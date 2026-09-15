@@ -65,6 +65,132 @@ pub const BOUNCE_SCORED_MIN_AGL_FT: f32 = 15.0;
 /// non-landing low flight over water (review finding, v0.15.21).
 pub const WATER_TOUCHDOWN_MIN_DESCENT_FPM: f32 = -50.0;
 
+// ─── Bodenhöhe des Flugzeugs (Referenz für die Tiefflug-Prüfung) ─────────
+//
+// Befund DLH 880 (Sven M, 15.09.2026, Fenix A321, MSFS 2024): Eine echte,
+// sehr weiche Landung (−50 fpm im Kontaktmoment, G-Spitze 1,01) wurde als
+// FALSE_EDGE verworfen. Die Tiefflug-Prüfung verlangte absolut „unter 5 ft
+// über Grund". Der Simulator misst die Höhe über Grund aber am Bezugspunkt
+// des Flugzeugs, nicht an den Rädern: Der Fenix A321 steht mit 9 ft auf
+// dem Boden, im Kontaktmoment waren es 11,9 ft. Die Prüfung konnte für
+// dieses Flugzeug also nie bestehen — nur ein kräftigeres Aufsetzen (G und
+// Sinkrate) rettete bisher die Abstimmung. Folge: kein Aufsetzfenster, kein
+// Touchdown beim Server, der PIREP hing in der Prüfung.
+//
+// Die Prüfung meint physikalisch „die Räder sind am Boden". Deshalb gilt
+// die Grenze jetzt RELATIV zur Bodenhöhe genau dieses Flugzeugs, gemessen
+// beim Rollen vor dem Start. Der Hopser-Zähler rechnet schon so (Höhe über
+// dem Boden, nicht über dem Gelände).
+//
+// Warum nicht der Wert im Kontaktmoment als Bezug: Ein flackerndes
+// Bodenkontakt-Signal in der Luft brächte seine Flughöhe als „Boden" mit
+// und bestünde die Prüfung immer. Die Rollmessung ist vom Kandidaten
+// unabhängig — ein Flackern in 50 ft bleibt weit über der Grenze.
+
+/// Spielraum über der gemessenen Bodenhöhe. Entspricht der bisherigen
+/// absoluten 5-ft-Grenze bei Flugzeugen, deren Bezugspunkt am Boden liegt.
+pub const TIEFFLUG_SPIELRAUM_FT: f32 = 5.0;
+
+/// Obergrenze der anerkannten Bodenhöhe. Proben darüber zählen gar nicht
+/// (kein Kappen) — ein Flugzeug jenseits davon behält die alte absolute
+/// Grenze, nie eine weichere.
+///
+/// Korpus 15.09.2026 (1203 Server-Flüge): höchster Musterwert 17,4 ft
+/// (ToLiss A346), A350 15,1, MD-11F 16,4, 777F 13,5; Streuung je Muster
+/// über alle Flüge unter 2 ft. Die erste Fassung erlaubte 30 ft — Codex
+/// wies zu Recht darauf hin, dass das eine Tiefflug-Grenze bis 35 ft
+/// zuliess, ohne dass ein reales Muster das braucht.
+pub const BODENHOEHE_MAX_FT: f32 = 22.0;
+
+/// Mindestzahl Rollproben, bevor die Bodenhöhe gilt (bei 50 Hz etwa 5 s).
+pub const BODENHOEHE_MIN_PROBEN: u32 = 250;
+
+/// Proben oberhalb dieser Rollgeschwindigkeit zählen nicht (Startlauf,
+/// Ausrollen — die Federung arbeitet, der Wert ist unruhig).
+pub const BODENHOEHE_MAX_GS_KT: f32 = 40.0;
+
+const BODENHOEHE_UNTERGRENZE_FT: f32 = -5.0;
+const BODENHOEHE_KLASSE_FT: f32 = 0.25;
+const BODENHOEHE_KLASSEN: usize =
+    ((BODENHOEHE_MAX_FT - BODENHOEHE_UNTERGRENZE_FT) / BODENHOEHE_KLASSE_FT) as usize;
+
+/// Robuste Bodenhöhe aus den Rollproben: Median über ein Häufigkeitsraster.
+///
+/// Median statt Mittelwert, weil beim Laden der Szenerie oder im Menü
+/// einzelne absurde Werte auftreten (RYR 2: −148 ft während einer Pause).
+/// Das Raster hält den Speicher konstant und lässt sich mit dem Flug
+/// sichern, damit ein Wiederaufnehmen nach Neustart die Messung behält.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BodenhoehenReferenz {
+    #[serde(default)]
+    klassen: Vec<u32>,
+    #[serde(default)]
+    anzahl: u32,
+}
+
+impl BodenhoehenReferenz {
+    /// Eine Probe aufnehmen. Der Aufrufer entscheidet, ob das Flugzeug
+    /// gerade ruhig am Boden steht oder rollt (siehe `ist_rollprobe`).
+    pub fn beobachte(&mut self, agl_ft: f32) {
+        if !agl_ft.is_finite()
+            || agl_ft < BODENHOEHE_UNTERGRENZE_FT
+            || agl_ft >= BODENHOEHE_MAX_FT
+        {
+            return;
+        }
+        if self.klassen.len() != BODENHOEHE_KLASSEN {
+            self.klassen = vec![0; BODENHOEHE_KLASSEN];
+        }
+        let idx = ((agl_ft - BODENHOEHE_UNTERGRENZE_FT) / BODENHOEHE_KLASSE_FT) as usize;
+        let idx = idx.min(BODENHOEHE_KLASSEN - 1);
+        self.klassen[idx] = self.klassen[idx].saturating_add(1);
+        self.anzahl = self.anzahl.saturating_add(1);
+    }
+
+    pub fn anzahl(&self) -> u32 {
+        self.anzahl
+    }
+
+    /// Median der Rollproben — `None`, solange zu wenige vorliegen.
+    pub fn bodenhoehe_ft(&self) -> Option<f32> {
+        if self.anzahl < BODENHOEHE_MIN_PROBEN || self.klassen.len() != BODENHOEHE_KLASSEN {
+            return None;
+        }
+        let haelfte = self.anzahl.div_ceil(2);
+        let mut summe = 0_u32;
+        for (i, n) in self.klassen.iter().enumerate() {
+            summe = summe.saturating_add(*n);
+            if summe >= haelfte {
+                return Some(
+                    BODENHOEHE_UNTERGRENZE_FT + (i as f32 + 0.5) * BODENHOEHE_KLASSE_FT,
+                );
+            }
+        }
+        None
+    }
+}
+
+/// Zählt diese Probe zur Bodenhöhe? Am Boden, langsam, kein Pausen- oder
+/// Versetzmodus.
+pub fn ist_rollprobe(on_ground: bool, groundspeed_kt: f32, paused: bool, slew: bool) -> bool {
+    on_ground
+        && !paused
+        && !slew
+        && groundspeed_kt.is_finite()
+        && groundspeed_kt < BODENHOEHE_MAX_GS_KT
+}
+
+/// Grenze der Tiefflug-Prüfung für dieses Flugzeug. Ohne gültige Messung
+/// (Flug in der Luft wiederaufgenommen, zu kurz gerollt) gilt die bisherige
+/// absolute Grenze — nie weniger streng als vorher.
+pub fn tiefflug_grenze_ft(bodenhoehe_ft: Option<f32>) -> f32 {
+    let boden = bodenhoehe_ft
+        .filter(|b| b.is_finite())
+        .map(|b| b.clamp(0.0, BODENHOEHE_MAX_FT))
+        .unwrap_or(0.0);
+    boden + TIEFFLUG_SPIELRAUM_FT
+}
+
 // ─── Layer 1: TD-Candidate Detection ──────────────────────────────────────
 
 /// Ein Sample-Pair fuer Edge-Detection (prev → current).
@@ -170,6 +296,10 @@ pub struct ValidationDetail {
     pub g_force_peak_in_window: f32,
     pub low_agl_persistence_pass: bool,
     pub low_agl_actual_ms: u64,
+    /// Angewandte Grenze der Tiefflug-Prüfung (Bodenhöhe + Spielraum).
+    /// `None` bei Datensätzen von vor dieser Änderung (damals fest 5 ft).
+    #[serde(default)]
+    pub low_agl_grenze_ft: Option<f32>,
     pub sustained_ground_pass: Option<bool>,
     pub sustained_ground_actual_ms: u64,
     pub vs_negative_pass: bool,
@@ -391,6 +521,7 @@ pub fn validate_candidate(
     sim: SimKind,
     impact_frame_vs: f32,
     category: AircraftCategory,
+    bodenhoehe_ft: Option<f32>,
 ) -> ValidationResult {
     let edge_at = candidate.edge_at;
     let threshold_n = gear_force_threshold_n(candidate.edge_total_weight_kg);
@@ -404,7 +535,22 @@ pub fn validate_candidate(
     let g_force_pass = g_force_peak > 1.05;
 
     // Test: low_agl_persistence (beide Sims)
-    let (low_agl_pass, low_agl_ms) = evaluate_low_agl_persistence(samples, edge_at);
+    // Relativ zur Bodenhöhe dieses Flugzeugs (Befund DLH 880, siehe
+    // `BodenhoehenReferenz`).
+    //
+    // Hubschrauber und Wasserflugzeuge behalten die absolute Grenze (Codex-
+    // Abnahme 15.09.2026): Ihr Bezugspunkt liegt ohnehin nah am Boden, sie
+    // starten aber oft von Plattformen, Dächern oder aus dem Wasser — dort
+    // wäre die Rollmessung kein Maß für "die Kufen/Schwimmer sind unten".
+    // Ihr eigener Bestätigungsweg (Präsenz über die Zeit) hat zudem keine
+    // Sinkraten- und G-Anker mehr, eine höhere Grenze wöge dort schwerer.
+    let tiefflug_grenze = if category.is_non_conventional() {
+        tiefflug_grenze_ft(None)
+    } else {
+        tiefflug_grenze_ft(bodenhoehe_ft)
+    };
+    let (low_agl_pass, low_agl_ms) =
+        evaluate_low_agl_persistence(samples, edge_at, tiefflug_grenze);
 
     // Test: sustained_ground_contact (MSFS-relevant)
     let (sustained_pass, sustained_ms) = evaluate_sustained_ground(samples, edge_at);
@@ -423,6 +569,7 @@ pub fn validate_candidate(
         g_force_peak_in_window: g_force_peak,
         low_agl_persistence_pass: low_agl_pass,
         low_agl_actual_ms: low_agl_ms,
+        low_agl_grenze_ft: Some(tiefflug_grenze),
         sustained_ground_pass: Some(sustained_pass),
         sustained_ground_actual_ms: sustained_ms,
         vs_negative_pass,
@@ -766,6 +913,7 @@ fn evaluate_g_force_peak(samples: &[TouchdownWindowSample], edge_at: DateTime<Ut
 fn evaluate_low_agl_persistence(
     samples: &[TouchdownWindowSample],
     edge_at: DateTime<Utc>,
+    grenze_ft: f32,
 ) -> (bool, u64) {
     let target_dur = Duration::milliseconds(1000);
     let window_end = edge_at + target_dur;
@@ -786,10 +934,10 @@ fn evaluate_low_agl_persistence(
         return (false, 0);
     }
 
-    // Suche erste violation (agl >= 5.0) im Target-Window
+    // Suche erste violation (agl >= Grenze) im Target-Window
     let mut first_violation_at: Option<DateTime<Utc>> = None;
     for s in &in_window {
-        if s.agl_ft >= 5.0 {
+        if s.agl_ft >= grenze_ft {
             first_violation_at = Some(s.at);
             break;
         }
@@ -1325,7 +1473,8 @@ mod tests {
                 &samples,
                 SimKind::Msfs2024,
                 -3.0,
-                AircraftCategory::FixedWing
+                AircraftCategory::FixedWing,
+                None
             ),
             ValidationResult::FalseEdge { .. }
         ));
@@ -1336,7 +1485,8 @@ mod tests {
                 &samples,
                 SimKind::Msfs2024,
                 -3.0,
-                AircraftCategory::Helicopter
+                AircraftCategory::Helicopter,
+                None
             ),
             ValidationResult::Validated { .. }
         ));
@@ -1353,7 +1503,8 @@ mod tests {
                 &samples,
                 SimKind::Msfs2024,
                 -120.0,
-                AircraftCategory::FixedWing
+                AircraftCategory::FixedWing,
+                None
             ),
             ValidationResult::FalseEdge { .. }
         ));
@@ -1364,7 +1515,8 @@ mod tests {
                 &samples,
                 SimKind::Msfs2024,
                 -120.0,
-                AircraftCategory::Seaplane
+                AircraftCategory::Seaplane,
+                None
             ),
             ValidationResult::Validated { .. }
         ));
@@ -1385,7 +1537,8 @@ mod tests {
                 &samples,
                 SimKind::Msfs2024,
                 -5.0, // near-zero sink = not a landing
-                AircraftCategory::Seaplane
+                AircraftCategory::Seaplane,
+                None
             ),
             ValidationResult::FalseEdge { .. }
         ));
@@ -1397,7 +1550,8 @@ mod tests {
                 &samples,
                 SimKind::Msfs2024,
                 -120.0,
-                AircraftCategory::Seaplane
+                AircraftCategory::Seaplane,
+                None
             ),
             ValidationResult::Validated { .. }
         ));
@@ -1430,7 +1584,8 @@ mod tests {
                 &samples,
                 SimKind::Msfs2024,
                 -3.0,
-                AircraftCategory::Helicopter
+                AircraftCategory::Helicopter,
+                None
             ),
             ValidationResult::FalseEdge { .. }
         ));
@@ -1648,6 +1803,7 @@ mod tests {
             SimKind::XPlane12,
             -1200.0,
             AircraftCategory::FixedWing,
+            None,
         ) {
             ValidationResult::Validated { result } => {
                 assert_eq!(
@@ -1677,7 +1833,8 @@ mod tests {
                 &samples,
                 SimKind::XPlane12,
                 -1200.0,
-                AircraftCategory::FixedWing
+                AircraftCategory::FixedWing,
+                None
             ),
             ValidationResult::Validated { .. }
         ));
@@ -1715,7 +1872,8 @@ mod tests {
                 &samples,
                 SimKind::XPlane12,
                 -1200.0,
-                AircraftCategory::FixedWing
+                AircraftCategory::FixedWing,
+                None
             ),
             ValidationResult::FalseEdge { .. }
         ));
@@ -1752,7 +1910,7 @@ mod tests {
     #[test]
     fn low_agl_persistence_fails_on_a_totally_empty_window() {
         let edge_at = DateTime::<Utc>::from_timestamp_millis(1000).unwrap();
-        let (pass, ms) = evaluate_low_agl_persistence(&[], edge_at);
+        let (pass, ms) = evaluate_low_agl_persistence(&[], edge_at, TIEFFLUG_SPIELRAUM_FT);
         assert!(
             !pass,
             "zero samples must not confirm 1000ms of low-AGL persistence"
@@ -1767,7 +1925,7 @@ mod tests {
         let samples: Vec<TouchdownWindowSample> =
             (0..5).map(|i| make_sample(1000 + i * 100, None)).collect();
         let edge_at = samples[0].at;
-        let (pass, ms) = evaluate_low_agl_persistence(&samples, edge_at);
+        let (pass, ms) = evaluate_low_agl_persistence(&samples, edge_at, TIEFFLUG_SPIELRAUM_FT);
         assert!(pass, "real samples with no violation must still pass");
         assert_eq!(ms, 1000);
     }
@@ -1860,6 +2018,7 @@ mod tests {
             SimKind::Msfs2024,
             -8.0, // impact_frame_vs: milder als -10 -> vs_negative_pass FALSE
             AircraftCategory::FixedWing,
+            None,
         );
         match result {
             ValidationResult::Validated { result } => {
@@ -1898,6 +2057,7 @@ mod tests {
             SimKind::Msfs2024,
             -182.0, // klarer harter Sink, weit unter -10fpm
             AircraftCategory::FixedWing,
+            None,
         );
         match result {
             ValidationResult::Validated { result } => {
@@ -1937,6 +2097,7 @@ mod tests {
             SimKind::Msfs2024,
             104.0, // positiv = steigt, kein Sinken
             AircraftCategory::FixedWing,
+            None,
         );
         assert!(
             matches!(result, ValidationResult::FalseEdge { .. }),
@@ -1959,6 +2120,7 @@ mod tests {
             SimKind::Msfs2024,
             -20.0,
             AircraftCategory::FixedWing,
+            None,
         );
         match result {
             ValidationResult::FalseEdge { reason, .. } => {
@@ -2006,6 +2168,7 @@ mod tests {
             SimKind::Msfs2024,
             -8.0,
             AircraftCategory::FixedWing,
+            None,
         );
         assert!(
             matches!(result, ValidationResult::FalseEdge { .. }),
@@ -2038,6 +2201,7 @@ mod tests {
             SimKind::Msfs2024,
             -8.0,
             AircraftCategory::FixedWing,
+            None,
         );
         assert!(
             matches!(result, ValidationResult::FalseEdge { .. }),
@@ -2066,6 +2230,7 @@ mod tests {
             SimKind::Msfs2024,
             -30.0,
             AircraftCategory::FixedWing,
+            None,
         );
         match result {
             ValidationResult::Validated { result } => {
@@ -2095,6 +2260,7 @@ mod tests {
             SimKind::Msfs2024,
             -10.0,
             AircraftCategory::FixedWing,
+            None,
         );
         // Settle-Pfad greift hier ohnehin (low_agl+sustained bestehen ueber
         // die volle Laenge) -> Validated, aber vs_negative_pass selbst muss
@@ -2325,5 +2491,173 @@ mod tests {
             fehlt.groesste_luecke_ms,
             BEWERTUNGS_FENSTER_VOR_MS + BEWERTUNGS_FENSTER_NACH_MS
         );
+    }
+
+    // ─── Bodenhöhe als Bezug der Tiefflug-Prüfung (Befund DLH 880) ────────
+
+    /// DLH 880 (Sven M, 15.09.2026, Fenix A321, MSFS 2024): Kontakt bei
+    /// 11,9 ft, danach Einfedern auf ~9,1 ft, Sinkrate im Kontakt −50 fpm,
+    /// G-Spitze 1,01. Das Flugzeug steht mit ~9 ft auf dem Boden.
+    fn dlh880_fenster() -> (TdCandidate, Vec<TouchdownWindowSample>) {
+        let edge = 0_i64;
+        let mut samples = Vec::new();
+        let mut t = edge;
+        while t <= 1200 {
+            // 11,9 ft im Kontakt, linear auf 9,9 ft nach 1,2 s
+            let agl = 11.9 - 2.0 * (t as f32 / 1200.0);
+            samples.push(msfs_sample(t, agl, true, -50.0, 1.01));
+            t += 20;
+        }
+        (msfs_candidate(edge, 11.9, -50.0, 1.01), samples)
+    }
+
+    fn referenz_mit(agl_ft: f32, anzahl: u32) -> BodenhoehenReferenz {
+        let mut r = BodenhoehenReferenz::default();
+        for _ in 0..anzahl {
+            r.beobachte(agl_ft);
+        }
+        r
+    }
+
+    #[test]
+    fn dlh880_ohne_bodenhoehe_bleibt_wie_bisher_verworfen() {
+        // Gegenprobe: genau der Live-Befund. Ohne Messung gilt die alte
+        // absolute Grenze — Tiefflug und G fallen durch, 2 von 4 Stimmen.
+        let (cand, samples) = dlh880_fenster();
+        let r = validate_candidate(&cand, &samples, SimKind::Msfs2024, -50.57, AircraftCategory::FixedWing, None);
+        match r {
+            ValidationResult::FalseEdge { reason, result } => {
+                assert!(matches!(reason, FalseEdgeReason::InsufficientVoteScore));
+                assert!(!result.low_agl_persistence_pass);
+                assert_eq!(result.low_agl_grenze_ft, Some(5.0));
+            }
+            ValidationResult::Validated { .. } => panic!("ohne Bodenhöhe darf sich nichts ändern"),
+        }
+    }
+
+    #[test]
+    fn dlh880_mit_gemessener_bodenhoehe_wird_erkannt() {
+        let (cand, samples) = dlh880_fenster();
+        let boden = referenz_mit(9.1, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
+        let r = validate_candidate(&cand, &samples, SimKind::Msfs2024, -50.57, AircraftCategory::FixedWing, boden);
+        match r {
+            ValidationResult::Validated { result } => {
+                assert!(result.low_agl_persistence_pass);
+                assert!(result.sustained_ground_pass.unwrap());
+                assert!(result.vs_negative_pass);
+                assert!(!result.g_force_pass.unwrap(), "G bleibt knapp darunter — erkannt über die Abstimmung");
+                let grenze = result.low_agl_grenze_ft.unwrap();
+                assert!((grenze - 14.125).abs() < 0.01, "Grenze = Bodenhöhe + 5 ft, war {grenze}");
+            }
+            ValidationResult::FalseEdge { reason, .. } => {
+                panic!("echte weiche Landung mit hohem Bezugspunkt muss erkannt werden — got {reason:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn flackern_in_der_luft_bleibt_trotz_bodenhoehe_verworfen() {
+        // Schutz gegen Phantom-Aufsetzer bleibt: Bodenkontakt-Signal flackert
+        // in 50 ft über Grund. Bodenhöhe 9 ft → Grenze 14 ft, 50 ft liegt weit
+        // darüber; G und Sinkrate unauffällig.
+        let edge = 0_i64;
+        let mut samples = Vec::new();
+        let mut t = edge;
+        while t <= 1200 {
+            samples.push(msfs_sample(t, 50.0, t <= 600, -5.0, 1.0));
+            t += 20;
+        }
+        let cand = msfs_candidate(edge, 50.0, -5.0, 1.0);
+        let boden = referenz_mit(9.0, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
+        let r = validate_candidate(&cand, &samples, SimKind::Msfs2024, -5.0, AircraftCategory::FixedWing, boden);
+        assert!(matches!(r, ValidationResult::FalseEdge { .. }), "Flackern in 50 ft darf nicht als Landung gelten");
+    }
+
+    #[test]
+    fn bodenhoehe_gilt_erst_ab_genug_proben_und_ist_robust_gegen_ausreisser() {
+        let mut r = referenz_mit(9.0, BODENHOEHE_MIN_PROBEN - 1);
+        assert_eq!(r.bodenhoehe_ft(), None, "zu wenige Proben");
+        r.beobachte(9.0);
+        let b = r.bodenhoehe_ft().unwrap();
+        assert!((b - 9.125).abs() < 0.01, "Median in der Klassenmitte, war {b}");
+
+        // Ausreißer beim Laden (RYR 2: −148 ft) und Unsinn oberhalb der
+        // Obergrenze zählen gar nicht; einzelne falsche Werte im gültigen
+        // Bereich verschieben den Median nicht.
+        let vorher = r.anzahl();
+        r.beobachte(-148.0);
+        r.beobachte(f32::NAN);
+        r.beobachte(BODENHOEHE_MAX_FT + 1.0);
+        assert_eq!(r.anzahl(), vorher);
+        for _ in 0..50 {
+            r.beobachte(25.0);
+        }
+        let b2 = r.bodenhoehe_ft().unwrap();
+        assert!((b2 - 9.125).abs() < 0.01, "Median bleibt beim Rollwert, war {b2}");
+    }
+
+    #[test]
+    fn tiefflug_grenze_ist_nie_strenger_als_vorher_und_gedeckelt() {
+        assert_eq!(tiefflug_grenze_ft(None), 5.0);
+        assert_eq!(tiefflug_grenze_ft(Some(-3.0)), 5.0, "negative Bodenhöhe macht nicht strenger");
+        assert_eq!(tiefflug_grenze_ft(Some(f32::NAN)), 5.0);
+        assert_eq!(tiefflug_grenze_ft(Some(9.0)), 14.0);
+        assert_eq!(tiefflug_grenze_ft(Some(500.0)), BODENHOEHE_MAX_FT + TIEFFLUG_SPIELRAUM_FT);
+    }
+
+    #[test]
+    fn hubschrauber_und_wasserflugzeuge_behalten_die_absolute_grenze() {
+        // Präsenzweg ohne Sinkraten-/G-Anker: Kufen 12 ft über Grund,
+        // Bodenkontakt-Signal an. Mit gemessener "Bodenhöhe" 9 ft (etwa vom
+        // Start auf einem Dach) darf das nicht als Landung durchgehen.
+        let edge = 0_i64;
+        let mut samples = Vec::new();
+        let mut t = edge;
+        while t <= 1200 {
+            samples.push(msfs_sample(t, 12.0, true, -3.0, 1.0));
+            t += 20;
+        }
+        let cand = msfs_candidate(edge, 12.0, -3.0, 1.0);
+        let boden = referenz_mit(9.0, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
+        for kat in [AircraftCategory::Helicopter, AircraftCategory::Seaplane] {
+            match validate_candidate(&cand, &samples, SimKind::Msfs2024, -3.0, kat, boden) {
+                ValidationResult::FalseEdge { result, .. } => {
+                    assert_eq!(result.low_agl_grenze_ft, Some(TIEFFLUG_SPIELRAUM_FT), "{kat:?}");
+                }
+                ValidationResult::Validated { .. } => panic!("{kat:?}: Bodenhöhe darf die Präsenzprüfung nicht aufweichen"),
+            }
+        }
+    }
+
+    #[test]
+    fn proben_ueber_der_obergrenze_zaehlen_nicht() {
+        // Kein Kappen auf 22 ft: Ein Flugzeug (oder eine Fehlmessung) jenseits
+        // der Obergrenze bekommt gar keine Bodenhöhe und damit die alte Grenze.
+        let r = referenz_mit(BODENHOEHE_MAX_FT + 3.0, BODENHOEHE_MIN_PROBEN * 2);
+        assert_eq!(r.bodenhoehe_ft(), None);
+        assert_eq!(tiefflug_grenze_ft(r.bodenhoehe_ft()), TIEFFLUG_SPIELRAUM_FT);
+    }
+
+    #[test]
+    fn nur_ruhige_bodenproben_zaehlen_zur_bodenhoehe() {
+        assert!(ist_rollprobe(true, 12.0, false, false));
+        assert!(ist_rollprobe(true, 0.0, false, false), "Stehen am Gate zählt");
+        assert!(!ist_rollprobe(false, 12.0, false, false), "in der Luft nie");
+        assert!(!ist_rollprobe(true, BODENHOEHE_MAX_GS_KT, false, false), "Startlauf/Ausrollen nicht");
+        assert!(!ist_rollprobe(true, 5.0, true, false), "Pause nicht");
+        assert!(!ist_rollprobe(true, 5.0, false, true), "Versetzen nicht");
+        assert!(!ist_rollprobe(true, f32::NAN, false, false));
+    }
+
+    #[test]
+    fn bodenhoehe_ueberlebt_speichern_und_laden() {
+        let r = referenz_mit(9.1, BODENHOEHE_MIN_PROBEN);
+        let json = serde_json::to_string(&r).unwrap();
+        let zurueck: BodenhoehenReferenz = serde_json::from_str(&json).unwrap();
+        assert_eq!(zurueck, r);
+        assert_eq!(zurueck.bodenhoehe_ft(), r.bodenhoehe_ft());
+        // Alte Sicherung ohne Feld / leeres Objekt → keine Messung, kein Absturz.
+        let leer: BodenhoehenReferenz = serde_json::from_str("{}").unwrap();
+        assert_eq!(leer.bodenhoehe_ft(), None);
     }
 }

@@ -11149,3 +11149,44 @@ input.datalink-block__input {
     backdrop-filter: none;
   }
 }
+
+/* ---- Prüfstatus beim Live-Server ----
+   Befund DLH 880 (15.09.2026): Ein Flug hing im Integritäts-Gate, der Pilot
+   sah davon nichts. Farben: Prüfung = Warnung, Ablehnung = Gefahr,
+   Freigabe = Ok. Der Normalfall ("geprüft, in Ordnung") bleibt leise. */
+
+.pruefstatus-marke {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  vertical-align: middle;
+  border: 1px solid currentColor;
+}
+.pruefstatus-marke--in_pruefung { color: var(--sem-warn); background: var(--sem-warn-bg); }
+.pruefstatus-marke--abgelehnt { color: var(--sem-danger); background: var(--sem-danger-bg); }
+.pruefstatus-marke--fehlalarm,
+.pruefstatus-marke--freigegeben_hinweis { color: var(--sem-ok); background: var(--sem-ok-bg); }
+
+.pruefstatus-kasten {
+  margin-bottom: 0.9rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--sem-info);
+  border-radius: 10px;
+  background: var(--sem-info-bg);
+}
+.pruefstatus-kasten__titel { font-weight: 700; margin-bottom: 0.3rem; color: var(--sem-info); }
+.pruefstatus-kasten__text { font-size: 0.86rem; line-height: 1.45; }
+.pruefstatus-kasten__gruende { margin: 0.45rem 0 0 1.1rem; padding: 0; font-size: 0.78rem; color: var(--text-muted); }
+.pruefstatus-kasten--ok { border-color: var(--sem-ok); background: var(--sem-ok-bg); }
+.pruefstatus-kasten--ok .pruefstatus-kasten__titel { color: var(--sem-ok); }
+.pruefstatus-kasten--in_pruefung { border-color: var(--sem-warn); background: var(--sem-warn-bg); }
+.pruefstatus-kasten--in_pruefung .pruefstatus-kasten__titel { color: var(--sem-warn); }
+.pruefstatus-kasten--abgelehnt { border-color: var(--sem-danger); background: var(--sem-danger-bg); }
+.pruefstatus-kasten--abgelehnt .pruefstatus-kasten__titel { color: var(--sem-danger); }
+.pruefstatus-kasten--fehlalarm,
+.pruefstatus-kasten--freigegeben_hinweis { border-color: var(--sem-ok); background: var(--sem-ok-bg); }
+.pruefstatus-kasten--fehlalarm .pruefstatus-kasten__titel,
+.pruefstatus-kasten--freigegeben_hinweis .pruefstatus-kasten__titel { color: var(--sem-ok); }

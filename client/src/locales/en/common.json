@@ -845,6 +845,33 @@
       "rat": "The usual cause is a simulator under heavy load. Reducing graphics load and add-ons during final approach helps; do not restart the client while landing.",
       "kein_wert": "not measured",
       "kurz": "not scorable"
+    },
+    "pruefstatus": {
+      "kurz": {
+        "in_pruefung": "under review",
+        "abgelehnt": "rejected",
+        "fehlalarm": "approved",
+        "freigegeben_hinweis": "approved"
+      },
+      "titel": {
+        "ok": "Checked by the server — all good",
+        "in_pruefung": "Flight under review",
+        "abgelehnt": "Flight rejected",
+        "fehlalarm": "Approved — the review was a false alarm",
+        "freigegeben_hinweis": "Approved with a note"
+      },
+      "text": {
+        "ok": "The live server accepted this flight without any findings.",
+        "in_pruefung": "This flight was not accepted automatically and is waiting for review by the VA team. You don't need to do anything. The decision will show up here.",
+        "abgelehnt": "The VA team rejected this flight after review. Please contact the team if you have questions.",
+        "fehlalarm": "The automatic check held this flight back. The VA team found everything in order and approved it.",
+        "freigegeben_hinweis": "The VA team approved this flight after review."
+      },
+      "grund": {
+        "no_touchdown_recorded": "The server had no landing on record when the PIREP was filed.",
+        "sim_crash_signature_at_touchdown": "The touchdown looked like a simulator crash.",
+        "sonstiges": "Another automatic review reason applied."
+      }
     }
   },
   "about": {

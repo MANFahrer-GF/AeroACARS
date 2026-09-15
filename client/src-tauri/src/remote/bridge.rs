@@ -721,6 +721,19 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         }
         // v1.5.6 (#lan-bruecke-1zu1): Landungs-Sicherung. Laeuft auf dem
         // HOST (schreibt/liest dessen Datei) — das Tablet loest sie nur aus.
+        // Prüfstatus beim Live-Server (Befund DLH 880). Fragt mit dem
+        // Zugang des HOSTS — das Tablet zeigt dieselben Landungen wie er.
+        "pirep_pruefstatus" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                pirep_ids: Vec<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::pirep_pruefstatus(app.clone(), a.pirep_ids).await),
+                Err(e) => Err(e),
+            }
+        }
         "landing_backup_now" => from_uierr(crate::landing_backup_now(app.clone()).await),
         "landing_backup_restore" => from_uierr(crate::landing_backup_restore(app.clone()).await),
         "flight_logs_stats" => from_uierr(crate::flight_logs_stats(app.clone())),

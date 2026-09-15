@@ -31,6 +31,7 @@ import {
   T_VS_HARD_FPM,
   T_VS_SEVERE_FPM,
 } from "../lib/landingScoring";
+import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
 
 // ---- Types (mirror storage::LandingRecord on the Rust side) -------------
 
@@ -3041,7 +3042,10 @@ export function LandingDetail({
   onBack,
   onDelete,
   isPreview,
+  pruefstatus,
 }: {
+  /** Stand beim Live-Server (Integritäts-Gate), falls bekannt. */
+  pruefstatus?: PirepPruefstatus;
   record: LandingRecord;
   /** Full history — used to compute personal-best comparisons. */
   allRecords: LandingRecord[];
@@ -3193,6 +3197,11 @@ export function LandingDetail({
           ankam. Seitdem gibt es dafür keine Note mehr — und diese Zeile
           sagt dem Piloten, warum. Sie steht ÜBER der Kopfzeile, damit
           niemand erst nach der fehlenden Zahl sucht. */}
+      {/* Prüfstatus beim Live-Server (Befund DLH 880, 15.09.2026): Hängt
+          der Flug im Integritäts-Gate, soll der Pilot das hier sehen —
+          und ebenso, wenn er inzwischen freigegeben wurde. */}
+      {!isPreview && <PruefstatusKasten status={pruefstatus} />}
+
       {record.landung_nicht_bewertbar != null && (
         <div className="landing-nicht-bewertbar" role="status">
           <div className="landing-nicht-bewertbar__titel">
@@ -4282,6 +4291,16 @@ export function LandingPanel() {
   const [airportNames, setAirportNames] = useState<Record<string, string>>({});
   const nachladeGedaechtnisRef = useRef<NachladeGedaechtnis>(leeresGedaechtnis());
   const stats = useOverviewStats(records);
+  // Prüfstatus beim Live-Server für die jüngsten Flüge (Befund DLH 880).
+  const pruefIds = useMemo(
+    () =>
+      [...records]
+        .sort((a, b) => Date.parse(b.touchdown_at) - Date.parse(a.touchdown_at))
+        .slice(0, 50)
+        .map((r) => r.pirep_id),
+    [records],
+  );
+  const pruefstatus = usePirepPruefstatus(pruefIds);
 
   // QS 2026-08-04: `refresh` läuft alle 5 s. Dauert ein Abruf einmal
   // länger als der Takt (träger VPS/phpVMS), überholen sich zwei
@@ -4417,6 +4436,7 @@ export function LandingPanel() {
             onBack={() => setSelectedId(null)}
             onDelete={() => handleDelete(rec.pirep_id)}
             isPreview={false}
+            pruefstatus={pruefstatus[rec.pirep_id]}
           />
         </section>
       );
@@ -4597,6 +4617,7 @@ export function LandingPanel() {
                     <td>
                       <span className="landing-ov-route__l1">
                         {dep} → {arr}
+                        <PruefstatusMarke status={pruefstatus[r.pirep_id]} />
                       </span>
                       <span className="landing-ov-route__l2">
                         {callsign} · {airportNames[dep] ?? dep} → {airportNames[arr] ?? arr}

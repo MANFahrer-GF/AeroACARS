@@ -845,6 +845,33 @@
       "rat": "Häufigste Ursache ist ein ausgelasteter Simulator. Weniger Grafiklast und Zusatzprogramme im Endanflug helfen; den Client währenddessen nicht neu starten.",
       "kein_wert": "nicht gemessen",
       "kurz": "nicht bewertbar"
+    },
+    "pruefstatus": {
+      "kurz": {
+        "in_pruefung": "in Prüfung",
+        "abgelehnt": "abgelehnt",
+        "fehlalarm": "freigegeben",
+        "freigegeben_hinweis": "freigegeben"
+      },
+      "titel": {
+        "ok": "Vom Server geprüft — in Ordnung",
+        "in_pruefung": "Flug wird geprüft",
+        "abgelehnt": "Flug abgelehnt",
+        "fehlalarm": "Freigegeben — Prüfung war ein Fehlalarm",
+        "freigegeben_hinweis": "Freigegeben mit Hinweis"
+      },
+      "text": {
+        "ok": "Der Live-Server hat den Flug ohne Auffälligkeiten angenommen.",
+        "in_pruefung": "Der Flug wurde nicht automatisch angenommen und liegt zur Prüfung beim VA-Team. Du musst nichts tun. Sobald entschieden ist, erscheint das hier.",
+        "abgelehnt": "Das VA-Team hat den Flug nach Prüfung abgelehnt. Bei Fragen wende dich an das Team.",
+        "fehlalarm": "Die automatische Prüfung hatte den Flug zurückgehalten. Das VA-Team hat festgestellt, dass alles in Ordnung war, und ihn freigegeben.",
+        "freigegeben_hinweis": "Das VA-Team hat den Flug nach Prüfung freigegeben."
+      },
+      "grund": {
+        "no_touchdown_recorded": "Beim Einreichen lag dem Server keine Landung vor.",
+        "sim_crash_signature_at_touchdown": "Beim Aufsetzen sah es nach einem Simulator-Absturz aus.",
+        "sonstiges": "Ein weiterer automatischer Prüfgrund lag vor."
+      }
     }
   },
   "about": {

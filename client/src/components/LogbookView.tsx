@@ -10,6 +10,7 @@ import type { TFunction } from "i18next";
 import { invoke } from "../lib/ipc";
 import { FlightProfile } from "./FlightProfile";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
+import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus } from "./PirepPruefstatus";
 
 // Die Stil-Adressen kommen vom Server, damit ein Schluesselwechsel bei
 // CARTO kein Release kostet — siehe `BasemapContext`. Die eingebauten
@@ -139,6 +140,10 @@ export function LogbookView() {
   // effect's deps below so a click re-runs it even when `page` didn't
   // change (all automatic retries in invokeWithRetry already exhausted).
   const [retryTick, setRetryTick] = useState(0);
+  // Prüfstatus beim Live-Server (Befund DLH 880, Codex-Abnahme 15.09.2026):
+  // Das Logbuch listet ALLE eingereichten PIREPs — auch solche, zu denen der
+  // Landungs-Tab keinen Datensatz hat, weil das Aufsetzen nicht erkannt wurde.
+  const pruefstatus = usePirepPruefstatus(items.map((f) => f.id));
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapElRef = useRef<HTMLDivElement | null>(null);
 
@@ -222,12 +227,14 @@ export function LogbookView() {
           <span className="aa-lb-route">{detail.dep_icao}<span className="aa-lb-arr">→</span>{detail.arr_icao}</span>
           <span className="aa-lb-muted">{detail.aircraft_icao} · {detail.aircraft_reg}</span>
           <span dangerouslySetInnerHTML={{ __html: badge(detail.status, t) }} />
+          <PruefstatusMarke status={pruefstatus[detail.id]} />
           <div className="aa-lb-det-stats">
             <div><div className="aa-lb-k">{t("logbook_view.table_duration")}</div><div className="aa-lb-v">{dur(detail.duration_min)}</div></div>
             <div><div className="aa-lb-k">{t("logbook_view.table_distance")}</div><div className="aa-lb-v">{detail.distance_nm} nm</div></div>
             <div><div className="aa-lb-k">{t("logbook_view.table_landing")}</div><div className="aa-lb-v">{detail.landing_rate_fpm} fpm</div></div>
           </div>
         </div>
+        <PruefstatusKasten status={pruefstatus[detail.id]} />
         <div className="aa-lb-det-row">
           <div className="aa-lb-map" ref={mapElRef} />
           <div className="aa-lb-panel aa-lb-logpanel">
@@ -305,7 +312,10 @@ export function LogbookView() {
                 <td className="num">{dur(f.duration_min)}</td>
                 <td className="num">{f.distance_nm} nm</td>
                 <td className="num">{f.landing_rate_fpm} fpm</td>
-                <td><span dangerouslySetInnerHTML={{ __html: badge(f.status, t) }} /></td>
+                <td>
+                  <span dangerouslySetInnerHTML={{ __html: badge(f.status, t) }} />
+                  <PruefstatusMarke status={pruefstatus[f.id]} />
+                </td>
                 {/* Der Pfeil wird zum Kreisel — an genau der Stelle, auf die
                     man geklickt hat, statt irgendwo sonst auf der Seite. */}
                 <td className="aa-lb-chev">{openingId === f.id ? <span className="aa-lb-spin" aria-label={t("logbook_view.opening_aria")} /> : "›"}</td>

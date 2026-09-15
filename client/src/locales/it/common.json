@@ -845,6 +845,33 @@
       "rat": "La causa più comune è un simulatore sovraccarico. Ridurre carico grafico e componenti aggiuntivi in finale aiuta; non riavviare il client durante l'atterraggio.",
       "kein_wert": "non misurato",
       "kurz": "non valutabile"
+    },
+    "pruefstatus": {
+      "kurz": {
+        "in_pruefung": "in verifica",
+        "abgelehnt": "rifiutato",
+        "fehlalarm": "approvato",
+        "freigegeben_hinweis": "approvato"
+      },
+      "titel": {
+        "ok": "Verificato dal server — tutto in ordine",
+        "in_pruefung": "Volo in verifica",
+        "abgelehnt": "Volo rifiutato",
+        "fehlalarm": "Approvato — la verifica era un falso allarme",
+        "freigegeben_hinweis": "Approvato con nota"
+      },
+      "text": {
+        "ok": "Il server live ha accettato questo volo senza anomalie.",
+        "in_pruefung": "Questo volo non è stato accettato automaticamente ed è in attesa di verifica da parte del team della VA. Non devi fare nulla. La decisione comparirà qui.",
+        "abgelehnt": "Il team della VA ha rifiutato questo volo dopo la verifica. Per domande contatta il team.",
+        "fehlalarm": "Il controllo automatico aveva trattenuto questo volo. Il team della VA ha verificato che era tutto in ordine e lo ha approvato.",
+        "freigegeben_hinweis": "Il team della VA ha approvato questo volo dopo la verifica."
+      },
+      "grund": {
+        "no_touchdown_recorded": "Al momento dell'invio il server non aveva registrato alcun atterraggio.",
+        "sim_crash_signature_at_touchdown": "L'atterraggio sembrava un crash del simulatore.",
+        "sonstiges": "Si è applicato un altro motivo di verifica automatica."
+      }
     }
   },
   "about": {

@@ -136,6 +136,7 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
                 fixture.sim,
                 impact_vs,
                 AircraftCategory::FixedWing,
+                None,
             );
             eprintln!(
                 "DBG candidate idx={} at={} agl={} vs={} impact_vs={} -> {}",
@@ -538,6 +539,7 @@ fn simulate_live_sampler(
                         sim,
                         impact_vs,
                         AircraftCategory::FixedWing,
+                        None,
                     );
                     match validation {
                         ValidationResult::Validated { .. } => {

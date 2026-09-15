@@ -53,6 +53,8 @@ vi.mock("../lib/ipc", () => ({
         ],
       });
     }
+    // Prüfstatus beim Live-Server (seit DLH 880) — für diese Tests ohne Belang.
+    if (cmd === "pirep_pruefstatus") return Promise.resolve([]);
     // Der Detailabruf bleibt offen, bis der Test ihn auflöst.
     return new Promise((resolve) => h.pending.push(resolve));
   },

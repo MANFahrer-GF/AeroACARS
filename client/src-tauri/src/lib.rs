@@ -3422,6 +3422,11 @@ struct PersistedFlightStats {
     /// denselben Neustart.
     #[serde(default)]
     sampler_diagnose: Option<serde_json::Value>,
+    /// Bodenhöhe des Flugzeugs aus dem Rollen (Befund DLH 880). Überlebt
+    /// den Neustart, sonst fiele ein in der Luft wiederaufgenommener Flug
+    /// auf die absolute 5-ft-Grenze zurück, obwohl gemessen wurde.
+    #[serde(default)]
+    bodenhoehe: touchdown_v2::BodenhoehenReferenz,
     /// "vs_at_impact" | "smoothed_500ms" | "smoothed_1000ms" | "pre_flare_peak"
     #[serde(default)]
     /// Welcher Simulator die Landung geliefert hat. Persistiert, weil die
@@ -3863,6 +3868,7 @@ impl PersistedFlightStats {
             landing_confidence: stats.landing_confidence.clone(),
             landung_abdeckung_fehlt: stats.landung_abdeckung_fehlt.clone(),
             sampler_diagnose: stats.sampler_diagnose.clone(),
+            bodenhoehe: stats.bodenhoehe.clone(),
             landing_source: stats.landing_source.clone(),
             landing_wind_direction_deg: stats.landing_wind_direction_deg,
             landing_wind_speed_kt: stats.landing_wind_speed_kt,
@@ -4048,6 +4054,7 @@ impl PersistedFlightStats {
         stats.landing_confidence = self.landing_confidence;
         stats.landung_abdeckung_fehlt = self.landung_abdeckung_fehlt;
         stats.sampler_diagnose = self.sampler_diagnose;
+        stats.bodenhoehe = self.bodenhoehe;
         stats.landing_source = self.landing_source;
         stats.landing_wind_direction_deg = self.landing_wind_direction_deg;
         stats.landing_wind_speed_kt = self.landing_wind_speed_kt;
@@ -4829,6 +4836,13 @@ struct FlightStats {
     /// wird (kam der Client nicht zum Messen, oder lagen die Proben nur
     /// ungünstig?).
     sampler_diagnose: Option<serde_json::Value>,
+    /// Bodenhöhe genau dieses Flugzeugs, gemessen beim Rollen. Bezug der
+    /// Tiefflug-Prüfung in der Aufsetzerkennung — siehe
+    /// `touchdown_v2::BodenhoehenReferenz` (Befund DLH 880).
+    bodenhoehe: touchdown_v2::BodenhoehenReferenz,
+    /// Die Ablehnungs-Warnung im Finalisierer wurde für die aktuelle
+    /// Ablehnung schon geschrieben (nur gegen Protokollflut, nicht gesichert).
+    ablehnung_gemeldet: bool,
     /// How many bounces (on_ground → !on_ground → on_ground) we counted
     /// within the touchdown window. >0 implies the pilot didn't put it
     /// down clean.
@@ -10774,11 +10788,30 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
                 tracing::warn!(key = k, error = %e, "live-tracking: caching MQTT credential failed (non-fatal, will re-provision)");
             }
         };
-        store(MQTT_KEYRING_USERNAME, &resp.username);
-        store(MQTT_KEYRING_PASSWORD, &resp.password);
-        store(MQTT_KEYRING_VA, &resp.va_prefix);
-        store(MQTT_KEYRING_PILOT_ID, &resp.pilot_id);
-        store(MQTT_KEYRING_BROKER, &resp.broker_url);
+        // Codex-Abnahme (15.09.2026): `provision(...).await` oben ist ein
+        // echter Await — ein Kontowechsel/Logout in dieser Zeit erhoeht die
+        // Epoche. Vorher wurden die Credentials trotzdem in den Keyring
+        // geschrieben (Epochen-Pruefung erst NACH `start`), ein ueberholter
+        // Request konnte so die Zugangsdaten des vorigen Piloten nach dem
+        // Logout-Loeschen wieder zurueckschreiben. Jetzt: pruefen+schreiben
+        // atomar unter dem Epochen-Lock; ein Logout, der die Epoche erhoeht,
+        // wartet auf das Schreiben und loescht danach (`phpvms_logout`:
+        // `leere_session_atomar` VOR `clear_mqtt_credentials_cache`).
+        let geschrieben =
+            mqtt_cache_schreiben_wenn_epoche_gilt(&state.session_epoch, epoche_bei_start, || {
+                store(MQTT_KEYRING_USERNAME, &resp.username);
+                store(MQTT_KEYRING_PASSWORD, &resp.password);
+                store(MQTT_KEYRING_VA, &resp.va_prefix);
+                store(MQTT_KEYRING_PILOT_ID, &resp.pilot_id);
+                store(MQTT_KEYRING_BROKER, &resp.broker_url);
+            });
+        if !geschrieben {
+            tracing::warn!(
+                "live-tracking: Sitzung aenderte sich waehrend der Provisionierung — \
+                 Antwort verworfen, nichts in den Keyring geschrieben"
+            );
+            return;
+        }
         tracing::info!(
             pilot_id = %resp.pilot_id,
             va = %resp.va_prefix,
@@ -10913,11 +10946,117 @@ async fn stoppe_mqtt_publisher(state: &tauri::State<'_, AppState>) {
 /// re-provisions cleanly. The phpVMS API key in `KEYRING_ACCOUNT`
 /// already gets cleared by the existing logout flow.
 fn clear_mqtt_credentials_cache() {
-    let _ = secrets::delete_api_key(MQTT_KEYRING_USERNAME);
-    let _ = secrets::delete_api_key(MQTT_KEYRING_PASSWORD);
-    let _ = secrets::delete_api_key(MQTT_KEYRING_VA);
-    let _ = secrets::delete_api_key(MQTT_KEYRING_PILOT_ID);
-    let _ = secrets::delete_api_key(MQTT_KEYRING_BROKER);
+    for key in [
+        MQTT_KEYRING_USERNAME,
+        MQTT_KEYRING_PASSWORD,
+        MQTT_KEYRING_VA,
+        MQTT_KEYRING_PILOT_ID,
+        MQTT_KEYRING_BROKER,
+    ] {
+        // Weiterhin nicht fatal (Logout soll nicht daran scheitern), aber
+        // nicht mehr stumm: ein stehengebliebener Eintrag waere sonst nicht
+        // diagnostizierbar. Nur Schluesselname + Fehler, nie der Wert.
+        if let Err(e) = secrets::delete_api_key(key) {
+            tracing::warn!(key, error = %e, "live-tracking: Loeschen des MQTT-Credential-Caches fehlgeschlagen");
+        }
+    }
+}
+
+/// Schreibt den MQTT-Credential-Cache (`schreibe`) NUR, wenn die Sitzung
+/// seit `epoche_bei_start` unveraendert ist — Pruefung und Schreiben
+/// laufen unter DEMSELBEN gehaltenen `session_epoch`-Lock, damit kein
+/// Login/Logout (`setze_session_atomar`/`leere_session_atomar` erhoehen
+/// die Epoche unter diesem Lock) zwischen "geprueft" und "geschrieben"
+/// hindurchschluepfen kann. Gibt `true` zurueck, wenn geschrieben wurde.
+/// `schreibe` darf keine anderen AppState-Locks nehmen (Sperr-Reihenfolge).
+fn mqtt_cache_schreiben_wenn_epoche_gilt(
+    session_epoch: &Mutex<u64>,
+    epoche_bei_start: u64,
+    schreibe: impl FnOnce(),
+) -> bool {
+    let epoch_guard = session_epoch.lock().expect("session_epoch lock");
+    if *epoch_guard != epoche_bei_start {
+        return false;
+    }
+    schreibe();
+    drop(epoch_guard);
+    true
+}
+
+#[cfg(test)]
+mod mqtt_cache_epochen_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// Ueberholter Provisionierungs-Request: Epoche beim Start 7, waehrend
+    /// des HTTP-Awaits Kontowechsel/Logout → Epoche 8. Es darf NICHTS in
+    /// den Keyring geschrieben werden.
+    #[test]
+    fn ueberholter_request_schreibt_nichts() {
+        let epoch = Mutex::new(7u64);
+        let start = *epoch.lock().unwrap();
+        *epoch.lock().unwrap() += 1; // Logout/Login waehrend provision().await
+        let mut geschrieben = false;
+        let ok = mqtt_cache_schreiben_wenn_epoche_gilt(&epoch, start, || geschrieben = true);
+        assert!(!ok);
+        assert!(
+            !geschrieben,
+            "ueberholter Request hat den Keyring beschrieben"
+        );
+    }
+
+    #[test]
+    fn unveraenderte_epoche_schreibt() {
+        let epoch = Mutex::new(3u64);
+        let mut geschrieben = false;
+        assert!(mqtt_cache_schreiben_wenn_epoche_gilt(&epoch, 3, || {
+            geschrieben = true
+        }));
+        assert!(geschrieben);
+    }
+
+    /// Das Schreiben laeuft unter dem gehaltenen Epochen-Lock: ein
+    /// paralleler Logout, der die Epoche erhoehen will, kann erst NACH dem
+    /// Schreiben zum Zug kommen (und loescht danach den Cache).
+    #[test]
+    fn schreiben_haelt_den_epochen_lock() {
+        let epoch = Arc::new(Mutex::new(1u64));
+        let im_schreiben = Arc::new(AtomicBool::new(false));
+        let ok = mqtt_cache_schreiben_wenn_epoche_gilt(&epoch, 1, || {
+            im_schreiben.store(true, Ordering::SeqCst);
+            assert!(
+                epoch.try_lock().is_err(),
+                "Epochen-Lock waehrend des Keyring-Schreibens nicht gehalten"
+            );
+        });
+        assert!(ok && im_schreiben.load(Ordering::SeqCst));
+    }
+
+    /// Verdrahtung: in der Provisionierung liegen die Keyring-Schreibzugriffe
+    /// innerhalb des Helfers, nicht davor.
+    #[test]
+    fn provisionierung_schreibt_nur_ueber_den_epochen_helfer() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find("async fn init_mqtt_publisher_via_provisioning(")
+            .expect("Funktion fehlt");
+        let ende = start
+            + SRC[start..]
+                .find("\nasync fn stoppe_mqtt_publisher(")
+                .expect("Ende fehlt");
+        let koerper = &SRC[start..ende];
+        let helfer = koerper
+            .find("mqtt_cache_schreiben_wenn_epoche_gilt(")
+            .expect("Provisionierung nutzt den Epochen-Helfer nicht mehr");
+        let erster_store = koerper
+            .find("store(MQTT_KEYRING_USERNAME")
+            .expect("store-Aufruf fehlt");
+        assert!(
+            erster_store > helfer,
+            "Keyring wird vor der Epochen-Pruefung beschrieben"
+        );
+    }
 }
 
 /// Forget the current session. Removes the keyring entry and site config,
@@ -22641,6 +22780,53 @@ fn spawn_landing_backup(app: &AppHandle) {
     });
 }
 
+/// Prüfstatus der eigenen PIREPs beim Live-Server (Befund DLH 880).
+///
+/// Der Landungs-Tab zeigt damit, ob ein Flug im Integritäts-Gate festhängt,
+/// warum, und ob er inzwischen freigegeben wurde. Ohne Live-Server-Zugang
+/// (nicht provisioniert) kommt eine leere Liste — die Anzeige bleibt dann
+/// einfach aus, statt einen Fehler zu melden.
+#[tauri::command]
+async fn pirep_pruefstatus(
+    app: AppHandle,
+    pirep_ids: Vec<String>,
+) -> Result<Vec<aeroacars_mqtt::pirep_status::PirepPruefstatus>, UiError> {
+    // Codex-Abnahme 15.09.2026: Die Zugangsdaten im Schlüsselbund können
+    // noch einem VORHERIGEN Piloten gehören (Kontowechsel ohne Abmelden,
+    // fehlgeschlagenes Löschen). Dann würde als dieser abgefragt — seine
+    // Prüfgründe erschienen beim neuen Piloten. Nur abfragen, wenn die
+    // gespeicherte Piloten-ID zum angemeldeten Konto passt, und eine Antwort
+    // verwerfen, wenn sich die Sitzung währenddessen geändert hat.
+    let state = app.state::<AppState>();
+    let epoche_vorher = *state.session_epoch.lock().expect("session_epoch lock");
+    let angemeldet = *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
+    let Some(angemeldet) = angemeldet else {
+        return Ok(Vec::new());
+    };
+    let (Some(username), Some(password), Some(schluessel_pilot)) = (
+        secrets::load_api_key(MQTT_KEYRING_USERNAME).ok().flatten(),
+        secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten(),
+        secrets::load_api_key(MQTT_KEYRING_PILOT_ID).ok().flatten(),
+    ) else {
+        return Ok(Vec::new());
+    };
+    if schluessel_pilot != angemeldet.to_string() {
+        tracing::debug!("pirep_pruefstatus: Schlüsselbund gehört nicht zum angemeldeten Piloten — übersprungen");
+        return Ok(Vec::new());
+    }
+    let antwort =
+        aeroacars_mqtt::pirep_status::pruefstatus_abrufen(&pirep_ids, &username, &password, None)
+            .await
+            .map_err(|e| UiError::new("pirep_pruefstatus", e.to_string()))?;
+    if *state.session_epoch.lock().expect("session_epoch lock") != epoche_vorher {
+        return Ok(Vec::new());
+    }
+    Ok(antwort)
+}
+
 #[tauri::command]
 async fn landing_backup_now(app: AppHandle) -> Result<usize, UiError> {
     upload_landing_backup(app)
@@ -28822,6 +29008,24 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 gear_normal_force_n: snap.gear_normal_force_n,
                 total_weight_kg: snap.total_weight_kg,
             });
+            // Bodenhöhe des Flugzeugs mitmessen, solange es ruhig am Boden
+            // steht oder rollt (Befund DLH 880, `touchdown_v2::BodenhoehenReferenz`).
+            //
+            // Nur VOR dem ersten Abheben (Codex-Abnahme 15.09.2026): Danach
+            // steht der Wert fest. Ein späterer Bodenabschnitt — Zwischenhalt,
+            // Touch-and-Go, ein Szenerieobjekt mit falschem Gelände — darf den
+            // Bezug nicht mehr verschieben und damit die Tiefflug-Grenze für
+            // die eigentliche Landung anheben.
+            if stats.takeoff_at.is_none()
+                && stats.sampler_takeoff_at.is_none()
+                && touchdown_v2::ist_rollprobe(
+                snap.on_ground,
+                snap.groundspeed_kt,
+                snap.paused,
+                snap.slew_mode,
+            ) {
+                stats.bodenhoehe.beobachte(snap.altitude_agl_ft as f32);
+            }
 
             // v0.5.11: running peak-descent VS in the LOW-ALTITUDE zone
             // only (AGL ≤ 250 ft). Earlier versions (v0.5.5+) tracked
@@ -29110,6 +29314,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             sim,
                             impact_vs,
                             category,
+                            stats.bodenhoehe.bodenhoehe_ft(),
                         );
                         match validation {
                             touchdown_v2::ValidationResult::Validated { result } => {
@@ -29339,12 +29544,22 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 );
                                 stats = flight.stats.lock().expect("flight stats");
                             }
-                            touchdown_v2::ValidationResult::FalseEdge { reason, .. } => {
+                            touchdown_v2::ValidationResult::FalseEdge { reason, result } => {
+                                // Befund DLH 880: Die Meldung nannte nur den Grund —
+                                // welche Prüfung durchfiel, liess sich erst aus den
+                                // Positionsdaten rekonstruieren. Jetzt stehen die
+                                // Einzelergebnisse direkt im Protokoll.
                                 tracing::warn!(
                                     pirep_id = %flight.pirep_id,
                                     edge_at = %pending_at,
                                     impact_vs = impact_vs,
                                     reason = ?reason,
+                                    g_spitze = result.g_force_peak_in_window,
+                                    g_bestanden = ?result.g_force_pass,
+                                    tiefflug_bestanden = result.low_agl_persistence_pass,
+                                    tiefflug_grenze_ft = ?result.low_agl_grenze_ft,
+                                    bodenkontakt_bestanden = ?result.sustained_ground_pass,
+                                    sinkrate_bestanden = result.vs_negative_pass,
                                     "v0.7.0 TD candidate FALSE_EDGE — ignoring, continue watching"
                                 );
                                 // Bug B (Codex, Vereinheitlichung 09/2026): eine
@@ -29365,6 +29580,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     touchdown_v2::FalseEdgeReason::InsufficientTelemetry => None,
                                     other => Some(other),
                                 };
+                                stats.ablehnung_gemeldet = false;
                                 stats.pending_td_at = None;
                                 stats.pending_td_premium_vs = None;
                                 stats.pending_td_premium_g = None;
@@ -36105,11 +36321,16 @@ fn finalize_landing_score_if_due(
     // Setzstelle) — dort bleibt der FSM-Fallback bewusst die einzige
     // Quelle.
     if let Some(reason) = stats.sampler_touchdown_rejected_reason {
-        tracing::warn!(
-            pirep_id = %pirep_id,
-            reason = ?reason,
-            "Sampler hat diesen Touchdown-Kandidaten aktiv abgelehnt — landing_score bleibt None (Bug B guard, keine FSM-Ueberstimmung)."
-        );
+        // Diese Funktion läuft bei jedem Takt. Svens DLH 880 schrieb die
+        // Warnung deshalb 1141-mal ins Protokoll. Einmal je Ablehnung reicht.
+        if !stats.ablehnung_gemeldet {
+            stats.ablehnung_gemeldet = true;
+            tracing::warn!(
+                pirep_id = %pirep_id,
+                reason = ?reason,
+                "Sampler hat diesen Touchdown-Kandidaten aktiv abgelehnt — landing_score bleibt None (Bug B guard, keine FSM-Ueberstimmung)."
+            );
+        }
         return;
     }
     // ── Wurde das Aufsetzen überhaupt gemessen? ──────────────────────────
@@ -47874,6 +48095,7 @@ pub fn run() {
             activity_log_clear,
             landing_list,
             landing_get_current,
+            pirep_pruefstatus,
             landing_delete,
             metar_get,
             flight_forget,
