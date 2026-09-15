@@ -103,6 +103,7 @@ import { useSimSession } from "./hooks/useSimSession";
 import { simKindLabel } from "./lib/simKind";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { listen } from "./lib/ipc";
+import { useFensterAnInhalt } from "./lib/useFensterAnInhalt";
 import { spieleChatTon } from "./lib/chatTon";
 import { ChatView } from "./components/ChatView";
 import type { ActiveFlightInfo, FlightPhase, LoginResult, Profile, UiError } from "./types";
@@ -394,6 +395,9 @@ function App() {
     null,
   );
   useEffect(() => { phaseRef.current = activeFlight?.phase ?? null; }, [activeFlight]);
+  // v1.7.29: Cockpit passt nicht in die Startgröße — Fenster beim Betreten
+  // (und wenn ein Flug beginnt/endet) nur vergrößern, siehe fenster.rs.
+  useFensterAnInhalt(status.kind === "loggedIn" && tab === "cockpit", activeFlight?.pirep_id ?? null);
 
   // Ob noch ein gespeicherter Flug auf Wiederaufnahme wartet — die Antwort
   // braucht der Pflicht-Update-Riegel, BEVOR er sperrt.

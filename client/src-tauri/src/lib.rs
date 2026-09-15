@@ -14,6 +14,7 @@ mod arrival;
 mod ausfahrten;
 /// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
 mod fahrwerk;
+mod fenster;
 mod navdata_cache;
 mod replay_erkennung;
 mod runway;
@@ -47749,6 +47750,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        // v1.7.29: Hauptfenster merkt sich Größe/Lage (siehe fenster.rs).
+        .plugin(fenster::zustand_plugin())
         .manage(app_state)
         .manage(aircraft_scan::AircraftScanState::default())
         // v1.5.6 (#lan-bruecke-1zu1): gespiegelter UI-Zustand (SimBrief-Konto,
@@ -47756,6 +47759,7 @@ pub fn run() {
         // dieselbe Wahrheit sehen statt je eigenem localStorage.
         .manage(ui_state::UiStateStore::default())
         .on_window_event(|window, event| {
+            fenster::nach_aenderung_sichern(window, event);
             // CloseRequested fires when the user clicks the red X
             // (Mac) or the title-bar X (Win). When the
             // minimize-to-tray toggle is on, we suppress the close
@@ -48024,6 +48028,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             vdgs_fenster_oeffnen,
+            fenster::fenster_an_inhalt_anpassen,
             vdgs_fenster_offen,
             navdata_zwischenspeicher_bestand,
             landing_backup_now,

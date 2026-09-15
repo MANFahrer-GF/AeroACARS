@@ -1160,6 +1160,10 @@ mod tests {
             // zurueck (VatsimCdmView/CpdlcPanel pruefen isTauri).
             "vdgs_fenster_oeffnen",
             "vdgs_fenster_offen",
+            // v1.7.29: vergrößert das NATIVE Hauptfenster auf dem Sim-PC.
+            // Das Tablet hat kein solches Fenster; die Oberfläche ruft den
+            // Befehl nur mit isTauri auf.
+            "fenster_an_inhalt_anpassen",
         ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,
