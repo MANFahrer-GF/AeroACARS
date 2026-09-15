@@ -38,7 +38,7 @@
 //! `to_station`/`ended_sessions`/`next_data_authority`/`thread` now goes
 //! through this one struct instead.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use hoppie_protocol::thread::CpdlcThread;
 
@@ -115,7 +115,38 @@ pub(crate) struct HoppieSession {
     /// would conflict with keeping the marker clear ONLY on confirmed
     /// LOGOFF success — see that finding's own fix).
     persist_generation: u64,
+    /// Stations we sent a PDC request to, with the time it went out.
+    ///
+    /// v1.7.28 (#pdc-clearance-without-logon, EDDM 15.09.2026): a PDC is
+    /// requested WITHOUT any CPDLC logon, yet vSMR answers it on the CPDLC
+    /// channel with a WILCO-required clearance. The round-8 allowlist
+    /// (sender must be our ACCEPTED station) therefore routed every such
+    /// clearance into the untrusted log without reply keys — the pilot
+    /// saw it arrive and could not acknowledge it, and ATC cancelled it
+    /// for a missing ACK. Our own request is the invitation: that station
+    /// may answer for [`PDC_ANSWER_WINDOW_MINUTES`]. It earns NO control
+    /// rights (HANDOVER/END SERVICE stay `Accepted`-only).
+    pdc_requests: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Next wiring-internal MIN handed out by
+    /// [`Self::allocate_internal_uplink_min`].
+    next_internal_uplink_min: u32,
+    /// Open uplinks accepted ONLY on the strength of a PDC invitation,
+    /// keyed by thread MIN, valued by their station. External QS (Codex,
+    /// 15.09.2026) P1: a HANDOVER/END SERVICE/LOGOFF of the accepted CPDLC
+    /// station must not supersede another station's PDC clearance — only
+    /// the end of THAT station's own standing does (see `end_current`).
+    pdc_uplinks: HashMap<u32, String>,
 }
+
+/// Start of the wiring-internal uplink MIN range. GOLD/Hoppie wire MINs
+/// are small (0-63), so these can never meet a real one.
+pub(crate) const INTERNAL_UPLINK_MIN_BASE: u32 = 1_000_000;
+
+/// How long after our PDC request the addressed station may send us
+/// replyable traffic without a logon. A busy delivery desk plus a revised
+/// clearance (EDDM 15.09.: first answer after 2 min, revision after 13
+/// min) must fit; beyond that the request is no longer an invitation.
+pub(crate) const PDC_ANSWER_WINDOW_MINUTES: i64 = 90;
 
 impl HoppieSession {
     pub fn new(default_station: String) -> Self {
@@ -126,6 +157,9 @@ impl HoppieSession {
             ended_stations: HashSet::new(),
             next_data_authority: None,
             persist_generation: 0,
+            pdc_requests: HashMap::new(),
+            next_internal_uplink_min: INTERNAL_UPLINK_MIN_BASE,
+            pdc_uplinks: HashMap::new(),
             // QS round 7 (07.09.2026, #pdc-session-model): the caller
             // (`settings.station_id`) normally defaults to `"SERVER"`
             // via serde — but only when the JSON key is MISSING
@@ -300,6 +334,11 @@ impl HoppieSession {
             std::mem::replace(&mut self.session, Session::None)
         {
             self.thread.mark_logged_off();
+            // A session with this station that has now ENDED outranks an
+            // older PDC invitation from it — late traffic stays quarantined,
+            // and its still-open PDC traffic ends with it.
+            self.pdc_requests.remove(&station);
+            self.supersede_pdc_uplinks_of(&station);
             self.ended_stations.insert(station);
             self.persist_generation += 1;
         }
@@ -419,6 +458,150 @@ impl HoppieSession {
         }
     }
 
+    /// Remember that we just asked `station` for a PDC — see
+    /// [`Self::pdc_requests`]. Called BEFORE the network send: a request
+    /// that timed out on our side may still have reached Hoppie (EDDM
+    /// 15.09. had repeated transport timeouts), and its answer must not be
+    /// locked out for that.
+    ///
+    /// Returns the invitation this one replaced, for
+    /// [`Self::forget_pdc_request`] to restore if this request is rejected.
+    pub fn note_pdc_request(
+        &mut self,
+        station: &str,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let station = normalize(station);
+        if station.is_empty() {
+            return None;
+        }
+        self.pdc_requests.insert(station, at)
+    }
+
+    /// Take back [`Self::note_pdc_request`] when Hoppie explicitly
+    /// REJECTED the request — nothing was delivered, nothing may answer.
+    /// Only if it is still the same request (a newer one stays).
+    ///
+    /// External QS (Codex, 15.09.2026) P2: a rejected FOLLOW-UP request
+    /// must not wipe the invitation of an earlier, successfully delivered
+    /// one — `previous` (what [`Self::note_pdc_request`] returned) is
+    /// restored instead.
+    pub fn forget_pdc_request(
+        &mut self,
+        station: &str,
+        at: chrono::DateTime<chrono::Utc>,
+        previous: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        let station = normalize(station);
+        if self.pdc_requests.get(&station) != Some(&at) {
+            return;
+        }
+        match previous {
+            Some(prev) => {
+                self.pdc_requests.insert(station, prev);
+            }
+            None => {
+                self.pdc_requests.remove(&station);
+            }
+        }
+    }
+
+    /// Record that the just-received uplink `min` from `station` was
+    /// accepted only because of a PDC invitation: it survives the end of
+    /// an unrelated CPDLC session. Call right after `thread.record_received`.
+    pub fn mark_pdc_uplink(&mut self, min: u32, station: &str) {
+        self.thread.mark_uplink_session_independent(min);
+        self.pdc_uplinks.insert(min, normalize(station));
+    }
+
+    /// The `DM_LOGOFF` branch of `thread.record_sent` supersedes session
+    /// uplinks itself; PDC uplinks of the logged-off station are handled
+    /// here (and by `end_current`, which runs in the same lock hold).
+    fn supersede_pdc_uplinks_of(&mut self, station: &str) {
+        let mins: Vec<u32> = self
+            .pdc_uplinks
+            .iter()
+            .filter(|(_, st)| st.as_str() == station)
+            .map(|(m, _)| *m)
+            .collect();
+        for min in mins {
+            self.pdc_uplinks.remove(&min);
+            // A reused MIN (a newer uplink from another station) dropped
+            // the exemption in `record_received` — that entry isn't ours.
+            if self.thread.is_uplink_session_independent(min) && self.thread.is_uplink_open(min) {
+                self.thread.supersede_uplink(min);
+            }
+        }
+    }
+
+    /// Whether `station` may currently send us replyable traffic at all:
+    /// our accepted station or one answering our PDC request. Used to
+    /// decide whether an OPEN uplink occupying a MIN is still a live
+    /// instruction that an incoming message must not displace.
+    pub fn is_live_uplink_authority(
+        &self,
+        station: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> bool {
+        self.is_authorized_to_control(station) || self.is_answering_our_pdc_request(station, now)
+    }
+
+    /// A fresh wiring-internal MIN for an uplink whose wire MIN is already
+    /// held by an open uplink of a DIFFERENT live station. `CpdlcThread`
+    /// keys by MIN alone; two live stations numbering independently (a
+    /// PDC desk and the accepted CPDLC centre, or two PDC desks) would
+    /// otherwise overwrite each other's open slot — external QS (Codex,
+    /// 15.09.2026) P1. The wire MIN is kept in `MsgMeta::wire_min` and
+    /// restored as the MRN when the reply goes out.
+    pub fn allocate_internal_uplink_min(&mut self) -> u32 {
+        loop {
+            let min = self.next_internal_uplink_min;
+            self.next_internal_uplink_min = self
+                .next_internal_uplink_min
+                .wrapping_add(1)
+                .max(INTERNAL_UPLINK_MIN_BASE);
+            if !self.thread.is_uplink_open(min) {
+                return min;
+            }
+        }
+    }
+
+    /// Whether `from` may send us replyable traffic because WE asked it
+    /// for a PDC within [`PDC_ANSWER_WINDOW_MINUTES`]. Deliberately NOT
+    /// part of [`Self::is_authorized_to_control`]: answering a clearance
+    /// request is not control over the CPDLC session.
+    pub fn is_answering_our_pdc_request(
+        &self,
+        from: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> bool {
+        let from = normalize(from);
+        if from.is_empty() {
+            return false;
+        }
+        self.pdc_requests.get(&from).is_some_and(|at| {
+            let age = now.signed_duration_since(*at);
+            age >= -chrono::Duration::minutes(1)
+                && age <= chrono::Duration::minutes(PDC_ANSWER_WINDOW_MINUTES)
+        })
+    }
+
+    /// The allowlist for an ordinary (decodable, non-control) uplink:
+    /// replyable only from our accepted station, the answer to our own
+    /// pending logon, or a station answering our PDC request. Pulled out
+    /// of `poller.rs` so the EDDM 15.09. sequence is unit-testable
+    /// without an `AppHandle` (see the round-9 extractions below).
+    pub fn may_send_replyable_uplink(
+        &self,
+        from: &str,
+        is_our_pending_logon_reply: bool,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> bool {
+        is_our_pending_logon_reply
+            || self.is_authorized_to_control(from)
+            || self.is_answering_our_pdc_request(from, now)
+    }
+
     pub fn take_next_data_authority(&mut self) -> Option<String> {
         self.next_data_authority.take()
     }
@@ -516,9 +699,12 @@ impl HoppieSession {
         &mut self,
         from: &str,
         looks_like_a_refusal: bool,
+        now: chrono::DateTime<chrono::Utc>,
     ) -> (bool, bool) {
         let is_our_pending_logon_reply = self.is_our_pending_logon_reply(from, None);
-        let authorized = is_our_pending_logon_reply || self.is_authorized_to_control(from);
+        let authorized = is_our_pending_logon_reply
+            || self.is_authorized_to_control(from)
+            || self.is_answering_our_pdc_request(from, now);
         // The SESSION-level mirror, not `self.thread.pending_logon_min()`
         // — this function only ever needs to reason about `self`'s own
         // state, and staying self-contained means it can't be broken by
@@ -1111,7 +1297,7 @@ mod tests {
         let mut s = HoppieSession::new(String::new());
         s.begin_logon("LBSR", 1);
         s.accept_logon("LBSR");
-        let (superseded, cancelled) = s.handle_undecodable_uplink("LBSR", true);
+        let (superseded, cancelled) = s.handle_undecodable_uplink("LBSR", true, chrono::Utc::now());
         assert!(!superseded, "an authorized sender must not be marked stale");
         assert!(
             !cancelled,
@@ -1128,7 +1314,7 @@ mod tests {
         let mut s = HoppieSession::new(String::new());
         s.begin_logon("LBSR", 1);
         s.accept_logon("LBSR");
-        let (superseded, cancelled) = s.handle_undecodable_uplink("XXXX", true);
+        let (superseded, cancelled) = s.handle_undecodable_uplink("XXXX", true, chrono::Utc::now());
         assert!(superseded, "an unrelated, never-seen station is untrusted");
         assert!(!cancelled);
     }
@@ -1139,7 +1325,7 @@ mod tests {
         s.begin_logon("LBSR", 1);
         s.accept_logon("LBSR");
         s.end_current(); // LBSR is now abandoned
-        let (superseded, cancelled) = s.handle_undecodable_uplink("LBSR", true);
+        let (superseded, cancelled) = s.handle_undecodable_uplink("LBSR", true, chrono::Utc::now());
         assert!(superseded);
         assert!(!cancelled);
     }
@@ -1153,7 +1339,7 @@ mod tests {
         // non-refusal conventions — see the next two tests for those.
         let mut s = HoppieSession::new(String::new());
         s.begin_logon("LBSR", 1);
-        let (superseded, cancelled) = s.handle_undecodable_uplink("LBSR", true);
+        let (superseded, cancelled) = s.handle_undecodable_uplink("LBSR", true, chrono::Utc::now());
         assert!(!superseded, "still authorized — it IS the station we asked");
         assert!(
             cancelled,
@@ -1175,7 +1361,8 @@ mod tests {
         // known texts.
         let mut s = HoppieSession::new(String::new());
         s.begin_logon("LBSR", 1);
-        let (superseded, cancelled) = s.handle_undecodable_uplink("LBSR", false);
+        let (superseded, cancelled) =
+            s.handle_undecodable_uplink("LBSR", false, chrono::Utc::now());
         assert!(!superseded, "still authorized");
         assert!(
             !cancelled,
@@ -1208,7 +1395,7 @@ mod tests {
         assert_eq!(s.thread.pending_response_count(), 1, "logon is outstanding");
         assert!(s.thread.pending_logon_min().is_some());
 
-        let (_, cancelled) = s.handle_undecodable_uplink("LBSR", true);
+        let (_, cancelled) = s.handle_undecodable_uplink("LBSR", true, chrono::Utc::now());
         assert!(cancelled);
 
         assert!(!s.is_logon_pending(), "session level: no logon pending");
@@ -1228,12 +1415,248 @@ mod tests {
         // an unrelated, still-live pending attempt.
         let mut s = HoppieSession::new(String::new());
         s.begin_logon("LBSR", 1);
-        let (superseded, cancelled) = s.handle_undecodable_uplink("XXXX", true);
+        let (superseded, cancelled) = s.handle_undecodable_uplink("XXXX", true, chrono::Utc::now());
         assert!(superseded);
         assert!(!cancelled);
         assert!(
             s.is_logon_pending(),
             "the actual pending attempt (LBSR) must be untouched"
         );
+    }
+    // --- PDC clearance without logon (v1.7.28, EDDM 15.09.2026) ---
+
+    fn at(min: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-09-15T18:38:05Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+            + chrono::Duration::minutes(min)
+    }
+
+    /// Field sequence from UAE4TK's log: PDC to EDDM at 18:38, clearance
+    /// uplinks MIN 35/36 at 18:40 and MIN 46 at 18:51, no CPDLC logon at
+    /// any point. All three were routed to the untrusted log; the WILCO
+    /// could never be sent.
+    #[test]
+    fn eddm_pdc_clearance_without_logon_is_replyable_and_wilco_closes_it() {
+        let mut s = HoppieSession::new("SERVER".into());
+        assert!(
+            !s.may_send_replyable_uplink("EDDM", false, at(2)),
+            "without our request EDDM stays untrusted (round-8 allowlist)"
+        );
+        s.note_pdc_request("eddm ", at(0));
+        assert!(s.may_send_replyable_uplink("EDDM", false, at(2)));
+        assert!(s.may_send_replyable_uplink("EDDM", false, at(13)));
+
+        let clearance = cpdlc::decode(
+            "/data2/35//WU/CLD 1840 260915 EDDM PDC 001 @UAE4TK@ CLRD TO @OMDB@ OFF @26R@ VIA @MERSI3S@ SQUAWK @2317@",
+            Direction::Uplink,
+        )
+        .expect("well-formed vSMR clearance");
+        s.thread.record_received(clearance);
+        assert_eq!(s.thread.pending_uplink_count(), 1);
+        assert!(!s.thread.is_superseded_uplink(35));
+
+        let spec = hoppie_protocol::elements::find("DM0").unwrap();
+        let resolved = hoppie_protocol::elements::resolve(spec, &[]).unwrap();
+        s.thread.record_sent(
+            spec.response,
+            Some(35),
+            resolved.filled_text.clone(),
+            hoppie_protocol::elements::ParsedElement::Recognized(resolved),
+        );
+        assert_eq!(
+            s.thread.pending_uplink_count(),
+            0,
+            "WILCO answered the clearance"
+        );
+        assert!(!s.is_logged_on(), "a PDC never creates a CPDLC session");
+    }
+
+    #[test]
+    fn a_pdc_request_grants_no_control_rights() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        assert!(
+            !s.is_authorized_to_control("EDDM"),
+            "HANDOVER/END SERVICE stay Accepted-only"
+        );
+    }
+
+    #[test]
+    fn a_pdc_invitation_only_covers_the_addressed_station_and_the_window() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        assert!(!s.may_send_replyable_uplink("EDMM", false, at(2)));
+        assert!(s.may_send_replyable_uplink("EDDM", false, at(PDC_ANSWER_WINDOW_MINUTES)));
+        assert!(!s.may_send_replyable_uplink("EDDM", false, at(PDC_ANSWER_WINDOW_MINUTES + 1)));
+    }
+
+    #[test]
+    fn an_ended_session_with_the_station_revokes_its_pdc_invitation() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        s.begin_logon("EDDM", 1);
+        s.accept_logon("EDDM");
+        s.end_current();
+        assert!(!s.may_send_replyable_uplink("EDDM", false, at(5)));
+    }
+
+    #[test]
+    fn a_rejected_pdc_request_is_forgotten_but_a_newer_one_survives() {
+        let mut s = HoppieSession::new(String::new());
+        let prev = s.note_pdc_request("EDDM", at(0));
+        assert_eq!(prev, None);
+        s.forget_pdc_request("EDDM", at(0), prev);
+        assert!(!s.may_send_replyable_uplink("EDDM", false, at(1)));
+
+        s.note_pdc_request("EDDM", at(2));
+        s.forget_pdc_request("EDDM", at(0), None);
+        assert!(s.may_send_replyable_uplink("EDDM", false, at(3)));
+    }
+
+    #[test]
+    fn a_rejected_follow_up_request_restores_the_earlier_delivered_invitation() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        let prev = s.note_pdc_request("EDDM", at(80));
+        assert_eq!(prev, Some(at(0)));
+        s.forget_pdc_request("EDDM", at(80), prev);
+        assert!(
+            s.may_send_replyable_uplink("EDDM", false, at(30)),
+            "the first, delivered request still invites its answer"
+        );
+    }
+
+    #[test]
+    fn internal_uplink_mins_never_meet_wire_mins_or_open_slots() {
+        let mut s = HoppieSession::new(String::new());
+        let a = s.allocate_internal_uplink_min();
+        let b = s.allocate_internal_uplink_min();
+        assert!(a >= INTERNAL_UPLINK_MIN_BASE && b > a);
+
+        let open = cpdlc::decode(
+            &format!("/data2/{}//WU/CLIMB TO FL100", b + 1),
+            Direction::Uplink,
+        )
+        .unwrap();
+        s.thread.record_received(open);
+        assert_ne!(
+            s.allocate_internal_uplink_min(),
+            b + 1,
+            "an open slot is skipped"
+        );
+    }
+
+    #[test]
+    fn undecodable_pdc_answer_from_the_requested_station_is_not_superseded() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        let (superseded, cancelled) = s.handle_undecodable_uplink("EDDM", true, at(3));
+        assert!(
+            !superseded,
+            "e.g. vSMR's UNABLE CALL ON FREQ must be visible as current"
+        );
+        assert!(!cancelled);
+    }
+
+    #[test]
+    fn pdc_clearance_and_cpdlc_instruction_with_the_same_wire_min_both_stay_open() {
+        let mut s = HoppieSession::new(String::new());
+        s.begin_logon("EDMM", 1);
+        s.accept_logon("EDMM");
+        s.note_pdc_request("EDDM", at(0));
+
+        let from_centre = cpdlc::decode("/data2/5//WU/CLIMB TO FL100", Direction::Uplink).unwrap();
+        s.thread.record_received(from_centre);
+        assert!(s.is_live_uplink_authority("EDMM", at(1)));
+
+        // Poller path for the colliding PDC clearance: holder is live and
+        // a different station -> internal MIN, never overwrite slot 5.
+        let mut clearance = cpdlc::decode(
+            "/data2/5//WU/CLD 1840 EDDM PDC 001 CLRD TO OMDB",
+            Direction::Uplink,
+        )
+        .unwrap();
+        assert!(s.thread.is_uplink_open(5));
+        clearance.min = s.allocate_internal_uplink_min();
+        let internal = clearance.min;
+        s.thread.record_received(clearance);
+
+        assert_eq!(
+            s.thread.pending_uplink_count(),
+            2,
+            "neither instruction was displaced"
+        );
+        assert!(!s.thread.is_superseded_uplink(5));
+        assert!(!s.thread.is_superseded_uplink(internal));
+    }
+
+    #[test]
+    fn a_centre_session_end_keeps_another_stations_pdc_clearance_open() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        s.begin_logon("EDMM", 1);
+        s.accept_logon("EDMM");
+
+        s.thread.record_received(
+            cpdlc::decode("/data2/5//WU/CLIMB TO FL100", Direction::Uplink).unwrap(),
+        );
+        s.thread.record_received(
+            cpdlc::decode(
+                "/data2/7//WU/CLD EDDM PDC 001 CLRD TO OMDB",
+                Direction::Uplink,
+            )
+            .unwrap(),
+        );
+        s.mark_pdc_uplink(7, "EDDM");
+
+        s.end_current(); // HANDOVER / END SERVICE / LOGOFF of EDMM
+        assert!(
+            s.thread.is_superseded_uplink(5),
+            "the centre's own instruction ends with it"
+        );
+        assert!(
+            !s.thread.is_superseded_uplink(7),
+            "EDDM's PDC clearance stays answerable"
+        );
+        assert_eq!(s.thread.pending_uplink_count(), 1);
+    }
+
+    #[test]
+    fn ending_a_session_with_the_pdc_station_itself_supersedes_its_pdc_clearance() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        s.thread.record_received(
+            cpdlc::decode(
+                "/data2/7//WU/CLD EDDM PDC 001 CLRD TO OMDB",
+                Direction::Uplink,
+            )
+            .unwrap(),
+        );
+        s.mark_pdc_uplink(7, "EDDM");
+        s.begin_logon("EDDM", 1);
+        s.accept_logon("EDDM");
+        s.end_current();
+        assert!(s.thread.is_superseded_uplink(7));
+    }
+
+    #[test]
+    fn a_stale_pdc_entry_never_supersedes_a_reused_min_of_another_station() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", at(0));
+        s.thread.record_received(
+            cpdlc::decode("/data2/7//WU/CLD EDDM PDC 001", Direction::Uplink).unwrap(),
+        );
+        s.mark_pdc_uplink(7, "EDDM");
+        s.thread.supersede_uplink(7);
+        s.thread.record_received(
+            cpdlc::decode("/data2/7//WU/CLIMB TO FL100", Direction::Uplink).unwrap(),
+        );
+        s.supersede_pdc_uplinks_of("EDDM");
+        assert!(
+            !s.thread.is_superseded_uplink(7),
+            "the reused MIN belongs to another station"
+        );
+        assert!(s.thread.is_uplink_open(7));
     }
 }

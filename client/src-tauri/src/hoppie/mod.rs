@@ -206,6 +206,11 @@ pub(crate) struct MsgMeta {
     /// keeps its old, MIN-keyed shape unchanged for reply routing, which
     /// needs "the current one" semantics, not "this exact one".
     pub station: String,
+    /// Uplinks only: the MIN as it was ON THE WIRE, when the thread holds
+    /// the message under a wiring-internal MIN instead (see
+    /// `HoppieSession::allocate_internal_uplink_min`). A reply's MRN must
+    /// carry this value, never the internal one. `None` for downlinks.
+    pub wire_min: Option<u32>,
 }
 
 /// Per-message metadata keyed by `(is_uplink, MIN)`.
@@ -873,6 +878,12 @@ fn resolve_logon_code() -> Result<String, UiError> {
 /// perfectly formed, perfectly timed and still worthless if it is
 /// addressed to the wrong desk, and nothing in the app could be used to
 /// check afterwards where it had gone.
+/// The MRN to put on the wire for a reply to uplink `mrn` (a thread MIN,
+/// possibly wiring-internal): the uplink's recorded wire MIN, else `mrn`.
+pub(crate) fn resolve_wire_mrn(meta: &MinMeta, mrn: Option<u32>) -> Option<u32> {
+    mrn.map(|m| meta.get(&(true, m)).and_then(|x| x.wire_min).unwrap_or(m))
+}
+
 pub(crate) fn resolve_reply_station(meta: &MinMeta, mrn: Option<u32>, fallback: &str) -> String {
     mrn.and_then(|m| meta.get(&(true, m)))
         .map(|m| m.station.trim())
@@ -935,7 +946,7 @@ async fn send_cpdlc_element(
     // that. Same lock ORDER (`session` before `min_meta`) the receive-side
     // poller.rs code holds (see `process_poll_payload`'s doc comment
     // there for why that matters for deadlock-freedom too).
-    let (to, message, min) = {
+    let (to, message, min, wire_mrn) = {
         let mut session = handle.session.lock().expect("hoppie session mutex");
         // v0.19.x FIX: a handover supersedes any uplink the pilot hadn't
         // answered yet (see `HoppieSession::end_current`). Without this
@@ -954,12 +965,13 @@ async fn send_cpdlc_element(
                 ));
             }
         }
-        let to = match &explicit_to {
-            Some(t) => t.clone(),
-            None => {
-                let meta = handle.min_meta.lock().expect("hoppie min_meta mutex");
-                resolve_reply_station(&meta, mrn, &session.addressee())
-            }
+        let (to, wire_mrn) = {
+            let meta = handle.min_meta.lock().expect("hoppie min_meta mutex");
+            let to = match &explicit_to {
+                Some(t) => t.clone(),
+                None => resolve_reply_station(&meta, mrn, &session.addressee()),
+            };
+            (to, resolve_wire_mrn(&meta, mrn))
         };
         let (message, _event) = session.thread.record_sent(
             spec.response,
@@ -980,7 +992,7 @@ async fn send_cpdlc_element(
         } else if spec.id == "DM_LOGOFF" {
             logoff_generation = Some(session.end_current());
         }
-        (to, message, min)
+        (to, message, min, wire_mrn)
     };
     handle
         .min_meta
@@ -991,10 +1003,18 @@ async fn send_cpdlc_element(
             MsgMeta {
                 at: chrono::Utc::now(),
                 station: to.clone(),
+                wire_min: None,
             },
         );
 
-    let packet = hoppie_protocol::cpdlc::encode(&message);
+    // The thread may hold the answered uplink under a wiring-internal MIN
+    // (MIN collision between two live stations) — the wire needs the MIN
+    // the station itself sent.
+    let packet = {
+        let mut on_wire = message.clone();
+        on_wire.mrn = wire_mrn;
+        hoppie_protocol::cpdlc::encode(&on_wire)
+    };
     let wire_req = hoppie_protocol::wire::HoppieRequest {
         logon,
         from: handle.from_callsign.clone(),
@@ -1054,7 +1074,7 @@ async fn send_cpdlc_element(
         tracing::warn!(
             to = %wire_req.to,
             min,
-            mrn,
+            mrn = ?wire_mrn,
             element = %spec.id,
             reason = %rejected.clone().unwrap_or_else(|| "Netzwerkfehler".to_string()),
             "hoppie: CPDLC-Downlink NICHT gesendet — Buchung zurückgenommen"
@@ -1063,7 +1083,7 @@ async fn send_cpdlc_element(
         tracing::info!(
             to = %wire_req.to,
             min,
-            mrn,
+            mrn = ?wire_mrn,
             element = %spec.id,
             "hoppie: CPDLC-Downlink gesendet"
         );
@@ -1080,7 +1100,7 @@ async fn send_cpdlc_element(
         "cpdlc",
         Some(wire_req.to.clone()),
         Some(min),
-        mrn,
+        wire_mrn,
         Some(spec.response.code().to_string()),
         message.element_text.clone(),
     );
@@ -1538,6 +1558,15 @@ pub async fn hoppie_send_pdc_request(
         atis_letter: request.atis_letter.trim().to_uppercase(),
     };
     let text = hoppie_protocol::pdc::format_pdc_request(&pdc_request);
+    // v1.7.28 (#pdc-clearance-without-logon): the answer comes back on the
+    // CPDLC channel without any logon — mark the invitation BEFORE sending
+    // (see `HoppieSession::note_pdc_request` for why not after).
+    let requested_at = chrono::Utc::now();
+    let replaced_invitation = handle
+        .session
+        .lock()
+        .expect("hoppie session mutex")
+        .note_pdc_request(&pdc_request.recipient, requested_at);
 
     let wire_req = hoppie_protocol::wire::HoppieRequest {
         logon,
@@ -1550,6 +1579,11 @@ pub async fn hoppie_send_pdc_request(
         handle.http.send(&wire_req).await?
     {
         tracing::warn!(to = %wire_req.to, reason = %reason, "hoppie: PDC-Anfrage abgelehnt");
+        handle
+            .session
+            .lock()
+            .expect("hoppie session mutex")
+            .forget_pdc_request(&pdc_request.recipient, requested_at, replaced_invitation);
         return Err(UiError::new("hoppie_pdc_rejected", reason));
     }
     tracing::info!(to = %wire_req.to, "hoppie: PDC-Anfrage gesendet");
@@ -1731,6 +1765,7 @@ mod tests {
                     MsgMeta {
                         at: chrono::Utc::now(),
                         station: (*station).to_string(),
+                        wire_min: None,
                     },
                 )
             })
@@ -1745,6 +1780,25 @@ mod tests {
         // whatever the last logon (or the "SERVER" default) left behind.
         let meta = meta_with(&[((true, 4), "LDZO")]);
         assert_eq!(resolve_reply_station(&meta, Some(4), "SERVER"), "LDZO");
+    }
+
+    #[test]
+    fn a_reply_to_a_remapped_uplink_carries_the_wire_min_as_mrn() {
+        let mut meta = meta_with(&[((true, 5), "EDMM")]);
+        meta.insert(
+            (true, crate::hoppie::session::INTERNAL_UPLINK_MIN_BASE),
+            MsgMeta {
+                at: chrono::Utc::now(),
+                station: "EDDM".into(),
+                wire_min: Some(5),
+            },
+        );
+        let internal = crate::hoppie::session::INTERNAL_UPLINK_MIN_BASE;
+        assert_eq!(resolve_wire_mrn(&meta, Some(internal)), Some(5));
+        assert_eq!(resolve_reply_station(&meta, Some(internal), "EDMM"), "EDDM");
+        assert_eq!(resolve_wire_mrn(&meta, Some(5)), Some(5));
+        assert_eq!(resolve_reply_station(&meta, Some(5), "SERVER"), "EDMM");
+        assert_eq!(resolve_wire_mrn(&meta, None), None);
     }
 
     #[test]

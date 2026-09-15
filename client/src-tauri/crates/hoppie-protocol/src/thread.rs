@@ -87,6 +87,14 @@ pub struct CpdlcThread {
     /// once the real GOLD table (where `UM0`/`"UNABLE"` is a
     /// general-purpose response, not logon-specific) is in play.
     logon_request_min: Option<u32>,
+    /// Open uplinks that do NOT belong to the CPDLC session at all — e.g.
+    /// a PDC clearance from a delivery desk we never logged on to. A
+    /// session end ([`Self::mark_logged_off`], a sent `DM_LOGOFF`) must not
+    /// supersede them; the wiring layer, which knows stations, supersedes
+    /// them itself when THEIR station's standing ends. Cleared for a MIN
+    /// whenever a new uplink with that MIN is recorded, so a reused MIN
+    /// never inherits the exemption.
+    session_independent_uplinks: std::collections::HashSet<u32>,
 }
 
 impl CpdlcThread {
@@ -296,6 +304,7 @@ impl CpdlcThread {
     /// [`crate::cpdlc::decode`] with `Direction::Uplink`).
     pub fn record_received(&mut self, message: CpdlcMessage) -> ThreadEvent {
         let min = message.min;
+        self.session_independent_uplinks.remove(&min);
         let mrn = message.mrn;
         let mut resolves = None;
         if let Some(m) = mrn {
@@ -470,6 +479,7 @@ impl CpdlcThread {
             .open
             .keys()
             .filter(|(direction, _)| *direction == Direction::Uplink)
+            .filter(|(_, min)| !self.session_independent_uplinks.contains(min))
             .map(|(_, min)| *min)
             .collect();
         for min in stale_mins {
@@ -490,6 +500,20 @@ impl CpdlcThread {
     /// loses that tie-break gets superseded through this method — the
     /// wiring layer decides which one that is (see `poller.rs`'s
     /// per-envelope handling), this method only knows MINs, not stations.
+    /// Mark the just-recorded uplink `min` as not part of the CPDLC
+    /// session — see the `session_independent_uplinks` field.
+    pub fn mark_uplink_session_independent(&mut self, min: u32) {
+        if self.open.contains_key(&(Direction::Uplink, min)) {
+            self.session_independent_uplinks.insert(min);
+        }
+    }
+
+    /// Whether uplink `min`'s CURRENT entry still carries the exemption —
+    /// `false` once a newer uplink reused the MIN.
+    pub fn is_uplink_session_independent(&self, min: u32) -> bool {
+        self.session_independent_uplinks.contains(&min)
+    }
+
     pub fn supersede_uplink(&mut self, min: u32) {
         self.open.remove(&(Direction::Uplink, min));
         // v0.20.x QS fix: a plain forward `.find()` here returned
@@ -1381,5 +1405,40 @@ mod tests {
         assert_eq!(thread.pending_response_count(), 1);
         send(&mut thread, "DM0", &[], Some(2));
         assert_eq!(thread.pending_response_count(), 0);
+    }
+
+    #[test]
+    fn a_session_end_leaves_session_independent_uplinks_open() {
+        let mut t = CpdlcThread::new();
+        t.record_received(
+            crate::cpdlc::decode("/data2/5//WU/CLIMB TO FL100", Direction::Uplink).unwrap(),
+        );
+        t.record_received(
+            crate::cpdlc::decode("/data2/7//WU/CLD EDDM PDC 001", Direction::Uplink).unwrap(),
+        );
+        t.mark_uplink_session_independent(7);
+        t.mark_logged_off();
+        assert!(t.is_superseded_uplink(5));
+        assert!(!t.is_superseded_uplink(7));
+        assert!(t.is_uplink_open(7));
+
+        // A reused MIN does not inherit the exemption.
+        t.supersede_uplink(7);
+        t.record_received(
+            crate::cpdlc::decode("/data2/7//WU/CLIMB TO FL120", Direction::Uplink).unwrap(),
+        );
+        t.mark_logged_off();
+        assert!(t.is_superseded_uplink(7));
+    }
+
+    #[test]
+    fn exemption_is_ignored_for_a_min_with_no_open_uplink() {
+        let mut t = CpdlcThread::new();
+        t.mark_uplink_session_independent(9);
+        t.record_received(
+            crate::cpdlc::decode("/data2/9//WU/CLIMB TO FL100", Direction::Uplink).unwrap(),
+        );
+        t.mark_logged_off();
+        assert!(t.is_superseded_uplink(9));
     }
 }

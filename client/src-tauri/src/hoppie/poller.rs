@@ -465,6 +465,54 @@ fn resolve_min_collision(
     }
 }
 
+/// External QS (Codex, 15.09.2026) P1: an incoming uplink whose wire MIN
+/// is held by an OPEN uplink of a DIFFERENT station that is itself still a
+/// live authority (our accepted station or an invited PDC desk) must not
+/// displace it — both are valid, current instructions. The caller then
+/// files the incoming one under a wiring-internal MIN. Collisions with a
+/// station that is no longer live keep going through
+/// [`resolve_min_collision`] unchanged.
+fn needs_min_remap(
+    existing_station: Option<&str>,
+    existing_is_open: bool,
+    existing_is_live: bool,
+    incoming_station: &str,
+) -> bool {
+    existing_is_open
+        && existing_is_live
+        && existing_station
+            .is_some_and(|st| !st.trim().eq_ignore_ascii_case(incoming_station.trim()))
+}
+
+/// Whether an OPEN uplink holding a colliding MIN must be kept rather
+/// than handed to [`resolve_min_collision`]'s supersede decision: it is
+/// from a current authority, it is an open PDC clearance (session-
+/// independent, even past its invitation window), or the supersede logic
+/// would pick neither side — which in the thread means silently
+/// overwriting the open slot and misaddressing its reply.
+fn holder_is_protected(
+    holder_is_live_authority: bool,
+    holder_is_session_independent: bool,
+    fallback: MinCollisionResolution,
+) -> bool {
+    holder_is_live_authority
+        || holder_is_session_independent
+        || fallback == MinCollisionResolution::NoCollision
+}
+
+/// The MRN a sender trusted only via a PDC invitation may use: only one
+/// that references a downlink WE addressed to that same station.
+fn mrn_usable_for_sender(
+    meta: &crate::hoppie::MinMeta,
+    mrn: Option<u32>,
+    sender: &str,
+) -> Option<u32> {
+    mrn.filter(|m| {
+        meta.get(&(false, *m))
+            .is_some_and(|x| x.station.trim().eq_ignore_ascii_case(sender.trim()))
+    })
+}
+
 /// Station ids on the wire are compared case-insensitively everywhere
 /// else in this module, but a RECORDED station is also used as a send
 /// address later. Normalizing once, where it enters the app, keeps "ldzo "
@@ -511,6 +559,7 @@ async fn send_logon(
         crate::hoppie::MsgMeta {
             at: chrono::Utc::now(),
             station: station.to_string(),
+            wire_min: None,
         },
     );
 
@@ -645,7 +694,7 @@ async fn process_poll_payload(
             continue;
         }
         match cpdlc::decode(&env.packet, Direction::Uplink) {
-            Ok(msg) => {
+            Ok(mut msg) => {
                 // Sector handover: the current centre names the one
                 // taking over and we silently log on there. The pilot
                 // never acts on this — it's protocol bookkeeping, not
@@ -800,7 +849,8 @@ async fn process_poll_payload(
                         );
                     }
                 }
-                let min = msg.min;
+                let mut min = msg.min;
+                let wire_min = msg.min;
                 let this_station = normalize_station(&env.from);
                 // QS round 4 (07.09.2026): `s` locked HERE, once, and kept
                 // for the abandoned-station check below too — that check
@@ -915,8 +965,15 @@ async fn process_poll_payload(
                         None
                     },
                 );
-                let is_untrusted_sender =
-                    !is_our_pending_logon_reply && !s.is_authorized_to_control(&this_station);
+                // v1.7.28 (#pdc-clearance-without-logon, EDDM 15.09.2026):
+                // a PDC clearance arrives on the CPDLC channel from a
+                // station we never logged on to — our own PDC request is
+                // what invites it (see `HoppieSession::pdc_requests`).
+                let is_untrusted_sender = !s.may_send_replyable_uplink(
+                    &this_station,
+                    is_our_pending_logon_reply,
+                    chrono::Utc::now(),
+                );
                 if is_untrusted_sender {
                     // `is_abandoned` doesn't change the decision (the
                     // allowlist above already covers it) — kept, and used
@@ -949,11 +1006,61 @@ async fn process_poll_payload(
                     }
                     continue;
                 }
-                let existing_meta_station = min_meta
-                    .lock()
-                    .expect("hoppie min_meta mutex")
-                    .get(&(true, min))
-                    .map(|m| m.station.clone());
+                let arrival = chrono::Utc::now();
+                // Trusted ONLY because we asked this station for a PDC —
+                // not our accepted CPDLC station, not our logon's answer.
+                let trusted_only_by_pdc =
+                    !is_our_pending_logon_reply && !s.is_authorized_to_control(&this_station);
+                let existing_meta_station = {
+                    let meta = min_meta.lock().expect("hoppie min_meta mutex");
+                    if trusted_only_by_pdc {
+                        // External QS (Codex, 15.09.2026) P2: the thread
+                        // closes OUR downlink by MRN alone, station-free —
+                        // a PDC desk must not close a downlink we sent to a
+                        // different station.
+                        msg.mrn = mrn_usable_for_sender(&meta, msg.mrn, &this_station);
+                    }
+                    meta.get(&(true, min)).map(|m| m.station.clone())
+                };
+                // External QS (Codex, 15.09.2026) follow-up P1: "live" is not
+                // only a current authority. A PDC clearance stays open past
+                // its invitation window, and any collision the supersede
+                // logic below has no opinion on (`NoCollision`) would just
+                // overwrite the open slot — so both count as protected.
+                let existing_is_live = existing_meta_station.as_deref().is_some_and(|st| {
+                    holder_is_protected(
+                        s.is_live_uplink_authority(st, arrival),
+                        s.thread.is_uplink_session_independent(min),
+                        resolve_min_collision(
+                            Some(st),
+                            s.thread.is_uplink_open(min),
+                            &this_station,
+                            &current_station,
+                        ),
+                    )
+                });
+                if needs_min_remap(
+                    existing_meta_station.as_deref(),
+                    s.thread.is_uplink_open(min),
+                    existing_is_live,
+                    &this_station,
+                ) {
+                    let internal = s.allocate_internal_uplink_min();
+                    tracing::warn!(
+                        wire_min,
+                        internal,
+                        from = %this_station,
+                        held_by = existing_meta_station.as_deref().unwrap_or(""),
+                        "hoppie: MIN already held by an open uplink of another live station — keeping both, this one under an internal MIN"
+                    );
+                    min = internal;
+                    msg.min = internal;
+                }
+                let existing_meta_station = if min == wire_min {
+                    existing_meta_station
+                } else {
+                    None
+                };
                 match resolve_min_collision(
                     existing_meta_station.as_deref(),
                     s.thread.is_uplink_open(min),
@@ -1056,6 +1163,9 @@ async fn process_poll_payload(
                 // instead of the MIN-keyed `min_meta` below.
                 let history_idx = s.thread.history().len();
                 s.thread.record_received(msg);
+                if trusted_only_by_pdc {
+                    s.mark_pdc_uplink(min, &this_station);
+                }
                 let now_logged_on = s.thread.is_logged_on();
                 let thread_pending_after = s.thread.pending_logon_min();
                 // v1.7.21 (#pdc-session-model): keep the session-identity
@@ -1104,6 +1214,7 @@ async fn process_poll_payload(
                         // The sender off the wire — this is what a reply
                         // to this uplink must be addressed to.
                         station: this_station.clone(),
+                        wire_min: Some(wire_min),
                     },
                 );
                 history_meta
@@ -1114,6 +1225,7 @@ async fn process_poll_payload(
                         crate::hoppie::MsgMeta {
                             at: now,
                             station: this_station,
+                            wire_min: Some(wire_min),
                         },
                     );
                 // QS round 8 (07.09.2026, #pdc-session-model, external QS
@@ -1213,7 +1325,11 @@ async fn process_poll_payload(
                 let (superseded, cancelled_pending) = session
                     .lock()
                     .expect("hoppie session mutex")
-                    .handle_undecodable_uplink(&this_station, looks_like_a_refusal);
+                    .handle_undecodable_uplink(
+                        &this_station,
+                        looks_like_a_refusal,
+                        chrono::Utc::now(),
+                    );
                 if cancelled_pending {
                     tracing::warn!(
                         from = %this_station,
@@ -1876,5 +1992,87 @@ mod tests {
             "Y",
             "FREE TEXT"
         )));
+    }
+
+    // --- MIN collisions between live stations (external QS, Codex 15.09.2026) ---
+
+    fn meta(entries: &[((bool, u32), &str)]) -> crate::hoppie::MinMeta {
+        entries
+            .iter()
+            .map(|(k, st)| {
+                (
+                    *k,
+                    crate::hoppie::MsgMeta {
+                        at: chrono::Utc::now(),
+                        station: (*st).to_string(),
+                        wire_min: None,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_colliding_min_from_another_live_station_is_remapped_not_superseded() {
+        assert!(needs_min_remap(Some("EDMM"), true, true, "EDDM"));
+        assert!(needs_min_remap(Some("EDDM"), true, true, "EDMM"));
+    }
+
+    #[test]
+    fn no_remap_for_same_station_closed_slot_or_a_dead_holder() {
+        assert!(!needs_min_remap(Some("EDDM"), true, true, " eddm"));
+        assert!(!needs_min_remap(Some("EDMM"), false, true, "EDDM"));
+        assert!(
+            !needs_min_remap(Some("LBSR"), true, false, "LRBB"),
+            "an abandoned holder still goes through resolve_min_collision"
+        );
+        assert!(!needs_min_remap(None, true, true, "EDDM"));
+    }
+
+    #[test]
+    fn a_pdc_desk_may_only_reference_downlinks_it_was_sent() {
+        let m = meta(&[((false, 3), "EDMM"), ((false, 4), "EDDM")]);
+        assert_eq!(mrn_usable_for_sender(&m, Some(3), "EDDM"), None);
+        assert_eq!(mrn_usable_for_sender(&m, Some(4), "eddm"), Some(4));
+        assert_eq!(mrn_usable_for_sender(&m, Some(9), "EDDM"), None);
+        assert_eq!(mrn_usable_for_sender(&m, None, "EDDM"), None);
+    }
+
+    #[test]
+    fn an_open_holder_is_never_silently_overwritten() {
+        // Expired PDC invitation, clearance still open.
+        assert!(holder_is_protected(
+            false,
+            true,
+            MinCollisionResolution::NoCollision
+        ));
+        assert!(holder_is_protected(
+            false,
+            true,
+            MinCollisionResolution::SupersedeExisting
+        ));
+        // Two unrelated stations, supersede logic has no opinion.
+        assert!(holder_is_protected(
+            false,
+            false,
+            MinCollisionResolution::NoCollision
+        ));
+        // Current authority.
+        assert!(holder_is_protected(
+            true,
+            false,
+            MinCollisionResolution::SupersedeExisting
+        ));
+        // An abandoned station's leftover keeps the established supersede path.
+        assert!(!holder_is_protected(
+            false,
+            false,
+            MinCollisionResolution::SupersedeExisting
+        ));
+        assert!(!holder_is_protected(
+            false,
+            false,
+            MinCollisionResolution::SupersedeIncoming
+        ));
     }
 }
