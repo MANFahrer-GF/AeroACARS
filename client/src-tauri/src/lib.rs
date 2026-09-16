@@ -1309,8 +1309,10 @@ fn aircraft_aliases(code: &str) -> &'static [&'static str] {
         "B744" => &["747-400"],
         "B748" => &["747-8"],
         // 747-Frachter — VA-/SimBrief-Alias (nicht streng ICAO Doc 8643).
-        // Spec docs/spec/aircraft-type-match.md §4 + §7.3: Cargo-Bid
-        // strict gegen Frachter-Title; B744 (Pax-Bid) akzeptiert via
+        // Spec docs/spec/aircraft-type-match.md §4 + §7.3/§7.4: beide
+        // Richtungen erlaubt (Strict-Cargo aufgehoben 16.09.2026 — die
+        // Oeffnung laeuft ueber `frachter_basismuster`); B744 (Pax-Bid)
+        // akzeptiert via
         // Long-Form-Substring "747-400" auch -400F-Frachter (Cargo-
         // Pragmatismus). Lufthansa Cargo / Atlas / Cargolux flogen
         // historisch B744F + heute B748F.
@@ -1393,18 +1395,24 @@ fn aircraft_types_match(expected: &str, actual: &str) -> bool {
 /// uppercase, value = list of additional alias substrings the sim
 /// might report. VPS aliases are ADDITIVE — a hardcoded mismatch
 /// (e.g. an A330 family) is never relaxed by an empty VPS table.
-/// Ist das eine Frachter-KENNUNG (`MD11F`, `B763F`, `A332F`)?
-fn frachter_kennung(code: &str) -> bool {
-    let ohne_trenner = ohne_trenner_gross(code);
-    let laenge = ohne_trenner.chars().count();
-    (4..=6).contains(&laenge) && ohne_trenner.ends_with('F')
-}
 
-fn ohne_trenner_gross(code: &str) -> String {
-    code.chars()
-        .filter(|c| *c != '-' && *c != ' ')
-        .collect::<String>()
-        .to_uppercase()
+/// Frachter-Muster → das Passagier-Muster derselben Baureihe.
+///
+/// Bewusst eine LISTE und keine Regel ueber die Zeichenkette: `MD11F` ist
+/// ein Frachter, `M20F` eine Mooney-Baureihe. Eintraege stammen aus der
+/// Aliastabelle oben (dort stehen die Frachter mit eigenem Schluessel).
+fn frachter_basismuster(code: &str) -> Option<&'static str> {
+    match code {
+        "A332F" => Some("A332"),
+        "B74F" => Some("B744"),
+        "B748F" => Some("B748"),
+        "B752F" => Some("B752"),
+        "B762F" => Some("B762"),
+        "B763F" => Some("B763"),
+        "B77F" => Some("B77L"),
+        "MD11F" => Some("MD11"),
+        _ => None,
+    }
 }
 
 fn aircraft_types_match_with_extra(
@@ -1424,22 +1432,38 @@ fn aircraft_types_match_with_extra(
     // benutzen — meldete der Abgleich Mismatch und der Auto-Start blieb
     // aus. Beide Seiten werden jetzt durch die Kaskade gezogen.
     //
-    // ⚠ NUR innerhalb derselben Frachter-Klasse: `muster_kandidaten`
-    // streicht ein angehaengtes `F` (MD11F → MD11), und diese
-    // Gleichsetzung darf die Frachter-Grenze aus Spec §7.3 nicht
-    // aufweichen — der bestehende Test `cargo_bid_strict_against_pax_sim`
-    // hat das beim ersten Wurf sofort aufgedeckt. Eine Kennung, die auf
-    // `F` endet (MD11F, aber auch die Mooney M20F), wird hier also nur
-    // mit einer ebensolchen verglichen; alles andere entscheidet
-    // unveraendert die Aliastabelle unten. Diese Aenderung macht die
-    // Frachter-Pruefung damit weder strenger noch lockerer als vorher.
-    if frachter_kennung(&exp) == frachter_kennung(&act) {
+    // Die Kaskade streicht dabei auch ein angehaengtes `F` — das ist hier
+    // ZU GROB: bei der Mooney `M20F` ist das `F` ein Buchstabe der
+    // Baureihe, kein Frachtermerkmal (externe QS, Codex 16.09.2026).
+    // Die Frachter-Oeffnung steht deshalb weiter unten als BENANNTE
+    // Liste, nicht als Zeichenketten-Regel.
+    let ist_f_kennung = |c: &str| {
+        let ohne: String = c.chars().filter(|z| *z != '-' && *z != ' ').collect();
+        (4..=6).contains(&ohne.chars().count()) && ohne.ends_with('F')
+    };
+    if ist_f_kennung(&exp) == ist_f_kennung(&act) {
         let exp_kandidaten = muster_kandidaten(&exp);
         let act_kandidaten = muster_kandidaten(&act);
         if exp_kandidaten
             .iter()
             .any(|e| act_kandidaten.iter().any(|a| a == e))
         {
+            return true;
+        }
+    }
+
+    // Frachter-Buchung + Passagier-Muster im Simulator: erlaubt, seit
+    // 16.09.2026 (Entscheidung Thomas K., Spec §7.4). AeroACARS kann einen
+    // Frachter nicht verlaesslich erkennen — ein Add-on, das seine MD-11F
+    // als `MD-11` meldet, kostete den Piloten sonst den Auto-Start fuer
+    // eine Schreibweise des Herstellers. Die Oeffnung laeuft ueber die
+    // BENANNTEN Frachter-Muster (nicht ueber ein abgeschnittenes `F`),
+    // damit sie fuer jede Schreibweise gleich wirkt — `B74F` gegen
+    // `747-400` genauso wie `MD11F` gegen `MD-11` — und Muster wie `M20F`
+    // nicht beruehrt. Der Aufruf ist rekursiv, aber garantiert EINSTUFIG:
+    // keine Basis dieser Tabelle steht selbst als Schluessel darin.
+    if let Some(basis) = frachter_basismuster(&exp) {
+        if aircraft_types_match_with_extra(basis, &act, vps_aliases) {
             return true;
         }
     }
@@ -51803,28 +51827,48 @@ mod aircraft_alias_tests {
         assert!(aircraft_types_match("A332F", "A330-200 Freighter"));
     }
 
-    /// P2: Strict-Cargo-Grenze (Spec §7.3): Cargo-Bid + Pax-Sim wird
-    /// blockiert (Pax-Compartment hat keine Cargo-Lasten-Verteilung).
-    /// Pax-Bid + Cargo-Sim ist hingegen erlaubt (Cargo-Pragmatismus).
-    /// Diese Tests dokumentieren die Asymmetrie pro Familie.
+    /// Frachter-Buchung + Passagier-Muster im Simulator: **akzeptiert**,
+    /// seit 16.09.2026. Vorher war das je nach Schreibweise mal
+    /// blockiert (`MD-11`), mal nicht (`MD11`) — und zwar ohne dass
+    /// AeroACARS den Unterschied wirklich sehen konnte: Erkannt wird nur
+    /// ein `F` am Ende der Kennung oder „Freighter" im Titel. Ein
+    /// Add-on, das seine MD-11F als `MD-11` meldet, kostete den Piloten
+    /// den Auto-Start fuer eine Schreibweise, nicht fuer das falsche
+    /// Flugzeug. Entscheidung Thomas K.: verglichen wird das
+    /// Grundmuster; wer Fracht fliegt, nimmt den Frachter — das ist
+    /// Dispatch-Disziplin, nicht Sache dieser Zeichenkette.
+    ///
+    /// Der Rest der Zuordnung bleibt streng: ein echtes anderes Muster
+    /// (A320 statt B738) faellt weiterhin durch.
     #[test]
-    fn cargo_bid_strict_against_pax_sim() {
-        // Cargo-Bid → Pax-Sim BLOCKIERT
-        assert!(!aircraft_types_match("B74F", "747-400"));
-        assert!(!aircraft_types_match("B748F", "747-8"));
-        assert!(!aircraft_types_match("B752F", "757-200"));
-        assert!(!aircraft_types_match("B763F", "767-300"));
-        assert!(!aircraft_types_match("B762F", "767-200"));
-        assert!(!aircraft_types_match("A332F", "A330-200"));
-        assert!(!aircraft_types_match("MD11F", "MD-11"));
-        // Ein Frachter-Muster bleibt ein Treffer.
-        assert!(aircraft_types_match("MD11F", "MD-11F"));
-        // BEKANNTE, AELTERE Luecke (externe QS, Codex 16.09.2026): die
-        // KOMPAKTE Pax-Kennung `MD11` matcht ueber den Teilstring-Weg der
-        // Aliastabelle weiterhin gegen `MD11F`. Das ist unabhaengig von
-        // der Musterauflösung und wird hier bewusst NICHT nebenbei
-        // geaendert — es beruehrt jede Frachter-Zuordnung im Client.
+    fn cargo_bid_akzeptiert_pax_sim_derselben_baureihe() {
+        assert!(aircraft_types_match("MD11F", "MD-11"));
         assert!(aircraft_types_match("MD11F", "MD11"));
+        assert!(aircraft_types_match("MD11F", "MD-11F"));
+        // Externe QS (Codex, 16.09.2026): die Oeffnung muss fuer JEDE
+        // Schreibweise gleich wirken, nicht nur fuer die MD-11 — vorher
+        // war `B74F` gegen `747-400` weiterhin ein Mismatch.
+        assert!(aircraft_types_match("B74F", "747-400"));
+        assert!(aircraft_types_match("B748F", "747-8"));
+        assert!(aircraft_types_match("B752F", "757-200"));
+        assert!(aircraft_types_match("B762F", "767-200"));
+        assert!(aircraft_types_match("B763F", "767-300"));
+        assert!(aircraft_types_match("A332F", "A330-200"));
+        // Ein echtes anderes Muster bleibt ein Mismatch.
+        assert!(!aircraft_types_match("MD11F", "B763"));
+        assert!(!aircraft_types_match("B763F", "A320"));
+        assert!(!aircraft_types_match("B748F", "A388"));
+    }
+
+    /// Nicht jedes `F` am Ende ist ein Frachter: bei der Mooney `M20F` ist
+    /// es ein Buchstabe der Baureihe. Die Oeffnung laeuft deshalb ueber
+    /// eine benannte Liste, nicht ueber die Zeichenkette (externe QS,
+    /// Codex 16.09.2026 P2).
+    #[test]
+    fn variantenbuchstabe_f_oeffnet_nichts() {
+        assert!(super::frachter_basismuster("M20F").is_none());
+        assert!(!aircraft_types_match("M20F", "M20"));
+        assert!(super::frachter_basismuster("MD11F").is_some());
     }
 
     #[test]

@@ -184,7 +184,12 @@ Damit funktioniert sowohl:
 | ERJ | `E170`, `E175`, `E190`, `E195` |
 | E2 | `E290`, `E295` |
 
-### 3.5 Test-Coverage (21 Tests in `aircraft_alias_tests`, v0.7.4 Pending)
+### 3.5 Test-Coverage (die 22 Faelle DIESER Spec; Stand 16.09.2026)
+
+> Die Tabelle listet die Faelle, die zu dieser Spec gehoeren — nicht den
+> gesamten Modulbestand. `aircraft_alias_tests` in `client/src-tauri/src/lib.rs`
+> ist seither auf 64 Tests gewachsen (externe QS 16.09.2026: die alte
+> Formulierung las sich wie eine Gesamtzahl).
 
 | Test | Was es deckt |
 |---|---|
@@ -206,9 +211,10 @@ Damit funktioniert sowohl:
 | `b762f_matches_767_200f` | 767-200F (v0.7.3) |
 | `a332f_matches_a330_200f` | A330-200F (v0.7.3) |
 | **`cargo_aliases_match_freighter_long_form`** (v0.7.4) | **Alle 6 Cargo-Aliase matchen "X-XX Freighter" Long-Form** |
-| **`cargo_bid_strict_against_pax_sim`** (v0.7.4) | **Cargo-Bid + Pax-Sim BLOCKIERT pro Familie (Compartment-Unterschied)** |
+| **`cargo_bid_akzeptiert_pax_sim_derselben_baureihe`** (16.09.2026) | **Cargo-Bid + Pax-Sim AKZEPTIERT — ersetzt `cargo_bid_strict_against_pax_sim`, siehe §7.4** |
 | **`pax_bid_accepts_cargo_sim_pragmatism`** (v0.7.4) | **Pax-Bid + Cargo-Sim akzeptiert (umgekehrte Richtung okay)** |
 | **`a359_does_not_match_a350_1000`** (v0.7.4) | **A359 ≠ A350-1000 (vorher matched faelschlich via "A350"-Substring)** |
+| **`variantenbuchstabe_f_oeffnet_nichts`** (16.09.2026) | **Nicht jedes `F` ist ein Frachter: `M20F` (Mooney) oeffnet NICHT gegen `M20` — die §7.4-Oeffnung laeuft nur ueber die benannte Tabelle `frachter_basismuster`** |
 
 ---
 
@@ -272,7 +278,7 @@ Daruebergehend gibt es **Empfehlungen**, je nach Familie sinnvoll oder unnoetig:
 |---|---|---|
 | **Long-Form-Match** | Jede Familie wo Sim-Title eine Marketing-Form benutzt (`A350-900` statt `A359`) | nein, aber Standard |
 | **Cargo-Variant-Match** | Familien mit Frachter-Variante wo Pax-Bid auch Cargo-Sim akzeptieren soll | nein, abhaengig von VA-Praxis |
-| **Strict-Cargo-Match** | Wenn Pure-Frachter-ICAO existiert (B77F, MD11F, B748F) | nein |
+| ~~Strict-Cargo-Match~~ | **aufgehoben 16.09.2026, siehe §7.4** | — |
 | **Unrelated-Mismatch** | Familien die optisch verwechselt werden koennten (MD-11 vs B747, A350 vs B777) | **ja, eine der zwei harten Regeln** |
 | **Case-Insensitive** | Lowercase-Inputs (rare in Praxis weil phpVMS uppercase) | nein |
 | **Variant-Suffix-Variations** | Familien mit NEO/MAX/ER/F-Suffix die im Title verschieden geschrieben werden | nein, aber empfohlen wenn drei oder mehr Schreibweisen existieren |
@@ -283,7 +289,7 @@ Daruebergehend gibt es **Empfehlungen**, je nach Familie sinnvoll oder unnoetig:
 cargo test --lib aircraft_alias_tests
 ```
 
-Aktuell (v0.7.3 + v0.7.4 Pending): 21 Tests fuer 17 Familien — alle Familien decken die zwei harten Regeln (Match + Mismatch). Mehr Tests sind willkommen, aber kein Release-Blocker.
+Aktuell (v0.7.3 + v0.7.4 Pending, plus §7.4 vom 16.09.2026): die 22 in §3.5 gelisteten Faelle decken 17 Familien — alle mit den zwei harten Regeln (Match + Mismatch). Der Modulbestand ist groesser (64 Tests). Mehr Tests sind willkommen, aber kein Release-Blocker.
 
 ### 5.2 Empfohlene Coverage-Erweiterung (Backlog, nicht Pflicht)
 
@@ -372,15 +378,46 @@ Wenn ein Pilot mit `aircraft_mismatch` blockiert wird obwohl er das richtige Flu
 
 **Pax-Bid + Cargo-Sim** (z.B. `MD11` Bid + `MD-11F` Sim-Title): wir akzeptieren das. Begruendung: Cargo-Variante hat groesseren Frachtraum, kann aber problemlos eine Pax-Strecke fliegen. Wenn eine VA das fuer ihre Dispatch-Disziplin nicht will, ist das eine **VA-Daten-Entscheidung** (in phpVMS strikt `MD11F` als Bid-ICAO setzen).
 
-**Cargo-Bid + Pax-Sim** (z.B. `MD11F` Bid + `MD-11` Sim-Title — JustFlight Pax-Variante): aktuell **strict** geblockt. Begruendung: Pax-Compartment hat keine Cargo-Lasten-Verteilung, der Pilot wuerde 78t Cargo in einem 290-Sitze-Sim fliegen. Falls in der Praxis das zu hart ist, koennen wir das auf "Warning + Trotzdem-Starten-Button" umstellen (analog `acknowledge_aircraft_mismatch` aus dem Manual-Pfad).
+**Cargo-Bid + Pax-Sim** (z.B. `MD11F` Bid + `MD-11` Sim-Title — JustFlight Pax-Variante): war bis 16.09.2026 **strict** geblockt (Begruendung damals: Pax-Compartment hat keine Cargo-Lasten-Verteilung). **Aufgehoben — siehe §7.4.**
 
-### 7.4 Bekannte Edge-Cases (Stand v0.7.4 Pending)
+
+### 7.4 Strict-Cargo aufgehoben (16.09.2026)
+
+Die Gegenrichtung — **Cargo-Bid + Pax-Sim** — galt bis hierher als Mismatch
+(Compartment-Unterschied). Das ist aufgehoben. Grund: AeroACARS kann einen
+Frachter gar nicht verlaesslich erkennen. Es sieht nur ein `F` am Ende der
+Kennung oder das Wort „Freighter" im Titel. Ein Add-on, das seine MD-11F
+schlicht als `MD-11` meldet — verbreitet —, sah dadurch aus wie ein
+Passagierflugzeug.
+
+Die Regel wirkte ausserdem nur je nach Schreibweise: `MD11F` gegen `MD-11`
+blockierte, gegen `MD11` nicht (Teilstring-Treffer der Aliastabelle, externe
+QS 16.09.2026). Sie bestrafte also die Schreibweise des Herstellers, nicht das
+falsche Flugzeug — und ein Mismatch kostet den Piloten den automatischen Start.
+
+**Jetzt:** Eine **benannte Tabelle** `frachter_basismuster()` (lib.rs) bildet
+jedes Frachter-Muster auf das Passagier-Muster derselben Baureihe ab — `A332F`
+→ `A332`, `B74F` → `B744`, `B748F` → `B748`, `B752F` → `B752`, `B762F` →
+`B762`, `B763F` → `B763`, `B77F` → `B77L`, `MD11F` → `MD11`. Der Vergleich
+laeuft danach einmal mit der Basis erneut durch die volle Aliasmaschinerie, so
+dass `B74F` gegen `747-400` genauso trifft wie `MD11F` gegen `MD-11`.
+**Bewusst KEINE Zeichenketten-Regel** ueber ein abgeschnittenes `F`: bei der
+Mooney `M20F` ist das `F` ein Buchstabe der Baureihe (externe QS 16.09.2026,
+Test `variantenbuchstabe_f_oeffnet_nichts`). Wer Fracht fliegt, nimmt den
+Frachter — Dispatch-Disziplin, keine Aufgabe dieses Vergleichs
+(Entscheidung Thomas K.).
+Gewichte und Zuladung haengen an SimBrief, die Bewertungsgrenzen am
+Grundmuster. Der Rest der Zuordnung bleibt streng: A320 gegen B738 faellt
+weiterhin durch. Test: `cargo_bid_akzeptiert_pax_sim_derselben_baureihe`
+(ersetzt `cargo_bid_strict_against_pax_sim`).
+
+### 7.5 Bekannte Edge-Cases (Stand v0.7.4 Pending)
 
 | Bid-ICAO | Sim-Title | Match? |
 |---|---|---|
 | `MD11` | "DC-10-30" | ✗ — DC-10 ist Vorlauefer, nicht MD-11 |
 | `B748` | "Boeing 747-8 Freighter (PMDG)" | ✓ via Long-Form "747-8" Substring — Pax-Bid akzeptiert Frachter, gewuenscht (Cargo-Pragmatismus §7.3) |
-| `B748F` | "Boeing 747-8" (Pax-Sim) | ✗ strict geblockt seit v0.7.3 — Cargo-Bid akzeptiert KEIN Pax-Sim (Compartment-Unterschied). Test: `cargo_bid_strict_against_pax_sim` |
+| `B748F` | "Boeing 747-8" (Pax-Sim) | ✓ seit 16.09.2026 (§7.4, vorher strict geblockt) — Test: `cargo_bid_akzeptiert_pax_sim_derselben_baureihe` |
 | `A359` | "Airbus A350-1000" | ✗ strict geblockt seit v0.7.4 (Polish) — A359-Alias wurde von ["A350-900", "A350"] auf nur ["A350-900"] eingeengt. Test: `a359_does_not_match_a350_1000` |
 
 ---
@@ -417,8 +454,8 @@ Wenn ein Pilot mit `aircraft_mismatch` blockiert wird obwohl er das richtige Flu
 - **Sim-Title:** Volltext-String den der Simulator in der `TITLE`-SimVar liefert. Beispiele: "Airbus A350-900 [Asobo]", "TFDi Design MD-11F PW4462". Vendor-spezifisch.
 - **Long-Form-Alias:** Substring-Pattern das im Sim-Title vorkommt wenn das richtige Flugzeug geladen ist. Beispiel: `"A350-900"` ist Alias fuer `A359`.
 - **Cargo-Variant:** F-Suffix (z.B. `MD11F`, `B77F`). Eigene ICAO weil Cargo-Compartment + andere MTOW.
-- **Pax-Variant:** Standard-ICAO ohne F-Suffix. In dieser Spec wird bewusst toleriert dass Pax-Bid einen Cargo-Sim akzeptiert (gleiche Familie, Cargo-Pilot kann Pax fliegen). Umgekehrt **NICHT** (Cargo-Bid darf nicht in Pax-Sim).
+- **Pax-Variant:** Standard-ICAO ohne F-Suffix. Pax-Bid akzeptiert einen Cargo-Sim (gleiche Familie). Seit 16.09.2026 gilt auch die Gegenrichtung: Cargo-Bid akzeptiert den Pax-Sim derselben Baureihe (§7.4) — AeroACARS kann einen Frachter nicht verlaesslich erkennen.
 
 ---
 
-**Ende der Spec v1.2 — Leitplanke statt Regelwerk. Drei harte Regeln aus dem Leitprinzip sind Pflicht, alles andere Empfehlung. v0.7.3 hat die HOHE-Prio-Cargo-Familien (B74F/B748F/B752F/B762F/B763F/A332F) eingebaut. v0.7.4 Pending-Polish: " FREIGHTER" Long-Form fuer alle Cargo-Aliase + Cargo-Bid-vs-Pax-Sim Strict-Tests + A359-Alias narrowed (kein A350-1000-False-Positive mehr).**
+**Ende der Spec v1.2 — Leitplanke statt Regelwerk. Drei harte Regeln aus dem Leitprinzip sind Pflicht, alles andere Empfehlung. v0.7.3 hat die HOHE-Prio-Cargo-Familien (B74F/B748F/B752F/B762F/B763F/A332F) eingebaut. v0.7.4 Pending-Polish: " FREIGHTER" Long-Form fuer alle Cargo-Aliase + Cargo-Bid-vs-Pax-Sim Strict-Tests + A359-Alias narrowed (kein A350-1000-False-Positive mehr). **Nachtrag 16.09.2026:** die Strict-Tests sind aufgehoben — Cargo-Bid akzeptiert den Pax-Sim derselben Baureihe (§7.4, Test `cargo_bid_akzeptiert_pax_sim_derselben_baureihe`).**
