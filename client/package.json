@@ -1,7 +1,7 @@
 {
   "name": "aeroacars-client",
   "private": true,
-  "version": "1.7.31",
+  "version": "1.7.32",
   "type": "module",
   "description": "AeroACARS desktop client \u2014 Tauri 2 + React + TypeScript",
   "scripts": {
