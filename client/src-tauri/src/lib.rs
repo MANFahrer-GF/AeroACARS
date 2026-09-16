@@ -1393,6 +1393,20 @@ fn aircraft_types_match(expected: &str, actual: &str) -> bool {
 /// uppercase, value = list of additional alias substrings the sim
 /// might report. VPS aliases are ADDITIVE — a hardcoded mismatch
 /// (e.g. an A330 family) is never relaxed by an empty VPS table.
+/// Ist das eine Frachter-KENNUNG (`MD11F`, `B763F`, `A332F`)?
+fn frachter_kennung(code: &str) -> bool {
+    let ohne_trenner = ohne_trenner_gross(code);
+    let laenge = ohne_trenner.chars().count();
+    (4..=6).contains(&laenge) && ohne_trenner.ends_with('F')
+}
+
+fn ohne_trenner_gross(code: &str) -> String {
+    code.chars()
+        .filter(|c| *c != '-' && *c != ' ')
+        .collect::<String>()
+        .to_uppercase()
+}
+
 fn aircraft_types_match_with_extra(
     expected: &str,
     actual: &str,
@@ -1402,6 +1416,32 @@ fn aircraft_types_match_with_extra(
     let act = actual.to_uppercase();
     if exp == act {
         return true;
+    }
+    // Externe QS (Codex, 16.09.2026) P1: seit fuenfstellige Sim-Kennungen
+    // die Normalisierung ueberstehen (`414AW` statt frueher „nichts"),
+    // treffen sie hier auf den gebuchten Code (`C414`). Ohne die
+    // Schreibweisen-Kaskade — dieselbe, die Grenzen und Spurweite schon
+    // benutzen — meldete der Abgleich Mismatch und der Auto-Start blieb
+    // aus. Beide Seiten werden jetzt durch die Kaskade gezogen.
+    //
+    // ⚠ NUR innerhalb derselben Frachter-Klasse: `muster_kandidaten`
+    // streicht ein angehaengtes `F` (MD11F → MD11), und diese
+    // Gleichsetzung darf die Frachter-Grenze aus Spec §7.3 nicht
+    // aufweichen — der bestehende Test `cargo_bid_strict_against_pax_sim`
+    // hat das beim ersten Wurf sofort aufgedeckt. Eine Kennung, die auf
+    // `F` endet (MD11F, aber auch die Mooney M20F), wird hier also nur
+    // mit einer ebensolchen verglichen; alles andere entscheidet
+    // unveraendert die Aliastabelle unten. Diese Aenderung macht die
+    // Frachter-Pruefung damit weder strenger noch lockerer als vorher.
+    if frachter_kennung(&exp) == frachter_kennung(&act) {
+        let exp_kandidaten = muster_kandidaten(&exp);
+        let act_kandidaten = muster_kandidaten(&act);
+        if exp_kandidaten
+            .iter()
+            .any(|e| act_kandidaten.iter().any(|a| a == e))
+        {
+            return true;
+        }
     }
     // Either side might be the short ICAO form, the other the
     // long marketing form. Check both directions against the
@@ -8452,23 +8492,43 @@ fn muster_kandidaten(upper: &str) -> Vec<String> {
     // Musteridentitaet des ganzen Clients gegen eine geratene Variante
     // tauschen (Auto-Start-Abgleich, PIREP). Hier bestaetigt die Tabelle
     // das Ergebnis, ein Fehlgriff kostet nichts.
-    let familie = match ohne_trenner.as_str() {
-        "A300" => Some("A306"),
-        "A330" => Some("A333"),
-        "A340" => Some("A343"),
-        "A380" => Some("A388"),
-        "B747" => Some("B744"),
-        "B777" => Some("B77W"),
-        "B787" => Some("B789"),
-        _ => None,
-    };
-    if let Some(f) = familie {
-        schieben(f.to_string());
+    fn familie_von(code: &str) -> Option<&'static str> {
+        match code {
+            "A300" => Some("A306"),
+            "A330" => Some("A333"),
+            "A340" => Some("A343"),
+            "A380" => Some("A388"),
+            "B747" => Some("B744"),
+            "B777" => Some("B77W"),
+            "B787" => Some("B789"),
+            _ => None,
+        }
     }
+    // Externe QS (Codex, 16.09.2026) P1: die Familienregel galt NUR fuer
+    // die rohe Kennung. `A380X` (FBW A380X meldet das als ATC-Modell)
+    // wurde dadurch zu `A380` verkuerzt — und dort blieb es stehen, weil
+    // die Regel den verkuerzten Kandidaten nie mehr sah. Ergebnis: genau
+    // der A380-Fehler von UAE 52, nur ueber eine andere Schreibweise.
+    // Jetzt laeuft sie ueber JEDEN bisher gefundenen Kandidaten.
     // Fuehrende Werksnummer wie 414AW (Cessna 414) → C414.
     if zeichen.len() >= 3 && zeichen[..3].iter().all(char::is_ascii_digit) {
         let zahl: String = zeichen[..3].iter().collect();
         schieben(format!("C{zahl}"));
+    }
+
+    // Familienregel zum Schluss ueber JEDEN gefundenen Kandidaten — nicht
+    // nur ueber die rohe Kennung. Externe QS (Codex, 16.09.2026) P1:
+    // `A380X` wurde zu `A380` verkuerzt und blieb dort stehen, weil die
+    // Regel den verkuerzten Kandidaten nie mehr sah; damit fehlte genau
+    // die A388-Aufloesung, um die es bei UAE 52 ging.
+    let familien: Vec<String> = aus
+        .iter()
+        .filter_map(|k| familie_von(k).map(str::to_string))
+        .collect();
+    for f in familien {
+        if !aus.contains(&f) {
+            aus.push(f);
+        }
     }
 
     aus
@@ -21423,9 +21483,17 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Flugphase gebunden, kann also einen Score noch finalisieren, wo die
 /// alte, phasengebundene Pruefung nie mehr lief.
 ///
+/// **14 seit v1.7.30**: Der Simulator darf die Buchung nur noch mit einem
+/// brauchbaren Typcode schlagen (`sim_core::muster_aufloesen`). Muster,
+/// deren Sim-Kennung eine Langform ist — belegt: die iniBuilds A380
+/// meldet "A380-800", Buchung A388 (UAE 52, 15.09.2026) — bekommen
+/// dadurch Spurweite, Spannweite und eine BEWERTETE Bahndisziplin-Achse,
+/// wo vorher `track_width_unknown` stand. Derselbe Flug wird unter
+/// v1.7.29 und v1.7.30 also verschieden benotet.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 13;
+const SCORE_ALGORITHMUS_VERSION: u8 = 14;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -22815,7 +22883,9 @@ async fn pirep_pruefstatus(
         return Ok(Vec::new());
     };
     if schluessel_pilot != angemeldet.to_string() {
-        tracing::debug!("pirep_pruefstatus: Schlüsselbund gehört nicht zum angemeldeten Piloten — übersprungen");
+        tracing::debug!(
+            "pirep_pruefstatus: Schlüsselbund gehört nicht zum angemeldeten Piloten — übersprungen"
+        );
         return Ok(Vec::new());
     }
     let antwort =
@@ -29020,11 +29090,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             if stats.takeoff_at.is_none()
                 && stats.sampler_takeoff_at.is_none()
                 && touchdown_v2::ist_rollprobe(
-                snap.on_ground,
-                snap.groundspeed_kt,
-                snap.paused,
-                snap.slew_mode,
-            ) {
+                    snap.on_ground,
+                    snap.groundspeed_kt,
+                    snap.paused,
+                    snap.slew_mode,
+                )
+            {
                 stats.bodenhoehe.beobachte(snap.altitude_agl_ft as f32);
             }
 
@@ -50890,6 +50961,43 @@ mod aircraft_alias_tests {
     /// "PHENOM 300E". Ohne Alias ein Mismatch (Phenom fehlt in der
     /// hardcoded Embraer-Sektion); mit einem VPS-Alias E55P→["PHENOM 300"]
     /// muss es matchen — und zwar im Gate wie im Watcher identisch.
+    /// Externe QS (Codex, 16.09.2026) P1: `A380X` (FBW A380X) ist ein
+    /// Fuenfsteller — er ueberlebt die Normalisierung jetzt und darf
+    /// deshalb NICHT in einer Sackgasse enden. Die Kaskade muss ueber die
+    /// Verkuerzung `A380` bis zur Variante `A388` durchziehen, sonst lebt
+    /// der UAE-52-Fehler in dieser Schreibweise weiter.
+    #[test]
+    fn a380_schreibweisen_fuehren_alle_zur_spurweite() {
+        for roh in ["A380X", "A380", "A380-800", "A388"] {
+            let spur = crate::muster_fuer_typtabelle(Some(roh), |m| {
+                landing_scoring::spurweite::spurweite_m(m)
+            });
+            assert_eq!(spur, Some(14.30), "{roh} muss die A388-Spurweite finden");
+        }
+    }
+
+    /// Externe QS (Codex, 16.09.2026) P1: Fuenfsteller erreichen jetzt den
+    /// Auto-Start-Abgleich. Ohne die Kaskade meldete `414AW` gegen die
+    /// Buchung `C414` einen Mismatch — der Flug waere nicht mehr von
+    /// selbst gestartet.
+    #[test]
+    fn auto_start_erkennt_fuenfstellige_sim_kennungen() {
+        let leer = std::collections::HashMap::new();
+        assert!(super::aircraft_type_matches_sim(
+            Some("C414"),
+            Some("414AW"),
+            "Cessna 414AW Chancellor",
+            &leer
+        ));
+        // Ein echter Mismatch bleibt einer.
+        assert!(!super::aircraft_type_matches_sim(
+            Some("C414"),
+            Some("B738"),
+            "Boeing 737-800",
+            &leer
+        ));
+    }
+
     #[test]
     fn aircraft_type_matches_sim_e55p_phenom_via_vps_alias() {
         use super::aircraft_type_matches_sim;
@@ -51709,6 +51817,14 @@ mod aircraft_alias_tests {
         assert!(!aircraft_types_match("B762F", "767-200"));
         assert!(!aircraft_types_match("A332F", "A330-200"));
         assert!(!aircraft_types_match("MD11F", "MD-11"));
+        // Ein Frachter-Muster bleibt ein Treffer.
+        assert!(aircraft_types_match("MD11F", "MD-11F"));
+        // BEKANNTE, AELTERE Luecke (externe QS, Codex 16.09.2026): die
+        // KOMPAKTE Pax-Kennung `MD11` matcht ueber den Teilstring-Weg der
+        // Aliastabelle weiterhin gegen `MD11F`. Das ist unabhaengig von
+        // der Musterauflösung und wird hier bewusst NICHT nebenbei
+        // geaendert — es beruehrt jede Frachter-Zuordnung im Client.
+        assert!(aircraft_types_match("MD11F", "MD11"));
     }
 
     #[test]

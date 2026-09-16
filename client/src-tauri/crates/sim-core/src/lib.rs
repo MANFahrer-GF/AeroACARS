@@ -1679,7 +1679,16 @@ pub fn muster_aufloesen(
     buchung_icao: &str,
     flugzeug_titel: Option<&str>,
 ) -> Option<String> {
-    if let Some(m) = sim_atc_model.and_then(clean_atc_model) {
+    // v1.7.30 (UAE 52, EDDM→OMDB, 15.09.2026): Der Simulator gewinnt nur
+    // mit einem BRAUCHBAREN Code. Vorher reichte irgendein Text aus
+    // `ATC MODEL` — die iniBuilds A380 meldet „A380-800", das steht in
+    // keiner Typtabelle, und weil der Sim-Wert gesetzt war, wurde die
+    // Buchung (A388!) nie mehr gefragt. Ergebnis: keine Spurweite, keine
+    // Spannweite, kein seitlicher Randabstand, obwohl der Typ die ganze
+    // Zeit bekannt war. `normalize_icao_type` reinigt, ordnet
+    // Marketing-Namen zu und prüft die Plausibilität — genau die Stufe,
+    // die hier fehlte.
+    if let Some(m) = sim_atc_model.and_then(normalize_icao_type) {
         return Some(m);
     }
     let gebucht = buchung_icao.trim();
@@ -1715,6 +1724,11 @@ const TITEL_MUSTER: &[(&str, &str)] = &[
     ("A330-200", "A332"),
     ("A340-300", "A343"), // 3 Flüge (Freighter EIS1)
     ("A340-600", "A346"),
+    // v1.7.30: Titel der iniBuilds A380 ("A380-800 RR Basic") und des
+    // FBW A380X — beide tragen die Baureihe im Titel.
+    ("A380-800", "A388"),
+    ("A380X", "A388"),
+    ("A380", "A388"),
     // ── Boeing / McDonnell Douglas ────────────────────────────────────────
     // `MD-11` allein deckt auch `MD-11F` ab (Teilstring). Die spezifische
     // Zeile steht trotzdem hier, weil sie den Auslöser benennt — und weil eine
@@ -1737,8 +1751,18 @@ const TITEL_MUSTER: &[(&str, &str)] = &[
 /// (Großbuchstaben + Ziffern). Filtert Modellnamen mit Leer-/Sonderzeichen
 /// und überlange Reste heraus.
 fn is_plausible_icao(s: &str) -> bool {
-    let len = s.len();
-    (2..=4).contains(&len)
+    // Externe QS (Codex, 16.09.2026) P1: bis 5 Zeichen, nicht bis 4.
+    // Fuenfstellige Sim-Schreibweisen (`C182Q`, `MD11F`, `E190F`,
+    // `414AW`) sind zwar kein Doc-8643-Code, aber im Feldkorpus belegt,
+    // und die Schreibweisen-Kaskade des Clients (`muster_kandidaten`)
+    // loest sie sauber auf. Sie hier zu verwerfen hiess: der SIMULATOR
+    // verliert gegen die BUCHUNG, obwohl er recht hat. Die
+    // MSFS-Telemetrie normalisiert schon selbst (adapter/telemetry.rs),
+    // deshalb muss die Regel HIER stehen und nicht eine Ebene hoeher.
+    // Ausdrueckliche Junkwerte (NONE/NULL/NA) bleiben in
+    // `normalize_icao_type` gesperrt — die Laengenregel hebt das nicht auf.
+    let len = s.chars().count();
+    (2..=5).contains(&len)
         && s.chars()
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
@@ -1752,6 +1776,9 @@ fn map_model_name_to_icao(s: &str) -> Option<String> {
     let icao = match s {
         "PHENOM 300E" | "PHENOM 300" | "EMB-505" | "EMB505" => "E55P",
         "A350-900" | "A350-900XWB" | "A350" => "A359",
+        // v1.7.30: A380-Langformen. Die iniBuilds A380 meldet "A380-800"
+        // als ATC-Modell — vorher fiel sie durch jede Typtabelle.
+        "A380-800" | "A380" | "A380X" | "A380-800F" => "A388",
         "A350-1000" => "A35K",
         "A340-300" => "A343",
         "A340-600" => "A346",
@@ -2136,6 +2163,119 @@ mod tests {
         // Sanity: darf nicht als Fenix klassifiziert werden, sonst
         // greift der Fenix-LVar-Mapping-Block faelschlich.
         assert!(!AircraftProfile::AerosoftA346.is_fenix());
+    }
+
+    /// UAE 52 (EDDM→OMDB, 15.09.2026): Die iniBuilds A380 meldete
+    /// "A380-800" als ATC-Modell. Der Wert war gesetzt, also gewann er —
+    /// und weil er in keiner Typtabelle steht, gab es weder Spurweite noch
+    /// Spannweite noch seitlichen Randabstand, obwohl die Buchung A388
+    /// sagte. Der Sim gewinnt jetzt nur mit einem brauchbaren Code.
+    #[test]
+    fn unbrauchbarer_sim_wert_darf_die_buchung_nicht_verdraengen() {
+        assert_eq!(
+            muster_aufloesen(Some("A380-800"), "A388", Some("A380-800 RR Basic")),
+            Some("A388".to_string())
+        );
+        // Auch reiner Unsinn im ATC-Feld darf die Buchung nicht kosten.
+        assert_eq!(
+            muster_aufloesen(Some("Boeing Longname Deluxe"), "B77W", None),
+            Some("B77W".to_string())
+        );
+        // Ohne Buchung rettet der Titel.
+        assert_eq!(
+            muster_aufloesen(Some("A380-800"), "", Some("A380-800 RR Basic")),
+            Some("A388".to_string())
+        );
+    }
+
+    /// Externe QS (Codex, 16.09.2026) P1: fünfstellige Sim-Schreibweisen
+    /// sind kein Doc-8643-Code, aber im Feldkorpus belegt — die Kaskade
+    /// des Clients löst sie auf. Sie dürfen die Buchung weiterhin schlagen.
+    /// Die gesperrten Junkwerte bleiben gesperrt — die erweiterte
+    /// Laengenregel darf sie nicht wieder hereinlassen (Codex P2).
+    #[test]
+    fn junkwerte_schlagen_die_buchung_nicht() {
+        for roh in ["NONE", "NULL", "NA", "N/A"] {
+            assert_eq!(
+                muster_aufloesen(Some(roh), "A388", None).as_deref(),
+                Some("A388"),
+                "{roh} darf die Buchung nicht verdraengen"
+            );
+        }
+    }
+
+    /// Die Laengenregel muss dort greifen, wo der Sim-Wert wirklich
+    /// herkommt: die MSFS-Telemetrie normalisiert selbst, bevor
+    /// `muster_aufloesen` ihn je sieht (Codex P1, zweite Runde).
+    #[test]
+    fn fuenfstellige_kennungen_ueberstehen_die_normalisierung() {
+        for roh in ["C182Q", "MD11F", "E190F", "414AW"] {
+            assert_eq!(
+                normalize_icao_type(roh).as_deref(),
+                Some(roh),
+                "{roh} muss die Normalisierung ueberstehen"
+            );
+        }
+    }
+
+    #[test]
+    fn fuenfstellige_sim_schreibweisen_bleiben_gueltig() {
+        for roh in ["C182Q", "MD11F", "E190F", "414AW"] {
+            assert_eq!(
+                muster_aufloesen(Some(roh), "A320", None).as_deref(),
+                Some(roh),
+                "{roh} muss den gebuchten Typ schlagen"
+            );
+        }
+    }
+
+    /// Was sichtbar keine Kennung ist, darf nicht als Muster weitergereicht
+    /// werden — auch nicht „nur für die Anzeige" (Codex P2: der Wert landet
+    /// in Bewertung, Health-Warnung und Landedatensatz).
+    #[test]
+    fn unbrauchbarer_sim_wert_ohne_buchung_und_titel_ergibt_nichts() {
+        // "A380-800" ist bewusst KEIN Beispiel mehr — genau das loest sich
+        // jetzt ueber die Namenstabelle auf. Hier steht, was wirklich
+        // niemand kennt.
+        assert_eq!(
+            muster_aufloesen(Some("Superjet Deluxe 9000"), "", None),
+            None
+        );
+        assert_eq!(muster_aufloesen(Some("A999-100"), "", None), None);
+    }
+
+    /// Wer anders fliegt als gebucht, bekommt weiterhin das GEFLOGENE
+    /// Muster — der Sim behält den Vorrang, solange er brauchbar ist.
+    #[test]
+    fn brauchbarer_sim_wert_schlaegt_die_buchung_weiterhin() {
+        assert_eq!(
+            muster_aufloesen(Some("B738"), "A320", None),
+            Some("B738".to_string())
+        );
+        assert_eq!(
+            muster_aufloesen(Some("A350-900"), "A320", None),
+            Some("A359".to_string())
+        );
+    }
+
+    /// Wächter gegen die Fehlerklasse: Steht ein Muster in der
+    /// Spurweiten-Tabelle, muss die Auflösung es aus den üblichen
+    /// Sim-Schreibweisen (Langform, Titel) auch herausholen.
+    #[test]
+    fn uebliche_langformen_loesen_sich_auf() {
+        for (sim_text, erwartet) in [
+            ("A380-800", "A388"),
+            ("A350-900", "A359"),
+            ("A350-1000", "A35K"),
+            ("A340-600", "A346"),
+            ("A330-900", "A339"),
+        ] {
+            assert_eq!(
+                muster_aufloesen(Some(sim_text), "", None).as_deref(),
+                Some(erwartet),
+                "{sim_text} muss sich auf {erwartet} aufloesen"
+            );
+        }
     }
 
     #[test]

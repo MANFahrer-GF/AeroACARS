@@ -993,7 +993,12 @@
     "wind": "Wind",
     "visibility": "Sicht",
     "temp_dew": "Temp / Taupunkt",
-    "qnh": "QNH"
+    "qnh": "QNH",
+    "age_now": "gerade eben",
+    "age_minutes": "vor {{min}} Min.",
+    "age_hours": "vor {{std}} Std.",
+    "age_days": "vor {{tage}} Tagen",
+    "age_stale": "veraltet"
   },
   "activity_log": {
     "title": "ACARS-Aktivitätsprotokoll",

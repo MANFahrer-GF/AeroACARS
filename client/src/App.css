@@ -1453,6 +1453,18 @@ button:disabled {
   font-size: var(--fs-500);
   font-weight: var(--fw-bold);
 }
+/* v1.7.30: Alter des METAR — klein und ruhig, direkt vor dem
+   Aufklapp-Pfeil. Es soll beim Hinsehen beantworten „ist das frisch",
+   ohne die Messwerte daneben zu uebertoenen. */
+.wx__alter {
+  font-size: var(--fs-200);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.wx__alter--veraltet {
+  color: var(--warn, #c08a2e);
+  font-weight: var(--fw-medium, 500);
+}
 .wx__cell {
   font-family: var(--font-acars);
   font-size: var(--fs-300);

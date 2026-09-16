@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { wetterAlter } from "../lib/wetterAlter";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
@@ -203,6 +204,16 @@ function WxCard({
 }) {
   const { t } = useTranslation();
   const [showRaw, setShowRaw] = useState(false);
+  // Eigener Takt fuer die Altersangabe: Sie darf nicht daran haengen,
+  // dass die Karte aus einem anderen Grund neu zeichnet (unabhaengige
+  // QS, 16.09.2026 — sonst friert „vor 6 Min." lautlos ein, sobald der
+  // uebergeordnete Poll ausfaellt oder die Karte woanders benutzt wird).
+  // 30 s reichen: die Anzeige ist minutengenau.
+  const [, takt] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => takt((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   if (state.kind === "loading") {
     return (
@@ -240,6 +251,16 @@ function WxCard({
   // Beispiele: 🌦 -SHRA (leichter Regenschauer), ⛈ TSRA (Gewitterregen),
   // 🌫 FG (Nebel), ☁ OVC (bedeckt). Wenn nichts erkannt → kein Element.
   const wx = extractWeatherPhenomena(m.raw);
+  // v1.7.30: Wie alt ist das, was hier steht? Ohne die Angabe sieht ein
+  // zwei Stunden altes METAR genauso aus wie ein frisches.
+  //
+  // `time_is_estimated` heisst: die Station hat keine brauchbare
+  // Beobachtungszeit geliefert, und `time` ist der Zeitpunkt UNSERES
+  // Abrufs (siehe MetarSnapshotDto). Dann waere jede Altersangabe eine
+  // Behauptung ueber die Frische, die die Daten nicht decken — ein zwei
+  // Stunden altes METAR stuende als „gerade eben" da. In dem Fall lieber
+  // nichts anzeigen (Codex-QS P1, 16.09.2026).
+  const alter = m.time_is_estimated ? null : wetterAlter(m.time, new Date());
   return (
     <div className="card">
       <div className="wx__head">
@@ -250,10 +271,22 @@ function WxCard({
             {wx.icon} {wx.label}
           </span>
         )}
+        {alter && (
+          <span
+            className={`wx__alter${alter.veraltet ? " wx__alter--veraltet" : ""}`}
+            style={{ marginLeft: "auto" }}
+          >
+            {t(alter.text.key, alter.text.werte)}
+            {alter.veraltet && <> · {t("weather.age_stale")}</>}
+          </span>
+        )}
         <button
           type="button"
           className="card__action"
-          style={{ marginLeft: "auto" }}
+          // `.card__action` traegt `margin-left:auto` — mit der
+          // Altersanzeige gaebe es zwei Auto-Abstaende, die den Platz
+          // teilen und beide auseinanderziehen (Codex-QS P2).
+          style={alter ? { marginLeft: 0 } : { marginLeft: "auto" }}
           onClick={() => setShowRaw((v) => !v)}
           aria-expanded={showRaw}
           title="METAR"

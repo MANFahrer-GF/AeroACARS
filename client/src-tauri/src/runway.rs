@@ -2162,12 +2162,26 @@ mod tests {
         // versetzt ist (Feld 200 bzw. 100 ft, aber die Geometrie misst
         // die volle Bahn) — die Funktion darf hier nichts erfinden.
         assert_eq!(
-            geometry_implied_displacement_ft(45.474_833_33, -73.297_736_11, 45.480_991_67, -73.305_441_67, 3000.0, 0),
+            geometry_implied_displacement_ft(
+                45.474_833_33,
+                -73.297_736_11,
+                45.480_991_67,
+                -73.305_441_67,
+                3000.0,
+                0
+            ),
             0,
             "CRG3 33: Geometrie zeigt keinen Versatz"
         );
         assert_eq!(
-            geometry_implied_displacement_ft(43.288_875, -81.710_533_33, 43.285_716_67, -81.718_208_33, 2340.0, 0),
+            geometry_implied_displacement_ft(
+                43.288_875,
+                -81.710_533_33,
+                43.285_716_67,
+                -81.718_208_33,
+                2340.0,
+                0
+            ),
             0,
             "CPL4 25: Geometrie zeigt keinen Versatz"
         );
@@ -2224,7 +2238,10 @@ mod tests {
         // ganzen Bahnlaenge vor — das ist kein echter Versatz, sondern
         // ein Datenfehler. Grenze: length_ft/2.
         let ft = geometry_implied_displacement_ft(40.0, -3.0, 40.0, -3.0, 13084.0, 0);
-        assert_eq!(ft, 0, "ein Versatz ueber der halben Bahnlaenge ist unplausibel");
+        assert_eq!(
+            ft, 0,
+            "ein Versatz ueber der halben Bahnlaenge ist unplausibel"
+        );
     }
 
     #[test]

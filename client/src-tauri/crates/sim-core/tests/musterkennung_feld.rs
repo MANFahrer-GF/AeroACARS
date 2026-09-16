@@ -61,7 +61,10 @@ const FELDWERTE: &[(&str, &str, u32)] = &[
     ("GA-8", "GA8", 1),
     ("ATCCOM.AC_MODEL B772.0.text", "B772", 1),
     ("ATCCOM.AC_MODEL C185.0.text", "C185", 1),
-    ("ATCCOM.AC_MODEL A380.0.text", "A380", 1),
+    // v1.7.30: frueher "A380" erwartet — das ist aber KEIN Doc-8643-Code,
+    // und genau daran scheiterten Spurweite/Spannweite (UAE 52, 15.09.2026).
+    // Die Baureihe wird jetzt auf die einzige gebaute Variante aufgeloest.
+    ("ATCCOM.AC_MODEL A380.0.text", "A388", 1),
 ];
 
 #[test]

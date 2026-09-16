@@ -132,9 +132,7 @@ impl BodenhoehenReferenz {
     /// Eine Probe aufnehmen. Der Aufrufer entscheidet, ob das Flugzeug
     /// gerade ruhig am Boden steht oder rollt (siehe `ist_rollprobe`).
     pub fn beobachte(&mut self, agl_ft: f32) {
-        if !agl_ft.is_finite()
-            || agl_ft < BODENHOEHE_UNTERGRENZE_FT
-            || agl_ft >= BODENHOEHE_MAX_FT
+        if !agl_ft.is_finite() || agl_ft < BODENHOEHE_UNTERGRENZE_FT || agl_ft >= BODENHOEHE_MAX_FT
         {
             return;
         }
@@ -161,9 +159,7 @@ impl BodenhoehenReferenz {
         for (i, n) in self.klassen.iter().enumerate() {
             summe = summe.saturating_add(*n);
             if summe >= haelfte {
-                return Some(
-                    BODENHOEHE_UNTERGRENZE_FT + (i as f32 + 0.5) * BODENHOEHE_KLASSE_FT,
-                );
+                return Some(BODENHOEHE_UNTERGRENZE_FT + (i as f32 + 0.5) * BODENHOEHE_KLASSE_FT);
             }
         }
         None
@@ -1962,7 +1958,13 @@ mod tests {
 
     /// MSFS-Sample fuer die Settle-Path-Tests: kein gear_normal_force_n
     /// (MSFS liefert das nicht), sonst frei parametrisierbar.
-    fn msfs_sample(at_ms: i64, agl_ft: f32, on_ground: bool, vs_fpm: f32, g_force: f32) -> TouchdownWindowSample {
+    fn msfs_sample(
+        at_ms: i64,
+        agl_ft: f32,
+        on_ground: bool,
+        vs_fpm: f32,
+        g_force: f32,
+    ) -> TouchdownWindowSample {
         TouchdownWindowSample {
             at: DateTime::<Utc>::from_timestamp_millis(at_ms).unwrap(),
             vs_fpm,
@@ -1983,7 +1985,12 @@ mod tests {
         }
     }
 
-    fn msfs_candidate(edge_at_ms: i64, edge_agl_ft: f32, edge_vs_fpm: f32, edge_g_force: f32) -> TdCandidate {
+    fn msfs_candidate(
+        edge_at_ms: i64,
+        edge_agl_ft: f32,
+        edge_vs_fpm: f32,
+        edge_g_force: f32,
+    ) -> TdCandidate {
         TdCandidate {
             edge_sample_index: 0,
             edge_at: DateTime::<Utc>::from_timestamp_millis(edge_at_ms).unwrap(),
@@ -2022,8 +2029,14 @@ mod tests {
         );
         match result {
             ValidationResult::Validated { result } => {
-                assert!(!result.g_force_pass.unwrap(), "g_force sollte hier knapp durchfallen");
-                assert!(!result.vs_negative_pass, "vs_negative sollte hier knapp durchfallen");
+                assert!(
+                    !result.g_force_pass.unwrap(),
+                    "g_force sollte hier knapp durchfallen"
+                );
+                assert!(
+                    !result.vs_negative_pass,
+                    "vs_negative sollte hier knapp durchfallen"
+                );
                 assert!(result.low_agl_persistence_pass);
                 assert!(result.sustained_ground_pass.unwrap());
             }
@@ -2061,7 +2074,10 @@ mod tests {
         );
         match result {
             ValidationResult::Validated { result } => {
-                assert!(!result.sustained_ground_pass.unwrap(), "sustained sollte hier durchfallen (307ms-Muster)");
+                assert!(
+                    !result.sustained_ground_pass.unwrap(),
+                    "sustained sollte hier durchfallen (307ms-Muster)"
+                );
                 assert!(result.g_force_pass.unwrap());
                 assert!(result.vs_negative_pass);
                 assert!(result.low_agl_persistence_pass);
@@ -2267,7 +2283,10 @@ mod tests {
         // false bleiben (die Grenze wurde nicht aufgeweicht).
         match result {
             ValidationResult::Validated { result } => {
-                assert!(!result.vs_negative_pass, "-10.0 ist die Grenze, nicht darunter");
+                assert!(
+                    !result.vs_negative_pass,
+                    "-10.0 ist die Grenze, nicht darunter"
+                );
             }
             ValidationResult::FalseEdge { reason, .. } => {
                 panic!("Boden-Wahrheit haette das retten muessen, got FalseEdge({reason:?})")
@@ -2524,7 +2543,14 @@ mod tests {
         // Gegenprobe: genau der Live-Befund. Ohne Messung gilt die alte
         // absolute Grenze — Tiefflug und G fallen durch, 2 von 4 Stimmen.
         let (cand, samples) = dlh880_fenster();
-        let r = validate_candidate(&cand, &samples, SimKind::Msfs2024, -50.57, AircraftCategory::FixedWing, None);
+        let r = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -50.57,
+            AircraftCategory::FixedWing,
+            None,
+        );
         match r {
             ValidationResult::FalseEdge { reason, result } => {
                 assert!(matches!(reason, FalseEdgeReason::InsufficientVoteScore));
@@ -2539,15 +2565,28 @@ mod tests {
     fn dlh880_mit_gemessener_bodenhoehe_wird_erkannt() {
         let (cand, samples) = dlh880_fenster();
         let boden = referenz_mit(9.1, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
-        let r = validate_candidate(&cand, &samples, SimKind::Msfs2024, -50.57, AircraftCategory::FixedWing, boden);
+        let r = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -50.57,
+            AircraftCategory::FixedWing,
+            boden,
+        );
         match r {
             ValidationResult::Validated { result } => {
                 assert!(result.low_agl_persistence_pass);
                 assert!(result.sustained_ground_pass.unwrap());
                 assert!(result.vs_negative_pass);
-                assert!(!result.g_force_pass.unwrap(), "G bleibt knapp darunter — erkannt über die Abstimmung");
+                assert!(
+                    !result.g_force_pass.unwrap(),
+                    "G bleibt knapp darunter — erkannt über die Abstimmung"
+                );
                 let grenze = result.low_agl_grenze_ft.unwrap();
-                assert!((grenze - 14.125).abs() < 0.01, "Grenze = Bodenhöhe + 5 ft, war {grenze}");
+                assert!(
+                    (grenze - 14.125).abs() < 0.01,
+                    "Grenze = Bodenhöhe + 5 ft, war {grenze}"
+                );
             }
             ValidationResult::FalseEdge { reason, .. } => {
                 panic!("echte weiche Landung mit hohem Bezugspunkt muss erkannt werden — got {reason:?}")
@@ -2569,8 +2608,18 @@ mod tests {
         }
         let cand = msfs_candidate(edge, 50.0, -5.0, 1.0);
         let boden = referenz_mit(9.0, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
-        let r = validate_candidate(&cand, &samples, SimKind::Msfs2024, -5.0, AircraftCategory::FixedWing, boden);
-        assert!(matches!(r, ValidationResult::FalseEdge { .. }), "Flackern in 50 ft darf nicht als Landung gelten");
+        let r = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -5.0,
+            AircraftCategory::FixedWing,
+            boden,
+        );
+        assert!(
+            matches!(r, ValidationResult::FalseEdge { .. }),
+            "Flackern in 50 ft darf nicht als Landung gelten"
+        );
     }
 
     #[test]
@@ -2579,7 +2628,10 @@ mod tests {
         assert_eq!(r.bodenhoehe_ft(), None, "zu wenige Proben");
         r.beobachte(9.0);
         let b = r.bodenhoehe_ft().unwrap();
-        assert!((b - 9.125).abs() < 0.01, "Median in der Klassenmitte, war {b}");
+        assert!(
+            (b - 9.125).abs() < 0.01,
+            "Median in der Klassenmitte, war {b}"
+        );
 
         // Ausreißer beim Laden (RYR 2: −148 ft) und Unsinn oberhalb der
         // Obergrenze zählen gar nicht; einzelne falsche Werte im gültigen
@@ -2593,16 +2645,26 @@ mod tests {
             r.beobachte(25.0);
         }
         let b2 = r.bodenhoehe_ft().unwrap();
-        assert!((b2 - 9.125).abs() < 0.01, "Median bleibt beim Rollwert, war {b2}");
+        assert!(
+            (b2 - 9.125).abs() < 0.01,
+            "Median bleibt beim Rollwert, war {b2}"
+        );
     }
 
     #[test]
     fn tiefflug_grenze_ist_nie_strenger_als_vorher_und_gedeckelt() {
         assert_eq!(tiefflug_grenze_ft(None), 5.0);
-        assert_eq!(tiefflug_grenze_ft(Some(-3.0)), 5.0, "negative Bodenhöhe macht nicht strenger");
+        assert_eq!(
+            tiefflug_grenze_ft(Some(-3.0)),
+            5.0,
+            "negative Bodenhöhe macht nicht strenger"
+        );
         assert_eq!(tiefflug_grenze_ft(Some(f32::NAN)), 5.0);
         assert_eq!(tiefflug_grenze_ft(Some(9.0)), 14.0);
-        assert_eq!(tiefflug_grenze_ft(Some(500.0)), BODENHOEHE_MAX_FT + TIEFFLUG_SPIELRAUM_FT);
+        assert_eq!(
+            tiefflug_grenze_ft(Some(500.0)),
+            BODENHOEHE_MAX_FT + TIEFFLUG_SPIELRAUM_FT
+        );
     }
 
     #[test]
@@ -2622,9 +2684,15 @@ mod tests {
         for kat in [AircraftCategory::Helicopter, AircraftCategory::Seaplane] {
             match validate_candidate(&cand, &samples, SimKind::Msfs2024, -3.0, kat, boden) {
                 ValidationResult::FalseEdge { result, .. } => {
-                    assert_eq!(result.low_agl_grenze_ft, Some(TIEFFLUG_SPIELRAUM_FT), "{kat:?}");
+                    assert_eq!(
+                        result.low_agl_grenze_ft,
+                        Some(TIEFFLUG_SPIELRAUM_FT),
+                        "{kat:?}"
+                    );
                 }
-                ValidationResult::Validated { .. } => panic!("{kat:?}: Bodenhöhe darf die Präsenzprüfung nicht aufweichen"),
+                ValidationResult::Validated { .. } => {
+                    panic!("{kat:?}: Bodenhöhe darf die Präsenzprüfung nicht aufweichen")
+                }
             }
         }
     }
@@ -2641,9 +2709,15 @@ mod tests {
     #[test]
     fn nur_ruhige_bodenproben_zaehlen_zur_bodenhoehe() {
         assert!(ist_rollprobe(true, 12.0, false, false));
-        assert!(ist_rollprobe(true, 0.0, false, false), "Stehen am Gate zählt");
+        assert!(
+            ist_rollprobe(true, 0.0, false, false),
+            "Stehen am Gate zählt"
+        );
         assert!(!ist_rollprobe(false, 12.0, false, false), "in der Luft nie");
-        assert!(!ist_rollprobe(true, BODENHOEHE_MAX_GS_KT, false, false), "Startlauf/Ausrollen nicht");
+        assert!(
+            !ist_rollprobe(true, BODENHOEHE_MAX_GS_KT, false, false),
+            "Startlauf/Ausrollen nicht"
+        );
         assert!(!ist_rollprobe(true, 5.0, true, false), "Pause nicht");
         assert!(!ist_rollprobe(true, 5.0, false, true), "Versetzen nicht");
         assert!(!ist_rollprobe(true, f32::NAN, false, false));
