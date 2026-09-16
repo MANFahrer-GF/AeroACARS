@@ -61,11 +61,101 @@ use crate::{Band, SubScoreEntry};
 /// Ohne bekanntes Abfluggewicht bleibt es beim reinen Prozentsatz.
 const TOLERANZ_ANTEIL_VOM_TOW: f32 = 0.002;
 
+// ─── v1.7.32: Umweg und Verfahren gehen nicht mehr auf die Note ──────
+//
+// # Der Anlass
+//
+// THY 1068 (LRCK→LTFM, 16.09.2026): Plan 1929 kg, geflogen 2189 kg =
+// +13,5 % → 55 Punkte. Geflogen wurden 277 NM bei 186 NM Luftlinie, also
+// rund 90 NM Mehrweg. Der Mehrverbrauch war die Folge von Vektoren, nicht
+// von schlechter Flugführung.
+//
+// # Was der Bestand sagt (1118 Flüge mit OFP-Daten, Recorder)
+//
+//   172 Flüge (15,4 %) verloren Punkte — davon 76 % mit mindestens 10 %
+//   Mehrweg gegenüber der Luftlinie (Median 17,3 % gegen 11,7 % bei den
+//   Flügen ohne Abzug). Und: 22 von 42 Flügen MIT Durchstartmanöver
+//   verloren Punkte, also die Hälfte gegen 15 % im Schnitt. Wer
+//   durchstartet, tut das Richtige und wurde dafür bestraft.
+//
+// # Die Regel
+//
+// Bewertet wird der Mehrverbrauch NACH Abzug der Arbeit, die der Pilot
+// nicht zu verantworten hat:
+//
+//   1. Eine geplante Route ist immer länger als die Luftlinie (typisch
+//      5-15 %). GRUNDKORRIDOR gilt deshalb als eingeplant; erst der
+//      Mehrweg DARÜBER wird gutgeschrieben. Sonst bekäme der Pilot
+//      Strecke gutgeschrieben, die längst im Plan steckt.
+//   2. Zusatzmeilen zählen nur mit ZUSATZMEILE_ANTEIL des
+//      Schnittverbrauchs: Rollen, Start und Steigflug hängen nicht an
+//      der Strecke (externe QS, Codex 16.09.2026).
+//   3. Durchstarten wird in KILOGRAMM gutgeschrieben, nicht in Prozent —
+//      ein Prozentsatz wäre auf Langstrecke großzügig und auf
+//      Kurzstrecke zu knapp.
+//   4. Warteschleifen brauchen keine eigene Erkennung: Sie erzeugen
+//      Strecke und laufen damit in Punkt 1 ein. Eine echte,
+//      zeitbasierte Erkennung bleibt der nächste Ausbau.
+//   5. Oberhalb von UMWEG_DECKEL lässt sich ein ATC-Vektor nicht mehr
+//      von einem selbst gewählten Umweg unterscheiden → die Achse sagt
+//      „nicht bewertbar" statt eine Note zu erfinden. Dasselbe bei
+//      Rundflügen und sehr kurzen Strecken (Luftlinie ≈ 0 ergibt
+//      absurde Verhältnisse — im Bestand ein Flug mit 11696 %).
+//
+// Die Bänder sind mitgewandert (3/8/15/25 statt 5/10/20/35): Wer die
+// Bezugsgröße entschärft und die Grenzen lässt, entkernt die Achse —
+// gemessen am Bestand bleiben so 12,3 % Abzüge statt 15,4 %, aber sie
+// treffen die Richtigen.
+
+/// Anteil, um den eine geplante Route typisch länger ist als die
+/// Luftlinie. Wird NICHT gutgeschrieben.
+const GRUNDKORRIDOR: f32 = 0.10;
+/// Anteil des Schnittverbrauchs, mit dem eine Zusatzmeile zählt.
+const ZUSATZMEILE_ANTEIL: f32 = 0.80;
+/// Gutschrift je Durchstartmanöver, in kg je Tonne Abfluggewicht
+/// (A320 ≈ 220 kg, Großraumjet ≈ 750 kg).
+const DURCHSTART_KG_JE_TONNE: f32 = 3.0;
+/// Ab hier ist der Mehrweg nicht mehr zurechenbar → nicht bewertbar.
+const UMWEG_DECKEL: f32 = 0.50;
+/// Unter dieser Planstrecke gibt es keinen brauchbaren Bezug
+/// (Rundflug, Platzrunde).
+const MIN_PLAN_STRECKE_NM: f32 = 25.0;
+
+/// Was der Flug an Zusatzarbeit hatte, die der Pilot nicht zu
+/// verantworten hat — zusammen mit dem, was davon gutgeschrieben wird.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ZusatzArbeit {
+    /// Tatsächlich geflogene Strecke.
+    pub geflogene_strecke_nm: Option<f32>,
+    /// Geplante Streckenlaenge aus dem Flugplan (phpVMS).
+    pub plan_strecke_nm: Option<f32>,
+    /// Zahl der Durchstartmanöver.
+    pub durchstarts: u32,
+}
+
 pub fn sub_fuel_v0_7_1(
     planned_burn_kg: Option<f32>,
     actual_trip_burn_kg: Option<f32>,
     planned_tow_kg: Option<f32>,
     diverted: Option<bool>,
+) -> SubScoreEntry {
+    sub_fuel_v1_7_32(
+        planned_burn_kg,
+        actual_trip_burn_kg,
+        planned_tow_kg,
+        diverted,
+        ZusatzArbeit::default(),
+    )
+}
+
+/// OFP-Treue mit Gutschrift für Mehrweg und Durchstartmanöver — siehe
+/// den Block über [`GRUNDKORRIDOR`] für Anlass, Zahlen und Regel.
+pub fn sub_fuel_v1_7_32(
+    planned_burn_kg: Option<f32>,
+    actual_trip_burn_kg: Option<f32>,
+    planned_tow_kg: Option<f32>,
+    diverted: Option<bool>,
+    zusatz: ZusatzArbeit,
 ) -> SubScoreEntry {
     // ⚠ Nach einem Ausweichflug ist die OFP-Treue nicht bewertbar.
     //
@@ -90,11 +180,104 @@ pub fn sub_fuel_v0_7_1(
         return SubScoreEntry::skipped("fuel", "landing.sub.fuel", "no_actual_burn");
     };
 
-    let efficiency = ((actual - planned) / planned) * 100.0;
-    let value = if efficiency > 0.0 {
+    // ── Zusatzarbeit, die nicht auf die Note geht ────────────────────
+    let roh = ((actual - planned) / planned) * 100.0;
+    let mut erklaerung: Vec<String> = Vec::new();
+    let mut gutschrift_kg = 0.0_f32;
+    // Ohne Plandistanz gibt es keine Mehrweg-Gutschrift — dann gelten die
+    // ALTEN, milderen Bänder. Sonst träfen die gestrafften Grenzen genau
+    // die Flüge, denen der Ausgleich fehlt: Ein Neustart mitten im Flug
+    // oder ein Altbestand-Resume würde bestraft (externe QS, Codex
+    // 16.09.2026).
+    let mit_streckenbezug = zusatz
+        .plan_strecke_nm
+        .is_some_and(|v| v >= MIN_PLAN_STRECKE_NM)
+        && zusatz.geflogene_strecke_nm.is_some_and(|v| v > 0.0);
+
+    if let (Some(geflogen), Some(plan_strecke)) = (
+        zusatz.geflogene_strecke_nm.filter(|v| *v > 0.0),
+        zusatz.plan_strecke_nm.filter(|v| *v > 0.0),
+    ) {
+        if plan_strecke < MIN_PLAN_STRECKE_NM {
+            // Rundflug/Platzrunde: ohne brauchbare Plandistanz kein Bezug.
+            return SubScoreEntry::skipped("fuel", "landing.sub.fuel", "kein_streckenbezug");
+        }
+        // ⚠ Der Deckel gilt gegen die PLANSTRECKE selbst. Gegen die schon
+        // um den Grundkorridor vergroesserte Strecke gerechnet spraeche die
+        // Anzeige von „mehr als 50 %", waehrend erst bei 65 % ueber Plan
+        // uebersprungen wuerde (externe QS, Codex 16.09.2026).
+        let umweg = geflogen / plan_strecke - 1.0;
+        if umweg > UMWEG_DECKEL {
+            return SubScoreEntry::skipped("fuel", "landing.sub.fuel", "umweg_zu_gross");
+        }
+        // Der Grundkorridor gilt NUR fuer die Gutschrift: bis dahin steckt
+        // der Mehrweg im Plan.
+        let eingeplant_nm = plan_strecke * (1.0 + GRUNDKORRIDOR);
+        let zusatz_nm = (geflogen - eingeplant_nm).max(0.0);
+        if zusatz_nm > 0.0 {
+            // ⚠ Schnittverbrauch gegen die PLANSTRECKE. Mit der
+            // vergroesserten Strecke im Nenner waeren es effektiv nur
+            // 0,8/1,1 = 0,73 statt der gewollten 0,8 (externe QS, Codex).
+            let kg = zusatz_nm * (planned / plan_strecke) * ZUSATZMEILE_ANTEIL;
+            gutschrift_kg += kg;
+            erklaerung.push(format!("{zusatz_nm:.0} NM Mehrweg (−{kg:.0} kg)"));
+        }
+    }
+    // ⚠ Ohne bekanntes Abfluggewicht gibt es KEINE Durchstart-Gutschrift.
+    // Ein pauschaler Ersatzwert (frueher 70 t = 210 kg je Durchstart) ist
+    // fuer einen Manual-/VFR-Flug ohne OFP absurd — bei 60 kg Planverbrauch
+    // haette er den ganzen Verbrauch ueberkompensiert (externe QS, Codex
+    // 16.09.2026). Lieber keine Gutschrift als eine erfundene.
+    if zusatz.durchstarts > 0 {
+        if let Some(tonnen) = planned_tow_kg.filter(|t| *t > 0.0).map(|t| t / 1000.0) {
+            let kg = zusatz.durchstarts as f32 * DURCHSTART_KG_JE_TONNE * tonnen;
+            gutschrift_kg += kg;
+            erklaerung.push(format!("{}× Durchstarten (−{kg:.0} kg)", zusatz.durchstarts));
+        }
+    }
+
+    // ⚠ Die Gutschrift kann den Mehrverbrauch nur AUSGLEICHEN, nie
+    // unterbieten. Ohne Deckel wurde aus einem normalen Flug fälschlich
+    // „sehr sparsam" samt Hinweis „der Plan könnte falsch sein" — bei
+    // THY 1068 standen 597 kg Gutschrift gegen 260 kg Mehrverbrauch
+    // (externe QS, Codex 16.09.2026). Sparen soll der Pilot selbst; die
+    // Gutschrift nimmt ihm nur die fremde Zusatzarbeit ab.
+    let mehrverbrauch = (actual - planned).max(0.0);
+    let angerechnet_kg = gutschrift_kg.min(mehrverbrauch);
+    // Die Erklärung sagt, was WIRKLICH angerechnet wurde — nicht, was
+    // rechnerisch möglich gewesen wäre. Wer ohnehin unter Plan lag,
+    // braucht keine Gutschrift und soll auch keine angezeigt bekommen.
+    if angerechnet_kg <= 0.0 {
+        erklaerung.clear();
+    } else if angerechnet_kg < gutschrift_kg {
+        // JEDE Teilanrechnung wird benannt — ohne Schwelle. `angerechnet`
+        // ist das Minimum aus Gutschrift und Mehrverbrauch, bei voller
+        // Anrechnung ist die Differenz exakt 0; eine Toleranz braucht es
+        // hier also nicht, und sie hat nur Faelle verschluckt (externe
+        // QS, Codex 16.09.2026).
+        erklaerung.push(format!("auf {angerechnet_kg:.0} kg Mehrverbrauch begrenzt"));
+    }
+    let actual = actual - angerechnet_kg;
+    // ⚠ Gerundet wird EINMAL, vor der Bandentscheidung — sonst stehen
+    // +2,96 % und +3,04 % beide als „+3.0%" da und bekommen 100 bzw. 80
+    // Punkte (externe QS, Codex 16.09.2026).
+    let efficiency = (((actual - planned) / planned) * 1000.0).round() / 10.0;
+    let kern = if efficiency > 0.0 {
         format!("+{:.1}%", efficiency)
     } else {
         format!("{:.1}%", efficiency)
+    };
+    // Die Anzeige erklärt sich selbst: roher Wert, was gutgeschrieben
+    // wurde und wofür, und was am Ende bewertet wird.
+    let value = if erklaerung.is_empty() {
+        kern
+    } else {
+        format!(
+            "{kern} bewertet · roh {}{:.1}% · {}",
+            if roh > 0.0 { "+" } else { "" },
+            roh,
+            erklaerung.join(" · ")
+        )
     };
 
     // ⚠ Der Toleranzboden gilt VOR den Prozentbaendern.
@@ -125,7 +308,7 @@ pub fn sub_fuel_v0_7_1(
         //
         // Wind weicht vom Prognosewert ab, ATC vektort, Steigprofile
         // unterscheiden sich. Nichts davon ist dem Piloten anzulasten.
-        if efficiency < 5.0 {
+        if efficiency < if mit_streckenbezug { 3.0 } else { 5.0 } {
             SubScoreEntry::scored(
                 "fuel",
                 "landing.sub.fuel",
@@ -134,7 +317,7 @@ pub fn sub_fuel_v0_7_1(
                 "on_plan",
                 Band::Good,
             )
-        } else if efficiency < 10.0 {
+        } else if efficiency < if mit_streckenbezug { 8.0 } else { 10.0 } {
             SubScoreEntry::scored(
                 "fuel",
                 "landing.sub.fuel",
@@ -143,9 +326,9 @@ pub fn sub_fuel_v0_7_1(
                 "near_plan",
                 Band::Good,
             )
-        } else if efficiency < 20.0 {
+        } else if efficiency < if mit_streckenbezug { 15.0 } else { 20.0 } {
             SubScoreEntry::scored("fuel", "landing.sub.fuel", 55, value, "off_plan", Band::Ok)
-        } else if efficiency < 35.0 {
+        } else if efficiency < if mit_streckenbezug { 25.0 } else { 35.0 } {
             SubScoreEntry::scored(
                 "fuel",
                 "landing.sub.fuel",
@@ -370,8 +553,17 @@ mod tests {
     /// anfasst.
     #[test]
     fn v1_6_7_underburn_band_edges() {
-        // knapp unter der alten 5-%-Grenze — war schon immer 100
-        let s = sub_fuel_v0_7_1(Some(1000.0), Some(950.5), None, None); // -4,95 %
+        // ⚠ v1.7.32: gerundet wird EINMAL, vor der Bandentscheidung —
+        // sonst zeigt die Karte „-5.0%" und bewertet -4,95 %. Dieser Fall
+        // liegt jetzt also im Sparen-Band; die Punktzahl ist dieselbe,
+        // nur die Begruendung heisst ehrlicherweise „effizient".
+        let s = sub_fuel_v0_7_1(Some(1000.0), Some(950.5), None, None); // -4,95 % → -5,0 %
+        assert_eq!(
+            (s.score, s.rationale_key.as_deref(), s.value.as_deref()),
+            (100, Some("landing.rat.efficient"), Some("-5.0%"))
+        );
+        // eine Zehntelstelle darunter bleibt „auf Plan"
+        let s = sub_fuel_v0_7_1(Some(1000.0), Some(951.0), None, None); // -4,9 %
         assert_eq!(
             (s.score, s.rationale_key.as_deref()),
             (100, Some("landing.rat.on_plan"))
@@ -383,7 +575,9 @@ mod tests {
             (100, Some("landing.rat.efficient"))
         );
         // kurz vor der Warnschwelle — weiterhin volle Punktzahl
-        let s = sub_fuel_v0_7_1(Some(1000.0), Some(850.5), None, None); // -14,95 %
+        // (v1.7.32: -14,9 % statt -14,95 %, weil einmal gerundet wird —
+        // -14,95 % zeigt die Karte als „-15.0%" und meint dann auch das.)
+        let s = sub_fuel_v0_7_1(Some(1000.0), Some(851.0), None, None); // -14,9 %
         assert_eq!(
             (s.score, s.rationale_key.as_deref()),
             (100, Some("landing.rat.efficient"))
@@ -403,7 +597,7 @@ mod tests {
 
     /// Mehrverbrauch bleibt unangetastet — die Aenderung ist einseitig.
     #[test]
-    fn ofp_treue_baender_v1_7_12() {
+    fn ofp_treue_baender_v1_7_32() {
         // ⚠ Die Baender wurden am 30.08.2026 geweitet. Anlass: Gemessen
         // ueber 412 Fluege lagen **45 % aller Grossraum-Landungen** und
         // 21 % der schmaleren ueber der alten +2-%-Grenze und verloren
@@ -415,13 +609,44 @@ mod tests {
         // der Toleranzboden hat eigene Tests.
         let f =
             |geplant: f32, echt: f32| sub_fuel_v0_7_1(Some(geplant), Some(echt), None, None).score;
-        assert_eq!(f(1000.0, 1019.0), 100); // +1,9 %
-        assert_eq!(f(1000.0, 1049.0), 100); // +4,9 % — vorher 80
-        assert_eq!(f(1000.0, 1053.0), 80); // +5,3 % — vorher 55
-        assert_eq!(f(1000.0, 1070.0), 80); // +7,0 %
-        assert_eq!(f(1000.0, 1150.0), 55); // +15,0 % — vorher 25
+        //
+        // ⚠ v1.7.32: Baender wieder gestrafft auf 3/8/15/25. Das gehoert
+        // zur Gutschrift fuer Mehrweg und Durchstarten: Wer die
+        // Bezugsgroesse entschaerft und die Grenzen laesst, entkernt die
+        // Achse (Codex, 16.09.2026: „2,5 % Abzuege und Ø 99,0 Punkte sind
+        // kaum noch eine Bewertung"). Am Bestand gemessen bleiben mit
+        // Gutschrift + neuen Baendern 12,3 % Abzuege statt 15,4 % — sie
+        // treffen aber die Richtigen. Die Werte hier sind OHNE Gutschrift
+        // (keine Streckenangabe), pruefen also die reinen Baender.
+        // OHNE Streckenangabe gelten weiter die alten, milderen Baender
+        // (5/10/20/35). Externe QS (Codex, 16.09.2026): Die gestrafften
+        // Grenzen sind das Gegengewicht zur Gutschrift — wer sie ohne
+        // Gutschrift bekommt (alte Resume-Datei, fehlende Plandistanz),
+        // wuerde doppelt bestraft.
+        assert_eq!(f(1000.0, 1049.0), 100); // +4,9 %
+        assert_eq!(f(1000.0, 1053.0), 80); // +5,3 %
+        assert_eq!(f(1000.0, 1150.0), 55); // +15,0 %
         assert_eq!(f(1000.0, 1250.0), 25); // +25,0 %
         assert_eq!(f(1000.0, 1400.0), 5); // +40,0 %
+
+        // MIT Streckenangabe (und damit moeglicher Gutschrift) gelten die
+        // gestrafften Baender 3/8/15/25. Hier ohne Mehrweg, damit nur die
+        // Grenzen geprueft werden.
+        let g = |geplant: f32, echt: f32| {
+            sub_fuel_v1_7_32(
+                Some(geplant),
+                Some(echt),
+                None,
+                None,
+                mit(500.0, 500.0, 0),
+            )
+            .score
+        };
+        assert_eq!(g(1000.0, 1029.0), 100); // +2,9 %
+        assert_eq!(g(1000.0, 1049.0), 80); // +4,9 %
+        assert_eq!(g(1000.0, 1120.0), 55); // +12,0 %
+        assert_eq!(g(1000.0, 1200.0), 25); // +20,0 %
+        assert_eq!(g(1000.0, 1400.0), 5); // +40,0 %
     }
 
     #[test]
@@ -450,7 +675,8 @@ mod tests {
             100,
             "400 kg auf einem 208-t-Flugzeug sind kein Mehrverbrauch"
         );
-        // Ohne bekanntes Abfluggewicht bleibt es beim Prozentsatz.
+        // Ohne bekanntes Abfluggewicht bleibt es beim Prozentsatz —
+        // und ohne Streckenangabe bei den alten Baendern: +8,4 % → 80.
         assert_eq!(
             sub_fuel_v0_7_1(Some(4780.0), Some(5180.0), None, None).score,
             80
@@ -494,5 +720,229 @@ mod tests {
         let s = sub_fuel_v0_7_1(Some(5000.0), Some(5000.0), None, None);
         assert_eq!(s.score, 100);
         assert_eq!(s.rationale_key.as_deref(), Some("landing.rat.on_plan"));
+    }
+
+    // ─── v1.7.32: Mehrweg und Durchstarten gehen nicht auf die Note ───
+
+    fn mit(geflogen: f32, luftlinie: f32, durchstarts: u32) -> ZusatzArbeit {
+        ZusatzArbeit {
+            geflogene_strecke_nm: Some(geflogen),
+            plan_strecke_nm: Some(luftlinie),
+            durchstarts,
+        }
+    }
+
+    /// Der Anlassfall: THY 1068 (LRCK→LTFM, 16.09.2026). Plan 1929 kg,
+    /// geflogen 2189 kg = +13,5 % → vorher 55 Punkte. Geflogen wurden
+    /// 277 NM bei 186,5 NM Plandistanz.
+    #[test]
+    fn thy1068_vektoren_kosten_keine_punkte_mehr() {
+        let e = sub_fuel_v1_7_32(
+            Some(1929.0),
+            Some(2189.1),
+            Some(59122.0),
+            None,
+            mit(277.3, 186.5, 0),
+        );
+        assert_eq!(e.score, 100, "90 NM Mehrweg sind nicht dem Piloten anzulasten");
+        let text = e.value.clone().unwrap();
+        // Die Anzeige erklärt sich selbst — Wert, Rohwert, Grund.
+        assert!(text.contains("roh +13.5%"), "{text}");
+        assert!(text.contains("NM Mehrweg"), "{text}");
+    }
+
+    /// Ohne Mehrweg bleibt derselbe Mehrverbrauch ein Abzug — sonst
+    /// misst die Achse nichts mehr.
+    #[test]
+    fn mehrverbrauch_ohne_grund_kostet_weiter_punkte() {
+        let e = sub_fuel_v1_7_32(
+            Some(1929.0),
+            Some(2189.1),
+            Some(59122.0),
+            None,
+            mit(190.0, 186.5, 0),
+        );
+        assert_eq!(e.score, 55, "+13,5 % ohne Umweg bleiben ein Abzug");
+    }
+
+    /// Der Grundkorridor: die geplante Route ist immer länger als die
+    /// Luftlinie. Bis 10 % gibt es KEINE Gutschrift.
+    #[test]
+    fn grundkorridor_wird_nicht_gutgeschrieben() {
+        let knapp = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(1120.0),
+            None,
+            None,
+            mit(109.0, 100.0, 0),
+        );
+        assert_eq!(knapp.score, 55, "9 % Mehrweg gelten als eingeplant");
+        let drueber = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(1120.0),
+            None,
+            None,
+            mit(135.0, 100.0, 0),
+        );
+        assert_eq!(drueber.score, 100, "25 % Mehrweg werden gutgeschrieben");
+    }
+
+    /// Durchstarten ist gutes Handwerk und darf nichts kosten. Die
+    /// Gutschrift wächst mit dem Flugzeug, nicht mit dem Planverbrauch.
+    #[test]
+    fn durchstarten_wird_in_kilogramm_gutgeschrieben() {
+        let a320 = sub_fuel_v1_7_32(
+            Some(3000.0),
+            Some(3240.0),
+            Some(73_000.0),
+            None,
+            mit(500.0, 500.0, 1),
+        );
+        assert_eq!(a320.score, 100, "+8 % auf einem A320 = ein Durchstarten");
+        assert!(a320.value.clone().unwrap().contains("Durchstarten"));
+        // Zwei Durchstarter auf einem Großraumjet: entsprechend mehr.
+        let heavy = sub_fuel_v1_7_32(
+            Some(20_000.0),
+            Some(21_500.0),
+            Some(250_000.0),
+            None,
+            mit(2000.0, 2000.0, 2),
+        );
+        assert_eq!(heavy.score, 100);
+    }
+
+    /// Ab 50 % Mehrweg lässt sich ein ATC-Vektor nicht mehr von einem
+    /// selbst gewählten Umweg unterscheiden → keine erfundene Note.
+    #[test]
+    fn extremer_umweg_ist_nicht_bewertbar() {
+        let e = sub_fuel_v1_7_32(Some(1000.0), Some(1500.0), None, None, mit(200.0, 100.0, 0));
+        assert_eq!(e.band, "skipped");
+        assert_eq!(e.reason.as_deref(), Some("umweg_zu_gross"));
+    }
+
+    /// Rundflug/Platzrunde: die Luftlinie taugt nicht als Bezug (im
+    /// Bestand ein Flug mit rechnerisch 11696 % Mehrweg).
+    #[test]
+    fn rundflug_hat_keinen_streckenbezug() {
+        let e = sub_fuel_v1_7_32(Some(200.0), Some(260.0), None, None, mit(80.0, 2.0, 0));
+        assert_eq!(e.band, "skipped");
+        assert_eq!(e.reason.as_deref(), Some("kein_streckenbezug"));
+    }
+
+    /// Ohne Streckenangabe (Alt-Client, Adopt/Resume) rechnet die Achse
+    /// wie zuvor — nur eben mit den gestrafften Bändern.
+    #[test]
+    fn ohne_streckenangabe_keine_gutschrift() {
+        let e = sub_fuel_v1_7_32(Some(1000.0), Some(1120.0), None, None, ZusatzArbeit::default());
+        assert_eq!(e.score, 55);
+        assert_eq!(e.value.as_deref(), Some("+12.0%"));
+    }
+
+    /// Die Gutschrift gleicht nur aus, sie macht niemanden sparsam.
+    /// Externe QS (Codex, 16.09.2026): Bei THY 1068 standen 597 kg
+    /// Gutschrift gegen 260 kg Mehrverbrauch — daraus wurde „sehr
+    /// sparsam" samt Hinweis „der Plan könnte falsch sein".
+    #[test]
+    fn gutschrift_macht_niemanden_sparsam() {
+        let e = sub_fuel_v1_7_32(
+            Some(1929.0),
+            Some(2189.1),
+            Some(59122.0),
+            None,
+            mit(277.3, 186.5, 0),
+        );
+        assert_eq!(e.score, 100);
+        assert_eq!(e.rationale_key.as_deref(), Some("landing.rat.on_plan"));
+        assert!(e.warning.is_none(), "kein falscher Plan-Zweifel");
+        assert_eq!(e.value.as_deref().map(|v| v.starts_with("0.0%")), Some(true));
+    }
+
+    /// Wer WIRKLICH sparsam war, bleibt sparsam — der Deckel greift nur
+    /// gegen die Gutschrift, nicht gegen den Piloten.
+    #[test]
+    fn echtes_sparen_bleibt_sichtbar() {
+        let e = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(880.0),
+            None,
+            None,
+            mit(150.0, 100.0, 0),
+        );
+        assert_eq!(e.score, 100);
+        assert_eq!(e.rationale_key.as_deref(), Some("landing.rat.efficient"));
+        assert_eq!(e.value.as_deref(), Some("-12.0%"));
+    }
+
+    /// Der Hinweis auf die Begrenzung — genau der Mechanismus, der zuletzt
+    /// nachgebessert wurde (unabhaengige QS, 16.09.2026: bis dahin
+    /// unassertiert).
+    #[test]
+    fn begrenzte_gutschrift_sagt_es_auch() {
+        // 40 NM Mehrweg = 320 kg moegliche Gutschrift, aber nur 100 kg
+        // Mehrverbrauch → angerechnet werden 100, und das steht da.
+        let e = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(1100.0),
+            None,
+            None,
+            mit(150.0, 100.0, 0),
+        );
+        let text = e.value.clone().unwrap();
+        assert!(text.contains("auf 100 kg Mehrverbrauch begrenzt"), "{text}");
+
+        // Volle Anrechnung: kein Begrenzungshinweis.
+        let voll = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(1400.0),
+            None,
+            None,
+            mit(150.0, 100.0, 0),
+        );
+        let text = voll.value.clone().unwrap();
+        assert!(text.contains("NM Mehrweg"), "{text}");
+        assert!(!text.contains("begrenzt"), "{text}");
+    }
+
+    /// Die beiden Grenzwerte selbst — nicht nur deutlich darueber oder
+    /// darunter (unabhaengige QS, 16.09.2026).
+    #[test]
+    fn grenzwerte_genau_getroffen() {
+        // Genau 25 NM Plandistanz: noch bewertbar.
+        let auf_der_grenze = sub_fuel_v1_7_32(
+            Some(100.0),
+            Some(105.0),
+            None,
+            None,
+            mit(25.0, MIN_PLAN_STRECKE_NM, 0),
+        );
+        assert_ne!(auf_der_grenze.band, "skipped");
+        // Eine Zehntelmeile darunter: kein Streckenbezug.
+        let darunter = sub_fuel_v1_7_32(
+            Some(100.0),
+            Some(105.0),
+            None,
+            None,
+            mit(25.0, MIN_PLAN_STRECKE_NM - 0.1, 0),
+        );
+        assert_eq!(darunter.reason.as_deref(), Some("kein_streckenbezug"));
+
+        // Genau 50 % Mehrweg: noch bewertbar (der Deckel greift erst
+        // DARUEBER).
+        let genau_deckel = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(1200.0),
+            None,
+            None,
+            mit(100.0 * (1.0 + UMWEG_DECKEL), 100.0, 0),
+        );
+        assert_ne!(genau_deckel.band, "skipped");
+        let drueber = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(1200.0),
+            None,
+            None,
+            mit(100.0 * (1.0 + UMWEG_DECKEL) + 0.5, 100.0, 0),
+        );
+        assert_eq!(drueber.reason.as_deref(), Some("umweg_zu_gross"));
     }
 }

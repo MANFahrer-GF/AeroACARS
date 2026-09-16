@@ -364,7 +364,9 @@
       "implausible_lateral_track": "Lo scostamento misurato non può essere corretto — probabilmente un errore di misura, quindi nessuna valutazione laterale.",
       "unpaved_runway": "Pista non pavimentata — la valutazione laterale richiede una superficie pavimentata con bordo definito.",
       "water_runway": "Ammaraggio — qui non esiste una larghezza pista, la valutazione laterale non si applica.",
-      "surface_unknown": "Superficie pista sconosciuta — senza di essa non si può stabilire se esiste un bordo pavimentato."
+      "surface_unknown": "Superficie pista sconosciuta — senza di essa non si può stabilire se esiste un bordo pavimentato.",
+      "umweg_zu_gross": "Oltre il 50 % di deviazione rispetto alla rotta pianificata — un vettoramento ATC non è più distinguibile da una deviazione scelta dal pilota, quindi nessun punteggio (nessuna penalità).",
+      "kein_streckenbezug": "Volo turistico o tratta molto breve — senza una distanza pianificata utilizzabile non c'è confronto (nessuna penalità)."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",

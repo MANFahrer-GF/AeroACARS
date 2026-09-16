@@ -364,7 +364,9 @@
       "implausible_lateral_track": "Der gemessene Versatz kann nicht stimmen — vermutlich ein Messfehler, deshalb keine seitliche Bewertung.",
       "unpaved_runway": "Unbefestigte Bahn — die seitliche Bewertung setzt eine befestigte Fläche mit definiertem Rand voraus.",
       "water_runway": "Wasserlandung — eine Bahnbreite gibt es hier nicht, die seitliche Bewertung entfällt.",
-      "surface_unknown": "Bahnbelag unbekannt — ohne ihn lässt sich nicht sagen, ob es einen befestigten Rand gibt."
+      "surface_unknown": "Bahnbelag unbekannt — ohne ihn lässt sich nicht sagen, ob es einen befestigten Rand gibt.",
+      "umweg_zu_gross": "Mehr als 50 % Umweg gegenüber der geplanten Strecke — ein ATC-Vektor lässt sich hier nicht mehr von einem selbst gewählten Umweg unterscheiden, deshalb keine Note (kein Abzug).",
+      "kein_streckenbezug": "Rundflug oder sehr kurze Strecke — ohne brauchbare Plandistanz gibt es keinen Vergleich (kein Abzug)."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",

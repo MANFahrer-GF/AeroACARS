@@ -364,7 +364,9 @@
       "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment.",
       "unpaved_runway": "Unpaved runway — the lateral assessment requires a paved surface with a defined edge.",
       "water_runway": "Water landing — there is no runway width here, so the lateral assessment does not apply.",
-      "surface_unknown": "Runway surface unknown — without it there is no way to tell whether a paved edge exists."
+      "surface_unknown": "Runway surface unknown — without it there is no way to tell whether a paved edge exists.",
+      "umweg_zu_gross": "More than 50 % detour versus the planned route — an ATC vector can no longer be told apart from a self-chosen detour, so no score (no penalty).",
+      "kein_streckenbezug": "Scenic flight or very short leg — without a usable planned distance there is nothing to compare (no penalty)."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",

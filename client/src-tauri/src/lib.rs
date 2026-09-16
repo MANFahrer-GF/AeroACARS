@@ -2017,6 +2017,12 @@ struct ActiveFlight {
     /// persistiert) oder wenn phpVMS keine pflegt — dann zeigt die
     /// ETE-Zelle wie bisher ab dem ersten plausiblen Wert.
     planned_flight_time_min: Option<i32>,
+    /// v1.7.32: geplante Streckenlaenge aus phpVMS (`bid.flight.distance`,
+    /// NM). Grundlage der Mehrweg-Gutschrift auf der OFP-Achse — siehe
+    /// `landing_scoring::sub_fuel`s Regelblock. `None` bei Adopt/Resume
+    /// (kein Bid-Kontext) oder wenn phpVMS keine pflegt; dann gibt es
+    /// keine Gutschrift und die Achse rechnet wie zuvor.
+    plan_strecke_nm: Option<f64>,
     /// Final loads (per fare-class id) captured at flight start so we can
     /// include them in the filed PIREP — even if the bid is gone by then.
     fares: Vec<(i64, i32)>,
@@ -3340,6 +3346,13 @@ struct PersistedFlight {
     /// deserialisierbar bleiben — Default ist `String::new()`.
     #[serde(default)]
     flight_id: String,
+    /// v1.7.32: geplante Streckenlaenge (NM) — Grundlage der
+    /// Mehrweg-Gutschrift auf der OFP-Achse. Ohne Persistenz haette ein
+    /// Neustart mitten im Flug die Gutschrift verloren und dem Piloten
+    /// die strengeren Baender ohne Ausgleich gelassen (externe QS, Codex
+    /// 16.09.2026). `serde(default)` → None bei aelteren Resume-Dateien.
+    #[serde(default)]
+    plan_strecke_nm: Option<f64>,
     /// v0.7.8 v1.5: Bid.flight.callsign Persistenz fuer Resume.
     /// serde(default) → None bei pre-v0.7.8-Resume-Files.
     #[serde(default)]
@@ -13545,6 +13558,7 @@ fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
             pirep_id: flight.pirep_id.clone(),
             bid_id: flight.bid_id,
             flight_id: flight.flight_id.clone(),
+            plan_strecke_nm: flight.plan_strecke_nm,
             bid_callsign: flight.bid_callsign.clone(),
             pilot_callsign: flight.pilot_callsign.clone(),
             started_at: flight.started_at,
@@ -14829,9 +14843,19 @@ async fn flight_adopt(
     let arr_airport = pirep.arr_airport_id.clone().unwrap_or_default();
 
     let bids = client.get_bids().await.unwrap_or_default();
+    // Externe QS (Codex, 16.09.2026): Die Flugnummer allein kann
+    // mehrdeutig sein (Hin- und Rueckflug, mehrere Bids). Start und Ziel
+    // stehen hier zur Verfuegung — also mitpruefen, sonst kann die
+    // Plandistanz vom falschen Flug stammen.
+    let passt_genau = |b: &&api_client::Bid| {
+        b.flight.flight_number == flight_number
+            && b.flight.dpt_airport_id.eq_ignore_ascii_case(&dpt_airport)
+            && b.flight.arr_airport_id.eq_ignore_ascii_case(&arr_airport)
+    };
     let matching_bid = bids
         .iter()
-        .find(|b| b.flight.flight_number == flight_number);
+        .find(passt_genau)
+        .or_else(|| bids.iter().find(|b| b.flight.flight_number == flight_number));
     let bid_id = matching_bid.map(|b| b.id).unwrap_or(0);
     let fares: Vec<(i64, i32)> = matching_bid
         .and_then(|b| b.flight.simbrief.as_ref())
@@ -14931,6 +14955,9 @@ async fn flight_adopt(
         dpt_airport,
         arr_airport,
         planned_flight_time_min: None, // Adopt: kein Bid-Kontext
+        // v1.7.32: Beim Adopt gibt es oft doch einen passenden Bid —
+        // dann kommt die Plandistanz von dort (externe QS, Codex).
+        plan_strecke_nm: matching_bid.and_then(|b| b.flight.distance.as_ref()?.nm()),
         fares,
         stats: Mutex::new(FlightStats::new()),
         stop: AtomicBool::new(false),
@@ -15282,7 +15309,7 @@ async fn flight_start(
         route_code: bid.flight.route_code.clone(),
         route_leg: bid.flight.route_leg.clone(),
         level: bid.flight.level.filter(|&l| l > 0),
-        planned_distance: bid.flight.distance.as_ref().and_then(|d| d.nmi),
+        planned_distance: bid.flight.distance.as_ref().and_then(|d| d.nm()),
         planned_flight_time: bid.flight.flight_time,
         route: bid.flight.route.clone().filter(|s| !s.is_empty()),
         source_name: format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")),
@@ -15706,6 +15733,7 @@ async fn flight_start(
         dpt_airport: bid.flight.dpt_airport_id.clone(),
         arr_airport: bid.flight.arr_airport_id.clone(),
         planned_flight_time_min: bid.flight.flight_time,
+        plan_strecke_nm: bid.flight.distance.as_ref().and_then(|d| d.nm()),
         fares,
         stats: Mutex::new(FlightStats::new()),
         stop: AtomicBool::new(false),
@@ -16362,7 +16390,7 @@ async fn flight_start_manual(
         route_code: bid.flight.route_code.clone(),
         route_leg: bid.flight.route_leg.clone(),
         level: plan.cruise_level_ft.filter(|&l| l > 0),
-        planned_distance: bid.flight.distance.as_ref().and_then(|d| d.nmi),
+        planned_distance: bid.flight.distance.as_ref().and_then(|d| d.nm()),
         planned_flight_time: Some(plan.planned_flight_time_min),
         route: plan.planned_route.clone().filter(|s| !s.is_empty()),
         source_name: format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")),
@@ -16492,6 +16520,7 @@ async fn flight_start_manual(
         dpt_airport: bid.flight.dpt_airport_id.clone(),
         arr_airport: bid.flight.arr_airport_id.clone(),
         planned_flight_time_min: bid.flight.flight_time,
+        plan_strecke_nm: bid.flight.distance.as_ref().and_then(|d| d.nm()),
         fares,
         stats: Mutex::new(FlightStats::new()),
         stop: AtomicBool::new(false),
@@ -20103,6 +20132,7 @@ fn build_pirep_payload(
             eingereicht: effective_arr_icao,
             geplant: planned_arr_icao,
         }),
+        flight.plan_strecke_nm,
     );
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
@@ -20999,6 +21029,9 @@ fn compute_aggregate_master_score(
     // ⚠ Das GEPLANTE Ziel — nur im Vergleich mit `arr_airport`
     // (dem eingereichten) entsteht die Aussage „Ausweichflug".
     geplantes_ziel: &str,
+    // v1.7.32: geplante Streckenlaenge (NM) fuer die Mehrweg-Gutschrift
+    // der OFP-Achse. `None` = keine Gutschrift.
+    plan_strecke_nm: Option<f64>,
 ) -> Option<u8> {
     let mut scoring_input = scoring_eingang(
         stats,
@@ -21007,6 +21040,7 @@ fn compute_aggregate_master_score(
             eingereicht: arr_airport,
             geplant: geplantes_ziel,
         }),
+        plan_strecke_nm,
     );
     // v0.10.0: v2-RolloutInput-Felder mit-füllen damit der LDA-basierte
     // Sub-Score gerechnet wird (siehe spec docs/spec/v0.10.0-runway-
@@ -21079,6 +21113,7 @@ fn canonical_landing_verdict(
         muster_fuer_landung(stats, &flight.aircraft_icao),
         effective_arr_icao,
         &flight.arr_airport,
+        flight.plan_strecke_nm,
     );
     let (label, numeric) = match aggregate {
         Some(m) => (aggregate_score_label(m), m as i32),
@@ -21515,9 +21550,17 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// wo vorher `track_width_unknown` stand. Derselbe Flug wird unter
 /// v1.7.29 und v1.7.30 also verschieden benotet.
 ///
+/// **15 seit v1.7.32**: Die OFP-Achse rechnet Mehrweg und
+/// Durchstartmanoever heraus, bevor sie bewertet (Anlass THY 1068,
+/// 16.09.2026: +13,5 % Mehrverbrauch bei 90 NM Umweg = 55 Punkte).
+/// Gegengewicht: die Baender sind auf 3/8/15/25 gestrafft. Am Bestand
+/// (1118 Fluege) faellt die Abzugsquote von 15,4 % auf 12,3 %, aber die
+/// Verteilung verschiebt sich deutlich — derselbe Flug wird unter
+/// v1.7.31 und v1.7.32 verschieden benotet.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 14;
+const SCORE_ALGORITHMUS_VERSION: u8 = 15;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -21572,6 +21615,7 @@ fn scoring_eingang(
     stats: &FlightStats,
     muster: Option<&str>,
     ausweichziel: Option<Ausweichziel<'_>>,
+    plan_strecke_nm: Option<f64>,
 ) -> landing_scoring::LandingScoringInput {
     landing_scoring::LandingScoringInput {
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
@@ -21593,6 +21637,13 @@ fn scoring_eingang(
         actual_trip_burn_kg: actual_burn_for_record(stats),
         planned_zfw_kg: stats.planned_zfw_kg,
         planned_tow_kg: stats.planned_tow_kg,
+        // v1.7.32: Grundlage der Mehrweg-/Durchstart-Gutschrift auf der
+        // OFP-Achse. Gerechnet wird NUR in `landing_scoring::sub_fuel` —
+        // hier werden ausschliesslich die Messwerte durchgereicht, damit
+        // Client, Server und Webansicht dieselbe Zahl sehen.
+        geflogene_strecke_nm: Some(stats.distance_nm as f32).filter(|v| *v > 0.0),
+        plan_strecke_nm: plan_strecke_nm.map(|v| v as f32).filter(|v| *v > 0.0),
+        durchstarts: stats.go_around_count,
         // ⚠ Nach einem Ausweichflug ist die OFP-Treue nicht bewertbar —
         // es wurde eine ANDERE Strecke geflogen als die geplante. Ein
         // Vergleich gegen den urspruenglichen Verbrauch misst den Umweg,
@@ -22184,6 +22235,7 @@ where
             eingereicht: effective_arr_icao,
             geplant: &flight.arr_airport,
         }),
+        flight.plan_strecke_nm,
     );
     // v0.10.0 (#runway-utilization-score): LDA-basierten Bahn-Auslastungs-
     // Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
@@ -23785,6 +23837,7 @@ mod rearm_background_task_guards_tests {
             dpt_airport: "EDDF".into(),
             arr_airport: "ZZZZ".into(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -23852,6 +23905,7 @@ mod positions_idempotenz_tests {
             dpt_airport: "EDDF".into(),
             arr_airport: "ZZZZ".into(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -24443,6 +24497,7 @@ async fn flight_end(
             muster_fuer_landung(&stats, &flight.aircraft_icao),
             effective_arr,
             &flight.arr_airport,
+            flight.plan_strecke_nm,
         )
         .map(|m| m as i32)
         .or_else(|| stats.landing_score.map(|s| s.numeric()));
@@ -38914,6 +38969,7 @@ mod arrived_fallback_dwell_tests {
             dpt_airport: "EDDF".into(),
             arr_airport: "ZZZZ".into(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -39471,6 +39527,7 @@ mod takeoff_roll_tests {
             dpt_airport: "KCLT".into(),
             arr_airport: "EDDM".into(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -39543,6 +39600,7 @@ mod arrived_fallback_geometry_tests {
             dpt_airport: "ENGM".into(),
             arr_airport: arr.into(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -39853,6 +39911,7 @@ mod enroute_reconcile_tests {
             dpt_airport: "EDLN".into(),
             arr_airport: "ZZZZ".into(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -40920,6 +40979,7 @@ mod enroute_reconcile_replay_tests {
             // dort separat abgedeckt).
             arr_airport: "ZZZZ".into(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -42431,6 +42491,7 @@ fn build_pirep_notes(
             eingereicht: effective_arr_icao,
             geplant: &flight.arr_airport,
         }),
+        flight.plan_strecke_nm,
     );
     // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den
     // gleichen Algorithmus rechnen wie der echte PIREP-Pfad — sonst
@@ -46416,6 +46477,9 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
         aircraft_icao: String::new(),
         aircraft_name: String::new(),
         flight_number: persisted.flight_number.clone(),
+        // v1.7.32: Plandistanz aus der Resume-Datei — sonst faellt die
+        // Mehrweg-Gutschrift nach einem Neustart mitten im Flug weg.
+        plan_strecke_nm: persisted.plan_strecke_nm,
         dpt_airport: persisted.dpt_airport.clone(),
         arr_airport: persisted.arr_airport.clone(),
         planned_flight_time_min: None, /* Resume: Planzeit nicht persistiert */
@@ -52232,6 +52296,31 @@ mod v0_7_7_ofp_refresh_tests {
         );
     }
 
+    /// v1.7.32: Die Plandistanz muss den Neustart mitten im Flug
+    /// ueberleben. Ohne sie faellt die Mehrweg-Gutschrift der OFP-Achse
+    /// weg, und der Pilot steht nach einem Absturz des Clients mit den
+    /// strengeren Baendern ohne Ausgleich da (externe QS, Codex
+    /// 16.09.2026). Eine ALTE Resume-Datei ohne das Feld muss weiterhin
+    /// lesbar bleiben.
+    #[test]
+    fn plandistanz_ueberlebt_den_neustart() {
+        let json = r#"{"pirep_id":"x","bid_id":1,"plan_strecke_nm":186.5,
+            "flight_number":"THY 1068","dpt_airport":"LRCK","arr_airport":"LTFM",
+            "started_at":"2026-09-16T17:06:48Z","pilot_callsign":"","fares":[]}"#;
+        let parsed: PersistedFlight =
+            serde_json::from_str(json).expect("Resume-Datei muss lesbar sein");
+        assert_eq!(parsed.plan_strecke_nm, Some(186.5));
+
+        // Alte Datei ohne das Feld: weiterhin lesbar, dann eben ohne
+        // Gutschrift — nie schlechter als vor der Aenderung.
+        let alt = r#"{"pirep_id":"x","bid_id":1,
+            "flight_number":"THY 1068","dpt_airport":"LRCK","arr_airport":"LTFM",
+            "started_at":"2026-09-16T17:06:48Z","pilot_callsign":"","fares":[]}"#;
+        let parsed: PersistedFlight =
+            serde_json::from_str(alt).expect("alte Resume-Datei muss lesbar bleiben");
+        assert_eq!(parsed.plan_strecke_nm, None);
+    }
+
     /// v0.7.7 §10-Pflicht: pre-v0.7.7-Persistenz ohne die neuen Felder
     /// bleibt deserialisierbar (serde(default) greift, Werte sind None).
     #[test]
@@ -52288,6 +52377,7 @@ mod v0_7_7_ofp_refresh_tests {
     fn persisted_flight_preserves_flight_id_round_trip() {
         let original = PersistedFlight {
             pirep_id: "abc123".to_string(),
+            plan_strecke_nm: None,
             bid_id: 42,
             flight_id: "1234567".to_string(),
             bid_callsign: None,
@@ -55142,6 +55232,7 @@ mod touchdown_metadata_stamp_tests {
             dpt_airport: "EDDF".into(),
             arr_airport: arr.to_string(),
             planned_flight_time_min: None,
+            plan_strecke_nm: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
             stop: AtomicBool::new(false),
@@ -58027,7 +58118,7 @@ mod touchdown_metadata_stamp_tests {
             Some(runway::RunwaySource::OurAirportsFallback)
         ));
         // The PIREP score the OLD ordering would have filed (provisional).
-        let provisional_score = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF");
+        let provisional_score = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF", None);
         let provisional_field = landing_score_field(&flight, &stats, eff);
 
         // The on-demand fetch completes: EDDP navdata (with a displaced
@@ -58058,7 +58149,7 @@ mod touchdown_metadata_stamp_tests {
         // The PIREP score now reflects the Navigraph LDA — strictly different
         // from the provisional OurAirports score (the displaced threshold
         // shortened the LDA → the rollout sub-score dropped a band).
-        let upgraded_score = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF");
+        let upgraded_score = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF", None);
         let upgraded_field = landing_score_field(&flight, &stats, eff);
         assert_ne!(
             upgraded_score, provisional_score,
@@ -58074,7 +58165,7 @@ mod touchdown_metadata_stamp_tests {
         // agree.
         let record_score_before = upgraded_score;
         apply_finalized_runway_correlation(&flight, &mut stats); // the no-op
-        let record_score_after = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF");
+        let record_score_after = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF", None);
         assert_eq!(
             record_score_before, record_score_after,
             "the second finalize (inside record_landing_for_filed_flight) must be a no-op \
@@ -58131,12 +58222,12 @@ mod touchdown_metadata_stamp_tests {
         // the trust check sees matched=EDDP != arr=EDDF and no divert match →
         // icao_mismatch → the rollout/LDA sub-score is SKIPPED.
         let buggy_planned_arr_score =
-            compute_aggregate_master_score(&stats, Some("A320"), "EDDF", "EDDF");
+            compute_aggregate_master_score(&stats, Some("A320"), "EDDF", "EDDF", None);
         // FIXED behaviour: feeding the EFFECTIVE arrival (the divert EDDP) →
         // matched=EDDP == effective=EDDP → geometry trusted → the rollout/LDA
         // sub-score COMPUTES. This is what the native score now passes.
         let fixed_effective_arr_score =
-            compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
+            compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF", None);
 
         // The fix must change the scored value on this divert (the rollout
         // sub-score went from skipped → computed against the Navigraph LDA).
@@ -58162,7 +58253,7 @@ mod touchdown_metadata_stamp_tests {
         // The local record path runs the SAME finalize (idempotent no-op once
         // Navigraph) and the SAME effective arrival → identical score.
         apply_finalized_runway_correlation(&flight, &mut stats);
-        let record_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
+        let record_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF", None);
         assert_eq!(
             Some(native_score),
             record_score,
@@ -58299,10 +58390,10 @@ mod touchdown_metadata_stamp_tests {
         correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
 
         // v0.16.24 (QS-2 FIX A): effective arrival == EDDP (the divert field).
-        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
+        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF", None);
         // Empty cache → finalize keeps the provisional fallback.
         apply_finalized_runway_correlation(&flight, &mut stats);
-        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
+        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF", None);
         assert!(matches!(
             stats.runway_source,
             Some(runway::RunwaySource::OurAirportsFallback)
@@ -58340,10 +58431,10 @@ mod touchdown_metadata_stamp_tests {
         ));
 
         // On-plan: effective arrival == planned arrival == EDDP.
-        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
+        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF", None);
         let before_field = landing_score_field(&flight, &stats, "EDDP");
         apply_finalized_runway_correlation(&flight, &mut stats); // must be a no-op
-        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
+        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF", None);
         let after_field = landing_score_field(&flight, &stats, "EDDP");
         assert_eq!(
             before, after,
@@ -59547,7 +59638,7 @@ mod v0_16_6_bush_completeness_tests {
 
                             // Weg 2: die Bewertung, über denselben
                             // Eingang, den der Betrieb benutzt.
-                            let mut eingang = scoring_eingang(&stats, m, None);
+                            let mut eingang = scoring_eingang(&stats, m, None, None);
                             fill_v2_rollout_fields(&mut eingang, &stats, "XXXX");
 
                             let b_spur = eingang.fahrwerk_spurweite_m.or_else(|| {
@@ -64137,6 +64228,7 @@ mod wiederaufnahme_langstrecke_tests {
     fn beispiel_flug() -> PersistedFlight {
         PersistedFlight {
             pirep_id: "p8Q8YeaXqvKgyO6Z".to_string(),
+            plan_strecke_nm: None,
             bid_id: 1,
             flight_id: String::new(),
             bid_callsign: None,

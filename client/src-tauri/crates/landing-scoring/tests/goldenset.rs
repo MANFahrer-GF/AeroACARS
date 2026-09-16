@@ -214,6 +214,13 @@ fn dah3181_xplane_firm_with_overburn() {
     // Das Abfluggewicht steht hier bei 95 t; der Toleranzboden waeren
     // 190 kg, der Mehrverbrauch betraegt 960 kg — er greift also nicht,
     // und die Prozentbaender entscheiden. Genau so gewollt.
+    //
+    // ⚠ v1.7.32: bleibt bei 80. Die gestrafften Baender (3/8/15/25)
+    // gelten NUR mit Streckenangabe — sie sind das Gegengewicht zur
+    // Gutschrift fuer Mehrweg und Durchstarten. Dieser Goldenset-Fall
+    // hat keine Strecke, bekommt also keine Gutschrift und wird nach den
+    // alten Grenzen bewertet (externe QS, Codex 16.09.2026: sonst wird
+    // doppelt bestraft, wem die Daten fehlen).
     assert_eq!(pts(&subs, "fuel"), 80);
     // ⚠ v1.7.12: 68 statt 70. Die Ladepapier-Achse ist stillgelegt — sie
     // bewertete das geplante Abfluggewicht, auf das der Pilot keinen

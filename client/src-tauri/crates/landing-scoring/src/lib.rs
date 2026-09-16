@@ -208,6 +208,12 @@ pub struct LandingScoringInput {
     /// urspruenglichen Verbrauch misst den Umweg, nicht den Piloten.
     /// `None` = unbekannt, dann wird wie bisher verglichen.
     pub diverted: Option<bool>,
+    /// v1.7.32 — Zusatzarbeit fuer die OFP-Treue: tatsaechlich geflogene
+    /// Strecke, Luftlinie Start→Ziel und Zahl der Durchstartmanoever.
+    /// Siehe `sub_fuel`s Regelblock. Leer = keine Gutschrift (Alt-Caller).
+    pub geflogene_strecke_nm: Option<f32>,
+    pub plan_strecke_nm: Option<f32>,
+    pub durchstarts: u32,
     /// Wurde die Bahngeometrie gegen die SZENERIE des Simulators
     /// geprueft und uebernommen?
     ///
@@ -474,11 +480,16 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     // sub_fuel_v0_7_1 mit Hard-Gate + Asymmetrie. Wenn weder
     // planned_burn noch actual_trip_burn vorhanden → skipped (NICHT
     // in den Master-Score eingerechnet).
-    out.push(sub_fuel::sub_fuel_v0_7_1(
+    out.push(sub_fuel::sub_fuel_v1_7_32(
         input.planned_burn_kg,
         input.actual_trip_burn_kg,
         input.planned_tow_kg,
         input.diverted,
+        sub_fuel::ZusatzArbeit {
+            geflogene_strecke_nm: input.geflogene_strecke_nm,
+            plan_strecke_nm: input.plan_strecke_nm,
+            durchstarts: input.durchstarts,
+        },
     ));
 
     // ⚠ `sub_loadsheet` wird NICHT MEHR bewertet (v1.7.12).
@@ -918,6 +929,11 @@ mod tests {
     fn voll_besetzter_eingang() -> LandingScoringInput {
         LandingScoringInput {
             diverted: None,
+            // v1.7.32: echte Werte, damit der Waechter auch die
+            // Gutschrift-Zweige der OFP-Achse durchlaeuft.
+            geflogene_strecke_nm: Some(520.0),
+            plan_strecke_nm: Some(500.0),
+            durchstarts: 1,
             bahn_geometrie_aus_szenerie: None,
             bahn_achsen_abweichung_grad: None,
             bahn_achsen_kreuzt_mitte: None,

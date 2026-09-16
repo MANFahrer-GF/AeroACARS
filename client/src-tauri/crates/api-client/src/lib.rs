@@ -382,6 +382,20 @@ pub struct Airport {
     pub elevation: Option<f64>,
 }
 
+impl Distance {
+    /// Streckenlaenge in NM — egal, welche Einheit phpVMS mitgeschickt
+    /// hat. Externe QS (Codex, 16.09.2026): Wer nur `nmi` liest, bekommt
+    /// bei einem Serializer, der nur `km`/`m`/`mi` liefert, still `None`
+    /// — und damit faellt die Mehrweg-Gutschrift der OFP-Achse weg.
+    pub fn nm(&self) -> Option<f64> {
+        self.nmi
+            .or_else(|| self.km.map(|v| v / 1.852))
+            .or_else(|| self.m.map(|v| v / 1852.0))
+            .or_else(|| self.mi.map(|v| v * 0.868_976))
+            .filter(|v| v.is_finite() && *v > 0.0)
+    }
+}
+
 /// phpVMS exposes distance as a multi-unit object:
 /// `{ "m": 483372, "km": 483.37, "mi": 300.35, "nmi": 261 }`.
 /// Any of these may be missing depending on the serializer.
