@@ -67,6 +67,11 @@ pub struct SpritEingang {
     pub planned_reserve_kg: Option<f32>,
     pub planned_extra_kg: Option<f32>,
     pub planned_block_fuel_kg: Option<f32>,
+    /// Ausweichflug: eingereichtes Ziel != geplantes Ziel. Dann wurde der Plan
+    /// nicht geflogen — Phasen und Plan-Reststrecke gegen ihn zu zeigen waere
+    /// eine Aussage ueber einen Flug, den es nicht gab. Die alte Achse hatte
+    /// dafuer eine ausdrueckliche Regel; die gilt hier weiter.
+    pub ausweichflug: bool,
     /// `false`, wenn der Tankstand beim Aufsetzen nicht zum Verlauf passt
     /// (Auslesefehler, nur zwei von vier Tanks, Sprung). Dann gibt es
     /// „nicht pruefbar" statt einer falschen Warnung.
@@ -143,6 +148,21 @@ pub struct SpritAuswertung {
 
 pub const SPRIT_AUSWERTUNG_FASSUNG: u8 = 1;
 
+/// Unterhalb dieses geplanten Anflugverbrauchs ist der Prozentwert ohne
+/// Aussage (Division durch fast null).
+///
+/// 15 kg statt der urspruenglichen 50: Die Korpus-Pruefung hat gezeigt, dass
+/// 50 kg rund 17 % aller Fluege die Anflugphase gekostet haetten — praktisch
+/// die gesamte GA- und Bizjet-Flotte (E55P, BE58, DA40, PC12 …). Genau diesen
+/// Mustern waere dann nur die andere Phase geblieben.
+const MIN_PLAN_ANFLUG_KG: f32 = 15.0;
+
+/// Mindestgroesse fuer die Phase „bis Sinkflug". Bei 18 kg Planverbrauch
+/// (AC11, PA24, DA40 im Bestand) macht 1 kg Ablesefehler schon 7 % aus —
+/// dreistellige Prozentwerte sind dort normal und sagen nichts. Dann lieber
+/// keine Phase; Reserve, Leiter und Extra bleiben sichtbar.
+const MIN_PLAN_BIS_TOD_KG: f32 = 120.0;
+
 fn runde1(v: f32) -> f32 {
     (v * 10.0).round() / 10.0
 }
@@ -168,22 +188,31 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
     let planned_burn = positiv(e.planned_burn_kg);
     let reserve = positiv(e.planned_reserve_kg);
 
-    // ---- Phasen: nur bei plausiblem Tank und vollstaendigen Werten ----
-    let (bis_sinkflug, anflug) = if e.tank_plausibel {
+    // ---- Phasen: nur bei plausiblem Tank, vollstaendigen Werten und
+    // tatsaechlich geflogenem Plan ----
+    let (bis_sinkflug, anflug) = if e.tank_plausibel && !e.ausweichflug {
         let bis = match (takeoff, vergleich, plan_bis) {
-            (Some(to), Some(vp), Some(plan)) if to > vp => Some(Phase {
+            (Some(to), Some(vp), Some(plan)) if to > vp && plan >= MIN_PLAN_BIS_TOD_KG => Some(Phase {
+                // Prozent aus DENSELBEN Zahlen, die daneben stehen — sonst
+                // passen angezeigter Wert und angezeigte Abweichung nicht
+                // zusammen.
                 ist_kg: (to - vp).round(),
                 plan_kg: plan.round(),
-                abweichung_pct: pct(to - vp, plan),
+                abweichung_pct: pct((to - vp).round(), plan.round()),
             }),
             _ => None,
         };
         let an = match (vergleich, landing, planned_burn, plan_bis) {
-            (Some(vp), Some(ldg), Some(burn), Some(plan)) if vp > ldg && burn > plan => {
+            // `burn - plan` ist der geplante Anflugverbrauch. Liegt der TOD
+            // kurz vor dem Ziel, wird er winzig und jede Abweichung ergibt
+            // dreistellige Prozentwerte ohne Aussage — dann lieber nichts.
+            (Some(vp), Some(ldg), Some(burn), Some(plan))
+                if vp > ldg && burn - plan >= MIN_PLAN_ANFLUG_KG =>
+            {
                 Some(Phase {
                     ist_kg: (vp - ldg).round(),
                     plan_kg: (burn - plan).round(),
-                    abweichung_pct: pct(vp - ldg, burn - plan),
+                    abweichung_pct: pct((vp - ldg).round(), (burn - plan).round()),
                 })
             }
             _ => None,
@@ -205,7 +234,10 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             grund: "kein_landesprit".into(),
         },
         (Some(res), Some(ldg)) => {
-            let quote = runde1(ldg / res * 100.0);
+            // Deckel: Bei Kleinflugzeugen ergeben sich Quoten wie 1 298 %
+            // (BE60: 19 kg Reserve, 247 kg gelandet). Die Zahl waere richtig
+            // und trotzdem ohne Aussage.
+            let quote = runde1((ldg / res * 100.0).min(999.0));
             if ldg >= res {
                 Reserve::Intakt { quote_pct: quote }
             } else {
@@ -243,10 +275,17 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
     let (extra_getankt, extra_genutzt, extra_ungenutzt, contingency_verbraucht, alt_res_intakt) =
         match (&leiter, landing, e.tank_plausibel) {
             (Some(l), Some(ldg), true) => {
-                // Geplanter Landesprit = alles, was nach dem Trip uebrig
-                // bleiben sollte. Was darunter liegt, wurde „zusaetzlich"
-                // gebraucht — zuerst aus Contingency, dann aus Extra.
-                let plan_landing = l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
+                // Was nach dem Trip uebrig bleiben sollte — gemessen am
+                // TATSAECHLICHEN Tankstand beim Abheben, nicht an der
+                // geplanten Betankung. Wer mehr tankt als geplant, landet
+                // hoeher; ohne diese Korrektur bekaeme er „Contingency und
+                // Extra unangetastet", obwohl er mehr verbraucht hat. Und
+                // umgekehrt: DLH370 hob mit 40 919 kg statt geplanter
+                // 40 646 kg ab — 273 kg, die sonst falsch zugeordnet wuerden.
+                let plan_landing = match takeoff {
+                    Some(to) => (to - l.trip_kg).max(0.0),
+                    None => l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg,
+                };
                 let mehr = (plan_landing - ldg).max(0.0);
                 let cont_verbraucht = l.contingency_kg > 0.0 && mehr >= l.contingency_kg;
                 let genutzt = (mehr - l.contingency_kg).clamp(0.0, l.extra_kg).round();
@@ -268,7 +307,13 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         zeit_unter_schwelle_min: nicht_negativ(e.zeit_unter_schwelle_s).map(|s| runde1(s / 60.0)),
         schwelle_ft: positiv(e.schwelle_ft).map(|v| v.round()),
         strecke_anflug_nm: positiv(e.strecke_ab_vergleichspunkt_nm).map(|v| v.round()),
-        plan_strecke_anflug_nm: positiv(e.plan_rest_nm).map(|v| v.round()),
+        // Nach einem Ausweichflug gab es diesen Plan nicht — die geflogene
+        // Strecke bleibt eine Tatsache, der Plan dazu nicht.
+        plan_strecke_anflug_nm: if e.ausweichflug {
+            None
+        } else {
+            positiv(e.plan_rest_nm).map(|v| v.round())
+        },
         reserve: reserve_status,
         reserve_kg: reserve.map(|v| v.round()),
         landing_fuel_kg: landing.map(|v| v.round()),
@@ -292,7 +337,9 @@ mod tests {
         SpritEingang {
             planned_burn_kg: Some(21_218.0),
             plan_bis_vergleichspunkt_kg: Some(19_353.0),
-            plan_rest_nm: Some(191.0),
+            // Echte Navlog-Summe nach dem TOD-Fix aus dem OFP dieses Fluges
+            // (die 191 hier waren frueher handgeschrieben und falsch).
+            plan_rest_nm: Some(139.0),
             takeoff_fuel_kg: Some(40_919.0),
             sprit_bei_vergleichspunkt_kg: Some(22_231.0),
             landing_fuel_kg: Some(16_770.0),
@@ -306,6 +353,7 @@ mod tests {
             planned_extra_kg: Some(5_178.0),
             planned_block_fuel_kg: Some(41_644.0),
             tank_plausibel: true,
+            ausweichflug: false,
         }
     }
 
@@ -322,7 +370,7 @@ mod tests {
         assert_eq!(an.abweichung_pct, 192.8);
         assert_eq!(a.zeit_unter_schwelle_min, Some(15.8));
         assert_eq!(a.strecke_anflug_nm, Some(182.0));
-        assert_eq!(a.plan_strecke_anflug_nm, Some(191.0));
+        assert_eq!(a.plan_strecke_anflug_nm, Some(139.0));
     }
 
     #[test]
@@ -331,8 +379,8 @@ mod tests {
         assert_eq!(a.reserve, Reserve::Intakt { quote_pct: 341.1 });
         assert_eq!(a.badge, Badge::Gruen);
         assert_eq!(a.extra_getankt_kg, Some(5_178.0));
-        assert_eq!(a.extra_genutzt_kg, Some(1_597.0));
-        assert_eq!(a.extra_ungenutzt_kg, Some(3_581.0));
+        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
+        assert_eq!(a.extra_ungenutzt_kg, Some(3_308.0));
         assert_eq!(a.contingency_verbraucht, Some(true));
         assert_eq!(a.alternate_und_reserve_intakt, Some(true));
         let l = a.leiter.expect("Leiter");
@@ -413,7 +461,117 @@ mod tests {
         assert!(a.bis_sinkflug.is_none() && a.anflug.is_none());
         assert_eq!(a.badge, Badge::Gruen);
         assert!(a.leiter.is_some());
-        assert_eq!(a.extra_genutzt_kg, Some(1_597.0));
+        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
+    }
+
+
+    /// Extra und Contingency zaehlen gegen den TATSAECHLICHEN Tankstand beim
+    /// Abheben. DLH370 hob mit 40 919 kg ab, geplant waren 40 646 kg — die
+    /// 273 kg Differenz gehoeren in die Rechnung, sonst steht eine falsche
+    /// Aussage ueber den Piloten da (QS-Befund P2-3).
+    #[test]
+    fn sprit_auswertung_extra_gegen_echten_tankstand() {
+        let a = auswerten(&dlh370());
+        // 40 919 − 21 218 = 19 701 sollten uebrig sein; 16 770 sind es.
+        // Differenz 2 931, davon 1 061 Contingency → 1 870 Extra.
+        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
+        assert_eq!(a.extra_ungenutzt_kg, Some(3_308.0));
+        assert_eq!(a.contingency_verbraucht, Some(true));
+    }
+
+    /// Wer mehr tankt als geplant, landet hoeher — das darf nicht als
+    /// „Extra unangetastet" durchgehen.
+    #[test]
+    fn sprit_auswertung_extra_erkennt_tankern() {
+        let mut e = dlh370();
+        e.takeoff_fuel_kg = Some(43_919.0); // 3 t ueber Plan getankt
+        e.landing_fuel_kg = Some(19_770.0); // entsprechend hoeher gelandet
+        let a = auswerten(&e);
+        // Ohne Korrektur waere hier „nichts verbraucht" herausgekommen.
+        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
+    }
+
+    /// Nach einem Ausweichflug wurde der Plan nicht geflogen: keine Phasen,
+    /// keine Plan-Reststrecke. Die geflogenen Zahlen bleiben (QS-Befund P2-4).
+    #[test]
+    fn sprit_auswertung_divert_zeigt_keine_planphasen() {
+        let mut e = dlh370();
+        e.ausweichflug = true;
+        let a = auswerten(&e);
+        assert!(a.bis_sinkflug.is_none() && a.anflug.is_none());
+        assert_eq!(a.plan_strecke_anflug_nm, None);
+        // Tatsachen bleiben: Reserve, Landesprit, geflogene Strecke.
+        assert!(matches!(a.reserve, Reserve::Intakt { .. }));
+        assert_eq!(a.landing_fuel_kg, Some(16_770.0));
+        assert_eq!(a.strecke_anflug_nm, Some(182.0));
+    }
+
+    /// Ein winziger geplanter Anflugverbrauch (TOD kurz vor dem Ziel) ergibt
+    /// keinen Prozentwert, sondern keinen — sonst stuenden dreistellige
+    /// Zahlen ohne Aussage da.
+    #[test]
+    fn sprit_auswertung_winziger_anflugplan_ergibt_keine_phase() {
+        let mut e = dlh370();
+        e.plan_bis_vergleichspunkt_kg = Some(21_200.0); // nur 18 kg Anflugplan
+        let a = auswerten(&e);
+        assert!(a.anflug.is_none());
+        assert!(a.bis_sinkflug.is_some());
+    }
+
+
+    /// Ein winziger Plan bis TOD (Kleinflugzeug: 18 kg Trip) ergibt keine
+    /// Phase — 1 kg Ablesefehler waeren dort 7 % (Korpus-Befund P3).
+    #[test]
+    fn sprit_auswertung_winziger_plan_ergibt_keine_phase() {
+        let e = SpritEingang {
+            planned_burn_kg: Some(18.0),
+            plan_bis_vergleichspunkt_kg: Some(14.0),
+            takeoff_fuel_kg: Some(90.0),
+            sprit_bei_vergleichspunkt_kg: Some(76.0),
+            landing_fuel_kg: Some(72.0),
+            tank_plausibel: true,
+            ..Default::default()
+        };
+        let a = auswerten(&e);
+        assert!(a.bis_sinkflug.is_none(), "winziger Plan darf keine Phase ergeben");
+        assert!(a.anflug.is_none());
+        // Der Landesprit bleibt eine Tatsache.
+        assert_eq!(a.landing_fuel_kg, Some(72.0));
+    }
+
+    /// Ein Bizjet mit kleinem, aber messbarem Anflugplan behaelt die Phase —
+    /// die frueheren 50 kg haetten 17 % aller Fluege die Phase gekostet.
+    #[test]
+    fn sprit_auswertung_bizjet_behaelt_die_anflugphase() {
+        let e = SpritEingang {
+            planned_burn_kg: Some(900.0),
+            plan_bis_vergleichspunkt_kg: Some(870.0), // 30 kg Anflugplan
+            takeoff_fuel_kg: Some(1_400.0),
+            sprit_bei_vergleichspunkt_kg: Some(520.0),
+            landing_fuel_kg: Some(470.0),
+            tank_plausibel: true,
+            ..Default::default()
+        };
+        let a = auswerten(&e);
+        assert!(a.anflug.is_some(), "30 kg Anflugplan sind messbar");
+        assert!(a.bis_sinkflug.is_some());
+    }
+
+    /// Reserve-Quoten von Kleinflugzeugen werden gedeckelt — 1 298 % waere
+    /// richtig und trotzdem ohne Aussage (Korpus-Befund P7).
+    #[test]
+    fn sprit_auswertung_reserve_quote_gedeckelt() {
+        let e = SpritEingang {
+            planned_reserve_kg: Some(19.0),
+            landing_fuel_kg: Some(247.0),
+            takeoff_fuel_kg: Some(300.0),
+            tank_plausibel: true,
+            ..Default::default()
+        };
+        match auswerten(&e).reserve {
+            Reserve::Intakt { quote_pct } => assert_eq!(quote_pct, 999.0),
+            andere => panic!("erwartet Intakt, war {andere:?}"),
+        }
     }
 
     /// Das Ergebnis ist das Wire-Format: Enum-Tags und Feldnamen sind

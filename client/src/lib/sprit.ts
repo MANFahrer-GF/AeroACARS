@@ -78,3 +78,25 @@ export function balken(p: SpritPhase | null): { plan: number; ist: number } {
   const max = Math.max(p.plan_kg, p.ist_kg, 1);
   return { plan: (p.plan_kg / max) * 100, ist: (p.ist_kg / max) * 100 };
 }
+
+/** Differenz in kg mit Vorzeichen — „+3 596 kg". */
+export function diffKg(p: SpritPhase | null | undefined): string {
+  if (!p) return "—";
+  const d = Math.round(p.ist_kg - p.plan_kg);
+  return (d > 0 ? "+" : d < 0 ? "−" : "") + kg(Math.abs(d)) + " kg";
+}
+
+/**
+ * Die Hauptzahl einer Phase.
+ *
+ * Bis zum Sinkflug sagt der Prozentwert etwas — dort liegen die Werte in
+ * einem lesbaren Band. Im Anflug nicht: die Korpus-Prüfung fand einen Median
+ * von +66 % und Ausreißer bis +352 %. Eine solche Zahl erklärt niemandem
+ * etwas, und laut Modul-Kopf gehört diese Phase ohnehin nicht dem Piloten.
+ * Deshalb steht dort die Differenz in Kilogramm.
+ */
+export function hauptzahl(p: SpritPhase | null | undefined, phase: "bis_sinkflug" | "anflug"): string {
+  if (!p) return "—";
+  if (phase === "anflug" && Math.abs(p.abweichung_pct) > 60) return diffKg(p);
+  return pct(p.abweichung_pct);
+}

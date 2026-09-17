@@ -9,7 +9,7 @@
  */
 import { useTranslation } from "react-i18next";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
-import { balken, kg, pct, phaseTon } from "../lib/sprit";
+import { balken, hauptzahl, kg, pct, phaseTon } from "../lib/sprit";
 
 const TON = {
   ok: "#22c55e",
@@ -62,7 +62,17 @@ export function SpritBadge({ sprit }: { sprit: SpritAuswertung | null | undefine
   );
 }
 
-function Phase({ label, phase, sub }: { label: string; phase: SpritPhase | null; sub: string | null }) {
+function Phase({
+  label,
+  phase,
+  sub,
+  art,
+}: {
+  label: string;
+  phase: SpritPhase | null;
+  sub: string | null;
+  art: "bis_sinkflug" | "anflug";
+}) {
   const { t } = useTranslation();
   const ton = phaseTon(phase);
   const b = balken(phase);
@@ -105,10 +115,11 @@ function Phase({ label, phase, sub }: { label: string; phase: SpritPhase | null;
           color: ton === "neutral" ? "var(--text-muted)" : TON[ton],
         }}
       >
-        {phase ? pct(phase.abweichung_pct) : t("landing.sprit.keine_messung")}
+        {phase ? hauptzahl(phase, art) : t("landing.sprit.keine_messung")}
       </span>
       <span style={{ gridColumn: "2 / -1", color: "var(--text-muted)", fontSize: "0.76rem", marginTop: "-0.3rem" }}>
         {phase ? t("landing.sprit.phase_werte", { ist: kg(phase.ist_kg), plan: kg(phase.plan_kg) }) : ""}
+        {phase && hauptzahl(phase, art) !== pct(phase.abweichung_pct) ? ` · ${pct(phase.abweichung_pct)}` : ""}
         {phase && sub ? ` · ${sub}` : ""}
       </span>
     </>
@@ -125,9 +136,13 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
     ["taxi_kg", "#4a5563", t("landing.sprit.leiter_taxi")],
     ["trip_kg", "#38bdf8", t("landing.sprit.leiter_trip")],
     ["contingency_kg", "#f2b24c", t("landing.sprit.leiter_contingency")],
+    // Reihenfolge = Verbrauchsreihenfolge: erst Contingency, dann Extra.
+    // Alternate und Reserve stehen rechts, weil sie stehen bleiben sollen —
+    // nur so trifft die von rechts gemessene Landemarke denselben Punkt,
+    // den `sprit.rs` rechnet (bei DLH370 die Grenze der 3581 kg Rest-Extra).
+    ["extra_kg", "#1f2d3a", t("landing.sprit.leiter_extra")],
     ["alternate_kg", "#3b4655", t("landing.sprit.leiter_alternate")],
     ["reserve_kg", "#3b4655", t("landing.sprit.leiter_reserve")],
-    ["extra_kg", "#1f2d3a", t("landing.sprit.leiter_extra")],
   ];
   let cursor = 0;
   const rects = parts.map(([k, fill, label]) => {
@@ -138,7 +153,12 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   });
   // Landemarke: vom rechten Ende aus die verbleibende Menge.
   const ldg = sprit.landing_fuel_kg;
-  const markX = ldg != null ? W - x(ldg) : null;
+  // Innerhalb der Leiter bleiben: bei OFP-Mismatch (mehr gelandet als Block)
+  // liefe die Marke sonst links aus dem Bild.
+  const markX = ldg != null ? Math.min(Math.max(W - x(ldg), 0), W) : null;
+  // Die Marke ist eine Tatsache, kein Urteil: Ton nach Reservestand,
+  // nie die Fehlerfarbe.
+  const markFarbe = sprit.badge === "gelb" ? TON.warn : "var(--text)";
   return (
     <svg viewBox={`0 0 ${W} 100`} role="img" aria-label={t("landing.sprit.leiter_titel")} style={{ display: "block", maxWidth: "100%", height: "auto", marginTop: "0.6rem" }}>
       <text x="0" y="11" style={{ font: "600 11px system-ui, sans-serif", fill: "var(--text)" }}>
@@ -148,7 +168,12 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
         <rect key={r.label} x={r.x} y={20} width={Math.max(r.w, 0)} height={22} fill={r.fill} stroke="var(--border)" strokeWidth={0.5} />
       ))}
       {rects
-        .filter((r) => r.w > 34)
+        .filter((r) => {
+          // 10.5px Monospace ≈ 6.3px je Zeichen — nur beschriften, wenn der
+          // Text ins Segment passt und im Bild bleibt.
+          const breite = (`${r.label} ${kg(r.kg)}`).length * 6.3;
+          return r.w >= breite + 6 && r.x + breite <= W;
+        })
         .map((r) => (
           <text key={`t-${r.label}`} x={r.x + 3} y={56} style={{ font: "10.5px ui-monospace, monospace", fill: "var(--text-muted)" }}>
             {r.label} {kg(r.kg)}
@@ -156,7 +181,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
         ))}
       {markX != null && (
         <>
-          <line x1={markX} y1={16} x2={markX} y2={46} stroke="#ff5c4d" strokeWidth={2} />
+          <line x1={markX} y1={16} x2={markX} y2={46} stroke={markFarbe} strokeWidth={2} />
           <text x={Math.min(markX + 5, W - 210)} y={80} style={{ font: "600 11px system-ui, sans-serif", fill: "var(--text)" }}>
             ▲ {t("landing.sprit.gelandet_mit", { kg: kg(ldg) })}
           </text>
@@ -244,8 +269,8 @@ export function SpritSektion({ sprit }: { sprit: SpritAuswertung | null | undefi
           fontSize: "0.84rem",
         }}
       >
-        <Phase label={t("landing.sprit.bis_sinkflug")} phase={sprit.bis_sinkflug} sub={null} />
-        <Phase label={t("landing.sprit.anflug")} phase={sprit.anflug} sub={anflugSub} />
+        <Phase label={t("landing.sprit.bis_sinkflug")} phase={sprit.bis_sinkflug} sub={null} art="bis_sinkflug" />
+        <Phase label={t("landing.sprit.anflug")} phase={sprit.anflug} sub={anflugSub} art="anflug" />
       </div>
       <Leiter sprit={sprit} />
       <div style={{ marginTop: "0.6rem" }}>

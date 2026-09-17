@@ -2376,9 +2376,31 @@ fn extract_tag<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
 /// weights returned in KG; if the OFP was generated in lbs we
 /// convert. Returns None when the document is too malformed to be
 /// useful (no weights block at all).
+/// Rechnet das OFP in Pfund?
+///
+/// v1.7.35: SimBrief schreibt die Einheit als `<params><units>kgs|lbs</units>`.
+/// Frueher wurde hier `<wt_unit>` gesucht — ein Tag, das in KEINEM echten OFP
+/// vorkommt (Korpus-Pruefung ueber 40 OFPs der Produktionsdatenbank). Die
+/// Pfund-Erkennung war damit toter Code: Fuer einen Piloten mit lbs-Konto
+/// waeren alle Planwerte 2,2-fach zu gross gewesen — Reserve auf jedem Flug
+/// „unterschritten", die Sprit-Leiter Unsinn. `wt_unit` bleibt als Rueckfall.
+fn ofp_unit_is_lb(xml: &str) -> bool {
+    matches!(
+        extract_tag(xml, "params").and_then(|p| extract_tag(p, "units")),
+        Some("lbs")
+    ) || matches!(extract_tag(xml, "wt_unit"), Some("lbs"))
+}
+
 fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
     // Conversion factor: SimBrief reports either kgs or lbs.
-    let unit_is_lb = matches!(extract_tag(xml, "wt_unit"), Some("lbs"));
+    // v1.7.35 (Korpus-Pruefung an 40 echten OFPs): SimBrief schreibt die
+    // Einheit als `<params><units>kgs|lbs</units></params>`. Das frueher
+    // gesuchte `<wt_unit>` kommt in KEINEM echten OFP vor — die
+    // Pfund-Erkennung war toter Code. Fuer einen Piloten mit lbs-Konto waeren
+    // damit ALLE Planwerte 2,2-fach zu gross gewesen: Reserve auf jedem Flug
+    // „unterschritten", die Sprit-Leiter Unsinn. `wt_unit` bleibt als
+    // Rueckfall stehen, falls SimBrief es irgendwo doch liefert.
+    let unit_is_lb = ofp_unit_is_lb(xml);
     let to_kg = |v: f32| -> f32 {
         if unit_is_lb { v * 0.453_592_37 } else { v }
     };
@@ -2651,7 +2673,7 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
 /// Resilient to missing `<navlog>` (older SimBrief OFP variants put fixes
 /// at the document root) — falls back to scanning the whole document.
 fn extract_navlog_fixes(xml: &str, unit_is_lb: bool) -> Vec<RouteFix> {
-    let to_kg = |v: f32| if unit_is_lb { v * 0.453_592 } else { v };
+    let to_kg = |v: f32| if unit_is_lb { v * 0.453_592_37 } else { v };
     let num = |block: &str, tag: &str| -> Option<f32> {
         extract_tag(block, tag)
             .and_then(|s| s.trim().parse::<f32>().ok())
@@ -3414,7 +3436,7 @@ mod tests {
 mod navlog_sprit_tests {
     use super::*;
 
-    const XML: &str = r#"<OFP><params><units>lbs</units></params><general><wt_unit>lbs</wt_unit></general>
+    const XML: &str = r#"<OFP><params><units>lbs</units></params><general>
 <navlog>
 <fix><ident>NOSLI</ident><type>wpt</type><pos_lat>59.072</pos_lat><pos_long>17.9</pos_long>
 <distance>37</distance><altitude_feet>23600</altitude_feet><fuel_totalused>10216</fuel_totalused><time_total>513</time_total></fix>
@@ -3442,6 +3464,31 @@ mod navlog_sprit_tests {
     fn navlog_sprit_in_kg_bleibt_unveraendert() {
         let fixes = extract_navlog_fixes(XML, false);
         assert_eq!(fixes[1].sprit_bis_hier_kg, Some(42666.0));
+    }
+
+
+    /// Das Format, das SimBrief wirklich liefert: `<params><units>`. Ohne
+    /// diesen Test waere der Griff nach `<wt_unit>` unbemerkt geblieben —
+    /// er kommt in keinem echten OFP vor (Korpus-Pruefung ueber 40 OFPs).
+    #[test]
+    fn navlog_sprit_erkennt_einheit_aus_params() {
+        // Das Format, das SimBrief wirklich liefert — so steht es in allen
+        // 40 OFPs der Produktionsdatenbank.
+        assert!(ofp_unit_is_lb("<OFP><params><units>lbs</units></params></OFP>"));
+        assert!(!ofp_unit_is_lb("<OFP><params><units>kgs</units></params></OFP>"));
+        // Rueckfall, falls SimBrief das alte Tag doch irgendwo liefert.
+        assert!(ofp_unit_is_lb("<OFP><general><wt_unit>lbs</wt_unit></general></OFP>"));
+        // Und ohne jede Angabe bleibt es bei Kilogramm.
+        assert!(!ofp_unit_is_lb("<OFP><navlog></navlog></OFP>"));
+        // Wirkung auf die Sprit-Felder: 42 666 lb sind 19 353 kg (DLH370).
+        let xml = r#"<OFP><params><units>lbs</units></params><navlog>
+<fix><ident>TOD</ident><type>ltp</type><pos_lat>49.7</pos_lat><pos_long>12.1</pos_long>
+<distance>62</distance><fuel_totalused>42666</fuel_totalused></fix></navlog></OFP>"#;
+        let fixes = extract_navlog_fixes(xml, ofp_unit_is_lb(xml));
+        let kg = fixes[0].sprit_bis_hier_kg.expect("sprit");
+        assert!((kg - 19_353.0).abs() < 2.0, "lbs nicht umgerechnet: {kg}");
+        // Die Strecke bleibt NM, nicht umgerechnet.
+        assert_eq!(fixes[0].segment_nm, Some(62.0));
     }
 
     /// Ein persistierter Fix aus einer aelteren Version kennt die Felder

@@ -71,12 +71,14 @@ fn pto105_msfs_smooth_55fpm_with_loadsheet() {
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 80);
-    assert_eq!(pts(&subs, "fuel"), 100);
     // ⚠ v1.7.12: 91 statt 92. Die Ladepapier-Achse ist stillgelegt — sie
     // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
     // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
     // zogen jeden Score um 1-2 Punkte nach oben.
-    assert_eq!(aggregate_master_score(&subs), Some(91));
+    // ⚠ v1.7.35: 91 → 90. Die Sprit-Achse ist raus — sie gab hier
+    // 100 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
+    // schlecht stand, gewinnt umgekehrt (97 → 100).
+    assert_eq!(aggregate_master_score(&subs), Some(90));
 }
 
 #[test]
@@ -122,8 +124,6 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 55);
-    // F3 Asymmetrie: -3.5% Minderverbrauch nicht bestraft
-    assert_eq!(pts(&subs, "fuel"), 100);
     // ⚠ v1.7.12: 78 statt 80. Die Ladepapier-Achse ist stillgelegt — sie
     // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
     // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
@@ -132,7 +132,10 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     // Harte Landungen werden dadurch haerter bewertet, und genau das war
     // die Absicht: Die mildere Achse zog die haertere systematisch nach
     // oben, am staerksten dort, wo die Bewertung beissen soll.
-    assert_eq!(aggregate_master_score(&subs), Some(74));
+    // ⚠ v1.7.35: 74 → 72. Die Sprit-Achse ist raus — sie gab hier
+    // 100 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
+    // schlecht stand, gewinnt umgekehrt (97 → 100).
+    assert_eq!(aggregate_master_score(&subs), Some(72));
 }
 
 #[test]
@@ -167,8 +170,10 @@ fn cfg785_msfs_smooth_with_overburn_unchanged() {
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 100);
-    assert_eq!(pts(&subs, "fuel"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(97));
+    // ⚠ v1.7.35: 97 → 96. Die Sprit-Achse ist raus — sie gab hier
+    // 100 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
+    // schlecht stand, gewinnt umgekehrt (97 → 100).
+    assert_eq!(aggregate_master_score(&subs), Some(96));
 }
 
 #[test]
@@ -221,7 +226,6 @@ fn dah3181_xplane_firm_with_overburn() {
     // hat keine Strecke, bekommt also keine Gutschrift und wird nach den
     // alten Grenzen bewertet (externe QS, Codex 16.09.2026: sonst wird
     // doppelt bestraft, wem die Daten fehlen).
-    assert_eq!(pts(&subs, "fuel"), 80);
     // ⚠ v1.7.12: 68 statt 70. Die Ladepapier-Achse ist stillgelegt — sie
     // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
     // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
@@ -230,13 +234,16 @@ fn dah3181_xplane_firm_with_overburn() {
     // Harte Landungen werden dadurch haerter bewertet, und genau das war
     // die Absicht: Die mildere Achse zog die haertere systematisch nach
     // oben, am staerksten dort, wo die Bewertung beissen soll.
-    assert_eq!(aggregate_master_score(&subs), Some(64));
+    // ⚠ v1.7.35: 64 → 62. Die Sprit-Achse ist raus — sie gab hier
+    // 80 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
+    // schlecht stand, gewinnt umgekehrt (97 → 100).
+    assert_eq!(aggregate_master_score(&subs), Some(62));
 }
 
 // ─── F1/F2 Edge-Cases (VFR/Manual ohne Plan) ───────────────────────
 
 #[test]
-fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
+fn vfr_no_zfw_no_burn_hat_keine_sprit_achse() {
     // VFR-Pilot ohne SimBrief: planned_zfw=None, planned_burn=None
     //   → fuel=skipped, loadsheet=skipped
     //   → Master rechnet nur aus 5 Sub-Scores (landing_rate, g_force,
@@ -270,7 +277,7 @@ fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 80); // 800<m<1200 = good_stop
     // F1 + F2: loadsheet + fuel skipped → 0-Penalty vermieden
-    assert!(skipped(&subs, "fuel"));
+    assert!(!subs.iter().any(|s| s.key == "fuel"), "die Sprit-Achse ist seit v1.7.35 raus");
     // Master = (100*3+85*3+100*2+80*2+80*1) / (3+3+2+2+1) = (300+255+200+160+80) / 11
     //        = 995/11 = 90.45 → 90
     // ⚠ v1.7.12: 89 statt 90 — Folge der angeglichenen G-Punktleiter.
@@ -278,7 +285,7 @@ fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
 }
 
 #[test]
-fn vfr_no_burn_skips_only_fuel() {
+fn vfr_no_burn_hat_keine_sprit_achse() {
     // VFR mit ZFW aber ohne planned_burn (z.B. Pilot hat ZFW eingegeben
     // aber keinen OFP-Plan) → loadsheet=100, fuel=skipped
     let input = LandingScoringInput {
@@ -292,32 +299,32 @@ fn vfr_no_burn_skips_only_fuel() {
         ..Default::default()
     };
     let subs = compute_sub_scores(&input);
-    assert!(skipped(&subs, "fuel"));
+    assert!(!subs.iter().any(|s| s.key == "fuel"), "die Sprit-Achse ist seit v1.7.35 raus");
 }
 
 // ─── F3 Asymmetrie explizit ───────────────────────────────────────
 
 #[test]
-fn underburn_minus_25_pct_warns() {
-    // ⚠ v1.7.12: -25 % gibt jetzt 100 Punkte PLUS den Hinweis. Sparen
-    // darf nichts kosten — die Datei sagte das seit jeher im Kopf und
-    // zog trotzdem ab. Der Hinweis bleibt wichtig: Ein so starker
-    // Minderverbrauch ist bei einem planmaessigen Flug kaum moeglich,
-    // da stimmt eher der Plan nicht (oder es war ein Divert, den ein
-    // eigener Zweig davor abfaengt).
-    let input = LandingScoringInput {
-        planned_burn_kg: Some(8000.0),
-        actual_trip_burn_kg: Some(6000.0),
+fn underburn_wird_nicht_mehr_bewertet() {
+    // Bis v1.7.34 gab starker Minderverbrauch 100 Punkte plus die Warnung
+    // `planned_burn_may_be_off`. Seit v1.7.35 ist der Sprit keine Note mehr
+    // (er mass ueberwiegend die Radarfuehrung) — es gibt also weder Punkte
+    // noch Warnung. Die Zahlen stehen in der Sprit-Auswertung, ohne Urteil.
+    let subs = compute_sub_scores(&LandingScoringInput {
+        vs_fpm: Some(-150.0),
+        peak_g_load: Some(1.2),
+        scored_g_load: Some(1.2),
+        bounce_count: Some(0),
+        planned_burn_kg: Some(4000.0),
+        actual_trip_burn_kg: Some(3000.0),
         ..Default::default()
-    };
-    let subs = compute_sub_scores(&input);
-    let fuel = subs.iter().find(|s| s.key == "fuel").unwrap();
-    assert_eq!(fuel.score, 100);
-    assert_eq!(fuel.warning.as_deref(), Some("planned_burn_may_be_off"));
+    });
+    assert!(!subs.iter().any(|s| s.key == "fuel"));
+    assert!(!subs.iter().any(|s| s.warning.as_deref() == Some("planned_burn_may_be_off")));
 }
 
 #[test]
-fn empty_input_returns_only_bounces_loadsheet_fuel() {
+fn empty_input_returns_only_bounces() {
     // v0.20.2 — ERWARTUNG BEWUSST GEAENDERT.
     //
     // Vorher schrieb dieser Test fest: Default-Input (keinerlei Messwerte) →
@@ -345,7 +352,7 @@ fn empty_input_returns_only_bounces_loadsheet_fuel() {
     no_sub(&subs, "stability");
     no_sub(&subs, "rollout");
     assert_eq!(pts(&subs, "bounces"), 100);
-    assert!(skipped(&subs, "fuel"));
+    assert!(!subs.iter().any(|s| s.key == "fuel"), "die Sprit-Achse ist seit v1.7.35 raus");
     assert_eq!(
         aggregate_master_score(&subs),
         None,

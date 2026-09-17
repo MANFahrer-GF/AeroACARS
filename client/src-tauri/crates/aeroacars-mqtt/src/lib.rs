@@ -589,6 +589,13 @@ pub struct BahnHerkunftWire {
 
 #[derive(Default, Clone, Debug, Serialize)]
 pub struct TouchdownPayload {
+    /// v1.7.35: Sprit-Auswertung ohne Note. Dieselbe eingefrorene Auswertung
+    /// wie im `PirepPayload` — die Live-Uebersicht liest den Touchdown-Payload,
+    /// und der Recorder propagiert nur `landing_score`/`sub_scores` nach. Ohne
+    /// dieses Feld saehe die Webapp den Sprit also nie. Gerechnet wird trotzdem
+    /// nur EINMAL (`sprit_auswertung_einmal`), danach eingefroren.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprit: Option<landing_scoring::sprit::SpritAuswertung>,
     pub ts: i64,
     /// Gesetzt, wenn die Aufzeichnung im Aufsetzfenster nicht ausreichte —
     /// dann gibt es in diesem Payload keine Sinkrate und keine Note.

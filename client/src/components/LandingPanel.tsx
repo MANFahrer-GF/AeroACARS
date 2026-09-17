@@ -197,7 +197,7 @@ export interface LandingRecord {
   actual_trip_burn_kg: number | null;
   fuel_efficiency_kg_diff: number | null;
   fuel_efficiency_pct: number | null;
-  /** v1.7.33: Sprit-Auswertung ohne Note — vom Rust-Client gerechnet, hier nur gerendert. */
+  /** v1.7.35: Sprit-Auswertung ohne Note — vom Rust-Client gerechnet, hier nur gerendert. */
   sprit?: SpritAuswertung | null;
   takeoff_weight_kg: number | null;
   takeoff_fuel_kg: number | null;
@@ -471,7 +471,7 @@ export interface ApproachSample {
   /// liegt (zeitbasiert).
   is_flare?: boolean | null;
   /** Geschwindigkeit über Grund in kt — Grundlage des Soll-Bandes
-   *  (`lib/anflugSollband.ts`). Fehlt bei Aufzeichnungen vor v1.7.33. */
+   *  (`lib/anflugSollband.ts`). Fehlt bei Aufzeichnungen vor v1.7.35. */
   gs_kt?: number | null;
 }
 
@@ -1285,7 +1285,7 @@ function ApproachChart({
   const gsFactor = gleitwinkelFaktor(glideslopeAngleDeg);
   // Soll-Band aus der echten Geschwindigkeit über Grund — dieselbe Rechnung
   // wie die Bewertung (siehe lib/anflugSollband.ts). Aufzeichnungen ohne
-  // gs_kt (vor v1.7.33) behalten den alten Richtwert, klar als solcher
+  // gs_kt (vor v1.7.35) behalten den alten Richtwert, klar als solcher
   // beschriftet, statt ein Soll zu erfinden.
   const sollPunkte = sollband(samples, glideslopeAngleDeg);
   const hatSollband = sollPunkte.length > 0;
@@ -2942,7 +2942,7 @@ export function LandingReport({ record }: { record: LandingRecord }) {
         >
           {hasFuel ? (
             <div className="report-tiles">
-              {/* v1.7.33: die fertige Sprit-Auswertung zuerst — nur gerendert. */}
+              {/* v1.7.35: die fertige Sprit-Auswertung zuerst — nur gerendert. */}
               {record.sprit?.bis_sinkflug && (
                 <ReportTile label={t("landing.sprit.report_bis_sinkflug")} value={spritPct(record.sprit.bis_sinkflug.abweichung_pct)} />
               )}
@@ -2990,13 +2990,17 @@ export function LandingReport({ record }: { record: LandingRecord }) {
                   value={fmtNumber(record.planned_burn_kg, 0, "kg")}
                 />
               )}
-              {record.fuel_efficiency_kg_diff != null && (
+              {/* v1.7.35: Diese beiden stammen aus der abgeschafften Achse und
+                  rechnen ueber den GANZEN Trip — neben den Phasen oben waere das
+                  eine dritte, anders gerechnete Prozentzahl. Sie bleiben nur fuer
+                  Datensaetze ohne Auswertung (vor v1.7.35). */}
+              {!record.sprit && record.fuel_efficiency_kg_diff != null && (
                 <ReportTile
                   label={t("landing.report.fuel_diff")}
                   value={fmtSigned(record.fuel_efficiency_kg_diff, 0, "kg")}
                 />
               )}
-              {record.fuel_efficiency_pct != null && (
+              {!record.sprit && record.fuel_efficiency_pct != null && (
                 <ReportTile
                   label={t("landing.report.fuel_efficiency")}
                   value={fmtSigned(record.fuel_efficiency_pct, 1, "%")}
@@ -3365,7 +3369,7 @@ export function LandingDetail({
               confidence={record.landing_confidence}
               source={record.landing_source}
             />
-            {/* v1.7.33: Sprit-Badge derselben Bauart — Reserve intakt / unter
+            {/* v1.7.35: Sprit-Badge derselben Bauart — Reserve intakt / unter
                 Reserve / nicht pruefbar. Nie rot, keine Zahl, keine Note. */}
             <SpritBadge sprit={record.sprit} />
           </div>
@@ -3703,8 +3707,8 @@ export function LandingDetail({
                 ℹ️ {t("landing.no_plan_hint")}
               </div>
             )}
-          {/* v1.7.33: Sprit-Auswertung ohne Note. Der alte Plan/Ist-Balken
-              bleibt nur fuer Datensaetze ohne Auswertung (vor v1.7.33). */}
+          {/* v1.7.35: Sprit-Auswertung ohne Note. Der alte Plan/Ist-Balken
+              bleibt nur fuer Datensaetze ohne Auswertung (vor v1.7.35). */}
           <SpritSektion sprit={record.sprit} />
           {!record.sprit && record.planned_burn_kg != null && record.actual_trip_burn_kg != null && (
             <FuelComparisonBar

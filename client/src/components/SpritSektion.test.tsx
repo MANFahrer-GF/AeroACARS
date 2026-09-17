@@ -21,8 +21,8 @@ function dlh370(): SpritAuswertung {
     reserve_kg: 4916,
     landing_fuel_kg: 16770,
     extra_getankt_kg: 5178,
-    extra_genutzt_kg: 1597,
-    extra_ungenutzt_kg: 3581,
+    extra_genutzt_kg: 1870,
+    extra_ungenutzt_kg: 3308,
     contingency_verbraucht: true,
     alternate_und_reserve_intakt: true,
     leiter: {
@@ -97,7 +97,7 @@ describe("SpritSektion", () => {
     expect(t).toContain("intakt");
     expect(t).toContain("341 %");
     expect(t).toContain("5\u202f178");
-    expect(t).toContain("3\u202f581");
+    expect(t).toContain("3\u202f308");
   });
 
   it("sagt ausdrücklich, dass es keine Note gibt", () => {
@@ -127,6 +127,63 @@ describe("SpritSektion", () => {
     const t = screen.getByTestId("sprit-sektion").textContent ?? "";
     expect(t).toContain("intakt");
     expect(t).toContain("—");
+  });
+
+
+  it("zeichnet die Leiter in Verbrauchsreihenfolge, sodass die Landemarke den Text trifft", () => {
+    // Bei DLH370 bleiben 3581 kg Extra ungenutzt. Von rechts gemessen liegt
+    // die Marke damit genau an der Grenze Extra|Alternate — also NICHT im
+    // Alternate-Block, passend zur Zeile „Alternate + Final Reserve
+    // unangetastet". Genau dieser Widerspruch war ein QS-Befund.
+    const a = dlh370();
+    const { container } = render(<SpritSektion sprit={a} />);
+    const svg = container.querySelector("svg")!;
+    const rects = [...svg.querySelectorAll("rect")];
+    const W = 560;
+    const l = a.leiter!;
+    const x = (v: number) => (v / l.block_kg) * W;
+    // Reihenfolge der Segmente: Taxi, Trip, Contingency, Extra, Alternate, Reserve.
+    const breiten = rects.map((r) => Number(r.getAttribute("width")));
+    expect(breiten[3]).toBeCloseTo(x(l.extra_kg), 1);
+    expect(breiten[4]).toBeCloseTo(x(l.alternate_kg), 1);
+    // Von der Marke bis zum rechten Rand steht, was gelandet ist. Rechts
+    // liegen Alternate + Reserve (13 189 kg, unangetastet), davor das noch
+    // vorhandene Extra. Die Marke muss also im EXTRA-Block liegen — vorher
+    // lag sie im Alternate-Block und widersprach damit der Zeile daneben
+    // „Alternate + Final Reserve unangetastet" (QS-Befund P2-2).
+    //
+    // Sie misst den TATSÄCHLICHEN Landesprit gegen die GEPLANTE Leiter. Wer
+    // anders tankt als geplant, bei dem weicht die Marke leicht von der
+    // Textzeile „X kg Extra genutzt" ab — die rechnet gegen den echten
+    // Abhebe-Tankstand. Beides ist richtig, es misst nur Verschiedenes.
+    const markX = Number(svg.querySelector("line")!.getAttribute("x1"));
+    const grenzeExtraAlternate = W - x(l.alternate_kg + l.reserve_kg);
+    const extraBeginn = x(l.taxi_kg + l.trip_kg + l.contingency_kg);
+    expect(markX).toBeCloseTo(W - x(a.landing_fuel_kg!), 1);
+    expect(markX).toBeGreaterThan(extraBeginn);
+    expect(markX).toBeLessThan(grenzeExtraAlternate);
+  });
+
+  it("färbt die Landemarke nie in der Fehlerfarbe", () => {
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    expect(container.querySelector("svg")!.innerHTML).not.toContain("#ff5c4d");
+  });
+
+  it("hält die Landemarke im Bild, wenn mehr gelandet wurde als geplant", () => {
+    const a = dlh370();
+    a.landing_fuel_kg = 99999; // OFP-Mismatch / getankt
+    const { container } = render(<SpritSektion sprit={a} />);
+    const markX = Number(container.querySelector("svg")!.querySelector("line")!.getAttribute("x1"));
+    expect(markX).toBeGreaterThanOrEqual(0);
+    expect(markX).toBeLessThanOrEqual(560);
+  });
+
+  it("kommt ohne Leiter aus (Manual-Flug ohne OFP)", () => {
+    const a = dlh370();
+    a.leiter = null;
+    const { container } = render(<SpritSektion sprit={a} />);
+    expect(container.querySelector("svg")).toBeNull();
+    expect(screen.getByTestId("sprit-sektion").textContent).toContain("intakt");
   });
 
   it("rendert nichts ohne Auswertung (Altbestand behält den alten Balken)", () => {
