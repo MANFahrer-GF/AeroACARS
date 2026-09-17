@@ -1822,7 +1822,7 @@
       "flight_active": "Un volo è ancora attivo — terminalo o annullalo prima di disconnetterti.",
       "flight_setup_in_progress": "È in corso un avvio o una ripresa del volo — attendi un momento e riprova."
     },
-    "ofp_callsign_warning": "Attenzione: il callsign dell'OFP è {{sb_callsign}}, il tuo volo attivo usa {{active_callsigns}}. DEP/ARR coincidono — l'OFP è stato caricato. Se non è corretto, rigenera su simbrief.com con un ATC callsign corrispondente."
+    "ofp_callsign_warning": "Il callsign dell'OFP è {{sb_callsign}} (volo: {{active_callsigns}}). DEP/ARR coincidono, l'OFP è stato caricato; Hoppie/PDC effettuerà il logon come {{sb_callsign}}. Se non è il callsign che hai pianificato, rigenera l'OFP."
   },
   "confirm_dialog": {
     "default_title": "Sei sicuro?",

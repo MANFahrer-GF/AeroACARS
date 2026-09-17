@@ -3763,6 +3763,8 @@ struct PersistedFlightStats {
     planned_ldw_kg: Option<f32>,
     #[serde(default)]
     planned_route: Option<String>,
+    #[serde(default)]
+    planned_atc_callsign: Option<String>,
     /// v0.15.x: Navlog-Fixes mit-persistieren, damit ein Resume die
     /// Map-Strecke (Wegpunkte) behält statt auf die Great-Circle-Linie zu fallen.
     #[serde(default)]
@@ -4051,6 +4053,7 @@ impl PersistedFlightStats {
             planned_tow_kg: stats.planned_tow_kg,
             planned_ldw_kg: stats.planned_ldw_kg,
             planned_route: stats.planned_route.clone(),
+            planned_atc_callsign: stats.planned_atc_callsign.clone(),
             planned_waypoints: stats.planned_waypoints.clone(),
             planned_alternate: stats.planned_alternate.clone(),
             planned_arr_ref_pos: stats.planned_arr_ref_pos,
@@ -4274,6 +4277,7 @@ impl PersistedFlightStats {
         stats.planned_tow_kg = self.planned_tow_kg;
         stats.planned_ldw_kg = self.planned_ldw_kg;
         stats.planned_route = self.planned_route;
+        stats.planned_atc_callsign = self.planned_atc_callsign;
         stats.planned_waypoints = self.planned_waypoints;
         stats.planned_alternate = self.planned_alternate;
         stats.planned_arr_ref_pos = self.planned_arr_ref_pos;
@@ -5729,6 +5733,11 @@ struct FlightStats {
     planned_ldw_kg: Option<f32>,
     /// Planned route string from the OFP.
     planned_route: Option<String>,
+    /// ATC-Rufzeichen aus dem geladenen OFP (`<atc><callsign>`), nur wenn es eine
+    /// gueltige ICAO-Kennung ist (siehe `ofp_atc_callsign`). Hoppie/PDC meldet sich
+    /// damit an — in PaxStudio/SimBrief kann ein anderes Rufzeichen als Airline +
+    /// Flugnummer geplant sein (z.B. DLH4TK, EWG9KC). None = kein OFP oder ungueltig.
+    planned_atc_callsign: Option<String>,
     /// v0.13.x (In-App-Live-Map): geplante Navlog-Fixes aus dem SimBrief-OFP
     /// (ident + lat/lon + kind, inkl. TOC/TOD falls im Navlog). Beim Flugstart
     /// gesetzt, von der Map-Ansicht via `flight_get_route_fixes` gelesen.
@@ -12597,6 +12606,7 @@ async fn flight_refresh_simbrief(
         stats.planned_tow_kg = Some(ofp.planned_tow_kg).filter(|&v| v > 0.0);
         stats.planned_ldw_kg = Some(ofp.planned_ldw_kg).filter(|&v| v > 0.0);
         stats.planned_route = ofp.route.clone();
+        stats.planned_atc_callsign = ofp_atc_callsign(&ofp.ofp_flight_number);
         // v0.15.6: Bugfix — der Refresh-Pfad hat `planned_waypoints` NIE
         // gesetzt (nur `flight_start` tat das). Folge: wer den SimBrief-Plan
         // erst nach dem Bid generierte/aktualisierte (OFP kam per Refresh,
@@ -12683,9 +12693,37 @@ struct RouteRefreshResult {
     route_posted: bool,
 }
 
+/// ATC-Rufzeichen eines OFP fuer Hoppie/PDC: Leerzeichen raus, gross geschrieben,
+/// dann nur eine gueltige ICAO-Kennung (Flugplan Feld 7: 2-7 Zeichen A-Z/0-9, erstes
+/// Zeichen ein Buchstabe). `ofp_flight_number` faellt ohne `<atc><callsign>` auf die
+/// reine Flugnummer ("371") zurueck — die ist kein Rufzeichen und ergibt None, dann
+/// bleibt Hoppie bei Airline + Flugnummer. Gleiche Regel wie PaxStudio
+/// `UtilityService::normalizeAtcCallsign`.
+fn ofp_atc_callsign(raw: &str) -> Option<String> {
+    let cs = raw
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let mut chars = cs.chars();
+    let first_ok = chars.next().is_some_and(|c| c.is_ascii_uppercase());
+    let rest_ok = chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+    (first_ok && rest_ok && (2..=7).contains(&cs.len())).then_some(cs)
+}
+
+/// Rufzeichen, unter dem der aktive Flug bei Hoppie/PDC auftritt: das des OFP,
+/// sonst Airline + Flugnummer (so wie bisher immer).
+pub(crate) fn flight_atc_callsign(planned: Option<&str>, airline_icao: &str, flight_number: &str) -> String {
+    planned
+        .filter(|cs| !cs.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{airline_icao}{flight_number}"))
+}
+
 /// v0.16.23: Schreibt AUSSCHLIESSLICH die Routen-Felder eines frischen
 /// OFP in die FlightStats — `planned_route`, `planned_waypoints` und
-/// (falls der OFP einen liefert) `planned_alternate`. Bewusst KEINE
+/// (falls der OFP einen liefert) `planned_alternate`, dazu das ATC-Rufzeichen
+/// des OFP (`planned_atc_callsign`, kein Score-Feld — nur Hoppie/PDC). Bewusst KEINE
 /// Beruehrung irgendeines Score-Feldes: kein `*_kg`, kein
 /// `flight_plan_source`, kein `simbrief_ofp_id`, kein
 /// `simbrief_ofp_generated_at`.
@@ -12702,6 +12740,7 @@ struct RouteRefreshResult {
 /// Navlog soll die schon vorhandenen Wegpunkte nicht loeschen.
 fn apply_route_only_to_stats(stats: &mut FlightStats, ofp: &api_client::SimBriefOfp) {
     stats.planned_route = ofp.route.clone();
+    stats.planned_atc_callsign = ofp_atc_callsign(&ofp.ofp_flight_number);
     if !ofp.waypoints.is_empty() {
         stats.planned_waypoints = ofp.waypoints.clone();
     }
@@ -15885,6 +15924,7 @@ async fn flight_start(
             stats.planned_cruise_alt_ft = ofp.planned_cruise_alt_ft;
         }
         stats.planned_route = ofp.route;
+        stats.planned_atc_callsign = ofp_atc_callsign(&ofp.ofp_flight_number);
         // v0.8.0: OFP-Alternate kann sich vom Bid-Alternate
         // unterscheiden — wenn ja, fetch ihn jetzt nach. Der
         // per-ICAO-Guard im `spawn_navdata_fetch` macht das zu einem
@@ -66084,5 +66124,59 @@ mod sprung_thy42_tests {
             1,
             "ein 20-ft-Sprung bei niedrigem Modellursprung wurde verschluckt"
         );
+    }
+}
+
+#[cfg(test)]
+mod ofp_atc_callsign_tests {
+    use super::*;
+
+    #[test]
+    fn ofp_callsign_accepts_icao_identifications() {
+        assert_eq!(ofp_atc_callsign("DLH4TK").as_deref(), Some("DLH4TK"));
+        assert_eq!(ofp_atc_callsign("ewg9kc").as_deref(), Some("EWG9KC"));
+        assert_eq!(ofp_atc_callsign(" cfg 1tk ").as_deref(), Some("CFG1TK"));
+        assert_eq!(ofp_atc_callsign("GSG0001").as_deref(), Some("GSG0001"));
+        assert_eq!(ofp_atc_callsign("N123AB").as_deref(), Some("N123AB"));
+    }
+
+    #[test]
+    fn ofp_callsign_rejects_plain_flight_numbers_and_junk() {
+        // Ohne <atc><callsign> liefert der Parser die reine Flugnummer.
+        assert_eq!(ofp_atc_callsign("371"), None);
+        assert_eq!(ofp_atc_callsign(""), None);
+        assert_eq!(ofp_atc_callsign("DLH12345"), None);
+        assert_eq!(ofp_atc_callsign("DLH-371"), None);
+        assert_eq!(ofp_atc_callsign("A"), None);
+        assert_eq!(ofp_atc_callsign("ÄBC12"), None);
+    }
+
+    #[test]
+    fn hoppie_uses_ofp_callsign_else_airline_and_number() {
+        assert_eq!(flight_atc_callsign(Some("DLH4TK"), "DLH", "371"), "DLH4TK");
+        assert_eq!(flight_atc_callsign(None, "DLH", "371"), "DLH371");
+        assert_eq!(flight_atc_callsign(Some("  "), "DLH", "371"), "DLH371");
+    }
+
+    #[test]
+    fn ofp_callsign_survives_resume_snapshot() {
+        let mut stats = FlightStats::new();
+        stats.planned_atc_callsign = Some("EWG9KC".to_string());
+        let json = serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).unwrap();
+        let restored: PersistedFlightStats = serde_json::from_str(&json).unwrap();
+        let mut back = FlightStats::new();
+        restored.apply_to(&mut back);
+        assert_eq!(back.planned_atc_callsign.as_deref(), Some("EWG9KC"));
+    }
+
+    #[test]
+    fn old_resume_file_without_callsign_still_loads() {
+        let stats = FlightStats::new();
+        let mut value = serde_json::to_value(PersistedFlightStats::snapshot_from(&stats)).unwrap();
+        value.as_object_mut().unwrap().remove("planned_atc_callsign");
+        let restored: PersistedFlightStats = serde_json::from_value(value).unwrap();
+        let mut back = FlightStats::new();
+        restored.apply_to(&mut back);
+        assert_eq!(back.planned_atc_callsign, None);
     }
 }

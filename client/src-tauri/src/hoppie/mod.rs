@@ -824,7 +824,20 @@ fn flight_context(app: &AppHandle) -> FlightContext {
     let guard = state.active_flight.lock().expect("active flight mutex");
     match guard.as_ref() {
         Some(flight) => FlightContext {
-            callsign: Some(format!("{}{}", flight.airline_icao, flight.flight_number)),
+            // The OFP's ATC callsign first: PaxStudio/SimBrief may plan a callsign other
+            // than airline + flight number (personal DLH4TK, real-world EWG9KC), and that
+            // is what the pilot files and flies under. Airline + flight number only when
+            // the OFP has none (or no OFP is loaded).
+            callsign: Some(crate::flight_atc_callsign(
+                flight
+                    .stats
+                    .lock()
+                    .expect("flight stats lock")
+                    .planned_atc_callsign
+                    .as_deref(),
+                &flight.airline_icao,
+                &flight.flight_number,
+            )),
             aircraft_type: Some(flight.aircraft_icao.clone()),
             dep_icao: Some(flight.dpt_airport.clone()),
             dest_icao: Some(flight.arr_airport.clone()),

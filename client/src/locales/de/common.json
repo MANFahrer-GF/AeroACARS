@@ -1829,7 +1829,7 @@
       "flight_active": "Ein Flug ist noch aktiv — bitte zuerst beenden oder abbrechen, bevor du dich abmeldest.",
       "flight_setup_in_progress": "Ein Flugstart oder eine Übernahme läuft gerade — bitte kurz warten und erneut versuchen."
     },
-    "ofp_callsign_warning": "Achtung: OFP-Callsign ist {{sb_callsign}}, dein aktiver Flug nutzt {{active_callsigns}}. DEP/ARR stimmen — der OFP wurde geladen. Wenn das nicht passt, generiere auf simbrief.com einen OFP mit passendem ATC-Callsign."
+    "ofp_callsign_warning": "OFP-Rufzeichen ist {{sb_callsign}} (Flug: {{active_callsigns}}). DEP/ARR stimmen, der OFP wurde geladen; Hoppie/PDC meldet sich mit {{sb_callsign}} an. Ist das nicht dein geplantes Rufzeichen, generiere den OFP neu."
   },
   "confirm_dialog": {
     "default_title": "Bist du sicher?",

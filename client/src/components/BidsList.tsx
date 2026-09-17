@@ -690,7 +690,9 @@ export function BidsList({
               sb_callsign: warn.sb_callsign,
               active_callsigns: warn.active_callsigns,
             }),
-            tone: "warn",
+            // Ein eigenes ATC-Rufzeichen (PaxStudio/SimBrief) ist gewollt, kein
+            // Fehler: DEP/ARR stimmen, der OFP ist geladen. Nur Info.
+            tone: "info",
           });
           noticeSet = true;
         }

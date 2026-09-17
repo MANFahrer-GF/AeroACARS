@@ -1829,7 +1829,7 @@
       "flight_active": "A flight is still active — please end or cancel it first before logging out.",
       "flight_setup_in_progress": "A flight start or takeover is currently in progress — please wait a moment and try again."
     },
-    "ofp_callsign_warning": "Heads up: OFP callsign is {{sb_callsign}}, your active flight uses {{active_callsigns}}. DEP/ARR match — the OFP was loaded. If this is wrong, regenerate on simbrief.com with a matching ATC callsign."
+    "ofp_callsign_warning": "OFP callsign is {{sb_callsign}} (flight: {{active_callsigns}}). DEP/ARR match, the OFP was loaded; Hoppie/PDC will log on as {{sb_callsign}}. If this is not the callsign you planned, regenerate the OFP."
   },
   "confirm_dialog": {
     "default_title": "Are you sure?",
