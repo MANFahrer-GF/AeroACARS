@@ -169,7 +169,9 @@
     "approach_start": "Inizio avvicinamento",
     "vs_chart": {
       "axis": "Rateo di discesa (fpm)",
-      "band": "Rateo target {{hi}}…{{lo}}",
+      "band_gs": "Rateo target {{angle}}° ±{{tol}} fpm",
+      "band_legacy": "Valore indicativo {{hi}}…{{lo}} (volo senza dati di velocità)",
+      "target": "target {{fpm}} fpm",
       "limit": "Limite di stabilità {{fpm}} fpm",
       "limit_custom": "Limite di stabilità {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s prima del TD",

@@ -31,6 +31,13 @@ import {
   T_VS_HARD_FPM,
   T_VS_SEVERE_FPM,
 } from "../lib/landingScoring";
+import {
+  gleitwinkelFaktor,
+  sollband,
+  sollbandPfad,
+  sollbandStuecke,
+  SOLLBAND_TOLERANZ_FPM,
+} from "../lib/anflugSollband";
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
 
 // ---- Types (mirror storage::LandingRecord on the Rust side) -------------
@@ -458,6 +465,9 @@ export interface ApproachSample {
   /// True wenn das Sample in den letzten `FLARE_CUTOFF_MS` vor TD
   /// liegt (zeitbasiert).
   is_flare?: boolean | null;
+  /** Geschwindigkeit über Grund in kt — Grundlage des Soll-Bandes
+   *  (`lib/anflugSollband.ts`). Fehlt bei Aufzeichnungen vor v1.7.33. */
+  gs_kt?: number | null;
 }
 
 /** v0.12.7: Flare-Score-Aufschlüsselung — der „Flare-Score" ist
@@ -1267,13 +1277,13 @@ function ApproachChart({
   // vorher). Steilanflüge (ENTC 4°, EGLC 5,5°) bekommen die korrekte, tiefere
   // Linie — sonst „stürzt" die V/S-Spur scheinbar unter eine falsche −1000-
   // Marke, obwohl das Backend (korrekt skaliert) den Anflug gar nicht flaggt.
-  const gsFactor =
-    glideslopeAngleDeg != null &&
-    glideslopeAngleDeg >= 2 &&
-    glideslopeAngleDeg <= 7.5
-      ? Math.tan((glideslopeAngleDeg * Math.PI) / 180) /
-        Math.tan((3 * Math.PI) / 180)
-      : 1;
+  const gsFactor = gleitwinkelFaktor(glideslopeAngleDeg);
+  // Soll-Band aus der echten Geschwindigkeit über Grund — dieselbe Rechnung
+  // wie die Bewertung (siehe lib/anflugSollband.ts). Aufzeichnungen ohne
+  // gs_kt (vor v1.7.33) behalten den alten Richtwert, klar als solcher
+  // beschriftet, statt ein Soll zu erfinden.
+  const sollPunkte = sollband(samples, glideslopeAngleDeg);
+  const hatSollband = sollPunkte.length > 0;
   const bandHi = -600 * gsFactor;
   const bandLo = -900 * gsFactor;
   const limitFpm = -1000 * gsFactor;
@@ -1300,6 +1310,13 @@ function ApproachChart({
   // v0.15.18: mit dem Gleitwinkel mit-skaliert, damit die (ggf. tiefere)
   // Grenze + Band auch bei Steilanflügen im Bild bleiben.
   lo = Math.min(lo, Math.floor((limitFpm - 100) / 100) * 100);
+  // Das Soll-Band hängt von der Geschwindigkeit ab und kann bei schnellen
+  // Anflügen tiefer liegen als Kurve und Grenze — dann mit ins Bild nehmen,
+  // statt es unbemerkt am Achsenrand abzuschneiden.
+  if (sollPunkte.length > 0) {
+    const tiefste = Math.min(...sollPunkte.map((p) => p.unten));
+    lo = Math.min(lo, Math.floor((tiefste - 60) / 100) * 100);
+  }
   const range = Math.max(1, hi - lo);
 
   const xStep = innerW / Math.max(1, samples.length - 1);
@@ -1370,10 +1387,15 @@ function ApproachChart({
                      height={innerH} fill={zoneFill(z.kind)} />;
       })}
 
-      {bandBottom > bandTop && (
-        <rect x={pad.left} y={bandTop} width={innerW} height={bandBottom - bandTop}
-              fill="rgba(34,197,94,0.16)" />
-      )}
+      {hatSollband
+        ? sollbandStuecke(sollPunkte).map((stueck, idx) => (
+            <path key={idx} d={sollbandPfad(stueck, x, clampY)}
+                  fill="rgba(34,197,94,0.16)" />
+          ))
+        : bandBottom > bandTop && (
+            <rect x={pad.left} y={bandTop} width={innerW} height={bandBottom - bandTop}
+                  fill="rgba(34,197,94,0.16)" />
+          )}
 
       {gridVals.map((v) => {
         const gy = y(v);
@@ -1435,10 +1457,15 @@ function ApproachChart({
           <text x={pad.left + 173} y={h - 6}>{t("landing.chart_zone.flare")}</text>
           <rect x={pad.left + 230} y={h - 14} width={9} height={9} fill="rgba(34,197,94,0.4)" />
           <text x={pad.left + 243} y={h - 6}>
-            {t("landing.vs_chart.band", {
-              hi: fmtFpm(bandHi),
-              lo: fmtFpm(bandLo),
-            })}
+            {hatSollband
+              ? t("landing.vs_chart.band_gs", {
+                  angle: String(isScaledGp ? glideslopeAngleDeg : 3),
+                  tol: SOLLBAND_TOLERANZ_FPM,
+                })
+              : t("landing.vs_chart.band_legacy", {
+                  hi: fmtFpm(bandHi),
+                  lo: fmtFpm(bandLo),
+                })}
           </text>
         </g>
       )}
@@ -1456,7 +1483,8 @@ function ApproachChart({
           : s.is_scored_gate
             ? t("landing.chart_zone.gate")
             : t("landing.chart_zone.vorlauf");
-        const boxW = 188;
+        const sollBeiHover = sollPunkte.find((p) => p.index === hover) ?? null;
+        const boxW = sollBeiHover != null ? 268 : 188;
         const boxX = Math.min(Math.max(hx + 12, pad.left), pad.left + innerW - boxW);
         const boxY = Math.max(hy - 46, pad.top + 2);
         return (
@@ -1472,6 +1500,9 @@ function ApproachChart({
             </text>
             <text x={boxX + 9} y={boxY + 32} fontSize="11" fill="#94a3b8">
               {s.agl_ft != null ? `AGL ${Math.round(s.agl_ft)} ft  ·  ` : ""}{zoneLabel}
+              {sollBeiHover != null
+                ? `  ·  ${t("landing.vs_chart.target", { fpm: Math.round(sollBeiHover.soll) })}`
+                : ""}
             </text>
           </g>
         );

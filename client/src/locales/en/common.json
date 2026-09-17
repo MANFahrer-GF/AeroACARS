@@ -169,7 +169,9 @@
     "approach_start": "Approach start",
     "vs_chart": {
       "axis": "Vertical speed (fpm)",
-      "band": "Target sink {{hi}}…{{lo}}",
+      "band_gs": "Target sink rate {{angle}}° ±{{tol}} fpm",
+      "band_legacy": "Guide value {{hi}}…{{lo}} (flight without speed data)",
+      "target": "target {{fpm}} fpm",
       "limit": "Stability limit {{fpm}} fpm",
       "limit_custom": "Stability limit {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s before TD",

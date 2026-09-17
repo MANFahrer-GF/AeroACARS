@@ -169,7 +169,9 @@
     "approach_start": "Anflug-Start",
     "vs_chart": {
       "axis": "Sinkrate (fpm)",
-      "band": "Soll-Sinkrate {{hi}}…{{lo}}",
+      "band_gs": "Soll-Sinkrate {{angle}}° ±{{tol}} fpm",
+      "band_legacy": "Richtwert {{hi}}…{{lo}} (Flug ohne Geschwindigkeitsdaten)",
+      "target": "Soll {{fpm}} fpm",
       "limit": "Stabilitätsgrenze {{fpm}} fpm",
       "limit_custom": "Stabilitätsgrenze {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s vor TD",
