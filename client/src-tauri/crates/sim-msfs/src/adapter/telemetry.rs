@@ -4914,6 +4914,14 @@ mod tests {
         // darunter pruefte etwas anderes. Genau dieselbe Falle wie am
         // 19.08.2026 (siehe Kommentar unten) — und sie hat auch diesmal
         // wieder ZUERST hier zugeschlagen, nicht im pattern_buffer-Test.
+        // 16.09.2026: `ENG COMBUSTION:1..4` (4 * i32 = 16) ist jetzt der
+        // Schwanz — dieselbe Falle ein drittes Mal, also zuerst die weg.
+        buf.truncate(buf.len() - 16);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.syn_aural_glideslope, 1316.0, "Gruppe J intakt");
+        assert!(!t.eng1_combustion_state, "ENG COMBUSTION = sicherer Default");
+        assert!(!t.eng4_combustion_state, "ENG COMBUSTION = sicherer Default");
+
         buf.truncate(buf.len() - 128);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.simulation_rate, 1299.0, "Echtheits-Feld intakt");
