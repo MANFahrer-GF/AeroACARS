@@ -1227,6 +1227,7 @@ impl XPlaneState {
             // Streamer (post-Engine) — Adapter liefern immer None.
             shadow_phase: None,
             shadow_segment: None,
+            engine_signals: None,
         }
     }
 }

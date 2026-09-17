@@ -465,6 +465,14 @@ pub struct SimSnapshot {
     /// "level" / "descending" / "insufficient").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadow_segment: Option<String>,
+    /// Rohsignale zum Triebwerkszustand, genau so, wie der Simulator sie
+    /// liefert — je Triebwerk, ohne Auswertung. `engines_running` ist das
+    /// Urteil daraus; dieses Feld ist der Beleg, damit ein falsches Urteil
+    /// im Flug-Log nachvollziehbar ist, ohne dass jemand das Flugzeug
+    /// besitzen oder im Inspektor nachmessen muss (Anlass: PC-12,
+    /// Thorben 16.09.2026). `None` bei Adaptern, die es nicht füllen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_signals: Option<EngineSignals>,
 }
 
 /// PMDG aircraft "premium telemetry" — generic across 737 NG3 and
@@ -956,6 +964,7 @@ impl Default for SimSnapshot {
             // Schatten-Felder — Default/Adapter liefern None.
             shadow_phase: None,
             shadow_segment: None,
+            engine_signals: None,
         }
     }
 }
@@ -1400,6 +1409,24 @@ impl AircraftProfile {
     pub fn engine_count_unreliable(self) -> bool {
         matches!(self, Self::ContrailFa50)
     }
+}
+
+/// Triebwerks-Rohsignale je Triebwerk (Index 0 = Triebwerk 1), siehe
+/// `SimSnapshot::engine_signals`. Die Vektoren haben immer dieselbe Länge:
+/// so viele Triebwerke, wie der Adapter abfragt (MSFS: 4).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct EngineSignals {
+    /// MSFS `GENERAL ENG COMBUSTION:n` (laut SDK ein setzbarer Schalter).
+    pub general_combustion: Vec<bool>,
+    /// MSFS `GENERAL ENG COMBUSTION EX1:n`.
+    pub combustion_ex1: Vec<bool>,
+    /// MSFS `ENG COMBUSTION:n` (laut SDK nur lesbar, "True if the indexed
+    /// engine is running").
+    pub eng_combustion: Vec<bool>,
+    /// `TURB ENG N1:n` in der angeforderten Einheit Percent (0–100).
+    pub n1_pct: Vec<f64>,
+    /// `ENG FUEL FLOW PPH:n` in Pfund pro Stunde.
+    pub fuel_flow_pph: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
