@@ -866,6 +866,11 @@ pub struct ApproachSample {
     /// liegt (zeitbasiert, Werte aus landing_scoring::gate).
     #[serde(default)]
     pub is_flare: Option<bool>,
+    /// Geschwindigkeit über Grund in kt. Die Anflug-Grafik zeichnet daraus
+    /// das Soll-Band (−GS × 5,31 × Gleitwinkel-Faktor) — dieselbe Rechnung
+    /// wie die Bewertung. Ältere Records haben das Feld nicht (`None`).
+    #[serde(default)]
+    pub gs_kt: Option<f32>,
 }
 
 /// File-backed JSON store of past landings.

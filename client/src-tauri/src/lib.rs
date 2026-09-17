@@ -22351,6 +22351,7 @@ where
                 agl_ft: Some(height),
                 is_scored_gate: Some(in_height_band && !in_flare),
                 is_flare: Some(in_flare),
+                gs_kt: Some(s.gs_kt),
             }
         })
         .collect();

@@ -69,6 +69,10 @@ export const DATEIEN = [
   "components/runwayV2Skin.ts",
   "lib/runwayProjection.ts",
   "lib/useBahnZoom.ts",
+  // Soll-Sinkrate im Anflug (16.09.2026): Rechnung der Anflug-Grafik,
+  // identisch zur Bewertung. Beide Grafiken (LandingPanel, _ApproachChart)
+  // zeichnen das Band nur hieraus.
+  "lib/anflugSollband.ts",
 ];
 
 /**
