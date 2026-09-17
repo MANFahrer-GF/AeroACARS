@@ -151,11 +151,22 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
     cursor += w;
     return r;
   });
-  // Landemarke: vom rechten Ende aus die verbleibende Menge.
+  // Landemarke: aus DERSELBEN Rechnung wie die Textzeile daneben.
+  //
+  // Frueher stand hier `W − x(landing_fuel)` — der tatsaechliche Spritstand
+  // gegen die GEPLANTE Leiter. Die Zeile „X kg Extra genutzt" rechnet aber
+  // gegen den echten Abhebe-Tankstand; bei abweichender Betankung klafften
+  // beide auseinander (bei DLH370 um 273 kg). Zwei Zahlen fuer dieselbe
+  // Aussage — genau das, was dieser Umbau abschafft.
+  //
+  // Also: rechts liegen Alternate und Reserve, davor das noch vorhandene
+  // Extra. Die Marke sitzt an dessen linker Kante.
+  const restRechts =
+    sprit.extra_ungenutzt_kg != null
+      ? l.alternate_kg + l.reserve_kg + sprit.extra_ungenutzt_kg
+      : sprit.landing_fuel_kg;
+  const markX = restRechts != null ? Math.min(Math.max(W - x(restRechts), 0), W) : null;
   const ldg = sprit.landing_fuel_kg;
-  // Innerhalb der Leiter bleiben: bei OFP-Mismatch (mehr gelandet als Block)
-  // liefe die Marke sonst links aus dem Bild.
-  const markX = ldg != null ? Math.min(Math.max(W - x(ldg), 0), W) : null;
   // Die Marke ist eine Tatsache, kein Urteil: Ton nach Reservestand,
   // nie die Fehlerfarbe.
   const markFarbe = sprit.badge === "gelb" ? TON.warn : "var(--text)";
@@ -172,7 +183,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
           // 10.5px Monospace ≈ 6.3px je Zeichen — nur beschriften, wenn der
           // Text ins Segment passt und im Bild bleibt.
           const breite = (`${r.label} ${kg(r.kg)}`).length * 6.3;
-          return r.w >= breite + 6 && r.x + breite <= W;
+          return r.w >= breite + 6 && r.x + 3 + breite <= W;
         })
         .map((r) => (
           <text key={`t-${r.label}`} x={r.x + 3} y={56} style={{ font: "10.5px ui-monospace, monospace", fill: "var(--text-muted)" }}>

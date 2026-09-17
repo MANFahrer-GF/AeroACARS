@@ -2385,10 +2385,9 @@ fn extract_tag<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
 /// waeren alle Planwerte 2,2-fach zu gross gewesen — Reserve auf jedem Flug
 /// „unterschritten", die Sprit-Leiter Unsinn. `wt_unit` bleibt als Rueckfall.
 fn ofp_unit_is_lb(xml: &str) -> bool {
-    matches!(
-        extract_tag(xml, "params").and_then(|p| extract_tag(p, "units")),
-        Some("lbs")
-    ) || matches!(extract_tag(xml, "wt_unit"), Some("lbs"))
+    let ist_lbs = |v: Option<&str>| v.map(str::trim).is_some_and(|v| v.eq_ignore_ascii_case("lbs"));
+    ist_lbs(extract_tag(xml, "params").and_then(|p| extract_tag(p, "units")))
+        || ist_lbs(extract_tag(xml, "wt_unit"))
 }
 
 fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
@@ -3480,6 +3479,8 @@ mod navlog_sprit_tests {
         assert!(ofp_unit_is_lb("<OFP><general><wt_unit>lbs</wt_unit></general></OFP>"));
         // Und ohne jede Angabe bleibt es bei Kilogramm.
         assert!(!ofp_unit_is_lb("<OFP><navlog></navlog></OFP>"));
+        // Ein pretty-printed OFP darf nicht still auf Kilogramm zurueckfallen.
+        assert!(ofp_unit_is_lb("<OFP><params><units>\n  LBS\n</units></params></OFP>"));
         // Wirkung auf die Sprit-Felder: 42 666 lb sind 19 353 kg (DLH370).
         let xml = r#"<OFP><params><units>lbs</units></params><navlog>
 <fix><ident>TOD</ident><type>ltp</type><pos_lat>49.7</pos_lat><pos_long>12.1</pos_long>

@@ -78,6 +78,11 @@ describe("SpritSektion", () => {
     render(<SpritSektion sprit={dlh370()} />);
     const t = screen.getByTestId("sprit-sektion").textContent ?? "";
     expect(t).toContain("−3,4 %");
+    // Die Hauptzahl des Anflugs steht in Kilogramm — wie in der Live-
+    // Übersicht und im Bericht. Der Prozentwert steht daneben in der
+    // Nebenzeile. Vorher prüfte dieser Test NUR die Nebenzeile und wäre
+    // auch grün geblieben, wenn hauptzahl() gar nicht gegriffen hätte.
+    expect(t).toContain("+3\u202f596 kg");
     expect(t).toContain("+192,8 %");
     expect(t).toContain("18\u202f688");
     expect(t).toContain("19\u202f353");
@@ -119,6 +124,32 @@ describe("SpritSektion", () => {
     expect(svg!.textContent).toContain("Contingency verbraucht");
   });
 
+
+  it("zeichnet die Landemarke aus derselben Zahl wie die Textzeile", () => {
+    // Vorher rechnete die Grafik den Landesprit gegen die geplante Leiter,
+    // die Zeile daneben gegen den echten Abhebe-Tankstand — 273 kg
+    // Widerspruch bei DLH370 (QS-Befund P2-2).
+    const a = dlh370();
+    const { container } = render(<SpritSektion sprit={a} />);
+    const svg = container.querySelector("svg")!;
+    const W = 560;
+    const l = a.leiter!;
+    const x = (v: number) => (v / l.block_kg) * W;
+    const markX = Number(svg.querySelector("line")!.getAttribute("x1"));
+    const erwartet = W - x(l.alternate_kg + l.reserve_kg + a.extra_ungenutzt_kg!);
+    expect(markX).toBeCloseTo(erwartet, 1);
+  });
+
+  it("zeigt bei moderatem Anflug den Prozentwert als Hauptzahl", () => {
+    // Die kg-Darstellung greift erst bei unlesbaren Prozenten (> 60 %).
+    const a = dlh370();
+    a.anflug = { ist_kg: 2000, plan_kg: 1865, abweichung_pct: 7.2 };
+    render(<SpritSektion sprit={a} />);
+    const t = screen.getByTestId("sprit-sektion").textContent ?? "";
+    expect(t).toContain("+7,2 %");
+    expect(t).not.toContain("+135 kg");
+  });
+
   it("kommt ohne Phasen aus und zeigt trotzdem die Reserve", () => {
     const a = dlh370();
     a.bis_sinkflug = null;
@@ -156,10 +187,14 @@ describe("SpritSektion", () => {
     // anders tankt als geplant, bei dem weicht die Marke leicht von der
     // Textzeile „X kg Extra genutzt" ab — die rechnet gegen den echten
     // Abhebe-Tankstand. Beides ist richtig, es misst nur Verschiedenes.
+    // Die Marke muss im EXTRA-Block liegen: rechts von ihr stehen das noch
+    // vorhandene Extra sowie Alternate und Reserve. Vorher lag sie im
+    // Alternate-Block und widersprach damit der Zeile daneben „Alternate +
+    // Final Reserve unangetastet". Die genaue Position prüft der Test
+    // „zeichnet die Landemarke aus derselben Zahl wie die Textzeile".
     const markX = Number(svg.querySelector("line")!.getAttribute("x1"));
     const grenzeExtraAlternate = W - x(l.alternate_kg + l.reserve_kg);
     const extraBeginn = x(l.taxi_kg + l.trip_kg + l.contingency_kg);
-    expect(markX).toBeCloseTo(W - x(a.landing_fuel_kg!), 1);
     expect(markX).toBeGreaterThan(extraBeginn);
     expect(markX).toBeLessThan(grenzeExtraAlternate);
   });

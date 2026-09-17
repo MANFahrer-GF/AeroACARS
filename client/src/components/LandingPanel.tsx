@@ -12,7 +12,7 @@ import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
 import { SpritBadge, SpritSektion } from "./SpritSektion";
-import { kg as spritKg, pct as spritPct } from "../lib/sprit";
+import { hauptzahl as spritHauptzahl, kg as spritKg } from "../lib/sprit";
 import type { SpritAuswertung } from "../lib/sprit";
 import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
@@ -2944,10 +2944,16 @@ export function LandingReport({ record }: { record: LandingRecord }) {
             <div className="report-tiles">
               {/* v1.7.35: die fertige Sprit-Auswertung zuerst — nur gerendert. */}
               {record.sprit?.bis_sinkflug && (
-                <ReportTile label={t("landing.sprit.report_bis_sinkflug")} value={spritPct(record.sprit.bis_sinkflug.abweichung_pct)} />
+                <ReportTile
+                  label={t("landing.sprit.report_bis_sinkflug")}
+                  value={spritHauptzahl(record.sprit.bis_sinkflug, "bis_sinkflug")}
+                />
               )}
               {record.sprit?.anflug && (
-                <ReportTile label={t("landing.sprit.report_anflug")} value={spritPct(record.sprit.anflug.abweichung_pct)} />
+                <ReportTile
+                  label={t("landing.sprit.report_anflug")}
+                  value={spritHauptzahl(record.sprit.anflug, "anflug")}
+                />
               )}
               {record.sprit?.zeit_unter_schwelle_min != null && record.sprit.schwelle_ft != null && (
                 <ReportTile

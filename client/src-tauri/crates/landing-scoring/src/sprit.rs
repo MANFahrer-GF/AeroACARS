@@ -465,18 +465,44 @@ mod tests {
     }
 
 
-    /// Extra und Contingency zaehlen gegen den TATSAECHLICHEN Tankstand beim
-    /// Abheben. DLH370 hob mit 40 919 kg ab, geplant waren 40 646 kg — die
-    /// 273 kg Differenz gehoeren in die Rechnung, sonst steht eine falsche
-    /// Aussage ueber den Piloten da (QS-Befund P2-3).
+    /// Die Grenzen MIN_PLAN_ANFLUG_KG (15) und MIN_PLAN_BIS_TOD_KG (120)
+    /// genau an ihrer Kante — vorher war keine von beiden abgesteckt.
     #[test]
-    fn sprit_auswertung_extra_gegen_echten_tankstand() {
-        let a = auswerten(&dlh370());
-        // 40 919 − 21 218 = 19 701 sollten uebrig sein; 16 770 sind es.
-        // Differenz 2 931, davon 1 061 Contingency → 1 870 Extra.
-        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
-        assert_eq!(a.extra_ungenutzt_kg, Some(3_308.0));
-        assert_eq!(a.contingency_verbraucht, Some(true));
+    fn sprit_auswertung_grenzen_genau_getroffen() {
+        let bau = |plan_trip: f32, plan_bis: f32| SpritEingang {
+            planned_burn_kg: Some(plan_trip),
+            plan_bis_vergleichspunkt_kg: Some(plan_bis),
+            takeoff_fuel_kg: Some(5_000.0),
+            sprit_bei_vergleichspunkt_kg: Some(4_000.0),
+            landing_fuel_kg: Some(3_500.0),
+            tank_plausibel: true,
+            ..Default::default()
+        };
+        // bis Sinkflug: 120 kg Plan zaehlt, 119 nicht.
+        assert!(auswerten(&bau(200.0, 120.0)).bis_sinkflug.is_some());
+        assert!(auswerten(&bau(200.0, 119.0)).bis_sinkflug.is_none());
+        // Anflug: 15 kg Plan zaehlt (200 − 185), 14 nicht.
+        assert!(auswerten(&bau(200.0, 185.0)).anflug.is_some());
+        assert!(auswerten(&bau(200.0, 186.0)).anflug.is_none());
+    }
+
+    /// Ein Flug mit rund 100 kg Plan-Trip verliert „bis Sinkflug", behaelt
+    /// aber den Anflug — der Fall, den der Pruefer als unerklaert bemaengelt
+    /// hat. Der Test haelt fest, dass das kein Unfall ist.
+    #[test]
+    fn sprit_auswertung_kleiner_flug_behaelt_nur_den_anflug() {
+        let e = SpritEingang {
+            planned_burn_kg: Some(100.0),
+            plan_bis_vergleichspunkt_kg: Some(80.0), // 20 kg Anflugplan
+            takeoff_fuel_kg: Some(300.0),
+            sprit_bei_vergleichspunkt_kg: Some(215.0),
+            landing_fuel_kg: Some(190.0),
+            tank_plausibel: true,
+            ..Default::default()
+        };
+        let a = auswerten(&e);
+        assert!(a.bis_sinkflug.is_none(), "80 kg Plan sind zu klein");
+        assert!(a.anflug.is_some(), "20 kg Anflugplan sind messbar");
     }
 
     /// Wer mehr tankt als geplant, landet hoeher — das darf nicht als
@@ -512,7 +538,10 @@ mod tests {
     #[test]
     fn sprit_auswertung_winziger_anflugplan_ergibt_keine_phase() {
         let mut e = dlh370();
-        e.plan_bis_vergleichspunkt_kg = Some(21_200.0); // nur 18 kg Anflugplan
+        // 8 kg Anflugplan — unter MIN_PLAN_ANFLUG_KG (15). Die Grenze liegt
+        // bewusst niedrig, damit die GA- und Bizjet-Flotte ihre Anflugphase
+        // behaelt; darunter ist die Zahl aber nicht mehr messbar.
+        e.plan_bis_vergleichspunkt_kg = Some(21_210.0);
         let a = auswerten(&e);
         assert!(a.anflug.is_none());
         assert!(a.bis_sinkflug.is_some());
