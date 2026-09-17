@@ -374,6 +374,11 @@ pub struct LandingRecord {
     pub takeoff_fuel_kg: Option<f32>,
     pub landing_fuel_kg: Option<f32>,
     pub block_fuel_kg: Option<f32>,
+    /// v1.7.35: Sprit-Auswertung ohne Note — einmal im Client gerechnet
+    /// (`landing_scoring::sprit::auswerten`), hier gespeichert, ueberall
+    /// nur gerendert. `None` bei Datensaetzen vor v1.7.35.
+    #[serde(default)]
+    pub sprit: Option<landing_scoring::sprit::SpritAuswertung>,
 
     // Runway
     pub runway_match: Option<LandingRunwayMatch>,

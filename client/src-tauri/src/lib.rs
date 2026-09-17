@@ -3771,6 +3771,29 @@ struct PersistedFlightStats {
     planned_waypoints: Vec<api_client::RouteFix>,
     #[serde(default)]
     planned_alternate: Option<String>,
+    /// v1.7.35: Sprit-Messwerte ueberleben einen Neustart. Altbestand ohne
+    /// die Felder liest `None`/0 — und die Auswertung zeigt dann nur, was
+    /// sie hat (Reserve, Leiter), nie erfundene Phasen.
+    #[serde(default)]
+    sprit_vergleichspunkt_kg: Option<f32>,
+    #[serde(default)]
+    sprit_vergleichspunkt_odo_nm: Option<f64>,
+    #[serde(default)]
+    sprit_plan_rest_nm: Option<f64>,
+    #[serde(default)]
+    sprit_plan_bis_tod_kg: Option<f32>,
+    #[serde(default)]
+    sprit_zeit_unter_schwelle_s: f64,
+    #[serde(default)]
+    sprit_schwelle_ft: Option<f64>,
+    #[serde(default)]
+    planned_taxi_kg: Option<f32>,
+    #[serde(default)]
+    planned_contingency_kg: Option<f32>,
+    #[serde(default)]
+    planned_alternate_burn_kg: Option<f32>,
+    #[serde(default)]
+    planned_extra_kg: Option<f32>,
     /// v0.19.3: the arrival airport's reference coordinates (Navigraph → phpVMS
     /// → OurAirports; see `airport_reference_pos`). Persisted so a resumed
     /// flight doesn't lose the ability to tell where it is.
@@ -4057,6 +4080,16 @@ impl PersistedFlightStats {
             planned_waypoints: stats.planned_waypoints.clone(),
             planned_alternate: stats.planned_alternate.clone(),
             planned_arr_ref_pos: stats.planned_arr_ref_pos,
+            sprit_vergleichspunkt_kg: stats.sprit_vergleichspunkt_kg,
+            sprit_vergleichspunkt_odo_nm: stats.sprit_vergleichspunkt_odo_nm,
+            sprit_plan_rest_nm: stats.sprit_plan_rest_nm,
+            sprit_plan_bis_tod_kg: stats.sprit_plan_bis_tod_kg,
+            sprit_zeit_unter_schwelle_s: stats.sprit_zeit_unter_schwelle_s,
+            sprit_schwelle_ft: stats.sprit_schwelle_ft,
+            planned_taxi_kg: stats.planned_taxi_kg,
+            planned_contingency_kg: stats.planned_contingency_kg,
+            planned_alternate_burn_kg: stats.planned_alternate_burn_kg,
+            planned_extra_kg: stats.planned_extra_kg,
             planned_arr_ref_source: stats.planned_arr_ref_source,
             planned_max_zfw_kg: stats.planned_max_zfw_kg,
             planned_max_tow_kg: stats.planned_max_tow_kg,
@@ -4281,6 +4314,16 @@ impl PersistedFlightStats {
         stats.planned_waypoints = self.planned_waypoints;
         stats.planned_alternate = self.planned_alternate;
         stats.planned_arr_ref_pos = self.planned_arr_ref_pos;
+        stats.sprit_vergleichspunkt_kg = self.sprit_vergleichspunkt_kg;
+        stats.sprit_vergleichspunkt_odo_nm = self.sprit_vergleichspunkt_odo_nm;
+        stats.sprit_plan_rest_nm = self.sprit_plan_rest_nm;
+        stats.sprit_plan_bis_tod_kg = self.sprit_plan_bis_tod_kg;
+        stats.sprit_zeit_unter_schwelle_s = self.sprit_zeit_unter_schwelle_s;
+        stats.sprit_schwelle_ft = self.sprit_schwelle_ft;
+        stats.planned_taxi_kg = self.planned_taxi_kg;
+        stats.planned_contingency_kg = self.planned_contingency_kg;
+        stats.planned_alternate_burn_kg = self.planned_alternate_burn_kg;
+        stats.planned_extra_kg = self.planned_extra_kg;
         stats.planned_arr_ref_source = self.planned_arr_ref_source;
         stats.planned_max_zfw_kg = self.planned_max_zfw_kg;
         stats.planned_max_tow_kg = self.planned_max_tow_kg;
@@ -4769,6 +4812,36 @@ struct FlightStats {
     /// dem Sim-Restart re-positionieren soll. Kein 5-NM-Restriction wie
     /// bei smartCARS — der Pilot entscheidet wo er wieder einsteigt.
     paused_since: Option<DateTime<Utc>>,
+    /// v1.7.35 Sprit-Auswertung — Messwerte, die nur im Flug entstehen.
+    ///
+    /// Tankstand am *Vergleichspunkt*: dort, wo die Grosskreis-Reststrecke
+    /// zum Ziel erstmals unter die geplante Reststrecke ab TOD faellt
+    /// (`sprit_plan_rest_nm`). Ab hier beginnt „Sinkflug + Anflug" — die
+    /// Phase, die die Flugsicherung bestimmt. Einmal gesetzt, bleibt es.
+    sprit_vergleichspunkt_kg: Option<f32>,
+    /// Odometer (`distance_nm`) am Vergleichspunkt — daraus die geflogene
+    /// Anflugstrecke.
+    sprit_vergleichspunkt_odo_nm: Option<f64>,
+    /// Geplante Reststrecke ab TOD (Summe der Navlog-Segmente nach dem
+    /// TOD-Fix). `None`, wenn das Navlog die Felder nicht traegt.
+    sprit_plan_rest_nm: Option<f64>,
+    /// Geplanter Verbrauch bis TOD (Navlog `fuel_totalused` am TOD-Fix).
+    sprit_plan_bis_tod_kg: Option<f32>,
+    /// Sekunden unterhalb der Schwelle (Platzhoehe + 8 000 ft, gedeckelt
+    /// unter der geplanten Reiseflughoehe) — nach dem Vergleichspunkt, nur
+    /// in der Luft, ohne Pausen, ohne Neustart-Luecken.
+    sprit_zeit_unter_schwelle_s: f64,
+    /// Die verwendete Schwelle (ft MSL), zur Anzeige.
+    sprit_schwelle_ft: Option<f64>,
+    /// Das Ergebnis — einmal beim Abschluss der Landung gerechnet.
+    sprit_auswertung: Option<landing_scoring::sprit::SpritAuswertung>,
+    /// v1.7.35: OFP-Sprit-Leiter (Taxi, Contingency, Alternate, Extra) —
+    /// bisher nur im Bid-Vorschau-DTO, jetzt auch im Flug, damit die
+    /// Auswertung die Leiter zeigen kann.
+    planned_taxi_kg: Option<f32>,
+    planned_contingency_kg: Option<f32>,
+    planned_alternate_burn_kg: Option<f32>,
+    planned_extra_kg: Option<f32>,
     /// Snapshot der letzten Werte zum Pause-Zeitpunkt — wird in der UI
     /// + Activity-Log angezeigt damit der Pilot weiß was er für die
     /// Repositionierung braucht. None solange der Flug nicht pausiert.
@@ -12602,6 +12675,11 @@ async fn flight_refresh_simbrief(
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
+        // v1.7.35: Sprit-Leiter mitnehmen (0 im OFP = nicht geplant → None).
+        stats.planned_taxi_kg = Some(ofp.planned_taxi_kg).filter(|&v| v > 0.0);
+        stats.planned_contingency_kg = Some(ofp.planned_contingency_kg).filter(|&v| v >= 0.0);
+        stats.planned_alternate_burn_kg = Some(ofp.planned_alternate_burn_kg).filter(|&v| v >= 0.0);
+        stats.planned_extra_kg = Some(ofp.planned_extra_kg).filter(|&v| v >= 0.0);
         stats.planned_zfw_kg = Some(ofp.planned_zfw_kg).filter(|&v| v > 0.0);
         stats.planned_tow_kg = Some(ofp.planned_tow_kg).filter(|&v| v > 0.0);
         stats.planned_ldw_kg = Some(ofp.planned_ldw_kg).filter(|&v| v > 0.0);
@@ -15911,6 +15989,11 @@ async fn flight_start(
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
+        // v1.7.35: Sprit-Leiter mitnehmen (0 im OFP = nicht geplant → None).
+        stats.planned_taxi_kg = Some(ofp.planned_taxi_kg).filter(|&v| v > 0.0);
+        stats.planned_contingency_kg = Some(ofp.planned_contingency_kg).filter(|&v| v >= 0.0);
+        stats.planned_alternate_burn_kg = Some(ofp.planned_alternate_burn_kg).filter(|&v| v >= 0.0);
+        stats.planned_extra_kg = Some(ofp.planned_extra_kg).filter(|&v| v >= 0.0);
         stats.planned_zfw_kg = Some(ofp.planned_zfw_kg).filter(|&v| v > 0.0);
         stats.planned_tow_kg = Some(ofp.planned_tow_kg).filter(|&v| v > 0.0);
         stats.planned_ldw_kg = Some(ofp.planned_ldw_kg).filter(|&v| v > 0.0);
@@ -20286,6 +20369,7 @@ fn build_pirep_payload(
         // P1.5 + Phase 2 (F1/F2/F3) + P1.3-Fix:
         // bereits oben berechnet, hier nur durchreichen.
         sub_scores: payload_sub_scores,
+        sprit: stats.sprit_auswertung.clone(),
         // v0.7.6 P1-3: Runway-Geometry-Trust. Pure-
         // function Check + reason-string ins Payload.
         // v1.7.8: Woher die Bahngeometrie kam. Ohne diese drei Felder
@@ -20750,6 +20834,171 @@ fn emit_landing_finalized(app: &AppHandle, flight: &ActiveFlight) {
 /// v0.7.1 Helper: actual_trip_burn = takeoff_fuel - landing_fuel
 /// (1:1 wie in build_landing_record line 6527-6530). Damit sub_scores
 /// + aggregate_master_score den gleichen Wert nutzen.
+// ─────────────────────────────────────────────────────────────────────────
+// v1.7.35 — Sprit-Auswertung ohne Note. Messung im Flug, Rechnung in
+// `landing_scoring::sprit::auswerten`, Anzeige ueberall aus dem Ergebnis.
+// Siehe `crates/landing-scoring/src/sprit.rs` fuer das Warum.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Schwelle „tief" = Platzhoehe des Ziels + 8 000 ft. Ueber Platzhoehe,
+/// nicht MSL (Nairobi liegt auf 5 300 ft) und nicht Terrain-AGL (Innsbruck
+/// springt). Gedeckelt unter der geplanten Reiseflughoehe, damit eine C172
+/// nicht den ganzen Flug „tief" ist.
+const SPRIT_SCHWELLE_UEBER_PLATZ_FT: f64 = 8_000.0;
+const SPRIT_SCHWELLE_ABSTAND_ZUR_REISEHOEHE_FT: f64 = 1_000.0;
+/// Ein Tick-Abstand ueber dieser Grenze ist eine Pause oder ein Neustart —
+/// die Zeit dazwischen wurde nicht geflogen und zaehlt nicht.
+const SPRIT_TICK_MAX_S: f64 = 60.0;
+/// Der Vergleichspunkt wird nur gesetzt, solange das Flugzeug noch *vor*
+/// ihm ist (Rest ≥ 80 % der Plan-Reststrecke). Wer nach einem Neustart
+/// schon dahinter ist, bekommt keinen Punkt — lieber keine Phasen als
+/// falsche.
+const SPRIT_VERGLEICHSPUNKT_FENSTER: f64 = 0.8;
+/// Ein Landesprit unter 1 % des Startsprits ist kein Flug, sondern ein
+/// Auslesefehler (KMRH→TXKF: 7 kg bei einer A340).
+const SPRIT_TANK_MIN_ANTEIL: f32 = 0.01;
+
+/// Aus dem Navlog: geplante Reststrecke ab TOD (Summe der Segmente nach
+/// dem TOD-Fix) und geplanter Verbrauch bis TOD. `None`, wenn das Navlog
+/// die Felder nicht traegt (Altbestand) oder keinen TOD kennt.
+fn sprit_plan_aus_navlog(fixes: &[api_client::RouteFix]) -> (Option<f64>, Option<f32>) {
+    let Some(tod) = fixes.iter().position(|f| f.ident.eq_ignore_ascii_case("TOD")) else {
+        return (None, None);
+    };
+    let bis = fixes[tod].sprit_bis_hier_kg.filter(|v| *v > 0.0);
+    let rest: Option<f64> = fixes[tod + 1..]
+        .iter()
+        .map(|f| f.segment_nm.map(|v| v as f64))
+        .sum();
+    (rest.filter(|v| *v > 0.0), bis)
+}
+
+fn sprit_schwelle_ft(stats: &FlightStats) -> Option<f64> {
+    let platz = stats.arr_airport_elevation_ft? as f64;
+    let mut schwelle = platz + SPRIT_SCHWELLE_UEBER_PLATZ_FT;
+    if let Some(cruise) = stats.planned_cruise_alt_ft {
+        schwelle = schwelle.min(cruise - SPRIT_SCHWELLE_ABSTAND_ZUR_REISEHOEHE_FT);
+    }
+    (schwelle > platz).then_some(schwelle)
+}
+
+/// Ein Tick in der Luft: Vergleichspunkt setzen, danach Zeit unter der
+/// Schwelle zaehlen. Nur zwischen Abheben und Aufsetzen, nie bei Pause,
+/// nie am Boden, nie ueber eine Neustart-Luecke hinweg.
+fn sprit_tick(
+    stats: &mut FlightStats,
+    lat: f64,
+    lon: f64,
+    alt_msl_ft: f64,
+    fuel_kg: f32,
+    paused: bool,
+    on_ground: bool,
+    dt_s: Option<f64>,
+) {
+    if stats.takeoff_fuel_kg.is_none() || stats.landing_fuel_kg.is_some() {
+        return;
+    }
+    if stats.sprit_vergleichspunkt_kg.is_none() {
+        if stats.sprit_plan_rest_nm.is_none() {
+            let (rest, bis) = sprit_plan_aus_navlog(&stats.planned_waypoints);
+            stats.sprit_plan_rest_nm = rest;
+            stats.sprit_plan_bis_tod_kg = bis;
+        }
+        let (Some((alat, alon)), Some(rest)) = (stats.planned_arr_ref_pos, stats.sprit_plan_rest_nm) else {
+            return;
+        };
+        let rest_ist = ::geo::distance_m(lat, lon, alat, alon) / 1852.0;
+        if rest_ist <= rest && rest_ist >= rest * SPRIT_VERGLEICHSPUNKT_FENSTER {
+            stats.sprit_vergleichspunkt_kg = Some(fuel_kg);
+            stats.sprit_vergleichspunkt_odo_nm = Some(stats.distance_nm);
+            stats.sprit_schwelle_ft = sprit_schwelle_ft(stats);
+        }
+        return;
+    }
+    if paused || on_ground {
+        return;
+    }
+    let Some(dt) = dt_s.filter(|d| *d > 0.0 && *d <= SPRIT_TICK_MAX_S) else {
+        return;
+    };
+    if stats.sprit_schwelle_ft.is_none() {
+        stats.sprit_schwelle_ft = sprit_schwelle_ft(stats);
+    }
+    let Some(schwelle) = stats.sprit_schwelle_ft else {
+        return;
+    };
+    if alt_msl_ft < schwelle {
+        stats.sprit_zeit_unter_schwelle_s += dt;
+    }
+}
+
+/// Ist der Tankverlauf glaubwuerdig? Sonst gibt es „nicht pruefbar" statt
+/// einer falschen Reserve-Warnung.
+fn sprit_tank_plausibel(stats: &FlightStats) -> bool {
+    let (Some(to), Some(ldg)) = (stats.takeoff_fuel_kg, stats.landing_fuel_kg) else {
+        return false;
+    };
+    if !(to.is_finite() && ldg.is_finite()) || to <= 0.0 || ldg < 0.0 || ldg > to {
+        return false;
+    }
+    if ldg < to * SPRIT_TANK_MIN_ANTEIL {
+        return false;
+    }
+    match stats.sprit_vergleichspunkt_kg {
+        Some(vp) => vp <= to && vp >= ldg,
+        None => true,
+    }
+}
+
+/// Die eine Rechnung — beim Aufsetzen, einmal.
+fn sprit_auswertung_aus(stats: &FlightStats) -> landing_scoring::sprit::SpritAuswertung {
+    let anflug_nm = match stats.sprit_vergleichspunkt_odo_nm {
+        Some(odo) if stats.distance_nm > odo => Some((stats.distance_nm - odo) as f32),
+        _ => None,
+    };
+    landing_scoring::sprit::auswerten(&landing_scoring::sprit::SpritEingang {
+        planned_burn_kg: stats.planned_burn_kg,
+        plan_bis_vergleichspunkt_kg: stats.sprit_plan_bis_tod_kg,
+        plan_rest_nm: stats.sprit_plan_rest_nm.map(|v| v as f32),
+        takeoff_fuel_kg: stats.takeoff_fuel_kg,
+        sprit_bei_vergleichspunkt_kg: stats.sprit_vergleichspunkt_kg,
+        landing_fuel_kg: stats.landing_fuel_kg,
+        strecke_ab_vergleichspunkt_nm: anflug_nm,
+        zeit_unter_schwelle_s: Some(stats.sprit_zeit_unter_schwelle_s as f32).filter(|v| *v > 0.0),
+        schwelle_ft: stats.sprit_schwelle_ft.map(|v| v as f32),
+        planned_taxi_kg: stats.planned_taxi_kg,
+        planned_contingency_kg: stats.planned_contingency_kg,
+        planned_alternate_kg: stats.planned_alternate_burn_kg,
+        planned_reserve_kg: stats.planned_reserve_kg,
+        planned_extra_kg: stats.planned_extra_kg,
+        planned_block_fuel_kg: stats.planned_block_fuel_kg,
+        tank_plausibel: sprit_tank_plausibel(stats),
+    })
+}
+
+/// PIREP-Felder fuer die Webseite — reine Anzeige der fertigen Auswertung.
+fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &mut HashMap<String, String>) {
+    use landing_scoring::sprit::Reserve;
+    let Some(a) = a else { return };
+    if let Some(p) = &a.bis_sinkflug {
+        f.insert("Sprit bis Sinkflug".into(), format!("{:+.1}% ({:.0} kg / Plan {:.0} kg)", p.abweichung_pct, p.ist_kg, p.plan_kg));
+    }
+    if let Some(p) = &a.anflug {
+        f.insert("Sprit Anflug".into(), format!("{:+.1}% ({:.0} kg / Plan {:.0} kg)", p.abweichung_pct, p.ist_kg, p.plan_kg));
+    }
+    if let (Some(min), Some(ft)) = (a.zeit_unter_schwelle_min, a.schwelle_ft) {
+        f.insert("Zeit unter Schwelle".into(), format!("{min:.1} min unter {ft:.0} ft"));
+    }
+    match &a.reserve {
+        Reserve::Intakt { quote_pct } => f.insert("Final Reserve".into(), format!("intakt ({quote_pct:.0} %)")),
+        Reserve::Unterschritten { quote_pct } => f.insert("Final Reserve".into(), format!("UNTERSCHRITTEN ({quote_pct:.0} %)")),
+        Reserve::NichtPruefbar { grund } => f.insert("Final Reserve".into(), format!("nicht pruefbar ({grund})")),
+    };
+    if let (Some(g), Some(n), Some(u)) = (a.extra_getankt_kg, a.extra_genutzt_kg, a.extra_ungenutzt_kg) {
+        f.insert("Extra Fuel".into(), format!("{g:.0} kg getankt · {n:.0} kg genutzt · {u:.0} kg ungenutzt"));
+    }
+}
+
 fn actual_burn_for_record(stats: &FlightStats) -> Option<f32> {
     match (stats.takeoff_fuel_kg, stats.landing_fuel_kg) {
         (Some(toff), Some(land)) if toff > land && toff > 0.0 && land >= 0.0 => Some(toff - land),
@@ -21600,7 +21849,7 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 ///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 15;
+const SCORE_ALGORITHMUS_VERSION: u8 = 16;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -22503,6 +22752,7 @@ where
         actual_trip_burn_kg: actual_burn,
         fuel_efficiency_kg_diff: fuel_diff_kg,
         fuel_efficiency_pct: fuel_pct,
+        sprit: stats.sprit_auswertung.clone(),
         takeoff_weight_kg: stats.takeoff_weight_kg,
         takeoff_fuel_kg: stats.takeoff_fuel_kg,
         landing_fuel_kg: stats.landing_fuel_kg,
@@ -32560,6 +32810,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // DLH 1386: +9.5% statt korrekt +4.2%). Jetzt
                                 // identische Basis wie `LandingRecord.
                                 // fuel_efficiency_pct` und `sub_scores[].fuel`.
+                                sprit: stats.sprit_auswertung.clone(),
                                 fuel_efficiency_pct: trip_burn_efficiency_pct(
                                     stats.takeoff_fuel_kg,
                                     stats.landing_fuel_kg,
@@ -33721,6 +33972,11 @@ fn takeoff_weight_from_snapshot(snap: &SimSnapshot) -> Option<f64> {
 fn latch_takeoff_stats(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
     stats.takeoff_at = Some(now);
     stats.takeoff_fuel_kg = Some(snap.fuel_total_kg);
+    // v1.7.35: ein neuer Start heisst ein neuer Vergleichspunkt.
+    stats.sprit_vergleichspunkt_kg = None;
+    stats.sprit_vergleichspunkt_odo_nm = None;
+    stats.sprit_zeit_unter_schwelle_s = 0.0;
+    stats.sprit_auswertung = None;
     // v0.5.16: capture pitch + bank for tail-strike / wing-strike
     // maintenance detection (DisposableSpecial dmaintenance reads these
     // as numeric custom fields).
@@ -34023,6 +34279,8 @@ fn stamp_touchdown_metadata(
         stats.landing_true_airspeed_kt = Some(v);
     }
     stats.landing_fuel_kg = Some(snap.fuel_total_kg);
+    // v1.7.35: die eine Sprit-Rechnung — jetzt, wo Start- und Landesprit da sind.
+    stats.sprit_auswertung = Some(sprit_auswertung_aus(&stats));
 
     // ---- Tier 2/3 BeatMyLanding-aligned extras ----
 
@@ -36678,6 +36936,9 @@ fn step_flight_at(
             stats.distance_nm += d_m / 1852.0;
         }
     }
+    let sprit_dt_s = stats
+        .last_pos_at
+        .map(|t| (now - t).num_milliseconds() as f64 / 1000.0);
     stats.last_lat = Some(snap.lat);
     stats.last_lon = Some(snap.lon);
     stats.last_pos_at = Some(now);
@@ -36697,6 +36958,16 @@ fn step_flight_at(
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
     stats.last_fuel_kg = Some(snap.fuel_total_kg);
+    sprit_tick(
+        &mut stats,
+        snap.lat,
+        snap.lon,
+        snap.altitude_msl_ft,
+        snap.fuel_total_kg,
+        snap.paused,
+        snap.on_ground,
+        sprit_dt_s,
+    );
     // v0.3.0: ZFW + Total-Weight für Live-Loadsheet (Cockpit-Tab
     // während Boarding-Phase). Updates jeden Tick. None bleiben sie
     // wenn das Aircraft-Profil die SimVars nicht meldet (z.B. Fenix
@@ -42047,6 +42318,8 @@ fn build_pirep_fields(
     if let Some(r) = stats.planned_reserve_kg {
         f.insert("Plan Reserve Fuel".into(), format!("{:.0} kg", r));
     }
+    // v1.7.35: Sprit-Auswertung ohne Note — die fertigen Werte, nichts gerechnet.
+    sprit_pirep_felder(stats.sprit_auswertung.as_ref(), &mut f);
     if let Some(z) = stats.planned_zfw_kg {
         f.insert("Plan ZFW".into(), format!("{:.0} kg", z));
     }
@@ -66178,5 +66451,178 @@ mod ofp_atc_callsign_tests {
         let mut back = FlightStats::new();
         restored.apply_to(&mut back);
         assert_eq!(back.planned_atc_callsign, None);
+    }
+}
+
+#[cfg(test)]
+mod sprit_messung_tests {
+    use super::*;
+
+    fn fix(ident: &str, nm: f32, kg: f32) -> api_client::RouteFix {
+        api_client::RouteFix {
+            ident: ident.into(),
+            lat: 50.0,
+            lon: 10.0,
+            kind: "wpt".into(),
+            sprit_bis_hier_kg: Some(kg),
+            segment_nm: Some(nm),
+            hoehe_ft: Some(40_000.0),
+            zeit_bis_hier_s: Some(1.0),
+        }
+    }
+
+    /// Ein Flug nach EDDM (48.3538 N, 11.7861 E) mit TOD 142 NM vor dem Ziel.
+    fn stats_im_flug() -> FlightStats {
+        let mut st = FlightStats::default();
+        st.takeoff_fuel_kg = Some(40_919.0);
+        st.planned_arr_ref_pos = Some((48.3538, 11.7861));
+        st.arr_airport_elevation_ft = Some(1_487.0);
+        st.planned_cruise_alt_ft = Some(40_000.0);
+        st.planned_waypoints = vec![
+            fix("NOSLI", 37.0, 4_634.0),
+            fix("TOD", 62.0, 19_353.0),
+            fix("VESUB", 20.0, 19_546.0),
+            fix("MIQ", 90.0, 20_388.0),
+            fix("EDDM", 32.0, 21_218.0),
+        ];
+        st.distance_nm = 600.0;
+        st
+    }
+
+    #[test]
+    fn sprit_messung_plan_aus_navlog() {
+        let st = stats_im_flug();
+        let (rest, bis) = sprit_plan_aus_navlog(&st.planned_waypoints);
+        assert_eq!(rest, Some(142.0));
+        assert_eq!(bis, Some(19_353.0));
+        // Altbestand ohne Felder: nichts, nie 0.
+        let alt = vec![api_client::RouteFix { ident: "TOD".into(), lat: 1.0, lon: 2.0, kind: "wpt".into(), ..Default::default() }];
+        assert_eq!(sprit_plan_aus_navlog(&alt), (None, None));
+    }
+
+    #[test]
+    fn sprit_messung_vergleichspunkt_im_fenster() {
+        let mut st = stats_im_flug();
+        // 300 NM vor dem Ziel: noch nicht.
+        sprit_tick(&mut st, 48.35, 4.5, 40_000.0, 25_000.0, false, false, Some(1.0));
+        assert!(st.sprit_vergleichspunkt_kg.is_none());
+        // ~135 NM vor dem Ziel (Fenster 80–100 % von 142): jetzt.
+        sprit_tick(&mut st, 48.35, 8.4, 40_000.0, 22_231.0, false, false, Some(1.0));
+        assert_eq!(st.sprit_vergleichspunkt_kg, Some(22_231.0));
+        assert_eq!(st.sprit_vergleichspunkt_odo_nm, Some(600.0));
+        assert_eq!(st.sprit_plan_rest_nm, Some(142.0));
+        assert_eq!(st.sprit_schwelle_ft, Some(9_487.0));
+    }
+
+    #[test]
+    fn sprit_messung_vergleichspunkt_verpasst_bleibt_leer() {
+        let mut st = stats_im_flug();
+        // Neustart erst 40 NM vor dem Ziel: weit hinter dem Punkt → kein Punkt.
+        sprit_tick(&mut st, 48.35, 10.8, 20_000.0, 18_000.0, false, false, Some(1.0));
+        assert!(st.sprit_vergleichspunkt_kg.is_none());
+        st.landing_fuel_kg = Some(16_770.0);
+        let a = sprit_auswertung_aus(&st);
+        assert!(a.bis_sinkflug.is_none() && a.anflug.is_none());
+    }
+
+    #[test]
+    fn sprit_messung_zeit_zaehlt_nur_tief_und_in_der_luft() {
+        let mut st = stats_im_flug();
+        st.sprit_vergleichspunkt_kg = Some(22_231.0);
+        st.sprit_vergleichspunkt_odo_nm = Some(600.0);
+        st.sprit_schwelle_ft = Some(9_487.0);
+        let t = |st: &mut FlightStats, alt: f64, paused: bool, ground: bool, dt: Option<f64>| {
+            sprit_tick(st, 48.3, 11.5, alt, 20_000.0, paused, ground, dt)
+        };
+        t(&mut st, 12_000.0, false, false, Some(10.0)); // ueber Schwelle
+        t(&mut st, 7_000.0, false, false, Some(10.0));  // zaehlt
+        t(&mut st, 7_000.0, true, false, Some(10.0));   // Pause
+        t(&mut st, 7_000.0, false, true, Some(10.0));   // Boden
+        t(&mut st, 7_000.0, false, false, Some(900.0)); // Neustart-Luecke
+        t(&mut st, 7_000.0, false, false, None);        // kein dt
+        t(&mut st, 7_000.0, false, false, Some(5.0));   // zaehlt
+        assert_eq!(st.sprit_zeit_unter_schwelle_s, 15.0);
+    }
+
+    #[test]
+    fn sprit_messung_schwelle_ueber_platz_und_unter_reiseflug() {
+        let mut st = FlightStats::default();
+        assert_eq!(sprit_schwelle_ft(&st), None);
+        st.arr_airport_elevation_ft = Some(5_330.0); // Nairobi
+        assert_eq!(sprit_schwelle_ft(&st), Some(13_330.0));
+        st.planned_cruise_alt_ft = Some(9_500.0);    // C172
+        assert_eq!(sprit_schwelle_ft(&st), Some(8_500.0));
+        st.planned_cruise_alt_ft = Some(5_500.0);    // Platzrunde: keine Schwelle
+        assert_eq!(sprit_schwelle_ft(&st), None);
+    }
+
+    #[test]
+    fn sprit_messung_tank_plausibel() {
+        let mut st = FlightStats::default();
+        st.takeoff_fuel_kg = Some(100_000.0);
+        st.landing_fuel_kg = Some(7.0); // KMRH→TXKF
+        assert!(!sprit_tank_plausibel(&st));
+        st.landing_fuel_kg = Some(16_770.0);
+        assert!(sprit_tank_plausibel(&st));
+        st.sprit_vergleichspunkt_kg = Some(150_000.0); // mehr als beim Start
+        assert!(!sprit_tank_plausibel(&st));
+    }
+
+    #[test]
+    fn sprit_messung_dlh370_ende_zu_ende() {
+        let mut st = stats_im_flug();
+        st.planned_burn_kg = Some(21_218.0);
+        st.planned_block_fuel_kg = Some(41_644.0);
+        st.planned_reserve_kg = Some(4_916.0);
+        st.planned_taxi_kg = Some(998.0);
+        st.planned_contingency_kg = Some(1_061.0);
+        st.planned_alternate_burn_kg = Some(8_273.0);
+        st.planned_extra_kg = Some(5_178.0);
+        sprit_tick(&mut st, 48.35, 8.4, 40_000.0, 22_231.0, false, false, Some(1.0));
+        st.distance_nm = 782.0;
+        st.sprit_zeit_unter_schwelle_s = 948.0;
+        st.landing_fuel_kg = Some(16_770.0);
+        let a = sprit_auswertung_aus(&st);
+        assert_eq!(a.bis_sinkflug.as_ref().map(|p| p.abweichung_pct), Some(-3.4));
+        assert_eq!(a.anflug.as_ref().map(|p| p.abweichung_pct), Some(192.8));
+        assert_eq!(a.strecke_anflug_nm, Some(182.0));
+        assert_eq!(a.zeit_unter_schwelle_min, Some(15.8));
+        assert_eq!(a.badge, landing_scoring::sprit::Badge::Gruen);
+        assert_eq!(a.extra_genutzt_kg, Some(1_597.0));
+    }
+}
+
+#[cfg(test)]
+mod pirep_felder_sprit_tests {
+    use super::*;
+
+    #[test]
+    fn pirep_felder_sprit_schreibt_die_fertigen_werte() {
+        let a = landing_scoring::sprit::auswerten(&landing_scoring::sprit::SpritEingang {
+            planned_burn_kg: Some(21_218.0),
+            plan_bis_vergleichspunkt_kg: Some(19_353.0),
+            takeoff_fuel_kg: Some(40_919.0),
+            sprit_bei_vergleichspunkt_kg: Some(22_231.0),
+            landing_fuel_kg: Some(16_770.0),
+            zeit_unter_schwelle_s: Some(948.0),
+            schwelle_ft: Some(9_487.0),
+            planned_contingency_kg: Some(1_061.0),
+            planned_alternate_kg: Some(8_273.0),
+            planned_reserve_kg: Some(4_916.0),
+            planned_extra_kg: Some(5_178.0),
+            planned_block_fuel_kg: Some(41_644.0),
+            tank_plausibel: true,
+            ..Default::default()
+        });
+        let mut f = HashMap::new();
+        sprit_pirep_felder(Some(&a), &mut f);
+        assert_eq!(f["Sprit bis Sinkflug"], "-3.4% (18688 kg / Plan 19353 kg)");
+        assert_eq!(f["Sprit Anflug"], "+192.8% (5461 kg / Plan 1865 kg)");
+        assert_eq!(f["Zeit unter Schwelle"], "15.8 min unter 9487 ft");
+        assert_eq!(f["Final Reserve"], "intakt (341 %)");
+        assert_eq!(f["Extra Fuel"], "5178 kg getankt · 1597 kg genutzt · 3581 kg ungenutzt");
+        let mut leer = HashMap::new();
+        sprit_pirep_felder(None, &mut leer);
+        assert!(leer.is_empty());
     }
 }

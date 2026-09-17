@@ -1389,6 +1389,12 @@ pub struct PirepPayload {
     /// dann LegacyPirepNotice statt Breakdown.
     #[serde(default)]
     pub sub_scores: Vec<landing_scoring::SubScoreEntry>,
+    /// v1.7.35: Sprit-Auswertung ohne Note (Phasen, Zeit unter Schwelle,
+    /// Sprit-Leiter, Final Reserve, Badge). Wird EINMAL im Client gerechnet
+    /// (`landing_scoring::sprit::auswerten`) und ueberall nur gerendert.
+    /// Fehlt bei Altbestand und ohne Messung — dann zeigt die Anzeige „—".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprit: Option<landing_scoring::sprit::SpritAuswertung>,
 
     // ─── v0.7.6 P1-3: Runway-Geometry-Trust ──────────────────────────
     // Spec docs/spec/v0.7.6-landing-payload-consistency.md §3 P1-3.
@@ -3976,5 +3982,55 @@ mod tests {
         let w: BahnWire = serde_json::from_str("{}").unwrap();
         assert!(w.clearance_point_m.is_none());
         assert!(w.lateral_samples.is_none());
+    }
+}
+
+#[cfg(test)]
+mod sprit_payload_tests {
+    use super::*;
+    use landing_scoring::sprit::{auswerten, SpritEingang};
+
+    fn payload_mit(sprit: Option<landing_scoring::sprit::SpritAuswertung>) -> serde_json::Value {
+        // Ein PirepPayload hat viele Pflichtfelder; wir serialisieren nur das
+        // Sprit-Feld ueber eine Huelle mit identischen serde-Attributen, damit
+        // der Test die Wire-Regel prueft, ohne 60 Felder zu befuellen.
+        #[derive(serde::Serialize)]
+        struct Huelle {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            sprit: Option<landing_scoring::sprit::SpritAuswertung>,
+        }
+        serde_json::to_value(Huelle { sprit }).expect("json")
+    }
+
+    /// Ohne Auswertung fehlt das Feld ganz — Altbestand-Renderer und die
+    /// Webapp sehen dann kein `sprit` und zeigen „—".
+    #[test]
+    fn sprit_payload_fehlt_bei_none() {
+        let v = payload_mit(None);
+        assert!(v.get("sprit").is_none(), "{v}");
+    }
+
+    /// Mit Auswertung steht das Wire-Format 1:1 im Payload.
+    #[test]
+    fn sprit_payload_traegt_die_auswertung() {
+        let a = auswerten(&SpritEingang {
+            planned_reserve_kg: Some(4916.0),
+            landing_fuel_kg: Some(16770.0),
+            tank_plausibel: true,
+            ..Default::default()
+        });
+        let v = payload_mit(Some(a));
+        assert_eq!(v["sprit"]["badge"], "gruen");
+        assert_eq!(v["sprit"]["reserve"]["status"], "intakt");
+        assert_eq!(v["sprit"]["fassung"], 1);
+    }
+
+    /// Das echte PirepPayload-Struct kennt das Feld (Kompilier-Beweis ueber
+    /// einen Zugriff auf den Typ).
+    #[test]
+    fn sprit_payload_feld_existiert_im_pirep_payload() {
+        fn _typ(p: &PirepPayload) -> &Option<landing_scoring::sprit::SpritAuswertung> {
+            &p.sprit
+        }
     }
 }

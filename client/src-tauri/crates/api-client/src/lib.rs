@@ -644,6 +644,20 @@ pub struct RouteFix {
     pub lat: f64,
     pub lon: f64,
     pub kind: String,
+    /// v1.7.35: Plan-Sprit bis zu diesem Fix (kg, kumuliert; SimBrief
+    /// `<fuel_totalused>`, in die OFP-Einheit umgerechnet). Grundlage der
+    /// Sprit-Auswertung „bis Sinkflug / Anflug". `None` bei Altbestand.
+    #[serde(default)]
+    pub sprit_bis_hier_kg: Option<f32>,
+    /// v1.7.35: Segmentlaenge zu diesem Fix (NM, `<distance>`).
+    #[serde(default)]
+    pub segment_nm: Option<f32>,
+    /// v1.7.35: geplante Hoehe am Fix (ft, `<altitude_feet>`).
+    #[serde(default)]
+    pub hoehe_ft: Option<f32>,
+    /// v1.7.35: geplante Zeit bis zu diesem Fix (s, `<time_total>`).
+    #[serde(default)]
+    pub zeit_bis_hier_s: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -2471,7 +2485,7 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         .and_then(|inner| extract_tag(inner, "icao_code"))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let waypoints = extract_navlog_fixes(xml);
+    let waypoints = extract_navlog_fixes(xml, unit_is_lb);
 
     // v0.21.x (#phase-v2 Fix A): geplante Reiseflughöhe aus
     // `<general><initial_altitude>` — SimBrief liefert das immer in FUSS
@@ -2636,7 +2650,13 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
 /// Walk `<navlog>...<fix>...</fix>...</navlog>` and pull every fix.
 /// Resilient to missing `<navlog>` (older SimBrief OFP variants put fixes
 /// at the document root) — falls back to scanning the whole document.
-fn extract_navlog_fixes(xml: &str) -> Vec<RouteFix> {
+fn extract_navlog_fixes(xml: &str, unit_is_lb: bool) -> Vec<RouteFix> {
+    let to_kg = |v: f32| if unit_is_lb { v * 0.453_592 } else { v };
+    let num = |block: &str, tag: &str| -> Option<f32> {
+        extract_tag(block, tag)
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite())
+    };
     let scope = extract_tag(xml, "navlog").unwrap_or(xml);
     let mut out = Vec::new();
     let mut cursor = 0;
@@ -2654,7 +2674,16 @@ fn extract_navlog_fixes(xml: &str) -> Vec<RouteFix> {
             .and_then(|s| s.trim().parse().ok());
         let kind = extract_tag(block, "type").unwrap_or("").trim().to_string();
         if let (true, Some(la), Some(lo)) = (!ident.is_empty(), lat, lon) {
-            out.push(RouteFix { ident, lat: la, lon: lo, kind });
+            out.push(RouteFix {
+                ident,
+                lat: la,
+                lon: lo,
+                kind,
+                sprit_bis_hier_kg: num(block, "fuel_totalused").map(to_kg),
+                segment_nm: num(block, "distance"),
+                hoehe_ft: num(block, "altitude_feet"),
+                zeit_bis_hier_s: num(block, "time_total"),
+            });
         }
     }
     out
@@ -3378,5 +3407,62 @@ mod tests {
             </ofp>"#;
         let ofp = parse_simbrief_ofp(xml).expect("parses");
         assert_eq!(ofp.freight_kg, 18000.0);
+    }
+}
+
+#[cfg(test)]
+mod navlog_sprit_tests {
+    use super::*;
+
+    const XML: &str = r#"<OFP><params><units>lbs</units></params><general><wt_unit>lbs</wt_unit></general>
+<navlog>
+<fix><ident>NOSLI</ident><type>wpt</type><pos_lat>59.072</pos_lat><pos_long>17.9</pos_long>
+<distance>37</distance><altitude_feet>23600</altitude_feet><fuel_totalused>10216</fuel_totalused><time_total>513</time_total></fix>
+<fix><ident>TOD</ident><type>ltp</type><pos_lat>49.730</pos_lat><pos_long>12.1</pos_long>
+<distance>62</distance><altitude_feet>40000</altitude_feet><fuel_totalused>42666</fuel_totalused><time_total>4832</time_total></fix>
+</navlog></OFP>"#;
+
+    /// Die vier neuen Felder kommen je Fix an; Sprit wird von lbs nach kg
+    /// umgerechnet (42 666 lb → 19 353 kg wie im DLH370-OFP).
+    #[test]
+    fn navlog_sprit_felder_werden_gelesen() {
+        let fixes = extract_navlog_fixes(XML, true);
+        assert_eq!(fixes.len(), 2);
+        let tod = &fixes[1];
+        assert_eq!(tod.ident, "TOD");
+        assert_eq!(tod.segment_nm, Some(62.0));
+        assert_eq!(tod.hoehe_ft, Some(40000.0));
+        assert_eq!(tod.zeit_bis_hier_s, Some(4832.0));
+        let kg = tod.sprit_bis_hier_kg.expect("sprit");
+        assert!((kg - 19353.0).abs() < 2.0, "{kg}");
+    }
+
+    /// Ohne `wt_unit = lbs` bleibt der Wert, wie er im OFP steht.
+    #[test]
+    fn navlog_sprit_in_kg_bleibt_unveraendert() {
+        let fixes = extract_navlog_fixes(XML, false);
+        assert_eq!(fixes[1].sprit_bis_hier_kg, Some(42666.0));
+    }
+
+    /// Ein persistierter Fix aus einer aelteren Version kennt die Felder
+    /// nicht — er muss zu `None` werden, nie zu 0 (sonst gaebe es
+    /// „Plan bis Sinkflug = 0 kg" und eine erfundene Zerlegung).
+    #[test]
+    fn navlog_sprit_altbestand_ohne_felder_ist_none() {
+        let alt = r#"{"ident":"TOD","lat":49.73,"lon":12.1,"kind":"ltp"}"#;
+        let fix: RouteFix = serde_json::from_str(alt).expect("altbestand");
+        assert_eq!(fix.sprit_bis_hier_kg, None);
+        assert_eq!(fix.segment_nm, None);
+        assert_eq!(fix.hoehe_ft, None);
+        assert_eq!(fix.zeit_bis_hier_s, None);
+    }
+
+    /// Ein Fix ohne Sprit-Angabe bleibt ein gueltiger Fix (Position zaehlt).
+    #[test]
+    fn navlog_sprit_fehlende_tags_brechen_den_fix_nicht() {
+        let xml = r#"<navlog><fix><ident>A</ident><type>wpt</type><pos_lat>1</pos_lat><pos_long>2</pos_long></fix></navlog>"#;
+        let fixes = extract_navlog_fixes(xml, true);
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0].sprit_bis_hier_kg, None);
     }
 }

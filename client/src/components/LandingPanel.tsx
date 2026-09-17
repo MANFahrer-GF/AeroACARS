@@ -11,6 +11,9 @@ import {
 import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
+import { SpritBadge, SpritSektion } from "./SpritSektion";
+import { kg as spritKg, pct as spritPct } from "../lib/sprit";
+import type { SpritAuswertung } from "../lib/sprit";
 import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
 import { RunwayDiagramV2 } from "./RunwayDiagramV2";
@@ -194,6 +197,8 @@ export interface LandingRecord {
   actual_trip_burn_kg: number | null;
   fuel_efficiency_kg_diff: number | null;
   fuel_efficiency_pct: number | null;
+  /** v1.7.33: Sprit-Auswertung ohne Note — vom Rust-Client gerechnet, hier nur gerendert. */
+  sprit?: SpritAuswertung | null;
   takeoff_weight_kg: number | null;
   takeoff_fuel_kg: number | null;
   landing_fuel_kg: number | null;
@@ -2937,6 +2942,37 @@ export function LandingReport({ record }: { record: LandingRecord }) {
         >
           {hasFuel ? (
             <div className="report-tiles">
+              {/* v1.7.33: die fertige Sprit-Auswertung zuerst — nur gerendert. */}
+              {record.sprit?.bis_sinkflug && (
+                <ReportTile label={t("landing.sprit.report_bis_sinkflug")} value={spritPct(record.sprit.bis_sinkflug.abweichung_pct)} />
+              )}
+              {record.sprit?.anflug && (
+                <ReportTile label={t("landing.sprit.report_anflug")} value={spritPct(record.sprit.anflug.abweichung_pct)} />
+              )}
+              {record.sprit?.zeit_unter_schwelle_min != null && record.sprit.schwelle_ft != null && (
+                <ReportTile
+                  label={t("landing.sprit.report_zeit")}
+                  value={t("landing.sprit.zeit_wert", { min: record.sprit.zeit_unter_schwelle_min.toFixed(1).replace(".", ","), ft: spritKg(record.sprit.schwelle_ft) })}
+                />
+              )}
+              {record.sprit && (
+                <ReportTile
+                  label={t("landing.sprit.report_reserve")}
+                  value={
+                    record.sprit.reserve.status === "intakt"
+                      ? `✓ ${Math.round(record.sprit.reserve.quote_pct)} %`
+                      : record.sprit.reserve.status === "unterschritten"
+                        ? `⚠ ${Math.round(record.sprit.reserve.quote_pct)} %`
+                        : t("landing.sprit.badge_np")
+                  }
+                />
+              )}
+              {record.sprit?.extra_getankt_kg != null && record.sprit.extra_genutzt_kg != null && (
+                <ReportTile
+                  label={t("landing.sprit.report_extra")}
+                  value={`${spritKg(record.sprit.extra_getankt_kg)} kg · ${spritKg(record.sprit.extra_genutzt_kg)} kg`}
+                />
+              )}
               {(record.planned_burn_kg != null ||
                 record.actual_trip_burn_kg != null) && (
                 <ReportTile
@@ -3322,13 +3358,16 @@ export function LandingDetail({
               Confidence-Pill. Bedingung im Component (P1.1-C:
               ux_version >= 1 AND forensics_version >= 2). Beide
               Werte kommen jetzt sauber aus dem LandingRecord. */}
-          <div style={{ marginTop: "0.5rem" }}>
+          <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
             <ForensicsBadge
               forensicsVersion={record.forensics_version}
               uxVersion={record.ux_version}
               confidence={record.landing_confidence}
               source={record.landing_source}
             />
+            {/* v1.7.33: Sprit-Badge derselben Bauart — Reserve intakt / unter
+                Reserve / nicht pruefbar. Nie rot, keine Zahl, keine Note. */}
+            <SpritBadge sprit={record.sprit} />
           </div>
         </div>
       </div>
@@ -3664,7 +3703,10 @@ export function LandingDetail({
                 ℹ️ {t("landing.no_plan_hint")}
               </div>
             )}
-          {record.planned_burn_kg != null && record.actual_trip_burn_kg != null && (
+          {/* v1.7.33: Sprit-Auswertung ohne Note. Der alte Plan/Ist-Balken
+              bleibt nur fuer Datensaetze ohne Auswertung (vor v1.7.33). */}
+          <SpritSektion sprit={record.sprit} />
+          {!record.sprit && record.planned_burn_kg != null && record.actual_trip_burn_kg != null && (
             <FuelComparisonBar
               plan={record.planned_burn_kg}
               actual={record.actual_trip_burn_kg}

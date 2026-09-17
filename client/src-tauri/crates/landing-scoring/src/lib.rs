@@ -21,6 +21,8 @@ pub mod sub_alignment;
 pub mod sub_bahndisziplin;
 pub mod sub_bounces;
 pub mod sub_fuel;
+/// v1.7.35: Sprit-Auswertung ohne Note — siehe `sprit.rs`.
+pub mod sprit;
 pub mod sub_g_force;
 pub mod sub_landing_rate;
 pub mod sub_loadsheet;
@@ -476,21 +478,33 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         ));
     }
 
-    // v0.7.1 Phase 2 F2 + F3: ersetzt sub_fuel_legacy durch
-    // sub_fuel_v0_7_1 mit Hard-Gate + Asymmetrie. Wenn weder
-    // planned_burn noch actual_trip_burn vorhanden → skipped (NICHT
-    // in den Master-Score eingerechnet).
-    out.push(sub_fuel::sub_fuel_v1_7_32(
-        input.planned_burn_kg,
-        input.actual_trip_burn_kg,
-        input.planned_tow_kg,
-        input.diverted,
-        sub_fuel::ZusatzArbeit {
-            geflogene_strecke_nm: input.geflogene_strecke_nm,
-            plan_strecke_nm: input.plan_strecke_nm,
-            durchstarts: input.durchstarts,
-        },
-    ));
+    // ⚠ `sub_fuel` wird NICHT MEHR bewertet (v1.7.35).
+    //
+    // # Warum die Achse raus ist
+    //
+    // Sie verglich den geplanten mit dem tatsaechlichen Streckenverbrauch.
+    // Am Bestand belegt (DLH370, 17.09.2026; alle A380-Fluege nach EDDM):
+    // Der Mehrverbrauch entsteht zum Grossteil im Anflug — Radarfuehrung,
+    // Zwischenhoehen, Transitions — und den bestimmt die Flugsicherung.
+    // Ein Pilot, der exakt nach Plan flog (Hoehe, Route, Gewicht), verlor
+    // 45 Punkte fuer 15,8 Minuten unter 8 000 ft. Der Pilot bewegt am
+    // Verbrauch 2–3 %, ATC bis ueber 25 % (EUROCONTROL 2020). Kein reales
+    // Airline-Programm und keine grosse VA-Plattform benotet den
+    // Einzelflug nach Verbrauch.
+    //
+    // (Thomas, 17.09.2026: „Ich soll ja nicht bestraft werden, wenn ich
+    // richtig fliege.")
+    //
+    // Der Sprit bleibt sichtbar — als Erklaerung, nicht als Note: siehe
+    // `sprit::auswerten` (Phasen, Zeit unter Schwelle, Sprit-Leiter,
+    // Final Reserve). Der Wächter `compute_sub_scores_never_emits_fuel`
+    // stellt sicher, dass die Achse nicht still zurueckkommt. Das Gewicht
+    // `"fuel" => 1.0` in `aggregate_master_score` bleibt als ruhender
+    // Eintrag stehen, wie bei `loadsheet` und `flare`.
+    //
+    // `sub_fuel.rs` selbst bleibt: Altbestand-Datensaetze tragen die Achse
+    // in ihren gespeicherten `sub_scores`, und die Tests dort dokumentieren
+    // die Regeln der Fassungen 13–15.
 
     // ⚠ `sub_loadsheet` wird NICHT MEHR bewertet (v1.7.12).
     //
@@ -921,6 +935,25 @@ mod tests {
             "die Ladepapier-Achse wird wieder ausgegeben — sie bewertet \
              etwas, das der Pilot nicht beeinflussen kann"
         );
+    }
+
+    /// v1.7.35 — Sprit-Waechter. Die OFP-Treue-Achse ist aus der Note
+    /// (siehe Kommentar in `compute_sub_scores`). Dieser Test faellt laut
+    /// aus, wenn jemand sie wieder ausgibt — ueber einen VOLL besetzten
+    /// Eingang, damit sie nicht nur deshalb fehlt, weil Daten fehlten.
+    #[test]
+    fn compute_sub_scores_never_emits_fuel() {
+        let rich = voll_besetzter_eingang();
+        let subs = compute_sub_scores(&rich);
+        assert!(
+            !subs.iter().any(|s| s.key == "fuel"),
+            "die Sprit-Achse wird wieder benotet — sie misst zum Grossteil \
+             die Flugsicherung, nicht den Piloten (v1.7.35)"
+        );
+        // Und der Master-Score ohne sie ist die gewichtete Summe der
+        // uebrigen Achsen — kein ruhendes Gewicht zieht mit.
+        let master = aggregate_master_score(&subs).expect("master");
+        assert!(master <= 100);
     }
 
     /// Ein voll besetzter Eingang — damit in den Waechtern jeder Zweig
