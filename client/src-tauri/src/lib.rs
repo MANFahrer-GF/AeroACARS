@@ -67649,7 +67649,7 @@ mod sprit_messung_tests {
         sprit_boden_marken(&mut st, 16_700.0, false, true, false, false, false, t(1000));
         sprit_boden_marken(&mut st, 16_690.0, false, true, false, false, false, t(1003));
         sprit_boden_marken(&mut st, 16_680.0, true, true, false, false, false, t(1004));
-        assert!(st.engine_off_fuel_kg.is_none(), "Zappeln hat „aus" gerastet");
+        assert!(st.engine_off_fuel_kg.is_none(), "Zappeln hat „aus“ gerastet");
 
         // Echtes Abstellen: erst nach der Frist.
         sprit_boden_marken(&mut st, 16_121.0, false, true, false, false, false, t(1200));
