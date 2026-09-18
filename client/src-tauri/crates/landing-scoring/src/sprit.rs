@@ -490,10 +490,16 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                 (None, Some(to)) if !e.einstieg_in_der_luft => Some(to + taxi),
                 _ => None,
             };
-            let uebertankung = tank_beim_anlassen.map(|t| (t - block).max(0.0)).unwrap_or(0.0);
+            // Ueber- und Untertankung gegen DIESELBE Groesse, die die Grafik
+            // als Plan-Stapel zeichnet: den Block, oder die Posten, wenn das
+            // OFP mehr in die Posten plant als in den Block. Dann ist die
+            // Skala (Stapel + Ueber − Unter) genau der Tank beim Anlassen,
+            // und die Abhebe-Marke sitzt auf ihrem echten Wert (QS Runde 3).
+            let stapel = block.max(posten);
+            let uebertankung = tank_beim_anlassen.map(|t| (t - stapel).max(0.0)).unwrap_or(0.0);
             // Siehe `Leiter::untertankung_kg`.
             let untertankung = tank_beim_anlassen
-                .map(|t| (block - t).max(0.0).min(extra))
+                .map(|t| (stapel - t).max(0.0).min(extra))
                 .unwrap_or(0.0);
             Some(Leiter {
                 taxi_kg: taxi.round(),
@@ -912,6 +918,25 @@ mod tests {
         let a = auswerten(&e);
         assert_eq!(a.leiter.as_ref().map(|l| l.untertankung_kg), Some(5_178.0));
         assert_eq!(a.extra_getankt_kg, Some(0.0));
+    }
+
+    /// Plant das OFP mehr in die Posten als in den Block, ist die Skala der
+    /// Grafik trotzdem der Tank beim Anlassen — ueber-, unter- und genau
+    /// betankt (QS Runde 3).
+    #[test]
+    fn sprit_skala_ist_der_tank_beim_anlassen_auch_bei_posten_ueber_block() {
+        for anlassen in [40_500.0_f32, 41_644.0, 43_000.0] {
+            let mut e = dlh370();
+            e.planned_block_fuel_kg = Some(40_000.0); // Posten: 41 644
+            e.engine_start_fuel_kg = Some(anlassen);
+            e.takeoff_fuel_kg = Some(anlassen - 725.0);
+            let l = auswerten(&e).leiter.expect("Leiter");
+            let skala = l.block_kg.max(
+                l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg,
+            ) + l.uebertankung_kg
+                - l.untertankung_kg;
+            assert_eq!(skala, anlassen, "Skala {skala} statt Tank beim Anlassen {anlassen}");
+        }
     }
 
     /// Einstieg in der Luft: „bis Sinkflug" rechnet nur das Stueck ab dem

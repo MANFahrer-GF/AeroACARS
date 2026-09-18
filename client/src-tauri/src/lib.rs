@@ -40433,6 +40433,41 @@ mod arrived_fallback_dwell_tests {
         assert_eq!(result, Some(FlightPhase::Arrived));
     }
 
+    /// v1.7.36 (QS Runde 3, F1) — ueber den ECHTEN Arrived-Uebergang: Wer
+    /// `Arrived` mit laufenden Triebwerken erreicht (hier das FA50-Muster
+    /// mit klemmendem Zaehler; ein Hubschrauber mit laufendem Rotor nimmt
+    /// denselben Weg ohne Triebwerks-Bedingung), bekommt KEINE Abstell-Marke.
+    /// Es gibt keinen Abstell-Zeitpunkt; ein geratener waere ein zu kleiner
+    /// Rollsprit. Gegenprobe: derselbe Flug mit abgestellten Triebwerken
+    /// rastet sie.
+    #[test]
+    fn arrived_mit_laufenden_triebwerken_rastet_kein_abstellen() {
+        let bereit = |engines: u8, dwell: i64| {
+            let flight = armed_flight(Some(dwell));
+            {
+                let mut st = flight.stats.lock().unwrap();
+                st.takeoff_fuel_kg = Some(2_000.0);
+                st.landing_fuel_kg = Some(1_300.0);
+            }
+            let mut snap = arrived_conditions_snap();
+            snap.aircraft_profile = sim_core::AircraftProfile::ContrailFa50;
+            snap.engines_running = engines;
+            snap.fuel_total_kg = 1_200.0;
+            (flight, snap)
+        };
+        let (flight, snap) = bereit(3, ARRIVED_STANDSTILL_DWELL_SECS + 1);
+        assert_eq!(step_flight(&flight, &snap), Some(FlightPhase::Arrived), "Vorbedingung");
+        assert_eq!(
+            flight.stats.lock().unwrap().engine_off_fuel_kg,
+            None,
+            "Abstell-Marke bei laufenden Triebwerken gerastet"
+        );
+
+        let (flight, snap) = bereit(0, ARRIVED_FALLBACK_DWELL_SECS + 1);
+        assert_eq!(step_flight(&flight, &snap), Some(FlightPhase::Arrived), "Vorbedingung");
+        assert_eq!(flight.stats.lock().unwrap().engine_off_fuel_kg, Some(1_200.0), "Gegenprobe");
+    }
+
     #[test]
     fn switching_between_paths_does_not_discard_accumulated_dwell_time() {
         // Regression guard: an aircraft that satisfies engines_off_path on
@@ -68160,19 +68195,8 @@ mod sprit_messung_tests {
             let pirep = koerper.find("let now_for_flight_time").expect("PIREP-Aufbau");
             assert!(ruf < pirep, "{anfang}: sprit_flug_abschliessen kommt erst nach dem PIREP-Aufbau");
         }
-        // Beim Ankommen nur mit abgestellten Triebwerken — `Arrived` erreicht
-        // auch ein Hubschrauber mit laufendem Rotor (QS Runde 3, F1).
-        // Zerlegt geschrieben: Stuende der ganze Aufruf woertlich hier, faende
-        // `include_str!` ihn in DIESEM Test, und der Waechter waere immer gruen.
-        let aufruf = concat!(
-            "sprit_flug_abschliessen(&mut stats, Some(snap.fuel_total_kg), ",
-            "snap.engines_running == 0)"
-        );
-        assert_eq!(
-            SRC.matches(aufruf).count(),
-            1,
-            "der Arrived-Uebergang rastet ohne Blick auf die Triebwerke"
-        );
+        // Das Ankommen mit laufenden Triebwerken prueft ein Verhaltenstest:
+        // `arrived_mit_laufenden_triebwerken_rastet_kein_abstellen`.
     }
 
     /// Die Phasen-Plananteile summieren sich auf den Navlog-Trip — auch

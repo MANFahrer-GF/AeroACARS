@@ -145,8 +145,9 @@ describe("Sprit-Leiter", () => {
 
   it("trifft auch bei Posten über dem Block die Zeile „Extra ungenutzt“", () => {
     // Werte, wie `sprit.rs` sie für diesen Fall liefert: Block 40 000, die
-    // sechs Posten 41 644, Tank beim Anlassen 40 000 (keine Über-, keine
-    // Untertankung gegen den Block). Skala = Posten = 41 644; geplant
+    // sechs Posten 41 644, Tank beim Anlassen 41 644 — Über- und
+    // Untertankung zählen gegen den Plan-Stapel (hier die Posten), also
+    // keine von beiden. Skala = Posten = 41 644; geplant
     // gelandet mit 41 644 − 998 − 21 218 = 19 428; 16 770 gelandet → 2 658
     // mehr, Contingency 1 061, Extra genutzt 1 597, ungenutzt 3 581.
     const basis = dlh370();
