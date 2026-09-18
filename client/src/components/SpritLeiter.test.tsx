@@ -303,4 +303,24 @@ describe("Sprit-Leiter", () => {
     fireEvent.focus(legende);
     expect(hinweis()).toContain("noch vollständig an Bord");
   });
+
+  it("erklärt ⓘ und Kacheln sofort — bei Maus, Tastatur und Tippen", () => {
+    // Live-Seite, 18.09.2026: „keine Note ⓘ" hatte scheinbar keine Funktion —
+    // der Browser-`title` erscheint spät und auf Touch-Geräten nie.
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    const erklaerung = () => container.querySelector('[data-testid="sprit-erklaerung"]');
+    expect(container.querySelectorAll("[title]").length, "noch ein Browser-title übrig").toBe(0);
+    const bedienbar = [...container.querySelectorAll('[tabindex="0"]')];
+    const info = bedienbar.find((e) => e.textContent?.trim() === "ⓘ")!;
+    fireEvent.click(info);
+    expect(erklaerung()?.textContent?.length ?? 0).toBeGreaterThan(40);
+    expect(info.getAttribute("aria-describedby"), "Bildschirmleser bekommt die Erklärung nicht").toBe(erklaerung()!.id);
+    fireEvent.blur(info);
+    expect(erklaerung()).toBeNull();
+    const kachel = bedienbar.find((e) => /Final Reserve/i.test(e.textContent ?? "") && /kg/.test(e.textContent ?? ""))!;
+    fireEvent.mouseEnter(kachel);
+    expect(erklaerung()?.textContent).toMatch(/Final Reserve/);
+    fireEvent.mouseLeave(kachel);
+    expect(erklaerung()).toBeNull();
+  });
 });

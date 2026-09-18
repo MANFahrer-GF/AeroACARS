@@ -21848,7 +21848,10 @@ fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &m
     //
     // Die Rechnung steht ausdruecklich da — „1 744 kg ueber der Final Reserve
     // (732 kg)" liess offen, ob die 732 noch abzuziehen sind (Thomas, BIT348).
-    match (&a.reserve, a.reserve_abstand_kg, a.reserve_kg, a.landing_fuel_kg) {
+    // Ueber `reserve_abstand`: auch eine vor v1.7.37 eingefrorene Auswertung
+    // (Update zwischen Landung und Einreichen) bekommt den Abstand in kg —
+    // sonst zeigte das PIREP-Feld die Quote und der Client die kg (QS v1.7.37).
+    match (&a.reserve, landing_scoring::sprit::reserve_abstand(a), a.reserve_kg, a.landing_fuel_kg) {
         (Reserve::Intakt { .. }, Some(ab), Some(res), Some(ldg)) => f.insert(
             "Final Reserve".into(),
             format!(

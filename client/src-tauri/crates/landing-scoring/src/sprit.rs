@@ -105,6 +105,31 @@ pub struct SpritEingang {
     pub plan_bis_einstieg_kg: Option<f32>,
 }
 
+/// Der Abstand zur Final Reserve passend zum Status: bei „unterschritten"
+/// mindestens −1 kg, bei „intakt" nie negativ, bei „nicht pruefbar" keiner.
+///
+/// Ohne die Klemme stuende bei knapper Unterschreitung (4 915,6 gegen
+/// 4 916,4 kg — gerundet gleich) „UNTERSCHRITTEN … − 0 kg" und im Hinweis
+/// „0 kg darueber gelandet" (QS v1.7.37).
+fn abstand_nach_status(status: &Reserve, roh: f32) -> Option<f32> {
+    match status {
+        Reserve::NichtPruefbar { .. } => None,
+        Reserve::Unterschritten { .. } => Some(roh.min(-1.0)),
+        Reserve::Intakt { .. } => Some(roh.max(0.0)),
+    }
+}
+
+/// Der Abstand zur Final Reserve einer FERTIGEN Auswertung — auch fuer eine,
+/// die vor v1.7.37 eingefroren wurde und das Feld nicht traegt (Update
+/// zwischen Landung und Einreichen). Dieselbe Regel wie `reserveAbstand`
+/// in client/src/lib/sprit.ts.
+pub fn reserve_abstand(a: &SpritAuswertung) -> Option<f32> {
+    if let Some(v) = a.reserve_abstand_kg {
+        return abstand_nach_status(&a.reserve, v);
+    }
+    abstand_nach_status(&a.reserve, a.landing_fuel_kg? - a.reserve_kg?)
+}
+
 /// Rollen nach der Landung: Landesprit minus Tankstand beim Abstellen.
 ///
 /// Eigene Funktion, weil sie ZWEIMAL gebraucht wird und dieselbe Zahl
@@ -463,14 +488,12 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             }
         }
     };
-    let reserve_abstand_kg = match (&reserve_status, reserve, landing) {
-        (Reserve::Intakt { .. } | Reserve::Unterschritten { .. }, Some(res), Some(ldg)) => {
-            // Aus den GERUNDETEN Werten, die auch angezeigt werden — dann
-            // geht die Rechnung in der Anzeige immer auf (gelandet − Reserve
-            // = Abstand), und ein Datensatz ohne dieses Feld bekommt in der
-            // Anzeige exakt dieselbe Zahl (`reserveAbstand` in sprit.ts).
-            Some(ldg.round() - res.round())
-        }
+    // Aus den GERUNDETEN Werten, die auch angezeigt werden — dann geht die
+    // Rechnung in der Anzeige immer auf (gelandet − Reserve = Abstand), und
+    // ein Datensatz ohne dieses Feld bekommt exakt dieselbe Zahl
+    // (`reserve_abstand`, `reserveAbstand` in sprit.ts).
+    let reserve_abstand_kg = match (reserve, landing) {
+        (Some(res), Some(ldg)) => abstand_nach_status(&reserve_status, ldg.round() - res.round()),
         _ => None,
     };
     let badge = match reserve_status {
@@ -996,6 +1019,24 @@ mod tests {
         e.tank_plausibel = true;
         e.planned_reserve_kg = None;
         assert_eq!(auswerten(&e).reserve_abstand_kg, None, "ohne OFP-Reserve kein Abstand");
+    }
+
+    /// Knapp unterschritten, gerundet gleich: nie „− 0 kg". Und eine
+    /// Auswertung ohne das Feld (vor v1.7.37 eingefroren) bekommt denselben
+    /// Abstand ueber `reserve_abstand`.
+    #[test]
+    fn sprit_reserve_abstand_klemme_und_altbestand() {
+        let mut e = dlh370();
+        e.planned_reserve_kg = Some(4_916.4);
+        e.landing_fuel_kg = Some(4_915.6);
+        let a = auswerten(&e);
+        assert!(matches!(a.reserve, Reserve::Unterschritten { .. }));
+        assert_eq!(a.reserve_abstand_kg, Some(-1.0), "gerundet gleich, trotzdem darunter");
+        let mut alt = auswerten(&dlh370());
+        alt.reserve_abstand_kg = None;
+        assert_eq!(reserve_abstand(&alt), Some(11_854.0), "Altbestand aus den gespeicherten Werten");
+        alt.reserve = Reserve::NichtPruefbar { grund: "kein_ofp".into() };
+        assert_eq!(reserve_abstand(&alt), None);
     }
 
     /// Rollen nach der Landung: eine Funktion, zwei Wege — dieselbe Zahl.

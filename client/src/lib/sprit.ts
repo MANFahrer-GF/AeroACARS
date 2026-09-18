@@ -41,9 +41,13 @@ export function dezimal(v: number, stellen: number): string {
  */
 export function reserveAbstand(s: SpritAuswertung): number | null {
   if (s.reserve.status === "nicht_pruefbar") return null;
-  if (s.reserve_abstand_kg != null) return s.reserve_abstand_kg;
-  if (s.landing_fuel_kg == null || s.reserve_kg == null) return null;
-  return s.landing_fuel_kg - s.reserve_kg;
+  let roh: number;
+  if (s.reserve_abstand_kg != null) roh = s.reserve_abstand_kg;
+  else if (s.landing_fuel_kg == null || s.reserve_kg == null) return null;
+  else roh = s.landing_fuel_kg - s.reserve_kg;
+  // Dieselbe Klemme wie `abstand_nach_status` in sprit.rs: unterschritten
+  // heißt mindestens −1 kg, intakt nie negativ — nie „− 0 kg".
+  return s.reserve.status === "unterschritten" ? Math.min(roh, -1) : Math.max(roh, 0);
 }
 
 export interface SpritPhase {
@@ -103,7 +107,8 @@ export interface SpritAuswertung {
   /**
    * v1.7.37: Landesprit minus Final Reserve in kg — positiv darüber,
    * negativ darunter. Gerechnet in `sprit.rs`, hier nur gelesen. Fehlt bei
-   * älteren Datensätzen; dann zeigt die Anzeige wie bisher die Quote.
+   * älteren Datensätzen; dann gilt dieselbe Differenz der gespeicherten
+   * Werte (`reserveAbstand`).
    */
   reserve_abstand_kg?: number | null;
   /** Tankstand beim Abheben — steht im Ergebnis, weil er sich aus den

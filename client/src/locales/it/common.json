@@ -455,7 +455,6 @@
       "na_reserve": "nessun OFP o valore carburante non plausibile",
       "unter_schwelle": "Sotto soglia",
       "rollen_vor_start": "Rullaggio in partenza",
-      "rollen_nach_landung": "Rullaggio dopo l’atterraggio: {{kg}} kg",
       "leiter_sonstiges": "Carburante aggiuntivo",
       "rollen_nach_ohne_plan": "senza piano — SimBrief pianifica solo il rullaggio in partenza",
       "hint_rollen_nach": "Carburante dall'atterraggio allo spegnimento dei motori in piazzola.",

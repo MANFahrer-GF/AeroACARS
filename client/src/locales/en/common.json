@@ -455,7 +455,6 @@
       "na_reserve": "no OFP, or fuel reading implausible",
       "unter_schwelle": "Below threshold",
       "rollen_vor_start": "Taxi out",
-      "rollen_nach_landung": "Taxi in after landing: {{kg}} kg",
       "leiter_sonstiges": "Additional fuel",
       "rollen_nach_ohne_plan": "no plan — SimBrief only plans the taxi out",
       "hint_rollen_nach": "Fuel from touchdown until the engines are shut down at the stand.",

@@ -69,8 +69,15 @@ describe("reserveAbstand", () => {
   const basis = (ueber: Partial<SpritAuswertung>) =>
     ({ reserve: { status: "intakt", quote_pct: 338.3 }, landing_fuel_kg: 2476, reserve_kg: 732, ...ueber }) as SpritAuswertung;
 
-  it("nimmt den Wert aus der Rechnung", () => {
-    expect(reserveAbstand(basis({ reserve_abstand_kg: 1744 }))).toBe(1744);
+  it("nimmt den Wert aus der Rechnung — nicht den Rückfall", () => {
+    // Bewusst ein anderer Wert als 2 476 − 732: Sonst bliebe der Test grün,
+    // wenn das Feld ignoriert würde (QS v1.7.37).
+    expect(reserveAbstand(basis({ reserve_abstand_kg: 1700 }))).toBe(1700);
+  });
+
+  it("zeigt bei knapper Unterschreitung nie „− 0 kg“", () => {
+    // Gerundet gleich, trotzdem darunter — dieselbe Klemme wie sprit.rs.
+    expect(reserveAbstand(basis({ reserve: { status: "unterschritten", quote_pct: 99.9 }, landing_fuel_kg: 732 }))).toBe(-1);
   });
 
   it("gibt älteren Datensätzen dieselbe Zahl aus den gespeicherten Werten", () => {

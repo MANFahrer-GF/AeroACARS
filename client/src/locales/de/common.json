@@ -455,7 +455,6 @@
       "na_reserve": "kein OFP oder Tankwert unplausibel",
       "unter_schwelle": "Unter Schwelle",
       "rollen_vor_start": "Rollen vor Start",
-      "rollen_nach_landung": "Rollen nach der Landung: {{kg}} kg",
       "leiter_sonstiges": "Zusatzsprit",
       "rollen_nach_ohne_plan": "ohne Plan — SimBrief plant nur das Rollen zum Start",
       "hint_rollen_nach": "Sprit vom Aufsetzen bis zum Abstellen der Triebwerke am Stand.",

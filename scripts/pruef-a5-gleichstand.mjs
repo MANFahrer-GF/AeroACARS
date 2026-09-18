@@ -151,6 +151,15 @@ function main() {
   if (!/<SpritSektion\s+sprit=/.test(huelle)) {
     fehler.push("LandingAnalysis.tsx rendert die geteilte SpritSektion nicht");
   }
+  // Die Karte der Live-Uebersicht traegt den Titel „⛽ Sprit" selbst. Ohne
+  // `ohneTitel` stuende er zweimal untereinander (BIT348, v1.7.37).
+  const ohneTitelRegel = /<SpritSektion\b[^>]*\bohneTitel\b[^>]*\/>/;
+  if (!ohneTitelRegel.test(huelle)) {
+    fehler.push("LandingAnalysis.tsx: <SpritSektion> ohne `ohneTitel` — „Sprit“ stuende doppelt");
+  }
+  if (ohneTitelRegel.test("<SpritSektion sprit={sprit} />") || !ohneTitelRegel.test("<SpritSektion sprit={sprit} ohneTitel />")) {
+    fehler.push("Gegenprobe: die ohneTitel-Regel unterscheidet mit und ohne Prop nicht");
+  }
   for (const v of huellenVerstoesse(huelle)) {
     fehler.push(`LandingAnalysis.tsx: ${v} — die Hülle darf nur weiterreichen`);
   }

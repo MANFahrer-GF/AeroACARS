@@ -8,7 +8,7 @@
  * den alten Plan/Ist-Balken.
  */
 import i18n from "i18next";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
 import { balken, dezimal, hauptzahl, hauptzahlText, kg, pct, phaseTon, reserveAbstand } from "../lib/sprit";
@@ -89,6 +89,91 @@ export function SpritBadge({ sprit }: { sprit: SpritAuswertung | null | undefine
 }
 
 /**
+ * Der Rahmen jeder Erklaerung — deckend, feste Farben (in beiden Themes
+ * dunkel; mit `--text` stuende im hellen Theme dunkel auf dunkel), und
+ * `--surface-2` ist in der Live-Webapp halbtransparent.
+ */
+const HINWEIS_STIL: React.CSSProperties = {
+  position: "absolute",
+  padding: "8px 10px",
+  borderRadius: 8,
+  background: "#151c27",
+  border: "1px solid #2f3a4d",
+  boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+  fontSize: "0.8rem",
+  fontWeight: 400,
+  lineHeight: 1.4,
+  letterSpacing: "normal",
+  textTransform: "none",
+  whiteSpace: "normal",
+  color: "#b4bdca",
+  pointerEvents: "none",
+  zIndex: 10,
+};
+
+/**
+ * Eine Erklaerung, die SOFORT erscheint — bei Maus, Tastatur und Tippen.
+ *
+ * Bis v1.7.37 standen die Erklaerungen der Sektion im `title`-Attribut. Der
+ * Browser zeigt das erst nach rund einer Sekunde Stillhalten, auf Touch-
+ * Geraeten nie, und nichts deutet darauf hin: Das „ⓘ" neben „keine Note"
+ * sah aus, als haette es keine Funktion (Thomas, Live-Uebersicht,
+ * 18.09.2026).
+ *
+ * `breit`: die Erklaerung ist so breit wie das Element (Kacheln) — dann
+ * ragt sie am rechten Kartenrand nicht hinaus.
+ */
+function Erklaerung({
+  text,
+  children,
+  als = "span",
+  breit = false,
+  style,
+}: {
+  text: string;
+  children: React.ReactNode;
+  als?: "span" | "div";
+  breit?: boolean;
+  style?: React.CSSProperties;
+}) {
+  const [offen, setOffen] = useState(false);
+  const id = useId();
+  const Tag = als;
+  return (
+    <Tag
+      tabIndex={0}
+      // Bildschirmleser lesen die Erklaerung vor, sobald sie offen ist.
+      aria-describedby={offen ? id : undefined}
+      onMouseEnter={() => setOffen(true)}
+      onMouseLeave={() => setOffen(false)}
+      onFocus={() => setOffen(true)}
+      onBlur={() => setOffen(false)}
+      // Tippen auf Touch-Geraeten: oeffnen (nicht umschalten — sonst
+      // schlaegt der Klick nach dem emulierten mouseenter sofort wieder zu).
+      onClick={() => setOffen(true)}
+      style={{ position: "relative", cursor: "help", outline: "none", ...style }}
+    >
+      {children}
+      {offen && (
+        <span
+          id={id}
+          role="tooltip"
+          data-testid="sprit-erklaerung"
+          style={{
+            ...HINWEIS_STIL,
+            top: "calc(100% + 6px)",
+            left: 0,
+            ...(breit ? { right: 0 } : { width: "max-content", maxWidth: 320 }),
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </Tag>
+  );
+}
+
+/**
  * Rollen nach der Landung — dieselbe Zeile wie die Phasen, aber ohne Plan.
  *
  * Der Balken steht im SELBEN Kilogramm-Massstab wie „Rollen vor Start",
@@ -102,9 +187,9 @@ function RollenNachLandung({ kgNach, vorStart }: { kgNach: number; vorStart: Spr
   const leise = "var(--text-muted, #9aa4b2)";
   return (
     <>
-      <span style={{ color: leise }} title={t("landing.sprit.hint_rollen_nach")}>
+      <Erklaerung text={t("landing.sprit.hint_rollen_nach")} style={{ color: leise }}>
         {t("landing.sprit.report_rollen_nach")}
-      </span>
+      </Erklaerung>
       <div
         data-testid="sprit-rollen-nach-balken"
         style={{ height: 11, background: "var(--surface-2, #1b2432)", borderRadius: 4, overflow: "hidden", position: "relative" }}
@@ -189,6 +274,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   const { t } = useTranslation();
   // Welcher Block gerade unter der Maus liegt (Balken oder Legende).
   const [aktiv, setAktiv] = useState<string | null>(null);
+  const hinweisId = useId();
   const l = sprit.leiter;
   if (!l || l.block_kg <= 0) return null;
   // **Was der Block in DIESEM Flug war** — fuer die Erklaerung beim
@@ -325,7 +411,6 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
           <rect
             key={r.label}
             data-block={r.label}
-            aria-label={`${r.label} ${kg(r.kg)} kg — ${r.hinweis}${r.imFlug ? ` ${r.imFlug}` : ""}`}
             x={r.x}
             y={4}
             width={Math.max(r.w, 0)}
@@ -345,7 +430,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
             damit brach die zugesagte Eigenschaft „der Abstand ist der
             Verbrauch" still. */}
         {abhebenX != null && (
-          <line x1={abhebenX} y1={0} x2={abhebenX} y2={30} stroke={leise} strokeWidth={1.5} strokeDasharray="3 2" vectorEffect="non-scaling-stroke" />
+          <line x1={abhebenX} y1={0} x2={abhebenX} y2={30} stroke={leise} strokeWidth={1.5} strokeDasharray="3 2" vectorEffect="non-scaling-stroke" pointerEvents="none" />
         )}
         {markX != null && (
           <line x1={markX} y1={0} x2={markX} y2={30} stroke={markFarbe} strokeWidth={2} vectorEffect="non-scaling-stroke" pointerEvents="none" />
@@ -360,29 +445,16 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
         const mitte = ((r.x + r.w / 2) / W) * 100;
         return (
           <div
+            id={hinweisId}
             role="tooltip"
             data-testid="sprit-leiter-hinweis"
             style={{
-              position: "absolute",
+              ...HINWEIS_STIL,
               bottom: "calc(100% + 8px)",
               left: `${Math.min(Math.max(mitte, 14), 86)}%`,
               transform: "translateX(-50%)",
               width: "max-content",
               maxWidth: 340,
-              padding: "8px 10px",
-              borderRadius: 8,
-              // DECKEND und mit festen Farben: `--surface-2` ist in der
-              // Live-Webapp halbtransparent — der Text darunter schien durch.
-              // Feste Schriftfarben, weil der Hinweis in beiden Themes dunkel
-              // ist; mit `--text` stuende im hellen Theme dunkel auf dunkel.
-              background: "#151c27",
-              border: "1px solid #2f3a4d",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
-              fontSize: "0.8rem",
-              lineHeight: 1.4,
-              color: "#b4bdca",
-              pointerEvents: "none",
-              zIndex: 5,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#eef2f7", fontWeight: 600 }}>
@@ -411,6 +483,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
             key={`l-${r.label}`}
             data-block={r.label}
             tabIndex={0}
+            aria-describedby={aktiv === r.label ? hinweisId : undefined}
             onMouseEnter={() => setAktiv(r.label)}
             onMouseLeave={() => setAktiv(null)}
             onFocus={() => setAktiv(r.label)}
@@ -425,18 +498,18 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", marginTop: 6, fontSize: "0.8rem", color: leise }}>
         {abhebenX != null && (
-          <span title={t("landing.sprit.leiter_hint_abgehoben")} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help" }}>
+          <Erklaerung text={t("landing.sprit.leiter_hint_abgehoben")} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <span aria-hidden style={{ width: 0, height: 12, borderLeft: `2px dashed ${leise}`, flex: "none" }} />
             {sprit.einstieg_in_der_luft
               ? t("landing.sprit.eingestiegen_mit", { kg: kg(abhebenKg) })
               : t("landing.sprit.abgehoben_mit", { kg: kg(abhebenKg) })}
-          </span>
+          </Erklaerung>
         )}
         {markX != null && (
-          <span title={t("landing.sprit.leiter_hint_gelandet")} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help", color: "var(--text, #e8ecf3)" }}>
+          <Erklaerung text={t("landing.sprit.leiter_hint_gelandet")} style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text, #e8ecf3)" }}>
             <span aria-hidden style={{ width: 0, height: 12, borderLeft: `2px solid ${markFarbe}`, flex: "none" }} />
             {t("landing.sprit.gelandet_mit", { kg: kg(ldg) })}
-          </span>
+          </Erklaerung>
         )}
         <span>
           {sprit.contingency_verbraucht ? t("landing.sprit.contingency_verbraucht") : t("landing.sprit.contingency_unberuehrt")}
@@ -496,8 +569,12 @@ function Kennzahl({
 }) {
   const leer = wert == null || wert === "";
   return (
-    <div
-      title={leer ? grundWennLeer : erklaerung}
+    // Die Erklaerung erscheint sofort und auch beim Tippen — siehe
+    // `Erklaerung`. Fehlt der Wert, steht dort der GRUND.
+    <Erklaerung
+      als="div"
+      breit
+      text={leer ? grundWennLeer : erklaerung}
       style={{
         border: "1px solid var(--border, #2a3344)",
         borderRadius: 8,
@@ -542,7 +619,7 @@ function Kennzahl({
           </span>
         )}
       </div>
-    </div>
+    </Erklaerung>
   );
 }
 
@@ -597,13 +674,9 @@ export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswert
         >
           {t("landing.sprit.keine_note")}
         </span>
-        <span
-          title={t("landing.sprit.info")}
-          aria-label={t("landing.sprit.info")}
-          style={{ color: "var(--text-muted, #9aa4b2)", cursor: "help", fontSize: "0.8rem" }}
-        >
+        <Erklaerung text={t("landing.sprit.info")} style={{ color: "var(--text-muted, #9aa4b2)", fontSize: "0.8rem" }}>
           ⓘ
-        </span>
+        </Erklaerung>
       </div>
       {/* Die Kennzahlenreihe — vier Zahlen auf einen Blick, jede mit
           Erklaerung. Sie kam aus der Live-Uebersicht; der Client hatte sie
