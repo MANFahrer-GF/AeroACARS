@@ -173,8 +173,16 @@ function Erklaerung({
     const weg = (e: Event) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOffen(false);
     };
+    // Die Lage gilt fuer die Fensterbreite beim Oeffnen. Aendert sie sich
+    // (Handy gedreht), schliesst der Hinweis, statt an der alten Stelle zu
+    // stehen (QS v1.7.37, B3).
+    const zu = () => setOffen(false);
     document.addEventListener("pointerdown", weg);
-    return () => document.removeEventListener("pointerdown", weg);
+    window.addEventListener("resize", zu);
+    return () => {
+      document.removeEventListener("pointerdown", weg);
+      window.removeEventListener("resize", zu);
+    };
   }, [offen]);
   const Tag = als;
   return (
@@ -330,6 +338,23 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
     setBalken(r ? { links: r.left, breite: r.width } : null);
     setAktiv(label);
   };
+  // Wie bei `Erklaerung`: Tippen neben Balken und Legende schliesst — iOS
+  // Safari sendet dabei weder mouseleave noch Blur (QS v1.7.37, B1) —, und
+  // eine neue Fensterbreite auch (B3).
+  const leiterRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (aktiv == null) return;
+    const weg = (e: Event) => {
+      if (leiterRef.current && !leiterRef.current.contains(e.target as Node)) setAktiv(null);
+    };
+    const zu = () => setAktiv(null);
+    document.addEventListener("pointerdown", weg);
+    window.addEventListener("resize", zu);
+    return () => {
+      document.removeEventListener("pointerdown", weg);
+      window.removeEventListener("resize", zu);
+    };
+  }, [aktiv]);
   const l = sprit.leiter;
   if (!l || l.block_kg <= 0) return null;
   // **Was der Block in DIESEM Flug war** — fuer die Erklaerung beim
@@ -448,7 +473,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   // sich ohne Seitenverhaeltnis dehnt; alles Lesbare ist HTML in der
   // Schrift der Sektion.
   return (
-    <div style={{ marginTop: "0.8rem" }}>
+    <div ref={leiterRef} style={{ marginTop: "0.8rem" }}>
       <div style={{ fontSize: "0.86rem", fontWeight: 600, color: "var(--text, #e8ecf3)", marginBottom: 6 }}>
         {t("landing.sprit.leiter_titel")} · {kg(l.block_kg)} kg
       </div>
@@ -510,8 +535,8 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
               ...HINWEIS_STIL,
               bottom: "calc(100% + 8px)",
               left: lage ? lage.versatz : 0,
-              width: lage ? lage.breite : "max-content",
-              maxWidth: 340,
+              width: "max-content",
+              maxWidth: lage ? lage.breite : 340,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#eef2f7", fontWeight: 600 }}>

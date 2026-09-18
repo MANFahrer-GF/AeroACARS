@@ -353,7 +353,7 @@ describe("Sprit-Leiter", () => {
       const h = container.querySelector('[data-testid="sprit-leiter-hinweis"]') as HTMLElement;
       const links = 16 + parseFloat(h.style.left);
       expect(links).toBeGreaterThanOrEqual(16);
-      expect(links + parseFloat(h.style.width)).toBeLessThanOrEqual(375 - 16);
+      expect(links + parseFloat(h.style.maxWidth)).toBeLessThanOrEqual(375 - 16);
     } finally {
       Object.defineProperty(window, "innerWidth", { value: breiteVorher, configurable: true });
       Element.prototype.getBoundingClientRect = rectVorher;
@@ -377,5 +377,31 @@ describe("Sprit-Leiter", () => {
     fireEvent.click(info);
     fireEvent.pointerDown(info);
     expect(erklaerung()).not.toBeNull();
+  });
+
+  it("schließt den Leiter-Hinweis bei Tippen daneben, Escape und Drehen", () => {
+    // QS v1.7.37: B1 (iOS sendet beim Tippen daneben weder mouseleave noch
+    // Blur), B2 (Escape an der Legende ungetestet), B3 (Handy gedreht).
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    const hinweis = () => container.querySelector('[data-testid="sprit-leiter-hinweis"]');
+    const trip = container.querySelector('svg rect[data-block="Trip"]')!;
+    fireEvent.mouseEnter(trip);
+    expect(hinweis()).not.toBeNull();
+    fireEvent.pointerDown(document.body);
+    expect(hinweis(), "Tippen daneben schließt nicht").toBeNull();
+    // Gegenprobe: Tippen auf den Balken selbst lässt ihn offen.
+    fireEvent.mouseEnter(trip);
+    fireEvent.pointerDown(trip);
+    expect(hinweis()).not.toBeNull();
+    // Escape an der Legende.
+    const eintrag = container.querySelector('[data-testid="sprit-leiter-legende"] [data-block="Extra"]')!;
+    fireEvent.focus(eintrag);
+    expect(hinweis()?.textContent).toContain("Extra");
+    fireEvent.keyDown(eintrag, { key: "Escape" });
+    expect(hinweis(), "Escape an der Legende schließt nicht").toBeNull();
+    // Drehen des Handys: neue Fensterbreite.
+    fireEvent.focus(eintrag);
+    fireEvent(window, new Event("resize"));
+    expect(hinweis(), "neue Fensterbreite schließt nicht").toBeNull();
   });
 });
