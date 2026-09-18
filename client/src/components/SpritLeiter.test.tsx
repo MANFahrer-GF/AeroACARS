@@ -43,6 +43,9 @@ function dlh370(ueber: Partial<SpritAuswertung> = {}): SpritAuswertung {
       reserve_kg: 4916,
       extra_kg: 5178,
       block_kg: 41644,
+      sonstiges_kg: 0,
+      // Aus der Rechnung: 40 919 abgehoben + 998 Taxi − 41 644 Block.
+      uebertankung_kg: 273,
     },
     rollen_vor_start: null,
     rollen_nach_landung_kg: null,
@@ -107,7 +110,12 @@ describe("Sprit-Leiter", () => {
     // 43 919 kg abgehoben bei 41 644 kg Plan-Block: Ohne die mitwachsende
     // Skala wurde die Marke auf x=0 geklemmt, während ihr Etikett den
     // echten Wert nannte.
-    const tanker = dlh370({ takeoff_fuel_kg: 43919 });
+    const basis = dlh370();
+    const tanker = dlh370({
+      takeoff_fuel_kg: 43919,
+      // Die Rechnung liefert die Übertankung mit: 43 919 + 998 − 41 644.
+      leiter: { ...basis.leiter!, uebertankung_kg: 3273 },
+    });
     const { container } = render(<SpritSektion sprit={tanker} />);
     const ab = abhebeMarke(container);
     expect(ab).not.toBeNull();

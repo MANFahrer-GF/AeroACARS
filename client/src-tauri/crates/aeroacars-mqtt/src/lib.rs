@@ -4029,9 +4029,12 @@ mod sprit_payload_tests {
         let v = payload_mit(Some(a));
         assert_eq!(v["sprit"]["badge"], "gruen");
         assert_eq!(v["sprit"]["reserve"]["status"], "intakt");
-        // Fassung 2 seit der Abnahme: `takeoff_fuel_kg` kam dazu, weil es
-        // sich aus den uebrigen Feldern nicht zurueckrechnen liess.
-        assert_eq!(v["sprit"]["fassung"], 2);
+        // Gegen die Konstante: Die Fassung ist Teil des Wire-Formats, und
+        // eine abgeschriebene Zahl hier wurde beim Sprung auf 3 vergessen.
+        assert_eq!(
+            v["sprit"]["fassung"],
+            landing_scoring::sprit::SPRIT_AUSWERTUNG_FASSUNG
+        );
     }
 
     /// Das echte PirepPayload-Struct kennt das Feld (Kompilier-Beweis ueber

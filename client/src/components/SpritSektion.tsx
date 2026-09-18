@@ -10,7 +10,7 @@
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
-import { balken, hauptzahl, hauptzahlText, kg, pct, phaseTon } from "../lib/sprit";
+import { balken, dezimal, hauptzahl, hauptzahlText, kg, pct, phaseTon } from "../lib/sprit";
 
 const TON = {
   ok: "#22c55e",
@@ -156,32 +156,25 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   const l = sprit.leiter;
   if (!l || l.block_kg <= 0) return null;
   const W = 560;
-  // **Uebertankung als eigenes Stueck.**
+  // Zusatzsprit (ETOPS, Minimum) und Übertankung kommen FERTIG aus der
+  // Rechnung (`sprit.rs`, Leiter). Bis v1.7.36 rechnete diese Anzeige die
+  // Übertankung selbst aus — entgegen der Zusage „nur gerendert" — und
+  // Zusatzsprit fehlte ganz, sodass die Marken um genau diesen Betrag
+  // danebenlagen.
   //
-  // Wer mehr tankt als der Plan vorsieht, hat Sprit an Bord, den die
-  // Plan-Leiter nicht kennt. Bis v1.7.35 fehlte er in der Grafik — und
-  // genau das liess Grafik und Zeile auseinanderlaufen: Die Landemarke
-  // las bei DLH 370 „3 581 kg Extra uebrig", waehrend die Zeile darunter
-  // 3 308 kg nannte. Die Differenz von 273 kg WAR die Uebertankung.
-  //
-  // Er steht zwischen Alternate und Extra, weil `sprit.rs` ihn genauso
-  // verrechnet: gegen den TATSAECHLICHEN Abhebestand (`takeoff − trip`),
-  // und was darueber hinausgeht, zehrt am Extra. Damit trifft die Marke
-  // denselben Punkt, den die Zeile nennt.
-  const uebertankung = Math.max(
-    0,
-    (sprit.takeoff_fuel_kg ?? 0) + l.taxi_kg - l.block_kg,
-  );
-  const skala = l.block_kg + uebertankung;
+  // Reihenfolge = Verbrauchsreihenfolge der Rechnung: Contingency, dann
+  // Extra. Zusatzsprit und Übertankung liegen darüber und bleiben — wie
+  // Alternate und Reserve — stehen. Nur so trifft die Landemarke denselben
+  // Punkt, den die Zeile „Extra ungenutzt" nennt.
+  const skala = l.block_kg + (l.uebertankung_kg ?? 0);
   const x = (v: number) => (v / skala) * W;
   const parts: Array<[number, string, string]> = [
     [l.taxi_kg, "#6b7688", t("landing.sprit.leiter_taxi")],
     [l.trip_kg, "#38bdf8", t("landing.sprit.leiter_trip")],
-    // Reihenfolge = Verbrauchsreihenfolge: erst Contingency, dann Extra.
     [l.contingency_kg, "#f2b24c", t("landing.sprit.leiter_contingency")],
     [l.extra_kg, "#3d5a6c", t("landing.sprit.leiter_extra")],
-    [uebertankung, "#47705a", t("landing.sprit.leiter_uebertankung")],
-    // Alternate und Reserve stehen rechts, weil sie stehen bleiben sollen.
+    [l.sonstiges_kg ?? 0, "#5a5f7a", t("landing.sprit.leiter_sonstiges")],
+    [l.uebertankung_kg ?? 0, "#47705a", t("landing.sprit.leiter_uebertankung")],
     [l.alternate_kg, "#566273", t("landing.sprit.leiter_alternate")],
     [l.reserve_kg, "#566273", t("landing.sprit.leiter_reserve")],
   ];
@@ -385,7 +378,7 @@ export function SpritSektion({ sprit }: { sprit: SpritAuswertung | null | undefi
   const reserveTon = r.status === "intakt" ? "ok" : r.status === "unterschritten" ? "warn" : "neutral";
   const anflugSub =
     sprit.zeit_unter_schwelle_min != null && sprit.schwelle_ft != null
-      ? t("landing.sprit.zeit_wert", { min: sprit.zeit_unter_schwelle_min.toFixed(1).replace(".", ","), ft: kg(sprit.schwelle_ft) }) +
+      ? t("landing.sprit.zeit_wert", { min: dezimal(sprit.zeit_unter_schwelle_min, 1), ft: kg(sprit.schwelle_ft) }) +
         (sprit.strecke_anflug_nm != null && sprit.plan_strecke_anflug_nm != null
           ? ` · ${t("landing.sprit.strecke", { ist: Math.round(sprit.strecke_anflug_nm), plan: Math.round(sprit.plan_strecke_anflug_nm) })}`
           : "")
@@ -445,7 +438,7 @@ export function SpritSektion({ sprit }: { sprit: SpritAuswertung | null | undefi
         />
         <Kennzahl
           label={t("landing.sprit.unter_schwelle")}
-          wert={sprit.zeit_unter_schwelle_min != null ? sprit.zeit_unter_schwelle_min.toFixed(1).replace(".", ",") : null}
+          wert={sprit.zeit_unter_schwelle_min != null ? dezimal(sprit.zeit_unter_schwelle_min, 1) : null}
           einheit="min"
           erklaerung={
             sprit.schwelle_ft != null

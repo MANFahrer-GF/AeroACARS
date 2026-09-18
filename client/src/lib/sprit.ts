@@ -8,6 +8,23 @@
  * `aeroacars-live/webapp/src/components/sprit.ts`.
  */
 
+import i18n from "i18next";
+
+/**
+ * Das Dezimalzeichen der eingestellten Sprache — Komma für Deutsch und
+ * Italienisch, Punkt für Englisch.
+ *
+ * Bis v1.7.36 stand überall ein Komma, auch in der englischen Ansicht
+ * („+3,4 %" über „Fuel"). Die Tausendertrennung bleibt in allen Sprachen
+ * das schmale Leerzeichen (U+202F): Das ist die international eindeutige
+ * Schreibweise, und sie verwechselt niemand mit einem Dezimalzeichen.
+ */
+export function dezimal(v: number, stellen: number): string {
+  const s = Math.abs(v).toFixed(stellen);
+  const sprache = (i18n.language || "de").slice(0, 2);
+  return sprache === "en" ? s : s.replace(".", ",");
+}
+
 export interface SpritPhase {
   ist_kg: number;
   plan_kg: number;
@@ -38,6 +55,10 @@ export interface SpritLeiter {
   reserve_kg: number;
   extra_kg: number;
   block_kg: number;
+  /** v1.7.36: Zusatzsprit im Block, der in keinem der sechs Posten steckt (ETOPS, Minimum). */
+  sonstiges_kg?: number;
+  /** v1.7.36: mehr getankt als geplant — aus der Rechnung, nicht aus der Anzeige. */
+  uebertankung_kg?: number;
 }
 
 export type SpritBadge = "gruen" | "gelb" | "grau";
@@ -83,8 +104,7 @@ export function kg(v: number | null | undefined): string {
 /** „+12,3 %" / „−3,4 %" — Vorzeichen immer, eine Nachkommastelle. */
 export function pct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const s = v.toFixed(1).replace(".", ",");
-  return (v > 0 ? "+" : v < 0 ? "−" : "") + s.replace("-", "") + " %";
+  return (v > 0 ? "+" : v < 0 ? "−" : "") + dezimal(v, 1) + " %";
 }
 
 /**

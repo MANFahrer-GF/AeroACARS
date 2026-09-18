@@ -34,6 +34,9 @@ function dlh370(): SpritAuswertung {
       reserve_kg: 4916,
       extra_kg: 5178,
       block_kg: 41644,
+      sonstiges_kg: 0,
+      // Aus der Rechnung: 40 919 abgehoben + 998 Taxi − 41 644 Block.
+      uebertankung_kg: 273,
     },
     badge: "gruen",
   };
@@ -82,8 +85,9 @@ describe("SpritBadge", () => {
  * und die Abhebe-Marke wurde beim Tankern auf x=0 geklemmt.
  */
 function skalaVon(a: SpritAuswertung): number {
+  // Aus den Daten, nicht nachgerechnet — so wie die Anzeige selbst.
   const l = a.leiter!;
-  return l.block_kg + Math.max(0, (a.takeoff_fuel_kg ?? 0) + l.taxi_kg - l.block_kg);
+  return l.block_kg + (l.uebertankung_kg ?? 0);
 }
 
 describe("SpritSektion", () => {

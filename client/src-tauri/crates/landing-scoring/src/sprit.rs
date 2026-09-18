@@ -76,6 +76,15 @@ pub struct SpritEingang {
     /// (Auslesefehler, nur zwei von vier Tanks, Sprung). Dann gibt es
     /// „nicht pruefbar" statt einer falschen Warnung.
     pub tank_plausibel: bool,
+    /// v1.7.36: Der geplante Trip laut DEMSELBEN Navlog, aus dem auch
+    /// `plan_bis_vergleichspunkt_kg` stammt (Sprit am letzten Fix).
+    ///
+    /// Der Anflug-Plan ist „Trip minus Plan bis zum Messpunkt". Kommen beide
+    /// aus verschiedenen Quellen — OFP-Kopf und Navlog, oder ein Routen-
+    /// Update im Flug, das nur die Wegpunkte ersetzt —, summieren sich die
+    /// Phasen nicht mehr auf den Plan, und der Schnitt driftet unbemerkt.
+    /// `None` bei Altbestand: dann gilt `planned_burn_kg` wie bisher.
+    pub plan_trip_navlog_kg: Option<f32>,
     /// v1.7.36: Tankstand, als die Triebwerke anliefen, und als sie
     /// ausgingen. Beide an ein Ereignis gerastet (`sprit_boden_marken`).
     pub engine_start_fuel_kg: Option<f32>,
@@ -103,6 +112,15 @@ pub struct Phase {
     /// Client „−12 kg" und auf der Webseite „−8,3 %".
     ///
     /// Deshalb entscheidet es die Rechnung, und die Anzeigen folgen.
+    ///
+    /// `#[serde(default)]`: Datensaetze der Fassungen 1 und 2 tragen das Feld
+    /// nicht. Ohne Rueckfall waere das ein harter Lesefehler — und
+    /// `storage::read_all` legte die GANZE `landings.json` als
+    /// `.corrupt-…` beiseite (QS-Befund F1, 18.09.2026: derselbe Fehler, der
+    /// am selben Tag schon einmal an `SpritAuswertung` behoben wurde).
+    /// Fuer Altbestand heisst `false` „Prozent" — die Anzeige des alten
+    /// Datensatzes bleibt dann, wie sie war.
+    #[serde(default)]
     pub als_kg: bool,
 }
 
@@ -150,6 +168,19 @@ pub struct Leiter {
     pub reserve_kg: f32,
     pub extra_kg: f32,
     pub block_kg: f32,
+    /// v1.7.36: Was im geplanten Block steckt, aber in keinem der sechs
+    /// Posten — ETOPS-, Minimum- oder Zusatzsprit, den SimBrief getrennt
+    /// ausweist. Ohne dieses Stueck ergaeben die Posten weniger als den
+    /// Block, und jede Marke saesse um genau diesen Betrag falsch.
+    #[serde(default)]
+    pub sonstiges_kg: f32,
+    /// v1.7.36: Mehr getankt als geplant — Abhebe-Tankstand plus Taxi ueber
+    /// dem Plan-Block. Bis dahin rechnete die ANZEIGE das selbst aus, entgegen
+    /// der Zusage „nur gerendert, nichts nachgerechnet" (QS-Befund V6). Und
+    /// es fehlte, war die Leiter nicht genau der Block. Jetzt eine Zahl, an
+    /// einer Stelle.
+    #[serde(default)]
+    pub uebertankung_kg: f32,
 }
 
 /// Das Ergebnis. Wird 1:1 in den Payload geschrieben und ueberall nur
@@ -301,7 +332,9 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             }),
             _ => None,
         };
-        let an = match (vergleich, landing, planned_burn, plan_bis) {
+        // Trip aus demselben Navlog wie `plan_bis` — sonst driftet der Schnitt.
+        let trip_fuer_phasen = positiv(e.plan_trip_navlog_kg).or(planned_burn);
+        let an = match (vergleich, landing, trip_fuer_phasen, plan_bis) {
             // `burn - plan` ist der geplante Anflugverbrauch. Liegt der TOD
             // kurz vor dem Ziel, wird er winzig und jede Abweichung ergibt
             // dreistellige Prozentwerte ohne Aussage — dann lieber nichts.
@@ -382,15 +415,26 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         nicht_negativ(e.planned_extra_kg),
         positiv(e.planned_block_fuel_kg),
     ) {
-        (Some(trip), Some(cont), Some(alt), Some(res), Some(extra), Some(block)) => Some(Leiter {
-            taxi_kg: nicht_negativ(e.planned_taxi_kg).unwrap_or(0.0).round(),
-            trip_kg: trip.round(),
-            contingency_kg: cont.round(),
-            alternate_kg: alt.round(),
-            reserve_kg: res.round(),
-            extra_kg: extra.round(),
-            block_kg: block.round(),
-        }),
+        (Some(trip), Some(cont), Some(alt), Some(res), Some(extra), Some(block)) => {
+            let taxi = nicht_negativ(e.planned_taxi_kg).unwrap_or(0.0);
+            let posten = taxi + trip + cont + alt + res + extra;
+            // Was der Block mehr enthaelt als die sechs Posten.
+            let sonstiges = (block - posten).max(0.0);
+            // Was an Bord war, aber nicht im Plan-Block: Abhebe-Tankstand
+            // plus geplantes Taxi gegen den Block.
+            let uebertankung = takeoff.map(|to| (to + taxi - block).max(0.0)).unwrap_or(0.0);
+            Some(Leiter {
+                taxi_kg: taxi.round(),
+                trip_kg: trip.round(),
+                contingency_kg: cont.round(),
+                alternate_kg: alt.round(),
+                reserve_kg: res.round(),
+                extra_kg: extra.round(),
+                block_kg: block.round(),
+                sonstiges_kg: sonstiges.round(),
+                uebertankung_kg: uebertankung.round(),
+            })
+        }
         _ => None,
     };
 
@@ -525,6 +569,17 @@ mod tests {
         assert_eq!(a.plan_strecke_anflug_nm, Some(139.0));
         assert_eq!(a.badge, Badge::Gruen);
         assert_eq!(a.reserve, Reserve::Intakt { quote_pct: 341.1 });
+    }
+
+    /// Eine Phase der Fassungen 1 und 2 traegt kein `als_kg` — sie muss
+    /// trotzdem lesbar sein, und zwar als „Prozent" (so wurde sie damals
+    /// angezeigt).
+    #[test]
+    fn sprit_phase_ohne_als_kg_bleibt_lesbar() {
+        let alt = r#"{"ist_kg": 5461.0, "plan_kg": 1865.0, "abweichung_pct": 192.8}"#;
+        let p: Phase = serde_json::from_str(alt).expect("Phase ohne als_kg muss lesbar sein");
+        assert!(!p.als_kg);
+        assert_eq!(p.ist_kg, 5_461.0, "Gegenprobe: die uebrigen Werte kommen an");
     }
 
     /// Gegenprobe zur Rueckwaertstoleranz: Ein voellig leeres Objekt ergibt
@@ -803,7 +858,13 @@ mod tests {
         let json = serde_json::to_string(&a).expect("json");
         assert!(json.contains("\"reserve\":{\"status\":\"intakt\",\"quote_pct\":341.1}"), "{json}");
         assert!(json.contains("\"badge\":\"gruen\""), "{json}");
-        assert!(json.contains("\"fassung\":2"), "{json}");
+        // Gegen die Konstante, nicht gegen eine abgeschriebene Zahl — sonst
+        // muss dieser Test bei jedem Fassungssprung von Hand nachgezogen
+        // werden, und genau das wurde beim Sprung auf 3 vergessen.
+        assert!(
+            json.contains(&format!("\"fassung\":{SPRIT_AUSWERTUNG_FASSUNG}")),
+            "{json}"
+        );
         let zurueck: SpritAuswertung = serde_json::from_str(&json).expect("roundtrip");
         assert_eq!(zurueck, a);
     }

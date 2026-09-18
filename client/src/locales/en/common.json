@@ -417,7 +417,8 @@
       "reserve_grund": {
         "kein_ofp": "not verifiable — no OFP",
         "kein_landesprit": "not verifiable — no landing fuel recorded",
-        "tank_unplausibel": "not verifiable — implausible tank reading"
+        "tank_unplausibel": "not verifiable — implausible tank reading",
+        "unbekannt": "not checkable — reason unknown"
       },
       "hint_bis_sinkflug": "Fuel burnt up to the actual start of descent, against the OFP plan — the phase you control.",
       "hint_anflug": "Fuel burnt from start of descent against plan. Vectoring, intermediate levels and transitions are ATC’s call — hence no score.",
@@ -429,7 +430,9 @@
       "na_reserve": "no OFP, or fuel reading implausible",
       "unter_schwelle": "Below threshold",
       "rollen_vor_start": "Taxi out",
-      "rollen_nach_landung": "Taxi in after landing: {{kg}} kg"
+      "rollen_nach_landung": "Taxi in after landing: {{kg}} kg",
+      "leiter_sonstiges": "Additional",
+      "report_rollen_nach": "Taxi in"
     },
     "confidence": {
       "high": "Confidence: High",

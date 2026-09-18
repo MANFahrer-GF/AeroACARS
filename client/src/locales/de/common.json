@@ -417,7 +417,8 @@
       "reserve_grund": {
         "kein_ofp": "nicht prüfbar — kein OFP",
         "kein_landesprit": "nicht prüfbar — kein Landesprit erfasst",
-        "tank_unplausibel": "nicht prüfbar — Tankwert unplausibel"
+        "tank_unplausibel": "nicht prüfbar — Tankwert unplausibel",
+        "unbekannt": "nicht prüfbar — Grund unbekannt"
       },
       "hint_bis_sinkflug": "Verbrauch bis zum tatsächlichen Sinkflugbeginn gegen den OFP-Plan — die Phase, die ihr steuert.",
       "hint_anflug": "Verbrauch ab Sinkflugbeginn gegen Plan. Radarführung, Zwischenhöhen und Transitions bestimmt die Flugsicherung — deshalb ohne Note.",
@@ -429,7 +430,9 @@
       "na_reserve": "kein OFP oder Tankwert unplausibel",
       "unter_schwelle": "Unter Schwelle",
       "rollen_vor_start": "Rollen vor Start",
-      "rollen_nach_landung": "Rollen nach der Landung: {{kg}} kg"
+      "rollen_nach_landung": "Rollen nach der Landung: {{kg}} kg",
+      "leiter_sonstiges": "Zusatz",
+      "report_rollen_nach": "Rollen nach Landung"
     },
     "confidence": {
       "high": "Confidence: Hoch",

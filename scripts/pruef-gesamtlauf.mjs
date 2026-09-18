@@ -89,6 +89,27 @@ const SCHRITTE = [
     cmd: "node",
     args: ["scripts/pruef-a1-farben.mjs"],
   },
+  // Bis zur QS vom 18.09.2026 fehlten diese drei hier — der Gesamtlauf
+  // meldete „alles grün", ohne sie je auszuführen (Befund F5).
+  {
+    name: "Wächter: Gleichstand Client/Live",
+    cwd: WURZEL,
+    cmd: "node",
+    args: ["scripts/pruef-a5-gleichstand.mjs"],
+  },
+  {
+    name: "Wächter: Spec deckt Zustand",
+    cwd: WURZEL,
+    cmd: "node",
+    args: ["scripts/pruef-spec-vollstaendig.mjs"],
+  },
+  {
+    // Der ausgelieferte Code gegen 43 echte Flüge.
+    name: "Korpus gegen echte Flüge",
+    cwd: WURZEL,
+    cmd: "node",
+    args: ["scripts/pruef-korpus.mjs"],
+  },
 ];
 
 function main() {

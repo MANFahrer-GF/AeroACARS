@@ -12,7 +12,7 @@ import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
 import { SpritBadge, SpritSektion } from "./SpritSektion";
-import { hauptzahlText as spritHauptzahl, kg as spritKg } from "../lib/sprit";
+import { dezimal as spritDezimal, hauptzahlText as spritHauptzahl, kg as spritKg } from "../lib/sprit";
 import type { SpritAuswertung } from "../lib/sprit";
 import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
@@ -2960,7 +2960,22 @@ export function LandingReport({ record }: { record: LandingRecord }) {
               {record.sprit?.zeit_unter_schwelle_min != null && record.sprit.schwelle_ft != null && (
                 <ReportTile
                   label={t("landing.sprit.report_zeit")}
-                  value={t("landing.sprit.zeit_wert", { min: record.sprit.zeit_unter_schwelle_min.toFixed(1).replace(".", ","), ft: spritKg(record.sprit.schwelle_ft) })}
+                  value={t("landing.sprit.zeit_wert", { min: spritDezimal(record.sprit.zeit_unter_schwelle_min, 1), ft: spritKg(record.sprit.schwelle_ft) })}
+                />
+              )}
+              {/* v1.7.36: der Rollsprit — erst damit ist der Bericht von
+                  Triebwerk an bis Triebwerk aus vollständig. */}
+              {record.sprit?.rollen_vor_start && (
+                <ReportTile
+                  label={t("landing.sprit.rollen_vor_start")}
+                  value={`${spritKg(record.sprit.rollen_vor_start.ist_kg)} kg`}
+                  detail={`Plan ${spritKg(record.sprit.rollen_vor_start.plan_kg)} kg`}
+                />
+              )}
+              {record.sprit?.rollen_nach_landung_kg != null && (
+                <ReportTile
+                  label={t("landing.sprit.report_rollen_nach")}
+                  value={`${spritKg(record.sprit.rollen_nach_landung_kg)} kg`}
                 />
               )}
               {record.sprit && (

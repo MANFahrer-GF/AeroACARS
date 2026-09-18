@@ -27,7 +27,9 @@
 // Aufruf:  node scripts/pruef-korpus.mjs
 //          node scripts/pruef-korpus.mjs --daten <verzeichnis>
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,13 +37,12 @@ const HIER = dirname(fileURLToPath(import.meta.url));
 
 /** Wo die Messdaten liegen. */
 const ARG = process.argv.indexOf("--daten");
+// Flugspuren von Piloten — deshalb ausserhalb des oeffentlichen Repos.
 const DATEN =
   ARG > -1 && process.argv[ARG + 1]
     ? resolve(process.argv[ARG + 1])
-    : resolve(
-        "/private/tmp/claude-501/-Users-thomaskant-Claude-GSG",
-        "152733bd-27be-4c7d-b852-4916804efb8f/scratchpad/mess",
-      );
+    : resolve(homedir(), "Claude", "aeroacars-korpus", "sprit-2026-09-18");
+const ERGEBNIS = resolve(tmpdir(), `sprit-korpus-${process.pid}.tsv`);
 
 /**
  * Die Schwellen.
@@ -85,16 +86,27 @@ function main() {
     process.exit(1);
   }
 
-  // Die Auswertung liegt als TSV vor, eine Zeile je Flug. Erzeugt vom
-  // Messlauf (mess/mess*.py) gegen die Produktionsdatenbank.
-  const roh = lies("ergebnis.tsv");
-  if (!roh) {
-    console.error(`FEHLER: ${resolve(DATEN, "ergebnis.tsv")} fehlt.`);
-    console.error(
-      "Erst den Messlauf gegen die echten Flüge fahren, dann dieses Skript.",
-    );
+  // Den AUSGELIEFERTEN Code laufen lassen — `sprit_tick`,
+  // `sprit_plan_am_ort`, `sprit_auswertung_aus` — ueber die echten Spuren.
+  // Bis zur QS vom 18.09.2026 las dieses Skript stattdessen eine liegende
+  // Datei aus einer Python-Nachbildung und war bei jeder Codeaenderung
+  // gruen (QS-Befund F4).
+  rmSync(ERGEBNIS, { force: true });
+  const lauf = spawnSync(
+    "cargo",
+    ["test", "-p", "aeroacars-app", "--lib", "sprit_korpus", "--", "--ignored", "--nocapture"],
+    {
+      cwd: resolve(HIER, "..", "client", "src-tauri"),
+      env: { ...process.env, SPRIT_KORPUS: DATEN, SPRIT_KORPUS_AUS: ERGEBNIS },
+      encoding: "utf-8",
+    },
+  );
+  if (lauf.status !== 0 || !existsSync(ERGEBNIS)) {
+    console.error("FEHLER: Der Korpus-Test im Code lief nicht durch.");
+    console.error(`${lauf.stdout ?? ""}${lauf.stderr ?? ""}`.split("\n").slice(-25).join("\n"));
     process.exit(1);
   }
+  const roh = readFileSync(ERGEBNIS, "utf-8");
 
   const zeilen = roh
     .trim()
@@ -117,6 +129,9 @@ function main() {
   const iAn = spalte("anflug_pct");
   const iStrecke = spalte("strecke_anflug_nm");
   const iPlanStrecke = spalte("plan_strecke_anflug_nm");
+  const iPlanBis = spalte("plan_bis_kg");
+  const iPlanAn = spalte("plan_anflug_kg");
+  const iPlanTrip = spalte("plan_trip_kg");
 
   const fluege = zeilen.map((z) => z.split("\t"));
   if (fluege.length === 0) {
@@ -185,15 +200,41 @@ function main() {
     }
   }
 
+  // 5. Die beiden Phasen sind zwei Teile derselben Strecke: Ihre
+  //    Plan-Anteile muessen den Plan-Trip ergeben. Die Schwelle war bis zur
+  //    QS vom 18.09.2026 definiert, aber nie geprueft (Befund F4).
+  let summenGeprueft = 0;
+  for (const f of mitPunkt) {
+    const bis = Number(f[iPlanBis]);
+    const an = Number(f[iPlanAn]);
+    const trip = Number(f[iPlanTrip]);
+    if (![bis, an, trip].every((v) => Number.isFinite(v) && v > 0)) continue;
+    summenGeprueft += 1;
+    const abw = (Math.abs(bis + an - trip) / trip) * 100;
+    if (abw > SCHWELLEN.phasensumme_abweichung_pct) {
+      fehler.push(
+        `${f[iId]}: Plan-Anteile ${bis} + ${an} = ${bis + an} kg gegen Trip ${trip} kg ` +
+          `(${abw.toFixed(1)} %). Der Schnitt zwischen den Phasen driftet.`,
+      );
+    }
+  }
+  if (summenGeprueft === 0) {
+    fehler.push("Phasensumme: kein einziger Flug mit beiden Plan-Anteilen — nichts geprueft.");
+  }
+
   // Grundgesamtheit — ohne sie wäre ein leeres Ergebnis „alles gut".
   if (mitPunkt.length === 0) {
     console.error("FEHLER: Kein einziger Flug mit Messpunkt. Nichts geprüft.");
     process.exit(1);
   }
 
+  // Echter Median (bei gerader Anzahl der Mittelwert der beiden mittleren) —
+  // dieselbe Definition wie `statistics.median`, sonst nennen Skript und
+  // Spec verschiedene Zahlen fuer denselben Lauf.
   const median = (arr) => {
     const s = [...arr].sort((a, b) => a - b);
-    return s[Math.floor(s.length / 2)];
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
   };
   const anPct = mitPunkt.map((f) => Number(f[iAn])).filter(Number.isFinite);
   const bisPct = mitPunkt.map((f) => Number(f[iBis])).filter(Number.isFinite);

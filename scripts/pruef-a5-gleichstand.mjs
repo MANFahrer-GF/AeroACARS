@@ -94,10 +94,24 @@ function main() {
     }
   }
 
-  // 3. Die Hülle rendert die geteilte Sektion und nichts Eigenes.
+  // 3. Die Hülle rendert die geteilte Sektion und rechnet NICHTS selbst.
+  //
+  // Eine Sperrliste alter Funktionsnamen fängt nur die Vergangenheit — jede
+  // neue eigene Rechnung käme durch (QS-Befund F5). Die Regel ist deshalb
+  // positiv: Die Hülle reicht `sprit` weiter und liest von allen seinen
+  // Feldern höchstens `badge` (für die Farbe des Kopf-Chips). Wer ein
+  // Zahlenfeld anfasst, rechnet oder formatiert selbst — und genau damit
+  // fing die Drift bis v1.7.35 an.
   const huelle = readFileSync(resolve(WEBAPP, "components", "LandingAnalysis.tsx"), "utf-8");
   if (!/<SpritSektion\s+sprit=/.test(huelle)) {
     fehler.push("LandingAnalysis.tsx rendert die geteilte SpritSektion nicht");
+  }
+  const ERLAUBT = new Set(["badge"]);
+  // `landing.sprit.title` ist ein Uebersetzungsschluessel, kein Feldzugriff.
+  for (const m of huelle.matchAll(/(?<!landing\.)\bsprit\??\.([A-Za-z_]+)/g)) {
+    if (!ERLAUBT.has(m[1])) {
+      fehler.push(`LandingAnalysis.tsx liest selbst sprit.${m[1]} — die Hülle darf nur weiterreichen`);
+    }
   }
   for (const v of VERBOTEN_IN_HUELLE) {
     if (huelle.includes(v)) fehler.push(`LandingAnalysis.tsx enthält noch „${v}"`);
@@ -106,9 +120,22 @@ function main() {
     fehler.push("webapp/src/components/sprit.ts existiert noch — die alte eigene Fassung");
   }
 
-  // Gegenprobe: Würde Prüfung 1 eine Abweichung überhaupt bemerken?
-  if (hash(resolve(CLIENT, GETEILT[0])) === createHash("sha256").update("x").digest("hex")) {
-    fehler.push("Gegenprobe: der Vergleich ist blind");
+  // Gegenproben: Würden die Prüfungen eine Abweichung überhaupt bemerken?
+  // (Die erste Fassung verglich einen Datei-Hash mit hash("x") — das schlug
+  // nie an, QS-Befund F5.)
+  const inhalt = readFileSync(resolve(CLIENT, GETEILT[0]));
+  const verfaelscht = Buffer.concat([inhalt, Buffer.from(" ")]);
+  if (
+    createHash("sha256").update(inhalt).digest("hex") ===
+    createHash("sha256").update(verfaelscht).digest("hex")
+  ) {
+    fehler.push("Gegenprobe 1: ein veraendertes Byte faellt dem Vergleich nicht auf");
+  }
+  if (kanon({ a: "x", b: "y" }) !== kanon({ b: "y", a: "x" }) || kanon({ a: "x" }) === kanon({ a: "z" })) {
+    fehler.push("Gegenprobe 2: der Beschriftungsvergleich ist blind oder reihenfolgeabhaengig");
+  }
+  if (![..."const n = pl.sprit.leiter;".matchAll(/(?<!landing\.)\bsprit\??\.([A-Za-z_]+)/g)].length) {
+    fehler.push("Gegenprobe 3: die Hüllen-Regel erkennt einen Feldzugriff nicht");
   }
 
   if (fehler.length > 0) {

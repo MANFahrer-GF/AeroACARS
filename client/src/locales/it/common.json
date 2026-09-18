@@ -417,7 +417,8 @@
       "reserve_grund": {
         "kein_ofp": "non verificabile — nessun OFP",
         "kein_landesprit": "non verificabile — carburante all'atterraggio non registrato",
-        "tank_unplausibel": "non verificabile — lettura serbatoio non plausibile"
+        "tank_unplausibel": "non verificabile — lettura serbatoio non plausibile",
+        "unbekannt": "non verificabile — motivo sconosciuto"
       },
       "hint_bis_sinkflug": "Carburante consumato fino all’inizio effettivo della discesa, rispetto al piano OFP — la fase che controlli tu.",
       "hint_anflug": "Carburante dall’inizio della discesa rispetto al piano. Vettoramenti, livelli intermedi e transizioni li decide l’ATC — perciò senza voto.",
@@ -429,7 +430,9 @@
       "na_reserve": "nessun OFP o valore carburante non plausibile",
       "unter_schwelle": "Sotto soglia",
       "rollen_vor_start": "Rullaggio in partenza",
-      "rollen_nach_landung": "Rullaggio dopo l’atterraggio: {{kg}} kg"
+      "rollen_nach_landung": "Rullaggio dopo l’atterraggio: {{kg}} kg",
+      "leiter_sonstiges": "Aggiuntivo",
+      "report_rollen_nach": "Rullaggio all’arrivo"
     },
     "confidence": {
       "high": "Confidenza: Alta",
