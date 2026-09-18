@@ -64,6 +64,12 @@ export interface SpritLeiter {
   sonstiges_kg?: number;
   /** v1.7.36: mehr getankt als geplant — aus der Rechnung, nicht aus der Anzeige. */
   uebertankung_kg?: number;
+  /**
+   * v1.7.36: Was vom Extra nie an Bord war (Tank beim Anlassen unter dem
+   * Block). Die Grafik zeichnet das Extra um genau diesen Betrag kürzer —
+   * gerechnet in `sprit.rs`, hier nur gelesen.
+   */
+  untertankung_kg?: number;
 }
 
 export type SpritBadge = "gruen" | "gelb" | "grau";
@@ -97,6 +103,12 @@ export interface SpritAuswertung {
    * Start. Für den Weg zurück zum Stand gibt es nichts zu vergleichen.
    */
   rollen_nach_landung_kg: number | null;
+  /**
+   * v1.7.36: Die Aufzeichnung begann in der Luft — `takeoff_fuel_kg` ist
+   * dann der Tankstand beim Einstieg, nicht beim Abheben. Fehlt bei älteren
+   * Datensätzen (dann: abgehoben).
+   */
+  einstieg_in_der_luft?: boolean;
   badge: SpritBadge;
 }
 

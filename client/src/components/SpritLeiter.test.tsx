@@ -142,4 +142,52 @@ describe("Sprit-Leiter", () => {
     expect(rechts).toBeLessThanOrEqual(560 + 0.01);
     expect(rechts).toBeCloseTo(560, 1);
   });
+
+  it("trifft auch bei Posten über dem Block die Zeile „Extra ungenutzt“", () => {
+    // Werte, wie `sprit.rs` sie für diesen Fall liefert: Block 40 000, die
+    // sechs Posten 41 644, Tank beim Anlassen 40 000 (keine Über-, keine
+    // Untertankung gegen den Block). Skala = Posten = 41 644; geplant
+    // gelandet mit 41 644 − 998 − 21 218 = 19 428; 16 770 gelandet → 2 658
+    // mehr, Contingency 1 061, Extra genutzt 1 597, ungenutzt 3 581.
+    const basis = dlh370();
+    const knapp = dlh370({
+      leiter: { ...basis.leiter!, block_kg: 40000, uebertankung_kg: 0 },
+      extra_genutzt_kg: 1597,
+      extra_ungenutzt_kg: 3581,
+    });
+    const { container } = render(<SpritSektion sprit={knapp} />);
+    const W = 560;
+    const skala = 41644;
+    const kgAnDerMarke = (1 - landeMarke(container)! / W) * skala;
+    expect(kgAnDerMarke - (4916 + 8273)).toBeCloseTo(3581, 0);
+  });
+
+  it("zeichnet bei Untertankung nur das Extra, das an Bord war", () => {
+    // 344 kg unter Block angelassen: `sprit.rs` zieht sie vom Extra ab.
+    const basis = dlh370();
+    const unter = dlh370({
+      leiter: { ...basis.leiter!, uebertankung_kg: 0, untertankung_kg: 344 },
+      extra_getankt_kg: 4834,
+      extra_genutzt_kg: 1253,
+      extra_ungenutzt_kg: 3581,
+    });
+    const { container } = render(<SpritSektion sprit={unter} />);
+    const W = 560;
+    const skala = 41644 - 344;
+    const breiten = [...container.querySelectorAll("svg rect")].map((r) => Number(r.getAttribute("width")));
+    // Taxi, Trip, Contingency, Extra, Alternate, Reserve.
+    expect(breiten[3]).toBeCloseTo(((5178 - 344) / skala) * W, 1);
+    const kgAnDerMarke = (1 - landeMarke(container)! / W) * skala;
+    expect(kgAnDerMarke - (4916 + 8273)).toBeCloseTo(3581, 0);
+  });
+
+  it("beschriftet den Tankstand beim Einstieg in der Luft nicht als Abheben", () => {
+    const { container } = render(<SpritSektion sprit={dlh370({ einstieg_in_der_luft: true })} />);
+    const text = container.querySelector("svg")!.textContent ?? "";
+    expect(text).not.toContain("abgehoben mit");
+    expect(text).toContain("in der Luft");
+    // Gegenprobe: ohne Kennzeichen bleibt „abgehoben mit".
+    const { container: normal } = render(<SpritSektion sprit={dlh370()} />);
+    expect(normal.querySelector("svg")!.textContent).toContain("abgehoben mit");
+  });
 });

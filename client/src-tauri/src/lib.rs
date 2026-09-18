@@ -21377,16 +21377,18 @@ fn sprit_triebwerke_aus_rasten(stats: &mut FlightStats, fuel_kg: f32) {
 /// Sekunden nach Blocks-On abstellte, bekam den PIREP ohne „Rollen nach der
 /// Landung", also gerade im Normalfall (QS-Befund E1, 18.09.2026).
 ///
-/// Zwei Aufrufer:
-/// * **der Uebergang nach `Arrived`** — die FSM hat das Abstellen dort
-///   selbst bestaetigt (Triebwerke aus, Parkbremse, mindestens 30 s nach
-///   Blocks-On, bzw. der Stillstands-Weg fuer Add-ons mit klemmendem
-///   Triebwerkszaehler). Das ist eine staerkere Bestaetigung als die
-///   Zehn-Sekunden-Frist, und der Tank steht dort still.
-/// * **`flight_end`**, bevor der PIREP gebaut wird — fuer das manuelle
-///   Einreichen vor `Arrived`. Dort nur, wenn die Triebwerke gerade aus
-///   sind (die Frist laeuft schon). Laufen sie noch, gibt es keinen
-///   Abstell-Zeitpunkt, und der Wert bleibt ehrlich leer.
+/// Drei Aufrufer:
+/// * **der Uebergang nach `Arrived`** — dort nur, wenn der Sim die
+///   Triebwerke aus meldet. Auf dem normalen Weg hat die FSM das schon
+///   bestaetigt (Triebwerke aus, Parkbremse, mindestens 30 s nach
+///   Blocks-On) — eine staerkere Bestaetigung als die Zehn-Sekunden-Frist.
+///   `Arrived` erreichen aber auch Hubschrauber mit laufendem Rotor und
+///   Add-ons mit klemmendem Triebwerkszaehler; dort gibt es keinen
+///   Abstell-Zeitpunkt.
+/// * **`flight_end`** und **`flight_end_manual`** (Formular, z. B. nach
+///   einem Ausweichflug), bevor der PIREP gebaut wird — fuer das Einreichen
+///   vor `Arrived`. Dort nur, wenn die Triebwerke gerade aus sind (die
+///   Frist laeuft schon). Laufen sie noch, bleibt der Wert ehrlich leer.
 fn sprit_flug_abschliessen(stats: &mut FlightStats, fuel_kg: Option<f32>, triebwerke_aus: bool) {
     if !triebwerke_aus {
         return;
@@ -26456,6 +26458,11 @@ async fn flight_end_manual(
         // Same idempotent, on-plan-byte-identical, graceful-when-not-fetched
         // contract as the auto-file path.
         apply_finalized_runway_correlation(&flight, &mut stats);
+        // v1.7.36: „Triebwerke aus" festhalten, bevor der PIREP gebaut wird —
+        // wie in `flight_end`, siehe `sprit_flug_abschliessen` (QS Runde 3, F2).
+        let (letzter_sprit, triebwerke_aus) =
+            (stats.last_fuel_kg, stats.sprit_triebwerke_aus_seit.is_some());
+        sprit_flug_abschliessen(&mut stats, letzter_sprit, triebwerke_aus);
 
         // Apply block-time overrides BEFORE building the body so the
         // notes block + custom fields pick them up.
@@ -40217,7 +40224,13 @@ fn step_flight_at(
         stats.transitions.push((now, next_phase));
         if next_phase == FlightPhase::Arrived {
             // Vor dem Auto-Einreichen, das an genau diesem Uebergang haengt.
-            sprit_flug_abschliessen(&mut stats, Some(snap.fuel_total_kg), true);
+            //
+            // Nur wenn der Sim die Triebwerke AUS meldet: `Arrived` erreicht
+            // auch ein Hubschrauber mit laufendem Rotor (Stillstand am Boden
+            // genuegt) oder ein Add-on mit klemmendem Triebwerkszaehler ueber
+            // den Stillstands-Weg. Dort gibt es keinen Abstell-Zeitpunkt, und
+            // ein geratener waere ein zu kleiner Rollsprit (QS Runde 3, F1).
+            sprit_flug_abschliessen(&mut stats, Some(snap.fuel_total_kg), snap.engines_running == 0);
         }
         Some(next_phase)
     } else {
@@ -67888,6 +67901,12 @@ mod sprit_messung_tests {
 
         // Rollen zum Stand: Der Wegzaehler laeuft am Boden weiter.
         st.distance_nm += 4.0;
+        // Und das OFP aendert sich noch (SimBrief-Refresh am Stand). Eine
+        // vollstaendige Neubildung beim Abstellen truege das in die
+        // Auswertung — das Nachtragen darf es nicht (QS Runde 3: jede der
+        // beiden E2-Absicherungen braucht einen eigenen Biss).
+        st.planned_burn_kg = Some(25_000.0);
+        st.planned_reserve_kg = Some(6_000.0);
         // Triebwerke aus — nach der Frist.
         let aus = t0 + chrono::Duration::minutes(8);
         sprit_boden_marken(&mut st, 16_121.0, false, true, false, false, false, aus);
@@ -68125,14 +68144,35 @@ mod sprit_messung_tests {
         assert_eq!(st.engine_off_fuel_kg, Some(16_300.0));
         assert_eq!(st.sprit_auswertung.as_ref().and_then(|a| a.rollen_nach_landung_kg), Some(470.0));
 
-        // Und `flight_end` ruft es, BEVOR der PIREP gebaut wird.
+        // Und beide Einreich-Wege — Knopf und Formular — rufen es, BEVOR der
+        // PIREP gebaut wird (QS Runde 3, F2: das Formular fehlte).
         const SRC: &str = include_str!("lib.rs");
-        let start = SRC.find("async fn flight_end(").expect("flight_end");
-        let ende = SRC[start..].find("async fn flight_end_manual(").expect("Ende") + start;
-        let koerper = &SRC[start..ende];
-        let ruf = koerper.find("sprit_flug_abschliessen(&mut stats").expect("flight_end ruft sprit_flug_abschliessen nicht");
-        let pirep = koerper.find("let now_for_flight_time").expect("PIREP-Aufbau");
-        assert!(ruf < pirep, "sprit_flug_abschliessen kommt erst nach dem PIREP-Aufbau");
+        for (anfang, schluss) in [
+            ("async fn flight_end(", "async fn flight_end_manual("),
+            ("async fn flight_end_manual(", "async fn flight_resume_check_position("),
+        ] {
+            let start = SRC.find(anfang).expect("Anfang");
+            let ende = SRC[start..].find(schluss).expect("Ende") + start;
+            let koerper = &SRC[start..ende];
+            let ruf = koerper
+                .find("sprit_flug_abschliessen(&mut stats")
+                .unwrap_or_else(|| panic!("{anfang} ruft sprit_flug_abschliessen nicht"));
+            let pirep = koerper.find("let now_for_flight_time").expect("PIREP-Aufbau");
+            assert!(ruf < pirep, "{anfang}: sprit_flug_abschliessen kommt erst nach dem PIREP-Aufbau");
+        }
+        // Beim Ankommen nur mit abgestellten Triebwerken — `Arrived` erreicht
+        // auch ein Hubschrauber mit laufendem Rotor (QS Runde 3, F1).
+        // Zerlegt geschrieben: Stuende der ganze Aufruf woertlich hier, faende
+        // `include_str!` ihn in DIESEM Test, und der Waechter waere immer gruen.
+        let aufruf = concat!(
+            "sprit_flug_abschliessen(&mut stats, Some(snap.fuel_total_kg), ",
+            "snap.engines_running == 0)"
+        );
+        assert_eq!(
+            SRC.matches(aufruf).count(),
+            1,
+            "der Arrived-Uebergang rastet ohne Blick auf die Triebwerke"
+        );
     }
 
     /// Die Phasen-Plananteile summieren sich auf den Navlog-Trip — auch

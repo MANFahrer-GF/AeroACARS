@@ -210,6 +210,17 @@ pub struct Leiter {
     /// einer Stelle.
     #[serde(default)]
     pub uebertankung_kg: f32,
+    /// v1.7.36: Weniger getankt als geplant — der Tank beim Anlassen unter
+    /// dem Plan-Block, hoechstens bis zur Hoehe des Extra.
+    ///
+    /// Was nie an Bord war, kann auch nicht „genutzt" worden sein. Es fehlt
+    /// am Extra, dem frei waehlbaren Teil der Betankung: `extra_getankt_kg`
+    /// ist um genau diesen Betrag kleiner, und die Grafik zeichnet das Extra
+    /// entsprechend kuerzer. Ohne das erschien die Untertankung als „Extra
+    /// genutzt" und konnte „Contingency verbraucht" ausloesen, waehrend die
+    /// Zeile „getankt" die volle Plan-Menge nannte (QS Runde 3).
+    #[serde(default)]
+    pub untertankung_kg: f32,
 }
 
 /// Das Ergebnis. Wird 1:1 in den Payload geschrieben und ueberall nur
@@ -265,6 +276,10 @@ pub struct SpritAuswertung {
     /// sondern die Wahrheit ueber das OFP — und es passt zur Hausform
     /// „zeigen, nicht benoten".
     pub rollen_nach_landung_kg: Option<f32>,
+    /// v1.7.36: Die Aufzeichnung begann in der Luft. `takeoff_fuel_kg` ist
+    /// dann der Tankstand beim EINSTIEG — die Anzeige beschriftet die Marke
+    /// entsprechend, statt „abgehoben mit" zu behaupten.
+    pub einstieg_in_der_luft: bool,
     pub badge: Badge,
 }
 
@@ -470,11 +485,16 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             // den Unterschied im Rollsprit ab, und weniger Rollen erschien
             // als Uebertankung (QS-Vorschlag V-a, 18.09.2026). Der Rueckfall
             // bleibt fuer Fluege ohne Anlass-Marke.
-            let uebertankung = match (positiv(e.engine_start_fuel_kg), takeoff) {
-                (Some(an), _) => (an - block).max(0.0),
-                (None, Some(to)) if !e.einstieg_in_der_luft => (to + taxi - block).max(0.0),
-                _ => 0.0,
+            let tank_beim_anlassen = match (positiv(e.engine_start_fuel_kg), takeoff) {
+                (Some(an), _) => Some(an),
+                (None, Some(to)) if !e.einstieg_in_der_luft => Some(to + taxi),
+                _ => None,
             };
+            let uebertankung = tank_beim_anlassen.map(|t| (t - block).max(0.0)).unwrap_or(0.0);
+            // Siehe `Leiter::untertankung_kg`.
+            let untertankung = tank_beim_anlassen
+                .map(|t| (block - t).max(0.0).min(extra))
+                .unwrap_or(0.0);
             Some(Leiter {
                 taxi_kg: taxi.round(),
                 trip_kg: trip.round(),
@@ -485,6 +505,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                 block_kg: block.round(),
                 sonstiges_kg: sonstiges.round(),
                 uebertankung_kg: uebertankung.round(),
+                untertankung_kg: untertankung.round(),
             })
         }
         _ => None,
@@ -513,15 +534,17 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                 // Dieselbe Skala wie die Grafik: Plant ein OFP mehr in die
                 // Posten als in den Block, zaehlen die Posten.
                 let posten = l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
-                let skala = l.block_kg.max(posten) + l.uebertankung_kg;
+                let skala = l.block_kg.max(posten) + l.uebertankung_kg - l.untertankung_kg;
                 let plan_landing = (skala - l.taxi_kg - l.trip_kg).max(0.0);
                 let mehr = (plan_landing - ldg).max(0.0);
                 let cont_verbraucht = l.contingency_kg > 0.0 && mehr >= l.contingency_kg;
-                let genutzt = (mehr - l.contingency_kg).clamp(0.0, l.extra_kg).round();
+                // Was vom Extra tatsaechlich an Bord war.
+                let extra_an_bord = (l.extra_kg - l.untertankung_kg).max(0.0);
+                let genutzt = (mehr - l.contingency_kg).clamp(0.0, extra_an_bord).round();
                 (
-                    Some(l.extra_kg),
+                    Some(extra_an_bord),
                     Some(genutzt),
-                    Some((l.extra_kg - genutzt).round()),
+                    Some((extra_an_bord - genutzt).round()),
                     Some(cont_verbraucht),
                     Some(ldg >= l.alternate_kg + l.reserve_kg),
                 )
@@ -555,6 +578,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         leiter,
         rollen_vor_start,
         rollen_nach_landung_kg,
+        einstieg_in_der_luft: e.einstieg_in_der_luft,
         badge,
     }
 }
@@ -852,7 +876,8 @@ mod tests {
                 let a = auswerten(&e);
                 let l = a.leiter.clone().expect("Leiter");
                 let rechts = l.reserve_kg + l.alternate_kg + l.uebertankung_kg + l.sonstiges_kg;
-                let grafik = (landung - rechts).clamp(0.0, l.extra_kg).round();
+                // Die Grafik zeichnet nur das Extra, das an Bord war.
+                let grafik = (landung - rechts).clamp(0.0, l.extra_kg - l.untertankung_kg).round();
                 assert_eq!(
                     a.extra_ungenutzt_kg,
                     Some(grafik),
@@ -860,6 +885,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Untertankung: Was nie an Bord war, erscheint nicht als „genutzt" und
+    /// loest keine „Contingency verbraucht" aus — und die Zeile „getankt"
+    /// nennt, was wirklich an Bord war (QS Runde 3).
+    #[test]
+    fn sprit_untertankung_zaehlt_nicht_als_genutzt() {
+        let mut e = dlh370();
+        e.engine_start_fuel_kg = Some(41_300.0); // 344 kg unter Block
+        e.takeoff_fuel_kg = Some(40_302.0); // 998 kg gerollt, wie geplant
+        // Trip genau nach Plan: 40 302 − 21 218.
+        e.landing_fuel_kg = Some(19_084.0);
+        let a = auswerten(&e);
+        let l = a.leiter.clone().expect("Leiter");
+        assert_eq!(l.untertankung_kg, 344.0);
+        assert_eq!(l.uebertankung_kg, 0.0);
+        assert_eq!(a.extra_getankt_kg, Some(4_834.0), "5 178 − 344");
+        assert_eq!(a.extra_genutzt_kg, Some(0.0), "planmaessig geflogen, nichts genutzt");
+        assert_eq!(a.extra_ungenutzt_kg, Some(4_834.0));
+        assert_eq!(a.contingency_verbraucht, Some(false));
+        // Mehr als das ganze Extra fehlt: gedeckelt, nie negativ.
+        e.engine_start_fuel_kg = Some(30_000.0);
+        e.takeoff_fuel_kg = Some(29_002.0);
+        e.landing_fuel_kg = Some(7_784.0);
+        let a = auswerten(&e);
+        assert_eq!(a.leiter.as_ref().map(|l| l.untertankung_kg), Some(5_178.0));
+        assert_eq!(a.extra_getankt_kg, Some(0.0));
     }
 
     /// Einstieg in der Luft: „bis Sinkflug" rechnet nur das Stueck ab dem
@@ -880,6 +932,9 @@ mod tests {
         assert!(auswerten(&e).bis_sinkflug.is_none());
         // Der Anflug haengt nicht am Einstieg.
         assert!(auswerten(&e).anflug.is_some());
+        // Und die Anzeige erfaehrt es — fuer die Beschriftung der Marke.
+        assert!(auswerten(&e).einstieg_in_der_luft);
+        assert!(!auswerten(&dlh370()).einstieg_in_der_luft);
     }
 
     /// Rollen nach der Landung: eine Funktion, zwei Wege — dieselbe Zahl.

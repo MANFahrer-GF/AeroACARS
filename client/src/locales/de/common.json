@@ -412,6 +412,7 @@
       "report_reserve": "Final Reserve",
       "report_extra": "Extra Fuel",
       "abgehoben_mit": "abgehoben mit {{kg}} kg",
+      "eingestiegen_mit": "Aufzeichnung ab {{kg}} kg (in der Luft)",
       "extra_detail": "{{genutzt}} kg genutzt · {{ungenutzt}} kg ungenutzt",
       "leiter_uebertankung": "Übertankung",
       "reserve_grund": {

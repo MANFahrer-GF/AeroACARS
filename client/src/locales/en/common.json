@@ -412,6 +412,7 @@
       "report_reserve": "Final reserve",
       "report_extra": "Extra fuel",
       "abgehoben_mit": "took off with {{kg}} kg",
+      "eingestiegen_mit": "recording from {{kg}} kg (airborne)",
       "extra_detail": "{{genutzt}} kg used · {{ungenutzt}} kg unused",
       "leiter_uebertankung": "Over-fuel",
       "reserve_grund": {

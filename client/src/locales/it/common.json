@@ -412,6 +412,7 @@
       "report_reserve": "Riserva finale",
       "report_extra": "Carburante extra",
       "abgehoben_mit": "decollato con {{kg}} kg",
+      "eingestiegen_mit": "registrazione da {{kg}} kg (in volo)",
       "extra_detail": "{{genutzt}} kg usati · {{ungenutzt}} kg non usati",
       "leiter_uebertankung": "Extra rifornito",
       "reserve_grund": {

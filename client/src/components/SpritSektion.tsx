@@ -170,7 +170,9 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
     [l.taxi_kg, "#6b7688", t("landing.sprit.leiter_taxi")],
     [l.trip_kg, "#38bdf8", t("landing.sprit.leiter_trip")],
     [l.contingency_kg, "#f2b24c", t("landing.sprit.leiter_contingency")],
-    [l.extra_kg, "#3d5a6c", t("landing.sprit.leiter_extra")],
+    // Nur das Extra, das an Bord war — die Untertankung kommt fertig aus
+    // der Rechnung (`sprit.rs`, Leiter).
+    [Math.max(l.extra_kg - (l.untertankung_kg ?? 0), 0), "#3d5a6c", t("landing.sprit.leiter_extra")],
     [l.sonstiges_kg ?? 0, "#5a5f7a", t("landing.sprit.leiter_sonstiges")],
     [l.uebertankung_kg ?? 0, "#47705a", t("landing.sprit.leiter_uebertankung")],
     [l.alternate_kg, "#566273", t("landing.sprit.leiter_alternate")],
@@ -181,7 +183,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   // Block (dann ist „Zusatzsprit" 0), wären die Balken sonst über die
   // Breite hinausgelaufen (QS-Vorschlag V-a, 18.09.2026).
   const summe = parts.reduce((acc, [kgWert]) => acc + Math.max(kgWert, 0), 0);
-  const skala = Math.max(l.block_kg + (l.uebertankung_kg ?? 0), summe);
+  const skala = Math.max(l.block_kg + (l.uebertankung_kg ?? 0) - (l.untertankung_kg ?? 0), summe);
   const x = (v: number) => (v / skala) * W;
   let cursor = 0;
   const rects = parts
@@ -246,7 +248,9 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
               am Block, die Marke also weit links — auf y=14 kollidierte der
               Text mit dem Leiter-Titel. */}
           <text x={Math.min(abhebenX + 4, W - 120)} y={68} style={{ font: "10px ui-monospace, monospace", fill: "var(--text-muted, #9aa4b2)" }}>
-            {t("landing.sprit.abgehoben_mit", { kg: kg(abhebenKg) })}
+            {sprit.einstieg_in_der_luft
+              ? t("landing.sprit.eingestiegen_mit", { kg: kg(abhebenKg) })
+              : t("landing.sprit.abgehoben_mit", { kg: kg(abhebenKg) })}
           </text>
         </>
       )}
