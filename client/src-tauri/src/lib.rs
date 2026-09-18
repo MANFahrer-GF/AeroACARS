@@ -21085,6 +21085,16 @@ fn sprit_durchstart_zuruecksetzen(stats: &mut FlightStats) {
     stats.sprit_auswertung = None;
 }
 
+#[cfg(test)]
+impl FlightStats {
+    /// Nur für Tests: den Plan-Verbrauch bis TOD setzen, ohne ein ganzes
+    /// Navlog bauen zu müssen.
+    fn plan_bis_setzen(&mut self, kg: f32) {
+        self.sprit_plan_bis_tod_kg = Some(kg);
+        self.sprit_plan_rest_nm = Some(139.0);
+    }
+}
+
 fn sprit_ist_ausweichflug(stats: &FlightStats) -> bool {
     let (Some(la), Some(lo), Some((rlat, rlon))) =
         (stats.landing_lat, stats.landing_lon, stats.planned_arr_ref_pos)
@@ -21160,11 +21170,28 @@ fn sprit_auswertung_aus(
 fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &mut HashMap<String, String>) {
     use landing_scoring::sprit::Reserve;
     let Some(a) = a else { return };
+    // Dieselbe Regel wie Client, Bericht und Live-Uebersicht (`hauptzahl()`):
+    // ueber 60 % sagt ein Prozentwert nichts mehr, dort steht die Differenz
+    // in Kilogramm. Sonst staende auf der Webseite „+192.8 %", wo die drei
+    // anderen Oberflaechen „+3 596 kg" zeigen.
+    let hauptzahl = |p: &landing_scoring::sprit::Phase| -> String {
+        if p.abweichung_pct.abs() > 60.0 {
+            format!("{:+.0} kg", p.ist_kg - p.plan_kg)
+        } else {
+            format!("{:+.1} %", p.abweichung_pct)
+        }
+    };
     if let Some(p) = &a.bis_sinkflug {
-        f.insert("Sprit bis Sinkflug".into(), format!("{:+.1}% ({:.0} kg / Plan {:.0} kg)", p.abweichung_pct, p.ist_kg, p.plan_kg));
+        f.insert(
+            "Sprit bis Sinkflug".into(),
+            format!("{} ({:.0} kg / Plan {:.0} kg)", hauptzahl(p), p.ist_kg, p.plan_kg),
+        );
     }
     if let Some(p) = &a.anflug {
-        f.insert("Sprit Anflug".into(), format!("{:+.1}% ({:.0} kg / Plan {:.0} kg)", p.abweichung_pct, p.ist_kg, p.plan_kg));
+        f.insert(
+            "Sprit Anflug".into(),
+            format!("{} ({:.0} kg / Plan {:.0} kg)", hauptzahl(p), p.ist_kg, p.plan_kg),
+        );
     }
     if let (Some(min), Some(ft)) = (a.zeit_unter_schwelle_min, a.schwelle_ft) {
         f.insert("Zeit unter Schwelle".into(), format!("{min:.1} min unter {ft:.0} ft"));
@@ -30857,6 +30884,10 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // Seitenwind-Kompensation der Ausrichtungs-Achse beim
                     // FINALEN Aufsetzen mit dem Wind des ersten.
                     landung_episode_zuruecksetzen(&mut s);
+                    // v1.7.35: auch der Sprit. Dieselbe Begruendung wie oben —
+                    // sonst traegt das FINALE Aufsetzen die Auswertung des
+                    // abgebrochenen, samt dessen Reserve-Quote.
+                    sprit_durchstart_zuruecksetzen(&mut s);
                     // v0.16.6: stability stats + rollout are per-episode too —
                     // the FINAL touchdown must re-evaluate its own approach
                     // window and re-accumulate its own rollout (on bush
@@ -34164,6 +34195,10 @@ fn latch_takeoff_stats(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTim
     // die Schutzwirkung entfaellt.
     stats.sprit_fenster_scharf = false;
     stats.sprit_hoechste_hoehe_ft = None;
+    // Ohne das bliebe `sprit_tick` fuer den ganzen zweiten Abschnitt stumm
+    // (es steigt bei gesetztem Landesprit aus) — Reserve und Leiter kaemen,
+    // Phasen und Zeit nicht.
+    stats.landing_fuel_kg = None;
     // v0.5.16: capture pitch + bank for tail-strike / wing-strike
     // maintenance detection (DisposableSpecial dmaintenance reads these
     // as numeric custom fields).
@@ -34466,9 +34501,6 @@ fn stamp_touchdown_metadata(
         stats.landing_true_airspeed_kt = Some(v);
     }
     stats.landing_fuel_kg = Some(snap.fuel_total_kg);
-    // v1.7.35: die eine Sprit-Rechnung — jetzt, wo Start- und Landesprit da
-    // sind und die Landeposition feststeht (fuer die Ausweich-Erkennung).
-    sprit_auswertung_einmal(stats);
 
     // ---- Tier 2/3 BeatMyLanding-aligned extras ----
 
@@ -34490,6 +34522,11 @@ fn stamp_touchdown_metadata(
     // the buffer is empty (resumed flight).
     stats.landing_lat = Some(td_buf_sample.map(|s| s.lat).unwrap_or(snap.lat));
     stats.landing_lon = Some(td_buf_sample.map(|s| s.lon).unwrap_or(snap.lon));
+    // v1.7.35: die eine Sprit-Rechnung — hier und NICHT frueher. Sie friert
+    // ein, und die Ausweich-Erkennung darin liest `landing_lat`/`landing_lon`.
+    // Stand der Aufruf oben beim Landesprit, sah sie immer eine leere Position
+    // und jeder Ausweichflug wurde als Normalflug eingefroren (QS-Runde 4).
+    sprit_auswertung_einmal(stats);
     stats.landing_heading_true_deg = Some(
         td_buf_sample
             .map(|s| s.heading_true_deg)
@@ -55809,6 +55846,59 @@ mod touchdown_metadata_stamp_tests {
 
     // ---- stamp_touchdown_metadata ----
 
+
+    /// **Über die echte Aufrufkette**, nicht per Handaufruf: Ein Ausweichflug
+    /// muss beim Stempeln als solcher erkannt werden.
+    ///
+    /// Der Prüfer der vierten Runde hat belegt, dass die Erkennung vorher NIE
+    /// feuerte: Die Auswertung fror ein, bevor `landing_lat`/`landing_lon`
+    /// gesetzt waren, und `sprit_ist_ausweichflug` liest genau diese Felder.
+    /// Ein Ausweichflug wäre als Normalflug eingefroren worden — mit Phasen
+    /// gegen einen Plan, der nie geflogen wurde. Die bisherigen Tests riefen
+    /// die Funktionen von Hand auf und bewiesen darüber nichts.
+    #[test]
+    fn sprit_ausweichflug_wird_beim_stempeln_erkannt() {
+        let bauen = |ziel: (f64, f64), landung: (f64, f64)| {
+            let mut st = FlightStats::default();
+            st.takeoff_fuel_kg = Some(40_919.0);
+            st.planned_burn_kg = Some(21_218.0);
+            st.planned_reserve_kg = Some(4_916.0);
+            st.plan_bis_setzen(19_353.0);
+            st.sprit_vergleichspunkt_kg = Some(22_231.0);
+            st.sprit_vergleichspunkt_odo_nm = Some(600.0);
+            st.distance_nm = 782.0;
+            st.planned_arr_ref_pos = Some(ziel);
+            let mut snap = rollout_snap();
+            snap.lat = landung.0;
+            snap.lon = landung.1;
+            snap.fuel_total_kg = 16_770.0;
+            stamp_touchdown_metadata(&mut st, &snap, td_at(), None);
+            st.sprit_auswertung.clone().expect("Auswertung fehlt")
+        };
+
+        // Auf dem geplanten Platz: Phasen und Plan-Reststrecke da.
+        let normal = bauen((48.3538, 11.7861), (48.3538, 11.7861));
+        assert!(normal.bis_sinkflug.is_some(), "Normalflug ohne Phasen");
+
+        // Woanders aufgesetzt (EDDN statt EDDM, ~60 NM): keine Phasen gegen
+        // einen Plan, der nicht geflogen wurde — und keine Schwelle, die zur
+        // Höhe des geplanten Platzes gehört.
+        let ausweich = bauen((48.3538, 11.7861), (49.4987, 11.0780));
+        assert!(
+            ausweich.bis_sinkflug.is_none() && ausweich.anflug.is_none(),
+            "Ausweichflug zeigt Phasen gegen den nicht geflogenen Plan"
+        );
+        assert_eq!(ausweich.plan_strecke_anflug_nm, None);
+        assert_eq!(ausweich.schwelle_ft, None);
+        assert_eq!(ausweich.zeit_unter_schwelle_min, None);
+        // Tatsachen bleiben.
+        assert_eq!(ausweich.landing_fuel_kg, Some(16_770.0));
+        assert!(matches!(
+            ausweich.reserve,
+            landing_scoring::sprit::Reserve::Intakt { .. }
+        ));
+    }
+
     #[test]
     fn stamp_uses_buffer_td_sample_not_live_snap() {
         let mut stats = stats_with_buffer();
@@ -63943,12 +64033,23 @@ mod v163_mutationsluecken {
             });
             let rest = &ohne_kommentare[start..];
             let ende = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
-            assert!(
-                rest[..ende].contains("landung_episode_zuruecksetzen("),
-                "{funktion} räumt die Landung nicht mehr ab — nach einem \
-                 Touch-and-Go rechnet die nächste Landung dann mit dem Wind \
-                 und der Geschwindigkeit der vorigen"
-            );
+            // v1.7.35: BEIDE Aufraeumer. Der Sprit-Teil wurde aus
+            // `landung_episode_zuruecksetzen` herausgeloest (die greift auch
+            // bei einem blossen AGL-Ausreisser im Ausrollen) — und prompt
+            // fehlte er an einer der beiden Stellen, ohne dass dieser
+            // Waechter fiel: er kannte nur den einen Namen.
+            for aufraeumer in [
+                "landung_episode_zuruecksetzen(",
+                "sprit_durchstart_zuruecksetzen(",
+            ] {
+                assert!(
+                    rest[..ende].contains(aufraeumer),
+                    "{funktion} ruft {aufraeumer} nicht mehr — nach einem \
+                     Touch-and-Go rechnet die naechste Landung dann mit den \
+                     Werten der vorigen (Wind, Geschwindigkeit, Landesprit, \
+                     Sprit-Auswertung)"
+                );
+            }
         }
     }
 
@@ -66751,7 +66852,9 @@ mod sprit_messung_tests {
         let mut st = stats_im_flug();
         st.planned_burn_kg = Some(21_218.0);
         st.planned_reserve_kg = Some(4_916.0);
-        st.sprit_fenster_scharf = true;
+        // Reiseflug auf FL400 (setzt die Hoechsthoehe), dann im Sinkflug
+        // auf 37 000 ft am Vergleichspunkt.
+        sprit_tick(&mut st, 48.35, 4.5, 40_000.0, 25_000.0, false, false, false, false, Some(1.0));
         sprit_tick(&mut st, 48.35, 8.4, 37_000.0, 22_231.0, false, false, false, false, Some(1.0));
         assert!(st.sprit_vergleichspunkt_kg.is_some(), "Vergleichspunkt fehlt");
         // Durchstart: Landesprit gesetzt, Auswertung eingefroren.
@@ -66761,8 +66864,11 @@ mod sprit_messung_tests {
             grund: "kein_ofp".into()
         });
 
-        // Der Episoden-Reset raeumt beides weg.
+        // Der Durchstart-Reset raeumt beides weg — und NUR der; der
+        // Episoden-Reset fasst den Sprit bewusst nicht mehr an.
         landung_episode_zuruecksetzen(&mut st);
+        assert!(st.landing_fuel_kg.is_some(), "Episoden-Reset darf den Sprit nicht anfassen");
+        sprit_durchstart_zuruecksetzen(&mut st);
         assert!(st.landing_fuel_kg.is_none(), "Landesprit des Durchstarts blieb stehen");
         assert!(st.sprit_auswertung.is_none(), "Auswertung des Durchstarts blieb stehen");
 
@@ -66787,7 +66893,7 @@ mod sprit_messung_tests {
         st.landing_fuel_kg = Some(20_000.0);
         sprit_tick(&mut st, 48.3, 11.5, 7_000.0, 19_000.0, false, false, false, false, Some(10.0));
         assert_eq!(st.sprit_zeit_unter_schwelle_s, 0.0, "mit Landesprit wird nicht gemessen");
-        landung_episode_zuruecksetzen(&mut st);
+        sprit_durchstart_zuruecksetzen(&mut st);
         sprit_tick(&mut st, 48.3, 11.5, 7_000.0, 19_000.0, false, false, false, false, Some(10.0));
         assert_eq!(st.sprit_zeit_unter_schwelle_s, 10.0, "nach dem Reset wieder");
     }
@@ -66859,7 +66965,9 @@ mod sprit_messung_tests {
         st.planned_contingency_kg = Some(1_061.0);
         st.planned_alternate_burn_kg = Some(8_273.0);
         st.planned_extra_kg = Some(5_178.0);
-        st.sprit_fenster_scharf = true;
+        // Reiseflug auf FL400 (setzt die Hoechsthoehe), dann im Sinkflug
+        // auf 37 000 ft am Vergleichspunkt.
+        sprit_tick(&mut st, 48.35, 4.5, 40_000.0, 25_000.0, false, false, false, false, Some(1.0));
         sprit_tick(&mut st, 48.35, 8.4, 37_000.0, 22_231.0, false, false, false, false, Some(1.0));
         st.distance_nm = 782.0;
         st.sprit_zeit_unter_schwelle_s = 948.0;
@@ -66898,8 +67006,9 @@ mod pirep_felder_sprit_tests {
         });
         let mut f = HashMap::new();
         sprit_pirep_felder(Some(&a), &mut f);
-        assert_eq!(f["Sprit bis Sinkflug"], "-3.4% (18688 kg / Plan 19353 kg)");
-        assert_eq!(f["Sprit Anflug"], "+192.8% (5461 kg / Plan 1865 kg)");
+        assert_eq!(f["Sprit bis Sinkflug"], "-3.4 % (18688 kg / Plan 19353 kg)");
+        // Ueber 60 %: Kilogramm, wie in allen anderen Oberflaechen.
+        assert_eq!(f["Sprit Anflug"], "+3596 kg (5461 kg / Plan 1865 kg)");
         assert_eq!(f["Zeit unter Schwelle"], "15.8 min unter 9487 ft");
         assert_eq!(f["Final Reserve"], "intakt (341 %)");
         assert_eq!(f["Extra Fuel"], "5178 kg getankt · 1870 kg genutzt · 3308 kg ungenutzt");

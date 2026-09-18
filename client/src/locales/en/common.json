@@ -413,7 +413,9 @@
       "report_anflug": "Approach · vs plan",
       "report_zeit": "Below threshold",
       "report_reserve": "Final reserve",
-      "report_extra": "Extra fuel"
+      "report_extra": "Extra fuel",
+      "abgehoben_mit": "took off with {{kg}} kg",
+      "extra_detail": "{{genutzt}} kg used · {{ungenutzt}} kg unused"
     },
     "confidence": {
       "high": "Confidence: High",

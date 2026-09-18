@@ -2437,11 +2437,13 @@ function ReportChartCard({
 }
 
 /** Eine Touchdown-Kennwert-Kachel: Label + großer Wert. */
-function ReportTile({ label, value }: { label: string; value: string }) {
+function ReportTile({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <div className="report-tile">
       <div className="report-tile__label">{label}</div>
       <div className="report-tile__value">{value}</div>
+      {/* v1.7.35: Detailzeile fuer den Druck — dort hilft kein Tooltip. */}
+      {detail && <div className="report-tile__detail">{detail}</div>}
     </div>
   );
 }
@@ -2976,7 +2978,11 @@ export function LandingReport({ record }: { record: LandingRecord }) {
               {record.sprit?.extra_getankt_kg != null && record.sprit.extra_genutzt_kg != null && (
                 <ReportTile
                   label={t("landing.sprit.report_extra")}
-                  value={`${spritKg(record.sprit.extra_getankt_kg)} kg · ${spritKg(record.sprit.extra_genutzt_kg)} kg`}
+                  value={`${spritKg(record.sprit.extra_getankt_kg)} kg`}
+                  detail={t("landing.sprit.extra_detail", {
+                    genutzt: spritKg(record.sprit.extra_genutzt_kg),
+                    ungenutzt: spritKg(record.sprit.extra_ungenutzt_kg),
+                  })}
                 />
               )}
               {(record.planned_burn_kg != null ||

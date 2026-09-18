@@ -413,7 +413,9 @@
       "report_anflug": "Avvicinamento · vs piano",
       "report_zeit": "Sotto soglia",
       "report_reserve": "Riserva finale",
-      "report_extra": "Carburante extra"
+      "report_extra": "Carburante extra",
+      "abgehoben_mit": "decollato con {{kg}} kg",
+      "extra_detail": "{{genutzt}} kg usati · {{ungenutzt}} kg non usati"
     },
     "confidence": {
       "high": "Confidenza: Alta",

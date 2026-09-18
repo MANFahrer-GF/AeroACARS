@@ -7925,6 +7925,15 @@ input:disabled {
   color: #0f172a;
 }
 
+/* v1.7.35: Detailzeile der Report-Kachel — zweite Zeile unter dem Wert. */
+.report-tile__detail {
+  font-size: 8.5pt;
+  font-weight: 600;
+  color: #64748b;
+  margin-top: 1mm;
+  line-height: 1.3;
+}
+
 /* Leer-Hinweis. */
 .report-empty {
   font-size: 10pt;

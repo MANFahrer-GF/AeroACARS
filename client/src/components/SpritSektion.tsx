@@ -151,22 +151,26 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
     cursor += w;
     return r;
   });
-  // Landemarke: aus DERSELBEN Rechnung wie die Textzeile daneben.
+  // Zwei Marken, beide Tatsachen: womit abgehoben, womit gelandet.
   //
-  // Frueher stand hier `W − x(landing_fuel)` — der tatsaechliche Spritstand
-  // gegen die GEPLANTE Leiter. Die Zeile „X kg Extra genutzt" rechnet aber
-  // gegen den echten Abhebe-Tankstand; bei abweichender Betankung klafften
-  // beide auseinander (bei DLH370 um 273 kg). Zwei Zahlen fuer dieselbe
-  // Aussage — genau das, was dieser Umbau abschafft.
-  //
-  // Also: rechts liegen Alternate und Reserve, davor das noch vorhandene
-  // Extra. Die Marke sitzt an dessen linker Kante.
-  const restRechts =
-    sprit.extra_ungenutzt_kg != null
-      ? l.alternate_kg + l.reserve_kg + sprit.extra_ungenutzt_kg
-      : sprit.landing_fuel_kg;
-  const markX = restRechts != null ? Math.min(Math.max(W - x(restRechts), 0), W) : null;
+  // Die Leiter zeigt den PLAN. Wer anders tankt als geplant, bei dem passt
+  // ein einzelner Strich nirgends — vorher stand er entweder im falschen
+  // Block (gegen die Zeile daneben) oder bei nicht verbrauchter Contingency
+  // fest auf deren Kante (gegen sein eigenes Etikett). Mit beiden Marken
+  // liest sich die Grafik ohne Widerspruch: der Abstand dazwischen ist der
+  // Verbrauch, und die Zeile darunter erklaert, was davon Contingency und
+  // Extra getragen haben.
   const ldg = sprit.landing_fuel_kg;
+  const imBild = (v: number) => Math.min(Math.max(v, 0), W);
+  const markX = ldg != null ? imBild(W - x(ldg)) : null;
+  // Der Abhebe-Tankstand laesst sich aus der Auswertung zurueckrechnen:
+  // geplanter Rest nach dem Trip = Landesprit + Mehrverbrauch.
+  const abhebenKg =
+    ldg != null && sprit.extra_getankt_kg != null && sprit.extra_ungenutzt_kg != null && l
+      ? l.trip_kg + l.alternate_kg + l.reserve_kg + sprit.extra_ungenutzt_kg +
+        (sprit.contingency_verbraucht ? 0 : l.contingency_kg)
+      : null;
+  const abhebenX = abhebenKg != null ? imBild(W - x(abhebenKg)) : null;
   // Die Marke ist eine Tatsache, kein Urteil: Ton nach Reservestand,
   // nie die Fehlerfarbe.
   const markFarbe = sprit.badge === "gelb" ? TON.warn : "var(--text)";
@@ -190,6 +194,14 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
             {r.label} {kg(r.kg)}
           </text>
         ))}
+      {abhebenX != null && Math.abs(abhebenX - (markX ?? 0)) > 6 && (
+        <>
+          <line x1={abhebenX} y1={18} x2={abhebenX} y2={44} stroke="var(--text-muted)" strokeWidth={1} strokeDasharray="3 2" />
+          <text x={Math.min(abhebenX + 4, W - 120)} y={14} style={{ font: "10px ui-monospace, monospace", fill: "var(--text-muted)" }}>
+            {t("landing.sprit.abgehoben_mit", { kg: kg(abhebenKg) })}
+          </text>
+        </>
+      )}
       {markX != null && (
         <>
           <line x1={markX} y1={16} x2={markX} y2={46} stroke={markFarbe} strokeWidth={2} />

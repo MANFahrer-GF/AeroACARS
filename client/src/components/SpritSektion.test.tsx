@@ -118,14 +118,14 @@ describe("SpritSektion", () => {
     expect(svg).not.toBeNull();
     // Sechs Segmente der Leiter.
     expect(svg!.querySelectorAll("rect").length).toBe(6);
-    // Landemarke als eigene Linie.
-    expect(svg!.querySelectorAll("line").length).toBe(1);
+    // Zwei Marken: womit abgehoben (gestrichelt), womit gelandet (kräftig).
+    expect(svg!.querySelectorAll("line").length).toBe(2);
     expect(svg!.textContent).toContain("gelandet mit");
     expect(svg!.textContent).toContain("Contingency verbraucht");
   });
 
 
-  it("zeichnet die Landemarke aus derselben Zahl wie die Textzeile", () => {
+  it("zeichnet die Landemarke auf den tatsächlichen Spritstand", () => {
     // Vorher rechnete die Grafik den Landesprit gegen die geplante Leiter,
     // die Zeile daneben gegen den echten Abhebe-Tankstand — 273 kg
     // Widerspruch bei DLH370 (QS-Befund P2-2).
@@ -135,9 +135,12 @@ describe("SpritSektion", () => {
     const W = 560;
     const l = a.leiter!;
     const x = (v: number) => (v / l.block_kg) * W;
-    const markX = Number(svg.querySelector("line")!.getAttribute("x1"));
-    const erwartet = W - x(l.alternate_kg + l.reserve_kg + a.extra_ungenutzt_kg!);
-    expect(markX).toBeCloseTo(erwartet, 1);
+    const landung = [...svg.querySelectorAll("line")].find(
+      (e) => e.getAttribute("stroke-width") === "2",
+    )!;
+    const markX = Number(landung.getAttribute("x1"));
+    // Die Marke ist eine Tatsache: der Spritstand beim Aufsetzen.
+    expect(markX).toBeCloseTo(W - x(a.landing_fuel_kg!), 1);
   });
 
   it("zeigt bei moderatem Anflug den Prozentwert als Hauptzahl", () => {
@@ -148,6 +151,45 @@ describe("SpritSektion", () => {
     const t = screen.getByTestId("sprit-sektion").textContent ?? "";
     expect(t).toContain("+7,2 %");
     expect(t).not.toContain("+135 kg");
+  });
+
+
+  it("setzt die Landemarke auf den echten Spritstand, auch bei unverbrauchter Contingency", () => {
+    // Der Prüfer der vierten Runde hat belegt, dass die vorige Fassung bei
+    // unverbrauchter Contingency — dem Normalfall — fest auf deren Kante
+    // stand, unabhängig vom tatsächlichen Landesprit. Das Bild behauptete
+    // „Contingency verbraucht", während die Zeile darunter „unberührt"
+    // schrieb. Jetzt zeigt die Marke eine Tatsache.
+    const a = dlh370();
+    a.landing_fuel_kg = 20000;
+    a.contingency_verbraucht = false;
+    a.extra_genutzt_kg = 0;
+    a.extra_ungenutzt_kg = 5178; // gekappt auf das volle Extra
+    const { container } = render(<SpritSektion sprit={a} />);
+    const svg = container.querySelector("svg")!;
+    const W = 560;
+    const l = a.leiter!;
+    const x = (v: number) => (v / l.block_kg) * W;
+    const linien = [...svg.querySelectorAll("line")];
+    // Die kräftige Marke ist die Landung.
+    const landung = linien.find((e) => e.getAttribute("stroke-width") === "2")!;
+    const markX = Number(landung.getAttribute("x1"));
+    expect(markX).toBeCloseTo(W - x(20000), 1);
+    // Und gerade NICHT auf der Contingency/Extra-Kante.
+    const kante = x(l.taxi_kg + l.trip_kg + l.contingency_kg);
+    expect(Math.abs(markX - kante)).toBeGreaterThan(5);
+    // Der Text im SVG widerspricht ihr nicht.
+    expect(svg.textContent).toContain("Contingency unberührt");
+  });
+
+  it("zeigt zwei Marken: womit abgehoben, womit gelandet", () => {
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    const linien = [...container.querySelectorAll("svg line")];
+    expect(linien.length).toBe(2);
+    const gestrichelt = linien.find((e) => e.getAttribute("stroke-dasharray"));
+    expect(gestrichelt).toBeDefined();
+    expect(container.querySelector("svg")!.textContent).toContain("abgehoben mit");
+    expect(container.querySelector("svg")!.textContent).toContain("gelandet mit");
   });
 
   it("kommt ohne Phasen aus und zeigt trotzdem die Reserve", () => {
@@ -192,7 +234,10 @@ describe("SpritSektion", () => {
     // Alternate-Block und widersprach damit der Zeile daneben „Alternate +
     // Final Reserve unangetastet". Die genaue Position prüft der Test
     // „zeichnet die Landemarke aus derselben Zahl wie die Textzeile".
-    const markX = Number(svg.querySelector("line")!.getAttribute("x1"));
+    const landung = [...svg.querySelectorAll("line")].find(
+      (e) => e.getAttribute("stroke-width") === "2",
+    )!;
+    const markX = Number(landung.getAttribute("x1"));
     const grenzeExtraAlternate = W - x(l.alternate_kg + l.reserve_kg);
     const extraBeginn = x(l.taxi_kg + l.trip_kg + l.contingency_kg);
     expect(markX).toBeGreaterThan(extraBeginn);
@@ -208,9 +253,12 @@ describe("SpritSektion", () => {
     const a = dlh370();
     a.landing_fuel_kg = 99999; // OFP-Mismatch / getankt
     const { container } = render(<SpritSektion sprit={a} />);
-    const markX = Number(container.querySelector("svg")!.querySelector("line")!.getAttribute("x1"));
-    expect(markX).toBeGreaterThanOrEqual(0);
-    expect(markX).toBeLessThanOrEqual(560);
+    const linien = [...container.querySelectorAll("svg line")];
+    for (const l of linien) {
+      const v = Number(l.getAttribute("x1"));
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(560);
+    }
   });
 
   it("kommt ohne Leiter aus (Manual-Flug ohne OFP)", () => {

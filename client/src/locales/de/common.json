@@ -413,7 +413,9 @@
       "report_anflug": "Anflug · gegen Plan",
       "report_zeit": "Unter Schwelle",
       "report_reserve": "Final Reserve",
-      "report_extra": "Extra Fuel"
+      "report_extra": "Extra Fuel",
+      "abgehoben_mit": "abgehoben mit {{kg}} kg",
+      "extra_detail": "{{genutzt}} kg genutzt · {{ungenutzt}} kg ungenutzt"
     },
     "confidence": {
       "high": "Confidence: Hoch",
