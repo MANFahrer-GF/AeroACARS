@@ -8,7 +8,7 @@
  * den alten Plan/Ist-Balken.
  */
 import i18n from "i18next";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
 import { balken, dezimal, hauptzahl, hauptzahlText, kg, pct, phaseTon, reserveAbstand } from "../lib/sprit";
@@ -111,6 +111,27 @@ const HINWEIS_STIL: React.CSSProperties = {
   zIndex: 10,
 };
 
+/** Rand zum Bildschirm, den ein Hinweis nie unterschreitet (px). */
+const HINWEIS_RAND = 16;
+
+/**
+ * Wo ein Hinweis stehen muss, damit er ganz im Bild bleibt — auf dem Handy
+ * wie am Monitor.
+ *
+ * `ankerLinks` ist die linke Kante des Elements im Fenster, `mitte` die
+ * gewuenschte Mitte (oder `null`: am Element links anliegend). Zurueck kommt
+ * die Breite und der Versatz RELATIV zum Element. Ohne das ragte die
+ * Erklaerung am ⓘ auf einem 375-px-Handy rund 100 px ueber den Kartenrand,
+ * und die Karte schnitt sie ab (QS v1.7.37, N1).
+ */
+function hinweisLage(ankerLinks: number, gewuenscht: number, mitte: number | null): { breite: number; versatz: number } {
+  const fenster = typeof window !== "undefined" ? window.innerWidth : 1024;
+  const breite = Math.max(160, Math.min(gewuenscht, fenster - 2 * HINWEIS_RAND));
+  const links = mitte == null ? ankerLinks : mitte - breite / 2;
+  const geklemmt = Math.min(Math.max(links, HINWEIS_RAND), fenster - HINWEIS_RAND - breite);
+  return { breite, versatz: geklemmt - ankerLinks };
+}
+
 /**
  * Eine Erklaerung, die SOFORT erscheint — bei Maus, Tastatur und Tippen.
  *
@@ -137,21 +158,45 @@ function Erklaerung({
   style?: React.CSSProperties;
 }) {
   const [offen, setOffen] = useState(false);
+  const [lage, setLage] = useState<{ breite: number; versatz: number } | null>(null);
   const id = useId();
+  const ref = useRef<HTMLElement | null>(null);
+  const oeffnen = () => {
+    const r = ref.current?.getBoundingClientRect();
+    setLage(r && !breit ? hinweisLage(r.left, 320, null) : null);
+    setOffen(true);
+  };
+  // Tippen daneben schliesst — iOS Safari sendet dabei weder Blur noch
+  // mouseleave, und der Hinweis bliebe sonst offen stehen.
+  useEffect(() => {
+    if (!offen) return;
+    const weg = (e: Event) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOffen(false);
+    };
+    document.addEventListener("pointerdown", weg);
+    return () => document.removeEventListener("pointerdown", weg);
+  }, [offen]);
   const Tag = als;
   return (
     <Tag
+      ref={ref as never}
       tabIndex={0}
       // Bildschirmleser lesen die Erklaerung vor, sobald sie offen ist.
       aria-describedby={offen ? id : undefined}
-      onMouseEnter={() => setOffen(true)}
+      onMouseEnter={oeffnen}
       onMouseLeave={() => setOffen(false)}
-      onFocus={() => setOffen(true)}
+      onFocus={oeffnen}
       onBlur={() => setOffen(false)}
       // Tippen auf Touch-Geraeten: oeffnen (nicht umschalten — sonst
       // schlaegt der Klick nach dem emulierten mouseenter sofort wieder zu).
-      onClick={() => setOffen(true)}
-      style={{ position: "relative", cursor: "help", outline: "none", ...style }}
+      onClick={oeffnen}
+      // Escape schliesst (WCAG 1.4.13: Hinweise muessen wegzubekommen sein).
+      onKeyDown={(e) => {
+        if (e.key === "Escape") setOffen(false);
+      }}
+      // KEIN `outline: none` — der Fokusring der Tastatur muss sichtbar
+      // bleiben (QS v1.7.37, N2).
+      style={{ position: "relative", cursor: "help", ...style }}
     >
       {children}
       {offen && (
@@ -162,8 +207,9 @@ function Erklaerung({
           style={{
             ...HINWEIS_STIL,
             top: "calc(100% + 6px)",
-            left: 0,
-            ...(breit ? { right: 0 } : { width: "max-content", maxWidth: 320 }),
+            ...(breit
+              ? { left: 0, right: 0 }
+              : { left: lage?.versatz ?? 0, width: "max-content", maxWidth: lage?.breite ?? 320 }),
           }}
         >
           {text}
@@ -275,6 +321,15 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   // Welcher Block gerade unter der Maus liegt (Balken oder Legende).
   const [aktiv, setAktiv] = useState<string | null>(null);
   const hinweisId = useId();
+  // Linke Kante und Breite des Balkens im Fenster — beim Oeffnen gemessen,
+  // damit der Hinweis auf dem Handy nicht aus der Karte ragt.
+  const balkenRef = useRef<HTMLDivElement | null>(null);
+  const [balken, setBalken] = useState<{ links: number; breite: number } | null>(null);
+  const zeige = (label: string) => {
+    const r = balkenRef.current?.getBoundingClientRect();
+    setBalken(r ? { links: r.left, breite: r.width } : null);
+    setAktiv(label);
+  };
   const l = sprit.leiter;
   if (!l || l.block_kg <= 0) return null;
   // **Was der Block in DIESEM Flug war** — fuer die Erklaerung beim
@@ -397,7 +452,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
       <div style={{ fontSize: "0.86rem", fontWeight: 600, color: "var(--text, #e8ecf3)", marginBottom: 6 }}>
         {t("landing.sprit.leiter_titel")} · {kg(l.block_kg)} kg
       </div>
-      <div style={{ position: "relative" }}>
+      <div ref={balkenRef} style={{ position: "relative" }}>
       <svg
         viewBox={`0 0 ${W} 30`}
         preserveAspectRatio="none"
@@ -421,7 +476,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
             vectorEffect="non-scaling-stroke"
             opacity={aktiv != null && aktiv !== r.label ? 0.45 : 1}
             style={{ cursor: "help", transition: "opacity 120ms" }}
-            onMouseEnter={() => setAktiv(r.label)}
+            onMouseEnter={() => zeige(r.label)}
             onMouseLeave={() => setAktiv(null)}
           />
         ))}
@@ -442,7 +497,10 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
         // Verzoegerung eines Browser-Hinweises.
         const r = rects.find((q) => q.label === aktiv);
         if (!r) return null;
-        const mitte = ((r.x + r.w / 2) / W) * 100;
+        // Mitte des Blocks im Fenster; der Hinweis wird dort zentriert und
+        // so geklemmt, dass er ganz im Bild bleibt.
+        const mitteImFenster = balken ? balken.links + ((r.x + r.w / 2) / W) * balken.breite : null;
+        const lage = balken && mitteImFenster != null ? hinweisLage(balken.links, 340, mitteImFenster) : null;
         return (
           <div
             id={hinweisId}
@@ -451,9 +509,8 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
             style={{
               ...HINWEIS_STIL,
               bottom: "calc(100% + 8px)",
-              left: `${Math.min(Math.max(mitte, 14), 86)}%`,
-              transform: "translateX(-50%)",
-              width: "max-content",
+              left: lage ? lage.versatz : 0,
+              width: lage ? lage.breite : "max-content",
               maxWidth: 340,
             }}
           >
@@ -484,10 +541,13 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
             data-block={r.label}
             tabIndex={0}
             aria-describedby={aktiv === r.label ? hinweisId : undefined}
-            onMouseEnter={() => setAktiv(r.label)}
+            onMouseEnter={() => zeige(r.label)}
             onMouseLeave={() => setAktiv(null)}
-            onFocus={() => setAktiv(r.label)}
+            onFocus={() => zeige(r.label)}
             onBlur={() => setAktiv(null)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setAktiv(null);
+            }}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "help" }}
           >
             <span aria-hidden style={{ width: 10, height: 10, borderRadius: 2, background: r.fill, flex: "none" }} />

@@ -323,4 +323,59 @@ describe("Sprit-Leiter", () => {
     fireEvent.mouseLeave(kachel);
     expect(erklaerung()).toBeNull();
   });
+
+  it("bleibt auf dem Handy (375 px) ganz im Bild — ⓘ und Leiter", () => {
+    // QS v1.7.37, N1: Die Erklärung am ⓘ ragte rund 100 px über den
+    // Kartenrand, und die Karte schnitt sie ab.
+    const breiteVorher = window.innerWidth;
+    const rectVorher = Element.prototype.getBoundingClientRect;
+    Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
+    // Jedes Element liegt bei x=150 (ⓘ), der Balken spannt 16…359.
+    Element.prototype.getBoundingClientRect = function () {
+      const balken = (this as HTMLElement).querySelector?.("svg") != null;
+      const links = balken ? 16 : 150;
+      const breite = balken ? 343 : 14;
+      return { left: links, right: links + breite, width: breite, top: 0, bottom: 10, height: 10, x: links, y: 0, toJSON() {} } as DOMRect;
+    };
+    try {
+      const { container } = render(<SpritSektion sprit={dlh370()} />);
+      const imBild = (anker: number, el: HTMLElement) => {
+        const links = anker + parseFloat(el.style.left || "0");
+        const breite = parseFloat(el.style.maxWidth) || parseFloat(el.style.width);
+        expect(links, "ragt links hinaus").toBeGreaterThanOrEqual(16);
+        expect(links + breite, "ragt rechts hinaus").toBeLessThanOrEqual(375 - 16);
+      };
+      const info = [...container.querySelectorAll('[tabindex="0"]')].find((e) => e.textContent?.trim() === "ⓘ")!;
+      fireEvent.click(info);
+      imBild(150, container.querySelector('[data-testid="sprit-erklaerung"]') as HTMLElement);
+      // Leiter: der Block ganz rechts (Final Reserve).
+      fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Final Reserve"]')!);
+      const h = container.querySelector('[data-testid="sprit-leiter-hinweis"]') as HTMLElement;
+      const links = 16 + parseFloat(h.style.left);
+      expect(links).toBeGreaterThanOrEqual(16);
+      expect(links + parseFloat(h.style.width)).toBeLessThanOrEqual(375 - 16);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: breiteVorher, configurable: true });
+      Element.prototype.getBoundingClientRect = rectVorher;
+    }
+  });
+
+  it("schließt mit Escape und beim Tippen daneben", () => {
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    const erklaerung = () => container.querySelector('[data-testid="sprit-erklaerung"]');
+    const info = [...container.querySelectorAll('[tabindex="0"]')].find((e) => e.textContent?.trim() === "ⓘ")!;
+    fireEvent.click(info);
+    expect(erklaerung()).not.toBeNull();
+    fireEvent.keyDown(info, { key: "Escape" });
+    expect(erklaerung(), "Escape schließt nicht").toBeNull();
+    // iOS: Tippen daneben sendet weder Blur noch mouseleave.
+    fireEvent.click(info);
+    expect(erklaerung()).not.toBeNull();
+    fireEvent.pointerDown(document.body);
+    expect(erklaerung(), "Tippen daneben schließt nicht").toBeNull();
+    // Gegenprobe: Tippen AUF das ⓘ lässt ihn offen.
+    fireEvent.click(info);
+    fireEvent.pointerDown(info);
+    expect(erklaerung()).not.toBeNull();
+  });
 });
