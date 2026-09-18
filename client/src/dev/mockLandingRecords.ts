@@ -28,6 +28,39 @@ function baseRecord(): LandingRecord {
     aircraft_registration: "SU-GCC",
     aircraft_icao: "B738",
     aircraft_title: "Boeing 737-800 PMDG",
+    // v1.7.36: die Sprit-Auswertung, damit die PDF-Messung
+    // (`npm run bericht:pdf`) auch die Sprit-Kacheln sieht — ohne sie war
+    // die Messung gruen, ohne die neuen Kacheln je gedruckt zu haben.
+    // Passend zu den uebrigen Werten dieses Fluges (Block 8 800, Trip-Plan
+    // 4 500, Landesprit 4 480, Verbrauch 4 620) und nach den Regeln aus
+    // `sprit.rs`: 500 kg ueber Block angelassen (9 300), 200 kg gerollt.
+    sprit: {
+      fassung: 3,
+      bis_sinkflug: { ist_kg: 4080, plan_kg: 4000, abweichung_pct: 2.0, als_kg: false },
+      anflug: { ist_kg: 540, plan_kg: 500, abweichung_pct: 8.0, als_kg: false },
+      zeit_unter_schwelle_min: 6.2,
+      schwelle_ft: 8300,
+      strecke_anflug_nm: 98,
+      plan_strecke_anflug_nm: 92,
+      reserve: { status: "intakt", quote_pct: 407.3 },
+      reserve_kg: 1100,
+      takeoff_fuel_kg: 9100,
+      landing_fuel_kg: 4480,
+      extra_getankt_kg: 1275,
+      extra_genutzt_kg: 0,
+      extra_ungenutzt_kg: 1275,
+      contingency_verbraucht: false,
+      alternate_und_reserve_intakt: true,
+      leiter: {
+        taxi_kg: 200, trip_kg: 4500, contingency_kg: 225, alternate_kg: 1500,
+        reserve_kg: 1100, extra_kg: 1275, block_kg: 8800,
+        sonstiges_kg: 0, uebertankung_kg: 500, untertankung_kg: 0,
+      },
+      rollen_vor_start: { ist_kg: 200, plan_kg: 200, abweichung_pct: 0, als_kg: false },
+      rollen_nach_landung_kg: 80,
+      einstieg_in_der_luft: false,
+      badge: "gruen",
+    },
     sim_kind: "X-PLANE",
 
     score_numeric: 82,
