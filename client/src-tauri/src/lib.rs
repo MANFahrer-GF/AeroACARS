@@ -68556,6 +68556,9 @@ mod sprit_messung_tests {
         assert_eq!(a.strecke_anflug_nm, Some(182.0));
         assert_eq!(a.zeit_unter_schwelle_min, Some(15.8));
         assert_eq!(a.badge, landing_scoring::sprit::Badge::Gruen);
+        // Ohne Anlass-Marke gilt der Rueckfall „Abheben plus Plan-Taxi" als
+        // Tank beim Anlassen (41 917 kg) — daher 1 870, nicht die 1 597 des
+        // Fluges mit Marke (siehe `sprit.rs`, Leiter).
         assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
     }
 }
@@ -68605,6 +68608,10 @@ mod pirep_felder_sprit_tests {
             planned_reserve_kg: Some(4_916.0),
             planned_extra_kg: Some(5_178.0),
             planned_block_fuel_kg: Some(41_644.0),
+            // Wie im echten Flug: Plan-Taxi und Tank beim Anlassen. Ohne sie
+            // stuenden die 998 kg Taxi als „Zusatzsprit" in der Leiter.
+            planned_taxi_kg: Some(998.0),
+            engine_start_fuel_kg: Some(41_644.0),
             tank_plausibel: true,
             ..Default::default()
         });
@@ -68625,7 +68632,7 @@ mod pirep_felder_sprit_tests {
         assert_eq!(f["Final Reserve"], "intakt (341 %)");
         assert_eq!(
             f["Extra Fuel"],
-            "5\u{202f}178 kg getankt · 1\u{202f}870 kg genutzt · 3\u{202f}308 kg ungenutzt"
+            "5\u{202f}178 kg getankt · 1\u{202f}597 kg genutzt · 3\u{202f}581 kg ungenutzt"
         );
         let mut leer = HashMap::new();
         sprit_pirep_felder(None, &mut leer);
