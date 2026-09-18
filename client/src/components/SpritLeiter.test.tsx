@@ -8,9 +8,11 @@
  *     verschwand bei kleinem Abstand ganz — wo nichts steht, liest niemand
  *     einen Abstand ab.
  *  2. Die Landemarke trifft denselben Punkt, den die Zeile darunter nennt.
- *     Sie tat es nicht: Bei DLH 370 las die Grafik 3 581 kg übriges Extra,
- *     die Zeile sagte 3 308 — die Übertankung von 273 kg fehlte in der
- *     Grafik.
+ *     Seit v1.7.36 rechnen beide gegen den Tank beim ANLASSEN (`sprit.rs`):
+ *     Bei DLH 370 war das genau der Block, 41 644 kg. Gerollt wurden 725 kg
+ *     statt geplanter 998 — die Ersparnis erscheint nicht mehr als „273 kg
+ *     Übertankung", und Grafik und Zeile sagen beide 3 581 kg übriges Extra
+ *     (QS-Vorschlag V-a, 18.09.2026).
  */
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
@@ -31,8 +33,8 @@ function dlh370(ueber: Partial<SpritAuswertung> = {}): SpritAuswertung {
     takeoff_fuel_kg: 40919,
     landing_fuel_kg: 16770,
     extra_getankt_kg: 5178,
-    extra_genutzt_kg: 1870,
-    extra_ungenutzt_kg: 3308,
+    extra_genutzt_kg: 1597,
+    extra_ungenutzt_kg: 3581,
     contingency_verbraucht: true,
     alternate_und_reserve_intakt: true,
     leiter: {
@@ -44,8 +46,8 @@ function dlh370(ueber: Partial<SpritAuswertung> = {}): SpritAuswertung {
       extra_kg: 5178,
       block_kg: 41644,
       sonstiges_kg: 0,
-      // Aus der Rechnung: 40 919 abgehoben + 998 Taxi − 41 644 Block.
-      uebertankung_kg: 273,
+      // Aus der Rechnung: 41 644 beim Anlassen − 41 644 Block.
+      uebertankung_kg: 0,
     },
     rollen_vor_start: null,
     rollen_nach_landung_kg: null,
@@ -72,8 +74,8 @@ describe("Sprit-Leiter", () => {
   it("die Landemarke trifft, was die Zeile darunter sagt", () => {
     const { container } = render(<SpritSektion sprit={dlh370()} />);
     const W = 560;
-    // Die Skala trägt die Übertankung: 40 919 + 998 − 41 644 = 273 kg.
-    const skala = 41644 + 273;
+    // Die Skala ist der Tank beim Anlassen: Block, keine Übertankung.
+    const skala = 41644;
     const mark = landeMarke(container);
     expect(mark).not.toBeNull();
 
@@ -82,15 +84,15 @@ describe("Sprit-Leiter", () => {
     expect(kgAnDerMarke).toBeCloseTo(16770, 0);
 
     // Und das Extra, das dabei übrig bleibt, ist genau die Zahl aus der
-    // Auswertung — nicht 3 581, wie die Grafik bis v1.7.35 auswies.
-    const untenImExtra = 4916 + 8273 + 273; // Reserve + Alternate + Übertank
-    expect(kgAnDerMarke - untenImExtra).toBeCloseTo(3308, 0);
+    // Auswertung.
+    const untenImExtra = 4916 + 8273; // Reserve + Alternate
+    expect(kgAnDerMarke - untenImExtra).toBeCloseTo(dlh370().extra_ungenutzt_kg!, 0);
   });
 
   it("der Abstand zwischen den Marken IST der Verbrauch", () => {
     const { container } = render(<SpritSektion sprit={dlh370()} />);
     const W = 560;
-    const skala = 41644 + 273;
+    const skala = 41644;
     const ab = abhebeMarke(container);
     const mark = landeMarke(container);
     expect(ab).not.toBeNull();
@@ -113,15 +115,31 @@ describe("Sprit-Leiter", () => {
     const basis = dlh370();
     const tanker = dlh370({
       takeoff_fuel_kg: 43919,
-      // Die Rechnung liefert die Übertankung mit: 43 919 + 998 − 41 644.
-      leiter: { ...basis.leiter!, uebertankung_kg: 3273 },
+      // Die Rechnung liefert die Übertankung mit: 44 644 beim Anlassen
+      // − 41 644 Block.
+      leiter: { ...basis.leiter!, uebertankung_kg: 3000 },
     });
     const { container } = render(<SpritSektion sprit={tanker} />);
     const ab = abhebeMarke(container);
     expect(ab).not.toBeNull();
     expect(ab!).toBeGreaterThan(0);
     const W = 560;
-    const skala = 41644 + (43919 + 998 - 41644);
+    const skala = 41644 + 3000;
     expect((1 - ab! / W) * skala).toBeCloseTo(43919, 0);
+  });
+
+  it("läuft nicht über die Breite, wenn die Posten den Block übersteigen", () => {
+    // Ein OFP, dessen sechs Posten mehr ergeben als der Block (dann ist
+    // „Zusatzsprit" 0): Bis v1.7.36-Entwurf liefen die Balken über den
+    // Rand hinaus (QS-Vorschlag V-a, 18.09.2026).
+    const basis = dlh370();
+    const knapp = dlh370({ leiter: { ...basis.leiter!, block_kg: 40000 } });
+    const { container } = render(<SpritSektion sprit={knapp} />);
+    const rects = [...container.querySelectorAll("svg rect")];
+    const rechts = Math.max(
+      ...rects.map((r) => Number(r.getAttribute("x")) + Number(r.getAttribute("width"))),
+    );
+    expect(rechts).toBeLessThanOrEqual(560 + 0.01);
+    expect(rechts).toBeCloseTo(560, 1);
   });
 });

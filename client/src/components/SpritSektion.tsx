@@ -166,8 +166,6 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   // Extra. Zusatzsprit und Übertankung liegen darüber und bleiben — wie
   // Alternate und Reserve — stehen. Nur so trifft die Landemarke denselben
   // Punkt, den die Zeile „Extra ungenutzt" nennt.
-  const skala = l.block_kg + (l.uebertankung_kg ?? 0);
-  const x = (v: number) => (v / skala) * W;
   const parts: Array<[number, string, string]> = [
     [l.taxi_kg, "#6b7688", t("landing.sprit.leiter_taxi")],
     [l.trip_kg, "#38bdf8", t("landing.sprit.leiter_trip")],
@@ -178,6 +176,13 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
     [l.alternate_kg, "#566273", t("landing.sprit.leiter_alternate")],
     [l.reserve_kg, "#566273", t("landing.sprit.leiter_reserve")],
   ];
+  // Die Skala ist die Summe der gezeichneten Posten — normal genau Block
+  // plus Übertankung. Plant ein OFP aber mehr in die Posten als in den
+  // Block (dann ist „Zusatzsprit" 0), wären die Balken sonst über die
+  // Breite hinausgelaufen (QS-Vorschlag V-a, 18.09.2026).
+  const summe = parts.reduce((acc, [kgWert]) => acc + Math.max(kgWert, 0), 0);
+  const skala = Math.max(l.block_kg + (l.uebertankung_kg ?? 0), summe);
+  const x = (v: number) => (v / skala) * W;
   let cursor = 0;
   const rects = parts
     .filter(([kgWert]) => kgWert > 0)

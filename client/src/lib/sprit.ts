@@ -22,7 +22,12 @@ import i18n from "i18next";
 export function dezimal(v: number, stellen: number): string {
   const s = Math.abs(v).toFixed(stellen);
   const sprache = (i18n.language || "de").slice(0, 2);
-  return sprache === "en" ? s : s.replace(".", ",");
+  const zahl = sprache === "en" ? s : s.replace(".", ",");
+  // Das Vorzeichen bleibt erhalten — als echtes Minus (U+2212) wie in
+  // `pct`. Bis v1.7.36-Entwurf fiel es hier still weg (QS-Vorschlag V-e):
+  // harmlos, solange nur `pct` und Minutenwerte fragten, eine Falle für
+  // jeden späteren Aufrufer. Eine auf null gerundete Zahl bekommt keins.
+  return v < 0 && Number(s) !== 0 ? "−" + zahl : zahl;
 }
 
 export interface SpritPhase {
@@ -104,7 +109,7 @@ export function kg(v: number | null | undefined): string {
 /** „+12,3 %" / „−3,4 %" — Vorzeichen immer, eine Nachkommastelle. */
 export function pct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return (v > 0 ? "+" : v < 0 ? "−" : "") + dezimal(v, 1) + " %";
+  return (v > 0 ? "+" : v < 0 ? "−" : "") + dezimal(Math.abs(v), 1) + " %";
 }
 
 /**

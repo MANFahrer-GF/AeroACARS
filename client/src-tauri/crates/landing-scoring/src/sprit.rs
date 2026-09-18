@@ -89,6 +89,35 @@ pub struct SpritEingang {
     /// ausgingen. Beide an ein Ereignis gerastet (`sprit_boden_marken`).
     pub engine_start_fuel_kg: Option<f32>,
     pub engine_off_fuel_kg: Option<f32>,
+    /// v1.7.36: Die Aufzeichnung begann erst IN DER LUFT — Client mitten im
+    /// Flug gestartet, die FSM hat das Abheben nie gesehen und der
+    /// Airborne-Rescue hat den Abhebe-Tankstand beim Einstieg gesetzt.
+    ///
+    /// Dann ist `takeoff_fuel_kg` der Tankstand am EINSTIEG, und „bis
+    /// Sinkflug" darf nur das Stueck ab dort gegen den Plan ab dort rechnen.
+    /// Sonst stuende ein kurzes Ist-Stueck gegen den Plan ab dem Abflug, und
+    /// der Flug saehe um Tonnen sparsamer aus, als er war.
+    pub einstieg_in_der_luft: bool,
+    /// Der Plan-Verbrauch bis zum Einstiegsort (`sprit_plan_am_ort`).
+    /// `None` bei einem Einstieg in der Luft heisst: Der Ort lag nicht auf
+    /// der Route — dann gibt es „bis Sinkflug" nicht, statt einer geratenen
+    /// Zahl. Ohne Einstieg in der Luft ohne Bedeutung.
+    pub plan_bis_einstieg_kg: Option<f32>,
+}
+
+/// Rollen nach der Landung: Landesprit minus Tankstand beim Abstellen.
+///
+/// Eigene Funktion, weil sie ZWEIMAL gebraucht wird und dieselbe Zahl
+/// liefern muss: in `auswerten` und beim Nachtragen, wenn die Triebwerke
+/// erst nach dem Einfrieren der Auswertung ausgehen. Dort wird nur dieses
+/// eine Feld nachgetragen — alles andere bleibt, wie es beim Aufsetzen
+/// gerechnet wurde (QS-Befund E2, 18.09.2026: eine vollstaendige Neubildung
+/// hatte die Rollstrecke zum Stand in die Anflugstrecke geschoben).
+pub fn rollen_nach_landung(landing_fuel_kg: Option<f32>, engine_off_fuel_kg: Option<f32>) -> Option<f32> {
+    match (nicht_negativ(landing_fuel_kg), positiv(engine_off_fuel_kg)) {
+        (Some(ldg), Some(aus)) if ldg > aus => Some((ldg - aus).round()),
+        _ => None,
+    }
 }
 
 /// Eine Flugphase: was gebraucht wurde, was geplant war, Abweichung in
@@ -174,8 +203,8 @@ pub struct Leiter {
     /// Block, und jede Marke saesse um genau diesen Betrag falsch.
     #[serde(default)]
     pub sonstiges_kg: f32,
-    /// v1.7.36: Mehr getankt als geplant — Abhebe-Tankstand plus Taxi ueber
-    /// dem Plan-Block. Bis dahin rechnete die ANZEIGE das selbst aus, entgegen
+    /// v1.7.36: Mehr getankt als geplant — der Tank beim Anlassen ueber dem
+    /// Plan-Block (ohne Anlass-Marke: Abhebe-Tankstand plus Plan-Taxi). Bis dahin rechnete die ANZEIGE das selbst aus, entgegen
     /// der Zusage „nur gerendert, nichts nachgerechnet" (QS-Befund V6). Und
     /// es fehlte, war die Leiter nicht genau der Block. Jetzt eine Zahl, an
     /// einer Stelle.
@@ -262,7 +291,12 @@ pub struct SpritAuswertung {
 ///   und dort wurde ein kurzes Ist-Stueck gegen einen vollen Plan
 ///   gerechnet. Dazu kommen `rollen_vor_start` und
 ///   `rollen_nach_landung_kg`: der Flug ist erst damit lueckenlos
-///   abgedeckt, von den Triebwerken an bis zu den Triebwerken aus.
+///   abgedeckt, von den Triebwerken an bis zu den Triebwerken aus. Die
+///   Leiter traegt `sonstiges_kg` (Block ueber den sechs Posten) und
+///   `uebertankung_kg` (Tank beim Anlassen ueber dem Block), und der
+///   Anflug-Plan rechnet gegen den Trip desselben Navlogs
+///   (`plan_trip_navlog_kg`) statt gegen den OFP-Kopf. Bei einem Einstieg
+///   in der Luft zaehlt „bis Sinkflug" erst ab dem Einstiegsort.
 pub const SPRIT_AUSWERTUNG_FASSUNG: u8 = 3;
 
 /// Unterhalb dieses geplanten Rollverbrauchs ist der Prozentwert ohne
@@ -317,7 +351,16 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
     // ---- Phasen: nur bei plausiblem Tank, vollstaendigen Werten und
     // tatsaechlich geflogenem Plan ----
     let (bis_sinkflug, anflug) = if e.tank_plausibel && !e.ausweichflug {
-        let bis = match (takeoff, vergleich, plan_bis) {
+        // Beim Einstieg in der Luft zaehlt der Plan erst ab dem Einstiegsort.
+        let plan_bis_phase = if e.einstieg_in_der_luft {
+            match (plan_bis, nicht_negativ(e.plan_bis_einstieg_kg)) {
+                (Some(vp), Some(ein)) if vp > ein => Some(vp - ein),
+                _ => None,
+            }
+        } else {
+            plan_bis
+        };
+        let bis = match (takeoff, vergleich, plan_bis_phase) {
             (Some(to), Some(vp), Some(plan)) if to > vp && plan >= MIN_PLAN_BIS_TOD_KG => Some(Phase {
                 // Prozent aus DENSELBEN Zahlen, die daneben stehen — sonst
                 // passen angezeigter Wert und angezeigte Abweichung nicht
@@ -372,10 +415,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         }),
         _ => None,
     };
-    let rollen_nach_landung_kg = match (landing, positiv(e.engine_off_fuel_kg)) {
-        (Some(ldg), Some(aus)) if ldg > aus => Some((ldg - aus).round()),
-        _ => None,
-    };
+    let rollen_nach_landung_kg = rollen_nach_landung(e.landing_fuel_kg, e.engine_off_fuel_kg);
 
     // ---- Reserve ----
     let reserve_status = match (reserve, landing) {
@@ -420,9 +460,21 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             let posten = taxi + trip + cont + alt + res + extra;
             // Was der Block mehr enthaelt als die sechs Posten.
             let sonstiges = (block - posten).max(0.0);
-            // Was an Bord war, aber nicht im Plan-Block: Abhebe-Tankstand
-            // plus geplantes Taxi gegen den Block.
-            let uebertankung = takeoff.map(|to| (to + taxi - block).max(0.0)).unwrap_or(0.0);
+            // Was an Bord war, aber nicht im Plan-Block.
+            //
+            // Am besten gemessen am Tankstand beim ANLASSEN: Dann ist die
+            // Skala der Leiter (Block plus Uebertankung) genau der Tank beim
+            // Anlassen, und Abhebe- und Lande-Marke sitzen auf ihren echten
+            // Tankstaenden — gleich, ob mehr oder weniger gerollt wurde als
+            // geplant. Mit „Abheben plus Plan-Taxi" wich die Marke um genau
+            // den Unterschied im Rollsprit ab, und weniger Rollen erschien
+            // als Uebertankung (QS-Vorschlag V-a, 18.09.2026). Der Rueckfall
+            // bleibt fuer Fluege ohne Anlass-Marke.
+            let uebertankung = match (positiv(e.engine_start_fuel_kg), takeoff) {
+                (Some(an), _) => (an - block).max(0.0),
+                (None, Some(to)) if !e.einstieg_in_der_luft => (to + taxi - block).max(0.0),
+                _ => 0.0,
+            };
             Some(Leiter {
                 taxi_kg: taxi.round(),
                 trip_kg: trip.round(),
@@ -441,17 +493,28 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
     let (extra_getankt, extra_genutzt, extra_ungenutzt, contingency_verbraucht, alt_res_intakt) =
         match (&leiter, landing, e.tank_plausibel) {
             (Some(l), Some(ldg), true) => {
-                // Was nach dem Trip uebrig bleiben sollte — gemessen am
-                // TATSAECHLICHEN Tankstand beim Abheben, nicht an der
-                // geplanten Betankung. Wer mehr tankt als geplant, landet
-                // hoeher; ohne diese Korrektur bekaeme er „Contingency und
-                // Extra unangetastet", obwohl er mehr verbraucht hat. Und
-                // umgekehrt: DLH370 hob mit 40 919 kg statt geplanter
-                // 40 646 kg ab — 273 kg, die sonst falsch zugeordnet wuerden.
-                let plan_landing = match takeoff {
-                    Some(to) => (to - l.trip_kg).max(0.0),
-                    None => l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg,
-                };
+                // Was nach Rollen und Trip uebrig bleiben sollte — gemessen
+                // an der SKALA DER LEITER: Block plus Uebertankung, also der
+                // Tank beim Anlassen (bei Untertankung der Block).
+                //
+                // Bis v1.7.36-Entwurf stand hier „Abhebe-Tankstand minus
+                // Trip". Das war fuer sich richtig, aber eine andere Rechnung
+                // als die Grafik: Wer weniger rollte als geplant, bekam die
+                // Ersparnis als Uebertankung gezeichnet und als Reserve fuer
+                // den Trip gerechnet, und die Landemarke lag um genau diese
+                // Differenz neben der Zeile „Extra ungenutzt" (QS-Vorschlag
+                // V-a, 18.09.2026). Mit derselben Skala auf beiden Seiten
+                // trifft die Marke die Zeile immer — und seit v1.7.36 zaehlt
+                // der Flug ohnehin vom Anlassen an, nicht vom Abheben.
+                //
+                // Beim Einstieg in der Luft gibt es keine Anlass-Marke; die
+                // Skala ist dann der Block, und der Plan-Landestand ist der
+                // des OFP.
+                // Dieselbe Skala wie die Grafik: Plant ein OFP mehr in die
+                // Posten als in den Block, zaehlen die Posten.
+                let posten = l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
+                let skala = l.block_kg.max(posten) + l.uebertankung_kg;
+                let plan_landing = (skala - l.taxi_kg - l.trip_kg).max(0.0);
                 let mehr = (plan_landing - ldg).max(0.0);
                 let cont_verbraucht = l.contingency_kg > 0.0 && mehr >= l.contingency_kg;
                 let genutzt = (mehr - l.contingency_kg).clamp(0.0, l.extra_kg).round();
@@ -525,6 +588,8 @@ mod tests {
             // 41 644 kg, abgestellt mit 16 121 kg.
             engine_start_fuel_kg: Some(41_644.0),
             engine_off_fuel_kg: Some(16_121.0),
+            einstieg_in_der_luft: false,
+            plan_bis_einstieg_kg: None,
             // Kein Navlog-Trip: Der Golden-Test deckt damit den Rueckfall auf
             // den OFP-Trip ab. Den Navlog-Weg prueft
             // `sprit_phasen_summieren_sich_auf_den_navlog_trip`.
@@ -618,8 +683,13 @@ mod tests {
         assert_eq!(a.reserve, Reserve::Intakt { quote_pct: 341.1 });
         assert_eq!(a.badge, Badge::Gruen);
         assert_eq!(a.extra_getankt_kg, Some(5_178.0));
-        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
-        assert_eq!(a.extra_ungenutzt_kg, Some(3_308.0));
+        // Vom Anlassen an gerechnet (Tank 41 644 = Block): geplant gelandet
+        // mit 41 644 − 998 Taxi − 21 218 Trip = 19 428, tatsaechlich 16 770.
+        // 2 658 mehr, davon traegt die Contingency 1 061, das Extra 1 597.
+        // Bis v1.7.36-Entwurf standen hier 1 870 / 3 308 — dort zaehlte die
+        // Rollersparnis von 273 kg als Uebertankung (QS-Vorschlag V-a).
+        assert_eq!(a.extra_genutzt_kg, Some(1_597.0));
+        assert_eq!(a.extra_ungenutzt_kg, Some(3_581.0));
         assert_eq!(a.contingency_verbraucht, Some(true));
         assert_eq!(a.alternate_und_reserve_intakt, Some(true));
         let l = a.leiter.expect("Leiter");
@@ -700,7 +770,7 @@ mod tests {
         assert!(a.bis_sinkflug.is_none() && a.anflug.is_none());
         assert_eq!(a.badge, Badge::Gruen);
         assert!(a.leiter.is_some());
-        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
+        assert_eq!(a.extra_genutzt_kg, Some(1_597.0));
     }
 
 
@@ -749,11 +819,78 @@ mod tests {
     #[test]
     fn sprit_auswertung_extra_erkennt_tankern() {
         let mut e = dlh370();
-        e.takeoff_fuel_kg = Some(43_919.0); // 3 t ueber Plan getankt
+        e.engine_start_fuel_kg = Some(44_644.0); // 3 t ueber Plan getankt
+        e.takeoff_fuel_kg = Some(43_919.0);
         e.landing_fuel_kg = Some(19_770.0); // entsprechend hoeher gelandet
         let a = auswerten(&e);
+        assert_eq!(a.leiter.as_ref().map(|l| l.uebertankung_kg), Some(3_000.0));
         // Ohne Korrektur waere hier „nichts verbraucht" herausgekommen.
-        assert_eq!(a.extra_genutzt_kg, Some(1_870.0));
+        assert_eq!(a.extra_genutzt_kg, Some(1_597.0));
+    }
+
+    /// Die Landemarke der Grafik und die Zeile „Extra ungenutzt" nennen
+    /// DIESELBE Zahl — gleich ob mehr oder weniger gerollt wurde als
+    /// geplant, ob unter- oder uebertankt (QS-Vorschlag V-a, 18.09.2026).
+    ///
+    /// Die Grafik stapelt von rechts Reserve, Alternate, Uebertankung,
+    /// Zusatzsprit und Extra; die Landemarke steht beim Landesprit. Was vom
+    /// Extra in der Grafik uebrig ist, ist also der Landesprit minus alles
+    /// rechts davon, auf das Extra begrenzt.
+    #[test]
+    fn sprit_landemarke_trifft_die_zeile_extra_ungenutzt() {
+        for (anlassen, abheben) in [
+            (41_644.0, 40_919.0), // DLH 370: 273 kg weniger gerollt
+            (41_644.0, 40_346.0), // 300 kg mehr gerollt
+            (41_300.0, 40_302.0), // 344 kg untertankt
+            (44_644.0, 43_646.0), // 3 t uebertankt
+        ] {
+            for landung in [15_000.0, 16_770.0, 18_000.0] {
+                let mut e = dlh370();
+                e.engine_start_fuel_kg = Some(anlassen);
+                e.takeoff_fuel_kg = Some(abheben);
+                e.landing_fuel_kg = Some(landung);
+                let a = auswerten(&e);
+                let l = a.leiter.clone().expect("Leiter");
+                let rechts = l.reserve_kg + l.alternate_kg + l.uebertankung_kg + l.sonstiges_kg;
+                let grafik = (landung - rechts).clamp(0.0, l.extra_kg).round();
+                assert_eq!(
+                    a.extra_ungenutzt_kg,
+                    Some(grafik),
+                    "Anlassen {anlassen}, Abheben {abheben}, Landung {landung}"
+                );
+            }
+        }
+    }
+
+    /// Einstieg in der Luft: „bis Sinkflug" rechnet nur das Stueck ab dem
+    /// Einstiegsort — gegen den Plan ab dort, nicht ab dem Abflug.
+    #[test]
+    fn sprit_einstieg_in_der_luft_rechnet_ab_dem_einstieg() {
+        let mut e = dlh370();
+        e.einstieg_in_der_luft = true;
+        e.engine_start_fuel_kg = None;
+        e.plan_bis_einstieg_kg = Some(10_000.0);
+        e.takeoff_fuel_kg = Some(31_500.0);
+        let bis = auswerten(&e).bis_sinkflug.expect("bis Sinkflug");
+        assert_eq!(bis.plan_kg, 9_353.0, "19 353 bis zum Messpunkt − 10 000 bis zum Einstieg");
+        assert_eq!(bis.ist_kg, 9_269.0, "31 500 − 22 231");
+        // Liegt der Einstiegsort nicht auf der Route, gibt es keinen Wert —
+        // statt eines kurzen Ist-Stuecks gegen den ganzen Plan.
+        e.plan_bis_einstieg_kg = None;
+        assert!(auswerten(&e).bis_sinkflug.is_none());
+        // Der Anflug haengt nicht am Einstieg.
+        assert!(auswerten(&e).anflug.is_some());
+    }
+
+    /// Rollen nach der Landung: eine Funktion, zwei Wege — dieselbe Zahl.
+    #[test]
+    fn sprit_rollen_nach_landung_eine_funktion() {
+        assert_eq!(rollen_nach_landung(Some(16_770.0), Some(16_121.0)), Some(649.0));
+        assert_eq!(auswerten(&dlh370()).rollen_nach_landung_kg, Some(649.0));
+        // Nachgetankt oder toter Sensor: kein Wert.
+        assert_eq!(rollen_nach_landung(Some(16_770.0), Some(17_000.0)), None);
+        assert_eq!(rollen_nach_landung(Some(16_770.0), Some(0.0)), None);
+        assert_eq!(rollen_nach_landung(None, Some(16_121.0)), None);
     }
 
     /// Nach einem Ausweichflug wurde der Plan nicht geflogen: keine Phasen,

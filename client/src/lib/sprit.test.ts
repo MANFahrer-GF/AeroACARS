@@ -6,7 +6,7 @@
  * zurückbringen, ohne dass ein Test es merkt.
  */
 import { describe, expect, it } from "vitest";
-import { phaseTon } from "./sprit";
+import { dezimal, pct, phaseTon } from "./sprit";
 import type { SpritPhase } from "./sprit";
 
 const phase = (pct: number): SpritPhase => ({
@@ -46,5 +46,21 @@ describe("phaseTon", () => {
   it("behandelt eine Phase ohne Angabe der Art wie „bis Sinkflug“", () => {
     expect(phaseTon(phase(-5))).toBe("ok");
     expect(phaseTon(phase(50))).toBe("neutral");
+  });
+});
+
+describe("dezimal", () => {
+  it("behält das Vorzeichen — als echtes Minus", () => {
+    // Bis v1.7.36-Entwurf fiel es still weg (QS-Vorschlag V-e).
+    expect(dezimal(-3.4, 1)).toBe("−3,4");
+    expect(dezimal(3.4, 1)).toBe("3,4");
+    // Eine auf null gerundete Zahl bekommt keins.
+    expect(dezimal(-0.04, 1)).toBe("0,0");
+  });
+
+  it("setzt in pct genau ein Vorzeichen", () => {
+    expect(pct(-3.4)).toBe("−3,4 %");
+    expect(pct(192.8)).toBe("+192,8 %");
+    expect(pct(0)).toBe("0,0 %");
   });
 });

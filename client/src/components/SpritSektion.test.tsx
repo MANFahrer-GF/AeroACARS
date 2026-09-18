@@ -133,8 +133,9 @@ describe("SpritSektion", () => {
     const { container } = render(<SpritSektion sprit={dlh370()} />);
     const svg = container.querySelector("svg");
     expect(svg).not.toBeNull();
-    // Sieben Segmente: die sechs Plan-Bloecke plus die Uebertankung, die
-    // DLH 370 mit 273 kg hat.
+    // Sieben Segmente: die sechs Plan-Bloecke plus die Uebertankung — diese
+    // Vorlage ist mit 273 kg ueber dem Block angelassen worden (41 917 kg).
+    // Beim echten DLH 370 war der Tank beim Anlassen genau der Block.
     expect(svg!.querySelectorAll("rect").length).toBe(7);
     // Zwei Marken: womit abgehoben (gestrichelt), womit gelandet (kräftig).
     expect(svg!.querySelectorAll("line").length).toBe(2);
@@ -247,8 +248,8 @@ describe("SpritSektion", () => {
 
 
   it("zeichnet die Leiter in Verbrauchsreihenfolge, sodass die Landemarke den Text trifft", () => {
-    // Bei DLH 370 bleiben **3 308 kg** Extra ungenutzt — das ist die Zahl
-    // aus der Auswertung. Bis v1.7.35 stand hier 3 581: die Grafik rechnete
+    // In dieser Vorlage (273 kg ueber Block angelassen) bleiben **3 308 kg**
+    // Extra ungenutzt — das ist die Zahl aus der Auswertung. Bis v1.7.35 stand hier 3 581: die Grafik rechnete
     // gegen den geplanten Block, die Zeile gegen den tatsächlichen
     // Abhebestand, und die 273 kg Übertankung dazwischen fehlten in der
     // Leiter ganz. Seit die Übertankung ein eigenes Segment hat, treffen

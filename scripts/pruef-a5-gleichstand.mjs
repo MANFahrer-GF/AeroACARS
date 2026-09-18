@@ -16,9 +16,10 @@
 //
 // Aufruf:  node scripts/pruef-a5-gleichstand.mjs
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { resolve, dirname } from "node:path";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benoetigteSchluessel } from "./anzeige-sync.mjs";
 
@@ -47,6 +48,50 @@ const kanon = (v) =>
 
 const hash = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
+/** Der Vergleich aus Schritt 1 — als Funktion, damit die Gegenprobe GENAU ihn prüft. */
+const dateienGleich = (a, b) => hash(a) === hash(b);
+
+/** Kommentare entfernen — ein Kommentar über `payload.sprit` ist kein Zugriff. */
+function ohneKommentare(q) {
+  return q.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`])\/\/[^\n]*/g, "$1");
+}
+
+/**
+ * Die Regel für die Hülle: Sie reicht `sprit` weiter und liest davon
+ * höchstens `badge`.
+ *
+ * Geprüft wird jedes Vorkommen des Bezeichners `sprit`, nicht nur die Form
+ * `sprit.feld`. Die erste Fassung erkannte nur die — ein Alias
+ * (`const s = pl.sprit; s.leiter`), eine Zerlegung (`const { leiter } =
+ * pl.sprit`) oder `pl["sprit"]` gingen durch (QS-Vorschlag V-b, 18.09.2026).
+ */
+function huellenVerstoesse(quelltext) {
+  const q = ohneKommentare(quelltext);
+  const v = [];
+  if (/\[\s*["'`]sprit["'`]\s*\]/.test(q)) v.push('Zugriff über ["sprit"]');
+  for (const m of q.matchAll(/\bsprit\b/g)) {
+    const vor = q.slice(Math.max(0, m.index - 12), m.index);
+    const nach = q.slice(m.index + 5, m.index + 40);
+    // Übersetzungsschlüssel `landing.sprit.*` und `data-testid="sprit-…"`.
+    if (/landing\.$/.test(vor) || /^-/.test(nach)) continue;
+    // Import-Pfad `../lib/sprit`.
+    if (/\/$/.test(vor)) continue;
+    if (/\.\.\.\s*(\w+\??\.)?$/.test(vor)) {
+      v.push("sprit wird ausgebreitet (...)");
+      continue;
+    }
+    // Zuweisung an einen Alias oder eine Zerlegung — aber nicht die
+    // JSX-Weitergabe `sprit={…}` und kein Vergleich.
+    if (/[^=!<>]=\s*(\w+\??\.)?$/.test(vor) && !/=\{\s*(\w+\??\.)?$/.test(vor)) {
+      v.push(`sprit wird zugewiesen (…${vor.trim()}sprit)`);
+      continue;
+    }
+    const feld = nach.match(/^\s*\??\.\s*([A-Za-z_$][\w$]*)/);
+    if (feld && feld[1] !== "badge") v.push(`liest selbst sprit.${feld[1]}`);
+  }
+  return v;
+}
+
 function teilbaum(datei) {
   const d = JSON.parse(readFileSync(datei, "utf-8"));
   return JSON.stringify(d?.landing?.sprit ?? null);
@@ -67,7 +112,7 @@ function main() {
       fehler.push(`${rel}: fehlt auf einer Seite`);
       continue;
     }
-    if (hash(a) !== hash(b)) fehler.push(`${rel}: Client und Webapp verschieden`);
+    if (!dateienGleich(a, b)) fehler.push(`${rel}: Client und Webapp verschieden`);
   }
 
   // 2. Beschriftungen: Jede, die die Live-Übersicht führt, muss wörtlich
@@ -106,12 +151,8 @@ function main() {
   if (!/<SpritSektion\s+sprit=/.test(huelle)) {
     fehler.push("LandingAnalysis.tsx rendert die geteilte SpritSektion nicht");
   }
-  const ERLAUBT = new Set(["badge"]);
-  // `landing.sprit.title` ist ein Uebersetzungsschluessel, kein Feldzugriff.
-  for (const m of huelle.matchAll(/(?<!landing\.)\bsprit\??\.([A-Za-z_]+)/g)) {
-    if (!ERLAUBT.has(m[1])) {
-      fehler.push(`LandingAnalysis.tsx liest selbst sprit.${m[1]} — die Hülle darf nur weiterreichen`);
-    }
+  for (const v of huellenVerstoesse(huelle)) {
+    fehler.push(`LandingAnalysis.tsx: ${v} — die Hülle darf nur weiterreichen`);
   }
   for (const v of VERBOTEN_IN_HUELLE) {
     if (huelle.includes(v)) fehler.push(`LandingAnalysis.tsx enthält noch „${v}"`);
@@ -123,19 +164,54 @@ function main() {
   // Gegenproben: Würden die Prüfungen eine Abweichung überhaupt bemerken?
   // (Die erste Fassung verglich einen Datei-Hash mit hash("x") — das schlug
   // nie an, QS-Befund F5.)
-  const inhalt = readFileSync(resolve(CLIENT, GETEILT[0]));
-  const verfaelscht = Buffer.concat([inhalt, Buffer.from(" ")]);
-  if (
-    createHash("sha256").update(inhalt).digest("hex") ===
-    createHash("sha256").update(verfaelscht).digest("hex")
-  ) {
-    fehler.push("Gegenprobe 1: ein veraendertes Byte faellt dem Vergleich nicht auf");
+  // Gegenprobe 1 prüft DENSELBEN Vergleich wie Schritt 1, an zwei echten
+  // Dateien, die sich in einem Byte unterscheiden. Die Vorfassung verglich
+  // nur zwei Hash-Werte miteinander und konnte nicht rot werden
+  // (QS-Vorschlag V-c, 18.09.2026).
+  const probe = mkdtempSync(join(tmpdir(), "a5-probe-"));
+  try {
+    const inhalt = readFileSync(resolve(CLIENT, GETEILT[0]));
+    const echt = join(probe, "echt");
+    const kopie = join(probe, "kopie");
+    const falsch = join(probe, "falsch");
+    writeFileSync(echt, inhalt);
+    writeFileSync(kopie, inhalt);
+    writeFileSync(falsch, Buffer.concat([inhalt, Buffer.from(" ")]));
+    if (dateienGleich(echt, falsch)) fehler.push("Gegenprobe 1: ein veraendertes Byte faellt dem Vergleich nicht auf");
+    if (!dateienGleich(echt, kopie)) fehler.push("Gegenprobe 1: zwei gleiche Dateien gelten als verschieden");
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
   }
   if (kanon({ a: "x", b: "y" }) !== kanon({ b: "y", a: "x" }) || kanon({ a: "x" }) === kanon({ a: "z" })) {
     fehler.push("Gegenprobe 2: der Beschriftungsvergleich ist blind oder reihenfolgeabhaengig");
   }
-  if (![..."const n = pl.sprit.leiter;".matchAll(/(?<!landing\.)\bsprit\??\.([A-Za-z_]+)/g)].length) {
-    fehler.push("Gegenprobe 3: die Hüllen-Regel erkennt einen Feldzugriff nicht");
+  // Gegenprobe 3: Jede Umgehung muss auffallen — und die erlaubten Formen
+  // der echten Hülle dürfen es nicht.
+  const umgehungen = [
+    "const n = pl.sprit.leiter;",
+    "const n = pl.sprit?.leiter;",
+    "const s = pl.sprit; return s.leiter;",
+    "const { leiter } = pl.sprit;",
+    'const n = pl["sprit"].leiter;',
+    "const x = { ...pl.sprit };",
+    "function K({ sprit }) { return sprit.anflug; }",
+  ];
+  for (const u of umgehungen) {
+    if (huellenVerstoesse(u).length === 0) fehler.push(`Gegenprobe 3: „${u}" fällt der Hüllen-Regel nicht auf`);
+  }
+  const erlaubt = [
+    'import type { SpritAuswertung } from "../lib/sprit";',
+    "sprit?: SpritAuswertung | null;",
+    "{pl.sprit && <SpritCard sprit={pl.sprit} />}",
+    'data-testid="sprit-badge" data-ton={pl.sprit.badge}',
+    'color: pl.sprit.badge === "gruen" ? "a" : "b"',
+    "export function SpritCard({ sprit }: { sprit: SpritAuswertung }) { return <SpritSektion sprit={sprit} />; }",
+    't("landing.sprit.title")',
+    "// payload.sprit.leiter im Kommentar",
+  ];
+  for (const e of erlaubt) {
+    const v = huellenVerstoesse(e);
+    if (v.length) fehler.push(`Gegenprobe 3: erlaubte Form „${e}" gilt als Verstoß (${v.join(", ")})`);
   }
 
   if (fehler.length > 0) {

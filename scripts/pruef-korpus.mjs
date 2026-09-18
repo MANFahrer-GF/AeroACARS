@@ -132,6 +132,7 @@ function main() {
   const iPlanBis = spalte("plan_bis_kg");
   const iPlanAn = spalte("plan_anflug_kg");
   const iPlanTrip = spalte("plan_trip_kg");
+  const iOfpTrip = spalte("ofp_trip_kg");
 
   const fluege = zeilen.map((z) => z.split("\t"));
   if (fluege.length === 0) {
@@ -200,22 +201,47 @@ function main() {
     }
   }
 
-  // 5. Die beiden Phasen sind zwei Teile derselben Strecke: Ihre
-  //    Plan-Anteile muessen den Plan-Trip ergeben. Die Schwelle war bis zur
-  //    QS vom 18.09.2026 definiert, aber nie geprueft (Befund F4).
-  let summenGeprueft = 0;
-  for (const f of mitPunkt) {
-    const bis = Number(f[iPlanBis]);
-    const an = Number(f[iPlanAn]);
-    const trip = Number(f[iPlanTrip]);
-    if (![bis, an, trip].every((v) => Number.isFinite(v) && v > 0)) continue;
-    summenGeprueft += 1;
-    const abw = (Math.abs(bis + an - trip) / trip) * 100;
-    if (abw > SCHWELLEN.phasensumme_abweichung_pct) {
-      fehler.push(
-        `${f[iId]}: Plan-Anteile ${bis} + ${an} = ${bis + an} kg gegen Trip ${trip} kg ` +
-          `(${abw.toFixed(1)} %). Der Schnitt zwischen den Phasen driftet.`,
-      );
+  // 5. Die beiden Phasen und die Leiter muessen DENSELBEN Trip meinen: Die
+  //    Phasen rechnen gegen den Navlog-Trip, die Leiter zeigt den Trip aus
+  //    dem OFP-Kopf. Weichen beide ab, passt „bis Sinkflug + Anflug" nicht
+  //    mehr zum Trip-Balken daneben.
+  //
+  //    Verglichen wird darum gegen den OFP-KOPF (`ofp_trip_kg`), den der
+  //    Korpus-Test getrennt aus den Metadaten liest. Die Vorfassung
+  //    verglich gegen den Navlog-Trip — denselben Wert, aus dem der Code
+  //    den Anflug-Plan bildet. Das galt per Konstruktion und konnte nie rot
+  //    werden (QS-Befund E6, 18.09.2026).
+  const summenPruefung = (zeilen) => {
+    const meldungen = [];
+    let geprueft = 0;
+    for (const f of zeilen) {
+      const bis = Number(f[iPlanBis]);
+      const an = Number(f[iPlanAn]);
+      const trip = Number(f[iOfpTrip]);
+      if (![bis, an, trip].every((v) => Number.isFinite(v) && v > 0)) continue;
+      geprueft += 1;
+      const abw = (Math.abs(bis + an - trip) / trip) * 100;
+      if (abw > SCHWELLEN.phasensumme_abweichung_pct) {
+        meldungen.push(
+          `${f[iId]}: Plan-Anteile ${bis} + ${an} = ${bis + an} kg gegen Trip ${trip} kg ` +
+            `aus dem OFP-Kopf (${abw.toFixed(1)} %; Navlog-Trip ${f[iPlanTrip]} kg). ` +
+            `Phasen und Leiter meinen verschiedene Trips.`,
+        );
+      }
+    }
+    return { meldungen, geprueft };
+  };
+  const summen = summenPruefung(mitPunkt);
+  fehler.push(...summen.meldungen);
+  const summenGeprueft = summen.geprueft;
+  // Gegenprobe: Ein OFP-Kopf, der 5 % vom Navlog abweicht, MUSS auffallen.
+  if (mitPunkt.length > 0) {
+    const probe = [...mitPunkt[0]];
+    probe[iPlanBis] = "1000";
+    probe[iPlanAn] = "500";
+    probe[iOfpTrip] = "1575";
+    if (summenPruefung([probe]).meldungen.length === 0) {
+      fehler.push("Gegenprobe Phasensumme: 5 % Abweichung zum OFP-Kopf fällt nicht auf.");
     }
   }
   if (summenGeprueft === 0) {
