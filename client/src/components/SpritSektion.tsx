@@ -74,7 +74,7 @@ function Phase({
   art: "bis_sinkflug" | "anflug";
 }) {
   const { t } = useTranslation();
-  const ton = phaseTon(phase);
+  const ton = phaseTon(phase, art);
   const b = balken(phase);
   return (
     <>
@@ -163,13 +163,11 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   const ldg = sprit.landing_fuel_kg;
   const imBild = (v: number) => Math.min(Math.max(v, 0), W);
   const markX = ldg != null ? imBild(W - x(ldg)) : null;
-  // Der Abhebe-Tankstand laesst sich aus der Auswertung zurueckrechnen:
-  // geplanter Rest nach dem Trip = Landesprit + Mehrverbrauch.
-  const abhebenKg =
-    ldg != null && sprit.extra_getankt_kg != null && sprit.extra_ungenutzt_kg != null && l
-      ? l.trip_kg + l.alternate_kg + l.reserve_kg + sprit.extra_ungenutzt_kg +
-        (sprit.contingency_verbraucht ? 0 : l.contingency_kg)
-      : null;
+  // Der Abhebe-Tankstand kommt aus der Auswertung — er wird NICHT
+  // zurückgerechnet. Ein früherer Versuch tat das und lag bei DLH 370 um
+  // 3 204 kg daneben: Bleibt der Mehrverbrauch unter der Contingency,
+  // steckt er in keinem der übrigen Felder.
+  const abhebenKg = sprit.takeoff_fuel_kg;
   const abhebenX = abhebenKg != null ? imBild(W - x(abhebenKg)) : null;
   // Die Marke ist eine Tatsache, kein Urteil: Ton nach Reservestand,
   // nie die Fehlerfarbe.
@@ -197,7 +195,10 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
       {abhebenX != null && Math.abs(abhebenX - (markX ?? 0)) > 6 && (
         <>
           <line x1={abhebenX} y1={18} x2={abhebenX} y2={44} stroke="var(--text-muted)" strokeWidth={1} strokeDasharray="3 2" />
-          <text x={Math.min(abhebenX + 4, W - 120)} y={14} style={{ font: "10px ui-monospace, monospace", fill: "var(--text-muted)" }}>
+          {/* Unter die Leiter statt daneben: der Abhebe-Tankstand liegt nah
+              am Block, die Marke also weit links — auf y=14 kollidierte der
+              Text mit dem Leiter-Titel. */}
+          <text x={Math.min(abhebenX + 4, W - 120)} y={68} style={{ font: "10px ui-monospace, monospace", fill: "var(--text-muted)" }}>
             {t("landing.sprit.abgehoben_mit", { kg: kg(abhebenKg) })}
           </text>
         </>

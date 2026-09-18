@@ -42,6 +42,9 @@ export interface SpritAuswertung {
   plan_strecke_anflug_nm: number | null;
   reserve: SpritReserve;
   reserve_kg: number | null;
+  /** Tankstand beim Abheben — steht im Ergebnis, weil er sich aus den
+   *  übrigen Feldern nicht zurückrechnen lässt. */
+  takeoff_fuel_kg: number | null;
   landing_fuel_kg: number | null;
   extra_getankt_kg: number | null;
   extra_genutzt_kg: number | null;
@@ -65,11 +68,38 @@ export function pct(v: number | null | undefined): string {
   return (v > 0 ? "+" : v < 0 ? "−" : "") + s.replace("-", "") + " %";
 }
 
-/** Farbton einer Phase: sparsamer oder nahe Plan = ruhig, deutlich drüber = warm. */
-export function phaseTon(p: SpritPhase | null): "ok" | "warn" | "neutral" {
+/**
+ * Farbton einer Phase — **ruhig oder gar nichts, nie eine Warnung**.
+ *
+ * Die Sprit-Achse ist aus der Note geflogen, weil sie die Flugsicherung
+ * benotete statt den Piloten. Eine Warnfarbe wäre derselbe Vorwurf, nur in
+ * Rot statt in Punkten — deshalb gibt es sie hier nicht. Wer sparsam fliegt,
+ * bekommt dafür weiterhin die ruhige Farbe; wer darüber liegt, bekommt die
+ * Zahl und sonst nichts.
+ *
+ * Am Bestand gemessen (Korpus-Prüfung 18.09.2026, 39 Flüge):
+ *
+ * - **Anflug**: 82 % lägen über +3 %, und zwischen 0 und +10 % liegt kein
+ *   einziger Flug. Die Phase misst überwiegend die Dauer der Radarführung —
+ *   ein A359 verbrannte dort 3 113 kg statt geplanter 704, in 36,5 Minuten.
+ *   Was fast jeder bekommt, ist keine Auskunft.
+ * - **bis Sinkflug**: Hier wäre eine Schwelle vertretbar (Median −8,5 %),
+ *   aber sie träfe das Falsche. Seit der Vergleichspunkt auf den echten
+ *   Sinkflugbeginn wartet, wandert der Reiseflug eines spät sinkenden Fluges
+ *   in diese Phase. Von sechs Flügen über +3 % sind fünf genau solche Fälle —
+ *   die Farbe markierte einen verschobenen Phasenschnitt, kein Verhalten.
+ *
+ * Die Landemarke in der Leiter hält es genauso („Ton nach Reservestand, nie
+ * die Fehlerfarbe"). Gewertet wird allein im Badge, und dort nach dem
+ * Reservestand — das ist eine Sicherheitsaussage, keine Sparnote.
+ */
+export function phaseTon(
+  p: SpritPhase | null,
+  art: "bis_sinkflug" | "anflug" = "bis_sinkflug",
+): "ok" | "warn" | "neutral" {
   if (!p) return "neutral";
-  if (p.abweichung_pct <= 3) return "ok";
-  return "warn";
+  if (art === "anflug") return "neutral";
+  return p.abweichung_pct <= 3 ? "ok" : "neutral";
 }
 
 /** Balkenbreite (0–100) für Ist gegen Plan, gedeckelt bei 3×Plan. */
@@ -91,7 +121,7 @@ export function diffKg(p: SpritPhase | null | undefined): string {
  *
  * Bis zum Sinkflug sagt der Prozentwert etwas — dort liegen die Werte in
  * einem lesbaren Band. Im Anflug nicht: die Korpus-Prüfung fand einen Median
- * von +66 % und Ausreißer bis +352 %. Eine solche Zahl erklärt niemandem
+ * von +44,9 % und Ausreißer bis +342 %. Eine solche Zahl erklärt niemandem
  * etwas, und laut Modul-Kopf gehört diese Phase ohnehin nicht dem Piloten.
  * Deshalb steht dort die Differenz in Kilogramm.
  */

@@ -950,10 +950,21 @@ mod tests {
             "die Sprit-Achse wird wieder benotet — sie misst zum Grossteil \
              die Flugsicherung, nicht den Piloten (v1.7.35)"
         );
-        // Und der Master-Score ohne sie ist die gewichtete Summe der
-        // uebrigen Achsen — kein ruhendes Gewicht zieht mit.
-        let master = aggregate_master_score(&subs).expect("master");
-        assert!(master <= 100);
+        // Und das ruhende Gewicht `"fuel" => 1.0` zieht nicht mit: Der
+        // Master ist der gewichtete Schnitt GENAU der ausgegebenen Achsen.
+        // (`assert!(master <= 100)` stand hier frueher — bauartbedingt immer
+        // wahr und damit kein Beleg.)
+        let master = aggregate_master_score(&subs).expect("master") as f32;
+        let gewicht = |k: &str| -> f32 {
+            match k {
+                "landing_rate" | "g_force" => 3.0,
+                "bounces" | "stability" => 2.0,
+                _ => 1.0,
+            }
+        };
+        let summe: f32 = subs.iter().filter(|s| !s.skipped).map(|s| s.score as f32 * gewicht(&s.key)).sum();
+        let gewichte: f32 = subs.iter().filter(|s| !s.skipped).map(|s| gewicht(&s.key)).sum();
+        assert_eq!(master, (summe / gewichte).round(), "ein ruhendes Gewicht zieht mit");
     }
 
     /// Ein voll besetzter Eingang — damit in den Waechtern jeder Zweig

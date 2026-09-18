@@ -3789,6 +3789,8 @@ struct PersistedFlightStats {
     #[serde(default)]
     sprit_fenster_scharf: bool,
     #[serde(default)]
+    sprit_rest_erreicht: bool,
+    #[serde(default)]
     sprit_hoechste_hoehe_ft: Option<f64>,
     #[serde(default)]
     planned_taxi_kg: Option<f32>,
@@ -4097,6 +4099,7 @@ impl PersistedFlightStats {
             sprit_zeit_unter_schwelle_s: stats.sprit_zeit_unter_schwelle_s,
             sprit_schwelle_ft: stats.sprit_schwelle_ft,
             sprit_fenster_scharf: stats.sprit_fenster_scharf,
+            sprit_rest_erreicht: stats.sprit_rest_erreicht,
             sprit_hoechste_hoehe_ft: stats.sprit_hoechste_hoehe_ft,
             planned_taxi_kg: stats.planned_taxi_kg,
             planned_contingency_kg: stats.planned_contingency_kg,
@@ -4334,6 +4337,7 @@ impl PersistedFlightStats {
         stats.sprit_zeit_unter_schwelle_s = self.sprit_zeit_unter_schwelle_s;
         stats.sprit_schwelle_ft = self.sprit_schwelle_ft;
         stats.sprit_fenster_scharf = self.sprit_fenster_scharf;
+        stats.sprit_rest_erreicht = self.sprit_rest_erreicht;
         stats.sprit_hoechste_hoehe_ft = self.sprit_hoechste_hoehe_ft;
         stats.planned_taxi_kg = self.planned_taxi_kg;
         stats.planned_contingency_kg = self.planned_contingency_kg;
@@ -4855,6 +4859,10 @@ struct FlightStats {
     /// (kurzer Hopser mit langem Routing, Positionierungsflug, Rueckkehr) —
     /// schon beim ersten Tick nach dem Abheben.
     sprit_fenster_scharf: bool,
+    /// Der Durchgang durch die Plan-Reststrecke wurde LIVE gesehen. Trennt
+    /// „lueckenlos gemessen" von „erst dahinter eingestiegen" (Neustart,
+    /// Pause, Tick-Loch) — danach darf der Sinkflug beliebig spaet kommen.
+    sprit_rest_erreicht: bool,
     /// Hoechste bisher erreichte Hoehe (ft MSL) — Rueckfall fuer den
     /// Sinkflug-Test ohne Plan-Reiseflughoehe.
     sprit_hoechste_hoehe_ft: Option<f64>,
@@ -20877,10 +20885,14 @@ const SPRIT_SCHWELLE_ABSTAND_ZUR_REISEHOEHE_FT: f64 = 1_000.0;
 /// Ein Tick-Abstand ueber dieser Grenze ist eine Pause oder ein Neustart —
 /// die Zeit dazwischen wurde nicht geflogen und zaehlt nicht.
 const SPRIT_TICK_MAX_S: f64 = 60.0;
-/// Der Vergleichspunkt wird nur gesetzt, solange das Flugzeug noch *vor*
-/// ihm ist (Rest ≥ 80 % der Plan-Reststrecke). Wer nach einem Neustart
-/// schon dahinter ist, bekommt keinen Punkt — lieber keine Phasen als
-/// falsche.
+/// Der DURCHGANG durch die Plan-Reststrecke muss live gesehen werden: der
+/// erste Tick dahinter darf hoechstens 20 % dahinter liegen. Wer nach einem
+/// Neustart oder einem Tick-Loch schon weiter ist, bekommt keinen Punkt —
+/// lieber keine Phasen als falsche.
+///
+/// Das Fenster gilt NUR fuer diesen Durchgang, nicht fuer den Sinkflug.
+/// Solange beides im selben Tick gelten musste, verlor ein Drittel des
+/// Bestands seine Phasen — siehe `sprit_tick`.
 const SPRIT_VERGLEICHSPUNKT_FENSTER: f64 = 0.8;
 /// Ein Landesprit unter 1 % des Startsprits ist kein Flug, sondern ein
 /// Auslesefehler. (Der Kommentar nannte frueher KMRH→TXKF als Beispiel —
@@ -21001,11 +21013,32 @@ fn sprit_tick(
             (None, None) => f64::MAX,
         };
         let sinkt = alt_msl_ft <= reise - SPRIT_SINKFLUG_UNTER_REISEHOEHE_FT;
+        // Erster Schritt: den Durchgang durch die Plan-Reststrecke LIVE
+        // sehen. Das Fenster gehoert hierher und nur hierher — es trennt
+        // „wir haben lueckenlos gemessen" von „wir sind erst dahinter
+        // eingestiegen" (Neustart, Pause, Tick-Loch).
         if stats.sprit_fenster_scharf
-            && sinkt
             && rest_ist <= rest
             && rest_ist >= rest * SPRIT_VERGLEICHSPUNKT_FENSTER
         {
+            stats.sprit_rest_erreicht = true;
+        }
+        // Zweiter Schritt: auf den Sinkflug warten — beliebig lange.
+        //
+        // Frueher musste BEIDES im selben Tick gelten. Das kostete ein
+        // Drittel des Bestands die Phasen (Korpus-Pruefung 18.09.2026:
+        // 14 von 43 Fluegen, darunter ALLE vier A380 und der Referenzflug
+        // DLH 370 selbst): Wer die Sinkflugfreigabe spaet bekommt, sinkt
+        // erst unterhalb von 80 % der Plan-Reststrecke — und bekam dann gar
+        // keinen Punkt. Betroffen waren also genau die Fluege mit langer
+        // Radarfuehrung, fuer die diese Auswertung gebaut wurde.
+        //
+        // Dass der Punkt dadurch spaeter liegen kann, ist kein Verlust,
+        // sondern genauer: `rest` ist Strecke ueber Grund entlang STAR und
+        // Transition, `rest_ist` eine Luftlinie. Bei DLH 370 entsprechen
+        // 97 NM Luftlinie rund 140 NM Reststrecke — also fast exakt der
+        // geplanten 139.
+        if stats.sprit_rest_erreicht && sinkt {
             stats.sprit_vergleichspunkt_kg = Some(fuel_kg);
             stats.sprit_vergleichspunkt_odo_nm = Some(stats.distance_nm);
             stats.sprit_schwelle_ft = sprit_schwelle_ft(stats);
@@ -21044,27 +21077,6 @@ fn sprit_tank_plausibel(stats: &FlightStats) -> bool {
     }
 }
 
-/// Die Auswertung holen — **einmal rechnen, dann einfrieren**.
-///
-/// Der Touchdown-Payload entsteht im Positions-Streamer, die Messung im
-/// Touchdown-Sampler — zwei Threads, deren Reihenfolge nicht feststeht.
-/// Wer zuerst kommt, rechnet; alle weiteren bekommen exakt dasselbe
-/// Ergebnis. Damit zeigen Client, Bericht und Live-Uebersicht nie
-/// unterschiedliche Zahlen (Muster wie beim Landeurteil, 13.07.2026).
-///
-/// Ohne Landesprit gibt es nichts zu rechnen — dann bleibt es `None`,
-/// und die Anzeigen lassen die Sektion weg.
-/// Ist der Flieger woanders aufgesetzt als geplant?
-///
-/// v1.7.35: Die Frage wird BEIM AUFSETZEN aus der Landeposition beantwortet
-/// (`arrival::locate`), nicht erst beim Einreichen. Nur so steht die Fassung
-/// fest, bevor der erste Leser sie sieht — Touchdown-Payload, PIREP-Felder,
-/// LandingRecord und PIREP-Payload werden zu verschiedenen Zeitpunkten
-/// gebaut. Entschiede man erst beim Einreichen, saehen sie drei verschiedene
-/// Staende, und genau das soll der Umbau verhindern.
-///
-/// Der spaeter vom Piloten bestaetigte Divert ist nur die Formalisierung
-/// desselben Sachverhalts; die Position weiss es vorher.
 /// Nach einem Durchstart gehoert der Sprit der ABGEBROCHENEN Landung weg.
 ///
 /// Ein Touch-and-Go hat `landing_fuel_kg` gesetzt und die Auswertung
@@ -21095,6 +21107,17 @@ impl FlightStats {
     }
 }
 
+/// Ist der Flieger woanders aufgesetzt als geplant?
+///
+/// v1.7.35: Die Frage wird BEIM AUFSETZEN aus der Landeposition beantwortet
+/// (`arrival::locate`), nicht erst beim Einreichen. Nur so steht die Fassung
+/// fest, bevor der erste Leser sie sieht — Touchdown-Payload, PIREP-Felder,
+/// LandingRecord und PIREP-Payload werden zu verschiedenen Zeitpunkten
+/// gebaut. Entschiede man erst beim Einreichen, saehen sie drei verschiedene
+/// Staende, und genau das soll der Umbau verhindern.
+///
+/// Der spaeter vom Piloten bestaetigte Divert ist nur die Formalisierung
+/// desselben Sachverhalts; die Position weiss es vorher.
 fn sprit_ist_ausweichflug(stats: &FlightStats) -> bool {
     let (Some(la), Some(lo), Some((rlat, rlon))) =
         (stats.landing_lat, stats.landing_lon, stats.planned_arr_ref_pos)
@@ -21117,6 +21140,26 @@ fn sprit_ist_ausweichflug(stats: &FlightStats) -> bool {
 /// Die Ausweich-Erkennung laeuft beim allerersten Aufruf ueber die
 /// Landeposition; danach wird der eingefrorene Wert zurueckgegeben, ganz
 /// gleich wer fragt.
+/// Die Auswertung holen — **einmal rechnen, dann einfrieren**.
+///
+/// Der Touchdown-Payload entsteht im Positions-Streamer, die Messung im
+/// Touchdown-Sampler — zwei Threads, deren Reihenfolge nicht feststeht.
+/// Wer zuerst kommt, rechnet; alle weiteren bekommen das eingefrorene
+/// Ergebnis. Damit zeigen Client, Bericht und Live-Uebersicht nie
+/// unterschiedliche Zahlen (Muster wie beim Landeurteil, 13.07.2026).
+///
+/// **Die eine Ausnahme**, und warum sie nach aussen unsichtbar bleibt:
+/// `stamp_touchdown_metadata` kann zweimal laufen — aus dem Sampler und
+/// danach aus der FSM. Traegt der zweite Stempel einen ANDEREN Landesprit,
+/// verwirft er die Auswertung, damit sie nicht den Wert des ersten Ticks
+/// traegt, waehrend die Kachel „Landesprit" den zweiten zeigt. Es gilt also
+/// genauer: einmal je Stempel, der letzte gilt. Beide Stempel gehoeren zu
+/// DERSELBEN Landung und liegen beide VOR jedem Versand — der Payload haengt
+/// an `announce_landing_score`, das erst eine fertige Note braucht. Kein
+/// Leser sieht darum je einen revidierten Stand.
+///
+/// Ohne Landesprit gibt es nichts zu rechnen — dann bleibt es `None`,
+/// und die Anzeigen lassen die Sektion weg.
 fn sprit_auswertung_einmal(
     stats: &mut FlightStats,
 ) -> Option<landing_scoring::sprit::SpritAuswertung> {
@@ -21170,31 +21213,70 @@ fn sprit_auswertung_aus(
 fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &mut HashMap<String, String>) {
     use landing_scoring::sprit::Reserve;
     let Some(a) = a else { return };
-    // Dieselbe Regel wie Client, Bericht und Live-Uebersicht (`hauptzahl()`):
-    // ueber 60 % sagt ein Prozentwert nichts mehr, dort steht die Differenz
-    // in Kilogramm. Sonst staende auf der Webseite „+192.8 %", wo die drei
-    // anderen Oberflaechen „+3 596 kg" zeigen.
-    let hauptzahl = |p: &landing_scoring::sprit::Phase| -> String {
-        if p.abweichung_pct.abs() > 60.0 {
-            format!("{:+.0} kg", p.ist_kg - p.plan_kg)
+    // Diese drei Helfer sind die Gegenstuecke zu `kg()` und `pct()` in
+    // client/src/lib/sprit.ts. Dieselbe Zahl darf nicht viererlei aussehen —
+    // die Webseite ist die vierte Flaeche neben Client, Bericht und
+    // Live-Uebersicht.
+    //
+    // Ziffern mit schmalem Leerzeichen gruppiert, ohne Vorzeichen — das
+    // Gegenstueck zu `kg()` in client/src/lib/sprit.ts.
+    let ziffern = |v: f32| -> String {
+        let s = (v.abs().round() as i64).to_string();
+        let mut aus = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if i > 0 && (s.len() - i) % 3 == 0 {
+                aus.push('\u{202f}');
+            }
+            aus.push(c);
+        }
+        aus
+    };
+    // Mit Vorzeichen, Minus als echtes U+2212 — nicht als ASCII-Bindestrich.
+    let mit_trenner = |v: f32| -> String {
+        format!("{}{}", if v < 0.0 { "\u{2212}" } else { "+" }, ziffern(v))
+    };
+    // „+192,8 %" / „−3,4 %" — Komma, nicht Punkt. Ohne das stand hier als
+    // einziger der vier Oberflaechen „+192.8 %".
+    let prozent = |v: f32| -> String {
+        let z = format!("{:.1}", v.abs()).replace('.', ",");
+        let vz = if v > 0.0 {
+            "+"
+        } else if v < 0.0 {
+            "\u{2212}"
         } else {
-            format!("{:+.1} %", p.abweichung_pct)
+            ""
+        };
+        format!("{vz}{z} %")
+    };
+    // Dieselbe Regel wie `hauptzahl()` in client/src/lib/sprit.ts und
+    // webapp/src/components/sprit.ts: Kilogramm NUR im Anflug, und nur
+    // dort, wo der Prozentwert unlesbar wird. Bei „bis Sinkflug" bleibt es
+    // immer bei Prozent — sonst saehe die GA-Flotte hier Kilogramm und in
+    // den drei anderen Oberflaechen Prozent.
+    let hauptzahl = |p: &landing_scoring::sprit::Phase, ist_anflug: bool| -> String {
+        if ist_anflug && p.abweichung_pct.abs() > 60.0 {
+            format!("{} kg", mit_trenner(p.ist_kg - p.plan_kg))
+        } else {
+            prozent(p.abweichung_pct)
         }
     };
     if let Some(p) = &a.bis_sinkflug {
         f.insert(
             "Sprit bis Sinkflug".into(),
-            format!("{} ({:.0} kg / Plan {:.0} kg)", hauptzahl(p), p.ist_kg, p.plan_kg),
+            format!("{} ({} kg / Plan {} kg)", hauptzahl(p, false), ziffern(p.ist_kg), ziffern(p.plan_kg)),
         );
     }
     if let Some(p) = &a.anflug {
         f.insert(
             "Sprit Anflug".into(),
-            format!("{} ({:.0} kg / Plan {:.0} kg)", hauptzahl(p), p.ist_kg, p.plan_kg),
+            format!("{} ({} kg / Plan {} kg)", hauptzahl(p, true), ziffern(p.ist_kg), ziffern(p.plan_kg)),
         );
     }
     if let (Some(min), Some(ft)) = (a.zeit_unter_schwelle_min, a.schwelle_ft) {
-        f.insert("Zeit unter Schwelle".into(), format!("{min:.1} min unter {ft:.0} ft"));
+        f.insert(
+            "Zeit unter Schwelle".into(),
+            format!("{} min unter {} ft", format!("{min:.1}").replace('.', ","), ziffern(ft)),
+        );
     }
     match &a.reserve {
         Reserve::Intakt { quote_pct } => f.insert("Final Reserve".into(), format!("intakt ({quote_pct:.0} %)")),
@@ -21202,7 +21284,15 @@ fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &m
         Reserve::NichtPruefbar { grund } => f.insert("Final Reserve".into(), format!("nicht pruefbar ({grund})")),
     };
     if let (Some(g), Some(n), Some(u)) = (a.extra_getankt_kg, a.extra_genutzt_kg, a.extra_ungenutzt_kg) {
-        f.insert("Extra Fuel".into(), format!("{g:.0} kg getankt · {n:.0} kg genutzt · {u:.0} kg ungenutzt"));
+        f.insert(
+            "Extra Fuel".into(),
+            format!(
+                "{} kg getankt · {} kg genutzt · {} kg ungenutzt",
+                ziffern(g),
+                ziffern(n),
+                ziffern(u)
+            ),
+        );
     }
 }
 
@@ -22053,6 +22143,20 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// (1118 Fluege) faellt die Abzugsquote von 15,4 % auf 12,3 %, aber die
 /// Verteilung verschiebt sich deutlich — derselbe Flug wird unter
 /// v1.7.31 und v1.7.32 verschieden benotet.
+///
+/// **16 seit v1.7.35**: Die OFP-Achse ist ERSATZLOS weg. Anlass DLH 370
+/// (17.09.2026, ESSA→EDDM): geplante Hoehe, geplante Route, Gewicht auf
+/// 128 kg genau — und 45 Punkte Abzug. Der Anflug kostete das Dreifache
+/// des Plans, aber nicht durch den Weg (182 statt 139 NM geplant), sondern
+/// durch die Zeit: knapp 16 Minuten unter 8 000 ft. Alle sechs
+/// A380-Fluege nach EDDM im Bestand ordnen sich lueckenlos nach genau
+/// dieser Zeit. Die Achse mass damit die Dauer der Radarfuehrung — eine
+/// Entscheidung der Flugsicherung, nicht des Piloten. Der Sprit wird
+/// weiterhin gemessen und angezeigt (`sprit::SpritAuswertung`), aber er
+/// ist keine Note mehr. Jeder Flug mit einer frueheren OFP-Abwertung wird
+/// unter v1.7.35 also besser benotet als unter v1.7.34; der Goldenset
+/// verschiebt sich um bis zu 2 Punkte (91→90, 74→72, 97→96, weil die
+/// verbleibenden Achsen die Gewichtung neu unter sich aufteilen).
 ///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
@@ -34194,6 +34298,7 @@ fn latch_takeoff_stats(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTim
     // beim zweiten Abschnitt einer Zwischenlandung sofort als scharf und
     // die Schutzwirkung entfaellt.
     stats.sprit_fenster_scharf = false;
+    stats.sprit_rest_erreicht = false;
     stats.sprit_hoechste_hoehe_ft = None;
     // Ohne das bliebe `sprit_tick` fuer den ganzen zweiten Abschnitt stumm
     // (es steigt bei gesetztem Landesprit aus) — Reserve und Leiter kaemen,
@@ -34499,6 +34604,19 @@ fn stamp_touchdown_metadata(
         .or(Some(snap.true_airspeed_kt).filter(|v| v.is_finite() && *v > 0.0));
     if let Some(v) = tas {
         stats.landing_true_airspeed_kt = Some(v);
+    }
+    // v1.7.35 Paritaet: Der Stempel kann zweimal laufen — erst aus dem
+    // Sampler, dann aus der FSM mit einem spaeteren Tick. Aendert sich dabei
+    // der Landesprit (Umkehrschub, auf einer A380 leicht zweistellig), gehoert
+    // die Sprit-Auswertung neu gebildet; sonst truege sie den Wert des ersten
+    // Ticks, waehrend die Kachel „Landesprit" den zweiten zeigt — zwei Zahlen
+    // fuer dieselbe Sache im selben Tab.
+    //
+    // „Einmal rechnen" bleibt gewahrt: Beide Stempel gehoeren zu DERSELBEN
+    // Landung, und der letzte gilt. Der Rohwert wird dabei NICHT gerundet —
+    // die Rundung lebt allein in der Auswertung, fuer die Anzeige.
+    if stats.landing_fuel_kg.is_some() && stats.landing_fuel_kg != Some(snap.fuel_total_kg) {
+        stats.sprit_auswertung = None;
     }
     stats.landing_fuel_kg = Some(snap.fuel_total_kg);
 
@@ -55856,6 +55974,77 @@ mod touchdown_metadata_stamp_tests {
     /// Ein Ausweichflug wäre als Normalflug eingefroren worden — mit Phasen
     /// gegen einen Plan, der nie geflogen wurde. Die bisherigen Tests riefen
     /// die Funktionen von Hand auf und bewiesen darüber nichts.
+
+    /// Die Kachel „Landesprit" und die Sprit-Auswertung tragen dieselbe Zahl.
+    ///
+    /// Der FSM-Stempel überschreibt `landing_fuel_kg` absichtlich mit seinem
+    /// späteren Tick, während die Auswertung schon eingefroren ist. Ohne das
+    /// Zurückschreiben stünden im selben Tab zwei Zahlen für denselben
+    /// Landesprit — getrennt durch den Verbrauch im Umkehrschub (QS-Abnahme).
+    #[test]
+    fn sprit_landesprit_ist_ueberall_dieselbe_zahl() {
+        let mut st = FlightStats::default();
+        st.takeoff_fuel_kg = Some(40_919.0);
+        st.planned_burn_kg = Some(21_218.0);
+        st.planned_reserve_kg = Some(4_916.0);
+        st.plan_bis_setzen(19_353.0);
+        st.sprit_vergleichspunkt_kg = Some(22_231.0);
+        st.planned_arr_ref_pos = Some((48.3538, 11.7861));
+        // Geht als `zeit_unter_schwelle_min` in die Auswertung ein — der
+        // Hebel fuer die Gegenprobe ganz unten.
+        st.sprit_schwelle_ft = Some(9_487.0);
+        st.sprit_zeit_unter_schwelle_s = 948.0;
+
+        // Erster Stempel (Sampler) friert ein.
+        let mut snap = rollout_snap();
+        snap.lat = 48.3538;
+        snap.lon = 11.7861;
+        snap.fuel_total_kg = 16_770.0;
+        stamp_touchdown_metadata(&mut st, &snap, td_at(), None);
+        let eingefroren = st.sprit_auswertung.clone().expect("Auswertung");
+        assert_eq!(eingefroren.landing_fuel_kg, Some(16_770.0));
+
+        // Zweiter Stempel (FSM) mit spaeterem Tick — Umkehrschub hat weiter
+        // verbrannt. Der letzte Stempel gilt, die Auswertung wird neu
+        // gebildet; sonst truege sie den Landesprit des ersten Ticks,
+        // waehrend die Kachel den zweiten zeigt.
+        snap.fuel_total_kg = 16_680.0;
+        stamp_touchdown_metadata(&mut st, &snap, td_at(), None);
+        let danach = st.sprit_auswertung.clone().expect("Auswertung");
+        assert_eq!(st.landing_fuel_kg, Some(16_680.0), "Rohwert ungerundet");
+        assert_ne!(danach, eingefroren, "der zweite Stempel muss durchschlagen");
+
+        // Gegenprobe: Ein dritter Stempel mit demselben Landesprit rechnet
+        // NICHT neu.
+        //
+        // Damit die Zusicherung etwas taugt, muss sich zwischendurch ETWAS
+        // aendern, das in die Rechnung eingeht — sonst laege eine unbedingte
+        // Neuberechnung aus unveraenderten `stats` bei exakt demselben Wert,
+        // und der Test bliebe auch ohne den Riegel gruen (QS-Befund F3).
+        // `sprit_zeit_unter_schwelle_s` laeuft beim Ausrollen weiter und
+        // geht als `zeit_unter_schwelle_min` in die Auswertung ein.
+        let vorher_min = st
+            .sprit_auswertung
+            .as_ref()
+            .and_then(|a| a.zeit_unter_schwelle_min)
+            .expect("Zeit unter Schwelle");
+        assert_eq!(vorher_min, 15.8, "Vorbedingung: 948 s = 15,8 min");
+        st.sprit_zeit_unter_schwelle_s += 600.0;
+        stamp_touchdown_metadata(&mut st, &snap, td_at(), None);
+        assert_eq!(
+            st.sprit_auswertung.as_ref().and_then(|a| a.zeit_unter_schwelle_min),
+            Some(15.8),
+            "gleicher Landesprit = eingefroren; 25,8 min hiesse: unbedingt neu gerechnet"
+        );
+
+        // Und die Kachel zeigt dieselbe Zahl wie „gelandet mit …".
+        assert_eq!(
+            st.landing_fuel_kg,
+            danach.landing_fuel_kg,
+            "Kachel und Sprit-Auswertung zeigen verschiedene Landespritwerte"
+        );
+    }
+
     #[test]
     fn sprit_ausweichflug_wird_beim_stempeln_erkannt() {
         let bauen = |ziel: (f64, f64), landung: (f64, f64)| {
@@ -55867,6 +56056,12 @@ mod touchdown_metadata_stamp_tests {
             st.sprit_vergleichspunkt_kg = Some(22_231.0);
             st.sprit_vergleichspunkt_odo_nm = Some(600.0);
             st.distance_nm = 782.0;
+            // Vorbesetzen, sonst sind die Zusicherungen auf `schwelle_ft`
+            // und `zeit_unter_schwelle_min` wirkungslos: `auswerten` filtert
+            // beide ohnehin auf None, und der Test bliebe gruen, wenn der
+            // Ausweich-Zweig sie gar nicht mehr nullte (QS-Abnahme, P3).
+            st.sprit_schwelle_ft = Some(9_487.0);
+            st.sprit_zeit_unter_schwelle_s = 948.0;
             st.planned_arr_ref_pos = Some(ziel);
             let mut snap = rollout_snap();
             snap.lat = landung.0;
@@ -55879,6 +56074,10 @@ mod touchdown_metadata_stamp_tests {
         // Auf dem geplanten Platz: Phasen und Plan-Reststrecke da.
         let normal = bauen((48.3538, 11.7861), (48.3538, 11.7861));
         assert!(normal.bis_sinkflug.is_some(), "Normalflug ohne Phasen");
+        // Gegenprobe: im Normalfall sind Schwelle und Zeit DA — erst damit
+        // sagt ihr Fehlen beim Ausweichflug etwas aus.
+        assert_eq!(normal.schwelle_ft, Some(9_487.0));
+        assert_eq!(normal.zeit_unter_schwelle_min, Some(15.8));
 
         // Woanders aufgesetzt (EDDN statt EDDM, ~60 NM): keine Phasen gegen
         // einen Plan, der nicht geflogen wurde — und keine Schwelle, die zur
@@ -66796,6 +66995,61 @@ mod sprit_messung_tests {
         assert_eq!(sprit_plan_aus_navlog(&alt), (None, None));
     }
 
+    /// Der Sinkflug darf beliebig spaet kommen — der Durchgang durch die
+    /// Plan-Reststrecke muss nur live gesehen worden sein.
+    ///
+    /// Das ist der Fall DLH 370 und damit ein Drittel des Bestands
+    /// (Korpus-Pruefung 18.09.2026: 14 von 43 Fluegen, alle vier A380
+    /// darunter). Solange Fenster UND Sinkflug im selben Tick gelten mussten,
+    /// bekamen genau die Fluege mit langer Radarfuehrung — die, fuer die
+    /// diese Auswertung gebaut wurde — ueberhaupt keinen Vergleichspunkt.
+    #[test]
+    fn sprit_messung_spaeter_sinkflug_bekommt_trotzdem_einen_punkt() {
+        let mut st = stats_im_flug();
+        // 300 NM draussen: schaltet scharf.
+        sprit_tick(&mut st, 48.35, 4.5, 40_000.0, 25_000.0, false, false, false, false, Some(1.0));
+        assert!(st.sprit_fenster_scharf);
+        // ~135 NM (im Fenster 80–100 % von 142), aber NOCH auf Reiseflughoehe
+        // — die Freigabe zum Sinken kam noch nicht.
+        sprit_tick(&mut st, 48.35, 8.4, 40_000.0, 22_231.0, false, false, false, false, Some(1.0));
+        assert!(
+            st.sprit_vergleichspunkt_kg.is_none(),
+            "ohne Sinkflug noch kein Punkt"
+        );
+        assert!(st.sprit_rest_erreicht, "der Durchgang wurde live gesehen");
+        // ~100 NM — also UNTER 80 % von 142 — und jetzt beginnt der Sinkflug.
+        sprit_tick(&mut st, 48.35, 9.3, 37_000.0, 21_500.0, false, false, false, false, Some(1.0));
+        assert_eq!(
+            st.sprit_vergleichspunkt_kg,
+            Some(21_500.0),
+            "spaeter Sinkflug muss trotzdem einen Punkt setzen"
+        );
+    }
+
+    /// Gegenprobe: Wer den Durchgang NICHT live gesehen hat, bekommt keinen
+    /// Punkt — sonst waere die Trennung wertlos.
+    ///
+    /// Ohne diesen Test wuerde auch ein Client, der erst im Endanflug
+    /// gestartet wird, „bis Sinkflug" gegen den kompletten Plan rechnen.
+    #[test]
+    fn sprit_messung_ohne_live_durchgang_kein_punkt() {
+        let mut st = stats_im_flug();
+        // Erster Tick weit draussen schaltet scharf …
+        sprit_tick(&mut st, 48.35, 4.5, 40_000.0, 25_000.0, false, false, false, false, Some(1.0));
+        assert!(st.sprit_fenster_scharf);
+        // … dann ein Tick-Loch: der naechste Tick liegt schon bei ~40 NM,
+        // weit unter 80 % von 142. Der Durchgang wurde nie gesehen.
+        sprit_tick(&mut st, 48.35, 10.8, 20_000.0, 20_000.0, false, false, false, false, Some(1.0));
+        assert!(!st.sprit_rest_erreicht, "Durchgang wurde nicht gesehen");
+        assert!(
+            st.sprit_vergleichspunkt_kg.is_none(),
+            "nach einem Tick-Loch lieber keine Phasen als falsche"
+        );
+        // Und er holt das auch spaeter nicht nach.
+        sprit_tick(&mut st, 48.35, 11.2, 10_000.0, 19_000.0, false, false, false, false, Some(1.0));
+        assert!(st.sprit_vergleichspunkt_kg.is_none());
+    }
+
     #[test]
     fn sprit_messung_vergleichspunkt_im_fenster() {
         let mut st = stats_im_flug();
@@ -66986,6 +67240,32 @@ mod sprit_messung_tests {
 mod pirep_felder_sprit_tests {
     use super::*;
 
+
+    /// „bis Sinkflug" bleibt immer in Prozent — auch über 60 %. Die
+    /// Kilogramm-Regel gilt NUR im Anflug, sonst zeigte die Webseite der GA-
+    /// Flotte Kilogramm und die drei anderen Oberflächen Prozent (QS-Abnahme).
+    #[test]
+    fn pirep_felder_sprit_hauptzahl_nur_im_anflug_in_kg() {
+        let a = landing_scoring::sprit::auswerten(&landing_scoring::sprit::SpritEingang {
+            planned_burn_kg: Some(400.0),
+            plan_bis_vergleichspunkt_kg: Some(130.0),
+            takeoff_fuel_kg: Some(900.0),
+            sprit_bei_vergleichspunkt_kg: Some(680.0), // 220 gegen Plan 130 = +69,2 %
+            landing_fuel_kg: Some(400.0),
+            tank_plausibel: true,
+            ..Default::default()
+        });
+        let p = a.bis_sinkflug.as_ref().expect("Phase");
+        assert!(p.abweichung_pct > 60.0, "Vorbedingung: {}", p.abweichung_pct);
+        let mut f = HashMap::new();
+        sprit_pirep_felder(Some(&a), &mut f);
+        assert!(
+            f["Sprit bis Sinkflug"].starts_with("+69,2 %"),
+            "bis Sinkflug muss in Prozent bleiben: {}",
+            f["Sprit bis Sinkflug"]
+        );
+    }
+
     #[test]
     fn pirep_felder_sprit_schreibt_die_fertigen_werte() {
         let a = landing_scoring::sprit::auswerten(&landing_scoring::sprit::SpritEingang {
@@ -67006,12 +67286,23 @@ mod pirep_felder_sprit_tests {
         });
         let mut f = HashMap::new();
         sprit_pirep_felder(Some(&a), &mut f);
-        assert_eq!(f["Sprit bis Sinkflug"], "-3.4 % (18688 kg / Plan 19353 kg)");
+        // Komma, schmales Leerzeichen, echtes Minuszeichen — Zeichen fuer
+        // Zeichen wie Client, Bericht und Live-Uebersicht.
+        assert_eq!(
+            f["Sprit bis Sinkflug"],
+            "\u{2212}3,4 % (18\u{202f}688 kg / Plan 19\u{202f}353 kg)"
+        );
         // Ueber 60 %: Kilogramm, wie in allen anderen Oberflaechen.
-        assert_eq!(f["Sprit Anflug"], "+3596 kg (5461 kg / Plan 1865 kg)");
-        assert_eq!(f["Zeit unter Schwelle"], "15.8 min unter 9487 ft");
+        assert_eq!(
+            f["Sprit Anflug"],
+            "+3\u{202f}596 kg (5\u{202f}461 kg / Plan 1\u{202f}865 kg)"
+        );
+        assert_eq!(f["Zeit unter Schwelle"], "15,8 min unter 9\u{202f}487 ft");
         assert_eq!(f["Final Reserve"], "intakt (341 %)");
-        assert_eq!(f["Extra Fuel"], "5178 kg getankt · 1870 kg genutzt · 3308 kg ungenutzt");
+        assert_eq!(
+            f["Extra Fuel"],
+            "5\u{202f}178 kg getankt · 1\u{202f}870 kg genutzt · 3\u{202f}308 kg ungenutzt"
+        );
         let mut leer = HashMap::new();
         sprit_pirep_felder(None, &mut leer);
         assert!(leer.is_empty());

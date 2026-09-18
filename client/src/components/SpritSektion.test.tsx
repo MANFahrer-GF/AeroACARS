@@ -10,15 +10,16 @@ import { kg, pct } from "../lib/sprit";
 
 function dlh370(): SpritAuswertung {
   return {
-    fassung: 1,
+    fassung: 2,
     bis_sinkflug: { ist_kg: 18688, plan_kg: 19353, abweichung_pct: -3.4 },
     anflug: { ist_kg: 5461, plan_kg: 1865, abweichung_pct: 192.8 },
     zeit_unter_schwelle_min: 15.8,
     schwelle_ft: 9487,
     strecke_anflug_nm: 182,
-    plan_strecke_anflug_nm: 191,
+    plan_strecke_anflug_nm: 139,
     reserve: { status: "intakt", quote_pct: 341.1 },
     reserve_kg: 4916,
+    takeoff_fuel_kg: 40919,
     landing_fuel_kg: 16770,
     extra_getankt_kg: 5178,
     extra_genutzt_kg: 1870,
@@ -182,14 +183,40 @@ describe("SpritSektion", () => {
     expect(svg.textContent).toContain("Contingency unberührt");
   });
 
-  it("zeigt zwei Marken: womit abgehoben, womit gelandet", () => {
-    const { container } = render(<SpritSektion sprit={dlh370()} />);
-    const linien = [...container.querySelectorAll("svg line")];
+  it("zeigt zwei Marken an der richtigen Stelle, mit den richtigen Zahlen", () => {
+    // Dieser Test prüft Position UND Wert. Die frühere Fassung prüfte nur,
+    // DASS eine gestrichelte Linie existiert — und blieb grün, während die
+    // Abhebe-Marke um 3 204 kg falsch lag (QS-Abnahme).
+    const a = dlh370();
+    const { container } = render(<SpritSektion sprit={a} />);
+    const svg = container.querySelector("svg")!;
+    const W = 560;
+    const x = (v: number) => (v / a.leiter!.block_kg) * W;
+    const linien = [...svg.querySelectorAll("line")];
     expect(linien.length).toBe(2);
-    const gestrichelt = linien.find((e) => e.getAttribute("stroke-dasharray"));
-    expect(gestrichelt).toBeDefined();
-    expect(container.querySelector("svg")!.textContent).toContain("abgehoben mit");
-    expect(container.querySelector("svg")!.textContent).toContain("gelandet mit");
+
+    const abheben = linien.find((e) => e.getAttribute("stroke-dasharray"))!;
+    const landung = linien.find((e) => e.getAttribute("stroke-width") === "2")!;
+    expect(Number(abheben.getAttribute("x1"))).toBeCloseTo(W - x(40919), 1);
+    expect(Number(landung.getAttribute("x1"))).toBeCloseTo(W - x(16770), 1);
+
+    // Die Etiketten nennen dieselben Zahlen.
+    expect(svg.textContent).toContain("40\u202f919");
+    expect(svg.textContent).toContain("16\u202f770");
+
+    // Und die zugesagte Eigenschaft gilt: der Abstand IST der Verbrauch.
+    const abstandKg =
+      ((Number(landung.getAttribute("x1")) - Number(abheben.getAttribute("x1"))) / W) *
+      a.leiter!.block_kg;
+    expect(abstandKg).toBeCloseTo(40919 - 16770, 0);
+  });
+
+  it("lässt die Abhebe-Marke weg, wenn der Tankstand fehlt", () => {
+    const a = dlh370();
+    a.takeoff_fuel_kg = null;
+    const { container } = render(<SpritSektion sprit={a} />);
+    expect([...container.querySelectorAll("svg line")].length).toBe(1);
+    expect(container.querySelector("svg")!.textContent).not.toContain("abgehoben mit");
   });
 
   it("kommt ohne Phasen aus und zeigt trotzdem die Reserve", () => {

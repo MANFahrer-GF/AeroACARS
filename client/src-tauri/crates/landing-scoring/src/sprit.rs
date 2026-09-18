@@ -97,16 +97,28 @@ pub enum Reserve {
     Intakt { quote_pct: f32 },
     /// Landesprit unter der geplanten Final Reserve. Gelb, nie rot.
     Unterschritten { quote_pct: f32 },
-    /// Kein OFP, kein Landesprit oder Tankwert unplausibel.
+    /// Kein OFP, kein Landesprit oder Tankwert unplausibel. Auch der
+    /// Rueckfall fuer einen Datensatz, der das Feld nicht traegt.
     NichtPruefbar { grund: String },
 }
 
+impl Default for Reserve {
+    fn default() -> Self {
+        Reserve::NichtPruefbar {
+            grund: "unbekannt".into(),
+        }
+    }
+}
+
 /// Das Badge im Kopf der Landung. Nur drei Farben, nie rot, keine Zahl.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Badge {
     Gruen,
     Gelb,
+    /// Auch der Rueckfall: „keine Aussage" ist die ehrliche Antwort, wenn
+    /// ein Datensatz das Feld nicht traegt.
+    #[default]
     Grau,
 }
 
@@ -125,7 +137,20 @@ pub struct Leiter {
 /// Das Ergebnis. Wird 1:1 in den Payload geschrieben und ueberall nur
 /// gerendert. `fassung` steigt, wenn sich die Bedeutung eines Feldes
 /// aendert, damit Anzeigen alte Datensaetze richtig lesen.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// # Warum `#[serde(default)]` am ganzen Typ
+///
+/// `fassung` verspricht, dass eine spaetere Fassung einen aelteren Datensatz
+/// noch lesen kann. Ohne `default` haelt serde das nicht: ein fehlendes Feld
+/// ist ein harter Fehler. `LandingRecord.sprit` traegt zwar `default`, aber
+/// das greift nur, wenn das ganze Objekt fehlt — nicht, wenn es da ist und
+/// ein Feld vermisst. Und `storage::read_all` liest `landings.json` als EINEN
+/// `Vec<LandingRecord>`: ein einziger Datensatz aelterer Fassung wuerde die
+/// gesamte lokale Landungs-Historie in den Fehlerzweig kippen und als
+/// `landings.json.corrupt-…` beiseitelegen. Genau das ist beim Sprung von
+/// Fassung 1 auf 2 (`takeoff_fuel_kg`) moeglich geworden.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SpritAuswertung {
     pub fassung: u8,
     pub bis_sinkflug: Option<Phase>,
@@ -136,6 +161,11 @@ pub struct SpritAuswertung {
     pub plan_strecke_anflug_nm: Option<f32>,
     pub reserve: Reserve,
     pub reserve_kg: Option<f32>,
+    /// Tankstand beim Abheben. Steht hier, weil er sich aus den uebrigen
+    /// Feldern nicht rekonstruieren laesst: Bleibt der Mehrverbrauch unter
+    /// der Contingency, taucht er in `extra_genutzt_kg` gar nicht auf. Die
+    /// Anzeige braucht ihn fuer die Abhebe-Marke der Sprit-Leiter.
+    pub takeoff_fuel_kg: Option<f32>,
     pub landing_fuel_kg: Option<f32>,
     pub extra_getankt_kg: Option<f32>,
     pub extra_genutzt_kg: Option<f32>,
@@ -146,7 +176,11 @@ pub struct SpritAuswertung {
     pub badge: Badge,
 }
 
-pub const SPRIT_AUSWERTUNG_FASSUNG: u8 = 1;
+/// Fassung 2 (v1.7.35, nach der Abnahme): `takeoff_fuel_kg` kam dazu. Ohne
+/// das Feld rechnete die Anzeige den Abhebe-Tankstand zurueck — und lag bei
+/// DLH370 um 3 204 kg daneben, weil der Mehrverbrauch bei unverbrauchter
+/// Contingency in keinem der uebrigen Felder steckt.
+pub const SPRIT_AUSWERTUNG_FASSUNG: u8 = 2;
 
 /// Unterhalb dieses geplanten Anflugverbrauchs ist der Prozentwert ohne
 /// Aussage (Division durch fast null).
@@ -316,6 +350,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         },
         reserve: reserve_status,
         reserve_kg: reserve.map(|v| v.round()),
+        takeoff_fuel_kg: takeoff.map(|v| v.round()),
         landing_fuel_kg: landing.map(|v| v.round()),
         extra_getankt_kg: extra_getankt,
         extra_genutzt_kg: extra_genutzt,
@@ -355,6 +390,57 @@ mod tests {
             tank_plausibel: true,
             ausweichflug: false,
         }
+    }
+
+    /// Ein Datensatz der Fassung 1 — ohne `takeoff_fuel_kg` — muss lesbar
+    /// bleiben.
+    ///
+    /// Sonst kippt `storage::read_all` die GANZE `landings.json` in den
+    /// Fehlerzweig (sie wird als ein einziger `Vec<LandingRecord>` gelesen),
+    /// und die komplette lokale Landungs-Historie verschwindet aus der
+    /// Oberflaeche. Der Test faellt, sobald jemand `#[serde(default)]` an
+    /// `SpritAuswertung` entfernt oder ein neues Feld ohne Rueckfall ergaenzt.
+    #[test]
+    fn sprit_auswertung_aeltere_fassung_bleibt_lesbar() {
+        // Genau die Felder der Fassung 1, kein `takeoff_fuel_kg`.
+        let alt = r#"{
+            "fassung": 1,
+            "bis_sinkflug": { "ist_kg": 18688.0, "plan_kg": 19353.0, "abweichung_pct": -3.4 },
+            "anflug": null,
+            "zeit_unter_schwelle_min": 15.8,
+            "schwelle_ft": 9487.0,
+            "strecke_anflug_nm": 182.0,
+            "plan_strecke_anflug_nm": 139.0,
+            "reserve": { "status": "intakt", "quote_pct": 341.1 },
+            "reserve_kg": 4916.0,
+            "landing_fuel_kg": 16770.0,
+            "extra_getankt_kg": 5178.0,
+            "extra_genutzt_kg": 1870.0,
+            "extra_ungenutzt_kg": 3308.0,
+            "contingency_verbraucht": false,
+            "alternate_und_reserve_intakt": true,
+            "leiter": null,
+            "badge": "gruen"
+        }"#;
+        let a: SpritAuswertung = serde_json::from_str(alt).expect("Fassung 1 muss lesbar sein");
+        assert_eq!(a.fassung, 1, "die Fassung bleibt stehen, sie wird nicht hochgelogen");
+        assert_eq!(a.takeoff_fuel_kg, None, "das fehlende Feld wird zu None");
+        // Gegenprobe: Die uebrigen Werte kommen unveraendert an — der
+        // Rueckfall darf nicht alles auf Default ziehen.
+        assert_eq!(a.landing_fuel_kg, Some(16_770.0));
+        assert_eq!(a.plan_strecke_anflug_nm, Some(139.0));
+        assert_eq!(a.badge, Badge::Gruen);
+        assert_eq!(a.reserve, Reserve::Intakt { quote_pct: 341.1 });
+    }
+
+    /// Gegenprobe zur Rueckwaertstoleranz: Ein voellig leeres Objekt ergibt
+    /// den ehrlichen Leerstand — Grau und „nicht pruefbar", nicht Gruen.
+    #[test]
+    fn sprit_auswertung_leeres_objekt_ist_grau_und_nicht_pruefbar() {
+        let a: SpritAuswertung = serde_json::from_str("{}").expect("leer muss lesbar sein");
+        assert_eq!(a.badge, Badge::Grau);
+        assert!(matches!(a.reserve, Reserve::NichtPruefbar { .. }));
+        assert_eq!(a.fassung, 0, "keine Fassung behauptet, wo keine stand");
     }
 
     #[test]
@@ -603,6 +689,18 @@ mod tests {
         }
     }
 
+    /// Der Abhebe-Tankstand steht im Ergebnis und ist nicht geraten.
+    #[test]
+    fn sprit_auswertung_nennt_den_abhebe_tankstand() {
+        let a = auswerten(&dlh370());
+        assert_eq!(a.takeoff_fuel_kg, Some(40_919.0));
+        assert_eq!(a.landing_fuel_kg, Some(16_770.0));
+        // Und die Differenz ist der Trip-Verbrauch — die Aussage, die die
+        // beiden Marken der Sprit-Leiter machen.
+        let verbrauch = a.takeoff_fuel_kg.unwrap() - a.landing_fuel_kg.unwrap();
+        assert_eq!(verbrauch, 24_149.0);
+    }
+
     /// Das Ergebnis ist das Wire-Format: Enum-Tags und Feldnamen sind
     /// Vertrag mit Webapp und Client-Oberflaeche.
     #[test]
@@ -611,7 +709,7 @@ mod tests {
         let json = serde_json::to_string(&a).expect("json");
         assert!(json.contains("\"reserve\":{\"status\":\"intakt\",\"quote_pct\":341.1}"), "{json}");
         assert!(json.contains("\"badge\":\"gruen\""), "{json}");
-        assert!(json.contains("\"fassung\":1"), "{json}");
+        assert!(json.contains("\"fassung\":2"), "{json}");
         let zurueck: SpritAuswertung = serde_json::from_str(&json).expect("roundtrip");
         assert_eq!(zurueck, a);
     }
