@@ -525,6 +525,10 @@ mod tests {
             // 41 644 kg, abgestellt mit 16 121 kg.
             engine_start_fuel_kg: Some(41_644.0),
             engine_off_fuel_kg: Some(16_121.0),
+            // Kein Navlog-Trip: Der Golden-Test deckt damit den Rueckfall auf
+            // den OFP-Trip ab. Den Navlog-Weg prueft
+            // `sprit_phasen_summieren_sich_auf_den_navlog_trip`.
+            plan_trip_navlog_kg: None,
             tank_plausibel: true,
             ausweichflug: false,
         }
