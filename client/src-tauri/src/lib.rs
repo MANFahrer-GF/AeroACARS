@@ -12913,7 +12913,7 @@ fn apply_route_only_to_stats(stats: &mut FlightStats, ofp: &api_client::SimBrief
         // v1.7.36: Der Anker (Plan-Reststrecke ab TOD) stammte aus den ALTEN
         // Wegpunkten. Anker und Projektion muessen aus derselben Route kommen
         // (QS-Befund V4, 18.09.2026).
-        sprit_plan_neu_lesen(&mut stats);
+        sprit_plan_neu_lesen(stats);
     }
     // Alternate nur uebernehmen wenn der OFP einen nicht-leeren liefert —
     // sonst den schon vorhandenen behalten (kein Loeschen durch Sync).
@@ -55979,7 +55979,8 @@ mod touchdown_metadata_stamp_tests {
     /// post-derotation pitch, bled-off IAS, drifted position. If any of
     /// these leak into the stamped landing_* fields while the buffer holds
     /// a TD sample, the fallback chain is broken.
-    fn rollout_snap() -> SimSnapshot {
+    /// Auch vom Sprit-Test ueber die echte Kette benutzt.
+    pub(super) fn rollout_snap() -> SimSnapshot {
         SimSnapshot {
             lat: 51.001,
             lon: 12.001,
@@ -67708,7 +67709,7 @@ mod sprit_messung_tests {
         st.distance_nm = 782.0;
 
         // Aufsetzen — durch den ECHTEN Stempel, der die Auswertung einfriert.
-        let mut snap = rollout_snap();
+        let mut snap = crate::touchdown_metadata_stamp_tests::rollout_snap();
         snap.lat = 48.3538;
         snap.lon = 11.7861;
         snap.fuel_total_kg = 16_770.0;
