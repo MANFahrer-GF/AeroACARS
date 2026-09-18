@@ -404,9 +404,6 @@
       "reserve_label": "Final reserve",
       "reserve_zeile_intakt": "✓ intact — landed with {{ldg}} kg, reserve {{res}} kg ({{q}} %)",
       "reserve_zeile_unter": "⚠ landed below final reserve — {{ldg}} kg, reserve {{res}} kg ({{q}} %)",
-      "reserve_grund_kein_ofp": "not verifiable — no OFP",
-      "reserve_grund_kein_landesprit": "not verifiable — no landing fuel recorded",
-      "reserve_grund_tank_unplausibel": "not verifiable — implausible tank reading",
       "extra_label": "Extra fuel",
       "extra_zeile": "{{getankt}} kg loaded · {{genutzt}} kg used · {{ungenutzt}} kg unused",
       "report_bis_sinkflug": "To TOD · vs plan",
@@ -415,7 +412,24 @@
       "report_reserve": "Final reserve",
       "report_extra": "Extra fuel",
       "abgehoben_mit": "took off with {{kg}} kg",
-      "extra_detail": "{{genutzt}} kg used · {{ungenutzt}} kg unused"
+      "extra_detail": "{{genutzt}} kg used · {{ungenutzt}} kg unused",
+      "leiter_uebertankung": "Over-fuel",
+      "reserve_grund": {
+        "kein_ofp": "not verifiable — no OFP",
+        "kein_landesprit": "not verifiable — no landing fuel recorded",
+        "tank_unplausibel": "not verifiable — implausible tank reading"
+      },
+      "hint_bis_sinkflug": "Fuel burnt up to the actual start of descent, against the OFP plan — the phase you control.",
+      "hint_anflug": "Fuel burnt from start of descent against plan. Vectoring, intermediate levels and transitions are ATC’s call — hence no score.",
+      "hint_schwelle": "Time below {{ft}} ft (field elevation + 8,000 ft, capped below cruise level). Pauses excluded.",
+      "hint_schwelle_ohne": "Time below the approach threshold.",
+      "hint_reserve": "Landing fuel against the planned final reserve. Going below is a note — no score, no block.",
+      "na_kein_vergleichspunkt": "no reference point measured",
+      "na_keine_messung": "not measured",
+      "na_reserve": "no OFP, or fuel reading implausible",
+      "unter_schwelle": "Below threshold",
+      "rollen_vor_start": "Taxi out",
+      "rollen_nach_landung": "Taxi in after landing: {{kg}} kg"
     },
     "confidence": {
       "high": "Confidence: High",

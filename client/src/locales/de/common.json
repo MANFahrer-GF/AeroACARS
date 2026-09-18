@@ -404,9 +404,6 @@
       "reserve_label": "Final Reserve",
       "reserve_zeile_intakt": "✓ intakt — {{ldg}} kg gelandet, Reserve {{res}} kg ({{q}} %)",
       "reserve_zeile_unter": "⚠ unter Final Reserve gelandet — {{ldg}} kg, Reserve {{res}} kg ({{q}} %)",
-      "reserve_grund_kein_ofp": "nicht prüfbar — kein OFP",
-      "reserve_grund_kein_landesprit": "nicht prüfbar — kein Landesprit erfasst",
-      "reserve_grund_tank_unplausibel": "nicht prüfbar — Tankwert unplausibel",
       "extra_label": "Extra Fuel",
       "extra_zeile": "{{getankt}} kg getankt · {{genutzt}} kg genutzt · {{ungenutzt}} kg ungenutzt",
       "report_bis_sinkflug": "Bis Sinkflug · gegen Plan",
@@ -415,7 +412,24 @@
       "report_reserve": "Final Reserve",
       "report_extra": "Extra Fuel",
       "abgehoben_mit": "abgehoben mit {{kg}} kg",
-      "extra_detail": "{{genutzt}} kg genutzt · {{ungenutzt}} kg ungenutzt"
+      "extra_detail": "{{genutzt}} kg genutzt · {{ungenutzt}} kg ungenutzt",
+      "leiter_uebertankung": "Übertankung",
+      "reserve_grund": {
+        "kein_ofp": "nicht prüfbar — kein OFP",
+        "kein_landesprit": "nicht prüfbar — kein Landesprit erfasst",
+        "tank_unplausibel": "nicht prüfbar — Tankwert unplausibel"
+      },
+      "hint_bis_sinkflug": "Verbrauch bis zum tatsächlichen Sinkflugbeginn gegen den OFP-Plan — die Phase, die ihr steuert.",
+      "hint_anflug": "Verbrauch ab Sinkflugbeginn gegen Plan. Radarführung, Zwischenhöhen und Transitions bestimmt die Flugsicherung — deshalb ohne Note.",
+      "hint_schwelle": "Zeit unterhalb {{ft}} ft (Platzhöhe + 8 000 ft, gedeckelt unter der Reiseflughöhe). Pausen abgezogen.",
+      "hint_schwelle_ohne": "Zeit unterhalb der Anflugschwelle.",
+      "hint_reserve": "Landesprit gegen die geplante Final Reserve. Eine Unterschreitung ist ein Hinweis — keine Note, keine Blockierung.",
+      "na_kein_vergleichspunkt": "kein Vergleichspunkt gemessen",
+      "na_keine_messung": "keine Messung",
+      "na_reserve": "kein OFP oder Tankwert unplausibel",
+      "unter_schwelle": "Unter Schwelle",
+      "rollen_vor_start": "Rollen vor Start",
+      "rollen_nach_landung": "Rollen nach der Landung: {{kg}} kg"
     },
     "confidence": {
       "high": "Confidence: Hoch",

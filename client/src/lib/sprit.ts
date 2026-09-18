@@ -13,6 +13,16 @@ export interface SpritPhase {
   plan_kg: number;
   /** Eine Nachkommastelle, gerundet vom Client. */
   abweichung_pct: number;
+  /**
+   * Gehört die Hauptzahl in Kilogramm statt in Prozent?
+   *
+   * Die Rechnung entscheidet das (`sprit.rs`), nicht die Anzeige. Bis
+   * v1.7.35 stand dieselbe 60-%-Regel an VIER Stellen — Client, Live-
+   * Übersicht, Bericht und die PIREP-Felder für die GSG-Webseite. Wer eine
+   * ändert, lässt die anderen lautlos zurück, und der Pilot liest im
+   * Client „−12 kg" und auf der Webseite „−8,3 %".
+   */
+  als_kg: boolean;
 }
 
 export type SpritReserve =
@@ -52,6 +62,15 @@ export interface SpritAuswertung {
   contingency_verbraucht: boolean | null;
   alternate_und_reserve_intakt: boolean | null;
   leiter: SpritLeiter | null;
+  /** v1.7.36: Rollen vor dem Start, gegen den geplanten Taxi-Anteil. */
+  rollen_vor_start: SpritPhase | null;
+  /**
+   * Rollen nach der Landung — nur die Zahl, kein Plan.
+   *
+   * SimBrief plant einen einzigen Taxi-Block, und der gilt dem Weg zum
+   * Start. Für den Weg zurück zum Stand gibt es nichts zu vergleichen.
+   */
+  rollen_nach_landung_kg: number | null;
   badge: SpritBadge;
 }
 
@@ -95,8 +114,8 @@ export function pct(v: number | null | undefined): string {
  */
 export function phaseTon(
   p: SpritPhase | null,
-  art: "bis_sinkflug" | "anflug" = "bis_sinkflug",
-): "ok" | "warn" | "neutral" {
+  art: "bis_sinkflug" | "anflug",
+): "ok" | "neutral" {
   if (!p) return "neutral";
   if (art === "anflug") return "neutral";
   return p.abweichung_pct <= 3 ? "ok" : "neutral";
@@ -125,8 +144,34 @@ export function diffKg(p: SpritPhase | null | undefined): string {
  * etwas, und laut Modul-Kopf gehört diese Phase ohnehin nicht dem Piloten.
  * Deshalb steht dort die Differenz in Kilogramm.
  */
-export function hauptzahl(p: SpritPhase | null | undefined, phase: "bis_sinkflug" | "anflug"): string {
-  if (!p) return "—";
-  if (phase === "anflug" && Math.abs(p.abweichung_pct) > 60) return diffKg(p);
-  return pct(p.abweichung_pct);
+export function hauptzahl(
+  p: SpritPhase | null | undefined,
+  _phase?: "bis_sinkflug" | "anflug",
+): { wert: string; einheit: string } {
+  if (!p) return { wert: "", einheit: "" };
+  // v1.7.36: Die Entscheidung trifft die Rechnung (`als_kg`), nicht die
+  // Anzeige. Bis dahin stand die 60-%-Regel an vier Stellen; wer eine
+  // änderte, ließ die anderen lautlos zurück.
+  if (p.als_kg) {
+    return { wert: diffKg(p).replace(/\s*kg$/, ""), einheit: "kg" };
+  }
+  return { wert: pct(p.abweichung_pct).replace(/\s*%$/, ""), einheit: "%" };
+}
+
+/**
+ * Dieselbe Zahl als ein Stück Text — für Stellen, die keine zwei Elemente
+ * setzen können (Fließtext, PDF, PIREP-Feld).
+ *
+ * Wert und Einheit stehen getrennt in `hauptzahl`, weil die Live-Übersicht
+ * die Einheit kleiner setzt. Wer sie zusammen braucht, ruft das hier —
+ * statt eine zweite Regel danebenzustellen. Genau daran sind Client und
+ * Webapp bis v1.7.35 auseinandergelaufen.
+ */
+export function hauptzahlText(
+  p: SpritPhase | null | undefined,
+  phase: "bis_sinkflug" | "anflug",
+): string {
+  const h = hauptzahl(p, phase);
+  if (!h.wert) return "—";
+  return `${h.wert} ${h.einheit}`;
 }

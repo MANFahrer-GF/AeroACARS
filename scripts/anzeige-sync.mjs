@@ -73,6 +73,14 @@ export const DATEIEN = [
   // identisch zur Bewertung. Beide Grafiken (LandingPanel, _ApproachChart)
   // zeichnen das Band nur hieraus.
   "lib/anflugSollband.ts",
+  // v1.7.36: Die Sprit-Auswertung. Sie lief bis dahin zweimal — Client und
+  // Live-Uebersicht mit je eigener Fassung, beide mit Kommentaren, die
+  // Gleichheit zusagten, und trotzdem auseinander: In der Webapp waren
+  // `strecke_anflug_nm`, `plan_strecke_anflug_nm` und `takeoff_fuel_kg`
+  // typisiert und wurden nie angezeigt, die Sprit-Leiter fehlte ganz.
+  // Dieselbe Fehlerklasse wie bei der Bahn-Grafik, dieselbe Antwort.
+  "components/SpritSektion.tsx",
+  "lib/sprit.ts",
 ];
 
 /**

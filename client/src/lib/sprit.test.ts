@@ -13,6 +13,7 @@ const phase = (pct: number): SpritPhase => ({
   ist_kg: 1000,
   plan_kg: 1000,
   abweichung_pct: pct,
+  als_kg: false,
 });
 
 describe("phaseTon", () => {

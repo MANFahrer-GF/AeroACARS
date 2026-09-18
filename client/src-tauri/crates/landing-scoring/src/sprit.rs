@@ -76,6 +76,10 @@ pub struct SpritEingang {
     /// (Auslesefehler, nur zwei von vier Tanks, Sprung). Dann gibt es
     /// „nicht pruefbar" statt einer falschen Warnung.
     pub tank_plausibel: bool,
+    /// v1.7.36: Tankstand, als die Triebwerke anliefen, und als sie
+    /// ausgingen. Beide an ein Ereignis gerastet (`sprit_boden_marken`).
+    pub engine_start_fuel_kg: Option<f32>,
+    pub engine_off_fuel_kg: Option<f32>,
 }
 
 /// Eine Flugphase: was gebraucht wurde, was geplant war, Abweichung in
@@ -86,6 +90,20 @@ pub struct Phase {
     pub ist_kg: f32,
     pub plan_kg: f32,
     pub abweichung_pct: f32,
+    /// Soll die Hauptzahl in Kilogramm stehen statt in Prozent?
+    ///
+    /// # Warum das hier entschieden wird
+    ///
+    /// Ueber 60 % sagt ein Prozentwert nichts mehr — der Anflug-Plan ist im
+    /// Median nur 6,5 % des Trips, und dort ergeben schon 129 kg
+    /// Mehrverbrauch +47 %. Die Regel selbst ist eine Zeile, aber sie stand
+    /// bis v1.7.35 an VIER Stellen: im Client, in der Live-Uebersicht, im
+    /// Bericht und in den PIREP-Feldern fuer die GSG-Webseite. Aendert
+    /// jemand eine, driftet die vierte lautlos — und der Pilot liest im
+    /// Client „−12 kg" und auf der Webseite „−8,3 %".
+    ///
+    /// Deshalb entscheidet es die Rechnung, und die Anzeigen folgen.
+    pub als_kg: bool,
 }
 
 /// Stand der Final Reserve beim Aufsetzen.
@@ -173,14 +191,57 @@ pub struct SpritAuswertung {
     pub contingency_verbraucht: Option<bool>,
     pub alternate_und_reserve_intakt: Option<bool>,
     pub leiter: Option<Leiter>,
+    /// v1.7.36: Rollen vor dem Start, gegen den geplanten Taxi-Anteil.
+    ///
+    /// Erst damit ist der Flug lueckenlos abgedeckt: Bis v1.7.35 begann die
+    /// Auswertung beim Abheben und endete beim Aufsetzen — bei einem A380
+    /// blieben so vierstellige Kilogramm unerwaehnt.
+    pub rollen_vor_start: Option<Phase>,
+    /// Rollen nach der Landung — **ohne Plan**, nur die Zahl.
+    ///
+    /// SimBrief plant genau EINEN Taxi-Block, und der gilt dem Weg zum
+    /// Start; `planned_burn_kg` beginnt beim Abheben. Fuer den Weg zurueck
+    /// zum Stand gibt es also nichts zu vergleichen. Das ist kein Mangel,
+    /// sondern die Wahrheit ueber das OFP — und es passt zur Hausform
+    /// „zeigen, nicht benoten".
+    pub rollen_nach_landung_kg: Option<f32>,
     pub badge: Badge,
 }
 
-/// Fassung 2 (v1.7.35, nach der Abnahme): `takeoff_fuel_kg` kam dazu. Ohne
-/// das Feld rechnete die Anzeige den Abhebe-Tankstand zurueck — und lag bei
-/// DLH370 um 3 204 kg daneben, weil der Mehrverbrauch bei unverbrauchter
-/// Contingency in keinem der uebrigen Felder steckt.
-pub const SPRIT_AUSWERTUNG_FASSUNG: u8 = 2;
+/// Die Fassung dieser Auswertung — **Diagnose, keine Weiche.**
+///
+/// Sie sagt einem Leser (Mensch oder Werkzeug), nach welcher Regel die
+/// Zahlen entstanden sind. Der Code verzweigt NICHT auf sie; ein aelterer
+/// Datensatz bleibt lesbar, weil `#[serde(default)]` am Typ steht, nicht
+/// weil hier eine Fallunterscheidung haengt. Wer das aendern will, muss
+/// zuerst die Anzeigen anfassen — heute wertet sie niemand aus.
+///
+/// # Was die Fassungen bedeuten
+///
+/// * **1** (v1.7.35, erster Wurf): `plan_kg` beider Phasen stammt vom
+///   TOD-Fix des Navlogs.
+/// * **2** (v1.7.35, nach der Abnahme): `takeoff_fuel_kg` kam dazu. Ohne das
+///   Feld rechnete die Anzeige den Abhebe-Tankstand zurueck — und lag bei
+///   DLH 370 um 3 204 kg daneben, weil der Mehrverbrauch bei unverbrauchter
+///   Contingency in keinem der uebrigen Felder steckt.
+/// * **3** (v1.7.36): `plan_kg` und `plan_strecke_anflug_nm` gehoeren jetzt
+///   zum GEMESSENEN Ort, nicht mehr zum TOD-Fix (`sprit_plan_am_ort`).
+///   Derselbe Flug bekommt unter Fassung 2 und 3 verschiedene Zahlen — bei
+///   14 von 39 Fluegen lag der Messpunkt unter 80 % der Plan-Reststrecke,
+///   und dort wurde ein kurzes Ist-Stueck gegen einen vollen Plan
+///   gerechnet. Dazu kommen `rollen_vor_start` und
+///   `rollen_nach_landung_kg`: der Flug ist erst damit lueckenlos
+///   abgedeckt, von den Triebwerken an bis zu den Triebwerken aus.
+pub const SPRIT_AUSWERTUNG_FASSUNG: u8 = 3;
+
+/// Unterhalb dieses geplanten Rollverbrauchs ist der Prozentwert ohne
+/// Aussage. Ein Bizjet plant 60 kg Taxi; bei 20 kg Plan waeren 10 kg
+/// Unterschied schon 50 %.
+const MIN_PLAN_ROLLEN_KG: f32 = 30.0;
+
+/// Ab dieser Abweichung sagt ein Prozentwert nichts mehr — dann steht die
+/// Differenz in Kilogramm. Siehe `Phase::als_kg`.
+const MAX_LESBARER_PROZENTWERT: f32 = 60.0;
 
 /// Unterhalb dieses geplanten Anflugverbrauchs ist der Prozentwert ohne
 /// Aussage (Division durch fast null).
@@ -233,6 +294,10 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                 ist_kg: (to - vp).round(),
                 plan_kg: plan.round(),
                 abweichung_pct: pct((to - vp).round(), plan.round()),
+                // „bis Sinkflug" bleibt IMMER in Prozent: Der Plan-Anteil
+                // ist dort gross genug, dass die Quote etwas aussagt. Sonst
+                // saehe die GA-Flotte hier Kilogramm und anderswo Prozent.
+                als_kg: false,
             }),
             _ => None,
         };
@@ -247,6 +312,8 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                     ist_kg: (vp - ldg).round(),
                     plan_kg: (burn - plan).round(),
                     abweichung_pct: pct((vp - ldg).round(), (burn - plan).round()),
+                    als_kg: pct((vp - ldg).round(), (burn - plan).round()).abs()
+                        > MAX_LESBARER_PROZENTWERT,
                 })
             }
             _ => None,
@@ -254,6 +321,27 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         (bis, an)
     } else {
         (None, None)
+    };
+
+    // ---- Rollen, vor dem Start und nach der Landung ----
+    //
+    // Beide Marken sind an ein Ereignis gerastet, nicht laufend gefuehrt —
+    // sonst stuende hier bei jedem zweiten Flug Unsinn (siehe
+    // `sprit_boden_marken`).
+    let rollen_vor_start = match (positiv(e.engine_start_fuel_kg), takeoff, positiv(e.planned_taxi_kg)) {
+        (Some(an), Some(to), Some(plan)) if an > to && plan >= MIN_PLAN_ROLLEN_KG => Some(Phase {
+            ist_kg: (an - to).round(),
+            plan_kg: plan.round(),
+            abweichung_pct: pct((an - to).round(), plan.round()),
+            // Beim Rollen ist der Plan klein (ein Bizjet plant 60 kg), aber
+            // die Abweichung auch — hier bleibt Prozent lesbar.
+            als_kg: false,
+        }),
+        _ => None,
+    };
+    let rollen_nach_landung_kg = match (landing, positiv(e.engine_off_fuel_kg)) {
+        (Some(ldg), Some(aus)) if ldg > aus => Some((ldg - aus).round()),
+        _ => None,
     };
 
     // ---- Reserve ----
@@ -358,6 +446,8 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         contingency_verbraucht,
         alternate_und_reserve_intakt: alt_res_intakt,
         leiter,
+        rollen_vor_start,
+        rollen_nach_landung_kg,
         badge,
     }
 }
@@ -387,6 +477,10 @@ mod tests {
             planned_reserve_kg: Some(4_916.0),
             planned_extra_kg: Some(5_178.0),
             planned_block_fuel_kg: Some(41_644.0),
+            // Die echten Boden-Marken dieses Fluges: angelassen mit
+            // 41 644 kg, abgestellt mit 16 121 kg.
+            engine_start_fuel_kg: Some(41_644.0),
+            engine_off_fuel_kg: Some(16_121.0),
             tank_plausibel: true,
             ausweichflug: false,
         }

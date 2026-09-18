@@ -11,8 +11,8 @@ import { kg, pct } from "../lib/sprit";
 function dlh370(): SpritAuswertung {
   return {
     fassung: 2,
-    bis_sinkflug: { ist_kg: 18688, plan_kg: 19353, abweichung_pct: -3.4 },
-    anflug: { ist_kg: 5461, plan_kg: 1865, abweichung_pct: 192.8 },
+    bis_sinkflug: { ist_kg: 18688, plan_kg: 19353, abweichung_pct: -3.4, als_kg: false },
+    anflug: { ist_kg: 5461, plan_kg: 1865, abweichung_pct: 192.8, als_kg: true },
     zeit_unter_schwelle_min: 15.8,
     schwelle_ft: 9487,
     strecke_anflug_nm: 182,
@@ -74,6 +74,18 @@ describe("SpritBadge", () => {
   });
 });
 
+/**
+ * Die Skala der Leiter — sie traegt seit v1.7.36 die Uebertankung mit.
+ *
+ * Wer mehr tankt als geplant, hat Sprit an Bord, den der Plan-Block nicht
+ * kennt. Ohne ihn liefen Grafik und Textzeile 273 kg auseinander (DLH 370),
+ * und die Abhebe-Marke wurde beim Tankern auf x=0 geklemmt.
+ */
+function skalaVon(a: SpritAuswertung): number {
+  const l = a.leiter!;
+  return l.block_kg + Math.max(0, (a.takeoff_fuel_kg ?? 0) + l.taxi_kg - l.block_kg);
+}
+
 describe("SpritSektion", () => {
   it("zeigt beide Phasen mit Ist, Plan und Abweichung", () => {
     render(<SpritSektion sprit={dlh370()} />);
@@ -117,8 +129,9 @@ describe("SpritSektion", () => {
     const { container } = render(<SpritSektion sprit={dlh370()} />);
     const svg = container.querySelector("svg");
     expect(svg).not.toBeNull();
-    // Sechs Segmente der Leiter.
-    expect(svg!.querySelectorAll("rect").length).toBe(6);
+    // Sieben Segmente: die sechs Plan-Bloecke plus die Uebertankung, die
+    // DLH 370 mit 273 kg hat.
+    expect(svg!.querySelectorAll("rect").length).toBe(7);
     // Zwei Marken: womit abgehoben (gestrichelt), womit gelandet (kräftig).
     expect(svg!.querySelectorAll("line").length).toBe(2);
     expect(svg!.textContent).toContain("gelandet mit");
@@ -134,8 +147,7 @@ describe("SpritSektion", () => {
     const { container } = render(<SpritSektion sprit={a} />);
     const svg = container.querySelector("svg")!;
     const W = 560;
-    const l = a.leiter!;
-    const x = (v: number) => (v / l.block_kg) * W;
+    const x = (v: number) => (v / skalaVon(a)) * W;
     const landung = [...svg.querySelectorAll("line")].find(
       (e) => e.getAttribute("stroke-width") === "2",
     )!;
@@ -147,7 +159,7 @@ describe("SpritSektion", () => {
   it("zeigt bei moderatem Anflug den Prozentwert als Hauptzahl", () => {
     // Die kg-Darstellung greift erst bei unlesbaren Prozenten (> 60 %).
     const a = dlh370();
-    a.anflug = { ist_kg: 2000, plan_kg: 1865, abweichung_pct: 7.2 };
+    a.anflug = { ist_kg: 2000, plan_kg: 1865, abweichung_pct: 7.2, als_kg: false };
     render(<SpritSektion sprit={a} />);
     const t = screen.getByTestId("sprit-sektion").textContent ?? "";
     expect(t).toContain("+7,2 %");
@@ -170,7 +182,7 @@ describe("SpritSektion", () => {
     const svg = container.querySelector("svg")!;
     const W = 560;
     const l = a.leiter!;
-    const x = (v: number) => (v / l.block_kg) * W;
+    const x = (v: number) => (v / skalaVon(a)) * W;
     const linien = [...svg.querySelectorAll("line")];
     // Die kräftige Marke ist die Landung.
     const landung = linien.find((e) => e.getAttribute("stroke-width") === "2")!;
@@ -191,7 +203,7 @@ describe("SpritSektion", () => {
     const { container } = render(<SpritSektion sprit={a} />);
     const svg = container.querySelector("svg")!;
     const W = 560;
-    const x = (v: number) => (v / a.leiter!.block_kg) * W;
+    const x = (v: number) => (v / skalaVon(a)) * W;
     const linien = [...svg.querySelectorAll("line")];
     expect(linien.length).toBe(2);
 
@@ -207,7 +219,7 @@ describe("SpritSektion", () => {
     // Und die zugesagte Eigenschaft gilt: der Abstand IST der Verbrauch.
     const abstandKg =
       ((Number(landung.getAttribute("x1")) - Number(abheben.getAttribute("x1"))) / W) *
-      a.leiter!.block_kg;
+      skalaVon(a);
     expect(abstandKg).toBeCloseTo(40919 - 16770, 0);
   });
 
@@ -231,21 +243,26 @@ describe("SpritSektion", () => {
 
 
   it("zeichnet die Leiter in Verbrauchsreihenfolge, sodass die Landemarke den Text trifft", () => {
-    // Bei DLH370 bleiben 3581 kg Extra ungenutzt. Von rechts gemessen liegt
-    // die Marke damit genau an der Grenze Extra|Alternate — also NICHT im
-    // Alternate-Block, passend zur Zeile „Alternate + Final Reserve
-    // unangetastet". Genau dieser Widerspruch war ein QS-Befund.
+    // Bei DLH 370 bleiben **3 308 kg** Extra ungenutzt — das ist die Zahl
+    // aus der Auswertung. Bis v1.7.35 stand hier 3 581: die Grafik rechnete
+    // gegen den geplanten Block, die Zeile gegen den tatsächlichen
+    // Abhebestand, und die 273 kg Übertankung dazwischen fehlten in der
+    // Leiter ganz. Seit die Übertankung ein eigenes Segment hat, treffen
+    // beide denselben Punkt.
     const a = dlh370();
     const { container } = render(<SpritSektion sprit={a} />);
     const svg = container.querySelector("svg")!;
     const rects = [...svg.querySelectorAll("rect")];
     const W = 560;
     const l = a.leiter!;
-    const x = (v: number) => (v / l.block_kg) * W;
-    // Reihenfolge der Segmente: Taxi, Trip, Contingency, Extra, Alternate, Reserve.
+    const x = (v: number) => (v / skalaVon(a)) * W;
+    // Reihenfolge: Taxi, Trip, Contingency, Extra, Übertankung, Alternate,
+    // Reserve. Die Übertankung steht zwischen Extra und Alternate, weil
+    // `sprit.rs` sie genauso verrechnet.
     const breiten = rects.map((r) => Number(r.getAttribute("width")));
     expect(breiten[3]).toBeCloseTo(x(l.extra_kg), 1);
-    expect(breiten[4]).toBeCloseTo(x(l.alternate_kg), 1);
+    expect(breiten[4]).toBeCloseTo(x(273), 1);
+    expect(breiten[5]).toBeCloseTo(x(l.alternate_kg), 1);
     // Von der Marke bis zum rechten Rand steht, was gelandet ist. Rechts
     // liegen Alternate + Reserve (13 189 kg, unangetastet), davor das noch
     // vorhandene Extra. Die Marke muss also im EXTRA-Block liegen — vorher
@@ -265,7 +282,7 @@ describe("SpritSektion", () => {
       (e) => e.getAttribute("stroke-width") === "2",
     )!;
     const markX = Number(landung.getAttribute("x1"));
-    const grenzeExtraAlternate = W - x(l.alternate_kg + l.reserve_kg);
+    const grenzeExtraAlternate = W - x(l.alternate_kg + l.reserve_kg + 273);
     const extraBeginn = x(l.taxi_kg + l.trip_kg + l.contingency_kg);
     expect(markX).toBeGreaterThan(extraBeginn);
     expect(markX).toBeLessThan(grenzeExtraAlternate);

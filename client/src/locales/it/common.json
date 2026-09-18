@@ -404,9 +404,6 @@
       "reserve_label": "Riserva finale",
       "reserve_zeile_intakt": "✓ intatta — atterrato con {{ldg}} kg, riserva {{res}} kg ({{q}} %)",
       "reserve_zeile_unter": "⚠ atterrato sotto la riserva finale — {{ldg}} kg, riserva {{res}} kg ({{q}} %)",
-      "reserve_grund_kein_ofp": "non verificabile — nessun OFP",
-      "reserve_grund_kein_landesprit": "non verificabile — carburante all'atterraggio non registrato",
-      "reserve_grund_tank_unplausibel": "non verificabile — lettura serbatoio non plausibile",
       "extra_label": "Carburante extra",
       "extra_zeile": "{{getankt}} kg imbarcati · {{genutzt}} kg usati · {{ungenutzt}} kg non usati",
       "report_bis_sinkflug": "Fino al TOD · vs piano",
@@ -415,7 +412,24 @@
       "report_reserve": "Riserva finale",
       "report_extra": "Carburante extra",
       "abgehoben_mit": "decollato con {{kg}} kg",
-      "extra_detail": "{{genutzt}} kg usati · {{ungenutzt}} kg non usati"
+      "extra_detail": "{{genutzt}} kg usati · {{ungenutzt}} kg non usati",
+      "leiter_uebertankung": "Extra rifornito",
+      "reserve_grund": {
+        "kein_ofp": "non verificabile — nessun OFP",
+        "kein_landesprit": "non verificabile — carburante all'atterraggio non registrato",
+        "tank_unplausibel": "non verificabile — lettura serbatoio non plausibile"
+      },
+      "hint_bis_sinkflug": "Carburante consumato fino all’inizio effettivo della discesa, rispetto al piano OFP — la fase che controlli tu.",
+      "hint_anflug": "Carburante dall’inizio della discesa rispetto al piano. Vettoramenti, livelli intermedi e transizioni li decide l’ATC — perciò senza voto.",
+      "hint_schwelle": "Tempo sotto {{ft}} ft (quota aeroporto + 8 000 ft, limitato sotto la quota di crociera). Pause escluse.",
+      "hint_schwelle_ohne": "Tempo sotto la soglia di avvicinamento.",
+      "hint_reserve": "Carburante all’atterraggio rispetto alla final reserve pianificata. Scendere sotto è un’indicazione — nessun voto, nessun blocco.",
+      "na_kein_vergleichspunkt": "nessun punto di riferimento misurato",
+      "na_keine_messung": "nessuna misurazione",
+      "na_reserve": "nessun OFP o valore carburante non plausibile",
+      "unter_schwelle": "Sotto soglia",
+      "rollen_vor_start": "Rullaggio in partenza",
+      "rollen_nach_landung": "Rullaggio dopo l’atterraggio: {{kg}} kg"
     },
     "confidence": {
       "high": "Confidenza: Alta",

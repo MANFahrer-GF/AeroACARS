@@ -7,22 +7,47 @@
  * nichts und `SpritSektion` gibt `null` zurück — der Aufrufer zeigt dann
  * den alten Plan/Ist-Balken.
  */
+import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
-import { balken, hauptzahl, kg, pct, phaseTon } from "../lib/sprit";
+import { balken, hauptzahl, hauptzahlText, kg, pct, phaseTon } from "../lib/sprit";
 
 const TON = {
   ok: "#22c55e",
   warn: "#f2b24c",
   bad: "#ff5c4d",
-  neutral: "var(--text-muted)",
+  neutral: "var(--text-muted, #9aa4b2)",
 } as const;
 
 const PILL = {
-  gruen: { color: "#1f6e3a", bg: "#d4eddc", key: "landing.sprit.badge_intakt" },
-  gelb: { color: "#8a4500", bg: "#fde2c4", key: "landing.sprit.badge_unter" },
-  grau: { color: "#555", bg: "#eee", key: "landing.sprit.badge_np" },
+  gruen: { color: "#1f6e3a", bg: "#d4eddc" },
+  gelb: { color: "#8a4500", bg: "#fde2c4" },
+  grau: { color: "#555", bg: "#eee" },
 } as const;
+
+/**
+ * Der Badge-Text je Zustand.
+ *
+ * Bewusst drei literale `t()`-Aufrufe statt eines Schlüssels aus der
+ * Tabelle: Der Beschriftungs-Wächter in `scripts/anzeige-sync.mjs` liest
+ * den Quelltext und erkennt nur feste Aufrufe. Stand der Schlüssel in
+ * `PILL`, waren diese drei Texte ungeprüft — und ein fehlender Schlüssel
+ * hätte in der Live-Übersicht still den deutschen Vorgabetext gezeigt.
+ */
+export function spritBadgeText(badge: SpritAuswertung["badge"], uebersetzer?: (k: string) => string): string {
+  // Ohne uebergebenen Uebersetzer den globalen nehmen — die Live-Uebersicht
+  // ruft die Funktion ausserhalb einer Komponente, wo `useTranslation`
+  // nicht geht.
+  //
+  // Die Funktion MUSS `t` heißen: Der Beschriftungs-Wächter erkennt nur
+  // literale `t("…")`-Aufrufe. Unter einem anderen Namen waren diese drei
+  // Texte für ihn unsichtbar — genau das hat `pruef-a0-waechter.mjs` bei
+  // der ersten Fassung gemeldet.
+  const t = uebersetzer ?? ((k: string) => i18n.t(k));
+  if (badge === "gruen") return t("landing.sprit.badge_intakt");
+  if (badge === "gelb") return t("landing.sprit.badge_unter");
+  return t("landing.sprit.badge_np");
+}
 
 /** Badge neben „Forensik v2" im Kopf der Landung. Nie rot, keine Zahl. */
 export function SpritBadge({ sprit }: { sprit: SpritAuswertung | null | undefined }) {
@@ -56,7 +81,7 @@ export function SpritBadge({ sprit }: { sprit: SpritAuswertung | null | undefine
           background: p.bg,
         }}
       >
-        {t(p.key)}
+        {spritBadgeText(sprit.badge, t)}
       </span>
     </div>
   );
@@ -78,11 +103,11 @@ function Phase({
   const b = balken(phase);
   return (
     <>
-      <span style={{ color: "var(--text-muted)" }}>{label}</span>
+      <span style={{ color: "var(--text-muted, #9aa4b2)" }}>{label}</span>
       <div
         style={{
           height: 11,
-          background: "var(--surface-2)",
+          background: "var(--surface-2, #1b2432)",
           borderRadius: 4,
           overflow: "hidden",
           position: "relative",
@@ -112,14 +137,14 @@ function Phase({
           fontWeight: 600,
           fontVariantNumeric: "tabular-nums",
           whiteSpace: "nowrap",
-          color: ton === "neutral" ? "var(--text-muted)" : TON[ton],
+          color: ton === "neutral" ? "var(--text-muted, #9aa4b2)" : TON[ton],
         }}
       >
-        {phase ? hauptzahl(phase, art) : t("landing.sprit.keine_messung")}
+        {phase ? hauptzahlText(phase, art) : t("landing.sprit.keine_messung")}
       </span>
-      <span style={{ gridColumn: "2 / -1", color: "var(--text-muted)", fontSize: "0.76rem", marginTop: "-0.3rem" }}>
+      <span style={{ gridColumn: "2 / -1", color: "var(--text-muted, #9aa4b2)", fontSize: "0.76rem", marginTop: "-0.3rem" }}>
         {phase ? t("landing.sprit.phase_werte", { ist: kg(phase.ist_kg), plan: kg(phase.plan_kg) }) : ""}
-        {phase && hauptzahl(phase, art) !== pct(phase.abweichung_pct) ? ` · ${pct(phase.abweichung_pct)}` : ""}
+        {phase && hauptzahlText(phase, art) !== pct(phase.abweichung_pct) ? ` · ${pct(phase.abweichung_pct)}` : ""}
         {phase && sub ? ` · ${sub}` : ""}
       </span>
     </>
@@ -131,26 +156,44 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   const l = sprit.leiter;
   if (!l || l.block_kg <= 0) return null;
   const W = 560;
-  const x = (v: number) => (v / l.block_kg) * W;
-  const parts: Array<[keyof typeof l, string, string]> = [
-    ["taxi_kg", "#4a5563", t("landing.sprit.leiter_taxi")],
-    ["trip_kg", "#38bdf8", t("landing.sprit.leiter_trip")],
-    ["contingency_kg", "#f2b24c", t("landing.sprit.leiter_contingency")],
+  // **Uebertankung als eigenes Stueck.**
+  //
+  // Wer mehr tankt als der Plan vorsieht, hat Sprit an Bord, den die
+  // Plan-Leiter nicht kennt. Bis v1.7.35 fehlte er in der Grafik — und
+  // genau das liess Grafik und Zeile auseinanderlaufen: Die Landemarke
+  // las bei DLH 370 „3 581 kg Extra uebrig", waehrend die Zeile darunter
+  // 3 308 kg nannte. Die Differenz von 273 kg WAR die Uebertankung.
+  //
+  // Er steht zwischen Alternate und Extra, weil `sprit.rs` ihn genauso
+  // verrechnet: gegen den TATSAECHLICHEN Abhebestand (`takeoff − trip`),
+  // und was darueber hinausgeht, zehrt am Extra. Damit trifft die Marke
+  // denselben Punkt, den die Zeile nennt.
+  const uebertankung = Math.max(
+    0,
+    (sprit.takeoff_fuel_kg ?? 0) + l.taxi_kg - l.block_kg,
+  );
+  const skala = l.block_kg + uebertankung;
+  const x = (v: number) => (v / skala) * W;
+  const parts: Array<[number, string, string]> = [
+    [l.taxi_kg, "#6b7688", t("landing.sprit.leiter_taxi")],
+    [l.trip_kg, "#38bdf8", t("landing.sprit.leiter_trip")],
     // Reihenfolge = Verbrauchsreihenfolge: erst Contingency, dann Extra.
-    // Alternate und Reserve stehen rechts, weil sie stehen bleiben sollen —
-    // nur so trifft die von rechts gemessene Landemarke denselben Punkt,
-    // den `sprit.rs` rechnet (bei DLH370 die Grenze der 3581 kg Rest-Extra).
-    ["extra_kg", "#1f2d3a", t("landing.sprit.leiter_extra")],
-    ["alternate_kg", "#3b4655", t("landing.sprit.leiter_alternate")],
-    ["reserve_kg", "#3b4655", t("landing.sprit.leiter_reserve")],
+    [l.contingency_kg, "#f2b24c", t("landing.sprit.leiter_contingency")],
+    [l.extra_kg, "#3d5a6c", t("landing.sprit.leiter_extra")],
+    [uebertankung, "#47705a", t("landing.sprit.leiter_uebertankung")],
+    // Alternate und Reserve stehen rechts, weil sie stehen bleiben sollen.
+    [l.alternate_kg, "#566273", t("landing.sprit.leiter_alternate")],
+    [l.reserve_kg, "#566273", t("landing.sprit.leiter_reserve")],
   ];
   let cursor = 0;
-  const rects = parts.map(([k, fill, label]) => {
-    const w = x(l[k]);
-    const r = { x: cursor, w, fill, label, kg: l[k] };
-    cursor += w;
-    return r;
-  });
+  const rects = parts
+    .filter(([kgWert]) => kgWert > 0)
+    .map(([kgWert, fill, label]) => {
+      const w = x(kgWert);
+      const r = { x: cursor, w, fill, label, kg: kgWert };
+      cursor += w;
+      return r;
+    });
   // Zwei Marken, beide Tatsachen: womit abgehoben, womit gelandet.
   //
   // Die Leiter zeigt den PLAN. Wer anders tankt als geplant, bei dem passt
@@ -171,14 +214,14 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   const abhebenX = abhebenKg != null ? imBild(W - x(abhebenKg)) : null;
   // Die Marke ist eine Tatsache, kein Urteil: Ton nach Reservestand,
   // nie die Fehlerfarbe.
-  const markFarbe = sprit.badge === "gelb" ? TON.warn : "var(--text)";
+  const markFarbe = sprit.badge === "gelb" ? TON.warn : "var(--text, #e8ecf3)";
   return (
     <svg viewBox={`0 0 ${W} 100`} role="img" aria-label={t("landing.sprit.leiter_titel")} style={{ display: "block", maxWidth: "100%", height: "auto", marginTop: "0.6rem" }}>
-      <text x="0" y="11" style={{ font: "600 11px system-ui, sans-serif", fill: "var(--text)" }}>
+      <text x="0" y="11" style={{ font: "600 11px system-ui, sans-serif", fill: "var(--text, #e8ecf3)" }}>
         {t("landing.sprit.leiter_titel")} · {kg(l.block_kg)} kg
       </text>
       {rects.map((r) => (
-        <rect key={r.label} x={r.x} y={20} width={Math.max(r.w, 0)} height={22} fill={r.fill} stroke="var(--border)" strokeWidth={0.5} />
+        <rect key={r.label} x={r.x} y={20} width={Math.max(r.w, 0)} height={22} fill={r.fill} stroke="var(--border, #2a3344)" strokeWidth={0.5} />
       ))}
       {rects
         .filter((r) => {
@@ -188,17 +231,23 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
           return r.w >= breite + 6 && r.x + 3 + breite <= W;
         })
         .map((r) => (
-          <text key={`t-${r.label}`} x={r.x + 3} y={56} style={{ font: "10.5px ui-monospace, monospace", fill: "var(--text-muted)" }}>
+          <text key={`t-${r.label}`} x={r.x + 3} y={56} style={{ font: "10.5px ui-monospace, monospace", fill: "var(--text-muted, #9aa4b2)" }}>
             {r.label} {kg(r.kg)}
           </text>
         ))}
-      {abhebenX != null && Math.abs(abhebenX - (markX ?? 0)) > 6 && (
+      {/* Die Abhebe-Marke wird IMMER gezeichnet. Bis v1.7.35 verschwand sie
+          bei kleinem Abstand zur Landemarke ganz — ohne Hinweis, und damit
+          brach die zugesagte Eigenschaft „der Abstand ist der Verbrauch"
+          still: Wo nichts steht, liest niemand einen Abstand ab. Bei kurzem
+          Flug liegen die Marken eben dicht beieinander; das IST die
+          Aussage. */}
+      {abhebenX != null && (
         <>
-          <line x1={abhebenX} y1={18} x2={abhebenX} y2={44} stroke="var(--text-muted)" strokeWidth={1} strokeDasharray="3 2" />
+          <line x1={abhebenX} y1={18} x2={abhebenX} y2={44} stroke="var(--text-muted, #9aa4b2)" strokeWidth={1} strokeDasharray="3 2" />
           {/* Unter die Leiter statt daneben: der Abhebe-Tankstand liegt nah
               am Block, die Marke also weit links — auf y=14 kollidierte der
               Text mit dem Leiter-Titel. */}
-          <text x={Math.min(abhebenX + 4, W - 120)} y={68} style={{ font: "10px ui-monospace, monospace", fill: "var(--text-muted)" }}>
+          <text x={Math.min(abhebenX + 4, W - 120)} y={68} style={{ font: "10px ui-monospace, monospace", fill: "var(--text-muted, #9aa4b2)" }}>
             {t("landing.sprit.abgehoben_mit", { kg: kg(abhebenKg) })}
           </text>
         </>
@@ -206,12 +255,12 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
       {markX != null && (
         <>
           <line x1={markX} y1={16} x2={markX} y2={46} stroke={markFarbe} strokeWidth={2} />
-          <text x={Math.min(markX + 5, W - 210)} y={80} style={{ font: "600 11px system-ui, sans-serif", fill: "var(--text)" }}>
+          <text x={Math.min(markX + 5, W - 210)} y={80} style={{ font: "600 11px system-ui, sans-serif", fill: "var(--text, #e8ecf3)" }}>
             ▲ {t("landing.sprit.gelandet_mit", { kg: kg(ldg) })}
           </text>
         </>
       )}
-      <text x="0" y="94" style={{ font: "10.5px ui-monospace, monospace", fill: "var(--text-muted)" }}>
+      <text x="0" y="94" style={{ font: "10.5px ui-monospace, monospace", fill: "var(--text-muted, #9aa4b2)" }}>
         {sprit.contingency_verbraucht ? t("landing.sprit.contingency_verbraucht") : t("landing.sprit.contingency_unberuehrt")}
         {sprit.alternate_und_reserve_intakt === true ? ` · ${t("landing.sprit.alt_res_intakt")}` : ""}
         {sprit.alternate_und_reserve_intakt === false ? ` · ${t("landing.sprit.alt_res_angegriffen")}` : ""}
@@ -230,11 +279,90 @@ function Zeile({ label, children, ton }: { label: string; children: React.ReactN
         flexWrap: "wrap",
         fontSize: "0.86rem",
         padding: "0.45rem 0",
-        borderTop: "1px solid color-mix(in srgb, var(--text) 8%, transparent)",
+        borderTop: "1px solid color-mix(in srgb, var(--text, #e8ecf3) 8%, transparent)",
       }}
     >
-      <span style={{ color: "var(--text-muted)" }}>{label}</span>
-      <b style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: ton ? TON[ton] : "var(--text)" }}>{children}</b>
+      <span style={{ color: "var(--text-muted, #9aa4b2)" }}>{label}</span>
+      <b style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: ton ? TON[ton] : "var(--text, #e8ecf3)" }}>{children}</b>
+    </div>
+  );
+}
+
+/**
+ * Eine Kennzahl mit Erklaerung — und mit Begruendung, wenn sie fehlt.
+ *
+ * Beides gab es bis v1.7.35 nur in der Live-Uebersicht: Dort erklaerte ein
+ * Hinweis je Kachel, was die Zahl bedeutet, und statt eines stummen
+ * Strichs stand dort, WARUM nichts zu sehen ist („kein Vergleichspunkt
+ * gemessen"). Der Client hatte einen einzigen Tooltip fuer die ganze
+ * Sektion und liess fehlende Werte kommentarlos weg.
+ *
+ * Beim Zusammenlegen wandert die reichere Fassung in die gemeinsame —
+ * nichts geht verloren (`feedback-never-drop-features-during-redesign`).
+ */
+function Kennzahl({
+  label,
+  wert,
+  einheit,
+  erklaerung,
+  grundWennLeer,
+  ton = "neutral",
+}: {
+  label: string;
+  wert: string | null;
+  einheit?: string;
+  erklaerung: string;
+  grundWennLeer: string;
+  ton?: "ok" | "warn" | "neutral";
+}) {
+  const leer = wert == null || wert === "";
+  return (
+    <div
+      title={leer ? grundWennLeer : erklaerung}
+      style={{
+        border: "1px solid var(--border, #2a3344)",
+        borderRadius: 8,
+        padding: "0.45rem 0.6rem",
+        background: "color-mix(in srgb, var(--text, #e8ecf3) 3%, transparent)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.68rem",
+          color: "var(--text-muted, #9aa4b2)",
+          textTransform: "uppercase",
+          letterSpacing: ".04em",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+        }}
+      >
+        {label}
+        {/* Das Fragezeichen erscheint NUR bei fehlendem Wert — so sieht man,
+            dass es einen Grund gibt, statt einen stummen Strich zu lesen. */}
+        {leer && <span aria-hidden="true">ⓘ</span>}
+      </div>
+      <div
+        style={{
+          fontSize: "1.05rem",
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+          color: leer
+            ? "var(--text-muted, #9aa4b2)"
+            : ton === "ok"
+              ? TON.ok
+              : ton === "warn"
+                ? TON.warn
+                : "var(--text, #e8ecf3)",
+        }}
+      >
+        {leer ? "—" : wert}
+        {!leer && einheit && (
+          <span style={{ fontSize: "0.72rem", fontWeight: 400, marginLeft: 3, color: "var(--text-muted, #9aa4b2)" }}>
+            {einheit}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -249,7 +377,11 @@ export function SpritSektion({ sprit }: { sprit: SpritAuswertung | null | undefi
       ? t("landing.sprit.reserve_zeile_intakt", { ldg: kg(sprit.landing_fuel_kg), res: kg(sprit.reserve_kg), q: Math.round(r.quote_pct) })
       : r.status === "unterschritten"
         ? t("landing.sprit.reserve_zeile_unter", { ldg: kg(sprit.landing_fuel_kg), res: kg(sprit.reserve_kg), q: Math.round(r.quote_pct) })
-        : t(`landing.sprit.reserve_grund_${r.grund}`, { defaultValue: t("landing.sprit.badge_np") });
+        : // Punkt statt Unterstrich, damit `vorspaenneAusQuelltext` den
+          // Vorspann sieht. Und OHNE `defaultValue`: Der verschluckte genau
+          // den Fehlerfall — fehlte der Schlüssel, stand dort „nicht
+          // prüfbar" statt des Grundes, und nichts fiel auf.
+          t(`landing.sprit.reserve_grund.${r.grund}`);
   const reserveTon = r.status === "intakt" ? "ok" : r.status === "unterschritten" ? "warn" : "neutral";
   const anflugSub =
     sprit.zeit_unter_schwelle_min != null && sprit.schwelle_ft != null
@@ -269,8 +401,8 @@ export function SpritSektion({ sprit }: { sprit: SpritAuswertung | null | undefi
             textTransform: "uppercase",
             padding: "2px 7px",
             borderRadius: 999,
-            background: "color-mix(in srgb, var(--text) 8%, transparent)",
-            color: "var(--text-muted)",
+            background: "color-mix(in srgb, var(--text, #e8ecf3) 8%, transparent)",
+            color: "var(--text-muted, #9aa4b2)",
             fontWeight: 600,
           }}
         >
@@ -279,10 +411,57 @@ export function SpritSektion({ sprit }: { sprit: SpritAuswertung | null | undefi
         <span
           title={t("landing.sprit.info")}
           aria-label={t("landing.sprit.info")}
-          style={{ color: "var(--text-muted)", cursor: "help", fontSize: "0.8rem" }}
+          style={{ color: "var(--text-muted, #9aa4b2)", cursor: "help", fontSize: "0.8rem" }}
         >
           ⓘ
         </span>
+      </div>
+      {/* Die Kennzahlenreihe — vier Zahlen auf einen Blick, jede mit
+          Erklaerung. Sie kam aus der Live-Uebersicht; der Client hatte sie
+          nicht. Darunter stehen wie bisher die Balken und die Leiter. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))",
+          gap: "0.45rem",
+          marginBottom: "0.7rem",
+        }}
+      >
+        <Kennzahl
+          label={t("landing.sprit.bis_sinkflug")}
+          wert={sprit.bis_sinkflug ? hauptzahl(sprit.bis_sinkflug, "bis_sinkflug").wert : null}
+          einheit={sprit.bis_sinkflug ? hauptzahl(sprit.bis_sinkflug, "bis_sinkflug").einheit : undefined}
+          ton={phaseTon(sprit.bis_sinkflug, "bis_sinkflug")}
+          erklaerung={t("landing.sprit.hint_bis_sinkflug")}
+          grundWennLeer={t("landing.sprit.na_kein_vergleichspunkt")}
+        />
+        <Kennzahl
+          label={t("landing.sprit.anflug")}
+          wert={sprit.anflug ? hauptzahl(sprit.anflug, "anflug").wert : null}
+          einheit={sprit.anflug ? hauptzahl(sprit.anflug, "anflug").einheit : undefined}
+          ton={phaseTon(sprit.anflug, "anflug")}
+          erklaerung={t("landing.sprit.hint_anflug")}
+          grundWennLeer={t("landing.sprit.na_kein_vergleichspunkt")}
+        />
+        <Kennzahl
+          label={t("landing.sprit.unter_schwelle")}
+          wert={sprit.zeit_unter_schwelle_min != null ? sprit.zeit_unter_schwelle_min.toFixed(1).replace(".", ",") : null}
+          einheit="min"
+          erklaerung={
+            sprit.schwelle_ft != null
+              ? t("landing.sprit.hint_schwelle", { ft: kg(sprit.schwelle_ft) })
+              : t("landing.sprit.hint_schwelle_ohne")
+          }
+          grundWennLeer={t("landing.sprit.na_keine_messung")}
+        />
+        <Kennzahl
+          label={t("landing.sprit.reserve_label")}
+          wert={r.status === "nicht_pruefbar" ? null : String(Math.round(r.quote_pct))}
+          einheit="%"
+          ton={r.status === "intakt" ? "ok" : r.status === "unterschritten" ? "warn" : "neutral"}
+          erklaerung={t("landing.sprit.hint_reserve")}
+          grundWennLeer={t("landing.sprit.na_reserve")}
+        />
       </div>
       <div
         style={{
@@ -295,7 +474,24 @@ export function SpritSektion({ sprit }: { sprit: SpritAuswertung | null | undefi
       >
         <Phase label={t("landing.sprit.bis_sinkflug")} phase={sprit.bis_sinkflug} sub={null} art="bis_sinkflug" />
         <Phase label={t("landing.sprit.anflug")} phase={sprit.anflug} sub={anflugSub} art="anflug" />
+        {/* v1.7.36: Rollen vor dem Start und nach der Landung. Erst damit
+            ist der Flug lueckenlos — vorher fehlten bei einem A380
+            vierstellige Kilogramm. Nach der Landung OHNE Plan, weil
+            SimBrief nur den Weg zum Start plant. */}
+        {sprit.rollen_vor_start && (
+          <Phase
+            label={t("landing.sprit.rollen_vor_start")}
+            phase={sprit.rollen_vor_start}
+            sub={null}
+            art="bis_sinkflug"
+          />
+        )}
       </div>
+      {sprit.rollen_nach_landung_kg != null && (
+        <div style={{ fontSize: "0.82rem", color: "var(--text-muted, #9aa4b2)", marginTop: "0.4rem" }}>
+          {t("landing.sprit.rollen_nach_landung", { kg: kg(sprit.rollen_nach_landung_kg) })}
+        </div>
+      )}
       <Leiter sprit={sprit} />
       <div style={{ marginTop: "0.6rem" }}>
         <Zeile label={t("landing.sprit.reserve_label")} ton={reserveTon}>
