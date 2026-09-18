@@ -30,6 +30,22 @@ export function dezimal(v: number, stellen: number): string {
   return v < 0 && Number(s) !== 0 ? "−" + zahl : zahl;
 }
 
+/**
+ * Abstand zur Final Reserve in kg — positiv darüber, negativ darunter.
+ *
+ * Kommt aus der Rechnung (`reserve_abstand_kg`, `sprit.rs`). Datensätze vor
+ * v1.7.37 tragen das Feld nicht; für sie gilt dieselbe Differenz der beiden
+ * gespeicherten, gerundeten Werte — genau so rechnet auch `sprit.rs`. Damit
+ * zeigt ein alter Flug denselben Abstand wie ein neuer, und Client und
+ * Live-Übersicht können nicht auseinanderlaufen (eine Datei).
+ */
+export function reserveAbstand(s: SpritAuswertung): number | null {
+  if (s.reserve.status === "nicht_pruefbar") return null;
+  if (s.reserve_abstand_kg != null) return s.reserve_abstand_kg;
+  if (s.landing_fuel_kg == null || s.reserve_kg == null) return null;
+  return s.landing_fuel_kg - s.reserve_kg;
+}
+
 export interface SpritPhase {
   ist_kg: number;
   plan_kg: number;
@@ -84,6 +100,12 @@ export interface SpritAuswertung {
   plan_strecke_anflug_nm: number | null;
   reserve: SpritReserve;
   reserve_kg: number | null;
+  /**
+   * v1.7.37: Landesprit minus Final Reserve in kg — positiv darüber,
+   * negativ darunter. Gerechnet in `sprit.rs`, hier nur gelesen. Fehlt bei
+   * älteren Datensätzen; dann zeigt die Anzeige wie bisher die Quote.
+   */
+  reserve_abstand_kg?: number | null;
   /** Tankstand beim Abheben — steht im Ergebnis, weil er sich aus den
    *  übrigen Feldern nicht zurückrechnen lässt. */
   takeoff_fuel_kg: number | null;

@@ -15,7 +15,7 @@
  *     (QS-Vorschlag V-a, 18.09.2026).
  */
 import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { SpritSektion } from "./SpritSektion";
 import type { SpritAuswertung } from "../lib/sprit";
 
@@ -184,11 +184,123 @@ describe("Sprit-Leiter", () => {
 
   it("beschriftet den Tankstand beim Einstieg in der Luft nicht als Abheben", () => {
     const { container } = render(<SpritSektion sprit={dlh370({ einstieg_in_der_luft: true })} />);
-    const text = container.querySelector("svg")!.textContent ?? "";
+    const text = container.textContent ?? "";
     expect(text).not.toContain("abgehoben mit");
     expect(text).toContain("in der Luft");
     // Gegenprobe: ohne Kennzeichen bleibt „abgehoben mit".
     const { container: normal } = render(<SpritSektion sprit={dlh370()} />);
-    expect(normal.querySelector("svg")!.textContent).toContain("abgehoben mit");
+    expect(normal.textContent).toContain("abgehoben mit");
+  });
+
+  it("erklärt JEDEN gezeichneten Block — auch Contingency und Extra", () => {
+    // BIT348 (18.09.2026): Namen standen nur IM Balken und nur, wenn sie
+    // hineinpassten — Contingency und Extra blieben unbeschriftet.
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    const bloecke = container.querySelectorAll("svg rect").length;
+    const legende = container.querySelector('[data-testid="sprit-leiter-legende"]')!;
+    const eintraege = [...legende.children];
+    expect(eintraege.length).toBe(bloecke);
+    const text = legende.textContent ?? "";
+    for (const name of ["Taxi", "Trip", "Contingency", "Extra", "Alternate", "Reserve"]) {
+      expect(text, `${name} fehlt in der Legende`).toContain(name);
+    }
+    // Und jeder Eintrag erklärt sich beim Darüberfahren.
+    for (const e of eintraege) {
+      fireEvent.mouseEnter(e);
+      const h = container.querySelector('[data-testid="sprit-leiter-hinweis"]')?.textContent ?? "";
+      expect(h.length, `${e.textContent} ohne Erklärung`).toBeGreaterThan(30);
+      fireEvent.mouseLeave(e);
+    }
+  });
+
+  it("legt keine Schrift ins gedehnte SVG — sie würde mitwachsen", () => {
+    // Die Live-Übersicht zog die Leiter auf fast 2 000 px, die Beschriftung
+    // wuchs auf das Dreieinhalbfache. Lesbares ist jetzt HTML.
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    const svg = container.querySelector("svg")!;
+    expect(svg.querySelectorAll("text").length).toBe(0);
+    expect(svg.getAttribute("preserveAspectRatio")).toBe("none");
+    // Gegenprobe: die Marken-Texte gibt es trotzdem — als HTML.
+    expect(container.textContent).toContain("gelandet mit");
+    expect(container.textContent).toContain("abgehoben mit");
+  });
+
+  it("lässt den Titel weg, wenn die Karte ihn schon trägt", () => {
+    const { container: mit } = render(<SpritSektion sprit={dlh370()} />);
+    const { container: ohne } = render(<SpritSektion sprit={dlh370()} ohneTitel />);
+    const kopf = (c: HTMLElement) => c.querySelector('[data-testid="sprit-sektion"] > div')!.textContent ?? "";
+    expect(kopf(mit)).toMatch(/^Sprit/);
+    expect(kopf(ohne)).not.toMatch(/^Sprit/);
+    // „Keine Note" bleibt in beiden Fällen stehen.
+    expect(kopf(ohne)).toMatch(/keine Note/i);
+  });
+
+  it("zeigt Rollen nach der Landung als volle Zeile — im Maßstab von Rollen vor Start", () => {
+    // BIT348: Es stand als kleine Textzeile unter den Balken und ging unter.
+    const mitRollen = dlh370({
+      rollen_vor_start: { ist_kg: 725, plan_kg: 998, abweichung_pct: -27.4, als_kg: false },
+      rollen_nach_landung_kg: 649,
+    });
+    const { container } = render(<SpritSektion sprit={mitRollen} />);
+    const balken = container.querySelector('[data-testid="sprit-rollen-nach-balken"]') as HTMLElement;
+    expect(balken, "keine eigene Zeile mit Balken").not.toBeNull();
+    // Dieselbe Zeilenform wie die Phasen: Beschriftung, Balken, Wert.
+    const zeile = balken.parentElement!;
+    expect(zeile.textContent).toContain("Rollen nach Landung");
+    expect(zeile.textContent).toContain("649 kg");
+    expect(zeile.textContent).toContain("ohne Plan");
+    // Maßstab: 649 von max(998 Plan, 725 Ist) = 65 %.
+    const fuellung = balken.querySelector("i") as HTMLElement;
+    expect(parseFloat(fuellung.style.width)).toBeCloseTo((649 / 998) * 100, 1);
+    // Gegenprobe: ohne Wert keine Zeile.
+    const { container: ohne } = render(<SpritSektion sprit={dlh370({ rollen_nach_landung_kg: null })} />);
+    expect(ohne.querySelector('[data-testid="sprit-rollen-nach-balken"]')).toBeNull();
+  });
+
+  it("zeigt die Final Reserve als Abstand in kg — Kachel und Zeile", () => {
+    // BIT348: „Reserve 732 kg (338 %)" las sich, als hätte die Reserve 338 %.
+    const ueber = dlh370({ landing_fuel_kg: 2476, reserve_kg: 732, reserve_abstand_kg: 1744, reserve: { status: "intakt", quote_pct: 338.3 } });
+    const t = render(<SpritSektion sprit={ueber} />).container.textContent ?? "";
+    expect(t).toContain("+1\u202f744kg");
+    expect(t).toContain("2\u202f476 kg gelandet = 732 kg Final Reserve + 1\u202f744 kg darüber");
+    expect(t).not.toMatch(/338\s*%/);
+    // Darunter: gelb, mit echtem Minus.
+    const unter = dlh370({ landing_fuel_kg: 612, reserve_kg: 732, reserve_abstand_kg: -120, badge: "gelb", reserve: { status: "unterschritten", quote_pct: 83.6 } });
+    const u = render(<SpritSektion sprit={unter} />).container.textContent ?? "";
+    expect(u).toContain("−120kg");
+    expect(u).toContain("612 kg gelandet = 732 kg Final Reserve − 120 kg");
+  });
+
+  it("erklärt beim Darüberfahren, was der Block IN DIESEM FLUG war", () => {
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    const hinweis = () => container.querySelector('[data-testid="sprit-leiter-hinweis"]')?.textContent ?? null;
+    expect(hinweis(), "ohne Maus keine Erklärung").toBeNull();
+
+    // Trip: die beiden Phasen dieses Fluges, mit Plan.
+    fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Trip"]')!);
+    expect(hinweis()).toContain("In diesem Flug");
+    expect(hinweis()).toContain("bis Sinkflug 18\u202f688 kg (Plan 19\u202f353 kg)");
+    expect(hinweis()).toContain("Sinkflug + Anflug 5\u202f461 kg (Plan 1\u202f865 kg)");
+
+    // Contingency: in dieser Vorlage verbraucht.
+    fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Contingency"]')!);
+    expect(hinweis()).toContain("angebrochen");
+
+    // Extra: an Bord, genutzt, übrig — dieselben Zahlen wie die Zeile.
+    fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Extra"]')!);
+    expect(hinweis()).toContain("5\u202f178 kg an Bord · 1\u202f597 kg genutzt · 3\u202f581 kg übrig");
+
+    // Final Reserve: der Abstand.
+    fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Final Reserve"]')!);
+    expect(hinweis()).toContain("11\u202f854 kg darüber gelandet");
+
+    // Maus weg: Erklärung weg.
+    fireEvent.mouseLeave(container.querySelector('svg rect[data-block="Final Reserve"]')!);
+    expect(hinweis()).toBeNull();
+
+    // Über die Legende genauso — auch per Tastatur.
+    const legende = container.querySelector('[data-testid="sprit-leiter-legende"] [data-block="Alternate"]')!;
+    fireEvent.focus(legende);
+    expect(hinweis()).toContain("noch vollständig an Bord");
   });
 });

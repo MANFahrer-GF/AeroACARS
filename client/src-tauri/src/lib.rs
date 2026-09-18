@@ -21842,10 +21842,34 @@ fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &m
             format!("{} min unter {} ft", format!("{min:.1}").replace('.', ","), ziffern(ft)),
         );
     }
-    match &a.reserve {
-        Reserve::Intakt { quote_pct } => f.insert("Final Reserve".into(), format!("intakt ({quote_pct:.0} %)")),
-        Reserve::Unterschritten { quote_pct } => f.insert("Final Reserve".into(), format!("UNTERSCHRITTEN ({quote_pct:.0} %)")),
-        Reserve::NichtPruefbar { grund } => f.insert("Final Reserve".into(), format!("nicht pruefbar ({grund})")),
+    // v1.7.37: der Abstand in kg statt der Quote — „(338 %)" las sich, als
+    // haette die Reserve 338 %. Die Quote bleibt nur fuer Altbestand ohne
+    // `reserve_abstand_kg`.
+    //
+    // Die Rechnung steht ausdruecklich da — „1 744 kg ueber der Final Reserve
+    // (732 kg)" liess offen, ob die 732 noch abzuziehen sind (Thomas, BIT348).
+    match (&a.reserve, a.reserve_abstand_kg, a.reserve_kg, a.landing_fuel_kg) {
+        (Reserve::Intakt { .. }, Some(ab), Some(res), Some(ldg)) => f.insert(
+            "Final Reserve".into(),
+            format!(
+                "intakt — {} kg gelandet = {} kg Final Reserve + {} kg darüber",
+                ziffern(ldg),
+                ziffern(res),
+                ziffern(ab.abs())
+            ),
+        ),
+        (Reserve::Unterschritten { .. }, Some(ab), Some(res), Some(ldg)) => f.insert(
+            "Final Reserve".into(),
+            format!(
+                "UNTERSCHRITTEN — {} kg gelandet = {} kg Final Reserve − {} kg",
+                ziffern(ldg),
+                ziffern(res),
+                ziffern(ab.abs())
+            ),
+        ),
+        (Reserve::Intakt { quote_pct }, _, _, _) => f.insert("Final Reserve".into(), format!("intakt ({quote_pct:.0} %)")),
+        (Reserve::Unterschritten { quote_pct }, _, _, _) => f.insert("Final Reserve".into(), format!("UNTERSCHRITTEN ({quote_pct:.0} %)")),
+        (Reserve::NichtPruefbar { grund }, _, _, _) => f.insert("Final Reserve".into(), format!("nicht pruefbar ({grund})")),
     };
     if let (Some(g), Some(n), Some(u)) = (a.extra_getankt_kg, a.extra_genutzt_kg, a.extra_ungenutzt_kg) {
         f.insert(
@@ -68693,7 +68717,10 @@ mod pirep_felder_sprit_tests {
             "+3\u{202f}596 kg (5\u{202f}461 kg / Plan 1\u{202f}865 kg)"
         );
         assert_eq!(f["Zeit unter Schwelle"], "15,8 min unter 9\u{202f}487 ft");
-        assert_eq!(f["Final Reserve"], "intakt (341 %)");
+        assert_eq!(
+            f["Final Reserve"],
+            "intakt — 16\u{202f}770 kg gelandet = 4\u{202f}916 kg Final Reserve + 11\u{202f}854 kg darüber"
+        );
         assert_eq!(
             f["Extra Fuel"],
             "5\u{202f}178 kg getankt · 1\u{202f}597 kg genutzt · 3\u{202f}581 kg ungenutzt"

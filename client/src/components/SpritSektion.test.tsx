@@ -117,7 +117,10 @@ describe("SpritSektion", () => {
     render(<SpritSektion sprit={dlh370()} />);
     const t = screen.getByTestId("sprit-sektion").textContent ?? "";
     expect(t).toContain("intakt");
-    expect(t).toContain("341 %");
+    // v1.7.37: Abstand in kg statt Quote — „(341 %)" las sich, als hätte
+    // die Reserve 341 %.
+    expect(t).toContain("16\u202f770 kg gelandet = 4\u202f916 kg Final Reserve + 11\u202f854 kg darüber");
+    expect(t).not.toContain("341 %");
     expect(t).toContain("5\u202f178");
     expect(t).toContain("3\u202f308");
   });
@@ -139,8 +142,8 @@ describe("SpritSektion", () => {
     expect(svg!.querySelectorAll("rect").length).toBe(7);
     // Zwei Marken: womit abgehoben (gestrichelt), womit gelandet (kräftig).
     expect(svg!.querySelectorAll("line").length).toBe(2);
-    expect(svg!.textContent).toContain("gelandet mit");
-    expect(svg!.textContent).toContain("Contingency verbraucht");
+    expect(svg!.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("gelandet mit");
+    expect(svg!.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("Contingency verbraucht");
   });
 
 
@@ -196,8 +199,8 @@ describe("SpritSektion", () => {
     // Und gerade NICHT auf der Contingency/Extra-Kante.
     const kante = x(l.taxi_kg + l.trip_kg + l.contingency_kg);
     expect(Math.abs(markX - kante)).toBeGreaterThan(5);
-    // Der Text im SVG widerspricht ihr nicht.
-    expect(svg.textContent).toContain("Contingency unberührt");
+    // Der Text unter der Leiter widerspricht ihr nicht.
+    expect(svg.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("Contingency unberührt");
   });
 
   it("zeigt zwei Marken an der richtigen Stelle, mit den richtigen Zahlen", () => {
@@ -218,8 +221,8 @@ describe("SpritSektion", () => {
     expect(Number(landung.getAttribute("x1"))).toBeCloseTo(W - x(16770), 1);
 
     // Die Etiketten nennen dieselben Zahlen.
-    expect(svg.textContent).toContain("40\u202f919");
-    expect(svg.textContent).toContain("16\u202f770");
+    expect(svg.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("40\u202f919");
+    expect(svg.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("16\u202f770");
 
     // Und die zugesagte Eigenschaft gilt: der Abstand IST der Verbrauch.
     const abstandKg =
@@ -233,7 +236,7 @@ describe("SpritSektion", () => {
     a.takeoff_fuel_kg = null;
     const { container } = render(<SpritSektion sprit={a} />);
     expect([...container.querySelectorAll("svg line")].length).toBe(1);
-    expect(container.querySelector("svg")!.textContent).not.toContain("abgehoben mit");
+    expect(container.textContent).not.toContain("abgehoben mit");
   });
 
   it("kommt ohne Phasen aus und zeigt trotzdem die Reserve", () => {

@@ -12,7 +12,7 @@ import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
 import { SpritBadge, SpritSektion } from "./SpritSektion";
-import { dezimal as spritDezimal, hauptzahlText as spritHauptzahl, kg as spritKg } from "../lib/sprit";
+import { dezimal as spritDezimal, hauptzahlText as spritHauptzahl, kg as spritKg, reserveAbstand as spritReserveAbstand } from "../lib/sprit";
 import type { SpritAuswertung } from "../lib/sprit";
 import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
@@ -2982,7 +2982,13 @@ export function LandingReport({ record }: { record: LandingRecord }) {
                 <ReportTile
                   label={t("landing.sprit.report_reserve")}
                   value={
-                    record.sprit.reserve.status === "intakt"
+                    // v1.7.37: Abstand in kg wie in der Sektion; die Quote nur
+                    // noch fuer aeltere Datensaetze ohne das Feld.
+                    spritReserveAbstand(record.sprit) != null
+                      ? `${record.sprit.reserve.status === "intakt" ? "✓" : "⚠"} ${
+                          spritReserveAbstand(record.sprit)! > 0 ? "+" : spritReserveAbstand(record.sprit)! < 0 ? "−" : ""
+                        }${spritKg(Math.abs(spritReserveAbstand(record.sprit)!))} kg`
+                      : record.sprit.reserve.status === "intakt"
                       ? `✓ ${Math.round(record.sprit.reserve.quote_pct)} %`
                       : record.sprit.reserve.status === "unterschritten"
                         ? `⚠ ${Math.round(record.sprit.reserve.quote_pct)} %`

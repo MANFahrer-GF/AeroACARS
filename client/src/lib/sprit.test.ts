@@ -6,8 +6,8 @@
  * zurückbringen, ohne dass ein Test es merkt.
  */
 import { describe, expect, it } from "vitest";
-import { dezimal, pct, phaseTon } from "./sprit";
-import type { SpritPhase } from "./sprit";
+import { dezimal, pct, phaseTon, reserveAbstand } from "./sprit";
+import type { SpritAuswertung, SpritPhase } from "./sprit";
 
 const phase = (pct: number): SpritPhase => ({
   ist_kg: 1000,
@@ -62,5 +62,25 @@ describe("dezimal", () => {
     expect(pct(-3.4)).toBe("−3,4 %");
     expect(pct(192.8)).toBe("+192,8 %");
     expect(pct(0)).toBe("0,0 %");
+  });
+});
+
+describe("reserveAbstand", () => {
+  const basis = (ueber: Partial<SpritAuswertung>) =>
+    ({ reserve: { status: "intakt", quote_pct: 338.3 }, landing_fuel_kg: 2476, reserve_kg: 732, ...ueber }) as SpritAuswertung;
+
+  it("nimmt den Wert aus der Rechnung", () => {
+    expect(reserveAbstand(basis({ reserve_abstand_kg: 1744 }))).toBe(1744);
+  });
+
+  it("gibt älteren Datensätzen dieselbe Zahl aus den gespeicherten Werten", () => {
+    // BIT348 wurde mit v1.7.36 gerechnet — ohne das Feld.
+    expect(reserveAbstand(basis({}))).toBe(2476 - 732);
+    expect(reserveAbstand(basis({ reserve: { status: "unterschritten", quote_pct: 83.6 }, landing_fuel_kg: 612 }))).toBe(-120);
+  });
+
+  it("nennt keinen Abstand, wenn die Reserve nicht prüfbar ist", () => {
+    expect(reserveAbstand(basis({ reserve: { status: "nicht_pruefbar", grund: "kein_ofp" }, reserve_abstand_kg: 5 }))).toBeNull();
+    expect(reserveAbstand(basis({ reserve_kg: null }))).toBeNull();
   });
 });

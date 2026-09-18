@@ -250,6 +250,14 @@ pub struct SpritAuswertung {
     pub plan_strecke_anflug_nm: Option<f32>,
     pub reserve: Reserve,
     pub reserve_kg: Option<f32>,
+    /// v1.7.37: Landesprit minus Final Reserve in kg — positiv darueber,
+    /// negativ darunter. `None`, wenn die Reserve nicht pruefbar ist.
+    ///
+    /// Die Anzeige zeigte bis dahin die Quote („Reserve 732 kg (338 %)"),
+    /// und das las sich, als haette die RESERVE 338 %. Ein Pilot denkt in
+    /// Kilogramm Abstand zur Reserve (Thomas, BIT348, 18.09.2026). Die
+    /// Quote bleibt im Datensatz fuer aeltere Anzeigen.
+    pub reserve_abstand_kg: Option<f32>,
     /// Tankstand beim Abheben. Steht hier, weil er sich aus den uebrigen
     /// Feldern nicht rekonstruieren laesst: Bleibt der Mehrverbrauch unter
     /// der Contingency, taucht er in `extra_genutzt_kg` gar nicht auf. Die
@@ -455,6 +463,16 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             }
         }
     };
+    let reserve_abstand_kg = match (&reserve_status, reserve, landing) {
+        (Reserve::Intakt { .. } | Reserve::Unterschritten { .. }, Some(res), Some(ldg)) => {
+            // Aus den GERUNDETEN Werten, die auch angezeigt werden — dann
+            // geht die Rechnung in der Anzeige immer auf (gelandet − Reserve
+            // = Abstand), und ein Datensatz ohne dieses Feld bekommt in der
+            // Anzeige exakt dieselbe Zahl (`reserveAbstand` in sprit.ts).
+            Some(ldg.round() - res.round())
+        }
+        _ => None,
+    };
     let badge = match reserve_status {
         Reserve::Intakt { .. } => Badge::Gruen,
         Reserve::Unterschritten { .. } => Badge::Gelb,
@@ -574,6 +592,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         },
         reserve: reserve_status,
         reserve_kg: reserve.map(|v| v.round()),
+        reserve_abstand_kg,
         takeoff_fuel_kg: takeoff.map(|v| v.round()),
         landing_fuel_kg: landing.map(|v| v.round()),
         extra_getankt_kg: extra_getankt,
@@ -711,6 +730,7 @@ mod tests {
     fn sprit_auswertung_dlh370_reserve_und_extra() {
         let a = auswerten(&dlh370());
         assert_eq!(a.reserve, Reserve::Intakt { quote_pct: 341.1 });
+        assert_eq!(a.reserve_abstand_kg, Some(11_854.0), "16 770 − 4 916");
         assert_eq!(a.badge, Badge::Gruen);
         assert_eq!(a.extra_getankt_kg, Some(5_178.0));
         // Vom Anlassen an gerechnet (Tank 41 644 = Block): geplant gelandet
@@ -960,6 +980,22 @@ mod tests {
         // Und die Anzeige erfaehrt es — fuer die Beschriftung der Marke.
         assert!(auswerten(&e).einstieg_in_der_luft);
         assert!(!auswerten(&dlh370()).einstieg_in_der_luft);
+    }
+
+    /// Der Abstand zur Final Reserve: positiv darueber, negativ darunter,
+    /// leer, wenn nicht pruefbar.
+    #[test]
+    fn sprit_reserve_abstand_in_kg() {
+        let mut e = dlh370();
+        e.landing_fuel_kg = Some(4_796.0);
+        let a = auswerten(&e);
+        assert!(matches!(a.reserve, Reserve::Unterschritten { .. }));
+        assert_eq!(a.reserve_abstand_kg, Some(-120.0));
+        e.tank_plausibel = false;
+        assert_eq!(auswerten(&e).reserve_abstand_kg, None, "nicht pruefbar → kein Abstand");
+        e.tank_plausibel = true;
+        e.planned_reserve_kg = None;
+        assert_eq!(auswerten(&e).reserve_abstand_kg, None, "ohne OFP-Reserve kein Abstand");
     }
 
     /// Rollen nach der Landung: eine Funktion, zwei Wege — dieselbe Zahl.
