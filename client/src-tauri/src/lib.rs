@@ -21840,7 +21840,13 @@ fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &m
         f.insert(
             "Zeit unter Schwelle".into(),
             // v1.7.38: ganze Minuten — „14,3 min" las niemand als 14 min 18 s.
-            format!("{} min unter {} ft", min.round() as i64, ziffern(ft)),
+            // Dieselbe Regel wie `minuten()` in client/src/lib/sprit.ts:
+            // gemessene Kurzzeit unter einer halben Minute ist „< 1", nie „0".
+            format!(
+                "{} min unter {} ft",
+                if min > 0.0 && min < 0.5 { "< 1".to_string() } else { (min.round() as i64).to_string() },
+                ziffern(ft)
+            ),
         );
     }
     // v1.7.37: der Abstand in kg statt der Quote — „(338 %)" las sich, als
@@ -68741,6 +68747,10 @@ mod pirep_felder_sprit_tests {
         e.planned_contingency_kg = Some(0.0);
         e.planned_block_fuel_kg = Some(5_399.0);
         assert_eq!(felder(e)["Contingency"], "keine geplant");
+        // Gemessene Kurzzeit: „< 1 min", wie in der Anzeige.
+        let mut e = basis();
+        e.zeit_unter_schwelle_s = Some(18.0);
+        assert_eq!(felder(e)["Zeit unter Schwelle"], "< 1 min unter 8\u{202f}362 ft");
         // Tank unplausibel: keine Aussage — kein Feld.
         let mut e = basis();
         e.tank_plausibel = false;
