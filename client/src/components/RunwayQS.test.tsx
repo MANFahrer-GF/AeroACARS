@@ -1246,7 +1246,7 @@ describe("Ausfahrten: die Zahl im Bild", () => {
  * abgerollt, aber das Abrollen sieht auf der Darstellung ganz anders aus."
  * Der Korridor hätte den falschen Rollweg gezeigt.
  */
-describe("Korridor der genommenen Ausfahrt", () => {
+describe("Rollweg der genommenen Ausfahrt (Lupe)", () => {
   it("nimmt die nächstgelegene, nicht die erste", () => {
     const basis = VARIANTEN.find((v) => v.key === "dlh369")!.props;
     // Zwei Ausfahrten im 120-Meter-Fenster, beide mit Verlauf. Die
@@ -1267,42 +1267,29 @@ describe("Korridor der genommenen Ausfahrt", () => {
         ],
       },
     ];
-    const mk = renderToStaticMarkup(
-      <RunwayDiagramV2 {...basis} runway_exits={exits as never} />,
+    // Seit v1.7.40 steht der Rollweg in der Lupe „Abrollen im echten
+    // Massstab" (RunwayExitLupe), nicht mehr als Korridor in der
+    // überhöhten Queransicht. Dort werden ALLE Rollwege im Ausschnitt
+    // gezeichnet — hervorgehoben (fett benannt, kräftiger gefüllt) nur der
+    // genommene. Genau das prüft der Test: B6, nicht B7.
+    const lupe = (liste: typeof exits) => {
+      const mk = renderToStaticMarkup(
+        <RunwayDiagramV2 {...basis} runway_exits={liste as never} />,
+      );
+      return /<svg[^>]*data-ansicht="lupe"[\s\S]*?<\/svg>/.exec(mk)?.[0] ?? "";
+    };
+    const svg = lupe(exits);
+    expect(svg, "keine Lupe gezeichnet — der Test prüft nichts").not.toBe("");
+    const fett = [...svg.matchAll(/<text[^>]*font-weight="700"[^>]*>([^<]+)<\/text>/g)].map(
+      (m) => m[1],
     );
-
-    // Der Korridor wird als eigener Pfad gezeichnet. Welcher der beiden
-    // es ist, verrät seine Längslage: B7 endet bei 2.300 m, B6 bei 2.400.
-    // Die Marke ③ steht am Räumpunkt und ist für beide gleich, taugt
-    // also nicht zur Unterscheidung — deshalb wird hier der gezeichnete
-    // Korridor selbst gesucht.
-    const korridor = /<path[^>]*fill="#3b82f6"[^>]*d="([^"]+)"/.exec(mk)?.[1]
-      ?? /<path[^>]*d="([^"]+)"[^>]*fill="#3b82f6"/.exec(mk)?.[1];
-    expect(
-      korridor,
-      "es wird gar kein Korridor gezeichnet — der Test prüft nichts",
-    ).toBeTruthy();
-
-    // Die x-Werte des Pfads in Metern zurückrechnen ist umständlich;
-    // einfacher und ebenso eindeutig: Der Korridor von B6 reicht weiter
-    // nach rechts als der von B7.
-    const xs = [...korridor!.matchAll(/(-?\d+(?:\.\d+)?)[, ]/g)]
-      .map((m) => Number(m[1]))
-      .filter((n, i) => i % 2 === 0);
-    const maxX = Math.max(...xs);
-    const nurB7 = renderToStaticMarkup(
-      <RunwayDiagramV2 {...basis} runway_exits={[exits[0]] as never} />,
+    expect(fett, "hervorgehoben ist nicht die nächstgelegene Ausfahrt").toEqual(["B6"]);
+    // Gegenprobe: Liegt nur B7 im Fenster, ist B7 die genommene.
+    const nurB7 = lupe([exits[0]!]);
+    const fettB7 = [...nurB7.matchAll(/<text[^>]*font-weight="700"[^>]*>([^<]+)<\/text>/g)].map(
+      (m) => m[1],
     );
-    const kB7 = /<path[^>]*fill="#3b82f6"[^>]*d="([^"]+)"/.exec(nurB7)?.[1]
-      ?? /<path[^>]*d="([^"]+)"[^>]*fill="#3b82f6"/.exec(nurB7)?.[1];
-    const xsB7 = [...(kB7 ?? "").matchAll(/(-?\d+(?:\.\d+)?)[, ]/g)]
-      .map((m) => Number(m[1]))
-      .filter((n, i) => i % 2 === 0);
-    expect(xsB7.length, "B7 allein zeichnet keinen Korridor").toBeGreaterThan(0);
-    expect(
-      maxX,
-      "der gezeichnete Korridor ist der von B7 — die erste, nicht die nächste",
-    ).toBeGreaterThan(Math.max(...xsB7) + 1);
+    expect(fettB7).toEqual(["B7"]);
   });
 });
 

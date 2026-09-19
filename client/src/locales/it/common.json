@@ -2177,7 +2177,13 @@
     "zoom_in": "Ingrandisci",
     "zoom_out": "Riduci",
     "cross_exaggeration_stretched": "{{f}}× esagerazione laterale · pista stretta ingrandita {{d}}×",
-    "legend_shoulder": "a lato della pista — non asfaltato"
+    "legend_shoulder": "a lato della pista — non asfaltato",
+    "lupe_aria": "Uscita dalla pista in scala reale: traccia e via di rullaggio in pianta",
+    "lupe_title": "USCITA DALLA PISTA — IN SCALA REALE",
+    "lupe_scale_note": "stessa scala in lunghezza e larghezza · angoli come percorsi",
+    "lupe_direction": "Direzione di atterraggio →",
+    "legend_mess_ende": "▲ Scostamento laterale valutato fino a qui — oltre solo disegnato",
+    "legend_rollweg_lupe": "Via di rullaggio (OSM, larghezza ipotizzata 23 m) — nel dettaglio"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

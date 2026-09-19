@@ -2184,7 +2184,13 @@
     "zoom_in": "Zoom in",
     "zoom_out": "Zoom out",
     "cross_exaggeration_stretched": "{{f}}× vertical stretch · narrow runway scaled up {{d}}×",
-    "legend_shoulder": "beside the runway — unpaved"
+    "legend_shoulder": "beside the runway — unpaved",
+    "lupe_aria": "Runway exit at true scale: track and taxiway in plan view",
+    "lupe_title": "RUNWAY EXIT — TRUE SCALE",
+    "lupe_scale_note": "same scale along and across · angles as flown",
+    "lupe_direction": "Landing direction →",
+    "legend_mess_ende": "▲ Lateral offset scored up to here — drawn only beyond",
+    "legend_rollweg_lupe": "Taxiway (OSM, assumed 23 m wide) — in the close-up"
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",

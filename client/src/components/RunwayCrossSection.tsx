@@ -92,6 +92,11 @@ export interface QueransichtProps {
   maxLateralOffsetM?: number | null;
   /** Strecke über das Bahnende hinaus — für die Marke ④. */
   overrunM?: number | null;
+  /**
+   * Nummer des Spurendes — so, wie die Liste darunter es führt. Ohne sie
+   * nimmt das Bild die nächste freie Nummer (alte Aufrufer).
+   */
+  endpunktNummer?: number;
   /** Rollwege, die die Bahn treffen (OSM). Optional. */
   ausfahrten?: Ausfahrt[] | null;
   /** ICAO-Typcode — steht mit der Spurweite im Kopf der Ansicht. */
@@ -430,17 +435,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // Flugzeug ist trotzdem über das Bahnende geschossen.
   //
   // Erst danach zählt die seitliche Lage.
-  const rand = p.minEdgeClearanceM;
-  const ueberrollt = (p.overrunM ?? 0) > 0;
-  const bandFarbe = ueberrollt
-    ? p.tokens.tdSevere
-    : rand == null
-    ? p.tokens.rollout
-    : rand < 0
-    ? p.tokens.tdSevere
-    : rand < 3
-    ? p.tokens.tdWarn
-    : p.tokens.tdPerfect;
+  const bandFarbe = bandFarbeFuer(p.tokens, p.overrunM, p.minEdgeClearanceM);
 
   // ── Marken ───────────────────────────────────────────────────────────
   const marken: Array<{ n: number; x: number; y: number; farbe: string }> = [
@@ -540,7 +535,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
     const MIN_ABSTAND_PX = 22;
     const belegt = marken.some((m) => Math.hypot(m.x - x, m.y - y) < MIN_ABSTAND_PX);
     if (!belegt) {
-      marken.push({ n: marken.length + 1, x, y, farbe: "#94a3b8" });
+      marken.push({ n: p.endpunktNummer ?? marken.length + 1, x, y, farbe: "#94a3b8" });
     }
   }
 
@@ -575,68 +570,13 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // 2230 m — zwei Beschriftungen an derselben x-Position, die einander
   // ueberdecken. Die Referenzgrafik loest das mit `S5/S6`, und genau das
   // passiert hier: Ein Stummel, ein Name aus beiden.
-  // ── Der genutzte Rollweg, als Korridor unter der Spur ────────────────
+  // ── Der genutzte Rollweg ─────────────────────────────────────────────
   //
-  // §8.6 verbot Rollwege in dieser Ansicht: „Bei 15-facher Überhöhung wäre
-  // ein 30°-Schnellabrollweg fast senkrecht gezeichnet — das wäre eine
-  // Behauptung, die der Massstab nicht hergibt."
-  //
-  // Die Regel war richtig für einen Rollweg ALLEIN. Zusammen mit der Spur
-  // beantwortet er eine andere Frage — und die beantwortet er richtig:
-  // Beide sind gleich überhöht, also ist ablesbar, OB die Räder im
-  // Rollweg blieben. Nur der absolute Winkel bleibt unlesbar, und der
-  // steht deshalb als Zahl in der Marke.
-  //
-  // Feldbefund Thomas zu DLH369 (EDDM 26L, 25.08.2026): „auf B6 abgerollt,
-  // aber das Abrollen sieht auf der Darstellung ganz anders aus." Gemessen
-  // 19,4°, B6 selbst 23,7°, gezeichnet 80,3°.
-  //
-  // Gezeichnet wird NUR der genutzte Rollweg. Alle nebeneinander wären ein
-  // Liniengewirr, und die Frage lautet „bin ich meinem Rollweg gefolgt",
-  // nicht „welche gibt es".
-  const rollwegKorridor = ((): string | null => {
-    // Die NAECHSTE, nicht die erste.
-    //
-    // `find` nahm die erste Ausfahrt, die ins Fenster passt — und das
-    // Fenster ist 120 Meter breit. In Muenchen liegen darin zwei: B7 bei
-    // 2.259 m und B6 bei 2.368 m. Thomas' Raeumpunkt war 2.345 m, also
-    // 23 Meter von B6 und 86 von B7 entfernt — gezeichnet worden waere
-    // B7, weil sie in der nach Laengs sortierten Liste vorne steht.
-    //
-    // Das ist genau der Einwand, mit dem diese ganze Arbeit angefangen
-    // hat: „auf B6 abgerollt, aber das Abrollen sieht ganz anders aus."
-    const genutzteAusfahrt = (p.ausfahrten ?? [])
-      .filter((a) => genutzt(a) && (a.verlauf?.length ?? 0) >= 2)
-      .sort(
-        (x, y) =>
-          Math.abs(x.laengs_m - (p.clearanceM ?? 0)) -
-          Math.abs(y.laengs_m - (p.clearanceM ?? 0)),
-      )[0];
-    if (!genutzteAusfahrt?.verlauf) return null;
-    const achse = genutzteAusfahrt.verlauf
-      .filter(
-        (v) =>
-          Number.isFinite(v.laengs_m) &&
-          Number.isFinite(v.quer_m) &&
-          v.laengs_m >= 0 &&
-          v.laengs_m <= p.projektion.lengthM &&
-          Math.abs(v.quer_m) <= sichtbarM,
-      )
-      .map((v) => xy({ laengs_m: v.laengs_m, quer_m: v.quer_m }));
-    if (achse.length < 2) return null;
-    // 23 m: die uebliche Breite eines Schnellabrollwegs. Die Bodenkarte
-    // fuehrt Rollwege als Mittellinie, eine echte Breite steht dort nicht.
-    const halbRollwegPx = (23 / 2) * pxProQuerM;
-    const oben = bandRand(achse, halbRollwegPx, -1);
-    const unten = bandRand(achse, halbRollwegPx, 1);
-    // Gleiche Glättung wie beim Radspur-Band oben (bewusst geteilte Logik,
-    // siehe Kommentar bei `bandRand`) — sonst knickt der Rollweg an derselben
-    // Art enger Kurve sichtbar ab.
-    const untenUmgekehrt = unten.slice().reverse();
-    const rollwegEnde = untenUmgekehrt[0];
-    if (!rollwegEnde) return null;
-    return `${weicherPfad(oben)} L ${rollwegEnde.x.toFixed(1)} ${rollwegEnde.y.toFixed(1)} ${weicherPfad(untenUmgekehrt, 0.5, true)} Z`;
-  })();
+  // Bis v1.7.39 lag er hier als Korridor unter der Spur. Bei zwölffacher
+  // Überhöhung stand ein 30°-Schnellabrollweg darin fast senkrecht — die
+  // Aussage „die Räder blieben im Rollweg" war ablesbar, der Verlauf nicht.
+  // Seit v1.7.40 zeigt ihn die Lupe „Abrollen im echten Massstab"
+  // (`RunwayExitLupe`) mit dem Winkel, den er hat.
 
   const ausfahrten = gruppiere(
     // ⚠ Die Schranke muss im SELBEN Bezugspunkt stehen wie `laengs_m`.
@@ -842,19 +782,6 @@ export function RunwayCrossSection(p: QueransichtProps) {
       {/* Der genutzte Rollweg — UNTER der Spur, damit sie oben liegt.
           Nur eine Fläche mit gestricheltem Rand: Er ist der Untergrund, auf
           dem die Spur läuft, nicht selbst eine Messung. */}
-      {rollwegKorridor && (
-        <path
-          d={rollwegKorridor}
-          fill={p.tokens.rollweg}
-          fillOpacity={0.22}
-          stroke={p.tokens.rollwegRand}
-          strokeWidth={1.1}
-          strokeOpacity={0.75}
-          strokeDasharray="6 5"
-          strokeLinejoin="round"
-          pointerEvents="none"
-        />
-      )}
       {bandPfad && (
         <path
           d={bandPfad}
@@ -964,6 +891,19 @@ export function RunwayCrossSection(p: QueransichtProps) {
           Zwei Linien für dieselbe Aussage sind eine zu viel, und die
           erfundene wäre die auffälligere gewesen. */}
 
+      {/* Bis hier geht der Querversatz in die Note ein — die Spur läuft
+          weiter bis zur Ausfahrt, gewertet wird sie dort nicht mehr (siehe
+          `bahn_mess_schwelle_kt`). Nur ein Strich am unteren Rand, keine
+          Fläche: Thomas (19.09.2026) wollte das Abrollen sehen, nicht eine
+          Grenze, die es abschneidet. */}
+      {p.messEndeM != null && (
+        <path
+          d={`M ${p.projektion.mAbBahnanfangZuX(p.messEndeM).toFixed(1)} ${(bahnBot - 1).toFixed(1)} l -5 9 l 10 0 z`}
+          fill="#fbbf24"
+          data-marke="messende"
+        />
+      )}
+
       {/* Marken — nur Ziffern, der Text steht in der Liste darunter (§8.5). */}
       {marken.map((m) => (
         <g key={m.n}>
@@ -1057,6 +997,22 @@ export function RunwayCrossSection(p: QueransichtProps) {
       </text>
     </svg>
   );
+}
+
+/**
+ * Farbe des Radspur-Bandes. Eine Stelle für Queransicht und Lupe — zwei
+ * Fassungen derselben Rangfolge würden auseinanderlaufen.
+ */
+export function bandFarbeFuer(
+  tokens: { rollout: string; tdPerfect: string; tdWarn: string; tdSevere: string },
+  overrunM: number | null | undefined,
+  minEdgeClearanceM: number | null | undefined,
+): string {
+  if ((overrunM ?? 0) > 0) return tokens.tdSevere;
+  if (minEdgeClearanceM == null) return tokens.rollout;
+  if (minEdgeClearanceM < 0) return tokens.tdSevere;
+  if (minEdgeClearanceM < 3) return tokens.tdWarn;
+  return tokens.tdPerfect;
 }
 
 /**

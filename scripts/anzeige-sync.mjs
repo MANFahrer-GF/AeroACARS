@@ -58,6 +58,8 @@ export const DATEIEN = [
   "components/RunwayDiagramV2.tsx",
   "components/RunwayDisciplinePanel.tsx",
   "components/RunwayCrossSection.tsx",
+  // v1.7.40: Lupe „Abrollen im echten Massstab" unter der Queransicht.
+  "components/RunwayExitLupe.tsx",
   "components/SkinContext.tsx",
   // Die Farbtabelle. Sie stand nicht in der ersten Fassung dieser Liste,
   // und der Baum-Test hat sie gefunden: Die Webapp-Fassung schleppte noch

@@ -89,25 +89,16 @@ const VERLAUF_NACH_M: f64 = 400.0;
 
 /// Wie weit der Verlauf ueber die Bahnkante hinaus mitgenommen wird.
 ///
-/// # Warum das noetig wurde
+/// Bis v1.7.39 waren es sechs Meter — passend fuer die ueberhoehte
+/// Queransicht, die neben der Kante nur einen schmalen Gruenstreifen zeigt.
+/// Seit es die Lupe „Abrollen im echten Massstab" gibt, wird der Rollweg
+/// dort gezeichnet, wo das Flugzeug hinrollt: Die Spur laeuft bis achtzig
+/// Meter neben die Kante (`BAHN_SPUR_RAND_M`), der Rollweg muss darueber
+/// hinausreichen, sonst endet er mitten in der Kurve.
 ///
-/// Bis zur QS am 26.08.2026 war der Verlauf nur LAENGS beschnitten. Quer
-/// lief er, so weit die Bodenkarte reichte: In Muenchen begann B6 bei
-/// 219,5 Metern neben der Mittellinie, tief im Vorfeld. Die Queransicht
-/// zeigt rund dreissig Meter — der Korridor waere zu sieben Achteln
-/// ausserhalb des Bildes gewesen.
-///
-/// Wie viel darueber hinaus sinnvoll ist, sagt die ZEICHNUNG, nicht das
-/// Gefuehl: Die Queransicht zeigt neben der Kante nur den gruenen
-/// Streifen, `GRUEN_H = 13` Pixel — bei Muenchener Massstab rund drei
-/// Meter. Alles Weitere klemmt `querZuY` auf den Rand und laege dort als
-/// waagerechter Strich, also als Behauptung, der Rollweg fuehre die Kante
-/// entlang.
-///
-/// Sechs Meter: knapp das Doppelte des Sichtbaren, damit der Korridor den
-/// Rand erkennbar erreicht, ohne einen langen unsichtbaren Schwanz
-/// mitzuschleppen.
-const VERLAUF_QUER_UEBER_KANTE_M: f64 = 6.0;
+/// Die Queransicht beschneidet selbst (`Math.abs(v.quer_m) <= sichtbarM`)
+/// und bekommt deshalb nichts Zusaetzliches ins Bild.
+const VERLAUF_QUER_UEBER_KANTE_M: f64 = 150.0;
 
 /// Wie nah ein Stützpunkt an der Bahnkante liegen muss, um als Ausfahrt zu
 /// zählen, in Metern.
@@ -245,18 +236,67 @@ fn verlauf_ausduennen(
     halbe_breite_m: f64,
 ) -> Vec<Verlaufspunkt> {
     let quer_max = halbe_breite_m + VERLAUF_QUER_UEBER_KANTE_M;
+    let fenster = (
+        kante_laengs - VERLAUF_VOR_M,
+        kante_laengs + VERLAUF_NACH_M,
+        -quer_max,
+        quer_max,
+    );
+
+    // Abschnitte zuschneiden, nicht Stuetzpunkte filtern.
+    //
+    // OpenStreetMap zeichnet einen Schnellabrollweg oft als EINE Gerade mit
+    // zwei Stuetzpunkten — einer auf der Bahn, einer weit draussen am
+    // parallelen Rollweg. Wer nur Punkte im Fenster behaelt, behaelt davon
+    // einen, und „ein Punkt ist keine Linie" verwirft den Rest. So fehlte
+    // der Verlauf bei zwei Dritteln aller Landungen (214 von 313 mit
+    // Ausfahrten, 19.09.2026), darunter L6 in EDDL bei EWG9503.
+    //
+    // Zugeschnitten wird jeder Abschnitt am Fensterrand; die Schnittpunkte
+    // kommen als echte Punkte dazu. Faellt ein Rollweg aus dem Fenster und
+    // kommt wieder herein, entstehen zwei Stuecke — behalten wird das, das
+    // der Kante am naechsten liegt, statt beide mit einer Geraden zu
+    // verbinden, die es nicht gibt.
+    let mut stuecke: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut offen = false;
+    for w in roh.windows(2) {
+        match abschnitt_zuschneiden(w[0], w[1], fenster) {
+            Some((a, b)) => {
+                if !offen {
+                    stuecke.push(vec![a]);
+                    offen = true;
+                }
+                let st = stuecke.last_mut().expect("eben angelegt");
+                if st.last() != Some(&a) {
+                    st.push(a);
+                }
+                st.push(b);
+                // Endet der Abschnitt am Rand, ist das Stueck zu.
+                if b != w[1] {
+                    offen = false;
+                }
+            }
+            None => offen = false,
+        }
+    }
+    let kante = |p: &(f64, f64)| (p.0 - kante_laengs).hypot(p.1.abs() - halbe_breite_m);
+    let Some(stueck) = stuecke.into_iter().min_by(|a, b| {
+        let da = a.iter().map(kante).fold(f64::MAX, f64::min);
+        let db = b.iter().map(kante).fold(f64::MAX, f64::min);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    }) else {
+        return Vec::new();
+    };
+
     let mut aus: Vec<Verlaufspunkt> = Vec::new();
-    for &(laengs, quer) in roh {
-        if laengs < kante_laengs - VERLAUF_VOR_M || laengs > kante_laengs + VERLAUF_NACH_M {
-            continue;
-        }
-        // Und quer: was weit neben der Bahn liegt, wird nie gezeichnet.
-        if quer.abs() > quer_max {
-            continue;
-        }
+    let n = stueck.len();
+    for (i, &(laengs, quer)) in stueck.iter().enumerate() {
+        // Der letzte Punkt bleibt immer — sonst endet eine Gerade vor ihrem
+        // Ende, und ein Rollweg aus zwei Stuetzpunkten wird kuerzer
+        // gezeichnet, als er ist.
         if let Some(letzter) = aus.last() {
             let d = (laengs - letzter.laengs_m).hypot(quer - letzter.quer_m);
-            if d < VERLAUF_MIN_ABSTAND_M {
+            if d < VERLAUF_MIN_ABSTAND_M && i + 1 < n {
                 continue;
             }
         }
@@ -290,6 +330,50 @@ fn verlauf_ausduennen(
         aus.reverse();
     }
     aus
+}
+
+/// Schneidet die Strecke `a`–`b` auf das Rechteck
+/// `(laengs_min, laengs_max, quer_min, quer_max)` zu (Liang–Barsky).
+/// `None`, wenn nichts davon im Rechteck liegt.
+fn abschnitt_zuschneiden(
+    a: (f64, f64),
+    b: (f64, f64),
+    (l0, l1, q0, q1): (f64, f64, f64, f64),
+) -> Option<((f64, f64), (f64, f64))> {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, a.0 - l0),
+        (dx, l1 - a.0),
+        (-dy, a.1 - q0),
+        (dy, q1 - a.1),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                t0 = t0.max(r);
+            } else {
+                t1 = t1.min(r);
+            }
+        }
+    }
+    if t0 > t1 {
+        return None;
+    }
+    let punkt = |t: f64| {
+        if t == 0.0 {
+            a
+        } else if t == 1.0 {
+            b
+        } else {
+            (a.0 + t * dx, a.1 + t * dy)
+        }
+    };
+    Some((punkt(t0), punkt(t1)))
 }
 
 fn lonlat(v: &serde_json::Value) -> Option<(f64, f64)> {
@@ -447,6 +531,42 @@ mod tests {
                 v.laengs_m
             );
         }
+    }
+
+    #[test]
+    fn eine_lange_gerade_wird_zugeschnitten_statt_verworfen() {
+        // EDDL L6 bei EWG9503: OSM fuehrt den Schnellabrollweg als eine
+        // Gerade von der Bahn bis weit hinaus. Nur EIN Stuetzpunkt lag im
+        // Fenster — der Verlauf wurde verworfen, die Lupe haette keinen
+        // Rollweg gehabt.
+        let g = karte(&rollweg_aus("L6", &[(1900.0, -10.0), (2700.0, -520.0)]));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1, "{a:?}");
+        let v = &a[0].verlauf;
+        assert!(v.len() >= 2, "Verlauf verworfen: {v:?}");
+        // Er reicht bis an den Fensterrand, nicht nur bis zur Kante.
+        let weitest = v.iter().map(|p| p.quer_m.abs()).fold(0.0, f64::max);
+        assert!(weitest > 100.0, "endet bei {weitest:.0} m neben der Mitte");
+        // Und der Winkel bleibt der der Geraden (atan(510/800) ≈ 32,5°).
+        let (e, l) = (v.first().unwrap(), v.last().unwrap());
+        let grad = (l.quer_m - e.quer_m)
+            .abs()
+            .atan2(l.laengs_m - e.laengs_m)
+            .to_degrees();
+        assert!((grad - 32.5).abs() < 2.0, "{grad:.1}°");
+    }
+
+    #[test]
+    fn zugeschnitten_wird_am_fensterrand() {
+        let f = (0.0, 100.0, -10.0, 10.0);
+        assert_eq!(
+            abschnitt_zuschneiden((-50.0, 0.0), (50.0, 0.0), f),
+            Some(((0.0, 0.0), (50.0, 0.0)))
+        );
+        assert_eq!(abschnitt_zuschneiden((50.0, 20.0), (50.0, 30.0), f), None);
+        let (a, b) = abschnitt_zuschneiden((50.0, 0.0), (50.0, 40.0), f).unwrap();
+        assert_eq!(a, (50.0, 0.0));
+        assert!((b.1 - 10.0).abs() < 1e-9);
     }
 
     #[test]

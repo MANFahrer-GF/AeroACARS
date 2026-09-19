@@ -128,7 +128,13 @@ export interface RunwayDiagramV2Props {
    * genutzten lag und wie weit davor. Optional — ohne sie zeigt die
    * Queransicht einfach keine Stummel.
    */
-  runway_exits?: Array<{ name: string; laengs_m: number; seite: "left" | "right" }> | null;
+  /** Ausfahrten samt Rollweg-Verlauf (für die Lupe, seit v1.7.4 im Payload). */
+  runway_exits?: Array<{
+    name: string;
+    laengs_m: number;
+    seite: "left" | "right";
+    verlauf?: Array<{ laengs_m: number; quer_m: number }> | null;
+  }> | null;
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;

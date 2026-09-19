@@ -2184,7 +2184,13 @@
     "zoom_in": "Näher",
     "zoom_out": "Weiter weg",
     "cross_exaggeration_stretched": "quer {{f}}× überhöht · schmale Bahn {{d}}× aufgezogen",
-    "legend_shoulder": "neben der Bahn — unbefestigt"
+    "legend_shoulder": "neben der Bahn — unbefestigt",
+    "lupe_aria": "Abrollen im echten Maßstab: Spur und Rollweg als Draufsicht",
+    "lupe_title": "ABROLLEN — IM ECHTEN MASSSTAB",
+    "lupe_scale_note": "längs und quer gleicher Maßstab · Winkel wie gefahren",
+    "lupe_direction": "Landerichtung →",
+    "legend_mess_ende": "▲ Querversatz bewertet bis hier — danach nur noch gezeichnet",
+    "legend_rollweg_lupe": "Rollweg (OSM, 23 m breit angenommen) — in der Lupe"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

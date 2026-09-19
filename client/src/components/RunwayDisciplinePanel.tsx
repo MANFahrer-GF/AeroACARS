@@ -7,7 +7,8 @@
 // Kanten, damit der Aufsetzpunkt oben senkrecht über der Marke unten liegt.
 
 import { useTranslation } from "react-i18next";
-import { RunwayCrossSection } from "./RunwayCrossSection";
+import { RunwayCrossSection, bandFarbeFuer } from "./RunwayCrossSection";
+import { RunwayExitLupe } from "./RunwayExitLupe";
 import type { Projektion } from "../lib/runwayProjection";
 import type { BahnZoom } from "../lib/useBahnZoom";
 import type { RunwayDiagramV2Props } from "./RunwayDiagramV2";
@@ -184,12 +185,30 @@ export function RunwayDisciplinePanel({
                 : null
             }
             overrunM={props.overrun_m}
+            endpunktNummer={endpunktNummer(props)}
             ausfahrten={props.runway_exits}
             aircraftIcao={props.aircraft_icao}
             width={width}
             zoom={zoom}
             tokens={tokens}
           />
+          {/* Das Abrollen im echten Massstab — die Queransicht darüber ist
+              quer überhöht und zeichnet eine Ausfahrt als Haken. Ohne
+              Abrollen (kein Räumpunkt, Spur bleibt auf der Bahn) fehlt sie. */}
+          <div style={{ marginTop: 14 }}>
+            <RunwayExitLupe
+              samples={samples}
+              runwayWidthM={breite!}
+              trackWidthM={props.track_width_m ?? null}
+              clearanceM={props.clearance_point_m}
+              clearanceSide={props.clearance_side}
+              ausfahrten={props.runway_exits}
+              bandFarbe={bandFarbeFuer(tokens, props.overrun_m, props.min_edge_clearance_m)}
+              width={width}
+              schriftMindest={props.schriftMindest}
+              tokens={tokens}
+            />
+          </div>
           {/* Die Grafik zeigt die rohe Spur — es gibt trotzdem kein
               Bewertungsurteil zur Bahndisziplin (Messfenster o.Ä.). Klein
               und unaufdringlich, damit es die Grafik nicht ersetzt. */}
@@ -283,6 +302,45 @@ function versatzAufDerSpur(
       null,
     );
   return naechster != null && Math.abs(naechster.quer_m - max) <= 2 ? naechster : null;
+}
+
+/**
+ * Ob der gemeldete Grösstversatz nicht gilt — dann führt die Liste keinen
+ * Eintrag ②. Eine Stelle, weil auch die Nummer des Spurendes im Bild davon
+ * abhängt (siehe `endpunktNummer`).
+ */
+function versatzUnglaubwuerdig(props: RunwayDiagramV2Props): boolean {
+  return [
+    // Der Versatz selbst ist unglaubwürdig.
+    "implausible_lateral_track",
+    // Die Bahnachse, auf die projiziert wurde, ist es nicht.
+    "untrusted_geometry",
+    "off_airport_landing",
+    // Aus zwei, drei Proben lässt sich kein Grösstwert ablesen.
+    "insufficient_samples",
+    // Falsche Achse, schräg dazu gemessen (QS-Fund, Codex 08.09.2026) —
+    // dieselbe Ereignisliste wird unabhängig von der Grafik oben gerendert,
+    // sie muss den Grund selbst kennen statt sich auf `grund` zu verlassen.
+    "runway_axis_mismatch",
+  ].includes(props.lateral_skip_reason ?? "");
+}
+
+/**
+ * Die Nummer, unter der die Liste das Ende der Spur führt.
+ *
+ * Bild und Liste zählen getrennt, und sie liefen auseinander: Bei EWG9503
+ * (#1431) fehlt die Ausfahrtsseite — das Bild setzte keine ③, sondern ein
+ * Spurende mit der nächsten freien Nummer, ②. Die Liste führte unter ② den
+ * Grösstversatz und unter ③ „Bahn geräumt". Zwei Nummern, zwei Bedeutungen.
+ *
+ * Die Liste ist die Vorgabe: ③, wenn es einen Räumpunkt gibt (dann IST das
+ * Spurende die Räumung, nur ohne bekannte Seite), sonst die Nummer nach
+ * Aufsetzen und — falls geführt — Grösstversatz.
+ */
+function endpunktNummer(props: RunwayDiagramV2Props): number {
+  if (props.clearance_point_m != null) return 3;
+  const mitVersatz = !versatzUnglaubwuerdig(props) && props.max_lateral_offset_m != null;
+  return mitVersatz ? 3 : 2;
 }
 
 function skipText(grund: string): string {
@@ -381,19 +439,7 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
   // gemessene VERSATZ in Ordnung, nur die Kante ist fliessend. Deshalb
   // wird unterschieden, statt pauschal alles wegzulassen — sonst
   // verschwände eine Messung, die stimmt.
-  const versatzEntwertet = [
-    // Der Versatz selbst ist unglaubwürdig.
-    "implausible_lateral_track",
-    // Die Bahnachse, auf die projiziert wurde, ist es nicht.
-    "untrusted_geometry",
-    "off_airport_landing",
-    // Aus zwei, drei Proben lässt sich kein Grösstwert ablesen.
-    "insufficient_samples",
-    // Falsche Achse, schräg dazu gemessen (QS-Fund, Codex 08.09.2026) —
-    // dieselbe Ereignisliste wird unabhängig von der Grafik oben gerendert,
-    // sie muss den Grund selbst kennen statt sich auf `grund` zu verlassen.
-    "runway_axis_mismatch",
-  ].includes(props.lateral_skip_reason ?? "");
+  const versatzEntwertet = versatzUnglaubwuerdig(props);
   // Die Kante trägt zusätzlich dann nicht, wenn sie keine feste Grenze ist.
   const kanteEntwertet =
     versatzEntwertet ||
@@ -621,6 +667,22 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
       farbe: "#334155",
       text: t("runway_v2.exits_none", {
         defaultValue: "Für diesen Platz sind keine Rollwege hinterlegt",
+      }),
+    });
+  }
+  if (props.mess_ende_laengs_m != null) {
+    eintraege.push({
+      farbe: "#fbbf24",
+      text: t("runway_v2.legend_mess_ende", {
+        defaultValue: "▲ Querversatz bewertet bis hier — danach nur noch gezeichnet",
+      }),
+    });
+  }
+  if ((props.runway_exits ?? []).some((a) => (a.verlauf?.length ?? 0) >= 2)) {
+    eintraege.push({
+      farbe: "#3b82f6",
+      text: t("runway_v2.legend_rollweg_lupe", {
+        defaultValue: "Rollweg (OSM, 23 m breit angenommen) — in der Lupe",
       }),
     });
   }
