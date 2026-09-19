@@ -32,7 +32,7 @@ export interface DisziplinProps {
 }
 
 export function RunwayDisciplinePanel({
-  props,
+  props: roh,
   projektion,
   zoom,
   width,
@@ -40,6 +40,11 @@ export function RunwayDisciplinePanel({
 }: DisziplinProps) {
   const { t } = useTranslation();
 
+  // Eine Spur für Bild, Liste und Legende — siehe `spurBereinigen`.
+  const props: RunwayDiagramV2Props = {
+    ...roh,
+    lateral_samples: roh.lateral_samples ? spurBereinigen(roh.lateral_samples) : roh.lateral_samples,
+  };
   const samples = props.lateral_samples ?? [];
   const breite = props.runway_width_m ?? null;
 
@@ -166,7 +171,18 @@ export function RunwayDisciplinePanel({
             messEndeM={props.mess_ende_laengs_m}
             clearanceSide={props.clearance_side}
             minEdgeClearanceM={props.min_edge_clearance_m}
-            maxLateralOffsetM={props.max_lateral_offset_m}
+            // Die Marke nur, wo die Spur den Wert auch trägt — siehe
+            // `versatzAufDerSpur`.
+            maxLateralOffsetM={
+              props.max_lateral_offset_m != null &&
+              versatzAufDerSpur(
+                samples,
+                props.max_lateral_offset_m,
+                props.mess_ende_laengs_m ?? props.scoring_cutoff_m ?? props.clearance_point_m,
+              ) != null
+                ? props.max_lateral_offset_m
+                : null
+            }
             overrunM={props.overrun_m}
             ausfahrten={props.runway_exits}
             aircraftIcao={props.aircraft_icao}
@@ -198,6 +214,77 @@ export function RunwayDisciplinePanel({
 }
 
 /** Der ausgeschriebene Grund, warum die Queransicht entfällt. */
+/**
+ * Die Spur ab dem Aufsetzen, nur vorwärts.
+ *
+ * Gespeicherte Landungen tragen zwei Fehlerbilder aus dem Client, die dort
+ * behoben sind (fix/durchstart-spur), sich im Bestand aber nicht nachbessern
+ * lassen:
+ *
+ * * **Startlauf nach dem Durchstarten** vor der Spur. EWG9503 (#1431, EDDL
+ *   23L): sechs Punkte bei 2232–2313 m, danach das Aufsetzen bei 595 m. Die
+ *   Linie lief von dort zurück und las sich als zweite Spur.
+ * * **Wiederkehrende Probe** zwischen den Live-Punkten. LPPT 02 (#1403):
+ *   976 m, 1117 m, 976 m, 1130 m … — ein Sägezahn.
+ *
+ * Gemessen über 360 Landungen: acht betroffen. Die Regel trifft beide, ohne
+ * einen Wert zu erfinden: Die Spur beginnt am kleinsten Längswert (dem
+ * Aufsetzen — früher misst sie nicht), und danach fällt nur ein SPRUNG
+ * zurück weg.
+ *
+ * ⚠ Nicht „nur vorwärts": Eine Ausfahrt, die schräg nach hinten abgeht,
+ * läuft wirklich rückwärts — in Schritten von rund zehn Metern (dem
+ * Mindestabstand der Aufzeichnung). Die Fehlerbilder springen 140 Meter
+ * und mehr. Dazwischen liegt `RUECKSPRUNG_M`.
+ */
+const RUECKSPRUNG_M = 30;
+
+export function spurBereinigen<T extends { laengs_m: number; quer_m: number }>(
+  samples: T[],
+): T[] {
+  const gueltig = samples.filter(
+    (s) => Number.isFinite(s.laengs_m) && Number.isFinite(s.quer_m),
+  );
+  if (gueltig.length < 2) return gueltig;
+  let start = 0;
+  gueltig.forEach((s, i) => {
+    if (s.laengs_m < gueltig[start]!.laengs_m) start = i;
+  });
+  const aus: T[] = [];
+  for (const s of gueltig.slice(start)) {
+    const letzter = aus[aus.length - 1];
+    if (letzter == null || s.laengs_m >= letzter.laengs_m - RUECKSPRUNG_M) aus.push(s);
+  }
+  return aus;
+}
+
+/**
+ * Die Stelle der Spur, an der der gemeldete Grösstversatz lag.
+ *
+ * Gesucht wird der nächste Punkt — aber nur, wenn er dem Wert auch nahe
+ * kommt. Bei EWG9503 (#1431) stammt der gespeicherte Wert (11,0 m) aus den
+ * Fremdpunkten, die `spurBereinigen` entfernt; die echte Spur kommt nicht
+ * über 2,8 m. Der nächste Punkt läge dann 8 m daneben, und Marke wie Text
+ * behaupteten „11 m bei 856 m" — eine Stelle, an der das nie gemessen
+ * wurde. Ohne Beleg keine Stelle.
+ *
+ * Zwei Meter Spielraum: Die Ablage dünnt auf zehn Meter aus, der
+ * Grösstwert kann zwischen zwei Punkten gelegen haben.
+ */
+function versatzAufDerSpur(
+  samples: Array<{ laengs_m: number; quer_m: number }>,
+  max: number,
+  bewertungsEnde: number | null | undefined,
+): { laengs_m: number; quer_m: number } | null {
+  const naechster = samples
+    .filter((x) => bewertungsEnde == null || x.laengs_m < bewertungsEnde)
+    .reduce<{ laengs_m: number; quer_m: number } | null>(
+      (a, b) => (a == null || Math.abs(b.quer_m - max) < Math.abs(a.quer_m - max) ? b : a),
+      null,
+    );
+  return naechster != null && Math.abs(naechster.quer_m - max) <= 2 ? naechster : null;
+}
+
 function skipText(grund: string): string {
   switch (grund) {
     case "runway_width_unknown":
@@ -337,11 +424,7 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
       props.mess_ende_laengs_m ??
       props.scoring_cutoff_m ??
       props.clearance_point_m;
-    const wo = (props.lateral_samples ?? [])
-      .filter((x) => bewertungsEnde == null || x.laengs_m < bewertungsEnde)
-      .reduce<
-      { laengs_m: number; quer_m: number } | null
-    >((a, b) => (a == null || Math.abs(b.quer_m - max) < Math.abs(a.quer_m - max) ? b : a), null);
+    const wo = versatzAufDerSpur(props.lateral_samples ?? [], max, bewertungsEnde);
     const beiM =
       wo != null
         ? `${t("runway_v2.at_position", {
