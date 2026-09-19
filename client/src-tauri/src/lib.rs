@@ -15609,8 +15609,15 @@ async fn flight_start(
             }) if err_body.contains("aircraft-not-available") => {
                 // Diagnose: fetch aircraft details to tell the user *why* it's
                 // unavailable (wrong airport, "in use" by an orphan PIREP, etc.).
+                // In use / in flight almost always means another pilot departed
+                // first with the same aircraft (both had booked it) — that gets
+                // its own code so the pilot is told to pick another aircraft.
+                let mut code = "aircraft_not_available";
                 let detail = match client.get_aircraft(aircraft_id).await {
                     Ok(a) => {
+                        if matches!(a.state, Some(1) | Some(2)) {
+                            code = "aircraft_in_use";
+                        }
                         let reg = a
                             .registration
                             .as_deref()
@@ -15630,9 +15637,9 @@ async fn flight_start(
                     }
                     Err(e) => format!("could not fetch aircraft {} details: {e}", aircraft_id),
                 };
-                tracing::warn!(aircraft_id, %detail, "aircraft not available");
+                tracing::warn!(aircraft_id, %detail, code, "aircraft not available");
                 return Err(UiError::new(
-                    "aircraft_not_available",
+                    code,
                     format!("Aircraft not available — {detail}"),
                 ));
             }

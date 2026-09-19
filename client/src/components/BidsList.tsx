@@ -840,6 +840,7 @@ export function BidsList({
         "flight_already_active",
         "bid_not_found",
         "aircraft_not_available",
+        "aircraft_in_use",
         "aircraft_mismatch",
         "phpvms_error",
       ];

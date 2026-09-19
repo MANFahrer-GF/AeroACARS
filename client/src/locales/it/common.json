@@ -1902,6 +1902,7 @@
       "flight_already_active": "Un altro volo è già attivo.",
       "bid_not_found": "Bid non trovato — aggiorna.",
       "aircraft_not_available": "Velivolo non disponibile — vedi dettagli sotto. Cause comuni: il velivolo è parcheggiato in un altro aeroporto, è „in uso\" da un PIREP aperto, o il tuo grado non ha accesso. Pulizia tramite admin phpVMS (annulla PIREP orfani + verifica posizione velivolo).",
+      "aircraft_in_use": "Questo velivolo è attualmente in volo con un altro pilota, partito prima di te. In PaxStudio clicca «Replan» nell'hub, scegli un velivolo libero, rigenera l'OFP e poi riavvia.",
       "aircraft_mismatch": "Tipo di velivolo non corrispondente — sei nel velivolo sbagliato per questo bid. Carica il tipo corretto nel simulatore o scegli un altro bid.",
       "aircraft_mismatch_warning": "Il tipo di velivolo non corrisponde: bid e sim mostrano tipi diversi. Per voli in wetlease (il Loadsheet di PaxStudio permette qualsiasi velivolo attivo) → clicca \"Avvia comunque\", la tua scelta viene rispettata. Se hai caricato per errore il velivolo sbagliato → ricaricane uno corretto nel sim ora. I limiti di punteggio si applicano al velivolo caricato nel sim.",
       "invalid_block_fuel": "Il block fuel deve essere un numero positivo in kg.",

@@ -1909,6 +1909,7 @@
       "flight_already_active": "Another flight is already active.",
       "bid_not_found": "Bid not found — please refresh.",
       "aircraft_not_available": "Aircraft not available — see details below. Common causes: the aircraft is parked at another airport, is currently 'in use' by an open PIREP, or your rank doesn't grant access. Fix in phpVMS admin: cancel orphan PIREPs and verify the aircraft's location.",
+      "aircraft_in_use": "This aircraft is currently being flown by another pilot who departed before you. In PaxStudio, click “Replan” on the hub, pick a free aircraft, regenerate the OFP and then start again.",
       "aircraft_mismatch": "Aircraft type mismatch — you're in the wrong aircraft for this bid. Load the correct type in the simulator or pick a different bid.",
       "aircraft_mismatch_warning": "Aircraft type doesn't match: bid and sim show different types. For wetlease flights (PaxStudio Loadsheet allows any active aircraft) → click \"Start anyway\", your pick is respected. If you loaded the wrong aircraft by mistake → reload the correct one in the sim now. Score limits still apply to the aircraft loaded in the sim.",
       "invalid_block_fuel": "Block fuel must be a positive number in kg.",
