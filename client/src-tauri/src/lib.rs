@@ -37429,6 +37429,22 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     // In der Anzeige wäre das nicht als Fehler erkennbar gewesen, sondern
     // als eine Landung, bei der das Flugzeug zweimal über die Bahn lief.
     spur_verwerfen(stats);
+    // Und die Nachernte darf nicht hinter diesen Moment zurueckgreifen.
+    //
+    // `spur_verwerfen` setzt `bahn_spur_bis` zurueck, und die Ernte
+    // sucht dann ab `landing_at` — das ist hier noch das ERSTE Aufsetzen.
+    // Der Ruecksetzer laeuft beim Steigen ueber hundert Fuss; der Puffer
+    // haelt zu diesem Zeitpunkt noch die letzte Sekunde Startlauf am
+    // Boden. Genau die landete in der Spur der zweiten Landung.
+    //
+    // Feldbefund EWG9503 (#1431, EDDL 23L, 19.09.2026): sechs Punkte bei
+    // 2232–2313 m vor dem eigentlichen Aufsetzen bei 595 m. Die Anzeige
+    // zog von dort eine Linie zurueck — eine zweite Spur, die es nicht
+    // gab. Im Bestand acht von 360 Landungen.
+    //
+    // Das neue Aufsetzen liegt spaeter; `max(bis, landing_at)` in der
+    // Ernte laesst ihm den Vortritt.
+    stats.bahn_spur_bis = stats.snapshot_buffer.iter().map(|p| p.at).max();
     // `arr_ground_geojson` bleibt: Die Bodenkarte gehört zum Flughafen,
     // nicht zur Landung. Sie erneut zu holen wäre eine Netzanfrage im
     // ungünstigsten Moment — kurz nach einem Durchstarten.
@@ -65803,6 +65819,48 @@ mod spur_aufloesung_tests {
         assert!(
             kleinster >= 8.0,
             "zwei Punkte nur {kleinster} m auseinander"
+        );
+    }
+
+    #[test]
+    fn nach_dem_durchstarten_erntet_die_spur_keinen_startlauf() {
+        // EWG9503 (#1431): Aufsetzen, Durchstarten, Ruecksetzer beim
+        // Steigen. Der Puffer haelt noch Bodenproben vom Startlauf; das
+        // erste `landing_at` steht noch. Ohne Untergrenze wandern sie in
+        // die Spur der naechsten Landung.
+        let mut stats = flug_mit_puffer(4.0, 140.0);
+        spur_aus_puffer_abschoepfen(&mut stats, 22.5);
+        assert!(
+            !stats.bahn_spur.is_empty(),
+            "Gegenprobe: der Puffer traegt Bodenproben"
+        );
+
+        // Derselbe Ruecksetzer, den der Sampler beim Steigen ruft.
+        clear_approach_stability_and_rollout(&mut stats);
+        assert!(stats.bahn_spur.is_empty());
+
+        // Naechster Takt vor dem zweiten Aufsetzen — derselbe Puffer.
+        spur_aus_puffer_abschoepfen(&mut stats, 22.5);
+        assert!(
+            stats.bahn_spur.is_empty(),
+            "{} Punkte vom Startlauf in der Spur der naechsten Landung",
+            stats.bahn_spur.len()
+        );
+
+        // Das zweite Aufsetzen erntet wieder: neue Proben, neues
+        // `landing_at`, spaeter als der Ruecksetzer.
+        let td2 = stats.snapshot_buffer.back().unwrap().at + chrono::Duration::seconds(60);
+        stats.landing_at = Some(td2);
+        let mut t = 0.0;
+        while t <= 2.0 {
+            stats.snapshot_buffer.push_back(probe(td2, t, 140.0));
+            t += 0.02;
+        }
+        spur_aus_puffer_abschoepfen(&mut stats, 22.5);
+        assert!(
+            stats.bahn_spur.len() >= 10,
+            "das zweite Aufsetzen bekommt keine Spur ({} Punkte)",
+            stats.bahn_spur.len()
         );
     }
 
