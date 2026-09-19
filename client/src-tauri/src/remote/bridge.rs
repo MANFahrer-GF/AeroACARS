@@ -130,6 +130,8 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "flight_status" => ok_json(crate::flight_status(app.clone(), st!())),
         "flight_get_track" => ok_json(crate::flight_get_track(st!())),
         "flight_get_route_fixes" => ok_json(crate::flight_get_route_fixes(st!())),
+        // v1.7.40: Sprit je Wegpunkt — nur lesend, wie die Route selbst.
+        "flight_sprit_wegpunkte" => ok_json(crate::flight_sprit_wegpunkte(st!())),
         "activity_log_get" => ok_json(crate::activity_log_get(st!())),
         "landing_get_current" => ok_json(crate::landing_get_current(app.clone(), st!())),
         "landing_list" => ok_json(crate::landing_list(app.clone())),
