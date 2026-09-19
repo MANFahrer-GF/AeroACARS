@@ -124,12 +124,44 @@ const HINWEIS_RAND = 16;
  * Erklaerung am ⓘ auf einem 375-px-Handy rund 100 px ueber den Kartenrand,
  * und die Karte schnitt sie ab (QS v1.7.37, N1).
  */
-function hinweisLage(ankerLinks: number, gewuenscht: number, mitte: number | null): { breite: number; versatz: number } {
-  const fenster = typeof window !== "undefined" ? window.innerWidth : 1024;
-  const breite = Math.max(160, Math.min(gewuenscht, fenster - 2 * HINWEIS_RAND));
+function hinweisLage(
+  ankerLinks: number,
+  gewuenscht: number,
+  mitte: number | null,
+  bereich: { links: number; rechts: number } = fensterBereich(),
+): { breite: number; versatz: number } {
+  const innenLinks = bereich.links + HINWEIS_RAND;
+  const innenRechts = bereich.rechts - HINWEIS_RAND;
+  const breite = Math.max(160, Math.min(gewuenscht, innenRechts - innenLinks));
   const links = mitte == null ? ankerLinks : mitte - breite / 2;
-  const geklemmt = Math.min(Math.max(links, HINWEIS_RAND), fenster - HINWEIS_RAND - breite);
+  const geklemmt = Math.min(Math.max(links, innenLinks), innenRechts - breite);
   return { breite, versatz: geklemmt - ankerLinks };
+}
+
+function fensterBereich(): { links: number; rechts: number } {
+  return { links: 0, rechts: typeof window !== "undefined" ? window.innerWidth : 1024 };
+}
+
+/**
+ * Der waagerechte Bereich, in dem ein Hinweis am Element `el` sichtbar ist:
+ * das Fenster, geschnitten mit jedem Vorfahren, der Ueberstand abschneidet.
+ * Nur am Fenster ausgerichtet, ragte der Hinweis am Rand der Sprit-Karte
+ * hinaus und wurde abgeschnitten — die Karte ist schmaler als das Fenster
+ * (Seitenleiste im Client, Rand in der Live-Webapp; Thomas, 19.09.2026).
+ */
+const SCHNEIDET_AB = new Set(["hidden", "clip", "auto", "scroll"]);
+
+function sichtbarerBereich(el: Element | null): { links: number; rechts: number } {
+  const bereich = fensterBereich();
+  for (let p = el?.parentElement ?? null; p; p = p.parentElement) {
+    const stil = getComputedStyle(p);
+    if (!SCHNEIDET_AB.has(stil.overflowX) && !SCHNEIDET_AB.has(stil.overflow)) continue;
+    const r = p.getBoundingClientRect();
+    if (r.width <= 0) continue;
+    bereich.links = Math.max(bereich.links, r.left);
+    bereich.rechts = Math.min(bereich.rechts, r.right);
+  }
+  return bereich;
 }
 
 /**
@@ -163,7 +195,7 @@ function Erklaerung({
   const ref = useRef<HTMLElement | null>(null);
   const oeffnen = () => {
     const r = ref.current?.getBoundingClientRect();
-    setLage(r && !breit ? hinweisLage(r.left, 320, null) : null);
+    setLage(r && !breit ? hinweisLage(r.left, 320, null, sichtbarerBereich(ref.current)) : null);
     setOffen(true);
   };
   // Tippen daneben schliesst — iOS Safari sendet dabei weder Blur noch
@@ -332,10 +364,10 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   // Linke Kante und Breite des Balkens im Fenster — beim Oeffnen gemessen,
   // damit der Hinweis auf dem Handy nicht aus der Karte ragt.
   const balkenRef = useRef<HTMLDivElement | null>(null);
-  const [balken, setBalken] = useState<{ links: number; breite: number } | null>(null);
+  const [balken, setBalken] = useState<{ links: number; breite: number; bereich: { links: number; rechts: number } } | null>(null);
   const zeige = (label: string) => {
     const r = balkenRef.current?.getBoundingClientRect();
-    setBalken(r ? { links: r.left, breite: r.width } : null);
+    setBalken(r ? { links: r.left, breite: r.width, bereich: sichtbarerBereich(balkenRef.current) } : null);
     setAktiv(label);
   };
   // Wie bei `Erklaerung`: Tippen neben Balken und Legende schliesst — iOS
@@ -528,7 +560,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
         // Mitte des Blocks im Fenster; der Hinweis wird dort zentriert und
         // so geklemmt, dass er ganz im Bild bleibt.
         const mitteImFenster = balken ? balken.links + ((r.x + r.w / 2) / W) * balken.breite : null;
-        const lage = balken && mitteImFenster != null ? hinweisLage(balken.links, 340, mitteImFenster) : null;
+        const lage = balken && mitteImFenster != null ? hinweisLage(balken.links, 340, mitteImFenster, balken.bereich) : null;
         return (
           <div
             id={hinweisId}

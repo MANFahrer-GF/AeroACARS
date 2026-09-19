@@ -324,6 +324,47 @@ describe("Sprit-Leiter", () => {
     expect(erklaerung()).toBeNull();
   });
 
+  it("bleibt in der Karte, wenn die Karte schmaler ist als das Fenster", () => {
+    // Thomas, 19.09.2026: Am Monitor ist die Sprit-Karte schmaler als das
+    // Fenster (Seitenleiste). Der Hinweis wurde nur am FENSTER geklemmt und
+    // ragte links (Taxi) und rechts (Final Reserve) aus der Karte, die ihn
+    // abschnitt. Karte 300…1000 px in einem 1400-px-Fenster.
+    const breiteVorher = window.innerWidth;
+    const rectVorher = Element.prototype.getBoundingClientRect;
+    Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
+    const rect = (links: number, breite: number) =>
+      ({ left: links, right: links + breite, width: breite, top: 0, bottom: 10, height: 10, x: links, y: 0, toJSON() {} }) as DOMRect;
+    Element.prototype.getBoundingClientRect = function () {
+      const el = this as HTMLElement;
+      if (el.dataset?.testid === "karte") return rect(300, 700);
+      if (el.querySelector?.("svg") != null) return rect(330, 640);
+      return rect(990, 14); // ⓘ ganz rechts in der Karte
+    };
+    try {
+      const { container } = render(
+        <div data-testid="karte" style={{ overflow: "hidden" }}>
+          <SpritSektion sprit={dlh370()} />
+        </div>,
+      );
+      const inKarte = (anker: number, el: HTMLElement) => {
+        const links = anker + parseFloat(el.style.left || "0");
+        const breite = parseFloat(el.style.maxWidth) || parseFloat(el.style.width);
+        expect(links, "ragt links aus der Karte").toBeGreaterThanOrEqual(300 + 16);
+        expect(links + breite, "ragt rechts aus der Karte").toBeLessThanOrEqual(1000 - 16);
+      };
+      for (const block of ["Taxi", "Final Reserve"]) {
+        fireEvent.mouseEnter(container.querySelector(`svg rect[data-block="${block}"]`)!);
+        inKarte(330, container.querySelector('[data-testid="sprit-leiter-hinweis"]') as HTMLElement);
+      }
+      const info = [...container.querySelectorAll('[tabindex="0"]')].find((e) => e.textContent?.trim() === "ⓘ")!;
+      fireEvent.click(info);
+      inKarte(990, container.querySelector('[data-testid="sprit-erklaerung"]') as HTMLElement);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: breiteVorher, configurable: true });
+      Element.prototype.getBoundingClientRect = rectVorher;
+    }
+  });
+
   it("bleibt auf dem Handy (375 px) ganz im Bild — ⓘ und Leiter", () => {
     // QS v1.7.37, N1: Die Erklärung am ⓘ ragte rund 100 px über den
     // Kartenrand, und die Karte schnitt sie ab.
