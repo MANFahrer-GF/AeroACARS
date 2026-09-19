@@ -36973,11 +36973,24 @@ fn spur_aus_puffer_abschoepfen(stats: &mut FlightStats, halbe_breite_m: f64) {
     // Ab dem Aufsetzzeitpunkt — oder ab dem, was beim letzten Mal schon
     // verarbeitet war. Was frueher liegt, ist entweder Anflug oder
     // laengst gezeichnet.
-    let ab = stats.bahn_spur_bis.unwrap_or(td_at).max(td_at);
+    //
+    // ⚠ Nach dem Merker STRENG groesser, nicht `>=`. Der Merker ist der
+    // Zeitstempel der zuletzt geernteten Probe; mit `>=` kommt sie bei
+    // jedem Takt wieder, solange der Puffer nichts Neueres hat. Das war
+    // unsichtbar, solange nur geerntet wurde (Abstand null zum letzten
+    // Punkt, der Mindestabstand verwirft sie). Schreibt aber der Live-Takt
+    // dazwischen einen Punkt weiter vorn, liegt die alte Probe wieder mehr
+    // als zehn Meter entfernt — und wird erneut abgelegt. Feldbefund LPPT
+    // 02 (#1403, v1.7.34): 976 m, 1117 m, 976 m, 1130 m, 976 m … — die
+    // Anzeige zeichnete einen Saegezahn. Im Bestand sieben von 360.
+    let neu = |at: DateTime<Utc>| match stats.bahn_spur_bis {
+        Some(bis) if bis >= td_at => at > bis,
+        _ => at >= td_at,
+    };
     let proben: Vec<(f64, f64, f32, DateTime<Utc>)> = stats
         .snapshot_buffer
         .iter()
-        .filter(|p| p.at >= ab && p.on_ground)
+        .filter(|p| neu(p.at) && p.on_ground)
         .map(|p| (p.lat, p.lon, p.groundspeed_kt, p.at))
         .collect();
 
@@ -65862,6 +65875,27 @@ mod spur_aufloesung_tests {
             "das zweite Aufsetzen bekommt keine Spur ({} Punkte)",
             stats.bahn_spur.len()
         );
+    }
+
+    #[test]
+    fn ein_live_punkt_holt_die_letzte_probe_nicht_zurueck() {
+        // LPPT 02 (#1403): Der Puffer liefert nichts Neues mehr, der
+        // Live-Takt schreibt weiter vorn. Mit `>=` am Merker kam die
+        // letzte Probe bei jedem Takt wieder — Saegezahn in der Anzeige.
+        let mut stats = flug_mit_puffer(4.0, 140.0);
+        spur_aus_puffer_abschoepfen(&mut stats, 22.5);
+        for i in 1..=3 {
+            let vorn = 600.0 + 20.0 * i as f64;
+            spur_fortschreiben(&mut stats, 140.0, vorn, 0.0, 22.5);
+            spur_aus_puffer_abschoepfen(&mut stats, 22.5);
+        }
+        let rueck: Vec<_> = stats
+            .bahn_spur
+            .windows(2)
+            .filter(|w| w[1].0 < w[0].0)
+            .map(|w| (w[0].0, w[1].0))
+            .collect();
+        assert!(rueck.is_empty(), "Spur laeuft rueckwaerts: {rueck:?}");
     }
 
     #[test]
