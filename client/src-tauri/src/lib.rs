@@ -21551,6 +21551,13 @@ fn sprit_neuer_abschnitt_beim_abheben(stats: &mut FlightStats) {
 /// gelesen werden. Nach dem Messpunkt bleibt alles stehen: Dessen Werte sind
 /// eingefroren und gehoeren zur Route, auf der gemessen wurde.
 fn sprit_plan_neu_lesen(stats: &mut FlightStats) {
+    // Sprit je Wegpunkt: Der gemerkte Abschnitt ist ein Index in die ALTE
+    // Route. Stehen lassen hiesse, nach einer kürzeren Route nichts mehr
+    // zu erfassen, bis der alte Index eingeholt ist, oder nach einer
+    // längeren alles dazwischen als übersprungen zu buchen. Der nächste
+    // Takt setzt den Anker neu, ohne nachzutragen; die Messungen bleiben
+    // und finden ihren Wegpunkt über die Kennung.
+    stats.sprit_wp_segment = None;
     if stats.sprit_vergleichspunkt_kg.is_some() {
         return;
     }
@@ -21563,10 +21570,6 @@ fn sprit_plan_neu_lesen(stats: &mut FlightStats) {
 /// Anzeige, kuerzer als jedes echte Abstellen am Stand.
 const SPRIT_TRIEBWERKE_AUS_S: f64 = 10.0;
 
-/// Ein Tick in der Luft: Vergleichspunkt setzen, danach Zeit unter der
-/// Schwelle zaehlen. Nur zwischen Abheben und Aufsetzen, nie bei Pause,
-/// nie am Boden, nie ueber eine Neustart-Luecke hinweg.
-#[allow(clippy::too_many_arguments)]
 /// Eine Messung „Sprit beim Überflug" — Rohdaten, gerechnet wird erst in
 /// `sprit_wegpunkt_zeilen`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -21672,9 +21675,15 @@ fn sprit_wegpunkt_zeilen(
             ..Default::default()
         })
         .collect();
-    // Abflug: der Tankstand beim Abheben (bei Einstieg in der Luft: beim
-    // Einstieg — `takeoff_fuel_kg` ist dann dieser Wert).
-    if let (Some(z), Some(t)) = (zeilen.first_mut(), stats.takeoff_fuel_kg) {
+    // Abflug: der Tankstand beim Abheben. Bei Einstieg in der Luft ist
+    // `takeoff_fuel_kg` der Stand am EINSTIEG, nicht am Abflug — dann bleibt
+    // die Zeile offen, und die Hochrechnung bezieht sich auf den ersten
+    // Überflug danach (`wegpunkte_auswerten`).
+    if let (false, Some(z), Some(t)) = (
+        stats.sprit_einstieg_in_der_luft,
+        zeilen.first_mut(),
+        stats.takeoff_fuel_kg,
+    ) {
         z.zustand = WegpunktZustand::Gemessen;
         z.ist_an_bord_kg = Some(t);
         z.zeit_ms = stats.takeoff_at.map(|t| t.timestamp_millis());
@@ -21717,6 +21726,10 @@ fn sprit_wegpunkt_zeilen(
     zeilen
 }
 
+/// Ein Tick in der Luft: Vergleichspunkt setzen, danach Zeit unter der
+/// Schwelle zaehlen. Nur zwischen Abheben und Aufsetzen, nie bei Pause,
+/// nie am Boden, nie ueber eine Neustart-Luecke hinweg.
+#[allow(clippy::too_many_arguments)]
 fn sprit_tick(
     stats: &mut FlightStats,
     lat: f64,
@@ -23625,7 +23638,6 @@ impl BahnFelder {
     }
 }
 
-/// Traeger der abgeleiteten Bahndisziplin-Werte — siehe `bahn_felder`.
 /// Frühere Durchgänge, die in der Ansicht dieser Landung Platz haben.
 ///
 /// Nur solche auf DERSELBEN Bahn: Die Spur ist gegen die Bahn projiziert,
@@ -23664,6 +23676,7 @@ fn vorherige_durchgaenge(stats: &FlightStats) -> Vec<storage::VorigerDurchgang> 
         .collect()
 }
 
+/// Traeger der abgeleiteten Bahndisziplin-Werte — siehe `bahn_felder`.
 struct BahnFelder {
     /// Um wie viele Meter die LAENGSMASSE der Spur gegen die
     /// Landeschwelle verschoben sind.
@@ -69439,6 +69452,46 @@ mod sprit_wegpunkt_tests {
         sprit_wegpunkt_tick(&mut st, BREITE, lon_nm(41.0), 7_500.0, false, true, false, false, 0);
         sprit_wegpunkt_tick(&mut st, BREITE, lon_nm(81.0), 7_200.0, false, false, false, true, 0);
         assert!(st.sprit_wp_messungen.is_empty());
+    }
+
+    #[test]
+    fn einstieg_in_der_luft_misst_den_abflug_nicht() {
+        let mut st = stats_mit_route();
+        st.sprit_einstieg_in_der_luft = true;
+        st.takeoff_fuel_kg = Some(7_300.0);
+        fliegen(&mut st, 70.0, 130.0);
+        use landing_scoring::sprit::WegpunktZustand;
+        let z = sprit_wegpunkt_zeilen(&st, false);
+        assert_eq!(z[0].zustand, WegpunktZustand::Offen, "Einstiegs-Tankstand als Abflug gemessen");
+        assert!(z[0].ist_an_bord_kg.is_none());
+        // Bezug ist BRAVO, der erste Überflug nach dem Einstieg.
+        assert!(z[2].ampel.is_some());
+    }
+
+    #[test]
+    fn eine_neue_route_setzt_den_abschnitt_neu_an() {
+        // Route-Sync im Reiseflug: Die neue Route hat vorn zwei Fixe mehr.
+        // Mit dem alten Index galten ALFA..BRAVO der neuen Route als
+        // übersprungen, obwohl das Flugzeug dort nie war.
+        let mut st = stats_mit_route();
+        fliegen(&mut st, 1.0, 50.0);
+        assert_eq!(st.sprit_wp_segment, Some(1));
+        let vorher = st.sprit_wp_messungen.len();
+        let mut neu = vec![
+            fx("DEP", BREITE, 0.0, 0.0, 0.0),
+            fx("XRAY", BREITE, 10.0, 10.0, 100.0),
+            fx("YANK", BREITE, 20.0, 10.0, 200.0),
+        ];
+        neu.extend(st.planned_waypoints[1..].iter().cloned());
+        st.planned_waypoints = neu;
+        sprit_plan_neu_lesen(&mut st);
+        assert_eq!(st.sprit_wp_segment, None, "Index der alten Route bleibt stehen");
+        fliegen(&mut st, 52.0, 90.0);
+        let dazu: Vec<(&str, bool)> = st.sprit_wp_messungen[vorher..]
+            .iter()
+            .map(|m| (m.ident.as_str(), m.uebersprungen))
+            .collect();
+        assert_eq!(dazu, vec![("BRAVO", false)], "nach dem Routenwechsel falsch erfasst");
     }
 
     #[test]

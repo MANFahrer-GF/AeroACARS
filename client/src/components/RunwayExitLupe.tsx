@@ -61,6 +61,68 @@ const FUSS = 58;
 
 type P = { x: number; y: number };
 
+type LQ = { laengs_m: number; quer_m: number };
+
+/**
+ * Schneidet einen Linienzug auf das Rechteck [l0, l1] × [q0, q1]
+ * (Liang–Barsky je Abschnitt). Liefert die Stücke, die im Rechteck liegen;
+ * ein Linienzug, der hinaus- und wieder hineinläuft, ergibt mehrere.
+ */
+function linieZuschneiden(
+  zug: LQ[],
+  l0: number,
+  l1: number,
+  q0: number,
+  q1: number,
+): LQ[][] {
+  const stuecke: LQ[][] = [];
+  let akt: LQ[] = [];
+  const gleich = (a: LQ, b: LQ) => Math.abs(a.laengs_m - b.laengs_m) < 1e-6 && Math.abs(a.quer_m - b.quer_m) < 1e-6;
+  for (let i = 0; i + 1 < zug.length; i++) {
+    const a = zug[i]!;
+    const b = zug[i + 1]!;
+    const dl = b.laengs_m - a.laengs_m;
+    const dq = b.quer_m - a.quer_m;
+    let t0 = 0;
+    let t1 = 1;
+    const kanten: Array<[number, number]> = [
+      [-dl, a.laengs_m - l0],
+      [dl, l1 - a.laengs_m],
+      [-dq, a.quer_m - q0],
+      [dq, q1 - a.quer_m],
+    ];
+    let drin = true;
+    for (const [pp, qq] of kanten) {
+      if (pp === 0) {
+        if (qq < 0) drin = false;
+      } else {
+        const r = qq / pp;
+        if (pp < 0) t0 = Math.max(t0, r);
+        else t1 = Math.min(t1, r);
+      }
+    }
+    if (!drin || t0 > t1) {
+      if (akt.length >= 2) stuecke.push(akt);
+      akt = [];
+      continue;
+    }
+    const s = { laengs_m: a.laengs_m + t0 * dl, quer_m: a.quer_m + t0 * dq };
+    const e = { laengs_m: a.laengs_m + t1 * dl, quer_m: a.quer_m + t1 * dq };
+    if (akt.length === 0 || !gleich(akt[akt.length - 1]!, s)) {
+      if (akt.length >= 2) stuecke.push(akt);
+      akt = [s];
+    }
+    akt.push(e);
+    // Verlässt der Abschnitt das Rechteck, endet das Stück hier.
+    if (t1 < 1) {
+      if (akt.length >= 2) stuecke.push(akt);
+      akt = [];
+    }
+  }
+  if (akt.length >= 2) stuecke.push(akt);
+  return stuecke.filter((st) => st.length >= 2 && !gleich(st[0]!, st[st.length - 1]!));
+}
+
 /**
  * Die Lupe. Gibt `null` zurück, wenn es kein Abrollen zu zeigen gibt —
  * weder ein Räumpunkt noch eine Spur, die die Bahn verlässt.
@@ -89,12 +151,14 @@ export function RunwayExitLupe(p: LupeProps) {
 
   // Rollwege genau auf den Ausschnitt — was darüber hinausragt, läge unter
   // den Namen am Rand.
-  const rollwege = (p.ausfahrten ?? [])
-    .map((a) => ({
-      a,
-      v: (a.verlauf ?? []).filter((v) => imFenster(v) && v.laengs_m >= von && v.laengs_m <= bis),
-    }))
-    .filter((r) => r.v.length >= 2);
+  //
+  // Geschnitten, nicht gefiltert: OSM führt Schnellabrollwege oft als EINE
+  // lange Gerade aus zwei Punkten. Punkte zu filtern ließ davon einen übrig,
+  // und der Rollweg fehlte ganz (QS 19.09.2026, derselbe Fehler, den
+  // `ausfahrten.rs` im Client schon mit Liang–Barsky behoben hat).
+  const rollwege = (p.ausfahrten ?? []).flatMap((a) =>
+    linieZuschneiden(a.verlauf ?? [], von, bis, -quergrenze, quergrenze).map((v) => ({ a, v })),
+  );
 
 
   // Hervorgehoben wird der Rollweg, auf den die Spur gefahren ist. Die

@@ -60,6 +60,14 @@ describe("Lupe — Abrollen im echten Massstab", () => {
     expect(grad).toBeLessThan(32);
   });
 
+  it("zeichnet einen Rollweg aus zwei weit auseinander liegenden OSM-Punkten", () => {
+    // L6 läuft von 1800 m bis 1990 m; die Lupe endet bei 1949 m. Punkte zu
+    // filtern ließ einen übrig, der Rollweg fehlte und die Lupe behauptete,
+    // es gebe keine Rollwegdaten. Geschnitten bleibt das Stück im Bild.
+    const svg = renderToStaticMarkup(<RunwayExitLupe {...basis} />);
+    expect(svg.match(/stroke-dasharray="6 5"/g)?.length ?? 0).toBe(1);
+  });
+
   it("gibt ohne Abrollen nichts aus", () => {
     // Keine Räumung, Spur bleibt auf der Bahn — es gibt keine Ausfahrt zu zeigen.
     const svg = renderToStaticMarkup(

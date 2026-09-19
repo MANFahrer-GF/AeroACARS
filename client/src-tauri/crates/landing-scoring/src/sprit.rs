@@ -462,7 +462,6 @@ pub fn wegpunkte_auswerten(
         return;
     };
     let min_landung = letzte.min_an_bord_kg;
-    let plan_start = zeilen.first().and_then(|z| z.plan_an_bord_kg);
 
     // Übersprungene: Abweichung vom Plan zwischen den gemessenen Nachbarn
     // linear übertragen, gewichtet nach dem Plan-Verbrauch dazwischen.
@@ -471,6 +470,21 @@ pub fn wegpunkte_auswerten(
             zeilen[i].zustand == WegpunktZustand::Gemessen && zeilen[i].ist_an_bord_kg.is_some()
         })
         .collect();
+
+    // Bezugspunkt des Verbrauchsfaktors: die erste GEMESSENE Zeile, Ist
+    // und Plan am selben Ort. Im Normalfall ist das der Abflug mit dem
+    // Abhebe-Tankstand (= `ist_start`). Beim Einstieg in der Luft trägt
+    // der Abflug keine Messung; dann ist es der erste Überflug danach.
+    // Den Tankstand am Einstieg gegen den Plan am Abflug zu stellen, hätte
+    // Verbrauch seit dem Einstieg durch Plan-Verbrauch seit dem Abflug
+    // geteilt — Hochrechnung zu günstig, Rot als Grün (QS 19.09.2026).
+    let (ist_start, plan_start) = match gemessen
+        .iter()
+        .find_map(|&g| Some((zeilen[g].ist_an_bord_kg?, zeilen[g].plan_an_bord_kg?)))
+    {
+        Some((ist, plan)) => (Some(ist), Some(plan)),
+        None => (ist_start, zeilen.first().and_then(|z| z.plan_an_bord_kg)),
+    };
     for i in 0..zeilen.len() {
         if zeilen[i].zustand != WegpunktZustand::Uebersprungen {
             continue;
@@ -1039,6 +1053,25 @@ mod tests {
         assert!(z[4].ampel.is_none() && z[4].ist_an_bord_kg.is_none());
         // Gemessene schon.
         assert!(z[3].ampel.is_some() && z[3].landung_hochgerechnet_kg.is_some());
+    }
+
+    #[test]
+    fn einstieg_in_der_luft_rechnet_ab_dem_ersten_ueberflug() {
+        // Client erst im Reiseflug gestartet: Der Abflug trägt keine
+        // Messung. Ab KORED 10 % über Plan. Mit dem Abflug-Plan als Bezug
+        // (8.000) und dem Einstiegs-Tankstand (5.000) wäre der Faktor auf
+        // 0,5 geklemmt und die Landung grün hochgerechnet.
+        let mut z = vec![
+            wp("EDDL", 8000.0, 1500.0, None, WegpunktZustand::Offen),
+            wp("KORED", 5000.0, 1400.0, Some(5000.0), WegpunktZustand::Gemessen),
+            wp("RESMI", 4000.0, 1300.0, Some(3900.0), WegpunktZustand::Gemessen),
+            wp("LEPA", 2000.0, 1300.0, None, WegpunktZustand::Offen),
+        ];
+        wegpunkte_auswerten(&mut z, Some(5000.0), Some(100.0));
+        // Faktor 1,1: 3.900 − 2.000 × 1,1 = 1.700 — unter Plan − Contingency.
+        assert_eq!(z[2].landung_hochgerechnet_kg, Some(1700.0));
+        assert_eq!(z[2].ampel, Some(Ampel::Gelb));
+        assert!(z[0].ampel.is_none(), "der Abflug wurde nicht gemessen");
     }
 
     #[test]

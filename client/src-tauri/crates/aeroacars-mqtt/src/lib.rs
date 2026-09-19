@@ -1126,8 +1126,12 @@ pub struct BahnWire {
     /// der Anzeige aus wie eine Messung, die nichts gefunden hat.
     pub lateral_samples: Option<Vec<LateralSampleWire>>,
     /// Frühere Durchgänge auf derselben Bahn (durchgestartet). Nur zur
-    /// Anzeige; leer wird es weggelassen.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Anzeige.
+    ///
+    /// Leer geht es als `null` raus, NICHT weggelassen — aus demselben
+    /// Grund wie bei `mess_ende_laengs_m`: Korrigiert ein Nachtrag die
+    /// Landung auf eine andere Bahn, muss der Recorder die gegen die alte
+    /// Bahn projizierte Spur löschen können (RFC 7396, QS 19.09.2026).
     pub vorherige_durchgaenge: Option<Vec<DurchgangWire>>,
     pub surface_paved: Option<bool>,
     pub overrun_m: Option<f64>,
@@ -3882,6 +3886,12 @@ mod tests {
             );
             assert!(jl["mess_ende_laengs_m"].is_null());
         }
+        // Ebenso die früheren Durchgänge: Nach einer Bahnkorrektur muss
+        // die Spur der alten Bahn im Recorder gelöscht werden können.
+        assert!(
+            j.get("vorherige_durchgaenge").is_some_and(|v| v.is_null()),
+            "vorherige_durchgaenge fehlt bei None — der Recorder behielte die alte Spur",
+        );
         assert_eq!(j["clearance_side"], "left");
         assert_eq!(j["track_width_source"], "aircraft_file");
         assert_eq!(j["lateral_samples"][1]["quer_m"], -6.1);
