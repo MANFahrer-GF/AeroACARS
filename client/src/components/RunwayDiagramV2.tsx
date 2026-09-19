@@ -1361,6 +1361,28 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           )}
         </div>
 
+          {/* ─── LEGENDE DER LAENGSANSICHT ───────────────────────────────
+              Direkt unter IHREM Bild, nicht unter allen dreien. Thomas
+              (19.09.2026): „das muss direkt unter das jeweilige Bild." Sie
+              stand bis dahin nach Queransicht, Lupe und Ereignisliste. */}
+        <div
+          style={{
+            display: "flex",
+            gap: 18,
+            flexWrap: "wrap",
+            minWidth: 0,
+            fontSize: "0.78rem",
+            opacity: 0.85,
+            padding: "0 4px",
+          }}
+        >
+          <LegendItem swatch={TOKENS.threshold} label={t("runway_v2.legend_threshold")} />
+          {tdzEndX && display.show_aufsetzzone_box && <LegendItem swatch={TOKENS.tdzStroke} label={t("runway_v2.legend_tdz")} />}
+          {aimX && display.show_aim_marker && <LegendItem swatch={TOKENS.aimMarker} label={t("runway_v2.legend_aim")} />}
+          <LegendDot color={dotColor} label={t("runway_v2.legend_td")} />
+          {ddsActive && <LegendItem swatch={TOKENS.ddsBorder} label={t("runway_v2.legend_pre_threshold")} />}
+        </div>
+
         {/* ─── 2b. QUERANSICHT + EREIGNISSE + GROESSENVERGLEICH ────────
             v1.7.0, Spec §8.3. Im SELBEN Container wie die Laengsansicht,
             damit beide dieselbe Breite haben und die Kanten fluchten -- der
@@ -1387,25 +1409,6 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             }}
           />
         </div>
-      </div>
-
-      {/* ─── 3. LEGENDE ─────────────────────────────────────────────── */}
-      <div
-        style={{
-          display: "flex",
-          gap: 18,
-          flexWrap: "wrap",
-          minWidth: 0,
-          fontSize: "0.78rem",
-          opacity: 0.85,
-          padding: "0 4px",
-        }}
-      >
-        <LegendItem swatch={TOKENS.threshold} label={t("runway_v2.legend_threshold")} />
-        {tdzEndX && display.show_aufsetzzone_box && <LegendItem swatch={TOKENS.tdzStroke} label={t("runway_v2.legend_tdz")} />}
-        {aimX && display.show_aim_marker && <LegendItem swatch={TOKENS.aimMarker} label={t("runway_v2.legend_aim")} />}
-        <LegendDot color={dotColor} label={t("runway_v2.legend_td")} />
-        {ddsActive && <LegendItem swatch={TOKENS.ddsBorder} label={t("runway_v2.legend_pre_threshold")} />}
       </div>
 
       {/* ─── 4. DETAIL-PILLS ─────────────────────────────────────────

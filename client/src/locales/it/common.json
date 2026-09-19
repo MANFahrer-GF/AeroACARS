@@ -2184,9 +2184,14 @@
     "lupe_scale_note": "stessa scala in lunghezza e larghezza · angoli come percorsi",
     "lupe_direction": "Direzione di atterraggio →",
     "legend_mess_ende": "▲ Scostamento laterale valutato fino a qui — oltre solo disegnato",
-    "legend_rollweg_lupe": "Via di rullaggio (OSM, larghezza ipotizzata 23 m) — nel dettaglio",
     "durchgang_frueher": "Passaggio precedente · toccata a {{m}} m oltre la soglia · {{seite}} · riattaccata, non valutata",
-    "legend_durchgang": "Passaggio precedente — riattaccata, non valutata"
+    "legend_durchgang": "Passaggio precedente — riattaccata, non valutata",
+    "quer_erklaerung": "Vista dall'alto dell'intera pista — ma allungata in larghezza (fattore in alto a destra) per rendere visibili uno o due metri di scostamento. La fascia sono i due carrelli principali, la linea al centro il loro asse, i punti le misure. L'allungamento deforma gli angoli: un'uscita qui sembra un uncino — com'è andata davvero lo mostra il dettaglio sotto.",
+    "lupe_erklaerung": "Dettaglio attorno al punto in cui si è lasciata la pista — stessa scala in lunghezza e larghezza, quindi angoli reali. Così l'aereo ha lasciato la pista.",
+    "lupe_ohne_rollweg": "Nessun dato sulle vie di rullaggio per questo volo (client precedente a v1.7.40 o nessuna mappa a terra per l'aeroporto).",
+    "lupe_legend_spur": "Traccia dei carrelli principali, punti = misure",
+    "lupe_legend_rollweg": "Via di rullaggio da OpenStreetMap (larghezza ipotizzata 23 m) — marcata: quella percorsa",
+    "lupe_legend_raeum": "③ qui la traccia ha lasciato la pista"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

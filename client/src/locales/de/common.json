@@ -2191,9 +2191,14 @@
     "lupe_scale_note": "längs und quer gleicher Maßstab · Winkel wie gefahren",
     "lupe_direction": "Landerichtung →",
     "legend_mess_ende": "▲ Querversatz bewertet bis hier — danach nur noch gezeichnet",
-    "legend_rollweg_lupe": "Rollweg (OSM, 23 m breit angenommen) — in der Lupe",
     "durchgang_frueher": "Früherer Durchgang · aufgesetzt {{m}} m hinter der Schwelle · {{seite}} · durchgestartet, nicht gewertet",
-    "legend_durchgang": "Früherer Durchgang — durchgestartet, nicht gewertet"
+    "legend_durchgang": "Früherer Durchgang — durchgestartet, nicht gewertet",
+    "quer_erklaerung": "Blick von oben auf die ganze Bahn — aber quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung zur Mitte sichtbar werden. Das Band sind die beiden Hauptfahrwerke, die Linie darin ihre Mitte, die Punkte die Messungen. Die Streckung verbiegt Winkel: Eine Ausfahrt sieht hier wie ein Haken aus — wie sie wirklich verlief, zeigt die Lupe darunter.",
+    "lupe_erklaerung": "Ausschnitt um die Stelle, an der die Bahn verlassen wurde — längs und quer im selben Maßstab, also mit den echten Winkeln. So ist das Flugzeug abgerollt.",
+    "lupe_ohne_rollweg": "Rollwege liegen für diesen Flug nicht vor (Client vor v1.7.40 oder keine Bodenkarte für den Platz).",
+    "lupe_legend_spur": "Spur der Hauptfahrwerke, Punkte = Messungen",
+    "lupe_legend_rollweg": "Rollweg aus OpenStreetMap (23 m breit angenommen) — kräftig: der genommene",
+    "lupe_legend_raeum": "③ hier hat die Spur die Bahn verlassen"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

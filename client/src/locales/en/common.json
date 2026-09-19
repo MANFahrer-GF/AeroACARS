@@ -2191,9 +2191,14 @@
     "lupe_scale_note": "same scale along and across · angles as flown",
     "lupe_direction": "Landing direction →",
     "legend_mess_ende": "▲ Lateral offset scored up to here — drawn only beyond",
-    "legend_rollweg_lupe": "Taxiway (OSM, assumed 23 m wide) — in the close-up",
     "durchgang_frueher": "Earlier pass · touched down {{m}} m past the threshold · {{seite}} · went around, not scored",
-    "legend_durchgang": "Earlier pass — went around, not scored"
+    "legend_durchgang": "Earlier pass — went around, not scored",
+    "quer_erklaerung": "Top view of the whole runway — but stretched sideways (factor top right) so that one or two metres of offset become visible. The band is the two main gear legs, the line inside their centre, the dots the measurements. The stretch bends angles: a runway exit looks like a hook here — the close-up below shows how it really went.",
+    "lupe_erklaerung": "Close-up around where the runway was left — same scale along and across, so the angles are real. This is how the aircraft rolled off.",
+    "lupe_ohne_rollweg": "No taxiway data for this flight (client before v1.7.40 or no ground map for this airport).",
+    "lupe_legend_spur": "Main gear track, dots = measurements",
+    "lupe_legend_rollweg": "Taxiway from OpenStreetMap (assumed 23 m wide) — bold: the one taken",
+    "lupe_legend_raeum": "③ here the track left the runway"
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",

@@ -196,6 +196,22 @@ export function RunwayDisciplinePanel({
             zoom={zoom}
             tokens={tokens}
           />
+          {/* Jede Ansicht erklärt sich direkt unter sich — Thomas (19.09.):
+              „nur das erste Bild oben ist beschrieben, bei allem anderen
+              muss man raten." Die Legende stand bis dahin ganz unten, nach
+              Ereignisliste und Lupe, weit weg vom Bild, das sie erklärt. */}
+          <SoLiestDu
+            text={t("runway_v2.quer_erklaerung", {
+              defaultValue:
+                "Blick von oben auf die ganze Bahn — aber quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung zur Mitte sichtbar werden. " +
+                "Das Band sind die beiden Hauptfahrwerke, die Linie darin ihre Mitte, die Punkte die Messungen. " +
+                "Die Streckung verbiegt Winkel: Eine Ausfahrt sieht hier wie ein Haken aus — wie sie wirklich verlief, zeigt die Lupe darunter.",
+            })}
+          />
+          <QuerLegende
+            props={props}
+            bandFarbe={bandFarbeFuer(tokens, props.overrun_m, props.min_edge_clearance_m)}
+          />
           {/* Das Abrollen im echten Massstab — die Queransicht darüber ist
               quer überhöht und zeichnet eine Ausfahrt als Haken. Ohne
               Abrollen (kein Räumpunkt, Spur bleibt auf der Bahn) fehlt sie. */}
@@ -237,7 +253,6 @@ export function RunwayDisciplinePanel({
             querM={d[0]!.quer_m}
           />
         ))}
-      {grund == null && <QuerLegende props={props} />}
 
       {breite != null && breite > 0 && <Groessenvergleich props={props} breiteM={breite} />}
     </div>
@@ -446,6 +461,18 @@ function Hinweis({ text }: { text: string }) {
 /** Kleine, unaufdringliche Notiz NEBEN der Grafik — kein Ersatz für sie.
  *  Zeigt an, dass die Bewertung kein Urteil gefällt hat, obwohl die Spur
  *  zu sehen ist (siehe `keinUrteilGrund` oben). */
+/** Ein Satz, wie eine Ansicht zu lesen ist — direkt unter ihr. */
+export function SoLiestDu({ text }: { text: string }) {
+  return (
+    <div
+      style={{ fontSize: "0.76rem", color: "#94a3b8", lineHeight: 1.5, maxWidth: "70rem" }}
+      data-zeile="so-liest-du"
+    >
+      {text}
+    </div>
+  );
+}
+
 function KeinUrteilNotiz({ text }: { text: string }) {
   return (
     <div
@@ -675,7 +702,7 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
 // genutzten. Ohne eigene Legende muss man raten, was die dünnen Striche am
 // Rand bedeuten.
 
-function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
+function QuerLegende({ props, bandFarbe }: { props: RunwayDiagramV2Props; bandFarbe: string }) {
   const { t } = useTranslation();
   const n = props.lateral_samples?.length ?? 0;
   const eintraege: Array<{ farbe: string; text: string; gestrichelt?: boolean }> = [
@@ -684,7 +711,9 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
       text: t("runway_v2.legend_td", { defaultValue: "Aufsetzpunkt (TD)" }),
     },
     {
-      farbe: "#38bdf8",
+      // Die Farbe, die das Band im Bild WIRKLICH hat — sie hängt am
+      // Ergebnis (grün/gelb/rot). Fest cyan passte zu keinem Bild.
+      farbe: bandFarbe,
       text: t("runway_v2.legend_track", {
         defaultValue: "Spur — {{n}} gemessene Stützpunkte",
         n,
@@ -704,7 +733,7 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
   // eine unklare Ausfahrt, nicht die Ausnahme.
   if (props.clearance_point_m != null) {
     eintraege.push({
-      farbe: "#38bdf8",
+      farbe: bandFarbe,
       gestrichelt: true,
       text: t("runway_v2.legend_exit_arc", {
         defaultValue: "Ausfahrt — Richtung echt, ab hier nicht mehr gewertet",
@@ -747,14 +776,6 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
       farbe: "#fbbf24",
       text: t("runway_v2.legend_mess_ende", {
         defaultValue: "▲ Querversatz bewertet bis hier — danach nur noch gezeichnet",
-      }),
-    });
-  }
-  if ((props.runway_exits ?? []).some((a) => (a.verlauf?.length ?? 0) >= 2)) {
-    eintraege.push({
-      farbe: "#3b82f6",
-      text: t("runway_v2.legend_rollweg_lupe", {
-        defaultValue: "Rollweg (OSM, 23 m breit angenommen) — in der Lupe",
       }),
     });
   }

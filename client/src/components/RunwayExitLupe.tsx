@@ -201,7 +201,37 @@ export function RunwayExitLupe(p: LupeProps) {
   const skala = [50, 100, 25].find((m) => m * k <= zeichenB / 3) ?? 10;
   const clip = `lupe-${id}`;
 
+  const hatRollweg = rollwege.length > 0;
+  const legende: Array<{ farbe: string; text: string; flaeche?: boolean }> = [
+    {
+      farbe: p.bandFarbe,
+      text: t("runway_v2.lupe_legend_spur", {
+        defaultValue: "Spur der Hauptfahrwerke, Punkte = Messungen",
+      }),
+    },
+    ...(hatRollweg
+      ? [
+          {
+            farbe: p.tokens.rollweg,
+            flaeche: true,
+            text: t("runway_v2.lupe_legend_rollweg", {
+              defaultValue: "Rollweg aus OpenStreetMap (23 m breit angenommen) — kräftig: der genommene",
+            }),
+          },
+        ]
+      : []),
+    ...(p.clearanceM != null && p.clearanceSide != null
+      ? [
+          {
+            farbe: p.tokens.rollout,
+            text: t("runway_v2.lupe_legend_raeum", { defaultValue: "③ hier hat die Spur die Bahn verlassen" }),
+          },
+        ]
+      : []),
+  ];
+
   return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
     <svg
       viewBox={`0 0 ${p.width} ${H.toFixed(0)}`}
       width="100%"
@@ -329,5 +359,34 @@ export function RunwayExitLupe(p: LupeProps) {
         {skala} m
       </text>
     </svg>
+      <div style={{ fontSize: "0.76rem", color: "#94a3b8", lineHeight: 1.5 }} data-zeile="so-liest-du">
+        {t("runway_v2.lupe_erklaerung", {
+          defaultValue:
+            "Ausschnitt um die Stelle, an der die Bahn verlassen wurde — längs und quer im selben Maßstab, also mit den echten Winkeln. So ist das Flugzeug abgerollt.",
+        })}
+        {!hatRollweg &&
+          ` ${t("runway_v2.lupe_ohne_rollweg", {
+            defaultValue:
+              "Rollwege liegen für diesen Flug nicht vor (Client vor v1.7.40 oder keine Bodenkarte für den Platz).",
+          })}`}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 18px", fontSize: "0.72rem", color: "#94a3b8" }}>
+        {legende.map((e) => (
+          <span key={e.text} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span
+              style={{
+                display: "inline-block",
+                width: 11,
+                height: e.flaeche ? 11 : 3,
+                borderRadius: 2,
+                background: e.farbe,
+                opacity: e.flaeche ? 0.6 : 1,
+              }}
+            />
+            {e.text}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
