@@ -50,6 +50,31 @@ export function reserveAbstand(s: SpritAuswertung): number | null {
   return s.reserve.status === "unterschritten" ? Math.min(roh, -1) : Math.max(roh, 0);
 }
 
+/**
+ * Genutzte Contingency in kg — aus der Rechnung, oder für Datensätze vor
+ * v1.7.38 dieselbe Rechnung wie `contingency_genutzt` in `sprit.rs`:
+ * Plan-Landestand (Skala − Taxi − Trip) minus Landesprit, auf die
+ * Contingency begrenzt. `null`, wenn die Auswertung dazu nichts sagt.
+ *
+ * Bis v1.7.38 gab es nur „verbraucht" (ganz) oder „unberührt" — bei Flug
+ * #1417 hieß es „unberührt", obwohl 86 von 238 kg genutzt waren.
+ */
+export function contingencyGenutzt(s: SpritAuswertung): number | null {
+  if (s.contingency_verbraucht == null) return null;
+  if (s.contingency_genutzt_kg != null) return s.contingency_genutzt_kg;
+  const l = s.leiter;
+  if (!l || s.landing_fuel_kg == null) return null;
+  const posten = l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
+  const skala = Math.max(l.block_kg, posten) + (l.uebertankung_kg ?? 0) - (l.untertankung_kg ?? 0);
+  const mehr = Math.max(skala - l.taxi_kg - l.trip_kg - s.landing_fuel_kg, 0);
+  return Math.round(Math.min(Math.max(mehr, 0), l.contingency_kg));
+}
+
+/** Minuten als ganze Zahl — „14,3 min" las niemand als 14 min 18 s. */
+export function minuten(v: number): string {
+  return String(Math.round(v));
+}
+
 export interface SpritPhase {
   ist_kg: number;
   plan_kg: number;
@@ -119,6 +144,12 @@ export interface SpritAuswertung {
   extra_genutzt_kg: number | null;
   extra_ungenutzt_kg: number | null;
   contingency_verbraucht: boolean | null;
+  /**
+   * v1.7.38: genutzte Contingency in kg (0 … geplant). Gerechnet in
+   * `sprit.rs`; fehlt bei älteren Datensätzen — dann gilt dieselbe Rechnung
+   * aus Leiter und Landesprit (`contingencyGenutzt`).
+   */
+  contingency_genutzt_kg?: number | null;
   alternate_und_reserve_intakt: boolean | null;
   leiter: SpritLeiter | null;
   /** v1.7.36: Rollen vor dem Start, gegen den geplanten Taxi-Anteil. */

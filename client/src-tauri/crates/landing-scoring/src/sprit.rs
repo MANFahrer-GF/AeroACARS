@@ -130,6 +130,27 @@ pub fn reserve_abstand(a: &SpritAuswertung) -> Option<f32> {
     abstand_nach_status(&a.reserve, a.landing_fuel_kg? - a.reserve_kg?)
 }
 
+/// Genutzte Contingency einer FERTIGEN Auswertung, in kg — auch fuer eine
+/// aus der Zeit vor v1.7.38 ohne das Feld. Dann gilt dieselbe Rechnung aus
+/// Leiter und Landesprit wie in `auswerten`: Plan-Landestand (Skala minus
+/// Taxi minus Trip) minus Landesprit, auf die Contingency begrenzt.
+/// Dieselbe Regel wie `contingencyGenutzt` in client/src/lib/sprit.ts.
+///
+/// `None`, wenn die Auswertung dazu nichts sagt (kein OFP, Tank unplausibel —
+/// dann ist auch `contingency_verbraucht` leer).
+pub fn contingency_genutzt(a: &SpritAuswertung) -> Option<f32> {
+    a.contingency_verbraucht?;
+    if let Some(v) = a.contingency_genutzt_kg {
+        return Some(v);
+    }
+    let l = a.leiter.as_ref()?;
+    let ldg = a.landing_fuel_kg?;
+    let posten = l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
+    let skala = l.block_kg.max(posten) + l.uebertankung_kg - l.untertankung_kg;
+    let mehr = (skala - l.taxi_kg - l.trip_kg - ldg).max(0.0);
+    Some(mehr.clamp(0.0, l.contingency_kg).round())
+}
+
 /// Rollen nach der Landung: Landesprit minus Tankstand beim Abstellen.
 ///
 /// Eigene Funktion, weil sie ZWEIMAL gebraucht wird und dieselbe Zahl
@@ -293,6 +314,13 @@ pub struct SpritAuswertung {
     pub extra_genutzt_kg: Option<f32>,
     pub extra_ungenutzt_kg: Option<f32>,
     pub contingency_verbraucht: Option<bool>,
+    /// v1.7.38: Wie viel der Contingency genutzt wurde, in kg (0 … geplant).
+    ///
+    /// `contingency_verbraucht` sagt nur, ob sie GANZ aufgebraucht ist. Alles
+    /// darunter hiess in der Anzeige „unberuehrt" — bei Flug #1417 waren aber
+    /// 86 von 238 kg genutzt, und die Landemarke stand sichtbar im gelben
+    /// Block (Thomas, 19.09.2026).
+    pub contingency_genutzt_kg: Option<f32>,
     pub alternate_und_reserve_intakt: Option<bool>,
     pub leiter: Option<Leiter>,
     /// v1.7.36: Rollen vor dem Start, gegen den geplanten Taxi-Anteil.
@@ -558,7 +586,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         _ => None,
     };
 
-    let (extra_getankt, extra_genutzt, extra_ungenutzt, contingency_verbraucht, alt_res_intakt) =
+    let (extra_getankt, extra_genutzt, extra_ungenutzt, contingency_verbraucht, contingency_genutzt_kg, alt_res_intakt) =
         match (&leiter, landing, e.tank_plausibel) {
             (Some(l), Some(ldg), true) => {
                 // Was nach Rollen und Trip uebrig bleiben sollte — gemessen
@@ -585,6 +613,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                 let plan_landing = (skala - l.taxi_kg - l.trip_kg).max(0.0);
                 let mehr = (plan_landing - ldg).max(0.0);
                 let cont_verbraucht = l.contingency_kg > 0.0 && mehr >= l.contingency_kg;
+                let cont_genutzt = mehr.clamp(0.0, l.contingency_kg).round();
                 // Was vom Extra tatsaechlich an Bord war.
                 let extra_an_bord = (l.extra_kg - l.untertankung_kg).max(0.0);
                 let genutzt = (mehr - l.contingency_kg).clamp(0.0, extra_an_bord).round();
@@ -593,10 +622,11 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                     Some(genutzt),
                     Some((extra_an_bord - genutzt).round()),
                     Some(cont_verbraucht),
+                    Some(cont_genutzt),
                     Some(ldg >= l.alternate_kg + l.reserve_kg),
                 )
             }
-            _ => (None, None, None, None, None),
+            _ => (None, None, None, None, None, None),
         };
 
     SpritAuswertung {
@@ -622,6 +652,7 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         extra_genutzt_kg: extra_genutzt,
         extra_ungenutzt_kg: extra_ungenutzt,
         contingency_verbraucht,
+        contingency_genutzt_kg,
         alternate_und_reserve_intakt: alt_res_intakt,
         leiter,
         rollen_vor_start,
@@ -1037,6 +1068,47 @@ mod tests {
         assert_eq!(reserve_abstand(&alt), Some(11_854.0), "Altbestand aus den gespeicherten Werten");
         alt.reserve = Reserve::NichtPruefbar { grund: "kein_ofp".into() };
         assert_eq!(reserve_abstand(&alt), None);
+    }
+
+    /// Flug #1417 (19.09.2026): 86 von 238 kg Contingency genutzt — die
+    /// Anzeige sagte „unberuehrt". Und eine Auswertung ohne das Feld
+    /// bekommt ueber `contingency_genutzt` dieselbe Zahl.
+    #[test]
+    fn sprit_contingency_genutzt_in_kg() {
+        let e = SpritEingang {
+            planned_burn_kg: Some(2_115.0),
+            planned_taxi_kg: Some(227.0),
+            planned_contingency_kg: Some(238.0),
+            planned_alternate_kg: Some(1_927.0),
+            planned_reserve_kg: Some(1_130.0),
+            planned_extra_kg: Some(0.0),
+            planned_block_fuel_kg: Some(5_637.0),
+            engine_start_fuel_kg: Some(5_628.0),
+            takeoff_fuel_kg: Some(5_444.0),
+            landing_fuel_kg: Some(3_209.0),
+            tank_plausibel: true,
+            ..Default::default()
+        };
+        let a = auswerten(&e);
+        assert_eq!(a.contingency_verbraucht, Some(false), "nicht GANZ verbraucht");
+        assert_eq!(a.contingency_genutzt_kg, Some(86.0), "5 637 − 227 − 2 115 − 3 209");
+        let mut alt = a.clone();
+        alt.contingency_genutzt_kg = None;
+        assert_eq!(contingency_genutzt(&alt), Some(86.0), "Altbestand: dieselbe Zahl");
+        // Grenzen: unberuehrt 0, ganz verbraucht = geplant.
+        let mut sparsam = e.clone();
+        sparsam.landing_fuel_kg = Some(3_400.0);
+        assert_eq!(auswerten(&sparsam).contingency_genutzt_kg, Some(0.0));
+        let mut viel = e.clone();
+        viel.landing_fuel_kg = Some(2_900.0);
+        let v = auswerten(&viel);
+        assert_eq!(v.contingency_genutzt_kg, Some(238.0));
+        assert_eq!(v.contingency_verbraucht, Some(true));
+        // Ohne Aussage keine Zahl.
+        let mut leer = a.clone();
+        leer.contingency_verbraucht = None;
+        leer.contingency_genutzt_kg = None;
+        assert_eq!(contingency_genutzt(&leer), None);
     }
 
     /// Rollen nach der Landung: eine Funktion, zwei Wege — dieselbe Zahl.

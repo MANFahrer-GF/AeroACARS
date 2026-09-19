@@ -11,7 +11,7 @@ import i18n from "i18next";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
-import { balken, dezimal, hauptzahl, hauptzahlText, kg, pct, phaseTon, reserveAbstand } from "../lib/sprit";
+import { balken, hauptzahl, hauptzahlText, kg, pct, phaseTon, reserveAbstand, contingencyGenutzt, minuten } from "../lib/sprit";
 
 const TON = {
   ok: "#22c55e",
@@ -365,6 +365,7 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
   const an = sprit.anflug;
   const unter = l.untertankung_kg ?? 0;
   const abstand = reserveAbstand(sprit);
+  const contGenutzt = contingencyGenutzt(sprit);
   const imFlug = {
     taxi: sprit.rollen_vor_start
       ? t("landing.sprit.imflug_taxi", { ist: kg(sprit.rollen_vor_start.ist_kg), plan: kg(sprit.rollen_vor_start.plan_kg) })
@@ -374,11 +375,13 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
         ? t("landing.sprit.imflug_trip", { bis: kg(bis.ist_kg), bisPlan: kg(bis.plan_kg), an: kg(an.ist_kg), anPlan: kg(an.plan_kg) })
         : null,
     contingency:
-      sprit.contingency_verbraucht === true
-        ? t("landing.sprit.imflug_cont_verbraucht")
-        : sprit.contingency_verbraucht === false
+      contGenutzt == null
+        ? null
+        : contGenutzt <= 0
           ? t("landing.sprit.imflug_cont_unberuehrt")
-          : null,
+          : contGenutzt >= l.contingency_kg
+            ? t("landing.sprit.imflug_cont_ganz", { c: kg(l.contingency_kg) })
+            : t("landing.sprit.imflug_cont_teil", { n: kg(contGenutzt), c: kg(l.contingency_kg) }),
     extra:
       sprit.extra_getankt_kg != null && sprit.extra_genutzt_kg != null && sprit.extra_ungenutzt_kg != null
         ? t("landing.sprit.imflug_extra", { g: kg(sprit.extra_getankt_kg), n: kg(sprit.extra_genutzt_kg), u: kg(sprit.extra_ungenutzt_kg) }) +
@@ -597,7 +600,15 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
           </Erklaerung>
         )}
         <span>
-          {sprit.contingency_verbraucht ? t("landing.sprit.contingency_verbraucht") : t("landing.sprit.contingency_unberuehrt")}
+          {contGenutzt == null
+            ? sprit.contingency_verbraucht
+              ? t("landing.sprit.contingency_verbraucht")
+              : t("landing.sprit.contingency_unberuehrt")
+            : contGenutzt <= 0
+              ? t("landing.sprit.contingency_unberuehrt")
+              : contGenutzt >= l.contingency_kg
+                ? t("landing.sprit.contingency_ganz", { c: kg(l.contingency_kg) })
+                : t("landing.sprit.contingency_teil", { n: kg(contGenutzt), c: kg(l.contingency_kg) })}
           {sprit.alternate_und_reserve_intakt === true ? ` · ${t("landing.sprit.alt_res_intakt")}` : ""}
           {sprit.alternate_und_reserve_intakt === false ? ` · ${t("landing.sprit.alt_res_angegriffen")}` : ""}
         </span>
@@ -734,7 +745,7 @@ export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswert
   const reserveTon = r.status === "intakt" ? "ok" : r.status === "unterschritten" ? "warn" : "neutral";
   const anflugSub =
     sprit.zeit_unter_schwelle_min != null && sprit.schwelle_ft != null
-      ? t("landing.sprit.zeit_wert", { min: dezimal(sprit.zeit_unter_schwelle_min, 1), ft: kg(sprit.schwelle_ft) }) +
+      ? t("landing.sprit.zeit_wert", { min: minuten(sprit.zeit_unter_schwelle_min), ft: kg(sprit.schwelle_ft) }) +
         (sprit.strecke_anflug_nm != null && sprit.plan_strecke_anflug_nm != null
           ? ` · ${t("landing.sprit.strecke", { ist: Math.round(sprit.strecke_anflug_nm), plan: Math.round(sprit.plan_strecke_anflug_nm) })}`
           : "")
@@ -791,8 +802,10 @@ export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswert
           grundWennLeer={t("landing.sprit.na_kein_vergleichspunkt")}
         />
         <Kennzahl
-          label={t("landing.sprit.unter_schwelle")}
-          wert={sprit.zeit_unter_schwelle_min != null ? dezimal(sprit.zeit_unter_schwelle_min, 1) : null}
+          // v1.7.38: Die Kachel nennt die Hoehe selbst („Unter 8 362 ft")
+          // statt „Unter Schwelle" — das erklaerte sich nicht (Thomas).
+          label={sprit.schwelle_ft != null ? t("landing.sprit.unter_ft", { ft: kg(sprit.schwelle_ft) }) : t("landing.sprit.unter_schwelle")}
+          wert={sprit.zeit_unter_schwelle_min != null ? minuten(sprit.zeit_unter_schwelle_min) : null}
           einheit="min"
           erklaerung={
             sprit.schwelle_ft != null
@@ -854,11 +867,13 @@ export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswert
         </Zeile>
         {sprit.extra_getankt_kg != null && sprit.extra_genutzt_kg != null && sprit.extra_ungenutzt_kg != null && (
           <Zeile label={t("landing.sprit.extra_label")}>
-            {t("landing.sprit.extra_zeile", {
-              getankt: kg(sprit.extra_getankt_kg),
-              genutzt: kg(sprit.extra_genutzt_kg),
-              ungenutzt: kg(sprit.extra_ungenutzt_kg),
-            })}
+            {sprit.extra_getankt_kg <= 0
+              ? t("landing.sprit.extra_keins")
+              : t("landing.sprit.extra_zeile", {
+                  getankt: kg(sprit.extra_getankt_kg),
+                  genutzt: kg(sprit.extra_genutzt_kg),
+                  ungenutzt: kg(sprit.extra_ungenutzt_kg),
+                })}
           </Zeile>
         )}
       </div>

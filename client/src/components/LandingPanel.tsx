@@ -12,7 +12,7 @@ import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
 import { SpritBadge, SpritSektion } from "./SpritSektion";
-import { dezimal as spritDezimal, hauptzahlText as spritHauptzahl, kg as spritKg, reserveAbstand as spritReserveAbstand } from "../lib/sprit";
+import { hauptzahlText as spritHauptzahl, kg as spritKg, minuten as spritMinuten, reserveAbstand as spritReserveAbstand } from "../lib/sprit";
 import type { SpritAuswertung } from "../lib/sprit";
 import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
@@ -2960,7 +2960,7 @@ export function LandingReport({ record }: { record: LandingRecord }) {
               {record.sprit?.zeit_unter_schwelle_min != null && record.sprit.schwelle_ft != null && (
                 <ReportTile
                   label={t("landing.sprit.report_zeit")}
-                  value={t("landing.sprit.zeit_wert", { min: spritDezimal(record.sprit.zeit_unter_schwelle_min, 1), ft: spritKg(record.sprit.schwelle_ft) })}
+                  value={t("landing.sprit.zeit_wert", { min: spritMinuten(record.sprit.zeit_unter_schwelle_min), ft: spritKg(record.sprit.schwelle_ft) })}
                 />
               )}
               {/* v1.7.36: der Rollsprit — erst damit ist der Bericht von
@@ -2999,11 +2999,15 @@ export function LandingReport({ record }: { record: LandingRecord }) {
               {record.sprit?.extra_getankt_kg != null && record.sprit.extra_genutzt_kg != null && (
                 <ReportTile
                   label={t("landing.sprit.report_extra")}
-                  value={`${spritKg(record.sprit.extra_getankt_kg)} kg`}
-                  detail={t("landing.sprit.extra_detail", {
-                    genutzt: spritKg(record.sprit.extra_genutzt_kg),
-                    ungenutzt: spritKg(record.sprit.extra_ungenutzt_kg),
-                  })}
+                  value={record.sprit.extra_getankt_kg <= 0 ? t("landing.sprit.extra_keins") : `${spritKg(record.sprit.extra_getankt_kg)} kg`}
+                  detail={
+                    record.sprit.extra_getankt_kg <= 0
+                      ? undefined
+                      : t("landing.sprit.extra_detail", {
+                          genutzt: spritKg(record.sprit.extra_genutzt_kg),
+                          ungenutzt: spritKg(record.sprit.extra_ungenutzt_kg),
+                        })
+                  }
                 />
               )}
               {(record.planned_burn_kg != null ||

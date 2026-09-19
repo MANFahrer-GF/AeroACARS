@@ -284,7 +284,7 @@ describe("Sprit-Leiter", () => {
 
     // Contingency: in dieser Vorlage verbraucht.
     fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Contingency"]')!);
-    expect(hinweis()).toContain("angebrochen");
+    expect(hinweis()).toContain("aufgebraucht — alle 1\u202f061 kg genutzt");
 
     // Extra: an Bord, genutzt, übrig — dieselben Zahlen wie die Zeile.
     fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Extra"]')!);
@@ -403,5 +403,41 @@ describe("Sprit-Leiter", () => {
     fireEvent.focus(eintrag);
     fireEvent(window, new Event("resize"));
     expect(hinweis(), "neue Fensterbreite schließt nicht").toBeNull();
+  });
+
+  it("Flug #1417: Contingency angebrochen, Kachel nennt die Höhe, kein Extra", () => {
+    // Thomas, 19.09.2026: „Contingency unberührt — stimmt das? Gelb wurde doch
+    // genutzt." 5 637 Skala − 227 Taxi − 2 115 Trip = 3 295 geplant gelandet,
+    // tatsächlich 3 209 → 86 von 238 kg genutzt. Der Datensatz stammt aus
+    // v1.7.37 und trägt das neue Feld NICHT — die Anzeige muss es selbst
+    // richtig ableiten.
+    const f1417 = dlh370({
+      bis_sinkflug: { ist_kg: 1613, plan_kg: 1736, abweichung_pct: -7.1, als_kg: false },
+      anflug: { ist_kg: 622, plan_kg: 379, abweichung_pct: 64.1, als_kg: true },
+      zeit_unter_schwelle_min: 14.3,
+      schwelle_ft: 8362,
+      reserve: { status: "intakt", quote_pct: 284 },
+      reserve_kg: 1130,
+      takeoff_fuel_kg: 5444,
+      landing_fuel_kg: 3209,
+      extra_getankt_kg: 0,
+      extra_genutzt_kg: 0,
+      extra_ungenutzt_kg: 0,
+      contingency_verbraucht: false,
+      leiter: { taxi_kg: 227, trip_kg: 2115, contingency_kg: 238, alternate_kg: 1927, reserve_kg: 1130, extra_kg: 0, block_kg: 5637, sonstiges_kg: 0, uebertankung_kg: 0 },
+    });
+    const { container } = render(<SpritSektion sprit={f1417} />);
+    const t = container.textContent ?? "";
+    expect(t).toContain("Contingency angebrochen — 86 von 238 kg genutzt");
+    expect(t).not.toContain("unberührt");
+    // Die Kachel erklärt sich selbst, ganze Minuten.
+    expect(t).toMatch(/Unter 8\u202f362 ft\s*14\s*min/);
+    expect(t).not.toContain("14,3");
+    // Kein Extra geplant: keine Nullen-Zeile.
+    expect(t).toContain("kein Extra getankt");
+    expect(t).not.toContain("0 kg getankt");
+    // Und der Hinweis am gelben Block sagt dasselbe.
+    fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Contingency"]')!);
+    expect(container.querySelector('[data-testid="sprit-leiter-hinweis"]')?.textContent).toContain("angebrochen — 86 von 238 kg genutzt");
   });
 });

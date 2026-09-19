@@ -21839,7 +21839,8 @@ fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &m
     if let (Some(min), Some(ft)) = (a.zeit_unter_schwelle_min, a.schwelle_ft) {
         f.insert(
             "Zeit unter Schwelle".into(),
-            format!("{} min unter {} ft", format!("{min:.1}").replace('.', ","), ziffern(ft)),
+            // v1.7.38: ganze Minuten — „14,3 min" las niemand als 14 min 18 s.
+            format!("{} min unter {} ft", min.round() as i64, ziffern(ft)),
         );
     }
     // v1.7.37: der Abstand in kg statt der Quote — „(338 %)" las sich, als
@@ -21874,15 +21875,32 @@ fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &m
         (Reserve::Unterschritten { quote_pct }, _, _, _) => f.insert("Final Reserve".into(), format!("UNTERSCHRITTEN ({quote_pct:.0} %)")),
         (Reserve::NichtPruefbar { grund }, _, _, _) => f.insert("Final Reserve".into(), format!("nicht pruefbar ({grund})")),
     };
+    // v1.7.38: die genutzte Contingency in kg — „unberuehrt" stand auch da,
+    // wo sie angebrochen war (#1417: 86 von 238 kg).
+    if let (Some(n), Some(l)) = (landing_scoring::sprit::contingency_genutzt(a), a.leiter.as_ref()) {
+        let text = if n <= 0.0 {
+            "unberührt".to_string()
+        } else if n >= l.contingency_kg {
+            format!("aufgebraucht — alle {} kg genutzt", ziffern(l.contingency_kg))
+        } else {
+            format!("angebrochen — {} von {} kg genutzt", ziffern(n), ziffern(l.contingency_kg))
+        };
+        f.insert("Contingency".into(), text);
+    }
     if let (Some(g), Some(n), Some(u)) = (a.extra_getankt_kg, a.extra_genutzt_kg, a.extra_ungenutzt_kg) {
         f.insert(
             "Extra Fuel".into(),
-            format!(
-                "{} kg getankt · {} kg genutzt · {} kg ungenutzt",
-                ziffern(g),
-                ziffern(n),
-                ziffern(u)
-            ),
+            // Ohne geplantes Extra keine Nullen-Zeile (v1.7.38).
+            if g <= 0.0 {
+                "kein Extra getankt".to_string()
+            } else {
+                format!(
+                    "{} kg getankt · {} kg genutzt · {} kg ungenutzt",
+                    ziffern(g),
+                    ziffern(n),
+                    ziffern(u)
+                )
+            },
         );
     }
 }
@@ -68719,7 +68737,9 @@ mod pirep_felder_sprit_tests {
             f["Sprit Anflug"],
             "+3\u{202f}596 kg (5\u{202f}461 kg / Plan 1\u{202f}865 kg)"
         );
-        assert_eq!(f["Zeit unter Schwelle"], "15,8 min unter 9\u{202f}487 ft");
+        assert_eq!(f["Zeit unter Schwelle"], "16 min unter 9\u{202f}487 ft");
+        // DLH 370: Contingency ganz verbraucht (1 061 kg).
+        assert_eq!(f["Contingency"], "aufgebraucht — alle 1\u{202f}061 kg genutzt");
         assert_eq!(
             f["Final Reserve"],
             "intakt — 16\u{202f}770 kg gelandet = 4\u{202f}916 kg Final Reserve + 11\u{202f}854 kg darüber"

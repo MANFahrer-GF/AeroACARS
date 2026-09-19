@@ -108,7 +108,9 @@ describe("SpritSektion", () => {
   it("nennt Zeit unter der Schwelle und die Anflugstrecke", () => {
     render(<SpritSektion sprit={dlh370()} />);
     const t = screen.getByTestId("sprit-sektion").textContent ?? "";
-    expect(t).toContain("15,8 min");
+    // Ganze Minuten (v1.7.38) — „15,8 min" las niemand als 15 min 48 s.
+    expect(t).toContain("16 min unter 9\u202f487 ft");
+    expect(t).not.toContain("15,8");
     expect(t).toContain("9\u202f487 ft");
     expect(t).toContain("182 NM");
   });
@@ -143,7 +145,7 @@ describe("SpritSektion", () => {
     // Zwei Marken: womit abgehoben (gestrichelt), womit gelandet (kräftig).
     expect(svg!.querySelectorAll("line").length).toBe(2);
     expect(svg!.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("gelandet mit");
-    expect(svg!.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("Contingency verbraucht");
+    expect(svg!.closest('[data-testid="sprit-sektion"]')!.textContent).toContain("Contingency aufgebraucht — alle 1\u202f061 kg genutzt");
   });
 
 
