@@ -15,6 +15,7 @@ import { LoadsheetMonitor } from "./LoadsheetMonitor";
 import { ManualFileDialog } from "./ManualFileDialog";
 import { PhaseCard } from "./PhaseCard";
 import { WeatherBriefing } from "./WeatherBriefing";
+import { SpritWegpunkteLive } from "./SpritWegpunkteLive";
 
 interface Props {
   /** Active-flight info, owned by Dashboard. Pure display. */
@@ -671,6 +672,10 @@ export function ActiveFlightPanel({
             LoadsheetMonitor). */}
         <LoadsheetMonitor info={info} />
       </div>
+
+      {/* v1.7.40: Sprit je Wegpunkt — direkt über der METAR-Karte
+          (Thomas, 19.09.2026). Verschwindet ohne Navlog-Werte von selbst. */}
+      <SpritWegpunkteLive />
 
       <WeatherBriefing
         dptIcao={info.dpt_airport}

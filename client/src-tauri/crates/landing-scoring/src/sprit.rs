@@ -145,7 +145,8 @@ pub fn contingency_genutzt(a: &SpritAuswertung) -> Option<f32> {
     }
     let l = a.leiter.as_ref()?;
     let ldg = a.landing_fuel_kg?;
-    let posten = l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
+    let posten =
+        l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
     let skala = l.block_kg.max(posten) + l.uebertankung_kg - l.untertankung_kg;
     let mehr = (skala - l.taxi_kg - l.trip_kg - ldg).max(0.0);
     Some(mehr.clamp(0.0, l.contingency_kg).round())
@@ -159,7 +160,10 @@ pub fn contingency_genutzt(a: &SpritAuswertung) -> Option<f32> {
 /// eine Feld nachgetragen — alles andere bleibt, wie es beim Aufsetzen
 /// gerechnet wurde (QS-Befund E2, 18.09.2026: eine vollstaendige Neubildung
 /// hatte die Rollstrecke zum Stand in die Anflugstrecke geschoben).
-pub fn rollen_nach_landung(landing_fuel_kg: Option<f32>, engine_off_fuel_kg: Option<f32>) -> Option<f32> {
+pub fn rollen_nach_landung(
+    landing_fuel_kg: Option<f32>,
+    engine_off_fuel_kg: Option<f32>,
+) -> Option<f32> {
     match (nicht_negativ(landing_fuel_kg), positiv(engine_off_fuel_kg)) {
         (Some(ldg), Some(aus)) if ldg > aus => Some((ldg - aus).round()),
         _ => None,
@@ -342,6 +346,181 @@ pub struct SpritAuswertung {
     /// entsprechend, statt „abgehoben mit" zu behaupten.
     pub einstieg_in_der_luft: bool,
     pub badge: Badge,
+    /// v1.7.40: Sprit Wegpunkt für Wegpunkt — SimBrief an Bord gegen den
+    /// Tankstand beim Überflug, mit Hochrechnung auf die Landung. Leer bei
+    /// Flügen ohne Navlog-Werte und bei Altbestand. Nur Anzeige, keine Note.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub wegpunkte: Vec<Wegpunkt>,
+}
+
+/// Farbe einer Zeile der Wegpunkt-Tabelle. **Keine Note** — sie fliesst in
+/// keine Bewertung ein. Sie sagt, wie viel Luft im Tank bleibt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ampel {
+    /// Die Hochrechnung auf die Landung liegt im Plan (Contingency deckt).
+    Gruen,
+    /// Die Contingency wird aufgebraucht, das OFP-Minimum hält.
+    Gelb,
+    /// Unter dem OFP-Minimum — jetzt oder hochgerechnet bei der Landung.
+    Rot,
+}
+
+/// Wie ein Wegpunkt zu seinem Ist-Wert kam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WegpunktZustand {
+    /// Noch nicht erreicht — nur der Plan.
+    #[default]
+    Offen,
+    /// Überflogen, Tankstand gemessen.
+    Gemessen,
+    /// Nicht überflogen (Direct, Radarführung). Der Ist-Wert ist aus den
+    /// gemessenen Nachbarn gerechnet — keine Messung.
+    Uebersprungen,
+}
+
+/// Eine Zeile der Tabelle „Sprit · Wegpunkt für Wegpunkt".
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Wegpunkt {
+    pub ident: String,
+    /// Geplante Höhe (ft), zur Anzeige.
+    pub hoehe_ft: Option<f32>,
+    /// SimBrief `fuel_plan_onboard`, kg.
+    pub plan_an_bord_kg: Option<f32>,
+    /// SimBrief `fuel_min_onboard`, kg.
+    pub min_an_bord_kg: Option<f32>,
+    pub zustand: WegpunktZustand,
+    /// Zeitpunkt des Überflugs (Unix-Millisekunden).
+    pub zeit_ms: Option<i64>,
+    /// Tankstand beim Überflug — bei `Uebersprungen` gerechnet.
+    pub ist_an_bord_kg: Option<f32>,
+    /// Hochrechnung: So viel wäre bei der Landung noch im Tank.
+    pub landung_hochgerechnet_kg: Option<f32>,
+    pub ampel: Option<Ampel>,
+}
+
+/// Unter diesem geplanten Verbrauch ist das Verhältnis Ist/Plan ohne Aussage
+/// — kurz nach dem Abheben wären 30 kg Unterschied schon 30 %.
+const FUEL_CHECK_MIN_PLAN_KG: f32 = 150.0;
+
+/// Der Fuel-Check an einem Wegpunkt, wie ihn eine Crew macht (EFOB):
+/// Tankstand jetzt, minus der geplante Rest, hochgerechnet mit dem bisher
+/// gemessenen Verhältnis von Ist- zu Plan-Verbrauch.
+///
+/// Thomas (19.09.2026) hat das gegen „Contingency bisher" gewählt, weil es
+/// nach vorn schaut: Ein hoher Verbrauch fällt auf, bevor er die Reserve
+/// erreicht. Eine feste Prozentschwelle hat er verworfen — kleine Muster
+/// liegen ohnehin 9–15 % über SimBrief und wären dauernd gelb.
+///
+/// Gibt `None`, wenn Plan-Werte fehlen.
+pub fn fuel_check(
+    ist_hier: f32,
+    plan_hier: f32,
+    ist_start: Option<f32>,
+    plan_start: Option<f32>,
+    plan_landung: f32,
+    min_landung: Option<f32>,
+    min_hier: Option<f32>,
+    contingency_kg: Option<f32>,
+) -> Option<(f32, Ampel)> {
+    if !(ist_hier.is_finite() && plan_hier.is_finite() && plan_landung.is_finite()) {
+        return None;
+    }
+    let faktor = match (ist_start, plan_start) {
+        (Some(is), Some(ps)) if ps - plan_hier >= FUEL_CHECK_MIN_PLAN_KG => {
+            ((is - ist_hier) / (ps - plan_hier)).clamp(0.5, 2.0)
+        }
+        _ => 1.0,
+    };
+    let plan_rest = (plan_hier - plan_landung).max(0.0);
+    let hoch = ist_hier - plan_rest * faktor;
+    let unter_min = min_landung.is_some_and(|m| hoch < m) || min_hier.is_some_and(|m| ist_hier < m);
+    let ampel = if unter_min {
+        Ampel::Rot
+    } else if hoch < plan_landung - contingency_kg.unwrap_or(0.0).max(0.0) {
+        Ampel::Gelb
+    } else {
+        Ampel::Gruen
+    };
+    Some((hoch, ampel))
+}
+
+/// Füllt Hochrechnung und Ampel für die Zeilen und rechnet übersprungene
+/// Wegpunkte aus ihren gemessenen Nachbarn nach.
+///
+/// Erwartet die Zeilen in Flugreihenfolge; die erste ist der Abflug, die
+/// letzte das Ziel (deren Plan-Wert die Plan-Landung ist).
+pub fn wegpunkte_auswerten(
+    zeilen: &mut [Wegpunkt],
+    ist_start: Option<f32>,
+    contingency_kg: Option<f32>,
+) {
+    let Some(letzte) = zeilen.last() else { return };
+    let Some(plan_landung) = letzte.plan_an_bord_kg else {
+        return;
+    };
+    let min_landung = letzte.min_an_bord_kg;
+    let plan_start = zeilen.first().and_then(|z| z.plan_an_bord_kg);
+
+    // Übersprungene: Abweichung vom Plan zwischen den gemessenen Nachbarn
+    // linear übertragen, gewichtet nach dem Plan-Verbrauch dazwischen.
+    let gemessen: Vec<usize> = (0..zeilen.len())
+        .filter(|&i| {
+            zeilen[i].zustand == WegpunktZustand::Gemessen && zeilen[i].ist_an_bord_kg.is_some()
+        })
+        .collect();
+    for i in 0..zeilen.len() {
+        if zeilen[i].zustand != WegpunktZustand::Uebersprungen {
+            continue;
+        }
+        zeilen[i].ist_an_bord_kg = None;
+        let vor = gemessen.iter().rev().find(|&&g| g < i).copied();
+        let nach = gemessen.iter().find(|&&g| g > i).copied();
+        let (Some(v), Some(n)) = (vor, nach) else {
+            continue;
+        };
+        let (Some(pv), Some(pn), Some(ph)) = (
+            zeilen[v].plan_an_bord_kg,
+            zeilen[n].plan_an_bord_kg,
+            zeilen[i].plan_an_bord_kg,
+        ) else {
+            continue;
+        };
+        let dv = zeilen[v].ist_an_bord_kg.unwrap() - pv;
+        let dn = zeilen[n].ist_an_bord_kg.unwrap() - pn;
+        let anteil = if (pv - pn).abs() > 1.0 {
+            ((pv - ph) / (pv - pn)).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        zeilen[i].ist_an_bord_kg = Some(ph + dv + (dn - dv) * anteil);
+    }
+
+    for z in zeilen.iter_mut() {
+        z.landung_hochgerechnet_kg = None;
+        z.ampel = None;
+        if z.zustand == WegpunktZustand::Offen {
+            continue;
+        }
+        let (Some(ist), Some(plan)) = (z.ist_an_bord_kg, z.plan_an_bord_kg) else {
+            continue;
+        };
+        if let Some((hoch, ampel)) = fuel_check(
+            ist,
+            plan,
+            ist_start,
+            plan_start,
+            plan_landung,
+            min_landung,
+            z.min_an_bord_kg,
+            contingency_kg,
+        ) {
+            z.landung_hochgerechnet_kg = Some(hoch.round());
+            z.ampel = Some(ampel);
+        }
+    }
 }
 
 /// Die Fassung dieser Auswertung — **Diagnose, keine Weiche.**
@@ -437,18 +616,20 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             plan_bis
         };
         let bis = match (takeoff, vergleich, plan_bis_phase) {
-            (Some(to), Some(vp), Some(plan)) if to > vp && plan >= MIN_PLAN_BIS_TOD_KG => Some(Phase {
-                // Prozent aus DENSELBEN Zahlen, die daneben stehen — sonst
-                // passen angezeigter Wert und angezeigte Abweichung nicht
-                // zusammen.
-                ist_kg: (to - vp).round(),
-                plan_kg: plan.round(),
-                abweichung_pct: pct((to - vp).round(), plan.round()),
-                // „bis Sinkflug" bleibt IMMER in Prozent: Der Plan-Anteil
-                // ist dort gross genug, dass die Quote etwas aussagt. Sonst
-                // saehe die GA-Flotte hier Kilogramm und anderswo Prozent.
-                als_kg: false,
-            }),
+            (Some(to), Some(vp), Some(plan)) if to > vp && plan >= MIN_PLAN_BIS_TOD_KG => {
+                Some(Phase {
+                    // Prozent aus DENSELBEN Zahlen, die daneben stehen — sonst
+                    // passen angezeigter Wert und angezeigte Abweichung nicht
+                    // zusammen.
+                    ist_kg: (to - vp).round(),
+                    plan_kg: plan.round(),
+                    abweichung_pct: pct((to - vp).round(), plan.round()),
+                    // „bis Sinkflug" bleibt IMMER in Prozent: Der Plan-Anteil
+                    // ist dort gross genug, dass die Quote etwas aussagt. Sonst
+                    // saehe die GA-Flotte hier Kilogramm und anderswo Prozent.
+                    als_kg: false,
+                })
+            }
             _ => None,
         };
         // Trip aus demselben Navlog wie `plan_bis` — sonst driftet der Schnitt.
@@ -480,7 +661,11 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
     // Beide Marken sind an ein Ereignis gerastet, nicht laufend gefuehrt —
     // sonst stuende hier bei jedem zweiten Flug Unsinn (siehe
     // `sprit_boden_marken`).
-    let rollen_vor_start = match (positiv(e.engine_start_fuel_kg), takeoff, positiv(e.planned_taxi_kg)) {
+    let rollen_vor_start = match (
+        positiv(e.engine_start_fuel_kg),
+        takeoff,
+        positiv(e.planned_taxi_kg),
+    ) {
         (Some(an), Some(to), Some(plan)) if an > to && plan >= MIN_PLAN_ROLLEN_KG => Some(Phase {
             ist_kg: (an - to).round(),
             plan_kg: plan.round(),
@@ -565,7 +750,9 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
             // Skala (Stapel + Ueber − Unter) genau der Tank beim Anlassen,
             // und die Abhebe-Marke sitzt auf ihrem echten Wert (QS Runde 3).
             let stapel = block.max(posten);
-            let uebertankung = tank_beim_anlassen.map(|t| (t - stapel).max(0.0)).unwrap_or(0.0);
+            let uebertankung = tank_beim_anlassen
+                .map(|t| (t - stapel).max(0.0))
+                .unwrap_or(0.0);
             // Siehe `Leiter::untertankung_kg`.
             let untertankung = tank_beim_anlassen
                 .map(|t| (stapel - t).max(0.0).min(extra))
@@ -586,51 +773,62 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         _ => None,
     };
 
-    let (extra_getankt, extra_genutzt, extra_ungenutzt, contingency_verbraucht, contingency_genutzt_kg, alt_res_intakt) =
-        match (&leiter, landing, e.tank_plausibel) {
-            (Some(l), Some(ldg), true) => {
-                // Was nach Rollen und Trip uebrig bleiben sollte — gemessen
-                // an der SKALA DER LEITER: Block plus Uebertankung, also der
-                // Tank beim Anlassen (bei Untertankung der Block).
-                //
-                // Bis v1.7.36-Entwurf stand hier „Abhebe-Tankstand minus
-                // Trip". Das war fuer sich richtig, aber eine andere Rechnung
-                // als die Grafik: Wer weniger rollte als geplant, bekam die
-                // Ersparnis als Uebertankung gezeichnet und als Reserve fuer
-                // den Trip gerechnet, und die Landemarke lag um genau diese
-                // Differenz neben der Zeile „Extra ungenutzt" (QS-Vorschlag
-                // V-a, 18.09.2026). Mit derselben Skala auf beiden Seiten
-                // trifft die Marke die Zeile immer — und seit v1.7.36 zaehlt
-                // der Flug ohnehin vom Anlassen an, nicht vom Abheben.
-                //
-                // Beim Einstieg in der Luft gibt es keine Anlass-Marke; die
-                // Skala ist dann der Block, und der Plan-Landestand ist der
-                // des OFP.
-                // Dieselbe Skala wie die Grafik: Plant ein OFP mehr in die
-                // Posten als in den Block, zaehlen die Posten.
-                let posten = l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg;
-                let skala = l.block_kg.max(posten) + l.uebertankung_kg - l.untertankung_kg;
-                let plan_landing = (skala - l.taxi_kg - l.trip_kg).max(0.0);
-                let mehr = (plan_landing - ldg).max(0.0);
-                let cont_genutzt = mehr.clamp(0.0, l.contingency_kg).round();
-                // „Verbraucht" folgt dem GERUNDETEN Wert, den die Anzeige
-                // nennt — sonst stuende „aufgebraucht — alle 238 kg" neben
-                // einem Kennzeichen „nicht verbraucht" (QS v1.7.38).
-                let cont_verbraucht = l.contingency_kg > 0.0 && cont_genutzt >= l.contingency_kg;
-                // Was vom Extra tatsaechlich an Bord war.
-                let extra_an_bord = (l.extra_kg - l.untertankung_kg).max(0.0);
-                let genutzt = (mehr - l.contingency_kg).clamp(0.0, extra_an_bord).round();
-                (
-                    Some(extra_an_bord),
-                    Some(genutzt),
-                    Some((extra_an_bord - genutzt).round()),
-                    Some(cont_verbraucht),
-                    Some(cont_genutzt),
-                    Some(ldg >= l.alternate_kg + l.reserve_kg),
-                )
-            }
-            _ => (None, None, None, None, None, None),
-        };
+    let (
+        extra_getankt,
+        extra_genutzt,
+        extra_ungenutzt,
+        contingency_verbraucht,
+        contingency_genutzt_kg,
+        alt_res_intakt,
+    ) = match (&leiter, landing, e.tank_plausibel) {
+        (Some(l), Some(ldg), true) => {
+            // Was nach Rollen und Trip uebrig bleiben sollte — gemessen
+            // an der SKALA DER LEITER: Block plus Uebertankung, also der
+            // Tank beim Anlassen (bei Untertankung der Block).
+            //
+            // Bis v1.7.36-Entwurf stand hier „Abhebe-Tankstand minus
+            // Trip". Das war fuer sich richtig, aber eine andere Rechnung
+            // als die Grafik: Wer weniger rollte als geplant, bekam die
+            // Ersparnis als Uebertankung gezeichnet und als Reserve fuer
+            // den Trip gerechnet, und die Landemarke lag um genau diese
+            // Differenz neben der Zeile „Extra ungenutzt" (QS-Vorschlag
+            // V-a, 18.09.2026). Mit derselben Skala auf beiden Seiten
+            // trifft die Marke die Zeile immer — und seit v1.7.36 zaehlt
+            // der Flug ohnehin vom Anlassen an, nicht vom Abheben.
+            //
+            // Beim Einstieg in der Luft gibt es keine Anlass-Marke; die
+            // Skala ist dann der Block, und der Plan-Landestand ist der
+            // des OFP.
+            // Dieselbe Skala wie die Grafik: Plant ein OFP mehr in die
+            // Posten als in den Block, zaehlen die Posten.
+            let posten = l.taxi_kg
+                + l.trip_kg
+                + l.contingency_kg
+                + l.alternate_kg
+                + l.reserve_kg
+                + l.extra_kg;
+            let skala = l.block_kg.max(posten) + l.uebertankung_kg - l.untertankung_kg;
+            let plan_landing = (skala - l.taxi_kg - l.trip_kg).max(0.0);
+            let mehr = (plan_landing - ldg).max(0.0);
+            let cont_genutzt = mehr.clamp(0.0, l.contingency_kg).round();
+            // „Verbraucht" folgt dem GERUNDETEN Wert, den die Anzeige
+            // nennt — sonst stuende „aufgebraucht — alle 238 kg" neben
+            // einem Kennzeichen „nicht verbraucht" (QS v1.7.38).
+            let cont_verbraucht = l.contingency_kg > 0.0 && cont_genutzt >= l.contingency_kg;
+            // Was vom Extra tatsaechlich an Bord war.
+            let extra_an_bord = (l.extra_kg - l.untertankung_kg).max(0.0);
+            let genutzt = (mehr - l.contingency_kg).clamp(0.0, extra_an_bord).round();
+            (
+                Some(extra_an_bord),
+                Some(genutzt),
+                Some((extra_an_bord - genutzt).round()),
+                Some(cont_verbraucht),
+                Some(cont_genutzt),
+                Some(ldg >= l.alternate_kg + l.reserve_kg),
+            )
+        }
+        _ => (None, None, None, None, None, None),
+    };
 
     SpritAuswertung {
         fassung: SPRIT_AUSWERTUNG_FASSUNG,
@@ -662,12 +860,222 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
         rollen_nach_landung_kg,
         einstieg_in_der_luft: e.einstieg_in_der_luft,
         badge,
+        // Die Tabelle füllt der Client (`sprit_wegpunkt_zeilen`) — hier
+        // fehlt ihm die Route.
+        wegpunkte: Vec::new(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Sprit je Wegpunkt ────────────────────────────────────────────
+
+    fn wp(
+        ident: &str,
+        plan: f32,
+        min: f32,
+        ist: Option<f32>,
+        zustand: WegpunktZustand,
+    ) -> Wegpunkt {
+        Wegpunkt {
+            ident: ident.into(),
+            plan_an_bord_kg: Some(plan),
+            min_an_bord_kg: Some(min),
+            ist_an_bord_kg: ist,
+            zustand,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fuel_check_rechnet_den_mehrverbrauch_auf_die_landung_hoch() {
+        // Start 7700 (Plan und Ist), jetzt Plan 5480, Ist 5360: 2340 statt
+        // 2220 verbraucht, Faktor 1,054. Rest bis Landung laut Plan 960 kg
+        // → hochgerechnet 5360 − 960·1,054 ≈ 4348.
+        let (hoch, ampel) = fuel_check(
+            5360.0,
+            5480.0,
+            Some(7700.0),
+            Some(7700.0),
+            4520.0,
+            Some(3790.0),
+            Some(4400.0),
+            Some(160.0),
+        )
+        .unwrap();
+        assert!((hoch - 4348.0).abs() < 3.0, "{hoch}");
+        // 4348 liegt unter 4520 − 160 = 4360: die Contingency reicht nicht.
+        assert_eq!(ampel, Ampel::Gelb);
+    }
+
+    #[test]
+    fn fuel_check_gruen_wenn_die_contingency_deckt() {
+        let (_, ampel) = fuel_check(
+            5440.0,
+            5480.0,
+            Some(7700.0),
+            Some(7700.0),
+            4520.0,
+            Some(3790.0),
+            None,
+            Some(160.0),
+        )
+        .unwrap();
+        assert_eq!(ampel, Ampel::Gruen);
+    }
+
+    #[test]
+    fn fuel_check_weniger_verbraucht_ist_immer_gruen() {
+        // Mehr im Tank als geplant — nichts daran ist schlimm (Thomas).
+        let (_, ampel) = fuel_check(
+            5700.0,
+            5480.0,
+            Some(7700.0),
+            Some(7700.0),
+            4520.0,
+            Some(3790.0),
+            Some(4400.0),
+            Some(0.0),
+        )
+        .unwrap();
+        assert_eq!(ampel, Ampel::Gruen);
+    }
+
+    #[test]
+    fn fuel_check_rot_unter_dem_ofp_minimum() {
+        // Jetzt schon unter dem Minimum an diesem Wegpunkt.
+        let (_, a) = fuel_check(
+            4300.0,
+            5480.0,
+            Some(7700.0),
+            Some(7700.0),
+            4520.0,
+            Some(3790.0),
+            Some(4400.0),
+            Some(160.0),
+        )
+        .unwrap();
+        assert_eq!(a, Ampel::Rot);
+        // Oder hochgerechnet bei der Landung darunter.
+        let (h, a) = fuel_check(
+            4900.0,
+            5480.0,
+            Some(7700.0),
+            Some(7700.0),
+            4520.0,
+            Some(3790.0),
+            Some(4000.0),
+            Some(160.0),
+        )
+        .unwrap();
+        assert!(h < 3790.0, "{h}");
+        assert_eq!(a, Ampel::Rot);
+    }
+
+    #[test]
+    fn fuel_check_kurz_nach_dem_abheben_ohne_verhaeltnis() {
+        // 40 kg Plan-Verbrauch: das Verhältnis wäre Rauschen, Faktor 1.
+        let (hoch, _) = fuel_check(
+            7640.0,
+            7660.0,
+            Some(7700.0),
+            Some(7700.0),
+            4520.0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!((hoch - (7640.0 - 3140.0)).abs() < 0.5, "{hoch}");
+    }
+
+    #[test]
+    fn uebersprungener_wegpunkt_wird_aus_den_nachbarn_gerechnet_nicht_gemessen() {
+        let mut z = vec![
+            wp(
+                "EDDL",
+                7700.0,
+                5000.0,
+                Some(7700.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "KORED",
+                5930.0,
+                4700.0,
+                Some(5870.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "ADEKA",
+                5710.0,
+                4600.0,
+                None,
+                WegpunktZustand::Uebersprungen,
+            ),
+            wp(
+                "RESMI",
+                5480.0,
+                4400.0,
+                Some(5360.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp("LUMAS", 5330.0, 4300.0, None, WegpunktZustand::Offen),
+            wp("LEPA", 4520.0, 3790.0, None, WegpunktZustand::Offen),
+        ];
+        wegpunkte_auswerten(&mut z, Some(7700.0), Some(160.0));
+        // Abweichung −60 bei KORED, −120 bei RESMI; ADEKA liegt nach Plan-
+        // Verbrauch knapp in der Mitte → etwa −89.
+        let adeka = z[2].ist_an_bord_kg.unwrap();
+        assert!((adeka - (5710.0 - 89.0)).abs() < 2.0, "{adeka}");
+        assert_eq!(
+            z[2].zustand,
+            WegpunktZustand::Uebersprungen,
+            "bleibt als übersprungen gekennzeichnet"
+        );
+        // Offene Zeilen bekommen keine Ampel und keinen Ist-Wert.
+        assert!(z[4].ampel.is_none() && z[4].ist_an_bord_kg.is_none());
+        // Gemessene schon.
+        assert!(z[3].ampel.is_some() && z[3].landung_hochgerechnet_kg.is_some());
+    }
+
+    #[test]
+    fn uebersprungen_ohne_gemessenen_nachfolger_bleibt_leer() {
+        // Keine Zahl erfinden, wenn es danach keine Messung gibt.
+        let mut z = vec![
+            wp(
+                "EDDL",
+                7700.0,
+                5000.0,
+                Some(7700.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "ADEKA",
+                5710.0,
+                4600.0,
+                None,
+                WegpunktZustand::Uebersprungen,
+            ),
+            wp("LEPA", 4520.0, 3790.0, None, WegpunktZustand::Offen),
+        ];
+        wegpunkte_auswerten(&mut z, Some(7700.0), Some(160.0));
+        assert!(z[1].ist_an_bord_kg.is_none());
+        assert!(z[1].ampel.is_none());
+    }
+
+    #[test]
+    fn altbestand_ohne_wegpunkte_bleibt_lesbar_und_sendet_nichts() {
+        let a: SpritAuswertung = serde_json::from_str(r#"{"fassung":3}"#).unwrap();
+        assert!(a.wegpunkte.is_empty());
+        let j = serde_json::to_value(&a).unwrap();
+        assert!(
+            j.get("wegpunkte").is_none(),
+            "leere Tabelle wird nicht gesendet"
+        );
+    }
 
     /// DLH370, 17.09.2026, ESSA→EDDM, A380 D-AIMK — die echten Zahlen aus
     /// Track und OFP. Sie stehen so im Entwurf, den Thomas freigegeben hat.
@@ -736,7 +1144,10 @@ mod tests {
             "badge": "gruen"
         }"#;
         let a: SpritAuswertung = serde_json::from_str(alt).expect("Fassung 1 muss lesbar sein");
-        assert_eq!(a.fassung, 1, "die Fassung bleibt stehen, sie wird nicht hochgelogen");
+        assert_eq!(
+            a.fassung, 1,
+            "die Fassung bleibt stehen, sie wird nicht hochgelogen"
+        );
         assert_eq!(a.takeoff_fuel_kg, None, "das fehlende Feld wird zu None");
         // Gegenprobe: Die uebrigen Werte kommen unveraendert an — der
         // Rueckfall darf nicht alles auf Default ziehen.
@@ -754,7 +1165,10 @@ mod tests {
         let alt = r#"{"ist_kg": 5461.0, "plan_kg": 1865.0, "abweichung_pct": 192.8}"#;
         let p: Phase = serde_json::from_str(alt).expect("Phase ohne als_kg muss lesbar sein");
         assert!(!p.als_kg);
-        assert_eq!(p.ist_kg, 5_461.0, "Gegenprobe: die uebrigen Werte kommen an");
+        assert_eq!(
+            p.ist_kg, 5_461.0,
+            "Gegenprobe: die uebrigen Werte kommen an"
+        );
     }
 
     /// Gegenprobe zur Rueckwaertstoleranz: Ein voellig leeres Objekt ergibt
@@ -801,7 +1215,10 @@ mod tests {
         assert_eq!(a.alternate_und_reserve_intakt, Some(true));
         let l = a.leiter.expect("Leiter");
         assert_eq!(l.block_kg, 41_644.0);
-        assert_eq!(l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg, 41_644.0);
+        assert_eq!(
+            l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg,
+            41_644.0
+        );
     }
 
     /// EDDH→EFHK, A350: 1 835 kg gelandet bei 2 647 kg Final Reserve.
@@ -831,7 +1248,9 @@ mod tests {
         assert_eq!(a.badge, Badge::Grau);
         assert_eq!(
             a.reserve,
-            Reserve::NichtPruefbar { grund: "kein_ofp".into() }
+            Reserve::NichtPruefbar {
+                grund: "kein_ofp".into()
+            }
         );
         assert!(a.bis_sinkflug.is_none() && a.anflug.is_none() && a.leiter.is_none());
         assert_eq!(a.landing_fuel_kg, Some(1_200.0));
@@ -848,7 +1267,9 @@ mod tests {
         assert_eq!(a.badge, Badge::Grau);
         assert_eq!(
             a.reserve,
-            Reserve::NichtPruefbar { grund: "tank_unplausibel".into() }
+            Reserve::NichtPruefbar {
+                grund: "tank_unplausibel".into()
+            }
         );
         assert!(a.bis_sinkflug.is_none() && a.anflug.is_none());
         assert_eq!(a.extra_genutzt_kg, None);
@@ -879,7 +1300,6 @@ mod tests {
         assert!(a.leiter.is_some());
         assert_eq!(a.extra_genutzt_kg, Some(1_597.0));
     }
-
 
     /// Die Grenzen MIN_PLAN_ANFLUG_KG (15) und MIN_PLAN_BIS_TOD_KG (120)
     /// genau an ihrer Kante — vorher war keine von beiden abgesteckt.
@@ -960,7 +1380,9 @@ mod tests {
                 let l = a.leiter.clone().expect("Leiter");
                 let rechts = l.reserve_kg + l.alternate_kg + l.uebertankung_kg + l.sonstiges_kg;
                 // Die Grafik zeichnet nur das Extra, das an Bord war.
-                let grafik = (landung - rechts).clamp(0.0, l.extra_kg - l.untertankung_kg).round();
+                let grafik = (landung - rechts)
+                    .clamp(0.0, l.extra_kg - l.untertankung_kg)
+                    .round();
                 assert_eq!(
                     a.extra_ungenutzt_kg,
                     Some(grafik),
@@ -978,14 +1400,18 @@ mod tests {
         let mut e = dlh370();
         e.engine_start_fuel_kg = Some(41_300.0); // 344 kg unter Block
         e.takeoff_fuel_kg = Some(40_302.0); // 998 kg gerollt, wie geplant
-        // Trip genau nach Plan: 40 302 − 21 218.
+                                            // Trip genau nach Plan: 40 302 − 21 218.
         e.landing_fuel_kg = Some(19_084.0);
         let a = auswerten(&e);
         let l = a.leiter.clone().expect("Leiter");
         assert_eq!(l.untertankung_kg, 344.0);
         assert_eq!(l.uebertankung_kg, 0.0);
         assert_eq!(a.extra_getankt_kg, Some(4_834.0), "5 178 − 344");
-        assert_eq!(a.extra_genutzt_kg, Some(0.0), "planmaessig geflogen, nichts genutzt");
+        assert_eq!(
+            a.extra_genutzt_kg,
+            Some(0.0),
+            "planmaessig geflogen, nichts genutzt"
+        );
         assert_eq!(a.extra_ungenutzt_kg, Some(4_834.0));
         assert_eq!(a.contingency_verbraucht, Some(false));
         // Mehr als das ganze Extra fehlt: gedeckelt, nie negativ.
@@ -1009,10 +1435,18 @@ mod tests {
             e.takeoff_fuel_kg = Some(anlassen - 725.0);
             let l = auswerten(&e).leiter.expect("Leiter");
             let skala = l.block_kg.max(
-                l.taxi_kg + l.trip_kg + l.contingency_kg + l.alternate_kg + l.reserve_kg + l.extra_kg,
+                l.taxi_kg
+                    + l.trip_kg
+                    + l.contingency_kg
+                    + l.alternate_kg
+                    + l.reserve_kg
+                    + l.extra_kg,
             ) + l.uebertankung_kg
                 - l.untertankung_kg;
-            assert_eq!(skala, anlassen, "Skala {skala} statt Tank beim Anlassen {anlassen}");
+            assert_eq!(
+                skala, anlassen,
+                "Skala {skala} statt Tank beim Anlassen {anlassen}"
+            );
         }
     }
 
@@ -1026,7 +1460,10 @@ mod tests {
         e.plan_bis_einstieg_kg = Some(10_000.0);
         e.takeoff_fuel_kg = Some(31_500.0);
         let bis = auswerten(&e).bis_sinkflug.expect("bis Sinkflug");
-        assert_eq!(bis.plan_kg, 9_353.0, "19 353 bis zum Messpunkt − 10 000 bis zum Einstieg");
+        assert_eq!(
+            bis.plan_kg, 9_353.0,
+            "19 353 bis zum Messpunkt − 10 000 bis zum Einstieg"
+        );
         assert_eq!(bis.ist_kg, 9_269.0, "31 500 − 22 231");
         // Liegt der Einstiegsort nicht auf der Route, gibt es keinen Wert —
         // statt eines kurzen Ist-Stuecks gegen den ganzen Plan.
@@ -1049,10 +1486,18 @@ mod tests {
         assert!(matches!(a.reserve, Reserve::Unterschritten { .. }));
         assert_eq!(a.reserve_abstand_kg, Some(-120.0));
         e.tank_plausibel = false;
-        assert_eq!(auswerten(&e).reserve_abstand_kg, None, "nicht pruefbar → kein Abstand");
+        assert_eq!(
+            auswerten(&e).reserve_abstand_kg,
+            None,
+            "nicht pruefbar → kein Abstand"
+        );
         e.tank_plausibel = true;
         e.planned_reserve_kg = None;
-        assert_eq!(auswerten(&e).reserve_abstand_kg, None, "ohne OFP-Reserve kein Abstand");
+        assert_eq!(
+            auswerten(&e).reserve_abstand_kg,
+            None,
+            "ohne OFP-Reserve kein Abstand"
+        );
     }
 
     /// Knapp unterschritten, gerundet gleich: nie „− 0 kg". Und eine
@@ -1065,11 +1510,21 @@ mod tests {
         e.landing_fuel_kg = Some(4_915.6);
         let a = auswerten(&e);
         assert!(matches!(a.reserve, Reserve::Unterschritten { .. }));
-        assert_eq!(a.reserve_abstand_kg, Some(-1.0), "gerundet gleich, trotzdem darunter");
+        assert_eq!(
+            a.reserve_abstand_kg,
+            Some(-1.0),
+            "gerundet gleich, trotzdem darunter"
+        );
         let mut alt = auswerten(&dlh370());
         alt.reserve_abstand_kg = None;
-        assert_eq!(reserve_abstand(&alt), Some(11_854.0), "Altbestand aus den gespeicherten Werten");
-        alt.reserve = Reserve::NichtPruefbar { grund: "kein_ofp".into() };
+        assert_eq!(
+            reserve_abstand(&alt),
+            Some(11_854.0),
+            "Altbestand aus den gespeicherten Werten"
+        );
+        alt.reserve = Reserve::NichtPruefbar {
+            grund: "kein_ofp".into(),
+        };
         assert_eq!(reserve_abstand(&alt), None);
     }
 
@@ -1093,11 +1548,23 @@ mod tests {
             ..Default::default()
         };
         let a = auswerten(&e);
-        assert_eq!(a.contingency_verbraucht, Some(false), "nicht GANZ verbraucht");
-        assert_eq!(a.contingency_genutzt_kg, Some(86.0), "5 637 − 227 − 2 115 − 3 209");
+        assert_eq!(
+            a.contingency_verbraucht,
+            Some(false),
+            "nicht GANZ verbraucht"
+        );
+        assert_eq!(
+            a.contingency_genutzt_kg,
+            Some(86.0),
+            "5 637 − 227 − 2 115 − 3 209"
+        );
         let mut alt = a.clone();
         alt.contingency_genutzt_kg = None;
-        assert_eq!(contingency_genutzt(&alt), Some(86.0), "Altbestand: dieselbe Zahl");
+        assert_eq!(
+            contingency_genutzt(&alt),
+            Some(86.0),
+            "Altbestand: dieselbe Zahl"
+        );
         // Grenzen: unberuehrt 0, ganz verbraucht = geplant.
         let mut sparsam = e.clone();
         sparsam.landing_fuel_kg = Some(3_400.0);
@@ -1124,7 +1591,10 @@ mod tests {
     /// Rollen nach der Landung: eine Funktion, zwei Wege — dieselbe Zahl.
     #[test]
     fn sprit_rollen_nach_landung_eine_funktion() {
-        assert_eq!(rollen_nach_landung(Some(16_770.0), Some(16_121.0)), Some(649.0));
+        assert_eq!(
+            rollen_nach_landung(Some(16_770.0), Some(16_121.0)),
+            Some(649.0)
+        );
         assert_eq!(auswerten(&dlh370()).rollen_nach_landung_kg, Some(649.0));
         // Nachgetankt oder toter Sensor: kein Wert.
         assert_eq!(rollen_nach_landung(Some(16_770.0), Some(17_000.0)), None);
@@ -1162,7 +1632,6 @@ mod tests {
         assert!(a.bis_sinkflug.is_some());
     }
 
-
     /// Ein winziger Plan bis TOD (Kleinflugzeug: 18 kg Trip) ergibt keine
     /// Phase — 1 kg Ablesefehler waeren dort 7 % (Korpus-Befund P3).
     #[test]
@@ -1177,7 +1646,10 @@ mod tests {
             ..Default::default()
         };
         let a = auswerten(&e);
-        assert!(a.bis_sinkflug.is_none(), "winziger Plan darf keine Phase ergeben");
+        assert!(
+            a.bis_sinkflug.is_none(),
+            "winziger Plan darf keine Phase ergeben"
+        );
         assert!(a.anflug.is_none());
         // Der Landesprit bleibt eine Tatsache.
         assert_eq!(a.landing_fuel_kg, Some(72.0));
@@ -1236,7 +1708,10 @@ mod tests {
     fn sprit_auswertung_wire_format() {
         let a = auswerten(&dlh370());
         let json = serde_json::to_string(&a).expect("json");
-        assert!(json.contains("\"reserve\":{\"status\":\"intakt\",\"quote_pct\":341.1}"), "{json}");
+        assert!(
+            json.contains("\"reserve\":{\"status\":\"intakt\",\"quote_pct\":341.1}"),
+            "{json}"
+        );
         assert!(json.contains("\"badge\":\"gruen\""), "{json}");
         // Gegen die Konstante, nicht gegen eine abgeschriebene Zahl — sonst
         // muss dieser Test bei jedem Fassungssprung von Hand nachgezogen

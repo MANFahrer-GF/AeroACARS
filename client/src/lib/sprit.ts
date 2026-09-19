@@ -171,6 +171,27 @@ export interface SpritAuswertung {
    */
   einstieg_in_der_luft?: boolean;
   badge: SpritBadge;
+  /**
+   * v1.7.40: Sprit Wegpunkt für Wegpunkt — gerechnet in `sprit.rs`
+   * (`wegpunkte_auswerten`), hier nur gelesen. Fehlt bei Altbestand.
+   */
+  wegpunkte?: SpritWegpunkt[];
+}
+
+/** Farbe einer Wegpunkt-Zeile — keine Note, siehe `SpritWegpunkte.tsx`. */
+export type SpritAmpel = "gruen" | "gelb" | "rot";
+
+/** Eine Zeile der Tabelle „Sprit · Wegpunkt für Wegpunkt" (Rust: `Wegpunkt`). */
+export interface SpritWegpunkt {
+  ident: string;
+  hoehe_ft?: number | null;
+  plan_an_bord_kg?: number | null;
+  min_an_bord_kg?: number | null;
+  zustand?: "offen" | "gemessen" | "uebersprungen";
+  zeit_ms?: number | null;
+  ist_an_bord_kg?: number | null;
+  landung_hochgerechnet_kg?: number | null;
+  ampel?: SpritAmpel | null;
 }
 
 /** Tausendertrennung mit schmalem Leerzeichen, ganze kg. */

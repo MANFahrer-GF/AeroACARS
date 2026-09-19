@@ -3786,6 +3786,12 @@ struct PersistedFlightStats {
     /// sie hat (Reserve, Leiter), nie erfundene Phasen.
     #[serde(default)]
     sprit_vergleichspunkt_kg: Option<f32>,
+    /// v1.7.40: Sprit je Wegpunkt — Messungen und zuletzt erreichter
+    /// Routenabschnitt überleben den Neustart.
+    #[serde(default)]
+    sprit_wp_messungen: Vec<SpritWpMessung>,
+    #[serde(default)]
+    sprit_wp_segment: Option<usize>,
     #[serde(default)]
     sprit_vergleichspunkt_odo_nm: Option<f64>,
     #[serde(default)]
@@ -4125,6 +4131,8 @@ impl PersistedFlightStats {
             planned_alternate: stats.planned_alternate.clone(),
             planned_arr_ref_pos: stats.planned_arr_ref_pos,
             sprit_vergleichspunkt_kg: stats.sprit_vergleichspunkt_kg,
+            sprit_wp_messungen: stats.sprit_wp_messungen.clone(),
+            sprit_wp_segment: stats.sprit_wp_segment,
             sprit_vergleichspunkt_odo_nm: stats.sprit_vergleichspunkt_odo_nm,
             sprit_plan_rest_nm: stats.sprit_plan_rest_nm,
             sprit_plan_bis_tod_kg: stats.sprit_plan_bis_tod_kg,
@@ -4372,6 +4380,8 @@ impl PersistedFlightStats {
         stats.planned_alternate = self.planned_alternate;
         stats.planned_arr_ref_pos = self.planned_arr_ref_pos;
         stats.sprit_vergleichspunkt_kg = self.sprit_vergleichspunkt_kg;
+        stats.sprit_wp_messungen = self.sprit_wp_messungen;
+        stats.sprit_wp_segment = self.sprit_wp_segment;
         stats.sprit_vergleichspunkt_odo_nm = self.sprit_vergleichspunkt_odo_nm;
         stats.sprit_plan_rest_nm = self.sprit_plan_rest_nm;
         stats.sprit_plan_bis_tod_kg = self.sprit_plan_bis_tod_kg;
@@ -4906,6 +4916,13 @@ struct FlightStats {
     /// Odometer (`distance_nm`) am Vergleichspunkt — daraus die geflogene
     /// Anflugstrecke.
     sprit_vergleichspunkt_odo_nm: Option<f64>,
+    /// v1.7.40: Tankstand beim Überflug je Wegpunkt des Navlogs, in der
+    /// Reihenfolge des Überflugs. Siehe `sprit_wegpunkt_tick`.
+    sprit_wp_messungen: Vec<SpritWpMessung>,
+    /// Der Routenabschnitt (Index des Start-Fixes), auf den das Flugzeug
+    /// zuletzt projiziert wurde. Wächst nur — eine Warteschleife führt
+    /// nicht zurück.
+    sprit_wp_segment: Option<usize>,
     /// Geplante Reststrecke ab TOD (Summe der Navlog-Segmente nach dem
     /// TOD-Fix). `None`, wenn das Navlog die Felder nicht traegt.
     sprit_plan_rest_nm: Option<f64>,
@@ -14569,6 +14586,56 @@ fn flight_get_route_fixes(state: tauri::State<'_, AppState>) -> Vec<api_client::
     }
 }
 
+/// v1.7.40: Die Tabelle „Sprit · Wegpunkt für Wegpunkt" für das Cockpit.
+///
+/// Dieselbe Rechnung (`sprit_wegpunkt_zeilen`), die nach der Landung mit der
+/// Sprit-Auswertung eingefroren wird — Cockpit und Landeauswertung zeigen
+/// nie verschiedene Zahlen. Leer ohne aktiven Flug oder ohne Navlog-Werte.
+#[derive(Debug, Clone, Default, Serialize)]
+struct SpritWegpunkteDto {
+    zeilen: Vec<landing_scoring::sprit::Wegpunkt>,
+    /// Der nächste noch nicht überflogene Wegpunkt.
+    naechster: Option<usize>,
+    /// Luftlinie dorthin, NM.
+    naechster_nm: Option<f64>,
+}
+
+#[tauri::command]
+fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDto {
+    let guard = state.active_flight.lock().expect("active_flight lock");
+    let Some(flight) = guard.as_ref() else {
+        return SpritWegpunkteDto::default();
+    };
+    let stats = flight.stats.lock().expect("flight stats lock");
+    // Nach der Landung die eingefrorene Fassung — sie ist die, die in den
+    // Bericht geht.
+    let zeilen = match stats.sprit_auswertung.as_ref() {
+        Some(a) if !a.wegpunkte.is_empty() => a.wegpunkte.clone(),
+        _ => sprit_wegpunkt_zeilen(&stats, false),
+    };
+    use landing_scoring::sprit::WegpunktZustand;
+    let letzter = zeilen
+        .iter()
+        .rposition(|z| z.zustand != WegpunktZustand::Offen);
+    let naechster = match letzter {
+        Some(i) if i + 1 < zeilen.len() => Some(i + 1),
+        None if !zeilen.is_empty() => Some(0),
+        _ => None,
+    };
+    let naechster_nm = match (naechster, stats.last_known_lat, stats.last_known_lon) {
+        (Some(i), Some(la), Some(lo)) => stats
+            .planned_waypoints
+            .get(i)
+            .map(|f| ::geo::distance_m(la, lo, f.lat, f.lon) / 1852.0),
+        _ => None,
+    };
+    SpritWegpunkteDto {
+        zeilen,
+        naechster,
+        naechster_nm,
+    }
+}
+
 /// v0.15.x (In-App-Live-Map): der im Backend akkumulierte, ausgedünnte
 /// geflogene Track [lon, lat] des aktiven Flugs. Im Streamer bei voller Tick-
 /// Rate gefüllt (fokus-/fenster-unabhängig → lückenlos auch bei X-Plane-
@@ -21241,6 +21308,7 @@ fn sprit_plan_am_ort_suche(
             plan_bis_kg,
             plan_rest_nm,
             abstand_nm,
+            segment: i,
         };
         // **Der Abstand entscheidet, die Strecke nur bei Gleichstand.**
         //
@@ -21276,6 +21344,9 @@ struct SpritPlanOrt {
     plan_rest_nm: f64,
     /// Wie weit die gemessene Position neben der Route lag.
     abstand_nm: f64,
+    /// Der Abschnitt `fixes[segment] → fixes[segment + 1]`, auf dem der
+    /// Lotfusspunkt liegt. Für die Überflug-Erkennung je Wegpunkt.
+    segment: usize,
 }
 
 /// Wo auf der Strecke A→B liegt der Lotfusspunkt von P? `0.0` = bei A,
@@ -21496,6 +21567,156 @@ const SPRIT_TRIEBWERKE_AUS_S: f64 = 10.0;
 /// Schwelle zaehlen. Nur zwischen Abheben und Aufsetzen, nie bei Pause,
 /// nie am Boden, nie ueber eine Neustart-Luecke hinweg.
 #[allow(clippy::too_many_arguments)]
+/// Eine Messung „Sprit beim Überflug" — Rohdaten, gerechnet wird erst in
+/// `sprit_wegpunkt_zeilen`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct SpritWpMessung {
+    /// Index im Navlog (`planned_waypoints`) zum Zeitpunkt der Messung.
+    idx: usize,
+    /// Kennung — damit die Messung nach einer Routenänderung wieder ihren
+    /// Wegpunkt findet, auch wenn sich der Index verschoben hat.
+    ident: String,
+    zeit_ms: i64,
+    /// Tankstand; `None` bei einem übersprungenen Wegpunkt.
+    ist_kg: Option<f32>,
+    uebersprungen: bool,
+}
+
+/// Wie nah das Flugzeug beim Abschnittswechsel am Wegpunkt sein muss, damit
+/// der Tankstand als „beim Überflug gemessen" gilt. Fünf Meilen: Beim
+/// Überfliegen einer Kurve (fly-by) schneidet das Flugzeug die Ecke, und
+/// der Wechsel fällt auf die Winkelhalbierende, nicht auf den Fix.
+const SPRIT_WP_NAH_NM: f64 = 5.0;
+
+/// Sprit je Wegpunkt: erkennt den Überflug und hält den Tankstand fest.
+///
+/// Grundlage ist dieselbe Projektion auf die Plan-Route wie für den
+/// Vergleichspunkt (`sprit_plan_am_ort`) — nicht die Luftlinie der Karte,
+/// die springt. Wechselt der Abschnitt nach vorn, gilt der Start-Fix des
+/// neuen Abschnitts als überflogen; liegen dazwischen weitere Fixe, wurden
+/// sie übersprungen (Direct, Radarführung) und bekommen keinen Messwert.
+///
+/// Dieselben Tore wie `sprit_tick`: nur in der Luft, zwischen Abheben und
+/// Landung, nie bei Pause, Slew oder Replay-Verdacht.
+#[allow(clippy::too_many_arguments)]
+fn sprit_wegpunkt_tick(
+    stats: &mut FlightStats,
+    lat: f64,
+    lon: f64,
+    fuel_kg: f32,
+    paused: bool,
+    slew: bool,
+    replay_verdacht: bool,
+    on_ground: bool,
+    jetzt_ms: i64,
+) {
+    if stats.takeoff_fuel_kg.is_none() || stats.landing_fuel_kg.is_some() {
+        return;
+    }
+    if paused || slew || replay_verdacht || on_ground || !fuel_kg.is_finite() {
+        return;
+    }
+    if stats.planned_waypoints.len() < 2 {
+        return;
+    }
+    let geflogen = Some(stats.distance_nm).filter(|d| d.is_finite() && *d > 0.0);
+    let Some(ort) = sprit_plan_am_ort(&stats.planned_waypoints, lat, lon, geflogen) else {
+        return;
+    };
+    let neu = ort.segment;
+    match stats.sprit_wp_segment {
+        // Erster Tick in der Luft: Was davor lag, wurde nicht gemessen — es
+        // wird nichts nachgetragen (Einstieg in der Luft, Neustart ohne
+        // Stand). Der Abflug selbst bekommt den Abhebe-Tankstand.
+        None => stats.sprit_wp_segment = Some(neu),
+        Some(alt) if neu > alt => {
+            for k in (alt + 1)..=neu {
+                let f = &stats.planned_waypoints[k];
+                let nah = ::geo::distance_m(lat, lon, f.lat, f.lon) / 1852.0 <= SPRIT_WP_NAH_NM;
+                let gemessen = k == neu && nah;
+                stats.sprit_wp_messungen.push(SpritWpMessung {
+                    idx: k,
+                    ident: f.ident.clone(),
+                    zeit_ms: jetzt_ms,
+                    ist_kg: gemessen.then_some(fuel_kg),
+                    uebersprungen: !gemessen,
+                });
+            }
+            stats.sprit_wp_segment = Some(neu);
+        }
+        _ => {}
+    }
+}
+
+/// Die Tabelle „Sprit · Wegpunkt für Wegpunkt" — EINE Rechnung für das
+/// Cockpit (live) und die Landeauswertung (eingefroren mit der
+/// Sprit-Auswertung). Leer, wenn das Navlog keine An-Bord-Werte trägt.
+fn sprit_wegpunkt_zeilen(
+    stats: &FlightStats,
+    // Ausweichflug: gelandet wurde woanders — der Landesprit gehört nicht
+    // in die Zeile des geplanten Ziels.
+    ausweichflug: bool,
+) -> Vec<landing_scoring::sprit::Wegpunkt> {
+    use landing_scoring::sprit::{Wegpunkt, WegpunktZustand};
+    let fixes = &stats.planned_waypoints;
+    if fixes.len() < 2 || fixes.iter().all(|f| f.sprit_an_bord_kg.is_none()) {
+        return Vec::new();
+    }
+    let mut zeilen: Vec<Wegpunkt> = fixes
+        .iter()
+        .map(|f| Wegpunkt {
+            ident: f.ident.clone(),
+            hoehe_ft: f.hoehe_ft,
+            plan_an_bord_kg: f.sprit_an_bord_kg,
+            min_an_bord_kg: f.sprit_min_an_bord_kg,
+            ..Default::default()
+        })
+        .collect();
+    // Abflug: der Tankstand beim Abheben (bei Einstieg in der Luft: beim
+    // Einstieg — `takeoff_fuel_kg` ist dann dieser Wert).
+    if let (Some(z), Some(t)) = (zeilen.first_mut(), stats.takeoff_fuel_kg) {
+        z.zustand = WegpunktZustand::Gemessen;
+        z.ist_an_bord_kg = Some(t);
+        z.zeit_ms = stats.takeoff_at.map(|t| t.timestamp_millis());
+    }
+    // Überflüge: über den Index, und wenn der nach einer Routenänderung
+    // nicht mehr zur Kennung passt, über die Kennung (der nächstgelegene
+    // Treffer, damit ein Fix, der zweimal vorkommt, nicht vertauscht wird).
+    let n = zeilen.len();
+    for m in &stats.sprit_wp_messungen {
+        let ziel = if m.idx < n && zeilen[m.idx].ident == m.ident {
+            Some(m.idx)
+        } else {
+            (0..n)
+                .filter(|&i| zeilen[i].ident == m.ident)
+                .min_by_key(|&i| i.abs_diff(m.idx))
+        };
+        let Some(i) = ziel else { continue };
+        if i == 0 || i + 1 == n {
+            continue;
+        }
+        zeilen[i].zeit_ms = Some(m.zeit_ms);
+        if m.uebersprungen {
+            zeilen[i].zustand = WegpunktZustand::Uebersprungen;
+        } else {
+            zeilen[i].zustand = WegpunktZustand::Gemessen;
+            zeilen[i].ist_an_bord_kg = m.ist_kg;
+        }
+    }
+    // Ziel: der Tankstand beim Aufsetzen.
+    if let (false, Some(z), Some(l)) = (ausweichflug, zeilen.last_mut(), stats.landing_fuel_kg) {
+        z.zustand = WegpunktZustand::Gemessen;
+        z.ist_an_bord_kg = Some(l);
+        z.zeit_ms = stats.landing_at.map(|t| t.timestamp_millis());
+    }
+    landing_scoring::sprit::wegpunkte_auswerten(
+        &mut zeilen,
+        stats.takeoff_fuel_kg,
+        stats.planned_contingency_kg,
+    );
+    zeilen
+}
+
 fn sprit_tick(
     stats: &mut FlightStats,
     lat: f64,
@@ -21736,6 +21957,10 @@ fn sprit_auswertung_einmal(
             a.schwelle_ft = None;
             a.zeit_unter_schwelle_min = None;
         }
+        // v1.7.40: Die Tabelle je Wegpunkt friert mit der Auswertung ein —
+        // so tragen Landungsdatensatz und Nutzlast dieselben Zeilen, die das
+        // Cockpit zuletzt zeigte.
+        a.wegpunkte = sprit_wegpunkt_zeilen(stats, ausweich);
         stats.sprit_auswertung = Some(a);
     }
     stats.sprit_auswertung.clone()
@@ -38167,6 +38392,17 @@ fn step_flight_at(
         snap.on_ground,
         sprit_dt_s,
     );
+    sprit_wegpunkt_tick(
+        &mut stats,
+        snap.lat,
+        snap.lon,
+        snap.fuel_total_kg,
+        snap.paused,
+        snap.slew_mode,
+        sprit_replay_verdacht,
+        snap.on_ground,
+        now.timestamp_millis(),
+    );
     // v0.3.0: ZFW + Total-Weight für Live-Loadsheet (Cockpit-Tab
     // während Boarding-Phase). Updates jeden Tick. None bleiben sie
     // wenn das Aircraft-Profil die SimVars nicht meldet (z.B. Fenix
@@ -49799,6 +50035,7 @@ pub fn run() {
             airport_ground_index,
             flight_status,
             flight_get_route_fixes,
+            flight_sprit_wegpunkte,
             flight_get_track,
             va_live_flights,
             logbook_pireps,
@@ -68108,6 +68345,7 @@ mod sprit_messung_tests {
             segment_nm: Some(nm),
             hoehe_ft: Some(40_000.0),
             zeit_bis_hier_s: Some(1.0),
+            ..Default::default()
         }
     }
 
@@ -68165,6 +68403,7 @@ mod sprit_messung_tests {
             segment_nm: Some(nm),
             hoehe_ft: Some(40_000.0),
             zeit_bis_hier_s: Some(zeit_s),
+            ..Default::default()
         }
     }
 
@@ -68341,6 +68580,7 @@ mod sprit_messung_tests {
             ident: id.into(), lat: 48.0, lon, kind: "wpt".into(),
             sprit_bis_hier_kg: Some(kg), segment_nm: Some(nm),
             hoehe_ft: Some(20_000.0), zeit_bis_hier_s: None,
+            ..Default::default()
         };
         let ost = |nm: f64| 11.0 + nm / (60.0 * 48.0_f64.to_radians().cos());
         let route = vec![
@@ -68367,6 +68607,7 @@ mod sprit_messung_tests {
             ident: id.into(), lat, lon, kind: "wpt".into(),
             sprit_bis_hier_kg: Some(kg), segment_nm: Some(nm),
             hoehe_ft: Some(20_000.0), zeit_bis_hier_s: None,
+            ..Default::default()
         };
         let ost = |nm: f64| 11.0 + nm / (60.0 * 48.0_f64.to_radians().cos());
         let nord = |nm: f64| 48.0 + nm / 60.0;
@@ -69091,6 +69332,143 @@ mod pirep_felder_sprit_tests {
 }
 
 #[cfg(test)]
+mod sprit_wegpunkt_tests {
+    use super::*;
+
+    const BREITE: f64 = 48.0;
+
+    fn lon_nm(nm: f64) -> f64 {
+        10.0 + nm / (60.0 * BREITE.to_radians().cos())
+    }
+
+    /// Ein Fix auf der Route: Strecke ab Start, Plan-Verbrauch bis hier,
+    /// Plan an Bord und Minimum laut OFP.
+    fn fx(ident: &str, lat: f64, nm: f64, seg: f32, verbrauch: f32) -> api_client::RouteFix {
+        api_client::RouteFix {
+            ident: ident.into(),
+            lat,
+            lon: lon_nm(nm),
+            kind: "wpt".into(),
+            sprit_bis_hier_kg: Some(verbrauch),
+            segment_nm: Some(seg),
+            sprit_an_bord_kg: Some(8_000.0 - verbrauch),
+            sprit_min_an_bord_kg: Some(8_000.0 - verbrauch - 900.0),
+            ..Default::default()
+        }
+    }
+
+    /// Eine Route nach Osten; KILO liegt 30 NM nördlich der Linie —
+    /// geradeaus geflogen ist das ein Direct an KILO vorbei.
+    fn stats_mit_route() -> FlightStats {
+        let mut st = FlightStats::default();
+        st.takeoff_fuel_kg = Some(8_000.0);
+        st.takeoff_at = Some(Utc::now());
+        st.planned_contingency_kg = Some(150.0);
+        st.planned_waypoints = vec![
+            fx("DEP", BREITE, 0.0, 0.0, 0.0),
+            fx("ALFA", BREITE, 40.0, 40.0, 400.0),
+            fx("BRAVO", BREITE, 80.0, 40.0, 700.0),
+            fx("KILO", BREITE + 0.5, 120.0, 50.0, 1_050.0),
+            fx("DELTA", BREITE, 160.0, 50.0, 1_400.0),
+            fx("ARR", BREITE, 200.0, 40.0, 1_700.0),
+        ];
+        st
+    }
+
+    /// Geradeaus nach Osten fliegen, 5 % über Plan-Verbrauch.
+    fn fliegen(st: &mut FlightStats, von: f64, bis: f64) {
+        let mut nm = von;
+        while nm <= bis {
+            st.distance_nm = nm;
+            let verbrauch = (nm / 200.0 * 1_700.0 * 1.05) as f32;
+            sprit_wegpunkt_tick(st, BREITE, lon_nm(nm), 8_000.0 - verbrauch, false, false, false, false, nm as i64);
+            nm += 2.0;
+        }
+    }
+
+    #[test]
+    fn ueberflug_wird_gemessen_und_ein_direct_als_uebersprungen_gefuehrt() {
+        let mut st = stats_mit_route();
+        fliegen(&mut st, 1.0, 195.0);
+        let m: Vec<(&str, bool)> = st
+            .sprit_wp_messungen
+            .iter()
+            .map(|m| (m.ident.as_str(), m.uebersprungen))
+            .collect();
+        assert_eq!(
+            m,
+            vec![("ALFA", false), ("BRAVO", false), ("KILO", true), ("DELTA", false)],
+            "Überflüge falsch erkannt"
+        );
+        // Gemessen heisst: Tankstand beim Überflug, nicht irgendwann.
+        let alfa = st.sprit_wp_messungen[0].ist_kg.unwrap();
+        assert!((alfa - (8_000.0 - 40.0 / 200.0 * 1_700.0 * 1.05)).abs() < 25.0, "{alfa}");
+        assert!(st.sprit_wp_messungen[2].ist_kg.is_none(), "übersprungen ohne Messwert");
+
+        // Die Tabelle: KILO gerechnet, aber als übersprungen gekennzeichnet.
+        use landing_scoring::sprit::{Ampel, WegpunktZustand};
+        let z = sprit_wegpunkt_zeilen(&st, false);
+        assert_eq!(z.len(), 6);
+        assert_eq!(z[0].zustand, WegpunktZustand::Gemessen, "Abflug trägt den Abhebe-Tankstand");
+        assert_eq!(z[3].zustand, WegpunktZustand::Uebersprungen);
+        assert!(z[3].ist_an_bord_kg.is_some());
+        assert_eq!(z[5].zustand, WegpunktZustand::Offen, "vor der Landung ist das Ziel offen");
+        // 5 % Mehrverbrauch auf 1.700 kg Trip = 85 kg, Contingency 150: grün.
+        assert_eq!(z[4].ampel, Some(Ampel::Gruen));
+    }
+
+    #[test]
+    fn eine_warteschleife_fuehrt_nicht_zurueck() {
+        let mut st = stats_mit_route();
+        fliegen(&mut st, 1.0, 95.0);
+        let vorher = st.sprit_wp_messungen.len();
+        // Zurück über ALFA (Holding) — nichts wird doppelt erfasst.
+        let mut nm = 95.0;
+        while nm > 30.0 {
+            st.distance_nm += 2.0;
+            sprit_wegpunkt_tick(&mut st, BREITE, lon_nm(nm), 7_000.0, false, false, false, false, 0);
+            nm -= 2.0;
+        }
+        assert_eq!(st.sprit_wp_messungen.len(), vorher);
+    }
+
+    #[test]
+    fn am_boden_und_im_slew_wird_nichts_erfasst() {
+        let mut st = stats_mit_route();
+        sprit_wegpunkt_tick(&mut st, BREITE, lon_nm(1.0), 8_000.0, false, false, false, false, 0);
+        sprit_wegpunkt_tick(&mut st, BREITE, lon_nm(41.0), 7_500.0, false, true, false, false, 0);
+        sprit_wegpunkt_tick(&mut st, BREITE, lon_nm(81.0), 7_200.0, false, false, false, true, 0);
+        assert!(st.sprit_wp_messungen.is_empty());
+    }
+
+    #[test]
+    fn nach_der_landung_friert_die_tabelle_mit_der_auswertung_ein() {
+        let mut st = stats_mit_route();
+        fliegen(&mut st, 1.0, 199.0);
+        st.landing_fuel_kg = Some(6_200.0);
+        let a = sprit_auswertung_einmal(&mut st).expect("Auswertung");
+        assert_eq!(a.wegpunkte.len(), 6, "die Tabelle reist mit der Auswertung");
+        assert_eq!(a.wegpunkte[5].ist_an_bord_kg, Some(6_200.0));
+    }
+
+    #[test]
+    fn der_takt_ruft_die_erfassung_auf() {
+        // Verdrahtung, nicht die Funktion: Ohne den Aufruf im Takt bleibt
+        // die Tabelle leer, und alle Tests oben wären grün.
+        let quelle = include_str!("lib.rs");
+        let takt = quelle
+            .find("    sprit_tick(\n        &mut stats,")
+            .expect("Aufruf von sprit_tick im Takt nicht gefunden");
+        let rest = &quelle[takt..];
+        let wp = rest.find("sprit_wegpunkt_tick(\n        &mut stats,");
+        assert!(
+            wp.is_some_and(|i| i < 1_500),
+            "sprit_wegpunkt_tick wird im Takt nicht direkt nach sprit_tick gerufen"
+        );
+    }
+}
+
+#[cfg(test)]
 mod sprit_persistenz_tests {
     use super::*;
 
@@ -69313,6 +69691,7 @@ mod sprit_korpus_tests {
                     segment_nm: Some(dists[i]),
                     hoehe_ft: alts.get(i).copied(),
                     zeit_bis_hier_s: None,
+                    ..Default::default()
                 })
                 .collect();
 

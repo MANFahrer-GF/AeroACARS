@@ -82,6 +82,8 @@ export const DATEIEN = [
   // typisiert und wurden nie angezeigt, die Sprit-Leiter fehlte ganz.
   // Dieselbe Fehlerklasse wie bei der Bahn-Grafik, dieselbe Antwort.
   "components/SpritSektion.tsx",
+  // v1.7.40: Sprit je Wegpunkt — in der Sprit-Sektion der Landeauswertung.
+  "components/SpritWegpunkte.tsx",
   "lib/sprit.ts",
 ];
 

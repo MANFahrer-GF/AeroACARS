@@ -12,6 +12,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
 import { balken, hauptzahl, hauptzahlText, kg, pct, phaseTon, reserveAbstand, contingencyGenutzt, minuten } from "../lib/sprit";
+import { SpritWegpunkte } from "./SpritWegpunkte";
 
 const TON = {
   ok: "#22c55e",
@@ -920,6 +921,13 @@ export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswert
         )}
       </div>
       <Leiter sprit={sprit} />
+      {/* v1.7.40: Sprit je Wegpunkt — dieselbe Tabelle wie im Cockpit,
+          mit der Auswertung eingefroren. Fehlt bei Altbestand. */}
+      {sprit.wegpunkte && sprit.wegpunkte.length >= 2 && (
+        <div style={{ marginTop: "0.8rem" }}>
+          <SpritWegpunkte zeilen={sprit.wegpunkte} />
+        </div>
+      )}
       <div style={{ marginTop: "0.6rem" }}>
         <Zeile label={t("landing.sprit.reserve_label")} ton={reserveTon}>
           {reserveZeile}

@@ -658,6 +658,15 @@ pub struct RouteFix {
     /// v1.7.35: geplante Zeit bis zu diesem Fix (s, `<time_total>`).
     #[serde(default)]
     pub zeit_bis_hier_s: Option<f32>,
+    /// v1.7.40: Sprit an Bord laut Plan an diesem Fix (kg,
+    /// `<fuel_plan_onboard>`). Grundlage der Tabelle „Sprit · Wegpunkt für
+    /// Wegpunkt". `None` bei Altbestand.
+    #[serde(default)]
+    pub sprit_an_bord_kg: Option<f32>,
+    /// v1.7.40: Mindest-Sprit an Bord laut OFP an diesem Fix (kg,
+    /// `<fuel_min_onboard>`) — darunter wird die Zeile rot.
+    #[serde(default)]
+    pub sprit_min_an_bord_kg: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -2704,6 +2713,8 @@ fn extract_navlog_fixes(xml: &str, unit_is_lb: bool) -> Vec<RouteFix> {
                 segment_nm: num(block, "distance"),
                 hoehe_ft: num(block, "altitude_feet"),
                 zeit_bis_hier_s: num(block, "time_total"),
+                sprit_an_bord_kg: num(block, "fuel_plan_onboard").map(to_kg),
+                sprit_min_an_bord_kg: num(block, "fuel_min_onboard").map(to_kg),
             });
         }
     }
