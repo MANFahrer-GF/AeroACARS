@@ -3853,6 +3853,7 @@ mod tests {
             overrun_m: None,
             lateral_skip_reason: None,
             runway_exits: None,
+            vorherige_durchgaenge: None,
         };
         let j: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
