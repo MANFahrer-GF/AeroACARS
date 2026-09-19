@@ -6,7 +6,7 @@
  * zurückbringen, ohne dass ein Test es merkt.
  */
 import { describe, expect, it } from "vitest";
-import { dezimal, pct, phaseTon, reserveAbstand } from "./sprit";
+import { contingencyGenutzt, dezimal, minuten, pct, phaseTon, reserveAbstand } from "./sprit";
 import type { SpritAuswertung, SpritPhase } from "./sprit";
 
 const phase = (pct: number): SpritPhase => ({
@@ -89,5 +89,31 @@ describe("reserveAbstand", () => {
   it("nennt keinen Abstand, wenn die Reserve nicht prüfbar ist", () => {
     expect(reserveAbstand(basis({ reserve: { status: "nicht_pruefbar", grund: "kein_ofp" }, reserve_abstand_kg: 5 }))).toBeNull();
     expect(reserveAbstand(basis({ reserve_kg: null }))).toBeNull();
+  });
+});
+
+describe("minuten", () => {
+  it("rundet auf ganze Minuten, zeigt gemessene Kurzzeit nie als 0", () => {
+    expect(minuten(14.3)).toBe("14");
+    expect(minuten(15.8)).toBe("16");
+    expect(minuten(0.3)).toBe("< 1");
+    expect(minuten(0)).toBe("0");
+  });
+});
+
+describe("contingencyGenutzt — Rückfall für Altbestand", () => {
+  const leiter = { taxi_kg: 227, trip_kg: 2115, contingency_kg: 238, alternate_kg: 1927, reserve_kg: 1130, extra_kg: 0, block_kg: 5637, sonstiges_kg: 0, uebertankung_kg: 0 };
+  const alt = (ldg: number) => ({ contingency_verbraucht: false, landing_fuel_kg: ldg, leiter }) as unknown as SpritAuswertung;
+  it("rechnet wie sprit.rs und begrenzt auf die Contingency", () => {
+    expect(contingencyGenutzt(alt(3209))).toBe(86);
+    expect(contingencyGenutzt(alt(3400))).toBe(0);
+    // Weit über die Contingency hinaus: gedeckelt, nicht 395.
+    expect(contingencyGenutzt(alt(2900))).toBe(238);
+  });
+  it("nimmt das Feld aus der Rechnung, wenn es da ist", () => {
+    expect(contingencyGenutzt({ ...alt(3209), contingency_genutzt_kg: 50 } as SpritAuswertung)).toBe(50);
+  });
+  it("sagt nichts ohne Aussage der Rechnung", () => {
+    expect(contingencyGenutzt({ ...alt(3209), contingency_verbraucht: null } as SpritAuswertung)).toBeNull();
   });
 });

@@ -21878,7 +21878,9 @@ fn sprit_pirep_felder(a: Option<&landing_scoring::sprit::SpritAuswertung>, f: &m
     // v1.7.38: die genutzte Contingency in kg — „unberuehrt" stand auch da,
     // wo sie angebrochen war (#1417: 86 von 238 kg).
     if let (Some(n), Some(l)) = (landing_scoring::sprit::contingency_genutzt(a), a.leiter.as_ref()) {
-        let text = if n <= 0.0 {
+        let text = if l.contingency_kg <= 0.0 {
+            "keine geplant".to_string()
+        } else if n <= 0.0 {
             "unberührt".to_string()
         } else if n >= l.contingency_kg {
             format!("aufgebraucht — alle {} kg genutzt", ziffern(l.contingency_kg))
@@ -68700,6 +68702,49 @@ mod pirep_felder_sprit_tests {
             "bis Sinkflug muss in Prozent bleiben: {}",
             f["Sprit bis Sinkflug"]
         );
+    }
+
+    /// v1.7.38 (Flug #1417): Die PIREP-Felder sagen, was wirklich war —
+    /// angebrochen, unberuehrt, keine geplant, kein Extra, ganze Minuten.
+    #[test]
+    fn pirep_felder_sprit_contingency_extra_minuten() {
+        let basis = || landing_scoring::sprit::SpritEingang {
+            planned_burn_kg: Some(2_115.0),
+            planned_taxi_kg: Some(227.0),
+            planned_contingency_kg: Some(238.0),
+            planned_alternate_kg: Some(1_927.0),
+            planned_reserve_kg: Some(1_130.0),
+            planned_extra_kg: Some(0.0),
+            planned_block_fuel_kg: Some(5_637.0),
+            engine_start_fuel_kg: Some(5_628.0),
+            takeoff_fuel_kg: Some(5_444.0),
+            landing_fuel_kg: Some(3_209.0),
+            zeit_unter_schwelle_s: Some(858.0),
+            schwelle_ft: Some(8_362.0),
+            tank_plausibel: true,
+            ..Default::default()
+        };
+        let felder = |e: landing_scoring::sprit::SpritEingang| {
+            let a = landing_scoring::sprit::auswerten(&e);
+            let mut f = HashMap::new();
+            sprit_pirep_felder(Some(&a), &mut f);
+            f
+        };
+        let f = felder(basis());
+        assert_eq!(f["Contingency"], "angebrochen — 86 von 238 kg genutzt");
+        assert_eq!(f["Extra Fuel"], "kein Extra getankt");
+        assert_eq!(f["Zeit unter Schwelle"], "14 min unter 8\u{202f}362 ft");
+        let mut e = basis();
+        e.landing_fuel_kg = Some(3_400.0);
+        assert_eq!(felder(e)["Contingency"], "unberührt");
+        let mut e = basis();
+        e.planned_contingency_kg = Some(0.0);
+        e.planned_block_fuel_kg = Some(5_399.0);
+        assert_eq!(felder(e)["Contingency"], "keine geplant");
+        // Tank unplausibel: keine Aussage — kein Feld.
+        let mut e = basis();
+        e.tank_plausibel = false;
+        assert!(!felder(e).contains_key("Contingency"));
     }
 
     #[test]

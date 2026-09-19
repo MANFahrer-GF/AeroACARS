@@ -440,4 +440,21 @@ describe("Sprit-Leiter", () => {
     fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Contingency"]')!);
     expect(container.querySelector('[data-testid="sprit-leiter-hinweis"]')?.textContent).toContain("angebrochen — 86 von 238 kg genutzt");
   });
+
+  it("sagt nichts zur Contingency, wenn nichts bekannt ist — und nennt „keine geplant“", () => {
+    // QS v1.7.38, F1: Tank unplausibel → Leiter aus dem OFP, aber keine
+    // Aussage über die Nutzung. Bis dahin stand dann „unberührt" da.
+    const unbekannt = dlh370({ contingency_verbraucht: null, contingency_genutzt_kg: null, alternate_und_reserve_intakt: null });
+    const u = render(<SpritSektion sprit={unbekannt} />).container.textContent ?? "";
+    expect(u).not.toMatch(/Contingency (unberührt|angebrochen|aufgebraucht)/);
+    // Gegenprobe: mit Aussage steht sie da.
+    const bekannt = render(<SpritSektion sprit={dlh370()} />).container.textContent ?? "";
+    expect(bekannt).toContain("Contingency aufgebraucht");
+    // Keine Contingency geplant: nicht „unberührt".
+    const basis = dlh370();
+    const ohne = dlh370({ contingency_verbraucht: false, contingency_genutzt_kg: 0, leiter: { ...basis.leiter!, contingency_kg: 0 } });
+    const o = render(<SpritSektion sprit={ohne} />).container.textContent ?? "";
+    expect(o).toContain("keine Contingency geplant");
+    expect(o).not.toContain("Contingency unberührt");
+  });
 });

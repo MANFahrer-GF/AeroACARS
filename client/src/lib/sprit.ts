@@ -72,6 +72,9 @@ export function contingencyGenutzt(s: SpritAuswertung): number | null {
 
 /** Minuten als ganze Zahl — „14,3 min" las niemand als 14 min 18 s. */
 export function minuten(v: number): string {
+  // Gemessene Zeit unter einer halben Minute ist nicht „0" — sonst sähe es
+  // aus, als wäre nichts gemessen worden (QS v1.7.38).
+  if (v > 0 && v < 0.5) return "< 1";
   return String(Math.round(v));
 }
 

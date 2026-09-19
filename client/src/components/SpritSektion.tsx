@@ -600,17 +600,27 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
           </Erklaerung>
         )}
         <span>
-          {contGenutzt == null
-            ? sprit.contingency_verbraucht
-              ? t("landing.sprit.contingency_verbraucht")
-              : t("landing.sprit.contingency_unberuehrt")
-            : contGenutzt <= 0
-              ? t("landing.sprit.contingency_unberuehrt")
-              : contGenutzt >= l.contingency_kg
-                ? t("landing.sprit.contingency_ganz", { c: kg(l.contingency_kg) })
-                : t("landing.sprit.contingency_teil", { n: kg(contGenutzt), c: kg(l.contingency_kg) })}
-          {sprit.alternate_und_reserve_intakt === true ? ` · ${t("landing.sprit.alt_res_intakt")}` : ""}
-          {sprit.alternate_und_reserve_intakt === false ? ` · ${t("landing.sprit.alt_res_angegriffen")}` : ""}
+          {/* Ist nichts bekannt (Tank unplausibel, kein Landesprit), sagt die
+              Zeile NICHTS zur Contingency — bis v1.7.38 stand dann
+              „unberührt" da (QS v1.7.38, F1). */}
+          {[
+            contGenutzt == null
+              ? null
+              : l.contingency_kg <= 0
+                ? t("landing.sprit.contingency_keine")
+                : contGenutzt <= 0
+                  ? t("landing.sprit.contingency_unberuehrt")
+                  : contGenutzt >= l.contingency_kg
+                    ? t("landing.sprit.contingency_ganz", { c: kg(l.contingency_kg) })
+                    : t("landing.sprit.contingency_teil", { n: kg(contGenutzt), c: kg(l.contingency_kg) }),
+            sprit.alternate_und_reserve_intakt === true
+              ? t("landing.sprit.alt_res_intakt")
+              : sprit.alternate_und_reserve_intakt === false
+                ? t("landing.sprit.alt_res_angegriffen")
+                : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </span>
       </div>
     </div>

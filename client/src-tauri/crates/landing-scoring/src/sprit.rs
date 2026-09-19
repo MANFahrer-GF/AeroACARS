@@ -612,8 +612,11 @@ pub fn auswerten(e: &SpritEingang) -> SpritAuswertung {
                 let skala = l.block_kg.max(posten) + l.uebertankung_kg - l.untertankung_kg;
                 let plan_landing = (skala - l.taxi_kg - l.trip_kg).max(0.0);
                 let mehr = (plan_landing - ldg).max(0.0);
-                let cont_verbraucht = l.contingency_kg > 0.0 && mehr >= l.contingency_kg;
                 let cont_genutzt = mehr.clamp(0.0, l.contingency_kg).round();
+                // „Verbraucht" folgt dem GERUNDETEN Wert, den die Anzeige
+                // nennt — sonst stuende „aufgebraucht — alle 238 kg" neben
+                // einem Kennzeichen „nicht verbraucht" (QS v1.7.38).
+                let cont_verbraucht = l.contingency_kg > 0.0 && cont_genutzt >= l.contingency_kg;
                 // Was vom Extra tatsaechlich an Bord war.
                 let extra_an_bord = (l.extra_kg - l.untertankung_kg).max(0.0);
                 let genutzt = (mehr - l.contingency_kg).clamp(0.0, extra_an_bord).round();
@@ -1104,6 +1107,13 @@ mod tests {
         let v = auswerten(&viel);
         assert_eq!(v.contingency_genutzt_kg, Some(238.0));
         assert_eq!(v.contingency_verbraucht, Some(true));
+        // Rundungsrand: 0,3 kg unter der Contingency — Text und
+        // Kennzeichen sagen dasselbe („aufgebraucht").
+        let mut knapp = e.clone();
+        knapp.landing_fuel_kg = Some(3_295.0 - 237.7);
+        let k = auswerten(&knapp);
+        assert_eq!(k.contingency_genutzt_kg, Some(238.0));
+        assert_eq!(k.contingency_verbraucht, Some(true));
         // Ohne Aussage keine Zahl.
         let mut leer = a.clone();
         leer.contingency_verbraucht = None;
