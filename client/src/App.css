@@ -694,6 +694,14 @@ body {
   background: color-mix(in srgb, var(--acc) 85%, var(--text));
   border-color: color-mix(in srgb, var(--acc) 85%, var(--text));
 }
+/* ⚠ Die globale Regel `button:hover:not(:disabled)` (Kartenfarbe) wiegt
+   (0,2,1) und schlug `.update-button:hover` (0,2,0): Beim Drueberfahren
+   wurde der Knopf dunkel mit dunkler Schrift (hell: weiss auf fast weiss).
+   Mit `:not(:disabled)` gewinnt die eigene Farbe (Thomas, 19.09.2026). */
+.update-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 85%, var(--text));
+  border-color: color-mix(in srgb, var(--acc) 85%, var(--text));
+}
 .update-button__icon {
   font-size: 13px;
   line-height: 1;
@@ -720,9 +728,10 @@ body {
   border-color: var(--sem-info);
   animation: update-button-glow 2s ease-in-out infinite;
 }
-.update-button--escalated:hover {
-  background: #0891b2;
-  border-color: #0891b2;
+.update-button--escalated:hover,
+.update-button--escalated:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sem-info) 85%, var(--text));
+  border-color: color-mix(in srgb, var(--sem-info) 85%, var(--text));
 }
 
 /* v0.5.48 — Großes Update-Banner über dem Header. Vollbreit, cyan
@@ -785,8 +794,10 @@ body {
   border-color: var(--sem-info);
 }
 .update-banner .button--primary:hover:not(:disabled) {
-  background: #0891b2;
-  border-color: #0891b2;
+  /* Kein festes Tuerkis: #0891b2 mit weisser Schrift (hell) kam nur auf
+     3,7:1. Die Mischung dreht sich mit dem Theme (hell 8:1, dunkel 7,5:1). */
+  background: color-mix(in srgb, var(--sem-info) 85%, var(--text));
+  border-color: color-mix(in srgb, var(--sem-info) 85%, var(--text));
 }
 .update-banner .button--ghost {
   background: transparent;
@@ -6405,6 +6416,7 @@ input:disabled {
 }
 
 .info-badge:hover,
+.info-badge:hover:not(:disabled),
 .info-badge--open {
   background: var(--accent, #38bdf8);
   color: var(--on-acc);
@@ -10800,6 +10812,9 @@ input.datalink-block__input {
   color: var(--bg);
 }
 .cpdlc-key--affirm:hover:not(:disabled) {
+  /* Flaeche halten — sonst setzt `button:hover:not(:disabled)` die
+     Kartenfarbe darunter, und --bg-Schrift steht dunkel auf dunkel. */
+  background: var(--sem-ok);
   filter: brightness(1.08);
 }
 .cpdlc-key--deny {
@@ -11119,6 +11134,9 @@ input.datalink-block__input {
   cursor: pointer;
 }
 .update-gate__install:hover:not(:disabled) {
+  /* Hintergrund ausdruecklich halten — sonst setzt die globale Regel
+     `button:hover:not(:disabled)` die Kartenfarbe darunter. */
+  background: var(--accent);
   filter: brightness(1.08);
 }
 .update-gate__install:disabled {
