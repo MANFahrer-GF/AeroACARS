@@ -60,6 +60,17 @@ describe("Hover farbiger Knoepfe", () => {
     }
   });
 
+  // Knoepfe, die erst beim Hover (info-badge) oder als Variante ohne eigene
+  // Schriftfarbe (escalated) farbig werden — die findet die Suche nicht.
+  it.each(["info-badge", "update-button--escalated"])(".%s hat eine Hover-Regel mit :not(:disabled) und Hintergrund", (klasse) => {
+    const hover = regeln.some(
+      (r) =>
+        /(?:^|;)\s*background(?:-color)?:/.test(r.inhalt) &&
+        r.selektoren.some((s) => s.includes(`.${klasse}:hover:not(:disabled)`)),
+    );
+    expect(hover).toBe(true);
+  });
+
   it.each(farbigeKnoepfe())(".%s setzt beim Hover selbst einen Hintergrund, der die globale Regel schlaegt", (klasse) => {
     const hover = regeln.some(
       (r) =>

@@ -365,6 +365,54 @@ describe("Sprit-Leiter", () => {
     }
   });
 
+  it("ragt auch in einem sehr schmalen Bereich (< 192 px) nicht hinaus", () => {
+    // QS/Codex 19.09.2026: Die Mindestbreite 160 px plus 2 × 16 px Rand
+    // passte nicht in schmale Bereiche — links wurde abgeschnitten.
+    const breiteVorher = window.innerWidth;
+    const rectVorher = Element.prototype.getBoundingClientRect;
+    Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
+    const rect = (links: number, breite: number) =>
+      ({ left: links, right: links + breite, width: breite, top: 0, bottom: 10, height: 10, x: links, y: 0, toJSON() {} }) as DOMRect;
+    Element.prototype.getBoundingClientRect = function () {
+      const el = this as HTMLElement;
+      if (el.dataset?.testid === "karte") return rect(300, 150);
+      if (el.querySelector?.("svg") != null) return rect(305, 140);
+      return rect(400, 14);
+    };
+    try {
+      const { container } = render(
+        <div data-testid="karte" style={{ overflow: "hidden" }}>
+          <SpritSektion sprit={dlh370()} />
+        </div>,
+      );
+      for (const block of ["Taxi", "Final Reserve"]) {
+        fireEvent.mouseEnter(container.querySelector(`svg rect[data-block="${block}"]`)!);
+        const h = container.querySelector('[data-testid="sprit-leiter-hinweis"]') as HTMLElement;
+        const links = 305 + parseFloat(h.style.left);
+        expect(links, `${block}: links`).toBeGreaterThanOrEqual(300);
+        expect(links + parseFloat(h.style.maxWidth), `${block}: rechts`).toBeLessThanOrEqual(450);
+      }
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: breiteVorher, configurable: true });
+      Element.prototype.getBoundingClientRect = rectVorher;
+    }
+  });
+
+  it("schliesst beim Scrollen eines Containers", () => {
+    // QS/Codex 19.09.2026: Der sichtbare Bereich wird beim Oeffnen gemessen;
+    // nach einem Scroll stimmt er nicht mehr.
+    const { container } = render(<SpritSektion sprit={dlh370()} />);
+    fireEvent.mouseEnter(container.querySelector('svg rect[data-block="Taxi"]')!);
+    expect(container.querySelector('[data-testid="sprit-leiter-hinweis"]')).not.toBeNull();
+    fireEvent.scroll(document.body);
+    expect(container.querySelector('[data-testid="sprit-leiter-hinweis"]')).toBeNull();
+    const info = [...container.querySelectorAll('[tabindex="0"]')].find((e) => e.textContent?.trim() === "ⓘ")!;
+    fireEvent.click(info);
+    expect(container.querySelector('[data-testid="sprit-erklaerung"]')).not.toBeNull();
+    fireEvent.scroll(document.body);
+    expect(container.querySelector('[data-testid="sprit-erklaerung"]')).toBeNull();
+  });
+
   it("bleibt auf dem Handy (375 px) ganz im Bild — ⓘ und Leiter", () => {
     // QS v1.7.37, N1: Die Erklärung am ⓘ ragte rund 100 px über den
     // Kartenrand, und die Karte schnitt sie ab.

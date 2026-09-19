@@ -130,9 +130,16 @@ function hinweisLage(
   mitte: number | null,
   bereich: { links: number; rechts: number } = fensterBereich(),
 ): { breite: number; versatz: number } {
-  const innenLinks = bereich.links + HINWEIS_RAND;
-  const innenRechts = bereich.rechts - HINWEIS_RAND;
-  const breite = Math.max(160, Math.min(gewuenscht, innenRechts - innenLinks));
+  let innenLinks = bereich.links + HINWEIS_RAND;
+  let innenRechts = bereich.rechts - HINWEIS_RAND;
+  // Sehr schmaler Bereich: lieber ohne Randabstand und schmaler als
+  // abgeschnitten — eine Mindestbreite ragte sonst links hinaus (QS/Codex
+  // 19.09.2026).
+  if (innenRechts - innenLinks < 160) {
+    innenLinks = bereich.links;
+    innenRechts = bereich.rechts;
+  }
+  const breite = Math.max(1, Math.min(gewuenscht, innenRechts - innenLinks));
   const links = mitte == null ? ankerLinks : mitte - breite / 2;
   const geklemmt = Math.min(Math.max(links, innenLinks), innenRechts - breite);
   return { breite, versatz: geklemmt - ankerLinks };
@@ -211,9 +218,14 @@ function Erklaerung({
     const zu = () => setOffen(false);
     document.addEventListener("pointerdown", weg);
     window.addEventListener("resize", zu);
+    // Scrollt ein Container (auch waagerecht), stimmt der beim Oeffnen
+    // gemessene sichtbare Bereich nicht mehr — dann schliessen (QS/Codex
+    // 19.09.2026). `capture`, weil scroll nicht hochblubbert.
+    document.addEventListener("scroll", zu, true);
     return () => {
       document.removeEventListener("pointerdown", weg);
       window.removeEventListener("resize", zu);
+      document.removeEventListener("scroll", zu, true);
     };
   }, [offen]);
   const Tag = als;
@@ -382,9 +394,14 @@ function Leiter({ sprit }: { sprit: SpritAuswertung }) {
     const zu = () => setAktiv(null);
     document.addEventListener("pointerdown", weg);
     window.addEventListener("resize", zu);
+    // Scrollt ein Container (auch waagerecht), stimmt der beim Oeffnen
+    // gemessene sichtbare Bereich nicht mehr — dann schliessen (QS/Codex
+    // 19.09.2026). `capture`, weil scroll nicht hochblubbert.
+    document.addEventListener("scroll", zu, true);
     return () => {
       document.removeEventListener("pointerdown", weg);
       window.removeEventListener("resize", zu);
+      document.removeEventListener("scroll", zu, true);
     };
   }, [aktiv]);
   const l = sprit.leiter;

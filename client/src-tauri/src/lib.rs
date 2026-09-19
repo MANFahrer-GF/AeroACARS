@@ -15298,6 +15298,32 @@ async fn flight_adopt(
 
 /// Start tracking a flight: prefile a PIREP and begin position streaming.
 
+/// Welcher Fehlercode, wenn phpVMS den Start mit „aircraft-not-available“
+/// ablehnt?
+///
+/// „In use“ / „in flight“ (state 1/2) heißt meist: Ein anderer Pilot hat
+/// dieselbe Maschine gebucht und ist zuerst gestartet (D-AEWK, 19.09.2026).
+/// Es kann aber auch ein EIGENER hängengebliebener Flugbericht sein — dann
+/// wäre „anderer Pilot, neu planen“ der falsche Rat. Deshalb nur mit
+/// bekannter eigener PIREP-Liste auf den anderen Piloten schließen
+/// (QS/Codex 19.09.2026).
+fn flugzeug_belegt_code(
+    flugzeug_state: Option<i32>,
+    eigene_liste_bekannt: bool,
+    eigener_pirep_belegt: bool,
+) -> &'static str {
+    if !matches!(flugzeug_state, Some(1) | Some(2)) {
+        return "aircraft_not_available";
+    }
+    if eigener_pirep_belegt {
+        "aircraft_in_use_own"
+    } else if eigene_liste_bekannt {
+        "aircraft_in_use"
+    } else {
+        "aircraft_not_available"
+    }
+}
+
 /// Darf ein noch offener Flugbericht für diesen Start wiederverwendet werden?
 ///
 /// Die Übernahme existiert für den Wiederaufnahme-Fall: Absturz mitten im
@@ -15573,16 +15599,19 @@ async fn flight_start(
     // v0.16.17: server-seitig auf IN_PROGRESS gefiltert (?state=0) — das
     // paginierte get_user_pireps() sah nur die letzten 20 PIREPs, ältere
     // Leichen blieben unsichtbar und blockierten Aircraft dauerhaft.
-    let existing = match client.get_user_pireps_in_progress().await {
-        Ok(list) => list,
+    let (existing, eigene_liste_bekannt) = match client.get_user_pireps_in_progress().await {
+        Ok(list) => (list, true),
         Err(e) => {
             tracing::warn!(error = %e, "could not list user PIREPs to check for resume");
-            Vec::new()
+            (Vec::new(), false)
         }
     };
     // v0.16.17 Selbstheilung: >24-h-alte Orphans best-effort wegcanceln,
     // BEVOR der Adopt-/Collision-Check läuft — gibt die Überlebenden zurück.
     let existing = sweep_stale_orphans_before_prefile(&app, &client, existing).await;
+    // Belegt ein eigener offener Flugbericht genau dieses Flugzeug? Nur für
+    // die Fehlermeldung unten, falls phpVMS den Start ablehnt.
+    let eigener_pirep_belegt = existing.iter().any(|p| p.aircraft_id == Some(aircraft_id));
     let adoptable = existing
         .into_iter()
         .find(|p| pirep_ist_uebernehmbar(p, &body, airline_id));
@@ -15609,15 +15638,15 @@ async fn flight_start(
             }) if err_body.contains("aircraft-not-available") => {
                 // Diagnose: fetch aircraft details to tell the user *why* it's
                 // unavailable (wrong airport, "in use" by an orphan PIREP, etc.).
-                // In use / in flight almost always means another pilot departed
-                // first with the same aircraft (both had booked it) — that gets
-                // its own code so the pilot is told to pick another aircraft.
+                // In use / in flight gets its own code — see flugzeug_belegt_code.
                 let mut code = "aircraft_not_available";
                 let detail = match client.get_aircraft(aircraft_id).await {
                     Ok(a) => {
-                        if matches!(a.state, Some(1) | Some(2)) {
-                            code = "aircraft_in_use";
-                        }
+                        code = flugzeug_belegt_code(
+                            a.state,
+                            eigene_liste_bekannt,
+                            eigener_pirep_belegt,
+                        );
                         let reg = a
                             .registration
                             .as_deref()
@@ -64933,6 +64962,38 @@ mod pirep_uebernahme_tests {
             arr_airport_id: Some("LPPT".to_string()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn belegtes_flugzeug_nennt_den_richtigen_grund() {
+        // Anderer Pilot fliegt (eigene Liste bekannt, kein eigener PIREP).
+        assert_eq!(
+            flugzeug_belegt_code(Some(2), true, false),
+            "aircraft_in_use"
+        );
+        assert_eq!(
+            flugzeug_belegt_code(Some(1), true, false),
+            "aircraft_in_use"
+        );
+        // Eigener hängengebliebener Flugbericht belegt die Maschine.
+        assert_eq!(
+            flugzeug_belegt_code(Some(2), true, true),
+            "aircraft_in_use_own"
+        );
+        // Eigene Liste unbekannt → keine Behauptung über den Verursacher.
+        assert_eq!(
+            flugzeug_belegt_code(Some(2), false, false),
+            "aircraft_not_available"
+        );
+        // Geparkt oder unbekannt → andere Ursache (Standort, Rang …).
+        assert_eq!(
+            flugzeug_belegt_code(Some(0), true, false),
+            "aircraft_not_available"
+        );
+        assert_eq!(
+            flugzeug_belegt_code(None, true, true),
+            "aircraft_not_available"
+        );
     }
 
     #[test]
