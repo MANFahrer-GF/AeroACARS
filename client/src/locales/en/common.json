@@ -2138,7 +2138,8 @@
       "cleared": "Runway vacated",
       "off_pavement": "outer wheel {{m}} m off the paved surface",
       "edge_distance": "outer wheel {{m}} m from the edge",
-      "overrun": "Past the runway end"
+      "overrun": "Past the runway end",
+      "max_offset_fremd": "scored: {{wert}}{{rand}} — from faulty track points not drawn here"
     },
     "scale": {
       "runway_width": "Runway width",
@@ -2190,7 +2191,9 @@
     "lupe_scale_note": "same scale along and across · angles as flown",
     "lupe_direction": "Landing direction →",
     "legend_mess_ende": "▲ Lateral offset scored up to here — drawn only beyond",
-    "legend_rollweg_lupe": "Taxiway (OSM, assumed 23 m wide) — in the close-up"
+    "legend_rollweg_lupe": "Taxiway (OSM, assumed 23 m wide) — in the close-up",
+    "durchgang_frueher": "Earlier pass · touched down {{m}} m past the threshold · {{seite}} · went around, not scored",
+    "legend_durchgang": "Earlier pass — went around, not scored"
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",

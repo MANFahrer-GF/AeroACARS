@@ -1125,6 +1125,10 @@ pub struct BahnWire {
     /// sie weggelassen, nicht als `[]` gesendet: Ein leeres Feld sieht in
     /// der Anzeige aus wie eine Messung, die nichts gefunden hat.
     pub lateral_samples: Option<Vec<LateralSampleWire>>,
+    /// Frühere Durchgänge auf derselben Bahn (durchgestartet). Nur zur
+    /// Anzeige; leer wird es weggelassen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vorherige_durchgaenge: Option<Vec<DurchgangWire>>,
     pub surface_paved: Option<bool>,
     pub overrun_m: Option<f64>,
     /// Warum die seitliche Bewertung entfiel. `None` = bewertet.
@@ -1212,6 +1216,12 @@ pub struct LateralSampleWire {
     /// Versatz zur Mittellinie, in Metern, auf einen Dezimeter gerundet.
     /// Positiv = rechts in Landerichtung.
     pub quer_m: f64,
+}
+
+/// Ein früherer Durchgang — siehe `storage::VorigerDurchgang`.
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+pub struct DurchgangWire {
+    pub lateral_samples: Vec<LateralSampleWire>,
 }
 
 fn is_false(b: &bool) -> bool {

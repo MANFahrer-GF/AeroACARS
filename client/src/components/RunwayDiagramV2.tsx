@@ -138,6 +138,14 @@ export interface RunwayDiagramV2Props {
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
+  /**
+   * Frühere Durchgänge derselben Landung auf derselben Bahn — aufgesetzt,
+   * dann durchgestartet. Nur zur Anzeige, nie gewertet. Aus dem Client ab
+   * v1.7.40; ältere Flüge ergänzt die Webapp aus dem überholten Datensatz.
+   */
+  vorherige_durchgaenge?: Array<{
+    lateral_samples: Array<{ laengs_m: number; quer_m: number }>;
+  }> | null;
   /** Warum die seitliche Bewertung entfiel — der Grund aus der BEWERTUNG. */
   lateral_skip_reason?: string | null;
   /**

@@ -98,21 +98,51 @@ describe("Altbestand durch die echte Anzeige", () => {
     expect(punkte).toHaveLength(DURCHSTART.length - 6);
   });
 
-  it("setzt keine Marke ② an eine Stelle, die den Grösstwert nie trug", () => {
-    // Gespeichert: 11,0 m — aus den Fremdpunkten. Die echte Spur kommt
-    // nicht über 2,8 m.
+  it("setzt die Marke ② an den echten Grösstversatz und nennt den bewerteten Wert", () => {
+    // Gespeichert und bewertet: 11,0 m — aus den Fremdpunkten. Die echte
+    // Spur kommt nicht über 2,8 m (bei 856,5 m). Thomas: „Punkt 2 nicht
+    // vergessen, den bewerten wir doch." Also: Marke ja, aber dort, wo die
+    // Spur ihren Grösstwert hat — und der bewertete Wert steht dabei.
     const falsch = zeichne(DURCHSTART, 11.0);
     const ziffern = [...falsch.quer.matchAll(/<text[^>]*fill="#0B0F17"[^>]*>(\d)<\/text>/g)].map(
       (m) => m[1],
     );
-    expect(ziffern).not.toContain("2");
-    expect(falsch.markup).not.toMatch(/bei 856 m/);
+    expect(ziffern).toContain("2");
+    expect(falsch.markup).toMatch(/bei 857 m/);
+    expect(falsch.markup).toMatch(/bewertet wurden 11\.0 m/);
 
-    // Gegenprobe: derselbe Flug mit belegtem Wert bekommt die Marke.
+    // Gegenprobe: Trägt die Spur den Wert, gibt es keinen Hinweis.
     const richtig = zeichne(DURCHSTART, 2.8);
-    const ziffernRichtig = [
-      ...richtig.quer.matchAll(/<text[^>]*fill="#0B0F17"[^>]*>(\d)<\/text>/g),
-    ].map((m) => m[1]);
-    expect(ziffernRichtig).toContain("2");
+    expect(richtig.markup).not.toMatch(/bewertet wurden/);
+    expect(richtig.markup).toMatch(/bei 857 m/);
+  });
+
+  it("zeichnet den ersten Durchgang getrennt und nennt ihn in der Liste", () => {
+    // EWG9503: erstes Aufsetzen bei 831 m, durchgestartet (#1428).
+    const erster = [
+      p(831.5, 0.3), p(855, 0.5), p(902, 0.9), p(959, 1.6), p(1004, 2), p(1059, 1.9),
+      p(1117, 1.6), p(1175, 0.9), p(1232, 0.3), p(1291, -0.4), p(1350, -0.9), p(1421, -0.9),
+    ];
+    const markup = renderToStaticMarkup(
+      <RunwayDiagramV2
+        {...basis}
+        lateral_samples={DURCHSTART.slice(6)}
+        max_lateral_offset_m={2.8}
+        vorherige_durchgaenge={[{ lateral_samples: erster }]}
+      />,
+    );
+    const quer = (markup.match(/<svg[\s\S]*?<\/svg>/g) ?? []).find((x) => x.includes("Queransicht"))!;
+    expect(quer).toMatch(/data-durchgang="1"/);
+    expect(markup).toMatch(/Früherer Durchgang · aufgesetzt/);
+    // Die Ziffern gehören der gewerteten Landung — der Durchgang bekommt keine.
+    const ziffern = [...quer.matchAll(/<text[^>]*fill="#0B0F17"[^>]*>(\d)<\/text>/g)].map((m) => m[1]);
+    expect(new Set(ziffern).size).toBe(ziffern.length);
+
+    // Gegenprobe: ohne Durchgang nichts davon.
+    const ohne = renderToStaticMarkup(
+      <RunwayDiagramV2 {...basis} lateral_samples={DURCHSTART.slice(6)} max_lateral_offset_m={2.8} />,
+    );
+    expect(ohne).not.toMatch(/data-durchgang/);
+    expect(ohne).not.toMatch(/Früherer Durchgang/);
   });
 });

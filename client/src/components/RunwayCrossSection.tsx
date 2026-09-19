@@ -97,6 +97,11 @@ export interface QueransichtProps {
    * nimmt das Bild die nächste freie Nummer (alte Aufrufer).
    */
   endpunktNummer?: number;
+  /**
+   * Frühere Durchgänge (aufgesetzt, durchgestartet), schon bereinigt.
+   * Gezeichnet blass und gestrichelt in eigener Farbe — nie gewertet.
+   */
+  vorherigeDurchgaenge?: Array<Array<{ laengs_m: number; quer_m: number }>>;
   /** Rollwege, die die Bahn treffen (OSM). Optional. */
   ausfahrten?: Ausfahrt[] | null;
   /** ICAO-Typcode — steht mit der Spurweite im Kopf der Ansicht. */
@@ -190,6 +195,8 @@ const SKALA_SCHRITT_M = 10;
  * ihn nicht gemeldet, weil sie die Textbreite zu knapp schätzte.
  */
 const SKALA_X = 48;
+/** Farbe früherer Durchgänge — deutlich getrennt von Grün/Gelb/Rot/Cyan der Wertung. */
+export const DURCHGANG_FARBE = "#a78bfa";
 
 /**
  * Queransicht. Gibt `null` zurück, wenn die Bahnbreite fehlt — eine geratene
@@ -336,6 +343,22 @@ export function RunwayCrossSection(p: QueransichtProps) {
     spurSichtbar.length >= 2 && halbeSpurM > 0 && bandEndeRechts
       ? `${weicherPfad(linksPunkte)} L ${bandEndeRechts.x.toFixed(1)} ${bandEndeRechts.y.toFixed(1)} ${weicherPfad(rechtsUmgekehrt, 0.5, true)} Z`
       : null;
+
+  // ── Frühere Durchgänge ───────────────────────────────────────────────
+  //
+  // EWG9503 (#1431): aufgesetzt bei 831 m, durchgestartet, gelandet bei
+  // 595 m. Thomas: „beide drauf ist auch gut so — nur man kann sie nicht
+  // auseinanderhalten." Deshalb eigene Farbe, gestrichelte Radspuren, kaum
+  // Füllung, kein Punkt je Messung — der Durchgang ist Beiwerk, die
+  // gewertete Spur bleibt das Auffällige.
+  const durchgaenge = (p.vorherigeDurchgaenge ?? [])
+    .map((d) => amRandAbschneiden(d, sichtbarM).map((q) => xy(q)))
+    .filter((d) => d.length >= 2)
+    .map((achse) => ({
+      achse,
+      links: bandRand(achse, halbeSpurPx, -1),
+      rechts: bandRand(achse, halbeSpurPx, 1),
+    }));
 
   // ── Gewerteter und ungewerteter Teil der Spur ────────────────────────
   //
@@ -782,6 +805,48 @@ export function RunwayCrossSection(p: QueransichtProps) {
       {/* Der genutzte Rollweg — UNTER der Spur, damit sie oben liegt.
           Nur eine Fläche mit gestricheltem Rand: Er ist der Untergrund, auf
           dem die Spur läuft, nicht selbst eine Messung. */}
+      {durchgaenge.map((d, i) => (
+        <g key={`durchgang-${i}`} data-durchgang={i + 1} pointerEvents="none">
+          {halbeSpurM > 0 && (
+            <>
+              <path
+                d={weicherPfad(d.links)}
+                fill="none"
+                stroke={DURCHGANG_FARBE}
+                strokeWidth={1.6}
+                strokeDasharray="7 5"
+                strokeOpacity={0.9}
+              />
+              <path
+                d={weicherPfad(d.rechts)}
+                fill="none"
+                stroke={DURCHGANG_FARBE}
+                strokeWidth={1.6}
+                strokeDasharray="7 5"
+                strokeOpacity={0.9}
+              />
+            </>
+          )}
+          <path
+            d={weicherPfad(d.achse)}
+            fill="none"
+            stroke={DURCHGANG_FARBE}
+            strokeWidth={1.2}
+            strokeDasharray="3 4"
+            strokeOpacity={0.7}
+          />
+          {/* Wo dieser Durchgang aufsetzte — offener Kreis, keine Ziffer:
+              Die Ziffern gehören der gewerteten Landung. */}
+          <circle
+            cx={d.achse[0]!.x}
+            cy={d.achse[0]!.y}
+            r={5}
+            fill="none"
+            stroke={DURCHGANG_FARBE}
+            strokeWidth={2}
+          />
+        </g>
+      ))}
       {bandPfad && (
         <path
           d={bandPfad}

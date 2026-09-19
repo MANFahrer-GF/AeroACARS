@@ -3683,6 +3683,10 @@ struct PersistedFlightStats {
     rollout_finalized: bool,
     #[serde(default)]
     bahn_spur: Vec<(f32, f32)>,
+    /// Spuren früherer Durchgänge (durchgestartet) — überlebt den Neustart
+    /// wie die Spur selbst.
+    #[serde(default)]
+    bahn_vorige_spuren: Vec<(String, Vec<(f32, f32)>)>,
     #[serde(default)]
     bahn_spur_laeuft: bool,
     #[serde(default)]
@@ -4082,6 +4086,7 @@ impl PersistedFlightStats {
             rollout_distance_m: stats.rollout_distance_m,
             rollout_finalized: stats.rollout_finalized,
             bahn_spur: stats.bahn_spur.clone(),
+            bahn_vorige_spuren: stats.bahn_vorige_spuren.clone(),
             bahn_spur_laeuft: stats.bahn_spur_laeuft,
             bahn_spur_bis: stats.bahn_spur_bis,
             bahn_nachtrag_offen: stats.bahn_nachtrag_offen,
@@ -4328,6 +4333,7 @@ impl PersistedFlightStats {
         stats.rollout_distance_m = self.rollout_distance_m;
         stats.rollout_finalized = self.rollout_finalized;
         stats.bahn_spur = self.bahn_spur;
+        stats.bahn_vorige_spuren = self.bahn_vorige_spuren;
         stats.bahn_spur_laeuft = self.bahn_spur_laeuft;
         stats.bahn_spur_bis = self.bahn_spur_bis;
         stats.bahn_nachtrag_offen = self.bahn_nachtrag_offen;
@@ -5710,6 +5716,15 @@ struct FlightStats {
     /// Landung — in jedem gespeicherten Datensatz, in jedem Upload und in
     /// jedem Diagramm, das sie zeichnen soll.
     bahn_spur: Vec<(f32, f32)>,
+    /// Die Spuren früherer Durchgänge derselben PIREP, je mit der Bahn,
+    /// auf die sie projiziert sind (`"EDDL 23L"`).
+    ///
+    /// Gesichert beim Durchstarten, bevor `spur_verwerfen` die Spur leert:
+    /// Sie gehört nicht in die Bewertung der gewerteten Landung, soll aber
+    /// in der Anzeige erscheinen — klar getrennt (EWG9503, 19.09.2026).
+    /// Die Bahn steht dabei, weil eine Spur gegen eine ANDERE Bahn in der
+    /// Ansicht der gewerteten nichts zu suchen hat.
+    bahn_vorige_spuren: Vec<(String, Vec<(f32, f32)>)>,
     /// Laeuft die Spuraufzeichnung gerade?
     ///
     /// Steuert den Aufzeichnungstakt (`adaptive_tick_interval_v2`). Ohne
@@ -23255,6 +23270,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
                 quer_m: *qr,
             })
             .collect(),
+        vorherige_durchgaenge: vorherige_durchgaenge(stats),
         // `Unbekannt` ist NICHT „unbefestigt" — es ist „wir wissen es
         // nicht". Beide fuehren zum selben Verzicht auf die seitliche
         // Bewertung, aber die Anzeige muss sie auseinanderhalten koennen.
@@ -23332,6 +23348,25 @@ impl BahnFelder {
                         .collect(),
                 )
             },
+            vorherige_durchgaenge: if self.vorherige_durchgaenge.is_empty() {
+                None
+            } else {
+                Some(
+                    self.vorherige_durchgaenge
+                        .iter()
+                        .map(|d| aeroacars_mqtt::DurchgangWire {
+                            lateral_samples: d
+                                .lateral_samples
+                                .iter()
+                                .map(|s| aeroacars_mqtt::LateralSampleWire {
+                                    laengs_m: dezimeter(s.laengs_m),
+                                    quer_m: dezimeter(s.quer_m),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                )
+            },
             surface_paved: self.surface_paved,
             overrun_m: self.overrun_m,
             lateral_skip_reason: self.lateral_skip_reason.clone(),
@@ -23366,6 +23401,44 @@ impl BahnFelder {
 }
 
 /// Traeger der abgeleiteten Bahndisziplin-Werte — siehe `bahn_felder`.
+/// Frühere Durchgänge, die in der Ansicht dieser Landung Platz haben.
+///
+/// Nur solche auf DERSELBEN Bahn: Die Spur ist gegen die Bahn projiziert,
+/// auf der damals aufgesetzt wurde. Wer nach dem Durchstarten auf einer
+/// anderen Bahn landet, hätte sonst eine Spur im Bild, die dort nie lief.
+///
+/// Ausgedünnt auf zwanzig Meter: Der Durchgang ist Beiwerk und reist im
+/// selben Paket wie die Spur der Landung (Brokergrenze 64 KB).
+fn vorherige_durchgaenge(stats: &FlightStats) -> Vec<storage::VorigerDurchgang> {
+    let Some(rm) = stats.runway_match.as_ref() else {
+        return Vec::new();
+    };
+    let bahn = format!("{} {}", rm.airport_ident, rm.runway_ident);
+    stats
+        .bahn_vorige_spuren
+        .iter()
+        .filter(|(b, spur)| *b == bahn && spur.len() >= 2)
+        .map(|(_, spur)| {
+            let mut aus: Vec<storage::LateralSample> = Vec::new();
+            for (i, &(lg, qr)) in spur.iter().enumerate() {
+                let letzter = i + 1 == spur.len();
+                if let Some(v) = aus.last() {
+                    if (lg - v.laengs_m).abs() < 20.0 && !letzter {
+                        continue;
+                    }
+                }
+                aus.push(storage::LateralSample {
+                    laengs_m: lg,
+                    quer_m: qr,
+                });
+            }
+            storage::VorigerDurchgang {
+                lateral_samples: aus,
+            }
+        })
+        .collect()
+}
+
 struct BahnFelder {
     /// Um wie viele Meter die LAENGSMASSE der Spur gegen die
     /// Landeschwelle verschoben sind.
@@ -23422,6 +23495,7 @@ struct BahnFelder {
     min_edge_clearance_m: Option<f64>,
     max_lateral_offset_m: Option<f64>,
     lateral_samples: Vec<storage::LateralSample>,
+    vorherige_durchgaenge: Vec<storage::VorigerDurchgang>,
     surface_paved: Option<bool>,
     overrun_m: Option<f64>,
     lateral_skip_reason: Option<String>,
@@ -23648,6 +23722,7 @@ where
         min_edge_clearance_m: bahn.min_edge_clearance_m,
         max_lateral_offset_m: bahn.max_lateral_offset_m,
         lateral_samples: bahn.lateral_samples,
+        vorherige_durchgaenge: bahn.vorherige_durchgaenge,
         surface_paved: bahn.surface_paved,
         overrun_m: bahn.overrun_m,
         pirep_id: flight.pirep_id.clone(),
@@ -37441,6 +37516,20 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     //
     // In der Anzeige wäre das nicht als Fehler erkennbar gewesen, sondern
     // als eine Landung, bei der das Flugzeug zweimal über die Bahn lief.
+    //
+    // Vorher sichern: Die Spur gehört nicht in die Bewertung, wohl aber in
+    // die Anzeige, als eigener, früherer Durchgang. Höchstens drei — wer
+    // öfter durchstartet, bekommt die letzten drei gezeigt.
+    if !stats.bahn_spur.is_empty() {
+        if let Some(rm) = stats.runway_match.as_ref() {
+            let bahn = format!("{} {}", rm.airport_ident, rm.runway_ident);
+            stats
+                .bahn_vorige_spuren
+                .push((bahn, stats.bahn_spur.clone()));
+            let zuviel = stats.bahn_vorige_spuren.len().saturating_sub(3);
+            stats.bahn_vorige_spuren.drain(..zuviel);
+        }
+    }
     spur_verwerfen(stats);
     // Und die Nachernte darf nicht hinter diesen Moment zurueckgreifen.
     //
@@ -65833,6 +65922,38 @@ mod spur_aufloesung_tests {
             kleinster >= 8.0,
             "zwei Punkte nur {kleinster} m auseinander"
         );
+    }
+
+    #[test]
+    fn der_erste_durchgang_bleibt_fuer_die_anzeige_erhalten() {
+        // EWG9503: aufgesetzt, durchgestartet, gelandet. Die erste Spur
+        // gehoert nicht in die Bewertung, soll aber gezeigt werden.
+        let mut stats = flug_mit_puffer(4.0, 140.0);
+        spur_aus_puffer_abschoepfen(&mut stats, 22.5);
+        let erste = stats.bahn_spur.len();
+        assert!(erste > 5, "Gegenprobe: der erste Durchgang hat eine Spur");
+
+        // Derselbe Ruecksetzer, den der Sampler beim Steigen ruft.
+        clear_approach_stability_and_rollout(&mut stats);
+        assert!(stats.bahn_spur.is_empty(), "die Spur der Wertung ist leer");
+
+        // Gleiche Bahn: der Durchgang reist mit, ausgeduennt, nicht leer.
+        let d = vorherige_durchgaenge(&stats);
+        assert_eq!(d.len(), 1, "der erste Durchgang fehlt");
+        assert!(d[0].lateral_samples.len() >= 2);
+        assert!(d[0].lateral_samples.len() <= erste);
+
+        // Und er erreicht die Bahnfelder, aus denen Aufzeichnung und
+        // Nutzlast entstehen — nicht nur die Hilfsfunktion.
+        let felder = bahn_felder(&stats, Some("A320"), None);
+        assert_eq!(felder.vorherige_durchgaenge.len(), 1);
+        let wire = felder.wire(true);
+        assert_eq!(wire.vorherige_durchgaenge.map(|v| v.len()), Some(1));
+
+        // Andere Bahn nach dem Durchstarten: nichts zeigen — die Spur ist
+        // gegen die alte Bahn projiziert.
+        stats.runway_match.as_mut().unwrap().runway_ident = "27".to_string();
+        assert!(vorherige_durchgaenge(&stats).is_empty());
     }
 
     #[test]

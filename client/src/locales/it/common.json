@@ -2131,7 +2131,8 @@
       "cleared": "Pista liberata",
       "off_pavement": "ruota esterna {{m}} m fuori dalla superficie pavimentata",
       "edge_distance": "ruota esterna {{m}} m dal bordo",
-      "overrun": "Oltre la fine pista"
+      "overrun": "Oltre la fine pista",
+      "max_offset_fremd": "valutati: {{wert}}{{rand}} — da punti di misura errati non disegnati qui"
     },
     "scale": {
       "runway_width": "Larghezza pista",
@@ -2183,7 +2184,9 @@
     "lupe_scale_note": "stessa scala in lunghezza e larghezza · angoli come percorsi",
     "lupe_direction": "Direzione di atterraggio →",
     "legend_mess_ende": "▲ Scostamento laterale valutato fino a qui — oltre solo disegnato",
-    "legend_rollweg_lupe": "Via di rullaggio (OSM, larghezza ipotizzata 23 m) — nel dettaglio"
+    "legend_rollweg_lupe": "Via di rullaggio (OSM, larghezza ipotizzata 23 m) — nel dettaglio",
+    "durchgang_frueher": "Passaggio precedente · toccata a {{m}} m oltre la soglia · {{seite}} · riattaccata, non valutata",
+    "legend_durchgang": "Passaggio precedente — riattaccata, non valutata"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

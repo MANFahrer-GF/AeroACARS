@@ -53,6 +53,7 @@ const FELDER = [
   "min_edge_clearance_m",
   "max_lateral_offset_m",
   "lateral_samples",
+  "vorherige_durchgaenge",
   "surface_paved",
   "overrun_m",
   "runway_exits",

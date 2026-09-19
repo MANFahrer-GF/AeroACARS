@@ -7,7 +7,7 @@
 // Kanten, damit der Aufsetzpunkt oben senkrecht über der Marke unten liegt.
 
 import { useTranslation } from "react-i18next";
-import { RunwayCrossSection, bandFarbeFuer } from "./RunwayCrossSection";
+import { RunwayCrossSection, bandFarbeFuer, DURCHGANG_FARBE } from "./RunwayCrossSection";
 import { RunwayExitLupe } from "./RunwayExitLupe";
 import type { Projektion } from "../lib/runwayProjection";
 import type { BahnZoom } from "../lib/useBahnZoom";
@@ -48,6 +48,10 @@ export function RunwayDisciplinePanel({
   };
   const samples = props.lateral_samples ?? [];
   const breite = props.runway_width_m ?? null;
+  // Frühere Durchgänge — dieselbe Bereinigung wie die Spur selbst.
+  const durchgaenge = (props.vorherige_durchgaenge ?? [])
+    .map((d) => spurBereinigen(d.lateral_samples ?? []))
+    .filter((d) => d.length >= 2);
 
   // Gründe, bei denen wirklich keine nutzbare Geometrie/Spur vorliegt — die
   // blockieren die Grafik weiterhin sofort und vollständig.
@@ -172,20 +176,20 @@ export function RunwayDisciplinePanel({
             messEndeM={props.mess_ende_laengs_m}
             clearanceSide={props.clearance_side}
             minEdgeClearanceM={props.min_edge_clearance_m}
-            // Die Marke nur, wo die Spur den Wert auch trägt — siehe
-            // `versatzAufDerSpur`.
+            // Die Marke an der Stelle, die die Spur trägt — siehe
+            // `stelleDesVersatzes`.
             maxLateralOffsetM={
-              props.max_lateral_offset_m != null &&
-              versatzAufDerSpur(
-                samples,
-                props.max_lateral_offset_m,
-                props.mess_ende_laengs_m ?? props.scoring_cutoff_m ?? props.clearance_point_m,
-              ) != null
-                ? props.max_lateral_offset_m
+              props.max_lateral_offset_m != null
+                ? stelleDesVersatzes(
+                    samples,
+                    props.max_lateral_offset_m,
+                    props.mess_ende_laengs_m ?? props.scoring_cutoff_m ?? props.clearance_point_m,
+                  )?.probe.quer_m ?? null
                 : null
             }
             overrunM={props.overrun_m}
             endpunktNummer={endpunktNummer(props)}
+            vorherigeDurchgaenge={durchgaenge}
             ausfahrten={props.runway_exits}
             aircraftIcao={props.aircraft_icao}
             width={width}
@@ -225,6 +229,14 @@ export function RunwayDisciplinePanel({
 
       <Ereignisliste props={props} />
 
+      {grund == null &&
+        durchgaenge.map((d, i) => (
+          <DurchgangZeile
+            key={`dg-${i}`}
+            abSchwelleM={d[0]!.laengs_m - projektion.spurVersatzM}
+            querM={d[0]!.quer_m}
+          />
+        ))}
       {grund == null && <QuerLegende props={props} />}
 
       {breite != null && breite > 0 && <Groessenvergleich props={props} breiteM={breite} />}
@@ -278,30 +290,37 @@ export function spurBereinigen<T extends { laengs_m: number; quer_m: number }>(
 }
 
 /**
- * Die Stelle der Spur, an der der gemeldete Grösstversatz lag.
+ * Wo die Marke ② steht — und ob sie den bewerteten Wert trägt.
  *
- * Gesucht wird der nächste Punkt — aber nur, wenn er dem Wert auch nahe
- * kommt. Bei EWG9503 (#1431) stammt der gespeicherte Wert (11,0 m) aus den
- * Fremdpunkten, die `spurBereinigen` entfernt; die echte Spur kommt nicht
- * über 2,8 m. Der nächste Punkt läge dann 8 m daneben, und Marke wie Text
- * behaupteten „11 m bei 856 m" — eine Stelle, an der das nie gemessen
- * wurde. Ohne Beleg keine Stelle.
+ * Gesucht wird der Punkt der Spur, der dem gemeldeten Grösstversatz am
+ * nächsten kommt. Trägt ihn keiner (Abstand über zwei Metern), stammt der
+ * Wert nicht aus dieser Spur: Bei EWG9503 (#1431) wurden 11,0 m bewertet,
+ * und die kamen aus den Fremdpunkten, die `spurBereinigen` entfernt; die
+ * echte Spur kommt nicht über 2,8 m.
+ *
+ * Dann steht die Marke am echten Grösstversatz der gezeichneten Spur, und
+ * die Liste sagt dazu, was bewertet wurde. Weglassen ging nicht — Thomas
+ * (19.09.2026): „Punkt 2 nicht vergessen, den bewerten wir doch." Den
+ * bewerteten Wert an eine Stelle zu setzen, an der er nie gemessen wurde,
+ * ging auch nicht.
  *
  * Zwei Meter Spielraum: Die Ablage dünnt auf zehn Meter aus, der
  * Grösstwert kann zwischen zwei Punkten gelegen haben.
  */
-function versatzAufDerSpur(
+function stelleDesVersatzes(
   samples: Array<{ laengs_m: number; quer_m: number }>,
   max: number,
   bewertungsEnde: number | null | undefined,
-): { laengs_m: number; quer_m: number } | null {
-  const naechster = samples
-    .filter((x) => bewertungsEnde == null || x.laengs_m < bewertungsEnde)
-    .reduce<{ laengs_m: number; quer_m: number } | null>(
-      (a, b) => (a == null || Math.abs(b.quer_m - max) < Math.abs(a.quer_m - max) ? b : a),
-      null,
-    );
-  return naechster != null && Math.abs(naechster.quer_m - max) <= 2 ? naechster : null;
+): { probe: { laengs_m: number; quer_m: number }; belegt: boolean } | null {
+  const imFenster = samples.filter((x) => bewertungsEnde == null || x.laengs_m < bewertungsEnde);
+  const naechster = imFenster.reduce<{ laengs_m: number; quer_m: number } | null>(
+    (a, b) => (a == null || Math.abs(b.quer_m - max) < Math.abs(a.quer_m - max) ? b : a),
+    null,
+  );
+  if (naechster == null) return null;
+  if (Math.abs(naechster.quer_m - max) <= 2) return { probe: naechster, belegt: true };
+  const echt = imFenster.reduce((a, b) => (Math.abs(b.quer_m) > Math.abs(a.quer_m) ? b : a));
+  return { probe: echt, belegt: false };
 }
 
 /**
@@ -341,6 +360,40 @@ function endpunktNummer(props: RunwayDiagramV2Props): number {
   if (props.clearance_point_m != null) return 3;
   const mitVersatz = !versatzUnglaubwuerdig(props) && props.max_lateral_offset_m != null;
   return mitVersatz ? 3 : 2;
+}
+
+/**
+ * Ein früherer Durchgang in der Ereignisliste — ohne Ziffer, die Ziffern
+ * gehören der gewerteten Landung. Der offene Kreis ist derselbe wie im Bild.
+ */
+function DurchgangZeile({ abSchwelleM, querM }: { abSchwelleM: number; querM: number }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: "0.82rem", color: "#cbd5e1" }}
+      data-zeile="durchgang"
+    >
+      <span
+        style={{
+          flex: "0 0 auto",
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          border: `2px solid ${DURCHGANG_FARBE}`,
+          display: "inline-block",
+          transform: "translateY(2px)",
+        }}
+      />
+      <span>
+        {t("runway_v2.durchgang_frueher", {
+          defaultValue:
+            "Früherer Durchgang · aufgesetzt {{m}} m hinter der Schwelle · {{seite}} · durchgestartet, nicht gewertet",
+          m: fmt(abSchwelleM),
+          seite: seite(querM, t),
+        })}
+      </span>
+    </div>
+  );
 }
 
 function skipText(grund: string): string {
@@ -470,7 +523,8 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
       props.mess_ende_laengs_m ??
       props.scoring_cutoff_m ??
       props.clearance_point_m;
-    const wo = versatzAufDerSpur(props.lateral_samples ?? [], max, bewertungsEnde);
+    const stelle = stelleDesVersatzes(props.lateral_samples ?? [], max, bewertungsEnde);
+    const wo = stelle?.probe ?? null;
     const beiM =
       wo != null
         ? `${t("runway_v2.at_position", {
@@ -499,7 +553,16 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
       n: 2,
       text: `${t("runway_v2.mark.max_offset", {
         defaultValue: "Grösster Versatz bis zur Messschwelle",
-      })} · ${beiM}${seite(max, t)}${zusatz}`,
+      })} · ${beiM}${
+        stelle != null && !stelle.belegt
+          ? `${seite(stelle.probe.quer_m, t)} · ${t("runway_v2.mark.max_offset_fremd", {
+              defaultValue:
+                "bewertet wurden {{wert}}{{rand}} — aus fehlerhaften Messpunkten, die hier nicht gezeichnet sind",
+              wert: seite(max, t),
+              rand: zusatz,
+            })}`
+          : `${seite(max, t)}${zusatz}`
+      }`,
     });
   }
 
@@ -667,6 +730,15 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
       farbe: "#334155",
       text: t("runway_v2.exits_none", {
         defaultValue: "Für diesen Platz sind keine Rollwege hinterlegt",
+      }),
+    });
+  }
+  if ((props.vorherige_durchgaenge ?? []).some((d) => (d.lateral_samples?.length ?? 0) >= 2)) {
+    eintraege.push({
+      farbe: DURCHGANG_FARBE,
+      gestrichelt: true,
+      text: t("runway_v2.legend_durchgang", {
+        defaultValue: "Früherer Durchgang — durchgestartet, nicht gewertet",
       }),
     });
   }

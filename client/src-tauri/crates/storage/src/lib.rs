@@ -272,6 +272,20 @@ pub struct Verlaufspunkt {
     pub quer_m: f64,
 }
 
+/// Ein früherer Durchgang derselben Landung: aufgesetzt, dann
+/// durchgestartet (Touch-and-Go / Balked Landing).
+///
+/// Die Spur des ersten Aufsetzens wurde beim Durchstarten verworfen, damit
+/// sie nicht in die Bewertung der gewerteten Landung läuft (siehe
+/// `spur_verwerfen`). Gezeigt werden soll sie trotzdem — klar getrennt,
+/// ohne Wertung. Thomas (19.09.2026) zu EWG9503: „beide Durchgänge, klar
+/// getrennt".
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VorigerDurchgang {
+    /// Die Spur, im selben Bezug wie `lateral_samples` der Landung.
+    pub lateral_samples: Vec<LateralSample>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LateralSample {
     /// Distanz ab der Landeschwelle, in Metern.
@@ -487,6 +501,9 @@ pub struct LandingRecord {
     /// Der gefahrene Streifen, ausgeduennt. Fuer die Queransicht.
     #[serde(default)]
     pub lateral_samples: Vec<LateralSample>,
+    /// Frühere Durchgänge auf DERSELBEN Bahn (durchgestartet). Nur Anzeige.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vorherige_durchgaenge: Vec<VorigerDurchgang>,
     /// Ist der Belag befestigt? Auf Gras entfaellt die seitliche Bewertung.
     #[serde(default)]
     pub surface_paved: Option<bool>,

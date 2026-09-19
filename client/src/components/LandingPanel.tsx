@@ -186,6 +186,10 @@ export interface LandingRecord {
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
+  /** Frühere Durchgänge auf derselben Bahn (durchgestartet) — nur Anzeige. */
+  vorherige_durchgaenge?: Array<{
+    lateral_samples: Array<{ laengs_m: number; quer_m: number }>;
+  }> | null;
   surface_paved?: boolean | null;
   overrun_m?: number | null;
 

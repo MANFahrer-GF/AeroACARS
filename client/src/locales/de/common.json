@@ -2138,7 +2138,8 @@
       "cleared": "Bahn geräumt",
       "off_pavement": "äußeres Rad {{m}} m neben der befestigten Fläche",
       "edge_distance": "äußeres Rad {{m}} m vor der Kante",
-      "overrun": "Über das Bahnende hinaus"
+      "overrun": "Über das Bahnende hinaus",
+      "max_offset_fremd": "bewertet wurden {{wert}}{{rand}} — aus fehlerhaften Messpunkten, die hier nicht gezeichnet sind"
     },
     "scale": {
       "runway_width": "Bahnbreite",
@@ -2190,7 +2191,9 @@
     "lupe_scale_note": "längs und quer gleicher Maßstab · Winkel wie gefahren",
     "lupe_direction": "Landerichtung →",
     "legend_mess_ende": "▲ Querversatz bewertet bis hier — danach nur noch gezeichnet",
-    "legend_rollweg_lupe": "Rollweg (OSM, 23 m breit angenommen) — in der Lupe"
+    "legend_rollweg_lupe": "Rollweg (OSM, 23 m breit angenommen) — in der Lupe",
+    "durchgang_frueher": "Früherer Durchgang · aufgesetzt {{m}} m hinter der Schwelle · {{seite}} · durchgestartet, nicht gewertet",
+    "legend_durchgang": "Früherer Durchgang — durchgestartet, nicht gewertet"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

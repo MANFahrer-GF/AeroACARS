@@ -95,6 +95,7 @@ export function mapLandingRecordToV2Props(
     min_edge_clearance_m: record.min_edge_clearance_m ?? null,
     max_lateral_offset_m: record.max_lateral_offset_m ?? null,
     lateral_samples: record.lateral_samples ?? null,
+    vorherige_durchgaenge: record.vorherige_durchgaenge ?? null,
     // Zwischenstand-Kennzeichen: `undefined` heisst „Flug von vor
     // dieser Fassung", nur ein ausdrueckliches `false` meldet sich.
     rollout_final: (record as unknown as Record<string, unknown>).rollout_final as
