@@ -17916,16 +17916,27 @@ mod nachtrag_queue {
         let base = base.to_path_buf();
         let mut geschrumpft = 0;
         let mut aussortiert = 0;
-        let mut ordner = vec![base];
+        // Die Ablage ist flach: <wurzel>/<va>/<pilot>/*.json. Mehr als zwei
+        // Ebenen gibt es nicht — die Grenze verhindert, dass ein
+        // verirrter Verweis das Aufraeumen beim Start im Kreis laufen
+        // laesst (`is_dir` folgt Symlinks).
+        let mut ordner = vec![(base, 0u8)];
         let mut dateien: Vec<PathBuf> = Vec::new();
-        while let Some(d) = ordner.pop() {
+        while let Some((d, tiefe)) = ordner.pop() {
             let Ok(rd) = std::fs::read_dir(&d) else {
                 continue;
             };
             for eintrag in rd.flatten() {
                 let p = eintrag.path();
-                if p.is_dir() {
-                    ordner.push(p);
+                // `file_type` folgt keinem Symlink, `is_dir` schon.
+                let art = eintrag.file_type().ok();
+                if art.is_some_and(|t| t.is_symlink()) {
+                    continue;
+                }
+                if art.is_some_and(|t| t.is_dir()) {
+                    if tiefe < 2 {
+                        ordner.push((p, tiefe + 1));
+                    }
                 } else if p.extension().and_then(|s| s.to_str()) == Some("json") {
                     dateien.push(p);
                 }
@@ -17937,7 +17948,7 @@ mod nachtrag_queue {
             };
             // Bewusst über die Ablage-Hülle, damit va_prefix und pilot_id
             // erhalten bleiben — die Datei wird ja nur ersetzt.
-            let Ok(mut ablage) = serde_json::from_str::<Ablage>(&text) else {
+            let Ok(ablage) = serde_json::from_str::<Ablage>(&text) else {
                 continue;
             };
             let gelesen = serde_json::from_value::<aeroacars_mqtt::TouchdownRolloutFinalizedPayload>(
@@ -17961,13 +17972,17 @@ mod nachtrag_queue {
                 }
                 continue;
             }
-            let Ok(wert) = serde_json::to_value(&nachtrag) else {
-                continue;
-            };
-            ablage.nachtrag = wert;
-            match serde_json::to_string_pretty(&ablage)
-                .map_err(|e| io_err(e.to_string()))
-                .and_then(|t| std::fs::write(&pfad, t))
+            // Atomar wie `enqueue_in`: erst Temp, dann `rename`. Ein
+            // `fs::write` auf die Zieldatei liesse einen Leser eine halbe
+            // Datei sehen — genau der Fehler, den die Ablage schon einmal
+            // hatte (Runde 13, High 3).
+            let tmp = pfad.with_file_name(format!(
+                ".{}.tmp",
+                pfad.file_name().and_then(|n| n.to_str()).unwrap_or("nachtrag")
+            ));
+            match serialisieren(&ablage.va_prefix, &ablage.pilot_id, &nachtrag)
+                .and_then(|t| std::fs::write(&tmp, t))
+                .and_then(|()| std::fs::rename(&tmp, &pfad))
             {
                 Ok(()) => {
                     geschrumpft += 1;
@@ -58447,7 +58462,13 @@ mod touchdown_metadata_stamp_tests {
                 quer_m: (i % 7) as f64 * 0.25,
             })
             .collect();
-        n.bahn.as_mut().expect("Bahn").lateral_samples = Some(spur);
+        // Die Bahn-Gruppe ausdrücklich setzen: `bahn_nachtrag_bauen` füllt
+        // sie nur, wenn die Bewertung schon gelaufen ist.
+        n.bahn = Some(aeroacars_mqtt::BahnWire {
+            clearance_point_m: Some(1_831.6),
+            lateral_samples: Some(spur),
+            ..Default::default()
+        });
         n
     }
 
