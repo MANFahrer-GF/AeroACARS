@@ -3688,6 +3688,8 @@ struct PersistedFlightStats {
     #[serde(default)]
     bahn_vorige_spuren: Vec<(String, Vec<(f32, f32)>)>,
     #[serde(default)]
+    abflug_icao: Option<String>,
+    #[serde(default)]
     bahn_spur_laeuft: bool,
     #[serde(default)]
     bahn_spur_bis: Option<DateTime<Utc>>,
@@ -4092,6 +4094,7 @@ impl PersistedFlightStats {
             rollout_distance_m: stats.rollout_distance_m,
             rollout_finalized: stats.rollout_finalized,
             bahn_spur: stats.bahn_spur.clone(),
+            abflug_icao: stats.abflug_icao.clone(),
             bahn_vorige_spuren: stats.bahn_vorige_spuren.clone(),
             bahn_spur_laeuft: stats.bahn_spur_laeuft,
             bahn_spur_bis: stats.bahn_spur_bis,
@@ -4341,6 +4344,7 @@ impl PersistedFlightStats {
         stats.rollout_distance_m = self.rollout_distance_m;
         stats.rollout_finalized = self.rollout_finalized;
         stats.bahn_spur = self.bahn_spur;
+        stats.abflug_icao = self.abflug_icao;
         stats.bahn_vorige_spuren = self.bahn_vorige_spuren;
         stats.bahn_spur_laeuft = self.bahn_spur_laeuft;
         stats.bahn_spur_bis = self.bahn_spur_bis;
@@ -5742,6 +5746,10 @@ struct FlightStats {
     /// Die Bahn steht dabei, weil eine Spur gegen eine ANDERE Bahn in der
     /// Ansicht der gewerteten nichts zu suchen hat.
     bahn_vorige_spuren: Vec<(String, Vec<(f32, f32)>)>,
+    /// Die Kennung des Abflughafens — fuer die Abflugzeile der
+    /// Wegpunkt-Tabelle. Steht hier, weil die Tabelle auch beim Aufsetzen
+    /// eingefroren wird, wo es keinen Zugriff auf den Flug gibt.
+    abflug_icao: Option<String>,
     /// Die gesendete Landung, für den Fall, dass sie nicht ankam.
     ///
     /// Bewusst NICHT persistiert: Überlebt der Client den Flug nicht, holt
@@ -14616,11 +14624,12 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
         return SpritWegpunkteDto::default();
     };
     let stats = flight.stats.lock().expect("flight stats lock");
+    let abflug = stats.abflug_icao.clone();
     // Nach der Landung die eingefrorene Fassung — sie ist die, die in den
     // Bericht geht.
     let zeilen = match stats.sprit_auswertung.as_ref() {
         Some(a) if !a.wegpunkte.is_empty() => a.wegpunkte.clone(),
-        _ => sprit_wegpunkt_zeilen(&stats, false),
+        _ => sprit_wegpunkt_zeilen(&stats, abflug.as_deref(), false),
     };
     use landing_scoring::sprit::WegpunktZustand;
     let letzter = zeilen
@@ -16243,6 +16252,16 @@ async fn flight_start(
         let mut stats = flight.stats.lock().expect("flight stats lock");
         // v0.13.x: Navlog-Fixes für die In-App-Live-Map vorhalten (Dots + TOC/TOD).
         stats.planned_waypoints = waypoints.clone();
+        // Fuer die Abflugzeile der Sprit-Tabelle: Das Navlog beginnt oft
+        // erst am ersten Streckenpunkt, nicht am Flughafen.
+        stats.abflug_icao = Some(
+            dpt_airport
+                .icao
+                .clone()
+                .unwrap_or_else(|| dpt_airport.id.clone())
+                .trim()
+                .to_ascii_uppercase(),
+        );
         // v1.7.36: Der Anker (Plan-Reststrecke ab TOD) stammte aus den ALTEN
         // Wegpunkten. Anker und Projektion muessen aus derselben Route kommen
         // (QS-Befund V4, 18.09.2026).
@@ -22153,6 +22172,10 @@ fn sprit_wegpunkt_tick(
 /// Sprit-Auswertung). Leer, wenn das Navlog keine An-Bord-Werte trägt.
 fn sprit_wegpunkt_zeilen(
     stats: &FlightStats,
+    // Die Kennung des Abflughafens fuer die eigene Abflugzeile. `None`
+    // schreibt „Abflug" — lieber ein schlichtes Wort als eine geratene
+    // Kennung.
+    abflug_ident: Option<&str>,
     // Ausweichflug: gelandet wurde woanders — der Landesprit gehört nicht
     // in die Zeile des geplanten Ziels.
     ausweichflug: bool,
@@ -22172,15 +22195,57 @@ fn sprit_wegpunkt_zeilen(
             ..Default::default()
         })
         .collect();
-    // Abflug: der Tankstand beim Abheben. Bei Einstieg in der Luft ist
-    // `takeoff_fuel_kg` der Stand am EINSTIEG, nicht am Abflug — dann bleibt
-    // die Zeile offen, und die Hochrechnung bezieht sich auf den ersten
-    // Überflug danach (`wegpunkte_auswerten`).
-    if let (false, Some(z), Some(t)) = (
+    // Der Abflug bekommt eine EIGENE Zeile.
+    //
+    // # Warum nicht einfach die erste Zeile des Navlogs
+    //
+    // SimBrief beginnt das Navlog NICHT am Abflughafen, sondern am ersten
+    // Streckenpunkt (A380 nach EDDM, 20.09.2026: „BETTE", laut FMS um
+    // 11:56 überflogen, während das Abheben um 11:55 war; bei DLH 369 war
+    // es „DER24"). Bis hierher trug diese Zeile trotzdem die Abhebezeit
+    // und den Abhebe-Tankstand — verglichen wurde also der Tankstand an
+    // EINEM Ort mit dem Plan an einem ANDEREN, und die Differenz enthielt
+    // den Verbrauch dazwischen. Bei „3.865 kg mehr getankt" ist das
+    // wenig, bei einem Navlog, das erst am Steigflugende beginnt, viel.
+    //
+    // Die Abflugzeile steht deshalb für sich: Plan an Bord beim Abheben
+    // ist Block minus Taxi, Ist ist der gemessene Tankstand. Beide gehören
+    // zum selben Ort, und der erste Streckenpunkt wird wieder als das
+    // behandelt, was er ist — ein Überflug.
+    //
+    // Fehlt eine der beiden Plan-Zahlen, gibt es keine Abflugzeile: Ein
+    // erfundener Planwert wäre schlimmer als eine fehlende Zeile.
+    let erster_ist_der_flughafen = fixes
+        .first()
+        .is_some_and(|f| f.kind.eq_ignore_ascii_case("apt"));
+    if !stats.sprit_einstieg_in_der_luft && !erster_ist_der_flughafen {
+        if let (Some(block), Some(ist)) = (
+            stats
+                .planned_block_fuel_kg
+                .zip(stats.planned_taxi_kg)
+                .map(|(b, t)| b - t)
+                .filter(|v| v.is_finite() && *v > 0.0),
+            stats.takeoff_fuel_kg,
+        ) {
+            zeilen.insert(
+                0,
+                Wegpunkt {
+                    ident: abflug_ident.unwrap_or("Abflug").to_string(),
+                    plan_an_bord_kg: Some(block),
+                    ist_an_bord_kg: Some(ist),
+                    zustand: WegpunktZustand::Gemessen,
+                    zeit_ms: stats.takeoff_at.map(|t| t.timestamp_millis()),
+                    ..Default::default()
+                },
+            );
+        }
+    } else if let (false, Some(z), Some(t)) = (
         stats.sprit_einstieg_in_der_luft,
         zeilen.first_mut(),
         stats.takeoff_fuel_kg,
     ) {
+        // Der Navlog beginnt am Flughafen — dann ist die erste Zeile der
+        // Abflug, und Plan und Ist gehören zum selben Ort.
         z.zustand = WegpunktZustand::Gemessen;
         z.ist_an_bord_kg = Some(t);
         z.zeit_ms = stats.takeoff_at.map(|t| t.timestamp_millis());
@@ -22470,7 +22535,8 @@ fn sprit_auswertung_einmal(
         // v1.7.40: Die Tabelle je Wegpunkt friert mit der Auswertung ein —
         // so tragen Landungsdatensatz und Nutzlast dieselben Zeilen, die das
         // Cockpit zuletzt zeigte.
-        a.wegpunkte = sprit_wegpunkt_zeilen(stats, ausweich);
+        let abflug = stats.abflug_icao.clone();
+        a.wegpunkte = sprit_wegpunkt_zeilen(stats, abflug.as_deref(), ausweich);
         stats.sprit_auswertung = Some(a);
     }
     stats.sprit_auswertung.clone()
@@ -70111,7 +70177,12 @@ mod sprit_wegpunkt_tests {
         st.takeoff_at = Some(Utc::now());
         st.planned_contingency_kg = Some(150.0);
         st.planned_waypoints = vec![
-            fx("DEP", BREITE, 0.0, 0.0, 0.0),
+            // Als FLUGHAFEN gekennzeichnet — dann ist die erste Zeile
+            // wirklich der Abflug und bekommt keine eigene davor.
+            api_client::RouteFix {
+                kind: "apt".into(),
+                ..fx("DEP", BREITE, 0.0, 0.0, 0.0)
+            },
             fx("ALFA", BREITE, 40.0, 40.0, 400.0),
             fx("BRAVO", BREITE, 80.0, 40.0, 700.0),
             fx("KILO", BREITE + 0.5, 120.0, 50.0, 1_050.0),
@@ -70153,7 +70224,7 @@ mod sprit_wegpunkt_tests {
 
         // Die Tabelle: KILO gerechnet, aber als übersprungen gekennzeichnet.
         use landing_scoring::sprit::{Ampel, WegpunktZustand};
-        let z = sprit_wegpunkt_zeilen(&st, false);
+        let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
         assert_eq!(z.len(), 6);
         assert_eq!(z[0].zustand, WegpunktZustand::Gemessen, "Abflug trägt den Abhebe-Tankstand");
         assert_eq!(z[3].zustand, WegpunktZustand::Uebersprungen);
@@ -70161,6 +70232,56 @@ mod sprit_wegpunkt_tests {
         assert_eq!(z[5].zustand, WegpunktZustand::Offen, "vor der Landung ist das Ziel offen");
         // 5 % Mehrverbrauch auf 1.700 kg Trip = 85 kg, Contingency 150: grün.
         assert_eq!(z[4].ampel, Some(Ampel::Gruen));
+    }
+
+    #[test]
+    fn ohne_flughafen_im_navlog_bekommt_der_abflug_eine_eigene_zeile() {
+        // A380 nach EDDM (20.09.2026): SimBrief beginnt das Navlog am
+        // ersten Streckenpunkt („BETTE", laut FMS um 11:56 überflogen),
+        // nicht am Flughafen. Bis dahin trug diese Zeile trotzdem die
+        // Abhebezeit und den Abhebe-Tankstand — verglichen wurde der
+        // Tankstand an EINEM Ort mit dem Plan an einem ANDEREN.
+        let mut st = stats_mit_route();
+        // Navlog ohne Flughafen: der erste Fix ist ein Streckenpunkt.
+        st.planned_waypoints.remove(0);
+        st.planned_block_fuel_kg = Some(8_300.0);
+        st.planned_taxi_kg = Some(300.0);
+        st.takeoff_fuel_kg = Some(8_100.0);
+
+        use landing_scoring::sprit::WegpunktZustand;
+        let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
+        assert_eq!(z[0].ident, "EDDL", "keine eigene Abflugzeile");
+        assert_eq!(
+            z[0].plan_an_bord_kg,
+            Some(8_000.0),
+            "Plan beim Abheben ist Block minus Taxi"
+        );
+        assert_eq!(z[0].ist_an_bord_kg, Some(8_100.0));
+        assert_eq!(z[1].ident, "ALFA", "der Streckenpunkt bleibt ein Streckenpunkt");
+        assert_eq!(
+            z[1].zustand,
+            WegpunktZustand::Offen,
+            "ALFA trägt nicht mehr den Abhebe-Tankstand"
+        );
+        // Und die Rechnung stimmt: 100 kg mehr getankt als geplant,
+        // nicht „100 kg plus der Verbrauch bis ALFA".
+        assert_eq!(
+            z[0].ist_an_bord_kg.zip(z[0].plan_an_bord_kg).map(|(i, p)| i - p),
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn ohne_plan_zahlen_wird_keine_abflugzeile_erfunden() {
+        // Fehlt Block oder Taxi, gibt es keine Zeile — ein geratener
+        // Planwert waere schlimmer als eine fehlende Zeile.
+        let mut st = stats_mit_route();
+        st.planned_waypoints.remove(0);
+        st.planned_block_fuel_kg = None;
+        st.planned_taxi_kg = None;
+
+        let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
+        assert_eq!(z[0].ident, "ALFA", "es wurde eine Zeile erfunden");
     }
 
     #[test]
@@ -70196,7 +70317,7 @@ mod sprit_wegpunkt_tests {
         // gar nicht überflogen, und der Test misst nur sich selbst.
         fliegen(&mut st, 70.0, 165.0);
         use landing_scoring::sprit::WegpunktZustand;
-        let z = sprit_wegpunkt_zeilen(&st, false);
+        let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
         assert_eq!(z[0].zustand, WegpunktZustand::Offen, "Einstiegs-Tankstand als Abflug gemessen");
         assert!(z[0].ist_an_bord_kg.is_none());
         // Bezug ist BRAVO, der erste Überflug nach dem Einstieg: dort

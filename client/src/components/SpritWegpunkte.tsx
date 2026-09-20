@@ -270,7 +270,13 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
                     background: istNaechster ? "rgba(76,194,255,0.12)" : undefined,
                     whiteSpace: "nowrap",
                   };
-                  const ersteZeile = i === 0;
+                  // „Abheben" nur, wenn die Zeile auch wirklich der Abflug
+                  // ist: Fehlen Block- und Taxi-Sprit, gibt es keine
+                  // Abflugzeile, und der erste Eintrag ist ein ganz
+                  // normaler Streckenpunkt (SimBrief beginnt das Navlog
+                  // oft dort, nicht am Flughafen).
+                  const ersteZeile =
+                    i === 0 && z.zustand === "gemessen" && z.ist_an_bord_kg != null;
                   const letzteZeile = i === zeilen.length - 1;
                   return (
                     <tr key={`${z.ident}-${i}`} data-zustand={z.zustand ?? "offen"}>
