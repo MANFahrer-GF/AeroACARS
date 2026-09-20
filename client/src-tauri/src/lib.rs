@@ -17126,6 +17126,18 @@ mod pirep_queue {
         /// Feld erreichte die bessere Geometrie den Recorder nie.
         #[serde(default)]
         pub bahn_nachtrag: Option<serde_json::Value>,
+        /// Die Landung, falls der Server sie noch nicht bestaetigt hat.
+        ///
+        /// Ohne sie war die Landung verloren, sobald das Einreichen
+        /// scheiterte: Der Flug wird danach geschlossen, und der gemerkte
+        /// Stand lebt nur im Arbeitsspeicher. Der Worker schickt sie vor
+        /// dem Flugbericht — erst die Landung, dann der Bericht, sonst
+        /// faellt das Urteil „keine Landung aufgezeichnet" (AAL 1331).
+        ///
+        /// `#[serde(default)]`: Eintraege aus aelteren Fassungen bleiben
+        /// lesbar, sie tragen dann eben keine.
+        #[serde(default)]
+        pub landung: Option<serde_json::Value>,
         pub bid_id: i64,
         pub airline_icao: String,
         pub flight_number: String,
@@ -18452,6 +18464,41 @@ mod konten_isolierung_runde_neun_wiring_tests {
     /// — ein Kontowechsel in der Luecke dazwischen darf diese Best-Effort-
     /// Kanaele nicht mit dem FALSCHEN Account weiterlaufen lassen.
     #[test]
+    /// Die Landung reist in der Warteschlange mit — und geht VOR dem
+    /// Flugbericht raus.
+    ///
+    /// Scheitert das Einreichen, wird der Flug geschlossen; der gemerkte
+    /// Stand lebt nur im Arbeitsspeicher. Ohne diesen Weg kam der Bericht
+    /// spaeter allein an, das Urteil lautete „keine Landung aufgezeichnet"
+    /// und liess sich nicht mehr umdrehen (AAL 1331, 20.09.2026).
+    #[test]
+    fn die_landung_reist_in_der_warteschlange_mit_und_geht_zuerst_raus() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
+        let koerper = funktionskoerper(SRC, &nadel);
+        let landung = koerper
+            .find("q.landung")
+            .expect("der Worker schickt die Landung aus der Warteschlange nicht");
+        let bericht = koerper
+            .find("client.file_pirep(&q.pirep_id")
+            .expect("der Worker reicht den Bericht nicht mehr ein — Test anpassen");
+        assert!(
+            landung < bericht,
+            "die Landung muss VOR dem Flugbericht raus: Trifft der Bericht ohne \
+             Landung ein, faellt das Urteil „keine Landung aufgezeichnet\" und \
+             laesst sich nicht mehr umdrehen"
+        );
+        // Und sie muss beim Einreihen ueberhaupt erst hineinkommen.
+        assert!(
+            SRC.contains("pub landung: Option<serde_json::Value>"),
+            "QueuedPirep traegt die Landung nicht mehr"
+        );
+        assert!(
+            SRC.contains("st.landung_live_bestaetigt"),
+            "beim Einreihen wird nicht geprueft, ob die Landung schon bestaetigt ist"
+        );
+    }
+
     fn queue_worker_prueft_identitaet_erneut_vor_mqtt_und_log_upload() {
         const SRC: &str = include_str!("lib.rs");
         let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
@@ -19331,6 +19378,56 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                 }
                 q.attempt_count += 1;
                 q.last_attempt_at = Some(Utc::now());
+                // ERST die Landung, DANN der Flugbericht.
+                //
+                // Trifft der Bericht ohne Landung ein, faellt das Urteil
+                // „keine Landung aufgezeichnet", und das laesst sich nicht
+                // mehr umdrehen, sobald die Webseite es abgeholt hat
+                // (AAL 1331, 20.09.2026). Die Wiederholung ist
+                // ungefaehrlich: Der Recorder erkennt dieselbe Landung an
+                // Pilot und Zeitstempel.
+                if let Some(json) = q.landung.clone() {
+                    let gelesen = serde_json::from_value::<aeroacars_mqtt::TouchdownPayload>(json);
+                    let gesendet = match gelesen {
+                        Ok(mut payload) => {
+                            // Die Version der laufenden App, nicht die von
+                            // damals — siehe `client_version` im Payload.
+                            payload.client_version = Some(env!("CARGO_PKG_VERSION"));
+                            let ack = {
+                                let mqtt = state.mqtt.lock().await;
+                                mqtt.as_ref().map(|h| h.touchdown_bestaetigt(payload))
+                            };
+                            match ack {
+                                Some(rx) => tokio::time::timeout(LANDUNG_ACK_FRIST, rx)
+                                    .await
+                                    .ok()
+                                    .and_then(|r| r.ok())
+                                    .unwrap_or(false),
+                                None => false,
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                pirep_id = %q.pirep_id,
+                                error = %e,
+                                "Landung aus der Warteschlange ist nicht lesbar"
+                            );
+                            true // nichts zu senden — den Bericht nicht aufhalten
+                        }
+                    };
+                    if gesendet {
+                        tracing::info!(
+                            pirep_id = %q.pirep_id,
+                            "Landung aus der Warteschlange nachgeschickt"
+                        );
+                        q.landung = None;
+                    } else {
+                        tracing::warn!(
+                            pirep_id = %q.pirep_id,
+                            "Landung aus der Warteschlange nicht zugestellt — bleibt liegen"
+                        );
+                    }
+                }
                 match client.file_pirep(&q.pirep_id, &q.body).await {
                     Ok(()) => {
                         tracing::info!(pirep_id = %q.pirep_id, "queued PIREP filed successfully by background worker");
@@ -21094,6 +21191,11 @@ mod client_health_report_tests {
 /// Doppelt abgelegt schadet nicht: `senden` schreibt dieselbe Datei
 /// (Kennung + Aufsetzzeit + Revision) noch einmal, atomar und mit
 /// gleichem Inhalt, und der Recorder riegelt ueber die Revision.
+/// Wie lange auf die Bestätigung der Landung gewartet wird, bevor der
+/// Flugbericht trotzdem rausgeht. Der Bericht ist wichtiger als seine
+/// Diagnose — aber die Reihenfolge soll stimmen, wenn es geht.
+const LANDUNG_ACK_FRIST: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Hält fest, ob der Broker die Landung bestätigt hat.
 ///
 /// Bis v1.7.40 ging die Landung blind raus. Riss die Leitung im
@@ -26683,9 +26785,22 @@ async fn flight_end(
                         None
                     }
                 };
+                // Die Landung mitnehmen, wenn sie noch nicht bestaetigt
+                // ist — sonst ist sie weg, sobald der Flug schliesst.
+                let landung = {
+                    let st = flight.stats.lock().expect("flight stats");
+                    if st.landung_live_bestaetigt {
+                        None
+                    } else {
+                        st.landung_payload
+                            .as_ref()
+                            .and_then(|p| serde_json::to_value(&**p).ok())
+                    }
+                };
                 let queued = pirep_queue::QueuedPirep {
                     pirep_id: flight.pirep_id.clone(),
                     bahn_nachtrag,
+                    landung,
                     bid_id: flight.bid_id,
                     airline_icao: flight.airline_icao.clone(),
                     flight_number: flight.flight_number.clone(),

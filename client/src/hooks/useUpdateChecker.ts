@@ -285,9 +285,32 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
     setInstalling(true);
     setProgress("Lädt Update herunter…");
     try {
+      // Erst NOCH EINMAL nachsehen, was gerade die neueste ist.
+      //
+      // Der gefundene Stand kann Stunden alt sein: Geprüft wird beim
+      // Start, alle vier Stunden und beim Fenster-Fokus. Ein Client, der
+      // seit gestern Abend läuft, trägt die Version von gestern im Knopf
+      // — und installierte sie auch, obwohl inzwischen eine neuere da
+      // ist. Danach fand er die neuere und der Pilot durfte ein zweites
+      // Mal updaten (Thomas, 20.09.2026: „39 / 40 / 41, es wird nicht
+      // gleich 41 gezogen").
+      //
+      // Schlägt die Abfrage fehl (kein Netz), bleibt es beim bekannten
+      // Stand — lieber ein Update von gestern als gar keines.
+      let zuInstallieren = update;
+      try {
+        const frisch = await tauriCheckForUpdate();
+        if (frisch && frisch.version !== update.version) {
+          zuInstallieren = frisch;
+          setUpdate(frisch);
+          setProgress(`Neuere Fassung gefunden: ${frisch.version} — lädt…`);
+        }
+      } catch {
+        // Keine Verbindung: mit dem bekannten Stand weitermachen.
+      }
       let downloaded = 0;
       let total = 0;
-      await update.downloadAndInstall((event) => {
+      await zuInstallieren.downloadAndInstall((event) => {
         switch (event.event) {
           case "Started":
             total = event.data.contentLength ?? 0;

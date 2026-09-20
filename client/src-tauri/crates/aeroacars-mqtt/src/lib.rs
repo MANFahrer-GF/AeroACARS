@@ -610,7 +610,13 @@ pub struct BahnHerkunftWire {
     pub pre_displaced_threshold: Option<bool>,
 }
 
-#[derive(Default, Clone, Debug, Serialize)]
+/// `Deserialize` mit `serde(default)`: Die Landung wird seit v1.7.42 in
+/// die Flugbericht-Warteschlange geschrieben, wenn das Einreichen
+/// scheitert — und muss von dort wieder gelesen werden. Fehlende Felder
+/// eines aelteren Eintrags bekommen ihren Vorgabewert, statt den ganzen
+/// Eintrag unlesbar zu machen.
+#[derive(Default, Clone, Debug, Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct TouchdownPayload {
     /// v1.7.35: Sprit-Auswertung ohne Note. Dieselbe eingefrorene Auswertung
     /// wie im `PirepPayload` — die Live-Uebersicht liest den Touchdown-Payload,
@@ -640,6 +646,12 @@ pub struct TouchdownPayload {
     /// Datenfluss + sichtbar auch fuer historische PIREPs sobald ein
     /// Pilot mit v0.11.1+ einen neuen Flug einreicht.
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// `skip_deserializing`: Der Typ ist `&'static str` und laesst sich
+    /// nicht zurueckgelesen (die Ableitung waere nur fuer `'static`
+    /// gueltig). Beim Nachschicken aus der Warteschlange setzt der
+    /// Aufrufer die Version der LAUFENDEN App — die ist ohnehin richtiger
+    /// als die von damals.
+    #[serde(skip_deserializing)]
     pub client_version: Option<&'static str>,
     pub vs_fpm: i32,
     pub ias_kt: i32,
