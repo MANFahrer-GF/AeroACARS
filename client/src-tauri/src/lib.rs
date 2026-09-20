@@ -18483,8 +18483,13 @@ mod konten_isolierung_runde_neun_wiring_tests {
             .find("sprit_plan_fehlt")
             .expect("die Wiederaufnahme prueft die Sprit-Planwerte nicht");
         let nachladen = koerper
-            .find("flight_refresh_simbrief(")
-            .expect("die Wiederaufnahme laedt den OFP nicht nach");
+            .find("flight_refresh_route_only(")
+            .expect("die Wiederaufnahme laedt die Route nicht nach");
+        assert!(
+            !koerper.contains("flight_refresh_simbrief("),
+            "der volle Refresh hat ein Phasen-Gate und greift ab Steigflug nicht — \
+             und er wuerde Plan- und Gewichtswerte mitten im Flug ersetzen"
+        );
         assert!(
             pruefung < nachladen,
             "erst pruefen, dann nachladen — sonst holt jeder Neustart den OFP"
@@ -19417,13 +19422,29 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                 // (AAL 1331, 20.09.2026). Die Wiederholung ist
                 // ungefaehrlich: Der Recorder erkennt dieselbe Landung an
                 // Pilot und Zeitstempel.
-                if let Some(json) = q.landung.clone() {
+                // Wie beim Publish nach dem Filing: Zwischen dem
+                // Sitzungs-Schnappschuss am Tick-Anfang und hier liegen
+                // mehrere Wartepunkte. Ein Kontowechsel dazwischen wuerde
+                // Pilot As Landung ueber Pilot Bs Verbindung schicken
+                // (Abnahme 20.09.2026, dieselbe Fehlerklasse wie beim
+                // PIREP-Publish).
+                let identitaet_vor_landung = state
+                    .authenticated_pilot_id
+                    .lock()
+                    .expect("authenticated_pilot_id lock")
+                    .map(|id| id.to_string())
+                    == Some(aktuelle_identitaet.clone());
+                if let Some(json) = q.landung.clone().filter(|_| identitaet_vor_landung) {
                     let gelesen = serde_json::from_value::<aeroacars_mqtt::TouchdownPayload>(json);
                     let gesendet = match gelesen {
-                        Ok(mut payload) => {
-                            // Die Version der laufenden App, nicht die von
-                            // damals — siehe `client_version` im Payload.
-                            payload.client_version = Some(env!("CARGO_PKG_VERSION"));
+                        Ok(payload) => {
+                            // `client_version` bleibt LEER. Der Typ ist
+                            // `&'static str` und laesst sich nicht
+                            // zurueckgelesen; die Version der laufenden App
+                            // einzutragen waere falsch, weil das Feld
+                            // gerade dazu dient, Messumstellungen in der
+                            // Datenbank nachzurechnen. Lieber keine Angabe
+                            // als eine falsche (Abnahme 20.09.2026).
                             let ack = {
                                 let mqtt = state.mqtt.lock().await;
                                 mqtt.as_ref().map(|h| h.touchdown_bestaetigt(payload))
@@ -19453,9 +19474,19 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                         );
                         q.landung = None;
                     } else {
+                        // Bleibt liegen, solange der Eintrag lebt. Geht der
+                        // Bericht gleich darauf durch, wird der Eintrag
+                        // entfernt — die Landung ist dann NICHT verloren:
+                        // Der Worker laedt anschliessend das Flugprotokoll
+                        // hoch, und darin steht sie (`record_event` beim
+                        // Aufsetzen). Sie kommt dann spaeter an als der
+                        // Bericht, und der Flug kann in der Pruefliste
+                        // landen — genau der Rest, der vom AAL-1331-Fall
+                        // uebrig bleibt.
                         tracing::warn!(
                             pirep_id = %q.pirep_id,
-                            "Landung aus der Warteschlange nicht zugestellt — bleibt liegen"
+                            "Landung aus der Warteschlange nicht zugestellt — \
+                             das Flugprotokoll traegt sie nach"
                         );
                     }
                 }
@@ -48901,13 +48932,22 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
         let app_fuer_ofp = app.clone();
         tauri::async_runtime::spawn(async move {
             let state = app_fuer_ofp.state::<AppState>();
-            match flight_refresh_simbrief(app_fuer_ofp.clone(), state).await {
+            // NUR die Route, nicht den ganzen Plan.
+            //
+            // `flight_refresh_simbrief` hat ein Phasen-Gate und bricht ab
+            // Steigflug mit `phase_locked` ab — also ausgerechnet in dem
+            // Fall, fuer den das hier gebaut ist (Abnahme 20.09.2026).
+            // `flight_refresh_route_only` kennt dieses Gate nicht und
+            // fasst ausdruecklich KEIN Score-Feld an: kein Block-Fuel,
+            // kein ZFW/TOW/LDW, keine OFP-Kennung. Es setzt Route und
+            // Wegpunkte — genau das, was hier fehlt.
+            match flight_refresh_route_only(app_fuer_ofp.clone(), state).await {
                 Ok(_) => {
-                    tracing::info!("Sprit-Planwerte fehlten nach dem Neustart — OFP nachgeladen")
+                    tracing::info!("Sprit-Planwerte fehlten nach dem Neustart — Route nachgeladen")
                 }
                 Err(e) => tracing::warn!(
                     error = ?e,
-                    "Sprit-Planwerte fehlen und der OFP liess sich nicht nachladen"
+                    "Sprit-Planwerte fehlen und die Route liess sich nicht nachladen"
                 ),
             }
         });

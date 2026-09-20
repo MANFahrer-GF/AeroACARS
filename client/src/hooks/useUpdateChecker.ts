@@ -303,6 +303,13 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
         if (frisch && frisch.version !== update.version) {
           zuInstallieren = frisch;
           setUpdate(frisch);
+          // Die Eskalations-Uhr für die neue Fassung mitziehen. Ohne das
+          // stünde nach einer gescheiterten Installation wieder „frisch
+          // entdeckt" statt der Stufe, die der Pilot schon erreicht hatte
+          // (Abnahme 20.09.2026).
+          const k = firstSeenKey(frisch.version);
+          if (readNum(k) == null) writeNum(k, readNum(firstSeenKey(update.version)) ?? Date.now());
+          pruneOldVersionKeys(frisch.version);
           setProgress(`Neuere Fassung gefunden: ${frisch.version} — lädt…`);
         }
       } catch {
