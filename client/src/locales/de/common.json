@@ -2530,7 +2530,9 @@
     "knopf_titel": "Abflugfolge auf VATSIM öffnen (TOBT, TSAT, CTOT)",
     "band": {
       "in_min": "in {{n}} min",
-      "vor_min": "vor {{n}} min"
+      "vor_min": "vor {{n}} min",
+      "tobt_setzen": "TOBT SETZEN",
+      "tobt_setzen_grund": "Ohne TOBT keine TSAT — im VDGS-Fenster setzen"
     }
   }
 }

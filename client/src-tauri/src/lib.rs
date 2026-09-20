@@ -71,7 +71,7 @@ mod panel_server;
 // `hoppie-protocol` crate; this module is the thin Tauri wiring layer.
 // Spec: docs/spec/v1.3.0-hoppie-pdc-cpdlc.md
 mod hoppie;
-/// v1.7.41: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
+/// v1.7.44: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
 /// A-CDM-Werkzeug von VATSIM Spain. Nur lesend.
 mod vdgs;
 

@@ -113,6 +113,29 @@ describe("VdgsPlatte", () => {
     expect(band.textContent).toContain("COMPLY");
   });
 
+  it("fordert zum Setzen auf, wenn keine TOBT gesetzt ist", async () => {
+    // Ohne TOBT gibt es keine TSAT und kein Sequencing — der Flug steht
+    // nicht in der Folge. Das ist kein Leerwert, sondern eine offene
+    // Aufgabe (Thomas, 20.09.2026: "die muss doch gesetzt werden").
+    render(<VdgsPlatte stand={{ ...STAND, tobt: "", tsat: "" }} />);
+    expect(screen.getByText("TOBT SETZEN")).toBeTruthy();
+    // Und keine grosse Leerzahl mehr an der Stelle. (In der kleinen
+    // Feldreihe darunter steht weiter "--:--" fuer CTOT usw. — geprueft
+    // wird die HAUPTZAHL.)
+    expect(document.querySelector(".vdgs__gross")).toBeNull();
+    // Gesetzt wird sie auf vats.im/vdgs — der Klick fuehrt dorthin.
+    invoke.mockClear();
+    screen.getByText("TOBT SETZEN").closest("button")!.click();
+    expect(invoke).toHaveBeenCalledWith("vdgs_fenster_oeffnen");
+  });
+
+  it("zeigt die Restzeit nicht, solange keine TOBT steht", () => {
+    // Sie haette keinen Bezug: Ohne TOBT gibt es nichts, worauf man
+    // wartet.
+    render(<VdgsPlatte stand={{ ...STAND, tobt: "", tsat: "" }} />);
+    expect(screen.queryByText(/in \d+ min|vor \d+ min/)).toBeNull();
+  });
+
   it("nimmt die TOBT als Hauptzahl, wo es keine TSAT gibt", () => {
     // Plätze ohne CDM-Sequenzierung (EDDF, EGLL) liefern keine TSAT —
     // dort stünde sonst dauerhaft „--:--" als größte Zahl im Bild.

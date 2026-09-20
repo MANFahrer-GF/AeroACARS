@@ -144,11 +144,40 @@ export function VdgsPlatte({ stand }: { stand: VdgsStand | null }) {
       </div>
 
       <div className="vdgs__haupt">
-        <div className="vdgs__gross">
-          <span className="vdgs__gross-label">{kopflabel}</span>
-          <span className="vdgs__gross-wert">{kopfzahl || "--:--"}</span>
-        </div>
-        {rest !== null && (
+        {/* Ohne gesetzte TOBT gibt es keine TSAT und kein Sequencing —
+            der Flug steht nicht in der Folge. Das ist kein Leerwert,
+            sondern eine offene Aufgabe (Thomas, 20.09.2026: „die muss
+            doch gesetzt werden, das ist doch Pflicht"). Gesetzt wird sie
+            nicht hier, sondern auf vats.im/vdgs, also fuehrt der Klick
+            genau dorthin. */}
+        {!stand.tobt ? (
+          <button
+            type="button"
+            className="vdgs__auftrag"
+            onClick={() => {
+              // Auf dem Tablet gibt es kein Fenster zu oeffnen (die
+              // LAN-Bruecke laesst den Befehl nicht durch). Dann bleibt
+              // der Text stehen und sagt, wo es geht.
+              void invoke("vdgs_fenster_oeffnen").catch(() => {});
+            }}
+          >
+            <span className="vdgs__auftrag-wort">
+              {t("cdm.band.tobt_setzen", "TOBT SETZEN")}
+            </span>
+            <span className="vdgs__auftrag-grund">
+              {t(
+                "cdm.band.tobt_setzen_grund",
+                "Ohne TOBT keine TSAT — im VDGS-Fenster setzen",
+              )}
+            </span>
+          </button>
+        ) : (
+          <div className="vdgs__gross">
+            <span className="vdgs__gross-label">{kopflabel}</span>
+            <span className="vdgs__gross-wert">{kopfzahl || "--:--"}</span>
+          </div>
+        )}
+        {stand.tobt && rest !== null && (
           <div className="vdgs__rest">
             {rest >= 0
               ? t("cdm.band.in_min", "in {{n}} min", { n: rest })

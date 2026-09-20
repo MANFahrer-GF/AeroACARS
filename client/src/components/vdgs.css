@@ -143,3 +143,38 @@
   letter-spacing: var(--ls-mono);
   text-transform: none;
 }
+
+/* Offene Aufgabe statt Leerwert: Ohne gesetzte TOBT gibt es keine TSAT
+   und kein Sequencing. Steht an der Stelle der grossen Zahl und fuehrt
+   auf vats.im/vdgs, wo sie gesetzt wird (Thomas, 20.09.2026). */
+.vdgs__auftrag {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  align-items: flex-start;
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: 1px solid var(--vdgs-an);
+  border-radius: var(--r-md);
+  font-family: inherit;
+  color: var(--vdgs-an);
+  cursor: pointer;
+  text-align: left;
+}
+.vdgs__auftrag:hover,
+.vdgs__auftrag:focus-visible {
+  /* Eigene Regel, weil ein globales button:hover sonst dunkel auf
+     dunkel setzt (Hausfalle, siehe Button-Hover-Spezifitaet). */
+  background: rgba(255, 176, 0, 0.14);
+  color: var(--vdgs-an);
+  border-color: var(--vdgs-an);
+}
+.vdgs__auftrag-wort {
+  font-size: var(--fs-500);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-mono);
+}
+.vdgs__auftrag-grund {
+  font-size: var(--fs-200);
+  color: var(--vdgs-leise);
+}

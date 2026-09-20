@@ -2530,7 +2530,9 @@
     "knopf_titel": "Open your departure sequence on VATSIM (TOBT, TSAT, CTOT)",
     "band": {
       "in_min": "in {{n}} min",
-      "vor_min": "{{n}} min ago"
+      "vor_min": "{{n}} min ago",
+      "tobt_setzen": "SET TOBT",
+      "tobt_setzen_grund": "No TOBT, no TSAT — set it in the VDGS window"
     }
   }
 }

@@ -2523,7 +2523,9 @@
     "knopf_titel": "Apri la sequenza di partenza su VATSIM",
     "band": {
       "in_min": "tra {{n}} min",
-      "vor_min": "{{n}} min fa"
+      "vor_min": "{{n}} min fa",
+      "tobt_setzen": "IMPOSTA TOBT",
+      "tobt_setzen_grund": "Senza TOBT nessuna TSAT — impostala nella finestra VDGS"
     }
   },
   "msfs_hud": {
