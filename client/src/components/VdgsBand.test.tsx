@@ -180,6 +180,35 @@ describe("Rufzeichen in der Platte", () => {
     expect(screen.queryByTestId("vdgs-band")).toBeNull();
   });
 
+  it("sagt bei Stoerung, dass die gezeigten Zahlen alt sind", () => {
+    // Faellt der Dienst aus, liefert das Backend den letzten guten Stand
+    // bis zu zehn Minuten weiter, damit das Band nicht flackert. Ohne
+    // Hinweis sieht das aus wie eine normale Platte — und eine TSAT von
+    // vor neun Minuten gilt als aktuell (Codex-Abnahme, dritte Runde).
+    render(
+      <VdgsPlatte
+        antwort={{ gefragt_als: STAND.callsign, stand: STAND, stoerung: true }}
+      />,
+    );
+    // Die volle Platte steht da (der Stand ist ja noch brauchbar) …
+    expect(screen.getByTestId("vdgs-band")).toBeTruthy();
+    expect(screen.getByText(STAND.tsat)).toBeTruthy();
+    // … aber mit Warnung, und die nennt das Alter.
+    const hinweis = screen.getByTestId("vdgs-alt-hinweis");
+    expect(hinweis.textContent).toMatch(/10 Minuten|nicht erreichbar/i);
+  });
+
+  it("zeigt ohne Stoerung KEINEN Alt-Hinweis", () => {
+    // Gegenprobe zum Test darueber: Sonst stuende die Warnung immer da
+    // und wuerde bedeutungslos.
+    render(
+      <VdgsPlatte
+        antwort={{ gefragt_als: STAND.callsign, stand: STAND, stoerung: false }}
+      />,
+    );
+    expect(screen.queryByTestId("vdgs-alt-hinweis")).toBeNull();
+  });
+
   it("laesst das Rufzeichen hier NICHT aendern", () => {
     // Bewusst nur anzeigen (Thomas, 20.09.2026). Am Funk haengt die
     // Identitaet: Hoppie merkt sich das Rufzeichen beim VERBINDEN, und
@@ -195,7 +224,20 @@ describe("Rufzeichen in der Platte", () => {
     expect(zeichen.closest("button")).toBeNull();
     expect(zeichen.tagName).toBe("SPAN");
     expect(zeichen.getAttribute("title")).toMatch(/CPDLC/);
-    // Und von hier aus wird nichts geschrieben.
+
+    // WIRKLICH ANFASSEN, nicht nur ansehen.
+    //
+    // Die erste Fassung prüfte `invoke` gleich nach dem Rendern. Ein
+    // wieder eingebauter Schreibweg per `onClick` am selben `<span>`
+    // wäre damit unentdeckt geblieben (Codex-Abnahme, dritte Runde).
+    fireEvent.click(zeichen);
+    fireEvent.doubleClick(zeichen);
+    fireEvent.keyDown(zeichen, { key: "Enter" });
+    fireEvent.focus(zeichen);
+    fireEvent.blur(zeichen);
+    // Und es entsteht auch kein Eingabefeld.
+    expect(screen.queryByRole("textbox")).toBeNull();
+    // Von hier aus wird nichts geschrieben — kein Befehl ueberhaupt.
     expect(invoke).not.toHaveBeenCalled();
   });
 

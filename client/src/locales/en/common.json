@@ -2535,7 +2535,8 @@
       "tobt_setzen_grund": "No TOBT, no TSAT — set it in the VDGS window",
       "kein_eintrag": "no CDM entry",
       "stoerung": "service unavailable",
-      "rufzeichen_woher": "Callsign from flight plan or settings — change it in the CPDLC window"
+      "rufzeichen_woher": "Callsign from flight plan or settings — change it in the CPDLC window",
+      "stand_alt": "Service unavailable — figures up to 10 minutes old"
     }
   }
 }

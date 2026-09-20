@@ -203,3 +203,22 @@
 
 /* Das Rufzeichen steht sichtbar da — geaendert wird es im
    CPDLC-Fenster, weil daran die Funkidentitaet haengt (20.09.2026). */
+
+/* Der Stand ist ueberbrueckt: Der Dienst antwortet nicht, gezeigt wird
+   der letzte gute Wert. Ohne diesen Streifen sah das aus wie eine
+   normale Platte, und eine alte TSAT galt als aktuell (Codex-Abnahme,
+   dritte Runde, 20.09.2026). */
+.vdgs__alt-hinweis {
+  align-self: stretch;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--vdgs-halt);
+  border-radius: var(--r-md);
+  background: rgba(255, 95, 82, 0.12);
+  color: var(--vdgs-halt);
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-mono);
+}
+/* Die Ampel darf bei alten Zahlen nicht mehr beruhigend gruen wirken. */
+.vdgs--alt {
+  border-left-color: var(--vdgs-halt);
+}

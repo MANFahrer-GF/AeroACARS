@@ -2528,7 +2528,8 @@
       "tobt_setzen_grund": "Senza TOBT nessuna TSAT — impostala nella finestra VDGS",
       "kein_eintrag": "nessuna voce CDM",
       "stoerung": "servizio non raggiungibile",
-      "rufzeichen_woher": "Indicativo da piano di volo o impostazioni — modificalo nella finestra CPDLC"
+      "rufzeichen_woher": "Indicativo da piano di volo o impostazioni — modificalo nella finestra CPDLC",
+      "stand_alt": "Servizio non raggiungibile — dati fino a 10 minuti fa"
     }
   },
   "msfs_hud": {

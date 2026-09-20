@@ -195,7 +195,25 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
   const rest = minutenBis(kopfzahl);
 
   return (
-    <div className={`vdgs vdgs--${zustand}`} data-testid="vdgs-band">
+    <div
+      className={`vdgs vdgs--${zustand}${antwort.stoerung ? " vdgs--alt" : ""}`}
+      data-testid="vdgs-band"
+    >
+      {/* Ist der Dienst gestoert, liefert das Backend den letzten guten
+          Stand bis zu zehn Minuten weiter — damit das Band bei einem
+          Netzhaenger nicht flackert. Dann MUSS aber dranstehen, dass die
+          Zahlen alt sind: Sonst sieht der Pilot eine normale Platte und
+          haelt eine TSAT fuer aktuell, die es nicht mehr ist. Die
+          Unterscheidung gab es bisher nur im Fall „gar kein Stand"
+          (Codex-Abnahme, dritte Runde, 20.09.2026). */}
+      {antwort.stoerung && (
+        <div className="vdgs__alt-hinweis" data-testid="vdgs-alt-hinweis">
+          {t(
+            "cdm.band.stand_alt",
+            "Dienst nicht erreichbar — Zahlen bis zu 10 Minuten alt",
+          )}
+        </div>
+      )}
       <div className="vdgs__kopf">
         <Rufzeichen wert={antwort.gefragt_als} />
         <span className="vdgs__platz">{stand.departure}</span>
