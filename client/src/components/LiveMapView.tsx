@@ -437,6 +437,11 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   );
   const basemapRef = useRef<"auto" | "sat">(basemap);
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
+  // Als Ref, weil `addOverlays` aus einem einmalig registrierten
+  // `styledata`-Handler gerufen wird und dort den AKTUELLEN Stand braucht —
+  // genauso wie showTrackRef/showTaxiRef weiter unten.
+  const showVaRef = useRef(showVa);
+  showVaRef.current = showVa;
   // VATSIM-Overlay (Sektoren + Lotsen + fremde Piloten). Standard AUS und
   // gemerkt: das ist eine bewusste Zuschaltung, kein Dauerzustand — die
   // Karte gehoert zuerst dem eigenen Flug.
@@ -1672,6 +1677,17 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     const taxiVis = showTaxiRef.current ? "visible" : "none";
     for (const id of TAXI_LAYERS) {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", taxiVis);
+    }
+    // Dasselbe fuer die Routen der Kollegen: Die Ebene wird oben neu angelegt
+    // und ist dann sichtbar. Ohne dieses Nachziehen kaemen die Linien nach
+    // einem Kartenstil- oder Hell/Dunkel-Wechsel zurueck, obwohl die
+    // Kollegen-Anzeige aus ist — Geisterspuren ohne Flugzeuge dazu.
+    if (map.getLayer("fremde-routen-line")) {
+      map.setLayoutProperty(
+        "fremde-routen-line",
+        "visibility",
+        showVaRef.current ? "visible" : "none",
+      );
     }
   }
 

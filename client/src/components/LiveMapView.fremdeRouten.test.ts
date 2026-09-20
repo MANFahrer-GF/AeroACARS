@@ -97,7 +97,32 @@ describe("Karte: Routen der Kollegen", () => {
 
   it("versteckt die Linien, wenn die Kollegen-Anzeige aus ist", () => {
     // Sonst blieben die Routen sichtbar, während die Marker verschwinden.
-    expect(quelle).toMatch(/setLayoutProperty\(\s*"fremde-routen-line",\s*"visibility"/);
+    // Geprueft wird der WERT, nicht nur, dass irgendwo etwas gesetzt wird:
+    // `showVa ? "none" : "visible"` waere sonst genauso gruen.
+    const stelle = quelle.slice(quelle.indexOf('if (!map || !mapReady || !map.getLayer("fremde-routen-line")) return;'));
+    const effekt = stelle.slice(0, stelle.indexOf("}, ["));
+    expect(effekt).toMatch(
+      /setLayoutProperty\(\s*"fremde-routen-line",\s*"visibility",\s*showVa \? "visible" : "none",?\s*\)/,
+    );
+    // Und die Abhaengigkeiten: ohne `showVa` liefe der Effekt beim
+    // Umschalten nicht.
+    const deps = stelle.slice(stelle.indexOf("}, ["), stelle.indexOf("}, [") + 40);
+    expect(deps).toMatch(/\[\s*showVa\s*,/);
+  });
+
+  it("zieht die Sichtbarkeit nach einem Kartenstil-Wechsel nach", () => {
+    // `addOverlays` legt die Ebene neu an — neue Ebenen sind sichtbar.
+    // Ohne das Nachziehen kaemen die Routen zurueck, obwohl die
+    // Kollegen-Anzeige aus ist (Abnahme 20.09.2026). Der Effekt oben
+    // rettet das NICHT: seine Abhaengigkeiten aendern sich dabei nicht.
+    const taxi = quelle.slice(quelle.indexOf("const taxiVis = showTaxiRef.current"));
+    const rest = taxi.slice(0, 900);
+    expect(rest).toMatch(
+      /setLayoutProperty\(\s*"fremde-routen-line",\s*"visibility",\s*showVaRef\.current \? "visible" : "none",?\s*\)/,
+    );
+    // Ein State statt eines Refs waere hier immer der Stand vom ersten
+    // Rendern — `addOverlays` haengt an einem einmaligen Handler.
+    expect(quelle).toMatch(/const showVaRef = useRef\(showVa\);\s*\n\s*showVaRef\.current = showVa;/);
   });
 
   it("stellt eingeblendete Routen nach einem Neuaufbau der Karte wieder her", () => {

@@ -14681,13 +14681,15 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
     // `planned_waypoints`. Sobald vorn eine eigene Abflugzeile steht, sind
     // beide Listen verschieden lang, und der Index zeigte auf den Fix
     // DAVOR — eine Entfernung, die waechst statt zu schrumpfen (Abnahme
-    // 20.09.2026). Ein Laengenvergleich waere nur geraten: Nach einer
-    // Routenaenderung oder bei einer eingefrorenen Auswertung stimmt er
-    // nicht mehr. Die Kennung stimmt immer.
+    // 20.09.2026). Die Kennung sucht den Fix, sie stimmt immer.
     // Kommt eine Kennung zweimal vor (Warteschleife, SID/STAR-
-    // Ueberschneidung), entscheidet die Naehe zum Zeilen-Index — genau wie
-    // bei der Zuordnung der Messungen. Der erste Treffer waere sonst
-    // willkuerlich (Abnahme 20.09.2026).
+    // Ueberschneidung), entscheidet erst dann die Naehe zum uebersetzten
+    // Zeilen-Index — genau wie bei der Zuordnung der Messungen. Diese
+    // Uebersetzung ist ein Laengenvergleich und damit nur so gut wie die
+    // Annahme, dass die Zeilen vorn um die Abflugzeile laenger sind;
+    // stimmt sie einmal nicht, faellt die Wahl auf den ersten Treffer
+    // zurueck statt daneben (`saturating_sub`). Entscheider bleibt die
+    // Kennung, der Index ist nur der Stichentscheid (Abnahme 20.09.2026).
     let naechster_nm = match (naechster, stats.last_known_lat, stats.last_known_lon) {
         (Some(i), Some(la), Some(lo)) => {
             entfernung_zur_zeile(&zeilen, &stats.planned_waypoints, i, la, lo)
