@@ -18463,7 +18463,13 @@ mod konten_isolierung_runde_neun_wiring_tests {
     /// JSONL-Upload-Schritte DANACH lesen aber erneut den aktuellen Zustand
     /// — ein Kontowechsel in der Luecke dazwischen darf diese Best-Effort-
     /// Kanaele nicht mit dem FALSCHEN Account weiterlaufen lassen.
-    #[test]
+    ///
+    /// ⚠ Dieser Doc-Block gehoert zu
+    /// `queue_worker_prueft_identitaet_erneut_vor_mqtt_und_log_upload`
+    /// weiter unten. Wer hier etwas einfuegt, schiebt sonst dessen
+    /// `#[test]` auf die eigene Funktion — und der Waechter laeuft
+    /// stillschweigend nicht mehr (Abnahme 20.09.2026, zweite Runde).
+    ///
     /// Ein Flug, der vor v1.7.40 begann, bekommt seine Sprit-Planwerte
     /// nachgeladen.
     ///
@@ -18535,6 +18541,7 @@ mod konten_isolierung_runde_neun_wiring_tests {
         );
     }
 
+    #[test]
     fn queue_worker_prueft_identitaet_erneut_vor_mqtt_und_log_upload() {
         const SRC: &str = include_str!("lib.rs");
         let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
@@ -19434,6 +19441,19 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                     .expect("authenticated_pilot_id lock")
                     .map(|id| id.to_string())
                     == Some(aktuelle_identitaet.clone());
+                if !identitaet_vor_landung && q.landung.is_some() {
+                    // Laut sagen, wie der PIREP-Pfad weiter unten auch.
+                    // Still verwerfen waere das Schlimmste: Der Bericht
+                    // geht gleich darauf raus, der Eintrag wird entfernt,
+                    // und auf DIESEM Pfad traegt auch das Flugprotokoll
+                    // nichts nach — der Upload haengt am selben
+                    // Identitaets-Riegel (Abnahme 20.09.2026).
+                    tracing::warn!(
+                        pirep_id = %q.pirep_id,
+                        "pirep_queue: Konto wechselte waehrend der Verarbeitung — \
+                         die Landung wird NICHT nachgeschickt"
+                    );
+                }
                 if let Some(json) = q.landung.clone().filter(|_| identitaet_vor_landung) {
                     let gelesen = serde_json::from_value::<aeroacars_mqtt::TouchdownPayload>(json);
                     let gesendet = match gelesen {
@@ -21253,18 +21273,21 @@ mod client_health_report_tests {
 /// Doppelt abgelegt schadet nicht: `senden` schreibt dieselbe Datei
 /// (Kennung + Aufsetzzeit + Revision) noch einmal, atomar und mit
 /// gleichem Inhalt, und der Recorder riegelt ueber die Revision.
-/// Wie lange auf die Bestätigung der Landung gewartet wird, bevor der
-/// Flugbericht trotzdem rausgeht. Der Bericht ist wichtiger als seine
-/// Diagnose — aber die Reihenfolge soll stimmen, wenn es geht.
-const LANDUNG_ACK_FRIST: std::time::Duration = std::time::Duration::from_secs(15);
-
-/// Hält fest, ob der Broker die Landung bestätigt hat.
 ///
 /// Bis v1.7.40 ging die Landung blind raus. Riss die Leitung im
 /// Aufsetzmoment — und genau dann riss sie bei drei Flügen am 20.09.2026,
 /// rund zehn Sekunden nach dem Aufsetzen —, war sie weg. Der Server sah
 /// einen Flugbericht ohne Landung, hielt ihn für unvollständig und stellte
 /// ihn in die Prüfliste, während der Pilot eine Note sah, die nie ankam.
+/// Wie lange auf die Bestätigung der Landung gewartet wird, bevor der
+/// Flugbericht trotzdem rausgeht. Der Bericht ist wichtiger als seine
+/// Zustellmeldung — aber die Reihenfolge soll stimmen, wenn es geht.
+const LANDUNG_ACK_FRIST: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Hält fest, ob der Broker die Landung bestätigt hat.
+///
+/// Bis v1.7.40 ging die Landung blind raus. Riss die Leitung im
+/// Aufsetzmoment, war sie weg, und niemand merkte es.
 fn landung_zustellung_vermerken(app: &AppHandle, pirep_id: &str, ok: bool) {
     let state = app.state::<AppState>();
     let guard = state.active_flight.lock().expect("active_flight lock");
