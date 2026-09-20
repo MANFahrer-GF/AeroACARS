@@ -50864,6 +50864,7 @@ pub fn run() {
             fenster::fenster_an_inhalt_anpassen,
             vdgs_fenster_offen,
             vdgs::vdgs_stand,
+            vdgs::vdgs_rufzeichen_setzen,
             navdata_zwischenspeicher_bestand,
             landing_backup_now,
             landing_backup_restore,

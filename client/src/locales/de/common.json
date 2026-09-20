@@ -2532,7 +2532,9 @@
       "in_min": "in {{n}} min",
       "vor_min": "vor {{n}} min",
       "tobt_setzen": "TOBT SETZEN",
-      "tobt_setzen_grund": "Ohne TOBT keine TSAT — im VDGS-Fenster setzen"
+      "tobt_setzen_grund": "Ohne TOBT keine TSAT — im VDGS-Fenster setzen",
+      "kein_eintrag": "kein CDM-Eintrag",
+      "rufzeichen_aendern": "Rufzeichen ändern — gilt auch für den Funk"
     }
   }
 }

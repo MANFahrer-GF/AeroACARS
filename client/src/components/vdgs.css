@@ -178,3 +178,55 @@
   font-size: var(--fs-200);
   color: var(--vdgs-leise);
 }
+
+/* Kein CDM-Eintrag: eine schmale Zeile statt gar nichts.
+   Sie sagt, WOMIT gefragt wurde — vorher verschwand die Platte, und
+   damit die einzige Auskunft darueber (Thomas, 20.09.2026). Bewusst
+   kein Geraet: an Plaetzen ohne A-CDM stuende sonst dauerhaft eine
+   leere Platte im Cockpit. */
+.vdgs--leer {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-left-color: var(--vdgs-leise);
+  color: var(--vdgs-leise);
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-mono);
+}
+.vdgs--leer .vdgs__quelle {
+  margin-left: 0;
+}
+.vdgs__leer-text {
+  margin-left: auto;
+}
+
+/* Das Rufzeichen ist anklickbar — es ist der Schluessel zum Eintrag. */
+.vdgs__rufzeichen--knopf {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  padding: 1px var(--sp-1);
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.vdgs__rufzeichen--knopf:hover,
+.vdgs__rufzeichen--knopf:focus-visible {
+  /* Eigene Regel: ein globales button:hover setzt sonst dunkel auf
+     dunkel (bekannte Hausfalle). */
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--vdgs-linie);
+  color: #dfe7e3;
+}
+.vdgs__rufzeichen--feld {
+  width: 9ch;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--vdgs-an);
+  border-radius: var(--r-md);
+  padding: 1px var(--sp-1);
+  font: inherit;
+  letter-spacing: inherit;
+  color: #dfe7e3;
+  text-transform: uppercase;
+}

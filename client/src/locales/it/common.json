@@ -2525,7 +2525,9 @@
       "in_min": "tra {{n}} min",
       "vor_min": "{{n}} min fa",
       "tobt_setzen": "IMPOSTA TOBT",
-      "tobt_setzen_grund": "Senza TOBT nessuna TSAT — impostala nella finestra VDGS"
+      "tobt_setzen_grund": "Senza TOBT nessuna TSAT — impostala nella finestra VDGS",
+      "kein_eintrag": "nessuna voce CDM",
+      "rufzeichen_aendern": "Cambia indicativo — vale anche per il datalink"
     }
   },
   "msfs_hud": {

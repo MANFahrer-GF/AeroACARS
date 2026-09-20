@@ -279,13 +279,29 @@ fn aus_rumpf(rumpf: &[u8]) -> Result<Option<VdgsStand>, String> {
     }
 }
 
+/// Was die Anzeige bekommt: das verwendete Rufzeichen UND der Stand.
+///
+/// Das Rufzeichen faehrt immer mit, auch wenn es keinen Eintrag gibt.
+/// Vorher verschwand die Platte in dem Fall ganz — und damit die
+/// einzige Auskunft darueber, WOMIT gefragt wurde. Genau daran ist ein
+/// Fehler lange unbemerkt geblieben: falsches Rufzeichen, leeres Band,
+/// und der Pilot sucht die Ursache beim Dienst (Thomas, 20.09.2026:
+/// „ist das nicht besser als was anzunehmen").
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VdgsAntwort {
+    /// Das Rufzeichen, unter dem gefragt wurde.
+    pub gefragt_als: String,
+    /// Der Eintrag, wenn es einen gibt.
+    pub stand: Option<VdgsStand>,
+}
+
 /// Stand der eigenen Abflugfolge, oder `None`, wenn es nichts zu zeigen
 /// gibt: kein laufender Flug, kein Eintrag drueben, oder der Dienst
 /// antwortet nicht. Ein Ausfall ist bewusst kein Fehler — das Band
 /// verschwindet dann einfach, statt im Cockpit eine Fehlermeldung zu
 /// hinterlassen.
 #[tauri::command]
-pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsStand> {
+pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
     // Erst das Rufzeichen (kurz, synchron, keine Sperre ueber ein await),
     // dann der Netzabruf.
     // NUR bei laufendem Flug — und zwar hier im Backend geprueft, nicht
@@ -319,14 +335,21 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsStand> {
     }
     let schl = schluessel(&flug_id, &callsign);
 
+    let antwort = |stand: Option<VdgsStand>| {
+        Some(VdgsAntwort {
+            gefragt_als: callsign.clone(),
+            stand,
+        })
+    };
+
     if let Some(gemerkt) = aus_speicher(&schl, MIN_ABSTAND) {
-        return gemerkt;
+        return antwort(gemerkt);
     }
 
     match abrufen(&callsign).await {
         Ok(stand) => {
             in_speicher(&schl, stand.clone());
-            stand
+            antwort(stand)
         }
         Err(e) => {
             tracing::debug!(target: "vdgs", "VDGS-Abruf fehlgeschlagen: {e}");
@@ -334,7 +357,9 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsStand> {
             // versucht werden. Solange der letzte gute Stand nicht zu alt
             // ist, bleibt er stehen — sonst flackert das Band bei jedem
             // Netzhaenger weg und wieder hin.
-            aus_speicher(&schl, HOECHSTALTER_BEI_AUSFALL).flatten()
+            // Auch im Fehlerfall das Rufzeichen mitgeben: Die Platte
+            // zeigt dann die schmale Zeile statt ganz zu verschwinden.
+            antwort(aus_speicher(&schl, HOECHSTALTER_BEI_AUSFALL).flatten())
         }
     }
 }
@@ -602,4 +627,32 @@ mod tests {
         };
         assert_eq!(aufbereiten(&f).taxi_min, None);
     }
+}
+
+/// Das Rufzeichen setzen, unter dem gefunkt UND abgefragt wird.
+///
+/// Schreibt die Uebersteuerung in den Hoppie-Einstellungen — dieselbe,
+/// die `resolve_callsign` zuerst nimmt. Gezielt statt „alle
+/// Einstellungen lesen, eine aendern, zurueckschreiben": Sonst
+/// ueberschriebe ein Klick hier das, was jemand gerade im
+/// Einstellungs-Fenster geaendert hat.
+///
+/// Ein leerer Wert LOESCHT die Uebersteuerung — dann gilt wieder das
+/// Rufzeichen des Fluges.
+#[tauri::command]
+pub fn vdgs_rufzeichen_setzen(app: AppHandle, callsign: String) -> Result<String, crate::UiError> {
+    let sauber = sauberes_rufzeichen(&callsign);
+    let mut einstellungen = crate::hoppie::settings::read_settings(&app);
+    einstellungen.callsign_override = if sauber.is_empty() {
+        None
+    } else {
+        Some(sauber.clone())
+    };
+    crate::hoppie::settings::write_settings(&app, &einstellungen);
+    // Der gemerkte Stand gehoert zum ALTEN Rufzeichen und waere jetzt
+    // falsch — verwerfen, damit der naechste Takt frisch fragt.
+    if let Ok(mut g) = speicher().lock() {
+        *g = None;
+    }
+    Ok(sauber)
 }

@@ -9,7 +9,7 @@
 //      gefragt — Etikette gegenüber einem Dienst, den wir nicht bezahlen.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -102,12 +102,12 @@ describe("ampel", () => {
 
 describe("VdgsPlatte", () => {
   it("zeigt nichts ohne Eintrag", () => {
-    const { container } = render(<VdgsPlatte stand={null} />);
+    const { container } = render(<VdgsPlatte antwort={null} />);
     expect(container.firstChild).toBeNull();
   });
 
   it("zeigt Rufzeichen, Platz, Bahn und die Zeiten", () => {
-    render(<VdgsPlatte stand={STAND} />);
+    render(<VdgsPlatte antwort={{ gefragt_als: STAND.callsign, stand: STAND }} />);
     const band = screen.getByTestId("vdgs-band");
     expect(band.textContent).toContain("GSG421");
     expect(band.textContent).toContain("LEBL");
@@ -122,7 +122,7 @@ describe("VdgsPlatte", () => {
     // Ohne TOBT gibt es keine TSAT und kein Sequencing — der Flug steht
     // nicht in der Folge. Das ist kein Leerwert, sondern eine offene
     // Aufgabe (Thomas, 20.09.2026: "die muss doch gesetzt werden").
-    render(<VdgsPlatte stand={{ ...STAND, tobt: "", tsat: "" }} />);
+    render(<VdgsPlatte antwort={{ gefragt_als: STAND.callsign, stand: { ...STAND, tobt: "", tsat: "" } }} />);
     expect(screen.getByText("TOBT SETZEN")).toBeTruthy();
     // Und keine grosse Leerzahl mehr an der Stelle. (In der kleinen
     // Feldreihe darunter steht weiter "--:--" fuer CTOT usw. — geprueft
@@ -137,14 +137,14 @@ describe("VdgsPlatte", () => {
   it("zeigt die Restzeit nicht, solange keine TOBT steht", () => {
     // Sie haette keinen Bezug: Ohne TOBT gibt es nichts, worauf man
     // wartet.
-    render(<VdgsPlatte stand={{ ...STAND, tobt: "", tsat: "" }} />);
+    render(<VdgsPlatte antwort={{ gefragt_als: STAND.callsign, stand: { ...STAND, tobt: "", tsat: "" } }} />);
     expect(screen.queryByText(/in \d+ min|vor \d+ min/)).toBeNull();
   });
 
   it("nimmt die TOBT als Hauptzahl, wo es keine TSAT gibt", () => {
     // Plätze ohne CDM-Sequenzierung (EDDF, EGLL) liefern keine TSAT —
     // dort stünde sonst dauerhaft „--:--" als größte Zahl im Bild.
-    render(<VdgsPlatte stand={{ ...STAND, tsat: "" }} />);
+    render(<VdgsPlatte antwort={{ gefragt_als: STAND.callsign, stand: { ...STAND, tsat: "" } }} />);
     const gross = screen.getByTestId("vdgs-band").querySelector(".vdgs__gross");
     expect(gross?.textContent).toContain("TOBT");
     expect(gross?.textContent).toContain("15:44");
@@ -152,7 +152,7 @@ describe("VdgsPlatte", () => {
   });
 
   it("nimmt die TSAT, sobald es eine gibt", () => {
-    render(<VdgsPlatte stand={STAND} />);
+    render(<VdgsPlatte antwort={{ gefragt_als: STAND.callsign, stand: STAND }} />);
     const gross = screen.getByTestId("vdgs-band").querySelector(".vdgs__gross");
     expect(gross?.textContent).toContain("TSAT");
     expect(gross?.textContent).toContain("15:46");
@@ -162,13 +162,73 @@ describe("VdgsPlatte", () => {
 /** Probe-Komponente: ruft nur den Haken auf, damit sein Verhalten
  *  prüfbar ist, ohne das ganze Cockpit zu rendern. */
 function Probe({ aktiv }: { aktiv: boolean }) {
-  const stand = useVdgsStand(aktiv);
-  return <span data-testid="probe">{stand ? stand.callsign : "leer"}</span>;
+  const [antwort] = useVdgsStand(aktiv);
+  return <span data-testid="probe">{antwort?.stand ? antwort.stand.callsign : "leer"}</span>;
 }
+
+describe("Rufzeichen in der Platte", () => {
+  it("zeigt bei fehlendem Eintrag eine schmale Zeile MIT dem Rufzeichen", () => {
+    // Vorher verschwand die Platte ganz — und damit die einzige
+    // Auskunft darueber, WOMIT gefragt wurde. Genau daran blieb ein
+    // falsches Rufzeichen unbemerkt (Thomas, 20.09.2026).
+    render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null }} />);
+    expect(screen.getByTestId("vdgs-band-leer")).toBeTruthy();
+    expect(screen.getByText("GSG421")).toBeTruthy();
+    expect(screen.getByText("kein CDM-Eintrag")).toBeTruthy();
+    // Und es ist KEINE volle Platte — sonst stuende an jedem Platz
+    // ohne A-CDM ein leeres Geraet im Cockpit.
+    expect(screen.queryByTestId("vdgs-band")).toBeNull();
+  });
+
+  it("schreibt ein geaendertes Rufzeichen und laedt neu", async () => {
+    const neuGeladen = vi.fn();
+    invoke.mockClear();
+    render(
+      <VdgsPlatte
+        antwort={{ gefragt_als: "GSG421", stand: null }}
+        onRufzeichenGesetzt={neuGeladen}
+      />,
+    );
+    await act(async () => {
+      screen.getByText("GSG421").click();
+    });
+    const feld = screen.getByLabelText(/Rufzeichen/i) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(feld, { target: { value: "sas4084" } });
+      fireEvent.keyDown(feld, { key: "Enter" });
+    });
+    // Grossgeschrieben, und ueber den EINEN Befehl, der auch den Funk
+    // betrifft — keine vierte Rufzeichen-Quelle.
+    expect(invoke).toHaveBeenCalledWith("vdgs_rufzeichen_setzen", {
+      callsign: "SAS4084",
+    });
+    await waitFor(() => expect(neuGeladen).toHaveBeenCalled());
+  });
+
+  it("verwirft die Aenderung bei Escape", async () => {
+    invoke.mockClear();
+    render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null }} />);
+    await act(async () => {
+      screen.getByText("GSG421").click();
+    });
+    const feld = screen.getByLabelText(/Rufzeichen/i) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(feld, { target: { value: "FALSCH" } });
+      fireEvent.keyDown(feld, { key: "Escape" });
+    });
+    // Sonst genuegte ein versehentliches Escape, um das FUNK-Rufzeichen
+    // zu aendern.
+    expect(invoke).not.toHaveBeenCalledWith(
+      "vdgs_rufzeichen_setzen",
+      expect.anything(),
+    );
+    expect(screen.getByText("GSG421")).toBeTruthy();
+  });
+});
 
 describe("useVdgsStand", () => {
   it("fragt die fremde Seite gar nicht, solange nichts läuft", () => {
-    invoke.mockResolvedValue(STAND);
+    invoke.mockResolvedValue({ gefragt_als: STAND.callsign, stand: STAND });
     render(<Probe aktiv={false} />);
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -176,7 +236,7 @@ describe("useVdgsStand", () => {
   it("fragt genau einmal, sobald die Abflugfolge läuft", async () => {
     // Gegenprobe zur Zeile darüber — sonst wäre „nicht gefragt" auch
     // dann grün, wenn der Haken überhaupt nie abriefe.
-    invoke.mockResolvedValue(STAND);
+    invoke.mockResolvedValue({ gefragt_als: STAND.callsign, stand: STAND });
     render(<Probe aktiv={true} />);
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("vdgs_stand");
@@ -189,7 +249,7 @@ describe("useVdgsStand", () => {
     // gruen, selbst wenn man den ganzen Fehlerzweig entfernte
     // (Abnahme 20.09.2026, per Mutation nachgemessen).
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    invoke.mockResolvedValueOnce(STAND);
+    invoke.mockResolvedValueOnce({ gefragt_als: STAND.callsign, stand: STAND });
     render(<Probe aktiv={true} />);
     expect(await screen.findByText(STAND.callsign)).toBeTruthy();
 

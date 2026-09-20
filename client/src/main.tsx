@@ -119,7 +119,7 @@ function VdgsVorschau() {
       d.getUTCMinutes(),
     ).padStart(2, "0")}`;
   };
-  const faelle: Array<[string, VdgsStand]> = [
+  const faelle: Array<[string, VdgsStand | null]> = [
     [
       "Freigegeben — TSAT in Reichweite",
       {
@@ -163,6 +163,9 @@ function VdgsVorschau() {
         rwy_sid: "25/XENOL5A",
       },
     ],
+    // Kein CDM-Eintrag: die schmale Zeile mit dem Rufzeichen. Ohne sie
+    // war nicht zu sehen, WOMIT gefragt wurde (20.09.2026).
+    ["Kein Eintrag — Rufzeichen pruefbar", null],
   ];
 
   return (
@@ -190,7 +193,7 @@ function VdgsVorschau() {
           >
             {titel}
           </div>
-          <VdgsPlatte stand={stand} />
+          <VdgsPlatte antwort={{ gefragt_als: stand?.callsign ?? "GSG421", stand }} />
         </div>
       ))}
     </div>

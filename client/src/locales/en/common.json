@@ -2532,7 +2532,9 @@
       "in_min": "in {{n}} min",
       "vor_min": "{{n}} min ago",
       "tobt_setzen": "SET TOBT",
-      "tobt_setzen_grund": "No TOBT, no TSAT — set it in the VDGS window"
+      "tobt_setzen_grund": "No TOBT, no TSAT — set it in the VDGS window",
+      "kein_eintrag": "no CDM entry",
+      "rufzeichen_aendern": "Change callsign — also applies to datalink"
     }
   }
 }

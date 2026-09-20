@@ -28,6 +28,13 @@ import "./vdgs.css";
 /** Wie `VdgsStand` in src-tauri/src/vdgs.rs. Zeiten sind `HH:MM` (UTC)
  *  oder leer — umgerechnet wird schon dort, damit hier nur angezeigt
  *  wird (siehe die beiden Zeitformate der Gegenseite). */
+/** Was der Befehl liefert: das verwendete Rufzeichen UND der Stand. */
+export interface VdgsAntwort {
+  /** Womit gefragt wurde — auch dann gesetzt, wenn es keinen Eintrag gibt. */
+  gefragt_als: string;
+  stand: VdgsStand | null;
+}
+
 export interface VdgsStand {
   callsign: string;
   departure: string;
@@ -83,9 +90,13 @@ export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
  * und jede Minute ein Neuzeichnen für den Countdown — sonst stünde „in
  * 4 min" eine Minute später immer noch da.
  */
-export function useVdgsStand(aktiv: boolean): VdgsStand | null {
-  const [stand, setStand] = useState<VdgsStand | null>(null);
+export function useVdgsStand(aktiv: boolean): [VdgsAntwort | null, () => void] {
+  const [stand, setStand] = useState<VdgsAntwort | null>(null);
   const [, setTakt] = useState(0);
+  // Nach einer Rufzeichen-Aenderung sofort neu fragen, statt bis zum
+  // naechsten Takt zu warten — sonst sieht der Pilot bis zu eine Minute
+  // lang weiter „kein Eintrag" und haelt seine Korrektur fuer wirkungslos.
+  const [neuLadenZaehler, setNeuLadenZaehler] = useState(0);
 
   useEffect(() => {
     if (!aktiv) {
@@ -94,7 +105,7 @@ export function useVdgsStand(aktiv: boolean): VdgsStand | null {
     }
     let abgemeldet = false;
     const holen = () => {
-      void invoke<VdgsStand | null>("vdgs_stand")
+      void invoke<VdgsAntwort | null>("vdgs_stand")
         .then((s) => {
           if (!abgemeldet) setStand(s ?? null);
         })
@@ -109,7 +120,7 @@ export function useVdgsStand(aktiv: boolean): VdgsStand | null {
       abgemeldet = true;
       window.clearInterval(id);
     };
-  }, [aktiv]);
+  }, [aktiv, neuLadenZaehler]);
 
   useEffect(() => {
     if (!aktiv || !stand) return;
@@ -117,12 +128,96 @@ export function useVdgsStand(aktiv: boolean): VdgsStand | null {
     return () => window.clearInterval(id);
   }, [aktiv, stand]);
 
-  return stand;
+  return [stand, () => setNeuLadenZaehler((n) => n + 1)];
 }
 
-export function VdgsPlatte({ stand }: { stand: VdgsStand | null }) {
+/**
+ * Das Rufzeichen — sichtbar und aenderbar.
+ *
+ * Es ist der Schluessel zum CDM-Eintrag. Passt es nicht, bleibt das Band
+ * leer, und vorher war nicht einmal zu sehen, WOMIT gefragt wurde
+ * (Thomas, 20.09.2026: „ist das nicht besser als was anzunehmen").
+ * Geschrieben wird die Uebersteuerung, die auch der Funk nimmt — eine
+ * Quelle, kein Auseinanderlaufen.
+ */
+function Rufzeichen({
+  wert,
+  onGesetzt,
+}: {
+  wert: string;
+  onGesetzt: () => void;
+}) {
   const { t } = useTranslation();
-  if (!stand) return null;
+  const [bearbeiten, setBearbeiten] = useState(false);
+  const [entwurf, setEntwurf] = useState(wert);
+
+  if (!bearbeiten) {
+    return (
+      <button
+        type="button"
+        className="vdgs__rufzeichen vdgs__rufzeichen--knopf"
+        title={t("cdm.band.rufzeichen_aendern", "Rufzeichen ändern")}
+        onClick={() => {
+          setEntwurf(wert);
+          setBearbeiten(true);
+        }}
+      >
+        {wert}
+      </button>
+    );
+  }
+
+  const speichern = () => {
+    setBearbeiten(false);
+    void invoke("vdgs_rufzeichen_setzen", { callsign: entwurf })
+      .then(onGesetzt)
+      .catch(() => {});
+  };
+
+  return (
+    <input
+      className="vdgs__rufzeichen vdgs__rufzeichen--feld"
+      value={entwurf}
+      autoFocus
+      maxLength={16}
+      aria-label={t("cdm.band.rufzeichen_aendern", "Rufzeichen ändern")}
+      onChange={(e) => setEntwurf(e.target.value.toUpperCase())}
+      onBlur={speichern}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") speichern();
+        // Abbrechen laesst den alten Wert stehen — sonst genuegte ein
+        // versehentliches Escape, um das Funk-Rufzeichen zu aendern.
+        if (e.key === "Escape") setBearbeiten(false);
+      }}
+    />
+  );
+}
+
+export function VdgsPlatte({
+  antwort,
+  onRufzeichenGesetzt,
+}: {
+  antwort: VdgsAntwort | null;
+  onRufzeichenGesetzt?: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!antwort) return null;
+  const stand = antwort.stand;
+  const neuLaden = onRufzeichenGesetzt ?? (() => {});
+
+  // Kein Eintrag: schmale Zeile statt gar nichts. Sie sagt, womit
+  // gefragt wurde, und laesst es richtigstellen.
+  if (!stand) {
+    return (
+      <div className="vdgs vdgs--leer" data-testid="vdgs-band-leer">
+        <span className="vdgs__quelle">VDGS</span>
+        <Rufzeichen wert={antwort.gefragt_als} onGesetzt={neuLaden} />
+        <span className="vdgs__leer-text">
+          {t("cdm.band.kein_eintrag", "kein CDM-Eintrag")}
+        </span>
+      </div>
+    );
+  }
 
   const zustand = ampel(stand);
   // Die große Zahl ist die, auf die gewartet wird: TSAT, wo das CDM
@@ -137,7 +232,7 @@ export function VdgsPlatte({ stand }: { stand: VdgsStand | null }) {
   return (
     <div className={`vdgs vdgs--${zustand}`} data-testid="vdgs-band">
       <div className="vdgs__kopf">
-        <span className="vdgs__rufzeichen">{stand.callsign}</span>
+        <Rufzeichen wert={antwort.gefragt_als} onGesetzt={neuLaden} />
         <span className="vdgs__platz">{stand.departure}</span>
         {stand.rwy_sid && <span className="vdgs__sid">{stand.rwy_sid}</span>}
         <span className="vdgs__quelle">VDGS</span>
