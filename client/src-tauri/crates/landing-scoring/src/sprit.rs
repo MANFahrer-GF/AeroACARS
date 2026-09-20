@@ -402,8 +402,7 @@ pub struct Wegpunkt {
 }
 
 /// Der Fuel-Check an einem Wegpunkt, wie ihn eine Crew macht (EFOB):
-/// Tankstand jetzt, minus der geplante Rest, hochgerechnet mit dem bisher
-/// gemessenen Verhältnis von Ist- zu Plan-Verbrauch.
+/// Tankstand jetzt, minus der geplante Rest.
 ///
 /// Thomas (19.09.2026) hat das gegen „Contingency bisher" gewählt, weil es
 /// nach vorn schaut: Ein hoher Verbrauch fällt auf, bevor er die Reserve
@@ -510,10 +509,24 @@ pub fn wegpunkte_auswerten(zeilen: &mut [Wegpunkt], contingency_kg: Option<f32>)
     // minus geplanter Rest ist ab dem ersten Ueberflug stabil. Beim selben
     // Flug traefe ACK — 26 Minuten nach dem Abheben — den FMS-Wert auf
     // 130 kg genau. Den haette der Riegel verschwiegen.
-    for z in zeilen.iter_mut() {
+    for (i, z) in zeilen.iter_mut().enumerate() {
         z.landung_hochgerechnet_kg = None;
         z.ampel = None;
         if z.zustand == WegpunktZustand::Offen {
+            continue;
+        }
+        // Die Abflugzeile bleibt ohne Ampel und ohne Hochrechnung.
+        //
+        // Dort ist noch kein Meter geflogen: `hoch` waere schlicht der
+        // Plan-Landesprit plus dem, was mehr getankt wurde. Das ist keine
+        // Aussage ueber den Flug, sondern ueber die Betankung — und die
+        // steht in derselben Zeile bereits im Klartext ("3865 kg mehr
+        // getankt als geplant"). Bis 20.09.2026 hat das der 10-%-Riegel
+        // nebenbei miterledigt; seit er weg ist, steht es hier ausdrueck-
+        // lich. Beim Einstieg in der Luft traegt Zeile 0 keine Messung und
+        // faellt schon oben heraus — der erste echte Ueberflug bekommt
+        // seine Ampel.
+        if i == 0 {
             continue;
         }
         let (Some(ist), Some(plan)) = (z.ist_an_bord_kg, z.plan_an_bord_kg) else {
@@ -900,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn fuel_check_rechnet_den_mehrverbrauch_auf_die_landung_hoch() {
+    fn fuel_check_traegt_die_abweichung_als_betrag_weiter() {
         // Jetzt Plan 5480, Ist 5360 — 120 kg unter Plan. Rest bis zur
         // Landung laut Plan 960 kg → 5360 − 960 = 4400. Die Abweichung
         // wird als BETRAG weitergetragen, nicht gestreckt: 4520 − 120.
@@ -1047,7 +1060,9 @@ mod tests {
         // Der Steigflug kostete 4.545 kg mehr als geplant. Auf die ganze
         // Reststrecke hochgerechnet ergab das bei BRADD "-3748 kg bei der
         // Landung" — rot —, zwei Fixe spaeter "+20 209 kg" — gruen.
-        // Mit TOC als Faktor-Basis steht eine ruhige Reihe da.
+        // Ohne Hochskalierung steht eine ruhige Reihe da. (Den Faktor
+        // erst ab TOC zu bilden war ein Zwischenschritt und half nicht:
+        // dort stand dann 30 893 kg.)
         let mut z = vec![
             wp("BETTE", 103417.0, 20000.0, Some(107282.0), WegpunktZustand::Gemessen),
             wp("ACK", 97262.0, 20000.0, Some(96582.0), WegpunktZustand::Gemessen),
@@ -1086,6 +1101,25 @@ mod tests {
     }
 
     #[test]
+    fn die_abflugzeile_bekommt_keine_ampel() {
+        // Dort ist kein Meter geflogen. Die Hochrechnung waere nur
+        // "Plan-Landesprit plus Uebertankung" — eine Aussage ueber die
+        // Betankung, die in derselben Zeile schon im Klartext steht.
+        // Bis 20.09.2026 hat das der 10-%-Riegel nebenbei miterledigt.
+        let mut z = vec![
+            wp("EDDL", 9491.0, 2000.0, Some(9783.0), WegpunktZustand::Gemessen),
+            wp("GEMMA", 9245.0, 2000.0, Some(9377.0), WegpunktZustand::Gemessen),
+            wp("EDDF", 3791.0, 2000.0, None, WegpunktZustand::Offen),
+        ];
+        wegpunkte_auswerten(&mut z, Some(300.0));
+        assert!(z[0].ampel.is_none(), "der Abflug hat nichts verbraucht");
+        assert!(z[0].landung_hochgerechnet_kg.is_none());
+        // Die Zeile DANACH rechnet sehr wohl — sonst waere der Riegel
+        // nur unter anderem Namen zurueck.
+        assert!(z[1].ampel.is_some(), "der erste Ueberflug rechnet mit");
+    }
+
+    #[test]
     fn die_ersten_minuten_rechnen_jetzt_mit() {
         // DLH #1439: 292 kg mehr getankt, Startschub gegen ein winziges
         // Planstück. Mit der Hochskalierung standen hier drei ROTE Zeilen,
@@ -1117,17 +1151,19 @@ mod tests {
             wp("EDDF", 3791.0, 2800.0, None, WegpunktZustand::Offen),
         ];
         wegpunkte_auswerten(&mut z, Some(300.0));
-        // Jede gemessene Zeile bekommt ihre Zahl, schon 246 kg nach dem
+        // Jede geflogene Zeile bekommt ihre Zahl, schon 246 kg nach dem
         // Abheben. Der Riegel haette die beiden ersten verschwiegen.
-        for i in 0..3 {
+        // Zeile 0 ist der Abflug — die bleibt bewusst stumm, siehe
+        // `die_abflugzeile_bekommt_keine_ampel`.
+        for i in 1..3 {
             assert!(
                 z[i].landung_hochgerechnet_kg.is_some() && z[i].ampel.is_some(),
                 "Zeile {i} sollte gerechnet werden",
             );
             assert_ne!(z[i].ampel, Some(Ampel::Rot), "Zeile {i} war nie in Not");
         }
-        // Und sie stehen ruhig beieinander: 4.083 / 3.923 / 3.873 kg.
-        let werte: Vec<f32> = (0..3)
+        // Und sie stehen ruhig beieinander: 3.923 / 3.873 kg.
+        let werte: Vec<f32> = (1..3)
             .map(|i| z[i].landung_hochgerechnet_kg.unwrap())
             .collect();
         let spanne = werte.iter().cloned().fold(f32::MIN, f32::max)

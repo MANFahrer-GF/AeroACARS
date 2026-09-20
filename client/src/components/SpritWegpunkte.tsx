@@ -388,10 +388,21 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
                         ) : (
                           <>
                             <div>
-                              {abschnittText(
-                                abschnittsverbrauch(z, vorigeMitWert(zeilen, i)),
-                                ueber,
-                              )}
+                              {(() => {
+                                const vorige = vorigeMitWert(zeilen, i);
+                                // Auch dann „≈", wenn die VORIGE Zeile
+                                // uebersprungen wurde: Ihr Tankstand ist
+                                // aus den Nachbarn interpoliert, also ist
+                                // die Aufteilung auf die beiden
+                                // Abschnitte gerechnet, nicht gemessen
+                                // (Abnahme 20.09.2026).
+                                const gerechnet =
+                                  ueber || vorige?.zustand === "uebersprungen";
+                                return abschnittText(
+                                  abschnittsverbrauch(z, vorige),
+                                  gerechnet,
+                                );
+                              })()}
                             </div>
                             {gesamtText(mehrverbrauch(z, bezug)) && (
                               <small style={{ color: LEISE, fontSize: 10.5 }}>

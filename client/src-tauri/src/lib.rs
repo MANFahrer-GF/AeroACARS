@@ -70561,10 +70561,16 @@ mod sprit_wegpunkt_tests {
         let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
         assert_eq!(z[0].zustand, WegpunktZustand::Offen, "Einstiegs-Tankstand als Abflug gemessen");
         assert!(z[0].ist_an_bord_kg.is_none());
-        // Bezug ist BRAVO, der erste Überflug nach dem Einstieg: dort
-        // liegt noch kein Plan-Verbrauch, also auch keine Ampel. Die
-        // Hochrechnung setzt erst danach ein.
-        assert!(z[2].ampel.is_none(), "der Bezugspunkt selbst rechnet nichts hoch");
+        // Bezug ist BRAVO, der erste Überflug nach dem Einstieg. Seit dem
+        // Wegfall der Hochskalierung (20.09.2026) braucht die Rechnung
+        // keinen Anlauf mehr: Tankstand dort minus dem geplanten Rest ist
+        // ab der ersten Messung eine gültige Aussage. Vorher blieb die
+        // Zeile farblos, weil ein Verhältnis aus einem winzigen Planstück
+        // Rauschen gewesen wäre.
+        assert!(
+            z[2].ampel.is_some(),
+            "auch der erste Überflug bekommt seine Hochrechnung",
+        );
         assert_eq!(z[4].zustand, WegpunktZustand::Gemessen, "DELTA wurde überflogen");
         assert!(z[4].ampel.is_some(), "nach genug Strecke gehört die Ampel hin");
     }

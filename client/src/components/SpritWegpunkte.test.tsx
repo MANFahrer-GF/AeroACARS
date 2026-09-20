@@ -41,7 +41,12 @@ describe("SpritWegpunkte", () => {
     // Summe seit dem Abheben aber 120 kg. Genau diese zwei Zahlen liefen
     // vorher zu einer zusammen, und die Spalte meldete an jedem
     // Reiseflug-Fix einen Mehrverbrauch, der laengst hinter einem lag.
-    expect(html).toContain("31 kg mehr auf diesem Abschnitt");
+    // ADEKA davor ist uebersprungen — sein Tankstand ist interpoliert,
+    // also ist auch die Aufteilung auf die beiden Abschnitte gerechnet
+    // und nicht gemessen. Das muss man der Zahl ansehen (Abnahme
+    // 20.09.2026); ohne das stuende hier eine harte Zahl aus weicher
+    // Quelle.
+    expect(html).toContain("≈ 31 kg mehr auf diesem Abschnitt");
     expect(html).toContain("gesamt +120 kg");
     expect(html).toContain("Min. laut OFP 3 790");
     expect((html.match(/data-zustand="offen"/g) ?? []).length).toBe(2);
