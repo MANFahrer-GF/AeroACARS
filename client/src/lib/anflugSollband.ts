@@ -39,6 +39,28 @@ export function gleitwinkelFaktor(winkelGrad?: number | null): number {
   return Math.tan((winkelGrad * Math.PI) / 180) / Math.tan((3 * Math.PI) / 180);
 }
 
+/**
+ * Soll-Sinkrate auf dem Gleitpfad, in fpm (negativ = sinken).
+ *
+ * `null`, wenn die Geschwindigkeit fehlt oder zu klein ist — dann gibt es
+ * kein Soll, und der Aufrufer darf keines erfinden.
+ *
+ * Warum das auch WARNSCHWELLEN betrifft: Am 20.09.2026 bekam Thomas bei
+ * einem perfekten Anflug (−720 fpm bei 139 kt, eigene Prüfung
+ * `stable_at_gate=true`) eine rote „PULL UP"-Meldung. Die Schwelle war
+ * fest auf 700 fpm gesetzt — auf 3° erzeugt aber jede Geschwindigkeit
+ * über rund 132 kt geometrisch mehr als das. Dieselbe Verwechslung wie
+ * bei Thorbens PC-12 vier Tage zuvor, nur an anderer Stelle: eine feste
+ * fpm-Zahl gilt immer nur für ein bestimmtes Flugzeug.
+ */
+export function sollSinkrateFpm(
+  gsKt?: number | null,
+  winkelGrad?: number | null,
+): number | null {
+  if (gsKt == null || !Number.isFinite(gsKt) || gsKt < MIN_GS_KT) return null;
+  return -gsKt * FPM_JE_KT_3_GRAD * gleitwinkelFaktor(winkelGrad);
+}
+
 export interface SollbandProbe {
   gs_kt?: number | null;
   is_flare?: boolean | null;

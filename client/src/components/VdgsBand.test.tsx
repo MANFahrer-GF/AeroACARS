@@ -193,9 +193,21 @@ describe("Rufzeichen in der Platte", () => {
     // Die volle Platte steht da (der Stand ist ja noch brauchbar) …
     expect(screen.getByTestId("vdgs-band")).toBeTruthy();
     expect(screen.getByText(STAND.tsat)).toBeTruthy();
-    // … aber mit Warnung, und die nennt das Alter.
+    // … aber mit Warnung, und die nennt BEIDES: dass der Dienst nicht
+    // antwortet UND wie alt die Zahlen sein koennen.
+    //
+    // Das Muster war erst `/10 Minuten|nicht erreichbar/` — mit ODER.
+    // Damit blieb der Test gruen, wenn die Altersangabe verschwindet,
+    // also genau der Teil, der den Befund behoben hat (Codex, vierte
+    // Runde). Jetzt beide Aussagen einzeln.
     const hinweis = screen.getByTestId("vdgs-alt-hinweis");
-    expect(hinweis.textContent).toMatch(/10 Minuten|nicht erreichbar/i);
+    expect(hinweis.textContent).toMatch(/nicht erreichbar/i);
+    expect(hinweis.textContent).toMatch(/10 Minuten/i);
+
+    // Und die Platte traegt die Alt-Kennzeichnung, die ihre linke Kante
+    // auf Rot setzt — sonst wirkt eine gruene Ampel auf alten Zahlen
+    // beruhigend.
+    expect(screen.getByTestId("vdgs-band").className).toMatch(/\bvdgs--alt\b/);
   });
 
   it("zeigt ohne Stoerung KEINEN Alt-Hinweis", () => {
@@ -207,6 +219,7 @@ describe("Rufzeichen in der Platte", () => {
       />,
     );
     expect(screen.queryByTestId("vdgs-alt-hinweis")).toBeNull();
+    expect(screen.getByTestId("vdgs-band").className).not.toMatch(/\bvdgs--alt\b/);
   });
 
   it("laesst das Rufzeichen hier NICHT aendern", () => {

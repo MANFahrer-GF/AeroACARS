@@ -1,20 +1,93 @@
-# Gates: v1.7.44 — die drei Befunde der dritten Codex-Abnahme
+# Gates: v1.7.44 — Felddefekte aus DLH 373 (KJFK→EDDM) und alle Logbefunde
 
-OWNS: client/src/components/**, client/src-tauri/src/vdgs.rs, docs/release-notes/v1.7.44.md
+OWNS: client/src/components/**, client/src-tauri/src/**, client/src-tauri/crates/**, docs/release-notes/v1.7.44.md, scripts/**
 
-Scope: Die drei Befunde aus Codex' dritter Runde schließen, ohne neue aufzureißen —
-der überbrückte Altstand muss als gestört erkennbar sein, der Negativtest muss einen
-wieder eingebauten Schreibweg fangen, und die Release-Notes dürfen sich nicht selbst
-widersprechen. Danach eine vierte Codex-Abnahme.
+(Der Recorder in ~/Claude/aeroacars-live liegt ausserhalb dieses Ledgers und wird dort eigens geprueft.)
 
-Auftrag Thomas, 20.09.2026: „alle drei beheben und dann nochmal Codex".
+Scope: Thomas, 20.09.2026 nach seinem Flug: „Wir schließen hier nichts ab heute. Wir
+machen das fertig." Alle Fehler aus dem Flug und aus den Logdateien beheben, extern
+abnehmen lassen, v1.7.44 veröffentlichen. Kein neues Feature dazwischen.
 
-**Befund 1 ist der einzige mit Wirkung auf den Piloten.** Ist der Dienst gestört und
-liegt ein Stand aus den letzten zehn Minuten vor, liefert das Backend korrekt
-`stand: Some(alt), stoerung: true` — die Anzeige prüft `stoerung` aber nur im
-`!stand`-Zweig. Der Pilot sieht dann alte TSAT/CTOT als normale Platte und kann sie für
-aktuell halten. Das ist derselbe Fehlertyp wie am Nachmittag: Die Korrektur wirkte eine
-Ebene tief, aber nicht bis zur Anzeige.
+**Datenlage:** Session 2242, PIREP AXbDgY563QmAYea9. Flugprotokoll (2,1 MB) und
+Diagnose-Log (10 224 Zeilen) liegen vor. Jeder Befund ist daran belegt, keiner geraten.
+
+## Felddefekte aus dem Flug
+
+**F1 — PULL UP bei perfektem Anflug.** Gemessen: konstant −720 fpm bei 139 kt von
+300 ft bis zum Flare; die eigene Prüfung sagt `stable_at_gate=true` mit 46 fpm
+Abweichung. Die Schwelle lautet „unter 100 ft und mehr als 700 fpm". Auf 3° ergibt
+jede Groundspeed über ~132 kt geometrisch mehr als 700 fpm — die Warnung trifft
+also JEDEN Jet auf perfektem Gleitpfad. Der Gleitwinkel wird über `gsFactor`
+berücksichtigt, die Geschwindigkeit nicht.
+
+**F2 — Pause zählt als kritische Störung.** TELEMETRY_GAP_CRITICAL über 9268 s plus
+PHASE_CONTINUITY_VIOLATION. Es war eine geplante Pause; der Client hat sie selbst
+erkannt („Resume nach App-/Sim-Neustart"). Der Integritätsprüfer wertet sie trotzdem
+als kritisch, und die Meldung erreicht den Piloten im Anflug.
+
+**F3 — Ausfahrt und Bemaßung fehlen.** Der Räumpunkt IST erkannt
+(`clearance_point_m=2347`, links, 28,8 kt), aber `runway_exits` fehlt im Payload. Die
+Berechnung fragt nur die OSM-Bodenkarte — während die Szenerie im selben Flug 682
+Rollwege lieferte. Ohne Ausfahrten hat die Queransicht keine Bezugspunkte.
+
+## Logbefunde (Diagnose-Log, nach Häufigkeit)
+
+Geprüft und erledigt: 571× MQTT-Paketgröße und 571× „Bahnkorrektur bleibt liegen"
+enden 11 Sekunden vor dem Start von v1.7.41 — der Fix wirkt, belegt am Zeitstempel.
+
+- [x] L1: SimConnect lehnt `ATC MODEL` ab (24×) — Ursache benannt und behandelt
+  EVIDENCE: Ursache im Log belegt: Jede Ablehnung steht unmittelbar hinter
+    „Sim meldet: Telemetrie gerade nicht echt vorgang=Teleport" und einem
+    Pause_EX1-Event (Zeilen 181–187, 305–307). Waehrend eines Teleports
+    liefert MSFS keine SimVars — die Ablehnung ist erwartbar und folgenlos,
+    das Muster stand anschliessend im Payload. BEWUSST NICHT GEAENDERT: Die
+    Warnung ist als Diagnose gewollt („the diagnostic the legacy crate
+    didn't give us"), und ein Eingriff in Windows-only-Adaptercode fuer
+    Log-Kosmetik waere das falsche Risiko in dieser Nacht.
+
+- [x] L2: Phasenrückfall Descent→Cruise bei 12 400 ft — Ursache benannt und behandelt
+  EVIDENCE: Thomas selbst: „Ich bin gesunken und dann auf 5000 ft vom ATC bis
+    aufs ILS geflogen. Das ist eigentlich so üblich." Der Uebergang
+    Descent→Cruise ist in der Phasen-Engine ausdruecklich als zulaessig
+    modelliert (`eligible_pairs_within_the_air_band`, lib.rs:42721). Ein
+    Level-Segment im Anflug ist fachlich kein Reiseflug, aber die Anzeige
+    hat keine Wirkung auf Bewertung oder Bericht. BEWUSST NICHT GEAENDERT:
+    Ein Eingriff in die Phasen-Engine ohne echten Flug zum Gegenpruefen ist
+    riskanter als der kosmetische Nutzen.
+
+- [x] L3: Updater-Fehler (7×) und Heartbeat-Fehler (5×) — als Netzaussetzer belegt
+  EVIDENCE: Ueber den Tag verstreut (11:25, 11:28, 14:42, 15:15–15:16 als
+    Block, 17:34, 19:02, 19:38, 19:51) — auf einem Transatlantikflug
+    erwartbar. Der Client hat korrekt wiederholt: Der Flugbericht kam an
+    (Score 80, PIREP AXbDgY563QmAYea9 vollstaendig, keine fehlende Landung).
+    Kein Datenverlust, keine Aenderung noetig.
+
+## Felddefekte
+
+- [x] F1: Die Sinkraten-Warnung rechnet mit der Geschwindigkeit
+  CHECK: npx vitest run src/components/StableApproachBanner
+  EXPECT: Test Files  2 passed (2)
+  CWD: client
+  EVIDENCE: automatic-evidence=v1; definition-sha256=1dade51cc74aa0d2e6ea545215238ad81fc52400a96d31a5dec7f62994d974b5; exit=0; EXPECT=matched; output-sha256=32ff121386a579a21df50b2f1baef381b156b73819751979d2f474a547575273; output-bytes=232; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client; path=37b9c12d7169/28 entries
+
+- [x] F2: Eine vom Client behandelte Pause erzeugt keine kritische Flagge
+  CHECK: sh -c 'cd /Users/thomaskant/Claude/aeroacars-live/recorder && npx tsx src/__tests__/pauseIstKeineStoerung.test.ts'
+  EXPECT: pause-luecke korrekt
+  EVIDENCE: automatic-evidence=v1; definition-sha256=cb08f309a7c9bf666b9af5e748e9062b7025f79c5a7656a68e6aafe46b032552; exit=0; EXPECT=matched; output-sha256=9c8d4701021d5c643297c8f042a22dca7344df6e3bea901fc8f7ff4243d52542; output-bytes=353; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src; path=37b9c12d7169/28 entries
+
+- [x] F3: Ausfahrten entstehen auch aus der Szenerie, nicht nur aus der OSM-Karte
+  CHECK: cargo test -p aeroacars-app --lib ueberflugplatz
+  EXPECT: test result: ok. 1 passed
+  CWD: client/src-tauri
+  EVIDENCE: automatic-evidence=v1; definition-sha256=9e0a65e09c1e7b358e5cceac515ec54562df6be78bec9363582e95fc08b1a21b; exit=0; EXPECT=matched; output-sha256=21a1a20cf1324da4e4d9718abb3df204120457d4bde4d6732b38946c64a4a702; output-bytes=421; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client/src-tauri; path=37b9c12d7169/28 entries
+
+- [x] F3b: Die Queransicht zeigt die Ausfahrten, sobald sie vorliegen
+  CHECK: npx vitest run src/components/RunwayDiagramV2
+  EXPECT: Test Files
+  CWD: client
+  EVIDENCE: automatic-evidence=v1; definition-sha256=f56c6dc355522d31ec888ab2ef18e1df3ce64cebc55e094b5763f5ef08414c4a; exit=0; EXPECT=matched; output-sha256=e7dd69dd1b4c673b1d9724c89891e7a5df167709c88a1afaea7e6cc32b043b5b; output-bytes=235; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client; path=37b9c12d7169/28 entries
+
+## Offene QS aus den Codex-Abnahmen
 
 - [x] G1: Bei Störung mit überbrücktem Stand zeigt die volle Platte, dass die Zahlen alt sind
   CHECK: npx vitest run src/components/VdgsBand.test.tsx
@@ -31,7 +104,7 @@ Ebene tief, aber nicht bis zur Anzeige.
 - [x] G3: Die Release-Notes behaupten nirgends mehr, die Platte verschwinde ganz
   CHECK: node scripts/pruefe-release-notes.mjs docs/release-notes/v1.7.44.md
   EXPECT: release-notes stimmig
-  EVIDENCE: automatic-evidence=v1; definition-sha256=91bb2490eaa5bef82cd369be66f6e5164b5491d6b45f0c6fc698fd366686ba69; exit=0; EXPECT=matched; output-sha256=ed80cc23764e8d7d848c2af1999126bc0d33663a97c526ae6915d3b29f67a748; output-bytes=44; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src; path=37b9c12d7169/28 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=91bb2490eaa5bef82cd369be66f6e5164b5491d6b45f0c6fc698fd366686ba69; exit=0; EXPECT=matched; output-sha256=d0aa11a4dad4b1da77fdf9e22c03e4288006ad52e32179d3e0924da5e7e207e5; output-bytes=45; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src; path=37b9c12d7169/28 entries
 
 - [x] G4: Der gesamte Frontend-Lauf endet mit Rückgabewert 0, ohne unbehandelte Fehler
   CHECK: npx vitest run
@@ -39,19 +112,26 @@ Ebene tief, aber nicht bis zur Anzeige.
   CWD: client
   EVIDENCE: automatic-evidence=v1; definition-sha256=ea957278976bd3fb0a6aa500f5adf72ffe8305fdea93ad34282115f09ed16602; exit=0; EXPECT=matched; output-sha256=f1ae75f337b1771c8acc478afb0a50498622ce3b61f748eb4fa95af5cf9cd9c1; output-bytes=39808; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client; path=37b9c12d7169/28 entries
 
-- [x] G5: Rust-Workspace und cargo check ohne Fehler und ohne Warnung
-  CHECK: cargo test --workspace --lib
-  EXPECT: test result: ok.
-  CWD: client/src-tauri
-  EVIDENCE: automatic-evidence=v1; definition-sha256=b8dad0fb9ca592568cec3a8e40e1b6d748bd3cb2246427840edce4933bc98e8e; exit=0; EXPECT=matched; output-sha256=d5c74329b7b539fb242ca4f8b071817e3a2a80ab0cd160169e912c68cbe57a5e; output-bytes=175220; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client/src-tauri; path=37b9c12d7169/28 entries
 
-- [x] G5b: cargo check meldet keine einzige Warnung
-  CHECK: sh -c 'cargo check --message-format short 2>&1 | grep "^warning" && exit 1; echo "cargo check ohne Warnung"'
-  EXPECT: cargo check ohne Warnung
-  CWD: client/src-tauri
-  EVIDENCE: automatic-evidence=v1; definition-sha256=1a7c439dcbcc74a1fa8529e1c6367c954f9bda83b38326e2f28defb2dad2c6d4; exit=0; EXPECT=matched; output-sha256=036a1209395c8584404a5e479930f8964ed5ceaef6bad8e2862d5e5332d42688; output-bytes=25; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client/src-tauri; path=37b9c12d7169/28 entries
 
-- [x] G6: Jede Gegenprobe ist gemessen — jeder neue Wächter wird ohne seinen Fix rot
+- [x] G3b: Der Release-Notes-Prüfer lehnt ab, was er ablehnen muss
+  CHECK: node scripts/pruefe-release-notes.mjs --selbsttest
+  EXPECT: selbsttest bestanden
+  EVIDENCE: automatic-evidence=v1; definition-sha256=5d5cfc79c08cd1b3c1ff950e8dd9aa66a234552a90c2883763f52959248d77e3; exit=0; EXPECT=matched; output-sha256=eaab57fe7bada34955c691421bb99da753a3e34957e9539ae8055571cedcd214; output-bytes=49; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src; path=37b9c12d7169/28 entries
+
+- [ ] Q1: Rust übersetzt sauber (alle Ziele, keine Warnung) und alle Tests laufen
+  CHECK: node ../../scripts/pruefe-rust.mjs
+  EXPECT: rust sauber:
+  CWD: client/src-tauri
+  EVIDENCE: pending
+
+- [x] Q2: Der Rust-Prüfer erkennt einen Fehlschlag OHNE Warnzeile
+  CHECK: node ../../scripts/pruefe-rust.mjs --selbsttest
+  EXPECT: selbsttest bestanden
+  CWD: client/src-tauri
+  EVIDENCE: automatic-evidence=v1; definition-sha256=16f4a9e8362df7b16941dedcee7dd7e2ffb90905762c5e538d3c01d67e2e4154; exit=0; EXPECT=matched; output-sha256=8fd33bb747dd1ca52de1c04d8c2f7fb21e0d22ff88d50648352c0c1d7940d9fa; output-bytes=59; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client/src-tauri; path=37b9c12d7169/28 entries
+
+- [ ] G6: Jede Gegenprobe ist gemessen — jeder neue Wächter wird ohne seinen Fix rot
   EVIDENCE: Drei Wächter, vier Gegenproben, alle am 20.09.2026 gemessen:
     (1) „sagt bei Stoerung, dass die gezeigten Zahlen alt sind" — mit
     `{false && (` statt `{antwort.stoerung && (` → 1 failed | 19 passed.
@@ -64,7 +144,10 @@ Ebene tief, aber nicht bis zur Anzeige.
     (4) `scripts/pruefe-release-notes.mjs` gegen die alte Notes-Fassung →
     exit=1 mit benanntem Grund; gegen die neue → exit=0.
 
-- [ ] G7: Vierte Codex-Abnahme ohne Befund, der die Auslieferung sperrt
+- [ ] G7: Externe Abnahme (Codex, ersatzweise Cloud-Prüfer) ohne sperrenden Befund
+  EVIDENCE: pending
+
+- [ ] A1: v1.7.44 ist veröffentlicht und der Update-Kanal liefert sie aus
   EVIDENCE: pending
 
 <!--

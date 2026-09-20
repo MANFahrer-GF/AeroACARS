@@ -2645,6 +2645,7 @@ fn flugkopie_entwerten(alt_generation: u32, buch_generation: u32) -> bool {
 fn schnappschuss_uebernehmen(
     stats: &mut FlightStats,
     ziel: Option<&str>,
+    geplantes_ziel: &str,
     schnapp: sim_core::szenerie::Schnappschuss,
 ) {
     // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
@@ -2731,6 +2732,18 @@ fn schnappschuss_uebernehmen(
             rollwege = neu.rollwege.len(),
             "Szenerie-Auskunft am Flug abgelegt"
         );
+        // Gehoert die Auskunft zum GEPLANTEN Ziel, zusaetzlich dort
+        // ablegen — dieser Platz ueberlebt einen Zielwechsel.
+        if neu.icao.eq_ignore_ascii_case(geplantes_ziel) {
+            let alt_ziel = stats
+                .ziel_szenerie_auskunft
+                .as_ref()
+                .map(|a| (a.icao.as_str(), stats.ziel_szenerie_auskunft_stand));
+            if auskunft_ersetzen(alt_ziel, &neu.icao, stand) {
+                stats.ziel_szenerie_auskunft = Some(neu.clone());
+                stats.ziel_szenerie_auskunft_stand = stand;
+            }
+        }
         stats.szenerie_auskunft = Some(neu);
         stats.szenerie_auskunft_stand = stand;
     }
@@ -3012,7 +3025,12 @@ fn szenerie_auskunft_uebernehmen(
         // ⚠ EINE Uebernahme, EINE Sperre, und sie steht in einer
         // pruefbaren Funktion — siehe `schnappschuss_uebernehmen`.
         if let Ok(mut stats) = flight.stats.lock() {
-            schnappschuss_uebernehmen(&mut stats, ernteziel.as_deref(), schnapp_aussen);
+            schnappschuss_uebernehmen(
+                &mut stats,
+                ernteziel.as_deref(),
+                &flight.arr_airport,
+                schnapp_aussen,
+            );
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -5430,6 +5448,29 @@ struct FlightStats {
     /// beim Aufsetzen vorfindet. Bei X-Plane bleibt sie leer — dort
     /// liest der Client die Datei direkt.
     szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    /// v1.7.44: Die Auskunft für den GEPLANTEN Zielplatz — ein eigener
+    /// Platz, den ein Überflug nicht wegräumen kann.
+    ///
+    /// Der Fall aus DLH 373 (KJFK→EDDM, 20.09.2026): Um 15:38 lag EDDM
+    /// mit 682 Rollwegen vor. Auf dem Sinkflug korrelierte die Bahn
+    /// kurz mit EDML (Landshut, liegt auf der Anflugstrecke), das
+    /// Ernteziel wechselte dorthin, und `szenerie_auskunft` wurde
+    /// pflichtgemäß verworfen — EDML lieferte 0 Rollwege. Beim Aufsetzen
+    /// in EDDM war damit nichts mehr da; die Ausfahrten fehlten, und die
+    /// Queransicht stand ohne Bemaßung. Die richtige Auskunft traf vier
+    /// Sekunden NACH dem Aufsetzen wieder ein.
+    ///
+    /// Das Verwerfen bleibt richtig — es verhindert, dass die Rollwege
+    /// eines fremden Platzes in die Ausfahrten geraten. Falsch war nur,
+    /// dass es die EINZIGE Kopie traf. Hier liegt deshalb zusätzlich die
+    /// des geplanten Ziels, und beim Aufsetzen entscheidet weiterhin die
+    /// ICAO der gematchten Bahn, welche verwendet wird: Bei einem
+    /// Ausweichflug passt dieses Feld nicht und wird ignoriert.
+    ziel_szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    /// Stand der Auskunft in `ziel_szenerie_auskunft` — dieselbe
+    /// Buchführung wie bei `szenerie_auskunft_stand`, damit eine spätere
+    /// LEERE Lieferung eine gute nicht überschreibt.
+    ziel_szenerie_auskunft_stand: u32,
     /// v1.7.17: Die Szenerie-Auskunft des Simulators für den
     /// ABFLUGplatz — ein eigenes, unabhängiges Feld, NICHT dasselbe wie
     /// `szenerie_auskunft` oben.
@@ -24067,14 +24108,36 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // per `#[serde(default)]` auf `None` steht, obwohl `runway_match`
     // durchaus vorliegt.
     let landeplatz_der_bahn = rm.map(|m| m.airport_ident.as_str());
+    // ZWEI Quellen: die Auskunft des aktuellen Ernteziels und die des
+    // geplanten Ziels.
+    //
+    // Die erste kann von einem Ueberflugplatz stammen — bei DLH 373 am
+    // 20.09.2026 korrelierte die Bahn im Sinkflug kurz mit EDML
+    // (Landshut, liegt auf der Anflugstrecke nach EDDM), das Ernteziel
+    // wechselte dorthin, und die gute EDDM-Auskunft mit 682 Rollwegen
+    // wurde verworfen. EDML lieferte 0. Beim Aufsetzen in Muenchen war
+    // deshalb keine Bodenkarte da: keine Ausfahrten, keine Bemassung.
+    //
+    // Die ICAO-Pruefung bleibt an BEIDEN Quellen — sie ist die
+    // Sicherung, die verhindert, dass Rollwege eines fremden Platzes in
+    // die Ausfahrten geraten. Bei einem Ausweichflug passt das geplante
+    // Ziel nicht und faellt heraus.
+    let passt = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz_der_bahn {
+        Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
+        None => false,
+    };
     let szenerie_karte = stats
         .szenerie_auskunft
         .as_ref()
-        .filter(|a| match landeplatz_der_bahn {
-            Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
-            None => false,
-        })
+        .filter(passt)
         .filter(|a| !a.rollwege.is_empty())
+        .or_else(|| {
+            stats
+                .ziel_szenerie_auskunft
+                .as_ref()
+                .filter(passt)
+                .filter(|a| !a.rollwege.is_empty())
+        })
         .map(|a| szenerie_bahn::rollwege_als_bodenkarte(&a.rollwege));
     let arr_karte = match (&stats.arr_ground_geojson, landeplatz_der_bahn) {
         (Some(karte), Some(landeplatz)) => stats
@@ -52926,6 +52989,32 @@ mod divert_filing_contract_tests {
     }
 
     #[test]
+    fn der_manuelle_weg_setzt_den_status_nicht_von_hand() {
+        // `manueller_pfad()` stand hier, ohne dass ein Test ihn benutzte —
+        // aufgefallen erst, als `cargo check --all-targets` am 20.09.2026
+        // die tote Funktion meldete. Eine ungenutzte Testhilfe heisst oft,
+        // dass ein Waechter fehlt, nicht dass Code ueberfluessig ist.
+        //
+        // Gegenstueck zu `kein_zweiter_filing_weg_am_file_endpunkt_vorbei`:
+        // Der regulaere Weg darf die PIREP-Quelle NICHT auf MANUAL
+        // faelschen, der manuelle Weg MUSS sie so setzen — er ist ja einer.
+        // Gemeinsam ist beiden: Den Status von Hand auf PENDING zu setzen
+        // sperrt den Piloten aus (23.08.2026, eine Stunde).
+        let body = manueller_pfad();
+        assert!(
+            !body.contains("state: Some(1)"),
+            "flight_end_manual setzt den PIREP-Status von Hand auf PENDING. \
+             Ohne /file feuert PirepFiled nie — weder Divert-Behandlung noch \
+             Auto-Approve laufen dann."
+        );
+        assert!(
+            body.contains("pirep_source::MANUAL"),
+            "flight_end_manual kennzeichnet den Bericht nicht mehr als \
+             manuell. Genau das unterscheidet ihn vom regulaeren Weg."
+        );
+    }
+
+    #[test]
     fn quellen_konstanten_stimmen_mit_phpvms_ueberein() {
         // phpVMS App\Enums\PirepSource. Waren bis v1.7.0 vertauscht, wodurch
         // jedes "auf MANUAL setzen" in Wahrheit ACARS schrieb.
@@ -55858,6 +55947,66 @@ mod sim_pause_tests {
         );
     }
 
+    /// Ein Ueberflugplatz darf die Auskunft des Ziels nicht wegraeumen.
+    ///
+    /// DLH 373, KJFK→EDDM, 20.09.2026: Um 15:38 lag EDDM mit 682
+    /// Rollwegen vor. Im Sinkflug korrelierte die Bahn kurz mit EDML
+    /// (Landshut, liegt auf der Anflugstrecke), das Ernteziel wechselte
+    /// dorthin, und `szenerie_auskunft` wurde verworfen — richtig, denn
+    /// fremde Rollwege duerfen nicht in die Ausfahrten geraten. EDML
+    /// lieferte 0 Rollwege. Beim Aufsetzen in Muenchen war damit KEINE
+    /// Bodenkarte da: keine Ausfahrten, keine Bemassung in der
+    /// Queransicht. Die richtige Auskunft traf vier Sekunden nach dem
+    /// Aufsetzen wieder ein.
+    #[test]
+    fn ein_ueberflugplatz_raeumt_die_auskunft_des_ziels_nicht_weg() {
+        let mut stats = FlightStats::default();
+        let auskunft = |icao: &str, rollwege: usize| sim_core::szenerie::SzenerieFlughafen {
+            icao: icao.to_string(),
+            rollwege: (0..rollwege)
+                .map(|i| sim_core::szenerie::SzenerieRollweg {
+                    name: format!("A{i}"),
+                    punkte: vec![(48.35, 11.78), (48.36, 11.79)],
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let liefere = |a: sim_core::szenerie::SzenerieFlughafen, stand: u32| {
+            sim_core::szenerie::Schnappschuss {
+                generation: 0,
+                auskunft: Some((a, stand)),
+                diagnose: "geliefert".to_string(),
+                kennung: None,
+            }
+        };
+
+        // 15:38 — Muenchen liefert, Ernteziel ist EDDM.
+        schnappschuss_uebernehmen(&mut stats, Some("EDDM"), "EDDM", liefere(auskunft("EDDM", 682), 1));
+        assert_eq!(
+            stats.szenerie_auskunft.as_ref().map(|a| a.rollwege.len()),
+            Some(682),
+        );
+        assert_eq!(
+            stats.ziel_szenerie_auskunft.as_ref().map(|a| a.rollwege.len()),
+            Some(682),
+            "die Auskunft des geplanten Ziels wurde nicht mitgeschrieben",
+        );
+
+        // 20:55 — im Sinkflug korreliert die Bahn mit Landshut.
+        schnappschuss_uebernehmen(&mut stats, Some("EDML"), "EDDM", liefere(auskunft("EDML", 0), 2));
+        assert_eq!(
+            stats.szenerie_auskunft.as_ref().map(|a| a.icao.as_str()),
+            Some("EDML"),
+            "Vorrichtung: das Ernteziel ist gewechselt",
+        );
+        // DAS ist der Punkt: Muenchen liegt weiterhin bereit.
+        assert_eq!(
+            stats.ziel_szenerie_auskunft.as_ref().map(|a| a.rollwege.len()),
+            Some(682),
+            "der Ueberflugplatz hat die Auskunft des Ziels weggeraeumt",
+        );
+    }
+
     /// ⚠ Der feste Status faellt mit der Auskunft, die er beschreibt
     /// (Runde 6, Befund 5) — aber NICHT nach einem Neustart.
     #[test]
@@ -55876,7 +56025,7 @@ mod sim_pause_tests {
             kennung: None,
         };
         // Ausweichen: das Ernteziel ist jetzt EDDC, die Auskunft ist fremd.
-        schnappschuss_uebernehmen(&mut stats, Some("EDDC"), leer());
+        schnappschuss_uebernehmen(&mut stats, Some("EDDC"), "EDDC", leer());
         assert!(
             stats.szenerie_auskunft.is_none(),
             "Vorrichtung: Auskunft verworfen"
@@ -55900,7 +56049,7 @@ mod sim_pause_tests {
         );
         let mut neustart = leer();
         neustart.generation = 1;
-        schnappschuss_uebernehmen(&mut stats, Some("EDDC"), neustart);
+        schnappschuss_uebernehmen(&mut stats, Some("EDDC"), "EDDC", neustart);
         assert_eq!(
             stats.szenerie_auskunft_generation, 1,
             "der Generationszweig lief nicht"
@@ -68839,7 +68988,7 @@ mod szenerie_status_tests {
         .expect("Lieferung");
 
         let mut s = FlightStats::new();
-        schnappschuss_uebernehmen(&mut s, Some("LEZL"), buch.schnappschuss("LEZL"));
+        schnappschuss_uebernehmen(&mut s, Some("LEZL"), "LEZL", buch.schnappschuss("LEZL"));
         assert_eq!(
             s.szenerie_auskunft.as_ref().map(|a| a.icao.as_str()),
             Some("LEZL"),
@@ -68849,7 +68998,7 @@ mod szenerie_status_tests {
         // ⚠ Ausweichflug: Ziel ist jetzt LEMG — und LEMG hat NICHTS
         // geliefert. Die Generation ist unveraendert.
         buch.wunsch("LEMG");
-        schnappschuss_uebernehmen(&mut s, Some("LEMG"), buch.schnappschuss("LEMG"));
+        schnappschuss_uebernehmen(&mut s, Some("LEMG"), "LEMG", buch.schnappschuss("LEMG"));
 
         assert!(
             s.szenerie_auskunft.is_none(),
@@ -68867,7 +69016,7 @@ mod szenerie_status_tests {
         s.szenerie_auskunft = Some(auskunft(2));
         s.szenerie_auskunft_stand = 7;
         let buch = sim_core::szenerie::Auftragsbuch::neu();
-        schnappschuss_uebernehmen(&mut s, None, buch.schnappschuss("LEZL"));
+        schnappschuss_uebernehmen(&mut s, None, "LEZL", buch.schnappschuss("LEZL"));
         assert!(s.szenerie_auskunft.is_none());
     }
 
@@ -68898,7 +69047,7 @@ mod szenerie_status_tests {
         assert!(schnapp.generation > 0);
         assert!(schnapp.auskunft.is_none());
 
-        schnappschuss_uebernehmen(&mut s, Some("DAAG"), schnapp.clone());
+        schnappschuss_uebernehmen(&mut s, Some("DAAG"), "DAAG", schnapp.clone());
 
         assert!(
             s.szenerie_auskunft.is_none(),
@@ -68943,7 +69092,7 @@ mod szenerie_status_tests {
             "der Verbindungsschnitt laesst die Kennung im Buch stehen"
         );
 
-        schnappschuss_uebernehmen(&mut s, Some("LEZL"), buch.schnappschuss("LEZL"));
+        schnappschuss_uebernehmen(&mut s, Some("LEZL"), "LEZL", buch.schnappschuss("LEZL"));
         assert_eq!(
             s.sim_kennung, None,
             "die Kennung der alten Verbindung ueberlebt den Wechsel"
@@ -68982,7 +69131,7 @@ mod szenerie_status_tests {
         .expect("Lieferung");
 
         let mut s = FlightStats::new();
-        schnappschuss_uebernehmen(&mut s, Some("LKTB"), buch.schnappschuss("LKTB"));
+        schnappschuss_uebernehmen(&mut s, Some("LKTB"), "LKTB", buch.schnappschuss("LKTB"));
 
         let gemeldet = szenerie_status(&s);
         assert!(
@@ -69291,19 +69440,6 @@ mod ofp_atc_callsign_tests {
 mod sprit_messung_tests {
     use super::*;
 
-    fn fix(ident: &str, nm: f32, kg: f32) -> api_client::RouteFix {
-        api_client::RouteFix {
-            ident: ident.into(),
-            lat: 50.0,
-            lon: 10.0,
-            kind: "wpt".into(),
-            sprit_bis_hier_kg: Some(kg),
-            segment_nm: Some(nm),
-            hoehe_ft: Some(40_000.0),
-            zeit_bis_hier_s: Some(1.0),
-            ..Default::default()
-        }
-    }
 
     /// Ein Flug nach EDDM (48.3538 N, 11.7861 E) mit TOD 142 NM vor dem Ziel.
     ///

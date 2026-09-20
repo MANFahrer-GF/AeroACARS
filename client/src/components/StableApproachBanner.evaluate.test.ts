@@ -68,3 +68,59 @@ describe("evaluateApproach — gleitwinkel-aware Sink-Schwellen", () => {
     expect(evaluateApproach(snap({ vertical_speed_fpm: -3000 }), "cruise", 1)).toBeNull();
   });
 });
+
+describe("evaluateApproach — die Schwellen hängen an der Geschwindigkeit", () => {
+  // DLH 373, KJFK→EDDM, 20.09.2026, Session 2242. Die echten Messwerte
+  // aus dem Flugprotokoll: konstant −720 fpm bei 139 kt Groundspeed vom
+  // Endanflug bis zum Flare. Die eigene Prüfung des Clients bewertete
+  // denselben Anflug als stabil (`stable_at_gate=true`, Abweichung
+  // 46 fpm) — und das Banner zeigte trotzdem ab 100 ft durchgehend die
+  // rote „PULL UP"-Meldung.
+  //
+  // Erfundene Zahlen wären hier wertlos: Der Fehler ist nur aufgefallen,
+  // weil ein echter Anflug ihn ausgelöst hat.
+  const dlh373 = (aglFt: number) =>
+    snap({
+      altitude_agl_ft: aglFt,
+      vertical_speed_fpm: -723,
+      groundspeed_kt: 139,
+    });
+
+  it("DLH 373: kein Alarm bei 93 ft — das ist der 3°-Pfad, nicht zu steil", () => {
+    // 139 kt × 5,31 = 738 fpm Soll. −723 ist FLACHER als das Soll.
+    expect(evaluateApproach(dlh373(93), "final", 1, 3)).toBeNull();
+  });
+
+  it("DLH 373: auch bei 150 und 220 ft ruhig", () => {
+    expect(evaluateApproach(dlh373(150), "final", 1, 3)).toBeNull();
+    expect(evaluateApproach(dlh373(220), "final", 1, 3)).toBeNull();
+  });
+
+  it("aber eine ECHTE Übersinkrate meldet es weiterhin", () => {
+    // Doppelte Soll-Sinkrate bei derselben Geschwindigkeit.
+    const zuSteil = snap({
+      altitude_agl_ft: 93,
+      vertical_speed_fpm: -1500,
+      groundspeed_kt: 139,
+    });
+    expect(evaluateApproach(zuSteil, "final", 1, 3)?.key).toBe("sink_rate_pull_up");
+  });
+
+  it("langsames Muster: dieselbe Rate ist dort sehr wohl zu steil", () => {
+    // PC-12 mit 95 kt: Soll ist 504 fpm. −723 sind dort 43 % zu viel —
+    // die alte Festschwelle von 700 fpm hätte geschwiegen.
+    const pc12 = snap({
+      altitude_agl_ft: 93,
+      vertical_speed_fpm: -723,
+      groundspeed_kt: 95,
+    });
+    expect(evaluateApproach(pc12, "final", 1, 3)?.key).toBe("sink_rate_pull_up");
+  });
+
+  it("ohne Geschwindigkeit bleibt es bei den alten Festwerten", () => {
+    // Ein alter Client liefert `groundspeed_kt` nicht. Dann lieber die
+    // bekannte Näherung als gar keine Warnung.
+    const ohneGs = snap({ altitude_agl_ft: 93, vertical_speed_fpm: -800 });
+    expect(evaluateApproach(ohneGs, "final", 1, 3)?.key).toBe("sink_rate_pull_up");
+  });
+});

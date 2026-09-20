@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { sollSinkrateFpm } from "../lib/anflugSollband";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
 
 type Severity = "warn" | "alert" | "crit" | "info";
@@ -64,6 +65,7 @@ export function evaluateApproach(
   snap: SimSnapshot,
   phase: string,
   gsFactor = 1,
+  glideslopeDeg?: number | null,
 ): Advisory | null {
   const isApproachPhase =
     phase === "approach" ||
@@ -78,13 +80,36 @@ export function evaluateApproach(
   const gear = snap.gear_position ?? 0;
   const flaps = snap.flaps_position ?? 0;
 
-  // v0.15.19: Sink-Schwellen mit dem echten Gleitwinkel skalieren (gsFactor).
-  // gsFactor=1 (3°/unbekannt) → bit-identisch zu den alten Festwerten.
-  const sink100 = -700 * gsFactor;
-  const sink200 = -800 * gsFactor;
-  const sink500 = -1000 * gsFactor;
-  const sink1000Lo = -1100 * gsFactor;
-  const sink1000Hi = -300 * gsFactor;
+  // Die Schwellen hängen an der GESCHWINDIGKEIT, nicht nur am Winkel.
+  //
+  // Bis 20.09.2026 standen hier feste fpm-Werte, nur mit `gsFactor`
+  // skaliert. Das ist die halbe Geometrie: Auf einem Gleitpfad ist die
+  // Sinkrate `GS × 5,31 × tan(Winkel)/tan(3°)` — sie wächst mit der
+  // Geschwindigkeit. Bei 3° erzeugt schon jede Groundspeed über rund
+  // 132 kt mehr als 700 fpm, also bekam JEDER Jet auf perfektem Pfad die
+  // rote „PULL UP"-Meldung. Thomas, DLH 373 nach EDDM: konstant −720 fpm
+  // bei 139 kt, `stable_at_gate=true`, Abweichung 46 fpm — und trotzdem
+  // ab 100 ft durchgehend Alarm.
+  //
+  // Dieselbe Verwechslung hatte vier Tage zuvor Thorbens PC-12 getroffen
+  // (siehe `anflugSollband.ts`). Die Lösung lag also schon im Projekt und
+  // wurde hier nur nicht angewandt: dieselbe Funktion, eine Wahrheit.
+  //
+  // Gewarnt wird jetzt bei einem AUFSCHLAG auf das Soll statt bei einer
+  // absoluten Zahl. Der Sockel (80 fpm) fängt Messrauschen ab, ohne die
+  // Schwelle bei langsamen Mustern unbrauchbar zu machen: Mit 150 blieb
+  // eine PC-12 (95 kt, Soll 504 fpm) bei −723 fpm stumm — 43 % über dem
+  // Pfad und kurz vor dem Boden.
+  const soll = sollSinkrateFpm(snap.groundspeed_kt, glideslopeDeg);
+  // Ohne Geschwindigkeit bleibt es bei den alten Festwerten — lieber die
+  // bekannte Näherung als gar keine Warnung.
+  const sink100 = soll != null ? soll * 1.25 - 80 : -700 * gsFactor;
+  const sink200 = soll != null ? soll * 1.35 - 80 : -800 * gsFactor;
+  const sink500 = soll != null ? soll * 1.5 - 80 : -1000 * gsFactor;
+  const sink1000Lo = soll != null ? soll * 1.65 - 80 : -1100 * gsFactor;
+  // Die OBERE Grenze (zu flach) bleibt am Soll: zu langsames Sinken ist
+  // ebenso ein Abweichen vom Pfad, nur in die andere Richtung.
+  const sink1000Hi = soll != null ? soll * 0.4 : -300 * gsFactor;
 
   // Sub-100 ft mit excessive sink → höchste Priorität
   if (agl < 100 && agl > 5 && vs < sink100) {
@@ -205,8 +230,19 @@ export function StableApproachBanner({ activeFlight, simSnapshot, enabled }: Pro
 
   const advisory = useMemo<Advisory | null>(() => {
     if (!enabled || !simSnapshot) return null;
-    return evaluateApproach(simSnapshot, activeFlight.phase, gsFactor);
-  }, [enabled, simSnapshot, activeFlight.phase, gsFactor]);
+    return evaluateApproach(
+      simSnapshot,
+      activeFlight.phase,
+      gsFactor,
+      activeFlight.approach_glideslope_angle,
+    );
+  }, [
+    enabled,
+    simSnapshot,
+    activeFlight.phase,
+    gsFactor,
+    activeFlight.approach_glideslope_angle,
+  ]);
 
   if (!enabled) return null;
 
