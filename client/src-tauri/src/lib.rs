@@ -2713,6 +2713,17 @@ fn schnappschuss_uebernehmen(
         stats.szenerie_auskunft = None;
         stats.szenerie_auskunft_stand = 0;
         stats.szenerie_auskunft_generation = schnapp.generation;
+        // Die Zweitquelle faellt MIT. Sie haelt die Auskunft des
+        // geplanten Ziels ueber einen Zielwechsel hinweg — aber nicht
+        // ueber einen VERBINDUNGSwechsel: Ein Sim-Neustart (MSFS
+        // 2020↔2024, andere Szenerie) kann fuer denselben Platz andere
+        // Rollwege mitbringen, und die ICAO-Pruefung faengt das nicht,
+        // weil der Platz ja derselbe ist. Genau diese Luecke hat das
+        // Projekt fuer `dep_szenerie_auskunft` am 04.09.2026 schon
+        // einmal schliessen muessen; hier waere sie mit dem neuen Feld
+        // zurueckgekommen (externe Abnahme, 21.09.2026).
+        stats.ziel_szenerie_auskunft = None;
+        stats.ziel_szenerie_auskunft_stand = 0;
     }
 
     let Some((neu, stand)) = schnapp.auskunft else {
@@ -5468,8 +5479,13 @@ struct FlightStats {
     /// Ausweichflug passt dieses Feld nicht und wird ignoriert.
     ziel_szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
     /// Stand der Auskunft in `ziel_szenerie_auskunft` — dieselbe
-    /// Buchführung wie bei `szenerie_auskunft_stand`, damit eine spätere
-    /// LEERE Lieferung eine gute nicht überschreibt.
+    /// Buchführung wie bei `szenerie_auskunft_stand`.
+    ///
+    /// Sie schützt gegen VERSPÄTET eintreffende ÄLTERE Lieferungen, nicht
+    /// gegen leere: Eine leere Lieferung desselben Platzes mit höherem
+    /// Stand ersetzt die gute sehr wohl (siehe `auskunft_ersetzen`). Der
+    /// erste Kommentar hier behauptete das Gegenteil (externe Abnahme,
+    /// 21.09.2026) — und eine falsche Zusage ist schlimmer als keine.
     ziel_szenerie_auskunft_stand: u32,
     /// v1.7.17: Die Szenerie-Auskunft des Simulators für den
     /// ABFLUGplatz — ein eigenes, unabhängiges Feld, NICHT dasselbe wie
@@ -14533,7 +14549,19 @@ fn szenerie_status(stats: &FlightStats) -> String {
     // — der Status wuerde auf eine vagere Aussage kippen und die
     // genauere beim Recorder ueberschreiben (Runde 5, N26). Dann gilt der
     // Status, der bei der letzten Zuordnung festgehalten wurde.
-    if stats.szenerie_auskunft.is_none() {
+    // BEIDE Quellen ansehen — dieselben, aus denen Geometrie und
+    // Ausfahrten schoepfen.
+    //
+    // Sonst meldet der Status den Szenerie-Weg als unbenutzt, waehrend
+    // Achse und Ausfahrten gerade daraus stammen. Dieser Status ist der
+    // Messpunkt, mit dem die naechste Felddiagnose dieser Klasse
+    // eingekreist wird — er darf nicht in die Irre fuehren (externe
+    // Abnahme, 21.09.2026).
+    let auskunft = stats
+        .szenerie_auskunft
+        .as_ref()
+        .or(stats.ziel_szenerie_auskunft.as_ref());
+    if auskunft.is_none() {
         if let Some(fest) = stats.szenerie_status_fest.as_ref() {
             return fest.clone();
         }
@@ -14562,12 +14590,7 @@ fn szenerie_status(stats: &FlightStats) -> String {
     // 25L, YBWW 12, YBCG 14) und die Meldung sagte bei allen dasselbe.
     // Die Zahl der gelieferten Bahnen kommt mit dazu: Eine Auskunft mit
     // einer einzigen Bahn ist ein anderer Fall als eine mit vierzig.
-    if let Some(anzahl) = stats
-        .szenerie_auskunft
-        .as_ref()
-        .map(|a| a.bahnen.len())
-        .filter(|n| *n > 0)
-    {
+    if let Some(anzahl) = auskunft.map(|a| a.bahnen.len()).filter(|n| *n > 0) {
         // ⚠ NUR melden, wenn ein Vergleich wirklich gelaufen ist.
         //
         // Ohne Uebernahmebericht gab es keinen — etwa weil die Navdaten
@@ -37385,11 +37408,34 @@ fn korreliere_bahn(
     // als 0,0 oder 360,0 — bei 3.329 davon widerspricht das der eigenen
     // Bahnnummer. Dort messen wir gegen eine Achse, die es im Simulator
     // nicht gibt.
+    // DIESELBEN zwei Quellen wie bei den Ausfahrten.
+    //
+    // Die Korrektur vom 20.09.2026 war zunaechst nur halb gezogen: Die
+    // Ausfahrten nahmen die Auskunft des geplanten Ziels als zweite
+    // Quelle, die GEOMETRIE nicht. Im DLH-373-Fall stand dort weiter
+    // EDML — Achse und Schwelle fielen also auf die Navdaten zurueck,
+    // waehrend die Ausfahrten aus der Szenerie kamen. Zwei Stellen
+    // haetten Verschiedenes ueber dieselbe Tatsache gesagt, und
+    // `szenerie_status` haette den Szenerie-Weg als unbenutzt gemeldet
+    // (externe Abnahme, 21.09.2026).
+    //
+    // `ergaenze_aus_szenerie` filtert selbst nach ICAO — die Sicherung
+    // bleibt also an beiden Quellen.
+    let auskunft_fuer_geometrie = stats
+        .szenerie_auskunft
+        .clone()
+        .filter(|a| a.icao.eq_ignore_ascii_case(&actual_icao))
+        .or_else(|| {
+            stats
+                .ziel_szenerie_auskunft
+                .clone()
+                .filter(|a| a.icao.eq_ignore_ascii_case(&actual_icao))
+        });
     let (nav_opt, szenerie_bericht, benutzte_szenerie) = szenerie_bahn::ergaenze_aus_szenerie(
         simulator,
         &actual_icao,
         nav_opt,
-        stats.szenerie_auskunft.clone(),
+        auskunft_fuer_geometrie,
     );
     stats.szenerie_uebernahme = szenerie_bericht;
     // ⚠ Festhalten, MIT WELCHEM Stand zugeordnet wurde.
@@ -57726,6 +57772,118 @@ mod touchdown_metadata_stamp_tests {
     /// Am Korpus gemessen (854 Landungen mit 50-Hz-Fenster): 13
     /// ueberschreiten die Schwelle, waehrend sie noch ueber sechzig Knoten
     /// schnell sind, bei bis zu 141 kt und 100 von 100 folgenden Proben.
+    /// Die Ausfahrten kommen AUCH aus der Auskunft des geplanten Ziels.
+    ///
+    /// Das ist die eigentliche Korrektur aus DLH 373 (20.09.2026): Im
+    /// Sinkflug korrelierte die Bahn kurz mit EDML (Landshut), das
+    /// Ernteziel wechselte, und `szenerie_auskunft` wurde verworfen —
+    /// richtig, denn fremde Rollwege duerfen nicht in die Ausfahrten
+    /// geraten. Beim Aufsetzen in EDDM war damit keine Bodenkarte da.
+    ///
+    /// Der Waechter `ein_ueberflugplatz_raeumt_die_auskunft_des_ziels_nicht_weg`
+    /// belegt nur, dass das FELD den Zielwechsel ueberlebt. Ob es dann
+    /// auch benutzt wird, entscheidet `bahn_felder` — und genau dieser
+    /// Zweig war bis zur externen Abnahme am 21.09.2026 von keinem Test
+    /// erreichbar: Wer ihn loescht, bekam 1411 gruene Tests.
+    #[test]
+    fn ausfahrten_kommen_auch_aus_der_zielauskunft() {
+        let flight = flight_fixture("EDDM");
+        let rollweg = |name: &str, lat: f64, lon: f64| sim_core::szenerie::SzenerieRollweg {
+            name: name.to_string(),
+            // Zwei Punkte quer zur Bahn, damit die Ausfahrt sie trifft.
+            punkte: vec![(lat, lon), (lat + 0.004, lon + 0.004)],
+        };
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDM".to_string(),
+                runway_ident: "26R".to_string(),
+                heading_true_deg: 263.4,
+                length_ft: 13123.0,
+                width_ft: 197.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 48.3694,
+                threshold_lon: 11.8306,
+                end_lat: 48.3617,
+                end_lon: 11.7766,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 1656.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+                geometry_implied_displaced_threshold_ft: 0,
+            });
+            // Genau die Lage aus dem Flug: Das Ernteziel steht auf dem
+            // Ueberflugplatz, das Ziel liegt nur noch in der Zweitquelle.
+            stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+                icao: "EDML".to_string(),
+                ..Default::default()
+            });
+            stats.ziel_szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+                icao: "EDDM".to_string(),
+                rollwege: vec![
+                    rollweg("A8", 48.3660, 11.8050),
+                    rollweg("A10", 48.3640, 11.7930),
+                ],
+                ..Default::default()
+            });
+        }
+        let stats = flight.stats.lock().expect("stats");
+        let felder = bahn_felder(&stats, Some("A388"), None);
+        assert!(
+            !felder.runway_exits.is_empty(),
+            "die Auskunft des Ziels wird nicht als Quelle benutzt — \
+             genau der Fehler aus DLH 373",
+        );
+    }
+
+    /// Und die Zweitquelle darf KEINEN fremden Platz durchlassen.
+    ///
+    /// Gegenprobe zum Test darueber: Passt die ICAO nicht zur gematchten
+    /// Bahn, bleibt die Liste leer. Sonst haette die Korrektur genau das
+    /// Loch aufgerissen, das der Zielwechsel schliessen soll.
+    #[test]
+    fn die_zielauskunft_eines_fremden_platzes_bleibt_draussen() {
+        let flight = flight_fixture("EDDM");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDM".to_string(),
+                runway_ident: "26R".to_string(),
+                heading_true_deg: 263.4,
+                length_ft: 13123.0,
+                width_ft: 197.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 48.3694,
+                threshold_lon: 11.8306,
+                end_lat: 48.3617,
+                end_lon: 11.7766,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 1656.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+                geometry_implied_displaced_threshold_ft: 0,
+            });
+            // Ausweichflug: gelandet wird in EDDM, das geplante Ziel war
+            // ein anderer Platz — dessen Rollwege gehoeren hier nicht hin.
+            stats.ziel_szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+                icao: "EDDF".to_string(),
+                rollwege: vec![sim_core::szenerie::SzenerieRollweg {
+                    name: "N1".to_string(),
+                    punkte: vec![(48.3660, 11.8050), (48.3700, 11.8090)],
+                }],
+                ..Default::default()
+            });
+        }
+        let stats = flight.stats.lock().expect("stats");
+        let felder = bahn_felder(&stats, Some("A388"), None);
+        assert!(
+            felder.runway_exits.is_empty(),
+            "die Rollwege eines FREMDEN Platzes sind in die Ausfahrten geraten",
+        );
+    }
+
     /// Dort biegt niemand auf einen Rollweg ab — und die Bewertung waere
     /// beendet gewesen, bevor sie angefangen hat.
     ///

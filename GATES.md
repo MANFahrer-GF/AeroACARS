@@ -83,7 +83,7 @@ enden 11 Sekunden vor dem Start von v1.7.41 — der Fix wirkt, belegt am Zeitste
 
 - [x] F3b: Die Queransicht zeigt die Ausfahrten, sobald sie vorliegen
   CHECK: npx vitest run src/components/RunwayDiagramV2
-  EXPECT: Test Files
+  EXPECT: Test Files  1 passed (1)
   CWD: client
   EVIDENCE: automatic-evidence=v1; definition-sha256=f56c6dc355522d31ec888ab2ef18e1df3ce64cebc55e094b5763f5ef08414c4a; exit=0; EXPECT=matched; output-sha256=e7dd69dd1b4c673b1d9724c89891e7a5df167709c88a1afaea7e6cc32b043b5b; output-bytes=235; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client; path=37b9c12d7169/28 entries
 

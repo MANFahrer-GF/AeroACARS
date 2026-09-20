@@ -103,10 +103,20 @@ export function evaluateApproach(
   const soll = sollSinkrateFpm(snap.groundspeed_kt, glideslopeDeg);
   // Ohne Geschwindigkeit bleibt es bei den alten Festwerten — lieber die
   // bekannte Näherung als gar keine Warnung.
-  const sink100 = soll != null ? soll * 1.25 - 80 : -700 * gsFactor;
-  const sink200 = soll != null ? soll * 1.35 - 80 : -800 * gsFactor;
-  const sink500 = soll != null ? soll * 1.5 - 80 : -1000 * gsFactor;
-  const sink1000Lo = soll != null ? soll * 1.65 - 80 : -1100 * gsFactor;
+  //
+  // NACH UNTEN gedeckelt: Die geschwindigkeitsabhaengige Schwelle darf
+  // nie STRENGER werden als die alte Festzahl. Sonst kehrt sich der
+  // Fehler bei langsamen Mustern um — ein Hubschrauber oder Buschflieger
+  // mit 40–60 kt ueber Grund bekaeme bei 500 fpm eine rote Meldung, die
+  // es nie gab (Schwelle waere dort −345 bis −478 fpm; externe Abnahme,
+  // 21.09.2026). `Math.min` nimmt bei negativen Zahlen die STEILERE,
+  // also die nachsichtigere Grenze.
+  const deckel = (wert: number, alt: number) => Math.min(wert, alt * gsFactor);
+  const sink100 = soll != null ? deckel(soll * 1.25 - 80, -700) : -700 * gsFactor;
+  const sink200 = soll != null ? deckel(soll * 1.35 - 80, -800) : -800 * gsFactor;
+  const sink500 = soll != null ? deckel(soll * 1.5 - 80, -1000) : -1000 * gsFactor;
+  const sink1000Lo =
+    soll != null ? deckel(soll * 1.65 - 80, -1100) : -1100 * gsFactor;
   // Die OBERE Grenze (zu flach) bleibt am Soll: zu langsames Sinken ist
   // ebenso ein Abweichen vom Pfad, nur in die andere Richtung.
   const sink1000Hi = soll != null ? soll * 0.4 : -300 * gsFactor;

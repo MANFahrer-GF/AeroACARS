@@ -124,3 +124,40 @@ describe("evaluateApproach — die Schwellen hängen an der Geschwindigkeit", ()
     expect(evaluateApproach(ohneGs, "final", 1, 3)?.key).toBe("sink_rate_pull_up");
   });
 });
+
+describe("evaluateApproach — die Schwelle wird nie strenger als vorher", () => {
+  // Externe Abnahme 21.09.2026: Die geschwindigkeitsabhängige Schwelle
+  // kehrte den behobenen Fehler bei langsamen Mustern um. Unter 100 ft
+  // lag sie bei 40 kt auf −345 fpm, bei 60 kt auf −478 — ein Hubschrauber
+  // oder Buschflieger mit 500 fpm hätte die rote Meldung bekommen, die es
+  // nie gab. Deshalb ein Deckel: nie strenger als die alte Festzahl.
+  it("Hubschrauber mit 45 kt und 500 fpm bleibt ruhig", () => {
+    const heli = snap({
+      altitude_agl_ft: 90,
+      vertical_speed_fpm: -500,
+      groundspeed_kt: 45,
+    });
+    expect(evaluateApproach(heli, "final", 1, 3)).toBeNull();
+  });
+
+  it("… aber bei 900 fpm meldet es auch dort", () => {
+    const zuSteil = snap({
+      altitude_agl_ft: 90,
+      vertical_speed_fpm: -900,
+      groundspeed_kt: 45,
+    });
+    expect(evaluateApproach(zuSteil, "final", 1, 3)?.key).toBe("sink_rate_pull_up");
+  });
+
+  it("die PC-12 bleibt trotzdem strenger als ein Jet", () => {
+    // 95 kt: Soll −504, Schwelle −710 — unter dem Deckel von −700, also
+    // greift die gerechnete. Der Deckel nimmt nur die Überstrenge weg,
+    // nicht die Schärfe.
+    const pc12 = snap({
+      altitude_agl_ft: 93,
+      vertical_speed_fpm: -723,
+      groundspeed_kt: 95,
+    });
+    expect(evaluateApproach(pc12, "final", 1, 3)?.key).toBe("sink_rate_pull_up");
+  });
+});
