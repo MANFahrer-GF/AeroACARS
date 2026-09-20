@@ -141,6 +141,29 @@ fn should_publish_position(link_up: bool) -> bool {
 ///
 /// Bewusst großzügig: lieber ein paar Sekunden später neu verbinden als
 /// eine gesunde Verbindung wegen einer Verkehrspause abzuräumen.
+/// Die groesste Nachricht, die wir senden — passend zu `max_packet_size`
+/// des Brokers (mosquitto: 65536).
+///
+/// # Warum das hier steht
+///
+/// rumqttc erlaubt ausgehend von sich aus nur **10 KiB**
+/// (`MqttOptions`-Vorgabe, rumqttc 0.25.1 lib.rs:516-517). Wir haben das nie
+/// angehoben. Eine groessere Nachricht verweigert rumqttc — und meldet das
+/// als VERBINDUNGSFEHLER. Der Drive-Loop wirft daraufhin die Leitung weg,
+/// wartet fuenf Sekunden und baut neu auf.
+///
+/// Feldbefund 20.09.2026 (Pilot 5, Peter): Eine liegengebliebene
+/// Bahnkorrektur von 10.379 Byte wurde jede Minute aus der Ablage geholt
+/// und scheiterte jedes Mal — 625 Mal an einem Tag, 279 am naechsten. Die
+/// Verbindung riss dadurch im Minutentakt; wer in so einem Fenster
+/// aufsetzte, verlor seine Landungsmeldung (AAL 1331, WJA 66, DLH 339).
+/// Im Broker-Log sah das wie ein Netzproblem aus: Socket zu, kein
+/// DISCONNECT, fuenf Sekunden spaeter wieder da.
+const MAX_PAKET_BYTES: usize = 64 * 1024;
+
+/// Nutzlast-Obergrenze mit Reserve fuer Thema und MQTT-Kopf.
+const MAX_NUTZLAST_BYTES: usize = MAX_PAKET_BYTES - 2 * 1024;
+
 const POLL_SILENCE_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// v1.5.7: Frist für einen einzelnen Sendeversuch. `publish()` wartet
@@ -1750,7 +1773,17 @@ enum Cmd {
     Phase(PhasePayload),
     Block(Box<BlockPayload>),
     Takeoff(Box<TakeoffPayload>),
-    Touchdown(Box<TouchdownPayload>),
+    /// Die Landung — optional MIT Zustellmeldung.
+    ///
+    /// `Some(meldung)` liefert `true` erst beim PUBACK des Brokers. Ohne das
+    /// war die Landung die einzige wichtige Nachricht ohne Erfolgskontrolle:
+    /// Riss die Leitung im Aufsetzmoment, war sie weg, und niemand merkte es
+    /// (AAL 1331, WJA 66, DLH 339 — alle am 20.09.2026, jeweils rund zehn
+    /// Sekunden nach dem Aufsetzen).
+    Touchdown(
+        Box<TouchdownPayload>,
+        Option<tokio::sync::oneshot::Sender<bool>>,
+    ),
     Pirep(Box<PirepPayload>),
     /// v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE1): vorab-
     /// serialisiertes PIREP-Payload. Der Filing-Refactor baut das
@@ -1977,6 +2010,23 @@ async fn publish_registriert_wartend(
     body: Vec<u8>,
     mut meldung: Option<tokio::sync::oneshot::Sender<bool>>,
 ) -> bool {
+    // Ein zu grosses Paket darf die LEITUNG nicht kosten. rumqttc meldet es
+    // als Verbindungsfehler, und der Drive-Loop wirft daraufhin die
+    // Verbindung weg (siehe MAX_PAKET_BYTES). Also hier abfangen: Die
+    // Nachricht faellt aus, die Leitung bleibt stehen, und der Aufrufer
+    // erfaehrt es ueber die Meldung.
+    if body.len() > MAX_NUTZLAST_BYTES {
+        error!(
+            topic = %topic,
+            bytes = body.len(),
+            grenze = MAX_NUTZLAST_BYTES,
+            "Nachricht zu gross — NICHT gesendet (die Verbindung bleibt)"
+        );
+        if let Some(m) = meldung {
+            let _ = m.send(false);
+        }
+        return false;
+    }
     let bis = tokio::time::Instant::now() + PUBLISH_TIMEOUT;
     loop {
         // Die Meldung wandert nur bei Annahme ins Buch; bei „voll" behalten
@@ -2259,13 +2309,51 @@ impl Handle {
         tokio::spawn(async move {
             if let Err(e) = tokio::time::timeout(
                 EVENT_ENQUEUE_TIMEOUT,
-                tx.send(Cmd::Touchdown(Box::new(payload))),
+                tx.send(Cmd::Touchdown(Box::new(payload), None)),
             )
             .await
             {
                 warn!("dropping touchdown publish: {e}");
             }
         });
+    }
+
+    /// Dieselbe Landung, aber mit Zustellmeldung — `true` erst beim PUBACK
+    /// des Brokers.
+    ///
+    /// Der Aufrufer merkt sich das Ergebnis und schickt die Landung beim
+    /// Einreichen erneut, wenn sie nicht bestätigt wurde. Der Recorder
+    /// verträgt die Wiederholung: Er erkennt dieselbe Landung an
+    /// va/pilot/ts und legt keine zweite Zeile an.
+    pub fn touchdown_bestaetigt(
+        &self,
+        payload: TouchdownPayload,
+    ) -> tokio::sync::oneshot::Receiver<bool> {
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let (weiter_tx, weiter_rx) = tokio::sync::oneshot::channel();
+            let eingereiht = tokio::time::timeout(
+                EVENT_ENQUEUE_TIMEOUT,
+                tx.send(Cmd::Touchdown(Box::new(payload), Some(weiter_tx))),
+            )
+            .await;
+            match eingereiht {
+                Ok(Ok(())) => {
+                    let ok = weiter_rx.await.unwrap_or(false);
+                    let _ = ack_tx.send(ok);
+                }
+                Ok(Err(e)) => {
+                    warn!("touchdown: Auftragskanal geschlossen: {e}");
+                    let _ = ack_tx.send(false);
+                }
+                Err(_) => {
+                    warn!("touchdown: Auftragskanal voll — nicht eingereiht");
+                    let _ = ack_tx.send(false);
+                }
+            }
+        });
+        ack_rx
     }
 
     pub fn pirep(&self, payload: PirepPayload) {
@@ -2379,6 +2467,8 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     let mut opts = MqttOptions::new(&client_id, &broker_addr, port);
     opts.set_credentials(&cfg.username, &cfg.password);
     opts.set_keep_alive(Duration::from_secs(60));
+    // Ohne das gilt die rumqttc-Vorgabe von 10 KiB — siehe MAX_PAKET_BYTES.
+    opts.set_max_packet_size(MAX_PAKET_BYTES, MAX_PAKET_BYTES);
     opts.set_clean_session(true);
     opts.set_last_will(LastWill::new(
         &status_topic,
@@ -2735,16 +2825,17 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 // dedups on va/pilot/ts±2s/vs±5fpm with a stable ts), so a
                 // retained replay matches the existing row instead of
                 // duplicating. The next flight on the topic overwrites it.
-                Cmd::Touchdown(p) => {
-                    publish_json(
+                Cmd::Touchdown(p, meldung) => {
+                    let _ = publish_json_bestaetigt(
                         &pub_client,
                         &buch_pub,
                         &cfg_for_pub.topic("touchdown"),
                         &p,
                         QoS::AtLeastOnce,
                         true,
+                        meldung,
                     )
-                    .await
+                    .await;
                 }
                 Cmd::Pirep(p) => {
                     publish_json(

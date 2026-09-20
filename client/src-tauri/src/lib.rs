@@ -5742,6 +5742,15 @@ struct FlightStats {
     /// Die Bahn steht dabei, weil eine Spur gegen eine ANDERE Bahn in der
     /// Ansicht der gewerteten nichts zu suchen hat.
     bahn_vorige_spuren: Vec<(String, Vec<(f32, f32)>)>,
+    /// Die gesendete Landung, für den Fall, dass sie nicht ankam.
+    ///
+    /// Bewusst NICHT persistiert: Überlebt der Client den Flug nicht, holt
+    /// das hochgeladene Flugprotokoll die Landung nach. Hier geht es um den
+    /// Fall, der bisher lautlos war — Client läuft, Leitung riss genau im
+    /// Aufsetzmoment (AAL 1331, 20.09.2026).
+    landung_payload: Option<Box<aeroacars_mqtt::TouchdownPayload>>,
+    /// Hat der Broker die Landung bestätigt (PUBACK)?
+    landung_live_bestaetigt: bool,
     /// Laeuft die Spuraufzeichnung gerade?
     ///
     /// Steuert den Aufzeichnungstakt (`adaptive_tick_interval_v2`). Ohne
@@ -17821,6 +17830,163 @@ mod nachtrag_queue {
     /// DER Sendeweg: Ablage zuerst, dann senden, Datei faellt mit der
     /// Zustellmeldung. Alle vier Aufrufer (Streamer, Einreichen, gequeuter
     /// Nachtrag, Worker-Altbestand) gehen hier durch.
+    /// Die groesste Nutzlast, die der Sendeweg annimmt. Etwas kleiner als
+    /// die Grenze im MQTT-Crate, damit Thema und Kopf sicher passen.
+    const MAX_NACHTRAG_BYTES: usize = 60 * 1024;
+
+    /// Bringt einen zu grossen Nachtrag auf Sendegroesse, indem die Spur
+    /// ausgeduennt wird — jeder zweite Punkt, so oft wie noetig.
+    ///
+    /// # Warum es das gibt
+    ///
+    /// Bis v1.7.40 wurde ein zu grosser Nachtrag jede Minute erneut
+    /// versucht. rumqttc verweigert ihn und meldet das als
+    /// Verbindungsfehler; der Client warf daraufhin die Leitung weg und
+    /// baute fuenf Sekunden spaeter neu auf — im Minutentakt, tagelang
+    /// (Pilot 5, 20.09.2026: 625 Fehlversuche an einem Tag). Wer in so
+    /// einem Fenster aufsetzte, verlor seine Landungsmeldung.
+    ///
+    /// Ausduennen statt wegwerfen: Die Spur ist Beiwerk der Anzeige, die
+    /// Korrektur selbst (Raeumpunkt, Kantenabstand, Bahn) bleibt ganz.
+    /// Gibt `false`, wenn auch ohne Spur nichts passt — dann ist der
+    /// Nachtrag strukturell unzustellbar und hat in der Ablage nichts
+    /// mehr verloren.
+    pub fn auf_sendegroesse_bringen(
+        nachtrag: &mut aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
+    ) -> bool {
+        let gross = |n: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload| {
+            serde_json::to_vec(n).map(|v| v.len()).unwrap_or(usize::MAX)
+        };
+        if gross(nachtrag) <= MAX_NACHTRAG_BYTES {
+            return true;
+        }
+        for _ in 0..12 {
+            // Die Spur liegt in der Bahn-Gruppe (`#[serde(flatten)]`).
+            let Some(spur) = nachtrag
+                .bahn
+                .as_mut()
+                .and_then(|b| b.lateral_samples.as_mut())
+            else {
+                break;
+            };
+            if spur.len() < 2 {
+                break;
+            }
+            let ausgeduennt: Vec<_> = spur
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 2 == 0)
+                .map(|(_, p)| p.clone())
+                .collect();
+            *spur = ausgeduennt;
+            if gross(nachtrag) <= MAX_NACHTRAG_BYTES {
+                return true;
+            }
+        }
+        // Ohne Spur bleibt der Rest — passt der auch nicht, ist Schluss.
+        if let Some(b) = nachtrag.bahn.as_mut() {
+            b.lateral_samples = None;
+            b.vorherige_durchgaenge = None;
+        }
+        gross(nachtrag) <= MAX_NACHTRAG_BYTES
+    }
+
+    /// Räumt die Ablage BEIM START auf — unabhängig von der Verbindung.
+    ///
+    /// # Warum beim Start und nicht im Minutentakt
+    ///
+    /// Der Worker läuft erst eine Minute nach dem Start, und genau diese
+    /// erste Minute hat bei Pilot 5 tagelang die Leitung gekostet: Eine
+    /// 10.379 Byte grosse Korrektur wurde gesendet, rumqttc verweigerte sie,
+    /// der Client warf die Verbindung weg. Wer den Client startet, soll die
+    /// Altlast los sein, BEVOR zum ersten Mal gesendet wird — und ohne dass
+    /// ein Pilot im Dateisystem etwas löschen muss (Thomas, 20.09.2026).
+    ///
+    /// Geht über ALLE Ordner der Ablage, nicht nur den aktuellen Piloten:
+    /// Wer den Zugang wechselt, schleppt die alte Datei sonst weiter mit.
+    pub fn aufraeumen(app: &AppHandle) -> (usize, usize) {
+        let Some(base) = wurzel(app) else {
+            return (0, 0);
+        };
+        aufraeumen_in(&base)
+    }
+
+    /// Der Kern — ohne `AppHandle`, damit er prüfbar ist.
+    pub fn aufraeumen_in(base: &Path) -> (usize, usize) {
+        let base = base.to_path_buf();
+        let mut geschrumpft = 0;
+        let mut aussortiert = 0;
+        let mut ordner = vec![base];
+        let mut dateien: Vec<PathBuf> = Vec::new();
+        while let Some(d) = ordner.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            for eintrag in rd.flatten() {
+                let p = eintrag.path();
+                if p.is_dir() {
+                    ordner.push(p);
+                } else if p.extension().and_then(|s| s.to_str()) == Some("json") {
+                    dateien.push(p);
+                }
+            }
+        }
+        for pfad in dateien {
+            let Ok(text) = std::fs::read_to_string(&pfad) else {
+                continue;
+            };
+            // Bewusst über die Ablage-Hülle, damit va_prefix und pilot_id
+            // erhalten bleiben — die Datei wird ja nur ersetzt.
+            let Ok(mut ablage) = serde_json::from_str::<Ablage>(&text) else {
+                continue;
+            };
+            let gelesen = serde_json::from_value::<aeroacars_mqtt::TouchdownRolloutFinalizedPayload>(
+                ablage.nachtrag.clone(),
+            );
+            let Ok(mut nachtrag) = gelesen else {
+                continue;
+            };
+            if serde_json::to_vec(&nachtrag).map(|v| v.len()).unwrap_or(0) <= MAX_NACHTRAG_BYTES {
+                continue;
+            }
+            let pirep_id = nachtrag.pirep_id.clone();
+            if !auf_sendegroesse_bringen(&mut nachtrag) {
+                tracing::error!(
+                    pirep_id,
+                    pfad = %pfad.display(),
+                    "Ablage-Aufräumen: Korrektur passt auch ohne Spur nicht — entfernt"
+                );
+                if entfernen(&pfad) {
+                    aussortiert += 1;
+                }
+                continue;
+            }
+            let Ok(wert) = serde_json::to_value(&nachtrag) else {
+                continue;
+            };
+            ablage.nachtrag = wert;
+            match serde_json::to_string_pretty(&ablage)
+                .map_err(|e| io_err(e.to_string()))
+                .and_then(|t| std::fs::write(&pfad, t))
+            {
+                Ok(()) => {
+                    geschrumpft += 1;
+                    tracing::info!(
+                        pirep_id,
+                        pfad = %pfad.display(),
+                        "Ablage-Aufräumen: Korrektur ausgedünnt, damit sie sendbar ist"
+                    );
+                }
+                Err(e) => tracing::warn!(
+                    pirep_id,
+                    error = %e,
+                    "Ablage-Aufräumen: ausgedünnte Korrektur nicht geschrieben"
+                ),
+            }
+        }
+        (geschrumpft, aussortiert)
+    }
+
     pub fn senden(
         app: &AppHandle,
         sender: &aeroacars_mqtt::NachtragSender,
@@ -17875,6 +18041,19 @@ mod nachtrag_queue {
         for (pfad, nachtrag) in list_in(&base, &sender.va_prefix, &sender.pilot_id) {
             let revision = nachtrag.herkunft.bahn_revision;
             let pirep_id = nachtrag.pirep_id.clone();
+            // Erst auf Sendegroesse bringen. Was auch ausgeduennt nicht
+            // passt, bleibt NICHT liegen: Es wuerde die Leitung jede
+            // Minute erneut kosten.
+            let mut nachtrag = nachtrag;
+            if !auf_sendegroesse_bringen(&mut nachtrag) {
+                tracing::error!(
+                    pirep_id,
+                    pfad = %pfad.display(),
+                    "Bahnkorrektur passt auch ausgeduennt nicht in eine Nachricht — aussortiert"
+                );
+                entfernen(&pfad);
+                continue;
+            }
             let zugestellt = matches!(
                 tokio::time::timeout(ZUSTELL_FRIST, sender.senden(nachtrag)).await,
                 Ok(Ok(true))
@@ -20878,6 +21057,100 @@ mod client_health_report_tests {
 /// Doppelt abgelegt schadet nicht: `senden` schreibt dieselbe Datei
 /// (Kennung + Aufsetzzeit + Revision) noch einmal, atomar und mit
 /// gleichem Inhalt, und der Recorder riegelt ueber die Revision.
+/// Hält fest, ob der Broker die Landung bestätigt hat.
+///
+/// Bis v1.7.40 ging die Landung blind raus. Riss die Leitung im
+/// Aufsetzmoment — und genau dann riss sie bei drei Flügen am 20.09.2026,
+/// rund zehn Sekunden nach dem Aufsetzen —, war sie weg. Der Server sah
+/// einen Flugbericht ohne Landung, hielt ihn für unvollständig und stellte
+/// ihn in die Prüfliste, während der Pilot eine Note sah, die nie ankam.
+fn landung_zustellung_vermerken(app: &AppHandle, pirep_id: &str, ok: bool) {
+    let state = app.state::<AppState>();
+    let guard = state.active_flight.lock().expect("active_flight lock");
+    let Some(flight) = guard.as_ref() else {
+        return;
+    };
+    if flight.pirep_id != pirep_id {
+        return;
+    }
+    let mut stats = flight.stats.lock().expect("flight stats lock");
+    stats.landung_live_bestaetigt = ok;
+    if ok {
+        // Angekommen — die Kopie für den zweiten Versuch wird nicht mehr
+        // gebraucht.
+        stats.landung_payload = None;
+        tracing::info!(pirep_id = %pirep_id, "Landung vom Server bestaetigt");
+    } else {
+        tracing::warn!(
+            pirep_id = %pirep_id,
+            "Landung NICHT bestaetigt — zweiter Versuch beim Einreichen"
+        );
+    }
+}
+
+/// Schickt die Landung vor dem Einreichen erneut, wenn sie nicht
+/// bestätigt wurde — und sagt es dem Piloten, wenn auch das nicht klappt.
+///
+/// Reihenfolge ist wichtig: erst die Landung, dann der Flugbericht. Trifft
+/// der Bericht ohne Landung ein, fällt das Urteil „keine Landung
+/// aufgezeichnet", und das lässt sich später nicht mehr umdrehen, sobald
+/// die Webseite es abgeholt hat (AAL 1331).
+///
+/// Die Wiederholung ist ungefährlich: Der Recorder erkennt dieselbe
+/// Landung an Pilot und Zeitstempel und legt keine zweite Zeile an.
+async fn landung_vor_dem_einreichen_nachschicken(app: &AppHandle, flight: &ActiveFlight) {
+    let payload = {
+        let stats = flight.stats.lock().expect("flight stats lock");
+        if stats.landung_live_bestaetigt {
+            return;
+        }
+        stats.landung_payload.as_ref().map(|p| (**p).clone())
+    };
+    // Kein Aufsetzen aufgezeichnet (Abbruch, Ausweichflug ohne Landung):
+    // Dann gibt es nichts nachzuschicken.
+    let Some(payload) = payload else {
+        return;
+    };
+    let ack = {
+        let state = app.state::<AppState>();
+        let mqtt = state.mqtt.lock().await;
+        match mqtt.as_ref() {
+            Some(handle) => Some(handle.touchdown_bestaetigt(payload)),
+            None => None,
+        }
+    };
+    let ok = match ack {
+        Some(rx) => tokio::time::timeout(std::time::Duration::from_secs(15), rx)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false),
+        None => false,
+    };
+    landung_zustellung_vermerken(app, &flight.pirep_id, ok);
+    if ok {
+        tracing::info!(
+            pirep_id = %flight.pirep_id,
+            "Landung beim Einreichen nachgeschickt und bestaetigt"
+        );
+        return;
+    }
+    // Ehrlich bleiben: Der Pilot erfährt, dass seine Landung nicht durchkam.
+    // Verloren ist sie nicht — das hochgeladene Flugprotokoll trägt sie nach,
+    // nur dauert die Bewertung dann länger.
+    log_activity_handle(
+        app,
+        ActivityLevel::Warn,
+        "Landung konnte nicht an den Server gemeldet werden",
+        Some(
+            "Die Verbindung stand beim Aufsetzen nicht. Der Flugbericht wird trotzdem \
+             eingereicht; die Landung reicht das Flugprotokoll nach. Die Bewertung auf \
+             der Webseite kann dadurch spaeter erscheinen."
+                .to_string(),
+        ),
+    );
+}
+
 fn nachtrag_vor_dem_einreichen_sichern(app: &AppHandle, flight: &ActiveFlight) {
     let offener = {
         let st = flight.stats.lock().expect("flight stats");
@@ -26196,6 +26469,7 @@ async fn flight_end(
     // Verbindung wieder steht. Pilot sieht „PIREP queued" statt
     // „PIREP filed", kann aber sofort den nächsten Flug starten.
     nachtrag_vor_dem_einreichen_sichern(&app, &flight);
+    landung_vor_dem_einreichen_nachschicken(&app, &flight).await;
     match file_pirep_with_retry(&client, &flight.pirep_id, &body).await {
         Ok(()) => {
             // Snapshot the landing into the local history file BEFORE
@@ -27101,6 +27375,7 @@ async fn flight_end_manual(
     }
     tracing::info!(pirep_id = %flight.pirep_id, "filing PIREP (manual)");
     nachtrag_vor_dem_einreichen_sichern(&app, &flight);
+    landung_vor_dem_einreichen_nachschicken(&app, &flight).await;
     match client.file_pirep(&flight.pirep_id, &body).await {
         Ok(()) => {
             // Same landing-history snapshot as the regular file path.
@@ -34346,10 +34621,30 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 .unwrap_or(serde_json::Value::Null),
                         },
                     );
+                    {
+                        let mut st = flight.stats.lock().expect("flight stats lock");
+                        st.landung_payload = Some(Box::new(payload.clone()));
+                        st.landung_live_bestaetigt = false;
+                    }
                     let app_state = app.state::<AppState>();
                     let mqtt = app_state.mqtt.lock().await;
                     if let Some(handle) = mqtt.as_ref() {
-                        handle.touchdown(payload);
+                        // Mit Zustellmeldung. Das Warten läuft nebenher —
+                        // der Takt darf nicht auf das PUBACK warten.
+                        let ack = handle.touchdown_bestaetigt(payload);
+                        let app_fuer_ack = app.clone();
+                        let pirep_fuer_ack = flight.pirep_id.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let ok = tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                ack,
+                            )
+                            .await
+                            .ok()
+                            .and_then(|r| r.ok())
+                            .unwrap_or(false);
+                            landung_zustellung_vermerken(&app_fuer_ack, &pirep_fuer_ack, ok);
+                        });
                     }
                 }
             }
@@ -49903,6 +50198,17 @@ pub fn run() {
             // yet (fresh install, user hasn't logged in) it just
             // returns and we'll retry after login.
             {
+                // v1.7.41: Altlasten aus der Ablage raeumen, BEVOR zum
+                // ersten Mal gesendet wird — siehe `nachtrag_queue::aufraeumen`.
+                let (geschrumpft, aussortiert) = nachtrag_queue::aufraeumen(&app.handle());
+                if geschrumpft > 0 || aussortiert > 0 {
+                    tracing::warn!(
+                        geschrumpft,
+                        aussortiert,
+                        "Ablage beim Start geraeumt — zu grosse Bahnkorrekturen haben die \
+                         Verbindung im Minutentakt gekostet"
+                    );
+                }
                 let app_for_mqtt = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     init_mqtt_publisher_via_provisioning(app_for_mqtt).await;
@@ -58127,6 +58433,66 @@ mod touchdown_metadata_stamp_tests {
     /// Zwei Piloten auf demselben Rechner: `list_in` fuer den einen liefert
     /// nie den Nachtrag des anderen — weder ueber den Pfad noch ueber eine
     /// Datei, deren Inhalt einem anderen gehoert.
+    /// Baut einen Nachtrag mit einer Spur der gewünschten Länge.
+    fn nachtrag_mit_spur(punkte: usize) -> aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(0.0));
+        stats.landing_at =
+            Some(chrono::DateTime::<Utc>::from_timestamp(1_755_000_100, 0).expect("Zeit"));
+        let mut n = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        let spur: Vec<_> = (0..punkte)
+            .map(|i| aeroacars_mqtt::LateralSampleWire {
+                laengs_m: i as f64 * 1.5,
+                quer_m: (i % 7) as f64 * 0.25,
+            })
+            .collect();
+        n.bahn.as_mut().expect("Bahn").lateral_samples = Some(spur);
+        n
+    }
+
+    #[test]
+    fn eine_zu_grosse_korrektur_wird_ausgeduennt_statt_die_leitung_zu_kosten() {
+        // Feldbefund 20.09.2026 (Pilot 5): 10.379 Byte gegen die
+        // rumqttc-Vorgabe von 10.240 — jede Minute ein Verbindungsabriss,
+        // 625 Mal an einem Tag. Der Nachtrag darf danach SENDBAR sein,
+        // und die Korrektur selbst muss erhalten bleiben.
+        let mut n = nachtrag_mit_spur(40_000);
+        let vorher = serde_json::to_vec(&n).expect("json").len();
+        assert!(
+            vorher > 60 * 1024,
+            "Gegenprobe: {vorher} Byte sind nicht zu gross"
+        );
+        assert!(nachtrag_queue::auf_sendegroesse_bringen(&mut n));
+        let nachher = serde_json::to_vec(&n).expect("json").len();
+        assert!(nachher <= 60 * 1024, "immer noch {nachher} Byte");
+        assert_eq!(n.pirep_id, "p1", "die Korrektur selbst bleibt");
+        assert!(
+            n.bahn.as_ref().expect("Bahn").clearance_point_m.is_some(),
+            "der Raeumpunkt darf beim Ausduennen nicht verloren gehen"
+        );
+    }
+
+    #[test]
+    fn das_aufraeumen_beim_start_macht_die_ablage_sendbar() {
+        // Thomas, 20.09.2026: Der Pilot soll nichts loeschen muessen —
+        // der Client raeumt beim Start selbst auf.
+        let base = temp_ablage("aufraeumen");
+        let n = nachtrag_mit_spur(40_000);
+        let pfad = nachtrag_queue::enqueue_in(&base, "GSG", "42", &n).expect("Ablage");
+        let vorher = std::fs::metadata(&pfad).expect("Datei").len();
+        assert!(vorher > 60 * 1024, "Gegenprobe: {vorher} Byte");
+
+        let (geschrumpft, aussortiert) = nachtrag_queue::aufraeumen_in(&base);
+        assert_eq!((geschrumpft, aussortiert), (1, 0));
+
+        let gelesen = nachtrag_queue::list_in(&base, "GSG", "42");
+        assert_eq!(gelesen.len(), 1, "die Korrektur bleibt in der Ablage");
+        let gross = serde_json::to_vec(&gelesen[0].1).expect("json").len();
+        assert!(gross <= 60 * 1024, "nach dem Aufraeumen noch {gross} Byte");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn die_ablage_trennt_die_mandanten() {
         let base = temp_ablage("mandanten");
