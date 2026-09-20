@@ -246,8 +246,17 @@ fn aus_rumpf(rumpf: &[u8]) -> Result<Option<VdgsStand>, String> {
 pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsStand> {
     // Erst das Rufzeichen (kurz, synchron, keine Sperre ueber ein await),
     // dann der Netzabruf.
-    let callsign = crate::hoppie::hoppie_get_flight_context(app)
-        .callsign
+    // DASSELBE Rufzeichen, unter dem der Client auch funkt.
+    //
+    // `resolve_callsign` nimmt zuerst die Uebersteuerung aus den
+    // Einstellungen und erst dann das des Fluges — und dort wieder das
+    // ATC-Rufzeichen des OFP vor Airline+Flugnummer (PaxStudio/SimBrief
+    // planen oft ein anderes, etwa DLH4TK oder EWG9KC). Wer per Hoppie
+    // unter einem Rufzeichen funkt, aber VDGS unter einem anderen
+    // abfragt, bekommt ein leeres Band und sucht den Fehler beim Dienst
+    // (Thomas, 20.09.2026: „das kann sich von der Flugnummer
+    // unterscheiden").
+    let callsign = crate::hoppie::resolve_callsign(&app)
         .map(|c| c.trim().to_uppercase())
         .filter(|c| !c.is_empty())?;
 
@@ -400,6 +409,36 @@ mod tests {
         assert_eq!(aus_speicher("GSG9", Duration::ZERO), None);
         // Und ein anderes Rufzeichen bekommt nie den fremden Stand.
         assert_eq!(aus_speicher("GSG8", MIN_ABSTAND), None);
+    }
+
+    /// Der Abruf nimmt DASSELBE Rufzeichen wie der Funk.
+    ///
+    /// Es gibt drei Quellen, und sie koennen auseinanderlaufen: die
+    /// Uebersteuerung in den Einstellungen, das ATC-Rufzeichen aus dem
+    /// OFP (PaxStudio/SimBrief planen oft DLH4TK statt DLH400) und
+    /// Airline+Flugnummer. `hoppie::resolve_callsign` kennt die
+    /// Reihenfolge; wer hier `flight_context().callsign` nimmt, laesst
+    /// die Uebersteuerung fallen und fragt den Dienst unter einem
+    /// Rufzeichen ab, unter dem der Pilot gar nicht fliegt — das Band
+    /// bleibt leer, und die Ursache sieht man ihm nicht an.
+    ///
+    /// Ein Verhaltenstest brauchte einen laufenden Flug samt
+    /// Einstellungen; deshalb hier am Quelltext.
+    #[test]
+    fn der_abruf_nimmt_dasselbe_rufzeichen_wie_der_funk() {
+        let quelle = include_str!("vdgs.rs");
+        let von = quelle
+            .find("pub async fn vdgs_stand")
+            .expect("vdgs_stand nicht gefunden");
+        let rumpf = &quelle[von..von + 1200];
+        assert!(
+            rumpf.contains("hoppie::resolve_callsign"),
+            "vdgs_stand loest das Rufzeichen nicht wie der Funk auf",
+        );
+        assert!(
+            !rumpf.contains("hoppie_get_flight_context"),
+            "vdgs_stand umgeht die Uebersteuerung aus den Einstellungen",
+        );
     }
 
     /// Unbekanntes Rufzeichen: HTTP 200, leerer Rumpf. Muss „kein

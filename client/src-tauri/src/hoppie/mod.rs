@@ -857,7 +857,7 @@ pub fn hoppie_get_flight_context(app: AppHandle) -> FlightContext {
 /// button used to receive the callsign FROM the UI, which passed an
 /// empty string whenever no override was set and made "Test code" fail
 /// with "no callsign" while a perfectly good one sat in the flight plan.
-fn resolve_callsign(app: &AppHandle) -> Option<String> {
+pub(crate) fn resolve_callsign(app: &AppHandle) -> Option<String> {
     settings::read_settings(app)
         .callsign_override
         .filter(|c| !c.trim().is_empty())
