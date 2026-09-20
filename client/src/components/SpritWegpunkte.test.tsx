@@ -53,6 +53,25 @@ describe("SpritWegpunkte", () => {
     expect(html).not.toContain("−80");
   });
 
+  it("rechnet Verbrauch, nicht Tankstand — mehr getankt färbt die Spalte nicht grün", () => {
+    // DLH #1439 (20.09.2026): 292 kg mehr getankt als geplant. Die Spalte
+    // meldete „132 kg weniger verbraucht", während die Ampel rot war.
+    // Tatsächlich verbraucht: 406 kg gegen 246 kg Plan = 160 kg mehr.
+    const html = leer(renderToStaticMarkup(
+      <SpritWegpunkte
+        offen
+        zeilen={[
+          { ident: "DER24", plan_an_bord_kg: 9491, ist_an_bord_kg: 9783, zustand: "gemessen" },
+          { ident: "GEMMA", plan_an_bord_kg: 9245, ist_an_bord_kg: 9377, zustand: "gemessen", ampel: "rot" },
+        ]}
+      />,
+    ));
+    expect(html).toContain("160 kg mehr verbraucht");
+    expect(html).not.toContain("132 kg weniger verbraucht");
+    // Und die Abflugzeile sagt, was sie meint: getankt, nicht verbraucht.
+    expect(html).toContain("292 kg mehr getankt als geplant");
+  });
+
   it("zeigt ohne Zeilen nichts", () => {
     expect(renderToStaticMarkup(<SpritWegpunkte zeilen={[]} />)).toBe("");
     expect(renderToStaticMarkup(<SpritWegpunkte zeilen={undefined} />)).toBe("");

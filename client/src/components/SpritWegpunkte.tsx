@@ -39,10 +39,39 @@ function uhrzeit(ms: number | null | undefined): string {
   return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}z`;
 }
 
-/** Mehrverbrauch gegenüber Plan in kg (positiv = mehr verbraucht). */
-function mehrverbrauch(z: SpritWegpunkt): number | null {
+/**
+ * Die Zeile, auf die sich der Verbrauch bezieht: die erste mit Ist UND Plan.
+ * Normalerweise der Abflug, beim Einstieg in der Luft der erste Überflug
+ * danach — dieselbe Zeile, auf die auch die Hochrechnung aufsetzt.
+ */
+function bezugszeile(zeilen: SpritWegpunkt[]): SpritWegpunkt | null {
+  return (
+    zeilen.find(
+      (z) => z.ist_an_bord_kg != null && z.plan_an_bord_kg != null && z.zustand === "gemessen",
+    ) ?? null
+  );
+}
+
+/**
+ * Mehrverbrauch gegenüber Plan in kg (positiv = mehr verbraucht).
+ *
+ * VERBRAUCH, nicht Tankstand: Wer 292 kg mehr getankt hat als geplant,
+ * trägt diesen Vorsprung sonst durch alle Zeilen, und die Spalte meldet
+ * „weniger verbraucht", während die Ampel rot ist. Genau so stand es bei
+ * DLH #1439 (20.09.2026) im Bild — Text und Farbe widersprachen sich.
+ */
+function mehrverbrauch(z: SpritWegpunkt, bezug: SpritWegpunkt | null): number | null {
   if (z.ist_an_bord_kg == null || z.plan_an_bord_kg == null) return null;
-  return z.plan_an_bord_kg - z.ist_an_bord_kg;
+  if (bezug?.ist_an_bord_kg == null || bezug.plan_an_bord_kg == null) return null;
+  const ist = bezug.ist_an_bord_kg - z.ist_an_bord_kg;
+  const plan = bezug.plan_an_bord_kg - z.plan_an_bord_kg;
+  return ist - plan;
+}
+
+/** Wie viel mehr (positiv) oder weniger getankt wurde als geplant. */
+function tankdifferenz(z: SpritWegpunkt): number | null {
+  if (z.ist_an_bord_kg == null || z.plan_an_bord_kg == null) return null;
+  return z.ist_an_bord_kg - z.plan_an_bord_kg;
 }
 
 function Punkt({ ampel, blass }: { ampel?: SpritAmpel | null; blass?: boolean }) {
@@ -80,9 +109,10 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
   const zeilen = p.zeilen ?? [];
   if (zeilen.length < 2) return null;
 
+  const bezug = bezugszeile(zeilen);
   const letzte = [...zeilen].reverse().find((z) => z.zustand === "gemessen");
   const naechster = p.naechster != null ? zeilen[p.naechster] : null;
-  const mv = letzte ? mehrverbrauch(letzte) : null;
+  const mv = letzte ? mehrverbrauch(letzte, bezug) : null;
 
   const mvText = (m: number | null, ungefaehr = false) =>
     m == null
@@ -95,6 +125,15 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
           m > 0
           ? t("landing.sprit.wp_mehr", { kg: `${ungefaehr ? "≈ " : ""}${kg(Math.abs(m))}` })
           : t("landing.sprit.wp_weniger", { kg: `${ungefaehr ? "≈ " : ""}${kg(Math.abs(m))}` });
+
+  // Die Bezugszeile hat noch nichts verbraucht; dort steht, wie viel mehr
+  // oder weniger getankt wurde als geplant.
+  const tankText = (d: number | null) =>
+    d == null || Math.abs(d) < 0.5
+      ? t("landing.sprit.wp_wie_getankt")
+      : d > 0
+        ? t("landing.sprit.wp_getankt_mehr", { kg: kg(Math.abs(d)) })
+        : t("landing.sprit.wp_getankt_weniger", { kg: kg(Math.abs(d)) });
 
   const kopf = (
     <button
@@ -273,7 +312,9 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
                       <td style={zelle}>{ueber ? "—" : uhrzeit(z.zeit_ms)}</td>
                       <td style={zelle}>{kg(z.plan_an_bord_kg)}</td>
                       <td style={zelle}>{zukunft ? "—" : `${ueber ? "≈ " : ""}${kg(z.ist_an_bord_kg)}`}</td>
-                      <td style={{ ...zelle, color: zukunft ? LEISE : farbe }}>{zukunft ? "—" : mvText(mehrverbrauch(z), ueber)}</td>
+                      <td style={{ ...zelle, color: zukunft ? LEISE : farbe }}>
+                        {zukunft ? "—" : z === bezug ? tankText(tankdifferenz(z)) : mvText(mehrverbrauch(z, bezug), ueber)}
+                      </td>
                       <td style={{ ...zelle, color: zukunft ? LEISE : farbe }}>
                         {zukunft || z.landung_hochgerechnet_kg == null ? (
                           letzteZeile && z.min_an_bord_kg != null ? (
@@ -306,13 +347,14 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
  */
 function Kurve({ zeilen }: { zeilen: SpritWegpunkt[] }) {
   const { t } = useTranslation();
+  const bezug = bezugszeile(zeilen);
   const W = 1060;
   const H = 150;
   const X0 = 60;
   const X1 = W - 10;
   const YM = 72;
   const punkte = zeilen
-    .map((z, i) => ({ z, i, m: mehrverbrauch(z) }))
+    .map((z, i) => ({ z, i, m: mehrverbrauch(z, bezug) }))
     .filter((q) => q.m != null && (q.z.zustand === "gemessen" || q.z.zustand === "uebersprungen"));
   const groesst = Math.max(100, ...punkte.map((q) => Math.abs(q.m!)));
   const skala = Math.ceil(groesst / 100) * 100;

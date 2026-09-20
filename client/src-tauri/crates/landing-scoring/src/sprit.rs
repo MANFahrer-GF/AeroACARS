@@ -512,11 +512,28 @@ pub fn wegpunkte_auswerten(
         zeilen[i].ist_an_bord_kg = Some(ph + dv + (dn - dv) * anteil);
     }
 
+    // Wie viel Plan-Verbrauch hinter dem Bezugspunkt liegen muss, bevor
+    // hochgerechnet wird. In den ersten Minuten steht der Startschub gegen
+    // ein winziges Planstück: Bei DLH #1439 (20.09.2026) wurden aus drei
+    // Minuten Steigflug 929 kg Landesprit hochgerechnet, drei Zeilen waren
+    // rot, und ab dem vierten Fix war alles wieder grün. Ein Alarm, der
+    // sich von selbst erledigt, ist keiner. Ein Zehntel des Trips, aber nie
+    // weniger als `FUEL_CHECK_MIN_PLAN_KG`.
+    let basis_min = plan_start
+        .map(|ps| ((ps - plan_landung) * 0.10).max(FUEL_CHECK_MIN_PLAN_KG))
+        .unwrap_or(FUEL_CHECK_MIN_PLAN_KG);
+
     for z in zeilen.iter_mut() {
         z.landung_hochgerechnet_kg = None;
         z.ampel = None;
         if z.zustand == WegpunktZustand::Offen {
             continue;
+        }
+        // Zu früh für eine Hochrechnung: Zahlen ja, Ampel nein.
+        if let (Some(ps), Some(ph)) = (plan_start, z.plan_an_bord_kg) {
+            if ps - ph < basis_min {
+                continue;
+            }
         }
         let (Some(ist), Some(plan)) = (z.ist_an_bord_kg, z.plan_an_bord_kg) else {
             continue;
@@ -1053,6 +1070,28 @@ mod tests {
         assert!(z[4].ampel.is_none() && z[4].ist_an_bord_kg.is_none());
         // Gemessene schon.
         assert!(z[3].ampel.is_some() && z[3].landung_hochgerechnet_kg.is_some());
+    }
+
+    #[test]
+    fn die_ersten_minuten_bekommen_keine_ampel() {
+        // DLH #1439: 292 kg mehr getankt, Startschub gegen ein winziges
+        // Planstück — drei rote Zeilen, die sich ab dem vierten Fix von
+        // selbst erledigten. Trip laut Plan 5.700 kg, ein Zehntel = 570.
+        let mut z = vec![
+            wp("DER24", 9491.0, 8000.0, Some(9783.0), WegpunktZustand::Gemessen),
+            wp("GEMMA", 9245.0, 7800.0, Some(9377.0), WegpunktZustand::Gemessen),
+            wp("TEA", 8384.0, 7000.0, Some(8466.0), WegpunktZustand::Gemessen),
+            wp("EDDF", 3791.0, 2800.0, None, WegpunktZustand::Offen),
+        ];
+        wegpunkte_auswerten(&mut z, Some(9783.0), Some(300.0));
+        assert!(z[0].ampel.is_none(), "der Abflug hat nichts verbraucht");
+        assert!(
+            z[1].ampel.is_none(),
+            "246 kg Plan-Verbrauch reichen für keine Hochrechnung",
+        );
+        assert!(z[1].landung_hochgerechnet_kg.is_none());
+        // TEA: 1.107 kg Plan-Verbrauch — jetzt wird gerechnet.
+        assert!(z[2].ampel.is_some(), "ab genug Strecke gehört die Ampel hin");
     }
 
     #[test]
