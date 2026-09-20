@@ -18473,7 +18473,12 @@ mod konten_isolierung_runde_neun_wiring_tests {
     #[test]
     fn ein_flug_ohne_sprit_planwerte_laedt_den_ofp_nach() {
         const SRC: &str = include_str!("lib.rs");
-        let koerper = funktionskoerper(SRC, "async fn try_resume_flight(");
+        // Der Name wird zusammengesetzt, damit dieser Test nicht selbst zum
+        // Treffer wird: `vor_der_server_auskunft_wird_nichts_geloescht`
+        // sucht dieselbe Zeichenkette in der Quelldatei und fand sonst
+        // diesen Test statt der Funktion.
+        let nadel = format!("async fn try{}resume_flight(", "_");
+        let koerper = funktionskoerper(SRC, &nadel);
         let pruefung = koerper
             .find("sprit_plan_fehlt")
             .expect("die Wiederaufnahme prueft die Sprit-Planwerte nicht");
