@@ -108,6 +108,93 @@ pub async fn upload_flight_log(
     })
 }
 
+/// Hoechstens so viel rohes Diagnose-Log wird geschickt. Groessere Dateien
+/// werden HINTEN abgeschnitten — das Ende ist das Interessante.
+const DIAGNOSE_MAX_ROH: usize = 8 * 1024 * 1024;
+
+fn default_diagnose_url() -> String {
+    DEFAULT_PROVISION_URL.replace("/api/provision", "/api/flight-logs/diagnose")
+}
+
+/// Laedt das DIAGNOSE-Log des Clients hoch (die taegliche tracing-Datei).
+///
+/// # Warum
+///
+/// Am 20.09.2026 riss bei mehreren Piloten die Verbindung im Minutentakt.
+/// Serverseitig sah das wie ein Netzproblem aus; die Zeile, die den Fehler
+/// benannte, stand nur auf dem Rechner des Piloten. Die Suche dauerte zwei
+/// Tage und endete erst, als jemand seine Logdatei schickte. Seitdem reist
+/// sie mit dem Flugprotokoll mit.
+///
+/// Best effort: Schlaegt das fehl, ist das kein Grund, irgendetwas anderes
+/// abzubrechen — der Flugbericht ist wichtiger als seine Diagnose.
+pub async fn upload_diagnose_log(
+    log_path: &Path,
+    pirep_id: &str,
+    username: &str,
+    password: &str,
+    endpoint: Option<&str>,
+) -> Result<UploadStats> {
+    let mut raw = tokio::fs::read(log_path)
+        .await
+        .with_context(|| format!("read diagnose log {log_path:?}"))?;
+    if raw.is_empty() {
+        anyhow::bail!("diagnose log is empty");
+    }
+    if raw.len() > DIAGNOSE_MAX_ROH {
+        // Vorn abschneiden: Der Fehler steht am Ende, nicht am Anfang.
+        raw = raw.split_off(raw.len() - DIAGNOSE_MAX_ROH);
+    }
+    let raw_size = raw.len();
+
+    let compressed = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+        let mut encoder = GzEncoder::new(Vec::with_capacity(raw.len() / 8), Compression::default());
+        encoder.write_all(&raw)?;
+        Ok(encoder.finish()?)
+    })
+    .await
+    .context("gzip task panic")??;
+    let compressed_size = compressed.len();
+
+    let url = endpoint
+        .map(String::from)
+        .unwrap_or_else(default_diagnose_url);
+    let auth_token = format!("{username}:{password}");
+    let auth_b64 = base64::engine::general_purpose::STANDARD.encode(auth_token.as_bytes());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let res = client
+        .post(&url)
+        .header("Authorization", format!("Basic {auth_b64}"))
+        .header("X-Pirep-Id", pirep_id)
+        .header("Content-Type", "application/gzip")
+        .body(compressed)
+        .send()
+        .await
+        .context("diagnose upload POST failed")?;
+    let status = res.status();
+    if !status.is_success() {
+        let body = res.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "diagnose upload rejected: HTTP {} — {}",
+            status.as_u16(),
+            body
+        );
+    }
+    tracing::info!(
+        pirep_id = %pirep_id,
+        roh_kb = raw_size / 1024,
+        gzip_kb = compressed_size / 1024,
+        "Diagnose-Log hochgeladen"
+    );
+    Ok(UploadStats {
+        raw_size,
+        compressed_size,
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct UploadStats {
     pub raw_size: usize,

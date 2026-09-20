@@ -29111,6 +29111,36 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Op
                 );
             }
         }
+
+        // v1.7.41: das DIAGNOSE-Log gleich mit.
+        //
+        // Am 20.09.2026 riss bei mehreren Piloten die Verbindung im
+        // Minutentakt. Serverseitig sah das wie ein Netzproblem aus; die
+        // Zeile, die den Fehler benannte ("Cannot send packet of size
+        // 10379 ... maximum 10240"), stand ausschliesslich auf dem
+        // Rechner des Piloten. Die Suche dauerte zwei Tage und endete
+        // erst, als jemand seine Logdatei schickte.
+        //
+        // Best effort: Fehlt die Datei oder scheitert der Upload, bleibt
+        // es bei einer Logzeile — der Flugbericht ist wichtiger.
+        if let Some(diagnose) = heutiges_diagnose_log() {
+            match aeroacars_mqtt::log_upload::upload_diagnose_log(
+                &diagnose, &pirep_id, &username, &password, None,
+            )
+            .await
+            {
+                Ok(stats) => tracing::info!(
+                    pirep_id = %pirep_id,
+                    gzip_kb = stats.compressed_size / 1024,
+                    "Diagnose-Log mitgeschickt"
+                ),
+                Err(e) => tracing::warn!(
+                    pirep_id = %pirep_id,
+                    error = %e,
+                    "Diagnose-Log nicht hochgeladen (nicht schlimm)"
+                ),
+            }
+        }
     });
 }
 
@@ -49818,6 +49848,14 @@ fn log_dir() -> Option<PathBuf> {
 /// Test unten die Konfiguration wirklich ausführt: eine ungültige
 /// Rotations-Einstellung würde sonst lautlos im Fehlerzweig landen und wir
 /// hätten eine Protokollierung, die nichts protokolliert.
+/// Die Logdatei von heute — dieselbe Ableitung wie `log_dir`, damit
+/// Schreiben und Hochladen nicht auseinanderlaufen koennen.
+fn heutiges_diagnose_log() -> Option<PathBuf> {
+    let d = log_dir()?;
+    let pfad = d.join(format!("aeroacars.{}.log", Utc::now().format("%Y-%m-%d")));
+    pfad.exists().then_some(pfad)
+}
+
 fn build_log_appender(
     dir: &std::path::Path,
 ) -> Option<tracing_appender::rolling::RollingFileAppender> {
