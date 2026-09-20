@@ -2,11 +2,17 @@
 // Überflug, mit Hochrechnung auf die Landung.
 //
 // Eine Anzeige für zwei Orte: im Cockpit live (über der METAR-Karte) und in
-// der Landeauswertung, im Client und auf der Live-Seite. Gerechnet wird
-// NICHTS hier — Zeilen, Hochrechnung und Ampel kommen aus
-// `landing_scoring::sprit::wegpunkte_auswerten` (Rust). Zwei Rechnungen
-// derselben Frage laufen auseinander; das hat dieses Projekt mehrfach
-// bezahlt.
+// der Landeauswertung, im Client und auf der Live-Seite. Zeilen,
+// Hochrechnung und Ampel kommen aus
+// `landing_scoring::sprit::wegpunkte_auswerten` (Rust) — was eine AUSSAGE
+// traegt, wird dort gerechnet. Zwei Rechnungen derselben Frage laufen
+// auseinander; das hat dieses Projekt mehrfach bezahlt.
+//
+// Hier entstehen nur Differenzen zweier bereits angezeigter Spalten:
+// `mehrverbrauch` (seit dem Bezugspunkt) und `abschnittsverbrauch` (seit
+// der vorigen Zeile). Sie erfinden nichts und koennen nicht von der
+// Rust-Seite abweichen, weil sie deren Zahlen subtrahieren. Alles, was
+// darueber hinausgeht, gehoert nach Rust.
 //
 // # Farben
 //
@@ -68,6 +74,37 @@ function mehrverbrauch(z: SpritWegpunkt, bezug: SpritWegpunkt | null): number | 
   return ist - plan;
 }
 
+/**
+ * Mehrverbrauch auf DIESEM Abschnitt: von der vorigen gemessenen Zeile bis
+ * hier, gegen den Plan für dasselbe Stück.
+ *
+ * Der kumulierte Wert beantwortet „wie steht es insgesamt", aber nicht
+ * „passt es gerade" — er schleppt den Steigflug bis ans Ziel mit. Bei
+ * DLH #1439 (20.09.2026) stand an jedem Reiseflug-Fix ein vierstelliger
+ * Mehrverbrauch, obwohl der Flug dort sparsamer lief als geplant
+ * (Thomas: „so kann man nicht auf den ersten Blick vergleichen").
+ */
+function abschnittsverbrauch(
+  z: SpritWegpunkt,
+  vorige: SpritWegpunkt | null,
+): number | null {
+  if (z.ist_an_bord_kg == null || z.plan_an_bord_kg == null) return null;
+  if (vorige?.ist_an_bord_kg == null || vorige.plan_an_bord_kg == null) return null;
+  const ist = vorige.ist_an_bord_kg - z.ist_an_bord_kg;
+  const plan = vorige.plan_an_bord_kg - z.plan_an_bord_kg;
+  return ist - plan;
+}
+
+/** Die letzte Zeile vor `i`, die einen gemessenen Tankstand trägt. */
+function vorigeMitWert(zeilen: SpritWegpunkt[], i: number): SpritWegpunkt | null {
+  for (let k = i - 1; k >= 0; k--) {
+    if (zeilen[k].ist_an_bord_kg != null && zeilen[k].plan_an_bord_kg != null) {
+      return zeilen[k];
+    }
+  }
+  return null;
+}
+
 /** Wie viel mehr (positiv) oder weniger getankt wurde als geplant. */
 function tankdifferenz(z: SpritWegpunkt): number | null {
   if (z.ist_an_bord_kg == null || z.plan_an_bord_kg == null) return null;
@@ -125,6 +162,31 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
           m > 0
           ? t("landing.sprit.wp_mehr", { kg: `${ungefaehr ? "≈ " : ""}${kg(Math.abs(m))}` })
           : t("landing.sprit.wp_weniger", { kg: `${ungefaehr ? "≈ " : ""}${kg(Math.abs(m))}` });
+
+  // Der Abschnitt — die Hauptzahl der Spalte. Gleiche Bauart wie `mvText`,
+  // eigene Schlüssel: „mehr auf diesem Abschnitt" statt „mehr verbraucht".
+  const abschnittText = (m: number | null, ungefaehr = false) =>
+    m == null
+      ? "—"
+      : Math.abs(m) < 0.5
+        ? t("landing.sprit.wp_abschnitt_wie_geplant")
+        : m > 0
+          ? t("landing.sprit.wp_abschnitt_mehr", {
+              kg: `${ungefaehr ? "≈ " : ""}${kg(Math.abs(m))}`,
+            })
+          : t("landing.sprit.wp_abschnitt_weniger", {
+              kg: `${ungefaehr ? "≈ " : ""}${kg(Math.abs(m))}`,
+            });
+
+  // Der Gesamtstand, klein darunter — mit Vorzeichen, damit er in einer
+  // Zeile bleibt. Er verschwindet nicht: Wer wissen will, wie es insgesamt
+  // steht, findet es weiter hier (Redesign nimmt nichts weg).
+  const gesamtText = (m: number | null) =>
+    m == null || Math.abs(m) < 0.5
+      ? null
+      : t("landing.sprit.wp_gesamt", {
+          kg: `${m > 0 ? "+" : "−"}${kg(Math.abs(m))} kg`,
+        });
 
   // Die Bezugszeile hat noch nichts verbraucht; dort steht, wie viel mehr
   // oder weniger getankt wurde als geplant.
@@ -319,7 +381,25 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
                       <td style={zelle}>{kg(z.plan_an_bord_kg)}</td>
                       <td style={zelle}>{zukunft ? "—" : `${ueber ? "≈ " : ""}${kg(z.ist_an_bord_kg)}`}</td>
                       <td style={{ ...zelle, color: zukunft ? LEISE : farbe }}>
-                        {zukunft ? "—" : z === bezug ? tankText(tankdifferenz(z)) : mvText(mehrverbrauch(z, bezug), ueber)}
+                        {zukunft ? (
+                          "—"
+                        ) : z === bezug ? (
+                          tankText(tankdifferenz(z))
+                        ) : (
+                          <>
+                            <div>
+                              {abschnittText(
+                                abschnittsverbrauch(z, vorigeMitWert(zeilen, i)),
+                                ueber,
+                              )}
+                            </div>
+                            {gesamtText(mehrverbrauch(z, bezug)) && (
+                              <small style={{ color: LEISE, fontSize: 10.5 }}>
+                                {gesamtText(mehrverbrauch(z, bezug))}
+                              </small>
+                            )}
+                          </>
+                        )}
                       </td>
                       <td style={{ ...zelle, color: zukunft ? LEISE : farbe }}>
                         {zukunft || z.landung_hochgerechnet_kg == null ? (

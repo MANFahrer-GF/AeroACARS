@@ -401,10 +401,6 @@ pub struct Wegpunkt {
     pub ampel: Option<Ampel>,
 }
 
-/// Unter diesem geplanten Verbrauch ist das Verhältnis Ist/Plan ohne Aussage
-/// — kurz nach dem Abheben wären 30 kg Unterschied schon 30 %.
-const FUEL_CHECK_MIN_PLAN_KG: f32 = 150.0;
-
 /// Der Fuel-Check an einem Wegpunkt, wie ihn eine Crew macht (EFOB):
 /// Tankstand jetzt, minus der geplante Rest, hochgerechnet mit dem bisher
 /// gemessenen Verhältnis von Ist- zu Plan-Verbrauch.
@@ -414,12 +410,28 @@ const FUEL_CHECK_MIN_PLAN_KG: f32 = 150.0;
 /// erreicht. Eine feste Prozentschwelle hat er verworfen — kleine Muster
 /// liegen ohnehin 9–15 % über SimBrief und wären dauernd gelb.
 ///
+/// # Warum der Rest NICHT hochskaliert wird
+///
+/// Bis 20.09.2026 wurde der geplante Restverbrauch mit dem bisher
+/// gemessenen Ist-zu-Plan-Verhaeltnis multipliziert. Das erfindet Zahlen,
+/// weil die Phasen verschieden teuer sind: Steigen kostet ein Vielfaches
+/// derselben Strecke im Reiseflug. Bei DLH #1439 (A380, EDDM) ergab das
+/// bei BRADD "−3748 kg bei der Landung" (rot) und zwei Fixe spaeter
+/// "+20 209 kg" (gruen) — ein Sprung von 24 Tonnen im ruhigen Reiseflug.
+/// Den Faktor stattdessen erst ab TOC zu bilden half nicht: Dann stand
+/// dort 30 893 kg. Das Flugzeug selbst sagte 23,3 t.
+///
+/// Der SimBrief-Plan kennt Sinkflug, Wind und Stufen bereits; unsere
+/// Multiplikation weiss davon nichts. Also genau die Crew-Rechnung:
+/// Tankstand jetzt minus dem GEPLANTEN Rest. Die bisherige Abweichung
+/// steckt in `ist_hier` und wird als Betrag weitergetragen, nicht
+/// gestreckt. Fuer denselben Flug: 23 429 / 23 436 / 23 805 kg gegen
+/// 23,3 t im FMS (Thomas, 20.09.2026).
+///
 /// Gibt `None`, wenn Plan-Werte fehlen.
 pub fn fuel_check(
     ist_hier: f32,
     plan_hier: f32,
-    ist_start: Option<f32>,
-    plan_start: Option<f32>,
     plan_landung: f32,
     min_landung: Option<f32>,
     min_hier: Option<f32>,
@@ -428,14 +440,8 @@ pub fn fuel_check(
     if !(ist_hier.is_finite() && plan_hier.is_finite() && plan_landung.is_finite()) {
         return None;
     }
-    let faktor = match (ist_start, plan_start) {
-        (Some(is), Some(ps)) if ps - plan_hier >= FUEL_CHECK_MIN_PLAN_KG => {
-            ((is - ist_hier) / (ps - plan_hier)).clamp(0.5, 2.0)
-        }
-        _ => 1.0,
-    };
     let plan_rest = (plan_hier - plan_landung).max(0.0);
-    let hoch = ist_hier - plan_rest * faktor;
+    let hoch = ist_hier - plan_rest;
     let unter_min = min_landung.is_some_and(|m| hoch < m) || min_hier.is_some_and(|m| ist_hier < m);
     let ampel = if unter_min {
         Ampel::Rot
@@ -452,11 +458,7 @@ pub fn fuel_check(
 ///
 /// Erwartet die Zeilen in Flugreihenfolge; die erste ist der Abflug, die
 /// letzte das Ziel (deren Plan-Wert die Plan-Landung ist).
-pub fn wegpunkte_auswerten(
-    zeilen: &mut [Wegpunkt],
-    ist_start: Option<f32>,
-    contingency_kg: Option<f32>,
-) {
+pub fn wegpunkte_auswerten(zeilen: &mut [Wegpunkt], contingency_kg: Option<f32>) {
     let Some(letzte) = zeilen.last() else { return };
     let Some(plan_landung) = letzte.plan_an_bord_kg else {
         return;
@@ -471,20 +473,6 @@ pub fn wegpunkte_auswerten(
         })
         .collect();
 
-    // Bezugspunkt des Verbrauchsfaktors: die erste GEMESSENE Zeile, Ist
-    // und Plan am selben Ort. Im Normalfall ist das der Abflug mit dem
-    // Abhebe-Tankstand (= `ist_start`). Beim Einstieg in der Luft trägt
-    // der Abflug keine Messung; dann ist es der erste Überflug danach.
-    // Den Tankstand am Einstieg gegen den Plan am Abflug zu stellen, hätte
-    // Verbrauch seit dem Einstieg durch Plan-Verbrauch seit dem Abflug
-    // geteilt — Hochrechnung zu günstig, Rot als Grün (QS 19.09.2026).
-    let (ist_start, plan_start) = match gemessen
-        .iter()
-        .find_map(|&g| Some((zeilen[g].ist_an_bord_kg?, zeilen[g].plan_an_bord_kg?)))
-    {
-        Some((ist, plan)) => (Some(ist), Some(plan)),
-        None => (ist_start, zeilen.first().and_then(|z| z.plan_an_bord_kg)),
-    };
     for i in 0..zeilen.len() {
         if zeilen[i].zustand != WegpunktZustand::Uebersprungen {
             continue;
@@ -512,37 +500,21 @@ pub fn wegpunkte_auswerten(
         zeilen[i].ist_an_bord_kg = Some(ph + dv + (dn - dv) * anteil);
     }
 
-    // Wie viel Plan-Verbrauch hinter dem Bezugspunkt liegen muss, bevor
-    // hochgerechnet wird. In den ersten Minuten steht der Startschub gegen
-    // ein winziges Planstück: Bei DLH #1439 (20.09.2026) wurden aus drei
-    // Minuten Steigflug 929 kg Landesprit hochgerechnet, drei Zeilen waren
-    // rot, und ab dem vierten Fix war alles wieder grün. Ein Alarm, der
-    // sich von selbst erledigt, ist keiner. Ein Zehntel des Trips, aber nie
-    // weniger als `FUEL_CHECK_MIN_PLAN_KG`.
+    // KEIN Mindestabstand mehr, bevor gerechnet wird.
     //
-    // NUR ein Zehntel, KEINE absolute Untergrenze: Mit `max(150 kg)` wäre
-    // ein kurzer Flug ganz ohne Ampel geblieben — bei einem Trip von
-    // 300 kg die halbe Strecke, bei 150 kg und weniger (GA, kurzer
-    // Bizjet-Hüpfer) bis zur Landung (Abnahme 20.09.2026). Unterhalb von
-    // `FUEL_CHECK_MIN_PLAN_KG` rechnet `fuel_check` ohnehin mit Faktor 1,0
-    // statt aus einem winzigen Nenner — die Ampel bleibt also ruhig, statt
-    // ganz zu fehlen.
-    let basis_min = plan_start
-        .map(|ps| (ps - plan_landung) * 0.10)
-        .unwrap_or(FUEL_CHECK_MIN_PLAN_KG);
-
+    // Der Riegel (ein Zehntel des Trips) war die Notbremse gegen die
+    // Hochskalierung: In den ersten Minuten stand der Startschub gegen ein
+    // winziges Planstueck, und aus drei Minuten Steigflug wurden bei
+    // DLH #1439 (20.09.2026) 929 kg Landesprit hochgerechnet. Seit die
+    // Skalierung weg ist, gibt es dieses Rauschen nicht mehr: Tankstand
+    // minus geplanter Rest ist ab dem ersten Ueberflug stabil. Beim selben
+    // Flug traefe ACK — 26 Minuten nach dem Abheben — den FMS-Wert auf
+    // 130 kg genau. Den haette der Riegel verschwiegen.
     for z in zeilen.iter_mut() {
         z.landung_hochgerechnet_kg = None;
         z.ampel = None;
         if z.zustand == WegpunktZustand::Offen {
             continue;
-        }
-        // Zu früh: keine Hochrechnung und keine Ampel. Die gemessenen
-        // Zahlen stehen trotzdem in der Zeile — sie kommen nicht von hier.
-        if let (Some(ps), Some(ph)) = (plan_start, z.plan_an_bord_kg) {
-            if ps - ph < basis_min {
-                continue;
-            }
         }
         let (Some(ist), Some(plan)) = (z.ist_an_bord_kg, z.plan_an_bord_kg) else {
             continue;
@@ -550,8 +522,6 @@ pub fn wegpunkte_auswerten(
         if let Some((hoch, ampel)) = fuel_check(
             ist,
             plan,
-            ist_start,
-            plan_start,
             plan_landung,
             min_landung,
             z.min_an_bord_kg,
@@ -931,23 +901,21 @@ mod tests {
 
     #[test]
     fn fuel_check_rechnet_den_mehrverbrauch_auf_die_landung_hoch() {
-        // Start 7700 (Plan und Ist), jetzt Plan 5480, Ist 5360: 2340 statt
-        // 2220 verbraucht, Faktor 1,054. Rest bis Landung laut Plan 960 kg
-        // → hochgerechnet 5360 − 960·1,054 ≈ 4348.
+        // Jetzt Plan 5480, Ist 5360 — 120 kg unter Plan. Rest bis zur
+        // Landung laut Plan 960 kg → 5360 − 960 = 4400. Die Abweichung
+        // wird als BETRAG weitergetragen, nicht gestreckt: 4520 − 120.
         let (hoch, ampel) = fuel_check(
             5360.0,
             5480.0,
-            Some(7700.0),
-            Some(7700.0),
             4520.0,
             Some(3790.0),
             Some(4400.0),
             Some(160.0),
         )
         .unwrap();
-        assert!((hoch - 4348.0).abs() < 3.0, "{hoch}");
-        // 4348 liegt unter 4520 − 160 = 4360: die Contingency reicht nicht.
-        assert_eq!(ampel, Ampel::Gelb);
+        assert!((hoch - 4400.0).abs() < 3.0, "{hoch}");
+        // 4400 liegt ueber 4520 − 160 = 4360: die Contingency deckt es.
+        assert_eq!(ampel, Ampel::Gruen);
     }
 
     #[test]
@@ -955,8 +923,6 @@ mod tests {
         let (_, ampel) = fuel_check(
             5440.0,
             5480.0,
-            Some(7700.0),
-            Some(7700.0),
             4520.0,
             Some(3790.0),
             None,
@@ -972,8 +938,6 @@ mod tests {
         let (_, ampel) = fuel_check(
             5700.0,
             5480.0,
-            Some(7700.0),
-            Some(7700.0),
             4520.0,
             Some(3790.0),
             Some(4400.0),
@@ -989,8 +953,6 @@ mod tests {
         let (_, a) = fuel_check(
             4300.0,
             5480.0,
-            Some(7700.0),
-            Some(7700.0),
             4520.0,
             Some(3790.0),
             Some(4400.0),
@@ -998,12 +960,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a, Ampel::Rot);
-        // Oder hochgerechnet bei der Landung darunter.
+        // Oder hochgerechnet bei der Landung darunter: 4700 − 960 = 3740.
         let (h, a) = fuel_check(
-            4900.0,
+            4700.0,
             5480.0,
-            Some(7700.0),
-            Some(7700.0),
             4520.0,
             Some(3790.0),
             Some(4000.0),
@@ -1015,13 +975,13 @@ mod tests {
     }
 
     #[test]
-    fn fuel_check_kurz_nach_dem_abheben_ohne_verhaeltnis() {
-        // 40 kg Plan-Verbrauch: das Verhältnis wäre Rauschen, Faktor 1.
+    fn fuel_check_kurz_nach_dem_abheben_bleibt_ruhig() {
+        // 40 kg Plan-Verbrauch, 20 kg darunter. Frueher machte das
+        // Verhaeltnis daraus Rauschen; jetzt steht schlicht der Plan
+        // minus 20 kg da.
         let (hoch, _) = fuel_check(
             7640.0,
             7660.0,
-            Some(7700.0),
-            Some(7700.0),
             4520.0,
             None,
             None,
@@ -1065,7 +1025,7 @@ mod tests {
             wp("LUMAS", 5330.0, 4300.0, None, WegpunktZustand::Offen),
             wp("LEPA", 4520.0, 3790.0, None, WegpunktZustand::Offen),
         ];
-        wegpunkte_auswerten(&mut z, Some(7700.0), Some(160.0));
+        wegpunkte_auswerten(&mut z, Some(160.0));
         // Abweichung −60 bei KORED, −120 bei RESMI; ADEKA liegt nach Plan-
         // Verbrauch knapp in der Mitte → etwa −89.
         let adeka = z[2].ist_an_bord_kg.unwrap();
@@ -1082,10 +1042,56 @@ mod tests {
     }
 
     #[test]
-    fn die_ersten_minuten_bekommen_keine_ampel() {
+    fn der_steigflug_faerbt_den_reiseflug_nicht_mehr_rot() {
+        // DLH #1439 am 20.09.2026, echte Zahlen aus Thomas' Bild.
+        // Der Steigflug kostete 4.545 kg mehr als geplant. Auf die ganze
+        // Reststrecke hochgerechnet ergab das bei BRADD "-3748 kg bei der
+        // Landung" — rot —, zwei Fixe spaeter "+20 209 kg" — gruen.
+        // Mit TOC als Faktor-Basis steht eine ruhige Reihe da.
+        let mut z = vec![
+            wp("BETTE", 103417.0, 20000.0, Some(107282.0), WegpunktZustand::Gemessen),
+            wp("ACK", 97262.0, 20000.0, Some(96582.0), WegpunktZustand::Gemessen),
+            wp("TOC", 97221.0, 20000.0, Some(96548.0), WegpunktZustand::Gemessen),
+            wp("BRADD", 92992.0, 20000.0, Some(92688.0), WegpunktZustand::Gemessen),
+            wp("PORTI", 77551.0, 20000.0, Some(78884.0), WegpunktZustand::Gemessen),
+            wp("EDDM", 24109.0, 20000.0, None, WegpunktZustand::Offen),
+        ];
+        wegpunkte_auswerten(&mut z, Some(2000.0));
+
+        // Das Flugzeug selbst sagte 23,3 t bei der Landung. Was im
+        // Steigflug zu viel wegging, fehlt weiter im Tank — es wird nur
+        // nicht mehr auf die Reststrecke hochskaliert.
+        const FMS: f32 = 23300.0;
+        let ack = z[1].landung_hochgerechnet_kg.expect("ACK wird hochgerechnet");
+        let brad = z[3].landung_hochgerechnet_kg.expect("BRADD wird hochgerechnet");
+        let porti = z[4].landung_hochgerechnet_kg.expect("PORTI wird hochgerechnet");
+        // Die alte Rechnung lag bei BRADD 27 t daneben und war negativ.
+        for (name, wert) in [("ACK", ack), ("BRADD", brad)] {
+            assert!(
+                (wert - FMS).abs() < 600.0,
+                "{name} soll nahe am FMS-Wert liegen: {wert} statt {FMS}",
+            );
+        }
+        // PORTI ist die schwaechste Zeile — aber immer noch im Rahmen,
+        // waehrend die alte Rechnung dort 20 209 kg sagte.
+        assert!((porti - FMS).abs() < 2500.0, "PORTI: {porti}");
+        // Der eigentliche Fehler war der SPRUNG: 24 t zwischen zwei Zeilen
+        // desselben ruhigen Reiseflugs.
+        assert!(
+            (porti - brad).abs() < 2000.0,
+            "zwei Fixe im Reiseflug duerfen nicht um {} kg auseinanderliegen",
+            (porti - brad).abs(),
+        );
+        assert_eq!(z[3].ampel, Some(Ampel::Gruen), "BRADD war nie in Not");
+    }
+
+    #[test]
+    fn die_ersten_minuten_rechnen_jetzt_mit() {
         // DLH #1439: 292 kg mehr getankt, Startschub gegen ein winziges
-        // Planstück — drei rote Zeilen, die sich ab dem vierten Fix von
-        // selbst erledigten. Trip laut Plan 5.700 kg, ein Zehntel = 570.
+        // Planstück. Mit der Hochskalierung standen hier drei ROTE Zeilen,
+        // die sich ab dem vierten Fix von selbst erledigten; dagegen half
+        // nur, die ersten Zeilen ganz zu verschweigen. Ohne Skalierung
+        // rechnen sie mit — und bleiben von allein ruhig.
         let mut z = vec![
             wp(
                 "DER24",
@@ -1110,18 +1116,23 @@ mod tests {
             ),
             wp("EDDF", 3791.0, 2800.0, None, WegpunktZustand::Offen),
         ];
-        wegpunkte_auswerten(&mut z, Some(9783.0), Some(300.0));
-        assert!(z[0].ampel.is_none(), "der Abflug hat nichts verbraucht");
-        assert!(
-            z[1].ampel.is_none(),
-            "246 kg Plan-Verbrauch reichen für keine Hochrechnung",
-        );
-        assert!(z[1].landung_hochgerechnet_kg.is_none());
-        // TEA: 1.107 kg Plan-Verbrauch — jetzt wird gerechnet.
-        assert!(
-            z[2].ampel.is_some(),
-            "ab genug Strecke gehört die Ampel hin"
-        );
+        wegpunkte_auswerten(&mut z, Some(300.0));
+        // Jede gemessene Zeile bekommt ihre Zahl, schon 246 kg nach dem
+        // Abheben. Der Riegel haette die beiden ersten verschwiegen.
+        for i in 0..3 {
+            assert!(
+                z[i].landung_hochgerechnet_kg.is_some() && z[i].ampel.is_some(),
+                "Zeile {i} sollte gerechnet werden",
+            );
+            assert_ne!(z[i].ampel, Some(Ampel::Rot), "Zeile {i} war nie in Not");
+        }
+        // Und sie stehen ruhig beieinander: 4.083 / 3.923 / 3.873 kg.
+        let werte: Vec<f32> = (0..3)
+            .map(|i| z[i].landung_hochgerechnet_kg.unwrap())
+            .collect();
+        let spanne = werte.iter().cloned().fold(f32::MIN, f32::max)
+            - werte.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(spanne < 300.0, "Spanne {spanne} kg ueber die ersten Fixe");
     }
 
     #[test]
@@ -1141,7 +1152,7 @@ mod tests {
             ),
             wp("EDDK", 700.0, 260.0, None, WegpunktZustand::Offen),
         ];
-        wegpunkte_auswerten(&mut z, Some(900.0), Some(40.0));
+        wegpunkte_auswerten(&mut z, Some(40.0));
         assert!(
             z[1].ampel.is_some(),
             "kurzer Flug ohne Ampel — 200 kg Trip, 100 kg Plan-Verbrauch"
@@ -1150,11 +1161,13 @@ mod tests {
     }
 
     #[test]
-    fn einstieg_in_der_luft_rechnet_ab_dem_ersten_ueberflug() {
+    fn einstieg_in_der_luft_bekommt_seine_ampel() {
         // Client erst im Reiseflug gestartet: Der Abflug trägt keine
-        // Messung. Ab KORED 10 % über Plan. Mit dem Abflug-Plan als Bezug
-        // (8.000) und dem Einstiegs-Tankstand (5.000) wäre der Faktor auf
-        // 0,5 geklemmt und die Landung grün hochgerechnet.
+        // Messung. Seit dem Wegfall der Hochskalierung (20.09.2026) hängt
+        // die Rechnung an keinem Startpunkt mehr — der Tankstand hier
+        // gegen den geplanten Rest, fertig. Der Test hält fest, dass ein
+        // Einstieg in der Luft trotzdem eine Ampel bekommt und die
+        // Contingency-Grenze dort genauso greift.
         let mut z = vec![
             wp("EDDL", 8000.0, 1500.0, None, WegpunktZustand::Offen),
             wp(
@@ -1168,14 +1181,14 @@ mod tests {
                 "RESMI",
                 4000.0,
                 1300.0,
-                Some(3900.0),
+                Some(3850.0),
                 WegpunktZustand::Gemessen,
             ),
             wp("LEPA", 2000.0, 1300.0, None, WegpunktZustand::Offen),
         ];
-        wegpunkte_auswerten(&mut z, Some(5000.0), Some(100.0));
-        // Faktor 1,1: 3.900 − 2.000 × 1,1 = 1.700 — unter Plan − Contingency.
-        assert_eq!(z[2].landung_hochgerechnet_kg, Some(1700.0));
+        wegpunkte_auswerten(&mut z, Some(100.0));
+        // 3.850 − 2.000 geplanter Rest = 1.850, unter 2.000 − 100.
+        assert_eq!(z[2].landung_hochgerechnet_kg, Some(1850.0));
         assert_eq!(z[2].ampel, Some(Ampel::Gelb));
         assert!(z[0].ampel.is_none(), "der Abflug wurde nicht gemessen");
     }
@@ -1200,7 +1213,7 @@ mod tests {
             ),
             wp("LEPA", 4520.0, 3790.0, None, WegpunktZustand::Offen),
         ];
-        wegpunkte_auswerten(&mut z, Some(7700.0), Some(160.0));
+        wegpunkte_auswerten(&mut z, Some(160.0));
         assert!(z[1].ist_an_bord_kg.is_none());
         assert!(z[1].ampel.is_none());
     }

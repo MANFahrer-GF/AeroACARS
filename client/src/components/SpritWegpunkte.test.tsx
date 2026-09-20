@@ -33,8 +33,16 @@ describe("SpritWegpunkte", () => {
     expect(html).toMatch(/übersprungen · Direct/);
     // Übersprungen: gerechnet, nicht gemessen — mit ≈.
     expect(html).toMatch(/≈ 5 621/);
-    // Weniger verbraucht wird als solches benannt (Thomas: „eher wenn wir mehr verbrauchen").
-    expect(html).toContain("60 kg mehr verbraucht");
+    // Die Spalte zeigt den ABSCHNITT — „passt es gerade" (Thomas,
+    // 20.09.2026). KORED liegt direkt hinter EDDL, dort sind Abschnitt und
+    // Gesamtstand noch dasselbe: 60 kg.
+    expect(html).toContain("60 kg mehr auf diesem Abschnitt");
+    // RESMI trennt beides: auf dem Stück ab ADEKA nur 31 kg mehr, in
+    // Summe seit dem Abheben aber 120 kg. Genau diese zwei Zahlen liefen
+    // vorher zu einer zusammen, und die Spalte meldete an jedem
+    // Reiseflug-Fix einen Mehrverbrauch, der laengst hinter einem lag.
+    expect(html).toContain("31 kg mehr auf diesem Abschnitt");
+    expect(html).toContain("gesamt +120 kg");
     expect(html).toContain("Min. laut OFP 3 790");
     expect((html.match(/data-zustand="offen"/g) ?? []).length).toBe(2);
     expect(html).toMatch(/keine Note/);
@@ -66,7 +74,8 @@ describe("SpritWegpunkte", () => {
         ]}
       />,
     ));
-    expect(html).toContain("160 kg mehr verbraucht");
+    expect(html).toContain("160 kg mehr auf diesem Abschnitt");
+    expect(html).toContain("gesamt +160 kg");
     expect(html).not.toContain("132 kg weniger verbraucht");
     // Und die Abflugzeile sagt, was sie meint: getankt, nicht verbraucht.
     expect(html).toContain("292 kg mehr getankt als geplant");

@@ -22383,11 +22383,7 @@ fn sprit_wegpunkt_zeilen(
         z.ist_an_bord_kg = Some(l);
         z.zeit_ms = stats.landing_at.map(|t| t.timestamp_millis());
     }
-    landing_scoring::sprit::wegpunkte_auswerten(
-        &mut zeilen,
-        stats.takeoff_fuel_kg,
-        stats.planned_contingency_kg,
-    );
+    landing_scoring::sprit::wegpunkte_auswerten(&mut zeilen, stats.planned_contingency_kg);
     zeilen
 }
 
