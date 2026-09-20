@@ -58,6 +58,39 @@ describe("Karte: Routen der Kollegen", () => {
     expect(Number(breite![1]), "so dick wie die eigene Route").toBeLessThan(2);
   });
 
+  it("räumt auch auf, wenn der LETZTE Kollege landet", () => {
+    // Abnahme 20.09.2026, dritte Runde: Die erste Fassung hängte das
+    // Aufräumen an `vaVisible.length > 0`. Landete der letzte Kollege,
+    // wurde die Liste leer, das Aufräumen übersprungen — und seine Route
+    // blieb als Geisterspur stehen. Ohne Marker liess sie sich nicht mehr
+    // abschalten.
+    const abschnitt = quelle.slice(quelle.indexOf("fremdeRoutenRef.current.size > 0"));
+    const bedingung = abschnitt.slice(0, abschnitt.indexOf(")"));
+    expect(bedingung, "hängt wieder an der Länge der Liste").not.toMatch(/vaVisible\.length/);
+    expect(bedingung, "prüft nicht, ob die Liste aus einem echten Abruf stammt").toMatch(
+      /vaListeAktuellRef\.current/,
+    );
+  });
+
+  it("unterscheidet einen fehlgeschlagenen Abruf von einer leeren Liste", () => {
+    // Ein Netz-Hänger setzt die Liste ebenfalls auf leer — das heisst
+    // aber nicht, dass alle gelandet sind.
+    const poll = quelle.slice(quelle.indexOf("const poll = async ()"));
+    const bis = poll.indexOf("const id = setInterval");
+    const rumpf = poll.slice(0, bis > 0 ? bis : 2000);
+    expect(rumpf).toMatch(/vaListeAktuellRef\.current = true/);
+    expect(rumpf).toMatch(/vaListeAktuellRef\.current = false/);
+    // Der Fehlerzweig darf NICHT auf "aktuell" setzen.
+    const catchTeil = rumpf.slice(rumpf.indexOf("} catch"));
+    expect(catchTeil).toMatch(/vaListeAktuellRef\.current = false/);
+    expect(catchTeil).not.toMatch(/vaListeAktuellRef\.current = true/);
+  });
+
+  it("versteckt die Linien, wenn die Kollegen-Anzeige aus ist", () => {
+    // Sonst blieben die Routen sichtbar, während die Marker verschwinden.
+    expect(quelle).toMatch(/setLayoutProperty\(\s*"fremde-routen-line",\s*"visibility"/);
+  });
+
   it("stellt eingeblendete Routen nach einem Neuaufbau der Karte wieder her", () => {
     // Nach einem Kartenstil-Wechsel ist die Quelle leer, das Ref nicht.
     const anlegen = quelle.slice(quelle.indexOf('map.addSource("fremde-routen"'));

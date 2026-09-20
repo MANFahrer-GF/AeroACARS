@@ -390,6 +390,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // gebaut, der an `vaFlights` hängt. Ein State würde ihn bei jedem
   // Ein- und Ausblenden neu laufen lassen.
   const fremdeRoutenRef = useRef<Map<string, [number, number][]>>(new Map());
+  // Sagt, ob die Kollegen-Liste aus einem erfolgreichen Abruf stammt.
+  // Eine leere Liste nach einem Fehler bedeutet nichts; eine leere Liste
+  // nach einem erfolgreichen Abruf heisst „niemand mehr unterwegs".
+  const vaListeAktuellRef = useRef(false);
   const vaPopupRef = useRef<maplibregl.Popup | null>(null);
   const vaPopupIdRef = useRef<string | null>(null); // welcher VA-Flug das offene Popup zeigt
   // README §5 — colleague popup ETA needs the arrival airport's coordinate,
@@ -817,6 +821,19 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const [vaFlights, setVaFlights] = useState<VaFlight[]>([]);
   // Kurzer Hinweis, wenn eine Route fehlt oder nicht geladen werden kann.
   const [fremdeRouteHinweis, setFremdeRouteHinweis] = useState<string | null>(null);
+  // Ist die Kollegen-Anzeige aus, sollen auch ihre Routen verschwinden —
+  // nur verstecken, nicht vergessen: Beim Wiedereinschalten sind sie
+  // wieder da (Abnahme 20.09.2026).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !map.getLayer("fremde-routen-line")) return;
+    map.setLayoutProperty(
+      "fremde-routen-line",
+      "visibility",
+      showVa ? "visible" : "none",
+    );
+  }, [showVa, mapReady]);
+
   useEffect(() => {
     if (!fremdeRouteHinweis) return;
     const id = window.setTimeout(() => setFremdeRouteHinweis(null), 4000);
@@ -2110,9 +2127,17 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         // /api/acars liefert { data: [...] } — defensiv auch flights / Array.
         const data = await invoke<{ data?: VaFlight[]; flights?: VaFlight[] } | VaFlight[]>("va_live_flights");
         const flights = Array.isArray(data) ? data : data?.data ?? data?.flights ?? [];
-        if (!cancelled) setVaFlights(flights);
+        if (!cancelled) {
+          // Die Liste ist AKTUELL — auch wenn sie leer ist.
+          vaListeAktuellRef.current = true;
+          setVaFlights(flights);
+        }
       } catch {
-        if (!cancelled) setVaFlights([]);
+        if (!cancelled) {
+          // Ein Netz-Haenger heisst NICHT „alle sind gelandet".
+          vaListeAktuellRef.current = false;
+          setVaFlights([]);
+        }
       }
     };
     void poll();
@@ -2153,9 +2178,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       return null;
     }
   }
-  /** README §5's ETA cell for a colleague aircraft — same great-circle +
-   *  groundspeed math as the own-flight ETA (`nav`), just resolving the
-   *  destination coordinate on demand instead of from the loaded route. */
   /** Die eingeblendeten Routen in die Karte schreiben. */
   function fremdeRoutenZeichnen(map: maplibregl.Map) {
     const quelle = map.getSource("fremde-routen") as maplibregl.GeoJSONSource | undefined;
@@ -2216,6 +2238,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     }
   }
 
+  /** README §5's ETA cell for a colleague aircraft — same great-circle +
+   *  groundspeed math as the own-flight ETA (`nav`), just resolving the
+   *  destination coordinate on demand instead of from the loaded route. */
   async function vaEtaFor(f: VaFlight): Promise<string> {
     const pos = f.position;
     if (!pos || pos.lat == null || pos.lon == null || pos.gs == null || pos.gs <= 30 || !f.arr_airport_id) return "—";
@@ -2244,7 +2269,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // Liste dann auf leer). Beides heisst NICHT „alle sind gelandet".
     // Ohne diese Bedingung verlor der Pilot seine eingeblendeten Routen,
     // sobald er die Anzeige kurz ausschaltete (Abnahme 20.09.2026).
-    if (fremdeRoutenRef.current.size > 0 && showVa && vaVisible.length > 0) {
+    // Aufraeumen nur, wenn die Liste etwas aussagt: Sie muss aus einem
+    // erfolgreichen Abruf stammen. Dann ist auch eine LEERE Liste eine
+    // echte Aussage („der letzte Kollege ist gelandet") — sonst bliebe
+    // seine Route als Geisterspur stehen, und ohne Marker liesse sie sich
+    // nicht mehr abschalten (Abnahme 20.09.2026, dritte Runde).
+    if (fremdeRoutenRef.current.size > 0 && showVa && vaListeAktuellRef.current) {
       const nochDa = new Set(vaVisible.map((f) => String(f.id ?? "")));
       let entfernt = false;
       for (const id of [...fremdeRoutenRef.current.keys()]) {

@@ -14620,6 +14620,38 @@ struct SpritWegpunkteDto {
     naechster_nm: Option<f64>,
 }
 
+/// Luftlinie zur Zeile `i` der Tabelle, in NM.
+///
+/// # Warum das nicht einfach `planned_waypoints[i]` ist
+///
+/// Die Tabelle traegt vorn eine eigene Abflugzeile, sobald das Navlog
+/// nicht am Flughafen beginnt — dann sind beide Listen um eins versetzt,
+/// und der rohe Index zeigte auf den Fix DAVOR: eine Entfernung, die
+/// waechst statt zu schrumpfen (Abnahme 20.09.2026).
+///
+/// Gesucht wird ueber die Kennung. Kommt sie mehrfach vor (Warteschleife,
+/// SID/STAR-Ueberschneidung), entscheidet die Naehe — aber erst, nachdem
+/// der Zeilen-Index in einen Wegpunkt-Index uebersetzt wurde. Ohne diese
+/// Uebersetzung waehlt er bei zwei gleichen Kennungen direkt
+/// hintereinander die falsche.
+fn entfernung_zur_zeile(
+    zeilen: &[landing_scoring::sprit::Wegpunkt],
+    fixes: &[api_client::RouteFix],
+    i: usize,
+    lat: f64,
+    lon: f64,
+) -> Option<f64> {
+    let z = zeilen.get(i)?;
+    let versatz = zeilen.len().saturating_sub(fixes.len());
+    let ziel = i.saturating_sub(versatz);
+    fixes
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.ident == z.ident)
+        .min_by_key(|(k, _)| k.abs_diff(ziel))
+        .map(|(_, f)| ::geo::distance_m(lat, lon, f.lat, f.lon) / 1852.0)
+}
+
 #[tauri::command]
 fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDto {
     let guard = state.active_flight.lock().expect("active_flight lock");
@@ -14657,15 +14689,9 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
     // bei der Zuordnung der Messungen. Der erste Treffer waere sonst
     // willkuerlich (Abnahme 20.09.2026).
     let naechster_nm = match (naechster, stats.last_known_lat, stats.last_known_lon) {
-        (Some(i), Some(la), Some(lo)) => zeilen.get(i).and_then(|z| {
-            stats
-                .planned_waypoints
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| f.ident == z.ident)
-                .min_by_key(|(k, _)| k.abs_diff(i))
-                .map(|(_, f)| ::geo::distance_m(la, lo, f.lat, f.lon) / 1852.0)
-        }),
+        (Some(i), Some(la), Some(lo)) => {
+            entfernung_zur_zeile(&zeilen, &stats.planned_waypoints, i, la, lo)
+        }
         _ => None,
     };
     SpritWegpunkteDto {
@@ -70361,6 +70387,48 @@ mod sprit_wegpunkt_tests {
     }
 
     #[test]
+    fn die_entfernung_trifft_bei_doppelter_kennung_den_richtigen_fix() {
+        // Abnahme 20.09.2026, dritte Runde: Die Suche ueber die Kennung
+        // verglich einen ZEILEN-Index mit WEGPUNKT-Indizes. Bei zwei
+        // gleichen Kennungen direkt hintereinander (Warteschleife) waehlte
+        // sie damit den falschen — dieselbe Klasse wie der Fehler, den sie
+        // beheben sollte.
+        use landing_scoring::sprit::{Wegpunkt, WegpunktZustand};
+        // Wegpunkte: ALFA (40 NM), ALFA (60 NM), BRAVO (80 NM).
+        let fixes = vec![
+            fx("ALFA", BREITE, 40.0, 40.0, 400.0),
+            fx("ALFA", BREITE, 60.0, 20.0, 550.0),
+            fx("BRAVO", BREITE, 80.0, 20.0, 700.0),
+        ];
+        // Zeilen mit Abflugzeile vorn: [EDDL, ALFA, ALFA, BRAVO].
+        let zeile = |ident: &str| Wegpunkt {
+            ident: ident.into(),
+            zustand: WegpunktZustand::Offen,
+            ..Default::default()
+        };
+        let zeilen = vec![
+            zeile("EDDL"),
+            zeile("ALFA"),
+            zeile("ALFA"),
+            zeile("BRAVO"),
+        ];
+        // Standort am Abflug. Zeile 1 ist das ERSTE ALFA (40 NM), Zeile 2
+        // das zweite (60 NM) — die Entfernungen muessen das abbilden.
+        let erste = entfernung_zur_zeile(&zeilen, &fixes, 1, BREITE, lon_nm(0.0))
+            .expect("keine Entfernung");
+        let zweite = entfernung_zur_zeile(&zeilen, &fixes, 2, BREITE, lon_nm(0.0))
+            .expect("keine Entfernung");
+        assert!(
+            (erste - 40.0).abs() < 1.0,
+            "Zeile 1 zeigt nicht auf das erste ALFA ({erste:.1} NM)"
+        );
+        assert!(
+            (zweite - 60.0).abs() < 1.0,
+            "Zeile 2 zeigt nicht auf das zweite ALFA ({zweite:.1} NM)"
+        );
+    }
+
+    #[test]
     fn die_abflugzeile_verschiebt_die_zuordnung_nicht_bei_doppelter_kennung() {
         // Abnahme 20.09.2026, zweite Runde: Der erste Fassung dieses Tests
         // konnte den Fehler nicht rot machen — bei lauter eindeutigen
@@ -70405,11 +70473,16 @@ mod sprit_wegpunkt_tests {
         );
     }
 
+    /// Jede Messung findet ihre Zeile, und die Abflugzeile bleibt stehen.
+    ///
+    /// ⚠ Dieser Test kann den Versatz-Fehler NICHT rot machen: Bei lauter
+    /// eindeutigen Kennungen rettet der Rueckfall ueber die Kennung die
+    /// Zuordnung auch ohne ihn. Dafuer ist
+    /// `die_abflugzeile_verschiebt_die_zuordnung_nicht_bei_doppelter_kennung`
+    /// zustaendig (Abnahme 20.09.2026, dritte Runde). Hier geht es nur
+    /// darum, dass ueberhaupt jede Messung ankommt.
     #[test]
-    fn die_abflugzeile_verschiebt_die_zuordnung_nicht() {
-        // Abnahme 20.09.2026: Die Messungen tragen Indizes in
-        // `planned_waypoints`, die Tabelle ist mit Abflugzeile aber um
-        // eins laenger. Ohne Versatz traf der schnelle Weg daneben.
+    fn jede_messung_findet_ihre_zeile() {
         let mut st = stats_mit_route();
         st.planned_waypoints.remove(0); // Navlog ohne Flughafen
         st.planned_block_fuel_kg = Some(8_300.0);
