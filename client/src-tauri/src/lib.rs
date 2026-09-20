@@ -17978,7 +17978,9 @@ mod nachtrag_queue {
             // hatte (Runde 13, High 3).
             let tmp = pfad.with_file_name(format!(
                 ".{}.tmp",
-                pfad.file_name().and_then(|n| n.to_str()).unwrap_or("nachtrag")
+                pfad.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("nachtrag")
             ));
             match serialisieren(&ablage.va_prefix, &ablage.pilot_id, &nachtrag)
                 .and_then(|t| std::fs::write(&tmp, t))
