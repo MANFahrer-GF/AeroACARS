@@ -72,8 +72,22 @@ describe("Karte: Routen der Kollegen", () => {
     // Und nicht so duenn, dass sie verschwindet. Am Bild abgewogen:
     // unter 1,8 px traegt sie auf dunkler Karte nicht mehr.
     expect(Number(breite![1]), "zu duenn, um sie zu sehen").toBeGreaterThanOrEqual(1.8);
-    const deckung = /"line-opacity":\s*([\d.]+)/.exec(ebene);
-    expect(Number(deckung![1]), "zu blass, um sie zu sehen").toBeGreaterThanOrEqual(0.8);
+    // Die Deckkraft haengt bei BEIDEN am Kartenstil (`sat ? a : b`).
+    // Fest gesetzt war die fremde Linie auf der Vektorkarte deckender
+    // als die eigene — genau das Gegenteil der Absicht (Abnahme
+    // 20.09.2026). Geprueft wird das Verhaeltnis in beiden Stilen.
+    const paare = (block: string) => {
+      const m = /"line-opacity":\s*sat \? ([\d.]+) : ([\d.]+)/.exec(block);
+      expect(m, "line-opacity haengt nicht am Kartenstil").not.toBeNull();
+      return [Number(m![1]), Number(m![2])] as const;
+    };
+    const [eigenSat, eigenVektor] = paare(eigene);
+    const [fremdSat, fremdVektor] = paare(ebene);
+    expect(fremdSat, "auf der Satellitenkarte deckender als die eigene").toBeLessThan(eigenSat);
+    expect(fremdVektor, "auf der Vektorkarte deckender als die eigene").toBeLessThan(eigenVektor);
+    // Und nicht so blass, dass sie wieder verschwindet: Der alte Wert
+    // war 0,7 bei 1,4 px — die halbe Flaeche von heute.
+    expect(fremdVektor, "zu blass, um sie zu sehen").toBeGreaterThanOrEqual(0.55);
 
     // Zu einer Route gehoeren ihre Wegpunkte.
     expect(quelle, "keine Punkt-Ebene").toMatch(/id: "fremde-routen-punkte"/);

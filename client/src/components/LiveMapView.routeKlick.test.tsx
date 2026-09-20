@@ -18,6 +18,8 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, cleanup, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
@@ -97,6 +99,12 @@ vi.mock("maplibre-gl", () => {
     easeTo() { return this; }
     jumpTo() { return this; }
     fitBounds() { return this; }
+    // Die Komponente ruft `resize()` nach dem Einblenden. Fehlt die
+    // Methode, wirft der Aufruf in einem requestAnimationFrame — als
+    // UNBEHANDELTE Rejection, die den ganzen Lauf mit Rueckgabewert 1
+    // enden laesst, waehrend die Zusammenfassung "grün" meldet
+    // (Abnahme 20.09.2026).
+    resize() { return this; }
     remove() { return this; }
   }
   return {
@@ -244,7 +252,38 @@ describe("Klick auf einen Kollegen", () => {
     await waitFor(() => {
       expect(h.sichtbarkeit["fremde-routen-line"]).toBe("none");
       expect(h.sichtbarkeit["fremde-routen-punkte"]).toBe("none");
+      // Auch die BESCHRIFTUNG. Fiel sie aus FREMDE_ROUTEN_EBENEN
+      // heraus, blieben die Wegpunkt-Namen als Geisterschrift stehen,
+      // waehrend Linie und Punkte verschwinden — und alle Tests blieben
+      // gruen (Abnahme 20.09.2026, nachgemessen per Mutation).
+      expect(h.sichtbarkeit["fremde-routen-namen"]).toBe("none");
     });
+  });
+
+  it("versteckt JEDE Ebene der Kollegen-Routen, keine bleibt uebrig", () => {
+    // Nicht nur die drei von heute: Wer morgen eine vierte Ebene anlegt
+    // (etwa eine Umrandung), muss sie in FREMDE_ROUTEN_EBENEN eintragen.
+    // Sonst bleibt sie beim Ausschalten stehen. Der Vergleich laeuft
+    // gegen den Quelltext, weil ein Rendertest eine Ebene, die es noch
+    // nicht gibt, nicht kennen kann.
+    const quelle = readFileSync(
+      resolve(__dirname, "LiveMapView.tsx"),
+      "utf8",
+    );
+    const angelegt = [...quelle.matchAll(/id: "(fremde-routen-[a-z-]+)"/g)].map(
+      (m) => m[1],
+    );
+    const listeRoh = quelle.slice(
+      quelle.indexOf("const FREMDE_ROUTEN_EBENEN"),
+      quelle.indexOf("const TRACK_LAYERS"),
+    );
+    const gefuehrt = [...listeRoh.matchAll(/"(fremde-routen-[a-z-]+)"/g)].map(
+      (m) => m[1],
+    );
+    expect(angelegt.length).toBeGreaterThanOrEqual(3);
+    for (const ebene of new Set(angelegt)) {
+      expect(gefuehrt, `${ebene} fehlt in FREMDE_ROUTEN_EBENEN`).toContain(ebene);
+    }
   });
 
   it("sagt es sichtbar, wenn keine Route vorliegt", async () => {

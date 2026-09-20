@@ -14706,15 +14706,6 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
     }
 }
 
-/// Die geplante Route eines KOLLEGEN — fuer die Karte.
-///
-/// Thomas, 20.09.2026: „in der Map auf die anderen Flieger klicken und die
-/// Route sehen, bei erneutem Klick wieder aus." Das Ein- und Ausblenden
-/// macht die Anzeige; hier kommen nur die Punkte her.
-///
-/// Leere Liste heisst: Es gibt keine Route (Flug ohne SimBrief-Plan) oder
-/// sie gehoert einer anderen VA. Beides ist kein Fehler — die Anzeige
-/// sagt es dem Piloten.
 /// Ein Wegpunkt einer fremden Route, wie die Karte ihn braucht.
 #[derive(Debug, Clone, serde::Serialize)]
 struct FremdePunkt {
@@ -14724,6 +14715,15 @@ struct FremdePunkt {
     name: String,
 }
 
+/// Die geplante Route eines KOLLEGEN — fuer die Karte.
+///
+/// Thomas, 20.09.2026: „in der Map auf die anderen Flieger klicken und die
+/// Route sehen, bei erneutem Klick wieder aus." Das Ein- und Ausblenden
+/// macht die Anzeige; hier kommen nur die Punkte her.
+///
+/// Leere Liste heisst: Es gibt keine Route (Flug ohne SimBrief-Plan) oder
+/// sie gehoert einer anderen VA. Beides ist kein Fehler — die Anzeige
+/// sagt es dem Piloten.
 #[tauri::command]
 async fn fremde_flugroute(pirep_id: String) -> Result<Vec<FremdePunkt>, UiError> {
     if pirep_id.trim().is_empty() {

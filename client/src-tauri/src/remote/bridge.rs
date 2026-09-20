@@ -879,7 +879,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "hoppie_get_flight_context" => {
             ok_json(crate::hoppie::hoppie_get_flight_context(app.clone()))
         }
-        // v1.7.41: VDGS-Band. Anders als die beiden Fenster-Befehle
+        // v1.7.44: VDGS-Band. Anders als die beiden Fenster-Befehle
         // gehoert das hierher — es ist eine reine Abfrage, und auf dem
         // Tablet ist das Band genauso nuetzlich wie am Sim-PC.
         "vdgs_stand" => ok_json(crate::vdgs::vdgs_stand(app.clone()).await),

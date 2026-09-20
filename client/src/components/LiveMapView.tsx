@@ -1306,7 +1306,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           // nicht uebertoenen.
           "line-color": "#8fb0d4",
           "line-width": 2.0,
-          "line-opacity": 0.85,
+          // An denselben Kartenstil gekoppelt wie die eigene Route
+          // (0,95 / 0,7): Fest auf 0,85 war die Kollegen-Linie auf der
+          // Vektorkarte DECKENDER als die eigene — das Gegenteil der
+          // Absicht und der Zusage in den Release-Notes (Abnahme
+          // 20.09.2026). Sie bleibt jetzt in beiden Stilen darunter.
+          "line-opacity": sat ? 0.85 : 0.62,
           "line-dasharray": [4, 3],
         },
       });
@@ -1318,7 +1323,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         paint: {
           "circle-radius": 2.8,
           "circle-color": "#8fb0d4",
-          "circle-opacity": 0.85,
+          "circle-opacity": sat ? 0.85 : 0.62,
         },
       });
       ebeneAnlegen(map, {
@@ -1341,7 +1346,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         },
         paint: {
           "text-color": "#8fb0d4",
-          "text-opacity": 0.9,
+          "text-opacity": sat ? 0.9 : 0.75,
           "text-halo-color": "rgba(10,16,24,0.85)",
           "text-halo-width": 1.2,
         },
@@ -1976,9 +1981,15 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
 
     void (async () => {
       try {
-        index = await invoke<Array<{ icao: string; lat: number; lon: number }>>(
-          "airport_ground_index",
-        );
+        const geliefert = await invoke<
+          Array<{ icao: string; lat: number; lon: number }> | null
+        >("airport_ground_index");
+        // Nur uebernehmen, was wirklich eine Liste ist. Ein `null` oder
+        // ein Objekt liess `index.length` weiter unten werfen — in der
+        // Produktion liefert Rust zwar ein Vec, aber der Fehler landete
+        // dann als unbehandelte Rejection im Nichts und machte den
+        // ganzen Testlauf zu einem Falsch-Gruen (Abnahme 20.09.2026).
+        index = Array.isArray(geliefert) ? geliefert : [];
       } catch {
         index = [];
       }

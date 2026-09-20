@@ -381,8 +381,6 @@ mod tests {
         assert_eq!(aufbereiten(&f).tsat, "12:00");
     }
 
-    /// Unbekanntes Rufzeichen: HTTP 200, leerer Rumpf. Muss „kein
-    /// Eintrag" heissen, nicht „Fehler".
     /// Der Zwischenspeicher hat zwei Fristen: die kurze fuer den
     /// Normalbetrieb, die lange als Ueberbrueckung bei Ausfall.
     #[test]
@@ -404,6 +402,9 @@ mod tests {
         assert_eq!(aus_speicher("GSG8", MIN_ABSTAND), None);
     }
 
+    /// Unbekanntes Rufzeichen: HTTP 200, leerer Rumpf. Muss „kein
+    /// Eintrag" heissen, nicht „Fehler". Am 20.09.2026 am echten Dienst
+    /// nachgemessen (ZZZ9999 -> 200, 0 Bytes).
     #[test]
     fn leerer_rumpf_ist_kein_fehler() {
         assert_eq!(aus_rumpf(b""), Ok(None));

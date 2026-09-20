@@ -9,7 +9,7 @@
 //      gefragt — Etikette gegenüber einem Dienst, den wir nicht bezahlen.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, act } from "@testing-library/react";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -20,7 +20,11 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-const invoke = vi.fn();
+// Standardmaessig ein Promise: Der Code haengt `.catch(...)` an jeden
+// Aufruf. Ohne Rueckgabewert wirft das im Klick-Handler, und zwar als
+// UNBEHANDELTE Rejection — der Lauf endet dann mit Rueckgabewert 1,
+// waehrend die Zusammenfassung "grün" meldet (Abnahme 20.09.2026).
+const invoke = vi.fn(() => Promise.resolve(null));
 vi.mock("../lib/ipc", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
 import {
@@ -47,6 +51,7 @@ const STAND: VdgsStand = {
 const um = (hhmm: string) => new Date(`2026-09-20T${hhmm}:00Z`);
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   invoke.mockReset();
 });
@@ -179,8 +184,23 @@ describe("useVdgsStand", () => {
   });
 
   it("bleibt still, wenn der Dienst nicht antwortet", async () => {
-    invoke.mockRejectedValue(new Error("offline"));
+    // Erst einen Stand liefern, DANN den Fehler — sonst prueft der Test
+    // nichts: "leer" ist auch der Anfangszustand, und mit ihm blieb er
+    // gruen, selbst wenn man den ganzen Fehlerzweig entfernte
+    // (Abnahme 20.09.2026, per Mutation nachgemessen).
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    invoke.mockResolvedValueOnce(STAND);
     render(<Probe aktiv={true} />);
+    expect(await screen.findByText(STAND.callsign)).toBeTruthy();
+
+    // Jetzt faellt der Dienst aus, und der 60-Sekunden-Takt laeuft
+    // erneut. NICHT ueber `aktiv={false}` gehen: Dieser Zweig leert den
+    // Stand selbst, und der Test waere wieder blind fuer den
+    // Fehlerzweig (zweiter Anlauf, 20.09.2026).
+    invoke.mockRejectedValue(new Error("offline"));
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
     expect(await screen.findByText("leer")).toBeTruthy();
   });
 });
