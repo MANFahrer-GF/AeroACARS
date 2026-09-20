@@ -52,10 +52,29 @@ describe("Karte: Routen der Kollegen", () => {
     // Und Linien mit weniger als zwei Punkten fallen raus.
     expect(zeichnen).toMatch(/punkte\.length >= 2/);
 
+    // Gegen die ECHTE eigene Route vergleichen, nicht gegen eine
+    // ausgedachte Zahl.
+    //
+    // Hier stand „< 2" — eine Schranke, die ich mir ausgedacht hatte.
+    // Sie hat den eigentlichen Fehler zementiert: 1,4 px bei 70 %
+    // erfuellten sie bestens und waren auf der Karte trotzdem nicht zu
+    // sehen (Thomas, 20.09.2026). Ein Test, der eine erfundene Grenze
+    // prueft, sagt nichts ueber das Bild.
+    const eigene = quelle.slice(quelle.indexOf("id: LYR_ROUTE,"));
+    const eigeneBreite = Number(/"line-width":\s*([\d.]+)/.exec(eigene)![1]);
     const ebene = quelle.slice(quelle.indexOf('id: "fremde-routen-line"'));
     const breite = /"line-width":\s*([\d.]+)/.exec(ebene);
     expect(breite, "keine Linienbreite gesetzt").not.toBeNull();
-    expect(Number(breite![1]), "so dick wie die eigene Route").toBeLessThan(2);
+    expect(Number(breite![1]), "so dick wie die eigene Route").toBeLessThan(eigeneBreite);
+    // Und nicht so duenn, dass sie verschwindet. Am Bild abgewogen:
+    // unter 1,8 px traegt sie auf dunkler Karte nicht mehr.
+    expect(Number(breite![1]), "zu duenn, um sie zu sehen").toBeGreaterThanOrEqual(1.8);
+    const deckung = /"line-opacity":\s*([\d.]+)/.exec(ebene);
+    expect(Number(deckung![1]), "zu blass, um sie zu sehen").toBeGreaterThanOrEqual(0.8);
+
+    // Zu einer Route gehoeren ihre Wegpunkte.
+    expect(quelle, "keine Punkt-Ebene").toMatch(/id: "fremde-routen-punkte"/);
+    expect(zeichnen, "es entstehen keine Punkt-Features").toMatch(/"Point"/);
   });
 
   it("räumt auch auf, wenn der LETZTE Kollege landet", () => {
@@ -97,12 +116,14 @@ describe("Karte: Routen der Kollegen", () => {
 
   it("versteckt die Linien, wenn die Kollegen-Anzeige aus ist", () => {
     // Sonst blieben die Routen sichtbar, während die Marker verschwinden.
-    // Geprueft wird der WERT, nicht nur, dass irgendwo etwas gesetzt wird:
-    // `showVa ? "none" : "visible"` waere sonst genauso gruen.
+    // Das VERHALTEN prueft `LiveMapView.routeKlick.test.tsx` am echten
+    // Schalter; hier bleibt nur, was ein Rendertest nicht sieht: dass
+    // BEIDE Ebenen gemeint sind und der Wert nicht vertauscht ist.
     const stelle = quelle.slice(quelle.indexOf('if (!map || !mapReady || !map.getLayer("fremde-routen-line")) return;'));
     const effekt = stelle.slice(0, stelle.indexOf("}, ["));
+    expect(effekt, "nicht ueber beide Ebenen").toMatch(/FREMDE_ROUTEN_EBENEN/);
     expect(effekt).toMatch(
-      /setLayoutProperty\(\s*"fremde-routen-line",\s*"visibility",\s*showVa \? "visible" : "none",?\s*\)/,
+      /"visibility",\s*showVa \? "visible" : "none"/,
     );
     // Und die Abhaengigkeiten: ohne `showVa` liefe der Effekt beim
     // Umschalten nicht.
@@ -117,9 +138,8 @@ describe("Karte: Routen der Kollegen", () => {
     // rettet das NICHT: seine Abhaengigkeiten aendern sich dabei nicht.
     const taxi = quelle.slice(quelle.indexOf("const taxiVis = showTaxiRef.current"));
     const rest = taxi.slice(0, 900);
-    expect(rest).toMatch(
-      /setLayoutProperty\(\s*"fremde-routen-line",\s*"visibility",\s*showVaRef\.current \? "visible" : "none",?\s*\)/,
-    );
+    expect(rest, "nicht ueber beide Ebenen").toMatch(/FREMDE_ROUTEN_EBENEN/);
+    expect(rest).toMatch(/showVaRef\.current \? "visible" : "none"/);
     // Ein State statt eines Refs waere hier immer der Stand vom ersten
     // Rendern — `addOverlays` haengt an einem einmaligen Handler.
     expect(quelle).toMatch(/const showVaRef = useRef\(showVa\);\s*\n\s*showVaRef\.current = showVa;/);
@@ -127,7 +147,12 @@ describe("Karte: Routen der Kollegen", () => {
 
   it("stellt eingeblendete Routen nach einem Neuaufbau der Karte wieder her", () => {
     // Nach einem Kartenstil-Wechsel ist die Quelle leer, das Ref nicht.
-    const anlegen = quelle.slice(quelle.indexOf('map.addSource("fremde-routen"'));
-    expect(anlegen.slice(0, 1400)).toMatch(/fremdeRoutenZeichnen\(map\)/);
+    // Bis zum ENDE des Anlege-Blocks lesen, nicht 1400 Zeichen weit:
+    // Beim Einfuegen der Punkt-Ebene rutschte der Aufruf aus dem festen
+    // Fenster, und der Test schlug an, obwohl nichts kaputt war.
+    const von = quelle.indexOf('map.addSource("fremde-routen"');
+    const bis = quelle.indexOf("\n    }\n", von);
+    const anlegen = quelle.slice(von, bis > von ? bis : von + 3000);
+    expect(anlegen).toMatch(/fremdeRoutenZeichnen\(map\)/);
   });
 });

@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   quellen: {} as Record<string, { type: string; features: unknown[] }>,
   invokeAntworten: {} as Record<string, unknown>,
   invokeRufe: [] as Array<{ cmd: string; args?: Record<string, unknown> }>,
+  popupsOffen: 0,
+  sichtbarkeit: {} as Record<string, string>,
 }));
 
 vi.mock("../lib/ipc", () => ({
@@ -54,8 +56,8 @@ vi.mock("maplibre-gl", () => {
   class FakePopup {
     setLngLat() { return this; }
     setHTML() { return this; }
-    addTo() { return this; }
-    remove() { return this; }
+    addTo() { h.popupsOffen += 1; return this; }
+    remove() { if (h.popupsOffen > 0) h.popupsOffen -= 1; return this; }
     on() { return this; }
   }
   class FakeBounds { extend() { return this; } }
@@ -88,7 +90,10 @@ vi.mock("maplibre-gl", () => {
       };
     }
     getLayer() { return {}; }
-    setLayoutProperty() { return this; }
+    setLayoutProperty(id: string, _n: string, wert: string) {
+      h.sichtbarkeit[id] = wert;
+      return this;
+    }
     easeTo() { return this; }
     jumpTo() { return this; }
     fitBounds() { return this; }
@@ -147,6 +152,8 @@ beforeEach(() => {
   h.marker = [];
   h.quellen = {};
   h.invokeRufe = [];
+  h.popupsOffen = 0;
+  h.sichtbarkeit = {};
 });
 afterEach(() => cleanup());
 
@@ -167,15 +174,58 @@ describe("Klick auf einen Kollegen", () => {
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    await waitFor(() =>
-      expect(h.quellen["fremde-routen"]?.features.length).toBe(1),
-    );
+    const linien = () =>
+      (h.quellen["fremde-routen"]?.features ?? []).filter(
+        (x) => (x as { geometry: { type: string } }).geometry.type === "LineString",
+      ).length;
+    await waitFor(() => expect(linien()).toBe(1));
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    await waitFor(() =>
-      expect(h.quellen["fremde-routen"]?.features.length).toBe(0),
-    );
+    // Beim Ausschalten geht ALLES weg, Linie wie Punkte.
+    await waitFor(() => expect(h.quellen["fremde-routen"]?.features.length).toBe(0));
+  });
+
+  it("zeichnet die Wegpunkte mit, nicht nur den Strich", async () => {
+    // Thomas, 20.09.2026: „die Route ist sichtbar ohne Punkte die zu
+    // sehen sind". Zu einer Route gehoeren ihre Fixe.
+    await karteMitKollege([[11.1, 60.2], [13.0, 64.0], [16.5, 68.5]]);
+    await act(async () => {
+      kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitFor(() => {
+      const f = h.quellen["fremde-routen"]?.features ?? [];
+      const linien = f.filter((x) => (x as { geometry: { type: string } }).geometry.type === "LineString");
+      const punkte = f.filter((x) => (x as { geometry: { type: string } }).geometry.type === "Point");
+      expect(linien.length).toBe(1);
+      expect(punkte.length).toBe(3);
+    });
+  });
+
+  it("schaltet beim zweiten Klick auch die Infokarte wieder zu", async () => {
+    // Vorher ging sie erneut auf und verdeckte die Route, und man musste
+    // woanders hinklicken, um sie loszuwerden.
+    await karteMitKollege([[11.1, 60.2], [16.5, 68.5]]);
+    await act(async () => {
+      kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(h.popupsOffen).toBe(1);
+    await act(async () => {
+      kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(h.popupsOffen).toBe(0);
+  });
+
+  it("versteckt Linie UND Punkte, wenn die Kollegen-Anzeige ausgeht", async () => {
+    await karteMitKollege([[11.1, 60.2], [16.5, 68.5]]);
+    const schalter = screen.getByRole("button", { name: /VA-Verkehr/i });
+    await act(async () => {
+      schalter.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(h.sichtbarkeit["fremde-routen-line"]).toBe("none");
+      expect(h.sichtbarkeit["fremde-routen-punkte"]).toBe("none");
+    });
   });
 
   it("sagt es sichtbar, wenn keine Route vorliegt", async () => {

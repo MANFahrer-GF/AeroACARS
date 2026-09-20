@@ -327,6 +327,8 @@ const GROUND_MIN_ZOOM = 12;
 // ein-/ausschalten, Taxiwege ein-/ausschalten... das wäre gut, wenn man das
 // separat machen könnte"), so these are two independent layer groups now,
 // each with its own toggle.
+/** Die Ebenen der Kollegen-Routen — Linie UND Wegpunkte, immer zusammen. */
+const FREMDE_ROUTEN_EBENEN = ["fremde-routen-line", "fremde-routen-punkte"];
 const TRACK_LAYERS = [LYR_ROUTE, LYR_ROUTE_CASING, LYR_WPTS, LYR_WPT_LABELS, LYR_TRACK, LYR_TRACK_DOTS];
 const TAXI_LAYERS = [
   LYR_GROUND_APRON,
@@ -832,11 +834,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !map.getLayer("fremde-routen-line")) return;
-    map.setLayoutProperty(
-      "fremde-routen-line",
-      "visibility",
-      showVa ? "visible" : "none",
-    );
+    // BEIDE Ebenen — Linie und Wegpunkte. Eine davon zu vergessen hiesse,
+    // dass Punkte ohne Linie stehen bleiben (oder umgekehrt).
+    for (const ebene of FREMDE_ROUTEN_EBENEN) {
+      if (!map.getLayer(ebene)) continue;
+      map.setLayoutProperty(ebene, "visibility", showVa ? "visible" : "none");
+    }
   }, [showVa, mapReady]);
 
   useEffect(() => {
@@ -1281,13 +1284,29 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         id: "fremde-routen-line",
         type: "line",
         source: "fremde-routen",
+        filter: ["==", ["geometry-type"], "LineString"],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          // Gedämpft und dünn: Die eigene Route bleibt die kräftige.
-          "line-color": "#8aa0b8",
-          "line-width": 1.4,
-          "line-opacity": 0.7,
-          "line-dasharray": [3, 2],
+          // 1,4 px bei 70 % in Graublau waren auf dunkler Karte praktisch
+          // unsichtbar (Thomas, 20.09.2026: „die Linie ist nicht zu sehen
+          // (kaum)"). Am Bild gegen die eigene Route abgewogen: Sie soll
+          // klar da sein, aber die eigene (2,5 px / 95 % / Akzentfarbe)
+          // nicht uebertoenen.
+          "line-color": "#8fb0d4",
+          "line-width": 2.0,
+          "line-opacity": 0.85,
+          "line-dasharray": [4, 3],
+        },
+      });
+      ebeneAnlegen(map, {
+        id: "fremde-routen-punkte",
+        type: "circle",
+        source: "fremde-routen",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-radius": 2.8,
+          "circle-color": "#8fb0d4",
+          "circle-opacity": 0.85,
         },
       });
       // Nach einem Neuaufbau der Karte (Kartenstil gewechselt, Reiter neu
@@ -1682,12 +1701,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // und ist dann sichtbar. Ohne dieses Nachziehen kaemen die Linien nach
     // einem Kartenstil- oder Hell/Dunkel-Wechsel zurueck, obwohl die
     // Kollegen-Anzeige aus ist — Geisterspuren ohne Flugzeuge dazu.
-    if (map.getLayer("fremde-routen-line")) {
-      map.setLayoutProperty(
-        "fremde-routen-line",
-        "visibility",
-        showVaRef.current ? "visible" : "none",
-      );
+    const fremdVis = showVaRef.current ? "visible" : "none";
+    for (const ebene of FREMDE_ROUTEN_EBENEN) {
+      if (map.getLayer(ebene)) map.setLayoutProperty(ebene, "visibility", fremdVis);
     }
   }
 
@@ -2206,13 +2222,23 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!quelle) return;
     quelle.setData({
       type: "FeatureCollection",
+      // Linie UND Wegpunkte. Ohne die Punkte war nur ein Strich zu sehen,
+      // und man konnte nicht erkennen, wo der Kollege seine Fixe hat
+      // (Thomas, 20.09.2026: „ohne Punkte die zu sehen sind").
       features: [...fremdeRoutenRef.current.entries()]
         .filter(([, punkte]) => punkte.length >= 2)
-        .map(([id, punkte]) => ({
-          type: "Feature" as const,
-          properties: { pirep_id: id },
-          geometry: { type: "LineString" as const, coordinates: punkte },
-        })),
+        .flatMap(([id, punkte]) => [
+          {
+            type: "Feature" as const,
+            properties: { pirep_id: id },
+            geometry: { type: "LineString" as const, coordinates: punkte },
+          },
+          ...punkte.map((p) => ({
+            type: "Feature" as const,
+            properties: { pirep_id: id },
+            geometry: { type: "Point" as const, coordinates: p },
+          })),
+        ]),
     });
   }
 
@@ -2329,12 +2355,25 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       // Klick → Popup mit Flugdaten (ersetzt ein evtl. offenes Popup).
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        const thisId = String(f.id ?? f.ident ?? f.flight_number ?? "");
         // Route des Kollegen ein- oder ausblenden (Thomas, 20.09.2026).
         void fremdeRouteUmschalten(String(f.id ?? ""), map);
+        const warOffen = vaPopupIdRef.current === thisId && vaPopupRef.current != null;
         vaPopupRef.current?.remove();
-        const thisId = String(f.id ?? f.ident ?? f.flight_number ?? "");
+        // Zweiter Klick auf DENSELBEN Kollegen: Karte zu, Route aus —
+        // ein Umschalter, der in beide Richtungen dasselbe tut. Vorher
+        // ging die Karte dabei wieder auf und verdeckte die Route, und
+        // man musste woanders hinklicken, um sie loszuwerden (Thomas,
+        // 20.09.2026: „das Infofeld vom Piloten verdeckt es … kmm").
+        if (warOffen) {
+          vaPopupRef.current = null;
+          vaPopupIdRef.current = null;
+          return;
+        }
         vaPopupIdRef.current = thisId;
-        const popup = new maplibregl.Popup({ offset: 16, closeButton: true, className: "aa-vapop", maxWidth: "260px" })
+        // Etwas weiter vom Flieger weg als die 16 px vorher: Die Route
+        // laeuft durch den Marker, und die Karte sass direkt darauf.
+        const popup = new maplibregl.Popup({ offset: 26, closeButton: true, className: "aa-vapop", maxWidth: "260px" })
           .setLngLat(lngLat)
           .setHTML(vaPopupHtml(f))
           .addTo(map);
