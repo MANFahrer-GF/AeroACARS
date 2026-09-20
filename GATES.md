@@ -131,18 +131,25 @@ enden 11 Sekunden vor dem Start von v1.7.41 — der Fix wirkt, belegt am Zeitste
   CWD: client/src-tauri
   EVIDENCE: automatic-evidence=v1; definition-sha256=16f4a9e8362df7b16941dedcee7dd7e2ffb90905762c5e538d3c01d67e2e4154; exit=0; EXPECT=matched; output-sha256=8fd33bb747dd1ca52de1c04d8c2f7fb21e0d22ff88d50648352c0c1d7940d9fa; output-bytes=59; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client/src-tauri; path=37b9c12d7169/28 entries
 
-- [ ] G6: Jede Gegenprobe ist gemessen — jeder neue Wächter wird ohne seinen Fix rot
-  EVIDENCE: Drei Wächter, vier Gegenproben, alle am 20.09.2026 gemessen:
-    (1) „sagt bei Stoerung, dass die gezeigten Zahlen alt sind" — mit
-    `{false && (` statt `{antwort.stoerung && (` → 1 failed | 19 passed.
-    (2) Gegenrichtung: mit `{true && (` wird „zeigt ohne Stoerung KEINEN
-    Alt-Hinweis" rot → 1 failed | 19 passed. Beide Richtungen greifen, die
-    Warnung kann also weder fehlen noch dauerhaft dastehen.
-    (3) „laesst das Rufzeichen hier NICHT aendern" — mit genau dem Fall aus
-    Codex' Befund 2 (span bleibt, bekommt `onClick` mit Schreibbefehl) →
-    1 failed | 19 skipped. Der erste Entwurf dieses Tests blieb dabei grün.
-    (4) `scripts/pruefe-release-notes.mjs` gegen die alte Notes-Fassung →
-    exit=1 mit benanntem Grund; gegen die neue → exit=0.
+- [x] G6: Jede Gegenprobe ist gemessen — jeder neue Wächter wird ohne seinen Fix rot
+  EVIDENCE: Sieben Mutationen, alle in der Nacht vom 20./21.09.2026 gemessen:
+    F1 (1) `sink100` zurück auf `-700 * gsFactor` → „DLH 373: kein Alarm bei
+    93 ft" wird rot (1 failed | 19 passed). Der Test trifft also genau den
+    Fehler aus dem Flug.
+    F2 (2) `stillgestanden = false` → P1a und P1b rot; (3) `stillgestanden =
+    true` → P2 und P3 rot. Beide Richtungen: Die Pause-Erkennung kann weder
+    fehlen noch alles verschlucken.
+    F3 (4) Das Mitschreiben in `ziel_szenerie_auskunft` entfernt → „ein
+    Ueberflugplatz raeumt die Auskunft des Ziels nicht weg" rot.
+    Werkzeuge (5) `scripts/pruefe-rust.mjs --selbsttest` laesst einen Befehl
+    mit Code 42 OHNE Warnzeile scheitern und muss das erkennen — genau der
+    Fall, an dem das alte Shell-Gate vorbeilief; (6)
+    `pruefe-release-notes.mjs --selbsttest` beurteilt sechs Faelle, darunter
+    zweimal Englisch ohne Deutsch und eine umformulierte Falschaussage;
+    (7) frueher am Abend: VdgsBand-Rufzeichen als `<span>` mit `onClick`
+    (Codex' eigener Gegenfall) → Negativtest rot.
+    Dazu die beiden Faelle aus Codex' vierter Runde: Altersangabe aus dem
+    Stoerungs-Hinweis entfernt → rot; `vdgs--alt` entfernt → rot.
 
 - [ ] G7: Externe Abnahme (Codex, ersatzweise Cloud-Prüfer) ohne sperrenden Befund
   EVIDENCE: pending
