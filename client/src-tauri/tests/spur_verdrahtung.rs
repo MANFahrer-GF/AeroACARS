@@ -890,8 +890,9 @@ fn der_gequeute_nachtrag_kommt_ueber_aus_json() {
     let typ = "TouchdownRolloutFinalizedPayload";
     assert_eq!(
         produktion.matches(&format!("{typ}::aus_json(")).count(),
-        3,
-        "nicht alle Lesestellen (Einreich-Trichter, Worker-Altbestand, Ablage) nehmen `aus_json`"
+        4,
+        "nicht alle Lesestellen (Einreich-Trichter, Worker-Altbestand, Ablage, \
+         Aufraeumen beim Start) nehmen `aus_json`"
     );
     // ⚠ Beide Schreibweisen: der Turbofish UND die Typannotation
     // (`let n: …Payload = serde_json::from_value(json)`) — genau die stand

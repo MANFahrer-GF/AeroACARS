@@ -17951,9 +17951,12 @@ mod nachtrag_queue {
             let Ok(ablage) = serde_json::from_str::<Ablage>(&text) else {
                 continue;
             };
-            let gelesen = serde_json::from_value::<aeroacars_mqtt::TouchdownRolloutFinalizedPayload>(
-                ablage.nachtrag.clone(),
-            );
+            // ÜBER `aus_json`, nicht über ein rohes `from_value`: Die
+            // Bahn-Gruppe haengt an `#[serde(flatten)] Option<BahnWire>`,
+            // und ein rohes Einlesen macht aus dem FEHLENDEN Block einen
+            // leeren — der dann als „alles zurueckgesetzt" rausginge.
+            let gelesen =
+                aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(ablage.nachtrag.clone());
             let Ok(mut nachtrag) = gelesen else {
                 continue;
             };
@@ -18014,13 +18017,19 @@ mod nachtrag_queue {
         // Schon beim ERSTEN Versand auf Sendegroesse bringen — sonst
         // scheitert er garantiert, und die Korrektur kaeme erst beim
         // naechsten Worker-Takt an (QS 20.09.2026).
+        //
+        // KEIN frueher Abbruch: Was auch ausgeduennt nicht passt, wird
+        // trotzdem abgelegt — die Ablage ist der einzige Ort, an dem eine
+        // Korrektur ueberleben kann. Das Aussortieren uebernimmt `drain`.
+        // Der Abbruch in dieser Funktion gehoert allein der fehlenden
+        // Ablage (Runde 13, High 2), siehe Test
+        // `ohne_ablage_wird_nicht_gesendet_und_die_sperre_bleibt`.
         let mut nachtrag = nachtrag;
         if !auf_sendegroesse_bringen(&mut nachtrag) {
             tracing::error!(
                 pirep_id,
-                "Bahnkorrektur passt auch ausgeduennt nicht in eine Nachricht — nicht gesendet"
+                "Bahnkorrektur passt auch ausgeduennt nicht in eine Nachricht"
             );
-            return Err(io_err("Nachtrag zu gross"));
         }
         // ⚠ Ohne Ablage KEIN Senden (Runde 13, High 2): Vorher ging der
         // Nachtrag bei voller Platte trotzdem raus, der Aufrufer setzte
@@ -29016,9 +29025,12 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Op
         let log_path = app_data_dir
             .join("flight_logs")
             .join(format!("{safe_pirep}.jsonl"));
-        if !log_path.exists() {
-            tracing::debug!(path = ?log_path, "log-upload: file missing — skipping");
-            return;
+        // Fehlt das Flugprotokoll, ist das KEIN Grund, auch die Diagnose
+        // wegzulassen: Genau dann (Aufzeichnung aus, Client kaputt,
+        // manuell eingereicht) will man sie haben (Abnahme 20.09.2026).
+        let flugprotokoll_da = log_path.exists();
+        if !flugprotokoll_da {
+            tracing::debug!(path = ?log_path, "log-upload: file missing — nur Diagnose");
         }
 
         // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): dieser
@@ -29062,6 +29074,7 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Op
         };
 
         // 3. Hochladen.
+        if flugprotokoll_da {
         match aeroacars_mqtt::log_upload::upload_flight_log(
             &log_path, &pirep_id, &username, &password,
             None, // default endpoint = https://live.kant.ovh/api/flight-logs/upload
@@ -29112,6 +29125,8 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Op
             }
         }
 
+        }
+
         // v1.7.41: das DIAGNOSE-Log gleich mit.
         //
         // Am 20.09.2026 riss bei mehreren Piloten die Verbindung im
@@ -29123,22 +29138,47 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Op
         //
         // Best effort: Fehlt die Datei oder scheitert der Upload, bleibt
         // es bei einer Logzeile — der Flugbericht ist wichtiger.
-        if let Some(diagnose) = heutiges_diagnose_log() {
-            match aeroacars_mqtt::log_upload::upload_diagnose_log(
-                &diagnose, &pirep_id, &username, &password, None,
-            )
-            .await
-            {
-                Ok(stats) => tracing::info!(
-                    pirep_id = %pirep_id,
-                    gzip_kb = stats.compressed_size / 1024,
-                    "Diagnose-Log mitgeschickt"
-                ),
-                Err(e) => tracing::warn!(
-                    pirep_id = %pirep_id,
-                    error = %e,
-                    "Diagnose-Log nicht hochgeladen (nicht schlimm)"
-                ),
+        //
+        // NICHT bei selbst eingeschalteter Fehlersuche: Mit `RUST_LOG=trace`
+        // schreibt rumqttc seine Pakete mit, und im CONNECT stehen Name und
+        // Passwort. Wer so debuggt, schickt seine Datei bewusst von Hand
+        // (Abnahme 20.09.2026).
+        if std::env::var_os("RUST_LOG").is_some() {
+            tracing::info!(
+                "Diagnose-Log NICHT hochgeladen: RUST_LOG ist gesetzt, die Datei \
+                 koennte Zugangsdaten enthalten"
+            );
+        } else {
+            let dateien = diagnose_logs_fuer_upload();
+            if !dateien.is_empty() {
+                match aeroacars_mqtt::log_upload::upload_diagnose_logs(
+                    &dateien, &pirep_id, &username, &password, None,
+                )
+                .await
+                {
+                    Ok(stats) => {
+                        tracing::info!(
+                            pirep_id = %pirep_id,
+                            gzip_kb = stats.compressed_size / 1024,
+                            "Diagnose-Log mitgeschickt"
+                        );
+                        // Sichtbar machen, was den Server erreicht.
+                        log_activity_handle(
+                            &app,
+                            ActivityLevel::Info,
+                            "Diagnose-Protokoll mitgeschickt",
+                            Some(format!(
+                                "{} KB — technische Meldungen des Clients, keine Zugangsdaten",
+                                stats.compressed_size / 1024
+                            )),
+                        );
+                    }
+                    Err(e) => tracing::warn!(
+                        pirep_id = %pirep_id,
+                        error = %e,
+                        "Diagnose-Log nicht hochgeladen (nicht schlimm)"
+                    ),
+                }
             }
         }
     });
@@ -49850,10 +49890,20 @@ fn log_dir() -> Option<PathBuf> {
 /// hätten eine Protokollierung, die nichts protokolliert.
 /// Die Logdatei von heute — dieselbe Ableitung wie `log_dir`, damit
 /// Schreiben und Hochladen nicht auseinanderlaufen koennen.
-fn heutiges_diagnose_log() -> Option<PathBuf> {
-    let d = log_dir()?;
-    let pfad = d.join(format!("aeroacars.{}.log", Utc::now().format("%Y-%m-%d")));
-    pfad.exists().then_some(pfad)
+fn diagnose_logs_fuer_upload() -> Vec<PathBuf> {
+    let Some(d) = log_dir() else {
+        return Vec::new();
+    };
+    // Gestern UND heute: Ein Flug, der 23:40z aufsetzt und 00:10z
+    // eingereicht wird, haette sonst nur ein paar Zeilen von heute
+    // mitgeschickt — der Abriss von gestern bliebe auf der Platte
+    // (Abnahme 20.09.2026). Reihenfolge zeitlich: erst gestern.
+    let heute = Utc::now();
+    [heute - chrono::Duration::days(1), heute]
+        .iter()
+        .map(|t| d.join(format!("aeroacars.{}.log", t.format("%Y-%m-%d"))))
+        .filter(|p| p.exists())
+        .collect()
 }
 
 fn build_log_appender(

@@ -108,8 +108,8 @@ pub async fn upload_flight_log(
     })
 }
 
-/// Hoechstens so viel rohes Diagnose-Log wird geschickt. Groessere Dateien
-/// werden HINTEN abgeschnitten — das Ende ist das Interessante.
+/// Hoechstens so viel rohes Diagnose-Log wird geschickt. Ist mehr da, faellt
+/// der ANFANG weg — das Ende ist das Interessante.
 const DIAGNOSE_MAX_ROH: usize = 8 * 1024 * 1024;
 
 fn default_diagnose_url() -> String {
@@ -128,16 +128,27 @@ fn default_diagnose_url() -> String {
 ///
 /// Best effort: Schlaegt das fehl, ist das kein Grund, irgendetwas anderes
 /// abzubrechen — der Flugbericht ist wichtiger als seine Diagnose.
-pub async fn upload_diagnose_log(
-    log_path: &Path,
+pub async fn upload_diagnose_logs(
+    log_paths: &[std::path::PathBuf],
     pirep_id: &str,
     username: &str,
     password: &str,
     endpoint: Option<&str>,
 ) -> Result<UploadStats> {
-    let mut raw = tokio::fs::read(log_path)
-        .await
-        .with_context(|| format!("read diagnose log {log_path:?}"))?;
+    // Mehrere Tagesdateien in zeitlicher Reihenfolge, getrennt durch eine
+    // Kopfzeile — ein Flug ueber Mitternacht braucht beide.
+    let mut raw: Vec<u8> = Vec::new();
+    for pfad in log_paths {
+        let teil = match tokio::fs::read(pfad).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::debug!(pfad = ?pfad, error = %e, "Diagnose-Teil nicht lesbar");
+                continue;
+            }
+        };
+        raw.extend_from_slice(format!("\n===== {} =====\n", pfad.display()).as_bytes());
+        raw.extend_from_slice(&teil);
+    }
     if raw.is_empty() {
         anyhow::bail!("diagnose log is empty");
     }

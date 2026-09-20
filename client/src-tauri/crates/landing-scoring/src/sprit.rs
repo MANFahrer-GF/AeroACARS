@@ -519,8 +519,16 @@ pub fn wegpunkte_auswerten(
     // rot, und ab dem vierten Fix war alles wieder grün. Ein Alarm, der
     // sich von selbst erledigt, ist keiner. Ein Zehntel des Trips, aber nie
     // weniger als `FUEL_CHECK_MIN_PLAN_KG`.
+    //
+    // NUR ein Zehntel, KEINE absolute Untergrenze: Mit `max(150 kg)` wäre
+    // ein kurzer Flug ganz ohne Ampel geblieben — bei einem Trip von
+    // 300 kg die halbe Strecke, bei 150 kg und weniger (GA, kurzer
+    // Bizjet-Hüpfer) bis zur Landung (Abnahme 20.09.2026). Unterhalb von
+    // `FUEL_CHECK_MIN_PLAN_KG` rechnet `fuel_check` ohnehin mit Faktor 1,0
+    // statt aus einem winzigen Nenner — die Ampel bleibt also ruhig, statt
+    // ganz zu fehlen.
     let basis_min = plan_start
-        .map(|ps| ((ps - plan_landung) * 0.10).max(FUEL_CHECK_MIN_PLAN_KG))
+        .map(|ps| (ps - plan_landung) * 0.10)
         .unwrap_or(FUEL_CHECK_MIN_PLAN_KG);
 
     for z in zeilen.iter_mut() {
@@ -1079,9 +1087,27 @@ mod tests {
         // Planstück — drei rote Zeilen, die sich ab dem vierten Fix von
         // selbst erledigten. Trip laut Plan 5.700 kg, ein Zehntel = 570.
         let mut z = vec![
-            wp("DER24", 9491.0, 8000.0, Some(9783.0), WegpunktZustand::Gemessen),
-            wp("GEMMA", 9245.0, 7800.0, Some(9377.0), WegpunktZustand::Gemessen),
-            wp("TEA", 8384.0, 7000.0, Some(8466.0), WegpunktZustand::Gemessen),
+            wp(
+                "DER24",
+                9491.0,
+                8000.0,
+                Some(9783.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "GEMMA",
+                9245.0,
+                7800.0,
+                Some(9377.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "TEA",
+                8384.0,
+                7000.0,
+                Some(8466.0),
+                WegpunktZustand::Gemessen,
+            ),
             wp("EDDF", 3791.0, 2800.0, None, WegpunktZustand::Offen),
         ];
         wegpunkte_auswerten(&mut z, Some(9783.0), Some(300.0));
@@ -1092,7 +1118,35 @@ mod tests {
         );
         assert!(z[1].landung_hochgerechnet_kg.is_none());
         // TEA: 1.107 kg Plan-Verbrauch — jetzt wird gerechnet.
-        assert!(z[2].ampel.is_some(), "ab genug Strecke gehört die Ampel hin");
+        assert!(
+            z[2].ampel.is_some(),
+            "ab genug Strecke gehört die Ampel hin"
+        );
+    }
+
+    #[test]
+    fn ein_kurzer_flug_bekommt_trotzdem_eine_ampel() {
+        // Abnahme 20.09.2026: Mit einer absoluten Untergrenze von 150 kg
+        // blieb ein Trip von 300 kg zur Haelfte stumm, ein Trip unter
+        // 150 kg bis zur Landung. Genau die kleinen Muster fliegen aber
+        // am dichtesten an ihren Reserven.
+        let mut z = vec![
+            wp("EDDL", 900.0, 400.0, Some(900.0), WegpunktZustand::Gemessen),
+            wp(
+                "MITTE",
+                800.0,
+                330.0,
+                Some(760.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp("EDDK", 700.0, 260.0, None, WegpunktZustand::Offen),
+        ];
+        wegpunkte_auswerten(&mut z, Some(900.0), Some(40.0));
+        assert!(
+            z[1].ampel.is_some(),
+            "kurzer Flug ohne Ampel — 200 kg Trip, 100 kg Plan-Verbrauch"
+        );
+        assert!(z[1].landung_hochgerechnet_kg.is_some());
     }
 
     #[test]
@@ -1103,8 +1157,20 @@ mod tests {
         // 0,5 geklemmt und die Landung grün hochgerechnet.
         let mut z = vec![
             wp("EDDL", 8000.0, 1500.0, None, WegpunktZustand::Offen),
-            wp("KORED", 5000.0, 1400.0, Some(5000.0), WegpunktZustand::Gemessen),
-            wp("RESMI", 4000.0, 1300.0, Some(3900.0), WegpunktZustand::Gemessen),
+            wp(
+                "KORED",
+                5000.0,
+                1400.0,
+                Some(5000.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "RESMI",
+                4000.0,
+                1300.0,
+                Some(3900.0),
+                WegpunktZustand::Gemessen,
+            ),
             wp("LEPA", 2000.0, 1300.0, None, WegpunktZustand::Offen),
         ];
         wegpunkte_auswerten(&mut z, Some(5000.0), Some(100.0));
