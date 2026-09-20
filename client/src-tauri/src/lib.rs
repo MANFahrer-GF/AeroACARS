@@ -14643,17 +14643,23 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
         None if !zeilen.is_empty() => Some(0),
         _ => None,
     };
-    // `naechster` ist ein Index in die ZEILEN. Steht vorn eine eigene
-    // Abflugzeile, ist die Tabelle um eins laenger als `planned_waypoints`
-    // — ohne den Versatz zeigte die Entfernung auf den Fix DAVOR, also auf
-    // einen bereits ueberflogenen: eine Zahl, die waechst statt zu
-    // schrumpfen (Abnahme 20.09.2026).
-    let versatz = zeilen.len().saturating_sub(stats.planned_waypoints.len());
+    // Ueber die KENNUNG, nicht ueber den Index.
+    //
+    // `naechster` zaehlt in den ZEILEN, die Koordinaten stehen in
+    // `planned_waypoints`. Sobald vorn eine eigene Abflugzeile steht, sind
+    // beide Listen verschieden lang, und der Index zeigte auf den Fix
+    // DAVOR — eine Entfernung, die waechst statt zu schrumpfen (Abnahme
+    // 20.09.2026). Ein Laengenvergleich waere nur geraten: Nach einer
+    // Routenaenderung oder bei einer eingefrorenen Auswertung stimmt er
+    // nicht mehr. Die Kennung stimmt immer.
     let naechster_nm = match (naechster, stats.last_known_lat, stats.last_known_lon) {
-        (Some(i), Some(la), Some(lo)) => stats
-            .planned_waypoints
-            .get(i.saturating_sub(versatz))
-            .map(|f| ::geo::distance_m(la, lo, f.lat, f.lon) / 1852.0),
+        (Some(i), Some(la), Some(lo)) => zeilen.get(i).and_then(|z| {
+            stats
+                .planned_waypoints
+                .iter()
+                .find(|f| f.ident == z.ident)
+                .map(|f| ::geo::distance_m(la, lo, f.lat, f.lon) / 1852.0)
+        }),
         _ => None,
     };
     SpritWegpunkteDto {
