@@ -2527,7 +2527,8 @@
       "tobt_setzen": "IMPOSTA TOBT",
       "tobt_setzen_grund": "Senza TOBT nessuna TSAT — impostala nella finestra VDGS",
       "kein_eintrag": "nessuna voce CDM",
-      "rufzeichen_aendern": "Cambia indicativo — vale anche per il datalink"
+      "stoerung": "servizio non raggiungibile",
+      "rufzeichen_woher": "Indicativo da piano di volo o impostazioni — modificalo nella finestra CPDLC"
     }
   },
   "msfs_hud": {

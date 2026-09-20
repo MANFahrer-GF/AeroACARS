@@ -180,50 +180,25 @@ describe("Rufzeichen in der Platte", () => {
     expect(screen.queryByTestId("vdgs-band")).toBeNull();
   });
 
-  it("schreibt ein geaendertes Rufzeichen und laedt neu", async () => {
-    const neuGeladen = vi.fn();
-    invoke.mockClear();
-    render(
-      <VdgsPlatte
-        antwort={{ gefragt_als: "GSG421", stand: null }}
-        onRufzeichenGesetzt={neuGeladen}
-      />,
-    );
-    await act(async () => {
-      screen.getByText("GSG421").click();
-    });
-    const feld = screen.getByLabelText(/Rufzeichen/i) as HTMLInputElement;
-    await act(async () => {
-      fireEvent.change(feld, { target: { value: "sas4084" } });
-      fireEvent.keyDown(feld, { key: "Enter" });
-    });
-    // Grossgeschrieben, und ueber den EINEN Befehl, der auch den Funk
-    // betrifft — keine vierte Rufzeichen-Quelle.
-    expect(invoke).toHaveBeenCalledWith("vdgs_rufzeichen_setzen", {
-      callsign: "SAS4084",
-    });
-    await waitFor(() => expect(neuGeladen).toHaveBeenCalled());
-  });
-
-  it("verwirft die Aenderung bei Escape", async () => {
+  it("laesst das Rufzeichen hier NICHT aendern", () => {
+    // Bewusst nur anzeigen (Thomas, 20.09.2026). Am Funk haengt die
+    // Identitaet: Hoppie merkt sich das Rufzeichen beim VERBINDEN, und
+    // ohne Neuaufbau funkt eine laufende Verbindung weiter unter dem
+    // alten, waehrend VDGS schon das neue nimmt — zwei Identitaeten
+    // gleichzeitig (Codex-Abnahme, zweite Runde). Geaendert wird es im
+    // CPDLC-Fenster, das den Neuaufbau selbst macht.
     invoke.mockClear();
     render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null }} />);
-    await act(async () => {
-      screen.getByText("GSG421").click();
-    });
-    const feld = screen.getByLabelText(/Rufzeichen/i) as HTMLInputElement;
-    await act(async () => {
-      fireEvent.change(feld, { target: { value: "FALSCH" } });
-      fireEvent.keyDown(feld, { key: "Escape" });
-    });
-    // Sonst genuegte ein versehentliches Escape, um das FUNK-Rufzeichen
-    // zu aendern.
-    expect(invoke).not.toHaveBeenCalledWith(
-      "vdgs_rufzeichen_setzen",
-      expect.anything(),
-    );
-    expect(screen.getByText("GSG421")).toBeTruthy();
+    const zeichen = screen.getByText("GSG421");
+    // Kein Knopf, kein Eingabefeld — nur Text mit Erklaerung, woher es
+    // kommt.
+    expect(zeichen.closest("button")).toBeNull();
+    expect(zeichen.tagName).toBe("SPAN");
+    expect(zeichen.getAttribute("title")).toMatch(/CPDLC/);
+    // Und von hier aus wird nichts geschrieben.
+    expect(invoke).not.toHaveBeenCalled();
   });
+
 });
 
 describe("useVdgsStand", () => {

@@ -14718,6 +14718,14 @@ pub(crate) fn vdgs_flug_kennung(app: &AppHandle) -> Option<String> {
     let state = app.state::<AppState>();
     let guard = state.active_flight.lock().ok()?;
     let flight = guard.as_ref()?;
+    // Und nur VOR dem Abheben. Die Anzeige haelt sich daran, das
+    // Backend tat es nicht — ueber die LAN-Bruecke war der Befehl also
+    // auch im Reiseflug erreichbar, entgegen der Zusage (Codex-Abnahme,
+    // zweite Runde, 20.09.2026). Nach dem Abheben gibt es nichts mehr
+    // zu sequenzieren.
+    if flight.stats.lock().ok()?.takeoff_at.is_some() {
+        return None;
+    }
     Some(flight.pirep_id.clone())
 }
 
@@ -50864,7 +50872,6 @@ pub fn run() {
             fenster::fenster_an_inhalt_anpassen,
             vdgs_fenster_offen,
             vdgs::vdgs_stand,
-            vdgs::vdgs_rufzeichen_setzen,
             navdata_zwischenspeicher_bestand,
             landing_backup_now,
             landing_backup_restore,

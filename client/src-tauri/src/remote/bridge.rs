@@ -883,20 +883,6 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // gehoert das hierher — es ist eine reine Abfrage, und auf dem
         // Tablet ist das Band genauso nuetzlich wie am Sim-PC.
         "vdgs_stand" => ok_json(crate::vdgs::vdgs_stand(app.clone()).await),
-        // Das Rufzeichen darf auch vom Tablet aus gesetzt werden: Wer
-        // dort merkt, dass das Band leer bleibt, soll es dort richtig
-        // stellen koennen. Es aendert eine Einstellung, keinen Flug.
-        "vdgs_rufzeichen_setzen" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct A {
-                callsign: String,
-            }
-            match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::vdgs::vdgs_rufzeichen_setzen(app.clone(), a.callsign)),
-                Err(e) => Err(e),
-            }
-        }
         "hoppie_ping_station" => {
             #[derive(Deserialize)]
             struct A {

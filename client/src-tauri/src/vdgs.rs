@@ -293,6 +293,17 @@ pub struct VdgsAntwort {
     pub gefragt_als: String,
     /// Der Eintrag, wenn es einen gibt.
     pub stand: Option<VdgsStand>,
+    /// Der Abruf ist gescheitert — Netz, Zeitueberschreitung, HTTP-Fehler
+    /// oder eine Antwort, die wir nicht verstehen.
+    ///
+    /// Ohne dieses Feld sah ein Serverfehler im Cockpit genauso aus wie
+    /// „dieser Flug ist dort nicht gefuehrt": Die Korrektur an `aus_rumpf`
+    /// wirkte nur im Parser, denn `vdgs_stand` machte aus dem Fehler
+    /// wieder ein `stand: None` (Codex-Abnahme, zweite Runde,
+    /// 20.09.2026). Der Pilot muss beides unterscheiden koennen — beim
+    /// einen stimmt vielleicht sein Rufzeichen nicht, beim anderen ist
+    /// die Gegenseite gerade nicht erreichbar.
+    pub stoerung: bool,
 }
 
 /// Stand der eigenen Abflugfolge, oder `None`, wenn es nichts zu zeigen
@@ -339,6 +350,14 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
         Some(VdgsAntwort {
             gefragt_als: callsign.clone(),
             stand,
+            stoerung: false,
+        })
+    };
+    let stoerung = |stand: Option<VdgsStand>| {
+        Some(VdgsAntwort {
+            gefragt_als: callsign.clone(),
+            stand,
+            stoerung: true,
         })
     };
 
@@ -359,7 +378,11 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
             // Netzhaenger weg und wieder hin.
             // Auch im Fehlerfall das Rufzeichen mitgeben: Die Platte
             // zeigt dann die schmale Zeile statt ganz zu verschwinden.
-            antwort(aus_speicher(&schl, HOECHSTALTER_BEI_AUSFALL).flatten())
+            // Und als STOERUNG kennzeichnen — sonst liest der Pilot
+            // „kein CDM-Eintrag", wo die Gegenseite schlicht nicht
+            // antwortet, und prueft sein Rufzeichen statt zu warten.
+            let ueberbrueckt = aus_speicher(&schl, HOECHSTALTER_BEI_AUSFALL).flatten();
+            stoerung(ueberbrueckt)
         }
     }
 }
@@ -367,6 +390,21 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wer den GLOBALEN Zwischenspeicher anfasst, nimmt diese Sperre.
+    ///
+    /// `speicher()` ist ein `OnceLock` fuer den ganzen Prozess, und
+    /// Rust laesst Tests parallel laufen: Zwei Tests, die beide
+    /// hineinschreiben, machen sich gegenseitig die Erwartung kaputt.
+    /// Genau das ist am 20.09.2026 passiert — derselbe Test war einmal
+    /// rot und beim naechsten Lauf gruen. Ein sporadisch roter Test ist
+    /// schlimmer als keiner: Man gewoehnt sich an, ihn zu wiederholen.
+    fn speicher_sperre() -> std::sync::MutexGuard<'static, ()> {
+        static S: OnceLock<Mutex<()>> = OnceLock::new();
+        S.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|v| v.into_inner())
+    }
 
     fn leer() -> VdgsStand {
         VdgsStand {
@@ -478,6 +516,7 @@ mod tests {
     /// Cockpit — bei einer Stoerung bis zu zehn.
     #[test]
     fn ein_neuer_flug_erbt_den_stand_des_alten_nicht() {
+        let _wache = speicher_sperre();
         let alt = VdgsStand {
             callsign: "GSG421".into(),
             departure: "LEBL".into(),
@@ -508,6 +547,7 @@ mod tests {
     /// Normalbetrieb, die lange als Ueberbrueckung bei Ausfall.
     #[test]
     fn gemerkter_stand_verfaellt_nach_frist() {
+        let _wache = speicher_sperre();
         let stand = VdgsStand {
             callsign: "GSG9".into(),
             ..leer()
@@ -564,9 +604,21 @@ mod tests {
         assert!(abruf > aufloesung, "gefragt wird vor dem Aufloesen");
         // Und nur bei laufendem Flug — sonst koennte ein Tablet ueber
         // die LAN-Bruecke auch ohne Flug fragen.
+        // Nicht nur, DASS der Name vorkommt — ein ungenutzter Aufruf
+        // genuegte sonst (Codex-Abnahme, zweite Runde). Das Ergebnis
+        // muss die Funktion abbrechen lassen, und zwar VOR dem Abruf.
+        let wache = rumpf
+            .find("vdgs_flug_kennung(&app)?")
+            .expect("vdgs_stand bricht ohne laufenden Flug nicht ab");
         assert!(
-            rumpf.contains("vdgs_flug_kennung"),
-            "vdgs_stand prueft nicht, ob ueberhaupt ein Flug laeuft",
+            wache < abruf,
+            "die Flugwache greift erst NACH dem Abruf",
+        );
+        // Und die Kennung muss in den Speicherschluessel fliessen —
+        // sonst teilen sich zwei Fluege wieder einen Platz.
+        assert!(
+            rumpf.contains("schluessel(&flug_id, &callsign)"),
+            "die Flugkennung landet nicht im Speicherschluessel",
         );
     }
 
@@ -629,30 +681,22 @@ mod tests {
     }
 }
 
-/// Das Rufzeichen setzen, unter dem gefunkt UND abgefragt wird.
-///
-/// Schreibt die Uebersteuerung in den Hoppie-Einstellungen — dieselbe,
-/// die `resolve_callsign` zuerst nimmt. Gezielt statt „alle
-/// Einstellungen lesen, eine aendern, zurueckschreiben": Sonst
-/// ueberschriebe ein Klick hier das, was jemand gerade im
-/// Einstellungs-Fenster geaendert hat.
-///
-/// Ein leerer Wert LOESCHT die Uebersteuerung — dann gilt wieder das
-/// Rufzeichen des Fluges.
-#[tauri::command]
-pub fn vdgs_rufzeichen_setzen(app: AppHandle, callsign: String) -> Result<String, crate::UiError> {
-    let sauber = sauberes_rufzeichen(&callsign);
-    let mut einstellungen = crate::hoppie::settings::read_settings(&app);
-    einstellungen.callsign_override = if sauber.is_empty() {
-        None
-    } else {
-        Some(sauber.clone())
-    };
-    crate::hoppie::settings::write_settings(&app, &einstellungen);
-    // Der gemerkte Stand gehoert zum ALTEN Rufzeichen und waere jetzt
-    // falsch — verwerfen, damit der naechste Takt frisch fragt.
-    if let Ok(mut g) = speicher().lock() {
-        *g = None;
-    }
-    Ok(sauber)
-}
+// **Bewusst KEIN Setzen von hier aus** (Thomas, 20.09.2026).
+// 
+// Ein erster Anlauf schrieb die Uebersteuerung direkt aus der Platte.
+// Die Codex-Abnahme zeigte, dass daran drei Dinge haengen, die man
+// nicht nebenbei erledigt:
+// 
+//  * Hoppie merkt sich das Rufzeichen beim VERBINDEN (`from_callsign`).
+//    Ohne Neuaufbau funkt eine laufende Verbindung weiter unter dem
+//    alten, waehrend VDGS schon das neue nimmt — der Pilot arbeitet
+//    unter ZWEI Identitaeten. Das ist schlimmer als ein leeres Band.
+//  * `read_settings` + `write_settings` einzeln ist ein Wettlauf mit
+//    dem Einstellungsfenster; dabei gingen Station oder
+//    Benachrichtigungen verloren.
+//  * Aus `DLH 123` wurde stillschweigend `DLH123` — ein anderes,
+//    plausibel aussehendes Rufzeichen als Funkidentitaet.
+// 
+// Geaendert wird deshalb weiter dort, wo es hingehoert: im
+// CPDLC-Fenster, das seit v1.5.6 den Neuaufbau selbst macht. Die Platte
+// ZEIGT nur, womit gefragt wurde — das war der eigentliche Gewinn.

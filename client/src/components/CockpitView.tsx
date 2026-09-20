@@ -229,7 +229,7 @@ export function CockpitView({
   // VDGS-Band: nur vor dem Abheben und nur, wenn der Flug im CDM-System
   // gefuehrt wird. Der Haken muss VOR dem `if (!activeFlight) return`
   // stehen — Hooks duerfen nicht hinter einem Rueckgabezweig sitzen.
-  const [vdgsStand, vdgsNeuLaden] = useVdgsStand(
+  const [vdgsStand] = useVdgsStand(
     !!activeFlight && activeFlight.takeoff_at === null,
   );
 
@@ -269,7 +269,7 @@ export function CockpitView({
       {noticeBanner}
       {/* Ganz oben, solange die Abflugfolge laeuft: das Geraet vom Gate.
           Zeigt sich von allein nur, wenn es etwas zu zeigen gibt. */}
-      <VdgsPlatte antwort={vdgsStand} onRufzeichenGesetzt={vdgsNeuLaden} />
+      <VdgsPlatte antwort={vdgsStand} />
       {/* was_just_resumed: ActiveFlightPanel (and its action row, below)
           doesn't render at all yet — the resume banner owns the screen
           instead — so the weather button still needs its own top row here,

@@ -201,32 +201,5 @@
   margin-left: auto;
 }
 
-/* Das Rufzeichen ist anklickbar — es ist der Schluessel zum Eintrag. */
-.vdgs__rufzeichen--knopf {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  padding: 1px var(--sp-1);
-  font: inherit;
-  letter-spacing: inherit;
-  cursor: pointer;
-}
-.vdgs__rufzeichen--knopf:hover,
-.vdgs__rufzeichen--knopf:focus-visible {
-  /* Eigene Regel: ein globales button:hover setzt sonst dunkel auf
-     dunkel (bekannte Hausfalle). */
-  background: rgba(255, 255, 255, 0.08);
-  border-color: var(--vdgs-linie);
-  color: #dfe7e3;
-}
-.vdgs__rufzeichen--feld {
-  width: 9ch;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--vdgs-an);
-  border-radius: var(--r-md);
-  padding: 1px var(--sp-1);
-  font: inherit;
-  letter-spacing: inherit;
-  color: #dfe7e3;
-  text-transform: uppercase;
-}
+/* Das Rufzeichen steht sichtbar da — geaendert wird es im
+   CPDLC-Fenster, weil daran die Funkidentitaet haengt (20.09.2026). */

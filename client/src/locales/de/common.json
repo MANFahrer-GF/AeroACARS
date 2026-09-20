@@ -2534,7 +2534,8 @@
       "tobt_setzen": "TOBT SETZEN",
       "tobt_setzen_grund": "Ohne TOBT keine TSAT — im VDGS-Fenster setzen",
       "kein_eintrag": "kein CDM-Eintrag",
-      "rufzeichen_aendern": "Rufzeichen ändern — gilt auch für den Funk"
+      "stoerung": "Dienst nicht erreichbar",
+      "rufzeichen_woher": "Rufzeichen aus Flugplan bzw. Einstellungen — ändern im CPDLC-Fenster"
     }
   }
 }

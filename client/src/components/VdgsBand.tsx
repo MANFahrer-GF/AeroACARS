@@ -33,6 +33,8 @@ export interface VdgsAntwort {
   /** Womit gefragt wurde — auch dann gesetzt, wenn es keinen Eintrag gibt. */
   gefragt_als: string;
   stand: VdgsStand | null;
+  /** Der Abruf ist gescheitert — NICHT dasselbe wie „kein Eintrag". */
+  stoerung?: boolean;
 }
 
 export interface VdgsStand {
@@ -90,13 +92,9 @@ export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
  * und jede Minute ein Neuzeichnen für den Countdown — sonst stünde „in
  * 4 min" eine Minute später immer noch da.
  */
-export function useVdgsStand(aktiv: boolean): [VdgsAntwort | null, () => void] {
+export function useVdgsStand(aktiv: boolean): [VdgsAntwort | null] {
   const [stand, setStand] = useState<VdgsAntwort | null>(null);
   const [, setTakt] = useState(0);
-  // Nach einer Rufzeichen-Aenderung sofort neu fragen, statt bis zum
-  // naechsten Takt zu warten — sonst sieht der Pilot bis zu eine Minute
-  // lang weiter „kein Eintrag" und haelt seine Korrektur fuer wirkungslos.
-  const [neuLadenZaehler, setNeuLadenZaehler] = useState(0);
 
   useEffect(() => {
     if (!aktiv) {
@@ -120,7 +118,7 @@ export function useVdgsStand(aktiv: boolean): [VdgsAntwort | null, () => void] {
       abgemeldet = true;
       window.clearInterval(id);
     };
-  }, [aktiv, neuLadenZaehler]);
+  }, [aktiv]);
 
   useEffect(() => {
     if (!aktiv || !stand) return;
@@ -128,82 +126,42 @@ export function useVdgsStand(aktiv: boolean): [VdgsAntwort | null, () => void] {
     return () => window.clearInterval(id);
   }, [aktiv, stand]);
 
-  return [stand, () => setNeuLadenZaehler((n) => n + 1)];
+  return [stand];
 }
 
 /**
- * Das Rufzeichen — sichtbar und aenderbar.
+ * Das Rufzeichen — sichtbar, aber hier nicht aenderbar.
  *
- * Es ist der Schluessel zum CDM-Eintrag. Passt es nicht, bleibt das Band
- * leer, und vorher war nicht einmal zu sehen, WOMIT gefragt wurde
- * (Thomas, 20.09.2026: „ist das nicht besser als was anzunehmen").
- * Geschrieben wird die Uebersteuerung, die auch der Funk nimmt — eine
- * Quelle, kein Auseinanderlaufen.
+ * Sichtbar, weil es der Schluessel zum CDM-Eintrag ist: Passt es nicht,
+ * bleibt das Band leer, und vorher war nicht einmal zu sehen, WOMIT
+ * gefragt wurde (Thomas, 20.09.2026).
+ *
+ * NICHT aenderbar, weil daran der Funk haengt. Hoppie merkt sich das
+ * Rufzeichen beim VERBINDEN; ohne Neuaufbau funkt eine laufende
+ * Verbindung weiter unter dem alten, waehrend VDGS schon das neue nimmt
+ * — zwei Identitaeten gleichzeitig, schlimmer als ein leeres Band
+ * (Codex-Abnahme, zweite Runde). Geaendert wird es im CPDLC-Fenster,
+ * das den Neuaufbau seit v1.5.6 selbst macht.
  */
-function Rufzeichen({
-  wert,
-  onGesetzt,
-}: {
-  wert: string;
-  onGesetzt: () => void;
-}) {
+function Rufzeichen({ wert }: { wert: string }) {
   const { t } = useTranslation();
-  const [bearbeiten, setBearbeiten] = useState(false);
-  const [entwurf, setEntwurf] = useState(wert);
-
-  if (!bearbeiten) {
-    return (
-      <button
-        type="button"
-        className="vdgs__rufzeichen vdgs__rufzeichen--knopf"
-        title={t("cdm.band.rufzeichen_aendern", "Rufzeichen ändern")}
-        onClick={() => {
-          setEntwurf(wert);
-          setBearbeiten(true);
-        }}
-      >
-        {wert}
-      </button>
-    );
-  }
-
-  const speichern = () => {
-    setBearbeiten(false);
-    void invoke("vdgs_rufzeichen_setzen", { callsign: entwurf })
-      .then(onGesetzt)
-      .catch(() => {});
-  };
-
   return (
-    <input
-      className="vdgs__rufzeichen vdgs__rufzeichen--feld"
-      value={entwurf}
-      autoFocus
-      maxLength={16}
-      aria-label={t("cdm.band.rufzeichen_aendern", "Rufzeichen ändern")}
-      onChange={(e) => setEntwurf(e.target.value.toUpperCase())}
-      onBlur={speichern}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") speichern();
-        // Abbrechen laesst den alten Wert stehen — sonst genuegte ein
-        // versehentliches Escape, um das Funk-Rufzeichen zu aendern.
-        if (e.key === "Escape") setBearbeiten(false);
-      }}
-    />
+    <span
+      className="vdgs__rufzeichen"
+      title={t(
+        "cdm.band.rufzeichen_woher",
+        "Rufzeichen aus Flugplan bzw. Einstellungen — ändern im CPDLC-Fenster",
+      )}
+    >
+      {wert}
+    </span>
   );
 }
 
-export function VdgsPlatte({
-  antwort,
-  onRufzeichenGesetzt,
-}: {
-  antwort: VdgsAntwort | null;
-  onRufzeichenGesetzt?: () => void;
-}) {
+export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
   const { t } = useTranslation();
   if (!antwort) return null;
   const stand = antwort.stand;
-  const neuLaden = onRufzeichenGesetzt ?? (() => {});
 
   // Kein Eintrag: schmale Zeile statt gar nichts. Sie sagt, womit
   // gefragt wurde, und laesst es richtigstellen.
@@ -211,9 +169,16 @@ export function VdgsPlatte({
     return (
       <div className="vdgs vdgs--leer" data-testid="vdgs-band-leer">
         <span className="vdgs__quelle">VDGS</span>
-        <Rufzeichen wert={antwort.gefragt_als} onGesetzt={neuLaden} />
+        <Rufzeichen wert={antwort.gefragt_als} />
         <span className="vdgs__leer-text">
-          {t("cdm.band.kein_eintrag", "kein CDM-Eintrag")}
+          {/* Stoerung und „kein Eintrag" sind zwei verschiedene Dinge:
+              Beim einen stimmt vielleicht das Rufzeichen nicht, beim
+              anderen antwortet die Gegenseite gerade nicht. Wer das
+              verwechselt, prueft sein Rufzeichen, obwohl daran nichts
+              falsch ist (Codex-Abnahme, zweite Runde). */}
+          {antwort.stoerung
+            ? t("cdm.band.stoerung", "Dienst nicht erreichbar")
+            : t("cdm.band.kein_eintrag", "kein CDM-Eintrag")}
         </span>
       </div>
     );
@@ -232,7 +197,7 @@ export function VdgsPlatte({
   return (
     <div className={`vdgs vdgs--${zustand}`} data-testid="vdgs-band">
       <div className="vdgs__kopf">
-        <Rufzeichen wert={antwort.gefragt_als} onGesetzt={neuLaden} />
+        <Rufzeichen wert={antwort.gefragt_als} />
         <span className="vdgs__platz">{stand.departure}</span>
         {stand.rwy_sid && <span className="vdgs__sid">{stand.rwy_sid}</span>}
         <span className="vdgs__quelle">VDGS</span>
