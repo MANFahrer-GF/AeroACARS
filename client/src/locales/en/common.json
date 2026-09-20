@@ -32,8 +32,6 @@
   },
   "landing": {
     "off_airport": {
-      "fremde_route_fehlt": "No route available for this flight.",
-      "fremde_route_fehler": "The route could not be loaded.",
       "title": "Off-airport touchdown",
       "planned": "Planned destination",
       "actual": "Actual touchdown",
@@ -2463,7 +2461,9 @@
     "netz_zeit_hint": "Fetching the data and drawing the areas on the last run",
     "fl_auto": "own altitude",
     "fl_auto_hint": "Show sectors at your own flight level",
-    "fl_regler": "Flight level for the sector view"
+    "fl_regler": "Flight level for the sector view",
+    "fremde_route_fehlt": "No route available for this flight.",
+    "fremde_route_fehler": "The route could not be loaded."
   },
   "chat": {
     "title": "Pilot chat",

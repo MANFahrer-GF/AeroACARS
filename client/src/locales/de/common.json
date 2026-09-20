@@ -32,8 +32,6 @@
   },
   "landing": {
     "off_airport": {
-      "fremde_route_fehlt": "Für diesen Flug liegt keine Route vor.",
-      "fremde_route_fehler": "Route konnte nicht geladen werden.",
       "title": "Off-airport Touchdown",
       "planned": "Geplante Destination",
       "actual": "Tatsächlicher Touchdown",
@@ -2463,7 +2461,9 @@
     "netz_zeit_hint": "Holen der Daten und Zeichnen der Flächen beim letzten Durchlauf",
     "fl_auto": "eigene Höhe",
     "fl_auto_hint": "Sektoren auf der eigenen Flughöhe zeigen",
-    "fl_regler": "Flugfläche für die Sektoransicht"
+    "fl_regler": "Flugfläche für die Sektoransicht",
+    "fremde_route_fehlt": "Für diesen Flug liegt keine Route vor.",
+    "fremde_route_fehler": "Route konnte nicht geladen werden."
   },
   "chat": {
     "title": "Pilotenchat",

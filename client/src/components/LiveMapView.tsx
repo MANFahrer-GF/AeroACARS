@@ -2237,7 +2237,14 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // Sonst bliebe die Linie als Geisterspur stehen, nachdem der Marker
     // verschwunden ist — und ohne Marker könnte niemand sie ausschalten
     // (Abnahme 20.09.2026).
-    if (fremdeRoutenRef.current.size > 0) {
+    // NUR aufräumen, wenn die Liste auch etwas aussagt.
+    //
+    // `vaVisible` ist leer, wenn die Kollegen-Anzeige ausgeschaltet ist —
+    // und ebenso nach einem fehlgeschlagenen Abruf (der Poll setzt die
+    // Liste dann auf leer). Beides heisst NICHT „alle sind gelandet".
+    // Ohne diese Bedingung verlor der Pilot seine eingeblendeten Routen,
+    // sobald er die Anzeige kurz ausschaltete (Abnahme 20.09.2026).
+    if (fremdeRoutenRef.current.size > 0 && showVa && vaVisible.length > 0) {
       const nochDa = new Set(vaVisible.map((f) => String(f.id ?? "")));
       let entfernt = false;
       for (const id of [...fremdeRoutenRef.current.keys()]) {

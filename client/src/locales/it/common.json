@@ -32,8 +32,6 @@
   },
   "landing": {
     "off_airport": {
-      "fremde_route_fehlt": "Nessuna rotta disponibile per questo volo.",
-      "fremde_route_fehler": "Impossibile caricare la rotta.",
       "title": "Atterraggio off-airport",
       "planned": "Destinazione pianificata",
       "actual": "Atterraggio reale",
@@ -2456,7 +2454,9 @@
     "netz_zeit_hint": "Recupero dei dati e disegno delle aree nell'ultimo ciclo",
     "fl_auto": "quota propria",
     "fl_auto_hint": "Mostra i settori alla propria quota",
-    "fl_regler": "Livello di volo per i settori"
+    "fl_regler": "Livello di volo per i settori",
+    "fremde_route_fehlt": "Nessuna rotta disponibile per questo volo.",
+    "fremde_route_fehler": "Impossibile caricare la rotta."
   },
   "chat": {
     "title": "Chat piloti",

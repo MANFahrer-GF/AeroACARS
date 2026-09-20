@@ -14652,13 +14652,19 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
     // 20.09.2026). Ein Laengenvergleich waere nur geraten: Nach einer
     // Routenaenderung oder bei einer eingefrorenen Auswertung stimmt er
     // nicht mehr. Die Kennung stimmt immer.
+    // Kommt eine Kennung zweimal vor (Warteschleife, SID/STAR-
+    // Ueberschneidung), entscheidet die Naehe zum Zeilen-Index — genau wie
+    // bei der Zuordnung der Messungen. Der erste Treffer waere sonst
+    // willkuerlich (Abnahme 20.09.2026).
     let naechster_nm = match (naechster, stats.last_known_lat, stats.last_known_lon) {
         (Some(i), Some(la), Some(lo)) => zeilen.get(i).and_then(|z| {
             stats
                 .planned_waypoints
                 .iter()
-                .find(|f| f.ident == z.ident)
-                .map(|f| ::geo::distance_m(la, lo, f.lat, f.lon) / 1852.0)
+                .enumerate()
+                .filter(|(_, f)| f.ident == z.ident)
+                .min_by_key(|(k, _)| k.abs_diff(i))
+                .map(|(_, f)| ::geo::distance_m(la, lo, f.lat, f.lon) / 1852.0)
         }),
         _ => None,
     };
@@ -14669,12 +14675,6 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
     }
 }
 
-/// v0.15.x (In-App-Live-Map): der im Backend akkumulierte, ausgedünnte
-/// geflogene Track [lon, lat] des aktiven Flugs. Im Streamer bei voller Tick-
-/// Rate gefüllt (fokus-/fenster-unabhängig → lückenlos auch bei X-Plane-
-/// Vollbild, anders als der gedrosselte Webview-Snapshot-Poll). Leer, wenn
-/// kein aktiver Flug. Das Frontend spiegelt das via `setTrack` in den
-/// trackStore und rendert die Linie daraus.
 /// Die geplante Route eines KOLLEGEN — fuer die Karte.
 ///
 /// Thomas, 20.09.2026: „in der Map auf die anderen Flieger klicken und die
@@ -14716,6 +14716,12 @@ async fn fremde_flugroute(pirep_id: String) -> Result<Vec<[f64; 2]>, UiError> {
     }
 }
 
+/// v0.15.x (In-App-Live-Map): der im Backend akkumulierte, ausgedünnte
+/// geflogene Track [lon, lat] des aktiven Flugs. Im Streamer bei voller Tick-
+/// Rate gefüllt (fokus-/fenster-unabhängig → lückenlos auch bei X-Plane-
+/// Vollbild, anders als der gedrosselte Webview-Snapshot-Poll). Leer, wenn
+/// kein aktiver Flug. Das Frontend spiegelt das via `setTrack` in den
+/// trackStore und rendert die Linie daraus.
 #[tauri::command]
 fn flight_get_track(state: tauri::State<'_, AppState>) -> Vec<[f64; 2]> {
     let guard = state.active_flight.lock().expect("active_flight lock");
@@ -70296,10 +70302,18 @@ mod sprit_wegpunkt_tests {
         use landing_scoring::sprit::{Ampel, WegpunktZustand};
         let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
         assert_eq!(z.len(), 6);
-        assert_eq!(z[0].zustand, WegpunktZustand::Gemessen, "Abflug trägt den Abhebe-Tankstand");
+        assert_eq!(
+            z[0].zustand,
+            WegpunktZustand::Gemessen,
+            "Abflug trägt den Abhebe-Tankstand"
+        );
         assert_eq!(z[3].zustand, WegpunktZustand::Uebersprungen);
         assert!(z[3].ist_an_bord_kg.is_some());
-        assert_eq!(z[5].zustand, WegpunktZustand::Offen, "vor der Landung ist das Ziel offen");
+        assert_eq!(
+            z[5].zustand,
+            WegpunktZustand::Offen,
+            "vor der Landung ist das Ziel offen"
+        );
         // 5 % Mehrverbrauch auf 1.700 kg Trip = 85 kg, Contingency 150: grün.
         assert_eq!(z[4].ampel, Some(Ampel::Gruen));
     }
@@ -70343,6 +70357,51 @@ mod sprit_wegpunkt_tests {
                 .zip(z[0].plan_an_bord_kg)
                 .map(|(i, p)| i - p),
             Some(100.0)
+        );
+    }
+
+    #[test]
+    fn die_abflugzeile_verschiebt_die_zuordnung_nicht_bei_doppelter_kennung() {
+        // Abnahme 20.09.2026, zweite Runde: Der erste Fassung dieses Tests
+        // konnte den Fehler nicht rot machen — bei lauter eindeutigen
+        // Kennungen rettet der Rueckfall ueber die Kennung die Zuordnung
+        // auch ohne Versatz. Erst wenn eine Kennung ZWEIMAL vorkommt,
+        // entscheidet die Index-Naehe, und dann trifft ein um eins
+        // verschobener Bezug die falsche Zeile.
+        let mut st = stats_mit_route();
+        st.planned_waypoints.remove(0); // Navlog ohne Flughafen
+        // ALFA kommt ZWEIMAL DIREKT HINTEREINANDER vor — so sieht eine
+        // Warteschleife im Navlog aus. Nur in dieser Lage schlaegt der
+        // fehlende Versatz durch: Der schnelle Weg ueber den Index trifft
+        // dann eine Zeile mit der RICHTIGEN Kennung, aber der falschen.
+        st.planned_waypoints
+            .insert(1, fx("ALFA", BREITE, 60.0, 20.0, 550.0));
+        st.planned_block_fuel_kg = Some(8_300.0);
+        st.planned_taxi_kg = Some(300.0);
+
+        // Eine Messung am ZWEITEN ALFA (Index 1 in den Wegpunkten).
+        st.sprit_wp_messungen = vec![SpritWpMessung {
+            idx: 1,
+            ident: "ALFA".to_string(),
+            zeit_ms: 1,
+            ist_kg: Some(7_000.0),
+            uebersprungen: false,
+        }];
+
+        use landing_scoring::sprit::WegpunktZustand;
+        let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
+        // Mit Abflugzeile liegt das zweite ALFA in Zeile 2, das erste in 1.
+        assert_eq!(z[2].ident, "ALFA", "Testaufbau: Zeile 2 ist das zweite ALFA");
+        assert_eq!(
+            z[2].zustand,
+            WegpunktZustand::Gemessen,
+            "die Messung landete nicht am zweiten ALFA"
+        );
+        assert_eq!(z[2].ist_an_bord_kg, Some(7_000.0));
+        assert_eq!(
+            z[1].zustand,
+            WegpunktZustand::Offen,
+            "die Messung landete faelschlich am ERSTEN ALFA"
         );
     }
 
