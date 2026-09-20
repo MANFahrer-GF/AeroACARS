@@ -69459,7 +69459,9 @@ mod sprit_wegpunkt_tests {
         let mut st = stats_mit_route();
         st.sprit_einstieg_in_der_luft = true;
         st.takeoff_fuel_kg = Some(7_300.0);
-        fliegen(&mut st, 70.0, 130.0);
+        // Bis hinter DELTA (160 NM) — sonst ist die geprüfte Zeile noch
+        // gar nicht überflogen, und der Test misst nur sich selbst.
+        fliegen(&mut st, 70.0, 165.0);
         use landing_scoring::sprit::WegpunktZustand;
         let z = sprit_wegpunkt_zeilen(&st, false);
         assert_eq!(z[0].zustand, WegpunktZustand::Offen, "Einstiegs-Tankstand als Abflug gemessen");
@@ -69468,6 +69470,7 @@ mod sprit_wegpunkt_tests {
         // liegt noch kein Plan-Verbrauch, also auch keine Ampel. Die
         // Hochrechnung setzt erst danach ein.
         assert!(z[2].ampel.is_none(), "der Bezugspunkt selbst rechnet nichts hoch");
+        assert_eq!(z[4].zustand, WegpunktZustand::Gemessen, "DELTA wurde überflogen");
         assert!(z[4].ampel.is_some(), "nach genug Strecke gehört die Ampel hin");
     }
 
