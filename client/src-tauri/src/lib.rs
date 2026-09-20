@@ -12836,6 +12836,9 @@ async fn flight_refresh_simbrief(
             ));
         }
         let mut stats = flight.stats.lock().expect("flight stats lock");
+        if stats.abflug_icao.is_none() {
+            stats.abflug_icao = Some(flight.dpt_airport.trim().to_ascii_uppercase());
+        }
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -14640,10 +14643,16 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
         None if !zeilen.is_empty() => Some(0),
         _ => None,
     };
+    // `naechster` ist ein Index in die ZEILEN. Steht vorn eine eigene
+    // Abflugzeile, ist die Tabelle um eins laenger als `planned_waypoints`
+    // — ohne den Versatz zeigte die Entfernung auf den Fix DAVOR, also auf
+    // einen bereits ueberflogenen: eine Zahl, die waechst statt zu
+    // schrumpfen (Abnahme 20.09.2026).
+    let versatz = zeilen.len().saturating_sub(stats.planned_waypoints.len());
     let naechster_nm = match (naechster, stats.last_known_lat, stats.last_known_lon) {
         (Some(i), Some(la), Some(lo)) => stats
             .planned_waypoints
-            .get(i)
+            .get(i.saturating_sub(versatz))
             .map(|f| ::geo::distance_m(la, lo, f.lat, f.lon) / 1852.0),
         _ => None,
     };
@@ -14678,16 +14687,16 @@ async fn fremde_flugroute(pirep_id: String) -> Result<Vec<[f64; 2]>, UiError> {
         secrets::load_api_key(MQTT_KEYRING_USERNAME),
         secrets::load_api_key(MQTT_KEYRING_PASSWORD),
     ) else {
-        // Ohne Zugang zum Live-Server gibt es nichts zu holen.
-        return Ok(Vec::new());
+        // Fehlender Zugang ist NICHT dasselbe wie „keine Route": Sonst
+        // suchte der Pilot den Fehler beim Kollegen, obwohl sein eigener
+        // Client nicht angemeldet ist (Abnahme 20.09.2026).
+        return Err(UiError::new(
+            "kein_live_zugang",
+            "Kein Zugang zum Live-Server — Route nicht abrufbar.",
+        ));
     };
-    match aeroacars_mqtt::log_upload::fremde_route(
-        pirep_id.trim(),
-        &username,
-        &password,
-        None,
-    )
-    .await
+    match aeroacars_mqtt::log_upload::fremde_route(pirep_id.trim(), &username, &password, None)
+        .await
     {
         Ok(punkte) => Ok(punkte
             .into_iter()
@@ -17032,6 +17041,11 @@ async fn flight_start_manual(
     // Manual-Plan in FlightStats schreiben (analog zu SB-OFP-Path)
     {
         let mut stats = flight.stats.lock().expect("flight stats lock");
+        // Auch hier die Kennung fuer die Abflugzeile — sonst steht dort
+        // „Abflug" statt des Flughafens (Abnahme 20.09.2026).
+        if stats.abflug_icao.is_none() {
+            stats.abflug_icao = Some(flight.dpt_airport.trim().to_ascii_uppercase());
+        }
         stats.planned_block_fuel_kg = Some(plan.planned_block_fuel_kg);
         // v0.7.1 Phase 2 F2 (Spec docs/spec/v0.7.1-landing-ux-fairness.md):
         // KEIN Fallback mehr. Wenn der Pilot keinen geplanten Trip-Burn aus
@@ -22295,13 +22309,21 @@ fn sprit_wegpunkt_zeilen(
     // nicht mehr zur Kennung passt, über die Kennung (der nächstgelegene
     // Treffer, damit ein Fix, der zweimal vorkommt, nicht vertauscht wird).
     let n = zeilen.len();
+    // Die Messungen tragen Indizes in `planned_waypoints`. Steht vorn eine
+    // eigene Abflugzeile, ist die Tabelle um eins laenger — ohne diesen
+    // Versatz trifft der schnelle Weg systematisch daneben, und nur der
+    // Rueckfall ueber die Kennung rettet die Zuordnung. Bei einer Kennung,
+    // die zweimal vorkommt (SID/STAR-Ueberschneidung, Warteschleife),
+    // waehlt er dann sogar die falsche Zeile (Abnahme 20.09.2026).
+    let versatz = n.saturating_sub(fixes.len());
     for m in &stats.sprit_wp_messungen {
-        let ziel = if m.idx < n && zeilen[m.idx].ident == m.ident {
-            Some(m.idx)
+        let idx = m.idx + versatz;
+        let ziel = if idx < n && zeilen[idx].ident == m.ident {
+            Some(idx)
         } else {
             (0..n)
                 .filter(|&i| zeilen[i].ident == m.ident)
-                .min_by_key(|&i| i.abs_diff(m.idx))
+                .min_by_key(|&i| i.abs_diff(idx))
         };
         let Some(i) = ziel else { continue };
         if i == 0 || i + 1 == n {
@@ -70299,7 +70321,10 @@ mod sprit_wegpunkt_tests {
             "Plan beim Abheben ist Block minus Taxi"
         );
         assert_eq!(z[0].ist_an_bord_kg, Some(8_100.0));
-        assert_eq!(z[1].ident, "ALFA", "der Streckenpunkt bleibt ein Streckenpunkt");
+        assert_eq!(
+            z[1].ident, "ALFA",
+            "der Streckenpunkt bleibt ein Streckenpunkt"
+        );
         assert_eq!(
             z[1].zustand,
             WegpunktZustand::Offen,
@@ -70308,9 +70333,47 @@ mod sprit_wegpunkt_tests {
         // Und die Rechnung stimmt: 100 kg mehr getankt als geplant,
         // nicht „100 kg plus der Verbrauch bis ALFA".
         assert_eq!(
-            z[0].ist_an_bord_kg.zip(z[0].plan_an_bord_kg).map(|(i, p)| i - p),
+            z[0].ist_an_bord_kg
+                .zip(z[0].plan_an_bord_kg)
+                .map(|(i, p)| i - p),
             Some(100.0)
         );
+    }
+
+    #[test]
+    fn die_abflugzeile_verschiebt_die_zuordnung_nicht() {
+        // Abnahme 20.09.2026: Die Messungen tragen Indizes in
+        // `planned_waypoints`, die Tabelle ist mit Abflugzeile aber um
+        // eins laenger. Ohne Versatz traf der schnelle Weg daneben.
+        let mut st = stats_mit_route();
+        st.planned_waypoints.remove(0); // Navlog ohne Flughafen
+        st.planned_block_fuel_kg = Some(8_300.0);
+        st.planned_taxi_kg = Some(300.0);
+        fliegen(&mut st, 1.0, 95.0);
+
+        let gemessen: Vec<&str> = st
+            .sprit_wp_messungen
+            .iter()
+            .map(|m| m.ident.as_str())
+            .collect();
+        assert!(!gemessen.is_empty(), "Gegenprobe: es wurde etwas gemessen");
+
+        use landing_scoring::sprit::WegpunktZustand;
+        let z = sprit_wegpunkt_zeilen(&st, Some("EDDL"), false);
+        for m in &st.sprit_wp_messungen {
+            let zeile = z
+                .iter()
+                .find(|zz| zz.ident == m.ident)
+                .expect("Messung ohne Zeile");
+            assert_ne!(
+                zeile.zustand,
+                WegpunktZustand::Offen,
+                "die Messung von {} landete nicht in ihrer Zeile",
+                m.ident
+            );
+        }
+        // Und die Abflugzeile bleibt der Abflug, nicht eine Messung.
+        assert_eq!(z[0].ident, "EDDL");
     }
 
     #[test]

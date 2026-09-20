@@ -2186,9 +2186,17 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       fremdeRoutenZeichnen(map);
       return;
     }
+    // Platz SOFORT belegen, noch vor dem Abruf. Sonst findet ein zweiter
+    // Klick den Schlüssel nicht (der erste ist noch am Laden), lädt
+    // ebenfalls, und die Route bleibt an, obwohl der Pilot sie
+    // ausgeschaltet hat (Abnahme 20.09.2026).
+    fremdeRoutenRef.current.set(pirepId, []);
     try {
       const punkte = await invoke<[number, number][]>("fremde_flugroute", { pirepId });
+      // Hat der Pilot inzwischen wieder ausgeschaltet, nichts zeichnen.
+      if (!fremdeRoutenRef.current.has(pirepId)) return;
       if (!punkte || punkte.length < 2) {
+        fremdeRoutenRef.current.delete(pirepId);
         setFremdeRouteHinweis(
           t("livemap.fremde_route_fehlt", {
             defaultValue: "Für diesen Flug liegt keine Route vor.",
@@ -2199,6 +2207,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       fremdeRoutenRef.current.set(pirepId, punkte);
       fremdeRoutenZeichnen(map);
     } catch {
+      fremdeRoutenRef.current.delete(pirepId);
       setFremdeRouteHinweis(
         t("livemap.fremde_route_fehler", {
           defaultValue: "Route konnte nicht geladen werden.",
@@ -2224,6 +2233,21 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!map || !mapReady) return;
     vaMarkersRef.current.forEach((m) => m.remove());
     vaMarkersRef.current = [];
+    // Routen von Kollegen aufräumen, die nicht mehr unterwegs sind.
+    // Sonst bliebe die Linie als Geisterspur stehen, nachdem der Marker
+    // verschwunden ist — und ohne Marker könnte niemand sie ausschalten
+    // (Abnahme 20.09.2026).
+    if (fremdeRoutenRef.current.size > 0) {
+      const nochDa = new Set(vaVisible.map((f) => String(f.id ?? "")));
+      let entfernt = false;
+      for (const id of [...fremdeRoutenRef.current.keys()]) {
+        if (!nochDa.has(id)) {
+          fremdeRoutenRef.current.delete(id);
+          entfernt = true;
+        }
+      }
+      if (entfernt) fremdeRoutenZeichnen(map);
+    }
     if (vaVisible.length === 0) {
       vaPopupRef.current?.remove();
       vaPopupRef.current = null;

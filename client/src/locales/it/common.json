@@ -32,6 +32,8 @@
   },
   "landing": {
     "off_airport": {
+      "fremde_route_fehlt": "Nessuna rotta disponibile per questo volo.",
+      "fremde_route_fehler": "Impossibile caricare la rotta.",
       "title": "Atterraggio off-airport",
       "planned": "Destinazione pianificata",
       "actual": "Atterraggio reale",

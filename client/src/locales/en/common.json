@@ -32,6 +32,8 @@
   },
   "landing": {
     "off_airport": {
+      "fremde_route_fehlt": "No route available for this flight.",
+      "fremde_route_fehler": "The route could not be loaded.",
       "title": "Off-airport touchdown",
       "planned": "Planned destination",
       "actual": "Actual touchdown",
