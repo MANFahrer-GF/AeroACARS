@@ -37,6 +37,10 @@ describe("SpritWegpunkte", () => {
     // 20.09.2026). KORED liegt direkt hinter EDDL, dort sind Abschnitt und
     // Gesamtstand noch dasselbe: 60 kg.
     expect(html).toContain("60 kg mehr auf diesem Abschnitt");
+    // Und zwar OHNE „≈": EDDL davor ist gemessen. `toContain` allein
+    // koennte das nicht sehen — „≈ 60 kg mehr…" enthaelt denselben Text
+    // (Abnahme 20.09.2026: Abwesenheit ohne Gegenprobe).
+    expect(html).not.toContain("≈ 60 kg mehr auf diesem Abschnitt");
     // RESMI trennt beides: auf dem Stück ab ADEKA nur 31 kg mehr, in
     // Summe seit dem Abheben aber 120 kg. Genau diese zwei Zahlen liefen
     // vorher zu einer zusammen, und die Spalte meldete an jedem
