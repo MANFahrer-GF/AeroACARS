@@ -85,7 +85,7 @@ enden 11 Sekunden vor dem Start von v1.7.41 — der Fix wirkt, belegt am Zeitste
   CHECK: npx vitest run src/components/RunwayDiagramV2
   EXPECT: Test Files  1 passed (1)
   CWD: client
-  EVIDENCE: automatic-evidence=v1; definition-sha256=f56c6dc355522d31ec888ab2ef18e1df3ce64cebc55e094b5763f5ef08414c4a; exit=0; EXPECT=matched; output-sha256=e7dd69dd1b4c673b1d9724c89891e7a5df167709c88a1afaea7e6cc32b043b5b; output-bytes=235; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client; path=37b9c12d7169/28 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=d70803e5b2495ac4f79dee421aae9d7ec441630dfe7c49d5922a71d31dab36ae; exit=0; EXPECT=matched; output-sha256=3b08fb2147ceaf105adaf9d6bd3f97d799419ecc71cf4ff20ed0be374344d540; output-bytes=234; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client; path=37b9c12d7169/28 entries
 
 ## Offene QS aus den Codex-Abnahmen
 
@@ -119,11 +119,11 @@ enden 11 Sekunden vor dem Start von v1.7.41 — der Fix wirkt, belegt am Zeitste
   EXPECT: selbsttest bestanden
   EVIDENCE: automatic-evidence=v1; definition-sha256=5d5cfc79c08cd1b3c1ff950e8dd9aa66a234552a90c2883763f52959248d77e3; exit=0; EXPECT=matched; output-sha256=eaab57fe7bada34955c691421bb99da753a3e34957e9539ae8055571cedcd214; output-bytes=49; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src; path=37b9c12d7169/28 entries
 
-- [ ] Q1: Rust übersetzt sauber (alle Ziele, keine Warnung) und alle Tests laufen
+- [x] Q1: Rust übersetzt sauber (alle Ziele, keine Warnung) und alle Tests laufen
   CHECK: node ../../scripts/pruefe-rust.mjs
   EXPECT: rust sauber:
   CWD: client/src-tauri
-  EVIDENCE: pending
+  EVIDENCE: automatic-evidence=v1; definition-sha256=7665998eea229b76345d2ba00d152918dba92e351b83a748eae7b8759f8a6f28; exit=0; EXPECT=matched; output-sha256=4e01ef937507d736f985b7cd8ff7e85d407a5d11daae4a4b4a68e6f67dd282a9; output-bytes=45; shell=/bin/sh; cwd=/Users/thomaskant/Claude/aeroacars-src/client/src-tauri; path=37b9c12d7169/28 entries
 
 - [x] Q2: Der Rust-Prüfer erkennt einen Fehlschlag OHNE Warnzeile
   CHECK: node ../../scripts/pruefe-rust.mjs --selbsttest
@@ -156,6 +156,16 @@ enden 11 Sekunden vor dem Start von v1.7.41 — der Fix wirkt, belegt am Zeitste
 
 - [ ] A1: v1.7.44 ist veröffentlicht und der Update-Kanal liefert sie aus
   EVIDENCE: pending
+
+<!--
+Q1 braucht `--timeout 1800`: Der Rust-Lauf dauert auf diesem Mac mehrere
+Minuten (syspolicyd bremst cargo), das Standardlimit des Checkers sind 120
+Sekunden. Ohne den Schalter bricht das Gate ab, BEVOR es messen kann, und
+meldet FAIL — ein Prueferzeugnis ueber einen Lauf, den es nie gesehen hat.
+Genau das Muster, das diese Nacht mehrfach aufgetreten ist.
+
+    node <skill>/scripts/gate-check.mjs --approve --timeout 1800 GATES.md
+-->
 
 <!--
 G1 und G2 sind Absenz-Prüfungen: Sie sollen zeigen, dass ein Fehler NICHT
