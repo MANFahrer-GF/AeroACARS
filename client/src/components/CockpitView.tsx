@@ -19,6 +19,7 @@ const WEATHER_BRIEFING_URL = "https://german-sky-group.eu/weatherbriefing";
 // Loadsheet visuell zum aktiven Flug gehört statt als getrennte
 // Section unter dem WeatherBriefing zu hängen.
 import { DivertBanner } from "./DivertBanner";
+import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
 
 interface Props {
   session: LoginResult;
@@ -225,6 +226,13 @@ export function CockpitView({
     </div>
   );
 
+  // VDGS-Band: nur vor dem Abheben und nur, wenn der Flug im CDM-System
+  // gefuehrt wird. Der Haken muss VOR dem `if (!activeFlight) return`
+  // stehen — Hooks duerfen nicht hinter einem Rueckgabezweig sitzen.
+  const vdgsStand = useVdgsStand(
+    !!activeFlight && activeFlight.takeoff_at === null,
+  );
+
   const weatherLoadToast = weatherLoadHint && (
     <div className="cockpit-weather-toast" role="status">
       🌦 {t("cockpit.weather_briefing_load_hint")}
@@ -259,6 +267,9 @@ export function CockpitView({
   return (
     <>
       {noticeBanner}
+      {/* Ganz oben, solange die Abflugfolge laeuft: das Geraet vom Gate.
+          Zeigt sich von allein nur, wenn es etwas zu zeigen gibt. */}
+      <VdgsPlatte stand={vdgsStand} />
       {/* was_just_resumed: ActiveFlightPanel (and its action row, below)
           doesn't render at all yet — the resume banner owns the screen
           instead — so the weather button still needs its own top row here,

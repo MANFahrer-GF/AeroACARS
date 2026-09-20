@@ -71,6 +71,9 @@ mod panel_server;
 // `hoppie-protocol` crate; this module is the thin Tauri wiring layer.
 // Spec: docs/spec/v1.3.0-hoppie-pdc-cpdlc.md
 mod hoppie;
+/// v1.7.41: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
+/// A-CDM-Werkzeug von VATSIM Spain. Nur lesend.
+mod vdgs;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -50828,6 +50831,7 @@ pub fn run() {
             vdgs_fenster_oeffnen,
             fenster::fenster_an_inhalt_anpassen,
             vdgs_fenster_offen,
+            vdgs::vdgs_stand,
             navdata_zwischenspeicher_bestand,
             landing_backup_now,
             landing_backup_restore,

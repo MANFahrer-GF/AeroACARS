@@ -2527,6 +2527,10 @@
     "was_text": "TOBT, TSAT and CTOT come from the CDM page by VATSIM Spain. It opens in its own AeroACARS window — you sign in once yourself with your VATSIM account, and the sign-in stays there.",
     "warum_fenster": "Why a separate window and not in here: VATSIM does not allow their sign-in page to be embedded in another program — for good reason, otherwise someone could put a fake one in front of it.",
     "knopf": "VATSIM CDM",
-    "knopf_titel": "Open your departure sequence on VATSIM (TOBT, TSAT, CTOT)"
+    "knopf_titel": "Open your departure sequence on VATSIM (TOBT, TSAT, CTOT)",
+    "band": {
+      "in_min": "in {{n}} min",
+      "vor_min": "{{n}} min ago"
+    }
   }
 }

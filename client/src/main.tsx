@@ -16,6 +16,7 @@ import {
 } from "./lib/ipc";
 import { RemotePinGate } from "./components/RemotePinGate";
 import { VatsimCdmView } from "./components/VatsimCdmView";
+import { VdgsPlatte, type VdgsStand } from "./components/VdgsBand";
 
 // v0.9.0 (#GlitchTip): Sentry-Init MUSS frueh laufen, sonst gehen
 // Bootstrap-Fehler im weissen Bildschirm unter. Init macht KEIN
@@ -86,7 +87,114 @@ function Vorschau({ was }: { was: string }) {
       </SkinProvider>
     );
   }
+  if (was === "vdgs") {
+    return (
+      <SkinProvider>
+        <VdgsVorschau />
+      </SkinProvider>
+    );
+  }
   return <div style={{ padding: 24, fontFamily: "system-ui" }}>Unbekannte Vorschau: {was}</div>;
+}
+
+/** Vorschau des VDGS-Bandes: die Zustaende nebeneinander, mit
+ *  erfundenen, aber formgleichen Werten aus der viffsys-Antwort. Im
+ *  Cockpit erscheint immer nur einer davon — und nur, wenn es einen
+ *  CDM-Eintrag gibt. */
+function VdgsVorschau() {
+  const leer = {
+    eobt: "",
+    tobt: "",
+    tsat: "",
+    ctot: "",
+    taxi_min: null,
+    cdm_sts: "",
+    regulierung: "",
+    rwy_sid: "",
+  };
+  const jetzt = new Date();
+  const inMin = (n: number) => {
+    const d = new Date(jetzt.getTime() + n * 60_000);
+    return `${String(d.getUTCHours()).padStart(2, "0")}:${String(
+      d.getUTCMinutes(),
+    ).padStart(2, "0")}`;
+  };
+  const faelle: Array<[string, VdgsStand]> = [
+    [
+      "Freigegeben — TSAT in Reichweite",
+      {
+        ...leer,
+        callsign: "GSG421",
+        departure: "LEBL",
+        eobt: inMin(15),
+        tobt: inMin(2),
+        tsat: inMin(4),
+        taxi_min: 9,
+        cdm_sts: "COMPLY",
+        rwy_sid: "24L/OLOXO3Q",
+      },
+    ],
+    [
+      "TOBT gesetzt, noch warten",
+      {
+        ...leer,
+        callsign: "GSG118",
+        departure: "EDDM",
+        eobt: inMin(25),
+        tobt: inMin(21),
+        tsat: "",
+        taxi_min: 14,
+        cdm_sts: "COMPLY",
+      },
+    ],
+    [
+      "Regulierung — CTOT greift",
+      {
+        ...leer,
+        callsign: "GSG7L",
+        departure: "LIRF",
+        eobt: inMin(40),
+        tobt: inMin(38),
+        tsat: inMin(38),
+        ctot: inMin(55),
+        taxi_min: 18,
+        cdm_sts: "FLS-NRA",
+        regulierung: "LECMCTA",
+        rwy_sid: "25/XENOL5A",
+      },
+    ],
+  ];
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        padding: 24,
+        background: "var(--bg)",
+        display: "grid",
+        gap: 24,
+        gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
+        alignContent: "start",
+        gridAutoRows: "min-content",
+      }}
+    >
+      {faelle.map(([titel, stand]) => (
+        <div key={titel} style={{ display: "grid", gap: 8, gridAutoRows: "min-content" }}>
+          <div
+            style={{
+              font: "var(--fw-bold) var(--fs-200)/1 var(--font-mono)",
+              letterSpacing: "var(--ls-caps)",
+              textTransform: "uppercase",
+              color: "var(--text-dim)",
+            }}
+          >
+            {titel}
+          </div>
+          <VdgsPlatte stand={stand} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Root() {

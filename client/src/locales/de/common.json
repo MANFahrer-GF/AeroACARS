@@ -2527,6 +2527,10 @@
     "was_text": "TOBT, TSAT und CTOT kommen von der CDM-Seite von VATSIM Spain. Sie öffnet sich in einem eigenen Fenster von AeroACARS — anmelden musst du dich einmal selbst mit deinem VATSIM-Konto, danach bleibt die Anmeldung dort bestehen.",
     "warum_fenster": "Warum ein eigenes Fenster und nicht hier drin: VATSIM erlaubt es nicht, die Anmeldeseite in ein anderes Programm einzubetten — aus gutem Grund, sonst könnte jemand eine falsche davorlegen.",
     "knopf": "VATSIM CDM",
-    "knopf_titel": "Abflugfolge auf VATSIM öffnen (TOBT, TSAT, CTOT)"
+    "knopf_titel": "Abflugfolge auf VATSIM öffnen (TOBT, TSAT, CTOT)",
+    "band": {
+      "in_min": "in {{n}} min",
+      "vor_min": "vor {{n}} min"
+    }
   }
 }

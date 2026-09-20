@@ -1,120 +1,184 @@
-// VDGS-Band — die Abflugfolge im Cockpit, ohne Fensterwechsel.
+// VDGS-Band — die eigene Abflugfolge im Cockpit, ohne Fensterwechsel.
 //
-// ENTWURF (20.09.2026): rein darstellend, noch ohne Anbindung. Die Daten
-// kommen spaeter aus `api.viffsys.com/ifps/callsign?callsign=...` (lesend,
-// ohne Anmeldung); gesetzt wird weiterhin im VDGS-Fenster, s.
-// VatsimCdmView.tsx. Deshalb steht hier kein Abruf, sondern nur die Form —
-// damit die Anzeige am echten Korpus beurteilt werden kann.
+// Zeigt das, was am echten Flughafen auf der Anzeige am Gate steht:
+// TOBT, TSAT, CTOT, Rollzeit, Bahn/Abflugstrecke und den CDM-Status.
+// Die Werte kommen vom Rechenwerk hinter `vats.im/vdgs` (VATSIM Spain),
+// abgerufen im Hintergrund von `vdgs_stand` (src-tauri/src/vdgs.rs).
 //
-// Zwei Fassungen, bewusst nebeneinander:
-//   * `<VdgsPlatte>` — sieht aus wie das Geraet am Gate (dunkle Platte,
-//     B612 Mono, Bernstein/Gruen). Die Zahl, auf die es ankommt (TSAT),
-//     ist die groesste im Bild.
-//   * `<VdgsKarte>` — dieselben Werte als gewoehnliche `.card`, fuer das
-//     Cockpit-Raster neben Massen/Luftdaten/Trip.
+// Drei Entscheidungen, die man beim Lesen kennen muss:
+//
+//   1. **Nur lesend.** Die TOBT setzt der Pilot weiterhin auf deren
+//      Seite — dafür bleibt die Taste in der CDM-Ansicht
+//      (`VatsimCdmView.tsx`). Schreiben braucht einen Schlüssel von
+//      VATSIM Spain und eine Bindung an die echte Pilotenkennung.
+//
+//   2. **Nur wenn es etwas zu zeigen gibt.** Kein Eintrag im CDM-System
+//      (der Normalfall auf den meisten Plätzen), kein laufender Flug,
+//      oder der Dienst antwortet nicht → das Band erscheint gar nicht.
+//      Kein leeres Gerät, keine Fehlermeldung im Cockpit.
+//
+//   3. **Nur vor dem Abheben.** Danach ist die Abflugfolge Geschichte;
+//      das entscheidet CockpitView über `takeoff_at`.
 
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { invoke } from "../lib/ipc";
 import "./vdgs.css";
 
-/** Was die viffsys-Antwort an Feldern hergibt, auf das reduziert, was das
- *  Band zeigt. Feldnamen wie in der API, damit der spaetere Abruf 1:1
- *  hineinreicht. */
-export interface CdmStand {
+/** Wie `VdgsStand` in src-tauri/src/vdgs.rs. Zeiten sind `HH:MM` (UTC)
+ *  oder leer — umgerechnet wird schon dort, damit hier nur angezeigt
+ *  wird (siehe die beiden Zeitformate der Gegenseite). */
+export interface VdgsStand {
   callsign: string;
   departure: string;
-  /** Aus dem VATSIM-Flugplan. */
   eobt: string;
-  /** Vom Piloten gesetzt/bestaetigt. */
   tobt: string;
-  /** Vom CDM zugeteilt — die Freigabezeit fuer Anlassen. */
   tsat: string;
-  /** Aus der Flussregelung; leer, wenn keine Regulierung greift. */
   ctot: string;
-  /** Rollzeit in Minuten. */
-  taxi: number | null;
-  /** COMPLY | FLS-NRA | SUSPENDED | ... */
-  cdmSts: string;
-  /** Grund der Regulierung, falls vorhanden. */
-  regulierung?: string;
-  /** Minuten bis TSAT; negativ = TSAT liegt zurueck. */
-  bisTsatMin: number | null;
+  taxi_min: number | null;
+  cdm_sts: string;
+  regulierung: string;
+  rwy_sid: string;
 }
 
-type Ampel = "ok" | "warten" | "achtung" | "ruhe";
+export type Ampel = "frei" | "warten" | "achtung";
 
-/** Farbe folgt dem echten VDGS: gruen heisst „anlassen", bernstein
- *  „vorbereiten", rot „raus aus der Folge". Unbekannte Status bleiben
- *  absichtlich neutral, statt zu raten. */
-function ampel(s: CdmStand): Ampel {
-  const st = s.cdmSts.toUpperCase();
+/** Abstand in Minuten von jetzt (UTC) bis zu einer `HH:MM`-Zeit.
+ *
+ *  Der Tageswechsel ist hier der ganze Punkt: eine TSAT um 23:58, von
+ *  00:03 aus gesehen, liegt 5 Minuten ZURÜCK und nicht 1435 Minuten in
+ *  der Zukunft. Alles außerhalb eines halben Tages wird deshalb auf die
+ *  andere Seite gedreht. */
+export function minutenBis(zeit: string, jetzt: Date = new Date()): number | null {
+  const m = /^(\d{2}):(\d{2})$/.exec(zeit.trim());
+  if (!m) return null;
+  const std = Number(m[1]);
+  const min = Number(m[2]);
+  if (std > 23 || min > 59) return null;
+  const jetztMin = jetzt.getUTCHours() * 60 + jetzt.getUTCMinutes();
+  let diff = std * 60 + min - jetztMin;
+  if (diff > 720) diff -= 1440;
+  if (diff <= -720) diff += 1440;
+  return diff;
+}
+
+/** Farbe wie am echten Gerät: grün heißt „anlassen", bernstein
+ *  „vorbereiten", rot „raus aus der Folge". */
+export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
+  const st = stand.cdm_sts.toUpperCase();
   if (st.includes("SUSPEND") || st.includes("NRA")) return "achtung";
-  if (!s.tobt) return "warten";
-  if (s.bisTsatMin !== null && s.bisTsatMin <= 5) return "ok";
+  const rest = minutenBis(stand.tsat || stand.tobt, jetzt);
+  // Ohne TOBT ist nichts bestätigt — und ohne Zeitangabe wissen wir
+  // schlicht nicht genug, um grün zu zeigen.
+  if (!stand.tobt) return "warten";
+  if (rest !== null && rest <= 5 && rest >= -10) return "frei";
   return "warten";
 }
 
-function zeit(v: string): string {
-  return v && v.length === 4 ? `${v.slice(0, 2)}:${v.slice(2)}` : "--:--";
+/**
+ * Holt den Stand im Hintergrund, solange `aktiv`.
+ *
+ * Zwei Takte: alle 60 s ein Abruf (der Rust-Teil hält zusätzlich einen
+ * Zwischenspeicher, damit die fremde Seite nicht öfter getroffen wird),
+ * und jede Minute ein Neuzeichnen für den Countdown — sonst stünde „in
+ * 4 min" eine Minute später immer noch da.
+ */
+export function useVdgsStand(aktiv: boolean): VdgsStand | null {
+  const [stand, setStand] = useState<VdgsStand | null>(null);
+  const [, setTakt] = useState(0);
+
+  useEffect(() => {
+    if (!aktiv) {
+      setStand(null);
+      return;
+    }
+    let abgemeldet = false;
+    const holen = () => {
+      void invoke<VdgsStand | null>("vdgs_stand")
+        .then((s) => {
+          if (!abgemeldet) setStand(s ?? null);
+        })
+        // Ein Fehler ist hier kein Ereignis: das Band bleibt einfach weg.
+        .catch(() => {
+          if (!abgemeldet) setStand(null);
+        });
+    };
+    holen();
+    const id = window.setInterval(holen, 60_000);
+    return () => {
+      abgemeldet = true;
+      window.clearInterval(id);
+    };
+  }, [aktiv]);
+
+  useEffect(() => {
+    if (!aktiv || !stand) return;
+    const id = window.setInterval(() => setTakt((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, [aktiv, stand]);
+
+  return stand;
 }
 
-export function VdgsPlatte({ stand }: { stand: CdmStand | null }) {
+export function VdgsPlatte({ stand }: { stand: VdgsStand | null }) {
   const { t } = useTranslation();
-
-  // Kein Eintrag im CDM-System ist der Normalfall auf den meisten
-  // Plaetzen — dann meldet sich das Band leise ab, statt leer zu leuchten.
-  if (!stand) {
-    return (
-      <div className="vdgs vdgs--aus">
-        <span className="vdgs__aus-text">
-          {t("vdgs.kein_eintrag", "Kein CDM-Eintrag für diesen Flug")}
-        </span>
-      </div>
-    );
-  }
+  if (!stand) return null;
 
   const zustand = ampel(stand);
-  const rest = stand.bisTsatMin;
+  // Die große Zahl ist die, auf die gewartet wird: TSAT, wo das CDM
+  // sequenziert — sonst die TOBT. Plätze ohne Sequenzierung liefern
+  // gar keine TSAT (EDDF, EGLL, EHAM am 20.09.2026), da stünde sonst
+  // dauerhaft „--:--" als Hauptzahl.
+  const hatTsat = stand.tsat !== "";
+  const kopfzahl = hatTsat ? stand.tsat : stand.tobt;
+  const kopflabel = hatTsat ? "TSAT" : "TOBT";
+  const rest = minutenBis(kopfzahl);
 
   return (
-    <div className={`vdgs vdgs--${zustand}`}>
+    <div className={`vdgs vdgs--${zustand}`} data-testid="vdgs-band">
       <div className="vdgs__kopf">
         <span className="vdgs__rufzeichen">{stand.callsign}</span>
         <span className="vdgs__platz">{stand.departure}</span>
+        {stand.rwy_sid && <span className="vdgs__sid">{stand.rwy_sid}</span>}
         <span className="vdgs__quelle">VDGS</span>
       </div>
 
       <div className="vdgs__haupt">
         <div className="vdgs__gross">
-          <span className="vdgs__gross-label">TSAT</span>
-          <span className="vdgs__gross-wert">{zeit(stand.tsat)}</span>
+          <span className="vdgs__gross-label">{kopflabel}</span>
+          <span className="vdgs__gross-wert">{kopfzahl || "--:--"}</span>
         </div>
         {rest !== null && (
           <div className="vdgs__rest">
             {rest >= 0
-              ? t("vdgs.in_min", "in {{n}} min", { n: rest })
-              : t("vdgs.vor_min", "vor {{n}} min", { n: Math.abs(rest) })}
+              ? t("cdm.band.in_min", "in {{n}} min", { n: rest })
+              : t("cdm.band.vor_min", "vor {{n}} min", { n: Math.abs(rest) })}
           </div>
         )}
       </div>
 
       <div className="vdgs__reihe">
-        <Feld label="EOBT" wert={zeit(stand.eobt)} />
-        <Feld label="TOBT" wert={zeit(stand.tobt)} stark={!!stand.tobt} />
-        <Feld label="CTOT" wert={zeit(stand.ctot)} />
+        <Feld label="EOBT" wert={stand.eobt} />
+        <Feld label="TOBT" wert={stand.tobt} stark={hatTsat} />
+        <Feld label="CTOT" wert={stand.ctot} />
         <Feld
           label="TAXI"
-          wert={stand.taxi !== null ? `${stand.taxi}′` : "--"}
+          wert={stand.taxi_min !== null ? `${stand.taxi_min}′` : ""}
         />
       </div>
 
-      <div className="vdgs__fuss">
-        <span className={`vdgs__status vdgs__status--${zustand}`}>
-          {stand.cdmSts || "—"}
-        </span>
-        {stand.regulierung && (
-          <span className="vdgs__reg">{stand.regulierung}</span>
-        )}
-      </div>
+      {(stand.cdm_sts || stand.regulierung) && (
+        <div className="vdgs__fuss">
+          {stand.cdm_sts && (
+            <span className={`vdgs__status vdgs__status--${zustand}`}>
+              {stand.cdm_sts}
+            </span>
+          )}
+          {stand.regulierung && (
+            <span className="vdgs__reg">{stand.regulierung}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -131,50 +195,7 @@ function Feld({
   return (
     <div className={`vdgs__feld${stark ? " vdgs__feld--stark" : ""}`}>
       <span className="vdgs__feld-label">{label}</span>
-      <span className="vdgs__feld-wert">{wert}</span>
-    </div>
-  );
-}
-
-/** Dieselben Werte in der gewoehnlichen Hausform — fuer das Cockpit-Raster. */
-export function VdgsKarte({ stand }: { stand: CdmStand | null }) {
-  const { t } = useTranslation();
-  if (!stand) return null;
-  const zustand = ampel(stand);
-
-  return (
-    <div className="card">
-      <div className="card__head">
-        <span className="card__title">{t("vdgs.titel", "VATSIM CDM")}</span>
-        <span className={`vdgs-chip vdgs-chip--${zustand}`}>{stand.cdmSts}</span>
-      </div>
-      <div className="card__body">
-        <Zeile label="EOBT" wert={zeit(stand.eobt)} />
-        <Zeile label="TOBT" wert={zeit(stand.tobt)} />
-        <Zeile label="TSAT" wert={zeit(stand.tsat)} summe />
-        <Zeile label="CTOT" wert={zeit(stand.ctot)} />
-        <Zeile
-          label={t("vdgs.taxi", "Rollzeit")}
-          wert={stand.taxi !== null ? `${stand.taxi} min` : "—"}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Zeile({
-  label,
-  wert,
-  summe,
-}: {
-  label: string;
-  wert: string;
-  summe?: boolean;
-}) {
-  return (
-    <div className={`row${summe ? " row--sum" : ""}`}>
-      <span className="row__label">{label}</span>
-      <span className="row__value">{wert}</span>
+      <span className="vdgs__feld-wert">{wert || "--:--"}</span>
     </div>
   );
 }

@@ -25,7 +25,7 @@
   box-shadow: var(--el-1);
 }
 
-.vdgs--ok {
+.vdgs--frei {
   border-left-color: var(--vdgs-frei);
   color: var(--vdgs-frei);
 }
@@ -50,6 +50,10 @@
   color: inherit;
   font-weight: var(--fw-bold);
   color: #dfe7e3;
+}
+/* Bahn/Abflugstrecke, wie sie drueben gefuehrt wird ("24L/OLOXO3Q"). */
+.vdgs__sid {
+  color: #b9c6c0;
 }
 .vdgs__quelle {
   margin-left: auto;
@@ -124,7 +128,7 @@
   border-radius: var(--r-sm);
   border: 1px solid currentColor;
 }
-.vdgs__status--ok {
+.vdgs__status--frei {
   color: var(--vdgs-frei);
 }
 .vdgs__status--warten {
@@ -138,41 +142,4 @@
   color: var(--vdgs-leise);
   letter-spacing: var(--ls-mono);
   text-transform: none;
-}
-
-/* Kein Eintrag: da, aber still. */
-.vdgs--aus {
-  border-left-color: var(--vdgs-linie);
-  color: var(--vdgs-leise);
-  padding: var(--sp-3) var(--sp-4);
-}
-.vdgs__aus-text {
-  font-size: var(--fs-300);
-  letter-spacing: var(--ls-mono);
-}
-
-/* Karten-Fassung: nur das Abzeichen ist neu, der Rest ist .card/.row. */
-.vdgs-chip {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-100);
-  letter-spacing: var(--ls-caps);
-  padding: 1px var(--sp-2);
-  border-radius: var(--r-sm);
-}
-.vdgs-chip--ok {
-  color: var(--sem-ok);
-  background: var(--sem-ok-bg);
-}
-.vdgs-chip--warten {
-  color: var(--sem-warn);
-  background: var(--sem-warn-bg);
-}
-.vdgs-chip--achtung {
-  color: var(--sem-danger);
-  background: var(--sem-danger-bg);
-}
-.vdgs-chip--ruhe {
-  color: var(--text-dim);
-  background: var(--surface-3);
 }

@@ -2520,7 +2520,11 @@
     "was_text": "TOBT, TSAT e CTOT arrivano dalla pagina CDM di VATSIM Spain. Si apre in una finestra di AeroACARS — l'accesso lo fai tu una volta con il tuo account VATSIM.",
     "warum_fenster": "Perché una finestra separata: VATSIM non consente di incorporare la pagina di accesso in un altro programma.",
     "knopf": "VATSIM CDM",
-    "knopf_titel": "Apri la sequenza di partenza su VATSIM"
+    "knopf_titel": "Apri la sequenza di partenza su VATSIM",
+    "band": {
+      "in_min": "tra {{n}} min",
+      "vor_min": "{{n}} min fa"
+    }
   },
   "msfs_hud": {
     "section_title": "HUD in-sim per MSFS",
