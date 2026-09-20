@@ -18011,6 +18011,17 @@ mod nachtrag_queue {
     ) -> Result<(), std::io::Error> {
         let pirep_id = nachtrag.pirep_id.clone();
         let revision = nachtrag.herkunft.bahn_revision;
+        // Schon beim ERSTEN Versand auf Sendegroesse bringen — sonst
+        // scheitert er garantiert, und die Korrektur kaeme erst beim
+        // naechsten Worker-Takt an (QS 20.09.2026).
+        let mut nachtrag = nachtrag;
+        if !auf_sendegroesse_bringen(&mut nachtrag) {
+            tracing::error!(
+                pirep_id,
+                "Bahnkorrektur passt auch ausgeduennt nicht in eine Nachricht — nicht gesendet"
+            );
+            return Err(io_err("Nachtrag zu gross"));
+        }
         // ⚠ Ohne Ablage KEIN Senden (Runde 13, High 2): Vorher ging der
         // Nachtrag bei voller Platte trotzdem raus, der Aufrufer setzte
         // Sperre und Fahne — und wenn der Transport dann scheiterte, gab es
@@ -58481,6 +58492,7 @@ mod touchdown_metadata_stamp_tests {
         // 625 Mal an einem Tag. Der Nachtrag darf danach SENDBAR sein,
         // und die Korrektur selbst muss erhalten bleiben.
         let mut n = nachtrag_mit_spur(40_000);
+        let kennung = n.pirep_id.clone();
         let vorher = serde_json::to_vec(&n).expect("json").len();
         assert!(
             vorher > 60 * 1024,
@@ -58489,7 +58501,7 @@ mod touchdown_metadata_stamp_tests {
         assert!(nachtrag_queue::auf_sendegroesse_bringen(&mut n));
         let nachher = serde_json::to_vec(&n).expect("json").len();
         assert!(nachher <= 60 * 1024, "immer noch {nachher} Byte");
-        assert_eq!(n.pirep_id, "p1", "die Korrektur selbst bleibt");
+        assert_eq!(n.pirep_id, kennung, "die Korrektur selbst bleibt");
         assert!(
             n.bahn.as_ref().expect("Bahn").clearance_point_m.is_some(),
             "der Raeumpunkt darf beim Ausduennen nicht verloren gehen"

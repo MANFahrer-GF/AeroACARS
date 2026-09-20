@@ -529,7 +529,8 @@ pub fn wegpunkte_auswerten(
         if z.zustand == WegpunktZustand::Offen {
             continue;
         }
-        // Zu früh für eine Hochrechnung: Zahlen ja, Ampel nein.
+        // Zu früh: keine Hochrechnung und keine Ampel. Die gemessenen
+        // Zahlen stehen trotzdem in der Zeile — sie kommen nicht von hier.
         if let (Some(ps), Some(ph)) = (plan_start, z.plan_an_bord_kg) {
             if ps - ph < basis_min {
                 continue;

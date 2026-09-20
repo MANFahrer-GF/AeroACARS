@@ -355,7 +355,16 @@ function Kurve({ zeilen }: { zeilen: SpritWegpunkt[] }) {
   const YM = 72;
   const punkte = zeilen
     .map((z, i) => ({ z, i, m: mehrverbrauch(z, bezug) }))
-    .filter((q) => q.m != null && (q.z.zustand === "gemessen" || q.z.zustand === "uebersprungen"));
+    // Die Bezugszeile selbst bleibt draussen: Ihr Verbrauch ist per
+    // Definition null, die Tabelle nennt dort aber die Tankdifferenz
+    // ("292 kg mehr getankt"). Ein Punkt auf der Nulllinie neben dieser
+    // Zahl liest sich wie ein Widerspruch (QS 20.09.2026).
+    .filter(
+      (q) =>
+        q.z !== bezug &&
+        q.m != null &&
+        (q.z.zustand === "gemessen" || q.z.zustand === "uebersprungen"),
+    );
   const groesst = Math.max(100, ...punkte.map((q) => Math.abs(q.m!)));
   const skala = Math.ceil(groesst / 100) * 100;
   const x = (i: number) => X0 + ((X1 - X0) * i) / Math.max(1, zeilen.length - 1);

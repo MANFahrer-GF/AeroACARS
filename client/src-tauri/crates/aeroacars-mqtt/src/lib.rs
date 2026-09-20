@@ -1984,6 +1984,22 @@ fn publish_registriert(
     body: Vec<u8>,
     meldung: Option<tokio::sync::oneshot::Sender<bool>>,
 ) -> Result<(), rumqttc::ClientError> {
+    // Auch hier: ein zu grosses Paket darf die Leitung nicht kosten.
+    // Heute laufen ueber diesen Weg nur schlanke Positionen — aber die
+    // Annahme „hier wird nie etwas Grosses gesendet" ist genau die Art
+    // Annahme, die den Minutentakt verursacht hat (QS 20.09.2026).
+    if body.len() > MAX_NUTZLAST_BYTES {
+        error!(
+            topic = %topic,
+            bytes = body.len(),
+            grenze = MAX_NUTZLAST_BYTES,
+            "Nachricht zu gross — NICHT gesendet (die Verbindung bleibt)"
+        );
+        if let Some(m) = meldung {
+            let _ = m.send(false);
+        }
+        return Ok(());
+    }
     let mut b = buch.lock().unwrap_or_else(|e| e.into_inner());
     match client.try_publish(topic, qos, retain, body) {
         Ok(()) => {
