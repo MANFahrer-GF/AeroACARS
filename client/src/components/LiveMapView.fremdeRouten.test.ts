@@ -86,6 +86,15 @@ describe("Karte: Routen der Kollegen", () => {
     expect(catchTeil).not.toMatch(/vaListeAktuellRef\.current = true/);
   });
 
+  it("vergisst beim Ausschalten, dass die Liste aktuell war", () => {
+    // Sonst raeumte das Aufraeumen beim WIEDEREINSCHALTEN alles weg: Die
+    // Liste ist dann noch leer (vom Ausschalten), der Merker stuende aber
+    // auf „aktuell", waehrend der erste Abruf noch laeuft.
+    const aus = quelle.slice(quelle.indexOf("if (!showVa) {"));
+    const rumpf = aus.slice(0, aus.indexOf("return;"));
+    expect(rumpf).toMatch(/vaListeAktuellRef\.current = false/);
+  });
+
   it("versteckt die Linien, wenn die Kollegen-Anzeige aus ist", () => {
     // Sonst blieben die Routen sichtbar, während die Marker verschwinden.
     expect(quelle).toMatch(/setLayoutProperty\(\s*"fremde-routen-line",\s*"visibility"/);

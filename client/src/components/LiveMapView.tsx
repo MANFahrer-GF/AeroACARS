@@ -2114,6 +2114,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // ---- VA-Verkehr: pollt /api/acars (wenn eingeblendet) ----
   useEffect(() => {
     if (!showVa) {
+      // Die Liste wird geleert, weil niemand sie sehen will — das ist
+      // KEINE Aussage ueber gelandete Kollegen. Wird die Anzeige gleich
+      // wieder eingeschaltet, liegt die leere Liste noch vor, waehrend
+      // der erste Abruf laeuft; ohne dieses Zuruecksetzen raeumte das
+      // Aufraeumen in diesem Moment alle Routen weg.
+      vaListeAktuellRef.current = false;
       setVaFlights([]);
       return;
     }
