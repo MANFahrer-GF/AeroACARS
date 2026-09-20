@@ -2519,7 +2519,7 @@
   },
   "cdm": {
     "titel": "VATSIM CDM",
-    "fuss": "Seite von VATSIM Spain. AeroACARS zeigt sie nur an, übergibt nichts dorthin und speichert nichts davon.",
+    "fuss": "Seite von VATSIM Spain. AeroACARS schreibt dort nichts — die TOBT setzt du selbst auf dieser Seite. Für das Band im Cockpit fragt AeroACARS dort höchstens einmal pro Minute deinen Flug unter deinem Rufzeichen ab, solange ein Flug vor dem Abheben läuft; die Antwort bleibt im Arbeitsspeicher und wird nicht auf die Platte geschrieben.",
     "oeffnen": "VDGS öffnen",
     "nach_vorn": "Fenster nach vorn holen",
     "fehler": "Das Fenster ließ sich nicht öffnen.",

@@ -35,6 +35,9 @@ const MIN_ABSTAND: Duration = Duration::from_secs(60);
 /// zu alt, um ihn noch zu zeigen.
 const HOECHSTALTER_BEI_AUSFALL: Duration = Duration::from_secs(600);
 
+/// Hoechstgroesse der Antwort. Ein Flug wiegt rund 2 kB.
+const MAX_RUMPF_BYTES: usize = 512 * 1024;
+
 /// Was das Band zeigt. Zeiten als `HH:MM` oder leer — die Umrechnung aus
 /// den beiden Formaten der Gegenseite (HHMM und HHMMSS) passiert hier,
 /// damit die Oberflaeche nur noch anzeigt.
@@ -150,10 +153,17 @@ fn aufbereiten(f: &ApiFlug) -> VdgsStand {
     }
 }
 
-/// Zwischenspeicher: letzter Abruf je Rufzeichen. `None` als Wert heisst
+/// Zwischenspeicher: letzter Abruf je FLUG. `None` als Wert heisst
 /// „gefragt, aber dieser Flug ist dort nicht gefuehrt" — auch das wird
 /// gemerkt, sonst fragt die Oberflaeche fuer jeden Flug ausserhalb des
 /// CDM-Systems im Minutentakt vergeblich nach.
+///
+/// Der Schluessel ist die FLUGKENNUNG samt Rufzeichen, nicht das
+/// Rufzeichen allein: Zwei Fluege koennen dasselbe Rufzeichen tragen
+/// (Rueckflug, Neustart nach Abbruch, dieselbe Nummer am naechsten Tag).
+/// Mit dem Rufzeichen als einzigem Schluessel standen TOBT, TSAT und
+/// sogar der ABFLUGPLATZ des vorigen Fluges bis zu eine Minute im neuen
+/// Cockpit — bei einer Stoerung bis zu zehn (Codex-Abnahme 20.09.2026).
 type Speicher = Mutex<Option<(String, Instant, Option<VdgsStand>)>>;
 
 fn speicher() -> &'static Speicher {
@@ -161,19 +171,25 @@ fn speicher() -> &'static Speicher {
     S.get_or_init(|| Mutex::new(None))
 }
 
-fn aus_speicher(callsign: &str, hoechstalter: Duration) -> Option<Option<VdgsStand>> {
+/// Flugkennung + Rufzeichen. Beides, weil der Pilot das Rufzeichen
+/// waehrend desselben Fluges aendern kann (Uebersteuerung).
+fn schluessel(flug_id: &str, callsign: &str) -> String {
+    format!("{flug_id}\u{1f}{callsign}")
+}
+
+fn aus_speicher(schluessel: &str, hoechstalter: Duration) -> Option<Option<VdgsStand>> {
     let g = speicher().lock().ok()?;
     let (gemerkt, wann, wert) = g.as_ref()?;
-    if gemerkt == callsign && wann.elapsed() < hoechstalter {
+    if gemerkt == schluessel && wann.elapsed() < hoechstalter {
         Some(wert.clone())
     } else {
         None
     }
 }
 
-fn in_speicher(callsign: &str, wert: Option<VdgsStand>) {
+fn in_speicher(schluessel: &str, wert: Option<VdgsStand>) {
     if let Ok(mut g) = speicher().lock() {
-        *g = Some((callsign.to_string(), Instant::now(), wert));
+        *g = Some((schluessel.to_string(), Instant::now(), wert));
     }
 }
 
@@ -209,7 +225,21 @@ async fn abrufen(callsign: &str) -> Result<Option<VdgsStand>, String> {
     if !status.is_success() {
         return Err(format!("HTTP {}", status.as_u16()));
     }
-    let rumpf = antwort.bytes().await.map_err(|e| e.to_string())?;
+    // Die Groesse begrenzen, nicht nur die Dauer.
+    //
+    // Der Zeitriegel deckelt, wie LANGE die Gegenseite senden darf, nicht
+    // WIE VIEL. `bytes()` sammelt alles im Speicher — auch einen stark
+    // gepackten Rumpf, der entpackt um Groessenordnungen waechst. Ein
+    // Flug wiegt rund 2 kB; 512 kB sind das Vielfache dessen, was je
+    // kommen kann (Codex-Abnahme 20.09.2026).
+    let mut rumpf: Vec<u8> = Vec::new();
+    let mut antwort = antwort;
+    while let Some(stueck) = antwort.chunk().await.map_err(|e| e.to_string())? {
+        if rumpf.len() + stueck.len() > MAX_RUMPF_BYTES {
+            return Err(format!("Antwort groesser als {MAX_RUMPF_BYTES} Bytes"));
+        }
+        rumpf.extend_from_slice(&stueck);
+    }
     aus_rumpf(&rumpf)
 }
 
@@ -232,9 +262,21 @@ fn aus_rumpf(rumpf: &[u8]) -> Result<Option<VdgsStand>, String> {
             .into_iter()
             .next(),
     };
-    Ok(flug
-        .filter(|f| !f.callsign.trim().is_empty())
-        .map(|f| aufbereiten(&f)))
+    // Ein nichtleerer Rumpf OHNE Rufzeichen ist ein Fehler, kein
+    // „kein Eintrag".
+    //
+    // „Kein Eintrag" sagt die Gegenseite durch einen LEEREN Rumpf oder
+    // 404. Kommt dagegen ein Objekt ohne `callsign` — Fehlerobjekt,
+    // geaendertes Schema —, dann haben wir die Antwort nicht verstanden.
+    // Als „kein Eintrag" gewertet ueberschriebe das einen guten Stand im
+    // Zwischenspeicher mit `None` und umginge die Ueberbrueckung bei
+    // Ausfall; das Band verschwaende, obwohl der Flug gefuehrt wird
+    // (Codex-Abnahme 20.09.2026).
+    match flug {
+        Some(f) if !f.callsign.trim().is_empty() => Ok(Some(aufbereiten(&f))),
+        Some(_) => Err("Antwort ohne Rufzeichen — Schema unbekannt".into()),
+        None => Err("leere Liste statt Eintrag".into()),
+    }
 }
 
 /// Stand der eigenen Abflugfolge, oder `None`, wenn es nichts zu zeigen
@@ -246,6 +288,17 @@ fn aus_rumpf(rumpf: &[u8]) -> Result<Option<VdgsStand>, String> {
 pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsStand> {
     // Erst das Rufzeichen (kurz, synchron, keine Sperre ueber ein await),
     // dann der Netzabruf.
+    // NUR bei laufendem Flug — und zwar hier im Backend geprueft, nicht
+    // erst in der Anzeige.
+    //
+    // `resolve_callsign` liefert auch ohne Flug ein Rufzeichen, sobald in
+    // den Einstellungen eine Uebersteuerung steht. Ueber die LAN-Bruecke
+    // ist der Befehl direkt erreichbar; ohne diese Wache haette ein
+    // Tablet den fremden Dienst also auch ohne Flug befragen koennen,
+    // entgegen der Zusage „nur bei laufendem Flug" (Codex-Abnahme
+    // 20.09.2026).
+    let flug_id = crate::vdgs_flug_kennung(&app)?;
+
     // DASSELBE Rufzeichen, unter dem der Client auch funkt.
     //
     // `resolve_callsign` nimmt zuerst die Uebersteuerung aus den
@@ -264,14 +317,15 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsStand> {
     if callsign.is_empty() {
         return None;
     }
+    let schl = schluessel(&flug_id, &callsign);
 
-    if let Some(gemerkt) = aus_speicher(&callsign, MIN_ABSTAND) {
+    if let Some(gemerkt) = aus_speicher(&schl, MIN_ABSTAND) {
         return gemerkt;
     }
 
     match abrufen(&callsign).await {
         Ok(stand) => {
-            in_speicher(&callsign, stand.clone());
+            in_speicher(&schl, stand.clone());
             stand
         }
         Err(e) => {
@@ -280,7 +334,7 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsStand> {
             // versucht werden. Solange der letzte gute Stand nicht zu alt
             // ist, bleibt er stehen — sonst flackert das Band bei jedem
             // Netzhaenger weg und wieder hin.
-            aus_speicher(&callsign, HOECHSTALTER_BEI_AUSFALL).flatten()
+            aus_speicher(&schl, HOECHSTALTER_BEI_AUSFALL).flatten()
         }
     }
 }
@@ -390,6 +444,41 @@ mod tests {
         assert_eq!(aufbereiten(&f).tsat, "12:00");
     }
 
+    /// Zwei Fluege mit DEMSELBEN Rufzeichen teilen sich keinen Eintrag.
+    ///
+    /// Der Fall aus der Codex-Abnahme (20.09.2026): Rueckflug, Neustart
+    /// nach Abbruch, dieselbe Nummer am naechsten Tag. Mit dem
+    /// Rufzeichen als einzigem Schluessel standen TOBT, TSAT und der
+    /// Abflugplatz des VORIGEN Fluges bis zu eine Minute im neuen
+    /// Cockpit — bei einer Stoerung bis zu zehn.
+    #[test]
+    fn ein_neuer_flug_erbt_den_stand_des_alten_nicht() {
+        let alt = VdgsStand {
+            callsign: "GSG421".into(),
+            departure: "LEBL".into(),
+            tsat: "15:46".into(),
+            ..leer()
+        };
+        let a = schluessel("PIREP-ALT", "GSG421");
+        let b = schluessel("PIREP-NEU", "GSG421");
+        assert_ne!(a, b, "gleiches Rufzeichen darf nicht denselben Platz teilen");
+
+        in_speicher(&a, Some(alt.clone()));
+        // Derselbe Flug findet seinen Stand.
+        assert_eq!(
+            aus_speicher(&a, Duration::from_secs(60)),
+            Some(Some(alt)),
+        );
+        // Der neue Flug findet NICHTS und fragt frisch.
+        assert_eq!(
+            aus_speicher(&b, Duration::from_secs(60)),
+            None,
+            "der neue Flug erbt den Stand des alten",
+        );
+        // Auch nicht ueber die lange Ausfall-Frist.
+        assert_eq!(aus_speicher(&b, HOECHSTALTER_BEI_AUSFALL), None);
+    }
+
     /// Der Zwischenspeicher hat zwei Fristen: die kurze fuer den
     /// Normalbetrieb, die lange als Ueberbrueckung bei Ausfall.
     #[test]
@@ -430,14 +519,29 @@ mod tests {
         let von = quelle
             .find("pub async fn vdgs_stand")
             .expect("vdgs_stand nicht gefunden");
-        let rumpf = &quelle[von..von + 1200];
-        assert!(
-            rumpf.contains("hoppie::resolve_callsign"),
-            "vdgs_stand loest das Rufzeichen nicht wie der Funk auf",
-        );
+        // Bis zum Ende der Funktion, nicht 1200 Zeichen weit: Beim
+        // Einbau der Flugwache rutschte der Aufruf aus dem festen
+        // Fenster, und der Waechter schlug an, obwohl nichts falsch war.
+        let rumpf = &quelle[von..];
+        let rumpf = &rumpf[..rumpf.find("\n}\n").unwrap_or(rumpf.len())];
+        let aufloesung = rumpf
+            .find("hoppie::resolve_callsign")
+            .expect("vdgs_stand loest das Rufzeichen nicht wie der Funk auf");
         assert!(
             !rumpf.contains("hoppie_get_flight_context"),
             "vdgs_stand umgeht die Uebersteuerung aus den Einstellungen",
+        );
+        // Und das aufgeloeste Rufzeichen muss auch das sein, mit dem
+        // gefragt wird — ein Aufruf ins Leere waere sonst genauso gruen.
+        let abruf = rumpf
+            .find("abrufen(&callsign)")
+            .expect("es wird nicht mit dem aufgeloesten Rufzeichen gefragt");
+        assert!(abruf > aufloesung, "gefragt wird vor dem Aufloesen");
+        // Und nur bei laufendem Flug — sonst koennte ein Tablet ueber
+        // die LAN-Bruecke auch ohne Flug fragen.
+        assert!(
+            rumpf.contains("vdgs_flug_kennung"),
+            "vdgs_stand prueft nicht, ob ueberhaupt ein Flug laeuft",
         );
     }
 
@@ -451,8 +555,22 @@ mod tests {
     }
 
     #[test]
-    fn rumpf_ohne_rufzeichen_zaehlt_nicht_als_eintrag() {
-        assert_eq!(aus_rumpf(br#"{"callsign":""}"#), Ok(None));
+    fn rumpf_ohne_rufzeichen_ist_ein_fehler_kein_leerer_eintrag() {
+        // Bis zur Codex-Abnahme am 20.09.2026 stand hier `Ok(None)` —
+        // der Test schrieb damit eine Verwechslung fest: Ein Objekt ohne
+        // Rufzeichen (Fehlerobjekt, geaendertes Schema) galt als „dieser
+        // Flug ist dort nicht gefuehrt". Folge: Ein guter Stand im
+        // Zwischenspeicher wurde durch `None` ersetzt, die Ueberbrueckung
+        // bei Ausfall umgangen, das Band verschwand.
+        //
+        // „Kein Eintrag" sagt die Gegenseite durch einen LEEREN Rumpf
+        // oder 404 — beides weiter unten geprueft.
+        assert!(aus_rumpf(br#"{"callsign":""}"#).is_err());
+        assert!(aus_rumpf(br#"{"error":"rate limited"}"#).is_err());
+        assert!(aus_rumpf(b"[]").is_err(), "leere Liste ist kein Eintrag");
+        // Gegenprobe: Der echte Weg fuer „kein Eintrag" bleibt still.
+        assert_eq!(aus_rumpf(b""), Ok(None));
+        assert_eq!(aus_rumpf(b"   \n"), Ok(None));
     }
 
     #[test]

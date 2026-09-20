@@ -2519,7 +2519,7 @@
   },
   "cdm": {
     "titel": "VATSIM CDM",
-    "fuss": "Page by VATSIM Spain. AeroACARS only displays it, sends nothing there and stores nothing from it.",
+    "fuss": "VATSIM Spain's page. AeroACARS writes nothing there — you set your TOBT on that page yourself. For the cockpit panel, AeroACARS queries your flight there under your callsign at most once a minute while a flight is running before takeoff; the answer stays in memory and is never written to disk.",
     "oeffnen": "Open VDGS",
     "nach_vorn": "Bring window to front",
     "fehler": "The window could not be opened.",

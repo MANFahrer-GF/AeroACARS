@@ -31,6 +31,7 @@ const h = vi.hoisted(() => ({
   invokeRufe: [] as Array<{ cmd: string; args?: Record<string, unknown> }>,
   popupsOffen: 0,
   sichtbarkeit: {} as Record<string, string>,
+  ebenen: new Set<string>(),
 }));
 
 vi.mock("../lib/ipc", () => ({
@@ -82,16 +83,32 @@ vi.mock("maplibre-gl", () => {
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; }
     setStyle() { return this; }
-    addSource(id: string) { h.quellen[id] = { type: "FeatureCollection", features: [] }; return this; }
+    // Quellen und Ebenen entstehen erst durch addSource/addLayer.
+    //
+    // Der erste Nachbau meldete auf `getSource`/`getLayer` IMMER etwas —
+    // damit lief `if (!map.getSource("fremde-routen"))` nie, der echte
+    // Anlagepfad wurde uebersprungen, und die Tests waeren gruen
+    // geblieben, obwohl die Ebenen nie angelegt werden (Codex-Abnahme
+    // 20.09.2026).
+    addSource(id: string) {
+      h.quellen[id] = { type: "FeatureCollection", features: [] };
+      return this;
+    }
     hasImage() { return false; }
     addImage() { return this; }
-    addLayer() { return this; }
+    addLayer(spec: { id: string }) {
+      h.ebenen.add(spec.id);
+      return this;
+    }
     getSource(id: string) {
+      if (!(id in h.quellen)) return undefined;
       return {
         setData: (d: { type: string; features: unknown[] }) => { h.quellen[id] = d; },
       };
     }
-    getLayer() { return {}; }
+    getLayer(id: string) {
+      return h.ebenen.has(id) ? { id } : undefined;
+    }
     setLayoutProperty(id: string, _n: string, wert: string) {
       h.sichtbarkeit[id] = wert;
       return this;
@@ -166,6 +183,7 @@ beforeEach(() => {
   h.invokeRufe = [];
   h.popupsOffen = 0;
   h.sichtbarkeit = {};
+  h.ebenen = new Set<string>();
 });
 afterEach(() => cleanup());
 
@@ -175,6 +193,15 @@ describe("Klick auf einen Kollegen", () => {
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+    // Die drei Ebenen muessen real angelegt worden sein — sonst prueft
+    // alles Weitere eine Karte ohne Darstellung (Codex-Abnahme).
+    for (const ebene of [
+      "fremde-routen-line",
+      "fremde-routen-punkte",
+      "fremde-routen-namen",
+    ]) {
+      expect(h.ebenen.has(ebene), `${ebene} wurde nie angelegt`).toBe(true);
+    }
     const ruf = h.invokeRufe.find((r) => r.cmd === "fremde_flugroute");
     expect(ruf, "der Klick hat die Route nie abgefragt").toBeTruthy();
     // Unter DIESER Kennung — nicht unter der Flugnummer oder leer.
@@ -206,6 +233,52 @@ describe("Klick auf einen Kollegen", () => {
     });
     // Beim Ausschalten geht ALLES weg, Linie wie Punkte.
     await waitFor(() => expect(h.quellen["fremde-routen"]?.features.length).toBe(0));
+  });
+
+  it("zeichnet ZWEI Kollegen gleichzeitig, nicht nur den letzten", async () => {
+    // Der Quelltext-Test dazu prueft nur, dass `.entries()` vorkommt —
+    // eine Fassung, die trotzdem nur einen Eintrag zeichnet, bliebe dort
+    // gruen (Codex-Abnahme 20.09.2026). Hier werden wirklich zwei
+    // Kollegen angeklickt.
+    const ZWEITER = {
+      ...KOLLEGE,
+      id: "PIREP-ZWEITER",
+      ident: "GSG9",
+      position: { lat: 52.0, lon: 9.0, gs: 380, heading: 90 },
+    };
+    h.invokeAntworten = {
+      va_live_flights: [KOLLEGE, ZWEITER],
+      fremde_flugroute: [P1, P2],
+    };
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => {
+      render(<LiveMapView />);
+    });
+    await waitFor(() => {
+      const marker = h.marker.filter((m) =>
+        m.el.className.includes("aa-ac-marker--va"),
+      );
+      expect(marker.length).toBe(2);
+    });
+    const marker = h.marker.filter((m) =>
+      m.el.className.includes("aa-ac-marker--va"),
+    );
+    for (const m of marker) {
+      await act(async () => {
+        m.el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+    await waitFor(() => {
+      const linien = (h.quellen["fremde-routen"]?.features ?? []).filter(
+        (x) => (x as { geometry: { type: string } }).geometry.type === "LineString",
+      );
+      expect(linien.length, "nur eine Route gezeichnet").toBe(2);
+      // Und beide gehoeren verschiedenen Fluegen.
+      const ids = new Set(
+        linien.map((x) => (x as { properties: { pirep_id: string } }).properties.pirep_id),
+      );
+      expect(ids.size).toBe(2);
+    });
   });
 
   it("zeichnet die Wegpunkte mit, nicht nur den Strich", async () => {

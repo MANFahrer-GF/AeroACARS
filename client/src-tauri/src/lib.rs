@@ -14706,6 +14706,21 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
     }
 }
 
+/// Kennung des laufenden Fluges, oder `None`, wenn gerade keiner laeuft.
+///
+/// Das VDGS-Band braucht beides: die Wache („laeuft ueberhaupt ein
+/// Flug?") und einen Schluessel fuer seinen Zwischenspeicher. Ueber das
+/// Rufzeichen allein ginge das nicht — zwei Fluege koennen dasselbe
+/// tragen, und dann stuenden die Zeiten des vorigen im neuen Cockpit
+/// (Codex-Abnahme 20.09.2026). `pirep_id` ist je Flug eindeutig.
+pub(crate) fn vdgs_flug_kennung(app: &AppHandle) -> Option<String> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let guard = state.active_flight.lock().ok()?;
+    let flight = guard.as_ref()?;
+    Some(flight.pirep_id.clone())
+}
+
 /// Ein Wegpunkt einer fremden Route, wie die Karte ihn braucht.
 #[derive(Debug, Clone, serde::Serialize)]
 struct FremdePunkt {

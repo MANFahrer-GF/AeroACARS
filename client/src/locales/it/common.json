@@ -2512,7 +2512,7 @@
   },
   "cdm": {
     "titel": "VATSIM CDM",
-    "fuss": "Pagina di VATSIM Spain. AeroACARS la mostra soltanto, non invia nulla e non memorizza nulla.",
+    "fuss": "Pagina di VATSIM Spain. AeroACARS non scrive nulla lì — la TOBT la imposti tu stesso su quella pagina. Per il pannello in cabina AeroACARS interroga il tuo volo con il tuo indicativo al massimo una volta al minuto, finché un volo è in corso prima del decollo; la risposta resta in memoria e non viene scritta su disco.",
     "oeffnen": "Apri VDGS",
     "nach_vorn": "Porta la finestra in primo piano",
     "fehler": "Impossibile aprire la finestra.",
