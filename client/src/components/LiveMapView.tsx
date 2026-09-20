@@ -2537,10 +2537,16 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               onClick={() => setFremdeRouteHinweis(null)}
               style={{
                 position: "absolute",
-                top: 12,
+                // UNTER die Kartenschalter-Leiste, und darueber in der
+                // Stapelung. Bei `top: 12` + `zIndex: 5` lag der Hinweis
+                // hinter der Leiste (die hat `z-index: 500`, App.css) —
+                // fuer den Piloten sah es aus, als tue der Klick nichts,
+                // waehrend der Grund verdeckt darunter stand (Thomas,
+                // 20.09.2026). Die Leiste endet bei rund 76px.
+                top: 92,
                 left: "50%",
                 transform: "translateX(-50%)",
-                zIndex: 5,
+                zIndex: 600,
                 background: "rgba(20,26,33,0.92)",
                 border: "1px solid var(--border, #2a3344)",
                 borderRadius: 8,

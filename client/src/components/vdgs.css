@@ -1,0 +1,178 @@
+/* ── VDGS-Band ─────────────────────────────────────────────────────────
+   Die Platte ist ein Geraet, kein Panel: dunkle Flaeche, B612 Mono
+   (dieselbe Schrift wie der Datalink), Bernstein/Gruen. Sie bleibt in
+   beiden Themes dunkel — so wie die Karte und der Datalink-Text auch.
+   Alle Abstaende kommen aus dem 8er-Raster, keine Kantenwerte. */
+
+.vdgs {
+  --vdgs-flaeche: #0b0f0d;
+  --vdgs-linie: rgba(255, 255, 255, 0.14);
+  --vdgs-leise: #6f7d76;
+  --vdgs-an: #ffb000; /* Bernstein: vorbereiten */
+  --vdgs-frei: #35d07f; /* Gruen: anlassen */
+  --vdgs-halt: #ff5f52; /* Rot: raus aus der Folge */
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--vdgs-flaeche);
+  border: 1px solid var(--vdgs-linie);
+  border-radius: var(--r-md);
+  border-left: 3px solid var(--vdgs-leise);
+  font-family: var(--font-acars);
+  color: var(--vdgs-an);
+  box-shadow: var(--el-1);
+}
+
+.vdgs--ok {
+  border-left-color: var(--vdgs-frei);
+  color: var(--vdgs-frei);
+}
+.vdgs--warten {
+  border-left-color: var(--vdgs-an);
+}
+.vdgs--achtung {
+  border-left-color: var(--vdgs-halt);
+  color: var(--vdgs-halt);
+}
+
+/* Kopfzeile: wer, wo — klein und ruhig. */
+.vdgs__kopf {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-mono);
+  color: var(--vdgs-leise);
+}
+.vdgs__rufzeichen {
+  color: inherit;
+  font-weight: var(--fw-bold);
+  color: #dfe7e3;
+}
+.vdgs__quelle {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+/* Die eine Zahl, auf die es ankommt. */
+.vdgs__haupt {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+.vdgs__gross {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+.vdgs__gross-label {
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-caps);
+  color: var(--vdgs-leise);
+}
+.vdgs__gross-wert {
+  font-size: var(--fs-600);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  font-variant-numeric: tabular-nums;
+}
+.vdgs__rest {
+  margin-left: auto;
+  font-size: var(--fs-300);
+  color: var(--vdgs-leise);
+}
+
+/* Die uebrigen Zeiten, vier Spalten, gleich breit. */
+.vdgs__reihe {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--vdgs-linie);
+}
+.vdgs__feld {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.vdgs__feld-label {
+  font-size: var(--fs-100);
+  letter-spacing: var(--ls-caps);
+  color: var(--vdgs-leise);
+}
+.vdgs__feld-wert {
+  font-size: var(--fs-400);
+  font-variant-numeric: tabular-nums;
+  color: #b9c6c0;
+}
+.vdgs__feld--stark .vdgs__feld-wert {
+  color: inherit;
+  font-weight: var(--fw-bold);
+}
+
+.vdgs__fuss {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-caps);
+}
+.vdgs__status {
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-sm);
+  border: 1px solid currentColor;
+}
+.vdgs__status--ok {
+  color: var(--vdgs-frei);
+}
+.vdgs__status--warten {
+  color: var(--vdgs-an);
+}
+.vdgs__status--achtung {
+  color: var(--vdgs-halt);
+}
+.vdgs__reg {
+  margin-left: auto;
+  color: var(--vdgs-leise);
+  letter-spacing: var(--ls-mono);
+  text-transform: none;
+}
+
+/* Kein Eintrag: da, aber still. */
+.vdgs--aus {
+  border-left-color: var(--vdgs-linie);
+  color: var(--vdgs-leise);
+  padding: var(--sp-3) var(--sp-4);
+}
+.vdgs__aus-text {
+  font-size: var(--fs-300);
+  letter-spacing: var(--ls-mono);
+}
+
+/* Karten-Fassung: nur das Abzeichen ist neu, der Rest ist .card/.row. */
+.vdgs-chip {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: var(--ls-caps);
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-sm);
+}
+.vdgs-chip--ok {
+  color: var(--sem-ok);
+  background: var(--sem-ok-bg);
+}
+.vdgs-chip--warten {
+  color: var(--sem-warn);
+  background: var(--sem-warn-bg);
+}
+.vdgs-chip--achtung {
+  color: var(--sem-danger);
+  background: var(--sem-danger-bg);
+}
+.vdgs-chip--ruhe {
+  color: var(--text-dim);
+  background: var(--surface-3);
+}
