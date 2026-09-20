@@ -69464,8 +69464,11 @@ mod sprit_wegpunkt_tests {
         let z = sprit_wegpunkt_zeilen(&st, false);
         assert_eq!(z[0].zustand, WegpunktZustand::Offen, "Einstiegs-Tankstand als Abflug gemessen");
         assert!(z[0].ist_an_bord_kg.is_none());
-        // Bezug ist BRAVO, der erste Überflug nach dem Einstieg.
-        assert!(z[2].ampel.is_some());
+        // Bezug ist BRAVO, der erste Überflug nach dem Einstieg: dort
+        // liegt noch kein Plan-Verbrauch, also auch keine Ampel. Die
+        // Hochrechnung setzt erst danach ein.
+        assert!(z[2].ampel.is_none(), "der Bezugspunkt selbst rechnet nichts hoch");
+        assert!(z[4].ampel.is_some(), "nach genug Strecke gehört die Ampel hin");
     }
 
     #[test]
