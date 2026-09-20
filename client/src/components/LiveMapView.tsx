@@ -379,6 +379,17 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const acMarkerRef = useRef<maplibregl.Marker | null>(null);
   const pinMarkersRef = useRef<maplibregl.Marker[]>([]);
   const vaMarkersRef = useRef<maplibregl.Marker[]>([]);
+  // Die eingeblendeten Routen der Kollegen: Kennung → Punkte.
+  //
+  // Thomas, 20.09.2026: „auf die anderen Flieger klicken und zusätzlich die
+  // Route angezeigt bekommen, nach einem erneuten Klick wieder aus."
+  // Mehrere gleichzeitig sind erlaubt — alle in derselben gedämpften Farbe
+  // und dünner als die eigene, damit man sie nicht verwechselt.
+  //
+  // Bewusst ein Ref und kein State: Die Marker werden in einem Effekt
+  // gebaut, der an `vaFlights` hängt. Ein State würde ihn bei jedem
+  // Ein- und Ausblenden neu laufen lassen.
+  const fremdeRoutenRef = useRef<Map<string, [number, number][]>>(new Map());
   const vaPopupRef = useRef<maplibregl.Popup | null>(null);
   const vaPopupIdRef = useRef<string | null>(null); // welcher VA-Flug das offene Popup zeigt
   // README §5 — colleague popup ETA needs the arrival airport's coordinate,
@@ -804,6 +815,13 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const [routeFixes, setRouteFixes] = useState<RouteFix[]>([]);
   const [depArr, setDepArr] = useState<{ dep?: [number, number]; arr?: [number, number] }>({});
   const [vaFlights, setVaFlights] = useState<VaFlight[]>([]);
+  // Kurzer Hinweis, wenn eine Route fehlt oder nicht geladen werden kann.
+  const [fremdeRouteHinweis, setFremdeRouteHinweis] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fremdeRouteHinweis) return;
+    const id = window.setTimeout(() => setFremdeRouteHinweis(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [fremdeRouteHinweis]);
   // v0.15.x: geflogener Track. QUELLE ist jetzt das Backend — der Rust-Streamer
   // akkumuliert ihn bei voller Tick-Rate (fokus-/fenster-unabhängig → lückenlos
   // auch bei X-Plane-Vollbild). Früher kam der Track aus dem im Hintergrund
@@ -1229,6 +1247,32 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         },
         paint: { "icon-opacity": 0.88 },
       });
+    }
+
+    // Routen der Kollegen — unter den Flugzeugen, damit sie nichts verdecken.
+    if (!map.getSource("fremde-routen")) {
+      map.addSource("fremde-routen", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      ebeneAnlegen(map, {
+        id: "fremde-routen-line",
+        type: "line",
+        source: "fremde-routen",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          // Gedämpft und dünn: Die eigene Route bleibt die kräftige.
+          "line-color": "#8aa0b8",
+          "line-width": 1.4,
+          "line-opacity": 0.7,
+          "line-dasharray": [3, 2],
+        },
+      });
+      // Nach einem Neuaufbau der Karte (Kartenstil gewechselt, Reiter neu
+      // geöffnet) ist die Quelle leer, die eingeblendeten Routen stehen
+      // aber noch im Ref. Ohne das hier wären sie unsichtbar, und ein
+      // Klick hätte sie „ausgeblendet", statt sie zu zeigen.
+      fremdeRoutenZeichnen(map);
     }
 
     if (!map.getSource(SRC_GROUND)) {
@@ -2112,6 +2156,57 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   /** README §5's ETA cell for a colleague aircraft — same great-circle +
    *  groundspeed math as the own-flight ETA (`nav`), just resolving the
    *  destination coordinate on demand instead of from the loaded route. */
+  /** Die eingeblendeten Routen in die Karte schreiben. */
+  function fremdeRoutenZeichnen(map: maplibregl.Map) {
+    const quelle = map.getSource("fremde-routen") as maplibregl.GeoJSONSource | undefined;
+    if (!quelle) return;
+    quelle.setData({
+      type: "FeatureCollection",
+      features: [...fremdeRoutenRef.current.entries()]
+        .filter(([, punkte]) => punkte.length >= 2)
+        .map(([id, punkte]) => ({
+          type: "Feature" as const,
+          properties: { pirep_id: id },
+          geometry: { type: "LineString" as const, coordinates: punkte },
+        })),
+    });
+  }
+
+  /**
+   * Route eines Kollegen ein- oder ausblenden.
+   *
+   * Zweiter Klick auf denselben Flieger nimmt sie wieder weg. Gibt es
+   * keine Route (Flug ohne SimBrief-Plan), sagt die Karte das kurz —
+   * sonst sähe es nach einem kaputten Klick aus.
+   */
+  async function fremdeRouteUmschalten(pirepId: string, map: maplibregl.Map) {
+    if (!pirepId) return;
+    if (fremdeRoutenRef.current.has(pirepId)) {
+      fremdeRoutenRef.current.delete(pirepId);
+      fremdeRoutenZeichnen(map);
+      return;
+    }
+    try {
+      const punkte = await invoke<[number, number][]>("fremde_flugroute", { pirepId });
+      if (!punkte || punkte.length < 2) {
+        setFremdeRouteHinweis(
+          t("livemap.fremde_route_fehlt", {
+            defaultValue: "Für diesen Flug liegt keine Route vor.",
+          }),
+        );
+        return;
+      }
+      fremdeRoutenRef.current.set(pirepId, punkte);
+      fremdeRoutenZeichnen(map);
+    } catch {
+      setFremdeRouteHinweis(
+        t("livemap.fremde_route_fehler", {
+          defaultValue: "Route konnte nicht geladen werden.",
+        }),
+      );
+    }
+  }
+
   async function vaEtaFor(f: VaFlight): Promise<string> {
     const pos = f.position;
     if (!pos || pos.lat == null || pos.lon == null || pos.gs == null || pos.gs <= 30 || !f.arr_airport_id) return "—";
@@ -2151,6 +2246,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       // Klick → Popup mit Flugdaten (ersetzt ein evtl. offenes Popup).
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        // Route des Kollegen ein- oder ausblenden (Thomas, 20.09.2026).
+        void fremdeRouteUmschalten(String(f.id ?? ""), map);
         vaPopupRef.current?.remove();
         const thisId = String(f.id ?? f.ident ?? f.flight_number ?? "");
         vaPopupIdRef.current = thisId;
@@ -2349,6 +2446,30 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
 
       <div className="aa-livemap__body">
         <div className="aa-livemap__map" ref={containerRef}>
+          {/* Kurzer Hinweis, wenn zu einem angeklickten Kollegen keine
+              Route vorliegt — sonst sähe der Klick aus, als täte er nichts. */}
+          {fremdeRouteHinweis && (
+            <div
+              role="status"
+              onClick={() => setFremdeRouteHinweis(null)}
+              style={{
+                position: "absolute",
+                top: 12,
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 5,
+                background: "rgba(20,26,33,0.92)",
+                border: "1px solid var(--border, #2a3344)",
+                borderRadius: 8,
+                padding: "6px 12px",
+                fontSize: "0.8rem",
+                color: "var(--text-muted, #9aa4b2)",
+                cursor: "pointer",
+              }}
+            >
+              {fremdeRouteHinweis}
+            </div>
+          )}
           {/* README §3 — Kartenschalter-Block, one overlay container, four
               named groups. Every switch shows its own state (bold/accent =
               active) — the whole point is that today's unlabeled icon

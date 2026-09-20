@@ -206,6 +206,56 @@ pub async fn upload_diagnose_logs(
     })
 }
 
+/// Ein Wegpunkt einer fremden Route — so, wie der Server ihn liefert.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FremderWegpunkt {
+    #[serde(default)]
+    pub name: Option<String>,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// Die Route eines Kollegen für die Karte.
+///
+/// Thomas, 20.09.2026: „in der Map auf die anderen Flieger klicken und die
+/// Route sehen." Der Server gibt nur Routen DERSELBEN VA heraus und
+/// antwortet auf Unbekanntes mit einer leeren Liste — ein Flug ohne
+/// SimBrief-Plan hat schlicht keine.
+pub async fn fremde_route(
+    pirep_id: &str,
+    username: &str,
+    password: &str,
+    endpoint: Option<&str>,
+) -> Result<Vec<FremderWegpunkt>> {
+    #[derive(serde::Deserialize)]
+    struct Antwort {
+        #[serde(default)]
+        waypoints: Vec<FremderWegpunkt>,
+    }
+    let basis = endpoint
+        .map(String::from)
+        .unwrap_or_else(|| DEFAULT_PROVISION_URL.replace("/api/provision", "/api/flight-route"));
+    let url = format!("{}/{}", basis.trim_end_matches('/'), pirep_id);
+    let auth_b64 =
+        base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let res = client
+        .get(&url)
+        .header("Authorization", format!("Basic {auth_b64}"))
+        .send()
+        .await
+        .context("route GET failed")?;
+    let status = res.status();
+    if !status.is_success() {
+        anyhow::bail!("route rejected: HTTP {}", status.as_u16());
+    }
+    let antwort: Antwort = res.json().await.context("route JSON")?;
+    Ok(antwort.waypoints)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct UploadStats {
     pub raw_size: usize,

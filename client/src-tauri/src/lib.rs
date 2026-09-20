@@ -14660,6 +14660,47 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
 /// Vollbild, anders als der gedrosselte Webview-Snapshot-Poll). Leer, wenn
 /// kein aktiver Flug. Das Frontend spiegelt das via `setTrack` in den
 /// trackStore und rendert die Linie daraus.
+/// Die geplante Route eines KOLLEGEN — fuer die Karte.
+///
+/// Thomas, 20.09.2026: „in der Map auf die anderen Flieger klicken und die
+/// Route sehen, bei erneutem Klick wieder aus." Das Ein- und Ausblenden
+/// macht die Anzeige; hier kommen nur die Punkte her.
+///
+/// Leere Liste heisst: Es gibt keine Route (Flug ohne SimBrief-Plan) oder
+/// sie gehoert einer anderen VA. Beides ist kein Fehler — die Anzeige
+/// sagt es dem Piloten.
+#[tauri::command]
+async fn fremde_flugroute(pirep_id: String) -> Result<Vec<[f64; 2]>, UiError> {
+    if pirep_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let (Ok(Some(username)), Ok(Some(password))) = (
+        secrets::load_api_key(MQTT_KEYRING_USERNAME),
+        secrets::load_api_key(MQTT_KEYRING_PASSWORD),
+    ) else {
+        // Ohne Zugang zum Live-Server gibt es nichts zu holen.
+        return Ok(Vec::new());
+    };
+    match aeroacars_mqtt::log_upload::fremde_route(
+        pirep_id.trim(),
+        &username,
+        &password,
+        None,
+    )
+    .await
+    {
+        Ok(punkte) => Ok(punkte
+            .into_iter()
+            .filter(|p| p.lat.is_finite() && p.lon.is_finite())
+            .map(|p| [p.lon, p.lat])
+            .collect()),
+        Err(e) => {
+            tracing::warn!(pirep_id = %pirep_id, error = %e, "fremde Route nicht geladen");
+            Err(UiError::new("route_unavailable", e.to_string()))
+        }
+    }
+}
+
 #[tauri::command]
 fn flight_get_track(state: tauri::State<'_, AppState>) -> Vec<[f64; 2]> {
     let guard = state.active_flight.lock().expect("active_flight lock");
@@ -50782,6 +50823,7 @@ pub fn run() {
             flight_get_route_fixes,
             flight_sprit_wegpunkte,
             flight_get_track,
+            fremde_flugroute,
             va_live_flights,
             logbook_pireps,
             chat_senden,
