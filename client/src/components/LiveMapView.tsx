@@ -327,8 +327,20 @@ const GROUND_MIN_ZOOM = 12;
 // ein-/ausschalten, Taxiwege ein-/ausschalten... das wäre gut, wenn man das
 // separat machen könnte"), so these are two independent layer groups now,
 // each with its own toggle.
-/** Die Ebenen der Kollegen-Routen — Linie UND Wegpunkte, immer zusammen. */
-const FREMDE_ROUTEN_EBENEN = ["fremde-routen-line", "fremde-routen-punkte"];
+/** Ein Wegpunkt einer fremden Route, wie `fremde_flugroute` ihn liefert. */
+interface FremderPunkt {
+  lon: number;
+  lat: number;
+  /** Kann leer sein — dann bleibt der Punkt unbeschriftet. */
+  name?: string;
+}
+
+/** Die Ebenen der Kollegen-Routen — Linie, Wegpunkte und Beschriftung. */
+const FREMDE_ROUTEN_EBENEN = [
+  "fremde-routen-line",
+  "fremde-routen-punkte",
+  "fremde-routen-namen",
+];
 const TRACK_LAYERS = [LYR_ROUTE, LYR_ROUTE_CASING, LYR_WPTS, LYR_WPT_LABELS, LYR_TRACK, LYR_TRACK_DOTS];
 const TAXI_LAYERS = [
   LYR_GROUND_APRON,
@@ -391,7 +403,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // Bewusst ein Ref und kein State: Die Marker werden in einem Effekt
   // gebaut, der an `vaFlights` hängt. Ein State würde ihn bei jedem
   // Ein- und Ausblenden neu laufen lassen.
-  const fremdeRoutenRef = useRef<Map<string, [number, number][]>>(new Map());
+  const fremdeRoutenRef = useRef<Map<string, FremderPunkt[]>>(new Map());
   // Sagt, ob die Kollegen-Liste aus einem erfolgreichen Abruf stammt.
   // Eine leere Liste nach einem Fehler bedeutet nichts; eine leere Liste
   // nach einem erfolgreichen Abruf heisst „niemand mehr unterwegs".
@@ -1307,6 +1319,31 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           "circle-radius": 2.8,
           "circle-color": "#8fb0d4",
           "circle-opacity": 0.85,
+        },
+      });
+      ebeneAnlegen(map, {
+        id: "fremde-routen-namen",
+        type: "symbol",
+        source: "fremde-routen",
+        filter: ["==", ["geometry-type"], "Point"],
+        // Erst ab mittlerem Zoom: Eine Langstrecke hat 39 Fixe, und
+        // mehrere Kollegen gleichzeitig wuerden die Karte sonst
+        // zupflastern (Thomas fragte am 20.09.2026 nach den Namen).
+        minzoom: 5,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": 10,
+          "text-offset": [0, 0.9],
+          "text-anchor": "top",
+          // Lieber weglassen als uebereinanderlegen.
+          "text-allow-overlap": false,
+          "text-optional": true,
+        },
+        paint: {
+          "text-color": "#8fb0d4",
+          "text-opacity": 0.9,
+          "text-halo-color": "rgba(10,16,24,0.85)",
+          "text-halo-width": 1.2,
         },
       });
       // Nach einem Neuaufbau der Karte (Kartenstil gewechselt, Reiter neu
@@ -2231,12 +2268,16 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           {
             type: "Feature" as const,
             properties: { pirep_id: id },
-            geometry: { type: "LineString" as const, coordinates: punkte },
+            geometry: {
+              type: "LineString" as const,
+              coordinates: punkte.map((p) => [p.lon, p.lat] as [number, number]),
+            },
           },
           ...punkte.map((p) => ({
             type: "Feature" as const,
-            properties: { pirep_id: id },
-            geometry: { type: "Point" as const, coordinates: p },
+            // Der Name wandert mit — die Beschriftung liest ihn von hier.
+            properties: { pirep_id: id, name: p.name ?? "" },
+            geometry: { type: "Point" as const, coordinates: [p.lon, p.lat] as [number, number] },
           })),
         ]),
     });
@@ -2262,7 +2303,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // ausgeschaltet hat (Abnahme 20.09.2026).
     fremdeRoutenRef.current.set(pirepId, []);
     try {
-      const punkte = await invoke<[number, number][]>("fremde_flugroute", { pirepId });
+      const punkte = await invoke<FremderPunkt[]>("fremde_flugroute", { pirepId });
       // Hat der Pilot inzwischen wieder ausgeschaltet, nichts zeichnen.
       if (!fremdeRoutenRef.current.has(pirepId)) return;
       if (!punkte || punkte.length < 2) {

@@ -30,7 +30,10 @@ describe("Karte: Routen der Kollegen", () => {
     // Erst prüfen, ob sie schon an ist — dann entfernen und NICHT laden.
     const hat = r.indexOf("fremdeRoutenRef.current.has(");
     const weg = r.indexOf("fremdeRoutenRef.current.delete(");
-    const laden = r.indexOf('invoke<[number, number][]>("fremde_flugroute"');
+    // Ohne den Typ im Muster: Er hat sich schon einmal geaendert
+    // (Wegpunkt-Namen kamen dazu), und der Test schlug an, obwohl an
+    // der Reihenfolge nichts falsch war.
+    const laden = r.indexOf('"fremde_flugroute"');
     expect(hat).toBeGreaterThan(-1);
     expect(weg).toBeGreaterThan(hat);
     expect(weg, "es wird geladen, bevor ausgeblendet wird").toBeLessThan(laden);

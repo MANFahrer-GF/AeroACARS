@@ -118,6 +118,10 @@ beforeAll(async () => {
   }
 });
 
+/** So liefert `fremde_flugroute` einen Wegpunkt — mit Namen. */
+const P1 = { lon: 11.1, lat: 60.2, name: "GM604" };
+const P2 = { lon: 16.5, lat: 68.5, name: "ENEV" };
+
 const KOLLEGE = {
   id: "PIREP-KOLLEGE",
   ident: "SK4084",
@@ -159,7 +163,7 @@ afterEach(() => cleanup());
 
 describe("Klick auf einen Kollegen", () => {
   it("fragt die Route unter seiner Kennung ab", async () => {
-    await karteMitKollege([[11.1, 60.2], [16.5, 68.5]]);
+    await karteMitKollege([P1, P2]);
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -170,7 +174,7 @@ describe("Klick auf einen Kollegen", () => {
   });
 
   it("zeichnet die Route und nimmt sie beim zweiten Klick wieder weg", async () => {
-    await karteMitKollege([[11.1, 60.2], [16.5, 68.5]]);
+    await karteMitKollege([P1, P2]);
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -179,6 +183,16 @@ describe("Klick auf einen Kollegen", () => {
         (x) => (x as { geometry: { type: string } }).geometry.type === "LineString",
       ).length;
     await waitFor(() => expect(linien()).toBe(1));
+    // Die Koordinaten muessen wirklich ankommen. Nur die Anzahl zu
+    // zaehlen liess eine Typaenderung durchgehen, bei der
+    // [undefined, undefined] gezeichnet worden waere (20.09.2026).
+    const linie = (h.quellen["fremde-routen"]!.features as Array<{
+      geometry: { type: string; coordinates: number[][] };
+    }>).find((f) => f.geometry.type === "LineString")!;
+    expect(linie.geometry.coordinates).toEqual([
+      [P1.lon, P1.lat],
+      [P2.lon, P2.lat],
+    ]);
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -189,7 +203,7 @@ describe("Klick auf einen Kollegen", () => {
   it("zeichnet die Wegpunkte mit, nicht nur den Strich", async () => {
     // Thomas, 20.09.2026: „die Route ist sichtbar ohne Punkte die zu
     // sehen sind". Zu einer Route gehoeren ihre Fixe.
-    await karteMitKollege([[11.1, 60.2], [13.0, 64.0], [16.5, 68.5]]);
+    await karteMitKollege([P1, { lon: 13.0, lat: 64.0, name: "VIBUK" }, P2]);
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -199,13 +213,18 @@ describe("Klick auf einen Kollegen", () => {
       const punkte = f.filter((x) => (x as { geometry: { type: string } }).geometry.type === "Point");
       expect(linien.length).toBe(1);
       expect(punkte.length).toBe(3);
+      // Mit Namen — sonst stehen unbeschriftete Punkte auf der Karte.
+      const namen = punkte.map(
+        (x) => (x as { properties: { name?: string } }).properties.name,
+      );
+      expect(namen).toEqual(["GM604", "VIBUK", "ENEV"]);
     });
   });
 
   it("schaltet beim zweiten Klick auch die Infokarte wieder zu", async () => {
     // Vorher ging sie erneut auf und verdeckte die Route, und man musste
     // woanders hinklicken, um sie loszuwerden.
-    await karteMitKollege([[11.1, 60.2], [16.5, 68.5]]);
+    await karteMitKollege([P1, P2]);
     await act(async () => {
       kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -217,7 +236,7 @@ describe("Klick auf einen Kollegen", () => {
   });
 
   it("versteckt Linie UND Punkte, wenn die Kollegen-Anzeige ausgeht", async () => {
-    await karteMitKollege([[11.1, 60.2], [16.5, 68.5]]);
+    await karteMitKollege([P1, P2]);
     const schalter = screen.getByRole("button", { name: /VA-Verkehr/i });
     await act(async () => {
       schalter.dispatchEvent(new MouseEvent("click", { bubbles: true }));

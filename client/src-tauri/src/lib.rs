@@ -14715,8 +14715,17 @@ fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDt
 /// Leere Liste heisst: Es gibt keine Route (Flug ohne SimBrief-Plan) oder
 /// sie gehoert einer anderen VA. Beides ist kein Fehler — die Anzeige
 /// sagt es dem Piloten.
+/// Ein Wegpunkt einer fremden Route, wie die Karte ihn braucht.
+#[derive(Debug, Clone, serde::Serialize)]
+struct FremdePunkt {
+    lon: f64,
+    lat: f64,
+    /// Kann leer sein — dann zeichnet die Karte nur den Punkt.
+    name: String,
+}
+
 #[tauri::command]
-async fn fremde_flugroute(pirep_id: String) -> Result<Vec<[f64; 2]>, UiError> {
+async fn fremde_flugroute(pirep_id: String) -> Result<Vec<FremdePunkt>, UiError> {
     if pirep_id.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -14735,10 +14744,18 @@ async fn fremde_flugroute(pirep_id: String) -> Result<Vec<[f64; 2]>, UiError> {
     match aeroacars_mqtt::log_upload::fremde_route(pirep_id.trim(), &username, &password, None)
         .await
     {
+        // Den NAMEN mitnehmen. Er kommt vom Server mit und wurde hier
+        // weggeworfen — die Karte zeigte dann Punkte ohne Beschriftung,
+        // und man konnte nicht lesen, wo der Kollege seine Fixe hat
+        // (Thomas, 20.09.2026).
         Ok(punkte) => Ok(punkte
             .into_iter()
             .filter(|p| p.lat.is_finite() && p.lon.is_finite())
-            .map(|p| [p.lon, p.lat])
+            .map(|p| FremdePunkt {
+                lon: p.lon,
+                lat: p.lat,
+                name: p.name.unwrap_or_default(),
+            })
             .collect()),
         Err(e) => {
             tracing::warn!(pirep_id = %pirep_id, error = %e, "fremde Route nicht geladen");
