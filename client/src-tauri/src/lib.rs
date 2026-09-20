@@ -18464,6 +18464,32 @@ mod konten_isolierung_runde_neun_wiring_tests {
     /// — ein Kontowechsel in der Luecke dazwischen darf diese Best-Effort-
     /// Kanaele nicht mit dem FALSCHEN Account weiterlaufen lassen.
     #[test]
+    /// Ein Flug, der vor v1.7.40 begann, bekommt seine Sprit-Planwerte
+    /// nachgeladen.
+    ///
+    /// `sprit_an_bord_kg` kam erst mit v1.7.40. Wer mitten im Flug
+    /// aktualisiert, hat gespeicherte Wegpunkte ohne dieses Feld — und die
+    /// Cockpit-Tabelle blendet sich dann ganz aus (Thomas, 20.09.2026).
+    #[test]
+    fn ein_flug_ohne_sprit_planwerte_laedt_den_ofp_nach() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn try_resume_flight(");
+        let pruefung = koerper
+            .find("sprit_plan_fehlt")
+            .expect("die Wiederaufnahme prueft die Sprit-Planwerte nicht");
+        let nachladen = koerper
+            .find("flight_refresh_simbrief(")
+            .expect("die Wiederaufnahme laedt den OFP nicht nach");
+        assert!(
+            pruefung < nachladen,
+            "erst pruefen, dann nachladen — sonst holt jeder Neustart den OFP"
+        );
+        assert!(
+            koerper.contains("f.sprit_an_bord_kg.is_none()"),
+            "geprueft wird das Feld, das seit v1.7.40 fehlen kann"
+        );
+    }
+
     /// Die Landung reist in der Warteschlange mit — und geht VOR dem
     /// Flugbericht raus.
     ///
@@ -48842,9 +48868,44 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
         }
         spawn_navdata_fetch(app, &flight, icaos);
     }
+    // v1.7.42: Traegt der wiederhergestellte Flug keine Sprit-Planwerte je
+    // Wegpunkt, den OFP einmal nachladen.
+    //
+    // `sprit_an_bord_kg` kam erst mit v1.7.40. Ein Flug, der VOR dem Update
+    // begann, hat seine Wegpunkte ohne dieses Feld gespeichert — und die
+    // Tabelle „Sprit · Wegpunkt für Wegpunkt" blendet sich komplett aus,
+    // wenn kein einziger Wegpunkt einen Planwert traegt. Der Pilot sah im
+    // Cockpit eine leere Stelle und musste selbst auf die Idee kommen, den
+    // Plan neu zu laden (Thomas, 20.09.2026, X-Plane-Flug).
+    //
+    // Best effort: Ohne Netz oder ohne OFP bleibt es, wie es war — der
+    // naechste Flug bringt die Werte ohnehin mit.
+    let sprit_plan_fehlt = {
+        let st = flight.stats.lock().expect("flight stats lock");
+        st.planned_waypoints.len() >= 2
+            && st
+                .planned_waypoints
+                .iter()
+                .all(|f| f.sprit_an_bord_kg.is_none())
+    };
     {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(flight);
+    }
+    if sprit_plan_fehlt {
+        let app_fuer_ofp = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app_fuer_ofp.state::<AppState>();
+            match flight_refresh_simbrief(app_fuer_ofp.clone(), state).await {
+                Ok(_) => {
+                    tracing::info!("Sprit-Planwerte fehlten nach dem Neustart — OFP nachgeladen")
+                }
+                Err(e) => tracing::warn!(
+                    error = ?e,
+                    "Sprit-Planwerte fehlen und der OFP liess sich nicht nachladen"
+                ),
+            }
+        });
     }
     // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): dieselbe
     // Eigentuemer-Erfassung wie in `flight_start`/`flight_adopt` — an
