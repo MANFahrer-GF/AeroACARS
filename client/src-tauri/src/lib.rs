@@ -50227,6 +50227,75 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
     )
 }
 
+/// So lange muss der Simulator ruhig laufen, bevor der Auto-Start ihn
+/// ueberhaupt bewertet.
+const AUTO_START_SIM_RUHE_SECS: i64 = 20;
+/// Hinweis-Code, solange der Simulator noch nicht zur Ruhe gekommen ist
+/// (Banner-Schluessel `bids.auto_start_skip.sim_not_ready`).
+const AUTO_START_SIM_WARTET: &str = "sim_not_ready";
+/// Weiter als das zwischen zwei Takten (3 s) ist kein Rollen, sondern
+/// Laden, Teleport oder Flughafenwechsel.
+const AUTO_START_SPRUNG_M: f64 = 1_000.0;
+
+/// Ist der Simulator zur Ruhe gekommen?
+///
+/// Beim Laden liefert MSFS minutenlang Zwischenstaende: Weltkarte
+/// (in der Luft), Teleports (1526 → 4432 → 6724 nm vom Abflughafen),
+/// halb geladenes Flugzeug (Sprit 0, Triebwerke an). Der Watcher
+/// bewertete jeden davon, der Hinweis sprang im Sekundentakt, und am
+/// 19.09.2026 feuerte der Auto-Start 0,1 s nach einem Pause-Event mitten
+/// im Ladebildschirm (Log Thomas, A380 VABB). Jetzt gilt: erst wenn der
+/// Sim `AUTO_START_SIM_RUHE_SECS` lang nicht pausiert ist, nicht springt
+/// und dasselbe Flugzeug zeigt, schaut der Auto-Start hin.
+///
+/// Bewusst OHNE Zeitstempel-Frische: X-Plane stempelt jeden Abruf neu,
+/// MSFS nicht verlaesslich — ein Frische-Kriterium koennte den Auto-Start
+/// dauerhaft sperren.
+#[derive(Debug, Default)]
+struct SimRuhe {
+    seit: Option<DateTime<Utc>>,
+    letzte_pos: Option<(f64, f64)>,
+    letzter_titel: Option<String>,
+}
+
+impl SimRuhe {
+    /// `None` = bereit. Sonst der Grund fuer den Piloten.
+    fn pruefen(&mut self, snap: &SimSnapshot, jetzt: DateTime<Utc>) -> Option<String> {
+        let titel = snap
+            .aircraft_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        let gesprungen = self.letzte_pos.is_some_and(|(lat, lon)| {
+            ::geo::distance_m(lat, lon, snap.lat, snap.lon) > AUTO_START_SPRUNG_M
+        });
+        let flugzeug_gewechselt = self.letzte_pos.is_some() && titel != self.letzter_titel;
+        self.letzte_pos = Some((snap.lat, snap.lon));
+        self.letzter_titel = titel;
+        let unruhe = if snap.paused || snap.slew_mode {
+            Some("Der Simulator lädt oder ist pausiert.")
+        } else if gesprungen {
+            Some("Die Position springt noch (Laden oder Flughafenwechsel).")
+        } else if flugzeug_gewechselt {
+            Some("Das Flugzeug wurde gerade gewechselt.")
+        } else {
+            None
+        };
+        if let Some(grund) = unruhe {
+            self.seit = None;
+            return Some(grund.to_string());
+        }
+        let seit = *self.seit.get_or_insert(jetzt);
+        let ruhig = (jetzt - seit).num_seconds();
+        (ruhig < AUTO_START_SIM_RUHE_SECS).then(|| {
+            format!(
+                "Der Simulator läuft erst {ruhig} s ruhig — Auto-Start prüft nach {AUTO_START_SIM_RUHE_SECS} s."
+            )
+        })
+    }
+}
+
 #[cfg(test)]
 mod auto_start_vorpruefung_tests {
     use super::*;
@@ -50360,9 +50429,10 @@ mod auto_start_vorpruefung_tests {
             },
             AutoStartBeobachtung::default(),
         ];
-        let codes: std::collections::BTreeSet<&str> =
+        let mut codes: std::collections::BTreeSet<&str> =
             faelle.iter().map(|b| auto_start_hinweis(b).0).collect();
         assert_eq!(codes.len(), faelle.len(), "jeder Fall eigener Code");
+        codes.insert(AUTO_START_SIM_WARTET);
         for (sprache, json) in [
             ("de", include_str!("../../src/locales/de/common.json")),
             ("en", include_str!("../../src/locales/en/common.json")),
@@ -50377,6 +50447,72 @@ mod auto_start_vorpruefung_tests {
                 );
             }
         }
+    }
+
+    fn sim(lat: f64, lon: f64, paused: bool, titel: &str) -> SimSnapshot {
+        let mut s = SimSnapshot::default();
+        s.lat = lat;
+        s.lon = lon;
+        s.paused = paused;
+        s.aircraft_title = Some(titel.to_string());
+        s
+    }
+
+    /// Nachgestellt nach dem Log vom 19.09.2026 (MSFS lädt, Weltkarte
+    /// pausiert, Teleports, Pause-Flackern). Vorher feuerte der Auto-Start
+    /// mitten darin; jetzt erst nach 20 s Ruhe am Gate.
+    #[test]
+    fn ladevorgang_sperrt_bis_der_sim_20_s_ruhig_ist() {
+        let t0 = Utc::now();
+        let s = |sek: i64| t0 + chrono::Duration::seconds(sek);
+        let mut r = SimRuhe::default();
+        // Weltkarte: pausiert, irgendwo in der Luft.
+        assert!(r.pruefen(&sim(50.0, 8.0, true, "A380"), s(0)).is_some());
+        // Kurz unpausiert, aber Teleport um Tausende Kilometer.
+        let g = r.pruefen(&sim(19.09, 72.87, false, "A380"), s(3));
+        assert!(g.as_deref().unwrap_or("").contains("springt"), "{g:?}");
+        // Pause-Flackern am Zielplatz setzt die Uhr jedes Mal zurück.
+        assert!(r.pruefen(&sim(19.09, 72.87, false, "A380"), s(6)).is_some());
+        assert!(r.pruefen(&sim(19.09, 72.87, true, "A380"), s(9)).is_some());
+        // Ab jetzt ruhig: erst nach 20 s bereit, nicht vorher.
+        for t in (12..32).step_by(3) {
+            assert!(
+                r.pruefen(&sim(19.09, 72.87, false, "A380"), s(t)).is_some(),
+                "t={t}"
+            );
+        }
+        assert_eq!(r.pruefen(&sim(19.09, 72.87, false, "A380"), s(33)), None);
+        // Und bleibt bereit, solange nichts passiert.
+        assert_eq!(
+            r.pruefen(&sim(19.0901, 72.8701, false, "A380"), s(36)),
+            None
+        );
+    }
+
+    /// Normalfall: Pilot sitzt schon kalt am Gate, der Sim läuft ruhig —
+    /// der Auto-Start ist nach 20 s bereit, Rollen am Platz stört nicht.
+    #[test]
+    fn ruhiger_sim_am_gate_ist_nach_20_s_bereit() {
+        let t0 = Utc::now();
+        let mut r = SimRuhe::default();
+        assert!(r.pruefen(&sim(18.04, -63.11, false, "C24R"), t0).is_some());
+        let t = t0 + chrono::Duration::seconds(AUTO_START_SIM_RUHE_SECS);
+        assert_eq!(r.pruefen(&sim(18.0401, -63.1101, false, "C24R"), t), None);
+    }
+
+    #[test]
+    fn flugzeugwechsel_und_slew_setzen_die_ruhe_zurueck() {
+        let t0 = Utc::now();
+        let s = |sek: i64| t0 + chrono::Duration::seconds(sek);
+        let mut r = SimRuhe::default();
+        r.pruefen(&sim(18.0, -63.0, false, "C24R"), s(0));
+        assert_eq!(r.pruefen(&sim(18.0, -63.0, false, "C24R"), s(25)), None);
+        let g = r.pruefen(&sim(18.0, -63.0, false, "B738"), s(28));
+        assert!(g.as_deref().unwrap_or("").contains("gewechselt"), "{g:?}");
+        let mut slew = sim(18.0, -63.0, false, "B738");
+        slew.slew_mode = true;
+        assert!(r.pruefen(&slew, s(60)).is_some());
+        assert!(r.pruefen(&sim(18.0, -63.0, false, "B738"), s(63)).is_some());
     }
 }
 
@@ -50536,6 +50672,10 @@ fn spawn_auto_start_watcher(app: AppHandle) {
         // the loop ticks every 3 s and must not spam the activity log.
         let mut no_geometry_logged: std::collections::HashSet<String> =
             std::collections::HashSet::new();
+        // Ist der Simulator zur Ruhe gekommen? Siehe `SimRuhe`. Wird bei
+        // ausgeschaltetem Auto-Start und während eines Flugs verworfen, damit
+        // nach Flugende und nach dem Einschalten neu gemessen wird.
+        let mut sim_ruhe = SimRuhe::default();
         loop {
             tokio::time::sleep(Duration::from_secs(AUTO_START_INTERVAL_SECS)).await;
             let state = app.state::<AppState>();
@@ -50544,12 +50684,14 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // body. Used to `break` and rely on a re-spawn on next
             // toggle, which raced with first-launch IPC on Mac.
             if !state.auto_start_enabled.load(Ordering::Relaxed) {
+                sim_ruhe = SimRuhe::default();
                 continue;
             }
             // Skip if a flight is already active.
             {
                 let guard = state.active_flight.lock().expect("active_flight lock");
                 if guard.is_some() {
+                    sim_ruhe = SimRuhe::default();
                     continue;
                 }
             }
@@ -50598,8 +50740,33 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // Start nicht greift. Throttled auf 1× / 60 s pro reason
             // damit der Log nicht spamt.
             let Some(snap) = current_snapshot(&app) else {
+                sim_ruhe = SimRuhe::default();
                 continue;
             };
+            // Erst wenn der Simulator zur Ruhe gekommen ist, schaut der
+            // Auto-Start überhaupt hin. Solange er lädt, pausiert ist oder
+            // springt, gibt es EINEN ruhigen Hinweis statt wechselnder Gründe
+            // („in der Luft" / „6724 nm" / „Sprit 0"): ins Protokoll nur beim
+            // Eintritt, das Banner bleibt stehen (Zeitstempel jeden Takt frisch).
+            if let Some(grund) = sim_ruhe.pruefen(&snap, Utc::now()) {
+                let eintritt = {
+                    let mut g = state.auto_start_skip_reason.lock().unwrap();
+                    let eintritt = g
+                        .as_ref()
+                        .is_none_or(|(_, code)| code != AUTO_START_SIM_WARTET);
+                    *g = Some((Utc::now(), AUTO_START_SIM_WARTET.to_string()));
+                    eintritt
+                };
+                if eintritt {
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Info,
+                        "Auto-Start: wartet auf den Simulator".to_string(),
+                        Some(grund),
+                    );
+                }
+                continue;
+            }
             // v0.3.0: Race-Condition-Fix nach Sim-Reconnect. Wenn der
             // Sim gerade frisch connected ist (Pilot hat X-Plane neu
             // gestartet), hat der Snapshot kurz Default-0-Werte

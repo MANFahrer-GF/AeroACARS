@@ -1883,7 +1883,8 @@
       "aircraft_mismatch": "Das geladene Flugzeug passt nicht zum Bid. Lade das passende Flugzeug — oder pflege einen Aircraft-Alias, falls es derselbe Typ mit anderem Namen ist.",
       "bid_already_started": "Dieser Bid wurde diese Session schon automatisch gestartet. Über Manuell-Umschalten oder ein anderes Bid neu starten.",
       "ofp_missing": "Auto-Start wartet auf das SimBrief-OFP: Dem Bid ist noch kein Flugzeug zugeordnet. Sobald das OFP erstellt ist, startet der Flug von selbst.",
-      "retry_pending": "Der letzte Auto-Start ist gescheitert — neuer Versuch in Kürze. Den Grund zeigt das Aktivitätsprotokoll. Oder manuell „Flug starten\" nutzen."
+      "retry_pending": "Der letzte Auto-Start ist gescheitert — neuer Versuch in Kürze. Den Grund zeigt das Aktivitätsprotokoll. Oder manuell „Flug starten\" nutzen.",
+      "sim_not_ready": "Auto-Start wartet, bis der Simulator fertig geladen ist und 20 Sekunden ruhig läuft (nicht pausiert, keine Positionssprünge)."
     },
     "open_flight_page": "Flugseite öffnen",
     "open_ofp": "OFP / Briefing öffnen",
