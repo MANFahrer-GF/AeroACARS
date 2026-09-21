@@ -355,6 +355,48 @@ fn desired_profile(
         .filter(|&pi| !probe_seen.get(pi).copied().unwrap_or(false))
 }
 
+/// Ob ein Empfangsfehler nur die ICMP-Rueckmeldung „Port nicht erreichbar"
+/// auf ein eigenes RREF-Paket ist. Windows meldet sie auf UDP-Sockets als
+/// `WSAECONNRESET` (10054 → `ConnectionReset`), Linux/macOS je nach Lage
+/// als `ConnectionRefused`. Kein Fehler des Sockets — X-Plane hoert
+/// nur gerade nicht zu.
+fn ist_icmp_rueckmeldung(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionRefused
+    )
+}
+
+#[cfg(test)]
+mod icmp_rueckmeldung_tests {
+    use super::ist_icmp_rueckmeldung;
+    use std::io::ErrorKind;
+
+    /// Genau der Fehler aus dem Diagnose-Log (Windows, os error 10054).
+    #[test]
+    fn windows_10054_ist_nur_eine_rueckmeldung() {
+        #[cfg(windows)]
+        assert!(ist_icmp_rueckmeldung(
+            std::io::Error::from_raw_os_error(10054).kind()
+        ));
+        assert!(ist_icmp_rueckmeldung(ErrorKind::ConnectionReset));
+        assert!(ist_icmp_rueckmeldung(ErrorKind::ConnectionRefused));
+    }
+
+    /// Gegenprobe: echte Socket-Fehler bleiben Warnungen mit Pause.
+    #[test]
+    fn echte_fehler_bleiben_fehler() {
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::InvalidInput,
+            ErrorKind::AddrNotAvailable,
+            ErrorKind::Other,
+        ] {
+            assert!(!ist_icmp_rueckmeldung(kind), "{kind:?}");
+        }
+    }
+}
+
 /// The blocking listener thread. Binds a UDP socket on an ephemeral
 /// local port, subscribes the active catalog (+ aircraft-profile
 /// probes) to 127.0.0.1:49000, then loops decoding responses until
@@ -461,9 +503,14 @@ fn run_listener(shared: Arc<AdapterShared>) {
     /// aircraft swap — the old aircraft's probe DataRef simply vanishes.
     const PROBE_STALE_AFTER: Duration = Duration::from_secs(8);
 
+    // Einmal je Ausfall melden, dass X-Plane nicht zuhoert (siehe
+    // `ist_icmp_rueckmeldung`); zurueckgesetzt beim naechsten Paket.
+    let mut sim_hoert_nicht_gemeldet = false;
+
     while !shared.stop.load(Ordering::SeqCst) {
         match socket.recv_from(&mut buf) {
             Ok((n, _peer)) => {
+                sim_hoert_nicht_gemeldet = false;
                 let pairs = decode_response(&buf[..n]);
                 if pairs.is_empty() {
                     continue;
@@ -515,6 +562,24 @@ fn run_listener(shared: Arc<AdapterShared>) {
             {
                 // No data this tick — check stale timeout + resubscribe-
                 // due timer below, then loop.
+            }
+            Err(e) if ist_icmp_rueckmeldung(e.kind()) => {
+                // Befund 21.09.2026 (Diagnose-Log Ralf T): nach dem Beenden
+                // von X-Plane schickt der Resubscribe alle 5 s den ganzen
+                // Katalog an einen toten Port. Windows liefert fuer JEDES
+                // dieser Pakete einen eigenen `os error 10054` zurueck. Mit
+                // 100 ms Pause je Fehler holte die Schleife den Rueckstand
+                // nie auf: 38 822 Warnungen in 65 Minuten, und eine
+                // Wiederverbindung waere erst nach dem Abarbeiten des
+                // Rueckstands gesehen worden. Die Rueckmeldung heisst nur
+                // „niemand hoert zu" — wie „keine Daten" behandeln.
+                if !sim_hoert_nicht_gemeldet {
+                    tracing::info!(
+                        error = %e,
+                        "X-Plane hoert auf dem RREF-Port nicht (mehr) zu — warte auf den Simulator"
+                    );
+                    sim_hoert_nicht_gemeldet = true;
+                }
             }
             Err(e) => {
                 tracing::warn!(error = %e, "X-Plane UDP recv error");

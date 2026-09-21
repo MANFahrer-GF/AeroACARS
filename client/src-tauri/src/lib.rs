@@ -27451,10 +27451,55 @@ async fn enqueue_pending_bid_cleanup(
     }
 }
 
+/// Was mit einem Aufraeum-Eintrag passiert, der seine Versuche ausgereizt hat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AusgereizterBidEintrag {
+    /// Der Bid existiert im eigenen Konto nicht mehr — Ziel erreicht.
+    Verwerfen,
+    /// Bid noch da, fremder Eintrag oder Bid-Liste nicht abrufbar.
+    Behalten,
+}
+
+/// Entscheidet ueber einen ausgereizten `pending_bid_cleanup`-Eintrag.
+///
+/// `eigene_bids` ist `None`, wenn der Abruf der eigenen Bids gescheitert
+/// ist — dann wird NICHTS verworfen, ein Netzfehler darf die Warteschlange
+/// nicht leeren. Ein Eintrag, der nachweislich einem ANDEREN Konto gehoert,
+/// bleibt in Quarantaene: die Bid-Liste zeigt nur das aktuelle Konto und
+/// sagt ueber seinen Bid nichts aus. Ohne `bid_id` entscheidet die
+/// `flight_id` — hier nur als Grund zum BEHALTEN, nie als Eigentumsbeweis.
+fn ausgereizter_bid_eintrag(
+    eintrag_eigentuemer: Option<&str>,
+    aktuelle_identitaet: &str,
+    bid_id: Option<i64>,
+    flight_id: Option<&str>,
+    eigene_bids: Option<&[(i64, String)]>,
+) -> AusgereizterBidEintrag {
+    let Some(bids) = eigene_bids else {
+        return AusgereizterBidEintrag::Behalten;
+    };
+    if eintrag_eigentuemer.is_some()
+        && !pirep_queue_eintrag_gehoert_aktuellem_piloten(eintrag_eigentuemer, aktuelle_identitaet)
+    {
+        return AusgereizterBidEintrag::Behalten;
+    }
+    let noch_vorhanden = match (bid_id, flight_id) {
+        (Some(id), _) => bids.iter().any(|(b_id, _)| *b_id == id),
+        (None, Some(flug)) => bids.iter().any(|(_, b_flug)| b_flug == flug),
+        (None, None) => false,
+    };
+    if noch_vorhanden {
+        AusgereizterBidEintrag::Behalten
+    } else {
+        AusgereizterBidEintrag::Verwerfen
+    }
+}
+
 /// v0.7.19 GAF-707: drain-Pass fuer den PendingBidCleanupQueue. Wird im
 /// spawn_pirep_queue_worker-Tick mit aufgerufen (selbe 60s-Frequenz).
-/// Cap auf 8 Versuche pro Eintrag, danach bleibt der Eintrag liegen
-/// und wird ueber den B-011 Orphan-Cleanup-Flow sichtbar.
+/// Cap auf 8 Versuche pro Eintrag. Danach wird der Eintrag einmal pro Tick
+/// gegen die eigenen Bids gehalten und verworfen, sobald der Bid nicht mehr
+/// existiert (siehe `ausgereizter_bid_eintrag`).
 async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_identitaet: &str) {
     const MAX_ATTEMPTS: u32 = 8;
     let Ok(dir) = app.path().app_data_dir() else {
@@ -27486,16 +27531,57 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
 
     let mut survivors: Vec<storage::PendingBidCleanup> = Vec::new();
     // Lazily geholt (hoechstens einmal pro Tick) und nur wenn ueberhaupt ein
-    // Eintrag ohne passenden Eigentuemer auftaucht.
-    let mut eigene_bids: Option<Vec<api_client::Bid>> = None;
+    // Eintrag ohne passenden Eigentuemer oder ein ausgereizter Eintrag
+    // auftaucht.
+    // Aeusseres `None` = noch nicht gefragt, inneres `None` = Abruf
+    // gescheitert. Die Reklamierung unten behandelt einen gescheiterten
+    // Abruf wie eine leere Liste; der ausgereizte Zweig darf das NICHT —
+    // sonst wuerde ein Netzfehler alle Eintraege verwerfen.
+    let mut eigene_bids: Option<Option<Vec<api_client::Bid>>> = None;
     for mut e in entries {
         if e.attempts >= MAX_ATTEMPTS {
-            tracing::warn!(
-                pirep_id = %e.pirep_id,
-                attempts = e.attempts,
-                "pending_bid_cleanup: max attempts reached — leaving in queue for orphan-cleanup UI"
-            );
-            survivors.push(e);
+            // Befund 21.09.2026 (Diagnose-Logs): bei Peter lagen vier
+            // Eintraege aus Juni/Juli, deren PIREPs laengst angenommen und
+            // deren Bids laengst weg waren. Sie warnten jede Minute, fuer
+            // immer — die „orphan-cleanup UI", auf die die Meldung verwies,
+            // gibt es im Frontend nicht. Ein ausgereizter Eintrag wird jetzt
+            // einmal gegen die eigenen Bids gehalten: existiert der Bid
+            // nicht mehr, ist das Ziel des Eintrags erreicht.
+            let fremder_eintrag = e.owner_identity.is_some()
+                && !pirep_queue_eintrag_gehoert_aktuellem_piloten(
+                    e.owner_identity.as_deref(),
+                    aktuelle_identitaet,
+                );
+            if eigene_bids.is_none() && !fremder_eintrag {
+                eigene_bids = Some(client.get_bids().await.ok());
+            }
+            let bid_liste: Option<Vec<(i64, String)>> = eigene_bids
+                .as_ref()
+                .and_then(|abruf| abruf.as_ref())
+                .map(|bids| bids.iter().map(|b| (b.id, b.flight_id.clone())).collect());
+            match ausgereizter_bid_eintrag(
+                e.owner_identity.as_deref(),
+                aktuelle_identitaet,
+                e.bid_id,
+                e.flight_id.as_deref(),
+                bid_liste.as_deref(),
+            ) {
+                AusgereizterBidEintrag::Verwerfen => {
+                    tracing::info!(
+                        pirep_id = %e.pirep_id,
+                        attempts = e.attempts,
+                        "pending_bid_cleanup: Bid existiert nicht mehr — Eintrag entfernt"
+                    );
+                }
+                AusgereizterBidEintrag::Behalten => {
+                    tracing::debug!(
+                        pirep_id = %e.pirep_id,
+                        attempts = e.attempts,
+                        "pending_bid_cleanup: ausgereizt, Bid noch vorhanden oder nicht pruefbar — bleibt liegen"
+                    );
+                    survivors.push(e);
+                }
+            }
             continue;
         }
         // Codex-Folgefund (adversarial, 05.09.2026, neunte Runde): diese
@@ -27513,7 +27599,7 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
             aktuelle_identitaet,
         ) {
             if eigene_bids.is_none() {
-                eigene_bids = Some(client.get_bids().await.unwrap_or_default());
+                eigene_bids = Some(client.get_bids().await.ok());
             }
             // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): NUR
             // `bid_id` beweist Eigentum — `flight_id` bezeichnet den
@@ -27530,6 +27616,7 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
             let gehoert_doch_dem_aktuellen_account = e.bid_id.is_some_and(|bid_id| {
                 eigene_bids
                     .as_ref()
+                    .and_then(|abruf| abruf.as_ref())
                     .is_some_and(|bids| bids.iter().any(|b| b.id == bid_id))
             });
             if gehoert_doch_dem_aktuellen_account {
@@ -27561,6 +27648,17 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
                 );
                 // Eintrag NICHT in survivors aufnehmen → wird gedroppt.
             }
+            // 404 heisst hier: den Bid gibt es serverseitig nicht mehr —
+            // genau das wollte der Eintrag erreichen. Vorher zaehlte das
+            // als Fehlschlag, bis der Eintrag nach acht Minuten ausgereizt
+            // war und fuer immer liegen blieb (Befund 21.09.2026).
+            Err(api_client::ApiError::NotFound) => {
+                tracing::info!(
+                    pirep_id = %e.pirep_id,
+                    attempts = e.attempts,
+                    "pending_bid_cleanup: Bid serverseitig schon weg (404) — Eintrag entfernt"
+                );
+            }
             Err(err) => {
                 tracing::warn!(
                     pirep_id = %e.pirep_id,
@@ -27574,6 +27672,86 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
     }
     if let Err(e) = queue.replace(&survivors) {
         tracing::warn!(error = %e, "pending_bid_cleanup drain: queue write failed");
+    }
+}
+
+#[cfg(test)]
+mod ausgereizter_bid_eintrag_tests {
+    use super::{ausgereizter_bid_eintrag, AusgereizterBidEintrag::*};
+
+    const ICH: &str = "https://german-sky-group.eu|5";
+    const ANDERER: &str = "https://german-sky-group.eu|23";
+
+    fn bids() -> Vec<(i64, String)> {
+        vec![(4711, "flug-a".to_string()), (4712, "flug-b".to_string())]
+    }
+
+    /// Der Fall aus den Diagnose-Logs: Alt-Eintrag ohne Eigentuemer, Bid
+    /// laengst weg — darf nicht mehr fuer immer liegen bleiben.
+    #[test]
+    fn alter_eintrag_ohne_bid_wird_verworfen() {
+        let b = bids();
+        assert_eq!(
+            ausgereizter_bid_eintrag(None, ICH, Some(99), Some("flug-x"), Some(&b)),
+            Verwerfen
+        );
+        assert_eq!(
+            ausgereizter_bid_eintrag(Some(ICH), ICH, Some(99), None, Some(&b)),
+            Verwerfen
+        );
+        assert_eq!(
+            ausgereizter_bid_eintrag(None, ICH, Some(99), None, Some(&[])),
+            Verwerfen
+        );
+    }
+
+    #[test]
+    fn noch_vorhandener_bid_bleibt() {
+        let b = bids();
+        assert_eq!(
+            ausgereizter_bid_eintrag(Some(ICH), ICH, Some(4711), None, Some(&b)),
+            Behalten
+        );
+        // Ohne bid_id haelt die flight_id den Eintrag fest.
+        assert_eq!(
+            ausgereizter_bid_eintrag(None, ICH, None, Some("flug-b"), Some(&b)),
+            Behalten
+        );
+    }
+
+    /// Gegenprobe: ein Netzfehler beim Abruf darf nichts verwerfen.
+    #[test]
+    fn gescheiterter_abruf_verwirft_nichts() {
+        assert_eq!(
+            ausgereizter_bid_eintrag(None, ICH, Some(99), None, None),
+            Behalten
+        );
+        assert_eq!(
+            ausgereizter_bid_eintrag(Some(ICH), ICH, None, Some("flug-x"), None),
+            Behalten
+        );
+    }
+
+    /// Die Bid-Liste zeigt nur das aktuelle Konto — ueber den Bid eines
+    /// anderen Kontos sagt sie nichts, der Eintrag bleibt in Quarantaene.
+    #[test]
+    fn fremder_eintrag_bleibt_auch_ohne_treffer() {
+        let b = bids();
+        assert_eq!(
+            ausgereizter_bid_eintrag(Some(ANDERER), ICH, Some(99), None, Some(&b)),
+            Behalten
+        );
+    }
+
+    /// bid_id hat Vorrang: passt nur die flight_id, der Bid mit der
+    /// gespeicherten Nummer ist aber weg, ist der Eintrag erledigt.
+    #[test]
+    fn bid_id_entscheidet_vor_flight_id() {
+        let b = bids();
+        assert_eq!(
+            ausgereizter_bid_eintrag(None, ICH, Some(99), Some("flug-a"), Some(&b)),
+            Verwerfen
+        );
     }
 }
 

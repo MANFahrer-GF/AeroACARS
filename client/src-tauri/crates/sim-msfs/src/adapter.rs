@@ -1554,15 +1554,27 @@ fn run_dispatch(
                         facility_lieferungen = facility::Lieferungen::neu();
                         continue;
                     }
-                    // This is the diagnostic the legacy crate didn't
-                    // give us — log the exact SimVar that failed.
-                    let field = TELEMETRY_FIELDS.get(index as usize).map(|f| f.name);
+                    // ⚠ `index` ist bei SimConnect die Nummer des
+                    // PARAMETERS im abgelehnten Aufruf — nicht die eines
+                    // Telemetriefelds. Bis v1.7.44 wurde JEDE Ausnahme mit
+                    // index=1 als „ATC MODEL" (Feld 1) ausgegeben; die 212
+                    // Meldungen in den Diagnose-Logs waren in Wahrheit
+                    // `EVENT_ID_DUPLICATE` aus doppelten Event-Abos
+                    // (Befund 21.09.2026). Ein Feld wird deshalb nur noch
+                    // bei `NAME_UNRECOGNIZED` und nur als Vermutung genannt.
+                    let name = facility::ausnahme_name(exception);
+                    let feld_vermutet = if name == "NAME_UNRECOGNIZED" {
+                        TELEMETRY_FIELDS.get(index as usize).map(|f| f.name)
+                    } else {
+                        None
+                    };
                     tracing::warn!(
                         exception,
+                        ausnahme = name,
                         send_id,
                         index,
-                        ?field,
-                        "SIMCONNECT_RECV_EXCEPTION — SimVar request was rejected"
+                        ?feld_vermutet,
+                        "SIMCONNECT_RECV_EXCEPTION — Aufruf vom Simulator abgelehnt"
                     );
                     // ⚠ Gehoert sie zu einer Szenerie-Anfrage, ist der
                     // Platz damit ABGELEHNT — nicht weiter „unterwegs".
@@ -1909,8 +1921,10 @@ fn run_dispatch(
                     if event_id == SIM_START_EVENT_ID {
                         // SimStart fires when the user loads a new
                         // flight. Re-request AircraftLoaded so we
-                        // pick up any aircraft change.
-                        if let Err(e) = conn.subscribe_aircraft_loaded() {
+                        // pick up any aircraft change. Nur die Abfrage —
+                        // die Abos stehen seit dem Verbindungsaufbau (siehe
+                        // `subscribe_aircraft_loaded`).
+                        if let Err(e) = conn.request_aircraft_loaded() {
                             tracing::warn!(error = %e, "re-request AircraftLoaded failed");
                         }
                     } else if event_id == PAUSE_EX1_EVENT_ID {
@@ -2590,10 +2604,9 @@ impl Connection {
         Ok(())
     }
 
-    /// Subscribe to the AircraftLoaded system state — both as a
-    /// one-shot request (so we know what's loaded right now) and as
-    /// a subscription to "SimStart" for live aircraft changes.
-    fn subscribe_aircraft_loaded(&mut self) -> Result<(), String> {
+    /// One-shot request for the AircraftLoaded system state. Safe to
+    /// repeat — used on every SimStart to pick up an aircraft change.
+    fn request_aircraft_loaded(&mut self) -> Result<(), String> {
         let cstate =
             std::ffi::CString::new("AircraftLoaded").expect("AircraftLoaded is plain ASCII");
         let hr = unsafe {
@@ -2608,6 +2621,21 @@ impl Connection {
                 "RequestSystemState(AircraftLoaded) returned 0x{hr:08X}"
             ));
         }
+        Ok(())
+    }
+
+    /// Subscribe to the AircraftLoaded system state — both as a
+    /// one-shot request (so we know what's loaded right now) and as
+    /// a subscription to "SimStart" for live aircraft changes.
+    ///
+    /// ⚠ NUR EINMAL je Verbindung aufrufen. Die Abos bleiben bestehen;
+    /// ein zweiter Aufruf meldet jedes Abo erneut unter derselben Event-ID
+    /// an, und MSFS antwortet mit Ausnahme 9 (`EVENT_ID_DUPLICATE`). Bis
+    /// v1.7.44 geschah das bei jedem SimStart — 212 falsch als
+    /// „ATC MODEL abgelehnt" beschriftete Warnungen in neun Diagnose-Logs
+    /// (Befund 21.09.2026). Fuer SimStart reicht `request_aircraft_loaded`.
+    fn subscribe_aircraft_loaded(&mut self) -> Result<(), String> {
+        self.request_aircraft_loaded()?;
 
         let cevent = std::ffi::CString::new("SimStart").expect("SimStart is plain ASCII");
         let hr = unsafe {

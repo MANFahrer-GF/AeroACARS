@@ -1223,8 +1223,111 @@ pub fn ausnahme_einordnen(exception: u32) -> Ausnahmeart {
     }
 }
 
+/// Name einer SimConnect-Ausnahme fuers Protokoll — dieselbe Aufzaehlung
+/// wie oben, vollstaendig aus `ffi/include/SimConnect.h` uebernommen. Eine
+/// nackte Zahl im Diagnose-Log hat am 21.09.2026 dazu gefuehrt, dass 212
+/// harmlose `EVENT_ID_DUPLICATE` als abgelehntes Telemetriefeld galten.
+pub fn ausnahme_name(exception: u32) -> &'static str {
+    match exception {
+        0 => "NONE",
+        1 => "ERROR",
+        2 => "SIZE_MISMATCH",
+        3 => "UNRECOGNIZED_ID",
+        4 => "UNOPENED",
+        5 => "VERSION_MISMATCH",
+        6 => "TOO_MANY_GROUPS",
+        7 => "NAME_UNRECOGNIZED",
+        8 => "TOO_MANY_EVENT_NAMES",
+        9 => "EVENT_ID_DUPLICATE",
+        10 => "TOO_MANY_MAPS",
+        11 => "TOO_MANY_OBJECTS",
+        12 => "TOO_MANY_REQUESTS",
+        13 => "WEATHER_INVALID_PORT",
+        14 => "WEATHER_INVALID_METAR",
+        15 => "WEATHER_UNABLE_TO_GET_OBSERVATION",
+        16 => "WEATHER_UNABLE_TO_CREATE_STATION",
+        17 => "WEATHER_UNABLE_TO_REMOVE_STATION",
+        18 => "INVALID_DATA_TYPE",
+        19 => "INVALID_DATA_SIZE",
+        20 => "DATA_ERROR",
+        21 => "INVALID_ARRAY",
+        22 => "CREATE_OBJECT_FAILED",
+        23 => "LOAD_FLIGHTPLAN_FAILED",
+        24 => "OPERATION_INVALID_FOR_OBJECT_TYPE",
+        25 => "ILLEGAL_OPERATION",
+        26 => "ALREADY_SUBSCRIBED",
+        27 => "INVALID_ENUM",
+        28 => "DEFINITION_ERROR",
+        29 => "DUPLICATE_ID",
+        30 => "DATUM_ID",
+        31 => "OUT_OF_BOUNDS",
+        32 => "ALREADY_CREATED",
+        33 => "OBJECT_OUTSIDE_REALITY_BUBBLE",
+        34 => "OBJECT_CONTAINER",
+        35 => "OBJECT_AI",
+        36 => "OBJECT_ATC",
+        37 => "OBJECT_SCHEDULE",
+        38 => "JETWAY_DATA",
+        39 => "ACTION_NOT_FOUND",
+        40 => "NOT_AN_ACTION",
+        41 => "INCORRECT_ACTION_PARAMS",
+        42 => "GET_INPUT_EVENT_FAILED",
+        43 => "SET_INPUT_EVENT_FAILED",
+        44 => "INTERNAL",        _ => "UNBEKANNT",
+    }
+}
+
 /// Wie viele Paketkennungen zurueckverfolgt werden.
 pub const PAKETE_GEDAECHTNIS: usize = 16;
+
+#[cfg(test)]
+mod ausnahme_name_tests {
+    use super::*;
+
+    /// Die Namen stimmen mit der Aufzaehlung im mitgelieferten Header
+    /// ueberein — gelesen zur Testzeit, nicht abgetippt.
+    #[test]
+    fn namen_folgen_dem_sdk_header() {
+        const HEADER: &str = include_str!("../ffi/include/SimConnect.h");
+        // Zeilenende-unabhaengig: auf Windows kann der Header mit CRLF
+        // ausgecheckt sein.
+        let kopf = "SIMCONNECT_ENUM SIMCONNECT_EXCEPTION";
+        let start = HEADER
+            .match_indices(kopf)
+            .map(|(i, _)| i)
+            .find(|&i| {
+                HEADER[i + kopf.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_whitespace() || c == '{')
+            })
+            .expect("Aufzaehlung SIMCONNECT_EXCEPTION im Header");
+        let rest = &HEADER[start..];
+        let ende = rest.find("};").expect("Ende der Aufzaehlung");
+        let namen: Vec<&str> = rest[..ende]
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter_map(|w| w.strip_prefix("SIMCONNECT_EXCEPTION_"))
+            .collect();
+        assert!(
+            namen.len() > 40,
+            "Header-Aufzaehlung nicht gelesen: {namen:?}"
+        );
+        for (nummer, name) in namen.iter().enumerate() {
+            assert_eq!(ausnahme_name(nummer as u32), *name, "Nummer {nummer}");
+        }
+        assert_eq!(ausnahme_name(namen.len() as u32), "UNBEKANNT");
+    }
+
+    /// Der Fall aus den Diagnose-Logs und die Konstanten der Einordnung.
+    #[test]
+    fn bekannte_nummern() {
+        assert_eq!(ausnahme_name(9), "EVENT_ID_DUPLICATE");
+        assert_eq!(ausnahme_name(EXC_NAME_UNRECOGNIZED), "NAME_UNRECOGNIZED");
+        assert_eq!(ausnahme_name(EXC_TOO_MANY_REQUESTS), "TOO_MANY_REQUESTS");
+        assert_eq!(ausnahme_name(EXC_DEFINITION_ERROR), "DEFINITION_ERROR");
+        assert_eq!(ausnahme_name(EXC_INTERNAL), "INTERNAL");
+    }
+}
 
 #[cfg(test)]
 mod paketzuordnung_tests {
