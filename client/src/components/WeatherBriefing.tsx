@@ -78,17 +78,24 @@ interface Props {
 function fmtVisibilityKm(meters: number | null): string {
   if (meters == null) return "—";
   const km = meters / 1000;
-  // v0.3.0: aviation-relevant ≥ 9.5 km wird als "≥ 10 km" angezeigt
+  // v0.3.0: aviation-relevant ab 9,5 km wird als "10+ km" angezeigt
   // (war 10.0 — das hat 9.999 km als "10.0 km" gerendert was identisch
   // aussieht aber den CAVOK-Indikator unterdrückt). Aviation-Konvention
   // ist: 9999 m = "10 km oder mehr".
-  return km >= 9.5 ? "≥ 10 km" : `${km.toFixed(1)} km`;
+  //
+  // Die Schreibweise war bis 21.09.2026 "≥ 10 km". Das Zeichen U+2265
+  // fehlt in B612 Mono, der Schrift dieser Zelle (`.wx__cell` trägt
+  // `--font-acars`) — der Browser musste dafür still auf eine
+  // Ersatzschrift ausweichen, deren Laufweite nicht zur Monospace-Zeile
+  // daneben passt. Auf einem System ohne passende Ersatzschrift stünde
+  // dort ein Kästchen. "10+" kommt mit ASCII aus und sagt dasselbe.
+  return km >= 9.5 ? "10+ km" : `${km.toFixed(1)} km`;
 }
 
 /**
  * Sichtweite aus dem METAR-Rohtext fischen, wenn der Backend-Parser
  * sie nicht geliefert hat (`visibility_m === null`). Real-life-Fälle
- * 2026-05: "9999" = ≥ 10 km, "CAVOK" = visibility ≥ 10 km + no clouds
+ * 2026-05: "9999" = 10 km oder mehr, "CAVOK" = dasselbe + keine Wolken
  * unter 5000 ft, "10SM" = 10 statute miles, "1500" = 1500 m. Wir
  * parsen nur die häufigsten Tokens.
  */
@@ -99,7 +106,8 @@ function fmtVisibilityFromRaw(raw: string | null): string {
   const mMatch = raw.match(/\b(\d{4})\b/);
   if (mMatch) {
     const m = Number.parseInt(mMatch[1]!, 10);
-    if (m === 9999) return "≥ 10 km";
+    // Siehe `fmtVisibilityKm`: kein U+2265, das fehlt der Cockpit-Schrift.
+    if (m === 9999) return "10+ km";
     return `${(m / 1000).toFixed(1)} km`;
   }
   // US-Format "10SM"
@@ -242,7 +250,7 @@ function WxCard({
   const m = state.data!;
   // Sicht: Backend liefert manchmal null (Parser ignoriert "9999" oder
   // CAVOK). Fallback aus dem Raw-METAR parsen damit der Pilot wenigstens
-  // die wichtigsten Sichtwerte ("≥ 10 km" / "CAVOK") sieht.
+  // die wichtigsten Sichtwerte ("10+ km" / "CAVOK") sieht.
   const visibilityLabel =
     m.visibility_m != null
       ? fmtVisibilityKm(m.visibility_m)

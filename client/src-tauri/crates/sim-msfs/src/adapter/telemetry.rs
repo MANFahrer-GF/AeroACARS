@@ -2176,7 +2176,8 @@ fn contrail_fma_vertical_label(n: i32) -> Option<String> {
 }
 
 /// Kombiniert Active- + Armed-Slot zu einem FMA-Label: „HDG" bzw.
-/// „HDG (→LOC)" wenn ein Modus armed ist. `lateral` waehlt die
+/// „HDG (arm LOC)" wenn ein Modus armed ist. (Bis 21.09.2026 „HDG (→LOC)":
+/// Die Zeile landet im Aktivitaetsprotokoll in B612 Mono, der „→" fehlt.) `lateral` waehlt die
 /// Decode-Tabelle. Beide Slots kommen als f64-Number-LVar.
 fn contrail_fma_combined(active: f64, armed: f64, lateral: bool) -> Option<String> {
     let decode = |v: f64| {
@@ -2187,9 +2188,9 @@ fn contrail_fma_combined(active: f64, armed: f64, lateral: bool) -> Option<Strin
         }
     };
     match (decode(active), decode(armed)) {
-        (Some(a), Some(arm)) => Some(format!("{a} (→{arm})")),
+        (Some(a), Some(arm)) => Some(format!("{a} (arm {arm})")),
         (Some(a), None) => Some(a),
-        (None, Some(arm)) => Some(format!("(→{arm})")),
+        (None, Some(arm)) => Some(format!("(arm {arm})")),
         (None, None) => None,
     }
 }
@@ -4877,14 +4878,14 @@ mod tests {
         // Combined: aktiv HDG, armed LOC.
         assert_eq!(
             contrail_fma_combined(4.0, 3.0, true),
-            Some("HDG (→LOC)".to_string())
+            Some("HDG (arm LOC)".to_string())
         );
         // Combined: beide NONE → None.
         assert_eq!(contrail_fma_combined(0.0, 0.0, false), None);
         // Combined vertikal: aktiv VS, armed ALT SEL.
         assert_eq!(
             contrail_fma_combined(4.0, 3.0, false),
-            Some("VS (→ALT SEL)".to_string())
+            Some("VS (arm ALT SEL)".to_string())
         );
     }
 

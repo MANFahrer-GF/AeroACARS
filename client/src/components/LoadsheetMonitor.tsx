@@ -256,7 +256,9 @@ function LsRow({
     else if (deltaPct >= 5) deltaClass = "loadsheet__delta--warn";
   }
 
-  // Overweight: IST > MAX → ⚠ + alert-color
+  // Overweight: IST > MAX → "!" + alert-color. (Bis 21.09.2026 „⚠": `.ls td`
+  // traegt B612 Mono, der das Zeichen fehlt — die Ziffernspalte verrutschte
+  // genau in der Warnzeile.)
   const overweight = ist != null && max != null && ist > max;
   if (overweight) deltaClass = "loadsheet__delta--alert";
 
@@ -268,7 +270,7 @@ function LsRow({
       <td className={deltaClass}>
         {delta == null
           ? "—"
-          : `${overweight ? "⚠ " : ""}${delta >= 0 ? "+" : ""}${Math.round(delta).toLocaleString("de-DE")}`}
+          : `${overweight ? "! " : ""}${delta >= 0 ? "+" : ""}${Math.round(delta).toLocaleString("de-DE")}`}
       </td>
     </tr>
   );
