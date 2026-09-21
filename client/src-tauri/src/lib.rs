@@ -50291,13 +50291,14 @@ impl SimRuhe {
         let gesprungen = self.letzte_pos.is_some_and(|(lat, lon)| {
             ::geo::distance_m(lat, lon, snap.lat, snap.lon) > AUTO_START_SPRUNG_M
         });
-        // Nur ein echter Wechsel A → B zählt. Ein kurz fehlender Titel (X-Plane-
-        // Web-API liefert mal Teildaten) darf die Uhr nicht ständig zurücksetzen —
-        // „Titel fehlt" meldet ohnehin der Warm-Check danach.
-        let flugzeug_gewechselt = matches!(
-            (&self.letzter_titel, &titel),
-            (Some(vorher), Some(jetzt_titel)) if vorher != jetzt_titel
-        );
+        // Wechsel = ein Titel erscheint, der vom letzten BEKANNTEN abweicht:
+        // A → B, und beim Hochfahren leer → A (der Titel kommt oft erst spät;
+        // ab dann zählt die Ruhe neu). Ein kurz fehlender Titel (X-Plane-Web-
+        // API liefert mal Teildaten) setzt nichts zurück: A → leer → A ist
+        // kein Wechsel, weil der letzte bekannte Titel A stehen bleibt. Die
+        // allererste Messung ist kein Wechsel.
+        let flugzeug_gewechselt =
+            self.letzte_pos.is_some() && titel.is_some() && titel != self.letzter_titel;
         self.letzte_pos = Some((snap.lat, snap.lon));
         if titel.is_some() {
             self.letzter_titel = titel;
@@ -50684,6 +50685,28 @@ mod auto_start_vorpruefung_tests {
         assert!(p.protokollieren("retry_pending", s(63), Some(60)));
         assert!(p.protokollieren(AUTO_START_SIM_WARTET, s(66), None));
         assert!(!p.protokollieren(AUTO_START_SIM_WARTET, s(600), None));
+    }
+
+    /// Codex-Nachprüfung: Kommt der Titel beim Hochfahren erst nach 20 s,
+    /// durfte der Auto-Start sofort feuern. Das erste Erscheinen startet die
+    /// Ruhe neu.
+    #[test]
+    fn spaet_erscheinender_titel_startet_die_ruhe_neu() {
+        let t0 = Utc::now();
+        let s = |sek: i64| t0 + chrono::Duration::seconds(sek);
+        let mut r = SimRuhe::default();
+        let mut ohne = sim(47.0, 11.0, false, "");
+        ohne.aircraft_title = None;
+        for t in (0..=30).step_by(3) {
+            r.pruefen(&ohne, s(t));
+        }
+        let g = r.pruefen(&sim(47.0, 11.0, false, "C172"), s(33));
+        assert!(g.as_deref().unwrap_or("").contains("gewechselt"), "{g:?}");
+        // Ruhe beginnt mit dem nächsten ruhigen Takt (36) neu: bei 54 noch
+        // nicht bereit, bei 56 schon.
+        assert!(r.pruefen(&sim(47.0, 11.0, false, "C172"), s(36)).is_some());
+        assert!(r.pruefen(&sim(47.0, 11.0, false, "C172"), s(54)).is_some());
+        assert_eq!(r.pruefen(&sim(47.0, 11.0, false, "C172"), s(56)), None);
     }
 
     /// X-Plane: Die Web-API liefert mal keinen Titel. Das darf die Ruhe

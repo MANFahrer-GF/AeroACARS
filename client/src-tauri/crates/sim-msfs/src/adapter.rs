@@ -1132,14 +1132,18 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // all reset so the next dispatch session re-detects
                 // and re-subscribes from scratch.
                 *shared.pmdg.lock() = PmdgSharedState::default();
-                // Pause und „Telemetrie nicht echt" gelten nur für die
-                // Verbindung, in der sie gemeldet wurden. Riss sie zwischen
-                // TELEPORT_START und TELEPORT_DONE ab, blieb die Tiefe > 0 und
-                // jeder spätere Snapshot hieß `paused` — für Phasen-Engine und
-                // Auto-Start bis zum App-Neustart (QS Codex, 21.09.2026).
-                // Kein zweiter Schreiber: run_dispatch ist hier zurückgekehrt;
-                // MSFS meldet den Pausezustand nach dem Neuaufbau sofort neu.
-                shared.sim_paused.store(false, Ordering::Relaxed);
+                // „Telemetrie nicht echt" (Replay/Teleport/Vorspulen) gilt nur
+                // für die Verbindung, in der START gemeldet wurde. Riss sie vor
+                // DONE ab, blieb die Tiefe > 0 und jeder spätere Snapshot hieß
+                // `paused` — für Phasen-Engine und Auto-Start bis zum App-
+                // Neustart (QS Codex, 21.09.2026). Für diese Vorgänge gibt es
+                // keine Zustandsabfrage; 0 ist der einzige Wert, der nicht für
+                // immer sperrt. Ein Vorgang, der den Abriss überdauert, zählt
+                // bis zu seinem DONE als echt (max(0) fängt das DONE ab).
+                // `sim_paused` bleibt bewusst stehen: MSFS meldet Pause_EX1
+                // direkt nach dem Neuaufbau neu, bis dahin ist der alte Wert
+                // die bessere Annahme als „läuft". Kein zweiter Schreiber:
+                // run_dispatch ist hier zurückgekehrt.
                 shared.sim_unecht_tiefe.store(0, Ordering::Relaxed);
                 *shared.state.lock() = ConnectionState::Connecting;
             }
