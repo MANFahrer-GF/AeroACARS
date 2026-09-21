@@ -16390,18 +16390,12 @@ async fn flight_start(
         .as_ref()
         .map(|a| a.id)
         .ok_or_else(|| UiError::new("missing_airline", "bid has no airline relation"))?;
-    let aircraft_id = bid
-        .flight
-        .simbrief
-        .as_ref()
-        .map(|sb| sb.aircraft_id)
-        .flatten()
-        .ok_or_else(|| {
-            UiError::new(
-                "missing_aircraft",
-                "no aircraft on this bid — please prepare a SimBrief OFP first",
-            )
-        })?;
+    let aircraft_id = bid_flugzeug_id(&bid).ok_or_else(|| {
+        UiError::new(
+            "missing_aircraft",
+            "no aircraft on this bid — please prepare a SimBrief OFP first",
+        )
+    })?;
 
     // ---- Aircraft-mismatch gate (spec §7) ----
     // Compare the aircraft type the bid expects (from get_aircraft) to what's
@@ -50127,6 +50121,265 @@ const AUTO_START_FAIL_COOLDOWN_SECS: i64 = 120;
 /// spawns at a distant gate.
 const AUTO_START_PROXIMITY_M: f64 = 5_000.0;
 
+/// Das Flugzeug, mit dem ein Bid geflogen wird. phpVMS haengt es erst mit
+/// dem SimBrief-OFP an den Bid; vorher gibt es keins.
+///
+/// `flight_start` braucht es zwingend, und der Auto-Start-Watcher fragt
+/// genau diese Stelle, bevor er feuert. Beide lesen hier, damit sie nicht
+/// auseinanderlaufen koennen. Vorher feuerte der Watcher Bids ohne OFP,
+/// `flight_start` lehnte mit `missing_aircraft` ab, und nach 120 s Pause
+/// ging es von vorn (21.09.2026, Pilot 22: dreimal an einem Nachmittag,
+/// 377 GlitchTip-Meldungen seit Juni).
+fn bid_flugzeug_id(bid: &Bid) -> Option<i64> {
+    bid.flight.simbrief.as_ref().and_then(|sb| sb.aircraft_id)
+}
+
+/// Laeuft fuer diesen Bid noch die Pause nach einem gescheiterten
+/// Auto-Start? Dann `(Restsekunden, Fehlercode des letzten Versuchs)`.
+fn auto_start_pause_rest(
+    bid_id: i64,
+    fehlschlag: Option<&(DateTime<Utc>, i64, String)>,
+    jetzt: DateTime<Utc>,
+) -> Option<(i64, String)> {
+    let (am, fbid, code) = fehlschlag?;
+    if *fbid != bid_id {
+        return None;
+    }
+    let rest = AUTO_START_FAIL_COOLDOWN_SECS - (jetzt - *am).num_seconds();
+    (rest > 0).then(|| (rest, code.clone()))
+}
+
+/// Was der Watcher in einem Tick ueber die Bids erfahren hat, die er NICHT
+/// gestartet hat. Daraus waehlt `auto_start_hinweis` den einen Hinweis.
+#[derive(Debug, Default)]
+struct AutoStartBeobachtung {
+    /// (Flugnummer, erwartete ICAO, Sim-ICAO): am Platz, Typ passt nicht.
+    typ_passt_nicht: Option<(String, String, String)>,
+    /// Flugnummer eines Bids am Platz, an dem noch kein Flugzeug haengt.
+    ohne_ofp: Option<String>,
+    /// (Bid, Restsekunden, Fehlercode): Pause nach gescheitertem Versuch.
+    pause: Option<(i64, i64, String)>,
+    /// Bid, der in dieser Parkphase schon gestartet wurde.
+    schon_gestartet: Option<i64>,
+    /// Naechster Abflughafen in nm.
+    naechster_nm: Option<f64>,
+}
+
+/// Der eine Hinweis `(Code, Titel, Text)`, den der Pilot sieht, wenn der
+/// Watcher nicht gefeuert hat — vom konkretesten Grund zum allgemeinsten.
+/// Die Codes sind zugleich die Schluessel `bids.auto_start_skip.<code>`
+/// im Banner.
+fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, String) {
+    if let Some((flug, erwartet, sim)) = &b.typ_passt_nicht {
+        return (
+            "aircraft_mismatch",
+            "Auto-Start: Flugzeug passt nicht",
+            format!(
+                "Bid {flug} erwartet {erwartet}, im Sim ist {sim} geladen. \
+                 Auto-Start greift hier nicht — bitte manuell „Trotzdem starten\" \
+                 (Wetlease) oder das passende Flugzeug laden. Tipp: passt der Typ \
+                 eigentlich (nur anderer Name)? Dann fehlt ein Aircraft-Type-Alias \
+                 auf dem VPS."
+            ),
+        );
+    }
+    if let Some(flug) = &b.ohne_ofp {
+        return (
+            "ofp_missing",
+            "Auto-Start: wartet auf SimBrief-OFP",
+            format!(
+                "Bid {flug} hat noch kein Flugzeug — phpVMS haengt es erst mit dem \
+                 SimBrief-OFP an. Sobald das OFP erstellt ist, startet der Flug von selbst."
+            ),
+        );
+    }
+    if let Some((bid, rest, code)) = &b.pause {
+        return (
+            "retry_pending",
+            "Auto-Start: neuer Versuch gleich",
+            format!(
+                "Der letzte Start von Bid {bid} scheiterte ({code}). Neuer Versuch in \
+                 {rest} s — oder manuell „Flug starten\"."
+            ),
+        );
+    }
+    if let Some(bid) = b.schon_gestartet {
+        return (
+            "bid_already_started",
+            "Auto-Start: kein Match",
+            format!(
+                "Bid {bid} wurde diese Session schon mal auto-gestartet. \
+                 Neu-Starten via Manual-Toggle oder anderem Bid."
+            ),
+        );
+    }
+    let abstand = b
+        .naechster_nm
+        .map(|nm| format!("{:.1} nm zum naechsten Departure-Airport", nm))
+        .unwrap_or_else(|| "kein Departure-Airport in Reichweite".to_string());
+    (
+        "no_bid_match",
+        "Auto-Start: kein Match",
+        format!(
+            "Kein Bid passt zur aktuellen Position ({abstand}). Auto-Start \
+             greift nur am Stand des Departure-Airports."
+        ),
+    )
+}
+
+#[cfg(test)]
+mod auto_start_vorpruefung_tests {
+    use super::*;
+
+    fn bid(simbrief: &str) -> Bid {
+        serde_json::from_str(&format!(
+            r#"{{"id": 5719, "user_id": 22, "flight_id": "f1",
+                "flight": {{"id": "f1", "flight_number": "219",
+                  "dpt_airport_id": "TNCM", "arr_airport_id": "TFFG"{simbrief}}}}}"#
+        ))
+        .expect("Bid-JSON")
+    }
+
+    /// Der Fall vom 21.09.: Bid gebucht, OFP noch nicht fertig.
+    #[test]
+    fn bid_ohne_ofp_hat_kein_flugzeug() {
+        assert_eq!(bid_flugzeug_id(&bid("")), None);
+        assert_eq!(
+            bid_flugzeug_id(&bid(r#", "simbrief": {"id": "sb1"}"#)),
+            None,
+            "OFP-Eintrag ohne aircraft_id ist ebenfalls kein Flugzeug"
+        );
+        assert_eq!(
+            bid_flugzeug_id(&bid(r#", "simbrief": {"id": "sb1", "aircraft_id": 1046}"#)),
+            Some(1046)
+        );
+    }
+
+    #[test]
+    fn pause_gilt_nur_fuer_den_gescheiterten_bid_und_nur_120_s() {
+        let jetzt = Utc::now();
+        let f = (
+            jetzt - chrono::Duration::seconds(20),
+            5719,
+            "not_at_departure".to_string(),
+        );
+        assert_eq!(
+            auto_start_pause_rest(5719, Some(&f), jetzt),
+            Some((
+                AUTO_START_FAIL_COOLDOWN_SECS - 20,
+                "not_at_departure".to_string()
+            ))
+        );
+        assert_eq!(auto_start_pause_rest(5720, Some(&f), jetzt), None);
+        assert_eq!(auto_start_pause_rest(5719, None, jetzt), None);
+        let alt = (
+            jetzt - chrono::Duration::seconds(AUTO_START_FAIL_COOLDOWN_SECS),
+            5719,
+            "x".to_string(),
+        );
+        assert_eq!(auto_start_pause_rest(5719, Some(&alt), jetzt), None);
+    }
+
+    #[test]
+    fn ohne_ofp_sagt_worauf_gewartet_wird() {
+        let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+            ohne_ofp: Some("219".into()),
+            naechster_nm: Some(0.2),
+            ..Default::default()
+        });
+        assert_eq!(code, "ofp_missing");
+        assert!(titel.contains("SimBrief-OFP"));
+        assert!(text.contains("Bid 219"), "{text}");
+    }
+
+    /// Frueher: „Bid ? wurde diese Session schon mal auto-gestartet" —
+    /// waehrend in Wahrheit die Pause nach einem Fehler lief.
+    #[test]
+    fn pause_nennt_bid_rest_und_fehler_statt_fragezeichen() {
+        let (code, _, text) = auto_start_hinweis(&AutoStartBeobachtung {
+            pause: Some((5719, 95, "not_at_departure".into())),
+            ..Default::default()
+        });
+        assert_eq!(code, "retry_pending");
+        assert!(text.contains("5719") && text.contains("95 s"), "{text}");
+        assert!(text.contains("not_at_departure"), "{text}");
+        assert!(!text.contains('?'), "{text}");
+    }
+
+    #[test]
+    fn konkretester_grund_gewinnt() {
+        let alles = AutoStartBeobachtung {
+            typ_passt_nicht: Some(("219".into(), "C24R".into(), "B738".into())),
+            ohne_ofp: Some("220".into()),
+            pause: Some((1, 10, "x".into())),
+            schon_gestartet: Some(2),
+            naechster_nm: Some(0.1),
+        };
+        assert_eq!(auto_start_hinweis(&alles).0, "aircraft_mismatch");
+        let ohne_typ = AutoStartBeobachtung {
+            typ_passt_nicht: None,
+            ..alles
+        };
+        assert_eq!(auto_start_hinweis(&ohne_typ).0, "ofp_missing");
+        let nur_pause = AutoStartBeobachtung {
+            pause: Some((1, 10, "x".into())),
+            schon_gestartet: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(auto_start_hinweis(&nur_pause).0, "retry_pending");
+        let (code, _, text) = auto_start_hinweis(&AutoStartBeobachtung {
+            naechster_nm: Some(12.34),
+            ..Default::default()
+        });
+        assert_eq!(code, "no_bid_match");
+        assert!(text.contains("12.3 nm"), "{text}");
+    }
+
+    /// Jeder Code, den `auto_start_hinweis` liefern kann, braucht einen
+    /// Banner-Text in allen drei Sprachen — sonst zeigt das Banner nur den
+    /// allgemeinen Ersatztext. Die Codes kommen aus der Funktion selbst,
+    /// nicht aus einer Liste im Test.
+    #[test]
+    fn jeder_hinweis_code_hat_einen_banner_text() {
+        let faelle = [
+            AutoStartBeobachtung {
+                typ_passt_nicht: Some(("1".into(), "A".into(), "B".into())),
+                ..Default::default()
+            },
+            AutoStartBeobachtung {
+                ohne_ofp: Some("1".into()),
+                ..Default::default()
+            },
+            AutoStartBeobachtung {
+                pause: Some((1, 1, "x".into())),
+                ..Default::default()
+            },
+            AutoStartBeobachtung {
+                schon_gestartet: Some(1),
+                ..Default::default()
+            },
+            AutoStartBeobachtung::default(),
+        ];
+        let codes: std::collections::BTreeSet<&str> =
+            faelle.iter().map(|b| auto_start_hinweis(b).0).collect();
+        assert_eq!(codes.len(), faelle.len(), "jeder Fall eigener Code");
+        for (sprache, json) in [
+            ("de", include_str!("../../src/locales/de/common.json")),
+            ("en", include_str!("../../src/locales/en/common.json")),
+            ("it", include_str!("../../src/locales/it/common.json")),
+        ] {
+            let v: serde_json::Value = serde_json::from_str(json).expect("Locale-JSON");
+            for code in &codes {
+                let text = v["bids"]["auto_start_skip"][*code].as_str().unwrap_or("");
+                assert!(
+                    !text.trim().is_empty(),
+                    "{sprache}: bids.auto_start_skip.{code} fehlt"
+                );
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn auto_start_get_enabled(state: tauri::State<'_, AppState>) -> bool {
     state.auto_start_enabled.load(Ordering::Relaxed)
@@ -50499,35 +50752,28 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 let g = state.auto_start_last_bid_id.lock().unwrap();
                 *g
             };
-            let mut any_match_attempt = false;
-            let mut closest_nm: Option<f64> = None;
             let mut fired = false;
-            // v0.13.16 (Option C): falls ein Bid in Reichweite + warm ist,
-            // aber der Flugzeug-TYP nicht passt, merken wir das hier für den
-            // Post-Loop-Hint (statt blind flight_start zu feuern). Tuple =
-            // (flight_number, erwartete ICAO, Sim-ICAO).
-            let mut mismatch_info: Option<(String, String, String)> = None;
+            // Was dieser Tick über die nicht gestarteten Bids erfährt; daraus
+            // wählt `auto_start_hinweis` nach der Schleife den einen Hinweis.
+            let mut beobachtung = AutoStartBeobachtung::default();
             for bid in &bids {
                 if Some(bid.id) == last_bid {
+                    beobachtung.schon_gestartet = Some(bid.id);
                     continue;
                 }
                 // v0.15.13: Fehler-Cooldown. Ist dieser Bid kürzlich an
-                // flight_start gescheitert (missing_aircraft / flight_already_active
+                // flight_start gescheitert (not_at_departure / flight_already_active
                 // / …), feuern wir ihn AUTO_START_FAIL_COOLDOWN_SECS lang nicht
-                // erneut — sonst Retry-Sturm alle 3 s (GlitchTip #10). Wie das
-                // last_bid-Skip behandelt: zählt nicht als Match-Versuch, damit
-                // der Post-Loop-Hint nicht fälschlich „kein Match" meldet.
-                {
+                // erneut — sonst Retry-Sturm alle 3 s (GlitchTip #10). Der Hinweis
+                // nennt Bid, Restzeit und Fehler (vorher: „Bid ? schon gestartet").
+                let pause = {
                     let g = state.auto_start_fail.lock().unwrap();
-                    if let Some((at, fbid, _code)) = g.as_ref() {
-                        if *fbid == bid.id
-                            && (Utc::now() - *at).num_seconds() < AUTO_START_FAIL_COOLDOWN_SECS
-                        {
-                            continue;
-                        }
-                    }
+                    auto_start_pause_rest(bid.id, g.as_ref(), Utc::now())
+                };
+                if let Some((rest, code)) = pause {
+                    beobachtung.pause = Some((bid.id, rest, code));
+                    continue;
                 }
-                any_match_attempt = true;
                 // v0.19.3: the departure airport's coordinates as phpVMS knows
                 // them — the fallback for the thousands of fields the embedded
                 // runway table has no threshold geometry for (see
@@ -50567,7 +50813,8 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 match distance_to_airport_any_source(&dpt_icao, &snap, phpvms_pos) {
                     Some(m) => {
                         let dist_nm = m / 1852.0;
-                        closest_nm = Some(closest_nm.map_or(dist_nm, |c| c.min(dist_nm)));
+                        beobachtung.naechster_nm =
+                            Some(beobachtung.naechster_nm.map_or(dist_nm, |c| c.min(dist_nm)));
                     }
                     None => {
                         // No geometry from the runway table AND none from
@@ -50596,6 +50843,17 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 if !bid_matches_current_state(bid, &snap, phpvms_pos) {
                     continue;
                 }
+                // Am Platz, aber noch ohne SimBrief-OFP: phpVMS hat dem Bid
+                // noch kein Flugzeug zugeordnet, und `flight_start` würde mit
+                // `missing_aircraft` ablehnen. Nicht feuern, nicht claimen,
+                // keine Pause — die Bids kommen jeden Tick frisch, der Start
+                // folgt also wenige Sekunden nach dem OFP. Scheitert es doch
+                // (Vorabprüfung und flight_start teilen `bid_flugzeug_id`, das
+                // sollte nicht vorkommen), greift der Fehlerpfad unten wie bisher.
+                let Some(ac_id) = bid_flugzeug_id(bid) else {
+                    beobachtung.ohne_ofp = Some(bid.flight.flight_number.clone());
+                    continue;
+                };
                 // v0.13.16 (Option C): alias-bewusster Aircraft-Typ-Vorabcheck
                 // BEVOR wir feuern. Vorher feuerte der Watcher blind
                 // flight_start; bei Aircraft-Mismatch (z.B. Bid E55P vs Sim
@@ -50612,37 +50870,29 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 // überspringt korrekt, Lock bleibt frei fürs manuelle
                 // Override. get_aircraft nur hier (Bid in Reichweite + warm)
                 // und pro aircraft_id gecacht → kein Per-Tick-API-Spam.
-                let expected_icao: Option<String> = match bid
-                    .flight
-                    .simbrief
-                    .as_ref()
-                    .and_then(|sb| sb.aircraft_id)
-                {
-                    Some(ac_id) => match expected_icao_cache.get(&ac_id) {
-                        Some(cached) => cached.clone(),
-                        None => match client.get_aircraft(ac_id).await {
-                            Ok(ac) => {
-                                let v = ac
-                                    .icao
-                                    .as_ref()
-                                    .map(|s| s.trim().to_uppercase())
-                                    .filter(|s| !s.is_empty());
-                                expected_icao_cache.insert(ac_id, v.clone());
-                                v
-                            }
-                            // Auflösung fehlgeschlagen → NICHT cachen (nächster
-                            // Tick versucht's erneut), für jetzt permissiv.
-                            Err(e) => {
-                                tracing::debug!(
-                                    ?e,
-                                    ac_id,
-                                    "auto-start: get_aircraft für Typ-Vorabcheck fehlgeschlagen — permissiv"
-                                );
-                                None
-                            }
-                        },
+                let expected_icao: Option<String> = match expected_icao_cache.get(&ac_id) {
+                    Some(cached) => cached.clone(),
+                    None => match client.get_aircraft(ac_id).await {
+                        Ok(ac) => {
+                            let v = ac
+                                .icao
+                                .as_ref()
+                                .map(|s| s.trim().to_uppercase())
+                                .filter(|s| !s.is_empty());
+                            expected_icao_cache.insert(ac_id, v.clone());
+                            v
+                        }
+                        // Auflösung fehlgeschlagen → NICHT cachen (nächster
+                        // Tick versucht's erneut), für jetzt permissiv.
+                        Err(e) => {
+                            tracing::debug!(
+                                ?e,
+                                ac_id,
+                                "auto-start: get_aircraft für Typ-Vorabcheck fehlgeschlagen — permissiv"
+                            );
+                            None
+                        }
                     },
-                    None => None,
                 };
                 let sim_icao = snap.aircraft_icao.as_deref().and_then(clean_atc_model);
                 let sim_title = snap.aircraft_title.as_deref().unwrap_or("");
@@ -50661,7 +50911,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     // Post-Loop-Hint meldet es (gedrosselt). Pilot übersteuert
                     // manuell („Trotzdem starten") oder lädt das richtige
                     // Flugzeug → nächster Tick matcht.
-                    mismatch_info = Some((
+                    beobachtung.typ_passt_nicht = Some((
                         bid.flight.flight_number.clone(),
                         expected_icao.clone().unwrap_or_else(|| "?".to_string()),
                         sim_icao.clone().unwrap_or_else(|| "?".to_string()),
@@ -50747,49 +50997,10 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // Departure-Airport. Vorher silent.
             if !fired {
                 let now = Utc::now();
-                // v0.13.16 (Option C): ein Typ-Mismatch (Bid in Reichweite +
-                // warm, aber Flugzeug passt nicht) hat Vorrang vor dem
-                // generischen „kein Match"-Hint — sonst stünde irreführend
-                // „Kein Bid passt zur Position", obwohl die Position passt.
-                let (reason_code, title, reason_msg) =
-                    if let Some((flight_no, exp, act)) = &mismatch_info {
-                        (
-                            "aircraft_mismatch",
-                            "Auto-Start: Flugzeug passt nicht",
-                            format!(
-                                "Bid {flight_no} erwartet {exp}, im Sim ist {act} geladen. \
-                             Auto-Start greift hier nicht — bitte manuell „Trotzdem starten\" \
-                             (Wetlease) oder das passende Flugzeug laden. Tipp: passt der Typ \
-                             eigentlich (nur anderer Name)? Dann fehlt ein Aircraft-Type-Alias \
-                             auf dem VPS.",
-                            ),
-                        )
-                    } else if !any_match_attempt {
-                        // Bid-Liste war zwar nicht leer, aber das einzige Bid
-                        // ist bereits durchs last_bid_id-Lock blockiert.
-                        (
-                            "bid_already_started",
-                            "Auto-Start: kein Match",
-                            format!(
-                                "Bid {} wurde diese Session schon mal auto-gestartet. \
-                             Neu-Starten via Manual-Toggle oder anderem Bid.",
-                                last_bid.map_or("?".to_string(), |id| id.to_string())
-                            ),
-                        )
-                    } else {
-                        let dist_text = closest_nm
-                            .map(|nm| format!("{:.1} nm zum naechsten Departure-Airport", nm))
-                            .unwrap_or_else(|| "kein Departure-Airport in Reichweite".to_string());
-                        (
-                            "no_bid_match",
-                            "Auto-Start: kein Match",
-                            format!(
-                                "Kein Bid passt zur aktuellen Position ({}). Auto-Start \
-                             greift nur am Stand des Departure-Airports.",
-                                dist_text
-                            ),
-                        )
-                    };
+                // Vom konkretesten Grund zum allgemeinsten (Typ passt nicht →
+                // OFP fehlt → Pause → schon gestartet → kein Bid am Platz),
+                // siehe `auto_start_hinweis`.
+                let (reason_code, title, reason_msg) = auto_start_hinweis(&beobachtung);
                 let should_log = {
                     let mut g = state.auto_start_skip_reason.lock().unwrap();
                     let log_it = g.as_ref().map_or(true, |(at, code)| {

@@ -1874,7 +1874,9 @@
       "no_bids": "Nessun bid prenotato trovato. Prenota prima un volo sul sito.",
       "no_bid_match": "Nessun bid corrisponde alla posizione attuale. L'auto-start parte solo allo stand dell'aeroporto di partenza.",
       "aircraft_mismatch": "L'aereo caricato non corrisponde al bid. Carica l'aereo corretto — o aggiungi un alias aeromobile se è lo stesso tipo con un altro nome.",
-      "bid_already_started": "Questo bid è già stato avviato automaticamente in questa sessione. Riavvia col toggle manuale o scegli un altro bid."
+      "bid_already_started": "Questo bid è già stato avviato automaticamente in questa sessione. Riavvia col toggle manuale o scegli un altro bid.",
+      "ofp_missing": "L'auto-start attende l'OFP SimBrief: al bid non è ancora assegnato un aereo. Appena l'OFP è creato, il volo parte da solo.",
+      "retry_pending": "L'ultimo auto-start è fallito — nuovo tentativo a breve. Il motivo è nel registro attività. Oppure usa „Avvia volo\" manuale."
     },
     "open_flight_page": "Apri pagina volo",
     "open_ofp": "Apri OFP / briefing",
