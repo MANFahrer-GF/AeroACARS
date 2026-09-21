@@ -61,6 +61,10 @@ pub struct VdgsStand {
     pub regulierung: String,
     /// Bahn und Abflugstrecke, wie die Gegenseite sie fuehrt ("24L/OLOXO3Q").
     pub rwy_sid: String,
+    /// Tatsaechliche Off-Block-Zeit, sobald die Gegenseite den Flug in
+    /// Bewegung sieht ("Detected in movement"). Ab dann zaehlt das
+    /// Anlassfenster nicht mehr — wer rollt, hat es nicht verpasst.
+    pub aobt: String,
 }
 
 /// Rohantwort. Nur die Felder, die das Band braucht; alles andere bleibt
@@ -78,6 +82,8 @@ struct ApiFlug {
     tobt: String,
     #[serde(default)]
     ctot: String,
+    #[serde(default)]
+    aobt: String,
     #[serde(default)]
     taxi: Option<u32>,
     #[serde(default, rename = "cdmSts")]
@@ -150,6 +156,7 @@ fn aufbereiten(f: &ApiFlug) -> VdgsStand {
         cdm_sts: f.cdm_sts.trim().to_uppercase(),
         regulierung: f.atfcm_data.most_penalising_regulation.trim().to_string(),
         rwy_sid: f.cdm_data.dep_info.trim().to_uppercase(),
+        aobt: zeit(&f.aobt),
     }
 }
 
@@ -418,6 +425,7 @@ mod tests {
             cdm_sts: String::new(),
             regulierung: String::new(),
             rwy_sid: String::new(),
+            aobt: String::new(),
         }
     }
 
@@ -426,6 +434,25 @@ mod tests {
         assert_eq!(zeit("1546"), "15:46");
         assert_eq!(zeit("154600"), "15:46");
         assert_eq!(zeit(" 0905 "), "09:05");
+    }
+
+    /// Echte Antwort (gekuerzt) fuer AIB4TK EDDC→LEPA, 21.09.2026: kein
+    /// CDM-Platz (`isCdm:false`), TOBT nur oben, keine TSAT, Off-Block
+    /// erkannt. Genau so muss das Band sie sehen.
+    #[test]
+    fn nicht_cdm_platz_mit_off_block_wird_richtig_gelesen() {
+        let s = aus_rumpf(
+            br#"{"callsign":"AIB4TK","departure":"EDDC","eobt":"2045","tobt":"2045",
+            "taxi":10,"ctot":"","aobt":"2042","cdmSts":"COMPLY","isCdm":false,
+            "cdmData":{"tobt":"","tsat":"","ttot":"","ctot":"","depInfo":"","reqTobt":"2045"}}"#,
+        )
+        .expect("lesbar")
+        .expect("ein Flug");
+        assert_eq!(s.tobt, "20:45");
+        assert_eq!(s.tsat, "", "kein CDM-Platz, keine TSAT");
+        assert_eq!(s.aobt, "20:42");
+        assert_eq!(s.taxi_min, Some(10));
+        assert_eq!(s.cdm_sts, "COMPLY");
     }
 
     #[test]

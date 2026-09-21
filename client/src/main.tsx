@@ -111,6 +111,7 @@ function VdgsVorschau() {
     cdm_sts: "",
     regulierung: "",
     rwy_sid: "",
+    aobt: "",
   };
   const jetzt = new Date();
   const inMin = (n: number) => {
@@ -145,6 +146,33 @@ function VdgsVorschau() {
         tsat: "",
         taxi_min: 14,
         cdm_sts: "COMPLY",
+      },
+    ],
+    [
+      "Anlassfenster verpasst — kein CDM-Platz (wie EDDC)",
+      {
+        ...leer,
+        callsign: "AIB4TK",
+        departure: "EDDC",
+        eobt: inMin(-8),
+        tobt: inMin(-8),
+        tsat: "",
+        taxi_min: 10,
+        cdm_sts: "COMPLY",
+      },
+    ],
+    [
+      "Off-Block — Fenster erfüllt",
+      {
+        ...leer,
+        callsign: "AIB4TK",
+        departure: "EDDC",
+        eobt: inMin(-8),
+        tobt: inMin(-8),
+        tsat: "",
+        taxi_min: 10,
+        cdm_sts: "COMPLY",
+        aobt: inMin(-3),
       },
     ],
     [

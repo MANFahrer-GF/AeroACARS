@@ -84,8 +84,68 @@
 }
 .vdgs__rest {
   margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-1);
   font-size: var(--fs-300);
   color: var(--vdgs-leise);
+}
+/* Anlassfenster bzw. Off-Block unter dem Countdown — gleiche Farbe wie
+   der Zustand, damit „jetzt anlassen" auf einen Blick lesbar ist. */
+.vdgs__fenster {
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-mono);
+  color: var(--vdgs-an);
+}
+.vdgs--frei .vdgs__fenster {
+  color: var(--vdgs-frei);
+}
+.vdgs--achtung .vdgs__fenster {
+  color: var(--vdgs-halt);
+}
+
+/* „TOBT ÄNDERN" im Kopf: immer da, aber leise — die Hauptzahl bleibt
+   das Wichtigste. Eigene Hover-Regel, sonst setzt ein globales
+   button:hover dunkel auf dunkel (Hausfalle Button-Hover-Spezifitaet). */
+.vdgs__aendern {
+  padding: 0 var(--sp-2);
+  background: transparent;
+  border: 1px solid var(--vdgs-linie);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-mono);
+  color: var(--vdgs-leise);
+  cursor: pointer;
+}
+.vdgs .vdgs__aendern:hover,
+.vdgs .vdgs__aendern:focus-visible {
+  background: rgba(255, 176, 0, 0.14);
+  border-color: var(--vdgs-an);
+  color: var(--vdgs-an);
+}
+
+/* Fenster verpasst: eine klare Aufgabe statt nur roter Farbe. */
+.vdgs__verpasst {
+  align-self: stretch;
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: 1px solid var(--vdgs-halt);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-300);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-mono);
+  color: var(--vdgs-halt);
+  text-align: left;
+  cursor: pointer;
+}
+.vdgs .vdgs__verpasst:hover,
+.vdgs .vdgs__verpasst:focus-visible {
+  background: rgba(255, 95, 82, 0.14);
+  color: var(--vdgs-halt);
+  border-color: var(--vdgs-halt);
 }
 
 /* Die uebrigen Zeiten, vier Spalten, gleich breit. */

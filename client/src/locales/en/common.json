@@ -2533,6 +2533,11 @@
     "knopf": "VATSIM CDM",
     "knopf_titel": "Open your departure sequence on VATSIM (TOBT, TSAT, CTOT)",
     "band": {
+      "tobt_aendern": "CHANGE TOBT",
+      "tobt_aendern_titel": "Change TOBT on vats.im/vdgs",
+      "off_block": "Off-block {{zeit}}",
+      "anlassfenster": "Start-up {{von}}–{{bis}}",
+      "verpasst": "Start-up window missed — set a new TOBT",
       "in_min": "in {{n}} min",
       "vor_min": "{{n}} min ago",
       "tobt_setzen": "SET TOBT",

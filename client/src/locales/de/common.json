@@ -2533,6 +2533,11 @@
     "knopf": "VATSIM CDM",
     "knopf_titel": "Abflugfolge auf VATSIM öffnen (TOBT, TSAT, CTOT)",
     "band": {
+      "tobt_aendern": "TOBT ÄNDERN",
+      "tobt_aendern_titel": "TOBT auf vats.im/vdgs ändern",
+      "off_block": "Off-Block {{zeit}}",
+      "anlassfenster": "Anlassen {{von}}–{{bis}}",
+      "verpasst": "Anlassfenster verpasst — neue TOBT setzen",
       "in_min": "in {{n}} min",
       "vor_min": "vor {{n}} min",
       "tobt_setzen": "TOBT SETZEN",

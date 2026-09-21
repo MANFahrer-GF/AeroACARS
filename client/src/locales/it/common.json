@@ -2526,6 +2526,11 @@
     "knopf": "VATSIM CDM",
     "knopf_titel": "Apri la sequenza di partenza su VATSIM",
     "band": {
+      "tobt_aendern": "MODIFICA TOBT",
+      "tobt_aendern_titel": "Modifica la TOBT su vats.im/vdgs",
+      "off_block": "Off-block {{zeit}}",
+      "anlassfenster": "Avviamento {{von}}–{{bis}}",
+      "verpasst": "Finestra di avviamento persa — imposta una nuova TOBT",
       "in_min": "tra {{n}} min",
       "vor_min": "{{n}} min fa",
       "tobt_setzen": "IMPOSTA TOBT",

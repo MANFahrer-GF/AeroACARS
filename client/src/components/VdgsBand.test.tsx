@@ -13,9 +13,9 @@ import { render, screen, cleanup, act, fireEvent, waitFor } from "@testing-libra
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (_k: string, fallback?: unknown, opts?: { n?: number }) =>
+    t: (_k: string, fallback?: unknown, opts?: Record<string, unknown>) =>
       typeof fallback === "string"
-        ? fallback.replace("{{n}}", String(opts?.n ?? ""))
+        ? fallback.replace(/\{\{(\w+)\}\}/g, (_m, k: string) => String(opts?.[k] ?? ""))
         : _k,
   }),
 }));
@@ -31,7 +31,9 @@ import deCommon from "../locales/de/common.json";
 import {
   VdgsPlatte,
   ampel,
+  anlassfenster,
   minutenBis,
+  zeitPlus,
   useVdgsStand,
   type VdgsStand,
 } from "./VdgsBand";
@@ -47,6 +49,7 @@ const STAND: VdgsStand = {
   cdm_sts: "COMPLY",
   regulierung: "",
   rwy_sid: "24L/OLOXO3Q",
+  aobt: "",
 };
 
 const um = (hhmm: string) => new Date(`2026-09-20T${hhmm}:00Z`);
@@ -357,5 +360,116 @@ describe("useVdgsStand", () => {
       vi.advanceTimersByTime(60_000);
     });
     expect(await screen.findByText("leer")).toBeTruthy();
+  });
+});
+
+/** AIB4TK EDDC→LEPA, 21.09.2026: kein CDM-Platz, also keine TSAT —
+ *  die Seite von VATSIM Spain zeigte dazu „Suggested startup window
+ *  2040Z to 2051Z". */
+const EDDC: VdgsStand = {
+  ...STAND,
+  callsign: "AIB4TK",
+  departure: "EDDC",
+  eobt: "20:45",
+  tobt: "20:45",
+  tsat: "",
+  taxi_min: 10,
+  rwy_sid: "",
+};
+
+describe("Anlassfenster (VATSIM A-CDM: TSAT -5/+5, ab +6 verpasst)", () => {
+  it("rechnet das Fenster wie die Seite von VATSIM Spain", () => {
+    expect(anlassfenster("20:45")).toEqual(["20:40", "20:51"]);
+    expect(anlassfenster("--:--")).toBeNull();
+  });
+
+  it("rechnet über Mitternacht", () => {
+    expect(zeitPlus("23:58", 6)).toBe("00:04");
+    expect(zeitPlus("00:02", -5)).toBe("23:57");
+  });
+
+  it("ist grün von -5 bis +5 und ab der sechsten Minute rot", () => {
+    // Vorher reichte grün bis +10 — dann stand „anlassen" da, obwohl der
+    // Flug laut CDM schon aus der Folge war.
+    expect(ampel(STAND, um("15:40"))).toBe("warten");
+    expect(ampel(STAND, um("15:41"))).toBe("frei");
+    expect(ampel(STAND, um("15:51"))).toBe("frei");
+    expect(ampel(STAND, um("15:52"))).toBe("achtung");
+  });
+
+  it("gilt ohne TSAT genauso für die TOBT", () => {
+    expect(ampel(EDDC, um("20:50"))).toBe("frei");
+    expect(ampel(EDDC, um("20:52"))).toBe("achtung");
+  });
+
+  it("wird nicht rot, wenn der Flug schon off-block ist", () => {
+    expect(ampel({ ...EDDC, aobt: "20:42" }, um("20:53"))).toBe("frei");
+  });
+
+  it("zeigt das Fenster unter dem Countdown", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(um("20:17"));
+    render(<VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: EDDC }} />);
+    expect(screen.getByTestId("vdgs-fenster").textContent).toBe("Anlassen 20:40–20:51");
+    expect(screen.queryByTestId("vdgs-verpasst")).toBeNull();
+  });
+
+  it("zeigt nach dem Off-Block die Off-Block-Zeit statt des Fensters", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(um("20:53"));
+    render(<VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: { ...EDDC, aobt: "20:42" } }} />);
+    expect(screen.getByTestId("vdgs-offblock").textContent).toBe("Off-Block 20:42");
+    expect(screen.queryByTestId("vdgs-fenster")).toBeNull();
+    expect(screen.queryByTestId("vdgs-verpasst")).toBeNull();
+  });
+
+  it("fordert nach verpasstem Fenster eine neue TOBT und führt dorthin", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(um("20:52"));
+    render(<VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: EDDC }} />);
+    invoke.mockImplementation(() => Promise.resolve(null));
+    const knopf = screen.getByTestId("vdgs-verpasst");
+    expect(knopf.textContent).toBe("Anlassfenster verpasst — neue TOBT setzen");
+    knopf.click();
+    expect(invoke).toHaveBeenCalledWith("vdgs_fenster_oeffnen");
+  });
+});
+
+describe("Verpasst ist eine Frage der Zeit", () => {
+  it("meldet bei FLS-NRA mit TSAT weit voraus KEIN verpasstes Fenster", () => {
+    // Am Bild gefunden (Vorschau, 21.09.2026): Der Hinweis hing an der
+    // roten Farbe — und rot ist das Band auch bei Regulierung.
+    vi.useFakeTimers();
+    vi.setSystemTime(um("15:00"));
+    render(
+      <VdgsPlatte antwort={{ gefragt_als: "GSG7L", stand: { ...STAND, cdm_sts: "FLS-NRA" } }} />,
+    );
+    expect(screen.getByTestId("vdgs-band").className).toContain("vdgs--achtung");
+    expect(screen.queryByTestId("vdgs-verpasst")).toBeNull();
+  });
+});
+
+describe("TOBT ändern", () => {
+  it("ist auch mit gesetzter TOBT erreichbar", () => {
+    // Thomas, 21.09.2026: Mit gesetzter TOBT gab es im Band keinen Weg
+    // mehr zu vats.im/vdgs — den Link musste er selbst suchen.
+    render(<VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: EDDC }} />);
+    invoke.mockImplementation(() => Promise.resolve(null));
+    const knopf = screen.getByTestId("vdgs-tobt-aendern");
+    expect(knopf.textContent).toBe("TOBT ÄNDERN");
+    knopf.click();
+    expect(invoke).toHaveBeenCalledWith("vdgs_fenster_oeffnen");
+  });
+
+  it("verdoppelt ohne TOBT nicht den großen Auftrag", () => {
+    render(<VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: { ...EDDC, tobt: "" } }} />);
+    expect(screen.queryByTestId("vdgs-tobt-aendern")).toBeNull();
+    expect(screen.getByText("TOBT SETZEN")).toBeTruthy();
+  });
+
+  it("hat die neuen Texte auch in der Sprachdatei", () => {
+    expect(deCommon.cdm.band.tobt_aendern).toBe("TOBT ÄNDERN");
+    expect(deCommon.cdm.band.anlassfenster).toBe("Anlassen {{von}}–{{bis}}");
+    expect(deCommon.cdm.band.verpasst).toContain("neue TOBT");
   });
 });

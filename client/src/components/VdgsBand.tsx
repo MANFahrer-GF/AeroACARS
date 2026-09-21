@@ -48,6 +48,8 @@ export interface VdgsStand {
   cdm_sts: string;
   regulierung: string;
   rwy_sid: string;
+  /** Off-Block laut Gegenseite („Detected in movement"), sonst leer. */
+  aobt: string;
 }
 
 export type Ampel = "frei" | "warten" | "achtung";
@@ -71,17 +73,57 @@ export function minutenBis(zeit: string, jetzt: Date = new Date()): number | nul
   return diff;
 }
 
+/** Anlassfenster um TSAT (bzw. TOBT, wo es keine TSAT gibt): von 5 min
+ *  davor bis 5 min danach. Ab der sechsten Minute gilt der Flug als
+ *  verspätet („Expired", danach SUSP) — VATSIM-UK-A-CDM-Leitfaden. Die
+ *  Seite von VATSIM Spain zeigt dasselbe als „Suggested startup window
+ *  2040Z to 2051Z" bei TOBT 20:45; das Ende ist die erste Minute, die
+ *  nicht mehr dazugehört. So steht es hier auch, damit beide gleich
+ *  aussehen. */
+export const FENSTER_VOR_MIN = 5;
+export const FENSTER_NACH_MIN = 5;
+
+/** `HH:MM` um `delta` Minuten verschoben, über Mitternacht hinweg. */
+export function zeitPlus(zeit: string, delta: number): string | null {
+  const m = /^(\d{2}):(\d{2})$/.exec(zeit.trim());
+  if (!m) return null;
+  const std = Number(m[1]);
+  const min = Number(m[2]);
+  if (std > 23 || min > 59) return null;
+  const t = (((std * 60 + min + delta) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+}
+
+/** `[von, bis]` des Anlassfensters; `bis` ist die erste Minute danach. */
+export function anlassfenster(zeit: string): [string, string] | null {
+  const von = zeitPlus(zeit, -FENSTER_VOR_MIN);
+  const bis = zeitPlus(zeit, FENSTER_NACH_MIN + 1);
+  return von && bis ? [von, bis] : null;
+}
+
 /** Farbe wie am echten Gerät: grün heißt „anlassen", bernstein
  *  „vorbereiten", rot „raus aus der Folge". */
 export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
   const st = stand.cdm_sts.toUpperCase();
   if (st.includes("SUSPEND") || st.includes("NRA")) return "achtung";
-  const rest = minutenBis(stand.tsat || stand.tobt, jetzt);
   // Ohne TOBT ist nichts bestätigt — und ohne Zeitangabe wissen wir
   // schlicht nicht genug, um grün zu zeigen.
   if (!stand.tobt) return "warten";
-  if (rest !== null && rest <= 5 && rest >= -10) return "frei";
+  // Schon off-block: Das Fenster ist erfüllt, rot wäre eine Falschmeldung.
+  if (stand.aobt) return "frei";
+  const rest = minutenBis(stand.tsat || stand.tobt, jetzt);
+  if (rest === null) return "warten";
+  // Ab der sechsten Minute nach TSAT/TOBT: Fenster verpasst.
+  if (rest < -FENSTER_NACH_MIN) return "achtung";
+  if (rest <= FENSTER_VOR_MIN) return "frei";
   return "warten";
+}
+
+/** Öffnet vats.im/vdgs im eigenen Fenster — dort wird die TOBT gesetzt.
+ *  Auf dem Tablet gibt es kein Fenster zu öffnen (die LAN-Brücke lässt
+ *  den Befehl nicht durch); dann passiert schlicht nichts. */
+function vdgsOeffnen() {
+  void invoke("vdgs_fenster_oeffnen").catch(() => {});
 }
 
 /**
@@ -204,6 +246,11 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
   const kopfzahl = hatTsat ? stand.tsat : stand.tobt;
   const kopflabel = hatTsat ? "TSAT" : "TOBT";
   const rest = minutenBis(kopfzahl);
+  const fenster = anlassfenster(kopfzahl);
+  // Verpasst ist eine Frage der ZEIT, nicht der Farbe: Rot ist das Band
+  // auch bei SUSPEND/FLS-NRA, und dort kann die TSAT noch weit vorn liegen.
+  const verpasst =
+    !!stand.tobt && !stand.aobt && rest !== null && rest < -FENSTER_NACH_MIN;
 
   return (
     <div
@@ -230,6 +277,19 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
         <span className="vdgs__platz">{stand.departure}</span>
         {stand.rwy_sid && <span className="vdgs__sid">{stand.rwy_sid}</span>}
         <span className="vdgs__quelle">VDGS</span>
+        {/* Immer erreichbar, nicht nur ohne TOBT: Wer seine TOBT verschieben
+            muss, suchte den Weg dorthin bisher selbst (Thomas, 21.09.2026). */}
+        {stand.tobt && (
+          <button
+            type="button"
+            className="vdgs__aendern"
+            data-testid="vdgs-tobt-aendern"
+            onClick={vdgsOeffnen}
+            title={t("cdm.band.tobt_aendern_titel", "TOBT auf vats.im/vdgs ändern")}
+          >
+            {t("cdm.band.tobt_aendern", "TOBT ÄNDERN")}
+          </button>
+        )}
       </div>
 
       <div className="vdgs__haupt">
@@ -243,12 +303,7 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
           <button
             type="button"
             className="vdgs__auftrag"
-            onClick={() => {
-              // Auf dem Tablet gibt es kein Fenster zu oeffnen (die
-              // LAN-Bruecke laesst den Befehl nicht durch). Dann bleibt
-              // der Text stehen und sagt, wo es geht.
-              void invoke("vdgs_fenster_oeffnen").catch(() => {});
-            }}
+            onClick={vdgsOeffnen}
           >
             <span className="vdgs__auftrag-wort">
               {t("cdm.band.tobt_setzen", "TOBT SETZEN")}
@@ -268,12 +323,42 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
         )}
         {stand.tobt && rest !== null && (
           <div className="vdgs__rest">
-            {rest >= 0
-              ? t("cdm.band.in_min", "in {{n}} min", { n: rest })
-              : t("cdm.band.vor_min", "vor {{n}} min", { n: Math.abs(rest) })}
+            <span>
+              {rest >= 0
+                ? t("cdm.band.in_min", "in {{n}} min", { n: rest })
+                : t("cdm.band.vor_min", "vor {{n}} min", { n: Math.abs(rest) })}
+            </span>
+            {stand.aobt ? (
+              <span className="vdgs__fenster" data-testid="vdgs-offblock">
+                {t("cdm.band.off_block", "Off-Block {{zeit}}", { zeit: stand.aobt })}
+              </span>
+            ) : (
+              fenster && (
+                <span className="vdgs__fenster" data-testid="vdgs-fenster">
+                  {t("cdm.band.anlassfenster", "Anlassen {{von}}–{{bis}}", {
+                    von: fenster[0],
+                    bis: fenster[1],
+                  })}
+                </span>
+              )
+            )}
           </div>
         )}
       </div>
+
+      {/* Fenster verpasst und noch am Stand: Die Folge hat den Flug
+          gleich aus der Planung genommen. Der Weg zurück ist eine neue
+          TOBT — also direkt dorthin. */}
+      {verpasst && (
+        <button
+          type="button"
+          className="vdgs__verpasst"
+          data-testid="vdgs-verpasst"
+          onClick={vdgsOeffnen}
+        >
+          {t("cdm.band.verpasst", "Anlassfenster verpasst — neue TOBT setzen")}
+        </button>
+      )}
 
       <div className="vdgs__reihe">
         <Feld label="EOBT" wert={stand.eobt} />
