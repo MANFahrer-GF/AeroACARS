@@ -151,11 +151,31 @@ enden 11 Sekunden vor dem Start von v1.7.41 — der Fix wirkt, belegt am Zeitste
     Dazu die beiden Faelle aus Codex' vierter Runde: Altersangabe aus dem
     Stoerungs-Hinweis entfernt → rot; `vdgs--alt` entfernt → rot.
 
-- [ ] G7: Externe Abnahme (Codex, ersatzweise Cloud-Prüfer) ohne sperrenden Befund
-  EVIDENCE: pending
+- [x] G7: Externe Abnahme (Codex, ersatzweise Cloud-Prüfer) ohne sperrenden Befund
+  EVIDENCE: Fünf Codex-Runden auf diesem Stand (gpt-5.6-sol, read-only).
+  Letzte Runde am 21.09.2026 auf den Korrektur-Diff 52720e31: „SPERRENDER
+  BEFUND: Nein. Alle fünf Korrekturen beheben den jeweiligen Befund, ohne
+  im geprüften Diff einen neuen Fehler einzuführen."
+  Die Schwellentabelle, die Codex dabei ausrechnete, habe ich unabhängig
+  gegengerechnet (eigener tsx-Lauf gegen sollSinkrateFpm, 8 Geschwindigkeiten)
+  — identische Werte, insbesondere sink1000Hi = −300 ab 160 kt. Ein Prüfer,
+  dessen Zahlen man nicht nachrechnet, ist nur eine zweite Behauptung.
 
-- [ ] A1: v1.7.44 ist veröffentlicht und der Update-Kanal liefert sie aus
-  EVIDENCE: pending
+- [x] A1: v1.7.44 ist veröffentlicht und der Update-Kanal liefert sie aus
+  EVIDENCE: Release veröffentlicht am 21.09.2026 00:40 UTC (draft=false,
+  pre=false). CI-Lauf 35547294814 komplett grün, alle acht Artefakte da:
+  Windows-Installer + .sig, macOS .app.tar.gz + .sig, DMG, beide Plugins,
+  latest.json.
+  Nicht nur das Vorhandensein geprüft, sondern der Kanal selbst: ein Abruf
+  von releases/latest/download/latest.json liefert HTTP 200 und
+  version 1.7.44, alle vier Plattformeinträge mit Signatur. Ein Draft
+  hätte an dieser Stelle 404 gegeben — genau das unterscheidet „gebaut"
+  von „beim Piloten".
+  Server war zuerst dran: Recorder seit 20.09. 22:44 UTC mit dem
+  Pause-Fix aktiv (Neustart 2 s nach dem Schreiben der Datei, Prüfsummen
+  gegen den lokalen Build identisch), Webapp am 21.09. 00:18 UTC
+  ausgerollt — der neue i18n-Schlüssel `wp_wie_geplant` ist im
+  ausgelieferten Bundle nachgewiesen, nicht nur im Quelltext.
 
 <!--
 Q1 braucht `--timeout 1800`: Der Rust-Lauf dauert auf diesem Mac mehrere
