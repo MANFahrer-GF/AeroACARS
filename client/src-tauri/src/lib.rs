@@ -11037,6 +11037,28 @@ const MQTT_KEYRING_PASSWORD: &str = "mqtt-password";
 const MQTT_KEYRING_VA: &str = "mqtt-va";
 const MQTT_KEYRING_PILOT_ID: &str = "mqtt-pilot-id";
 const MQTT_KEYRING_BROKER: &str = "mqtt-broker-url";
+/// phpVMS-PILOTENNUMMER (`profile.pilot_id`) des Kontos, fuer das die
+/// MQTT-Daten provisioniert wurden.
+///
+/// ⚠ Nicht dasselbe wie `MQTT_KEYRING_PILOT_ID`: Der Recorder fuehrt Piloten
+/// unter der phpVMS-BENUTZER-ID (`users.id`), der Client kennt als
+/// `authenticated_pilot_id` die Pilotennummer (`users.pilot_id`). Bei GSG
+/// sind beide ab Benutzer 15 verschieden (Sven M: id 23, Nummer 19). Bis
+/// v1.7.44 wurde trotzdem Recorder-ID gegen Pilotennummer verglichen —
+/// bei 13 von 17 Piloten verwarf die Sitzungs-Wiederherstellung deshalb bei
+/// JEDEM Start die gespeicherten Daten und provisionierte neu, bis die
+/// Anmelde-Bremse des Servers griff (Befund 21.09.2026, Sven M: ganzer Flug
+/// ohne Live-Tracking). Die Zuordnung wird deshalb hier gespeichert und
+/// Nummer gegen Nummer verglichen (`mqtt_cache_gehoert_angemeldetem`).
+const MQTT_KEYRING_PHPVMS_PILOT: &str = "mqtt-phpvms-pilot-nr";
+
+/// Gehoeren die gespeicherten MQTT-Daten zum angemeldeten Konto?
+/// `gespeicherte_nr` ist `MQTT_KEYRING_PHPVMS_PILOT` — fehlt sie (Cache aus
+/// einer Fassung vor diesem Feld), gilt der Cache als NICHT zugeordnet und
+/// es wird einmal neu provisioniert, was die Nummer dann nachtraegt.
+fn mqtt_cache_gehoert_angemeldetem(gespeicherte_nr: Option<&str>, angemeldet: i64) -> bool {
+    gespeicherte_nr.is_some_and(|nr| nr.trim() == angemeldet.to_string())
+}
 
 /// Try to start the MQTT live-tracking publisher.
 ///
@@ -11148,7 +11170,17 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
     // Logout), waere Pilot As alte MQTT-Identitaet fuer Pilot Bs Flug
     // uebernommen worden. Nur verwenden, wenn sie zum aktuellen Account
     // passen oder (Setup-Hook-Fall) noch gar keine Piloten-ID bekannt ist.
-    let cached = cached.filter(|c| aktuelle_pilot_id.is_none_or(|id| c.pilot_id == id.to_string()));
+    //
+    // ⚠ `c.pilot_id` ist die Recorder-ID (phpVMS-Benutzer-ID), die
+    // angemeldete ID die Pilotennummer — verglichen wird deshalb die mit
+    // gespeicherte Pilotennummer (siehe `MQTT_KEYRING_PHPVMS_PILOT`).
+    let cache_pilot_nr = secrets::load_api_key(MQTT_KEYRING_PHPVMS_PILOT)
+        .ok()
+        .flatten();
+    let cached = cached.filter(|_| {
+        aktuelle_pilot_id
+            .is_none_or(|id| mqtt_cache_gehoert_angemeldetem(cache_pilot_nr.as_deref(), id))
+    });
 
     let cfg = if let Some(c) = cached {
         tracing::info!("live-tracking: using cached MQTT credentials");
@@ -11258,6 +11290,15 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
                 store(MQTT_KEYRING_VA, &resp.va_prefix);
                 store(MQTT_KEYRING_PILOT_ID, &resp.pilot_id);
                 store(MQTT_KEYRING_BROKER, &resp.broker_url);
+                // Ohne bekannte Pilotennummer (Setup-Hook vor dem Login)
+                // eine alte Nummer entfernen — sie gehoerte evtl. zu einem
+                // anderen Konto. Die naechste Provisionierung traegt sie nach.
+                match aktuelle_pilot_id {
+                    Some(nr) => store(MQTT_KEYRING_PHPVMS_PILOT, &nr.to_string()),
+                    None => {
+                        let _ = secrets::delete_api_key(MQTT_KEYRING_PHPVMS_PILOT);
+                    }
+                }
             });
         if !geschrieben {
             tracing::warn!(
@@ -11406,12 +11447,61 @@ fn clear_mqtt_credentials_cache() {
         MQTT_KEYRING_VA,
         MQTT_KEYRING_PILOT_ID,
         MQTT_KEYRING_BROKER,
+        MQTT_KEYRING_PHPVMS_PILOT,
     ] {
         // Weiterhin nicht fatal (Logout soll nicht daran scheitern), aber
         // nicht mehr stumm: ein stehengebliebener Eintrag waere sonst nicht
         // diagnostizierbar. Nur Schluesselname + Fehler, nie der Wert.
         if let Err(e) = secrets::delete_api_key(key) {
             tracing::warn!(key, error = %e, "live-tracking: Loeschen des MQTT-Credential-Caches fehlgeschlagen");
+        }
+    }
+}
+
+#[cfg(test)]
+mod mqtt_cache_zuordnung_tests {
+    use super::mqtt_cache_gehoert_angemeldetem;
+
+    /// Svens Fall: Recorder-ID 23, Pilotennummer 19. Gespeichert wird die
+    /// Nummer — der Cache gehoert ihm.
+    #[test]
+    fn pilotennummer_passt() {
+        assert!(mqtt_cache_gehoert_angemeldetem(Some("19"), 19));
+        assert!(mqtt_cache_gehoert_angemeldetem(Some(" 5 "), 5));
+    }
+
+    /// Gegenprobe: anderes Konto oder fehlende Zuordnung (Cache von vor
+    /// diesem Feld) — nicht verwenden, neu provisionieren.
+    #[test]
+    fn fremde_oder_fehlende_nummer_passt_nicht() {
+        assert!(!mqtt_cache_gehoert_angemeldetem(Some("23"), 19));
+        assert!(!mqtt_cache_gehoert_angemeldetem(None, 19));
+        assert!(!mqtt_cache_gehoert_angemeldetem(Some(""), 19));
+    }
+
+    /// Verdrahtung: Provisionierung UND Pruefstatus vergleichen ueber die
+    /// gespeicherte Pilotennummer, nicht mehr ueber die Recorder-ID.
+    #[test]
+    fn beide_vergleiche_nutzen_die_pilotennummer() {
+        const SRC: &str = include_str!("lib.rs");
+        // Nadeln zusammengesetzt — als ganzes Literal staenden sie HIER vor
+        // der echten `pirep_pruefstatus` und der Waechter faende sich selbst.
+        for kopf in [
+            format!("{}{}", "async fn init_mqtt_publisher", "_via_provisioning("),
+            format!("{}{}", "async fn pirep_", "pruefstatus("),
+        ] {
+            let start = SRC.find(&kopf).expect("Funktion nicht gefunden");
+            let rest = &SRC[start..];
+            let ende = rest[1..].find("\n#[").map(|e| e + 1).unwrap_or(rest.len());
+            let koerper = &rest[..ende];
+            assert!(
+                koerper.contains("mqtt_cache_gehoert_angemeldetem("),
+                "{kopf} prueft die Zuordnung nicht ueber die Pilotennummer"
+            );
+            assert!(
+                !koerper.contains(&format!("{}{}", "c.pilot_id == ", "id.to_string()")),
+                "{kopf} vergleicht wieder Recorder-ID mit Pilotennummer"
+            );
         }
     }
 }
@@ -25380,14 +25470,19 @@ async fn pirep_pruefstatus(
     let Some(angemeldet) = angemeldet else {
         return Ok(Vec::new());
     };
-    let (Some(username), Some(password), Some(schluessel_pilot)) = (
+    let (Some(username), Some(password)) = (
         secrets::load_api_key(MQTT_KEYRING_USERNAME).ok().flatten(),
         secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten(),
-        secrets::load_api_key(MQTT_KEYRING_PILOT_ID).ok().flatten(),
     ) else {
         return Ok(Vec::new());
     };
-    if schluessel_pilot != angemeldet.to_string() {
+    // Befund 21.09.2026: vorher Recorder-ID gegen Pilotennummer — bei 13
+    // von 17 GSG-Piloten nie gleich, der Pruefstatus blieb fuer sie immer
+    // leer (siehe `MQTT_KEYRING_PHPVMS_PILOT`).
+    let schluessel_nr = secrets::load_api_key(MQTT_KEYRING_PHPVMS_PILOT)
+        .ok()
+        .flatten();
+    if !mqtt_cache_gehoert_angemeldetem(schluessel_nr.as_deref(), angemeldet) {
         tracing::debug!(
             "pirep_pruefstatus: Schlüsselbund gehört nicht zum angemeldeten Piloten — übersprungen"
         );
