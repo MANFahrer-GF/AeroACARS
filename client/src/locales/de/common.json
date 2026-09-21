@@ -2537,7 +2537,7 @@
       "stoerung": "Dienst nicht erreichbar",
       "rufzeichen_woher": "Rufzeichen aus Flugplan bzw. Einstellungen — ändern im CPDLC-Fenster",
       "stand_alt": "Dienst nicht erreichbar — Zahlen bis zu 10 Minuten alt",
-      "kein_eintrag_wo_aendern": "kein CDM-Eintrag — Rufzeichen im PDC/CPDLC‑Tab"
+      "kein_eintrag_wo_aendern": "kein CDM-Eintrag — Rufzeichen im Tab PDC/CPDLC"
     }
   }
 }

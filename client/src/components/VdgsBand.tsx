@@ -188,7 +188,7 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
             ? t("cdm.band.stoerung", "Dienst nicht erreichbar")
             : t(
                 "cdm.band.kein_eintrag_wo_aendern",
-                "kein CDM-Eintrag — Rufzeichen im PDC/CPDLC‑Tab",
+                "kein CDM-Eintrag — Rufzeichen im Tab PDC/CPDLC",
               )}
         </span>
       </div>

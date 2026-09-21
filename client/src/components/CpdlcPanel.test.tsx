@@ -386,6 +386,17 @@ describe("Reichweite des Rufzeichens", () => {
     // gilt", ohne zu sagen, was das heisst (externe Abnahme, 21.09.).
     expect(hinweis.textContent).toMatch(/demselben Rufzeichen/i);
 
+    // Und die SPRACHDATEI eigens, nicht nur den gerenderten Wortlaut.
+    //
+    // i18next faellt bei einem fehlenden Schluessel stillschweigend auf
+    // den Ersatztext zurueck, den `t()` im Quelltext mitbekommt — und
+    // der ist hier derselbe Satz. Wer also den Schluessel aus
+    // locales/de loescht, sieht dasselbe Bild, und die Zusicherungen
+    // oben blieben gruen (externe Abnahme, 21.09.2026). Englisch und
+    // Italienisch haetten dann still den deutschen Satz gezeigt.
+    expect(deCommon.cpdlc.callsign_gilt_auch_vdgs).toMatch(/VDGS/);
+    expect(deCommon.cpdlc.callsign_gilt_auch_vdgs).toMatch(/TOBT/);
+
     // Und sichtbar, nicht als Tooltip: Ein `title` erreicht im Cockpit
     // niemanden. Genau das war der Zustand vorher, und genau deshalb
     // wird hier der Textinhalt geprüft und nicht ein Attribut.

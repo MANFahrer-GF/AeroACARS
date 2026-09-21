@@ -189,41 +189,47 @@ describe("Rufzeichen in der Platte", () => {
     expect(screen.queryByTestId("vdgs-band")).toBeNull();
   });
 
-  it("haelt PDC/CPDLC-Tab zusammen, damit es nicht am Bindestrich bricht", () => {
-    // Am laufenden Korpus gesehen (21.09.2026): Bei 480 px Bandbreite
-    // brach der deutsche Text mitten im Wort auf — „PDC/CPDLC-" in der
-    // einen, „Tab" in der naechsten Zeile. Browser behandeln einen
-    // gewoehnlichen Bindestrich als weiche Trennstelle; dieselbe Falle
-    // steht schon bei `.datalink-block__label` in App.css beschrieben.
-    // Englisch und Italienisch trifft es nicht (Leerzeichen bzw. gar
-    // kein „Tab"), Deutsch schon.
+  it("setzt keinen Bindestrich vor Tab, der mitten im Wort bricht", () => {
+    // Zwei Befunde in Folge an derselben Zeile, beide am laufenden
+    // Korpus gesehen:
     //
-    // Geprueft wird das Zeichen, nicht der Umbruch: jsdom layoutet
-    // nicht, kann also keinen Zeilenfall sehen. Das ist eine
-    // Ersatzpruefung — sie traegt, weil der geschuetzte Bindestrich
-    // (U+2011) im Quelltext unsichtbar ist und beim Nachbearbeiten der
-    // Sprachdatei lautlos zu einem gewoehnlichen wird.
+    //   1. „PDC/CPDLC-Tab" brach bei 480 px Bandbreite mitten im Wort
+    //      auf — Browser behandeln einen Bindestrich als weiche
+    //      Trennstelle. Dieselbe Falle steht schon bei
+    //      `.datalink-block__label` in App.css.
+    //   2. Mein erster Fix dafuer war ein geschuetzter Bindestrich
+    //      (U+2011). Den kennt B612 Mono nicht — die Schrift des
+    //      Bandes. Im Cockpit waere dort eine Ersatzglyphe erschienen
+    //      oder der Browser auf eine fremde Schrift gesprungen, mitten
+    //      im Wort, in einer Monospace-Zeile. Schlechter als der
+    //      Umbruch, den es beheben sollte.
+    //
+    // Antwort auf beides: die Reihenfolge drehen. „im Tab PDC/CPDLC"
+    // braucht gar keinen Bindestrich, also faellt der Umbruch auf ein
+    // Leerzeichen — wie im Englischen und Italienischen, die nie
+    // betroffen waren.
+    //
+    // Gegen den WIEDEREINBAU eines exotischen Zeichens steht nicht
+    // dieser Test, sondern scripts/pruefe-schriftzeichen.mjs: Der
+    // vergleicht alle Bandtexte mit dem echten Zeichenvorrat der
+    // Schrift. Hier geht es nur um die Trennstelle.
     render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null }} />);
     const text = screen.getByTestId("vdgs-band-leer").textContent ?? "";
-    expect(text).toContain("PDC/CPDLC\u2011Tab");
+    expect(text).toContain("Tab PDC/CPDLC");
     expect(
       text,
-      "gewoehnlicher Bindestrich vor Tab — bricht bei schmalem Band mitten im Wort",
-    ).not.toContain("PDC/CPDLC-Tab");
+      "Bindestrich vor Tab — bricht bei schmalem Band mitten im Wort",
+    ).not.toMatch(/[-\u2010-\u2015]Tab/);
 
     // Und die SPRACHDATEI mit, nicht nur der Ersatztext im Quelltext.
     //
     // Das ist hier kein Beiwerk: Die `react-i18next`-Attrappe oben gibt
     // den Ersatztext zurueck, den `t()` im Quelltext mitbekommt — die
     // Datei unter locales/ fasst sie nie an. Im Betrieb ist es genau
-    // umgekehrt. Ohne diese Zeilen waere der Test also blind fuer den
-    // Text, den der Pilot wirklich sieht.
-    expect(deCommon.cdm.band.kein_eintrag_wo_aendern).toContain(
-      "PDC/CPDLC\u2011Tab",
-    );
-    expect(deCommon.cdm.band.kein_eintrag_wo_aendern).not.toContain(
-      "PDC/CPDLC-Tab",
-    );
+    // umgekehrt. Ohne diese Zeilen waere der Test blind fuer den Text,
+    // den der Pilot wirklich sieht.
+    expect(deCommon.cdm.band.kein_eintrag_wo_aendern).toContain("Tab PDC/CPDLC");
+    expect(deCommon.cdm.band.kein_eintrag_wo_aendern).not.toMatch(/[-\u2010-\u2015]Tab/);
   });
 
   it("nennt den Weg zum Rufzeichen NUR bei fehlendem Eintrag, nicht bei Stoerung", () => {
