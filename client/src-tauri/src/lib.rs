@@ -14072,6 +14072,133 @@ fn read_persisted_flight(app: &AppHandle) -> Option<PersistedFlight> {
     serde_json::from_slice::<PersistedFlight>(&bytes).ok()
 }
 
+/// Wie der vorige Programmlauf endete, gelesen aus seiner Sentinel-Datei.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VorlaufEnde {
+    /// Keine Sentinel-Datei — sauber beendet.
+    Sauber,
+    /// Andere Fassung — der Auto-Updater hat neu gestartet, kein Absturz.
+    Update { vorher: String },
+    /// Gleiche Fassung, Datei noch da — abgestuerzt oder abgeschossen.
+    Abbruch { gestartet: Option<String> },
+    /// Datei ohne Fassung (vor 21.09.2026 geschrieben) — nicht zu entscheiden.
+    Unbekannt,
+}
+
+/// Ordnet den Inhalt der Sentinel-Datei des VORIGEN Laufs ein.
+///
+/// Befund 21.09.2026 (Sven M): 22 Programmstarts hintereinander ohne ein
+/// sauberes Ende, keiner davon kam in GlitchTip an — die Sentinel-Datei
+/// wurde nur fuer einen laufenden Flug ausgewertet, und Absturz und
+/// Update-Neustart sahen gleich aus.
+fn vorlauf_einordnen(sentinel: Option<&str>, aktuelle_version: &str) -> VorlaufEnde {
+    let Some(inhalt) = sentinel else {
+        return VorlaufEnde::Sauber;
+    };
+    let feld = |name: &str| {
+        inhalt
+            .lines()
+            .find_map(|z| z.strip_prefix(name).map(|w| w.trim().to_string()))
+            .filter(|w| !w.is_empty())
+    };
+    match feld("version=") {
+        None => VorlaufEnde::Unbekannt,
+        Some(v) if v != aktuelle_version => VorlaufEnde::Update { vorher: v },
+        Some(_) => VorlaufEnde::Abbruch {
+            gestartet: feld("started_at="),
+        },
+    }
+}
+
+/// Meldet einen Abbruch des vorigen Laufs: sofort ins Log (die
+/// Diagnose-Auswertung auf dem Live-Server zaehlt ihn), nach 30 s an
+/// GlitchTip — erst dann ist die Zustimmung des Piloten geladen, vorher
+/// wuerde `before_send` die Meldung verwerfen. Bewusst OHNE Log-Zeilen:
+/// darin stehen Namen und Pfade; die Einzelheiten kommen mit dem
+/// Diagnose-Log des naechsten Flugs.
+fn vorlauf_melden(ende: &VorlaufEnde) {
+    let VorlaufEnde::Abbruch { gestartet } = ende else {
+        return;
+    };
+    let version = env!("CARGO_PKG_VERSION");
+    tracing::warn!(
+        version,
+        vorheriger_start = gestartet.as_deref().unwrap_or("?"),
+        "Vorheriger Lauf endete ohne sauberes Ende"
+    );
+    let detail = format!(
+        "Fassung {version}, vorheriger Lauf gestartet {}",
+        gestartet.as_deref().unwrap_or("?")
+    );
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        sentry_init::capture_activity(
+            "App wurde nicht sauber beendet",
+            Some(&detail),
+            sentry::Level::Warning,
+        );
+    });
+}
+
+#[cfg(test)]
+mod vorlauf_tests {
+    use super::{vorlauf_einordnen, VorlaufEnde};
+
+    /// Svens Fall: Datei des vorigen Laufs noch da, gleiche Fassung.
+    #[test]
+    fn gleiche_fassung_ist_ein_abbruch() {
+        let datei = "pid=10712\nstarted_at=2026-09-21T07:13:32+00:00\nversion=1.7.41\n";
+        assert_eq!(
+            vorlauf_einordnen(Some(datei), "1.7.41"),
+            VorlaufEnde::Abbruch {
+                gestartet: Some("2026-09-21T07:13:32+00:00".into())
+            }
+        );
+    }
+
+    /// Gegenprobe: der Auto-Updater startet mit einer anderen Fassung neu.
+    #[test]
+    fn andere_fassung_ist_ein_update() {
+        let datei = "pid=1\nstarted_at=x\nversion=1.7.41\n";
+        assert_eq!(
+            vorlauf_einordnen(Some(datei), "1.7.44"),
+            VorlaufEnde::Update {
+                vorher: "1.7.41".into()
+            }
+        );
+    }
+
+    /// Keine Datei = sauber beendet; alte Datei ohne Fassung = offen lassen,
+    /// statt jeden Update-Neustart nach dem Aufspielen als Absturz zu melden.
+    #[test]
+    fn sauber_und_unbekannt() {
+        assert_eq!(vorlauf_einordnen(None, "1.7.47"), VorlaufEnde::Sauber);
+        assert_eq!(
+            vorlauf_einordnen(Some("pid=1\nstarted_at=x\n"), "1.7.47"),
+            VorlaufEnde::Unbekannt
+        );
+        assert_eq!(
+            vorlauf_einordnen(Some("pid=1\nversion=\n"), "1.7.47"),
+            VorlaufEnde::Unbekannt
+        );
+    }
+
+    /// Die geschriebene Datei ist mit der Einordnung lesbar (Rundreise).
+    #[test]
+    fn geschriebenes_format_wird_gelesen() {
+        let inhalt = format!(
+            "pid={}\nstarted_at={}\nversion={}\n",
+            42,
+            "2026-09-21T12:00:00+00:00",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(matches!(
+            vorlauf_einordnen(Some(&inhalt), env!("CARGO_PKG_VERSION")),
+            VorlaufEnde::Abbruch { .. }
+        ));
+    }
+}
+
 fn run_sentinel_path(app: &AppHandle) -> Result<PathBuf, UiError> {
     app.path()
         .app_config_dir()
@@ -14102,10 +14229,13 @@ fn write_run_sentinel(app: &AppHandle) {
             return;
         }
     }
+    // `version` seit 21.09.2026: unterscheidet beim naechsten Start einen
+    // Abbruch (gleiche Fassung) von einem Update-Neustart (andere Fassung).
     let content = format!(
-        "pid={}\nstarted_at={}\n",
+        "pid={}\nstarted_at={}\nversion={}\n",
         std::process::id(),
-        Utc::now().to_rfc3339()
+        Utc::now().to_rfc3339(),
+        env!("CARGO_PKG_VERSION")
     );
     if let Err(e) = std::fs::write(&path, content) {
         tracing::warn!(error = %e, "could not write run sentinel");
@@ -51453,6 +51583,12 @@ pub fn run() {
                 let state = app.state::<AppState>();
                 *state.previous_run_exit_clean.lock().expect("previous_run_exit_clean lock") =
                     Some(previous_exit_clean);
+                // 21.09.2026: ausserhalb eines Flugs blieb ein Abbruch bisher
+                // unsichtbar. Einordnen (Abbruch vs. Update) und melden.
+                let vorher = run_sentinel_path(&app.handle())
+                    .ok()
+                    .and_then(|p| std::fs::read_to_string(p).ok());
+                vorlauf_melden(&vorlauf_einordnen(vorher.as_deref(), env!("CARGO_PKG_VERSION")));
             }
             write_run_sentinel(&app.handle());
 
