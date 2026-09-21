@@ -11173,14 +11173,64 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
             }
         };
 
-        let resp = match provision(&api_key, None).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "live-tracking: provision call failed (non-fatal)"
-                );
-                return;
+        // Befund 21.09.2026: vorher reichte EIN gescheiterter Aufruf, und
+        // das Live-Tracking blieb fuer die ganze Sitzung aus — ohne Sitzung
+        // im Recorder gingen danach auch Flug- und Diagnose-Log verloren.
+        // Voruebergehende Fehler werden jetzt wiederholt (Abstand siehe
+        // `naechster_versuch`), bis es klappt, die Sitzung wechselt oder
+        // ein anderer Aufruf den Publisher schon gestartet hat.
+        // App-Start und Sitzungs-Wiederherstellung starten die
+        // Provisionierung fast gleichzeitig. Nur EINE Schleife darf
+        // wiederholen — zwei wuerden die Anmelde-Bremse des Servers (10 pro
+        // Stunde je IP) doppelt so schnell fuellen.
+        static WIEDERHOLUNG_LAEUFT: AtomicBool = AtomicBool::new(false);
+        struct WiederholungFrei;
+        impl Drop for WiederholungFrei {
+            fn drop(&mut self) {
+                WIEDERHOLUNG_LAEUFT.store(false, Ordering::SeqCst);
+            }
+        }
+        let mut wiederholung: Option<WiederholungFrei> = None;
+        let mut versuch: u32 = 0;
+        let resp = loop {
+            match provision(&api_key, None).await {
+                Ok(r) => break r,
+                Err(e) => {
+                    if wiederholung.is_none() {
+                        if WIEDERHOLUNG_LAEUFT.swap(true, Ordering::SeqCst) {
+                            tracing::info!(
+                                error = %e,
+                                "live-tracking: provision call failed — eine andere Wiederholung laeuft schon"
+                            );
+                            return;
+                        }
+                        wiederholung = Some(WiederholungFrei);
+                    }
+                    let warten = aeroacars_mqtt::provision::naechster_versuch(&e, versuch);
+                    tracing::warn!(
+                        error = %e,
+                        versuch,
+                        naechster_versuch_s = warten.map(|d| d.as_secs()),
+                        "live-tracking: provision call failed (non-fatal)"
+                    );
+                    let Some(warten) = warten else {
+                        return;
+                    };
+                    tokio::time::sleep(warten).await;
+                    if aktuelle_epoche(&state) != epoche_bei_start {
+                        tracing::info!(
+                            "live-tracking: Sitzung gewechselt — Provisionierung dieses Laufs endet"
+                        );
+                        return;
+                    }
+                    if state.mqtt.lock().await.is_some() {
+                        tracing::info!(
+                            "live-tracking: Publisher laeuft inzwischen — Wiederholung endet"
+                        );
+                        return;
+                    }
+                    versuch = versuch.saturating_add(1);
+                }
             }
         };
 
