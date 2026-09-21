@@ -1132,18 +1132,23 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // all reset so the next dispatch session re-detects
                 // and re-subscribes from scratch.
                 *shared.pmdg.lock() = PmdgSharedState::default();
-                // „Telemetrie nicht echt" (Replay/Teleport/Vorspulen) gilt nur
-                // für die Verbindung, in der START gemeldet wurde. Riss sie vor
-                // DONE ab, blieb die Tiefe > 0 und jeder spätere Snapshot hieß
-                // `paused` — für Phasen-Engine und Auto-Start bis zum App-
-                // Neustart (QS Codex, 21.09.2026). Für diese Vorgänge gibt es
-                // keine Zustandsabfrage; 0 ist der einzige Wert, der nicht für
-                // immer sperrt. Ein Vorgang, der den Abriss überdauert, zählt
-                // bis zu seinem DONE als echt (max(0) fängt das DONE ab).
-                // `sim_paused` bleibt bewusst stehen: MSFS meldet Pause_EX1
-                // direkt nach dem Neuaufbau neu, bis dahin ist der alte Wert
-                // die bessere Annahme als „läuft". Kein zweiter Schreiber:
+                // Pause und „Telemetrie nicht echt" (Replay/Teleport/Vorspulen)
+                // gelten nur für die Verbindung, in der sie gemeldet wurden.
+                // Riss sie z. B. zwischen TELEPORT_START und _DONE ab, blieb die
+                // Tiefe > 0 und jeder spätere Snapshot hieß `paused` — für
+                // Phasen-Engine und Auto-Start bis zum App-Neustart. Dasselbe
+                // gilt für `sim_paused`, wenn nach dem Neuaufbau kein
+                // Pause_EX1 kommt (Abo gescheitert) (QS Codex, 21.09.2026).
+                //
+                // Abwägung: Zurücksetzen ist der einzige Zustand, der nie für
+                // immer sperrt. Preis: Bis MSFS Pause_EX1 neu meldet (in allen
+                // Logs direkt nach dem Handshake), kann ein Snapshot „läuft"
+                // heißen; ein Vorgang, der den Abriss überdauert, zählt bis zu
+                // seinem DONE als echt (max(0) fängt das DONE ab). Der Auto-
+                // Start ist dagegen abgesichert (20 s SimRuhe + Sprungerkennung
+                // + Pause-Prüfung in flight_start_mit). Kein zweiter Schreiber:
                 // run_dispatch ist hier zurückgekehrt.
+                shared.sim_paused.store(false, Ordering::Relaxed);
                 shared.sim_unecht_tiefe.store(0, Ordering::Relaxed);
                 *shared.state.lock() = ConnectionState::Connecting;
             }
