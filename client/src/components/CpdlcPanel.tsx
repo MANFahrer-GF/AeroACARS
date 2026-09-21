@@ -504,6 +504,27 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
         </button>
       </header>
 
+      {/* Das Rufzeichen oben übersteuert ALLES, was der Client unter
+          einer Kennung tut — Hoppie-Funk, PDC und seit v1.7.44 auch die
+          VDGS-Abfrage der eigenen Abflugfolge. Das stand bisher
+          nirgends: Wer ein leeres VDGS-Band sah, suchte den Fehler beim
+          Dienst, statt hier nachzusehen (Thomas, 21.09.2026: „dann muss
+          das irgendwo erklärt sein").
+
+          Bewusst HIER, unter dem Kopf, und nicht im Rufzeichen-Block:
+          Dessen Zeile ist auf 66 px festgenagelt und schneidet mit
+          `overflow-y: hidden` ab, was nicht hineinpasst (siehe
+          `.datalink-block__label` in App.css — genau daran ist schon
+          einmal eine dritte Zeile still verschwunden). Und bewusst als
+          sichtbarer Satz statt als Tooltip: Was man erst durch Hovern
+          findet, erreicht im Cockpit niemanden. */}
+      <p className="datalink-callsign-reichweite" data-testid="callsign-reichweite">
+        {t(
+          "cpdlc.callsign_gilt_auch_vdgs",
+          "Das Callsign oben gilt auch für die VDGS-Abfrage der eigenen Abflugfolge (TOBT/TSAT) — dort wird unter demselben Rufzeichen gesucht.",
+        )}
+      </p>
+
       {(status?.last_error || error || logonError || logonTimedOut || callsignNotice) && (
         <div className="datalink-alerts">
           {status?.last_error && <p className="cpdlc-panel__error">{status.last_error}</p>}

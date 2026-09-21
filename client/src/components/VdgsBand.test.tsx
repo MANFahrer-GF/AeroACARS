@@ -174,10 +174,31 @@ describe("Rufzeichen in der Platte", () => {
     render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null }} />);
     expect(screen.getByTestId("vdgs-band-leer")).toBeTruthy();
     expect(screen.getByText("GSG421")).toBeTruthy();
-    expect(screen.getByText("kein CDM-Eintrag")).toBeTruthy();
+    // Und der Weg steht DABEI, nicht nur im Tooltip: Wer im Cockpit
+    // sitzt, faehrt nicht mit der Maus ueber eine schmale Zeile, um zu
+    // erfahren, wo sein Rufzeichen herkommt (Thomas, 21.09.2026).
+    //
+    // Beide Aussagen einzeln geprueft — mit einem ODER-Muster bliebe
+    // der Test gruen, wenn genau der Wegweiser wieder verschwindet.
+    const zeile = screen.getByTestId("vdgs-band-leer");
+    expect(zeile.textContent).toMatch(/kein CDM-Eintrag/i);
+    expect(zeile.textContent).toMatch(/PDC\/CPDLC/i);
     // Und es ist KEINE volle Platte — sonst stuende an jedem Platz
     // ohne A-CDM ein leeres Geraet im Cockpit.
     expect(screen.queryByTestId("vdgs-band")).toBeNull();
+  });
+
+  it("nennt den Weg zum Rufzeichen NUR bei fehlendem Eintrag, nicht bei Stoerung", () => {
+    // Die Gegenprobe zum Test darueber, und der eigentliche Grund fuer
+    // die Trennung: Antwortet der Dienst nicht, ist das Rufzeichen
+    // nicht das Problem. Ein Wegweiser waere dort eine falsche Faehrte
+    // — der Pilot tauscht ein Rufzeichen aus, an dem nichts falsch ist.
+    render(
+      <VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null, stoerung: true }} />,
+    );
+    const zeile = screen.getByTestId("vdgs-band-leer");
+    expect(zeile.textContent).toMatch(/nicht erreichbar/i);
+    expect(zeile.textContent).not.toMatch(/PDC\/CPDLC/i);
   });
 
   it("sagt bei Stoerung, dass die gezeigten Zahlen alt sind", () => {

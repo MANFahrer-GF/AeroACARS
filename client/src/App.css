@@ -9926,6 +9926,28 @@ input.datalink-block__input {
   padding: 8px 20px 0;
 }
 
+/* Reichweite des Rufzeichens: eine ruhige Erklärzeile, kein Alarm.
+   Dass das Feld oben auch die VDGS-Abfrage steuert, ist eine
+   Eigenschaft und kein Zustand — deshalb gedämpft wie `__note`, nicht
+   warnfarben. Sie darf umbrechen (im Gegensatz zur festgenagelten
+   Statuszeile darüber), weil sie außerhalb der 66-px-Reihe steht; das
+   seitliche Maß entspricht `.datalink-alerts`, damit sie in derselben
+   Flucht beginnt wie die Meldungen darunter. */
+.datalink-callsign-reichweite {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: var(--fs-300);
+  line-height: 1.45;
+  /* Gleicher Wert und gleicher Ersatzwert wie `.cpdlc-link-bar__note`
+     direkt darunter — die beiden stehen im Panel untereinander, und
+     zwei verschiedene Grautöne für dieselbe Textsorte fallen sofort
+     auf. Der Ersatzwert ist kein Beiwerk: Ohne ihn erbt der Satz bei
+     fehlender Variable die Vordergrundfarbe und steht heller da als
+     die Meldung darunter. */
+  color: var(--text-dim, #8b95a6);
+}
+
 .cpdlc-link-bar__warn {
   margin: 0;
   font-size: var(--fs-300);

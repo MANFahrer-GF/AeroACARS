@@ -330,3 +330,73 @@ describe("CpdlcPanel connection flow", () => {
     ).toBe("");
   });
 });
+
+describe("Reichweite des Rufzeichens", () => {
+  // Thomas, 21.09.2026: „Dann macht es doch genau Sinn, wenn wir in CPDLC
+  // und PDC das Callsign eintragen müssen und das gleichzeitig für VDGS
+  // TOBT gilt. Dann muss das irgendwo erklärt sein."
+  //
+  // Bis dahin stand es nirgends im Bild. Wer ein leeres VDGS-Band sah,
+  // suchte den Fehler beim Dienst, statt hier nachzusehen — dabei ist
+  // dieses Feld die EINE Stelle, die das Rufzeichen für Hoppie-Funk, PDC
+  // und die VDGS-Abfrage gemeinsam setzt.
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      switch (cmd) {
+        case "hoppie_get_settings":
+          // `enabled: true` ist hier nicht Beiwerk: Ohne das Flag steigt
+          // das Panel vorher aus und zeigt nur „Einstellungen öffnen" —
+          // die Zusicherungen unten liefen dann gegen eine Seite, die
+          // den Hinweis gar nicht enthalten KANN.
+          return Promise.resolve({
+            enabled: true,
+            callsign_override: null,
+            notify_sound: false,
+          });
+        case "hoppie_status":
+          return Promise.resolve(OFFLINE);
+        case "hoppie_get_flight_context":
+          return Promise.resolve({ callsign: "GSG421" });
+        case "hoppie_list_elements":
+          // Muss eine LISTE sein, nicht `undefined`: Der Composer
+          // baut daraus sofort eine Map (`elements.map`). Mit dem
+          // `default`-Zweig warf er nach dem Test — die Zusicherungen
+          // liefen durch, der Lauf endete trotzdem mit Rückgabewert 1
+          // („2 errors" bei 31 grünen Tests).
+          return Promise.resolve([]);
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+  });
+
+  it("erklärt sichtbar, dass das Callsign auch für VDGS/TOBT gilt", async () => {
+    renderPanel();
+    const hinweis = await screen.findByTestId("callsign-reichweite");
+
+    // Der Satz muss BEIDES nennen: wofür er gilt (VDGS/TOBT) und dass es
+    // dasselbe Rufzeichen ist. Einzeln geprüft — ein ODER-Muster bliebe
+    // grün, wenn die Hälfte der Aussage wegfällt.
+    expect(hinweis.textContent).toMatch(/VDGS/i);
+    expect(hinweis.textContent).toMatch(/TOBT/i);
+
+    // Und sichtbar, nicht als Tooltip: Ein `title` erreicht im Cockpit
+    // niemanden. Genau das war der Zustand vorher, und genau deshalb
+    // wird hier der Textinhalt geprüft und nicht ein Attribut.
+    expect(hinweis.textContent?.trim().length ?? 0).toBeGreaterThan(20);
+  });
+
+  it("steht ausserhalb der Statuszeile, die auf 66 px abschneidet", async () => {
+    // Der erste Entwurf setzte den Satz in den Rufzeichen-Block. Dessen
+    // Reihe ist in App.css auf 66 px festgenagelt und schneidet mit
+    // `overflow-y: hidden` ab — eine dritte Zeile wäre dort still
+    // verschwunden, und der Test oben hätte es trotzdem gefunden, weil
+    // jsdom nicht layoutet. Diese Zusicherung hält die Platzierung fest:
+    // der Hinweis darf KEIN Nachfahre eines `.datalink-block` sein.
+    renderPanel();
+    const hinweis = await screen.findByTestId("callsign-reichweite");
+    expect(hinweis.closest(".datalink-block")).toBeNull();
+    expect(hinweis.closest(".datalink-status")).toBeNull();
+  });
+});

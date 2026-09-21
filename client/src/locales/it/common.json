@@ -2389,7 +2389,8 @@
     "callsign_override_active": "Stai trasmettendo come {{entered}} (piano di volo: {{flight}}).",
     "callsign_locked_logon": "Nominativo bloccato mentre è attivo un logon CPDLC — il controllore ti conosce come {{callsign}}. Disconnettiti prima.",
     "callsign_reconnecting": "Riconnessione con il nuovo nominativo …",
-    "field_callsign_readonly": "Solo visualizzazione — cambia il nominativo sopra"
+    "field_callsign_readonly": "Solo visualizzazione — cambia il nominativo sopra",
+    "callsign_gilt_auch_vdgs": "Il callsign qui sopra vale anche per la richiesta VDGS della propria sequenza di partenza (TOBT/TSAT) — la ricerca avviene con lo stesso callsign."
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",
@@ -2526,10 +2527,10 @@
       "vor_min": "{{n}} min fa",
       "tobt_setzen": "IMPOSTA TOBT",
       "tobt_setzen_grund": "Senza TOBT nessuna TSAT — impostala nella finestra VDGS",
-      "kein_eintrag": "nessuna voce CDM",
       "stoerung": "servizio non raggiungibile",
       "rufzeichen_woher": "Indicativo da piano di volo o impostazioni — modificalo nella finestra CPDLC",
-      "stand_alt": "Servizio non raggiungibile — dati fino a 10 minuti fa"
+      "stand_alt": "Servizio non raggiungibile — dati fino a 10 minuti fa",
+      "kein_eintrag_wo_aendern": "nessuna voce CDM — callsign nella scheda PDC/CPDLC"
     }
   },
   "msfs_hud": {

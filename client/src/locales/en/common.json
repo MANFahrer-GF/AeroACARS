@@ -2396,7 +2396,8 @@
     "callsign_override_active": "Sending as {{entered}} (flight plan: {{flight}}).",
     "callsign_locked_logon": "Callsign locked while a CPDLC logon is active — the controller knows you as {{callsign}}. Log off first.",
     "callsign_reconnecting": "Reconnecting with the new callsign …",
-    "field_callsign_readonly": "Display only — change the callsign above"
+    "field_callsign_readonly": "Display only — change the callsign above",
+    "callsign_gilt_auch_vdgs": "The callsign above also applies to the VDGS lookup of your own departure sequence (TOBT/TSAT) — it is queried under the same callsign."
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",
@@ -2533,10 +2534,10 @@
       "vor_min": "{{n}} min ago",
       "tobt_setzen": "SET TOBT",
       "tobt_setzen_grund": "No TOBT, no TSAT — set it in the VDGS window",
-      "kein_eintrag": "no CDM entry",
       "stoerung": "service unavailable",
       "rufzeichen_woher": "Callsign from flight plan or settings — change it in the CPDLC window",
-      "stand_alt": "Service unavailable — figures up to 10 minutes old"
+      "stand_alt": "Service unavailable — figures up to 10 minutes old",
+      "kein_eintrag_wo_aendern": "no CDM entry — callsign in the PDC/CPDLC tab"
     }
   }
 }

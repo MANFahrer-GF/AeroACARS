@@ -175,10 +175,21 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
               Beim einen stimmt vielleicht das Rufzeichen nicht, beim
               anderen antwortet die Gegenseite gerade nicht. Wer das
               verwechselt, prueft sein Rufzeichen, obwohl daran nichts
-              falsch ist (Codex-Abnahme, zweite Runde). */}
+              falsch ist (Codex-Abnahme, zweite Runde).
+
+              Und im Fall „kein Eintrag" steht der Weg dabei, statt nur
+              im Tooltip zu stecken: Wer im Cockpit sitzt, faehrt nicht
+              mit der Maus ueber eine schmale Zeile, um zu erfahren, wo
+              sein Rufzeichen herkommt (Thomas, 21.09.2026: „dann muss
+              das irgendwo erklaert sein"). Bei einer Stoerung bleibt
+              der Hinweis WEG — dort ist das Rufzeichen nicht das
+              Problem, und ein Wegweiser waere eine falsche Faehrte. */}
           {antwort.stoerung
             ? t("cdm.band.stoerung", "Dienst nicht erreichbar")
-            : t("cdm.band.kein_eintrag", "kein CDM-Eintrag")}
+            : t(
+                "cdm.band.kein_eintrag_wo_aendern",
+                "kein CDM-Eintrag — Rufzeichen im PDC/CPDLC-Tab",
+              )}
         </span>
       </div>
     );

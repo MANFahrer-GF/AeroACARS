@@ -2396,7 +2396,8 @@
     "callsign_override_active": "Du sendest als {{entered}} (Flugplan: {{flight}}).",
     "callsign_locked_logon": "Rufzeichen während einer laufenden CPDLC-Anmeldung gesperrt — der Lotse kennt dich unter {{callsign}}. Erst abmelden.",
     "callsign_reconnecting": "Verbindung wird mit dem neuen Rufzeichen neu aufgebaut …",
-    "field_callsign_readonly": "Anzeige — Rufzeichen oben ändern"
+    "field_callsign_readonly": "Anzeige — Rufzeichen oben ändern",
+    "callsign_gilt_auch_vdgs": "Das Callsign oben gilt auch für die VDGS-Abfrage der eigenen Abflugfolge (TOBT/TSAT) — dort wird unter demselben Rufzeichen gesucht."
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",
@@ -2533,10 +2534,10 @@
       "vor_min": "vor {{n}} min",
       "tobt_setzen": "TOBT SETZEN",
       "tobt_setzen_grund": "Ohne TOBT keine TSAT — im VDGS-Fenster setzen",
-      "kein_eintrag": "kein CDM-Eintrag",
       "stoerung": "Dienst nicht erreichbar",
       "rufzeichen_woher": "Rufzeichen aus Flugplan bzw. Einstellungen — ändern im CPDLC-Fenster",
-      "stand_alt": "Dienst nicht erreichbar — Zahlen bis zu 10 Minuten alt"
+      "stand_alt": "Dienst nicht erreichbar — Zahlen bis zu 10 Minuten alt",
+      "kein_eintrag_wo_aendern": "kein CDM-Eintrag — Rufzeichen im PDC/CPDLC-Tab"
     }
   }
 }
