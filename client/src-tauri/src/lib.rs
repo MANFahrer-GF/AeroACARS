@@ -15407,6 +15407,15 @@ pub(crate) fn vdgs_flug_kennung(app: &AppHandle) -> Option<String> {
     Some(flight.pirep_id.clone())
 }
 
+/// Abflugplatz des laufenden Fluges — fuer die Pruefung, ob ein VDGS-
+/// Eintrag zu genau diesem Flug gehoert (`vdgs::passt_zum_flug`).
+pub(crate) fn vdgs_flug_abflug(app: &AppHandle) -> Option<String> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let guard = state.active_flight.lock().ok()?;
+    Some(guard.as_ref()?.dpt_airport.clone())
+}
+
 /// Ein Wegpunkt einer fremden Route, wie die Karte ihn braucht.
 #[derive(Debug, Clone, serde::Serialize)]
 struct FremdePunkt {

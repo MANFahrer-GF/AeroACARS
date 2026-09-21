@@ -2533,6 +2533,12 @@
     "knopf": "VATSIM CDM",
     "knopf_titel": "Open your departure sequence on VATSIM (TOBT, TSAT, CTOT)",
     "band": {
+      "kopf_aus_ctot": "START-UP",
+      "kopf_aus_ctot_titel": "CTOT minus taxi time",
+      "sperre_gs": "Ground stop — no start-up until it is lifted",
+      "sperre_mr": "Mandatory route not followed — correct the route in the flight plan",
+      "sperre_cdm": "Suspended by CDM — coordinate with ATC",
+      "sperre_sonst": "Suspended — follow ATC instructions",
       "tobt_aendern": "CHANGE TOBT",
       "tobt_aendern_titel": "Change TOBT on vats.im/vdgs",
       "off_block": "Off-block {{zeit}}",

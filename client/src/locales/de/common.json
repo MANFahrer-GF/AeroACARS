@@ -2533,6 +2533,12 @@
     "knopf": "VATSIM CDM",
     "knopf_titel": "Abflugfolge auf VATSIM öffnen (TOBT, TSAT, CTOT)",
     "band": {
+      "kopf_aus_ctot": "ANLASSEN",
+      "kopf_aus_ctot_titel": "CTOT minus Rollzeit",
+      "sperre_gs": "Ground Stop — kein Anlassen, bis er aufgehoben ist",
+      "sperre_mr": "Pflichtroute nicht eingehalten — Route im Flugplan korrigieren",
+      "sperre_cdm": "Vom CDM ausgesetzt — mit ATC abstimmen",
+      "sperre_sonst": "Ausgesetzt — den Anweisungen von ATC folgen",
       "tobt_aendern": "TOBT ÄNDERN",
       "tobt_aendern_titel": "TOBT auf vats.im/vdgs ändern",
       "off_block": "Off-Block {{zeit}}",

@@ -22,7 +22,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "../lib/ipc";
+import { invoke, isTauri, openExternal } from "../lib/ipc";
 import "./vdgs.css";
 
 /** Wie `VdgsStand` in src-tauri/src/vdgs.rs. Zeiten sind `HH:MM` (UTC)
@@ -73,7 +73,7 @@ export function minutenBis(zeit: string, jetzt: Date = new Date()): number | nul
   return diff;
 }
 
-/** Anlassfenster um TSAT (bzw. TOBT, wo es keine TSAT gibt): von 5 min
+/** Anlassfenster um die Referenzzeit (s. `referenz`): von 5 min
  *  davor bis 5 min danach. Ab der sechsten Minute gilt der Flug als
  *  verspätet („Expired", danach SUSP) — VATSIM-UK-A-CDM-Leitfaden. Die
  *  Seite von VATSIM Spain zeigt dasselbe als „Suggested startup window
@@ -101,28 +101,74 @@ export function anlassfenster(zeit: string): [string, string] | null {
   return von && bis ? [von, bis] : null;
 }
 
+export type ReferenzArt = "TSAT" | "CTOT" | "TOBT" | "EOBT";
+
+/** Die Zeit, um die das Anlassfenster liegt — in der Reihenfolge, die
+ *  VATSIM Spain für sein VDGS dokumentiert: TSAT → (CTOT − EXOT) → TOBT
+ *  → EOBT (cdm.vatsimspain.es/docs.html). Vorher nahm das Band immer
+ *  TSAT oder TOBT; bei einer Regulierung ohne TSAT lag das Fenster dann
+ *  um die TOBT statt um CTOT minus Rollzeit — erst falsch grün, danach
+ *  lange falsch rot (Codex-Abnahme 21.09.2026). Ohne bekannte Rollzeit
+ *  lässt sich aus der CTOT keine Anlasszeit rechnen; dann die TOBT. */
+export function referenz(stand: VdgsStand): { zeit: string; art: ReferenzArt } | null {
+  if (stand.tsat) return { zeit: stand.tsat, art: "TSAT" };
+  if (stand.ctot && stand.taxi_min !== null) {
+    const z = zeitPlus(stand.ctot, -stand.taxi_min);
+    if (z) return { zeit: z, art: "CTOT" };
+  }
+  if (stand.tobt) return { zeit: stand.tobt, art: "TOBT" };
+  if (stand.eobt) return { zeit: stand.eobt, art: "EOBT" };
+  return null;
+}
+
+export type Sperre = "gs" | "mr" | "cdm" | "sonst";
+
+/** Ist der Flug ausgesetzt? VATSIM Spain führt jedes `FLS-*` als
+ *  Aussetzung, mit unterschiedlicher Abhilfe: FLS-GS Ground Stop,
+ *  FLS-MR Pflichtroute nicht eingehalten (Route korrigieren), FLS-CDM
+ *  vom CDM ausgesetzt (mit ATC abstimmen), FLS-NRA und Rest: dem Status
+ *  folgen. Vorher erkannte das Band nur SUSPEND und NRA — FLS-MR/GS/CDM
+ *  konnten grün erscheinen (Codex-Abnahme 21.09.2026). */
+export function sperre(cdmSts: string): Sperre | null {
+  const st = cdmSts.trim().toUpperCase();
+  if (st === "FLS-GS") return "gs";
+  if (st === "FLS-MR") return "mr";
+  if (st === "FLS-CDM") return "cdm";
+  if (st.startsWith("FLS") || st.startsWith("SUSP")) return "sonst";
+  return null;
+}
+
 /** Farbe wie am echten Gerät: grün heißt „anlassen", bernstein
  *  „vorbereiten", rot „raus aus der Folge". */
 export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
-  const st = stand.cdm_sts.toUpperCase();
-  if (st.includes("SUSPEND") || st.includes("NRA")) return "achtung";
+  // Schon off-block: Das Anlassfenster ist erfüllt — das gilt vor allem
+  // anderen, auch vor einem Status (Codex-Abnahme 21.09.2026).
+  if (stand.aobt) return "frei";
+  if (sperre(stand.cdm_sts)) return "achtung";
   // Ohne TOBT ist nichts bestätigt — und ohne Zeitangabe wissen wir
   // schlicht nicht genug, um grün zu zeigen.
   if (!stand.tobt) return "warten";
-  // Schon off-block: Das Fenster ist erfüllt, rot wäre eine Falschmeldung.
-  if (stand.aobt) return "frei";
-  const rest = minutenBis(stand.tsat || stand.tobt, jetzt);
+  const ref = referenz(stand);
+  const rest = ref ? minutenBis(ref.zeit, jetzt) : null;
   if (rest === null) return "warten";
-  // Ab der sechsten Minute nach TSAT/TOBT: Fenster verpasst.
+  // Ab der sechsten Minute nach der Referenzzeit: Fenster verpasst.
   if (rest < -FENSTER_NACH_MIN) return "achtung";
   if (rest <= FENSTER_VOR_MIN) return "frei";
   return "warten";
 }
 
-/** Öffnet vats.im/vdgs im eigenen Fenster — dort wird die TOBT gesetzt.
- *  Auf dem Tablet gibt es kein Fenster zu öffnen (die LAN-Brücke lässt
- *  den Befehl nicht durch); dann passiert schlicht nichts. */
+const VDGS_URL = "https://vats.im/vdgs";
+
+/** Öffnet vats.im/vdgs — dort wird die TOBT gesetzt. In der App im
+ *  eigenen Fenster; im LAN-Browser (Tablet) lässt die Brücke den Befehl
+ *  nicht durch, dort also der normale Weg über den Browser, wie in der
+ *  CDM-Ansicht. Vorher war die Taste auf dem Tablet ein stiller No-op
+ *  (Codex-Abnahme 21.09.2026). */
 function vdgsOeffnen() {
+  if (!isTauri) {
+    void openExternal(VDGS_URL).catch(() => {});
+    return;
+  }
   void invoke("vdgs_fenster_oeffnen").catch(() => {});
 }
 
@@ -238,19 +284,31 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
   }
 
   const zustand = ampel(stand);
-  // Die große Zahl ist die, auf die gewartet wird: TSAT, wo das CDM
-  // sequenziert — sonst die TOBT. Plätze ohne Sequenzierung liefern
-  // gar keine TSAT (EDDF, EGLL, EHAM am 20.09.2026), da stünde sonst
-  // dauerhaft „--:--" als Hauptzahl.
+  // Die große Zahl ist die, auf die gewartet wird — dieselbe Referenz wie
+  // für Ampel, Countdown und Fenster (s. `referenz`): TSAT, wo das CDM
+  // sequenziert, bei Regulierung ohne TSAT CTOT minus Rollzeit, sonst
+  // die TOBT. Plätze ohne Sequenzierung liefern gar keine TSAT (EDDF,
+  // EGLL, EHAM am 20.09.2026).
   const hatTsat = stand.tsat !== "";
-  const kopfzahl = hatTsat ? stand.tsat : stand.tobt;
-  const kopflabel = hatTsat ? "TSAT" : "TOBT";
-  const rest = minutenBis(kopfzahl);
-  const fenster = anlassfenster(kopfzahl);
+  const ref = referenz(stand);
+  const kopfzahl = ref?.zeit ?? "";
+  const kopflabel =
+    ref?.art === "CTOT"
+      ? t("cdm.band.kopf_aus_ctot", "ANLASSEN")
+      : (ref?.art ?? "TOBT");
+  const rest = kopfzahl ? minutenBis(kopfzahl) : null;
+  const fenster = kopfzahl ? anlassfenster(kopfzahl) : null;
+  const gesperrt = stand.aobt ? null : sperre(stand.cdm_sts);
   // Verpasst ist eine Frage der ZEIT, nicht der Farbe: Rot ist das Band
-  // auch bei SUSPEND/FLS-NRA, und dort kann die TSAT noch weit vorn liegen.
+  // auch bei einer Aussetzung, und dort kann die TSAT noch weit vorn
+  // liegen. Und bei einer Aussetzung hilft eine neue TOBT nicht — dort
+  // steht stattdessen, was zu tun ist.
   const verpasst =
-    !!stand.tobt && !stand.aobt && rest !== null && rest < -FENSTER_NACH_MIN;
+    !!stand.tobt &&
+    !stand.aobt &&
+    !gesperrt &&
+    rest !== null &&
+    rest < -FENSTER_NACH_MIN;
 
   return (
     <div
@@ -299,7 +357,7 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
             doch gesetzt werden, das ist doch Pflicht"). Gesetzt wird sie
             nicht hier, sondern auf vats.im/vdgs, also fuehrt der Klick
             genau dorthin. */}
-        {!stand.tobt ? (
+        {!stand.tobt && !stand.aobt ? (
           <button
             type="button"
             className="vdgs__auftrag"
@@ -317,38 +375,64 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
           </button>
         ) : (
           <div className="vdgs__gross">
-            <span className="vdgs__gross-label">{kopflabel}</span>
+            <span
+              className="vdgs__gross-label"
+              title={
+                ref?.art === "CTOT"
+                  ? t("cdm.band.kopf_aus_ctot_titel", "CTOT minus Rollzeit")
+                  : undefined
+              }
+            >
+              {kopflabel}
+            </span>
             <span className="vdgs__gross-wert">{kopfzahl || "--:--"}</span>
           </div>
         )}
-        {stand.tobt && rest !== null && (
+        {/* Off-Block zuerst und unabhängig von TOBT und Countdown: Wer
+            rollt, hat sein Fenster erfüllt (Codex-Abnahme 21.09.2026). */}
+        {stand.aobt ? (
           <div className="vdgs__rest">
-            <span>
-              {rest >= 0
-                ? t("cdm.band.in_min", "in {{n}} min", { n: rest })
-                : t("cdm.band.vor_min", "vor {{n}} min", { n: Math.abs(rest) })}
+            <span className="vdgs__fenster" data-testid="vdgs-offblock">
+              {t("cdm.band.off_block", "Off-Block {{zeit}}", { zeit: stand.aobt })}
             </span>
-            {stand.aobt ? (
-              <span className="vdgs__fenster" data-testid="vdgs-offblock">
-                {t("cdm.band.off_block", "Off-Block {{zeit}}", { zeit: stand.aobt })}
+          </div>
+        ) : (
+          stand.tobt &&
+          rest !== null && (
+            <div className="vdgs__rest">
+              <span>
+                {rest >= 0
+                  ? t("cdm.band.in_min", "in {{n}} min", { n: rest })
+                  : t("cdm.band.vor_min", "vor {{n}} min", { n: Math.abs(rest) })}
               </span>
-            ) : (
-              fenster && (
+              {fenster && (
                 <span className="vdgs__fenster" data-testid="vdgs-fenster">
                   {t("cdm.band.anlassfenster", "Anlassen {{von}}–{{bis}}", {
                     von: fenster[0],
                     bis: fenster[1],
                   })}
                 </span>
-              )
-            )}
-          </div>
+              )}
+            </div>
+          )
         )}
       </div>
 
       {/* Fenster verpasst und noch am Stand: Die Folge hat den Flug
           gleich aus der Planung genommen. Der Weg zurück ist eine neue
           TOBT — also direkt dorthin. */}
+      {gesperrt && (
+        <div className="vdgs__sperre" data-testid="vdgs-sperre">
+          {gesperrt === "gs"
+            ? t("cdm.band.sperre_gs", "Ground Stop — kein Anlassen, bis er aufgehoben ist")
+            : gesperrt === "mr"
+              ? t("cdm.band.sperre_mr", "Pflichtroute nicht eingehalten — Route im Flugplan korrigieren")
+              : gesperrt === "cdm"
+                ? t("cdm.band.sperre_cdm", "Vom CDM ausgesetzt — mit ATC abstimmen")
+                : t("cdm.band.sperre_sonst", "Ausgesetzt — den Anweisungen von ATC folgen")}
+        </div>
+      )}
+
       {verpasst && (
         <button
           type="button"

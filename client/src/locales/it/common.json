@@ -2526,6 +2526,12 @@
     "knopf": "VATSIM CDM",
     "knopf_titel": "Apri la sequenza di partenza su VATSIM",
     "band": {
+      "kopf_aus_ctot": "AVVIAMENTO",
+      "kopf_aus_ctot_titel": "CTOT meno tempo di rullaggio",
+      "sperre_gs": "Ground stop — nessun avviamento finché non viene revocato",
+      "sperre_mr": "Rotta obbligatoria non rispettata — correggi la rotta nel piano di volo",
+      "sperre_cdm": "Sospeso dal CDM — coordinati con l'ATC",
+      "sperre_sonst": "Sospeso — segui le istruzioni dell'ATC",
       "tobt_aendern": "MODIFICA TOBT",
       "tobt_aendern_titel": "Modifica la TOBT su vats.im/vdgs",
       "off_block": "Off-block {{zeit}}",

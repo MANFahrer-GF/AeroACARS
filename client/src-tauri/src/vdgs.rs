@@ -65,6 +65,9 @@ pub struct VdgsStand {
     /// Bewegung sieht ("Detected in movement"). Ab dann zaehlt das
     /// Anlassfenster nicht mehr — wer rollt, hat es nicht verpasst.
     pub aobt: String,
+    /// Tatsaechliche Startzeit laut Gegenseite. Nur zur Pruefung, ob der
+    /// Eintrag ueberhaupt zu diesem Flug gehoert (s. `passt_zum_flug`).
+    pub atot: String,
 }
 
 /// Rohantwort. Nur die Felder, die das Band braucht; alles andere bleibt
@@ -84,6 +87,8 @@ struct ApiFlug {
     ctot: String,
     #[serde(default)]
     aobt: String,
+    #[serde(default)]
+    atot: String,
     #[serde(default)]
     taxi: Option<u32>,
     #[serde(default, rename = "cdmSts")]
@@ -157,7 +162,32 @@ fn aufbereiten(f: &ApiFlug) -> VdgsStand {
         regulierung: f.atfcm_data.most_penalising_regulation.trim().to_string(),
         rwy_sid: f.cdm_data.dep_info.trim().to_uppercase(),
         aobt: zeit(&f.aobt),
+        atot: zeit(&f.atot),
     }
+}
+
+/// Gehoert der Eintrag zu DIESEM Flug?
+///
+/// Gefragt wird je Rufzeichen, und die Gegenseite haelt einen Flug nach
+/// dem Trennen noch rund zehn Minuten vor. Nach einem Neustart, Abbruch
+/// oder schnellen Folgeflug unter demselben Rufzeichen kann die Antwort
+/// also noch der VORIGE Flug sein — mit dessen Off-Block, und das Band
+/// hielte den neuen Flug faelschlich fuer „Fenster erfuellt" (Codex-
+/// Abnahme 21.09.2026). Zwei Zeichen verraten das:
+///   * anderer Abflugplatz als der laufende Flug,
+///   * schon abgehoben (`atot`), obwohl dieser Flug noch am Boden steht —
+///     `vdgs_stand` fragt nur vor dem Abheben.
+/// Dann ist das fuer diesen Flug „kein Eintrag".
+fn passt_zum_flug(stand: Option<VdgsStand>, abflug: &str) -> Option<VdgsStand> {
+    let s = stand?;
+    let abflug = abflug.trim().to_uppercase();
+    if !abflug.is_empty() && !s.departure.is_empty() && s.departure != abflug {
+        return None;
+    }
+    if !s.atot.is_empty() {
+        return None;
+    }
+    Some(s)
 }
 
 /// Zwischenspeicher: letzter Abruf je FLUG. `None` als Wert heisst
@@ -332,6 +362,7 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
     // entgegen der Zusage „nur bei laufendem Flug" (Codex-Abnahme
     // 20.09.2026).
     let flug_id = crate::vdgs_flug_kennung(&app)?;
+    let abflug = crate::vdgs_flug_abflug(&app).unwrap_or_default();
 
     // DASSELBE Rufzeichen, unter dem der Client auch funkt.
     //
@@ -374,6 +405,7 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
 
     match abrufen(&callsign).await {
         Ok(stand) => {
+            let stand = passt_zum_flug(stand, &abflug);
             in_speicher(&schl, stand.clone());
             antwort(stand)
         }
@@ -426,6 +458,7 @@ mod tests {
             regulierung: String::new(),
             rwy_sid: String::new(),
             aobt: String::new(),
+            atot: String::new(),
         }
     }
 
@@ -453,6 +486,38 @@ mod tests {
         assert_eq!(s.aobt, "20:42");
         assert_eq!(s.taxi_min, Some(10));
         assert_eq!(s.cdm_sts, "COMPLY");
+    }
+
+    #[test]
+    fn eintrag_eines_frueheren_fluges_wird_verworfen() {
+        let eigen = VdgsStand {
+            callsign: "AIB4TK".into(),
+            departure: "EDDC".into(),
+            tobt: "20:45".into(),
+            ..leer()
+        };
+        assert_eq!(
+            passt_zum_flug(Some(eigen.clone()), "eddc"),
+            Some(eigen.clone())
+        );
+        // Anderer Platz: der vorige Flug unter demselben Rufzeichen.
+        assert_eq!(passt_zum_flug(Some(eigen.clone()), "LEPA"), None);
+        // Schon abgehoben, waehrend wir noch am Boden stehen.
+        let alt = VdgsStand {
+            aobt: "20:42".into(),
+            atot: "20:54".into(),
+            ..eigen.clone()
+        };
+        assert_eq!(passt_zum_flug(Some(alt), "EDDC"), None);
+        // Off-Block allein (rollt gerade) ist dagegen unser Flug.
+        let rollt = VdgsStand {
+            aobt: "20:42".into(),
+            ..eigen.clone()
+        };
+        assert_eq!(passt_zum_flug(Some(rollt.clone()), "EDDC"), Some(rollt));
+        // Unbekannter Abflugplatz auf einer Seite: nicht ausschliessen.
+        assert_eq!(passt_zum_flug(Some(eigen.clone()), ""), Some(eigen));
+        assert_eq!(passt_zum_flug(None, "EDDC"), None);
     }
 
     #[test]

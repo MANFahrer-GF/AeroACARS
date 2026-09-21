@@ -25,7 +25,16 @@ vi.mock("react-i18next", () => ({
 // UNBEHANDELTE Rejection — der Lauf endet dann mit Rueckgabewert 1,
 // waehrend die Zusammenfassung "grün" meldet (Abnahme 20.09.2026).
 const invoke = vi.fn(() => Promise.resolve(null));
-vi.mock("../lib/ipc", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
+const openExternal = vi.fn(() => Promise.resolve());
+// Umschaltbar: App (Tauri) oder LAN-Browser auf dem Tablet.
+let istTauri = true;
+vi.mock("../lib/ipc", () => ({
+  invoke: (...a: unknown[]) => invoke(...a),
+  openExternal: (...a: unknown[]) => openExternal(...a),
+  get isTauri() {
+    return istTauri;
+  },
+}));
 
 import deCommon from "../locales/de/common.json";
 import {
@@ -33,6 +42,8 @@ import {
   ampel,
   anlassfenster,
   minutenBis,
+  referenz,
+  sperre,
   zeitPlus,
   useVdgsStand,
   type VdgsStand,
@@ -58,6 +69,8 @@ afterEach(() => {
   vi.useRealTimers();
   cleanup();
   invoke.mockReset();
+  openExternal.mockReset();
+  istTauri = true;
 });
 
 describe("minutenBis", () => {
@@ -471,5 +484,88 @@ describe("TOBT ändern", () => {
     expect(deCommon.cdm.band.tobt_aendern).toBe("TOBT ÄNDERN");
     expect(deCommon.cdm.band.anlassfenster).toBe("Anlassen {{von}}–{{bis}}");
     expect(deCommon.cdm.band.verpasst).toContain("neue TOBT");
+  });
+});
+
+describe("Codex-Abnahme 21.09.2026", () => {
+  it("nimmt die Referenz in der Reihenfolge von VATSIM Spain", () => {
+    expect(referenz(STAND)).toEqual({ zeit: "15:46", art: "TSAT" });
+    // Regulierung ohne TSAT: CTOT minus Rollzeit, nicht die TOBT.
+    const reg = { ...STAND, tsat: "", tobt: "12:00", ctot: "12:45", taxi_min: 15 };
+    expect(referenz(reg)).toEqual({ zeit: "12:30", art: "CTOT" });
+    // Ohne Rollzeit lässt sich aus der CTOT nichts rechnen.
+    expect(referenz({ ...reg, taxi_min: null })).toEqual({ zeit: "12:00", art: "TOBT" });
+    expect(referenz({ ...STAND, tsat: "", tobt: "" })).toEqual({ zeit: "15:50", art: "EOBT" });
+  });
+
+  it("legt bei Regulierung ohne TSAT Fenster und Ampel um CTOT minus Rollzeit", () => {
+    const reg = { ...STAND, tsat: "", tobt: "12:00", ctot: "12:45", taxi_min: 15 };
+    // 12:10 ist nach dem TOBT-Fenster — früher schon rot.
+    expect(ampel(reg, um("12:10"))).toBe("warten");
+    expect(ampel(reg, um("12:26"))).toBe("frei");
+    expect(ampel(reg, um("12:36"))).toBe("achtung");
+    vi.useFakeTimers();
+    vi.setSystemTime(um("12:10"));
+    render(<VdgsPlatte antwort={{ gefragt_als: "GSG1", stand: reg }} />);
+    expect(screen.getByTestId("vdgs-fenster").textContent).toBe("Anlassen 12:25–12:36");
+    const gross = screen.getByTestId("vdgs-band").querySelector(".vdgs__gross");
+    expect(gross?.textContent).toContain("ANLASSEN");
+    expect(gross?.textContent).toContain("12:30");
+    expect(screen.queryByTestId("vdgs-verpasst")).toBeNull();
+  });
+
+  it("erkennt jede FLS-Aussetzung", () => {
+    expect(sperre("FLS-GS")).toBe("gs");
+    expect(sperre("FLS-MR")).toBe("mr");
+    expect(sperre("fls-cdm")).toBe("cdm");
+    expect(sperre("FLS-NRA")).toBe("sonst");
+    expect(sperre("SUSPENDED")).toBe("sonst");
+    expect(sperre("COMPLY")).toBeNull();
+    expect(sperre("REA")).toBeNull();
+    expect(sperre("")).toBeNull();
+    // Früher grün möglich: FLS-MR mitten im Fenster.
+    expect(ampel({ ...STAND, cdm_sts: "FLS-MR" }, um("15:43"))).toBe("achtung");
+  });
+
+  it("sagt bei Aussetzung, was zu tun ist — keine neue TOBT", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(um("16:10"));
+    render(<VdgsPlatte antwort={{ gefragt_als: "GSG1", stand: { ...STAND, cdm_sts: "FLS-MR" } }} />);
+    expect(screen.getByTestId("vdgs-sperre").textContent).toContain("Route im Flugplan korrigieren");
+    // Zeitlich verpasst, aber eine neue TOBT behebt eine Routenverletzung nicht.
+    expect(screen.queryByTestId("vdgs-verpasst")).toBeNull();
+  });
+
+  it("stellt Off-Block vor jeden Status", () => {
+    expect(ampel({ ...STAND, cdm_sts: "FLS-NRA", aobt: "15:45" }, um("16:10"))).toBe("frei");
+    render(
+      <VdgsPlatte
+        antwort={{ gefragt_als: "GSG1", stand: { ...STAND, cdm_sts: "FLS-NRA", aobt: "15:45" } }}
+      />,
+    );
+    expect(screen.getByTestId("vdgs-offblock").textContent).toBe("Off-Block 15:45");
+    expect(screen.queryByTestId("vdgs-sperre")).toBeNull();
+  });
+
+  it("zeigt Off-Block auch ohne TOBT — und keinen Auftrag, sie zu setzen", () => {
+    render(
+      <VdgsPlatte antwort={{ gefragt_als: "GSG1", stand: { ...STAND, tobt: "", aobt: "15:45" } }} />,
+    );
+    expect(screen.getByTestId("vdgs-offblock").textContent).toBe("Off-Block 15:45");
+    expect(screen.queryByText("TOBT SETZEN")).toBeNull();
+  });
+
+  it("öffnet auf dem Tablet vats.im/vdgs im Browser statt still nichts zu tun", () => {
+    istTauri = false;
+    render(<VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: EDDC }} />);
+    screen.getByTestId("vdgs-tobt-aendern").click();
+    expect(openExternal).toHaveBeenCalledWith("https://vats.im/vdgs");
+    expect(invoke).not.toHaveBeenCalledWith("vdgs_fenster_oeffnen");
+  });
+
+  it("hat die neuen Texte in allen Sprachen", () => {
+    for (const k of ["kopf_aus_ctot", "sperre_gs", "sperre_mr", "sperre_cdm", "sperre_sonst"]) {
+      expect((deCommon.cdm.band as Record<string, string>)[k], k).toBeTruthy();
+    }
   });
 });

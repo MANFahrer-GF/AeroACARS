@@ -126,6 +126,17 @@
   color: var(--vdgs-an);
 }
 
+/* Ausgesetzt (FLS-irgendwas oder SUSP): was zu tun ist, in Worten — keine Taste,
+   denn eine neue TOBT hilft dort nicht. */
+.vdgs__sperre {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--vdgs-halt);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-300);
+  letter-spacing: var(--ls-mono);
+  color: var(--vdgs-halt);
+}
+
 /* Fenster verpasst: eine klare Aufgabe statt nur roter Farbe. */
 .vdgs__verpasst {
   align-self: stretch;
