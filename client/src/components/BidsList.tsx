@@ -2009,7 +2009,14 @@ function AutoStartSkipBanner() {
       aria-live="polite"
     >
       <div className="bids__auto-start-skip-text">
-        <strong>{t("bids.auto_start_skip.title")}</strong>
+        {/* „Start läuft" ist kein Hindernis — unter der Überschrift „gerade
+            nicht möglich" las es sich wieder wie ein Fehler, also genau das,
+            was es beheben sollte (unabhängige Prüfung, 22.09.2026). */}
+        <strong>
+          {skip.reason === "start_running"
+            ? t("bids.auto_start_skip.title_running")
+            : t("bids.auto_start_skip.title")}
+        </strong>
         <span>{reasonText}</span>
       </div>
     </div>

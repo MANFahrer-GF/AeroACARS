@@ -50457,13 +50457,42 @@ fn freigeben_wenn_eigen(platz: &Mutex<Option<i64>>, bid: i64) {
     }
 }
 
+/// Was beim Ende eines Auto-Start-Tasks aufgeraeumt wird — ohne
+/// `AppHandle`, damit es direkt testbar ist.
+///
+/// Immer: den eigenen Marker freigeben. Nur bei NICHT normalem Ende
+/// (Panik, Abbruch): auch den eigenen Anspruch freigeben UND die Pause
+/// setzen wie nach einem Fehler. Ohne Pause startete der Watcher denselben
+/// Bid nach 3 s neu — bei einer wiederholbaren Panik der Retry-Sturm aus
+/// GlitchTip #10, womoeglich mit einem neuen Prefile je Versuch
+/// (unabhaengige Pruefung, 22.09.2026).
+fn auto_start_aufraeumen(
+    marker: &Mutex<Option<i64>>,
+    anspruch: &Mutex<Option<i64>>,
+    pause: &Mutex<Option<(DateTime<Utc>, i64, String)>>,
+    bid: i64,
+    erledigt: bool,
+    jetzt: DateTime<Utc>,
+) {
+    freigeben_wenn_eigen(marker, bid);
+    if !erledigt {
+        *pause.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((jetzt, bid, "abgebrochen".to_string()));
+        freigeben_wenn_eigen(anspruch, bid);
+    }
+}
+
 impl Drop for AutoStartLaeuft {
     fn drop(&mut self) {
         let state = self.app.state::<AppState>();
-        freigeben_wenn_eigen(&state.auto_start_laeuft_bid, self.bid);
-        if !self.erledigt {
-            freigeben_wenn_eigen(&state.auto_start_last_bid_id, self.bid);
-        }
+        auto_start_aufraeumen(
+            &state.auto_start_laeuft_bid,
+            &state.auto_start_last_bid_id,
+            &state.auto_start_fail,
+            self.bid,
+            self.erledigt,
+            Utc::now(),
+        );
     }
 }
 
@@ -50742,6 +50771,40 @@ mod auto_start_vorpruefung_tests {
         assert!(vergiftet.is_poisoned());
         freigeben_wenn_eigen(&vergiftet, 7);
         assert_eq!(*vergiftet.lock().unwrap_or_else(|e| e.into_inner()), None);
+    }
+
+    /// Normales Ende: nur der Marker. Panik/Abbruch: Marker, Anspruch UND
+    /// Pause — sonst Neustart desselben Bids nach 3 s.
+    #[test]
+    fn aufraeumen_nach_normalem_ende_und_nach_panik() {
+        let jetzt = Utc::now();
+        let marker = Mutex::new(Some(5724));
+        let anspruch = Mutex::new(Some(5724));
+        let pause = Mutex::new(None);
+        auto_start_aufraeumen(&marker, &anspruch, &pause, 5724, true, jetzt);
+        assert_eq!(*marker.lock().unwrap(), None);
+        assert_eq!(
+            *anspruch.lock().unwrap(),
+            Some(5724),
+            "den regelt der normale Weg"
+        );
+        assert!(pause.lock().unwrap().is_none());
+
+        let marker = Mutex::new(Some(5724));
+        auto_start_aufraeumen(&marker, &anspruch, &pause, 5724, false, jetzt);
+        assert_eq!(*marker.lock().unwrap(), None);
+        assert_eq!(*anspruch.lock().unwrap(), None);
+        let p = pause.lock().unwrap().clone().expect("Pause gesetzt");
+        assert_eq!((p.1, p.2.as_str()), (5724, "abgebrochen"));
+        // Und die Pause greift wirklich im Watcher.
+        assert!(auto_start_pause_rest(5724, Some(&p), jetzt).is_some());
+
+        // Fremde Eintraege bleiben unangetastet.
+        let marker = Mutex::new(Some(1));
+        let anspruch = Mutex::new(Some(1));
+        auto_start_aufraeumen(&marker, &anspruch, &pause, 5724, false, jetzt);
+        assert_eq!(*marker.lock().unwrap(), Some(1));
+        assert_eq!(*anspruch.lock().unwrap(), Some(1));
     }
 
     /// Log Thomas 21.09.2026 (AIB424): waehrend flight_start lief, stand

@@ -1871,6 +1871,7 @@
     "no_ofp_open": "Generate on simbrief.com",
     "auto_start_skip": {
       "title": "Auto-start active, but currently not possible",
+      "title_running": "Auto-start in progress",
       "generic": "Auto-start can't fire right now.",
       "engines_on": "Engines are running — auto-start only works on a cold-and-dark aircraft. Use 'Start flight' manually.",
       "moving": "Aircraft is already taxiing — auto-start only fires while parked. Use 'Start flight' manually.",

@@ -1864,6 +1864,7 @@
     "no_ofp_open": "Crea su simbrief.com",
     "auto_start_skip": {
       "title": "Auto-start attivo, ma al momento non possibile",
+      "title_running": "Auto-start in corso",
       "generic": "L'auto-start non può partire ora.",
       "engines_on": "Motori accesi — l'auto-start parte solo a freddo/aereo fermo. Usa „Avvia volo\" manuale.",
       "moving": "L'aereo sta già rullando — l'auto-start parte solo da fermo. Usa „Avvia volo\" manuale.",

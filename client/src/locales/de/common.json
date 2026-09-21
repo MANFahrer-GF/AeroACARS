@@ -1871,6 +1871,7 @@
     "no_ofp_open": "Auf simbrief.com erstellen",
     "auto_start_skip": {
       "title": "Auto-Start aktiv, aber gerade nicht möglich",
+      "title_running": "Auto-Start läuft",
       "generic": "Auto-Start greift gerade nicht.",
       "engines_on": "Triebwerke sind an — Auto-Start greift nur bei kalt/stehendem Flugzeug. Manuell „Flug starten\" nutzen.",
       "moving": "Flugzeug rollt schon — Auto-Start greift nur am Stand. Manuell „Flug starten\" nutzen.",
