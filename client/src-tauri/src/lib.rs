@@ -50509,6 +50509,7 @@ mod auto_start_vorpruefung_tests {
             ohne_ofp: Some("220".into()),
             pause: Some((1, 10, "x".into())),
             schon_gestartet: Some(2),
+            start_laeuft: false,
             naechster_nm: Some(0.1),
         };
         assert_eq!(auto_start_hinweis(&alles).0, "aircraft_mismatch");
