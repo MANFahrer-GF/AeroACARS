@@ -6547,7 +6547,7 @@ struct FlightStats {
     last_logged_pmdg_thrust_mode: Option<String>,
     /// 777 ECL phase completion tracking — one slot per phase.
     /// Logged on rising edge (false→true) so the activity log
-    /// shows "ECL: Preflight ✓ complete" once per phase.
+    /// shows "ECL: Preflight complete" once per phase.
     last_logged_pmdg_ecl: [bool; 10],
     /// PMDG-authoritative APU-running bit (777). Distinct from
     /// the standard-SimVar APU tracking which uses RPM heuristics.
@@ -29288,9 +29288,9 @@ fn apply_pause_resume(
     // statt blockieren). Der Pilot kann ueber PIREP-Cancel-UI
     // korrigieren wenn er einen falschen Flug erwischt hat.
     let auto_prefix = match reason {
-        PauseReason::SimDisconnect => "▶ Flug automatisch fortgesetzt",
-        PauseReason::SimPause => "▶ Sim-Pause beendet — Flug fortgesetzt",
-        PauseReason::ManualResume => "▶ Flug wiederaufgenommen",
+        PauseReason::SimDisconnect => "Flug automatisch fortgesetzt",
+        PauseReason::SimPause => "Sim-Pause beendet — Flug fortgesetzt",
+        PauseReason::ManualResume => "Flug wiederaufgenommen",
     };
     let (level, msg) = match drift_nm {
         Some(d) if d > RESUME_DRIFT_EXTREME_NM => (
@@ -49600,7 +49600,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 ) {
                 Some((
                         "title_missing_xplane",
-                        "Auto-Start wartet auf Sim-Daten: Aircraft-Titel fehlt. In X-Plane Settings → Network → Web API einschalten, damit AeroACARS den Flugzeug-Namen lesen kann.",
+                        "Auto-Start wartet auf Sim-Daten: Aircraft-Titel fehlt. In X-Plane Settings > Network > Web API einschalten, damit AeroACARS den Flugzeug-Namen lesen kann.",
                     ))
             } else if title_missing {
                 Some((
@@ -51034,7 +51034,7 @@ pub fn run() {
             discord_rpc::discord_rpc_send_test,
             discord_rpc::discord_rpc_push_state,
             discord_rpc::discord_rpc_clear_flight,
-            // v0.9.1 F7: LE8-Suffix "Sim getrennt" verdrahten
+            // v0.9.1 F7: LE8-Suffix "⚠ Sim getrennt" verdrahten (Discord-Status, nicht die Cockpit-Schrift)
             discord_rpc::discord_rpc_set_sim_lost,
             // v0.7.14: Discord-Posts macht der Recorder zentral — keine
             // Pilot-Client-Commands mehr fuer Webhook-URL. Audit C1.

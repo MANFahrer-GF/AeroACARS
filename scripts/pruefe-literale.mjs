@@ -108,6 +108,16 @@ function pruefe(name, ist, soll) {
   );
 }
 
+// ── A5: Klammer in einem Kommentar mitten im Aufruf ────────────────
+{
+  const q = 'log_x(&s,\n  // Hinweis 1) hier\n  "Sicht ≥ 10 km");';
+  pruefe(
+    "A5: Kommentar-Klammer schliesst den Aufruf nicht",
+    aufrufLiterale(q, "log_x", rustLiterale).map((l) => l.text),
+    ["Sicht ≥ 10 km"],
+  );
+}
+
 // ── T1: Template-Literal, feste Teile bleiben ─────────────────────────
 {
   const q = "const a = `Sicht ${wert} ≥ 10 km`; const b = 'einfach';";
@@ -136,4 +146,4 @@ if (fehler > 0) {
   console.error(`\n${fehler} Prüfung(en) fehlgeschlagen`);
   process.exit(1);
 }
-console.log("\nliteral-scanner in Ordnung — 12 Fälle, alle aus echten Fehlern");
+console.log("\nliteral-scanner in Ordnung — 13 Fälle, alle aus echten Fehlern");

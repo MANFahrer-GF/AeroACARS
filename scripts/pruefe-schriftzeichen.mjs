@@ -77,6 +77,28 @@ const SPRACHEN = ["de", "en", "it"];
  * Seit dem 21.09.2026 deckt er deshalb DREI Quellen ab: i18n-Zweige,
  * Literale in benannten Quelldateien und die Meldungen, die das
  * Backend ins Aktivitätsprotokoll schreibt.
+ *
+ * # Was er grundsätzlich NICHT sieht
+ *
+ * Ein statischer Prüfer liest Quelltext, nicht den laufenden Client.
+ * Offen bleiben deshalb:
+ *
+ *   * Texte, die ERST IN EINER VARIABLE gebaut und dann übergeben
+ *     werden (`let msg = …; log_activity_handle(app, …, msg, …)`). Die
+ *     externe Abnahme fand am 21.09.2026 drei solche Meldungen mit
+ *     fehlenden Zeichen (▶ beim Fortsetzen, Δ in der Loadsheet-Zeile,
+ *     → in einem X-Plane-Menüpfad) — keiner davon im Aufruf selbst.
+ *     Eine vierte (⚠ vor „Touchdown im Pre-Threshold-Bereich") wurde
+ *     nur durch eine zu breite Ersetzung erwischt, also durch Glück.
+ *   * Texte vom Server und aus Fehlermeldungen fremder Bibliotheken.
+ *   * Einträge, die vor einem Update gespeichert wurden und beim Start
+ *     wieder geladen werden, bis die Kapazitätsgrenze sie verdrängt.
+ *   * In TS-Dateien: JSX-Textknoten zwischen Tags, und Literale hinter
+ *     einem Regex-Literal, das selbst ein Anführungszeichen enthält.
+ *
+ * Grün heißt also: Kein DIREKT erkennbarer Text enthält ein Zeichen,
+ * das der Schrift fehlt. Nicht: Das Cockpit ist sauber. Wer eine
+ * neue Protokollmeldung über eine Variable baut, prüft sie selbst.
  */
 const ZWEIGE = [["cdm", "band"]];
 

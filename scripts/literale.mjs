@@ -259,8 +259,11 @@ export function aufrufLiterale(quelle, name, scanner) {
     let i = m.index + m[0].length;
     let tiefe = 1;
     while (i < quelle.length && tiefe > 0) {
-      // Literale am Stueck ueberspringen — ihre Klammern zaehlen nicht.
-      const hier = imLiteral(i);
+      // Literale UND Kommentare am Stueck ueberspringen — ihre
+      // Klammern zaehlen nicht. Ein `// Hinweis 1) hier` mitten im
+      // Aufruf schloss den Block sonst zu frueh, und der ganze Aufruf
+      // fiel still aus der Pruefung (externe Abnahme, 21.09.2026).
+      const hier = imLiteral(i) ?? kommentare.find((k) => k.start <= i && i < k.ende);
       if (hier) {
         i = hier.ende;
         continue;
