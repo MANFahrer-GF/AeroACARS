@@ -178,6 +178,15 @@ fn aufbereiten(f: &ApiFlug) -> VdgsStand {
 ///   * schon abgehoben (`atot`), obwohl dieser Flug noch am Boden steht —
 ///     `vdgs_stand` fragt nur vor dem Abheben.
 /// Dann ist das fuer diesen Flug „kein Eintrag".
+///
+/// Bewusst NICHT abgedeckt (Codex-Nachpruefung 21.09.2026): ein Abbruch
+/// nach dem Off-Block, aber vor dem Start, und ein Neustart am selben
+/// Platz unter demselben Rufzeichen binnen der zehn Minuten. Dann fuehrt
+/// das CDM den Flug SELBST noch als off-block — das Band zeigt, was die
+/// Folge glaubt, und ein erfundenes Zeitlimit waere schlechter. Ebenso
+/// hingenommen: meldet die Gegenseite die ATOT Sekunden vor unserer
+/// eigenen Abhebe-Erkennung, steht kurz „kein Eintrag"; danach
+/// verschwindet das Band ohnehin.
 fn passt_zum_flug(stand: Option<VdgsStand>, abflug: &str) -> Option<VdgsStand> {
     let s = stand?;
     let abflug = abflug.trim().to_uppercase();
