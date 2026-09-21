@@ -19,10 +19,12 @@ on:
     branches: ['**']
     paths:
       - 'client/**'
+      - 'scripts/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'client/**'
+      - 'scripts/**'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -103,3 +105,19 @@ jobs:
         run: |
           npx tsc -p tsconfig.json --noEmit
           npx vitest run
+      # Die Waechter, die ausserhalb von Vitest leben. Ohne diesen
+      # Schritt liefen sie NIRGENDS: Vitest kennt sie nicht, und
+      # Aenderungen unter scripts/ loesten den Workflow bisher nicht
+      # einmal aus (externe Abnahme, 21.09.2026). Ein Waechter, den
+      # niemand aufruft, ist kein Waechter.
+      #
+      # Jeder laeuft zuerst gegen sich selbst: `--selbsttest` stellt
+      # den Fehler nach, den er finden soll. Meldet der Selbsttest
+      # gruen, obwohl das Werkzeug kaputt ist, faellt es hier auf.
+      # scripts/anzeige-sync.mjs laeuft hier bewusst NICHT: Es
+      # vergleicht gegen das Nachbar-Repo aeroacars-live, das in der CI
+      # nicht ausgecheckt ist. Es bleibt ein lokaler Waechter.
+      - name: Waechter (Schriftzeichen der Cockpit-Schrift)
+        run: |
+          node scripts/pruefe-schriftzeichen.mjs --selbsttest
+          node scripts/pruefe-schriftzeichen.mjs

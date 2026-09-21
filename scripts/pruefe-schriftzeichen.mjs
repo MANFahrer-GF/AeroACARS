@@ -34,10 +34,32 @@ const SPRACHEN = ["de", "en", "it"];
  * darin die Schrift. Die Beschriftungen des Bandes liegen alle unter
  * `cdm.band.*`.
  *
- * Bewusst NICHT der ganze Sprachbaum: Was außerhalb des Bandes steht,
+ * Bewusst NICHT der ganze Sprachbaum: Der größte Teil der Oberfläche
  * läuft in der Fließtextschrift, und die kann mehr. Ein Wächter, der
  * alles verbietet, was B612 Mono fehlt, würde Texte beanstanden, die
- * völlig in Ordnung sind — und dann abgeschaltet.
+ * völlig in Ordnung sind — und wäre nach einer Woche abgeschaltet.
+ *
+ * # Was dieser Wächter NICHT sieht
+ *
+ * Die erste Fassung dieses Kommentars behauptete, außerhalb des Bandes
+ * laufe alles in der Fließtextschrift. Das stimmt nicht, und die
+ * externe Abnahme hat es am 21.09.2026 mit zwei Gegenbeispielen
+ * widerlegt, die der Pilot heute schon sieht:
+ *
+ *   * Das Wetter (`.wx__cell`, App.css) zeigt bei Sicht ab 9,5 km
+ *     „≥ 10 km" — U+2265 fehlt in B612 Mono. Der Text ist ein Literal
+ *     in WeatherBriefing.tsx, kein i18n-Schlüssel, also kann ein
+ *     Prüfer über die Sprachdateien ihn gar nicht finden.
+ *   * Das Aktivitätsprotokoll (`.log`, App.css) erbt B612 Mono und
+ *     zeigt bei jedem Flugstart „A → B" — U+2192 fehlt ebenfalls. Der
+ *     Text entsteht im Rust-Backend (lib.rs), nicht in den Locales.
+ *
+ * Beides ist Bestand und älter als dieser Wächter; beides wurde
+ * bewusst nicht im Vorbeigehen geändert, weil der Pfeil an 55 Stellen
+ * steht und ein Teil davon in PIREP-Texte geht, die Betreiber greppen.
+ *
+ * Wer diesen Wächter erweitert, muss also wissen: Er deckt i18n-Texte
+ * ab, keine Literale im Quelltext und keine Texte aus dem Backend.
  */
 const ZWEIGE = [["cdm", "band"]];
 
@@ -78,7 +100,17 @@ function pruefe(sprachdateien, vorratDaten, schriftSummen) {
   // Zuerst: Passt der Vorrat überhaupt noch zur Schrift? Sonst prüft
   // der Wächter gegen eine Liste von gestern und meldet grün, während
   // die neue Schrift ein Zeichen verloren hat.
-  for (const [name, summe] of Object.entries(vorratDaten.schriften)) {
+  const schriftNamen = Object.keys(vorratDaten.schriften ?? {});
+  if (schriftNamen.length === 0) {
+    // Sonst prüft der Wächter gegen eine Liste ohne jede Herkunft: Wer
+    // `schriften` leert, schaltet die Prüfsummen-Wache ab, ohne dass
+    // etwas rot wird (externe Abnahme, gemessen: fehler=[], geprueft=1).
+    fehler.push(
+      "der Zeichenvorrat nennt keine Schrift — ohne Herkunft ist er " +
+        "nicht überprüfbar; mit scripts/erzeuge-schriftzeichen.py erneuern",
+    );
+  }
+  for (const [name, summe] of Object.entries(vorratDaten.schriften ?? {})) {
     const ist = schriftSummen[name];
     if (ist === undefined) {
       fehler.push(`Schrift ${name} fehlt — Vorrat nicht überprüfbar`);
@@ -90,10 +122,25 @@ function pruefe(sprachdateien, vorratDaten, schriftSummen) {
     }
   }
 
+  // Und: Trägt jede Sprache jeden Zweig?
+  //
+  // Ohne diese Wache zählte eine Sprache, der `cdm.band` fehlt, einfach
+  // nicht mit — `geprueft` stieg durch die anderen beiden, und der
+  // Lauf meldete grün. Genau dann zeigt i18next aber den deutschen
+  // Ersatztext, und ein Zeichen, das nur dort steht, wäre nie geprüft
+  // worden (externe Abnahme, 21.09.2026, gemessen: fehler=[], geprueft=2).
   let geprueft = 0;
   for (const [sprache, baum] of Object.entries(sprachdateien)) {
     for (const zweig of ZWEIGE) {
-      for (const [schluessel, text] of texteSammeln(baum, zweig)) {
+      const texte = texteSammeln(baum, zweig);
+      if (texte.length === 0) {
+        fehler.push(
+          `${sprache}: Zweig ${zweig.join(".")} fehlt oder ist leer — ` +
+            "diese Sprache wurde nicht geprüft",
+        );
+        continue;
+      }
+      for (const [schluessel, text] of texte) {
         geprueft += 1;
         const fehlend = unbekannte(text, vorrat);
         if (fehlend.length > 0) {
@@ -124,6 +171,16 @@ if (process.argv.includes("--selbsttest")) {
     ["U+2011", { de: { cdm: { band: { a: "PDC/CPDLC‑Tab" } } } }, false],
     ["Gedankenstrich", { de: { cdm: { band: { a: "a — b" } } } }, false],
     ["leerer Zweig", { de: { cdm: {} } }, false],
+    // Die beiden Fehlgrün-Pfade, die die externe Abnahme gemessen hat.
+    [
+      "eine von drei Sprachen ohne Zweig",
+      {
+        de: { cdm: { band: { a: "ok" } } },
+        en: { cdm: {} },
+        it: { cdm: { band: { a: "ok" } } },
+      },
+      false,
+    ],
   ];
   let schlecht = 0;
   for (const [name, dateien, erwartetOk] of faelle) {
@@ -137,14 +194,24 @@ if (process.argv.includes("--selbsttest")) {
       schlecht += 1;
     }
   }
-  // Und die Gegenprobe zur Prüfsummen-Wache.
+  // Und die Gegenproben zur Prüfsummen-Wache.
   const { fehler: f2 } = pruefe(faelle[0][1], vorratDaten, { "X.woff2": "bbbb" });
   if (!f2.some((f) => f.includes("geändert"))) {
     console.error("SELBSTTEST FEHLGESCHLAGEN: geänderte Schrift wurde nicht bemerkt");
     schlecht += 1;
   }
+  // Ein Vorrat ohne Herkunft schaltete die Wache lautlos ab.
+  const { fehler: f3 } = pruefe(
+    faelle[0][1],
+    { schriften: {}, zeichen: vorratDaten.zeichen },
+    {},
+  );
+  if (!f3.some((f) => f.includes("keine Schrift"))) {
+    console.error("SELBSTTEST FEHLGESCHLAGEN: leere Schriftliste wurde durchgelassen");
+    schlecht += 1;
+  }
   if (schlecht > 0) process.exit(1);
-  console.log(`selbsttest bestanden: ${faelle.length + 1} Fälle richtig beurteilt`);
+  console.log(`selbsttest bestanden: ${faelle.length + 2} Fälle richtig beurteilt`);
   process.exit(0);
 }
 
