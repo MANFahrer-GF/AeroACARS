@@ -27,6 +27,7 @@ vi.mock("react-i18next", () => ({
 const invoke = vi.fn(() => Promise.resolve(null));
 vi.mock("../lib/ipc", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
+import deCommon from "../locales/de/common.json";
 import {
   VdgsPlatte,
   ampel,
@@ -186,6 +187,43 @@ describe("Rufzeichen in der Platte", () => {
     // Und es ist KEINE volle Platte — sonst stuende an jedem Platz
     // ohne A-CDM ein leeres Geraet im Cockpit.
     expect(screen.queryByTestId("vdgs-band")).toBeNull();
+  });
+
+  it("haelt PDC/CPDLC-Tab zusammen, damit es nicht am Bindestrich bricht", () => {
+    // Am laufenden Korpus gesehen (21.09.2026): Bei 480 px Bandbreite
+    // brach der deutsche Text mitten im Wort auf — „PDC/CPDLC-" in der
+    // einen, „Tab" in der naechsten Zeile. Browser behandeln einen
+    // gewoehnlichen Bindestrich als weiche Trennstelle; dieselbe Falle
+    // steht schon bei `.datalink-block__label` in App.css beschrieben.
+    // Englisch und Italienisch trifft es nicht (Leerzeichen bzw. gar
+    // kein „Tab"), Deutsch schon.
+    //
+    // Geprueft wird das Zeichen, nicht der Umbruch: jsdom layoutet
+    // nicht, kann also keinen Zeilenfall sehen. Das ist eine
+    // Ersatzpruefung — sie traegt, weil der geschuetzte Bindestrich
+    // (U+2011) im Quelltext unsichtbar ist und beim Nachbearbeiten der
+    // Sprachdatei lautlos zu einem gewoehnlichen wird.
+    render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null }} />);
+    const text = screen.getByTestId("vdgs-band-leer").textContent ?? "";
+    expect(text).toContain("PDC/CPDLC\u2011Tab");
+    expect(
+      text,
+      "gewoehnlicher Bindestrich vor Tab — bricht bei schmalem Band mitten im Wort",
+    ).not.toContain("PDC/CPDLC-Tab");
+
+    // Und die SPRACHDATEI mit, nicht nur der Ersatztext im Quelltext.
+    //
+    // Das ist hier kein Beiwerk: Die `react-i18next`-Attrappe oben gibt
+    // den Ersatztext zurueck, den `t()` im Quelltext mitbekommt — die
+    // Datei unter locales/ fasst sie nie an. Im Betrieb ist es genau
+    // umgekehrt. Ohne diese Zeilen waere der Test also blind fuer den
+    // Text, den der Pilot wirklich sieht.
+    expect(deCommon.cdm.band.kein_eintrag_wo_aendern).toContain(
+      "PDC/CPDLC\u2011Tab",
+    );
+    expect(deCommon.cdm.band.kein_eintrag_wo_aendern).not.toContain(
+      "PDC/CPDLC-Tab",
+    );
   });
 
   it("nennt den Weg zum Rufzeichen NUR bei fehlendem Eintrag, nicht bei Stoerung", () => {

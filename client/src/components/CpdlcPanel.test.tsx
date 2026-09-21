@@ -380,6 +380,11 @@ describe("Reichweite des Rufzeichens", () => {
     // grün, wenn die Hälfte der Aussage wegfällt.
     expect(hinweis.textContent).toMatch(/VDGS/i);
     expect(hinweis.textContent).toMatch(/TOBT/i);
+    // Und die eigentliche Erklaerung: dass es DASSELBE Rufzeichen ist.
+    // Ohne diese Zeile blieb der Test gruen, wenn genau dieser Halbsatz
+    // wegfaellt — dann stuende nur noch da, dass es „auch fuer VDGS
+    // gilt", ohne zu sagen, was das heisst (externe Abnahme, 21.09.).
+    expect(hinweis.textContent).toMatch(/demselben Rufzeichen/i);
 
     // Und sichtbar, nicht als Tooltip: Ein `title` erreicht im Cockpit
     // niemanden. Genau das war der Zustand vorher, und genau deshalb
