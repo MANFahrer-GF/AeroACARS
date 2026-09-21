@@ -1884,7 +1884,8 @@
       "bid_already_started": "This bid was already auto-started this session. Restart via the manual toggle or pick another bid.",
       "ofp_missing": "Auto-start is waiting for the SimBrief OFP: no aircraft is assigned to the bid yet. As soon as the OFP is created, the flight starts by itself.",
       "retry_pending": "The last auto-start failed — retrying shortly. The activity log shows why. Or use 'Start flight' manually.",
-      "sim_not_ready": "Auto-start is waiting until the simulator has finished loading and has been running steadily for 20 seconds (not paused, no position jumps)."
+      "sim_not_ready": "Auto-start is waiting until the simulator has finished loading and has been running steadily for 20 seconds (not paused, no position jumps).",
+      "start_running": "Auto-start is creating the flight right now — one moment."
     },
     "open_flight_page": "Open flight page",
     "open_ofp": "Open OFP / briefing",

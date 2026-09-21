@@ -50191,6 +50191,9 @@ struct AutoStartBeobachtung {
     pause: Option<(i64, i64, String)>,
     /// Bid, der in dieser Parkphase schon gestartet wurde.
     schon_gestartet: Option<i64>,
+    /// `flight_start` laeuft gerade (`flight_setup_in_progress`). Dann ist
+    /// „schon gestartet" in Wahrheit „wird gerade gestartet".
+    start_laeuft: bool,
     /// Naechster Abflughafen in nm.
     naechster_nm: Option<f64>,
 }
@@ -50200,6 +50203,17 @@ struct AutoStartBeobachtung {
 /// Die Codes sind zugleich die Schluessel `bids.auto_start_skip.<code>`
 /// im Banner.
 fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, String) {
+    // Der Start dieses Bids laeuft gerade: das ist jetzt die einzige
+    // wichtige Auskunft. Vorher stand in diesen rund fuenf Sekunden „Bid N
+    // wurde diese Session schon mal auto-gestartet" — technisch richtig,
+    // gelesen wie ein Fehler (Thomas, 22.09.2026, Log AIB424).
+    if let (Some(bid), true) = (b.schon_gestartet, b.start_laeuft) {
+        return (
+            "start_running",
+            "Auto-Start: Start läuft",
+            format!("Bid {bid} wird gerade gestartet — der Flug wird angelegt."),
+        );
+    }
     if let Some((flug, erwartet, sim)) = &b.typ_passt_nicht {
         return (
             "aircraft_mismatch",
@@ -50542,6 +50556,11 @@ mod auto_start_vorpruefung_tests {
                 schon_gestartet: Some(1),
                 ..Default::default()
             },
+            AutoStartBeobachtung {
+                schon_gestartet: Some(1),
+                start_laeuft: true,
+                ..Default::default()
+            },
             AutoStartBeobachtung::default(),
         ];
         let mut codes: std::collections::BTreeSet<&str> =
@@ -50651,6 +50670,36 @@ mod auto_start_vorpruefung_tests {
             auto_start_bid_vorpruefung(&bid_mit(5719, Some(1046)), None, true, None),
             BidVorpruefung::TypPruefen { flugzeug_id: 1046 }
         );
+    }
+
+    /// Log Thomas 21.09.2026 (AIB424): waehrend flight_start lief, stand
+    /// „schon mal auto-gestartet" im Protokoll. Jetzt „Start läuft" — und
+    /// NUR, solange der Start wirklich laeuft.
+    #[test]
+    fn laufender_start_heisst_start_laeuft() {
+        let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+            schon_gestartet: Some(5724),
+            start_laeuft: true,
+            // Andere Bids duerfen das nicht verdraengen.
+            typ_passt_nicht: Some(("1".into(), "A".into(), "B".into())),
+            ..Default::default()
+        });
+        assert_eq!(code, "start_running");
+        assert!(titel.contains("Start läuft"), "{titel}");
+        assert!(text.contains("5724"), "{text}");
+        // Ohne laufenden Start bleibt es beim bisherigen Hinweis.
+        let (code, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
+            schon_gestartet: Some(5724),
+            ..Default::default()
+        });
+        assert_eq!(code, "bid_already_started");
+        // Laeuft ein Start, aber nicht fuer einen beanspruchten Bid, gibt es
+        // nichts „Laufendes" zu melden.
+        let (code, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
+            start_laeuft: true,
+            ..Default::default()
+        });
+        assert_eq!(code, "no_bid_match");
     }
 
     #[test]
@@ -51395,6 +51444,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 // Vom konkretesten Grund zum allgemeinsten (Typ passt nicht →
                 // OFP fehlt → Pause → schon gestartet → kein Bid am Platz),
                 // siehe `auto_start_hinweis`.
+                beobachtung.start_laeuft = state.flight_setup_in_progress.load(Ordering::SeqCst);
                 let (reason_code, title, reason_msg) = auto_start_hinweis(&beobachtung);
                 auto_start_melden(
                     &app,
