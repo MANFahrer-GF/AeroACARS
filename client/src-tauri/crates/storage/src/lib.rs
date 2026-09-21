@@ -1323,6 +1323,55 @@ impl LandingStore {
     }
 }
 
+/// Fuellt in `ziel` rekursiv, was dort fehlt, leer (`null`) oder eine leere
+/// Liste ist, aus `quelle`. Vorhandene Werte werden NIE ueberschrieben.
+///
+/// Befund 21.09.2026: Der Mac holte eine Landung mit v1.7.38 aus der
+/// Sicherung. Diese Fassung kannte `sprit.wegpunkte` noch nicht und verwarf
+/// das Feld beim Einlesen. Weil die Zusammenfuehrung bei gleichem
+/// `recorded_at` stur die lokale Kopie behielt, kam die Tabelle auch mit
+/// neueren Fassungen nie wieder an — und der naechste Upload des Mac haette
+/// sie auf dem Server geloescht. Zwei Kopien mit gleichem `recorded_at`
+/// stammen aus DERSELBEN Berechnung; was einer fehlt, ist verloren gegangen,
+/// nicht bewusst geleert.
+pub fn luecken_fuellen(ziel: &mut serde_json::Value, quelle: &serde_json::Value) {
+    use serde_json::Value;
+    match (ziel, quelle) {
+        (Value::Object(z), Value::Object(q)) => {
+            for (schluessel, qwert) in q {
+                match z.get_mut(schluessel) {
+                    Some(zwert) => luecken_fuellen(zwert, qwert),
+                    None => {
+                        z.insert(schluessel.clone(), qwert.clone());
+                    }
+                }
+            }
+        }
+        (z @ Value::Null, q) => *z = q.clone(),
+        (Value::Array(z), Value::Array(q)) if z.is_empty() && !q.is_empty() => {
+            *z = q.clone();
+        }
+        _ => {}
+    }
+}
+
+/// Vereint zwei Kopien derselben Landung (gleiche PIREP, gleiches
+/// `recorded_at`). `None`, wenn nichts zu ergaenzen war oder die Vereinigung
+/// sich nicht mehr einlesen laesst — dann bleibt die behaltene Kopie.
+fn gleiche_landung_vereinen(
+    behalten: &LandingRecord,
+    andere: &LandingRecord,
+) -> Option<LandingRecord> {
+    let mut ziel = serde_json::to_value(behalten).ok()?;
+    let quelle = serde_json::to_value(andere).ok()?;
+    let vorher = ziel.clone();
+    luecken_fuellen(&mut ziel, &quelle);
+    if ziel == vorher {
+        return None;
+    }
+    serde_json::from_value(ziel).ok()
+}
+
 /// Merge two landing lists into one, newest write per PIREP winning.
 ///
 /// Why merging rather than "last upload wins": A pilot who flies from two
@@ -1335,6 +1384,10 @@ impl LandingStore {
 /// legitimately be re-recorded (a re-filed PIREP, a corrected score), and the
 /// later WRITE is the better record even though the touchdown time is
 /// identical.
+///
+/// Gleiches `recorded_at` heisst dieselbe Berechnung: dann gewinnt die
+/// lokale Kopie wie bisher, wird aber um das ergaenzt, was nur die andere
+/// noch hat (`luecken_fuellen`, 21.09.2026).
 pub fn merge_landings(
     local: Vec<LandingRecord>,
     incoming: Vec<LandingRecord>,
@@ -1343,8 +1396,16 @@ pub fn merge_landings(
 
     let mut by_id: HashMap<String, LandingRecord> = HashMap::new();
     for rec in local.into_iter().chain(incoming) {
-        match by_id.get(&rec.pirep_id) {
-            Some(existing) if existing.recorded_at >= rec.recorded_at => {}
+        match by_id.get_mut(&rec.pirep_id) {
+            // Dieselbe Berechnung auf zwei Geraeten: die behaltene Kopie um
+            // das ergaenzen, was nur die andere noch hat (siehe
+            // `luecken_fuellen`).
+            Some(existing) if existing.recorded_at == rec.recorded_at => {
+                if let Some(vereint) = gleiche_landung_vereinen(existing, &rec) {
+                    *existing = vereint;
+                }
+            }
+            Some(existing) if existing.recorded_at > rec.recorded_at => {}
             _ => {
                 by_id.insert(rec.pirep_id.clone(), rec);
             }
@@ -1393,6 +1454,90 @@ mod merge_tests {
             "accident_reasons": [],
         }))
         .expect("test record")
+    }
+
+    fn mit(mut basis: LandingRecord, zusatz: serde_json::Value) -> LandingRecord {
+        let mut v = serde_json::to_value(&basis).unwrap();
+        for (k, w) in zusatz.as_object().unwrap() {
+            v[k] = w.clone();
+        }
+        basis = serde_json::from_value(v).expect("test record mit Zusatz");
+        basis
+    }
+
+    fn wegpunkte(r: &LandingRecord) -> usize {
+        r.sprit.as_ref().map_or(0, |s| s.wegpunkte.len())
+    }
+
+    /// Der Befund vom 21.09.2026: Der Mac holte die Landung mit einer
+    /// Fassung, die `sprit.wegpunkte` noch nicht kannte, und hielt sie ohne
+    /// Tabelle. Der Server hat sie. Gleiches `recorded_at` → die Tabelle
+    /// muss ankommen, beim Abholen (Server als `incoming`) wie beim
+    /// Hochladen (dieselbe Zusammenfuehrung vor dem PUT).
+    #[test]
+    fn gleiche_berechnung_fuellt_die_wegpunkte_nach() {
+        let t = ("2026-09-20T21:02:00Z", "2026-09-20T21:10:17Z");
+        let mac = mit(
+            rec("AXb", t.0, t.1),
+            serde_json::json!({"sprit": {"fassung": 3}}),
+        );
+        let server = mit(
+            rec("AXb", t.0, t.1),
+            serde_json::json!({"sprit": {"fassung": 3, "wegpunkte": [{"ident": "DLE"}, {"ident": "BOMBI"}]}}),
+        );
+        assert_eq!(wegpunkte(&mac), 0);
+        let merged = merge_landings(vec![mac.clone()], vec![server.clone()]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(wegpunkte(&merged[0]), 2, "Tabelle vom Server nachgefuellt");
+        // Umgekehrte Reihenfolge (PC lokal, Mac-Kopie kommt herein): bleibt voll.
+        let merged = merge_landings(vec![server], vec![mac]);
+        assert_eq!(wegpunkte(&merged[0]), 2);
+    }
+
+    /// Nachfuellen heisst nie ueberschreiben: Ein vorhandener Wert der
+    /// behaltenen Kopie bleibt, auch wenn die andere etwas anderes sagt.
+    #[test]
+    fn vorhandene_werte_werden_nie_ueberschrieben() {
+        let t = ("2026-09-20T21:02:00Z", "2026-09-20T21:10:17Z");
+        let lokal = mit(rec("X", t.0, t.1), serde_json::json!({"score_numeric": 88}));
+        let anders = mit(rec("X", t.0, t.1), serde_json::json!({"score_numeric": 70}));
+        let merged = merge_landings(vec![lokal], vec![anders]);
+        assert_eq!(merged[0].score_numeric, Some(88));
+    }
+
+    /// Gegenprobe: Eine NEUERE Berechnung darf Felder bewusst leeren — dort
+    /// wird nichts aus der aelteren nachgefuellt.
+    #[test]
+    fn neuere_berechnung_wird_nicht_aus_der_aelteren_gefuellt() {
+        let alt = mit(
+            rec("Y", "2026-09-20T21:02:00Z", "2026-09-20T21:10:00Z"),
+            serde_json::json!({"sprit": {"fassung": 3, "wegpunkte": [{"ident": "ALT"}]}}),
+        );
+        let neu = mit(
+            rec("Y", "2026-09-20T21:02:00Z", "2026-09-20T22:00:00Z"),
+            serde_json::json!({"sprit": {"fassung": 3}}),
+        );
+        let merged = merge_landings(vec![alt], vec![neu]);
+        assert_eq!(wegpunkte(&merged[0]), 0);
+    }
+
+    /// Die Regel selbst, auf Rohdaten: null und leere Listen werden
+    /// gefuellt, fehlende Schluessel ergaenzt, alles andere bleibt.
+    #[test]
+    fn luecken_fuellen_regeln() {
+        let mut ziel = serde_json::json!({
+            "a": null, "b": [], "c": 1, "d": [1], "tief": {"x": null, "y": 2}
+        });
+        let quelle = serde_json::json!({
+            "a": 5, "b": [9], "c": 2, "d": [7, 8], "e": "neu", "tief": {"x": 3, "y": 4, "z": 5}
+        });
+        luecken_fuellen(&mut ziel, &quelle);
+        assert_eq!(
+            ziel,
+            serde_json::json!({
+                "a": 5, "b": [9], "c": 1, "d": [1], "e": "neu", "tief": {"x": 3, "y": 2, "z": 5}
+            })
+        );
     }
 
     /// Der Fall, für den es die Zusammenführung gibt: zwei Rechner, jeder
