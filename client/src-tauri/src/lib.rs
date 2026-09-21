@@ -12958,7 +12958,7 @@ async fn flight_refresh_simbrief(
         }
         .to_string(),
         Some(format!(
-            "{} → {} ({}). Block {:.0} kg, TOW {:.0} kg, LDW {:.0} kg",
+            "{} – {} ({}). Block {:.0} kg, TOW {:.0} kg, LDW {:.0} kg",
             previous_ofp_id.as_deref().unwrap_or("—"),
             sb_id,
             if changed { "neu" } else { "identisch" },
@@ -15590,7 +15590,7 @@ async fn flight_adopt(
         &state,
         ActivityLevel::Info,
         format!(
-            "Adopted in-progress flight {} ({} → {})",
+            "Adopted in-progress flight {} ({} – {})",
             format_callsign(&flight.airline_icao, &flight.flight_number),
             flight.dpt_airport,
             flight.arr_airport
@@ -16287,7 +16287,7 @@ async fn flight_start(
             &state,
             ActivityLevel::Info,
             "Kein SimBrief-OFP für diesen Flug".to_string(),
-            Some("Der Bid hat keinen SimBrief-OFP gelinkt. Du kannst trotzdem fliegen — der Landung-Tab zeigt dann nur die IST-Werte ohne SOLL/Δ-Vergleich.".to_string()),
+            Some("Der Bid hat keinen SimBrief-OFP gelinkt. Du kannst trotzdem fliegen — der Landung-Tab zeigt dann nur die IST-Werte ohne SOLL-IST-Vergleich.".to_string()),
         );
         None
     };
@@ -16628,7 +16628,7 @@ async fn flight_start(
         &state,
         ActivityLevel::Info,
         format!(
-            "Flight started: {} {} → {}",
+            "Flight started: {} {} – {}",
             format_callsign(&flight.airline_icao, &flight.flight_number),
             flight.dpt_airport,
             flight.arr_airport
@@ -17248,7 +17248,7 @@ async fn flight_start_manual(
         &state,
         ActivityLevel::Info,
         format!(
-            "Manual-Mode-Flug gestartet: {} {} → {} (Block {:.0} kg, ETA {} min)",
+            "Manual-Mode-Flug gestartet: {} {} – {} (Block {:.0} kg, ETA {} min)",
             format_callsign(&flight.airline_icao, &flight.flight_number),
             flight.dpt_airport,
             flight.arr_airport,
@@ -19644,7 +19644,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                         &app,
                         ActivityLevel::Warn,
                         format!(
-                            "PIREP konnte nach {} Versuchen noch nicht eingereicht werden: {} {} → {}",
+                            "PIREP konnte nach {} Versuchen noch nicht eingereicht werden: {} {} – {}",
                             q.attempt_count,
                             format_callsign(&q.airline_icao, &q.flight_number),
                             q.dpt_airport,
@@ -19758,7 +19758,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                             &app,
                             ActivityLevel::Info,
                             format!(
-                                "Gequeueter PIREP nachträglich eingereicht: {} {} → {}",
+                                "Gequeueter PIREP nachträglich eingereicht: {} {} – {}",
                                 format_callsign(&q.airline_icao, &q.flight_number),
                                 q.dpt_airport,
                                 q.arr_airport,
@@ -27024,7 +27024,7 @@ async fn flight_end(
                 &state,
                 ActivityLevel::Info,
                 format!(
-                    "PIREP filed: {} {} → {}{}",
+                    "PIREP filed: {} {} – {}{}",
                     format_callsign(&flight.airline_icao, &flight.flight_number),
                     flight.dpt_airport,
                     effective_arr_icao,
@@ -27267,7 +27267,7 @@ async fn flight_end(
                     &state,
                     ActivityLevel::Warn,
                     format!(
-                        "PIREP queued: {} {} → {}",
+                        "PIREP queued: {} {} – {}",
                         format_callsign(&flight.airline_icao, &flight.flight_number),
                         flight.dpt_airport,
                         flight.arr_airport,
@@ -27951,7 +27951,7 @@ async fn flight_end_manual(
                         String::new()
                     };
                     format!(
-                        "Manual PIREP filed: {} {} → {}{}",
+                        "Manual PIREP filed: {} {} – {}{}",
                         format_callsign(&flight.airline_icao, &flight.flight_number),
                         flight.dpt_airport,
                         actual_arr,
@@ -28445,7 +28445,7 @@ async fn flight_cancel(
         &state,
         ActivityLevel::Warn,
         format!(
-            "Flight cancelled: {} {} → {}",
+            "Flight cancelled: {} {} – {}",
             format_callsign(&flight.airline_icao, &flight.flight_number),
             flight.dpt_airport,
             flight.arr_airport
@@ -28758,7 +28758,7 @@ async fn sweep_stale_orphans_before_prefile(
                 log_activity_handle(
                     app,
                     ActivityLevel::Info,
-                    format!("Verwaister Flug {nr} ({dep}→{arr}, {alter}) automatisch aufgeräumt"),
+                    format!("Verwaister Flug {nr} ({dep}–{arr}, {alter}) automatisch aufgeräumt"),
                     Some(format!(
                         "PIREP {} server-seitig gecancelt (Selbstheilung beim Flugstart)",
                         p.id
@@ -29260,9 +29260,9 @@ fn apply_pause_resume(
                 app,
                 &flight.pirep_id,
                 ActivityLevel::Error,
-                "⚠ Unmöglicher Sprung beim Wiederaufnehmen erkannt".to_string(),
+                "Unmöglicher Sprung beim Wiederaufnehmen erkannt".to_string(),
                 Some(format!(
-                    "Fuel-Δ {:+.0} kg · Höhen-Δ {:+.0} ft · Drift {:.1} nm — \
+                    "Fuel-Diff {:+.0} kg · Höhen-Diff {:+.0} ft · Drift {:.1} nm — \
                      physikalisch nicht plausibel (kein normaler Verbrauch/Flug), \
                      vermutlich Reload/neuer Ladezustand während der Pause.",
                     d.fuel_delta_kg, d.altitude_delta_ft, d.drift_nm,
@@ -29385,7 +29385,7 @@ fn apply_pause_resume(
                     app,
                     ActivityLevel::Warn,
                     format!(
-                        "⚠ Aircraft-Mismatch nach Resume: Sim meldet {}, Bid erwartet {}",
+                        "Aircraft-Mismatch nach Resume: Sim meldet {}, Bid erwartet {}",
                         actual, bid_icao
                     ),
                     Some(format!(
@@ -29393,7 +29393,7 @@ fn apply_pause_resume(
                          und starte einen neuen Flug mit dem passenden Bid. Andernfalls lade im Sim \
                          das richtige Flugzeug nach (Bid-ICAO: {bid_icao}). Ist es derselbe Flieger \
                          und der Sim meldet nur einen anderen Typ-String, pflege im Recorder-Admin \
-                         einen Aircraft-Alias {bid_icao} → {actual}."
+                         einen Aircraft-Alias {bid_icao} auf {actual}."
                     )),
                 );
                 tracing::warn!(
@@ -29609,7 +29609,7 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Op
                     ActivityLevel::Info,
                     "Flight log uploaded to live-tracking server",
                     Some(format!(
-                        "{} KB raw → {} KB gzip ({}% Kompression)",
+                        "{} KB raw, {} KB gzip ({}% Kompression)",
                         stats.raw_size / 1024,
                         stats.compressed_size / 1024,
                         ((stats.compressed_size as f64 / stats.raw_size as f64) * 100.0) as i32,
@@ -33239,9 +33239,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 &app,
                                 &flight.pirep_id,
                                 ActivityLevel::Error,
-                                "⚠ Unmöglicher Sprung beim Wiederaufnehmen erkannt".to_string(),
+                                "Unmöglicher Sprung beim Wiederaufnehmen erkannt".to_string(),
                                 Some(format!(
-                                    "Fuel-Δ {:+.0} kg · Höhen-Δ {:+.0} ft · Drift {:.1} nm — \
+                                    "Fuel-Diff {:+.0} kg · Höhen-Diff {:+.0} ft · Drift {:.1} nm — \
                                      physikalisch nicht plausibel (kein normaler Verbrauch/Flug), \
                                      vermutlich Reload/neuer Ladezustand während eines App- oder \
                                      Sim-Neustarts.",
@@ -33314,7 +33314,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         &app,
                         &flight.pirep_id,
                         ActivityLevel::Error,
-                        "⚠ Sim-Reload erkannt — Aufzeichnung pausiert".to_string(),
+                        "Sim-Reload erkannt — Aufzeichnung pausiert".to_string(),
                         Some(format!(
                             "Vorher: FL{:.0} airborne · jetzt: {:.0} ft am Boden bei LAT {:.3}° LON {:.3}° (Drop: {:.0} ft). \
                             Bitte im ResumeFlightBanner waehlen: zurueck zur Cruise-Position positionieren + Position pruefen, \
@@ -33385,7 +33385,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         log_activity_handle(
                             &app,
                             ActivityLevel::Info,
-                            "⏸ Simulator pausiert — AeroACARS pausiert die Aufzeichnung."
+                            "Simulator pausiert — AeroACARS pausiert die Aufzeichnung."
                                 .to_string(),
                             Some(detail),
                         );
@@ -33596,7 +33596,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         &app,
                         &flight.pirep_id,
                         ActivityLevel::Warn,
-                        "⏸ Sim getrennt — Flug pausiert. Klicke „Flug wiederaufnehmen\" sobald du repositioniert hast.".to_string(),
+                        "Sim getrennt — Flug pausiert. Klicke „Flug wiederaufnehmen\" sobald du repositioniert hast.".to_string(),
                         Some(detail),
                     );
                     save_active_flight(&app, &flight);
@@ -46554,7 +46554,7 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     let dds_warning_msg: Option<String> = assess_touchdown(&stats).dds.and_then(|d| {
         if d.in_pre_threshold_zone {
             Some(format!(
-                "⚠ Touchdown im Pre-Threshold-Bereich (DDS {:.0} m vor Landing-Threshold)",
+                "Touchdown im Pre-Threshold-Bereich (DDS {:.0} m vor Landing-Threshold)",
                 d.displaced_threshold_m
             ))
         } else {
@@ -46720,7 +46720,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             log_activity_handle(
                 app,
                 ActivityLevel::Info,
-                format!("Aircraft profile changed → {}", label),
+                format!("Aircraft profile changed: {}", label),
                 None,
             );
         }
@@ -46767,7 +46767,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 log_activity_handle(
                     app,
                     ActivityLevel::Info,
-                    format!("XPDR mode → {}", mode),
+                    format!("XPDR mode: {}", mode),
                     None,
                 );
             }
@@ -47444,7 +47444,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     log_activity_handle(
                         app,
                         ActivityLevel::Info,
-                        format!("MCP IAS → {display}"),
+                        format!("MCP IAS: {display}"),
                         None,
                     );
                 }
@@ -47459,7 +47459,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     log_activity_handle(
                         app,
                         ActivityLevel::Info,
-                        format!("MCP HDG → {hdg:03}°"),
+                        format!("MCP HDG: {hdg:03}°"),
                         None,
                     );
                 }
@@ -47480,7 +47480,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     log_activity_handle(
                         app,
                         ActivityLevel::Info,
-                        format!("MCP ALT → {alt} ft"),
+                        format!("MCP ALT: {alt} ft"),
                         None,
                     );
                 }
@@ -47500,7 +47500,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     log_activity_handle(
                         app,
                         ActivityLevel::Info,
-                        format!("MCP V/S → {vs:+} fpm"),
+                        format!("MCP V/S: {vs:+} fpm"),
                         None,
                     );
                 }
@@ -47558,7 +47558,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 log_activity_handle(
                     app,
                     ActivityLevel::Info,
-                    format!("Thrust mode → {}", p.thrust_limit_mode),
+                    format!("Thrust mode: {}", p.thrust_limit_mode),
                     None,
                 );
             }
@@ -47595,7 +47595,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     log_activity_handle(
                         app,
                         ActivityLevel::Info,
-                        format!("ECL: {label} ✓ complete"),
+                        format!("ECL: {label} complete"),
                         None,
                     );
                     stats.last_logged_pmdg_ecl[idx] = true;
@@ -47776,7 +47776,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 log_activity_handle(
                     app,
                     ActivityLevel::Warn,
-                    "⚠ MASTER CAUTION".to_string(),
+                    "MASTER CAUTION".to_string(),
                     None,
                 );
             } else {
@@ -47934,7 +47934,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             log_activity_handle(
                 app,
                 ActivityLevel::Warn,
-                "⚠ Below Glideslope".to_string(),
+                "Below Glideslope".to_string(),
                 None,
             );
         }
@@ -47967,7 +47967,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             log_activity_handle(
                 app,
                 ActivityLevel::Warn,
-                "⚠ Stabilizer out of trim".to_string(),
+                "Stabilizer out of trim".to_string(),
                 None,
             );
         }
@@ -48105,7 +48105,7 @@ fn once_per_landing_rising_edge(
     }
 }
 
-/// v0.16.10: Below-G/S-Alert-Latch. `true` ⇒ "⚠ Below Glideslope"
+/// v0.16.10: Below-G/S-Alert-Latch. `true` ⇒ "Below Glideslope"
 /// jetzt loggen. Regeln:
 ///   * nur die false→true-Transition loggt,
 ///   * erster beobachteter Wert latcht stumm — ein beim Connect
@@ -49896,7 +49896,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     &app,
                     ActivityLevel::Info,
                     format!(
-                        "Auto-Start: {} {} → {}",
+                        "Auto-Start: {} {} – {}",
                         bid.flight.flight_number,
                         bid.flight.dpt_airport_id,
                         bid.flight.arr_airport_id
@@ -51034,7 +51034,7 @@ pub fn run() {
             discord_rpc::discord_rpc_send_test,
             discord_rpc::discord_rpc_push_state,
             discord_rpc::discord_rpc_clear_flight,
-            // v0.9.1 F7: LE8-Suffix "⚠ Sim getrennt" verdrahten
+            // v0.9.1 F7: LE8-Suffix "Sim getrennt" verdrahten
             discord_rpc::discord_rpc_set_sim_lost,
             // v0.7.14: Discord-Posts macht der Recorder zentral — keine
             // Pilot-Client-Commands mehr fuer Webhook-URL. Audit C1.

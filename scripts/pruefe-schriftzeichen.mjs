@@ -20,6 +20,22 @@
 
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
+import { rustLiterale, tsLiterale, aufrufLiterale } from "./literale.mjs";
+
+/** Alle .rs-Dateien unter einem Verzeichnis, rekursiv. */
+function rustDateien(wurzel) {
+  const raus = [];
+  for (const eintrag of readdirSync(wurzel, { withFileTypes: true })) {
+    const url = new URL(
+      eintrag.name + (eintrag.isDirectory() ? "/" : ""),
+      wurzel,
+    );
+    if (eintrag.isDirectory()) raus.push(...rustDateien(url));
+    else if (eintrag.name.endsWith(".rs")) raus.push(url);
+  }
+  return raus;
+}
 
 const WURZEL = new URL("..", import.meta.url);
 const SCHRIFTEN = new URL("client/src/assets/fonts/", WURZEL);
@@ -58,11 +74,132 @@ const SPRACHEN = ["de", "en", "it"];
  * bewusst nicht im Vorbeigehen geändert, weil der Pfeil an 55 Stellen
  * steht und ein Teil davon in PIREP-Texte geht, die Betreiber greppen.
  *
- * Wer diesen Wächter erweitert, muss also wissen: Er deckt i18n-Texte
- * ab, keine Literale im Quelltext und keine Texte aus dem Backend.
+ * Seit dem 21.09.2026 deckt er deshalb DREI Quellen ab: i18n-Zweige,
+ * Literale in benannten Quelldateien und die Meldungen, die das
+ * Backend ins Aktivitätsprotokoll schreibt.
  */
 const ZWEIGE = [["cdm", "band"]];
 
+/**
+ * Quelldateien, deren sichtbare Literale in B612 Mono landen.
+ *
+ * Jeder Eintrag braucht einen Grund — sonst ist diese Liste nur ein
+ * Weg, die Prüfung auszuweiten, bis sie jemand abschaltet.
+ *
+ * Geprüft werden nur Literale mit einem Zeichen ausserhalb von ASCII.
+ * Das ist der Filter, der die Prüfung brauchbar macht: Klassennamen,
+ * i18n-Schlüssel und Attribute sind ASCII und fallen nie auf, ein
+ * sichtbarer Text mit Sonderzeichen dagegen sofort.
+ */
+const QUELLDATEIEN = [
+  {
+    pfad: "client/src/components/WeatherBriefing.tsx",
+    grund: "`.wx__cell` und `.wx__raw` tragen --font-acars (App.css). " +
+      "Hier stand bis 21.09.2026 die Sichtweite mit U+2265, das der " +
+      "Schrift fehlt.",
+  },
+  {
+    pfad: "client/src/components/ActivityLogPanel.tsx",
+    grund: "Die Protokollliste erbt --font-acars (App.css, `.log`).",
+  },
+];
+
+/**
+ * Die Meldungen, die das Backend ins Aktivitätsprotokoll schreibt.
+ *
+ * Sie entstehen in Rust und gehen durch keine Sprachdatei — über die
+ * Locales waren sie also unerreichbar. Bis 21.09.2026 stand in acht
+ * dieser Meldungen ein „→" (U+2192), das der Schrift fehlt; sichtbar
+ * bei jedem Flugstart.
+ *
+ * Gelesen werden die Zeichenketten-Literale innerhalb eines
+ * `log_activity(...)`-Aufrufs — nicht alle Literale von lib.rs, denn
+ * der Pfeil steht dort an 55 Stellen, und die übrigen gehen in
+ * PIREP-Texte an phpVMS, die niemand im Cockpit sieht.
+ */
+const BACKEND = {
+  wurzel: "client/src-tauri/src/",
+  // ALLE DREI Schreibfunktionen. Die erste Fassung kannte nur
+  // `log_activity` — und weil der Name ein Präfix der beiden anderen
+  // ist, sah sie so vollständig aus, wie sie es nicht war: Hinter
+  // `log_activity_handle` standen 103 Aufrufe, davon 13 mit einem
+  // Pfeil, hinter `log_activity_and_record` weitere zwei mit „Δ".
+  // Gefunden bei der QS zur eigenen Korrektur (21.09.2026).
+  aufrufe: ["log_activity", "log_activity_handle", "log_activity_and_record"],
+};
+
+/**
+ * Literale mit mindestens einem Zeichen ausserhalb von ASCII.
+ *
+ * Gelesen wird mit dem Scanner aus literale.mjs, nicht mit einem
+ * regulären Ausdruck: Der kann Kommentare nicht von Code
+ * unterscheiden, sobald der Kommentar hinter dem Code steht oder ein
+ * Blockkommentar keinen Sternchen-Rand hat.
+ */
+/**
+ * Literale, die zwar in einer der Quelldateien stehen, aber NICHT in
+ * einem Element mit der Cockpit-Schrift landen.
+ *
+ * Das ist die bekannte Schwäche des Datei-Ansatzes: Geprüft wird die
+ * ganze Datei, aber nur einzelne Elemente darin tragen B612 Mono. Jeder
+ * Eintrag nennt deshalb die Stelle und den Grund — und der Grund muss
+ * am CSS nachprüfbar sein, sonst ist diese Liste nur ein Weg, den
+ * Wächter ruhigzustellen.
+ *
+ * Verglichen wird der GANZE Text, nicht ein Teilstück. Mit
+ * `includes()` hätte ein Literal wie „⟳Δ→ alles auf einmal" die
+ * Ausnahme geerbt und Δ und → gleich mit durchgeschmuggelt (externe
+ * Abnahme, 21.09.2026).
+ */
+const NICHT_IN_DER_SCHRIFT_GERENDERT = [
+  {
+    datei: "client/src/components/WeatherBriefing.tsx",
+    texte: ["🌫", "⛈", "🌨", "🌦", "🌧", "❄", "🌁", "☀", "☁", "🌥", "⛅", "🌤"],
+    grund:
+      "die Wettersymbole der Kopfzeile. Sie landen in `.wx__phen` " +
+      "(App.css 1496) innerhalb von `.wx__head` — beide setzen keine " +
+      "font-family, und auch `.card` darüber nicht. Die Reihe erbt also " +
+      "die Fliesstextschrift. B612 Mono tragen nur `.wx__cell` und " +
+      "`.wx__raw` weiter unten, und dort steht kein Symbol.",
+  },
+  {
+    datei: "client/src/components/WeatherBriefing.tsx",
+    text: "⟳",
+    grund:
+      "steht auf `.weather-briefing__refresh` im Kopf des Briefings. " +
+      "Die Regel setzt keine font-family (App.css 3397), und kein " +
+      "Vorfahr setzt --font-acars — der Knopf erbt die Fliesstextschrift. " +
+      "B612 Mono tragen nur `.wx__cell` und `.wx__raw` darunter.",
+  },
+];
+
+/**
+ * Piktogramme sind kein Befund.
+ *
+ * Ein Zeichen mit Emoji-Darstellung kommt IMMER aus einer Bilderschrift,
+ * in jeder Anwendung, und sieht genau so aus, wie es soll. Es hier zu
+ * beanstanden hiesse, den Wächter eine Woche zu haben und dann
+ * abgeschaltet.
+ *
+ * Der Befund sind TEXTzeichen, die still aus einer fremden Textschrift
+ * kommen: Ihre Laufweite passt nicht zur Monospace-Zeile daneben, und
+ * niemand rechnet damit.
+ *
+ * Die Grenze lief zuerst an `\p{Extended_Pictographic}` — und die ist
+ * VIEL weiter als „wird als Bild gezeigt". Gemessen (externe Abnahme,
+ * 21.09.2026): ⚠ U+26A0, ⏸ U+23F8, ☀ U+2600, ✈, ❄, ✔ sind alle
+ * Extended_Pictographic, haben aber TEXT-Darstellung und fehlen B612
+ * Mono — also genau der Fehler, den dieser Wächter finden soll, per
+ * Ausnahme für unauffällig erklärt. Acht reale Protokollmeldungen waren
+ * betroffen.
+ *
+ * `\p{Emoji_Presentation}` ist die richtige Grenze: Diese Zeichen zeigt
+ * jede Umgebung von sich aus als farbiges Bild (🔴, 🛬), und dafür ist
+ * eine Bilderschrift gewollt. Alles andere ist Text.
+ */
+const PIKTOGRAMM = /\p{Emoji_Presentation}|\uFE0F|\p{Emoji_Modifier}/u;
+
+/** Die Blattwerte eines i18n-Zweigs, mit vollem Schlüsselpfad. */
 function texteSammeln(baum, pfad) {
   let knoten = baum;
   for (const teil of pfad) {
@@ -80,20 +217,39 @@ function texteSammeln(baum, pfad) {
   return raus;
 }
 
-/** Zeichen, die der Vorrat nicht kennt — als Codepoints, nicht als
- *  UTF-16-Einheiten, sonst zerfällt jedes Zeichen außerhalb der BMP. */
+/** Fehlende Zeichen lesbar auflisten, mit Codepoint zum Nachschlagen. */
+function zeichenListe(zeichen) {
+  return zeichen
+    .map(
+      (z) =>
+        `\u201e${z}" (U+${z.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")})`,
+    )
+    .join(", ");
+}
+
+/**
+ * Zeichen, die der Vorrat nicht kennt — als Codepoints, nicht als
+ * UTF-16-Einheiten, sonst zerfällt jedes Zeichen ausserhalb der BMP.
+ */
 function unbekannte(text, vorrat) {
   const raus = new Set();
   for (const z of text) {
     const cp = z.codePointAt(0);
     // Zeilenumbruch und Tabulator stehen nie im Bild.
     if (cp === 0x0a || cp === 0x09) continue;
+    if (PIKTOGRAMM.test(z)) continue;
     if (!vorrat.has(cp)) raus.add(z);
   }
   return [...raus];
 }
 
-function pruefe(sprachdateien, vorratDaten, schriftSummen) {
+function auffaelligeLiterale(quelle, datei, scanner) {
+  return scanner(quelle)
+    .filter((l) => [...l.text].some((z) => z.codePointAt(0) > 0x7f))
+    .map((l) => ({ wo: `${datei}:${l.zeile}`, text: l.text }));
+}
+
+function pruefe(sprachdateien, vorratDaten, schriftSummen, quellen = null) {
   const fehler = [];
   const vorrat = new Set(vorratDaten.zeichen);
 
@@ -144,21 +300,56 @@ function pruefe(sprachdateien, vorratDaten, schriftSummen) {
         geprueft += 1;
         const fehlend = unbekannte(text, vorrat);
         if (fehlend.length > 0) {
-          const liste = fehlend
-            .map((z) => `„${z}" (U+${z.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")})`)
-            .join(", ");
           fehler.push(
-            `${sprache}/${schluessel}: ${liste} fehlt in B612 Mono — ` +
+            `${sprache}/${schluessel}: ${zeichenListe(fehlend)} fehlt in B612 Mono — ` +
               "im Cockpit erschiene dort eine Ersatzglyphe oder eine fremde Schrift",
           );
         }
       }
     }
   }
+  // Die beiden Quellen ausserhalb der Sprachdateien. Ohne `quellen`
+  // übersprungen — dann sagt der Prüfer das auch, statt Vollständigkeit
+  // vorzutäuschen.
+  let ausQuellen = 0;
+  if (quellen) {
+    for (const [herkunft, texte] of Object.entries(quellen)) {
+      // Eine Quelldatei ohne auffälliges Literal ist der Normalfall und
+      // sogar das Ziel. Beim BACKEND ist es umgekehrt: Findet das
+      // Suchmuster dort nichts, wurde `log_activity` umbenannt, und der
+      // Prüfer sähe stillschweigend weg.
+      if (texte.length === 0) {
+        if (BACKEND.aufrufe.some((a) => herkunft.endsWith(`(${a})`))) {
+          fehler.push(
+            `${herkunft}: kein einziger Aufruf gefunden — umbenannt? ` +
+              "Ohne Treffer prüft dieser Teil nichts",
+          );
+        }
+        continue;
+      }
+      for (const [wo, text] of texte) {
+        const ausgenommen = NICHT_IN_DER_SCHRIFT_GERENDERT.find(
+          (a) =>
+            wo.startsWith(a.datei) &&
+            (a.text === text || a.texte?.includes(text)),
+        );
+        if (ausgenommen) continue;
+        ausQuellen += 1;
+        const fehlend = unbekannte(text, vorrat);
+        if (fehlend.length > 0) {
+          fehler.push(
+            `${wo}: ${zeichenListe(fehlend)} fehlt in B612 Mono — ` +
+              "im Cockpit erschiene dort eine Ersatzglyphe oder eine fremde Schrift",
+          );
+        }
+      }
+    }
+  }
+
   if (geprueft === 0) {
     fehler.push("kein einziger Text geprüft — die Zweige stimmen nicht mehr");
   }
-  return { fehler, geprueft };
+  return { fehler, geprueft, ausQuellen };
 }
 
 // ── Selbsttest ────────────────────────────────────────────────────────
@@ -200,6 +391,48 @@ if (process.argv.includes("--selbsttest")) {
     console.error("SELBSTTEST FEHLGESCHLAGEN: geänderte Schrift wurde nicht bemerkt");
     schlecht += 1;
   }
+  // Die drei Pfade der Quellen-Prüfung.
+  const gut = faelle[0][1];
+  const quellenFaelle = [
+    [
+      "Quelldatei mit Textzeichen, das fehlt",
+      { "a.tsx": [["a.tsx:1", "Sicht \u2265 10 km"]] },
+      false,
+    ],
+    // Ein Zeichen mit EMOJI-Darstellung kommt immer aus einer
+    // Bilderschrift — kein Befund.
+    ["Quelldatei mit echtem Emoji", { "a.tsx": [["a.tsx:1", "Landung \u{1F6EC}"]] }, true],
+    // ☀ sieht aus wie ein Emoji, hat aber TEXT-Darstellung und fehlt
+    // der Schrift. Der alte Selbsttest erwartete hier ausdruecklich
+    // „stimmig" und zementierte damit den Fehler, den die externe
+    // Abnahme am 21.09.2026 als sperrend gemeldet hat.
+    ["Quelldatei mit Textsymbol, das nur wie ein Emoji aussieht",
+     { "a.tsx": [["a.tsx:1", "Wetter \u2600"]] }, false],
+    ["Quelldatei mit Warnzeichen", { "a.tsx": [["a.tsx:1", "\u26A0 Achtung"]] }, false],
+    ["Quelldatei ohne auffaelliges Literal", { "a.tsx": [] }, true],
+    [
+      "Backend-Suchmuster laeuft ins Leere",
+      { "lib.rs (log_activity)": [] },
+      false,
+    ],
+    [
+      "Backend-Text mit Pfeil",
+      { "lib.rs (log_activity)": [["log_activity:1", "A \u2192 B"]] },
+      false,
+    ],
+  ];
+  for (const [name, quellen, erwartetOk] of quellenFaelle) {
+    const { fehler } = pruefe(gut, vorratDaten, summen, quellen);
+    const ok = fehler.length === 0;
+    if (ok !== erwartetOk) {
+      console.error(
+        `SELBSTTEST FEHLGESCHLAGEN (${name}): erwartet ${erwartetOk ? "stimmig" : "abgelehnt"}, ` +
+          `bekam ${ok ? "stimmig" : `abgelehnt: ${fehler.join("; ")}`}`,
+      );
+      schlecht += 1;
+    }
+  }
+
   // Ein Vorrat ohne Herkunft schaltete die Wache lautlos ab.
   const { fehler: f3 } = pruefe(
     faelle[0][1],
@@ -211,7 +444,9 @@ if (process.argv.includes("--selbsttest")) {
     schlecht += 1;
   }
   if (schlecht > 0) process.exit(1);
-  console.log(`selbsttest bestanden: ${faelle.length + 2} Fälle richtig beurteilt`);
+  console.log(
+    `selbsttest bestanden: ${faelle.length + quellenFaelle.length + 2} Fälle richtig beurteilt`,
+  );
   process.exit(0);
 }
 
@@ -234,9 +469,51 @@ for (const s of SPRACHEN) {
   );
 }
 
-const { fehler, geprueft } = pruefe(sprachdateien, vorratDaten, schriftSummen);
+// Die beiden Quellen ausserhalb der Sprachdateien einsammeln.
+const quellen = {};
+for (const { pfad } of QUELLDATEIEN) {
+  const quelle = readFileSync(new URL(pfad, WURZEL), "utf8");
+  quellen[pfad] = auffaelligeLiterale(quelle, pfad, tsLiterale).map((l) => [
+    l.wo,
+    l.text,
+  ]);
+}
+// Alle Rust-Quellen, nicht nur lib.rs: `log_activity_handle` ist
+// `pub(crate)` und wird auch aus hoppie/ heraus gerufen — dieselbe
+// Protokollliste, vorher ungeprüft (externe Abnahme, 21.09.2026).
+for (const datei of rustDateien(new URL(BACKEND.wurzel, WURZEL))) {
+  const quelle = readFileSync(datei, "utf8");
+  const kurz = decodeURIComponent(datei.pathname).split("/src-tauri/")[1] ?? "";
+  for (const aufruf of BACKEND.aufrufe) {
+    const treffer = aufrufLiterale(quelle, aufruf, rustLiterale);
+    if (treffer.length === 0) continue;
+    const schluessel = `src-tauri/${kurz} (${aufruf})`;
+    // `l.wo` traegt den Aufrufnamen schon; nur die Datei davorsetzen.
+    quellen[schluessel] = treffer.map((l) => [
+      `src-tauri/${kurz}:${l.wo}`,
+      l.text,
+    ]);
+  }
+}
+// Und die Gegenprobe, dass ueberhaupt etwas gefunden wurde: Wird eine
+// der drei Funktionen umbenannt, faende der Prüfer im ganzen Baum
+// nichts mehr und saehe stillschweigend weg.
+for (const aufruf of BACKEND.aufrufe) {
+  const gefunden = Object.keys(quellen).some((k) => k.endsWith(`(${aufruf})`));
+  if (!gefunden) quellen[`src-tauri (${aufruf})`] = [];
+}
+
+const { fehler, geprueft, ausQuellen } = pruefe(
+  sprachdateien,
+  vorratDaten,
+  schriftSummen,
+  quellen,
+);
 if (fehler.length > 0) {
   for (const f of fehler) console.error(`FEHLER: ${f}`);
   process.exit(1);
 }
-console.log(`schriftzeichen in Ordnung: ${geprueft} Bandtexte, alle in B612 Mono vorhanden`);
+console.log(
+  `schriftzeichen in Ordnung: ${geprueft} Bandtexte und ${ausQuellen} Texte ` +
+    "aus Quelldateien und Backend, alle in B612 Mono vorhanden",
+);

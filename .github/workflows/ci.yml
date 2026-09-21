@@ -119,5 +119,6 @@ jobs:
       # nicht ausgecheckt ist. Es bleibt ein lokaler Waechter.
       - name: Waechter (Schriftzeichen der Cockpit-Schrift)
         run: |
+          node scripts/pruefe-literale.mjs
           node scripts/pruefe-schriftzeichen.mjs --selbsttest
           node scripts/pruefe-schriftzeichen.mjs
