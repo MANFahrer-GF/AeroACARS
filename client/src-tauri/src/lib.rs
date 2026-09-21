@@ -1726,6 +1726,13 @@ struct AppState {
     /// nach dem Cooldown versucht der Watcher erneut (Pilot kann inzwischen das
     /// Flugzeug zuweisen / Sim fertig laden).
     auto_start_fail: Mutex<Option<(DateTime<Utc>, i64, String)>>,
+    /// Bid, dessen `flight_start` der AUTO-START gerade ausfuehrt. Eigener
+    /// Marker statt `flight_setup_in_progress`: jenes ist ein globaler
+    /// Lebenszyklus-Riegel, den auch manueller Start, Uebernahme und
+    /// Wiederherstellung setzen — daraus liess sich nicht ablesen, WELCHER
+    /// Start laeuft (Codex-Abnahme 22.09.2026). Gesetzt beim Claim, geloescht,
+    /// sobald `flight_start_mit` zurueckkehrt.
+    auto_start_laeuft_bid: Mutex<Option<i64>>,
     /// When `true`, intercept the main window's CloseRequested event
     /// and `hide()` the window instead of letting it close. The user
     /// gets to it again via the system-tray icon (Win) / menubar
@@ -50191,9 +50198,10 @@ struct AutoStartBeobachtung {
     pause: Option<(i64, i64, String)>,
     /// Bid, der in dieser Parkphase schon gestartet wurde.
     schon_gestartet: Option<i64>,
-    /// `flight_start` laeuft gerade (`flight_setup_in_progress`). Dann ist
-    /// „schon gestartet" in Wahrheit „wird gerade gestartet".
-    start_laeuft: bool,
+    /// Bid, dessen Auto-Start-`flight_start` gerade laeuft
+    /// (`AppState::auto_start_laeuft_bid`). Ist es derselbe wie
+    /// `schon_gestartet`, heisst das „wird gerade gestartet".
+    start_laeuft_bid: Option<i64>,
     /// Naechster Abflughafen in nm.
     naechster_nm: Option<f64>,
 }
@@ -50207,7 +50215,10 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
     // wichtige Auskunft. Vorher stand in diesen rund fuenf Sekunden „Bid N
     // wurde diese Session schon mal auto-gestartet" — technisch richtig,
     // gelesen wie ein Fehler (Thomas, 22.09.2026, Log AIB424).
-    if let (Some(bid), true) = (b.schon_gestartet, b.start_laeuft) {
+    if let Some(bid) = b
+        .schon_gestartet
+        .filter(|id| b.start_laeuft_bid == Some(*id))
+    {
         return (
             "start_running",
             "Auto-Start: Start läuft",
@@ -50509,7 +50520,7 @@ mod auto_start_vorpruefung_tests {
             ohne_ofp: Some("220".into()),
             pause: Some((1, 10, "x".into())),
             schon_gestartet: Some(2),
-            start_laeuft: false,
+            start_laeuft_bid: None,
             naechster_nm: Some(0.1),
         };
         assert_eq!(auto_start_hinweis(&alles).0, "aircraft_mismatch");
@@ -50559,7 +50570,7 @@ mod auto_start_vorpruefung_tests {
             },
             AutoStartBeobachtung {
                 schon_gestartet: Some(1),
-                start_laeuft: true,
+                start_laeuft_bid: Some(1),
                 ..Default::default()
             },
             AutoStartBeobachtung::default(),
@@ -50680,7 +50691,7 @@ mod auto_start_vorpruefung_tests {
     fn laufender_start_heisst_start_laeuft() {
         let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
             schon_gestartet: Some(5724),
-            start_laeuft: true,
+            start_laeuft_bid: Some(5724),
             // Andere Bids duerfen das nicht verdraengen.
             typ_passt_nicht: Some(("1".into(), "A".into(), "B".into())),
             ..Default::default()
@@ -50694,10 +50705,18 @@ mod auto_start_vorpruefung_tests {
             ..Default::default()
         });
         assert_eq!(code, "bid_already_started");
-        // Laeuft ein Start, aber nicht fuer einen beanspruchten Bid, gibt es
+        // Laeuft der Auto-Start eines ANDEREN Bids, ist dieser nicht „am
+        // Starten" (Codex-Abnahme 22.09.2026: vorher globales Signal).
+        let (code, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
+            schon_gestartet: Some(5724),
+            start_laeuft_bid: Some(99),
+            ..Default::default()
+        });
+        assert_eq!(code, "bid_already_started");
+        // Laeuft ein Start, aber fuer keinen beanspruchten Bid, gibt es
         // nichts „Laufendes" zu melden.
         let (code, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
-            start_laeuft: true,
+            start_laeuft_bid: Some(5724),
             ..Default::default()
         });
         assert_eq!(code, "no_bid_match");
@@ -51379,6 +51398,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     let mut g = state.auto_start_last_bid_id.lock().unwrap();
                     *g = Some(bid.id);
                 }
+                *state.auto_start_laeuft_bid.lock().unwrap() = Some(bid.id);
                 let app_for_call = app.clone();
                 let bid_id = bid.id;
                 tauri::async_runtime::spawn(async move {
@@ -51392,9 +51412,20 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     // ein Race-Edge (Sim-Flugzeug zwischen Vorabcheck und
                     // flight_start gewechselt) → der Fehler-Pfad cleart
                     // last_bid_id, der nächste Tick prüft erneut vorab.
-                    if let Err(e) =
-                        flight_start_mit(app_for_call.clone(), state_ref, bid_id, None, true).await
+                    let ergebnis =
+                        flight_start_mit(app_for_call.clone(), state_ref, bid_id, None, true).await;
                     {
+                        let s = app_for_call.state::<AppState>();
+                        // Der Start ist vorbei, so oder so.
+                        *s.auto_start_laeuft_bid.lock().unwrap() = None;
+                        // Erfolg: „Start läuft" darf nicht noch bis zu 10 s im
+                        // Banner stehen — der Flug laeuft (Codex-Abnahme
+                        // 22.09.2026).
+                        if ergebnis.is_ok() {
+                            *s.auto_start_skip_reason.lock().unwrap() = None;
+                        }
+                    }
+                    if let Err(e) = ergebnis {
                         let s = app_for_call.state::<AppState>();
                         // Sim wurde im letzten Moment unruhig: kein Fehler, keine
                         // Pause — Claim lösen, der Watcher wartet auf Ruhe.
@@ -51445,7 +51476,19 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 // Vom konkretesten Grund zum allgemeinsten (Typ passt nicht →
                 // OFP fehlt → Pause → schon gestartet → kein Bid am Platz),
                 // siehe `auto_start_hinweis`.
-                beobachtung.start_laeuft = state.flight_setup_in_progress.load(Ordering::SeqCst);
+                // Zwischen dem Tick-Anfang und hier lagen Netzabfragen. Ist der
+                // Flug inzwischen angelegt, gibt es nichts mehr zu melden —
+                // sonst stuende doch wieder „schon mal auto-gestartet" da
+                // (Codex-Abnahme 22.09.2026).
+                if state
+                    .active_flight
+                    .lock()
+                    .expect("active_flight lock")
+                    .is_some()
+                {
+                    continue;
+                }
+                beobachtung.start_laeuft_bid = *state.auto_start_laeuft_bid.lock().unwrap();
                 let (reason_code, title, reason_msg) = auto_start_hinweis(&beobachtung);
                 auto_start_melden(
                     &app,
