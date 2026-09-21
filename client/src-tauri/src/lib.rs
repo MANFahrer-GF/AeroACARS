@@ -16289,7 +16289,22 @@ async fn flight_start(
     // Wetlease-Workflows (PaxStudio-Loadsheet) ohne Hard-Block.
     #[allow(non_snake_case)] acknowledgeAircraftMismatch: Option<bool>,
 ) -> Result<ActiveFlightInfo, UiError> {
-    let ack_aircraft_mismatch = acknowledgeAircraftMismatch.unwrap_or(false);
+    flight_start_mit(app, state, bid_id, acknowledgeAircraftMismatch, false).await
+}
+
+/// `flight_start` mit der Angabe, ob der Auto-Start ihn ausloest. Nur dann
+/// muss der Simulator auch in dem Moment, in dem die Startwerte gelesen
+/// werden, ungestoert sein: Zwischen der Ruhepruefung des Watchers und
+/// diesem Snapshot liegen Netzabfragen, in denen MSFS pausieren oder neu
+/// laden kann (QS Codex, 21.09.2026). Der manuelle Start bleibt, wie er ist.
+async fn flight_start_mit(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    bid_id: i64,
+    acknowledge_aircraft_mismatch: Option<bool>,
+    von_auto_start: bool,
+) -> Result<ActiveFlightInfo, UiError> {
+    let ack_aircraft_mismatch = acknowledge_aircraft_mismatch.unwrap_or(false);
     // Same race protection as flight_adopt: a double-click on "Start flight"
     // would otherwise prefile two PIREPs against the same bid.
     let setup_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
@@ -16338,6 +16353,12 @@ async fn flight_start(
             "no sim snapshot yet — is the simulator connected?",
         )
     })?;
+    if von_auto_start && (snapshot.paused || snapshot.slew_mode) {
+        return Err(UiError::new(
+            AUTO_START_SIM_WARTET,
+            "simulator paused or loading — auto-start waits until it is settled",
+        ));
+    }
     if !snapshot.on_ground {
         return Err(UiError::new(
             "not_on_ground",
@@ -50270,9 +50291,17 @@ impl SimRuhe {
         let gesprungen = self.letzte_pos.is_some_and(|(lat, lon)| {
             ::geo::distance_m(lat, lon, snap.lat, snap.lon) > AUTO_START_SPRUNG_M
         });
-        let flugzeug_gewechselt = self.letzte_pos.is_some() && titel != self.letzter_titel;
+        // Nur ein echter Wechsel A → B zählt. Ein kurz fehlender Titel (X-Plane-
+        // Web-API liefert mal Teildaten) darf die Uhr nicht ständig zurücksetzen —
+        // „Titel fehlt" meldet ohnehin der Warm-Check danach.
+        let flugzeug_gewechselt = matches!(
+            (&self.letzter_titel, &titel),
+            (Some(vorher), Some(jetzt_titel)) if vorher != jetzt_titel
+        );
         self.letzte_pos = Some((snap.lat, snap.lon));
-        self.letzter_titel = titel;
+        if titel.is_some() {
+            self.letzter_titel = titel;
+        }
         let unruhe = if snap.paused || snap.slew_mode {
             Some("Der Simulator lädt oder ist pausiert.")
         } else if gesprungen {
@@ -50293,6 +50322,80 @@ impl SimRuhe {
                 "Der Simulator läuft erst {ruhig} s ruhig — Auto-Start prüft nach {AUTO_START_SIM_RUHE_SECS} s."
             )
         })
+    }
+}
+
+/// Was der Watcher mit einem einzelnen Bid tut. Reine Entscheidung ohne
+/// Netz und Zustand, damit sie direkt testbar ist; die asynchrone Typ-
+/// Pruefung (`get_aircraft`, Aliase) folgt nur bei `TypPruefen`.
+#[derive(Debug, PartialEq)]
+enum BidVorpruefung {
+    /// In dieser Parkphase schon gestartet (oder der Start laeuft gerade).
+    SchonGestartet,
+    /// Flugzeug steht nicht am Abflughafen dieses Bids.
+    NichtAmPlatz,
+    /// Am Platz, aber der letzte Start scheiterte vor Kurzem.
+    Pause { rest_s: i64, code: String },
+    /// Am Platz, aber phpVMS kennt noch kein Flugzeug (SimBrief-OFP fehlt).
+    OhneOfp,
+    /// Alles da — Flugzeugtyp gegen den Sim pruefen, dann feuern.
+    TypPruefen { flugzeug_id: i64 },
+}
+
+/// Reihenfolge: schon gestartet → Position → Pause → OFP. Die Pause kommt
+/// bewusst NACH der Position: Ein Bid, an dessen Platz man nicht mehr steht,
+/// soll nicht „neuer Versuch gleich" versprechen (QS Codex, 21.09.2026).
+fn auto_start_bid_vorpruefung(
+    bid: &Bid,
+    letzter_bid: Option<i64>,
+    am_platz: bool,
+    pause: Option<(i64, String)>,
+) -> BidVorpruefung {
+    if letzter_bid == Some(bid.id) {
+        return BidVorpruefung::SchonGestartet;
+    }
+    if !am_platz {
+        return BidVorpruefung::NichtAmPlatz;
+    }
+    if let Some((rest_s, code)) = pause {
+        return BidVorpruefung::Pause { rest_s, code };
+    }
+    match bid_flugzeug_id(bid) {
+        Some(flugzeug_id) => BidVorpruefung::TypPruefen { flugzeug_id },
+        None => BidVorpruefung::OhneOfp,
+    }
+}
+
+/// Trennt, was der Pilot SIEHT, von dem, was ins Protokoll geht.
+///
+/// Das Banner zeigt einen Grund nur, solange sein Zeitstempel juenger als
+/// 10 s ist (`auto_start_skip_status`). Frueher teilte es sich den
+/// Zeitstempel mit der 60-s-Protokolldrossel — das Banner stand 10 s, war
+/// 50 s weg und kam wieder (QS Codex, 21.09.2026). Jetzt wird der Grund
+/// bei jedem Takt aufgefrischt, nur der Protokolleintrag ist gedrosselt.
+#[derive(Debug, Default)]
+struct HinweisProtokoll {
+    zuletzt_protokolliert: Option<(DateTime<Utc>, String)>,
+}
+
+impl HinweisProtokoll {
+    /// Soll dieser Grund jetzt ins Protokoll? Bei neuem Grund immer; bei
+    /// gleichem nur, wenn `wiederholen_nach_s` gesetzt und verstrichen ist.
+    fn protokollieren(
+        &mut self,
+        code: &str,
+        jetzt: DateTime<Utc>,
+        wiederholen_nach_s: Option<i64>,
+    ) -> bool {
+        let faellig = match &self.zuletzt_protokolliert {
+            None => true,
+            Some((_, alt)) if alt != code => true,
+            Some((am, _)) => wiederholen_nach_s.is_some_and(|s| (jetzt - *am).num_seconds() >= s),
+        };
+        if faellig {
+            self.zuletzt_protokolliert = Some((jetzt, code.to_string()));
+        }
+        faellig
     }
 }
 
@@ -50406,8 +50509,10 @@ mod auto_start_vorpruefung_tests {
 
     /// Jeder Code, den `auto_start_hinweis` liefern kann, braucht einen
     /// Banner-Text in allen drei Sprachen — sonst zeigt das Banner nur den
-    /// allgemeinen Ersatztext. Die Codes kommen aus der Funktion selbst,
-    /// nicht aus einer Liste im Test.
+    /// allgemeinen Ersatztext. Die Codes erzeugt die Funktion selbst, die
+    /// FAELLE (ein Feld je Zweig) stehen aber hier: Wer einen Zweig ergaenzt,
+    /// muss hier einen Fall ergaenzen. Die Laengen-Pruefung faengt nur
+    /// doppelte Codes, keinen vergessenen Zweig.
     #[test]
     fn jeder_hinweis_code_hat_einen_banner_text() {
         let faelle = [
@@ -50513,6 +50618,89 @@ mod auto_start_vorpruefung_tests {
         slew.slew_mode = true;
         assert!(r.pruefen(&slew, s(60)).is_some());
         assert!(r.pruefen(&sim(18.0, -63.0, false, "B738"), s(63)).is_some());
+    }
+
+    fn bid_mit(id: i64, flugzeug: Option<i64>) -> Bid {
+        let sb = flugzeug
+            .map(|f| format!(r#", "simbrief": {{"id": "sb", "aircraft_id": {f}}}"#))
+            .unwrap_or_default();
+        let mut b = bid(&sb);
+        b.id = id;
+        b
+    }
+
+    /// Der Fall vom 21.09.: am Platz, ohne OFP → nie `TypPruefen`, also
+    /// weder Claim noch flight_start noch Pause.
+    #[test]
+    fn am_platz_ohne_ofp_wird_nicht_gefeuert() {
+        assert_eq!(
+            auto_start_bid_vorpruefung(&bid_mit(5719, None), None, true, None),
+            BidVorpruefung::OhneOfp
+        );
+        assert_eq!(
+            auto_start_bid_vorpruefung(&bid_mit(5719, Some(1046)), None, true, None),
+            BidVorpruefung::TypPruefen { flugzeug_id: 1046 }
+        );
+    }
+
+    #[test]
+    fn pause_zaehlt_nur_am_platz_und_schon_gestartet_zuerst() {
+        let pause = || Some((90, "not_at_departure".to_string()));
+        let b = bid_mit(5719, Some(1046));
+        assert_eq!(
+            auto_start_bid_vorpruefung(&b, None, false, pause()),
+            BidVorpruefung::NichtAmPlatz,
+            "fern vom Platz kein „neuer Versuch gleich\""
+        );
+        assert_eq!(
+            auto_start_bid_vorpruefung(&b, None, true, pause()),
+            BidVorpruefung::Pause {
+                rest_s: 90,
+                code: "not_at_departure".into()
+            }
+        );
+        assert_eq!(
+            auto_start_bid_vorpruefung(&b, Some(5719), true, pause()),
+            BidVorpruefung::SchonGestartet
+        );
+        // Ein anderer Bid ist nicht „schon gestartet".
+        assert_eq!(
+            auto_start_bid_vorpruefung(&b, Some(1), true, None),
+            BidVorpruefung::TypPruefen { flugzeug_id: 1046 }
+        );
+    }
+
+    /// Banner und Protokoll getrennt: gleicher Grund → Protokoll erst nach
+    /// der Frist (oder nie, wenn keine gesetzt), neuer Grund → sofort.
+    #[test]
+    fn protokoll_drosselt_gleiche_gruende_und_meldet_neue_sofort() {
+        let t0 = Utc::now();
+        let s = |sek: i64| t0 + chrono::Duration::seconds(sek);
+        let mut p = HinweisProtokoll::default();
+        assert!(p.protokollieren("ofp_missing", s(0), Some(60)));
+        assert!(!p.protokollieren("ofp_missing", s(3), Some(60)));
+        assert!(!p.protokollieren("ofp_missing", s(57), Some(60)));
+        assert!(p.protokollieren("ofp_missing", s(60), Some(60)));
+        assert!(p.protokollieren("retry_pending", s(63), Some(60)));
+        assert!(p.protokollieren(AUTO_START_SIM_WARTET, s(66), None));
+        assert!(!p.protokollieren(AUTO_START_SIM_WARTET, s(600), None));
+    }
+
+    /// X-Plane: Die Web-API liefert mal keinen Titel. Das darf die Ruhe
+    /// nicht zurücksetzen, sonst feuert der Auto-Start nie.
+    #[test]
+    fn kurz_fehlender_titel_ist_kein_flugzeugwechsel() {
+        let t0 = Utc::now();
+        let s = |sek: i64| t0 + chrono::Duration::seconds(sek);
+        let mut r = SimRuhe::default();
+        r.pruefen(&sim(47.0, 11.0, false, "C172"), s(0));
+        let mut ohne = sim(47.0, 11.0, false, "");
+        ohne.aircraft_title = None;
+        for t in [3, 9, 15] {
+            r.pruefen(&ohne, s(t));
+            r.pruefen(&sim(47.0, 11.0, false, "C172"), s(t + 3));
+        }
+        assert_eq!(r.pruefen(&sim(47.0, 11.0, false, "C172"), s(21)), None);
     }
 }
 
@@ -50649,6 +50837,26 @@ fn navdata_zwischenspeicher_bestand(app: AppHandle) -> serde_json::Value {
     })
 }
 
+/// Zeigt dem Piloten einen Auto-Start-Grund (Banner, jeden Takt frisch) und
+/// schreibt ihn gedrosselt ins Protokoll, siehe [`HinweisProtokoll`].
+fn auto_start_melden(
+    app: &AppHandle,
+    protokoll: &mut HinweisProtokoll,
+    code: &str,
+    titel: &str,
+    text: String,
+    wiederholen_nach_s: Option<i64>,
+) {
+    let jetzt = Utc::now();
+    *app.state::<AppState>()
+        .auto_start_skip_reason
+        .lock()
+        .unwrap() = Some((jetzt, code.to_string()));
+    if protokoll.protokollieren(code, jetzt, wiederholen_nach_s) {
+        log_activity_handle(app, ActivityLevel::Info, titel.to_string(), Some(text));
+    }
+}
+
 /// Spawn the auto-start watcher task. Idempotent in practice:
 /// the body checks `auto_start_enabled` on every tick and returns
 /// when false, so spawning twice just means one drops out quickly.
@@ -50676,6 +50884,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
         // ausgeschaltetem Auto-Start und während eines Flugs verworfen, damit
         // nach Flugende und nach dem Einschalten neu gemessen wird.
         let mut sim_ruhe = SimRuhe::default();
+        let mut protokoll = HinweisProtokoll::default();
         loop {
             tokio::time::sleep(Duration::from_secs(AUTO_START_INTERVAL_SECS)).await;
             let state = app.state::<AppState>();
@@ -50685,6 +50894,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // toggle, which raced with first-launch IPC on Mac.
             if !state.auto_start_enabled.load(Ordering::Relaxed) {
                 sim_ruhe = SimRuhe::default();
+                protokoll = HinweisProtokoll::default();
                 continue;
             }
             // Skip if a flight is already active.
@@ -50692,6 +50902,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 let guard = state.active_flight.lock().expect("active_flight lock");
                 if guard.is_some() {
                     sim_ruhe = SimRuhe::default();
+                    protokoll = HinweisProtokoll::default();
                     continue;
                 }
             }
@@ -50747,24 +50958,16 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // Auto-Start überhaupt hin. Solange er lädt, pausiert ist oder
             // springt, gibt es EINEN ruhigen Hinweis statt wechselnder Gründe
             // („in der Luft" / „6724 nm" / „Sprit 0"): ins Protokoll nur beim
-            // Eintritt, das Banner bleibt stehen (Zeitstempel jeden Takt frisch).
+            // Eintritt, das Banner bleibt stehen.
             if let Some(grund) = sim_ruhe.pruefen(&snap, Utc::now()) {
-                let eintritt = {
-                    let mut g = state.auto_start_skip_reason.lock().unwrap();
-                    let eintritt = g
-                        .as_ref()
-                        .is_none_or(|(_, code)| code != AUTO_START_SIM_WARTET);
-                    *g = Some((Utc::now(), AUTO_START_SIM_WARTET.to_string()));
-                    eintritt
-                };
-                if eintritt {
-                    log_activity_handle(
-                        &app,
-                        ActivityLevel::Info,
-                        "Auto-Start: wartet auf den Simulator".to_string(),
-                        Some(grund),
-                    );
-                }
+                auto_start_melden(
+                    &app,
+                    &mut protokoll,
+                    AUTO_START_SIM_WARTET,
+                    "Auto-Start: wartet auf den Simulator",
+                    grund,
+                    None,
+                );
                 continue;
             }
             // v0.3.0: Race-Condition-Fix nach Sim-Reconnect. Wenn der
@@ -50835,30 +51038,15 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 None
             };
             if let Some((reason_code, reason_msg)) = skip_reason {
-                // Throttle: nur loggen wenn wir den Grund 60s+ nicht
-                // gemeldet haben oder der Grund neu ist.
-                let now = Utc::now();
-                let should_log = {
-                    let mut g = state.auto_start_skip_reason.lock().unwrap();
-                    let log_it = match g.as_ref() {
-                        None => true,
-                        Some((_, last_code)) if last_code != reason_code => true,
-                        Some((last_at, _)) if (now - *last_at).num_seconds() >= 60 => true,
-                        _ => false,
-                    };
-                    if log_it {
-                        *g = Some((now, reason_code.to_string()));
-                    }
-                    log_it
-                };
-                if should_log {
-                    log_activity_handle(
-                        &app,
-                        ActivityLevel::Info,
-                        "Auto-Start: nicht möglich".to_string(),
-                        Some(reason_msg.to_string()),
-                    );
-                }
+                // Protokoll: bei neuem Grund sofort, sonst höchstens 1×/60 s.
+                auto_start_melden(
+                    &app,
+                    &mut protokoll,
+                    reason_code,
+                    "Auto-Start: nicht möglich",
+                    reason_msg.to_string(),
+                    Some(60),
+                );
                 continue;
             }
             // v0.12.11: KEIN unbedingtes `*g = None` mehr hier. Der Reset
@@ -50884,32 +51072,17 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // v0.7.17 (N-003): Wenn die Bid-Liste leer ist, sagen wir
             // es dem Piloten — vorher Silent-Skip.
             if bids.is_empty() {
-                let now = Utc::now();
                 // v0.12.11: reine Edge-Detektion. „Keine Bids" ist ein
                 // Dauerzustand, kein Ereignis — nur loggen, wenn der
                 // Grund NEU auf „no_bids" wechselt, nicht bei jedem Poll.
-                // (Vorher: `matches!(.., None | Some((_,_)))` war immer
-                // true und die 60-s-Drossel wurde vom Reset oben außer
-                // Kraft gesetzt → Sekundentakt-Spam.)
-                let should_log = {
-                    let mut g = state.auto_start_skip_reason.lock().unwrap();
-                    let log_it = g.as_ref().map_or(true, |(_, code)| code != "no_bids");
-                    if log_it {
-                        *g = Some((now, "no_bids".to_string()));
-                    }
-                    log_it
-                };
-                if should_log {
-                    log_activity_handle(
-                        &app,
-                        ActivityLevel::Info,
-                        "Auto-Start: keine Bids verfuegbar".to_string(),
-                        Some(
-                            "Im phpVMS-Bid-Tab steht aktuell nichts gebucht. Logged-in?"
-                                .to_string(),
-                        ),
-                    );
-                }
+                auto_start_melden(
+                    &app,
+                    &mut protokoll,
+                    "no_bids",
+                    "Auto-Start: keine Bids verfuegbar",
+                    "Im phpVMS-Bid-Tab steht aktuell nichts gebucht. Logged-in?".to_string(),
+                    None,
+                );
                 continue;
             }
             // Don't re-fire for the same bid within the same parked
@@ -50920,27 +51093,21 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 *g
             };
             let mut fired = false;
+            // Der Sim war zwischen Ruheprüfung und Feuern nicht mehr ruhig.
+            let mut unruhig_geworden = false;
             // Was dieser Tick über die nicht gestarteten Bids erfährt; daraus
             // wählt `auto_start_hinweis` nach der Schleife den einen Hinweis.
             let mut beobachtung = AutoStartBeobachtung::default();
             for bid in &bids {
-                if Some(bid.id) == last_bid {
-                    beobachtung.schon_gestartet = Some(bid.id);
-                    continue;
-                }
                 // v0.15.13: Fehler-Cooldown. Ist dieser Bid kürzlich an
                 // flight_start gescheitert (not_at_departure / flight_already_active
                 // / …), feuern wir ihn AUTO_START_FAIL_COOLDOWN_SECS lang nicht
-                // erneut — sonst Retry-Sturm alle 3 s (GlitchTip #10). Der Hinweis
-                // nennt Bid, Restzeit und Fehler (vorher: „Bid ? schon gestartet").
+                // erneut — sonst Retry-Sturm alle 3 s (GlitchTip #10). Gewertet
+                // wird die Pause erst am Platz, siehe `auto_start_bid_vorpruefung`.
                 let pause = {
                     let g = state.auto_start_fail.lock().unwrap();
                     auto_start_pause_rest(bid.id, g.as_ref(), Utc::now())
                 };
-                if let Some((rest, code)) = pause {
-                    beobachtung.pause = Some((bid.id, rest, code));
-                    continue;
-                }
                 // v0.19.3: the departure airport's coordinates as phpVMS knows
                 // them — the fallback for the thousands of fields the embedded
                 // runway table has no threshold geometry for (see
@@ -51007,19 +51174,29 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                         }
                     }
                 }
-                if !bid_matches_current_state(bid, &snap, phpvms_pos) {
-                    continue;
-                }
-                // Am Platz, aber noch ohne SimBrief-OFP: phpVMS hat dem Bid
-                // noch kein Flugzeug zugeordnet, und `flight_start` würde mit
-                // `missing_aircraft` ablehnen. Nicht feuern, nicht claimen,
+                let am_platz = bid_matches_current_state(bid, &snap, phpvms_pos);
+                // Am Platz, aber noch ohne SimBrief-OFP (`OhneOfp`): phpVMS hat
+                // dem Bid noch kein Flugzeug zugeordnet, und `flight_start` würde
+                // mit `missing_aircraft` ablehnen. Nicht feuern, nicht claimen,
                 // keine Pause — die Bids kommen jeden Tick frisch, der Start
                 // folgt also wenige Sekunden nach dem OFP. Scheitert es doch
                 // (Vorabprüfung und flight_start teilen `bid_flugzeug_id`, das
                 // sollte nicht vorkommen), greift der Fehlerpfad unten wie bisher.
-                let Some(ac_id) = bid_flugzeug_id(bid) else {
-                    beobachtung.ohne_ofp = Some(bid.flight.flight_number.clone());
-                    continue;
+                let ac_id = match auto_start_bid_vorpruefung(bid, last_bid, am_platz, pause) {
+                    BidVorpruefung::SchonGestartet => {
+                        beobachtung.schon_gestartet = Some(bid.id);
+                        continue;
+                    }
+                    BidVorpruefung::NichtAmPlatz => continue,
+                    BidVorpruefung::Pause { rest_s, code } => {
+                        beobachtung.pause = Some((bid.id, rest_s, code));
+                        continue;
+                    }
+                    BidVorpruefung::OhneOfp => {
+                        beobachtung.ohne_ofp = Some(bid.flight.flight_number.clone());
+                        continue;
+                    }
+                    BidVorpruefung::TypPruefen { flugzeug_id } => flugzeug_id,
                 };
                 // v0.13.16 (Option C): alias-bewusster Aircraft-Typ-Vorabcheck
                 // BEVOR wir feuern. Vorher feuerte der Watcher blind
@@ -51085,6 +51262,16 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     ));
                     continue;
                 }
+                // Zwischen der Ruheprüfung oben und hier lagen Netzabfragen
+                // (Bids, Flughafen, Flugzeug). Hat der Sim inzwischen pausiert,
+                // neu geladen oder ist gesprungen, NICHT feuern — der nächste
+                // Takt meldet „wartet auf den Simulator" (QS Codex, 21.09.2026).
+                let noch_ruhig = current_snapshot(&app)
+                    .is_some_and(|frisch| sim_ruhe.pruefen(&frisch, Utc::now()).is_none());
+                if !noch_ruhig {
+                    unruhig_geworden = true;
+                    break;
+                }
                 // Match — fire flight_start.
                 tracing::info!(
                     bid_id = bid.id,
@@ -51124,10 +51311,20 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     // flight_start gewechselt) → der Fehler-Pfad cleart
                     // last_bid_id, der nächste Tick prüft erneut vorab.
                     if let Err(e) =
-                        flight_start(app_for_call.clone(), state_ref, bid_id, None).await
+                        flight_start_mit(app_for_call.clone(), state_ref, bid_id, None, true).await
                     {
-                        tracing::warn!(?e, bid_id, "auto-start: flight_start command failed");
                         let s = app_for_call.state::<AppState>();
+                        // Sim wurde im letzten Moment unruhig: kein Fehler, keine
+                        // Pause — Claim lösen, der Watcher wartet auf Ruhe.
+                        if e.code == AUTO_START_SIM_WARTET {
+                            tracing::info!(
+                                bid_id,
+                                "auto-start: Sim beim Start nicht ruhig — wartet"
+                            );
+                            *s.auto_start_last_bid_id.lock().unwrap() = None;
+                            return;
+                        }
+                        tracing::warn!(?e, bid_id, "auto-start: flight_start command failed");
                         // v0.15.13: Fehler-Cooldown setzen, BEVOR last_bid_id
                         // gecleart wird. Der Loop-Cooldown-Check verhindert
                         // damit ab dem nächsten Tick das sofortige Re-Fire
@@ -51162,30 +51359,19 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // v0.7.17 (N-003): Wenn die for-Schleife ohne Match endet
             // (kein break), gib dem Piloten einen Hint mit dem nähesten
             // Departure-Airport. Vorher silent.
-            if !fired {
-                let now = Utc::now();
+            if !fired && !unruhig_geworden {
                 // Vom konkretesten Grund zum allgemeinsten (Typ passt nicht →
                 // OFP fehlt → Pause → schon gestartet → kein Bid am Platz),
                 // siehe `auto_start_hinweis`.
                 let (reason_code, title, reason_msg) = auto_start_hinweis(&beobachtung);
-                let should_log = {
-                    let mut g = state.auto_start_skip_reason.lock().unwrap();
-                    let log_it = g.as_ref().map_or(true, |(at, code)| {
-                        code != reason_code || (now - *at).num_seconds() >= 60
-                    });
-                    if log_it {
-                        *g = Some((now, reason_code.to_string()));
-                    }
-                    log_it
-                };
-                if should_log {
-                    log_activity_handle(
-                        &app,
-                        ActivityLevel::Info,
-                        title.to_string(),
-                        Some(reason_msg),
-                    );
-                }
+                auto_start_melden(
+                    &app,
+                    &mut protokoll,
+                    reason_code,
+                    title,
+                    reason_msg,
+                    Some(60),
+                );
             }
         }
     });
