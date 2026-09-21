@@ -51479,6 +51479,12 @@ pub fn run() {
         // Der zweite Start-Versuch fokussiert hier nur das bestehende
         // Fenster, statt eine eigene Instanz hochzufahren.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // 21.09.2026: Der zweite Prozess hat seine Zeile „AeroACARS
+            // starting" schon ins Log geschrieben, bevor er hier abbricht.
+            // Ohne diese Gegenzeile saehe die Diagnose-Auswertung auf dem
+            // Live-Server einen Start ohne sauberes Ende der laufenden
+            // Instanz — also einen Abbruch, den es nicht gab.
+            tracing::info!("Zweiter Programmstart abgefangen — vorhandenes Fenster nach vorn");
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
                 let _ = w.unminimize();
