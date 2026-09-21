@@ -274,6 +274,23 @@ function zeichenListe(zeichen) {
  * Zeichen, die der Vorrat nicht kennt — als Codepoints, nicht als
  * UTF-16-Einheiten, sonst zerfällt jedes Zeichen ausserhalb der BMP.
  */
+/**
+ * Ist dieses Graphem eine echte Emoji-Folge, also ein Bild?
+ *
+ * Nur dann, wenn das GRUNDZEICHEN eine Emoji-Form hat. Die erste
+ * Fassung hat jedes Graphem mit FE0F, U+200D oder U+20E3 durchgelassen —
+ * auch „→\uFE0F" oder „Δ\uFE0F". Für diese Zeichen gibt es keine
+ * Emoji-Variante, der Browser ignoriert FE0F, und das Zeichen bleibt
+ * Text aus einer fremden Schrift: genau der Fehler, den dieser Wächter
+ * finden soll (externe Abnahme, 21.09.2026, Mutationen G1–G6).
+ */
+function istEmojiFolge(segment) {
+  if (!/[\uFE0F\u200D\u20E3]/u.test(segment)) return false;
+  if (segment.includes("\uFE0E")) return false; // erzwingt TEXT
+  const grund = [...segment][0];
+  return /\p{Emoji}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(grund);
+}
+
 function unbekannte(text, vorrat) {
   const raus = new Set();
   // Nach GRAPHEMEN gehen, nicht nach Codepoints: „❤️" ist U+2764 plus
@@ -285,7 +302,7 @@ function unbekannte(text, vorrat) {
   // weiter gemeldet.
   const segmente = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   for (const { segment } of segmente.segment(text)) {
-    if (/[\uFE0F\u200D\u20E3]/u.test(segment) && !segment.includes("\uFE0E")) continue;
+    if (istEmojiFolge(segment)) continue;
     for (const z of segment) {
       const cp = z.codePointAt(0);
       // Zeilenumbruch und Tabulator stehen nie im Bild.
@@ -470,6 +487,14 @@ if (process.argv.includes("--selbsttest")) {
     ["Tastenkappe", { "a.tsx": [["a.tsx:1", "1\uFE0F\u20E3 Schritt"]] }, true],
     // Und die Gegenrichtung: FE0E erzwingt TEXT-Darstellung.
     ["Emoji mit Text-Variante", { "a.tsx": [["a.tsx:1", "\u{1F534}\uFE0E"]] }, false],
+    // Ein Textzeichen OHNE Emoji-Form wird durch FE0F, ZWJ oder
+    // Tastenkappe nicht zum Bild — es bleibt Text in fremder Schrift.
+    ["Pfeil mit FE0F", { "a.tsx": [["a.tsx:1", "A \u2192\uFE0F B"]] }, false],
+    ["Delta mit FE0F", { "a.tsx": [["a.tsx:1", "\u0394\uFE0F 400"]] }, false],
+    ["Delta mit ZWJ", { "a.tsx": [["a.tsx:1", "\u0394\u200Dx"]] }, false],
+    ["Delta mit Tastenkappe", { "a.tsx": [["a.tsx:1", "\u0394\u20E3"]] }, false],
+    // Und die echte Warn-Folge „⚠️" bleibt ein Bild.
+    ["Warnzeichen als Emoji-Folge", { "a.tsx": [["a.tsx:1", "\u26A0\uFE0F Achtung"]] }, true],
     ["Quelldatei ohne auffaelliges Literal", { "a.tsx": [] }, true],
     [
       "Backend-Suchmuster laeuft ins Leere",

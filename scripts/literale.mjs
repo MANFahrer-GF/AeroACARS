@@ -43,6 +43,9 @@ function escapeAufloesen(quelle, i) {
   }
   if (c === "u" && quelle[i + 2] === "{") {
     const zu = quelle.indexOf("}", i + 3);
+    // Ohne schliessende Klammer (kompiliert ohnehin nicht) wuerde die
+    // Laenge negativ und der Scanner spraenge zurueck — lieber vorwaerts.
+    if (zu === -1) return ["u", 2];
     const hex = quelle.slice(i + 3, zu);
     return [String.fromCodePoint(parseInt(hex, 16) || 0), zu - i + 1];
   }
