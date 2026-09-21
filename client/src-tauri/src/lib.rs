@@ -12958,7 +12958,7 @@ async fn flight_refresh_simbrief(
         }
         .to_string(),
         Some(format!(
-            "{} – {} ({}). Block {:.0} kg, TOW {:.0} kg, LDW {:.0} kg",
+            "vorher {}, jetzt {} ({}). Block {:.0} kg, TOW {:.0} kg, LDW {:.0} kg",
             previous_ofp_id.as_deref().unwrap_or("—"),
             sb_id,
             if changed { "neu" } else { "identisch" },

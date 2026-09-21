@@ -92,6 +92,10 @@ const SPRACHEN = ["de", "en", "it"];
  *     dieser Wächter.
  *     Eine vierte (⚠ vor „Touchdown im Pre-Threshold-Bereich") wurde
  *     nur durch eine zu breite Ersetzung erwischt, also durch Glück.
+ *   * Texte, die in einem CRATE entstehen (client/src-tauri/crates/) und
+ *     erst in der App ins Protokoll gehen. Beispiel, am 21.09.2026 von
+ *     Hand behoben: die FMA-Zeile „HDG (→LOC)" aus sim-msfs, jetzt
+ *     „HDG (arm LOC)".
  *   * Texte vom Server und aus Fehlermeldungen fremder Bibliotheken.
  *   * Einträge, die vor einem Update gespeichert wurden und beim Start
  *     wieder geladen werden, bis die Kapazitätsgrenze sie verdrängt.
@@ -123,6 +127,12 @@ const QUELLDATEIEN = [
       "Schrift fehlt.",
   },
   {
+    pfad: "client/src/components/LoadsheetMonitor.tsx",
+    grund: "`.ls td` traegt --font-acars (App.css). Hier stand bis " +
+      "21.09.2026 ein Warnzeichen U+26A0 bei Uebergewicht — genau in der " +
+      "Warnzeile verrutschte die Ziffernspalte.",
+  },
+  {
     pfad: "client/src/components/ActivityLogPanel.tsx",
     grund: "Die Protokollliste erbt --font-acars (App.css, `.log`).",
   },
@@ -149,7 +159,16 @@ const BACKEND = {
   // `log_activity_handle` standen 103 Aufrufe, davon 13 mit einem
   // Pfeil, hinter `log_activity_and_record` weitere zwei mit „Δ".
   // Gefunden bei der QS zur eigenen Korrektur (21.09.2026).
-  aufrufe: ["log_activity", "log_activity_handle", "log_activity_and_record"],
+  aufrufe: [
+    "log_activity",
+    "log_activity_handle",
+    "log_activity_and_record",
+    // Der vierte Weg: Zeilen, die erst gepuffert und spaeter ins
+    // Protokoll gespiegelt werden (lib.rs, `log_activity_handle(line…)`),
+    // und gleichlautend als ACARS-Log an phpVMS gehen. Vorher ungeprueft
+    // (externe Abnahme, 21.09.2026, Mutation M7).
+    "pending_acars_logs.push",
+  ],
 };
 
 /**
@@ -257,12 +276,23 @@ function zeichenListe(zeichen) {
  */
 function unbekannte(text, vorrat) {
   const raus = new Set();
-  for (const z of text) {
-    const cp = z.codePointAt(0);
-    // Zeilenumbruch und Tabulator stehen nie im Bild.
-    if (cp === 0x0a || cp === 0x09) continue;
-    if (PIKTOGRAMM.test(z)) continue;
-    if (!vorrat.has(cp)) raus.add(z);
+  // Nach GRAPHEMEN gehen, nicht nach Codepoints: „❤️" ist U+2764 plus
+  // das Variantenzeichen FE0F, das die Emoji-Darstellung erzwingt; „👨‍✈️"
+  // haengt Teile mit U+200D zusammen; „1️⃣" endet auf U+20E3. Einzeln
+  // betrachtet saehe U+2764 wie ein Textzeichen aus, das der Schrift
+  // fehlt — als Folge ist es ein Bild und gewollt (externe Abnahme,
+  // 21.09.2026, Mutationen M9–M11). FE0E dagegen erzwingt TEXT und wird
+  // weiter gemeldet.
+  const segmente = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  for (const { segment } of segmente.segment(text)) {
+    if (/[\uFE0F\u200D\u20E3]/u.test(segment) && !segment.includes("\uFE0E")) continue;
+    for (const z of segment) {
+      const cp = z.codePointAt(0);
+      // Zeilenumbruch und Tabulator stehen nie im Bild.
+      if (cp === 0x0a || cp === 0x09) continue;
+      if (PIKTOGRAMM.test(z)) continue;
+      if (!vorrat.has(cp)) raus.add(z);
+    }
   }
   return [...raus];
 }
@@ -433,6 +463,13 @@ if (process.argv.includes("--selbsttest")) {
     ["Quelldatei mit Textsymbol, das nur wie ein Emoji aussieht",
      { "a.tsx": [["a.tsx:1", "Wetter \u2600"]] }, false],
     ["Quelldatei mit Warnzeichen", { "a.tsx": [["a.tsx:1", "\u26A0 Achtung"]] }, false],
+    // Emoji-FOLGEN sind Bilder, auch wenn ein Teil davon allein ein
+    // Textzeichen waere.
+    ["Herz mit Emoji-Variante", { "a.tsx": [["a.tsx:1", "Made with \u2764\uFE0F"]] }, true],
+    ["Pilot als ZWJ-Folge", { "a.tsx": [["a.tsx:1", "\u{1F468}\u200D\u2708\uFE0F"]] }, true],
+    ["Tastenkappe", { "a.tsx": [["a.tsx:1", "1\uFE0F\u20E3 Schritt"]] }, true],
+    // Und die Gegenrichtung: FE0E erzwingt TEXT-Darstellung.
+    ["Emoji mit Text-Variante", { "a.tsx": [["a.tsx:1", "\u{1F534}\uFE0E"]] }, false],
     ["Quelldatei ohne auffaelliges Literal", { "a.tsx": [] }, true],
     [
       "Backend-Suchmuster laeuft ins Leere",

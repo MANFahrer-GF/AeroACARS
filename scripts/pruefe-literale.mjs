@@ -118,6 +118,38 @@ function pruefe(name, ist, soll) {
   );
 }
 
+// ── E1/E2: Escape-Folgen werden zu dem Zeichen, das der Pilot sieht ─
+// Vorher stand im Text `u{2192}` — reines ASCII, der Waechter blieb
+// gruen (Mutation M6 der externen Abnahme, 21.09.2026).
+{
+  const q = 'log_x(&s, "A \\u{2192} B", "Tab\\tEnde");';
+  pruefe(
+    "E1: Rust-Escapes aufgeloest",
+    aufrufLiterale(q, "log_x", rustLiterale).map((l) => l.text),
+    ["A → B", "Tab\tEnde"],
+  );
+}
+{
+  const q = 'const a = "A \\u2192 B"; const b = "C \\u{2265} D"; const c = "\\x41";';
+  pruefe(
+    "E2: TS-Escapes aufgeloest",
+    tsLiterale(q).map((l) => l.text),
+    ["A → B", "C ≥ D", "A"],
+  );
+}
+
+// ── A6: Aufrufname mit Punkt ──────────────────────────────────────────
+// `pending_acars_logs.push` ist der vierte Weg ins Protokoll. Ein
+// unmaskierter Punkt im Muster haette auf jedes Zeichen gepasst.
+{
+  const q = 'pending_acars_logs.push("echt"); pending_acars_logsXpush("falsch");';
+  pruefe(
+    "A6: Punkt im Namen wird woertlich genommen",
+    aufrufLiterale(q, "pending_acars_logs.push", rustLiterale).map((l) => l.text),
+    ["echt"],
+  );
+}
+
 // ── T1: Template-Literal, feste Teile bleiben ─────────────────────────
 {
   const q = "const a = `Sicht ${wert} ≥ 10 km`; const b = 'einfach';";
@@ -125,6 +157,19 @@ function pruefe(name, ist, soll) {
     "T1: Template-Literal ohne die ${…}-Teile",
     tsLiterale(q).map((l) => l.text),
     ["Sicht  ≥ 10 km", "einfach"],
+  );
+}
+
+// ── T4: Zeichenkette IM Template-Ausdruck ─────────────────────────────
+// Die Loadsheet-Tabelle zeigte ein Warnzeichen ueber
+// `${warn ? "⚠ " : ""}`. Der Scanner uebersprang den ganzen Ausdruck,
+// der Waechter blieb gruen (Gegenprobe, 21.09.2026).
+{
+  const q = 'const a = `${warn ? "⚠ " : ""}${n} kg`; const b = "danach";';
+  pruefe(
+    "T4: Literale in ${…} werden gelesen, der Scanner bleibt im Takt",
+    tsLiterale(q).map((l) => l.text),
+    ["⚠ ", "", " kg", "danach"],
   );
 }
 
@@ -146,4 +191,4 @@ if (fehler > 0) {
   console.error(`\n${fehler} Prüfung(en) fehlgeschlagen`);
   process.exit(1);
 }
-console.log("\nliteral-scanner in Ordnung — 13 Fälle, alle aus echten Fehlern");
+console.log("\nliteral-scanner in Ordnung — 17 Fälle, alle aus echten Fehlern");

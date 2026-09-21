@@ -23,6 +23,37 @@
 // anfängt und wie sie endet.
 
 /**
+ * Eine Escape-Folge ab `i` (das `\\` selbst) auflösen.
+ *
+ * Ohne diese Auflösung stand im Text `u{2192}` statt „→", und der
+ * Wächter sah ein harmloses ASCII-Stück: Ein Pfeil als `"\\u{2192}"`
+ * im Quelltext wäre im Cockpit als Fremdglyphe erschienen und im
+ * Prüfer grün geblieben (externe Abnahme, 21.09.2026, Mutation M6).
+ * Die Codebasis benutzt solche Escapes tatsächlich, etwa `"\\u{2212}"`.
+ *
+ * Liefert [aufgelöster Text, Länge der Folge im Quelltext].
+ */
+function escapeAufloesen(quelle, i) {
+  const c = quelle[i + 1];
+  const einfach = { n: "\n", t: "\t", r: "\r", "0": "\0" };
+  if (c in einfach) return [einfach[c], 2];
+  if (c === "x") {
+    const hex = quelle.slice(i + 2, i + 4);
+    return [String.fromCodePoint(parseInt(hex, 16) || 0), 4];
+  }
+  if (c === "u" && quelle[i + 2] === "{") {
+    const zu = quelle.indexOf("}", i + 3);
+    const hex = quelle.slice(i + 3, zu);
+    return [String.fromCodePoint(parseInt(hex, 16) || 0), zu - i + 1];
+  }
+  if (c === "u") {
+    const hex = quelle.slice(i + 2, i + 6);
+    return [String.fromCodePoint(parseInt(hex, 16) || 0), 6];
+  }
+  return [c ?? "", 2];
+}
+
+/**
  * Alle Zeichenketten-Literale einer Rust-Datei, mit Zeilennummer.
  *
  * Erkannt werden:
@@ -108,8 +139,9 @@ export function rustLiterale(quelle, kommentare = null) {
             while (i < n && (quelle[i] === " " || quelle[i] === "\t")) i += 1;
             continue;
           }
-          text += quelle[i + 1] ?? "";
-          i += 2;
+          const [zeichen, laenge] = escapeAufloesen(quelle, i);
+          text += zeichen;
+          i += laenge;
           continue;
         }
         if (c === '"') {
@@ -152,64 +184,91 @@ export function rustLiterale(quelle, kommentare = null) {
  * Unterscheidung braucht einen halben Parser. Der Preis dafür ist
  * überschaubar, weil hier nur Literale mit Sonderzeichen zählen.
  */
-export function tsLiterale(quelle) {
+export function tsLiterale(quelle, kommentare = null) {
   const raus = [];
-  let i = 0;
-  let zeile = 1;
-  const n = quelle.length;
+  scanTs(quelle, 0, false, raus, kommentare, { zeile: 1 });
+  return raus;
+}
 
+/**
+ * Der eigentliche TS-Durchlauf ab `i`.
+ *
+ * Mit `bisKlammer` endet er an der `}`, die einen `${…}`-Ausdruck
+ * schliesst, und liefert deren Position. So werden Zeichenketten
+ * INNERHALB eines Template-Ausdrucks mitgelesen.
+ *
+ * Genau die fehlten vorher: `${warn ? "⚠ " : ""}` — der Ausdruck wurde
+ * als Ganzes uebersprungen, und das Warnzeichen in der Loadsheet-Tabelle
+ * blieb unsichtbar. Aufgefallen bei der Gegenprobe zur eigenen
+ * Korrektur (21.09.2026): zurueckgedreht, und der Waechter blieb gruen.
+ */
+function scanTs(quelle, i, bisKlammer, raus, kommentare, pos) {
+  const n = quelle.length;
+  let tiefe = 0;
   while (i < n) {
     const z = quelle[i];
 
     if (z === "\n") {
-      zeile += 1;
+      pos.zeile += 1;
       i += 1;
       continue;
     }
     if (z === "/" && quelle[i + 1] === "/") {
+      const start = i;
       while (i < n && quelle[i] !== "\n") i += 1;
+      kommentare?.push({ start, ende: i });
       continue;
     }
     if (z === "/" && quelle[i + 1] === "*") {
+      const start = i;
       i += 2;
       while (i < n && !(quelle[i] === "*" && quelle[i + 1] === "/")) {
-        if (quelle[i] === "\n") zeile += 1;
+        if (quelle[i] === "\n") pos.zeile += 1;
         i += 1;
       }
       i += 2;
+      kommentare?.push({ start, ende: i });
       continue;
+    }
+    if (bisKlammer) {
+      if (z === "{") tiefe += 1;
+      else if (z === "}") {
+        if (tiefe === 0) return i;
+        tiefe -= 1;
+      }
     }
 
     if (z === '"' || z === "'" || z === "`") {
       const anfang = z;
-      const startZeile = zeile;
+      const startZeile = pos.zeile;
       const start = i;
       let text = "";
       i += 1;
       while (i < n) {
         const c = quelle[i];
         if (c === "\\") {
-          text += quelle[i + 1] ?? "";
-          i += 2;
+          if (quelle[i + 1] === "\n") {
+            // Zeilenfortsetzung im String — gehoert nicht zum Text.
+            pos.zeile += 1;
+            i += 2;
+            continue;
+          }
+          const [zeichen, laenge] = escapeAufloesen(quelle, i);
+          text += zeichen;
+          i += laenge;
           continue;
         }
-        // `${…}` im Template-Literal überspringen.
+        // `${…}` im Template-Literal: der feste Text laeuft weiter, der
+        // Ausdruck wird REKURSIV gelesen — seine Zeichenketten zaehlen.
         if (anfang === "`" && c === "$" && quelle[i + 1] === "{") {
-          let tiefe = 1;
-          i += 2;
-          while (i < n && tiefe > 0) {
-            if (quelle[i] === "{") tiefe += 1;
-            else if (quelle[i] === "}") tiefe -= 1;
-            else if (quelle[i] === "\n") zeile += 1;
-            i += 1;
-          }
+          i = scanTs(quelle, i + 2, true, raus, kommentare, pos) + 1;
           continue;
         }
         if (c === anfang) {
           i += 1;
           break;
         }
-        if (c === "\n") zeile += 1;
+        if (c === "\n") pos.zeile += 1;
         text += c;
         i += 1;
       }
@@ -219,7 +278,7 @@ export function tsLiterale(quelle) {
 
     i += 1;
   }
-  return raus;
+  return i;
 }
 
 /**
@@ -246,7 +305,10 @@ export function aufrufLiterale(quelle, name, scanner) {
   const imKommentar = (pos) => kommentare.some((k) => k.start <= pos && pos < k.ende);
   const raus = [];
 
-  for (const m of quelle.matchAll(new RegExp(`\\b${name}\\s*\\(`, "g"))) {
+  // Punkte usw. maskieren: `pending_acars_logs.push` ist ein Name mit
+  // Punkt, und ein unmaskierter Punkt passte auf jedes Zeichen.
+  const maskiert = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const m of quelle.matchAll(new RegExp(`\\b${maskiert}\\s*\\(`, "g"))) {
     // Die Definition selbst ist kein Aufruf.
     if (quelle.slice(0, m.index).trimEnd().endsWith("fn")) continue;
     // Eine Erwaehnung in einem Kommentar oder in einer Zeichenkette
