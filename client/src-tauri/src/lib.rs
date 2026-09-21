@@ -14557,10 +14557,29 @@ fn szenerie_status(stats: &FlightStats) -> String {
     // Messpunkt, mit dem die naechste Felddiagnose dieser Klasse
     // eingekreist wird — er darf nicht in die Irre fuehren (externe
     // Abnahme, 21.09.2026).
+    //
+    // MIT demselben ICAO-Filter wie Geometrie und Ausfahrten. Ohne ihn
+    // meldete der Status beim Ausweichflug eine einschlaegige
+    // Szenerie-Antwort, wo keine benutzt wurde: Gelandet in EDDM, in der
+    // Zweitquelle liegt das geplante Ziel EDDF — Geometrie und
+    // Ausfahrten verwerfen es korrekt, der Status haette
+    // `auskunft_ohne_vergleich(platz=?, …)` behauptet. Genau die
+    // Irrefuehrung, die dieser Messpunkt vermeiden soll (externe
+    // Nachpruefung, 21.09.2026).
+    let landeplatz = stats
+        .runway_match
+        .as_ref()
+        .map(|m| m.airport_ident.as_str());
+    let passend = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz {
+        Some(icao) => a.icao.eq_ignore_ascii_case(icao),
+        // Ohne gematchte Bahn gibt es nichts zu vergleichen — dann zaehlt
+        // wie bisher die Primaerquelle, die Zweitquelle bleibt draussen.
+        None => false,
+    };
     let auskunft = stats
         .szenerie_auskunft
         .as_ref()
-        .or(stats.ziel_szenerie_auskunft.as_ref());
+        .or_else(|| stats.ziel_szenerie_auskunft.as_ref().filter(passend));
     if auskunft.is_none() {
         if let Some(fest) = stats.szenerie_status_fest.as_ref() {
             return fest.clone();
@@ -57758,8 +57777,6 @@ mod touchdown_metadata_stamp_tests {
         stats
     }
 
-    /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
-    /// `navdata` + `arr_airport` are read by it).
     /// Ein Ausbrechen bei hoher Fahrt ist keine Ausfahrt.
     ///
     /// # Der Befund
@@ -57772,6 +57789,72 @@ mod touchdown_metadata_stamp_tests {
     /// Am Korpus gemessen (854 Landungen mit 50-Hz-Fenster): 13
     /// ueberschreiten die Schwelle, waehrend sie noch ueber sechzig Knoten
     /// schnell sind, bei bis zu 141 kt und 100 von 100 folgenden Proben.
+    /// Dort biegt niemand auf einen Rollweg ab — und die Bewertung waere
+    /// beendet gewesen, bevor sie angefangen hat.
+    ///
+    /// Ueber sechzig Knoten ist eine seitliche Abweichung ein Ausbrechen,
+    /// und das ist genau das, was diese Achse bewerten SOLL.
+    #[test]
+    fn ausbrechen_bei_hoher_fahrt_setzt_keinen_raeumpunkt() {
+        let flight = flight_fixture("EDDH");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.phase = FlightPhase::Landing;
+            stats.landing_at = Some(Utc::now());
+            stats.landing_lat = Some(53.636_011);
+            stats.landing_lon = Some(9.999_656);
+            stats.rollout_last_lat = Some(53.636_011);
+            stats.rollout_last_lon = Some(9.999_656);
+            stats.landing_heading_true_deg = Some(230.21);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636_011,
+                threshold_lon: 9.999_656,
+                end_lat: 53.619_958,
+                end_lon: 9.967_167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+                geometry_implied_displaced_threshold_ft: 0,
+            });
+        }
+
+        // 115 kt, Nase 14 Grad schraeg — der Crab-Ausgleich nach dem
+        // Aufsetzen, gemessen am echten Bestand.
+        let snap = SimSnapshot {
+            lat: 53.630_234,
+            lon: 9.988_032,
+            groundspeed_kt: 115.0,
+            heading_deg_true: 216.0,
+            on_ground: true,
+            ..Default::default()
+        };
+        step_flight_at(&flight, &snap, Utc::now());
+
+        let stats = flight.stats.lock().expect("stats");
+        assert!(
+            stats.bahn_raeum_laengs_m.is_none(),
+            "bei 115 kt wurde ein Raeumpunkt gesetzt — das ist ein \
+             Ausbrechen, keine Ausfahrt"
+        );
+        assert!(
+            !stats.bahn_fenster_zu,
+            "die Bewertung wurde beendet, bevor sie angefangen hat"
+        );
+        // Und der Versatz wird weiter gemessen — genau darum geht es.
+        assert!(
+            stats.bahn_max_querversatz_m.is_some(),
+            "das Ausbrechen wird gar nicht bewertet"
+        );
+    }
+
     /// Die Ausfahrten kommen AUCH aus der Auskunft des geplanten Ziels.
     ///
     /// Das ist die eigentliche Korrektur aus DLH 373 (20.09.2026): Im
@@ -57881,72 +57964,6 @@ mod touchdown_metadata_stamp_tests {
         assert!(
             felder.runway_exits.is_empty(),
             "die Rollwege eines FREMDEN Platzes sind in die Ausfahrten geraten",
-        );
-    }
-
-    /// Dort biegt niemand auf einen Rollweg ab — und die Bewertung waere
-    /// beendet gewesen, bevor sie angefangen hat.
-    ///
-    /// Ueber sechzig Knoten ist eine seitliche Abweichung ein Ausbrechen,
-    /// und das ist genau das, was diese Achse bewerten SOLL.
-    #[test]
-    fn ausbrechen_bei_hoher_fahrt_setzt_keinen_raeumpunkt() {
-        let flight = flight_fixture("EDDH");
-        {
-            let mut stats = flight.stats.lock().expect("stats");
-            stats.phase = FlightPhase::Landing;
-            stats.landing_at = Some(Utc::now());
-            stats.landing_lat = Some(53.636_011);
-            stats.landing_lon = Some(9.999_656);
-            stats.rollout_last_lat = Some(53.636_011);
-            stats.rollout_last_lon = Some(9.999_656);
-            stats.landing_heading_true_deg = Some(230.21);
-            stats.runway_match = Some(runway::RunwayMatch {
-                airport_ident: "EDDH".to_string(),
-                runway_ident: "23".to_string(),
-                heading_true_deg: 230.21,
-                length_ft: 10663.0,
-                width_ft: 151.0,
-                surface: "ASP".to_string(),
-                threshold_lat: 53.636_011,
-                threshold_lon: 9.999_656,
-                end_lat: 53.619_958,
-                end_lon: 9.967_167,
-                centerline_distance_m: 0.0,
-                centerline_distance_abs_ft: 0.0,
-                touchdown_distance_from_threshold_ft: 720.0,
-                side: "left".to_string(),
-                displaced_threshold_ft: 0,
-                geometry_implied_displaced_threshold_ft: 0,
-            });
-        }
-
-        // 115 kt, Nase 14 Grad schraeg — der Crab-Ausgleich nach dem
-        // Aufsetzen, gemessen am echten Bestand.
-        let snap = SimSnapshot {
-            lat: 53.630_234,
-            lon: 9.988_032,
-            groundspeed_kt: 115.0,
-            heading_deg_true: 216.0,
-            on_ground: true,
-            ..Default::default()
-        };
-        step_flight_at(&flight, &snap, Utc::now());
-
-        let stats = flight.stats.lock().expect("stats");
-        assert!(
-            stats.bahn_raeum_laengs_m.is_none(),
-            "bei 115 kt wurde ein Raeumpunkt gesetzt — das ist ein \
-             Ausbrechen, keine Ausfahrt"
-        );
-        assert!(
-            !stats.bahn_fenster_zu,
-            "die Bewertung wurde beendet, bevor sie angefangen hat"
-        );
-        // Und der Versatz wird weiter gemessen — genau darum geht es.
-        assert!(
-            stats.bahn_max_querversatz_m.is_some(),
-            "das Ausbrechen wird gar nicht bewertet"
         );
     }
 
@@ -58215,6 +58232,8 @@ mod touchdown_metadata_stamp_tests {
         );
     }
 
+    /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
+    /// `navdata` + `arr_airport` are read by it).
     fn flight_fixture(arr: &str) -> ActiveFlight {
         ActiveFlight {
             pirep_id: "test-pirep".into(),
@@ -69192,6 +69211,18 @@ mod szenerie_status_tests {
         let mut s = FlightStats::new();
         s.szenerie_auskunft = Some(auskunft(2));
         s.szenerie_auskunft_stand = 7;
+        // Die Zweitquelle gehoert MIT auf den Pruefstand.
+        //
+        // Sie haelt die Auskunft des geplanten Ziels ueber einen
+        // ZIELwechsel hinweg — aber ein VERBINDUNGSwechsel entwertet
+        // auch sie: Ein Sim-Neustart kann fuer denselben Platz andere
+        // Rollwege mitbringen, und die ICAO-Pruefung faengt das nicht.
+        // Ohne diese beiden Zeilen prueft die Zusicherung unten ein
+        // Feld, das nie gesetzt wurde — sie war trivial gruen, und wer
+        // die Entwertung ausbaute, bekam 1413 gruene Tests (externe
+        // Nachpruefung, 21.09.2026).
+        s.ziel_szenerie_auskunft = Some(auskunft(2));
+        s.ziel_szenerie_auskunft_stand = 7;
         // ⚠ Die Flugkopie stammt aus Generation 0 — die des Buches ist
         // nach dem Wechsel groesser. Mein erster Entwurf setzte hier 1
         // und das Buch stand ebenfalls auf 1: Der Test prueste dann
@@ -69212,6 +69243,13 @@ mod szenerie_status_tests {
             "die Kopie der alten Verbindung ueberlebt"
         );
         assert_eq!(s.szenerie_auskunft_stand, 0);
+        assert!(
+            s.ziel_szenerie_auskunft.is_none(),
+            "die Zweitquelle ueberlebt den Verbindungswechsel — damit \
+             koennte die Szenerie der ALTEN Verbindung doch noch in die \
+             Ausfahrten geraten",
+        );
+        assert_eq!(s.ziel_szenerie_auskunft_stand, 0);
         assert_eq!(
             s.szenerie_auskunft_generation, schnapp.generation,
             "die Generation wird nicht nachgezogen — dann entwertet jeder \

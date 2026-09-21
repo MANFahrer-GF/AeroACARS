@@ -19,14 +19,25 @@
 // Befehl absichtlich scheitern und erwartet, dass das erkannt wird.
 
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const selbsttest = process.argv.includes("--selbsttest");
+
+/**
+ * Der Arbeitsbereich liegt unter `client/src-tauri`, nicht im Wurzelordner.
+ * Ohne diese Festlegung hing das Ergebnis davon ab, aus welchem Verzeichnis
+ * jemand das Skript startet: aus der Wurzel aufgerufen meldete Cargo 101
+ * („could not find Cargo.toml") — ein Fehler, der wie ein echter Befund
+ * aussah und einmal Minuten kostete. Der Pfad hängt jetzt am Skript selbst.
+ */
+const ARBEITSBEREICH = fileURLToPath(new URL("../client/src-tauri", import.meta.url));
 
 /** Einen Befehl ausführen und Rückgabewert plus Ausgabe zurückgeben. */
 function lauf(befehl, argumente) {
   const r = spawnSync(befehl, argumente, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    cwd: befehl === "cargo" ? ARBEITSBEREICH : undefined,
   });
   if (r.error) {
     return { code: 127, ausgabe: String(r.error.message) };

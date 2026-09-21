@@ -101,8 +101,15 @@ export function evaluateApproach(
   // eine PC-12 (95 kt, Soll 504 fpm) bei −723 fpm stumm — 43 % über dem
   // Pfad und kurz vor dem Boden.
   const soll = sollSinkrateFpm(snap.groundspeed_kt, glideslopeDeg);
-  // Ohne Geschwindigkeit bleibt es bei den alten Festwerten — lieber die
-  // bekannte Näherung als gar keine Warnung.
+  // Unter 30 kt über Grund (`MIN_GS_KT` in `anflugSollband.ts`) gibt es
+  // kein Soll: Rollen, Stillstand, Sim-Aussetzer. NUR dann gelten die
+  // alten Festwerte.
+  //
+  // Hier stand zuerst „ein alter Client liefert `groundspeed_kt` nicht" —
+  // den Fall gibt es nicht: Das Feld ist weder in `sim-core` noch in
+  // `types.ts` optional, und beide Hälften werden als EINE Datei
+  // ausgeliefert. Eine erfundene Begründung hält jemanden davon ab, den
+  // Zweig zu hinterfragen (externe Abnahme, 21.09.2026).
   //
   // NACH UNTEN gedeckelt: Die geschwindigkeitsabhaengige Schwelle darf
   // nie STRENGER werden als die alte Festzahl. Sonst kehrt sich der
@@ -117,9 +124,17 @@ export function evaluateApproach(
   const sink500 = soll != null ? deckel(soll * 1.5 - 80, -1000) : -1000 * gsFactor;
   const sink1000Lo =
     soll != null ? deckel(soll * 1.65 - 80, -1100) : -1100 * gsFactor;
-  // Die OBERE Grenze (zu flach) bleibt am Soll: zu langsames Sinken ist
-  // ebenso ein Abweichen vom Pfad, nur in die andere Richtung.
-  const sink1000Hi = soll != null ? soll * 0.4 : -300 * gsFactor;
+  // Die OBERE Grenze (zu flach) — ebenfalls gedeckelt, nur andersherum.
+  //
+  // Hier warnt ein GRÖSSERER Wert seltener, also ist `Math.max` die
+  // nachsichtige Richtung. Ohne den Deckel war diese Grenze oberhalb von
+  // 141 kt strenger als die alte Festzahl (160 kt → −340 statt −300;
+  // 250 kt → −531), und ein Muster mit −320 fpm zwischen 600 und 1100 ft
+  // hätte eine Meldung bekommen, die es vorher nicht gab. Die
+  // Release-Notes sagen ausdrücklich das Gegenteil zu — eine Zusage, die
+  // der Code halten muss (externe Nachprüfung, 21.09.2026).
+  const sink1000Hi =
+    soll != null ? Math.max(soll * 0.4, -300 * gsFactor) : -300 * gsFactor;
 
   // Sub-100 ft mit excessive sink → höchste Priorität
   if (agl < 100 && agl > 5 && vs < sink100) {

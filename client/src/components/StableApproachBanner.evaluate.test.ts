@@ -161,3 +161,27 @@ describe("evaluateApproach — die Schwelle wird nie strenger als vorher", () =>
     expect(evaluateApproach(pc12, "final", 1, 3)?.key).toBe("sink_rate_pull_up");
   });
 });
+
+describe("evaluateApproach — auch die obere Grenze wird nie strenger", () => {
+  // Externe Nachprüfung 21.09.2026: `sink1000Hi = soll * 0.4` war NICHT
+  // gedeckelt. Oberhalb von 141 kt war die Grenze für zu flaches Sinken
+  // strenger als die alte Festzahl (160 kt → −340 statt −300), und die
+  // Release-Notes sagten dem Piloten das Gegenteil zu.
+  it("160 kt mit −320 fpm meldet nicht — wie vorher", () => {
+    const flach = snap({
+      altitude_agl_ft: 800,
+      vertical_speed_fpm: -320,
+      groundspeed_kt: 160,
+    });
+    expect(evaluateApproach(flach, "approach", 1, 3)).toBeNull();
+  });
+
+  it("… und bei −250 fpm meldet es, ebenfalls wie vorher", () => {
+    const zuFlach = snap({
+      altitude_agl_ft: 800,
+      vertical_speed_fpm: -250,
+      groundspeed_kt: 160,
+    });
+    expect(evaluateApproach(zuFlach, "approach", 1, 3)?.key).toBe("gate1000_unstable");
+  });
+});
