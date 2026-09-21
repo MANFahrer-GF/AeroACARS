@@ -50434,6 +50434,39 @@ impl HinweisProtokoll {
     }
 }
 
+/// Haelt den Marker „dieser Bid wird gerade vom Auto-Start gestartet"
+/// (`AppState::auto_start_laeuft_bid`) und raeumt ihn beim Ende des
+/// Start-Tasks IMMER auf — auch bei Panik oder Abbruch des Tasks, und nur,
+/// wenn der Eintrag noch ihm gehoert. Endet der Task, ohne dass der
+/// normale Weg ihn als `erledigt` markiert hat (Panik/Abbruch), gibt er
+/// auch den Anspruch `auto_start_last_bid_id` frei; sonst bliebe der Bid
+/// bis zum Neustart der App gesperrt (Codex-Abnahme Runde 2, 22.09.2026).
+struct AutoStartLaeuft {
+    app: AppHandle,
+    bid: i64,
+    erledigt: bool,
+}
+
+/// Gibt `platz` nur frei, wenn dort noch `bid` steht — ein anderer
+/// Eigentuemer bleibt unangetastet. Auch mit vergiftetem Mutex (Panik in
+/// einem anderen Halter), denn gerade dann muss aufgeraeumt werden.
+fn freigeben_wenn_eigen(platz: &Mutex<Option<i64>>, bid: i64) {
+    let mut g = platz.lock().unwrap_or_else(|e| e.into_inner());
+    if *g == Some(bid) {
+        *g = None;
+    }
+}
+
+impl Drop for AutoStartLaeuft {
+    fn drop(&mut self) {
+        let state = self.app.state::<AppState>();
+        freigeben_wenn_eigen(&state.auto_start_laeuft_bid, self.bid);
+        if !self.erledigt {
+            freigeben_wenn_eigen(&state.auto_start_last_bid_id, self.bid);
+        }
+    }
+}
+
 #[cfg(test)]
 mod auto_start_vorpruefung_tests {
     use super::*;
@@ -50684,6 +50717,33 @@ mod auto_start_vorpruefung_tests {
         );
     }
 
+    /// Codex-Abnahme Runde 2: Aufraeumen darf nur den EIGENEN Eintrag
+    /// loeschen — ein fremder Start bleibt markiert. Und es muss auch nach
+    /// einer Panik eines anderen Halters (vergifteter Mutex) gehen.
+    #[test]
+    fn freigeben_nur_den_eigenen_eintrag() {
+        let platz = Mutex::new(Some(5724));
+        freigeben_wenn_eigen(&platz, 99);
+        assert_eq!(
+            *platz.lock().unwrap(),
+            Some(5724),
+            "fremder Eintrag geloescht"
+        );
+        freigeben_wenn_eigen(&platz, 5724);
+        assert_eq!(*platz.lock().unwrap(), None);
+
+        let vergiftet = std::sync::Arc::new(Mutex::new(Some(7)));
+        let v2 = vergiftet.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = v2.lock().unwrap();
+            panic!("Halter stirbt");
+        })
+        .join();
+        assert!(vergiftet.is_poisoned());
+        freigeben_wenn_eigen(&vergiftet, 7);
+        assert_eq!(*vergiftet.lock().unwrap_or_else(|e| e.into_inner()), None);
+    }
+
     /// Log Thomas 21.09.2026 (AIB424): waehrend flight_start lief, stand
     /// „schon mal auto-gestartet" im Protokoll. Jetzt „Start läuft" — und
     /// NUR, solange der Start wirklich laeuft.
@@ -50858,6 +50918,17 @@ fn auto_start_skip_status(state: tauri::State<'_, AppState>) -> Option<AutoStart
     if !state.auto_start_enabled.load(Ordering::Relaxed) {
         return None;
     }
+    // Laeuft ein Flug, ist kein Auto-Start-Grund mehr aktuell — auch nicht
+    // einer, den der Watcher im selben Augenblick noch geschrieben hat
+    // (Codex-Abnahme Runde 2, 22.09.2026).
+    if state
+        .active_flight
+        .lock()
+        .map(|g| g.is_some())
+        .unwrap_or(false)
+    {
+        return None;
+    }
     let g = state.auto_start_skip_reason.lock().unwrap();
     let (at, code) = g.as_ref()?;
     let age_secs = (Utc::now() - *at).num_seconds();
@@ -51006,6 +51077,24 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     protokoll = HinweisProtokoll::default();
                     continue;
                 }
+            }
+            // Laeuft gerade ein Auto-Start, startet der Watcher nichts
+            // anderes: sonst konnte bei zwei passenden Bids ein zweiter Start
+            // anlaufen, dessen schneller Fehler den Marker des ersten loeschte
+            // (Codex-Abnahme Runde 2, 22.09.2026). Gemeldet wird nur „Start
+            // läuft" fuer genau diesen Bid.
+            let laeuft = *state
+                .auto_start_laeuft_bid
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(bid) = laeuft {
+                let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+                    schon_gestartet: Some(bid),
+                    start_laeuft_bid: Some(bid),
+                    ..Default::default()
+                });
+                auto_start_melden(&app, &mut protokoll, code, titel, text, None);
+                continue;
             }
             // v0.15.16: VPS-Alias-Cache lazy warm halten. Ohne das wäre er vor
             // dem ersten Flug leer → der alias-bewusste Typ-Vorabcheck unten
@@ -51399,9 +51488,15 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     *g = Some(bid.id);
                 }
                 *state.auto_start_laeuft_bid.lock().unwrap() = Some(bid.id);
+                let waechter = AutoStartLaeuft {
+                    app: app.clone(),
+                    bid: bid.id,
+                    erledigt: false,
+                };
                 let app_for_call = app.clone();
                 let bid_id = bid.id;
                 tauri::async_runtime::spawn(async move {
+                    let mut waechter = waechter;
                     let state_ref = app_for_call.state::<AppState>();
                     // v0.8.3 (#7): Auto-Start liefert kein acknowledge mit —
                     // ein Aircraft-Mismatch ergäbe "aircraft_mismatch_warning"
@@ -51416,8 +51511,10 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                         flight_start_mit(app_for_call.clone(), state_ref, bid_id, None, true).await;
                     {
                         let s = app_for_call.state::<AppState>();
-                        // Der Start ist vorbei, so oder so.
-                        *s.auto_start_laeuft_bid.lock().unwrap() = None;
+                        // Der Start ist vorbei, so oder so: Marker frei (nur
+                        // der eigene), den Anspruch regelt der Weg unten.
+                        waechter.erledigt = true;
+                        drop(waechter);
                         // Erfolg: „Start läuft" darf nicht noch bis zu 10 s im
                         // Banner stehen — der Flug laeuft (Codex-Abnahme
                         // 22.09.2026).
@@ -51488,7 +51585,6 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 {
                     continue;
                 }
-                beobachtung.start_laeuft_bid = *state.auto_start_laeuft_bid.lock().unwrap();
                 let (reason_code, title, reason_msg) = auto_start_hinweis(&beobachtung);
                 auto_start_melden(
                     &app,
