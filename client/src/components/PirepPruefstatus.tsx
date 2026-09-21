@@ -15,6 +15,8 @@ import { useTranslation } from "react-i18next";
 export interface PirepPruefstatus {
   pirep_id: string;
   known: boolean;
+  /** Liegt das Flugprotokoll auf dem Server? `null`/fehlt = aelterer Server. */
+  flug_log_vorhanden?: boolean | null;
   score_trust_level: string | null;
   requires_review: boolean;
   review_state: string | null;

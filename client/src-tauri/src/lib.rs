@@ -11420,6 +11420,331 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         .lock()
         .expect("mqtt_owner_epoch lock") = Some(epoche_bei_start);
     tracing::info!("live-tracking publisher running");
+    spawn_flug_logs_nachreichen(&app);
+}
+
+/// Wie weit das Nachreichen zurueckschaut. Aeltere Fluege sind entweder
+/// laengst angekommen oder ohnehin nur noch fuer Admins interessant.
+const NACHREICHEN_MAX_ALTER: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+/// Hoechstens so viele Protokolle je Programmstart hochladen.
+const NACHREICHEN_MAX_UPLOADS: usize = 5;
+/// Nur das Ende der Datei nach `pirep_filed` absuchen — Flugprotokolle
+/// werden bis zu 15 MB gross, das Ereignis steht am Schluss.
+const NACHREICHEN_ENDE_BYTES: u64 = 512 * 1024;
+
+/// Ein lokales Flugprotokoll als Kandidat fuers Nachreichen.
+#[derive(Debug, Clone)]
+struct LokalesProtokoll {
+    pirep_id: String,
+    alter: std::time::Duration,
+    /// Enthaelt es ein `pirep_filed`? Abgebrochene Fluege nicht nachreichen —
+    /// der Import legte sonst eine Sitzung fuer einen Flug an, den es in
+    /// phpVMS so nie gab.
+    eingereicht: bool,
+}
+
+/// Welche lokalen Protokolle kommen fuers Nachfragen beim Server in Frage?
+/// Juengste zuerst, ohne den laufenden Flug, hoechstens `max` (Obergrenze
+/// des Status-Endpunkts: 50).
+fn nachreich_kandidaten(
+    protokolle: &[LokalesProtokoll],
+    aktiver_pirep: Option<&str>,
+    max_alter: std::time::Duration,
+    max: usize,
+) -> Vec<String> {
+    let mut passend: Vec<&LokalesProtokoll> = protokolle
+        .iter()
+        .filter(|p| p.eingereicht && p.alter <= max_alter)
+        .filter(|p| aktiver_pirep != Some(p.pirep_id.as_str()))
+        .collect();
+    passend.sort_by_key(|p| p.alter);
+    passend
+        .into_iter()
+        .take(max)
+        .map(|p| p.pirep_id.clone())
+        .collect()
+}
+
+/// Was fehlt laut Server? Nur ein ausdrueckliches `false` zaehlt — ein
+/// Server ohne das Feld (`None`) bekommt nichts nachgeschickt.
+fn fehlt_auf_dem_server(status: &[aeroacars_mqtt::pirep_status::PirepPruefstatus]) -> Vec<String> {
+    status
+        .iter()
+        .filter(|s| s.flug_log_vorhanden == Some(false))
+        .map(|s| s.pirep_id.clone())
+        .collect()
+}
+
+/// Steht `"type":"pirep_filed"` im letzten Stueck der Datei?
+fn protokoll_ist_eingereicht(pfad: &std::path::Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(pfad) else {
+        return false;
+    };
+    let laenge = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = laenge.saturating_sub(NACHREICHEN_ENDE_BYTES);
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return false;
+    }
+    let mut ende = Vec::new();
+    if f.read_to_end(&mut ende).is_err() {
+        return false;
+    }
+    let nadel = br#""type":"pirep_filed""#;
+    ende.windows(nadel.len()).any(|w| w == nadel)
+}
+
+/// Reicht Flugprotokolle nach, die der Server nicht hat — einmal je
+/// Programmstart, kurz nach der ersten erfolgreichen Verbindung.
+///
+/// Befund 21.09.2026 (Sven M): Ein Flug ohne Live-Sitzung verlor sein
+/// Flugprotokoll, weil der Upload nur EINMAL beim Einreichen versucht wurde
+/// und der Recorder ihn damals ablehnte. Ab Recorder-Stand
+/// `fix/verbindung-nachhaltig` nimmt der Server solche Protokolle an; dieser
+/// Schritt sorgt dafuer, dass sie auch ankommen — ebenso nach Netz- oder
+/// Serverausfaellen beim Einreichen.
+fn spawn_flug_logs_nachreichen(app: &AppHandle) {
+    static GELAUFEN: AtomicBool = AtomicBool::new(false);
+    if GELAUFEN.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Den Start nicht mit Uploads belasten.
+        tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+        if !flug_logs_nachreichen(&app).await {
+            // Voraussetzungen fehlten (noch nicht angemeldet o. ae.) — der
+            // naechste erfolgreiche Verbindungsaufbau darf es erneut versuchen.
+            GELAUFEN.store(false, Ordering::SeqCst);
+        }
+    });
+}
+
+/// `false`, wenn die Voraussetzungen fehlten und nichts versucht wurde.
+async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    let epoche = aktuelle_epoche(&state);
+    let Some(angemeldet) = *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+    else {
+        return false;
+    };
+    let (Some(username), Some(password)) = (
+        secrets::load_api_key(MQTT_KEYRING_USERNAME).ok().flatten(),
+        secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten(),
+    ) else {
+        return false;
+    };
+    // Nur mit Zugangsdaten DIESES Kontos (siehe `MQTT_KEYRING_PHPVMS_PILOT`).
+    let nr = secrets::load_api_key(MQTT_KEYRING_PHPVMS_PILOT)
+        .ok()
+        .flatten();
+    if !mqtt_cache_gehoert_angemeldetem(nr.as_deref(), angemeldet) {
+        return false;
+    }
+    let Ok(dir) = app.path().app_data_dir().map(|d| d.join("flight_logs")) else {
+        return false;
+    };
+    let aktiv = state
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .as_ref()
+        .map(|f| f.pirep_id.clone());
+
+    let jetzt = std::time::SystemTime::now();
+    let mut protokolle = Vec::new();
+    if let Ok(eintraege) = std::fs::read_dir(&dir) {
+        for e in eintraege.flatten() {
+            let pfad = e.path();
+            if pfad.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(pirep_id) = pfad
+                .file_stem()
+                .and_then(|x| x.to_str())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(alter) = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|m| jetzt.duration_since(m).ok())
+            else {
+                continue;
+            };
+            if alter > NACHREICHEN_MAX_ALTER {
+                continue;
+            }
+            let eingereicht = protokoll_ist_eingereicht(&pfad);
+            protokolle.push(LokalesProtokoll {
+                pirep_id,
+                alter,
+                eingereicht,
+            });
+        }
+    }
+    let kandidaten = nachreich_kandidaten(&protokolle, aktiv.as_deref(), NACHREICHEN_MAX_ALTER, 50);
+    if kandidaten.is_empty() {
+        return true;
+    }
+    let status = match aeroacars_mqtt::pirep_status::pruefstatus_abrufen(
+        &kandidaten,
+        &username,
+        &password,
+        None,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "Nachreichen: Status nicht abrufbar — naechster Start");
+            return true;
+        }
+    };
+    let fehlend = fehlt_auf_dem_server(&status);
+    tracing::info!(
+        geprueft = kandidaten.len(),
+        fehlend = fehlend.len(),
+        "Nachreichen: Flugprotokolle mit dem Server abgeglichen"
+    );
+    for pirep_id in fehlend.into_iter().take(NACHREICHEN_MAX_UPLOADS) {
+        if aktuelle_epoche(&state) != epoche {
+            tracing::info!("Nachreichen: Sitzung gewechselt — abgebrochen");
+            break;
+        }
+        let pfad = dir.join(format!("{pirep_id}.jsonl"));
+        match aeroacars_mqtt::log_upload::upload_flight_log(
+            &pfad, &pirep_id, &username, &password, None,
+        )
+        .await
+        {
+            Ok(stats) => tracing::info!(
+                pirep_id = %pirep_id,
+                gzip_kb = stats.compressed_size / 1024,
+                "Nachreichen: Flugprotokoll hochgeladen"
+            ),
+            Err(e) => tracing::warn!(
+                pirep_id = %pirep_id,
+                error = %e,
+                "Nachreichen: Upload fehlgeschlagen — naechster Start versucht es wieder"
+            ),
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod nachreichen_tests {
+    use super::{
+        fehlt_auf_dem_server, nachreich_kandidaten, protokoll_ist_eingereicht, LokalesProtokoll,
+    };
+    use aeroacars_mqtt::pirep_status::PirepPruefstatus;
+    use std::time::Duration;
+
+    fn p(id: &str, stunden: u64, eingereicht: bool) -> LokalesProtokoll {
+        LokalesProtokoll {
+            pirep_id: id.into(),
+            alter: Duration::from_secs(stunden * 3600),
+            eingereicht,
+        }
+    }
+
+    const WOCHE: Duration = Duration::from_secs(7 * 24 * 3600);
+
+    #[test]
+    fn nur_eingereichte_und_juengste_zuerst() {
+        let liste = [
+            p("alt", 30, true),
+            p("neu", 2, true),
+            p("abgebrochen", 1, false),
+        ];
+        assert_eq!(
+            nachreich_kandidaten(&liste, None, WOCHE, 50),
+            vec!["neu", "alt"]
+        );
+    }
+
+    /// Gegenprobe: der laufende Flug und zu alte Protokolle bleiben weg,
+    /// die Obergrenze greift.
+    #[test]
+    fn laufender_flug_zu_alt_und_obergrenze() {
+        let liste = [
+            p("aktiv", 1, true),
+            p("uralt", 24 * 8, true),
+            p("a", 2, true),
+            p("b", 3, true),
+        ];
+        assert_eq!(
+            nachreich_kandidaten(&liste, Some("aktiv"), WOCHE, 1),
+            vec!["a"]
+        );
+    }
+
+    fn status(id: &str, da: Option<bool>) -> PirepPruefstatus {
+        PirepPruefstatus {
+            pirep_id: id.into(),
+            known: true,
+            flug_log_vorhanden: da,
+            score_trust_level: None,
+            requires_review: false,
+            review_state: None,
+            review_decision: None,
+            reason_codes: vec![],
+            reviewed_at: None,
+        }
+    }
+
+    /// Nur ein ausdrueckliches `false` loest einen Upload aus — ein alter
+    /// Server ohne das Feld bekommt nicht alles noch einmal.
+    #[test]
+    fn nur_ausdruecklich_fehlende_werden_nachgereicht() {
+        let s = [
+            status("da", Some(true)),
+            status("fehlt", Some(false)),
+            status("alt", None),
+        ];
+        assert_eq!(fehlt_auf_dem_server(&s), vec!["fehlt"]);
+    }
+
+    /// Das Feld kommt vom Server als `flug_log_vorhanden`; fehlt es, ist es
+    /// `None` (aelterer Recorder).
+    #[test]
+    fn feld_wird_gelesen_und_fehlt_tolerant() {
+        let mit: PirepPruefstatus =
+            serde_json::from_str(r#"{"pirep_id":"x","known":false,"flug_log_vorhanden":false}"#)
+                .unwrap();
+        assert_eq!(mit.flug_log_vorhanden, Some(false));
+        let ohne: PirepPruefstatus =
+            serde_json::from_str(r#"{"pirep_id":"x","known":true}"#).unwrap();
+        assert_eq!(ohne.flug_log_vorhanden, None);
+    }
+
+    /// Das echte Format der Protokollzeile (serde-Tag `type`, snake_case),
+    /// auch wenn mehr als das abgesuchte Endstueck davor steht.
+    #[test]
+    fn eingereicht_erkennt_das_ereignis_am_dateiende() {
+        let dir =
+            std::env::temp_dir().join(format!("aeroacars-nachreichen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mit = dir.join("mit.jsonl");
+        let ohne = dir.join("ohne.jsonl");
+        let fuell = "{\"type\":\"position\",\"x\":1}\n".repeat(40_000); // ~1 MB davor
+        std::fs::write(
+            &mit,
+            format!("{fuell}{{\"type\":\"pirep_filed\",\"payload\":{{}}}}\n"),
+        )
+        .unwrap();
+        std::fs::write(&ohne, &fuell).unwrap();
+        assert!(protokoll_ist_eingereicht(&mit));
+        assert!(!protokoll_ist_eingereicht(&ohne));
+        assert!(!protokoll_ist_eingereicht(&dir.join("gibtsnicht.jsonl")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Stoppt einen eventuell laufenden MQTT-Publisher UND vergisst, welcher

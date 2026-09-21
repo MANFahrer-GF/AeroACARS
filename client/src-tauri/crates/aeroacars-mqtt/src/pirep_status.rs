@@ -34,6 +34,10 @@ pub struct PirepPruefstatus {
     /// `false`: Der Server kennt diesen PIREP nicht (oder er gehört nicht
     /// zum angemeldeten Piloten). Dann ist nichts anzuzeigen.
     pub known: bool,
+    /// Liegt das Flugprotokoll auf dem Server? `None` = Server kennt das
+    /// Feld noch nicht (aelterer Recorder) — dann wird NICHTS nachgereicht.
+    #[serde(default)]
+    pub flug_log_vorhanden: Option<bool>,
     #[serde(default)]
     pub score_trust_level: Option<String>,
     #[serde(default)]
