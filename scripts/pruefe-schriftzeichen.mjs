@@ -88,6 +88,8 @@ const SPRACHEN = ["de", "en", "it"];
  *     externe Abnahme fand am 21.09.2026 drei solche Meldungen mit
  *     fehlenden Zeichen (▶ beim Fortsetzen, Δ in der Loadsheet-Zeile,
  *     → in einem X-Plane-Menüpfad) — keiner davon im Aufruf selbst.
+ *     Alle drei sind behoben; gefunden hat sie nur die Abnahme, nicht
+ *     dieser Wächter.
  *     Eine vierte (⚠ vor „Touchdown im Pre-Threshold-Bereich") wurde
  *     nur durch eine zu breite Ersetzung erwischt, also durch Glück.
  *   * Texte vom Server und aus Fehlermeldungen fremder Bibliotheken.

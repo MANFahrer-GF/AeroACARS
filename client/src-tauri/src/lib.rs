@@ -39722,7 +39722,11 @@ fn step_flight_at(
                     line.push_str(&format!("{:.0} kg", block));
                     if let Some(p) = plan_block {
                         let delta = block - p;
-                        line.push_str(&format!(" (Plan {:.0} kg, Δ {:+.0})", p, delta));
+                        // „Diff" statt „Δ": Die Zeile erscheint im Aktivitaetsprotokoll in
+                        // B612 Mono, der das Zeichen fehlt, und geht gleichlautend als
+                        // ACARS-Log an phpVMS (Entscheidung Thomas, 21.09.2026: ueberall
+                        // gleich, nicht zwei Wortlaute fuer dieselbe Zeile).
+                        line.push_str(&format!(" (Plan {:.0} kg, Diff {:+.0})", p, delta));
                     }
                     if let Some(z) = zfw {
                         line.push_str(&format!(" · ZFW {:.0} kg", z));
