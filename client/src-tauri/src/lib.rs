@@ -19909,7 +19909,11 @@ mod konten_isolierung_runde_zehn_wiring_tests {
     #[test]
     fn flight_log_upload_prueft_identitaet_vor_dem_keyring_lesen() {
         const SRC: &str = include_str!("lib.rs");
-        let nadel = format!("{}{}", "fn spawn_flight_log_upload", "(app: &AppHandle");
+        // Am Zeilenanfang verankert statt an der einzeiligen Signatur: Seit
+        // dem Parameter `nur_diagnose` (23.09.2026) steht sie mehrzeilig, und
+        // der Waechter fand sie nicht mehr. Der eigene Suchtext hier ist
+        // eingerueckt, trifft also nicht auf sich selbst.
+        let nadel = format!("{}{}", "\nfn spawn_flight_log_upload", "(");
         let koerper = funktionskoerper(SRC, &nadel);
         let pruefung_pos = koerper.find("owner_identity.as_deref()");
         let keyring_pos = koerper.find("secrets::load_api_key(MQTT_KEYRING_USERNAME)");
