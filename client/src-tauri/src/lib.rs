@@ -27398,8 +27398,7 @@ async fn flight_end(
     // (Banner `SprungBanner`). Steht danach in den PIREP-Notizen.
     // Einfacher Kommentar, KEIN `///`: Doku-Kommentare sind an Parametern
     // nicht erlaubt (CI 23.09.2026).
-    #[allow(non_snake_case)]
-    sprungBegruendung: Option<String>,
+    #[allow(non_snake_case)] sprungBegruendung: Option<String>,
 ) -> Result<(), UiError> {
     let sprung_begruendung = sprungBegruendung
         .as_deref()
