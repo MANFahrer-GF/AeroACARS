@@ -22395,6 +22395,8 @@ mod client_health_report_tests {
             altitude_delta_ft: 0.0,
             fuel_delta_kg: 7683.3,
             both_grounded: false,
+            ziel_vorher_nm: None,
+            ziel_nachher_nm: None,
         });
         let report = build_client_health_report(&stats).expect("must be Some");
         assert_eq!(report.disconnect_sim_liveness.as_deref(), Some("unknown"));
