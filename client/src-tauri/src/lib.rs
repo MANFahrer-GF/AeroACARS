@@ -961,6 +961,21 @@ const RESUME_DRIFT_EXTREME_NM: f64 = 200.0;
 /// mehrere Tonnen bei langen Pausen) ist harmlos.
 const RESUME_FUEL_JUMP_IMPOSSIBLE_KG: f64 = 200.0;
 
+/// „Sprung ans Ziel": Der Sim stuerzt unterwegs ab, und danach steht das
+/// Flugzeug am ANKUNFTSFLUGHAFEN — nicht dort, wo der Flug abbrach.
+///
+/// Regel (Thomas, 23.09.2026): Nach einem Sim-Absturz darf sich der Pilot in
+/// der Gegend der Unterbrechung neu hinstellen und weiterfliegen. Was NICHT
+/// geht: sich ans Ziel stellen und den Flug genehmigen lassen.
+///
+/// Deshalb zwei Abstaende zum geplanten Ziel: War der Flug vorher weiter als
+/// `RESUME_ZIELSPRUNG_VORHER_NM` entfernt und steht er danach naeher als
+/// `RESUME_ZIELSPRUNG_NACHHER_NM` dran, ist das der Sprung ans Ziel. Wer
+/// kurz vor dem Platz abbricht (innerhalb der ersten Schwelle), faellt
+/// bewusst nicht darunter — dort ist Neuladen am Platz der normale Weg.
+const RESUME_ZIELSPRUNG_VORHER_NM: f64 = 15.0;
+const RESUME_ZIELSPRUNG_NACHHER_NM: f64 = 5.0;
+
 /// v0.20 (Process-Integrity): Ergebnis des Vergleichs "letzter bekannter
 /// Snapshot vor der Pause/dem Neustart" vs. "erster frischer Snapshot
 /// danach". `fuel_delta_kg` bleibt VORZEICHENBEHAFTET (aktuell − vorher) —
@@ -980,17 +995,42 @@ struct ResumeDiscontinuity {
     /// Seite airborne (der tatsächliche Vorfall-Fall: airborne vorher,
     /// geparkt danach), bleibt ein Fuel-Anstieg weiter verdächtig.
     both_grounded: bool,
+    /// Abstand zum geplanten Ziel VOR der Unterbrechung (nm). `None`, wenn
+    /// die Zielkoordinaten noch nicht bekannt sind.
+    ziel_vorher_nm: Option<f64>,
+    /// Abstand zum geplanten Ziel DANACH (nm).
+    ziel_nachher_nm: Option<f64>,
 }
 
 /// Vergleicht den letzten bekannten Snapshot vor einer Pause/einem
 /// Neustart (`prev`) mit dem ersten frischen Snapshot danach (`cur`).
-fn compute_resume_discontinuity(prev: &PausedSnapshot, cur: &SimSnapshot) -> ResumeDiscontinuity {
+fn compute_resume_discontinuity(
+    prev: &PausedSnapshot,
+    cur: &SimSnapshot,
+    ziel: Option<(f64, f64)>,
+) -> ResumeDiscontinuity {
     let d_m = ::geo::distance_m(prev.lat, prev.lon, cur.lat, cur.lon);
+    let nm_zum_ziel = |lat: f64, lon: f64| {
+        ziel.map(|(zlat, zlon)| ::geo::distance_m(lat, lon, zlat, zlon) / 1852.0)
+    };
     ResumeDiscontinuity {
         drift_nm: d_m / 1852.0,
         altitude_delta_ft: cur.altitude_msl_ft - prev.altitude_ft,
         fuel_delta_kg: cur.fuel_total_kg as f64 - prev.fuel_total_kg as f64,
         both_grounded: prev.on_ground && cur.on_ground,
+        ziel_vorher_nm: nm_zum_ziel(prev.lat, prev.lon),
+        ziel_nachher_nm: nm_zum_ziel(cur.lat, cur.lon),
+    }
+}
+
+/// Stand der Flug vorher weit weg vom Ziel und danach direkt davor?
+/// Siehe `RESUME_ZIELSPRUNG_VORHER_NM`.
+fn ist_sprung_ans_ziel(d: &ResumeDiscontinuity) -> bool {
+    match (d.ziel_vorher_nm, d.ziel_nachher_nm) {
+        (Some(vorher), Some(nachher)) => {
+            vorher > RESUME_ZIELSPRUNG_VORHER_NM && nachher < RESUME_ZIELSPRUNG_NACHHER_NM
+        }
+        _ => false,
     }
 }
 
@@ -1001,7 +1041,7 @@ fn compute_resume_discontinuity(prev: &PausedSnapshot, cur: &SimSnapshot) -> Res
 /// durchgehende Simulation).
 fn is_impossible_discontinuity(d: &ResumeDiscontinuity) -> bool {
     let impossible_fuel_jump = d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG && !d.both_grounded;
-    d.drift_nm > RESUME_DRIFT_EXTREME_NM || impossible_fuel_jump
+    d.drift_nm > RESUME_DRIFT_EXTREME_NM || impossible_fuel_jump || ist_sprung_ans_ziel(d)
 }
 
 #[cfg(test)]
@@ -1054,7 +1094,7 @@ mod resume_discontinuity_tests {
     fn incident_fuel_jump_is_impossible() {
         let prev = paused_snapshot(49.4955, 11.0752, 1200.0, 4117.4, false);
         let cur = sim_snapshot(49.4955, 11.0752, 1027.0, 11800.7, true);
-        let d = compute_resume_discontinuity(&prev, &cur);
+        let d = compute_resume_discontinuity(&prev, &cur, None);
         assert!(
             d.fuel_delta_kg > 0.0,
             "fuel delta must be signed positive on increase"
@@ -1074,7 +1114,7 @@ mod resume_discontinuity_tests {
     fn ground_refuel_between_pause_and_resume_is_not_impossible() {
         let prev = paused_snapshot(50.0331, 8.5622, 360.0, 3000.0, true);
         let cur = sim_snapshot(50.0331, 8.5622, 360.0, 12000.0, true);
-        let d = compute_resume_discontinuity(&prev, &cur);
+        let d = compute_resume_discontinuity(&prev, &cur, None);
         assert!(d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG);
         assert!(d.both_grounded);
         assert!(!is_impossible_discontinuity(&d));
@@ -1086,7 +1126,7 @@ mod resume_discontinuity_tests {
     fn normal_fuel_burn_is_not_impossible() {
         let prev = paused_snapshot(50.0, 8.0, 35000.0, 5500.0, false);
         let cur = sim_snapshot(50.01, 8.01, 34950.0, 4300.0, false);
-        let d = compute_resume_discontinuity(&prev, &cur);
+        let d = compute_resume_discontinuity(&prev, &cur, None);
         assert!(d.fuel_delta_kg < 0.0);
         assert!(!is_impossible_discontinuity(&d));
     }
@@ -1102,7 +1142,7 @@ mod resume_discontinuity_tests {
         // als Längengrad, der mit cos(lat) schrumpft) → 5° ≈ 300 nm nördlich,
         // gleicher Fuel-Stand.
         let cur = sim_snapshot(55.0, 8.0, 35000.0, 5000.0, false);
-        let d = compute_resume_discontinuity(&prev, &cur);
+        let d = compute_resume_discontinuity(&prev, &cur, None);
         assert!(d.drift_nm > RESUME_DRIFT_EXTREME_NM);
         assert!(is_impossible_discontinuity(&d));
     }
@@ -1114,7 +1154,7 @@ mod resume_discontinuity_tests {
     fn extreme_drift_stays_impossible_even_when_both_grounded() {
         let prev = paused_snapshot(50.0, 8.0, 400.0, 5000.0, true);
         let cur = sim_snapshot(55.0, 8.0, 400.0, 5000.0, true);
-        let d = compute_resume_discontinuity(&prev, &cur);
+        let d = compute_resume_discontinuity(&prev, &cur, None);
         assert!(d.both_grounded);
         assert!(is_impossible_discontinuity(&d));
     }
@@ -1126,8 +1166,44 @@ mod resume_discontinuity_tests {
     fn small_plausible_resume_is_not_impossible() {
         let prev = paused_snapshot(50.0, 8.0, 5000.0, 2000.0, false);
         let cur = sim_snapshot(50.02, 8.02, 4950.0, 1950.0, false);
-        let d = compute_resume_discontinuity(&prev, &cur);
+        let d = compute_resume_discontinuity(&prev, &cur, None);
         assert!(!is_impossible_discontinuity(&d));
+    }
+    /// Regel Thomas, 23.09.2026: Nach einem Sim-Absturz darf sich der Pilot
+    /// in der Gegend der Unterbrechung neu hinstellen. Was NICHT geht: sich
+    /// ans Ziel stellen und den Flug genehmigen lassen.
+    #[test]
+    fn sprung_ans_ziel_faellt_auf_reposition_unterwegs_nicht() {
+        // EDDN → HECA. Unterbrechung 49 nm vor Kairo, danach am Platz.
+        let ziel = Some((30.1219, 31.4056));
+        let vorher = paused_snapshot(30.9219, 31.2357, 24523.0, 3876.0, false);
+        let am_ziel = sim_snapshot(30.1250, 31.4100, 358.0, 3876.0, true);
+        let d = compute_resume_discontinuity(&vorher, &am_ziel, ziel);
+        assert!(
+            ist_sprung_ans_ziel(&d),
+            "vorher {:?} nm, danach {:?} nm",
+            d.ziel_vorher_nm,
+            d.ziel_nachher_nm
+        );
+        assert!(is_impossible_discontinuity(&d));
+
+        // Erlaubt: in der Gegend der Unterbrechung neu hingestellt, mit
+        // gleichem Sprit — 3 nm neben der letzten Position.
+        let daneben = sim_snapshot(30.9500, 31.2600, 24000.0, 3876.0, false);
+        let d2 = compute_resume_discontinuity(&vorher, &daneben, ziel);
+        assert!(!ist_sprung_ans_ziel(&d2));
+        assert!(!is_impossible_discontinuity(&d2));
+
+        // Ebenfalls erlaubt: Abbruch KURZ vor dem Platz (innerhalb der
+        // ersten Schwelle) und Neuladen am Platz — dort ist das der
+        // normale Weg, nicht der Sprung ans Ziel.
+        let kurz_davor = paused_snapshot(30.20, 31.42, 2000.0, 3000.0, false);
+        let d3 = compute_resume_discontinuity(&kurz_davor, &am_ziel, ziel);
+        assert!(!ist_sprung_ans_ziel(&d3));
+
+        // Ohne bekannte Zielkoordinaten bleibt die Regel stumm.
+        let d4 = compute_resume_discontinuity(&vorher, &am_ziel, None);
+        assert!(!ist_sprung_ans_ziel(&d4));
     }
 }
 
@@ -7357,6 +7433,14 @@ pub struct ActiveFlightInfo {
     /// banner ("you landed at LFBO, planned was LEBL — file as divert
     /// to LFBO?") with action buttons. None for normal arrivals.
     divert_hint: Option<DivertHint>,
+    /// Beim Wiederaufnehmen wurde ein physikalisch unmoeglicher Sprung
+    /// erkannt (Sprit/Hoehe/Drift, s. `is_impossible_discontinuity`): Der
+    /// Sim wurde neu geladen, der Flug ging so nicht weiter. Dann gibt die
+    /// App NICHT mehr von selbst ab, sondern das Cockpit fragt den Piloten
+    /// (Banner). Anlass MSC1588, 22.09.2026: Nach dem Neuladen am Zielplatz
+    /// liefen die Phasen im Stand bis „Arrived" durch, und der PIREP ging
+    /// mit voller Strecke und ohne je gemessene Landung raus.
+    unmoeglicher_sprung: bool,
     /// Number of touch-and-go events recorded so far. Always 0 on a
     /// routine A→B; non-zero on training flights or unstable approaches
     /// where the pilot bounced and went around. Surfaced as a small
@@ -11839,6 +11923,37 @@ mod nachreichen_tests {
         assert_eq!(ohne.flug_log_vorhanden, None);
     }
 
+    /// Nach einem unmoeglichen Sprung gibt die App NICHT mehr von selbst ab
+    /// — sonst ginge ein Flug wie MSC1588 (22.09.2026) mit voller Strecke
+    /// und ohne je gemessene Landung raus. Der Pilot entscheidet im Banner.
+    ///
+    /// Waechter am Quelltext: Ein Verhaltenstest braeuchte einen laufenden
+    /// Flug samt Sim-Snapshots. Am Zeilenanfang gesucht, sonst findet der
+    /// Test seinen eigenen Suchtext (CI 23.09.2026).
+    #[test]
+    fn auto_file_setzt_bei_unmoeglichem_sprung_aus() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find("\n                if new_phase == FlightPhase::Arrived")
+            .expect("Auto-File-Zweig nicht mehr gefunden — Test anpassen, nicht loeschen");
+        let zweig = &SRC[start..start + 3000];
+        let sprung = zweig
+            .find("resume_discontinuity.is_some()")
+            .expect("Auto-File prueft den unmoeglichen Sprung nicht mehr");
+        let abgabe = zweig
+            .find("flight_end(app_af.clone()")
+            .expect("Auto-File-Aufruf nicht mehr gefunden");
+        assert!(
+            sprung < abgabe,
+            "die Sprung-Pruefung muss VOR der automatischen Abgabe stehen"
+        );
+        assert!(
+            zweig.contains("der Pilot entscheidet im Banner"),
+            "der Grund gehoert an die Stelle — sonst wird die Ausnahme spaeter \
+             fuer einen Fehler gehalten"
+        );
+    }
+
     /// Abgebrochene Fluege liefern das DIAGNOSE-Log — genau deren
     /// technische Zeilen fehlten uns (Joel, 22.09.2026). Das Flugprotokoll
     /// bleibt trotzdem aussen vor, sonst entstuende im Import eine Sitzung
@@ -11892,9 +12007,13 @@ mod nachreichen_tests {
     #[test]
     fn abbruch_laedt_nur_die_diagnose() {
         const SRC: &str = include_str!("lib.rs");
+        // Am Zeilenanfang suchen: Dieser Test steht FRUEHER in der Datei als
+        // die Funktion, und sein eigener Suchtext ist eingerueckt — ohne den
+        // Zeilenumbruch fand der Waechter sich selbst (CI 23.09.2026).
         let start = SRC
-            .find("async fn flight_cancel(")
-            .expect("flight_cancel nicht mehr gefunden — Test anpassen, nicht loeschen");
+            .find("\nasync fn flight_cancel(")
+            .expect("flight_cancel nicht mehr gefunden — Test anpassen, nicht loeschen")
+            + 1;
         let rest_der_datei = &SRC[start..];
         let ende_der_funktion = rest_der_datei[1..]
             .find("\nasync fn ")
@@ -15216,6 +15335,7 @@ fn flight_info(
         paused_since: stats.paused_since.map(|t| t.to_rfc3339()),
         paused_last_known: stats.paused_last_known.clone(),
         divert_hint: stats.divert_hint.clone(),
+        unmoeglicher_sprung: stats.resume_discontinuity.is_some(),
         touch_and_go_count: stats
             .touchdown_events
             .iter()
@@ -27271,7 +27391,17 @@ async fn flight_end(
     divert_to: Option<String>,
     divert_reason: Option<String>,
     accident_decision: Option<String>,
+    /// Freiwillige Begruendung, wenn beim Wiederaufnehmen ein unmoeglicher
+    /// Sprung erkannt wurde und der Pilot den Flug trotzdem einreicht
+    /// (Banner `SprungBanner`). Steht danach in den PIREP-Notizen.
+    #[allow(non_snake_case)]
+    sprungBegruendung: Option<String>,
 ) -> Result<(), UiError> {
+    let sprung_begruendung = sprungBegruendung
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let divert_to = divert_to
         .as_deref()
         .map(|s| s.trim().to_uppercase())
@@ -27733,6 +27863,24 @@ async fn flight_end(
                  Die automatische Erkennung hat den Flug nicht am Zielflughafen \
                  verortet; der Pilot hat {arr_icao} als tatsächlichen Landeplatz \
                  bestätigt.{reason_line}\n\n{notes}"
+            );
+        }
+        // Unterbrochener Flug: Beim Wiederaufnehmen sprang der Zustand
+        // (Reload). Das gehoert in den PIREP, sonst sieht die VA nur eine
+        // normale Ankunft — genau der Fall MSC1588 (22.09.2026), wo eine
+        // nie geflogene Strecke als angekommen gebucht wurde. Die
+        // Begruendung des Piloten ist freiwillig und steht direkt darunter.
+        if let Some(d) = stats.resume_discontinuity {
+            let begruendung = sprung_begruendung
+                .as_deref()
+                .map(|r| format!("Begründung: {r}\n"))
+                .unwrap_or_default();
+            notes = format!(
+                "UNTERBROCHENER FLUG: Beim Wiederaufnehmen sprang der Zustand \
+                 (Sprit {:+.0} kg · Höhe {:+.0} ft · Position {:.1} nm). Der \
+                 Simulator wurde neu geladen; der Flug ging so nicht weiter. \
+                 Vom Piloten bewusst eingereicht.\n{}\n{}",
+                d.fuel_delta_kg, d.altitude_delta_ft, d.drift_nm, begruendung, notes
             );
         }
         // Prepend a divert banner to the notes so the VA admin sees
@@ -29302,7 +29450,7 @@ async fn flight_cancel(
         //                             Kein Auto-Cancel mehr (R2-1 UX-Fix).
         //                             active_flight bleibt erhalten, Pilot
         //                             entscheidet im Frontend nochmal.
-        match flight_end(app.clone(), state.clone(), None, None, None).await {
+        match flight_end(app.clone(), state.clone(), None, None, None, None).await {
             Ok(()) => {
                 // flight_end hat erfolgreich gefilt ODER gequeued. In
                 // beiden Faellen ist active_flight geleert, der PIREP
@@ -30180,10 +30328,14 @@ fn apply_pause_resume(
     reason: PauseReason,
 ) -> Option<PauseSegment> {
     let now = Utc::now();
-    let (started_at, last_known) = {
+    let (started_at, last_known, ziel_fuer_sprung) = {
         let stats = flight.stats.lock().expect("flight stats");
         let start = stats.paused_since?;
-        (start, stats.paused_last_known.clone())
+        (
+            start,
+            stats.paused_last_known.clone(),
+            stats.planned_arr_ref_pos,
+        )
     };
 
     let duration_secs = (now - started_at).num_seconds().max(0);
@@ -30198,7 +30350,7 @@ fn apply_pause_resume(
     // behaftete Delta über `compute_resume_discontinuity` geteilt, damit
     // derselbe Code auch den App-Neustart-Resume-Pfad bedienen kann.
     let discontinuity = match (&last_known, current_snap) {
-        (Some(prev), Some(cur)) => Some(compute_resume_discontinuity(prev, cur)),
+        (Some(prev), Some(cur)) => Some(compute_resume_discontinuity(prev, cur, ziel_fuer_sprung)),
         _ => None,
     };
     let (drift_nm, alt_delta_ft, fuel_delta_kg) = match discontinuity {
@@ -34243,7 +34395,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         stats.last_persisted_snapshot.take()
                     };
                     if let Some(prev) = maybe_prev {
-                        let discontinuity = compute_resume_discontinuity(&prev, curr);
+                        let ziel = flight
+                            .stats
+                            .lock()
+                            .expect("flight stats")
+                            .planned_arr_ref_pos;
+                        let discontinuity = compute_resume_discontinuity(&prev, curr, ziel);
                         if is_impossible_discontinuity(&discontinuity) {
                             {
                                 let mut stats = flight.stats.lock().expect("flight stats");
@@ -36687,17 +36844,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         .auto_file_enabled
                         .load(Ordering::Relaxed)
                 {
-                    let is_divert = flight
-                        .stats
-                        .lock()
-                        .expect("flight stats")
-                        .divert_hint
-                        .is_some();
+                    let (is_divert, sprung) = {
+                        let st = flight.stats.lock().expect("flight stats");
+                        (st.divert_hint.is_some(), st.resume_discontinuity.is_some())
+                    };
                     if is_divert {
                         tracing::info!(
                             pirep_id = %flight.pirep_id,
                             "backend auto-file skipped — divert detected, \
                              pilot confirms via banner"
+                        );
+                    } else if sprung {
+                        // Unmoeglicher Sprung beim Wiederaufnehmen: Der Flug
+                        // ging so nicht weiter, „Arrived" sagt hier nichts.
+                        // Der Pilot entscheidet im Banner — verwerfen oder
+                        // bewusst einreichen (MSC1588, 22.09.2026).
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            "backend auto-file ausgesetzt — unmoeglicher Sprung, \
+                             der Pilot entscheidet im Banner"
                         );
                     } else {
                         tracing::info!(
@@ -36708,7 +36873,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         let flight_af = Arc::clone(&flight);
                         tauri::async_runtime::spawn(async move {
                             let st = app_af.state::<AppState>();
-                            match flight_end(app_af.clone(), st, None, None, None).await {
+                            match flight_end(app_af.clone(), st, None, None, None, None).await {
                                 Ok(()) => {
                                     // LE7-Erfolgs-Banner: das Frontend
                                     // hört auf dieses Event und zeigt das

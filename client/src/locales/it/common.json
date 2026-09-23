@@ -2555,5 +2555,14 @@
     "toggle_label": "Attiva il server del pannello",
     "toggle_hint": "Predefinito: attivo. Puoi disattivarlo per isolare eventuali problemi — senza il server l'HUD nel simulatore mostra sempre «nessuna connessione», tutto il resto di AeroACARS continua a funzionare.",
     "restart_hint": "Ha effetto al prossimo avvio di AeroACARS."
+  },
+  "sprung": {
+    "title": "Il volo non è proseguito così",
+    "body": "Alla ripresa lo stato dell'aereo è cambiato di colpo (carburante, quota o posizione). Il simulatore è stato evidentemente ricaricato e il volo non è proseguito da dove si era fermato. Non viene inviato nulla automaticamente.",
+    "verwerfen": "Scarta il volo",
+    "trotzdem": "Invia comunque",
+    "laeuft": "un momento …",
+    "begruendung_label": "Motivo per la VA (facoltativo)",
+    "begruendung_platzhalter": "es. simulatore in crash, poi ricaricato all'aeroporto di arrivo"
   }
 }

@@ -2555,5 +2555,14 @@
       "stand_alt": "Service unavailable — figures up to 10 minutes old",
       "kein_eintrag_wo_aendern": "no CDM entry — callsign in the PDC/CPDLC tab"
     }
+  },
+  "sprung": {
+    "title": "Flight did not continue like this",
+    "body": "When resuming, the aircraft state jumped (fuel, altitude or position). The simulator was apparently reloaded and the flight did not continue from where it stopped. Nothing is filed automatically.",
+    "verwerfen": "Discard flight",
+    "trotzdem": "File anyway",
+    "laeuft": "one moment …",
+    "begruendung_label": "Reason for the VA (optional)",
+    "begruendung_platzhalter": "e.g. simulator crashed, then reloaded at the destination"
   }
 }

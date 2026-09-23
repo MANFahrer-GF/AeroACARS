@@ -470,6 +470,11 @@ export interface ActiveFlightInfo {
    *  the pilot to confirm the actual destination so the PIREP can be
    *  filed with the correct `arr_airport_id`. Null on normal arrivals. */
   divert_hint: DivertHint | null;
+  /** Beim Wiederaufnehmen wurde ein physikalisch unmöglicher Sprung erkannt
+   *  (Sprit/Höhe/Drift): Der Sim wurde neu geladen, der Flug ging so nicht
+   *  weiter. Die App gibt dann nicht mehr von selbst ab — das Cockpit fragt
+   *  den Piloten (`SprungBanner`). */
+  unmoeglicher_sprung: boolean;
   /** Touch-and-go count detected during the flight. Sustained climb-back
    *  above 100 ft AGL within 30 s of an on-ground edge counts as a T&G;
    *  the FSM also reverts to Climb so subsequent landing detection works

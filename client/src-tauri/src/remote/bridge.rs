@@ -363,6 +363,8 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 divert_reason: Option<String>,
                 #[serde(default)]
                 accident_decision: Option<String>,
+                #[serde(default, alias = "sprungBegruendung")]
+                sprung_begruendung: Option<String>,
             }
             match parse_args::<A>(body) {
                 Ok(a) => from_uierr(
@@ -372,6 +374,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                         a.divert_to,
                         a.divert_reason,
                         a.accident_decision,
+                        a.sprung_begruendung,
                     )
                     .await,
                 ),

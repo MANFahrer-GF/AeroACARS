@@ -2555,5 +2555,14 @@
       "stand_alt": "Dienst nicht erreichbar — Zahlen bis zu 10 Minuten alt",
       "kein_eintrag_wo_aendern": "kein CDM-Eintrag — Rufzeichen im Tab PDC/CPDLC"
     }
+  },
+  "sprung": {
+    "title": "Flug so nicht fortgesetzt",
+    "body": "Beim Wiederaufnehmen hat sich die Lage des Flugzeugs sprunghaft geändert (Sprit, Höhe oder Position). Der Simulator wurde offenbar neu geladen, der Flug ging so nicht weiter. Deshalb wird nichts automatisch eingereicht.",
+    "verwerfen": "Flug verwerfen",
+    "trotzdem": "Trotzdem einreichen",
+    "laeuft": "einen Moment …",
+    "begruendung_label": "Begründung für die VA (freiwillig)",
+    "begruendung_platzhalter": "z. B. Simulator abgestürzt, danach am Zielflughafen neu geladen"
   }
 }

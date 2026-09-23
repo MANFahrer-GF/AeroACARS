@@ -19,6 +19,7 @@ const WEATHER_BRIEFING_URL = "https://german-sky-group.eu/weatherbriefing";
 // Loadsheet visuell zum aktiven Flug gehört statt als getrennte
 // Section unter dem WeatherBriefing zu hängen.
 import { DivertBanner } from "./DivertBanner";
+import { SprungBanner } from "./SprungBanner";
 import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
 
 interface Props {
@@ -290,6 +291,14 @@ export function CockpitView({
           onFiledSuccess={handleFiledSuccess}
         />
       )}
+
+      {/* Unmöglicher Sprung beim Wiederaufnehmen: Die App gibt dann NICHT
+          mehr von selbst ab — der Pilot entscheidet (MSC1588, 22.09.2026). */}
+      <SprungBanner
+        activeFlight={activeFlight}
+        onFiledSuccess={handleFiledSuccess}
+        onDiscarded={() => setActiveFlight(null)}
+      />
 
       {/* v0.5.38: Visual Stable-Approach-Advisory. Steht ÜBER dem
           ActiveFlightPanel sodass es bei jedem Flugzustand sichtbar

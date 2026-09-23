@@ -17,6 +17,8 @@ import {
 import { RemotePinGate } from "./components/RemotePinGate";
 import { VatsimCdmView } from "./components/VatsimCdmView";
 import { VdgsPlatte, type VdgsStand } from "./components/VdgsBand";
+import { SprungBanner } from "./components/SprungBanner";
+import type { ActiveFlightInfo } from "./types";
 
 // v0.9.0 (#GlitchTip): Sentry-Init MUSS frueh laufen, sonst gehen
 // Bootstrap-Fehler im weissen Bildschirm unter. Init macht KEIN
@@ -78,6 +80,13 @@ if (isTauri) {
  * Aufruf: http://localhost:1420/?vorschau=cdm
  */
 function Vorschau({ was }: { was: string }) {
+  // `?theme=dark` erlaubt, eine Vorschau in beiden Themen anzusehen — sonst
+  // haengt das Thema am localStorage, und ein frisch gestarteter Browser
+  // (z. B. beim Rendern eines Bildes) zeigt immer nur hell.
+  const gewuenscht = new URLSearchParams(window.location.search).get("theme");
+  if (gewuenscht === "dark" || gewuenscht === "light") {
+    applyTheme(gewuenscht);
+  }
   if (was === "cdm") {
     return (
       <SkinProvider>
@@ -94,7 +103,43 @@ function Vorschau({ was }: { was: string }) {
       </SkinProvider>
     );
   }
+  if (was === "sprung") {
+    return (
+      <SkinProvider>
+        <SprungVorschau />
+      </SkinProvider>
+    );
+  }
   return <div style={{ padding: 24, fontFamily: "system-ui" }}>Unbekannte Vorschau: {was}</div>;
+}
+
+/** Vorschau des Sprung-Banners: Es erscheint, wenn beim Wiederaufnehmen
+ *  ein physikalisch unmoeglicher Sprung erkannt wurde — dann gibt die App
+ *  NICHT mehr von selbst ab, sondern der Pilot entscheidet (MSC1588). Die
+ *  Tasten sind echt; ohne laufenden Flug antwortet das Backend mit einem
+ *  Fehler, der im Banner erscheint. */
+function SprungVorschau() {
+  const flug = {
+    pirep_id: "b5om4wrXNAm1G9mB",
+    airline_icao: "MSC",
+    flight_number: "1588",
+    callsign: null,
+    dpt_airport: "EDDN",
+    arr_airport: "HECA",
+    phase: "arrived",
+    was_just_resumed: false,
+    divert_hint: null,
+    unmoeglicher_sprung: true,
+  } as unknown as ActiveFlightInfo;
+  return (
+    <div style={{ minHeight: "100vh", padding: 24, background: "var(--bg)" }}>
+      <SprungBanner
+        activeFlight={flug}
+        onFiledSuccess={() => {}}
+        onDiscarded={() => {}}
+      />
+    </div>
+  );
 }
 
 /** Vorschau des VDGS-Bandes: die Zustaende nebeneinander, mit

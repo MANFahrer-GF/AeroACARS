@@ -3636,6 +3636,25 @@ input:disabled {
   font-size: 12px;
 }
 
+.sprung-banner__feld {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1, 4px);
+  margin: var(--sp-2, 8px) 0;
+  font-size: var(--fs-200, 0.85rem);
+  color: var(--text-muted, inherit);
+}
+.sprung-banner__eingabe {
+  width: 100%;
+  padding: var(--sp-2, 8px);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.4));
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface, transparent);
+  color: var(--text, inherit);
+  font: inherit;
+  resize: vertical;
+}
+
 .divert-banner__actions {
   display: flex;
   flex-wrap: wrap;
