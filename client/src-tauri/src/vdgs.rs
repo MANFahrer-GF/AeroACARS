@@ -144,11 +144,19 @@ fn zeit(roh: &str) -> String {
 fn aufbereiten(f: &ApiFlug) -> VdgsStand {
     let tobt = {
         let cdm = zeit(&f.cdm_data.tobt);
-        if cdm.is_empty() { zeit(&f.tobt) } else { cdm }
+        if cdm.is_empty() {
+            zeit(&f.tobt)
+        } else {
+            cdm
+        }
     };
     let ctot = {
         let cdm = zeit(&f.cdm_data.ctot);
-        if cdm.is_empty() { zeit(&f.ctot) } else { cdm }
+        if cdm.is_empty() {
+            zeit(&f.ctot)
+        } else {
+            cdm
+        }
     };
     VdgsStand {
         callsign: f.callsign.trim().to_uppercase(),
@@ -253,9 +261,7 @@ fn sauberes_rufzeichen(roh: &str) -> String {
 
 /// Einen Abruf gegen die Gegenseite. `Ok(None)` = Flug dort nicht gefuehrt.
 async fn abrufen(callsign: &str) -> Result<Option<VdgsStand>, String> {
-    let url = format!(
-        "https://api.viffsys.com/ifps/callsign?callsign={callsign}&profile=false"
-    );
+    let url = format!("https://api.viffsys.com/ifps/callsign?callsign={callsign}&profile=false");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
@@ -626,14 +632,14 @@ mod tests {
         };
         let a = schluessel("PIREP-ALT", "GSG421");
         let b = schluessel("PIREP-NEU", "GSG421");
-        assert_ne!(a, b, "gleiches Rufzeichen darf nicht denselben Platz teilen");
+        assert_ne!(
+            a, b,
+            "gleiches Rufzeichen darf nicht denselben Platz teilen"
+        );
 
         in_speicher(&a, Some(alt.clone()));
         // Derselbe Flug findet seinen Stand.
-        assert_eq!(
-            aus_speicher(&a, Duration::from_secs(60)),
-            Some(Some(alt)),
-        );
+        assert_eq!(aus_speicher(&a, Duration::from_secs(60)), Some(Some(alt)),);
         // Der neue Flug findet NICHTS und fragt frisch.
         assert_eq!(
             aus_speicher(&b, Duration::from_secs(60)),
@@ -711,10 +717,7 @@ mod tests {
         let wache = rumpf
             .find("vdgs_flug_kennung(&app)?")
             .expect("vdgs_stand bricht ohne laufenden Flug nicht ab");
-        assert!(
-            wache < abruf,
-            "die Flugwache greift erst NACH dem Abruf",
-        );
+        assert!(wache < abruf, "die Flugwache greift erst NACH dem Abruf",);
         // Und die Kennung muss in den Speicherschluessel fliessen —
         // sonst teilen sich zwei Fluege wieder einen Platz.
         assert!(
@@ -783,11 +786,11 @@ mod tests {
 }
 
 // **Bewusst KEIN Setzen von hier aus** (Thomas, 20.09.2026).
-// 
+//
 // Ein erster Anlauf schrieb die Uebersteuerung direkt aus der Platte.
 // Die Codex-Abnahme zeigte, dass daran drei Dinge haengen, die man
 // nicht nebenbei erledigt:
-// 
+//
 //  * Hoppie merkt sich das Rufzeichen beim VERBINDEN (`from_callsign`).
 //    Ohne Neuaufbau funkt eine laufende Verbindung weiter unter dem
 //    alten, waehrend VDGS schon das neue nimmt — der Pilot arbeitet
@@ -797,7 +800,7 @@ mod tests {
 //    Benachrichtigungen verloren.
 //  * Aus `DLH 123` wurde stillschweigend `DLH123` — ein anderes,
 //    plausibel aussehendes Rufzeichen als Funkidentitaet.
-// 
+//
 // Geaendert wird deshalb weiter dort, wo es hingehoert: im
 // CPDLC-Fenster, das seit v1.5.6 den Neuaufbau selbst macht. Die Platte
 // ZEIGT nur, womit gefragt wurde — das war der eigentliche Gewinn.

@@ -30,6 +30,13 @@ interface Props {
  *
  * Bewusst KEIN dritter Weg: Die fehlenden Meilen lassen sich nicht
  * nachträglich fliegen, und eine „halbe" Abgabe gibt es in phpVMS nicht.
+ *
+ * Lücke mit Absicht: Steht gleichzeitig ein Divert an, hat dessen Banner
+ * Vorrang und dieses hier bleibt weg. Der Divert-Weg reicht den PIREP dann
+ * selbst ein — die Sprung-Notiz hängt trotzdem dran, weil sie in
+ * `flight_end` aus `stats.resume_discontinuity` kommt und nicht aus diesem
+ * Banner; nur die freiwillige Begründung kann der Pilot dort nicht
+ * eintippen (Cloud-QS 23.09.2026).
  */
 export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Props) {
   const { t } = useTranslation();
@@ -118,7 +125,7 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
           disabled={busy}
           onClick={() => void trotzdemEinreichen()}
         >
-          {t("sprung.trotzdem")}
+          {busy ? t("sprung.laeuft") : t("sprung.trotzdem")}
         </button>
       </div>
     </section>

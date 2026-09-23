@@ -363,7 +363,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 divert_reason: Option<String>,
                 #[serde(default)]
                 accident_decision: Option<String>,
-                #[serde(default, alias = "sprungBegruendung")]
+                #[serde(default)]
                 sprung_begruendung: Option<String>,
             }
             match parse_args::<A>(body) {
