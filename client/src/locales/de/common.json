@@ -2570,6 +2570,7 @@
     "landung_body": "Der Flug war unterbrochen, und für das Aufsetzen liegen keine verwertbaren Messwerte vor — es gibt weder Sinkrate noch Note. Deshalb wird nichts automatisch eingereicht: Du entscheidest.",
     "landung_platzhalter": "z. B. Simulator ist beim Aufsetzen abgestürzt",
     "unbekannt_title": "Bitte entscheide über diesen Flug",
-    "unbekannt_body": "Die App hat bei diesem Flug etwas Ungewöhnliches festgestellt und reicht ihn deshalb nicht automatisch ein. Du entscheidest."
+    "unbekannt_body": "Die App hat bei diesem Flug etwas Ungewöhnliches festgestellt und reicht ihn deshalb nicht automatisch ein. Du entscheidest.",
+    "unbekannt_platzhalter": "Was ist passiert? (freiwillig)"
   }
 }

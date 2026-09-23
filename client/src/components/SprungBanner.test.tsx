@@ -203,6 +203,10 @@ describe("Banner nach unmöglichem Sprung", () => {
     // konnte das nicht sehen (Cloud-QS 23.09.2026, dritte Runde).
     expect(screen.queryByText("Flug wurde so nicht fortgesetzt")).toBeNull();
     expect(screen.getByText("Bitte entscheide über diesen Flug")).toBeTruthy();
+    // Auch das Beispiel im Eingabefeld darf keine Ursache nahelegen.
+    expect(screen.getByRole("textbox").getAttribute("placeholder")).toBe(
+      "Was ist passiert? (freiwillig)",
+    );
   });
 
   it("beschriftet die Taste waehrend der Abgabe um", async () => {

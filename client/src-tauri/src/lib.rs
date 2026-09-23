@@ -1423,15 +1423,18 @@ fn sprung_notiz(
             }
         })
         .collect();
-    let kopf = if spruenge.len() > 1 {
-        format!("UNTERBROCHENER FLUG ({} Sprünge)", spruenge.len())
-    } else {
-        "UNTERBROCHENER FLUG".to_string()
+    let nur_bestaetigt = spruenge.iter().all(|d| d.nur_bestaetigt);
+    // Ohne gemessenen Sprung heisst es „Abweichungen" — der Kopf darf nicht
+    // behaupten, was der Satz dahinter zuruecknimmt (Cloud-QS 23.09.2026).
+    let kopf = match (spruenge.len(), nur_bestaetigt) {
+        (n, true) if n > 1 => format!("UNTERBROCHENER FLUG ({n} Abweichungen)"),
+        (n, false) if n > 1 => format!("UNTERBROCHENER FLUG ({n} Sprünge)"),
+        _ => "UNTERBROCHENER FLUG".to_string(),
     };
     // Ist KEIN Sprung gemessen worden, sondern nur die Bestaetigung des
     // Piloten da, darf der Kopf keinen Sprung behaupten (Cloud-QS
     // 23.09.2026, dritte Runde).
-    let erklaerung = if spruenge.iter().all(|d| d.nur_bestaetigt) {
+    let erklaerung = if nur_bestaetigt {
         "Beim Wiederaufnehmen passte der Simulator nicht zum gespeicherten \
          Flug, und der Pilot hat trotzdem fortgesetzt."
     } else {
@@ -1802,6 +1805,18 @@ mod resume_discontinuity_tests {
             sprung_grund(&alt),
             "Zustand beim Wiederaufnehmen nicht plausibel"
         );
+
+        // Nur bestaetigt („Trotzdem fortsetzen"), nichts gemessen: Die Notiz
+        // darf keinen Sprung behaupten und keine erfundenen Nullwerte zeigen
+        // (Cloud-QS 23.09.2026).
+        let mut bestaetigt = d;
+        bestaetigt.nur_bestaetigt = true;
+        let b = sprung_notiz(&[bestaetigt, bestaetigt], None, "Rest");
+        assert!(b.contains("UNTERBROCHENER FLUG (2 Abweichungen)"), "{b}");
+        assert!(!b.contains("Sprünge"), "{b}");
+        assert!(!b.contains("sprang der Zustand"), "{b}");
+        assert!(!b.contains("Sprit"), "keine erfundenen Sprit-Werte: {b}");
+        assert!(b.contains("Fortsetzen trotz Abweichung bestätigt"), "{b}");
 
         // Zwei Unterbrechungen in einem Flug: Der zweite Sprung macht den
         // ersten nicht ungeschehen, beide gehoeren in die Notiz
@@ -23403,6 +23418,30 @@ mod client_health_report_tests {
         assert_eq!(report.impossible_resume_jump, Some(true));
         assert_eq!(report.resume_fuel_delta_kg, Some(7683.3));
         assert_eq!(report.resume_gap_minutes, Some(98));
+    }
+
+    /// Bei blosser Bestaetigung („Trotzdem fortsetzen") gibt es keine
+    /// gemessenen Deltas — der Bericht darf keine erfundenen Nullwerte
+    /// melden. Die Abweichung selbst bleibt gemeldet (Cloud-QS 23.09.2026).
+    #[test]
+    fn bestaetigung_ohne_messwerte_meldet_keine_deltas() {
+        let mut stats = FlightStats::new();
+        stats.resume_gap_minutes = Some(11);
+        stats.resume_discontinuity = Some(ResumeDiscontinuity {
+            drift_nm: 1.4,
+            altitude_delta_ft: 0.0,
+            fuel_delta_kg: 0.0,
+            both_grounded: false,
+            ziel_vorher_nm: None,
+            ziel_nachher_nm: None,
+            danach_am_boden: true,
+            luecke_secs: Some(660),
+            nur_bestaetigt: true,
+        });
+        let report = build_client_health_report(&stats).expect("must be Some");
+        assert_eq!(report.impossible_resume_jump, Some(true));
+        assert_eq!(report.resume_fuel_delta_kg, None);
+        assert_eq!(report.resume_altitude_delta_ft, None);
     }
 }
 

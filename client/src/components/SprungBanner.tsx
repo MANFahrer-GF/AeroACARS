@@ -75,7 +75,6 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
           ? "sprung"
           : null;
   if (!grund) return null;
-  const istLandung = grund === "landung_fehlt";
   // Ein unbekannter Grund bekommt eigene, neutrale Texte — der Sprung-Text
   // wäre hier eine erfundene Ursache (Cloud-QS 23.09.2026, dritte Runde).
   const titel =
@@ -161,7 +160,11 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
           value={begruendung}
           disabled={busy}
           placeholder={
-            istLandung ? t("sprung.landung_platzhalter") : t("sprung.begruendung_platzhalter")
+            grund === "landung_fehlt"
+              ? t("sprung.landung_platzhalter")
+              : grund === "unbekannt"
+                ? t("sprung.unbekannt_platzhalter")
+                : t("sprung.begruendung_platzhalter")
           }
           onChange={(e) => setBegruendung(e.target.value)}
         />

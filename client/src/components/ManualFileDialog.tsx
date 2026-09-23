@@ -310,6 +310,9 @@ export function ManualFileDialog({
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   rows={2}
+                  // Gleiche Grenze wie im Backend — sonst kürzt die
+                  // PIREP-Notiz still (Cloud-QS 23.09.2026).
+                  maxLength={500}
                   placeholder={t(
                     "active_flight.validation.reason_placeholder",
                   )}
