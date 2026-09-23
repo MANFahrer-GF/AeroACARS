@@ -27393,9 +27393,11 @@ async fn flight_end(
     divert_to: Option<String>,
     divert_reason: Option<String>,
     accident_decision: Option<String>,
-    /// Freiwillige Begruendung, wenn beim Wiederaufnehmen ein unmoeglicher
-    /// Sprung erkannt wurde und der Pilot den Flug trotzdem einreicht
-    /// (Banner `SprungBanner`). Steht danach in den PIREP-Notizen.
+    // Freiwillige Begruendung, wenn beim Wiederaufnehmen ein unmoeglicher
+    // Sprung erkannt wurde und der Pilot den Flug trotzdem einreicht
+    // (Banner `SprungBanner`). Steht danach in den PIREP-Notizen.
+    // Einfacher Kommentar, KEIN `///`: Doku-Kommentare sind an Parametern
+    // nicht erlaubt (CI 23.09.2026).
     #[allow(non_snake_case)]
     sprungBegruendung: Option<String>,
 ) -> Result<(), UiError> {
