@@ -12895,6 +12895,36 @@ mod nachreichen_tests {
         );
     }
 
+    /// Das Aktivitaetsprotokoll schreibt die GUELTIGE Phase, nicht die der
+    /// alten Logik. Vorher sprang es im Stufensinkflug auf „Cruise",
+    /// waehrend phpVMS „Descent" bekam (Feldbefund 23.09.2026).
+    #[test]
+    fn aktivitaetsprotokoll_schreibt_die_gueltige_phase() {
+        const SRC: &str = include_str!("lib.rs");
+        // Suchtexte getrennt — sonst findet der Test sich selbst.
+        let alt = concat!("format!(\"Phase: {:?}\", ", "new_phase)");
+        let neu = concat!("format!(\"Phase: {:?}\", ", "effective_phase_this_tick)");
+        assert_eq!(
+            SRC.matches(alt).count(),
+            0,
+            "die alte Phase steht wieder im Protokoll"
+        );
+        assert_eq!(
+            SRC.matches(neu).count(),
+            1,
+            "die gueltige Phase fehlt im Protokoll"
+        );
+        // Und sie haengt am Wechsel der gueltigen Phase, nicht am v1-Wechsel.
+        let i = SRC.find(neu).unwrap();
+        let davor = &SRC[SRC[..i]
+            .rfind(concat!("if effective_", "phase_changed {"))
+            .unwrap()..i];
+        assert!(
+            !davor.contains(concat!("if let Some(new_phase) = ", "phase_change")),
+            "die Protokollzeile steht im falschen Block"
+        );
+    }
+
     /// Der manuelle Einreichweg darf nicht die Tuer sein, durch die ein
     /// unterbrochener Flug ohne Vermerk durchgeht (Cloud-QS 23.09.2026).
     #[test]
@@ -37654,6 +37684,22 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 (changed, effective)
             };
             if effective_phase_changed {
+                // Das lokale Aktivitaetsprotokoll schreibt DIESELBE Phase wie
+                // phpVMS und die Karte. Bis v1.7.52 stand hier die alte
+                // Phasenlogik: Im Stufensinkflug sprang das Protokoll bei
+                // jedem Abfangen auf „Cruise", waehrend phpVMS korrekt
+                // „Descent" bekam — beim Lesen der Logs nicht von einem
+                // echten Fehler zu unterscheiden (Feldbefund 23.09.2026,
+                // 7 von 8 gepruefte Logs).
+                log_activity_handle(
+                    &app,
+                    ActivityLevel::Info,
+                    format!("Phase: {:?}", effective_phase_this_tick),
+                    Some(format!(
+                        "Alt {:.0} ft, GS {:.0} kt, AGL {:.0} ft",
+                        snap.altitude_msl_ft, snap.groundspeed_kt, snap.altitude_agl_ft
+                    )),
+                );
                 acars_log_entries.push(api_client::LogEntry {
                     log: format!("Phase: {}", phase_human_label(effective_phase_this_tick)),
                     lat: Some(snap.lat),
@@ -37953,14 +37999,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // On phase change, push the new status to phpVMS so the
             // live-map and PIREP detail page reflect the current phase.
             if let Some(new_phase) = phase_change {
-                log_activity_handle(
-                    &app,
-                    ActivityLevel::Info,
-                    format!("Phase: {:?}", new_phase),
-                    Some(format!(
-                        "Alt {:.0} ft, GS {:.0} kt, AGL {:.0} ft",
-                        snap.altitude_msl_ft, snap.groundspeed_kt, snap.altitude_agl_ft
-                    )),
+                // Die ALTE Phasenlogik (v1) nur noch leise fuer die
+                // Forensik. Ins Aktivitaetsprotokoll gehoert die Phase, die
+                // phpVMS und die Karte auch sehen — siehe weiter oben bei
+                // `effective_phase_changed` (Feldbefund 23.09.2026).
+                tracing::debug!(
+                    pirep_id = %flight.pirep_id,
+                    v1_phase = ?new_phase,
+                    "v1-Phasenwechsel"
                 );
                 // Diagnostic fuel/weight snapshot at the four phases
                 // where the values get captured into PIREP fields.
