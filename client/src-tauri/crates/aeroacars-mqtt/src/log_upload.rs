@@ -153,6 +153,27 @@ pub async fn upload_diagnose_logs_mit(
     endpoint: Option<&str>,
     anfang_behalten: bool,
 ) -> Result<UploadStats> {
+    let paket = diagnose_paket_bauen(log_paths, anfang_behalten).await?;
+    diagnose_paket_senden(&paket, pirep_id, username, password, endpoint).await
+}
+
+/// Ein fertig gepacktes Diagnose-Paket — einmal lesen, einmal zippen,
+/// beliebig oft verschicken.
+#[derive(Clone)]
+pub struct DiagnosePaket {
+    gz: Vec<u8>,
+    raw_size: usize,
+}
+
+/// Liest die Tagesdateien, kuerzt auf `DIAGNOSE_MAX_ROH` und packt.
+///
+/// Getrennt vom Verschicken, weil das Nachreichen bis zu fuenf PIREPs
+/// mit DENSELBEN ein bis zwei Tagesdateien bedient: vorher wurde dafuer
+/// fuenfmal gelesen und fuenfmal gzippt (Cloud-QS 23.09.2026).
+pub async fn diagnose_paket_bauen(
+    log_paths: &[std::path::PathBuf],
+    anfang_behalten: bool,
+) -> Result<DiagnosePaket> {
     // Mehrere Tagesdateien in zeitlicher Reihenfolge, getrennt durch eine
     // Kopfzeile — ein Flug ueber Mitternacht braucht beide.
     let mut raw: Vec<u8> = Vec::new();
@@ -187,6 +208,22 @@ pub async fn upload_diagnose_logs_mit(
     })
     .await
     .context("gzip task panic")??;
+    Ok(DiagnosePaket {
+        gz: compressed,
+        raw_size,
+    })
+}
+
+/// Verschickt ein gebautes Paket unter einer PIREP-Kennung.
+pub async fn diagnose_paket_senden(
+    paket: &DiagnosePaket,
+    pirep_id: &str,
+    username: &str,
+    password: &str,
+    endpoint: Option<&str>,
+) -> Result<UploadStats> {
+    let raw_size = paket.raw_size;
+    let compressed = paket.gz.clone();
     let compressed_size = compressed.len();
 
     let url = endpoint

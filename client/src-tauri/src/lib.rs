@@ -1099,24 +1099,50 @@ fn sprit_wurde_verbraucht(d: &ResumeDiscontinuity) -> bool {
 /// MSC1588 (22.09.2026), wo eine nie geflogene Strecke als angekommen
 /// gebucht wurde. Die Begruendung des Piloten ist freiwillig; Leerraum
 /// allein ist keine (die LAN-Bruecke kann schicken, was sie will).
-fn sprung_notiz(d: &ResumeDiscontinuity, begruendung: Option<&str>, notes: &str) -> String {
+fn sprung_notiz(
+    spruenge: &[ResumeDiscontinuity],
+    begruendung: Option<&str>,
+    notes: &str,
+) -> String {
     let zeile = begruendung
         .map(str::trim)
         .filter(|r| !r.is_empty())
         .map(|r| format!("Begründung: {r}\n"))
         .unwrap_or_default();
+    // Jeder Sprung mit eigener Zeile: Ein Flug kann mehrfach unterbrochen
+    // werden, und der zweite macht den ersten nicht ungeschehen.
+    let liste: String = spruenge
+        .iter()
+        .map(|d| {
+            format!(
+                "· {} (Sprit {:+.0} kg · Höhe {:+.0} ft · Position {:.1} nm)\n",
+                sprung_grund(d),
+                d.fuel_delta_kg,
+                d.altitude_delta_ft,
+                d.drift_nm
+            )
+        })
+        .collect();
+    let kopf = if spruenge.len() > 1 {
+        format!("UNTERBROCHENER FLUG ({} Sprünge)", spruenge.len())
+    } else {
+        "UNTERBROCHENER FLUG".to_string()
+    };
     format!(
-        "UNTERBROCHENER FLUG ({}): Beim Wiederaufnehmen sprang der Zustand \
-         (Sprit {:+.0} kg · Höhe {:+.0} ft · Position {:.1} nm). Der \
-         Simulator wurde neu geladen; der Flug ging so nicht weiter. \
-         Vom Piloten bewusst eingereicht.\n{}\n{}",
-        sprung_grund(d),
-        d.fuel_delta_kg,
-        d.altitude_delta_ft,
-        d.drift_nm,
-        zeile,
-        notes
+        "{kopf}: Beim Wiederaufnehmen sprang der Zustand. Der Simulator \
+         wurde neu geladen; der Flug ging so nicht weiter. Vom Piloten \
+         bewusst eingereicht.\n{liste}{zeile}\n{notes}"
     )
+}
+
+/// Die Spruenge fuer die Notiz: die Liste, und fuer Fluege aus einer
+/// aelteren Fassung (leere Liste) das alte Einzelfeld.
+fn spruenge_fuer_notiz(stats: &FlightStats) -> Vec<ResumeDiscontinuity> {
+    if !stats.resume_spruenge.is_empty() {
+        stats.resume_spruenge.clone()
+    } else {
+        stats.resume_discontinuity.into_iter().collect()
+    }
 }
 
 /// Welche Regel hat angeschlagen? Fuer Protokoll und PIREP-Notiz — eine
@@ -1367,17 +1393,19 @@ mod resume_discontinuity_tests {
         let am_ziel = sim_snapshot(30.1250, 31.4100, 358.0, 3876.0, true);
         let d = compute_resume_discontinuity(&vorher, &am_ziel, ziel, LUECKE);
 
-        let mit = sprung_notiz(&d, Some("  Sim abgestuerzt  "), "Bestehende Notiz");
-        assert!(
-            mit.contains("UNTERBROCHENER FLUG (ans Ziel gesprungen)"),
-            "{mit}"
+        let mit = sprung_notiz(
+            std::slice::from_ref(&d),
+            Some("  Sim abgestuerzt  "),
+            "Bestehende Notiz",
         );
+        assert!(mit.contains("UNTERBROCHENER FLUG:"), "{mit}");
+        assert!(mit.contains("· ans Ziel gesprungen (Sprit"), "{mit}");
         assert!(mit.contains("Begründung: Sim abgestuerzt\n"), "{mit}");
         assert!(mit.contains("Bestehende Notiz"), "{mit}");
 
         // Kein Text, nur Leerraum → keine leere Begruendungszeile.
         for leer in [None, Some(""), Some("   \n  ")] {
-            let ohne = sprung_notiz(&d, leer, "Bestehende Notiz");
+            let ohne = sprung_notiz(std::slice::from_ref(&d), leer, "Bestehende Notiz");
             assert!(!ohne.contains("Begründung:"), "{leer:?} → {ohne}");
             assert!(ohne.contains("Bestehende Notiz"));
         }
@@ -1406,6 +1434,18 @@ mod resume_discontinuity_tests {
             sprung_grund(&alt),
             "Zustand beim Wiederaufnehmen nicht plausibel"
         );
+
+        // Zwei Unterbrechungen in einem Flug: Der zweite Sprung macht den
+        // ersten nicht ungeschehen, beide gehoeren in die Notiz
+        // (Cloud-QS 23.09.2026, dritte Runde).
+        let zwei = sprung_notiz(&[d, d2], None, "Bestehende Notiz");
+        assert!(zwei.contains("UNTERBROCHENER FLUG (2 Sprünge)"), "{zwei}");
+        assert!(zwei.contains("· ans Ziel gesprungen"), "{zwei}");
+        assert!(
+            zwei.contains("· Position um mehr als 200 nm versetzt"),
+            "{zwei}"
+        );
+        assert!(zwei.contains("Bestehende Notiz"), "{zwei}");
     }
 }
 
@@ -4278,6 +4318,15 @@ struct PersistedFlightStats {
     /// (siehe `build_pirep_payload`). `#[serde(default)]` → None bei pre-v0.20 Files.
     #[serde(default)]
     resume_discontinuity: Option<ResumeDiscontinuity>,
+    /// ALLE Spruenge dieses Fluges, in der Reihenfolge, in der sie
+    /// auffielen. `resume_discontinuity` ist der juengste davon.
+    ///
+    /// Ein Flug kann mehrfach unterbrochen werden; vorher ueberschrieb der
+    /// zweite Sprung den ersten still, und die PIREP-Notiz nannte nur den
+    /// letzten (Cloud-QS 23.09.2026). `serde(default)` → leer bei Fluegen
+    /// aus einer aelteren Fassung.
+    #[serde(default)]
+    resume_spruenge: Vec<ResumeDiscontinuity>,
     /// v0.20 (Process-Integrity): true wenn der App-Neustart, der diesen Flug
     /// wiederaufgenommen hat, unsauber war (`FlightResumed.previous_exit_clean
     /// == Some(false)`). None wenn nie ein App-Neustart passierte. Bleibt bis
@@ -4503,6 +4552,7 @@ impl PersistedFlightStats {
             disconnect_sim_liveness: stats.disconnect_sim_liveness,
             last_persisted_snapshot: stats.last_persisted_snapshot.clone(),
             resume_discontinuity: stats.resume_discontinuity,
+            resume_spruenge: stats.resume_spruenge.clone(),
             app_restart_was_unclean: stats.app_restart_was_unclean,
             resume_gap_minutes: stats.resume_gap_minutes,
             // v0.16.12 (#phase-v2)
@@ -4757,6 +4807,7 @@ impl PersistedFlightStats {
         stats.disconnect_sim_liveness = self.disconnect_sim_liveness;
         stats.last_persisted_snapshot = self.last_persisted_snapshot;
         stats.resume_discontinuity = self.resume_discontinuity;
+        stats.resume_spruenge = self.resume_spruenge;
         stats.app_restart_was_unclean = self.app_restart_was_unclean;
         stats.resume_gap_minutes = self.resume_gap_minutes;
         // v0.16.12 (#phase-v2): cruise_ref + Divergenz-Aggregat restoren.
@@ -5317,6 +5368,8 @@ struct FlightStats {
     last_persisted_snapshot: Option<PausedSnapshot>,
     /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
     resume_discontinuity: Option<ResumeDiscontinuity>,
+    /// Alle Spruenge dieses Fluges — siehe PersistedFlightStats.
+    resume_spruenge: Vec<ResumeDiscontinuity>,
     /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
     app_restart_was_unclean: Option<bool>,
     /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
@@ -12052,16 +12105,30 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
         // 23.09.2026).
         let tage = (NACHREICHEN_DIAGNOSE_MAX_ALTER.as_secs() as i64) / 86_400 + 1;
         let dateien = diagnose_logs_der_letzten_tage(tage);
-        for pirep_id in diagnose_fehlt.into_iter().take(NACHREICHEN_MAX_UPLOADS) {
-            if dateien.is_empty() {
-                break;
+        // Einmal lesen, einmal packen — die fehlenden PIREPs bekommen alle
+        // DIESELBEN Tagesdateien. Vorher lief das je PIREP neu, bis zu
+        // fuenfmal 8 MB (Cloud-QS 23.09.2026).
+        let paket = if dateien.is_empty() {
+            None
+        } else {
+            match aeroacars_mqtt::log_upload::diagnose_paket_bauen(&dateien, true).await {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Nachreichen: Diagnose-Paket nicht lesbar");
+                    None
+                }
             }
+        };
+        let Some(paket) = paket else {
+            return true;
+        };
+        for pirep_id in diagnose_fehlt.into_iter().take(NACHREICHEN_MAX_UPLOADS) {
             if aktuelle_epoche(&state) != epoche {
                 tracing::info!("Nachreichen: Sitzung gewechselt — abgebrochen");
                 break;
             }
-            match aeroacars_mqtt::log_upload::upload_diagnose_logs_mit(
-                &dateien, &pirep_id, &username, &password, None, true,
+            match aeroacars_mqtt::log_upload::diagnose_paket_senden(
+                &paket, &pirep_id, &username, &password, None,
             )
             .await
             {
@@ -12234,6 +12301,30 @@ mod nachreichen_tests {
         );
     }
 
+    /// Wo ein Sprung erkannt wird, muss er auch in die LISTE — sonst
+    /// ueberschreibt der zweite Sprung den ersten still, und die Notiz
+    /// nennt nur den letzten (Cloud-QS 23.09.2026, dritte Runde).
+    #[test]
+    fn jede_erkennung_haengt_den_sprung_an_die_liste() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = concat!("stats.resume_discontinuity = ", "Some(");
+        let stellen: Vec<usize> = SRC.match_indices(nadel).map(|(i, _)| i).collect();
+        assert_eq!(stellen.len(), 3, "Erkennungsstellen: {stellen:?}");
+        for i in &stellen {
+            let rest = &SRC[*i..];
+            let fenster = &rest[..rest
+                .find("\n            }")
+                .map(|e| e.min(rest.len()))
+                .unwrap_or(rest.len())];
+            assert!(
+                fenster.contains("resume_spruenge.push(")
+                    // Die dritte Stelle ist ein Test, der das Feld direkt setzt.
+                    || fenster.contains("ResumeDiscontinuity {"),
+                "Sprung wird erkannt, aber nicht angehaengt: {fenster}"
+            );
+        }
+    }
+
     /// Die Einheitentests rufen `compute_resume_discontinuity` selbst mit
     /// Ziel und Luecke auf. Uebergaeben die ECHTEN Aufrufstellen dort `None`,
     /// waere die ganze Regel wirkungslos — und alle Tests blieben gruen
@@ -12293,7 +12384,7 @@ mod nachreichen_tests {
             .unwrap_or(SRC.len());
         let koerper = &SRC[start..ende];
         assert!(
-            koerper.contains("sprung_notiz(&d, None, &notes)"),
+            koerper.contains("sprung_notiz(&spruenge, None, &notes)"),
             "flight_end_manual vermerkt den Sprung nicht mehr"
         );
     }
@@ -28300,8 +28391,9 @@ async fn flight_end(
         // normale Ankunft — genau der Fall MSC1588 (22.09.2026), wo eine
         // nie geflogene Strecke als angekommen gebucht wurde. Die
         // Begruendung des Piloten ist freiwillig und steht direkt darunter.
-        if let Some(d) = stats.resume_discontinuity {
-            notes = sprung_notiz(&d, sprung_begruendung.as_deref(), &notes);
+        let spruenge = spruenge_fuer_notiz(&stats);
+        if !spruenge.is_empty() {
+            notes = sprung_notiz(&spruenge, sprung_begruendung.as_deref(), &notes);
         }
         // Prepend a divert banner to the notes so the VA admin sees
         // immediately on the PIREP page that this wasn't a normal
@@ -29384,8 +29476,9 @@ async fn flight_end_manual(
         // unbemerkt als saubere Ankunft eingeht (Cloud-QS 23.09.2026,
         // Nebenbefund). Eine Begruendung nimmt dieser Weg nicht entgegen —
         // dafuer gibt es hier das freie Notizfeld des Piloten.
-        if let Some(d) = stats.resume_discontinuity {
-            notes = sprung_notiz(&d, None, &notes);
+        let spruenge = spruenge_fuer_notiz(&stats);
+        if !spruenge.is_empty() {
+            notes = sprung_notiz(&spruenge, None, &notes);
         }
         if let Some(divert) = divert_to
             .as_ref()
@@ -30859,6 +30952,7 @@ fn apply_pause_resume(
         if let Some(d) = discontinuity {
             if is_impossible_discontinuity(&d) {
                 stats.resume_discontinuity = Some(d);
+                stats.resume_spruenge.push(d);
             }
         }
     }
@@ -34863,6 +34957,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             {
                                 let mut stats = flight.stats.lock().expect("flight stats");
                                 stats.resume_discontinuity = Some(discontinuity);
+                                stats.resume_spruenge.push(discontinuity);
                             }
                             log_activity_and_record(
                                 &app,
