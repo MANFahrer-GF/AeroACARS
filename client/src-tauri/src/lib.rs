@@ -975,6 +975,10 @@ const RESUME_FUEL_JUMP_IMPOSSIBLE_KG: f64 = 200.0;
 /// bewusst nicht darunter — dort ist Neuladen am Platz der normale Weg.
 const RESUME_ZIELSPRUNG_VORHER_NM: f64 = 15.0;
 const RESUME_ZIELSPRUNG_NACHHER_NM: f64 = 5.0;
+/// Schnellste Grundgeschwindigkeit, die noch als geflogen durchgeht (kt).
+/// Bewusst weit ueber jeder Reisegeschwindigkeit: Ein Jet im Jetstream
+/// schafft 600 kt ueber Grund. Wer mehr „fliegt", ist gesprungen.
+const RESUME_MAX_PLAUSIBEL_KT: f64 = 700.0;
 
 /// v0.20 (Process-Integrity): Ergebnis des Vergleichs "letzter bekannter
 /// Snapshot vor der Pause/dem Neustart" vs. "erster frischer Snapshot
@@ -1011,6 +1015,10 @@ struct ResumeDiscontinuity {
     /// Stand das Flugzeug beim Wiederaufnehmen am Boden?
     #[serde(default)]
     danach_am_boden: bool,
+    /// Wie lange war die Verbindung weg (Sekunden)? `None`, wenn die Dauer
+    /// nicht bekannt ist — dann gilt im Zweifel der Pilot als ehrlich.
+    #[serde(default)]
+    luecke_secs: Option<i64>,
 }
 
 /// Vergleicht den letzten bekannten Snapshot vor einer Pause/einem
@@ -1019,6 +1027,7 @@ fn compute_resume_discontinuity(
     prev: &PausedSnapshot,
     cur: &SimSnapshot,
     ziel: Option<(f64, f64)>,
+    luecke_secs: Option<i64>,
 ) -> ResumeDiscontinuity {
     let d_m = ::geo::distance_m(prev.lat, prev.lon, cur.lat, cur.lon);
     let nm_zum_ziel = |lat: f64, lon: f64| {
@@ -1032,6 +1041,21 @@ fn compute_resume_discontinuity(
         ziel_vorher_nm: nm_zum_ziel(prev.lat, prev.lon),
         ziel_nachher_nm: nm_zum_ziel(cur.lat, cur.lon),
         danach_am_boden: cur.on_ground,
+        luecke_secs,
+    }
+}
+
+/// Liess sich die Strecke zwischen den beiden Punkten in der Zeit, in der
+/// die Verbindung weg war, ueberhaupt fliegen? Ohne bekannte Dauer: ja
+/// (im Zweifel fuer den Piloten).
+fn strecke_war_fliegbar(d: &ResumeDiscontinuity) -> bool {
+    match d.luecke_secs {
+        Some(secs) if secs > 0 => {
+            let stunden = secs as f64 / 3600.0;
+            d.drift_nm / stunden <= RESUME_MAX_PLAUSIBEL_KT
+        }
+        // Luecke unbekannt oder null — keine Aussage moeglich.
+        _ => true,
     }
 }
 
@@ -1045,18 +1069,19 @@ fn compute_resume_discontinuity(
 /// sich dagegen ans Ziel STELLT, steht dort (Cloud-QS 23.09.2026).
 fn ist_sprung_ans_ziel(d: &ResumeDiscontinuity) -> bool {
     match (d.ziel_vorher_nm, d.ziel_nachher_nm) {
-        (Some(vorher), Some(nachher)) => {
-            d.danach_am_boden
-                && vorher > RESUME_ZIELSPRUNG_VORHER_NM
-                && nachher < RESUME_ZIELSPRUNG_NACHHER_NM
+        (Some(vorher), Some(nachher))
+            if vorher > RESUME_ZIELSPRUNG_VORHER_NM && nachher < RESUME_ZIELSPRUNG_NACHHER_NM =>
+        {
+            // Am Boden am Ziel: hingestellt. In der Luft am Ziel: nur dann,
+            // wenn die Strecke in der Zeit gar nicht zu fliegen war — sonst
+            // waere jeder Pilot verdaechtig, dem SimConnect unterwegs
+            // abreisst und der den Rest selbst fliegt (Cloud-QS 23.09.2026).
+            d.danach_am_boden || !strecke_war_fliegbar(d)
         }
         _ => false,
     }
 }
 
-/// Welche Regel hat angeschlagen? Fuer Protokoll und PIREP-Notiz — eine
-/// Zahlenreihe allein sagt dem Pruefer nicht, WARUM das unmoeglich war
-/// (Cloud-QS 23.09.2026, Befund 8).
 /// Der Notiz-Block, den ein bewusst eingereichter Sprung-Flug im PIREP
 /// bekommt. Ohne ihn sieht die VA nur eine normale Ankunft — genau der Fall
 /// MSC1588 (22.09.2026), wo eine nie geflogene Strecke als angekommen
@@ -1082,13 +1107,21 @@ fn sprung_notiz(d: &ResumeDiscontinuity, begruendung: Option<&str>, notes: &str)
     )
 }
 
+/// Welche Regel hat angeschlagen? Fuer Protokoll und PIREP-Notiz — eine
+/// Zahlenreihe allein sagt dem Pruefer nicht, WARUM das unmoeglich war
+/// (Cloud-QS 23.09.2026, Befund 8).
 fn sprung_grund(d: &ResumeDiscontinuity) -> &'static str {
     if ist_sprung_ans_ziel(d) {
         "ans Ziel gesprungen"
     } else if d.drift_nm > RESUME_DRIFT_EXTREME_NM {
         "Position um mehr als 200 nm versetzt"
-    } else {
+    } else if d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG && !d.both_grounded {
         "Sprit in der Luft gestiegen"
+    } else {
+        // Kein Zweig passt: ein Flug, der mit einer aelteren Fassung
+        // gespeichert wurde. Lieber ehrlich unbestimmt als eine Ursache
+        // behaupten, die nicht zutrifft (Cloud-QS 23.09.2026).
+        "Zustand beim Wiederaufnehmen nicht plausibel"
     }
 }
 
@@ -1152,7 +1185,7 @@ mod resume_discontinuity_tests {
     fn incident_fuel_jump_is_impossible() {
         let prev = paused_snapshot(49.4955, 11.0752, 1200.0, 4117.4, false);
         let cur = sim_snapshot(49.4955, 11.0752, 1027.0, 11800.7, true);
-        let d = compute_resume_discontinuity(&prev, &cur, None);
+        let d = compute_resume_discontinuity(&prev, &cur, None, None);
         assert!(
             d.fuel_delta_kg > 0.0,
             "fuel delta must be signed positive on increase"
@@ -1172,7 +1205,7 @@ mod resume_discontinuity_tests {
     fn ground_refuel_between_pause_and_resume_is_not_impossible() {
         let prev = paused_snapshot(50.0331, 8.5622, 360.0, 3000.0, true);
         let cur = sim_snapshot(50.0331, 8.5622, 360.0, 12000.0, true);
-        let d = compute_resume_discontinuity(&prev, &cur, None);
+        let d = compute_resume_discontinuity(&prev, &cur, None, None);
         assert!(d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG);
         assert!(d.both_grounded);
         assert!(!is_impossible_discontinuity(&d));
@@ -1184,7 +1217,7 @@ mod resume_discontinuity_tests {
     fn normal_fuel_burn_is_not_impossible() {
         let prev = paused_snapshot(50.0, 8.0, 35000.0, 5500.0, false);
         let cur = sim_snapshot(50.01, 8.01, 34950.0, 4300.0, false);
-        let d = compute_resume_discontinuity(&prev, &cur, None);
+        let d = compute_resume_discontinuity(&prev, &cur, None, None);
         assert!(d.fuel_delta_kg < 0.0);
         assert!(!is_impossible_discontinuity(&d));
     }
@@ -1200,7 +1233,7 @@ mod resume_discontinuity_tests {
         // als Längengrad, der mit cos(lat) schrumpft) → 5° ≈ 300 nm nördlich,
         // gleicher Fuel-Stand.
         let cur = sim_snapshot(55.0, 8.0, 35000.0, 5000.0, false);
-        let d = compute_resume_discontinuity(&prev, &cur, None);
+        let d = compute_resume_discontinuity(&prev, &cur, None, None);
         assert!(d.drift_nm > RESUME_DRIFT_EXTREME_NM);
         assert!(is_impossible_discontinuity(&d));
     }
@@ -1212,7 +1245,7 @@ mod resume_discontinuity_tests {
     fn extreme_drift_stays_impossible_even_when_both_grounded() {
         let prev = paused_snapshot(50.0, 8.0, 400.0, 5000.0, true);
         let cur = sim_snapshot(55.0, 8.0, 400.0, 5000.0, true);
-        let d = compute_resume_discontinuity(&prev, &cur, None);
+        let d = compute_resume_discontinuity(&prev, &cur, None, None);
         assert!(d.both_grounded);
         assert!(is_impossible_discontinuity(&d));
     }
@@ -1224,19 +1257,24 @@ mod resume_discontinuity_tests {
     fn small_plausible_resume_is_not_impossible() {
         let prev = paused_snapshot(50.0, 8.0, 5000.0, 2000.0, false);
         let cur = sim_snapshot(50.02, 8.02, 4950.0, 1950.0, false);
-        let d = compute_resume_discontinuity(&prev, &cur, None);
+        let d = compute_resume_discontinuity(&prev, &cur, None, None);
         assert!(!is_impossible_discontinuity(&d));
     }
     /// Regel Thomas, 23.09.2026: Nach einem Sim-Absturz darf sich der Pilot
     /// in der Gegend der Unterbrechung neu hinstellen. Was NICHT geht: sich
     /// ans Ziel stellen und den Flug genehmigen lassen.
+    /// Eine Unterbrechung von 15 Minuten: lang genug, dass die 46 nm bis
+    /// Kairo fliegbar gewesen waeren. Der Sprung muss sich also am Boden
+    /// entscheiden, nicht an der Uhr.
+    const LUECKE: Option<i64> = Some(900);
+
     #[test]
     fn sprung_ans_ziel_faellt_auf_reposition_unterwegs_nicht() {
         // EDDN → HECA. Unterbrechung 49 nm vor Kairo, danach am Platz.
         let ziel = Some((30.1219, 31.4056));
         let vorher = paused_snapshot(30.9219, 31.2357, 24523.0, 3876.0, false);
         let am_ziel = sim_snapshot(30.1250, 31.4100, 358.0, 3876.0, true);
-        let d = compute_resume_discontinuity(&vorher, &am_ziel, ziel);
+        let d = compute_resume_discontinuity(&vorher, &am_ziel, ziel, LUECKE);
         assert!(
             ist_sprung_ans_ziel(&d),
             "vorher {:?} nm, danach {:?} nm",
@@ -1248,7 +1286,7 @@ mod resume_discontinuity_tests {
         // Erlaubt: in der Gegend der Unterbrechung neu hingestellt, mit
         // gleichem Sprit — 3 nm neben der letzten Position.
         let daneben = sim_snapshot(30.9500, 31.2600, 24000.0, 3876.0, false);
-        let d2 = compute_resume_discontinuity(&vorher, &daneben, ziel);
+        let d2 = compute_resume_discontinuity(&vorher, &daneben, ziel, LUECKE);
         assert!(!ist_sprung_ans_ziel(&d2));
         assert!(!is_impossible_discontinuity(&d2));
 
@@ -1256,12 +1294,33 @@ mod resume_discontinuity_tests {
         // ersten Schwelle) und Neuladen am Platz — dort ist das der
         // normale Weg, nicht der Sprung ans Ziel.
         let kurz_davor = paused_snapshot(30.20, 31.42, 2000.0, 3000.0, false);
-        let d3 = compute_resume_discontinuity(&kurz_davor, &am_ziel, ziel);
+        let d3 = compute_resume_discontinuity(&kurz_davor, &am_ziel, ziel, LUECKE);
         assert!(!ist_sprung_ans_ziel(&d3));
 
         // Ohne bekannte Zielkoordinaten bleibt die Regel stumm.
-        let d4 = compute_resume_discontinuity(&vorher, &am_ziel, None);
+        let d4 = compute_resume_discontinuity(&vorher, &am_ziel, None, LUECKE);
         assert!(!ist_sprung_ans_ziel(&d4));
+
+        // Erlaubt: SimConnect reisst unterwegs ab, der Simulator laeuft
+        // weiter, und die Verbindung kommt erst im Endanflug zurueck —
+        // in der Luft, 3 nm vor der Bahn. In 15 Minuten sind 46 nm zu
+        // schaffen, also hat der Pilot sie geflogen.
+        let im_anflug = sim_snapshot(30.1500, 31.4200, 2000.0, 3000.0, false);
+        let d5 = compute_resume_discontinuity(&vorher, &im_anflug, ziel, LUECKE);
+        assert!(!ist_sprung_ans_ziel(&d5), "{:?}", d5.ziel_nachher_nm);
+        assert!(!is_impossible_discontinuity(&d5));
+
+        // NICHT erlaubt: dieselbe Lage, aber die Verbindung war nur eine
+        // Minute weg. 46 nm in 60 s waeren 2760 kt — da hat sich jemand
+        // in den Endanflug gestellt (Cloud-QS 23.09.2026, Befund 1).
+        let d6 = compute_resume_discontinuity(&vorher, &im_anflug, ziel, Some(60));
+        assert!(ist_sprung_ans_ziel(&d6));
+        assert!(is_impossible_discontinuity(&d6));
+        assert_eq!(sprung_grund(&d6), "ans Ziel gesprungen");
+
+        // Ohne bekannte Luecke bleibt es beim Zweifel fuer den Piloten.
+        let d7 = compute_resume_discontinuity(&vorher, &im_anflug, ziel, None);
+        assert!(!ist_sprung_ans_ziel(&d7));
     }
     /// Die Notiz ist das EINZIGE, was der VA-Admin spaeter sieht: Der Sprung
     /// steht sonst nirgends im PIREP. Geprueft wird deshalb, dass Grund und
@@ -1272,7 +1331,7 @@ mod resume_discontinuity_tests {
         let ziel = Some((30.1219, 31.4056));
         let vorher = paused_snapshot(30.9219, 31.2357, 24523.0, 3876.0, false);
         let am_ziel = sim_snapshot(30.1250, 31.4100, 358.0, 3876.0, true);
-        let d = compute_resume_discontinuity(&vorher, &am_ziel, ziel);
+        let d = compute_resume_discontinuity(&vorher, &am_ziel, ziel, LUECKE);
 
         let mit = sprung_notiz(&d, Some("  Sim abgestuerzt  "), "Bestehende Notiz");
         assert!(
@@ -1292,9 +1351,27 @@ mod resume_discontinuity_tests {
         // Der Grund nennt die andere Ursache beim Namen, statt pauschal
         // „ans Ziel" zu behaupten.
         let weit = sim_snapshot(10.0, 10.0, 24000.0, 3876.0, false);
-        let d2 = compute_resume_discontinuity(&vorher, &weit, ziel);
+        let d2 = compute_resume_discontinuity(&vorher, &weit, ziel, LUECKE);
         assert!(is_impossible_discontinuity(&d2));
         assert_eq!(sprung_grund(&d2), "Position um mehr als 200 nm versetzt");
+
+        // Ein Flug aus einer aelteren Fassung: keiner der Zweige passt.
+        // Dann darf die Notiz KEINE Ursache behaupten, die nicht zutrifft
+        // (Cloud-QS 23.09.2026, Befund 6).
+        let alt = ResumeDiscontinuity {
+            drift_nm: 1.0,
+            altitude_delta_ft: 0.0,
+            fuel_delta_kg: -10.0,
+            both_grounded: false,
+            ziel_vorher_nm: None,
+            ziel_nachher_nm: None,
+            danach_am_boden: false,
+            luecke_secs: None,
+        };
+        assert_eq!(
+            sprung_grund(&alt),
+            "Zustand beim Wiederaufnehmen nicht plausibel"
+        );
     }
 }
 
@@ -11854,7 +11931,15 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
             return true;
         }
     };
-    let fehlend = fehlt_auf_dem_server(&status);
+    // Nur Fluege, die auch eingereicht wurden: Seit die Diagnose-Kandidaten
+    // in derselben Abfrage stehen, enthaelt die Antwort auch abgebrochene
+    // Fluege — deren VOLLES Flugprotokoll darf nicht hochgehen, sonst legt
+    // der Import eine Sitzung fuer einen Flug an, den es in phpVMS nie gab
+    // (Cloud-QS 23.09.2026). Symmetrisch zum Diagnose-Zweig weiter unten.
+    let fehlend: Vec<String> = fehlt_auf_dem_server(&status)
+        .into_iter()
+        .filter(|id| flug_kandidaten.contains(id))
+        .collect();
     tracing::info!(
         geprueft = kandidaten.len(),
         fehlend = fehlend.len(),
@@ -12032,14 +12117,25 @@ mod nachreichen_tests {
         let start = SRC
             .find("\n                if new_phase == FlightPhase::Arrived")
             .expect("Auto-File-Zweig nicht mehr gefunden — Test anpassen, nicht loeschen");
-        // Bis zum Ende des Zweigs, NICHT feste 3000 Bytes: lib.rs enthaelt
-        // Nicht-ASCII, ein fester Offset kann mitten in ein Zeichen fallen
-        // und den Test mit einem Slice-Panic roeten (Cloud-QS 23.09.2026).
+        // Bis zur schliessenden Klammer DIESES Zweigs (Einrueckung 16),
+        // nicht bis zu einem festen Byte-Offset: lib.rs enthaelt Nicht-ASCII,
+        // ein fester Offset kann mitten in ein Zeichen fallen und den Test
+        // mit einem Slice-Panic roeten. Ausserdem endete das Fenster mit
+        // 3000 Bytes mitten im Heartbeat-Code dahinter — ein kuenftiger
+        // zweiter `flight_end`-Aufruf dort haette die Aussage entwertet
+        // (Cloud-QS 23.09.2026, zweite Runde).
         let rest = &SRC[start..];
         let zweig_ende = rest
-            .find("\n            }\n        }\n")
-            .unwrap_or_else(|| rest.len().min(4000));
+            .find("\n                }\n")
+            .expect("Ende des Auto-File-Zweigs nicht gefunden — Test anpassen, nicht loeschen");
         let zweig = &rest[..zweig_ende];
+        // Genau EIN Abgabe-Aufruf im Fenster: sonst prueft die
+        // Reihenfolge-Aussage weiter unten den falschen.
+        assert_eq!(
+            zweig.matches("flight_end(").count(),
+            1,
+            "Fenster passt nicht mehr auf den Auto-File-Zweig"
+        );
         let sprung = zweig
             .find("resume_discontinuity.is_some()")
             .expect("Auto-File prueft den unmoeglichen Sprung nicht mehr");
@@ -12054,6 +12150,25 @@ mod nachreichen_tests {
             zweig.contains("der Pilot entscheidet im Banner"),
             "der Grund gehoert an die Stelle — sonst wird die Ausnahme spaeter \
              fuer einen Fehler gehalten"
+        );
+    }
+
+    /// Der manuelle Einreichweg darf nicht die Tuer sein, durch die ein
+    /// unterbrochener Flug ohne Vermerk durchgeht (Cloud-QS 23.09.2026).
+    #[test]
+    fn manueller_weg_vermerkt_den_sprung_ebenfalls() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find("\nasync fn flight_end_manual(")
+            .expect("flight_end_manual nicht gefunden — Test anpassen, nicht loeschen");
+        let ende = SRC[start + 1..]
+            .find("\n#[tauri::command]")
+            .map(|i| start + 1 + i)
+            .unwrap_or(SRC.len());
+        let koerper = &SRC[start..ende];
+        assert!(
+            koerper.contains("sprung_notiz(&d, None, &notes)"),
+            "flight_end_manual vermerkt den Sprung nicht mehr"
         );
     }
 
@@ -22509,6 +22624,7 @@ mod client_health_report_tests {
             ziel_vorher_nm: None,
             ziel_nachher_nm: None,
             danach_am_boden: false,
+            luecke_secs: None,
         });
         let report = build_client_health_report(&stats).expect("must be Some");
         assert_eq!(report.disconnect_sim_liveness.as_deref(), Some("unknown"));
@@ -29119,6 +29235,14 @@ async fn flight_end_manual(
         }
         let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         notes.push_str("\n\n[MANUAL FILE — auto-validation bypassed by pilot.]");
+        // Der Sprung gehoert auch hier in die Notiz: Sonst waere der
+        // manuelle Weg genau die Tuer, durch die ein unterbrochener Flug
+        // unbemerkt als saubere Ankunft eingeht (Cloud-QS 23.09.2026,
+        // Nebenbefund). Eine Begruendung nimmt dieser Weg nicht entgegen —
+        // dafuer gibt es hier das freie Notizfeld des Piloten.
+        if let Some(d) = stats.resume_discontinuity {
+            notes = sprung_notiz(&d, None, &notes);
+        }
         if let Some(divert) = divert_to
             .as_ref()
             .map(|s| s.trim().to_uppercase())
@@ -30512,7 +30636,12 @@ fn apply_pause_resume(
     // behaftete Delta über `compute_resume_discontinuity` geteilt, damit
     // derselbe Code auch den App-Neustart-Resume-Pfad bedienen kann.
     let discontinuity = match (&last_known, current_snap) {
-        (Some(prev), Some(cur)) => Some(compute_resume_discontinuity(prev, cur, ziel_fuer_sprung)),
+        (Some(prev), Some(cur)) => Some(compute_resume_discontinuity(
+            prev,
+            cur,
+            ziel_fuer_sprung,
+            Some(duration_secs),
+        )),
         _ => None,
     };
     let (drift_nm, alt_delta_ft, fuel_delta_kg) = match discontinuity {
@@ -30579,7 +30708,10 @@ fn apply_pause_resume(
                 app,
                 &flight.pirep_id,
                 ActivityLevel::Error,
-                "Unmöglicher Sprung beim Wiederaufnehmen erkannt".to_string(),
+                format!(
+                    "Unmöglicher Sprung beim Wiederaufnehmen erkannt ({})",
+                    sprung_grund(&d)
+                ),
                 Some(format!(
                     "Fuel-Diff {:+.0} kg · Höhen-Diff {:+.0} ft · Drift {:.1} nm — \
                      physikalisch nicht plausibel (kein normaler Verbrauch/Flug), \
@@ -34560,12 +34692,15 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         stats.last_persisted_snapshot.take()
                     };
                     if let Some(prev) = maybe_prev {
-                        let ziel = flight
-                            .stats
-                            .lock()
-                            .expect("flight stats")
-                            .planned_arr_ref_pos;
-                        let discontinuity = compute_resume_discontinuity(&prev, curr, ziel);
+                        let (ziel, luecke_secs) = {
+                            let stats = flight.stats.lock().expect("flight stats");
+                            (
+                                stats.planned_arr_ref_pos,
+                                stats.resume_gap_minutes.map(|m| m * 60),
+                            )
+                        };
+                        let discontinuity =
+                            compute_resume_discontinuity(&prev, curr, ziel, luecke_secs);
                         if is_impossible_discontinuity(&discontinuity) {
                             {
                                 let mut stats = flight.stats.lock().expect("flight stats");

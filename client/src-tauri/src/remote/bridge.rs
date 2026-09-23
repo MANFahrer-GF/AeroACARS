@@ -1107,6 +1107,8 @@ mod tests {
             divert_reason: Option<String>,
             #[serde(default)]
             accident_decision: Option<String>,
+            #[serde(default)]
+            sprung_begruendung: Option<String>,
         }
         let body = json!({ "divertTo": "EDDM", "divertReason": "weather" });
         let a: A = parse_args(&body).unwrap();
@@ -1123,6 +1125,34 @@ mod tests {
         // A plain arrival (no divert args) still parses cleanly.
         let empty: A = parse_args(&json!({})).unwrap();
         assert_eq!(empty.divert_to, None);
+        // Die Begruendung aus dem Sprung-Banner kommt ebenfalls camelCase;
+        // sie traegt KEINEN eigenen Alias mehr, haengt also allein an
+        // `rename_all` (Cloud-QS 23.09.2026).
+        let sprung: A = parse_args(&json!({ "sprungBegruendung": "Sim abgestuerzt" })).unwrap();
+        assert_eq!(
+            sprung.sprung_begruendung,
+            Some("Sim abgestuerzt".to_string())
+        );
+
+        // ⚠ Das hier oben ist eine NACHGEBAUTE Struktur — sie kann nicht
+        // bemerken, wenn im echten Dispatch `rename_all` verschwindet.
+        // Deshalb zusaetzlich am Original nachsehen (Cloud-QS 23.09.2026).
+        let src = include_str!("bridge.rs");
+        let start = src
+            .find("\n        \"flight_end\" => {")
+            .expect("flight_end-Zweig nicht gefunden — Test anpassen, nicht loeschen");
+        let ende = src[start..]
+            .find("\n        }\n")
+            .expect("Ende des flight_end-Zweigs nicht gefunden");
+        let zweig = &src[start..start + ende];
+        assert!(
+            zweig.contains("rename_all = \"camelCase\""),
+            "ohne rename_all kommt sprungBegruendung nie an: {zweig}"
+        );
+        assert!(
+            zweig.contains("sprung_begruendung: Option<String>"),
+            "{zweig}"
+        );
     }
 
     #[test]

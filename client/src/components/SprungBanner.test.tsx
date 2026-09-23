@@ -111,6 +111,23 @@ describe("Banner nach unmöglichem Sprung", () => {
     expect(invokeMock).toHaveBeenCalledWith("flight_cancel", { force: true });
   });
 
+  it("beschriftet BEIDE Tasten waehrend der Abgabe um", async () => {
+    // Die zweite Taste blieb frueher stumm — der Pilot klickte nach, weil
+    // nichts passierte (Cloud-QS 23.09.2026).
+    let loesen: (() => void) | null = null;
+    invokeMock.mockImplementation(
+      () =>
+        new Promise<void>((r) => {
+          loesen = r;
+        }),
+    );
+    zeige();
+    await userEvent.click(screen.getByText("Trotzdem einreichen"));
+    expect(screen.queryByText("Trotzdem einreichen")).toBeNull();
+    expect(screen.getAllByText("einen Moment …").length).toBe(2);
+    loesen?.();
+  });
+
   it("zeigt den Fehler an, statt ihn zu verschlucken", async () => {
     invokeMock.mockRejectedValue(new Error("phpVMS returned non-OK"));
     zeige();
