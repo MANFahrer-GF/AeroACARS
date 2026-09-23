@@ -5166,6 +5166,11 @@ struct FlightStats {
     /// Das Feld sagt nichts über den Piloten. Es sagt: Wir haben es nicht
     /// gemessen. Siehe `touchdown_v2::pruefe_bewertbarkeit`.
     landung_abdeckung_fehlt: Option<touchdown_v2::FehlendeAbdeckung>,
+    /// Wurde „Landung nicht messbar" schon geschrieben? Die Bewertung läuft
+    /// bei jedem Takt erneut; ohne diese Merkung stand die Zeile alle drei
+    /// Sekunden im Protokoll (MSC1588, 22.09.2026: zehnmal für EINEN
+    /// Vorfall — im Report sah das nach zehn Fällen aus).
+    landung_unmessbar_gemeldet: bool,
     /// Wie zuverlässig der Sampler lief (`SamplerDiagnose::als_json`).
     /// Steht neben dem Aufsetzfenster im Protokoll und im PIREP — damit
     /// eine dünne Aufzeichnung nicht nur auffällt, sondern auch erklärbar
@@ -11435,6 +11440,10 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
 const NACHREICHEN_MAX_ALTER: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
 /// Hoechstens so viele Protokolle je Programmstart hochladen.
 const NACHREICHEN_MAX_UPLOADS: usize = 5;
+/// So weit zurueck werden fehlende DIAGNOSE-Logs nachgereicht. Kurz, weil
+/// der Client nur das Tagesprotokoll von heute und gestern mitschickt.
+const NACHREICHEN_DIAGNOSE_MAX_ALTER: std::time::Duration =
+    std::time::Duration::from_secs(36 * 3600);
 /// Nur das Ende der Datei nach `pirep_filed` absuchen — Flugprotokolle
 /// werden bis zu 15 MB gross, das Ereignis steht am Schluss.
 const NACHREICHEN_ENDE_BYTES: u64 = 512 * 1024;
@@ -11479,6 +11488,43 @@ fn fehlt_auf_dem_server(status: &[aeroacars_mqtt::pirep_status::PirepPruefstatus
         .iter()
         .filter(|s| s.flug_log_vorhanden == Some(false))
         .map(|s| s.pirep_id.clone())
+        .collect()
+}
+
+/// Wie beim Flugprotokoll, nur fuer das Diagnose-Log.
+fn diagnose_fehlt_auf_dem_server(
+    status: &[aeroacars_mqtt::pirep_status::PirepPruefstatus],
+) -> Vec<String> {
+    status
+        .iter()
+        .filter(|s| s.diagnose_log_vorhanden == Some(false))
+        .map(|s| s.pirep_id.clone())
+        .collect()
+}
+
+/// Kandidaten fuers Nachreichen des DIAGNOSE-Logs — anders als beim
+/// Flugprotokoll auch ABGEBROCHENE Fluege, denn genau deren technische
+/// Zeilen fehlen uns (23.09.2026).
+///
+/// Kurzes Fenster: Mitgeschickt wird das Tagesprotokoll der App (heute und
+/// gestern). Fuer einen Flug von vorgestern stuende darin nichts mehr ueber
+/// ihn — das waere ein Upload ohne Inhalt.
+fn diagnose_kandidaten(
+    protokolle: &[LokalesProtokoll],
+    aktiver_pirep: Option<&str>,
+    max_alter: std::time::Duration,
+    max: usize,
+) -> Vec<String> {
+    let mut passend: Vec<&LokalesProtokoll> = protokolle
+        .iter()
+        .filter(|p| p.alter <= max_alter)
+        .filter(|p| aktiver_pirep != Some(p.pirep_id.as_str()))
+        .collect();
+    passend.sort_by_key(|p| p.alter);
+    passend
+        .into_iter()
+        .take(max)
+        .map(|p| p.pirep_id.clone())
         .collect()
 }
 
@@ -11595,7 +11641,22 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
             });
         }
     }
-    let kandidaten = nachreich_kandidaten(&protokolle, aktiv.as_deref(), NACHREICHEN_MAX_ALTER, 50);
+    let flug_kandidaten =
+        nachreich_kandidaten(&protokolle, aktiv.as_deref(), NACHREICHEN_MAX_ALTER, 50);
+    let diag_kandidaten = diagnose_kandidaten(
+        &protokolle,
+        aktiv.as_deref(),
+        NACHREICHEN_DIAGNOSE_MAX_ALTER,
+        50,
+    );
+    // Eine Abfrage fuer beides; der Server nimmt hoechstens 50 IDs.
+    let mut kandidaten = flug_kandidaten.clone();
+    for id in &diag_kandidaten {
+        if !kandidaten.contains(id) {
+            kandidaten.push(id.clone());
+        }
+    }
+    kandidaten.truncate(50);
     if kandidaten.is_empty() {
         return true;
     }
@@ -11640,6 +11701,52 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
                 error = %e,
                 "Nachreichen: Upload fehlgeschlagen — naechster Start versucht es wieder"
             ),
+        }
+    }
+
+    // Fehlende Diagnose-Logs — auch von abgebrochenen Fluegen. Beim Abbruch
+    // laedt der Client sie selbst hoch; das hier faengt die Faelle, in denen
+    // das scheiterte (kein Netz, Server weg, App gleich mit beendet).
+    //
+    // NICHT bei selbst eingeschalteter Fehlersuche: Mit `RUST_LOG` schreibt
+    // rumqttc seine Pakete mit, und im CONNECT stehen Name und Passwort —
+    // dieselbe Regel wie beim Upload nach dem Einreichen.
+    if std::env::var_os("RUST_LOG").is_none() {
+        let diagnose_fehlt: Vec<String> = diagnose_fehlt_auf_dem_server(&status)
+            .into_iter()
+            .filter(|id| diag_kandidaten.contains(id))
+            .collect();
+        if !diagnose_fehlt.is_empty() {
+            tracing::info!(
+                fehlend = diagnose_fehlt.len(),
+                "Nachreichen: Diagnose-Logs fehlen auf dem Server"
+            );
+        }
+        let dateien = diagnose_logs_fuer_upload();
+        for pirep_id in diagnose_fehlt.into_iter().take(NACHREICHEN_MAX_UPLOADS) {
+            if dateien.is_empty() {
+                break;
+            }
+            if aktuelle_epoche(&state) != epoche {
+                tracing::info!("Nachreichen: Sitzung gewechselt — abgebrochen");
+                break;
+            }
+            match aeroacars_mqtt::log_upload::upload_diagnose_logs(
+                &dateien, &pirep_id, &username, &password, None,
+            )
+            .await
+            {
+                Ok(stats) => tracing::info!(
+                    pirep_id = %pirep_id,
+                    gzip_kb = stats.compressed_size / 1024,
+                    "Nachreichen: Diagnose-Log hochgeladen"
+                ),
+                Err(e) => tracing::warn!(
+                    pirep_id = %pirep_id,
+                    error = %e,
+                    "Nachreichen: Diagnose-Upload fehlgeschlagen — naechster Start versucht es wieder"
+                ),
+            }
         }
     }
     true
@@ -11697,6 +11804,7 @@ mod nachreichen_tests {
             pirep_id: id.into(),
             known: true,
             flug_log_vorhanden: da,
+            diagnose_log_vorhanden: None,
             score_trust_level: None,
             requires_review: false,
             review_state: None,
@@ -11729,6 +11837,79 @@ mod nachreichen_tests {
         let ohne: PirepPruefstatus =
             serde_json::from_str(r#"{"pirep_id":"x","known":true}"#).unwrap();
         assert_eq!(ohne.flug_log_vorhanden, None);
+    }
+
+    /// Abgebrochene Fluege liefern das DIAGNOSE-Log — genau deren
+    /// technische Zeilen fehlten uns (Joel, 22.09.2026). Das Flugprotokoll
+    /// bleibt trotzdem aussen vor, sonst entstuende im Import eine Sitzung
+    /// fuer einen Flug, den phpVMS so nie gesehen hat.
+    #[test]
+    fn diagnose_nimmt_auch_abgebrochene_flugprotokolle() {
+        let liste = [
+            p("eingereicht", 2, true),
+            p("abgebrochen", 3, false),
+            p("zu_alt", 48, false),
+        ];
+        let tag_und_nacht = Duration::from_secs(36 * 3600);
+        assert_eq!(
+            super::diagnose_kandidaten(&liste, None, tag_und_nacht, 50),
+            vec!["eingereicht", "abgebrochen"]
+        );
+        // Der laufende Flug bleibt aussen vor.
+        assert_eq!(
+            super::diagnose_kandidaten(&liste, Some("eingereicht"), tag_und_nacht, 50),
+            vec!["abgebrochen"]
+        );
+        // Gegenprobe: Fuers Flugprotokoll zaehlt der abgebrochene weiter nicht.
+        assert_eq!(
+            nachreich_kandidaten(&liste, None, tag_und_nacht, 50),
+            vec!["eingereicht"]
+        );
+    }
+
+    /// Wie beim Flugprotokoll: nur ein ausdrueckliches `false` loest etwas
+    /// aus, ein aelterer Server (`None`) nicht.
+    #[test]
+    fn diagnose_nur_ausdruecklich_fehlende() {
+        let s = [
+            status_mit_diagnose("da", Some(true)),
+            status_mit_diagnose("fehlt", Some(false)),
+            status_mit_diagnose("alt", None),
+        ];
+        assert_eq!(super::diagnose_fehlt_auf_dem_server(&s), vec!["fehlt"]);
+    }
+
+    fn status_mit_diagnose(id: &str, da: Option<bool>) -> PirepPruefstatus {
+        PirepPruefstatus {
+            diagnose_log_vorhanden: da,
+            ..status(id, None)
+        }
+    }
+
+    /// Der Abbruch laedt NUR die Diagnose hoch (`nur_diagnose = true`).
+    /// Waere das Flugprotokoll dabei, legte der Import eine Sitzung fuer
+    /// einen Flug an, den es in phpVMS nicht gibt.
+    #[test]
+    fn abbruch_laedt_nur_die_diagnose() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find("async fn flight_cancel(")
+            .expect("flight_cancel nicht mehr gefunden — Test anpassen, nicht loeschen");
+        let rest_der_datei = &SRC[start..];
+        let ende_der_funktion = rest_der_datei[1..]
+            .find("\nasync fn ")
+            .map(|i| i + 1)
+            .unwrap_or(rest_der_datei.len());
+        let koerper = &rest_der_datei[..ende_der_funktion];
+        let aufruf = koerper
+            .find("spawn_flight_log_upload(")
+            .expect("flight_cancel laedt die Diagnose nicht mehr hoch");
+        let rest = &koerper[aufruf..];
+        let ende = rest.find(");").unwrap_or(rest.len());
+        assert!(
+            rest[..ende].contains("true"),
+            "flight_cancel muss mit nur_diagnose=true aufrufen, sonst wandert              das Flugprotokoll eines abgebrochenen Fluges in den Import"
+        );
     }
 
     /// Das echte Format der Protokollzeile (serde-Tag `type`, snake_case),
@@ -20495,6 +20676,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 &app,
                                 q.pirep_id.clone(),
                                 Some(aktuelle_identitaet.clone()),
+                                false,
                             );
                         }
                     }
@@ -20547,6 +20729,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 &app,
                                 q.pirep_id.clone(),
                                 Some(aktuelle_identitaet.clone()),
+                                false,
                             );
                             continue;
                         }
@@ -27745,6 +27928,7 @@ async fn flight_end(
                 &app,
                 flight.pirep_id.clone(),
                 aktuelle_identitaet_fuer_bid_cleanup.clone(),
+                false,
             );
             // v0.7.19 (QS-R1 Finding 1): Bei delete_bid-fail wird der Bid
             // in pending_bid_cleanup eingereiht und vom Background-Worker
@@ -28834,6 +29018,7 @@ async fn flight_end_manual(
                 &app,
                 flight.pirep_id.clone(),
                 aktuelle_identitaet_fuer_bid_cleanup.clone(),
+                false,
             );
             // v0.7.19 (QS-R1 Finding 1) + QS-R2 Finding 2 (flight_id fallback).
             consume_bid_best_effort(
@@ -29270,6 +29455,17 @@ async fn flight_cancel(
             outcome: FlightOutcome::Cancelled,
         },
     );
+    // Die technischen Zeilen mitschicken — NUR die, ohne Flugprotokoll.
+    //
+    // Ein abgebrochener Flug lud bisher gar nichts hoch. Genau dort, wo die
+    // Abbrüche das Problem sind, hatten wir deshalb keine Daten (Joel,
+    // 22.09.2026: zwei Flüge nach Stunden weggeworfen, Ursache unbekannt).
+    let besitzer = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| id.to_string());
+    spawn_flight_log_upload(&app, flight.pirep_id.clone(), besitzer, true);
     Ok(FlightCancelOutcome::Cancelled {
         pirep_id: flight.pirep_id.clone(),
     })
@@ -30322,7 +30518,16 @@ async fn flight_resume_after_disconnect(
 ///     naechsten App-Start neu provisionieren.
 ///   * Server gibt non-2xx zurueck (401 / 403 / 5xx) — gelogged, keine
 ///     Retry-Queue heute (kann spaeter mit Pending-Folder kommen).
-fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Option<String>) {
+/// `nur_diagnose`: nur die technischen Zeilen hochladen, NICHT das
+/// Flugprotokoll. Für abgebrochene Flüge: Deren Protokoll darf nicht in den
+/// Import, sonst entstünde eine Sitzung für einen Flug, den phpVMS so nie
+/// gesehen hat — die Diagnose brauchen wir aber gerade dort (23.09.2026).
+fn spawn_flight_log_upload(
+    app: &AppHandle,
+    pirep_id: String,
+    owner_identity: Option<String>,
+    nur_diagnose: bool,
+) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // 1. Pfad zur JSONL-Datei zusammensetzen — gleiche Logik wie der
@@ -30350,7 +30555,7 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Op
         // Fehlt das Flugprotokoll, ist das KEIN Grund, auch die Diagnose
         // wegzulassen: Genau dann (Aufzeichnung aus, Client kaputt,
         // manuell eingereicht) will man sie haben (Abnahme 20.09.2026).
-        let flugprotokoll_da = log_path.exists();
+        let flugprotokoll_da = !nur_diagnose && log_path.exists();
         if !flugprotokoll_da {
             tracing::debug!(path = ?log_path, "log-upload: file missing — nur Diagnose");
         }
@@ -40001,7 +40206,8 @@ fn finalize_landing_score_if_due(
         // zu warten (sonst wartete es effektiv zweimal hintereinander).
         stats.landing_score_finalized = true;
         stats.landing_score_announced = false;
-    } else {
+    } else if !stats.landung_unmessbar_gemeldet {
+        stats.landung_unmessbar_gemeldet = true;
         tracing::warn!(
             pirep_id = %pirep_id,
             "landing_peak_vs_fpm = None at score-finalise — keeping landing_score=None (B-005). Sampler likely missed the touchdown edge."

@@ -38,6 +38,12 @@ pub struct PirepPruefstatus {
     /// Feld noch nicht (aelterer Recorder) — dann wird NICHTS nachgereicht.
     #[serde(default)]
     pub flug_log_vorhanden: Option<bool>,
+    /// Liegt das Diagnose-Log auf dem Server? `None` = aelterer Recorder,
+    /// dann wird nichts nachgereicht. Abgebrochene Fluege laden beim
+    /// Abbruch selbst hoch; das hier faengt die Faelle, in denen das
+    /// scheiterte (23.09.2026).
+    #[serde(default)]
+    pub diagnose_log_vorhanden: Option<bool>,
     #[serde(default)]
     pub score_trust_level: Option<String>,
     #[serde(default)]
