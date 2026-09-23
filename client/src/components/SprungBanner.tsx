@@ -49,7 +49,11 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
    *  sonst in der App fragt ein Abbruch nach (Cloud-QS 23.09.2026). */
   const [sicher, setSicher] = useState(false);
 
-  if (!activeFlight.unmoeglicher_sprung) return null;
+  // Zwei Gründe, dieselbe Frage. `unmoeglicher_sprung` bleibt als
+  // Rückfallebene für einen älteren Client an der LAN-Brücke.
+  const grund =
+    activeFlight.abgabe_sperre ?? (activeFlight.unmoeglicher_sprung ? "sprung" : null);
+  if (!grund) return null;
   // Erst entscheiden lassen, wenn die Entscheidung ansteht — und nicht,
   // während der Resume-Hinweis noch offen ist.
   if (activeFlight.was_just_resumed) return null;
@@ -105,9 +109,13 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
         <span className="divert-banner__icon" aria-hidden="true">
           ⚠
         </span>
-        <h2 className="divert-banner__title">{t("sprung.title")}</h2>
+        <h2 className="divert-banner__title">
+          {grund === "landung_fehlt" ? t("sprung.landung_title") : t("sprung.title")}
+        </h2>
       </header>
-      <p className="divert-banner__body">{t("sprung.body")}</p>
+      <p className="divert-banner__body">
+        {grund === "landung_fehlt" ? t("sprung.landung_body") : t("sprung.body")}
+      </p>
       <label className="sprung-banner__feld">
         <span>{t("sprung.begruendung_label")}</span>
         <textarea

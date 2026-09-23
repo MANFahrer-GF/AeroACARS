@@ -1094,21 +1094,166 @@ fn sprit_wurde_verbraucht(d: &ResumeDiscontinuity) -> bool {
     d.fuel_delta_kg < 0.0
 }
 
+/// Ab dieser Laenge zaehlt eine Unterbrechung fuer die Abgabe-Frage.
+///
+/// Kurze Aussetzer (Ladebildschirm, Menue, ein verlorener Tick) sind
+/// Alltag und sollen niemanden vor eine Entscheidung stellen. Zwei Minuten
+/// ohne Simulator sind etwas anderes: Danach steht das Flugzeug erfahrungs-
+/// gemaess woanders.
+const ABGABE_UNTERBRECHUNG_MIN_SECS: i64 = 120;
+
+/// Warum die App diesen Flug NICHT von selbst einreichen darf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AbgabeSperre {
+    /// Beim Wiederaufnehmen sprang der Zustand (MSC1588, 22.09.2026).
+    Sprung,
+    /// Der Flug war unterbrochen, und am Ende wurde nie eine Landung
+    /// gemessen (GAF 9655, 23.09.2026): Der Simulator kam am Boden am Ziel
+    /// zurueck, die Phasen liefen im Stand bis „Arrived" durch, und die App
+    /// reichte einen Flug ein, dessen Aufsetzen sie nie gesehen hat.
+    LandungFehlt,
+}
+
+impl AbgabeSperre {
+    fn code(self) -> &'static str {
+        match self {
+            AbgabeSperre::Sprung => "sprung",
+            AbgabeSperre::LandungFehlt => "landung_fehlt",
+        }
+    }
+}
+
+/// War der Flug laenger als `ABGABE_UNTERBRECHUNG_MIN_SECS` ohne Simulator
+/// — oder hat ihn ein App-/Sim-Neustart unterbrochen?
+fn flug_war_unterbrochen(stats: &FlightStats) -> bool {
+    stats.resume_gap_minutes.is_some()
+        || !stats.resume_spruenge.is_empty()
+        || stats
+            .pause_segments
+            .iter()
+            .any(|p| p.duration_secs >= ABGABE_UNTERBRECHUNG_MIN_SECS)
+}
+
+/// Wurde die Landung ueberhaupt gemessen? Ohne Aufsetzfenster gibt es
+/// weder Rate noch Note — dann hat die App das Aufsetzen nicht gesehen.
+fn landung_wurde_gemessen(stats: &FlightStats) -> bool {
+    stats.landing_rate_fpm.is_some() || stats.landing_score.is_some()
+}
+
+/// Haelt fest, dass der Pilot trotz einer erkannten Abweichung
+/// fortgesetzt hat.
+///
+/// `flight_resume_check_position` raeumt `was_just_resumed` NUR ab, wenn
+/// die Lage sauber ist. Wer hier ankommt, ohne dass das passiert ist, hat
+/// „Trotzdem fortsetzen" gedrueckt — oder der Sim steht immer noch
+/// woanders. Beides gehoert in den Bericht.
+fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
+    let (phase, letzte_pos, ziel, luecke_secs) = {
+        let stats = flight.stats.lock().expect("flight stats");
+        (
+            stats.phase,
+            stats
+                .last_lat
+                .zip(stats.last_lon)
+                .or(stats.paused_last_known.as_ref().map(|p| (p.lat, p.lon))),
+            stats.planned_arr_ref_pos,
+            stats.resume_luecke_secs,
+        )
+    };
+    if !is_resume_position_suspect(phase, letzte_pos, snap.on_ground, snap.lat, snap.lon) {
+        return;
+    }
+    let Some((plat, plon)) = letzte_pos else {
+        return;
+    };
+    let vorher = PausedSnapshot {
+        lat: plat,
+        lon: plon,
+        heading_deg: 0.0,
+        altitude_ft: snap.altitude_msl_ft,
+        fuel_total_kg: snap.fuel_total_kg,
+        zfw_kg: None,
+        on_ground: false,
+    };
+    let d = compute_resume_discontinuity(&vorher, snap, ziel, luecke_secs);
+    {
+        let mut stats = flight.stats.lock().expect("flight stats");
+        stats.resume_discontinuity = Some(d);
+        stats.resume_spruenge.push(d);
+    }
+    save_active_flight(app, flight);
+    log_activity_and_record(
+        app,
+        &flight.pirep_id,
+        ActivityLevel::Warn,
+        "Trotz erkannter Abweichung fortgesetzt".to_string(),
+        Some(format!(
+            "Der Simulator passte beim Fortsetzen nicht zum gespeicherten Flug \
+             (Position {:.1} nm, am Boden: {}). Der Flug läuft weiter, aber die \
+             App reicht ihn nicht mehr von selbst ein — du entscheidest am Ende.",
+            d.drift_nm, snap.on_ground
+        )),
+    );
+    tracing::warn!(
+        pirep_id = %flight.pirep_id,
+        drift_nm = d.drift_nm,
+        on_ground = snap.on_ground,
+        "Resume trotz Abweichung bestaetigt — als Sprung vermerkt"
+    );
+}
+
+/// Die eine Stelle, an der entschieden wird, ob der Pilot gefragt werden
+/// muss. Beide Abgabewege (Auto-File im Streamer, File-First in
+/// `flight_cancel`) fragen hier — sonst wandert die Regel wieder
+/// auseinander.
+fn abgabe_sperre(stats: &FlightStats) -> Option<AbgabeSperre> {
+    if stats.resume_discontinuity.is_some() {
+        return Some(AbgabeSperre::Sprung);
+    }
+    if flug_war_unterbrochen(stats) && !landung_wurde_gemessen(stats) {
+        return Some(AbgabeSperre::LandungFehlt);
+    }
+    None
+}
+
 /// Der Notiz-Block, den ein bewusst eingereichter Sprung-Flug im PIREP
 /// bekommt. Ohne ihn sieht die VA nur eine normale Ankunft — genau der Fall
 /// MSC1588 (22.09.2026), wo eine nie geflogene Strecke als angekommen
 /// gebucht wurde. Die Begruendung des Piloten ist freiwillig; Leerraum
 /// allein ist keine (die LAN-Bruecke kann schicken, was sie will).
+/// So lang darf die freiwillige Begruendung im PIREP werden. Gleicher Wert
+/// wie `maxLength` im Eingabefeld.
+const SPRUNG_BEGRUENDUNG_MAX_ZEICHEN: usize = 500;
+
+/// Die Begruendungszeile des Piloten — getrimmt, einzeilig, begrenzt.
+///
+/// Das Eingabefeld begrenzt auf 500 Zeichen, die LAN-Bruecke aber nicht:
+/// Mit Zeilenumbruechen liesse sich sonst eine zweite „Begründung:"- oder
+/// „DIVERT:"-Zeile in die Notiz faelschen (Cloud-QS 23.09.2026). Der Riegel
+/// stand schon einmal hier und ging beim Umbau auf mehrere Spruenge still
+/// verloren — deshalb jetzt an EINER Stelle, mit eigenem Test.
+fn begruendungs_zeile(begruendung: Option<&str>) -> String {
+    begruendung
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(|r| {
+            let einzeilig: String = r
+                .chars()
+                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                .take(SPRUNG_BEGRUENDUNG_MAX_ZEICHEN)
+                .collect();
+            format!("Begründung: {einzeilig}\n")
+        })
+        .unwrap_or_default()
+}
+
 fn sprung_notiz(
     spruenge: &[ResumeDiscontinuity],
     begruendung: Option<&str>,
     notes: &str,
 ) -> String {
-    let zeile = begruendung
-        .map(str::trim)
-        .filter(|r| !r.is_empty())
-        .map(|r| format!("Begründung: {r}\n"))
-        .unwrap_or_default();
+    let zeile = begruendungs_zeile(begruendung);
     // Jeder Sprung mit eigener Zeile: Ein Flug kann mehrfach unterbrochen
     // werden, und der zweite macht den ersten nicht ungeschehen.
     let liste: String = spruenge
@@ -1132,6 +1277,20 @@ fn sprung_notiz(
         "{kopf}: Beim Wiederaufnehmen sprang der Zustand. Der Simulator \
          wurde neu geladen; der Flug ging so nicht weiter. Vom Piloten \
          bewusst eingereicht.\n{liste}{zeile}\n{notes}"
+    )
+}
+
+/// Notiz fuer den Fall „unterbrochen und keine Landung gemessen".
+///
+/// Ohne sie sieht die VA einen Bericht wie jeden anderen — mit Strecke,
+/// Zeiten und Sprit, aber ohne den einen Satz, auf den es ankommt: Das
+/// Aufsetzen hat niemand gesehen (GAF 9655, 23.09.2026).
+fn landung_fehlt_notiz(begruendung: Option<&str>, notes: &str) -> String {
+    let zeile = begruendungs_zeile(begruendung);
+    format!(
+        "LANDUNG NICHT GEMESSEN: Der Flug war unterbrochen, und beim \
+         Aufsetzen lagen der App keine Daten vor — es gibt weder Sinkrate \
+         noch Note. Vom Piloten bewusst eingereicht.\n{zeile}\n{notes}"
     )
 }
 
@@ -1382,6 +1541,44 @@ mod resume_discontinuity_tests {
             compute_resume_discontinuity(&kurz_vorher, &gelandet_ohne_verbrauch, ziel, Some(600));
         assert!(ist_sprung_ans_ziel(&d9));
     }
+    /// Der Riegel auf die Begruendung: eine Zeile, hoechstens 500 Zeichen.
+    /// Ueber die LAN-Bruecke kommt ungepruefter Text an — mit Umbruechen
+    /// liesse sich sonst eine zweite „Begründung:"- oder „DIVERT:"-Zeile
+    /// faelschen. Dieser Riegel ist schon einmal still verschwunden.
+    #[test]
+    fn begruendung_bleibt_eine_gekuerzte_zeile() {
+        let lang = "A".repeat(600);
+        let zeile = begruendungs_zeile(Some(&lang));
+        assert_eq!(zeile.matches('\n').count(), 1, "{zeile}");
+        assert_eq!(
+            zeile.trim_end().chars().count(),
+            "Begründung: ".chars().count() + SPRUNG_BEGRUENDUNG_MAX_ZEICHEN
+        );
+
+        let mehrzeilig = begruendungs_zeile(Some("Sim weg\nDIVERT: EDDM\rBegründung: erfunden"));
+        assert_eq!(mehrzeilig.matches('\n').count(), 1, "{mehrzeilig}");
+        // Der gefaelschte Text darf vorkommen — aber nur MITTEN in der
+        // Zeile, nie an deren Anfang. Sonst liest die VA ihn als eigenen
+        // Eintrag der App.
+        assert!(mehrzeilig.contains("Sim weg DIVERT: EDDM Begründung: erfunden"));
+        assert!(!mehrzeilig.trim_end().contains('\r'));
+        for zeile in mehrzeilig.trim_end().lines().skip(1) {
+            assert!(
+                !zeile.starts_with("Begründung:") && !zeile.starts_with("DIVERT:"),
+                "{zeile}"
+            );
+        }
+
+        // Und beide Notizarten nutzen denselben Riegel.
+        for notiz in [
+            landung_fehlt_notiz(Some(&lang), "Rest"),
+            sprung_notiz(&[], Some(&lang), "Rest"),
+        ] {
+            assert!(notiz.contains(&"A".repeat(SPRUNG_BEGRUENDUNG_MAX_ZEICHEN)));
+            assert!(!notiz.contains(&"A".repeat(SPRUNG_BEGRUENDUNG_MAX_ZEICHEN + 1)));
+        }
+    }
+
     /// Die Notiz ist das EINZIGE, was der VA-Admin spaeter sieht: Der Sprung
     /// steht sonst nirgends im PIREP. Geprueft wird deshalb, dass Grund und
     /// Begruendung wirklich drin landen — und dass Leerraum allein keine
@@ -7704,6 +7901,9 @@ pub struct ActiveFlightInfo {
     /// liefen die Phasen im Stand bis „Arrived" durch, und der PIREP ging
     /// mit voller Strecke und ohne je gemessene Landung raus.
     unmoeglicher_sprung: bool,
+    /// Warum der Pilot entscheiden muss: `sprung` oder `landung_fehlt`.
+    /// `None` = die App darf selbst einreichen.
+    abgabe_sperre: Option<String>,
     /// Number of touch-and-go events recorded so far. Always 0 on a
     /// routine A→B; non-zero on training flights or unstable approaches
     /// where the pilot bounced and went around. Surfaced as a small
@@ -12268,8 +12468,8 @@ mod nachreichen_tests {
             "Fenster passt nicht mehr auf den Auto-File-Zweig"
         );
         let sprung = zweig
-            .find("resume_discontinuity.is_some()")
-            .expect("Auto-File prueft den unmoeglichen Sprung nicht mehr");
+            .find("abgabe_sperre(&st)")
+            .expect("Auto-File fragt die Abgabe-Sperre nicht mehr");
         let abgabe = zweig
             .find("flight_end(app_af.clone()")
             .expect("Auto-File-Aufruf nicht mehr gefunden");
@@ -12290,8 +12490,8 @@ mod nachreichen_tests {
             .unwrap_or(SRC.len());
         let file_first = &SRC[cancel..cancel_ende];
         let bedingung = file_first
-            .find("stats.resume_discontinuity.is_none()")
-            .expect("File-First prueft den Sprung nicht mehr — es reicht sonst selbst ein");
+            .find("abgabe_sperre(&stats).is_none()")
+            .expect("File-First fragt die Abgabe-Sperre nicht mehr — es reicht sonst selbst ein");
         let aufruf = file_first
             .find("flight_end(app.clone()")
             .expect("File-First-Aufruf nicht mehr gefunden");
@@ -12309,7 +12509,10 @@ mod nachreichen_tests {
         const SRC: &str = include_str!("lib.rs");
         let nadel = concat!("stats.resume_discontinuity = ", "Some(");
         let stellen: Vec<usize> = SRC.match_indices(nadel).map(|(i, _)| i).collect();
-        assert_eq!(stellen.len(), 3, "Erkennungsstellen: {stellen:?}");
+        // Keine feste Zahl: Es kommen Erkennungsstellen dazu (23.09.2026
+        // die Bestaetigung „Trotzdem fortsetzen"). Was zaehlt, ist, dass
+        // JEDE davon anhaengt — und dass keine verschwindet.
+        assert!(stellen.len() >= 3, "Erkennungsstellen: {stellen:?}");
         for i in &stellen {
             let rest = &SRC[*i..];
             let fenster = &rest[..rest
@@ -12357,7 +12560,7 @@ mod nachreichen_tests {
             // Die Definition selbst ist kein Aufruf.
             .filter(|a| !a.contains("prev: &PausedSnapshot"))
             .collect();
-        assert_eq!(aufrufe.len(), 2, "Aufrufstellen: {aufrufe:#?}");
+        assert!(aufrufe.len() >= 2, "Aufrufstellen: {aufrufe:#?}");
         for a in &aufrufe {
             assert!(
                 a.contains("ziel"),
@@ -12368,6 +12571,61 @@ mod nachreichen_tests {
                 "ohne Luecke gilt jede Strecke als fliegbar: {a}"
             );
         }
+    }
+
+    /// GAF 9655 (23.09.2026): Der Simulator stuerzte 1,4 nm vor der Bahn
+    /// ab, kam am Boden am Ziel zurueck, die Phasen liefen im Stand bis
+    /// „Arrived" durch — und die App reichte ein, ohne je ein Aufsetzen
+    /// gesehen zu haben. Kein Sprung nach den alten Regeln: Position kaum
+    /// verschoben, Sprit gesunken, Ziel schon vorher in Reichweite.
+    #[test]
+    fn unterbrochen_ohne_gemessene_landung_fragt_den_piloten() {
+        use super::{abgabe_sperre, AbgabeSperre, FlightStats, PauseReason, PauseSegment, Utc};
+        let mut stats = FlightStats::new();
+        // Ein Flug ohne alles: Die App darf einreichen.
+        assert_eq!(abgabe_sperre(&stats), None);
+
+        // Kurzer Aussetzer (Ladebildschirm) zaehlt nicht.
+        stats.pause_segments.push(PauseSegment {
+            started_at: Utc::now(),
+            ended_at: Utc::now(),
+            duration_secs: 8,
+            reason: PauseReason::SimDisconnect,
+            drift_nm: None,
+            altitude_delta_ft: None,
+            fuel_delta_kg: None,
+        });
+        assert_eq!(abgabe_sperre(&stats), None);
+
+        // Elf Minuten ohne Simulator, danach keine gemessene Landung.
+        stats.pause_segments.push(PauseSegment {
+            started_at: Utc::now(),
+            ended_at: Utc::now(),
+            duration_secs: 674,
+            reason: PauseReason::SimDisconnect,
+            drift_nm: None,
+            altitude_delta_ft: None,
+            fuel_delta_kg: None,
+        });
+        assert_eq!(abgabe_sperre(&stats), Some(AbgabeSperre::LandungFehlt));
+
+        // Mit gemessener Sinkrate ist alles in Ordnung — eine lange Pause
+        // allein macht keinen Verdacht.
+        stats.landing_rate_fpm = Some(-180.0);
+        assert_eq!(abgabe_sperre(&stats), None);
+
+        // Der Sprung wiegt schwerer und wird zuerst genannt.
+        stats.resume_discontinuity = Some(super::ResumeDiscontinuity {
+            drift_nm: 240.0,
+            altitude_delta_ft: -20000.0,
+            fuel_delta_kg: 0.0,
+            both_grounded: false,
+            ziel_vorher_nm: None,
+            ziel_nachher_nm: None,
+            danach_am_boden: true,
+            luecke_secs: Some(600),
+        });
+        assert_eq!(abgabe_sperre(&stats), Some(AbgabeSperre::Sprung));
     }
 
     /// Der manuelle Einreichweg darf nicht die Tuer sein, durch die ein
@@ -15793,6 +16051,7 @@ fn flight_info(
         paused_last_known: stats.paused_last_known.clone(),
         divert_hint: stats.divert_hint.clone(),
         unmoeglicher_sprung: stats.resume_discontinuity.is_some(),
+        abgabe_sperre: abgabe_sperre(&stats).map(|g| g.code().to_string()),
         touch_and_go_count: stats
             .touchdown_events
             .iter()
@@ -28394,6 +28653,8 @@ async fn flight_end(
         let spruenge = spruenge_fuer_notiz(&stats);
         if !spruenge.is_empty() {
             notes = sprung_notiz(&spruenge, sprung_begruendung.as_deref(), &notes);
+        } else if abgabe_sperre(&stats) == Some(AbgabeSperre::LandungFehlt) {
+            notes = landung_fehlt_notiz(sprung_begruendung.as_deref(), &notes);
         }
         // Prepend a divert banner to the notes so the VA admin sees
         // immediately on the PIREP page that this wasn't a normal
@@ -29479,6 +29740,8 @@ async fn flight_end_manual(
         let spruenge = spruenge_fuer_notiz(&stats);
         if !spruenge.is_empty() {
             notes = sprung_notiz(&spruenge, None, &notes);
+        } else if abgabe_sperre(&stats) == Some(AbgabeSperre::LandungFehlt) {
+            notes = landung_fehlt_notiz(None, &notes);
         }
         if let Some(divert) = divert_to
             .as_ref()
@@ -29951,7 +30214,7 @@ async fn flight_cancel(
                 | FlightPhase::BlocksOn
                 | FlightPhase::Arrived
         ) && stats.landing_at.is_some()
-            && stats.resume_discontinuity.is_none()
+            && abgabe_sperre(&stats).is_none()
     };
 
     let user_forced_cancel = force.unwrap_or(false);
@@ -30252,7 +30515,19 @@ fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Clie
             if let Some(snap) = current_snapshot(&app) {
                 let age_secs = (Utc::now() - snap.timestamp).num_seconds();
                 if age_secs.abs() <= SIM_GATE_FRESH_SECS {
-                    // Sim liefert frische Daten → jetzt scharfschalten.
+                    // ⚠ Bevor der Flug scharf wird: Passt die Lage im Sim
+                    // ueberhaupt zum gespeicherten Flug? Der Pilot kann hier
+                    // ueber „Trotzdem fortsetzen" hergekommen sein, nachdem
+                    // ihm die App gesagt hat „im Sim am Boden, gespeicherter
+                    // Flug war in der Luft — bitte zurueck in die Luft
+                    // positionieren ODER Flug verwerfen".
+                    //
+                    // Bisher stand diese ausdrueckliche Bestaetigung NUR im
+                    // Aktivitaets-Protokoll. Fuer die Abgabe war sie
+                    // vergessen, und die App reichte am Ende selbst ein
+                    // (GAF 9655, 23.09.2026). Jetzt wird sie vermerkt —
+                    // damit entscheidet der Pilot am Ende auch die Abgabe.
+                    sprung_beim_fortsetzen_vermerken(&app, &flight, &snap);
                     flight.was_just_resumed.store(false, Ordering::Relaxed);
                     spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
                     spawn_position_streamer(app.clone(), Arc::clone(&flight), client.clone());
@@ -37396,9 +37671,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         .auto_file_enabled
                         .load(Ordering::Relaxed)
                 {
-                    let (is_divert, sprung) = {
+                    let (is_divert, sperre) = {
                         let st = flight.stats.lock().expect("flight stats");
-                        (st.divert_hint.is_some(), st.resume_discontinuity.is_some())
+                        (st.divert_hint.is_some(), abgabe_sperre(&st))
                     };
                     if is_divert {
                         tracing::info!(
@@ -37406,15 +37681,16 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             "backend auto-file skipped — divert detected, \
                              pilot confirms via banner"
                         );
-                    } else if sprung {
-                        // Unmoeglicher Sprung beim Wiederaufnehmen: Der Flug
-                        // ging so nicht weiter, „Arrived" sagt hier nichts.
-                        // Der Pilot entscheidet im Banner — verwerfen oder
-                        // bewusst einreichen (MSC1588, 22.09.2026).
+                    } else if let Some(grund) = sperre {
+                        // „Arrived" sagt hier nichts: Entweder sprang der
+                        // Zustand beim Wiederaufnehmen (MSC1588), oder der
+                        // Flug war unterbrochen und die Landung wurde nie
+                        // gemessen (GAF 9655). Der Pilot entscheidet im
+                        // Banner — verwerfen oder bewusst einreichen.
                         tracing::info!(
                             pirep_id = %flight.pirep_id,
-                            "backend auto-file ausgesetzt — unmoeglicher Sprung, \
-                             der Pilot entscheidet im Banner"
+                            grund = grund.code(),
+                            "backend auto-file ausgesetzt — der Pilot entscheidet im Banner"
                         );
                     } else {
                         tracing::info!(

@@ -475,6 +475,10 @@ export interface ActiveFlightInfo {
    *  weiter. Die App gibt dann nicht mehr von selbst ab — das Cockpit fragt
    *  den Piloten (`SprungBanner`). */
   unmoeglicher_sprung: boolean;
+  /** Warum der Pilot über die Abgabe entscheiden muss: "sprung" (der
+   *  Zustand sprang beim Wiederaufnehmen) oder "landung_fehlt" (der Flug
+   *  war unterbrochen und das Aufsetzen wurde nie gemessen). */
+  abgabe_sperre?: "sprung" | "landung_fehlt" | null;
   /** Touch-and-go count detected during the flight. Sustained climb-back
    *  above 100 ft AGL within 30 s of an on-ground edge counts as a T&G;
    *  the FSM also reverts to Climb so subsequent landing detection works

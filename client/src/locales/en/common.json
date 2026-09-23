@@ -2565,6 +2565,8 @@
     "begruendung_label": "Reason for the VA (optional)",
     "begruendung_platzhalter": "e.g. simulator crashed, then reloaded at the destination",
     "verwerfen_sicher": "Yes, discard flight",
-    "doch_nicht": "Keep flight"
+    "doch_nicht": "Keep flight",
+    "landung_title": "No landing was measured",
+    "landung_body": "The flight was interrupted and the app had no data at touchdown — there is neither a rate nor a score. That is why nothing is filed automatically: you decide."
   }
 }

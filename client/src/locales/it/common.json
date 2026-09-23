@@ -2565,6 +2565,8 @@
     "begruendung_label": "Motivo per la VA (facoltativo)",
     "begruendung_platzhalter": "es. simulatore in crash, poi ricaricato all'aeroporto di arrivo",
     "verwerfen_sicher": "Sì, elimina il volo",
-    "doch_nicht": "Mantieni il volo"
+    "doch_nicht": "Mantieni il volo",
+    "landung_title": "L'atterraggio non è stato misurato",
+    "landung_body": "Il volo è stato interrotto e al momento del contatto l'app non aveva dati — non c'è né rateo né punteggio. Per questo non viene inviato nulla automaticamente: decidi tu."
   }
 }

@@ -5,7 +5,7 @@
 // echten Komponente, weil genau die Sichtbarkeit das Problem war: Ein Banner,
 // der zur falschen Zeit erscheint (oder gar nicht), ist schlimmer als keiner.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -45,6 +45,7 @@ const FLUG = {
   arr_airport: "HECA",
   phase: "arrived",
   unmoeglicher_sprung: true,
+  abgabe_sperre: "sprung",
   was_just_resumed: false,
   divert_hint: null,
 } as unknown as ActiveFlightInfo;
@@ -79,8 +80,15 @@ describe("Banner nach unmöglichem Sprung", () => {
   // Die vier Bedingungen einzeln — jede hat einen eigenen Grund, und eine
   // gemeinsame Prüfung würde verdecken, wenn eine davon wegfällt.
   it("bleibt weg, solange kein Sprung erkannt wurde", () => {
-    zeige({ unmoeglicher_sprung: false });
+    zeige({ unmoeglicher_sprung: false, abgabe_sperre: null });
     expect(screen.queryByTestId("sprung-banner")).toBeNull();
+  });
+
+  it("versteht auch einen aelteren Client ohne den neuen Grund", () => {
+    // Die LAN-Bruecke kann eine aeltere Oberflaeche bedienen: Dort kommt
+    // nur `unmoeglicher_sprung`, kein `abgabe_sperre`.
+    zeige({ abgabe_sperre: undefined });
+    expect(screen.getByTestId("sprung-banner")).toBeTruthy();
   });
 
   it("bleibt weg, solange der Wiederaufnahme-Hinweis noch offen ist", () => {
@@ -149,6 +157,25 @@ describe("Banner nach unmöglichem Sprung", () => {
     await verwerfen();
     expect(verworfen).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/no_active_flight/)).toBeNull();
+  });
+
+  it("nennt den Grund, aus dem gefragt wird", () => {
+    // Zwei Gründe, zwei Texte — sonst stünde bei GAF 9655 (23.09.2026)
+    // „der Zustand sprang", obwohl nichts gesprungen ist: Dort fehlte die
+    // gemessene Landung nach einer Unterbrechung.
+    zeige({ abgabe_sperre: "sprung" });
+    expect(screen.getByText("Flug wurde so nicht fortgesetzt")).toBeTruthy();
+    expect(screen.queryByText("Landung wurde nicht gemessen")).toBeNull();
+    cleanup();
+
+    zeige({ abgabe_sperre: "landung_fehlt", unmoeglicher_sprung: false });
+    expect(screen.getByText("Landung wurde nicht gemessen")).toBeTruthy();
+    expect(screen.queryByText("Flug wurde so nicht fortgesetzt")).toBeNull();
+  });
+
+  it("bleibt weg, wenn die App selbst einreichen darf", () => {
+    zeige({ abgabe_sperre: null, unmoeglicher_sprung: false });
+    expect(screen.queryByTestId("sprung-banner")).toBeNull();
   });
 
   it("beschriftet die Taste waehrend der Abgabe um", async () => {
