@@ -1138,8 +1138,11 @@ fn flug_war_unterbrochen(stats: &FlightStats) -> bool {
     // wird bei jedem App-Neustart gesetzt, auch bei `Some(0)` — ohne Schwelle
     // zaehlte der Update-Relaunch mitten im Flug als Unterbrechung
     // (Cloud-QS 23.09.2026).
+    // Die LAENGSTE Luecke, nicht die letzte: ein kurzer zweiter Neustart
+    // darf einen langen ersten nicht ueberschreiben.
     let neustart_lang_genug = stats
-        .resume_luecke_secs
+        .resume_luecke_max_secs
+        .or(stats.resume_luecke_secs)
         .or_else(|| stats.resume_gap_minutes.map(|m| m * 60))
         .is_some_and(|secs| secs >= ABGABE_UNTERBRECHUNG_MIN_SECS);
     neustart_lang_genug
@@ -1236,7 +1239,7 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
 /// noch steht. Danach kaeme kein zweiter Uebergang — der Flug bliebe
 /// haengen (Cloud-QS 23.09.2026). Der Merker `auto_file_gestartet` sorgt
 /// dafuer, dass trotzdem nur EIN Versuch laeuft.
-fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>) {
+fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>, beim_wechsel: bool) {
     if !app
         .state::<AppState>()
         .auto_file_enabled
@@ -1259,19 +1262,36 @@ fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>) {
         }
     };
     match entscheidung {
+        // Beim Wechsel nach `Arrived` EINMAL sichtbar ins Log, danach im Takt
+        // nur noch leise — sonst laesst sich im Feld nicht nachvollziehen,
+        // warum nicht eingereicht wurde (Cloud-QS 23.09.2026, dritte Runde).
         Err((true, _)) => {
             // Den Ausweich-Airport bestaetigt der Pilot im Divert-Banner (LE2).
+            if beim_wechsel {
+                tracing::info!(
+                    pirep_id = %flight.pirep_id,
+                    "backend auto-file skipped — divert detected, pilot confirms via banner"
+                );
+            }
         }
         Err((false, Some(grund))) => {
             // „Arrived" sagt hier nichts: Entweder sprang der Zustand beim
             // Wiederaufnehmen (MSC1588), oder der Flug war unterbrochen und
             // die Landung wurde nie gemessen (GAF 9655). Der Pilot
             // entscheidet im Banner — verwerfen oder bewusst einreichen.
-            tracing::debug!(
-                pirep_id = %flight.pirep_id,
-                grund = grund.code(),
-                "backend auto-file ausgesetzt — der Pilot entscheidet im Banner"
-            );
+            if beim_wechsel {
+                tracing::info!(
+                    pirep_id = %flight.pirep_id,
+                    grund = grund.code(),
+                    "backend auto-file ausgesetzt — der Pilot entscheidet im Banner"
+                );
+            } else {
+                tracing::debug!(
+                    pirep_id = %flight.pirep_id,
+                    grund = grund.code(),
+                    "backend auto-file weiter ausgesetzt"
+                );
+            }
         }
         Err((false, None)) => {}
         Ok(()) => {
@@ -1408,11 +1428,17 @@ fn sprung_notiz(
     } else {
         "UNTERBROCHENER FLUG".to_string()
     };
-    format!(
-        "{kopf}: Beim Wiederaufnehmen sprang der Zustand. Der Simulator \
-         wurde neu geladen; der Flug ging so nicht weiter. Vom Piloten \
-         bewusst eingereicht.\n{liste}{zeile}\n{notes}"
-    )
+    // Ist KEIN Sprung gemessen worden, sondern nur die Bestaetigung des
+    // Piloten da, darf der Kopf keinen Sprung behaupten (Cloud-QS
+    // 23.09.2026, dritte Runde).
+    let erklaerung = if spruenge.iter().all(|d| d.nur_bestaetigt) {
+        "Beim Wiederaufnehmen passte der Simulator nicht zum gespeicherten \
+         Flug, und der Pilot hat trotzdem fortgesetzt."
+    } else {
+        "Beim Wiederaufnehmen sprang der Zustand. Der Simulator wurde neu \
+         geladen; der Flug ging so nicht weiter."
+    };
+    format!("{kopf}: {erklaerung} Vom Piloten bewusst eingereicht.\n{liste}{zeile}\n{notes}")
 }
 
 /// Notiz fuer den Fall „unterbrochen und keine Landung gemessen".
@@ -4681,6 +4707,14 @@ struct PersistedFlightStats {
     /// verfügbar ist. `#[serde(default)]` → None bei pre-v0.20 Files.
     #[serde(default)]
     resume_gap_minutes: Option<i64>,
+    /// Die LAENGSTE Neustart-Luecke dieses Fluges (Sekunden). Waechst nur.
+    ///
+    /// `resume_gap_minutes` beschreibt nur den LETZTEN Neustart: Nach 15 min
+    /// Absturz und einem spaeteren 20-s-Update stand dort 0 — und die
+    /// Abgabe-Sperre vergass die lange Unterbrechung (Cloud-QS 23.09.2026,
+    /// dritte Runde).
+    #[serde(default)]
+    resume_luecke_max_secs: Option<i64>,
     /// v0.16.12 (#phase-v2): geplante Cruise-Altitude (ft) — persistiert,
     /// damit die Schatten-Engine nach einem Resume ihren `cruise_ref`
     /// behält. `#[serde(default)]` → None bei pre-v0.16.12-Files.
@@ -4897,6 +4931,7 @@ impl PersistedFlightStats {
             resume_spruenge: stats.resume_spruenge.clone(),
             app_restart_was_unclean: stats.app_restart_was_unclean,
             resume_gap_minutes: stats.resume_gap_minutes,
+            resume_luecke_max_secs: stats.resume_luecke_max_secs,
             // v0.16.12 (#phase-v2)
             planned_cruise_alt_ft: stats.planned_cruise_alt_ft,
             shadow_divergence_secs: stats.shadow_divergence_secs,
@@ -5152,6 +5187,7 @@ impl PersistedFlightStats {
         stats.resume_spruenge = self.resume_spruenge;
         stats.app_restart_was_unclean = self.app_restart_was_unclean;
         stats.resume_gap_minutes = self.resume_gap_minutes;
+        stats.resume_luecke_max_secs = self.resume_luecke_max_secs;
         // v0.16.12 (#phase-v2): cruise_ref + Divergenz-Aggregat restoren.
         // Die Engine selbst wird NICHT persistiert (wärmt sich nach dem
         // Resume in ≤ 2 Fenstern wieder auf — dokumentiert).
@@ -5719,6 +5755,8 @@ struct FlightStats {
     app_restart_was_unclean: Option<bool>,
     /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
     resume_gap_minutes: Option<i64>,
+    /// Siehe PersistedFlightStats — die laengste Neustart-Luecke.
+    resume_luecke_max_secs: Option<i64>,
     /// Dieselbe Luecke in SEKUNDEN, nur fuer die Sprung-Pruefung.
     ///
     /// `resume_gap_minutes` schneidet auf ganze Minuten ab: 105 Sekunden
@@ -12758,6 +12796,21 @@ mod nachreichen_tests {
         });
         assert_eq!(abgabe_sperre(&stats), Some(AbgabeSperre::LandungFehlt));
 
+        // Zwei App-Neustarts: erst 15 min (Absturz), dann 20 s (Update).
+        // Der zweite darf den ersten NICHT vergessen machen — `resume_luecke_secs`
+        // steht dann auf 20, die laengste Luecke bleibt bei 900
+        // (Cloud-QS 23.09.2026, dritte Runde).
+        let mut zwei_neustarts = FlightStats::new();
+        zwei_neustarts.resume_luecke_secs = Some(20);
+        zwei_neustarts.resume_gap_minutes = Some(0);
+        assert_eq!(abgabe_sperre(&zwei_neustarts), None, "nur der kurze");
+        zwei_neustarts.resume_luecke_max_secs = Some(900);
+        assert_eq!(
+            abgabe_sperre(&zwei_neustarts),
+            Some(AbgabeSperre::LandungFehlt),
+            "der lange erste Neustart zaehlt weiter"
+        );
+
         // Mit gemessener Sinkrate ist alles in Ordnung — eine lange Pause
         // allein macht keinen Verdacht.
         stats.landing_rate_fpm = Some(-180.0);
@@ -12776,6 +12829,55 @@ mod nachreichen_tests {
             nur_bestaetigt: false,
         });
         assert_eq!(abgabe_sperre(&stats), Some(AbgabeSperre::Sprung));
+    }
+
+    /// Die Kette um `auto_file_versuchen`: Takt-Aufruf in `Arrived` UND der
+    /// Merker gegen Doppelabgabe. Ohne den Takt bliebe ein Flug haengen,
+    /// wenn die Landebewertung erst nach dem Wechsel fertig wird; ohne den
+    /// Merker reichte die App bei jedem Takt erneut ein
+    /// (Cloud-QS 23.09.2026, dritte Runde).
+    #[test]
+    fn auto_file_kette_takt_und_merker() {
+        const SRC: &str = include_str!("lib.rs");
+        // Suchtexte getrennt — sonst findet der Test sich selbst.
+        let takt = concat!("auto_file_versuchen(&app, &flight, ", "false)");
+        let wechsel = concat!("auto_file_versuchen(&app, &flight, ", "true)");
+        assert_eq!(
+            SRC.matches(takt).count(),
+            1,
+            "Takt-Aufruf fehlt oder doppelt"
+        );
+        assert_eq!(
+            SRC.matches(wechsel).count(),
+            1,
+            "Wechsel-Aufruf fehlt oder doppelt"
+        );
+        // Der Takt-Aufruf darf nur in `Arrived` laufen.
+        let i = SRC.find(takt).unwrap();
+        let davor = &SRC[SRC[..i]
+            .rfind('\n')
+            .map(|z| z.saturating_sub(120))
+            .unwrap_or(0)..i];
+        assert!(
+            davor.contains("FlightPhase::Arrived"),
+            "Takt-Aufruf ohne Arrived-Bedingung: {davor}"
+        );
+
+        let start = SRC
+            .find(concat!("\nfn auto_file_", "versuchen("))
+            .expect("auto_file_versuchen nicht gefunden");
+        let koerper = &SRC[start..start + SRC[start..].find("\n}\n").unwrap()];
+        let pruefen = koerper
+            .find("if st.auto_file_gestartet")
+            .expect("Merker wird nicht mehr geprueft");
+        let setzen = koerper
+            .find("st.auto_file_gestartet = true")
+            .expect("Merker wird nicht mehr gesetzt");
+        let abgabe = koerper.find("flight_end(").expect("Abgabe fehlt");
+        assert!(
+            pruefen < setzen && setzen < abgabe,
+            "Merker-Reihenfolge stimmt nicht"
+        );
     }
 
     /// Der manuelle Einreichweg darf nicht die Tuer sein, durch die ein
@@ -23208,10 +23310,12 @@ fn build_client_health_report(stats: &FlightStats) -> Option<aeroacars_mqtt::Cli
         .disconnect_sim_liveness
         .map(|l| l.as_wire_str().to_string());
     let impossible_resume_jump = stats.resume_discontinuity.map(|_| true);
-    let resume_fuel_delta_kg = stats.resume_discontinuity.map(|d| d.fuel_delta_kg as f32);
-    let resume_altitude_delta_ft = stats
-        .resume_discontinuity
-        .map(|d| d.altitude_delta_ft as f32);
+    // Bei einer blossen Bestaetigung („Trotzdem fortsetzen") sind Sprit-
+    // und Hoehendelta konstruktionsbedingt 0 — keine Messwerte, also nicht
+    // melden (Cloud-QS 23.09.2026, dritte Runde).
+    let gemessen = stats.resume_discontinuity.filter(|d| !d.nur_bestaetigt);
+    let resume_fuel_delta_kg = gemessen.map(|d| d.fuel_delta_kg as f32);
+    let resume_altitude_delta_ft = gemessen.map(|d| d.altitude_delta_ft as f32);
 
     // v0.20 (QS-Fix, Finding 3): `Some(false)` (a perfectly CLEAN app
     // restart) must count as "nothing to report", same as `None` — only
@@ -29930,9 +30034,12 @@ async fn flight_end_manual(
                 actual = divert,
             ));
         }
-        if let Some(r) = reason.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            notes.push_str("\n\nReason: ");
-            notes.push_str(r);
+        // Derselbe Riegel wie ueberall: Der manuelle Weg ist ueber die
+        // LAN-Bruecke erreichbar (Cloud-QS 23.09.2026, dritte Runde).
+        let reason_line = begruendungs_zeile_mit(reason.as_deref(), "Reason");
+        if !reason_line.is_empty() {
+            notes.push_str("\n\n");
+            notes.push_str(reason_line.trim_end());
         }
 
         // List which fields the pilot manually overrode so the admin
@@ -37853,7 +37960,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // Divert wird ausgelassen — den Ausweich-Airport muss der
                 // Pilot über das Divert-Banner bestätigen (LE2).
                 if new_phase == FlightPhase::Arrived {
-                    auto_file_versuchen(&app, &flight);
+                    auto_file_versuchen(&app, &flight, true);
                 }
             }
 
@@ -37864,7 +37971,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // (Cloud-QS 23.09.2026). Der Merker in `auto_file_versuchen`
             // sorgt dafuer, dass trotzdem nur EIN Versuch laeuft.
             if phase_change.is_none() && current_phase == FlightPhase::Arrived {
-                auto_file_versuchen(&app, &flight);
+                auto_file_versuchen(&app, &flight, false);
             }
 
             // Unified heartbeat-and-phase-update: POST `/pireps/{id}/update`
@@ -51297,6 +51404,17 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
     restored_stats.resume_luecke_secs = persisted
         .zuletzt_geschrieben
         .map(|z| (Utc::now() - z).num_seconds().max(0));
+    // Fuer die Abgabe zaehlt die LAENGSTE Luecke, nicht die letzte.
+    // Ohne `zuletzt_geschrieben` die Minuten als Rueckfall — lieber einmal
+    // zu oft gefragt als einen Absturz vergessen.
+    let diese_luecke = restored_stats
+        .resume_luecke_secs
+        .or(Some(stillstand.num_seconds().max(0)));
+    restored_stats.resume_luecke_max_secs =
+        match (restored_stats.resume_luecke_max_secs, diese_luecke) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
     tracing::info!(
         distance_nm = restored_stats.distance_nm,
         position_count = restored_stats.position_count,

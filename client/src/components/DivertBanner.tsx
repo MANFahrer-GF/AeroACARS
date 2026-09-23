@@ -240,6 +240,9 @@ function DivertConfirmModal({
           <textarea
             id="divert-reason"
             rows={3}
+            // Gleiche Grenze wie im Backend — sonst kürzt die PIREP-Notiz
+            // still, was hier noch sichtbar war (Cloud-QS 23.09.2026).
+            maxLength={500}
             placeholder={t("divert.confirm_reason_placeholder")}
             value={reason}
             onChange={(e) => setReason(e.target.value)}

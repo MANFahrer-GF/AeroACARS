@@ -76,6 +76,20 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
           : null;
   if (!grund) return null;
   const istLandung = grund === "landung_fehlt";
+  // Ein unbekannter Grund bekommt eigene, neutrale Texte — der Sprung-Text
+  // wäre hier eine erfundene Ursache (Cloud-QS 23.09.2026, dritte Runde).
+  const titel =
+    grund === "landung_fehlt"
+      ? t("sprung.landung_title")
+      : grund === "unbekannt"
+        ? t("sprung.unbekannt_title")
+        : t("sprung.title");
+  const text =
+    grund === "landung_fehlt"
+      ? t("sprung.landung_body")
+      : grund === "unbekannt"
+        ? t("sprung.unbekannt_body")
+        : t("sprung.body");
   // Erst entscheiden lassen, wenn die Entscheidung ansteht — und nicht,
   // während der Resume-Hinweis noch offen ist.
   if (activeFlight.was_just_resumed) return null;
@@ -132,11 +146,11 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
           ⚠
         </span>
         <h2 className="divert-banner__title">
-          {istLandung ? t("sprung.landung_title") : t("sprung.title")}
+          {titel}
         </h2>
       </header>
       <p className="divert-banner__body">
-        {istLandung ? t("sprung.landung_body") : t("sprung.body")}
+        {text}
       </p>
       <label className="sprung-banner__feld">
         <span>{t("sprung.begruendung_label")}</span>

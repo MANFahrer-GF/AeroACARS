@@ -2568,6 +2568,8 @@
     "doch_nicht": "Mantieni il volo",
     "landung_title": "L'atterraggio non è stato valutato",
     "landung_body": "Il volo è stato interrotto e per il contatto non ci sono misure utilizzabili — non c'è né rateo di discesa né punteggio. Per questo non viene inviato nulla automaticamente: decidi tu.",
-    "landung_platzhalter": "es. il simulatore è andato in crash durante il flare"
+    "landung_platzhalter": "es. il simulatore è andato in crash durante il flare",
+    "unbekannt_title": "Decidi tu su questo volo",
+    "unbekannt_body": "L'app ha rilevato qualcosa di insolito in questo volo e per questo non lo invia automaticamente. Decidi tu."
   }
 }

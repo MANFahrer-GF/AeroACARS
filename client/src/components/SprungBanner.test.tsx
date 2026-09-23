@@ -198,6 +198,11 @@ describe("Banner nach unmöglichem Sprung", () => {
     zeige({ abgabe_sperre: "etwas_neues" } as unknown as Partial<ActiveFlightInfo>);
     expect(screen.getByTestId("sprung-banner")).toBeTruthy();
     expect(screen.queryByText("Landung konnte nicht bewertet werden")).toBeNull();
+    // ⚠ Auch den Sprung-Titel prüfen: Vorher stand hier nur die erste
+    // Zeile, und der Banner behauptete trotzdem einen Sprung — der Test
+    // konnte das nicht sehen (Cloud-QS 23.09.2026, dritte Runde).
+    expect(screen.queryByText("Flug wurde so nicht fortgesetzt")).toBeNull();
+    expect(screen.getByText("Bitte entscheide über diesen Flug")).toBeTruthy();
   });
 
   it("beschriftet die Taste waehrend der Abgabe um", async () => {

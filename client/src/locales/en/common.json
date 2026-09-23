@@ -2568,6 +2568,8 @@
     "doch_nicht": "Keep flight",
     "landung_title": "Landing could not be assessed",
     "landung_body": "The flight was interrupted and there are no usable readings for the touchdown — neither a descent rate nor a score. That is why nothing is filed automatically: you decide.",
-    "landung_platzhalter": "e.g. the simulator crashed during the flare"
+    "landung_platzhalter": "e.g. the simulator crashed during the flare",
+    "unbekannt_title": "Please decide about this flight",
+    "unbekannt_body": "The app noticed something unusual about this flight and is therefore not filing it automatically. You decide."
   }
 }

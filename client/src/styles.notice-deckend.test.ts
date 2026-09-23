@@ -61,8 +61,10 @@ describe("Schwebender Hinweis", () => {
     // Die Kurzform `background:` setzt background-image auf none. Nach
     // `--floating` darf sie in keiner `.ui-notice`-Regel mehr vorkommen.
     const danach = css.slice(index(".ui-notice--floating") + 1);
+    // Nicht nur die Kurzform: auch ein nachträgliches `background-color`
+    // setzte die deckende Fläche zurück (Cloud-QS 23.09.2026, dritte Runde).
     const treffer = [...danach.matchAll(/\.ui-notice[^{}]*\{[^}]*\}/g)].filter((m) =>
-      /\n\s*background:\s/.test(m[0]),
+      /\n\s*background(-color)?:\s/.test(m[0]),
     );
     expect(treffer.map((t) => t[0].slice(0, 60))).toEqual([]);
   });
