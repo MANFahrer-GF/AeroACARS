@@ -26,13 +26,13 @@ use landing_scoring::belag::{belag_aus_angabe, Belag};
 /// Jeder Wert aus `BELAG` in `dfdNavFill.ts`, mit der Deutung, die er
 /// haben MUSS. Reihenfolge wie dort.
 const WAS_DER_SERVER_SCHREIBT: &[(&str, Belag)] = &[
-    ("ASP", Belag::Befestigt),    // Navigraph 100, 101, 104, 105, 106
-    ("CONC", Belag::Befestigt),   // Navigraph 103, 18
-    ("TURF", Belag::Unbefestigt), // Navigraph 4, 19, 17, 3
-    ("GRAV", Belag::Unbefestigt), // Navigraph 5
+    ("ASP", Belag::Befestigt),     // Navigraph 100, 101, 104, 105, 106
+    ("CONC", Belag::Befestigt),    // Navigraph 103, 18
+    ("TURF", Belag::Unbefestigt),  // Navigraph 4, 19, 17, 3
+    ("GRAV", Belag::Unbefestigt),  // Navigraph 5
     ("CORAL", Belag::Unbefestigt), // Navigraph 2
-    ("ICE", Belag::Unbefestigt),  // Navigraph 6
-    ("WATER", Belag::Wasser),     // Navigraph 20
+    ("ICE", Belag::Unbefestigt),   // Navigraph 6
+    ("WATER", Belag::Wasser),      // Navigraph 20
 ];
 
 #[test]

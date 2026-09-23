@@ -4920,8 +4920,14 @@ mod tests {
         buf.truncate(buf.len() - 16);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.syn_aural_glideslope, 1316.0, "Gruppe J intakt");
-        assert!(!t.eng1_combustion_state, "ENG COMBUSTION = sicherer Default");
-        assert!(!t.eng4_combustion_state, "ENG COMBUSTION = sicherer Default");
+        assert!(
+            !t.eng1_combustion_state,
+            "ENG COMBUSTION = sicherer Default"
+        );
+        assert!(
+            !t.eng4_combustion_state,
+            "ENG COMBUSTION = sicherer Default"
+        );
 
         buf.truncate(buf.len() - 128);
         let t = Telemetry::from_block(&buf);

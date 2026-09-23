@@ -56,7 +56,10 @@ fn ek406_a380_real_case_excellent() {
     // 25.09 < 30 → excellent_margin (100 PTS)
     let r = sub_rollout_v2(&ok_input(516.93, 583.55, 3657.0, 0, "A388"));
     assert_eq!(r.points, 100, "EK406-A380 muss excellent_margin sein");
-    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.excellent_margin")
+    );
     assert!(r.value.as_deref().unwrap_or("").contains("30 %"));
     assert!(!r.skipped);
     assert!(r.warning.is_none());
@@ -139,7 +142,10 @@ fn no_pre_rounding_at_band_boundary() {
     let input = ok_input(100.0, 499.0, 1000.0, 0, "C172");
     let r = sub_rollout_v2(&input);
     assert_eq!(r.points, 100);
-    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.excellent_margin")
+    );
     // Und einen Meter weiter kippt es sauber ins naechste Band.
     let r = sub_rollout_v2(&ok_input(100.0, 500.0, 1000.0, 0, "C172"));
     assert_eq!(r.points, 80);
@@ -173,7 +179,10 @@ fn medium_no_allowance() {
     let r = sub_rollout_v2(&ok_input(100.0, 550.0, 1000.0, 0, "A320"));
     assert_eq!(r.points, 80);
     let r = sub_rollout_v2(&ok_input(100.0, 440.0, 1000.0, 0, "A320"));
-    assert_eq!(r.points, 100, "54 % genutzt ist auch ohne Gutschrift volle Punktzahl");
+    assert_eq!(
+        r.points, 100,
+        "54 % genutzt ist auch ohne Gutschrift volle Punktzahl"
+    );
 }
 
 #[test]
@@ -331,7 +340,10 @@ fn btx8815_real_case_long_float() {
     // Landung ist einfach "excellent_margin".
     let r = sub_rollout_v2(&ok_input(540.85, 442.50, 2849.88, 0, "A319"));
     assert_eq!(r.points, 100, "BTX8815: 34,5 % genutzt → 100 PT");
-    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.excellent_margin")
+    );
     assert!(!r.skipped);
     assert!(r.warning.is_none());
     // value zeigt die ECHTE Auslastung (raw 983/2850 = 34.5 % → 35 %)
@@ -419,7 +431,10 @@ fn ezy2995_near_overrun_is_no_longer_forgiven() {
     // bewertete und das Overrun-Gate erst ueber 100 % greift.
     let r = sub_rollout_v2(&ok_input(760.0, 3062.0, 3902.0, 0, "A319"));
     assert_eq!(r.points, 5, "98 % Bahnnutzung ist nicht 'sportlich'");
-    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.marginal_runway"));
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.marginal_runway")
+    );
 }
 
 #[test]
@@ -496,7 +511,10 @@ fn ewg2047_regression_full_marks() {
     // von 3345 m LDA genutzt — 1,5 km Bahn blieben uebrig. Alt: 80 PT.
     let r = sub_rollout_v2(&ok_input(286.33, 1552.7, 3344.88, 0, "A20N"));
     assert_eq!(r.points, 100, "1,5 km Restbahn sind kein Punktabzug");
-    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.excellent_margin")
+    );
     assert!(r.value.as_deref().unwrap_or("").contains("55 %"));
 }
 
@@ -546,7 +564,10 @@ fn effective_vs_raw_ratio_in_value() {
     let v = r.value.as_deref().unwrap_or("");
     assert!(v.contains("983 m"), "value zeigt echte distance_used 983 m");
     assert!(v.contains("2850 m"), "value zeigt LDA");
-    assert!(v.contains("35 %"), "value zeigt raw-% (34.5 → 35), nicht 20 %");
+    assert!(
+        v.contains("35 %"),
+        "value zeigt raw-% (34.5 → 35), nicht 20 %"
+    );
 }
 
 // ── Wire-Schema-Snapshot (LE8 — Mini-Golden-JSON-Datei) ────────────────

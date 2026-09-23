@@ -74,7 +74,9 @@ impl Default for DiscordPresenceSettings {
     }
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DiscordPresenceState {
@@ -269,7 +271,10 @@ impl DiscordPresenceManager {
     /// Status: wenn enabled=true UND keine Verbindung → enable() retry, egal
     /// in welchem Match-Arm. Macht apply_settings idempotent gegen jeden
     /// inneren Inkonsistenz-Zustand.
-    pub async fn apply_settings(self: &Arc<Self>, new_settings: DiscordPresenceSettings) -> Result<()> {
+    pub async fn apply_settings(
+        self: &Arc<Self>,
+        new_settings: DiscordPresenceSettings,
+    ) -> Result<()> {
         let was_enabled;
         let client_bound;
         {
@@ -337,13 +342,14 @@ impl DiscordPresenceManager {
         // cross the spawn_blocking boundary as-is — format it to a String
         // (all we need it for: logging + the UI error_message) inside the
         // closure instead.
-        let connect_outcome: Result<DiscordIpcClient, String> = tokio::task::spawn_blocking(move || {
-            DiscordIpcClient::new(&id_for_blocking)
-                .and_then(|mut client| client.connect().map(|_| client))
-                .map_err(|e| format!("{e:?}"))
-        })
-        .await
-        .map_err(|e| anyhow!("discord IPC blocking task panicked: {e}"))?;
+        let connect_outcome: Result<DiscordIpcClient, String> =
+            tokio::task::spawn_blocking(move || {
+                DiscordIpcClient::new(&id_for_blocking)
+                    .and_then(|mut client| client.connect().map(|_| client))
+                    .map_err(|e| format!("{e:?}"))
+            })
+            .await
+            .map_err(|e| anyhow!("discord IPC blocking task panicked: {e}"))?;
 
         let connect_result = {
             let mut inner = self.inner.lock().await;
@@ -650,7 +656,14 @@ impl DiscordPresenceManager {
             let small_image = format::sim_to_asset_key(input.sim).unwrap_or("");
             let small_tooltip = format::sim_to_tooltip(input.sim);
 
-            (client, details, state, small_image, small_tooltip, input.start_unix)
+            (
+                client,
+                details,
+                state,
+                small_image,
+                small_tooltip,
+                input.start_unix,
+            )
         };
 
         // Same Send-bound issue as enable()'s connect: format the crate's
@@ -724,7 +737,9 @@ mod tests {
             .await
             .unwrap();
 
-        m.update_phase(FlightPhase::Climb, Some(1050)).await.unwrap();
+        m.update_phase(FlightPhase::Climb, Some(1050))
+            .await
+            .unwrap();
         let first_push_at = m.inner.lock().await.last_altitude_only_push_at;
         assert!(
             first_push_at.is_some(),
@@ -733,7 +748,9 @@ mod tests {
 
         // Rapid follow-up altitude change — must be throttled (real-world
         // equivalent: the next tick, ~0.5-1s later).
-        m.update_phase(FlightPhase::Climb, Some(1100)).await.unwrap();
+        m.update_phase(FlightPhase::Climb, Some(1100))
+            .await
+            .unwrap();
         let second_push_at = m.inner.lock().await.last_altitude_only_push_at;
         assert_eq!(
             first_push_at, second_push_at,
@@ -742,7 +759,14 @@ mod tests {
 
         // The STORED altitude must still be the latest value even though
         // it wasn't pushed to Discord yet — only the IPC call is throttled.
-        let stored_alt = m.inner.lock().await.last_input.as_ref().unwrap().altitude_ft;
+        let stored_alt = m
+            .inner
+            .lock()
+            .await
+            .last_input
+            .as_ref()
+            .unwrap()
+            .altitude_ft;
         assert_eq!(stored_alt, Some(1100));
     }
 
@@ -752,11 +776,15 @@ mod tests {
         m.set_flight(input("TKJ1224", FlightPhase::Climb, 1000))
             .await
             .unwrap();
-        m.update_phase(FlightPhase::Climb, Some(1050)).await.unwrap(); // consumes the throttle slot
+        m.update_phase(FlightPhase::Climb, Some(1050))
+            .await
+            .unwrap(); // consumes the throttle slot
         let throttle_after_altitude = m.inner.lock().await.last_altitude_only_push_at;
 
         // Immediately — well within the throttle window — transition phase.
-        m.update_phase(FlightPhase::Cruise, Some(35000)).await.unwrap();
+        m.update_phase(FlightPhase::Cruise, Some(35000))
+            .await
+            .unwrap();
         let phase_now = m.inner.lock().await.last_input.as_ref().unwrap().phase;
         assert_eq!(
             phase_now,
@@ -802,7 +830,9 @@ mod tests {
         m.push_state(input("TKJ1224", FlightPhase::Climb, 1000))
             .await
             .unwrap();
-        m.update_phase(FlightPhase::Climb, Some(1050)).await.unwrap(); // consume the throttle slot
+        m.update_phase(FlightPhase::Climb, Some(1050))
+            .await
+            .unwrap(); // consume the throttle slot
         assert!(m.inner.lock().await.last_altitude_only_push_at.is_some());
 
         // A different arr_icao (divert / effectively a new flight) must go

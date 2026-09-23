@@ -145,8 +145,16 @@ pub fn maybe_anonymize_callsign(callsign: &str, anonymize: bool) -> String {
 /// Fehlende Felder werden mit "—" ersetzt damit die Zeile nie leer ist.
 pub fn build_details(input: &PresenceInput, anonymize: bool) -> String {
     let callsign = maybe_anonymize_callsign(&input.callsign, anonymize);
-    let dep = if input.dep_icao.is_empty() { "—".to_string() } else { input.dep_icao.clone() };
-    let arr = if input.arr_icao.is_empty() { "—".to_string() } else { input.arr_icao.clone() };
+    let dep = if input.dep_icao.is_empty() {
+        "—".to_string()
+    } else {
+        input.dep_icao.clone()
+    };
+    let arr = if input.arr_icao.is_empty() {
+        "—".to_string()
+    } else {
+        input.arr_icao.clone()
+    };
     format!("{} · {} → {}", callsign, dep, arr)
 }
 
@@ -158,11 +166,19 @@ pub fn build_details(input: &PresenceInput, anonymize: bool) -> String {
 ///
 /// `sim_lost=true` haengt " · ⚠ Sim getrennt" hinten an (LE8).
 pub fn build_state(input: &PresenceInput, sim_lost: bool) -> String {
-    let aircraft = if input.aircraft.is_empty() { "Aircraft".to_string() } else { input.aircraft.clone() };
+    let aircraft = if input.aircraft.is_empty() {
+        "Aircraft".to_string()
+    } else {
+        input.aircraft.clone()
+    };
     let label = phase_to_label(input.phase);
 
     let mut text = if input.phase == FlightPhase::Arrived {
-        let arr = if input.arr_icao.is_empty() { "—".to_string() } else { input.arr_icao.clone() };
+        let arr = if input.arr_icao.is_empty() {
+            "—".to_string()
+        } else {
+            input.arr_icao.clone()
+        };
         format!("{} · {} · {}", label, aircraft, arr)
     } else if phase_uses_altitude(input.phase) {
         let alt_text = input

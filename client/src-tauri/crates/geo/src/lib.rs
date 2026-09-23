@@ -37,8 +37,7 @@ pub fn distance_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let (phi1, phi2) = (to_rad(lat1), to_rad(lat2));
     let dphi = to_rad(lat2 - lat1);
     let dlambda = to_rad(lon2 - lon1);
-    let a = (dphi / 2.0).sin().powi(2)
-        + phi1.cos() * phi2.cos() * (dlambda / 2.0).sin().powi(2);
+    let a = (dphi / 2.0).sin().powi(2) + phi1.cos() * phi2.cos() * (dlambda / 2.0).sin().powi(2);
     2.0 * EARTH_RADIUS_M * a.sqrt().asin()
 }
 

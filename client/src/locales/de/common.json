@@ -2557,12 +2557,14 @@
     }
   },
   "sprung": {
-    "title": "Flug so nicht fortgesetzt",
+    "title": "Flug wurde so nicht fortgesetzt",
     "body": "Beim Wiederaufnehmen hat sich die Lage des Flugzeugs sprunghaft geändert (Sprit, Höhe oder Position). Der Simulator wurde offenbar neu geladen, der Flug ging so nicht weiter. Deshalb wird nichts automatisch eingereicht.",
     "verwerfen": "Flug verwerfen",
     "trotzdem": "Trotzdem einreichen",
     "laeuft": "einen Moment …",
     "begruendung_label": "Begründung für die VA (freiwillig)",
-    "begruendung_platzhalter": "z. B. Simulator abgestürzt, danach am Zielflughafen neu geladen"
+    "begruendung_platzhalter": "z. B. Simulator abgestürzt, danach am Zielflughafen neu geladen",
+    "verwerfen_sicher": "Ja, Flug verwerfen",
+    "doch_nicht": "Doch nicht"
   }
 }

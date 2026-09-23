@@ -135,6 +135,24 @@ pub async fn upload_diagnose_logs(
     password: &str,
     endpoint: Option<&str>,
 ) -> Result<UploadStats> {
+    upload_diagnose_logs_mit(log_paths, pirep_id, username, password, endpoint, false).await
+}
+
+/// Wie `upload_diagnose_logs`, aber mit der Wahl, welche Seite beim
+/// Kuerzen ueberlebt.
+///
+/// Beim Einreichen ist der Fehler das Letzte, was passiert ist — da bleibt
+/// das Ende. Beim NACHREICHEN laeuft der Upload kurz nach dem Programmstart:
+/// Das Ende sind dann die frischen Startzeilen von heute, und der gesuchte
+/// Abriss von gestern faellt als erstes weg (Cloud-QS 23.09.2026).
+pub async fn upload_diagnose_logs_mit(
+    log_paths: &[std::path::PathBuf],
+    pirep_id: &str,
+    username: &str,
+    password: &str,
+    endpoint: Option<&str>,
+    anfang_behalten: bool,
+) -> Result<UploadStats> {
     // Mehrere Tagesdateien in zeitlicher Reihenfolge, getrennt durch eine
     // Kopfzeile — ein Flug ueber Mitternacht braucht beide.
     let mut raw: Vec<u8> = Vec::new();
@@ -153,8 +171,12 @@ pub async fn upload_diagnose_logs(
         anyhow::bail!("diagnose log is empty");
     }
     if raw.len() > DIAGNOSE_MAX_ROH {
-        // Vorn abschneiden: Der Fehler steht am Ende, nicht am Anfang.
-        raw = raw.split_off(raw.len() - DIAGNOSE_MAX_ROH);
+        if anfang_behalten {
+            raw.truncate(DIAGNOSE_MAX_ROH);
+        } else {
+            // Vorn abschneiden: Der Fehler steht am Ende, nicht am Anfang.
+            raw = raw.split_off(raw.len() - DIAGNOSE_MAX_ROH);
+        }
     }
     let raw_size = raw.len();
 

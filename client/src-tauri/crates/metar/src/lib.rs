@@ -172,10 +172,7 @@ pub async fn fetch_metar(icao: &str) -> Result<MetarSnapshot, MetarError> {
         match fetch_metar_once(icao).await {
             Ok(m) => return Ok(m),
             Err(e) => {
-                let retryable = matches!(
-                    &e,
-                    MetarError::Network(_) | MetarError::Status(_)
-                );
+                let retryable = matches!(&e, MetarError::Network(_) | MetarError::Status(_));
                 last_err = Some(e);
                 if !retryable || attempt == 2 {
                     break;
@@ -193,9 +190,7 @@ pub async fn fetch_metar(icao: &str) -> Result<MetarSnapshot, MetarError> {
 
 async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
     let icao = icao.trim().to_uppercase();
-    let url = format!(
-        "https://aviationweather.gov/api/data/metar?ids={icao}&format=json&hours=2"
-    );
+    let url = format!("https://aviationweather.gov/api/data/metar?ids={icao}&format=json&hours=2");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
@@ -228,8 +223,8 @@ async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
     if body.iter().all(|b| b.is_ascii_whitespace()) {
         return Err(MetarError::NotFound(icao.clone()));
     }
-    let list: Vec<ApiMetar> = serde_json::from_slice(&body)
-        .map_err(|e| MetarError::Parse(e.to_string()))?;
+    let list: Vec<ApiMetar> =
+        serde_json::from_slice(&body).map_err(|e| MetarError::Parse(e.to_string()))?;
     let raw = pick_latest(list).ok_or_else(|| MetarError::NotFound(icao.clone()))?;
 
     let echte_beobachtungszeit = raw.obs_time.and_then(|s| Utc.timestamp_opt(s, 0).single());
@@ -312,11 +307,20 @@ mod decoded_wx_tests {
         assert_eq!(m.wx_string.as_deref(), Some("-SHRA"));
         assert_eq!(m.clouds.len(), 3);
         // Mapping-Logik gespiegelt (CLR faellt raus, Basis wird u32):
-        let layers: Vec<CloudLayer> = m.clouds.into_iter().filter_map(|c| {
-            let cover = c.cover?.trim().to_uppercase();
-            if matches!(cover.as_str(), "CLR" | "SKC" | "NSC" | "NCD" | "CAVOK") { return None; }
-            Some(CloudLayer { cover, base_ft: c.base.map(|b| b.max(0.0) as u32) })
-        }).collect();
+        let layers: Vec<CloudLayer> = m
+            .clouds
+            .into_iter()
+            .filter_map(|c| {
+                let cover = c.cover?.trim().to_uppercase();
+                if matches!(cover.as_str(), "CLR" | "SKC" | "NSC" | "NCD" | "CAVOK") {
+                    return None;
+                }
+                Some(CloudLayer {
+                    cover,
+                    base_ft: c.base.map(|b| b.max(0.0) as u32),
+                })
+            })
+            .collect();
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[1].cover, "BKN");
         assert_eq!(layers[1].base_ft, Some(1200));
@@ -325,13 +329,22 @@ mod decoded_wx_tests {
     #[test]
     fn snapshot_serialises_new_fields_for_the_panel() {
         let snap = MetarSnapshot {
-            icao: "EDDB".into(), raw: "x".into(), time: Utc::now(),
+            icao: "EDDB".into(),
+            raw: "x".into(),
+            time: Utc::now(),
             time_is_estimated: false,
-            wind_direction_deg: Some(260.0), wind_speed_kt: Some(12.0), gust_kt: None,
-            visibility_m: Some(9999), temperature_c: Some(30.0), dewpoint_c: Some(13.0),
+            wind_direction_deg: Some(260.0),
+            wind_speed_kt: Some(12.0),
+            gust_kt: None,
+            visibility_m: Some(9999),
+            temperature_c: Some(30.0),
+            dewpoint_c: Some(13.0),
             qnh_hpa: Some(1011.0),
             weather: Some("-SHRA".into()),
-            cloud_layers: vec![CloudLayer { cover: "BKN".into(), base_ft: Some(1200) }],
+            cloud_layers: vec![CloudLayer {
+                cover: "BKN".into(),
+                base_ft: Some(1200),
+            }],
         };
         let js = serde_json::to_string(&snap).expect("serialise");
         assert!(js.contains("\"weather\":\"-SHRA\""), "{js}");
@@ -347,7 +360,10 @@ mod decoded_wx_tests {
         fn zeit_und_geschaetzt(obs_time: Option<i64>) -> (DateTime<Utc>, bool) {
             let echte_beobachtungszeit = obs_time.and_then(|s| Utc.timestamp_opt(s, 0).single());
             let time_is_estimated = echte_beobachtungszeit.is_none();
-            (echte_beobachtungszeit.unwrap_or_else(Utc::now), time_is_estimated)
+            (
+                echte_beobachtungszeit.unwrap_or_else(Utc::now),
+                time_is_estimated,
+            )
         }
 
         // Echte, parsebare obs_time → keine Schätzung.
@@ -367,7 +383,8 @@ mod decoded_wx_tests {
 }
 
 fn pick_latest(list: Vec<ApiMetar>) -> Option<ApiMetar> {
-    list.into_iter().max_by_key(|m| m.obs_time.unwrap_or(i64::MIN))
+    list.into_iter()
+        .max_by_key(|m| m.obs_time.unwrap_or(i64::MIN))
 }
 
 /// Decode the aviationweather.gov `visib` field (and the raw METAR
@@ -480,18 +497,20 @@ mod tests {
     /// rendering "—" in the UI because CAVOK wasn't being decoded.
     #[test]
     fn cavok_eddw_visibility_is_at_least_10km() {
-        let raw_ob =
-            "METAR EDDW 021520Z AUTO 23015KT CAVOK 25/09 Q1015 TEMPO 23015G25KT";
+        let raw_ob = "METAR EDDW 021520Z AUTO 23015KT CAVOK 25/09 Q1015 TEMPO 23015G25KT";
         // No structured visib field returned by upstream.
         let v = decode_visibility(None, Some(raw_ob));
-        assert_eq!(v, Some(9999), "CAVOK without structured visib must map to ≥10 km");
+        assert_eq!(
+            v,
+            Some(9999),
+            "CAVOK without structured visib must map to ≥10 km"
+        );
     }
 
     /// Same EDDM CAVOK report — checks the same fallback path holds.
     #[test]
     fn cavok_eddm_visibility() {
-        let raw_ob =
-            "METAR EDDM 021520Z AUTO 09004KT 050V150 CAVOK 24/03 Q1019 NOSIG";
+        let raw_ob = "METAR EDDM 021520Z AUTO 09004KT 050V150 CAVOK 24/03 Q1019 NOSIG";
         let v = decode_visibility(None, Some(raw_ob));
         assert_eq!(v, Some(9999));
     }
@@ -527,7 +546,10 @@ mod tests {
     /// Sub-10 sm value should still convert to metres normally.
     #[test]
     fn numeric_3sm_converts_to_metres() {
-        let v = decode_visibility(Some(&Visibility::Numeric(3.0)), Some("METAR KJFK ... 3SM ..."));
+        let v = decode_visibility(
+            Some(&Visibility::Numeric(3.0)),
+            Some("METAR KJFK ... 3SM ..."),
+        );
         // 3 * 1609.344 = 4828.032 → 4828 as u32
         assert_eq!(v, Some(4828));
     }

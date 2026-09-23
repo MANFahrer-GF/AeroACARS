@@ -58,11 +58,7 @@ fn ewg248_bekommt_mit_beiden_korrekturen_eine_echte_note() {
         "die Achse wird immer noch übersprungen: {:?}",
         r.reason
     );
-    assert!(
-        r.score <= 100,
-        "unplausible Punktzahl {}",
-        r.score
-    );
+    assert!(r.score <= 100, "unplausible Punktzahl {}", r.score);
     // Und der Wert ist nicht geschenkt: Das äussere Rad lag rechnerisch
     // rund 3 m vor der Kante — das ist knapp, und die Note muss das zeigen.
     let halbe = BAHNBREITE_M / 2.0;

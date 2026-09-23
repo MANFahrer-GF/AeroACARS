@@ -1536,9 +1536,7 @@ impl Client {
     /// `$where['state']` when the query param is present, and a pilot has at
     /// most a handful of IN_PROGRESS PIREPs at once, so page 1 is always the
     /// complete set.
-    pub async fn get_user_pireps_in_progress(
-        &self,
-    ) -> Result<Vec<PirepSummary>, ApiError> {
+    pub async fn get_user_pireps_in_progress(&self) -> Result<Vec<PirepSummary>, ApiError> {
         self.get_data(USER_PIREPS_IN_PROGRESS_PATH).await
     }
 
@@ -1627,9 +1625,15 @@ impl Client {
     }
 
     /// Logbuch-Flugliste (paginiert): `{ items, total, limit, offset }`.
-    pub async fn get_logbook_pireps(&self, limit: u32, offset: u32) -> Result<serde_json::Value, ApiError> {
-        self.get_logbook_json(&format!("/api/gsg/logbook/pireps?limit={limit}&offset={offset}"))
-            .await
+    pub async fn get_logbook_pireps(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<serde_json::Value, ApiError> {
+        self.get_logbook_json(&format!(
+            "/api/gsg/logbook/pireps?limit={limit}&offset={offset}"
+        ))
+        .await
     }
 
     /// Logbuch-Summen (Flüge, Stunden, Distanz, Ø-Landung, Rang).
@@ -1639,7 +1643,8 @@ impl Client {
 
     /// Logbuch-Detail eines PIREP inkl. `route` (Track) + `log` (Fluglogbuch).
     pub async fn get_logbook_pirep(&self, id: &str) -> Result<serde_json::Value, ApiError> {
-        self.get_logbook_json(&format!("/api/gsg/logbook/pireps/{id}")).await
+        self.get_logbook_json(&format!("/api/gsg/logbook/pireps/{id}"))
+            .await
     }
 
     /// POST a JSON body and decode the response envelope `{ data: T }`.
@@ -1884,10 +1889,7 @@ impl Client {
     /// Returns `Ok(None)` when the OFP is missing or malformed —
     /// flight_start should treat that as "no plan, no comparison"
     /// rather than refusing to start.
-    pub async fn fetch_simbrief_ofp(
-        &self,
-        ofp_id: &str,
-    ) -> Result<Option<SimBriefOfp>, ApiError> {
+    pub async fn fetch_simbrief_ofp(&self, ofp_id: &str) -> Result<Option<SimBriefOfp>, ApiError> {
         let url = format!(
             "https://www.simbrief.com/ofp/flightplans/xml/{}.xml",
             urlencoding_escape(ofp_id)
@@ -2138,11 +2140,7 @@ impl Client {
     /// text log lines that show up in the PIREP detail. Used for sub-events
     /// without a PirepStatus equivalent (TOC, TOD, V1/VR/V2, touchdown VS,
     /// engine start/stop, etc.).
-    pub async fn post_acars_logs(
-        &self,
-        pirep_id: &str,
-        logs: &[LogEntry],
-    ) -> Result<(), ApiError> {
+    pub async fn post_acars_logs(&self, pirep_id: &str, logs: &[LogEntry]) -> Result<(), ApiError> {
         #[derive(Serialize)]
         struct Body<'a> {
             logs: &'a [LogEntry],
@@ -2220,9 +2218,7 @@ impl Client {
             .await
         {
             Ok(a) => Ok(a),
-            Err(ApiError::NotFound) => {
-                self.get_data(&format!("/api/aircraft/{id}")).await
-            }
+            Err(ApiError::NotFound) => self.get_data(&format!("/api/aircraft/{id}")).await,
             Err(e) => Err(e),
         }
     }
@@ -2234,7 +2230,10 @@ impl Client {
     ///
     /// phpVMS gibt nur Aircraft zurueck die der Pilot per Subfleet-Rank
     /// fliegen darf — Server-side enforcement, kein Client-Filter noetig.
-    pub async fn get_aircraft_at_airport(&self, icao: &str) -> Result<Vec<AircraftDetails>, ApiError> {
+    pub async fn get_aircraft_at_airport(
+        &self,
+        icao: &str,
+    ) -> Result<Vec<AircraftDetails>, ApiError> {
         let path = format!("/api/airports/{}/aircraft", icao.to_uppercase());
         self.get_data(&path).await
     }
@@ -2340,7 +2339,9 @@ async fn check_status(response: Response, path: &str) -> Result<Response, ApiErr
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(60);
-            Err(ApiError::RateLimited { retry_after_seconds })
+            Err(ApiError::RateLimited {
+                retry_after_seconds,
+            })
         }
         s => {
             let body = response.text().await.unwrap_or_default();
@@ -2394,7 +2395,10 @@ fn extract_tag<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
 /// waeren alle Planwerte 2,2-fach zu gross gewesen — Reserve auf jedem Flug
 /// „unterschritten", die Sprit-Leiter Unsinn. `wt_unit` bleibt als Rueckfall.
 fn ofp_unit_is_lb(xml: &str) -> bool {
-    let ist_lbs = |v: Option<&str>| v.map(str::trim).is_some_and(|v| v.eq_ignore_ascii_case("lbs"));
+    let ist_lbs = |v: Option<&str>| {
+        v.map(str::trim)
+            .is_some_and(|v| v.eq_ignore_ascii_case("lbs"))
+    };
     ist_lbs(extract_tag(xml, "params").and_then(|p| extract_tag(p, "units")))
         || ist_lbs(extract_tag(xml, "wt_unit"))
 }
@@ -2410,12 +2414,15 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
     // Rueckfall stehen, falls SimBrief es irgendwo doch liefert.
     let unit_is_lb = ofp_unit_is_lb(xml);
     let to_kg = |v: f32| -> f32 {
-        if unit_is_lb { v * 0.453_592_37 } else { v }
+        if unit_is_lb {
+            v * 0.453_592_37
+        } else {
+            v
+        }
     };
 
     let parse_f = |tag: &str| -> Option<f32> {
-        extract_tag(xml, tag)
-            .and_then(|s| s.trim().parse::<f32>().ok())
+        extract_tag(xml, tag).and_then(|s| s.trim().parse::<f32>().ok())
     };
 
     // Required: at least one weight field has to be present, else
@@ -2626,7 +2633,9 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
     // Block-Zeiten aus <times> — Fallback-Quellen wenn phpVMS' eigene Felder
     // (Bid-Pointer-Subfleet bzw. flights.dpt_time/arr_time) fehlen.
     let aircraft_icao = extract_tag(xml, "aircraft")
-        .and_then(|inner| extract_tag(inner, "icaocode").or_else(|| extract_tag(inner, "base_type")))
+        .and_then(|inner| {
+            extract_tag(inner, "icaocode").or_else(|| extract_tag(inner, "base_type"))
+        })
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let max_passengers = extract_tag(xml, "aircraft")
@@ -2698,10 +2707,8 @@ fn extract_navlog_fixes(xml: &str, unit_is_lb: bool) -> Vec<RouteFix> {
         let block = &scope[abs_start..abs_start + rel_end];
         cursor = abs_start + rel_end + "</fix>".len();
         let ident = extract_tag(block, "ident").unwrap_or("").trim().to_string();
-        let lat: Option<f64> = extract_tag(block, "pos_lat")
-            .and_then(|s| s.trim().parse().ok());
-        let lon: Option<f64> = extract_tag(block, "pos_long")
-            .and_then(|s| s.trim().parse().ok());
+        let lat: Option<f64> = extract_tag(block, "pos_lat").and_then(|s| s.trim().parse().ok());
+        let lon: Option<f64> = extract_tag(block, "pos_long").and_then(|s| s.trim().parse().ok());
         let kind = extract_tag(block, "type").unwrap_or("").trim().to_string();
         if let (true, Some(la), Some(lo)) = (!ident.is_empty(), lat, lon) {
             out.push(RouteFix {
@@ -2759,7 +2766,10 @@ mod positions_wire_tests {
             ..Default::default()
         };
         let v = serde_json::to_value(&p).unwrap();
-        assert!(v.get("id").is_none(), "leere id darf nicht mitgeschickt werden");
+        assert!(
+            v.get("id").is_none(),
+            "leere id darf nicht mitgeschickt werden"
+        );
     }
 
     /// Rueckwaertskompatibilitaet: `position_queue.json` eines aelteren
@@ -3175,7 +3185,6 @@ mod tests {
         assert_eq!(ofp.alternate.as_deref(), Some("EDDN"));
     }
 
-
     /// v0.7.8: <params><request_id> ist die canonical changed-flag-
     /// Quelle fuer SimBrief-direct Refresh. Spec §3.
     #[test]
@@ -3370,7 +3379,10 @@ mod tests {
             ..Default::default()
         };
         let js = serde_json::to_string(&body).unwrap();
-        assert!(!js.contains("flight_id"), "None muss weggelassen werden: {js}");
+        assert!(
+            !js.contains("flight_id"),
+            "None muss weggelassen werden: {js}"
+        );
 
         body.flight_id = Some("N43EeJppON5wr3Rm".into());
         let js = serde_json::to_string(&body).unwrap();
@@ -3476,7 +3488,6 @@ mod navlog_sprit_tests {
         assert_eq!(fixes[1].sprit_bis_hier_kg, Some(42666.0));
     }
 
-
     /// Das Format, das SimBrief wirklich liefert: `<params><units>`. Ohne
     /// diesen Test waere der Griff nach `<wt_unit>` unbemerkt geblieben —
     /// er kommt in keinem echten OFP vor (Korpus-Pruefung ueber 40 OFPs).
@@ -3484,14 +3495,22 @@ mod navlog_sprit_tests {
     fn navlog_sprit_erkennt_einheit_aus_params() {
         // Das Format, das SimBrief wirklich liefert — so steht es in allen
         // 40 OFPs der Produktionsdatenbank.
-        assert!(ofp_unit_is_lb("<OFP><params><units>lbs</units></params></OFP>"));
-        assert!(!ofp_unit_is_lb("<OFP><params><units>kgs</units></params></OFP>"));
+        assert!(ofp_unit_is_lb(
+            "<OFP><params><units>lbs</units></params></OFP>"
+        ));
+        assert!(!ofp_unit_is_lb(
+            "<OFP><params><units>kgs</units></params></OFP>"
+        ));
         // Rueckfall, falls SimBrief das alte Tag doch irgendwo liefert.
-        assert!(ofp_unit_is_lb("<OFP><general><wt_unit>lbs</wt_unit></general></OFP>"));
+        assert!(ofp_unit_is_lb(
+            "<OFP><general><wt_unit>lbs</wt_unit></general></OFP>"
+        ));
         // Und ohne jede Angabe bleibt es bei Kilogramm.
         assert!(!ofp_unit_is_lb("<OFP><navlog></navlog></OFP>"));
         // Ein pretty-printed OFP darf nicht still auf Kilogramm zurueckfallen.
-        assert!(ofp_unit_is_lb("<OFP><params><units>\n  LBS\n</units></params></OFP>"));
+        assert!(ofp_unit_is_lb(
+            "<OFP><params><units>\n  LBS\n</units></params></OFP>"
+        ));
         // Wirkung auf die Sprit-Felder: 42 666 lb sind 19 353 kg (DLH370).
         let xml = r#"<OFP><params><units>lbs</units></params><navlog>
 <fix><ident>TOD</ident><type>ltp</type><pos_lat>49.7</pos_lat><pos_long>12.1</pos_long>

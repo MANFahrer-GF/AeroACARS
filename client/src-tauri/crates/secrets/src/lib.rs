@@ -204,7 +204,10 @@ mod tests {
     fn store_load_delete_roundtrip() {
         setup();
         store_api_key("test-1", "secret-value").unwrap();
-        assert_eq!(load_api_key("test-1").unwrap().as_deref(), Some("secret-value"));
+        assert_eq!(
+            load_api_key("test-1").unwrap().as_deref(),
+            Some("secret-value")
+        );
         delete_api_key("test-1").unwrap();
         assert!(load_api_key("test-1").unwrap().is_none());
     }

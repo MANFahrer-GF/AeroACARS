@@ -1072,14 +1072,26 @@ fn ist_sprung_ans_ziel(d: &ResumeDiscontinuity) -> bool {
         (Some(vorher), Some(nachher))
             if vorher > RESUME_ZIELSPRUNG_VORHER_NM && nachher < RESUME_ZIELSPRUNG_NACHHER_NM =>
         {
-            // Am Boden am Ziel: hingestellt. In der Luft am Ziel: nur dann,
-            // wenn die Strecke in der Zeit gar nicht zu fliegen war — sonst
-            // waere jeder Pilot verdaechtig, dem SimConnect unterwegs
-            // abreisst und der den Rest selbst fliegt (Cloud-QS 23.09.2026).
-            d.danach_am_boden || !strecke_war_fliegbar(d)
+            // Zwei Wege zum selben Urteil, und beide brauchen ein Merkmal
+            // ausser der Nachbarschaft zum Ziel — sonst traefe es jeden
+            // Piloten, dem SimConnect im Anflug abreisst und der den Rest
+            // selbst fliegt und landet (Cloud-QS 23.09.2026, zweite Runde):
+            //
+            //   * die Uhr: die Strecke war in der Zeit nicht zu fliegen;
+            //   * der Sprit: es wurde ueberhaupt nichts verbraucht. Wer
+            //     die Meilen wirklich geflogen ist, hat getankt — MSC1588
+            //     kam mit exakt demselben Tankstand 49 nm weiter.
+            !strecke_war_fliegbar(d) || (d.danach_am_boden && !sprit_wurde_verbraucht(d))
         }
         _ => false,
     }
+}
+
+/// Ist zwischen den beiden Punkten ueberhaupt Sprit verbrannt worden?
+/// Ein Flugzeug, das Meilen zurueckgelegt hat, hat welchen verbraucht;
+/// ein neu geladenes steht mit dem alten (oder einem hoeheren) Stand da.
+fn sprit_wurde_verbraucht(d: &ResumeDiscontinuity) -> bool {
+    d.fuel_delta_kg < 0.0
 }
 
 /// Der Notiz-Block, den ein bewusst eingereichter Sprung-Flug im PIREP
@@ -1321,6 +1333,28 @@ mod resume_discontinuity_tests {
         // Ohne bekannte Luecke bleibt es beim Zweifel fuer den Piloten.
         let d7 = compute_resume_discontinuity(&vorher, &im_anflug, ziel, None);
         assert!(!ist_sprung_ans_ziel(&d7));
+
+        // Erlaubt und haeufig: SimConnect reisst 18 nm vor dem Platz ab, der
+        // Pilot fliegt selbst weiter, landet und rollt ans Gate. Danach steht
+        // er AM BODEN am Ziel — wie ein Hingestellter. Ihn unterscheidet der
+        // Sprit: 900 kg weniger (Cloud-QS 23.09.2026, zweite Runde).
+        let kurz_vorher = paused_snapshot(30.42, 31.43, 6000.0, 3876.0, false);
+        let gelandet = sim_snapshot(30.1250, 31.4100, 358.0, 2976.0, true);
+        let d8 = compute_resume_discontinuity(&kurz_vorher, &gelandet, ziel, Some(600));
+        assert!(
+            !ist_sprung_ans_ziel(&d8),
+            "ehrliche Landung nach Abriss: {:?} nm, Sprit {:+.0}",
+            d8.ziel_vorher_nm,
+            d8.fuel_delta_kg
+        );
+        assert!(!is_impossible_discontinuity(&d8));
+
+        // Gegenprobe zur Gegenprobe: dieselbe Lage, aber der Tank steht noch
+        // genau so voll wie vorher. Dann sind die Meilen nicht geflogen.
+        let gelandet_ohne_verbrauch = sim_snapshot(30.1250, 31.4100, 358.0, 3876.0, true);
+        let d9 =
+            compute_resume_discontinuity(&kurz_vorher, &gelandet_ohne_verbrauch, ziel, Some(600));
+        assert!(ist_sprung_ans_ziel(&d9));
     }
     /// Die Notiz ist das EINZIGE, was der VA-Admin spaeter sieht: Der Sprung
     /// steht sonst nirgends im PIREP. Geprueft wird deshalb, dass Grund und
@@ -5287,6 +5321,14 @@ struct FlightStats {
     app_restart_was_unclean: Option<bool>,
     /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
     resume_gap_minutes: Option<i64>,
+    /// Dieselbe Luecke in SEKUNDEN, nur fuer die Sprung-Pruefung.
+    ///
+    /// `resume_gap_minutes` schneidet auf ganze Minuten ab: 105 Sekunden
+    /// werden dort zu 60, und die gerechnete Grundgeschwindigkeit steigt
+    /// entsprechend — genug fuer einen Fehlalarm nach einem Update-Neustart
+    /// im Sinkflug (Cloud-QS 23.09.2026). `None`, wenn die Dauer nicht
+    /// bekannt ist; dann gilt der Zweifel fuer den Piloten.
+    resume_luecke_secs: Option<i64>,
 
     /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
     /// Summe aller Pause-Sekunden seit Flugstart. Wird beim
@@ -11914,6 +11956,22 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
             kandidaten.push(id.clone());
         }
     }
+    let uebersprungen = flug_kandidaten.len() + diag_kandidaten.len()
+        - flug_kandidaten
+            .iter()
+            .filter(|id| diag_kandidaten.contains(id))
+            .count()
+        - kandidaten.len();
+    if uebersprungen > 0 {
+        // Nicht stumm bleiben: Der Server nimmt 50 IDs, mehr Kandidaten
+        // fallen hinten runter (Cloud-QS 23.09.2026).
+        tracing::info!(
+            uebersprungen,
+            flug = flug_kandidaten.len(),
+            diagnose = diag_kandidaten.len(),
+            "Nachreichen: mehr Kandidaten als die Abfrage fasst"
+        );
+    }
     if kandidaten.is_empty() {
         return true;
     }
@@ -11987,7 +12045,13 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
                 "Nachreichen: Diagnose-Logs fehlen auf dem Server"
             );
         }
-        let dateien = diagnose_logs_fuer_upload();
+        // So weit zurueck, wie ein Kandidat alt sein darf: Die Zeilen eines
+        // 35 Stunden alten Fluges stehen in einer aelteren Tagesdatei. Ohne
+        // sie ginge ein Upload raus, der den Flug auf dem Server als
+        // erledigt markiert, ohne das Gesuchte zu enthalten (Cloud-QS
+        // 23.09.2026).
+        let tage = (NACHREICHEN_DIAGNOSE_MAX_ALTER.as_secs() as i64) / 86_400 + 1;
+        let dateien = diagnose_logs_der_letzten_tage(tage);
         for pirep_id in diagnose_fehlt.into_iter().take(NACHREICHEN_MAX_UPLOADS) {
             if dateien.is_empty() {
                 break;
@@ -11996,8 +12060,8 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
                 tracing::info!("Nachreichen: Sitzung gewechselt — abgebrochen");
                 break;
             }
-            match aeroacars_mqtt::log_upload::upload_diagnose_logs(
-                &dateien, &pirep_id, &username, &password, None,
+            match aeroacars_mqtt::log_upload::upload_diagnose_logs_mit(
+                &dateien, &pirep_id, &username, &password, None, true,
             )
             .await
             {
@@ -12146,11 +12210,73 @@ mod nachreichen_tests {
             sprung < abgabe,
             "die Sprung-Pruefung muss VOR der automatischen Abgabe stehen"
         );
+        // Der ZWEITE Weg, auf dem die App von selbst einreicht: File-First
+        // in `flight_cancel`. Er hat MSC1588 nicht ausgeloest, aber der
+        // Resume-Banner ruft ihn ohne `force` — ohne diese Bedingung reicht
+        // „Flug verwerfen" den Flug ein (Cloud-QS 23.09.2026).
+        let cancel = SRC
+            .find("\nasync fn flight_cancel(")
+            .expect("flight_cancel nicht gefunden — Test anpassen, nicht loeschen");
+        let cancel_ende = SRC[cancel + 1..]
+            .find("\nasync fn ")
+            .map(|i| cancel + 1 + i)
+            .unwrap_or(SRC.len());
+        let file_first = &SRC[cancel..cancel_ende];
+        let bedingung = file_first
+            .find("stats.resume_discontinuity.is_none()")
+            .expect("File-First prueft den Sprung nicht mehr — es reicht sonst selbst ein");
+        let aufruf = file_first
+            .find("flight_end(app.clone()")
+            .expect("File-First-Aufruf nicht mehr gefunden");
         assert!(
-            zweig.contains("der Pilot entscheidet im Banner"),
-            "der Grund gehoert an die Stelle — sonst wird die Ausnahme spaeter \
-             fuer einen Fehler gehalten"
+            bedingung < aufruf,
+            "die Pruefung muss VOR der Abgabe stehen"
         );
+    }
+
+    /// Die Einheitentests rufen `compute_resume_discontinuity` selbst mit
+    /// Ziel und Luecke auf. Uebergaeben die ECHTEN Aufrufstellen dort `None`,
+    /// waere die ganze Regel wirkungslos — und alle Tests blieben gruen
+    /// (Cloud-QS 23.09.2026).
+    #[test]
+    fn die_echten_aufrufe_geben_ziel_und_luecke_mit() {
+        const SRC: &str = include_str!("lib.rs");
+        // Die Tests selbst stehen im Modul `resume_discontinuity_tests`
+        // und werden hier ausgeblendet — gezaehlt werden nur die Aufrufe
+        // ausserhalb.
+        let modul = SRC
+            .find("\nmod resume_discontinuity_tests {")
+            .expect("Testmodul nicht gefunden — Test anpassen, nicht loeschen");
+        let modul_ende = SRC[modul..]
+            .find("\n}\n")
+            .map(|i| modul + i)
+            .expect("Ende des Testmoduls nicht gefunden");
+        // Der Suchtext getrennt, sonst findet der Test SICH SELBST — die
+        // Falle hat in dieser Datei schon zweimal zugeschlagen.
+        let nadel = concat!("compute_resume_", "discontinuity(");
+        let aufrufe: Vec<&str> = SRC
+            .match_indices(nadel)
+            .filter(|(i, _)| !(modul..modul_ende).contains(i))
+            .map(|(i, _)| {
+                let rest = &SRC[i..];
+                // Bis zum Ende der Anweisung, nicht bis zu einem festen
+                // Offset (die Datei enthaelt Nicht-ASCII).
+                &rest[..rest.find(';').map(|e| e + 1).unwrap_or(rest.len())]
+            })
+            // Die Definition selbst ist kein Aufruf.
+            .filter(|a| !a.contains("prev: &PausedSnapshot"))
+            .collect();
+        assert_eq!(aufrufe.len(), 2, "Aufrufstellen: {aufrufe:#?}");
+        for a in &aufrufe {
+            assert!(
+                a.contains("ziel"),
+                "ohne Zielkoordinaten schlaegt die Sprung-Regel nie an: {a}"
+            );
+            assert!(
+                a.contains("duration_secs") || a.contains("luecke_secs"),
+                "ohne Luecke gilt jede Strecke als fliegbar: {a}"
+            );
+        }
     }
 
     /// Der manuelle Einreichweg darf nicht die Tuer sein, durch die ein
@@ -12183,7 +12309,7 @@ mod nachreichen_tests {
             p("abgebrochen", 3, false),
             p("zu_alt", 48, false),
         ];
-        let tag_und_nacht = Duration::from_secs(36 * 3600);
+        let tag_und_nacht = super::NACHREICHEN_DIAGNOSE_MAX_ALTER;
         assert_eq!(
             super::diagnose_kandidaten(&liste, None, tag_und_nacht, 50),
             vec!["eingereicht", "abgebrochen"]
@@ -12243,9 +12369,27 @@ mod nachreichen_tests {
             .expect("flight_cancel laedt die Diagnose nicht mehr hoch");
         let rest = &koerper[aufruf..];
         let ende = rest.find(");").unwrap_or(rest.len());
+        // Auf das LETZTE Argument abstellen, nicht auf „irgendwo steht true":
+        // ein Variablenname mit „true" darin haette den Waechter sonst
+        // gruen gelassen (Cloud-QS 23.09.2026).
+        let letztes = rest[..ende]
+            .rsplit(',')
+            .next()
+            .map(str::trim)
+            .unwrap_or_default();
+        assert_eq!(
+            letztes, "true",
+            "flight_cancel muss mit nur_diagnose=true aufrufen, sonst wandert \
+             das Flugprotokoll eines abgebrochenen Fluges in den Import"
+        );
+        // Und er muss laufen, BEVOR ein Serverfehler die Funktion verlaesst.
+        let fehlerausgang = koerper
+            .find("\n    result?;")
+            .expect("result?-Ausgang nicht mehr gefunden");
         assert!(
-            rest[..ende].contains("true"),
-            "flight_cancel muss mit nur_diagnose=true aufrufen, sonst wandert              das Flugprotokoll eines abgebrochenen Fluges in den Import"
+            aufruf < fehlerausgang,
+            "ohne Netz kehrt flight_cancel bei result? zurueck — der Upload \
+             muss davor stehen"
         );
     }
 
@@ -29701,6 +29845,12 @@ async fn flight_cancel(
         // gültige `landing_at`-Markierung gesetzt ist UND die FSM-Phase
         // eine TD-Phase ist, ist der Flug noch nicht gefiled (gefilte
         // Flüge räumen `state.active_flight` selber via flight_end-Pfad).
+        // ⚠ Nicht bei erkanntem Sprung: Hier reicht die App von SELBST ein
+        // (File-First). Genau das soll nach MSC1588 nicht mehr passieren —
+        // und der Resume-Banner ruft `flight_cancel` OHNE `force`, sodass
+        // ein Klick auf „Flug verwerfen" den Flug sonst einreicht statt ihn
+        // wegzuwerfen (Cloud-QS 23.09.2026). Einreichen darf nur der Pilot
+        // im Sprung-Banner.
         matches!(
             stats.phase,
             FlightPhase::Landing
@@ -29708,6 +29858,7 @@ async fn flight_cancel(
                 | FlightPhase::BlocksOn
                 | FlightPhase::Arrived
         ) && stats.landing_at.is_some()
+            && stats.resume_discontinuity.is_none()
     };
 
     let user_forced_cancel = force.unwrap_or(false);
@@ -29868,6 +30019,22 @@ async fn flight_cancel(
     clear_persisted_flight(&app, Some(&flight.pirep_id));
     discard_queued_positions_for(&app, &flight.pirep_id);
     pirep_queue::remove(&app, &flight.pirep_id);
+    // Die technischen Zeilen mitschicken — NUR die, ohne Flugprotokoll.
+    //
+    // Ein abgebrochener Flug lud bisher gar nichts hoch. Genau dort, wo die
+    // Abbrüche das Problem sind, hatten wir deshalb keine Daten (Joel,
+    // 22.09.2026: zwei Flüge nach Stunden weggeworfen, Ursache unbekannt).
+    //
+    // ⚠ VOR `result?`: Scheitert die Stornierung am Server (kein Netz, 5xx),
+    // kehrt die Funktion mit Err zurueck — und ausgerechnet der Abbruch ohne
+    // Netz, fuer den dieser Weg gebaut wurde, haette nie etwas hochgeladen
+    // (Cloud-QS 23.09.2026).
+    let besitzer = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| id.to_string());
+    spawn_flight_log_upload(&app, flight.pirep_id.clone(), besitzer, true);
     result?;
     log_activity(
         &state,
@@ -29889,17 +30056,6 @@ async fn flight_cancel(
             outcome: FlightOutcome::Cancelled,
         },
     );
-    // Die technischen Zeilen mitschicken — NUR die, ohne Flugprotokoll.
-    //
-    // Ein abgebrochener Flug lud bisher gar nichts hoch. Genau dort, wo die
-    // Abbrüche das Problem sind, hatten wir deshalb keine Daten (Joel,
-    // 22.09.2026: zwei Flüge nach Stunden weggeworfen, Ursache unbekannt).
-    let besitzer = state
-        .authenticated_pilot_id
-        .lock()
-        .expect("authenticated_pilot_id lock")
-        .map(|id| id.to_string());
-    spawn_flight_log_upload(&app, flight.pirep_id.clone(), besitzer, true);
     Ok(FlightCancelOutcome::Cancelled {
         pirep_id: flight.pirep_id.clone(),
     })
@@ -30640,7 +30796,12 @@ fn apply_pause_resume(
             prev,
             cur,
             ziel_fuer_sprung,
-            Some(duration_secs),
+            // `paused_since` steht erst, wenn der Ausfall ERKANNT ist —
+            // der letzte gute Snapshot ist da schon `SIM_DISCONNECT_THRESHOLD_S`
+            // alt. Ohne diesen Aufschlag rechnet die Sprung-Pruefung mit einer
+            // zu kurzen Luecke und damit einer zu hohen Geschwindigkeit
+            // (Cloud-QS 23.09.2026).
+            Some(duration_secs + SIM_DISCONNECT_THRESHOLD_S),
         )),
         _ => None,
     };
@@ -34694,10 +34855,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     if let Some(prev) = maybe_prev {
                         let (ziel, luecke_secs) = {
                             let stats = flight.stats.lock().expect("flight stats");
-                            (
-                                stats.planned_arr_ref_pos,
-                                stats.resume_gap_minutes.map(|m| m * 60),
-                            )
+                            (stats.planned_arr_ref_pos, stats.resume_luecke_secs)
                         };
                         let discontinuity =
                             compute_resume_discontinuity(&prev, curr, ziel, luecke_secs);
@@ -50635,6 +50793,13 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
     // Langstreckenflug meldete es 760 Minuten Luecke, wo der Client 4 Minuten
     // weg war. Jetzt steht dort die echte Unterbrechung.
     restored_stats.resume_gap_minutes = Some(stillstand.num_minutes());
+    // Sekundengenau und NUR wenn die Datei sagt, wann sie zuletzt angefasst
+    // wurde: Faellt `zuletzt_geschrieben` weg, ist `stillstand` die FLUGDAUER
+    // — mit der als Luecke waere jede Strecke fliegbar, und die Pruefung
+    // faende gar nichts mehr (Cloud-QS 23.09.2026).
+    restored_stats.resume_luecke_secs = persisted
+        .zuletzt_geschrieben
+        .map(|z| (Utc::now() - z).num_seconds().max(0));
     tracing::info!(
         distance_nm = restored_stats.distance_nm,
         position_count = restored_stats.position_count,
@@ -52783,16 +52948,23 @@ fn log_dir() -> Option<PathBuf> {
 /// Die Logdatei von heute — dieselbe Ableitung wie `log_dir`, damit
 /// Schreiben und Hochladen nicht auseinanderlaufen koennen.
 fn diagnose_logs_fuer_upload() -> Vec<PathBuf> {
-    let Some(d) = log_dir() else {
-        return Vec::new();
-    };
     // Gestern UND heute: Ein Flug, der 23:40z aufsetzt und 00:10z
     // eingereicht wird, haette sonst nur ein paar Zeilen von heute
     // mitgeschickt — der Abriss von gestern bliebe auf der Platte
-    // (Abnahme 20.09.2026). Reihenfolge zeitlich: erst gestern.
+    // (Abnahme 20.09.2026).
+    diagnose_logs_der_letzten_tage(1)
+}
+
+/// Die Tagesdateien von heute und den `tage_zurueck` Tagen davor,
+/// aelteste zuerst.
+fn diagnose_logs_der_letzten_tage(tage_zurueck: i64) -> Vec<PathBuf> {
+    let Some(d) = log_dir() else {
+        return Vec::new();
+    };
     let heute = Utc::now();
-    [heute - chrono::Duration::days(1), heute]
-        .iter()
+    (0..=tage_zurueck.max(0))
+        .rev()
+        .map(|t| heute - chrono::Duration::days(t))
         .map(|t| d.join(format!("aeroacars.{}.log", t.format("%Y-%m-%d"))))
         .filter(|p| p.exists())
         .collect()

@@ -577,7 +577,11 @@ fn peilung_grad(a: (f64, f64), b: (f64, f64)) -> f64 {
 /// Kleinster Winkelabstand zwischen zwei Kursen, `[0, 180]`.
 fn winkelabstand_grad(a: f64, b: f64) -> f64 {
     let d = (a - b).rem_euclid(360.0);
-    if d > 180.0 { 360.0 - d } else { d }
+    if d > 180.0 {
+        360.0 - d
+    } else {
+        d
+    }
 }
 
 /// Wie weit `HEADING`/die MAGVAR-Kreuzprobe von der gemalten Bahnnummer
@@ -844,7 +848,11 @@ pub fn bestaetige_kurse(
     for paar in bahnen.chunks_mut(2) {
         let [a, b] = paar else { continue };
         for i in [0usize, 1] {
-            let (this, gegen) = if i == 0 { (&mut *a, &*b) } else { (&mut *b, &*a) };
+            let (this, gegen) = if i == 0 {
+                (&mut *a, &*b)
+            } else {
+                (&mut *b, &*a)
+            };
             let Some(eigen) = zerlege_bezeichner(&this.bezeichner) else {
                 continue;
             };
@@ -1273,7 +1281,8 @@ pub fn ausnahme_name(exception: u32) -> &'static str {
         41 => "INCORRECT_ACTION_PARAMS",
         42 => "GET_INPUT_EVENT_FAILED",
         43 => "SET_INPUT_EVENT_FAILED",
-        44 => "INTERNAL",        _ => "UNBEKANNT",
+        44 => "INTERNAL",
+        _ => "UNBEKANNT",
     }
 }
 
@@ -1705,8 +1714,16 @@ mod tests {
 
     #[test]
     fn zerlege_bezeichner_ist_die_umkehrung_von_bezeichner() {
-        for (nummer, kennung) in [(9, 0), (9, 1), (27, 2), (4, 3), (1, 0), (18, 4), (36, 5), (18, 6)]
-        {
+        for (nummer, kennung) in [
+            (9, 0),
+            (9, 1),
+            (27, 2),
+            (4, 3),
+            (1, 0),
+            (18, 4),
+            (36, 5),
+            (18, 6),
+        ] {
             let b = bezeichner(nummer, kennung);
             assert_eq!(
                 zerlege_bezeichner(&b),
@@ -1789,8 +1806,22 @@ mod tests {
         // Toleranz liegen und als Quellenwiderspruch unbestaetigt
         // bleiben, nicht bloss "unwahrscheinlich, aber durchgelassen".
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 40.484_861_11,
+                lon: -3.576_011_11,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             360.0, // 37,68° neben der echten Peilung 322,32°
@@ -1820,8 +1851,22 @@ mod tests {
         let a = (50.0, 8.0);
         let b = (49.983_097_889_060_08, 8.009_567_017_514_918); // 2000 m bei Peilung 160° ab a
         let starts = vec![
-            StartRoh { lat: a.0, lon: a.1, heading_grad: 0.0, nummer: 7, designator: 0, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: b.0, lon: b.1, heading_grad: 0.0, nummer: 25, designator: 0, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: a.0,
+                lon: a.1,
+                heading_grad: 0.0,
+                nummer: 7,
+                designator: 0,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: b.0,
+                lon: b.1,
+                heading_grad: 0.0,
+                nummer: 25,
+                designator: 0,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             70.0,
@@ -1885,8 +1930,22 @@ mod tests {
         // degenerierten Geometrie zu machen (siehe Korrektur an
         // `START_TYPE_WATER`, externe QS 07.09.2026).
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_WATER },
-            StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_WATER },
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_WATER,
+            },
+            StartRoh {
+                lat: 40.484_861_11,
+                lon: -3.576_011_11,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_WATER,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             322.32,
@@ -1909,8 +1968,22 @@ mod tests {
         // (500 m, z.B. ein kurzer Feldflugplatz) nicht passt — Zahlen-
         // dreher/falsche Bahn aus derselben Szenerie.
         let starts = vec![
-            StartRoh { lat: 40.500, lon: -3.560, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 40.635, lon: -3.560, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: 40.500,
+                lon: -3.560,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 40.635,
+                lon: -3.560,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             360.0,
@@ -1931,8 +2004,22 @@ mod tests {
         // kein echter Punkt vor der westafrikanischen Kueste — ein
         // START darauf darf nie eine Bahnachse bestaetigen.
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 0.0, lon: 0.0, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 0.0,
+                lon: 0.0,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             360.0,
@@ -1952,8 +2039,22 @@ mod tests {
         // lat/lon ausserhalb des geographisch gueltigen Bereichs — ein
         // verschobenes/kaputtes Feld, kein echter Punkt.
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 200.0, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 200.0,
+                lon: -3.576_011_11,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             360.0,
@@ -1973,9 +2074,30 @@ mod tests {
         // Zwei STARTs mit derselben Nummer/Kennung, aber an
         // unterschiedlichen Koordinaten — mehrdeutig, keine Bestaetigung.
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 40.463_5, lon: -3.554_0, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 40.463_5,
+                lon: -3.554_0,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 40.484_861_11,
+                lon: -3.576_011_11,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             360.0,
@@ -2003,8 +2125,22 @@ mod tests {
         let a = (50.0, 8.0);
         let b = (49.983_097_889_060_08, 8.009_567_017_514_918); // 2000 m bei Peilung 160° ab a
         let starts = vec![
-            StartRoh { lat: a.0, lon: a.1, heading_grad: 0.0, nummer: 7, designator: 0, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: b.0, lon: b.1, heading_grad: 0.0, nummer: 25, designator: 0, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: a.0,
+                lon: a.1,
+                heading_grad: 0.0,
+                nummer: 7,
+                designator: 0,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: b.0,
+                lon: b.1,
+                heading_grad: 0.0,
+                nummer: 25,
+                designator: 0,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             70.0, // HEADING, laut Doku wahr — Bahn 07
@@ -2029,8 +2165,22 @@ mod tests {
         // weit entfernt (Frankfurt statt Madrid) — die Laenge allein
         // haette hier faelschlich bestaetigt.
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 40.484_861_11,
+                lon: -3.576_011_11,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
             360.0,
@@ -2054,8 +2204,22 @@ mod tests {
         // eingetroffen), bleibt der Kurs jetzt unbestaetigt, auch wenn
         // die STARTs selbst echt und plausibel waeren.
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 40.484_861_11,
+                lon: -3.576_011_11,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
         ];
         let (kurs, quelle) =
             bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
@@ -2073,18 +2237,52 @@ mod tests {
         // pruefte, weil `bestaetige_kurse` STARTs immer ueber die ECHTE
         // Gegenkennung aus `zerlege_bezeichner` sucht.
         let starts = vec![
-            StartRoh { lat: 50.0300, lon: 8.0, heading_grad: 0.0, nummer: 7, designator: 1, typ: START_TYPE_RUNWAY }, // 07L (Nordstreifen, Westende)
-            StartRoh { lat: 50.0300, lon: 8.02, heading_grad: 0.0, nummer: 25, designator: 2, typ: START_TYPE_RUNWAY }, // 25R (Nordstreifen, Ostende)
-            StartRoh { lat: 50.0000, lon: 8.0, heading_grad: 0.0, nummer: 7, designator: 2, typ: START_TYPE_RUNWAY }, // 07R (Suedstreifen, Westende)
-            StartRoh { lat: 50.0000, lon: 8.02, heading_grad: 0.0, nummer: 25, designator: 1, typ: START_TYPE_RUNWAY }, // 25L (Suedstreifen, Ostende)
+            StartRoh {
+                lat: 50.0300,
+                lon: 8.0,
+                heading_grad: 0.0,
+                nummer: 7,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            }, // 07L (Nordstreifen, Westende)
+            StartRoh {
+                lat: 50.0300,
+                lon: 8.02,
+                heading_grad: 0.0,
+                nummer: 25,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            }, // 25R (Nordstreifen, Ostende)
+            StartRoh {
+                lat: 50.0000,
+                lon: 8.0,
+                heading_grad: 0.0,
+                nummer: 7,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            }, // 07R (Suedstreifen, Westende)
+            StartRoh {
+                lat: 50.0000,
+                lon: 8.02,
+                heading_grad: 0.0,
+                nummer: 25,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            }, // 25L (Suedstreifen, Ostende)
         ];
         let referenz = Some((50.015, 8.01)); // Mittelpunkt beider Streifen
         let (kurs_l, quelle_l) =
             bestaetige_kurs_eines_endes(90.0, None, (7, 1), (25, 2), 1429.0, &starts, referenz);
         let (kurs_r, quelle_r) =
             bestaetige_kurs_eines_endes(90.0, None, (7, 2), (25, 1), 1429.0, &starts, referenz);
-        assert_eq!(quelle_l, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
-        assert_eq!(quelle_r, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
+        assert_eq!(
+            quelle_l,
+            sim_core::szenerie::KursQuelle::MsfsStartBestaetigt
+        );
+        assert_eq!(
+            quelle_r,
+            sim_core::szenerie::KursQuelle::MsfsStartBestaetigt
+        );
         // Beide Achsen sind (fast) Ost-West, aber aus VERSCHIEDENEN
         // Koordinatenpaaren gerechnet — ein Vertauschen von L/R wuerde
         // eine der beiden Bahnen auf die Koordinaten der anderen legen.
@@ -2272,7 +2470,15 @@ mod tests {
             (32, 1, 928.0),
             (14, 2, 0.0),
         );
-        let bahn_b = bahn_paar((40.5, -3.6), 70.0, 3000.0, 45.0, 1, (7, 0, 0.0), (25, 0, 0.0));
+        let bahn_b = bahn_paar(
+            (40.5, -3.6),
+            70.0,
+            3000.0,
+            45.0,
+            1,
+            (7, 0, 0.0),
+            (25, 0, 0.0),
+        );
         let mut bahnen = Vec::new();
         bahnen.extend(bahn_a);
         bahnen.extend(bahn_b);

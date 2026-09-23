@@ -58,8 +58,8 @@ struct Zeile {
 }
 
 fn lies_korpus(pfad: &str) -> Vec<Zeile> {
-    let inhalt = std::fs::read_to_string(pfad)
-        .unwrap_or_else(|e| panic!("Korpus {pfad} nicht lesbar: {e}"));
+    let inhalt =
+        std::fs::read_to_string(pfad).unwrap_or_else(|e| panic!("Korpus {pfad} nicht lesbar: {e}"));
     let mut zeilen = inhalt.lines();
     let kopf: Vec<&str> = zeilen.next().expect("Kopfzeile").split(',').collect();
     let idx = |name: &str| {
@@ -169,11 +169,12 @@ fn korpus_nachrechnung() {
             overrun_m: z.overrun_m,
             belag: Some(belag_aus_angabe(Some(&z.belag))),
             airport_source: Some("runway_match"),
-            runway_geometry_trusted: Some(true),            achsen_kreuzt_mitte: None,
+            runway_geometry_trusted: Some(true),
+            achsen_kreuzt_mitte: None,
             bahn_geometrie_aus_szenerie: None,
             achsen_groesster_betrag_m: None,
             achsen_abweichung_grad: None,
-        proben: Some(z.proben),
+            proben: Some(z.proben),
         });
 
         // Aim/TDZ nach denselben Regeln wie `runway_assessment`.
@@ -193,14 +194,18 @@ fn korpus_nachrechnung() {
         });
 
         if d.skipped {
-            *skips.entry(d.reason.clone().unwrap_or_default()).or_default() += 1;
+            *skips
+                .entry(d.reason.clone().unwrap_or_default())
+                .or_default() += 1;
         } else {
             let grund = d
                 .rationale_key
                 .as_deref()
                 .and_then(|k| k.strip_prefix("landing.rat."))
                 .unwrap_or("?");
-            *disziplin.entry(Box::leak(grund.to_string().into_boxed_str())).or_default() += 1;
+            *disziplin
+                .entry(Box::leak(grund.to_string().into_boxed_str()))
+                .or_default() += 1;
         }
         if !a.skipped {
             let grund = a
@@ -208,7 +213,9 @@ fn korpus_nachrechnung() {
                 .as_deref()
                 .and_then(|k| k.strip_prefix("landing.rat."))
                 .unwrap_or("?");
-            *aufsetz.entry(Box::leak(grund.to_string().into_boxed_str())).or_default() += 1;
+            *aufsetz
+                .entry(Box::leak(grund.to_string().into_boxed_str()))
+                .or_default() += 1;
         }
 
         match (z.alt_punkte, d.skipped) {
@@ -236,16 +243,25 @@ fn korpus_nachrechnung() {
 
     println!("Bahndisziplin (neu):");
     for (grund, anzahl) in &disziplin {
-        println!("   {grund:<18} {anzahl:>4}   {:>5.1} %", 100.0 * *anzahl as f64 / n as f64);
+        println!(
+            "   {grund:<18} {anzahl:>4}   {:>5.1} %",
+            100.0 * *anzahl as f64 / n as f64
+        );
     }
     println!("Übersprungen:");
     for (grund, anzahl) in &skips {
-        println!("   {grund:<18} {anzahl:>4}   {:>5.1} %", 100.0 * *anzahl as f64 / n as f64);
+        println!(
+            "   {grund:<18} {anzahl:>4}   {:>5.1} %",
+            100.0 * *anzahl as f64 / n as f64
+        );
     }
 
     println!("\nAufsetzpunkt (neue Achse):");
     for (grund, anzahl) in &aufsetz {
-        println!("   {grund:<20} {anzahl:>4}   {:>5.1} %", 100.0 * *anzahl as f64 / n as f64);
+        println!(
+            "   {grund:<20} {anzahl:>4}   {:>5.1} %",
+            100.0 * *anzahl as f64 / n as f64
+        );
     }
 
     println!("\nGegenüber der alten Auslastungs-Achse:");

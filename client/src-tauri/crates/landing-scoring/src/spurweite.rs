@@ -364,20 +364,20 @@ const TABELLE: &[(&str, f64, f64)] = &[
     // Spurweite steht in keiner oeffentlich zugaenglichen Quelle — bei
     // CS-23-Mustern ist sie typischerweise kein Pflichtfeld der
     // Musterzulassung. Grundsatz dieser Datei: im Zweifel `None`.
-    ("P28R", 3.20, 10.67),  // Piper Arrow
-    ("E135", 4.10, 20.04),  // ERJ-135
-    ("E145", 4.10, 20.04),  // ERJ-145
-    ("E13L", 4.10, 21.17),  // Legacy 600 auf ERJ-135-Basis
-    ("E175", 5.30, 26.00),  // zweite Schreibweise zu E75L
-    ("RJ85", 4.72, 26.21),  // Avro RJ85
-    ("B463", 4.72, 26.21),  // BAe 146-300
-    ("748", 5.79, 30.02),   // HS 748
-    ("CJ4", 3.50, 15.08),   // Citation CJ4
-    ("HDJT", 3.00, 12.12),  // HondaJet, zweite Schreibweise zu HA4T
-    ("C414", 3.50, 13.45),  // Cessna 414
-    ("MU2", 2.44, 11.94),   // Mitsubishi MU-2
-    ("VL3", 1.60, 8.43),    // JMB VL-3, Ultraleicht
-    ("CONC", 7.72, 25.60),  // Concorde
+    ("P28R", 3.20, 10.67), // Piper Arrow
+    ("E135", 4.10, 20.04), // ERJ-135
+    ("E145", 4.10, 20.04), // ERJ-145
+    ("E13L", 4.10, 21.17), // Legacy 600 auf ERJ-135-Basis
+    ("E175", 5.30, 26.00), // zweite Schreibweise zu E75L
+    ("RJ85", 4.72, 26.21), // Avro RJ85
+    ("B463", 4.72, 26.21), // BAe 146-300
+    ("748", 5.79, 30.02),  // HS 748
+    ("CJ4", 3.50, 15.08),  // Citation CJ4
+    ("HDJT", 3.00, 12.12), // HondaJet, zweite Schreibweise zu HA4T
+    ("C414", 3.50, 13.45), // Cessna 414
+    ("MU2", 2.44, 11.94),  // Mitsubishi MU-2
+    ("VL3", 1.60, 8.43),   // JMB VL-3, Ultraleicht
+    ("CONC", 7.72, 25.60), // Concorde
     // Eurofighter: 5,00 m ist die SPURWEITE, 5,80 m waere der Radstand —
     // die beiden zu verwechseln ist bei Deltafluglern leicht, weil das
     // Fahrwerk dort im Verhaeltnis zur kurzen Spannweite breit steht. Der
@@ -422,7 +422,11 @@ mod tests {
         assert_eq!(spurweite_m(Some("GA8")), Some(2.79));
         assert_eq!(spurweite_m(Some("YK18")), Some(3.12));
         // DA50 bewusst NICHT eingetragen — siehe Kommentar an der Tabelle.
-        assert_eq!(spurweite_m(Some("DA50")), None, "Spurweite unbelegt, bleibt None");
+        assert_eq!(
+            spurweite_m(Some("DA50")),
+            None,
+            "Spurweite unbelegt, bleibt None"
+        );
     }
 
     #[test]

@@ -276,8 +276,11 @@ fn vfr_no_zfw_no_burn_hat_keine_sprit_achse() {
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 80); // 800<m<1200 = good_stop
-    // F1 + F2: loadsheet + fuel skipped → 0-Penalty vermieden
-    assert!(!subs.iter().any(|s| s.key == "fuel"), "die Sprit-Achse ist seit v1.7.35 raus");
+                                           // F1 + F2: loadsheet + fuel skipped → 0-Penalty vermieden
+    assert!(
+        !subs.iter().any(|s| s.key == "fuel"),
+        "die Sprit-Achse ist seit v1.7.35 raus"
+    );
     // Master = (100*3+85*3+100*2+80*2+80*1) / (3+3+2+2+1) = (300+255+200+160+80) / 11
     //        = 995/11 = 90.45 → 90
     // ⚠ v1.7.12: 89 statt 90 — Folge der angeglichenen G-Punktleiter.
@@ -292,14 +295,17 @@ fn vfr_no_burn_hat_keine_sprit_achse() {
         vs_fpm: Some(-100.0),
         peak_g_load: Some(1.15),
         bounce_count: Some(0),
-        planned_burn_kg: None, // nicht geplant
+        planned_burn_kg: None,             // nicht geplant
         actual_trip_burn_kg: Some(2000.0), // gemessen aber ohne Plan
         planned_zfw_kg: Some(20000.0),
         planned_tow_kg: Some(22500.0),
         ..Default::default()
     };
     let subs = compute_sub_scores(&input);
-    assert!(!subs.iter().any(|s| s.key == "fuel"), "die Sprit-Achse ist seit v1.7.35 raus");
+    assert!(
+        !subs.iter().any(|s| s.key == "fuel"),
+        "die Sprit-Achse ist seit v1.7.35 raus"
+    );
 }
 
 // ─── F3 Asymmetrie explizit ───────────────────────────────────────
@@ -320,7 +326,9 @@ fn underburn_wird_nicht_mehr_bewertet() {
         ..Default::default()
     });
     assert!(!subs.iter().any(|s| s.key == "fuel"));
-    assert!(!subs.iter().any(|s| s.warning.as_deref() == Some("planned_burn_may_be_off")));
+    assert!(!subs
+        .iter()
+        .any(|s| s.warning.as_deref() == Some("planned_burn_may_be_off")));
 }
 
 #[test]
@@ -352,7 +360,10 @@ fn empty_input_returns_only_bounces() {
     no_sub(&subs, "stability");
     no_sub(&subs, "rollout");
     assert_eq!(pts(&subs, "bounces"), 100);
-    assert!(!subs.iter().any(|s| s.key == "fuel"), "die Sprit-Achse ist seit v1.7.35 raus");
+    assert!(
+        !subs.iter().any(|s| s.key == "fuel"),
+        "die Sprit-Achse ist seit v1.7.35 raus"
+    );
     assert_eq!(
         aggregate_master_score(&subs),
         None,
@@ -417,10 +428,9 @@ mod ausrichtung_integration {
         // Dieselbe Landung, nur schief aufgesetzt: der Master MUSS sinken —
         // sonst haengt die Achse zwar im Ergebnis, wirkt aber nicht.
         let gut = aggregate_master_score(&subs).expect("Master");
-        let schief = aggregate_master_score(&compute_sub_scores(&eingabe_mit_ausrichtung(
-            40.0, 88.0,
-        )))
-        .expect("Master");
+        let schief =
+            aggregate_master_score(&compute_sub_scores(&eingabe_mit_ausrichtung(40.0, 88.0)))
+                .expect("Master");
         assert!(
             schief < gut,
             "schiefe Landung muss den Gesamtscore druecken: {schief} !< {gut}"

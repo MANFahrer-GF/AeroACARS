@@ -16,13 +16,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod belag;
 pub mod gate;
+/// v1.7.35: Sprit-Auswertung ohne Note — siehe `sprit.rs`.
+pub mod sprit;
 pub mod spurweite;
 pub mod sub_alignment;
 pub mod sub_bahndisziplin;
 pub mod sub_bounces;
 pub mod sub_fuel;
-/// v1.7.35: Sprit-Auswertung ohne Note — siehe `sprit.rs`.
-pub mod sprit;
 pub mod sub_g_force;
 pub mod sub_landing_rate;
 pub mod sub_loadsheet;
@@ -962,9 +962,21 @@ mod tests {
                 _ => 1.0,
             }
         };
-        let summe: f32 = subs.iter().filter(|s| !s.skipped).map(|s| s.score as f32 * gewicht(&s.key)).sum();
-        let gewichte: f32 = subs.iter().filter(|s| !s.skipped).map(|s| gewicht(&s.key)).sum();
-        assert_eq!(master, (summe / gewichte).round(), "ein ruhendes Gewicht zieht mit");
+        let summe: f32 = subs
+            .iter()
+            .filter(|s| !s.skipped)
+            .map(|s| s.score as f32 * gewicht(&s.key))
+            .sum();
+        let gewichte: f32 = subs
+            .iter()
+            .filter(|s| !s.skipped)
+            .map(|s| gewicht(&s.key))
+            .sum();
+        assert_eq!(
+            master,
+            (summe / gewichte).round(),
+            "ein ruhendes Gewicht zieht mit"
+        );
     }
 
     /// Ein voll besetzter Eingang — damit in den Waechtern jeder Zweig

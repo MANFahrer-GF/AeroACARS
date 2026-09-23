@@ -23,9 +23,7 @@
 //! Landungen sind klein genug, um mitzureisen (136 KB), und decken 37
 //! Flughäfen ab. Erzeugt von `tools/korpus/achsen_export.py`.
 
-use landing_scoring::sub_bahndisziplin::{
-    achse_fragwuerdig, achsen_befund, achsen_fenster_bis_m,
-};
+use landing_scoring::sub_bahndisziplin::{achse_fragwuerdig, achsen_befund, achsen_fenster_bis_m};
 
 /// Ab wann ein Rückwärtsschritt kein Messrauschen mehr ist.
 const GROSSER_RUECKSPRUNG_M: f64 = 50.0;
@@ -140,7 +138,10 @@ fn der_vorrat_ist_vollstaendig() {
                 y.winkel_grad
             ),
             (None, None) => {}
-            _ => panic!("{}: einmal Urteil, einmal nicht — Reihenfolge zaehlt", l.platz),
+            _ => panic!(
+                "{}: einmal Urteil, einmal nicht — Reihenfolge zaehlt",
+                l.platz
+            ),
         }
         // ⚠ Nur GROSSE Rücksprünge zählen.
         //
@@ -153,8 +154,7 @@ fn der_vorrat_ist_vollstaendig() {
         // (Zurückrollen auf der Bahn) und 207 m in LEPA (ein stecken
         // gebliebener Messpunkt). Werden das plötzlich viele, stimmt
         // etwas mit der Projektion nicht.
-        if l
-            .proben
+        if l.proben
             .windows(2)
             .any(|w| w[0].0 - w[1].0 >= GROSSER_RUECKSPRUNG_M)
         {
@@ -217,11 +217,7 @@ fn bekannt_falsch_kartierte_bahnen_bleiben_geschuetzt() {
     let edhe: Vec<_> = k.iter().filter(|l| l.platz == "EDHE").collect();
     assert!(!edhe.is_empty(), "EDHE fehlt im Vorrat");
     for l in edhe {
-        assert_eq!(
-            urteil(l),
-            Some(true),
-            "EDHE muss uebersprungen bleiben"
-        );
+        assert_eq!(urteil(l), Some(true), "EDHE muss uebersprungen bleiben");
     }
 }
 

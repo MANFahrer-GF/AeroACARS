@@ -2563,6 +2563,8 @@
     "trotzdem": "File anyway",
     "laeuft": "one moment …",
     "begruendung_label": "Reason for the VA (optional)",
-    "begruendung_platzhalter": "e.g. simulator crashed, then reloaded at the destination"
+    "begruendung_platzhalter": "e.g. simulator crashed, then reloaded at the destination",
+    "verwerfen_sicher": "Yes, discard flight",
+    "doch_nicht": "Keep flight"
   }
 }

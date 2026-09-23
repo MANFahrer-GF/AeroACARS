@@ -2563,6 +2563,8 @@
     "trotzdem": "Invia comunque",
     "laeuft": "un momento …",
     "begruendung_label": "Motivo per la VA (facoltativo)",
-    "begruendung_platzhalter": "es. simulatore in crash, poi ricaricato all'aeroporto di arrivo"
+    "begruendung_platzhalter": "es. simulatore in crash, poi ricaricato all'aeroporto di arrivo",
+    "verwerfen_sicher": "Sì, elimina il volo",
+    "doch_nicht": "Mantieni il volo"
   }
 }

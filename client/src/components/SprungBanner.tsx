@@ -45,6 +45,9 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
   /** Freiwillig — sie landet in den PIREP-Notizen, damit die VA beim
    *  Prüfen weiß, was passiert ist (Thomas, 23.09.2026). */
   const [begruendung, setBegruendung] = useState("");
+  /** Verwerfen ist unwiderruflich und kostet einen ganzen Flug — überall
+   *  sonst in der App fragt ein Abbruch nach (Cloud-QS 23.09.2026). */
+  const [sicher, setSicher] = useState(false);
 
   if (!activeFlight.unmoeglicher_sprung) return null;
   // Erst entscheiden lassen, wenn die Entscheidung ansteht — und nicht,
@@ -62,7 +65,15 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
       await invoke("flight_cancel", { force: true });
       onDiscarded();
     } catch (e) {
-      setError(String(e));
+      // `flight_cancel` nimmt den Flug aus dem Zustand, BEVOR es phpVMS
+      // fragt. Scheitert das, ist der Flug hier trotzdem weg — ein zweiter
+      // Klick antwortet dann „no_active_flight". Das ist kein Fehler, das
+      // ist der Erfolg von eben (Cloud-QS 23.09.2026).
+      if (String(e).includes("no_active_flight")) {
+        onDiscarded();
+      } else {
+        setError(String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -89,7 +100,7 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
   };
 
   return (
-    <section className="divert-banner" role="alert" aria-live="polite" data-testid="sprung-banner">
+    <section className="divert-banner" role="alert" data-testid="sprung-banner">
       <header className="divert-banner__header">
         <span className="divert-banner__icon" aria-hidden="true">
           ⚠
@@ -111,22 +122,45 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
       </label>
       {error && <p className="divert-banner__error">{error}</p>}
       <div className="divert-banner__actions">
-        <button
-          type="button"
-          className="button button--primary"
-          disabled={busy}
-          onClick={() => void verwerfen()}
-        >
-          {busy ? t("sprung.laeuft") : t("sprung.verwerfen")}
-        </button>
-        <button
-          type="button"
-          className="button button--ghost"
-          disabled={busy}
-          onClick={() => void trotzdemEinreichen()}
-        >
-          {busy ? t("sprung.laeuft") : t("sprung.trotzdem")}
-        </button>
+        {sicher ? (
+          <>
+            <button
+              type="button"
+              className="button button--primary"
+              disabled={busy}
+              onClick={() => void verwerfen()}
+            >
+              {busy ? t("sprung.laeuft") : t("sprung.verwerfen_sicher")}
+            </button>
+            <button
+              type="button"
+              className="button button--ghost"
+              disabled={busy}
+              onClick={() => setSicher(false)}
+            >
+              {t("sprung.doch_nicht")}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="button button--primary"
+            disabled={busy}
+            onClick={() => setSicher(true)}
+          >
+            {t("sprung.verwerfen")}
+          </button>
+        )}
+        {!sicher && (
+          <button
+            type="button"
+            className="button button--ghost"
+            disabled={busy}
+            onClick={() => void trotzdemEinreichen()}
+          >
+            {busy ? t("sprung.laeuft") : t("sprung.trotzdem")}
+          </button>
+        )}
       </div>
     </section>
   );

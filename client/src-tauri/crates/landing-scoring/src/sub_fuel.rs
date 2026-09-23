@@ -232,7 +232,10 @@ pub fn sub_fuel_v1_7_32(
         if let Some(tonnen) = planned_tow_kg.filter(|t| *t > 0.0).map(|t| t / 1000.0) {
             let kg = zusatz.durchstarts as f32 * DURCHSTART_KG_JE_TONNE * tonnen;
             gutschrift_kg += kg;
-            erklaerung.push(format!("{}× Durchstarten (−{kg:.0} kg)", zusatz.durchstarts));
+            erklaerung.push(format!(
+                "{}× Durchstarten (−{kg:.0} kg)",
+                zusatz.durchstarts
+            ));
         }
     }
 
@@ -633,14 +636,7 @@ mod tests {
         // gestrafften Baender 3/8/15/25. Hier ohne Mehrweg, damit nur die
         // Grenzen geprueft werden.
         let g = |geplant: f32, echt: f32| {
-            sub_fuel_v1_7_32(
-                Some(geplant),
-                Some(echt),
-                None,
-                None,
-                mit(500.0, 500.0, 0),
-            )
-            .score
+            sub_fuel_v1_7_32(Some(geplant), Some(echt), None, None, mit(500.0, 500.0, 0)).score
         };
         assert_eq!(g(1000.0, 1029.0), 100); // +2,9 %
         assert_eq!(g(1000.0, 1049.0), 80); // +4,9 %
@@ -744,7 +740,10 @@ mod tests {
             None,
             mit(277.3, 186.5, 0),
         );
-        assert_eq!(e.score, 100, "90 NM Mehrweg sind nicht dem Piloten anzulasten");
+        assert_eq!(
+            e.score, 100,
+            "90 NM Mehrweg sind nicht dem Piloten anzulasten"
+        );
         let text = e.value.clone().unwrap();
         // Die Anzeige erklärt sich selbst — Wert, Rohwert, Grund.
         assert!(text.contains("roh +13.5%"), "{text}");
@@ -769,21 +768,10 @@ mod tests {
     /// Luftlinie. Bis 10 % gibt es KEINE Gutschrift.
     #[test]
     fn grundkorridor_wird_nicht_gutgeschrieben() {
-        let knapp = sub_fuel_v1_7_32(
-            Some(1000.0),
-            Some(1120.0),
-            None,
-            None,
-            mit(109.0, 100.0, 0),
-        );
+        let knapp = sub_fuel_v1_7_32(Some(1000.0), Some(1120.0), None, None, mit(109.0, 100.0, 0));
         assert_eq!(knapp.score, 55, "9 % Mehrweg gelten als eingeplant");
-        let drueber = sub_fuel_v1_7_32(
-            Some(1000.0),
-            Some(1120.0),
-            None,
-            None,
-            mit(135.0, 100.0, 0),
-        );
+        let drueber =
+            sub_fuel_v1_7_32(Some(1000.0), Some(1120.0), None, None, mit(135.0, 100.0, 0));
         assert_eq!(drueber.score, 100, "25 % Mehrweg werden gutgeschrieben");
     }
 
@@ -833,7 +821,13 @@ mod tests {
     /// wie zuvor — nur eben mit den gestrafften Bändern.
     #[test]
     fn ohne_streckenangabe_keine_gutschrift() {
-        let e = sub_fuel_v1_7_32(Some(1000.0), Some(1120.0), None, None, ZusatzArbeit::default());
+        let e = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(1120.0),
+            None,
+            None,
+            ZusatzArbeit::default(),
+        );
         assert_eq!(e.score, 55);
         assert_eq!(e.value.as_deref(), Some("+12.0%"));
     }
@@ -854,20 +848,17 @@ mod tests {
         assert_eq!(e.score, 100);
         assert_eq!(e.rationale_key.as_deref(), Some("landing.rat.on_plan"));
         assert!(e.warning.is_none(), "kein falscher Plan-Zweifel");
-        assert_eq!(e.value.as_deref().map(|v| v.starts_with("0.0%")), Some(true));
+        assert_eq!(
+            e.value.as_deref().map(|v| v.starts_with("0.0%")),
+            Some(true)
+        );
     }
 
     /// Wer WIRKLICH sparsam war, bleibt sparsam — der Deckel greift nur
     /// gegen die Gutschrift, nicht gegen den Piloten.
     #[test]
     fn echtes_sparen_bleibt_sichtbar() {
-        let e = sub_fuel_v1_7_32(
-            Some(1000.0),
-            Some(880.0),
-            None,
-            None,
-            mit(150.0, 100.0, 0),
-        );
+        let e = sub_fuel_v1_7_32(Some(1000.0), Some(880.0), None, None, mit(150.0, 100.0, 0));
         assert_eq!(e.score, 100);
         assert_eq!(e.rationale_key.as_deref(), Some("landing.rat.efficient"));
         assert_eq!(e.value.as_deref(), Some("-12.0%"));
@@ -880,24 +871,12 @@ mod tests {
     fn begrenzte_gutschrift_sagt_es_auch() {
         // 40 NM Mehrweg = 320 kg moegliche Gutschrift, aber nur 100 kg
         // Mehrverbrauch → angerechnet werden 100, und das steht da.
-        let e = sub_fuel_v1_7_32(
-            Some(1000.0),
-            Some(1100.0),
-            None,
-            None,
-            mit(150.0, 100.0, 0),
-        );
+        let e = sub_fuel_v1_7_32(Some(1000.0), Some(1100.0), None, None, mit(150.0, 100.0, 0));
         let text = e.value.clone().unwrap();
         assert!(text.contains("auf 100 kg Mehrverbrauch begrenzt"), "{text}");
 
         // Volle Anrechnung: kein Begrenzungshinweis.
-        let voll = sub_fuel_v1_7_32(
-            Some(1000.0),
-            Some(1400.0),
-            None,
-            None,
-            mit(150.0, 100.0, 0),
-        );
+        let voll = sub_fuel_v1_7_32(Some(1000.0), Some(1400.0), None, None, mit(150.0, 100.0, 0));
         let text = voll.value.clone().unwrap();
         assert!(text.contains("NM Mehrweg"), "{text}");
         assert!(!text.contains("begrenzt"), "{text}");

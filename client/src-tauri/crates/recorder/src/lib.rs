@@ -426,9 +426,7 @@ pub fn compute_scored_g(samples: &[TouchdownWindowSample], edge_at: DateTime<Utc
             None => g, // LE2 Regel 2: Init beim ersten finiten Sample.
             Some(prev) => {
                 let dt = prev_at
-                    .map(|p| {
-                        (s.at - p).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0
-                    })
+                    .map(|p| (s.at - p).num_microseconds().unwrap_or(0) as f64 / 1_000_000.0)
                     .filter(|&d| d > 0.0)
                     .unwrap_or(SCORED_G_NOMINAL_DT_SECS);
                 let alpha = 1.0 - (-dt / SCORED_G_TAU_SECS).exp();
@@ -448,7 +446,11 @@ pub fn compute_scored_g(samples: &[TouchdownWindowSample], edge_at: DateTime<Utc
     if scored.is_finite() {
         ScoredG {
             scored_g: scored,
-            raw_peak: if raw_peak.is_finite() { raw_peak } else { scored },
+            raw_peak: if raw_peak.is_finite() {
+                raw_peak
+            } else {
+                scored
+            },
             method: ScoredGMethod::EmaMax,
         }
     } else {
@@ -465,7 +467,11 @@ pub fn compute_scored_g(samples: &[TouchdownWindowSample], edge_at: DateTime<Utc
         // Daten". 1.0 g (Standlast/Ruhewert) ist der einzige physikalisch
         // ehrliche "wir wissen es nicht"-Default.
         let raw = if raw_peak.is_finite() { raw_peak } else { 1.0 };
-        ScoredG { scored_g: raw, raw_peak: raw, method: ScoredGMethod::RawFallback }
+        ScoredG {
+            scored_g: raw,
+            raw_peak: raw,
+            method: ScoredGMethod::RawFallback,
+        }
     }
 }
 
@@ -473,7 +479,11 @@ pub fn compute_scored_g(samples: &[TouchdownWindowSample], edge_at: DateTime<Utc
 /// Touchdown-Fenster (z. B. spätes Roh-Peak-Tracking). `scored_g` ist der
 /// rohe G-Wert, als `RawFallback` markiert.
 pub fn scored_g_raw_fallback(raw_g: f32) -> ScoredG {
-    ScoredG { scored_g: raw_g, raw_peak: raw_g, method: ScoredGMethod::RawFallback }
+    ScoredG {
+        scored_g: raw_g,
+        raw_peak: raw_g,
+        method: ScoredGMethod::RawFallback,
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -532,7 +542,13 @@ impl FlightRecorder {
 /// future phpVMS deployment changes the format.
 fn sanitize_pirep_id(raw: &str) -> String {
     raw.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -596,7 +612,9 @@ pub fn flight_logs_purge_older_than(
         return Ok(0);
     }
     let cutoff = std::time::SystemTime::now()
-        .checked_sub(std::time::Duration::from_secs(u64::from(older_than_days) * 86_400))
+        .checked_sub(std::time::Duration::from_secs(
+            u64::from(older_than_days) * 86_400,
+        ))
         .unwrap_or(std::time::UNIX_EPOCH);
     let mut removed = 0u32;
     for entry in std::fs::read_dir(&dir)? {
@@ -643,11 +661,18 @@ mod scored_g_tests {
 
     /// Sample a continuous g(t) curve every `dt_ms` from -300 ms to
     /// +1000 ms around the edge (t = 0).
-    fn sampled(edge: DateTime<Utc>, dt_ms: i64, g: impl Fn(f64) -> f32) -> Vec<TouchdownWindowSample> {
+    fn sampled(
+        edge: DateTime<Utc>,
+        dt_ms: i64,
+        g: impl Fn(f64) -> f32,
+    ) -> Vec<TouchdownWindowSample> {
         let mut out = Vec::new();
         let mut t_ms = -300_i64;
         while t_ms <= 1000 {
-            out.push(s(edge + chrono::Duration::milliseconds(t_ms), g(t_ms as f64 / 1000.0)));
+            out.push(s(
+                edge + chrono::Duration::milliseconds(t_ms),
+                g(t_ms as f64 / 1000.0),
+            ));
             t_ms += dt_ms;
         }
         out
@@ -673,7 +698,11 @@ mod scored_g_tests {
         let edge = Utc::now();
         let r = compute_scored_g(&sampled(edge, 22, tap533_like), edge);
         // A genuine ~160 ms plateau is kept (lightly lagged), not flattened.
-        assert!(r.scored_g > 1.65 && r.scored_g < 1.90, "scored_g={}", r.scored_g);
+        assert!(
+            r.scored_g > 1.65 && r.scored_g < 1.90,
+            "scored_g={}",
+            r.scored_g
+        );
         // Raw peak ~= the sampled plateau (1.92) — far above the smoothed
         // value, confirming the smoothing demotes the raw single-frame max.
         assert!(r.raw_peak >= 1.90, "raw_peak={}", r.raw_peak);
@@ -686,7 +715,11 @@ mod scored_g_tests {
         // The TAP533-shaped trace at ~22 ms (~45 Hz) → ~1.78 g (spec table).
         let edge = Utc::now();
         let r = compute_scored_g(&sampled(edge, 22, tap533_like), edge);
-        assert!(r.scored_g > 1.70 && r.scored_g < 1.86, "scored_g={}", r.scored_g);
+        assert!(
+            r.scored_g > 1.70 && r.scored_g < 1.86,
+            "scored_g={}",
+            r.scored_g
+        );
     }
 
     #[test]
@@ -713,7 +746,11 @@ mod scored_g_tests {
         }
         let r = compute_scored_g(&v, edge);
         assert!((r.raw_peak - 3.0).abs() < 0.001, "raw_peak={}", r.raw_peak);
-        assert!(r.scored_g < 1.7, "spike not attenuated: scored_g={}", r.scored_g);
+        assert!(
+            r.scored_g < 1.7,
+            "spike not attenuated: scored_g={}",
+            r.scored_g
+        );
     }
 
     #[test]
@@ -730,7 +767,11 @@ mod scored_g_tests {
         }
         let r = compute_scored_g(&v, edge);
         assert!(r.scored_g.is_finite(), "scored_g not finite");
-        assert!(r.scored_g > 1.5 && r.scored_g < 1.9, "scored_g={}", r.scored_g);
+        assert!(
+            r.scored_g > 1.5 && r.scored_g < 1.9,
+            "scored_g={}",
+            r.scored_g
+        );
     }
 
     #[test]
@@ -759,7 +800,10 @@ mod scored_g_tests {
             .collect();
         let r = compute_scored_g(&v, edge);
         assert_eq!(r.method, ScoredGMethod::RawFallback);
-        assert_eq!(r.scored_g, 1.0, "must fall back to nominal 1g, not the impossible 0.0g");
+        assert_eq!(
+            r.scored_g, 1.0,
+            "must fall back to nominal 1g, not the impossible 0.0g"
+        );
         assert_eq!(r.raw_peak, 1.0);
     }
 
@@ -873,7 +917,8 @@ mod scored_g_tests {
         match ev {
             FlightLogEvent::FlightResumed {
                 age_minutes,
-                previous_exit_clean, ..
+                previous_exit_clean,
+                ..
             } => {
                 assert_eq!(age_minutes, 98);
                 assert_eq!(previous_exit_clean, None);
@@ -973,10 +1018,7 @@ mod scored_g_tests {
         let ev: FlightLogEvent = serde_json::from_str(minimal).expect("minimal row parses");
         match ev {
             FlightLogEvent::Datalink {
-                station,
-                min,
-                text,
-                ..
+                station, min, text, ..
             } => {
                 assert_eq!(station, None);
                 assert_eq!(min, None);

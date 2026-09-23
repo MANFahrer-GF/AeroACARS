@@ -71,7 +71,9 @@ pub fn gueltige_ids(ids: &[String]) -> Vec<String> {
         .filter(|id| {
             !id.is_empty()
                 && id.len() <= 128
-                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         })
         .filter(|id| gesehen.insert((*id).clone()))
         .cloned()
@@ -89,9 +91,11 @@ pub async fn pruefstatus_abrufen(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let url = endpoint.map(String::from).unwrap_or_else(default_status_url);
-    let auth_b64 =
-        base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}").as_bytes());
+    let url = endpoint
+        .map(String::from)
+        .unwrap_or_else(default_status_url);
+    let auth_b64 = base64::engine::general_purpose::STANDARD
+        .encode(format!("{username}:{password}").as_bytes());
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
@@ -109,7 +113,11 @@ pub async fn pruefstatus_abrufen(
         let status = res.status();
         if !status.is_success() {
             let body = res.text().await.unwrap_or_default();
-            anyhow::bail!("pirep-status abgelehnt: HTTP {} — {}", status.as_u16(), body);
+            anyhow::bail!(
+                "pirep-status abgelehnt: HTTP {} — {}",
+                status.as_u16(),
+                body
+            );
         }
         let antwort: Antwort = res.json().await.context("pirep-status: Antwort unlesbar")?;
         alle.extend(antwort.pireps);
@@ -131,7 +139,10 @@ mod tests {
             "x".repeat(129),
             "ok_-1".to_string(),
         ];
-        assert_eq!(gueltige_ids(&ids), vec!["278xq2bgoYV5qZjL".to_string(), "ok_-1".to_string()]);
+        assert_eq!(
+            gueltige_ids(&ids),
+            vec!["278xq2bgoYV5qZjL".to_string(), "ok_-1".to_string()]
+        );
     }
 
     #[test]

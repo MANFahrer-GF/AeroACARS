@@ -49,14 +49,25 @@ const FLUG = {
   divert_hint: null,
 } as unknown as ActiveFlightInfo;
 
+const eingereicht = vi.fn();
+const verworfen = vi.fn();
+
 function zeige(patch: Partial<ActiveFlightInfo> = {}) {
+  eingereicht.mockReset();
+  verworfen.mockReset();
   return render(
     <SprungBanner
       activeFlight={{ ...FLUG, ...patch }}
-      onFiledSuccess={() => {}}
-      onDiscarded={() => {}}
+      onFiledSuccess={eingereicht}
+      onDiscarded={verworfen}
     />,
   );
+}
+
+/** Verwerfen fragt seit 23.09.2026 nach — erst der zweite Klick zaehlt. */
+async function verwerfen() {
+  await userEvent.click(screen.getByText("Flug verwerfen"));
+  await userEvent.click(screen.getByText("Ja, Flug verwerfen"));
 }
 
 describe("Banner nach unmöglichem Sprung", () => {
@@ -78,8 +89,14 @@ describe("Banner nach unmöglichem Sprung", () => {
   });
 
   it("bleibt weg, solange der Flug noch laeuft", () => {
-    zeige({ phase: "enroute" } as Partial<ActiveFlightInfo>);
-    expect(screen.queryByTestId("sprung-banner")).toBeNull();
+    // Echte Phasen aus FlightPhase — ein ausgedachter Wert wie „enroute"
+    // haette auch eine umgedrehte Bedingung gruen gelassen
+    // (Cloud-QS 23.09.2026).
+    for (const phase of ["cruise", "approach", "landing", "taxi_in", "blocks_on"] as const) {
+      const { unmount } = zeige({ phase });
+      expect(screen.queryByTestId("sprung-banner")).toBeNull();
+      unmount();
+    }
   });
 
   it("tritt hinter einen Divert zurueck — zwei Banner widersprechen sich", () => {
@@ -97,6 +114,10 @@ describe("Banner nach unmöglichem Sprung", () => {
     expect(invokeMock).toHaveBeenCalledWith("flight_end", {
       sprungBegruendung: "Sim abgestuerzt, danach neu geladen",
     });
+    // Das Elternteil muss erfahren, dass eingereicht wurde — sonst bleibt
+    // der Flug auf dem Schirm stehen und das Erfolgsbanner kommt nie.
+    expect(eingereicht).toHaveBeenCalledTimes(1);
+    expect(eingereicht.mock.calls[0][0]).toMatchObject({ kind: "filed", dpt: "EDDN", arr: "HECA" });
   });
 
   it("schickt ohne Eingabe null statt eines leeren Textes", async () => {
@@ -105,15 +126,34 @@ describe("Banner nach unmöglichem Sprung", () => {
     expect(invokeMock).toHaveBeenCalledWith("flight_end", { sprungBegruendung: null });
   });
 
-  it("verwirft den Flug hart, damit kein halber PIREP zurueckbleibt", async () => {
+  it("fragt vor dem Verwerfen nach — ein Fehlklick kostet den ganzen Flug", async () => {
     zeige();
     await userEvent.click(screen.getByText("Flug verwerfen"));
-    expect(invokeMock).toHaveBeenCalledWith("flight_cancel", { force: true });
+    expect(invokeMock).not.toHaveBeenCalled();
+    // Und der Rueckzieher bringt die urspruenglichen Tasten zurueck.
+    await userEvent.click(screen.getByText("Doch nicht"));
+    expect(screen.getByText("Trotzdem einreichen")).toBeTruthy();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("beschriftet BEIDE Tasten waehrend der Abgabe um", async () => {
-    // Die zweite Taste blieb frueher stumm — der Pilot klickte nach, weil
-    // nichts passierte (Cloud-QS 23.09.2026).
+  it("verwirft den Flug hart, damit kein halber PIREP zurueckbleibt", async () => {
+    zeige();
+    await verwerfen();
+    expect(invokeMock).toHaveBeenCalledWith("flight_cancel", { force: true });
+    expect(verworfen).toHaveBeenCalledTimes(1);
+  });
+
+  it("behandelt einen schon weggeraeumten Flug als verworfen, nicht als Fehler", async () => {
+    invokeMock.mockRejectedValue(new Error("no_active_flight"));
+    zeige();
+    await verwerfen();
+    expect(verworfen).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/no_active_flight/)).toBeNull();
+  });
+
+  it("beschriftet die Taste waehrend der Abgabe um", async () => {
+    // Sie blieb frueher stumm — der Pilot klickte nach, weil nichts
+    // passierte (Cloud-QS 23.09.2026).
     let loesen: (() => void) | null = null;
     invokeMock.mockImplementation(
       () =>
@@ -124,7 +164,7 @@ describe("Banner nach unmöglichem Sprung", () => {
     zeige();
     await userEvent.click(screen.getByText("Trotzdem einreichen"));
     expect(screen.queryByText("Trotzdem einreichen")).toBeNull();
-    expect(screen.getAllByText("einen Moment …").length).toBe(2);
+    expect(screen.getByText("einen Moment …")).toBeTruthy();
     loesen?.();
   });
 
@@ -133,5 +173,7 @@ describe("Banner nach unmöglichem Sprung", () => {
     zeige();
     await userEvent.click(screen.getByText("Trotzdem einreichen"));
     expect(screen.getByText(/phpVMS returned non-OK/)).toBeTruthy();
+    // Und der Flug darf NICHT als eingereicht gelten.
+    expect(eingereicht).not.toHaveBeenCalled();
   });
 });

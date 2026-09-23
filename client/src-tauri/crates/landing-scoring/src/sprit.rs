@@ -933,15 +933,8 @@ mod tests {
 
     #[test]
     fn fuel_check_gruen_wenn_die_contingency_deckt() {
-        let (_, ampel) = fuel_check(
-            5440.0,
-            5480.0,
-            4520.0,
-            Some(3790.0),
-            None,
-            Some(160.0),
-        )
-        .unwrap();
+        let (_, ampel) =
+            fuel_check(5440.0, 5480.0, 4520.0, Some(3790.0), None, Some(160.0)).unwrap();
         assert_eq!(ampel, Ampel::Gruen);
     }
 
@@ -992,15 +985,7 @@ mod tests {
         // 40 kg Plan-Verbrauch, 20 kg darunter. Frueher machte das
         // Verhaeltnis daraus Rauschen; jetzt steht schlicht der Plan
         // minus 20 kg da.
-        let (hoch, _) = fuel_check(
-            7640.0,
-            7660.0,
-            4520.0,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let (hoch, _) = fuel_check(7640.0, 7660.0, 4520.0, None, None, None).unwrap();
         assert!((hoch - (7640.0 - 3140.0)).abs() < 0.5, "{hoch}");
     }
 
@@ -1064,11 +1049,41 @@ mod tests {
         // erst ab TOC zu bilden war ein Zwischenschritt und half nicht:
         // dort stand dann 30 893 kg.)
         let mut z = vec![
-            wp("BETTE", 103417.0, 20000.0, Some(107282.0), WegpunktZustand::Gemessen),
-            wp("ACK", 97262.0, 20000.0, Some(96582.0), WegpunktZustand::Gemessen),
-            wp("TOC", 97221.0, 20000.0, Some(96548.0), WegpunktZustand::Gemessen),
-            wp("BRADD", 92992.0, 20000.0, Some(92688.0), WegpunktZustand::Gemessen),
-            wp("PORTI", 77551.0, 20000.0, Some(78884.0), WegpunktZustand::Gemessen),
+            wp(
+                "BETTE",
+                103417.0,
+                20000.0,
+                Some(107282.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "ACK",
+                97262.0,
+                20000.0,
+                Some(96582.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "TOC",
+                97221.0,
+                20000.0,
+                Some(96548.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "BRADD",
+                92992.0,
+                20000.0,
+                Some(92688.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "PORTI",
+                77551.0,
+                20000.0,
+                Some(78884.0),
+                WegpunktZustand::Gemessen,
+            ),
             wp("EDDM", 24109.0, 20000.0, None, WegpunktZustand::Offen),
         ];
         wegpunkte_auswerten(&mut z, Some(2000.0));
@@ -1077,9 +1092,15 @@ mod tests {
         // Steigflug zu viel wegging, fehlt weiter im Tank — es wird nur
         // nicht mehr auf die Reststrecke hochskaliert.
         const FMS: f32 = 23300.0;
-        let ack = z[1].landung_hochgerechnet_kg.expect("ACK wird hochgerechnet");
-        let brad = z[3].landung_hochgerechnet_kg.expect("BRADD wird hochgerechnet");
-        let porti = z[4].landung_hochgerechnet_kg.expect("PORTI wird hochgerechnet");
+        let ack = z[1]
+            .landung_hochgerechnet_kg
+            .expect("ACK wird hochgerechnet");
+        let brad = z[3]
+            .landung_hochgerechnet_kg
+            .expect("BRADD wird hochgerechnet");
+        let porti = z[4]
+            .landung_hochgerechnet_kg
+            .expect("PORTI wird hochgerechnet");
         // Die alte Rechnung lag bei BRADD 27 t daneben und war negativ.
         for (name, wert) in [("ACK", ack), ("BRADD", brad)] {
             assert!(
@@ -1107,8 +1128,20 @@ mod tests {
         // Betankung, die in derselben Zeile schon im Klartext steht.
         // Bis 20.09.2026 hat das der 10-%-Riegel nebenbei miterledigt.
         let mut z = vec![
-            wp("EDDL", 9491.0, 2000.0, Some(9783.0), WegpunktZustand::Gemessen),
-            wp("GEMMA", 9245.0, 2000.0, Some(9377.0), WegpunktZustand::Gemessen),
+            wp(
+                "EDDL",
+                9491.0,
+                2000.0,
+                Some(9783.0),
+                WegpunktZustand::Gemessen,
+            ),
+            wp(
+                "GEMMA",
+                9245.0,
+                2000.0,
+                Some(9377.0),
+                WegpunktZustand::Gemessen,
+            ),
             wp("EDDF", 3791.0, 2000.0, None, WegpunktZustand::Offen),
         ];
         wegpunkte_auswerten(&mut z, Some(300.0));

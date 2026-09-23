@@ -29,9 +29,26 @@ fn dummy_input(phase: FlightPhase) -> PresenceInput {
 fn phase_to_label_covers_all_20_phases() {
     use FlightPhase::*;
     let all = [
-        Preflight, Boarding, Pushback, TaxiOut, TakeoffRoll, Takeoff,
-        RejectedTakeoff, Climb, Cruise, Holding, Descent, Approach, Final,
-        Landing, GoAround, TaxiIn, Arrived, BlocksOn, Deboarding, PirepSubmitted,
+        Preflight,
+        Boarding,
+        Pushback,
+        TaxiOut,
+        TakeoffRoll,
+        Takeoff,
+        RejectedTakeoff,
+        Climb,
+        Cruise,
+        Holding,
+        Descent,
+        Approach,
+        Final,
+        Landing,
+        GoAround,
+        TaxiIn,
+        Arrived,
+        BlocksOn,
+        Deboarding,
+        PirepSubmitted,
     ];
     // v0.9.0-Hotfix F2: vorher waren's 18 (ohne Holding + PirepSubmitted), jetzt 20.
     // 17 davon emittiert der heutige Rust-FSM, 3 (RejectedTakeoff, GoAround,
@@ -40,7 +57,12 @@ fn phase_to_label_covers_all_20_phases() {
     for p in all {
         let label = phase_to_label(p);
         assert!(!label.is_empty(), "{:?} ohne Label", p);
-        assert!(!label.contains("UNKNOWN"), "{:?} -> {} darf kein UNKNOWN-Fallback sein", p, label);
+        assert!(
+            !label.contains("UNKNOWN"),
+            "{:?} -> {} darf kein UNKNOWN-Fallback sein",
+            p,
+            label
+        );
     }
 }
 
@@ -50,8 +72,14 @@ fn holding_and_pirep_submitted_have_distinct_labels() {
     // und kamen in Discord als "PREFLIGHT" raus. Spec-Garantie ist eigene Beschriftung.
     assert_eq!(phase_to_label(FlightPhase::Holding), "HOLDING");
     assert_eq!(phase_to_label(FlightPhase::PirepSubmitted), "PIREP FILED");
-    assert_ne!(phase_to_label(FlightPhase::Holding), phase_to_label(FlightPhase::Preflight));
-    assert_ne!(phase_to_label(FlightPhase::PirepSubmitted), phase_to_label(FlightPhase::Preflight));
+    assert_ne!(
+        phase_to_label(FlightPhase::Holding),
+        phase_to_label(FlightPhase::Preflight)
+    );
+    assert_ne!(
+        phase_to_label(FlightPhase::PirepSubmitted),
+        phase_to_label(FlightPhase::Preflight)
+    );
 }
 
 #[test]
@@ -62,8 +90,17 @@ fn phase_warn_labels_have_warning_prefix() {
 
 #[test]
 fn phase_normal_labels_have_no_warning_prefix() {
-    for p in [FlightPhase::Cruise, FlightPhase::Climb, FlightPhase::Approach, FlightPhase::Boarding] {
-        assert!(!phase_to_label(p).starts_with("⚠"), "{:?} darf kein ⚠ haben", p);
+    for p in [
+        FlightPhase::Cruise,
+        FlightPhase::Climb,
+        FlightPhase::Approach,
+        FlightPhase::Boarding,
+    ] {
+        assert!(
+            !phase_to_label(p).starts_with("⚠"),
+            "{:?} darf kein ⚠ haben",
+            p
+        );
     }
 }
 
@@ -72,14 +109,43 @@ fn phase_normal_labels_have_no_warning_prefix() {
 #[test]
 fn phase_to_asset_key_uses_only_six_registered_assets() {
     use FlightPhase::*;
-    let allowed = ["phase_taxi", "phase_climb", "phase_cruise", "phase_descent", "phase_approach", "phase_landed"];
+    let allowed = [
+        "phase_taxi",
+        "phase_climb",
+        "phase_cruise",
+        "phase_descent",
+        "phase_approach",
+        "phase_landed",
+    ];
     for p in [
-        Preflight, Boarding, Pushback, TaxiOut, TakeoffRoll, Takeoff,
-        RejectedTakeoff, Climb, Cruise, Holding, Descent, Approach, Final,
-        Landing, GoAround, TaxiIn, Arrived, BlocksOn, Deboarding, PirepSubmitted,
+        Preflight,
+        Boarding,
+        Pushback,
+        TaxiOut,
+        TakeoffRoll,
+        Takeoff,
+        RejectedTakeoff,
+        Climb,
+        Cruise,
+        Holding,
+        Descent,
+        Approach,
+        Final,
+        Landing,
+        GoAround,
+        TaxiIn,
+        Arrived,
+        BlocksOn,
+        Deboarding,
+        PirepSubmitted,
     ] {
         let key = phase_to_asset_key(p);
-        assert!(allowed.contains(&key), "{:?} mapped auf nicht-registriertes Asset '{}'", p, key);
+        assert!(
+            allowed.contains(&key),
+            "{:?} mapped auf nicht-registriertes Asset '{}'",
+            p,
+            key
+        );
     }
 }
 
