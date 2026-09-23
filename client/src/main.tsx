@@ -16,6 +16,7 @@ import {
 } from "./lib/ipc";
 import { RemotePinGate } from "./components/RemotePinGate";
 import { VatsimCdmView } from "./components/VatsimCdmView";
+import { Notice } from "./components/ui";
 import { VdgsPlatte, type VdgsStand } from "./components/VdgsBand";
 import { SprungBanner } from "./components/SprungBanner";
 import type { ActiveFlightInfo } from "./types";
@@ -110,7 +111,45 @@ function Vorschau({ was }: { was: string }) {
       </SkinProvider>
     );
   }
+  if (was === "integritaet") {
+    return (
+      <SkinProvider>
+        <IntegritaetVorschau />
+      </SkinProvider>
+    );
+  }
   return <div style={{ padding: 24, fontFamily: "system-ui" }}>Unbekannte Vorschau: {was}</div>;
+}
+
+/** Vorschau des schwebenden Integritaets-Hinweises ueber echtem Inhalt.
+ *  Anlass GAF 9655 (23.09.2026): Im hellen Design stand die Meldung
+ *  durchsichtig ueber der Buchungsliste, beides zusammen war unlesbar. */
+function IntegritaetVorschau() {
+  return (
+    <div style={{ minHeight: "100vh", padding: 24, background: "var(--bg)" }}>
+      <h1 style={{ color: "var(--text)" }}>Gebuchte Flüge</h1>
+      <p style={{ color: "var(--text)" }}>
+        Auto-Start aktiv, aber gerade nicht möglich — keine gebuchten Bids gefunden.
+        Buche zuerst einen Flug auf der Webseite.
+      </p>
+      <p style={{ color: "var(--text-dim)" }}>
+        Dieser Text liegt UNTER dem Hinweis. Er darf nicht durchscheinen.
+      </p>
+      <Notice
+        floating
+        role="alert"
+        tone="error"
+        level="Data-Integrity-Problem entdeckt"
+        detail={
+          <span>
+            Längere Datenlücke im Endanflug · Der Flug wird normal gewertet.
+            Bleibt die Aufzeichnung aber lückenhaft, fehlt am Ende womöglich die
+            Landung — dann geht der Bericht zur Prüfung. · 2-mal in diesem Flug.
+          </span>
+        }
+      />
+    </div>
+  );
 }
 
 /** Vorschau des Sprung-Banners: Es erscheint, wenn beim Wiederaufnehmen

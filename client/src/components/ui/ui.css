@@ -213,22 +213,28 @@
   min-height: 34px;
   padding: 6px var(--sp-4);
   border-left: 3px solid var(--sem-info);
-  background: var(--sem-info-bg);
+  /* Der Ton als eigene Variable: Im Fluss reicht die durchscheinende
+     Toenung, die schwebende Variante braucht sie DECKEND (siehe unten). */
+  --notice-ton-bg: var(--sem-info-bg);
+  background: var(--notice-ton-bg);
   /* 12px war fuer eine Warnung im Cockpit zu klein — eine Stufe hoch. */
   font-size: var(--fs-400);
   border-radius: var(--r-sm);
 }
 .ui-notice--warn {
   border-left-color: var(--sem-warn);
-  background: var(--sem-warn-bg);
+  --notice-ton-bg: var(--sem-warn-bg);
+  background: var(--notice-ton-bg);
 }
 .ui-notice--error {
   border-left-color: var(--sem-danger);
-  background: var(--sem-danger-bg);
+  --notice-ton-bg: var(--sem-danger-bg);
+  background: var(--notice-ton-bg);
 }
 .ui-notice--success {
   border-left-color: var(--sem-ok);
-  background: var(--sem-ok-bg);
+  --notice-ton-bg: var(--sem-ok-bg);
+  background: var(--notice-ton-bg);
 }
 .ui-notice__level {
   font-family: var(--font-mono);
@@ -271,6 +277,13 @@
 /* Fixiert eingeblendete Variante (loest die Tailwind-Klassen im
    IntegrityBanner ab, die gegen ein Projekt OHNE Tailwind geschrieben waren). */
 .ui-notice--floating {
+  /* ⚠ Feldbefund Thomas (23.09.2026, GAF 9655): Die Toenungen sind mit 9-12 %
+     Deckkraft gebaut — richtig fuer einen Hinweis IM Textfluss, unbrauchbar
+     fuer einen Kasten, der ueber der Seite schwebt. Im hellen Design stand
+     die Meldung ueber der Buchungsliste und man las beides durcheinander.
+     Deshalb hier die Flaeche deckend: Seitenfarbe unten, Ton darueber. */
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--notice-ton-bg), var(--notice-ton-bg));
   position: fixed;
   top: 56px;
   left: 50%;
