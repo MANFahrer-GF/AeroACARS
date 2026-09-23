@@ -148,6 +148,24 @@ function IntegritaetVorschau() {
           </span>
         }
       />
+      {/* Die übrigen drei Stufen im Fluss, aber mit derselben schwebenden
+          Klasse — so sieht man in EINEM Bild, ob alle deckend sind. */}
+      <div style={{ marginTop: 180, display: "grid", gap: 12 }}>
+        {(["info", "warn", "success"] as const).map((ton) => (
+          <div key={ton} style={{ position: "relative", height: 56 }}>
+            <p style={{ color: "var(--text)", margin: 0 }}>
+              Text unter „{ton}" — darf nicht durchscheinen, darf nicht durchscheinen.
+            </p>
+            <Notice
+              floating
+              tone={ton}
+              level={ton.toUpperCase()}
+              detail={<span>Schwebender Hinweis der Stufe {ton}.</span>}
+              style={{ position: "absolute", top: 0, left: 0, transform: "none" }}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -169,14 +187,38 @@ function SprungVorschau() {
     was_just_resumed: false,
     divert_hint: null,
     unmoeglicher_sprung: true,
+    abgabe_sperre: "sprung",
+  } as unknown as ActiveFlightInfo;
+  // Beide Gründe untereinander: MSC1588 (Sprung) und GAF 9655 (Landung
+  // nach Unterbrechung nicht bewertet). Im Cockpit erscheint nur einer.
+  const gaf9655 = {
+    ...flug,
+    pirep_id: "3Vv2QegWN1lye2J0",
+    airline_icao: "GAF",
+    flight_number: "9655",
+    dpt_airport: "LAKU",
+    arr_airport: "EDDN",
+    unmoeglicher_sprung: false,
+    abgabe_sperre: "landung_fehlt",
   } as unknown as ActiveFlightInfo;
   return (
-    <div style={{ minHeight: "100vh", padding: 24, background: "var(--bg)" }}>
-      <SprungBanner
-        activeFlight={flug}
-        onFiledSuccess={() => {}}
-        onDiscarded={() => {}}
-      />
+    <div
+      style={{
+        minHeight: "100vh",
+        padding: 24,
+        background: "var(--bg)",
+        display: "grid",
+        gap: 24,
+      }}
+    >
+      {[flug, gaf9655].map((f) => (
+        <SprungBanner
+          key={f.pirep_id}
+          activeFlight={f}
+          onFiledSuccess={() => {}}
+          onDiscarded={() => {}}
+        />
+      ))}
     </div>
   );
 }

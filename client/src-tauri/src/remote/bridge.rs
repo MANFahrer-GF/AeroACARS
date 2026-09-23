@@ -450,7 +450,14 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             from_uierr(crate::flight_resume_check_position(app.clone(), st!()).await)
         }
         "flight_resume_confirm" => {
-            from_uierr(crate::flight_resume_confirm(app.clone(), st!()).await)
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                #[serde(default)]
+                force: Option<bool>,
+            }
+            let force = parse_args::<A>(body).map(|a| a.force).unwrap_or(None);
+            from_uierr(crate::flight_resume_confirm(app.clone(), st!(), force).await)
         }
         "flight_refresh_simbrief" => {
             from_uierr(crate::flight_refresh_simbrief(app.clone(), st!()).await)

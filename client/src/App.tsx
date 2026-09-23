@@ -93,6 +93,7 @@ import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
 import { CpdlcMessageBanner } from "./components/CpdlcMessageBanner";
+import { SprungBanner } from "./components/SprungBanner";
 import type { DatalinkMode } from "./components/CpdlcPanel";
 import { Notice, Button } from "./components/ui";
 import { useHoppieAttention } from "./hooks/useHoppieAttention";
@@ -106,7 +107,14 @@ import { listen } from "./lib/ipc";
 import { useFensterAnInhalt } from "./lib/useFensterAnInhalt";
 import { spieleChatTon } from "./lib/chatTon";
 import { ChatView } from "./components/ChatView";
-import type { ActiveFlightInfo, FlightPhase, LoginResult, Profile, UiError } from "./types";
+import type {
+  ActiveFlightInfo,
+  FlightEndOutcome,
+  FlightPhase,
+  LoginResult,
+  Profile,
+  UiError,
+} from "./types";
 
 type SessionStatus =
   | { kind: "loading" }
@@ -391,6 +399,9 @@ function App() {
     void invoke("auto_start_set_enabled", { enabled: autoStart }).catch(() => {});
   }, [autoStart]);
   const simState = simStatus?.state ?? "disconnected";
+  /** Ein Flug, der ausserhalb des Cockpits abgeschlossen wurde (Sprung-
+   *  Banner im App-Rahmen) — das Cockpit zeigt die Erfolgsmeldung dazu. */
+  const [abschluss, setAbschluss] = useState<FlightEndOutcome | null>(null);
   const [activeFlight, setActiveFlight] = useState<ActiveFlightInfo | null>(
     null,
   );
@@ -1000,6 +1011,23 @@ function App() {
         />
       )}
 
+      {/* Die Frage, ob dieser Flug überhaupt eingereicht werden soll, hängt
+          hier oben — NICHT im Cockpit-Reiter. Wer nach der Landung ins
+          Logbuch oder in den Chat wechselt, sähe sonst gar nichts, und der
+          Flug bliebe offen (Cloud-QS 23.09.2026). Gleiche Begründung wie
+          beim CPDLC-Banner. */}
+      {status.kind === "loggedIn" && activeFlight && (
+        <SprungBanner
+          activeFlight={activeFlight}
+          onFiledSuccess={(outcome) => {
+            setActiveFlight(null);
+            setAbschluss(outcome);
+            setTab("cockpit");
+          }}
+          onDiscarded={() => setActiveFlight(null)}
+        />
+      )}
+
       {status.kind === "loggedIn" && tab === "cockpit" && (
         <CockpitView
           session={status.session}
@@ -1008,6 +1036,8 @@ function App() {
           simSnapshot={simSnapshot}
           onSwitchToBriefing={() => setTab("briefing")}
           approachAdvisoriesEnabled={approachAdvisoriesEnabled}
+          abschlussVonAussen={abschluss}
+          onAbschlussGezeigt={() => setAbschluss(null)}
         />
       )}
 

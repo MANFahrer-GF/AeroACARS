@@ -1019,6 +1019,12 @@ struct ResumeDiscontinuity {
     /// nicht bekannt ist — dann gilt im Zweifel der Pilot als ehrlich.
     #[serde(default)]
     luecke_secs: Option<i64>,
+    /// Kein gemessener Sprung, sondern die ausdrueckliche Bestaetigung des
+    /// Piloten „Trotzdem fortsetzen". Sprit- und Hoehendelta sind hier
+    /// konstruktionsbedingt 0 und gehoeren NICHT in die Notiz — sonst legt
+    /// sie dem Pruefer Messwerte vor, die keine sind (Cloud-QS 23.09.2026).
+    #[serde(default)]
+    nur_bestaetigt: bool,
 }
 
 /// Vergleicht den letzten bekannten Snapshot vor einer Pause/einem
@@ -1042,6 +1048,7 @@ fn compute_resume_discontinuity(
         ziel_nachher_nm: nm_zum_ziel(cur.lat, cur.lon),
         danach_am_boden: cur.on_ground,
         luecke_secs,
+        nur_bestaetigt: false,
     }
 }
 
@@ -1127,7 +1134,15 @@ impl AbgabeSperre {
 /// War der Flug laenger als `ABGABE_UNTERBRECHUNG_MIN_SECS` ohne Simulator
 /// — oder hat ihn ein App-/Sim-Neustart unterbrochen?
 fn flug_war_unterbrochen(stats: &FlightStats) -> bool {
-    stats.resume_gap_minutes.is_some()
+    // Die Schwelle gilt fuer BEIDE Arten von Unterbrechung. `resume_gap_minutes`
+    // wird bei jedem App-Neustart gesetzt, auch bei `Some(0)` — ohne Schwelle
+    // zaehlte der Update-Relaunch mitten im Flug als Unterbrechung
+    // (Cloud-QS 23.09.2026).
+    let neustart_lang_genug = stats
+        .resume_luecke_secs
+        .or_else(|| stats.resume_gap_minutes.map(|m| m * 60))
+        .is_some_and(|secs| secs >= ABGABE_UNTERBRECHUNG_MIN_SECS);
+    neustart_lang_genug
         || !stats.resume_spruenge.is_empty()
         || stats
             .pause_segments
@@ -1138,16 +1153,22 @@ fn flug_war_unterbrochen(stats: &FlightStats) -> bool {
 /// Wurde die Landung ueberhaupt gemessen? Ohne Aufsetzfenster gibt es
 /// weder Rate noch Note — dann hat die App das Aufsetzen nicht gesehen.
 fn landung_wurde_gemessen(stats: &FlightStats) -> bool {
-    stats.landing_rate_fpm.is_some() || stats.landing_score.is_some()
+    // ⚠ NICHT `landing_rate_fpm` lesen: Dort steht auch der Notnagel
+    // `fallback_zero`, und bei gesetztem `landung_abdeckung_fehlt` steht
+    // eine Zahl, die nirgends gilt. `canonical_landing_rate_fpm` ist die
+    // eine Stelle, die all diese Riegel kennt — sonst greift die Sperre
+    // ausgerechnet in der Fehlerklasse nicht, fuer die sie gebaut ist
+    // (Cloud-QS 23.09.2026).
+    stats.canonical_landing_rate_fpm().is_some() || stats.landing_score.is_some()
 }
 
-/// Haelt fest, dass der Pilot trotz einer erkannten Abweichung
-/// fortgesetzt hat.
+/// Haelt fest, dass der Pilot den Knopf „Trotzdem fortsetzen" gedrueckt
+/// hat, obwohl die Lage im Simulator nicht zum gespeicherten Flug passte.
 ///
-/// `flight_resume_check_position` raeumt `was_just_resumed` NUR ab, wenn
-/// die Lage sauber ist. Wer hier ankommt, ohne dass das passiert ist, hat
-/// „Trotzdem fortsetzen" gedrueckt — oder der Sim steht immer noch
-/// woanders. Beides gehoert in den Bericht.
+/// ⚠ NUR von dort aufrufen. Der Countdown im Resume-Banner bestaetigt von
+/// selbst, und wer danach den Simulator neu laedt, steht beim ersten
+/// Snapshot regelmaessig am Boden — ohne diese Bedingung bekaeme jeder
+/// ehrliche Neustart einen Sprung-Vermerk (Cloud-QS 23.09.2026).
 fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
     let (phase, letzte_pos, ziel, luecke_secs) = {
         let stats = flight.stats.lock().expect("flight stats");
@@ -1176,7 +1197,8 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
         zfw_kg: None,
         on_ground: false,
     };
-    let d = compute_resume_discontinuity(&vorher, snap, ziel, luecke_secs);
+    let mut d = compute_resume_discontinuity(&vorher, snap, ziel, luecke_secs);
+    d.nur_bestaetigt = true;
     {
         let mut stats = flight.stats.lock().expect("flight stats");
         stats.resume_discontinuity = Some(d);
@@ -1201,6 +1223,98 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
         on_ground = snap.on_ground,
         "Resume trotz Abweichung bestaetigt — als Sprung vermerkt"
     );
+}
+
+/// Backend-Auto-File: Latcht der FSM auf `Arrived` und hat der Pilot
+/// Auto-File aktiviert, reicht das Backend selbst ein — fenster-unabhaengig
+/// (v0.12.6; vorher ein Frontend-`useEffect`, der bei nicht-aktivem Cockpit
+/// nicht feuerte).
+///
+/// ⚠ Wird bei JEDEM Takt in `Arrived` aufgerufen, nicht nur beim Uebergang:
+/// Die Landebewertung wird Sekunden nach dem Aufsetzen fertig, und wer nur
+/// den Uebergang prueft, trifft womoeglich das Fenster, in dem die Sperre
+/// noch steht. Danach kaeme kein zweiter Uebergang — der Flug bliebe
+/// haengen (Cloud-QS 23.09.2026). Der Merker `auto_file_gestartet` sorgt
+/// dafuer, dass trotzdem nur EIN Versuch laeuft.
+fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>) {
+    if !app
+        .state::<AppState>()
+        .auto_file_enabled
+        .load(Ordering::Relaxed)
+    {
+        return;
+    }
+    let entscheidung = {
+        let mut st = flight.stats.lock().expect("flight stats");
+        if st.auto_file_gestartet {
+            return;
+        }
+        let is_divert = st.divert_hint.is_some();
+        let sperre = abgabe_sperre(&st);
+        if is_divert || sperre.is_some() {
+            Err((is_divert, sperre))
+        } else {
+            st.auto_file_gestartet = true;
+            Ok(())
+        }
+    };
+    match entscheidung {
+        Err((true, _)) => {
+            // Den Ausweich-Airport bestaetigt der Pilot im Divert-Banner (LE2).
+        }
+        Err((false, Some(grund))) => {
+            // „Arrived" sagt hier nichts: Entweder sprang der Zustand beim
+            // Wiederaufnehmen (MSC1588), oder der Flug war unterbrochen und
+            // die Landung wurde nie gemessen (GAF 9655). Der Pilot
+            // entscheidet im Banner — verwerfen oder bewusst einreichen.
+            tracing::debug!(
+                pirep_id = %flight.pirep_id,
+                grund = grund.code(),
+                "backend auto-file ausgesetzt — der Pilot entscheidet im Banner"
+            );
+        }
+        Err((false, None)) => {}
+        Ok(()) => {
+            tracing::info!(pirep_id = %flight.pirep_id, "Arrived — backend auto-file");
+            let app_af = app.clone();
+            let flight_af = Arc::clone(flight);
+            tauri::async_runtime::spawn(async move {
+                let st = app_af.state::<AppState>();
+                match flight_end(app_af.clone(), st, None, None, None, None).await {
+                    Ok(()) => {
+                        // LE7-Erfolgs-Banner: das Frontend hoert auf dieses
+                        // Event und zeigt das gruene ✅ — sonst verschwaende
+                        // der Flug beim Backend-Auto-File kommentarlos.
+                        let payload = serde_json::json!({
+                            "callsign": format_callsign(
+                                &flight_af.airline_icao,
+                                &flight_af.flight_number,
+                            ),
+                            "dpt": flight_af.dpt_airport,
+                            "arr": flight_af.arr_airport,
+                        });
+                        let _ = tauri::Emitter::emit(&app_af, "pirep_auto_filed", payload.clone());
+                        // v0.16.0 (#LAN-Remote): fan out to LAN WS.
+                        app_af
+                            .state::<AppState>()
+                            .remote_events
+                            .send(remote::RemoteEvent::new("pirep_auto_filed", payload));
+                    }
+                    Err(e) => {
+                        // Der Versuch ist gelaufen; ein zweiter waere nur ein
+                        // zweiter Fehlschlag. Der Pilot uebernimmt von Hand.
+                        log_activity_handle(
+                            &app_af,
+                            ActivityLevel::Warn,
+                            "Auto-File fehlgeschlagen — bitte manuell „Flug beenden\" klicken"
+                                .to_string(),
+                            Some(format!("{}: {}", e.code, e.message)),
+                        );
+                    }
+                }
+            });
+        }
+    }
 }
 
 /// Die eine Stelle, an der entschieden wird, ob der Pilot gefragt werden
@@ -1234,16 +1348,32 @@ const SPRUNG_BEGRUENDUNG_MAX_ZEICHEN: usize = 500;
 /// stand schon einmal hier und ging beim Umbau auf mehrere Spruenge still
 /// verloren — deshalb jetzt an EINER Stelle, mit eigenem Test.
 fn begruendungs_zeile(begruendung: Option<&str>) -> String {
+    begruendungs_zeile_mit(begruendung, "Begründung")
+}
+
+/// Wie `begruendungs_zeile`, aber mit eigener Beschriftung — die
+/// Divert-Begruendung kommt ueber dieselbe LAN-Bruecke und braucht
+/// denselben Riegel (Cloud-QS 23.09.2026).
+fn begruendungs_zeile_mit(begruendung: Option<&str>, beschriftung: &str) -> String {
     begruendung
         .map(str::trim)
         .filter(|r| !r.is_empty())
         .map(|r| {
             let einzeilig: String = r
                 .chars()
-                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                // Nicht nur \n und \r: U+2028/U+2029, vertikaler Tabulator
+                // und Formfeed brechen die Zeile je nach Anzeige ebenfalls
+                // (Cloud-QS 23.09.2026).
+                .map(|c| {
+                    if c.is_control() || c == '\u{2028}' || c == '\u{2029}' {
+                        ' '
+                    } else {
+                        c
+                    }
+                })
                 .take(SPRUNG_BEGRUENDUNG_MAX_ZEICHEN)
                 .collect();
-            format!("Begründung: {einzeilig}\n")
+            format!("{beschriftung}: {einzeilig}\n")
         })
         .unwrap_or_default()
 }
@@ -1259,13 +1389,18 @@ fn sprung_notiz(
     let liste: String = spruenge
         .iter()
         .map(|d| {
-            format!(
-                "· {} (Sprit {:+.0} kg · Höhe {:+.0} ft · Position {:.1} nm)\n",
-                sprung_grund(d),
-                d.fuel_delta_kg,
-                d.altitude_delta_ft,
-                d.drift_nm
-            )
+            if d.nur_bestaetigt {
+                // Hier gibt es nur einen gemessenen Wert: den Abstand.
+                format!("· {} (Position {:.1} nm)\n", sprung_grund(d), d.drift_nm)
+            } else {
+                format!(
+                    "· {} (Sprit {:+.0} kg · Höhe {:+.0} ft · Position {:.1} nm)\n",
+                    sprung_grund(d),
+                    d.fuel_delta_kg,
+                    d.altitude_delta_ft,
+                    d.drift_nm
+                )
+            }
         })
         .collect();
     let kopf = if spruenge.len() > 1 {
@@ -1308,6 +1443,9 @@ fn spruenge_fuer_notiz(stats: &FlightStats) -> Vec<ResumeDiscontinuity> {
 /// Zahlenreihe allein sagt dem Pruefer nicht, WARUM das unmoeglich war
 /// (Cloud-QS 23.09.2026, Befund 8).
 fn sprung_grund(d: &ResumeDiscontinuity) -> &'static str {
+    if d.nur_bestaetigt {
+        return "Fortsetzen trotz Abweichung bestätigt";
+    }
     if ist_sprung_ans_ziel(d) {
         "ans Ziel gesprungen"
     } else if d.drift_nm > RESUME_DRIFT_EXTREME_NM {
@@ -1562,12 +1700,18 @@ mod resume_discontinuity_tests {
         // Eintrag der App.
         assert!(mehrzeilig.contains("Sim weg DIVERT: EDDM Begründung: erfunden"));
         assert!(!mehrzeilig.trim_end().contains('\r'));
-        for zeile in mehrzeilig.trim_end().lines().skip(1) {
-            assert!(
-                !zeile.starts_with("Begründung:") && !zeile.starts_with("DIVERT:"),
-                "{zeile}"
-            );
-        }
+        // ⚠ An der FERTIGEN Notiz pruefen, nicht an der einzelnen Zeile:
+        // die hat nur einen Umbruch, `lines().skip(1)` lief dort ins Leere
+        // und behauptete nichts (Cloud-QS 23.09.2026, zweite Runde).
+        let notiz = landung_fehlt_notiz(
+            Some("Sim weg\nDIVERT: EDDM\u{2028}Begründung: erfunden"),
+            "Bestehende Notiz",
+        );
+        let eigene_zeilen: Vec<&str> = notiz
+            .lines()
+            .filter(|z| z.starts_with("Begründung:") || z.starts_with("DIVERT:"))
+            .collect();
+        assert_eq!(eigene_zeilen.len(), 1, "{notiz}");
 
         // Und beide Notizarten nutzen denselben Riegel.
         for notiz in [
@@ -1626,6 +1770,7 @@ mod resume_discontinuity_tests {
             ziel_nachher_nm: None,
             danach_am_boden: false,
             luecke_secs: None,
+            nur_bestaetigt: false,
         };
         assert_eq!(
             sprung_grund(&alt),
@@ -5567,6 +5712,9 @@ struct FlightStats {
     resume_discontinuity: Option<ResumeDiscontinuity>,
     /// Alle Spruenge dieses Fluges — siehe PersistedFlightStats.
     resume_spruenge: Vec<ResumeDiscontinuity>,
+    /// Ein Auto-File-Versuch laeuft oder lief schon. Verhindert, dass die
+    /// wiederholte Pruefung in `Arrived` zweimal einreicht.
+    auto_file_gestartet: bool,
     /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
     app_restart_was_unclean: Option<bool>,
     /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
@@ -12446,8 +12594,8 @@ mod nachreichen_tests {
     fn auto_file_setzt_bei_unmoeglichem_sprung_aus() {
         const SRC: &str = include_str!("lib.rs");
         let start = SRC
-            .find("\n                if new_phase == FlightPhase::Arrived")
-            .expect("Auto-File-Zweig nicht mehr gefunden — Test anpassen, nicht loeschen");
+            .find(concat!("\nfn auto_file_", "versuchen("))
+            .expect("Auto-File-Funktion nicht mehr gefunden — Test anpassen, nicht loeschen");
         // Bis zur schliessenden Klammer DIESES Zweigs (Einrueckung 16),
         // nicht bis zu einem festen Byte-Offset: lib.rs enthaelt Nicht-ASCII,
         // ein fester Offset kann mitten in ein Zeichen fallen und den Test
@@ -12457,8 +12605,8 @@ mod nachreichen_tests {
         // (Cloud-QS 23.09.2026, zweite Runde).
         let rest = &SRC[start..];
         let zweig_ende = rest
-            .find("\n                }\n")
-            .expect("Ende des Auto-File-Zweigs nicht gefunden — Test anpassen, nicht loeschen");
+            .find("\n}\n")
+            .expect("Ende der Auto-File-Funktion nicht gefunden — Test anpassen, nicht loeschen");
         let zweig = &rest[..zweig_ende];
         // Genau EIN Abgabe-Aufruf im Fenster: sonst prueft die
         // Reihenfolge-Aussage weiter unten den falschen.
@@ -12515,13 +12663,14 @@ mod nachreichen_tests {
         assert!(stellen.len() >= 3, "Erkennungsstellen: {stellen:?}");
         for i in &stellen {
             let rest = &SRC[*i..];
-            let fenster = &rest[..rest
-                .find("\n            }")
-                .map(|e| e.min(rest.len()))
-                .unwrap_or(rest.len())];
+            // Eng: bis zum Ende der naechsten Anweisung. Ein weites Fenster
+            // faende das Schlagwort irgendwo weiter unten und koennte nicht
+            // mehr rot werden (Cloud-QS 23.09.2026, zweite Runde).
+            let zeilen: Vec<&str> = rest.lines().take(4).collect();
+            let fenster = zeilen.join("\n");
             assert!(
                 fenster.contains("resume_spruenge.push(")
-                    // Die dritte Stelle ist ein Test, der das Feld direkt setzt.
+                    // Test-Literale bauen den Wert direkt, ohne Erkennung.
                     || fenster.contains("ResumeDiscontinuity {"),
                 "Sprung wird erkannt, aber nicht angehaengt: {fenster}"
             );
@@ -12624,6 +12773,7 @@ mod nachreichen_tests {
             ziel_nachher_nm: None,
             danach_am_boden: true,
             luecke_secs: Some(600),
+            nur_bestaetigt: false,
         });
         assert_eq!(abgabe_sperre(&stats), Some(AbgabeSperre::Sprung));
     }
@@ -12644,6 +12794,28 @@ mod nachreichen_tests {
         assert!(
             koerper.contains("sprung_notiz(&spruenge, None, &notes)"),
             "flight_end_manual vermerkt den Sprung nicht mehr"
+        );
+        assert!(
+            koerper.contains("landung_fehlt_notiz(None, &notes)"),
+            "flight_end_manual vermerkt die fehlende Landung nicht mehr"
+        );
+        // Und derselbe Vermerk im normalen Weg — sonst haette nur der
+        // manuelle Weg ihn (Cloud-QS 23.09.2026, zweite Runde).
+        // ⚠ Suchtext getrennt: Wörtlich geschrieben findet ihn der Wächter
+        // `kein_zweiter_filing_weg_am_file_endpunkt_vorbei` in DIESEM Test
+        // und schneidet sein Fenster ab hier — er wurde dadurch rot
+        // (Cloud-QS 23.09.2026, zweite Runde).
+        let ende_start = SRC
+            .find(concat!("\nasync fn ", "flight_end("))
+            .expect("flight_end nicht gefunden — Test anpassen, nicht loeschen");
+        let ende_ende = SRC[ende_start + 1..]
+            .find(concat!("\nasync ", "fn "))
+            .map(|i| ende_start + 1 + i)
+            .unwrap_or(SRC.len());
+        let flight_end_koerper = &SRC[ende_start..ende_ende];
+        assert!(
+            flight_end_koerper.contains("landung_fehlt_notiz(sprung_begruendung.as_deref()"),
+            "flight_end vermerkt die fehlende Landung nicht mehr"
         );
     }
 
@@ -23119,6 +23291,7 @@ mod client_health_report_tests {
             ziel_nachher_nm: None,
             danach_am_boden: false,
             luecke_secs: None,
+            nur_bestaetigt: false,
         });
         let report = build_client_health_report(&stats).expect("must be Some");
         assert_eq!(report.disconnect_sim_liveness.as_deref(), Some("unknown"));
@@ -28634,10 +28807,12 @@ async fn flight_end(
             let dist_line = measured_arr_nm
                 .map(|d| format!(" (gemessen: {d:.1} nm vom Ziel)"))
                 .unwrap_or_default();
-            let reason_line = divert_reason
-                .as_deref()
-                .map(|r| format!("\nBegründung: {r}"))
-                .unwrap_or_default();
+            // Derselbe Riegel wie bei der Sprung-Begruendung: Der Text kommt
+            // ueber dieselbe LAN-Bruecke (Cloud-QS 23.09.2026).
+            let reason_line = match begruendungs_zeile(divert_reason.as_deref()).as_str() {
+                "" => String::new(),
+                z => format!("\n{}", z.trim_end()),
+            };
             notes = format!(
                 "ANKUNFT VOM PILOTEN BESTÄTIGT: {arr_icao}{dist_line}\n\
                  Die automatische Erkennung hat den Flug nicht am Zielflughafen \
@@ -28663,10 +28838,11 @@ async fn flight_end(
         // v0.12.5 (LE2): die Pflicht-Begründung steht direkt unter dem
         // Banner — ein Audit-Eintrag pro Divert für den VA-Admin.
         if let Some(actual) = divert_to.as_deref() {
-            let reason_line = divert_reason
-                .as_deref()
-                .map(|r| format!("Reason: {r}\n\n"))
-                .unwrap_or_default();
+            let reason_line =
+                match begruendungs_zeile_mit(divert_reason.as_deref(), "Reason").as_str() {
+                    "" => String::new(),
+                    z => format!("{z}\n"),
+                };
             notes = format!(
                 "DIVERT: {} → {} (planned destination not reached)\n{}\n{}",
                 arr_icao, actual, reason_line, notes
@@ -30447,6 +30623,10 @@ pub enum FlightCancelOutcome {
 async fn flight_resume_confirm(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
+    // true nur vom Knopf „Trotzdem fortsetzen": Der Pilot hat die Warnung
+    // gelesen und fuehrt den Flug bewusst weiter. Der Countdown und der
+    // normale Weg schicken das NICHT (Cloud-QS 23.09.2026).
+    force: Option<bool>,
 ) -> Result<(), UiError> {
     let flight = {
         let guard = state.active_flight.lock().expect("active_flight lock");
@@ -30465,7 +30645,7 @@ async fn flight_resume_confirm(
     // erst dann scharf. `was_just_resumed` bleibt true bis dahin → die UI
     // zeigt weiter den Resume-/Warte-Zustand statt einen scheinbar laufenden
     // Flug. Sim-agnostisch (X-Plane + MSFS via `current_snapshot`).
-    spawn_resume_sim_gate(app, Arc::clone(&flight), client);
+    spawn_resume_sim_gate(app, Arc::clone(&flight), client, force.unwrap_or(false));
     Ok(())
 }
 
@@ -30474,7 +30654,12 @@ async fn flight_resume_confirm(
 /// Flug erst dann scharf — Streamer + phpVMS-Worker + Touchdown-Sampler.
 /// Bis dahin: kein Streaming, kein phpVMS-Post. Bricht ab, wenn der Flug
 /// nicht mehr aktiv ist (Cancel/Forget/End) oder `stop` gesetzt wurde.
-fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
+fn spawn_resume_sim_gate(
+    app: AppHandle,
+    flight: Arc<ActiveFlight>,
+    client: Client,
+    trotzdem_fortsetzen: bool,
+) {
     tauri::async_runtime::spawn(async move {
         log_activity_handle(
             &app,
@@ -30527,7 +30712,9 @@ fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Clie
                     // vergessen, und die App reichte am Ende selbst ein
                     // (GAF 9655, 23.09.2026). Jetzt wird sie vermerkt —
                     // damit entscheidet der Pilot am Ende auch die Abgabe.
-                    sprung_beim_fortsetzen_vermerken(&app, &flight, &snap);
+                    if trotzdem_fortsetzen {
+                        sprung_beim_fortsetzen_vermerken(&app, &flight, &snap);
+                    }
                     flight.was_just_resumed.store(false, Ordering::Relaxed);
                     spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
                     spawn_position_streamer(app.clone(), Arc::clone(&flight), client.clone());
@@ -37665,80 +37852,19 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // nachdem der Pilot AeroACARS in den Vordergrund holte).
                 // Divert wird ausgelassen — den Ausweich-Airport muss der
                 // Pilot über das Divert-Banner bestätigen (LE2).
-                if new_phase == FlightPhase::Arrived
-                    && app
-                        .state::<AppState>()
-                        .auto_file_enabled
-                        .load(Ordering::Relaxed)
-                {
-                    let (is_divert, sperre) = {
-                        let st = flight.stats.lock().expect("flight stats");
-                        (st.divert_hint.is_some(), abgabe_sperre(&st))
-                    };
-                    if is_divert {
-                        tracing::info!(
-                            pirep_id = %flight.pirep_id,
-                            "backend auto-file skipped — divert detected, \
-                             pilot confirms via banner"
-                        );
-                    } else if let Some(grund) = sperre {
-                        // „Arrived" sagt hier nichts: Entweder sprang der
-                        // Zustand beim Wiederaufnehmen (MSC1588), oder der
-                        // Flug war unterbrochen und die Landung wurde nie
-                        // gemessen (GAF 9655). Der Pilot entscheidet im
-                        // Banner — verwerfen oder bewusst einreichen.
-                        tracing::info!(
-                            pirep_id = %flight.pirep_id,
-                            grund = grund.code(),
-                            "backend auto-file ausgesetzt — der Pilot entscheidet im Banner"
-                        );
-                    } else {
-                        tracing::info!(
-                            pirep_id = %flight.pirep_id,
-                            "Arrived — backend auto-file"
-                        );
-                        let app_af = app.clone();
-                        let flight_af = Arc::clone(&flight);
-                        tauri::async_runtime::spawn(async move {
-                            let st = app_af.state::<AppState>();
-                            match flight_end(app_af.clone(), st, None, None, None, None).await {
-                                Ok(()) => {
-                                    // LE7-Erfolgs-Banner: das Frontend
-                                    // hört auf dieses Event und zeigt das
-                                    // grüne ✅ — sonst verschwände der Flug
-                                    // beim Backend-Auto-File kommentarlos.
-                                    let payload = serde_json::json!({
-                                        "callsign": format_callsign(
-                                            &flight_af.airline_icao,
-                                            &flight_af.flight_number,
-                                        ),
-                                        "dpt": flight_af.dpt_airport,
-                                        "arr": flight_af.arr_airport,
-                                    });
-                                    let _ = tauri::Emitter::emit(
-                                        &app_af,
-                                        "pirep_auto_filed",
-                                        payload.clone(),
-                                    );
-                                    // v0.16.0 (#LAN-Remote): fan out to LAN WS.
-                                    app_af.state::<AppState>().remote_events.send(
-                                        remote::RemoteEvent::new("pirep_auto_filed", payload),
-                                    );
-                                }
-                                Err(e) => {
-                                    log_activity_handle(
-                                        &app_af,
-                                        ActivityLevel::Warn,
-                                        "Auto-File fehlgeschlagen — bitte \
-                                         manuell „Flug beenden\" klicken"
-                                            .to_string(),
-                                        Some(format!("{}: {}", e.code, e.message)),
-                                    );
-                                }
-                            }
-                        });
-                    }
+                if new_phase == FlightPhase::Arrived {
+                    auto_file_versuchen(&app, &flight);
                 }
+            }
+
+            // Auch OHNE Phasenwechsel: Die Landebewertung wird erst ein paar
+            // Sekunden nach dem Aufsetzen fertig. Wer nur den Uebergang nach
+            // `Arrived` prueft, kann das Fenster treffen, in dem die Sperre
+            // noch steht — und danach kommt kein zweiter Uebergang mehr
+            // (Cloud-QS 23.09.2026). Der Merker in `auto_file_versuchen`
+            // sorgt dafuer, dass trotzdem nur EIN Versuch laeuft.
+            if phase_change.is_none() && current_phase == FlightPhase::Arrived {
+                auto_file_versuchen(&app, &flight);
             }
 
             // Unified heartbeat-and-phase-update: POST `/pireps/{id}/update`

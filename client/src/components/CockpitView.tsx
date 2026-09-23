@@ -19,7 +19,6 @@ const WEATHER_BRIEFING_URL = "https://german-sky-group.eu/weatherbriefing";
 // Loadsheet visuell zum aktiven Flug gehört statt als getrennte
 // Section unter dem WeatherBriefing zu hängen.
 import { DivertBanner } from "./DivertBanner";
-import { SprungBanner } from "./SprungBanner";
 import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
 
 interface Props {
@@ -32,6 +31,11 @@ interface Props {
   onSwitchToBriefing: () => void;
   /** v0.5.38: Stable-Approach-Banner anzeigen. Default ON. */
   approachAdvisoriesEnabled: boolean;
+  /** Ein Flug, der AUSSERHALB des Cockpits abgeschlossen wurde (Sprung-
+   *  Banner im App-Rahmen). Das Cockpit zeigt dieselbe Meldung wie für
+   *  seine eigenen Abschlüsse. */
+  abschlussVonAussen?: FlightEndOutcome | null;
+  onAbschlussGezeigt?: () => void;
 }
 
 /**
@@ -50,6 +54,8 @@ export function CockpitView({
   simSnapshot,
   onSwitchToBriefing,
   approachAdvisoriesEnabled,
+  abschlussVonAussen,
+  onAbschlussGezeigt,
 }: Props) {
   const { t } = useTranslation();
   // v0.12.5 (LE7): how the last flight concluded — drives the post-flight
@@ -65,6 +71,12 @@ export function CockpitView({
     const id = window.setTimeout(() => setEndNotice(null), 8000);
     return () => window.clearTimeout(id);
   }, [endNotice]);
+  // Abschluss von aussen (Sprung-Banner im App-Rahmen) einmal übernehmen.
+  useEffect(() => {
+    if (!abschlussVonAussen) return;
+    setEndNotice(abschlussVonAussen);
+    onAbschlussGezeigt?.();
+  }, [abschlussVonAussen, onAbschlussGezeigt]);
 
   /** v0.12.5 (LE7): reload the active flight without claiming a PIREP was
    *  filed. `flight_forget` → backend returns null → cockpit collapses;
@@ -292,13 +304,8 @@ export function CockpitView({
         />
       )}
 
-      {/* Unmöglicher Sprung beim Wiederaufnehmen: Die App gibt dann NICHT
-          mehr von selbst ab — der Pilot entscheidet (MSC1588, 22.09.2026). */}
-      <SprungBanner
-        activeFlight={activeFlight}
-        onFiledSuccess={handleFiledSuccess}
-        onDiscarded={() => setActiveFlight(null)}
-      />
+      {/* Der Sprung-Banner hängt im App-Rahmen (App.tsx), damit er auf
+          JEDEM Reiter erscheint — siehe dortigen Kommentar. */}
 
       {/* v0.5.38: Visual Stable-Approach-Advisory. Steht ÜBER dem
           ActiveFlightPanel sodass es bei jedem Flugzustand sichtbar

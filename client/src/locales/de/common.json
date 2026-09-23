@@ -2566,7 +2566,8 @@
     "begruendung_platzhalter": "z. B. Simulator abgestürzt, danach am Zielflughafen neu geladen",
     "verwerfen_sicher": "Ja, Flug verwerfen",
     "doch_nicht": "Doch nicht",
-    "landung_title": "Landung wurde nicht gemessen",
-    "landung_body": "Der Flug war unterbrochen, und beim Aufsetzen lagen der App keine Daten vor — es gibt weder Sinkrate noch Note. Deshalb wird nichts automatisch eingereicht: Du entscheidest."
+    "landung_title": "Landung konnte nicht bewertet werden",
+    "landung_body": "Der Flug war unterbrochen, und für das Aufsetzen liegen keine verwertbaren Messwerte vor — es gibt weder Sinkrate noch Note. Deshalb wird nichts automatisch eingereicht: Du entscheidest.",
+    "landung_platzhalter": "z. B. Simulator ist beim Aufsetzen abgestürzt"
   }
 }

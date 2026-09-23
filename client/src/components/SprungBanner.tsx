@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, FlightEndOutcome } from "../types";
@@ -48,12 +48,34 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
   /** Verwerfen ist unwiderruflich und kostet einen ganzen Flug — überall
    *  sonst in der App fragt ein Abbruch nach (Cloud-QS 23.09.2026). */
   const [sicher, setSicher] = useState(false);
+  /** Nach dem ersten Klick tauscht React die Taste aus — der Fokus fiel
+   *  dabei auf das Dokument zurück, und wer mit der Tastatur bedient,
+   *  landete vor einer unwiderruflichen Aktion am Seitenanfang
+   *  (Cloud-QS 23.09.2026). Deshalb gezielt auf „Doch nicht": Der sichere
+   *  Weg ist vorbelegt, nicht der zerstörerische. */
+  const dochNichtRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (sicher) dochNichtRef.current?.focus();
+  }, [sicher]);
 
   // Zwei Gründe, dieselbe Frage. `unmoeglicher_sprung` bleibt als
   // Rückfallebene für einen älteren Client an der LAN-Brücke.
+  //
+  // Nur die BEKANNTEN Codes zählen: Ein neueres Backend (oder die
+  // LAN-Brücke, die schicken kann was sie will) darf hier nicht dazu
+  // führen, dass „der Zustand sprang" behauptet wird, obwohl etwas
+  // anderes gemeint war (Cloud-QS 23.09.2026).
+  const gemeldet = activeFlight.abgabe_sperre;
   const grund =
-    activeFlight.abgabe_sperre ?? (activeFlight.unmoeglicher_sprung ? "sprung" : null);
+    gemeldet === "sprung" || gemeldet === "landung_fehlt"
+      ? gemeldet
+      : gemeldet
+        ? "unbekannt"
+        : activeFlight.unmoeglicher_sprung
+          ? "sprung"
+          : null;
   if (!grund) return null;
+  const istLandung = grund === "landung_fehlt";
   // Erst entscheiden lassen, wenn die Entscheidung ansteht — und nicht,
   // während der Resume-Hinweis noch offen ist.
   if (activeFlight.was_just_resumed) return null;
@@ -110,11 +132,11 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
           ⚠
         </span>
         <h2 className="divert-banner__title">
-          {grund === "landung_fehlt" ? t("sprung.landung_title") : t("sprung.title")}
+          {istLandung ? t("sprung.landung_title") : t("sprung.title")}
         </h2>
       </header>
       <p className="divert-banner__body">
-        {grund === "landung_fehlt" ? t("sprung.landung_body") : t("sprung.body")}
+        {istLandung ? t("sprung.landung_body") : t("sprung.body")}
       </p>
       <label className="sprung-banner__feld">
         <span>{t("sprung.begruendung_label")}</span>
@@ -124,7 +146,9 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
           maxLength={500}
           value={begruendung}
           disabled={busy}
-          placeholder={t("sprung.begruendung_platzhalter")}
+          placeholder={
+            istLandung ? t("sprung.landung_platzhalter") : t("sprung.begruendung_platzhalter")
+          }
           onChange={(e) => setBegruendung(e.target.value)}
         />
       </label>
@@ -141,6 +165,7 @@ export function SprungBanner({ activeFlight, onFiledSuccess, onDiscarded }: Prop
               {busy ? t("sprung.laeuft") : t("sprung.verwerfen_sicher")}
             </button>
             <button
+              ref={dochNichtRef}
               type="button"
               className="button button--ghost"
               disabled={busy}

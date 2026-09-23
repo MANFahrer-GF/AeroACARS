@@ -184,13 +184,16 @@ export function ResumeFlightBanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, positionSuspect]);
 
-  async function doConfirm() {
+  /** `force` NUR vom Knopf „Trotzdem fortsetzen": Der Pilot hat die
+   *  Warnung gelesen und führt bewusst weiter. Das Backend vermerkt es
+   *  dann im Bericht (Cloud-QS 23.09.2026). */
+  async function doConfirm(force = false) {
     if (mode.kind === "auto_resumed") {
       setMode((prev) =>
         prev.kind === "auto_resumed" ? { ...prev, busy: true } : prev,
       );
       try {
-        await invoke("flight_resume_confirm");
+        await invoke("flight_resume_confirm", force ? { force: true } : {});
         setMode({ kind: "idle" });
       } catch (err) {
         const msg = errMsg(err);
@@ -310,7 +313,8 @@ export function ResumeFlightBanner({
           onConfirm={() => {
             if (confirmingRef.current) return;
             confirmingRef.current = true;
-            void doConfirm();
+            // Aus dem Hard-Stop-Dialog: ausdrückliches „Trotzdem fortsetzen".
+            void doConfirm(true);
           }}
           onCancel={() => void doCancel()}
         />

@@ -5,6 +5,8 @@
 // echten Komponente, weil genau die Sichtbarkeit das Problem war: Ein Banner,
 // der zur falschen Zeit erscheint (oder gar nicht), ist schlimmer als keiner.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import i18next from "i18next";
@@ -134,6 +136,14 @@ describe("Banner nach unmöglichem Sprung", () => {
     expect(invokeMock).toHaveBeenCalledWith("flight_end", { sprungBegruendung: null });
   });
 
+  it("setzt den Fokus nach der Rückfrage auf den sicheren Weg", async () => {
+    // React tauscht die Taste aus; ohne gezielten Fokus landete der
+    // Tastaturnutzer am Seitenanfang (Cloud-QS 23.09.2026).
+    zeige();
+    await userEvent.click(screen.getByText("Flug verwerfen"));
+    expect(document.activeElement).toBe(screen.getByText("Doch nicht"));
+  });
+
   it("fragt vor dem Verwerfen nach — ein Fehlklick kostet den ganzen Flug", async () => {
     zeige();
     await userEvent.click(screen.getByText("Flug verwerfen"));
@@ -165,17 +175,29 @@ describe("Banner nach unmöglichem Sprung", () => {
     // gemessene Landung nach einer Unterbrechung.
     zeige({ abgabe_sperre: "sprung" });
     expect(screen.getByText("Flug wurde so nicht fortgesetzt")).toBeTruthy();
-    expect(screen.queryByText("Landung wurde nicht gemessen")).toBeNull();
+    expect(screen.queryByText("Landung konnte nicht bewertet werden")).toBeNull();
     cleanup();
 
     zeige({ abgabe_sperre: "landung_fehlt", unmoeglicher_sprung: false });
-    expect(screen.getByText("Landung wurde nicht gemessen")).toBeTruthy();
+    expect(screen.getByText("Landung konnte nicht bewertet werden")).toBeTruthy();
     expect(screen.queryByText("Flug wurde so nicht fortgesetzt")).toBeNull();
   });
 
-  it("bleibt weg, wenn die App selbst einreichen darf", () => {
-    zeige({ abgabe_sperre: null, unmoeglicher_sprung: false });
-    expect(screen.queryByTestId("sprung-banner")).toBeNull();
+  it("nimmt den gemeldeten Grund, auch wenn der alte Schalter noch steht", () => {
+    // Sind beide gesetzt, gilt der neue Grund — sonst stünde „der Zustand
+    // sprang", wo die fehlende Landung gemeint ist.
+    zeige({ abgabe_sperre: "landung_fehlt", unmoeglicher_sprung: true });
+    expect(screen.getByText("Landung konnte nicht bewertet werden")).toBeTruthy();
+    expect(screen.queryByText("Flug wurde so nicht fortgesetzt")).toBeNull();
+  });
+
+  it("behauptet bei einem unbekannten Grund keinen Sprung", () => {
+    // Ein neueres Backend oder die LAN-Brücke kann einen Code schicken,
+    // den diese Oberfläche nicht kennt. Dann fragt sie trotzdem — aber
+    // ohne eine Ursache zu erfinden (Cloud-QS 23.09.2026).
+    zeige({ abgabe_sperre: "etwas_neues" } as unknown as Partial<ActiveFlightInfo>);
+    expect(screen.getByTestId("sprung-banner")).toBeTruthy();
+    expect(screen.queryByText("Landung konnte nicht bewertet werden")).toBeNull();
   });
 
   it("beschriftet die Taste waehrend der Abgabe um", async () => {
@@ -202,5 +224,26 @@ describe("Banner nach unmöglichem Sprung", () => {
     expect(screen.getByText(/phpVMS returned non-OK/)).toBeTruthy();
     // Und der Flug darf NICHT als eingereicht gelten.
     expect(eingereicht).not.toHaveBeenCalled();
+  });
+});
+
+describe("Wo der Banner hängt", () => {
+  const ohneLeerraum = (x: string) => x.replace(/\s+/g, "");
+
+  it("hängt im App-Rahmen, nicht im Cockpit-Reiter", () => {
+    // Wer nach der Landung ins Logbuch oder in den Chat wechselte, sah
+    // die Frage nie — und der Flug blieb offen (Cloud-QS 23.09.2026).
+    const app = ohneLeerraum(readFileSync(resolve(__dirname, "../App.tsx"), "utf-8"));
+    const cockpit = ohneLeerraum(readFileSync(resolve(__dirname, "CockpitView.tsx"), "utf-8"));
+    expect(app.includes("<SprungBanner")).toBe(true);
+    expect(cockpit.includes("<SprungBanner")).toBe(false);
+  });
+
+  it("ist an keinen Reiter gebunden", () => {
+    const app = ohneLeerraum(readFileSync(resolve(__dirname, "../App.tsx"), "utf-8"));
+    const stelle = app.indexOf("<SprungBanner");
+    // Die Bedingung unmittelbar davor darf keinen `tab===` enthalten.
+    const davor = app.slice(Math.max(0, stelle - 120), stelle);
+    expect(davor.includes("tab===")).toBe(false);
   });
 });
