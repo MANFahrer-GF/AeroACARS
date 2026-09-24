@@ -1695,7 +1695,9 @@
     "compare_aircraft": "Aeromobile",
     "compare_fuel": "Carburante",
     "compare_zfw": "ZFW",
-    "compare_total_weight": "Peso totale"
+    "compare_total_weight": "Peso totale",
+    "wartet_titel": "In attesa del simulatore",
+    "wartet_lange": "Ci vuole più del solito. Il simulatore è in pausa, in modalità slew o con accelerazione del tempo? Fino ad allora AeroACARS non registra nulla."
   },
   "active_flight": {
     "title": "Volo attivo",

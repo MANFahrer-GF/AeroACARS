@@ -1702,7 +1702,9 @@
     "compare_aircraft": "Aircraft",
     "compare_fuel": "Fuel",
     "compare_zfw": "ZFW",
-    "compare_total_weight": "Total weight"
+    "compare_total_weight": "Total weight",
+    "wartet_titel": "Waiting for the simulator",
+    "wartet_lange": "This is taking unusually long. Is the simulator paused, in slew mode, or running at a higher sim rate? AeroACARS records nothing until then."
   },
   "active_flight": {
     "title": "Active flight",

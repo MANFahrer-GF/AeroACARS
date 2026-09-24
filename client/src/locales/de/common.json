@@ -1702,7 +1702,9 @@
     "compare_aircraft": "Flugzeug",
     "compare_fuel": "Kraftstoff",
     "compare_zfw": "ZFW",
-    "compare_total_weight": "Gesamtgewicht"
+    "compare_total_weight": "Gesamtgewicht",
+    "wartet_titel": "Warte auf den Simulator",
+    "wartet_lange": "Das dauert ungewöhnlich lange. Ist der Simulator pausiert, im Slew-Modus oder läuft Zeitbeschleunigung? Bis dahin zeichnet AeroACARS nichts auf."
   },
   "active_flight": {
     "title": "Aktiver Flug",

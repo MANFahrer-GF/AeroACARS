@@ -20,6 +20,7 @@ const WEATHER_BRIEFING_URL = "https://german-sky-group.eu/weatherbriefing";
 // Section unter dem WeatherBriefing zu hängen.
 import { DivertBanner } from "./DivertBanner";
 import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
+import { Notice } from "./ui";
 
 interface Props {
   session: LoginResult;
@@ -288,6 +289,27 @@ export function CockpitView({
           instead — so the weather button still needs its own top row here,
           same as the no-active-flight empty state. Once resumed it moves
           into ActiveFlightPanel's own action row. */}
+      {/* Nach einem Neustart wartet der Flug, bis der Simulator geladen und
+          ruhig ist. Der Pilot sieht, worauf — vorher stand der Grund nur im
+          Debug-Log, und das Warten war unsichtbar (Cloud-QS 24.09.2026). */}
+      {activeFlight.was_just_resumed && activeFlight.resume_wartet_grund && (
+        <Notice
+          tone={(activeFlight.resume_wartet_s ?? 0) >= 120 ? "warn" : "info"}
+          level={t("resume.wartet_titel")}
+          data-testid="resume-wartet"
+          detail={
+            <span>
+              {activeFlight.resume_wartet_grund}
+              {(activeFlight.resume_wartet_s ?? 0) >= 120 && (
+                <>
+                  {" "}
+                  {t("resume.wartet_lange")}
+                </>
+              )}
+            </span>
+          }
+        />
+      )}
       {activeFlight.was_just_resumed && quickActionRow}
       {activeFlight.was_just_resumed && weatherLoadToast}
       {/* ⚠ Der Wiederaufnahme-Banner stand bis v1.7.9 HIER — und damit in

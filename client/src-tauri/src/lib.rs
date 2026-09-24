@@ -931,6 +931,9 @@ const SIM_DISCONNECT_THRESHOLD_S: i64 = 30;
 /// Snapshot darf nicht zählen. ≤ 5 s ⇒ frisch genug, dass der Sim jetzt
 /// gerade Daten liefert.
 const SIM_GATE_FRESH_SECS: i64 = 5;
+/// Ab so langer Wartezeit im Resume-Gate bekommt der Pilot einen deutlichen
+/// Hinweis, woran es liegen kann (Pause, Slew, Zeitbeschleunigung).
+const RESUME_GATE_WARNUNG_SECS: i64 = 120;
 
 /// Spec sim-disconnect-auto-resume F2 (Drift-Stufen):
 ///
@@ -1726,6 +1729,114 @@ mod resume_discontinuity_tests {
         assert!(snapshot_position_is_usable(&snap));
     }
 
+    /// Die Folge von OCN 712 (24.09.2026) durch die echte Gate-Entscheidung:
+    /// Menue (anderes Flugzeug, 0 kg, anderer Ort, pausiert), dann ein Wert
+    /// mit 20.926.040 ft, dann erst der geladene Flug. Scharf wird es erst,
+    /// wenn der geladene Flug 20 s ruhig war.
+    #[test]
+    fn resume_gate_folgt_der_ocn712_folge() {
+        let t0 = Utc::now();
+        let jetzt = |s: i64| t0 + chrono::Duration::seconds(s);
+        let frisch = |mut snap: SimSnapshot, t: DateTime<Utc>| {
+            snap.timestamp = t;
+            snap
+        };
+        let mut ruhe = SimRuhe::default();
+
+        let mut menue = sim_snapshot(47.4, -122.3, 400.0, 0.0, true);
+        menue.paused = true;
+        menue.aircraft_title = Some("FenixA320 CFM SL".into());
+        assert!(resume_gate_takt(&mut ruhe, Some(frisch(menue, jetzt(0))), jetzt(0)).is_err());
+
+        let mut muell = sim_snapshot(49.4952, 11.0779, 20_926_040.0, 9_546.0, false);
+        muell.aircraft_title = Some("FenixA320 CFM SL".into());
+        assert!(resume_gate_takt(&mut ruhe, Some(frisch(muell, jetzt(4))), jetzt(4)).is_err());
+
+        let mut eddn = sim_snapshot(49.4952, 11.0779, 1_028.0, 9_544.0, true);
+        eddn.aircraft_title = Some("FenixA321 CFM WF SC".into());
+        // Ruhig, aber noch nicht lange genug.
+        for s in (10..=28).step_by(2) {
+            assert!(
+                resume_gate_takt(&mut ruhe, Some(frisch(eddn.clone(), jetzt(s))), jetzt(s))
+                    .is_err(),
+                "nach {s} s schon scharf"
+            );
+        }
+        // Nach 20 s Ruhe ist er bereit — mit dem GELADENEN Flug als Ausgangslage.
+        let bereit = resume_gate_takt(&mut ruhe, Some(frisch(eddn.clone(), jetzt(32))), jetzt(32))
+            .expect("nach 20 s Ruhe bereit");
+        assert!((bereit.altitude_msl_ft - 1_028.0).abs() < 1.0);
+
+        // Ein Muellwert, der sonst ruhig aussaehe (gleicher Ort, gleiches
+        // Flugzeug, nur die Hoehe unmoeglich), darf weder Ruhe zaehlen noch
+        // Ausgangslage werden — dafuer steht der Filter im Gate.
+        let mut ruhe = SimRuhe::default();
+        for s in (0..=18).step_by(2) {
+            let _ = resume_gate_takt(&mut ruhe, Some(frisch(eddn.clone(), jetzt(s))), jetzt(s));
+        }
+        let mut hoehe_muell = eddn.clone();
+        hoehe_muell.altitude_msl_ft = 20_926_040.0;
+        assert!(
+            resume_gate_takt(&mut ruhe, Some(frisch(hoehe_muell, jetzt(20))), jetzt(20)).is_err(),
+            "unmoegliche Hoehe als Ausgangslage"
+        );
+        assert!(
+            resume_gate_takt(&mut ruhe, Some(frisch(eddn.clone(), jetzt(22))), jetzt(22)).is_err(),
+            "die Ruhe muss nach dem Muellwert von vorn beginnen"
+        );
+
+        // Ein eingefrorener (veralteter) Wert zaehlt nicht als Ruhe.
+        let mut ruhe = SimRuhe::default();
+        let alt = frisch(eddn.clone(), jetzt(0));
+        for s in (0..=40).step_by(2) {
+            assert!(resume_gate_takt(&mut ruhe, Some(alt.clone()), jetzt(s + 10)).is_err());
+        }
+    }
+
+    /// Nach einem Neustart im Reiseflug unter Zeitbeschleunigung muss das
+    /// Gate scharf werden — ohne die Sim-Rate hielt es jeden Takt fuer einen
+    /// Sprung (Cloud-QS 24.09.2026).
+    #[test]
+    fn resume_gate_schaltet_auch_unter_zeitbeschleunigung_scharf() {
+        let t0 = Utc::now();
+        let mut ruhe = SimRuhe::default();
+        let mut snap = sim_snapshot(50.0, 8.0, 36_000.0, 12_000.0, false);
+        snap.groundspeed_kt = 480.0;
+        snap.simulation_rate = 4.0;
+        let mut ergebnis = Err(String::new());
+        for i in 0..=12 {
+            let t = t0 + chrono::Duration::seconds(i * 2);
+            let mut s = snap.clone();
+            // 4x: rund 1975 m je 2 s Echtzeit.
+            s.lat += (i as f64) * 1_975.0 / 111_320.0;
+            s.timestamp = t;
+            ergebnis = resume_gate_takt(&mut ruhe, Some(s), t);
+        }
+        assert!(ergebnis.is_ok(), "unter 4x nie scharf: {ergebnis:?}");
+    }
+
+    /// Nach der Landung: erst ein Menue-Wert mit 0 kg, dann die Neubeladung.
+    /// Der Endsprit bleibt beim echten Wert — er klemmt weder auf 0 noch
+    /// springt er auf die neue Beladung (Cloud-QS 24.09.2026).
+    #[test]
+    fn endsprit_uebersteht_menue_und_neubeladung() {
+        let ldg = Some(2_966.0_f32);
+        let nach_menue = tankstand_nach_landung_begrenzen(0.0, ldg, Some(2_940.0));
+        assert_eq!(nach_menue, 2_940.0);
+        let nach_reload = tankstand_nach_landung_begrenzen(9_546.0, ldg, Some(nach_menue));
+        assert_eq!(nach_reload, 2_940.0);
+        // Normales Rollen: wenige kg weniger werden uebernommen.
+        assert_eq!(
+            tankstand_nach_landung_begrenzen(2_931.0, ldg, Some(2_940.0)),
+            2_931.0
+        );
+        // Vor der Landung gilt alles wie gemessen.
+        assert_eq!(
+            tankstand_nach_landung_begrenzen(9_546.0, None, Some(2_940.0)),
+            9_546.0
+        );
+    }
+
     /// Die Ruhe-Regel des Resume-Gates: Ein Teleport ist Unruhe, ein
     /// schnelles Flugzeug in der Luft nicht (sonst schaltete das Gate nach
     /// einem App-Neustart im Reiseflug nie scharf).
@@ -1748,6 +1859,20 @@ mod resume_discontinuity_tests {
         let mut c = b.clone();
         c.lat += 60.0;
         let grund = ruhe.pruefen(&c, t0 + chrono::Duration::seconds(4));
+        assert!(
+            grund.as_deref().is_some_and(|g| g.contains("springt")),
+            "{grund:?}"
+        );
+        // Ein Ladewert mit unsinniger Geschwindigkeit darf den Teleport
+        // nicht durchwinken (GS ist gedeckelt).
+        let mut ruhe = SimRuhe::default();
+        let mut d = a.clone();
+        d.groundspeed_kt = 1_000_000.0;
+        let _ = ruhe.pruefen(&d, t0);
+        let mut e = d.clone();
+        // ~556 km: ohne Deckel in 2 s „erlaubt", mit Deckel ein Sprung.
+        e.lat += 5.0;
+        let grund = ruhe.pruefen(&e, t0 + chrono::Duration::seconds(2));
         assert!(
             grund.as_deref().is_some_and(|g| g.contains("springt")),
             "{grund:?}"
@@ -5829,6 +5954,13 @@ struct FlightStats {
     resume_gap_minutes: Option<i64>,
     /// Siehe PersistedFlightStats — die laengste Neustart-Luecke.
     resume_luecke_max_secs: Option<i64>,
+    /// Wann der Flug nach einem App-Neustart wiederhergestellt wurde. Das
+    /// Resume-Gate schlaegt die Zeit bis zum Scharfschalten auf die Luecke
+    /// auf — in ihr lief weder Streamer noch Aufsetz-Sampler.
+    resume_wiederhergestellt_am: Option<DateTime<Utc>>,
+    /// Worauf das Resume-Gate gerade wartet, und seit wie vielen Sekunden.
+    /// Fuer die Oberflaeche; `None`, sobald der Flug scharf ist.
+    resume_wartet: Option<(String, i64)>,
     /// Dieselbe Luecke in SEKUNDEN, nur fuer die Sprung-Pruefung.
     ///
     /// `resume_gap_minutes` schneidet auf ganze Minuten ab: 105 Sekunden
@@ -8162,6 +8294,11 @@ pub struct ActiveFlightInfo {
     /// Warum der Pilot entscheiden muss: `sprung` oder `landung_fehlt`.
     /// `None` = die App darf selbst einreichen.
     abgabe_sperre: Option<String>,
+    /// Worauf das Resume-Gate wartet (Text fuer den Piloten), solange der
+    /// Flug nach einem Neustart noch nicht scharf ist.
+    resume_wartet_grund: Option<String>,
+    /// Seit wie vielen Sekunden das Gate wartet.
+    resume_wartet_s: Option<i64>,
     /// Number of touch-and-go events recorded so far. Always 0 on a
     /// routine A→B; non-zero on training flights or unstable approaches
     /// where the pilot bounced and went around. Surfaced as a small
@@ -12993,28 +13130,23 @@ mod nachreichen_tests {
             .find(concat!("\nfn spawn_resume_", "sim_gate("))
             .expect("Resume-Gate nicht gefunden — Test anpassen, nicht loeschen");
         let koerper = &SRC[start..start + SRC[start..].find("\n}\n").unwrap()];
-        let filter = koerper
-            .find(concat!(".filter(snapshot_position_", "is_usable)"))
-            .expect("Gate filtert unbrauchbare Werte nicht mehr");
-        let ruhe = koerper
-            .find(concat!("ruhe.", "pruefen(&snap"))
-            .expect("Gate fragt die Ruhe-Regel nicht mehr");
+        // Das Verhalten pruefen die Tests an `resume_gate_takt` selbst; hier
+        // nur, dass das Gate diese Entscheidung auch FRAGT, bevor es scharf
+        // schaltet — und nicht an ihr vorbei.
+        let takt = koerper
+            .find(concat!("resume_gate_", "takt(&mut ruhe"))
+            .expect("Gate fragt resume_gate_takt nicht mehr");
         let scharf = koerper
             .find(concat!("spawn_position_", "streamer("))
             .expect("Gate schaltet nicht mehr scharf");
-        assert!(
-            filter < scharf && ruhe < scharf,
-            "Pruefungen muessen VOR dem Scharfschalten stehen"
+        assert!(takt < scharf);
+        assert_eq!(
+            koerper
+                .matches(concat!("spawn_position_", "streamer("))
+                .count(),
+            1,
+            "ein zweiter Weg zum Scharfschalten"
         );
-        // Die Ruhe waechst nur mit frischen Werten: sonst saehe ein im Menue
-        // eingefrorener Wert ruhig aus.
-        let frisch = koerper
-            .find(concat!(
-                "if age_secs.abs() <= SIM_GATE_FRESH_SECS {\n",
-                "                    ruhe.pruefen"
-            ))
-            .expect("Ruhe wird auch mit veralteten Werten gezaehlt");
-        assert!(frisch < scharf);
     }
 
     /// Der manuelle Einreichweg darf nicht die Tuer sein, durch die ein
@@ -16463,6 +16595,8 @@ fn flight_info(
         divert_hint: stats.divert_hint.clone(),
         unmoeglicher_sprung: stats.resume_discontinuity.is_some(),
         abgabe_sperre: abgabe_sperre(&stats).map(|g| g.code().to_string()),
+        resume_wartet_grund: stats.resume_wartet.as_ref().map(|(g, _)| g.clone()),
+        resume_wartet_s: stats.resume_wartet.as_ref().map(|(_, s)| *s),
         touch_and_go_count: stats
             .touchdown_events
             .iter()
@@ -30932,7 +31066,7 @@ fn spawn_resume_sim_gate(
         log_activity_handle(
             &app,
             ActivityLevel::Warn,
-            "Warte auf Simulator — Flug wird scharfgeschaltet, sobald der Sim Daten liefert"
+            "Warte auf Simulator — Flug wird scharfgeschaltet, sobald der Sim geladen und ruhig ist"
                 .to_string(),
             Some(
                 "Resume nach App-/Sim-Neustart: kein Streaming und kein phpVMS-Post, \
@@ -30952,6 +31086,8 @@ fn spawn_resume_sim_gate(
         // Dazu der Filter, der auch im Streamer vor allem anderen steht.
         let mut ruhe = SimRuhe::default();
         let mut wartet_seit: Option<DateTime<Utc>> = None;
+        let mut letzter_grund: Option<String> = None;
+        let mut gewarnt = false;
         loop {
             // Flug abgebrochen / beendet / vergessen → Gate beenden.
             if flight.stop.load(Ordering::Relaxed) {
@@ -30976,68 +31112,84 @@ fn spawn_resume_sim_gate(
                 );
                 return;
             }
-            // Frischer, brauchbarer Snapshot vom aktuell gewählten Simulator?
-            let snap = current_snapshot(&app).filter(snapshot_position_is_usable);
-            if let Some(snap) = snap {
-                let age_secs = (Utc::now() - snap.timestamp).num_seconds();
-                let jetzt = Utc::now();
-                // Ruhe waechst NUR mit frischen Werten. Ein im Menue
-                // eingefrorener Wert saehe sonst „ruhig" aus, und der erste
-                // frische Wert danach schaltete sofort scharf — genau der, vor
-                // dem das Gate schuetzen soll.
-                let unruhe = if age_secs.abs() <= SIM_GATE_FRESH_SECS {
-                    ruhe.pruefen(&snap, jetzt)
-                } else {
-                    ruhe = SimRuhe::default();
-                    Some("Der Simulator liefert keine frischen Werte.".to_string())
-                };
-                if age_secs.abs() <= SIM_GATE_FRESH_SECS && unruhe.is_some() {
+            let jetzt = Utc::now();
+            match resume_gate_takt(&mut ruhe, current_snapshot(&app), jetzt) {
+                Err(grund) => {
                     let seit = *wartet_seit.get_or_insert(jetzt);
-                    tracing::debug!(
-                        pirep_id = %flight.pirep_id,
-                        grund = unruhe.as_deref().unwrap_or(""),
-                        wartet_s = (jetzt - seit).num_seconds(),
-                        "resume sim-gate: Simulator noch nicht ruhig"
-                    );
+                    let gewartet_s = (jetzt - seit).num_seconds();
+                    // Der Pilot SIEHT, worauf gewartet wird — vorher stand der
+                    // Grund nur im Debug-Log, und das Gate konnte ohne ein
+                    // Wort unbegrenzt warten (Cloud-QS 24.09.2026).
+                    {
+                        let mut st = flight.stats.lock().expect("flight stats");
+                        st.resume_wartet = Some((grund.clone(), gewartet_s));
+                    }
+                    if letzter_grund.as_deref() != Some(grund.as_str()) {
+                        log_activity_handle(
+                            &app,
+                            ActivityLevel::Info,
+                            "Warte auf den Simulator".to_string(),
+                            Some(grund.clone()),
+                        );
+                        letzter_grund = Some(grund);
+                    }
+                    if gewartet_s >= RESUME_GATE_WARNUNG_SECS && !gewarnt {
+                        gewarnt = true;
+                        log_activity_handle(
+                            &app,
+                            ActivityLevel::Warn,
+                            "Der Flug wartet ungewöhnlich lange auf den Simulator".to_string(),
+                            Some(
+                                "Ist der Simulator pausiert, im Slew-Modus oder läuft \
+                                 Zeitbeschleunigung? Solange zeichnet AeroACARS nichts \
+                                 auf. Alternativ den Flug verwerfen."
+                                    .to_string(),
+                            ),
+                        );
+                    }
                 }
-                if age_secs.abs() <= SIM_GATE_FRESH_SECS && unruhe.is_none() {
+                Ok(snap) => {
                     // ⚠ Bevor der Flug scharf wird: Passt die Lage im Sim
                     // ueberhaupt zum gespeicherten Flug? Der Pilot kann hier
-                    // ueber „Trotzdem fortsetzen" hergekommen sein, nachdem
-                    // ihm die App gesagt hat „im Sim am Boden, gespeicherter
-                    // Flug war in der Luft — bitte zurueck in die Luft
-                    // positionieren ODER Flug verwerfen".
-                    //
-                    // Bisher stand diese ausdrueckliche Bestaetigung NUR im
-                    // Aktivitaets-Protokoll. Fuer die Abgabe war sie
-                    // vergessen, und die App reichte am Ende selbst ein
-                    // (GAF 9655, 23.09.2026). Jetzt wird sie vermerkt —
-                    // damit entscheidet der Pilot am Ende auch die Abgabe.
+                    // ueber „Trotzdem fortsetzen" hergekommen sein (GAF 9655,
+                    // 23.09.2026) — dann steht das im Bericht, und er
+                    // entscheidet am Ende selbst ueber die Abgabe.
                     if trotzdem_fortsetzen {
                         sprung_beim_fortsetzen_vermerken(&app, &flight, &snap);
                     }
+                    // Die Wartezeit war eine Luecke wie jede andere: In ihr lief
+                    // weder Streamer noch Aufsetz-Sampler. Ohne diesen Aufschlag
+                    // haette ein Neustart im Endanflug die Landung verpasst, ohne
+                    // dass die Abgabe-Sperre davon wuesste (Cloud-QS 24.09.2026).
+                    {
+                        let mut st = flight.stats.lock().expect("flight stats");
+                        st.resume_wartet = None;
+                        if let Some(seit) = st.resume_wiederhergestellt_am.take() {
+                            let zusatz = (jetzt - seit).num_seconds().max(0);
+                            let luecke = st.resume_luecke_secs.unwrap_or(0) + zusatz;
+                            st.resume_luecke_secs = Some(luecke);
+                            st.resume_luecke_max_secs =
+                                Some(st.resume_luecke_max_secs.unwrap_or(0).max(luecke));
+                        }
+                    }
+                    save_active_flight(&app, &flight);
                     flight.was_just_resumed.store(false, Ordering::Relaxed);
                     spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
                     spawn_position_streamer(app.clone(), Arc::clone(&flight), client.clone());
                     spawn_touchdown_sampler(app.clone(), Arc::clone(&flight));
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
-                        age_secs,
-                        gewartet_s = wartet_seit.map_or(0, |t| (Utc::now() - t).num_seconds()),
+                        gewartet_s = wartet_seit.map_or(0, |t| (jetzt - t).num_seconds()),
                         "resume sim-gate: Simulator ruhig — flight armed"
                     );
                     log_activity_handle(
                         &app,
                         ActivityLevel::Info,
-                        "Simulator verbunden — Flug scharfgeschaltet".to_string(),
+                        "Simulator bereit — Flug scharfgeschaltet".to_string(),
                         None,
                     );
                     return;
                 }
-            } else {
-                // Kein brauchbarer Wert (Laden, Null Island, unmoegliche Hoehe):
-                // Die Ruhe beginnt von vorn, sobald wieder Brauchbares kommt.
-                ruhe = SimRuhe::default();
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
@@ -41311,7 +41463,7 @@ fn snapshot_position_is_usable(snap: &SimSnapshot) -> bool {
     // Die Hoehe gehoert zur Position. Beim Laden lieferte MSFS am 24.09.2026
     // (Joel, OCN 712) eine Hoehe von 20.926.040 ft — der Client las den
     // zugehoerigen AGL-Wert als Durchstart nach der Landung und loeschte den
-    // Landesprit. Kein Luftfahrzeug im Simulator fliegt ueber 60.000 ft oder
+    // Landesprit. Kein Luftfahrzeug im Simulator fliegt ueber 70.000 ft oder
     // steht tiefer als 2.000 ft unter NN.
     if !snap.altitude_msl_ft.is_finite()
         || !(SNAPSHOT_HOEHE_MIN_FT..=SNAPSHOT_HOEHE_MAX_FT).contains(&snap.altitude_msl_ft)
@@ -41321,7 +41473,7 @@ fn snapshot_position_is_usable(snap: &SimSnapshot) -> bool {
     !(snap.lat.abs() < 0.02 && snap.lon.abs() < 0.02)
 }
 
-/// Nach der Landung kann der Tank nur leerer werden.
+/// Nach der Landung kann der Tank nur leerer werden — und das langsam.
 ///
 /// Zwischen Aufsetzen und Einreichen wird Sprit verbraucht, nie getankt —
 /// steigt der Wert, hat jemand neu beladen: ein Sim-Reload (OCN 712,
@@ -41337,25 +41489,36 @@ fn tankstand_nach_landung_begrenzen(
 ) -> f32 {
     /// Messrauschen und Rundung — kein Tankvorgang.
     const TOLERANZ_KG: f32 = 50.0;
-    match landing_kg {
-        Some(ldg) if live_kg > ldg + TOLERANZ_KG => {
-            tracing::debug!(
-                live_kg,
-                landing_kg = ldg,
-                "Tankstand nach der Landung gestiegen — Neubeladung, nicht uebernommen"
-            );
-            // Der letzte echte Wert, hoechstens der Landewert.
-            vorher_kg.map_or(ldg, |v| v.min(ldg + TOLERANZ_KG))
-        }
-        _ => live_kg,
+    /// Mehr verbraucht ein Flugzeug am Boden nicht in einem Takt.
+    const STURZ_KG: f32 = 200.0;
+    let Some(ldg) = landing_kg else {
+        return live_kg;
+    };
+    // Der letzte echte Wert, hoechstens der Landewert.
+    let referenz = vorher_kg.map_or(ldg, |v| v.min(ldg + TOLERANZ_KG));
+    if live_kg > ldg + TOLERANZ_KG || referenz - live_kg > STURZ_KG {
+        // Neubeladung ODER Absturz des Messwerts (Menue mit 0 kg, wie bei
+        // OCN 712): beides nicht uebernehmen. Ohne die zweite Bedingung
+        // klemmte der Endsprit nach einem Menue-Wert fuer immer auf 0, und
+        // der PIREP meldete den ganzen Blocksprit als verbraucht
+        // (Cloud-QS 24.09.2026).
+        tracing::debug!(
+            live_kg,
+            landing_kg = ldg,
+            referenz,
+            "Tankstand nach der Landung verworfen"
+        );
+        return referenz;
     }
+    live_kg
 }
 
 /// Tiefster plausibler Wert (Totes Meer ~ -1.400 ft, mit Reserve).
 const SNAPSHOT_HOEHE_MIN_FT: f64 = -2_000.0;
-/// Hoechster plausibler Wert (Concorde FL600, U-2/SR-71 kommen im Betrieb
-/// nicht vor).
-const SNAPSHOT_HOEHE_MAX_FT: f64 = 60_000.0;
+/// Hoechster plausibler Wert. Concorde fliegt bis FL600, Addons wie der
+/// Darkstar hoeher — 70.000 ft laesst ihnen Luft und faengt trotzdem den
+/// Messmuell (20.926.040 ft am 24.09.2026).
+const SNAPSHOT_HOEHE_MAX_FT: f64 = 70_000.0;
 
 /// Wie ein Positions-Sprung einzuordnen ist.
 ///
@@ -46338,10 +46501,10 @@ mod enroute_reconcile_replay_tests {
                 Some(8_951.0),
                 "Blocksprit nach dem Abflug eingefroren"
             );
-            let endsprit = st.last_fuel_kg.unwrap();
-            assert!(
-                endsprit <= 2_966.0 + 50.0,
-                "Endsprit darf nach der Landung nicht steigen: {endsprit}"
+            assert_eq!(
+                st.last_fuel_kg,
+                Some(2_940.0),
+                "Endsprit bleibt beim letzten echten Wert"
             );
         }
 
@@ -51726,6 +51889,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
     restored_stats.resume_luecke_secs = persisted
         .zuletzt_geschrieben
         .map(|z| (Utc::now() - z).num_seconds().max(0));
+    restored_stats.resume_wiederhergestellt_am = Some(Utc::now());
     // Fuer die Abgabe zaehlt die LAENGSTE Luecke, nicht die letzte.
     // Ohne `zuletzt_geschrieben` die Minuten als Rueckfall — lieber einmal
     // zu oft gefragt als einen Absturz vergessen.
@@ -52075,6 +52239,39 @@ const AUTO_START_SIM_WARTET: &str = "sim_not_ready";
 /// Laden, Teleport oder Flughafenwechsel.
 const AUTO_START_SPRUNG_M: f64 = 1_000.0;
 
+/// Eine Runde des Resume-Gates: Darf der Flug jetzt scharf werden?
+///
+/// `Ok(snap)` = ja, mit dem Wert, der als Ausgangslage gilt. `Err(grund)` =
+/// noch nicht, mit dem Grund fuer den Piloten. Reine Funktion, damit sich
+/// die Folge eines echten Neustarts durchspielen laesst (OCN 712: Menue mit
+/// anderem Flugzeug und 0 kg, dann ein Wert mit 20.926.040 ft, dann erst der
+/// geladene Flug).
+///
+/// Die Ruhe waechst NUR mit frischen, brauchbaren Werten; alles andere setzt
+/// sie zurueck. Sonst saehe ein im Menue eingefrorener Wert ruhig aus, und
+/// der erste frische Wert danach schaltete sofort scharf.
+///
+/// ⚠ Die Frische prueft nur bei MSFS etwas: X-Plane stempelt jeden Abruf
+/// neu (siehe `SimRuhe`). Dort schuetzen nur Filter und Ruhe-Regel.
+fn resume_gate_takt(
+    ruhe: &mut SimRuhe,
+    snap: Option<SimSnapshot>,
+    jetzt: DateTime<Utc>,
+) -> Result<SimSnapshot, String> {
+    let Some(snap) = snap.filter(snapshot_position_is_usable) else {
+        *ruhe = SimRuhe::default();
+        return Err("Der Simulator lädt noch — es gibt keine brauchbare Position.".to_string());
+    };
+    if (jetzt - snap.timestamp).num_seconds().abs() > SIM_GATE_FRESH_SECS {
+        *ruhe = SimRuhe::default();
+        return Err("Der Simulator liefert keine frischen Werte.".to_string());
+    }
+    match ruhe.pruefen(&snap, jetzt) {
+        Some(grund) => Err(grund),
+        None => Ok(snap),
+    }
+}
+
 /// Ist der Simulator zur Ruhe gekommen?
 ///
 /// Beim Laden liefert MSFS minutenlang Zwischenstaende: Weltkarte
@@ -52113,9 +52310,18 @@ impl SimRuhe {
         // Messungen ehrlich mehr zurueck — eine Concorde in 2 s ueber 1 km.
         // Ohne diese Reserve wuerde das Gate dort nie scharfschalten
         // (24.09.2026). Doppelte Strecke als Spielraum fuer Messabstaende.
+        //
+        // Die Sim-Rate zaehlt mit: Bei 4x Zeitbeschleunigung legt das
+        // Flugzeug in derselben Echtzeit viermal so viel zurueck. Ohne sie
+        // schaltete das Gate nach einem Neustart unter Zeitbeschleunigung
+        // NIE scharf (Cloud-QS 24.09.2026). Die Geschwindigkeit ist gedeckelt
+        // wie in der Sprung-Pruefung: Ein Ladewert mit unsinniger GS darf
+        // keinen Teleport als ruhig durchwinken.
         let erlaubt_m = self.letzte_zeit.map_or(AUTO_START_SPRUNG_M, |t| {
             let sekunden = (jetzt - t).num_milliseconds().max(0) as f64 / 1000.0;
-            let unterwegs_m = f64::from(snap.groundspeed_kt.max(0.0)) * 0.514_444 * sekunden * 2.0;
+            let gs_kt = f64::from(snap.groundspeed_kt.max(0.0)).min(RESUME_MAX_PLAUSIBEL_KT);
+            let rate = f64::from(snap.simulation_rate).clamp(1.0, 16.0);
+            let unterwegs_m = gs_kt * 0.514_444 * sekunden * rate * 2.0;
             AUTO_START_SPRUNG_M.max(unterwegs_m)
         });
         let gesprungen = self
@@ -52151,7 +52357,7 @@ impl SimRuhe {
         let ruhig = (jetzt - seit).num_seconds();
         (ruhig < AUTO_START_SIM_RUHE_SECS).then(|| {
             format!(
-                "Der Simulator läuft erst {ruhig} s ruhig — Auto-Start prüft nach {AUTO_START_SIM_RUHE_SECS} s."
+                "Der Simulator läuft erst {ruhig} s ruhig — geprüft wird nach {AUTO_START_SIM_RUHE_SECS} s."
             )
         })
     }

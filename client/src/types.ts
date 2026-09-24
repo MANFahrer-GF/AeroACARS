@@ -479,6 +479,10 @@ export interface ActiveFlightInfo {
    *  Zustand sprang beim Wiederaufnehmen) oder "landung_fehlt" (der Flug
    *  war unterbrochen und das Aufsetzen wurde nie gemessen). */
   abgabe_sperre?: "sprung" | "landung_fehlt" | null;
+  /** Worauf der Flug nach einem Neustart wartet, bevor er wieder
+   *  aufzeichnet (z. B. „Der Simulator lädt noch"), und seit wann. */
+  resume_wartet_grund?: string | null;
+  resume_wartet_s?: number | null;
   /** Touch-and-go count detected during the flight. Sustained climb-back
    *  above 100 ft AGL within 30 s of an on-ground edge counts as a T&G;
    *  the FSM also reverts to Climb so subsequent landing detection works
