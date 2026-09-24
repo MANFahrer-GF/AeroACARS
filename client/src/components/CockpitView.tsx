@@ -292,7 +292,10 @@ export function CockpitView({
       {/* Nach einem Neustart wartet der Flug, bis der Simulator geladen und
           ruhig ist. Der Pilot sieht, worauf — vorher stand der Grund nur im
           Debug-Log, und das Warten war unsichtbar (Cloud-QS 24.09.2026). */}
-      {activeFlight.was_just_resumed && activeFlight.resume_wartet_grund && (
+      {/* Nur am Wartegrund, NICHT an was_just_resumed: Nach einer sauberen
+          Positionspruefung ist was_just_resumed schon false, das Gate wartet
+          aber noch — dann fehlte der Hinweis (Cloud-QS 24.09.2026). */}
+      {activeFlight.resume_wartet_grund && (
         <Notice
           tone={(activeFlight.resume_wartet_s ?? 0) >= 120 ? "warn" : "info"}
           level={t("resume.wartet_titel")}
