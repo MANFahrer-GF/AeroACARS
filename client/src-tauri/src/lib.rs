@@ -1872,6 +1872,27 @@ mod resume_discontinuity_tests {
             grund.as_deref().is_some_and(|g| g.contains("springt")),
             "zweiter Teleport als gleichmaessig durchgewunken: {grund:?}"
         );
+
+        // Nach einer langen Unterbrechung (60 s ohne Takt, z. B. App Nap)
+        // gilt der vorige Abstand nicht als Vergleich — sonst wuechse der
+        // Deckel mit der Zeit, und ein zweiter Teleport gleicher Groesse
+        // ginge als gleichmaessig durch (Cloud-QS 24.09.2026).
+        let mut ruhe3 = SimRuhe::default();
+        let mut a = snap.clone();
+        a.timestamp = t0;
+        let _ = ruhe3.pruefen(&a, t0);
+        let mut b = a.clone();
+        b.lat += 3.0;
+        let tb = t0 + chrono::Duration::seconds(2);
+        let _ = ruhe3.pruefen(&b, tb);
+        let mut c = b.clone();
+        c.lat += 3.0;
+        let tc = tb + chrono::Duration::seconds(60);
+        let grund = ruhe3.pruefen(&c, tc);
+        assert!(
+            grund.as_deref().is_some_and(|g| g.contains("springt")),
+            "Teleport nach langer Pause als gleichmaessig durchgewunken: {grund:?}"
+        );
     }
 
     /// Jeder Ausgang des Resume-Gates raeumt den Wartegrund weg — sonst
@@ -1879,18 +1900,25 @@ mod resume_discontinuity_tests {
     /// (Cloud-QS 24.09.2026, dritte Runde).
     #[test]
     fn resume_gate_raeumt_den_wartegrund_bei_jedem_ausgang() {
+        // Verhalten: Der Guard raeumt beim Verlassen, egal auf welchem Weg.
+        let flight = Arc::new(crate::enroute_reconcile_replay_tests::replay_fixture());
+        flight.stats.lock().unwrap().resume_wartet = Some(("Laedt".into(), 12));
+        {
+            let _g = WartegrundRaeumen(Arc::clone(&flight));
+        }
+        assert!(flight.stats.lock().unwrap().resume_wartet.is_none());
+
+        // Und das Gate setzt den Guard, bevor es irgendetwas anderes tut.
         const SRC: &str = include_str!("lib.rs");
         let start = SRC
             .find(concat!("\nfn spawn_resume_", "sim_gate("))
             .expect("Resume-Gate nicht gefunden — Test anpassen, nicht loeschen");
         let koerper = &SRC[start..start + SRC[start..].find("\n}\n").unwrap()];
-        let ausgaenge = koerper.matches("return;").count();
-        let geraeumt = koerper.matches(concat!("resume_wartet = ", "None")).count();
-        assert!(ausgaenge >= 3, "Ausgaenge nicht mehr gefunden: {ausgaenge}");
-        assert!(
-            geraeumt >= ausgaenge,
-            "{ausgaenge} Ausgaenge, aber nur {geraeumt}x Wartegrund geraeumt"
-        );
+        let guard = koerper
+            .find(concat!("WartegrundRaeumen(", "Arc::clone(&flight))"))
+            .expect("Gate setzt den Raeum-Guard nicht mehr");
+        let schleife = koerper.find("loop {").expect("Gate-Schleife fehlt");
+        assert!(guard < schleife, "Guard muss vor der Schleife stehen");
     }
 
     /// Nach der Landung: erst ein Menue-Wert mit 0 kg, dann die Neubeladung.
@@ -1901,21 +1929,17 @@ mod resume_discontinuity_tests {
         let t0 = Utc::now();
         let t = |s: i64| t0 + chrono::Duration::seconds(s);
         let ldg = Some(2_966.0_f32);
-        let mut k = None;
         let f = tankstand_nach_landung_begrenzen;
-        // Menue-Wert (8 kg wie bei OCN 712) fuer ein paar Sekunden: verworfen.
-        let a = f(8.0, ldg, Some(2_940.0), &mut k, t(0));
-        assert_eq!(a, 2_940.0);
-        let b = f(8.0, ldg, Some(a), &mut k, t(10));
-        assert_eq!(b, 2_940.0);
-        // Dann die Neubeladung: nie uebernommen, Kandidat verfaellt.
-        let c = f(9_546.0, ldg, Some(b), &mut k, t(20));
-        assert_eq!(c, 2_940.0);
-        assert!(k.is_none());
-        // Normales Rollen: wenige kg weniger werden sofort uebernommen.
-        assert_eq!(f(2_931.0, ldg, Some(2_940.0), &mut k, t(30)), 2_931.0);
+        // Menue-Wert (8 kg wie bei OCN 712): verworfen.
+        assert_eq!(f(8.0, ldg, Some(2_940.0), Some(t(0)), t(3)), 2_940.0);
+        // Neubeladung: nie uebernommen.
+        assert_eq!(f(9_546.0, ldg, Some(2_940.0), Some(t(0)), t(6)), 2_940.0);
+        // Normales Rollen: wenige kg weniger werden uebernommen.
+        assert_eq!(f(2_931.0, ldg, Some(2_940.0), Some(t(0)), t(3)), 2_931.0);
+        // Ein leerer Tank ist Muell, auch nach Stunden.
+        assert_eq!(f(0.0, ldg, Some(2_940.0), Some(t(0)), t(36_000)), 2_940.0);
         // Vor der Landung gilt alles wie gemessen.
-        assert_eq!(f(9_546.0, None, Some(2_940.0), &mut k, t(40)), 9_546.0);
+        assert_eq!(f(9_546.0, None, Some(2_940.0), Some(t(0)), t(3)), 9_546.0);
     }
 
     /// Nach einer Luecke nach der Landung (APU lief weiter) stehen 400 kg
@@ -1923,19 +1947,32 @@ mod resume_discontinuity_tests {
     /// Endsprit darf nicht fuer immer auf dem alten Wert haengen
     /// (Cloud-QS 24.09.2026, dritte Runde).
     #[test]
-    fn echter_abfall_nach_einer_luecke_gilt_nach_einer_minute() {
+    fn echter_abfall_passt_zur_verstrichenen_zeit() {
         let t0 = Utc::now();
         let t = |s: i64| t0 + chrono::Duration::seconds(s);
         let ldg = Some(2_966.0_f32);
-        let mut k = None;
         let f = tankstand_nach_landung_begrenzen;
-        let mut stand = 2_940.0;
-        for s in (0..60).step_by(5) {
-            stand = f(2_540.0, ldg, Some(stand), &mut k, t(s));
-            assert_eq!(stand, 2_940.0, "nach {s} s schon uebernommen");
-        }
-        stand = f(2_538.0, ldg, Some(stand), &mut k, t(61));
-        assert_eq!(stand, 2_538.0, "stabiler Abfall gilt nach einer Minute");
+        // 400 kg weniger nach zehn Minuten (APU lief weiter): echt.
+        assert_eq!(f(2_540.0, ldg, Some(2_940.0), Some(t(0)), t(600)), 2_540.0);
+        // Dieselben 400 kg in drei Sekunden: unmoeglich.
+        assert_eq!(f(2_540.0, ldg, Some(2_940.0), Some(t(0)), t(3)), 2_940.0);
+    }
+
+    /// Der Fall, an dem die erste Fassung scheiterte: ein Muellwert, dann
+    /// eine Pause OHNE Messung, dann derselbe Muellwert. Die Pause darf ihn
+    /// nicht glaubwuerdig machen — fuenf Minuten reichen nicht fuer 2932 kg
+    /// (Cloud-QS 24.09.2026, vierte Runde).
+    #[test]
+    fn muell_wird_durch_eine_pause_nicht_glaubwuerdig() {
+        let t0 = Utc::now();
+        let t = |s: i64| t0 + chrono::Duration::seconds(s);
+        let ldg = Some(2_966.0_f32);
+        let f = tankstand_nach_landung_begrenzen;
+        let erst = f(8.0, ldg, Some(2_940.0), Some(t(0)), t(3));
+        assert_eq!(erst, 2_940.0);
+        // Fuenf Minuten Pause, danach derselbe Wert — die Uhr lief ab der
+        // letzten UEBERNOMMENEN Messung (t=0).
+        assert_eq!(f(8.0, ldg, Some(erst), Some(t(0)), t(303)), 2_940.0);
     }
 
     /// Die Ruhe-Regel des Resume-Gates: Ein Teleport ist Unruhe, ein
@@ -6059,9 +6096,9 @@ struct FlightStats {
     /// Resume-Gate schlaegt die Zeit bis zum Scharfschalten auf die Luecke
     /// auf — in ihr lief weder Streamer noch Aufsetz-Sampler.
     resume_wiederhergestellt_am: Option<DateTime<Utc>>,
-    /// Ein nach der Landung abgestuerzter Tankwert, der noch beweisen muss,
-    /// dass er echt ist — siehe `tankstand_nach_landung_begrenzen`.
-    tankstand_kandidat: Option<(f32, DateTime<Utc>)>,
+    /// Wann der zuletzt uebernommene Tankwert gemessen wurde — fuer die
+    /// Verbrauchsgrenze nach der Landung (`tankstand_nach_landung_begrenzen`).
+    tankstand_seit: Option<DateTime<Utc>>,
     /// Worauf das Resume-Gate gerade wartet, und seit wie vielen Sekunden.
     /// Fuer die Oberflaeche; `None`, sobald der Flug scharf ist.
     resume_wartet: Option<(String, i64)>,
@@ -31188,6 +31225,7 @@ fn spawn_resume_sim_gate(
         // Dieselbe Regel wie beim Auto-Start (`SimRuhe`): nicht pausiert, keine
         // springende Position, dasselbe Flugzeug — und das eine Weile lang.
         // Dazu der Filter, der auch im Streamer vor allem anderen steht.
+        let _wartegrund_raeumen = WartegrundRaeumen(Arc::clone(&flight));
         let mut ruhe = SimRuhe::default();
         let mut wartet_seit: Option<DateTime<Utc>> = None;
         let mut letzter_grund: Option<String> = None;
@@ -31235,7 +31273,7 @@ fn spawn_resume_sim_gate(
                     // (Cloud-QS 24.09.2026). Den Zaehlstand selbst zeigt das
                     // Cockpit; ins Protokoll gehoeren nur echte Gruende.
                     let art: String = grund.chars().filter(|c| !c.is_ascii_digit()).collect();
-                    let nur_zaehlstand = grund.contains("ruhig — geprüft wird");
+                    let nur_zaehlstand = grund.contains(SIM_RUHE_ZAEHLSTAND);
                     if !nur_zaehlstand && letzter_grund.as_deref() != Some(art.as_str()) {
                         log_activity_handle(
                             &app,
@@ -41602,44 +41640,39 @@ fn tankstand_nach_landung_begrenzen(
     live_kg: f32,
     landing_kg: Option<f32>,
     vorher_kg: Option<f32>,
-    kandidat: &mut Option<(f32, DateTime<Utc>)>,
+    vorher_am: Option<DateTime<Utc>>,
     jetzt: DateTime<Utc>,
 ) -> f32 {
     /// Messrauschen und Rundung — kein Tankvorgang.
     const TOLERANZ_KG: f32 = 50.0;
-    /// Mehr verbraucht ein Flugzeug am Boden nicht in einem Takt.
-    const STURZ_KG: f32 = 200.0;
-    /// So lange muss ein abgestuerzter Wert stehen, bevor er gilt.
-    const STABIL_SECS: i64 = 60;
+    /// Was ein Flugzeug am Boden hoechstens verbraucht: Rollen mit allen
+    /// Triebwerken im Leerlauf plus APU, grosszuegig fuer vier Triebwerke.
+    const BODEN_MAX_KG_PRO_H: f32 = 2_000.0;
+    /// Grundreserve je Messung, unabhaengig von der Zeit.
+    const GRUND_KG: f32 = 200.0;
     let Some(ldg) = landing_kg else {
-        *kandidat = None;
         return live_kg;
     };
     // Der letzte echte Wert, hoechstens der Landewert.
     let referenz = vorher_kg.map_or(ldg, |v| v.min(ldg + TOLERANZ_KG));
     if live_kg > ldg + TOLERANZ_KG {
         // Neubeladung (Sim-Reload, Tankwagen) — nie.
-        *kandidat = None;
         return referenz;
     }
-    if referenz - live_kg > STURZ_KG {
-        // Absturz des Messwerts. Menue-Muell (OCN 712: 0 bzw. 8 kg) kommt in
-        // kurzen Fenstern und verschwindet wieder; ein echter Wert nach einer
-        // Luecke (APU lief weiter) bleibt stehen. Also erst uebernehmen, wenn
-        // er STABIL_SECS lang derselbe bleibt — sonst klemmte der Endsprit
-        // nach einer Luecke fuer immer auf dem alten Wert (Cloud-QS 24.09.2026).
-        match kandidat {
-            Some((k, seit)) if (live_kg - *k).abs() <= TOLERANZ_KG => {
-                if (jetzt - *seit).num_seconds() >= STABIL_SECS {
-                    *kandidat = None;
-                    return live_kg;
-                }
-            }
-            _ => *kandidat = Some((live_kg, jetzt)),
-        }
+    // Ein Abfall ist nur so gross erlaubt, wie das Flugzeug in der
+    // verstrichenen Zeit verbrennen KANN. 2940 -> 8 kg in fuenf Minuten ist
+    // Menue-Muell (OCN 712); 400 kg in zehn Minuten mit laufender APU ist
+    // echt. Die Zeit zaehlt ab der letzten UEBERNOMMENEN Messung — auch
+    // ueber eine Pause hinweg, in der gar nicht gemessen wurde. Die erste
+    // Fassung (60 s stabil) mass nur den Abstand zweier Messungen; ein
+    // Muellwert vor einer Pause galt danach als „stabil" (Cloud-QS
+    // 24.09.2026, vierte Runde).
+    let stunden = vorher_am.map_or(0.0, |t| (jetzt - t).num_seconds().max(0) as f32 / 3600.0);
+    let erlaubter_abfall = GRUND_KG + BODEN_MAX_KG_PRO_H * stunden;
+    // Ein leerer Tank nach der Landung ist Muell, egal wie lange es dauerte.
+    if live_kg < 1.0 || referenz - live_kg > erlaubter_abfall {
         return referenz;
     }
-    *kandidat = None;
     live_kg
 }
 
@@ -42101,16 +42134,19 @@ fn step_flight_at(
     stats.last_known_lon = Some(snap.lon);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
-    let landing_fuel_kg = stats.landing_fuel_kg;
-    let mut kandidat = stats.tankstand_kandidat.take();
-    stats.last_fuel_kg = Some(tankstand_nach_landung_begrenzen(
+    let neu = tankstand_nach_landung_begrenzen(
         snap.fuel_total_kg,
-        landing_fuel_kg,
+        stats.landing_fuel_kg,
         prev_fuel_kg,
-        &mut kandidat,
+        stats.tankstand_seit,
         now,
-    ));
-    stats.tankstand_kandidat = kandidat;
+    );
+    // Nur eine UEBERNOMMENE Messung setzt die Uhr zurueck; eine verworfene
+    // laesst sie laufen, damit ein echter Abfall irgendwann erlaubt ist.
+    if neu == snap.fuel_total_kg || stats.tankstand_seit.is_none() {
+        stats.tankstand_seit = Some(now);
+    }
+    stats.last_fuel_kg = Some(neu);
     let sprit_replay_verdacht = stats.replay_verdacht;
     // Die beiden Boden-Marken — eigener Pfad, weil `sprit_tick` am Boden
     // aussteigt.
@@ -46640,6 +46676,36 @@ mod enroute_reconcile_replay_tests {
                 st.last_fuel_kg,
                 Some(2_940.0),
                 "Endsprit bleibt beim letzten echten Wert"
+            );
+        }
+
+        /// Nach einer Luecke nach der Landung kommt ZUERST ein Muellwert, dann
+        /// der echte (APU lief weiter, 400 kg weniger). Der verworfene Muell
+        /// darf die Uhr nicht zuruecksetzen — sonst bekaeme der echte Wert
+        /// die Luecke nicht mehr gutgeschrieben und bliebe fuer immer
+        /// verworfen (Cloud-QS 24.09.2026, vierte Runde).
+        #[test]
+        fn echter_wert_nach_muell_bekommt_die_luecke_gutgeschrieben() {
+            let flight = taxi_in_flight(None);
+            let t0 = Utc::now();
+            {
+                let mut st = flight.stats.lock().unwrap();
+                st.takeoff_at = Some(t0 - chrono::Duration::hours(2));
+                st.landing_fuel_kg = Some(2_966.0);
+                st.last_fuel_kg = Some(2_940.0);
+                st.tankstand_seit = Some(t0);
+            }
+            let mut muell = stopped_at(49.4952, 11.0779);
+            muell.fuel_total_kg = 8.0;
+            step_flight_at(&flight, &muell, t0 + chrono::Duration::seconds(600));
+            assert_eq!(flight.stats.lock().unwrap().last_fuel_kg, Some(2_940.0));
+            let mut echt = stopped_at(49.4952, 11.0779);
+            echt.fuel_total_kg = 2_540.0;
+            step_flight_at(&flight, &echt, t0 + chrono::Duration::seconds(603));
+            assert_eq!(
+                flight.stats.lock().unwrap().last_fuel_kg,
+                Some(2_540.0),
+                "echter Abfall nach der Luecke verworfen"
             );
         }
 
@@ -52374,6 +52440,26 @@ const AUTO_START_SIM_WARTET: &str = "sim_not_ready";
 /// Laden, Teleport oder Flughafenwechsel.
 const AUTO_START_SPRUNG_M: f64 = 1_000.0;
 
+/// Raeumt den Wartegrund des Resume-Gates weg, egal wie das Gate endet —
+/// scharfgeschaltet, Flug abgebrochen, nicht mehr aktiv, oder ein Ausgang,
+/// den es heute noch nicht gibt. Vorher stand das Raeumen einzeln an jedem
+/// `return`; ein vergessener haette im Cockpit einen eingefrorenen Hinweis
+/// hinterlassen (Cloud-QS 24.09.2026).
+struct WartegrundRaeumen(Arc<ActiveFlight>);
+
+impl Drop for WartegrundRaeumen {
+    fn drop(&mut self) {
+        if let Ok(mut st) = self.0.stats.lock() {
+            st.resume_wartet = None;
+        }
+    }
+}
+
+/// Kennzeichen der blossen Ruhe-Zaehlstand-Meldung. Eine Konstante, damit
+/// das Gate sie beim Protokollieren sicher erkennt — ueber einen zweimal
+/// geschriebenen Text waere die Kopplung beim ersten Umformulieren gerissen.
+const SIM_RUHE_ZAEHLSTAND: &str = "ruhig — geprüft wird nach";
+
 /// Eine Runde des Resume-Gates: Darf der Flug jetzt scharf werden?
 ///
 /// `Ok(snap)` = ja, mit dem Wert, der als Ausgangslage gilt. `Err(grund)` =
@@ -52474,9 +52560,14 @@ impl SimRuhe {
         // Ein Teleport ueber hunderte Kilometer wird so nie „gleichmaessig",
         // auch nicht, wenn ihm ein gleich grosser folgt.
         let fliegbar_m = sekunden.map_or(0.0, |s| RESUME_MAX_PLAUSIBEL_KT * 0.514_444 * s * 16.0);
-        let erlaubt_m = self.letzter_abstand_m.map_or(erlaubt_m, |vorher| {
-            erlaubt_m.max((vorher * 3.0).min(fliegbar_m))
-        });
+        // Nur bei dichten Takten: Nach einer langen Unterbrechung (Ruhezustand,
+        // App Nap) wuechse der Deckel sonst mit, und ein zweiter Teleport
+        // gleicher Groesse gaelte als gleichmaessig (Cloud-QS 24.09.2026).
+        let dicht = sekunden.is_some_and(|s| s <= 5.0);
+        let erlaubt_m = match self.letzter_abstand_m {
+            Some(vorher) if dicht => erlaubt_m.max((vorher * 3.0).min(fliegbar_m)),
+            _ => erlaubt_m,
+        };
         let abstand_m = self
             .letzte_pos
             .map(|(lat, lon)| ::geo::distance_m(lat, lon, snap.lat, snap.lon));
@@ -52517,7 +52608,7 @@ impl SimRuhe {
         let ruhig = (jetzt - seit).num_seconds();
         (ruhig < AUTO_START_SIM_RUHE_SECS).then(|| {
             format!(
-                "Der Simulator läuft erst {ruhig} s ruhig — geprüft wird nach {AUTO_START_SIM_RUHE_SECS} s."
+                "Der Simulator läuft erst {ruhig} s {SIM_RUHE_ZAEHLSTAND} {AUTO_START_SIM_RUHE_SECS} s."
             )
         })
     }
