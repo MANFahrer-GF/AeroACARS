@@ -1708,6 +1708,63 @@ mod resume_discontinuity_tests {
             compute_resume_discontinuity(&kurz_vorher, &gelandet_ohne_verbrauch, ziel, Some(600));
         assert!(ist_sprung_ans_ziel(&d9));
     }
+    /// Die Hoehe gehoert zum Filter vor allem anderen: 20.926.040 ft
+    /// lieferte MSFS beim Laden (OCN 712), daraus wurde ein vorgetaeuschter
+    /// Durchstart. Echte Extreme muessen durch.
+    #[test]
+    fn unmoegliche_hoehe_ist_kein_brauchbarer_messwert() {
+        let mut snap = sim_snapshot(49.5, 11.08, 1_046.0, 3_000.0, true);
+        assert!(snapshot_position_is_usable(&snap));
+        snap.altitude_msl_ft = 20_926_040.0;
+        assert!(!snapshot_position_is_usable(&snap));
+        snap.altitude_msl_ft = f64::NAN;
+        assert!(!snapshot_position_is_usable(&snap));
+        // Totes Meer und Reiseflughoehe bleiben brauchbar.
+        snap.altitude_msl_ft = -1_400.0;
+        assert!(snapshot_position_is_usable(&snap));
+        snap.altitude_msl_ft = 59_000.0;
+        assert!(snapshot_position_is_usable(&snap));
+    }
+
+    /// Die Ruhe-Regel des Resume-Gates: Ein Teleport ist Unruhe, ein
+    /// schnelles Flugzeug in der Luft nicht (sonst schaltete das Gate nach
+    /// einem App-Neustart im Reiseflug nie scharf).
+    #[test]
+    fn ruhe_regel_kennt_die_geschwindigkeit() {
+        let t0 = Utc::now();
+        let mut ruhe = SimRuhe::default();
+        // Concorde: 1150 kt, 2 s → rund 1180 m, mehr als die Bodenschwelle.
+        let mut a = sim_snapshot(50.0, 8.0, 55_000.0, 20_000.0, false);
+        a.groundspeed_kt = 1_150.0;
+        let mut b = a.clone();
+        b.lat += 1_180.0 / 111_320.0;
+        let _ = ruhe.pruefen(&a, t0);
+        let grund = ruhe.pruefen(&b, t0 + chrono::Duration::seconds(2));
+        assert!(
+            grund.as_deref().is_none_or(|g| !g.contains("springt")),
+            "ehrlicher Flug ist kein Sprung: {grund:?}"
+        );
+        // Teleport wie beim Laden (Menue-Position 4973 nm entfernt).
+        let mut c = b.clone();
+        c.lat += 60.0;
+        let grund = ruhe.pruefen(&c, t0 + chrono::Duration::seconds(4));
+        assert!(
+            grund.as_deref().is_some_and(|g| g.contains("springt")),
+            "{grund:?}"
+        );
+        // Am Boden gilt weiter die feste Schwelle.
+        let mut ruhe = SimRuhe::default();
+        let boden = sim_snapshot(50.0, 8.0, 300.0, 5_000.0, true);
+        let mut weg = boden.clone();
+        weg.lat += 1_500.0 / 111_320.0;
+        let _ = ruhe.pruefen(&boden, t0);
+        let grund = ruhe.pruefen(&weg, t0 + chrono::Duration::seconds(2));
+        assert!(
+            grund.as_deref().is_some_and(|g| g.contains("springt")),
+            "{grund:?}"
+        );
+    }
+
     /// Der Riegel auf die Begruendung: eine Zeile, hoechstens 500 Zeichen.
     /// Ueber die LAN-Bruecke kommt ungepruefter Text an — mit Umbruechen
     /// liesse sich sonst eine zweite „Begründung:"- oder „DIVERT:"-Zeile
@@ -12923,6 +12980,41 @@ mod nachreichen_tests {
             !davor.contains(concat!("if let Some(new_phase) = ", "phase_change")),
             "die Protokollzeile steht im falschen Block"
         );
+    }
+
+    /// Das Resume-Gate schaltet erst scharf, wenn der Simulator ruhig und
+    /// brauchbar liefert — nicht beim ersten frischen Wert. Beim ersten Wert
+    /// war es am 24.09.2026 (OCN 712) das MSFS-Menue: anderes Flugzeug, 0 kg,
+    /// anderer Ort. Daraus wurden drei „Spruenge" und ein falscher Durchstart.
+    #[test]
+    fn resume_gate_wartet_auf_ruhigen_simulator() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find(concat!("\nfn spawn_resume_", "sim_gate("))
+            .expect("Resume-Gate nicht gefunden — Test anpassen, nicht loeschen");
+        let koerper = &SRC[start..start + SRC[start..].find("\n}\n").unwrap()];
+        let filter = koerper
+            .find(concat!(".filter(snapshot_position_", "is_usable)"))
+            .expect("Gate filtert unbrauchbare Werte nicht mehr");
+        let ruhe = koerper
+            .find(concat!("ruhe.", "pruefen(&snap"))
+            .expect("Gate fragt die Ruhe-Regel nicht mehr");
+        let scharf = koerper
+            .find(concat!("spawn_position_", "streamer("))
+            .expect("Gate schaltet nicht mehr scharf");
+        assert!(
+            filter < scharf && ruhe < scharf,
+            "Pruefungen muessen VOR dem Scharfschalten stehen"
+        );
+        // Die Ruhe waechst nur mit frischen Werten: sonst saehe ein im Menue
+        // eingefrorener Wert ruhig aus.
+        let frisch = koerper
+            .find(concat!(
+                "if age_secs.abs() <= SIM_GATE_FRESH_SECS {\n",
+                "                    ruhe.pruefen"
+            ))
+            .expect("Ruhe wird auch mit veralteten Werten gezaehlt");
+        assert!(frisch < scharf);
     }
 
     /// Der manuelle Einreichweg darf nicht die Tuer sein, durch die ein
@@ -30844,10 +30936,22 @@ fn spawn_resume_sim_gate(
                 .to_string(),
             Some(
                 "Resume nach App-/Sim-Neustart: kein Streaming und kein phpVMS-Post, \
-                 bis ein frischer Sim-Snapshot vorliegt."
+                 bis der Simulator geladen ist und ruhig liefert."
                     .to_string(),
             ),
         );
+        // ⚠ Nicht beim ERSTEN frischen Wert scharfschalten. Nach einem Neustart
+        // zeigt MSFS minutenlang Menue, Weltkarte und Ladezustaende — am
+        // 24.09.2026 (Joel, OCN 712) ein anderes Flugzeug mit 0 kg Sprit an
+        // einem anderen Ort, und spaeter 20.926.040 ft Hoehe. Das Gate schaltete
+        // beim ersten dieser Werte scharf; daraus wurden drei „Spruenge", ein
+        // vorgetaeuschter Durchstart, und der Landesprit war weg.
+        //
+        // Dieselbe Regel wie beim Auto-Start (`SimRuhe`): nicht pausiert, keine
+        // springende Position, dasselbe Flugzeug — und das eine Weile lang.
+        // Dazu der Filter, der auch im Streamer vor allem anderen steht.
+        let mut ruhe = SimRuhe::default();
+        let mut wartet_seit: Option<DateTime<Utc>> = None;
         loop {
             // Flug abgebrochen / beendet / vergessen → Gate beenden.
             if flight.stop.load(Ordering::Relaxed) {
@@ -30872,10 +30976,31 @@ fn spawn_resume_sim_gate(
                 );
                 return;
             }
-            // Frischer Snapshot vom aktuell gewählten Simulator?
-            if let Some(snap) = current_snapshot(&app) {
+            // Frischer, brauchbarer Snapshot vom aktuell gewählten Simulator?
+            let snap = current_snapshot(&app).filter(snapshot_position_is_usable);
+            if let Some(snap) = snap {
                 let age_secs = (Utc::now() - snap.timestamp).num_seconds();
-                if age_secs.abs() <= SIM_GATE_FRESH_SECS {
+                let jetzt = Utc::now();
+                // Ruhe waechst NUR mit frischen Werten. Ein im Menue
+                // eingefrorener Wert saehe sonst „ruhig" aus, und der erste
+                // frische Wert danach schaltete sofort scharf — genau der, vor
+                // dem das Gate schuetzen soll.
+                let unruhe = if age_secs.abs() <= SIM_GATE_FRESH_SECS {
+                    ruhe.pruefen(&snap, jetzt)
+                } else {
+                    ruhe = SimRuhe::default();
+                    Some("Der Simulator liefert keine frischen Werte.".to_string())
+                };
+                if age_secs.abs() <= SIM_GATE_FRESH_SECS && unruhe.is_some() {
+                    let seit = *wartet_seit.get_or_insert(jetzt);
+                    tracing::debug!(
+                        pirep_id = %flight.pirep_id,
+                        grund = unruhe.as_deref().unwrap_or(""),
+                        wartet_s = (jetzt - seit).num_seconds(),
+                        "resume sim-gate: Simulator noch nicht ruhig"
+                    );
+                }
+                if age_secs.abs() <= SIM_GATE_FRESH_SECS && unruhe.is_none() {
                     // ⚠ Bevor der Flug scharf wird: Passt die Lage im Sim
                     // ueberhaupt zum gespeicherten Flug? Der Pilot kann hier
                     // ueber „Trotzdem fortsetzen" hergekommen sein, nachdem
@@ -30898,7 +31023,8 @@ fn spawn_resume_sim_gate(
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
                         age_secs,
-                        "resume sim-gate: fresh sim snapshot — flight armed"
+                        gewartet_s = wartet_seit.map_or(0, |t| (Utc::now() - t).num_seconds()),
+                        "resume sim-gate: Simulator ruhig — flight armed"
                     );
                     log_activity_handle(
                         &app,
@@ -30908,6 +31034,10 @@ fn spawn_resume_sim_gate(
                     );
                     return;
                 }
+            } else {
+                // Kein brauchbarer Wert (Laden, Null Island, unmoegliche Hoehe):
+                // Die Ruhe beginnt von vorn, sobald wieder Brauchbares kommt.
+                ruhe = SimRuhe::default();
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
@@ -41178,8 +41308,54 @@ fn snapshot_position_is_usable(snap: &SimSnapshot) -> bool {
     if !snap.lat.is_finite() || !snap.lon.is_finite() {
         return false;
     }
+    // Die Hoehe gehoert zur Position. Beim Laden lieferte MSFS am 24.09.2026
+    // (Joel, OCN 712) eine Hoehe von 20.926.040 ft — der Client las den
+    // zugehoerigen AGL-Wert als Durchstart nach der Landung und loeschte den
+    // Landesprit. Kein Luftfahrzeug im Simulator fliegt ueber 60.000 ft oder
+    // steht tiefer als 2.000 ft unter NN.
+    if !snap.altitude_msl_ft.is_finite()
+        || !(SNAPSHOT_HOEHE_MIN_FT..=SNAPSHOT_HOEHE_MAX_FT).contains(&snap.altitude_msl_ft)
+    {
+        return false;
+    }
     !(snap.lat.abs() < 0.02 && snap.lon.abs() < 0.02)
 }
+
+/// Nach der Landung kann der Tank nur leerer werden.
+///
+/// Zwischen Aufsetzen und Einreichen wird Sprit verbraucht, nie getankt —
+/// steigt der Wert, hat jemand neu beladen: ein Sim-Reload (OCN 712,
+/// 24.09.2026: 9544 kg nach dem Neuladen in EDDN) oder der Tankwagen fuer
+/// den naechsten Flug. Der PIREP bekaeme sonst diesen Wert als Endsprit.
+///
+/// Ein Durchstart setzt `landing_fuel_kg` zurueck
+/// (`sprit_durchstart_zuruecksetzen`), danach gilt wieder der echte Wert.
+fn tankstand_nach_landung_begrenzen(
+    live_kg: f32,
+    landing_kg: Option<f32>,
+    vorher_kg: Option<f32>,
+) -> f32 {
+    /// Messrauschen und Rundung — kein Tankvorgang.
+    const TOLERANZ_KG: f32 = 50.0;
+    match landing_kg {
+        Some(ldg) if live_kg > ldg + TOLERANZ_KG => {
+            tracing::debug!(
+                live_kg,
+                landing_kg = ldg,
+                "Tankstand nach der Landung gestiegen — Neubeladung, nicht uebernommen"
+            );
+            // Der letzte echte Wert, hoechstens der Landewert.
+            vorher_kg.map_or(ldg, |v| v.min(ldg + TOLERANZ_KG))
+        }
+        _ => live_kg,
+    }
+}
+
+/// Tiefster plausibler Wert (Totes Meer ~ -1.400 ft, mit Reserve).
+const SNAPSHOT_HOEHE_MIN_FT: f64 = -2_000.0;
+/// Hoechster plausibler Wert (Concorde FL600, U-2/SR-71 kommen im Betrieb
+/// nicht vor).
+const SNAPSHOT_HOEHE_MAX_FT: f64 = 60_000.0;
 
 /// Wie ein Positions-Sprung einzuordnen ist.
 ///
@@ -41632,7 +41808,11 @@ fn step_flight_at(
     stats.last_known_lon = Some(snap.lon);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
-    stats.last_fuel_kg = Some(snap.fuel_total_kg);
+    stats.last_fuel_kg = Some(tankstand_nach_landung_begrenzen(
+        snap.fuel_total_kg,
+        stats.landing_fuel_kg,
+        prev_fuel_kg,
+    ));
     let sprit_replay_verdacht = stats.replay_verdacht;
     // Die beiden Boden-Marken — eigener Pfad, weil `sprit_tick` am Boden
     // aussteigt.
@@ -41694,7 +41874,13 @@ fn step_flight_at(
     //     cruise tick (~210 kg max), so no false positives from
     //     normal operations.
     let live_fuel = snap.fuel_total_kg;
-    if live_fuel > 0.0 {
+    // ⚠ Nur bis zum Abflug. Der Blocksprit ist der Tankinhalt beim
+    // Anlassen; alles danach ist Verbrauch. Lief der Peak weiter, ueberschrieb
+    // jede Neubeladung nach der Landung den echten Wert — am 24.09.2026
+    // (Joel, OCN 712) die 9546 kg nach einem Sim-Reload in EDDN, und der
+    // PIREP meldete 7 kg Verbrauch fuer 834 NM. Dasselbe traefe jeden, der am
+    // Gate fuer den naechsten Flug nachtankt, bevor er einreicht.
+    if live_fuel > 0.0 && stats.takeoff_at.is_none() {
         const DEFUEL_THRESHOLD_KG: f32 = 200.0;
         let is_defuel = prev_fuel_kg
             .map(|prev| prev - live_fuel > DEFUEL_THRESHOLD_KG)
@@ -46127,6 +46313,57 @@ mod enroute_reconcile_replay_tests {
                 stats.arr_stands = stands;
             }
             flight
+        }
+
+        /// OCN 712 (Joel, 24.09.2026): Nach der Landung stuerzte MSFS ab, nach
+        /// dem Neuladen in EDDN standen 9544 kg im Tank. Blocksprit und
+        /// Endsprit des PIREP kamen aus diesem Wert — „7 kg Verbrauch" fuer
+        /// 834 NM. Durch die ECHTE Tickfunktion geschickt, nicht nachgebaut.
+        #[test]
+        fn neubeladung_nach_der_landung_aendert_den_sprit_des_fluges_nicht() {
+            let flight = taxi_in_flight(None);
+            {
+                let mut st = flight.stats.lock().unwrap();
+                st.takeoff_at = Some(Utc::now() - chrono::Duration::hours(2));
+                st.block_fuel_kg = Some(8_951.0);
+                st.landing_fuel_kg = Some(2_966.0);
+                st.last_fuel_kg = Some(2_940.0);
+            }
+            let mut snap = stopped_at(49.4952, 11.0779);
+            snap.fuel_total_kg = 9_544.0;
+            step_flight_at(&flight, &snap, Utc::now());
+            let st = flight.stats.lock().unwrap();
+            assert_eq!(
+                st.block_fuel_kg,
+                Some(8_951.0),
+                "Blocksprit nach dem Abflug eingefroren"
+            );
+            let endsprit = st.last_fuel_kg.unwrap();
+            assert!(
+                endsprit <= 2_966.0 + 50.0,
+                "Endsprit darf nach der Landung nicht steigen: {endsprit}"
+            );
+        }
+
+        /// Gegenprobe: VOR dem Abflug ist Nachtanken ganz normal — der
+        /// Blocksprit folgt dem hoechsten Stand wie bisher.
+        #[test]
+        fn nachtanken_vor_dem_abflug_zaehlt_weiter() {
+            let flight = taxi_in_flight(None);
+            {
+                let mut st = flight.stats.lock().unwrap();
+                st.phase = FlightPhase::Boarding;
+                st.takeoff_at = None;
+                st.block_fuel_kg = Some(5_000.0);
+                st.landing_fuel_kg = None;
+                st.last_fuel_kg = Some(5_000.0);
+            }
+            let mut snap = stopped_at(49.4952, 11.0779);
+            snap.fuel_total_kg = 9_000.0;
+            step_flight_at(&flight, &snap, Utc::now());
+            let st = flight.stats.lock().unwrap();
+            assert_eq!(st.block_fuel_kg, Some(9_000.0));
+            assert_eq!(st.last_fuel_kg, Some(9_000.0));
         }
 
         #[test]
@@ -51857,6 +52094,9 @@ struct SimRuhe {
     seit: Option<DateTime<Utc>>,
     letzte_pos: Option<(f64, f64)>,
     letzter_titel: Option<String>,
+    /// Wann die letzte Position gemessen wurde — fuer die Strecke, die ein
+    /// fliegendes Flugzeug dazwischen ehrlich zuruecklegt.
+    letzte_zeit: Option<DateTime<Utc>>,
 }
 
 impl SimRuhe {
@@ -51868,9 +52108,19 @@ impl SimRuhe {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .map(str::to_string);
-        let gesprungen = self.letzte_pos.is_some_and(|(lat, lon)| {
-            ::geo::distance_m(lat, lon, snap.lat, snap.lon) > AUTO_START_SPRUNG_M
+        // Am Boden gilt die feste Schwelle. In der Luft (Resume-Gate nach
+        // einem App-Neustart mitten im Flug) legt ein Flugzeug zwischen zwei
+        // Messungen ehrlich mehr zurueck — eine Concorde in 2 s ueber 1 km.
+        // Ohne diese Reserve wuerde das Gate dort nie scharfschalten
+        // (24.09.2026). Doppelte Strecke als Spielraum fuer Messabstaende.
+        let erlaubt_m = self.letzte_zeit.map_or(AUTO_START_SPRUNG_M, |t| {
+            let sekunden = (jetzt - t).num_milliseconds().max(0) as f64 / 1000.0;
+            let unterwegs_m = f64::from(snap.groundspeed_kt.max(0.0)) * 0.514_444 * sekunden * 2.0;
+            AUTO_START_SPRUNG_M.max(unterwegs_m)
         });
+        let gesprungen = self
+            .letzte_pos
+            .is_some_and(|(lat, lon)| ::geo::distance_m(lat, lon, snap.lat, snap.lon) > erlaubt_m);
         // Wechsel = ein Titel erscheint, der vom letzten BEKANNTEN abweicht:
         // A → B, und beim Hochfahren leer → A (der Titel kommt oft erst spät;
         // ab dann zählt die Ruhe neu). Ein kurz fehlender Titel (X-Plane-Web-
@@ -51880,6 +52130,7 @@ impl SimRuhe {
         let flugzeug_gewechselt =
             self.letzte_pos.is_some() && titel.is_some() && titel != self.letzter_titel;
         self.letzte_pos = Some((snap.lat, snap.lon));
+        self.letzte_zeit = Some(jetzt);
         if titel.is_some() {
             self.letzter_titel = titel;
         }

@@ -26,7 +26,15 @@ interface Props {
  * (`unmoeglicher_sprung`), sondern fragt hier den Piloten:
  *
  *   1. Flug verwerfen (empfohlen)
- *   2. Trotzdem einreichen — landet dann in der Prüfliste der VA
+ *   2. Trotzdem einreichen — mit Vermerk und optionaler Begründung in der
+ *      PIREP-Notiz.
+ *
+ * ⚠ „Trotzdem einreichen" schickt den Flug NICHT automatisch in die
+ * Prüfung. Ob er angenommen wird, entscheidet wie bei jedem Flug das
+ * Gate-Modul nach dem Urteil des Recorders — der kennt den Vermerk nicht.
+ * Hier stand bis 24.09.2026 das Gegenteil, ungeprüft; OCN 712 (Joel) wurde
+ * trotz dreier Sprung-Vermerke angenommen, weil seine Landung gemessen war.
+ * Thomas hat entschieden, dass es dabei bleibt (keine zusätzliche Abnahme).
  *
  * Bewusst KEIN dritter Weg: Die fehlenden Meilen lassen sich nicht
  * nachträglich fliegen, und eine „halbe" Abgabe gibt es in phpVMS nicht.
