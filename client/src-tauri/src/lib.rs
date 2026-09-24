@@ -1951,9 +1951,29 @@ mod resume_discontinuity_tests {
         let warte_zweig = &koerper[koerper.find("Err(grund) =>").expect("Warte-Zweig fehlt")
             ..koerper.find("Ok(snap) =>").expect("Scharf-Zweig fehlt")];
         assert!(
-            warte_zweig.contains(concat!("client.update_", "pirep(")),
+            warte_zweig.contains(concat!(".update_", "pirep(")),
             "Gate schickt beim Warten keinen Heartbeat mehr"
         );
+        // In einem eigenen Task — sonst bremst ein haengendes phpVMS das Gate.
+        let hb = warte_zweig.find(concat!(".update_", "pirep(")).unwrap();
+        let task = warte_zweig
+            .find("async_runtime::spawn(")
+            .expect("Heartbeat nicht im eigenen Task");
+        assert!(
+            task < hb,
+            "Heartbeat laeuft wieder direkt in der Gate-Schleife"
+        );
+        // Ein geloeschter PIREP beendet den Flug, wie im Streamer.
+        assert!(
+            warte_zweig.contains("ApiError::NotFound")
+                && warte_zweig.contains("handle_remote_cancellation("),
+            "404 im Gate-Heartbeat wird nicht behandelt"
+        );
+        // Die Uhr laeuft ab dem Versuch, nicht erst ab dem Erfolg.
+        let uhr = warte_zweig
+            .find("letzter_heartbeat = std::time::Instant::now();")
+            .expect("Heartbeat-Uhr fehlt");
+        assert!(uhr < task, "Uhr wird erst nach dem Erfolg gesetzt");
     }
 
     /// Ein Durchstart nach dem Aufsetzen ist nur einer, wenn das Flugzeug
@@ -1976,6 +1996,10 @@ mod resume_discontinuity_tests {
         let mut boden = sim_snapshot(49.5, 11.08, 1_200.0, 2_900.0, true);
         boden.altitude_agl_ft = 150.0;
         assert!(!echter_steigflug_nach_aufsetzen(&boden));
+        // Gueltige MSL-Hoehe, aber das Gelaende laege auf 99.790 ft.
+        let mut hoch = sim_snapshot(49.5, 11.08, 100_000.0, 2_900.0, false);
+        hoch.altitude_agl_ft = 210.0;
+        assert!(!echter_steigflug_nach_aufsetzen(&hoch));
         // OCN 712: AGL 210 ft bei 20.926.040 ft MSL — gar keine Messung.
         let mut menue = sim_snapshot(49.5, 11.08, 20_926_040.0, 9_546.0, false);
         menue.altitude_agl_ft = 210.0;
@@ -2012,10 +2036,13 @@ mod resume_discontinuity_tests {
             "37 nm in {:?} s als fliegbar gewertet",
             d.luecke_secs
         );
-        // Eine unbekannte Luecke bleibt unbekannt.
+        // Eine unbekannte Luecke bleibt fuer die Sprung-Pruefung unbekannt —
+        // fuer die Abgabe-Sperre zaehlt die Wartezeit trotzdem mit.
         let mut alt = FlightStats::new();
-        luecke_aufschlagen(&mut alt, Some(t0), t0 + chrono::Duration::seconds(380));
+        alt.resume_luecke_max_secs = Some(60);
+        luecke_aufschlagen(&mut alt, Some(t0), t0 + chrono::Duration::seconds(90));
         assert_eq!(alt.resume_luecke_secs, None);
+        assert_eq!(alt.resume_luecke_max_secs, Some(150));
     }
 
     /// Am Boden gilt die feste Schwelle — egal, welche Geschwindigkeit ein
@@ -2056,8 +2083,14 @@ mod resume_discontinuity_tests {
     /// Hoch fliegende Add-ons (Concorde, Darkstar) sind kein Messmuell.
     #[test]
     fn hohe_flughoehe_ist_brauchbar() {
-        let snap = sim_snapshot(50.0, 8.0, 100_000.0, 5_000.0, false);
+        let mut snap = sim_snapshot(50.0, 8.0, 100_000.0, 5_000.0, false);
         assert!(snapshot_position_is_usable(&snap));
+        // Die Grenze selbst als Paar — eine versehentlich tiefere fiele auf.
+        snap.altitude_msl_ft = SNAPSHOT_HOEHE_MAX_FT;
+        assert!(snapshot_position_is_usable(&snap));
+        assert_eq!(SNAPSHOT_HOEHE_MAX_FT, 150_000.0);
+        snap.altitude_msl_ft = SNAPSHOT_HOEHE_MAX_FT + 1.0;
+        assert!(!snapshot_position_is_usable(&snap));
     }
 
     /// Ohne bekannten Aufsetzzeitpunkt gibt es keine Zeitgrenze — im Zweifel
@@ -31512,6 +31545,10 @@ fn spawn_resume_sim_gate(
                     // stehen laesst (Claude-QS 24.09.2026). Der Body kommt aus
                     // dem GESPEICHERTEN Stand, nie aus einem Menue-Wert.
                     if letzter_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
+                        // Die Uhr laeuft ab dem VERSUCH, nicht ab dem Erfolg —
+                        // sonst hagelte es bei einem fehlerhaften phpVMS alle
+                        // 2 s einen neuen Versuch.
+                        letzter_heartbeat = std::time::Instant::now();
                         let body = {
                             let st = flight.stats.lock().expect("flight stats");
                             let hb = SimSnapshot {
@@ -31521,20 +31558,42 @@ fn spawn_resume_sim_gate(
                                     .map_or(0.0, |p| p.altitude_ft),
                                 ..SimSnapshot::default()
                             };
-                            build_heartbeat_body(&hb, &st, st.phase)
+                            // Dieselbe Phase wie der Streamer meldet.
+                            build_heartbeat_body(&hb, &st, effective_phase(&st))
                         };
-                        match client.update_pirep(&flight.pirep_id, &body).await {
-                            Ok(()) => {
-                                letzter_heartbeat = std::time::Instant::now();
-                                flight.stats.lock().expect("flight stats").last_heartbeat_at =
-                                    Some(Utc::now());
+                        // In einem EIGENEN Task: Ein haengendes phpVMS (bis zu
+                        // 10 s) haette sonst jeden Gate-Takt von 2 auf 12 s
+                        // gestreckt — das Gate saehe Ladezwischenstaende gar
+                        // nicht mehr (Codex + Claude-QS 24.09.2026).
+                        let app_hb = app.clone();
+                        let flight_hb = Arc::clone(&flight);
+                        let client_hb = client.clone();
+                        tauri::async_runtime::spawn(async move {
+                            match client_hb.update_pirep(&flight_hb.pirep_id, &body).await {
+                                Ok(()) => {
+                                    flight_hb
+                                        .stats
+                                        .lock()
+                                        .expect("flight stats")
+                                        .last_heartbeat_at = Some(Utc::now());
+                                }
+                                Err(ApiError::NotFound) => {
+                                    // PIREP auf dem Server geloescht — wie im
+                                    // Streamer. Setzt `flight.stop`; das Gate
+                                    // endet damit beim naechsten Takt.
+                                    handle_remote_cancellation(
+                                        &app_hb,
+                                        &flight_hb,
+                                        "POST update (resume gate)",
+                                    );
+                                }
+                                Err(e) => tracing::warn!(
+                                    pirep_id = %flight_hb.pirep_id,
+                                    error = ?e,
+                                    "resume sim-gate: Heartbeat fehlgeschlagen"
+                                ),
                             }
-                            Err(e) => tracing::warn!(
-                                pirep_id = %flight.pirep_id,
-                                error = ?e,
-                                "resume sim-gate: Heartbeat fehlgeschlagen"
-                            ),
-                        }
+                        });
                     }
                     let seit = *wartet_seit.get_or_insert(jetzt);
                     let gewartet_s = (jetzt - seit).num_seconds();
@@ -41894,7 +41953,7 @@ fn snapshot_position_is_usable(snap: &SimSnapshot) -> bool {
     // Die Hoehe gehoert zur Position. Beim Laden lieferte MSFS am 24.09.2026
     // (Joel, OCN 712) eine Hoehe von 20.926.040 ft — der Client las den
     // zugehoerigen AGL-Wert als Durchstart nach der Landung und loeschte den
-    // Landesprit. Kein Luftfahrzeug im Simulator fliegt ueber 70.000 ft oder
+    // Landesprit. Kein Luftfahrzeug im Simulator fliegt ueber 150.000 ft oder
     // steht tiefer als 2.000 ft unter NN.
     if !snap.altitude_msl_ft.is_finite()
         || !(SNAPSHOT_HOEHE_MIN_FT..=SNAPSHOT_HOEHE_MAX_FT).contains(&snap.altitude_msl_ft)
@@ -41993,7 +42052,7 @@ fn bodenverbrauch_kg_pro_h(
 /// Tiefster plausibler Wert (Totes Meer ~ -1.400 ft, mit Reserve).
 const SNAPSHOT_HOEHE_MIN_FT: f64 = -2_000.0;
 /// Hoechster plausibler Wert. Concorde fliegt bis FL600, Addons wie der
-/// Darkstar hoeher — 70.000 ft laesst ihnen Luft und faengt trotzdem den
+/// Darkstar hoeher — 150.000 ft laesst ihnen Luft und faengt trotzdem den
 /// Messmuell (20.926.040 ft am 24.09.2026).
 const SNAPSHOT_HOEHE_MAX_FT: f64 = 150_000.0;
 
@@ -42448,15 +42507,17 @@ fn step_flight_at(
     stats.last_known_lon = Some(snap.lon);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
+    // Aufsetzzeit: die der FSM, sonst die des Aufsetz-Samplers (Busch- und
+    // Hubschrauberlandungen, bei denen die FSM noch nicht in Landing ist).
+    // Fuer Zeitbasis UND Verbrauchsrate — sonst bekam eine Cessna, deren
+    // Landung nur der Sampler kannte, die Jet-Rate (Codex-QS 24.09.2026).
+    let aufgesetzt_am = stats.landing_at.or(stats.sampler_touchdown_at);
     let bodenrate = bodenverbrauch_kg_pro_h(
         stats.block_fuel_kg,
         stats.landing_fuel_kg,
         stats.takeoff_at,
-        stats.landing_at,
+        aufgesetzt_am,
     );
-    // Aufsetzzeit: die der FSM, sonst die des Aufsetz-Samplers (Busch- und
-    // Hubschrauberlandungen, bei denen die FSM noch nicht in Landing ist).
-    let aufgesetzt_am = stats.landing_at.or(stats.sampler_touchdown_at);
     stats.last_fuel_kg = Some(tankstand_nach_landung_begrenzen(
         snap.fuel_total_kg,
         stats.landing_fuel_kg,
@@ -47069,22 +47130,26 @@ mod enroute_reconcile_replay_tests {
         /// gilt SEINE Zeit als Basis — sonst gaebe es gar keine Grenze.
         #[test]
         fn aufsetzzeit_des_samplers_zaehlt_als_zeitbasis() {
+            // Eine Cessna, deren Landung nur der Sampler kennt: 90 kg Block,
+            // 60 kg Landesprit, eine Stunde Flug — also rund 10 kg/h am Boden.
+            // Mit der Jet-Rate (2000 kg/h) waeren nach einer Minute 38 kg
+            // Verlust erlaubt; der Test waehlt 35 kg, damit NUR die richtige
+            // Rate ihn verwirft (Codex-QS 24.09.2026).
             let flight = taxi_in_flight(None);
             let t0 = Utc::now();
             {
                 let mut st = flight.stats.lock().unwrap();
-                st.takeoff_at = Some(t0 - chrono::Duration::seconds(7_860));
-                st.block_fuel_kg = Some(8_951.0);
+                st.takeoff_at = Some(t0 - chrono::Duration::seconds(3_600));
+                st.block_fuel_kg = Some(90.0);
                 st.landing_at = None;
                 st.sampler_touchdown_at = Some(t0);
-                st.landing_fuel_kg = Some(2_966.0);
-                st.last_fuel_kg = Some(2_940.0);
+                st.landing_fuel_kg = Some(60.0);
+                st.last_fuel_kg = Some(59.0);
             }
             let mut snap = stopped_at(49.4952, 11.0779);
-            // 566 kg weniger drei Sekunden nach dem Aufsetzen: unmoeglich.
-            snap.fuel_total_kg = 2_400.0;
-            step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(3));
-            assert_eq!(flight.stats.lock().unwrap().last_fuel_kg, Some(2_940.0));
+            snap.fuel_total_kg = 25.0;
+            step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(60));
+            assert_eq!(flight.stats.lock().unwrap().last_fuel_kg, Some(59.0));
         }
 
         /// Gegenprobe: VOR dem Abflug ist Nachtanken ganz normal — der
@@ -52851,17 +52916,28 @@ fn luecke_aufschlagen(
     wiederhergestellt: Option<DateTime<Utc>>,
     jetzt: DateTime<Utc>,
 ) {
-    let (Some(seit), Some(bisher)) = (wiederhergestellt, st.resume_luecke_secs) else {
+    let Some(seit) = wiederhergestellt else {
         return;
     };
     let gewartet = (jetzt - seit).num_seconds().max(0);
-    let lief = gewartet.min(AUTO_START_SIM_RUHE_SECS + 10);
-    st.resume_luecke_secs = Some(bisher + lief);
+    // Fuer die Abgabe-Sperre zaehlt die Wartezeit IMMER. Ist die Luecke bis
+    // zum Wiederherstellen unbekannt (Altdatei), steckt ihr Rueckfallwert
+    // schon im Hoechstwert — darauf aufschlagen, lieber einmal zu oft fragen
+    // (Codex-QS 24.09.2026: 60 s Rueckfall + 90 s Warten sind 150 s).
+    let bisher_fuer_sperre = st
+        .resume_luecke_secs
+        .or(st.resume_luecke_max_secs)
+        .unwrap_or(0);
     st.resume_luecke_max_secs = Some(
         st.resume_luecke_max_secs
             .unwrap_or(0)
-            .max(bisher + gewartet),
+            .max(bisher_fuer_sperre + gewartet),
     );
+    // Die Sprung-Pruefung bekommt nur eine BEKANNTE Luecke verlaengert, und
+    // nur um die ruhige Endphase.
+    if let Some(bisher) = st.resume_luecke_secs {
+        st.resume_luecke_secs = Some(bisher + gewartet.min(AUTO_START_SIM_RUHE_SECS + 10));
+    }
 }
 
 /// Ist das nach einem Aufsetzen ein ECHTER Steigflug (Durchstart,
@@ -52875,13 +52951,19 @@ fn luecke_aufschlagen(
 fn echter_steigflug_nach_aufsetzen(snap: &SimSnapshot) -> bool {
     let agl = snap.altitude_agl_ft;
     // Zuerst der zentrale Filter: Ein Wert mit unmoeglicher MSL-Hoehe
-    // (20.926.040 ft) ist gar keine Messung — sein kleines AGL darf dann
-    // nicht als „passend" durchgehen.
+    // (20.926.040 ft) ist gar keine Messung.
+    //
+    // Dann die Gelaendehoehe, die sich aus MSL - AGL ergibt: Sie muss es auf
+    // der Erde geben, vom Toten Meer bis knapp ueber den Everest. Die erste
+    // Fassung pruefte nur eine Richtung — 100.000 ft MSL mit 210 ft AGL
+    // (Gelaende auf 99.790 ft) ging noch als Steigflug durch (Codex-QS
+    // 24.09.2026).
+    let gelaende_ft = snap.altitude_msl_ft - agl;
     snapshot_position_is_usable(snap)
         && !snap.on_ground
         && agl.is_finite()
         && agl > 100.0
-        && agl <= snap.altitude_msl_ft + 2_000.0
+        && (-2_000.0..=30_000.0).contains(&gelaende_ft)
 }
 
 /// Kennzeichen der blossen Ruhe-Zaehlstand-Meldung. Eine Konstante, damit
