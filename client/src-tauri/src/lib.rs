@@ -1791,6 +1791,20 @@ mod resume_discontinuity_tests {
         for s in (0..=40).step_by(2) {
             assert!(resume_gate_takt(&mut ruhe, Some(alt.clone()), jetzt(s + 10)).is_err());
         }
+
+        // Ein Menuewert, der NICHT als Pause gemeldet ist, am selben Ort,
+        // aber mit anderem Flugzeug: Die Titelpruefung muss die Ruhe
+        // zuruecksetzen (Claude-QS 24.09.2026).
+        let mut ruhe = SimRuhe::default();
+        for s in (0..=18).step_by(2) {
+            let _ = resume_gate_takt(&mut ruhe, Some(frisch(eddn.clone(), jetzt(s))), jetzt(s));
+        }
+        let mut anderes = eddn.clone();
+        anderes.aircraft_title = Some("FenixA320 CFM SL".into());
+        assert!(
+            resume_gate_takt(&mut ruhe, Some(frisch(anderes, jetzt(20))), jetzt(20)).is_err(),
+            "Flugzeugwechsel als ruhig gewertet"
+        );
     }
 
     /// Nach einem Neustart im Reiseflug unter Zeitbeschleunigung muss das
@@ -1804,7 +1818,10 @@ mod resume_discontinuity_tests {
         snap.groundspeed_kt = 480.0;
         snap.simulation_rate = 4.0;
         let mut ergebnis = Err(String::new());
-        for i in 0..=12 {
+        // Genau bis t = 20 s: Nur MIT Sim-Rate ist schon der erste Takt ruhig.
+        // Ohne sie rettet erst die Gleichmaessigkeits-Regel ab dem zweiten, und
+        // die 20 s sind noch nicht voll (Claude-QS 24.09.2026).
+        for i in 0..=10 {
             let t = t0 + chrono::Duration::seconds(i * 2);
             let mut s = snap.clone();
             // 4x: rund 1975 m je 2 s Echtzeit.
@@ -1902,11 +1919,18 @@ mod resume_discontinuity_tests {
     fn resume_gate_raeumt_den_wartegrund_bei_jedem_ausgang() {
         // Verhalten: Der Guard raeumt beim Verlassen, egal auf welchem Weg.
         let flight = Arc::new(crate::enroute_reconcile_replay_tests::replay_fixture());
-        flight.stats.lock().unwrap().resume_wartet = Some(("Laedt".into(), 12));
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.resume_wartet = Some(("Laedt".into(), 12));
+            st.resume_gate_laeuft = true;
+        }
         {
             let _g = WartegrundRaeumen(Arc::clone(&flight));
         }
         assert!(flight.stats.lock().unwrap().resume_wartet.is_none());
+        // Und das Gate gibt sich frei — sonst waere nach einem Ende nie
+        // wieder ein Fortsetzen moeglich.
+        assert!(!flight.stats.lock().unwrap().resume_gate_laeuft);
 
         // Und das Gate setzt den Guard, bevor es irgendetwas anderes tut.
         const SRC: &str = include_str!("lib.rs");
@@ -1921,6 +1945,142 @@ mod resume_discontinuity_tests {
             .expect("Gate bindet den Raeum-Guard nicht mehr benannt");
         let schleife = koerper.find("loop {").expect("Gate-Schleife fehlt");
         assert!(guard < schleife, "Guard muss vor der Schleife stehen");
+
+        // Waehrend des Wartens geht ein Heartbeat an phpVMS — sonst loescht
+        // sein Cron den PIREP nach ~2 h (Claude-QS 24.09.2026).
+        let warte_zweig = &koerper[koerper.find("Err(grund) =>").expect("Warte-Zweig fehlt")
+            ..koerper.find("Ok(snap) =>").expect("Scharf-Zweig fehlt")];
+        assert!(
+            warte_zweig.contains(concat!("client.update_", "pirep(")),
+            "Gate schickt beim Warten keinen Heartbeat mehr"
+        );
+    }
+
+    /// Ein Durchstart nach dem Aufsetzen ist nur einer, wenn das Flugzeug
+    /// wirklich steigt. Messmuell darf ihn nicht vortaeuschen — sonst ist
+    /// der Landesprit weg (Codex-QS 24.09.2026).
+    #[test]
+    fn steigflug_nach_aufsetzen_erkennt_messmuell() {
+        let mut echt = sim_snapshot(49.5, 11.08, 1_300.0, 2_900.0, false);
+        echt.altitude_agl_ft = 300.0;
+        assert!(echter_steigflug_nach_aufsetzen(&echt));
+        // GSX-Pushback-Fehler: am Boden, AGL 53.819 ft.
+        let mut gsx = sim_snapshot(49.5, 11.08, 1_046.0, 2_900.0, true);
+        gsx.altitude_agl_ft = 53_819.0;
+        assert!(!echter_steigflug_nach_aufsetzen(&gsx));
+        // Derselbe Fehler „in der Luft": AGL passt nicht zur Hoehe.
+        gsx.on_ground = false;
+        assert!(!echter_steigflug_nach_aufsetzen(&gsx));
+        // Am Boden mit plausiblem, aber falschem AGL (Szenerie-Versatz): kein
+        // Steigflug, auch wenn AGL > 100 ft und zur Hoehe passt.
+        let mut boden = sim_snapshot(49.5, 11.08, 1_200.0, 2_900.0, true);
+        boden.altitude_agl_ft = 150.0;
+        assert!(!echter_steigflug_nach_aufsetzen(&boden));
+        // OCN 712: AGL 210 ft bei 20.926.040 ft MSL — gar keine Messung.
+        let mut menue = sim_snapshot(49.5, 11.08, 20_926_040.0, 9_546.0, false);
+        menue.altitude_agl_ft = 210.0;
+        assert!(!echter_steigflug_nach_aufsetzen(&menue));
+    }
+
+    /// Die Wartezeit im Gate zaehlt fuer die Abgabe-Sperre ganz, fuer die
+    /// Sprung-Pruefung nur als ruhige Endphase (Claude-QS 24.09.2026).
+    #[test]
+    fn wartezeit_zaehlt_fuer_sperre_ganz_fuer_sprungpruefung_kaum() {
+        let t0 = Utc::now();
+        let mut st = FlightStats::new();
+        st.resume_luecke_secs = Some(30);
+        luecke_aufschlagen(&mut st, Some(t0), t0 + chrono::Duration::seconds(380));
+        assert_eq!(
+            st.resume_luecke_secs,
+            Some(30 + AUTO_START_SIM_RUHE_SECS + 10)
+        );
+        assert_eq!(st.resume_luecke_max_secs, Some(410));
+        // 37 nm in der so gerechneten Luecke sind nicht fliegbar.
+        let d = ResumeDiscontinuity {
+            drift_nm: 37.0,
+            altitude_delta_ft: 0.0,
+            fuel_delta_kg: -50.0,
+            both_grounded: false,
+            ziel_vorher_nm: Some(40.0),
+            ziel_nachher_nm: Some(3.0),
+            danach_am_boden: false,
+            luecke_secs: st.resume_luecke_secs,
+            nur_bestaetigt: false,
+        };
+        assert!(
+            ist_sprung_ans_ziel(&d),
+            "37 nm in {:?} s als fliegbar gewertet",
+            d.luecke_secs
+        );
+        // Eine unbekannte Luecke bleibt unbekannt.
+        let mut alt = FlightStats::new();
+        luecke_aufschlagen(&mut alt, Some(t0), t0 + chrono::Duration::seconds(380));
+        assert_eq!(alt.resume_luecke_secs, None);
+    }
+
+    /// Am Boden gilt die feste Schwelle — egal, welche Geschwindigkeit ein
+    /// Ladewert meldet (Codex-QS 24.09.2026).
+    #[test]
+    fn ruhe_regel_am_boden_bleibt_streng() {
+        let t0 = Utc::now();
+        let mut ruhe = SimRuhe::default();
+        let mut a = sim_snapshot(50.0, 8.0, 300.0, 5_000.0, true);
+        a.groundspeed_kt = 700.0;
+        a.simulation_rate = 16.0;
+        let _ = ruhe.pruefen(&a, t0);
+        for i in 1..=5 {
+            let mut b = a.clone();
+            b.lat += (i as f64) * 20_000.0 / 111_320.0;
+            let grund = ruhe.pruefen(&b, t0 + chrono::Duration::seconds(3 * i));
+            assert!(
+                grund.as_deref().is_some_and(|g| g.contains("springt")),
+                "20-km-Sprung am Boden als ruhig gewertet (Takt {i}): {grund:?}"
+            );
+        }
+        // Flackern zwischen zwei Punkten 5 km auseinander: jeder Wechsel ein Sprung.
+        let mut ruhe = SimRuhe::default();
+        let p = sim_snapshot(50.0, 8.0, 300.0, 5_000.0, true);
+        let mut q = p.clone();
+        q.lat += 5_000.0 / 111_320.0;
+        let _ = ruhe.pruefen(&p, t0);
+        for i in 1..=6 {
+            let x = if i % 2 == 1 { &q } else { &p };
+            let grund = ruhe.pruefen(x, t0 + chrono::Duration::seconds(3 * i));
+            assert!(
+                grund.as_deref().is_some_and(|g| g.contains("springt")),
+                "Takt {i}: {grund:?}"
+            );
+        }
+    }
+
+    /// Hoch fliegende Add-ons (Concorde, Darkstar) sind kein Messmuell.
+    #[test]
+    fn hohe_flughoehe_ist_brauchbar() {
+        let snap = sim_snapshot(50.0, 8.0, 100_000.0, 5_000.0, false);
+        assert!(snapshot_position_is_usable(&snap));
+    }
+
+    /// Ohne bekannten Aufsetzzeitpunkt gibt es keine Zeitgrenze — im Zweifel
+    /// gilt der echte Wert. Mit dem Zeitpunkt des Aufsetz-Samplers greift sie.
+    #[test]
+    fn verbrauchsgrenze_braucht_eine_zeitbasis() {
+        let t0 = Utc::now();
+        let t = |s: i64| t0 + chrono::Duration::seconds(s);
+        let ldg = Some(16_770.0_f32);
+        let f = tankstand_nach_landung_begrenzen;
+        // Unbekannte Zeit: echter Rollverbrauch von 649 kg gilt.
+        assert_eq!(f(16_121.0, ldg, None, None, 2_000.0, t(30)), 16_121.0);
+        // Unbekannte Zeit, aber Neubeladung und fast leerer Tank: weiter nie.
+        assert_eq!(
+            f(30_000.0, ldg, Some(16_121.0), None, 2_000.0, t(30)),
+            16_121.0
+        );
+        assert_eq!(f(8.0, ldg, Some(16_121.0), None, 2_000.0, t(30)), 16_121.0);
+        // Mit Zeitbasis (z. B. vom Sampler): 649 kg in 3 s sind unmoeglich.
+        assert_eq!(
+            f(16_121.0, ldg, Some(16_770.0), Some(t(0)), 2_000.0, t(3)),
+            16_770.0
+        );
     }
 
     /// Nach der Landung: erst ein Menue-Wert mit 0 kg, dann die Neubeladung.
@@ -6172,6 +6332,10 @@ struct FlightStats {
     /// Resume-Gate schlaegt die Zeit bis zum Scharfschalten auf die Luecke
     /// auf — in ihr lief weder Streamer noch Aufsetz-Sampler.
     resume_wiederhergestellt_am: Option<DateTime<Utc>>,
+    /// Laeuft schon ein Resume-Gate? Ein zweites „Fortsetzen" (Hauptfenster
+    /// UND LAN-Fernbedienung) startete sonst ein zweites Gate, das den
+    /// Wartegrund des ersten ueberschrieb (QS 24.09.2026).
+    resume_gate_laeuft: bool,
     /// Worauf das Resume-Gate gerade wartet, und seit wie vielen Sekunden.
     /// Fuer die Oberflaeche; `None`, sobald der Flug scharf ist.
     resume_wartet: Option<(String, i64)>,
@@ -31261,6 +31425,15 @@ async fn flight_resume_confirm(
     // erst dann scharf. `was_just_resumed` bleibt true bis dahin → die UI
     // zeigt weiter den Resume-/Warte-Zustand statt einen scheinbar laufenden
     // Flug. Sim-agnostisch (X-Plane + MSFS via `current_snapshot`).
+    // Nur EIN Gate je Flug; ein zweites Bestaetigen ist ein klarer No-op.
+    {
+        let mut st = flight.stats.lock().expect("flight stats");
+        if st.resume_gate_laeuft {
+            tracing::info!(pirep_id = %flight.pirep_id, "resume gate laeuft schon — zweites Bestaetigen ignoriert");
+            return Ok(());
+        }
+        st.resume_gate_laeuft = true;
+    }
     spawn_resume_sim_gate(app, Arc::clone(&flight), client, force.unwrap_or(false));
     Ok(())
 }
@@ -31303,6 +31476,7 @@ fn spawn_resume_sim_gate(
         let mut wartet_seit: Option<DateTime<Utc>> = None;
         let mut letzter_grund: Option<String> = None;
         let mut gewarnt = false;
+        let mut letzter_heartbeat = std::time::Instant::now();
         loop {
             // Flug abgebrochen / beendet / vergessen → Gate beenden.
             if flight.stop.load(Ordering::Relaxed) {
@@ -31332,6 +31506,36 @@ fn spawn_resume_sim_gate(
             let jetzt = Utc::now();
             match resume_gate_takt(&mut ruhe, current_snapshot(&app), jetzt) {
                 Err(grund) => {
+                    // phpVMS will auch waehrend des Wartens ein Lebenszeichen,
+                    // sonst loescht sein Cron den PIREP nach `acars.live_time`
+                    // (~2 h) — etwa wenn der Pilot den geladenen Sim pausiert
+                    // stehen laesst (Claude-QS 24.09.2026). Der Body kommt aus
+                    // dem GESPEICHERTEN Stand, nie aus einem Menue-Wert.
+                    if letzter_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
+                        let body = {
+                            let st = flight.stats.lock().expect("flight stats");
+                            let hb = SimSnapshot {
+                                altitude_msl_ft: st
+                                    .last_persisted_snapshot
+                                    .as_ref()
+                                    .map_or(0.0, |p| p.altitude_ft),
+                                ..SimSnapshot::default()
+                            };
+                            build_heartbeat_body(&hb, &st, st.phase)
+                        };
+                        match client.update_pirep(&flight.pirep_id, &body).await {
+                            Ok(()) => {
+                                letzter_heartbeat = std::time::Instant::now();
+                                flight.stats.lock().expect("flight stats").last_heartbeat_at =
+                                    Some(Utc::now());
+                            }
+                            Err(e) => tracing::warn!(
+                                pirep_id = %flight.pirep_id,
+                                error = ?e,
+                                "resume sim-gate: Heartbeat fehlgeschlagen"
+                            ),
+                        }
+                    }
                     let seit = *wartet_seit.get_or_insert(jetzt);
                     let gewartet_s = (jetzt - seit).num_seconds();
                     // Der Pilot SIEHT, worauf gewartet wird — vorher stand der
@@ -31392,12 +31596,7 @@ fn spawn_resume_sim_gate(
                         // sonst wuerde aus „im Zweifel fliegbar" eine kurze,
                         // strenge Luecke (Cloud-QS 24.09.2026).
                         let seit = st.resume_wiederhergestellt_am.take();
-                        if let (Some(seit), Some(bisher)) = (seit, st.resume_luecke_secs) {
-                            let luecke = bisher + (jetzt - seit).num_seconds().max(0);
-                            st.resume_luecke_secs = Some(luecke);
-                            st.resume_luecke_max_secs =
-                                Some(st.resume_luecke_max_secs.unwrap_or(0).max(luecke));
-                        }
+                        luecke_aufschlagen(&mut st, seit, jetzt);
                     }
                     save_active_flight(&app, &flight);
                     flight.was_just_resumed.store(false, Ordering::Relaxed);
@@ -35664,7 +35863,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 let mut s = flight.stats.lock().expect("flight stats");
                 let dumped = s.touchdown_window_dumped_at.is_some();
                 let agl_now = snap.altitude_agl_ft as f32;
-                if dumped && agl_now > 100.0 {
+                // Nur ein ECHTER Steigflug: in der Luft, und mit einem AGL,
+                // das zur Hoehe passt. MSFS meldete am 03.05.2026 waehrend
+                // eines GSX-Pushbacks AGL = 53.819 ft (PMDG 737) — ohne diese
+                // Pruefung loeschte so ein Wert nach der Landung den
+                // Landesprit, auch ganz ohne Absturz (Codex-QS 24.09.2026).
+                if dumped && echter_steigflug_nach_aufsetzen(&snap) {
                     // Climb-out detected nach Dump → bereit fuer naechste TD.
                     // Reset alle TD-state-fields.
                     s.sampler_touchdown_at = None;
@@ -41743,7 +41947,16 @@ fn tankstand_nach_landung_begrenzen(
     //   * Pro Messung gerechnet, summierten sich viele kleine Schritte.
     // Deshalb: kumulativ ab der Landung (`landing_at` ist gespeichert und
     // ueberlebt einen App-Neustart), Reserve und Rate nach dem Flugzeug.
-    let stunden = landing_at.map_or(0.0, |t| (jetzt - t).num_seconds().max(0) as f32 / 3600.0);
+    //
+    // Ohne bekannten Aufsetzzeitpunkt gibt es keine Zeitbasis — dann keine
+    // Zeitgrenze, im Zweifel gilt der echte Wert. Sonst durfte ein Flug, dessen
+    // Landung nur der Aufsetz-Sampler kannte, nach der Landung nur die Reserve
+    // verlieren, und ein echter Rollverbrauch von 649 kg wurde verworfen
+    // (zwei bestehende Tests fingen das, 24.09.2026).
+    let Some(landing_at) = landing_at else {
+        return live_kg;
+    };
+    let stunden = (jetzt - landing_at).num_seconds().max(0) as f32 / 3600.0;
     let reserve_kg = (ldg * 0.05).clamp(5.0, 200.0);
     let erlaubter_abfall = reserve_kg + bodenrate_kg_pro_h * stunden;
     if ldg - live_kg > erlaubter_abfall {
@@ -41782,7 +41995,7 @@ const SNAPSHOT_HOEHE_MIN_FT: f64 = -2_000.0;
 /// Hoechster plausibler Wert. Concorde fliegt bis FL600, Addons wie der
 /// Darkstar hoeher — 70.000 ft laesst ihnen Luft und faengt trotzdem den
 /// Messmuell (20.926.040 ft am 24.09.2026).
-const SNAPSHOT_HOEHE_MAX_FT: f64 = 70_000.0;
+const SNAPSHOT_HOEHE_MAX_FT: f64 = 150_000.0;
 
 /// Wie ein Positions-Sprung einzuordnen ist.
 ///
@@ -42241,11 +42454,14 @@ fn step_flight_at(
         stats.takeoff_at,
         stats.landing_at,
     );
+    // Aufsetzzeit: die der FSM, sonst die des Aufsetz-Samplers (Busch- und
+    // Hubschrauberlandungen, bei denen die FSM noch nicht in Landing ist).
+    let aufgesetzt_am = stats.landing_at.or(stats.sampler_touchdown_at);
     stats.last_fuel_kg = Some(tankstand_nach_landung_begrenzen(
         snap.fuel_total_kg,
         stats.landing_fuel_kg,
         prev_fuel_kg,
-        stats.landing_at,
+        aufgesetzt_am,
         bodenrate,
         now,
     ));
@@ -42253,16 +42469,20 @@ fn step_flight_at(
     // Die beiden Boden-Marken — eigener Pfad, weil `sprit_tick` am Boden
     // aussteigt.
     // Entprellt wie jede andere Triebwerks-Abfrage hier.
-    let sprit_laeuft = engines_effectively_running(&stats, &snap, Utc::now());
+    let sprit_laeuft = engines_effectively_running(&stats, &snap, now);
+    // Der plausibilisierte Wert, nicht der rohe: Sonst rastete ein
+    // Menue-Wert nach der Landung als „Triebwerke aus"-Marke ein, und der
+    // PIREP meldete „Rollen nach der Landung: 2958 kg" (QS 24.09.2026).
+    let plausibler_tank_kg = stats.last_fuel_kg.unwrap_or(snap.fuel_total_kg);
     sprit_boden_marken(
         &mut stats,
-        snap.fuel_total_kg,
+        plausibler_tank_kg,
         sprit_laeuft,
         snap.on_ground,
         snap.paused,
         snap.slew_mode,
         sprit_replay_verdacht,
-        Utc::now(),
+        now,
     );
     sprit_tick(
         &mut stats,
@@ -44567,9 +44787,10 @@ fn step_flight_at(
             // genuegt) oder ein Add-on mit klemmendem Triebwerkszaehler ueber
             // den Stillstands-Weg. Dort gibt es keinen Abstell-Zeitpunkt, und
             // ein geratener waere ein zu kleiner Rollsprit (QS Runde 3, F1).
+            let plausibler_tank_kg = stats.last_fuel_kg.unwrap_or(snap.fuel_total_kg);
             sprit_flug_abschliessen(
                 &mut stats,
-                Some(snap.fuel_total_kg),
+                Some(plausibler_tank_kg),
                 snap.engines_running == 0,
             );
         }
@@ -46813,6 +47034,57 @@ mod enroute_reconcile_replay_tests {
                 Some(2_716.0),
                 "echter Abfall nach der Luecke verworfen"
             );
+        }
+
+        /// Nach der Landung liefert das Menue 8 kg bei abgestellten Triebwerken.
+        /// Die Marke „Triebwerke aus" darf diesen Wert nicht einrasten — sonst
+        /// meldete der PIREP „Rollen nach der Landung: 2958 kg" (Codex-QS
+        /// 24.09.2026). Zwei Takte ueber die Zehn-Sekunden-Frist.
+        #[test]
+        fn triebwerke_aus_rastet_keinen_menuewert_ein() {
+            let flight = taxi_in_flight(None);
+            let t0 = Utc::now();
+            {
+                let mut st = flight.stats.lock().unwrap();
+                st.takeoff_at = Some(t0 - chrono::Duration::seconds(7_860));
+                // Ohne Startsprit steigt `sprit_boden_marken` frueh aus — die
+                // erste Fassung dieses Tests konnte deshalb nie rot werden.
+                st.takeoff_fuel_kg = Some(8_700.0);
+                st.block_fuel_kg = Some(8_951.0);
+                st.landing_at = Some(t0);
+                st.landing_fuel_kg = Some(2_966.0);
+                st.last_fuel_kg = Some(2_940.0);
+            }
+            let mut menue = stopped_at(49.4952, 11.0779);
+            menue.fuel_total_kg = 8.0;
+            menue.engines_running = 0;
+            step_flight_at(&flight, &menue, t0 + chrono::Duration::seconds(600));
+            step_flight_at(&flight, &menue, t0 + chrono::Duration::seconds(615));
+            let st = flight.stats.lock().unwrap();
+            // Die Marke rastet ein — aber mit dem letzten echten Wert.
+            assert_eq!(st.engine_off_fuel_kg, Some(2_940.0), "Abstell-Sprit falsch");
+        }
+
+        /// Kennt nur der Aufsetz-Sampler die Landung (Busch, Hubschrauber),
+        /// gilt SEINE Zeit als Basis — sonst gaebe es gar keine Grenze.
+        #[test]
+        fn aufsetzzeit_des_samplers_zaehlt_als_zeitbasis() {
+            let flight = taxi_in_flight(None);
+            let t0 = Utc::now();
+            {
+                let mut st = flight.stats.lock().unwrap();
+                st.takeoff_at = Some(t0 - chrono::Duration::seconds(7_860));
+                st.block_fuel_kg = Some(8_951.0);
+                st.landing_at = None;
+                st.sampler_touchdown_at = Some(t0);
+                st.landing_fuel_kg = Some(2_966.0);
+                st.last_fuel_kg = Some(2_940.0);
+            }
+            let mut snap = stopped_at(49.4952, 11.0779);
+            // 566 kg weniger drei Sekunden nach dem Aufsetzen: unmoeglich.
+            snap.fuel_total_kg = 2_400.0;
+            step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(3));
+            assert_eq!(flight.stats.lock().unwrap().last_fuel_kg, Some(2_940.0));
         }
 
         /// Gegenprobe: VOR dem Abflug ist Nachtanken ganz normal — der
@@ -52557,8 +52829,59 @@ impl Drop for WartegrundRaeumen {
     fn drop(&mut self) {
         if let Ok(mut st) = self.0.stats.lock() {
             st.resume_wartet = None;
+            st.resume_gate_laeuft = false;
         }
     }
+}
+
+/// Schlaegt die Wartezeit im Resume-Gate auf die Neustart-Luecke auf.
+///
+/// Zwei Werte, zwei Zwecke:
+///   * `resume_luecke_max_secs` dient der Abgabe-Sperre („war der Flug
+///     unterbrochen?"). Dort zaehlt die GANZE Zeit ohne Aufzeichnung — auch
+///     Menue und Laden.
+///   * `resume_luecke_secs` dient der Sprung-Pruefung („war die Strecke in
+///     der Zeit fliegbar?"). Im Menue bewegt sich aber nichts. Bekaeme sie
+///     die ganze Wartezeit, galt ein Pilot, der sich nach sechs Minuten
+///     Laden 3 nm vor die Bahn stellt, als ehrlich geflogen (Claude-QS
+///     24.09.2026). Deshalb nur die ruhige Endphase, in der der Sim lief.
+/// Eine unbekannte Luecke (Altdatei) bleibt unbekannt.
+fn luecke_aufschlagen(
+    st: &mut FlightStats,
+    wiederhergestellt: Option<DateTime<Utc>>,
+    jetzt: DateTime<Utc>,
+) {
+    let (Some(seit), Some(bisher)) = (wiederhergestellt, st.resume_luecke_secs) else {
+        return;
+    };
+    let gewartet = (jetzt - seit).num_seconds().max(0);
+    let lief = gewartet.min(AUTO_START_SIM_RUHE_SECS + 10);
+    st.resume_luecke_secs = Some(bisher + lief);
+    st.resume_luecke_max_secs = Some(
+        st.resume_luecke_max_secs
+            .unwrap_or(0)
+            .max(bisher + gewartet),
+    );
+}
+
+/// Ist das nach einem Aufsetzen ein ECHTER Steigflug (Durchstart,
+/// Touch-and-Go) — oder nur ein Messwert, der einen vortaeuscht?
+///
+/// In der Luft, mehr als 100 ft ueber Grund, und mit einem AGL, das zur
+/// Hoehe passt. MSFS meldete am 03.05.2026 waehrend eines GSX-Pushbacks
+/// AGL = 53.819 ft (PMDG 737); nach einem Absturz lieferte das Menue
+/// AGL 210 ft bei 20.926.040 ft MSL (OCN 712). Ohne diese Pruefung loeschte
+/// so ein Wert nach der Landung den Landesprit (Codex-QS 24.09.2026).
+fn echter_steigflug_nach_aufsetzen(snap: &SimSnapshot) -> bool {
+    let agl = snap.altitude_agl_ft;
+    // Zuerst der zentrale Filter: Ein Wert mit unmoeglicher MSL-Hoehe
+    // (20.926.040 ft) ist gar keine Messung — sein kleines AGL darf dann
+    // nicht als „passend" durchgehen.
+    snapshot_position_is_usable(snap)
+        && !snap.on_ground
+        && agl.is_finite()
+        && agl > 100.0
+        && agl <= snap.altitude_msl_ft + 2_000.0
 }
 
 /// Kennzeichen der blossen Ruhe-Zaehlstand-Meldung. Eine Konstante, damit
@@ -52649,6 +52972,11 @@ impl SimRuhe {
         let sekunden = self
             .letzte_zeit
             .map(|t| (jetzt - t).num_milliseconds().max(0) as f64 / 1000.0);
+        // ⚠ Nur in der Luft. Am Boden gilt die feste Schwelle — sonst reichte
+        // ein Ladewert mit gemeldeten 700 kt, um Sprünge von 20 km als ruhig
+        // durchgehen zu lassen, und der Auto-Start feuerte ohne echte Ruhe
+        // (Codex-QS 24.09.2026).
+        let sekunden = if snap.on_ground { None } else { sekunden };
         let erlaubt_m = sekunden.map_or(AUTO_START_SPRUNG_M, |sekunden| {
             let gs_kt = f64::from(snap.groundspeed_kt.max(0.0)).min(RESUME_MAX_PLAUSIBEL_KT);
             let rate = f64::from(snap.simulation_rate).clamp(1.0, 16.0);
