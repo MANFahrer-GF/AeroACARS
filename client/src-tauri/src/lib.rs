@@ -1969,6 +1969,15 @@ mod resume_discontinuity_tests {
                 && warte_zweig.contains("handle_remote_cancellation("),
             "404 im Gate-Heartbeat wird nicht behandelt"
         );
+        // Ohne Leerraum verglichen — rustfmt bricht die Bedingung um.
+        let ohne_leerraum: String = warte_zweig.split_whitespace().collect();
+        assert!(
+            ohne_leerraum.contains(concat!(
+                "Err(ApiError::NotFound)if!flight_hb.stop",
+                ".load("
+            )),
+            "ein verspaeteter 404 trifft auch einen schon beendeten Flug"
+        );
         // Die Uhr laeuft ab dem Versuch, nicht erst ab dem Erfolg.
         let uhr = warte_zweig
             .find("letzter_heartbeat = std::time::Instant::now();")
@@ -1996,6 +2005,16 @@ mod resume_discontinuity_tests {
         let mut boden = sim_snapshot(49.5, 11.08, 1_200.0, 2_900.0, true);
         boden.altitude_agl_ft = 150.0;
         assert!(!echter_steigflug_nach_aufsetzen(&boden));
+        // Hochgebirge bleibt erkannt (Daocheng, Gelaende 14.472 ft).
+        let mut daocheng = sim_snapshot(29.3, 100.05, 15_000.0, 2_900.0, false);
+        daocheng.altitude_agl_ft = 528.0;
+        assert!(echter_steigflug_nach_aufsetzen(&daocheng));
+        // Die Gelaendespanne als Paar: 30.000 ft gilt, 30.001 nicht.
+        let mut grenze = sim_snapshot(29.3, 100.05, 30_300.0, 2_900.0, false);
+        grenze.altitude_agl_ft = 300.0;
+        assert!(echter_steigflug_nach_aufsetzen(&grenze));
+        grenze.altitude_msl_ft = 30_301.0;
+        assert!(!echter_steigflug_nach_aufsetzen(&grenze));
         // Gueltige MSL-Hoehe, aber das Gelaende laege auf 99.790 ft.
         let mut hoch = sim_snapshot(49.5, 11.08, 100_000.0, 2_900.0, false);
         hoch.altitude_agl_ft = 210.0;
@@ -31577,7 +31596,15 @@ fn spawn_resume_sim_gate(
                                         .expect("flight stats")
                                         .last_heartbeat_at = Some(Utc::now());
                                 }
-                                Err(ApiError::NotFound) => {
+                                // Nur fuer einen Flug, der noch LAEUFT: Wurde er
+                                // inzwischen beendet, abgebrochen oder vergessen,
+                                // loeste ein verspaeteter 404 sonst die Meldung
+                                // „vom Server gecancelt" aus — und die Oberflaeche
+                                // leerte kurz einen schon NEUEN Flug (Claude-QS
+                                // 24.09.2026).
+                                Err(ApiError::NotFound)
+                                    if !flight_hb.stop.load(Ordering::Relaxed) =>
+                                {
                                     // PIREP auf dem Server geloescht — wie im
                                     // Streamer. Setzt `flight.stop`; das Gate
                                     // endet damit beim naechsten Takt.
