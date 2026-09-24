@@ -1914,9 +1914,11 @@ mod resume_discontinuity_tests {
             .find(concat!("\nfn spawn_resume_", "sim_gate("))
             .expect("Resume-Gate nicht gefunden — Test anpassen, nicht loeschen");
         let koerper = &SRC[start..start + SRC[start..].find("\n}\n").unwrap()];
+        // Benannt gebunden — `let _ = …` droppte den Guard SOFORT, und der
+        // Wartegrund bliebe fuer immer stehen (Cloud-QS 24.09.2026).
         let guard = koerper
-            .find(concat!("WartegrundRaeumen(", "Arc::clone(&flight))"))
-            .expect("Gate setzt den Raeum-Guard nicht mehr");
+            .find(concat!("let _wartegrund_raeumen = ", "WartegrundRaeumen("))
+            .expect("Gate bindet den Raeum-Guard nicht mehr benannt");
         let schleife = koerper.find("loop {").expect("Gate-Schleife fehlt");
         assert!(guard < schleife, "Guard muss vor der Schleife stehen");
     }
@@ -1929,17 +1931,27 @@ mod resume_discontinuity_tests {
         let t0 = Utc::now();
         let t = |s: i64| t0 + chrono::Duration::seconds(s);
         let ldg = Some(2_966.0_f32);
+        // A321 wie OCN 712: 8951 kg Block, 2966 kg Landesprit, 2 h 11 min.
+        let rate = bodenverbrauch_kg_pro_h(Some(8_951.0), ldg, Some(t(-7_860)), Some(t(0)));
         let f = tankstand_nach_landung_begrenzen;
-        // Menue-Wert (8 kg wie bei OCN 712): verworfen.
-        assert_eq!(f(8.0, ldg, Some(2_940.0), Some(t(0)), t(3)), 2_940.0);
+        // Menue-Wert (8 kg wie bei OCN 712): verworfen, auch nach Stunden.
+        assert_eq!(f(8.0, ldg, Some(2_940.0), Some(t(0)), rate, t(3)), 2_940.0);
+        assert_eq!(
+            f(8.0, ldg, Some(2_940.0), Some(t(0)), rate, t(36_000)),
+            2_940.0
+        );
         // Neubeladung: nie uebernommen.
-        assert_eq!(f(9_546.0, ldg, Some(2_940.0), Some(t(0)), t(6)), 2_940.0);
+        assert_eq!(
+            f(9_546.0, ldg, Some(2_940.0), Some(t(0)), rate, t(6)),
+            2_940.0
+        );
         // Normales Rollen: wenige kg weniger werden uebernommen.
-        assert_eq!(f(2_931.0, ldg, Some(2_940.0), Some(t(0)), t(3)), 2_931.0);
-        // Ein leerer Tank ist Muell, auch nach Stunden.
-        assert_eq!(f(0.0, ldg, Some(2_940.0), Some(t(0)), t(36_000)), 2_940.0);
+        assert_eq!(
+            f(2_931.0, ldg, Some(2_940.0), Some(t(0)), rate, t(30)),
+            2_931.0
+        );
         // Vor der Landung gilt alles wie gemessen.
-        assert_eq!(f(9_546.0, None, Some(2_940.0), Some(t(0)), t(3)), 9_546.0);
+        assert_eq!(f(9_546.0, None, Some(2_940.0), None, rate, t(3)), 9_546.0);
     }
 
     /// Nach einer Luecke nach der Landung (APU lief weiter) stehen 400 kg
@@ -1951,11 +1963,68 @@ mod resume_discontinuity_tests {
         let t0 = Utc::now();
         let t = |s: i64| t0 + chrono::Duration::seconds(s);
         let ldg = Some(2_966.0_f32);
+        // A321 wie OCN 712: 8951 kg Block, 2966 kg Landesprit, 2 h 11 min.
+        let rate = bodenverbrauch_kg_pro_h(Some(8_951.0), ldg, Some(t(-7_860)), Some(t(0)));
         let f = tankstand_nach_landung_begrenzen;
-        // 400 kg weniger nach zehn Minuten (APU lief weiter): echt.
-        assert_eq!(f(2_540.0, ldg, Some(2_940.0), Some(t(0)), t(600)), 2_540.0);
-        // Dieselben 400 kg in drei Sekunden: unmoeglich.
-        assert_eq!(f(2_540.0, ldg, Some(2_940.0), Some(t(0)), t(3)), 2_940.0);
+        // Rund 960 kg/h am Boden erlaubt. 250 kg nach 20 Minuten Rollen: echt.
+        assert_eq!(
+            f(2_716.0, ldg, Some(2_940.0), Some(t(0)), rate, t(1_200)),
+            2_716.0
+        );
+        // Dieselben 250 kg drei Sekunden nach dem Aufsetzen: unmoeglich.
+        assert_eq!(
+            f(2_716.0, ldg, Some(2_940.0), Some(t(0)), rate, t(3)),
+            2_940.0
+        );
+    }
+
+    /// Eine Cessna mit 60 kg Landesprit. Mit festen 200 kg Reserve ging hier
+    /// JEDER Abfall durch — die Grenze muss mit dem Flugzeug schrumpfen
+    /// (Cloud-QS 24.09.2026, fuenfte Runde).
+    #[test]
+    fn verbrauchsgrenze_passt_zum_kleinen_flugzeug() {
+        let t0 = Utc::now();
+        let t = |s: i64| t0 + chrono::Duration::seconds(s);
+        let ldg = Some(60.0_f32);
+        // 1 h Flug, 30 kg verbraucht.
+        let rate = bodenverbrauch_kg_pro_h(Some(90.0), ldg, Some(t(-3_600)), Some(t(0)));
+        assert!(
+            rate < 15.0,
+            "Cessna-Bodenverbrauch unplausibel hoch: {rate}"
+        );
+        let f = tankstand_nach_landung_begrenzen;
+        // Ein Menue-Wert von 30 kg zehn Minuten nach der Landung: Muell.
+        assert_eq!(f(30.0, ldg, Some(59.0), Some(t(0)), rate, t(600)), 59.0);
+        // 3 kg weniger nach zehn Minuten Rollen: echt.
+        assert_eq!(f(57.0, ldg, Some(59.0), Some(t(0)), rate, t(600)), 57.0);
+    }
+
+    /// Viele kleine Schritte duerfen sich nicht zu einem unmoeglichen Abfall
+    /// summieren — die Grenze gilt fuer die SUMME seit der Landung, nicht je
+    /// Messung (Cloud-QS 24.09.2026, fuenfte Runde).
+    #[test]
+    fn verbrauchsgrenze_gilt_fuer_die_summe() {
+        let t0 = Utc::now();
+        let t = |s: i64| t0 + chrono::Duration::seconds(s);
+        let ldg = Some(2_966.0_f32);
+        // A321 wie OCN 712: 8951 kg Block, 2966 kg Landesprit, 2 h 11 min.
+        let rate = bodenverbrauch_kg_pro_h(Some(8_951.0), ldg, Some(t(-7_860)), Some(t(0)));
+        let f = tankstand_nach_landung_begrenzen;
+        let mut stand = 2_966.0;
+        for i in 1..=20 {
+            stand = f(
+                2_966.0 - 100.0 * i as f32,
+                ldg,
+                Some(stand),
+                Some(t(0)),
+                rate,
+                t(3 * i as i64),
+            );
+        }
+        assert!(
+            stand > 2_966.0 - 200.0,
+            "20 Schritte a 100 kg in einer Minute durchgewunken: {stand}"
+        );
     }
 
     /// Der Fall, an dem die erste Fassung scheiterte: ein Muellwert, dann
@@ -1967,12 +2036,19 @@ mod resume_discontinuity_tests {
         let t0 = Utc::now();
         let t = |s: i64| t0 + chrono::Duration::seconds(s);
         let ldg = Some(2_966.0_f32);
+        // A321 wie OCN 712: 8951 kg Block, 2966 kg Landesprit, 2 h 11 min.
+        let rate = bodenverbrauch_kg_pro_h(Some(8_951.0), ldg, Some(t(-7_860)), Some(t(0)));
         let f = tankstand_nach_landung_begrenzen;
-        let erst = f(8.0, ldg, Some(2_940.0), Some(t(0)), t(3));
-        assert_eq!(erst, 2_940.0);
-        // Fuenf Minuten Pause, danach derselbe Wert — die Uhr lief ab der
-        // letzten UEBERNOMMENEN Messung (t=0).
-        assert_eq!(f(8.0, ldg, Some(erst), Some(t(0)), t(303)), 2_940.0);
+        // Ein Menue-Wert von 500 kg (nicht „fast leer"), vor und nach fuenf
+        // Minuten Pause ohne Messung: 2466 kg in fuenf Minuten sind unmoeglich.
+        assert_eq!(
+            f(500.0, ldg, Some(2_940.0), Some(t(0)), rate, t(3)),
+            2_940.0
+        );
+        assert_eq!(
+            f(500.0, ldg, Some(2_940.0), Some(t(0)), rate, t(303)),
+            2_940.0
+        );
     }
 
     /// Die Ruhe-Regel des Resume-Gates: Ein Teleport ist Unruhe, ein
@@ -6096,9 +6172,6 @@ struct FlightStats {
     /// Resume-Gate schlaegt die Zeit bis zum Scharfschalten auf die Luecke
     /// auf — in ihr lief weder Streamer noch Aufsetz-Sampler.
     resume_wiederhergestellt_am: Option<DateTime<Utc>>,
-    /// Wann der zuletzt uebernommene Tankwert gemessen wurde — fuer die
-    /// Verbrauchsgrenze nach der Landung (`tankstand_nach_landung_begrenzen`).
-    tankstand_seit: Option<DateTime<Utc>>,
     /// Worauf das Resume-Gate gerade wartet, und seit wie vielen Sekunden.
     /// Fuer die Oberflaeche; `None`, sobald der Flug scharf ist.
     resume_wartet: Option<(String, i64)>,
@@ -41640,16 +41713,12 @@ fn tankstand_nach_landung_begrenzen(
     live_kg: f32,
     landing_kg: Option<f32>,
     vorher_kg: Option<f32>,
-    vorher_am: Option<DateTime<Utc>>,
+    landing_at: Option<DateTime<Utc>>,
+    bodenrate_kg_pro_h: f32,
     jetzt: DateTime<Utc>,
 ) -> f32 {
     /// Messrauschen und Rundung — kein Tankvorgang.
     const TOLERANZ_KG: f32 = 50.0;
-    /// Was ein Flugzeug am Boden hoechstens verbraucht: Rollen mit allen
-    /// Triebwerken im Leerlauf plus APU, grosszuegig fuer vier Triebwerke.
-    const BODEN_MAX_KG_PRO_H: f32 = 2_000.0;
-    /// Grundreserve je Messung, unabhaengig von der Zeit.
-    const GRUND_KG: f32 = 200.0;
     let Some(ldg) = landing_kg else {
         return live_kg;
     };
@@ -41659,21 +41728,53 @@ fn tankstand_nach_landung_begrenzen(
         // Neubeladung (Sim-Reload, Tankwagen) — nie.
         return referenz;
     }
-    // Ein Abfall ist nur so gross erlaubt, wie das Flugzeug in der
-    // verstrichenen Zeit verbrennen KANN. 2940 -> 8 kg in fuenf Minuten ist
-    // Menue-Muell (OCN 712); 400 kg in zehn Minuten mit laufender APU ist
-    // echt. Die Zeit zaehlt ab der letzten UEBERNOMMENEN Messung — auch
-    // ueber eine Pause hinweg, in der gar nicht gemessen wurde. Die erste
-    // Fassung (60 s stabil) mass nur den Abstand zweier Messungen; ein
-    // Muellwert vor einer Pause galt danach als „stabil" (Cloud-QS
-    // 24.09.2026, vierte Runde).
-    let stunden = vorher_am.map_or(0.0, |t| (jetzt - t).num_seconds().max(0) as f32 / 3600.0);
-    let erlaubter_abfall = GRUND_KG + BODEN_MAX_KG_PRO_H * stunden;
-    // Ein leerer Tank nach der Landung ist Muell, egal wie lange es dauerte.
-    if live_kg < 1.0 || referenz - live_kg > erlaubter_abfall {
+    // Ein fast leerer Tank nach der Landung ist Muell (OCN 712: 8 kg).
+    if live_kg < (ldg * 0.02).max(1.0) {
+        return referenz;
+    }
+    // Wie viel das Flugzeug SEIT DER LANDUNG am Boden verbraucht haben kann —
+    // in seiner eigenen Groesse gerechnet, nicht in festen Kilogramm.
+    //
+    // Drei Runden QS (24.09.2026) haben diese Grenze geformt:
+    //   * „60 s stabil" mass nur den Abstand zweier Messungen und liess einen
+    //     Muellwert nach einer Pause durch.
+    //   * Feste 200 kg / 2000 kg/h schuetzten eine Cessna mit 150 kg
+    //     Landesprit gar nicht.
+    //   * Pro Messung gerechnet, summierten sich viele kleine Schritte.
+    // Deshalb: kumulativ ab der Landung (`landing_at` ist gespeichert und
+    // ueberlebt einen App-Neustart), Reserve und Rate nach dem Flugzeug.
+    let stunden = landing_at.map_or(0.0, |t| (jetzt - t).num_seconds().max(0) as f32 / 3600.0);
+    let reserve_kg = (ldg * 0.05).clamp(5.0, 200.0);
+    let erlaubter_abfall = reserve_kg + bodenrate_kg_pro_h * stunden;
+    if ldg - live_kg > erlaubter_abfall {
         return referenz;
     }
     live_kg
+}
+
+/// Was dieses Flugzeug am Boden hoechstens pro Stunde verbraucht.
+///
+/// Aus dem Flug selbst: (Blocksprit - Landesprit) / Flugzeit ist der
+/// Reiseverbrauch; am Boden (Rollen, APU) sind es erfahrungsgemaess unter
+/// einem Viertel davon — 35 % laesst Luft. Ohne vollstaendige Flugdaten
+/// der grosszuegige Rueckfall fuer vierstrahlige Jets.
+fn bodenverbrauch_kg_pro_h(
+    block_kg: Option<f32>,
+    landing_kg: Option<f32>,
+    takeoff_at: Option<DateTime<Utc>>,
+    landing_at: Option<DateTime<Utc>>,
+) -> f32 {
+    const RUECKFALL_KG_PRO_H: f32 = 2_000.0;
+    let (Some(block), Some(ldg), Some(ab), Some(an)) =
+        (block_kg, landing_kg, takeoff_at, landing_at)
+    else {
+        return RUECKFALL_KG_PRO_H;
+    };
+    let stunden = (an - ab).num_seconds() as f32 / 3600.0;
+    if stunden < 0.1 || block <= ldg {
+        return RUECKFALL_KG_PRO_H;
+    }
+    ((block - ldg) / stunden * 0.35).clamp(5.0, RUECKFALL_KG_PRO_H)
 }
 
 /// Tiefster plausibler Wert (Totes Meer ~ -1.400 ft, mit Reserve).
@@ -42134,19 +42235,20 @@ fn step_flight_at(
     stats.last_known_lon = Some(snap.lon);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
-    let neu = tankstand_nach_landung_begrenzen(
+    let bodenrate = bodenverbrauch_kg_pro_h(
+        stats.block_fuel_kg,
+        stats.landing_fuel_kg,
+        stats.takeoff_at,
+        stats.landing_at,
+    );
+    stats.last_fuel_kg = Some(tankstand_nach_landung_begrenzen(
         snap.fuel_total_kg,
         stats.landing_fuel_kg,
         prev_fuel_kg,
-        stats.tankstand_seit,
+        stats.landing_at,
+        bodenrate,
         now,
-    );
-    // Nur eine UEBERNOMMENE Messung setzt die Uhr zurueck; eine verworfene
-    // laesst sie laufen, damit ein echter Abfall irgendwann erlaubt ist.
-    if neu == snap.fuel_total_kg || stats.tankstand_seit.is_none() {
-        stats.tankstand_seit = Some(now);
-    }
-    stats.last_fuel_kg = Some(neu);
+    ));
     let sprit_replay_verdacht = stats.replay_verdacht;
     // Die beiden Boden-Marken — eigener Pfad, weil `sprit_tick` am Boden
     // aussteigt.
@@ -46690,21 +46792,25 @@ mod enroute_reconcile_replay_tests {
             let t0 = Utc::now();
             {
                 let mut st = flight.stats.lock().unwrap();
-                st.takeoff_at = Some(t0 - chrono::Duration::hours(2));
+                st.takeoff_at = Some(t0 - chrono::Duration::seconds(7_860));
+                st.block_fuel_kg = Some(8_951.0);
+                st.landing_at = Some(t0);
                 st.landing_fuel_kg = Some(2_966.0);
                 st.last_fuel_kg = Some(2_940.0);
-                st.tankstand_seit = Some(t0);
             }
             let mut muell = stopped_at(49.4952, 11.0779);
             muell.fuel_total_kg = 8.0;
-            step_flight_at(&flight, &muell, t0 + chrono::Duration::seconds(600));
+            step_flight_at(&flight, &muell, t0 + chrono::Duration::seconds(1_200));
             assert_eq!(flight.stats.lock().unwrap().last_fuel_kg, Some(2_940.0));
+            // 20 Minuten nach der Landung, 250 kg weniger — auch nach einem
+            // App-Neustart dazwischen, weil ab der gespeicherten Landezeit
+            // gerechnet wird.
             let mut echt = stopped_at(49.4952, 11.0779);
-            echt.fuel_total_kg = 2_540.0;
-            step_flight_at(&flight, &echt, t0 + chrono::Duration::seconds(603));
+            echt.fuel_total_kg = 2_716.0;
+            step_flight_at(&flight, &echt, t0 + chrono::Duration::seconds(1_203));
             assert_eq!(
                 flight.stats.lock().unwrap().last_fuel_kg,
-                Some(2_540.0),
+                Some(2_716.0),
                 "echter Abfall nach der Luecke verworfen"
             );
         }
