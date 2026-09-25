@@ -52443,7 +52443,7 @@ fn spawn_telemetrie_takt(app: AppHandle) {
                 if takt_nr % telemetrie::LAN_JEDER_NTE == 0
                     && state
                         .telemetrie
-                        .aktiv_fuer(telemetrie::LAN_ZUSCHAUER, jetzt)
+                        .aktiv_mit_praefix(telemetrie::LAN_ZUSCHAUER, jetzt)
                 {
                     if let Ok(wert) = serde_json::to_value(&frame) {
                         state

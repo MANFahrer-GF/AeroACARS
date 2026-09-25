@@ -2958,6 +2958,7 @@
     "zurueck": "Undo",
     "alles_loeschen": "Clear all",
     "wirklich_loeschen": "Really clear everything?",
-    "flaeche": "Writing area"
+    "flaeche": "Writing area",
+    "nicht_gespeichert": "Not saved — the device storage is full or the browser is in private mode. What you see will be lost on reload."
   }
 }

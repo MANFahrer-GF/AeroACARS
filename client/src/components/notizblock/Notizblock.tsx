@@ -39,11 +39,13 @@ function lesen(k: string): string | null {
     return null;
   }
 }
-function schreiben(k: string, v: string) {
+function schreiben(k: string, v: string): boolean {
   try {
     localStorage.setItem(k, v);
+    return true;
   } catch {
-    /* voll oder privat — dann eben nicht merken */
+    // Speicher voll oder privater Modus — der Aufrufer zeigt es an.
+    return false;
   }
 }
 
@@ -70,6 +72,7 @@ export function Notizblock() {
   const [loeschenFragen, setLoeschenFragen] = useState(false);
   const [kannZurueck, setKannZurueck] = useState(false);
   const [hoehe, setHoehe] = useState(500);
+  const [nichtGespeichert, setNichtGespeichert] = useState(false);
 
   const setFinger = (v: boolean) => {
     setFingerState(v);
@@ -77,7 +80,10 @@ export function Notizblock() {
   };
 
   const speichern = useCallback(() => {
-    schreiben(SPEICHER_SCHLUESSEL, JSON.stringify(kompakt(striche.current)));
+    // Schlaegt das Speichern fehl (Speicher voll, privater Modus), bleibt
+    // der Inhalt sichtbar, ueberlebt aber kein Neuladen — das muss der
+    // Pilot wissen, statt es spaeter zu merken.
+    setNichtGespeichert(!schreiben(SPEICHER_SCHLUESSEL, JSON.stringify(kompakt(striche.current))));
     setKannZurueck(!verlauf.current.leer);
   }, []);
 
@@ -345,6 +351,11 @@ export function Notizblock() {
         </Button>
       </div>
 
+      {nichtGespeichert && (
+        <p className="notiz-warnung" role="status">
+          {t("notizblock.nicht_gespeichert")}
+        </p>
+      )}
       <div ref={rahmen} className="notiz-flaeche" style={{ height: hoehe }}>
         <canvas
           ref={leinwand}

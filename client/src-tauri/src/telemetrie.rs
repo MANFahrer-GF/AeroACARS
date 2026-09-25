@@ -26,10 +26,27 @@ pub const VERLAUF_HZ: u32 = 10;
 pub const VERLAUF_MAX: usize = 5 * 60 * VERLAUF_HZ as usize;
 /// Takt des Live-Stroms an die Oberflaeche.
 pub const STROM_TAKT: Duration = Duration::from_millis(50);
-/// v1.8.1: Kennung der Tablets (LAN-Bruecke) in der Zuschauerliste. Alle
-/// Tablets teilen sie — schliesst eines den Monitor, haelt das naechste
-/// Lebenszeichen eines anderen den Strom wieder offen.
+/// v1.8.1: Praefix der Tablets (LAN-Bruecke) in der Zuschauerliste. Jedes
+/// Tablet meldet sich als `lan:<geraet>` — schliesst eines den Monitor,
+/// laeuft der Strom fuer die anderen ohne Aussetzer weiter.
 pub const LAN_ZUSCHAUER: &str = "lan";
+
+/// Zuschauerkennung eines Tablets. Die Geraetekennung kommt von der
+/// Oberflaeche; sie wird gekuerzt und auf harmlose Zeichen begrenzt, weil
+/// sie nur als Schluessel dient.
+pub fn lan_zuschauer(geraet: Option<&str>) -> String {
+    let rein: String = geraet
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(40)
+        .collect();
+    if rein.is_empty() {
+        LAN_ZUSCHAUER.to_string()
+    } else {
+        format!("{LAN_ZUSCHAUER}:{rein}")
+    }
+}
 /// Jeder wievielte Takt geht ans Tablet: 20 Hz / 2 = 10 Frames je Sekunde.
 pub const LAN_JEDER_NTE: u32 = 2;
 
@@ -1093,6 +1110,17 @@ impl Monitor {
             g.zuschauer.remove(wer);
         }
     }
+    /// Schaut irgendein Zuschauer mit diesem Praefix zu (alle Tablets)?
+    pub fn aktiv_mit_praefix(&self, praefix: &str, jetzt: Instant) -> bool {
+        self.inner
+            .lock()
+            .map(|g| {
+                g.zuschauer
+                    .iter()
+                    .any(|(k, bis)| k.starts_with(praefix) && *bis > jetzt)
+            })
+            .unwrap_or(false)
+    }
     /// Schaut dieser Zuschauer (Fenster oder „lan") gerade zu?
     pub fn aktiv_fuer(&self, wer: &str, jetzt: Instant) -> bool {
         self.inner
@@ -1344,6 +1372,32 @@ mod tests {
         m.halten("main", t0);
         m.beenden("main");
         assert!(!m.aktiv(t0));
+    }
+
+    #[test]
+    fn tablets_stoeren_sich_nicht() {
+        let m = Monitor::default();
+        let t0 = Instant::now();
+        let a = lan_zuschauer(Some("ipad-1"));
+        let b = lan_zuschauer(Some("ipad-2"));
+        m.halten(&a, t0);
+        m.halten(&b, t0);
+        m.beenden(&a);
+        assert!(m.aktiv_mit_praefix(LAN_ZUSCHAUER, t0), "ipad-2 schaut noch");
+        m.beenden(&b);
+        assert!(!m.aktiv_mit_praefix(LAN_ZUSCHAUER, t0));
+        // Fenster zaehlen nicht als Tablet.
+        m.halten("main", t0);
+        assert!(!m.aktiv_mit_praefix(LAN_ZUSCHAUER, t0));
+    }
+
+    #[test]
+    fn geraetekennung_wird_bereinigt() {
+        assert_eq!(lan_zuschauer(None), "lan");
+        assert_eq!(lan_zuschauer(Some("")), "lan");
+        assert_eq!(lan_zuschauer(Some("ab-12")), "lan:ab-12");
+        assert_eq!(lan_zuschauer(Some("a/b c\\d")), "lan:abcd");
+        assert_eq!(lan_zuschauer(Some(&"x".repeat(100))).len(), 4 + 40);
     }
 
     #[test]

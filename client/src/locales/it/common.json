@@ -2958,6 +2958,7 @@
     "zurueck": "Annulla",
     "alles_loeschen": "Cancella tutto",
     "wirklich_loeschen": "Cancellare davvero tutto?",
-    "flaeche": "Area di scrittura"
+    "flaeche": "Area di scrittura",
+    "nicht_gespeichert": "Non salvato — la memoria del dispositivo è piena o il browser è in modalità privata. Ciò che vedi andrà perso ricaricando."
   }
 }

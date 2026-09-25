@@ -2958,6 +2958,7 @@
     "zurueck": "Rückgängig",
     "alles_loeschen": "Alles löschen",
     "wirklich_loeschen": "Wirklich alles löschen?",
-    "flaeche": "Schreibfläche"
+    "flaeche": "Schreibfläche",
+    "nicht_gespeichert": "Nicht gespeichert — der Speicher des Geräts ist voll oder der Browser ist im privaten Modus. Was du siehst, geht beim Neuladen verloren."
   }
 }

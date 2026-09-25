@@ -59,16 +59,22 @@ export interface Datenquelle {
   stop: () => void;
 }
 
+/** Geraetekennung dieses Tabs: Auf dem Tablet meldet sich jedes Geraet
+ *  einzeln an, damit das Schliessen auf einem den Strom der anderen nicht
+ *  unterbricht. In der App ignoriert das Backend sie (dort zaehlt das
+ *  Fenster). */
+const GERAET = Math.random().toString(36).slice(2, 12);
+
 /** Ueber `lib/ipc` — in der App direkt, auf dem Tablet ueber die
  *  LAN-Bruecke (seit v1.8.1, eigener Telemetrie-Kanal, 10 Frames/s). */
 const tauriQuelle: Datenquelle = {
-  start: () => invoke<StartAntwort>("telemetrie_start"),
+  start: () => invoke<StartAntwort>("telemetrie_start", { geraet: GERAET }),
   abonnieren: (cb) => listen<Frame>("telemetrie-frame", (e) => cb(e.payload)),
   halten: () => {
-    void invoke("telemetrie_halten").catch(() => undefined);
+    void invoke("telemetrie_halten", { geraet: GERAET }).catch(() => undefined);
   },
   stop: () => {
-    void invoke("telemetrie_stop").catch(() => undefined);
+    void invoke("telemetrie_stop", { geraet: GERAET }).catch(() => undefined);
   },
 };
 

@@ -125,20 +125,28 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             ok_json(crate::navdata_zwischenspeicher_bestand(app.clone()))
         }
         "sim_status" => ok_json(crate::sim_status(app.clone(), st!())),
-        // v1.8.1: Telemetrie-Monitor auf dem Tablet. Alle Tablets teilen die
-        // Zuschauerkennung `lan`; die Frames kommen ueber den eigenen
-        // Telemetrie-Kanal der Ereignisverbindung (10/s).
-        "telemetrie_start" => ok_json(crate::telemetrie_start_fuer(
-            &app,
-            crate::telemetrie::LAN_ZUSCHAUER,
-        )),
-        "telemetrie_halten" => {
-            crate::telemetrie_halten_fuer(&app, crate::telemetrie::LAN_ZUSCHAUER);
-            ok_json(())
-        }
-        "telemetrie_stop" => {
-            crate::telemetrie_stop_fuer(&app, crate::telemetrie::LAN_ZUSCHAUER);
-            ok_json(())
+        // v1.8.1: Telemetrie-Monitor auf dem Tablet. Jedes Tablet meldet sich
+        // mit eigener Geraetekennung (`lan:<geraet>`); die Frames kommen
+        // ueber den eigenen Telemetrie-Kanal der Ereignisverbindung (10/s).
+        "telemetrie_start" | "telemetrie_halten" | "telemetrie_stop" => {
+            #[derive(Deserialize, Default)]
+            #[serde(default)]
+            struct A {
+                geraet: Option<String>,
+            }
+            let a = parse_args::<A>(body).unwrap_or_default();
+            let wer = crate::telemetrie::lan_zuschauer(a.geraet.as_deref());
+            match name {
+                "telemetrie_start" => ok_json(crate::telemetrie_start_fuer(&app, &wer)),
+                "telemetrie_halten" => {
+                    crate::telemetrie_halten_fuer(&app, &wer);
+                    ok_json(())
+                }
+                _ => {
+                    crate::telemetrie_stop_fuer(&app, &wer);
+                    ok_json(())
+                }
+            }
         }
         "sim_get_kind" => ok_json(crate::sim_get_kind(app.clone())),
         "pmdg_status" => ok_json(crate::pmdg_status(st!())),

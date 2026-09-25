@@ -98,3 +98,12 @@
 .notiz-canvas--radierer {
   cursor: cell;
 }
+
+.notiz-warnung {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--sem-warn-bg);
+  color: var(--sem-warn);
+  font-size: var(--fs-300);
+}
