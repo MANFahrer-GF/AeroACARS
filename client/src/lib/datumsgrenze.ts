@@ -66,14 +66,14 @@ export function punkteAufKleinstemBogen(
   });
 }
 
-/** Liegt die Kante genau auf der Datumsgrenze (beide Enden bei +180° oder
- *  beide bei −180°)? */
+/** Liegt die Kante genau auf der Datumsgrenze (beide Enden bei ±180°)? */
 function kanteAufDatumsgrenze(
   a: GeoJSON.Position,
   b: GeoJSON.Position,
 ): boolean {
   const auf = (lon: number) => Math.abs(Math.abs(lon) - 180) < 1e-9;
-  return auf(a[0]) && auf(b[0]) && Math.sign(a[0]) === Math.sign(b[0]);
+  // Auch +180 → −180 direkt: diese Kante liefe sonst einmal um die Welt.
+  return auf(a[0]) && auf(b[0]);
 }
 
 /** Umriss von Flaechen OHNE die Schnittkante an der Datumsgrenze.

@@ -180,4 +180,37 @@ describe("Datumsgrenze", () => {
     });
     expect(u.features[0].geometry.coordinates).toEqual([ring]);
   });
+
+  it("Umriss laesst auch eine Kante von +180 direkt nach −180 weg", () => {
+    // Kommt in den heutigen VATSpy-Daten nicht vor; die Kante liefe sonst
+    // einmal quer ueber die Welt (Claude-QS 25.09.2026).
+    const u = umrissOhneNaht({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [170, 50],
+                [180, 50],
+                [-180, 60],
+                [170, 60],
+                [170, 50],
+              ],
+            ],
+          },
+        },
+      ],
+    });
+    const kanten = u.features[0]!.geometry.coordinates.flatMap((zug) =>
+      zug.slice(1).map((p, i) => [zug[i]!, p] as const),
+    );
+    expect(kanten).toHaveLength(3);
+    for (const [a, b] of kanten) {
+      expect(Math.abs(a[0]!) === 180 && Math.abs(b[0]!) === 180).toBe(false);
+    }
+  });
 });
