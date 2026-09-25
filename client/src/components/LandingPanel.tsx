@@ -392,6 +392,10 @@ export interface LandingRecord {
   tch_delta_ft?: number | null;
   /** F5 TCH-Klassifikation: on_profile|slightly_low|slightly_high|high|below_profile */
   tch_class?: string | null;
+  /** v1.8.1: naeherungsweise Raederhoehe ueber der Schwelle (ft). */
+  tch_rad_ft?: number | null;
+  /** v1.8.1: FAA-Hoehengruppe des Musters (1–4). */
+  tch_hoehengruppe?: number | null;
   /** F6 Pilot in Pre-Threshold-Paint gelandet (= illegal DDS-Touchdown). */
   pre_displaced_threshold?: boolean | null;
 }

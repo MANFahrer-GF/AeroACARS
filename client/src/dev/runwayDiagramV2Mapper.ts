@@ -70,6 +70,8 @@ export function mapLandingRecordToV2Props(
     tch_expected_ft: rw.tch_expected_ft ?? null,
     tch_delta_ft: record.tch_delta_ft ?? null,
     tch_class: (record.tch_class ?? null) as TchClass | null,
+    tch_rad_ft: record.tch_rad_ft ?? null,
+    tch_hoehengruppe: record.tch_hoehengruppe ?? null,
     pre_displaced_threshold: record.pre_displaced_threshold ?? null,
     rollout_m: record.rollout_distance_m ?? null,
     // ── v1.7.0 Bahndisziplin ──────────────────────────────────────────

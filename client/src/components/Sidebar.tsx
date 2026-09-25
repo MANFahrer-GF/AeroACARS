@@ -29,6 +29,7 @@ export type Tab =
   | "logbook"
   | "landing"
   | "telemetrie"
+  | "notizblock"
   | "news"
   | "log"
   | "settings"
@@ -51,6 +52,11 @@ export function getInitialCollapsed(): boolean {
    vorgelesen. Strichstärke 1.6, currentColor. */
 
 const I = {
+  notizblock: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" /><path d="M14 8l3 3" />
+    </svg>
+  ),
   telemetrie: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 20h18" /><path d="M3 15l4-5 4 3 4-7 6 8" />
@@ -264,17 +270,24 @@ export function Sidebar({
         )}
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
-        {/* v1.8: Telemetrie-Monitor. Nur in der App auf dem Sim-PC — der
-            Strom kommt als Tauri-Ereignis und geht nicht ueber die LAN-
-            Bruecke ans Tablet. */}
-        {isTauri && (
+        {/* v1.8.1: Notizblock fuer den Apple Pencil — nur in der Tablet-
+            Ansicht (LAN-Fernbedienung), dort sitzt der Stift. */}
+        {!isTauri && (
           <Item
-            icon={I.telemetrie}
-            label={t("tabs.telemetrie")}
-            active={tab === "telemetrie"}
-            onClick={() => setTab("telemetrie")}
+            icon={I.notizblock}
+            label={t("tabs.notizblock")}
+            active={tab === "notizblock"}
+            onClick={() => setTab("notizblock")}
           />
         )}
+        {/* v1.8: Telemetrie-Monitor. Seit v1.8.1 auch auf dem Tablet
+            (LAN-Bruecke, eigener Telemetrie-Kanal). */}
+        <Item
+          icon={I.telemetrie}
+          label={t("tabs.telemetrie")}
+          active={tab === "telemetrie"}
+          onClick={() => setTab("telemetrie")}
+        />
         <Item
           icon={I.news}
           label={t("nav.news")}

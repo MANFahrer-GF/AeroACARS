@@ -182,20 +182,126 @@ pub fn classify_aim(td_distance_m: f64, runway_length_m: f64) -> AimResult {
 // `stats.snapshot_buffer` for the earliest sample with positive along-
 // track distance from the landing threshold and stores its AGL in
 // `stats.runway_tch_actual_ft`. `classify_tch` then turns the
-// (actual, expected)-pair into a bucket.
+// (actual, expected, Muster)-triple into a bucket.
+//
+// v1.8.1: Bewertet wird die Hoehe der RAEDER ueber der Schwelle, nicht
+// mehr die feste Fuss-Abweichung vom Gleitpfad. Grundlage ist FAA Order
+// 8260.58D, Abschnitt 1-3 mit Tabelle 1-3-1: Die TCH ist so gewaehlt, dass
+// die Raeder (Wheel Crossing Height, WCH) mindestens 20 ft und hoechstens
+// 50 ft ueber der Schwelle bleiben; der Abstand Gleitpfad→Rad haengt von
+// der Hoehengruppe des Musters ab (10/15/20/25 ft). Vorher galt fuer jedes
+// Flugzeug dasselbe feste Band (±5/−15/+20 ft) — eine 737 mit 20 ft Raedern
+// ueber der Schwelle (genau das FAA-Minimum) stand rot da (Befund Thomas,
+// 25.09.2026).
+//
+// Die gemessene Hoehe ist die des Simulator-Bezugspunkts am Flugzeug, nicht
+// die der Gleitpfad-Antenne. Der Unterschied betraegt je nach Muster einige
+// Fuss; die Raederhoehe ist deshalb eine Naeherung („ca.").
+
+/// Hoehengruppe nach FAA Order 8260.58D, Tabelle 1-3-1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Hoehengruppe {
+    /// GA, Business-Jets, kleine Zubringer: Gleitpfad→Rad bis 10 ft.
+    G1,
+    /// B737, DC-9, F-28 (und vergleichbar A320-Familie, Regionaljets,
+    /// Turboprops der Zubringerklasse): 15 ft.
+    G2,
+    /// B757/727/707: 20 ft.
+    G3,
+    /// B747/767/777, DC-10, A300 (und vergleichbar alle Grossraumjets): 25 ft.
+    G4,
+}
+
+impl Hoehengruppe {
+    /// Naeherungsweiser Abstand Gleitpfad→Rad (FAA, Tabelle 1-3-1).
+    pub fn gleitpfad_zu_rad_ft(self) -> f64 {
+        match self {
+            Hoehengruppe::G1 => 10.0,
+            Hoehengruppe::G2 => 15.0,
+            Hoehengruppe::G3 => 20.0,
+            Hoehengruppe::G4 => 25.0,
+        }
+    }
+    pub fn nummer(self) -> u8 {
+        match self {
+            Hoehengruppe::G1 => 1,
+            Hoehengruppe::G2 => 2,
+            Hoehengruppe::G3 => 3,
+            Hoehengruppe::G4 => 4,
+        }
+    }
+}
+
+/// Muster (ICAO-Kennung) → Hoehengruppe.
+///
+/// Die FAA-Tabelle nennt nur Beispiele. Die uebrigen Muster sind nach
+/// Groesse und Fahrwerkshoehe zugeordnet — das ist unsere Einordnung, nicht
+/// die der FAA. Unbekannte Kennungen gelten als Gruppe 1 (GA/Business-Jet);
+/// die verbreiteten Verkehrs- und Transportflugzeuge sind hier aufgefuehrt,
+/// seltene Muster koennen fehlen und landen dann in Gruppe 1 (Raederhoehe
+/// eher zu hoch eingeschaetzt). Ohne Kennung Gruppe 3 als Mitte.
+pub fn hoehengruppe(icao: Option<&str>) -> Hoehengruppe {
+    let Some(roh) = icao else {
+        return Hoehengruppe::G3;
+    };
+    let k = roh.trim().to_ascii_uppercase();
+    if k.is_empty() {
+        return Hoehengruppe::G3;
+    }
+    // Praefixe (Familien) und exakte Kennungen getrennt: kurze Praefixe wie
+    // "C17" oder "C5" traefen sonst die Cessna 172 bzw. Citation 550.
+    const G4: &[&str] = &[
+        "B74", "B76", "B77", "B78", "A30", "A33", "A34", "A35", "A38", "MD11", "DC10", "L101",
+        "IL96", "IL86", "A124", "A225", "KC10",
+    ];
+    // BLCF = 747 Dreamlifter, A3ST = Beluga, CONC = Concorde.
+    const G4_EXAKT: &[&str] = &["A310", "C5", "C5M", "C17", "B52", "BLCF", "A3ST", "CONC"];
+    const G3: &[&str] = &["B75", "B72", "B70", "IL76", "IL62", "K35R", "DC8"];
+    const G3_EXAKT: &[&str] = &["C135", "E3TF", "E3CF", "T154", "T204", "A400"];
+    const G2: &[&str] = &[
+        "B73", "B37M", "B38M", "B39M", "B3XM", "A31", "A32", "A19N", "A20N", "A21N", "BCS1",
+        "BCS3", "MD8", "MD9", "DC9", "B712", "F28", "F70", "F100", "E17", "E19", "E29", "E75",
+        "CRJ", "AT4", "AT7", "DH8", "B46", "RJ70", "RJ85", "RJ1H", "SU95", "E145", "E135", "E140",
+        "SF34", "SB20", "JS41", "D328", "AN24", "AN26", "BA11", "F27", "F50", "DHC7", "C919",
+        "AJ27",
+    ];
+    // C30J = C-130J, P8 = Poseidon (737-Basis).
+    const G2_EXAKT: &[&str] = &["C130", "C30J", "Y12", "P8"];
+    let passt = |praefix: &[&str], exakt: &[&str]| {
+        exakt.contains(&k.as_str()) || praefix.iter().any(|p| k.starts_with(p))
+    };
+    // G4 zuerst: A310 (Grossraum) steht exakt dort, "A31" (A318/A319) erst
+    // in G2.
+    if passt(G4, G4_EXAKT) {
+        Hoehengruppe::G4
+    } else if passt(G3, G3_EXAKT) {
+        Hoehengruppe::G3
+    } else if passt(G2, G2_EXAKT) {
+        Hoehengruppe::G2
+    } else {
+        Hoehengruppe::G1
+    }
+}
+
+/// FAA: Raeder mindestens 20 ft ueber der Schwelle.
+pub const WCH_MIN_FT: f64 = 20.0;
+/// FAA: Raeder hoechstens 50 ft ueber der Schwelle.
+pub const WCH_MAX_FT: f64 = 50.0;
+/// Unser Toleranzstreifen (gelb) jenseits des FAA-Bands.
+pub const WCH_TOLERANZ_FT: f64 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TchClass {
-    /// |delta| ≤ 5 ft — on profile.
+    /// Raeder 20–50 ft ueber der Schwelle — im FAA-Band.
     OnProfile,
-    /// delta in [-15, -5] ft — a hair low, fine for ILS Cat I.
+    /// Raeder 10–20 ft — unter dem FAA-Minimum, aber noch mit Abstand.
     SlightlyLow,
-    /// delta in [5, 20] ft — slightly high, expect longer float.
+    /// Raeder 50–60 ft — ueber dem FAA-Maximum, laengeres Ausschweben.
     SlightlyHigh,
-    /// delta > 20 ft — long-landing risk material.
+    /// Raeder ueber 60 ft — Gefahr einer langen Landung.
     High,
-    /// delta < -15 ft — below profile, tail-strike / obstacle hazard.
+    /// Raeder unter 10 ft — kaum Abstand zur Schwelle.
     BelowProfile,
 }
 
@@ -204,29 +310,35 @@ pub struct TchResult {
     pub actual_ft: f64,
     pub expected_ft: f64,
     pub delta_ft: f64,
+    /// Naeherungsweise Hoehe der Raeder ueber der Schwelle.
+    pub rad_ft: f64,
+    pub gruppe: Hoehengruppe,
     pub class: TchClass,
 }
 
-/// Classify the actual TCH measured at threshold-crossing against the
-/// runway's published TCH. The actual_ft is provided by the caller —
-/// this function does no sample-buffer arithmetic, just classification.
-pub fn classify_tch(actual_ft: f64, expected_ft: f64) -> TchResult {
+/// Classify the actual TCH measured at threshold-crossing. `delta_ft`
+/// bleibt die Abweichung vom veroeffentlichten Gleitpfad (Anzeige); die
+/// Einstufung richtet sich nach der Raederhoehe.
+pub fn classify_tch(actual_ft: f64, expected_ft: f64, gruppe: Hoehengruppe) -> TchResult {
     let delta_ft = actual_ft - expected_ft;
-    let class = if delta_ft.abs() <= 5.0 {
-        TchClass::OnProfile
-    } else if delta_ft > 5.0 && delta_ft <= 20.0 {
-        TchClass::SlightlyHigh
-    } else if delta_ft < -5.0 && delta_ft >= -15.0 {
-        TchClass::SlightlyLow
-    } else if delta_ft > 20.0 {
-        TchClass::High
-    } else {
+    let rad_ft = actual_ft - gruppe.gleitpfad_zu_rad_ft();
+    let class = if rad_ft < WCH_MIN_FT - WCH_TOLERANZ_FT {
         TchClass::BelowProfile
+    } else if rad_ft < WCH_MIN_FT {
+        TchClass::SlightlyLow
+    } else if rad_ft <= WCH_MAX_FT {
+        TchClass::OnProfile
+    } else if rad_ft <= WCH_MAX_FT + WCH_TOLERANZ_FT {
+        TchClass::SlightlyHigh
+    } else {
+        TchClass::High
     };
     TchResult {
         actual_ft,
         expected_ft,
         delta_ft,
+        rad_ft,
+        gruppe,
         class,
     }
 }
@@ -430,34 +542,88 @@ mod tests {
     }
 
     #[test]
-    fn tch_on_profile() {
-        let r = classify_tch(47.0, 49.0);
+    fn tch_befund_thomas_737_auf_minimum_ist_nicht_rot() {
+        // 35 ft gemessen, TCH 54: vorher „unter Profil" (rot). Eine 737
+        // hat die Raeder bei ca. 20 ft = FAA-Minimum → im Band.
+        let r = classify_tch(35.0, 54.0, hoehengruppe(Some("B738")));
+        assert_eq!(r.gruppe, Hoehengruppe::G2);
+        assert!((r.rad_ft - 20.0).abs() < 0.01);
+        assert!((r.delta_ft - (-19.0)).abs() < 0.01);
         assert_eq!(r.class, TchClass::OnProfile);
-        assert!((r.delta_ft - (-2.0)).abs() < 0.01);
     }
 
     #[test]
-    fn tch_slightly_low() {
-        let r = classify_tch(40.0, 50.0);
+    fn tch_dieselbe_hoehe_ist_bei_der_777_zu_tief() {
+        // Raeder ca. 10 ft ueber der Schwelle — Grenze zu rot.
+        let r = classify_tch(35.0, 54.0, hoehengruppe(Some("B77W")));
+        assert_eq!(r.gruppe, Hoehengruppe::G4);
         assert_eq!(r.class, TchClass::SlightlyLow);
-    }
-
-    #[test]
-    fn tch_slightly_high() {
-        let r = classify_tch(62.0, 50.0);
-        assert_eq!(r.class, TchClass::SlightlyHigh);
-    }
-
-    #[test]
-    fn tch_high_warn() {
-        let r = classify_tch(75.0, 50.0);
-        assert_eq!(r.class, TchClass::High);
-    }
-
-    #[test]
-    fn tch_below_profile_dangerous() {
-        let r = classify_tch(28.0, 50.0);
+        let r = classify_tch(33.0, 54.0, Hoehengruppe::G4);
         assert_eq!(r.class, TchClass::BelowProfile);
+    }
+
+    #[test]
+    fn tch_baender_nach_raederhoehe() {
+        let g = Hoehengruppe::G3; // 20 ft Abstand
+        assert_eq!(classify_tch(50.0, 50.0, g).class, TchClass::OnProfile); // Rad 30
+        assert_eq!(classify_tch(40.0, 50.0, g).class, TchClass::OnProfile); // Rad 20
+        assert_eq!(classify_tch(35.0, 50.0, g).class, TchClass::SlightlyLow); // Rad 15
+        assert_eq!(classify_tch(29.0, 50.0, g).class, TchClass::BelowProfile); // Rad 9
+        assert_eq!(classify_tch(70.0, 50.0, g).class, TchClass::OnProfile); // Rad 50
+        assert_eq!(classify_tch(75.0, 50.0, g).class, TchClass::SlightlyHigh); // Rad 55
+        assert_eq!(classify_tch(85.0, 50.0, g).class, TchClass::High); // Rad 65
+    }
+
+    #[test]
+    fn hoehengruppen_der_haeufigen_muster() {
+        for (icao, g) in [
+            ("A320", Hoehengruppe::G2),
+            ("A20N", Hoehengruppe::G2),
+            ("A319", Hoehengruppe::G2),
+            ("A21N", Hoehengruppe::G2),
+            ("A310", Hoehengruppe::G4),
+            ("A306", Hoehengruppe::G4),
+            ("A333", Hoehengruppe::G4),
+            ("A359", Hoehengruppe::G4),
+            ("A388", Hoehengruppe::G4),
+            ("B738", Hoehengruppe::G2),
+            ("B38M", Hoehengruppe::G2),
+            ("B752", Hoehengruppe::G3),
+            ("B763", Hoehengruppe::G4),
+            ("B789", Hoehengruppe::G4),
+            ("B748", Hoehengruppe::G4),
+            ("MD11", Hoehengruppe::G4),
+            ("CRJ9", Hoehengruppe::G2),
+            ("E195", Hoehengruppe::G2),
+            ("AT76", Hoehengruppe::G2),
+            ("DH8D", Hoehengruppe::G2),
+            ("BCS3", Hoehengruppe::G2),
+            ("C750", Hoehengruppe::G1),
+            ("C172", Hoehengruppe::G1),
+            ("C17", Hoehengruppe::G4),
+            ("C550", Hoehengruppe::G1),
+            ("C560", Hoehengruppe::G1),
+            ("E35L", Hoehengruppe::G1),
+            ("C130", Hoehengruppe::G2),
+            ("C30J", Hoehengruppe::G2),
+            ("JS41", Hoehengruppe::G2),
+            ("BLCF", Hoehengruppe::G4),
+            ("A3ST", Hoehengruppe::G4),
+            ("T154", Hoehengruppe::G3),
+            ("DC86", Hoehengruppe::G3),
+            ("BA11", Hoehengruppe::G2),
+            ("F50", Hoehengruppe::G2),
+            ("P8", Hoehengruppe::G2),
+            ("C919", Hoehengruppe::G2),
+            ("A400", Hoehengruppe::G3),
+            ("PC12", Hoehengruppe::G1),
+            ("FA50", Hoehengruppe::G1),
+            (" b77w ", Hoehengruppe::G4),
+        ] {
+            assert_eq!(hoehengruppe(Some(icao)), g, "{icao}");
+        }
+        assert_eq!(hoehengruppe(None), Hoehengruppe::G3);
+        assert_eq!(hoehengruppe(Some("")), Hoehengruppe::G3);
     }
 
     #[test]

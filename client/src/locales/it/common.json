@@ -15,7 +15,8 @@
     "about": "Info",
     "cpdlc": "PDC/CPDLC",
     "chat": "Chat",
-    "telemetrie": "Telemetria"
+    "telemetrie": "Telemetria",
+    "notizblock": "Blocco note"
   },
   "nav": {
     "news": "Notizie",
@@ -661,7 +662,7 @@
         "tch": {
           "abbr": "TCH — Threshold Crossing Height",
           "full": "Altezza di attraversamento soglia",
-          "explanation": "Quanto eri in alto rispetto al suolo quando hai sorvolato la soglia? Avvicinamento ILS tipico 49 ft (≈ 15 m). Troppo basso: rischio tail-strike. Troppo alto: long landing."
+          "explanation": "Quanto eri alto sopra la soglia? Dalla v1.8.1 si valuta l'altezza delle ruote (wheel crossing height) secondo FAA Order 8260.58D: altezza misurata meno la distanza sentiero di discesa→ruote del tuo tipo (gruppo di altezza 1–4: 10/15/20/25 ft, es. 737 = 15 ft, 777 = 25 ft). Verde: ruote 20–50 ft sopra la soglia (fascia FAA). Giallo: 10–20 ft o 50–60 ft. Rosso: sotto 10 ft (margine minimo) o sopra 60 ft (atterraggio lungo). La misura usa il punto di riferimento del simulatore, quindi l'altezza delle ruote è un'approssimazione."
         },
         "dds": {
           "abbr": "DDS — Displaced Threshold",
@@ -2138,6 +2139,12 @@
     "tch_slightly_high": "leggermente alto",
     "tch_high": "troppo alto",
     "tch_below_profile": "sotto profilo",
+    "tch_raeder": "ruote ca. {{ft}} ft",
+    "tch_rad_on_profile": "nella fascia FAA",
+    "tch_rad_slightly_low": "sotto il minimo FAA",
+    "tch_rad_slightly_high": "sopra il massimo FAA",
+    "tch_rad_high": "decisamente troppo alto",
+    "tch_rad_below_profile": "molto basso",
     "surface_asp": "Asfalto",
     "surface_con": "Cemento",
     "surface_grv": "Ghiaia",
@@ -2599,7 +2606,6 @@
     "laedt": "Caricamento telemetria …",
     "kein_sim": "Nessun dato. I valori compaiono qui appena il simulatore è collegato.",
     "keine_werte": "Questo aereo o simulatore non fornisce valori per questo.",
-    "nur_am_pc": "Il monitor di telemetria funziona solo nell'app sul PC del simulatore.",
     "fehler": "Telemetria non disponibile: {{fehler}}",
     "an": "acceso",
     "aus": "spento",
@@ -2936,5 +2942,23 @@
       "mittel": "media"
     },
     "tanks_anteil": "Barra = quota del carburante a bordo"
+  },
+  "notizblock": {
+    "werkzeuge": "Strumenti",
+    "stift": "Penna",
+    "radierer": "Gomma",
+    "farbe": "Colore",
+    "farbe_text": "Standard",
+    "farbe_acc": "Blu",
+    "farbe_danger": "Rosso",
+    "strich": "Spessore",
+    "fein": "sottile",
+    "mittel": "marcato",
+    "finger": "Scrivi con il dito",
+    "zurueck": "Annulla",
+    "alles_loeschen": "Cancella tutto",
+    "wirklich_loeschen": "Cancellare davvero tutto?",
+    "flaeche": "Area di scrittura",
+    "nicht_gespeichert": "Non salvato — la memoria del dispositivo è piena o il browser è in modalità privata. Ciò che vedi andrà perso ricaricando."
   }
 }

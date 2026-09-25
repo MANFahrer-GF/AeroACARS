@@ -606,6 +606,14 @@ pub struct BahnHerkunftWire {
     pub tch_delta_ft: Option<f64>,
     /// F5 TCH classification.
     pub tch_class: Option<String>,
+    /// v1.8.1: naeherungsweise Hoehe der Raeder ueber der Schwelle (ft) —
+    /// Grundlage der Einstufung (FAA Order 8260.58D, Wheel Crossing Height).
+    /// Geht als `null` hinaus, nicht weggelassen: ein Bahn-Nachtrag ohne TCH
+    /// muss den alten Wert im Recorder ueberschreiben (siehe Test
+    /// `ein_leeres_feld_der_gruppe_geht_als_null_hinaus`).
+    pub tch_rad_ft: Option<f64>,
+    /// v1.8.1: FAA-Hoehengruppe des Musters (1–4), aus der `tch_rad_ft` folgt.
+    pub tch_hoehengruppe: Option<u8>,
     /// F6 Displaced-Threshold-Warning: Touchdown im Pre-Threshold-Paint.
     pub pre_displaced_threshold: Option<bool>,
 }
@@ -3290,7 +3298,7 @@ mod herkunft_auf_der_leitung {
     fn ein_leeres_feld_der_gruppe_geht_als_null_hinaus() {
         let json = serde_json::to_value(BahnHerkunftWire::default()).expect("serialisiert");
         let obj = json.as_object().expect("Objekt");
-        const NAMEN: [&str; 30] = [
+        const NAMEN: [&str; 32] = [
             "bahn_revision",
             "bahn_spur_veraltet",
             "runway_match_icao",
@@ -3320,6 +3328,8 @@ mod herkunft_auf_der_leitung {
             "tch_actual_ft",
             "tch_delta_ft",
             "tch_class",
+            "tch_rad_ft",
+            "tch_hoehengruppe",
             "pre_displaced_threshold",
         ];
         // ⚠ ZUERST die Anzahl. Ein NEUES Feld mit `skip_serializing_if`

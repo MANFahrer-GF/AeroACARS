@@ -70,6 +70,11 @@ const TOKEN_ACCOUNT: &str = "remote_access_token";
 /// `Lagged` skip, which the WS handler tolerates.
 const EVENT_CHANNEL_CAP: usize = 64;
 
+/// v1.8.1: Puffer des Telemetrie-Kanals — knapp 2 s bei 10 Frames/s. Ein
+/// langsames Tablet ueberspringt aeltere Frames, das ist fuer eine
+/// Live-Anzeige richtig.
+const TELEMETRIE_CHANNEL_CAP: usize = 16;
+
 /// Hard cap on concurrent WebSocket sessions. The LAN audience is a
 /// handful of the pilot's own devices, so this is generous; it exists to
 /// bound resource use (and the amplification an unbounded fan-out would
@@ -269,12 +274,18 @@ impl RemoteEvent {
 #[derive(Debug, Clone)]
 pub struct RemoteEventBus {
     sender: broadcast::Sender<RemoteEvent>,
+    /// v1.8.1: eigener Kanal fuer den Telemetrie-Strom (10 Frames/s). Liefe
+    /// er ueber `sender`, koennte ein traeges Tablet bei `Lagged` die
+    /// wichtigen Ereignisse (PIREP abgegeben, Integritaet) verlieren —
+    /// hier verliert es hoechstens ein paar Telemetrie-Frames.
+    telemetrie: broadcast::Sender<RemoteEvent>,
 }
 
 impl Default for RemoteEventBus {
     fn default() -> Self {
         let (sender, _rx) = broadcast::channel(EVENT_CHANNEL_CAP);
-        Self { sender }
+        let (telemetrie, _rx) = broadcast::channel(TELEMETRIE_CHANNEL_CAP);
+        Self { sender, telemetrie }
     }
 }
 
@@ -289,6 +300,16 @@ impl RemoteEventBus {
     /// Subscribe a fresh WS connection to the tap.
     pub fn subscribe(&self) -> broadcast::Receiver<RemoteEvent> {
         self.sender.subscribe()
+    }
+
+    /// v1.8.1: einen Telemetrie-Frame an die Tablets geben (eigener Kanal).
+    pub fn send_telemetrie(&self, event: RemoteEvent) {
+        let _ = self.telemetrie.send(event);
+    }
+
+    /// v1.8.1: Telemetrie-Kanal fuer eine WS-Verbindung.
+    pub fn subscribe_telemetrie(&self) -> broadcast::Receiver<RemoteEvent> {
+        self.telemetrie.subscribe()
     }
 }
 

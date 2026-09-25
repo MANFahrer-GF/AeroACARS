@@ -80,13 +80,6 @@ export function TelemetrieView({ imFenster = false, quelle }: Props) {
     });
   };
 
-  if (tm.zustand === "kein_tauri") {
-    return (
-      <div className="tele tele-leer">
-        <p>{t("telemetrie.nur_am_pc")}</p>
-      </div>
-    );
-  }
   if (tm.zustand === "fehler") {
     return (
       <div className="tele tele-leer">
@@ -142,9 +135,13 @@ export function TelemetrieView({ imFenster = false, quelle }: Props) {
             {t("telemetrie.eigenes_fenster")}
           </Button>
         )}
-        <Button size="sm" onClick={() => void csv()} disabled={!tm.letzter}>
-          {t("telemetrie.csv")}
-        </Button>
+        {/* CSV speichert ueber den Dialog des Sim-PCs — auf dem Tablet
+            (LAN-Bruecke) gibt es dafuer keinen Speicherort. */}
+        {isTauri && (
+          <Button size="sm" onClick={() => void csv()} disabled={!tm.letzter}>
+            {t("telemetrie.csv")}
+          </Button>
+        )}
       </div>
       {csvMeldung && <div className="tele-meldung">{csvMeldung}</div>}
 

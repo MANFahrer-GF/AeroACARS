@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke, isTauri, listen } from "../../lib/ipc";
+import { invoke, listen } from "../../lib/ipc";
 import { ereignisseAus, type Ereignis } from "./ereignisse";
 import type { Frame, Kanal, Katalog, StartAntwort } from "./typen";
 
@@ -22,7 +22,7 @@ export const PUFFER_MS = 5 * 60 * 1000;
 const HALTEN_MS = 5000;
 const ZEICHNEN_MS = 100;
 
-export type Zustand = "laedt" | "bereit" | "fehler" | "kein_tauri";
+export type Zustand = "laedt" | "bereit" | "fehler";
 
 export interface Marker {
   t: number;
@@ -59,20 +59,28 @@ export interface Datenquelle {
   stop: () => void;
 }
 
+/** Geraetekennung dieses Tabs: Auf dem Tablet meldet sich jedes Geraet
+ *  einzeln an, damit das Schliessen auf einem den Strom der anderen nicht
+ *  unterbricht. In der App ignoriert das Backend sie (dort zaehlt das
+ *  Fenster). */
+const GERAET = Math.random().toString(36).slice(2, 12);
+
+/** Ueber `lib/ipc` — in der App direkt, auf dem Tablet ueber die
+ *  LAN-Bruecke (seit v1.8.1, eigener Telemetrie-Kanal, 10 Frames/s). */
 const tauriQuelle: Datenquelle = {
-  start: () => invoke<StartAntwort>("telemetrie_start"),
+  start: () => invoke<StartAntwort>("telemetrie_start", { geraet: GERAET }),
   abonnieren: (cb) => listen<Frame>("telemetrie-frame", (e) => cb(e.payload)),
   halten: () => {
-    void invoke("telemetrie_halten").catch(() => undefined);
+    void invoke("telemetrie_halten", { geraet: GERAET }).catch(() => undefined);
   },
   stop: () => {
-    void invoke("telemetrie_stop").catch(() => undefined);
+    void invoke("telemetrie_stop", { geraet: GERAET }).catch(() => undefined);
   },
 };
 
 export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
-  const q = quelle ?? (isTauri ? tauriQuelle : null);
-  const [zustand, setZustand] = useState<Zustand>(q ? "laedt" : "kein_tauri");
+  const q = quelle ?? tauriQuelle;
+  const [zustand, setZustand] = useState<Zustand>("laedt");
   const [fehler, setFehler] = useState<string | null>(null);
   const [katalog, setKatalog] = useState<Katalog | null>(null);
   const [version, setVersion] = useState(0);

@@ -1,0 +1,109 @@
+/* Notizblock (v1.8.1) — Tablet-Ansicht. Farben nur aus Theme-Tokens. */
+
+.notiz {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.notiz-leiste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.notiz-gruppe {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+/* Gross genug fuer den Finger (44 px, Apple-Empfehlung). */
+.notiz-knopf {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-400);
+  cursor: pointer;
+}
+.notiz-knopf:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.notiz-knopf--an {
+  background: var(--acc-quiet);
+  color: var(--acc);
+  font-weight: var(--fw-bold);
+}
+.notiz-knopf--an:hover:not(:disabled) {
+  background: var(--acc-quiet);
+  color: var(--acc);
+}
+.notiz-farbe {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  cursor: pointer;
+  position: relative;
+}
+.notiz-farbe:last-child {
+  border-right: 0;
+}
+.notiz-farbe--an::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+}
+.notiz-schalter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  font-size: var(--fs-400);
+  color: var(--text-dim);
+}
+.notiz-schalter input {
+  width: 20px;
+  height: 20px;
+}
+.notiz-luecke {
+  flex: 1;
+}
+
+.notiz-flaeche {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.notiz-canvas {
+  position: absolute;
+  inset: 0;
+  /* Kein Scrollen, Zoomen oder Kontextmenue beim Schreiben. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: crosshair;
+}
+.notiz-canvas--radierer {
+  cursor: cell;
+}
+
+.notiz-warnung {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--sem-warn-bg);
+  color: var(--sem-warn);
+  font-size: var(--fs-300);
+}

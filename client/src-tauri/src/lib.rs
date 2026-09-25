@@ -23448,6 +23448,8 @@ fn bahn_herkunft(stats: &FlightStats) -> aeroacars_mqtt::BahnHerkunftWire {
             .tch
             .as_ref()
             .map(|t| tch_class_wire(t.class).to_string()),
+        tch_rad_ft: payload_assessed.tch.as_ref().map(|t| t.rad_ft),
+        tch_hoehengruppe: payload_assessed.tch.as_ref().map(|t| t.gruppe.nummer()),
         pre_displaced_threshold: payload_assessed.dds.map(|d| d.in_pre_threshold_zone),
     }
 }
@@ -23492,6 +23494,9 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
         (Some(g), Some(actual)) if g.tch_ft > 0 => Some(runway_assessment::classify_tch(
             actual as f64,
             g.tch_ft as f64,
+            // v1.8.1: Einstufung nach Raederhoehe — braucht die Hoehengruppe
+            // des geflogenen Musters (FAA Order 8260.58D, Tab. 1-3-1).
+            runway_assessment::hoehengruppe(stats.aufgeloestes_muster.as_deref()),
         )),
         _ => None,
     };
@@ -27840,6 +27845,8 @@ where
             .tch
             .as_ref()
             .map(|t| tch_class_wire(t.class).to_string()),
+        tch_rad_ft: assessed.tch.as_ref().map(|t| t.rad_ft),
+        tch_hoehengruppe: assessed.tch.as_ref().map(|t| t.gruppe.nummer()),
         pre_displaced_threshold: assessed.dds.map(|d| d.in_pre_threshold_zone),
         // v0.10.0 (#runway-utilization-score): markiert dass dieses
         // Record mit dem LDA-basierten Bahn-Auslastungs-Score gebaut
@@ -34823,6 +34830,18 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             prev_sample_for_reset_check = Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
 
             let mut stats = flight.stats.lock().expect("flight stats");
+            // v1.8.1: das Muster frueh festhalten, mit derselben Kette wie im
+            // Anflugblock (`sim_core::muster_aufloesen`). Die TCH-Einstufung
+            // nach Raederhoehe liest es nach dem Aufsetzen; ohne diesen Schritt
+            // fiele sie bei einem spaeten Einstieg auf die Mittelgruppe zurueck,
+            // obwohl die Buchung das Muster kennt (Cloud-QS, Befund 6).
+            if stats.aufgeloestes_muster.is_none() {
+                stats.aufgeloestes_muster = sim_core::muster_aufloesen(
+                    snap.aircraft_icao.as_deref(),
+                    &flight.aircraft_icao,
+                    snap.aircraft_title.as_deref(),
+                );
+            }
             // v1.6.10: solange das Flugzeug in der Luft ist, den Stand des
             // Sim-Latches mitfuehren. Erst dieser Vorher-Wert macht beim
             // Aufsetzen unterscheidbar, ob der Simulator die Zahl fuer
@@ -52203,17 +52222,21 @@ fn inspector_list(_state: tauri::State<'_, AppState>) -> Vec<serde_json::Value> 
 // geoeffneter Monitor sofort gefuellte Kurven zeigt. Siehe `telemetrie.rs`.
 
 #[derive(Serialize)]
-struct TelemetrieStartDto {
+pub(crate) struct TelemetrieStartDto {
     katalog: telemetrie::KatalogDto,
     verlauf: Vec<telemetrie::Frame>,
 }
 
 #[tauri::command]
 fn telemetrie_start(app: AppHandle, window: tauri::Window) -> TelemetrieStartDto {
+    telemetrie_start_fuer(&app, window.label())
+}
+
+/// Gemeinsamer Kern fuer Fenster und LAN-Bruecke (`wer` = Fensterkennung
+/// oder `telemetrie::LAN_ZUSCHAUER`).
+pub(crate) fn telemetrie_start_fuer(app: &AppHandle, wer: &str) -> TelemetrieStartDto {
     let state = app.state::<AppState>();
-    state
-        .telemetrie
-        .halten(window.label(), std::time::Instant::now());
+    state.telemetrie.halten(wer, std::time::Instant::now());
     TelemetrieStartDto {
         katalog: telemetrie::katalog(),
         verlauf: state.telemetrie.verlauf(),
@@ -52222,16 +52245,24 @@ fn telemetrie_start(app: AppHandle, window: tauri::Window) -> TelemetrieStartDto
 
 #[tauri::command]
 fn telemetrie_halten(app: AppHandle, window: tauri::Window) {
+    telemetrie_halten_fuer(&app, window.label());
+}
+
+pub(crate) fn telemetrie_halten_fuer(app: &AppHandle, wer: &str) {
     app.state::<AppState>()
         .telemetrie
-        .halten(window.label(), std::time::Instant::now());
+        .halten(wer, std::time::Instant::now());
 }
 
 /// Dieses Fenster schaut nicht mehr zu. Ein anderes (Tab oder eigenes
 /// Fenster) haelt den Strom mit seinem eigenen Eintrag weiter offen.
 #[tauri::command]
 fn telemetrie_stop(app: AppHandle, window: tauri::Window) {
-    app.state::<AppState>().telemetrie.beenden(window.label());
+    telemetrie_stop_fuer(&app, window.label());
+}
+
+pub(crate) fn telemetrie_stop_fuer(app: &AppHandle, wer: &str) {
+    app.state::<AppState>().telemetrie.beenden(wer);
 }
 
 /// Fragt ueber den Speichern-Dialog nach dem Ziel und schreibt die CSV.
@@ -52374,8 +52405,10 @@ fn spawn_telemetrie_takt(app: AppHandle) {
         // (aktiv, Simulator) beim letzten Abgleich mit den Adaptern.
         let mut zuletzt: Option<(bool, SimKind)> = None;
         let mut flugzeug: Option<String> = None;
+        let mut takt_nr: u32 = 0;
         loop {
             takt.tick().await;
+            takt_nr = takt_nr.wrapping_add(1);
             let jetzt = std::time::Instant::now();
             let state = app.state::<AppState>();
             let aktiv = state.telemetrie.aktiv(jetzt);
@@ -52411,8 +52444,23 @@ fn spawn_telemetrie_takt(app: AppHandle) {
                 // Nur an die eigenen Fenster — nicht an ein fremdes wie das
                 // VATSIM-CDM-Fenster (vats.im), das ebenfalls eine WebView ist.
                 for ziel in TELEMETRIE_FENSTER {
-                    if app.get_webview_window(ziel).is_some() {
+                    if state.telemetrie.aktiv_fuer(ziel, jetzt)
+                        && app.get_webview_window(ziel).is_some()
+                    {
                         let _ = tauri::Emitter::emit_to(&app, ziel, "telemetrie-frame", &frame);
+                    }
+                }
+                // v1.8.1: Tablets ueber die LAN-Bruecke, eigener Kanal und
+                // halbe Rate (10 Frames/s).
+                if takt_nr % telemetrie::LAN_JEDER_NTE == 0
+                    && state
+                        .telemetrie
+                        .aktiv_mit_praefix(telemetrie::LAN_ZUSCHAUER, jetzt)
+                {
+                    if let Ok(wert) = serde_json::to_value(&frame) {
+                        state
+                            .remote_events
+                            .send_telemetrie(remote::RemoteEvent::new("telemetrie-frame", wert));
                     }
                 }
             }

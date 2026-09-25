@@ -15,7 +15,8 @@
     "about": "About",
     "cpdlc": "PDC/CPDLC",
     "chat": "Chat",
-    "telemetrie": "Telemetry"
+    "telemetrie": "Telemetry",
+    "notizblock": "Notepad"
   },
   "nav": {
     "news": "News",
@@ -661,7 +662,7 @@
         "tch": {
           "abbr": "TCH — Threshold Crossing Height",
           "full": "Threshold crossing height",
-          "explanation": "How high were you above the ground when you crossed the threshold? ILS approach typically 49 ft (≈ 15 m). Too low: tail-strike risk. Too high: long landing."
+          "explanation": "How high were you over the threshold? Since v1.8.1 the height of the wheels (wheel crossing height) is assessed per FAA Order 8260.58D: measured height minus the glidepath-to-wheel distance of your type (height group 1–4: 10/15/20/25 ft, e.g. 737 = 15 ft, 777 = 25 ft). Green: wheels 20–50 ft above the threshold (FAA band). Yellow: 10–20 ft or 50–60 ft. Red: below 10 ft (hardly any margin) or above 60 ft (long landing). The measurement uses the simulator's reference point, so the wheel height is an approximation."
         },
         "dds": {
           "abbr": "DDS — Displaced Threshold",
@@ -2145,6 +2146,12 @@
     "tch_slightly_high": "slightly high",
     "tch_high": "too high",
     "tch_below_profile": "below profile",
+    "tch_raeder": "wheels approx. {{ft}} ft",
+    "tch_rad_on_profile": "within FAA band",
+    "tch_rad_slightly_low": "below FAA minimum",
+    "tch_rad_slightly_high": "above FAA maximum",
+    "tch_rad_high": "far too high",
+    "tch_rad_below_profile": "very low",
     "surface_asp": "Asphalt",
     "surface_con": "Concrete",
     "surface_grv": "Gravel",
@@ -2599,7 +2606,6 @@
     "laedt": "Loading telemetry …",
     "kein_sim": "No data yet. Values appear here as soon as the simulator is connected.",
     "keine_werte": "This aircraft or simulator provides no values for this.",
-    "nur_am_pc": "The telemetry monitor only runs in the app on the simulator PC.",
     "fehler": "Telemetry unavailable: {{fehler}}",
     "an": "on",
     "aus": "off",
@@ -2936,5 +2942,23 @@
       "mittel": "mean"
     },
     "tanks_anteil": "Bar = share of fuel on board"
+  },
+  "notizblock": {
+    "werkzeuge": "Tools",
+    "stift": "Pen",
+    "radierer": "Eraser",
+    "farbe": "Colour",
+    "farbe_text": "Default",
+    "farbe_acc": "Blue",
+    "farbe_danger": "Red",
+    "strich": "Stroke width",
+    "fein": "fine",
+    "mittel": "bold",
+    "finger": "Write with finger",
+    "zurueck": "Undo",
+    "alles_loeschen": "Clear all",
+    "wirklich_loeschen": "Really clear everything?",
+    "flaeche": "Writing area",
+    "nicht_gespeichert": "Not saved — the device storage is full or the browser is in private mode. What you see will be lost on reload."
   }
 }
