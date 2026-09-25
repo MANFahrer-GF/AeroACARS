@@ -1912,6 +1912,59 @@ mod resume_discontinuity_tests {
         );
     }
 
+    /// Ein zweites Bestaetigen nach dem Scharfschalten startet kein neues
+    /// Gate; ein nach Sim-Absturz pausierter Flug laesst sich aber weiter
+    /// freigeben (Codex-QS 25.09.2026).
+    #[test]
+    fn fortsetzen_nach_dem_gate_ist_ein_noop() {
+        let flight = crate::enroute_reconcile_replay_tests::replay_fixture();
+        // Frisch wiederhergestellt: Streamer laeuft noch nicht.
+        flight.streamer_spawned.store(false, Ordering::SeqCst);
+        flight.was_just_resumed.store(true, Ordering::SeqCst);
+        assert!(!fortsetzen_laeuft_schon(&flight));
+        // Nach der Positionspruefung, noch vor dem Gate.
+        flight.was_just_resumed.store(false, Ordering::SeqCst);
+        assert!(!fortsetzen_laeuft_schon(&flight));
+        // Gate hat scharf geschaltet.
+        flight.streamer_spawned.store(true, Ordering::SeqCst);
+        assert!(fortsetzen_laeuft_schon(&flight));
+        // Sim-Absturz mitten im Flug: Streamer pausiert, Pilot muss freigeben.
+        flight.was_just_resumed.store(true, Ordering::SeqCst);
+        assert!(!fortsetzen_laeuft_schon(&flight));
+
+        // Und der Befehl fragt das, bevor er ein Gate startet.
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find(concat!("\nasync fn flight_resume_", "confirm("))
+            .expect("flight_resume_confirm nicht gefunden");
+        let koerper = &SRC[start..start + SRC[start..].find("\n}\n").unwrap()];
+        let frage = koerper
+            .find(concat!("if fortsetzen_laeuft_", "schon(&flight)"))
+            .expect("Befehl fragt nicht mehr, ob der Flug schon laeuft");
+        let gate = koerper
+            .find(concat!("spawn_resume_", "sim_gate("))
+            .expect("Gate-Start fehlt");
+        assert!(frage < gate);
+    }
+
+    /// Holding steht fuer die ganze Warteschleife im Protokoll, nicht nur
+    /// im Tick des Eintritts; danach gilt wieder die gueltige Phase
+    /// (Codex-QS 25.09.2026).
+    #[test]
+    fn protokoll_haelt_holding_bis_zum_ende() {
+        let mut st = FlightStats::default();
+        st.phase = FlightPhase::Holding;
+        st.shadow_phase = Some(FlightPhase::Cruise);
+        assert_eq!(protokoll_phase(&st), FlightPhase::Holding);
+        st.phase = FlightPhase::Approach;
+        st.shadow_phase = Some(FlightPhase::Descent);
+        assert_eq!(protokoll_phase(&st), FlightPhase::Descent);
+
+        // Und der Tick fragt genau diese Funktion.
+        const SRC: &str = include_str!("lib.rs");
+        assert!(SRC.contains(concat!("let effective = protokoll_", "phase(&stats);")));
+    }
+
     /// Jeder Ausgang des Resume-Gates raeumt den Wartegrund weg — sonst
     /// bleibt im Cockpit ein eingefrorener Hinweis stehen
     /// (Cloud-QS 24.09.2026, dritte Runde).
@@ -13538,15 +13591,22 @@ mod nachreichen_tests {
             1,
             "die gueltige Phase fehlt im Protokoll"
         );
-        // Und sie haengt am Wechsel der gueltigen Phase, nicht am v1-Wechsel.
+        // Und sie haengt am Wechsel der gueltigen Phase, nicht am v1-Wechsel:
+        // Ein v1-Block davor muss geschlossen sein, bevor die Zeile kommt.
+        // Gezaehlt wird die Klammertiefe — ein umschliessender Block liegt
+        // VOR dem Wechsel-Block und waere in dessen Ausschnitt unsichtbar.
         let i = SRC.find(neu).unwrap();
-        let davor = &SRC[SRC[..i]
+        let bis_zeile = &SRC[..i];
+        let wechsel = bis_zeile
             .rfind(concat!("if effective_", "phase_changed {"))
-            .unwrap()..i];
-        assert!(
-            !davor.contains(concat!("if let Some(new_phase) = ", "phase_change")),
-            "die Protokollzeile steht im falschen Block"
-        );
+            .expect("Wechsel-Block fehlt");
+        if let Some(v1) = bis_zeile.rfind(concat!("if let Some(new_phase) = ", "phase_change")) {
+            assert_eq!(
+                SRC[v1..wechsel].matches('{').count(),
+                SRC[v1..wechsel].matches('}').count(),
+                "die Protokollzeile steht im v1-Block"
+            );
+        }
     }
 
     /// Das Resume-Gate schaltet erst scharf, wenn der Simulator ruhig und
@@ -17114,6 +17174,19 @@ fn effective_phase(stats: &FlightStats) -> FlightPhase {
         }
     }
     stats.phase
+}
+
+/// Die Phase fuer Protokoll und Phasen-Meldung: die gueltige Phase — nur
+/// Holding kommt aus v1, weil v2 es nicht kennt, und zwar fuer die GANZE
+/// Dauer der Warteschleife. Bis 25.09.2026 galt Holding nur im Tick des
+/// Eintritts; im naechsten stand schon wieder v2s „Cruise" im Protokoll,
+/// obwohl das Flugzeug noch kreiste (Codex-QS).
+fn protokoll_phase(stats: &FlightStats) -> FlightPhase {
+    if stats.phase == FlightPhase::Holding {
+        FlightPhase::Holding
+    } else {
+        effective_phase(stats)
+    }
 }
 
 /// Wie [`effective_phase`], aber für Publish-Pfade, die `stats` nicht gelockt
@@ -31478,6 +31551,13 @@ async fn flight_resume_confirm(
     // zeigt weiter den Resume-/Warte-Zustand statt einen scheinbar laufenden
     // Flug. Sim-agnostisch (X-Plane + MSFS via `current_snapshot`).
     // Nur EIN Gate je Flug; ein zweites Bestaetigen ist ein klarer No-op.
+    // Auch NACH dem Gate: Ein verspaeteter zweiter Aufruf haette sonst ein
+    // neues Gate gestartet — Wartehinweis und Heartbeats neben dem laufenden
+    // Flug (Codex-QS 25.09.2026).
+    if fortsetzen_laeuft_schon(&flight) {
+        tracing::info!(pirep_id = %flight.pirep_id, "Flug laeuft schon — Bestaetigen ignoriert");
+        return Ok(());
+    }
     {
         let mut st = flight.stats.lock().expect("flight stats");
         if st.resume_gate_laeuft {
@@ -31488,6 +31568,15 @@ async fn flight_resume_confirm(
     }
     spawn_resume_sim_gate(app, Arc::clone(&flight), client, force.unwrap_or(false));
     Ok(())
+}
+
+/// Laeuft der Flug schon scharf? Dann gibt es nichts mehr fortzusetzen.
+/// Ein Streamer, der wegen eines Sim-Absturzes mitten im Flug pausiert
+/// (`was_just_resumed` wieder gesetzt), zaehlt NICHT — den muss das
+/// Bestaetigen weiter freigeben koennen.
+fn fortsetzen_laeuft_schon(flight: &ActiveFlight) -> bool {
+    flight.streamer_spawned.load(Ordering::SeqCst)
+        && !flight.was_just_resumed.load(Ordering::Relaxed)
 }
 
 /// v0.12.5 (LE9): Resume-Sim-Gate. Wartet nach einem Flight-Resume auf
@@ -38467,16 +38556,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // log-worthy change, and record it so leaving the hold (v2
             // resuming e.g. Cruise) is itself detected as a change too —
             // a clean start/end pair, matching the old pure-v1 log.
-            let v1_entered_holding = phase_change == Some(FlightPhase::Holding);
             let (effective_phase_changed, effective_phase_this_tick) = {
                 let mut stats = flight.stats.lock().expect("flight stats");
-                let effective = if v1_entered_holding {
-                    FlightPhase::Holding
-                } else {
-                    effective_phase(&stats)
-                };
-                let changed =
-                    v1_entered_holding || stats.last_logged_effective_phase != Some(effective);
+                let effective = protokoll_phase(&stats);
+                let changed = stats.last_logged_effective_phase != Some(effective);
                 if changed {
                     stats.last_logged_effective_phase = Some(effective);
                 }
