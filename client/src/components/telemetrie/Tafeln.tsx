@@ -305,7 +305,7 @@ const SYSTEM_BLOECKE: Array<[string, string[]]> = [
   ["druck", ["kabinenhoehe", "kabine_vs", "differenzdruck"]],
   ["energie", ["batteriespannung", "batterie", "aussenstrom", "apu", "apu_drehzahl", "avionik"]],
   ["hydraulik", ["hydraulik"]],
-  ["eis", ["vereisung", "pitot_vereisung", "pitotheizung", "enteisung_tw", "enteisung_fl"]],
+  ["eis", ["vereisung", "vereisung_fl_links", "pitot_vereisung", "pitotheizung", "enteisung_tw", "enteisung_fl"]],
   ["warnungen", ["master_caution", "master_warning", "ueberziehwarnung", "ueberdrehzahl", "unter_gs"]],
   ["kabine", ["anschnallzeichen"]],
 ];

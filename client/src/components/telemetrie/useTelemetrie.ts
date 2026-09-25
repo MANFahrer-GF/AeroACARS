@@ -132,6 +132,12 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
           aufnehmen(f);
           neuZeichnen();
         });
+        // Waehrend des Anmeldens schon wieder geschlossen: sofort abmelden,
+        // sonst bliebe der Listener haengen (Codex-Befund 4).
+        if (aus) {
+          abbestellen();
+          return;
+        }
         const antwort = await q.start();
         if (aus) return;
         const idx = new Map<string, number>();

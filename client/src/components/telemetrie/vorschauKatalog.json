@@ -1225,6 +1225,14 @@
    "art": "zahl"
   },
   {
+   "id": "vereisung_fl_links",
+   "gruppe": "systeme",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
    "id": "pitot_vereisung",
    "gruppe": "systeme",
    "einheit": "%",

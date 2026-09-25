@@ -373,20 +373,16 @@ function VdgsVorschau() {
   );
 }
 
+/** v1.8: Dieses Fenster ist das eigene Fenster des Telemetrie-Monitors —
+ *  einmal beim Laden bestimmt, damit `Root` seine Hooks immer gleich ruft
+ *  (Codex-Befund 6). */
+const IST_TELEMETRIE_FENSTER =
+  isTauri && new URLSearchParams(window.location.search).get("fenster") === "telemetrie";
+
 function Root() {
   if (import.meta.env.DEV) {
     const was = new URLSearchParams(window.location.search).get("vorschau");
     if (was) return <Vorschau was={was} />;
-  }
-
-  // v1.8: eigenes Fenster des Telemetrie-Monitors — nur der Monitor, ohne
-  // Anmeldung und Menue (die Daten kommen direkt vom Backend).
-  if (isTauri && new URLSearchParams(window.location.search).get("fenster") === "telemetrie") {
-    return (
-      <SkinProvider>
-        <TelemetrieFenster />
-      </SkinProvider>
-    );
   }
 
   // Tauri: nie gesperrt. Browser: gesperrt bis ein Token da ist.
@@ -450,7 +446,13 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         </div>
       )}
     >
-      <Root />
+      {IST_TELEMETRIE_FENSTER ? (
+        <SkinProvider>
+          <TelemetrieFenster />
+        </SkinProvider>
+      ) : (
+        <Root />
+      )}
     </Sentry.ErrorBoundary>
   </React.StrictMode>,
 );

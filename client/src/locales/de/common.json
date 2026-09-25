@@ -2745,6 +2745,7 @@
       "enteisung_tw": "Enteisung Triebwerke",
       "enteisung_fl": "Enteisung Tragflächen",
       "vereisung": "Vereisung Zelle",
+      "vereisung_fl_links": "Vereisung linke Tragfläche",
       "pitot_vereisung": "Vereisung Pitot",
       "master_caution": "Master Caution",
       "master_warning": "Master Warning",

@@ -2745,6 +2745,7 @@
       "enteisung_tw": "Engine anti-ice",
       "enteisung_fl": "Wing anti-ice",
       "vereisung": "Structural ice",
+      "vereisung_fl_links": "Left wing ice",
       "pitot_vereisung": "Pitot ice",
       "master_caution": "Master caution",
       "master_warning": "Master warning",

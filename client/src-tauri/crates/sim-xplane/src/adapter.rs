@@ -548,7 +548,12 @@ fn run_listener(shared: Arc<AdapterShared>) {
                 if pairs.is_empty() {
                     continue;
                 }
-                last_packet_at = Some(Instant::now());
+                // `last_packet_at` erst setzen, wenn ein KATALOGWERT dabei war
+                // (siehe unten). Zusatzwerte des Telemetrie-Monitors und
+                // Proben duerfen einen Ausfall des Katalogs nicht verdecken —
+                // sonst raeumte der Watchdog den veralteten Snapshot nicht
+                // weg (Codex-Befund 1, 25.09.2026).
+                let mut katalog_paket = false;
                 let mut parsed = shared.parsed.lock();
                 let mut seen = shared.seen.lock();
                 let mut last = shared.last_values.lock();
@@ -573,6 +578,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
                     // Normal catalog packet: index → active entry →
                     // FieldId, with the profile's ValueMapping applied.
                     if let Some(entry) = active.get(p.index as usize) {
+                        katalog_paket = true;
                         if let Some(mapped) = entry.mapping.map(p.value) {
                             parsed.apply_field(entry.field, mapped);
                         }
@@ -584,6 +590,9 @@ fn run_listener(shared: Arc<AdapterShared>) {
                             *slot = p.value;
                         }
                     }
+                }
+                if katalog_paket {
+                    last_packet_at = Some(Instant::now());
                 }
                 if parsed.got_first_packet {
                     let mut s = shared.state.lock();

@@ -8,7 +8,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { save } from "@tauri-apps/plugin-dialog";
 import { invoke, isTauri } from "../../lib/ipc";
 import { Badge, Button } from "../ui";
 import { csvText } from "./csv";
@@ -105,13 +104,9 @@ export function TelemetrieView({ imFenster = false, quelle }: Props) {
     const ids = watch.length ? watch : (tm.katalog?.zahlen.map((k) => k.id) ?? []);
     const inhalt = csvText(tm, ids);
     try {
-      const pfad = await save({
-        defaultPath: `aeroacars-telemetrie-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`,
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-      });
-      if (!pfad) return;
-      await invoke("telemetrie_csv_schreiben", { pfad, inhalt });
-      setCsvMeldung(t("telemetrie.csv_gespeichert"));
+      const dateiname = `aeroacars-telemetrie-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`;
+      const gespeichert = await invoke<boolean>("telemetrie_csv_speichern", { inhalt, dateiname });
+      if (gespeichert) setCsvMeldung(t("telemetrie.csv_gespeichert"));
     } catch (e) {
       setCsvMeldung(t("telemetrie.csv_fehler", { fehler: e instanceof Error ? e.message : String(e) }));
     }

@@ -52209,9 +52209,11 @@ struct TelemetrieStartDto {
 }
 
 #[tauri::command]
-fn telemetrie_start(app: AppHandle) -> TelemetrieStartDto {
+fn telemetrie_start(app: AppHandle, window: tauri::Window) -> TelemetrieStartDto {
     let state = app.state::<AppState>();
-    state.telemetrie.halten(std::time::Instant::now());
+    state
+        .telemetrie
+        .halten(window.label(), std::time::Instant::now());
     TelemetrieStartDto {
         katalog: telemetrie::katalog(),
         verlauf: state.telemetrie.verlauf(),
@@ -52219,32 +52221,58 @@ fn telemetrie_start(app: AppHandle) -> TelemetrieStartDto {
 }
 
 #[tauri::command]
-fn telemetrie_halten(app: AppHandle) {
+fn telemetrie_halten(app: AppHandle, window: tauri::Window) {
     app.state::<AppState>()
         .telemetrie
-        .halten(std::time::Instant::now());
+        .halten(window.label(), std::time::Instant::now());
 }
 
+/// Dieses Fenster schaut nicht mehr zu. Ein anderes (Tab oder eigenes
+/// Fenster) haelt den Strom mit seinem eigenen Eintrag weiter offen.
 #[tauri::command]
-fn telemetrie_stop(app: AppHandle) {
-    // Das eigene Fenster kann noch offen sein — dann haelt es den Strom
-    // mit seinem naechsten Lebenszeichen wieder an.
-    app.state::<AppState>().telemetrie.beenden();
+fn telemetrie_stop(app: AppHandle, window: tauri::Window) {
+    app.state::<AppState>().telemetrie.beenden(window.label());
 }
 
-/// Schreibt die CSV-Datei, deren Pfad die Oberflaeche ueber den
-/// Speichern-Dialog geholt hat.
+/// Fragt ueber den Speichern-Dialog nach dem Ziel und schreibt die CSV.
+///
+/// Der Pfad kommt bewusst NICHT aus der Oberflaeche: ein Befehl, der jeden
+/// uebergebenen `.csv`-Pfad beschreibt, liesse eingeschleusten Code beliebige
+/// Dateien ueberschreiben (Codex-Befund 3, 25.09.2026). `Ok(false)` =
+/// Dialog abgebrochen.
 #[tauri::command]
-fn telemetrie_csv_schreiben(pfad: String, inhalt: String) -> Result<(), UiError> {
-    if !pfad.to_ascii_lowercase().ends_with(".csv") {
-        return Err(UiError::new("bad_path", "Nur .csv-Dateien"));
+async fn telemetrie_csv_speichern(
+    app: AppHandle,
+    inhalt: String,
+    dateiname: String,
+) -> Result<bool, UiError> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("CSV", &["csv"])
+        .set_file_name(dateiname)
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(ziel) = rx.await.ok().flatten() else {
+        return Ok(false);
+    };
+    let mut pfad = ziel
+        .into_path()
+        .map_err(|e| UiError::new("bad_path", format!("Speicherort ungültig: {e}")))?;
+    if pfad.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase())
+        != Some("csv".into())
+    {
+        pfad.set_extension("csv");
     }
-    std::fs::write(&pfad, inhalt).map_err(|e| {
+    tokio::fs::write(&pfad, inhalt).await.map_err(|e| {
         UiError::new(
             "write_failed",
             format!("CSV ließ sich nicht speichern: {e}"),
         )
-    })
+    })?;
+    Ok(true)
 }
 
 /// Oeffnet den Monitor in einem eigenen Fenster (zweiter Bildschirm).
@@ -52278,6 +52306,9 @@ async fn telemetrie_fenster_oeffnen(app: AppHandle) -> Result<(), UiError> {
     Ok(())
 }
 
+/// Fenster, die den Telemetrie-Strom bekommen.
+const TELEMETRIE_FENSTER: [&str; 2] = ["main", "telemetrie"];
+
 /// Zusatzwerte beim aktiven Adapter an- oder abmelden.
 fn telemetrie_zusatz_setzen(app: &AppHandle, aktiv: bool) {
     let state = app.state::<AppState>();
@@ -52287,9 +52318,11 @@ fn telemetrie_zusatz_setzen(app: &AppHandle, aktiv: bool) {
     } else {
         Vec::new()
     };
+    // Mit Semikolon: ohne waere das `if let` auf dem Mac der Schlussausdruck
+    // der Funktion, und die Sperre lebte laenger als `state` (E0597).
     if let Ok(a) = state.xplane.lock() {
         a.zusatz_setzen(xp);
-    }
+    };
     #[cfg(target_os = "windows")]
     {
         let ms = if aktiv && kind.is_msfs() {
@@ -52299,7 +52332,7 @@ fn telemetrie_zusatz_setzen(app: &AppHandle, aktiv: bool) {
         };
         if let Ok(a) = state.msfs.lock() {
             a.zusatz_setzen(ms);
-        }
+        };
     }
 }
 
@@ -52348,6 +52381,12 @@ fn spawn_telemetrie_takt(app: AppHandle) {
             let aktiv = state.telemetrie.aktiv(jetzt);
             let kind = read_sim_config(&app).kind;
             if zuletzt != Some((aktiv, kind)) {
+                // Anderer Simulator: der Verlauf gehoert nicht mehr dazu, auch
+                // wenn der Flugzeugtitel gleich heisst (Codex-Befund 5).
+                if zuletzt.is_some_and(|(_, alt)| alt != kind) {
+                    state.telemetrie.verlauf_leeren();
+                    flugzeug = None;
+                }
                 telemetrie_zusatz_setzen(&app, aktiv);
                 zuletzt = Some((aktiv, kind));
             }
@@ -52369,7 +52408,13 @@ fn spawn_telemetrie_takt(app: AppHandle) {
             let frame = telemetrie::frame(&snap, &zusatz);
             state.telemetrie.aufnehmen(&frame, jetzt);
             if aktiv {
-                let _ = tauri::Emitter::emit(&app, "telemetrie-frame", &frame);
+                // Nur an die eigenen Fenster — nicht an ein fremdes wie das
+                // VATSIM-CDM-Fenster (vats.im), das ebenfalls eine WebView ist.
+                for ziel in TELEMETRIE_FENSTER {
+                    if app.get_webview_window(ziel).is_some() {
+                        let _ = tauri::Emitter::emit_to(&app, ziel, "telemetrie-frame", &frame);
+                    }
+                }
             }
         }
     });
@@ -55810,7 +55855,7 @@ pub fn run() {
             telemetrie_start,
             telemetrie_halten,
             telemetrie_stop,
-            telemetrie_csv_schreiben,
+            telemetrie_csv_speichern,
             telemetrie_fenster_oeffnen,
             xplane_premium_status,
             xplane_detect_install_path,

@@ -1231,7 +1231,7 @@ mod tests {
             "telemetrie_start",
             "telemetrie_halten",
             "telemetrie_stop",
-            "telemetrie_csv_schreiben",
+            "telemetrie_csv_speichern",
             "telemetrie_fenster_oeffnen",
         ];
 

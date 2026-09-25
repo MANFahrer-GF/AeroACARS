@@ -75,7 +75,11 @@ pub enum Gruppe {
 }
 
 /// MSFS-Quelle eines Zusatzwerts: SimVar, angeforderte Einheit, Faktor.
+///
+/// SimVar und Einheit liest nur der Windows-Pfad (`msfs_zusatzfelder`);
+/// auf dem Mac gelten sie sonst als tot.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub struct MsfsQuelle {
     pub simvar: &'static str,
     pub einheit: &'static str,
@@ -827,7 +831,11 @@ pub static KATALOG: &[Kanal] = &[
         .zahl(|k| ob(k.s.wing_anti_ice)),
     k("vereisung", Gruppe::Systeme, "%", 0)
         .q(Quelle::Zusatz)
-        .msfs("STRUCTURAL ICE PCT", "percent", 1.0)
+        .msfs("STRUCTURAL ICE PCT", "percent", 1.0),
+    // X-Plane: `frm_ice` ist laut X-Plane die LINKE Tragflaeche, nicht die
+    // ganze Zelle — eigener Kanal, damit die Beschriftung stimmt.
+    k("vereisung_fl_links", Gruppe::Systeme, "%", 0)
+        .q(Quelle::Zusatz)
         .xp("sim/flightmodel/failures/frm_ice", 100.0),
     k("pitot_vereisung", Gruppe::Systeme, "%", 0)
         .q(Quelle::Zusatz)
@@ -1006,7 +1014,10 @@ pub fn frame(s: &SimSnapshot, zusatz: &HashMap<String, f64>) -> Frame {
     }
 }
 
-/// Zusatzfelder fuer MSFS: (Kanal-ID, SimVar, Einheit).
+/// Zusatzfelder fuer MSFS: (Kanal-ID, SimVar, Einheit). Nur unter Windows
+/// aufgerufen; der Test `msfs_felder_sind_vollstaendig` haelt sie auch auf
+/// dem Mac lebendig.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn msfs_zusatzfelder() -> Vec<(String, String, String)> {
     KATALOG
         .iter()
@@ -1058,25 +1069,30 @@ pub struct Monitor {
 #[derive(Default)]
 struct Inner {
     verlauf: VecDeque<Frame>,
-    aktiv_bis: Option<Instant>,
+    /// Zuschauer (Fensterkennung) → gueltig bis. Je Fenster, damit das
+    /// Schliessen des Tabs nicht den Strom des eigenen Fensters beendet.
+    zuschauer: HashMap<String, Instant>,
     letzte_aufnahme: Option<Instant>,
 }
 
 impl Monitor {
-    pub fn halten(&self, jetzt: Instant) {
+    pub fn halten(&self, wer: &str, jetzt: Instant) {
         if let Ok(mut g) = self.inner.lock() {
-            g.aktiv_bis = Some(jetzt + HALTEN_DAUER);
+            g.zuschauer.insert(wer.to_string(), jetzt + HALTEN_DAUER);
         }
     }
-    pub fn beenden(&self) {
+    pub fn beenden(&self, wer: &str) {
         if let Ok(mut g) = self.inner.lock() {
-            g.aktiv_bis = None;
+            g.zuschauer.remove(wer);
         }
     }
     pub fn aktiv(&self, jetzt: Instant) -> bool {
         self.inner
             .lock()
-            .map(|g| g.aktiv_bis.is_some_and(|t| t > jetzt))
+            .map(|mut g| {
+                g.zuschauer.retain(|_, bis| *bis > jetzt);
+                !g.zuschauer.is_empty()
+            })
             .unwrap_or(false)
     }
     /// Nimmt den Frame in den Verlauf auf, hoechstens mit [`VERLAUF_HZ`].
@@ -1308,11 +1324,23 @@ mod tests {
         let m = Monitor::default();
         let t0 = Instant::now();
         assert!(!m.aktiv(t0));
-        m.halten(t0);
+        m.halten("main", t0);
         assert!(m.aktiv(t0 + Duration::from_secs(5)));
         assert!(!m.aktiv(t0 + HALTEN_DAUER + Duration::from_millis(1)));
-        m.halten(t0);
-        m.beenden();
+        m.halten("main", t0);
+        m.beenden("main");
+        assert!(!m.aktiv(t0));
+    }
+
+    #[test]
+    fn tab_schliessen_beendet_nicht_das_eigene_fenster() {
+        let m = Monitor::default();
+        let t0 = Instant::now();
+        m.halten("main", t0);
+        m.halten("telemetrie", t0);
+        m.beenden("main");
+        assert!(m.aktiv(t0), "das eigene Fenster schaut noch zu");
+        m.beenden("telemetrie");
         assert!(!m.aktiv(t0));
     }
 
@@ -1330,6 +1358,19 @@ mod tests {
             datei, echt,
             "vorschauKatalog.json passt nicht mehr zum Katalog"
         );
+    }
+
+    #[test]
+    fn msfs_felder_sind_vollstaendig() {
+        let felder = msfs_zusatzfelder();
+        assert!(felder
+            .iter()
+            .any(|(id, sv, _)| id == "aoa" && sv == "INCIDENCE ALPHA"));
+        // Jede SimVar hat eine Einheit, jede ID gibt es im Katalog.
+        for (id, sv, einheit) in &felder {
+            assert!(!einheit.is_empty(), "{sv} ohne Einheit");
+            assert!(KATALOG.iter().any(|k| k.id == id));
+        }
     }
 
     #[test]
