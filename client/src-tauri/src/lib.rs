@@ -34830,6 +34830,18 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             prev_sample_for_reset_check = Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
 
             let mut stats = flight.stats.lock().expect("flight stats");
+            // v1.8.1: das Muster frueh festhalten, mit derselben Kette wie im
+            // Anflugblock (`sim_core::muster_aufloesen`). Die TCH-Einstufung
+            // nach Raederhoehe liest es nach dem Aufsetzen; ohne diesen Schritt
+            // fiele sie bei einem spaeten Einstieg auf die Mittelgruppe zurueck,
+            // obwohl die Buchung das Muster kennt (Cloud-QS, Befund 6).
+            if stats.aufgeloestes_muster.is_none() {
+                stats.aufgeloestes_muster = sim_core::muster_aufloesen(
+                    snap.aircraft_icao.as_deref(),
+                    &flight.aircraft_icao,
+                    snap.aircraft_title.as_deref(),
+                );
+            }
             // v1.6.10: solange das Flugzeug in der Luft ist, den Stand des
             // Sim-Latches mitfuehren. Erst dieser Vorher-Wert macht beim
             // Aufsetzen unterscheidbar, ob der Simulator die Zahl fuer

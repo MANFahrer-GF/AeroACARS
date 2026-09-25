@@ -89,7 +89,7 @@ export function Notizblock() {
 
   /* ---------------------------------------------------------- Zeichnen */
 
-  const zeichneStrich = useCallback((ctx: CanvasRenderingContext2D, s: Strich, w: number, h: number) => {
+  const zeichneStrich = useCallback((ctx: CanvasRenderingContext2D, s: Strich, w: number) => {
     const el = leinwand.current;
     if (!el || s.punkte.length === 0) return;
     ctx.strokeStyle = s.farbe.startsWith("--") ? farbwert(el, s.farbe) : s.farbe;
@@ -99,7 +99,7 @@ export function Notizblock() {
     if (s.punkte.length === 1) {
       const q = s.punkte[0];
       ctx.beginPath();
-      ctx.arc(q.x * w, q.y * h, pixelBreite(s, q.p, w) / 2, 0, Math.PI * 2);
+      ctx.arc(q.x * w, q.y * w, pixelBreite(s, q.p, w) / 2, 0, Math.PI * 2);
       ctx.fill();
       return;
     }
@@ -109,15 +109,16 @@ export function Notizblock() {
       const a = s.punkte[i - 1];
       const b = s.punkte[i];
       const vor = s.punkte[i - 2] ?? a;
+      // y ist in Breiten-Einheiten gespeichert (siehe logik.ts).
       const mx0 = ((vor.x + a.x) / 2) * w;
-      const my0 = ((vor.y + a.y) / 2) * h;
+      const my0 = ((vor.y + a.y) / 2) * w;
       const mx1 = ((a.x + b.x) / 2) * w;
-      const my1 = ((a.y + b.y) / 2) * h;
+      const my1 = ((a.y + b.y) / 2) * w;
       ctx.lineWidth = pixelBreite(s, (a.p + b.p) / 2, w);
       ctx.beginPath();
-      ctx.moveTo(i === 1 ? a.x * w : mx0, i === 1 ? a.y * h : my0);
-      ctx.quadraticCurveTo(a.x * w, a.y * h, mx1, my1);
-      if (i === s.punkte.length - 1) ctx.lineTo(b.x * w, b.y * h);
+      ctx.moveTo(i === 1 ? a.x * w : mx0, i === 1 ? a.y * w : my0);
+      ctx.quadraticCurveTo(a.x * w, a.y * w, mx1, my1);
+      if (i === s.punkte.length - 1) ctx.lineTo(b.x * w, b.y * w);
       ctx.stroke();
     }
   }, []);
@@ -132,8 +133,8 @@ export function Notizblock() {
     const h = el.height / dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    for (const s of striche.current) zeichneStrich(ctx, s, w, h);
-    if (aktuell.current) zeichneStrich(ctx, aktuell.current.strich, w, h);
+    for (const s of striche.current) zeichneStrich(ctx, s, w);
+    if (aktuell.current) zeichneStrich(ctx, aktuell.current.strich, w);
   }, [zeichneStrich]);
 
   // Groesse: Flaeche fuellt den Platz bis zum unteren Bildschirmrand.
@@ -176,7 +177,7 @@ export function Notizblock() {
     const r = leinwand.current!.getBoundingClientRect();
     return {
       x: (e.clientX - r.left) / r.width,
-      y: (e.clientY - r.top) / r.height,
+      y: (e.clientY - r.top) / r.width,
       // Maus meldet 0.5 beim Druecken, Finger oft 0 — beides wie mittlerer Druck.
       p: e.pointerType === "pen" && e.pressure > 0 ? e.pressure : 0.5,
     };
@@ -191,12 +192,18 @@ export function Notizblock() {
     return true;
   };
 
+  // Zustand vor dem ersten Treffer dieses Radiervorgangs — gemerkt wird er
+  // erst, wenn wirklich etwas verschwindet (Cloud-QS Befund 5: sonst legte
+  // jedes Antippen ins Leere einen wirkungslosen Rueckgaengig-Schritt an).
+  const vorRadieren = useRef<Strich[] | null>(null);
   const radieren = (q: Punkt) => {
-    const el = leinwand.current!;
-    const verh = el.clientHeight / Math.max(1, el.clientWidth);
     const vorher = striche.current;
-    const bleiben = vorher.filter((s) => !trifft(s, q.x, q.y, RADIER_RADIUS, verh));
+    const bleiben = vorher.filter((s) => !trifft(s, q.x, q.y, RADIER_RADIUS));
     if (bleiben.length !== vorher.length) {
+      if (vorRadieren.current) {
+        verlauf.current.merken(vorRadieren.current);
+        vorRadieren.current = null;
+      }
       striche.current = bleiben;
       allesZeichnen();
     }
@@ -215,7 +222,7 @@ export function Notizblock() {
     setLoeschenFragen(false);
     // Radierer: auch die Radierer-Taste mancher Stifte (buttons & 32).
     if (werkzeug === "radierer" || (e.buttons & 32) !== 0) {
-      verlauf.current.merken(striche.current);
+      vorRadieren.current = striche.current;
       radiertIn.current = e.pointerId;
       radieren(q);
       return;
@@ -247,7 +254,9 @@ export function Notizblock() {
   const onUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (radiertIn.current === e.pointerId) {
       radiertIn.current = null;
-      speichern();
+      const nichtsGeloescht = vorRadieren.current !== null;
+      vorRadieren.current = null;
+      if (!nichtsGeloescht) speichern();
       return;
     }
     const a = aktuell.current;

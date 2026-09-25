@@ -1,15 +1,17 @@
 /**
  * Notizblock (v1.8.1) — reine Logik ohne DOM, damit sie testbar ist.
  *
- * Striche werden in RELATIVEN Koordinaten gespeichert (0..1 der Flaeche):
- * dreht der Pilot das iPad oder aendert sich die Fenstergroesse, bleibt die
- * Schrift an ihrem Platz, statt abgeschnitten oder verschoben zu werden.
+ * Striche werden in Breiten-Einheiten gespeichert: x UND y relativ zur
+ * Flaechenbreite. So behaelt die Schrift beim Drehen des iPads oder bei
+ * einer anderen Fensterhoehe ihre Form (getrennte Achsen haetten sie
+ * gestreckt, Cloud-QS Befund 1). Was nach dem Drehen unter den Rand faellt,
+ * ist nach dem Zurueckdrehen wieder da.
  */
 
 export interface Punkt {
   /** 0..1 der Breite */
   x: number;
-  /** 0..1 der Hoehe */
+  /** Abstand von oben, ebenfalls in Einheiten der Breite */
   y: number;
   /** Andruck 0..1 (Maus/Finger: 0.5) */
   p: number;
@@ -22,7 +24,7 @@ export interface Strich {
   punkte: Punkt[];
 }
 
-export const SPEICHER_SCHLUESSEL = "aeroacars.notizblock.v1";
+export const SPEICHER_SCHLUESSEL = "aeroacars.notizblock.v2";
 const MAX_VERLAUF = 60;
 
 /** Linienbreite in Pixeln fuer einen Punkt: Andruck macht dicker. */
@@ -31,13 +33,12 @@ export function pixelBreite(s: Strich, p: number, flaecheBreite: number): number
   return Math.max(0.8, s.breite * flaecheBreite * druck);
 }
 
-/** Trifft ein Radierpunkt (relativ) einen Strich? `radius` relativ zur Breite. */
-export function trifft(s: Strich, x: number, y: number, radius: number, seitenverhaeltnis: number): boolean {
-  // y in Breiteneinheiten umrechnen, damit der Radius rund bleibt.
+/** Trifft ein Radierpunkt einen Strich? Alles in Breiten-Einheiten. */
+export function trifft(s: Strich, x: number, y: number, radius: number): boolean {
   for (let i = 0; i < s.punkte.length; i++) {
     const a = s.punkte[i];
     const b = s.punkte[i + 1] ?? a;
-    if (abstandZuStrecke(x, y * seitenverhaeltnis, a.x, a.y * seitenverhaeltnis, b.x, b.y * seitenverhaeltnis) <= radius) {
+    if (abstandZuStrecke(x, y, a.x, a.y, b.x, b.y) <= radius) {
       return true;
     }
   }

@@ -236,9 +236,10 @@ impl Hoehengruppe {
 ///
 /// Die FAA-Tabelle nennt nur Beispiele. Die uebrigen Muster sind nach
 /// Groesse und Fahrwerkshoehe zugeordnet — das ist unsere Einordnung, nicht
-/// die der FAA. Unbekannte Kennungen gelten als Gruppe 1 (GA/Business-Jet),
-/// weil alle Verkehrsflugzeuge hier aufgefuehrt sind; ohne Kennung Gruppe 3
-/// als Mitte.
+/// die der FAA. Unbekannte Kennungen gelten als Gruppe 1 (GA/Business-Jet);
+/// die verbreiteten Verkehrs- und Transportflugzeuge sind hier aufgefuehrt,
+/// seltene Muster koennen fehlen und landen dann in Gruppe 1 (Raederhoehe
+/// eher zu hoch eingeschaetzt). Ohne Kennung Gruppe 3 als Mitte.
 pub fn hoehengruppe(icao: Option<&str>) -> Hoehengruppe {
     let Some(roh) = icao else {
         return Hoehengruppe::G3;
@@ -253,16 +254,19 @@ pub fn hoehengruppe(icao: Option<&str>) -> Hoehengruppe {
         "B74", "B76", "B77", "B78", "A30", "A33", "A34", "A35", "A38", "MD11", "DC10", "L101",
         "IL96", "IL86", "A124", "A225", "KC10",
     ];
-    const G4_EXAKT: &[&str] = &["A310", "C5", "C5M", "C17", "B52"];
-    const G3: &[&str] = &["B75", "B72", "B70", "IL76", "IL62", "K35R"];
-    const G3_EXAKT: &[&str] = &["C135", "E3TF", "E3CF"];
+    // BLCF = 747 Dreamlifter, A3ST = Beluga, CONC = Concorde.
+    const G4_EXAKT: &[&str] = &["A310", "C5", "C5M", "C17", "B52", "BLCF", "A3ST", "CONC"];
+    const G3: &[&str] = &["B75", "B72", "B70", "IL76", "IL62", "K35R", "DC8"];
+    const G3_EXAKT: &[&str] = &["C135", "E3TF", "E3CF", "T154", "T204", "A400"];
     const G2: &[&str] = &[
         "B73", "B37M", "B38M", "B39M", "B3XM", "A31", "A32", "A19N", "A20N", "A21N", "BCS1",
         "BCS3", "MD8", "MD9", "DC9", "B712", "F28", "F70", "F100", "E17", "E19", "E29", "E75",
         "CRJ", "AT4", "AT7", "DH8", "B46", "RJ70", "RJ85", "RJ1H", "SU95", "E145", "E135", "E140",
-        "SF34", "SB20", "J41", "D328", "AN24", "AN26",
+        "SF34", "SB20", "JS41", "D328", "AN24", "AN26", "BA11", "F27", "F50", "DHC7", "C919",
+        "AJ27",
     ];
-    const G2_EXAKT: &[&str] = &["C130", "Y12"];
+    // C30J = C-130J, P8 = Poseidon (737-Basis).
+    const G2_EXAKT: &[&str] = &["C130", "C30J", "Y12", "P8"];
     let passt = |praefix: &[&str], exakt: &[&str]| {
         exakt.contains(&k.as_str()) || praefix.iter().any(|p| k.starts_with(p))
     };
@@ -601,6 +605,17 @@ mod tests {
             ("C560", Hoehengruppe::G1),
             ("E35L", Hoehengruppe::G1),
             ("C130", Hoehengruppe::G2),
+            ("C30J", Hoehengruppe::G2),
+            ("JS41", Hoehengruppe::G2),
+            ("BLCF", Hoehengruppe::G4),
+            ("A3ST", Hoehengruppe::G4),
+            ("T154", Hoehengruppe::G3),
+            ("DC86", Hoehengruppe::G3),
+            ("BA11", Hoehengruppe::G2),
+            ("F50", Hoehengruppe::G2),
+            ("P8", Hoehengruppe::G2),
+            ("C919", Hoehengruppe::G2),
+            ("A400", Hoehengruppe::G3),
             ("PC12", Hoehengruppe::G1),
             ("FA50", Hoehengruppe::G1),
             (" b77w ", Hoehengruppe::G4),

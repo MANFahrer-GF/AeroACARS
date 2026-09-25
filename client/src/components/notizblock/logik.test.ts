@@ -13,10 +13,10 @@ describe("Notizblock-Logik", () => {
       [0.1, 0.5],
       [0.9, 0.5],
     ]);
-    expect(trifft(s, 0.5, 0.505, 0.01, 1)).toBe(true);
-    expect(trifft(s, 0.5, 0.6, 0.01, 1)).toBe(false);
-    // Hochformat: y zaehlt in Breiteneinheiten doppelt.
-    expect(trifft(s, 0.5, 0.507, 0.01, 2)).toBe(false);
+    expect(trifft(s, 0.5, 0.505, 0.01)).toBe(true);
+    expect(trifft(s, 0.5, 0.6, 0.01)).toBe(false);
+    // Endpunkt: der Radius wirkt rund um das Strichende.
+    expect(trifft(s, 0.905, 0.5, 0.01)).toBe(true);
   });
 
   it("Andruck macht den Strich dicker", () => {
