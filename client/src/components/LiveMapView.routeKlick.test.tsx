@@ -235,6 +235,31 @@ describe("Klick auf einen Kollegen", () => {
     await waitFor(() => expect(h.quellen["fremde-routen"]?.features.length).toBe(0));
   });
 
+  it("zeichnet eine Kollegen-Route ueber die Datumsgrenze nicht quer ueber die Welt", async () => {
+    // Aleuten, 25.09.2026: 179° O → 179° W lief als waagerechte Linie
+    // ueber die ganze Karte. Die Laenge wird weitergezaehlt (181°).
+    const OST = { lon: 179, lat: 52, name: "OST" };
+    const WEST = { lon: -179, lat: 53, name: "WEST" };
+    await karteMitKollege([OST, WEST]);
+    await act(async () => {
+      kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitFor(() =>
+      expect(
+        (h.quellen["fremde-routen"]?.features ?? []).some(
+          (x) => (x as { geometry: { type: string } }).geometry.type === "LineString",
+        ),
+      ).toBe(true),
+    );
+    const linie = (h.quellen["fremde-routen"]!.features as Array<{
+      geometry: { type: string; coordinates: number[][] };
+    }>).find((f) => f.geometry.type === "LineString")!;
+    expect(linie.geometry.coordinates).toEqual([
+      [179, 52],
+      [181, 53],
+    ]);
+  });
+
   it("zeichnet ZWEI Kollegen gleichzeitig, nicht nur den letzten", async () => {
     // Der Quelltext-Test dazu prueft nur, dass `.entries()` vorkommt —
     // eine Fassung, die trotzdem nur einen Eintrag zeichnet, bliebe dort

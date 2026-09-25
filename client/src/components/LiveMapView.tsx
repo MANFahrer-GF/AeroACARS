@@ -30,7 +30,11 @@ import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
-import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
+import {
+  laengeNebenVorgaenger,
+  ohneDatumsgrenzenSprung,
+  punkteAufKleinstemBogen,
+} from "../lib/datumsgrenze";
 
 // Die Stil-Adressen kommen vom Server — siehe `BasemapContext`. CARTO
 // verlangt seit dem 26.08.2026 einen Schlüssel, und der soll austauschbar
@@ -1950,13 +1954,20 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       if (map.getZoom() < GROUND_MIN_ZOOM - 1) return;
 
       const b = map.getBounds();
-      const visible = index.filter(
-        (a) =>
+      // An der Datumsgrenze reicht der Ausschnitt ueber ±180 hinaus (etwa
+      // 175…185°). Den Platz deshalb in dieselbe Weltkopie legen wie die
+      // Kartenmitte — sonst faellt ein sichtbarer Platz bei −179° raus
+      // (Codex-QS 25.09.2026).
+      const mitte = map.getCenter().lng;
+      const visible = index.filter((a) => {
+        const lon = laengeNebenVorgaenger(a.lon, mitte);
+        return (
           a.lat >= b.getSouth() &&
           a.lat <= b.getNorth() &&
-          a.lon >= b.getWest() &&
-          a.lon <= b.getEast(),
-      );
+          lon >= b.getWest() &&
+          lon <= b.getEast()
+        );
+      });
 
       for (const a of visible) {
         if (loaded.has(a.icao)) continue;
@@ -2483,7 +2494,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // (sonst würde es dich vom eigenen Flug wegziehen). Und nur einmal.
     if (pts.length >= 1 && !vaFittedRef.current && !activeFlight) {
       vaFittedRef.current = true;
-      const b = pts.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
+      // Kleinster Bogen: Kollegen beiderseits der Datumsgrenze ergeben sonst
+      // einen Ausschnitt ueber fast die ganze Welt.
+      const bogen = punkteAufKleinstemBogen(pts);
+      const b = bogen.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(bogen[0], bogen[0]));
       map.fitBounds(b, { padding: 60, duration: 600, maxZoom: 6 });
     }
   }, [vaVisible, mapReady, activeFlight]);
