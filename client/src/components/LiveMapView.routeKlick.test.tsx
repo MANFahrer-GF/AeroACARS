@@ -32,6 +32,12 @@ const h = vi.hoisted(() => ({
   popupsOffen: 0,
   sichtbarkeit: {} as Record<string, string>,
   ebenen: new Set<string>(),
+  // Kamera — einstellbar fuer die Datumsgrenzen-Tests.
+  ausschnitt: { s: 40, n: 60, w: 0, o: 20 },
+  mitte: { lng: 6, lat: 48 },
+  zoom: 4,
+  /** Jeder `fitBounds`-Aufruf mit den Punkten, die hineingingen. */
+  einpassungen: [] as Array<Array<[number, number]>>,
 }));
 
 vi.mock("../lib/ipc", () => ({
@@ -63,7 +69,11 @@ vi.mock("maplibre-gl", () => {
     remove() { if (h.popupsOffen > 0) h.popupsOffen -= 1; return this; }
     on() { return this; }
   }
-  class FakeBounds { extend() { return this; } }
+  class FakeBounds {
+    punkte: Array<[number, number]> = [];
+    constructor(a?: [number, number]) { if (a) this.punkte.push(a); }
+    extend(p: [number, number]) { this.punkte.push(p); return this; }
+  }
   class FakeMap {
     center = { lng: 6, lat: 48 };
     zoom = 4;
@@ -75,12 +85,13 @@ vi.mock("maplibre-gl", () => {
     once() { return this; }
     off() { return this; }
     getBounds() {
+      const a = h.ausschnitt;
       return {
-        getSouth: () => 40, getNorth: () => 60, getWest: () => 0, getEast: () => 20,
+        getSouth: () => a.s, getNorth: () => a.n, getWest: () => a.w, getEast: () => a.o,
       };
     }
-    getCenter() { return this.center; }
-    getZoom() { return this.zoom; }
+    getCenter() { return h.mitte; }
+    getZoom() { return h.zoom; }
     isStyleLoaded() { return true; }
     setStyle() { return this; }
     // Quellen und Ebenen entstehen erst durch addSource/addLayer.
@@ -115,7 +126,10 @@ vi.mock("maplibre-gl", () => {
     }
     easeTo() { return this; }
     jumpTo() { return this; }
-    fitBounds() { return this; }
+    fitBounds(b: { punkte?: Array<[number, number]> }) {
+      h.einpassungen.push([...(b?.punkte ?? [])]);
+      return this;
+    }
     // Die Komponente ruft `resize()` nach dem Einblenden. Fehlt die
     // Methode, wirft der Aufruf in einem requestAnimationFrame — als
     // UNBEHANDELTE Rejection, die den ganzen Lauf mit Rueckgabewert 1
@@ -184,6 +198,10 @@ beforeEach(() => {
   h.popupsOffen = 0;
   h.sichtbarkeit = {};
   h.ebenen = new Set<string>();
+  h.ausschnitt = { s: 40, n: 60, w: 0, o: 20 };
+  h.mitte = { lng: 6, lat: 48 };
+  h.zoom = 4;
+  h.einpassungen = [];
 });
 afterEach(() => cleanup());
 
@@ -396,5 +414,44 @@ describe("Klick auf einen Kollegen", () => {
     expect(hinweis.textContent).toMatch(/keine Route/i);
     // Und er muss oben drauf liegen: Die Leiste traegt z-index 500.
     expect(Number(hinweis.style.zIndex)).toBeGreaterThan(500);
+  });
+});
+
+describe("Datumsgrenze im Kartenausschnitt", () => {
+  it("passt Kollegen beiderseits der Datumsgrenze auf einen kleinen Ausschnitt ein", async () => {
+    // Zwei Flieger bei 179° und −179°: 2° auseinander, nicht 358°.
+    const WEST = { ...KOLLEGE, id: "PIREP-WEST", position: { ...KOLLEGE.position, lat: 52, lon: 179 } };
+    const OST = { ...KOLLEGE, id: "PIREP-OST", ident: "SK1", position: { ...KOLLEGE.position, lat: 53, lon: -179 } };
+    h.invokeAntworten = { va_live_flights: [WEST, OST] };
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => {
+      render(<LiveMapView />);
+    });
+    await waitFor(() => expect(h.einpassungen.length).toBeGreaterThan(0), { timeout: 3000 });
+    const laengen = h.einpassungen[0]!.map((p) => p[0]);
+    expect(Math.max(...laengen) - Math.min(...laengen)).toBeLessThanOrEqual(2);
+  });
+
+  it("laedt Rollwege eines Platzes jenseits der Datumsgrenze, wenn er im Bild ist", async () => {
+    // Ausschnitt 175…185° (Karte ueber die Grenze geschoben), Adak bei −176,6°.
+    h.zoom = 12;
+    h.ausschnitt = { s: 45, n: 58, w: 175, o: 185 };
+    h.mitte = { lng: 180, lat: 51.5 };
+    h.invokeAntworten = {
+      va_live_flights: [],
+      airport_ground_index: [{ icao: "PADK", lat: 51.88, lon: -176.65 }],
+      airport_ground_get: null,
+    };
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => {
+      render(<LiveMapView />);
+    });
+    await waitFor(
+      () =>
+        expect(
+          h.invokeRufe.some((r) => r.cmd === "airport_ground_get" && r.args?.icao === "PADK"),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
   });
 });

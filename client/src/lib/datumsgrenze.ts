@@ -20,8 +20,18 @@ export function ohneDatumsgrenzenSprung(
 ): [number, number][] {
   const out: [number, number][] = [];
   for (const [lon, lat] of coords) {
+    // Ein kaputter Punkt faellt raus — er darf nicht zum Bezug fuer alle
+    // folgenden werden, sonst waere der ganze Rest der Linie NaN.
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
     const vorher = out[out.length - 1];
-    out.push([vorher ? laengeNebenVorgaenger(lon, vorher[0]) : lon, lat]);
+    // Der erste Punkt kommt in den Bereich ±180, damit die Linie nicht
+    // jenseits der gezeichneten Weltkopien beginnt.
+    out.push([
+      vorher
+        ? laengeNebenVorgaenger(lon, vorher[0])
+        : laengeNebenVorgaenger(lon, 0),
+      lat,
+    ]);
   }
   return out;
 }

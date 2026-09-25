@@ -84,4 +84,31 @@ describe("Datumsgrenze", () => {
       [139.8, 35.5],
     ]);
   });
+
+  it("kaputter Punkt verdirbt nicht den Rest der Linie", () => {
+    expect(
+      ohneDatumsgrenzenSprung([
+        [170, 0],
+        [Number.NaN, 0],
+        [175, 0],
+        [-179, 0],
+      ]),
+    ).toEqual([
+      [170, 0],
+      [175, 0],
+      [181, 0],
+    ]);
+  });
+
+  it("erster Punkt ausserhalb ±180 wird zurueckgeholt", () => {
+    expect(
+      ohneDatumsgrenzenSprung([
+        [540, 0],
+        [-179, 0],
+      ]),
+    ).toEqual([
+      [180, 0],
+      [181, 0],
+    ]);
+  });
 });
