@@ -3,6 +3,7 @@ import {
   laengeNebenVorgaenger,
   ohneDatumsgrenzenSprung,
   punkteAufKleinstemBogen,
+  umrissOhneNaht,
 } from "./datumsgrenze";
 
 describe("Datumsgrenze", () => {
@@ -110,5 +111,73 @@ describe("Datumsgrenze", () => {
       [180, 0],
       [181, 0],
     ]);
+  });
+
+  it("Umriss laesst nur die Schnittkante bei ±180° weg", () => {
+    // Anchorage-artig: westliches Stueck bis +180, oestliches ab −180.
+    const fc: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: { farbe: "#f00" },
+          geometry: {
+            type: "MultiPolygon",
+            coordinates: [
+              [
+                [
+                  [170, 50],
+                  [180, 50],
+                  [180, 60],
+                  [170, 60],
+                  [170, 50],
+                ],
+              ],
+              [
+                [
+                  [-180, 50],
+                  [-170, 50],
+                  [-170, 60],
+                  [-180, 60],
+                  [-180, 50],
+                ],
+              ],
+            ],
+          },
+        },
+      ],
+    };
+    const u = umrissOhneNaht(fc);
+    expect(u.features).toHaveLength(1);
+    expect(u.features[0].properties).toEqual({ farbe: "#f00" });
+    const kanten = u.features[0].geometry.coordinates.flatMap((zug) =>
+      zug.slice(1).map((p, i) => [zug[i], p]),
+    );
+    // 2 Ringe x 4 Kanten = 8, davon je eine auf der Datumsgrenze.
+    expect(kanten).toHaveLength(6);
+    for (const [a, b] of kanten) {
+      expect(Math.abs(a[0]) === 180 && Math.abs(b[0]) === 180).toBe(false);
+    }
+  });
+
+  it("Umriss eines gewoehnlichen Sektors bleibt vollstaendig", () => {
+    const ring = [
+      [5, 47],
+      [15, 47],
+      [15, 55],
+      [5, 55],
+      [5, 47],
+    ];
+    const u = umrissOhneNaht({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Polygon", coordinates: [ring] },
+        },
+      ],
+    });
+    expect(u.features[0].geometry.coordinates).toEqual([ring]);
   });
 });

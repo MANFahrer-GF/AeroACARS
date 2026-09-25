@@ -65,3 +65,55 @@ export function punkteAufKleinstemBogen(
     return [n < start ? n + 360 : n, lat];
   });
 }
+
+/** Liegt die Kante genau auf der Datumsgrenze (beide Enden bei +180° oder
+ *  beide bei −180°)? */
+function kanteAufDatumsgrenze(
+  a: GeoJSON.Position,
+  b: GeoJSON.Position,
+): boolean {
+  const auf = (lon: number) => Math.abs(Math.abs(lon) - 180) < 1e-9;
+  return auf(a[0]) && auf(b[0]) && Math.sign(a[0]) === Math.sign(b[0]);
+}
+
+/** Umriss von Flaechen OHNE die Schnittkante an der Datumsgrenze.
+ *
+ *  Die VATSpy-Grenzen teilen Pazifik-FIRs (Anchorage, Oakland Oceanic,
+ *  Magadan, Nadi, Auckland) sauber bei ±180° in zwei Stuecke. Die Flaeche
+ *  sieht dadurch richtig aus, der Rand aber zeichnet an 180° eine senkrechte
+ *  Naht mitten durch den Sektor (Kartenbild 25.09.2026). Hier fallen genau
+ *  diese Kanten weg; alle anderen bleiben, die Eigenschaften (Farbe usw.)
+ *  wandern mit. Nur fuer die LINIEN-Ebene — Flaeche und Klicks nutzen
+ *  weiter die Polygone. */
+export function umrissOhneNaht(
+  fc: GeoJSON.FeatureCollection,
+): GeoJSON.FeatureCollection<GeoJSON.MultiLineString> {
+  const features: GeoJSON.Feature<GeoJSON.MultiLineString>[] = [];
+  for (const f of fc.features) {
+    const g = f.geometry;
+    if (!g || (g.type !== "Polygon" && g.type !== "MultiPolygon")) continue;
+    const ringe = g.type === "Polygon" ? g.coordinates : g.coordinates.flat();
+    const linien: GeoJSON.Position[][] = [];
+    for (const ring of ringe) {
+      let zug: GeoJSON.Position[] = [];
+      for (let i = 0; i < ring.length; i++) {
+        const p = ring[i];
+        if (i > 0 && kanteAufDatumsgrenze(ring[i - 1], p)) {
+          if (zug.length >= 2) linien.push(zug);
+          zug = [p];
+        } else {
+          zug.push(p);
+        }
+      }
+      if (zug.length >= 2) linien.push(zug);
+    }
+    if (linien.length > 0) {
+      features.push({
+        type: "Feature",
+        properties: f.properties,
+        geometry: { type: "MultiLineString", coordinates: linien },
+      });
+    }
+  }
+  return { type: "FeatureCollection", features };
+}

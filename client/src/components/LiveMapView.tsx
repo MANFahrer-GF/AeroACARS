@@ -34,6 +34,7 @@ import {
   laengeNebenVorgaenger,
   ohneDatumsgrenzenSprung,
   punkteAufKleinstemBogen,
+  umrissOhneNaht,
 } from "../lib/datumsgrenze";
 
 // Die Stil-Adressen kommen vom Server — siehe `BasemapContext`. CARTO
@@ -547,6 +548,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       (map.getSource("vatsim-pilots") as maplibregl.GeoJSONSource | undefined)?.setData(pilots);
       (map.getSource("vatsim-atc-airports") as maplibregl.GeoJSONSource | undefined)?.setData(atc);
       (map.getSource("vatsim-sectors") as maplibregl.GeoJSONSource | undefined)?.setData(sectors);
+      (map.getSource("vatsim-sectors-umriss") as maplibregl.GeoJSONSource | undefined)?.setData(
+        umrissOhneNaht(sectors),
+      );
       (map.getSource("vatsim-sector-labels") as maplibregl.GeoJSONSource | undefined)?.setData(labels);
     };
 
@@ -1126,6 +1130,14 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!map.getSource("vatsim-sectors")) {
       map.addSource("vatsim-sectors", { type: "geojson", data: vatsimSectorsRef.current });
     }
+    // Eigene Quelle fuer den Rand: ohne die Schnittkante bei ±180°, sonst
+    // zieht sich eine Naht mitten durch die Pazifik-Sektoren.
+    if (!map.getSource("vatsim-sectors-umriss")) {
+      map.addSource("vatsim-sectors-umriss", {
+        type: "geojson",
+        data: umrissOhneNaht(vatsimSectorsRef.current),
+      });
+    }
     {
       ebeneAnlegen(map, {
         id: "vatsim-sectors-fill", type: "fill", source: "vatsim-sectors",
@@ -1147,7 +1159,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     }
     {
       ebeneAnlegen(map, {
-        id: "vatsim-sectors-line", type: "line", source: "vatsim-sectors",
+        id: "vatsim-sectors-line", type: "line", source: "vatsim-sectors-umriss",
         paint: {
           "line-color": ["get", "farbe"],
           "line-width": ["case", ["has", "ohne_hoehe"], 1.4, 1],
