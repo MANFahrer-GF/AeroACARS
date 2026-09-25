@@ -204,8 +204,10 @@ export function LogbookView() {
     mapRef.current = map;
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff";
     map.on("load", () => {
-      if (route.length >= 2) {
-        const coords = ohneDatumsgrenzenSprung(route.map((p) => [p.lon, p.lat] as [number, number]));
+      // Erst filtern, dann zaehlen: fallen kaputte Punkte raus, darf die
+      // Karte nicht mit einem leeren Track weitermachen (Cloud-QS 25.09.2026).
+      const coords = ohneDatumsgrenzenSprung(route.map((p) => [p.lon, p.lat] as [number, number]));
+      if (coords.length >= 2) {
         map.addSource("trk", { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } } });
         map.addLayer({ id: "trk", type: "line", source: "trk", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": accent, "line-width": 3 } });
         const pin = (c: [number, number], col: string) => { const el = document.createElement("div"); el.style.cssText = `width:12px;height:12px;border-radius:50%;background:${col};border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.5)`; new maplibregl.Marker({ element: el }).setLngLat(c).addTo(map); };
