@@ -74,6 +74,8 @@ mod hoppie;
 /// v1.7.44: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
 /// A-CDM-Werkzeug von VATSIM Spain. Nur lesend.
 mod vdgs;
+/// Telemetrie-Monitor (v1.8): Kanalkatalog, Verlauf, Strom.
+mod telemetrie;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -3196,6 +3198,8 @@ struct AppState {
     /// resulting `FlightResumed.previous_exit_clean` reflects the run that
     /// just ended, not the one currently starting.
     previous_run_exit_clean: Mutex<Option<bool>>,
+    /// v1.8: Telemetrie-Monitor — Verlauf und ob gerade jemand zuschaut.
+    telemetrie: telemetrie::Monitor,
 }
 
 /// v0.7.9: Warning-State wenn SimBrief-OFP DEP+ARR matched aber Callsign
@@ -52189,6 +52193,233 @@ fn inspector_list(_state: tauri::State<'_, AppState>) -> Vec<serde_json::Value> 
     }
 }
 
+// ---- Telemetrie-Monitor (v1.8) ----
+//
+// Der Tab „Telemetrie" (und sein eigenes Fenster) bekommt den Kanalkatalog
+// beim Oeffnen und danach 20× je Sekunde einen Frame als Ereignis
+// `telemetrie-frame`. Der Strom laeuft nur, solange die Oberflaeche sich
+// alle paar Sekunden meldet (`telemetrie_halten`); der Verlauf der letzten
+// fuenf Minuten wird dagegen immer mitgeschrieben, damit ein mitten im Flug
+// geoeffneter Monitor sofort gefuellte Kurven zeigt. Siehe `telemetrie.rs`.
+
+#[derive(Serialize)]
+struct TelemetrieStartDto {
+    katalog: telemetrie::KatalogDto,
+    verlauf: Vec<telemetrie::Frame>,
+}
+
+#[tauri::command]
+fn telemetrie_start(app: AppHandle, window: tauri::Window) -> TelemetrieStartDto {
+    let state = app.state::<AppState>();
+    state
+        .telemetrie
+        .halten(window.label(), std::time::Instant::now());
+    TelemetrieStartDto {
+        katalog: telemetrie::katalog(),
+        verlauf: state.telemetrie.verlauf(),
+    }
+}
+
+#[tauri::command]
+fn telemetrie_halten(app: AppHandle, window: tauri::Window) {
+    app.state::<AppState>()
+        .telemetrie
+        .halten(window.label(), std::time::Instant::now());
+}
+
+/// Dieses Fenster schaut nicht mehr zu. Ein anderes (Tab oder eigenes
+/// Fenster) haelt den Strom mit seinem eigenen Eintrag weiter offen.
+#[tauri::command]
+fn telemetrie_stop(app: AppHandle, window: tauri::Window) {
+    app.state::<AppState>().telemetrie.beenden(window.label());
+}
+
+/// Fragt ueber den Speichern-Dialog nach dem Ziel und schreibt die CSV.
+///
+/// Der Pfad kommt bewusst NICHT aus der Oberflaeche: ein Befehl, der jeden
+/// uebergebenen `.csv`-Pfad beschreibt, liesse eingeschleusten Code beliebige
+/// Dateien ueberschreiben (Codex-Befund 3, 25.09.2026). `Ok(false)` =
+/// Dialog abgebrochen.
+#[tauri::command]
+async fn telemetrie_csv_speichern(
+    app: AppHandle,
+    inhalt: String,
+    dateiname: String,
+) -> Result<bool, UiError> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("CSV", &["csv"])
+        .set_file_name(dateiname)
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(ziel) = rx.await.ok().flatten() else {
+        return Ok(false);
+    };
+    let mut pfad = ziel
+        .into_path()
+        .map_err(|e| UiError::new("bad_path", format!("Speicherort ungültig: {e}")))?;
+    if pfad.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase())
+        != Some("csv".into())
+    {
+        pfad.set_extension("csv");
+    }
+    tokio::fs::write(&pfad, inhalt).await.map_err(|e| {
+        UiError::new(
+            "write_failed",
+            format!("CSV ließ sich nicht speichern: {e}"),
+        )
+    })?;
+    Ok(true)
+}
+
+/// Oeffnet den Monitor in einem eigenen Fenster (zweiter Bildschirm).
+/// Zweimal aufgerufen wird das vorhandene nach vorn geholt.
+#[tauri::command]
+async fn telemetrie_fenster_oeffnen(app: AppHandle) -> Result<(), UiError> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    if let Some(vorhanden) = app.get_webview_window("telemetrie") {
+        let _ = vorhanden.unminimize();
+        let _ = vorhanden.show();
+        let _ = vorhanden.set_focus();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        "telemetrie",
+        WebviewUrl::App("index.html?fenster=telemetrie".into()),
+    )
+    .title("AeroACARS — Telemetrie")
+    .inner_size(1400.0, 900.0)
+    .min_inner_size(800.0, 560.0)
+    .resizable(true)
+    .build()
+    .map_err(|e| {
+        UiError::new(
+            "window_failed",
+            format!("Fenster ließ sich nicht öffnen: {e}"),
+        )
+    })?;
+    Ok(())
+}
+
+/// Fenster, die den Telemetrie-Strom bekommen.
+const TELEMETRIE_FENSTER: [&str; 2] = ["main", "telemetrie"];
+
+/// Zusatzwerte beim aktiven Adapter an- oder abmelden.
+fn telemetrie_zusatz_setzen(app: &AppHandle, aktiv: bool) {
+    let state = app.state::<AppState>();
+    let kind = read_sim_config(app).kind;
+    let xp = if aktiv && kind.is_xplane() {
+        telemetrie::xplane_zusatzfelder()
+    } else {
+        Vec::new()
+    };
+    // Mit Semikolon: ohne waere das `if let` auf dem Mac der Schlussausdruck
+    // der Funktion, und die Sperre lebte laenger als `state` (E0597).
+    if let Ok(a) = state.xplane.lock() {
+        a.zusatz_setzen(xp);
+    };
+    #[cfg(target_os = "windows")]
+    {
+        let ms = if aktiv && kind.is_msfs() {
+            telemetrie::msfs_zusatzfelder()
+        } else {
+            Vec::new()
+        };
+        if let Ok(a) = state.msfs.lock() {
+            a.zusatz_setzen(ms);
+        };
+    }
+}
+
+fn telemetrie_zusatz_werte(app: &AppHandle) -> HashMap<String, f64> {
+    let state = app.state::<AppState>();
+    let kind = read_sim_config(app).kind;
+    if kind.is_xplane() {
+        let roh = state
+            .xplane
+            .lock()
+            .map(|a| a.zusatz_werte())
+            .unwrap_or_default();
+        return telemetrie::zusatz_umrechnen(roh, true);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if kind.is_msfs() {
+            let roh = state
+                .msfs
+                .lock()
+                .map(|a| a.zusatz_werte())
+                .unwrap_or_default();
+            return telemetrie::zusatz_umrechnen(roh, false);
+        }
+    }
+    HashMap::new()
+}
+
+/// Takt des Monitors, laeuft fuer die ganze Lebensdauer der App.
+///
+/// Je Tick (50 ms): Messpunkt holen, in den Verlauf aufnehmen (10 Hz) und —
+/// nur wenn jemand zuschaut — als Ereignis senden. Wechselt die Sicht
+/// (Monitor auf/zu, Simulator gewechselt), werden die Zusatzwerte beim
+/// Adapter an- bzw. abgemeldet. Ohne Messpunkt passiert nichts.
+fn spawn_telemetrie_takt(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut takt = tokio::time::interval(telemetrie::STROM_TAKT);
+        takt.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // (aktiv, Simulator) beim letzten Abgleich mit den Adaptern.
+        let mut zuletzt: Option<(bool, SimKind)> = None;
+        let mut flugzeug: Option<String> = None;
+        loop {
+            takt.tick().await;
+            let jetzt = std::time::Instant::now();
+            let state = app.state::<AppState>();
+            let aktiv = state.telemetrie.aktiv(jetzt);
+            let kind = read_sim_config(&app).kind;
+            if zuletzt != Some((aktiv, kind)) {
+                // Anderer Simulator: der Verlauf gehoert nicht mehr dazu, auch
+                // wenn der Flugzeugtitel gleich heisst (Codex-Befund 5).
+                if zuletzt.is_some_and(|(_, alt)| alt != kind) {
+                    state.telemetrie.verlauf_leeren();
+                    flugzeug = None;
+                }
+                telemetrie_zusatz_setzen(&app, aktiv);
+                zuletzt = Some((aktiv, kind));
+            }
+            let Some(snap) = current_snapshot(&app) else {
+                continue;
+            };
+            // Anderes Flugzeug = der alte Verlauf gehoert nicht mehr dazu.
+            if snap.aircraft_title.is_some() && snap.aircraft_title != flugzeug {
+                if flugzeug.is_some() {
+                    state.telemetrie.verlauf_leeren();
+                }
+                flugzeug = snap.aircraft_title.clone();
+            }
+            let zusatz = if aktiv {
+                telemetrie_zusatz_werte(&app)
+            } else {
+                HashMap::new()
+            };
+            let frame = telemetrie::frame(&snap, &zusatz);
+            state.telemetrie.aufnehmen(&frame, jetzt);
+            if aktiv {
+                // Nur an die eigenen Fenster — nicht an ein fremdes wie das
+                // VATSIM-CDM-Fenster (vats.im), das ebenfalls eine WebView ist.
+                for ziel in TELEMETRIE_FENSTER {
+                    if app.get_webview_window(ziel).is_some() {
+                        let _ = tauri::Emitter::emit_to(&app, ziel, "telemetrie-frame", &frame);
+                    }
+                }
+            }
+        }
+    });
+}
+
 // v0.7.16 introduced an opt-in `set_fenix_beta_enabled` / `get_fenix_beta_enabled`
 // Tauri-Command-Paar fuer das Fenix-A32x-Profil. v0.7.17 (F-001) hat das wieder
 // entfernt: die Fenix-Erkennung ist jetzt automatisch (siehe AircraftProfile::
@@ -55405,6 +55636,9 @@ pub fn run() {
                 state.auto_file_enabled.store(true, Ordering::Relaxed);
             }
             spawn_auto_start_watcher(app.handle().clone());
+            // v1.8: Telemetrie-Monitor. Schreibt den Verlauf immer mit,
+            // sendet nur bei offenem Monitor.
+            spawn_telemetrie_takt(app.handle().clone());
             // Build the system-tray icon + menu. On Windows this lands
             // in the system tray (bottom-right); on Mac in the menubar
             // (top-right). The icon click toggles window visibility,
@@ -55618,6 +55852,11 @@ pub fn run() {
             inspector_remove,
             inspector_list,
             xplane_inspector_list,
+            telemetrie_start,
+            telemetrie_halten,
+            telemetrie_stop,
+            telemetrie_csv_speichern,
+            telemetrie_fenster_oeffnen,
             xplane_premium_status,
             xplane_detect_install_path,
             xplane_install_plugin,

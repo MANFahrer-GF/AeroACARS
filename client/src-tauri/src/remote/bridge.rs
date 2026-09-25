@@ -1223,6 +1223,16 @@ mod tests {
             // Das Tablet hat kein solches Fenster; die Oberfläche ruft den
             // Befehl nur mit isTauri auf.
             "fenster_an_inhalt_anpassen",
+            // v1.8 Telemetrie-Monitor: der Strom kommt als Tauri-Ereignis
+            // 20× je Sekunde und wird bewusst NICHT ueber die LAN-Bruecke
+            // gefaechert (Last auf dem Sim-PC, das Tablet braucht ihn nicht).
+            // Die Oberflaeche zeigt den Tab nur mit isTauri. Fenster und
+            // Dateischreiben betreffen ohnehin den Sim-PC.
+            "telemetrie_start",
+            "telemetrie_halten",
+            "telemetrie_stop",
+            "telemetrie_csv_speichern",
+            "telemetrie_fenster_oeffnen",
         ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,

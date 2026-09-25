@@ -19,6 +19,8 @@ import { VatsimCdmView } from "./components/VatsimCdmView";
 import { Notice } from "./components/ui";
 import { VdgsPlatte, type VdgsStand } from "./components/VdgsBand";
 import { SprungBanner } from "./components/SprungBanner";
+import { TelemetrieFenster, TelemetrieView } from "./components/telemetrie/TelemetrieView";
+import { vorschauQuelle } from "./components/telemetrie/vorschau";
 import type { ActiveFlightInfo } from "./types";
 
 // v0.9.0 (#GlitchTip): Sentry-Init MUSS frueh laufen, sonst gehen
@@ -111,6 +113,13 @@ function Vorschau({ was }: { was: string }) {
       </SkinProvider>
     );
   }
+  if (was === "telemetrie") {
+    return (
+      <SkinProvider>
+        <TelemetrieVorschau />
+      </SkinProvider>
+    );
+  }
   if (was === "integritaet") {
     return (
       <SkinProvider>
@@ -119,6 +128,16 @@ function Vorschau({ was }: { was: string }) {
     );
   }
   return <div style={{ padding: 24, fontFamily: "system-ui" }}>Unbekannte Vorschau: {was}</div>;
+}
+
+/** Telemetrie-Monitor mit abgespieltem A320-Endanflug statt Simulator. */
+function TelemetrieVorschau() {
+  const [quelle] = useState(vorschauQuelle);
+  return (
+    <div className="tele-fenster">
+      <TelemetrieView imFenster quelle={quelle} />
+    </div>
+  );
 }
 
 /** Vorschau des schwebenden Integritaets-Hinweises ueber echtem Inhalt.
@@ -354,6 +373,12 @@ function VdgsVorschau() {
   );
 }
 
+/** v1.8: Dieses Fenster ist das eigene Fenster des Telemetrie-Monitors —
+ *  einmal beim Laden bestimmt, damit `Root` seine Hooks immer gleich ruft
+ *  (Codex-Befund 6). */
+const IST_TELEMETRIE_FENSTER =
+  isTauri && new URLSearchParams(window.location.search).get("fenster") === "telemetrie";
+
 function Root() {
   if (import.meta.env.DEV) {
     const was = new URLSearchParams(window.location.search).get("vorschau");
@@ -421,7 +446,13 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         </div>
       )}
     >
-      <Root />
+      {IST_TELEMETRIE_FENSTER ? (
+        <SkinProvider>
+          <TelemetrieFenster />
+        </SkinProvider>
+      ) : (
+        <Root />
+      )}
     </Sentry.ErrorBoundary>
   </React.StrictMode>,
 );

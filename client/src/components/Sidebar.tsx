@@ -18,6 +18,7 @@
 
 import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { isTauri } from "../lib/ipc";
 
 export type Tab =
   | "cockpit"
@@ -27,6 +28,7 @@ export type Tab =
   | "briefing"
   | "logbook"
   | "landing"
+  | "telemetrie"
   | "news"
   | "log"
   | "settings"
@@ -49,6 +51,11 @@ export function getInitialCollapsed(): boolean {
    vorgelesen. Strichstärke 1.6, currentColor. */
 
 const I = {
+  telemetrie: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 20h18" /><path d="M3 15l4-5 4 3 4-7 6 8" />
+    </svg>
+  ),
   chat: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.6 9.6 0 0 1-3.5-.7L3 21l1.9-4.6A8.2 8.2 0 0 1 3.6 11.5a8.4 8.4 0 0 1 9-8.4 8.4 8.4 0 0 1 8.4 8.4z" />
@@ -257,6 +264,17 @@ export function Sidebar({
         )}
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
+        {/* v1.8: Telemetrie-Monitor. Nur in der App auf dem Sim-PC — der
+            Strom kommt als Tauri-Ereignis und geht nicht ueber die LAN-
+            Bruecke ans Tablet. */}
+        {isTauri && (
+          <Item
+            icon={I.telemetrie}
+            label={t("tabs.telemetrie")}
+            active={tab === "telemetrie"}
+            onClick={() => setTab("telemetrie")}
+          />
+        )}
         <Item
           icon={I.news}
           label={t("nav.news")}

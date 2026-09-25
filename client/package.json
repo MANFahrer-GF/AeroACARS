@@ -1,9 +1,9 @@
 {
   "name": "aeroacars-client",
   "private": true,
-  "version": "1.7.54",
+  "version": "1.8.0",
   "type": "module",
-  "description": "AeroACARS desktop client \u2014 Tauri 2 + React + TypeScript",
+  "description": "AeroACARS desktop client — Tauri 2 + React + TypeScript",
   "scripts": {
     "dev": "vite",
     "bericht": "node ../scripts/bericht-bauen.mjs",
@@ -29,7 +29,8 @@
     "react-dom": "^19.1.0",
     "react-i18next": "^15.1.1",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "uplot": "1.6.32"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
