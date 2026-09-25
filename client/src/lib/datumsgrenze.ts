@@ -15,7 +15,9 @@ export function laengeNebenVorgaenger(lon: number, vorher: number): number {
 
 /** Linie ohne Sprung ueber die Datumsgrenze: jeder Punkt hoechstens 180°
  *  Laenge vom vorigen entfernt. Die Breite bleibt unveraendert. */
-export function ohneDatumsgrenzenSprung(coords: [number, number][]): [number, number][] {
+export function ohneDatumsgrenzenSprung(
+  coords: [number, number][],
+): [number, number][] {
   const out: [number, number][] = [];
   for (const [lon, lat] of coords) {
     const vorher = out[out.length - 1];
