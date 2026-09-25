@@ -125,6 +125,21 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             ok_json(crate::navdata_zwischenspeicher_bestand(app.clone()))
         }
         "sim_status" => ok_json(crate::sim_status(app.clone(), st!())),
+        // v1.8.1: Telemetrie-Monitor auf dem Tablet. Alle Tablets teilen die
+        // Zuschauerkennung `lan`; die Frames kommen ueber den eigenen
+        // Telemetrie-Kanal der Ereignisverbindung (10/s).
+        "telemetrie_start" => ok_json(crate::telemetrie_start_fuer(
+            &app,
+            crate::telemetrie::LAN_ZUSCHAUER,
+        )),
+        "telemetrie_halten" => {
+            crate::telemetrie_halten_fuer(&app, crate::telemetrie::LAN_ZUSCHAUER);
+            ok_json(())
+        }
+        "telemetrie_stop" => {
+            crate::telemetrie_stop_fuer(&app, crate::telemetrie::LAN_ZUSCHAUER);
+            ok_json(())
+        }
         "sim_get_kind" => ok_json(crate::sim_get_kind(app.clone())),
         "pmdg_status" => ok_json(crate::pmdg_status(st!())),
         "flight_status" => ok_json(crate::flight_status(app.clone(), st!())),
@@ -1223,14 +1238,10 @@ mod tests {
             // Das Tablet hat kein solches Fenster; die Oberfläche ruft den
             // Befehl nur mit isTauri auf.
             "fenster_an_inhalt_anpassen",
-            // v1.8 Telemetrie-Monitor: der Strom kommt als Tauri-Ereignis
-            // 20× je Sekunde und wird bewusst NICHT ueber die LAN-Bruecke
-            // gefaechert (Last auf dem Sim-PC, das Tablet braucht ihn nicht).
-            // Die Oberflaeche zeigt den Tab nur mit isTauri. Fenster und
-            // Dateischreiben betreffen ohnehin den Sim-PC.
-            "telemetrie_start",
-            "telemetrie_halten",
-            "telemetrie_stop",
+            // Telemetrie-Monitor: CSV speichert ueber den Dialog des Sim-PCs
+            // (dort, nicht auf dem Tablet) — ueber die Bruecke sinnlos. Den
+            // Strom selbst gibt es seit v1.8.1 fuers Tablet (eigene Arme
+            // unten, eigener Ereigniskanal).
             "telemetrie_csv_speichern",
             "telemetrie_fenster_oeffnen",
         ];

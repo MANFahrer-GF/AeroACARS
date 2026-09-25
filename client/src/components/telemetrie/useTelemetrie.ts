@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke, isTauri, listen } from "../../lib/ipc";
+import { invoke, listen } from "../../lib/ipc";
 import { ereignisseAus, type Ereignis } from "./ereignisse";
 import type { Frame, Kanal, Katalog, StartAntwort } from "./typen";
 
@@ -22,7 +22,7 @@ export const PUFFER_MS = 5 * 60 * 1000;
 const HALTEN_MS = 5000;
 const ZEICHNEN_MS = 100;
 
-export type Zustand = "laedt" | "bereit" | "fehler" | "kein_tauri";
+export type Zustand = "laedt" | "bereit" | "fehler";
 
 export interface Marker {
   t: number;
@@ -59,6 +59,8 @@ export interface Datenquelle {
   stop: () => void;
 }
 
+/** Ueber `lib/ipc` — in der App direkt, auf dem Tablet ueber die
+ *  LAN-Bruecke (seit v1.8.1, eigener Telemetrie-Kanal, 10 Frames/s). */
 const tauriQuelle: Datenquelle = {
   start: () => invoke<StartAntwort>("telemetrie_start"),
   abonnieren: (cb) => listen<Frame>("telemetrie-frame", (e) => cb(e.payload)),
@@ -71,8 +73,8 @@ const tauriQuelle: Datenquelle = {
 };
 
 export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
-  const q = quelle ?? (isTauri ? tauriQuelle : null);
-  const [zustand, setZustand] = useState<Zustand>(q ? "laedt" : "kein_tauri");
+  const q = quelle ?? tauriQuelle;
+  const [zustand, setZustand] = useState<Zustand>("laedt");
   const [fehler, setFehler] = useState<string | null>(null);
   const [katalog, setKatalog] = useState<Katalog | null>(null);
   const [version, setVersion] = useState(0);

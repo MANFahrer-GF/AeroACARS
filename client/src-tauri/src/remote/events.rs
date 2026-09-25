@@ -39,6 +39,7 @@ pub async fn handle_socket(
     _permit: OwnedSemaphorePermit,
 ) {
     let mut events = ctx.events.subscribe();
+    let mut telemetrie = ctx.events.subscribe_telemetrie();
 
     // Send an immediate status frame so a freshly-connected tablet renders
     // the live panel without waiting for the next shared tick.
@@ -63,6 +64,23 @@ pub async fn handle_socket(
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(_)) => { /* ignore client payloads */ }
                     Some(Err(_)) => break,
+                }
+            }
+
+            // --- v1.8.1: Telemetrie-Strom, eigener Kanal ---
+            // `biased` ist nicht gesetzt: die Zweige werden gleich behandelt,
+            // ein voller Telemetrie-Kanal haelt die Ereignisse nicht auf.
+            frame = telemetrie.recv() => {
+                match frame {
+                    Ok(RemoteEvent { event, payload }) => {
+                        let body = payload.to_string();
+                        if send_event(&mut socket, &event, &body).await.is_err() {
+                            break;
+                        }
+                    }
+                    // Zu langsam: alte Frames ueberspringen.
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => break,
                 }
             }
 

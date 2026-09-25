@@ -21,6 +21,7 @@ import { VdgsPlatte, type VdgsStand } from "./components/VdgsBand";
 import { SprungBanner } from "./components/SprungBanner";
 import { TelemetrieFenster, TelemetrieView } from "./components/telemetrie/TelemetrieView";
 import { vorschauQuelle } from "./components/telemetrie/vorschau";
+import { Notizblock } from "./components/notizblock/Notizblock";
 import type { ActiveFlightInfo } from "./types";
 
 // v0.9.0 (#GlitchTip): Sentry-Init MUSS frueh laufen, sonst gehen
@@ -110,6 +111,15 @@ function Vorschau({ was }: { was: string }) {
     return (
       <SkinProvider>
         <SprungVorschau />
+      </SkinProvider>
+    );
+  }
+  if (was === "notizblock") {
+    return (
+      <SkinProvider>
+        <div style={{ minHeight: "100vh", padding: 12, background: "var(--bg)" }}>
+          <Notizblock />
+        </div>
       </SkinProvider>
     );
   }

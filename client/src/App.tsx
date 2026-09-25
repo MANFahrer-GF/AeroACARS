@@ -9,6 +9,7 @@ import {
 import { LoginPage } from "./components/LoginPage";
 import { CockpitView } from "./components/CockpitView";
 import { TelemetrieView } from "./components/telemetrie/TelemetrieView";
+import { Notizblock } from "./components/notizblock/Notizblock";
 import { ResumeFlightBanner } from "./components/ResumeFlightBanner";
 import { BriefingView } from "./components/BriefingView";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -124,7 +125,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "telemetrie" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "telemetrie" | "notizblock" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -1030,6 +1031,7 @@ function App() {
       )}
 
       {status.kind === "loggedIn" && tab === "telemetrie" && <TelemetrieView />}
+      {status.kind === "loggedIn" && tab === "notizblock" && <Notizblock />}
 
       {status.kind === "loggedIn" && tab === "cockpit" && (
         <CockpitView

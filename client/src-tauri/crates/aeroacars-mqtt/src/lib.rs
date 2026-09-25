@@ -606,6 +606,13 @@ pub struct BahnHerkunftWire {
     pub tch_delta_ft: Option<f64>,
     /// F5 TCH classification.
     pub tch_class: Option<String>,
+    /// v1.8.1: naeherungsweise Hoehe der Raeder ueber der Schwelle (ft) —
+    /// Grundlage der Einstufung (FAA Order 8260.58D, Wheel Crossing Height).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tch_rad_ft: Option<f64>,
+    /// v1.8.1: FAA-Hoehengruppe des Musters (1–4), aus der `tch_rad_ft` folgt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tch_hoehengruppe: Option<u8>,
     /// F6 Displaced-Threshold-Warning: Touchdown im Pre-Threshold-Paint.
     pub pre_displaced_threshold: Option<bool>,
 }

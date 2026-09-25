@@ -799,6 +799,13 @@ pub struct LandingRecord {
     /// "slightly_high" | "high" | "below_profile".
     #[serde(default)]
     pub tch_class: Option<String>,
+    /// v1.8.1: naeherungsweise Hoehe der Raeder ueber der Schwelle (ft).
+    /// Alte Landungen haben das Feld nicht — sie werden nicht neu gerechnet.
+    #[serde(default)]
+    pub tch_rad_ft: Option<f64>,
+    /// v1.8.1: FAA-Hoehengruppe des Musters (1–4).
+    #[serde(default)]
+    pub tch_hoehengruppe: Option<u8>,
     /// F6 Displaced-Threshold-Warning: pilot touched down in the
     /// pre-threshold paint zone (illegal). Only true when the runway
     /// has a non-zero displaced_threshold_ft AND the touchdown sits

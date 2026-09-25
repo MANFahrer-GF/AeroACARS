@@ -26,6 +26,13 @@ pub const VERLAUF_HZ: u32 = 10;
 pub const VERLAUF_MAX: usize = 5 * 60 * VERLAUF_HZ as usize;
 /// Takt des Live-Stroms an die Oberflaeche.
 pub const STROM_TAKT: Duration = Duration::from_millis(50);
+/// v1.8.1: Kennung der Tablets (LAN-Bruecke) in der Zuschauerliste. Alle
+/// Tablets teilen sie — schliesst eines den Monitor, haelt das naechste
+/// Lebenszeichen eines anderen den Strom wieder offen.
+pub const LAN_ZUSCHAUER: &str = "lan";
+/// Jeder wievielte Takt geht ans Tablet: 20 Hz / 2 = 10 Frames je Sekunde.
+pub const LAN_JEDER_NTE: u32 = 2;
+
 /// Ohne Lebenszeichen der Oberflaeche endet der Strom nach dieser Zeit —
 /// ein abgestuerztes oder geschlossenes Fenster haelt ihn nicht offen.
 pub const HALTEN_DAUER: Duration = Duration::from_secs(15);
@@ -1086,6 +1093,13 @@ impl Monitor {
             g.zuschauer.remove(wer);
         }
     }
+    /// Schaut dieser Zuschauer (Fenster oder „lan") gerade zu?
+    pub fn aktiv_fuer(&self, wer: &str, jetzt: Instant) -> bool {
+        self.inner
+            .lock()
+            .map(|g| g.zuschauer.get(wer).is_some_and(|bis| *bis > jetzt))
+            .unwrap_or(false)
+    }
     pub fn aktiv(&self, jetzt: Instant) -> bool {
         self.inner
             .lock()
@@ -1330,6 +1344,16 @@ mod tests {
         m.halten("main", t0);
         m.beenden("main");
         assert!(!m.aktiv(t0));
+    }
+
+    #[test]
+    fn zuschauer_einzeln_abfragbar() {
+        let m = Monitor::default();
+        let t0 = Instant::now();
+        m.halten(LAN_ZUSCHAUER, t0);
+        assert!(m.aktiv_fuer(LAN_ZUSCHAUER, t0));
+        assert!(!m.aktiv_fuer("main", t0));
+        assert!(!m.aktiv_fuer(LAN_ZUSCHAUER, t0 + HALTEN_DAUER + Duration::from_millis(1)));
     }
 
     #[test]

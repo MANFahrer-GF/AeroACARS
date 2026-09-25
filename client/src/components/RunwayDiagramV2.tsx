@@ -88,6 +88,11 @@ export interface RunwayDiagramV2Props {
   tch_expected_ft?: number | null;
   tch_delta_ft?: number | null;
   tch_class?: TchClass | null;
+  /** v1.8.1: naeherungsweise Hoehe der Raeder ueber der Schwelle (ft).
+   *  Fehlt bei aelteren Landungen — dann die alte Anzeige. */
+  tch_rad_ft?: number | null;
+  /** v1.8.1: FAA-Hoehengruppe des Musters (1–4). */
+  tch_hoehengruppe?: number | null;
   pre_displaced_threshold?: boolean | null;
   rollout_m?: number | null;
 
@@ -1504,7 +1509,12 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         {props.tch_actual_ft != null && props.tch_class && (
           <Pill
             label={t("runway_v2.pill_tch")}
-            value={`${props.tch_actual_ft.toFixed(0)} ft${props.tch_delta_ft != null ? ` · Δ ${props.tch_delta_ft >= 0 ? "+" : ""}${props.tch_delta_ft.toFixed(0)} ft` : ""} · ${t(tchClassLabelKey(props.tch_class))}`}
+            value={
+              props.tch_rad_ft != null
+                ? // v1.8.1: Einstufung nach Raederhoehe (FAA Order 8260.58D).
+                  `${props.tch_actual_ft.toFixed(0)} ft${props.tch_delta_ft != null ? ` (Δ ${props.tch_delta_ft >= 0 ? "+" : ""}${props.tch_delta_ft.toFixed(0)})` : ""} · ${t("runway_v2.tch_raeder", { ft: props.tch_rad_ft.toFixed(0) })} · ${t(tchRadLabelKey(props.tch_class))}`
+                : `${props.tch_actual_ft.toFixed(0)} ft${props.tch_delta_ft != null ? ` · Δ ${props.tch_delta_ft >= 0 ? "+" : ""}${props.tch_delta_ft.toFixed(0)} ft` : ""} · ${t(tchClassLabelKey(props.tch_class))}`
+            }
             tone={tchTone(props.tch_class)}
           />
         )}
@@ -1874,6 +1884,24 @@ function tchClassLabelKey(c: TchClass): string {
       return "runway_v2.tch_high";
     case "below_profile":
       return "runway_v2.tch_below_profile";
+  }
+}
+
+/** v1.8.1: Texte der Einstufung nach Raederhoehe. Dieselben Klassen wie
+ *  vorher, aber mit anderer Bedeutung — deshalb eigene Schluessel, damit
+ *  alte Landungen ihre alten Texte behalten. */
+function tchRadLabelKey(c: TchClass): string {
+  switch (c) {
+    case "on_profile":
+      return "runway_v2.tch_rad_on_profile";
+    case "slightly_low":
+      return "runway_v2.tch_rad_slightly_low";
+    case "slightly_high":
+      return "runway_v2.tch_rad_slightly_high";
+    case "high":
+      return "runway_v2.tch_rad_high";
+    case "below_profile":
+      return "runway_v2.tch_rad_below_profile";
   }
 }
 

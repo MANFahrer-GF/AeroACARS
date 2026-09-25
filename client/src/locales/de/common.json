@@ -15,7 +15,8 @@
     "about": "Über",
     "cpdlc": "PDC/CPDLC",
     "chat": "Chat",
-    "telemetrie": "Telemetrie"
+    "telemetrie": "Telemetrie",
+    "notizblock": "Notizblock"
   },
   "nav": {
     "news": "Nachrichten",
@@ -661,7 +662,7 @@
         "tch": {
           "abbr": "TCH — Threshold Crossing Height",
           "full": "Schwellen-Überflug-Höhe",
-          "explanation": "Wie hoch warst du über dem Boden, als du die Schwelle überflogen hast? ILS-Anflug typisch 49 ft (≈ 15 m). Zu niedrig: Tail-Strike-Risiko. Zu hoch: Long-Landing."
+          "explanation": "Wie hoch warst du über der Schwelle? Bewertet wird seit v1.8.1 die Höhe der Räder (Wheel Crossing Height) nach FAA Order 8260.58D: gemessene Höhe minus Abstand Gleitpfad→Rad deines Musters (Höhengruppe 1–4: 10/15/20/25 ft, z. B. 737 = 15 ft, 777 = 25 ft). Grün: Räder 20–50 ft über der Schwelle (FAA-Band). Gelb: 10–20 ft oder 50–60 ft. Rot: unter 10 ft (kaum Abstand) oder über 60 ft (Long-Landing). Die Messung nutzt den Bezugspunkt des Simulators, die Räderhöhe ist deshalb eine Näherung."
         },
         "dds": {
           "abbr": "DDS — Displaced Threshold",
@@ -2145,6 +2146,12 @@
     "tch_slightly_high": "leicht hoch",
     "tch_high": "zu hoch",
     "tch_below_profile": "unter Profil",
+    "tch_raeder": "Räder ca. {{ft}} ft",
+    "tch_rad_on_profile": "im FAA-Band",
+    "tch_rad_slightly_low": "unter FAA-Minimum",
+    "tch_rad_slightly_high": "über FAA-Maximum",
+    "tch_rad_high": "deutlich zu hoch",
+    "tch_rad_below_profile": "sehr tief",
     "surface_asp": "Asphalt",
     "surface_con": "Beton",
     "surface_grv": "Schotter",
@@ -2599,7 +2606,6 @@
     "laedt": "Telemetrie wird geladen …",
     "kein_sim": "Noch keine Daten. Sobald der Simulator verbunden ist, laufen die Werte hier ein.",
     "keine_werte": "Dieses Flugzeug oder dieser Simulator liefert hierfür keine Werte.",
-    "nur_am_pc": "Der Telemetrie-Monitor läuft nur in der App auf dem Simulator-PC.",
     "fehler": "Telemetrie nicht verfügbar: {{fehler}}",
     "an": "an",
     "aus": "aus",
@@ -2936,5 +2942,22 @@
       "mittel": "Mittel"
     },
     "tanks_anteil": "Säule = Anteil am Sprit an Bord"
+  },
+  "notizblock": {
+    "werkzeuge": "Werkzeuge",
+    "stift": "Stift",
+    "radierer": "Radierer",
+    "farbe": "Farbe",
+    "farbe_text": "Standard",
+    "farbe_acc": "Blau",
+    "farbe_danger": "Rot",
+    "strich": "Strichstärke",
+    "fein": "fein",
+    "mittel": "kräftig",
+    "finger": "Mit Finger schreiben",
+    "zurueck": "Rückgängig",
+    "alles_loeschen": "Alles löschen",
+    "wirklich_loeschen": "Wirklich alles löschen?",
+    "flaeche": "Schreibfläche"
   }
 }
