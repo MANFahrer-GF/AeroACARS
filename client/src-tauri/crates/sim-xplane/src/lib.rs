@@ -49,6 +49,7 @@ mod probe;
 mod profile;
 mod rref;
 pub mod szenerie;
+mod zusatz;
 mod web_api;
 
 pub use adapter::{ConnectionState, XPlaneAdapter};

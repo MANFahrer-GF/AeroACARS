@@ -38,6 +38,7 @@ use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown};
 use crate::profile::{build_active_catalog, profile_index_for_title, ActiveEntry, PROFILES};
 use crate::rref::{decode_response, encode_request};
 use crate::web_api::{AircraftInfo, DrefIdCache, WebApiClient};
+use crate::zusatz::{ZusatzAbos, ZUSATZ_HZ};
 use crate::{SUBSCRIPTION_HZ, XPLANE_LISTEN_PORT};
 
 /// v0.12.2 (LE1): RREF index base for the aircraft-profile probes.
@@ -97,6 +98,9 @@ struct AdapterShared {
     /// (X-Plane <12.1, or pilot didn't enable Settings → Network →
     /// Web Server).
     aircraft: Mutex<AircraftInfo>,
+    /// Zusatzwerte des Telemetrie-Monitors (v1.8), eigene RREF-Abos ab
+    /// `ZUSATZ_INDEX_BASE`. Leer, solange der Monitor zu ist.
+    zusatz: Mutex<ZusatzAbos>,
     /// Tells the worker thread to stop. Polled in the recv loop.
     stop: AtomicBool,
 }
@@ -136,6 +140,7 @@ impl XPlaneAdapter {
             last_values: Mutex::new(vec![0.0; CATALOG.len()]),
             active_catalog: Mutex::new(build_active_catalog(None)),
             aircraft: Mutex::new(AircraftInfo::default()),
+            zusatz: Mutex::new(ZusatzAbos::default()),
             stop: AtomicBool::new(false),
         });
         Self {
@@ -302,6 +307,18 @@ impl XPlaneAdapter {
     /// v0.12.2: reads the **active catalog** so the panel shows the
     /// dataref names actually in use — including a detected aircraft
     /// profile's overrides (e.g. the CL650 flaps dataref).
+    /// Telemetrie-Monitor: Zusatz-DataRefs setzen, (Kanal-ID, DataRef).
+    /// Leere Liste = Abos beenden. Der Empfangsthread gleicht im naechsten
+    /// Durchlauf ab.
+    pub fn zusatz_setzen(&self, felder: Vec<(String, String)>) {
+        self.shared.zusatz.lock().setzen(felder);
+    }
+
+    /// Aktuelle Zusatzwerte: (Kanal-ID, Rohwert des DataRefs).
+    pub fn zusatz_werte(&self) -> Vec<(String, f64)> {
+        self.shared.zusatz.lock().werte()
+    }
+
     pub fn subscribed_datarefs(&self) -> Vec<DatarefSample> {
         let seen = self.shared.seen.lock();
         let last = self.shared.last_values.lock();
@@ -483,6 +500,22 @@ fn run_listener(shared: Arc<AdapterShared>) {
         }
     };
 
+    // Telemetrie-Monitor: Zusatzabos, die gerade bestehen, und der
+    // Listenstand, zu dem sie gehoeren.
+    let mut zusatz_abonniert: Vec<(i32, String)> = Vec::new();
+    let mut zusatz_generation: u64 = 0;
+    // In Paketen senden: X-Plane verarbeitet nur etwa 140 Abos je Bild,
+    // der Rest ginge sonst verloren.
+    let zusatz_senden = |sock: &UdpSocket, abos: &[(i32, String)], hz: i32| {
+        for (n, (idx, dataref)) in abos.iter().enumerate() {
+            if n > 0 && n % 40 == 0 {
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            let req = encode_request(hz, *idx, dataref);
+            let _ = sock.send_to(&req, &xplane_addr);
+        }
+    };
+
     // Initial subscribe — base catalog + profile probes.
     subscribe_catalog(&socket, &active);
     subscribe_probes(&socket);
@@ -519,7 +552,13 @@ fn run_listener(shared: Arc<AdapterShared>) {
                 let mut parsed = shared.parsed.lock();
                 let mut seen = shared.seen.lock();
                 let mut last = shared.last_values.lock();
+                let mut zusatz = shared.zusatz.lock();
                 for p in pairs {
+                    // Telemetrie-Monitor: Zusatzwerte liegen ueber den
+                    // Proben und werden vor deren Pruefung abgefangen.
+                    if zusatz.empfangen(p.index, p.value) {
+                        continue;
+                    }
                     // v0.12.2 (LE1): discovery-index packets are PROBE
                     // responses — they only prove a profile's dataref
                     // exists. Intercepted BEFORE `apply_field`; they
@@ -632,6 +671,24 @@ fn run_listener(shared: Arc<AdapterShared>) {
             subscribe_catalog(&socket, &active);
         }
 
+        // Telemetrie-Monitor: Zusatzabos mit der gewuenschten Liste
+        // abgleichen. Alte Abos erst abbestellen (freq = 0), dann die
+        // neuen setzen.
+        let (gen_jetzt, abos_jetzt) = {
+            let z = shared.zusatz.lock();
+            (z.generation, z.abos())
+        };
+        if gen_jetzt != zusatz_generation {
+            zusatz_senden(&socket, &zusatz_abonniert, 0);
+            zusatz_senden(&socket, &abos_jetzt, ZUSATZ_HZ);
+            tracing::info!(
+                anzahl = abos_jetzt.len(),
+                "X-Plane: Zusatzwerte fuer den Telemetrie-Monitor abonniert"
+            );
+            zusatz_abonniert = abos_jetzt;
+            zusatz_generation = gen_jetzt;
+        }
+
         // Stale-snapshot guard: if we WERE connected but haven't
         // seen any packet for STALE_TIMEOUT, treat the connection
         // as dropped — clear the parsed state (so snapshot() returns
@@ -655,6 +712,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
                     for v in last.iter_mut() {
                         *v = 0.0;
                     }
+                    shared.zusatz.lock().leeren();
                     *shared.state.lock() = ConnectionState::Connecting;
                 }
                 // Reset so we don't fire the warning every tick.
@@ -673,6 +731,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
             tracing::debug!("X-Plane: not connected — re-sending RREF subscriptions");
             subscribe_catalog(&socket, &active);
             subscribe_probes(&socket);
+            zusatz_senden(&socket, &zusatz_abonniert, ZUSATZ_HZ);
             last_resubscribe_at = Instant::now();
         }
     }
@@ -684,6 +743,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
         let _ = socket.send_to(&req, &xplane_addr);
     }
     unsubscribe_probes(&socket);
+    zusatz_senden(&socket, &zusatz_abonniert, 0);
     tracing::info!("X-Plane UDP listener stopped");
 }
 

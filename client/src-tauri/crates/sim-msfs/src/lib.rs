@@ -38,6 +38,8 @@
 #[cfg(target_os = "windows")]
 mod adapter;
 pub mod facility;
+/// Zusatzwerte fuer den Telemetrie-Monitor — Logik plattformunabhaengig.
+pub mod zusatz;
 
 #[cfg(target_os = "windows")]
 pub use adapter::*;

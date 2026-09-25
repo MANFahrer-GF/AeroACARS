@@ -39,6 +39,11 @@ const TOUCHDOWN_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 2;
 /// SimVar name can't take down the per-tick telemetry.
 const INSPECTOR_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 3;
 const INSPECTOR_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 3;
+/// Definition #4: Zusatzwerte des Telemetrie-Monitors (v1.8). Existiert nur,
+/// solange der Monitor offen ist; eigener Platz aus demselben Grund wie der
+/// Inspector — eine abgelehnte SimVar trifft nur diese Definition.
+const ZUSATZ_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 4;
+const ZUSATZ_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 4;
 /// Definition #10: Bahnen und Rollwege aus der geladenen Szenerie
 /// (v1.7.8). Eigener Platz, damit ein abgelehnter Feldname weder die
 /// Telemetrie noch die Aufsetzprobe verschiebt — dieselbe Ueberlegung
@@ -199,6 +204,8 @@ struct Shared {
     /// vec via add_watch / remove_watch (which sets `dirty=true`),
     /// the worker re-registers definition #3 on the next tick.
     inspector: Mutex<InspectorState>,
+    /// Zusatzwerte des Telemetrie-Monitors (Definition #4).
+    zusatz: Mutex<crate::zusatz::ZusatzState>,
     /// PMDG SDK live data, available only when a PMDG aircraft is
     /// loaded AND the user has set `EnableDataBroadcast=1` in the
     /// aircraft's options ini. Variant tells which PMDG family
@@ -645,6 +652,7 @@ impl MsfsAdapter {
                 sim_crashed: AtomicBool::new(false),
                 touchdown: Mutex::new(None),
                 inspector: Mutex::new(InspectorState::default()),
+                zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
                 pmdg: Mutex::new(PmdgSharedState::default()),
             }),
             worker: None,
@@ -1001,6 +1009,33 @@ impl MsfsAdapter {
     pub fn watches(&self) -> Vec<InspectorWatch> {
         self.shared.inspector.lock().watches.clone()
     }
+
+    // ---- Telemetrie-Monitor (v1.8) ----
+
+    /// Zusatzfelder setzen: (Kanal-ID, SimVar, Einheit). Eine leere Liste
+    /// beendet die Abfrage. Die Definition wird im naechsten Tick des
+    /// Arbeitsthreads angelegt.
+    pub fn zusatz_setzen(&self, felder: Vec<(String, String, String)>) {
+        let felder = felder
+            .into_iter()
+            .map(|(kanal, simvar, einheit)| crate::zusatz::ZusatzFeld {
+                kanal,
+                simvar,
+                einheit,
+            })
+            .collect();
+        self.shared.zusatz.lock().setzen(felder);
+    }
+
+    /// Aktuelle Zusatzwerte: (Kanal-ID, Wert in der angeforderten Einheit).
+    pub fn zusatz_werte(&self) -> Vec<(String, f64)> {
+        self.shared.zusatz.lock().werte()
+    }
+
+    /// SimVars, die der Simulator in dieser Verbindung abgelehnt hat.
+    pub fn zusatz_abgelehnt(&self) -> Vec<String> {
+        self.shared.zusatz.lock().abgelehnt()
+    }
 }
 
 impl Drop for MsfsAdapter {
@@ -1181,6 +1216,8 @@ fn run_dispatch(
     if !shared.inspector.lock().watches.is_empty() {
         shared.inspector.lock().dirty = true;
     }
+    // Dasselbe fuer die Zusatzwerte des Telemetrie-Monitors.
+    shared.zusatz.lock().neue_verbindung();
 
     // v1.7.14 — die offenen Facility-Lieferungen, nach Anfragekennung
     // getrennt.
@@ -1227,6 +1264,26 @@ fn run_dispatch(
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "register_inspector failed; will retry");
+                }
+            }
+        }
+
+        // Telemetrie-Monitor: Zusatzdefinition anlegen, neu anlegen oder
+        // abbauen. Scheitert es, bleibt `dirty` stehen und der naechste
+        // Tick versucht es erneut.
+        let zusatz_offen = shared.zusatz.lock().dirty;
+        if zusatz_offen {
+            let felder = shared.zusatz.lock().zu_registrieren();
+            match conn.register_zusatz(&felder) {
+                Ok(kennungen) => {
+                    let reihenfolge = felder.iter().map(|(i, _)| *i).collect();
+                    shared
+                        .zusatz
+                        .lock()
+                        .registriert(reihenfolge, kennungen, Instant::now());
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Zusatzwerte fuer den Telemetrie-Monitor nicht angelegt");
                 }
             }
         }
@@ -1667,6 +1724,15 @@ fn run_dispatch(
                             }
                         }
                     }
+                    // Telemetrie-Monitor: abgelehnte Zusatz-SimVar aussortieren,
+                    // die Definition wird im naechsten Tick ohne sie angelegt.
+                    if let Some(simvar) = shared.zusatz.lock().ausnahme(send_id) {
+                        tracing::info!(
+                            exception,
+                            %simvar,
+                            "Zusatzwert vom Simulator abgelehnt — aus dem Telemetrie-Monitor genommen"
+                        );
+                    }
                     // Route it to the Inspector tool too, if this
                     // exception's send_id matches one of its watches'
                     // AddToDataDefinition calls — otherwise the pilot
@@ -1786,6 +1852,9 @@ fn run_dispatch(
                         }
                         INSPECTOR_REQUEST_ID => {
                             shared.inspector.lock().ingest(&bytes);
+                        }
+                        ZUSATZ_REQUEST_ID => {
+                            shared.zusatz.lock().einlesen(&bytes, Instant::now());
                         }
                         other => {
                             tracing::trace!(request_id = other, "unknown SimObjectData request_id");
@@ -2411,6 +2480,88 @@ impl Connection {
             }
         }
         Ok(())
+    }
+
+    /// Zusatzdefinition #4 neu anlegen (Telemetrie-Monitor). Leere Liste =
+    /// Abfrage beenden. Gibt je Feld (Paketkennung, Index) zurueck, damit
+    /// eine spaetere Ausnahme dem Feld zugeordnet werden kann.
+    fn register_zusatz(
+        &mut self,
+        felder: &[(usize, crate::zusatz::ZusatzFeld)],
+    ) -> Result<Vec<(u32, usize)>, String> {
+        // Laufende Anfrage zuerst stoppen, sonst liefert SimConnect waehrend
+        // des Umbaus Bloecke im alten Raster.
+        let hr = unsafe {
+            sys::SimConnect_RequestDataOnSimObject(
+                self.handle,
+                ZUSATZ_REQUEST_ID,
+                ZUSATZ_DEFINITION_ID,
+                sys::SIMCONNECT_OBJECT_ID_USER,
+                sys::SIMCONNECT_PERIOD_NEVER,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        // Beim allerersten Mal existiert die Definition noch nicht — eine
+        // Ablehnung hier ist harmlos und wird nur vermerkt.
+        if hr != 0 {
+            tracing::debug!("Zusatzanfrage stoppen: 0x{hr:08X}");
+        }
+        let hr = unsafe { sys::SimConnect_ClearDataDefinition(self.handle, ZUSATZ_DEFINITION_ID) };
+        if hr != 0 {
+            return Err(format!("ClearDataDefinition (Zusatz) returned 0x{hr:08X}"));
+        }
+        let mut kennungen = Vec::with_capacity(felder.len());
+        if felder.is_empty() {
+            return Ok(kennungen);
+        }
+        for (idx, feld) in felder {
+            let cname = std::ffi::CString::new(feld.simvar.as_str())
+                .map_err(|_| format!("Zusatzfeld {} enthaelt NUL", feld.kanal))?;
+            let cunit = std::ffi::CString::new(feld.einheit.as_str())
+                .map_err(|_| format!("Einheit von {} enthaelt NUL", feld.kanal))?;
+            let hr = unsafe {
+                sys::SimConnect_AddToDataDefinition(
+                    self.handle,
+                    ZUSATZ_DEFINITION_ID,
+                    cname.as_ptr(),
+                    cunit.as_ptr(),
+                    sys::SIMCONNECT_DATATYPE_FLOAT64,
+                    0.0,
+                    u32::MAX,
+                )
+            };
+            if hr != 0 {
+                return Err(format!(
+                    "AddToDataDefinition (Zusatz) \"{}\" returned 0x{hr:08X}",
+                    feld.simvar
+                ));
+            }
+            let mut send_id: sys::DWORD = 0;
+            let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
+            if hr == 0 {
+                kennungen.push((send_id, *idx));
+            }
+        }
+        let hr = unsafe {
+            sys::SimConnect_RequestDataOnSimObject(
+                self.handle,
+                ZUSATZ_REQUEST_ID,
+                ZUSATZ_DEFINITION_ID,
+                sys::SIMCONNECT_OBJECT_ID_USER,
+                sys::SIMCONNECT_PERIOD_VISUAL_FRAME,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        if hr != 0 {
+            return Err(format!("RequestDataOnSimObject (Zusatz) returned 0x{hr:08X}"));
+        }
+        Ok(kennungen)
     }
 
     fn request_inspector_per_second(&mut self) -> Result<(), String> {

@@ -19,6 +19,8 @@ import { VatsimCdmView } from "./components/VatsimCdmView";
 import { Notice } from "./components/ui";
 import { VdgsPlatte, type VdgsStand } from "./components/VdgsBand";
 import { SprungBanner } from "./components/SprungBanner";
+import { TelemetrieFenster, TelemetrieView } from "./components/telemetrie/TelemetrieView";
+import { vorschauQuelle } from "./components/telemetrie/vorschau";
 import type { ActiveFlightInfo } from "./types";
 
 // v0.9.0 (#GlitchTip): Sentry-Init MUSS frueh laufen, sonst gehen
@@ -111,6 +113,13 @@ function Vorschau({ was }: { was: string }) {
       </SkinProvider>
     );
   }
+  if (was === "telemetrie") {
+    return (
+      <SkinProvider>
+        <TelemetrieVorschau />
+      </SkinProvider>
+    );
+  }
   if (was === "integritaet") {
     return (
       <SkinProvider>
@@ -119,6 +128,16 @@ function Vorschau({ was }: { was: string }) {
     );
   }
   return <div style={{ padding: 24, fontFamily: "system-ui" }}>Unbekannte Vorschau: {was}</div>;
+}
+
+/** Telemetrie-Monitor mit abgespieltem A320-Endanflug statt Simulator. */
+function TelemetrieVorschau() {
+  const [quelle] = useState(vorschauQuelle);
+  return (
+    <div className="tele-fenster">
+      <TelemetrieView imFenster quelle={quelle} />
+    </div>
+  );
 }
 
 /** Vorschau des schwebenden Integritaets-Hinweises ueber echtem Inhalt.
@@ -358,6 +377,16 @@ function Root() {
   if (import.meta.env.DEV) {
     const was = new URLSearchParams(window.location.search).get("vorschau");
     if (was) return <Vorschau was={was} />;
+  }
+
+  // v1.8: eigenes Fenster des Telemetrie-Monitors — nur der Monitor, ohne
+  // Anmeldung und Menue (die Daten kommen direkt vom Backend).
+  if (isTauri && new URLSearchParams(window.location.search).get("fenster") === "telemetrie") {
+    return (
+      <SkinProvider>
+        <TelemetrieFenster />
+      </SkinProvider>
+    );
   }
 
   // Tauri: nie gesperrt. Browser: gesperrt bis ein Token da ist.

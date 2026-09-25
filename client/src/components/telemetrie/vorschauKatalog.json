@@ -1,0 +1,1534 @@
+{
+ "zahlen": [
+  {
+   "id": "hoehe_msl",
+   "gruppe": "flug",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "hoehe_agl",
+   "gruppe": "flug",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "hoehe_angezeigt",
+   "gruppe": "flug",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "hoehe_druck",
+   "gruppe": "flug",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "radarhoehe",
+   "gruppe": "flug",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "ias",
+   "gruppe": "flug",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "tas",
+   "gruppe": "flug",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "gs",
+   "gruppe": "flug",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "mach",
+   "gruppe": "flug",
+   "einheit": "",
+   "stellen": 3,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "vs",
+   "gruppe": "flug",
+   "einheit": "fpm",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "vs_roh",
+   "gruppe": "flug",
+   "einheit": "fpm",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "pitch",
+   "gruppe": "flug",
+   "einheit": "°",
+   "stellen": 1,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "bank",
+   "gruppe": "flug",
+   "einheit": "°",
+   "stellen": 1,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "kurs_mw",
+   "gruppe": "flug",
+   "einheit": "°",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "kurs_rw",
+   "gruppe": "flug",
+   "einheit": "°",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "vorhaltewinkel",
+   "gruppe": "flug",
+   "einheit": "°",
+   "stellen": 1,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "bahnwinkel",
+   "gruppe": "flug",
+   "einheit": "°",
+   "stellen": 2,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "energiehoehe",
+   "gruppe": "flug",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "aoa",
+   "gruppe": "aero",
+   "einheit": "°",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "schiebewinkel",
+   "gruppe": "aero",
+   "einheit": "°",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "aoa_abriss",
+   "gruppe": "aero",
+   "einheit": "°",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "g",
+   "gruppe": "aero",
+   "einheit": "g",
+   "stellen": 2,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "g_laengs",
+   "gruppe": "aero",
+   "einheit": "g",
+   "stellen": 2,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "g_seitlich",
+   "gruppe": "aero",
+   "einheit": "g",
+   "stellen": 2,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "rate_rollen",
+   "gruppe": "aero",
+   "einheit": "°/s",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "rate_nicken",
+   "gruppe": "aero",
+   "einheit": "°/s",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "rate_gieren",
+   "gruppe": "aero",
+   "einheit": "°/s",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "kugel",
+   "gruppe": "aero",
+   "einheit": "",
+   "stellen": 2,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "vs0",
+   "gruppe": "aero",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "vs1",
+   "gruppe": "aero",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "vfe",
+   "gruppe": "aero",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "vmo",
+   "gruppe": "aero",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "g_max",
+   "gruppe": "aero",
+   "einheit": "g",
+   "stellen": 2,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "g_min",
+   "gruppe": "aero",
+   "einheit": "g",
+   "stellen": 2,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "wind_richtung",
+   "gruppe": "wind",
+   "einheit": "°",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "wind_staerke",
+   "gruppe": "wind",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "gegenwind",
+   "gruppe": "wind",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "seitenwind",
+   "gruppe": "wind",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "vertikalwind",
+   "gruppe": "wind",
+   "einheit": "fpm",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oat",
+   "gruppe": "wind",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "tat",
+   "gruppe": "wind",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "isa_abweichung",
+   "gruppe": "wind",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "qnh",
+   "gruppe": "wind",
+   "einheit": "hPa",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "dichtehoehe",
+   "gruppe": "wind",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "triebwerke_anzahl",
+   "gruppe": "triebwerke",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "triebwerke_laufen",
+   "gruppe": "triebwerke",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "n1_1",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "n1_2",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "n1_3",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "n1_4",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "n2_1",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "n2_2",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "n2_3",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "n2_4",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "egt_1",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "egt_2",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "egt_3",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "egt_4",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "ff_1",
+   "gruppe": "triebwerke",
+   "einheit": "kg/h",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "ff_2",
+   "gruppe": "triebwerke",
+   "einheit": "kg/h",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "ff_3",
+   "gruppe": "triebwerke",
+   "einheit": "kg/h",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "ff_4",
+   "gruppe": "triebwerke",
+   "einheit": "kg/h",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "oeldruck_1",
+   "gruppe": "triebwerke",
+   "einheit": "psi",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oeldruck_2",
+   "gruppe": "triebwerke",
+   "einheit": "psi",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oeldruck_3",
+   "gruppe": "triebwerke",
+   "einheit": "psi",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oeldruck_4",
+   "gruppe": "triebwerke",
+   "einheit": "psi",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oeltemp_1",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oeltemp_2",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oeltemp_3",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "oeltemp_4",
+   "gruppe": "triebwerke",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "schubhebel_1",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "schubhebel_2",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "schubhebel_3",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "schubhebel_4",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "umkehr_1",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "umkehr_2",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "laeuft_1",
+   "gruppe": "triebwerke",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "laeuft_2",
+   "gruppe": "triebwerke",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "laeuft_3",
+   "gruppe": "triebwerke",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "laeuft_4",
+   "gruppe": "triebwerke",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "umkehrschub",
+   "gruppe": "triebwerke",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "schalter"
+  },
+  {
+   "id": "apu_drehzahl",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "sprit_gesamt",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "sprit_verbraucht",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "ff_gesamt",
+   "gruppe": "sprit",
+   "einheit": "kg/h",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_links",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_mitte",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_rechts",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_4",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_1",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_2",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_3",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "gewicht",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "zfw",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "zuladung",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "schwerpunkt",
+   "gruppe": "sprit",
+   "einheit": "% MAC",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fahrwerk",
+   "gruppe": "fahrwerk",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "fahrwerkshebel",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "am_boden",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "boden_bug",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "boden_links",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "boden_rechts",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "einfederung_bug",
+   "gruppe": "fahrwerk",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "einfederung_links",
+   "gruppe": "fahrwerk",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "einfederung_rechts",
+   "gruppe": "fahrwerk",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fahrwerk_kraft",
+   "gruppe": "fahrwerk",
+   "einheit": "kN",
+   "stellen": 1,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "bremse_links",
+   "gruppe": "fahrwerk",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "bremse_rechts",
+   "gruppe": "fahrwerk",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "parkbremse",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "untergrund",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "auf_bahn",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "klappen",
+   "gruppe": "steuerung",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "klappen_stufe",
+   "gruppe": "steuerung",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "spoiler",
+   "gruppe": "steuerung",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "spoiler_armed",
+   "gruppe": "steuerung",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "bodenspoiler",
+   "gruppe": "steuerung",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "schalter"
+  },
+  {
+   "id": "hoehenruder",
+   "gruppe": "steuerung",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "querruder",
+   "gruppe": "steuerung",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "seitenruder",
+   "gruppe": "steuerung",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "trimmung",
+   "gruppe": "steuerung",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "ap",
+   "gruppe": "autopilot",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "athr",
+   "gruppe": "autopilot",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "soll_hoehe",
+   "gruppe": "autopilot",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "soll_fahrt",
+   "gruppe": "autopilot",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "soll_vs",
+   "gruppe": "autopilot",
+   "einheit": "fpm",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "soll_kurs",
+   "gruppe": "autopilot",
+   "einheit": "°",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "v1",
+   "gruppe": "autopilot",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "vr",
+   "gruppe": "autopilot",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "v2",
+   "gruppe": "autopilot",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "vapp",
+   "gruppe": "autopilot",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "vls",
+   "gruppe": "autopilot",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "vref",
+   "gruppe": "autopilot",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "flex",
+   "gruppe": "autopilot",
+   "einheit": "°C",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "loc_ablage",
+   "gruppe": "anflug",
+   "einheit": "dots",
+   "stellen": 2,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "gs_ablage",
+   "gruppe": "anflug",
+   "einheit": "dots",
+   "stellen": 2,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "loc_empfang",
+   "gruppe": "anflug",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "gs_empfang",
+   "gruppe": "anflug",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "dme",
+   "gruppe": "anflug",
+   "einheit": "NM",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "unter_gs",
+   "gruppe": "anflug",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "schalter"
+  },
+  {
+   "id": "minimum",
+   "gruppe": "anflug",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "kabinenhoehe",
+   "gruppe": "systeme",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "kabine_vs",
+   "gruppe": "systeme",
+   "einheit": "fpm",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "differenzdruck",
+   "gruppe": "systeme",
+   "einheit": "psi",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "hydraulik",
+   "gruppe": "systeme",
+   "einheit": "psi",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "batteriespannung",
+   "gruppe": "systeme",
+   "einheit": "V",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "aussenstrom",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "batterie",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "avionik",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "apu",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "pitotheizung",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "enteisung_tw",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "enteisung_fl",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "vereisung",
+   "gruppe": "systeme",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "pitot_vereisung",
+   "gruppe": "systeme",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "master_caution",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "master_warning",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "ueberziehwarnung",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "ueberdrehzahl",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "anschnallzeichen",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "licht_lande",
+   "gruppe": "licht",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "licht_beacon",
+   "gruppe": "licht",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "licht_strobe",
+   "gruppe": "licht",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "licht_taxi",
+   "gruppe": "licht",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "licht_nav",
+   "gruppe": "licht",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "licht_logo",
+   "gruppe": "licht",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "squawk",
+   "gruppe": "funk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "com1",
+   "gruppe": "funk",
+   "einheit": "MHz",
+   "stellen": 3,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "com2",
+   "gruppe": "funk",
+   "einheit": "MHz",
+   "stellen": 3,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "nav1",
+   "gruppe": "funk",
+   "einheit": "MHz",
+   "stellen": 2,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "nav2",
+   "gruppe": "funk",
+   "einheit": "MHz",
+   "stellen": 2,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "sicht",
+   "gruppe": "umgebung",
+   "einheit": "m",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "niederschlag",
+   "gruppe": "umgebung",
+   "einheit": "mm",
+   "stellen": 1,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "in_wolke",
+   "gruppe": "umgebung",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "schalter"
+  },
+  {
+   "id": "bodenhoehe",
+   "gruppe": "umgebung",
+   "einheit": "ft",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "qnh_meer",
+   "gruppe": "umgebung",
+   "einheit": "hPa",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "pause",
+   "gruppe": "sim",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "sim_rate",
+   "gruppe": "sim",
+   "einheit": "×",
+   "stellen": 2,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
+   "id": "slew",
+   "gruppe": "sim",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "absturz",
+   "gruppe": "sim",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "schalter"
+  },
+  {
+   "id": "bildrate",
+   "gruppe": "sim",
+   "einheit": "fps",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  }
+ ],
+ "texte": [
+  {
+   "id": "autobrake",
+   "gruppe": "fahrwerk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  },
+  {
+   "id": "fma_lateral",
+   "gruppe": "autopilot",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "text"
+  },
+  {
+   "id": "fma_vertikal",
+   "gruppe": "autopilot",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "text"
+  },
+  {
+   "id": "fma_schub",
+   "gruppe": "autopilot",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "text"
+  },
+  {
+   "id": "schubrast",
+   "gruppe": "autopilot",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "text"
+  },
+  {
+   "id": "transponder",
+   "gruppe": "funk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  },
+  {
+   "id": "phase_flugzeug",
+   "gruppe": "sim",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "addon",
+   "art": "text"
+  },
+  {
+   "id": "phase_acars",
+   "gruppe": "sim",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "text"
+  },
+  {
+   "id": "flugzeug",
+   "gruppe": "flugzeug",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  },
+  {
+   "id": "muster",
+   "gruppe": "flugzeug",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  },
+  {
+   "id": "kennzeichen",
+   "gruppe": "flugzeug",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  }
+ ]
+}
