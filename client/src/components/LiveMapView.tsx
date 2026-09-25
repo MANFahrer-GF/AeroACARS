@@ -30,6 +30,7 @@ import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
+import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
 
 // Die Stil-Adressen kommen vom Server — siehe `BasemapContext`. CARTO
 // verlangt seit dem 26.08.2026 einen Schlüssel, und der soll austauschbar
@@ -1760,6 +1761,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!routeSrc || !wptSrc || !trackSrc || !dotsSrc) return;
     let line: [number, number][] = d.fixes.map((f) => [f.lon, f.lat]);
     if (line.length < 2 && d.dep && d.arr) line = [d.dep, d.arr];
+    // Ueber die Datumsgrenze weiterzaehlen, sonst laeuft die Linie quer
+    // ueber die ganze Karte (siehe `lib/datumsgrenze.ts`).
+    line = ohneDatumsgrenzenSprung(line);
+    const track = ohneDatumsgrenzenSprung(d.track);
     routeSrc.setData({
       type: "FeatureCollection",
       features: line.length >= 2 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: line } }] : [],
@@ -1778,7 +1783,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     });
     trackSrc.setData({
       type: "FeatureCollection",
-      features: d.track.length >= 2 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: d.track } }] : [],
+      features: track.length >= 2 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: track } }] : [],
     });
     // Breadcrumbs: jeden 8. Track-Punkt als Dot (sonst zu dicht).
     const dots = d.track.filter((_, i) => i % 8 === 0);
@@ -2175,11 +2180,13 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     const map = mapRef.current;
     if (!map || !mapReady || !activeFlight || follow) return;
     if (suppressRouteFitRef.current) return;
-    const pts: [number, number][] = [
-      ...effFixes.map((f) => [f.lon, f.lat] as [number, number]),
+    // In Flugreihenfolge und ueber die Datumsgrenze weitergezaehlt — sonst
+    // umfasst der Ausschnitt einer Pazifikroute die ganze Welt.
+    const pts = ohneDatumsgrenzenSprung([
       ...(effDep ? [effDep] : []),
+      ...effFixes.map((f) => [f.lon, f.lat] as [number, number]),
       ...(effArr ? [effArr] : []),
-    ];
+    ]);
     // pirepId mit im Key: ein neuer Flug derselben Strecke (gleiche Fix-Anzahl +
     // gleiche Dep/Arr) soll wieder gefittet werden, nicht als „schon erledigt" gelten.
     const key = `${pirepId}-${effFixes.length}-${effDepIcao}-${effArrIcao}`;
@@ -2281,7 +2288,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             properties: { pirep_id: id },
             geometry: {
               type: "LineString" as const,
-              coordinates: punkte.map((p) => [p.lon, p.lat] as [number, number]),
+              coordinates: ohneDatumsgrenzenSprung(
+                punkte.map((p) => [p.lon, p.lat] as [number, number]),
+              ),
             },
           },
           ...punkte.map((p) => ({

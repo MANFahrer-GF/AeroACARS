@@ -10,6 +10,7 @@ import type { TFunction } from "i18next";
 import { invoke } from "../lib/ipc";
 import { FlightProfile } from "./FlightProfile";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
+import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus } from "./PirepPruefstatus";
 
 // Die Stil-Adressen kommen vom Server, damit ein Schluesselwechsel bei
@@ -204,7 +205,7 @@ export function LogbookView() {
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff";
     map.on("load", () => {
       if (route.length >= 2) {
-        const coords = route.map((p) => [p.lon, p.lat] as [number, number]);
+        const coords = ohneDatumsgrenzenSprung(route.map((p) => [p.lon, p.lat] as [number, number]));
         map.addSource("trk", { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } } });
         map.addLayer({ id: "trk", type: "line", source: "trk", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": accent, "line-width": 3 } });
         const pin = (c: [number, number], col: string) => { const el = document.createElement("div"); el.style.cssText = `width:12px;height:12px;border-radius:50%;background:${col};border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.5)`; new maplibregl.Marker({ element: el }).setLngLat(c).addTo(map); };
