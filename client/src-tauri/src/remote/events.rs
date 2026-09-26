@@ -69,6 +69,12 @@ pub async fn handle_socket(
                     Some(Ok(Message::Text(text))) => {
                         if let Some(an) = telemetrie_abo_aus(&text) {
                             telemetrie_abonniert = an;
+                            // Bestaetigen: die Oberflaeche holt ihren Verlauf
+                            // erst danach, sonst fehlten die Frames bis hier.
+                            let body = if an { r#"{"an":true}"# } else { r#"{"an":false}"# };
+                            if send_event(&mut socket, TELEMETRIE_ABO_OK, body).await.is_err() {
+                                break;
+                            }
                         }
                     }
                     Some(Ok(_)) => { /* ignore other client payloads */ }
@@ -126,6 +132,9 @@ pub async fn handle_socket(
         }
     }
 }
+
+/// v1.8.2: Bestaetigung eines Telemetrie-Abos an die Oberflaeche.
+pub const TELEMETRIE_ABO_OK: &str = "telemetrie-abo";
 
 /// v1.8.1: Abo-Nachricht der Oberflaeche fuer den Telemetrie-Strom,
 /// `{"abo":"telemetrie-frame","an":true|false}`. Alles andere: `None`.

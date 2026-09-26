@@ -21,23 +21,38 @@ export function hatLuecke(vorher: Frame | null, neu: Frame): boolean {
   return !!vorher && neu.t - vorher.t > LUECKE_MS;
 }
 
-/** Zwei nach Zeit sortierte Listen zusammenfuehren; gleiche Zeitstempel
- *  nur einmal (die vorhandene Fassung bleibt). Ergebnis sortiert. */
-export function zusammenfuehren(vorhanden: Frame[], nachgeladen: Frame[]): Frame[] {
+/** Zwei nach Zeit sortierte Listen zusammenfuehren. Jeder Zeitstempel nur
+ *  einmal — auch wenn eine Liste ihn in sich mehrfach hat (stehender
+ *  Simulator); bei Gleichstand bleibt die vorhandene Fassung. Danach auf die
+ *  letzten `fensterMs` vor dem neuesten Frame gekuerzt. */
+export function zusammenfuehren(
+  vorhanden: Frame[],
+  nachgeladen: Frame[],
+  fensterMs = Infinity,
+): Frame[] {
   const aus: Frame[] = [];
+  const dazu = (f: Frame) => {
+    const letzter = aus[aus.length - 1];
+    if (!letzter || f.t > letzter.t) aus.push(f);
+  };
   let i = 0;
   let j = 0;
   while (i < vorhanden.length || j < nachgeladen.length) {
     const a = vorhanden[i];
     const b = nachgeladen[j];
     if (b === undefined || (a !== undefined && a.t <= b.t)) {
-      if (b !== undefined && a.t === b.t) j++;
-      aus.push(a);
+      dazu(a);
       i++;
     } else {
-      aus.push(b);
+      dazu(b);
       j++;
     }
+  }
+  if (aus.length && Number.isFinite(fensterMs)) {
+    const grenze = aus[aus.length - 1].t - fensterMs;
+    let weg = 0;
+    while (weg < aus.length && aus[weg].t < grenze) weg++;
+    if (weg) aus.splice(0, weg);
   }
   return aus;
 }

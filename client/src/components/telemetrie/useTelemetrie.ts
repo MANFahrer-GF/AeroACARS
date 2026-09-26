@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, listen } from "../../lib/ipc";
-import { ereignisseAus, type Ereignis } from "./ereignisse";
+import { ereignisseAus, ereignisseFuerListe, type Ereignis } from "./ereignisse";
 import { NACHLADEN_ABSTAND_MS, hatLuecke, zusammenfuehren } from "./luecken";
 import type { Frame, Kanal, Katalog, StartAntwort } from "./typen";
 
@@ -139,12 +139,10 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
       q.start()
         .then((antwort) => {
           if (aus) return;
-          const grenze =
-            (frames.current.length ? frames.current[frames.current.length - 1].t : jetzt) - PUFFER_MS;
-          frames.current = zusammenfuehren(
-            frames.current,
-            antwort.verlauf.filter((f) => f.t >= grenze),
-          );
+          frames.current = zusammenfuehren(frames.current, antwort.verlauf, PUFFER_MS);
+          // Ereignisse aus der Luecke gab es bisher nicht (oder mit falscher
+          // Uhrzeit am ersten Frame danach) — ueber die ganze Liste neu.
+          ereignisse.current = ereignisseFuerListe(frames.current, indexRef.current).slice(-200);
           neuZeichnen();
         })
         .catch(() => undefined);

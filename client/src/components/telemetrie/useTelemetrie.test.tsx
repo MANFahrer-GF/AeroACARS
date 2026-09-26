@@ -71,4 +71,40 @@ describe("useTelemetrie — Luecken", () => {
     act(() => senden!(f(1100)));
     expect(starts).toBe(1);
   });
+
+  it("Ereignisse aus der Luecke erscheinen nach dem Nachladen mit richtiger Zeit", async () => {
+    const kat: Katalog = {
+      zahlen: [{ id: "fahrwerk", gruppe: "fahrwerk", einheit: "%", stellen: 0, quelle: "sim", art: "zahl" }],
+      texte: [],
+    };
+    // Fahrwerk faehrt bei 1500 ms aus — mitten in der Luecke.
+    const g = (t: number): Frame => ({ t, z: [t >= 1500 ? 100 : 0], s: [] });
+    const reihe = (von: number, bis: number) => {
+      const r: Frame[] = [];
+      for (let t = von; t <= bis; t += 100) r.push(g(t));
+      return r;
+    };
+    let senden: ((fr: Frame) => void) | null = null;
+    let starts = 0;
+    const quelle: Datenquelle = {
+      start: async () => {
+        starts++;
+        return { katalog: kat, verlauf: starts === 1 ? reihe(0, 900) : reihe(0, 3000) };
+      },
+      abonnieren: async (cb) => {
+        senden = cb;
+        return () => undefined;
+      },
+      halten: () => undefined,
+      stop: () => undefined,
+    };
+    const { result } = renderHook(() => useTelemetrie(quelle));
+    await waitFor(() => expect(result.current.zustand).toBe("bereit"));
+    act(() => senden!(g(3100)));
+    await waitFor(() => expect(result.current.frames.at(0)!.t).toBe(0));
+    await waitFor(() =>
+      expect(result.current.ereignisse.map((e) => [e.art, e.t])).toEqual([["fahrwerk_unten", 1500]]),
+    );
+  });
 });
+

@@ -21,6 +21,17 @@ describe("Luecken im Telemetrie-Strom", () => {
     expect(r.find((x) => x.t === 1000)!.z[0]).toBe(2);
   });
 
+  it("doppelte Zeitstempel innerhalb einer Liste kommen nur einmal an", () => {
+    // Stehender Simulator: derselbe Messpunkt vielfach im Verlauf.
+    const nachgeladen = [f(100), f(100), f(100), f(200), f(200)];
+    expect(zusammenfuehren([f(0)], nachgeladen).map((x) => x.t)).toEqual([0, 100, 200]);
+  });
+
+  it("kuerzt nach dem Zusammenfuehren auf das Zeitfenster", () => {
+    const r = zusammenfuehren([f(0), f(1000)], [f(9000), f(10000)], 5000);
+    expect(r.map((x) => x.t)).toEqual([9000, 10000]);
+  });
+
   it("leere Listen", () => {
     expect(zusammenfuehren([], [f(1)]).map((x) => x.t)).toEqual([1]);
     expect(zusammenfuehren([f(1)], []).map((x) => x.t)).toEqual([1]);

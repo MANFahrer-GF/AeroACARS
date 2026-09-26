@@ -704,6 +704,11 @@ function openSocket(): void {
     } catch {
       return; // ignore malformed frames
     }
+    if (parsed.event === ABO_BESTAETIGUNG) {
+      const w = aboWartende;
+      aboWartende = [];
+      for (const los of w) los();
+    }
     const cbs = browserRegistry.get(parsed.event);
     if (!cbs) return;
     for (const cb of cbs) {
@@ -731,6 +736,27 @@ function openSocket(): void {
 /** v1.8.1: Ereignisse, die der Sim-PC nur auf Abo schickt (hohe Rate). Die
  *  Oberflaeche meldet an/ab ueber die bestehende Verbindung. */
 const ABO_EREIGNISSE = new Set(["telemetrie-frame"]);
+/** Bestaetigung des Sim-PCs, dass ein Abo wirkt (v1.8.2). */
+const ABO_BESTAETIGUNG = "telemetrie-abo";
+/** So lange wartet `listen` hoechstens auf die Bestaetigung (ms). */
+export const ABO_WARTEZEIT_MS = 2500;
+let aboWartende: Array<() => void> = [];
+
+/** Wartet, bis der Sim-PC das Abo bestaetigt — hoechstens `ms`. Danach geht
+ *  es trotzdem weiter; eine verbleibende Luecke fuellt die Oberflaeche aus
+ *  dem Verlauf nach. */
+function aufAboWarten(ms: number): Promise<void> {
+  return new Promise((fertig) => {
+    let erledigt = false;
+    const los = () => {
+      if (erledigt) return;
+      erledigt = true;
+      fertig();
+    };
+    aboWartende.push(los);
+    setTimeout(los, ms);
+  });
+}
 
 function aboSenden(event: string, an: boolean): void {
   if (!ABO_EREIGNISSE.has(event)) return;
@@ -791,7 +817,12 @@ export async function listen<T = unknown>(
     await ensureTauriListen();
     return tauriListen!<T>(event, cb as (e: { event: string; payload: T }) => void);
   }
-  return browserListen<T>(event, cb);
+  // Abo-Ereignisse: erst zurueckkehren, wenn der Sim-PC das Abo bestaetigt
+  // hat — wer danach seinen Verlauf holt, bekommt keine Luecke (Codex).
+  const warten = ABO_EREIGNISSE.has(event) ? aufAboWarten(ABO_WARTEZEIT_MS) : null;
+  const ab = browserListen<T>(event, cb);
+  if (warten) await warten;
+  return ab;
 }
 
 /**
