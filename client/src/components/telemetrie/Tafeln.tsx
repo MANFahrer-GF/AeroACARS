@@ -8,7 +8,7 @@
  */
 
 import { useTranslation } from "react-i18next";
-import { mitVorzeichen, wertMitEinheit, zahl } from "./format";
+import { mitVorzeichen, nichtVerlaesslich, wertMitEinheit, zahl } from "./format";
 import { tankAnsicht, tanksAbweichend } from "./tanks";
 import type { Telemetrie } from "./useTelemetrie";
 
@@ -80,8 +80,14 @@ export function Envelope({ tm }: P) {
   const ias = tm.wert("ias");
   const g = tm.wert("g");
   const vs1 = tm.wert("vs1") ?? tm.wert("vls");
-  const vfe = tm.wert("vfe");
-  const vmo = tm.wert("vmo");
+  // MSFS: Grenze der aktuellen Klappen; X-Plane nur „volle Klappen".
+  // 0 oder weniger heisst „hat das Muster nicht" (liefert schon der Katalog
+  // als leer, hier nur zur Sicherheit).
+  const pos = (v: number | null) => (v !== null && v > 0 ? v : null);
+  const vfeAktuell = pos(tm.wert("vfe"));
+  const vfe = vfeAktuell ?? pos(tm.wert("vfe_voll"));
+  const vmoWert = pos(tm.wert("vmo"));
+  const vmo = vmoWert ?? pos(tm.wert("vne"));
   const bisV = Math.max(200, (vmo ?? 0) + 30, (ias ?? 0) + 30);
   const W = 320;
   const H = 180;
@@ -120,8 +126,8 @@ export function Envelope({ tm }: P) {
           </g>
         ))}
         {grenze(vs1, "VS", "tele-warn")}
-        {grenze(vfe, "VFE", "tele-warn")}
-        {grenze(vmo, "VMO", "tele-grenze")}
+        {grenze(vfe, vfeAktuell !== null ? "VFE" : "VFE full", "tele-warn")}
+        {grenze(vmo, vmoWert !== null ? "VMO" : "VNE", "tele-grenze")}
         <polyline
           points={spur.map(([a, b]) => `${x(a)},${y(b)}`).join(" ")}
           className="tele-spurlinie"
@@ -237,16 +243,23 @@ export function Triebwerke({ tm }: P) {
   // Ohne Angabe: so viele, wie N1 liefern.
   let anzahl = anzahlGemeldet ?? [1, 2, 3, 4].filter((n) => tm.wert(`n1_${n}`) !== null).length;
   anzahl = Math.max(1, Math.min(4, Math.round(anzahl || 2)));
+  const unsicher = nichtVerlaesslich(tm.text("nicht_verlaesslich"));
+  const hinweis = t("telemetrie.nicht_verlaesslich_hinweis");
   const zeile = (label: string, id: string, n: number) => {
     const k = tm.kanal(`${id}_${n}`);
     return (
-      <span className="tele-kv-paar" key={id}>
+      <span
+        className={unsicher.has(`${id}_${n}`) ? "tele-kv-paar tele-zeile--unsicher" : "tele-kv-paar"}
+        key={id}
+        title={unsicher.has(`${id}_${n}`) ? hinweis : undefined}
+      >
         <span>{label}</span>
         <span>{k ? wertMitEinheit(k, tm.wert(`${id}_${n}`), t, i18n.language) : "–"}</span>
       </span>
     );
   };
   return (
+    <>
     <div className="tele-triebwerke" style={{ gridTemplateColumns: `repeat(${anzahl}, minmax(0, 1fr))` }}>
       {Array.from({ length: anzahl }, (_, i) => i + 1).map((n) => (
         <div key={n} className="tele-tw">
@@ -254,7 +267,9 @@ export function Triebwerke({ tm }: P) {
             ENG {n}
             {(tm.wert(`laeuft_${n}`) ?? 0) >= 0.5 && <span className="tele-tw-an" aria-label={t("telemetrie.an")} />}
           </div>
-          <Bogen wert={tm.wert(`n1_${n}`)} max={110} rot={104} beschriftung="N1 %" />
+          <div title={unsicher.has(`n1_${n}`) ? hinweis : undefined}>
+            <Bogen wert={tm.wert(`n1_${n}`)} max={110} rot={104} beschriftung="N1 %" />
+          </div>
           <div className="tele-kv">
             {zeile("N2", "n2", n)}
             {zeile("EGT", "egt", n)}
@@ -266,6 +281,8 @@ export function Triebwerke({ tm }: P) {
         </div>
       ))}
     </div>
+    {unsicher.size > 0 && <p className="tele-hinweis">{t("telemetrie.nicht_verlaesslich_triebwerke")}</p>}
+    </>
   );
 }
 
@@ -318,7 +335,8 @@ export function TankSumme({ tm }: P) {
 const SYSTEM_BLOECKE: Array<[string, string[]]> = [
   ["druck", ["kabinenhoehe", "kabine_vs", "differenzdruck"]],
   ["energie", ["batteriespannung", "batterie", "aussenstrom", "apu", "apu_drehzahl", "avionik"]],
-  ["hydraulik", ["hydraulik"]],
+  // MSFS in psi; X-Plane in der Einheit, die das Muster festlegt.
+  ["hydraulik", ["hydraulik", "hydraulik_xp_1", "hydraulik_xp_2", "hydraulik_xp_3"]],
   ["eis", ["vereisung", "vereisung_fl_links", "pitot_vereisung", "pitotheizung", "enteisung_tw", "enteisung_fl"]],
   ["warnungen", ["master_caution", "master_warning", "ueberziehwarnung", "ueberdrehzahl", "unter_gs"]],
   ["kabine", ["anschnallzeichen"]],
@@ -332,10 +350,12 @@ export function Systeme({ tm }: P) {
         <div key={block} className="tele-block">
           <h4>{t(`telemetrie.block.${block}`)}</h4>
           <div className="tele-kv">
-            {ids.map((id) => {
+            {ids.map((id, i) => {
               const k = tm.kanal(id);
               if (!k) return null;
               const v = tm.wert(id);
+              // Hydraulik: nur Systeme mit Wert; ohne jeden Wert eine Zeile „–".
+              if (block === "hydraulik" && v === null && (i > 0 || ids.some((x) => tm.wert(x) !== null))) return null;
               const warn = k.art === "schalter" && block === "warnungen" && (v ?? 0) >= 0.5;
               return (
                 <span key={id} className="tele-kv-paar">

@@ -1676,7 +1676,8 @@ pub struct EngineSignals {
     pub eng_combustion: Vec<bool>,
     /// `TURB ENG N1:n` in der angeforderten Einheit Percent (0–100).
     pub n1_pct: Vec<f64>,
-    /// `ENG FUEL FLOW PPH:n` in Pfund pro Stunde.
+    /// `ENG FUEL FLOW PPH:n` in Pfund pro Stunde; ist deren Summe 0, dafuer
+    /// `TURB ENG CORRECTED FF:n` (dieselbe Kaskade wie `fuel_flow_kg_per_h`).
     pub fuel_flow_pph: Vec<f64>,
 }
 

@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { invoke, isTauri } from "../../lib/ipc";
 import { Badge, Button } from "../ui";
 import { csvText } from "./csv";
-import { mitVorzeichen, wertMitEinheit, wertText } from "./format";
+import { mitVorzeichen, nichtVerlaesslich, wertMitEinheit, wertText } from "./format";
 import { Anflugfenster, Envelope, Fahrwerk, Systeme, TankSumme, Tanks, Triebwerke } from "./Tafeln";
 import { tankAnsicht } from "./tanks";
 import { GRUPPEN, type Kanal } from "./typen";
@@ -194,7 +194,15 @@ function WerteListe({ tm, watch, umschalten }: { tm: Telemetrie; watch: string[]
     );
   };
   const wertVon = (k: Kanal) => (k.art === "text" ? tm.text(k.id) : tm.wert(k.id));
-  const sichtbar = kanaele.filter((k) => passt(k) && (!nurMitWert || wertVon(k) !== null));
+  // Nicht verlaessliche Kanaele bleiben sichtbar (ausgegraut, ohne Wert) —
+  // sonst verschwaenden sie still aus der Liste.
+  const unsicher = nichtVerlaesslich(tm.text("nicht_verlaesslich"));
+  const sichtbar = kanaele.filter(
+    (k) =>
+      k.id !== "nicht_verlaesslich" &&
+      passt(k) &&
+      (!nurMitWert || wertVon(k) !== null || unsicher.has(k.id)),
+  );
   return (
     <aside className="tele-liste">
       <input
@@ -222,18 +230,26 @@ function WerteListe({ tm, watch, umschalten }: { tm: Telemetrie; watch: string[]
               <div className="tele-gruppe">{t(`telemetrie.gruppe.${g}`)}</div>
               {zeilen.map((k) => {
                 const gewaehlt = watch.includes(k.id);
+                const fraglich = unsicher.has(k.id);
+                const klasse = ["tele-zeile", gewaehlt && "tele-zeile--gewaehlt", fraglich && "tele-zeile--unsicher"]
+                  .filter(Boolean)
+                  .join(" ");
                 return (
                   <button
                     key={k.id}
                     type="button"
-                    className={gewaehlt ? "tele-zeile tele-zeile--gewaehlt" : "tele-zeile"}
+                    className={klasse}
                     onClick={() => umschalten(k.id)}
                     aria-pressed={gewaehlt}
-                    title={t("telemetrie.zeile_hinweis")}
+                    title={fraglich ? t("telemetrie.nicht_verlaesslich_hinweis") : t("telemetrie.zeile_hinweis")}
                   >
                     <span className="tele-zeile-name">{t(`telemetrie.kanal.${k.id}`)}</span>
                     <span className="tele-zeile-wert">{wertMitEinheit(k, wertVon(k), t, i18n.language)}</span>
-                    <span className={`tele-quelle tele-quelle--${k.quelle}`}>{t(`telemetrie.quelle.${k.quelle}`)}</span>
+                    {fraglich ? (
+                      <span className="tele-quelle tele-quelle--unsicher">{t("telemetrie.nicht_verlaesslich")}</span>
+                    ) : (
+                      <span className={`tele-quelle tele-quelle--${k.quelle}`}>{t(`telemetrie.quelle.${k.quelle}`)}</span>
+                    )}
                   </button>
                 );
               })}
@@ -404,7 +420,8 @@ function AnsichtInhalt({ tm, ansicht, fensterMs }: { tm: Telemetrie; ansicht: An
       { id: "bremse_links", farbe: S1 },
       { id: "bremse_rechts", farbe: S2 },
       { id: "spoiler", farbe: S3, gestrichelt: true },
-      { id: "umkehr_1", farbe: S4 },
+      // Schubumkehr aller vorhandenen Triebwerke (bis 26.09.2026 nur 1).
+      ...motoren.map((m) => ({ id: `umkehr_${m}`, farbe: MOTOR_FARBEN[m - 1], gestrichelt: m > 1 })),
     ],
     min: 0,
     max: 100,
@@ -471,6 +488,7 @@ function AutopilotTafel({ tm }: { tm: Telemetrie }) {
     "fma_lateral",
     "fma_vertikal",
     "soll_fahrt",
+    "soll_mach",
     "soll_kurs",
     "soll_hoehe",
     "soll_vs",

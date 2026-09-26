@@ -249,7 +249,23 @@
    "art": "zahl"
   },
   {
+   "id": "vfe_voll",
+   "gruppe": "aero",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
    "id": "vmo",
+   "gruppe": "aero",
+   "einheit": "kt",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "vne",
    "gruppe": "aero",
    "einheit": "kt",
    "stellen": 0,
@@ -261,7 +277,7 @@
    "gruppe": "aero",
    "einheit": "g",
    "stellen": 2,
-   "quelle": "zusatz",
+   "quelle": "berechnet",
    "art": "zahl"
   },
   {
@@ -269,7 +285,7 @@
    "gruppe": "aero",
    "einheit": "g",
    "stellen": 2,
-   "quelle": "zusatz",
+   "quelle": "berechnet",
    "art": "zahl"
   },
   {
@@ -609,6 +625,22 @@
    "art": "zahl"
   },
   {
+   "id": "umkehr_3",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "umkehr_4",
+   "gruppe": "triebwerke",
+   "einheit": "%",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
    "id": "laeuft_1",
    "gruppe": "triebwerke",
    "einheit": "",
@@ -669,7 +701,7 @@
    "gruppe": "sprit",
    "einheit": "kg",
    "stellen": 0,
-   "quelle": "sim",
+   "quelle": "berechnet",
    "art": "zahl"
   },
   {
@@ -945,6 +977,198 @@
    "art": "zahl"
   },
   {
+   "id": "fs_tank_1",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_2",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_3",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_4",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_5",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_6",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_7",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_8",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_9",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_10",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_11",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_12",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_1_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_2_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_3_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_4_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_5_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_6_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_7_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_8_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_9_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_10_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_11_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "fs_tank_12_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
    "id": "gewicht",
    "gruppe": "sprit",
    "einheit": "kg",
@@ -1201,6 +1425,14 @@
    "art": "zahl"
   },
   {
+   "id": "soll_mach",
+   "gruppe": "autopilot",
+   "einheit": "",
+   "stellen": 3,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
    "id": "soll_vs",
    "gruppe": "autopilot",
    "einheit": "fpm",
@@ -1361,6 +1593,30 @@
    "art": "zahl"
   },
   {
+   "id": "hydraulik_xp_1",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "hydraulik_xp_2",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "hydraulik_xp_3",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
    "id": "batteriespannung",
    "gruppe": "systeme",
    "einheit": "V",
@@ -1486,7 +1742,7 @@
    "einheit": "",
    "stellen": 0,
    "quelle": "sim",
-   "art": "schalter"
+   "art": "zahl"
   },
   {
    "id": "licht_lande",
@@ -1764,6 +2020,14 @@
   },
   {
    "id": "kennzeichen",
+   "gruppe": "flugzeug",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  },
+  {
+   "id": "nicht_verlaesslich",
    "gruppe": "flugzeug",
    "einheit": "",
    "stellen": 0,

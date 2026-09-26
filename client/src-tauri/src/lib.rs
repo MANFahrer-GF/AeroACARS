@@ -52515,6 +52515,13 @@ fn telemetrie_zusatz_werte(app: &AppHandle) -> HashMap<String, f64> {
     HashMap::new()
 }
 
+/// Sprit an Bord beim Flugbeginn (`initial_fob_kg`) des laufenden Fluges.
+fn telemetrie_sprit_basis(state: &AppState) -> Option<f32> {
+    let flug = state.active_flight.lock().ok()?.clone()?;
+    let stats = flug.stats.lock().ok()?;
+    stats.initial_fob_kg
+}
+
 /// Takt des Monitors, laeuft fuer die ganze Lebensdauer der App.
 ///
 /// Je Tick (50 ms): Messpunkt holen, in den Verlauf aufnehmen (10 Hz) und —
@@ -52556,11 +52563,18 @@ fn spawn_telemetrie_takt(app: AppHandle) {
                 }
                 flugzeug = snap.aircraft_title.clone();
             }
-            let zusatz = if aktiv {
+            let mut zusatz = if aktiv {
                 telemetrie_zusatz_werte(&app)
             } else {
                 HashMap::new()
             };
+            // Sprit verbraucht: FOB beim Flugbeginn aus den Flugdaten — der
+            // Snapshot des Adapters traegt dort immer 0 (Pruefbericht
+            // 26.09.2026), gerechnet wird nur in der Kopie des Positionstakts.
+            if let Some(basis) = telemetrie_sprit_basis(&state) {
+                zusatz.insert(telemetrie::SPRIT_BASIS.to_string(), basis as f64);
+            }
+            state.telemetrie.g_spanne_eintragen(&snap, &mut zusatz);
             let frame = telemetrie::frame(&snap, &zusatz);
             state.telemetrie.aufnehmen(&frame, jetzt);
             if aktiv {

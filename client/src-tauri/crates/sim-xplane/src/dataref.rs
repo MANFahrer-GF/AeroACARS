@@ -257,8 +257,10 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/flightmodel/position/psi",
         field: FieldId::HeadingDegTrue,
     },
+    // `magpsi` ist laut DataRefs.txt „DO NOT USE THIS … REPLACED"; der
+    // Nachfolger heisst `mag_psi` („the old magpsi dataref was FUBAR").
     DatarefEntry {
-        name: "sim/flightmodel/position/magpsi",
+        name: "sim/flightmodel/position/mag_psi",
         field: FieldId::HeadingDegMagnetic,
     },
     DatarefEntry {
@@ -520,8 +522,12 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/cockpit2/electrical/battery_on[0]",
         field: FieldId::BatteryMaster,
     },
+    // Pruefbericht 26.09.2026: `sim/cockpit2/electrical/avionics_on` gibt
+    // es nicht (DataRefs.txt XP12) — X-Plane antwortete mit 0, der Avionik-
+    // Schalter stand auf jedem X-Plane-Flug „aus". Belegt ist
+    // `sim/cockpit/electrical/avionics_on` („Is there power to the avionics").
     DatarefEntry {
-        name: "sim/cockpit2/electrical/avionics_on",
+        name: "sim/cockpit/electrical/avionics_on",
         field: FieldId::AvionicsMaster,
     },
     DatarefEntry {
@@ -576,7 +582,8 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/cockpit2/switches/auto_brake_level",
         field: FieldId::AutobrakeLevel,
     },
-    // Transponder mode: 0=OFF, 1=STBY, 2=ON, 3=TEST, 4=ALT, 5=TA, 6=TARA.
+    // Transponder mode (DataRefs.txt): off=0, stdby=1, on (mode A)=2,
+    // alt (mode C)=3, test=4, GND (mode S)=5, ta_only=6, ta/ra=7.
     DatarefEntry {
         name: "sim/cockpit2/radios/actuators/transponder_mode",
         field: FieldId::TransponderMode,
@@ -2146,5 +2153,40 @@ mod cockpit_schalter_tests {
                 "Stellung {roh}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod pruefbericht_2026_09_26 {
+    use super::*;
+
+    fn name_fuer(feld: FieldId) -> &'static str {
+        CATALOG
+            .iter()
+            .find(|e| e.field == feld)
+            .map(|e| e.name)
+            .expect("Feld im Katalog")
+    }
+
+    #[test]
+    fn avionik_liest_den_belegten_dataref() {
+        // DataRefs.txt (XP12) Zeile 615: `sim/cockpit/electrical/avionics_on`
+        // „Is there power to the avionics". Die cockpit2-Variante gibt es
+        // nicht — X-Plane lieferte 0, der Schalter stand immer auf „aus".
+        assert_eq!(
+            name_fuer(FieldId::AvionicsMaster),
+            "sim/cockpit/electrical/avionics_on"
+        );
+    }
+
+    #[test]
+    fn missweisender_kurs_ohne_veralteten_dataref() {
+        // DataRefs.txt: `magpsi` „DO NOT USE THIS … REPLACED",
+        // `mag_psi` „the old magpsi dataref was FUBAR".
+        assert_eq!(
+            name_fuer(FieldId::HeadingDegMagnetic),
+            "sim/flightmodel/position/mag_psi"
+        );
+        assert!(!CATALOG.iter().any(|e| e.name.ends_with("/magpsi")));
     }
 }

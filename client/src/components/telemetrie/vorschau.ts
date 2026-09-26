@@ -134,6 +134,7 @@ function frame(z: Zustand, jetzt: number): Frame {
     spoiler: z.boden ? 100 : 0,
     spoiler_armed: 1,
     umkehr_1: z.boden && z.seitTd > 1.5 && z.seitTd < 15 ? 100 : 0,
+    umkehr_2: z.boden && z.seitTd > 1.6 && z.seitTd < 15 ? 100 : 0,
     hoehenruder: z.agl < 40 && !z.boden ? -30 : r(5),
     querruder: r(8),
     seitenruder: r(3),

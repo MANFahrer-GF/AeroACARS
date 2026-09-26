@@ -32,6 +32,19 @@ export const TANK_IDS = [
   "xp_tank_7",
   "xp_tank_8",
   "xp_tank_9",
+  // MSFS 2024, modernes Treibstoffsystem (`NEW FUEL SYSTEM`): Tank.1 … Tank.12.
+  "fs_tank_1",
+  "fs_tank_2",
+  "fs_tank_3",
+  "fs_tank_4",
+  "fs_tank_5",
+  "fs_tank_6",
+  "fs_tank_7",
+  "fs_tank_8",
+  "fs_tank_9",
+  "fs_tank_10",
+  "fs_tank_11",
+  "fs_tank_12",
 ] as const;
 
 export interface TankSaeule {

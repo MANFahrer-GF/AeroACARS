@@ -8,7 +8,17 @@ import type { Kanal } from "./typen";
 /** Kanaele, deren Zahl ein Aufzaehlungswert ist (Text statt Zahl). */
 const AUFZAEHLUNG: Record<string, string> = {
   untergrund: "telemetrie.untergrund.",
+  // Wahlschalter 0=OFF 1=AUTO 2=ON — als Schalter las sich AUTO wie ON.
+  anschnallzeichen: "telemetrie.anschnallzeichen.",
 };
+
+/**
+ * Kanaele, die das erkannte Muster nicht verlaesslich liefert: der Kanal
+ * `nicht_verlaesslich` traegt ihre IDs, leerzeichengetrennt.
+ */
+export function nichtVerlaesslich(liste: string | null | undefined): Set<string> {
+  return new Set((liste ?? "").split(/\s+/).filter(Boolean));
+}
 
 export function zahl(v: number, stellen: number, sprache: string): string {
   return new Intl.NumberFormat(sprache, {

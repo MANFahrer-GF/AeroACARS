@@ -6,6 +6,7 @@ import katalogJson from "./vorschauKatalog.json";
 import { ereignisseAus } from "./ereignisse";
 import { csvText } from "./csv";
 import { tankAnsicht, tanksAbweichend } from "./tanks";
+import { nichtVerlaesslich, wertMitEinheit, wertText } from "./format";
 import type { Frame, Katalog } from "./typen";
 import type { Telemetrie } from "./useTelemetrie";
 
@@ -156,5 +157,61 @@ describe("Sprit je Tank", () => {
     expect(tanksAbweichend(18100, 18481)).toBe(true);
     expect(tanksAbweichend(18200, 18481)).toBe(false);
     expect(tanksAbweichend(null, 18481)).toBe(false);
+  });
+});
+
+describe("Prüfbericht 26.09.2026", () => {
+  const tStub = ((key: string, o?: { defaultValue?: string }) => {
+    const pfad = key.split(".");
+    let v: unknown = de;
+    for (const p of pfad) v = (v as Record<string, unknown> | undefined)?.[p];
+    return typeof v === "string" ? v : (o?.defaultValue ?? key);
+  }) as unknown as Parameters<typeof wertText>[2];
+  const kanal = (id: string) => {
+    const k = [...katalog.zahlen, ...katalog.texte].find((x) => x.id === id);
+    if (!k) throw new Error(id);
+    return k;
+  };
+
+  it("Anschnallzeichen zeigt OFF/AUTO/ON statt an/aus", () => {
+    const k = kanal("anschnallzeichen");
+    expect(k.art).toBe("zahl");
+    expect(wertText(k, 0, tStub, "de")).toBe("OFF");
+    expect(wertText(k, 1, tStub, "de")).toBe("AUTO");
+    expect(wertText(k, 2, tStub, "de")).toBe("ON");
+    expect(wertMitEinheit(k, 1, tStub, "de")).toBe("AUTO");
+  });
+
+  it("nicht verlässliche Kanäle aus der Liste des Katalogs", () => {
+    const s = nichtVerlaesslich("n1_1 egt_1  schubhebel_1");
+    expect([...s]).toEqual(["n1_1", "egt_1", "schubhebel_1"]);
+    expect(nichtVerlaesslich(null).size).toBe(0);
+    expect(katalog.texte.some((k) => k.id === "nicht_verlaesslich")).toBe(true);
+  });
+
+  it("MSFS 2024 neues Treibstoffsystem: Tanks 1–5, Tank 6 gibt es nicht", () => {
+    const a = tankAnsicht(
+      werte({
+        sprit_gesamt: 19600,
+        fs_tank_1: 4500,
+        fs_tank_1_kap: 12000,
+        fs_tank_2: 9800,
+        fs_tank_2_kap: 12000,
+        fs_tank_3: 4500,
+        fs_tank_3_kap: 12000,
+        fs_tank_4: 400,
+        fs_tank_4_kap: 12000,
+        fs_tank_5: 400,
+        fs_tank_5_kap: 12000,
+      }),
+    );
+    expect(a.saeulen.map((x) => x.id)).toEqual(["fs_tank_1", "fs_tank_2", "fs_tank_3", "fs_tank_4", "fs_tank_5"]);
+    expect(a.nachKapazitaet).toBe(true);
+  });
+
+  it("Schubumkehr, Soll-Mach, Vne und volle Klappen stehen im Katalog", () => {
+    for (const id of ["umkehr_3", "umkehr_4", "soll_mach", "vne", "vfe_voll", "hydraulik_xp_2"]) kanal(id);
+    expect(kanal("hydraulik_xp_1").einheit).toBe("");
+    expect(kanal("hydraulik").einheit).toBe("psi");
   });
 });

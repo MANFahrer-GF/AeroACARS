@@ -4901,7 +4901,19 @@ fn telemetry_to_snapshot_mit_pfad(
                 t.eng4_combustion_state,
             ],
             n1_pct: vec![t.n1_pct_1, t.n1_pct_2, t.n1_pct_3, t.n1_pct_4],
-            fuel_flow_pph: vec![t.eng1_ff_pph, t.eng2_ff_pph, t.eng3_ff_pph, t.eng4_ff_pph],
+            // Pruefbericht 26.09.2026: je Triebwerk dieselbe Kaskade wie die
+            // Summe `fuel_flow_kg_per_h` — bei der A346 bleibt `ENG FUEL
+            // FLOW PPH` 0, nur `TURB ENG CORRECTED FF` lebt.
+            fuel_flow_pph: if total_ff_pph <= 0.0 && total_ff_corrected_pph > 0.0 {
+                vec![
+                    t.eng1_ff_corrected_pph,
+                    t.eng2_ff_corrected_pph,
+                    t.eng3_ff_corrected_pph,
+                    t.eng4_ff_corrected_pph,
+                ]
+            } else {
+                vec![t.eng1_ff_pph, t.eng2_ff_pph, t.eng3_ff_pph, t.eng4_ff_pph]
+            },
         }),
         cockpit_rohwerte,
     }
@@ -5281,6 +5293,35 @@ mod tests {
         assert_eq!(sig.eng_combustion, vec![true, false, false, false]);
         assert_eq!(sig.n1_pct, vec![0.33, 0.0, 0.0, 0.0]);
         assert_eq!(sig.fuel_flow_pph, vec![212.5, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn ff_je_triebwerk_folgt_der_kaskade_der_summe() {
+        // Aerosoft A346: `ENG FUEL FLOW PPH` bleibt 0, nur `TURB ENG
+        // CORRECTED FF` lebt. Die Summe las das seit 2026-06-10, die Werte je
+        // Triebwerk standen im Monitor weiter auf 0.
+        let mut t = Telemetry::default();
+        t.eng1_ff_corrected_pph = 5100.0;
+        t.eng2_ff_corrected_pph = 5080.0;
+        t.eng3_ff_corrected_pph = 5120.0;
+        t.eng4_ff_corrected_pph = 5090.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        let sig = snap.engine_signals.expect("MSFS fuellt engine_signals");
+        assert_eq!(sig.fuel_flow_pph, vec![5100.0, 5080.0, 5120.0, 5090.0]);
+        let summe_kg = snap.fuel_flow_kg_per_h.expect("Summe aus CORRECTED FF") as f64;
+        let je_tw_kg: f64 = sig.fuel_flow_pph.iter().sum::<f64>() * KG_PER_LB;
+        assert!(
+            (summe_kg - je_tw_kg).abs() < 1.0,
+            "{summe_kg} vs {je_tw_kg}"
+        );
+        // Lebt PPH, bleibt es bei PPH.
+        let mut t = Telemetry::default();
+        t.eng1_ff_pph = 2400.0;
+        t.eng1_ff_corrected_pph = 9999.0;
+        let sig = telemetry_to_snapshot(t, Simulator::Msfs2024)
+            .engine_signals
+            .unwrap();
+        assert_eq!(sig.fuel_flow_pph, vec![2400.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]

@@ -231,6 +231,15 @@
   color: var(--acc);
   border-color: var(--acc);
 }
+/* Wert, den das erkannte Muster nicht verlaesslich liefert (iniBuilds A380). */
+.tele-quelle--unsicher {
+  color: var(--text-dim);
+  border-style: dashed;
+}
+.tele-zeile--unsicher .tele-zeile-name,
+.tele-zeile--unsicher .tele-zeile-wert {
+  color: var(--text-dim);
+}
 
 /* ---- Arbeitsflaeche ---- */
 .tele-arbeit {
