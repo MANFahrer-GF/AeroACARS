@@ -1206,6 +1206,22 @@ pub enum AircraftProfile {
     /// 0=ON 1=AUTO 2=OFF ist nicht übertragen) und läuft nur als Rohwert ins
     /// Flug-Log (`cockpit_rohwerte`).
     IniA380,
+    /// iniBuilds A330-200/-300 (MSFS 2024, Paket
+    /// `StreamedPackages/fs24-microsoft-aircraft-a330`). Titel ohne
+    /// Hersteller: "A330-200 VIP (GE)", "A330-300 (RR)", "A330-200 (GE)",
+    /// "A330-300 VIP (RR)", "A330-300P2F (RR)"; ICAO meist leer. Erkannt am
+    /// Titelmuster "a330-…(…)" bzw. am aircraft.cfg-Pfad `microsoft-a330`.
+    /// NICHT der Headwind A339 ("A330-941", ICAO A339 → `FbwA32nx`).
+    /// Belegung gemessen 26.09.2026 (Schalter im Simulator bewegt, L:INI_-
+    /// Werte gleich den Input-Events):
+    ///   * `L:INI_STROBE_LIGHT_SWITCH` 0=ON 1=AUTO 2=OFF (gespiegelt)
+    ///   * `L:INI_SEATBELTS_SWITCH` 0=OFF 1=ON — zweistufig, ANDERE Richtung
+    ///     als A350/A380
+    ///   * `L:INI_TCAS_STBY_STATE` 0=STBY 1=AUTO 2=ON, `L:INI_tcas_mode_pedestal`
+    ///     0=STBY 1=TA 2=TA-RA (anders als A350); Rueckfall `TRANSPONDER STATE:1`
+    ///   * `L:INI_SPOILERS_ARMED` 0/1, `L:INI_APU_MASTER_SWITCH` 0/1
+    ///   * Beacon: Standard-SimVar; Autobrake nicht lesbar (None)
+    IniA330,
     /// FSS E-Jets (MSFS 2024, E170/E175/E190/E195 — EIN Profil, die
     /// Cockpit-LVars heißen alle `L:FSS_EXX_*`). Paket
     /// `Community2024/fss-aircraft-e17x`, Verhaltensordner
@@ -1386,6 +1402,14 @@ impl AircraftProfile {
         {
             return Self::FbwA32nx;
         }
+        // iniBuilds A330 (MSFS 2024): Titel beginnt mit "A330-" und traegt
+        // eine Klammer-Variante ("A330-300 (RR)", "A330-200 VIP (GE)").
+        // Headwind/FBW sind oben schon abgefangen (Marker bzw. ICAO A339);
+        // die A330-900neo-Familie ("A330-9…", etwa "A330-941") ist
+        // ausdruecklich ausgenommen.
+        if t.starts_with("a330-") && t.contains('(') && !t.starts_with("a330-9") {
+            return Self::IniA330;
+        }
         // v0.13.13: FSReborn Phenom 300E. Title aus dem Sim heisst typisch
         // "FSReborn Phenom 300E Tristan Interior" (oder mit anderen
         // Interior-Varianten). Wir matchen tolerant auf fsreborn + phenom +
@@ -1528,6 +1552,16 @@ impl AircraftProfile {
         if p.contains("inibuilds") && p.contains("a380") {
             return Self::IniA380;
         }
+        // iniBuilds A330 (Paket `fs24-microsoft-aircraft-a330`; gemeldet
+        // wurde ausserdem `microsoft-a330` im Pfad — beide Formen zaehlen).
+        // Titel oder ICAO muss nach A330 aussehen, der Headwind A339 nie.
+        if (p.contains("microsoft-a330") || p.contains("microsoft-aircraft-a330"))
+            && modell != "A339"
+            && !t.contains("a330-9")
+            && (t.contains("a330") || modell.starts_with("A33"))
+        {
+            return Self::IniA330;
+        }
         // FBW A380X: Livery-Titel ohne Marker ("FBW Emirates (circa 2008)
         // A6-EDA", ICAO A388) liefen als `Default`. Titel bzw. ICAO muss
         // zur A380 passen, damit ein Rest-Pfad keinen fremden Titel kapert.
@@ -1605,6 +1639,7 @@ impl AircraftProfile {
             Self::ContrailFa50 => "Contrail Falcon 50",
             Self::SynapticA220 => "Synaptic A220",
             Self::IniA380 => "INIBuilds A380",
+            Self::IniA330 => "INIBuilds A330",
             Self::FssEjet => "FSS E-Jet",
         }
     }
@@ -3423,16 +3458,85 @@ mod msfs2024_cockpit_tests {
                 "{titel} / {icao}"
             );
         }
-        // Keine Fremdtreffer: iniBuilds A330 und ein blanker A359-ICAO
-        // ohne "a350" im Titel bleiben Default.
+        // Keine Fremdtreffer: die iniBuilds A330 hat seit 26.09.2026 ihr
+        // eigenes Profil (nicht A350), ein blanker A359-ICAO ohne "a350" im
+        // Titel bleibt Default.
         assert_eq!(
             AircraftProfile::detect("A330-300 (RR)", "A333"),
-            AircraftProfile::Default
+            AircraftProfile::IniA330
         );
         assert_eq!(
             AircraftProfile::detect("Some Airliner", "A359"),
             AircraftProfile::Default
         );
+    }
+
+    /// iniBuilds A330 (MSFS 2024): echte Titel aus den Logs, ICAO meist
+    /// leer; Abgrenzung gegen Headwind A339 und FBW.
+    #[test]
+    fn ini_a330_msfs2024_titel_und_pfad() {
+        for titel in [
+            "A330-200 VIP (GE)",
+            "A330-300 (RR)",
+            "A330-200 (GE)",
+            "A330-300 VIP (RR)",
+            "A330-300P2F (RR)",
+        ] {
+            assert_eq!(
+                AircraftProfile::detect(titel, ""),
+                AircraftProfile::IniA330,
+                "{titel}"
+            );
+        }
+        // Headwind A339 / FBW: nie A330-Profil.
+        for (titel, icao) in [
+            ("A330-941 (TR)", ""),
+            ("A330-941", "A339"),
+            ("Headwind A330-900neo (RR)", "A339"),
+            ("A330-300 (RR)", "A339"),
+            ("FlyByWire A32NX", "A20N"),
+        ] {
+            assert_ne!(
+                AircraftProfile::detect(titel, icao),
+                AircraftProfile::IniA330,
+                "{titel} / {icao}"
+            );
+        }
+        // Pfad nur, wenn der Titel Default ergibt und nach A330 aussieht.
+        let pfad = Some(
+            "C:\\Users\\x\\AppData\\Local\\Packages\\Microsoft.Limitless\\LocalCache\\StreamedPackages\\fs24-microsoft-aircraft-a330\\SimObjects\\Airplanes\\A330-300\\aircraft.cfg",
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Emirates A330 A6-EAA", "", pfad),
+            AircraftProfile::IniA330
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Irgendwas", "A333", pfad),
+            AircraftProfile::IniA330
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "KLM A330 PH-AOA",
+                "",
+                Some("C:\\MSFS\\microsoft-a330\\SimObjects\\aircraft.cfg")
+            ),
+            AircraftProfile::IniA330
+        );
+        // Rest-Pfad unter fremdem Titel bzw. Headwind: kein Treffer.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Cessna 172", "C172", pfad),
+            AircraftProfile::Default
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("A330-941", "A339", pfad),
+            AircraftProfile::FbwA32nx
+        );
+        // Titel gewinnt vor dem Pfad.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("FenixA320 DLH", "A320", pfad),
+            AircraftProfile::FenixA320
+        );
+        assert_eq!(AircraftProfile::IniA330.label(), "INIBuilds A330");
     }
 
     #[test]

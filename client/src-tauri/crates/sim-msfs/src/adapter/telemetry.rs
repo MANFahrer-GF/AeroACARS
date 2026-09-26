@@ -969,6 +969,11 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:FSS_EXX_AUTOBRAKE", "Number"),
     // Pedestal/Pedestal.xml:68-76: 0 = Off.
     F::f64("L:FSS_EXX_PARKBRAKE_BV_LEVER", "Number"),
+    // iniBuilds A330 (MSFS 2024), gemessen 26.09.2026: Strobe 0=ON 1=AUTO
+    // 2=OFF, ATC-Wahlschalter 0=STBY 1=AUTO 2=ON. LVars — koennen nicht
+    // abgelehnt werden, stehen deshalb VOR dem Standard-SimVar-Schwanz.
+    F::f64("L:INI_STROBE_LIGHT_SWITCH", "Number"),
+    F::f64("L:INI_TCAS_STBY_STATE", "Number"),
     // Standard-SimVars. SEATBELTS/TRANSPONDER STATE dienen als Rueckfall fuer
     // die Muster, die sie laut Paket bedienen (siehe Mapping); alle drei
     // laufen zusaetzlich roh ins Flug-Log. GANZ ans Ende: anders als LVars
@@ -1488,6 +1493,10 @@ pub struct Telemetry {
     pub fss_apu_master: f64,
     pub fss_autobrake: f64,
     pub fss_parkbrake_lever: f64,
+    /// iniBuilds A330 `L:INI_STROBE_LIGHT_SWITCH` 0=ON 1=AUTO 2=OFF.
+    pub ini_strobe_light_switch: f64,
+    /// iniBuilds A330 `L:INI_TCAS_STBY_STATE` 0=STBY 1=AUTO 2=ON.
+    pub ini_tcas_stby_state: f64,
     /// `AUTO BRAKE SWITCH CB` — nur roh ins Flug-Log.
     pub roh_std_autobrake_switch_cb: f64,
     /// `CABIN SEATBELTS ALERT SWITCH`. `None`, wenn der Block vor diesem
@@ -2220,6 +2229,8 @@ impl Telemetry {
         pull_f64!(t.fss_apu_master);
         pull_f64!(t.fss_autobrake);
         pull_f64!(t.fss_parkbrake_lever);
+        pull_f64!(t.ini_strobe_light_switch);
+        pull_f64!(t.ini_tcas_stby_state);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
         t.std_cabin_seatbelts_alert = read_f64(bytes, off);
@@ -2747,6 +2758,9 @@ fn telemetry_to_snapshot_mit_pfad(
     // Pfad bzw. neue Titel-Muster erkannt werden (siehe
     // `AircraftProfile::detect_mit_pfad`).
     let is_a380 = matches!(profile, AircraftProfile::IniA380);
+    // iniBuilds A330 (MSFS 2024), Belegung gemessen 26.09.2026 — siehe
+    // `AircraftProfile::IniA330`.
+    let is_a330 = matches!(profile, AircraftProfile::IniA330);
     let is_pmdg737 = matches!(profile, AircraftProfile::Pmdg737);
     let is_pmdg777 = matches!(profile, AircraftProfile::Pmdg777);
     // Der FBW A380X teilt das Profil mit dem A32NX, aber nicht jede
@@ -2781,8 +2795,10 @@ fn telemetry_to_snapshot_mit_pfad(
     // `TRANSPONDER STATE:1`. Den TCAS-Modus liefert die SimVar nicht — beim
     // A220 gibt es deshalb kein Label ueber ALT hinaus (kein erfundenes
     // TA/TA-RA); den A380-TCAS-Modus kann gemessen gar nichts lesen.
+    // A330 gemessen: STBY=1, AUTO am Boden=5, ON=4 — Rueckfall, wenn die
+    // Wahlschalter-LVars kein Label ergeben.
     let standard_transponder_bedient =
-        is_default_profile || is_fbw_a380x || is_fss || is_a380 || is_synaptic_a220;
+        is_default_profile || is_fbw_a380x || is_fss || is_a380 || is_synaptic_a220 || is_a330;
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
     // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
@@ -3218,6 +3234,11 @@ fn telemetry_to_snapshot_mit_pfad(
         // gespiegelt auf 0=OFF 1=AUTO 2=ON. Ohne Event None:
         // `L:INI_LIGHTS_STROBE` ist beim A380 unbelegt und laeuft nur roh.
         b_wert(&t, "AIRLINER_LIGHTS_EXT_STROBE").and_then(ini_on_auto_off_gespiegelt)
+    } else if is_a330 {
+        // iniBuilds A330 `L:INI_STROBE_LIGHT_SWITCH` 0=ON 1=AUTO 2=OFF
+        // (gemessen 26.09.2026, gleich `B:AIRLINER_STROBE_TOGGLE`) —
+        // gespiegelt auf 0=OFF 1=AUTO 2=ON.
+        ini_on_auto_off_gespiegelt(t.ini_strobe_light_switch)
     } else {
         None
     };
@@ -3314,7 +3335,10 @@ fn telemetry_to_snapshot_mit_pfad(
         // fest. Frueher fiel eine 0 auf die SimVar zurueck ("abgelehnt
         // oder Off") — genau dieser Rueckfall hielt den Haenger am Leben.
         t.syn_apu_switch >= 0.5
-    } else if is_a350 || is_a380 {
+    } else if is_a350 || is_a380 || is_a330 {
+        // A330 (gemessen 26.09.2026): `L:INI_APU_MASTER_SWITCH` 0/1, gleich
+        // `B:AIRLINER_APU_MASTER`.
+        //
         // Audit 26.09.2026: die Standard-SimVar `APU SWITCH` stand bei der
         // iniBuilds A350 den ganzen Flug auf true (auch im Reiseflug) —
         // darum ERSETZEN, nicht ODERn. `L:INI_APU_MASTER_SWITCH` 0/1 ist
@@ -3463,6 +3487,15 @@ fn telemetry_to_snapshot_mit_pfad(
         b_wert(&t, "AIRLINER_SIGNS_SEAT_BELTS")
             .and_then(ini_on_auto_off_gespiegelt)
             .or_else(|| ini_on_auto_off_gespiegelt(t.ini_seatbelts_switch))
+    } else if is_a330 {
+        // iniBuilds A330 `L:INI_SEATBELTS_SWITCH` — gemessen 26.09.2026 nur
+        // ZWEI Stellungen, 0=OFF 1=ON, also ANDERS herum als A350/A380
+        // (dort 0=ON). ON → Snapshot 2, OFF → 0; alles andere None.
+        match t.ini_seatbelts_switch.round() as i64 {
+            0 if t.ini_seatbelts_switch.abs() < 0.25 => Some(0),
+            1 if (t.ini_seatbelts_switch - 1.0).abs() < 0.25 => Some(2),
+            _ => None,
+        }
     } else if is_fsl {
         // FSLabs `L:VC_OVHD_SIGNS_SeatBelts_Switch` 0=OFF 10=AUTO 20=ON.
         lvar_raste_0_10_20(t.fsl_seatbelts_sw)
@@ -3686,6 +3719,12 @@ fn telemetry_to_snapshot_mit_pfad(
             b_wert(&t, "AIRLINER_MIP_LG_ABRK_KNOB"),
             b_wert(&t, "AIRLINER_MIP_LG_ABRK_RTO"),
         )
+    } else if is_a330 {
+        // iniBuilds A330: nicht lesbar. `B:AIRLINER_AUTOBRK_LO/MED/HI` sind
+        // gemessen (26.09.2026) nur Kippzustaende je Tastendruck — zwei
+        // Durchgaenge lieferten genau spiegelverkehrte Werte. Daraus laesst
+        // sich keine Stufe ablesen → None statt eines Ratewerts.
+        None
     } else if is_a340 {
         // v0.16.10 (#Premium): iniBuilds A340 `L:INI_AUTOBRAKE_LEVEL`
         // — Selector-Enum laut HubHop: 3=MED, 4=MAX, 5=LO. 0 =
@@ -4325,8 +4364,9 @@ fn telemetry_to_snapshot_mit_pfad(
         // A350-Geschwister und ist beim A380 ungeprueft — lieber "nicht
         // messbar" als ein ungepruefter Wert.
         None
-    } else if is_a350 {
-        // iniBuilds `L:INI_SPOILERS_ARMED` 1 = armiert.
+    } else if is_a350 || is_a330 {
+        // iniBuilds `L:INI_SPOILERS_ARMED` 1 = armiert (A330 gemessen
+        // 26.09.2026: 0/1).
         Some(t.spoilers_armed || t.ini_spoilers_armed != 0.0)
     } else if is_pmdg737 {
         // PMDG 737 ohne SDK: `L:switch_343_73X` > 0 = ARMED (HubHop-
@@ -4374,6 +4414,13 @@ fn telemetry_to_snapshot_mit_pfad(
             3 => Some("TA-RA".to_string()),
             _ => None,
         }
+    } else if is_a330 {
+        // iniBuilds A330, gemessen 26.09.2026: ATC-Wahlschalter
+        // `L:INI_TCAS_STBY_STATE` 0=STBY 1=AUTO 2=ON und TCAS
+        // `L:INI_tcas_mode_pedestal` 0=STBY 1=TA 2=TA-RA — ANDERS als bei der
+        // A350 (dort 2=TA/RA 3=TA). Genau die Belegung von
+        // `airbus_xpdr_mode_label`. Unbekannte Werte → Standard-Rueckfall.
+        airbus_xpdr_mode_label(t.ini_tcas_stby_state, t.ini_tcas_mode)
     } else if is_a350 {
         // `L:INI_tcas_mode_pedestal`: Belegstand — das Paket
         // (A350_Interior.behavior.xml) belegt nur 2=TA/RA und 3=TA ONLY;
@@ -5439,8 +5486,9 @@ mod tests {
         // (16 A220-Kanaele der Gruppe J); 16.09.2026: +16 (ENG COMBUSTION:1..4);
         // 26.09.2026: +232 (29 Kanaele der Gruppe K, alle f64); Runde 2:
         // +40 (MD-11-Speedbrake x2, INI-Autobrake x3); Runde 3: +96 (12 FSS-
-        // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2).
-        assert_eq!(buf.len(), 3544, "total block size");
+        // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2); A330 (26.09.2026): +16
+        // (Strobe + ATC-Wahlschalter).
+        assert_eq!(buf.len(), 3560, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -5744,12 +5792,14 @@ mod tests {
         assert_eq!(t.fss_apu_master, 1361.0); // idx 361
         assert_eq!(t.fss_autobrake, 1362.0); // idx 362
         assert_eq!(t.fss_parkbrake_lever, 1363.0); // idx 363
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1364.0); // idx 364
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1365.0)); // idx 365
-        assert_eq!(t.std_transponder_state, Some(1366.0)); // idx 366
-        assert_eq!(t.std_light_landing_on_1, Some(1367.0)); // idx 367
-        assert_eq!(t.std_light_landing_on_2, Some(1368.0)); // idx 368
-        assert_eq!(TELEMETRY_FIELDS.len(), 369, "letzter Index 368");
+        assert_eq!(t.ini_strobe_light_switch, 1364.0); // idx 364, A330 (26.09.2026)
+        assert_eq!(t.ini_tcas_stby_state, 1365.0); // idx 365
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1366.0); // idx 366
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1367.0)); // idx 367
+        assert_eq!(t.std_transponder_state, Some(1368.0)); // idx 368
+        assert_eq!(t.std_light_landing_on_1, Some(1369.0)); // idx 369
+        assert_eq!(t.std_light_landing_on_2, Some(1370.0)); // idx 370
+        assert_eq!(TELEMETRY_FIELDS.len(), 371, "letzter Index 370");
     }
 
     #[test]
@@ -5814,8 +5864,8 @@ mod tests {
         // zuerst die weg (Falle Nummer vier, siehe oben). Runde 2: zwei
         // MD-11-Speedbrake- und drei INI-Autobrake-LVars dazu → 34 * 8 = 272.
         // Runde 3: zwoelf FSS-LVars und LIGHT LANDING ON:1/:2 dazu → 48 * 8
-        // = 384.
-        buf.truncate(buf.len() - 384);
+        // = 384. A330 (26.09.2026): zwei LVars dazu → 50 * 8 = 400.
+        buf.truncate(buf.len() - 400);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(t.fnx_xpdr_operation, 0.0, "Gruppe K = sicherer Default");
@@ -5824,6 +5874,7 @@ mod tests {
             "Gruppe K = sicherer Default (kein erfundenes OFF)"
         );
         assert_eq!(t.fss_parkbrake_lever, 0.0, "Runde 3 = sicherer Default");
+        assert_eq!(t.ini_tcas_stby_state, 0.0, "A330 = sicherer Default");
         assert_eq!(
             t.std_light_landing_on_2, None,
             "Runde 3 = kein erfundener Wert"
@@ -9550,6 +9601,117 @@ mod tests {
             .werte
             .keys()
             .any(|k| k.starts_with("B:")));
+    }
+
+    // ---- iniBuilds A330 (MSFS 2024), gemessen 26.09.2026 ----
+
+    const A330: (&str, &str) = ("A330-300 (RR)", "");
+
+    #[test]
+    fn a330_strobe_gemessen_2_1_0_wird_0_1_2() {
+        for (roh, want) in [(2.0, 0u8), (1.0, 1), (0.0, 2)] {
+            let snap = runde2(A330.0, A330.1, &[("L:INI_STROBE_LIGHT_SWITCH", roh)]);
+            assert_eq!(snap.aircraft_profile, AircraftProfile::IniA330);
+            assert_eq!(snap.strobe_state, Some(want), "roh={roh}");
+        }
+        let snap = runde2(A330.0, A330.1, &[("L:INI_STROBE_LIGHT_SWITCH", 3.0)]);
+        assert_eq!(snap.strobe_state, None);
+    }
+
+    #[test]
+    fn a330_anschnallzeichen_zweistufig_andere_richtung() {
+        // 0=OFF 1=ON — anders herum als A350/A380 (dort 0=ON).
+        let belts =
+            |roh: f64| runde2(A330.0, A330.1, &[("L:INI_SEATBELTS_SWITCH", roh)]).seatbelts_sign;
+        assert_eq!(belts(0.0), Some(0));
+        assert_eq!(belts(1.0), Some(2));
+        assert_eq!(belts(2.0), None, "keine dritte Stellung");
+        // Die A350 behaelt ihre Richtung.
+        let snap = runde2(A350.0, A350.1, &[("L:INI_SEATBELTS_SWITCH", 0.0)]);
+        assert_eq!(snap.seatbelts_sign, Some(2));
+    }
+
+    #[test]
+    fn a330_transponder_und_tcas() {
+        let xpdr = |stby: f64, tcas: f64| {
+            runde2(
+                A330.0,
+                A330.1,
+                &[
+                    ("L:INI_TCAS_STBY_STATE", stby),
+                    ("L:INI_tcas_mode_pedestal", tcas),
+                ],
+            )
+            .xpdr_mode_label
+        };
+        assert_eq!(xpdr(0.0, 2.0).as_deref(), Some("STBY"));
+        assert_eq!(xpdr(1.0, 0.0).as_deref(), Some("XPNDR"));
+        assert_eq!(xpdr(2.0, 1.0).as_deref(), Some("TA"));
+        assert_eq!(xpdr(2.0, 2.0).as_deref(), Some("TA-RA"));
+        // A350: 2 = TA/RA, 3 = TA — die A330-Tabelle leakt nicht.
+        let snap = runde2(A350.0, A350.1, &[("L:INI_tcas_mode_pedestal", 1.0)]);
+        assert_eq!(snap.xpdr_mode_label, None);
+        // Rueckfall Standard-SimVar, wenn die LVars nichts Belegtes liefern
+        // (gemessen: STBY=1, AUTO am Boden=5, ON=4).
+        for (roh, want) in [(1.0, "STBY"), (5.0, "GND"), (4.0, "ALT")] {
+            let snap = runde2(
+                A330.0,
+                A330.1,
+                &[("L:INI_TCAS_STBY_STATE", 7.0), ("TRANSPONDER STATE:1", roh)],
+            );
+            assert_eq!(snap.xpdr_mode_label.as_deref(), Some(want), "roh={roh}");
+        }
+    }
+
+    #[test]
+    fn a330_spoiler_apu_beacon_autobrake() {
+        let snap = runde2(
+            A330.0,
+            A330.1,
+            &[
+                ("L:INI_SPOILERS_ARMED", 1.0),
+                ("L:INI_APU_MASTER_SWITCH", 1.0),
+                ("LIGHT BEACON", 1.0),
+            ],
+        );
+        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(snap.apu_switch, Some(true));
+        assert_eq!(snap.light_beacon, Some(true));
+        assert_eq!(snap.autobrake, None, "Autobrake nicht lesbar");
+        let snap = runde2(
+            A330.0,
+            A330.1,
+            &[
+                ("L:INI_SPOILERS_ARMED", 0.0),
+                ("L:INI_APU_MASTER_SWITCH", 0.0),
+                ("APU SWITCH", 1.0),
+            ],
+        );
+        assert_eq!(snap.spoilers_armed, Some(false));
+        assert_eq!(snap.apu_switch, Some(false), "LVar ersetzt die SimVar");
+    }
+
+    #[test]
+    fn a330_erkennung_ueber_den_pfad_in_der_kette() {
+        let pfad = "C:\\x\\StreamedPackages\\fs24-microsoft-aircraft-a330\\SimObjects\\Airplanes\\A330-200\\aircraft.cfg";
+        let snap = parse(
+            &runde2_puffer(
+                "Airline A330 D-AXXX",
+                "",
+                &[("L:INI_STROBE_LIGHT_SWITCH", 2.0)],
+            ),
+            Simulator::Msfs2024,
+            Some(pfad),
+        );
+        assert_eq!(snap.aircraft_profile, AircraftProfile::IniA330);
+        assert_eq!(snap.strobe_state, Some(0));
+        // Headwind A339 bleibt FBW, auch mit A330-Rest-Pfad.
+        let snap = parse(
+            &runde2_puffer("A330-941", "A339", &[]),
+            Simulator::Msfs2024,
+            Some(pfad),
+        );
+        assert_eq!(snap.aircraft_profile, AircraftProfile::FbwA32nx);
     }
 
     #[test]
