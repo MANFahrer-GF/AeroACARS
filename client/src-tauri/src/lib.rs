@@ -24985,25 +24985,45 @@ fn strecken_anteil(
 /// der Flieger rechnerisch ~1 460 ft zu hoch, kam nie ins 1000-ft-Fenster,
 /// und alle Anflugwerte blieben leer.
 ///
-/// Normale Flüge: unverändert die Zielhöhe (keine Änderung der Bewertung).
-/// Landebahn an einem ANDEREN Flughafen als geplant: Schwellenhöhe dieser
-/// Bahn aus den Navdaten; fehlt sie, `None` → Höhe über Grund statt einer
-/// falschen Platzhöhe.
-fn anflug_bezugshoehe_ft(stats: &FlightStats, geplant_arr: &str) -> Option<f32> {
-    let Some(m) = stats.runway_match.as_ref() else {
+/// Normale Flüge: unverändert die Zielhöhe (Anzeige wie bisher; die Note
+/// liest diese Anflugfelder ohnehin nicht). Divert: Schwellenhöhe der
+/// tatsächlichen Bahn aus den Navdaten, sonst die Platzhöhe des
+/// tatsächlichen Flughafens aus den Navdaten, sonst `None` → Höhe über Grund
+/// statt einer falschen Platzhöhe.
+///
+/// „Divert" entscheidet `runway_correlation_icao` — das Ergebnis von
+/// `correlate_airport_icao`, das bei Nachbarplätzen das geplante Ziel
+/// bevorzugt. NICHT `runway_match.airport_ident`: der OurAirports-Rückfall
+/// sucht global die nächste Bahn und kann bei Doppelplätzen einen anderen
+/// Ident liefern, obwohl am Ziel gelandet wurde (QS 26.09.2026).
+fn anflug_bezugshoehe_ft(
+    stats: &FlightStats,
+    geplant_arr: &str,
+    ist_platzhoehe_navdaten_ft: Option<i32>,
+) -> Option<f32> {
+    let Some(ist) = stats.runway_correlation_icao.as_deref() else {
         return stats.arr_airport_elevation_ft;
     };
-    if m.airport_ident
-        .trim()
-        .eq_ignore_ascii_case(geplant_arr.trim())
-    {
+    if ist.trim().eq_ignore_ascii_case(geplant_arr.trim()) {
         return stats.arr_airport_elevation_ft;
     }
     stats
         .runway_nav_geometry
         .as_ref()
         .and_then(|g| g.threshold.elev_ft)
+        .or(ist_platzhoehe_navdaten_ft)
         .map(|e| e as f32)
+}
+
+/// Platzhöhe des tatsächlich angeflogenen Flughafens aus dem Navdaten-Cache.
+fn ist_platzhoehe_navdaten_ft(flight: &ActiveFlight, stats: &FlightStats) -> Option<i32> {
+    let icao = stats.runway_correlation_icao.as_deref()?;
+    flight
+        .navdata
+        .lock()
+        .expect("navdata lock")
+        .get(icao)
+        .and_then(|a| a.elevation_ft)
 }
 
 fn sprit_schwelle_ft(stats: &FlightStats) -> Option<f64> {
@@ -35855,7 +35875,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                         konfig_kontext(&stats, &aircraft_limits_for(muster));
                                     let stab_v2 = compute_approach_stability_v2(
                                         &stats.approach_buffer,
-                                        anflug_bezugshoehe_ft(&stats, &flight.arr_airport),
+                                        anflug_bezugshoehe_ft(
+                                            &stats,
+                                            &flight.arr_airport,
+                                            ist_platzhoehe_navdaten_ft(&flight, &stats),
+                                        ),
                                         td_ts,
                                         stats
                                             .runway_nav_geometry
@@ -44578,7 +44602,11 @@ fn step_flight_at(
                 let konfig = konfig_kontext(&stats, &limits);
                 let stab_v2 = compute_approach_stability_v2(
                     &stats.approach_buffer,
-                    anflug_bezugshoehe_ft(&stats, &flight.arr_airport),
+                    anflug_bezugshoehe_ft(
+                        &stats,
+                        &flight.arr_airport,
+                        ist_platzhoehe_navdaten_ft(&flight, &stats),
+                    ),
                     td_ts,
                     // v0.15.17: echter Gleitwinkel der aufgelösten Bahn (oben bei
                     // 18597 gesetzt, also vor diesem Aufruf). None bei OurAirports-
@@ -62287,22 +62315,37 @@ mod sim_pause_tests {
             glideslope_angle: 3.0,
             tch_ft: 50,
         };
-        // Ohne Bahn-Zuordnung und am geplanten Ziel: unverändert die Zielhöhe.
-        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS"), Some(22.0));
+        // Ohne Zuordnung und am geplanten Ziel: unverändert die Zielhöhe.
+        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS", None), Some(22.0));
+        stats.runway_correlation_icao = Some("WSSS".to_string());
         stats.runway_match = Some(bahn("WSSS"));
         stats.runway_nav_geometry = Some(nav(Some(30)));
         assert_eq!(
-            anflug_bezugshoehe_ft(&stats, "wsss "),
+            anflug_bezugshoehe_ft(&stats, "wsss ", Some(22)),
             Some(22.0),
             "normaler Flug unverändert"
         );
+        // QS: OurAirports-Rückfall liefert einen Nachbar-Ident, die
+        // Zuordnung sagt aber „am Ziel" → kein Divert, Zielhöhe bleibt.
+        stats.runway_match = Some(bahn("WSSL"));
+        stats.runway_nav_geometry = None;
+        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS", None), Some(22.0));
         // Divert: Schwellenhöhe der tatsächlichen Bahn.
+        stats.runway_correlation_icao = Some("EDDM".to_string());
         stats.runway_match = Some(bahn("EDDM"));
         stats.runway_nav_geometry = Some(nav(Some(1487)));
-        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS"), Some(1487.0));
-        // Divert ohne Navdaten-Höhe: über Grund statt falscher Platzhöhe.
+        assert_eq!(
+            anflug_bezugshoehe_ft(&stats, "WSSS", Some(1500)),
+            Some(1487.0)
+        );
+        // Divert, Schwelle ohne Höhe: Platzhöhe aus den Navdaten.
         stats.runway_nav_geometry = Some(nav(None));
-        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS"), None);
+        assert_eq!(
+            anflug_bezugshoehe_ft(&stats, "WSSS", Some(1487)),
+            Some(1487.0)
+        );
+        // Divert ohne jede Höhe: über Grund statt falscher Platzhöhe.
+        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS", None), None);
 
         // Durch die Rechnung: Endanflug 900/600/300 ft über München.
         let buf: std::collections::VecDeque<ApproachBufferSample> = [900.0f32, 600.0, 300.0]
