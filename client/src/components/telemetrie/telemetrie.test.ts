@@ -5,6 +5,7 @@ import it_ from "../../locales/it/common.json";
 import katalogJson from "./vorschauKatalog.json";
 import { ereignisseAus } from "./ereignisse";
 import { csvText } from "./csv";
+import { tankAnsicht, tanksAbweichend } from "./tanks";
 import type { Frame, Katalog } from "./typen";
 import type { Telemetrie } from "./useTelemetrie";
 
@@ -75,5 +76,85 @@ describe("csvText", () => {
     expect(csv[0]).toBe("zeit_utc;ias [kt];fma_lateral");
     expect(csv[1]).toBe('2026-09-25T12:00:00.000Z;137.5;"L""OC"');
     expect(csv[2]).toBe("2026-09-25T12:00:01.000Z;;");
+  });
+});
+
+function werte(w: Record<string, number>) {
+  return (id: string) => (id in w ? w[id] : null);
+}
+
+describe("Sprit je Tank", () => {
+  it("A380 (iniBuilds, ECAM 26.09.2026): alle elf Tanks, Säule nach Fassungsvermögen", () => {
+    // Werte, wie sie der Katalog nach der Umrechnung aus Gallonen liefert.
+    const w = werte({
+      sprit_gesamt: 18481,
+      tank_summe: 18480,
+      tank_links_tip: 980,
+      tank_links_tip_kap: 3500,
+      tank_links_aux: 4080,
+      tank_links_aux_kap: 17000,
+      tank_links: 0,
+      tank_links_kap: 30000,
+      tank_mitte: 4160,
+      tank_mitte_kap: 17000,
+      tank_mitte_2: 4260,
+      tank_mitte_2_kap: 17000,
+      tank_mitte_3: 0,
+      tank_mitte_3_kap: 18000,
+      tank_rechts: 0,
+      tank_rechts_kap: 30000,
+      tank_rechts_aux: 4020,
+      tank_rechts_aux_kap: 17000,
+      tank_rechts_tip: 980,
+      tank_rechts_tip_kap: 3500,
+      tank_extern_1: 0,
+      tank_extern_1_kap: 29000,
+      tank_extern_2: 0,
+      tank_extern_2_kap: 29000,
+    });
+    const a = tankAnsicht(w);
+    expect(a.saeulen).toHaveLength(11);
+    expect(a.nachKapazitaet).toBe(true);
+    const summe = a.saeulen.reduce((s, x) => s + x.kg, 0);
+    expect(summe).toBe(18480);
+    const mitte = a.saeulen.find((x) => x.id === "tank_mitte");
+    expect(mitte?.anteil).toBeCloseTo(4160 / 17000, 5);
+    // Kein Hinweis: Summe und Sprit an Bord passen.
+    expect(tanksAbweichend(w("tank_summe"), w("sprit_gesamt"))).toBe(false);
+  });
+
+  it("Tanks mit Fassungsvermögen 0 fehlen", () => {
+    const a = tankAnsicht(
+      werte({
+        sprit_gesamt: 9000,
+        tank_links: 3000,
+        tank_links_kap: 6200,
+        tank_mitte: 3000,
+        tank_mitte_kap: 6500,
+        tank_rechts: 3000,
+        tank_rechts_kap: 6200,
+        tank_links_aux: 0,
+        tank_links_aux_kap: 0,
+      }),
+    );
+    expect(a.saeulen.map((x) => x.id)).toEqual(["tank_links", "tank_mitte", "tank_rechts"]);
+  });
+
+  it("X-Plane mit fünf Tanks: Säule = Anteil am Sprit an Bord", () => {
+    const a = tankAnsicht(
+      werte({ sprit_gesamt: 10200, xp_tank_1: 2100, xp_tank_2: 2100, xp_tank_3: 5200, xp_tank_4: 800, xp_tank_5: 0 }),
+    );
+    expect(a.saeulen.map((x) => x.id)).toEqual(["xp_tank_1", "xp_tank_2", "xp_tank_3", "xp_tank_4", "xp_tank_5"]);
+    expect(a.nachKapazitaet).toBe(false);
+    expect(a.saeulen[2].anteil).toBeCloseTo(5200 / 10200, 5);
+  });
+
+  it("Hinweis erst ab mehr als 2 % Abweichung", () => {
+    // Der A380-Fall vor der Korrektur: drei Tanks, 4174 von 18481 kg.
+    expect(tanksAbweichend(4174, 18481)).toBe(true);
+    expect(tanksAbweichend(18480, 18481)).toBe(false);
+    expect(tanksAbweichend(18100, 18481)).toBe(true);
+    expect(tanksAbweichend(18200, 18481)).toBe(false);
+    expect(tanksAbweichend(null, 18481)).toBe(false);
   });
 });

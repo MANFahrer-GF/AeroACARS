@@ -12,7 +12,8 @@ import { invoke, isTauri } from "../../lib/ipc";
 import { Badge, Button } from "../ui";
 import { csvText } from "./csv";
 import { mitVorzeichen, wertMitEinheit, wertText } from "./format";
-import { Anflugfenster, Envelope, Fahrwerk, Systeme, Tanks, Triebwerke } from "./Tafeln";
+import { Anflugfenster, Envelope, Fahrwerk, Systeme, TankSumme, Tanks, Triebwerke } from "./Tafeln";
+import { tankAnsicht } from "./tanks";
 import { GRUPPEN, type Kanal } from "./typen";
 import { useTelemetrie, type Datenquelle, type Telemetrie } from "./useTelemetrie";
 import { ZeitDiagramm, type Band, type Hilfslinie, type Reihe } from "./ZeitDiagramm";
@@ -256,6 +257,8 @@ interface DiagrammDef {
   baender?: Band[];
   /** Kopfwert rechts. */
   kopf?: string;
+  /** Zusatzzeile unter der Legende. */
+  fuss?: React.ReactNode;
 }
 
 function AnsichtInhalt({ tm, ansicht, fensterMs }: { tm: Telemetrie; ansicht: Ansicht; fensterMs: number }) {
@@ -305,6 +308,7 @@ function AnsichtInhalt({ tm, ansicht, fensterMs }: { tm: Telemetrie; ansicht: An
         ) : (
           <p className="tele-hinweis">{t("telemetrie.keine_werte")}</p>
         )}
+        {d.fuss}
       </section>
     );
   };
@@ -420,7 +424,11 @@ function AnsichtInhalt({ tm, ansicht, fensterMs }: { tm: Telemetrie; ansicht: An
     titel: "egt",
     reihen: motoren.map((m) => ({ id: `egt_${m}`, farbe: MOTOR_FARBEN[m - 1] })),
   });
-  const sprit = diagramm({ titel: "sprit", reihen: [{ id: "sprit_gesamt", farbe: S1, flaeche: true }] });
+  const sprit = diagramm({
+    titel: "sprit",
+    reihen: [{ id: "sprit_gesamt", farbe: S1, flaeche: true }],
+    fuss: <TankSumme tm={tm} />,
+  });
   const energie = diagramm({ titel: "energie", reihen: [{ id: "energiehoehe", farbe: S1 }] });
   const kabine = diagramm({
     titel: "kabine",
@@ -437,7 +445,8 @@ function AnsichtInhalt({ tm, ansicht, fensterMs }: { tm: Telemetrie; ansicht: An
       n1,
       ff,
       egt,
-      tafel("tanks", <Tanks tm={tm} />),
+      // Viele Tanks (A380: elf) bekommen die volle Breite.
+      tafel("tanks", <Tanks tm={tm} />, tankAnsicht((id) => tm.wert(id)).saeulen.length > 6),
       sprit,
     ],
     aero: [tafel("envelope", <Envelope tm={tm} />), aoa, g3, raten, steuerung, energie],

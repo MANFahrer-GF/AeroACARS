@@ -9,6 +9,7 @@
 
 import { useTranslation } from "react-i18next";
 import { mitVorzeichen, wertMitEinheit, zahl } from "./format";
+import { tankAnsicht, tanksAbweichend } from "./tanks";
 import type { Telemetrie } from "./useTelemetrie";
 
 type P = { tm: Telemetrie };
@@ -272,29 +273,42 @@ export function Triebwerke({ tm }: P) {
 
 export function Tanks({ tm }: P) {
   const { t, i18n } = useTranslation();
-  const ids = ["tank_links", "tank_mitte", "tank_rechts", "tank_4", "xp_tank_1", "xp_tank_2", "xp_tank_3"];
-  const tanks = ids
-    .map((id) => ({ id, v: tm.wert(id) }))
-    .filter((x): x is { id: string; v: number } => x.v !== null);
-  // Die Tankgroesse kennt der Simulator nicht zuverlaessig — die Saeule
-  // zeigt deshalb den Anteil am Sprit an Bord, nicht „voll/leer".
-  const gesamt = Math.max(1, tm.wert("sprit_gesamt") ?? tanks.reduce((a, x) => a + x.v, 0));
-  const max = gesamt;
-  if (tanks.length === 0) {
+  // Nur Tanks, die das Muster hat (Fassungsvermögen > 0 oder vom
+  // Simulator als vorhanden gemeldet) — beim A380 elf, beim A320 drei.
+  const { saeulen, nachKapazitaet } = tankAnsicht((id) => tm.wert(id));
+  if (saeulen.length === 0) {
     return <p className="tele-hinweis">{t("telemetrie.keine_tanks")}</p>;
   }
   return (
-    <div className="tele-tanks">
-      {tanks.map(({ id, v }) => (
+    <div className={saeulen.length > 6 ? "tele-tanks tele-tanks--viele" : "tele-tanks"}>
+      {saeulen.map(({ id, kg, anteil }) => (
         <div key={id} className="tele-tank">
           <div className="tele-tank-saeule">
-            <div className="tele-tank-inhalt" style={{ height: `${(v / max) * 100}%` }} />
+            <div className="tele-tank-inhalt" style={{ height: `${anteil * 100}%` }} />
           </div>
-          <div className="tele-wert">{zahl(v, 0, i18n.language)} kg</div>
+          <div className="tele-wert">{zahl(kg, 0, i18n.language)} kg</div>
           <div className="tele-skala-html">{t(`telemetrie.kanal.${id}`)}</div>
         </div>
       ))}
-      <p className="tele-hinweis tele-tanks-hinweis">{t("telemetrie.tanks_anteil")}</p>
+      <p className="tele-hinweis tele-tanks-hinweis">
+        {t(nachKapazitaet ? "telemetrie.tanks_anteil_kap" : "telemetrie.tanks_anteil")}
+      </p>
+    </div>
+  );
+}
+
+/** Unter dem Diagramm „Sprit an Bord": Summe der Tanks, klein. */
+export function TankSumme({ tm }: P) {
+  const { t, i18n } = useTranslation();
+  const summe = tm.wert("tank_summe");
+  if (summe === null) return null;
+  const abweichend = tanksAbweichend(summe, tm.wert("sprit_gesamt"));
+  return (
+    <div className="tele-tank-summe">
+      <span>
+        {t("telemetrie.tanks_summe")}: {zahl(summe, 0, i18n.language)} kg
+      </span>
+      {abweichend && <span className="tele-tank-summe-abweichung">{t("telemetrie.tanks_abweichung")}</span>}
     </div>
   );
 }

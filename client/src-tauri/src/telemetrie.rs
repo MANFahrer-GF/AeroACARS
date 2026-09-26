@@ -246,15 +246,190 @@ fn tank_pmdg<const I: usize>(k: &Kontext) -> Option<f64> {
         .as_ref()
         .and_then(|v| v.get(I).copied())
 }
-/// MSFS-Tankinhalt in Gallonen × Gewicht je Gallone. Bei PMDG liegen die
-/// Tanks schon in kg vor und gehen vor.
-fn tank_msfs(k: &Kontext, gal_id: &str, pmdg_idx: usize) -> Option<f64> {
-    if let Some(v) = k.s.fuel_per_tank_kg.as_ref().and_then(|v| v.get(pmdg_idx)) {
-        return Some(*v);
-    }
-    let gal = k.z(gal_id)?;
+/// Die elf Standardtanks von MSFS (SDK „Aircraft Fuel Variables"), in der
+/// Reihenfolge links → Mitte → rechts → extern: (kg-Kanal, Menge in
+/// Gallonen, Fassungsvermoegen in Gallonen, Index im PMDG-Tankvektor).
+///
+/// Bis 26.09.2026 las der Monitor nur LEFT MAIN, CENTER und RIGHT MAIN —
+/// beim iniBuilds A380 (11 Tanks) standen dort 7 / 4160 / 7 kg, obwohl
+/// 18 480 kg an Bord waren. Das Muster legt seinen Sprit, wohin es will;
+/// sichtbar wird nur, was man auch abfragt.
+const MSFS_TANKS: [(&str, &str, &str, Option<usize>); 11] = [
+    (
+        "tank_links_tip",
+        "tank_links_tip_gal",
+        "tank_links_tip_kap_gal",
+        None,
+    ),
+    (
+        "tank_links_aux",
+        "tank_links_aux_gal",
+        "tank_links_aux_kap_gal",
+        None,
+    ),
+    (
+        "tank_links",
+        "tank_links_gal",
+        "tank_links_kap_gal",
+        Some(0),
+    ),
+    (
+        "tank_mitte",
+        "tank_mitte_gal",
+        "tank_mitte_kap_gal",
+        Some(1),
+    ),
+    (
+        "tank_mitte_2",
+        "tank_mitte_2_gal",
+        "tank_mitte_2_kap_gal",
+        None,
+    ),
+    (
+        "tank_mitte_3",
+        "tank_mitte_3_gal",
+        "tank_mitte_3_kap_gal",
+        None,
+    ),
+    (
+        "tank_rechts",
+        "tank_rechts_gal",
+        "tank_rechts_kap_gal",
+        Some(2),
+    ),
+    (
+        "tank_rechts_aux",
+        "tank_rechts_aux_gal",
+        "tank_rechts_aux_kap_gal",
+        None,
+    ),
+    (
+        "tank_rechts_tip",
+        "tank_rechts_tip_gal",
+        "tank_rechts_tip_kap_gal",
+        None,
+    ),
+    (
+        "tank_extern_1",
+        "tank_extern_1_gal",
+        "tank_extern_1_kap_gal",
+        None,
+    ),
+    (
+        "tank_extern_2",
+        "tank_extern_2_gal",
+        "tank_extern_2_kap_gal",
+        None,
+    ),
+];
+
+fn gal_zu_kg(k: &Kontext, gal: f64) -> Option<f64> {
     let lb_je_gal = k.z("sprit_lb_je_gal")?;
     Some(gal * lb_je_gal / LB_JE_KG)
+}
+
+/// MSFS-Tankinhalt in kg (Gallonen × Gewicht je Gallone). Bei PMDG liegen
+/// die Tanks schon in kg vor und gehen vor — dann zaehlen nur die
+/// PMDG-Tanks, die uebrigen Standardtanks bleiben leer (sonst doppelt).
+///
+/// Ein Tank mit Fassungsvermoegen 0 hat das Muster nicht: kein Wert. Ist
+/// das Fassungsvermoegen unbekannt, zaehlt der Tank nur mit Inhalt.
+fn tank_msfs<const I: usize>(k: &Kontext) -> Option<f64> {
+    let (_, gal_id, kap_id, pmdg) = MSFS_TANKS[I];
+    if let Some(v) = k.s.fuel_per_tank_kg.as_ref() {
+        return pmdg.and_then(|i| v.get(i).copied());
+    }
+    let gal = k.z(gal_id)?;
+    match k.z(kap_id) {
+        Some(kap) if kap <= 0.0 => return None,
+        None if gal <= 0.0 => return None,
+        _ => {}
+    }
+    gal_zu_kg(k, gal)
+}
+
+/// Fassungsvermoegen eines MSFS-Tanks in kg. Bei PMDG unbekannt (die
+/// Standardtanks muessen dort nicht zu den PMDG-Tanks passen).
+fn tank_msfs_kap<const I: usize>(k: &Kontext) -> Option<f64> {
+    if k.s.fuel_per_tank_kg.is_some() {
+        return None;
+    }
+    let kap = k.z(MSFS_TANKS[I].2)?;
+    if kap > 0.0 {
+        gal_zu_kg(k, kap)
+    } else {
+        None
+    }
+}
+
+/// X-Plane: `m_fuel[i]` (kg) fuer alle 9 Tanks. Ob das Muster den Tank hat,
+/// sagt `acf_tank_rat[i]` (DataRefs.txt: „ratio of 0.0 means tank is not
+/// used"). Ohne Verhaeltnis zaehlt der Tank nur mit Inhalt.
+fn xp_tank<const I: usize>(k: &Kontext) -> Option<f64> {
+    let v = k.z(XP_TANK_ROH[I])?;
+    match k.z(XP_TANK_RAT[I]) {
+        Some(rat) if rat <= 0.0 => None,
+        None if v <= 0.0 => None,
+        _ => Some(v),
+    }
+}
+const XP_TANK_ROH: [&str; 9] = [
+    "xp_tank_1_roh",
+    "xp_tank_2_roh",
+    "xp_tank_3_roh",
+    "xp_tank_4_roh",
+    "xp_tank_5_roh",
+    "xp_tank_6_roh",
+    "xp_tank_7_roh",
+    "xp_tank_8_roh",
+    "xp_tank_9_roh",
+];
+const XP_TANK_RAT: [&str; 9] = [
+    "xp_tank_1_rat",
+    "xp_tank_2_rat",
+    "xp_tank_3_rat",
+    "xp_tank_4_rat",
+    "xp_tank_5_rat",
+    "xp_tank_6_rat",
+    "xp_tank_7_rat",
+    "xp_tank_8_rat",
+    "xp_tank_9_rat",
+];
+
+/// Alle sichtbaren Tankkanaele — Grundlage der Summe.
+const TANK_FNS: [ZahlFn; 21] = [
+    tank_msfs::<0>,
+    tank_msfs::<1>,
+    tank_msfs::<2>,
+    tank_msfs::<3>,
+    tank_msfs::<4>,
+    tank_msfs::<5>,
+    tank_msfs::<6>,
+    tank_msfs::<7>,
+    tank_msfs::<8>,
+    tank_msfs::<9>,
+    tank_msfs::<10>,
+    tank_pmdg::<3>,
+    xp_tank::<0>,
+    xp_tank::<1>,
+    xp_tank::<2>,
+    xp_tank::<3>,
+    xp_tank::<4>,
+    xp_tank::<5>,
+    xp_tank::<6>,
+    xp_tank::<7>,
+    xp_tank::<8>,
+];
+
+/// Summe aller Tanks, die der Monitor kennt. Weicht sie vom Sprit an Bord
+/// ab, liegt Sprit in Tanks ausserhalb der Standardvariablen.
+fn tank_summe(k: &Kontext) -> Option<f64> {
+    let werte: Vec<f64> = TANK_FNS
+        .iter()
+        .filter_map(|f| f(k))
+        .filter(|v| v.is_finite())
+        .collect();
+    (!werte.is_empty()).then(|| werte.iter().sum())
 }
 
 /// Vorhaltewinkel aus der Koerpergeschwindigkeit (seitlich / laengs).
@@ -577,33 +752,150 @@ pub static KATALOG: &[Kanal] = &[
     k("sprit_gesamt", Gruppe::Sprit, "kg", 0).zahl(|k| f(k.s.fuel_total_kg)),
     k("sprit_verbraucht", Gruppe::Sprit, "kg", 0).zahl(|k| f(k.s.fuel_used_kg)),
     k("ff_gesamt", Gruppe::Sprit, "kg/h", 0).zahl(ff_summe),
+    k("tank_summe", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_summe),
+    k("tank_links_tip", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<0>),
+    k("tank_links_aux", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<1>),
     k("tank_links", Gruppe::Sprit, "kg", 0)
         .q(Quelle::Berechnet)
-        .zahl(|k| tank_msfs(k, "tank_links_gal", 0)),
+        .zahl(tank_msfs::<2>),
     k("tank_mitte", Gruppe::Sprit, "kg", 0)
         .q(Quelle::Berechnet)
-        .zahl(|k| tank_msfs(k, "tank_mitte_gal", 1)),
+        .zahl(tank_msfs::<3>),
+    k("tank_mitte_2", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<4>),
+    k("tank_mitte_3", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<5>),
     k("tank_rechts", Gruppe::Sprit, "kg", 0)
         .q(Quelle::Berechnet)
-        .zahl(|k| tank_msfs(k, "tank_rechts_gal", 2)),
+        .zahl(tank_msfs::<6>),
+    k("tank_rechts_aux", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<7>),
+    k("tank_rechts_tip", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<8>),
+    k("tank_extern_1", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<9>),
+    k("tank_extern_2", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs::<10>),
     k("tank_4", Gruppe::Sprit, "kg", 0)
         .q(Quelle::Addon)
         .zahl(tank_pmdg::<3>),
+    k("tank_links_tip_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<0>),
+    k("tank_links_aux_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<1>),
+    k("tank_links_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<2>),
+    k("tank_mitte_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<3>),
+    k("tank_mitte_2_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<4>),
+    k("tank_mitte_3_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<5>),
+    k("tank_rechts_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<6>),
+    k("tank_rechts_aux_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<7>),
+    k("tank_rechts_tip_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<8>),
+    k("tank_extern_1_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<9>),
+    k("tank_extern_2_kap", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Berechnet)
+        .zahl(tank_msfs_kap::<10>),
+    k("tank_links_tip_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK LEFT TIP QUANTITY", "gallons", 1.0),
+    k("tank_links_tip_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK LEFT TIP CAPACITY", "gallons", 1.0),
+    k("tank_links_aux_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK LEFT AUX QUANTITY", "gallons", 1.0),
+    k("tank_links_aux_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK LEFT AUX CAPACITY", "gallons", 1.0),
     k("tank_links_gal", Gruppe::Sprit, "gal", 0).intern().msfs(
         "FUEL TANK LEFT MAIN QUANTITY",
         "gallons",
         1.0,
     ),
+    k("tank_links_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK LEFT MAIN CAPACITY", "gallons", 1.0),
     k("tank_mitte_gal", Gruppe::Sprit, "gal", 0).intern().msfs(
         "FUEL TANK CENTER QUANTITY",
         "gallons",
         1.0,
     ),
+    k("tank_mitte_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK CENTER CAPACITY", "gallons", 1.0),
+    k("tank_mitte_2_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK CENTER2 QUANTITY", "gallons", 1.0),
+    k("tank_mitte_2_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK CENTER2 CAPACITY", "gallons", 1.0),
+    k("tank_mitte_3_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK CENTER3 QUANTITY", "gallons", 1.0),
+    k("tank_mitte_3_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK CENTER3 CAPACITY", "gallons", 1.0),
     k("tank_rechts_gal", Gruppe::Sprit, "gal", 0).intern().msfs(
         "FUEL TANK RIGHT MAIN QUANTITY",
         "gallons",
         1.0,
     ),
+    k("tank_rechts_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK RIGHT MAIN CAPACITY", "gallons", 1.0),
+    k("tank_rechts_aux_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK RIGHT AUX QUANTITY", "gallons", 1.0),
+    k("tank_rechts_aux_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK RIGHT AUX CAPACITY", "gallons", 1.0),
+    k("tank_rechts_tip_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK RIGHT TIP QUANTITY", "gallons", 1.0),
+    k("tank_rechts_tip_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK RIGHT TIP CAPACITY", "gallons", 1.0),
+    k("tank_extern_1_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK EXTERNAL1 QUANTITY", "gallons", 1.0),
+    k("tank_extern_1_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK EXTERNAL1 CAPACITY", "gallons", 1.0),
+    k("tank_extern_2_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK EXTERNAL2 QUANTITY", "gallons", 1.0),
+    k("tank_extern_2_kap_gal", Gruppe::Sprit, "gal", 0)
+        .intern()
+        .msfs("FUEL TANK EXTERNAL2 CAPACITY", "gallons", 1.0),
     k("sprit_lb_je_gal", Gruppe::Sprit, "lb", 2).intern().msfs(
         "FUEL WEIGHT PER GALLON",
         "pounds",
@@ -611,13 +903,85 @@ pub static KATALOG: &[Kanal] = &[
     ),
     k("xp_tank_1", Gruppe::Sprit, "kg", 0)
         .q(Quelle::Zusatz)
-        .xp("sim/flightmodel/weight/m_fuel[0]", 1.0),
+        .zahl(xp_tank::<0>),
     k("xp_tank_2", Gruppe::Sprit, "kg", 0)
         .q(Quelle::Zusatz)
-        .xp("sim/flightmodel/weight/m_fuel[1]", 1.0),
+        .zahl(xp_tank::<1>),
     k("xp_tank_3", Gruppe::Sprit, "kg", 0)
         .q(Quelle::Zusatz)
+        .zahl(xp_tank::<2>),
+    k("xp_tank_4", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Zusatz)
+        .zahl(xp_tank::<3>),
+    k("xp_tank_5", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Zusatz)
+        .zahl(xp_tank::<4>),
+    k("xp_tank_6", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Zusatz)
+        .zahl(xp_tank::<5>),
+    k("xp_tank_7", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Zusatz)
+        .zahl(xp_tank::<6>),
+    k("xp_tank_8", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Zusatz)
+        .zahl(xp_tank::<7>),
+    k("xp_tank_9", Gruppe::Sprit, "kg", 0)
+        .q(Quelle::Zusatz)
+        .zahl(xp_tank::<8>),
+    k("xp_tank_1_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[0]", 1.0),
+    k("xp_tank_1_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[0]", 1.0),
+    k("xp_tank_2_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[1]", 1.0),
+    k("xp_tank_2_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[1]", 1.0),
+    k("xp_tank_3_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
         .xp("sim/flightmodel/weight/m_fuel[2]", 1.0),
+    k("xp_tank_3_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[2]", 1.0),
+    k("xp_tank_4_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[3]", 1.0),
+    k("xp_tank_4_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[3]", 1.0),
+    k("xp_tank_5_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[4]", 1.0),
+    k("xp_tank_5_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[4]", 1.0),
+    k("xp_tank_6_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[5]", 1.0),
+    k("xp_tank_6_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[5]", 1.0),
+    k("xp_tank_7_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[6]", 1.0),
+    k("xp_tank_7_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[6]", 1.0),
+    k("xp_tank_8_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[7]", 1.0),
+    k("xp_tank_8_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[7]", 1.0),
+    k("xp_tank_9_roh", Gruppe::Sprit, "kg", 0)
+        .intern()
+        .xp("sim/flightmodel/weight/m_fuel[8]", 1.0),
+    k("xp_tank_9_rat", Gruppe::Sprit, "", 3)
+        .intern()
+        .xp("sim/aircraft/overflow/acf_tank_rat[8]", 1.0),
     k("gewicht", Gruppe::Sprit, "kg", 0).zahl(|k| of(k.s.total_weight_kg)),
     k("zfw", Gruppe::Sprit, "kg", 0).zahl(|k| of(k.s.zfw_kg)),
     k("zuladung", Gruppe::Sprit, "kg", 0).zahl(|k| of(k.s.payload_kg)),
@@ -1332,6 +1696,157 @@ mod tests {
             ..snap()
         };
         assert_eq!(wert(&frame(&s, &z), "tank_links"), Some(2000.0));
+    }
+
+    /// kg → Gallonen bei 6,7 lb/gal, wie MSFS sie liefern wuerde.
+    fn gal(kg: f64) -> f64 {
+        kg * LB_JE_KG / 6.7
+    }
+
+    #[test]
+    fn a380_alle_elf_tanks_und_summe() {
+        // iniBuilds A380 (MSFS 2024), ECAM FUEL vom 26.09.2026: Feed 1–4 =
+        // 4080/4160/4260/4020 kg, Outer L/R je 980, Inner/Mid/Trim leer.
+        // Die Zuordnung ECAM-Tank → MSFS-Standardtank ist hier gesetzt;
+        // Feed 2 in CENTER passt zu den 4160 kg, die der Monitor zeigte.
+        let belegung: [(&str, f64); 11] = [
+            ("tank_links_tip", 980.0),   // Outer L
+            ("tank_links_aux", 4080.0),  // Feed 1
+            ("tank_links", 0.0),         // Inner L
+            ("tank_mitte", 4160.0),      // Feed 2
+            ("tank_mitte_2", 4260.0),    // Feed 3
+            ("tank_mitte_3", 0.0),       // Trim
+            ("tank_rechts", 0.0),        // Inner R
+            ("tank_rechts_aux", 4020.0), // Feed 4
+            ("tank_rechts_tip", 980.0),  // Outer R
+            ("tank_extern_1", 0.0),      // Mid L
+            ("tank_extern_2", 0.0),      // Mid R
+        ];
+        let mut roh = vec![("sprit_lb_je_gal".to_string(), 6.7)];
+        for (id, kg) in belegung {
+            roh.push((format!("{id}_gal"), gal(kg)));
+            roh.push((format!("{id}_kap_gal"), gal(20_000.0)));
+        }
+        let z = zusatz_umrechnen(roh, false);
+        let s = SimSnapshot {
+            fuel_total_kg: 18_481.0,
+            ..snap()
+        };
+        let f = frame(&s, &z);
+        for (id, kg) in belegung {
+            let v = wert(&f, id).unwrap_or_else(|| panic!("{id} fehlt"));
+            assert!((v as f64 - kg).abs() < 0.5, "{id}: {v} statt {kg}");
+            let kap = wert(&f, &format!("{id}_kap")).unwrap();
+            assert!((kap - 20_000.0).abs() < 0.5, "{id}_kap: {kap}");
+        }
+        let summe = wert(&f, "tank_summe").unwrap();
+        assert!((summe - 18_480.0).abs() < 1.0, "Summe {summe}");
+        // Keine X-Plane-Tanks auf MSFS.
+        assert_eq!(wert(&f, "xp_tank_1"), None);
+    }
+
+    #[test]
+    fn msfs_tank_ohne_fassungsvermoegen_fehlt() {
+        // A320: nur drei Tanks, die uebrigen melden Fassungsvermoegen 0.
+        let z = zusatz_umrechnen(
+            vec![
+                ("sprit_lb_je_gal".into(), 6.7),
+                ("tank_links_gal".into(), gal(3000.0)),
+                ("tank_links_kap_gal".into(), gal(6000.0)),
+                ("tank_links_aux_gal".into(), 0.0),
+                ("tank_links_aux_kap_gal".into(), 0.0),
+                // Leerer Tank, den es gibt, bleibt sichtbar.
+                ("tank_mitte_gal".into(), 0.0),
+                ("tank_mitte_kap_gal".into(), gal(6500.0)),
+                // Ohne bekannte Groesse zaehlt nur ein Tank mit Inhalt.
+                ("tank_extern_1_gal".into(), 0.0),
+            ],
+            false,
+        );
+        let f = frame(&snap(), &z);
+        assert!(wert(&f, "tank_links").is_some());
+        assert_eq!(wert(&f, "tank_links_aux"), None);
+        assert_eq!(wert(&f, "tank_links_aux_kap"), None);
+        assert_eq!(wert(&f, "tank_mitte"), Some(0.0));
+        assert_eq!(wert(&f, "tank_extern_1"), None);
+        let summe = wert(&f, "tank_summe").unwrap();
+        assert!((summe - 3000.0).abs() < 0.5, "{summe}");
+    }
+
+    #[test]
+    fn pmdg_tanks_ersetzen_die_standardtanks() {
+        let z = zusatz_umrechnen(
+            vec![
+                ("sprit_lb_je_gal".into(), 6.7),
+                ("tank_links_aux_gal".into(), gal(500.0)),
+                ("tank_links_kap_gal".into(), gal(4000.0)),
+            ],
+            false,
+        );
+        let s = SimSnapshot {
+            fuel_per_tank_kg: Some(vec![3000.0, 1000.0, 3000.0, 400.0]),
+            ..snap()
+        };
+        let f = frame(&s, &z);
+        assert_eq!(wert(&f, "tank_links"), Some(3000.0));
+        assert_eq!(wert(&f, "tank_4"), Some(400.0));
+        assert_eq!(wert(&f, "tank_links_aux"), None, "nicht doppelt zaehlen");
+        assert_eq!(wert(&f, "tank_links_kap"), None);
+        assert_eq!(wert(&f, "tank_summe"), Some(7400.0));
+    }
+
+    #[test]
+    fn xplane_fuenf_tanks() {
+        // 5 von 9 Tanks benutzt (acf_tank_rat > 0), die uebrigen 0.
+        let inhalt = [2100.0, 2100.0, 5200.0, 800.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let rat = [0.2, 0.2, 0.4, 0.1, 0.1, 0.0, 0.0, 0.0, 0.0];
+        let mut roh = Vec::new();
+        for i in 0..9 {
+            roh.push((format!("xp_tank_{}_roh", i + 1), inhalt[i]));
+            roh.push((format!("xp_tank_{}_rat", i + 1), rat[i]));
+        }
+        let z = zusatz_umrechnen(roh, true);
+        let f = frame(&snap(), &z);
+        let da: Vec<_> = (1..=9)
+            .filter(|n| wert(&f, &format!("xp_tank_{n}")).is_some())
+            .collect();
+        assert_eq!(da, vec![1, 2, 3, 4, 5], "Tank 5 ist leer, aber vorhanden");
+        assert_eq!(wert(&f, "xp_tank_3"), Some(5200.0));
+        assert_eq!(wert(&f, "tank_summe"), Some(10_200.0));
+        assert_eq!(wert(&f, "tank_links"), None);
+    }
+
+    #[test]
+    fn msfs_liest_alle_elf_standardtanks() {
+        let felder = msfs_zusatzfelder();
+        for sv in [
+            "LEFT MAIN",
+            "RIGHT MAIN",
+            "LEFT AUX",
+            "RIGHT AUX",
+            "LEFT TIP",
+            "RIGHT TIP",
+            "CENTER",
+            "CENTER2",
+            "CENTER3",
+            "EXTERNAL1",
+            "EXTERNAL2",
+        ] {
+            for art in ["QUANTITY", "CAPACITY"] {
+                let name = format!("FUEL TANK {sv} {art}");
+                assert!(
+                    felder.iter().any(|(_, s, e)| *s == name && e == "gallons"),
+                    "{name} fehlt"
+                );
+            }
+        }
+        let xp = xplane_zusatzfelder();
+        assert!(xp
+            .iter()
+            .any(|(_, d)| d == "sim/flightmodel/weight/m_fuel[8]"));
+        assert!(xp
+            .iter()
+            .any(|(_, d)| d == "sim/aircraft/overflow/acf_tank_rat[8]"));
     }
 
     #[test]

@@ -681,6 +681,30 @@
    "art": "zahl"
   },
   {
+   "id": "tank_summe",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_links_tip",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_links_aux",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
    "id": "tank_links",
    "gruppe": "sprit",
    "einheit": "kg",
@@ -697,7 +721,55 @@
    "art": "zahl"
   },
   {
+   "id": "tank_mitte_2",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_mitte_3",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
    "id": "tank_rechts",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_rechts_aux",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_rechts_tip",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_extern_1",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_extern_2",
    "gruppe": "sprit",
    "einheit": "kg",
    "stellen": 0,
@@ -710,6 +782,94 @@
    "einheit": "kg",
    "stellen": 0,
    "quelle": "addon",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_links_tip_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_links_aux_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_links_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_mitte_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_mitte_2_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_mitte_3_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_rechts_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_rechts_aux_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_rechts_tip_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_extern_1_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
+   "art": "zahl"
+  },
+  {
+   "id": "tank_extern_2_kap",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "berechnet",
    "art": "zahl"
   },
   {
@@ -730,6 +890,54 @@
   },
   {
    "id": "xp_tank_3",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_4",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_5",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_6",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_7",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_8",
+   "gruppe": "sprit",
+   "einheit": "kg",
+   "stellen": 0,
+   "quelle": "zusatz",
+   "art": "zahl"
+  },
+  {
+   "id": "xp_tank_9",
    "gruppe": "sprit",
    "einheit": "kg",
    "stellen": 0,

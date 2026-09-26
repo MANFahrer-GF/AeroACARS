@@ -604,3 +604,28 @@
   flex-basis: 100%;
   text-align: center;
 }
+/* A380 & Co.: elf Tanks passen schmaler nebeneinander. */
+.tele-tanks--viele {
+  gap: var(--sp-2);
+  justify-content: center;
+}
+.tele-tanks--viele .tele-tank {
+  min-width: 52px;
+}
+.tele-tanks--viele .tele-tank-saeule {
+  width: 30px;
+}
+.tele-tank .tele-skala-html {
+  text-align: center;
+}
+.tele-tank-summe {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.tele-tank-summe-abweichung {
+  color: var(--sem-warn);
+}
