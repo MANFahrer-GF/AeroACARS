@@ -948,6 +948,27 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:INI_AUTOBRAKE_ARMED", "Number"),
     F::f64("L:INI_AUTOBRAKE_DISCONNECTED", "Number"),
     F::f64("L:INI_BTV_EXIT_SELECTED", "Number"),
+    // ---- Runde 3: FSS E-Jets (Paket `Community2024/fss-aircraft-e17x`,
+    // Verhaltensordner `ModelBehaviorDefs/FSS/Cockpit/Instruments/`) ----
+    // Overhead/PanelExtLight.xml: Beacon :431-437, Strobe :371-384, Nav
+    // :311-324, Landing L/R/Nose :10-50, Taxi Nose/Side :165-185 — je
+    // 0 = Off, sonst On.
+    F::f64("L:FSS_EXX_OVHD_EXLT_RED_BCN_SWITCH", "Number"),
+    F::f64("L:FSS_EXX_OVHD_EXLT_STROBE_SWITCH", "Number"),
+    F::f64("L:FSS_EXX_OVHD_EXLT_NAV_SWITCH", "Number"),
+    F::f64("L:FSS_EXX_OVHD_EXLT_LANDING_L_SWITCH", "Number"),
+    F::f64("L:FSS_EXX_OVHD_EXLT_LANDING_R_SWITCH", "Number"),
+    F::f64("L:FSS_EXX_OVHD_EXLT_LANDING_NOSE_SWITCH", "Number"),
+    F::f64("L:FSS_EXX_OVHD_EXLT_TAXI_NOSE_SWITCH", "Number"),
+    F::f64("L:FSS_EXX_OVHD_EXLT_TAXI_SIDE_SWITCH", "Number"),
+    // Overhead/PanelPsgrSigns.xml:104-111: 0 = Off, sonst On.
+    F::f64("L:FSS_EXX_OVHD_PSGR_FSTN_BELT_SWITCH", "Number"),
+    // Overhead/PanelAPUCtrl.xml:17-28: 0=Off 1=On 2=Start.
+    F::f64("L:FSS_EXX_OVHD_APU_MASTER", "Number"),
+    // Front/Front.xml:217-241: 0=RTO 1=OFF 2=LO 3=MED 4=HI.
+    F::f64("L:FSS_EXX_AUTOBRAKE", "Number"),
+    // Pedestal/Pedestal.xml:68-76: 0 = Off.
+    F::f64("L:FSS_EXX_PARKBRAKE_BV_LEVER", "Number"),
     // Standard-SimVars. SEATBELTS/TRANSPONDER STATE dienen als Rueckfall fuer
     // die Muster, die sie laut Paket bedienen (siehe Mapping); alle drei
     // laufen zusaetzlich roh ins Flug-Log. GANZ ans Ende: anders als LVars
@@ -957,6 +978,17 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("AUTO BRAKE SWITCH CB", "Number"),
     F::f64("CABIN SEATBELTS ALERT SWITCH", "Bool"),
     F::f64("TRANSPONDER STATE:1", "Number"),
+    // Runde 3: indizierte Landelichter. `LIGHT LANDING` (ohne Index) sieht
+    // nur den ersten Kreis; Black Square schaltet links/rechts ueber
+    // `(1 K:LANDING_LIGHTS_SET)` / `(2 K:LANDING_LIGHTS_SET)` (Baron
+    // Professional User Guide 2025, S. 142ff) — Audit: Baron 0 %, Bonanza
+    // 0–42 %, Commander 7 % Landelicht unter 10 000 ft. Dokumentierte
+    // indizierte Form laut SDK (Aircraft_System_Variables, Lights):
+    // "LIGHT LANDING ON … Use landing [lightdef] index". Ans Ende gehaengt,
+    // damit keine bestehende Position sich verschiebt; fehlen sie im Block,
+    // bleiben sie None.
+    F::f64("LIGHT LANDING ON:1", "Bool"),
+    F::f64("LIGHT LANDING ON:2", "Bool"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1443,6 +1475,19 @@ pub struct Telemetry {
     pub ini_autobrake_armed: f64,
     pub ini_autobrake_disconnected: f64,
     pub ini_btv_exit_selected: f64,
+    // Runde 3: FSS E-Jets (siehe TELEMETRY_FIELDS).
+    pub fss_beacon_sw: f64,
+    pub fss_strobe_sw: f64,
+    pub fss_nav_sw: f64,
+    pub fss_landing_l_sw: f64,
+    pub fss_landing_r_sw: f64,
+    pub fss_landing_nose_sw: f64,
+    pub fss_taxi_nose_sw: f64,
+    pub fss_taxi_side_sw: f64,
+    pub fss_fasten_belt_sw: f64,
+    pub fss_apu_master: f64,
+    pub fss_autobrake: f64,
+    pub fss_parkbrake_lever: f64,
     /// `AUTO BRAKE SWITCH CB` — nur roh ins Flug-Log.
     pub roh_std_autobrake_switch_cb: f64,
     /// `CABIN SEATBELTS ALERT SWITCH`. `None`, wenn der Block vor diesem
@@ -1452,6 +1497,10 @@ pub struct Telemetry {
     /// `TRANSPONDER STATE:1` (0=Off 1=Standby 2=Test 3=On 4=Alt 5=Ground),
     /// `None` wie oben.
     pub std_transponder_state: Option<f64>,
+    /// Runde 3: `LIGHT LANDING ON:1` / `:2` (Bool). `None`, wenn der Block
+    /// vor dem Feld endet — dann zaehlt nur `LIGHT LANDING`.
+    pub std_light_landing_on_1: Option<f64>,
+    pub std_light_landing_on_2: Option<f64>,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -2153,11 +2202,27 @@ impl Telemetry {
         pull_f64!(t.ini_autobrake_armed);
         pull_f64!(t.ini_autobrake_disconnected);
         pull_f64!(t.ini_btv_exit_selected);
+        pull_f64!(t.fss_beacon_sw);
+        pull_f64!(t.fss_strobe_sw);
+        pull_f64!(t.fss_nav_sw);
+        pull_f64!(t.fss_landing_l_sw);
+        pull_f64!(t.fss_landing_r_sw);
+        pull_f64!(t.fss_landing_nose_sw);
+        pull_f64!(t.fss_taxi_nose_sw);
+        pull_f64!(t.fss_taxi_side_sw);
+        pull_f64!(t.fss_fasten_belt_sw);
+        pull_f64!(t.fss_apu_master);
+        pull_f64!(t.fss_autobrake);
+        pull_f64!(t.fss_parkbrake_lever);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
         t.std_cabin_seatbelts_alert = read_f64(bytes, off);
         off += 8;
         t.std_transponder_state = read_f64(bytes, off);
+        off += 8;
+        t.std_light_landing_on_1 = read_f64(bytes, off);
+        off += 8;
+        t.std_light_landing_on_2 = read_f64(bytes, off);
         off += 8;
 
         // Silence the unused-assignment warning the last `pull_*!`
@@ -2304,6 +2369,9 @@ const MD11_AUTOBRAKE: &[&str] = &["T.O.", "OFF", "MIN", "MED", "MAX"];
 /// 0=DISARM 1=BTV 2=LOW 3=L2 4=L3 5=HIGH 6=RTO — eine ANDERE Tabelle als
 /// beim A32NX (0=DIS 1=LO 2=MED 3=MAX), obwohl die LVar gleich heisst.
 const FBW_A380X_AUTOBRAKE: &[&str] = &["DISARM", "BTV", "LOW", "L2", "L3", "HIGH", "RTO"];
+/// FSS E-Jets `L:FSS_EXX_AUTOBRAKE` (Paket Front/Front.xml:217-241):
+/// 0=RTO 1=OFF 2=LO 3=MED 4=HI.
+const FSS_EJET_AUTOBRAKE: &[&str] = &["RTO", "OFF", "LO", "MED", "HI"];
 
 /// Transponder-Label fuer Airbus-Pedestale mit getrenntem ATC-Schalter
 /// (0=STBY 1=AUTO 2=ON) und TCAS-Wahlschalter (0=STBY 1=TA 2=TA/RA) —
@@ -2633,7 +2701,19 @@ fn telemetry_to_snapshot_mit_pfad(
     let is_pmdg777 = matches!(profile, AircraftProfile::Pmdg777);
     // Der FBW A380X teilt das Profil mit dem A32NX, aber nicht jede
     // Wertetabelle (Autobrake). A32NX-/Headwind-Titel enthalten nie "a380".
-    let is_fbw_a380x = is_fbw && t.title.to_lowercase().contains("a380");
+    // Runde 3: Liveries ohne Marker ("FBW Emirates (circa 2008) A6-EDA",
+    // ICAO A388) kommen ueber ICAO A388 oder den Paketpfad dazu — sonst
+    // bekaemen sie die A32NX-Autobrake-Tabelle. Der Pfad zaehlt nur, wenn
+    // die ICAO nicht ausdruecklich etwas anderes meldet (Rest-Pfad vom
+    // vorigen Flugzeug unter einem A32NX-Titel).
+    let fbw_modell = sim_core::clean_atc_model(&t.atc_model);
+    let is_fbw_a380x = is_fbw
+        && (t.title.to_lowercase().contains("a380")
+            || fbw_modell.as_deref() == Some("A388")
+            || (cfg_pfad.is_some_and(sim_core::ist_fbw_a380_pfad)
+                && fbw_modell.as_deref().is_none_or(|m| m == "A388")));
+    // Runde 3: FSS E-Jets (`L:FSS_EXX_*`, siehe TELEMETRY_FIELDS).
+    let is_fss = matches!(profile, AircraftProfile::FssEjet);
     // Headwind A339 (FBW-Fork): Titel-Marker oder ICAO A339 — beides landet
     // auf `FbwA32nx` (siehe `AircraftProfile::detect`).
     let is_headwind_a339 = is_fbw
@@ -2644,7 +2724,9 @@ fn telemetry_to_snapshot_mit_pfad(
     // `CABIN SEATBELTS ALERT SWITCH` / `TRANSPONDER STATE:1` wirklich
     // bedienen. Nur dort dienen sie als Rueckfall.
     let standard_seatbelts_bedient = is_default_profile || is_fbw_a380x || is_headwind_a339;
-    let standard_transponder_bedient = is_default_profile || is_fbw_a380x;
+    // FSS E-Jets: keine Transponder-LVar, `fss.wasm` enthaelt den String
+    // `TRANSPONDER STATE` → Standard-Rueckfall erlaubt.
+    let standard_transponder_bedient = is_default_profile || is_fbw_a380x || is_fss;
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
     // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
@@ -3030,6 +3112,16 @@ fn telemetry_to_snapshot_mit_pfad(
             t.fnx_nav_logo as i32 >= 1,
             t.fnx_nav_logo as i32 >= 2,
         )
+    } else if is_fss {
+        // FSS E-Jets: Overhead-Schalter-LVars, 0 = Off, sonst On (Paket
+        // Overhead/PanelExtLight.xml). Logo hat keine belegte LVar →
+        // Standard-SimVar.
+        (
+            t.fss_beacon_sw != 0.0,
+            t.fss_strobe_sw != 0.0,
+            t.fss_nav_sw != 0.0,
+            t.light_logo,
+        )
     } else {
         (t.light_beacon, t.light_strobe, t.light_nav, t.light_logo)
     };
@@ -3073,14 +3165,30 @@ fn telemetry_to_snapshot_mit_pfad(
     //     beta is on (otherwise stays `None`).
     let fenix_beta_light_landing = if fenix_beta {
         Some(t.fnx_ext_lt_landing_l as i32 == 2 || t.fnx_ext_lt_landing_r as i32 == 2)
+    } else if is_fss {
+        // FSS E-Jets: Landing L/R/Nose (Overhead/PanelExtLight.xml:10-50),
+        // 0 = Off — irgendeiner an = Landelicht an.
+        Some(t.fss_landing_l_sw != 0.0 || t.fss_landing_r_sw != 0.0 || t.fss_landing_nose_sw != 0.0)
     } else {
         None
     };
     let fenix_beta_light_taxi = if fenix_beta {
         Some(t.fnx_ext_lt_nose as i32 >= 1)
+    } else if is_fss {
+        // FSS E-Jets: Taxi Nose/Side (Overhead/PanelExtLight.xml:165-185).
+        Some(t.fss_taxi_nose_sw != 0.0 || t.fss_taxi_side_sw != 0.0)
     } else {
         None
     };
+    // Runde 3: Standard-Landelicht = `LIGHT LANDING` ODER einer der
+    // indizierten Kreise `LIGHT LANDING ON:1/:2` (Black Square schaltet
+    // links/rechts getrennt ueber indizierte Kreise, `LIGHT LANDING` allein
+    // sah dort fast nie ein Landelicht). Fehlt ein indizierter Wert im
+    // Block (None), zaehlt er nicht — es wird nichts erfunden. Ein
+    // Add-on-Wert (Fenix, FSS) hat weiter Vorrang.
+    let standard_light_landing = t.light_landing
+        || t.std_light_landing_on_1.is_some_and(|v| v != 0.0)
+        || t.std_light_landing_on_2.is_some_and(|v| v != 0.0);
     let fenix_beta_light_wing = if fenix_beta {
         Some(t.fnx_ext_lt_wing as i32 != 0)
     } else {
@@ -3105,6 +3213,10 @@ fn telemetry_to_snapshot_mit_pfad(
         // Log: parking_brake=False bei real gesetzter Bremse). Skript
         // `(L:VC_PED_PARK_BRAKE_Switch) 0 == if{ released }` → !=0 = SET.
         t.fsl_park_brake_switch != 0.0
+    } else if is_fss {
+        // FSS E-Jets `L:FSS_EXX_PARKBRAKE_BV_LEVER` 0 = Off (Paket
+        // Pedestal/Pedestal.xml:68-76) — der Hebel entscheidet.
+        t.fss_parkbrake_lever != 0.0
     } else {
         // A220: bewusst KEIN Override — siehe Begruendung an
         // `L:A22X Parking Brake` in TELEMETRY_FIELDS.
@@ -3139,6 +3251,10 @@ fn telemetry_to_snapshot_mit_pfad(
         // `L:VC_OVHD_APU_Master_Button_BOT` > 70 = "ON"-Legende hell
         // (Paket …Common_Templates.xml) — ERSETZT die SimVar.
         t.fsl_apu_master_bot > 70.0
+    } else if is_fss {
+        // FSS E-Jets `L:FSS_EXX_OVHD_APU_MASTER` 0=Off 1=On 2=Start (Paket
+        // Overhead/PanelAPUCtrl.xml:17-28) — ON und START zaehlen als an.
+        t.fss_apu_master >= 0.5
     } else {
         t.apu_switch
     };
@@ -3283,6 +3399,11 @@ fn telemetry_to_snapshot_mit_pfad(
     } else if is_pmdg777 {
         // PMDG 777 ohne SDK: `L:switch_30_a` 0/50/100 = OFF/AUTO/ON.
         pmdg_lvar_raste(t.pmdg777_seat_belts_sw, 50.0).filter(|n| *n <= 2)
+    } else if is_fss {
+        // FSS E-Jets `L:FSS_EXX_OVHD_PSGR_FSTN_BELT_SWITCH` 0 = Off, sonst
+        // On (Paket Overhead/PanelPsgrSigns.xml:104-111) — zweistufig wie
+        // der Standard-Rueckfall: an = ON (2), aus = OFF (0).
+        Some(if t.fss_fasten_belt_sw != 0.0 { 2 } else { 0 })
     } else if standard_seatbelts_bedient {
         // Rueckfall Standard-SimVar `CABIN SEATBELTS ALERT SWITCH` (Bool,
         // "True if the Seatbelts switch is on") — nur fuer Muster, deren
@@ -3428,7 +3549,8 @@ fn telemetry_to_snapshot_mit_pfad(
         // der A32NX (siehe FBW_A380X_AUTOBRAKE). Vorher lief die A320-
         // Tabelle: BTV las "LO", LOW las "MED", L2 las "MAX". DISARM ist
         // hier eine echte Stellung — der A380X wird nur ueber seinen
-        // Titel-Marker erkannt, die LVar existiert also sicher.
+        // Titel-Marker, ICAO A388 oder Paketpfad erkannt (Runde 3) — in
+        // allen Faellen ist es das FBW-Paket, die LVar existiert also.
         enum_label_mit_null(t.fbw_autobrake_armed_mode, FBW_A380X_AUTOBRAKE)
     } else if is_fbw {
         // v0.16.10 (#Premium): FBW `A32NX_AUTOBRAKES_ARMED_MODE`
@@ -3522,6 +3644,10 @@ fn telemetry_to_snapshot_mit_pfad(
         // den HubHop-Output-Presets). `raw_enum_label` verwarf die 0 —
         // die RTO-Stellung vor dem Start fehlte in jedem A220-Bordbuch.
         enum_label_mit_null(t.syn_autobrake, A220_AUTOBRAKE)
+    } else if is_fss {
+        // FSS E-Jets `L:FSS_EXX_AUTOBRAKE` 0=RTO 1=OFF 2=LO 3=MED 4=HI
+        // (Paket Front/Front.xml:217-241).
+        enum_label_mit_null(t.fss_autobrake, FSS_EJET_AUTOBRAKE)
     } else if is_pmdg737 {
         // PMDG 737 ohne SDK: `L:switch_460_73X` 0/10/20/30/40/50 =
         // RTO/OFF/1/2/3/MAX (HubHop) — dieselbe Reihenfolge wie das SDK-
@@ -4069,7 +4195,8 @@ fn telemetry_to_snapshot_mit_pfad(
     // Spoiler bzw. ohne dokumentierten ARM-Zustand liefern None, damit das
     // Bordbuch "nicht messbar" statt "aus" zeigt (Phenom: hat keine;
     // Synaptic A220: die Doku kennt keinen ARM-Zustand).
-    let spoilers_armed: Option<bool> = if is_synaptic_a220 || is_fsr_phenom {
+    // FSS E-Jets: keine ARMED-LVar im Paket → None.
+    let spoilers_armed: Option<bool> = if is_synaptic_a220 || is_fsr_phenom || is_fss {
         None
     } else if is_fbw {
         Some(t.spoilers_armed || t.fbw_spoilers_armed != 0.0)
@@ -4277,6 +4404,13 @@ fn telemetry_to_snapshot_mit_pfad(
         if let Some(v) = t.std_transponder_state {
             roh("TRANSPONDER STATE:1", v);
         }
+        // Runde 3: indizierte Landelichter zur Gegenprobe am echten Flug.
+        if let Some(v) = t.std_light_landing_on_1 {
+            roh("LIGHT LANDING ON:1", v);
+        }
+        if let Some(v) = t.std_light_landing_on_2 {
+            roh("LIGHT LANDING ON:2", v);
+        }
         // Runde 2: FSL (Strobe/Belts/APU), iFly (Transponder/Belts) und
         // MD-11 (Belts) sowie A350-Belts/-Strobe werden jetzt ausgewertet
         // und stehen nicht mehr hier. Offen bleiben:
@@ -4453,7 +4587,7 @@ fn telemetry_to_snapshot_mit_pfad(
         nav2_mhz: positive_or_none(t.nav2_mhz as f32),
         // v0.7.16: Fenix beta overrides landing/taxi via verified
         // overhead LVARs. Stable behavior (beta off) is `Some(t.light_*)`.
-        light_landing: fenix_beta_light_landing.or(Some(t.light_landing)),
+        light_landing: fenix_beta_light_landing.or(Some(standard_light_landing)),
         light_beacon: Some(light_beacon),
         light_strobe: Some(light_strobe),
         light_taxi: fenix_beta_light_taxi.or(Some(t.light_taxi)),
@@ -5179,8 +5313,9 @@ mod tests {
         // +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE); v1.7.x: +128
         // (16 A220-Kanaele der Gruppe J); 16.09.2026: +16 (ENG COMBUSTION:1..4);
         // 26.09.2026: +232 (29 Kanaele der Gruppe K, alle f64); Runde 2:
-        // +40 (MD-11-Speedbrake x2, INI-Autobrake x3).
-        assert_eq!(buf.len(), 3432, "total block size");
+        // +40 (MD-11-Speedbrake x2, INI-Autobrake x3); Runde 3: +96 (12 FSS-
+        // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2).
+        assert_eq!(buf.len(), 3544, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -5471,9 +5606,25 @@ mod tests {
         assert_eq!(t.ini_autobrake_armed, 1349.0); // idx 349
         assert_eq!(t.ini_autobrake_disconnected, 1350.0); // idx 350
         assert_eq!(t.ini_btv_exit_selected, 1351.0); // idx 351
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1352.0); // idx 352
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1353.0)); // idx 353
-        assert_eq!(t.std_transponder_state, Some(1354.0)); // idx 354
+                                                     // Runde 3: FSS E-Jets (idx 352..363) vor den Standard-SimVars.
+        assert_eq!(t.fss_beacon_sw, 1352.0); // idx 352
+        assert_eq!(t.fss_strobe_sw, 1353.0); // idx 353
+        assert_eq!(t.fss_nav_sw, 1354.0); // idx 354
+        assert_eq!(t.fss_landing_l_sw, 1355.0); // idx 355
+        assert_eq!(t.fss_landing_r_sw, 1356.0); // idx 356
+        assert_eq!(t.fss_landing_nose_sw, 1357.0); // idx 357
+        assert_eq!(t.fss_taxi_nose_sw, 1358.0); // idx 358
+        assert_eq!(t.fss_taxi_side_sw, 1359.0); // idx 359
+        assert_eq!(t.fss_fasten_belt_sw, 1360.0); // idx 360
+        assert_eq!(t.fss_apu_master, 1361.0); // idx 361
+        assert_eq!(t.fss_autobrake, 1362.0); // idx 362
+        assert_eq!(t.fss_parkbrake_lever, 1363.0); // idx 363
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1364.0); // idx 364
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1365.0)); // idx 365
+        assert_eq!(t.std_transponder_state, Some(1366.0)); // idx 366
+        assert_eq!(t.std_light_landing_on_1, Some(1367.0)); // idx 367
+        assert_eq!(t.std_light_landing_on_2, Some(1368.0)); // idx 368
+        assert_eq!(TELEMETRY_FIELDS.len(), 369, "letzter Index 368");
     }
 
     #[test]
@@ -5537,13 +5688,20 @@ mod tests {
         // 26.09.2026: Gruppe K (29 * 8 = 232) ist jetzt der Schwanz —
         // zuerst die weg (Falle Nummer vier, siehe oben). Runde 2: zwei
         // MD-11-Speedbrake- und drei INI-Autobrake-LVars dazu → 34 * 8 = 272.
-        buf.truncate(buf.len() - 272);
+        // Runde 3: zwoelf FSS-LVars und LIGHT LANDING ON:1/:2 dazu → 48 * 8
+        // = 384.
+        buf.truncate(buf.len() - 384);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(t.fnx_xpdr_operation, 0.0, "Gruppe K = sicherer Default");
         assert_eq!(
             t.std_transponder_state, None,
             "Gruppe K = sicherer Default (kein erfundenes OFF)"
+        );
+        assert_eq!(t.fss_parkbrake_lever, 0.0, "Runde 3 = sicherer Default");
+        assert_eq!(
+            t.std_light_landing_on_2, None,
+            "Runde 3 = kein erfundener Wert"
         );
 
         buf.truncate(buf.len() - 16);
@@ -8456,9 +8614,12 @@ mod tests {
     const A32NX: (&str, &str) = ("FlyByWire A32NX", "A20N");
     const A220: (&str, &str) = ("Synaptic A220-300", "BCS3");
 
-    const STD_ROH: [&str; 3] = [
+    // Sortiert wie die BTreeMap der Rohwerte.
+    const STD_ROH: [&str; 5] = [
         "AUTO BRAKE SWITCH CB",
         "CABIN SEATBELTS ALERT SWITCH",
+        "LIGHT LANDING ON:1",
+        "LIGHT LANDING ON:2",
         "TRANSPONDER STATE:1",
     ];
 
@@ -8765,6 +8926,8 @@ mod tests {
     #[test]
     fn runde2_abgeschnittener_block_erfindet_kein_off() {
         let mut buf = runde2_puffer(ASOBO.0, ASOBO.1, &[]);
+        // Runde 3: erst die beiden indizierten Landelichter am Ende weg.
+        buf.truncate(buf.len() - 16);
         buf.truncate(buf.len() - 16);
         let snap = parse(&buf, Simulator::Msfs2024, None);
         assert_eq!(snap.aircraft_profile, AircraftProfile::Default);
@@ -8774,6 +8937,273 @@ mod tests {
             runde2_schluessel(&snap),
             vec!["AUTO BRAKE SWITCH CB".to_string()]
         );
+    }
+
+    // ================================================================
+    // Runde 3 (26.09.2026): indizierte Landelichter, FSS E-Jets, FBW
+    // A380X ueber ICAO/Pfad. Wieder durch die echte Kette Byte-Puffer →
+    // `parse` → Snapshot.
+    // ================================================================
+
+    fn runde3(titel: &str, atc: &str, pfad: Option<&str>, werte: &[(&str, f64)]) -> SimSnapshot {
+        parse(&runde2_puffer(titel, atc, werte), Simulator::Msfs2024, pfad)
+    }
+
+    const BARON: (&str, &str) = ("Black Square Baron BE58 D-GBSQ", "BE58");
+    const FSS_E190: (&str, &str) = ("FSS Embraer E190 Air France HOP F-HBLA", "E190");
+    const FSS_E175: (&str, &str) = ("FSS Embraer E175 American LW", "E175");
+    const FBW_EK: (&str, &str) = ("FBW Emirates (circa 2008) A6-EDA", "A388");
+    const PFAD_FBW_A380X: &str = r"C:\Community\flybywire-aircraft-a380-842\SimObjects\AirPlanes\FlyByWire_A380X\aircraft.cfg";
+    const PFAD_FBW_A380_ALT: &str = r"C:\Community\flybywire-aircraft-a380-842\SimObjects\AirPlanes\FlyByWire_A380_842_LUFTHANSA-AIMK\aircraft.cfg";
+    const PFAD_INI_A380: &str =
+        r"C:\Community\inibuilds-a380\SimObjects\Airplanes\A380\aircraft.cfg";
+
+    #[test]
+    fn runde3_indizierte_landelichter_black_square() {
+        // Black Square schaltet links `(1 K:LANDING_LIGHTS_SET)` und rechts
+        // `(2 …)` — `LIGHT LANDING` ohne Index bleibt dabei aus.
+        for (l1, l2, want) in [
+            (1.0, 0.0, true),
+            (0.0, 1.0, true),
+            (1.0, 1.0, true),
+            (0.0, 0.0, false),
+        ] {
+            let snap = runde3(
+                BARON.0,
+                BARON.1,
+                None,
+                &[
+                    ("LIGHT LANDING", 0.0),
+                    ("LIGHT LANDING ON:1", l1),
+                    ("LIGHT LANDING ON:2", l2),
+                ],
+            );
+            assert_eq!(snap.aircraft_profile, AircraftProfile::Default);
+            assert_eq!(snap.light_landing, Some(want), "ON:1={l1} ON:2={l2}");
+            let roh = snap.cockpit_rohwerte.unwrap();
+            assert_eq!(roh.werte.get("LIGHT LANDING ON:1"), Some(&l1));
+            assert_eq!(roh.werte.get("LIGHT LANDING ON:2"), Some(&l2));
+        }
+        // Die unindizierte SimVar zaehlt weiter allein.
+        let snap = runde3(BARON.0, BARON.1, None, &[("LIGHT LANDING", 1.0)]);
+        assert_eq!(snap.light_landing, Some(true));
+    }
+
+    #[test]
+    fn runde3_landelichter_ohne_index_im_block_erfinden_nichts() {
+        // Block endet vor den indizierten Werten (abgelehnt): nur `LIGHT
+        // LANDING` zaehlt, keine Rohwerte dafuer.
+        let mut buf = runde2_puffer(BARON.0, BARON.1, &[("LIGHT LANDING", 1.0)]);
+        buf.truncate(buf.len() - 16);
+        let snap = parse(&buf, Simulator::Msfs2024, None);
+        assert_eq!(snap.light_landing, Some(true));
+        assert!(!runde2_schluessel(&snap)
+            .iter()
+            .any(|k| k.starts_with("LIGHT LANDING")));
+        let mut buf = runde2_puffer(BARON.0, BARON.1, &[]);
+        buf.truncate(buf.len() - 16);
+        let snap = parse(&buf, Simulator::Msfs2024, None);
+        assert_eq!(snap.light_landing, Some(false));
+    }
+
+    #[test]
+    fn runde3_addon_landelicht_hat_vorrang_vor_den_indizierten() {
+        // Fenix: Landelichter eingefahren, Standard-Kreis meldet an → der
+        // Overhead-Schalter gewinnt.
+        let snap = runde3(
+            "FenixA320 Lufthansa D-AIUA",
+            "A320",
+            None,
+            &[
+                ("L:S_OH_EXT_LT_LANDING_L", 0.0),
+                ("L:S_OH_EXT_LT_LANDING_R", 0.0),
+                ("LIGHT LANDING ON:1", 1.0),
+            ],
+        );
+        assert!(snap.aircraft_profile.is_fenix());
+        assert_eq!(snap.light_landing, Some(false));
+        // FSS genauso.
+        let snap = runde3(FSS_E190.0, FSS_E190.1, None, &[("LIGHT LANDING ON:2", 1.0)]);
+        assert_eq!(snap.light_landing, Some(false));
+    }
+
+    #[test]
+    fn runde3_fss_ejet_aussenlicht() {
+        for muster in [FSS_E190, FSS_E175] {
+            let snap = runde3(muster.0, muster.1, None, &[]);
+            assert_eq!(
+                snap.aircraft_profile,
+                AircraftProfile::FssEjet,
+                "{}",
+                muster.0
+            );
+        }
+        // Standard-SimVars an, Schalter aus → aus.
+        let snap = runde3(
+            FSS_E190.0,
+            FSS_E190.1,
+            None,
+            &[
+                ("LIGHT BEACON", 1.0),
+                ("LIGHT STROBE", 1.0),
+                ("LIGHT NAV", 1.0),
+                ("LIGHT LANDING", 1.0),
+                ("LIGHT TAXI", 1.0),
+            ],
+        );
+        assert_eq!(snap.light_beacon, Some(false));
+        assert_eq!(snap.light_strobe, Some(false));
+        assert_eq!(snap.light_nav, Some(false));
+        assert_eq!(snap.light_landing, Some(false));
+        assert_eq!(snap.light_taxi, Some(false));
+        // Jeder Schalter einzeln (0 = Off, sonst On — auch Stellung 2).
+        let snap = runde3(
+            FSS_E190.0,
+            FSS_E190.1,
+            None,
+            &[
+                ("L:FSS_EXX_OVHD_EXLT_RED_BCN_SWITCH", 1.0),
+                ("L:FSS_EXX_OVHD_EXLT_STROBE_SWITCH", 2.0),
+                ("L:FSS_EXX_OVHD_EXLT_NAV_SWITCH", 1.0),
+            ],
+        );
+        assert_eq!(snap.light_beacon, Some(true));
+        assert_eq!(snap.light_strobe, Some(true));
+        assert_eq!(snap.light_nav, Some(true));
+        for name in [
+            "L:FSS_EXX_OVHD_EXLT_LANDING_L_SWITCH",
+            "L:FSS_EXX_OVHD_EXLT_LANDING_R_SWITCH",
+            "L:FSS_EXX_OVHD_EXLT_LANDING_NOSE_SWITCH",
+        ] {
+            let snap = runde3(FSS_E175.0, FSS_E175.1, None, &[(name, 1.0)]);
+            assert_eq!(snap.light_landing, Some(true), "{name}");
+            assert_eq!(snap.light_taxi, Some(false), "{name}");
+        }
+        for name in [
+            "L:FSS_EXX_OVHD_EXLT_TAXI_NOSE_SWITCH",
+            "L:FSS_EXX_OVHD_EXLT_TAXI_SIDE_SWITCH",
+        ] {
+            let snap = runde3(FSS_E175.0, FSS_E175.1, None, &[(name, 1.0)]);
+            assert_eq!(snap.light_taxi, Some(true), "{name}");
+            assert_eq!(snap.light_landing, Some(false), "{name}");
+        }
+    }
+
+    #[test]
+    fn runde3_fss_ejet_systemschalter() {
+        // Anschnallzeichen: 0 = Off, sonst On; die Standard-SimVar zaehlt nicht.
+        for (roh, want) in [(0.0, 0u8), (1.0, 2), (2.0, 2)] {
+            let snap = runde3(
+                FSS_E190.0,
+                FSS_E190.1,
+                None,
+                &[
+                    ("L:FSS_EXX_OVHD_PSGR_FSTN_BELT_SWITCH", roh),
+                    ("CABIN SEATBELTS ALERT SWITCH", 1.0 - roh.min(1.0)),
+                ],
+            );
+            assert_eq!(snap.seatbelts_sign, Some(want), "Belts roh={roh}");
+        }
+        // APU 0=Off 1=On 2=Start ersetzt `APU SWITCH`.
+        for (roh, simvar, want) in [(0.0, 1.0, false), (1.0, 0.0, true), (2.0, 0.0, true)] {
+            let snap = runde3(
+                FSS_E190.0,
+                FSS_E190.1,
+                None,
+                &[("L:FSS_EXX_OVHD_APU_MASTER", roh), ("APU SWITCH", simvar)],
+            );
+            assert_eq!(snap.apu_switch, Some(want), "APU roh={roh}");
+        }
+        // Autobrake 0=RTO 1=OFF 2=LO 3=MED 4=HI, Unbekanntes roh.
+        for (roh, want) in [
+            (0.0, "RTO"),
+            (1.0, "OFF"),
+            (2.0, "LO"),
+            (3.0, "MED"),
+            (4.0, "HI"),
+            (5.0, "#5"),
+        ] {
+            let snap = runde3(
+                FSS_E175.0,
+                FSS_E175.1,
+                None,
+                &[("L:FSS_EXX_AUTOBRAKE", roh)],
+            );
+            assert_eq!(snap.autobrake.as_deref(), Some(want), "Autobrake roh={roh}");
+        }
+        // Parkbremse: der Hebel entscheidet in beide Richtungen.
+        for (hebel, simvar, want) in [(1.0, 0.0, true), (0.0, 1.0, false)] {
+            let snap = runde3(
+                FSS_E190.0,
+                FSS_E190.1,
+                None,
+                &[
+                    ("L:FSS_EXX_PARKBRAKE_BV_LEVER", hebel),
+                    ("BRAKE PARKING POSITION", simvar),
+                ],
+            );
+            assert_eq!(snap.parking_brake, want, "Hebel={hebel}");
+        }
+        // Spoiler ARMED: keine LVar → None, auch wenn die SimVar an ist.
+        let snap = runde3(FSS_E190.0, FSS_E190.1, None, &[("SPOILERS ARMED", 1.0)]);
+        assert_eq!(snap.spoilers_armed, None);
+        // Transponder: Standard-Rueckfall erlaubt.
+        let snap = runde3(
+            FSS_E190.0,
+            FSS_E190.1,
+            None,
+            &[("TRANSPONDER STATE:1", 4.0)],
+        );
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("ALT"));
+    }
+
+    #[test]
+    fn runde3_fbw_a380x_ohne_titelmarker_bekommt_die_a380_tabelle() {
+        // Livery ohne Marker, nur ueber den Paketpfad erkannt (beide
+        // belegten Pfadformen). 2 = LOW beim A380X, beim A32NX waere es MED.
+        for pfad in [PFAD_FBW_A380X, PFAD_FBW_A380_ALT] {
+            let snap = runde3(
+                FBW_EK.0,
+                FBW_EK.1,
+                Some(pfad),
+                &[
+                    ("L:A32NX_AUTOBRAKES_ARMED_MODE", 2.0),
+                    ("TRANSPONDER STATE:1", 4.0),
+                    ("CABIN SEATBELTS ALERT SWITCH", 1.0),
+                ],
+            );
+            assert_eq!(snap.aircraft_profile, AircraftProfile::FbwA32nx, "{pfad}");
+            assert_eq!(snap.autobrake.as_deref(), Some("LOW"), "{pfad}");
+            assert_eq!(snap.xpdr_mode_label.as_deref(), Some("ALT"), "{pfad}");
+            assert_eq!(snap.seatbelts_sign, Some(2), "{pfad}");
+        }
+        // FBW-Marker im Titel, aber kein "a380": ICAO A388 genuegt.
+        let snap = runde3(
+            "FlyByWire Emirates A6-EDA",
+            "A388",
+            None,
+            &[("L:A32NX_AUTOBRAKES_ARMED_MODE", 2.0)],
+        );
+        assert_eq!(snap.aircraft_profile, AircraftProfile::FbwA32nx);
+        assert_eq!(snap.autobrake.as_deref(), Some("LOW"));
+        // Rest-Pfad des A380X unter einem A32NX: bleibt A32NX-Tabelle.
+        let snap = runde3(
+            A32NX.0,
+            A32NX.1,
+            Some(PFAD_FBW_A380X),
+            &[("L:A32NX_AUTOBRAKES_ARMED_MODE", 2.0)],
+        );
+        assert_eq!(snap.autobrake.as_deref(), Some("MED"));
+        // iniBuilds-A380-Pfad ist kein FBW: der Marker-lose FBW-Titel wird
+        // dort zur iniBuilds (Pfadregel), nie zur A380X-Tabelle.
+        let snap = runde3(
+            FBW_EK.0,
+            FBW_EK.1,
+            Some(PFAD_INI_A380),
+            &[("L:A32NX_AUTOBRAKES_ARMED_MODE", 2.0)],
+        );
+        assert_eq!(snap.aircraft_profile, AircraftProfile::IniA380);
+        assert_ne!(snap.autobrake.as_deref(), Some("LOW"));
     }
 }
 

@@ -1195,7 +1195,8 @@ pub enum AircraftProfile {
     /// Flüge): 13 Flüge mit dem Titel "A380-800 RR Basic" (ICAO A388)
     /// liefen alle als `Default` — der Titel trägt keinen Hersteller.
     /// NICHT zu verwechseln mit dem FBW A380X ("FlyByWire A380X
-    /// (A380-842)"), der über seinen Titel-Marker auf `FbwA32nx` landet.
+    /// (A380-842)"), der über seinen Titel-Marker bzw. seinen Paketpfad
+    /// (`detect_mit_pfad`) auf `FbwA32nx` landet.
     /// Gemappt (flight-fabric-Fremdcode + HubHop übereinstimmend):
     ///   * `L:INI_SPOILERS_ARMED` 1 = armed
     ///   * `L:INI_APU_MASTER_SWITCH` 0/1
@@ -1205,6 +1206,25 @@ pub enum AircraftProfile {
     /// 0=ON 1=AUTO 2=OFF ist nicht übertragen) und läuft nur als Rohwert ins
     /// Flug-Log (`cockpit_rohwerte`).
     IniA380,
+    /// FSS E-Jets (MSFS 2024, E170/E175/E190/E195 — EIN Profil, die
+    /// Cockpit-LVars heißen alle `L:FSS_EXX_*`). Paket
+    /// `Community2024/fss-aircraft-e17x`, Verhaltensordner
+    /// `ModelBehaviorDefs/FSS/Cockpit/Instruments/`. Audit-Titel: "FSS
+    /// Embraer E190 Air France HOP F-…" (ICAO E190), "FSS Embraer E175
+    /// American LW" (ICAO E175). Gemappt (Paket, Datei:Zeile):
+    ///   * Außenlicht-Schalter Beacon/Strobe/Nav/Landing L+R+Nose/Taxi
+    ///     Nose+Side (Overhead/PanelExtLight.xml), 0 = Off
+    ///   * Anschnallzeichen `L:FSS_EXX_OVHD_PSGR_FSTN_BELT_SWITCH`
+    ///     (Overhead/PanelPsgrSigns.xml:104-111), 0 = Off
+    ///   * APU `L:FSS_EXX_OVHD_APU_MASTER` 0=Off 1=On 2=Start
+    ///     (Overhead/PanelAPUCtrl.xml:17-28)
+    ///   * Autobrake `L:FSS_EXX_AUTOBRAKE` 0=RTO 1=OFF 2=LO 3=MED 4=HI
+    ///     (Front/Front.xml:217-241)
+    ///   * Parkbremse `L:FSS_EXX_PARKBRAKE_BV_LEVER` 0 = Off
+    ///     (Pedestal/Pedestal.xml:68-76)
+    /// Spoiler ARMED hat keine LVar (None); Transponder über die Standard-
+    /// SimVar `TRANSPONDER STATE:1` (fss.wasm enthält den String).
+    FssEjet,
 }
 
 impl AircraftProfile {
@@ -1357,8 +1377,9 @@ impl AircraftProfile {
         // marker-loser Dritt-A339 wuerde weiter als FBW erkannt — den
         // Fall faengt das Defense-in-Depth-OR im MSFS-Adapter ab
         // (Standard-SimVars gewinnen, A/THR-0 → None statt Some(false)).
-        // (ICAO A388 braucht keinen eigenen Zweig — A380X-Titles tragen
-        // immer "A380X" bzw. "FlyByWire" und matchen oben.)
+        // (ICAO A388 bekommt hier bewusst keinen Zweig — den meldet auch
+        // die iniBuilds A380. FBW-A380X-Liveries ohne Marker ("FBW Emirates
+        // (circa 2008) A6-EDA") erkennt `detect_mit_pfad` am Paketordner.)
         if !t.contains("asobo")
             && !t.contains("inibuilds")
             && clean_atc_model(icao).as_deref() == Some("A339")
@@ -1433,6 +1454,19 @@ impl AircraftProfile {
         if t.contains("a220-300") || t.contains("a220-100") {
             return Self::SynapticA220;
         }
+        // FSS E-Jets. "fss" als eigenes Wort (kein Teilstring-Treffer in
+        // fremden Titeln) plus Embraer-Marker. Audit-Titel: "FSS Embraer
+        // E190 Air France HOP F-…", "FSS Embraer E175 American LW". Der
+        // E190-Paketname ist nicht belegt, deshalb trägt die Titelregel
+        // beide Baureihen. KEIN ICAO-Fallback (E170/E175/E190 fliegen auch
+        // andere Hersteller). Die FSR-Phenom (ICAO E55P) braucht
+        // "fsreborn" und kollidiert nicht.
+        let fss_wort = t
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|w| w == "fss");
+        if fss_wort && (t.contains("embraer") || t.contains("e17") || t.contains("e19")) {
+            return Self::FssEjet;
+        }
         Self::Default
     }
 
@@ -1454,6 +1488,11 @@ impl AircraftProfile {
     /// die ICAO zum Pfad passen (737-Pfad nur mit "737"/B73x, 777-Pfad nur
     /// mit "777"/B77x), damit ein Rest-Pfad vom vorigen Flugzeug einen
     /// fremden Boeing-Titel nicht zu PMDG macht.
+    ///
+    /// Runde 3: dazu der FBW A380X (`flybywire-aircraft-a380…`, siehe
+    /// [`ist_fbw_a380_pfad`]) → `FbwA32nx`, und die FSS E-Jets
+    /// (`fss-aircraft-e1…`) → `FssEjet` — beide ebenfalls nur hinter einem
+    /// Titel-/ICAO-Abgleich.
     pub fn detect_mit_pfad(title: &str, icao: &str, cfg_pfad: Option<&str>) -> Self {
         let nach_titel = Self::detect(title, icao);
         if nach_titel != Self::Default {
@@ -1488,6 +1527,23 @@ impl AircraftProfile {
         }
         if p.contains("inibuilds") && p.contains("a380") {
             return Self::IniA380;
+        }
+        // FBW A380X: Livery-Titel ohne Marker ("FBW Emirates (circa 2008)
+        // A6-EDA", ICAO A388) liefen als `Default`. Titel bzw. ICAO muss
+        // zur A380 passen, damit ein Rest-Pfad keinen fremden Titel kapert.
+        if ist_fbw_a380_pfad(&p) && (modell == "A388" || t.contains("a380") || t.contains("fbw")) {
+            return Self::FbwA32nx;
+        }
+        // FSS E-Jets (Paket `fss-aircraft-e17x`; ein E190-Paket heißt
+        // vermutlich `fss-aircraft-e19x`, nicht belegt — das Muster deckt
+        // beides). Titel oder ICAO muss nach Embraer-E-Jet aussehen.
+        if p.contains("fss-aircraft-e1")
+            && (t.contains("embraer")
+                || t.contains("e17")
+                || t.contains("e19")
+                || ["E17", "E19", "E75"].iter().any(|m| modell.starts_with(m)))
+        {
+            return Self::FssEjet;
         }
         Self::Default
     }
@@ -1549,6 +1605,7 @@ impl AircraftProfile {
             Self::ContrailFa50 => "Contrail Falcon 50",
             Self::SynapticA220 => "Synaptic A220",
             Self::IniA380 => "INIBuilds A380",
+            Self::FssEjet => "FSS E-Jet",
         }
     }
 
@@ -1705,6 +1762,17 @@ pub enum SimError {
 //   * Implement the SimAdapter trait in `sim-msfs`.
 //   * Add a Phase FSM driven by SimSnapshot streams.
 //   * Add a snapshot ring buffer for downstream consumers.
+
+/// aircraft.cfg-Pfad des FlyByWire A380X. Belegt: `…/Community/
+/// flybywire-aircraft-a380-842/SimObjects/AirPlanes/FlyByWire_A380X/…` und
+/// die ältere Lackierungsform `…/FlyByWire_A380_842_LUFTHANSA-AIMK/
+/// aircraft.cfg`. iniBuilds-A380-Pfade (`…/inibuilds-a380/…`) zählen nie.
+/// Groß-/Kleinschreibung und Trennzeichen egal.
+pub fn ist_fbw_a380_pfad(pfad: &str) -> bool {
+    let p = pfad.to_lowercase().replace('\\', "/");
+    !p.contains("inibuilds")
+        && (p.contains("flybywire_a380") || p.contains("flybywire-aircraft-a380"))
+}
 
 /// MSFS often returns SimVar values as localization keys, not plain text.
 /// The ATC MODEL var is one of them — e.g. `TT:ATCCOM.AC_MODEL_A320.0.text`
@@ -3399,6 +3467,103 @@ mod msfs2024_cockpit_tests {
             ),
             AircraftProfile::IniA380
         );
+    }
+
+    // ---- Runde 3 (26.09.2026): FBW A380X über den Pfad, FSS E-Jets ----
+
+    const PFAD_FBW_A380X: &str = r"C:\Users\x\AppData\Local\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalCache\Packages\Community\flybywire-aircraft-a380-842\SimObjects\AirPlanes\FlyByWire_A380X\aircraft.cfg";
+    const PFAD_FBW_A380_ALT: &str = r"D:\Community\flybywire-aircraft-a380-842\SimObjects\AirPlanes\FlyByWire_A380_842_LUFTHANSA-AIMK\aircraft.cfg";
+    const PFAD_INI_A380: &str =
+        r"D:\Community2024\inibuilds-a380\SimObjects\Airplanes\A380\aircraft.cfg";
+    const PFAD_FSS_E17X: &str =
+        r"D:\Community2024\fss-aircraft-e17x\SimObjects\Airplanes\FSS_E175\aircraft.cfg";
+
+    #[test]
+    fn runde3_fbw_a380x_livery_ohne_marker_ueber_den_pfad() {
+        // Audit-Titel ohne A380X-/FlyByWire-Marker: nach Titel Default.
+        assert_eq!(
+            AircraftProfile::detect("FBW Emirates (circa 2008) A6-EDA", "A388"),
+            AircraftProfile::Default
+        );
+        for pfad in [PFAD_FBW_A380X, PFAD_FBW_A380_ALT] {
+            assert_eq!(
+                AircraftProfile::detect_mit_pfad(
+                    "FBW Emirates (circa 2008) A6-EDA",
+                    "A388",
+                    Some(pfad)
+                ),
+                AircraftProfile::FbwA32nx,
+                "{pfad}"
+            );
+            assert!(ist_fbw_a380_pfad(pfad), "{pfad}");
+        }
+        // iniBuilds-A380-Pfad ist kein FBW-Pfad und bleibt iniBuilds.
+        assert!(!ist_fbw_a380_pfad(PFAD_INI_A380));
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "FBW Emirates (circa 2008) A6-EDA",
+                "A388",
+                Some(PFAD_INI_A380)
+            ),
+            AircraftProfile::IniA380
+        );
+        // Rest-Pfad: ein fremder Titel wird nicht zum FBW.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Cessna Skyhawk", "C172", Some(PFAD_FBW_A380X)),
+            AircraftProfile::Default
+        );
+        // Der Pfad überschreibt nie ein erkanntes Profil.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("A380-800 RR Basic", "A388", Some(PFAD_FBW_A380X)),
+            AircraftProfile::IniA380
+        );
+    }
+
+    #[test]
+    fn runde3_fss_ejets_nach_titel_und_pfad() {
+        for (titel, icao) in [
+            ("FSS Embraer E190 Air France HOP F-HBLA", "E190"),
+            ("FSS Embraer E175 American LW", "E175"),
+            ("FSS E175 Republic", ""),
+        ] {
+            assert_eq!(
+                AircraftProfile::detect(titel, icao),
+                AircraftProfile::FssEjet,
+                "{titel}"
+            );
+        }
+        // Keine Fremdtreffer: FSR Phenom (E55P), ein fremder E190, "fss"
+        // als Teilstring.
+        for (titel, icao) in [
+            ("FSReborn Phenom 300E Tristan Interior", "E55P"),
+            ("Embraer E190 Generic", "E190"),
+            ("Kaffss Embraer E190", "E190"),
+        ] {
+            assert_ne!(
+                AircraftProfile::detect(titel, icao),
+                AircraftProfile::FssEjet,
+                "{titel}"
+            );
+        }
+        assert_eq!(
+            AircraftProfile::detect("FSReborn Phenom 300E Tristan Interior", "E55P"),
+            AircraftProfile::FsrPhenom300e
+        );
+        // Pfad-Weg für Liveries ohne FSS-Marker.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "Embraer E175 American Eagle",
+                "E175",
+                Some(PFAD_FSS_E17X)
+            ),
+            AircraftProfile::FssEjet
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Cessna Skyhawk", "C172", Some(PFAD_FSS_E17X)),
+            AircraftProfile::Default
+        );
+        assert_eq!(AircraftProfile::FssEjet.label(), "FSS E-Jet");
+        assert_eq!(AircraftProfile::FssEjet.icao_fallback(), None);
     }
 
     #[test]
