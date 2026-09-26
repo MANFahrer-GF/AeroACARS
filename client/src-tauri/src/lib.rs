@@ -24978,6 +24978,34 @@ fn strecken_anteil(
     t.is_finite().then(|| t.clamp(0.0, 1.0))
 }
 
+/// Bezugshöhe für die Anflugauswertung („Höhe über der Schwelle").
+///
+/// DLH 780 (26.09.2026, Divert EDDF→EDDM statt WSSS): Die Höhe kam immer vom
+/// GEPLANTEN Ziel (WSSS, ~22 ft). Im Endanflug auf München (1 487 ft) lag
+/// der Flieger rechnerisch ~1 460 ft zu hoch, kam nie ins 1000-ft-Fenster,
+/// und alle Anflugwerte blieben leer.
+///
+/// Normale Flüge: unverändert die Zielhöhe (keine Änderung der Bewertung).
+/// Landebahn an einem ANDEREN Flughafen als geplant: Schwellenhöhe dieser
+/// Bahn aus den Navdaten; fehlt sie, `None` → Höhe über Grund statt einer
+/// falschen Platzhöhe.
+fn anflug_bezugshoehe_ft(stats: &FlightStats, geplant_arr: &str) -> Option<f32> {
+    let Some(m) = stats.runway_match.as_ref() else {
+        return stats.arr_airport_elevation_ft;
+    };
+    if m.airport_ident
+        .trim()
+        .eq_ignore_ascii_case(geplant_arr.trim())
+    {
+        return stats.arr_airport_elevation_ft;
+    }
+    stats
+        .runway_nav_geometry
+        .as_ref()
+        .and_then(|g| g.threshold.elev_ft)
+        .map(|e| e as f32)
+}
+
 fn sprit_schwelle_ft(stats: &FlightStats) -> Option<f64> {
     let platz = stats.arr_airport_elevation_ft? as f64;
     let mut schwelle = platz + SPRIT_SCHWELLE_UEBER_PLATZ_FT;
@@ -35827,7 +35855,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                         konfig_kontext(&stats, &aircraft_limits_for(muster));
                                     let stab_v2 = compute_approach_stability_v2(
                                         &stats.approach_buffer,
-                                        stats.arr_airport_elevation_ft,
+                                        anflug_bezugshoehe_ft(&stats, &flight.arr_airport),
                                         td_ts,
                                         stats
                                             .runway_nav_geometry
@@ -44550,7 +44578,7 @@ fn step_flight_at(
                 let konfig = konfig_kontext(&stats, &limits);
                 let stab_v2 = compute_approach_stability_v2(
                     &stats.approach_buffer,
-                    stats.arr_airport_elevation_ft,
+                    anflug_bezugshoehe_ft(&stats, &flight.arr_airport),
                     td_ts,
                     // v0.15.17: echter Gleitwinkel der aufgelösten Bahn (oben bei
                     // 18597 gesetzt, also vor diesem Aufruf). None bei OurAirports-
@@ -62210,6 +62238,94 @@ mod sim_pause_tests {
         for muell in ["ÜBUNG", "Ä", "飛行機", "A—350", "🛫🛬"] {
             assert!(aircraft_limits_for(muell).is_fallback, "{muell}");
         }
+    }
+
+    /// DLH 780 (26.09.2026): Divert EDDF→EDDM statt WSSS. Mit der Höhe des
+    /// geplanten Ziels (22 ft) kam der Endanflug auf München (1 487 ft) nie
+    /// ins 1000-ft-Fenster — alle Anflugwerte blieben leer.
+    #[test]
+    fn divert_anflug_nutzt_schwellenhoehe_der_tatsaechlichen_bahn() {
+        let mut stats = FlightStats::default();
+        stats.arr_airport_elevation_ft = Some(22.0); // WSSS, geplant
+        let bahn = |icao: &str| runway::RunwayMatch {
+            airport_ident: icao.to_string(),
+            runway_ident: "26L".to_string(),
+            heading_true_deg: 262.0,
+            length_ft: 13123.0,
+            width_ft: 197.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 48.34,
+            threshold_lon: 11.82,
+            end_lat: 48.33,
+            end_lon: 11.76,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 1200.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+            geometry_implied_displaced_threshold_ft: 0,
+        };
+        let nav = |elev: Option<i32>| aeroacars_mqtt::navdata::NavRunway {
+            designator: "26L".to_string(),
+            magnetic_course: 260.0,
+            true_course: 262.0,
+            length_ft: 13123,
+            width_ft: Some(197),
+            surface: None,
+            threshold: aeroacars_mqtt::navdata::NavPoint {
+                lat: 48.34,
+                lon: 11.82,
+                elev_ft: elev,
+            },
+            far_end: aeroacars_mqtt::navdata::NavPoint {
+                lat: 48.33,
+                lon: 11.76,
+                elev_ft: elev,
+            },
+            displaced_threshold_ft: 0,
+            ils: None,
+            glideslope_angle: 3.0,
+            tch_ft: 50,
+        };
+        // Ohne Bahn-Zuordnung und am geplanten Ziel: unverändert die Zielhöhe.
+        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS"), Some(22.0));
+        stats.runway_match = Some(bahn("WSSS"));
+        stats.runway_nav_geometry = Some(nav(Some(30)));
+        assert_eq!(
+            anflug_bezugshoehe_ft(&stats, "wsss "),
+            Some(22.0),
+            "normaler Flug unverändert"
+        );
+        // Divert: Schwellenhöhe der tatsächlichen Bahn.
+        stats.runway_match = Some(bahn("EDDM"));
+        stats.runway_nav_geometry = Some(nav(Some(1487)));
+        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS"), Some(1487.0));
+        // Divert ohne Navdaten-Höhe: über Grund statt falscher Platzhöhe.
+        stats.runway_nav_geometry = Some(nav(None));
+        assert_eq!(anflug_bezugshoehe_ft(&stats, "WSSS"), None);
+
+        // Durch die Rechnung: Endanflug 900/600/300 ft über München.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [900.0f32, 600.0, 300.0]
+            .iter()
+            .map(|agl| {
+                let mut a = approach_sample(*agl, 140.0, 142.0, -700.0, 1.0, 0.6);
+                a.msl_ft = agl + 1487.0;
+                a
+            })
+            .collect();
+        let alt =
+            compute_approach_stability_v2(&buf, Some(22.0), None, None, None, Default::default());
+        let neu =
+            compute_approach_stability_v2(&buf, Some(1487.0), None, None, None, Default::default());
+        assert_eq!(
+            alt.window_sample_count, 0,
+            "Gegenprobe: mit WSSS-Höhe leer (der Fehler)"
+        );
+        assert_eq!(
+            neu.window_sample_count, 3,
+            "mit EDDM-Schwelle alle drei Proben im Fenster"
+        );
+        assert!(neu.vs_jerk_fpm.is_some() || neu.stable_at_gate.is_some());
     }
 
     #[test]
