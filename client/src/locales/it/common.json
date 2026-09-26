@@ -3260,7 +3260,8 @@
       "schluessel_platzhalter": "C700 o D-ABCD",
       "hinzufuegen": "Aggiungi",
       "nicht_dabei": "Volutamente escluso: 250 kt sotto FL100 (eccezioni in Germania e Regno Unito, green dot, autorizzazioni ATC) e limiti di inclinazione (falsi allarmi dovuti a meteo e scatti).",
-      "nicht_messbar": "Le voci che il tuo aereo non comunica ad AeroACARS appaiono nel diario come “non misurabile” con il motivo. Non contano né a favore né contro di te."
+      "nicht_messbar": "Le voci che il tuo aereo non comunica ad AeroACARS appaiono nel diario come “non misurabile” con il motivo. Non contano né a favore né contro di te.",
+      "rolltempo_grenzen": "Limite della velocità di rullaggio:"
     },
     "wert_atc": "SU ATC"
   }

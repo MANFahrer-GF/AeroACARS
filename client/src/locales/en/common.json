@@ -3260,7 +3260,8 @@
       "schluessel_platzhalter": "C700 or D-ABCD",
       "hinzufuegen": "Add",
       "nicht_dabei": "Deliberately not included: 250 kt below FL100 (exceptions in Germany and the UK, green dot, ATC clearances) and bank angle limits (false alarms from weather and stutters).",
-      "nicht_messbar": "Items your aircraft does not report to AeroACARS appear in the log book as “not measurable” with a reason. They count neither for nor against you."
+      "nicht_messbar": "Items your aircraft does not report to AeroACARS appear in the log book as “not measurable” with a reason. They count neither for nor against you.",
+      "rolltempo_grenzen": "Taxi speed limit:"
     },
     "wert_atc": "PER ATC"
   }

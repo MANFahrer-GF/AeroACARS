@@ -3260,7 +3260,8 @@
       "schluessel_platzhalter": "C700 oder D-ABCD",
       "hinzufuegen": "Hinzufügen",
       "nicht_dabei": "Bewusst nicht dabei: 250 kt unter FL100 (Ausnahmen in DE und UK, Green Dot, ATC-Freigaben) und Querlage-Grenzen (Fehlalarme durch Wetter und Ruckler).",
-      "nicht_messbar": "Punkte, die dein Flugzeug nicht an AeroACARS meldet, stehen im Bordbuch als „nicht messbar“ mit Grund. Sie zählen weder mit noch gegen dich."
+      "nicht_messbar": "Punkte, die dein Flugzeug nicht an AeroACARS meldet, stehen im Bordbuch als „nicht messbar“ mit Grund. Sie zählen weder mit noch gegen dich.",
+      "rolltempo_grenzen": "Grenze für das Rolltempo:"
     },
     "wert_atc": "NACH ATC"
   }

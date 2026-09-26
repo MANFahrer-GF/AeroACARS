@@ -588,6 +588,10 @@ pub struct Zustand {
     pub rollen_laengste_ueber_abflug_s: f64,
     pub rollen_laengste_ueber_ankunft_s: f64,
     pub war_ueber_fl100: bool,
+    /// Das Flugzeug war in diesem Flug schon in der Luft (auch ohne
+    /// beobachteten Startlauf — Bordbuch erst im Flug gestartet, etwa nach
+    /// einem Update oder App-Neustart mit älterem Zustand; SWR 269, 26.09.).
+    pub in_der_luft: bool,
     pub reiseflug_ab: Option<DateTime<Utc>>,
     pub gelandet: bool,
     /// Welche Felder im Flug je einen Wert hatten („nicht messbar"
@@ -1036,6 +1040,10 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     }
     let klasse = z.klasse.unwrap_or(k.klasse);
     z.merken(s);
+    // 100 ft über Grund: ein Hüpfer beim Rollen oder ein Messaussetzer zählt nicht.
+    if !s.on_ground && s.altitude_agl_ft > 100.0 {
+        z.in_der_luft = true;
+    }
     if s.xpdr_mode_label.is_some() {
         z.tcas_meldbar = Some(tcas_meldbar(s));
     }
@@ -1307,7 +1315,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         .reiseflug_ab
         .map(|t0| (jetzt - t0).num_seconds() >= APU_NACH_REISEFLUG_S)
         .unwrap_or(false)
-        || (phase_anflug(phase) && z.startlauf_ab.is_some());
+        || (phase_anflug(phase) && z.in_der_luft);
     if apu_faellig && z.offen(Regel::ApuReiseflug) && !s.on_ground {
         match s.apu_switch {
             Some(false) => z.entscheiden(Regel::ApuReiseflug, Status::Erledigt, s, None, None),
@@ -1328,7 +1336,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         z.war_ueber_fl100 = true;
     }
     let nacht_hier = nacht_ziel;
-    if !s.on_ground && z.startlauf_ab.is_some() {
+    if !s.on_ground && z.in_der_luft {
         let unter_fl100 = z.war_ueber_fl100
             && s.altitude_msl_ft < FL100_FT
             && (phase_anflug(phase) || s.vertical_speed_fpm < -300.0);
@@ -1368,7 +1376,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     // --- Endanflug unter 1000 ft AGL bis zum Aufsetzen: Spoiler,
     // Autobrake, Anschnallzeichen. Erledigt, sobald einmal gesehen.
     let im_endanflug = !s.on_ground
-        && z.startlauf_ab.is_some()
+        && z.in_der_luft
         && s.altitude_agl_ft < ANFLUG_AGL_FT
         && matches!(
             phase,
@@ -1416,7 +1424,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     // Durchstart oder ein Hüpfer würde sonst die Punkte einfrieren, bevor
     // die eigentliche Landung (mit gesetzten Spoilern) kommt (QS 26.09.2026).
     let ausgerollt = s.on_ground
-        && z.startlauf_ab.is_some()
+        && z.in_der_luft
         && matches!(
             phase,
             FlightPhase::TaxiIn | FlightPhase::BlocksOn | FlightPhase::Arrived
@@ -2507,6 +2515,47 @@ mod tests {
             (p.status, p.grund),
             (Status::NichtMessbar, Some(Grund::KeinTcasModus))
         );
+    }
+
+    /// SWR 269 (26.09.2026): Bordbuch erst im Steigflug gestartet (Update im
+    /// Flug). Anflugpunkte müssen trotzdem ausgewertet werden, die Punkte vor
+    /// dem Start bleiben „kam nicht vor".
+    #[test]
+    fn spaeter_beginn_im_flug_wertet_den_anflug_aus() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.on_ground = false;
+        s.engines_running = 2;
+        s.altitude_msl_ft = 27_000.0;
+        s.altitude_agl_ft = 26_500.0;
+        s.light_landing = Some(false);
+        tick(&mut z, &s, FlightPhase::Climb, &k);
+        s.altitude_msl_ft = 36_000.0;
+        s.altitude_agl_ft = 35_500.0;
+        takte_bis(&mut z, &mut s, FlightPhase::Cruise, &k, 60);
+        // Sinkflug durch FL100 mit Landelicht.
+        s.altitude_msl_ft = 9_500.0;
+        s.altitude_agl_ft = 9_100.0;
+        s.vertical_speed_fpm = -1500.0;
+        s.light_landing = Some(true);
+        takte_bis(&mut z, &mut s, FlightPhase::Descent, &k, 90);
+        // Endanflug mit Spoilern.
+        s.altitude_msl_ft = 1_300.0;
+        s.altitude_agl_ft = 900.0;
+        s.spoilers_armed = Some(true);
+        s.seatbelts_sign = Some(2);
+        takte_bis(&mut z, &mut s, FlightPhase::Final, &k, 120);
+        s.on_ground = true;
+        s.altitude_agl_ft = 0.0;
+        takte_bis(&mut z, &mut s, FlightPhase::TaxiIn, &k, 180);
+        let en = eintrag(&z, &e);
+        assert_eq!(status(&en, Regel::LandelichtAnflug), Status::Erledigt);
+        assert_eq!(status(&en, Regel::SpoilerLandung), Status::Erledigt);
+        assert_eq!(status(&en, Regel::AnschnallLandung), Status::Erledigt);
+        assert_eq!(status(&en, Regel::BeaconAnlassen), Status::NichtAnwendbar);
+        assert_eq!(status(&en, Regel::StrobesStart), Status::NichtAnwendbar);
     }
 
     /// Pause mitten in der Kulanz: die Frist verlängert sich um die Pause.

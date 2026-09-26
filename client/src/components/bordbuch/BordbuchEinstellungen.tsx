@@ -89,42 +89,47 @@ export function BordbuchEinstellungen() {
         <div key={g.key} className="settings__section">
           <h3>{t(`bordbuch.einst.gruppe.${g.key}`)}</h3>
           {g.schalter.map((s) => (
-            <label key={s} className="settings__checkbox">
-              <input type="checkbox" checked={schalterAn(e, s)} onChange={(ev) => setzeSchalter(s, ev.target.checked)} />
-              <span>
-                <strong>{t(`bordbuch.einst.regel.${s}`)}</strong>
-                <span className="settings__row-hint">{t(`bordbuch.einst.regel_hint.${s}`)}</span>
-              </span>
-            </label>
-          ))}
-          {g.key === "boden" && schalterAn(e, "rolltempo") && (
-            <div className="bb-einst-zahlen">
-              <label>
-                {t("bordbuch.einst.rolltempo_kt")}
-                <input
-                  type="number"
-                  min={5}
-                  max={60}
-                  step={1}
-                  defaultValue={e.rolltempo_kt}
-                  onBlur={(ev) => zahl("rolltempo_kt", ev.target.value)}
-                />
-                kt
+            <div key={s}>
+              <label className="settings__checkbox">
+                <input type="checkbox" checked={schalterAn(e, s)} onChange={(ev) => setzeSchalter(s, ev.target.checked)} />
+                <span>
+                  <strong>{t(`bordbuch.einst.regel.${s}`)}</strong>
+                  <span className="settings__row-hint">{t(`bordbuch.einst.regel_hint.${s}`)}</span>
+                </span>
               </label>
-              <label>
-                {t("bordbuch.einst.rolltempo_ga_kt")}
-                <input
-                  type="number"
-                  min={5}
-                  max={60}
-                  step={1}
-                  defaultValue={e.rolltempo_ga_kt}
-                  onBlur={(ev) => zahl("rolltempo_ga_kt", ev.target.value)}
-                />
-                kt
-              </label>
+              {/* Die Grenzen gehören sichtbar zum Rolltempo — vorher standen
+                  sie unter „APU" und wirkten wie deren Einstellung. */}
+              {s === "rolltempo" && schalterAn(e, "rolltempo") && (
+                <div className="bb-einst-zahlen">
+                  <span className="bb-einst-zahlen-titel">{t("bordbuch.einst.rolltempo_grenzen")}</span>
+                  <label>
+                    {t("bordbuch.einst.rolltempo_kt")}
+                    <input
+                      type="number"
+                      min={5}
+                      max={60}
+                      step={1}
+                      defaultValue={e.rolltempo_kt}
+                      onBlur={(ev) => zahl("rolltempo_kt", ev.target.value)}
+                    />
+                    kt
+                  </label>
+                  <label>
+                    {t("bordbuch.einst.rolltempo_ga_kt")}
+                    <input
+                      type="number"
+                      min={5}
+                      max={60}
+                      step={1}
+                      defaultValue={e.rolltempo_ga_kt}
+                      onBlur={(ev) => zahl("rolltempo_ga_kt", ev.target.value)}
+                    />
+                    kt
+                  </label>
+                </div>
+              )}
             </div>
-          )}
+          ))}
         </div>
       ))}
 

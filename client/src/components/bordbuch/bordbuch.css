@@ -277,7 +277,17 @@
 .bb-meilensteine li::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sem-ok); margin-right: 8px; vertical-align: 2px; }
 
 /* Einstellungen */
-.bb-einst-zahlen { display: flex; gap: 18px; flex-wrap: wrap; padding: 4px 0 0 26px; font-size: var(--fs-300, 12px); }
+.bb-einst-zahlen {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0 0 10px 26px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--border);
+  font-size: var(--fs-300, 12px);
+}
+.bb-einst-zahlen-titel { width: 100%; color: var(--text-dim); }
 .bb-einst-zahlen label { display: inline-flex; align-items: center; gap: 6px; }
 .bb-einst-zahlen input { width: 56px; }
 .bb-einst-klassen { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-300, 12px); }
