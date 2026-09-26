@@ -690,10 +690,10 @@ pub struct PmdgState {
     /// `None`, obwohl das SDK den Schalter mitsendet.
     #[serde(default)]
     pub seatbelts_sign: Option<u8>,
-    /// Rohbyte des Autobrake-Wahlschalters, NUR 777 — dessen Belegung ist ab
-    /// Byte 3 nicht gemessen (Header: 3 = "1" … 5 = MAX AUTO; das Label zeigt
-    /// ab 3 nur "?"). Wird mitgeschrieben, damit das Flug-Log die Tabelle
-    /// liefert; kein Label daraus ableiten, solange es nicht gemessen ist.
+    /// Rohbyte des Autobrake-Wahlschalters, NUR 777 — Belegung 0=RTO 1=OFF
+    /// 2=DISARM 3..6 = 1..4 7=MAX AUTO (SDK-Header, Paket-Animation und
+    /// Asobo-Template übereinstimmend, seit Runde 2 im Label). Läuft
+    /// weiter mit, damit echte Flüge die Tabelle gegenprüfen.
     #[serde(default)]
     pub autobrake_selector_roh: Option<u8>,
 }
@@ -1201,8 +1201,9 @@ pub enum AircraftProfile {
     ///   * `L:INI_APU_MASTER_SWITCH` 0/1
     ///   * `L:INI_SEATBELTS_SWITCH` 0=ON 1=AUTO 2=OFF (umgekehrt zur
     ///     Snapshot-Konvention, wird umgerechnet)
-    /// `L:INI_LIGHTS_STROBE` ist widersprüchlich belegt und läuft nur als
-    /// Rohwert ins Flug-Log (`cockpit_rohwerte`).
+    /// `L:INI_LIGHTS_STROBE` ist für die A380 nicht belegt (die A350-Belegung
+    /// 0=ON 1=AUTO 2=OFF ist nicht übertragen) und läuft nur als Rohwert ins
+    /// Flug-Log (`cockpit_rohwerte`).
     IniA380,
 }
 

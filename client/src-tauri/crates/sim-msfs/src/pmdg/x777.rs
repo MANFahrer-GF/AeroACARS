@@ -220,7 +220,7 @@ pub struct Pmdg777XRawData {
     pub GPWS_GSInhibit_Sw: u8,
     pub GPWS_annunGND_PROX_top: u8,
     pub GPWS_annunGND_PROX_bottom: u8,
-    pub BRAKES_AutobrakeSelector: u8, // 0=RTO 1=OFF 2=DISARM 3..5=AUTO
+    pub BRAKES_AutobrakeSelector: u8, // 0=RTO 1=OFF 2=DISARM 3=1 4=2 5=3 6=4 7=MAX AUTO
 
     // Standby - ISFD
     pub ISFD_Baro_Sw_Pushed: u8,
@@ -394,7 +394,7 @@ pub struct Pmdg777XRawData {
     pub FCTL_StabCutOutSw_C_NORMAL: u8,
     pub FCTL_StabCutOutSw_R_NORMAL: u8,
     pub FCTL_AltnPitch_Lever: u8,
-    pub FCTL_Speedbrake_Lever: u8, // 0..100
+    pub FCTL_Speedbrake_Lever: u8, // 0..100; Header: 25=ARMED, gemessen: 50 (siehe X777_SPEEDBRAKE_ARMED)
     /// 777 flaps: 0=UP 1=1 2=5 3=15 4=20 5=25 6=30
     pub FCTL_Flaps_Lever: u8,
     pub ENG_FuelControl_Sw_RUN: [u8; 2],
@@ -608,7 +608,13 @@ impl Pmdg777XPathVariant {
 // ---------------------------------------------------------------
 
 /// 777 autobrake: same enum-style as NG3 but the values differ
-/// (777 has a "DISARM" position + numbered 1..MAX-AUTO).
+/// (777 has a "DISARM" position + numbered 1..4 + MAX AUTO).
+///
+/// Belegung (Runde 2, 26.09.2026) aus drei übereinstimmenden Quellen:
+/// PMDG_777X_SDK.h:272 (`BRAKES_AutobrakeSelector` 0: RTO 1: OFF
+/// 2: DISARM 3: 1 4: 2 5: 3 6: 4 7: MAX AUTO), Paket
+/// 77W_Cockpit_Behavior.xml:15900 (ANIM_LENGTH 70 = 8 Rasten zu 10) und
+/// das Asobo-Template (POS_DISARM 2 … POS_MAX_AUTO 7).
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pmdg777XAutobrake {
@@ -618,7 +624,8 @@ pub enum Pmdg777XAutobrake {
     One,
     Two,
     Three,
-    FourMaxAuto,
+    Four,
+    MaxAuto,
     Unknown(u8),
 }
 
@@ -628,18 +635,14 @@ impl Pmdg777XAutobrake {
             0 => Self::Rto,
             1 => Self::Off,
             2 => Self::Disarm,
-            // v0.19.x QS (backlog "PMDG 777 autobrake enum mapping"):
-            // the raw struct field's own SDK-derived comment documents
-            // 3..5 as an undifferentiated "3..5=AUTO" range, but this
-            // used to split exactly those three values into distinct
-            // One/Two/FourMaxAuto labels anyway — an unverified guess
-            // (its own inline comment already admitted "Three not in
-            // real layout"). A wrong-but-confident label here silently
-            // corrupts the autobrake field in PIREPs/landing data,
-            // which is worse than admitting we don't know: report
-            // Unknown until a real PMDG 777 SDK header confirms the
-            // true per-position raw values. One/Two/Three/FourMaxAuto
-            // stay defined for when that data arrives.
+            // Früher (v0.19.x QS) lief alles ab 3 als Unknown ("?"), weil
+            // der Struct-Kommentar nur "3..5=AUTO" sagte. Header, Paket-
+            // Animation und Asobo-Template belegen 3..7 übereinstimmend.
+            3 => Self::One,
+            4 => Self::Two,
+            5 => Self::Three,
+            6 => Self::Four,
+            7 => Self::MaxAuto,
             _ => Self::Unknown(v),
         }
     }
@@ -652,7 +655,8 @@ impl Pmdg777XAutobrake {
             Self::One => "1",
             Self::Two => "2",
             Self::Three => "3",
-            Self::FourMaxAuto => "MAX AUTO",
+            Self::Four => "4",
+            Self::MaxAuto => "MAX AUTO",
             Self::Unknown(_) => "?",
         }
     }
@@ -773,8 +777,9 @@ pub struct Pmdg777XSnapshot {
     /// SEAT BELTS-Wahlschalter (`SIGNS_SeatBeltsSelector`,
     /// PMDG_777X_SDK.h:154 "0: OFF 1: AUTO 2: ON").
     pub seatbelts_selector: u8,
-    /// Rohbyte `BRAKES_AutobrakeSelector` — ab 3 unverifiziert, darum
-    /// zusätzlich roh ins Flug-Log (siehe `PmdgState::autobrake_selector_roh`).
+    /// Rohbyte `BRAKES_AutobrakeSelector` — läuft zusätzlich roh ins
+    /// Flug-Log (siehe `PmdgState::autobrake_selector_roh`), zur Kontrolle
+    /// der seit Runde 2 belegten Tabelle 0..7.
     pub autobrake_selector_raw: u8,
     pub gpws_top_warn: bool,
     pub gpws_bottom_warn: bool,
@@ -828,6 +833,11 @@ pub struct Pmdg777XSnapshot {
 /// ARMED-Raste des 777-Speedbrake-Hebels im SDK-Feld
 /// `FCTL_Speedbrake_Lever` — gemessen, nicht aus dem Header (siehe
 /// `Pmdg777XSnapshot::speedbrake_lever_pos`).
+///
+/// Offener Widerspruch, bewusst zugunsten der Messung entschieden: der
+/// SDK-Header sagt 25 = ARMED, die Live-Logs zeigen in 17 von 23 Flügen ein
+/// Plateau bei 50 (3 753 Samples bei 0.50, keines bei 0.25). Runde 2
+/// (26.09.2026) lässt die 50 bewusst stehen.
 pub const X777_SPEEDBRAKE_ARMED: u8 = 50;
 
 /// Ausfahrgrad 0.0..1.0 aus dem Rohhebel: bis einschließlich ARMED 0,
@@ -1106,20 +1116,17 @@ mod tests {
         assert_eq!(Pmdg777XAutobrake::from_byte(0).label(), "RTO");
         assert_eq!(Pmdg777XAutobrake::from_byte(2).label(), "DISARM");
 
-        // v0.19.x QS: 3..5 used to split into specific-but-unverified
-        // One/Two/FourMaxAuto labels, contradicting the raw field's own
-        // "3..5=AUTO" SDK comment. Must report Unknown (label "?"), not
-        // a confident-but-unconfirmed number — an unverified label
-        // silently corrupting PIREP/landing data is worse than an
-        // honest "we don't know".
-        for raw in 3u8..=6 {
-            assert_eq!(
-                Pmdg777XAutobrake::from_byte(raw),
-                Pmdg777XAutobrake::Unknown(raw),
-                "raw {raw} must be Unknown, not a guessed specific position"
-            );
-            assert_eq!(Pmdg777XAutobrake::from_byte(raw).label(), "?");
+        // Runde 2: 3..7 belegt (SDK-Header :272, Paket ANIM_LENGTH 70,
+        // Asobo-Template) — vorher lieferte alles ab 3 nur "?".
+        for (raw, want) in [(3u8, "1"), (4, "2"), (5, "3"), (6, "4"), (7, "MAX AUTO")] {
+            assert_eq!(Pmdg777XAutobrake::from_byte(raw).label(), want, "raw {raw}");
         }
+        // Jenseits der 8 Rasten bleibt es ehrlich unbekannt.
+        assert_eq!(
+            Pmdg777XAutobrake::from_byte(8),
+            Pmdg777XAutobrake::Unknown(8)
+        );
+        assert_eq!(Pmdg777XAutobrake::from_byte(8).label(), "?");
     }
 
     #[test]
@@ -1264,5 +1271,10 @@ mod tests {
         let s = Pmdg777XSnapshot::from_raw(&raw);
         assert_eq!(s.seatbelts_selector, 1);
         assert_eq!(s.autobrake_selector_raw, 4);
+        // Runde 2: durch `from_raw` bis zum Label — 4 = Stufe "2".
+        assert_eq!(s.autobrake.label(), "2");
+        raw.BRAKES_AutobrakeSelector = 7;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert_eq!(s.autobrake.label(), "MAX AUTO");
     }
 }
