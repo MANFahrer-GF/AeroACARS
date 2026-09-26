@@ -55,6 +55,35 @@ function abstandZuStrecke(px: number, py: number, ax: number, ay: number, bx: nu
   return Math.hypot(px - qx, py - qy);
 }
 
+/** Ab dieser Kontaktgroesse (CSS-Pixel, Breite oder Hoehe) ist eine
+ *  Beruehrung ein Handballen, kein Finger. Safari auf dem iPad meldet die
+ *  Groesse aus dem Beruehrungsradius; eine Fingerkuppe kann dort 40 px und
+ *  mehr erreichen (Cloud-QS: 32 px haette Finger gesperrt), ein Handballen
+ *  liegt deutlich darueber. Noch am echten iPad nachzumessen. */
+export const HANDBALLEN_PX = 60;
+
+/** Handballen-Schutz: Darf diese Beruehrung zeichnen?
+ *  - Stift und Maus immer.
+ *  - Grosse Auflageflaeche nie.
+ *  - Finger nur, wenn freigegeben oder noch nie ein Stift gesehen wurde. */
+export function darfZeichnen(
+  typ: string,
+  breite: number,
+  hoehe: number,
+  fingerFrei: boolean,
+  stiftBekannt: boolean,
+): boolean {
+  if (typ === "pen" || typ === "mouse") return true;
+  // Finger ausdruecklich erlaubt: nie sperren, auch nicht nach Groesse.
+  if (fingerFrei) return true;
+  if (Math.max(breite || 0, hoehe || 0) >= HANDBALLEN_PX) return false;
+  return !stiftBekannt;
+}
+
+/** Wie lange vor dem ersten Stiftkontakt ein Finger-Strich als Handballen
+ *  gilt und nachtraeglich verschwindet (ms). */
+export const HANDBALLEN_NACHLAUF_MS = 1500;
+
 /** Verlauf fuer „Rueckgaengig": Zustaende vor jeder Aenderung. */
 export class Verlauf {
   private stapel: Strich[][] = [];
@@ -76,12 +105,19 @@ export function laden(roh: string | null): Strich[] {
   try {
     const d = JSON.parse(roh) as unknown;
     if (!Array.isArray(d)) return [];
+    const zahl = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+    // Jeder Punkt muss x/y/p als endliche Zahl haben — ein kaputter Punkt
+    // liesse das Zeichnen spaeter abbrechen (Codex-Befund 5).
     return d.filter(
       (s): s is Strich =>
         !!s &&
         typeof (s as Strich).farbe === "string" &&
-        typeof (s as Strich).breite === "number" &&
-        Array.isArray((s as Strich).punkte),
+        zahl((s as Strich).breite) &&
+        Array.isArray((s as Strich).punkte) &&
+        (s as Strich).punkte.length > 0 &&
+        (s as Strich).punkte.every(
+          (q) => !!q && zahl((q as Punkt).x) && zahl((q as Punkt).y) && zahl((q as Punkt).p),
+        ),
     );
   } catch {
     return [];

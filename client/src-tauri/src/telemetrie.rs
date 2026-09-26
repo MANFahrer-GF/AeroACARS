@@ -1150,6 +1150,13 @@ impl Monitor {
         {
             return;
         }
+        // Derselbe Messpunkt nicht zweimal: Steht der Simulator (Pause,
+        // eingefrorene Daten), liefert der Adapter denselben Snapshot mit
+        // derselben Zeit — der Verlauf fuellte sich sonst mit Kopien, und die
+        // Oberflaeche bekam beim Nachladen doppelte Zeitstempel (Codex).
+        if g.verlauf.back().is_some_and(|l| l.t >= frame.t) {
+            return;
+        }
         g.letzte_aufnahme = Some(jetzt);
         if g.verlauf.len() >= VERLAUF_MAX {
             g.verlauf.pop_front();
@@ -1341,9 +1348,10 @@ mod tests {
     #[test]
     fn verlauf_nimmt_hoechstens_zehnmal_je_sekunde_auf() {
         let m = Monitor::default();
-        let f = frame(&snap(), &HashMap::new());
         let t0 = Instant::now();
         for i in 0..40u64 {
+            let mut f = frame(&snap(), &HashMap::new());
+            f.t = i as i64 * 50;
             m.aufnehmen(&f, t0 + Duration::from_millis(i * 50));
         }
         // 2 s bei 50-ms-Takt = 40 Ticks → 20 Aufnahmen.
@@ -1351,11 +1359,24 @@ mod tests {
     }
 
     #[test]
-    fn verlauf_ist_begrenzt() {
+    fn derselbe_messpunkt_kommt_nur_einmal_in_den_verlauf() {
+        // Stehender Simulator: gleiche Zeit, Takt laeuft weiter.
         let m = Monitor::default();
         let f = frame(&snap(), &HashMap::new());
         let t0 = Instant::now();
+        for i in 0..40u64 {
+            m.aufnehmen(&f, t0 + Duration::from_millis(i * 100));
+        }
+        assert_eq!(m.verlauf().len(), 1);
+    }
+
+    #[test]
+    fn verlauf_ist_begrenzt() {
+        let m = Monitor::default();
+        let t0 = Instant::now();
         for i in 0..(VERLAUF_MAX as u64 + 50) {
+            let mut f = frame(&snap(), &HashMap::new());
+            f.t = i as i64 * 100;
             m.aufnehmen(&f, t0 + Duration::from_millis(i * 100));
         }
         assert_eq!(m.verlauf().len(), VERLAUF_MAX);

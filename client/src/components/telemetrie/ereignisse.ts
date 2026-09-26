@@ -49,6 +49,13 @@ const SCHALTER: Array<[string, string]> = [
   ["pause", "pause"],
 ];
 
+/** Alle Ereignisse einer ganzen, nach Zeit sortierten Liste. */
+export function ereignisseFuerListe(frames: Frame[], idx: Index): Ereignis[] {
+  const aus: Ereignis[] = [];
+  for (let i = 1; i < frames.length; i++) aus.push(...ereignisseAus(frames[i - 1], frames[i], idx));
+  return aus;
+}
+
 export function ereignisseAus(a: Frame | null, b: Frame, idx: Index): Ereignis[] {
   if (!a) return [];
   const aus: Ereignis[] = [];

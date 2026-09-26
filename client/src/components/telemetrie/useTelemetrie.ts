@@ -14,7 +14,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, listen } from "../../lib/ipc";
-import { ereignisseAus, type Ereignis } from "./ereignisse";
+import { ereignisseAus, ereignisseFuerListe, type Ereignis } from "./ereignisse";
+import { NACHLADEN_ABSTAND_MS, hatLuecke, zusammenfuehren } from "./luecken";
 import type { Frame, Kanal, Katalog, StartAntwort } from "./typen";
 
 /** So weit reicht der Puffer zurueck (ms). */
@@ -108,6 +109,9 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
     if (!q) return;
     let aus = false;
     let abbestellen: (() => void) | null = null;
+    const halten = window.setInterval(() => {
+      if (!aus) q.halten();
+    }, HALTEN_MS);
 
     const aufnehmen = (f: Frame) => {
       const liste = frames.current;
@@ -125,6 +129,25 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
       if (weg > 0) liste.splice(0, weg);
     };
 
+    // Luecke im Strom (Tablet: Abo noch nicht aktiv, Verbindung kurz weg):
+    // Verlauf des Sim-PCs nachladen und zeitrichtig einfuegen.
+    let letztesNachladen = 0;
+    const nachladen = () => {
+      const jetzt = Date.now();
+      if (jetzt - letztesNachladen < NACHLADEN_ABSTAND_MS) return;
+      letztesNachladen = jetzt;
+      q.start()
+        .then((antwort) => {
+          if (aus) return;
+          frames.current = zusammenfuehren(frames.current, antwort.verlauf, PUFFER_MS);
+          // Ereignisse aus der Luecke gab es bisher nicht (oder mit falscher
+          // Uhrzeit am ersten Frame danach) — ueber die ganze Liste neu.
+          ereignisse.current = ereignisseFuerListe(frames.current, indexRef.current).slice(-200);
+          neuZeichnen();
+        })
+        .catch(() => undefined);
+    };
+
     (async () => {
       try {
         // Zuerst abonnieren, dann starten: sonst fehlen die Frames zwischen
@@ -134,9 +157,13 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
         abbestellen = await q.abonnieren((f) => {
           if (aus) return;
           if (!gestartet) {
-            puffer.push(f);
+            // Begrenzt: nur die Frames zwischen Abo und Startantwort zaehlen
+            // (Sekundenbruchteile). Mehr heisst, der Start haengt.
+            if (puffer.length < 200) puffer.push(f);
             return;
           }
+          const liste = frames.current;
+          if (hatLuecke(liste.length ? liste[liste.length - 1] : null, f)) nachladen();
           aufnehmen(f);
           neuZeichnen();
         });
@@ -161,12 +188,17 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
         setVersion((v) => v + 1);
       } catch (e) {
         if (aus) return;
+        // Start gescheitert: Abo und Lebenszeichen beenden, sonst liefe der
+        // Strom im Backend weiter, waehrend hier „Fehler" steht (Codex 4).
+        aus = true;
+        abbestellen?.();
+        abbestellen = null;
+        window.clearInterval(halten);
+        q.stop();
         setFehler(e instanceof Error ? e.message : String(e));
         setZustand("fehler");
       }
     })();
-
-    const halten = window.setInterval(() => q.halten(), HALTEN_MS);
     return () => {
       aus = true;
       window.clearInterval(halten);
