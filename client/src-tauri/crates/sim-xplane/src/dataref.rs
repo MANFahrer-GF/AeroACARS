@@ -1424,6 +1424,8 @@ impl XPlaneState {
             shadow_phase: None,
             shadow_segment: None,
             engine_signals: None,
+            // MSFS-Diagnosekanal (Audit 26.09.2026) — X-Plane fuellt ihn nicht.
+            cockpit_rohwerte: None,
         }
     }
 }

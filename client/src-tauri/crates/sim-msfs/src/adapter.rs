@@ -398,6 +398,10 @@ fn ng3_to_pmdg_state(s: &crate::pmdg::ng3::Pmdg738Snapshot) -> sim_core::PmdgSta
         // the generic telemetry provides.
         minimums_baro_ft: None,
         gnd_prox_warning: None,
+        // Audit 26.09.2026: FASTEN BELTS aus dem SDK (0=OFF 1=AUTO 2=ON).
+        seatbelts_sign: Some(s.seatbelts_selector.min(2)),
+        // NG3-Autobrake ist vollständig belegt (0..5) — kein Rohwert nötig.
+        autobrake_selector_roh: None,
     }
 }
 
@@ -516,8 +520,11 @@ fn x777_to_pmdg_state(s: &crate::pmdg::x777::Pmdg777XSnapshot) -> sim_core::Pmdg
 
         flap_angle_deg,
         flap_handle_label: s.flap_handle_label.to_string(),
-        // 777 SDK gives the lever as 0..100 — normalise to 0.0..1.0.
-        speedbrake_lever_pos: Some(f32::from(s.speedbrake_lever_pos) / 100.0),
+        // 777 SDK gives the lever as 0..100. Audit 26.09.2026: 50 ist die
+        // ARMED-Raste — der Handle-Wert ist darum der AUSFAHRGRAD ab der
+        // Raste (0 bei ARMED), nicht mehr lever/100. Vorher las jeder
+        // armierte Anflug 0.5 → "Spoilers DEPLOYED Handle 50%".
+        speedbrake_lever_pos: Some(s.speedbrake_handle_fraction),
         autobrake_label: s.autobrake.label().to_string(),
         speedbrake_armed: s.speedbrake_armed,
         speedbrake_extended: s.speedbrake_extended,
@@ -581,6 +588,10 @@ fn x777_to_pmdg_state(s: &crate::pmdg::x777::Pmdg777XSnapshot) -> sim_core::Pmdg
         minimums_baro_ft: s.minimums_baro_ft.map(f64::from),
         // GPWS GND PROX: top or bottom annunciator lit.
         gnd_prox_warning: Some(s.gpws_top_warn || s.gpws_bottom_warn),
+        // Audit 26.09.2026: SEAT BELTS aus dem SDK (0=OFF 1=AUTO 2=ON).
+        seatbelts_sign: Some(s.seatbelts_selector.min(2)),
+        // Autobrake ab Byte 3 unverifiziert ("?") — Rohbyte mitschreiben.
+        autobrake_selector_roh: Some(s.autobrake_selector_raw),
     }
 }
 
@@ -630,6 +641,12 @@ struct PmdgSharedState {
     /// (= aircraft loaded) but no packets for >5 s, the user
     /// probably hasn't enabled the SDK.
     last_packet_at: Option<std::time::Instant>,
+    /// aircraft.cfg-Pfad aus dem letzten `AircraftLoaded` (Audit
+    /// 26.09.2026). Dient der Profilerkennung für MSFS-2024-Titel ohne
+    /// Hersteller (`AircraftProfile::detect_mit_pfad`) und läuft als
+    /// Diagnose-Rohwert ins Flug-Log. Bei SimStart und Neuverbindung
+    /// geleert, damit ein Pfad des vorigen Flugzeugs nicht stehen bleibt.
+    air_path: Option<String>,
 }
 
 impl Default for MsfsAdapter {
@@ -1755,7 +1772,10 @@ fn run_dispatch(
                             // v0.7.17 (F-001): no more Fenix-Beta flag — the
                             // adapter always applies the Fenix-A32x extension
                             // LVARs when the aircraft profile is Fenix.
-                            let mut snap = telemetry::parse(&bytes, simulator);
+                            // Audit 26.09.2026: aircraft.cfg-Pfad fuer die
+                            // Profilerkennung (MSFS-2024-Titel ohne Hersteller).
+                            let air_path = shared.pmdg.lock().air_path.clone();
+                            let mut snap = telemetry::parse(&bytes, simulator, air_path.as_deref());
                             // Spec v0.7.15 F5: Pause-State aus dem Atomic
                             // in den Snapshot kopieren — wird vom Streamer-
                             // Loop in lib.rs ausgewertet damit der Pause-
@@ -1943,6 +1963,7 @@ fn run_dispatch(
                     if request_id == AIRCRAFT_LOADED_REQUEST_ID {
                         let detected = crate::pmdg::PmdgVariant::detect_from_air_path(&air_path);
                         let mut g = shared.pmdg.lock();
+                        g.air_path = Some(air_path.clone()).filter(|p| !p.trim().is_empty());
                         if g.variant != detected {
                             tracing::info!(
                                 ?detected,
@@ -2011,6 +2032,11 @@ fn run_dispatch(
                         // pick up any aircraft change. Nur die Abfrage —
                         // die Abos stehen seit dem Verbindungsaufbau (siehe
                         // `subscribe_aircraft_loaded`).
+                        //
+                        // Den alten Pfad sofort verwerfen: bis die Antwort
+                        // da ist, soll die Profilerkennung lieber nur den
+                        // Titel sehen als den Pfad des vorigen Flugzeugs.
+                        shared.pmdg.lock().air_path = None;
                         if let Err(e) = conn.request_aircraft_loaded() {
                             tracing::warn!(error = %e, "re-request AircraftLoaded failed");
                         }

@@ -11,7 +11,7 @@
 //! tail; nothing prior shifts.
 
 use chrono::Utc;
-use sim_core::{AircraftProfile, EngineSignals, SimSnapshot, Simulator};
+use sim_core::{AircraftProfile, CockpitRohwerte, EngineSignals, SimSnapshot, Simulator};
 
 const KG_PER_LB: f64 = 0.453_592_37;
 
@@ -856,6 +856,76 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::bool("ENG COMBUSTION:2"),
     F::bool("ENG COMBUSTION:3"),
     F::bool("ENG COMBUSTION:4"),
+    // ================================================================
+    // Gruppe K (Audit 26.09.2026, 705 MSFS-2024-Fluege): Cockpit-Signale,
+    // die bei den betroffenen Mustern nie ankamen (Anschnallzeichen,
+    // Transponder-Modus, Spoiler ARMED, APU). Jede Belegung ist durch
+    // HubHop-Presets und/oder Fremdcode (flight-fabric) belegt — Quelle
+    // steht je Zeile. Wie alle LVars: fremde Muster lesen 0, JEDES Mapping
+    // ist profil-gegated. ANHAENGEN, nicht einfuegen (siehe SIMULATION RATE).
+    // ================================================================
+    // Fenix A32x Transponder (HubHop + flight-fabric):
+    //   S_XPDR_OPERATION 0=STBY 1=AUTO 2=ON, S_XPDR_MODE 0=STBY 1=TA 2=TA/RA.
+    F::f64("L:S_XPDR_OPERATION", "Number"),
+    F::f64("L:S_XPDR_MODE", "Number"),
+    // iniBuilds A350/A380: 1 = Ground-Spoiler armiert (drei unabhaengige
+    // Fremdcode-Quellen fuer die A350, flight-fabric fuer die A380).
+    F::f64("L:INI_SPOILERS_ARMED", "Number"),
+    // iniBuilds A350/A380 APU MASTER 0/1 (HubHop A350 2020+2024,
+    // flight-fabric A380).
+    F::f64("L:INI_APU_MASTER_SWITCH", "Number"),
+    // iniBuilds A350 TCAS-Wahlschalter (HubHop): 0=STBY 2=TA/RA 3=TA ONLY,
+    // 1 fuer die A350 nicht belegt.
+    F::f64("L:INI_tcas_mode_pedestal", "Number"),
+    // iniBuilds SEAT BELTS: A380 0=ON 1=AUTO 2=OFF (flight-fabric + HubHop
+    // uebereinstimmend) — fuer die A350 widerspruechlich, dort nur Rohwert.
+    F::f64("L:INI_SEATBELTS_SWITCH", "Number"),
+    // Aerosoft A346 (HubHop): ATC 0=STBY 1=AUTO 2=ON, TCAS 0=STBY 1=TA
+    // 2=TA/RA, APU MASTER-Lampe > 0 = an.
+    F::f64("L:AB_PDS_XPDR_STBY_AUTO_ON", "Number"),
+    F::f64("L:AB_PDS_XPDR_STBY_TA_TARA", "Number"),
+    F::f64("L:AB_VC_OVH_APU_MASTER_ON", "Number"),
+    // TFDi MD-11 Transponder-Modusknopf (HubHop): 0=STBY 1=XPNDR
+    // 2=TA ONLY 3=TA/RA.
+    F::f64("L:md11_ped_xpndr_mode_kb", "Number"),
+    // FSReborn Phenom 300E Signs/Outlet (HubHop): 0 = Schild aus,
+    // 1 oder 2 = Schild an.
+    F::f64("L:FSR_300E_PAX_SWITCH_SETTING", "Number"),
+    // PMDG ohne SDK-Broadcast (24/44 737-, 14/37 777-Fluege ohne pmdg-
+    // Block): die Cockpit-Schalter-LVars (HubHop). Nur Rueckfall — kommt
+    // ein SDK-Block, gewinnt er im Adapter-Merge.
+    //   737 switch_343 > 0 = SPEED BRAKE ARMED
+    //   737 switch_800 0/10/20/30/40 = STBY/ALT-OFF/XPNDR/TA/TA-RA
+    //   737 switch_460 0/10/20/30/40/50 = RTO/OFF/1/2/3/MAX
+    //   737 switch_104 0/50/100 = FASTEN BELTS OFF/AUTO/ON
+    //   777 switch_498_a 0 = RET, 200 = ARMED, > 200 ausgefahren
+    //   777 switch_749_a wie 737 switch_800
+    //   777 switch_30_a 0/50/100 = SEAT BELTS OFF/AUTO/ON
+    F::f64("L:switch_343_73X", "Number"),
+    F::f64("L:switch_800_73X", "Number"),
+    F::f64("L:switch_460_73X", "Number"),
+    F::f64("L:switch_104_73X", "Number"),
+    F::f64("L:switch_498_a", "Number"),
+    F::f64("L:switch_749_a", "Number"),
+    F::f64("L:switch_30_a", "Number"),
+    // ---- Gruppe K, Teil B: NUR Rohwerte fuers Flug-Log ----
+    // Belegung widerspruechlich oder unbekannt — wird nicht gedeutet,
+    // sondern je Profil in `cockpit_rohwerte` mitgeschrieben.
+    F::f64("L:VC_OVHD_EXTLT_Strobe_Switch", "Number"), // FSLabs, 0/10/20 strittig
+    F::f64("L:VC_OVHD_SIGNS_SeatBelts_Switch", "Number"), // FSLabs
+    F::f64("L:VC_OVHD_APU_Master_Button_BOT", "Number"), // FSLabs
+    F::f64("L:INI_LIGHTS_STROBE", "Number"),           // iniBuilds A350/A380
+    F::f64("L:VC_Transponder_Mode_SW_VAL", "Number"),  // iFly
+    F::f64("L:VC_Fasten_Belts_SW_VAL", "Number"),      // iFly
+    F::f64("L:VC_FLTCTRL_LIGHT_SPEED_BRAKE_ARMED_VAL", "Number"), // iFly
+    F::f64("L:MD11_OVHD_LTS_SEAT_BELTS_SW", "Number"), // TFDi MD-11
+    // Standard-SimVars, ebenfalls nur roh. GANZ ans Ende: anders als LVars
+    // kann SimConnect eine SimVar ablehnen (MSFS 2020 kennt nicht jede),
+    // dann fehlt der Schwanz ab hier — davor verrutscht nichts. Die
+    // riskanteste (TRANSPONDER STATE, erst spaet im SDK) steht zuletzt.
+    F::f64("AUTO BRAKE SWITCH CB", "Number"),
+    F::f64("CABIN SEATBELTS ALERT SWITCH", "Bool"),
+    F::f64("TRANSPONDER STATE:1", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1308,6 +1378,38 @@ pub struct Telemetry {
     pub eng2_combustion_state: bool,
     pub eng3_combustion_state: bool,
     pub eng4_combustion_state: bool,
+
+    // Gruppe K (Audit 26.09.2026) — siehe TELEMETRY_FIELDS.
+    pub fnx_xpdr_operation: f64,
+    pub fnx_xpdr_mode: f64,
+    pub ini_spoilers_armed: f64,
+    pub ini_apu_master_switch: f64,
+    pub ini_tcas_mode: f64,
+    pub ini_seatbelts_switch: f64,
+    pub a346_xpdr_stby_auto_on: f64,
+    pub a346_xpdr_tcas_mode: f64,
+    pub a346_apu_master_on: f64,
+    pub md11_xpdr_mode_kb: f64,
+    pub fsr_pax_switch: f64,
+    pub pmdg737_speedbrake_arm_sw: f64,
+    pub pmdg737_xpdr_mode_sw: f64,
+    pub pmdg737_autobrake_sw: f64,
+    pub pmdg737_fasten_belts_sw: f64,
+    pub pmdg777_speedbrake_lever_sw: f64,
+    pub pmdg777_xpdr_mode_sw: f64,
+    pub pmdg777_seat_belts_sw: f64,
+    // Gruppe K, Teil B — nur Rohwerte (`cockpit_rohwerte`).
+    pub roh_fsl_strobe_sw: f64,
+    pub roh_fsl_seatbelts_sw: f64,
+    pub roh_fsl_apu_master_bot: f64,
+    pub roh_ini_lights_strobe: f64,
+    pub roh_ifly_xpdr_mode_sw: f64,
+    pub roh_ifly_fasten_belts_sw: f64,
+    pub roh_ifly_speedbrake_armed_light: f64,
+    pub roh_md11_seat_belts_sw: f64,
+    pub roh_std_autobrake_switch_cb: f64,
+    pub roh_std_cabin_seatbelts_alert: f64,
+    pub roh_std_transponder_state: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1977,6 +2079,37 @@ impl Telemetry {
         pull_i32!(t.eng3_combustion_state);
         pull_i32!(t.eng4_combustion_state);
 
+        // ---- Gruppe K (Audit 26.09.2026) ----
+        pull_f64!(t.fnx_xpdr_operation);
+        pull_f64!(t.fnx_xpdr_mode);
+        pull_f64!(t.ini_spoilers_armed);
+        pull_f64!(t.ini_apu_master_switch);
+        pull_f64!(t.ini_tcas_mode);
+        pull_f64!(t.ini_seatbelts_switch);
+        pull_f64!(t.a346_xpdr_stby_auto_on);
+        pull_f64!(t.a346_xpdr_tcas_mode);
+        pull_f64!(t.a346_apu_master_on);
+        pull_f64!(t.md11_xpdr_mode_kb);
+        pull_f64!(t.fsr_pax_switch);
+        pull_f64!(t.pmdg737_speedbrake_arm_sw);
+        pull_f64!(t.pmdg737_xpdr_mode_sw);
+        pull_f64!(t.pmdg737_autobrake_sw);
+        pull_f64!(t.pmdg737_fasten_belts_sw);
+        pull_f64!(t.pmdg777_speedbrake_lever_sw);
+        pull_f64!(t.pmdg777_xpdr_mode_sw);
+        pull_f64!(t.pmdg777_seat_belts_sw);
+        pull_f64!(t.roh_fsl_strobe_sw);
+        pull_f64!(t.roh_fsl_seatbelts_sw);
+        pull_f64!(t.roh_fsl_apu_master_bot);
+        pull_f64!(t.roh_ini_lights_strobe);
+        pull_f64!(t.roh_ifly_xpdr_mode_sw);
+        pull_f64!(t.roh_ifly_fasten_belts_sw);
+        pull_f64!(t.roh_ifly_speedbrake_armed_light);
+        pull_f64!(t.roh_md11_seat_belts_sw);
+        pull_f64!(t.roh_std_autobrake_switch_cb);
+        pull_f64!(t.roh_std_cabin_seatbelts_alert);
+        pull_f64!(t.roh_std_transponder_state);
+
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
         // call doesn't read it again).
@@ -1993,9 +2126,13 @@ impl Telemetry {
 /// when `AircraftProfile::is_fenix()` returns true. Tester-Feedback
 /// during the v0.7.16 opt-in beta phase was positive — no regression
 /// observed, mapping verified against the live `FNX32X_Interior.xml`.
-pub fn parse(bytes: &[u8], simulator: Simulator) -> SimSnapshot {
+///
+/// `cfg_pfad`: aircraft.cfg-Pfad aus dem letzten `AircraftLoaded` (Audit
+/// 26.09.2026) — zweite Quelle der Profilerkennung fuer MSFS-2024-Titel
+/// ohne Hersteller, siehe `AircraftProfile::detect_mit_pfad`.
+pub fn parse(bytes: &[u8], simulator: Simulator, cfg_pfad: Option<&str>) -> SimSnapshot {
     let t = Telemetry::from_block(bytes);
-    telemetry_to_snapshot(t, simulator)
+    telemetry_to_snapshot_mit_pfad(t, simulator, cfg_pfad)
 }
 
 /// Map 0.0 → None, anything > 0 → Some. Used for SimVars where a
@@ -2089,6 +2226,67 @@ fn raw_enum_label(v: f64) -> Option<String> {
         None
     } else {
         Some(format!("#{n}"))
+    }
+}
+
+/// Wahlschalter mit belegter Tabelle, in der 0 eine ECHTE Stellung ist
+/// (Audit 26.09.2026). `raw_enum_label` wirft die 0 weg — fuer Mode-LVars
+/// richtig (0 = kein Modus), fuer Autobrake-Wahlschalter falsch: beim A220
+/// ist 0 = RTO, beim MD-11 0 = T.O. Diese Stellungen gingen verloren.
+/// Unbelegte Werte laufen als "#{n}" durch, damit ein Addon-Update
+/// auffaellt statt falsch beschriftet zu werden.
+fn enum_label_mit_null(v: f64, labels: &[&str]) -> Option<String> {
+    let n = v.round() as i64;
+    match usize::try_from(n).ok().and_then(|i| labels.get(i)) {
+        Some(l) => Some((*l).to_string()),
+        None => Some(format!("#{n}")),
+    }
+}
+
+/// Synaptic A220 `L:A22X Autobrake` (HubHop-Output): 0=RTO 1=OFF 2=LO
+/// 3=MED 4=HI.
+const A220_AUTOBRAKE: &[&str] = &["RTO", "OFF", "LO", "MED", "HI"];
+/// TFDi MD-11 `L:MD11_CTR_AUTOBRAKE_SW` (HubHop): 0=T.O. 1=OFF 2=MIN
+/// 3=MED 4=MAX.
+const MD11_AUTOBRAKE: &[&str] = &["T.O.", "OFF", "MIN", "MED", "MAX"];
+/// FBW A380X `A32NX_AUTOBRAKES_ARMED_MODE` (fbw-a380x/docs/a380-simvars.md):
+/// 0=DISARM 1=BTV 2=LOW 3=L2 4=L3 5=HIGH 6=RTO — eine ANDERE Tabelle als
+/// beim A32NX (0=DIS 1=LO 2=MED 3=MAX), obwohl die LVar gleich heisst.
+const FBW_A380X_AUTOBRAKE: &[&str] = &["DISARM", "BTV", "LOW", "L2", "L3", "HIGH", "RTO"];
+
+/// Transponder-Label fuer Airbus-Pedestale mit getrenntem ATC-Schalter
+/// (0=STBY 1=AUTO 2=ON) und TCAS-Wahlschalter (0=STBY 1=TA 2=TA/RA) —
+/// Fenix A32x (`S_XPDR_OPERATION`/`S_XPDR_MODE`) und Aerosoft A346
+/// (`AB_PDS_XPDR_STBY_AUTO_ON`/`AB_PDS_XPDR_STBY_TA_TARA`).
+///
+/// Vokabular wie `pmdg_xpdr_mode_label` (STBY/ALT-OFF/XPNDR/TA/TA-RA),
+/// damit alle Muster dieselben Woerter ins Bordbuch schreiben. Festgelegte
+/// Abbildung:
+///   ATC STBY                    → "STBY"  (Transponder sendet nicht)
+///   ATC AUTO/ON + TCAS STBY     → "XPNDR" (Mode S an, TCAS aus)
+///   ATC AUTO/ON + TCAS TA       → "TA"
+///   ATC AUTO/ON + TCAS TA/RA    → "TA-RA"
+/// Unbekannte Stellungen → None (nicht raten).
+fn airbus_xpdr_mode_label(atc: f64, tcas: f64) -> Option<String> {
+    let label = match (atc.round() as i64, tcas.round() as i64) {
+        (0, _) => "STBY",
+        (1 | 2, 0) => "XPNDR",
+        (1 | 2, 1) => "TA",
+        (1 | 2, 2) => "TA-RA",
+        _ => return None,
+    };
+    Some(label.to_string())
+}
+
+/// PMDG-Schalter-LVars stehen in Rasten zu 10 bzw. 50 (HubHop-Presets
+/// schreiben genau diese Werte). Rastenindex nur, wenn der Wert nah an
+/// einer Raste liegt — ein Schalter mitten im Weg liefert None.
+fn pmdg_lvar_raste(v: f64, schritt: f64) -> Option<u8> {
+    let n = (v / schritt).round();
+    if n < 0.0 || n > 20.0 || (v - n * schritt).abs() > schritt * 0.25 {
+        None
+    } else {
+        Some(n as u8)
     }
 }
 
@@ -2301,8 +2499,17 @@ fn synaptic_a220_fma_vertical(
     }
 }
 
+#[cfg(test)]
 fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
-    let profile = AircraftProfile::detect(&t.title, &t.atc_model);
+    telemetry_to_snapshot_mit_pfad(t, simulator, None)
+}
+
+fn telemetry_to_snapshot_mit_pfad(
+    t: Telemetry,
+    simulator: Simulator,
+    cfg_pfad: Option<&str>,
+) -> SimSnapshot {
+    let profile = AircraftProfile::detect_mit_pfad(&t.title, &t.atc_model, cfg_pfad);
     let is_fenix = profile.is_fenix();
     let is_fbw = matches!(profile, AircraftProfile::FbwA32nx);
     // v0.16.4: A346-Komfort-LVars (Signs, Anti-Ice, BAT, Autobrake,
@@ -2340,6 +2547,15 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // 40 % über die generische `FLAPS HANDLE PERCENT`-SimVar. Siehe
     // `L:A22X Flap Lever`-Override weiter unten.
     let is_synaptic_a220 = matches!(profile, AircraftProfile::SynapticA220);
+    // Audit 26.09.2026: MSFS-2024-Profile, die erst ueber den aircraft.cfg-
+    // Pfad bzw. neue Titel-Muster erkannt werden (siehe
+    // `AircraftProfile::detect_mit_pfad`).
+    let is_a380 = matches!(profile, AircraftProfile::IniA380);
+    let is_pmdg737 = matches!(profile, AircraftProfile::Pmdg737);
+    let is_pmdg777 = matches!(profile, AircraftProfile::Pmdg777);
+    // Der FBW A380X teilt das Profil mit dem A32NX, aber nicht jede
+    // Wertetabelle (Autobrake). A32NX-/Headwind-Titel enthalten nie "a380".
+    let is_fbw_a380x = is_fbw && t.title.to_lowercase().contains("a380");
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
     // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
@@ -2810,6 +3026,16 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // echtem Off ohnehin dasselbe sagt. So kann ein fehlender Kanal
         // niemals eine Regression gegenueber dem Stand ohne Profil sein.
         true
+    } else if is_a350 || is_a380 {
+        // Audit 26.09.2026: die Standard-SimVar `APU SWITCH` stand bei der
+        // iniBuilds A350 den ganzen Flug auf true (auch im Reiseflug) —
+        // darum ERSETZEN, nicht ODERn. `L:INI_APU_MASTER_SWITCH` 0/1 ist
+        // der Overhead-Schalter (HubHop A350 2020+2024, flight-fabric A380).
+        t.ini_apu_master_switch != 0.0
+    } else if is_a346 {
+        // Aerosoft A346 `L:AB_VC_OVH_APU_MASTER_ON` (HubHop-Output-Preset
+        // "APU Master On": `0 >`).
+        t.a346_apu_master_on > 0.0
     } else {
         t.apu_switch
     };
@@ -2915,6 +3141,32 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // geclamped — Feldbefund 31.07.2026: Standardwert blieb den
         // ganzen Flug `None`, das Addon treibt die generische SimVar nicht.
         Some(t.syn_seatbelt_sign.round().clamp(0.0, 2.0) as u8)
+    } else if is_a380 {
+        // iniBuilds A380 `L:INI_SEATBELTS_SWITCH` 0=ON 1=AUTO 2=OFF
+        // (flight-fabric + HubHop uebereinstimmend) — umgekehrt zur
+        // Snapshot-Konvention 0=OFF 1=AUTO 2=ON, darum gespiegelt.
+        match t.ini_seatbelts_switch.round() as i64 {
+            0 => Some(2),
+            1 => Some(1),
+            2 => Some(0),
+            _ => None,
+        }
+    } else if is_fsr_phenom {
+        // FSReborn Phenom `L:FSR_300E_PAX_SWITCH_SETTING` (HubHop):
+        // 0 = Signs OFF, 1 = Signs ON/Outlet ON, 2 = Signs ON/Outlet OFF.
+        // Das Schild ist bei 1 und 2 an → Snapshot 2 (ON).
+        Some(if t.fsr_pax_switch.round() as i64 >= 1 {
+            2
+        } else {
+            0
+        })
+    } else if is_pmdg737 {
+        // PMDG ohne SDK: `L:switch_104_73X` 0/50/100 = OFF/AUTO/ON. Kommt
+        // ein SDK-Block, ersetzt `apply_pmdg_premium_override` den Wert.
+        pmdg_lvar_raste(t.pmdg737_fasten_belts_sw, 50.0).filter(|n| *n <= 2)
+    } else if is_pmdg777 {
+        // PMDG 777 ohne SDK: `L:switch_30_a` 0/50/100 = OFF/AUTO/ON.
+        pmdg_lvar_raste(t.pmdg777_seat_belts_sw, 50.0).filter(|n| *n <= 2)
     } else {
         None
     };
@@ -3046,6 +3298,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             3 => Some("MAX".to_string()),
             _ => None,
         }
+    } else if is_fbw_a380x {
+        // Audit 26.09.2026: der FBW A380X belegt dieselbe LVar anders als
+        // der A32NX (siehe FBW_A380X_AUTOBRAKE). Vorher lief die A320-
+        // Tabelle: BTV las "LO", LOW las "MED", L2 las "MAX". DISARM ist
+        // hier eine echte Stellung — der A380X wird nur ueber seinen
+        // Titel-Marker erkannt, die LVar existiert also sicher.
+        enum_label_mit_null(t.fbw_autobrake_armed_mode, FBW_A380X_AUTOBRAKE)
     } else if is_fbw {
         // v0.16.10 (#Premium): FBW `A32NX_AUTOBRAKES_ARMED_MODE`
         // (FBW-Doku): 0=DIS, 1=LO, 2=MED, 3=MAX. 0 behaelt die
@@ -3071,10 +3330,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             n => Some(format!("#{n}")),
         }
     } else if is_md11 {
-        // v0.16.10 (#Premium): TFDi MD-11 `L:MD11_CTR_AUTOBRAKE_SW` —
-        // Selector-Positions-Enum, Belegung undokumentiert → Roh-Wert
-        // "#{n}" fuer n != 0 (Decode beim ersten Live-Flug).
-        raw_enum_label(t.md11_autobrake_sw)
+        // TFDi MD-11 `L:MD11_CTR_AUTOBRAKE_SW` — Belegung aus den HubHop-
+        // Output-Presets (Audit 26.09.2026): 0=T.O. 1=OFF 2=MIN 3=MED
+        // 4=MAX. Vorher `raw_enum_label`, das die 0 verwarf: die T.O.-
+        // Stellung (RTO) kam nie im Bordbuch an.
+        enum_label_mit_null(t.md11_autobrake_sw, MD11_AUTOBRAKE)
     } else if is_ifly {
         // v1.5.3 (#ifly-audit): Enum geknackt — nicht per Live-Flug,
         // sondern ueber die HubHop-INPUT-Presets des iFly (die schreiben
@@ -3118,7 +3378,23 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Index-Zuordnung (anders als z.B. "Bus Isolation Mode: 0=Main,
         // 1=Auto, 2=Ess", das die Doku sehr wohl nummeriert). Roh-Wert
         // "#{n}" wie bei MD-11/iFly — Decode beim ersten Live-Flug.
-        raw_enum_label(t.syn_autobrake)
+        //
+        // Audit 26.09.2026: Belegung jetzt aus den HubHop-Output-Presets
+        // (0=RTO 1=OFF 2=LO 3=MED 4=HI). `raw_enum_label` verwarf die 0 —
+        // die RTO-Stellung vor dem Start fehlte in jedem A220-Bordbuch.
+        enum_label_mit_null(t.syn_autobrake, A220_AUTOBRAKE)
+    } else if is_pmdg737 {
+        // PMDG 737 ohne SDK: `L:switch_460_73X` 0/10/20/30/40/50 =
+        // RTO/OFF/1/2/3/MAX (HubHop) — dieselbe Reihenfolge wie das SDK-
+        // Byte `MAIN_AutobrakeSelector`, also dieselben Labels. Mit SDK
+        // ersetzt der Adapter-Merge den Wert.
+        pmdg_lvar_raste(t.pmdg737_autobrake_sw, 10.0)
+            .filter(|n| *n <= 5)
+            .map(|n| {
+                crate::pmdg::ng3::Pmdg738Autobrake::from_byte(n)
+                    .label()
+                    .to_string()
+            })
     } else {
         None
     };
@@ -3649,12 +3925,36 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // airborne-Samples). Kosmetisch (kein FSM/Scoring-Einfluss), aber
     // falsch — also faellt FSL auf die Standard-SimVar zurueck wie
     // jedes andere Aircraft ohne eigenes ARMED-LVar.
-    let spoilers_armed = if is_fbw {
-        t.spoilers_armed || t.fbw_spoilers_armed != 0.0
+    //
+    // Audit 26.09.2026: `Option` statt `bool` — Muster OHNE armierbare
+    // Spoiler bzw. ohne dokumentierten ARM-Zustand liefern None, damit das
+    // Bordbuch "nicht messbar" statt "aus" zeigt (Phenom: hat keine;
+    // Synaptic A220: die Doku kennt keinen ARM-Zustand).
+    let spoilers_armed: Option<bool> = if is_synaptic_a220 || is_fsr_phenom {
+        None
+    } else if is_fbw {
+        Some(t.spoilers_armed || t.fbw_spoilers_armed != 0.0)
     } else if is_a346 {
-        t.spoilers_armed || t.a346_spoiler_lever_armed != 0.0
+        Some(t.spoilers_armed || t.a346_spoiler_lever_armed != 0.0)
+    } else if is_fenix {
+        // Fenix `L:A_FC_SPEEDBRAKE` (HubHop + StableApproach + flight-
+        // fabric uebereinstimmend): 0=ARMED 1=RET 2=1/2 3=FULL, stufenlos
+        // dazwischen. Die Standard-SimVar war auf allen 76 Fenix-Anfluegen
+        // des Audits false.
+        Some(t.spoilers_armed || t.fnx_speedbrake_handle < 0.5)
+    } else if is_a350 || is_a380 {
+        // iniBuilds `L:INI_SPOILERS_ARMED` 1 = armiert.
+        Some(t.spoilers_armed || t.ini_spoilers_armed != 0.0)
+    } else if is_pmdg737 {
+        // PMDG 737 ohne SDK: `L:switch_343_73X` > 0 = ARMED (HubHop-
+        // Output "Speedbrake Armed"). Mit SDK ersetzt der Adapter-Merge.
+        Some(t.spoilers_armed || t.pmdg737_speedbrake_arm_sw > 0.0)
+    } else if is_pmdg777 {
+        // PMDG 777 ohne SDK: `L:switch_498_a` 0=RET, 200=ARMED, darueber
+        // ausgefahren (HubHop-Input "Spoiler Arm Toggle" prueft `200 !=`).
+        Some(t.spoilers_armed || (t.pmdg777_speedbrake_lever_sw - 200.0).abs() < 5.0)
     } else {
-        t.spoilers_armed
+        Some(t.spoilers_armed)
     };
 
     // v0.16.20: FSL-Transponder-Modus. `VC_PED_ATCXPDR_MODE_SWITCH` —
@@ -3664,7 +3964,45 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // (`VC_PED_ATCXPDR_ON_OFF_Switch`, Skript `/10` → 0=OFF, 1=AUTO,
     // 2=ON). Bei OFF (Rohwert 0) liefert der MODE-Switch kein
     // sinnvolles Label → None statt eines erfundenen STBY.
-    let xpdr_mode_label = if is_fsl {
+    // Audit 26.09.2026: weitere Muster mit belegtem Transponder-Wahlschalter,
+    // Vokabular jeweils das von `pmdg_xpdr_mode_label`.
+    let xpdr_mode_label = if is_fenix {
+        airbus_xpdr_mode_label(t.fnx_xpdr_operation, t.fnx_xpdr_mode)
+    } else if is_a346 {
+        airbus_xpdr_mode_label(t.a346_xpdr_stby_auto_on, t.a346_xpdr_tcas_mode)
+    } else if is_md11 {
+        // `L:md11_ped_xpndr_mode_kb` (HubHop): 0=STBY 1=XPNDR 2=TA ONLY
+        // 3=TA/RA.
+        match t.md11_xpdr_mode_kb.round() as i64 {
+            0 => Some("STBY".to_string()),
+            1 => Some("XPNDR".to_string()),
+            2 => Some("TA".to_string()),
+            3 => Some("TA-RA".to_string()),
+            _ => None,
+        }
+    } else if is_a350 {
+        // `L:INI_tcas_mode_pedestal` (HubHop A350): 0=STBY 2=TA/RA 3=TA
+        // ONLY. Die 1 ist fuer die A350 nicht belegt (die A300 nennt sie
+        // XPDR, das uebertragen wir nicht) → kein Label.
+        match t.ini_tcas_mode.round() as i64 {
+            0 => Some("STBY".to_string()),
+            2 => Some("TA-RA".to_string()),
+            3 => Some("TA".to_string()),
+            _ => None,
+        }
+    } else if is_pmdg737 || is_pmdg777 {
+        // PMDG ohne SDK: 0/10/20/30/40 = SDK-Byte `XPDR_ModeSel` × 10
+        // (HubHop). Mit SDK ersetzt der Adapter-Merge.
+        let roh = if is_pmdg737 {
+            t.pmdg737_xpdr_mode_sw
+        } else {
+            t.pmdg777_xpdr_mode_sw
+        };
+        pmdg_lvar_raste(roh, 10.0)
+            .map(crate::pmdg::pmdg_xpdr_mode_label)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+    } else if is_fsl {
         let on_off = (t.fsl_xpdr_on_off_switch / 10.0).round() as i32;
         if on_off == 0 {
             None // Transponder AUS → kein Modus-Label
@@ -3737,6 +4075,52 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             } else {
                 Some(n1[..k].to_vec())
             }
+        })
+    };
+
+    // Audit 26.09.2026, Teil B: Rohwerte unklar belegter Schalter je Profil
+    // plus die drei Standard-SimVars und der aircraft.cfg-Pfad. Nicht
+    // gedeutet — nur fuers Flug-Log, damit echte Fluege die Belegung
+    // klaeren. Der Streamer schreibt sie nur bei Aenderung
+    // (`SimSnapshot::cockpit_rohwerte_nur_bei_aenderung`).
+    let cockpit_rohwerte = {
+        let mut werte = std::collections::BTreeMap::new();
+        let mut roh = |name: &str, v: f64| {
+            werte.insert(name.to_string(), v);
+        };
+        roh("AUTO BRAKE SWITCH CB", t.roh_std_autobrake_switch_cb);
+        roh(
+            "CABIN SEATBELTS ALERT SWITCH",
+            t.roh_std_cabin_seatbelts_alert,
+        );
+        roh("TRANSPONDER STATE:1", t.roh_std_transponder_state);
+        if is_fsl {
+            roh("L:VC_OVHD_EXTLT_Strobe_Switch", t.roh_fsl_strobe_sw);
+            roh("L:VC_OVHD_SIGNS_SeatBelts_Switch", t.roh_fsl_seatbelts_sw);
+            roh("L:VC_OVHD_APU_Master_Button_BOT", t.roh_fsl_apu_master_bot);
+        }
+        if is_a350 {
+            roh("L:INI_SEATBELTS_SWITCH", t.ini_seatbelts_switch);
+            roh("L:INI_LIGHTS_STROBE", t.roh_ini_lights_strobe);
+            roh("L:INI_AUTOBRAKE_LEVEL", t.ini_autobrake_level);
+        }
+        if is_a380 {
+            roh("L:INI_LIGHTS_STROBE", t.roh_ini_lights_strobe);
+        }
+        if is_ifly {
+            roh("L:VC_Transponder_Mode_SW_VAL", t.roh_ifly_xpdr_mode_sw);
+            roh("L:VC_Fasten_Belts_SW_VAL", t.roh_ifly_fasten_belts_sw);
+            roh(
+                "L:VC_FLTCTRL_LIGHT_SPEED_BRAKE_ARMED_VAL",
+                t.roh_ifly_speedbrake_armed_light,
+            );
+        }
+        if is_md11 {
+            roh("L:MD11_OVHD_LTS_SEAT_BELTS_SW", t.roh_md11_seat_belts_sw);
+        }
+        Some(CockpitRohwerte {
+            werte,
+            cfg_pfad: cfg_pfad.map(str::to_string),
         })
     };
 
@@ -3911,10 +4295,20 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // SPD_BRK_LEVER-Override war ein Rollout-Scoring-Regress).
         spoilers_handle_position: Some(spoilers_handle_position),
         // v0.16.10 (#Premium): Standard ODER Profil-LVar (FBW/A346/FSL).
-        spoilers_armed: Some(spoilers_armed),
+        spoilers_armed,
         pushback_state,
-        apu_switch: Some(apu_switch),
-        apu_pct_rpm: Some(t.apu_pct_rpm as f32),
+        // Audit 26.09.2026: die Phenom 300E hat keine APU — None statt eines
+        // gemessenen "aus", damit das Bordbuch "nicht messbar" zeigt.
+        apu_switch: if is_fsr_phenom {
+            None
+        } else {
+            Some(apu_switch)
+        },
+        apu_pct_rpm: if is_fsr_phenom {
+            None
+        } else {
+            Some(t.apu_pct_rpm as f32)
+        },
         battery_master: Some(battery_master),
         avionics_master: Some(t.avionics_master),
         pitot_heat: Some(pitot_heat),
@@ -4020,6 +4414,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             n1_pct: vec![t.n1_pct_1, t.n1_pct_2, t.n1_pct_3, t.n1_pct_4],
             fuel_flow_pph: vec![t.eng1_ff_pph, t.eng2_ff_pph, t.eng3_ff_pph, t.eng4_ff_pph],
         }),
+        cockpit_rohwerte,
     }
 }
 
@@ -4599,8 +4994,9 @@ mod tests {
         }
         // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster); v1.6.12:
         // +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE); v1.7.x: +128
-        // (16 A220-Kanaele der Gruppe J); 16.09.2026: +16 (ENG COMBUSTION:1..4).
-        assert_eq!(buf.len(), 3160, "total block size");
+        // (16 A220-Kanaele der Gruppe J); 16.09.2026: +16 (ENG COMBUSTION:1..4);
+        // 26.09.2026: +232 (29 Kanaele der Gruppe K, alle f64).
+        assert_eq!(buf.len(), 3392, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4857,6 +5253,38 @@ mod tests {
         assert_eq!(t.syn_aural_glideslope, 1316.0); // idx 316
         assert!(t.eng1_combustion_state); // idx 317 (i32 = 317 → true)
         assert!(t.eng4_combustion_state); // idx 320
+
+        // ---- Gruppe K (idx 321..349, Audit 26.09.2026) ----
+        // Steht hinter vier Int32 — beweist wieder die Offset-Rechnung.
+        assert_eq!(t.fnx_xpdr_operation, 1321.0); // idx 321
+        assert_eq!(t.fnx_xpdr_mode, 1322.0); // idx 322
+        assert_eq!(t.ini_spoilers_armed, 1323.0); // idx 323
+        assert_eq!(t.ini_apu_master_switch, 1324.0); // idx 324
+        assert_eq!(t.ini_tcas_mode, 1325.0); // idx 325
+        assert_eq!(t.ini_seatbelts_switch, 1326.0); // idx 326
+        assert_eq!(t.a346_xpdr_stby_auto_on, 1327.0); // idx 327
+        assert_eq!(t.a346_xpdr_tcas_mode, 1328.0); // idx 328
+        assert_eq!(t.a346_apu_master_on, 1329.0); // idx 329
+        assert_eq!(t.md11_xpdr_mode_kb, 1330.0); // idx 330
+        assert_eq!(t.fsr_pax_switch, 1331.0); // idx 331
+        assert_eq!(t.pmdg737_speedbrake_arm_sw, 1332.0); // idx 332
+        assert_eq!(t.pmdg737_xpdr_mode_sw, 1333.0); // idx 333
+        assert_eq!(t.pmdg737_autobrake_sw, 1334.0); // idx 334
+        assert_eq!(t.pmdg737_fasten_belts_sw, 1335.0); // idx 335
+        assert_eq!(t.pmdg777_speedbrake_lever_sw, 1336.0); // idx 336
+        assert_eq!(t.pmdg777_xpdr_mode_sw, 1337.0); // idx 337
+        assert_eq!(t.pmdg777_seat_belts_sw, 1338.0); // idx 338
+        assert_eq!(t.roh_fsl_strobe_sw, 1339.0); // idx 339
+        assert_eq!(t.roh_fsl_seatbelts_sw, 1340.0); // idx 340
+        assert_eq!(t.roh_fsl_apu_master_bot, 1341.0); // idx 341
+        assert_eq!(t.roh_ini_lights_strobe, 1342.0); // idx 342
+        assert_eq!(t.roh_ifly_xpdr_mode_sw, 1343.0); // idx 343
+        assert_eq!(t.roh_ifly_fasten_belts_sw, 1344.0); // idx 344
+        assert_eq!(t.roh_ifly_speedbrake_armed_light, 1345.0); // idx 345
+        assert_eq!(t.roh_md11_seat_belts_sw, 1346.0); // idx 346
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1347.0); // idx 347
+        assert_eq!(t.roh_std_cabin_seatbelts_alert, 1348.0); // idx 348
+        assert_eq!(t.roh_std_transponder_state, 1349.0); // idx 349
     }
 
     #[test]
@@ -4917,6 +5345,17 @@ mod tests {
         // wieder ZUERST hier zugeschlagen, nicht im pattern_buffer-Test.
         // 16.09.2026: `ENG COMBUSTION:1..4` (4 * i32 = 16) ist jetzt der
         // Schwanz — dieselbe Falle ein drittes Mal, also zuerst die weg.
+        // 26.09.2026: Gruppe K (29 * 8 = 232) ist jetzt der Schwanz —
+        // zuerst die weg (Falle Nummer vier, siehe oben).
+        buf.truncate(buf.len() - 232);
+        let t = Telemetry::from_block(&buf);
+        assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
+        assert_eq!(t.fnx_xpdr_operation, 0.0, "Gruppe K = sicherer Default");
+        assert_eq!(
+            t.roh_std_transponder_state, 0.0,
+            "Gruppe K = sicherer Default"
+        );
+
         buf.truncate(buf.len() - 16);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.syn_aural_glideslope, 1316.0, "Gruppe J intakt");
@@ -5876,12 +6315,14 @@ mod tests {
         assert_eq!(snap.v1_kt, Some(148.0));
         assert_eq!(snap.vr_kt, Some(155.0));
         assert_eq!(snap.v2_kt, Some(163.0));
-        // Selector-Enum undokumentiert → Roh-Wert "#{n}".
-        assert_eq!(snap.autobrake.as_deref(), Some("#2"));
+        // Audit 26.09.2026: Belegung aus HubHop (0=T.O. 1=OFF 2=MIN
+        // 3=MED 4=MAX) statt Roh-Wert "#{n}".
+        assert_eq!(snap.autobrake.as_deref(), Some("MIN"));
 
+        // 0 ist die T.O.-Stellung — frueher verworfen (None).
         let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
         assert_eq!(snap.v1_kt, None);
-        assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.autobrake.as_deref(), Some("T.O."));
     }
 
     #[test]
@@ -7093,16 +7534,21 @@ mod tests {
         // Doku listet die Enum-Werte nur als Namensliste ohne Indizes —
         // wir raten NICHTS und reichen den Rohwert durch (Decode beim
         // ersten Live-Flug), analog zu MD-11/iFly.
+        //
+        // Audit 26.09.2026: der Autobrake-Wahlschalter ist inzwischen per
+        // HubHop belegt (0=RTO 1=OFF 2=LO 3=MED 4=HI) — die Flugphase bleibt
+        // roh.
         let mut t = synaptic_a220_telemetry();
         t.syn_autobrake = 2.0;
         t.syn_flight_stage = 4.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.autobrake, Some("#2".to_string()));
+        assert_eq!(snap.autobrake, Some("LO".to_string()));
         assert_eq!(snap.flight_phase_aircraft, Some("#4".to_string()));
 
+        // 0 = RTO, eine echte Stellung — frueher verworfen (None).
         let t = synaptic_a220_telemetry();
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.autobrake, Some("RTO".to_string()));
         assert_eq!(snap.flight_phase_aircraft, None);
     }
 
@@ -7333,6 +7779,459 @@ mod tests {
         state.clear_errors();
 
         assert_eq!(state.watches[0].error, None);
+    }
+
+    // ================================================================
+    // Audit 26.09.2026 (705 MSFS-2024-Fluege) — Gruppe K. Jeder Test ist
+    // mit dem Stand davor rot: dort landeten die Muster auf `Default`,
+    // lasen die falsche Wertetabelle oder das Signal fehlte ganz.
+    // ================================================================
+
+    const PFAD_738: &str = r"E:\MSFS24_Community\Community\pmdg-aircraft-738\SimObjects\Airplanes\PMDG 737-800\aircraft.cfg";
+    const PFAD_77W: &str =
+        r"D:\Community\pmdg-aircraft-77w\SimObjects\Airplanes\PMDG 777-300ER\aircraft.cfg";
+
+    fn pmdg737_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "737-800 PAX BW SC".into();
+        t.atc_model = "B738".into();
+        t
+    }
+
+    fn pmdg777_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "777-300ER".into();
+        t.atc_model = "B77W".into();
+        t
+    }
+
+    fn msfs2024_a350() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "A350-900 (No Cabin)".into();
+        t.atc_model = "A359".into();
+        t
+    }
+
+    fn msfs2024_a380() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "A380-800 RR Basic".into();
+        t.atc_model = "A380-800".into();
+        t
+    }
+
+    fn phenom_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "FSReborn Phenom 300E Oberon Interior".into();
+        t.atc_model = "E55P".into();
+        t
+    }
+
+    /// A1: die Kette `parse` → Profil nutzt den aircraft.cfg-Pfad.
+    #[test]
+    fn a1_pmdg_ohne_hersteller_im_titel_wird_ueber_den_pfad_erkannt() {
+        let snap = telemetry_to_snapshot_mit_pfad(
+            pmdg737_telemetry(),
+            Simulator::Msfs2024,
+            Some(PFAD_738),
+        );
+        assert_eq!(snap.aircraft_profile, AircraftProfile::Pmdg737);
+        let snap = telemetry_to_snapshot_mit_pfad(
+            pmdg777_telemetry(),
+            Simulator::Msfs2024,
+            Some(PFAD_77W),
+        );
+        assert_eq!(snap.aircraft_profile, AircraftProfile::Pmdg777);
+        // Ohne Pfad kein Titel-Rueckfall — "737-800 …" allein ist mehrdeutig.
+        let snap = telemetry_to_snapshot(pmdg737_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.aircraft_profile, AircraftProfile::Default);
+    }
+
+    /// A1 ueber den echten Byte-Pfad (`parse`), nicht nur die Mapping-Stufe.
+    #[test]
+    fn a1_parse_reicht_den_pfad_bis_zur_erkennung_durch() {
+        let total: usize = TELEMETRY_FIELDS.iter().map(|f| f.kind.size()).sum();
+        let mut buf = vec![0u8; total];
+        let titel = b"777F";
+        buf[..titel.len()].copy_from_slice(titel);
+        let snap = parse(&buf, Simulator::Msfs2024, Some(PFAD_77W));
+        assert_eq!(snap.aircraft_profile, AircraftProfile::Pmdg777);
+        assert_eq!(
+            snap.cockpit_rohwerte.and_then(|r| r.cfg_pfad).as_deref(),
+            Some(PFAD_77W),
+            "der Pfad laeuft als Diagnose-Rohwert mit ins Log"
+        );
+    }
+
+    #[test]
+    fn a1_msfs2024_titel_fuer_a350_und_a380() {
+        let snap = telemetry_to_snapshot(msfs2024_a350(), Simulator::Msfs2024);
+        assert_eq!(snap.aircraft_profile, AircraftProfile::IniA350);
+        let snap = telemetry_to_snapshot(msfs2024_a380(), Simulator::Msfs2024);
+        assert_eq!(snap.aircraft_profile, AircraftProfile::IniA380);
+        // Leeres ATC MODEL (kam im Audit vor) → Profil-Fallback A388.
+        let mut t = msfs2024_a380();
+        t.atc_model = String::new();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.aircraft_icao.as_deref(), Some("A388"));
+    }
+
+    /// A4: FBW A380X hat eine eigene Autobrake-Tabelle.
+    #[test]
+    fn a4_fbw_a380x_autobrake_eigene_tabelle() {
+        let a380x = |mode: f64| {
+            let mut t = Telemetry::default();
+            t.title = "FlyByWire A380X (A380-842) No Cabin".into();
+            t.atc_model = "A388".into();
+            t.fbw_autobrake_armed_mode = mode;
+            telemetry_to_snapshot(t, Simulator::Msfs2024).autobrake
+        };
+        for (roh, want) in [
+            (0.0, "DISARM"),
+            (1.0, "BTV"),
+            (2.0, "LOW"),
+            (3.0, "L2"),
+            (4.0, "L3"),
+            (5.0, "HIGH"),
+            (6.0, "RTO"),
+        ] {
+            assert_eq!(a380x(roh).as_deref(), Some(want), "roh={roh}");
+        }
+        // Der A32NX behaelt seine Tabelle (2 = MED, nicht LOW).
+        let mut t = fbw_telemetry();
+        t.fbw_autobrake_armed_mode = 2.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake.as_deref(), Some("MED"));
+    }
+
+    /// A5: 0 ist beim A220 RTO und beim MD-11 T.O. — echte Stellungen.
+    #[test]
+    fn a5_autobrake_null_ist_eine_stellung() {
+        for (roh, want) in [
+            (0.0, "RTO"),
+            (1.0, "OFF"),
+            (2.0, "LO"),
+            (3.0, "MED"),
+            (4.0, "HI"),
+        ] {
+            let mut t = synaptic_a220_telemetry();
+            t.syn_autobrake = roh;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.autobrake.as_deref(), Some(want), "A220 roh={roh}");
+        }
+        for (roh, want) in [
+            (0.0, "T.O."),
+            (1.0, "OFF"),
+            (2.0, "MIN"),
+            (3.0, "MED"),
+            (4.0, "MAX"),
+        ] {
+            let mut t = md11_telemetry();
+            t.md11_autobrake_sw = roh;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.autobrake.as_deref(), Some(want), "MD-11 roh={roh}");
+        }
+        // Unbelegter Wert faellt auf, statt falsch beschriftet zu werden.
+        let mut t = md11_telemetry();
+        t.md11_autobrake_sw = 7.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake.as_deref(), Some("#7"));
+    }
+
+    /// A6: Fenix `L:A_FC_SPEEDBRAKE` 0 = ARMED, 1 = RET.
+    #[test]
+    fn a6_fenix_spoiler_armed_aus_dem_hebel() {
+        let mut t = fenix_premium_telemetry();
+        t.fnx_speedbrake_handle = 0.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.spoilers_armed, Some(true));
+        for roh in [1.0, 2.0, 3.0] {
+            let mut t = fenix_premium_telemetry();
+            t.fnx_speedbrake_handle = roh;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.spoilers_armed, Some(false), "roh={roh}");
+        }
+    }
+
+    /// A7: Fenix Transponder im PMDG-Vokabular.
+    #[test]
+    fn a7_fenix_transponder_modus() {
+        let xpdr = |op: f64, mode: f64| {
+            let mut t = fenix_premium_telemetry();
+            t.fnx_xpdr_operation = op;
+            t.fnx_xpdr_mode = mode;
+            telemetry_to_snapshot(t, Simulator::Msfs2024).xpdr_mode_label
+        };
+        assert_eq!(
+            xpdr(0.0, 2.0).as_deref(),
+            Some("STBY"),
+            "ATC STBY schlaegt TCAS"
+        );
+        assert_eq!(xpdr(1.0, 0.0).as_deref(), Some("XPNDR"));
+        assert_eq!(xpdr(2.0, 1.0).as_deref(), Some("TA"));
+        assert_eq!(xpdr(1.0, 2.0).as_deref(), Some("TA-RA"));
+        assert_eq!(
+            xpdr(5.0, 2.0),
+            None,
+            "unbekannte Stellung wird nicht geraten"
+        );
+    }
+
+    /// A8: iniBuilds A350 (MSFS-2024-Titel) — Spoiler, APU, TCAS.
+    #[test]
+    fn a8_a350_spoiler_apu_und_tcas() {
+        let mut t = msfs2024_a350();
+        t.ini_spoilers_armed = 1.0;
+        t.apu_switch = true; // Standard-SimVar klemmt laut Audit auf true
+        t.ini_apu_master_switch = 0.0;
+        t.ini_tcas_mode = 2.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(
+            snap.apu_switch,
+            Some(false),
+            "Overhead-Schalter ersetzt die SimVar"
+        );
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("TA-RA"));
+
+        let tcas = |roh: f64| {
+            let mut t = msfs2024_a350();
+            t.ini_tcas_mode = roh;
+            telemetry_to_snapshot(t, Simulator::Msfs2024).xpdr_mode_label
+        };
+        assert_eq!(tcas(0.0).as_deref(), Some("STBY"));
+        assert_eq!(tcas(3.0).as_deref(), Some("TA"));
+        assert_eq!(tcas(1.0), None, "1 ist fuer die A350 nicht belegt");
+
+        let mut t = msfs2024_a350();
+        t.ini_apu_master_switch = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.apu_switch, Some(true));
+    }
+
+    /// A9: iniBuilds A380 — Spoiler, APU, Anschnallzeichen gespiegelt.
+    #[test]
+    fn a9_a380_spoiler_apu_und_anschnallzeichen() {
+        let mut t = msfs2024_a380();
+        t.ini_spoilers_armed = 1.0;
+        t.ini_apu_master_switch = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(snap.apu_switch, Some(true));
+        for (roh, want) in [(0.0, 2u8), (1.0, 1), (2.0, 0)] {
+            let mut t = msfs2024_a380();
+            t.ini_seatbelts_switch = roh;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.seatbelts_sign, Some(want), "roh={roh}");
+        }
+    }
+
+    /// A10: Aerosoft A346 Transponder + APU.
+    #[test]
+    fn a10_a346_transponder_und_apu() {
+        let mut t = a346_telemetry();
+        t.a346_xpdr_stby_auto_on = 1.0;
+        t.a346_xpdr_tcas_mode = 2.0;
+        t.a346_apu_master_on = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("TA-RA"));
+        assert_eq!(snap.apu_switch, Some(true));
+
+        let mut t = a346_telemetry();
+        t.apu_switch = true; // Standard-SimVar gilt fuer die A346 nicht mehr
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("STBY"));
+        assert_eq!(snap.apu_switch, Some(false));
+    }
+
+    /// A11: MD-11 Transponder-Modusknopf.
+    #[test]
+    fn a11_md11_transponder() {
+        for (roh, want) in [(0.0, "STBY"), (1.0, "XPNDR"), (2.0, "TA"), (3.0, "TA-RA")] {
+            let mut t = md11_telemetry();
+            t.md11_xpdr_mode_kb = roh;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.xpdr_mode_label.as_deref(), Some(want), "roh={roh}");
+        }
+    }
+
+    /// A12 + A14: Phenom Anschnallzeichen; keine Spoiler, keine APU.
+    #[test]
+    fn a12_a14_phenom_anschnallzeichen_und_fehlende_bauteile() {
+        for (roh, want) in [(0.0, 0u8), (1.0, 2), (2.0, 2)] {
+            let mut t = phenom_telemetry();
+            t.fsr_pax_switch = roh;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.seatbelts_sign, Some(want), "roh={roh}");
+        }
+        let mut t = phenom_telemetry();
+        t.apu_switch = true;
+        t.spoilers_armed = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(
+            snap.spoilers_armed, None,
+            "Phenom hat keine armierbaren Spoiler"
+        );
+        assert_eq!(snap.apu_switch, None, "Phenom hat keine APU");
+        assert_eq!(snap.apu_pct_rpm, None);
+        assert_eq!(snap.autobrake, None);
+    }
+
+    /// A14: A220 — die Doku kennt keinen ARM-Zustand.
+    #[test]
+    fn a14_a220_spoiler_armed_nicht_messbar() {
+        let mut t = synaptic_a220_telemetry();
+        t.spoilers_armed = false;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.spoilers_armed, None);
+        // Andere Muster behalten ihr gemessenes Nein.
+        let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.spoilers_armed, Some(false));
+    }
+
+    /// A13: PMDG 737 ohne SDK-Block — die Schalter-LVars.
+    #[test]
+    fn a13_pmdg737_ohne_sdk_aus_den_schalter_lvars() {
+        let mut t = pmdg737_telemetry();
+        t.pmdg737_speedbrake_arm_sw = 1.0;
+        t.pmdg737_xpdr_mode_sw = 40.0;
+        t.pmdg737_autobrake_sw = 30.0;
+        t.pmdg737_fasten_belts_sw = 50.0;
+        let snap = telemetry_to_snapshot_mit_pfad(t, Simulator::Msfs2024, Some(PFAD_738));
+        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("TA-RA"));
+        assert_eq!(snap.autobrake.as_deref(), Some("2"));
+        assert_eq!(snap.seatbelts_sign, Some(1));
+
+        for (roh, want) in [
+            (0.0, "RTO"),
+            (10.0, "OFF"),
+            (20.0, "1"),
+            (40.0, "3"),
+            (50.0, "MAX"),
+        ] {
+            let mut t = pmdg737_telemetry();
+            t.pmdg737_autobrake_sw = roh;
+            let snap = telemetry_to_snapshot_mit_pfad(t, Simulator::Msfs2024, Some(PFAD_738));
+            assert_eq!(snap.autobrake.as_deref(), Some(want), "roh={roh}");
+        }
+        // Schalter mitten im Weg → kein Label statt eines geratenen.
+        let mut t = pmdg737_telemetry();
+        t.pmdg737_xpdr_mode_sw = 15.0;
+        let snap = telemetry_to_snapshot_mit_pfad(t, Simulator::Msfs2024, Some(PFAD_738));
+        assert_eq!(snap.xpdr_mode_label, None);
+    }
+
+    /// A13: PMDG 777 ohne SDK-Block.
+    #[test]
+    fn a13_pmdg777_ohne_sdk_aus_den_schalter_lvars() {
+        let mut t = pmdg777_telemetry();
+        t.pmdg777_speedbrake_lever_sw = 200.0;
+        t.pmdg777_xpdr_mode_sw = 20.0;
+        t.pmdg777_seat_belts_sw = 100.0;
+        let snap = telemetry_to_snapshot_mit_pfad(t, Simulator::Msfs2024, Some(PFAD_77W));
+        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("XPNDR"));
+        assert_eq!(snap.seatbelts_sign, Some(2));
+
+        for roh in [0.0, 300.0] {
+            let mut t = pmdg777_telemetry();
+            t.pmdg777_speedbrake_lever_sw = roh;
+            let snap = telemetry_to_snapshot_mit_pfad(t, Simulator::Msfs2024, Some(PFAD_77W));
+            assert_eq!(
+                snap.spoilers_armed,
+                Some(false),
+                "roh={roh}: RET bzw. ausgefahren"
+            );
+        }
+    }
+
+    /// Profil-Gate: die neuen LVars beheizt, aber ein C172 bleibt auf dem
+    /// Standard-Pfad.
+    #[test]
+    fn gruppe_k_leakt_nicht_in_fremde_muster() {
+        let mut t = Telemetry::default();
+        t.title = "Asobo C172".into();
+        t.atc_model = "C172".into();
+        t.fnx_xpdr_operation = 2.0;
+        t.fnx_xpdr_mode = 2.0;
+        t.ini_spoilers_armed = 1.0;
+        t.ini_apu_master_switch = 1.0;
+        t.ini_tcas_mode = 2.0;
+        t.ini_seatbelts_switch = 0.0;
+        t.a346_xpdr_stby_auto_on = 2.0;
+        t.a346_xpdr_tcas_mode = 2.0;
+        t.a346_apu_master_on = 1.0;
+        t.md11_xpdr_mode_kb = 3.0;
+        t.fsr_pax_switch = 2.0;
+        t.pmdg737_speedbrake_arm_sw = 1.0;
+        t.pmdg737_xpdr_mode_sw = 40.0;
+        t.pmdg737_autobrake_sw = 50.0;
+        t.pmdg737_fasten_belts_sw = 100.0;
+        t.pmdg777_speedbrake_lever_sw = 200.0;
+        t.pmdg777_xpdr_mode_sw = 40.0;
+        t.pmdg777_seat_belts_sw = 100.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.xpdr_mode_label, None);
+        assert_eq!(snap.seatbelts_sign, None);
+        assert_eq!(snap.spoilers_armed, Some(false));
+        assert_eq!(snap.apu_switch, Some(false));
+        assert_eq!(snap.autobrake, None);
+        // Teil-B-Rohwerte: beim C172 nur die drei Standard-SimVars.
+        let roh = snap.cockpit_rohwerte.expect("MSFS liefert immer Rohwerte");
+        assert_eq!(
+            roh.werte.keys().cloned().collect::<Vec<_>>(),
+            vec![
+                "AUTO BRAKE SWITCH CB".to_string(),
+                "CABIN SEATBELTS ALERT SWITCH".to_string(),
+                "TRANSPONDER STATE:1".to_string(),
+            ]
+        );
+    }
+
+    /// Teil B: je Profil genau die unklar belegten Schalter.
+    #[test]
+    fn teil_b_rohwerte_je_profil() {
+        let mut t = fsl_telemetry();
+        t.roh_fsl_strobe_sw = 10.0;
+        let roh = telemetry_to_snapshot(t, Simulator::Msfs2024)
+            .cockpit_rohwerte
+            .unwrap();
+        assert_eq!(roh.werte.get("L:VC_OVHD_EXTLT_Strobe_Switch"), Some(&10.0));
+        assert!(roh.werte.contains_key("L:VC_OVHD_SIGNS_SeatBelts_Switch"));
+        assert!(roh.werte.contains_key("L:VC_OVHD_APU_Master_Button_BOT"));
+
+        let mut t = msfs2024_a350();
+        t.ini_seatbelts_switch = 1.0;
+        t.roh_ini_lights_strobe = 2.0;
+        t.ini_autobrake_level = 4.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        // A350-Anschnallzeichen ist widerspruechlich → NICHT gedeutet.
+        assert_eq!(snap.seatbelts_sign, None);
+        let roh = snap.cockpit_rohwerte.unwrap();
+        assert_eq!(roh.werte.get("L:INI_SEATBELTS_SWITCH"), Some(&1.0));
+        assert_eq!(roh.werte.get("L:INI_LIGHTS_STROBE"), Some(&2.0));
+        assert_eq!(roh.werte.get("L:INI_AUTOBRAKE_LEVEL"), Some(&4.0));
+
+        let roh = telemetry_to_snapshot(msfs2024_a380(), Simulator::Msfs2024)
+            .cockpit_rohwerte
+            .unwrap();
+        assert!(roh.werte.contains_key("L:INI_LIGHTS_STROBE"));
+
+        let roh = telemetry_to_snapshot(ifly_telemetry(), Simulator::Msfs2024)
+            .cockpit_rohwerte
+            .unwrap();
+        for k in [
+            "L:VC_Transponder_Mode_SW_VAL",
+            "L:VC_Fasten_Belts_SW_VAL",
+            "L:VC_FLTCTRL_LIGHT_SPEED_BRAKE_ARMED_VAL",
+        ] {
+            assert!(roh.werte.contains_key(k), "{k}");
+        }
+
+        let roh = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024)
+            .cockpit_rohwerte
+            .unwrap();
+        assert!(roh.werte.contains_key("L:MD11_OVHD_LTS_SEAT_BELTS_SW"));
     }
 }
 

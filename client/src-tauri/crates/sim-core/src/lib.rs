@@ -8,6 +8,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub mod process_probe;
 /// v0.20 (Process-Integrity): cross-platform "is the sim's OS process
@@ -473,6 +474,11 @@ pub struct SimSnapshot {
     /// Thorben 16.09.2026). `None` bei Adaptern, die es nicht füllen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_signals: Option<EngineSignals>,
+    /// Diagnose-Rohwerte unklar belegter Cockpit-Schalter + aircraft.cfg-
+    /// Pfad (siehe [`CockpitRohwerte`]). `None` bei Adaptern, die es nicht
+    /// füllen, und im Flug-Log bei jedem Tick ohne Änderung.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cockpit_rohwerte: Option<CockpitRohwerte>,
 }
 
 /// PMDG aircraft "premium telemetry" — generic across 737 NG3 and
@@ -675,6 +681,35 @@ pub struct PmdgState {
     /// generic SimSnapshot field yet; consumers read it via `pmdg`).
     #[serde(default)]
     pub gnd_prox_warning: Option<bool>,
+    /// Anschnallzeichen-Wahlschalter aus dem SDK, Snapshot-Konvention
+    /// 0=OFF 1=AUTO 2=ON. 737: `COMM_FastenBeltsSelector`
+    /// (PMDG_NG3_SDK.h:216), 777: `SIGNS_SeatBeltsSelector`
+    /// (PMDG_777X_SDK.h:154), beide laut Header "0: OFF 1: AUTO 2: ON".
+    /// Audit 26.09.2026: `seatbelts_sign` blieb auf allen PMDG-Flügen
+    /// `None`, obwohl das SDK den Schalter mitsendet.
+    #[serde(default)]
+    pub seatbelts_sign: Option<u8>,
+    /// Rohbyte des Autobrake-Wahlschalters, NUR 777 — dessen Belegung ist ab
+    /// Byte 3 nicht gemessen (Header: 3 = "1" … 5 = MAX AUTO; das Label zeigt
+    /// ab 3 nur "?"). Wird mitgeschrieben, damit das Flug-Log die Tabelle
+    /// liefert; kein Label daraus ableiten, solange es nicht gemessen ist.
+    #[serde(default)]
+    pub autobrake_selector_roh: Option<u8>,
+}
+
+/// Rohwerte von Cockpit-Schaltern, deren Belegung widersprüchlich oder
+/// unbekannt ist (Audit 26.09.2026, Teil B). Sie werden NICHT gedeutet,
+/// sondern nur ins Flug-Log geschrieben, damit echte Flüge die
+/// Belegung klären. Der Adapter füllt sie je Tick; der Streamer schreibt
+/// sie nur bei Änderung ins Log (`SimSnapshot::cockpit_rohwerte_nur_bei_aenderung`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CockpitRohwerte {
+    /// Variablenname (wie bei SimConnect registriert) → Rohwert.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub werte: BTreeMap<String, f64>,
+    /// aircraft.cfg-Pfad aus dem SimConnect-Systemzustand `AircraftLoaded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfg_pfad: Option<String>,
 }
 
 impl SimSnapshot {
@@ -687,6 +722,22 @@ impl SimSnapshot {
     pub fn touchdown_vs_source_fpm(&self) -> f32 {
         self.vertical_speed_raw_fpm
             .unwrap_or(self.vertical_speed_fpm)
+    }
+
+    /// Diagnose-Rohwerte nur bei Änderung ins Flug-Log: ist
+    /// `cockpit_rohwerte` gleich dem zuletzt geschriebenen Stand, wird das
+    /// Feld auf `None` gesetzt (und damit nicht serialisiert), sonst wird
+    /// `letzte` auf den neuen Stand gezogen. So kostet der Diagnosekanal
+    /// nur bei Schalterbewegungen Platz, nicht bei jedem 3-s-Tick.
+    pub fn cockpit_rohwerte_nur_bei_aenderung(&mut self, letzte: &mut Option<CockpitRohwerte>) {
+        if self.cockpit_rohwerte.is_none() {
+            return;
+        }
+        if self.cockpit_rohwerte == *letzte {
+            self.cockpit_rohwerte = None;
+        } else {
+            letzte.clone_from(&self.cockpit_rohwerte);
+        }
     }
 
     /// Premium-First override for the autoflight booleans (v0.16.7).
@@ -780,6 +831,7 @@ impl SimSnapshot {
         let fuel_per_tank_kg = p.fuel_per_tank_kg.clone();
         let (v1, vr, v2, vref) = (p.fmc_v1_kt, p.fmc_vr_kt, p.fmc_v2_kt, p.fmc_vref_kt);
         let speedbrake_extended = p.speedbrake_extended;
+        let seatbelts_sign = p.seatbelts_sign;
 
         if let Some(m) = fma_lateral {
             self.fma_lateral_mode = Some(m);
@@ -799,6 +851,9 @@ impl SimSnapshot {
         self.cabin_altitude_warning = cabin_altitude_warning.or(self.cabin_altitude_warning);
         self.stab_out_of_trim = stab_out_of_trim.or(self.stab_out_of_trim);
         self.minimums_baro_ft = minimums_baro_ft.or(self.minimums_baro_ft);
+        // Anschnallzeichen aus dem SDK-Wahlschalter; ohne SDK-Wert bleibt
+        // der LVar-Rückfall des Adapters stehen.
+        self.seatbelts_sign = seatbelts_sign.or(self.seatbelts_sign);
         if fuel_per_tank_kg.is_some() {
             self.fuel_per_tank_kg = fuel_per_tank_kg;
         }
@@ -965,6 +1020,7 @@ impl Default for SimSnapshot {
             shadow_phase: None,
             shadow_segment: None,
             engine_signals: None,
+            cockpit_rohwerte: None,
         }
     }
 }
@@ -1134,6 +1190,19 @@ pub enum AircraftProfile {
     /// Offene Lücke: KEINE numerischen V-Speed-LVars dokumentiert (nur
     /// ein V1-Aural-Flag) — v1/vr/v2/vapp/vls bleiben None.
     SynapticA220,
+    /// iniBuilds A380-800 (MSFS 2024). Audit 26.09.2026 (705 MSFS-2024-
+    /// Flüge): 13 Flüge mit dem Titel "A380-800 RR Basic" (ICAO A388)
+    /// liefen alle als `Default` — der Titel trägt keinen Hersteller.
+    /// NICHT zu verwechseln mit dem FBW A380X ("FlyByWire A380X
+    /// (A380-842)"), der über seinen Titel-Marker auf `FbwA32nx` landet.
+    /// Gemappt (flight-fabric-Fremdcode + HubHop übereinstimmend):
+    ///   * `L:INI_SPOILERS_ARMED` 1 = armed
+    ///   * `L:INI_APU_MASTER_SWITCH` 0/1
+    ///   * `L:INI_SEATBELTS_SWITCH` 0=ON 1=AUTO 2=OFF (umgekehrt zur
+    ///     Snapshot-Konvention, wird umgerechnet)
+    /// `L:INI_LIGHTS_STROBE` ist widersprüchlich belegt und läuft nur als
+    /// Rohwert ins Flug-Log (`cockpit_rohwerte`).
+    IniA380,
 }
 
 impl AircraftProfile {
@@ -1183,8 +1252,37 @@ impl AircraftProfile {
             return Self::Pmdg777;
         }
         // INIBuilds A350.
-        if t.contains("inibuilds") && t.contains("a350") {
+        //
+        // Audit 26.09.2026: in MSFS 2024 heissen die Titel nur noch
+        // "A350-900 (Default Cabin)", "A350-900 (No Cabin)", "A350-900
+        // ULR (No Cabin)", "A350-1000 (No Cabin)" — kein "inibuilds" mehr,
+        // alle 24 Flüge liefen als `Default`. Der Paketname der A350 ist
+        // nicht belegt, deshalb Titel-Muster statt aircraft.cfg-Pfad. Einen
+        // zweiten A350 gibt es im Simulator nicht; FBW/Headwind bauen keinen.
+        // Ein ICAO-Signal zählt nur zusammen mit "a350" im Titel — ein
+        // blanker A359/A35K-Fallback wäre dieselbe Fehlklassen-Gefahr wie
+        // der in QS M4 entfernte A20N-Fallback.
+        if (t.contains("inibuilds") && t.contains("a350"))
+            || t.contains("a350-900")
+            || t.contains("a350-1000")
+            || (t.contains("a350")
+                && matches!(
+                    clean_atc_model(icao).as_deref(),
+                    Some("A359") | Some("A35K")
+                ))
+        {
             return Self::IniA350;
+        }
+        // iniBuilds A380-800 (MSFS 2024). Titel "A380-800 RR Basic" ohne
+        // Hersteller. Der FBW A380X ist oben schon über "a380x"/"flybywire"
+        // abgefangen; FBW-Liveries ohne diesen Marker tragen oft "FBW" im
+        // Titel (Audit: "FBW Emirates (circa 2008) A6-EDA") — die schliessen
+        // wir hier ausdrücklich aus. KEIN blanker A388-ICAO-Fallback: den
+        // meldet auch der FBW A380X.
+        if !t.contains("fbw")
+            && (t.contains("a380-800") || (t.contains("inibuilds") && t.contains("a380")))
+        {
+            return Self::IniA380;
         }
         // INIBuilds A340-600 Pro — pro suffix is the discriminator vs the
         // standard A340 build.
@@ -1336,6 +1434,62 @@ impl AircraftProfile {
         Self::Default
     }
 
+    /// Erkennung mit dem aircraft.cfg-Pfad aus dem SimConnect-Systemzustand
+    /// `AircraftLoaded` als zweiter Quelle.
+    ///
+    /// Anlass (Audit 26.09.2026, 705 MSFS-2024-Flüge): MSFS 2024 liefert die
+    /// Titel ohne Hersteller — PMDG "737-800 PAX BW SC", "777F",
+    /// "777-300ER", iniBuilds "A380-800 RR Basic". Alle 81 PMDG-Flüge liefen
+    /// als `Default`. Der Paketordner im Pfad (`pmdg-aircraft-738`,
+    /// `pmdg-aircraft-77w`, …) ist dagegen stabil; der PMDG-SDK-Zweig im
+    /// Adapter wertet denselben Pfad schon seit v0.3 aus
+    /// (`PmdgVariant::detect_from_air_path`).
+    ///
+    /// Reihenfolge: der Titel gewinnt. Der Pfad zählt NUR, wenn die
+    /// Titelerkennung `Default` ergibt — so kann ein veralteter Pfad (der
+    /// Adapter fragt ihn nur bei Verbindungsaufbau und SimStart ab) nie ein
+    /// sauber erkanntes Profil überschreiben. Zusätzlich muss der Titel oder
+    /// die ICAO zum Pfad passen (737-Pfad nur mit "737"/B73x, 777-Pfad nur
+    /// mit "777"/B77x), damit ein Rest-Pfad vom vorigen Flugzeug einen
+    /// fremden Boeing-Titel nicht zu PMDG macht.
+    pub fn detect_mit_pfad(title: &str, icao: &str, cfg_pfad: Option<&str>) -> Self {
+        let nach_titel = Self::detect(title, icao);
+        if nach_titel != Self::Default {
+            return nach_titel;
+        }
+        let Some(pfad) = cfg_pfad else {
+            return Self::Default;
+        };
+        let p = pfad.to_lowercase().replace('\\', "/");
+        let t = title.to_lowercase();
+        let modell = clean_atc_model(icao).unwrap_or_default();
+        // Dieselben Ordnermuster wie `PmdgVariant::detect_from_air_path`
+        // (sim-msfs) — ein Test dort hält beide deckungsgleich.
+        let pmdg_737 = [
+            "pmdg-aircraft-736",
+            "pmdg-aircraft-737",
+            "pmdg-aircraft-738",
+            "pmdg-aircraft-739",
+            "pmdg 736",
+            "pmdg 737",
+            "pmdg 738",
+            "pmdg 739",
+        ]
+        .iter()
+        .any(|m| p.contains(m));
+        let pmdg_777 = p.contains("pmdg-aircraft-77") || p.contains("pmdg 777");
+        if pmdg_737 && (t.contains("737") || modell.starts_with("B73")) {
+            return Self::Pmdg737;
+        }
+        if pmdg_777 && (t.contains("777") || modell.starts_with("B77")) {
+            return Self::Pmdg777;
+        }
+        if p.contains("inibuilds") && p.contains("a380") {
+            return Self::IniA380;
+        }
+        Self::Default
+    }
+
     /// `true` if this profile is any Fenix A32x variant. All three
     /// share the same `FNX_32X` SimObject + LVar namespace, so most
     /// adapter mapping branches treat them identically.
@@ -1366,6 +1520,8 @@ impl AircraftProfile {
             // aircraft.cfg). Nur Anzeige-Fallback — die Detection läuft
             // über den Title, nicht über diesen Wert.
             Self::ContrailFa50 => Some("FA50"),
+            // iniBuilds A380: ein Flug im Audit kam mit leerem ATC MODEL.
+            Self::IniA380 => Some("A388"),
             _ => None,
         }
     }
@@ -1390,6 +1546,7 @@ impl AircraftProfile {
             Self::FsLabsA321 => "FSLabs A321",
             Self::ContrailFa50 => "Contrail Falcon 50",
             Self::SynapticA220 => "Synaptic A220",
+            Self::IniA380 => "INIBuilds A380",
         }
     }
 
@@ -3089,5 +3246,223 @@ mod muster_tests {
                 "Sim-Wert {roh:?} blockiert die dritte Stufe statt durchzufallen"
             );
         }
+    }
+}
+
+/// Audit 26.09.2026 (705 MSFS-2024-Flüge): Erkennung ohne Hersteller im
+/// Titel, SDK-Anschnallzeichen, Diagnose-Rohwerte. Jede Titel-/Pfad-Probe
+/// unten stammt wörtlich aus den Recorder-Logs.
+#[cfg(test)]
+mod msfs2024_cockpit_tests {
+    use super::*;
+
+    const PFAD_738: &str = r"E:\MSFS24_Community\Community\pmdg-aircraft-738\SimObjects\Airplanes\PMDG 737-800\aircraft.cfg";
+    const PFAD_737: &str = r"C:\Users\x\AppData\Local\Packages\Microsoft.Limitless\LocalCache\Packages\Community\pmdg-aircraft-737\SimObjects\Airplanes\PMDG 737-700\aircraft.cfg";
+    const PFAD_77W: &str =
+        r"D:\Community\pmdg-aircraft-77w\SimObjects\Airplanes\PMDG 777-300ER\aircraft.cfg";
+    const PFAD_77F: &str =
+        r"D:\Community\pmdg-aircraft-77f\SimObjects\Airplanes\PMDG 777F\aircraft.cfg";
+
+    #[test]
+    fn pmdg_titel_ohne_hersteller_werden_ueber_den_pfad_erkannt() {
+        for (titel, icao, pfad) in [
+            ("737-800 PAX BW SC", "B738", PFAD_738),
+            ("737-800 PAX BW HD", "B738", PFAD_738),
+            ("737-800BCF BW", "B738", PFAD_738),
+            ("737-800 PAX SSW HD", "B738", PFAD_738),
+            ("737-700 PAX BW TC", "B737", PFAD_737),
+        ] {
+            assert_eq!(
+                AircraftProfile::detect_mit_pfad(titel, icao, Some(pfad)),
+                AircraftProfile::Pmdg737,
+                "{titel}"
+            );
+        }
+        for (titel, icao, pfad) in [
+            ("777F", "B77L", PFAD_77F),
+            ("777-300ER", "B77W", PFAD_77W),
+            (
+                "777-200LR",
+                "B77L",
+                r"D:\Community\pmdg-aircraft-77l\SimObjects\Airplanes\PMDG 777-200LR\aircraft.cfg",
+            ),
+            (
+                "777-200ER PW",
+                "B772",
+                r"D:\Community\pmdg-aircraft-772\SimObjects\Airplanes\PMDG 777-200ER\aircraft.cfg",
+            ),
+        ] {
+            assert_eq!(
+                AircraftProfile::detect_mit_pfad(titel, icao, Some(pfad)),
+                AircraftProfile::Pmdg777,
+                "{titel}"
+            );
+        }
+    }
+
+    #[test]
+    fn ohne_pfad_bleiben_die_pmdg_titel_default() {
+        // Kein Titel-Rückfall für PMDG: "737-800 …" allein ist nicht
+        // eindeutig (iFly/Asobo/Zibo-Ports). Nur der Pfad entscheidet.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("737-800 PAX BW SC", "B738", None),
+            AircraftProfile::Default
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("777F", "B77L", None),
+            AircraftProfile::Default
+        );
+    }
+
+    #[test]
+    fn der_titel_schlaegt_einen_veralteten_pfad() {
+        // Rest-Pfad vom PMDG, jetzt aber ein Fenix geladen: Titel gewinnt.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("FenixA320 CFM SL", "A320", Some(PFAD_738)),
+            AircraftProfile::FenixA320
+        );
+        // Rest-Pfad 737, geladen ist ein fremder Boeing ohne Marker: der
+        // Titel passt nicht zum Pfad → kein PMDG.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "Boeing 787-9 (GE) Air New Zealand",
+                "B789",
+                Some(PFAD_738)
+            ),
+            AircraftProfile::Default
+        );
+        // 777-Pfad mit 737-Titel: ebenfalls kein Treffer über Kreuz.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("737-800 PAX BW SC", "B738", Some(PFAD_77W)),
+            AircraftProfile::Default
+        );
+    }
+
+    #[test]
+    fn inibuilds_a350_titel_aus_msfs_2024() {
+        for (titel, icao) in [
+            ("A350-900 (Default Cabin)", "A359"),
+            ("A350-900 (No Cabin)", "A359"),
+            ("A350-900 (No Cabin)", "A350-900"),
+            ("A350-900 ULR (No Cabin)", "A350-900 ULR"),
+            ("A350-1000 (No Cabin)", "A35K"),
+        ] {
+            assert_eq!(
+                AircraftProfile::detect(titel, icao),
+                AircraftProfile::IniA350,
+                "{titel} / {icao}"
+            );
+        }
+        // Keine Fremdtreffer: iniBuilds A330 und ein blanker A359-ICAO
+        // ohne "a350" im Titel bleiben Default.
+        assert_eq!(
+            AircraftProfile::detect("A330-300 (RR)", "A333"),
+            AircraftProfile::Default
+        );
+        assert_eq!(
+            AircraftProfile::detect("Some Airliner", "A359"),
+            AircraftProfile::Default
+        );
+    }
+
+    #[test]
+    fn inibuilds_a380_eigenes_profil_fbw_a380x_bleibt_fbw() {
+        assert_eq!(
+            AircraftProfile::detect("A380-800 RR Basic", "A388"),
+            AircraftProfile::IniA380
+        );
+        assert_eq!(
+            AircraftProfile::detect("A380-800 RR Basic", ""),
+            AircraftProfile::IniA380
+        );
+        assert_eq!(AircraftProfile::IniA380.icao_fallback(), Some("A388"));
+        // FBW A380X: Titel aus dem Audit.
+        assert_eq!(
+            AircraftProfile::detect("FlyByWire A380X (A380-842) No Cabin", "A388"),
+            AircraftProfile::FbwA32nx
+        );
+        // FBW-Livery ohne A380X-Marker darf NICHT zur iniBuilds werden.
+        assert_eq!(
+            AircraftProfile::detect("FBW Emirates A380-800 A6-EDA", "A388"),
+            AircraftProfile::Default
+        );
+        // Pfad-Weg für die A380, falls ein Livery-Titel das Muster nicht trägt.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "Emirates A6-EUA",
+                "A388",
+                Some(
+                    r"D:\Community\inibuilds-aircraft-a380\SimObjects\Airplanes\A380\aircraft.cfg"
+                )
+            ),
+            AircraftProfile::IniA380
+        );
+    }
+
+    #[test]
+    fn pmdg_sdk_anschnallzeichen_landet_im_snapshot() {
+        let mut snap = SimSnapshot {
+            pmdg: Some(PmdgState {
+                seatbelts_sign: Some(2),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        snap.apply_pmdg_premium_override();
+        assert_eq!(snap.seatbelts_sign, Some(2));
+
+        // Ohne SDK-Wert bleibt ein vorhandener (LVar-)Wert stehen.
+        let mut snap = SimSnapshot {
+            seatbelts_sign: Some(1),
+            pmdg: Some(PmdgState::default()),
+            ..Default::default()
+        };
+        snap.apply_pmdg_premium_override();
+        assert_eq!(snap.seatbelts_sign, Some(1));
+    }
+
+    #[test]
+    fn rohwerte_nur_bei_aenderung_im_log() {
+        let roh = |v: f64| CockpitRohwerte {
+            werte: [("L:INI_LIGHTS_STROBE".to_string(), v)]
+                .into_iter()
+                .collect(),
+            cfg_pfad: Some("x".into()),
+        };
+        let mut letzte = None;
+
+        let mut a = SimSnapshot {
+            cockpit_rohwerte: Some(roh(1.0)),
+            ..Default::default()
+        };
+        a.cockpit_rohwerte_nur_bei_aenderung(&mut letzte);
+        assert_eq!(
+            a.cockpit_rohwerte,
+            Some(roh(1.0)),
+            "erster Stand wird geschrieben"
+        );
+
+        let mut b = SimSnapshot {
+            cockpit_rohwerte: Some(roh(1.0)),
+            ..Default::default()
+        };
+        b.cockpit_rohwerte_nur_bei_aenderung(&mut letzte);
+        assert_eq!(b.cockpit_rohwerte, None, "unveraendert → nicht erneut");
+        let json = serde_json::to_string(&b).unwrap();
+        assert!(
+            !json.contains("cockpit_rohwerte"),
+            "None darf nicht serialisiert werden"
+        );
+
+        let mut c = SimSnapshot {
+            cockpit_rohwerte: Some(roh(2.0)),
+            ..Default::default()
+        };
+        c.cockpit_rohwerte_nur_bei_aenderung(&mut letzte);
+        assert_eq!(
+            c.cockpit_rohwerte,
+            Some(roh(2.0)),
+            "Aenderung wird geschrieben"
+        );
     }
 }

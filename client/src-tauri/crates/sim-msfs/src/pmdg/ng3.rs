@@ -728,6 +728,11 @@ pub struct Pmdg738Snapshot {
 
     // Comm + Misc
     pub xpdr_mode: u8, // 0=STBY 1=ALT_RPTG_OFF .. 4=TA/RA
+    /// FASTEN BELTS-Wahlschalter (`COMM_FastenBeltsSelector`,
+    /// PMDG_NG3_SDK.h:216 "0: OFF 1: AUTO 2: ON"). Audit 26.09.2026: das
+    /// SDK sendete ihn schon immer mit, `seatbelts_sign` blieb trotzdem
+    /// auf allen PMDG-737-Flügen `None`.
+    pub seatbelts_selector: u8,
 
     // ---- v0.16.10 (#Premium): deep-data annunciators + fuel ----
     /// Any engine's REVERSER annunciator lit (`ENG_annunREVERSER[0|1]`).
@@ -937,6 +942,7 @@ impl Pmdg738Snapshot {
             battery_master: raw.ELEC_BatSelector != 0,
 
             xpdr_mode: raw.XPDR_ModeSel,
+            seatbelts_selector: raw.COMM_FastenBeltsSelector,
 
             // ---- v0.16.10 (#Premium) deep-data fields ----
             // Two-channel annunciators (Capt/FO or Eng1/Eng2): OR —
@@ -1116,6 +1122,17 @@ mod tests {
         assert!(!Pmdg738Snapshot::from_raw(&raw).stab_out_of_trim);
         raw.MAIN_annunSTAB_OUT_OF_TRIM = 1;
         assert!(Pmdg738Snapshot::from_raw(&raw).stab_out_of_trim);
+    }
+
+    /// Audit 26.09.2026: Der FASTEN-BELTS-Wahlschalter kommt 1:1 aus dem
+    /// SDK-Byte (0=OFF 1=AUTO 2=ON). Vorher wurde er gar nicht gelesen.
+    #[test]
+    fn fasten_belts_selector_wird_aus_dem_sdk_gelesen() {
+        for sel in 0u8..=2 {
+            let mut raw: Pmdg738RawData = unsafe { std::mem::zeroed() };
+            raw.COMM_FastenBeltsSelector = sel;
+            assert_eq!(Pmdg738Snapshot::from_raw(&raw).seatbelts_selector, sel);
+        }
     }
 
     // v0.19.x FIX: speedbrake_lever_pos used to synthesise 0.25 for
