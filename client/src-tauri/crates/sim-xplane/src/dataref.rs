@@ -198,6 +198,12 @@ pub enum FieldId {
     /// `B742/ext_light/beacon_sw` — Felis 747-200, 0/1 (XPanel-Beispiel-
     /// konfiguration, kpcrew B742).
     FelisBeacon,
+    /// `FJS/Q4XP/Manips/TwoSwitch_Ctl[23]` — FlyJSim-Q400-Kollisionslicht-
+    /// Schalter (RED / OFF / WHITE): -1 = oben, 0 = Mitte (OFF), 1 = unten.
+    /// Beleg: Tabelle „Q4XP_datarefs_and_commands" (Le Coyote,
+    /// forums.x-plane.org Topic 325891, Befehle `ACOL_up`/`ACOL_dn`).
+    /// Welche Seite RED ist, steht dort nicht — deshalb nur „an/aus".
+    Q4xpKollisionslicht,
 }
 
 /// One row in the catalog: a DataRef name + which snapshot field it
@@ -703,6 +709,10 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "B742/ext_light/beacon_sw",
         field: FieldId::FelisBeacon,
     },
+    DatarefEntry {
+        name: "FJS/Q4XP/Manips/TwoSwitch_Ctl[23]",
+        field: FieldId::Q4xpKollisionslicht,
+    },
 ];
 
 /// v0.16.9: body-frame horizontal velocity, derived from the WORLD-frame
@@ -916,6 +926,7 @@ pub struct XPlaneState {
     pub a333_seatbelt_switch: Option<f32>,
     pub toliss_strobe_switch: Option<f32>,
     pub felis_beacon: Option<bool>,
+    pub q4xp_kollisionslicht: Option<bool>,
     /// True once we've received at least one RREF packet — drives
     /// the connection state machine's transition into `Connected`.
     pub got_first_packet: bool,
@@ -1110,6 +1121,7 @@ impl XPlaneState {
             FieldId::A333SeatbeltSwitch => self.a333_seatbelt_switch = Some(value),
             FieldId::TolissStrobeSwitch => self.toliss_strobe_switch = Some(value),
             FieldId::FelisBeacon => self.felis_beacon = Some(value > 0.5),
+            FieldId::Q4xpKollisionslicht => self.q4xp_kollisionslicht = Some(value.abs() > 0.5),
         }
     }
 
@@ -1303,7 +1315,8 @@ impl XPlaneState {
                 self.light_beacon
                     || self.light_beacon_legacy == Some(true)
                     || self.toliss_beacon == Some(true)
-                    || self.felis_beacon == Some(true),
+                    || self.felis_beacon == Some(true)
+                    || self.q4xp_kollisionslicht == Some(true),
             ),
             light_strobe: Some(self.light_strobe),
             light_taxi: Some(self.light_taxi),
@@ -2119,5 +2132,19 @@ mod cockpit_schalter_tests {
         s.apply_field(FieldId::LightBeacon, 0.0);
         s.apply_field(FieldId::FelisBeacon, 1.0);
         assert_eq!(s.to_snapshot(Simulator::XPlane12).light_beacon, Some(true));
+    }
+
+    #[test]
+    fn q4xp_kollisionslicht_jede_stellung_ausser_mitte() {
+        for (roh, an) in [(-1.0, true), (0.0, false), (1.0, true)] {
+            let mut s = XPlaneState::default();
+            s.apply_field(FieldId::LightBeacon, 0.0);
+            s.apply_field(FieldId::Q4xpKollisionslicht, roh);
+            assert_eq!(
+                s.to_snapshot(Simulator::XPlane12).light_beacon,
+                Some(an),
+                "Stellung {roh}"
+            );
+        }
     }
 }
