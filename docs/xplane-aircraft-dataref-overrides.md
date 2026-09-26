@@ -57,7 +57,7 @@ gesteuert. Pro Flugzeug prüfen und ggf. eintragen.
 
 | Funktion | Standard-DataRef (AeroACARS heute) | Typ / erwarteter Wert | Wirkung in AeroACARS | Aircraft-spezifischer DataRef |
 |---|---|---|---|---|
-| Flaps-Stellung | `sim/flightmodel2/controls/flap_handle_deploy_ratio` | float 0.0–1.0 | Approach-Stability „Landing Config" | `____________________` |
+| Flaps-Stellung | `sim/cockpit2/controls/flap_handle_request_ratio` (bis 09/2026 `sim/flightmodel2/controls/flap_handle_deploy_ratio` — in XP12 REPLACED, immer 0) | float 0.0–1.0 | Approach-Stability „Landing Config" | `____________________` |
 | Gear-Stellung | `sim/flightmodel2/gear/deploy_ratio[0]` | float 0.0–1.0 | Approach-Stability, Phasen | `____________________` |
 | Triebwerk 1 läuft | `sim/flightmodel/engine/ENGN_running[0]` | int 0/1 | Phasen-FSM (Pushback/Taxi/Start) | `____________________` |
 | Triebwerk 2 läuft | `sim/flightmodel/engine/ENGN_running[1]` | int 0/1 | Phasen-FSM | `____________________` |
@@ -70,7 +70,7 @@ gesteuert. Pro Flugzeug prüfen und ggf. eintragen.
 | Funktion | Standard-DataRef (AeroACARS heute) | Typ / erwarteter Wert | Aircraft-spezifischer DataRef |
 |---|---|---|---|
 | Speedbrake / Spoiler | `sim/cockpit2/controls/speedbrake_ratio` | float 0.0–1.0 | `____________________` |
-| Spoiler armed | `sim/cockpit2/annunciators/speedbrake` | int 0/1 | `____________________` |
+| Spoiler armed | `sim/cockpit2/controls/speedbrake_ratio` = −0.5 (das frühere `annunciators/speedbrake` heißt „deployed") | float | `____________________` |
 | Autobrake-Stufe | `sim/cockpit2/switches/auto_brake_level` | int | `____________________` |
 | Stall-Warnung | `sim/cockpit2/annunciators/stall_warning` | int 0/1 | `____________________` |
 | Landing-Lights | `sim/cockpit2/switches/landing_lights_on` | int 0/1 | `____________________` |
@@ -89,7 +89,7 @@ gesteuert. Pro Flugzeug prüfen und ggf. eintragen.
 | Avionics-Master | `sim/cockpit2/electrical/avionics_on` | int 0/1 | `____________________` |
 | APU | `sim/cockpit2/electrical/APU_running` | int 0/1 | `____________________` |
 | Pitot-Heat | `sim/cockpit2/ice/ice_pitot_heat_on_pilot` | int 0/1 | `____________________` |
-| Transponder-Mode | `sim/cockpit2/radios/actuators/transponder_mode` | int | `____________________` |
+| Transponder-Mode | `sim/cockpit2/radios/actuators/transponder_mode` | int 0=OFF 1=STBY 2=ON 3=ALT 4=TEST 5=GND 6=TA 7=TA/RA | `____________________` |
 | Takeoff-Config-Warnung | `laminar/B738/annunciator/takeoff_config` *(bereits 737-spezifisch)* | int 0/1 | `____________________` |
 
 ---

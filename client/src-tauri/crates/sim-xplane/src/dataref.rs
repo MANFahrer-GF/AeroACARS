@@ -105,7 +105,6 @@ pub enum FieldId {
     ApNav,
     ApApproach,
     SpoilersHandle,
-    SpoilersArmed,
     StallWarning,
     BatteryMaster,
     AvionicsMaster,
@@ -147,6 +146,42 @@ pub enum FieldId {
     /// `AirbusFBW/ATHRmode` — int autothrust mode; 0 = off,
     /// >0 = A/THR armed/active.
     TolissAthrMode,
+    // v1.8.x (Bordbuch-Audit 26.09.2026) — Cockpit-Schalter, die der
+    // Standard-Katalog nicht oder falsch liefert. Alle anwesenheits-
+    // gesteuert: X-Plane streamt einen fehlenden Dataref nie, das Feld
+    // bleibt dann `None` und der Standardwert gilt weiter.
+    /// `sim/cockpit/electrical/beacon_lights_on` — der aeltere Beacon-
+    /// Dataref, den der Zibo 737 bedient (seine Checkliste `clist.txt`
+    /// prueft genau diesen), waehrend `cockpit2/switches/beacon_on` dort
+    /// im Audit in 100 von 102 X-Plane-Fluegen fest auf 0 stand.
+    LightBeaconLegacy,
+    /// `laminar/B738/knob/transponder_pos` — Drehschalter des Laminar-
+    /// und Zibo-737: 0=TEST 1=STBY 2=ALT OFF 3=XPNDR 4=TA 5=TA/RA
+    /// (Laminar `B738.systems.lua`, Zibo `clist.txt`). Der Laminar-737
+    /// schreibt in den Standard-`transponder_mode` fuer jede Flugstellung
+    /// nur 2 — der Schalter ist die einzige Quelle fuer ALT/TA/RA.
+    B738XpdrKnob,
+    /// `laminar/B738/toggle_switch/seatbelt_sign_pos` — 0=OFF 1=AUTO 2=ON.
+    B738SeatbeltSign,
+    /// `laminar/B738/annunciator/speedbrake_armed` — >0 = SPEED BRAKE ARMED.
+    B738SpeedbrakeArmed,
+    /// `laminar/B738/autobrake/autobrake_pos` (nur Zibo) — 0=RTO 1=OFF
+    /// 2..5 = 1/2/3/MAX, dieselbe Skala wie `auto_brake_level`.
+    B738AutobrakePos,
+    /// `laminar/B738/flt_ctrls/flap_lever` (nur Zibo) — Hebel 0..1 ueber
+    /// die Rasten UP/1/2/5/10/15/25/30/40.
+    B738FlapLever,
+    /// `AirbusFBW/OHPLightSwitches[0]` — ToLiss-Beacon-Schalter, 0/1.
+    /// Community-Beleg (xpcockpit, a319-copilot, buttonboss), keine
+    /// offizielle ToLiss-Liste verfuegbar.
+    TolissBeacon,
+    /// `AirbusFBW/SeatBeltSignsOn` — ToLiss-Anschnallzeichen, >0 = an.
+    TolissSeatBeltSigns,
+    /// `AirbusFBW/AutoBrkLo` / `AutoBrkMed` / `AutoBrkMax` — je 0/1,
+    /// hoechstens einer gesetzt (kpcrew, xpcockpit, XHSI).
+    TolissAutoBrkLo,
+    TolissAutoBrkMed,
+    TolissAutoBrkMax,
 }
 
 /// One row in the catalog: a DataRef name + which snapshot field it
@@ -307,8 +342,12 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/flightmodel2/gear/deploy_ratio[0]",
         field: FieldId::GearDeploy,
     },
+    // Bordbuch-Audit 26.09.2026: `sim/flightmodel2/controls/
+    // flap_handle_deploy_ratio` ist in X-Plane 12 als REPLACED markiert
+    // (DataRefs.txt) und lieferte in allen 102 XP12-Fluegen 0.0 — auch
+    // beim Laminar-A330 und DA40. Die Hebelstellung steht jetzt hier.
     DatarefEntry {
-        name: "sim/flightmodel2/controls/flap_handle_deploy_ratio",
+        name: "sim/cockpit2/controls/flap_handle_request_ratio",
         field: FieldId::FlapsHandle,
     },
     // --- Engines: explicit array index per engine. The unbracketed
@@ -410,14 +449,13 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/cockpit2/autopilot/approach_status",
         field: FieldId::ApApproach,
     },
-    // Surfaces — speedbrake is a 0..1 ratio.
+    // Surfaces — speedbrake handle 0..1, **-0.5 = ARMED** (DataRefs.txt).
+    // Daraus kommt auch `spoilers_armed`: das frueher dafuer abonnierte
+    // `sim/cockpit2/annunciators/speedbrake` heisst laut DataRefs.txt
+    // „Speedbrake deployed", nicht „armed".
     DatarefEntry {
         name: "sim/cockpit2/controls/speedbrake_ratio",
         field: FieldId::SpoilersHandle,
-    },
-    DatarefEntry {
-        name: "sim/cockpit2/annunciators/speedbrake",
-        field: FieldId::SpoilersArmed,
     },
     // Windkomponenten im OpenGL-WELTSYSTEM (m/s): +X = Ost, +Z = Sued —
     // NICHT flugzeugbezogen, trotz des `aircraft/`-Pfads. Genau dieselbe
@@ -586,6 +624,53 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "AirbusFBW/ATHRmode",
         field: FieldId::TolissAthrMode,
     },
+    // ---- Bordbuch-Audit 26.09.2026 — Cockpit-Schalter je Add-on ----
+    // Gleiche Abwesenheits-Regel wie oben: nicht existierende Datarefs
+    // werden nie gestreamt, die `Option`-Felder bleiben `None`.
+    DatarefEntry {
+        name: "sim/cockpit/electrical/beacon_lights_on",
+        field: FieldId::LightBeaconLegacy,
+    },
+    DatarefEntry {
+        name: "laminar/B738/knob/transponder_pos",
+        field: FieldId::B738XpdrKnob,
+    },
+    DatarefEntry {
+        name: "laminar/B738/toggle_switch/seatbelt_sign_pos",
+        field: FieldId::B738SeatbeltSign,
+    },
+    DatarefEntry {
+        name: "laminar/B738/annunciator/speedbrake_armed",
+        field: FieldId::B738SpeedbrakeArmed,
+    },
+    DatarefEntry {
+        name: "laminar/B738/autobrake/autobrake_pos",
+        field: FieldId::B738AutobrakePos,
+    },
+    DatarefEntry {
+        name: "laminar/B738/flt_ctrls/flap_lever",
+        field: FieldId::B738FlapLever,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/OHPLightSwitches[0]",
+        field: FieldId::TolissBeacon,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/SeatBeltSignsOn",
+        field: FieldId::TolissSeatBeltSigns,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/AutoBrkLo",
+        field: FieldId::TolissAutoBrkLo,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/AutoBrkMed",
+        field: FieldId::TolissAutoBrkMed,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/AutoBrkMax",
+        field: FieldId::TolissAutoBrkMax,
+    },
 ];
 
 /// v0.16.9: body-frame horizontal velocity, derived from the WORLD-frame
@@ -744,7 +829,6 @@ pub struct XPlaneState {
     pub ap_nav: bool,
     pub ap_approach: bool,
     pub spoilers_handle: f32,
-    pub spoilers_armed: bool,
     pub stall_warning: bool,
     pub battery_master: bool,
     pub avionics_master: bool,
@@ -757,7 +841,8 @@ pub struct XPlaneState {
     /// 0=RTO, 1=OFF, 2=1, 3=2, 4=3, 5=MAX. Stored as f32 from the
     /// RREF feed; mapped to label string at snapshot boundary.
     pub autobrake_level: f32,
-    /// 0=OFF, 1=STBY, 2=ON, 3=TEST, 4=ALT, 5=TA, 6=TARA. Same.
+    /// X-Plane-12-Enum laut DataRefs.txt: 0=OFF 1=STBY 2=ON (Mode A)
+    /// 3=ALT (Mode C) 4=TEST 5=GND 6=TA ONLY 7=TA/RA. Same.
     pub transponder_mode: f32,
     // v0.3.0 additions (Boeing 737 family):
     pub light_wing: bool,
@@ -783,6 +868,18 @@ pub struct XPlaneState {
     /// presence gate that keeps `autothrottle_on` at `None` (the
     /// pre-v0.16.7 behaviour) on every other aircraft.
     pub toliss_athr_seen: bool,
+    // Bordbuch-Audit 26.09.2026 — `None`, bis der Dataref einmal kam.
+    pub light_beacon_legacy: Option<bool>,
+    pub b738_xpdr_knob: Option<f32>,
+    pub b738_seatbelt_sign: Option<f32>,
+    pub b738_speedbrake_armed: Option<bool>,
+    pub b738_autobrake_pos: Option<f32>,
+    pub b738_flap_lever: Option<f32>,
+    pub toliss_beacon: Option<bool>,
+    pub toliss_seatbelt_signs: Option<bool>,
+    pub toliss_autobrk_lo: Option<bool>,
+    pub toliss_autobrk_med: Option<bool>,
+    pub toliss_autobrk_max: Option<bool>,
     /// True once we've received at least one RREF packet — drives
     /// the connection state machine's transition into `Connected`.
     pub got_first_packet: bool,
@@ -802,19 +899,69 @@ pub fn xplane_autobrake_label(level: u8) -> &'static str {
     }
 }
 
-/// Map an X-Plane transponder-mode (0..6) to the cockpit-readable label.
-/// Mirrors the `sim/cockpit2/radios/actuators/transponder_mode` semantics.
+/// Map an X-Plane-12 transponder mode to the cockpit-readable label.
+/// Enum laut `DataRefs.txt` (X-Plane 12, `sim/cockpit2/radios/actuators/
+/// transponder_mode`): off=0, stdby=1, on (mode A)=2, alt (mode C)=3,
+/// test=4, GND (mode S)=5, ta_only=6, ta/ra=7.
+///
+/// Bis zum Bordbuch-Audit (26.09.2026) stand hier 3=TEST/4=ALT — in 102
+/// XP12-Fluegen erschien dadurch nie „ALT", dafuer sprang der ToLiss
+/// nach dem Abheben verlaesslich auf „TEST" und nach dem Abstellen
+/// zurueck auf „STBY": das war ALT.
 pub fn xplane_xpdr_mode_label(mode: u8) -> &'static str {
     match mode {
         0 => "OFF",
         1 => "STBY",
-        2 => "XPNDR", // X-Plane "ON" = transponder broadcasting
-        3 => "TEST",
-        4 => "ALT",
-        5 => "TA",
-        6 => "TA-RA",
+        2 => "XPNDR", // X-Plane "ON (mode A)" = sendet ohne Hoehe
+        3 => "ALT",
+        4 => "TEST",
+        5 => "GND",
+        6 => "TA",
+        7 => "TA-RA",
         _ => "",
     }
+}
+
+/// `speedbrake_ratio` unterhalb dieses Werts = SPEED BRAKE ARMED. Laut
+/// DataRefs.txt steht ARMED auf -0.5; die halbe Strecke faengt Rundung ab.
+const SPEEDBRAKE_ARMED_BELOW: f32 = -0.25;
+
+/// Transponder-Drehschalter des Laminar-/Zibo-737
+/// (`laminar/B738/knob/transponder_pos`): 0=TEST 1=STBY 2=ALT OFF
+/// 3=XPNDR 4=TA 5=TA/RA. Begriffe wie beim PMDG-SDK
+/// (`pmdg_xpdr_mode_label`), damit beide Simulatoren dieselben
+/// Woerter liefern.
+pub fn b738_xpdr_knob_label(pos: u8) -> &'static str {
+    match pos {
+        0 => "TEST",
+        1 => "STBY",
+        2 => "ALT-OFF",
+        3 => "XPNDR",
+        4 => "TA",
+        5 => "TA-RA",
+        _ => "",
+    }
+}
+
+/// ToLiss-Autobrake aus den drei Tasten `AutoBrkLo/Med/Max`. `None`,
+/// solange keiner der drei Datarefs je ankam (kein ToLiss geladen).
+fn toliss_autobrake_label(
+    lo: Option<bool>,
+    med: Option<bool>,
+    max: Option<bool>,
+) -> Option<&'static str> {
+    if lo.is_none() && med.is_none() && max.is_none() {
+        return None;
+    }
+    Some(if max == Some(true) {
+        "MAX"
+    } else if med == Some(true) {
+        "MED"
+    } else if lo == Some(true) {
+        "LO"
+    } else {
+        "OFF"
+    })
 }
 
 impl XPlaneState {
@@ -878,7 +1025,6 @@ impl XPlaneState {
             FieldId::ApNav => self.ap_nav = value > 0.5,
             FieldId::ApApproach => self.ap_approach = value > 0.5,
             FieldId::SpoilersHandle => self.spoilers_handle = value,
-            FieldId::SpoilersArmed => self.spoilers_armed = value > 0.5,
             FieldId::StallWarning => self.stall_warning = value > 0.5,
             FieldId::BatteryMaster => self.battery_master = value > 0.5,
             FieldId::AvionicsMaster => self.avionics_master = value > 0.5,
@@ -906,6 +1052,18 @@ impl XPlaneState {
                 // see the `toliss_athr_seen` field doc.
                 self.toliss_athr_seen = true;
             }
+            // Bordbuch-Audit 26.09.2026 — anwesenheitsgesteuerte Schalter
+            FieldId::LightBeaconLegacy => self.light_beacon_legacy = Some(value > 0.5),
+            FieldId::B738XpdrKnob => self.b738_xpdr_knob = Some(value),
+            FieldId::B738SeatbeltSign => self.b738_seatbelt_sign = Some(value),
+            FieldId::B738SpeedbrakeArmed => self.b738_speedbrake_armed = Some(value > 0.5),
+            FieldId::B738AutobrakePos => self.b738_autobrake_pos = Some(value),
+            FieldId::B738FlapLever => self.b738_flap_lever = Some(value),
+            FieldId::TolissBeacon => self.toliss_beacon = Some(value > 0.5),
+            FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = Some(value > 0.5),
+            FieldId::TolissAutoBrkLo => self.toliss_autobrk_lo = Some(value > 0.5),
+            FieldId::TolissAutoBrkMed => self.toliss_autobrk_med = Some(value > 0.5),
+            FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = Some(value > 0.5),
         }
     }
 
@@ -1013,7 +1171,9 @@ impl XPlaneState {
             slew_mode: false,
             simulation_rate: 1.0,
             gear_position: self.gear_deploy,
-            flaps_position: self.flaps_handle,
+            // Zibo: eigener Klappenhebel, sobald er ankommt; sonst der
+            // Standard-Hebel (`flap_handle_request_ratio`, 0..1).
+            flaps_position: self.b738_flap_lever.unwrap_or(self.flaps_handle),
             // v1.5.3: Rasterindex/-anzahl sind MSFS-SimVars; X-Plane
             // bleibt bei der Prozent-Heuristik (None -> alter Pfad).
             flap_handle_index: None,
@@ -1089,7 +1249,15 @@ impl XPlaneState {
             nav1_mhz: None,
             nav2_mhz: None,
             light_landing: Some(self.light_landing),
-            light_beacon: Some(self.light_beacon),
+            // Beacon aus jeder bekannten Quelle: Standard-Schalter
+            // (Laminar), der aeltere `electrical/beacon_lights_on` (Zibo)
+            // und der ToLiss-Schalter. Fehlende Quellen bleiben `None`
+            // und zaehlen nicht.
+            light_beacon: Some(
+                self.light_beacon
+                    || self.light_beacon_legacy == Some(true)
+                    || self.toliss_beacon == Some(true),
+            ),
             light_strobe: Some(self.light_strobe),
             light_taxi: Some(self.light_taxi),
             light_nav: Some(self.light_nav),
@@ -1124,8 +1292,13 @@ impl XPlaneState {
             },
             autothrottle_is_arm: false,
             fuel_flow_kg_per_h: None,
-            spoilers_handle_position: Some(self.spoilers_handle),
-            spoilers_armed: Some(self.spoilers_armed),
+            // `speedbrake_ratio` meldet ARMED als -0.5 — als Stellung
+            // ist das „eingefahren", als Zustand „scharf".
+            spoilers_handle_position: Some(self.spoilers_handle.max(0.0)),
+            spoilers_armed: Some(
+                self.b738_speedbrake_armed == Some(true)
+                    || self.spoilers_handle < SPEEDBRAKE_ARMED_BELOW,
+            ),
             // Pushback isn't a sim-managed thing in X-Plane.
             pushback_state: None,
             apu_switch: Some(self.apu_switch),
@@ -1148,7 +1321,12 @@ impl XPlaneState {
             light_wheel_well: Some(self.light_wheel_well),
             // v0.3.0 — Universal XPDR mode label.
             xpdr_mode_label: {
-                let label = xplane_xpdr_mode_label(self.transponder_mode as u8);
+                // Laminar-/Zibo-737: der Drehschalter, weil der Standard-
+                // Dataref dort fuer jede Flugstellung nur 2 traegt.
+                let label = match self.b738_xpdr_knob {
+                    Some(pos) => b738_xpdr_knob_label(pos.round().max(0.0) as u8),
+                    None => xplane_xpdr_mode_label(self.transponder_mode as u8),
+                };
                 if label.is_empty() {
                     None
                 } else {
@@ -1158,7 +1336,14 @@ impl XPlaneState {
             // v0.3.0 — 737 takeoff-config annunciator. Same caveat
             // as light_wing — non-737 aircraft just stay false.
             takeoff_config_warning: Some(self.takeoff_config_warning),
-            seatbelts_sign: None,
+            // 0=OFF 1=AUTO 2=ON. Nur wo ein Add-on den Schalter liefert —
+            // der Standard-Dataref ist bei den meisten Mustern nicht
+            // belegt und wuerde „OFF" vortaeuschen.
+            seatbelts_sign: match (self.b738_seatbelt_sign, self.toliss_seatbelt_signs) {
+                (Some(pos), _) if (0.0..=2.0).contains(&pos.round()) => Some(pos.round() as u8),
+                (_, Some(on)) => Some(if on { 2 } else { 0 }),
+                _ => None,
+            },
             no_smoking_sign: None,
             fcu_selected_altitude_ft: None,
             fcu_selected_heading_deg: None,
@@ -1166,7 +1351,18 @@ impl XPlaneState {
             fcu_selected_vs_fpm: None,
             // v0.3.0 — Universal autobrake label.
             autobrake: {
-                let label = xplane_autobrake_label(self.autobrake_level as u8);
+                let label = match (
+                    self.b738_autobrake_pos,
+                    toliss_autobrake_label(
+                        self.toliss_autobrk_lo,
+                        self.toliss_autobrk_med,
+                        self.toliss_autobrk_max,
+                    ),
+                ) {
+                    (Some(pos), _) => xplane_autobrake_label(pos.round().max(0.0) as u8),
+                    (None, Some(toliss)) => toliss,
+                    (None, None) => xplane_autobrake_label(self.autobrake_level as u8),
+                };
                 if label.is_empty() {
                     None
                 } else {
@@ -1611,5 +1807,224 @@ mod wind_body_tests {
         let s = snapshot_mit_wind(-10.0, 0.0, 0.0);
         let seit = s.aircraft_wind_x_kt.expect("Wind da");
         assert!(seit > 15.0, "Wind von rechts muss positiv sein, war {seit}");
+    }
+}
+
+// ---- Bordbuch-Audit 26.09.2026 — Cockpit-Schalter ----
+// Audit ueber 102 X-Plane-12-Fluege: Klappen immer 0.0, Beacon beim Zibo
+// fest aus, Transponder nie „ALT", Spoiler nie „scharf". Die Tests halten
+// jeden dieser Befunde fest; mit dem alten Katalog/Mapping waeren sie rot.
+#[cfg(test)]
+mod cockpit_schalter_tests {
+    use super::*;
+
+    fn katalog_name(field: FieldId) -> Option<&'static str> {
+        CATALOG.iter().find(|e| e.field == field).map(|e| e.name)
+    }
+
+    #[test]
+    fn klappen_kommen_aus_dem_xp12_hebel_dataref() {
+        // `sim/flightmodel2/controls/flap_handle_deploy_ratio` ist in XP12
+        // REPLACED und lieferte in 102/102 Fluegen 0.0.
+        assert_eq!(
+            katalog_name(FieldId::FlapsHandle),
+            Some("sim/cockpit2/controls/flap_handle_request_ratio")
+        );
+        assert!(
+            CATALOG
+                .iter()
+                .all(|e| !e.name.starts_with("sim/flightmodel2/controls/flap")),
+            "der ersetzte flightmodel2-Klappen-Dataref darf nicht mehr abonniert werden"
+        );
+    }
+
+    #[test]
+    fn transponder_folgt_dem_xp12_enum() {
+        let mut s = XPlaneState::default();
+        for (roh, erwartet) in [
+            (0.0, "OFF"),
+            (1.0, "STBY"),
+            (2.0, "XPNDR"),
+            (3.0, "ALT"),
+            (4.0, "TEST"),
+            (5.0, "GND"),
+            (6.0, "TA"),
+            (7.0, "TA-RA"),
+        ] {
+            s.apply_field(FieldId::TransponderMode, roh);
+            let snap = s.to_snapshot(Simulator::XPlane12);
+            assert_eq!(
+                snap.xpdr_mode_label.as_deref(),
+                Some(erwartet),
+                "Rohwert {roh}"
+            );
+        }
+    }
+
+    #[test]
+    fn b738_drehschalter_schlaegt_den_standard_transponder() {
+        // Der Laminar-737 schreibt fuer jede Flugstellung 2 in den
+        // Standard-Dataref — TA/RA steht nur am Drehschalter.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::TransponderMode, 2.0);
+        s.apply_field(FieldId::B738XpdrKnob, 5.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("TA-RA"));
+
+        for (pos, erwartet) in [
+            (0.0, "TEST"),
+            (1.0, "STBY"),
+            (2.0, "ALT-OFF"),
+            (3.0, "XPNDR"),
+            (4.0, "TA"),
+        ] {
+            s.apply_field(FieldId::B738XpdrKnob, pos);
+            let snap = s.to_snapshot(Simulator::XPlane12);
+            assert_eq!(
+                snap.xpdr_mode_label.as_deref(),
+                Some(erwartet),
+                "Stellung {pos}"
+            );
+        }
+    }
+
+    #[test]
+    fn spoiler_scharf_kommt_aus_speedbrake_ratio_minus_halb() {
+        // DataRefs.txt: speedbrake_ratio -0.5 = ARMED. Das frueher genutzte
+        // `annunciators/speedbrake` heisst „deployed" und bleibt draussen.
+        assert!(CATALOG
+            .iter()
+            .all(|e| e.name != "sim/cockpit2/annunciators/speedbrake"));
+
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::SpoilersHandle, -0.5);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(
+            snap.spoilers_handle_position,
+            Some(0.0),
+            "scharf ist nicht ausgefahren"
+        );
+
+        s.apply_field(FieldId::SpoilersHandle, 0.4);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.spoilers_armed, Some(false));
+        assert_eq!(snap.spoilers_handle_position, Some(0.4));
+
+        s.apply_field(FieldId::SpoilersHandle, 0.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.spoilers_armed, Some(false));
+    }
+
+    #[test]
+    fn b738_speedbrake_armed_leuchte_zaehlt() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::SpoilersHandle, 0.0);
+        s.apply_field(FieldId::B738SpeedbrakeArmed, 1.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).spoilers_armed,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn beacon_aus_jeder_quelle() {
+        // Nur Standard (Laminar): wie bisher.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::LightBeacon, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).light_beacon, Some(false));
+        s.apply_field(FieldId::LightBeacon, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).light_beacon, Some(true));
+
+        // Zibo: Standard tot, aelterer electrical-Dataref an.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::LightBeacon, 0.0);
+        s.apply_field(FieldId::LightBeaconLegacy, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).light_beacon, Some(true));
+
+        // ToLiss: Standard tot, OHPLightSwitches[0] an.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::LightBeacon, 0.0);
+        s.apply_field(FieldId::TolissBeacon, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).light_beacon, Some(true));
+        s.apply_field(FieldId::TolissBeacon, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).light_beacon, Some(false));
+    }
+
+    #[test]
+    fn anschnallzeichen_nur_wo_ein_addon_es_liefert() {
+        let s = XPlaneState::default();
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).seatbelts_sign,
+            None,
+            "ohne Add-on-Quelle kein vorgetaeuschtes OFF"
+        );
+
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::B738SeatbeltSign, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(1));
+
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::TolissSeatBeltSigns, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(2));
+        s.apply_field(FieldId::TolissSeatBeltSigns, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(0));
+    }
+
+    #[test]
+    fn autobrake_bevorzugt_die_addon_quelle() {
+        // Ohne Add-on: Standard-Enum wie bisher.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::AutobrakeLevel, 3.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autobrake.as_deref(),
+            Some("2")
+        );
+
+        // Zibo: eigener Wahlschalter, Standard steht fest auf OFF.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::AutobrakeLevel, 1.0);
+        s.apply_field(FieldId::B738AutobrakePos, 4.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autobrake.as_deref(),
+            Some("3")
+        );
+
+        // ToLiss: drei Tasten.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::AutobrakeLevel, 1.0);
+        s.apply_field(FieldId::TolissAutoBrkLo, 0.0);
+        s.apply_field(FieldId::TolissAutoBrkMed, 1.0);
+        s.apply_field(FieldId::TolissAutoBrkMax, 0.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autobrake.as_deref(),
+            Some("MED")
+        );
+        s.apply_field(FieldId::TolissAutoBrkMed, 0.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autobrake.as_deref(),
+            Some("OFF")
+        );
+    }
+
+    #[test]
+    fn zibo_klappenhebel_ersetzt_den_standard() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::FlapsHandle, 0.0);
+        s.apply_field(FieldId::B738FlapLever, 0.875); // Flaps 30
+        assert!((s.to_snapshot(Simulator::XPlane12).flaps_position - 0.875).abs() < 1e-6);
+
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::FlapsHandle, 0.5);
+        assert!((s.to_snapshot(Simulator::XPlane12).flaps_position - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn katalog_hat_keine_doppelten_datarefs() {
+        let mut namen: Vec<&str> = CATALOG.iter().map(|e| e.name).collect();
+        namen.sort_unstable();
+        let vorher = namen.len();
+        namen.dedup();
+        assert_eq!(vorher, namen.len(), "jeder Dataref genau einmal im Katalog");
     }
 }
