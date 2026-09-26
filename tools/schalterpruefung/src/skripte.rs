@@ -173,6 +173,27 @@ pub fn allgemein() -> Skript {
     }
 }
 
+// Zusatz-Namenslisten: MobiFlight listet nur LVar-IDs 0..999 (Module.cpp
+// Z. 228), iniBuilds- und Synaptic-Muster haben mehr. Diese Namen werden
+// zusätzlich direkt abonniert. Herkunft: A350-WASM-Strings + Behavior-XML
+// (ini.txt), lesbare Bruchstücke der A380-Archive (a380_frag.txt),
+// Synaptic-A220-Paket (a220.txt). Namen, die es im geladenen Flugzeug nicht
+// gibt, liefern nur konstant 0 und werden nie Kandidat.
+const NAMEN_INI: &str = include_str!("../namen/ini.txt");
+const NAMEN_A380_FRAG: &str = include_str!("../namen/a380_frag.txt");
+const NAMEN_A220: &str = include_str!("../namen/a220.txt");
+
+/// Zusätzlich direkt zu abonnierende LVar-Namen (ohne `L:`) je Skript.
+pub fn zusatzliste(kennung: &str) -> Vec<String> {
+    let roh = match kennung {
+        "a350" => NAMEN_INI.to_string(),
+        "a380" | "a330" => format!("{NAMEN_INI}\n{NAMEN_A380_FRAG}"),
+        "a220" => NAMEN_A220.to_string(),
+        _ => String::new(),
+    };
+    crate::mobiflight::zusatz_filtern(&roh)
+}
+
 /// Alle Skripte in Menü-Reihenfolge (das allgemeine zuletzt).
 pub fn alle() -> Vec<Skript> {
     vec![a380(), a350(), a330(), a220(), allgemein()]
@@ -263,6 +284,35 @@ mod tests {
                 "{}",
                 s.name
             );
+        }
+    }
+
+    #[test]
+    fn zusatzlisten_je_skript() {
+        let a380 = zusatzliste(fuer_titel("A380-800 RR Basic", None).unwrap().kennung);
+        assert!(a380.iter().any(|n| n == "INI_LIGHTS_STROBE"));
+        // Nur in a380_frag.txt, nicht in ini.txt:
+        assert!(!NAMEN_INI.lines().any(|z| z.trim() == "INI_A380_COPILOT"));
+        assert!(a380.iter().any(|n| n == "INI_A380_COPILOT"));
+        let a350 = zusatzliste("a350");
+        assert!(a350.iter().any(|n| n == "INI_LIGHTS_STROBE"));
+        assert!(!a350.iter().any(|n| n == "INI_A380_COPILOT"));
+        assert_eq!(zusatzliste("a330"), a380);
+        let a220 = zusatzliste("a220");
+        assert!(a220.len() > 400, "{}", a220.len());
+        assert!(
+            a220.iter().all(|n| n.starts_with("A22X")),
+            "Fremdnamen in a220.txt"
+        );
+        assert!(a220.iter().any(|n| n.contains(' ')));
+        assert!(zusatzliste("allgemein").is_empty());
+        // Alles abonnierbar, keine Dubletten.
+        for l in [&a380, &a220] {
+            assert!(l.iter().all(|n| crate::mobiflight::lvar_code(n).is_some()));
+            let mut u: Vec<String> = l.iter().map(|n| n.to_ascii_uppercase()).collect();
+            u.sort();
+            u.dedup();
+            assert_eq!(u.len(), l.len());
         }
     }
 }

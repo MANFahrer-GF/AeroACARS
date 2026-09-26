@@ -22,7 +22,15 @@ pub struct LaufInfo {
     pub atc_model: String,
     pub icao: Option<String>,
     pub mobiflight_version: String,
+    /// Tatsächlich abonniert (MobiFlight-Liste ∪ Zusatzliste, ohne
+    /// übersprungene Namen).
     pub lvars_gesamt: usize,
+    /// So viele Namen lieferte `MF.LVars.List`.
+    pub lvars_mobiflight: usize,
+    /// Größe der eingebetteten Zusatz-Namensliste des Skripts.
+    pub lvars_zusatzliste: usize,
+    /// Davon nicht schon in der MobiFlight-Liste.
+    pub lvars_zusatz_neu: usize,
     /// Das MobiFlight-Modul listet höchstens 1000 LVars (Module.cpp Z. 228).
     pub lvar_liste_moeglicherweise_gekappt: bool,
     pub lvars_uebersprungen: Vec<String>,
@@ -402,14 +410,19 @@ impl Lauf {
         z(format!("Ende:               {grund}"));
         z(format!("MobiFlight-Modul:   {}", i.mobiflight_version));
         z(format!(
-            "LVars gesamt:       {}{}",
-            i.lvars_gesamt,
+            "LVars MobiFlight:   {}{}",
+            i.lvars_mobiflight,
             if i.lvar_liste_moeglicherweise_gekappt {
-                "  (!) Das MobiFlight-Modul listet höchstens 1000 — es kann weitere geben"
+                "  (!) 1000er-Grenze des MobiFlight-Moduls erreicht — es gibt vermutlich mehr"
             } else {
-                ""
+                "  (1000er-Grenze nicht erreicht)"
             }
         ));
+        z(format!(
+            "LVars Zusatzliste:  {} ({} davon nicht in der MobiFlight-Liste)",
+            i.lvars_zusatzliste, i.lvars_zusatz_neu
+        ));
+        z(format!("LVars abonniert:    {}", i.lvars_gesamt));
         if !i.lvars_uebersprungen.is_empty() {
             z(format!(
                 "LVars übersprungen: {}",
@@ -682,6 +695,22 @@ mod tests {
         let txt = std::fs::read_to_string(tp).unwrap();
         assert!(txt.contains("L:WING_LT: 0 → 1"));
         assert!(txt.contains("L:BLINK (unruhig)"));
+        assert!(txt.contains("LVars abonniert:"));
+        assert!(txt.contains("1000er-Grenze"));
+        // Start-Ereignis trägt die Zähler.
+        let start: Value = serde_json::from_str(live.lines().next().unwrap()).unwrap();
+        for f in [
+            "lvars_mobiflight",
+            "lvars_zusatzliste",
+            "lvars_zusatz_neu",
+            "lvars_gesamt",
+            "lvar_liste_moeglicherweise_gekappt",
+        ] {
+            assert!(
+                start["info"].get(f).is_some(),
+                "{f} fehlt im start-Ereignis"
+            );
+        }
         // Ein zweites Abschließen (Strg+C nach Ende) schreibt kein zweites `ende`.
         l.abschliessen("nochmal").unwrap();
         let live2 = std::fs::read_to_string(l.live_pfad()).unwrap();

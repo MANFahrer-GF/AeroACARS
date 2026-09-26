@@ -248,18 +248,29 @@ pub fn run() -> i32 {
         hinweis("(Das MobiFlight-Modul listet höchstens 1000 — es kann weitere geben.)");
     }
 
-    // 5. Abonnieren
+    // 5. Skript (vor dem Abonnieren: es bestimmt die Zusatz-Namensliste)
+    let Some(skript) = skript_waehlen(&titel, icao.as_deref()) else {
+        return 1;
+    };
+
+    // 6. Abonnieren: MobiFlight-Liste + Zusatzliste des Skripts. MobiFlight
+    // listet nur die LVar-IDs 0..999 (Module.cpp Z. 228) — der gesuchte
+    // Schalter kann darüber liegen, deshalb die eingebetteten Namen.
+    let zusatz = skripte::zusatzliste(skript.kennung);
+    let (abo, zusatz_neu) = mobiflight::zusammenfuehren(&lvars, &zusatz);
+    hinweis(&format!(
+        "MobiFlight-Liste: {} · Zusatzliste: {} ({} davon neu) · zusammen: {}",
+        lvars.len(),
+        zusatz.len(),
+        zusatz_neu,
+        abo.len()
+    ));
     hinweis("Melde alle LVars bei MobiFlight an …");
-    if let Err(e) = sim.abonnieren(&lvars, |f, g| hinweis(&format!("   {f} von {g}"))) {
+    if let Err(e) = sim.abonnieren(&abo, |f, g| hinweis(&format!("   {f} von {g}"))) {
         fehler(&["Anmelden der LVars ist gescheitert.", &e]);
         schliessen_warten();
         return 1;
     }
-
-    // 6. Skript
-    let Some(skript) = skript_waehlen(&titel, icao.as_deref()) else {
-        return 1;
-    };
 
     let ordner = berichtsordner();
     let info = LaufInfo {
@@ -269,7 +280,10 @@ pub fn run() -> i32 {
         atc_model,
         icao,
         mobiflight_version: mf_version,
-        lvars_gesamt: lvars.len(),
+        lvars_gesamt: abo.len() - sim.uebersprungen.len(),
+        lvars_mobiflight: lvars.len(),
+        lvars_zusatzliste: zusatz.len(),
+        lvars_zusatz_neu: zusatz_neu,
         lvar_liste_moeglicherweise_gekappt: gekappt,
         lvars_uebersprungen: sim.uebersprungen.clone(),
         simvars_abgelehnt: sim.abgelehnt.clone(),

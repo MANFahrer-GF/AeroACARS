@@ -1,0 +1,482 @@
+A22X  Altimeter HPA
+A22X ACMP 2B
+A22X ACMP 2BL
+A22X ACMP 3A
+A22X ACMP 3B
+A22X ACMP 3BL
+A22X ACP VHF1 Rx
+A22X ACP VHF1 RxL
+A22X ACP VHF1 Tx
+A22X ACP VHF1 Volume
+A22X ACP VHF2 Rx
+A22X ACP VHF2 Tx
+A22X ACP VHF2 TxL
+A22X ACP VHF2 Volume
+A22X ACP VHF2 VolumeL
+A22X ACP VHF3 Rx
+A22X ACP VHF3 RxL
+A22X ACP VHF3 Tx
+A22X ACP VHF3 Volume
+A22X AP Master
+A22X AP MasterL
+A22X APU Bleed Fail Lamp
+A22X APU Bleed Fail LampL
+A22X APU Bleed Off
+A22X APU Bleed Off Lamp
+A22X APU Bottle 1
+A22X APU Door
+A22X APU Doorpercent over 100apu updatesystems
+A22X APU Fire
+A22X APU Gen Fail LampL
+A22X APU Gen Off
+A22X APU Gen Off Lamp
+A22X APU Gen OffL
+A22X APU RPM
+A22X APU RPMnumberWHEEL RPM
+A22X APU StarterL
+A22X APU Switch
+A22X APU SwitchL
+A22X AT Master
+A22X Aft Cabin Air
+A22X Aft Cabin AirL
+A22X Aft Cabin Trim Air FlowL
+A22X Aft Cargo Air
+A22X Aft Cargo AirL
+A22X Alternate Brake
+A22X Alternate Brake Lamp
+A22X Alternate Flap
+A22X Alternate FlapGPS POSITION ALTZULU TIMEsrcinternal
+A22X Alternate Gear
+A22X Alternate GearL
+A22X Annun Brightness
+A22X Annun Lights
+A22X Aural 100L
+A22X Aural 10L
+A22X Aural 2500L
+A22X Aural 300L
+A22X Aural 30L
+A22X Aural 40L
+A22X Aural 500L
+A22X Aural 60L
+A22X Aural AP DisengageL
+A22X Aural APU FireL
+A22X Aural AT Disengage ManualL
+A22X Aural Above 100L
+A22X Aural Approaching Decision HeightL
+A22X Aural Bank AngleL
+A22X Aural Cabin PressureL
+A22X Aural CautionL
+A22X Aural Cockpit DoorL
+A22X Aural Config AutopilotL
+A22X Aural Config SidestickL
+A22X Aural Config SpoilersL
+A22X Aural Config Thrust LeverL
+A22X Aural Internal TestL
+A22X Aural Left Engine FireL
+A22X Aural MinimumL
+A22X Aural Minimums MinimumsL
+A22X Aural Not A RunwayL
+A22X Aural Overspeed Pre AlertL
+A22X Aural OverspeedL
+A22X Aural Priority LeftL
+A22X Aural Quadruple Tone x3L
+A22X Aural Radio AltL
+A22X Aural Runway DisagreeL
+A22X Aural SelcalL
+A22X Aural Sink RateL
+A22X Aural SmokeL
+A22X Aural StandbyL
+A22X Aural Terrain TerrainL
+A22X Aural Too Low FlapL
+A22X Aural Too Low TerrainL
+A22X Aural V1L
+A22X Aural Vertical TrackL
+A22X Aural Warn Inhibit
+A22X Aural Warn Inhibit Lamp
+A22X Aural Warn Inhibit LampL
+A22X Aural Warn InhibitL
+A22X Aural Warning Test 1L
+A22X Aural WarningL
+A22X Aural WindshearL
+A22X Auto Press Fail Lamp
+A22X Auto Press Fail LampL
+A22X Autobrake
+A22X Beacon Lights
+A22X Bus Isolation Mode
+A22X CB Integral Lights
+A22X CVR Erase
+A22X CVR Test
+A22X Cabin Curtain
+A22X Cabin Power Off
+A22X Cabin Power Off Lamp
+A22X Cabin Power Off LampL
+A22X Cargo Aft Fire
+A22X Cargo Fire Bottle
+A22X Cargo Fwd Fire
+A22X Caution PBA
+A22X Caution PBAL
+A22X Circuit Breaker
+A22X Cockpit Air
+A22X Cockpit AirL
+A22X Cockpit Door Open
+A22X Cockpit Door OpenL
+A22X Cockpit Door Unlock
+A22X Cockpit Trim Air FlowL
+A22X Compass Lights
+A22X Continuous Ignition
+A22X Continuous Ignition Lamp
+A22X Continuous IgnitionL
+A22X Cooling Exhaust
+A22X Cooling ExhaustL
+A22X Cooling Inlet
+A22X Cooling Inlet Lamp
+A22X Crossbleed
+A22X CrossbleedL
+A22X DU Backlight
+A22X DU1 Backlight
+A22X DU2 Backlight
+A22X DU3 Backlight
+A22X DU4 Backlight
+A22X DU5 Backlight
+A22X Display Tune Inhibit
+A22X Display Tune InhibitL
+A22X Display Tune Inhibited
+A22X Display Tune InhibitedGLARESHIELD_LIGHTS_SETKOHLSM
+A22X Ditching
+A22X Ditching Lamp
+A22X Ditching LampL
+A22X Dome Lights
+A22X Dome Lights Annunciator
+A22X Dome Lights AnnunciatorL
+A22X Dome LightsL
+A22X EDM
+A22X Emer Access
+A22X Emer Access Lamp
+A22X Emer Transmitter
+A22X Emer Transmitter Test
+A22X Emer TransmitterL
+A22X Emergency Depress
+A22X Emergency Depress Lamp
+A22X Emergency Lights
+A22X Eng Start Mode
+A22X Eng Start ModeL
+A22X Engine
+A22X Engine  N1
+A22X Engine 1 Master
+A22X Engine 2 Master
+A22X Entrance Lights
+A22X Evac
+A22X Evac Lamp
+A22X EvacELECTRICAL MASTER BATTERY
+A22X External Power Available
+A22X External Power In Use
+A22X External Power Toggle
+A22X External Power ToggleL
+A22X FCP Backlight
+A22X FCP Brightness
+A22X FCP BrightnessAP_MASTERAUTO_THROTTLE_ARML
+A22X FCP Powered
+A22X FCP PoweredL
+A22X FG Altitude
+A22X FG Altitude Fine
+A22X FG Altitude Unit
+A22X FG Altitude UnitL
+A22X FG Approach
+A22X FG EDM
+A22X FG EDML
+A22X FG Flight Level
+A22X FG Flight LevelL
+A22X FG Flight Path Angle
+A22X FG Flight Path AngleAP_SPD_VAR_SETAP_MACH_VAR_SETA
+A22X FG Half Bank
+A22X FG Half BankL
+A22X FG Heading
+A22X FG LNAV
+A22X FG LNAVL
+A22X FG Source
+A22X FG Source Transfer
+A22X FG Source TransferAP_SPD_VAR_INCAP_SPD_VAR_DECL
+A22X FG Speed Mode
+A22X FG VNAV
+A22X FG VNAV Toggle
+A22X FG VNAV ToggleAP_VS_VAR_INCAP_VS_VAR_DECAP_VS_HOLD
+A22X FG VNAVL
+A22X FG Vertical Speed
+A22X Flight Plan Cancel
+A22X Flight Plan CancelL
+A22X Flight Plan Execute
+A22X Flight Plan Modified
+A22X Flight Plan ModifiedA220
+A22X Flight StageL
+A22X Flood Lights
+A22X Flood LightsL
+A22X Fwd Cabin Air
+A22X Fwd Cargo Air
+A22X Gear Aural
+A22X Gear Aural Lamp
+A22X Glareshield Integral Lights
+A22X Gravity Transfer
+A22X Gravity Transfer Lamp
+A22X Horizontal Stabilizer
+A22X Horizontal StabilizerELEVATOR_TRIM_SETNAV HAS DME
+A22X Hyd 1 SOV
+A22X Hyd 1 SOV Lamp
+A22X Hyd 2 SOV
+A22X Hyd 2 SOV Lamp
+A22X Hyd 2 SOV LampL
+A22X Hyd 2 SOVL
+A22X ISI ADS Reversion
+A22X ISI Altimeter STD
+A22X ISI Altimeter Set
+A22X ISI Altimeter SetL
+A22X ISI Backlight
+A22X ISI Brightness
+A22X ISI BrightnessL
+A22X L  Speed
+A22X L ADS Reversion
+A22X L ADS ReversionL
+A22X L Aileron
+A22X L AileronL
+A22X L Bag LightsL
+A22X L Bleed Fail Lamp
+A22X L Bleed Fail LampL
+A22X L Bleed Off
+A22X L Bleed Off Lamp
+A22X L Bleed OffL
+A22X L Boost Pump
+A22X L Boost PumpL
+A22X L CTP Backlight
+A22X L Console LightsL
+A22X L Cowl Anti Ice
+A22X L Cowl Anti IceL
+A22X L Cursor Inhibit
+A22X L Elevator
+A22X L ElevatorL
+A22X L Eng Fire
+A22X L Eng Fire Bottle 1
+A22X L Eng Fire Bottle 2
+A22X L Flight Director
+A22X L Flight DirectorL
+A22X L Foot LightsL
+A22X L GS
+A22X L GSL
+A22X L Gen Disc
+A22X L Gen Disc Lamp
+A22X L Gen DiscL
+A22X L Gen Fail Lamp
+A22X L Gen Fail LampL
+A22X L Gen Off
+A22X L Gen Off Lamp
+A22X L Gen OffL
+A22X L Gen Oil Lamp
+A22X L Gen Oil LampL
+A22X L IRS Reversion
+A22X L IRS ReversionL
+A22X L Inboard BrightnessL
+A22X L Inboard Partition
+A22X L Landing Lights
+A22X L Landing LightsL
+A22X L MFS 1
+A22X L MFS 2
+A22X L MFS 2L
+A22X L MFS 3
+A22X L MFS 4
+A22X L MFS 4L
+A22X L Map Lights
+A22X L Map LightsL
+A22X L Pack Fail Lamp
+A22X L Pack Fail LampL
+A22X L Pack Off
+A22X L Pack Off Lamp
+A22X L Pack OffL
+A22X L Reading Lights
+A22X L Reading LightsL
+A22X L Side Window Heat Off
+A22X L Side Window Heat Off Lamp
+A22X L Side Window Heat OffL
+A22X L Sidestick X
+A22X L Sidestick XL
+A22X L Sidestick Y
+A22X L Tiller
+A22X L TillerINCIDENCE BETAINCIDENCE ALPHAL
+A22X L Windshield Heat Off
+A22X L Windshield Heat Off Lamp
+A22X L Windshield Heat OffL
+A22X Lamp Test
+A22X Lamp TestL
+A22X Left Pack FlowL
+A22X Logo Lights
+A22X Lower Brightness
+A22X Lower BrightnessA22X
+A22X Maint Batt Power
+A22X Maint Channel
+A22X Maint Mode
+A22X Man Press
+A22X Man Press Lamp
+A22X Man PressL
+A22X Manual Rate
+A22X Manual Temperature
+A22X Manual Temperature Lamp
+A22X Manual Transfer
+A22X Manual TransferL
+A22X Master Caution Warning
+A22X Master Caution WarningL
+A22X Mech Call
+A22X NLG Door
+A22X NLG DoorGEAR LEFT POSITIONGEAR RIGHT POSITIONposit
+A22X Nav Lights
+A22X Nav LightsL
+A22X No PED Lights
+A22X Nose Landing Lights
+A22X Nose Landing LightsL
+A22X Nose Steer Off
+A22X Nose Steer Off Lamp
+A22X Nose Steer Off LampL
+A22X Nose Steer OffL
+A22X Overhead Integral Lights
+A22X Overhead Integral LightsL
+A22X PFCC 1 Off
+A22X PFCC 1 Off Lamp
+A22X PFCC 2 Off
+A22X PFCC 2 Off Lamp
+A22X PFCC 2 Off LampL
+A22X PFCC 2 OffL
+A22X PFCC 3 Off
+A22X PFCC 3 Off Lamp
+A22X PTU
+A22X PTU RunningL
+A22X Pack Flow
+A22X Pack Flow Lamp
+A22X Pack Flow LampL
+A22X Pack FlowL
+A22X Parking Brake
+A22X Parking BrakeL
+A22X Passenger Oxygen
+A22X Passenger Oxygen Lamp
+A22X Passenger OxygenL
+A22X Paused at TODL
+A22X Pedestal Integral Lights
+A22X Pedestal Integral LightsL
+A22X Pilot Event
+A22X Probe Heat
+A22X Probe Heat Lamp
+A22X Probe Heat LampL
+A22X R
+A22X R ADS Reversion
+A22X R Aileron
+A22X R Bleed Fail Lamp
+A22X R Bleed Fail LampL
+A22X R Bleed Off
+A22X R Bleed Off Lamp
+A22X R Boost Pump
+A22X R CTP Backlight
+A22X R ChronoA22X
+A22X R Cowl Anti Ice
+A22X R Cursor Inhibit
+A22X R Elevator
+A22X R Eng Fire
+A22X R Eng Fire Bottle 1
+A22X R Eng Fire Bottle 2
+A22X R Flight Director
+A22X R GS
+A22X R Gen Disc
+A22X R Gen Disc Lamp
+A22X R Gen Fail Lamp
+A22X R Gen Fail LampL
+A22X R Gen Off
+A22X R Gen Off Lamp
+A22X R Gen Oil Lamp
+A22X R Gen Oil LampL
+A22X R IRS Reversion
+A22X R Inboard BrightnessL
+A22X R Inboard Partition
+A22X R Landing Lights
+A22X R MFS 1
+A22X R MFS 1L
+A22X R MFS 2
+A22X R MFS 3
+A22X R MFS 3L
+A22X R MFS 4
+A22X R Map Lights
+A22X R Pack Fail Lamp
+A22X R Pack Fail LampL
+A22X R Pack Off
+A22X R Pack Off Lamp
+A22X R Reading Lights
+A22X R Side Window Heat Off
+A22X R Side Window Heat Off Lamp
+A22X R Side Window Heat Off LampL
+A22X R Sidestick X
+A22X R Sidestick Y
+A22X R Windshield Heat Off
+A22X R Windshield Heat Off Lamp
+A22X R Windshield Heat Off LampL
+A22X RAT Extension
+A22X RAT Gen
+A22X RAT Gen Lamp
+A22X RAT Gen LampL
+A22X RAT RPM
+A22X RAT RPML A1
+A22X RDC Powered
+A22X Ram Air
+A22X Ram Air Lamp
+A22X Recirc Air Off
+A22X Recirc Air Off Lamp
+A22X Recirc Air Off LampL
+A22X Recirc Air OffL
+A22X Reversion Mode
+A22X Reversion ModeL
+A22X Rudder
+A22X Rudder Pedals
+A22X Rudder PedalsELEVATOR_UPELEVATOR_DOWNAXIS_ELEVATOR
+A22X Rudderdegree
+A22X Seat Belt Lights
+A22X Seat Belt LightsL
+A22X Selected FPAAP_VS_VAR_SET_ENGLISHcommon_legsmissed
+A22X Service Intercom
+A22X Side L Blind 1 State
+A22X Side L Blind 2 State
+A22X Side R Blind 1 State
+A22X Side R Blind 2 State
+A22X Spoiler Lever
+A22X Strobe Lights
+A22X Strobe LightsL
+A22X TAWS Flaps Inhibit
+A22X TAWS Flaps Inhibit Lamp
+A22X TAWS GS Inhibit
+A22X TAWS GS Inhibit Lamp
+A22X TAWS GS Inhibit LampL
+A22X TAWS GS InhibitL
+A22X TAWS Gear Inhibit
+A22X TAWS Gear Inhibit Lamp
+A22X TAWS Terrain Inhibit
+A22X TAWS Terrain Inhibit Lamp
+A22X TAWS Terrain Inhibit LampL
+A22X TAWS Terrain InhibitL
+A22X TPMU Disabled
+A22X TPMU Disabledmetercelsiuspascalg forcepoundInvalid
+A22X Taxi Lights
+A22X Throttle
+A22X Throttle 1 TLA
+A22X Throttle 2 TLA
+A22X Throttle L Idle
+A22X Throttle L Raw
+A22X Throttle L RawL
+A22X Throttle L Rev Idle
+A22X Throttle R Idle
+A22X Throttle R IdleL
+A22X Throttle R Raw
+A22X Throttle R Rev Idle
+A22X Throttle R Rev IdleL
+A22X Throttle Type
+A22X Throttle TypeL
+A22X Trim Air Off
+A22X Trim Air Off Lamp
+A22X Trim Air Off LampL
+A22X Tx Channel
+A22X Warning PBA
+A22X Wing Anti Ice
+A22X Wing Anti IceL
+A22X Wing Insp Lights
+A22X Wing Insp LightsL
+A22X ZFW CG

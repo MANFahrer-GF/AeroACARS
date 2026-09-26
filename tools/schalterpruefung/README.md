@@ -25,8 +25,11 @@ nichts im Simulator.
 ## Was passiert
 
 1. Das Programm verbindet sich mit MSFS und zeigt das geladene Flugzeug.
-2. Es prüft, ob das MobiFlight-Modul antwortet, holt die Liste aller LVars
-   und meldet sie zur Beobachtung an.
+2. Es prüft, ob das MobiFlight-Modul antwortet und holt die LVar-Liste.
+   MobiFlight listet höchstens 1000 LVars; für A380/A350/A330 (iniBuilds)
+   und A220 (Synaptic) meldet das Programm deshalb zusätzlich eingebaute
+   Namenslisten (`namen/`) an. Namen, die es im Flugzeug nicht gibt, bleiben
+   einfach 0.
 3. Es wählt anhand des Flugzeugs ein Prüfskript (iniBuilds A380, A350,
    A330, Synaptic A220 oder ein allgemeines Skript) — du kannst auch selbst
    wählen.

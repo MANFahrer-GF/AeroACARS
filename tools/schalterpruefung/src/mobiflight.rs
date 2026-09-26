@@ -115,6 +115,43 @@ pub fn lvar_code(name: &str) -> Option<String> {
     Some(format!("(L:{n})"))
 }
 
+/// Eingebettete Zusatz-Namensliste (eine LVar je Zeile, ohne `L:`) säubern:
+/// Randleerzeichen weg, Einträge mit Zeichen außerhalb `[A-Za-z0-9 _/-]` oder
+/// kürzer als 4 Zeichen verwerfen (Müll aus Binär-Bruchstücken), Dubletten
+/// (Groß/klein egal — LVar-Namen sind im Simulator nicht fallempfindlich)
+/// entfernen. Leerzeichen IM Namen bleiben (Synaptic: „A22X Autobrake").
+pub fn zusatz_filtern(roh: &str) -> Vec<String> {
+    let mut gesehen = std::collections::HashSet::new();
+    let mut v = Vec::new();
+    for z in roh.lines() {
+        let n = z.trim();
+        let ok = n.len() >= 4
+            && n.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '/' | '-'))
+            && lvar_code(n).is_some();
+        if ok && gesehen.insert(n.to_ascii_uppercase()) {
+            v.push(n.to_string());
+        }
+    }
+    v
+}
+
+/// MobiFlight-Liste + Zusatzliste zu einer Abo-Liste. Gibt (alle, Anzahl
+/// der Zusatz-Namen, die NICHT schon in der MobiFlight-Liste standen).
+pub fn zusammenfuehren(mf: &[String], zusatz: &[String]) -> (Vec<String>, usize) {
+    let mut gesehen: std::collections::HashSet<String> =
+        mf.iter().map(|n| n.trim().to_ascii_uppercase()).collect();
+    let mut alle = mf.to_vec();
+    let mut neu = 0;
+    for n in zusatz {
+        if gesehen.insert(n.trim().to_ascii_uppercase()) {
+            alle.push(n.clone());
+            neu += 1;
+        }
+    }
+    (alle, neu)
+}
+
 /// Sammelt die LVar-Namen zwischen `Start` und `Ende`.
 #[derive(Debug, Default)]
 pub struct ListenSammler {
@@ -325,5 +362,28 @@ mod tests {
         assert_eq!(icao_aus_atc_model("BCS3").unwrap(), "BCS3");
         assert!(icao_aus_atc_model("A350-900 Marketing").is_none());
         assert!(icao_aus_atc_model("").is_none());
+    }
+
+    #[test]
+    fn zusatzliste_filtern_und_zusammenfuehren() {
+        let roh = "INI_A\n  INI_B  \nA22X  Altimeter HPA\nA22X Autobrake\nab\nINI_\u{1}X\nGUT)X\nini_a\nX/Y-Z_1\n";
+        let z = zusatz_filtern(roh);
+        assert_eq!(
+            z,
+            vec![
+                "INI_A",
+                "INI_B",
+                "A22X  Altimeter HPA",
+                "A22X Autobrake",
+                "X/Y-Z_1"
+            ]
+        );
+        assert_eq!(lvar_code("A22X Autobrake").unwrap(), "(L:A22X Autobrake)");
+        let mf: Vec<String> = vec!["INI_B".into(), "MF_ONLY".into()];
+        let (alle, neu) = zusammenfuehren(&mf, &z);
+        assert_eq!(neu, 4);
+        assert_eq!(alle.len(), 6);
+        assert_eq!(&alle[..2], &mf[..]);
+        assert_eq!(alle.iter().filter(|n| n.as_str() == "INI_B").count(), 1);
     }
 }
