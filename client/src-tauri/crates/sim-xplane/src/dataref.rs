@@ -190,6 +190,14 @@ pub enum FieldId {
     /// `laminar/A333/switches/fasten_seatbelts` (gross geschrieben) —
     /// Laminar-A330, 0=OFF 1=AUTO 2=ON (`A333.switches.lua`).
     A333SeatbeltSwitch,
+    /// `AirbusFBW/OHPLightSwitches[7]` — ToLiss-Strobe-Schalter 0=OFF
+    /// 1=AUTO 2=ON. Keine offizielle ToLiss-Liste; mehrfach uebereinstimmend
+    /// in Community-Code (xpcockpit `a320_overhead.c` „(auto)" = 1,
+    /// phpvms/acars-config `toliss.json`, `toliss-a330.json`).
+    TolissStrobeSwitch,
+    /// `B742/ext_light/beacon_sw` — Felis 747-200, 0/1 (XPanel-Beispiel-
+    /// konfiguration, kpcrew B742).
+    FelisBeacon,
 }
 
 /// One row in the catalog: a DataRef name + which snapshot field it
@@ -687,6 +695,14 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "laminar/A333/switches/fasten_seatbelts",
         field: FieldId::A333SeatbeltSwitch,
     },
+    DatarefEntry {
+        name: "AirbusFBW/OHPLightSwitches[7]",
+        field: FieldId::TolissStrobeSwitch,
+    },
+    DatarefEntry {
+        name: "B742/ext_light/beacon_sw",
+        field: FieldId::FelisBeacon,
+    },
 ];
 
 /// v0.16.9: body-frame horizontal velocity, derived from the WORLD-frame
@@ -898,6 +914,8 @@ pub struct XPlaneState {
     pub toliss_autobrk_max: Option<bool>,
     pub a333_strobe_pos: Option<f32>,
     pub a333_seatbelt_switch: Option<f32>,
+    pub toliss_strobe_switch: Option<f32>,
+    pub felis_beacon: Option<bool>,
     /// True once we've received at least one RREF packet — drives
     /// the connection state machine's transition into `Connected`.
     pub got_first_packet: bool,
@@ -1090,6 +1108,8 @@ impl XPlaneState {
             FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = Some(value > 0.5),
             FieldId::A333StrobePos => self.a333_strobe_pos = Some(value),
             FieldId::A333SeatbeltSwitch => self.a333_seatbelt_switch = Some(value),
+            FieldId::TolissStrobeSwitch => self.toliss_strobe_switch = Some(value),
+            FieldId::FelisBeacon => self.felis_beacon = Some(value > 0.5),
         }
     }
 
@@ -1282,7 +1302,8 @@ impl XPlaneState {
             light_beacon: Some(
                 self.light_beacon
                     || self.light_beacon_legacy == Some(true)
-                    || self.toliss_beacon == Some(true),
+                    || self.toliss_beacon == Some(true)
+                    || self.felis_beacon == Some(true),
             ),
             light_strobe: Some(self.light_strobe),
             light_taxi: Some(self.light_taxi),
@@ -1291,7 +1312,10 @@ impl XPlaneState {
             light_logo: Some(self.light_nav),
             // 3-Stufen-Schalter, wo ein Add-on ihn liefert (Laminar-A330);
             // sonst nur der binaere Effekt in `light_strobe`.
-            strobe_state: self.a333_strobe_pos.and_then(schalter_0_1_2),
+            strobe_state: self
+                .a333_strobe_pos
+                .or(self.toliss_strobe_switch)
+                .and_then(schalter_0_1_2),
             // v0.16.7: OR the ToLiss `AirbusFBW/AP1Engage`/`AP2Engage`
             // datarefs into the standard `servos_on` — addon-agnostic
             // (absent datarefs are never streamed → the toliss_* bools
@@ -2083,5 +2107,17 @@ mod cockpit_schalter_tests {
         assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(1));
         s.apply_field(FieldId::A333SeatbeltSwitch, 1.5);
         assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, None);
+    }
+
+    #[test]
+    fn toliss_strobe_auto_und_felis_beacon() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::TolissStrobeSwitch, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).strobe_state, Some(1));
+
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::LightBeacon, 0.0);
+        s.apply_field(FieldId::FelisBeacon, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).light_beacon, Some(true));
     }
 }
