@@ -1802,7 +1802,13 @@ mod tests {
 
     /// Takte im 5-s-Raster bis `ziel_s` — wie der echte Streamer. Grössere
     /// Sprünge gelten als Pause und verschieben die Fristen.
-    fn takte_bis(z: &mut Zustand, s: &mut SimSnapshot, phase: FlightPhase, k: &Kontext, ziel_s: i64) {
+    fn takte_bis(
+        z: &mut Zustand,
+        s: &mut SimSnapshot,
+        phase: FlightPhase,
+        k: &Kontext,
+        ziel_s: i64,
+    ) {
         let mut t = z.letzte_zeit.map(|l| (l - t0()).num_seconds()).unwrap_or(0);
         while t < ziel_s {
             t = (t + 5).min(ziel_s);
