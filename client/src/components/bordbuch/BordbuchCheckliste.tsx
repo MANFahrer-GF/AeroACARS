@@ -83,7 +83,7 @@ export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkiere
                     {(p.status === "erledigt" || p.status === "nach_atc") && (
                       <div className="bb-cl-zusatz">
                         {p.status === "nach_atc"
-                          ? t("bordbuch.status.nach_atc")
+                          ? [t("bordbuch.status.nach_atc"), rollenText(p, rolltempoGrenzeKt, t)].filter(Boolean).join(" · ")
                           : [rollenText(p, rolltempoGrenzeKt, t), zulu(p.zeit), p.art === "bestaetigung" ? t("bordbuch.zusaetzlich") : null]
                               .filter(Boolean)
                               .join(" · ")}
@@ -144,7 +144,7 @@ function rollenText(
   const kt = rollenMax(p);
   if (kt === null || grenze === undefined) return null;
   const s = p.beleg?.laengste_ueber_grenze_s;
-  if (p.status === "diesmal_ohne" && typeof s === "number" && s > 0) {
+  if ((p.status === "diesmal_ohne" || p.status === "nach_atc") && typeof s === "number" && s > 0) {
     return t("bordbuch.rollen_ueber", { kt: Math.round(kt), s: Math.round(s), grenze: Math.round(grenze) });
   }
   return t("bordbuch.rollen_gefahren", { kt: Math.round(kt), grenze: Math.round(grenze) });

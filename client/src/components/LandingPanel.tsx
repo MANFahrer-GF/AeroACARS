@@ -3249,8 +3249,21 @@ export function LandingDetail({
   //      gar kein Feedback bei einem echten Fehlschlag.
   const [printing, setPrinting] = useState(false);
   const [printFailed, setPrintFailed] = useState(false);
+  // Der Druck wartet, bis das Bordbuch dieser Landung geladen ist (über die
+  // LAN-Oberfläche dauert das), höchstens 3 s — sonst fehlte es im PDF.
+  const [bordbuchWarteEnde, setBordbuchWarteEnde] = useState(false);
   useEffect(() => {
-    if (!printing) return;
+    if (!printing) {
+      setBordbuchWarteEnde(false);
+      return;
+    }
+    if (bordbuch.bereit) return;
+    const t = window.setTimeout(() => setBordbuchWarteEnde(true), 3_000);
+    return () => window.clearTimeout(t);
+  }, [printing, bordbuch.bereit]);
+  const druckLos = printing && (bordbuch.bereit || bordbuchWarteEnde);
+  useEffect(() => {
+    if (!druckLos) return;
     let settled = false;
     const settle = (failed: boolean) => {
       if (settled) return;
@@ -3281,7 +3294,7 @@ export function LandingDetail({
       window.clearTimeout(timeout);
       window.removeEventListener("afterprint", onAfterPrint);
     };
-  }, [printing]);
+  }, [druckLos]);
 
   return (
     <div className="landing-detail">

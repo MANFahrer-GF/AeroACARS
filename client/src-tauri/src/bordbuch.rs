@@ -1041,7 +1041,20 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     let klasse = z.klasse.unwrap_or(k.klasse);
     z.merken(s);
     // 100 ft über Grund: ein Hüpfer beim Rollen oder ein Messaussetzer zählt nicht.
-    if !s.on_ground && s.altitude_agl_ft > 100.0 {
+    // Beginnt das Bordbuch erst im Endanflug (Neustart bei 80 ft), belegt die
+    // Flugphase das Fliegen — sonst fielen alle Anflugpunkte weg (Codex-QS).
+    if !s.on_ground
+        && (s.altitude_agl_ft > 100.0
+            || matches!(
+                phase,
+                FlightPhase::Climb
+                    | FlightPhase::Cruise
+                    | FlightPhase::Holding
+                    | FlightPhase::Descent
+                    | FlightPhase::Approach
+                    | FlightPhase::Final
+            ))
+    {
         z.in_der_luft = true;
     }
     if s.xpdr_mode_label.is_some() {
@@ -2556,6 +2569,46 @@ mod tests {
         assert_eq!(status(&en, Regel::AnschnallLandung), Status::Erledigt);
         assert_eq!(status(&en, Regel::BeaconAnlassen), Status::NichtAnwendbar);
         assert_eq!(status(&en, Regel::StrobesStart), Status::NichtAnwendbar);
+    }
+
+    /// Neustart im Endanflug unter 100 ft: die Phase „Final" belegt das
+    /// Fliegen, Spoiler und Anschnallzeichen werden noch ausgewertet.
+    #[test]
+    fn spaeter_beginn_unter_100_ft_im_final() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.on_ground = false;
+        s.engines_running = 2;
+        s.altitude_msl_ft = 480.0;
+        s.altitude_agl_ft = 80.0;
+        s.spoilers_armed = Some(true);
+        s.seatbelts_sign = Some(2);
+        tick(&mut z, &s, FlightPhase::Final, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::Final, &k, 10);
+        s.on_ground = true;
+        s.altitude_agl_ft = 0.0;
+        takte_bis(&mut z, &mut s, FlightPhase::TaxiIn, &k, 80);
+        let en = eintrag(&z, &e);
+        assert_eq!(status(&en, Regel::SpoilerLandung), Status::Erledigt);
+        assert_eq!(status(&en, Regel::AnschnallLandung), Status::Erledigt);
+    }
+
+    /// Ein Hüpfer beim Rollen (kurz „nicht am Boden", 3 ft) macht das
+    /// Flugzeug nicht zum Flieger.
+    #[test]
+    fn huepfer_beim_rollen_ist_kein_flug() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.engines_running = 2;
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        s.on_ground = false;
+        s.altitude_agl_ft = 3.0;
+        takte_bis(&mut z, &mut s, FlightPhase::TaxiOut, &k, 5);
+        assert!(!z.in_der_luft);
     }
 
     /// Pause mitten in der Kulanz: die Frist verlängert sich um die Pause.

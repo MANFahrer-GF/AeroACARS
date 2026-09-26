@@ -22,6 +22,7 @@ import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
 import type { LandingRecord } from "./LandingPanel";
 import { LandingDetail } from "./LandingPanel";
+import { invoke } from "../lib/ipc";
 
 vi.mock("../lib/ipc", () => ({ invoke: vi.fn() }));
 vi.mock("../lib/sentry", () => ({
@@ -162,6 +163,9 @@ describe("LandingDetail — PDF-Export darf nie dauerhaft haengen bleiben", () =
         isPreview={false}
       />,
     );
+    // Seite fertig laden lassen (das Bordbuch-Laden ist eine Promise; der
+    // Druck wartet darauf, damit es im PDF steht).
+    await act(async () => {});
 
     const button = screen.getByRole("button", { name: /PDF exportieren/i });
 
@@ -187,5 +191,31 @@ describe("LandingDetail — PDF-Export darf nie dauerhaft haengen bleiben", () =
       await vi.advanceTimersByTimeAsync(50);
     });
     expect(printSpy).toHaveBeenCalledTimes(1);
+  });
+  it("druckt auch, wenn das Bordbuch nie antwortet (höchstens 3 s warten)", async () => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame"],
+    });
+    vi.mocked(invoke).mockImplementation(((cmd: string) =>
+      cmd === "bordbuch_eintrag" ? new Promise(() => undefined) : Promise.resolve(undefined)) as typeof invoke);
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => undefined);
+    render(<LandingDetail record={record()} allRecords={[]} onBack={() => {}} isPreview={false} />);
+    await act(async () => {});
+    const button = screen.getByRole("button", { name: /PDF exportieren/i });
+    await act(async () => {
+      button.click();
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    // Wartet noch aufs Bordbuch …
+    expect(printSpy).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    // … aber nie länger als 3 s.
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    vi.mocked(invoke).mockReset();
   });
 });

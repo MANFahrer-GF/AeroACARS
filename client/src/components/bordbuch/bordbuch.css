@@ -307,10 +307,21 @@
 .bb-landung-bilanz strong { color: var(--text); }
 .bb-bericht .bb-checkliste { break-inside: avoid; }
 .bb-bericht .bb-cl-abschnitt { break-inside: avoid; }
-@media print {
-  .bb-bericht .bb-checkliste { background: none; border-color: #999; }
-  .bb-bericht .bb-cl-zeile { color: #000; }
-  .bb-bericht .bb-st-erledigt .bb-cl-wert,
-  .bb-bericht .bb-cl-marke { color: #0a6b45; }
-  .bb-bericht .bb-cl-linie { border-bottom-color: #888; }
+/* Der Bericht ist immer weißes Papier — auch wenn die App dunkel läuft.
+   Deshalb die Farben hier fest setzen statt vom Thema zu erben (sonst stand
+   „6 von 7 Punkten erledigt" fast weiß auf weiß im PDF, Codex-QS). */
+.bb-bericht {
+  --text: #111827;
+  --text-dim: #4b5563;
+  --border: #9ca3af;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --sem-ok: #0a6b45;
+  --sem-info: #1d4ed8;
+  --sem-warn: #92400e;
+  --acc: #1d4ed8;
+  color: var(--text);
 }
+.bb-bericht .bb-checkliste { background: none; border-color: var(--border); }
+.bb-bericht .bb-cl-zeile { color: var(--text); }
+.bb-bericht .bb-cl-linie { border-bottom-color: #888; }

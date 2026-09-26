@@ -2,7 +2,7 @@
 // der Pilot das nach der Landung — und kommt es aufs PDF?"). Dieselbe
 // Checkliste wie im Reiter „Bordbuch", an die Landung gehängt.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, listen } from "../../lib/ipc";
 import { bilanz, type Eintrag, type Regel } from "../../lib/bordbuch";
@@ -13,15 +13,29 @@ import "./bordbuch.css";
  *  Server-Abgleich). `null` = zu diesem Flug gibt es keins (ältere Flüge). */
 export function useBordbuchEintrag(pirepId: string | null | undefined) {
   const [eintrag, setEintrag] = useState<Eintrag | null>(null);
+  // Zu welcher Landung der Stand gehört — `bereit` heisst: für DIESE Landung
+  // ist die erste Antwort da (der PDF-Export wartet darauf).
+  const [geladenFuer, setGeladenFuer] = useState<string | null>(null);
+  // Jede Anfrage bekommt eine Nummer; nur die jüngste darf schreiben. Sonst
+  // überschreibt eine späte Antwort (vorige Landung, oder ein Laden, das vor
+  // der ATC-Markierung losging) den neueren Stand (Codex-QS).
+  const aktuell = useRef(pirepId);
+  aktuell.current = pirepId;
+  const nummer = useRef(0);
   const laden = useCallback(async () => {
     if (!pirepId) return;
+    const meine = ++nummer.current;
+    let neu: Eintrag | null = null;
     try {
       const e = await invoke<Eintrag | null>("bordbuch_eintrag", { pirepId });
       // Nur echte Einträge übernehmen (Tests/ältere Brücken liefern evtl. Unsinn).
-      setEintrag(e && Array.isArray((e as Eintrag).punkte) ? e : null);
+      neu = e && Array.isArray((e as Eintrag).punkte) ? e : null;
     } catch {
-      setEintrag(null);
+      neu = null;
     }
+    if (meine !== nummer.current || aktuell.current !== pirepId) return;
+    setEintrag(neu);
+    setGeladenFuer(pirepId);
   }, [pirepId]);
   useEffect(() => {
     setEintrag(null);
@@ -49,12 +63,14 @@ export function useBordbuchEintrag(pirepId: string | null | undefined) {
   const markieren = useCallback(
     async (regel: Regel, nachAtc: boolean) => {
       if (!pirepId) return;
+      const meine = ++nummer.current;
       const neu = await invoke<Eintrag | null>("bordbuch_markieren", { pirepId, regel, nachAtc });
-      if (neu) setEintrag(neu);
+      if (neu && meine === nummer.current && aktuell.current === pirepId) setEintrag(neu);
     },
     [pirepId],
   );
-  return { eintrag, markieren };
+  const bereit = !pirepId || geladenFuer === pirepId;
+  return { eintrag: bereit ? eintrag : null, markieren, bereit };
 }
 
 /** Kopfzeile „11 von 13 Punkten erledigt" bzw. der Aus-Hinweis. */
