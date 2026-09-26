@@ -301,3 +301,16 @@
   .bb-l-muster { display: none; }
   .bb-checkliste { grid-template-columns: 1fr; padding: 12px; }
 }
+
+/* Bordbuch im Landungs-Tab und im PDF-Bericht */
+.bb-landung-bilanz { margin: 0 0 10px; font-size: var(--fs-400, 13px); color: var(--text-dim); }
+.bb-landung-bilanz strong { color: var(--text); }
+.bb-bericht .bb-checkliste { break-inside: avoid; }
+.bb-bericht .bb-cl-abschnitt { break-inside: avoid; }
+@media print {
+  .bb-bericht .bb-checkliste { background: none; border-color: #999; }
+  .bb-bericht .bb-cl-zeile { color: #000; }
+  .bb-bericht .bb-st-erledigt .bb-cl-wert,
+  .bb-bericht .bb-cl-marke { color: #0a6b45; }
+  .bb-bericht .bb-cl-linie { border-bottom-color: #888; }
+}

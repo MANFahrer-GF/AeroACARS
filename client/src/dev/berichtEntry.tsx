@@ -22,6 +22,8 @@ import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
 import { MOCK_LANDING_OPTIONS } from "./mockLandingRecords";
 import { LandingReport, type LandingRecord } from "../components/LandingPanel";
+import { BEISPIEL_BORDBUCH } from "./mockBordbuch";
+import "../components/bordbuch/bordbuch.css";
 import "../App.css";
 
 void i18n.use(initReactI18next).init({
@@ -44,7 +46,14 @@ function Seite() {
   const key = varianteAusAdresse();
   const opt =
     MOCK_LANDING_OPTIONS.find((o) => o.key === key) ?? MOCK_LANDING_OPTIONS[0];
-  return <LandingReport record={opt.build() as unknown as LandingRecord} />;
+  // `?ohne_bordbuch` zeigt den Bericht wie bei Flügen ohne Bordbuch.
+  const mitBordbuch = !new URLSearchParams(window.location.search).has("ohne_bordbuch");
+  return (
+    <LandingReport
+      record={opt.build() as unknown as LandingRecord}
+      bordbuch={mitBordbuch ? BEISPIEL_BORDBUCH : null}
+    />
+  );
 }
 
 // Die App hängt den Bericht per `createPortal` NEBEN `#root` an

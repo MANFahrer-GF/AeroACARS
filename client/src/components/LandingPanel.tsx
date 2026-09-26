@@ -12,6 +12,8 @@ import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
 import { SpritBadge, SpritSektion } from "./SpritSektion";
+import { BordbuchBericht, BordbuchLandungsAbschnitt, useBordbuchEintrag } from "./bordbuch/BordbuchLandung";
+import type { Eintrag as BordbuchEintrag } from "../lib/bordbuch";
 import { hauptzahlText as spritHauptzahl, kg as spritKg, minuten as spritMinuten, reserveAbstand as spritReserveAbstand } from "../lib/sprit";
 import type { SpritAuswertung } from "../lib/sprit";
 import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
@@ -2465,7 +2467,14 @@ function ReportTile({ label, value, detail }: { label: string; value: string; de
  */
 /** Exportiert für die Prüfung — der Bericht ist sonst nur über
  *  `window.print()` erreichbar, und das lässt sich nicht lesen. */
-export function LandingReport({ record }: { record: LandingRecord }) {
+export function LandingReport({
+  record,
+  bordbuch,
+}: {
+  record: LandingRecord;
+  /** Bordbuch des Flugs (27.09.2026) — vorab geladen, der Druck wartet nicht. */
+  bordbuch?: BordbuchEintrag | null;
+}) {
   const { t } = useTranslation();
 
   const callsign = record.airline_icao
@@ -3084,6 +3093,15 @@ export function LandingReport({ record }: { record: LandingRecord }) {
         </ReportSection>
       </div>
 
+      {/* ── Bordbuch (27.09.2026) ─────────────────────────────────────
+          Kein Seitenumbruch davor: die Checkliste ist kurz und soll nicht
+          allein auf einem Blatt stehen. */}
+      {bordbuch && (
+        <ReportSection title={t("bordbuch.titel")}>
+          <BordbuchBericht eintrag={bordbuch} />
+        </ReportSection>
+      )}
+
       {/* ── Profile & Verläufe (frische Seite) ─────────────────────── */}
       {hasCharts && (
         <div className="report-break-before">
@@ -3176,6 +3194,9 @@ export function LandingDetail({
     : record.flight_number;
 
   const subs = useMemo(() => computeSubScores(record), [record]);
+  // Bordbuch dieses Flugs — im Tab und im PDF (in der Live-Vorschau gibt es
+  // noch keinen fertigen Eintrag).
+  const bordbuch = useBordbuchEintrag(isPreview ? null : record.pirep_id);
 
   // Personal-best comparison — best (closest to zero) landing rate
   // across ALL filed PIREPs. None when this is the only record yet.
@@ -3302,7 +3323,7 @@ export function LandingDetail({
       {printing &&
         createPortal(
           <div className="landing-report-print">
-            <LandingReport record={record} />
+            <LandingReport record={record} bordbuch={bordbuch.eintrag} />
           </div>,
           document.body,
         )}
@@ -3726,8 +3747,12 @@ export function LandingDetail({
       )}
 
 
+      {/* Bordbuch dieses Flugs — was der Pilot an SOPs abgehakt hat. */}
+      <BordbuchLandungsAbschnitt eintrag={bordbuch.eintrag} onMarkieren={bordbuch.markieren} />
+
       {/* Fuel + Weight — Soll/Ist-Vergleich (v0.3.0).
           Render whenever ANY fuel/weight value is present. */}
+
       {(record.planned_burn_kg != null ||
         record.actual_trip_burn_kg != null ||
         record.block_fuel_kg != null ||

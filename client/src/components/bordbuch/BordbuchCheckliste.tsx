@@ -21,9 +21,12 @@ interface Props {
   flugzeug: string | null;
   /** Nur nach dem Flug: Punkt als „nach ATC" markieren oder zurück. */
   onMarkieren?: (regel: Regel, nachAtc: boolean) => Promise<void>;
+  /** Grenze fürs Rolltempo dieses Flugs — ohne sie stand nur „max 22 kt"
+   *  da, und Thomas las die gefahrene Spitze als erlaubtes Tempo. */
+  rolltempoGrenzeKt?: number;
 }
 
-export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkieren }: Props) {
+export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkieren, rolltempoGrenzeKt }: Props) {
   const { t } = useTranslation();
   const [offen, setOffen] = useState<Regel | null>(null);
   const [laeuft, setLaeuft] = useState(false);
@@ -81,10 +84,13 @@ export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkiere
                       <div className="bb-cl-zusatz">
                         {p.status === "nach_atc"
                           ? t("bordbuch.status.nach_atc")
-                          : [zulu(p.zeit), p.art === "bestaetigung" ? t("bordbuch.zusaetzlich") : null]
+                          : [rollenText(p, rolltempoGrenzeKt, t), zulu(p.zeit), p.art === "bestaetigung" ? t("bordbuch.zusaetzlich") : null]
                               .filter(Boolean)
                               .join(" · ")}
                       </div>
+                    )}
+                    {p.status === "diesmal_ohne" && rollenText(p, rolltempoGrenzeKt, t) && (
+                      <div className="bb-cl-zusatz">{rollenText(p, rolltempoGrenzeKt, t)}</div>
                     )}
                     {p.status === "nicht_messbar" && (
                       <div className="bb-cl-zusatz bb-cl-nm">
@@ -121,10 +127,36 @@ export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkiere
   );
 }
 
+/** Gefahrene Spitze beim Rollen (aus dem Beleg), sonst null. */
+function rollenMax(p: Punkt): number | null {
+  if (p.regel !== "rolltempo_abflug" && p.regel !== "rolltempo_ankunft") return null;
+  const kt = p.beleg?.max_kt;
+  return typeof kt === "number" && Number.isFinite(kt) ? kt : null;
+}
+
+/** „schnellstes Rollen 22 kt · Grenze 30 kt" — Spitze und Grenze nebeneinander,
+ *  damit die gemessene Zahl nicht wie das erlaubte Tempo aussieht. */
+function rollenText(
+  p: Punkt,
+  grenze: number | undefined,
+  t: (k: string, o?: Record<string, unknown>) => string,
+): string | null {
+  const kt = rollenMax(p);
+  if (kt === null || grenze === undefined) return null;
+  const s = p.beleg?.laengste_ueber_grenze_s;
+  if (p.status === "diesmal_ohne" && typeof s === "number" && s > 0) {
+    return t("bordbuch.rollen_ueber", { kt: Math.round(kt), s: Math.round(s), grenze: Math.round(grenze) });
+  }
+  return t("bordbuch.rollen_gefahren", { kt: Math.round(kt), grenze: Math.round(grenze) });
+}
+
 function wertText(p: Punkt, t: (k: string, o?: Record<string, unknown>) => string): string {
   switch (p.status) {
-    case "erledigt":
+    case "erledigt": {
+      const kt = rollenMax(p);
+      if (kt !== null) return t("bordbuch.rollen_wert", { kt: Math.round(kt) });
       return p.stellung || t(`bordbuch.soll.${p.regel}`);
+    }
     case "nach_atc":
       // Nicht die Soll-Stellung zeigen — der Schalter stand ja anders.
       return t("bordbuch.wert_atc");

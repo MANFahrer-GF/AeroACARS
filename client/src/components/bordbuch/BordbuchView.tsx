@@ -140,6 +140,7 @@ export function BordbuchView() {
                 eingeschaltet={gewaehlt.eingeschaltet}
                 flugzeug={gewaehlt.flug.titel ?? gewaehlt.flug.muster ?? null}
                 onMarkieren={markieren}
+                rolltempoGrenzeKt={gewaehlt.rolltempo_grenze_kt}
               />
             ) : (
               <BordbuchProfil
@@ -181,7 +182,7 @@ export function BordbuchView() {
             <>
               <VariantenWahl variante={variante} onWahl={waehleVariante} />
               {variante === "checkliste" ? (
-                <BordbuchCheckliste punkte={live.punkte} eingeschaltet={live.eingeschaltet} flugzeug={null} />
+                <BordbuchCheckliste punkte={live.punkte} eingeschaltet={live.eingeschaltet} flugzeug={null} rolltempoGrenzeKt={live.rolltempo_grenze_kt} />
               ) : (
                 <BordbuchProfil punkte={live.punkte} eingeschaltet={live.eingeschaltet} profil={live.profil} />
               )}
