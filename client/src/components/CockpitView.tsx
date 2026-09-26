@@ -20,6 +20,7 @@ const WEATHER_BRIEFING_URL = "https://german-sky-group.eu/weatherbriefing";
 // Section unter dem WeatherBriefing zu hängen.
 import { DivertBanner } from "./DivertBanner";
 import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
+import { BordbuchHinweis } from "./bordbuch/BordbuchHinweis";
 import { Notice } from "./ui";
 
 interface Props {
@@ -341,6 +342,10 @@ export function CockpitView({
         simSnapshot={simSnapshot}
         enabled={approachAdvisoriesEnabled}
       />
+
+      {/* Bordbuch (26.09.2026): leiser Hinweis an Schlüsselstellen. Ein-/
+          ausschalten unter Einstellungen → Bordbuch. */}
+      <BordbuchHinweis aktiv={!activeFlight.was_just_resumed} />
 
       {!activeFlight.was_just_resumed && (
         <ActiveFlightPanel

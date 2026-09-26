@@ -1218,7 +1218,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         // Klappen meldet jedes Flugzeug (flaps_position ist immer da).
         let stellung = s
             .flap_handle_index
-            .map(|i| format!("Stufe {i}"))
+            .map(|i| i.to_string())
             .or_else(|| Some(format!("{:.0} %", s.flaps_position * 100.0)));
         if s.flaps_position > 0.01 {
             z.entscheiden(Regel::KlappenStart, Status::Erledigt, s, stellung, None);
@@ -1499,6 +1499,8 @@ pub struct LiveAnsicht {
     pub hinweis: Option<Hinweis>,
     pub profil: Vec<(i64, i32)>,
     pub rolltempo_grenze_kt: f32,
+    /// Der Pilot will Hinweise und kurze Haken im Flug.
+    pub hinweise_im_flug: bool,
 }
 
 pub fn live_ansicht(z: &Zustand, einst: &Einstellungen, vfr: bool) -> LiveAnsicht {
@@ -1528,6 +1530,7 @@ pub fn live_ansicht(z: &Zustand, einst: &Einstellungen, vfr: bool) -> LiveAnsich
         hinweis,
         profil: z.profil,
         rolltempo_grenze_kt: einst.rolltempo_fuer(klasse.unwrap_or(Klasse::Airliner)),
+        hinweise_im_flug: einst.hinweise_im_flug,
     }
 }
 

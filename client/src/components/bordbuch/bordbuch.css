@@ -1,0 +1,293 @@
+/* Bordbuch (26.09.2026). Ton: bestätigt, was geklappt hat — kein Rot,
+   keine Warnfarbe für „diesmal ohne", nur ruhiges Grau. */
+
+.bb-seite {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 16px);
+  padding: 1.25rem 1.5rem 2rem;
+  max-width: 920px;
+  margin: 0 auto;
+  width: 100%;
+}
+.bb-kopf {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--sp-4, 16px);
+  flex-wrap: wrap;
+}
+.bb-kopf h2 { margin: 0; font-size: var(--fs-600, 18px); }
+.bb-route { color: var(--text-dim); font-weight: 400; }
+.bb-unter { color: var(--text-dim); font-size: var(--fs-300, 12px); margin-top: 4px; }
+.bb-zurueck {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--acc);
+  font-size: var(--fs-300, 12px);
+  cursor: pointer;
+}
+.bb-leer { color: var(--text-dim); font-size: var(--fs-300, 12px); padding: 8px 0; }
+.bb-fuss { color: var(--text-dim); font-size: var(--fs-200, 11px); margin: 0; }
+.bb-fehler { color: var(--sem-warn); }
+
+/* Bilanz „11 von 13" */
+.bb-bilanz { display: flex; align-items: center; gap: 12px; }
+.bb-bilanz-zahl {
+  font-family: var(--font-acars);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--sem-ok);
+  min-width: 1.4em;
+  text-align: right;
+}
+.bb-bilanz-text { display: flex; flex-direction: column; font-size: var(--fs-400, 13px); }
+.bb-bilanz-satz { color: var(--text-dim); font-size: var(--fs-300, 12px); margin-top: 2px; max-width: 34ch; }
+.bb-bilanz--klein .bb-bilanz-zahl { font-size: 18px; }
+
+/* Umschalter Checkliste / Flugprofil */
+.bb-varianten {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  align-self: flex-start;
+  background: var(--surface-2);
+}
+.bb-variante {
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: var(--fs-300, 12px);
+  cursor: pointer;
+}
+.bb-variante.ist-aktiv { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
+
+/* Variante A: Papier-Checkliste */
+.bb-checkliste {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px 22px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-family: var(--font-acars);
+}
+.bb-cl-abschnitt ul { list-style: none; margin: 0; padding: 0; }
+.bb-cl-kopf {
+  display: flex;
+  justify-content: space-between;
+  font-family: inherit;
+  font-size: var(--fs-200, 11px);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px;
+  margin-bottom: 4px;
+}
+.bb-cl-zahl { color: var(--text-dim); }
+.bb-cl-zeile {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-300, 12px);
+  text-align: left;
+  cursor: default;
+}
+/* Nicht antippbare Zeilen sind `disabled` — die globale Regel
+   `button:disabled { opacity: 0.5 }` würde gerade das Erledigte blass machen. */
+.bb-cl-zeile:disabled { opacity: 1; }
+.bb-cl-zeile:not(:disabled) { cursor: pointer; }
+.bb-cl-zeile:not(:disabled):hover .bb-cl-name { text-decoration: underline dotted; }
+.bb-cl-marke { width: 12px; flex: 0 0 12px; color: var(--sem-ok); display: inline-flex; align-self: center; }
+.bb-cl-name { white-space: nowrap; }
+.bb-cl-linie { flex: 1; min-width: 10px; border-bottom: 1px dotted var(--text-dim); opacity: 0.6; transform: translateY(-3px); }
+.bb-cl-wert { white-space: nowrap; }
+.bb-cl-zusatz { font-size: var(--fs-200, 11px); color: var(--text-dim); padding: 0 0 4px 18px; font-family: var(--font-sans, system-ui, sans-serif); }
+.bb-cl-nm { line-height: 1.4; }
+.bb-st-erledigt .bb-cl-wert { color: var(--sem-ok); }
+.bb-st-nach_atc .bb-cl-wert, .bb-st-nach_atc .bb-cl-marke { color: var(--sem-info); }
+.bb-st-diesmal_ohne .bb-cl-name,
+.bb-st-diesmal_ohne .bb-cl-wert { color: var(--text-dim); }
+.bb-st-nicht_messbar .bb-cl-name,
+.bb-st-nicht_messbar .bb-cl-wert { color: var(--text-dim); }
+.bb-st-nicht_messbar .bb-cl-wert { font-size: var(--fs-200, 11px); letter-spacing: 0.04em; }
+.bb-st-offen .bb-cl-name, .bb-st-offen .bb-cl-wert { color: var(--text-dim); }
+.bb-bestaetigung .bb-cl-name { font-style: normal; }
+.bb-cl-aktion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 8px 18px;
+  font-family: system-ui, sans-serif;
+}
+.bb-cl-aktion-hinweis { font-size: var(--fs-200, 11px); color: var(--text-dim); }
+.bb-knopf {
+  border: 1px solid var(--sem-info);
+  color: var(--sem-info);
+  background: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: var(--fs-300, 12px);
+  cursor: pointer;
+}
+.bb-knopf:disabled { opacity: 0.5; cursor: default; }
+.bb-knopf--leise { border-color: var(--border); color: var(--text-dim); }
+
+/* Variante B: Flugprofil */
+.bb-profil { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 12px 14px; }
+.bb-profil-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.bb-profil-flaeche { fill: var(--acc); opacity: 0.08; }
+.bb-profil-linie { fill: none; stroke: var(--acc); stroke-width: 1.6; opacity: 0.7; }
+.bb-profil-boden { stroke: var(--border); stroke-width: 1; }
+.bb-profil-text { fill: var(--text-dim); font-size: 11px; font-family: var(--font-acars); }
+.bb-profil-marke { cursor: pointer; outline: none; }
+.bb-profil-punkt { fill: var(--surface); stroke: var(--text-dim); stroke-width: 1.4; }
+.bb-profil-marke.ist-ok .bb-profil-punkt { fill: var(--sem-ok); stroke: var(--sem-ok); }
+.bb-profil-marke.ist-atc .bb-profil-punkt { fill: var(--sem-info); stroke: var(--sem-info); }
+.bb-profil-zahl { fill: var(--surface); font-size: 9px; font-weight: 700; font-family: var(--font-sans, system-ui, sans-serif); pointer-events: none; }
+.bb-profil-marke.ist-ohne .bb-profil-zahl { fill: var(--text-dim); }
+.bb-profil-liste { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.bb-profil-haken { fill: none; stroke: var(--surface); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.bb-profil-marke.ist-gewaehlt .bb-profil-punkt,
+.bb-profil-marke:focus-visible .bb-profil-punkt { stroke: var(--text); stroke-width: 2.4; }
+.bb-profil-legende { display: flex; gap: 14px; flex-wrap: wrap; font-size: var(--fs-200, 11px); color: var(--text-dim); margin-top: 6px; }
+.bb-leg::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 1.4px solid var(--text-dim);
+}
+.bb-leg--ok::before { background: var(--sem-ok); border-color: var(--sem-ok); }
+.bb-leg--atc::before { background: var(--sem-info); border-color: var(--sem-info); }
+.bb-profil-moment { margin-top: 8px; font-size: var(--fs-300, 12px); min-height: 1.4em; }
+
+/* Laufender Flug */
+.bb-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--acc);
+  border-radius: 10px;
+}
+.bb-live-kopf { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.bb-live-titel { font-size: var(--fs-200, 11px); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+.bb-aus-hinweis { color: var(--text-dim); font-size: var(--fs-300, 12px); line-height: 1.5; }
+
+/* Liste vergangener Flüge */
+.bb-liste { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.bb-liste li + li { border-top: 1px solid var(--border); }
+.bb-listen-zeile {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 76px 1fr 64px 110px;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 14px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-300, 12px);
+  text-align: left;
+  cursor: pointer;
+}
+.bb-listen-zeile:hover { background: var(--surface-2); }
+.bb-l-datum, .bb-l-muster { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.bb-l-bilanz { text-align: right; color: var(--sem-ok); font-variant-numeric: tabular-nums; }
+
+/* Leiser Hinweis im Cockpit */
+.bb-hinweis-leiste {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 8px;
+  pointer-events: none;
+}
+.bb-hinweis-frage, .bb-hinweis-haken {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: var(--fs-400, 13px);
+  color: var(--text);
+  animation: bb-einblenden 0.25s ease-out;
+}
+.bb-hinweis-marke { font-size: var(--fs-200, 11px); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+.bb-hinweis-haken { color: var(--sem-ok); }
+@keyframes bb-einblenden { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .bb-hinweis-frage, .bb-hinweis-haken { animation: none; }
+}
+
+/* Variante C: Routine im Logbuch */
+.bb-routine {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  background: var(--surface-2);
+}
+.bb-routine-kopf { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.bb-routine-titel { font-weight: 600; font-size: var(--fs-400, 13px); }
+.bb-routine-privat { font-size: var(--fs-200, 11px); color: var(--text-dim); }
+.bb-routine-raster { display: grid; row-gap: 5px; column-gap: 4px; align-items: center; }
+.bb-routine-zeile { display: contents; }
+.bb-routine-name { font-size: var(--fs-300, 12px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bb-routine-serie { font-size: var(--fs-200, 11px); color: var(--sem-ok); padding-left: 8px; white-space: nowrap; }
+.bb-zelle {
+  display: inline-block;
+  width: 100%;
+  max-width: 22px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.bb-zelle--ok { background: var(--sem-ok); border-color: var(--sem-ok); }
+.bb-zelle--atc { background: var(--sem-info); border-color: var(--sem-info); }
+.bb-zelle--ohne { background: var(--border); border-color: var(--border); }
+.bb-zelle--nm { background: repeating-linear-gradient(45deg, transparent 0 3px, var(--border) 3px 4px); }
+.bb-zelle--leer { background: transparent; border-style: dashed; opacity: 0.4; }
+.bb-routine-legende { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: var(--fs-200, 11px); color: var(--text-dim); }
+.bb-leg-routine { display: inline-flex; align-items: center; gap: 5px; }
+.bb-leg-routine .bb-zelle { width: 14px; }
+.bb-meilensteine { margin: 10px 0 0; padding: 0; list-style: none; font-size: var(--fs-300, 12px); }
+.bb-meilensteine li::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sem-ok); margin-right: 8px; vertical-align: 2px; }
+
+/* Einstellungen */
+.bb-einst-zahlen { display: flex; gap: 18px; flex-wrap: wrap; padding: 4px 0 0 26px; font-size: var(--fs-300, 12px); }
+.bb-einst-zahlen label { display: inline-flex; align-items: center; gap: 6px; }
+.bb-einst-zahlen input { width: 56px; }
+.bb-einst-klassen { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-300, 12px); }
+.bb-einst-klassen li { display: flex; align-items: center; gap: 10px; }
+.bb-einst-neu { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+.bb-einst-neu input { width: 120px; text-transform: uppercase; }
+
+@media (max-width: 640px) {
+  .bb-seite { padding: 1rem 16px 1.5rem; }
+  .bb-listen-zeile { grid-template-columns: 64px 1fr 84px; }
+  .bb-l-muster { display: none; }
+  .bb-checkliste { grid-template-columns: 1fr; padding: 12px; }
+}

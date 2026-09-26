@@ -12,6 +12,7 @@ import { FlightProfile } from "./FlightProfile";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
 import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus } from "./PirepPruefstatus";
+import { BordbuchRoutine } from "./bordbuch/BordbuchRoutine";
 
 // Die Stil-Adressen kommen vom Server, damit ein Schluesselwechsel bei
 // CARTO kein Release kostet — siehe `BasemapContext`. Die eingebauten
@@ -276,6 +277,8 @@ export function LogbookView() {
         <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_this_year")}</div><div className="aa-lb-bigv">{stats?.hours_this_year != null ? Math.round(stats.hours_this_year) : "—"}<small> {t("logbook_view.unit_hours")}</small></div></div>
         <div className="aa-lb-stat aa-lb-rankcard">{stats?.rank_image && <img src={stats.rank_image} alt="" />}<div><div className="aa-lb-k">{t("logbook_view.stat_rank")}</div><div className="aa-lb-rankv">{stats?.rank ?? "—"}</div></div></div>
       </div>
+      {/* Bordbuch (26.09.2026): Variante C „Deine Routine" — lokal, privat. */}
+      <BordbuchRoutine />
       <div className="aa-lb-card">
         {error && (
           <div className="aa-lb-error">

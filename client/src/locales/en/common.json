@@ -16,7 +16,8 @@
     "cpdlc": "PDC/CPDLC",
     "chat": "Chat",
     "telemetrie": "Telemetry",
-    "notizblock": "Notepad"
+    "notizblock": "Notepad",
+    "bordbuch": "Log book"
   },
   "nav": {
     "news": "News",
@@ -1151,7 +1152,9 @@
       "required_hint": "SimBrief account + flight recording behaviour — the basis for flight-plan data and automatic tracking.",
       "extras_hint": "Optional comfort settings — appearance, behaviour, Discord presence.",
       "plugins_hint": "Aircraft-specific add-ons: PMDG SDK (Boeing) and the AeroACARS X-Plane plugin. Detected automatically once the matching aircraft loads.",
-      "tech_hint": "Diagnostics, debug tools and rarely used maintenance features."
+      "tech_hint": "Diagnostics, debug tools and rarely used maintenance features.",
+      "bordbuch": "📓 Log book",
+      "bordbuch_hint": "What the log book ticks off, quiet hints in flight, light aircraft and VFR."
     },
     "appearance_section": "Language & appearance",
     "language_label": "Language",
@@ -3033,5 +3036,232 @@
     "wirklich_loeschen": "Really clear everything?",
     "flaeche": "Writing area",
     "nicht_gespeichert": "Not saved — the device storage is full or the browser is in private mode. What you see will be lost on reload."
+  },
+  "bordbuch": {
+    "titel": "Flight log book",
+    "untertitel": "What you completed at the typical points of your flight. No effect on landing score or flight report.",
+    "laufender_flug": "Current flight",
+    "leer": "No flights in the log book yet. After your next flight you will see here what you ticked off.",
+    "zurueck": "Back to all flights",
+    "flug": "Flight",
+    "nachts": "night",
+    "fuss_privat": "Only you and flight operations can see this log book. Other pilots see nothing of it.",
+    "bilanz": "{{ok}} of {{von}} items done",
+    "bilanz_kurz": "{{ok}} of {{von}}",
+    "satz_alles": "Clean flight, everything ticked off.",
+    "satz_teil": "Grey means not this time. Did ATC instruct otherwise? Tap the item.",
+    "zusaetzlich": "extra",
+    "dieses_flugzeug": "This aircraft",
+    "profil_leer": "There is no altitude profile for this flight yet.",
+    "profil_tippen": "Tap an item to see the moment.",
+    "atc_markieren": "As instructed by ATC",
+    "atc_zuruecknehmen": "Remove mark",
+    "atc_erklaerung": "Then counts as done.",
+    "variante": {
+      "checkliste": "Checklist",
+      "profil": "Flight profile"
+    },
+    "abschnitt": {
+      "vor_dem_rollen": "Before taxi",
+      "rollen": "Taxi",
+      "start": "Takeoff",
+      "reiseflug": "Cruise",
+      "anflug": "Approach and landing",
+      "nach_der_landung": "After landing"
+    },
+    "regel": {
+      "beacon_anlassen": "BEACON",
+      "nav_lichter": "NAV LIGHTS",
+      "parkbremse_geloest": "PARKING BRAKE",
+      "rolltempo_abflug": "TAXI SPEED",
+      "strobes_start": "STROBES",
+      "landelicht_start": "LANDING LIGHTS",
+      "transponder_start": "TRANSPONDER",
+      "tcas_start": "TCAS",
+      "klappen_start": "FLAPS",
+      "anschnall_start": "SEAT BELTS",
+      "apu_reiseflug": "APU",
+      "landelicht_anflug": "LANDING LIGHTS",
+      "autobrake_landung": "AUTOBRAKE",
+      "spoiler_landung": "SPOILERS",
+      "anschnall_landung": "SEAT BELTS",
+      "rolltempo_ankunft": "TAXI SPEED"
+    },
+    "soll": {
+      "beacon_anlassen": "ON",
+      "nav_lichter": "ON",
+      "parkbremse_geloest": "RELEASED",
+      "rolltempo_abflug": "WITHIN LIMIT",
+      "strobes_start": "ON",
+      "landelicht_start": "ON",
+      "transponder_start": "ALT",
+      "tcas_start": "TA/RA",
+      "klappen_start": "SET",
+      "anschnall_start": "ON",
+      "apu_reiseflug": "OFF",
+      "landelicht_anflug": "ON",
+      "autobrake_landung": "SET",
+      "spoiler_landung": "ARMED",
+      "anschnall_landung": "ON",
+      "rolltempo_ankunft": "WITHIN LIMIT"
+    },
+    "kurz": {
+      "beacon_anlassen": "Beacon at engine start",
+      "nav_lichter": "Navigation lights",
+      "parkbremse_geloest": "Parking brake released",
+      "rolltempo_abflug": "Taxi speed to the runway",
+      "strobes_start": "Strobes for takeoff",
+      "landelicht_start": "Landing lights for takeoff",
+      "transponder_start": "Transponder with altitude",
+      "tcas_start": "TA/RA for takeoff",
+      "klappen_start": "Takeoff flaps",
+      "anschnall_start": "Seat belt sign for takeoff",
+      "apu_reiseflug": "APU off in cruise",
+      "landelicht_anflug": "Landing lights on approach",
+      "autobrake_landung": "Autobrake set",
+      "spoiler_landung": "Spoilers armed",
+      "anschnall_landung": "Seat belt sign for landing",
+      "rolltempo_ankunft": "Taxi speed after landing"
+    },
+    "frage": {
+      "beacon_anlassen": "Beacon?",
+      "nav_lichter": "Nav lights?",
+      "parkbremse_geloest": "Parking brake?",
+      "rolltempo_abflug": "Taxi speed?",
+      "strobes_start": "Strobes?",
+      "landelicht_start": "Landing lights?",
+      "transponder_start": "Transponder?",
+      "tcas_start": "TA/RA?",
+      "klappen_start": "Flaps?",
+      "anschnall_start": "Seat belts?",
+      "apu_reiseflug": "APU?",
+      "landelicht_anflug": "Landing lights?",
+      "autobrake_landung": "Autobrake?",
+      "spoiler_landung": "Spoilers?",
+      "anschnall_landung": "Seat belts?",
+      "rolltempo_ankunft": "Taxi speed?"
+    },
+    "status": {
+      "offen": "open",
+      "erledigt": "done",
+      "diesmal_ohne": "not this time",
+      "nach_atc": "as instructed by ATC",
+      "nicht_messbar": "not measurable",
+      "nicht_anwendbar": "did not occur"
+    },
+    "nicht_messbar": {
+      "wert_fehlt": "{{flugzeug}} does not report {{was}} to AeroACARS. This item therefore counts neither for nor against you.",
+      "kein_tcas_modus": "This aircraft only reports the transponder mode, not TA/RA. As soon as we find a way, the item will appear here by itself. It counts neither for nor against you."
+    },
+    "was": {
+      "beacon": "the beacon",
+      "strobes": "the strobes",
+      "nav": "the navigation lights",
+      "transponder": "the transponder mode",
+      "landelicht": "the landing lights",
+      "rolltempo": "the taxi speed",
+      "parkbremse": "the parking brake",
+      "apu": "the APU switch",
+      "autobrake": "the autobrake setting",
+      "spoiler": "the spoiler setting",
+      "anschnallzeichen": "the seat belt sign",
+      "klappen": "the flaps"
+    },
+    "schalter": {
+      "beacon": "Beacon",
+      "strobes": "Strobes",
+      "nav": "Nav lights",
+      "transponder": "Transponder",
+      "landelicht": "Landing lights",
+      "rolltempo": "Taxi speed",
+      "parkbremse": "Parking brake",
+      "apu": "APU",
+      "autobrake": "Autobrake",
+      "spoiler": "Spoilers",
+      "anschnallzeichen": "Seat belts",
+      "klappen": "Flaps"
+    },
+    "klasse": {
+      "airliner": "Airliner",
+      "business_jet": "Business jet",
+      "ga": "Light aircraft"
+    },
+    "aus": {
+      "ga": "The log book is switched off for light aircraft. You can switch it on in Settings under “Log book”.",
+      "vfr": "The log book is switched off for VFR flights. You can switch it on in Settings under “Log book”."
+    },
+    "aus_kurz": {
+      "ga": "off (GA)",
+      "vfr": "off (VFR)"
+    },
+    "zelle": {
+      "ok": "done",
+      "atc": "as instructed by ATC",
+      "ohne": "not this time",
+      "nm": "aircraft does not report this",
+      "leer": "did not occur"
+    },
+    "routine": {
+      "titel": "Your routine · last {{count}} flights",
+      "titel_kurz": "Your routine",
+      "privat": "Only visible to you",
+      "leer": "After a few flights you will see here which habits have already stuck.",
+      "in_folge": "{{count}} in a row",
+      "rekord": "New: {{was}} {{count}} in a row, your longest streak so far.",
+      "zieht_an": "{{was}} is picking up: done on {{von5}} of the last 5 flights."
+    },
+    "einst": {
+      "titel": "Log book",
+      "erklaerung": "The log book ticks off what you completed at the typical points of a flight. It only counts what worked and has no effect on landing score, flight report or approval. Settings and history are also stored on the server and come back after a reinstall.",
+      "hinweise": "Quiet hint in flight",
+      "hinweise_hint": "At key points a short question such as “Strobes?” and a green tick when an item is done. Disappears after a few seconds.",
+      "ga": "Also for light aircraft (GA)",
+      "ga_hint": "Off by default. GA has its own rules: taxi speed 20 kt, no items for flaps, APU, autobrake, spoilers and seat belts.",
+      "vfr": "Also for VFR flights",
+      "vfr_hint": "Off by default. The rules are the same as for IFR.",
+      "gruppe": {
+        "lichter": "Lights and indications",
+        "boden": "On the ground",
+        "anflug": "Approach (airliners and business jets)"
+      },
+      "regel": {
+        "beacon": "Beacon before pushback or engine start",
+        "strobes": "Strobes on the runway (AUTO counts)",
+        "nav": "Navigation lights with engines running",
+        "transponder": "Transponder to ALT or TA/RA for takeoff",
+        "landelicht": "Landing lights for takeoff and below FL100",
+        "rolltempo": "Taxi speed within limit",
+        "parkbremse": "Parking brake released before taxi",
+        "apu": "APU off in cruise (only with APU)",
+        "autobrake": "Autobrake before landing",
+        "spoiler": "Spoilers armed before landing",
+        "anschnallzeichen": "Seat belt sign for takeoff and landing (AUTO counts)",
+        "klappen": "Takeoff flaps set"
+      },
+      "regel_hint": {
+        "beacon": "At the latest when the first engine is running (14 CFR 91.209, SERA.3215).",
+        "strobes": "During the takeoff roll. For light aircraft only a confirmation.",
+        "nav": "When you start to taxi. Required for everyone at night, for GA by day only a confirmation.",
+        "transponder": "With altitude reporting. Airliners and business jets with TCAS additionally TA/RA (AIM 4-1-20).",
+        "landelicht": "During the takeoff roll and when descending below 10,000 ft (AIM 4-3-24). For GA the taxi light counts too.",
+        "rolltempo": "Only counts when you taxi above the limit for more than 10 seconds, never on the runway or the exit.",
+        "parkbremse": "When you start to taxi, not during pushback.",
+        "apu": "Only shown when done. There are many regular exceptions.",
+        "autobrake": "Only shown when done. Manual braking is regular.",
+        "spoiler": "From 1,000 ft above ground until touchdown.",
+        "anschnallzeichen": "During the takeoff roll and on final approach (14 CFR 121.317).",
+        "klappen": "During the takeoff roll. For business jets allowed to take off with flaps 0, only a confirmation."
+      },
+      "rolltempo_kt": "Limit airliner and business jet",
+      "rolltempo_ga_kt": "Limit light aircraft",
+      "klassen": "Aircraft class by hand",
+      "klassen_hint": "AeroACARS determines the class from the aircraft type. If it is wrong, enter the ICAO type or the registration here.",
+      "entfernen": "Remove",
+      "schluessel_platzhalter": "C700 or D-ABCD",
+      "hinzufuegen": "Add",
+      "nicht_dabei": "Deliberately not included: 250 kt below FL100 (exceptions in Germany and the UK, green dot, ATC clearances) and bank angle limits (false alarms from weather and stutters).",
+      "nicht_messbar": "Items your aircraft does not report to AeroACARS appear in the log book as “not measurable” with a reason. They count neither for nor against you."
+    },
+    "wert_atc": "PER ATC"
   }
 }

@@ -16,7 +16,8 @@
     "cpdlc": "PDC/CPDLC",
     "chat": "Chat",
     "telemetrie": "Telemetria",
-    "notizblock": "Blocco note"
+    "notizblock": "Blocco note",
+    "bordbuch": "Diario di bordo"
   },
   "nav": {
     "news": "Notizie",
@@ -1151,7 +1152,9 @@
       "required_hint": "Account SimBrief + comportamento di registrazione volo — la base per i dati del piano di volo e il tracking automatico.",
       "extras_hint": "Impostazioni opzionali di comfort — aspetto, comportamento, Discord presence.",
       "plugins_hint": "Add-on specifici per aereo: PMDG SDK (Boeing) e plugin AeroACARS X-Plane. Rilevati automaticamente al caricamento dell'aereo corrispondente.",
-      "tech_hint": "Diagnostica, strumenti di debug e funzioni di manutenzione rare."
+      "tech_hint": "Diagnostica, strumenti di debug e funzioni di manutenzione rare.",
+      "bordbuch": "📓 Diario di bordo",
+      "bordbuch_hint": "Cosa spunta il diario di bordo, suggerimenti discreti in volo, aerei leggeri e VFR."
     },
     "appearance_section": "Lingua e aspetto",
     "language_label": "Lingua",
@@ -3033,5 +3036,232 @@
     "wirklich_loeschen": "Cancellare davvero tutto?",
     "flaeche": "Area di scrittura",
     "nicht_gespeichert": "Non salvato — la memoria del dispositivo è piena o il browser è in modalità privata. Ciò che vedi andrà perso ricaricando."
+  },
+  "bordbuch": {
+    "titel": "Diario di bordo",
+    "untertitel": "Ciò che hai completato nei punti tipici del tuo volo. Nessun effetto sulla valutazione dell'atterraggio o sul rapporto di volo.",
+    "laufender_flug": "Volo in corso",
+    "leer": "Ancora nessun volo nel diario di bordo. Dopo il tuo prossimo volo qui vedrai cosa hai spuntato.",
+    "zurueck": "Torna a tutti i voli",
+    "flug": "Volo",
+    "nachts": "di notte",
+    "fuss_privat": "Solo tu e le operazioni di volo vedete questo diario. Gli altri piloti non ne vedono nulla.",
+    "bilanz": "{{ok}} di {{von}} voci completate",
+    "bilanz_kurz": "{{ok}} di {{von}}",
+    "satz_alles": "Volo pulito, tutto spuntato.",
+    "satz_teil": "Grigio significa non questa volta. L'ATC ha dato istruzioni diverse? Tocca la voce.",
+    "zusaetzlich": "extra",
+    "dieses_flugzeug": "Questo aereo",
+    "profil_leer": "Per questo volo non c'è ancora un profilo di quota.",
+    "profil_tippen": "Tocca una voce per vedere il momento.",
+    "atc_markieren": "Su istruzione ATC",
+    "atc_zuruecknehmen": "Rimuovi segno",
+    "atc_erklaerung": "Conta allora come completata.",
+    "variante": {
+      "checkliste": "Checklist",
+      "profil": "Profilo di volo"
+    },
+    "abschnitt": {
+      "vor_dem_rollen": "Prima del rullaggio",
+      "rollen": "Rullaggio",
+      "start": "Decollo",
+      "reiseflug": "Crociera",
+      "anflug": "Avvicinamento e atterraggio",
+      "nach_der_landung": "Dopo l'atterraggio"
+    },
+    "regel": {
+      "beacon_anlassen": "BEACON",
+      "nav_lichter": "NAV LIGHTS",
+      "parkbremse_geloest": "FRENO DI STAZ.",
+      "rolltempo_abflug": "VELOCITÀ RULLAGGIO",
+      "strobes_start": "STROBES",
+      "landelicht_start": "LUCI ATTERRAGGIO",
+      "transponder_start": "TRANSPONDER",
+      "tcas_start": "TCAS",
+      "klappen_start": "FLAP",
+      "anschnall_start": "CINTURE",
+      "apu_reiseflug": "APU",
+      "landelicht_anflug": "LUCI ATTERRAGGIO",
+      "autobrake_landung": "AUTOBRAKE",
+      "spoiler_landung": "SPOILER",
+      "anschnall_landung": "CINTURE",
+      "rolltempo_ankunft": "VELOCITÀ RULLAGGIO"
+    },
+    "soll": {
+      "beacon_anlassen": "ON",
+      "nav_lichter": "ON",
+      "parkbremse_geloest": "RILASCIATO",
+      "rolltempo_abflug": "NEI LIMITI",
+      "strobes_start": "ON",
+      "landelicht_start": "ON",
+      "transponder_start": "ALT",
+      "tcas_start": "TA/RA",
+      "klappen_start": "IMPOSTATI",
+      "anschnall_start": "ON",
+      "apu_reiseflug": "OFF",
+      "landelicht_anflug": "ON",
+      "autobrake_landung": "IMPOSTATO",
+      "spoiler_landung": "ARMED",
+      "anschnall_landung": "ON",
+      "rolltempo_ankunft": "NEI LIMITI"
+    },
+    "kurz": {
+      "beacon_anlassen": "Beacon all'avviamento",
+      "nav_lichter": "Luci di navigazione",
+      "parkbremse_geloest": "Freno di stazionamento rilasciato",
+      "rolltempo_abflug": "Velocità di rullaggio verso la pista",
+      "strobes_start": "Strobes per il decollo",
+      "landelicht_start": "Luci di atterraggio per il decollo",
+      "transponder_start": "Transponder con quota",
+      "tcas_start": "TA/RA per il decollo",
+      "klappen_start": "Flap di decollo",
+      "anschnall_start": "Segnale cinture per il decollo",
+      "apu_reiseflug": "APU spento in crociera",
+      "landelicht_anflug": "Luci di atterraggio in avvicinamento",
+      "autobrake_landung": "Autobrake impostato",
+      "spoiler_landung": "Spoiler armati",
+      "anschnall_landung": "Segnale cinture per l'atterraggio",
+      "rolltempo_ankunft": "Velocità di rullaggio dopo l'atterraggio"
+    },
+    "frage": {
+      "beacon_anlassen": "Beacon?",
+      "nav_lichter": "Luci di navigazione?",
+      "parkbremse_geloest": "Freno di stazionamento?",
+      "rolltempo_abflug": "Velocità di rullaggio?",
+      "strobes_start": "Strobes?",
+      "landelicht_start": "Luci di atterraggio?",
+      "transponder_start": "Transponder?",
+      "tcas_start": "TA/RA?",
+      "klappen_start": "Flap?",
+      "anschnall_start": "Cinture?",
+      "apu_reiseflug": "APU?",
+      "landelicht_anflug": "Luci di atterraggio?",
+      "autobrake_landung": "Autobrake?",
+      "spoiler_landung": "Spoiler?",
+      "anschnall_landung": "Cinture?",
+      "rolltempo_ankunft": "Velocità di rullaggio?"
+    },
+    "status": {
+      "offen": "aperto",
+      "erledigt": "completato",
+      "diesmal_ohne": "non questa volta",
+      "nach_atc": "su istruzione ATC",
+      "nicht_messbar": "non misurabile",
+      "nicht_anwendbar": "non avvenuto"
+    },
+    "nicht_messbar": {
+      "wert_fehlt": "{{flugzeug}} non comunica {{was}} ad AeroACARS. Questa voce quindi non conta né a favore né contro di te.",
+      "kein_tcas_modus": "Questo aereo comunica solo la modalità del transponder, non TA/RA. Appena troveremo un modo, la voce apparirà qui da sola. Non conta né a favore né contro di te."
+    },
+    "was": {
+      "beacon": "il beacon",
+      "strobes": "gli strobes",
+      "nav": "le luci di navigazione",
+      "transponder": "la modalità del transponder",
+      "landelicht": "le luci di atterraggio",
+      "rolltempo": "la velocità di rullaggio",
+      "parkbremse": "il freno di stazionamento",
+      "apu": "l'interruttore dell'APU",
+      "autobrake": "l'impostazione dell'autobrake",
+      "spoiler": "la posizione degli spoiler",
+      "anschnallzeichen": "il segnale cinture",
+      "klappen": "i flap"
+    },
+    "schalter": {
+      "beacon": "Beacon",
+      "strobes": "Strobes",
+      "nav": "Luci di navigazione",
+      "transponder": "Transponder",
+      "landelicht": "Luci di atterraggio",
+      "rolltempo": "Velocità di rullaggio",
+      "parkbremse": "Freno di stazionamento",
+      "apu": "APU",
+      "autobrake": "Autobrake",
+      "spoiler": "Spoiler",
+      "anschnallzeichen": "Cinture",
+      "klappen": "Flap"
+    },
+    "klasse": {
+      "airliner": "Aereo di linea",
+      "business_jet": "Business jet",
+      "ga": "Aereo leggero"
+    },
+    "aus": {
+      "ga": "Il diario di bordo è disattivato per gli aerei leggeri. Puoi attivarlo nelle Impostazioni alla voce “Diario di bordo”.",
+      "vfr": "Il diario di bordo è disattivato per i voli VFR. Puoi attivarlo nelle Impostazioni alla voce “Diario di bordo”."
+    },
+    "aus_kurz": {
+      "ga": "disattivato (GA)",
+      "vfr": "disattivato (VFR)"
+    },
+    "zelle": {
+      "ok": "completato",
+      "atc": "su istruzione ATC",
+      "ohne": "non questa volta",
+      "nm": "l'aereo non lo comunica",
+      "leer": "non avvenuto"
+    },
+    "routine": {
+      "titel": "La tua routine · ultimi {{count}} voli",
+      "titel_kurz": "La tua routine",
+      "privat": "Visibile solo a te",
+      "leer": "Dopo qualche volo qui vedrai quali gesti sono già diventati abitudine.",
+      "in_folge": "{{count}} di fila",
+      "rekord": "Novità: {{was}} {{count}} di fila, la tua serie più lunga finora.",
+      "zieht_an": "{{was}} sta migliorando: fatto in {{von5}} degli ultimi 5 voli."
+    },
+    "einst": {
+      "titel": "Diario di bordo",
+      "erklaerung": "Il diario di bordo spunta ciò che hai completato nei punti tipici di un volo. Conta solo ciò che è riuscito e non ha alcun effetto su valutazione dell'atterraggio, rapporto di volo o approvazione. Impostazioni e cronologia sono salvate anche sul server e tornano dopo una reinstallazione.",
+      "hinweise": "Suggerimento discreto in volo",
+      "hinweise_hint": "Nei punti chiave una breve domanda come “Strobes?” e una spunta verde quando una voce è completata. Scompare dopo pochi secondi.",
+      "ga": "Anche per aerei leggeri (GA)",
+      "ga_hint": "Disattivato per impostazione predefinita. Per la GA valgono regole proprie: velocità di rullaggio 20 kt, nessuna voce su flap, APU, autobrake, spoiler e cinture.",
+      "vfr": "Anche per voli VFR",
+      "vfr_hint": "Disattivato per impostazione predefinita. Le regole sono le stesse dell'IFR.",
+      "gruppe": {
+        "lichter": "Luci e indicazioni",
+        "boden": "A terra",
+        "anflug": "Avvicinamento (aerei di linea e business jet)"
+      },
+      "regel": {
+        "beacon": "Beacon prima del pushback o dell'avviamento",
+        "strobes": "Strobes in pista (AUTO conta)",
+        "nav": "Luci di navigazione con motori accesi",
+        "transponder": "Transponder su ALT o TA/RA per il decollo",
+        "landelicht": "Luci di atterraggio al decollo e sotto FL100",
+        "rolltempo": "Velocità di rullaggio nei limiti",
+        "parkbremse": "Freno di stazionamento rilasciato prima del rullaggio",
+        "apu": "APU spento in crociera (solo con APU)",
+        "autobrake": "Autobrake prima dell'atterraggio",
+        "spoiler": "Spoiler armati prima dell'atterraggio",
+        "anschnallzeichen": "Segnale cinture a decollo e atterraggio (AUTO conta)",
+        "klappen": "Flap di decollo impostati"
+      },
+      "regel_hint": {
+        "beacon": "Al più tardi quando il primo motore è in moto (14 CFR 91.209, SERA.3215).",
+        "strobes": "Durante la corsa di decollo. Per aerei leggeri solo una conferma.",
+        "nav": "All'inizio del rullaggio. Di notte obbligatorio per tutti, di giorno per la GA solo una conferma.",
+        "transponder": "Con trasmissione della quota. Aerei di linea e business jet con TCAS anche TA/RA (AIM 4-1-20).",
+        "landelicht": "Durante la corsa di decollo e in discesa sotto 10.000 ft (AIM 4-3-24). Per la GA conta anche la luce di rullaggio.",
+        "rolltempo": "Conta solo se rulli oltre il limite per più di 10 secondi, mai in pista o sulla via di uscita.",
+        "parkbremse": "All'inizio del rullaggio, non durante il pushback.",
+        "apu": "Appare solo se completato. Ci sono molte eccezioni regolari.",
+        "autobrake": "Appare solo se completato. La frenata manuale è regolare.",
+        "spoiler": "Da 1.000 ft sopra il suolo fino al contatto.",
+        "anschnallzeichen": "Durante la corsa di decollo e in finale (14 CFR 121.317).",
+        "klappen": "Durante la corsa di decollo. Per i business jet che possono decollare con flap 0, solo una conferma."
+      },
+      "rolltempo_kt": "Limite aerei di linea e business jet",
+      "rolltempo_ga_kt": "Limite aerei leggeri",
+      "klassen": "Classe dell'aereo a mano",
+      "klassen_hint": "AeroACARS determina la classe dal tipo di aereo. Se è sbagliata, inserisci qui il tipo ICAO o la marca.",
+      "entfernen": "Rimuovi",
+      "schluessel_platzhalter": "C700 o D-ABCD",
+      "hinzufuegen": "Aggiungi",
+      "nicht_dabei": "Volutamente escluso: 250 kt sotto FL100 (eccezioni in Germania e Regno Unito, green dot, autorizzazioni ATC) e limiti di inclinazione (falsi allarmi dovuti a meteo e scatti).",
+      "nicht_messbar": "Le voci che il tuo aereo non comunica ad AeroACARS appaiono nel diario come “non misurabile” con il motivo. Non contano né a favore né contro di te."
+    },
+    "wert_atc": "SU ATC"
   }
 }

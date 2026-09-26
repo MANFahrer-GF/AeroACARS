@@ -55,6 +55,9 @@ vi.mock("../lib/ipc", () => ({
     }
     // Prüfstatus beim Live-Server (seit DLH 880) — für diese Tests ohne Belang.
     if (cmd === "pirep_pruefstatus") return Promise.resolve([]);
+    // Bordbuch-Routine im Logbuch (seit 26.09.2026) — ebenfalls ohne Belang.
+    if (cmd === "bordbuch_liste") return Promise.resolve([]);
+    if (cmd === "bordbuch_einstellungen_holen") return Promise.resolve({ regeln: {} });
     // Der Detailabruf bleibt offen, bis der Test ihn auflöst.
     return new Promise((resolve) => h.pending.push(resolve));
   },

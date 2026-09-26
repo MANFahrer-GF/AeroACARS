@@ -43,6 +43,8 @@ const loadLogbookView = () =>
   import("./components/LogbookView").then((m) => ({ default: m.LogbookView }));
 const loadLandingPanel = () =>
   import("./components/LandingPanel").then((m) => ({ default: m.LandingPanel }));
+const loadBordbuchView = () =>
+  import("./components/bordbuch/BordbuchView").then((m) => ({ default: m.BordbuchView }));
 const loadReleaseNotesModal = () =>
   import("./components/ReleaseNotesModal").then((m) => ({ default: m.ReleaseNotesModal }));
 const loadCpdlcPanel = () =>
@@ -52,6 +54,7 @@ const loadCpdlcPanel = () =>
 const LAZY_VIEWS = [
   loadCpdlcPanel,        // klein, oft gebraucht → zuerst
   loadLandingPanel,
+  loadBordbuchView,
   loadLogbookView,
   loadLiveMapView,       // der 1,7-MB-Brocken zuletzt
   loadReleaseNotesModal,
@@ -87,6 +90,7 @@ function prefetchViews(): void {
 const LiveMapView = lazy(loadLiveMapView);
 const LogbookView = lazy(loadLogbookView);
 const LandingPanel = lazy(loadLandingPanel);
+const BordbuchView = lazy(loadBordbuchView);
 const ReleaseNotesModal = lazy(loadReleaseNotesModal);
 const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
@@ -125,7 +129,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "telemetrie" | "notizblock" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "bordbuch" | "telemetrie" | "notizblock" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -724,6 +728,13 @@ function App() {
       // Still scheitern: Wer keinen Live-Server-Zugang hat, soll deswegen
       // keinen Fehler sehen — die Sicherung ist Zusatz, nicht Voraussetzung.
       .catch(() => undefined);
+    // Bordbuch (26.09.2026): Einträge und Einstellungen vom Server holen —
+    // nach einer Neuinstallation ist beides wieder da. Ebenso still.
+    void invoke<number>("bordbuch_wiederherstellen")
+      .then((n) => {
+        if (n > 0) console.info(`[bordbuch] ${n} Einträge vom Server ergänzt`);
+      })
+      .catch(() => undefined);
   }, [status.kind]);
 
   // Die Piloten-Kennung des Servers ist die phpVMS-Benutzer-id als Text
@@ -1091,6 +1102,12 @@ function App() {
       {status.kind === "loggedIn" && tab === "landing" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
           <LandingPanel />
+        </Suspense>
+      )}
+
+      {status.kind === "loggedIn" && tab === "bordbuch" && (
+        <Suspense fallback={<div className="lazy-fallback">…</div>}>
+          <BordbuchView />
         </Suspense>
       )}
 

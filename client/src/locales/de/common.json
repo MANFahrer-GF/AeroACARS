@@ -16,7 +16,8 @@
     "cpdlc": "PDC/CPDLC",
     "chat": "Chat",
     "telemetrie": "Telemetrie",
-    "notizblock": "Notizblock"
+    "notizblock": "Notizblock",
+    "bordbuch": "Bordbuch"
   },
   "nav": {
     "news": "Nachrichten",
@@ -1151,7 +1152,9 @@
       "required_hint": "SimBrief-Konto + Flug-Aufzeichnungs-Verhalten — Basis für Flugplan-Daten und automatisches Tracking.",
       "extras_hint": "Optionale Komfort-Einstellungen — Darstellung, Verhalten, Discord-Status.",
       "plugins_hint": "Flugzeug-spezifische Add-ons: PMDG-SDK (Boeing) und AeroACARS-X-Plane-Plugin. Werden automatisch erkannt sobald das passende Flugzeug geladen ist.",
-      "tech_hint": "Diagnose, Debug-Werkzeuge und seltene Maintenance-Funktionen."
+      "tech_hint": "Diagnose, Debug-Werkzeuge und seltene Maintenance-Funktionen.",
+      "bordbuch": "📓 Bordbuch",
+      "bordbuch_hint": "Was das Bordbuch abhakt, leise Hinweise im Flug, Kleinflugzeuge und VFR."
     },
     "appearance_section": "Sprache & Darstellung",
     "language_label": "Sprache",
@@ -3033,5 +3036,232 @@
     "wirklich_loeschen": "Wirklich alles löschen?",
     "flaeche": "Schreibfläche",
     "nicht_gespeichert": "Nicht gespeichert — der Speicher des Geräts ist voll oder der Browser ist im privaten Modus. Was du siehst, geht beim Neuladen verloren."
+  },
+  "bordbuch": {
+    "titel": "Bordbuch",
+    "untertitel": "Was du an den typischen Stellen deines Flugs erledigt hast. Kein Einfluss auf Landebewertung oder Flugbericht.",
+    "laufender_flug": "Laufender Flug",
+    "leer": "Noch keine Flüge im Bordbuch. Nach deinem nächsten Flug steht hier, was du abgehakt hast.",
+    "zurueck": "Zurück zu allen Flügen",
+    "flug": "Flug",
+    "nachts": "nachts",
+    "fuss_privat": "Nur du und die Flugbetriebsleitung sehen dieses Bordbuch. Andere Piloten sehen nichts davon.",
+    "bilanz": "{{ok}} von {{von}} Punkten erledigt",
+    "bilanz_kurz": "{{ok}} von {{von}}",
+    "satz_alles": "Sauberer Flug, alles abgehakt.",
+    "satz_teil": "Grau heißt diesmal ohne. Hat ATC etwas anderes angewiesen? Tippe den Punkt an.",
+    "zusaetzlich": "zusätzlich",
+    "dieses_flugzeug": "Dieses Flugzeug",
+    "profil_leer": "Für diesen Flug gibt es noch kein Höhenprofil.",
+    "profil_tippen": "Tippe einen Punkt an, um den Moment zu sehen.",
+    "atc_markieren": "Nach ATC-Anweisung",
+    "atc_zuruecknehmen": "Markierung zurücknehmen",
+    "atc_erklaerung": "Zählt dann als erledigt.",
+    "variante": {
+      "checkliste": "Checkliste",
+      "profil": "Flugprofil"
+    },
+    "abschnitt": {
+      "vor_dem_rollen": "Vor dem Rollen",
+      "rollen": "Rollen",
+      "start": "Start",
+      "reiseflug": "Reiseflug",
+      "anflug": "Anflug und Landung",
+      "nach_der_landung": "Nach der Landung"
+    },
+    "regel": {
+      "beacon_anlassen": "BEACON",
+      "nav_lichter": "NAV LIGHTS",
+      "parkbremse_geloest": "PARKBREMSE",
+      "rolltempo_abflug": "ROLLTEMPO",
+      "strobes_start": "STROBES",
+      "landelicht_start": "LANDELICHT",
+      "transponder_start": "TRANSPONDER",
+      "tcas_start": "TCAS",
+      "klappen_start": "KLAPPEN",
+      "anschnall_start": "ANSCHNALLZEICHEN",
+      "apu_reiseflug": "APU",
+      "landelicht_anflug": "LANDELICHT",
+      "autobrake_landung": "AUTOBRAKE",
+      "spoiler_landung": "SPOILER",
+      "anschnall_landung": "ANSCHNALLZEICHEN",
+      "rolltempo_ankunft": "ROLLTEMPO"
+    },
+    "soll": {
+      "beacon_anlassen": "ON",
+      "nav_lichter": "ON",
+      "parkbremse_geloest": "GELÖST",
+      "rolltempo_abflug": "IM RAHMEN",
+      "strobes_start": "ON",
+      "landelicht_start": "ON",
+      "transponder_start": "ALT",
+      "tcas_start": "TA/RA",
+      "klappen_start": "GESETZT",
+      "anschnall_start": "ON",
+      "apu_reiseflug": "OFF",
+      "landelicht_anflug": "ON",
+      "autobrake_landung": "GESETZT",
+      "spoiler_landung": "ARMED",
+      "anschnall_landung": "ON",
+      "rolltempo_ankunft": "IM RAHMEN"
+    },
+    "kurz": {
+      "beacon_anlassen": "Beacon beim Anlassen",
+      "nav_lichter": "Navigationslichter",
+      "parkbremse_geloest": "Parkbremse gelöst",
+      "rolltempo_abflug": "Rolltempo zum Start",
+      "strobes_start": "Strobes beim Start",
+      "landelicht_start": "Landelicht beim Start",
+      "transponder_start": "Transponder mit Höhe",
+      "tcas_start": "TA/RA beim Start",
+      "klappen_start": "Startklappen",
+      "anschnall_start": "Anschnallzeichen beim Start",
+      "apu_reiseflug": "APU im Reiseflug aus",
+      "landelicht_anflug": "Landelicht im Anflug",
+      "autobrake_landung": "Autobrake gesetzt",
+      "spoiler_landung": "Spoiler scharf",
+      "anschnall_landung": "Anschnallzeichen zur Landung",
+      "rolltempo_ankunft": "Rolltempo nach der Landung"
+    },
+    "frage": {
+      "beacon_anlassen": "Beacon?",
+      "nav_lichter": "Nav Lights?",
+      "parkbremse_geloest": "Parkbremse?",
+      "rolltempo_abflug": "Rolltempo?",
+      "strobes_start": "Strobes?",
+      "landelicht_start": "Landelicht?",
+      "transponder_start": "Transponder?",
+      "tcas_start": "TA/RA?",
+      "klappen_start": "Klappen?",
+      "anschnall_start": "Anschnallzeichen?",
+      "apu_reiseflug": "APU?",
+      "landelicht_anflug": "Landelicht?",
+      "autobrake_landung": "Autobrake?",
+      "spoiler_landung": "Spoiler?",
+      "anschnall_landung": "Anschnallzeichen?",
+      "rolltempo_ankunft": "Rolltempo?"
+    },
+    "status": {
+      "offen": "offen",
+      "erledigt": "erledigt",
+      "diesmal_ohne": "diesmal ohne",
+      "nach_atc": "nach ATC-Anweisung",
+      "nicht_messbar": "nicht messbar",
+      "nicht_anwendbar": "kam nicht vor"
+    },
+    "nicht_messbar": {
+      "wert_fehlt": "{{flugzeug}} meldet {{was}} nicht an AeroACARS. Dieser Punkt zählt deshalb weder mit noch gegen dich.",
+      "kein_tcas_modus": "Dieses Flugzeug liefert nur den Transponder-Modus, nicht TA/RA. Sobald wir einen Weg finden, erscheint der Punkt hier von selbst. Er zählt weder mit noch gegen dich."
+    },
+    "was": {
+      "beacon": "das Beacon",
+      "strobes": "die Strobes",
+      "nav": "die Navigationslichter",
+      "transponder": "den Transponder-Modus",
+      "landelicht": "das Landelicht",
+      "rolltempo": "das Rolltempo",
+      "parkbremse": "die Parkbremse",
+      "apu": "den APU-Schalter",
+      "autobrake": "die Autobrake-Stellung",
+      "spoiler": "die Spoiler-Stellung",
+      "anschnallzeichen": "das Anschnallzeichen",
+      "klappen": "die Klappen"
+    },
+    "schalter": {
+      "beacon": "Beacon",
+      "strobes": "Strobes",
+      "nav": "Nav Lights",
+      "transponder": "Transponder",
+      "landelicht": "Landelicht",
+      "rolltempo": "Rolltempo",
+      "parkbremse": "Parkbremse",
+      "apu": "APU",
+      "autobrake": "Autobrake",
+      "spoiler": "Spoiler",
+      "anschnallzeichen": "Anschnallzeichen",
+      "klappen": "Klappen"
+    },
+    "klasse": {
+      "airliner": "Airliner",
+      "business_jet": "Business Jet",
+      "ga": "Kleinflugzeug"
+    },
+    "aus": {
+      "ga": "Das Bordbuch ist für Kleinflugzeuge ausgeschaltet. Du kannst es in den Einstellungen unter „Bordbuch“ einschalten.",
+      "vfr": "Das Bordbuch ist für VFR-Flüge ausgeschaltet. Du kannst es in den Einstellungen unter „Bordbuch“ einschalten."
+    },
+    "aus_kurz": {
+      "ga": "aus (GA)",
+      "vfr": "aus (VFR)"
+    },
+    "zelle": {
+      "ok": "erledigt",
+      "atc": "nach ATC-Anweisung",
+      "ohne": "diesmal ohne",
+      "nm": "Flugzeug meldet das nicht",
+      "leer": "kam nicht vor"
+    },
+    "routine": {
+      "titel": "Deine Routine · letzte {{count}} Flüge",
+      "titel_kurz": "Deine Routine",
+      "privat": "Nur für dich sichtbar",
+      "leer": "Nach ein paar Flügen siehst du hier, welche Handgriffe schon sitzen.",
+      "in_folge": "{{count}} in Folge",
+      "rekord": "Neu: {{was}} {{count}} in Folge, längste Serie bisher.",
+      "zieht_an": "{{was}} zieht an: bei {{von5}} der letzten 5 Flüge dabei."
+    },
+    "einst": {
+      "titel": "Bordbuch",
+      "erklaerung": "Das Bordbuch hakt ab, was du an den typischen Stellen eines Flugs erledigt hast. Es zählt nur, was geklappt hat, und hat keinen Einfluss auf Landebewertung, Flugbericht oder Freigabe. Einstellungen und Verlauf liegen auch auf dem Server und kommen nach einer Neuinstallation zurück.",
+      "hinweise": "Leiser Hinweis im Flug",
+      "hinweise_hint": "An Schlüsselstellen eine kurze Frage wie „Strobes?“ und ein grüner Haken, wenn ein Punkt erledigt ist. Verschwindet nach wenigen Sekunden.",
+      "ga": "Auch für Kleinflugzeuge (GA)",
+      "ga_hint": "Standardmäßig aus. Für GA gelten eigene Regeln: Rolltempo 20 kt, keine Punkte zu Klappen, APU, Autobrake, Spoiler und Anschnallzeichen.",
+      "vfr": "Auch für VFR-Flüge",
+      "vfr_hint": "Standardmäßig aus. Die Regeln sind dieselben wie bei IFR.",
+      "gruppe": {
+        "lichter": "Lichter und Anzeigen",
+        "boden": "Am Boden",
+        "anflug": "Anflug (Airliner und Business Jets)"
+      },
+      "regel": {
+        "beacon": "Beacon vor Pushback oder Anlassen",
+        "strobes": "Strobes auf der Startbahn (AUTO zählt)",
+        "nav": "Navigationslichter bei laufenden Triebwerken",
+        "transponder": "Transponder auf ALT oder TA/RA beim Start",
+        "landelicht": "Landelicht beim Start und unter FL100",
+        "rolltempo": "Rolltempo im Rahmen",
+        "parkbremse": "Parkbremse vor dem Rollen gelöst",
+        "apu": "APU im Reiseflug aus (nur mit APU)",
+        "autobrake": "Autobrake vor der Landung",
+        "spoiler": "Spoiler scharf vor der Landung",
+        "anschnallzeichen": "Anschnallzeichen bei Start und Landung (AUTO zählt)",
+        "klappen": "Startklappen gesetzt"
+      },
+      "regel_hint": {
+        "beacon": "Spätestens, wenn das erste Triebwerk läuft (14 CFR 91.209, SERA.3215).",
+        "strobes": "Beim Startlauf. Für Kleinflugzeuge nur eine Bestätigung.",
+        "nav": "Beim Losrollen. Nachts für alle Pflicht, tagsüber für GA nur eine Bestätigung.",
+        "transponder": "Mit Höhenübermittlung. Airliner und Business Jets mit TCAS zusätzlich TA/RA (AIM 4-1-20).",
+        "landelicht": "Beim Startlauf und im Sinkflug unter 10.000 ft (AIM 4-3-24). Bei GA zählt auch das Taxi-Licht.",
+        "rolltempo": "Zählt nur, wenn du länger als 10 Sekunden über der Grenze rollst, nie auf der Bahn oder dem Abrollweg.",
+        "parkbremse": "Beim Losrollen, nicht beim Pushback.",
+        "apu": "Erscheint nur, wenn erledigt. Es gibt viele reguläre Ausnahmen.",
+        "autobrake": "Erscheint nur, wenn erledigt. Manuelles Bremsen ist regulär.",
+        "spoiler": "Ab 1.000 ft über Grund bis zum Aufsetzen.",
+        "anschnallzeichen": "Beim Startlauf und im Endanflug (14 CFR 121.317).",
+        "klappen": "Beim Startlauf. Bei Business Jets, die mit Klappe 0 starten dürfen, nur eine Bestätigung."
+      },
+      "rolltempo_kt": "Grenze Airliner und Business Jet",
+      "rolltempo_ga_kt": "Grenze Kleinflugzeug",
+      "klassen": "Flugzeugklasse von Hand",
+      "klassen_hint": "AeroACARS bestimmt die Klasse aus dem Flugzeugtyp. Stimmt sie nicht, trage hier den ICAO-Typ oder das Kennzeichen ein.",
+      "entfernen": "Entfernen",
+      "schluessel_platzhalter": "C700 oder D-ABCD",
+      "hinzufuegen": "Hinzufügen",
+      "nicht_dabei": "Bewusst nicht dabei: 250 kt unter FL100 (Ausnahmen in DE und UK, Green Dot, ATC-Freigaben) und Querlage-Grenzen (Fehlalarme durch Wetter und Ruckler).",
+      "nicht_messbar": "Punkte, die dein Flugzeug nicht an AeroACARS meldet, stehen im Bordbuch als „nicht messbar“ mit Grund. Sie zählen weder mit noch gegen dich."
+    },
+    "wert_atc": "NACH ATC"
   }
 }

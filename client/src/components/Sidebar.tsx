@@ -28,6 +28,7 @@ export type Tab =
   | "briefing"
   | "logbook"
   | "landing"
+  | "bordbuch"
   | "telemetrie"
   | "notizblock"
   | "news"
@@ -95,6 +96,11 @@ const I = {
   landing: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 20h18" /><path d="M5 16.5 19.5 12a1.6 1.6 0 0 0-1-3L15 10 9 5 6.5 5.8 10 11l-4 1.3-2.5-1.8-1.3.5L5 16.5z" />
+    </svg>
+  ),
+  bordbuch: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3h11a1 1 0 0 1 1 1v17H7a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1z" /><path d="M5 17.5A1.5 1.5 0 0 1 6.5 16H18" /><path d="m9 8.5 1.6 1.6L14 6.7M9 12.5h5" />
     </svg>
   ),
   news: (
@@ -270,6 +276,7 @@ export function Sidebar({
         )}
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
+        <Item icon={I.bordbuch} label={t("tabs.bordbuch")} active={tab === "bordbuch"} onClick={() => setTab("bordbuch")} />
         {/* v1.8.1: Notizblock fuer den Apple Pencil — nur in der Tablet-
             Ansicht (LAN-Fernbedienung), dort sitzt der Stift. */}
         {!isTauri && (
