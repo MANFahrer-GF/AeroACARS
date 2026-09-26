@@ -979,10 +979,10 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // laufen zusaetzlich roh ins Flug-Log. GANZ ans Ende: anders als LVars
     // kann SimConnect eine SimVar ablehnen (MSFS 2020 kennt nicht jede),
     // dann fehlt der Schwanz ab hier — davor verrutscht nichts. Die
-    // riskanteste (TRANSPONDER STATE, erst spaet im SDK) steht zuletzt.
+    // riskanteste (TRANSPONDER STATE, erst spaet im SDK) steht ganz am
+    // Tabellenende, hinter den Landelichtern.
     F::f64("AUTO BRAKE SWITCH CB", "Number"),
     F::f64("CABIN SEATBELTS ALERT SWITCH", "Bool"),
-    F::f64("TRANSPONDER STATE:1", "Number"),
     // Runde 3: indizierte Landelichter. `LIGHT LANDING` (ohne Index) sieht
     // nur den ersten Kreis; Black Square schaltet links/rechts ueber
     // `(1 K:LANDING_LIGHTS_SET)` / `(2 K:LANDING_LIGHTS_SET)` (Baron
@@ -994,6 +994,11 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // bleiben sie None.
     F::f64("LIGHT LANDING ON:1", "Bool"),
     F::f64("LIGHT LANDING ON:2", "Bool"),
+    // QS 26.09.2026: TRANSPONDER STATE bleibt das LETZTE Feld. Lehnt MSFS
+    // 2020 es ab, wird der Block ein Feld kuerzer und alles DAHINTER
+    // verrutscht — stuende noch etwas dahinter, laese der Parser einen
+    // Landelicht-Wert als Transponder. Neue Felder deshalb DAVOR einfuegen.
+    F::f64("TRANSPONDER STATE:1", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -2235,11 +2240,11 @@ impl Telemetry {
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
         t.std_cabin_seatbelts_alert = read_f64(bytes, off);
         off += 8;
-        t.std_transponder_state = read_f64(bytes, off);
-        off += 8;
         t.std_light_landing_on_1 = read_f64(bytes, off);
         off += 8;
         t.std_light_landing_on_2 = read_f64(bytes, off);
+        off += 8;
+        t.std_transponder_state = read_f64(bytes, off);
         off += 8;
 
         // Silence the unused-assignment warning the last `pull_*!`
@@ -3455,7 +3460,9 @@ fn telemetry_to_snapshot_mit_pfad(
     // Keep both as `Option<u8>`; the activity-log helper picks the
     // right label set per field below.
     let seatbelts_sign = if is_fenix {
-        Some(t.fnx_signs_seatbelts.round().clamp(0.0, 1.0) as u8)
+        // 0/1-Schalter auf den Feld-Kontrakt 0=OFF 2=ON abbilden — eine
+        // rohe 1 hiesse sonst AUTO (Log/Monitor zeigten Fenix-ON als AUTO).
+        Some(if t.fnx_signs_seatbelts >= 0.5 { 2 } else { 0 })
     } else if is_a346 {
         // `L:AB_OVH_SEATBELT`: Overhead-Schalterposition. Der reale
         // A340-Schalter ist 3-stufig (OFF/AUTO/ON) — wir clampen auf
@@ -5837,9 +5844,9 @@ mod tests {
         assert_eq!(t.ini_tcas_stby_state, 1365.0); // idx 365
         assert_eq!(t.roh_std_autobrake_switch_cb, 1366.0); // idx 366
         assert_eq!(t.std_cabin_seatbelts_alert, Some(1367.0)); // idx 367
-        assert_eq!(t.std_transponder_state, Some(1368.0)); // idx 368
-        assert_eq!(t.std_light_landing_on_1, Some(1369.0)); // idx 369
-        assert_eq!(t.std_light_landing_on_2, Some(1370.0)); // idx 370
+        assert_eq!(t.std_light_landing_on_1, Some(1368.0)); // idx 368
+        assert_eq!(t.std_light_landing_on_2, Some(1369.0)); // idx 369
+        assert_eq!(t.std_transponder_state, Some(1370.0)); // idx 370, zuletzt
         assert_eq!(TELEMETRY_FIELDS.len(), 371, "letzter Index 370");
     }
 
@@ -9146,9 +9153,8 @@ mod tests {
     #[test]
     fn runde2_abgeschnittener_block_erfindet_kein_off() {
         let mut buf = runde2_puffer(ASOBO.0, ASOBO.1, &[]);
-        // Runde 3: erst die beiden indizierten Landelichter am Ende weg.
-        buf.truncate(buf.len() - 16);
-        buf.truncate(buf.len() - 16);
+        // Schwanz: CABIN SEATBELTS, LIGHT LANDING ON:1/:2, TRANSPONDER STATE.
+        buf.truncate(buf.len() - 32);
         let snap = parse(&buf, Simulator::Msfs2024, None);
         assert_eq!(snap.aircraft_profile, AircraftProfile::Default);
         assert_eq!(snap.seatbelts_sign, None);
@@ -9157,6 +9163,23 @@ mod tests {
             runde2_schluessel(&snap),
             vec!["AUTO BRAKE SWITCH CB".to_string()]
         );
+    }
+
+    /// QS 26.09.2026: lehnt MSFS 2020 nur TRANSPONDER STATE ab (letztes
+    /// Feld), bleiben die Landelichter richtig und der Transponder leer —
+    /// kein Landelicht-Wert, der als Transponder gelesen wird.
+    #[test]
+    fn nur_transponder_abgelehnt_laesst_landelichter_stehen() {
+        let mut buf = runde2_puffer(
+            ASOBO.0,
+            ASOBO.1,
+            &[("LIGHT LANDING ON:1", 1.0), ("LIGHT LANDING ON:2", 0.0)],
+        );
+        buf.truncate(buf.len() - 8);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.std_light_landing_on_1, Some(1.0));
+        assert_eq!(t.std_light_landing_on_2, Some(0.0));
+        assert_eq!(t.std_transponder_state, None);
     }
 
     // ================================================================
@@ -9211,17 +9234,18 @@ mod tests {
 
     #[test]
     fn runde3_landelichter_ohne_index_im_block_erfinden_nichts() {
-        // Block endet vor den indizierten Werten (abgelehnt): nur `LIGHT
-        // LANDING` zaehlt, keine Rohwerte dafuer.
+        // Block endet vor den indizierten Werten (abgelehnt; dahinter nur
+        // noch TRANSPONDER STATE): nur `LIGHT LANDING` zaehlt, keine
+        // Rohwerte dafuer.
         let mut buf = runde2_puffer(BARON.0, BARON.1, &[("LIGHT LANDING", 1.0)]);
-        buf.truncate(buf.len() - 16);
+        buf.truncate(buf.len() - 24);
         let snap = parse(&buf, Simulator::Msfs2024, None);
         assert_eq!(snap.light_landing, Some(true));
         assert!(!runde2_schluessel(&snap)
             .iter()
             .any(|k| k.starts_with("LIGHT LANDING")));
         let mut buf = runde2_puffer(BARON.0, BARON.1, &[]);
-        buf.truncate(buf.len() - 16);
+        buf.truncate(buf.len() - 24);
         let snap = parse(&buf, Simulator::Msfs2024, None);
         assert_eq!(snap.light_landing, Some(false));
     }

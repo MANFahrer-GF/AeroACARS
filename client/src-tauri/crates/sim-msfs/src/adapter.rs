@@ -1661,14 +1661,15 @@ fn run_dispatch(
                     send_id,
                     index,
                 })) => {
-                    // Input-Events: lehnt der Simulator die Aufzaehlung ab
-                    // (MSFS 2020), still aufgeben — kein Fehler.
+                    // Input-Events: lehnt der Simulator die Aufzaehlung ab,
+                    // still und begrenzt wiederholen — kein Fehler. MSFS 2020
+                    // ist oben schon als „nicht verfuegbar" markiert.
                     if eingabe_send_id.is_some_and(|id| id == send_id) {
                         tracing::info!(
                             exception,
-                            "EnumerateInputEvents abgelehnt — Simulator ohne Input-Events"
+                            "EnumerateInputEvents abgelehnt — spaeter erneut, Schalter bis dahin aus LVars/SimVars"
                         );
-                        shared.eingaben.lock().nicht_verfuegbar();
+                        shared.eingaben.lock().abgelehnt(Instant::now());
                         eingabe_send_id = None;
                         continue;
                     }
@@ -2032,6 +2033,9 @@ fn run_dispatch(
                         // Input-Events des (neuen) Flugzeugs: alte Abos
                         // abmelden, Werte verwerfen, nach kurzem Anlauf neu
                         // aufzaehlen.
+                        // Eine noch gehaltene MASTER-Lampe gehoert dem alten Muster.
+                        halter_warning = sim_core::lampen::LampenHalter::default();
+                        halter_caution = sim_core::lampen::LampenHalter::default();
                         let alt = shared.eingaben.lock().flugzeug_gewechselt(Instant::now());
                         conn.eingaben_abmelden(&alt);
                         let detected = crate::pmdg::PmdgVariant::detect_from_air_path(&air_path);
@@ -2130,6 +2134,9 @@ fn run_dispatch(
                         shared.pmdg.lock().air_path = None;
                         // Dasselbe fuer die Input-Events: Werte des vorigen
                         // Flugzeugs sofort verwerfen.
+                        // Eine noch gehaltene MASTER-Lampe gehoert dem alten Muster.
+                        halter_warning = sim_core::lampen::LampenHalter::default();
+                        halter_caution = sim_core::lampen::LampenHalter::default();
                         let alt = shared.eingaben.lock().flugzeug_gewechselt(Instant::now());
                         conn.eingaben_abmelden(&alt);
                         if let Err(e) = conn.request_aircraft_loaded() {
@@ -2680,7 +2687,9 @@ impl Connection {
             )
         };
         if hr != 0 {
-            return Err(format!("RequestDataOnSimObject (Zusatz) returned 0x{hr:08X}"));
+            return Err(format!(
+                "RequestDataOnSimObject (Zusatz) returned 0x{hr:08X}"
+            ));
         }
         Ok(kennungen)
     }

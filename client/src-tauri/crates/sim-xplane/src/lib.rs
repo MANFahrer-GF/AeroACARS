@@ -49,8 +49,8 @@ mod probe;
 mod profile;
 mod rref;
 pub mod szenerie;
-mod zusatz;
 mod web_api;
+mod zusatz;
 
 pub use adapter::{ConnectionState, XPlaneAdapter};
 pub use premium::{PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};

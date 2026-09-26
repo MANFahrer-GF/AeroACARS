@@ -86,7 +86,7 @@ gesteuert. Pro Flugzeug prüfen und ggf. eintragen.
 | AP Nav-Mode | `sim/cockpit2/autopilot/nav_status` | int 0/1/2 | `____________________` |
 | AP Approach-Mode | `sim/cockpit2/autopilot/approach_status` | int 0/1/2 | `____________________` |
 | Battery-Master | `sim/cockpit2/electrical/battery_on[0]` | int 0/1 | `____________________` |
-| Avionics-Master | `sim/cockpit2/electrical/avionics_on` | int 0/1 | `____________________` |
+| Avionics-Master | `sim/cockpit/electrical/avionics_on` | int 0/1 | `____________________` |
 | APU | `sim/cockpit2/electrical/APU_running` | int 0/1 | `____________________` |
 | Pitot-Heat | `sim/cockpit2/ice/ice_pitot_heat_on_pilot` | int 0/1 | `____________________` |
 | Transponder-Mode | `sim/cockpit2/radios/actuators/transponder_mode` | int 0=OFF 1=STBY 2=ON 3=ALT 4=TEST 5=GND 6=TA 7=TA/RA | `____________________` |

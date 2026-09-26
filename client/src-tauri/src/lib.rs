@@ -71,11 +71,11 @@ mod panel_server;
 // `hoppie-protocol` crate; this module is the thin Tauri wiring layer.
 // Spec: docs/spec/v1.3.0-hoppie-pdc-cpdlc.md
 mod hoppie;
+/// Telemetrie-Monitor (v1.8): Kanalkatalog, Verlauf, Strom.
+mod telemetrie;
 /// v1.7.44: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
 /// A-CDM-Werkzeug von VATSIM Spain. Nur lesend.
 mod vdgs;
-/// Telemetrie-Monitor (v1.8): Kanalkatalog, Verlauf, Strom.
-mod telemetrie;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -1238,6 +1238,12 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
     let Some((plat, plon)) = letzte_pos else {
         return;
     };
+    // Menue-Scheinposition (LAT 0 / LON 90) auf einer der beiden Seiten
+    // ist kein Sprung, sondern ein Messfehler (Log-Durchsicht 26.09.2026).
+    // Die Hoehe der Referenz kennen wir hier nicht — sie ist die aktuelle.
+    if !snapshot_plausibel(snap) || !position_plausibel(plat, plon, snap.altitude_msl_ft) {
+        return;
+    }
     let vorher = PausedSnapshot {
         lat: plat,
         lon: plon,
@@ -32525,16 +32531,16 @@ fn apply_pause_resume(
                 && snapshot_plausibel(cur) =>
         {
             Some(compute_resume_discontinuity(
-            prev,
-            cur,
-            ziel_fuer_sprung,
-            // `paused_since` steht erst, wenn der Ausfall ERKANNT ist —
-            // der letzte gute Snapshot ist da schon `SIM_DISCONNECT_THRESHOLD_S`
-            // alt. Ohne diesen Aufschlag rechnet die Sprung-Pruefung mit einer
-            // zu kurzen Luecke und damit einer zu hohen Geschwindigkeit
-            // (Cloud-QS 23.09.2026).
-            Some(duration_secs + SIM_DISCONNECT_THRESHOLD_S),
-        ))
+                prev,
+                cur,
+                ziel_fuer_sprung,
+                // `paused_since` steht erst, wenn der Ausfall ERKANNT ist —
+                // der letzte gute Snapshot ist da schon `SIM_DISCONNECT_THRESHOLD_S`
+                // alt. Ohne diesen Aufschlag rechnet die Sprung-Pruefung mit einer
+                // zu kurzen Luecke und damit einer zu hohen Geschwindigkeit
+                // (Cloud-QS 23.09.2026).
+                Some(duration_secs + SIM_DISCONNECT_THRESHOLD_S),
+            ))
         }
         _ => None,
     };
@@ -36602,8 +36608,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // ebenfalls `None`, kein Treffer) oder exakt der resumte Flug nach
             // `try_resume_flight()`. `take()` sorgt dafür, dass der Vergleich
             // nur EINMAL passiert, nicht auf jedem Tick.
+            //
+            // Log-Durchsicht 26.09.2026: die Menue-Scheinposition (LAT 0 /
+            // LON 90) nicht vergleichen — `last_persisted_snapshot` bleibt
+            // liegen, bis der erste echte Snapshot kommt.
             if previous_snap_for_recovery.is_none() {
-                if let Some(ref curr) = snapshot {
+                if let Some(curr) = snapshot.as_ref().filter(|s| snapshot_plausibel(s)) {
                     let maybe_prev = {
                         let mut stats = flight.stats.lock().expect("flight stats");
                         stats.last_persisted_snapshot.take()
@@ -36831,8 +36841,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // Erst weiter, wenn der Sim wieder eine echte Position hat —
                 // aus dem Ladebildschirm heraus kam sonst die Scheinposition
                 // als erster Punkt „danach" (aKRgO8gxYzPnLR8B, 11:01:10).
-                let can_resume = snapshot.as_ref().is_some_and(snapshot_plausibel)
-                    && !snap_says_paused;
+                let can_resume =
+                    snapshot.as_ref().is_some_and(snapshot_plausibel) && !snap_says_paused;
                 if can_resume {
                     // Auto-Resume: Reason aus dem State (gesetzt vom
                     // Disconnect- bzw. Sim-Pause-Detect-Pfad). Helper
@@ -50414,7 +50424,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if !mode.is_empty() && stats.last_logged_pmdg_xpdr_mode.as_deref() != Some(mode.as_str()) {
             // Skip first tick on a "boring" STBY/OFF value to avoid noise
             // when the pilot loads cold-and-dark.
-            if !first_tick || (mode != "STBY" && mode != "OFF") {
+            if !first_tick || !matches!(mode.as_str(), "STBY" | "OFF" | "ALT-OFF" | "GND") {
                 log_activity_handle(
                     app,
                     ActivityLevel::Info,
@@ -50973,14 +50983,18 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         "Wing anti-ice",
     );
 
-    // ---- Seat-belts (binary) and no-smoking (3-state).
-    // Different value spaces: Fenix's `L:S_OH_SIGNS` is 0/1 (the
-    // toggle uses logical-NOT) while `L:S_OH_SIGNS_SMOKING` is
+    // ---- Seat-belts and no-smoking, both 0=OFF 1=AUTO 2=ON.
+    // The adapters map two-position switches (Fenix `L:S_OH_SIGNS`,
+    // 0/1) onto 0/2, so 1 always means AUTO here. `L:S_OH_SIGNS_SMOKING` is
     // 0/1/2 (the toggle branches between 0 and 2 explicitly).
     if let Some(v) = snap.seatbelts_sign {
         if stats.last_logged_seatbelts_sign != Some(v) {
             if stats.last_logged_seatbelts_sign.is_some() {
-                let label = if v == 0 { "OFF" } else { "ON" };
+                let label = match v {
+                    0 => "OFF",
+                    1 => "AUTO",
+                    _ => "ON",
+                };
                 log_activity_handle(
                     app,
                     ActivityLevel::Info,
@@ -52415,7 +52429,10 @@ async fn telemetrie_csv_speichern(
     let mut pfad = ziel
         .into_path()
         .map_err(|e| UiError::new("bad_path", format!("Speicherort ungültig: {e}")))?;
-    if pfad.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase())
+    if pfad
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
         != Some("csv".into())
     {
         pfad.set_extension("csv");
@@ -53440,7 +53457,11 @@ mod auto_start_sperre_tests {
 
     #[test]
     fn echte_fehler_bleiben_fehler() {
-        for code in ["missing_aircraft", "not_at_departure", "flight_already_active"] {
+        for code in [
+            "missing_aircraft",
+            "not_at_departure",
+            "flight_already_active",
+        ] {
             assert!(!auto_start_fehler_ist_kein_fehler(code), "{code}");
         }
         assert!(auto_start_fehler_ist_kein_fehler(AUTO_START_SIM_WARTET));

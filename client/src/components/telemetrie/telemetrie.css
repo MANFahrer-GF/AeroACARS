@@ -237,7 +237,8 @@
   border-style: dashed;
 }
 .tele-zeile--unsicher .tele-zeile-name,
-.tele-zeile--unsicher .tele-zeile-wert {
+.tele-zeile--unsicher .tele-zeile-wert,
+.tele-kv-paar.tele-zeile--unsicher > span:last-child {
   color: var(--text-dim);
 }
 

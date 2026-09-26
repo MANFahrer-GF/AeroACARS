@@ -1549,7 +1549,13 @@ impl AircraftProfile {
         if pmdg_777 && (t.contains("777") || modell.starts_with("B77")) {
             return Self::Pmdg777;
         }
-        if p.contains("inibuilds") && p.contains("a380") {
+        // Wie bei den Nachbarzweigen muss Titel oder ICAO zum Pfad passen —
+        // sonst kaperte ein Rest-Pfad des A380 nach einem Flugzeugwechsel
+        // ein fremdes `Default`-Muster (QS 26.09.2026).
+        if p.contains("inibuilds")
+            && p.contains("a380")
+            && (t.contains("a380") || modell.starts_with("A38"))
+        {
             return Self::IniA380;
         }
         // iniBuilds A330 (Paket `fs24-microsoft-aircraft-a330`; gemeldet
@@ -3474,6 +3480,21 @@ mod msfs2024_cockpit_tests {
 
     /// iniBuilds A330 (MSFS 2024): echte Titel aus den Logs, ICAO meist
     /// leer; Abgrenzung gegen Headwind A339 und FBW.
+    #[test]
+    fn ini_a380_rest_pfad_kapert_kein_fremdes_muster() {
+        let pfad = r"C:\Community\inibuilds-aircraft-a380\SimObjects\Airplanes\inibuilds-a380\aircraft.cfg";
+        // Fremdes Muster mit veraltetem A380-Pfad bleibt Default.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Cessna Skyhawk", "C172", Some(pfad)),
+            AircraftProfile::Default
+        );
+        // Passender Titel/ICAO erkennt weiter den A380.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("D-AIMK", "A388", Some(pfad)),
+            AircraftProfile::IniA380
+        );
+    }
+
     #[test]
     fn ini_a330_msfs2024_titel_und_pfad() {
         for titel in [

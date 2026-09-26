@@ -237,6 +237,17 @@ impl EingabeState {
         self.faellig_ab = None;
     }
 
+    /// Der Simulator hat die Aufzählung mit einer Ausnahme abgelehnt. Bei
+    /// MSFS 2020 setzt der Adapter vorab [`Self::nicht_verfuegbar`]; unter
+    /// MSFS 2024 kann das auch vorübergehend passieren (Flugzeug lädt noch)
+    /// — darum wie eine leere Liste behandeln: begrenzt wiederholen, beim
+    /// nächsten Flugzeugwechsel wieder neu fragen, statt für die ganze
+    /// Verbindung aufzugeben.
+    pub fn abgelehnt(&mut self, jetzt: Instant) {
+        self.laufend = None;
+        self.nochmal(jetzt);
+    }
+
     pub fn ist_verfuegbar(&self) -> bool {
         !self.nicht_verfuegbar
     }
@@ -494,5 +505,26 @@ mod tests {
         s.flugzeug_gewechselt(t0 + WIEDERHOLUNG * 3);
         assert_eq!(s.aufzaehlung_starten(t0 + WIEDERHOLUNG * 9), None);
         assert!(s.werte().is_empty());
+    }
+
+    #[test]
+    fn ablehnung_waehrend_des_ladens_schaltet_nicht_dauerhaft_ab() {
+        let t0 = Instant::now();
+        let mut s = EingabeState::default();
+        s.flugzeug_gewechselt(t0);
+        let mut t = t0 + ANLAUF;
+        let mut versuche = 0;
+        while s.aufzaehlung_starten(t).is_some() {
+            versuche += 1;
+            s.abgelehnt(t);
+            t += WIEDERHOLUNG;
+        }
+        assert_eq!(versuche, MAX_VERSUCHE);
+        assert!(s.ist_verfuegbar());
+        // Naechstes Flugzeug: wieder gefragt, Liste wird angenommen.
+        s.flugzeug_gewechselt(t);
+        let req = s.aufzaehlung_starten(t + ANLAUF).expect("neuer Versuch");
+        let l = liste(req, 0, 1, &[("AIRLINER_SIGNS_SEAT_BELTS", 7, 0)]);
+        assert_eq!(s.liste_aufnehmen(&l, t + ANLAUF).unwrap().neu.len(), 1);
     }
 }
