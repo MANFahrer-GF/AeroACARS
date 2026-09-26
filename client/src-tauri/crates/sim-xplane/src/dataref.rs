@@ -1489,7 +1489,11 @@ impl XPlaneState {
             parking_name: None,
             parking_number: None,
             selected_runway: None,
-            sim_zeit_utc: sim_zeit_aus(self.zulu_time_sec, self.local_date_days, chrono::Utc::now()),
+            sim_zeit_utc: sim_zeit_aus(
+                self.zulu_time_sec,
+                self.local_date_days,
+                chrono::Utc::now(),
+            ),
             aircraft_profile: sim_core::AircraftProfile::default(),
             // PMDG SDK is MSFS-only; X-Plane never fills this.
             pmdg: None,
@@ -1971,7 +1975,10 @@ mod cockpit_schalter_tests {
         assert_eq!(s.to_snapshot(Simulator::XPlane12).sim_zeit_utc, None);
         s.apply_field(FieldId::ZuluTimeSec, 7200.0);
         s.apply_field(FieldId::LocalDateDays, 0.0);
-        let z = s.to_snapshot(Simulator::XPlane12).sim_zeit_utc.expect("zeit");
+        let z = s
+            .to_snapshot(Simulator::XPlane12)
+            .sim_zeit_utc
+            .expect("zeit");
         assert_eq!(z.format("%m-%d %H:%M").to_string(), "01-01 02:00");
     }
 

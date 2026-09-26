@@ -41,6 +41,7 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 pub mod backup;
+pub mod bordbuch;
 pub mod chat;
 pub mod log_upload;
 pub mod navdata;

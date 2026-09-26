@@ -171,6 +171,56 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "activity_log_get" => ok_json(crate::activity_log_get(st!())),
         "landing_get_current" => ok_json(crate::landing_get_current(app.clone(), st!())),
         "landing_list" => ok_json(crate::landing_list(app.clone())),
+        // Bordbuch (26.09.2026) — 1:1 wie am PC.
+        "bordbuch_liste" => ok_json(crate::bordbuch_liste(app.clone())),
+        "bordbuch_live" => ok_json(crate::bordbuch_live(app.clone(), st!())),
+        "bordbuch_einstellungen_holen" => ok_json(crate::bordbuch_einstellungen_holen(app.clone())),
+        "bordbuch_wiederherstellen" => {
+            from_uierr(crate::bordbuch_wiederherstellen(app.clone()).await)
+        }
+        "bordbuch_eintrag" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                pirep_id: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => ok_json(crate::bordbuch_eintrag(app.clone(), a.pirep_id)),
+                Err(e) => Err(e),
+            }
+        }
+        "bordbuch_markieren" => {
+            // camelCase: die Oberflaeche schickt `pirepId`/`nachAtc`.
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                pirep_id: String,
+                regel: crate::bordbuch::Regel,
+                nach_atc: bool,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::bordbuch_markieren(
+                    app.clone(),
+                    a.pirep_id,
+                    a.regel,
+                    a.nach_atc,
+                )),
+                Err(e) => Err(e),
+            }
+        }
+        "bordbuch_einstellungen_setzen" => {
+            #[derive(Deserialize)]
+            struct A {
+                einstellungen: crate::bordbuch::Einstellungen,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::bordbuch_einstellungen_setzen(
+                    app.clone(),
+                    a.einstellungen,
+                )),
+                Err(e) => Err(e),
+            }
+        }
         "auto_start_skip_status" => ok_json(crate::auto_start_skip_status(st!())),
         "auto_start_get_enabled" => ok_json(crate::auto_start_get_enabled(st!())),
         "ofp_callsign_warning_get" => ok_json(crate::ofp_callsign_warning_get(st!())),

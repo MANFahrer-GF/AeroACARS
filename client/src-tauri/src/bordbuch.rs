@@ -297,7 +297,10 @@ impl Default for Einstellungen {
 
 impl Einstellungen {
     pub fn an(&self, s: Schalter) -> bool {
-        self.regeln.get(&s).copied().unwrap_or_else(|| s.voreinstellung())
+        self.regeln
+            .get(&s)
+            .copied()
+            .unwrap_or_else(|| s.voreinstellung())
     }
 
     /// Werte in sinnvolle Grenzen bringen (Eingaben aus der Oberfläche oder
@@ -336,26 +339,24 @@ impl Einstellungen {
 
 /// ICAO-Typen der Business Jets (ICAO Doc 8643, gängige Muster).
 const BUSINESS_JETS: &[&str] = &[
-    "ASTR", "BE40", "C25A", "C25B", "C25C", "C25M", "C500", "C501", "C510", "C525", "C526",
-    "C550", "C551", "C560", "C56X", "C650", "C680", "C68A", "C700", "C750", "CL30", "CL35",
-    "CL60", "E35L", "E50P", "E545", "E550", "E55P", "EA50", "F2TH", "F900", "FA10", "FA20",
-    "FA50", "FA7X", "FA8X", "G150", "G280", "GA5C", "GA6C", "GALX", "GL5T", "GL7T", "GLEX",
-    "GLF2", "GLF3", "GLF4", "GLF5", "GLF6", "H25A", "H25B", "H25C", "HDJT", "LJ23", "LJ24",
-    "LJ25", "LJ31", "LJ35", "LJ40", "LJ45", "LJ55", "LJ60", "LJ70", "LJ75", "PC24", "PRM1",
-    "SF50", "WW24",
+    "ASTR", "BE40", "C25A", "C25B", "C25C", "C25M", "C500", "C501", "C510", "C525", "C526", "C550",
+    "C551", "C560", "C56X", "C650", "C680", "C68A", "C700", "C750", "CL30", "CL35", "CL60", "E35L",
+    "E50P", "E545", "E550", "E55P", "EA50", "F2TH", "F900", "FA10", "FA20", "FA50", "FA7X", "FA8X",
+    "G150", "G280", "GA5C", "GA6C", "GALX", "GL5T", "GL7T", "GLEX", "GLF2", "GLF3", "GLF4", "GLF5",
+    "GLF6", "H25A", "H25B", "H25C", "HDJT", "LJ23", "LJ24", "LJ25", "LJ31", "LJ35", "LJ40", "LJ45",
+    "LJ55", "LJ60", "LJ70", "LJ75", "PC24", "PRM1", "SF50", "WW24",
 ];
 
 /// ICAO-Typen der Kleinflugzeuge (Kolben, leichte Turboprops) und
 /// Hubschrauber — für sie ist das Bordbuch standardmässig aus.
 const GA_TYPEN: &[&str] = &[
-    "AC11", "AN2", "AS50", "ASK2", "B06", "B407", "BE20", "BE33", "BE35", "BE36", "BE55",
-    "BE58", "BE9L", "BE9T", "BL8", "C140", "C150", "C152", "C170", "C172", "C177", "C182",
-    "C206", "C207", "C208", "C210", "C310", "C337", "C340", "C414", "C421", "CRUZ", "DA20",
-    "DA40", "DA42", "DA50", "DA62", "DHC2", "DHC3", "DHC6", "DR40", "EC35", "EC45", "EV97",
-    "GLID", "H125", "H135", "H145", "J3", "KODI", "M20P", "M20T", "P28A", "P28B", "P28R",
-    "P32R", "P46T", "PA18", "PA24", "PA28", "PA31", "PA32", "PA34", "PA44", "PA46", "PC12",
-    "PC6T", "PC7", "R22", "R44", "R66", "RV10", "RV7", "RV8", "S22T", "S76", "SR20", "SR22",
-    "TBM7", "TBM8", "TBM9", "TOBA", "ULAC",
+    "AC11", "AN2", "AS50", "ASK2", "B06", "B407", "BE20", "BE33", "BE35", "BE36", "BE55", "BE58",
+    "BE9L", "BE9T", "BL8", "C140", "C150", "C152", "C170", "C172", "C177", "C182", "C206", "C207",
+    "C208", "C210", "C310", "C337", "C340", "C414", "C421", "CRUZ", "DA20", "DA40", "DA42", "DA50",
+    "DA62", "DHC2", "DHC3", "DHC6", "DR40", "EC35", "EC45", "EV97", "GLID", "H125", "H135", "H145",
+    "J3", "KODI", "M20P", "M20T", "P28A", "P28B", "P28R", "P32R", "P46T", "PA18", "PA24", "PA28",
+    "PA31", "PA32", "PA34", "PA44", "PA46", "PC12", "PC6T", "PC7", "R22", "R44", "R66", "RV10",
+    "RV7", "RV8", "S22T", "S76", "SR20", "SR22", "TBM7", "TBM8", "TBM9", "TOBA", "ULAC",
 ];
 
 /// Klasse aus Einstellung, Add-on-Profil und ICAO-Typ. Liefert zusätzlich
@@ -463,8 +464,7 @@ pub fn sonnenhoehe(lat: f64, lon: f64, t: DateTime<Utc>) -> f64 {
             - 0.032077 * g.sin()
             - 0.014615 * (2.0 * g).cos()
             - 0.040849 * (2.0 * g).sin());
-    let dekl = 0.006918 - 0.399912 * g.cos() + 0.070257 * g.sin()
-        - 0.006758 * (2.0 * g).cos()
+    let dekl = 0.006918 - 0.399912 * g.cos() + 0.070257 * g.sin() - 0.006758 * (2.0 * g).cos()
         + 0.000907 * (2.0 * g).sin()
         - 0.002697 * (3.0 * g).cos()
         + 0.00148 * (3.0 * g).sin();
@@ -595,6 +595,9 @@ pub struct Zustand {
     pub flugzeug: Option<String>,
     pub profil_name: Option<String>,
     pub simulator: Option<String>,
+    /// VFR-Flug (Flugstart ohne SimBrief). Einmal festgehalten, weil die
+    /// Flugplanquelle einen App-Neustart nicht überlebt.
+    pub vfr: Option<bool>,
 }
 
 /// Abgeschlossenes Bordbuch eines Flugs — lokal gespeichert, zum Server
@@ -768,7 +771,10 @@ fn beleg_fuer(regel: Regel, s: &SimSnapshot) -> BTreeMap<String, serde_json::Val
     let mut put = |k: &str, v: serde_json::Value| {
         m.insert(k.to_string(), v);
     };
-    put("phase_gs_kt", serde_json::json!((s.groundspeed_kt * 10.0).round() / 10.0));
+    put(
+        "phase_gs_kt",
+        serde_json::json!((s.groundspeed_kt * 10.0).round() / 10.0),
+    );
     match regel {
         Regel::BeaconAnlassen => {
             put("light_beacon", opt(&s.light_beacon));
@@ -784,14 +790,20 @@ fn beleg_fuer(regel: Regel, s: &SimSnapshot) -> BTreeMap<String, serde_json::Val
         Regel::LandelichtStart | Regel::LandelichtAnflug => {
             put("light_landing", opt(&s.light_landing));
             put("light_taxi", opt(&s.light_taxi));
-            put("altitude_msl_ft", serde_json::json!(s.altitude_msl_ft.round()));
+            put(
+                "altitude_msl_ft",
+                serde_json::json!(s.altitude_msl_ft.round()),
+            );
         }
         Regel::TransponderStart | Regel::TcasStart => {
             put("xpdr_mode_label", opt(&s.xpdr_mode_label));
             put("transponder_code", opt(&s.transponder_code));
         }
         Regel::KlappenStart => {
-            put("flaps_position", serde_json::json!((s.flaps_position * 1000.0).round() / 1000.0));
+            put(
+                "flaps_position",
+                serde_json::json!((s.flaps_position * 1000.0).round() / 1000.0),
+            );
             put("flap_handle_index", opt(&s.flap_handle_index));
         }
         Regel::AnschnallStart | Regel::AnschnallLandung => {
@@ -808,7 +820,10 @@ fn beleg_fuer(regel: Regel, s: &SimSnapshot) -> BTreeMap<String, serde_json::Val
         }
         Regel::RolltempoAbflug | Regel::RolltempoAnkunft => {}
     }
-    put("altitude_agl_ft", serde_json::json!(s.altitude_agl_ft.round()));
+    put(
+        "altitude_agl_ft",
+        serde_json::json!(s.altitude_agl_ft.round()),
+    );
     m
 }
 
@@ -878,7 +893,10 @@ impl Zustand {
         let felder: [(&str, bool); 10] = [
             ("beacon", s.light_beacon.is_some()),
             ("nav", s.light_nav.is_some()),
-            ("strobe", s.strobe_state.is_some() || s.light_strobe.is_some()),
+            (
+                "strobe",
+                s.strobe_state.is_some() || s.light_strobe.is_some(),
+            ),
             ("landing", s.light_landing.is_some()),
             ("xpdr", s.xpdr_mode_label.is_some()),
             ("autobrake", s.autobrake.is_some()),
@@ -902,12 +920,18 @@ impl Zustand {
         self.fristen.insert(r, bis);
         if hinweis && !self.hinweise_gezeigt.contains(&r) {
             self.hinweise_gezeigt.push(r);
-            self.hinweis = Some(Hinweis { regel: r, seit: jetzt });
+            self.hinweis = Some(Hinweis {
+                regel: r,
+                seit: jetzt,
+            });
         }
     }
 
     fn frist_abgelaufen(&self, r: Regel, jetzt: DateTime<Utc>) -> bool {
-        self.fristen.get(&r).map(|bis| jetzt > *bis).unwrap_or(false)
+        self.fristen
+            .get(&r)
+            .map(|bis| jetzt > *bis)
+            .unwrap_or(false)
     }
 
     fn frist_laeuft(&self, r: Regel) -> bool {
@@ -963,8 +987,14 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         z.simulator = Some(format!("{:?}", s.simulator));
     }
     let zeit_sonne = s.sim_zeit_utc.unwrap_or(jetzt);
-    z.zeitquelle
-        .get_or_insert_with(|| if s.sim_zeit_utc.is_some() { "sim" } else { "rechner" }.to_string());
+    z.zeitquelle.get_or_insert_with(|| {
+        if s.sim_zeit_utc.is_some() {
+            "sim"
+        } else {
+            "rechner"
+        }
+        .to_string()
+    });
     let nacht_jetzt = ist_nacht(sonnenhoehe(s.lat, s.lon, zeit_sonne), k.abflug);
     if !phase_nach_start(phase) {
         // Bis zum Startlauf gilt die Tageszeit am Abflugort.
@@ -986,7 +1016,10 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     // Höhenprofil (für Variante B).
     if !s.on_ground || z.profil.is_empty() {
         let t = jetzt.timestamp();
-        if z.profil.last().map(|(lt, _)| t - lt >= PROFIL_TAKT_S).unwrap_or(true)
+        if z.profil
+            .last()
+            .map(|(lt, _)| t - lt >= PROFIL_TAKT_S)
+            .unwrap_or(true)
             && z.profil.len() < PROFIL_MAX
         {
             z.profil.push((t, s.altitude_msl_ft.round() as i32));
@@ -1027,7 +1060,12 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         z.rollen_gesehen = true;
         let bis = jetzt + chrono::Duration::seconds(FRIST_ROLLEN_S);
         let h = hinweis_erlaubt(Regel::NavLichter, k, nacht_start);
-        z.frist(Regel::NavLichter, bis, jetzt, h && s.light_nav == Some(false));
+        z.frist(
+            Regel::NavLichter,
+            bis,
+            jetzt,
+            h && s.light_nav == Some(false),
+        );
         z.frist(Regel::ParkbremseGeloest, bis, jetzt, false);
     }
     pruefen_mit_frist(z, Regel::NavLichter, s, s.light_nav, "nav", None);
@@ -1046,8 +1084,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         z.taxi_in_ab = Some(jetzt);
     }
     let im_abrollweg = phase == FlightPhase::TaxiIn
-        && z
-            .taxi_in_ab
+        && z.taxi_in_ab
             .map(|t0| (jetzt - t0).num_seconds() < ABROLLWEG_S)
             .unwrap_or(true);
     if phase_am_boden_rollen(phase) && s.on_ground && !im_abrollweg {
@@ -1128,7 +1165,14 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     } else {
         "landing"
     };
-    pruefen_mit_frist(z, Regel::LandelichtStart, s, landelicht_start, feld_ll, None);
+    pruefen_mit_frist(
+        z,
+        Regel::LandelichtStart,
+        s,
+        landelicht_start,
+        feld_ll,
+        None,
+    );
     let label = s.xpdr_mode_label.clone();
     pruefen_mit_frist(
         z,
@@ -1144,7 +1188,13 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
             z.entscheiden(Regel::TcasStart, Status::Erledigt, s, label.clone(), None);
         } else if z.frist_abgelaufen(Regel::TcasStart, jetzt) {
             if !z.gesehen("xpdr") {
-                z.entscheiden(Regel::TcasStart, Status::NichtMessbar, s, None, Some(Grund::WertFehlt));
+                z.entscheiden(
+                    Regel::TcasStart,
+                    Status::NichtMessbar,
+                    s,
+                    None,
+                    Some(Grund::WertFehlt),
+                );
             } else if !tcas_meldbar(s) {
                 z.entscheiden(
                     Regel::TcasStart,
@@ -1154,7 +1204,13 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
                     Some(Grund::KeinTcasModus),
                 );
             } else {
-                z.entscheiden(Regel::TcasStart, Status::DiesmalOhne, s, label.clone(), None);
+                z.entscheiden(
+                    Regel::TcasStart,
+                    Status::DiesmalOhne,
+                    s,
+                    label.clone(),
+                    None,
+                );
             }
         }
     }
@@ -1176,7 +1232,14 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         1 => "AUTO".to_string(),
         _ => "ON".to_string(),
     });
-    pruefen_mit_frist(z, Regel::AnschnallStart, s, gurte, "seatbelts", gurte_st.clone());
+    pruefen_mit_frist(
+        z,
+        Regel::AnschnallStart,
+        s,
+        gurte,
+        "seatbelts",
+        gurte_st.clone(),
+    );
 
     // --- Reiseflug: APU aus (Bestätigung).
     if phase == FlightPhase::Cruise {
@@ -1215,10 +1278,13 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
             && s.altitude_agl_ft < ANFLUG_AGL_FT
             && matches!(phase, FlightPhase::Approach | FlightPhase::Final);
         if unter_fl100 || tief_im_anflug {
-            let frist = if unter_fl100 { FRIST_FL100_S } else { FRIST_START_S };
+            let frist = if unter_fl100 {
+                FRIST_FL100_S
+            } else {
+                FRIST_START_S
+            };
             let h = hinweis_erlaubt(Regel::LandelichtAnflug, k, nacht_hier)
-                && s.light_landing == Some(false)
-               ;
+                && s.light_landing == Some(false);
             z.frist(
                 Regel::LandelichtAnflug,
                 jetzt + chrono::Duration::seconds(frist),
@@ -1232,7 +1298,14 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         (_, Klasse::Ga) if s.light_taxi == Some(true) => Some(true),
         (v, _) => v,
     };
-    pruefen_mit_frist(z, Regel::LandelichtAnflug, s, landelicht_anflug, feld_ll, None);
+    pruefen_mit_frist(
+        z,
+        Regel::LandelichtAnflug,
+        s,
+        landelicht_anflug,
+        feld_ll,
+        None,
+    );
 
     // --- Endanflug unter 1000 ft AGL bis zum Aufsetzen: Spoiler,
     // Autobrake, Anschnallzeichen. Erledigt, sobald einmal gesehen.
@@ -1253,14 +1326,19 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
             if z.offen(r) && !z.frist_laeuft(r) {
                 // Frist bis zum Aufsetzen — hier nur als „läuft" markiert.
                 let h = hinweis_erlaubt(r, k, nacht_hier)
-                   
                     && r == Regel::SpoilerLandung
                     && s.spoilers_armed == Some(false);
                 z.frist(r, jetzt + chrono::Duration::days(1), jetzt, h);
             }
         }
         if s.spoilers_armed == Some(true) {
-            z.entscheiden(Regel::SpoilerLandung, Status::Erledigt, s, Some("ARMED".into()), None);
+            z.entscheiden(
+                Regel::SpoilerLandung,
+                Status::Erledigt,
+                s,
+                Some("ARMED".into()),
+                None,
+            );
         }
         if let Some(ab) = s.autobrake.as_deref().filter(|l| autobrake_gesetzt(l)) {
             z.entscheiden(
@@ -1454,6 +1532,174 @@ pub fn live_ansicht(z: &Zustand, einst: &Einstellungen, vfr: bool) -> LiveAnsich
 }
 
 // ---------------------------------------------------------------------------
+// Speicher (lokal, je Pilot)
+// ---------------------------------------------------------------------------
+
+/// Höchstens so viele Einträge lokal (älteste fliegen raus).
+const MAX_EINTRAEGE: usize = 3_000;
+
+/// Ein Lese-Ändern-Schreiben zur Zeit — Flugende, Markieren und Server-
+/// Abgleich können sich sonst gegenseitig überschreiben.
+static SPEICHER_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Lokaler Speicher unter `<app_data>/bordbuch/<pilot>/` — je Pilot
+/// getrennt, damit ein zweiter Pilot am selben Rechner weder Verlauf noch
+/// Einstellungen des ersten sieht.
+pub struct Speicher {
+    eintraege: std::path::PathBuf,
+    einstellungen: std::path::PathBuf,
+}
+
+fn atomar_schreiben(pfad: &std::path::Path, inhalt: &[u8]) -> std::io::Result<()> {
+    let tmp = pfad.with_extension("json.tmp");
+    std::fs::write(&tmp, inhalt)?;
+    std::fs::rename(&tmp, pfad)
+}
+
+impl Speicher {
+    pub fn oeffnen(app_data: &std::path::Path, pilot: &str) -> std::io::Result<Self> {
+        let sauber: String = pilot
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .take(40)
+            .collect();
+        let sauber = if sauber.is_empty() {
+            "ohne_anmeldung".to_string()
+        } else {
+            sauber
+        };
+        let dir = app_data.join("bordbuch").join(sauber);
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self {
+            eintraege: dir.join("eintraege.json"),
+            einstellungen: dir.join("einstellungen.json"),
+        })
+    }
+
+    fn lesen(&self) -> Vec<Eintrag> {
+        let Ok(roh) = std::fs::read(&self.eintraege) else {
+            return Vec::new();
+        };
+        match serde_json::from_slice::<Vec<serde_json::Value>>(&roh) {
+            // Einzeln lesen: ein kaputter Eintrag (ältere/neuere Fassung)
+            // darf den Rest nicht mitreissen.
+            Ok(werte) => werte
+                .into_iter()
+                .filter_map(|v| serde_json::from_value(v).ok())
+                .collect(),
+            Err(e) => {
+                // Datei beschädigt: beiseitelegen statt überschreiben.
+                let kaputt = self.eintraege.with_extension("json.kaputt");
+                let _ = std::fs::copy(&self.eintraege, kaputt);
+                tracing::warn!(error = %e, "Bordbuch-Datei nicht lesbar — beiseitegelegt");
+                Vec::new()
+            }
+        }
+    }
+
+    fn schreiben(&self, mut alle: Vec<Eintrag>) -> std::io::Result<()> {
+        alle.sort_by(|a, b| a.erstellt_at.cmp(&b.erstellt_at));
+        if alle.len() > MAX_EINTRAEGE {
+            let weg = alle.len() - MAX_EINTRAEGE;
+            alle.drain(0..weg);
+        }
+        let json = serde_json::to_vec(&alle).map_err(std::io::Error::other)?;
+        atomar_schreiben(&self.eintraege, &json)
+    }
+
+    /// Alle Einträge, neuester zuerst.
+    pub fn alle(&self) -> Vec<Eintrag> {
+        let _g = SPEICHER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut v = self.lesen();
+        v.sort_by(|a, b| b.erstellt_at.cmp(&a.erstellt_at));
+        v
+    }
+
+    pub fn holen(&self, pirep_id: &str) -> Option<Eintrag> {
+        let _g = SPEICHER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        self.lesen().into_iter().find(|e| e.pirep_id == pirep_id)
+    }
+
+    /// Eintrag anlegen oder ersetzen (gleiche PIREP).
+    pub fn speichern(&self, e: Eintrag) -> std::io::Result<()> {
+        let _g = SPEICHER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut alle = self.lesen();
+        alle.retain(|x| x.pirep_id != e.pirep_id);
+        alle.push(e);
+        self.schreiben(alle)
+    }
+
+    /// Einen Eintrag ändern (Markieren „nach ATC", Sync-Vermerk).
+    pub fn aendern<F: FnOnce(&mut Eintrag) -> bool>(
+        &self,
+        pirep_id: &str,
+        f: F,
+    ) -> std::io::Result<Option<Eintrag>> {
+        let _g = SPEICHER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut alle = self.lesen();
+        let Some(e) = alle.iter_mut().find(|e| e.pirep_id == pirep_id) else {
+            return Ok(None);
+        };
+        if !f(e) {
+            return Ok(None);
+        }
+        let neu = e.clone();
+        self.schreiben(alle)?;
+        Ok(Some(neu))
+    }
+
+    /// Serverstand einmischen: je PIREP gewinnt das neuere `updated_at`.
+    /// Liefert, wie viele Einträge neu oder aktualisiert wurden.
+    pub fn zusammenfuehren(&self, vom_server: Vec<Eintrag>) -> std::io::Result<usize> {
+        let _g = SPEICHER_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut alle = self.lesen();
+        let mut geaendert = 0;
+        for mut s in vom_server {
+            s.synced = true;
+            match alle.iter_mut().find(|l| l.pirep_id == s.pirep_id) {
+                Some(l) if l.updated_at >= s.updated_at => {
+                    if l.updated_at == s.updated_at && !l.synced {
+                        l.synced = true;
+                    }
+                }
+                Some(l) => {
+                    *l = s;
+                    geaendert += 1;
+                }
+                None => {
+                    alle.push(s);
+                    geaendert += 1;
+                }
+            }
+        }
+        self.schreiben(alle)?;
+        Ok(geaendert)
+    }
+
+    pub fn einstellungen(&self) -> Einstellungen {
+        std::fs::read(&self.einstellungen)
+            .ok()
+            .and_then(|r| serde_json::from_slice::<Einstellungen>(&r).ok())
+            .map(Einstellungen::bereinigt)
+            .unwrap_or_default()
+    }
+
+    /// `None` = es gibt noch keine gespeicherten Einstellungen.
+    pub fn einstellungen_vorhanden(&self) -> Option<Einstellungen> {
+        std::fs::read(&self.einstellungen)
+            .ok()
+            .and_then(|r| serde_json::from_slice::<Einstellungen>(&r).ok())
+            .map(Einstellungen::bereinigt)
+    }
+
+    pub fn einstellungen_speichern(&self, e: &Einstellungen) -> std::io::Result<()> {
+        let json =
+            serde_json::to_vec_pretty(&e.clone().bereinigt()).map_err(std::io::Error::other)?;
+        atomar_schreiben(&self.einstellungen, &json)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1631,7 +1877,10 @@ mod tests {
         s = snap(5);
         s.engines_running = 1;
         tick(&mut z, &s, FlightPhase::Pushback, &k);
-        assert_eq!(z.hinweis.as_ref().map(|h| h.regel), Some(Regel::BeaconAnlassen));
+        assert_eq!(
+            z.hinweis.as_ref().map(|h| h.regel),
+            Some(Regel::BeaconAnlassen)
+        );
         s = snap(15);
         s.engines_running = 1;
         s.light_beacon = Some(true);
@@ -1734,7 +1983,10 @@ mod tests {
         s.xpdr_mode_label = Some("TA-RA".into());
         s.light_landing = Some(true);
         tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
-        assert_eq!(z.hinweis.as_ref().map(|h| h.regel), Some(Regel::StrobesStart));
+        assert_eq!(
+            z.hinweis.as_ref().map(|h| h.regel),
+            Some(Regel::StrobesStart)
+        );
         // Nach 8 s weg, auch wenn nicht erledigt.
         s.timestamp = t0() + chrono::Duration::seconds(14);
         tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
@@ -1846,7 +2098,8 @@ mod tests {
             Klasse::BusinessJet
         );
         let mut e2 = e.clone();
-        e2.klassen_override.insert("D-EABC".into(), Klasse::BusinessJet);
+        e2.klassen_override
+            .insert("D-EABC".into(), Klasse::BusinessJet);
         assert_eq!(
             klasse_fuer(Some("C172"), Some("d-eabc"), AircraftProfile::Default, &e2),
             (Klasse::BusinessJet, "einstellung_kennzeichen")
@@ -1878,7 +2131,10 @@ mod tests {
         ] {
             assert_eq!(art(r, Klasse::Ga, false), None, "{r:?}");
         }
-        assert_eq!(art(Regel::NavLichter, Klasse::Ga, false), Some(Art::Bestaetigung));
+        assert_eq!(
+            art(Regel::NavLichter, Klasse::Ga, false),
+            Some(Art::Bestaetigung)
+        );
         assert_eq!(art(Regel::NavLichter, Klasse::Ga, true), Some(Art::Pflicht));
     }
 
@@ -1914,7 +2170,9 @@ mod tests {
 
     #[test]
     fn autobrake_labels() {
-        for l in ["LO", "MED", "MAX", "1", "3", "BTV", "L2", "HI", "ARMED", "MAX AUTO"] {
+        for l in [
+            "LO", "MED", "MAX", "1", "3", "BTV", "L2", "HI", "ARMED", "MAX AUTO",
+        ] {
             assert!(autobrake_gesetzt(l), "{l}");
         }
         for l in ["OFF", "DISARM", "RTO", "", "#3", "?"] {
@@ -1928,7 +2186,11 @@ mod tests {
         let h = sonnenhoehe(50.03, 8.56, t0());
         assert!((35.0..45.0).contains(&h), "{h}");
         // Frankfurt 26.09. 22:00 UTC: tief unter dem Horizont.
-        let n = sonnenhoehe(50.03, 8.56, Utc.with_ymd_and_hms(2026, 9, 26, 22, 0, 0).unwrap());
+        let n = sonnenhoehe(
+            50.03,
+            8.56,
+            Utc.with_ymd_and_hms(2026, 9, 26, 22, 0, 0).unwrap(),
+        );
         assert!(n < -20.0, "{n}");
         assert!(ist_nacht(n, Some("EDDF")));
         assert!(!ist_nacht(h, Some("EDDF")));
@@ -1989,6 +2251,56 @@ mod tests {
         let zj = serde_json::to_string(&z).unwrap();
         let zz: Zustand = serde_json::from_str(&zj).unwrap();
         assert_eq!(zz, z);
+    }
+
+    #[test]
+    fn speicher_je_pilot_getrennt_und_neuere_fassung_gewinnt() {
+        let dir = std::env::temp_dir().join(format!(
+            "bordbuch-test-{}",
+            std::process::id() as u64 * 1000 + t0().timestamp_subsec_nanos() as u64
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = Speicher::oeffnen(&dir, "123").unwrap();
+        let b = Speicher::oeffnen(&dir, "456").unwrap();
+        let e = Einstellungen::default();
+        let mut en = eintrag(&Zustand::default(), &e);
+        en.pirep_id = "X1".into();
+        a.speichern(en.clone()).unwrap();
+        assert_eq!(a.alle().len(), 1);
+        assert!(b.alle().is_empty(), "anderer Pilot sieht nichts");
+        // Markieren über aendern.
+        let neu = a
+            .aendern("X1", |x| {
+                x.updated_at = x.updated_at + chrono::Duration::minutes(1);
+                true
+            })
+            .unwrap()
+            .unwrap();
+        // Server hat eine ältere Fassung → lokal bleibt.
+        let mut alt = en.clone();
+        alt.updated_at = en.updated_at - chrono::Duration::hours(1);
+        assert_eq!(a.zusammenfuehren(vec![alt]).unwrap(), 0);
+        assert_eq!(a.holen("X1").unwrap().updated_at, neu.updated_at);
+        // Server hat eine neuere → sie gewinnt und gilt als gesichert.
+        let mut juenger = en.clone();
+        juenger.updated_at = neu.updated_at + chrono::Duration::hours(1);
+        juenger.regelwerk = "vfr".into();
+        assert_eq!(a.zusammenfuehren(vec![juenger]).unwrap(), 1);
+        let h = a.holen("X1").unwrap();
+        assert_eq!(h.regelwerk, "vfr");
+        assert!(h.synced);
+        // Einstellungen je Pilot.
+        let mut ea = Einstellungen::default();
+        ea.hinweise_im_flug = false;
+        a.einstellungen_speichern(&ea).unwrap();
+        assert!(!a.einstellungen().hinweise_im_flug);
+        assert!(b.einstellungen().hinweise_im_flug);
+        assert!(b.einstellungen_vorhanden().is_none());
+        // Beschädigte Datei → leer + beiseitegelegt, nichts panikt.
+        std::fs::write(&a.eintraege, b"{kaputt").unwrap();
+        assert!(a.alle().is_empty());
+        assert!(a.eintraege.with_extension("json.kaputt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
