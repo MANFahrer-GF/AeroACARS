@@ -28276,7 +28276,9 @@ fn bordbuch_tick(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
     if stats.replay_verdacht {
         return;
     }
-    let phase = effective_phase(&stats);
+    // `protokoll_phase` statt `effective_phase`: hält eine Warteschleife
+    // über den Eintrittstakt hinaus (Befund 25.09.2026, siehe dort).
+    let phase = protokoll_phase(&stats);
     if stats.bordbuch.vfr.is_none() {
         if let Some(quelle) = stats.flight_plan_source {
             stats.bordbuch.vfr = Some(quelle == "manual");
@@ -28478,10 +28480,20 @@ async fn bordbuch_abgleich(app: AppHandle) -> Result<usize, String> {
     Ok(neu)
 }
 
+/// Ein geplanter Abgleich genügt: er liest den Stand erst nach der
+/// Wartezeit, fasst also schnelle Aktionen hintereinander zusammen.
+static BORDBUCH_ABGLEICH_GEPLANT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 fn spawn_bordbuch_abgleich(app: &AppHandle) {
+    use std::sync::atomic::Ordering;
+    if BORDBUCH_ABGLEICH_GEPLANT.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        BORDBUCH_ABGLEICH_GEPLANT.store(false, Ordering::SeqCst);
         if let Err(e) = bordbuch_abgleich(app).await {
             tracing::debug!(error = %e, "Bordbuch-Abgleich verschoben");
         }

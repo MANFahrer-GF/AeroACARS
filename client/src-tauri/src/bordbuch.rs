@@ -46,6 +46,8 @@ const FL100_UEBER_FT: f64 = 10_500.0;
 const FL100_FT: f64 = 10_000.0;
 /// Anflugfenster für Spoiler, Autobrake, Anschnallzeichen.
 const ANFLUG_AGL_FT: f64 = 1_000.0;
+/// Ab dieser Lücke zwischen zwei Takten gilt: pausiert (Fristen verschieben).
+const PAUSE_AB_S: i64 = 15;
 /// Hinweis im Flug: so lange sichtbar.
 pub const HINWEIS_SICHTBAR_S: i64 = 8;
 /// Höhenprofil für die Ansicht „Flugprofil": ein Punkt je Minute, höchstens.
@@ -937,6 +939,40 @@ impl Zustand {
     fn frist_laeuft(&self, r: Regel) -> bool {
         self.fristen.contains_key(&r)
     }
+
+    /// Nicht erledigt: „diesmal ohne", wenn das Flugzeug den Wert je
+    /// meldete — sonst „nicht messbar".
+    fn ohne_oder_nicht_messbar(&mut self, r: Regel, s: &SimSnapshot) {
+        let feld = feld_der_regel(r);
+        if feld.is_none() || feld.map(|f| self.gesehen(f)).unwrap_or(false) {
+            let st = match r {
+                Regel::AutobrakeLandung => s.autobrake.clone(),
+                _ => None,
+            };
+            self.entscheiden(r, Status::DiesmalOhne, s, st, None);
+        } else {
+            self.entscheiden(r, Status::NichtMessbar, s, None, Some(Grund::WertFehlt));
+        }
+    }
+}
+
+/// Welches Snapshot-Feld eine Regel braucht (`None` = meldet jedes Flugzeug).
+fn feld_der_regel(r: Regel) -> Option<&'static str> {
+    Some(match r {
+        Regel::BeaconAnlassen => "beacon",
+        Regel::NavLichter => "nav",
+        Regel::StrobesStart => "strobe",
+        Regel::LandelichtStart | Regel::LandelichtAnflug => "landing",
+        Regel::TransponderStart | Regel::TcasStart => "xpdr",
+        Regel::AnschnallStart | Regel::AnschnallLandung => "seatbelts",
+        Regel::ApuReiseflug => "apu",
+        Regel::AutobrakeLandung => "autobrake",
+        Regel::SpoilerLandung => "spoilers",
+        Regel::ParkbremseGeloest
+        | Regel::RolltempoAbflug
+        | Regel::RolltempoAnkunft
+        | Regel::KlappenStart => return None,
+    })
 }
 
 /// Soll für diese Regel ein Hinweis erscheinen? Nur Pflichtpunkte, nur
@@ -976,6 +1012,18 @@ fn pruefen_mit_frist(
 pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     z.sicherstellen();
     let jetzt = s.timestamp;
+    // Lücke seit dem letzten Takt (Pause, Slew, App-Neustart): laufende
+    // Fristen um die Lücke verschieben, damit der Pilot nach dem Fortsetzen
+    // seine volle Kulanz behält (QS 26.09.2026). Normale Takte sind ≤ 10 s.
+    if let Some(vorher_t) = z.letzte_zeit {
+        let luecke = jetzt - vorher_t;
+        if luecke > chrono::Duration::seconds(PAUSE_AB_S) {
+            for bis in z.fristen.values_mut() {
+                *bis += luecke;
+            }
+            z.ueber_grenze_seit = None;
+        }
+    }
     if z.klasse.is_none() {
         z.klasse = Some(k.klasse);
     }
@@ -1353,24 +1401,25 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
             z.entscheiden(Regel::AnschnallLandung, Status::Erledigt, s, gurte_st, None);
         }
     }
-    // Aufgesetzt: was im Endanflug nicht kam, ist entschieden.
-    if s.on_ground && z.startlauf_ab.is_some() && vorher.map(phase_nach_start).unwrap_or(false) {
+    // Ausgerollt: was in keinem Endanflug kam, ist entschieden. Bewusst
+    // NICHT beim ersten Bodenkontakt — ein Touch-and-go, ein Aufsetzer mit
+    // Durchstart oder ein Hüpfer würde sonst die Punkte einfrieren, bevor
+    // die eigentliche Landung (mit gesetzten Spoilern) kommt (QS 26.09.2026).
+    let ausgerollt = s.on_ground
+        && z.startlauf_ab.is_some()
+        && matches!(
+            phase,
+            FlightPhase::TaxiIn | FlightPhase::BlocksOn | FlightPhase::Arrived
+        );
+    if ausgerollt {
         z.gelandet = true;
-        for (r, feld) in [
-            (Regel::SpoilerLandung, "spoilers"),
-            (Regel::AutobrakeLandung, "autobrake"),
-            (Regel::AnschnallLandung, "seatbelts"),
+        for r in [
+            Regel::SpoilerLandung,
+            Regel::AutobrakeLandung,
+            Regel::AnschnallLandung,
         ] {
             if z.offen(r) && z.frist_laeuft(r) {
-                if z.gesehen(feld) {
-                    let st = match r {
-                        Regel::AutobrakeLandung => s.autobrake.clone(),
-                        _ => None,
-                    };
-                    z.entscheiden(r, Status::DiesmalOhne, s, st, None);
-                } else {
-                    z.entscheiden(r, Status::NichtMessbar, s, None, Some(Grund::WertFehlt));
-                }
+                z.ohne_oder_nicht_messbar(r, s);
             }
         }
     }
@@ -1435,6 +1484,18 @@ pub fn abschliessen(
             "laengste_ueber_grenze_s".into(),
             serde_json::json!((laengste * 10.0).round() / 10.0),
         );
+    }
+    // Punkte mit laufender Frist (z. B. Flug endete vor dem Rollen zum
+    // Stand) sind vorgekommen — entscheiden statt „kam nicht vor".
+    let laufend: Vec<Regel> = z.fristen.keys().copied().collect();
+    if let Some(letzte) = z.letzte_zeit {
+        let mut stand = SimSnapshot::default();
+        stand.timestamp = letzte;
+        for r in laufend {
+            if z.offen(r) {
+                z.ohne_oder_nicht_messbar(r, &stand);
+            }
+        }
     }
     let nacht = z.nacht_start.unwrap_or(false);
     for p in z.punkte.iter_mut() {
@@ -1739,6 +1800,17 @@ mod tests {
         s
     }
 
+    /// Takte im 5-s-Raster bis `ziel_s` — wie der echte Streamer. Grössere
+    /// Sprünge gelten als Pause und verschieben die Fristen.
+    fn takte_bis(z: &mut Zustand, s: &mut SimSnapshot, phase: FlightPhase, k: &Kontext, ziel_s: i64) {
+        let mut t = z.letzte_zeit.map(|l| (l - t0()).num_seconds()).unwrap_or(0);
+        while t < ziel_s {
+            t = (t + 5).min(ziel_s);
+            s.timestamp = t0() + chrono::Duration::seconds(t);
+            tick(z, s, phase, k);
+        }
+    }
+
     fn ctx(e: &Einstellungen) -> Kontext<'_> {
         Kontext {
             klasse: Klasse::Airliner,
@@ -1896,9 +1968,9 @@ mod tests {
         let mut s = snap(5);
         s.engines_running = 1;
         tick(&mut z, &s, FlightPhase::Pushback, &k);
-        let mut s = snap(45);
+        let mut s = snap(5);
         s.engines_running = 1;
-        tick(&mut z, &s, FlightPhase::Pushback, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::Pushback, &k, 45);
         assert_eq!(z.status(Regel::BeaconAnlassen), Status::DiesmalOhne);
     }
 
@@ -1914,8 +1986,7 @@ mod tests {
         s.engines_running = 1;
         tick(&mut z, &s, FlightPhase::Pushback, &k);
         assert!(z.hinweis.is_none(), "kein Hinweis ohne Messwert");
-        s.timestamp = t0() + chrono::Duration::seconds(60);
-        tick(&mut z, &s, FlightPhase::Pushback, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::Pushback, &k, 60);
         let p = &z.punkte[Regel::BeaconAnlassen.index()];
         assert_eq!(p.status, Status::NichtMessbar);
         assert_eq!(p.grund, Some(Grund::WertFehlt));
@@ -2030,8 +2101,7 @@ mod tests {
             s.timestamp = t0() + chrono::Duration::seconds(5);
             s.xpdr_mode_label = Some(label.into());
             tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
-            s.timestamp = t0() + chrono::Duration::seconds(30);
-            tick(&mut z, &s, FlightPhase::Takeoff, &k);
+            takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 30);
             assert_eq!(z.status(Regel::TransponderStart), want, "{label}");
         }
     }
@@ -2048,8 +2118,7 @@ mod tests {
         s.timestamp = t0() + chrono::Duration::seconds(5);
         s.xpdr_mode_label = Some("ALT".into());
         tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
-        s.timestamp = t0() + chrono::Duration::seconds(30);
-        tick(&mut z, &s, FlightPhase::Takeoff, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 30);
         let p = &z.punkte[Regel::TcasStart.index()];
         assert_eq!(p.status, Status::NichtMessbar);
         assert_eq!(p.grund, Some(Grund::KeinTcasModus));
@@ -2067,8 +2136,7 @@ mod tests {
         s.timestamp = t0() + chrono::Duration::seconds(5);
         s.xpdr_mode_label = Some("TA-RA".into());
         tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
-        s.timestamp = t0() + chrono::Duration::seconds(30);
-        tick(&mut z, &s, FlightPhase::Takeoff, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 30);
         let mut en = eintrag(&z, &e);
         assert_eq!(status(&en, Regel::StrobesStart), Status::DiesmalOhne);
         let (ok0, _) = en.bilanz();
@@ -2304,6 +2372,102 @@ mod tests {
         assert!(a.alle().is_empty());
         assert!(a.eintraege.with_extension("json.kaputt").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// QS 26.09.2026: Touch-and-go / Aufsetzer mit Durchstart friert die
+    /// Anflugpunkte nicht ein — die echte Landung mit Spoilern zählt.
+    #[test]
+    fn touch_and_go_friert_anflugpunkte_nicht_ein() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.engines_running = 2;
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        s.timestamp = t0() + chrono::Duration::seconds(5);
+        tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
+        // Erster Anflug ohne Spoiler, Aufsetzer, Durchstart.
+        s.on_ground = false;
+        s.altitude_agl_ft = 600.0;
+        s.timestamp = t0() + chrono::Duration::seconds(600);
+        tick(&mut z, &s, FlightPhase::Final, &k);
+        s.on_ground = true;
+        s.altitude_agl_ft = 0.0;
+        s.timestamp = t0() + chrono::Duration::seconds(620);
+        tick(&mut z, &s, FlightPhase::Landing, &k);
+        assert_eq!(
+            z.status(Regel::SpoilerLandung),
+            Status::Offen,
+            "Aufsetzer entscheidet nicht"
+        );
+        s.on_ground = false;
+        s.altitude_agl_ft = 1500.0;
+        s.timestamp = t0() + chrono::Duration::seconds(640);
+        tick(&mut z, &s, FlightPhase::Climb, &k);
+        // Zweiter Anflug mit Spoilern, dann richtige Landung.
+        s.altitude_agl_ft = 700.0;
+        s.spoilers_armed = Some(true);
+        s.timestamp = t0() + chrono::Duration::seconds(1200);
+        tick(&mut z, &s, FlightPhase::Final, &k);
+        assert_eq!(z.status(Regel::SpoilerLandung), Status::Erledigt);
+        // Ohne Spoiler bis zum Ausrollen → erst dann diesmal ohne.
+        let mut z2 = Zustand::default();
+        let mut s2 = snap(0);
+        s2.engines_running = 2;
+        tick(&mut z2, &s2, FlightPhase::TaxiOut, &k);
+        s2.timestamp = t0() + chrono::Duration::seconds(5);
+        tick(&mut z2, &s2, FlightPhase::TakeoffRoll, &k);
+        s2.on_ground = false;
+        s2.altitude_agl_ft = 600.0;
+        s2.timestamp = t0() + chrono::Duration::seconds(600);
+        tick(&mut z2, &s2, FlightPhase::Final, &k);
+        s2.on_ground = true;
+        s2.timestamp = t0() + chrono::Duration::seconds(640);
+        tick(&mut z2, &s2, FlightPhase::Landing, &k);
+        assert_eq!(z2.status(Regel::SpoilerLandung), Status::Offen);
+        s2.timestamp = t0() + chrono::Duration::seconds(700);
+        tick(&mut z2, &s2, FlightPhase::TaxiIn, &k);
+        assert_eq!(z2.status(Regel::SpoilerLandung), Status::DiesmalOhne);
+    }
+
+    /// Flug endet (Einreichen) noch vor dem Rollen zum Stand: die Anflug-
+    /// punkte sind vorgekommen → entschieden, nicht „kam nicht vor".
+    #[test]
+    fn flugende_vor_dem_ausrollen_entscheidet_laufende_punkte() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.engines_running = 2;
+        s.spoilers_armed = None; // dieses Flugzeug meldet die Spoiler nie
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        s.timestamp = t0() + chrono::Duration::seconds(5);
+        tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
+        s.on_ground = false;
+        s.altitude_agl_ft = 600.0;
+        s.timestamp = t0() + chrono::Duration::seconds(600);
+        tick(&mut z, &s, FlightPhase::Final, &k);
+        let en = eintrag(&z, &e);
+        assert_eq!(status(&en, Regel::SpoilerLandung), Status::NichtMessbar);
+        assert_eq!(status(&en, Regel::AnschnallLandung), Status::DiesmalOhne);
+    }
+
+    /// Pause mitten in der Kulanz: die Frist verlängert sich um die Pause.
+    #[test]
+    fn pause_verlaengert_die_frist() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        tick(&mut z, &snap(0), FlightPhase::Preflight, &k);
+        let mut s = snap(5);
+        s.engines_running = 1;
+        tick(&mut z, &s, FlightPhase::Pushback, &k);
+        // 5 Minuten Pause (keine Takte), danach Beacon an.
+        let mut s = snap(305);
+        s.engines_running = 1;
+        s.light_beacon = Some(true);
+        tick(&mut z, &s, FlightPhase::Pushback, &k);
+        assert_eq!(z.status(Regel::BeaconAnlassen), Status::Erledigt);
     }
 
     #[test]
