@@ -111,7 +111,7 @@ pub fn dll_bereitstellen() -> Result<(), String> {
 enum Msg {
     Open(String),
     Quit,
-    Ausnahme { code: u32, send_id: u32 },
+    Ausnahme { send_id: u32 },
     ObjektDaten { req: u32, bytes: Vec<u8> },
     ClientDaten { req: u32, bytes: Vec<u8> },
     Sonst,
@@ -247,7 +247,6 @@ impl Sim {
         } else if id == sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_EXCEPTION as u32 {
             let e = unsafe { &*(p as *const sys::SIMCONNECT_RECV_EXCEPTION) };
             Msg::Ausnahme {
-                code: e.dwException,
                 send_id: e.dwSendID,
             }
         } else if id == sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_SIMOBJECT_DATA as u32 {
@@ -699,7 +698,7 @@ impl Sim {
         for (i, bw) in block_werte.into_iter().enumerate() {
             match bw {
                 Some(v) => w.extend(v),
-                None => w.extend(std::iter::repeat(None).take(laengen[i])),
+                None => w.extend(std::iter::repeat_n(None, laengen[i])),
             }
         }
         w.extend(sv_werte);

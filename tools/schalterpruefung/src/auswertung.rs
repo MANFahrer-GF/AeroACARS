@@ -184,23 +184,6 @@ pub fn auswerten(
     }
 }
 
-/// Indizes der Variablen, die sich irgendwann im Lauf geändert haben
-/// (gegenüber der ersten Messung) — nur diese kommen als Rohmessung in den
-/// Bericht, nicht alle LVars.
-pub fn geaenderte(messungen: &[&Werte]) -> Vec<usize> {
-    let Some(erste) = messungen.first() else {
-        return Vec::new();
-    };
-    (0..erste.len())
-        .filter(|&i| {
-            messungen.iter().any(|m| {
-                !gleich(erste[i], m.get(i).copied().flatten())
-                    && m.get(i).copied().flatten().is_some()
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,13 +376,6 @@ mod tests {
         };
         let e = auswerten(&schalter, &namen, &[st.clone(), st], &BTreeSet::new());
         assert!(e.kandidaten.is_empty());
-    }
-
-    #[test]
-    fn geaenderte_listet_nur_bewegte_variablen() {
-        let a = vec![Some(1.), Some(2.), None];
-        let b = vec![Some(1.), Some(3.), None];
-        assert_eq!(geaenderte(&[&a, &b]), vec![1]);
     }
 
     #[test]
