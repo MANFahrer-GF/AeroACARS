@@ -12,6 +12,8 @@ mod accident;
 mod arrival;
 /// v1.7.0 — Ausfahrten aus der OSM-Bodenkarte (Spec §8.6).
 mod ausfahrten;
+/// Bordbuch (26.09.2026) — bestätigt erledigte Cockpit-Routinen, ohne Einfluss auf Score/PIREP.
+pub mod bordbuch;
 /// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
 mod fahrwerk;
 mod fenster;

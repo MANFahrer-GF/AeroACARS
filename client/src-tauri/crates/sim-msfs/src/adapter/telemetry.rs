@@ -974,6 +974,12 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // abgelehnt werden, stehen deshalb VOR dem Standard-SimVar-Schwanz.
     F::f64("L:INI_STROBE_LIGHT_SWITCH", "Number"),
     F::f64("L:INI_TCAS_STBY_STATE", "Number"),
+    // Bordbuch (26.09.2026): Sim-Uhrzeit fuer Tag/Nacht aus dem Sonnenstand.
+    // Standard seit FSX (SDK „Environment Variables"), wird nicht abgelehnt
+    // — darum VOR dem riskanten Standard-SimVar-Schwanz.
+    F::f64("ZULU TIME", "Seconds"),
+    F::f64("ZULU DAY OF YEAR", "Number"),
+    F::f64("ZULU YEAR", "Number"),
     // Standard-SimVars. SEATBELTS/TRANSPONDER STATE dienen als Rueckfall fuer
     // die Muster, die sie laut Paket bedienen (siehe Mapping); alle drei
     // laufen zusaetzlich roh ins Flug-Log. GANZ ans Ende: anders als LVars
@@ -1502,6 +1508,11 @@ pub struct Telemetry {
     pub ini_strobe_light_switch: f64,
     /// iniBuilds A330 `L:INI_TCAS_STBY_STATE` 0=STBY 1=AUTO 2=ON.
     pub ini_tcas_stby_state: f64,
+    /// `ZULU TIME` (Sekunden seit Mitternacht UTC), `ZULU DAY OF YEAR`
+    /// (1..366), `ZULU YEAR` — Sim-Uhrzeit fuer das Bordbuch.
+    pub zulu_time_s: f64,
+    pub zulu_tag_im_jahr: f64,
+    pub zulu_jahr: f64,
     /// `AUTO BRAKE SWITCH CB` — nur roh ins Flug-Log.
     pub roh_std_autobrake_switch_cb: f64,
     /// `CABIN SEATBELTS ALERT SWITCH`. `None`, wenn der Block vor diesem
@@ -2236,6 +2247,9 @@ impl Telemetry {
         pull_f64!(t.fss_parkbrake_lever);
         pull_f64!(t.ini_strobe_light_switch);
         pull_f64!(t.ini_tcas_stby_state);
+        pull_f64!(t.zulu_time_s);
+        pull_f64!(t.zulu_tag_im_jahr);
+        pull_f64!(t.zulu_jahr);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
         t.std_cabin_seatbelts_alert = read_f64(bytes, off);
@@ -2461,6 +2475,27 @@ fn airbus_xpdr_mode_label(atc: f64, tcas: f64) -> Option<String> {
         _ => return None,
     };
     Some(label.to_string())
+}
+
+/// Sim-Uhrzeit (UTC) aus `ZULU YEAR`, `ZULU DAY OF YEAR` (1-basiert) und
+/// `ZULU TIME` (Sekunden). Ein abgeschnittener Block liefert 0/0/0 → `None`,
+/// ebenso jeder Wert ausserhalb des Plausiblen.
+fn sim_zeit_aus(jahr: f64, tag: f64, sekunden: f64) -> Option<chrono::DateTime<Utc>> {
+    use chrono::{Duration, TimeZone};
+    if !(1900.0..=2200.0).contains(&jahr)
+        || !(1.0..=366.0).contains(&tag)
+        || !(0.0..86_401.0).contains(&sekunden)
+    {
+        return None;
+    }
+    let neujahr = Utc
+        .with_ymd_and_hms(jahr.round() as i32, 1, 1, 0, 0, 0)
+        .single()?;
+    Some(
+        neujahr
+            + Duration::days(tag.round() as i64 - 1)
+            + Duration::milliseconds((sekunden * 1000.0).round() as i64),
+    )
 }
 
 /// Schalter-LVar in Zehner-Rasten (0/10/20/…) → Rastenindex, nur wenn der
@@ -4493,7 +4528,9 @@ fn telemetry_to_snapshot_mit_pfad(
             0 => "OFF",
             1 => "STBY",
             2 => "TEST",
-            3 => "XPNDR",
+            // SDK: 3 = "On" = sendet OHNE Hoehe (Mode A). Nicht „XPNDR" — das
+            // heisst bei PMDG/Airbus/iFly „mit Hoehe" (Bordbuch, 26.09.2026).
+            3 => "ON",
             4 => "ALT",
             5 => "GND",
             _ => return None,
@@ -4830,6 +4867,7 @@ fn telemetry_to_snapshot_mit_pfad(
         parking_name: None,
         parking_number: None,
         selected_runway: None,
+        sim_zeit_utc: sim_zeit_aus(t.zulu_jahr, t.zulu_tag_im_jahr, t.zulu_time_s),
         aircraft_profile: profile,
         // PMDG SDK data is filled in MsfsAdapter::snapshot() by
         // merging the latest ClientData block — not here in the
@@ -5536,7 +5574,7 @@ mod tests {
         // +40 (MD-11-Speedbrake x2, INI-Autobrake x3); Runde 3: +96 (12 FSS-
         // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2); A330 (26.09.2026): +16
         // (Strobe + ATC-Wahlschalter).
-        assert_eq!(buf.len(), 3560, "total block size");
+        assert_eq!(buf.len(), 3584, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -5842,12 +5880,15 @@ mod tests {
         assert_eq!(t.fss_parkbrake_lever, 1363.0); // idx 363
         assert_eq!(t.ini_strobe_light_switch, 1364.0); // idx 364, A330 (26.09.2026)
         assert_eq!(t.ini_tcas_stby_state, 1365.0); // idx 365
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1366.0); // idx 366
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1367.0)); // idx 367
-        assert_eq!(t.std_light_landing_on_1, Some(1368.0)); // idx 368
-        assert_eq!(t.std_light_landing_on_2, Some(1369.0)); // idx 369
-        assert_eq!(t.std_transponder_state, Some(1370.0)); // idx 370, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 371, "letzter Index 370");
+        assert_eq!(t.zulu_time_s, 1366.0); // idx 366, Bordbuch (26.09.2026)
+        assert_eq!(t.zulu_tag_im_jahr, 1367.0); // idx 367
+        assert_eq!(t.zulu_jahr, 1368.0); // idx 368
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1369.0); // idx 369
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1370.0)); // idx 370
+        assert_eq!(t.std_light_landing_on_1, Some(1371.0)); // idx 371
+        assert_eq!(t.std_light_landing_on_2, Some(1372.0)); // idx 372
+        assert_eq!(t.std_transponder_state, Some(1373.0)); // idx 373, zuletzt
+        assert_eq!(TELEMETRY_FIELDS.len(), 374, "letzter Index 373");
     }
 
     #[test]
@@ -5913,7 +5954,8 @@ mod tests {
         // MD-11-Speedbrake- und drei INI-Autobrake-LVars dazu → 34 * 8 = 272.
         // Runde 3: zwoelf FSS-LVars und LIGHT LANDING ON:1/:2 dazu → 48 * 8
         // = 384. A330 (26.09.2026): zwei LVars dazu → 50 * 8 = 400.
-        buf.truncate(buf.len() - 400);
+        // Bordbuch (26.09.2026): drei ZULU-Felder dazu → 53 * 8 = 424.
+        buf.truncate(buf.len() - 424);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(t.fnx_xpdr_operation, 0.0, "Gruppe K = sicherer Default");
@@ -9105,7 +9147,7 @@ mod tests {
             (0.0, "OFF"),
             (1.0, "STBY"),
             (2.0, "TEST"),
-            (3.0, "XPNDR"),
+            (3.0, "ON"),
             (4.0, "ALT"),
             (5.0, "GND"),
         ] {
@@ -9162,6 +9204,29 @@ mod tests {
         assert_eq!(
             runde2_schluessel(&snap),
             vec!["AUTO BRAKE SWITCH CB".to_string()]
+        );
+    }
+
+    /// Bordbuch: Sim-Uhrzeit aus den ZULU-Feldern; fehlender Block → None.
+    #[test]
+    fn sim_zeit_aus_den_zulu_feldern() {
+        let z = sim_zeit_aus(2026.0, 269.0, 13.5 * 3600.0).expect("zeit");
+        assert_eq!(z.to_rfc3339(), "2026-09-26T13:30:00+00:00");
+        assert_eq!(sim_zeit_aus(0.0, 0.0, 0.0), None);
+        assert_eq!(sim_zeit_aus(2026.0, 0.0, 10.0), None);
+        let buf = runde2_puffer(
+            ASOBO.0,
+            ASOBO.1,
+            &[
+                ("ZULU YEAR", 2026.0),
+                ("ZULU DAY OF YEAR", 1.0),
+                ("ZULU TIME", 60.0),
+            ],
+        );
+        let snap = parse(&buf, Simulator::Msfs2024, None);
+        assert_eq!(
+            snap.sim_zeit_utc.map(|z| z.to_rfc3339()).as_deref(),
+            Some("2026-01-01T00:01:00+00:00")
         );
     }
 
@@ -9622,7 +9687,7 @@ mod tests {
         assert_eq!(xpdr(A380, 5.0).as_deref(), Some("GND"));
         // Gemessen A220: STBY=1, ALT OFF=3, ALT ON/TA/TA-RA=4 — kein TA-Label.
         assert_eq!(xpdr(A220, 1.0).as_deref(), Some("STBY"));
-        assert_eq!(xpdr(A220, 3.0).as_deref(), Some("XPNDR"));
+        assert_eq!(xpdr(A220, 3.0).as_deref(), Some("ON"));
         assert_eq!(xpdr(A220, 4.0).as_deref(), Some("ALT"));
         assert_eq!(
             mit_b(A220, &[], &[]).aircraft_profile,

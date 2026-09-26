@@ -304,6 +304,13 @@ pub struct SimSnapshot {
     /// currently has the aircraft cleared for. Useful to record the
     /// approach runway at touchdown.
     pub selected_runway: Option<String>,
+    /// Uhrzeit IM SIMULATOR (UTC) — weicht von `timestamp` (Rechneruhr) ab,
+    /// wenn der Pilot mit anderer Tageszeit fliegt. MSFS `ZULU TIME` +
+    /// `ZULU DAY OF YEAR` + `ZULU YEAR`, X-Plane `sim/time/zulu_time_sec` +
+    /// `sim/time/local_date_days`. Bordbuch (26.09.2026): Tag/Nacht aus dem
+    /// Sonnenstand. `None` = Sim liefert keine Zeit → Rechneruhr.
+    #[serde(default)]
+    pub sim_zeit_utc: Option<DateTime<Utc>>,
 
     // ---- Aircraft profile (Phase H.4) ----
     /// Detected aircraft profile. Drives which set of variables (default
@@ -980,6 +987,7 @@ impl Default for SimSnapshot {
             parking_name: None,
             parking_number: None,
             selected_runway: None,
+            sim_zeit_utc: None,
             aircraft_profile: AircraftProfile::default(),
             pmdg: None,
             gear_is_skid: None,

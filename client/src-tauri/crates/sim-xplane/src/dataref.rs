@@ -204,6 +204,13 @@ pub enum FieldId {
     /// forums.x-plane.org Topic 325891, Befehle `ACOL_up`/`ACOL_dn`).
     /// Welche Seite RED ist, steht dort nicht — deshalb nur „an/aus".
     Q4xpKollisionslicht,
+    /// `sim/time/zulu_time_sec` — Sim-Uhrzeit UTC in Sekunden seit
+    /// Mitternacht (DataRefs.txt). Bordbuch: Tag/Nacht aus dem Sonnenstand.
+    ZuluTimeSec,
+    /// `sim/time/local_date_days` — Tag im Jahr (DataRefs.txt: „days since
+    /// January 1st at the user's location"). Ein Tag Versatz um Mitternacht
+    /// ist fuer den Sonnenstand belanglos (Deklination ±0,4°/Tag).
+    LocalDateDays,
 }
 
 /// One row in the catalog: a DataRef name + which snapshot field it
@@ -720,6 +727,14 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "FJS/Q4XP/Manips/TwoSwitch_Ctl[23]",
         field: FieldId::Q4xpKollisionslicht,
     },
+    DatarefEntry {
+        name: "sim/time/zulu_time_sec",
+        field: FieldId::ZuluTimeSec,
+    },
+    DatarefEntry {
+        name: "sim/time/local_date_days",
+        field: FieldId::LocalDateDays,
+    },
 ];
 
 /// v0.16.9: body-frame horizontal velocity, derived from the WORLD-frame
@@ -934,6 +949,8 @@ pub struct XPlaneState {
     pub toliss_strobe_switch: Option<f32>,
     pub felis_beacon: Option<bool>,
     pub q4xp_kollisionslicht: Option<bool>,
+    pub zulu_time_sec: Option<f32>,
+    pub local_date_days: Option<f32>,
     /// True once we've received at least one RREF packet — drives
     /// the connection state machine's transition into `Connected`.
     pub got_first_packet: bool,
@@ -966,7 +983,10 @@ pub fn xplane_xpdr_mode_label(mode: u8) -> &'static str {
     match mode {
         0 => "OFF",
         1 => "STBY",
-        2 => "XPNDR", // X-Plane "ON (mode A)" = sendet ohne Hoehe
+        // X-Plane "ON (mode A)" = sendet OHNE Hoehe. Bewusst nicht „XPNDR":
+        // das heisst bei PMDG/Airbus/Zibo „sendet mit Hoehe" (Bordbuch,
+        // 26.09.2026 — der Punkt „Transponder mit Hoehe" muss das trennen).
+        2 => "ON",
         3 => "ALT",
         4 => "TEST",
         5 => "GND",
@@ -974,6 +994,26 @@ pub fn xplane_xpdr_mode_label(mode: u8) -> &'static str {
         7 => "TA-RA",
         _ => "",
     }
+}
+
+/// Sim-Uhrzeit (UTC) aus `zulu_time_sec` + `local_date_days`. Das Jahr
+/// kennt X-Plane nicht als Dataref — es kommt von der Rechneruhr.
+fn sim_zeit_aus(
+    zulu_s: Option<f32>,
+    tag_im_jahr: Option<f32>,
+    jetzt: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::{Datelike, Duration, TimeZone};
+    let zulu_s = zulu_s.filter(|v| v.is_finite() && (0.0..86_400.5).contains(v))?;
+    let tag = tag_im_jahr.filter(|v| v.is_finite() && (0.0..366.5).contains(v))?;
+    let neujahr = chrono::Utc
+        .with_ymd_and_hms(jetzt.year(), 1, 1, 0, 0, 0)
+        .single()?;
+    Some(
+        neujahr
+            + Duration::days(tag.round() as i64)
+            + Duration::milliseconds((zulu_s as f64 * 1000.0).round() as i64),
+    )
 }
 
 /// Dreistufiger Schalter 0=OFF 1=AUTO 2=ON; alles andere → `None`.
@@ -1129,6 +1169,8 @@ impl XPlaneState {
             FieldId::TolissStrobeSwitch => self.toliss_strobe_switch = Some(value),
             FieldId::FelisBeacon => self.felis_beacon = Some(value > 0.5),
             FieldId::Q4xpKollisionslicht => self.q4xp_kollisionslicht = Some(value.abs() > 0.5),
+            FieldId::ZuluTimeSec => self.zulu_time_sec = Some(value),
+            FieldId::LocalDateDays => self.local_date_days = Some(value),
         }
     }
 
@@ -1447,6 +1489,7 @@ impl XPlaneState {
             parking_name: None,
             parking_number: None,
             selected_runway: None,
+            sim_zeit_utc: sim_zeit_aus(self.zulu_time_sec, self.local_date_days, chrono::Utc::now()),
             aircraft_profile: sim_core::AircraftProfile::default(),
             // PMDG SDK is MSFS-only; X-Plane never fills this.
             pmdg: None,
@@ -1915,13 +1958,30 @@ mod cockpit_schalter_tests {
         );
     }
 
+    /// Bordbuch: Sim-Uhrzeit aus zulu_time_sec + local_date_days (0 = 1. Jan).
+    #[test]
+    fn sim_zeit_aus_zulu_und_tag() {
+        use chrono::TimeZone;
+        let jetzt = chrono::Utc.with_ymd_and_hms(2026, 9, 26, 8, 0, 0).unwrap();
+        let z = super::sim_zeit_aus(Some(3600.0), Some(268.0), jetzt).expect("zeit");
+        assert_eq!(z.to_rfc3339(), "2026-09-26T01:00:00+00:00");
+        assert_eq!(super::sim_zeit_aus(None, Some(1.0), jetzt), None);
+        assert_eq!(super::sim_zeit_aus(Some(f32::NAN), Some(1.0), jetzt), None);
+        let mut s = XPlaneState::default();
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).sim_zeit_utc, None);
+        s.apply_field(FieldId::ZuluTimeSec, 7200.0);
+        s.apply_field(FieldId::LocalDateDays, 0.0);
+        let z = s.to_snapshot(Simulator::XPlane12).sim_zeit_utc.expect("zeit");
+        assert_eq!(z.format("%m-%d %H:%M").to_string(), "01-01 02:00");
+    }
+
     #[test]
     fn transponder_folgt_dem_xp12_enum() {
         let mut s = XPlaneState::default();
         for (roh, erwartet) in [
             (0.0, "OFF"),
             (1.0, "STBY"),
-            (2.0, "XPNDR"),
+            (2.0, "ON"),
             (3.0, "ALT"),
             (4.0, "TEST"),
             (5.0, "GND"),
