@@ -693,6 +693,9 @@ function openSocket(): void {
 
   socket.onopen = () => {
     reconnectDelay = 1000; // reset backoff on a clean connect
+    // Abos nach (Wieder-)Verbindung erneut melden — der Sim-PC kennt sie je
+    // Verbindung, eine neue startet ohne.
+    for (const ev of browserRegistry.keys()) aboSenden(ev, true);
   };
   socket.onmessage = (msg) => {
     let parsed: IpcEvent<unknown>;
@@ -725,6 +728,21 @@ function openSocket(): void {
   };
 }
 
+/** v1.8.1: Ereignisse, die der Sim-PC nur auf Abo schickt (hohe Rate). Die
+ *  Oberflaeche meldet an/ab ueber die bestehende Verbindung. */
+const ABO_EREIGNISSE = new Set(["telemetrie-frame"]);
+
+function aboSenden(event: string, an: boolean): void {
+  if (!ABO_EREIGNISSE.has(event)) return;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify({ abo: event, an }));
+    } catch {
+      /* beim naechsten Verbinden wird neu gemeldet (onopen) */
+    }
+  }
+}
+
 function browserListen<T>(
   event: string,
   cb: (e: IpcEvent<T>) => void,
@@ -735,16 +753,21 @@ function browserListen<T>(
     browserRegistry.set(event, set);
   }
   const wrapped = cb as AnyCb;
+  const erster = set.size === 0;
   set.add(wrapped);
 
   // Ensure the shared socket is up (or coming up).
   openSocket();
+  if (erster) aboSenden(event, true);
 
   return () => {
     const s = browserRegistry.get(event);
     if (s) {
       s.delete(wrapped);
-      if (s.size === 0) browserRegistry.delete(event);
+      if (s.size === 0) {
+        browserRegistry.delete(event);
+        aboSenden(event, false);
+      }
     }
     // If absolutely nothing is listening anymore, drop the socket so a logged-
     // out tablet doesn't keep a dead connection alive.

@@ -40,6 +40,10 @@ pub async fn handle_socket(
 ) {
     let mut events = ctx.events.subscribe();
     let mut telemetrie = ctx.events.subscribe_telemetrie();
+    // Telemetrie-Frames nur an Verbindungen, deren Oberflaeche den Monitor
+    // offen hat — sie meldet das per Abo-Nachricht (Codex-Befund 3: vorher
+    // bekam jedes verbundene Tablet 10 Frames/s, sobald irgendeins zusah).
+    let mut telemetrie_abonniert = false;
 
     // Send an immediate status frame so a freshly-connected tablet renders
     // the live panel without waiting for the next shared tick.
@@ -62,7 +66,12 @@ pub async fn handle_socket(
             inbound = socket.recv() => {
                 match inbound {
                     Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(_)) => { /* ignore client payloads */ }
+                    Some(Ok(Message::Text(text))) => {
+                        if let Some(an) = telemetrie_abo_aus(&text) {
+                            telemetrie_abonniert = an;
+                        }
+                    }
+                    Some(Ok(_)) => { /* ignore other client payloads */ }
                     Some(Err(_)) => break,
                 }
             }
@@ -73,6 +82,9 @@ pub async fn handle_socket(
             frame = telemetrie.recv() => {
                 match frame {
                     Ok(RemoteEvent { event, payload }) => {
+                        if !telemetrie_abonniert {
+                            continue;
+                        }
                         let body = payload.to_string();
                         if send_event(&mut socket, &event, &body).await.is_err() {
                             break;
@@ -113,6 +125,16 @@ pub async fn handle_socket(
             }
         }
     }
+}
+
+/// v1.8.1: Abo-Nachricht der Oberflaeche fuer den Telemetrie-Strom,
+/// `{"abo":"telemetrie-frame","an":true|false}`. Alles andere: `None`.
+fn telemetrie_abo_aus(text: &str) -> Option<bool> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    if v.get("abo")?.as_str()? != "telemetrie-frame" {
+        return None;
+    }
+    v.get("an")?.as_bool()
 }
 
 /// Whether receiving this broadcast event should close the socket right
@@ -158,6 +180,27 @@ fn escape_json_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn telemetrie_abo_nachricht() {
+        assert_eq!(
+            super::telemetrie_abo_aus(r#"{"abo":"telemetrie-frame","an":true}"#),
+            Some(true)
+        );
+        assert_eq!(
+            super::telemetrie_abo_aus(r#"{"abo":"telemetrie-frame","an":false}"#),
+            Some(false)
+        );
+        assert_eq!(
+            super::telemetrie_abo_aus(r#"{"abo":"anderes","an":true}"#),
+            None
+        );
+        assert_eq!(
+            super::telemetrie_abo_aus(r#"{"abo":"telemetrie-frame"}"#),
+            None
+        );
+        assert_eq!(super::telemetrie_abo_aus("kein json"), None);
+    }
+
     use super::*;
 
     #[test]

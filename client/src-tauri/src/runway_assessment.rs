@@ -255,9 +255,15 @@ pub fn hoehengruppe(icao: Option<&str>) -> Hoehengruppe {
         "IL96", "IL86", "A124", "A225", "KC10",
     ];
     // BLCF = 747 Dreamlifter, A3ST = Beluga, CONC = Concorde.
-    const G4_EXAKT: &[&str] = &["A310", "C5", "C5M", "C17", "B52", "BLCF", "A3ST", "CONC"];
+    // Alle Beispiele der FAA-Tabelle 1-3-1 sind exakt ihrer dort genannten
+    // Gruppe zugeordnet (Codex-Befund 1: C-17 und B-52 stehen in Gruppe 3,
+    // nicht 4). B-1 = "B1", E-4 = "E4B", VC-25 = B742.
+    const G4_EXAKT: &[&str] = &["A310", "C5", "C5M", "B1", "E4B", "BLCF", "A3ST", "CONC"];
     const G3: &[&str] = &["B75", "B72", "B70", "IL76", "IL62", "K35R", "DC8"];
-    const G3_EXAKT: &[&str] = &["C135", "E3TF", "E3CF", "T154", "T204", "A400"];
+    // FAA Gruppe 3: B-52, C-135, C-141, C-17, E-3, P-3, E-8, C-32.
+    const G3_EXAKT: &[&str] = &[
+        "B52", "C135", "C141", "C17", "E3TF", "E3CF", "P3", "E8", "C32", "T154", "T204", "A400",
+    ];
     const G2: &[&str] = &[
         "B73", "B37M", "B38M", "B39M", "B3XM", "A31", "A32", "A19N", "A20N", "A21N", "BCS1",
         "BCS3", "MD8", "MD9", "DC9", "B712", "F28", "F70", "F100", "E17", "E19", "E29", "E75",
@@ -266,7 +272,8 @@ pub fn hoehengruppe(icao: Option<&str>) -> Hoehengruppe {
         "AJ27",
     ];
     // C30J = C-130J, P8 = Poseidon (737-Basis).
-    const G2_EXAKT: &[&str] = &["C130", "C30J", "Y12", "P8"];
+    // FAA Gruppe 2: F-28, B-737, C-9, DC-9, C-130, T-43, B-2.
+    const G2_EXAKT: &[&str] = &["C130", "C30J", "Y12", "P8", "B2", "C9", "T43"];
     let passt = |praefix: &[&str], exakt: &[&str]| {
         exakt.contains(&k.as_str()) || praefix.iter().any(|p| k.starts_with(p))
     };
@@ -600,7 +607,18 @@ mod tests {
             ("BCS3", Hoehengruppe::G2),
             ("C750", Hoehengruppe::G1),
             ("C172", Hoehengruppe::G1),
-            ("C17", Hoehengruppe::G4),
+            // Beispiele aus FAA Tabelle 1-3-1, jeweils in der dort genannten
+            // Gruppe — nicht aus unserer Einordnung abgeleitet.
+            ("C17", Hoehengruppe::G3),
+            ("B52", Hoehengruppe::G3),
+            ("C141", Hoehengruppe::G3),
+            ("P3", Hoehengruppe::G3),
+            ("C135", Hoehengruppe::G3),
+            ("B727", Hoehengruppe::G3),
+            ("B2", Hoehengruppe::G2),
+            ("C5", Hoehengruppe::G4),
+            ("B1", Hoehengruppe::G4),
+            ("DC10", Hoehengruppe::G4),
             ("C550", Hoehengruppe::G1),
             ("C560", Hoehengruppe::G1),
             ("E35L", Hoehengruppe::G1),

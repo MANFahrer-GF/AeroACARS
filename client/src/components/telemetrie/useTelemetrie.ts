@@ -108,6 +108,9 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
     if (!q) return;
     let aus = false;
     let abbestellen: (() => void) | null = null;
+    const halten = window.setInterval(() => {
+      if (!aus) q.halten();
+    }, HALTEN_MS);
 
     const aufnehmen = (f: Frame) => {
       const liste = frames.current;
@@ -134,7 +137,9 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
         abbestellen = await q.abonnieren((f) => {
           if (aus) return;
           if (!gestartet) {
-            puffer.push(f);
+            // Begrenzt: nur die Frames zwischen Abo und Startantwort zaehlen
+            // (Sekundenbruchteile). Mehr heisst, der Start haengt.
+            if (puffer.length < 200) puffer.push(f);
             return;
           }
           aufnehmen(f);
@@ -161,12 +166,17 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
         setVersion((v) => v + 1);
       } catch (e) {
         if (aus) return;
+        // Start gescheitert: Abo und Lebenszeichen beenden, sonst liefe der
+        // Strom im Backend weiter, waehrend hier „Fehler" steht (Codex 4).
+        aus = true;
+        abbestellen?.();
+        abbestellen = null;
+        window.clearInterval(halten);
+        q.stop();
         setFehler(e instanceof Error ? e.message : String(e));
         setZustand("fehler");
       }
     })();
-
-    const halten = window.setInterval(() => q.halten(), HALTEN_MS);
     return () => {
       aus = true;
       window.clearInterval(halten);

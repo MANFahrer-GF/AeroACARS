@@ -101,12 +101,19 @@ export function laden(roh: string | null): Strich[] {
   try {
     const d = JSON.parse(roh) as unknown;
     if (!Array.isArray(d)) return [];
+    const zahl = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+    // Jeder Punkt muss x/y/p als endliche Zahl haben — ein kaputter Punkt
+    // liesse das Zeichnen spaeter abbrechen (Codex-Befund 5).
     return d.filter(
       (s): s is Strich =>
         !!s &&
         typeof (s as Strich).farbe === "string" &&
-        typeof (s as Strich).breite === "number" &&
-        Array.isArray((s as Strich).punkte),
+        zahl((s as Strich).breite) &&
+        Array.isArray((s as Strich).punkte) &&
+        (s as Strich).punkte.length > 0 &&
+        (s as Strich).punkte.every(
+          (q) => !!q && zahl((q as Punkt).x) && zahl((q as Punkt).y) && zahl((q as Punkt).p),
+        ),
     );
   } catch {
     return [];

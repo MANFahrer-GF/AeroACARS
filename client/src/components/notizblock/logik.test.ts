@@ -42,6 +42,10 @@ describe("Notizblock-Logik", () => {
     expect(laden("kein json")).toEqual([]);
     expect(laden('{"a":1}')).toEqual([]);
     expect(laden('[{"farbe":1}]')).toEqual([]);
+    // Kaputte Punkte (null, fehlende Koordinate, NaN als null) fliegen raus.
+    expect(laden('[{"farbe":"--text","breite":0.003,"punkte":[null]}]')).toEqual([]);
+    expect(laden('[{"farbe":"--text","breite":0.003,"punkte":[{"x":0.1,"p":0.5}]}]')).toEqual([]);
+    expect(laden('[{"farbe":"--text","breite":0.003,"punkte":[]}]')).toEqual([]);
     const s = [strich([[0.1, 0.2]])];
     expect(laden(JSON.stringify(s))).toEqual(s);
   });
