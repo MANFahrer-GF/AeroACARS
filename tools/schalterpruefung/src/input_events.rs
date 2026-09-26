@@ -60,7 +60,7 @@ fn text(b: &[u8]) -> String {
 
 /// Ein Teil der Liste: (RequestID, EntryNumber, OutOf, Deskriptoren).
 pub fn enumerate_deuten(roh: &[u8]) -> Option<(u32, u32, u32, Vec<Deskriptor>)> {
-    let req = u32_bei(roh, 12)?;
+    let req = u32_bei(roh, KOPF)?;
     let anzahl = u32_bei(roh, 16)? as usize;
     let nr = u32_bei(roh, 20)?;
     let von = u32_bei(roh, 24)?;
@@ -81,7 +81,7 @@ pub fn enumerate_deuten(roh: &[u8]) -> Option<(u32, u32, u32, Vec<Deskriptor>)> 
 
 /// Antwort auf GetInputEvent: (RequestID, Zahlenwert oder None bei Text).
 pub fn get_deuten(roh: &[u8]) -> Option<(u32, Option<f64>)> {
-    let req = u32_bei(roh, 12)?;
+    let req = u32_bei(roh, KOPF)?;
     let typ = u32_bei(roh, 16)?;
     let w = if typ == TYP_DOUBLE {
         f64_bei(roh, 20)
@@ -93,7 +93,7 @@ pub fn get_deuten(roh: &[u8]) -> Option<(u32, Option<f64>)> {
 
 /// Abo-Meldung: (Hash, Zahlenwert oder None bei Text).
 pub fn abo_deuten(roh: &[u8]) -> Option<(u64, Option<f64>)> {
-    let hash = u64_bei(roh, 12)?;
+    let hash = u64_bei(roh, KOPF)?;
     let typ = u32_bei(roh, 20)?;
     let w = if typ == TYP_DOUBLE {
         f64_bei(roh, 24)
@@ -125,7 +125,7 @@ impl ListenSammler {
             }
             if x.typ == TYP_DOUBLE {
                 self.events.push(x);
-            } else {
+            } else if x.typ == TYP_STRING {
                 self.text_events += 1;
             }
         }
