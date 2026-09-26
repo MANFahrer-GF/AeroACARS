@@ -62,6 +62,12 @@ const RESP_REQ: u32 = 0x3000_0000;
 const IE_LISTE_REQ: u32 = 0x3800_0000;
 /// + (Generation & 0xFF) << 16 + Index — bis 65535 Input-Events.
 const IE_REQ: u32 = 0x4000_0000;
+/// Direkt gelesene LVars: Definition DIR_DEF + Block, Anfrage
+/// DIR_REQ + Generation * 256 + Block.
+const DIR_DEF: u32 = 5000;
+const DIR_REQ: u32 = 0x5000_0000;
+/// LVars je direkter Definition (FLOAT64 → 1,6 KB je Antwort).
+const DIR_BLOCK: usize = 200;
 
 /// Client-Daten-IDs je MobiFlight-Kanal: Kanal k (0 = Standard-Client
 /// „MobiFlight", 1 = Liste, 2.. = LVar-Blöcke).
@@ -160,6 +166,12 @@ pub struct Sim {
     pub ie_text: usize,
     /// Letzter bekannter Wert je Hash (aus Abo-Meldungen und Get-Antworten).
     ie_wert: HashMap<u64, f64>,
+    /// Direkt per SimConnect gelesene LVars, in Blöcken zu `DIR_BLOCK`.
+    direkt: Vec<Vec<String>>,
+    /// Paketkennung → (Block, Position) für asynchrone Ablehnungen.
+    dir_send_ids: HashMap<u32, (usize, usize)>,
+    dir_abgelehnt_neu: Vec<(usize, usize)>,
+    pub direkt_abgelehnt: Vec<String>,
 }
 
 unsafe impl Send for Sim {}
@@ -179,6 +191,19 @@ fn hr_ok(hr: i32, was: &str) -> Result<(), String> {
     } else {
         Err(format!("{was}: HRESULT 0x{:08X}", hr as u32))
     }
+}
+
+/// n FLOAT64 (little endian) aus einer SimObject-Antwort.
+fn f64_lesen(bytes: &[u8], n: usize) -> Vec<Option<f64>> {
+    (0..n)
+        .map(|i| {
+            bytes.get(i * 8..i * 8 + 8).map(|b| {
+                let mut a = [0u8; 8];
+                a.copy_from_slice(b);
+                f64::from_le_bytes(a)
+            })
+        })
+        .collect()
 }
 
 fn c_text(bytes: &[u8]) -> String {
@@ -216,6 +241,10 @@ impl Sim {
             ie: Vec::new(),
             ie_text: 0,
             ie_wert: HashMap::new(),
+            direkt: Vec::new(),
+            dir_send_ids: HashMap::new(),
+            dir_abgelehnt_neu: Vec::new(),
+            direkt_abgelehnt: Vec::new(),
         };
         // Auf die OPEN-Meldung warten — erst dann ist die Verbindung wirklich da.
         let mut name = String::new();
@@ -315,6 +344,9 @@ impl Sim {
                         }
                     }
                     Msg::Ausnahme { send_id, .. } => {
+                        if let Some(bp) = self.dir_send_ids.get(send_id).copied() {
+                            self.dir_abgelehnt_neu.push(bp);
+                        }
                         if let Some(i) = self.sv_send_ids.get(send_id).copied() {
                             self.simvars[i].1 = false;
                             let n = self.simvars[i].0.clone();
@@ -656,13 +688,123 @@ impl Sim {
     /// Namen aller beobachteten Variablen in Messreihenfolge.
     pub fn variablen(&self) -> Vec<String> {
         let mut v: Vec<String> = self
-            .bloecke
+            .direkt
             .iter()
-            .flat_map(|b| b.block.lvars.iter().map(|n| format!("L:{n}")))
+            .flat_map(|b| b.iter().map(|n| format!("L:{n}")))
             .collect();
+        v.extend(self.bloecke.iter().flat_map(|b| {
+            b.block
+                .lvars
+                .iter()
+                .map(|n| format!("{}{n}", crate::diagnose::MF_PRAEFIX))
+        }));
         v.extend(self.ie.iter().map(|d| format!("B:{}", d.name)));
         v.extend(self.simvars.iter().map(|(n, _)| format!("A:{n}")));
         v
+    }
+
+    /// Gruppen in Messreihenfolge — für die Diagnose je Block/Client.
+    pub fn gruppen(&self) -> Vec<(String, usize)> {
+        let mut g: Vec<(String, usize)> = self
+            .direkt
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (format!("SimConnect direkt, Block {}", i + 1), b.len()))
+            .collect();
+        g.extend(self.bloecke.iter().map(|b| {
+            (
+                format!("MobiFlight-Client {}", b.block.name),
+                b.block.lvars.len(),
+            )
+        }));
+        g.push(("Input-Events (B:)".into(), self.ie.len()));
+        g.push(("Standard-SimVars (A:)".into(), self.simvars.len()));
+        g
+    }
+
+    /// LVars direkt per SimConnect-Datendefinition lesen:
+    /// `AddToDataDefinition("L:<Name>", "Number", FLOAT64)` — derselbe Weg,
+    /// auf dem der AeroACARS-Client INI_-LVars liest
+    /// (sim-msfs/src/adapter/telemetry.rs, `L:INI_ap1_on` u. a.).
+    ///
+    /// Warum nicht mehr über MobiFlight: In den Läufen vom 26.09. blieben
+    /// ALLE über Zusatz-Clients gelesenen INI_-LVars konstant, obwohl das
+    /// Flugzeug nachweislich auf L:INI_LIGHTS_STROBE reagierte. Im
+    /// MobiFlight-Quelltext (Module.cpp 1.0.1) ließ sich keine eindeutige
+    /// Grenze belegen; verdächtig bleibt, dass das Modul ALLE Clients über
+    /// EINE SimConnect-Verbindung mit je Variable eigener Client-Daten-
+    /// Definition (Z. 295–320, IDs 1000 + ClientID·20000 + i) bedient —
+    /// hier gab es ~3400 davon, weit mehr als üblich. Die Gegenprobe
+    /// („MF:L:…") im Bericht zeigt beim nächsten Lauf, welcher Weg lebt.
+    ///
+    /// Ein vom Simulator abgelehnter Name würde die Byte-Offsets aller
+    /// folgenden im Block verschieben — deshalb werden Ablehnungen über die
+    /// Paketkennung zugeordnet und der Block ohne sie neu aufgebaut.
+    pub fn lvars_direkt(
+        &mut self,
+        namen: &[String],
+        mut fortschritt: impl FnMut(usize, usize),
+    ) -> Result<(), String> {
+        let mut gueltig = Vec::new();
+        for n in namen {
+            let t = n.trim();
+            if t.is_empty() || t.contains(['\0', ',', ';']) {
+                self.uebersprungen.push(n.clone());
+            } else {
+                gueltig.push(t.to_string());
+            }
+        }
+        self.direkt = gueltig.chunks(DIR_BLOCK).map(|c| c.to_vec()).collect();
+        let gesamt = gueltig.len();
+        for runde in 0..4 {
+            self.dir_send_ids.clear();
+            self.dir_abgelehnt_neu.clear();
+            let mut fertig = 0;
+            for b in 0..self.direkt.len() {
+                let def = DIR_DEF + b as u32;
+                unsafe { sys::SimConnect_ClearDataDefinition(self.h, def) };
+                for p in 0..self.direkt[b].len() {
+                    let n = CString::new(format!("L:{}", self.direkt[b][p])).unwrap();
+                    let e = CString::new("Number").unwrap();
+                    let hr = unsafe {
+                        sys::SimConnect_AddToDataDefinition(
+                            self.h,
+                            def,
+                            n.as_ptr(),
+                            e.as_ptr(),
+                            sys::SIMCONNECT_DATATYPE_SIMCONNECT_DATATYPE_FLOAT64,
+                            0.0,
+                            u32::MAX,
+                        )
+                    };
+                    if hr != 0 {
+                        self.dir_abgelehnt_neu.push((b, p));
+                    } else if let Some(sid) = self.letzte_send_id() {
+                        self.dir_send_ids.insert(sid, (b, p));
+                    }
+                }
+                fertig += self.direkt[b].len();
+                if runde == 0 {
+                    fortschritt(fertig, gesamt);
+                }
+                self.pumpen(Duration::from_millis(10), |_| false)?;
+            }
+            // Asynchrone Ablehnungen einsammeln.
+            self.pumpen(Duration::from_millis(1500), |_| false)?;
+            if self.dir_abgelehnt_neu.is_empty() {
+                self.dir_send_ids.clear();
+                return Ok(());
+            }
+            let mut weg: Vec<(usize, usize)> = std::mem::take(&mut self.dir_abgelehnt_neu);
+            weg.sort();
+            weg.dedup();
+            for (b, p) in weg.into_iter().rev() {
+                let n = self.direkt[b].remove(p);
+                self.direkt_abgelehnt.push(n);
+            }
+            self.direkt.retain(|b| !b.is_empty());
+        }
+        Err("SimConnect lehnt beim direkten Lesen der LVars immer wieder Namen ab".into())
     }
 
     /// Alle Input-Events des Flugzeugs holen (Liste kommt in Teilen,
@@ -755,6 +897,28 @@ impl Sim {
             }
         }
         let mut ie_werte: Vec<Option<f64>> = vec![None; self.ie.len()];
+        let dir_basis = DIR_REQ + (self.gen & 0xFFFF) * 256;
+        let mut dir_offen: HashMap<u32, usize> = HashMap::new();
+        for b in 0..self.direkt.len() {
+            let req = dir_basis + b as u32;
+            let hr = unsafe {
+                sys::SimConnect_RequestDataOnSimObject(
+                    self.h,
+                    req,
+                    DIR_DEF + b as u32,
+                    sys::SIMCONNECT_OBJECT_ID_USER,
+                    sys::SIMCONNECT_PERIOD_SIMCONNECT_PERIOD_ONCE,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            hr_ok(hr, "RequestDataOnSimObject(LVars direkt)")?;
+            dir_offen.insert(req, b);
+        }
+        let dir_laengen: Vec<usize> = self.direkt.iter().map(|b| b.len()).collect();
+        let mut dir_werte: Vec<Option<Vec<Option<f64>>>> = vec![None; self.direkt.len()];
         let mut block_werte: Vec<Option<Vec<Option<f64>>>> = vec![None; self.bloecke.len()];
         let mut sv_werte: Vec<Option<f64>> = vec![None; self.simvars.len()];
         let laengen: Vec<usize> = self.bloecke.iter().map(|b| b.block.lvars.len()).collect();
@@ -765,12 +929,16 @@ impl Sim {
                         ie_werte[i] = w;
                     }
                 }
-                return offen.is_empty() && ie_offen.is_empty();
+                return offen.is_empty() && ie_offen.is_empty() && dir_offen.is_empty();
             }
             let (req, bytes) = match m {
                 Msg::ClientDaten { req, bytes } | Msg::ObjektDaten { req, bytes } => (req, bytes),
                 _ => return false,
             };
+            if let Some(b) = dir_offen.remove(req) {
+                dir_werte[b] = Some(f64_lesen(bytes, dir_laengen[b]));
+                return offen.is_empty() && ie_offen.is_empty() && dir_offen.is_empty();
+            }
             if let Some((ist_block, i)) = offen.remove(req) {
                 if ist_block {
                     block_werte[i] = Some(mobiflight::floats_lesen(bytes, laengen[i]));
@@ -780,7 +948,7 @@ impl Sim {
                     sv_werte[i] = Some(f64::from_le_bytes(b8));
                 }
             }
-            offen.is_empty() && ie_offen.is_empty()
+            offen.is_empty() && ie_offen.is_empty() && dir_offen.is_empty()
         })?;
         for (i, d) in self.ie.iter().enumerate() {
             match ie_werte[i] {
@@ -791,6 +959,12 @@ impl Sim {
             }
         }
         let mut w: Werte = Vec::new();
+        for (i, dw) in dir_werte.into_iter().enumerate() {
+            match dw {
+                Some(v) => w.extend(v),
+                None => w.extend(std::iter::repeat_n(None, dir_laengen[i])),
+            }
+        }
         for (i, bw) in block_werte.into_iter().enumerate() {
             match bw {
                 Some(v) => w.extend(v),

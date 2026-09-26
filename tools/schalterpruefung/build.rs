@@ -76,6 +76,8 @@ fn generate_bindings(sdk: &std::path::Path, out_path: &std::path::Path) {
         .allowlist_function("SimConnect_GetNextDispatch")
         .allowlist_function("SimConnect_GetLastSentPacketID")
         .allowlist_function("SimConnect_AddToDataDefinition")
+        // Direktes Lesen der LVars: Block bei Ablehnung neu aufbauen.
+        .allowlist_function("SimConnect_ClearDataDefinition")
         .allowlist_function("SimConnect_RequestDataOnSimObject")
         .allowlist_function("SimConnect_MapClientDataNameToID")
         .allowlist_function("SimConnect_CreateClientData")

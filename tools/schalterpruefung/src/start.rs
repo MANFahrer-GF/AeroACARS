@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::ablauf::{self, gross, hinweis, zeile_lesen, Ablauf, ABBRUCH, ABGEBROCHEN};
 use crate::bericht::{self, Lauf, LaufInfo};
+use crate::diagnose;
 use crate::mobiflight;
 use crate::sim::{self, Sim, BEENDET};
 use crate::skripte::{self, Skript};
@@ -253,23 +254,36 @@ pub fn run() -> i32 {
         return 1;
     };
 
-    // 6. Abonnieren: MobiFlight-Liste + Zusatzliste des Skripts. MobiFlight
-    // listet nur die LVar-IDs 0..999 (Module.cpp Z. 228) — der gesuchte
-    // Schalter kann darüber liegen, deshalb die eingebetteten Namen.
+    // 6. LVars lesen. MobiFlight listet nur die LVar-IDs 0..999
+    // (Module.cpp Z. 228) — deshalb die eingebetteten Zusatz-Namen. Gelesen
+    // wird ALLES direkt per SimConnect (siehe diagnose.rs: über
+    // MobiFlight-Zusatzclients blieben die INI_-LVars am 26.09. konstant);
+    // MobiFlight liest nur eine kleine Gegenprobe mit.
     let zusatz = skripte::zusatzliste(skript.kennung);
-    let (abo, zusatz_neu) = mobiflight::zusammenfuehren(&lvars, &zusatz);
+    let wege = diagnose::lesewege(&lvars, &zusatz);
     hinweis(&format!(
-        "MobiFlight-Liste: {} · Zusatzliste: {} ({} davon neu) · zusammen: {}",
+        "MobiFlight-Liste: {} · Zusatzliste: {} ({} davon neu) · direkt gelesen: {}",
         lvars.len(),
         zusatz.len(),
-        zusatz_neu,
-        abo.len()
+        wege.zusatz_neu,
+        wege.direkt.len()
     ));
-    hinweis("Melde alle LVars bei MobiFlight an …");
-    if let Err(e) = sim.abonnieren(&abo, |f, g| hinweis(&format!("   {f} von {g}"))) {
+    hinweis("Melde alle LVars direkt bei SimConnect an …");
+    if let Err(e) = sim.lvars_direkt(&wege.direkt, |f, g| hinweis(&format!("   {f} von {g}"))) {
         fehler(&["Anmelden der LVars ist gescheitert.", &e]);
         schliessen_warten();
         return 1;
+    }
+    if !sim.direkt_abgelehnt.is_empty() {
+        hinweis(&format!(
+            "({} LVar-Namen hat SimConnect abgelehnt — stehen im Bericht.)",
+            sim.direkt_abgelehnt.len()
+        ));
+    }
+    hinweis("Gegenprobe über MobiFlight anmelden …");
+    if let Err(e) = sim.abonnieren(&wege.mf_gegenprobe, |_, _| {}) {
+        // Die Gegenprobe ist Diagnose — ohne sie geht es weiter.
+        hinweis(&format!("(MobiFlight-Gegenprobe nicht möglich: {e})"));
     }
 
     // 7. Input-Events (B:) — iniBuilds hält manche Schalterstellungen nur
@@ -292,6 +306,41 @@ pub fn run() -> i32 {
         sim.ie_text
     ));
 
+    // Anfangsmessung für die Diagnose (je Gruppe: geliefert / ≠ 0,
+    // Stichprobe auf beiden Wegen).
+    hinweis("Erste Messung für die Diagnose …");
+    let (diagnose_gruppen, stichprobe) = match sim.messen() {
+        Ok(w) => {
+            let g = diagnose::gruppen(&sim.gruppen(), &w);
+            let p = diagnose::stichprobe(&sim.variablen(), &w);
+            (g, p)
+        }
+        Err(e) => {
+            fehler(&[&e]);
+            schliessen_warten();
+            return 1;
+        }
+    };
+    for g in &diagnose_gruppen {
+        hinweis(&format!(
+            "   {:<40} {:>4} abonniert, {:>4} geliefert, {:>4} ≠ 0{}",
+            g.gruppe,
+            g.abonniert,
+            g.geliefert,
+            g.ungleich_null,
+            if g.verdaechtig { "   (!) alles 0" } else { "" }
+        ));
+    }
+    for p in &stichprobe {
+        hinweis(&format!(
+            "   {:<40} = {}",
+            p.variable,
+            p.wert
+                .map(crate::auswertung::wert_text)
+                .unwrap_or_else(|| "–".into())
+        ));
+    }
+
     let ordner = berichtsordner();
     let info = LaufInfo {
         werkzeug_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -300,10 +349,14 @@ pub fn run() -> i32 {
         atc_model,
         icao,
         mobiflight_version: mf_version,
-        lvars_gesamt: abo.len() - sim.uebersprungen.len(),
+        lvars_gesamt: wege.direkt.len() - sim.uebersprungen.len() - sim.direkt_abgelehnt.len(),
         lvars_mobiflight: lvars.len(),
         lvars_zusatzliste: zusatz.len(),
-        lvars_zusatz_neu: zusatz_neu,
+        lvars_zusatz_neu: wege.zusatz_neu,
+        lesewege: "LVars direkt per SimConnect (L:), Gegenprobe über MobiFlight (MF:L:)".into(),
+        lvars_direkt_abgelehnt: sim.direkt_abgelehnt.clone(),
+        diagnose_gruppen,
+        stichprobe,
         input_events,
         input_events_text: sim.ie_text,
         lvar_liste_moeglicherweise_gekappt: gekappt,

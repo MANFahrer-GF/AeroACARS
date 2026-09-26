@@ -31,6 +31,13 @@ pub struct LaufInfo {
     pub lvars_zusatzliste: usize,
     /// Davon nicht schon in der MobiFlight-Liste.
     pub lvars_zusatz_neu: usize,
+    /// Welcher Weg die LVars liest.
+    pub lesewege: String,
+    pub lvars_direkt_abgelehnt: Vec<String>,
+    /// Anfangsmessung je Gruppe: abonniert / geliefert / ≠ 0.
+    pub diagnose_gruppen: Vec<crate::diagnose::GruppenDiagnose>,
+    /// Anfangswerte der Stichprobe auf beiden Wegen (L: direkt, MF:L:).
+    pub stichprobe: Vec<crate::diagnose::Probe>,
     /// Beobachtete Input-Events (B:, nur Zahlen-Events). 0 = MSFS lieferte keine.
     pub input_events: usize,
     /// Text-Input-Events, die übergangen wurden.
@@ -427,6 +434,35 @@ impl Lauf {
             i.lvars_zusatzliste, i.lvars_zusatz_neu
         ));
         z(format!("LVars abonniert:    {}", i.lvars_gesamt));
+        z(format!("Leseweg:            {}", i.lesewege));
+        if !i.lvars_direkt_abgelehnt.is_empty() {
+            z(format!(
+                "Von SimConnect abgelehnt: {}",
+                i.lvars_direkt_abgelehnt.join(", ")
+            ));
+        }
+        if !i.diagnose_gruppen.is_empty() {
+            z("Diagnose Anfangsmessung (abonniert / geliefert / ≠ 0):".into());
+            for g in &i.diagnose_gruppen {
+                z(format!(
+                    "    {:<40} {:>4} / {:>4} / {:>4}{}",
+                    g.gruppe,
+                    g.abonniert,
+                    g.geliefert,
+                    g.ungleich_null,
+                    if g.verdaechtig { "  (!) alles 0" } else { "" }
+                ));
+            }
+        }
+        for p in &i.stichprobe {
+            z(format!(
+                "    Stichprobe {:<36} = {}",
+                p.variable,
+                p.wert
+                    .map(auswertung::wert_text)
+                    .unwrap_or_else(|| "-".into())
+            ));
+        }
         z(format!(
             "Input-Events (B:):  {} ({} Text-Events übergangen)",
             i.input_events, i.input_events_text
