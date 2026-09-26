@@ -36300,6 +36300,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // Landebewertung, Live-Karte und Nachanalyse.
         let mut letzter_phpvms_push: Option<std::time::Instant> = None;
         let mut zuletzt_gepushte_phase: Option<FlightPhase> = None;
+        // Audit 26.09.2026: Diagnose-Rohwerte unklar belegter Cockpit-
+        // Schalter nur bei Aenderung ins Flug-Log (siehe
+        // `SimSnapshot::cockpit_rohwerte_nur_bei_aenderung`) — sonst kaemen
+        // sie mit jedem Tick erneut mit.
+        let mut letzte_cockpit_rohwerte: Option<sim_core::CockpitRohwerte> = None;
         // One warning per "sim is loading" episode, not one per tick.
         let mut null_island_logged = false;
         // Heartbeat tracker: ensures `POST /pireps/{id}/update` fires at
@@ -38786,12 +38791,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // in eine Lücke. User-Report von gsg/2 GA-Flug 2026-05-08:
             // 0.1 Hz Sample-Rate, peak_vs_fpm=-33 fpm während realer TD
             // bei vermutlich -350 fpm war.
+            let mut log_snap = snap.clone();
+            log_snap.cockpit_rohwerte_nur_bei_aenderung(&mut letzte_cockpit_rohwerte);
             record_event(
                 &app,
                 &flight.pirep_id,
                 &FlightLogEvent::Position {
                     timestamp: Utc::now(),
-                    snapshot: snap.clone(),
+                    snapshot: log_snap,
                 },
             );
 

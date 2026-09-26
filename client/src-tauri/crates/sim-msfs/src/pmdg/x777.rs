@@ -730,10 +730,23 @@ pub struct Pmdg777XSnapshot {
     // Controls
     pub flap_handle_label: &'static str, // "UP" / "1" / "5" / etc.
     pub flap_handle_pos: u8,
-    /// Speedbrake lever 0..100. 25=ARMED, 26..100=DEPLOYED.
+    /// Speedbrake lever 0..100, Rohwert aus dem SDK.
+    ///
+    /// ⚠ Der Header-Kommentar ("25: ARMED, 26...100: DEPLOYED") stimmt
+    /// NICHT mit dem Simulator überein. Gemessen (Audit 26.09.2026, 25
+    /// PMDG-777-Flüge mit SDK-Block): im Anflug steht der Hebel auf einem
+    /// Plateau bei 50 (3 753 Luft-Samples bei 0.50, KEIN einziges bei
+    /// 0.25), in 17 von 23 Anflügen. 50 ist also die ARMED-Raste, erst
+    /// darüber ist die Bremse ausgefahren. Mit der alten 25er-Deutung las
+    /// jeder armierte Anflug "Spoilers DEPLOYED Handle 50%" und am Boden
+    /// `ground_spoilers_active = true` vor dem Aufsetzen.
     pub speedbrake_lever_pos: u8,
     pub speedbrake_armed: bool,
     pub speedbrake_extended: bool,
+    /// Ausfahrgrad der Bremse 0.0..1.0 für `spoilers_handle_position`:
+    /// 0 bis zur ARMED-Raste (50), danach linear bis 1.0 bei Hebel 100.
+    /// ARMED selbst ist 0 — armiert heißt nicht ausgefahren.
+    pub speedbrake_handle_fraction: f32,
     pub gear_lever_down: bool,
     pub autobrake: Pmdg777XAutobrake,
     pub parking_brake_set: bool,
@@ -757,6 +770,12 @@ pub struct Pmdg777XSnapshot {
 
     // Misc
     pub xpdr_mode: u8,
+    /// SEAT BELTS-Wahlschalter (`SIGNS_SeatBeltsSelector`,
+    /// PMDG_777X_SDK.h:154 "0: OFF 1: AUTO 2: ON").
+    pub seatbelts_selector: u8,
+    /// Rohbyte `BRAKES_AutobrakeSelector` — ab 3 unverifiziert, darum
+    /// zusätzlich roh ins Flug-Log (siehe `PmdgState::autobrake_selector_roh`).
+    pub autobrake_selector_raw: u8,
     pub gpws_top_warn: bool,
     pub gpws_bottom_warn: bool,
 
@@ -806,6 +825,22 @@ pub struct Pmdg777XSnapshot {
     pub pitot_heat: bool,
 }
 
+/// ARMED-Raste des 777-Speedbrake-Hebels im SDK-Feld
+/// `FCTL_Speedbrake_Lever` — gemessen, nicht aus dem Header (siehe
+/// `Pmdg777XSnapshot::speedbrake_lever_pos`).
+pub const X777_SPEEDBRAKE_ARMED: u8 = 50;
+
+/// Ausfahrgrad 0.0..1.0 aus dem Rohhebel: bis einschließlich ARMED 0,
+/// darüber linear bis 1.0 bei 100.
+pub fn x777_speedbrake_handle_fraction(lever: u8) -> f32 {
+    if lever <= X777_SPEEDBRAKE_ARMED {
+        0.0
+    } else {
+        (f32::from(lever.min(100) - X777_SPEEDBRAKE_ARMED) / f32::from(100 - X777_SPEEDBRAKE_ARMED))
+            .clamp(0.0, 1.0)
+    }
+}
+
 impl Pmdg777XSnapshot {
     pub fn from_raw(raw: &Pmdg777XRawData) -> Self {
         let v_speed = |raw: u8| if raw == 0 { None } else { Some(raw) };
@@ -849,9 +884,13 @@ impl Pmdg777XSnapshot {
             flap_handle_label: x777_flap_label(raw.FCTL_Flaps_Lever),
             flap_handle_pos: raw.FCTL_Flaps_Lever,
             speedbrake_lever_pos: raw.FCTL_Speedbrake_Lever,
-            // SDK: 25=ARMED, 26..100=DEPLOYED.
-            speedbrake_armed: raw.FCTL_Speedbrake_Lever == 25,
-            speedbrake_extended: raw.FCTL_Speedbrake_Lever > 25,
+            // Gemessen: 50 = ARMED, > 50 = ausgefahren (siehe Feld-Doku;
+            // der SDK-Kommentar "25 = ARMED" ist falsch). Werte zwischen
+            // 1 und 49 sind Hebelweg auf dem Weg in die Raste — weder
+            // armiert noch ausgefahren.
+            speedbrake_armed: raw.FCTL_Speedbrake_Lever == X777_SPEEDBRAKE_ARMED,
+            speedbrake_extended: raw.FCTL_Speedbrake_Lever > X777_SPEEDBRAKE_ARMED,
+            speedbrake_handle_fraction: x777_speedbrake_handle_fraction(raw.FCTL_Speedbrake_Lever),
             gear_lever_down: raw.GEAR_Lever == 1,
             autobrake: Pmdg777XAutobrake::from_byte(raw.BRAKES_AutobrakeSelector),
             parking_brake_set: raw.BRAKES_ParkingBrakeLeverOn != 0,
@@ -875,6 +914,8 @@ impl Pmdg777XSnapshot {
             fmc_thrust_limit_mode: raw.FMC_ThrustLimitMode,
 
             xpdr_mode: raw.XPDR_ModeSel,
+            seatbelts_selector: raw.SIGNS_SeatBeltsSelector,
+            autobrake_selector_raw: raw.BRAKES_AutobrakeSelector,
             gpws_top_warn: raw.GPWS_annunGND_PROX_top != 0,
             gpws_bottom_warn: raw.GPWS_annunGND_PROX_bottom != 0,
 
@@ -1172,5 +1213,56 @@ mod tests {
         // FO-side set alone does NOT count (captain-side gate).
         raw.EFIS_BaroMinimumsSet = [0, 1];
         assert_eq!(Pmdg777XSnapshot::from_raw(&raw).minimums_baro_ft, None);
+    }
+
+    // ---- Audit 26.09.2026: Speedbrake-Raste + Anschnallzeichen ----
+
+    /// Gemessen steht der Hebel im armierten Anflug auf 50. Das ist ARMED,
+    /// nicht "ausgefahren" — und der Handle-Wert bleibt 0, damit das
+    /// Aktivitätslog nicht "Spoilers DEPLOYED Handle 50%" schreibt.
+    #[test]
+    fn speedbrake_hebel_50_ist_armed_nicht_ausgefahren() {
+        let mut raw = zeroed_raw();
+        raw.FCTL_Speedbrake_Lever = 50;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!(s.speedbrake_armed, "50 = ARMED-Raste");
+        assert!(!s.speedbrake_extended, "armiert ist nicht ausgefahren");
+        assert_eq!(s.speedbrake_handle_fraction, 0.0);
+    }
+
+    #[test]
+    fn speedbrake_ueber_der_raste_ist_ausgefahren() {
+        let mut raw = zeroed_raw();
+        raw.FCTL_Speedbrake_Lever = 100;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!(!s.speedbrake_armed);
+        assert!(s.speedbrake_extended);
+        assert_eq!(s.speedbrake_handle_fraction, 1.0);
+
+        raw.FCTL_Speedbrake_Lever = 75;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!(s.speedbrake_extended);
+        assert!((s.speedbrake_handle_fraction - 0.5).abs() < 1e-6);
+    }
+
+    /// Die alte Header-Raste 25 ist Hebelweg, kein Zustand.
+    #[test]
+    fn speedbrake_hebel_25_ist_weder_armed_noch_ausgefahren() {
+        let mut raw = zeroed_raw();
+        raw.FCTL_Speedbrake_Lever = 25;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!(!s.speedbrake_armed);
+        assert!(!s.speedbrake_extended);
+        assert_eq!(s.speedbrake_handle_fraction, 0.0);
+    }
+
+    #[test]
+    fn seat_belts_selector_und_autobrake_rohbyte_aus_dem_sdk() {
+        let mut raw = zeroed_raw();
+        raw.SIGNS_SeatBeltsSelector = 1;
+        raw.BRAKES_AutobrakeSelector = 4;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert_eq!(s.seatbelts_selector, 1);
+        assert_eq!(s.autobrake_selector_raw, 4);
     }
 }

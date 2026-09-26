@@ -237,4 +237,49 @@ mod tests {
         );
         assert_eq!(PmdgVariant::detect_from_air_path(""), None);
     }
+
+    /// Die Profilerkennung in sim-core (`AircraftProfile::detect_mit_pfad`)
+    /// wertet dieselben Paketordner aus wie `detect_from_air_path` — hier
+    /// gehalten, damit die beiden nicht auseinanderlaufen.
+    #[test]
+    fn profilerkennung_und_sdk_variante_lesen_denselben_pfad() {
+        use sim_core::AircraftProfile;
+        for (pfad, titel, profil, variante) in [
+            (
+                r"E:\Community\pmdg-aircraft-738\SimObjects\Airplanes\PMDG 737-800\aircraft.cfg",
+                "737-800 PAX BW SC",
+                AircraftProfile::Pmdg737,
+                PmdgVariant::Ng3,
+            ),
+            (
+                r"E:\Community\pmdg-aircraft-736\SimObjects\Airplanes\PMDG 737-600\aircraft.cfg",
+                "737-600 PAX SC",
+                AircraftProfile::Pmdg737,
+                PmdgVariant::Ng3,
+            ),
+            (
+                r"E:\Community\pmdg-aircraft-77f\SimObjects\Airplanes\PMDG 777F\aircraft.cfg",
+                "777F",
+                AircraftProfile::Pmdg777,
+                PmdgVariant::X777,
+            ),
+            (
+                r"E:\Community\pmdg-aircraft-77er\SimObjects\Airplanes\PMDG 777-200ER\aircraft.cfg",
+                "777-200ER PW",
+                AircraftProfile::Pmdg777,
+                PmdgVariant::X777,
+            ),
+        ] {
+            assert_eq!(
+                PmdgVariant::detect_from_air_path(pfad),
+                Some(variante),
+                "{pfad}"
+            );
+            assert_eq!(
+                AircraftProfile::detect_mit_pfad(titel, "", Some(pfad)),
+                profil,
+                "{pfad}"
+            );
+        }
+    }
 }
