@@ -123,6 +123,15 @@ fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
         .allowlist_function("SimConnect_RequestFacilityData")
         .allowlist_function("SimConnect_AddToFacilityDefinition")
         .allowlist_function("SimConnect_ClearAllFacilityDataDefinitionFilters")
+        // 26.09.2026 — MSFS-2024-Input-Events (B:-Variablen). iniBuilds haelt
+        // beim A380/A350 manche Schalterstellungen NUR dort. Nur LESEN:
+        // aufzaehlen, Startwert holen, Aenderungen abonnieren/abmelden.
+        // `SimConnect_SetInputEvent` bewusst NICHT — der Client schreibt nie
+        // ins Cockpit. Positivliste: ohne diese Eintraege fehlen die Symbole.
+        .allowlist_function("SimConnect_EnumerateInputEvents")
+        .allowlist_function("SimConnect_GetInputEvent")
+        .allowlist_function("SimConnect_SubscribeInputEvent")
+        .allowlist_function("SimConnect_UnsubscribeInputEvent")
         // --- Receiver structs we actually inspect ---
         .allowlist_type("SIMCONNECT_RECV")
         .allowlist_type("SIMCONNECT_RECV_ID")

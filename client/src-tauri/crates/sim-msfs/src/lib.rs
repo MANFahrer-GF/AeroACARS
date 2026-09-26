@@ -37,6 +37,8 @@
 
 #[cfg(target_os = "windows")]
 mod adapter;
+/// MSFS-2024-Input-Events (B:-Variablen): Deutung + Ablauf, plattformunabhaengig.
+pub mod eingabe_events;
 pub mod facility;
 /// Zusatzwerte fuer den Telemetrie-Monitor — Logik plattformunabhaengig.
 pub mod zusatz;

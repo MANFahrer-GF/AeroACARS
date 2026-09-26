@@ -1501,6 +1501,12 @@ pub struct Telemetry {
     /// vor dem Feld endet — dann zaehlt nur `LIGHT LANDING`.
     pub std_light_landing_on_1: Option<f64>,
     pub std_light_landing_on_2: Option<f64>,
+    /// MSFS-2024-Input-Events (B:-Variablen, 26.09.2026) — Name ohne
+    /// `B:`-Praefix → Wert. Kommen NICHT aus dem Datenblock, sondern aus
+    /// den Abos des Adapters (`crate::eingabe_events`); leer bei MSFS 2020
+    /// und bei Mustern ohne diese Events. Gedeutet nur im jeweiligen
+    /// Profil-Zweig, dort mit Vorrang vor den `L:INI_`-Belegungen.
+    pub eingaben: std::collections::BTreeMap<String, f64>,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -2246,8 +2252,52 @@ impl Telemetry {
 /// 26.09.2026) — zweite Quelle der Profilerkennung fuer MSFS-2024-Titel
 /// ohne Hersteller, siehe `AircraftProfile::detect_mit_pfad`.
 pub fn parse(bytes: &[u8], simulator: Simulator, cfg_pfad: Option<&str>) -> SimSnapshot {
-    let t = Telemetry::from_block(bytes);
+    parse_mit_eingaben(
+        bytes,
+        simulator,
+        cfg_pfad,
+        &std::collections::BTreeMap::new(),
+    )
+}
+
+/// Wie [`parse`], zusaetzlich mit den Werten der abonnierten MSFS-2024-
+/// Input-Events (Name ohne `B:` → Wert, siehe `crate::eingabe_events`).
+pub fn parse_mit_eingaben(
+    bytes: &[u8],
+    simulator: Simulator,
+    cfg_pfad: Option<&str>,
+    eingaben: &std::collections::BTreeMap<String, f64>,
+) -> SimSnapshot {
+    let mut t = Telemetry::from_block(bytes);
+    t.eingaben = eingaben.clone();
     telemetry_to_snapshot_mit_pfad(t, simulator, cfg_pfad)
+}
+
+/// Wert eines abonnierten Input-Events (B:-Variable), falls vorhanden.
+fn b_wert(t: &Telemetry, name: &str) -> Option<f64> {
+    t.eingaben.get(name).copied().filter(|v| v.is_finite())
+}
+
+/// iniBuilds A380 (MSFS 2024) Autobrake aus den Input-Events, gemessen
+/// 26.09.2026 durch Drehen des Knopfes: `AIRLINER_MIP_LG_ABRK_KNOB`
+/// 0=DISARM 1=BTV 2=LO 3=L2 4=L3 5=HI. BTV=1 ist NICHT direkt beobachtet,
+/// sondern aus der Zaehlung abgeleitet — der Knopf springt am Boden aus
+/// BTV zurueck. `AIRLINER_MIP_LG_ABRK_RTO` 1 = RTO-Taste gedrueckt, hat
+/// Vorrang vor der Knopfstellung. Kein Event → None.
+fn a380_autobrake_label(knopf: Option<f64>, rto: Option<f64>) -> Option<String> {
+    if rto.is_some_and(|v| (v - 1.0).abs() < 0.25) {
+        return Some("RTO".to_string());
+    }
+    let k = knopf?;
+    let n = k.round();
+    if (k - n).abs() > 0.25 {
+        return None;
+    }
+    const A380_KNOPF: [&str; 6] = ["DISARM", "BTV", "LO", "L2", "L3", "HI"];
+    usize::try_from(n as i64)
+        .ok()
+        .and_then(|i| A380_KNOPF.get(i))
+        .map(|s| s.to_string())
 }
 
 /// Map 0.0 → None, anything > 0 → Some. Used for SimVars where a
@@ -2726,7 +2776,13 @@ fn telemetry_to_snapshot_mit_pfad(
     let standard_seatbelts_bedient = is_default_profile || is_fbw_a380x || is_headwind_a339;
     // FSS E-Jets: keine Transponder-LVar, `fss.wasm` enthaelt den String
     // `TRANSPONDER STATE` → Standard-Rueckfall erlaubt.
-    let standard_transponder_bedient = is_default_profile || is_fbw_a380x || is_fss;
+    // 26.09.2026 gemessen: iniBuilds A380 (STBY=1, AUTO am Boden=5) und
+    // Synaptic A220 (STBY=1, ALT OFF=3, ALT ON/TA/TA-RA=4) bedienen
+    // `TRANSPONDER STATE:1`. Den TCAS-Modus liefert die SimVar nicht — beim
+    // A220 gibt es deshalb kein Label ueber ALT hinaus (kein erfundenes
+    // TA/TA-RA); den A380-TCAS-Modus kann gemessen gar nichts lesen.
+    let standard_transponder_bedient =
+        is_default_profile || is_fbw_a380x || is_fss || is_a380 || is_synaptic_a220;
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
     // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
@@ -3122,6 +3178,16 @@ fn telemetry_to_snapshot_mit_pfad(
             t.fss_nav_sw != 0.0,
             t.light_logo,
         )
+    } else if is_synaptic_a220 {
+        // Synaptic A220 (MSFS 2024): Input-Event `AIRLINER_OVH_LTS_BEACON`
+        // 0/1 — gemessen 26.09.2026, reagierte gleich wie die Standard-
+        // SimVar. Darum nur als ODER, die SimVar bleibt die Hauptquelle.
+        (
+            t.light_beacon || b_wert(&t, "AIRLINER_OVH_LTS_BEACON").is_some_and(|v| v >= 0.5),
+            t.light_strobe,
+            t.light_nav,
+            t.light_logo,
+        )
     } else {
         (t.light_beacon, t.light_strobe, t.light_nav, t.light_logo)
     };
@@ -3139,7 +3205,19 @@ fn telemetry_to_snapshot_mit_pfad(
         // sagt 0=OFF 1=AUTO 2=ON; das Paket gewinnt, der Rohwert laeuft
         // zur Gegenprobe weiter in `cockpit_rohwerte`.
         // `light_strobe` bleibt bewusst die Standard-SimVar.
-        ini_on_auto_off_gespiegelt(t.ini_lights_strobe)
+        //
+        // 26.09.2026: Input-Event `AIRLINER_LIGHTS_EXT_STROBE` (gemessen:
+        // 0=ON 1=AUTO 2=OFF, dieselbe Richtung wie das Paket) hat Vorrang;
+        // die LVar bleibt Rueckfall, wenn kein Event kommt (MSFS 2020).
+        b_wert(&t, "AIRLINER_LIGHTS_EXT_STROBE")
+            .and_then(ini_on_auto_off_gespiegelt)
+            .or_else(|| ini_on_auto_off_gespiegelt(t.ini_lights_strobe))
+    } else if is_a380 {
+        // iniBuilds A380 (MSFS 2024): Input-Event `AIRLINER_LIGHTS_EXT_STROBE`
+        // 0=ON 1=AUTO 2=OFF, gemessen 26.09.2026 durch Schalterbewegung —
+        // gespiegelt auf 0=OFF 1=AUTO 2=ON. Ohne Event None:
+        // `L:INI_LIGHTS_STROBE` ist beim A380 unbelegt und laeuft nur roh.
+        b_wert(&t, "AIRLINER_LIGHTS_EXT_STROBE").and_then(ini_on_auto_off_gespiegelt)
     } else {
         None
     };
@@ -3241,7 +3319,14 @@ fn telemetry_to_snapshot_mit_pfad(
         // iniBuilds A350 den ganzen Flug auf true (auch im Reiseflug) —
         // darum ERSETZEN, nicht ODERn. `L:INI_APU_MASTER_SWITCH` 0/1 ist
         // der Overhead-Schalter (HubHop A350 2020+2024, flight-fabric A380).
-        t.ini_apu_master_switch != 0.0
+        //
+        // 26.09.2026: beim A380 (MSFS 2024) hat das Input-Event
+        // `AIRLINER_APU_MASTER_SWITCH` (gemessen 0=aus 1=an) Vorrang; die
+        // LVar bleibt Rueckfall.
+        match b_wert(&t, "AIRLINER_APU_MASTER_SWITCH").filter(|_| is_a380) {
+            Some(v) => v >= 0.5,
+            None => t.ini_apu_master_switch != 0.0,
+        }
     } else if is_a346 {
         // Aerosoft A346 `L:AB_VC_OVH_APU_MASTER_ON` (HubHop-Output-Preset
         // "APU Master On": `0 >`).
@@ -3369,7 +3454,15 @@ fn telemetry_to_snapshot_mit_pfad(
         // iniBuilds-PDF "A350 LVARs-FEB2025" sagt 0=OFF — das Paket gewinnt,
         // der A350-Rohwert laeuft zur Gegenprobe weiter mit. Umgekehrt zur
         // Snapshot-Konvention 0=OFF 1=AUTO 2=ON, darum gespiegelt.
-        ini_on_auto_off_gespiegelt(t.ini_seatbelts_switch)
+        //
+        // 26.09.2026: Input-Event `AIRLINER_SIGNS_SEAT_BELTS` (gemessen an
+        // A380 und A350: 0=ON 1=AUTO 2=OFF) hat Vorrang; die LVar bleibt
+        // Rueckfall. `CABIN SEATBELTS ALERT SWITCH` bedient der A380
+        // gemessen NICHT — er steht deshalb nicht in
+        // `standard_seatbelts_bedient` und wird hier nie gelesen.
+        b_wert(&t, "AIRLINER_SIGNS_SEAT_BELTS")
+            .and_then(ini_on_auto_off_gespiegelt)
+            .or_else(|| ini_on_auto_off_gespiegelt(t.ini_seatbelts_switch))
     } else if is_fsl {
         // FSLabs `L:VC_OVHD_SIGNS_SeatBelts_Switch` 0=OFF 10=AUTO 20=ON.
         lvar_raste_0_10_20(t.fsl_seatbelts_sw)
@@ -3568,13 +3661,30 @@ fn telemetry_to_snapshot_mit_pfad(
         // "LDG AUTO BRK" (`L:INI_AUTOBRAKE_ARMED`, Paket
         // A350_Interior.behavior.xml:98473). Die Stufe liegt im WASM
         // (`INI_AUTOBRAKE_LEVEL`, Belegung unbekannt) → kein Stufen-Label.
+        //
+        // 26.09.2026: Input-Event `AIRLINER_LDG_AUTO_BRK` (gemessen 1 =
+        // ARMED, 0 = OFF) hat Vorrang vor `L:INI_AUTOBRAKE_ARMED`.
+        let b = b_wert(&t, "AIRLINER_LDG_AUTO_BRK").and_then(|v| match v.round() as i64 {
+            0 if v.abs() < 0.25 => Some(false),
+            1 if (v - 1.0).abs() < 0.25 => Some(true),
+            _ => None,
+        });
         Some(
-            if t.ini_autobrake_armed > 0.5 {
+            if b.unwrap_or(t.ini_autobrake_armed > 0.5) {
                 "ARMED"
             } else {
                 "OFF"
             }
             .to_string(),
+        )
+    } else if is_a380 {
+        // iniBuilds A380 (MSFS 2024): nur ueber die Input-Events lesbar
+        // (Knopf + RTO-Taste, siehe `a380_autobrake_label`). Die
+        // `L:INI_AUTOBRAKE_*`-LVars sind beim A380 unbelegt und laufen nur
+        // roh mit — ohne Event also weiter None.
+        a380_autobrake_label(
+            b_wert(&t, "AIRLINER_MIP_LG_ABRK_KNOB"),
+            b_wert(&t, "AIRLINER_MIP_LG_ABRK_RTO"),
         )
     } else if is_a340 {
         // v0.16.10 (#Premium): iniBuilds A340 `L:INI_AUTOBRAKE_LEVEL`
@@ -4208,7 +4318,14 @@ fn telemetry_to_snapshot_mit_pfad(
         // dazwischen. Die Standard-SimVar war auf allen 76 Fenix-Anfluegen
         // des Audits false.
         Some(t.spoilers_armed || t.fnx_speedbrake_handle < 0.5)
-    } else if is_a350 || is_a380 {
+    } else if is_a380 {
+        // iniBuilds A380 (MSFS 2024): ARMED ist gemessen NICHT lesbar
+        // (26.09.2026, Hebel bewegt: weder LVar noch Input-Event noch
+        // Standard-SimVar reagierten). `L:INI_SPOILERS_ARMED` stammt vom
+        // A350-Geschwister und ist beim A380 ungeprueft — lieber "nicht
+        // messbar" als ein ungepruefter Wert.
+        None
+    } else if is_a350 {
         // iniBuilds `L:INI_SPOILERS_ARMED` 1 = armiert.
         Some(t.spoilers_armed || t.ini_spoilers_armed != 0.0)
     } else if is_pmdg737 {
@@ -4434,6 +4551,14 @@ fn telemetry_to_snapshot_mit_pfad(
             roh("L:INI_AUTOBRAKE_LEVEL", t.ini_autobrake_level);
             roh("L:INI_AUTOBRAKE_ARMED", t.ini_autobrake_armed);
             roh("L:INI_BTV_EXIT_SELECTED", t.ini_btv_exit_selected);
+        }
+        // 26.09.2026: Rohwerte der abonnierten Input-Events (nur
+        // Positivliste), Schluessel "B:<Name>" — unabhaengig vom Profil,
+        // damit echte Fluege die Deutung gegenpruefen.
+        for (name, v) in &t.eingaben {
+            if crate::eingabe_events::POSITIVLISTE.contains(&name.as_str()) {
+                roh(&format!("B:{name}"), *v);
+            }
         }
         Some(CockpitRohwerte {
             werte,
@@ -8364,9 +8489,12 @@ mod tests {
     fn a9_a380_spoiler_apu_und_anschnallzeichen() {
         let mut t = msfs2024_a380();
         t.ini_spoilers_armed = 1.0;
+        t.spoilers_armed = true;
         t.ini_apu_master_switch = 1.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.spoilers_armed, Some(true));
+        // 26.09.2026 gemessen: ARMED ist beim A380 (MSFS 2024) nicht
+        // lesbar → "nicht messbar" statt eines ungeprueften Werts.
+        assert_eq!(snap.spoilers_armed, None);
         assert_eq!(snap.apu_switch, Some(true));
         for (roh, want) in [(0.0, 2u8), (1.0, 1), (2.0, 0)] {
             let mut t = msfs2024_a380();
@@ -9204,6 +9332,256 @@ mod tests {
         );
         assert_eq!(snap.aircraft_profile, AircraftProfile::IniA380);
         assert_ne!(snap.autobrake.as_deref(), Some("LOW"));
+    }
+
+    // ---- MSFS-2024-Input-Events (B:), gemessen 26.09.2026 ----
+    //
+    // Durch die echte Kette: Datenblock wie vom Simulator + die Werte, die
+    // der Adapter aus den Input-Event-Abos haelt (`parse_mit_eingaben`).
+
+    fn mit_b(muster: (&str, &str), werte: &[(&str, f64)], b: &[(&str, f64)]) -> SimSnapshot {
+        let eingaben = b.iter().map(|(n, v)| (n.to_string(), *v)).collect();
+        parse_mit_eingaben(
+            &runde2_puffer(muster.0, muster.1, werte),
+            Simulator::Msfs2024,
+            None,
+            &eingaben,
+        )
+    }
+
+    #[test]
+    fn b_a380_strobe_gemessen_2_1_0_wird_0_1_2() {
+        for (roh, want) in [(2.0, 0u8), (1.0, 1), (0.0, 2)] {
+            let snap = mit_b(A380, &[], &[("AIRLINER_LIGHTS_EXT_STROBE", roh)]);
+            assert_eq!(snap.aircraft_profile, AircraftProfile::IniA380);
+            assert_eq!(snap.strobe_state, Some(want), "B roh={roh}");
+        }
+        // Ohne Event bleibt es wie bisher: kein Wert aus der unbelegten LVar.
+        let snap = mit_b(A380, &[("L:INI_LIGHTS_STROBE", 0.0)], &[]);
+        assert_eq!(snap.strobe_state, None);
+    }
+
+    #[test]
+    fn b_anschnallzeichen_a380_a350_vorrang_vor_lvar() {
+        for muster in [A380, A350] {
+            for (roh, want) in [(0.0, 2u8), (1.0, 1), (2.0, 0)] {
+                // LVar sagt das Gegenteil (0 = ON) — das Event gewinnt.
+                let snap = mit_b(
+                    muster,
+                    &[("L:INI_SEATBELTS_SWITCH", 2.0 - roh)],
+                    &[("AIRLINER_SIGNS_SEAT_BELTS", roh)],
+                );
+                assert_eq!(snap.seatbelts_sign, Some(want), "{} B roh={roh}", muster.0);
+            }
+            // Ohne Event: LVar als Rueckfall.
+            let snap = mit_b(muster, &[("L:INI_SEATBELTS_SWITCH", 1.0)], &[]);
+            assert_eq!(snap.seatbelts_sign, Some(1), "{} Rueckfall", muster.0);
+        }
+        // A350-Strobe: Event vor LVar.
+        let snap = mit_b(
+            A350,
+            &[("L:INI_LIGHTS_STROBE", 0.0)],
+            &[("AIRLINER_LIGHTS_EXT_STROBE", 2.0)],
+        );
+        assert_eq!(snap.strobe_state, Some(0));
+    }
+
+    #[test]
+    fn b_a380_cabin_seatbelts_simvar_ist_keine_quelle() {
+        // Gemessen: der A380 bedient `CABIN SEATBELTS ALERT SWITCH` nicht.
+        let snap = mit_b(
+            A380,
+            &[
+                ("L:INI_SEATBELTS_SWITCH", 2.0),
+                ("CABIN SEATBELTS ALERT SWITCH", 1.0),
+            ],
+            &[],
+        );
+        assert_eq!(snap.seatbelts_sign, Some(0));
+        let snap = mit_b(
+            A380,
+            &[("CABIN SEATBELTS ALERT SWITCH", 1.0)],
+            &[("AIRLINER_SIGNS_SEAT_BELTS", 2.0)],
+        );
+        assert_eq!(snap.seatbelts_sign, Some(0));
+    }
+
+    #[test]
+    fn b_a380_autobrake_knopf_und_rto() {
+        for (roh, want) in [
+            (0.0, "DISARM"),
+            (1.0, "BTV"),
+            (2.0, "LO"),
+            (3.0, "L2"),
+            (4.0, "L3"),
+            (5.0, "HI"),
+        ] {
+            let snap = mit_b(A380, &[], &[("AIRLINER_MIP_LG_ABRK_KNOB", roh)]);
+            assert_eq!(snap.autobrake.as_deref(), Some(want), "Knopf roh={roh}");
+        }
+        // RTO-Taste gedrueckt hat Vorrang vor dem Knopf.
+        let snap = mit_b(
+            A380,
+            &[],
+            &[
+                ("AIRLINER_MIP_LG_ABRK_KNOB", 5.0),
+                ("AIRLINER_MIP_LG_ABRK_RTO", 1.0),
+            ],
+        );
+        assert_eq!(snap.autobrake.as_deref(), Some("RTO"));
+        let snap = mit_b(
+            A380,
+            &[],
+            &[
+                ("AIRLINER_MIP_LG_ABRK_KNOB", 3.0),
+                ("AIRLINER_MIP_LG_ABRK_RTO", 0.0),
+            ],
+        );
+        assert_eq!(snap.autobrake.as_deref(), Some("L2"));
+        // Unbekannte Stellung / kein Event: nichts erfinden.
+        let snap = mit_b(A380, &[], &[("AIRLINER_MIP_LG_ABRK_KNOB", 6.0)]);
+        assert_eq!(snap.autobrake, None);
+        let snap = mit_b(A380, &[("L:INI_AUTOBRAKE_ARMED", 1.0)], &[]);
+        assert_eq!(snap.autobrake, None);
+    }
+
+    #[test]
+    fn b_a350_ldg_auto_brk_vor_lvar() {
+        let snap = mit_b(
+            A350,
+            &[("L:INI_AUTOBRAKE_ARMED", 0.0)],
+            &[("AIRLINER_LDG_AUTO_BRK", 1.0)],
+        );
+        assert_eq!(snap.autobrake.as_deref(), Some("ARMED"));
+        let snap = mit_b(
+            A350,
+            &[("L:INI_AUTOBRAKE_ARMED", 1.0)],
+            &[("AIRLINER_LDG_AUTO_BRK", 0.0)],
+        );
+        assert_eq!(snap.autobrake.as_deref(), Some("OFF"));
+        let snap = mit_b(A350, &[("L:INI_AUTOBRAKE_ARMED", 1.0)], &[]);
+        assert_eq!(snap.autobrake.as_deref(), Some("ARMED"), "Rueckfall LVar");
+    }
+
+    #[test]
+    fn b_a380_apu_vor_lvar() {
+        let snap = mit_b(
+            A380,
+            &[("L:INI_APU_MASTER_SWITCH", 1.0), ("APU SWITCH", 1.0)],
+            &[("AIRLINER_APU_MASTER_SWITCH", 0.0)],
+        );
+        assert_eq!(snap.apu_switch, Some(false));
+        let snap = mit_b(
+            A380,
+            &[("L:INI_APU_MASTER_SWITCH", 0.0)],
+            &[("AIRLINER_APU_MASTER_SWITCH", 1.0)],
+        );
+        assert_eq!(snap.apu_switch, Some(true));
+        let snap = mit_b(A380, &[("L:INI_APU_MASTER_SWITCH", 1.0)], &[]);
+        assert_eq!(snap.apu_switch, Some(true), "Rueckfall LVar");
+    }
+
+    #[test]
+    fn b_a220_beacon_als_oder() {
+        let beacon = |simvar: f64, b: f64| {
+            mit_b(
+                A220,
+                &[("LIGHT BEACON", simvar)],
+                &[("AIRLINER_OVH_LTS_BEACON", b)],
+            )
+            .light_beacon
+        };
+        assert_eq!(beacon(0.0, 1.0), Some(true));
+        assert_eq!(beacon(1.0, 0.0), Some(true));
+        assert_eq!(beacon(0.0, 0.0), Some(false));
+    }
+
+    #[test]
+    fn b_transponder_state_fuer_a380_und_a220() {
+        let xpdr = |muster: (&str, &str), roh: f64| {
+            mit_b(muster, &[("TRANSPONDER STATE:1", roh)], &[]).xpdr_mode_label
+        };
+        // Gemessen A380: STBY=1, AUTO am Boden=5.
+        assert_eq!(xpdr(A380, 1.0).as_deref(), Some("STBY"));
+        assert_eq!(xpdr(A380, 5.0).as_deref(), Some("GND"));
+        // Gemessen A220: STBY=1, ALT OFF=3, ALT ON/TA/TA-RA=4 — kein TA-Label.
+        assert_eq!(xpdr(A220, 1.0).as_deref(), Some("STBY"));
+        assert_eq!(xpdr(A220, 3.0).as_deref(), Some("XPNDR"));
+        assert_eq!(xpdr(A220, 4.0).as_deref(), Some("ALT"));
+        assert_eq!(
+            mit_b(A220, &[], &[]).aircraft_profile,
+            AircraftProfile::SynapticA220
+        );
+    }
+
+    #[test]
+    fn b_a380_spoiler_armed_nicht_messbar() {
+        let snap = mit_b(
+            A380,
+            &[("L:INI_SPOILERS_ARMED", 1.0), ("SPOILERS ARMED", 1.0)],
+            &[],
+        );
+        assert_eq!(snap.spoilers_armed, None);
+        // Die A350 behaelt ihre LVar.
+        let snap = mit_b(A350, &[("L:INI_SPOILERS_ARMED", 1.0)], &[]);
+        assert_eq!(snap.spoilers_armed, Some(true));
+    }
+
+    #[test]
+    fn b_rohwerte_nur_positivliste_mit_praefix() {
+        let snap = mit_b(
+            A380,
+            &[],
+            &[
+                ("AIRLINER_LIGHTS_EXT_STROBE", 2.0),
+                ("AIRLINER_MIP_LG_ABRK_KNOB", 5.0),
+                ("AIRLINER_NICHT_GELISTET", 1.0),
+            ],
+        );
+        let roh = snap.cockpit_rohwerte.unwrap();
+        assert_eq!(roh.werte.get("B:AIRLINER_LIGHTS_EXT_STROBE"), Some(&2.0));
+        assert_eq!(roh.werte.get("B:AIRLINER_MIP_LG_ABRK_KNOB"), Some(&5.0));
+        assert!(!roh.werte.contains_key("B:AIRLINER_NICHT_GELISTET"));
+        // Ohne Events keine B:-Schluessel.
+        let snap = mit_b(A380, &[], &[]);
+        assert!(!snap
+            .cockpit_rohwerte
+            .unwrap()
+            .werte
+            .keys()
+            .any(|k| k.starts_with("B:")));
+    }
+
+    #[test]
+    fn b_profile_ohne_input_events_unveraendert() {
+        // Dieselben Events an Mustern, fuer die sie nicht gelten, aendern
+        // nichts an der Deutung (nur die Rohwerte laufen mit).
+        let alle: Vec<(&str, f64)> = crate::eingabe_events::POSITIVLISTE
+            .iter()
+            .map(|n| (*n, 1.0))
+            .collect();
+        for muster in [ASOBO, FSL, IFLY, MD11, A32NX, FBW_A380X] {
+            let ohne = mit_b(muster, &[("LIGHT BEACON", 0.0)], &[]);
+            let mit = mit_b(muster, &[("LIGHT BEACON", 0.0)], &alle);
+            assert_eq!(mit.strobe_state, ohne.strobe_state, "{}", muster.0);
+            assert_eq!(mit.seatbelts_sign, ohne.seatbelts_sign, "{}", muster.0);
+            assert_eq!(mit.autobrake, ohne.autobrake, "{}", muster.0);
+            assert_eq!(mit.apu_switch, ohne.apu_switch, "{}", muster.0);
+            assert_eq!(mit.light_beacon, ohne.light_beacon, "{}", muster.0);
+            assert_eq!(mit.xpdr_mode_label, ohne.xpdr_mode_label, "{}", muster.0);
+            assert_eq!(mit.spoilers_armed, ohne.spoilers_armed, "{}", muster.0);
+        }
+        // `parse` ohne Events ist `parse_mit_eingaben` mit leerer Liste.
+        let buf = runde2_puffer(A350.0, A350.1, &[("L:INI_SEATBELTS_SWITCH", 1.0)]);
+        let a = parse(&buf, Simulator::Msfs2024, None);
+        let b = parse_mit_eingaben(
+            &buf,
+            Simulator::Msfs2024,
+            None,
+            &std::collections::BTreeMap::new(),
+        );
+        assert_eq!(a.seatbelts_sign, b.seatbelts_sign);
+        assert_eq!(a.cockpit_rohwerte, b.cockpit_rohwerte);
     }
 }
 

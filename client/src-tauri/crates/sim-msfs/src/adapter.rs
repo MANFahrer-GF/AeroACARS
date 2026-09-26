@@ -214,6 +214,11 @@ struct Shared {
     /// `None` when no PMDG aircraft is loaded.
     /// Phase 5.2 — wired into the dispatch loop in this commit.
     pmdg: Mutex<PmdgSharedState>,
+    /// MSFS-2024-Input-Events (B:-Variablen) des geladenen Flugzeugs,
+    /// 26.09.2026. Aufzaehlen/Abonnieren nach `AircraftLoaded`, verworfen
+    /// bei Flugzeugwechsel und Neuverbinden. Ablauf und Deutung in
+    /// `crate::eingabe_events`.
+    eingaben: Mutex<crate::eingabe_events::EingabeState>,
 }
 
 /// Convert a PMDG NG3 (737-specific) snapshot to the generic
@@ -671,6 +676,7 @@ impl MsfsAdapter {
                 inspector: Mutex::new(InspectorState::default()),
                 zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
                 pmdg: Mutex::new(PmdgSharedState::default()),
+                eingaben: Mutex::new(crate::eingabe_events::EingabeState::default()),
             }),
             worker: None,
             stop: Arc::new(AtomicBool::new(false)),
@@ -1184,6 +1190,9 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // all reset so the next dispatch session re-detects
                 // and re-subscribes from scratch.
                 *shared.pmdg.lock() = PmdgSharedState::default();
+                // Input-Events gelten nur fuer die Verbindung, in der sie
+                // abonniert wurden.
+                *shared.eingaben.lock() = crate::eingabe_events::EingabeState::default();
                 // Pause und „Telemetrie nicht echt" (Replay/Teleport/Vorspulen)
                 // gelten nur für die Verbindung, in der sie gemeldet wurden.
                 // Riss sie z. B. zwischen TELEPORT_START und _DONE ab, blieb die
@@ -1239,6 +1248,16 @@ fn run_dispatch(
     }
     // Dasselbe fuer die Zusatzwerte des Telemetrie-Monitors.
     shared.zusatz.lock().neue_verbindung();
+    // MSFS-2024-Input-Events: frischer Zustand je Verbindung. MSFS 2020 kennt
+    // keine — dort wird gar nicht erst gefragt, alles bleibt wie bisher.
+    // Aufgezaehlt wird, sobald `AircraftLoaded` eintrifft.
+    *shared.eingaben.lock() = crate::eingabe_events::EingabeState::default();
+    if simulator == Simulator::Msfs2020 {
+        shared.eingaben.lock().nicht_verfuegbar();
+    }
+    // Paketkennung des letzten `EnumerateInputEvents` — lehnt der Simulator
+    // ihn mit einer Ausnahme ab, kennt er keine Input-Events.
+    let mut eingabe_send_id: Option<u32> = None;
 
     // v1.7.14 — die offenen Facility-Lieferungen, nach Anfragekennung
     // getrennt.
@@ -1305,6 +1324,29 @@ fn run_dispatch(
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "Zusatzwerte fuer den Telemetrie-Monitor nicht angelegt");
+                }
+            }
+        }
+
+        // MSFS-2024-Input-Events: Aufzaehlung starten, wenn faellig (nach
+        // `AircraftLoaded` bzw. als begrenzte Wiederholung).
+        {
+            let jetzt = Instant::now();
+            let req = {
+                let mut g = shared.eingaben.lock();
+                g.frist_pruefen(jetzt);
+                g.aufzaehlung_starten(jetzt)
+            };
+            if let Some(req) = req {
+                match conn.eingaben_aufzaehlen(req) {
+                    Ok(send_id) => eingabe_send_id = send_id,
+                    Err(e) => {
+                        tracing::info!(
+                            error = %e,
+                            "Input-Events nicht verfuegbar — Schalter kommen weiter aus LVars/SimVars"
+                        );
+                        shared.eingaben.lock().nicht_verfuegbar();
+                    }
                 }
             }
         }
@@ -1619,6 +1661,17 @@ fn run_dispatch(
                     send_id,
                     index,
                 })) => {
+                    // Input-Events: lehnt der Simulator die Aufzaehlung ab
+                    // (MSFS 2020), still aufgeben — kein Fehler.
+                    if eingabe_send_id.is_some_and(|id| id == send_id) {
+                        tracing::info!(
+                            exception,
+                            "EnumerateInputEvents abgelehnt — Simulator ohne Input-Events"
+                        );
+                        shared.eingaben.lock().nicht_verfuegbar();
+                        eingabe_send_id = None;
+                        continue;
+                    }
                     // ⚠ ZUERST fragen, ob die Ausnahme zu einem
                     // Facility-FELDNAMEN gehoert. Der `index` waere
                     // sonst ueber die TELEMETRIE-Feldliste gedeutet, und
@@ -1779,7 +1832,15 @@ fn run_dispatch(
                             // Audit 26.09.2026: aircraft.cfg-Pfad fuer die
                             // Profilerkennung (MSFS-2024-Titel ohne Hersteller).
                             let air_path = shared.pmdg.lock().air_path.clone();
-                            let mut snap = telemetry::parse(&bytes, simulator, air_path.as_deref());
+                            // 26.09.2026: Werte der abonnierten MSFS-2024-
+                            // Input-Events (leer bei MSFS 2020).
+                            let eingaben = shared.eingaben.lock().werte().clone();
+                            let mut snap = telemetry::parse_mit_eingaben(
+                                &bytes,
+                                simulator,
+                                air_path.as_deref(),
+                                &eingaben,
+                            );
                             // Spec v0.7.15 F5: Pause-State aus dem Atomic
                             // in den Snapshot kopieren — wird vom Streamer-
                             // Loop in lib.rs ausgewertet damit der Pause-
@@ -1968,6 +2029,11 @@ fn run_dispatch(
                     air_path,
                 })) => {
                     if request_id == AIRCRAFT_LOADED_REQUEST_ID {
+                        // Input-Events des (neuen) Flugzeugs: alte Abos
+                        // abmelden, Werte verwerfen, nach kurzem Anlauf neu
+                        // aufzaehlen.
+                        let alt = shared.eingaben.lock().flugzeug_gewechselt(Instant::now());
+                        conn.eingaben_abmelden(&alt);
                         let detected = crate::pmdg::PmdgVariant::detect_from_air_path(&air_path);
                         let mut g = shared.pmdg.lock();
                         g.air_path = Some(air_path.clone()).filter(|p| !p.trim().is_empty());
@@ -1989,6 +2055,24 @@ fn run_dispatch(
                             g.last_packet_at = None;
                         }
                     }
+                }
+                Ok(Some(DispatchMsg::EingabeListe(roh))) => {
+                    let abos = shared.eingaben.lock().liste_aufnehmen(&roh, Instant::now());
+                    if let Some(abos) = abos {
+                        eingabe_send_id = None;
+                        let namen: Vec<&str> =
+                            abos.neu.iter().map(|(_, n, _)| n.as_str()).collect();
+                        tracing::info!(?namen, "Input-Events (B:) abonniert");
+                        for (hash, _, get_req) in &abos.neu {
+                            conn.eingabe_abonnieren(*hash, *get_req);
+                        }
+                    }
+                }
+                Ok(Some(DispatchMsg::EingabeWert(roh))) => {
+                    shared.eingaben.lock().get_aufnehmen(&roh);
+                }
+                Ok(Some(DispatchMsg::EingabeAbo(roh))) => {
+                    shared.eingaben.lock().abo_aufnehmen(&roh);
                 }
                 Ok(Some(DispatchMsg::FlowEvent { event })) => {
                     // Der Simulator sagt uns selbst, dass die Telemetrie
@@ -2044,6 +2128,10 @@ fn run_dispatch(
                         // da ist, soll die Profilerkennung lieber nur den
                         // Titel sehen als den Pfad des vorigen Flugzeugs.
                         shared.pmdg.lock().air_path = None;
+                        // Dasselbe fuer die Input-Events: Werte des vorigen
+                        // Flugzeugs sofort verwerfen.
+                        let alt = shared.eingaben.lock().flugzeug_gewechselt(Instant::now());
+                        conn.eingaben_abmelden(&alt);
                         if let Err(e) = conn.request_aircraft_loaded() {
                             tracing::warn!(error = %e, "re-request AircraftLoaded failed");
                         }
@@ -2806,6 +2894,39 @@ impl Connection {
         Ok(())
     }
 
+    /// MSFS-2024-Input-Events aufzaehlen. Liefert die Paketkennung, damit
+    /// eine asynchrone Ablehnung (MSFS 2020) zugeordnet werden kann.
+    fn eingaben_aufzaehlen(&mut self, req: u32) -> Result<Option<u32>, String> {
+        let hr = unsafe { sys::SimConnect_EnumerateInputEvents(self.handle, req) };
+        if hr != 0 {
+            return Err(format!("EnumerateInputEvents returned 0x{hr:08X}"));
+        }
+        let mut id: sys::DWORD = 0;
+        let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut id) };
+        Ok((hr == 0).then_some(id))
+    }
+
+    /// Ein Input-Event auf Aenderungen abonnieren und den Startwert einmal
+    /// abfragen. Nur lesen — `SetInputEvent` gibt es hier nicht.
+    fn eingabe_abonnieren(&mut self, hash: u64, get_req: u32) {
+        let hr = unsafe { sys::SimConnect_SubscribeInputEvent(self.handle, hash) };
+        if hr != 0 {
+            tracing::warn!(hash, "SubscribeInputEvent returned 0x{hr:08X}");
+        }
+        let hr = unsafe { sys::SimConnect_GetInputEvent(self.handle, get_req, hash) };
+        if hr != 0 {
+            tracing::warn!(hash, "GetInputEvent returned 0x{hr:08X}");
+        }
+    }
+
+    /// Abos des vorigen Flugzeugs abmelden (Fehler egal — das Flugzeug
+    /// kann schon weg sein).
+    fn eingaben_abmelden(&mut self, hashes: &[u64]) {
+        for h in hashes {
+            unsafe { sys::SimConnect_UnsubscribeInputEvent(self.handle, *h) };
+        }
+    }
+
     /// One-shot request for the AircraftLoaded system state. Safe to
     /// repeat — used on every SimStart to pick up an aircraft change.
     fn request_aircraft_loaded(&mut self) -> Result<(), String> {
@@ -3069,6 +3190,23 @@ impl Connection {
                     bytes,
                 })
             }
+            id if id == sys::SIMCONNECT_RECV_ID_ENUMERATE_INPUT_EVENTS
+                || id == sys::SIMCONNECT_RECV_ID_GET_INPUT_EVENT
+                || id == sys::SIMCONNECT_RECV_ID_SUBSCRIBE_INPUT_EVENT =>
+            {
+                // Komplette Nachricht kopieren; Layout (pack 1) siehe
+                // `crate::eingabe_events`.
+                let roh =
+                    unsafe { std::slice::from_raw_parts(p_data as *const u8, cb_data as usize) }
+                        .to_vec();
+                Some(if id == sys::SIMCONNECT_RECV_ID_ENUMERATE_INPUT_EVENTS {
+                    DispatchMsg::EingabeListe(roh)
+                } else if id == sys::SIMCONNECT_RECV_ID_GET_INPUT_EVENT {
+                    DispatchMsg::EingabeWert(roh)
+                } else {
+                    DispatchMsg::EingabeAbo(roh)
+                })
+            }
             id if id == sys::SIMCONNECT_RECV_ID_FACILITY_DATA_END => {
                 let fd = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_FACILITY_DATA_END) };
                 Some(DispatchMsg::FacilityDataEnde {
@@ -3150,6 +3288,14 @@ enum DispatchMsg {
         request_id: u32,
         bytes: Vec<u8>,
     },
+    /// 26.09.2026 — MSFS-2024-Input-Events, jeweils die KOMPLETTE
+    /// Rohnachricht ab `dwSize`; gedeutet in `crate::eingabe_events`.
+    /// Ein Teil der Liste aus `EnumerateInputEvents`.
+    EingabeListe(Vec<u8>),
+    /// Antwort auf `GetInputEvent` (Startwert).
+    EingabeWert(Vec<u8>),
+    /// Aenderungsmeldung eines abonnierten Events.
+    EingabeAbo(Vec<u8>),
     /// Response to `RequestSystemState`. We use this to read the
     /// `.air` file path of the loaded aircraft for PMDG variant
     /// detection. The `request_id` will be `AIRCRAFT_LOADED_REQUEST_ID`.
