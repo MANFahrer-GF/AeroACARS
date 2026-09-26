@@ -182,6 +182,14 @@ pub enum FieldId {
     TolissAutoBrkLo,
     TolissAutoBrkMed,
     TolissAutoBrkMax,
+    /// `laminar/a333/switches/strobe_pos` (klein geschrieben) — Laminar-A330,
+    /// 0=OFF 1=AUTO 2=ON (`A333.lighting.lua`, Kommando-Handler). Der
+    /// Standard-`strobe_lights_on` zeigt dort nur den Effekt: bei AUTO
+    /// erst in der Luft (`A333.lighting.lua:1228`).
+    A333StrobePos,
+    /// `laminar/A333/switches/fasten_seatbelts` (gross geschrieben) —
+    /// Laminar-A330, 0=OFF 1=AUTO 2=ON (`A333.switches.lua`).
+    A333SeatbeltSwitch,
 }
 
 /// One row in the catalog: a DataRef name + which snapshot field it
@@ -671,6 +679,14 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "AirbusFBW/AutoBrkMax",
         field: FieldId::TolissAutoBrkMax,
     },
+    DatarefEntry {
+        name: "laminar/a333/switches/strobe_pos",
+        field: FieldId::A333StrobePos,
+    },
+    DatarefEntry {
+        name: "laminar/A333/switches/fasten_seatbelts",
+        field: FieldId::A333SeatbeltSwitch,
+    },
 ];
 
 /// v0.16.9: body-frame horizontal velocity, derived from the WORLD-frame
@@ -880,6 +896,8 @@ pub struct XPlaneState {
     pub toliss_autobrk_lo: Option<bool>,
     pub toliss_autobrk_med: Option<bool>,
     pub toliss_autobrk_max: Option<bool>,
+    pub a333_strobe_pos: Option<f32>,
+    pub a333_seatbelt_switch: Option<f32>,
     /// True once we've received at least one RREF packet — drives
     /// the connection state machine's transition into `Connected`.
     pub got_first_packet: bool,
@@ -920,6 +938,12 @@ pub fn xplane_xpdr_mode_label(mode: u8) -> &'static str {
         7 => "TA-RA",
         _ => "",
     }
+}
+
+/// Dreistufiger Schalter 0=OFF 1=AUTO 2=ON; alles andere → `None`.
+fn schalter_0_1_2(roh: f32) -> Option<u8> {
+    let r = roh.round();
+    ((roh - r).abs() < 0.05 && (0.0..=2.0).contains(&r)).then_some(r as u8)
 }
 
 /// `speedbrake_ratio` unterhalb dieses Werts = SPEED BRAKE ARMED. Laut
@@ -1064,6 +1088,8 @@ impl XPlaneState {
             FieldId::TolissAutoBrkLo => self.toliss_autobrk_lo = Some(value > 0.5),
             FieldId::TolissAutoBrkMed => self.toliss_autobrk_med = Some(value > 0.5),
             FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = Some(value > 0.5),
+            FieldId::A333StrobePos => self.a333_strobe_pos = Some(value),
+            FieldId::A333SeatbeltSwitch => self.a333_seatbelt_switch = Some(value),
         }
     }
 
@@ -1263,7 +1289,9 @@ impl XPlaneState {
             light_nav: Some(self.light_nav),
             // X-Plane's nav-light DataRef covers logo on most payware.
             light_logo: Some(self.light_nav),
-            strobe_state: None,
+            // 3-Stufen-Schalter, wo ein Add-on ihn liefert (Laminar-A330);
+            // sonst nur der binaere Effekt in `light_strobe`.
+            strobe_state: self.a333_strobe_pos.and_then(schalter_0_1_2),
             // v0.16.7: OR the ToLiss `AirbusFBW/AP1Engage`/`AP2Engage`
             // datarefs into the standard `servos_on` — addon-agnostic
             // (absent datarefs are never streamed → the toliss_* bools
@@ -1339,10 +1367,13 @@ impl XPlaneState {
             // 0=OFF 1=AUTO 2=ON. Nur wo ein Add-on den Schalter liefert —
             // der Standard-Dataref ist bei den meisten Mustern nicht
             // belegt und wuerde „OFF" vortaeuschen.
-            seatbelts_sign: match (self.b738_seatbelt_sign, self.toliss_seatbelt_signs) {
-                (Some(pos), _) if (0.0..=2.0).contains(&pos.round()) => Some(pos.round() as u8),
-                (_, Some(on)) => Some(if on { 2 } else { 0 }),
-                _ => None,
+            seatbelts_sign: match (
+                self.b738_seatbelt_sign.or(self.a333_seatbelt_switch),
+                self.toliss_seatbelt_signs,
+            ) {
+                (Some(pos), _) => schalter_0_1_2(pos),
+                (None, Some(on)) => Some(if on { 2 } else { 0 }),
+                (None, None) => None,
             },
             no_smoking_sign: None,
             fcu_selected_altitude_ft: None,
@@ -2028,5 +2059,29 @@ mod cockpit_schalter_tests {
         let vorher = namen.len();
         namen.dedup();
         assert_eq!(vorher, namen.len(), "jeder Dataref genau einmal im Katalog");
+    }
+
+    #[test]
+    fn laminar_a330_strobe_schalter_statt_effekt() {
+        // Bei AUTO am Boden blitzt nichts — der Standard-Dataref sagt 0,
+        // der Schalter steht regulaer.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::LightStrobe, 0.0);
+        s.apply_field(FieldId::A333StrobePos, 1.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.strobe_state, Some(1));
+        assert_eq!(snap.light_strobe, Some(false));
+
+        let s = XPlaneState::default();
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).strobe_state, None);
+    }
+
+    #[test]
+    fn laminar_a330_anschnallzeichen() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::A333SeatbeltSwitch, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(1));
+        s.apply_field(FieldId::A333SeatbeltSwitch, 1.5);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, None);
     }
 }
