@@ -1032,6 +1032,48 @@ struct ResumeDiscontinuity {
     nur_bestaetigt: bool,
 }
 
+/// Taugt eine Position als Messpunkt fuer Pause/Wiederaufnahme?
+///
+/// Log-Durchsicht 26.09.2026 (Recorder-Fix Befund 1): Im Lade-/Menue-
+/// bildschirm liefert MSFS eine Scheinposition LAT 0,0000 / LON 90,0003 mit
+/// Hoehen wie −2 109 340 ft. Wurde so ein Punkt Pausen-Referenz, meldete der
+/// Client „unmoeglicher Sprung" mit +2 110 082 ft und 5 038 nm Drift
+/// (n13rGYv4aLpBlZw4, aKRgO8gxYzPnLR8B) — Messfehler, kein Sprung.
+fn position_plausibel(lat: f64, lon: f64, hoehe_ft: f64) -> bool {
+    let menue_scheinposition = lat.abs() < 0.001 && (lon - 90.0).abs() < 0.01;
+    lat.is_finite()
+        && lon.is_finite()
+        && lat.abs() <= 90.0
+        && lon.abs() <= 180.0
+        && !menue_scheinposition
+        && (-2_000.0..=100_000.0).contains(&hoehe_ft)
+}
+
+fn snapshot_plausibel(s: &SimSnapshot) -> bool {
+    position_plausibel(s.lat, s.lon, s.altitude_msl_ft)
+}
+
+#[cfg(test)]
+mod scheinposition_tests {
+    use super::position_plausibel;
+
+    #[test]
+    fn menue_scheinpositionen_aus_den_logs_taugen_nicht() {
+        // Echte Werte aus n13rGYv4aLpBlZw4 und aKRgO8gxYzPnLR8B.
+        assert!(!position_plausibel(-0.0, 90.0003, -2_109_340.0));
+        assert!(!position_plausibel(-0.0, 90.0003, -287_007.0));
+        assert!(!position_plausibel(-0.0, 90.0003, 228.0));
+    }
+
+    #[test]
+    fn echte_positionen_taugen() {
+        assert!(position_plausibel(45.6291, 8.7188, 742.0)); // LIMC
+        assert!(position_plausibel(58.8836, 5.6302, 37.0)); // ENZV
+        assert!(position_plausibel(52.3, 4.76, -11.0)); // EHAM unter NN
+        assert!(position_plausibel(0.0, 0.0, 35_000.0)); // Reiseflug ueber dem Nullpunkt
+    }
+}
+
 /// Vergleicht den letzten bekannten Snapshot vor einer Pause/einem
 /// Neustart (`prev`) mit dem ersten frischen Snapshot danach (`cur`).
 fn compute_resume_discontinuity(
@@ -32475,8 +32517,14 @@ fn apply_pause_resume(
     // wie bisher der Betrag — intern (Phase 0, v0.20) wird das vorzeichen-
     // behaftete Delta über `compute_resume_discontinuity` geteilt, damit
     // derselbe Code auch den App-Neustart-Resume-Pfad bedienen kann.
+    // Ohne echte Position auf beiden Seiten gibt es nichts zu messen —
+    // ein Scheinwert aus dem Menue ergaebe einen Scheinsprung.
     let discontinuity = match (&last_known, current_snap) {
-        (Some(prev), Some(cur)) => Some(compute_resume_discontinuity(
+        (Some(prev), Some(cur))
+            if position_plausibel(prev.lat, prev.lon, prev.altitude_ft)
+                && snapshot_plausibel(cur) =>
+        {
+            Some(compute_resume_discontinuity(
             prev,
             cur,
             ziel_fuer_sprung,
@@ -32486,7 +32534,8 @@ fn apply_pause_resume(
             // zu kurzen Luecke und damit einer zu hohen Geschwindigkeit
             // (Cloud-QS 23.09.2026).
             Some(duration_secs + SIM_DISCONNECT_THRESHOLD_S),
-        )),
+        ))
+        }
         _ => None,
     };
     let (drift_nm, alt_delta_ft, fuel_delta_kg) = match discontinuity {
@@ -36603,7 +36652,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
 
-            if let Some(ref s) = snapshot {
+            if let Some(s) = snapshot.as_ref().filter(|s| snapshot_plausibel(s)) {
                 last_good_snap = Some(s.clone());
                 last_good_snap_at = Some(std::time::Instant::now());
             }
@@ -36703,30 +36752,39 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 };
                 if !already_paused {
                     if let Some(ref snap) = snapshot {
-                        let paused = PausedSnapshot {
-                            lat: snap.lat,
-                            lon: snap.lon,
-                            heading_deg: snap.heading_deg_true,
-                            altitude_ft: snap.altitude_indicated_ft.unwrap_or(snap.altitude_msl_ft),
-                            fuel_total_kg: snap.fuel_total_kg,
-                            zfw_kg: snap.zfw_kg,
-                            on_ground: snap.on_ground,
-                        };
-                        let detail = format!(
-                            "Letzte bekannte Position: LAT {:.4}° · LON {:.4}° · ALT {:.0} ft",
-                            paused.lat, paused.lon, paused.altitude_ft,
-                        );
+                        // Referenz fuer die Sprungpruefung: der aktuelle Punkt,
+                        // wenn er echt ist, sonst der letzte echte. Geht der
+                        // Sim gerade ins Menue, ist der aktuelle Punkt schon
+                        // die Scheinposition.
+                        let referenz = Some(snap)
+                            .filter(|s| snapshot_plausibel(s))
+                            .or(last_good_snap.as_ref());
+                        let paused = referenz.map(|r| PausedSnapshot {
+                            lat: r.lat,
+                            lon: r.lon,
+                            heading_deg: r.heading_deg_true,
+                            altitude_ft: r.altitude_indicated_ft.unwrap_or(r.altitude_msl_ft),
+                            fuel_total_kg: r.fuel_total_kg,
+                            zfw_kg: r.zfw_kg,
+                            on_ground: r.on_ground,
+                        });
+                        let detail = paused.as_ref().map(|p| {
+                            format!(
+                                "Letzte bekannte Position: LAT {:.4}° · LON {:.4}° · ALT {:.0} ft",
+                                p.lat, p.lon, p.altitude_ft,
+                            )
+                        });
                         {
                             let mut stats = flight.stats.lock().expect("flight stats");
                             stats.paused_since = Some(Utc::now());
-                            stats.paused_last_known = Some(paused);
+                            stats.paused_last_known = paused;
                             stats.current_pause_reason = Some(PauseReason::SimPause);
                         }
                         log_activity_handle(
                             &app,
                             ActivityLevel::Info,
                             "Simulator pausiert — AeroACARS pausiert die Aufzeichnung.".to_string(),
-                            Some(detail),
+                            detail,
                         );
                         save_active_flight(&app, &flight);
                         tracing::info!(
@@ -36770,7 +36828,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // mehr in eigener Pause (snap.paused=false). Sonst
                 // bleibt der Streamer pausiert auch wenn Snapshots
                 // kommen (F5: Frozen-Snapshots waehrend Esc-Pause).
-                let can_resume = snapshot.is_some() && !snap_says_paused;
+                // Erst weiter, wenn der Sim wieder eine echte Position hat —
+                // aus dem Ladebildschirm heraus kam sonst die Scheinposition
+                // als erster Punkt „danach" (aKRgO8gxYzPnLR8B, 11:01:10).
+                let can_resume = snapshot.as_ref().is_some_and(snapshot_plausibel)
+                    && !snap_says_paused;
                 if can_resume {
                     // Auto-Resume: Reason aus dem State (gesetzt vom
                     // Disconnect- bzw. Sim-Pause-Detect-Pfad). Helper
@@ -38940,7 +39002,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             let should_persist = {
                 let mut stats = flight.stats.lock().expect("flight stats");
                 let due = stats.position_count % STATS_PERSIST_EVERY_TICKS == 0;
-                if due {
+                if due && snapshot_plausibel(&snap) {
                     // v0.20 (Process-Integrity): refresh the "last known
                     // good state" independent of whether a SimDisconnect
                     // pause was ever registered — this is the comparison
