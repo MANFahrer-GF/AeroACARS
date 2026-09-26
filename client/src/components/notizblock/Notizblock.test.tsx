@@ -75,7 +75,7 @@ describe("Notizblock — Handballen-Schutz ueber die Ereigniskette", () => {
 
   it("grosse Auflageflaeche zeichnet nie", () => {
     const { strich, anzahl } = aufbau();
-    strich(1, "touch", 100, 60);
+    strich(1, "touch", 100, 80);
     expect(anzahl()).toBe(0);
   });
 

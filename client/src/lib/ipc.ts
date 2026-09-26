@@ -705,9 +705,17 @@ function openSocket(): void {
       return; // ignore malformed frames
     }
     if (parsed.event === ABO_BESTAETIGUNG) {
-      const w = aboWartende;
-      aboWartende = [];
-      for (const los of w) los();
+      // Nur eine ANmeldung gibt die Wartenden frei — die Bestaetigung einer
+      // vorherigen Abmeldung nicht (Cloud-QS).
+      const an = (parsed.payload as { an?: unknown } | null)?.an === true;
+      if (an) {
+        aboBestaetigt.add("telemetrie-frame");
+        const w = aboWartende;
+        aboWartende = [];
+        for (const los of w) los();
+      } else {
+        aboBestaetigt.delete("telemetrie-frame");
+      }
     }
     const cbs = browserRegistry.get(parsed.event);
     if (!cbs) return;
@@ -721,6 +729,7 @@ function openSocket(): void {
   };
   socket.onclose = () => {
     if (ws === socket) ws = null;
+    aboBestaetigt.clear();
     scheduleReconnect();
   };
   socket.onerror = () => {
@@ -741,6 +750,8 @@ const ABO_BESTAETIGUNG = "telemetrie-abo";
 /** So lange wartet `listen` hoechstens auf die Bestaetigung (ms). */
 export const ABO_WARTEZEIT_MS = 2500;
 let aboWartende: Array<() => void> = [];
+/** Ereignisse, deren Abo der Sim-PC auf der aktuellen Verbindung bestaetigt hat. */
+const aboBestaetigt = new Set<string>();
 
 /** Wartet, bis der Sim-PC das Abo bestaetigt — hoechstens `ms`. Danach geht
  *  es trotzdem weiter; eine verbleibende Luecke fuellt die Oberflaeche aus
@@ -793,6 +804,9 @@ function browserListen<T>(
       if (s.size === 0) {
         browserRegistry.delete(event);
         aboSenden(event, false);
+        // Abo ist aus — der naechste Listener muss wieder auf die
+        // Bestaetigung warten.
+        aboBestaetigt.delete(event);
       }
     }
     // If absolutely nothing is listening anymore, drop the socket so a logged-
@@ -819,7 +833,10 @@ export async function listen<T = unknown>(
   }
   // Abo-Ereignisse: erst zurueckkehren, wenn der Sim-PC das Abo bestaetigt
   // hat — wer danach seinen Verlauf holt, bekommt keine Luecke (Codex).
-  const warten = ABO_EREIGNISSE.has(event) ? aufAboWarten(ABO_WARTEZEIT_MS) : null;
+  // Ist das Abo auf dieser Verbindung schon bestaetigt (zweiter Listener),
+  // gibt es nichts zu warten.
+  const warten =
+    ABO_EREIGNISSE.has(event) && !aboBestaetigt.has(event) ? aufAboWarten(ABO_WARTEZEIT_MS) : null;
   const ab = browserListen<T>(event, cb);
   if (warten) await warten;
   return ab;

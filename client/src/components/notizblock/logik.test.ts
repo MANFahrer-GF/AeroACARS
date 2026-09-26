@@ -61,7 +61,11 @@ describe("Notizblock-Logik", () => {
     expect(darfZeichnen("mouse", 0, 0, false, true)).toBe(true);
     // Grosse Auflageflaeche ist nie ein Finger — auch vor dem ersten Stift.
     expect(darfZeichnen("touch", HANDBALLEN_PX, 10, false, false)).toBe(false);
-    expect(darfZeichnen("touch", 60, 45, true, false)).toBe(false);
+    expect(darfZeichnen("touch", 80, 70, false, false)).toBe(false);
+    // Grosse Fingerkuppe (iPad meldet bis ~40–50 px) zeichnet vor dem Stift.
+    expect(darfZeichnen("touch", 44, 44, false, false)).toBe(true);
+    // „Mit Finger schreiben" hebt die Groessenpruefung auf.
+    expect(darfZeichnen("touch", 80, 70, true, true)).toBe(true);
     // Fingerkuppe: nur ohne bekannten Stift oder wenn freigegeben.
     expect(darfZeichnen("touch", 12, 12, false, false)).toBe(true);
     expect(darfZeichnen("touch", 12, 12, false, true)).toBe(false);

@@ -74,4 +74,29 @@ describe("Abo-Ereignisse ueber die LAN-Bruecke", () => {
     expect(ws.gesendet.length).toBe(vorher);
     ab();
   });
+
+  it("eine Abmelde-Bestaetigung gibt Wartende nicht frei; ein zweiter Listener wartet nicht", async () => {
+    vi.useFakeTimers();
+    const ws = FakeWS.letzte!;
+    let fertig = false;
+    const p = listen("telemetrie-frame", () => undefined).then((ab) => {
+      fertig = true;
+      return ab;
+    });
+    ws.empfangen("telemetrie-abo", { an: false });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fertig).toBe(false);
+    ws.empfangen("telemetrie-abo", { an: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fertig).toBe(true);
+    // Zweiter Listener auf bestaetigter Verbindung: sofort fertig.
+    let zweiter = false;
+    void listen("telemetrie-frame", () => undefined).then(() => {
+      zweiter = true;
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(zweiter).toBe(true);
+    (await p)();
+  });
 });
+
