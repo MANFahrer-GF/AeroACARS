@@ -31,6 +31,10 @@ pub struct LaufInfo {
     pub lvars_zusatzliste: usize,
     /// Davon nicht schon in der MobiFlight-Liste.
     pub lvars_zusatz_neu: usize,
+    /// Beobachtete Input-Events (B:, nur Zahlen-Events). 0 = MSFS lieferte keine.
+    pub input_events: usize,
+    /// Text-Input-Events, die übergangen wurden.
+    pub input_events_text: usize,
     /// Das MobiFlight-Modul listet höchstens 1000 LVars (Module.cpp Z. 228).
     pub lvar_liste_moeglicherweise_gekappt: bool,
     pub lvars_uebersprungen: Vec<String>,
@@ -423,6 +427,10 @@ impl Lauf {
             i.lvars_zusatzliste, i.lvars_zusatz_neu
         ));
         z(format!("LVars abonniert:    {}", i.lvars_gesamt));
+        z(format!(
+            "Input-Events (B:):  {} ({} Text-Events übergangen)",
+            i.input_events, i.input_events_text
+        ));
         if !i.lvars_uebersprungen.is_empty() {
             z(format!(
                 "LVars übersprungen: {}",
@@ -696,6 +704,7 @@ mod tests {
         assert!(txt.contains("L:WING_LT: 0 → 1"));
         assert!(txt.contains("L:BLINK (unruhig)"));
         assert!(txt.contains("LVars abonniert:"));
+        assert!(txt.contains("Input-Events (B:):"));
         assert!(txt.contains("1000er-Grenze"));
         // Start-Ereignis trägt die Zähler.
         let start: Value = serde_json::from_str(live.lines().next().unwrap()).unwrap();

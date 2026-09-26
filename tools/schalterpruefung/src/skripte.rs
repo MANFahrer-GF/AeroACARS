@@ -7,10 +7,10 @@ use serde::Serialize;
 /// Schlüsselwort-Gruppen für die Rangfolge der Kandidaten. Ein LVar-Name, der
 /// eines davon enthält, rückt nach vorne.
 pub const KW_STROBE: &[&str] = &["STROBE", "STRB"];
-pub const KW_GURT: &[&str] = &["BELT", "SEAT"];
+pub const KW_GURT: &[&str] = &["BELT", "SEAT", "SIGNS"];
 pub const KW_BREMSE: &[&str] = &["BRK", "BRAKE", "ABRK"];
 pub const KW_XPDR: &[&str] = &["XPDR", "TCAS", "SQWK", "TRANSPONDER"];
-pub const KW_SPOILER: &[&str] = &["SPOIL", "SPD"];
+pub const KW_SPOILER: &[&str] = &["SPOIL", "SPD", "SPEEDBRAKE", "SPEED_BRAKE"];
 pub const KW_APU: &[&str] = &["APU"];
 pub const KW_BEACON: &[&str] = &["BEACON", "BCN"];
 pub const KW_NAV: &[&str] = &["NAV"];

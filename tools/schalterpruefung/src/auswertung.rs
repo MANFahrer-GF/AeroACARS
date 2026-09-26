@@ -385,4 +385,46 @@ mod tests {
         assert_eq!(wert_text(0.25), "0.25");
         assert_eq!(wert_text(1.0 / 3.0), "0.3333");
     }
+
+    #[test]
+    fn input_event_mit_schluesselwort_schlaegt_simvar_effekt() {
+        // Erster echter Lauf A380: Strobe hatte keine LVar; A:LIGHT STROBE
+        // zeigte nur den Effekt (0/0/1), die Stellung steckt im B:-Event.
+        let schalter = skripte::a380().schalter[0].clone();
+        let namen: Vec<String> = vec![
+            "A:LIGHT STROBE".into(),
+            "B:AIRLINER_LIGHTS_EXT_STROBE".into(),
+            "B:AIRLINER_LIGHTS_EXT_NAV".into(),
+        ];
+        let st = |n: &str, v: [f64; 3]| StellungMessung {
+            stellung: n.into(),
+            a: v.iter().map(|x| Some(*x)).collect(),
+            b: v.iter().map(|x| Some(*x)).collect(),
+        };
+        let m = vec![
+            st("OFF", [0., 0., 1.]),
+            st("AUTO", [0., 1., 1.]),
+            st("ON", [1., 2., 1.]),
+        ];
+        let e = auswerten(&schalter, &namen, &m, &BTreeSet::new());
+        assert_eq!(e.kandidaten.len(), 2);
+        assert_eq!(
+            e.kandidaten[0].zeile(),
+            "B:AIRLINER_LIGHTS_EXT_STROBE → OFF=0, AUTO=1, ON=2"
+        );
+        assert_eq!(e.kandidaten[1].variable, "A:LIGHT STROBE");
+    }
+
+    #[test]
+    fn schluesselwoerter_treffen_die_b_namen() {
+        let kw = |i: usize| skripte::a380().schalter[i].schluesselwoerter.clone();
+        assert!(hat_schluesselwort("B:AIRLINER_SIGNS_SEAT_BELTS", &kw(1)));
+        assert!(hat_schluesselwort("B:AIRLINER_AUTO_BRK", &kw(2)));
+        assert!(hat_schluesselwort("B:AIRLINER_ABRK_RTO", &kw(3)));
+        assert!(hat_schluesselwort("B:AIRLINER_TRANSPONDER_MODE", &kw(4)));
+        assert!(hat_schluesselwort("B:AIRLINER_SPEEDBRAKE", &kw(5)));
+        assert!(hat_schluesselwort("B:AIRLINER_APU_MASTER", &kw(6)));
+        let bcn = skripte::a330().schalter[7].schluesselwoerter.clone();
+        assert!(hat_schluesselwort("B:AIRLINER_LIGHTS_EXT_BEACON", &bcn));
+    }
 }

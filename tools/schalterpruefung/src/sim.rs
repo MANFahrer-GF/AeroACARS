@@ -10,6 +10,7 @@ use std::ffi::CString;
 use std::time::{Duration, Instant};
 
 use crate::auswertung::Werte;
+use crate::input_events::{self, Deskriptor};
 use crate::mobiflight::{
     self, antwort_deuten, befehl_kodieren, Antwort, ClientBlock, Kanal, ListenSammler,
     LVARS_BEREICH_GROESSE, NACHRICHT_GROESSE,
@@ -58,6 +59,9 @@ const ATC_REQ: u32 = 0x0180_0000;
 const SV_REQ: u32 = 0x1000_0000;
 const BL_REQ: u32 = 0x2000_0000;
 const RESP_REQ: u32 = 0x3000_0000;
+const IE_LISTE_REQ: u32 = 0x3800_0000;
+/// + (Generation & 0xFF) << 16 + Index — bis 65535 Input-Events.
+const IE_REQ: u32 = 0x4000_0000;
 
 /// Client-Daten-IDs je MobiFlight-Kanal: Kanal k (0 = Standard-Client
 /// „MobiFlight", 1 = Liste, 2.. = LVar-Blöcke).
@@ -111,9 +115,21 @@ pub fn dll_bereitstellen() -> Result<(), String> {
 enum Msg {
     Open(String),
     Quit,
-    Ausnahme { send_id: u32 },
-    ObjektDaten { req: u32, bytes: Vec<u8> },
-    ClientDaten { req: u32, bytes: Vec<u8> },
+    Ausnahme {
+        send_id: u32,
+    },
+    ObjektDaten {
+        req: u32,
+        bytes: Vec<u8>,
+    },
+    ClientDaten {
+        req: u32,
+        bytes: Vec<u8>,
+    },
+    /// Input-Events: komplette Rohnachricht (Deutung in `input_events`).
+    IeListe(Vec<u8>),
+    IeWert(Vec<u8>),
+    IeAbo(Vec<u8>),
     Sonst,
 }
 
@@ -139,6 +155,11 @@ pub struct Sim {
     gen: u32,
     pub mf_version: Option<String>,
     pub uebersprungen: Vec<String>,
+    /// Input-Events (B:) des Flugzeugs, nur Zahlen-Events.
+    ie: Vec<Deskriptor>,
+    pub ie_text: usize,
+    /// Letzter bekannter Wert je Hash (aus Abo-Meldungen und Get-Antworten).
+    ie_wert: HashMap<u64, f64>,
 }
 
 unsafe impl Send for Sim {}
@@ -192,6 +213,9 @@ impl Sim {
             gen: 0,
             mf_version: None,
             uebersprungen: Vec::new(),
+            ie: Vec::new(),
+            ie_text: 0,
+            ie_wert: HashMap::new(),
         };
         // Auf die OPEN-Meldung warten — erst dann ist die Verbindung wirklich da.
         let mut name = String::new();
@@ -232,6 +256,8 @@ impl Sim {
                 std::slice::from_raw_parts((p as *const u8).add(start), total - start).to_vec()
             }
         };
+        let roh =
+            || -> Vec<u8> { unsafe { std::slice::from_raw_parts(p as *const u8, total).to_vec() } };
         let m = if id == sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_OPEN as u32 {
             let o = unsafe { &*(p as *const sys::SIMCONNECT_RECV_OPEN) };
             let feld = o.szApplicationName;
@@ -263,6 +289,12 @@ impl Sim {
                 req,
                 bytes: payload(std::mem::size_of::<sys::SIMCONNECT_RECV_CLIENT_DATA>()),
             }
+        } else if id == sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_ENUMERATE_INPUT_EVENTS as u32 {
+            Msg::IeListe(roh())
+        } else if id == sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_GET_INPUT_EVENT as u32 {
+            Msg::IeWert(roh())
+        } else if id == sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_SUBSCRIBE_INPUT_EVENT as u32 {
+            Msg::IeAbo(roh())
         } else {
             Msg::Sonst
         };
@@ -277,6 +309,11 @@ impl Sim {
             while let Some(m) = self.naechste()? {
                 match &m {
                     Msg::Quit => return Err(BEENDET.into()),
+                    Msg::IeAbo(b) => {
+                        if let Some((hash, Some(w))) = input_events::abo_deuten(b) {
+                            self.ie_wert.insert(hash, w);
+                        }
+                    }
                     Msg::Ausnahme { send_id, .. } => {
                         if let Some(i) = self.sv_send_ids.get(send_id).copied() {
                             self.simvars[i].1 = false;
@@ -623,8 +660,39 @@ impl Sim {
             .iter()
             .flat_map(|b| b.block.lvars.iter().map(|n| format!("L:{n}")))
             .collect();
+        v.extend(self.ie.iter().map(|d| format!("B:{}", d.name)));
         v.extend(self.simvars.iter().map(|(n, _)| format!("A:{n}")));
         v
+    }
+
+    /// Alle Input-Events des Flugzeugs holen (Liste kommt in Teilen,
+    /// `dwEntryNumber`/`dwOutOf`) und auf Änderungen abonnieren. Liefert
+    /// MSFS nichts (MSFS 2020), geht es ohne weiter: `Ok(0)`.
+    pub fn input_events_holen(&mut self) -> Result<usize, String> {
+        let hr = unsafe { sys::SimConnect_EnumerateInputEvents(self.h, IE_LISTE_REQ) };
+        if hr != 0 {
+            return Ok(0);
+        }
+        let mut sammler = input_events::ListenSammler::default();
+        self.pumpen(Duration::from_secs(10), |m| {
+            if let Msg::IeListe(b) = m {
+                if let Some((req, nr, von, d)) = input_events::enumerate_deuten(b) {
+                    if req == IE_LISTE_REQ {
+                        sammler.aufnehmen(nr, von, d);
+                    }
+                }
+            }
+            sammler.fertig()
+        })?;
+        let (ev, texte) = sammler.sortiert();
+        self.ie_text = texte;
+        self.ie = ev.into_iter().take(0xFFFF).collect();
+        for d in &self.ie {
+            // Nur Benachrichtigung bei Änderung — schreibt nichts.
+            unsafe { sys::SimConnect_SubscribeInputEvent(self.h, d.hash) };
+        }
+        self.pumpen(Duration::from_millis(300), |_| false)?;
+        Ok(self.ie.len())
     }
 
     /// Eine Momentaufnahme aller Variablen.
@@ -675,10 +743,30 @@ impl Sim {
                 offen.insert(req, (false, i));
             }
         }
+        // Input-Events: frisch abfragen; was nicht rechtzeitig kommt, nimmt
+        // den letzten bekannten Wert (Abo/frühere Antwort).
+        let ie_basis = IE_REQ + ((self.gen & 0xFF) << 16);
+        let mut ie_offen: HashMap<u32, usize> = HashMap::new();
+        for (i, d) in self.ie.iter().enumerate() {
+            let req = ie_basis + i as u32;
+            let hr = unsafe { sys::SimConnect_GetInputEvent(self.h, req, d.hash) };
+            if hr == 0 {
+                ie_offen.insert(req, i);
+            }
+        }
+        let mut ie_werte: Vec<Option<f64>> = vec![None; self.ie.len()];
         let mut block_werte: Vec<Option<Vec<Option<f64>>>> = vec![None; self.bloecke.len()];
         let mut sv_werte: Vec<Option<f64>> = vec![None; self.simvars.len()];
         let laengen: Vec<usize> = self.bloecke.iter().map(|b| b.block.lvars.len()).collect();
         self.pumpen(Duration::from_millis(2500), |m| {
+            if let Msg::IeWert(b) = m {
+                if let Some((req, w)) = input_events::get_deuten(b) {
+                    if let Some(i) = ie_offen.remove(&req) {
+                        ie_werte[i] = w;
+                    }
+                }
+                return offen.is_empty() && ie_offen.is_empty();
+            }
             let (req, bytes) = match m {
                 Msg::ClientDaten { req, bytes } | Msg::ObjektDaten { req, bytes } => (req, bytes),
                 _ => return false,
@@ -692,8 +780,16 @@ impl Sim {
                     sv_werte[i] = Some(f64::from_le_bytes(b8));
                 }
             }
-            offen.is_empty()
+            offen.is_empty() && ie_offen.is_empty()
         })?;
+        for (i, d) in self.ie.iter().enumerate() {
+            match ie_werte[i] {
+                Some(w) => {
+                    self.ie_wert.insert(d.hash, w);
+                }
+                None => ie_werte[i] = self.ie_wert.get(&d.hash).copied(),
+            }
+        }
         let mut w: Werte = Vec::new();
         for (i, bw) in block_werte.into_iter().enumerate() {
             match bw {
@@ -701,6 +797,7 @@ impl Sim {
                 None => w.extend(std::iter::repeat_n(None, laengen[i])),
             }
         }
+        w.extend(ie_werte);
         w.extend(sv_werte);
         Ok(w)
     }
@@ -709,6 +806,9 @@ impl Sim {
     pub fn aufraeumen(&mut self) {
         for idx in 1..self.kanaele.len() {
             let _ = self.senden(idx, "MF.SimVars.Clear");
+        }
+        for d in &self.ie {
+            unsafe { sys::SimConnect_UnsubscribeInputEvent(self.h, d.hash) };
         }
         let _ = self.pumpen(Duration::from_millis(200), |_| false);
     }

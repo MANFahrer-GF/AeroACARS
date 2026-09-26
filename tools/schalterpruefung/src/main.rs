@@ -5,6 +5,7 @@
 //! * `skripte`    — Prüfskripte je Flugzeug + Auswahl per Titel
 //! * `auswertung` — Ruhe-/Rauschfilter, Kandidaten, Rangfolge
 //! * `mobiflight` — Protokoll des MobiFlight-WASM-Moduls (Kodieren/Deuten)
+//! * `input_events` — SimConnect-Input-Events (B:), Deutung der Rohdaten
 //! * `bericht`    — Live-Protokoll (JSONL) + Endbericht (JSON/TXT)
 //! * `ablauf`     — geführter Dialog (Ruhemessung, Skript, freier Modus)
 //! * `sim`        — SimConnect (nur Windows)
@@ -18,6 +19,7 @@
 mod ablauf;
 mod auswertung;
 mod bericht;
+mod input_events;
 mod mobiflight;
 mod skripte;
 

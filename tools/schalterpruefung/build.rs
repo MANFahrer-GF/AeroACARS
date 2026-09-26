@@ -84,6 +84,12 @@ fn generate_bindings(sdk: &std::path::Path, out_path: &std::path::Path) {
         // Nur für den MobiFlight-BEFEHLSKANAL ("<Client>.Command"). Damit wird
         // kein Simulatorwert gesetzt; `MF.SimVars.Set.` wird nie gesendet.
         .allowlist_function("SimConnect_SetClientData")
+        // Input-Events (B:-Variablen, MSFS 2024) — nur LESEN: Liste, Wert,
+        // Änderungs-Abo. `SimConnect_SetInputEvent` bewusst NICHT.
+        .allowlist_function("SimConnect_EnumerateInputEvents")
+        .allowlist_function("SimConnect_GetInputEvent")
+        .allowlist_function("SimConnect_SubscribeInputEvent")
+        .allowlist_function("SimConnect_UnsubscribeInputEvent")
         .allowlist_type("SIMCONNECT_RECV")
         .allowlist_type("SIMCONNECT_RECV_ID")
         .allowlist_type("SIMCONNECT_RECV_OPEN")

@@ -272,6 +272,26 @@ pub fn run() -> i32 {
         return 1;
     }
 
+    // 7. Input-Events (B:) — iniBuilds hält manche Schalterstellungen nur
+    // dort (A380-Strobe). MSFS 2020 liefert keine: dann ohne weiter.
+    hinweis("Hole die Input-Events (B:) des Flugzeugs …");
+    let input_events = match sim.input_events_holen() {
+        Ok(n) => n,
+        Err(e) if e == BEENDET => {
+            fehler(&[&e]);
+            schliessen_warten();
+            return 1;
+        }
+        Err(e) => {
+            hinweis(&format!("(Input-Events nicht verfügbar: {e})"));
+            0
+        }
+    };
+    hinweis(&format!(
+        "{input_events} Input-Events werden mitbeobachtet ({} Text-Events übergangen).",
+        sim.ie_text
+    ));
+
     let ordner = berichtsordner();
     let info = LaufInfo {
         werkzeug_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -284,6 +304,8 @@ pub fn run() -> i32 {
         lvars_mobiflight: lvars.len(),
         lvars_zusatzliste: zusatz.len(),
         lvars_zusatz_neu: zusatz_neu,
+        input_events,
+        input_events_text: sim.ie_text,
         lvar_liste_moeglicherweise_gekappt: gekappt,
         lvars_uebersprungen: sim.uebersprungen.clone(),
         simvars_abgelehnt: sim.abgelehnt.clone(),
