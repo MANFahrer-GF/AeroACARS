@@ -1,0 +1,72 @@
+name: Schalterpruefung
+
+# Baut das Piloten-Werkzeug tools/schalterpruefung (Konsolen-Exe, Windows)
+# und legt es als Artefakt „AeroACARS-Schalterpruefung" ab. Kein Release,
+# kein Signieren — der Client (ci.yml/release.yml) wird hier nicht berührt.
+#
+# SimConnect-SDK: wie in ci.yml NICHTS installieren — Header und Lib sind im
+# Repo vendort (client/src-tauri/crates/sim-msfs/ffi/), bindgen kommt aus
+# crates.io und findet libclang auf windows-latest vor. Das Build-Skript des
+# Werkzeugs zeigt auf genau diese Dateien.
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'tools/schalterpruefung/**'
+      - '.github/workflows/schalterpruefung.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: schalterpruefung-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Schalterpruefung (Windows-Exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tools/schalterpruefung -> target
+      - name: cargo test (Logik + Windows-Teil kompiliert)
+        working-directory: tools/schalterpruefung
+        run: cargo test
+      - name: cargo clippy
+        working-directory: tools/schalterpruefung
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo build --release
+        working-directory: tools/schalterpruefung
+        run: cargo build --release
+      - name: Artefakt zusammenstellen
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item tools/schalterpruefung/target/release/AeroACARS-Schalterpruefung.exe dist/
+          Copy-Item tools/schalterpruefung/README.md dist/LIESMICH.md
+          # Rauchtest: Die Exe muss OHNE daneben liegende SimConnect.dll
+          # starten (verzögertes Laden + eingebettete DLL). Ohne laufenden
+          # MSFS meldet sie „MSFS läuft nicht" und wartet auf Enter — die
+          # geschlossene Eingabe beendet sie.
+          Set-Content -Path leer.txt -Value $null
+          Push-Location dist
+          $p = Start-Process -FilePath .\AeroACARS-Schalterpruefung.exe -NoNewWindow -PassThru `
+                 -RedirectStandardInput ..\leer.txt -RedirectStandardOutput ..\rauch.txt
+          if (-not $p.WaitForExit(30000)) { $p.Kill(); throw "Exe haengt" }
+          Pop-Location
+          Get-Content rauch.txt
+          if (-not (Select-String -Path rauch.txt -Pattern "nochmal versuchen" -SimpleMatch -Quiet)) { throw "Meldung MSFS laeuft nicht fehlt" }
+          if (Test-Path dist/SimConnect.dll) { throw "SimConnect.dll darf nicht beiliegen muessen" }
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: AeroACARS-Schalterpruefung
+          path: dist/
+          if-no-files-found: error
