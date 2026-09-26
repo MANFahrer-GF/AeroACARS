@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, listen } from "../../lib/ipc";
 import { ereignisseAus, type Ereignis } from "./ereignisse";
+import { NACHLADEN_ABSTAND_MS, hatLuecke, zusammenfuehren } from "./luecken";
 import type { Frame, Kanal, Katalog, StartAntwort } from "./typen";
 
 /** So weit reicht der Puffer zurueck (ms). */
@@ -128,6 +129,27 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
       if (weg > 0) liste.splice(0, weg);
     };
 
+    // Luecke im Strom (Tablet: Abo noch nicht aktiv, Verbindung kurz weg):
+    // Verlauf des Sim-PCs nachladen und zeitrichtig einfuegen.
+    let letztesNachladen = 0;
+    const nachladen = () => {
+      const jetzt = Date.now();
+      if (jetzt - letztesNachladen < NACHLADEN_ABSTAND_MS) return;
+      letztesNachladen = jetzt;
+      q.start()
+        .then((antwort) => {
+          if (aus) return;
+          const grenze =
+            (frames.current.length ? frames.current[frames.current.length - 1].t : jetzt) - PUFFER_MS;
+          frames.current = zusammenfuehren(
+            frames.current,
+            antwort.verlauf.filter((f) => f.t >= grenze),
+          );
+          neuZeichnen();
+        })
+        .catch(() => undefined);
+    };
+
     (async () => {
       try {
         // Zuerst abonnieren, dann starten: sonst fehlen die Frames zwischen
@@ -142,6 +164,8 @@ export function useTelemetrie(quelle?: Datenquelle): Telemetrie {
             if (puffer.length < 200) puffer.push(f);
             return;
           }
+          const liste = frames.current;
+          if (hatLuecke(liste.length ? liste[liste.length - 1] : null, f)) nachladen();
           aufnehmen(f);
           neuZeichnen();
         });
