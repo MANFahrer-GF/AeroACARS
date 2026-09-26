@@ -11644,8 +11644,30 @@ pub(crate) fn log_activity_handle(
     message: impl Into<String>,
     detail: Option<String>,
 ) {
+    log_activity_mit_meldung(app, level, message.into(), detail, true);
+}
+
+/// Wie `log_activity_handle`, aber ohne GlitchTip-Meldung — fuer Ereignisse
+/// im Flugzeug (Cockpit-Lampen), die der Pilot sehen soll, die aber kein
+/// Fehler der Software sind. Log-Durchsicht 26.09.2026: eine blinkende
+/// Fenix-MASTER-WARNING erzeugte ~530 Error-Ereignisse in GlitchTip.
+pub(crate) fn log_activity_ohne_meldung(
+    app: &AppHandle,
+    level: ActivityLevel,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
+    log_activity_mit_meldung(app, level, message.into(), detail, false);
+}
+
+fn log_activity_mit_meldung(
+    app: &AppHandle,
+    level: ActivityLevel,
+    message: String,
+    detail: Option<String>,
+    an_glitchtip: bool,
+) {
     let now = Utc::now();
-    let message = message.into();
     let state = app.state::<AppState>();
     {
         let log = state.activity_log.lock().expect("activity_log lock");
@@ -11665,19 +11687,23 @@ pub(crate) fn log_activity_handle(
         }
         ActivityLevel::Warn => {
             tracing::warn!(message = %entry.message, detail = ?entry.detail, "activity");
-            sentry_init::capture_activity(
-                &entry.message,
-                entry.detail.as_deref(),
-                sentry::Level::Warning,
-            );
+            if an_glitchtip {
+                sentry_init::capture_activity(
+                    &entry.message,
+                    entry.detail.as_deref(),
+                    sentry::Level::Warning,
+                );
+            }
         }
         ActivityLevel::Error => {
             tracing::error!(message = %entry.message, detail = ?entry.detail, "activity");
-            sentry_init::capture_activity(
-                &entry.message,
-                entry.detail.as_deref(),
-                sentry::Level::Error,
-            );
+            if an_glitchtip {
+                sentry_init::capture_activity(
+                    &entry.message,
+                    entry.detail.as_deref(),
+                    sentry::Level::Error,
+                );
+            }
         }
     }
     let mut log = state.activity_log.lock().expect("activity_log lock");
@@ -16302,7 +16328,7 @@ fn write_run_sentinel(app: &AppHandle) {
 }
 
 /// Remove the current run's sentinel — call ONLY from the clean-exit path
-/// (`RunEvent::ExitRequested`). Never called from a crash/kill, which is
+/// (see `beendet_den_lauf_sauber`). Never called from a crash/kill, which is
 /// exactly the point: absence next launch = clean exit, presence = not.
 fn clear_run_sentinel(app: &AppHandle) {
     if let Ok(path) = run_sentinel_path(app) {
@@ -16311,6 +16337,39 @@ fn clear_run_sentinel(app: &AppHandle) {
                 tracing::warn!(error = %e, "could not remove run sentinel");
             }
         }
+    }
+}
+
+/// Welche Ereignisse einen Lauf sauber beenden.
+///
+/// Log-Durchsicht 26.09.2026: Beim Herunterfahren oder Abmelden in Windows
+/// loest tao 0.35 ueber `WM_ENDSESSION` nur `LoopDestroyed` →
+/// `RunEvent::Exit` aus, `ExitRequested` kommt dann nie (tauri-runtime-wry
+/// 2.11.0, Z. 4192/4317–4370; tao `platform_impl/windows/event_loop.rs`
+/// Z. 2384). Die Markierung blieb liegen, der naechste Start meldete
+/// „Vorheriger Lauf endete ohne sauberes Ende" samt GlitchTip-Eintrag.
+/// `Exit` kommt bei jedem echten Ende, auch nach `ExitRequested`.
+fn beendet_den_lauf_sauber(event: &tauri::RunEvent) -> bool {
+    matches!(
+        event,
+        tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+    )
+}
+
+#[cfg(test)]
+mod sauberes_ende_tests {
+    use super::beendet_den_lauf_sauber;
+
+    #[test]
+    fn exit_allein_beendet_den_lauf_sauber() {
+        // Windows-Herunterfahren liefert nur `Exit` — ohne diesen Fall blieb
+        // die Lauf-Markierung liegen.
+        assert!(beendet_den_lauf_sauber(&tauri::RunEvent::Exit));
+    }
+
+    #[test]
+    fn bereit_ist_kein_ende() {
+        assert!(!beendet_den_lauf_sauber(&tauri::RunEvent::Ready));
     }
 }
 
@@ -51303,7 +51362,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .update(mc, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
         {
             if mc {
-                log_activity_handle(app, ActivityLevel::Warn, "MASTER CAUTION".to_string(), None);
+                log_activity_ohne_meldung(app, ActivityLevel::Warn, "MASTER CAUTION", None);
             } else {
                 log_activity_handle(
                     app,
@@ -51320,12 +51379,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .update(mw, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
         {
             if mw {
-                log_activity_handle(
-                    app,
-                    ActivityLevel::Error,
-                    "🔴 MASTER WARNING".to_string(),
-                    None,
-                );
+                log_activity_ohne_meldung(app, ActivityLevel::Error, "🔴 MASTER WARNING", None);
             } else {
                 log_activity_handle(
                     app,
@@ -53275,6 +53329,47 @@ const AUTO_START_SIM_RUHE_SECS: i64 = 20;
 /// Hinweis-Code, solange der Simulator noch nicht zur Ruhe gekommen ist
 /// (Banner-Schluessel `bids.auto_start_skip.sim_not_ready`).
 const AUTO_START_SIM_WARTET: &str = "sim_not_ready";
+
+/// Fehlercode von `FlightSetupGuard::try_acquire`: ein anderer Start (meist
+/// der Pilot per Hand) haelt gerade die Sperre.
+const FLUGSTART_SPERRE_BELEGT: &str = "flight_setup_in_progress";
+
+/// Fehler eines Auto-Starts, die kein Fehler sind: Der Watcher gibt den
+/// Anspruch still frei, ohne Warnung, ohne GlitchTip, ohne Cooldown.
+///
+/// Log-Durchsicht 26.09.2026 (P2, 25.09. 13:46:12): Ein Handstart haelt die
+/// Sperre ~9 s, bevor `active_flight` gesetzt ist. Ein Auto-Start in dieses
+/// Fenster lief in `flight_setup_in_progress`, meldete WARN „Auto-Start:
+/// flight_start fehlgeschlagen" (→ GlitchTip) und sperrte 120 s — obwohl der
+/// Flug gerade per Hand startete.
+fn auto_start_fehler_ist_kein_fehler(code: &str) -> bool {
+    code == AUTO_START_SIM_WARTET || code == FLUGSTART_SPERRE_BELEGT
+}
+
+#[cfg(test)]
+mod auto_start_sperre_tests {
+    use super::*;
+
+    #[test]
+    fn belegte_startsperre_ist_kein_auto_start_fehler() {
+        // Der Code muss exakt der sein, den die Sperre wirklich liefert —
+        // sonst griffe die Ausnahme nie.
+        let flag = AtomicBool::new(false);
+        let _haelt = FlightSetupGuard::try_acquire(&flag).expect("erste Sperre");
+        let fehler = FlightSetupGuard::try_acquire(&flag)
+            .err()
+            .expect("zweite Sperre muss scheitern");
+        assert!(auto_start_fehler_ist_kein_fehler(&fehler.code));
+    }
+
+    #[test]
+    fn echte_fehler_bleiben_fehler() {
+        for code in ["missing_aircraft", "not_at_departure", "flight_already_active"] {
+            assert!(!auto_start_fehler_ist_kein_fehler(code), "{code}");
+        }
+        assert!(auto_start_fehler_ist_kein_fehler(AUTO_START_SIM_WARTET));
+    }
+}
 /// Weiter als das zwischen zwei Takten (3 s) ist kein Rollen, sondern
 /// Laden, Teleport oder Flughafenwechsel.
 const AUTO_START_SPRUNG_M: f64 = 1_000.0;
@@ -54307,6 +54402,11 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     continue;
                 }
             }
+            // Startet der Pilot gerade per Hand (Sperre belegt, `active_flight`
+            // noch leer), nicht dazwischenfeuern — der Start ist unterwegs.
+            if state.flight_setup_in_progress.load(Ordering::SeqCst) {
+                continue;
+            }
             // Laeuft gerade ein Auto-Start, startet der Watcher nichts
             // anderes: sonst konnte bei zwei passenden Bids ein zweiter Start
             // anlaufen, dessen schneller Fehler den Marker des ersten loeschte
@@ -54755,10 +54855,11 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                         let s = app_for_call.state::<AppState>();
                         // Sim wurde im letzten Moment unruhig: kein Fehler, keine
                         // Pause — Claim lösen, der Watcher wartet auf Ruhe.
-                        if e.code == AUTO_START_SIM_WARTET {
+                        if auto_start_fehler_ist_kein_fehler(&e.code) {
                             tracing::info!(
                                 bid_id,
-                                "auto-start: Sim beim Start nicht ruhig — wartet"
+                                code = %e.code,
+                                "auto-start: Start gerade nicht moeglich — wartet"
                             );
                             *s.auto_start_last_bid_id.lock().unwrap() = None;
                             return;
@@ -55987,11 +56088,13 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 panel_server::shutdown();
             }
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                // v0.20 (Process-Integrity): remove this run's sentinel — the
-                // ONLY place this is called. A crash/kill never reaches here,
-                // so the sentinel survives for the next launch to find.
+            // v0.20 (Process-Integrity): remove this run's sentinel — the
+            // ONLY place this is called. A crash/kill never reaches here,
+            // so the sentinel survives for the next launch to find.
+            if beendet_den_lauf_sauber(&event) {
                 clear_run_sentinel(app_handle);
+            }
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 let app_for_mqtt = app_handle.clone();
                 tauri::async_runtime::block_on(async move {
                     let state = app_for_mqtt.state::<AppState>();

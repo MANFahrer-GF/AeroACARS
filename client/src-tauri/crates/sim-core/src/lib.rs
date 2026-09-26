@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod lampen;
 pub mod process_probe;
 /// v0.20 (Process-Integrity): cross-platform "is the sim's OS process
 /// still alive?" probe, keyed off `SimKind`. Lives here (not in

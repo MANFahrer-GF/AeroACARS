@@ -1226,6 +1226,10 @@ fn run_dispatch(
 ) {
     let mut last_data = Instant::now();
     let mut got_first = false;
+    // Log-Durchsicht 26.09.2026: blinkende MASTER-Lampen im schnellen Takt
+    // zusammenfassen, bevor der 3-s-Streamer sie abtastet (sim_core::lampen).
+    let mut halter_warning = sim_core::lampen::LampenHalter::default();
+    let mut halter_caution = sim_core::lampen::LampenHalter::default();
     let simulator = kind.as_simulator();
     // Force inspector re-registration after a reconnect — the new
     // SimConnect handle starts with an empty definition table even
@@ -1796,6 +1800,9 @@ fn run_dispatch(
                             // FlightStats-Latch zu beruehren (Spec §Leit-
                             // entscheidung 6).
                             snap.crashed = shared.sim_crashed.load(Ordering::Relaxed);
+                            let jetzt = std::time::Instant::now();
+                            snap.master_warning = halter_warning.update(snap.master_warning, jetzt);
+                            snap.master_caution = halter_caution.update(snap.master_caution, jetzt);
                             snap.crash_source = if snap.crashed {
                                 Some("msfs_crashed_event".into())
                             } else {
