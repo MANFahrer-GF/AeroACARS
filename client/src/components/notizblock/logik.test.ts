@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Verlauf, kompakt, laden, pixelBreite, trifft, type Strich } from "./logik";
+import { HANDBALLEN_PX, Verlauf, darfZeichnen, kompakt, laden, pixelBreite, trifft, type Strich } from "./logik";
 
 const strich = (punkte: Array<[number, number]>): Strich => ({
   farbe: "--text",
@@ -49,5 +49,20 @@ describe("Notizblock-Logik", () => {
   it("kompakt rundet, ohne Striche zu verlieren", () => {
     const s = [{ farbe: "--acc", breite: 0.003, punkte: [{ x: 0.123456789, y: 0.987654321, p: 0.33333 }] }];
     expect(kompakt(s)[0].punkte[0]).toEqual({ x: 0.1235, y: 0.9877, p: 0.33 });
+  });
+
+  it("Handballen-Schutz", () => {
+    // Stift und Maus zeichnen immer.
+    expect(darfZeichnen("pen", 0, 0, false, true)).toBe(true);
+    expect(darfZeichnen("mouse", 0, 0, false, true)).toBe(true);
+    // Grosse Auflageflaeche ist nie ein Finger — auch vor dem ersten Stift.
+    expect(darfZeichnen("touch", HANDBALLEN_PX, 10, false, false)).toBe(false);
+    expect(darfZeichnen("touch", 60, 45, true, false)).toBe(false);
+    // Fingerkuppe: nur ohne bekannten Stift oder wenn freigegeben.
+    expect(darfZeichnen("touch", 12, 12, false, false)).toBe(true);
+    expect(darfZeichnen("touch", 12, 12, false, true)).toBe(false);
+    expect(darfZeichnen("touch", 12, 12, true, true)).toBe(true);
+    // Browser ohne Groessenangabe (0) verhalten sich wie bisher.
+    expect(darfZeichnen("touch", 0, 0, false, true)).toBe(false);
   });
 });

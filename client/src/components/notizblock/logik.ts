@@ -55,6 +55,31 @@ function abstandZuStrecke(px: number, py: number, ax: number, ay: number, bx: nu
   return Math.hypot(px - qx, py - qy);
 }
 
+/** Ab dieser Kontaktgroesse (CSS-Pixel, Breite oder Hoehe) ist eine
+ *  Beruehrung ein Handballen, kein Finger. Das iPad meldet die Groesse der
+ *  Auflageflaeche mit; eine Fingerkuppe liegt meist unter 20 px. */
+export const HANDBALLEN_PX = 32;
+
+/** Handballen-Schutz: Darf diese Beruehrung zeichnen?
+ *  - Stift und Maus immer.
+ *  - Grosse Auflageflaeche nie.
+ *  - Finger nur, wenn freigegeben oder noch nie ein Stift gesehen wurde. */
+export function darfZeichnen(
+  typ: string,
+  breite: number,
+  hoehe: number,
+  fingerFrei: boolean,
+  stiftBekannt: boolean,
+): boolean {
+  if (typ === "pen" || typ === "mouse") return true;
+  if (Math.max(breite || 0, hoehe || 0) >= HANDBALLEN_PX) return false;
+  return fingerFrei || !stiftBekannt;
+}
+
+/** Wie lange vor dem ersten Stiftkontakt ein Finger-Strich als Handballen
+ *  gilt und nachtraeglich verschwindet (ms). */
+export const HANDBALLEN_NACHLAUF_MS = 1500;
+
 /** Verlauf fuer „Rueckgaengig": Zustaende vor jeder Aenderung. */
 export class Verlauf {
   private stapel: Strich[][] = [];

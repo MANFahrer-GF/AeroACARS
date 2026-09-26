@@ -14,8 +14,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui";
 import {
+  HANDBALLEN_NACHLAUF_MS,
   SPEICHER_SCHLUESSEL,
   Verlauf,
+  darfZeichnen,
   kompakt,
   laden,
   pixelBreite,
@@ -31,6 +33,8 @@ const BREITEN = { fein: 0.0022, mittel: 0.0035 } as const;
 const RADIER_RADIUS = 0.012;
 
 const SPEICHER_FINGER = "aeroacars.notizblock.finger";
+/** Einmal einen Stift gesehen → auch nach Neuladen bleibt der Finger aus. */
+const SPEICHER_STIFT = "aeroacars.notizblock.stift";
 
 function lesen(k: string): string | null {
   try {
@@ -61,9 +65,12 @@ export function Notizblock() {
   const [anfang] = useState<Strich[]>(() => laden(lesen(SPEICHER_SCHLUESSEL)));
   const striche = useRef<Strich[]>(anfang);
   const verlauf = useRef(new Verlauf());
-  const aktuell = useRef<{ id: number; strich: Strich } | null>(null);
+  const aktuell = useRef<{ id: number; strich: Strich; typ: string } | null>(null);
+  // Finger-Striche der letzten Sekunden: kommt kurz danach der erste Stift,
+  // war es der Handballen — dann verschwinden sie wieder.
+  const juengsteFingerStriche = useRef<Array<{ strich: Strich; ende: number }>>([]);
   const radiertIn = useRef<number | null>(null);
-  const stiftGesehen = useRef(false);
+  const stiftGesehen = useRef(lesen(SPEICHER_STIFT) === "1");
 
   const [werkzeug, setWerkzeug] = useState<Werkzeug>("stift");
   const [farbe, setFarbe] = useState<(typeof FARBEN)[number]>("--text");
@@ -183,13 +190,25 @@ export function Notizblock() {
     };
   };
 
-  const darf = (e: React.PointerEvent) => {
-    if (e.pointerType === "pen") {
-      stiftGesehen.current = true;
-      return true;
-    }
-    if (e.pointerType === "touch") return finger || !stiftGesehen.current;
-    return true;
+  const darf = (e: React.PointerEvent) =>
+    darfZeichnen(e.pointerType, e.width, e.height, finger, stiftGesehen.current);
+
+  /** Erster Stiftkontakt: merken und frische Finger-Striche als Handballen
+   *  entfernen. */
+  const stiftErkannt = () => {
+    const ersterStift = !stiftGesehen.current;
+    stiftGesehen.current = true;
+    if (ersterStift) schreiben(SPEICHER_STIFT, "1");
+    if (finger) return;
+    const grenze = Date.now() - HANDBALLEN_NACHLAUF_MS;
+    const weg = new Set(
+      juengsteFingerStriche.current.filter((f) => f.ende >= grenze).map((f) => f.strich),
+    );
+    juengsteFingerStriche.current = [];
+    if (weg.size === 0) return;
+    verlauf.current.merken(striche.current);
+    striche.current = striche.current.filter((s) => !weg.has(s));
+    speichern();
   };
 
   // Zustand vor dem ersten Treffer dieses Radiervorgangs — gemerkt wird er
@@ -210,6 +229,15 @@ export function Notizblock() {
   };
 
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === "pen") {
+      stiftErkannt();
+      // Laeuft gerade ein Finger-/Handballen-Strich, gewinnt der Stift: der
+      // Handstrich wird verworfen statt den Stift zu blockieren.
+      if (aktuell.current && aktuell.current.typ !== "pen" && !finger) {
+        aktuell.current = null;
+        allesZeichnen();
+      }
+    }
     if (!darf(e) || aktuell.current || radiertIn.current !== null) return;
     e.preventDefault();
     try {
@@ -230,6 +258,7 @@ export function Notizblock() {
     aktuell.current = {
       id: e.pointerId,
       strich: { farbe, breite: BREITEN[breite], punkte: [q] },
+      typ: e.pointerType,
     };
     allesZeichnen();
   };
@@ -262,8 +291,20 @@ export function Notizblock() {
     const a = aktuell.current;
     if (!a || a.id !== e.pointerId) return;
     aktuell.current = null;
+    // iPadOS bricht erkannte Handballen-Beruehrungen mit „pointercancel" ab —
+    // ein so beendeter Finger-Strich wird verworfen, nicht gespeichert.
+    if (e.type === "pointercancel" && a.typ !== "pen") {
+      allesZeichnen();
+      return;
+    }
     verlauf.current.merken(striche.current);
     striche.current = [...striche.current, a.strich];
+    if (a.typ === "touch" && !stiftGesehen.current) {
+      juengsteFingerStriche.current = [
+        ...juengsteFingerStriche.current.slice(-9),
+        { strich: a.strich, ende: Date.now() },
+      ];
+    }
     allesZeichnen();
     speichern();
   };
