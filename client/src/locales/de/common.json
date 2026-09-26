@@ -2818,7 +2818,10 @@
       "schubhebel_4": "Schubhebel 4",
       "laeuft_4": "Triebwerk 4 läuft",
       "umkehr_1": "Schubumkehr 1",
-      "umkehr_2": "Schubumkehr 2"
+      "umkehr_2": "Schubumkehr 2",
+      "strobe_schalter": "Strobe-Schalter (0 aus · 1 auto · 2 an)",
+      "flugzeug_pfad": "Flugzeug-Pfad (aircraft.cfg)",
+      "cockpit_rohwerte": "Cockpit-Rohwerte"
     },
     "gruppe": {
       "flug": "Flugzustand",

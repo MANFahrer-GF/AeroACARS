@@ -2818,7 +2818,10 @@
       "schubhebel_4": "Manetta 4",
       "laeuft_4": "Motore 4 acceso",
       "umkehr_1": "Invertitore 1",
-      "umkehr_2": "Invertitore 2"
+      "umkehr_2": "Invertitore 2",
+      "strobe_schalter": "Interruttore strobe (0 off · 1 auto · 2 on)",
+      "flugzeug_pfad": "Percorso aereo (aircraft.cfg)",
+      "cockpit_rohwerte": "Valori grezzi cockpit"
     },
     "gruppe": {
       "flug": "Stato di volo",

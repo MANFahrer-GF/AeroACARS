@@ -1305,6 +1305,14 @@
    "art": "schalter"
   },
   {
+   "id": "strobe_schalter",
+   "gruppe": "licht",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "zahl"
+  },
+  {
    "id": "licht_taxi",
    "gruppe": "licht",
    "einheit": "",
@@ -1493,6 +1501,22 @@
   {
    "id": "transponder",
    "gruppe": "funk",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  },
+  {
+   "id": "flugzeug_pfad",
+   "gruppe": "systeme",
+   "einheit": "",
+   "stellen": 0,
+   "quelle": "sim",
+   "art": "text"
+  },
+  {
+   "id": "cockpit_rohwerte",
+   "gruppe": "systeme",
    "einheit": "",
    "stellen": 0,
    "quelle": "sim",

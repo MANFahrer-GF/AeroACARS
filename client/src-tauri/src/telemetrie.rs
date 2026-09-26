@@ -892,6 +892,10 @@ pub static KATALOG: &[Kanal] = &[
     k("licht_strobe", Gruppe::Licht, "", 0)
         .schalter()
         .zahl(|k| ob(k.s.light_strobe)),
+    // Bordbuch-Audit 26.09.2026: Schalterstellung 0=OFF 1=AUTO 2=ON, wo das
+    // Muster sie liefert — `licht_strobe` zeigt bei manchen nur das Blitzen
+    // (Airbus AUTO blitzt am Boden nicht).
+    k("strobe_schalter", Gruppe::Licht, "", 0).zahl(|k| k.s.strobe_state.map(|v| v as f64)),
     k("licht_taxi", Gruppe::Licht, "", 0)
         .schalter()
         .zahl(|k| ob(k.s.light_taxi)),
@@ -906,6 +910,25 @@ pub static KATALOG: &[Kanal] = &[
         .zahl(|k| k.s.transponder_code.map(|v| v as f64))
         .xp("sim/cockpit2/radios/actuators/transponder_code", 1.0),
     k("transponder", Gruppe::Funk, "", 0).text(|k| k.s.xpdr_mode_label.clone()),
+    // Bordbuch-Audit 26.09.2026: woran das Flugzeug erkannt wurde und die
+    // Rohwerte der Schalter, deren Belegung noch gemessen wird.
+    k("flugzeug_pfad", Gruppe::Systeme, "", 0).text(|k| {
+        k.s.cockpit_rohwerte
+            .as_ref()
+            .and_then(|r| r.cfg_pfad.clone())
+    }),
+    k("cockpit_rohwerte", Gruppe::Systeme, "", 0).text(|k| {
+        k.s.cockpit_rohwerte
+            .as_ref()
+            .filter(|r| !r.werte.is_empty())
+            .map(|r| {
+                r.werte
+                    .iter()
+                    .map(|(name, wert)| format!("{name}={wert}"))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+    }),
     k("com1", Gruppe::Funk, "MHz", 3).zahl(|k| of(k.s.com1_mhz)),
     k("com2", Gruppe::Funk, "MHz", 3).zahl(|k| of(k.s.com2_mhz)),
     k("nav1", Gruppe::Funk, "MHz", 2).zahl(|k| of(k.s.nav1_mhz)),

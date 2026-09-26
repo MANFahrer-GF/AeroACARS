@@ -2818,7 +2818,10 @@
       "schubhebel_4": "Thrust lever 4",
       "laeuft_4": "Engine 4 running",
       "umkehr_1": "Reverser 1",
-      "umkehr_2": "Reverser 2"
+      "umkehr_2": "Reverser 2",
+      "strobe_schalter": "Strobe switch (0 off · 1 auto · 2 on)",
+      "flugzeug_pfad": "Aircraft path (aircraft.cfg)",
+      "cockpit_rohwerte": "Cockpit raw values"
     },
     "gruppe": {
       "flug": "Flight state",
