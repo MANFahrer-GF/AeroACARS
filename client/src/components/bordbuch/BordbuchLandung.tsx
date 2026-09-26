@@ -65,9 +65,16 @@ export function useBordbuchEintrag(pirepId: string | null | undefined) {
       if (!pirepId) return;
       const meine = ++nummer.current;
       const neu = await invoke<Eintrag | null>("bordbuch_markieren", { pirepId, regel, nachAtc });
-      if (neu && meine === nummer.current && aktuell.current === pirepId) setEintrag(neu);
+      if (aktuell.current !== pirepId) return;
+      if (neu && meine === nummer.current) {
+        setEintrag(neu);
+      } else {
+        // Ein Laden lief dazwischen und hat evtl. den Stand VOR der Markierung
+        // gelesen. Die Markierung ist gespeichert — neu laden, das gewinnt.
+        void laden();
+      }
     },
-    [pirepId],
+    [pirepId, laden],
   );
   const bereit = !pirepId || geladenFuer === pirepId;
   return { eintrag: bereit ? eintrag : null, markieren, bereit };

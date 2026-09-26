@@ -36,6 +36,8 @@ const eintrag = (pirep: string, ankunftKt: number): Eintrag => ({
 
 const h = vi.hoisted(() => ({
   antworten: new Map<string, { resolve: (e: unknown) => void; promise: Promise<unknown> }>(),
+  markieren: null as Promise<unknown> | null,
+  ereignis: null as (() => void) | null,
 }));
 
 function offen(pirep: string) {
@@ -47,9 +49,13 @@ function offen(pirep: string) {
 vi.mock("../../lib/ipc", () => ({
   invoke: (cmd: string, args?: Record<string, unknown>) => {
     if (cmd === "bordbuch_eintrag") return h.antworten.get(args?.pirepId as string)!.promise;
+    if (cmd === "bordbuch_markieren") return h.markieren ?? Promise.resolve(null);
     return Promise.resolve(null);
   },
-  listen: () => Promise.resolve(() => undefined),
+  listen: (_name: string, cb: () => void) => {
+    h.ereignis = cb;
+    return Promise.resolve(() => undefined);
+  },
 }));
 
 import { BordbuchBericht, BordbuchLandungsAbschnitt, useBordbuchEintrag } from "./BordbuchLandung";
@@ -62,6 +68,8 @@ function Seite({ pirep }: { pirep: string }) {
 afterEach(() => {
   cleanup();
   h.antworten.clear();
+  h.markieren = null;
+  h.ereignis = null;
 });
 
 describe("Bordbuch im Landungs-Tab", () => {
@@ -83,6 +91,39 @@ describe("Bordbuch im Landungs-Tab", () => {
     await act(async () => h.antworten.get("A")!.resolve(eintrag("A", 21.7)));
     await waitFor(() => expect(screen.getByText(/schnellstes Rollen 17 kt/)).toBeTruthy());
     expect(screen.queryByText(/schnellstes Rollen 22 kt/)).toBeNull();
+  });
+
+  it("eine ATC-Markierung geht nicht verloren, wenn parallel geladen wird", async () => {
+    offen("A");
+    const { result } = renderHook(() => useBordbuchEintrag("A"));
+    await act(async () => h.antworten.get("A")!.resolve(eintrag("A", 21.7)));
+    // Markierung startet; bevor ihre Antwort da ist, beginnt ein Laden,
+    // das noch den alten Stand liest.
+    const markiert = eintrag("A", 21.7);
+    markiert.punkte[0] = { ...markiert.punkte[0]!, status: "nach_atc" };
+    let markierenFertig!: (e: unknown) => void;
+    h.markieren = new Promise((r) => (markierenFertig = r));
+    let lauf!: Promise<void>;
+    act(() => {
+      lauf = result.current.markieren("rolltempo_abflug", true);
+    });
+    offen("A");
+    const altesLaden = h.antworten.get("A")!;
+    act(() => {
+      h.ereignis?.();
+    });
+    await act(async () => altesLaden.resolve(eintrag("A", 21.7)));
+    // Das Nachladen nach der verworfenen Markierung liest den neuen Stand.
+    offen("A");
+    await act(async () => {
+      markierenFertig(markiert);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      h.antworten.get("A")!.resolve(markiert);
+      await lauf;
+    });
+    expect(result.current.eintrag?.punkte[0]?.status).toBe("nach_atc");
   });
 
   it("ohne Eintrag (ältere Flüge) bleibt der Abschnitt weg", async () => {
