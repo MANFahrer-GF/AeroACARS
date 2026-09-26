@@ -597,6 +597,9 @@ pub struct Zustand {
     pub flugzeug: Option<String>,
     pub profil_name: Option<String>,
     pub simulator: Option<String>,
+    /// Liefert die Quelle TCAS-Stellungen? Aus dem echten Snapshot gemerkt,
+    /// damit auch ein beim Flugende entschiedener Punkt es weiss.
+    pub tcas_meldbar: Option<bool>,
     /// VFR-Flug (Flugstart ohne SimBrief). Einmal festgehalten, weil die
     /// Flugplanquelle einen App-Neustart nicht überlebt.
     pub vfr: Option<bool>,
@@ -943,6 +946,10 @@ impl Zustand {
     /// Nicht erledigt: „diesmal ohne", wenn das Flugzeug den Wert je
     /// meldete — sonst „nicht messbar".
     fn ohne_oder_nicht_messbar(&mut self, r: Regel, s: &SimSnapshot) {
+        if r == Regel::TcasStart && self.gesehen("xpdr") && self.tcas_meldbar == Some(false) {
+            self.entscheiden(r, Status::NichtMessbar, s, None, Some(Grund::KeinTcasModus));
+            return;
+        }
         let feld = feld_der_regel(r);
         if feld.is_none() || feld.map(|f| self.gesehen(f)).unwrap_or(false) {
             let st = match r {
@@ -1029,6 +1036,9 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
     }
     let klasse = z.klasse.unwrap_or(k.klasse);
     z.merken(s);
+    if s.xpdr_mode_label.is_some() {
+        z.tcas_meldbar = Some(tcas_meldbar(s));
+    }
     if z.flugzeug.is_none() {
         z.flugzeug = s.aircraft_title.clone().filter(|t| !t.trim().is_empty());
         z.profil_name = Some(format!("{:?}", s.aircraft_profile));
@@ -1494,6 +1504,14 @@ pub fn abschliessen(
         for r in laufend {
             if z.offen(r) {
                 z.ohne_oder_nicht_messbar(r, &stand);
+                // Kein echter Snapshot zur Hand — ehrlich vermerken statt
+                // Nullwerte als Rohwerte zu zeigen (Admin-Ansicht).
+                let p = z.punkt(r);
+                p.beleg.clear();
+                p.beleg.insert(
+                    "entschieden".into(),
+                    serde_json::json!("beim Flugende, kein Messwert in diesem Moment"),
+                );
             }
         }
     }
@@ -2456,6 +2474,39 @@ mod tests {
         let en = eintrag(&z, &e);
         assert_eq!(status(&en, Regel::SpoilerLandung), Status::NichtMessbar);
         assert_eq!(status(&en, Regel::AnschnallLandung), Status::DiesmalOhne);
+        let p = en
+            .punkte
+            .iter()
+            .find(|p| p.regel == Regel::AnschnallLandung)
+            .unwrap();
+        assert!(p.beleg.contains_key("entschieden"), "keine Schein-Rohwerte");
+        assert!(!p.beleg.contains_key("seatbelts_sign"));
+    }
+
+    /// Flugende mitten in der TCAS-Frist bei einem Muster ohne TCAS-Stellung:
+    /// „nicht messbar", nicht „diesmal ohne".
+    #[test]
+    fn flugende_in_tcas_frist_bleibt_nicht_messbar() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.aircraft_profile = AircraftProfile::IniA380;
+        s.xpdr_mode_label = Some("ALT".into());
+        s.engines_running = 4;
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        s.timestamp = t0() + chrono::Duration::seconds(5);
+        tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
+        let en = eintrag(&z, &e);
+        let p = en
+            .punkte
+            .iter()
+            .find(|p| p.regel == Regel::TcasStart)
+            .unwrap();
+        assert_eq!(
+            (p.status, p.grund),
+            (Status::NichtMessbar, Some(Grund::KeinTcasModus))
+        );
     }
 
     /// Pause mitten in der Kulanz: die Frist verlängert sich um die Pause.
