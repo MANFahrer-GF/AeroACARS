@@ -1270,9 +1270,10 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
         let stats = flight.stats.lock().expect("flight stats");
         (
             stats.phase,
-            stats
-                .last_lat
-                .zip(stats.last_lon)
+            // Dauerhafter Punkt: `last_lat/lon` ist nach einem Resume leer,
+            // `paused_last_known` ueberlebt keinen Neustart — sonst fehlte
+            // der Vermerk genau nach Absturz + „Trotzdem fortsetzen".
+            gespeicherter_punkt(&stats)
                 .or(stats.paused_last_known.as_ref().map(|p| (p.lat, p.lon))),
             stats.planned_arr_ref_pos,
             stats.resume_luecke_secs,

@@ -113,6 +113,33 @@ describe("Wiederaufnahme nach Sim-Absturz", () => {
     }
   });
 
+  it("hängt die letzte Abfrage (LAN-Brücke), wird nach 3 s weiter gewartet statt blockiert", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const start = Date.now();
+      tauriInvoke.mockImplementation((cmd: string) => {
+        if (cmd === "sim_status") {
+          if (Date.now() - start < 29_500) {
+            return Promise.resolve({ state: "connected", kind: "xplane12", snapshot: { lat: 21.29, lon: 86.25 }, last_error: null, available: true });
+          }
+          return new Promise(() => undefined); // hängt
+        }
+        return Promise.resolve(null);
+      });
+      render(<ResumeFlightBanner activeFlight={FLUG} onAdopted={() => {}} onCancelled={() => {}} />);
+      for (let i = 0; i < 40; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+      }
+      expect(tauriInvoke.mock.calls.some(([c]) => c === "flight_resume_confirm")).toBe(false);
+      // Der Knopf „Jetzt fortsetzen" bleibt bedienbar (Sperre wieder frei).
+      expect(screen.getByText(/wird der Flug fortgesetzt|Warte auf den Simulator/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("Grad und Dezimalminuten wie im Positionsdialog der Simulatoren", () => {
     expect(fmtGradMinuten(21.2929, 86.2577)).toBe("N21°17.57' E086°15.46'");
     expect(fmtGradMinuten(-33.9461, -18.6017)).toBe("S33°56.77' W018°36.10'");

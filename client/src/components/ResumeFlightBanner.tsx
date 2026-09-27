@@ -74,6 +74,9 @@ export function ResumeFlightBanner({
   useEffect(() => {
     if (activeFlight && !activeFlight.was_just_resumed) {
       consumedRef.current = false;
+      // Auch die Sperre gegen doppeltes Fortsetzen freigeben — sonst liefe
+      // der Countdown nach einem zweiten Absturz im selben Flug ins Leere.
+      confirmingRef.current = false;
     }
   }, [activeFlight?.was_just_resumed]);
 
@@ -94,6 +97,11 @@ export function ResumeFlightBanner({
       setMode({ kind: "idle" });
     }
   }, [activeFlight?.was_just_resumed, mode.kind]);
+
+  // Jeder Abschluss (fortgesetzt, abgebrochen, Fehler) gibt die Sperre frei.
+  useEffect(() => {
+    if (mode.kind === "idle") confirmingRef.current = false;
+  }, [mode.kind]);
 
   // Disk-resume Banner
   useEffect(() => {
@@ -193,7 +201,13 @@ export function ResumeFlightBanner({
         void (async () => {
           let da = false;
           try {
-            da = (await invoke<SimStatus>("sim_status"))?.snapshot != null;
+            // Hoechstens 3 s — ueber die LAN-Bruecke kann eine Anfrage sonst
+            // haengen, und die Sperre blockierte auch den Knopf.
+            const st = await Promise.race([
+              invoke<SimStatus>("sim_status"),
+              new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+            ]);
+            da = st?.snapshot != null;
           } catch {
             da = false;
           }
