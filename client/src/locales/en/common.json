@@ -17,7 +17,7 @@
     "chat": "Chat",
     "telemetrie": "Telemetry",
     "notizblock": "Notepad",
-    "bordbuch": "Log book"
+    "bordbuch": "SOP Check"
   },
   "nav": {
     "news": "News",
@@ -1153,8 +1153,8 @@
       "extras_hint": "Optional comfort settings — appearance, behaviour, Discord presence.",
       "plugins_hint": "Aircraft-specific add-ons: PMDG SDK (Boeing) and the AeroACARS X-Plane plugin. Detected automatically once the matching aircraft loads.",
       "tech_hint": "Diagnostics, debug tools and rarely used maintenance features.",
-      "bordbuch": "📓 Log book",
-      "bordbuch_hint": "What the log book ticks off, quiet hints in flight, light aircraft and VFR."
+      "bordbuch": "📓 SOP Check",
+      "bordbuch_hint": "What the SOP Check ticks off, quiet hints in flight, light aircraft and VFR."
     },
     "appearance_section": "Language & appearance",
     "language_label": "Language",
@@ -3038,14 +3038,14 @@
     "nicht_gespeichert": "Not saved — the device storage is full or the browser is in private mode. What you see will be lost on reload."
   },
   "bordbuch": {
-    "titel": "Flight log book",
+    "titel": "SOP Check",
     "untertitel": "What you completed at the typical points of your flight. No effect on landing score or flight report.",
     "laufender_flug": "Current flight",
-    "leer": "No flights in the log book yet. After your next flight you will see here what you ticked off.",
+    "leer": "No flights in the SOP Check yet. After your next flight you will see here what you ticked off.",
     "zurueck": "Back to all flights",
     "flug": "Flight",
     "nachts": "night",
-    "fuss_privat": "Only you and flight operations can see this log book. Other pilots see nothing of it.",
+    "fuss_privat": "Only you and flight operations can see this SOP Check. Other pilots see nothing of it.",
     "bilanz": "{{ok}} of {{von}} items done",
     "bilanz_kurz": "{{ok}} of {{von}}",
     "satz_alles": "Clean flight, everything ticked off.",
@@ -3191,8 +3191,8 @@
       "ga": "Light aircraft"
     },
     "aus": {
-      "ga": "The log book is switched off for light aircraft. You can switch it on in Settings under “Log book”.",
-      "vfr": "The log book is switched off for VFR flights. You can switch it on in Settings under “Log book”."
+      "ga": "The SOP Check is switched off for light aircraft. You can switch it on in Settings under “SOP Check”.",
+      "vfr": "The SOP Check is switched off for VFR flights. You can switch it on in Settings under “SOP Check”."
     },
     "aus_kurz": {
       "ga": "off (GA)",
@@ -3215,8 +3215,8 @@
       "zieht_an": "{{was}} is picking up: done on {{von5}} of the last 5 flights."
     },
     "einst": {
-      "titel": "Log book",
-      "erklaerung": "The log book ticks off what you completed at the typical points of a flight. It only counts what worked and has no effect on landing score, flight report or approval. Settings and history are also stored on the server and come back after a reinstall.",
+      "titel": "SOP Check",
+      "erklaerung": "The SOP Check ticks off what you completed at the typical points of a flight. It only counts what worked and has no effect on landing score, flight report or approval. Settings and history are also stored on the server and come back after a reinstall.",
       "hinweise": "Quiet hint in flight",
       "hinweise_hint": "At key points a short question such as “Strobes?” and a green tick when an item is done. Disappears after a few seconds.",
       "ga": "Also for light aircraft (GA)",
@@ -3264,7 +3264,7 @@
       "schluessel_platzhalter": "C700 or D-ABCD",
       "hinzufuegen": "Add",
       "nicht_dabei": "Deliberately not included: 250 kt below FL100 (exceptions in Germany and the UK, green dot, ATC clearances) and bank angle limits (false alarms from weather and stutters).",
-      "nicht_messbar": "Items your aircraft does not report to AeroACARS appear in the log book as “not measurable” with a reason. They count neither for nor against you.",
+      "nicht_messbar": "Items your aircraft does not report to AeroACARS appear in the SOP Check as “not measurable” with a reason. They count neither for nor against you.",
       "rolltempo_grenzen": "Taxi speed limit:"
     },
     "wert_atc": "PER ATC"
