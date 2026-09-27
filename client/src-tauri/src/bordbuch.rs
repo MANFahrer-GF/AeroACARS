@@ -732,8 +732,15 @@ fn phase_nach_start(p: FlightPhase) -> bool {
 /// der Transponder schaltet selbst auf ALT, sobald das Flugzeug fliegt.
 /// Am 27.09.2026 im Laminar-A330 gemessen (AUTO → Standardwert 5 = GND),
 /// MSFS-A380 (UAE 423) genauso: korrekt geflogen, bisher „diesmal ohne".
-fn xpdr_mit_hoehe(label: &str) -> bool {
-    matches!(label, "ALT" | "XPNDR" | "TA" | "TA-RA" | "GND")
+///
+/// „GND" zaehlt nur am Boden: in der Luft heisst es, der Transponder ist
+/// nicht auf ALT gegangen (Codex-Befund 27.09.2026).
+fn xpdr_mit_hoehe(label: &str, am_boden: bool) -> bool {
+    match label {
+        "ALT" | "XPNDR" | "TA" | "TA-RA" => true,
+        "GND" => am_boden,
+        _ => false,
+    }
 }
 
 fn xpdr_tcas(label: &str) -> bool {
@@ -1239,7 +1246,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
                 Regel::TransponderStart,
                 s.xpdr_mode_label
                     .as_deref()
-                    .map(|l| !xpdr_mit_hoehe(l))
+                    .map(|l| !xpdr_mit_hoehe(l, s.on_ground))
                     .unwrap_or(false),
             ),
             (Regel::TcasStart, false),
@@ -1279,7 +1286,7 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
         z,
         Regel::TransponderStart,
         s,
-        label.as_deref().map(xpdr_mit_hoehe),
+        label.as_deref().map(|l| xpdr_mit_hoehe(l, s.on_ground)),
         "xpdr",
         label.clone(),
     );
@@ -2671,6 +2678,29 @@ mod tests {
         s.xpdr_mode_label = Some("TA-RA".into());
         takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 100);
         assert_eq!(z.status(Regel::TcasStart), Status::Erledigt);
+    }
+
+    /// „GND" erst in der Luft (hängender oder verspäteter Wert) zählt nicht.
+    #[test]
+    fn gnd_in_der_luft_zaehlt_nicht() {
+        assert!(xpdr_mit_hoehe("GND", true));
+        assert!(!xpdr_mit_hoehe("GND", false));
+        assert!(xpdr_mit_hoehe("TA-RA", false));
+        assert!(!xpdr_mit_hoehe("STBY", true));
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.engines_running = 2;
+        s.xpdr_mode_label = Some("STBY".into());
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::TaxiOut, &k, 30);
+        takte_bis(&mut z, &mut s, FlightPhase::TakeoffRoll, &k, 60);
+        s.on_ground = false;
+        s.altitude_agl_ft = 900.0;
+        s.xpdr_mode_label = Some("GND".into());
+        takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 200);
+        assert_eq!(z.status(Regel::TransponderStart), Status::DiesmalOhne);
     }
 
     /// STBY bleibt „diesmal ohne" — auch mit der längeren Frist.

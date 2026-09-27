@@ -172,6 +172,16 @@ impl WebApiClient {
         Ok(body.data.into_string())
     }
 
+    /// Nur der Pfad des geladenen Flugzeugs (`acf_relative_path`) — zwei
+    /// Loopback-GETs, schnell genug fuer eine Abfrage alle paar Sekunden.
+    /// Die ID wird jedes Mal frisch gesucht (X-Plane vergibt sie beim
+    /// Flugzeugwechsel neu, siehe `run_web_api_poller`).
+    pub fn flugzeug_pfad(&self) -> Result<Option<String>, WebApiError> {
+        let mut cache = DrefIdCache::default();
+        let id = self.discover_id(&mut cache, "sim/aircraft/view/acf_relative_path")?;
+        self.read_string(id)
+    }
+
     /// Ist dieser Dataref beim geladenen Flugzeug wirklich da?
     ///
     /// Befund 27.09.2026 (X-Plane-12-Demo, gemessen): RREF streamt fuer

@@ -478,12 +478,36 @@ fn vorhanden_neu(
 
 /// Gilt dieser Katalogeintrag? Standardwerte immer; Add-on-Quellen nur,
 /// wenn die Web-API sie bestaetigt hat.
+///
+/// Ohne Web-API (X-Plane 11, abgeschaltet — Codex-Befund 27.09.2026) gilt
+/// eine Quelle, sobald sie einmal einen Wert ungleich 0 geliefert hat
+/// (`ungleich_null`): ein fehlender Dataref liefert ueber RREF nur 0, kann
+/// diese Schwelle also nie nehmen.
 fn eintrag_gilt(
     field: crate::dataref::FieldId,
     name: &str,
     vorhanden: Option<&HashSet<String>>,
+    ungleich_null: &HashSet<&'static str>,
 ) -> bool {
-    !addon_quelle(field) || vorhanden.is_some_and(|v| v.contains(grundname(name)))
+    if !addon_quelle(field) {
+        return true;
+    }
+    match vorhanden {
+        Some(v) => v.contains(grundname(name)),
+        None => ungleich_null.contains(grundname(name)),
+    }
+}
+
+/// Wie `eintrag_gilt`, fuer die Profil-Proben.
+fn probe_gilt(
+    probe: &str,
+    vorhanden: Option<&HashSet<String>>,
+    ungleich_null: &HashSet<&'static str>,
+) -> bool {
+    match vorhanden {
+        Some(v) => v.contains(grundname(probe)),
+        None => ungleich_null.contains(grundname(probe)),
+    }
 }
 
 /// The blocking listener thread. Binds a UDP socket on an ephemeral
@@ -539,6 +563,8 @@ fn run_listener(shared: Arc<AdapterShared>) {
     // uebernommen hat (siehe `AdapterShared::addon_vorhanden`).
     let mut addon_gen_gesehen: u64 = u64::MAX;
     let mut vorhanden: Option<HashSet<String>> = None;
+    // Ersatz ohne Web-API: Quellen, die schon einmal ungleich 0 waren.
+    let mut ungleich_null: HashSet<&'static str> = HashSet::new();
 
     // ---- Hard-armoured re-subscribe (v0.3.0) ----
     // Send the full RREF subscription set for the given catalog. Called
@@ -649,13 +675,26 @@ fn run_listener(shared: Arc<AdapterShared>) {
                         if let Some(slot) = probe_last_seen.get_mut(pi) {
                             *slot = Some(Instant::now());
                         }
+                        if p.value != 0.0 {
+                            if let Some(prof) = PROFILES.get(pi) {
+                                ungleich_null.insert(grundname(prof.probe_dataref));
+                            }
+                        }
                         continue;
                     }
                     // Normal catalog packet: index → active entry →
                     // FieldId, with the profile's ValueMapping applied.
                     if let Some(entry) = active.get(p.index as usize) {
                         katalog_paket = true;
-                        let gilt = eintrag_gilt(entry.field, entry.name, vorhanden.as_ref());
+                        if p.value != 0.0 && addon_quelle(entry.field) {
+                            ungleich_null.insert(grundname(entry.name));
+                        }
+                        let gilt = eintrag_gilt(
+                            entry.field,
+                            entry.name,
+                            vorhanden.as_ref(),
+                            &ungleich_null,
+                        );
                         if gilt {
                             if let Some(mapped) = entry.mapping.map(p.value) {
                                 parsed.apply_field(entry.field, mapped);
@@ -735,7 +774,9 @@ fn run_listener(shared: Arc<AdapterShared>) {
             vorhanden = shared.addon_vorhanden.lock().clone();
             let mut parsed = shared.parsed.lock();
             for e in CATALOG.iter() {
-                if addon_quelle(e.field) && !eintrag_gilt(e.field, e.name, vorhanden.as_ref()) {
+                if addon_quelle(e.field)
+                    && !eintrag_gilt(e.field, e.name, vorhanden.as_ref(), &ungleich_null)
+                {
                     parsed.addon_leeren(e.field);
                 }
             }
@@ -755,11 +796,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
         // 27.09.2026 galt dadurch JEDES X-Plane-Flugzeug als Challenger 650.
         let probe_bestaetigt: Vec<bool> = PROFILES
             .iter()
-            .map(|p| {
-                vorhanden
-                    .as_ref()
-                    .is_some_and(|v| v.contains(grundname(p.probe_dataref)))
-            })
+            .map(|p| probe_gilt(p.probe_dataref, vorhanden.as_ref(), &ungleich_null))
             .collect();
         let probe_fresh: Vec<bool> = probe_last_seen
             .iter()
@@ -839,6 +876,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
                         *v = 0.0;
                     }
                     shared.zusatz.lock().leeren();
+                    ungleich_null.clear();
                     *shared.state.lock() = ConnectionState::Connecting;
                 }
                 // Reset so we don't fire the warning every tick.
@@ -912,19 +950,33 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
                 // Jede Runde neu (ein Add-on-Plugin laedt oft erst nach dem
                 // Flugzeug); beim Wechsel ohne Altlasten.
                 let neues_flugzeug = info.relative_path != geprueft_fuer;
-                let ergebnisse: Vec<(&str, Option<bool>)> = zu_pruefende_datarefs()
-                    .into_iter()
-                    .map(|n| (n, client.dataref_lesbar(n).ok()))
-                    .collect();
-                {
+                let mut ergebnisse: Vec<(&str, Option<bool>)> = Vec::new();
+                for n in zu_pruefende_datarefs() {
+                    // Bis zu zwei GETs je Name — zwischendurch aufs Stoppen
+                    // achten, sonst haengt `stop()` (Codex-Befund).
+                    if shared.stop.load(Ordering::SeqCst) {
+                        tracing::info!("X-Plane Web API poller stopped");
+                        return;
+                    }
+                    ergebnisse.push((n, client.dataref_lesbar(n).ok()));
+                }
+                // Hat der Pilot waehrend der Pruefung das Flugzeug gewechselt,
+                // gehoeren die Ergebnisse zu keinem Flugzeug — verwerfen.
+                let noch_dasselbe = client
+                    .flugzeug_pfad()
+                    .map(|p| p == info.relative_path)
+                    .unwrap_or(false);
+                if noch_dasselbe {
                     let mut v = shared.addon_vorhanden.lock();
                     let neu = vorhanden_neu(v.as_ref(), neues_flugzeug, &ergebnisse);
                     if v.as_ref() != Some(&neu) {
                         *v = Some(neu);
                         shared.addon_generation.fetch_add(1, Ordering::SeqCst);
                     }
+                    geprueft_fuer = info.relative_path.clone();
+                } else {
+                    geprueft_fuer = None;
                 }
-                geprueft_fuer = info.relative_path.clone();
                 if info.has_any() {
                     // Log on first detection AND on aircraft change
                     // (e.g. pilot loaded a different plane). Identity
@@ -970,12 +1022,27 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
             AIRCRAFT_POLL_INTERVAL_SECS
         };
         let ticks = secs * 10;
-        for _ in 0..ticks {
+        for tick in 1..=ticks {
             if shared.stop.load(Ordering::SeqCst) {
                 tracing::info!("X-Plane Web API poller stopped");
                 return;
             }
             std::thread::sleep(Duration::from_millis(100));
+            // Alle 5 s kurz nachsehen, ob ein anderes Flugzeug geladen ist.
+            // Ohne das galten nach einem Wechsel bis zu 30 s die Quellen des
+            // alten Flugzeugs — dessen Datarefs liefern dann nur noch Nullen
+            // (Codex-Befund 27.09.2026). Beim Wechsel sofort alles verwerfen
+            // und neu pruefen.
+            if consecutive_failures == 0 && geprueft_fuer.is_some() && tick % 50 == 0 {
+                if let Ok(pfad) = client.flugzeug_pfad() {
+                    if pfad != geprueft_fuer {
+                        tracing::info!(neu = ?pfad, "X-Plane: Flugzeugwechsel — Add-on-Quellen verworfen");
+                        *shared.addon_vorhanden.lock() = Some(HashSet::new());
+                        shared.addon_generation.fetch_add(1, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            }
         }
     }
     tracing::info!("X-Plane Web API poller stopped");
@@ -983,7 +1050,7 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
 
 #[cfg(test)]
 mod quellen_tests {
-    use super::{eintrag_gilt, vorhanden_neu, zu_pruefende_datarefs};
+    use super::{eintrag_gilt, probe_gilt, vorhanden_neu, zu_pruefende_datarefs};
     use crate::dataref::FieldId;
     use std::collections::HashSet;
 
@@ -996,20 +1063,24 @@ mod quellen_tests {
     /// Standardwerte immer.
     #[test]
     fn ohne_bestaetigung_nur_standardwerte() {
+        let leer = HashSet::new();
         assert!(!eintrag_gilt(
             FieldId::B738XpdrKnob,
             "laminar/B738/knob/transponder_pos",
-            None
+            None,
+            &leer
         ));
         assert!(!eintrag_gilt(
             FieldId::TolissStrobeSwitch,
             "AirbusFBW/OHPLightSwitches[7]",
-            None
+            None,
+            &leer
         ));
         assert!(eintrag_gilt(
             FieldId::LightStrobe,
             "sim/cockpit2/switches/strobe_lights_on",
-            None
+            None,
+            &leer
         ));
         let v = menge(&[
             "AirbusFBW/OHPLightSwitches",
@@ -1018,17 +1089,45 @@ mod quellen_tests {
         assert!(eintrag_gilt(
             FieldId::TolissStrobeSwitch,
             "AirbusFBW/OHPLightSwitches[7]",
-            Some(&v)
+            Some(&v),
+            &leer
         ));
         assert!(eintrag_gilt(
             FieldId::A333StrobePos,
             "laminar/a333/switches/strobe_pos",
-            Some(&v)
+            Some(&v),
+            &leer
         ));
         assert!(!eintrag_gilt(
             FieldId::B738XpdrKnob,
             "laminar/B738/knob/transponder_pos",
-            Some(&v)
+            Some(&v),
+            &leer
+        ));
+    }
+
+    /// Ohne Web-API (X-Plane 11): eine Quelle gilt erst, wenn sie einmal
+    /// ungleich 0 war — ein fehlender Dataref liefert nur 0 und bleibt aus.
+    #[test]
+    fn ohne_web_api_zaehlt_erst_ein_wert_ungleich_null() {
+        let mut gesehen: HashSet<&'static str> = HashSet::new();
+        let knopf = "laminar/B738/knob/transponder_pos";
+        assert!(!eintrag_gilt(FieldId::B738XpdrKnob, knopf, None, &gesehen));
+        gesehen.insert(knopf);
+        assert!(eintrag_gilt(FieldId::B738XpdrKnob, knopf, None, &gesehen));
+        // Mit Web-API entscheidet allein deren Antwort.
+        assert!(!eintrag_gilt(
+            FieldId::B738XpdrKnob,
+            knopf,
+            Some(&HashSet::new()),
+            &gesehen
+        ));
+        let probe = "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR";
+        assert!(!probe_gilt(probe, None, &HashSet::new()));
+        assert!(!probe_gilt(
+            probe,
+            Some(&HashSet::new()),
+            &HashSet::from([probe])
         ));
     }
 
