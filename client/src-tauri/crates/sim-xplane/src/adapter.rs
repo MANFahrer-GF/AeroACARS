@@ -111,6 +111,11 @@ struct AdapterShared {
     /// Zaehlt jede Aenderung von `addon_vorhanden`; der Listener leert
     /// daraufhin Felder, deren Quelle weggefallen ist.
     addon_generation: AtomicU64,
+    /// Laufnummer des Web-API-Fadens. `stop()` wartet nicht auf ihn (eine
+    /// langsame Web-API hielte sonst Simulatorwechsel und Sampler auf);
+    /// ein alter Faden erkennt an der Nummer, dass er nichts mehr
+    /// schreiben darf, und beendet sich.
+    web_lauf: AtomicU64,
     /// Tells the worker thread to stop. Polled in the recv loop.
     stop: AtomicBool,
 }
@@ -153,6 +158,7 @@ impl XPlaneAdapter {
             zusatz: Mutex::new(ZusatzAbos::default()),
             addon_vorhanden: Mutex::new(None),
             addon_generation: AtomicU64::new(0),
+            web_lauf: AtomicU64::new(0),
             stop: AtomicBool::new(false),
         });
         Self {
@@ -201,9 +207,10 @@ impl XPlaneAdapter {
             .expect("spawn xplane-udp thread");
         self.worker = Some(udp_handle);
         let shared_for_web = Arc::clone(&self.shared);
+        let lauf = self.shared.web_lauf.fetch_add(1, Ordering::SeqCst) + 1;
         let web_handle = std::thread::Builder::new()
             .name("xplane-web-api".into())
-            .spawn(move || run_web_api_poller(shared_for_web))
+            .spawn(move || run_web_api_poller(shared_for_web, lauf))
             .expect("spawn xplane-web-api thread");
         self.web_api_worker = Some(web_handle);
         // Start the premium plugin listener too. No-op unless the
@@ -223,10 +230,12 @@ impl XPlaneAdapter {
             // the recv loop has a 100 ms read timeout.
             let _ = handle.join();
         }
-        if let Some(handle) = self.web_api_worker.take() {
-            // The Web API poller wakes from its sleep every 100 ms to
-            // re-check the stop flag; join is fast.
-            let _ = handle.join();
+        if self.web_api_worker.take().is_some() {
+            // Nicht abwarten: eine Web-API-Abfrage kann bis zu 2 s haengen,
+            // eine Pruefrunde viele davon (Codex-Befund 27.09.2026). Die
+            // neue Laufnummer macht den alten Faden stumm; er beendet sich
+            // bei der naechsten Abfrage des Stop-Flags.
+            self.shared.web_lauf.fetch_add(1, Ordering::SeqCst);
         }
         // Tear down the premium listener last so it can drain any
         // in-flight packet before close. Idempotent.
@@ -498,6 +507,12 @@ fn eintrag_gilt(
     }
 }
 
+/// Ein anderes Flugzeug, wenn sich das Leergewicht um mehr als 1 kg aendert
+/// (Tankfuellung und Zuladung aendern es nicht).
+fn flugzeug_gewechselt(alt_kg: f32, neu_kg: f32) -> bool {
+    (alt_kg - neu_kg).abs() > 1.0
+}
+
 /// Wie `eintrag_gilt`, fuer die Profil-Proben.
 fn probe_gilt(
     probe: &str,
@@ -565,6 +580,9 @@ fn run_listener(shared: Arc<AdapterShared>) {
     let mut vorhanden: Option<HashSet<String>> = None;
     // Ersatz ohne Web-API: Quellen, die schon einmal ungleich 0 waren.
     let mut ungleich_null: HashSet<&'static str> = HashSet::new();
+    // Leergewicht als Kennung des geladenen Flugzeugs — kommt per RREF, also
+    // auch ohne Web-API. Aendert es sich, ist ein anderes Flugzeug geladen.
+    let mut leergewicht: Option<f32> = None;
 
     // ---- Hard-armoured re-subscribe (v0.3.0) ----
     // Send the full RREF subscription set for the given catalog. Called
@@ -686,6 +704,29 @@ fn run_listener(shared: Arc<AdapterShared>) {
                     // FieldId, with the profile's ValueMapping applied.
                     if let Some(entry) = active.get(p.index as usize) {
                         katalog_paket = true;
+                        if entry.field == crate::dataref::FieldId::EmptyWeightKg && p.value > 0.0 {
+                            if let Some(alt) = leergewicht {
+                                if flugzeug_gewechselt(alt, p.value) {
+                                    // Ohne Web-API sonst unbemerkt (Codex-Befund):
+                                    // Ersatzliste und Proben des alten Flugzeugs weg.
+                                    ungleich_null.clear();
+                                    for t in probe_last_seen.iter_mut() {
+                                        *t = None;
+                                    }
+                                    if vorhanden.is_none() {
+                                        for e in CATALOG.iter().filter(|e| addon_quelle(e.field)) {
+                                            parsed.addon_leeren(e.field);
+                                        }
+                                    }
+                                    tracing::info!(
+                                        alt,
+                                        neu = p.value,
+                                        "X-Plane: Leergewicht geaendert — Flugzeugwechsel"
+                                    );
+                                }
+                            }
+                            leergewicht = Some(p.value);
+                        }
                         if p.value != 0.0 && addon_quelle(entry.field) {
                             ungleich_null.insert(grundname(entry.name));
                         }
@@ -920,14 +961,20 @@ fn run_listener(shared: Arc<AdapterShared>) {
 /// identity rarely changes mid-flight. On repeated failures
 /// (X-Plane <12.1, or Web API not enabled in Settings → Network)
 /// we back off further so we don't spam.
-fn run_web_api_poller(shared: Arc<AdapterShared>) {
+fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
     let client = WebApiClient::new();
+    // Darf dieser Faden noch schreiben? Nein nach `stop()` oder einem
+    // Neustart (neue Laufnummer).
+    let aktiv =
+        || !shared.stop.load(Ordering::SeqCst) && shared.web_lauf.load(Ordering::SeqCst) == lauf;
     let mut consecutive_failures: u32 = 0;
     let mut last_logged_path: Option<String> = None;
     // Flugzeug, fuer das `addon_vorhanden` zuletzt geprueft wurde.
     let mut geprueft_fuer: Option<String> = None;
     tracing::info!("X-Plane Web API poller started");
-    while !shared.stop.load(Ordering::SeqCst) {
+    // Sofort neu pruefen (Flugzeugwechsel waehrend einer Pruefung).
+    let mut sofort = false;
+    while aktiv() {
         // Dataref-IDs JEDEN Poll frisch auflösen. X-Plane baut beim
         // Flugzeugwechsel seine Dataref-Registry neu auf — eine prozess-
         // weit gecachte numerische ID wird dann stale: `read_string`
@@ -938,6 +985,7 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
         // erkannt. (Pilot-Befund Michel, X-Plane 12.)
         let mut id_cache = DrefIdCache::default();
         match client.fetch_aircraft_info(&mut id_cache) {
+            Ok(_) if !aktiv() => return,
             Ok(info) => {
                 if consecutive_failures > 0 {
                     tracing::info!(
@@ -954,7 +1002,7 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
                 for n in zu_pruefende_datarefs() {
                     // Bis zu zwei GETs je Name — zwischendurch aufs Stoppen
                     // achten, sonst haengt `stop()` (Codex-Befund).
-                    if shared.stop.load(Ordering::SeqCst) {
+                    if !aktiv() {
                         tracing::info!("X-Plane Web API poller stopped");
                         return;
                     }
@@ -962,10 +1010,16 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
                 }
                 // Hat der Pilot waehrend der Pruefung das Flugzeug gewechselt,
                 // gehoeren die Ergebnisse zu keinem Flugzeug — verwerfen.
-                let noch_dasselbe = client
-                    .flugzeug_pfad()
-                    .map(|p| p == info.relative_path)
-                    .unwrap_or(false);
+                // Ohne erkannten Pfad laesst sich nichts zuordnen — dann
+                // nichts uebernehmen (Codex-Befund).
+                let noch_dasselbe = info.relative_path.is_some()
+                    && client
+                        .flugzeug_pfad()
+                        .map(|p| p == info.relative_path)
+                        .unwrap_or(false);
+                if !aktiv() {
+                    return;
+                }
                 if noch_dasselbe {
                     let mut v = shared.addon_vorhanden.lock();
                     let neu = vorhanden_neu(v.as_ref(), neues_flugzeug, &ergebnisse);
@@ -975,7 +1029,12 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
                     }
                     geprueft_fuer = info.relative_path.clone();
                 } else {
+                    // Waehrend der Pruefung gewechselt: alte Quellen sofort
+                    // verwerfen und gleich neu pruefen, nicht erst in 30 s.
+                    *shared.addon_vorhanden.lock() = Some(HashSet::new());
+                    shared.addon_generation.fetch_add(1, Ordering::SeqCst);
                     geprueft_fuer = None;
+                    sofort = true;
                 }
                 if info.has_any() {
                     // Log on first detection AND on aircraft change
@@ -993,6 +1052,9 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
                         );
                         last_logged_path = path;
                     }
+                }
+                if !aktiv() {
+                    return;
                 }
                 *shared.aircraft.lock() = info;
             }
@@ -1021,9 +1083,13 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
         } else {
             AIRCRAFT_POLL_INTERVAL_SECS
         };
-        let ticks = secs * 10;
+        let ticks = if std::mem::take(&mut sofort) {
+            0
+        } else {
+            secs * 10
+        };
         for tick in 1..=ticks {
-            if shared.stop.load(Ordering::SeqCst) {
+            if !aktiv() {
                 tracing::info!("X-Plane Web API poller stopped");
                 return;
             }
@@ -1033,8 +1099,11 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
             // alten Flugzeugs — dessen Datarefs liefern dann nur noch Nullen
             // (Codex-Befund 27.09.2026). Beim Wechsel sofort alles verwerfen
             // und neu pruefen.
-            if consecutive_failures == 0 && geprueft_fuer.is_some() && tick % 50 == 0 {
+            if consecutive_failures == 0 && tick % 50 == 0 {
                 if let Ok(pfad) = client.flugzeug_pfad() {
+                    if !aktiv() {
+                        return;
+                    }
                     if pfad != geprueft_fuer {
                         tracing::info!(neu = ?pfad, "X-Plane: Flugzeugwechsel — Add-on-Quellen verworfen");
                         *shared.addon_vorhanden.lock() = Some(HashSet::new());
@@ -1129,6 +1198,14 @@ mod quellen_tests {
             Some(&HashSet::new()),
             &HashSet::from([probe])
         ));
+    }
+
+    /// Leergewicht als Flugzeugkennung ohne Web-API.
+    #[test]
+    fn leergewicht_zeigt_den_wechsel() {
+        assert!(!super::flugzeug_gewechselt(41_413.0, 41_413.0));
+        assert!(!super::flugzeug_gewechselt(41_413.0, 41_413.6));
+        assert!(super::flugzeug_gewechselt(41_413.0, 120_900.0));
     }
 
     /// Nur eine klare Absage streicht eine Quelle; ein Zeitfehler laesst
