@@ -116,6 +116,11 @@ struct AdapterShared {
     /// ein alter Faden erkennt an der Nummer, dass er nichts mehr
     /// schreiben darf, und beendet sich.
     web_lauf: AtomicU64,
+    /// Haelt der Web-API-Faden, waehrend er prueft, ob er noch dran ist, und
+    /// schreibt; `start()`/`stop()` halten ihn beim Laufwechsel. So kann ein
+    /// alter Faden nicht zwischen Pruefung und Schreiben ueberholt werden
+    /// (Codex-Befund 27.09.2026).
+    web_schreiben: Mutex<()>,
     /// Tells the worker thread to stop. Polled in the recv loop.
     stop: AtomicBool,
 }
@@ -159,6 +164,7 @@ impl XPlaneAdapter {
             addon_vorhanden: Mutex::new(None),
             addon_generation: AtomicU64::new(0),
             web_lauf: AtomicU64::new(0),
+            web_schreiben: Mutex::new(()),
             stop: AtomicBool::new(false),
         });
         Self {
@@ -187,9 +193,12 @@ impl XPlaneAdapter {
         *self.shared.state.lock() = ConnectionState::Connecting;
         *self.shared.last_error.lock() = None;
         *self.shared.parsed.lock() = XPlaneState::default();
-        *self.shared.aircraft.lock() = AircraftInfo::default();
-        *self.shared.addon_vorhanden.lock() = None;
-        self.shared.addon_generation.fetch_add(1, Ordering::SeqCst);
+        {
+            let _w = self.shared.web_schreiben.lock();
+            *self.shared.aircraft.lock() = AircraftInfo::default();
+            *self.shared.addon_vorhanden.lock() = None;
+            self.shared.addon_generation.fetch_add(1, Ordering::SeqCst);
+        }
         // v0.12.2: a fresh run starts on the base catalog — profile
         // detection re-runs from scratch against the new sim session.
         *self.shared.active_catalog.lock() = build_active_catalog(None);
@@ -207,7 +216,10 @@ impl XPlaneAdapter {
             .expect("spawn xplane-udp thread");
         self.worker = Some(udp_handle);
         let shared_for_web = Arc::clone(&self.shared);
-        let lauf = self.shared.web_lauf.fetch_add(1, Ordering::SeqCst) + 1;
+        let lauf = {
+            let _w = self.shared.web_schreiben.lock();
+            self.shared.web_lauf.fetch_add(1, Ordering::SeqCst) + 1
+        };
         let web_handle = std::thread::Builder::new()
             .name("xplane-web-api".into())
             .spawn(move || run_web_api_poller(shared_for_web, lauf))
@@ -231,6 +243,7 @@ impl XPlaneAdapter {
             let _ = handle.join();
         }
         if self.web_api_worker.take().is_some() {
+            let _w = self.shared.web_schreiben.lock();
             // Nicht abwarten: eine Web-API-Abfrage kann bis zu 2 s haengen,
             // eine Pruefrunde viele davon (Codex-Befund 27.09.2026). Die
             // neue Laufnummer macht den alten Faden stumm; er beendet sich
@@ -1012,11 +1025,13 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
                 // gehoeren die Ergebnisse zu keinem Flugzeug — verwerfen.
                 // Ohne erkannten Pfad laesst sich nichts zuordnen — dann
                 // nichts uebernehmen (Codex-Befund).
-                let noch_dasselbe = info.relative_path.is_some()
+                let pfad_bekannt = info.relative_path.is_some();
+                let noch_dasselbe = pfad_bekannt
                     && client
                         .flugzeug_pfad()
                         .map(|p| p == info.relative_path)
                         .unwrap_or(false);
+                let _w = shared.web_schreiben.lock();
                 if !aktiv() {
                     return;
                 }
@@ -1028,7 +1043,7 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
                         shared.addon_generation.fetch_add(1, Ordering::SeqCst);
                     }
                     geprueft_fuer = info.relative_path.clone();
-                } else {
+                } else if pfad_bekannt {
                     // Waehrend der Pruefung gewechselt: alte Quellen sofort
                     // verwerfen und gleich neu pruefen, nicht erst in 30 s.
                     *shared.addon_vorhanden.lock() = Some(HashSet::new());
@@ -1036,6 +1051,8 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
                     geprueft_fuer = None;
                     sofort = true;
                 }
+                // Pfad unbekannt: nichts zuordnen, normal weiter warten — kein
+                // sofortiges Wiederholen, sonst liefe die Pruefung ungebremst.
                 if info.has_any() {
                     // Log on first detection AND on aircraft change
                     // (e.g. pilot loaded a different plane). Identity
@@ -1053,10 +1070,11 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
                         last_logged_path = path;
                     }
                 }
-                if !aktiv() {
-                    return;
+                // Nach erkanntem Wechsel nicht die alte Kennung veroeffentlichen.
+                if !pfad_bekannt || noch_dasselbe {
+                    *shared.aircraft.lock() = info;
                 }
-                *shared.aircraft.lock() = info;
+                drop(_w);
             }
             Err(e) => {
                 consecutive_failures += 1;
@@ -1105,6 +1123,10 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
                         return;
                     }
                     if pfad != geprueft_fuer {
+                        let _w = shared.web_schreiben.lock();
+                        if !aktiv() {
+                            return;
+                        }
                         tracing::info!(neu = ?pfad, "X-Plane: Flugzeugwechsel — Add-on-Quellen verworfen");
                         *shared.addon_vorhanden.lock() = Some(HashSet::new());
                         shared.addon_generation.fetch_add(1, Ordering::SeqCst);
