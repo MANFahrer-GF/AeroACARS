@@ -61,7 +61,9 @@ export function ResumeFlightBanner({
   // danach kam die rote Karte. Ohne Simulator gibt es nichts zu pruefen:
   // kein Countdown, sondern „Warte auf den Simulator" mit dem letzten Punkt.
   const simDa = useSimVerbunden(mode.kind === "auto_resumed");
-  const warteAufSim = mode.kind === "auto_resumed" && simDa === false;
+  // Auch solange die erste Antwort fehlt (`null`): kein Countdown aufblitzen
+  // lassen (Codex-Befund).
+  const warteAufSim = mode.kind === "auto_resumed" && simDa !== true;
 
   // v0.13.10 (QS-Round-1 Fix): consumedRef zuruecksetzen sobald
   // was_just_resumed im Backend auf false transitioniert (Pilot hat den
@@ -184,6 +186,26 @@ export function ResumeFlightBanner({
     if (mode.secondsLeft <= 0) {
       if (confirmingRef.current) return;
       confirmingRef.current = true;
+      if (mode.kind === "auto_resumed") {
+        // Unmittelbar vor dem Fortsetzen noch einmal fragen: bricht der
+        // Simulator in der letzten Sekunde weg, nicht fortsetzen, sondern
+        // zurueck ins Warten (Codex-Befund 27.09.2026).
+        void (async () => {
+          let da = false;
+          try {
+            da = (await invoke<SimStatus>("sim_status"))?.snapshot != null;
+          } catch {
+            da = false;
+          }
+          if (da) {
+            void doConfirm();
+          } else {
+            confirmingRef.current = false;
+            setMode((prev) => (prev.kind === "auto_resumed" ? { ...prev, secondsLeft: COUNTDOWN_SECONDS } : prev));
+          }
+        })();
+        return;
+      }
       void doConfirm();
       return;
     }
@@ -660,14 +682,31 @@ function useSimVerbunden(aktiv: boolean): boolean | null {
     }
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Ein einzelner Aussetzer soll nicht flackern: „weg" erst nach drei
+    // Fehlversuchen in Folge, wenn der Simulator vorher da war.
+    let fehlt = 0;
+    let zuletzt: boolean | null = null;
     async function poll() {
+      let jetzt: boolean;
       try {
         const st = await invoke<SimStatus>("sim_status");
-        if (alive) setDa(st?.snapshot != null);
+        jetzt = st?.snapshot != null;
       } catch {
-        if (alive) setDa(false);
+        jetzt = false;
       }
-      if (alive) timer = setTimeout(() => void poll(), 1000);
+      if (!alive) return;
+      if (jetzt) {
+        fehlt = 0;
+        zuletzt = true;
+        setDa(true);
+      } else {
+        fehlt += 1;
+        if (zuletzt !== true || fehlt >= 3) {
+          zuletzt = false;
+          setDa(false);
+        }
+      }
+      timer = setTimeout(() => void poll(), 1000);
     }
     void poll();
     return () => {

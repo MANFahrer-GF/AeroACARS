@@ -5,7 +5,7 @@
 //      Wegstrecken-Basis), Höhe und Kurs fehlten — der Pilot konnte nicht
 //      zurückstellen.
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
@@ -81,6 +81,36 @@ describe("Wiederaufnahme nach Sim-Absturz", () => {
     await waitFor(() => expect(screen.getByText(/wird der Flug fortgesetzt/)).toBeTruthy());
     expect(screen.queryByText("Warte auf den Simulator")).toBeNull();
     expect(screen.getByText(/Letzter gespeicherter Punkt/)).toBeTruthy();
+  });
+
+  it("solange der Simulatorstatus noch nicht da ist: kein Countdown", async () => {
+    tauriInvoke.mockImplementation((cmd: string) => (cmd === "sim_status" ? new Promise(() => undefined) : Promise.resolve(null)));
+    render(<ResumeFlightBanner activeFlight={FLUG} onAdopted={() => {}} onCancelled={() => {}} />);
+    expect(await screen.findByText("Warte auf den Simulator")).toBeTruthy();
+    expect(screen.queryByText(/wird der Flug fortgesetzt/)).toBeNull();
+  });
+
+  it("bricht der Simulator in der letzten Sekunde weg, wird nicht fortgesetzt", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const start = Date.now();
+      tauriInvoke.mockImplementation((cmd: string) => {
+        if (cmd === "sim_status") {
+          const da = Date.now() - start < 29_500;
+          return Promise.resolve({ state: "connected", kind: "xplane12", snapshot: da ? { lat: 21.29, lon: 86.25 } : null, last_error: null, available: true });
+        }
+        return Promise.resolve(null);
+      });
+      render(<ResumeFlightBanner activeFlight={FLUG} onAdopted={() => {}} onCancelled={() => {}} />);
+      for (let i = 0; i < 35; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+      }
+      expect(tauriInvoke.mock.calls.some(([c]) => c === "flight_resume_confirm")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("Grad und Dezimalminuten wie im Positionsdialog der Simulatoren", () => {

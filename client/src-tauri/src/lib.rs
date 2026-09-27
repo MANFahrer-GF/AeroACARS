@@ -549,6 +549,50 @@ mod v0_15_13_pushback_direction_tests {
     }
 }
 
+/// Der Punkt, mit dem eine Wiederaufnahme die Sim-Position vergleicht.
+///
+/// `last_known_*` zuerst: `last_lat/lon` ist die Wegstrecken-Basis und wird
+/// beim Resume absichtlich geleert — damit lief die Pruefung nach einem
+/// Absturz vor dem naechsten Speicherpunkt ohne Bezug und liess jede Position
+/// durch (Codex-Befund 27.09.2026, SIA 375).
+fn gespeicherter_punkt(stats: &FlightStats) -> Option<(f64, f64)> {
+    stats
+        .last_known_lat
+        .zip(stats.last_known_lon)
+        .or(stats.last_lat.zip(stats.last_lon))
+}
+
+#[cfg(test)]
+mod gespeicherter_punkt_tests {
+    use super::*;
+
+    /// Nach dem Resume ist `last_lat/lon` leer — der Vergleich muss den
+    /// dauerhaften Punkt nehmen, sonst gilt jede Sim-Position als passend.
+    #[test]
+    fn resume_vergleicht_mit_dem_dauerhaften_punkt() {
+        let mut stats = FlightStats::default();
+        stats.last_known_lat = Some(21.2929);
+        stats.last_known_lon = Some(86.2577);
+        stats.last_lat = None;
+        stats.last_lon = None;
+        assert_eq!(gespeicherter_punkt(&stats), Some((21.2929, 86.2577)));
+        // Sim nach dem Absturz in Singapur, in der Luft gespeichert → verdächtig.
+        stats.phase = FlightPhase::Cruise;
+        assert!(is_resume_position_suspect(
+            stats.phase,
+            gespeicherter_punkt(&stats),
+            true,
+            1.3502,
+            103.984
+        ));
+        // Ohne dauerhaften Punkt: die alte Basis als Rückfall.
+        let mut alt = FlightStats::default();
+        alt.last_lat = Some(50.0);
+        alt.last_lon = Some(8.5);
+        assert_eq!(gespeicherter_punkt(&alt), Some((50.0, 8.5)));
+    }
+}
+
 /// v0.12.1 (Stream E LE14): does the first post-resume sim position look
 /// like a glitchy crash-reload rather than the flight we persisted?
 /// Suspicious when:
@@ -17932,10 +17976,7 @@ fn flight_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ac
             Some(snap) => {
                 let (phase, pos) = {
                     let stats = flight.stats.lock().expect("flight stats");
-                    let pos = match (stats.last_lat, stats.last_lon) {
-                        (Some(la), Some(lo)) => Some((la, lo)),
-                        _ => None,
-                    };
+                    let pos = gespeicherter_punkt(&stats);
                     (stats.phase, pos)
                 };
                 is_resume_position_suspect(phase, pos, snap.on_ground, snap.lat, snap.lon)
@@ -31769,10 +31810,7 @@ async fn flight_resume_check_position(
 
     let (persisted_phase, persisted_pos) = {
         let stats = flight.stats.lock().expect("flight stats");
-        let pos = match (stats.last_lat, stats.last_lon) {
-            (Some(la), Some(lo)) => Some((la, lo)),
-            _ => None,
-        };
+        let pos = gespeicherter_punkt(&stats);
         (stats.phase, pos)
     };
 
