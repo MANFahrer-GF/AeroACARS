@@ -325,3 +325,7 @@
 .bb-bericht .bb-checkliste { background: none; border-color: var(--border); }
 .bb-bericht .bb-cl-zeile { color: var(--text); }
 .bb-bericht .bb-cl-linie { border-bottom-color: #888; }
+
+/* „nicht gesehen": was AeroACARS stattdessen gemessen hat */
+.bb-cl-gesehen { color: var(--text-dim); font-style: normal; }
+.bb-profil-liste .bb-cl-gesehen { font-size: var(--fs-200, 11px); padding-left: 0; margin-top: 2px; }

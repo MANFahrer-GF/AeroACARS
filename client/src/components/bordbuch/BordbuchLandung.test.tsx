@@ -149,9 +149,33 @@ describe("Bordbuch im Landungs-Tab", () => {
     expect(result.current.eintrag?.pirep_id).toBe("A");
   });
 
+  it("„nicht gesehen“ zeigt darunter, was gemessen wurde", () => {
+    const e = eintrag("A", 21.7);
+    e.punkte.push(
+      { ...e.punkte[1]!, regel: "transponder_start", schalter: "transponder", abschnitt: "start", status: "diesmal_ohne", stellung: "STBY", beleg: {} },
+      { ...e.punkte[1]!, regel: "strobes_start", schalter: "strobes", abschnitt: "start", status: "diesmal_ohne", stellung: null, beleg: {} },
+    );
+    e.eingeschaltet = ["rolltempo", "transponder", "strobes"];
+    render(<BordbuchBericht eintrag={e} />);
+    expect(screen.getAllByText("nicht gesehen").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Transponder stand beim Start auf STBY")).toBeTruthy();
+    expect(screen.getByText("Strobes waren beim Startlauf aus")).toBeTruthy();
+    expect(screen.queryByText(/diesmal ohne/)).toBeNull();
+  });
+
   it("der Druck sagt nicht „Tippe den Punkt an“", () => {
     render(<BordbuchBericht eintrag={eintrag("A", 21.7)} />);
     expect(screen.queryByText(/Tippe den Punkt an/)).toBeNull();
-    expect(screen.getByText(/Grau heißt diesmal ohne/)).toBeTruthy();
+    expect(screen.getByText(/Grau heißt: nicht gesehen/)).toBeTruthy();
+  });
+});
+
+describe("„nicht gesehen“-Zeile für jede Regel", () => {
+  it("jede Regel hat eine Erklärung (außer Rolltempo, das rechnet selbst)", async () => {
+    const de = (await import("../../locales/de/common.json")).default as { bordbuch: { regel: Record<string, string>; gesehen: Record<string, string> } };
+    for (const regel of Object.keys(de.bordbuch.regel)) {
+      if (regel.startsWith("rolltempo")) continue;
+      expect(de.bordbuch.gesehen[regel], regel).toBeTruthy();
+    }
   });
 });

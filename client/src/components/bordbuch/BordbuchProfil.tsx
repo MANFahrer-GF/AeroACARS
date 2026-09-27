@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { erledigt, sichtbar, zulu, type Punkt, type Regel, type Schalter } from "../../lib/bordbuch";
+import { gesehenText } from "./gesehen";
 
 interface Props {
   punkte: Punkt[];
@@ -11,13 +12,14 @@ interface Props {
   profil: Array<[number, number]>;
   dep?: string | null;
   arr?: string | null;
+  rolltempoGrenzeKt?: number;
 }
 
 const B = 640;
 const H = 170;
 const RAND = { l: 8, r: 8, o: 22, u: 26 };
 
-export function BordbuchProfil({ punkte, eingeschaltet, profil, dep, arr }: Props) {
+export function BordbuchProfil({ punkte, eingeschaltet, profil, dep, arr, rolltempoGrenzeKt }: Props) {
   const { t } = useTranslation();
   const [gewaehlt, setGewaehlt] = useState<Regel | null>(null);
 
@@ -130,6 +132,9 @@ export function BordbuchProfil({ punkte, eingeschaltet, profil, dep, arr }: Prop
                 {" · "}
                 {t(`bordbuch.status.${p.status}`)}
                 {hoeheText(p.hoehe_ft)}
+                {gesehenText(p, rolltempoGrenzeKt, t) && (
+                  <div className="bb-cl-gesehen">{gesehenText(p, rolltempoGrenzeKt, t)}</div>
+                )}
               </li>
             ))}
           </ul>

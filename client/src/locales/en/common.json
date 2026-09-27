@@ -3049,12 +3049,34 @@
     "bilanz": "{{ok}} of {{von}} items done",
     "bilanz_kurz": "{{ok}} of {{von}}",
     "satz_alles": "Clean flight, everything ticked off.",
-    "satz_teil": "Grey means not this time. Did ATC instruct otherwise? Tap the item.",
-    "satz_teil_druck": "Grey means not this time, “as instructed by ATC” means flown differently on instruction.",
+    "satz_teil": "Grey means: not seen. Below it you see what AeroACARS measured. Did ATC instruct otherwise? Tap the item.",
+    "satz_teil_druck": "Grey means: not seen, with what AeroACARS measured below. “as instructed by ATC” means flown differently on instruction.",
     "zusaetzlich": "extra",
     "rollen_gefahren": "fastest taxi {{kt}} kt · limit {{grenze}} kt",
     "rollen_ueber": "fastest taxi {{kt}} kt · {{s}} s above the {{grenze}} kt limit",
     "rollen_wert": "{{kt}} kt",
+    "gesehen": {
+      "beacon_anlassen": "Beacon was off when the first engine was running",
+      "nav_lichter": "Nav lights were off when you started taxiing",
+      "parkbremse_geloest": "Parking brake was still set when you started taxiing",
+      "strobes_start": "Strobes were off during the take-off roll",
+      "landelicht_start": "Landing lights were off during the take-off roll",
+      "transponder_start": "Transponder was not reporting altitude at take-off",
+      "tcas_start": "TA/RA was not selected at take-off",
+      "klappen_start": "Take-off flaps were not set during the take-off roll",
+      "anschnall_start": "Seat belt sign was off during the take-off roll",
+      "apu_reiseflug": "APU was running in cruise",
+      "landelicht_anflug": "Landing lights were off on approach",
+      "autobrake_landung": "Autobrake was not set before landing",
+      "spoiler_landung": "Spoilers were not armed before touchdown",
+      "anschnall_landung": "Seat belt sign was off on final approach"
+    },
+    "gesehen_mit": {
+      "transponder_start": "Transponder was on {{stellung}} at take-off",
+      "tcas_start": "Transponder was on {{stellung}}, not TA/RA",
+      "klappen_start": "Flaps were at {{stellung}} during the take-off roll",
+      "autobrake_landung": "Autobrake was on {{stellung}}"
+    },
     "dieses_flugzeug": "This aircraft",
     "profil_leer": "There is no altitude profile for this flight yet.",
     "profil_tippen": "Tap an item to see the moment.",
@@ -3148,7 +3170,7 @@
     "status": {
       "offen": "open",
       "erledigt": "done",
-      "diesmal_ohne": "not this time",
+      "diesmal_ohne": "not seen",
       "nach_atc": "as instructed by ATC",
       "nicht_messbar": "not measurable",
       "nicht_anwendbar": "did not occur"
@@ -3201,7 +3223,7 @@
     "zelle": {
       "ok": "done",
       "atc": "as instructed by ATC",
-      "ohne": "not this time",
+      "ohne": "not seen",
       "nm": "aircraft does not report this",
       "leer": "did not occur"
     },

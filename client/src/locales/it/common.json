@@ -3049,12 +3049,34 @@
     "bilanz": "{{ok}} di {{von}} voci completate",
     "bilanz_kurz": "{{ok}} di {{von}}",
     "satz_alles": "Volo pulito, tutto spuntato.",
-    "satz_teil": "Grigio significa non questa volta. L'ATC ha dato istruzioni diverse? Tocca la voce.",
-    "satz_teil_druck": "Grigio significa non questa volta, “su istruzione ATC” significa volato diversamente su istruzione.",
+    "satz_teil": "Grigio significa: non visto. Sotto trovi cosa ha misurato AeroACARS. L'ATC ha dato istruzioni diverse? Tocca la voce.",
+    "satz_teil_druck": "Grigio significa: non visto, sotto c'è cosa ha misurato AeroACARS. “su istruzione ATC” significa volato diversamente su istruzione.",
     "zusaetzlich": "extra",
     "rollen_gefahren": "rullaggio più veloce {{kt}} kt · limite {{grenze}} kt",
     "rollen_ueber": "rullaggio più veloce {{kt}} kt · {{s}} s oltre il limite di {{grenze}} kt",
     "rollen_wert": "{{kt}} kt",
+    "gesehen": {
+      "beacon_anlassen": "Beacon spento quando il primo motore era acceso",
+      "nav_lichter": "Luci di navigazione spente all'inizio del rullaggio",
+      "parkbremse_geloest": "Freno di parcheggio ancora inserito all'inizio del rullaggio",
+      "strobes_start": "Strobe spente durante la corsa di decollo",
+      "landelicht_start": "Luci di atterraggio spente durante la corsa di decollo",
+      "transponder_start": "Il transponder non trasmetteva la quota al decollo",
+      "tcas_start": "TA/RA non selezionato al decollo",
+      "klappen_start": "Flap di decollo non impostati durante la corsa",
+      "anschnall_start": "Segnale cinture spento durante la corsa di decollo",
+      "apu_reiseflug": "APU accesa in crociera",
+      "landelicht_anflug": "Luci di atterraggio spente in avvicinamento",
+      "autobrake_landung": "Autobrake non impostato prima dell'atterraggio",
+      "spoiler_landung": "Spoiler non armati prima del contatto",
+      "anschnall_landung": "Segnale cinture spento in finale"
+    },
+    "gesehen_mit": {
+      "transponder_start": "Transponder su {{stellung}} al decollo",
+      "tcas_start": "Transponder su {{stellung}}, non su TA/RA",
+      "klappen_start": "Flap su {{stellung}} durante la corsa di decollo",
+      "autobrake_landung": "Autobrake su {{stellung}}"
+    },
     "dieses_flugzeug": "Questo aereo",
     "profil_leer": "Per questo volo non c'è ancora un profilo di quota.",
     "profil_tippen": "Tocca una voce per vedere il momento.",
@@ -3148,7 +3170,7 @@
     "status": {
       "offen": "aperto",
       "erledigt": "completato",
-      "diesmal_ohne": "non questa volta",
+      "diesmal_ohne": "non visto",
       "nach_atc": "su istruzione ATC",
       "nicht_messbar": "non misurabile",
       "nicht_anwendbar": "non avvenuto"
@@ -3201,7 +3223,7 @@
     "zelle": {
       "ok": "completato",
       "atc": "su istruzione ATC",
-      "ohne": "non questa volta",
+      "ohne": "non visto",
       "nm": "l'aereo non lo comunica",
       "leer": "non avvenuto"
     },

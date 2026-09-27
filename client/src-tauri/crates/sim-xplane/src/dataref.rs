@@ -148,8 +148,9 @@ pub enum FieldId {
     TolissAthrMode,
     // v1.8.x (Bordbuch-Audit 26.09.2026) — Cockpit-Schalter, die der
     // Standard-Katalog nicht oder falsch liefert. Alle anwesenheits-
-    // gesteuert: X-Plane streamt einen fehlenden Dataref nie, das Feld
-    // bleibt dann `None` und der Standardwert gilt weiter.
+    // gesteuert ueber `addon_quelle`: der Adapter laesst einen Wert nur
+    // durch, wenn die Web-API den Dataref als lesbar bestaetigt — RREF
+    // selbst streamt auch fehlende Datarefs (als 0, gemessen 27.09.2026).
     /// `sim/cockpit/electrical/beacon_lights_on` — der aeltere Beacon-
     /// Dataref, den der Zibo 737 bedient (seine Checkliste `clist.txt`
     /// prueft genau diesen), waehrend `cockpit2/switches/beacon_on` dort
@@ -204,6 +205,17 @@ pub enum FieldId {
     /// forums.x-plane.org Topic 325891, Befehle `ACOL_up`/`ACOL_dn`).
     /// Welche Seite RED ist, steht dort nicht — deshalb nur „an/aus".
     Q4xpKollisionslicht,
+    /// `laminar/A333/transponder/auto_on_knob_pos` — Laminar-A330, am
+    /// 27.09.2026 im Simulator gemessen: -1 = STBY, 0 = AUTO, 1 = ON. Der
+    /// Standard-`transponder_mode` zeigt dabei am Boden STBY 1 / AUTO 5
+    /// (GND) / ON 6 — TA/RA nie.
+    A333XpdrAutoOn,
+    /// `laminar/A333/transponder/ta_ra_knob_pos` — gemessen: 0 = STBY,
+    /// 1 = TA, 2 = TA/RA.
+    A333TaRaKnob,
+    /// `laminar/A333/transponder/alt_rpt_knob_pos` — 1 = Höhenübermittlung
+    /// an (Grundstellung), 0 = aus.
+    A333AltRptKnob,
     /// `sim/time/zulu_time_sec` — Sim-Uhrzeit UTC in Sekunden seit
     /// Mitternacht (DataRefs.txt). Bordbuch: Tag/Nacht aus dem Sonnenstand.
     ZuluTimeSec,
@@ -638,16 +650,11 @@ pub const CATALOG: &[DatarefEntry] = &[
     // ToLiss leg (~30 flights, A20N/A21N/A320/A321), so the activity
     // log never showed "Autopilot ENGAGED/OFF" for those pilots.
     //
-    // Absent-dataref behaviour — same as the laminar/B738 entries
-    // above: X-Plane never streams an RREF index whose dataref doesn't
-    // exist (the aircraft-profile PROBE mechanism in adapter.rs relies
-    // on exactly that — `has_value` stays false forever for rejected
-    // datarefs), so on non-ToLiss aircraft `apply_field` is never
-    // called for these FieldIds, the state fields stay at their
-    // defaults and the snapshot is bit-identical to pre-v0.16.7.
-    // X-Plane notes one "invalid dataref" line in its own Log.txt per
-    // subscribe attempt — the same bounded trade-off the B738 entries
-    // already make.
+    // Absent-dataref behaviour: ⚠ korrigiert 27.09.2026. Frueher stand
+    // hier, X-Plane streame fehlende Datarefs nie. Gemessen stimmt das
+    // nicht — RREF liefert fuer jeden Namen 0. Diese Felder sind deshalb
+    // `addon_quelle`: der Adapter uebernimmt sie nur, wenn die Web-API den
+    // Dataref als lesbar bestaetigt.
     DatarefEntry {
         name: "AirbusFBW/AP1Engage",
         field: FieldId::TolissAp1,
@@ -661,8 +668,8 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::TolissAthrMode,
     },
     // ---- Bordbuch-Audit 26.09.2026 — Cockpit-Schalter je Add-on ----
-    // Gleiche Abwesenheits-Regel wie oben: nicht existierende Datarefs
-    // werden nie gestreamt, die `Option`-Felder bleiben `None`.
+    // Alle `addon_quelle`: gelten nur mit Bestaetigung der Web-API, sonst
+    // bleiben die `Option`-Felder `None` (RREF liefert auch Fehlendes als 0).
     DatarefEntry {
         name: "sim/cockpit/electrical/beacon_lights_on",
         field: FieldId::LightBeaconLegacy,
@@ -726,6 +733,18 @@ pub const CATALOG: &[DatarefEntry] = &[
     DatarefEntry {
         name: "FJS/Q4XP/Manips/TwoSwitch_Ctl[23]",
         field: FieldId::Q4xpKollisionslicht,
+    },
+    DatarefEntry {
+        name: "laminar/A333/transponder/auto_on_knob_pos",
+        field: FieldId::A333XpdrAutoOn,
+    },
+    DatarefEntry {
+        name: "laminar/A333/transponder/ta_ra_knob_pos",
+        field: FieldId::A333TaRaKnob,
+    },
+    DatarefEntry {
+        name: "laminar/A333/transponder/alt_rpt_knob_pos",
+        field: FieldId::A333AltRptKnob,
     },
     DatarefEntry {
         name: "sim/time/zulu_time_sec",
@@ -926,13 +945,13 @@ pub struct XPlaneState {
     pub toliss_ap2: bool,
     /// Raw `AirbusFBW/ATHRmode` value (0 = off, >0 = armed/active).
     pub toliss_athr_mode: f32,
-    /// True once `ATHRmode` has been delivered at least once. X-Plane
-    /// never streams non-existent datarefs, so any delivery (even 0)
-    /// proves a ToLiss-family aircraft is loaded — this is the
-    /// presence gate that keeps `autothrottle_on` at `None` (the
-    /// pre-v0.16.7 behaviour) on every other aircraft.
+    /// True once `ATHRmode` has been delivered at least once. Seit
+    /// 27.09.2026 laesst der Adapter den Wert nur durch, wenn die Web-API
+    /// den Dataref als lesbar bestaetigt (RREF streamt auch fehlende
+    /// Datarefs als 0 — siehe `addon_quelle`).
     pub toliss_athr_seen: bool,
-    // Bordbuch-Audit 26.09.2026 — `None`, bis der Dataref einmal kam.
+    // Bordbuch-Audit 26.09.2026 — `None`, solange die Quelle nicht
+    // bestaetigt ist (`addon_quelle`).
     pub light_beacon_legacy: Option<bool>,
     pub b738_xpdr_knob: Option<f32>,
     pub b738_seatbelt_sign: Option<f32>,
@@ -949,6 +968,9 @@ pub struct XPlaneState {
     pub toliss_strobe_switch: Option<f32>,
     pub felis_beacon: Option<bool>,
     pub q4xp_kollisionslicht: Option<bool>,
+    pub a333_xpdr_auto_on: Option<f32>,
+    pub a333_ta_ra_knob: Option<f32>,
+    pub a333_alt_rpt_knob: Option<f32>,
     pub zulu_time_sec: Option<f32>,
     pub local_date_days: Option<f32>,
     /// True once we've received at least one RREF packet — drives
@@ -1064,7 +1086,99 @@ fn toliss_autobrake_label(
     })
 }
 
+/// Add-on-Quelle: ein Dataref, den nur bestimmte Flugzeuge haben.
+///
+/// Befund 27.09.2026 (X-Plane-12-Demo, gemessen): RREF liefert fuer JEDEN
+/// abonnierten Namen Werte — auch fuer erfundene (`aeroacars/gibt/es/nicht`
+/// → 0). Die fruehere Annahme „fehlende Datarefs werden nie gestreamt"
+/// stimmte nicht; jedes Add-on-Feld stand dadurch bei jedem Flugzeug auf
+/// `Some(0)` (Transponder „TEST", Strobe-Schalter OFF, Klappen 0 …). Ob so
+/// eine Quelle gilt, entscheidet deshalb der Adapter ueber die Web-API
+/// (`WebApiClient::dataref_lesbar`); ohne Bestaetigung wird der Wert nicht
+/// uebernommen.
+pub fn addon_quelle(field: FieldId) -> bool {
+    matches!(
+        field,
+        FieldId::TolissAp1
+            | FieldId::TolissAp2
+            | FieldId::TolissAthrMode
+            | FieldId::LightBeaconLegacy
+            | FieldId::B738XpdrKnob
+            | FieldId::B738SeatbeltSign
+            | FieldId::B738SpeedbrakeArmed
+            | FieldId::B738AutobrakePos
+            | FieldId::B738FlapLever
+            | FieldId::TolissBeacon
+            | FieldId::TolissSeatBeltSigns
+            | FieldId::TolissAutoBrkLo
+            | FieldId::TolissAutoBrkMed
+            | FieldId::TolissAutoBrkMax
+            | FieldId::A333StrobePos
+            | FieldId::A333SeatbeltSwitch
+            | FieldId::TolissStrobeSwitch
+            | FieldId::FelisBeacon
+            | FieldId::Q4xpKollisionslicht
+            | FieldId::A333XpdrAutoOn
+            | FieldId::A333TaRaKnob
+            | FieldId::A333AltRptKnob
+    )
+}
+
+/// Laminar-A330-Transponder aus den eigenen Knoepfen (Werte am 27.09.2026
+/// im Simulator gemessen). `None`, solange der AUTO/ON-Knopf fehlt.
+fn a333_xpdr_label(
+    auto_on: Option<f32>,
+    ta_ra: Option<f32>,
+    alt_rpt: Option<f32>,
+) -> Option<&'static str> {
+    let auto_on = auto_on?.round();
+    if auto_on < -0.5 {
+        return Some("STBY");
+    }
+    if alt_rpt.is_some_and(|v| v.round() < 0.5) {
+        return Some("ON"); // sendet ohne Hoehe
+    }
+    Some(match ta_ra.map(|v| v.round() as i32) {
+        Some(2) => "TA-RA",
+        Some(1) => "TA",
+        _ => "ALT",
+    })
+}
+
 impl XPlaneState {
+    /// Eine Add-on-Quelle vergessen (Flugzeugwechsel oder nicht bestaetigt):
+    /// das Feld faellt auf „nicht vorhanden" zurueck, der Standardwert gilt.
+    pub fn addon_leeren(&mut self, field: FieldId) {
+        match field {
+            FieldId::TolissAp1 => self.toliss_ap1 = false,
+            FieldId::TolissAp2 => self.toliss_ap2 = false,
+            FieldId::TolissAthrMode => {
+                self.toliss_athr_mode = 0.0;
+                self.toliss_athr_seen = false;
+            }
+            FieldId::LightBeaconLegacy => self.light_beacon_legacy = None,
+            FieldId::B738XpdrKnob => self.b738_xpdr_knob = None,
+            FieldId::B738SeatbeltSign => self.b738_seatbelt_sign = None,
+            FieldId::B738SpeedbrakeArmed => self.b738_speedbrake_armed = None,
+            FieldId::B738AutobrakePos => self.b738_autobrake_pos = None,
+            FieldId::B738FlapLever => self.b738_flap_lever = None,
+            FieldId::TolissBeacon => self.toliss_beacon = None,
+            FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = None,
+            FieldId::TolissAutoBrkLo => self.toliss_autobrk_lo = None,
+            FieldId::TolissAutoBrkMed => self.toliss_autobrk_med = None,
+            FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = None,
+            FieldId::A333StrobePos => self.a333_strobe_pos = None,
+            FieldId::A333SeatbeltSwitch => self.a333_seatbelt_switch = None,
+            FieldId::TolissStrobeSwitch => self.toliss_strobe_switch = None,
+            FieldId::FelisBeacon => self.felis_beacon = None,
+            FieldId::Q4xpKollisionslicht => self.q4xp_kollisionslicht = None,
+            FieldId::A333XpdrAutoOn => self.a333_xpdr_auto_on = None,
+            FieldId::A333TaRaKnob => self.a333_ta_ra_knob = None,
+            FieldId::A333AltRptKnob => self.a333_alt_rpt_knob = None,
+            _ => {}
+        }
+    }
+
     /// Apply one decoded value to its `FieldId`.
     ///
     /// v0.12.2: the caller (the UDP listener) resolves the RREF index →
@@ -1169,6 +1283,9 @@ impl XPlaneState {
             FieldId::TolissStrobeSwitch => self.toliss_strobe_switch = Some(value),
             FieldId::FelisBeacon => self.felis_beacon = Some(value > 0.5),
             FieldId::Q4xpKollisionslicht => self.q4xp_kollisionslicht = Some(value.abs() > 0.5),
+            FieldId::A333XpdrAutoOn => self.a333_xpdr_auto_on = Some(value),
+            FieldId::A333TaRaKnob => self.a333_ta_ra_knob = Some(value),
+            FieldId::A333AltRptKnob => self.a333_alt_rpt_knob = Some(value),
             FieldId::ZuluTimeSec => self.zulu_time_sec = Some(value),
             FieldId::LocalDateDays => self.local_date_days = Some(value),
         }
@@ -1437,9 +1554,19 @@ impl XPlaneState {
             xpdr_mode_label: {
                 // Laminar-/Zibo-737: der Drehschalter, weil der Standard-
                 // Dataref dort fuer jede Flugstellung nur 2 traegt.
-                let label = match self.b738_xpdr_knob {
-                    Some(pos) => b738_xpdr_knob_label(pos.round().max(0.0) as u8),
-                    None => xplane_xpdr_mode_label(self.transponder_mode as u8),
+                // Laminar-A330: eigene Knoepfe (der Standard zeigt am
+                // Boden nie TA/RA).
+                let label = match (
+                    self.b738_xpdr_knob,
+                    a333_xpdr_label(
+                        self.a333_xpdr_auto_on,
+                        self.a333_ta_ra_knob,
+                        self.a333_alt_rpt_knob,
+                    ),
+                ) {
+                    (Some(pos), _) => b738_xpdr_knob_label(pos.round().max(0.0) as u8),
+                    (None, Some(a333)) => a333,
+                    (None, None) => xplane_xpdr_mode_label(self.transponder_mode as u8),
                 };
                 if label.is_empty() {
                     None
@@ -2219,6 +2346,80 @@ mod cockpit_schalter_tests {
                 Some(an),
                 "Stellung {roh}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod a333_und_quellen_tests {
+    use super::*;
+
+    /// Werte am 27.09.2026 im Laminar-A330 gemessen.
+    #[test]
+    fn a333_transponder_aus_den_knoepfen() {
+        assert_eq!(
+            a333_xpdr_label(Some(-1.0), Some(2.0), Some(1.0)),
+            Some("STBY")
+        );
+        assert_eq!(
+            a333_xpdr_label(Some(0.0), Some(2.0), Some(1.0)),
+            Some("TA-RA")
+        );
+        assert_eq!(a333_xpdr_label(Some(1.0), Some(1.0), Some(1.0)), Some("TA"));
+        assert_eq!(
+            a333_xpdr_label(Some(0.0), Some(0.0), Some(1.0)),
+            Some("ALT")
+        );
+        assert_eq!(a333_xpdr_label(Some(0.0), Some(2.0), Some(0.0)), Some("ON"));
+        assert_eq!(a333_xpdr_label(None, Some(2.0), Some(1.0)), None);
+    }
+
+    /// Im Snapshot: A330 in AUTO mit TA/RA meldet „TA-RA", obwohl der
+    /// Standard am Boden 5 (GND) zeigt.
+    #[test]
+    fn a333_snapshot_meldet_ta_ra() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::TransponderMode, 5.0);
+        s.apply_field(FieldId::A333XpdrAutoOn, 0.0);
+        s.apply_field(FieldId::A333TaRaKnob, 2.0);
+        s.apply_field(FieldId::A333AltRptKnob, 1.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12)
+                .xpdr_mode_label
+                .as_deref(),
+            Some("TA-RA")
+        );
+        // Quelle weggefallen (Flugzeugwechsel) → Standardwert.
+        s.addon_leeren(FieldId::A333XpdrAutoOn);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12)
+                .xpdr_mode_label
+                .as_deref(),
+            Some("GND")
+        );
+    }
+
+    /// Jede Add-on-Quelle laesst sich leeren: nach `addon_leeren` muss der
+    /// Snapshot aussehen, als sei der Wert nie gekommen. Sonst bliebe nach
+    /// einem Flugzeugwechsel ein Wert des alten Flugzeugs stehen.
+    #[test]
+    fn jede_addon_quelle_laesst_sich_leeren() {
+        let leer = XPlaneState::default().to_snapshot(Simulator::XPlane12);
+        for e in CATALOG.iter().filter(|e| addon_quelle(e.field)) {
+            let mut s = XPlaneState::default();
+            s.apply_field(e.field, 1.0);
+            s.addon_leeren(e.field);
+            s.got_first_packet = false;
+            let snap = s.to_snapshot(Simulator::XPlane12);
+            assert_eq!(snap.xpdr_mode_label, leer.xpdr_mode_label, "{}", e.name);
+            assert_eq!(snap.strobe_state, leer.strobe_state, "{}", e.name);
+            assert_eq!(snap.seatbelts_sign, leer.seatbelts_sign, "{}", e.name);
+            assert_eq!(snap.autobrake, leer.autobrake, "{}", e.name);
+            assert_eq!(snap.flaps_position, leer.flaps_position, "{}", e.name);
+            assert_eq!(snap.light_beacon, leer.light_beacon, "{}", e.name);
+            assert_eq!(snap.autothrottle_on, leer.autothrottle_on, "{}", e.name);
+            assert_eq!(snap.autopilot_master, leer.autopilot_master, "{}", e.name);
+            assert_eq!(snap.spoilers_armed, leer.spoilers_armed, "{}", e.name);
         }
     }
 }

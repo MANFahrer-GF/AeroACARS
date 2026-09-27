@@ -3049,12 +3049,34 @@
     "bilanz": "{{ok}} von {{von}} Punkten erledigt",
     "bilanz_kurz": "{{ok}} von {{von}}",
     "satz_alles": "Sauberer Flug, alles abgehakt.",
-    "satz_teil": "Grau heißt diesmal ohne. Hat ATC etwas anderes angewiesen? Tippe den Punkt an.",
-    "satz_teil_druck": "Grau heißt diesmal ohne, „nach ATC-Anweisung“ heißt auf Anweisung anders geflogen.",
+    "satz_teil": "Grau heißt: nicht gesehen. Darunter steht, was AeroACARS gemessen hat. Hat ATC etwas anderes angewiesen? Tippe den Punkt an.",
+    "satz_teil_druck": "Grau heißt: nicht gesehen, darunter steht, was AeroACARS gemessen hat. „nach ATC-Anweisung“ heißt auf Anweisung anders geflogen.",
     "zusaetzlich": "zusätzlich",
     "rollen_gefahren": "schnellstes Rollen {{kt}} kt · Grenze {{grenze}} kt",
     "rollen_ueber": "schnellstes Rollen {{kt}} kt · {{s}} s über der Grenze {{grenze}} kt",
     "rollen_wert": "{{kt}} kt",
+    "gesehen": {
+      "beacon_anlassen": "Beacon war aus, als das erste Triebwerk lief",
+      "nav_lichter": "Navigationslichter waren beim Losrollen aus",
+      "parkbremse_geloest": "Parkbremse war beim Losrollen noch gesetzt",
+      "strobes_start": "Strobes waren beim Startlauf aus",
+      "landelicht_start": "Landelicht war beim Startlauf aus",
+      "transponder_start": "Transponder sendete beim Start ohne Höhe",
+      "tcas_start": "TA/RA war beim Start nicht gewählt",
+      "klappen_start": "Startklappen waren beim Startlauf nicht gesetzt",
+      "anschnall_start": "Anschnallzeichen war beim Startlauf aus",
+      "apu_reiseflug": "APU lief im Reiseflug",
+      "landelicht_anflug": "Landelicht war im Anflug aus",
+      "autobrake_landung": "Autobrake war vor der Landung nicht gesetzt",
+      "spoiler_landung": "Spoiler waren vor dem Aufsetzen nicht scharf",
+      "anschnall_landung": "Anschnallzeichen war im Endanflug aus"
+    },
+    "gesehen_mit": {
+      "transponder_start": "Transponder stand beim Start auf {{stellung}}",
+      "tcas_start": "Transponder stand auf {{stellung}}, nicht auf TA/RA",
+      "klappen_start": "Klappen standen beim Startlauf auf {{stellung}}",
+      "autobrake_landung": "Autobrake stand auf {{stellung}}"
+    },
     "dieses_flugzeug": "Dieses Flugzeug",
     "profil_leer": "Für diesen Flug gibt es noch kein Höhenprofil.",
     "profil_tippen": "Tippe einen Punkt an, um den Moment zu sehen.",
@@ -3148,7 +3170,7 @@
     "status": {
       "offen": "offen",
       "erledigt": "erledigt",
-      "diesmal_ohne": "diesmal ohne",
+      "diesmal_ohne": "nicht gesehen",
       "nach_atc": "nach ATC-Anweisung",
       "nicht_messbar": "nicht messbar",
       "nicht_anwendbar": "kam nicht vor"
@@ -3201,7 +3223,7 @@
     "zelle": {
       "ok": "erledigt",
       "atc": "nach ATC-Anweisung",
-      "ohne": "diesmal ohne",
+      "ohne": "nicht gesehen",
       "nm": "Flugzeug meldet das nicht",
       "leer": "kam nicht vor"
     },

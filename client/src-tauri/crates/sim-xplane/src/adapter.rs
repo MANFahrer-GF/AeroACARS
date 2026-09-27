@@ -16,7 +16,8 @@
 //! `std::thread` works from any context.
 
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -33,7 +34,7 @@ const STALE_TIMEOUT: Duration = Duration::from_secs(5);
 
 use sim_core::{SimKind, SimSnapshot, Simulator};
 
-use crate::dataref::{XPlaneState, CATALOG};
+use crate::dataref::{addon_quelle, XPlaneState, CATALOG};
 use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown};
 use crate::profile::{build_active_catalog, profile_index_for_title, ActiveEntry, PROFILES};
 use crate::rref::{decode_response, encode_request};
@@ -101,6 +102,15 @@ struct AdapterShared {
     /// Zusatzwerte des Telemetrie-Monitors (v1.8), eigene RREF-Abos ab
     /// `ZUSATZ_INDEX_BASE`. Leer, solange der Monitor zu ist.
     zusatz: Mutex<ZusatzAbos>,
+    /// Add-on-Datarefs und Profil-Proben, die das geladene Flugzeug laut
+    /// Web-API wirklich hat (Name ohne „[n]"). `None`, solange die Web-API
+    /// nichts bestaetigt hat (X-Plane 11, Web-API aus, erste Sekunden) —
+    /// dann gelten nur die Standardwerte. Grund: RREF liefert fuer JEDEN
+    /// Namen Werte, auch fuer fehlende (gemessen 27.09.2026).
+    addon_vorhanden: Mutex<Option<HashSet<String>>>,
+    /// Zaehlt jede Aenderung von `addon_vorhanden`; der Listener leert
+    /// daraufhin Felder, deren Quelle weggefallen ist.
+    addon_generation: AtomicU64,
     /// Tells the worker thread to stop. Polled in the recv loop.
     stop: AtomicBool,
 }
@@ -141,6 +151,8 @@ impl XPlaneAdapter {
             active_catalog: Mutex::new(build_active_catalog(None)),
             aircraft: Mutex::new(AircraftInfo::default()),
             zusatz: Mutex::new(ZusatzAbos::default()),
+            addon_vorhanden: Mutex::new(None),
+            addon_generation: AtomicU64::new(0),
             stop: AtomicBool::new(false),
         });
         Self {
@@ -170,6 +182,8 @@ impl XPlaneAdapter {
         *self.shared.last_error.lock() = None;
         *self.shared.parsed.lock() = XPlaneState::default();
         *self.shared.aircraft.lock() = AircraftInfo::default();
+        *self.shared.addon_vorhanden.lock() = None;
+        self.shared.addon_generation.fetch_add(1, Ordering::SeqCst);
         // v0.12.2: a fresh run starts on the base catalog — profile
         // detection re-runs from scratch against the new sim session.
         *self.shared.active_catalog.lock() = build_active_catalog(None);
@@ -414,6 +428,64 @@ mod icmp_rueckmeldung_tests {
     }
 }
 
+/// Grundname eines Datarefs ohne Array-Index („…[7]" → „…").
+fn grundname(name: &str) -> &str {
+    name.split('[').next().unwrap_or(name)
+}
+
+/// Alle Datarefs, deren Vorhandensein die Web-API bestaetigen muss:
+/// Add-on-Quellen des Katalogs und die Profil-Proben.
+fn zu_pruefende_datarefs() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = CATALOG
+        .iter()
+        .filter(|e| addon_quelle(e.field))
+        .map(|e| grundname(e.name))
+        .chain(PROFILES.iter().map(|p| grundname(p.probe_dataref)))
+        .collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// Neuer Stand der bestaetigten Quellen aus einer Pruefrunde.
+/// `Ok(true)` nimmt auf, `Ok(false)` streicht, ein Fehler (Zeitueberschreitung,
+/// Simulator beschaeftigt) laesst den bisherigen Stand dieses Namens stehen —
+/// eine Quelle faellt nur weg, wenn X-Plane klar absagt. Beim Flugzeugwechsel
+/// (`neues_flugzeug`) wird nichts vom alten Flugzeug uebernommen.
+fn vorhanden_neu(
+    alt: Option<&HashSet<String>>,
+    neues_flugzeug: bool,
+    ergebnisse: &[(&str, Option<bool>)],
+) -> HashSet<String> {
+    let mut neu: HashSet<String> = if neues_flugzeug {
+        HashSet::new()
+    } else {
+        alt.cloned().unwrap_or_default()
+    };
+    for (name, lesbar) in ergebnisse {
+        match lesbar {
+            Some(true) => {
+                neu.insert((*name).to_string());
+            }
+            Some(false) => {
+                neu.remove(*name);
+            }
+            None => {}
+        }
+    }
+    neu
+}
+
+/// Gilt dieser Katalogeintrag? Standardwerte immer; Add-on-Quellen nur,
+/// wenn die Web-API sie bestaetigt hat.
+fn eintrag_gilt(
+    field: crate::dataref::FieldId,
+    name: &str,
+    vorhanden: Option<&HashSet<String>>,
+) -> bool {
+    !addon_quelle(field) || vorhanden.is_some_and(|v| v.contains(grundname(name)))
+}
+
 /// The blocking listener thread. Binds a UDP socket on an ephemeral
 /// local port, subscribes the active catalog (+ aircraft-profile
 /// probes) to 127.0.0.1:49000, then loops decoding responses until
@@ -463,6 +535,10 @@ fn run_listener(shared: Arc<AdapterShared>) {
     // when there is no Web API title (XP11 / Web API off), the case the
     // old `last_title`-diff logic missed.
     let mut probe_last_seen: Vec<Option<Instant>> = vec![None; PROFILES.len()];
+    // Stand der bestaetigten Add-on-Quellen, den dieser Thread zuletzt
+    // uebernommen hat (siehe `AdapterShared::addon_vorhanden`).
+    let mut addon_gen_gesehen: u64 = u64::MAX;
+    let mut vorhanden: Option<HashSet<String>> = None;
 
     // ---- Hard-armoured re-subscribe (v0.3.0) ----
     // Send the full RREF subscription set for the given catalog. Called
@@ -579,8 +655,11 @@ fn run_listener(shared: Arc<AdapterShared>) {
                     // FieldId, with the profile's ValueMapping applied.
                     if let Some(entry) = active.get(p.index as usize) {
                         katalog_paket = true;
-                        if let Some(mapped) = entry.mapping.map(p.value) {
-                            parsed.apply_field(entry.field, mapped);
+                        let gilt = eintrag_gilt(entry.field, entry.name, vorhanden.as_ref());
+                        if gilt {
+                            if let Some(mapped) = entry.mapping.map(p.value) {
+                                parsed.apply_field(entry.field, mapped);
+                            }
                         }
                         // seen/last reflect the RAW value X-Plane sent.
                         if let Some(slot) = seen.get_mut(p.index as usize) {
@@ -648,12 +727,50 @@ fn run_listener(shared: Arc<AdapterShared>) {
         // stale — `desired` is None and the adapter falls back to the
         // base catalog. This is the runtime aircraft-swap path (LE6) and
         // (QS-R4/P1) now works even with no Web API title.
+        // Neuer Stand der bestaetigten Add-on-Quellen: uebernehmen und
+        // Felder leeren, deren Quelle nicht (mehr) bestaetigt ist.
+        let gen = shared.addon_generation.load(Ordering::SeqCst);
+        if gen != addon_gen_gesehen {
+            addon_gen_gesehen = gen;
+            vorhanden = shared.addon_vorhanden.lock().clone();
+            let mut parsed = shared.parsed.lock();
+            for e in CATALOG.iter() {
+                if addon_quelle(e.field) && !eintrag_gilt(e.field, e.name, vorhanden.as_ref()) {
+                    parsed.addon_leeren(e.field);
+                }
+            }
+            tracing::info!(
+                bestaetigt = ?vorhanden.as_ref().map(|v| {
+                    let mut l: Vec<&String> = v.iter().collect();
+                    l.sort();
+                    l
+                }),
+                "X-Plane: Add-on-Quellen laut Web-API"
+            );
+        }
+
         let current_title = shared.aircraft.lock().descrip.clone();
+        // Eine Probe zaehlt nur, wenn die Web-API ihren Dataref bestaetigt:
+        // RREF antwortet auch fuer fehlende Datarefs (mit 0) — bis
+        // 27.09.2026 galt dadurch JEDES X-Plane-Flugzeug als Challenger 650.
+        let probe_bestaetigt: Vec<bool> = PROFILES
+            .iter()
+            .map(|p| {
+                vorhanden
+                    .as_ref()
+                    .is_some_and(|v| v.contains(grundname(p.probe_dataref)))
+            })
+            .collect();
         let probe_fresh: Vec<bool> = probe_last_seen
             .iter()
-            .map(|t| t.is_some_and(|seen| seen.elapsed() < PROBE_STALE_AFTER))
+            .zip(&probe_bestaetigt)
+            .map(|(t, &ok)| ok && t.is_some_and(|seen| seen.elapsed() < PROBE_STALE_AFTER))
             .collect();
-        let probe_seen: Vec<bool> = probe_last_seen.iter().map(|t| t.is_some()).collect();
+        let probe_seen: Vec<bool> = probe_last_seen
+            .iter()
+            .zip(&probe_bestaetigt)
+            .map(|(t, &ok)| ok && t.is_some())
+            .collect();
         let desired = desired_profile(current_title.as_deref(), &probe_fresh, &probe_seen);
 
         if desired != active_profile {
@@ -769,6 +886,8 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
     let client = WebApiClient::new();
     let mut consecutive_failures: u32 = 0;
     let mut last_logged_path: Option<String> = None;
+    // Flugzeug, fuer das `addon_vorhanden` zuletzt geprueft wurde.
+    let mut geprueft_fuer: Option<String> = None;
     tracing::info!("X-Plane Web API poller started");
     while !shared.stop.load(Ordering::SeqCst) {
         // Dataref-IDs JEDEN Poll frisch auflösen. X-Plane baut beim
@@ -789,6 +908,23 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
                     );
                 }
                 consecutive_failures = 0;
+                // Welche Add-on-Quellen hat das geladene Flugzeug wirklich?
+                // Jede Runde neu (ein Add-on-Plugin laedt oft erst nach dem
+                // Flugzeug); beim Wechsel ohne Altlasten.
+                let neues_flugzeug = info.relative_path != geprueft_fuer;
+                let ergebnisse: Vec<(&str, Option<bool>)> = zu_pruefende_datarefs()
+                    .into_iter()
+                    .map(|n| (n, client.dataref_lesbar(n).ok()))
+                    .collect();
+                {
+                    let mut v = shared.addon_vorhanden.lock();
+                    let neu = vorhanden_neu(v.as_ref(), neues_flugzeug, &ergebnisse);
+                    if v.as_ref() != Some(&neu) {
+                        *v = Some(neu);
+                        shared.addon_generation.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+                geprueft_fuer = info.relative_path.clone();
                 if info.has_any() {
                     // Log on first detection AND on aircraft change
                     // (e.g. pilot loaded a different plane). Identity
@@ -843,6 +979,92 @@ fn run_web_api_poller(shared: Arc<AdapterShared>) {
         }
     }
     tracing::info!("X-Plane Web API poller stopped");
+}
+
+#[cfg(test)]
+mod quellen_tests {
+    use super::{eintrag_gilt, vorhanden_neu, zu_pruefende_datarefs};
+    use crate::dataref::FieldId;
+    use std::collections::HashSet;
+
+    fn menge(n: &[&str]) -> HashSet<String> {
+        n.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Befund 27.09.2026: RREF liefert auch fehlende Datarefs (als 0).
+    /// Ohne Bestaetigung der Web-API darf keine Add-on-Quelle gelten —
+    /// Standardwerte immer.
+    #[test]
+    fn ohne_bestaetigung_nur_standardwerte() {
+        assert!(!eintrag_gilt(
+            FieldId::B738XpdrKnob,
+            "laminar/B738/knob/transponder_pos",
+            None
+        ));
+        assert!(!eintrag_gilt(
+            FieldId::TolissStrobeSwitch,
+            "AirbusFBW/OHPLightSwitches[7]",
+            None
+        ));
+        assert!(eintrag_gilt(
+            FieldId::LightStrobe,
+            "sim/cockpit2/switches/strobe_lights_on",
+            None
+        ));
+        let v = menge(&[
+            "AirbusFBW/OHPLightSwitches",
+            "laminar/a333/switches/strobe_pos",
+        ]);
+        assert!(eintrag_gilt(
+            FieldId::TolissStrobeSwitch,
+            "AirbusFBW/OHPLightSwitches[7]",
+            Some(&v)
+        ));
+        assert!(eintrag_gilt(
+            FieldId::A333StrobePos,
+            "laminar/a333/switches/strobe_pos",
+            Some(&v)
+        ));
+        assert!(!eintrag_gilt(
+            FieldId::B738XpdrKnob,
+            "laminar/B738/knob/transponder_pos",
+            Some(&v)
+        ));
+    }
+
+    /// Nur eine klare Absage streicht eine Quelle; ein Zeitfehler laesst
+    /// den alten Stand stehen. Beim Flugzeugwechsel beginnt alles leer.
+    #[test]
+    fn stand_folgt_nur_klaren_antworten() {
+        let alt = menge(&["a", "b"]);
+        let neu = vorhanden_neu(
+            Some(&alt),
+            false,
+            &[("a", None), ("b", Some(false)), ("c", Some(true))],
+        );
+        assert_eq!(neu, menge(&["a", "c"]));
+        let wechsel = vorhanden_neu(Some(&alt), true, &[("a", None), ("c", Some(true))]);
+        assert_eq!(wechsel, menge(&["c"]));
+        assert_eq!(vorhanden_neu(None, false, &[("x", None)]), HashSet::new());
+    }
+
+    /// Jede Profil-Probe und jede Add-on-Quelle wird geprueft — sonst gaelte
+    /// sie nie (oder ein Profil wie der CL650 wieder immer).
+    #[test]
+    fn alle_quellen_werden_geprueft() {
+        let liste = zu_pruefende_datarefs();
+        for p in crate::profile::PROFILES {
+            assert!(
+                liste.contains(&p.probe_dataref.split('[').next().unwrap()),
+                "{}",
+                p.name
+            );
+        }
+        assert!(liste.contains(&"AirbusFBW/OHPLightSwitches"));
+        assert!(liste.contains(&"laminar/A333/transponder/ta_ra_knob_pos"));
+        assert!(!liste.iter().any(|n| n.contains('[')));
+        assert!(!liste.contains(&"sim/cockpit2/switches/strobe_lights_on"));
+    }
 }
 
 #[cfg(test)]

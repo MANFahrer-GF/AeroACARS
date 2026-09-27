@@ -172,6 +172,40 @@ impl WebApiClient {
         Ok(body.data.into_string())
     }
 
+    /// Ist dieser Dataref beim geladenen Flugzeug wirklich da?
+    ///
+    /// Befund 27.09.2026 (X-Plane-12-Demo, gemessen): RREF streamt fuer
+    /// jeden Namen Werte, auch fuer erfundene — daran laesst sich nichts
+    /// ablesen. Die Web-API unterscheidet: ein unbekannter Name gibt einen
+    /// Fehler (`invalid_dataref_name`), und ein registrierter Dataref ohne
+    /// laufendes System dahinter (z. B. `laminar/B738/*` bei geladenem
+    /// A330 — die gibt es bei JEDEM Flugzeug) liefert beim Wert-Lesen 404.
+    /// Nur wenn beides klappt, gilt die Quelle.
+    ///
+    /// `Ok(false)` nur bei einer klaren Absage von X-Plane (HTTP 4xx oder
+    /// Name nicht in der Antwort); Zeitueberschreitung und Verbindungs-
+    /// fehler sind `Err` — der Aufrufer behaelt dann seinen alten Stand,
+    /// damit ein beschaeftigter Simulator keine Quelle abschaltet.
+    pub fn dataref_lesbar(&self, name: &str) -> Result<bool, WebApiError> {
+        // Array-Elemente („…[7]") fragt die Web-API ueber den Grundnamen ab.
+        let grund = name.split('[').next().unwrap_or(name);
+        let url = format!("{}/api/v1/datarefs?filter[name]={}", self.base_url, grund);
+        let body: serde_json::Value = match self.agent.get(&url).call() {
+            Ok(r) => r.into_json()?,
+            Err(ureq::Error::Status(code, _)) if absage(code) => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        let Some(id) = id_aus_suche(&body, grund) else {
+            return Ok(false);
+        };
+        let url = format!("{}/api/v1/datarefs/{}/value", self.base_url, id);
+        match self.agent.get(&url).call() {
+            Ok(_) => Ok(true),
+            Err(ureq::Error::Status(code, _)) if absage(code) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// One full pass: read every aircraft DataRef and return what we
     /// got. Best-effort per field — a single field's failure doesn't
     /// poison the whole snapshot.
@@ -221,6 +255,24 @@ impl WebApiClient {
         }
         Ok(info)
     }
+}
+
+/// Die ID eines Namens aus der Suchantwort. `None` bei der Absage
+/// `{"error_code":"invalid_dataref_name",…}` (gemessen 27.09.2026) und
+/// wenn der Name nicht genau so in `data` steht.
+fn id_aus_suche(body: &serde_json::Value, name: &str) -> Option<i64> {
+    body.get("data")?
+        .as_array()?
+        .iter()
+        .find(|d| d.get("name").and_then(|n| n.as_str()) == Some(name))?
+        .get("id")?
+        .as_i64()
+}
+
+/// Klare Absage von X-Plane: 4xx heisst „gibt es nicht / nicht lesbar".
+/// 5xx (Simulator gerade beschaeftigt) ist keine Absage.
+fn absage(code: u16) -> bool {
+    (400..500).contains(&code)
 }
 
 // ---- Wire types ----
@@ -346,6 +398,37 @@ mod tests {
     fn value_data_only_padding() {
         let v: ValueResponse = serde_json::from_str(r#"{"data":[0,0,0]}"#).unwrap();
         assert_eq!(v.data.into_string(), None);
+    }
+
+    /// Antworten wie am 27.09.2026 von X-Plane 12 geliefert.
+    #[test]
+    fn suche_findet_nur_den_genauen_namen() {
+        let da: serde_json::Value = serde_json::from_str(
+            r#"{"data":[{"id":511870357248,"is_writable":true,"name":"sim/cockpit2/switches/strobe_lights_on","value_type":"int"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            super::id_aus_suche(&da, "sim/cockpit2/switches/strobe_lights_on"),
+            Some(511870357248)
+        );
+        assert_eq!(
+            super::id_aus_suche(&da, "sim/cockpit2/switches/strobe"),
+            None
+        );
+        let weg: serde_json::Value = serde_json::from_str(
+            r#"{"error_code":"invalid_dataref_name","error_message":"Dataref name 'aeroacars/gibt/es/nicht' doesn't exist"}"#,
+        )
+        .unwrap();
+        assert_eq!(super::id_aus_suche(&weg, "aeroacars/gibt/es/nicht"), None);
+    }
+
+    #[test]
+    fn nur_4xx_ist_eine_absage() {
+        assert!(super::absage(404));
+        assert!(super::absage(400));
+        assert!(!super::absage(200));
+        assert!(!super::absage(500));
+        assert!(!super::absage(503));
     }
 
     #[test]

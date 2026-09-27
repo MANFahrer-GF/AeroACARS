@@ -149,6 +149,7 @@ export function BordbuchView() {
                 profil={gewaehlt.profil}
                 dep={gewaehlt.flug.dep}
                 arr={gewaehlt.flug.arr}
+                rolltempoGrenzeKt={gewaehlt.rolltempo_grenze_kt}
               />
             )}
             <p className="bb-fuss">{t("bordbuch.fuss_privat")}</p>
@@ -184,7 +185,7 @@ export function BordbuchView() {
               {variante === "checkliste" ? (
                 <BordbuchCheckliste punkte={live.punkte} eingeschaltet={live.eingeschaltet} flugzeug={null} rolltempoGrenzeKt={live.rolltempo_grenze_kt} />
               ) : (
-                <BordbuchProfil punkte={live.punkte} eingeschaltet={live.eingeschaltet} profil={live.profil} />
+                <BordbuchProfil punkte={live.punkte} eingeschaltet={live.eingeschaltet} profil={live.profil} rolltempoGrenzeKt={live.rolltempo_grenze_kt} />
               )}
             </>
           )}

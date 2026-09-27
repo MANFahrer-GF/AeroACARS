@@ -32,6 +32,11 @@ pub const SCHEMA: u8 = 1;
 /// Kulanz nach dem Auslöser: so lange darf der Pilot noch schalten.
 const FRIST_BEACON_S: i64 = 15;
 const FRIST_START_S: i64 = 10;
+/// Transponder und TCAS: bis 90 s nach Beginn des Startlaufs, also bis kurz
+/// nach dem Abheben. Airbus-Transponder in AUTO melden am Boden „GND" und
+/// zeigen TA/RA erst in der Luft; wer TA/RA auf der Bahn gewaehlt hat, soll
+/// dafuer nicht „nicht gesehen" bekommen.
+const FRIST_TRANSPONDER_S: i64 = 90;
 const FRIST_FL100_S: i64 = 60;
 const FRIST_ROLLEN_S: i64 = 20;
 /// Rollen über der Grenze zählt erst, wenn es länger als das dauert
@@ -722,8 +727,13 @@ fn phase_nach_start(p: FlightPhase) -> bool {
 
 /// Transponder mit Höhenübermittlung. „XPNDR" heisst bei PMDG/Airbus/iFly/
 /// Zibo „sendet mit Höhe"; die Standardwerte ohne Höhe heissen „ON".
+///
+/// „GND" (Mode S am Boden) ist die Airbus-Stellung AUTO vor dem Abheben —
+/// der Transponder schaltet selbst auf ALT, sobald das Flugzeug fliegt.
+/// Am 27.09.2026 im Laminar-A330 gemessen (AUTO → Standardwert 5 = GND),
+/// MSFS-A380 (UAE 423) genauso: korrekt geflogen, bisher „diesmal ohne".
 fn xpdr_mit_hoehe(label: &str) -> bool {
-    matches!(label, "ALT" | "XPNDR" | "TA" | "TA-RA")
+    matches!(label, "ALT" | "XPNDR" | "TA" | "TA-RA" | "GND")
 }
 
 fn xpdr_tcas(label: &str) -> bool {
@@ -759,6 +769,13 @@ fn autobrake_gesetzt(label: &str) -> bool {
 }
 
 fn strobe_an(s: &SimSnapshot) -> Option<bool> {
+    // Blitzen die Strobes nachweislich, zählt das — egal, was eine
+    // Schalterquelle sagt. SIA 375 (FF 777, X-Plane, 27.09.2026): Strobes
+    // laut Standardwert den ganzen Startlauf an, eine Add-on-Schalterquelle
+    // lieferte 0, das Bordbuch schrieb „diesmal ohne".
+    if s.light_strobe == Some(true) {
+        return Some(true);
+    }
     match (s.strobe_state, s.light_strobe) {
         (Some(st), _) => Some(st >= 1), // AUTO zählt als erfüllt
         (None, Some(b)) => Some(b),
@@ -1230,7 +1247,12 @@ pub fn tick(z: &mut Zustand, s: &SimSnapshot, phase: FlightPhase, k: &Kontext) {
             (Regel::AnschnallStart, false),
         ] {
             let h = hinweis_erlaubt(r, k, nacht_start) && frage;
-            z.frist(r, bis, jetzt, h);
+            let bis_r = if matches!(r, Regel::TransponderStart | Regel::TcasStart) {
+                jetzt + chrono::Duration::seconds(FRIST_TRANSPONDER_S)
+            } else {
+                bis
+            };
+            z.frist(r, bis_r, jetzt, h);
         }
     }
     pruefen_mit_frist(z, Regel::StrobesStart, s, strobe_an(s), "strobe", None);
@@ -2146,7 +2168,8 @@ mod tests {
             s.timestamp = t0() + chrono::Duration::seconds(5);
             s.xpdr_mode_label = Some(label.into());
             tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
-            takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 30);
+            // Frist Transponder: 90 s ab Startlauf (FRIST_TRANSPONDER_S).
+            takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 120);
             assert_eq!(z.status(Regel::TransponderStart), want, "{label}");
         }
     }
@@ -2163,7 +2186,7 @@ mod tests {
         s.timestamp = t0() + chrono::Duration::seconds(5);
         s.xpdr_mode_label = Some("ALT".into());
         tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
-        takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 30);
+        takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 120);
         let p = &z.punkte[Regel::TcasStart.index()];
         assert_eq!(p.status, Status::NichtMessbar);
         assert_eq!(p.grund, Some(Grund::KeinTcasModus));
@@ -2609,6 +2632,63 @@ mod tests {
         s.altitude_agl_ft = 3.0;
         takte_bis(&mut z, &mut s, FlightPhase::TaxiOut, &k, 5);
         assert!(!z.in_der_luft);
+    }
+
+    /// SIA 375: Schalterquelle meldet 0, die Strobes blitzen aber
+    /// (Standardwert an) — das zählt als erledigt.
+    #[test]
+    fn strobes_blitzen_trotz_schalterquelle_null() {
+        let mut s = snap(0);
+        s.strobe_state = Some(0);
+        s.light_strobe = Some(true);
+        assert_eq!(strobe_an(&s), Some(true));
+        // AUTO ohne Blitzen am Boden bleibt erfüllt, OFF ohne Blitzen nicht.
+        s.light_strobe = Some(false);
+        s.strobe_state = Some(1);
+        assert_eq!(strobe_an(&s), Some(true));
+        s.strobe_state = Some(0);
+        assert_eq!(strobe_an(&s), Some(false));
+    }
+
+    /// Airbus in AUTO: am Boden „GND", TA/RA erst nach dem Abheben
+    /// (gemessen im Laminar-A330, 27.09.2026). Beides zählt als erledigt.
+    #[test]
+    fn airbus_auto_gnd_und_tcas_nach_dem_abheben() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.engines_running = 2;
+        s.xpdr_mode_label = Some("GND".into());
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::TaxiOut, &k, 30);
+        takte_bis(&mut z, &mut s, FlightPhase::TakeoffRoll, &k, 60);
+        assert_eq!(z.status(Regel::TransponderStart), Status::Erledigt);
+        // TCAS am Boden noch offen, nicht „diesmal ohne".
+        assert_eq!(z.status(Regel::TcasStart), Status::Offen);
+        s.on_ground = false;
+        s.altitude_agl_ft = 800.0;
+        s.xpdr_mode_label = Some("TA-RA".into());
+        takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 100);
+        assert_eq!(z.status(Regel::TcasStart), Status::Erledigt);
+    }
+
+    /// STBY bleibt „diesmal ohne" — auch mit der längeren Frist.
+    #[test]
+    fn transponder_stby_bleibt_ohne() {
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.engines_running = 2;
+        s.xpdr_mode_label = Some("STBY".into());
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::TaxiOut, &k, 30);
+        takte_bis(&mut z, &mut s, FlightPhase::TakeoffRoll, &k, 60);
+        s.on_ground = false;
+        s.altitude_agl_ft = 1500.0;
+        takte_bis(&mut z, &mut s, FlightPhase::Climb, &k, 200);
+        assert_eq!(z.status(Regel::TransponderStart), Status::DiesmalOhne);
     }
 
     /// Pause mitten in der Kulanz: die Frist verlängert sich um die Pause.
