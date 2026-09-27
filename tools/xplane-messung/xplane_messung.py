@@ -30,11 +30,14 @@ import platform
 import sys
 import time
 import urllib.error
+import threading
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.0 (27.09.2026)"
-BASIS = os.environ.get("XPLANE_WEBAPI", "http://127.0.0.1:8086/api/v1")
+from xpws import XPlaneWS
+
+VERSION = "1.1 (27.09.2026)"
+BASIS = os.environ.get("XPLANE_WEBAPI", "http://127.0.0.1:8086/api/v2")
 MAX_ARRAY = 48  # Array-Datarefs bis zu dieser Länge Element für Element
 
 # ── Die Schritte ───────────────────────────────────────────────────────────
@@ -115,30 +118,62 @@ def flugzeug_info(alle: dict[str, dict]) -> dict:
     return info
 
 
-def lies_einen(d: dict):
-    """Wert eines Datarefs; None, wenn nicht lesbar (Add-on nicht geladen)."""
-    try:
-        v = hole(f"/datarefs/{d['id']}/value", timeout=3.0)["data"]
-    except Exception:
-        return None
-    return v
+class Spiegel:
+    """Hält alle abonnierten Werte aktuell (WebSocket, X-Plane schickt
+    Änderungen von selbst). Ein Schnappschuss ist dann nur eine Kopie."""
 
+    PAKET = 500  # größere Abo-Nachrichten beantwortet X-Plane nicht
 
-def schnappschuss(liste: list[dict]) -> dict[str, float]:
-    """Alle Zahlenwerte auf einmal (parallel), Arrays elementweise."""
-    werte: dict[str, float] = {}
-    with cf.ThreadPoolExecutor(max_workers=24) as ex:
-        for d, v in zip(liste, ex.map(lies_einen, liste)):
-            if v is None:
-                continue
-            name = d["name"]
+    def __init__(self, liste: list[dict]):
+        self.namen = {str(d["id"]): d["name"] for d in liste}
+        self.werte: dict[str, object] = {}
+        self.lock = threading.Lock()
+        self.ws = XPlaneWS()
+        for i in range(0, len(liste), self.PAKET):
+            self.ws.senden_json(
+                "dataref_subscribe_values",
+                {"datarefs": [{"id": d["id"]} for d in liste[i : i + self.PAKET]]},
+            )
+        self.lauf = True
+        threading.Thread(target=self._empfang, daemon=True).start()
+
+    def _empfang(self) -> None:
+        while self.lauf:
+            try:
+                m = self.ws.empfangen_json()
+            except Exception:
+                break
+            if m is None:
+                break
+            if m.get("type") == "dataref_update_values":
+                with self.lock:
+                    self.werte.update(m.get("data", {}))
+        self.lauf = False
+
+    def bereit(self, zeit_s: float = 15.0) -> int:
+        ende = time.time() + zeit_s
+        while time.time() < ende and len(self.werte) < len(self.namen) * 0.95:
+            time.sleep(0.25)
+        return len(self.werte)
+
+    def schnappschuss(self) -> dict[str, float]:
+        time.sleep(1.5)  # X-Plane schickt Änderungen etwa zehnmal pro Sekunde
+        with self.lock:
+            roh = dict(self.werte)
+        werte: dict[str, float] = {}
+        for i, v in roh.items():
+            name = self.namen.get(i, i)
             if isinstance(v, list):
-                for i, x in enumerate(v[:MAX_ARRAY]):
+                for k, x in enumerate(v[:MAX_ARRAY]):
                     if isinstance(x, (int, float)):
-                        werte[f"{name}[{i}]"] = float(x)
+                        werte[f"{name}[{k}]"] = float(x)
             elif isinstance(v, (int, float)):
                 werte[name] = float(v)
-    return werte
+        return werte
+
+    def schliessen(self) -> None:
+        self.lauf = False
+        self.ws.schliessen()
 
 
 # ── Ablauf ─────────────────────────────────────────────────────────────────
@@ -168,18 +203,25 @@ def messe_flugzeug() -> str | None:
     zeile(f"  Pfad:     {info.get('acf_relative_path', '?')}")
     zahlen = [d for d in alle_roh if d.get("value_type") in ("int", "float", "double", "int_array", "float_array")]
     zeile(f"  {len(zahlen)} Zahlenwerte gefunden.")
+    try:
+        spiegel = Spiegel(zahlen)
+    except Exception as e:
+        zeile(f"  ✗ Verbindung zu X-Plane (WebSocket) klappt nicht: {e}")
+        return None
+    n = spiegel.bereit()
+    zeile(f"  {n} Werte verbunden.")
+    schnappschuss = spiegel.schnappschuss
 
     zeile("\nSchritt 0 — Ruhemessung. Bitte 10 Sekunden NICHTS im Cockpit anfassen.")
     zeile("(Flugzeug am Boden, Parkbremse gesetzt, Simulator NICHT pausiert.)")
     frage("Enter drücken, wenn bereit … ")
     zeile("  messe …")
     t0 = time.time()
-    a = schnappschuss(zahlen)
-    zeile(f"  (ein Durchgang dauert {time.time() - t0:.1f} s)")
+    a = schnappschuss()
     unruhig: set[str] = set()
-    for _ in range(3):
-        time.sleep(2)
-        b = schnappschuss(zahlen)
+    for _ in range(5):
+        time.sleep(1.5)
+        b = schnappschuss()
         unruhig |= {k for k in set(a) | set(b) if a.get(k) != b.get(k)}
         a = b
     zeile(f"  {len(unruhig)} Werte ändern sich von selbst — die werden ignoriert.")
@@ -210,7 +252,7 @@ def messe_flugzeug() -> str | None:
             if antw == "s":
                 continue
             time.sleep(1.0)  # Animation/Logik des Add-ons nachlaufen lassen
-            stand.append(schnappschuss(zahlen))
+            stand.append(schnappschuss())
             namen.append(s)
         # Kandidaten: Werte, die sich über die Stellungen ändern und nicht
         # von selbst unruhig sind.
@@ -233,6 +275,7 @@ def messe_flugzeug() -> str | None:
     ziel = os.path.join(os.path.expanduser("~/Desktop"), f"AeroACARS-Messung_{typ}_{datetime.now():%Y%m%d-%H%M}.json")
     with open(ziel, "w", encoding="utf-8") as f:
         json.dump(ergebnis, f, ensure_ascii=False, indent=1)
+    spiegel.schliessen()
     zeile("\n" + "═" * 70)
     zeile(f"✓ Fertig. Gespeichert auf dem Schreibtisch:\n  {ziel}")
     return ziel
