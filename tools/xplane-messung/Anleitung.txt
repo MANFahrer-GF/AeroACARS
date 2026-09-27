@@ -1,0 +1,92 @@
+AeroACARS — X-Plane-Messwerkzeug
+Anleitung für Mac (X-Plane 12)
+==================================================================
+
+WOZU?
+AeroACARS liest aus X-Plane die Cockpitschalter (Strobes, Transponder,
+Anschnallzeichen, Klappen, Spoiler, Autobrake …). Viele Add-on-Flugzeuge
+legen diese Schalter aber an eigenen Stellen ab, die wir nicht kennen.
+Dieses Werkzeug findet sie: Du schaltest im Cockpit, das Werkzeug schaut
+zu und notiert, was sich bewegt. Es liest nur — in X-Plane wird nichts
+verändert.
+
+Dauer: etwa 5 Minuten pro Flugzeug.
+Bitte ALLE X-Plane-Flugzeuge messen, die du fliegst — besonders den
+FlightFactor 777.
+
+
+VORBEREITUNG (einmalig)
+------------------------------------------------------------------
+1. Den Ordner „AeroACARS-Messung“ auf den Schreibtisch legen
+   (ZIP doppelklicken, dann entsteht der Ordner).
+
+2. X-Plane 12 starten.
+   Die „Web API“ von X-Plane muss an sein (Port 8086). Bei
+   X-Plane 12.1 und neuer ist sie von Haus aus an — meist ist
+   nichts zu tun. Sagt das Werkzeug später „X-Plane antwortet
+   nicht“: Einstellungen (Zahnrad) → Netzwerk → Web Server /
+   Web API einschalten.
+
+
+MESSEN
+------------------------------------------------------------------
+3. Flugzeug in X-Plane laden:
+   • am Boden, an einem Gate oder auf dem Vorfeld
+   • Parkbremse gesetzt
+   • Strom an (Batterie / Bodenstrom), damit Schalter reagieren
+   • Simulator NICHT pausieren
+
+4. Im Ordner „AeroACARS-Messung“ Doppelklick auf
+   „Messung starten.command“.
+
+   Falls macOS sagt „kann nicht geöffnet werden, da der Entwickler
+   nicht verifiziert werden kann“:
+   → Rechtsklick (oder ctrl + Klick) auf die Datei → „Öffnen“
+   → im Dialog nochmal „Öffnen“. Das ist nur beim ersten Mal nötig.
+
+   Falls macOS anbietet, „Befehlszeilen-Entwicklerwerkzeuge“ zu
+   installieren: „Installieren“ klicken, warten, dann Schritt 4
+   wiederholen.
+
+   Es öffnet sich ein Terminal-Fenster mit Text.
+
+5. Das Werkzeug führt dich Schritt für Schritt:
+   • Zuerst eine Ruhemessung: 10 Sekunden nichts anfassen.
+   • Dann je Schalter: „Stelle auf [OFF] und drück Enter“ usw.
+     → im X-Plane-Cockpit den Schalter stellen,
+     → ins Terminal-Fenster klicken,
+     → Enter drücken.
+   • Hat das Flugzeug einen Schalter gar nicht:
+     bei der Frage „Hat das Flugzeug diesen Schalter?“ n + Enter.
+   • Gibt es eine einzelne Stellung nicht (z. B. kein AUTO):
+     s + Enter.
+   • Wichtig: zwischen zwei Enter immer NUR den genannten Schalter
+     bewegen, sonst kann das Werkzeug die Werte nicht zuordnen.
+
+6. Am Ende steht „Fertig. Gespeichert auf dem Schreibtisch“.
+   Frage „Noch ein Flugzeug messen?“:
+   → erst in X-Plane das nächste Flugzeug laden,
+   → dann j + Enter und weiter wie oben.
+   Sonst nur Enter.
+
+
+ERGEBNIS SCHICKEN
+------------------------------------------------------------------
+7. Auf dem Schreibtisch liegen jetzt Dateien wie
+   „AeroACARS-Messung_B77W_20260927-1930.json“
+   (eine pro Flugzeug). Bitte alle an Thomas schicken,
+   z. B. per Discord-Direktnachricht.
+
+
+PROBLEME?
+------------------------------------------------------------------
+• „X-Plane antwortet nicht auf der Web-API“:
+  X-Plane läuft nicht, kein Flugzeug geladen, oder die Web API ist
+  in den Netzwerk-Einstellungen aus (siehe Schritt 2).
+• Ein Schritt dauert lange: Das Werkzeug liest bei jedem Enter
+  mehrere tausend Werte, das braucht ein paar Sekunden. Einfach
+  warten, bis die nächste Anweisung erscheint.
+• Abbrechen: im Terminal ctrl + C. Die Messung des aktuellen
+  Flugzeugs geht dann verloren, einfach neu starten.
+
+Danke fürs Mitmachen!

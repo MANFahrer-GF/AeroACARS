@@ -2312,13 +2312,22 @@ fn b_wert(t: &Telemetry, name: &str) -> Option<f64> {
 /// 26.09.2026 durch Drehen des Knopfes: `AIRLINER_MIP_LG_ABRK_KNOB`
 /// 0=DISARM 1=BTV 2=LO 3=L2 4=L3 5=HI. BTV=1 ist NICHT direkt beobachtet,
 /// sondern aus der Zaehlung abgeleitet — der Knopf springt am Boden aus
-/// BTV zurueck. `AIRLINER_MIP_LG_ABRK_RTO` 1 = RTO-Taste gedrueckt, hat
-/// Vorrang vor der Knopfstellung. Kein Event → None.
+/// BTV zurueck. `AIRLINER_MIP_LG_ABRK_RTO` 1 = RTO-Taste gedrueckt.
+///
+/// ⚠ Die RTO-Taste bleibt nach einmaligem Druecken den GANZEN Flug auf 1
+/// (UAE 424, 27.09.2026: RTO=1 vom Rollen bis nach der Landung) — das ist
+/// der letzte Tastendruck, nicht der Zustand. Eine Landestufe am Knopf hat
+/// deshalb Vorrang; RTO gilt nur, solange der Knopf auf DISARM steht.
+/// Vorher stand bei jeder A380-Landung „RTO", obwohl L2 gewaehlt war.
+/// Kein Event → None.
 fn a380_autobrake_label(knopf: Option<f64>, rto: Option<f64>) -> Option<String> {
-    if rto.is_some_and(|v| (v - 1.0).abs() < 0.25) {
+    let rto_gedrueckt = rto.is_some_and(|v| (v - 1.0).abs() < 0.25);
+    let Some(k) = knopf else {
+        return rto_gedrueckt.then(|| "RTO".to_string());
+    };
+    if rto_gedrueckt && k.round() == 0.0 {
         return Some("RTO".to_string());
     }
-    let k = knopf?;
     let n = k.round();
     if (k - n).abs() > 0.25 {
         return None;
@@ -9600,16 +9609,27 @@ mod tests {
             let snap = mit_b(A380, &[], &[("AIRLINER_MIP_LG_ABRK_KNOB", roh)]);
             assert_eq!(snap.autobrake.as_deref(), Some(want), "Knopf roh={roh}");
         }
-        // RTO-Taste gedrueckt hat Vorrang vor dem Knopf.
+        // RTO-Taste gedrueckt und Knopf auf DISARM → RTO.
         let snap = mit_b(
             A380,
             &[],
             &[
-                ("AIRLINER_MIP_LG_ABRK_KNOB", 5.0),
+                ("AIRLINER_MIP_LG_ABRK_KNOB", 0.0),
                 ("AIRLINER_MIP_LG_ABRK_RTO", 1.0),
             ],
         );
         assert_eq!(snap.autobrake.as_deref(), Some("RTO"));
+        // UAE 424 (27.09.2026): RTO blieb den ganzen Flug auf 1, der Pilot
+        // stellte im Anflug L2 (Knopf 3) — die Landestufe gilt.
+        let snap = mit_b(
+            A380,
+            &[],
+            &[
+                ("AIRLINER_MIP_LG_ABRK_KNOB", 3.0),
+                ("AIRLINER_MIP_LG_ABRK_RTO", 1.0),
+            ],
+        );
+        assert_eq!(snap.autobrake.as_deref(), Some("L2"));
         let snap = mit_b(
             A380,
             &[],
