@@ -5041,6 +5041,14 @@ struct PersistedFlightStats {
     last_known_lat: Option<f64>,
     #[serde(default)]
     last_known_lon: Option<f64>,
+    #[serde(default)]
+    last_known_alt_ft: Option<f64>,
+    #[serde(default)]
+    last_known_hdg_deg: Option<f32>,
+    #[serde(default)]
+    last_known_gs_kt: Option<f32>,
+    #[serde(default)]
+    last_known_at: Option<DateTime<Utc>>,
     /// v0.19.3 (QS round 8): the detected divert. Persisted because two gates
     /// depend on it and the fallback that mints it cannot re-run once the flight
     /// has reached `Arrived` — an app restart used to cost the pilot his divert
@@ -5542,6 +5550,10 @@ impl PersistedFlightStats {
             arr_actual_icao: stats.arr_actual_icao.clone(),
             last_known_lat: stats.last_known_lat,
             last_known_lon: stats.last_known_lon,
+            last_known_alt_ft: stats.last_known_alt_ft,
+            last_known_hdg_deg: stats.last_known_hdg_deg,
+            last_known_gs_kt: stats.last_known_gs_kt,
+            last_known_at: stats.last_known_at,
             divert_hint: stats.divert_hint.clone(),
             approach_runway: stats.approach_runway.clone(),
             cruise_peak_msl: stats.cruise_peak_msl,
@@ -5794,6 +5806,10 @@ impl PersistedFlightStats {
         stats.arr_actual_icao = self.arr_actual_icao;
         stats.last_known_lat = self.last_known_lat;
         stats.last_known_lon = self.last_known_lon;
+        stats.last_known_alt_ft = self.last_known_alt_ft;
+        stats.last_known_hdg_deg = self.last_known_hdg_deg;
+        stats.last_known_gs_kt = self.last_known_gs_kt;
+        stats.last_known_at = self.last_known_at;
         stats.divert_hint = self.divert_hint;
         stats.approach_runway = self.approach_runway;
         stats.cruise_peak_msl = self.cruise_peak_msl;
@@ -7866,6 +7882,14 @@ struct FlightStats {
     /// sim is gone. See `aircraft_position_for_gates`.
     last_known_lat: Option<f64>,
     last_known_lon: Option<f64>,
+    /// Zum selben letzten Punkt: Hoehe, Kurs, Tempo, Zeit. Der Wiederaufnahme-
+    /// Dialog braucht sie, damit der Pilot nach einem Sim-Absturz dorthin
+    /// zurueckstellen kann (SIA 375, 27.09.2026: nur Koordinaten, Hoehe
+    /// und Kurs fehlten).
+    last_known_alt_ft: Option<f64>,
+    last_known_hdg_deg: Option<f32>,
+    last_known_gs_kt: Option<f32>,
+    last_known_at: Option<DateTime<Utc>>,
     /// `ATC RUNWAY SELECTED` snapshotted at touchdown. Useful for VAs
     /// that grade "did the pilot land on the right runway".
     approach_runway: Option<String>,
@@ -8730,6 +8754,13 @@ pub struct ActiveFlightInfo {
     last_known_lon: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_known_alt_ft: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_known_heading_deg: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_known_gs_kt: Option<i32>,
+    /// Wann der gespeicherte Punkt zuletzt aktualisiert wurde (UTC, RFC 3339).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_known_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_known_fuel_kg: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -17147,19 +17178,42 @@ fn flight_info(
         // v0.13.0 Stream F: nur befüllen wenn was_just_resumed=true, sonst
         // werden die Felder via skip_serializing_if weggelassen damit das
         // Live-Active-Flight-Panel sie nicht sieht.
-        // alt_ft nicht in FlightStats (nur lat/lon) → wir lassen es leer,
-        // die Position allein reicht für die Repositionierung.
+        // 27.09.2026 (SIA 375): der letzte Punkt kommt aus `last_known_*` —
+        // `last_lat/lon` ist die Wegstrecken-Basis und wird beim Resume
+        // absichtlich geleert. Dazu Hoehe, Kurs, Tempo und Zeit, damit der
+        // Pilot nach einem Sim-Absturz dorthin zurueckstellen kann.
         last_known_lat: if was_just_resumed {
-            stats.last_lat
+            stats.last_known_lat.or(stats.last_lat)
         } else {
             None
         },
         last_known_lon: if was_just_resumed {
-            stats.last_lon
+            stats.last_known_lon.or(stats.last_lon)
         } else {
             None
         },
-        last_known_alt_ft: None,
+        last_known_alt_ft: if was_just_resumed {
+            stats.last_known_alt_ft.map(|a| a.round() as i32)
+        } else {
+            None
+        },
+        last_known_heading_deg: if was_just_resumed {
+            stats
+                .last_known_hdg_deg
+                .map(|h| (h.round() as i32).rem_euclid(360))
+        } else {
+            None
+        },
+        last_known_gs_kt: if was_just_resumed {
+            stats.last_known_gs_kt.map(|g| g.round() as i32)
+        } else {
+            None
+        },
+        last_known_at: if was_just_resumed {
+            stats.last_known_at.map(|t| t.to_rfc3339())
+        } else {
+            None
+        },
         // v0.13.0 Stream F: Fuel/Weight/Aircraft aus dem letzten Sim-Snapshot
         // (vor dem Disconnect/Crash). MSFS setzt Fuel beim Reload oft auf
         // Default — der Pilot sieht jetzt den Soll-Wert und kann ihn manuell
@@ -43226,6 +43280,10 @@ fn step_flight_at(
     // So the last position is kept separately, and nothing clears it.
     stats.last_known_lat = Some(snap.lat);
     stats.last_known_lon = Some(snap.lon);
+    stats.last_known_alt_ft = Some(snap.altitude_msl_ft);
+    stats.last_known_hdg_deg = Some(snap.heading_deg_true);
+    stats.last_known_gs_kt = Some(snap.groundspeed_kt);
+    stats.last_known_at = Some(now);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
     // Aufsetzzeit: die der FSM, sonst die des Aufsetz-Samplers (Busch- und

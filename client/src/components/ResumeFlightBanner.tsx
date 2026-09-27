@@ -56,6 +56,12 @@ export function ResumeFlightBanner({
   // Countdown lief nie an. Mit reactive Value triggert der Countdown-Effect
   // ueber die [mode, positionSuspect] dep automatisch erneut.
   const positionSuspect = activeFlight?.resume_position_suspect === true;
+  // 27.09.2026 (Thomas, SIA 375): Nach einem Sim-Absturz lief der Countdown
+  // „wird fortgesetzt", obwohl noch gar kein Simulator verbunden war — erst
+  // danach kam die rote Karte. Ohne Simulator gibt es nichts zu pruefen:
+  // kein Countdown, sondern „Warte auf den Simulator" mit dem letzten Punkt.
+  const simDa = useSimVerbunden(mode.kind === "auto_resumed");
+  const warteAufSim = mode.kind === "auto_resumed" && simDa === false;
 
   // v0.13.10 (QS-Round-1 Fix): consumedRef zuruecksetzen sobald
   // was_just_resumed im Backend auf false transitioniert (Pilot hat den
@@ -167,6 +173,14 @@ export function ResumeFlightBanner({
     if (mode.kind !== "auto_resumed" && mode.kind !== "discovered") return;
     if (mode.busy) return;
     if (mode.kind === "auto_resumed" && positionSuspect) return;
+    // Ohne Simulator nicht herunterzaehlen — und nach dem Verbinden wieder
+    // mit vollem Countdown beginnen.
+    if (mode.kind === "auto_resumed" && simDa !== true) {
+      if (mode.secondsLeft !== COUNTDOWN_SECONDS) {
+        setMode((prev) => (prev.kind === "auto_resumed" ? { ...prev, secondsLeft: COUNTDOWN_SECONDS } : prev));
+      }
+      return;
+    }
     if (mode.secondsLeft <= 0) {
       if (confirmingRef.current) return;
       confirmingRef.current = true;
@@ -182,7 +196,7 @@ export function ResumeFlightBanner({
     }, 1000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, positionSuspect]);
+  }, [mode, positionSuspect, simDa]);
 
   /** `force` NUR vom Knopf „Trotzdem fortsetzen": Der Pilot hat die
    *  Warnung gelesen und führt bewusst weiter. Das Backend vermerkt es
@@ -307,6 +321,7 @@ export function ResumeFlightBanner({
         <p className="active-flight__paused-instructions">
           {t("resume.hard_stop_body")}
         </p>
+        <LetzterPunkt flight={activeFlight} />
         <ComparisonGrid activeFlight={activeFlight} />
         <RecheckActions
           busy={mode.busy}
@@ -318,6 +333,38 @@ export function ResumeFlightBanner({
           }}
           onCancel={() => void doCancel()}
         />
+      </section>
+    );
+  }
+
+  // ─── Simulator noch nicht verbunden: warten, Punkt zeigen ─────────
+  if (warteAufSim) {
+    return (
+      <section className="active-flight__paused-banner" role="status" aria-live="polite">
+        {confirmDialog}
+        <div className="active-flight__paused-header">
+          <span className="active-flight__paused-icon" aria-hidden="true">
+            ⏳
+          </span>
+          <div>
+            <strong>{t("resume.warte_titel")}</strong>
+            <span className="active-flight__paused-since">
+              {flight.callsign} · {flight.dpt_airport} → {flight.arr_airport}
+            </span>
+          </div>
+        </div>
+        <p className="active-flight__paused-instructions">{t("resume.warte_text")}</p>
+        <LetzterPunkt flight={mode.flight} />
+        <div className="active-flight__paused-actions">
+          <button
+            type="button"
+            className="resume-modal__danger"
+            onClick={() => void doCancel()}
+            disabled={mode.busy}
+          >
+            {t("resume.cancel_flight")}
+          </button>
+        </div>
       </section>
     );
   }
@@ -340,6 +387,8 @@ export function ResumeFlightBanner({
       </div>
 
       <div className="resume-modal__callsign">{flight.callsign}</div>
+
+      {mode.kind === "auto_resumed" && <LetzterPunkt flight={mode.flight} />}
 
       <div className="resume-modal__countdown">
         <div
@@ -439,6 +488,7 @@ function ComparisonGrid({
   const sZfw = activeFlight?.last_known_zfw_kg;
   const sTow = activeFlight?.last_known_total_weight_kg;
   const sAircraft = activeFlight?.last_known_aircraft_icao;
+  const sHdg = activeFlight?.last_known_heading_deg;
 
   // ── Sim-Werte
   const cLat = snap?.lat;
@@ -504,9 +554,9 @@ function ComparisonGrid({
         signed
       />
 
-      {/* Heading (nur Sim-Anzeige, kein Saved-Wert) */}
+      {/* Heading */}
       <div className="resume-compare__label">{t("resume.compare_heading")}</div>
-      <Val>{null}</Val>
+      <Val>{sHdg !== undefined ? `${sHdg}°` : null}</Val>
       <Val>{cHdg !== undefined ? `${Math.round(cHdg)}°` : null}</Val>
       <div className="resume-compare__delta resume-compare__delta--neutral">
         —
@@ -599,6 +649,108 @@ function Delta({
 }
 
 // Formatter
+/** Ist ein Simulator verbunden (Snapshot vorhanden)? `null`, solange noch
+ *  keine Antwort da ist. Fragt nur, solange `aktiv`. */
+function useSimVerbunden(aktiv: boolean): boolean | null {
+  const [da, setDa] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!aktiv) {
+      setDa(null);
+      return;
+    }
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    async function poll() {
+      try {
+        const st = await invoke<SimStatus>("sim_status");
+        if (alive) setDa(st?.snapshot != null);
+      } catch {
+        if (alive) setDa(false);
+      }
+      if (alive) timer = setTimeout(() => void poll(), 1000);
+    }
+    void poll();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [aktiv]);
+  return da;
+}
+
+/** Grad und Dezimalminuten („N21°17.57' E086°15.46'"), wie X-Plane und MSFS
+ *  sie im Positionsdialog erwarten. */
+export function fmtGradMinuten(lat: number, lon: number): string {
+  const teil = (v: number, pos: string, neg: string, stellen: number) => {
+    const a = Math.abs(v);
+    let grad = Math.floor(a);
+    let min = Math.round((a - grad) * 60 * 100) / 100;
+    if (min >= 60) {
+      grad += 1;
+      min = 0;
+    }
+    return `${v >= 0 ? pos : neg}${String(grad).padStart(stellen, "0")}°${min.toFixed(2).padStart(5, "0")}'`;
+  };
+  return `${teil(lat, "N", "S", 2)} ${teil(lon, "E", "W", 3)}`;
+}
+
+/** Der letzte gespeicherte Punkt — immer sichtbar, damit der Pilot nach
+ *  einem Sim-Absturz genau dorthin zurückstellen kann (Thomas, 27.09.2026:
+ *  „immer die Daten anzeigen"). */
+export function LetzterPunkt({ flight }: { flight: ActiveFlightInfo | null }) {
+  const { t } = useTranslation();
+  const [kopiert, setKopiert] = useState(false);
+  const lat = flight?.last_known_lat;
+  const lon = flight?.last_known_lon;
+  if (lat === undefined || lon === undefined) return null;
+  const alt = flight?.last_known_alt_ft;
+  const hdg = flight?.last_known_heading_deg;
+  const gs = flight?.last_known_gs_kt;
+  const at = flight?.last_known_at ? Date.parse(flight.last_known_at) : NaN;
+  const min = Number.isFinite(at) ? Math.max(0, Math.round((Date.now() - at) / 60000)) : null;
+  const text = `${fmtPos(lat, lon)}  (${fmtGradMinuten(lat, lon)})`;
+  const kopieren = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        [fmtGradMinuten(lat, lon), `${lat.toFixed(5)}, ${lon.toFixed(5)}`, alt !== undefined ? `${alt} ft` : "", hdg !== undefined ? `HDG ${hdg}°` : ""]
+          .filter(Boolean)
+          .join(" · "),
+      );
+      setKopiert(true);
+      setTimeout(() => setKopiert(false), 2000);
+    } catch {
+      /* ohne Zwischenablage (Browser ohne Freigabe) — Werte stehen ja da */
+    }
+  };
+  return (
+    <div className="resume-punkt">
+      <div className="resume-punkt__titel">{t("resume.punkt_titel")}</div>
+      <div className="resume-punkt__pos">{text}</div>
+      <dl className="resume-punkt__werte">
+        <div>
+          <dt>{t("resume.punkt_hoehe")}</dt>
+          <dd>{alt !== undefined ? `${alt.toLocaleString()} ft` : "—"}</dd>
+        </div>
+        <div>
+          <dt>{t("resume.punkt_kurs")}</dt>
+          <dd>{hdg !== undefined ? `${String(hdg).padStart(3, "0")}°` : "—"}</dd>
+        </div>
+        <div>
+          <dt>{t("resume.punkt_tempo")}</dt>
+          <dd>{gs !== undefined ? `${gs} kt` : "—"}</dd>
+        </div>
+        <div>
+          <dt>{t("resume.punkt_zeit")}</dt>
+          <dd>{min === null ? "—" : min === 0 ? t("resume.punkt_gerade") : t("resume.punkt_vor", { min })}</dd>
+        </div>
+      </dl>
+      <button type="button" className="button resume-punkt__kopieren" onClick={() => void kopieren()}>
+        {kopiert ? t("resume.punkt_kopiert") : t("resume.punkt_kopieren")}
+      </button>
+    </div>
+  );
+}
+
 function fmtPos(lat: number, lon: number): string {
   const latH = lat >= 0 ? "N" : "S";
   const lonH = lon >= 0 ? "E" : "W";

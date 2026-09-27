@@ -410,6 +410,11 @@ export interface ActiveFlightInfo {
   last_known_lat?: number;
   last_known_lon?: number;
   last_known_alt_ft?: number;
+  /** 27.09.2026: Kurs, Tempo und Zeit des letzten Punkts — zum Zurückstellen
+   *  nach einem Sim-Absturz. */
+  last_known_heading_deg?: number;
+  last_known_gs_kt?: number;
+  last_known_at?: string;
   /** v0.13.0 Stream F: zusätzlich Fuel/Weight/Aircraft aus dem letzten
    *  Sim-Snapshot vor dem Crash/Disconnect. MSFS setzt Fuel beim Reload
    *  oft auf Default — der Pilot sieht den Soll-Wert + stellt ihn manuell

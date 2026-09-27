@@ -1682,6 +1682,17 @@
     "folge_harmlos": "Kein Eingriff nötig — der Flug wird normal gewertet."
   },
   "resume": {
+    "warte_titel": "Warte auf den Simulator",
+    "warte_text": "Der Flug wird erst fortgesetzt, wenn der Simulator verbunden ist und die Position passt. Stell das Flugzeug im Simulator an den letzten gespeicherten Punkt.",
+    "punkt_titel": "Letzter gespeicherter Punkt — hierhin im Sim zurückstellen",
+    "punkt_hoehe": "Höhe",
+    "punkt_kurs": "Kurs",
+    "punkt_tempo": "Tempo über Grund",
+    "punkt_zeit": "gespeichert",
+    "punkt_vor": "vor {{min}} min",
+    "punkt_gerade": "gerade eben",
+    "punkt_kopieren": "Koordinaten kopieren",
+    "punkt_kopiert": "Kopiert",
     "title": "Aktiver Flug erkannt",
     "countdown": "In {{seconds}}s wird der Flug fortgesetzt — solange läuft kein Position-Stream",
     "position_suspect": "⚠ Die aktuelle Sim-Position weicht stark vom gespeicherten Flug ab — der Sim ist evtl. nach einem Crash neu geladen worden. Kein automatisches Fortsetzen: bitte erst prüfen, dass der Sim sauber geladen ist, dann „Jetzt fortsetzen\" drücken.",

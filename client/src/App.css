@@ -3112,11 +3112,32 @@ input:disabled {
   height: 100%;
   font-size: 13px;
   font-weight: 600;
-  color: var(--on-acc);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  /* Hell mit Schatten: lesbar auf dem hellen Balken UND auf dem dunklen
+     Grund, wenn der Balken kurz ist (SIA 375, 27.09.2026 — vorher
+     dunkel auf dunkel). */
+  color: var(--text);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
   padding: 0 12px;
   text-align: center;
 }
+
+/* Letzter gespeicherter Punkt im Wiederaufnahme-Dialog */
+.resume-punkt {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  margin: 4px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.resume-punkt__titel { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-dim); text-transform: uppercase; }
+.resume-punkt__pos { font-family: var(--font-mono, ui-monospace, monospace); font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
+.resume-punkt__werte { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 0; }
+.resume-punkt__werte div { display: grid; gap: 2px; }
+.resume-punkt__werte dt { font-size: 11px; color: var(--text-dim); }
+.resume-punkt__werte dd { margin: 0; font-family: var(--font-mono, ui-monospace, monospace); font-size: 14px; color: var(--text); }
+.resume-punkt__kopieren { justify-self: start; }
 
 .resume-modal__actions {
   display: flex;

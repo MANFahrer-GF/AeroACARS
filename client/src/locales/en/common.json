@@ -1682,6 +1682,17 @@
     "folge_harmlos": "Nothing to do — the flight is scored normally."
   },
   "resume": {
+    "warte_titel": "Waiting for the simulator",
+    "warte_text": "The flight only resumes once the simulator is connected and the position matches. Put the aircraft at the last saved point in the simulator.",
+    "punkt_titel": "Last saved point — reposition the sim here",
+    "punkt_hoehe": "Altitude",
+    "punkt_kurs": "Heading",
+    "punkt_tempo": "Ground speed",
+    "punkt_zeit": "saved",
+    "punkt_vor": "{{min}} min ago",
+    "punkt_gerade": "just now",
+    "punkt_kopieren": "Copy coordinates",
+    "punkt_kopiert": "Copied",
     "title": "Active flight detected",
     "countdown": "Resuming in {{seconds}}s — no position stream is running yet",
     "position_suspect": "⚠ The current sim position differs sharply from the saved flight — the sim may have reloaded after a crash. No automatic resume: please check the sim has loaded cleanly, then press “Resume now”.",

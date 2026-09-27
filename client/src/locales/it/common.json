@@ -1675,6 +1675,17 @@
     "flag_count_readable_other": "{{count}} volte in questo volo"
   },
   "resume": {
+    "warte_titel": "In attesa del simulatore",
+    "warte_text": "Il volo riprende solo quando il simulatore è collegato e la posizione corrisponde. Posiziona l'aereo nel simulatore all'ultimo punto salvato.",
+    "punkt_titel": "Ultimo punto salvato — riposiziona qui il sim",
+    "punkt_hoehe": "Quota",
+    "punkt_kurs": "Prua",
+    "punkt_tempo": "Velocità al suolo",
+    "punkt_zeit": "salvato",
+    "punkt_vor": "{{min}} min fa",
+    "punkt_gerade": "adesso",
+    "punkt_kopieren": "Copia coordinate",
+    "punkt_kopiert": "Copiato",
     "title": "Volo attivo rilevato",
     "countdown": "Tra {{seconds}}s il volo viene ripreso — fino allora nessun stream di posizioni",
     "position_suspect": "⚠ La posizione attuale del sim differisce molto dal volo salvato — il sim potrebbe essersi ricaricato dopo un crash. Nessuna ripresa automatica: verifica che il sim sia caricato correttamente, poi premi “Riprendi adesso”.",

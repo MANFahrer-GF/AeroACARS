@@ -5,6 +5,12 @@ import { BEISPIEL_BORDBUCH } from "./mockBordbuch";
 let eintrag = BEISPIEL_BORDBUCH;
 
 export async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  // Wiederaufnahme-Vorschau: `?sim=1` = Simulator verbunden (an WSSS).
+  if (cmd === "sim_status") {
+    const sim = new URLSearchParams(window.location.search).has("sim");
+    return { state: "connected", kind: "xplane12", available: true, last_error: null,
+      snapshot: sim ? { lat: 1.3502, lon: 103.9840, altitude_msl_ft: 139, heading_deg_true: 114, fuel_total_kg: 90594, zfw_kg: 224885, total_weight_kg: 315480, aircraft_icao: "B77W" } : null } as T;
+  }
   if (cmd === "bordbuch_eintrag") return eintrag as T;
   if (cmd === "bordbuch_markieren") {
     const { regel, nachAtc } = args as { regel: string; nachAtc: boolean };
