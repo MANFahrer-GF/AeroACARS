@@ -24,8 +24,9 @@ Ansätze sind erprobt und werden die Grundlage.
 3. **Ruhemessung** 10 s: nichts anfassen → Werte, die sich von selbst ändern, fallen raus.
 4. **Geführte Schritte**, je Schalter die Stellungen nacheinander, Knopf „Erledigt"
    (statt Enter), „Gibt es nicht" je Stellung und je Schalter:
-   Beacon · Strobes (OFF/AUTO/ON) · NAV · Landelicht · Taxi · Anschnallzeichen
-   (OFF/AUTO/ON) · Transponder (STBY/ALT/AUTO/TA/TA-RA) · Klappen (alle Rasten) ·
+   Beacon · Strobes (OFF/AUTO/ON) · NAV (OFF/1/2, Airbus NAV & LOGO) ·
+   Landelicht (OFF/ON/RETRACT) · Taxi (OFF/TAXI/T.O.) · Anschnallzeichen
+   (OFF/AUTO/ON) · Transponder (STBY/AUTO/ON/ALT/TA/TA-RA) · Klappen (alle Rasten) ·
    Spoiler ARMED · Autobrake (alle Stufen, RTO) · APU · Parkbremse.
    Live-Anzeige: „12 Werte sind mitgegangen" als Rückmeldung, dass es wirkt.
 5. **Senden** → live.kant.ovh, Einsende-Strecke des Aircraft-Scans (`/api/ascan`,
