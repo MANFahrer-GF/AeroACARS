@@ -980,6 +980,13 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("ZULU TIME", "Seconds"),
     F::f64("ZULU DAY OF YEAR", "Number"),
     F::f64("ZULU YEAR", "Number"),
+    // FBW A32NX, gemessen 28.09.2026 mit „Flugzeug vermessen" (Pilot
+    // Thorben2406): Parkbremse und APU bewegen die Standard-SimVars NICHT,
+    // TCAS steht nur hier, der Strobe-Schalter unterscheidet AUTO von ON.
+    F::f64("L:A32NX_PARK_BRAKE_LEVER_POS", "Number"),
+    F::f64("L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON", "Number"),
+    F::f64("L:A32NX_SWITCH_TCAS_POSITION", "Number"),
+    F::f64("L:LIGHTING_STROBE_0", "Number"),
     // Standard-SimVars. SEATBELTS/TRANSPONDER STATE dienen als Rueckfall fuer
     // die Muster, die sie laut Paket bedienen (siehe Mapping); alle drei
     // laufen zusaetzlich roh ins Flug-Log. GANZ ans Ende: anders als LVars
@@ -1515,6 +1522,14 @@ pub struct Telemetry {
     pub zulu_jahr: f64,
     /// `AUTO BRAKE SWITCH CB` — nur roh ins Flug-Log.
     pub roh_std_autobrake_switch_cb: f64,
+    /// FBW A32NX `L:A32NX_PARK_BRAKE_LEVER_POS` 1 = gesetzt (gemessen).
+    pub fbw_park_brake_lever: f64,
+    /// FBW A32NX `L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON` 1 = APU-Master an.
+    pub fbw_apu_master: f64,
+    /// FBW A32NX `L:A32NX_SWITCH_TCAS_POSITION` 0 = STBY, 1 = TA, 2 = TA/RA.
+    pub fbw_tcas_position: f64,
+    /// FBW A32NX `L:LIGHTING_STROBE_0` 2 = OFF, 1 = AUTO, 0 = ON.
+    pub fbw_strobe: f64,
     /// `CABIN SEATBELTS ALERT SWITCH`. `None`, wenn der Block vor diesem
     /// Feld endet (SimVar abgelehnt) — dann darf der Rueckfall nicht
     /// "OFF" melden.
@@ -2250,6 +2265,10 @@ impl Telemetry {
         pull_f64!(t.zulu_time_s);
         pull_f64!(t.zulu_tag_im_jahr);
         pull_f64!(t.zulu_jahr);
+        pull_f64!(t.fbw_park_brake_lever);
+        pull_f64!(t.fbw_apu_master);
+        pull_f64!(t.fbw_tcas_position);
+        pull_f64!(t.fbw_strobe);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
         t.std_cabin_seatbelts_alert = read_f64(bytes, off);
@@ -2832,6 +2851,10 @@ fn telemetry_to_snapshot_mit_pfad(
     let is_headwind_a339 = is_fbw
         && (t.title.to_lowercase().contains("headwind")
             || sim_core::clean_atc_model(&t.atc_model).as_deref() == Some("A339"));
+    // Genau der am 28.09.2026 vermessene FBW A320neo (A32NX) — NICHT der
+    // A380X und NICHT die Headwind-A339 (gleiches Profil, andere Codebasis,
+    // nicht gemessen: kein Beleg, kein Override).
+    let fbw_a32nx_gemessen = is_fbw && !is_fbw_a380x && !is_headwind_a339;
     let is_default_profile = matches!(profile, AircraftProfile::Default);
     // Runde 2 (Paketanalyse): welche Muster die Standard-SimVars
     // `CABIN SEATBELTS ALERT SWITCH` / `TRANSPONDER STATE:1` wirklich
@@ -3288,6 +3311,11 @@ fn telemetry_to_snapshot_mit_pfad(
         // (gemessen 26.09.2026, gleich `B:AIRLINER_STROBE_TOGGLE`) —
         // gespiegelt auf 0=OFF 1=AUTO 2=ON.
         ini_on_auto_off_gespiegelt(t.ini_strobe_light_switch)
+    } else if fbw_a32nx_gemessen {
+        // FBW A32NX `L:LIGHTING_STROBE_0`, gemessen 28.09.2026: OFF/AUTO/ON →
+        // 2/1/0 — dieselbe Richtung wie iniBuilds. Die Standard-SimVar
+        // `LIGHT STROBE` zeigte AUTO wie ON (0/1/1).
+        ini_on_auto_off_gespiegelt(t.fbw_strobe)
     } else {
         None
     };
@@ -3365,6 +3393,12 @@ fn telemetry_to_snapshot_mit_pfad(
         // FSS E-Jets `L:FSS_EXX_PARKBRAKE_BV_LEVER` 0 = Off (Paket
         // Pedestal/Pedestal.xml:68-76) — der Hebel entscheidet.
         t.fss_parkbrake_lever != 0.0
+    } else if fbw_a32nx_gemessen {
+        // FBW A32NX, gemessen 28.09.2026 („Flugzeug vermessen“, Thorben):
+        // gesetzt/geloest/gesetzt → Hebel-LVar 1/0/1, die Standard-SimVars
+        // `BRAKE PARKING POSITION/INDICATOR` bewegten sich NICHT. Der Hebel
+        // entscheidet.
+        t.fbw_park_brake_lever >= 0.5
     } else {
         // A220: bewusst KEIN Override — siehe Begruendung an
         // `L:A22X Parking Brake` in TELEMETRY_FIELDS.
@@ -3413,6 +3447,10 @@ fn telemetry_to_snapshot_mit_pfad(
         // FSS E-Jets `L:FSS_EXX_OVHD_APU_MASTER` 0=Off 1=On 2=Start (Paket
         // Overhead/PanelAPUCtrl.xml:17-28) — ON und START zaehlen als an.
         t.fss_apu_master >= 0.5
+    } else if fbw_a32nx_gemessen {
+        // FBW A32NX, gemessen 28.09.2026: aus/an/aus → 0/1/0; die
+        // Standard-SimVar `APU SWITCH` bewegte sich nicht — ERSETZEN.
+        t.fbw_apu_master >= 0.5
     } else {
         t.apu_switch
     };
@@ -4524,6 +4562,27 @@ fn telemetry_to_snapshot_mit_pfad(
             Some(2) => Some("TA".to_string()),
             Some(3) => Some("TA-RA".to_string()),
             _ => None,
+        }
+    } else if fbw_a32nx_gemessen {
+        // FBW A32NX, gemessen 28.09.2026 (Thorben): der Standard
+        // `TRANSPONDER STATE:1` geht mit (STBY=1, ALT=4, AUTO am Boden=5),
+        // TCAS steht nur in `L:A32NX_SWITCH_TCAS_POSITION` (0=STBY 1=TA
+        // 2=TA/RA). Frueher bekam der A32NX gar kein Label (Rueckfall nur
+        // fuer Default-Profil und A380X).
+        match t.std_transponder_state.map(|v| v.round() as i64) {
+            None => None,
+            Some(0) => Some("OFF".to_string()),
+            Some(1) => Some("STBY".to_string()),
+            Some(z) => match t.fbw_tcas_position.round() as i64 {
+                1 => Some("TA".to_string()),
+                2 => Some("TA-RA".to_string()),
+                _ => match z {
+                    3 => Some("ON".to_string()),
+                    4 => Some("ALT".to_string()),
+                    5 => Some("GND".to_string()),
+                    _ => None,
+                },
+            },
         }
     } else {
         None
@@ -5895,12 +5954,16 @@ mod tests {
         assert_eq!(t.zulu_time_s, 1366.0); // idx 366, Bordbuch (26.09.2026)
         assert_eq!(t.zulu_tag_im_jahr, 1367.0); // idx 367
         assert_eq!(t.zulu_jahr, 1368.0); // idx 368
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1369.0); // idx 369
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1370.0)); // idx 370
-        assert_eq!(t.std_light_landing_on_1, Some(1371.0)); // idx 371
-        assert_eq!(t.std_light_landing_on_2, Some(1372.0)); // idx 372
-        assert_eq!(t.std_transponder_state, Some(1373.0)); // idx 373, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 374, "letzter Index 373");
+        assert_eq!(t.fbw_park_brake_lever, 1369.0); // idx 369, FBW (28.09.2026)
+        assert_eq!(t.fbw_apu_master, 1370.0); // idx 370
+        assert_eq!(t.fbw_tcas_position, 1371.0); // idx 371
+        assert_eq!(t.fbw_strobe, 1372.0); // idx 372
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1373.0); // idx 373
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1374.0)); // idx 374
+        assert_eq!(t.std_light_landing_on_1, Some(1375.0)); // idx 375
+        assert_eq!(t.std_light_landing_on_2, Some(1376.0)); // idx 376
+        assert_eq!(t.std_transponder_state, Some(1377.0)); // idx 377, zuletzt
+        assert_eq!(TELEMETRY_FIELDS.len(), 378, "letzter Index 377");
     }
 
     #[test]
@@ -9721,6 +9784,98 @@ mod tests {
             mit_b(A220, &[], &[]).aircraft_profile,
             AircraftProfile::SynapticA220
         );
+    }
+
+    /// FBW A32NX, gemessen 28.09.2026 mit „Flugzeug vermessen" (Pilot
+    /// Thorben2406, „Airbus A320neo FlyByWire"): Parkbremse und APU nur ueber
+    /// die Hebel-/Schalter-LVars, TCAS ueber den eigenen Schalter, Strobe
+    /// OFF/AUTO/ON gespiegelt. Werte 1:1 aus der Messung.
+    #[test]
+    fn fbw_a32nx_gemessen_parkbremse_apu_transponder_strobe() {
+        // Parkbremse gesetzt/geloest — die Standard-SimVar sagt das Gegenteil
+        // und wird ignoriert.
+        let gesetzt = runde2(
+            A32NX.0,
+            A32NX.1,
+            &[
+                ("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0),
+                ("BRAKE PARKING POSITION", 0.0),
+            ],
+        );
+        assert!(gesetzt.parking_brake);
+        let geloest = runde2(
+            A32NX.0,
+            A32NX.1,
+            &[
+                ("L:A32NX_PARK_BRAKE_LEVER_POS", 0.0),
+                ("BRAKE PARKING POSITION", 1.0),
+            ],
+        );
+        assert!(!geloest.parking_brake);
+        // APU
+        let an = runde2(
+            A32NX.0,
+            A32NX.1,
+            &[
+                ("L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON", 1.0),
+                ("APU SWITCH", 0.0),
+            ],
+        );
+        assert_eq!(an.apu_switch, Some(true));
+        let aus = runde2(
+            A32NX.0,
+            A32NX.1,
+            &[
+                ("L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON", 0.0),
+                ("APU SWITCH", 1.0),
+            ],
+        );
+        assert_eq!(aus.apu_switch, Some(false));
+        // Transponder: STBY / ALT / AUTO / TA ONLY / TA-RA wie gemessen
+        // (Standard 1/4/5/4/4, TCAS 0/0/0/1/2).
+        for (zustand, tcas, want) in [
+            (1.0, 0.0, "STBY"),
+            (4.0, 0.0, "ALT"),
+            (5.0, 0.0, "GND"),
+            (4.0, 1.0, "TA"),
+            (4.0, 2.0, "TA-RA"),
+        ] {
+            let snap = runde2(
+                A32NX.0,
+                A32NX.1,
+                &[
+                    ("TRANSPONDER STATE:1", zustand),
+                    ("L:A32NX_SWITCH_TCAS_POSITION", tcas),
+                ],
+            );
+            assert_eq!(
+                snap.xpdr_mode_label.as_deref(),
+                Some(want),
+                "zustand={zustand} tcas={tcas}"
+            );
+        }
+        // Strobe OFF/AUTO/ON → roh 2/1/0 → Snapshot 0/1/2.
+        for (roh, want) in [(2.0, 0u8), (1.0, 1), (0.0, 2)] {
+            let snap = runde2(A32NX.0, A32NX.1, &[("L:LIGHTING_STROBE_0", roh)]);
+            assert_eq!(snap.strobe_state, Some(want), "strobe roh={roh}");
+        }
+        // Nicht gemessen → bleibt beim alten Weg: A380X und Headwind lesen die
+        // Standard-Parkbremse, nicht den A32NX-Hebel.
+        for muster in [FBW_A380X, HEADWIND] {
+            let snap = runde2(
+                muster.0,
+                muster.1,
+                &[
+                    ("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0),
+                    ("BRAKE PARKING POSITION", 0.0),
+                ],
+            );
+            assert!(
+                !snap.parking_brake,
+                "{} darf den A32NX-Hebel nicht lesen",
+                muster.0
+            );
+        }
     }
 
     /// Gemessen 28.09.2026 („Flugzeug vermessen", iniBuilds A380 in MSFS
