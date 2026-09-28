@@ -301,7 +301,7 @@ describe("Flugzeug vermessen", () => {
     expect(await screen.findByText("Autopilot im Flug vermessen")).toBeTruthy();
     expect(screen.getByText(/In der Luft · Boeing 777-300ER/)).toBeTruthy();
     // Auswahl zeigt nur die Luft-Schritte.
-    expect(screen.getByText("Nur bestimmte Schalter messen (8 von 8)")).toBeTruthy();
+    expect(screen.getByText("Nur bestimmte Schalter messen (9 von 9)")).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: "Beacon (Anti-Collision)" })).toBeNull();
     await klick("Autopilot-Messung starten");
     const start = h.aufrufe.find((a) => a.cmd === "vermessung_starten");
@@ -309,7 +309,7 @@ describe("Flugzeug vermessen", () => {
     await klick(/Ruhemessung starten/);
     await klick("Weiter");
     expect(await screen.findByText("Autopilot (AP)")).toBeTruthy();
-    expect(screen.getByText("Schalter 1 von 8")).toBeTruthy();
+    expect(screen.getByText("Schalter 1 von 9")).toBeTruthy();
   });
 
   it("am Boden: Start mit teil=boden", async () => {
