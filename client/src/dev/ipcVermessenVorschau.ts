@@ -14,7 +14,7 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
       } as T;
     case "vermessung_starten":
       await warte(1500);
-      return { sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W", autor: "FlightFactor" }, anzahl_werte: 9312, l_namen: 0 } as T;
+      return { sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W", autor: "FlightFactor" }, anzahl_werte: 9312, l_namen: 0, sitzung: 1 } as T;
     case "vermessung_ruhe":
       await warte(8000);
       return { rauschen: 214 } as T;

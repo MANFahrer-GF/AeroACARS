@@ -212,10 +212,31 @@ fn quelle_beenden(app: &AppHandle, q: Quelle) {
     let _ = app;
 }
 
-/// Nummer der laufenden Sitzung.
-fn aktuelle_nr() -> Result<u64, String> {
+/// Nummer der laufenden Sitzung. Nennt der Aufrufer eine Sitzung (die
+/// Oberfläche tut das immer, auch über die LAN-Brücke), muss es diese sein —
+/// ein verspäteter Befehl aus einem alten Lauf fasst die neue nicht an.
+fn aktuelle_nr(sitzung: Option<u64>) -> Result<u64, String> {
     let g = SITZUNG.lock().map_err(|_| "Sperre")?;
-    Ok(g.as_ref().ok_or("Keine Messung aktiv")?.nr)
+    let nr = g.as_ref().ok_or("Keine Messung aktiv")?.nr;
+    match sitzung {
+        Some(x) if x != nr => Err(ABGEBROCHEN.into()),
+        _ => Ok(nr),
+    }
+}
+
+/// Sitzung `nr` schließen, falls sie noch die aktuelle ist (ohne die
+/// Laufnummer zu erhöhen).
+fn schliessen_wenn(app: &AppHandle, nr: u64) {
+    let alt = SITZUNG.lock().ok().and_then(|mut g| {
+        if g.as_ref().is_some_and(|s| s.nr == nr) {
+            g.take()
+        } else {
+            None
+        }
+    });
+    if let Some(alt) = alt {
+        quelle_beenden(app, alt.quelle);
+    }
 }
 
 /// Die Sitzung `nr` — oder Fehler, wenn sie inzwischen beendet/ersetzt ist.
@@ -240,6 +261,8 @@ pub struct StartAntwort {
     anzahl_werte: usize,
     /// MSFS: wie viele L:-Namen aus dem Aircraft-Scan kamen (0 = kein Scan).
     l_namen: usize,
+    /// Sitzungsnummer — die Oberfläche gibt sie bei jedem Befehl mit.
+    sitzung: u64,
 }
 
 /// Messung starten. Nur am Boden und mit verbundenem Simulator.
@@ -251,10 +274,18 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
     if !snap.on_ground {
         return Err("Bitte nur am Boden messen (Parkposition, Parkbremse gesetzt).".into());
     }
-    let _start = START.lock().await;
-    // Eine alte Sitzung sauber beenden; ab hier gilt diese Laufnummer.
-    vermessung_beenden(app.clone());
+    // Laufnummer VOR dem Warten auf einen anderen Start ziehen: wird dieser
+    // Aufruf abgebrochen, während er wartet, merkt er es danach.
     let nr = LAUF.fetch_add(1, Ordering::SeqCst) + 1;
+    let _start = START.lock().await;
+    if LAUF.load(Ordering::SeqCst) != nr {
+        return Err(ABGEBROCHEN.into());
+    }
+    // Eine alte Sitzung sauber beenden.
+    let alt = SITZUNG.lock().map_err(|_| "Sperre")?.take();
+    if let Some(alt) = alt {
+        quelle_beenden(&app, alt.quelle);
+    }
     let kind = crate::read_sim_config(&app).kind;
     let (quelle, sim, flugzeug, l_namen) = if kind.is_xplane() {
         let spiegel =
@@ -297,16 +328,21 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
     let mut anzahl = 0;
     for _ in 0..24 {
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let n = stand_jetzt(&app, nr)?.len();
+        let n = match stand_jetzt(&app, nr) {
+            Ok(st) => st.len(),
+            Err(e) => {
+                // z. B. X-Plane-Verbindung abgerissen: nichts halb offen lassen.
+                schliessen_wenn(&app, nr);
+                return Err(e);
+            }
+        };
         if n > 0 && n == anzahl {
             break; // stabil
         }
         anzahl = n;
     }
     if anzahl == 0 {
-        if LAUF.load(Ordering::SeqCst) == nr {
-            vermessung_beenden(app.clone());
-        }
+        schliessen_wenn(&app, nr);
         return Err(
             "Vom Simulator kommen keine Werte an. Läuft er, und ist das Flugzeug geladen?".into(),
         );
@@ -320,6 +356,7 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
         flugzeug,
         anzahl_werte: anzahl,
         l_namen,
+        sitzung: nr,
     })
 }
 
@@ -367,8 +404,8 @@ pub struct RuheAntwort {
 
 /// Ruhemessung: sechs Stände über ~8 s; was sich ändert, ist Rauschen.
 #[tauri::command]
-pub async fn vermessung_ruhe(app: AppHandle) -> Result<RuheAntwort, String> {
-    let nr = aktuelle_nr()?;
+pub async fn vermessung_ruhe(app: AppHandle, sitzung: Option<u64>) -> Result<RuheAntwort, String> {
+    let nr = aktuelle_nr(sitzung)?;
     let mut staende = vec![stand_jetzt(&app, nr)?];
     for _ in 0..5 {
         tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -395,8 +432,9 @@ pub struct StellungAntwort {
 pub async fn vermessung_stellung(
     app: AppHandle,
     stellung: String,
+    sitzung: Option<u64>,
 ) -> Result<StellungAntwort, String> {
-    let nr = aktuelle_nr()?;
+    let nr = aktuelle_nr(sitzung)?;
     tokio::time::sleep(NACHLAUF).await;
     let stand = stand_jetzt(&app, nr)?;
     mit_sitzung(nr, |s| {
@@ -427,53 +465,56 @@ pub struct SchrittAntwort {
 pub fn vermessung_schritt_abschliessen(
     schalter: String,
     uebersprungen: bool,
+    sitzung: Option<u64>,
 ) -> Result<SchrittAntwort, String> {
-    let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
-    let s = g.as_mut().ok_or("Keine Messung aktiv")?;
-    // Doppelklick: der zweite Abschluss fände leere Stände vor und würde
-    // das gerade gebildete Ergebnis durch null Kandidaten ersetzen.
-    if !uebersprungen && s.staende.is_empty() {
-        if let Some(x) = s.schritte.iter().find(|x| x.schalter == schalter) {
-            return Ok(SchrittAntwort {
-                kandidaten: x.kandidaten.len(),
-                beispiele: x.kandidaten.iter().take(3).cloned().collect(),
-            });
+    let nr = aktuelle_nr(sitzung)?;
+    mit_sitzung(nr, |s| {
+        // Doppelklick: der zweite Abschluss fände leere Stände vor und würde
+        // das gerade gebildete Ergebnis durch null Kandidaten ersetzen.
+        if !uebersprungen && s.staende.is_empty() {
+            if let Some(x) = s.schritte.iter().find(|x| x.schalter == schalter) {
+                return Ok(SchrittAntwort {
+                    kandidaten: x.kandidaten.len(),
+                    beispiele: x.kandidaten.iter().take(3).cloned().collect(),
+                });
+            }
         }
-    }
-    let staende = std::mem::take(&mut s.staende);
-    let stellungen = std::mem::take(&mut s.stellungen);
-    let k = if uebersprungen {
-        Vec::new()
-    } else {
-        kandidaten(&staende, &s.rauschen)
-    };
-    let beispiele = k.iter().take(3).cloned().collect();
-    let n = k.len();
-    s.schritte.retain(|x| x.schalter != schalter);
-    s.schritte.push(Schritt {
-        schalter: schalter.chars().take(40).collect(),
-        uebersprungen,
-        stellungen: if uebersprungen {
+        let staende = std::mem::take(&mut s.staende);
+        let stellungen = std::mem::take(&mut s.stellungen);
+        let k = if uebersprungen {
             Vec::new()
         } else {
-            stellungen
-        },
-        kandidaten: k,
-    });
-    Ok(SchrittAntwort {
-        kandidaten: n,
-        beispiele,
+            kandidaten(&staende, &s.rauschen)
+        };
+        let beispiele = k.iter().take(3).cloned().collect();
+        let n = k.len();
+        s.schritte.retain(|x| x.schalter != schalter);
+        s.schritte.push(Schritt {
+            schalter: schalter.chars().take(40).collect(),
+            uebersprungen,
+            stellungen: if uebersprungen {
+                Vec::new()
+            } else {
+                stellungen
+            },
+            kandidaten: k,
+        });
+        Ok(SchrittAntwort {
+            kandidaten: n,
+            beispiele,
+        })
     })
 }
 
 /// Stellungen des laufenden Schritts verwerfen (Pilot will neu beginnen).
 #[tauri::command]
-pub fn vermessung_schritt_neu() -> Result<(), String> {
-    let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
-    let s = g.as_mut().ok_or("Keine Messung aktiv")?;
-    s.staende.clear();
-    s.stellungen.clear();
-    Ok(())
+pub fn vermessung_schritt_neu(sitzung: Option<u64>) -> Result<(), String> {
+    let nr = aktuelle_nr(sitzung)?;
+    mit_sitzung(nr, |s| {
+        s.staende.clear();
+        s.stellungen.clear();
+        Ok(())
+    })
 }
 
 /// Der Bericht, wie er gesendet wird.
@@ -498,15 +539,17 @@ pub struct SendenAntwort {
 
 /// Ergebnis an live.kant.ovh senden. Eine Kopie bleibt lokal liegen.
 #[tauri::command]
-pub async fn vermessung_senden(app: AppHandle) -> Result<SendenAntwort, String> {
-    let json = {
-        let g = SITZUNG.lock().map_err(|_| "Sperre")?;
-        let s = g.as_ref().ok_or("Keine Messung aktiv")?;
+pub async fn vermessung_senden(
+    app: AppHandle,
+    sitzung: Option<u64>,
+) -> Result<SendenAntwort, String> {
+    let nr = aktuelle_nr(sitzung)?;
+    let json = mit_sitzung(nr, |s| {
         if s.schritte.iter().all(|x| x.uebersprungen) {
             return Err("Noch kein Schalter gemessen.".into());
         }
-        bericht(s)
-    };
+        Ok(bericht(s))
+    })?;
     if let Ok(dir) = app.path().app_data_dir() {
         let ziel = dir.join("vermessungen");
         let _ = std::fs::create_dir_all(&ziel);
@@ -528,8 +571,18 @@ pub async fn vermessung_senden(app: AppHandle) -> Result<SendenAntwort, String> 
 }
 
 /// Messung beenden (auch Abbrechen): Quelle schließen, alles verwerfen.
+/// Mit `sitzung` nur diese — ein verspätetes Beenden aus einem alten Lauf
+/// lässt eine neuere Messung stehen. Ohne (Seite verlassen mitten im
+/// Verbinden) alles, auch einen noch laufenden Start.
 #[tauri::command]
-pub fn vermessung_beenden(app: AppHandle) {
+pub fn vermessung_beenden(app: AppHandle, sitzung: Option<u64>) {
+    if let Some(nr) = sitzung {
+        if LAUF.load(Ordering::SeqCst) == nr {
+            LAUF.fetch_add(1, Ordering::SeqCst);
+        }
+        schliessen_wenn(&app, nr);
+        return;
+    }
     LAUF.fetch_add(1, Ordering::SeqCst);
     let alt = SITZUNG.lock().ok().and_then(|mut g| g.take());
     if let Some(alt) = alt {

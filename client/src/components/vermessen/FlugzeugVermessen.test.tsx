@@ -31,7 +31,7 @@ vi.mock("../../lib/ipc", () => ({
       case "sim_status":
         return Promise.resolve({ snapshot: { on_ground: h.amBoden, aircraft_title: "Boeing 777-300ER", aircraft_icao: "B77W" } });
       case "vermessung_starten":
-        return Promise.resolve({ sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W" }, anzahl_werte: 9312, l_namen: 0 });
+        return Promise.resolve({ sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W" }, anzahl_werte: 9312, l_namen: 0, sitzung: 7 });
       case "vermessung_ruhe":
         if (h.ruheSpaet) return new Promise((res) => (h.ruheLoesen = () => res({ rauschen: 214 })));
         return Promise.resolve({ rauschen: 214 });
@@ -109,8 +109,11 @@ describe("Flugzeug vermessen", () => {
     expect(cmds[cmds.length - 1]).toBe("vermessung_beenden");
     const abschluesse = h.aufrufe.filter((a) => a.cmd === "vermessung_schritt_abschliessen");
     expect(abschluesse).toHaveLength(SCHRITTE.length);
-    expect(abschluesse[0]!.args).toEqual({ schalter: "beacon", uebersprungen: false });
-    expect(abschluesse[1]!.args).toEqual({ schalter: "strobe", uebersprungen: true });
+    expect(abschluesse[0]!.args).toEqual({ schalter: "beacon", uebersprungen: false, sitzung: 7 });
+    expect(abschluesse[1]!.args).toEqual({ schalter: "strobe", uebersprungen: true, sitzung: 7 });
+    // Jeder Befehl nach dem Start nennt die Sitzung (auch das Beenden).
+    const nachStart = h.aufrufe.filter((a) => a.cmd.startsWith("vermessung_") && a.cmd !== "vermessung_starten");
+    expect(nachStart.every((a) => a.args?.sitzung === 7)).toBe(true);
   });
 
   it("Klappen: nach zwei Rasten lässt sich die letzte Stellung wählen", async () => {
@@ -131,7 +134,7 @@ describe("Flugzeug vermessen", () => {
     await klick("Das war schon die letzte Stellung");
     await waitFor(() => expect(screen.getByText(/Werte gehen mit diesem Schalter mit/)).toBeTruthy());
     const letzter = h.aufrufe.filter((a) => a.cmd === "vermessung_schritt_abschliessen").pop();
-    expect(letzter!.args).toEqual({ schalter: "klappen", uebersprungen: false });
+    expect(letzter!.args).toEqual({ schalter: "klappen", uebersprungen: false, sitzung: 7 });
   });
 
   it("Doppelklick auf „letzte Stellung“ schließt nur einmal ab", async () => {

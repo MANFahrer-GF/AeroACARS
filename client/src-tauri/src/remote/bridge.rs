@@ -65,6 +65,13 @@ pub enum Dispatch {
 /// Deserialize `body` into a command-arg struct `T`. A malformed body
 /// (missing/extra/typed-wrong fields) becomes a `UiError` so the caller
 /// sees a clean 422 instead of a 500.
+/// Argumente der Vermessungsbefehle, die nur die Sitzung nennen.
+#[derive(Deserialize, Default)]
+struct VmSitzung {
+    #[serde(default)]
+    sitzung: Option<u64>,
+}
+
 fn parse_args<T: for<'de> Deserialize<'de>>(body: &Value) -> Result<T, UiError> {
     serde_json::from_value(body.clone()).map_err(|e| {
         UiError::new(
@@ -172,19 +179,27 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "landing_get_current" => ok_json(crate::landing_get_current(app.clone(), st!())),
         "landing_list" => ok_json(crate::landing_list(app.clone())),
         // „Flugzeug vermessen" (28.09.2026) — auch vom Tablet aus: im Cockpit
-        // schalten, am iPad „Erledigt" tippen.
+        // schalten, am iPad „Erledigt" tippen. Jeder Befehl nennt die
+        // Sitzung, damit ein verspäteter Befehl eine neuere nicht anfasst.
         "vermessung_starten" => {
             from_string_err(crate::vermessung::vermessung_starten(app.clone()).await)
         }
-        "vermessung_ruhe" => from_string_err(crate::vermessung::vermessung_ruhe(app.clone()).await),
+        "vermessung_ruhe" => {
+            // Ohne Argumente (null) = ohne Sitzungsangabe.
+            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
+            from_string_err(crate::vermessung::vermessung_ruhe(app.clone(), a.sitzung).await)
+        }
         "vermessung_stellung" => {
             #[derive(Deserialize)]
             struct A {
                 stellung: String,
+                #[serde(default)]
+                sitzung: Option<u64>,
             }
             match parse_args::<A>(body) {
                 Ok(a) => from_string_err(
-                    crate::vermessung::vermessung_stellung(app.clone(), a.stellung).await,
+                    crate::vermessung::vermessung_stellung(app.clone(), a.stellung, a.sitzung)
+                        .await,
                 ),
                 Err(e) => Err(e),
             }
@@ -194,21 +209,31 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             struct A {
                 schalter: String,
                 uebersprungen: bool,
+                #[serde(default)]
+                sitzung: Option<u64>,
             }
             match parse_args::<A>(body) {
                 Ok(a) => from_string_err(crate::vermessung::vermessung_schritt_abschliessen(
                     a.schalter,
                     a.uebersprungen,
+                    a.sitzung,
                 )),
                 Err(e) => Err(e),
             }
         }
-        "vermessung_schritt_neu" => from_string_err(crate::vermessung::vermessung_schritt_neu()),
+        "vermessung_schritt_neu" => {
+            // Ohne Argumente (null) = ohne Sitzungsangabe.
+            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
+            from_string_err(crate::vermessung::vermessung_schritt_neu(a.sitzung))
+        }
         "vermessung_senden" => {
-            from_string_err(crate::vermessung::vermessung_senden(app.clone()).await)
+            // Ohne Argumente (null) = ohne Sitzungsangabe.
+            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
+            from_string_err(crate::vermessung::vermessung_senden(app.clone(), a.sitzung).await)
         }
         "vermessung_beenden" => {
-            crate::vermessung::vermessung_beenden(app.clone());
+            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
+            crate::vermessung::vermessung_beenden(app.clone(), a.sitzung);
             ok_json(())
         }
         // Bordbuch (26.09.2026) — 1:1 wie am PC.

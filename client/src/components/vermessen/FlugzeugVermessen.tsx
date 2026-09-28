@@ -17,6 +17,8 @@ interface StartAntwort {
   flugzeug: { titel?: string | null; icao?: string | null; autor?: string | null };
   anzahl_werte: number;
   l_namen: number;
+  /** Sitzungsnummer — geht bei jedem Befehl mit. */
+  sitzung: number;
 }
 interface StellungAntwort {
   mitgegangen: number;
@@ -63,6 +65,8 @@ export function FlugzeugVermessen() {
   const lauf = useRef(0);
   // Ein Befehl läuft — Doppelklicks nicht zweimal senden.
   const belegt = useRef(false);
+  // Sitzung im Backend (ab erfolgreichem Start).
+  const sitzung = useRef<number | null>(null);
 
   // Simulatorstatus für den Startbildschirm.
   useEffect(() => {
@@ -90,7 +94,9 @@ export function FlugzeugVermessen() {
   useEffect(
     () => () => {
       lauf.current++;
-      void invoke("vermessung_beenden").catch(() => undefined);
+      // Mitten im Verbinden gibt es noch keine Nummer — dann alles beenden.
+      const nr = sitzung.current;
+      void invoke("vermessung_beenden", nr === null ? undefined : { sitzung: nr }).catch(() => undefined);
     },
     [],
   );
@@ -98,13 +104,16 @@ export function FlugzeugVermessen() {
   const beenden = useCallback(async () => {
     lauf.current++;
     belegt.current = false;
-    await invoke("vermessung_beenden").catch(() => undefined);
+    const nr = sitzung.current;
+    sitzung.current = null;
+    await invoke("vermessung_beenden", nr === null ? undefined : { sitzung: nr }).catch(() => undefined);
   }, []);
 
   /** Einen Befehl ausführen; `null`, wenn inzwischen abgebrochen wurde. */
   const ausfuehren = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
     const n = lauf.current;
-    const a = await invoke<T>(cmd, args);
+    const mitNr = sitzung.current === null ? args : { ...args, sitzung: sitzung.current };
+    const a = await invoke<T>(cmd, mitNr);
     return lauf.current === n ? a : null;
   };
   const fehlerWennAktuell = (n: number, e: unknown) => {
@@ -126,6 +135,7 @@ export function FlugzeugVermessen() {
     try {
       const a = await ausfuehren<StartAntwort>("vermessung_starten");
       if (!a) return;
+      sitzung.current = a.sitzung;
       setStart(a);
       setErgebnisse({});
       setPhase({ art: "ruhe", laeuft: false, rauschen: null });
@@ -240,7 +250,9 @@ export function FlugzeugVermessen() {
 
   const schrittNeu = async () => {
     if (phase.art !== "schritt") return;
-    await invoke("vermessung_schritt_neu").catch(() => undefined);
+    await invoke("vermessung_schritt_neu", sitzung.current === null ? undefined : { sitzung: sitzung.current }).catch(
+      () => undefined,
+    );
     setPhase({ ...phase, stellung: 0, rueckmeldungen: [], abschluss: null, begonnen: true });
   };
 
