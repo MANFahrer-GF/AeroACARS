@@ -138,6 +138,13 @@
   border-radius: 10px;
   background: var(--surface-2);
 }
+.vm-info-wann {
+  grid-column: 1 / -1;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.vm-aufgabe-tun { margin: 0; line-height: 1.55; }
 .vm-info-titel { font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
 .vm-frage { font-weight: 600; }
 

@@ -3436,43 +3436,93 @@
         "titel": "Autopilot (AP)",
         "wo": "Glareshield-Panel (FCU/MCP), Taste AP1, AP oder CMD A.",
         "namen": "AP1 · AP2 · CMD A · A/P ENGAGE",
-        "hinweis": "Beim Ausschalten fliegst du kurz von Hand – danach sofort wieder einschalten. Eine Warnung (Cavalry Charge) ist normal, einfach quittieren."
+        "hinweis": "Beim Ausschalten fliegst du kurz von Hand – danach sofort wieder einschalten. Eine Warnung (Cavalry Charge) ist normal, einfach quittieren.",
+        "wann": "Im ruhigen Reiseflug, Autopilot an, keine Kurve und kein Höhenwechsel in den nächsten Minuten.",
+        "frage": "Bist du im ruhigen Reiseflug und ist der Autopilot an?",
+        "tun": {
+          "0": "So lassen, wie es ist – der Autopilot ist an (im FMA oben steht AP1 bzw. CMD). Einfach „Erledigt“ klicken.",
+          "1": "Autopilot ausschalten. Airbus: die rote Taste am Sidestick einmal drücken, ein zweiter Druck stoppt den Warnton. Boeing: die Taste am Steuerhorn zweimal drücken. Das Flugzeug ein paar Sekunden ruhig geradeaus halten, dann „Erledigt“.",
+          "2": "Autopilot wieder an: AP1 (Boeing: CMD A) drücken. Warten, bis im FMA wieder AP1 bzw. CMD steht, dann „Erledigt“."
+        }
       },
       "lateral": {
         "titel": "Seitenführung NAV / HDG",
         "wo": "Glareshield-Panel: Heading-Knopf. Airbus: ziehen = HDG (selected), drücken = NAV (managed). Boeing: HDG SEL bzw. LNAV.",
         "namen": "NAV · LNAV · HDG · HDG SEL",
-        "hinweis": "Vorher den HDG-Wert auf den aktuellen Kurs stellen, dann dreht das Flugzeug nicht weg."
+        "hinweis": "Vorher den HDG-Wert auf den aktuellen Kurs stellen, dann dreht das Flugzeug nicht weg.",
+        "wann": "Im ruhigen Reiseflug, das Flugzeug fliegt auf der Route (NAV bzw. LNAV).",
+        "frage": "Fliegt das Flugzeug gerade auf der Route (NAV bzw. LNAV im FMA)?",
+        "tun": {
+          "0": "So lassen – das Flugzeug fliegt die Route, im FMA steht NAV bzw. LNAV. Einfach „Erledigt“ klicken.",
+          "1": "Zuerst am HDG-Knopf deinen aktuellen Kurs einstellen, damit das Flugzeug nicht wegdreht. Dann auf Kursmodus schalten – Airbus: HDG-Knopf ziehen. Boeing: HDG SEL drücken. Im FMA steht jetzt HDG. Dann „Erledigt“.",
+          "2": "Zurück auf die Route – Airbus: HDG-Knopf drücken. Boeing: LNAV drücken. Im FMA steht wieder NAV bzw. LNAV. Dann „Erledigt“."
+        }
       },
       "vertikal": {
         "titel": "Höhe ALT / V/S",
         "wo": "Glareshield-Panel: V/S-Knopf ziehen bzw. V/S-Taste; zurück mit ALT (Airbus: Höhenknopf drücken bei gleicher Höhe, Boeing: ALT HOLD).",
         "namen": "ALT · ALT HOLD · V/S · FPA",
-        "hinweis": "V/S auf 0 stellen, dann bleibt die Höhe. Danach zurück auf ALT."
+        "hinweis": "V/S auf 0 stellen, dann bleibt die Höhe. Danach zurück auf ALT.",
+        "wann": "Im ruhigen Reiseflug auf Reiseflughöhe, kein Steig- oder Sinkflug geplant.",
+        "frage": "Hält das Flugzeug gerade die Reiseflughöhe (ALT, ALT CRZ oder VNAV PTH im FMA)?",
+        "tun": {
+          "0": "So lassen – das Flugzeug hält die Höhe. Merk dir, was im FMA steht (z. B. ALT CRZ oder VNAV PTH). „Erledigt“ klicken.",
+          "1": "Auf V/S mit 0 umschalten, damit die Höhe bleibt – Airbus: V/S-Knopf ziehen und auf 0 drehen. Boeing: V/S drücken und 0 einstellen. Im FMA steht jetzt V/S. Dann „Erledigt“.",
+          "2": "Zurück in die Betriebsart vom Anfang – Airbus: Höhenknopf drücken. Boeing: VNAV bzw. ALT HOLD drücken, je nachdem was vorher drin war. Im FMA steht wieder dasselbe wie am Anfang. Dann „Erledigt“."
+        }
       },
       "anflug": {
         "titel": "Anflug APPR / LOC",
         "wo": "Glareshield-Panel: Taste APPR bzw. APP, oder LOC.",
         "namen": "APPR · APP · LOC",
-        "hinweis": "Nur im Anflug mit ILS sinnvoll. Im Reiseflug einfach überspringen. Nach dem Messen wieder aus (Taste nochmal drücken) – danach normal weiterfliegen."
+        "hinweis": "Nur im Anflug mit ILS sinnvoll. Im Reiseflug einfach überspringen. Nach dem Messen wieder aus (Taste nochmal drücken) – danach normal weiterfliegen.",
+        "wann": "Im ILS-Anflug, bevor der Localizer eingefangen ist (LOC im FMA noch blau oder noch gar nicht da), mindestens 3000 ft über Grund.",
+        "frage": "Bist du im ILS-Anflug und ist APPR noch nicht gedrückt? Sonst einfach überspringen.",
+        "tun": {
+          "0": "So lassen – APPR ist noch nicht gedrückt. Einfach „Erledigt“ klicken.",
+          "1": "APPR drücken (Boeing: APP). Im FMA erscheinen LOC und G/S in Blau (armed). Dann „Erledigt“.",
+          "2": "APPR noch einmal drücken – LOC und G/S verschwinden wieder. „Erledigt“ klicken und danach APPR ganz normal wieder drücken und den Anflug weiterfliegen."
+        }
       },
       "btv": {
         "titel": "Autobrake BTV",
         "wo": "Airbus A380/A350: Autobrake-Knopf auf BTV (A380) bzw. BTV-Wahl am ND. Braucht die Landebahn im Flugplan.",
         "namen": "BTV · Brake To Vacate",
-        "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. Im Anflug mit gewählter Bahn scharf schalten, zum Schluss wieder auf die Stufe, mit der du landen willst."
+        "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. Im Anflug mit gewählter Bahn scharf schalten, zum Schluss wieder auf die Stufe, mit der du landen willst.",
+        "wann": "Im Anflug, die Landebahn steht im Flugplan, noch vor dem Aufsetzen.",
+        "frage": "Hat dein Flugzeug BTV (z. B. A380 oder A350)? Sonst einfach überspringen.",
+        "tun": {
+          "0": "So lassen – BTV ist aus (Autobrake auf einer normalen Stufe oder aus). Einfach „Erledigt“ klicken.",
+          "1": "BTV scharf schalten – A380: den Autobrake-Knopf auf BTV drehen. A350: BTV am ND wählen und den Abrollweg setzen. Im FMA bzw. PFD erscheint BTV. Dann „Erledigt“.",
+          "2": "BTV wieder aus: zurück auf die Stufe von vorher. „Erledigt“ klicken und danach die Stufe einstellen, mit der du landen willst."
+        }
       },
       "ap2": {
         "titel": "Zweiter Autopilot (AP1 / AP2)",
         "wo": "Glareshield-Panel: Tasten AP1 und AP2 (Airbus) bzw. CMD A und CMD B (Boeing).",
         "namen": "AP1 · AP2 · CMD A · CMD B",
-        "hinweis": "Im Reiseflug ist immer nur einer drin: AP2 drücken, dann übernimmt AP2 und AP1 geht aus. Danach wieder AP1. Hat dein Flugzeug nur einen Autopiloten, überspringen."
+        "hinweis": "Im Reiseflug ist immer nur einer drin: AP2 drücken, dann übernimmt AP2 und AP1 geht aus. Danach wieder AP1. Hat dein Flugzeug nur einen Autopiloten, überspringen.",
+        "wann": "Im ruhigen Reiseflug, direkt nach dem Schritt Autopilot.",
+        "frage": "Hat dein Flugzeug zwei Autopiloten (AP1 und AP2 bzw. CMD A und CMD B)?",
+        "tun": {
+          "0": "So lassen – AP1 (Boeing: CMD A) ist an. Einfach „Erledigt“ klicken.",
+          "1": "AP2 drücken (Boeing: CMD B). Im Reiseflug übernimmt AP2 und AP1 geht von selbst aus – im FMA steht jetzt AP2 bzw. CMD B. Ein Warnton kommt dabei nicht. Dann „Erledigt“.",
+          "2": "Wieder AP1 drücken (Boeing: CMD A). Im FMA steht wieder AP1 bzw. CMD A. Dann „Erledigt“."
+        }
       },
       "autoland": {
         "titel": "Autoland – beide Autopiloten (CAT III)",
         "wo": "Glareshield-Panel: im ILS-Anflug mit APPR den zweiten AP dazuschalten (AP1 + AP2 bzw. CMD A + CMD B). Das FMA zeigt dann z. B. CAT 3 DUAL oder LAND 3.",
         "namen": "CAT 3 DUAL · CAT 3 SINGLE · LAND 3 · LAND 2 · AUTOLAND",
-        "hinweis": "Nur im ILS-Anflug mit APPR armed. Einmal den zweiten AP zu, ab und wieder zu – am Ende bleiben beide an, dein Autoland läuft normal weiter."
+        "hinweis": "Nur im ILS-Anflug mit APPR armed. Einmal den zweiten AP zu, ab und wieder zu – am Ende bleiben beide an, dein Autoland läuft normal weiter.",
+        "wann": "Im ILS-Anflug mit APPR gedrückt, ein Autopilot an, mindestens 2000 ft über Grund. Darunter nicht mehr messen.",
+        "frage": "Bist du im ILS-Anflug mit APPR gedrückt, und ist genau ein Autopilot an?",
+        "tun": {
+          "0": "So lassen – ein Autopilot ist an, APPR ist gedrückt. Im FMA steht z. B. CAT 3 SINGLE oder CAT 2. „Erledigt“ klicken.",
+          "1": "Den zweiten Autopiloten dazuschalten: AP2 drücken (Boeing: CMD B). Im FMA steht jetzt AP1+2 und CAT 3 DUAL (Boeing zeigt LAND 3 erst unter 1500 ft). Dann „Erledigt“.",
+          "2": "Einen wieder herausnehmen: AP2 (Boeing: CMD B) noch einmal drücken, im FMA steht wieder nur AP1. Lässt sich ein einzelner Autopilot nicht abschalten, „Diese Stellung gibt es nicht“ wählen. Dann „Erledigt“.",
+          "3": "Wieder beide: AP2 (Boeing: CMD B) drücken. Jetzt bleiben beide an – dein Autoland läuft ganz normal weiter. „Erledigt“ klicken."
+        }
       }
     },
     "stellung": {
@@ -3546,6 +3596,7 @@
     "ruhe_text_luft": "Der Autopilot fliegt. Bitte jetzt etwa 8 Sekunden nichts im Cockpit anfassen. AeroACARS merkt sich, welche Werte sich im Flug von selbst ändern (Position, Sprit, Uhr) – die werden später ignoriert.",
     "teil_boden": "Boden",
     "teil_luft": "Luft",
-    "fehlt": "fehlt"
+    "fehlt": "fehlt",
+    "wann": "Wann?"
   }
 }

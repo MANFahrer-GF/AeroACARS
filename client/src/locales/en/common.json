@@ -3436,43 +3436,93 @@
         "titel": "Autopilot (AP)",
         "wo": "Glareshield panel (FCU/MCP), AP1, AP or CMD A button.",
         "namen": "AP1 · AP2 · CMD A · A/P ENGAGE",
-        "hinweis": "When switching it off you fly by hand briefly – switch it back on right away. A warning (cavalry charge) is normal, just acknowledge it."
+        "hinweis": "When switching it off you fly by hand briefly – switch it back on right away. A warning (cavalry charge) is normal, just acknowledge it.",
+        "wann": "In calm cruise, autopilot on, no turn and no altitude change in the next few minutes.",
+        "frage": "Are you in calm cruise with the autopilot on?",
+        "tun": {
+          "0": "Leave everything as it is – the autopilot is on (the FMA shows AP1 or CMD). Just click “Done”.",
+          "1": "Switch the autopilot off. Airbus: press the red button on the sidestick once, a second press silences the warning. Boeing: press the button on the yoke twice. Keep the aircraft steady for a few seconds, then “Done”.",
+          "2": "Autopilot back on: press AP1 (Boeing: CMD A). Wait until the FMA shows AP1 or CMD again, then “Done”."
+        }
       },
       "lateral": {
         "titel": "Lateral NAV / HDG",
         "wo": "Glareshield panel: heading knob. Airbus: pull = HDG (selected), push = NAV (managed). Boeing: HDG SEL or LNAV.",
         "namen": "NAV · LNAV · HDG · HDG SEL",
-        "hinweis": "Set the HDG value to your current heading first so the aircraft doesn't turn away."
+        "hinweis": "Set the HDG value to your current heading first so the aircraft doesn't turn away.",
+        "wann": "In calm cruise, the aircraft is flying the route (NAV or LNAV).",
+        "frage": "Is the aircraft flying the route right now (NAV or LNAV in the FMA)?",
+        "tun": {
+          "0": "Leave it – the aircraft flies the route, the FMA shows NAV or LNAV. Just click “Done”.",
+          "1": "First set your current heading on the HDG knob so the aircraft doesn't turn away. Then switch to heading mode – Airbus: pull the HDG knob. Boeing: press HDG SEL. The FMA now shows HDG. Then “Done”.",
+          "2": "Back to the route – Airbus: push the HDG knob. Boeing: press LNAV. The FMA shows NAV or LNAV again. Then “Done”."
+        }
       },
       "vertikal": {
         "titel": "Vertical ALT / V/S",
         "wo": "Glareshield panel: pull the V/S knob or press V/S; back with ALT (Airbus: push the altitude knob at the same altitude, Boeing: ALT HOLD).",
         "namen": "ALT · ALT HOLD · V/S · FPA",
-        "hinweis": "Set V/S to 0 so the altitude holds. Then back to ALT."
+        "hinweis": "Set V/S to 0 so the altitude holds. Then back to ALT.",
+        "wann": "In calm cruise at cruise altitude, no climb or descent planned.",
+        "frage": "Is the aircraft holding cruise altitude right now (ALT, ALT CRZ or VNAV PTH in the FMA)?",
+        "tun": {
+          "0": "Leave it – the aircraft holds altitude. Note what the FMA shows (e.g. ALT CRZ or VNAV PTH). Click “Done”.",
+          "1": "Switch to V/S 0 so the altitude stays – Airbus: pull the V/S knob and set 0. Boeing: press V/S and set 0. The FMA now shows V/S. Then “Done”.",
+          "2": "Back to the mode from the start – Airbus: push the altitude knob. Boeing: press VNAV or ALT HOLD, whichever was active before. The FMA shows the same as at the start. Then “Done”."
+        }
       },
       "anflug": {
         "titel": "Approach APPR / LOC",
         "wo": "Glareshield panel: APPR or APP button, or LOC.",
         "namen": "APPR · APP · LOC",
-        "hinweis": "Only makes sense on an ILS approach. Skip it in cruise. After measuring switch it off again (press once more) – then continue as normal."
+        "hinweis": "Only makes sense on an ILS approach. Skip it in cruise. After measuring switch it off again (press once more) – then continue as normal.",
+        "wann": "On an ILS approach before the localizer is captured (LOC still blue or not shown yet), at least 3000 ft above ground.",
+        "frage": "Are you on an ILS approach with APPR not pressed yet? Otherwise just skip.",
+        "tun": {
+          "0": "Leave it – APPR is not pressed yet. Just click “Done”.",
+          "1": "Press APPR (Boeing: APP). LOC and G/S appear in blue (armed) in the FMA. Then “Done”.",
+          "2": "Press APPR once more – LOC and G/S disappear. Click “Done”, then press APPR again as usual and continue the approach."
+        }
       },
       "btv": {
         "titel": "Autobrake BTV",
         "wo": "Airbus A380/A350: autobrake knob to BTV (A380) or BTV selection on the ND. Needs the runway in the flight plan.",
         "namen": "BTV · Brake To Vacate",
-        "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected, finally set the level you want to land with."
+        "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected, finally set the level you want to land with.",
+        "wann": "On approach, the runway is in the flight plan, before touchdown.",
+        "frage": "Does your aircraft have BTV (e.g. A380 or A350)? Otherwise just skip.",
+        "tun": {
+          "0": "Leave it – BTV is off (autobrake on a normal level or off). Just click “Done”.",
+          "1": "Arm BTV – A380: turn the autobrake knob to BTV. A350: select BTV on the ND and set the exit. BTV appears in the FMA/PFD. Then “Done”.",
+          "2": "BTV off again: back to the previous level. Click “Done”, then set the level you want to land with."
+        }
       },
       "ap2": {
         "titel": "Second autopilot (AP1 / AP2)",
         "wo": "Glareshield panel: AP1 and AP2 buttons (Airbus) or CMD A and CMD B (Boeing).",
         "namen": "AP1 · AP2 · CMD A · CMD B",
-        "hinweis": "In cruise only one can be engaged: press AP2, AP2 takes over and AP1 drops out. Then back to AP1. If your aircraft has only one autopilot, skip this."
+        "hinweis": "In cruise only one can be engaged: press AP2, AP2 takes over and AP1 drops out. Then back to AP1. If your aircraft has only one autopilot, skip this.",
+        "wann": "In calm cruise, right after the autopilot step.",
+        "frage": "Does your aircraft have two autopilots (AP1 and AP2, or CMD A and CMD B)?",
+        "tun": {
+          "0": "Leave it – AP1 (Boeing: CMD A) is on. Just click “Done”.",
+          "1": "Press AP2 (Boeing: CMD B). In cruise AP2 takes over and AP1 drops out by itself – the FMA now shows AP2 or CMD B. There is no warning. Then “Done”.",
+          "2": "Press AP1 again (Boeing: CMD A). The FMA shows AP1 or CMD A again. Then “Done”."
+        }
       },
       "autoland": {
         "titel": "Autoland – both autopilots (CAT III)",
         "wo": "Glareshield panel: on an ILS approach with APPR engage the second AP as well (AP1 + AP2 or CMD A + CMD B). The FMA then shows e.g. CAT 3 DUAL or LAND 3.",
         "namen": "CAT 3 DUAL · CAT 3 SINGLE · LAND 3 · LAND 2 · AUTOLAND",
-        "hinweis": "Only on an ILS approach with APPR armed. Add the second AP, remove it and add it again – at the end both stay on and your autoland continues normally."
+        "hinweis": "Only on an ILS approach with APPR armed. Add the second AP, remove it and add it again – at the end both stay on and your autoland continues normally.",
+        "wann": "On an ILS approach with APPR pressed, one autopilot on, at least 2000 ft above ground. Don't measure below that.",
+        "frage": "Are you on an ILS approach with APPR pressed and exactly one autopilot on?",
+        "tun": {
+          "0": "Leave it – one autopilot is on, APPR is pressed. The FMA shows e.g. CAT 3 SINGLE or CAT 2. Click “Done”.",
+          "1": "Add the second autopilot: press AP2 (Boeing: CMD B). The FMA now shows AP1+2 and CAT 3 DUAL (Boeing shows LAND 3 only below 1500 ft). Then “Done”.",
+          "2": "Take one out again: press AP2 (Boeing: CMD B) once more, the FMA shows only AP1. If a single autopilot can't be switched off, choose “This position doesn't exist”. Then “Done”.",
+          "3": "Both again: press AP2 (Boeing: CMD B). Now both stay on – your autoland continues normally. Click “Done”."
+        }
       }
     },
     "stellung": {
@@ -3546,6 +3596,7 @@
     "ruhe_text_luft": "The autopilot is flying. Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves in flight (position, fuel, clock) – they will be ignored.",
     "teil_boden": "Ground",
     "teil_luft": "Air",
-    "fehlt": "missing"
+    "fehlt": "missing",
+    "wann": "When?"
   }
 }

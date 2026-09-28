@@ -83,6 +83,10 @@ pub async fn lvar_namen(
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct Vermessen {
     pub sim: Option<String>,
+    /// „boden" oder „luft" — ohne das Feld zeigte die Liste jede Luft-Messung
+    /// als Boden (QS 28.09.2026). Ältere Server liefern es nicht.
+    #[serde(default)]
+    pub teil: Option<String>,
     pub icao: Option<String>,
     pub titel: Option<String>,
     /// Jüngste Messung, ms seit 1970.
@@ -108,4 +112,23 @@ pub async fn vermessen(base: Option<&str>, token: &str) -> Result<Vec<Vermessen>
         .await
         .map(|l| l.flugzeuge)
         .map_err(|e| NavdataError::BadResponse(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Die Liste muss `teil` bis zur Oberfläche durchreichen.
+    #[test]
+    fn vermessen_behaelt_den_teil() {
+        let l: VermessenListe = serde_json::from_str(
+            r#"{"flugzeuge":[{"sim":"msfs","teil":"luft","icao":"A388","titel":"A380-800 RR Basic","zuletzt":1,"anzahl":1},
+                             {"sim":"xplane","icao":"B77W","titel":"B777","zuletzt":2,"anzahl":3}]}"#,
+        )
+        .unwrap();
+        assert_eq!(l.flugzeuge[0].teil.as_deref(), Some("luft"));
+        assert_eq!(l.flugzeuge[1].teil, None, "Altbestand ohne Teil");
+        let aus = serde_json::to_value(&l.flugzeuge[0]).unwrap();
+        assert_eq!(aus["teil"], "luft", "auch zur Oberfläche serialisiert");
+    }
 }

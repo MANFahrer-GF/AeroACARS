@@ -698,6 +698,11 @@ function SchrittKarte({
   const def = plan[phase.nr]!;
   const k = `vermessen.schritt.${def.schalter}`;
   const hinweis = i18n.exists(`${k}.hinweis`) ? t(`${k}.hinweis`) : null;
+  // Luft-Schritte: wann, eigene Einstiegsfrage und je Stellung eine genaue
+  // Anweisung (was drücken, woran man im FMA sieht, dass es geklappt hat).
+  const wann = i18n.exists(`${k}.wann`) ? t(`${k}.wann`) : null;
+  const frage = i18n.exists(`${k}.frage`) ? t(`${k}.frage`) : t("vermessen.hat_schalter");
+  const tun = i18n.exists(`${k}.tun.${phase.stellung}`) ? t(`${k}.tun.${phase.stellung}`) : null;
   const letzteRueck = phase.rueckmeldungen[phase.rueckmeldungen.length - 1];
   const nichtsBewegt = !!letzteRueck?.antwort && !letzteRueck.antwort.erste && letzteRueck.antwort.mitgegangen === 0;
   const fertig = phase.abschluss !== null;
@@ -725,6 +730,12 @@ function SchrittKarte({
       <h3 className="vm-titel">{t(`${k}.titel`)}</h3>
 
       <div className="vm-info">
+        {wann && (
+          <div className="vm-info-wann">
+            <div className="vm-info-titel">{t("vermessen.wann")}</div>
+            <div>{wann}</div>
+          </div>
+        )}
         <div>
           <div className="vm-info-titel">{t("vermessen.wo")}</div>
           <div>{t(`${k}.wo`)}</div>
@@ -738,7 +749,7 @@ function SchrittKarte({
 
       {!phase.begonnen ? (
         <>
-          <p className="vm-frage">{t("vermessen.hat_schalter")}</p>
+          <p className="vm-frage">{frage}</p>
           <div className="vm-knoepfe">
             <button type="button" className="button button--primary" onClick={onBeginnen}>
               {t("vermessen.ja_starten")}
@@ -783,9 +794,18 @@ function SchrittKarte({
 
           {!fertig && (
             <div className="vm-aufgabe">
-              <div className="vm-aufgabe-text">
-                {t("vermessen.stelle_auf")} <strong>{t(`vermessen.stellung.${def.stellungen[phase.stellung]}`)}</strong>
-              </div>
+              {tun ? (
+                <>
+                  <div className="vm-aufgabe-text">
+                    <strong>{t(`vermessen.stellung.${def.stellungen[phase.stellung]}`)}</strong>
+                  </div>
+                  <p className="vm-aufgabe-tun">{tun}</p>
+                </>
+              ) : (
+                <div className="vm-aufgabe-text">
+                  {t("vermessen.stelle_auf")} <strong>{t(`vermessen.stellung.${def.stellungen[phase.stellung]}`)}</strong>
+                </div>
+              )}
               <div className="vm-knoepfe">
                 <button type="button" className="button button--primary" disabled={phase.misst} onClick={onErledigt}>
                   {phase.misst ? t("vermessen.messe") : t("vermessen.erledigt")}
