@@ -219,6 +219,10 @@ struct Shared {
     /// bei Flugzeugwechsel und Neuverbinden. Ablauf und Deutung in
     /// `crate::eingabe_events`.
     eingaben: Mutex<crate::eingabe_events::EingabeState>,
+    /// „Flugzeug vermessen" (28.09.2026): L:/A:-Messkanal in Bloecken ab
+    /// Definition/Anfrage `crate::vermessung::ID_BASIS`. Leer ausser
+    /// waehrend einer Messung.
+    messung: Mutex<crate::vermessung::MessState>,
 }
 
 /// Convert a PMDG NG3 (737-specific) snapshot to the generic
@@ -677,6 +681,7 @@ impl MsfsAdapter {
                 zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
                 pmdg: Mutex::new(PmdgSharedState::default()),
                 eingaben: Mutex::new(crate::eingabe_events::EingabeState::default()),
+                messung: Mutex::new(crate::vermessung::MessState::default()),
             }),
             worker: None,
             stop: Arc::new(AtomicBool::new(false)),
@@ -1059,6 +1064,49 @@ impl MsfsAdapter {
     pub fn zusatz_abgelehnt(&self) -> Vec<String> {
         self.shared.zusatz.lock().abgelehnt()
     }
+
+    // ---- „Flugzeug vermessen" (28.09.2026) ----
+
+    /// Messung starten: Standard-SimVars der Schalter + diese L:-Namen
+    /// blockweise lesen, dazu ALLE Input-Events abonnieren.
+    pub fn vermessung_starten(&self, l_namen: Vec<String>) {
+        let mut felder = crate::vermessung::standard_felder();
+        felder.extend(crate::vermessung::l_felder(&l_namen));
+        self.shared.messung.lock().setzen(felder);
+        self.shared
+            .eingaben
+            .lock()
+            .alle_setzen(true, Instant::now());
+    }
+
+    /// Messung beenden: Bloecke abbauen, zusaetzliche Abos abmelden.
+    pub fn vermessung_stoppen(&self) {
+        self.shared.messung.lock().setzen(Vec::new());
+        self.shared
+            .eingaben
+            .lock()
+            .alle_setzen(false, Instant::now());
+    }
+
+    /// Aktuelle Messwerte: `L:…`/`A:…` aus den Bloecken, `B:…` aus den
+    /// Input-Events.
+    pub fn vermessung_werte(&self) -> Vec<(String, f64)> {
+        let mut v = self.shared.messung.lock().werte();
+        v.extend(
+            self.shared
+                .eingaben
+                .lock()
+                .werte()
+                .iter()
+                .map(|(n, w)| (format!("B:{n}"), *w)),
+        );
+        v
+    }
+
+    /// Zahl der beobachteten Variablen (Anzeige).
+    pub fn vermessung_anzahl(&self) -> usize {
+        self.shared.messung.lock().anzahl() + self.shared.eingaben.lock().anzahl_abonniert()
+    }
 }
 
 impl Drop for MsfsAdapter {
@@ -1248,10 +1296,19 @@ fn run_dispatch(
     }
     // Dasselbe fuer die Zusatzwerte des Telemetrie-Monitors.
     shared.zusatz.lock().neue_verbindung();
+    shared.messung.lock().neue_verbindung();
     // MSFS-2024-Input-Events: frischer Zustand je Verbindung. MSFS 2020 kennt
     // keine — dort wird gar nicht erst gefragt, alles bleibt wie bisher.
-    // Aufgezaehlt wird, sobald `AircraftLoaded` eintrifft.
-    *shared.eingaben.lock() = crate::eingabe_events::EingabeState::default();
+    // Aufgezaehlt wird, sobald `AircraftLoaded` eintrifft. Ein laufender
+    // Messmodus bleibt erhalten.
+    {
+        let mut g = shared.eingaben.lock();
+        let alle = g.ist_alle();
+        *g = crate::eingabe_events::EingabeState::default();
+        if alle {
+            g.alle_setzen(true, Instant::now());
+        }
+    }
     if simulator == Simulator::Msfs2020 {
         shared.eingaben.lock().nicht_verfuegbar();
     }
@@ -1325,6 +1382,34 @@ fn run_dispatch(
                 Err(e) => {
                     tracing::warn!(error = %e, "Zusatzwerte fuer den Telemetrie-Monitor nicht angelegt");
                 }
+            }
+        }
+
+        // „Flugzeug vermessen": Messbloecke anlegen/abbauen, und nach dem
+        // Ende des Messmodus die zusaetzlichen Input-Event-Abos abmelden.
+        let mess_offen = shared.messung.lock().dirty;
+        if mess_offen {
+            let (bloecke, alt) = shared.messung.lock().zu_registrieren();
+            match conn.register_messung(&bloecke, alt) {
+                Ok(kennungen) => {
+                    let belegung = bloecke
+                        .iter()
+                        .map(|b| b.iter().map(|(i, _)| *i).collect())
+                        .collect();
+                    shared
+                        .messung
+                        .lock()
+                        .registriert(belegung, kennungen, Instant::now());
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Messbloecke fuer „Flugzeug vermessen\" nicht angelegt");
+                }
+            }
+        }
+        {
+            let weg = shared.eingaben.lock().abmelden_nehmen();
+            if !weg.is_empty() {
+                conn.eingaben_abmelden(&weg);
             }
         }
 
@@ -1801,6 +1886,9 @@ fn run_dispatch(
                     }
                     // Telemetrie-Monitor: abgelehnte Zusatz-SimVar aussortieren,
                     // die Definition wird im naechsten Tick ohne sie angelegt.
+                    if let Some(simvar) = shared.messung.lock().ausnahme(send_id) {
+                        tracing::debug!(exception, %simvar, "Messvariable vom Simulator abgelehnt");
+                    }
                     if let Some(simvar) = shared.zusatz.lock().ausnahme(send_id) {
                         tracing::info!(
                             exception,
@@ -1944,6 +2032,12 @@ fn run_dispatch(
                         }
                         ZUSATZ_REQUEST_ID => {
                             shared.zusatz.lock().einlesen(&bytes, Instant::now());
+                        }
+                        other if crate::vermessung::MessState::ist_mess_anfrage(other) => {
+                            shared
+                                .messung
+                                .lock()
+                                .einlesen(other, &bytes, Instant::now());
                         }
                         other => {
                             tracing::trace!(request_id = other, "unknown SimObjectData request_id");
@@ -2690,6 +2784,87 @@ impl Connection {
             return Err(format!(
                 "RequestDataOnSimObject (Zusatz) returned 0x{hr:08X}"
             ));
+        }
+        Ok(kennungen)
+    }
+
+    /// Messbloecke fuer „Flugzeug vermessen" (neu) anlegen. Erst die `alt`
+    /// bisher angelegten Bloecke stoppen und leeren, dann je Block eine
+    /// Definition mit Abfrage einmal pro Sekunde. Liefert je Feld
+    /// (Paketkennung, Block, Position) fuer die Zuordnung von Ausnahmen.
+    fn register_messung(
+        &mut self,
+        bloecke: &[Vec<(usize, crate::vermessung::MessFeld)>],
+        alt: usize,
+    ) -> Result<Vec<(u32, usize, usize)>, String> {
+        for b in 0..alt.max(bloecke.len()) {
+            let id = crate::vermessung::ID_BASIS + b as u32;
+            // Fehler egal: beim ersten Mal gibt es den Block noch nicht.
+            unsafe {
+                sys::SimConnect_RequestDataOnSimObject(
+                    self.handle,
+                    id,
+                    id,
+                    sys::SIMCONNECT_OBJECT_ID_USER,
+                    sys::SIMCONNECT_PERIOD_NEVER,
+                    0,
+                    0,
+                    0,
+                    0,
+                );
+                sys::SimConnect_ClearDataDefinition(self.handle, id);
+            }
+        }
+        let mut kennungen = Vec::new();
+        for (b, block) in bloecke.iter().enumerate() {
+            let id = crate::vermessung::ID_BASIS + b as u32;
+            for (p, (_, feld)) in block.iter().enumerate() {
+                let (Ok(cname), Ok(cunit)) = (
+                    std::ffi::CString::new(feld.simvar.as_str()),
+                    std::ffi::CString::new(feld.einheit.as_str()),
+                ) else {
+                    continue;
+                };
+                let hr = unsafe {
+                    sys::SimConnect_AddToDataDefinition(
+                        self.handle,
+                        id,
+                        cname.as_ptr(),
+                        cunit.as_ptr(),
+                        sys::SIMCONNECT_DATATYPE_FLOAT64,
+                        0.0,
+                        u32::MAX,
+                    )
+                };
+                if hr != 0 {
+                    return Err(format!(
+                        "AddToDataDefinition (Messung) \"{}\" returned 0x{hr:08X}",
+                        feld.simvar
+                    ));
+                }
+                let mut send_id: sys::DWORD = 0;
+                if unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) } == 0 {
+                    kennungen.push((send_id, b, p));
+                }
+            }
+            let hr = unsafe {
+                sys::SimConnect_RequestDataOnSimObject(
+                    self.handle,
+                    id,
+                    id,
+                    sys::SIMCONNECT_OBJECT_ID_USER,
+                    sys::SIMCONNECT_PERIOD_SECOND,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            if hr != 0 {
+                return Err(format!(
+                    "RequestDataOnSimObject (Messung) returned 0x{hr:08X}"
+                ));
+            }
         }
         Ok(kennungen)
     }

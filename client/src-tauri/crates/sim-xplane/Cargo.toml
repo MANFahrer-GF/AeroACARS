@@ -29,6 +29,9 @@ ureq = { version = "2", default-features = false, features = ["json"] }
 # back as `{"data":"<base64>"}` (e.g. "QTEzOQ==" for "A139"). Tiny,
 # no_std-friendly, no transitive deps.
 base64 = "0.22"
+# „Flugzeug vermessen": Web-API v2 per WebSocket (alle Werte live). Synchron,
+# ohne tokio; dieselbe Version wie im übrigen Baum (keine neue Abhängigkeit).
+tungstenite = "0.29"
 
 [lints]
 workspace = true

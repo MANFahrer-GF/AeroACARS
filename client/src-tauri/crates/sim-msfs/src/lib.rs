@@ -40,6 +40,8 @@ mod adapter;
 /// MSFS-2024-Input-Events (B:-Variablen): Deutung + Ablauf, plattformunabhaengig.
 pub mod eingabe_events;
 pub mod facility;
+/// „Flugzeug vermessen": Messkanal fuer L:/A:-Variablen, plattformunabhaengig.
+pub mod vermessung;
 /// Zusatzwerte fuer den Telemetrie-Monitor — Logik plattformunabhaengig.
 pub mod zusatz;
 

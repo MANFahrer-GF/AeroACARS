@@ -44,6 +44,7 @@ pub mod backup;
 pub mod bordbuch;
 pub mod chat;
 pub mod log_upload;
+pub mod messung;
 pub mod navdata;
 pub mod pirep_status;
 pub mod provision;

@@ -143,6 +143,9 @@ struct ListenSammler {
     von: Option<u32>,
     hashes: HashSet<u64>,
     treffer: Vec<Deskriptor>,
+    /// Messmodus „Flugzeug vermessen": alle Zahlen-Events, nicht nur die
+    /// Positivliste.
+    alle: bool,
 }
 
 impl ListenSammler {
@@ -155,7 +158,7 @@ impl ListenSammler {
             if x.typ != TYP_DOUBLE || x.name.is_empty() || !self.hashes.insert(x.hash) {
                 continue;
             }
-            if POSITIVLISTE.contains(&x.name.as_str()) {
+            if self.alle || POSITIVLISTE.contains(&x.name.as_str()) {
                 self.treffer.push(x);
             }
         }
@@ -191,8 +194,15 @@ pub struct EingabeState {
     abonniert: HashMap<u64, String>,
     /// Offene `GetInputEvent`-Anfragen: RequestID → Name.
     get_anfragen: HashMap<u32, String>,
-    /// Letzte Werte je Name (nur Positivliste).
+    /// Letzte Werte je Name (Positivliste; im Messmodus alle).
     werte: BTreeMap<String, f64>,
+    /// Messmodus „Flugzeug vermessen" (28.09.2026): alle Events abonnieren.
+    alle: bool,
+    /// Laufende Nummer fuer `GetInputEvent`-Anfragen (im Messmodus viele).
+    get_zaehler: u32,
+    /// Abos, die der Adapter im naechsten Durchlauf abmelden soll (Ende des
+    /// Messmodus — Aufruf kommt aus einem Faden ohne SimConnect-Griff).
+    abmelden_offen: Vec<u64>,
 }
 
 impl EingabeState {
@@ -225,7 +235,11 @@ impl EingabeState {
         self.versuche += 1;
         self.generation = self.generation.wrapping_add(1) % 100_000;
         let req = self.generation;
-        self.laufend = Some((req, ListenSammler::default(), jetzt));
+        let sammler = ListenSammler {
+            alle: self.alle,
+            ..ListenSammler::default()
+        };
+        self.laufend = Some((req, sammler, jetzt));
         Some(req)
     }
 
@@ -283,8 +297,12 @@ impl EingabeState {
         let (_, sammler, _) = self.laufend.take()?;
         let mut neu = Vec::new();
         for d in sammler.treffer {
-            let idx = POSITIVLISTE.iter().position(|n| *n == d.name).unwrap_or(0) as u32;
-            let get_req = self.generation * 16 + idx;
+            // Schon abonniert (Messmodus nach der Positivliste): nicht doppelt.
+            if self.abonniert.contains_key(&d.hash) {
+                continue;
+            }
+            self.get_zaehler = self.get_zaehler.wrapping_add(1);
+            let get_req = self.get_zaehler;
             self.abonniert.insert(d.hash, d.name.clone());
             self.get_anfragen.insert(get_req, d.name.clone());
             neu.push((d.hash, d.name, get_req));
@@ -325,6 +343,50 @@ impl EingabeState {
     /// Aktuelle Werte (Name ohne `B:`-Präfix → Wert).
     pub fn werte(&self) -> &BTreeMap<String, f64> {
         &self.werte
+    }
+
+    /// Messmodus an/aus. An: sofort neu aufzählen und dann ALLE Events
+    /// abonnieren. Aus: alles außer der Positivliste zum Abmelden vormerken
+    /// ([`Self::abmelden_nehmen`]).
+    pub fn alle_setzen(&mut self, an: bool, jetzt: Instant) {
+        if self.alle == an {
+            return;
+        }
+        self.alle = an;
+        if an {
+            self.laufend = None;
+            self.versuche = 0;
+            if !self.nicht_verfuegbar {
+                self.faellig_ab = Some(jetzt);
+            }
+        } else {
+            let weg: Vec<u64> = self
+                .abonniert
+                .iter()
+                .filter(|(_, n)| !POSITIVLISTE.contains(&n.as_str()))
+                .map(|(h, _)| *h)
+                .collect();
+            for h in &weg {
+                if let Some(n) = self.abonniert.remove(h) {
+                    self.werte.remove(&n);
+                }
+            }
+            self.abmelden_offen.extend(weg);
+        }
+    }
+
+    pub fn ist_alle(&self) -> bool {
+        self.alle
+    }
+
+    /// Vorgemerkte Abmeldungen für den Adapter-Faden.
+    pub fn abmelden_nehmen(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.abmelden_offen)
+    }
+
+    /// Zahl der abonnierten Events (Anzeige „Werte verbunden").
+    pub fn anzahl_abonniert(&self) -> usize {
+        self.abonniert.len()
     }
 }
 
@@ -465,6 +527,61 @@ mod tests {
         assert!(s.werte().is_empty());
         s.abo_aufnehmen(&abo(11, 0.0)); // verspätete Meldung des alten
         assert!(s.werte().is_empty());
+    }
+
+    /// „Flugzeug vermessen": im Messmodus werden ALLE Zahlen-Events
+    /// abonniert (ohne die schon abonnierten doppelt), danach nur noch die
+    /// Positivliste — der Rest wird zum Abmelden vorgemerkt.
+    #[test]
+    fn messmodus_abonniert_alle_und_raeumt_danach_auf() {
+        let t0 = Instant::now();
+        let mut s = EingabeState::default();
+        s.flugzeug_gewechselt(t0);
+        let req = s.aufzaehlung_starten(t0 + ANLAUF).unwrap();
+        let l = liste(
+            req,
+            0,
+            1,
+            &[
+                ("AIRLINER_LIGHTS_EXT_STROBE", 11, TYP_DOUBLE),
+                ("AIRLINER_IRGENDWAS", 12, TYP_DOUBLE),
+            ],
+        );
+        assert_eq!(s.liste_aufnehmen(&l, t0).unwrap().neu.len(), 1);
+
+        let t1 = t0 + ANLAUF + Duration::from_secs(1);
+        s.alle_setzen(true, t1);
+        assert!(s.ist_alle());
+        let req2 = s.aufzaehlung_starten(t1).expect("sofort neu aufzählen");
+        let l2 = liste(
+            req2,
+            0,
+            1,
+            &[
+                ("AIRLINER_LIGHTS_EXT_STROBE", 11, TYP_DOUBLE),
+                ("AIRLINER_IRGENDWAS", 12, TYP_DOUBLE),
+                ("AIRLINER_TEXT", 13, TYP_STRING),
+            ],
+        );
+        let abos = s.liste_aufnehmen(&l2, t1).unwrap();
+        let namen: Vec<&str> = abos.neu.iter().map(|(_, n, _)| n.as_str()).collect();
+        assert_eq!(
+            namen,
+            vec!["AIRLINER_IRGENDWAS"],
+            "Strobe war schon abonniert, Text nie"
+        );
+        let reqs: HashSet<u32> = abos.neu.iter().map(|(_, _, r)| *r).collect();
+        assert_eq!(reqs.len(), abos.neu.len(), "eindeutige GetInputEvent-IDs");
+        s.abo_aufnehmen(&abo(12, 3.0));
+        s.abo_aufnehmen(&abo(11, 1.0));
+        assert_eq!(s.werte().len(), 2);
+        assert_eq!(s.anzahl_abonniert(), 2);
+
+        s.alle_setzen(false, t1);
+        assert_eq!(s.abmelden_nehmen(), vec![12]);
+        assert!(s.abmelden_nehmen().is_empty());
+        assert_eq!(s.werte().get("AIRLINER_IRGENDWAS"), None);
+        assert_eq!(s.werte().get("AIRLINER_LIGHTS_EXT_STROBE"), Some(&1.0));
     }
 
     #[test]

@@ -75,6 +75,8 @@ mod panel_server;
 mod hoppie;
 /// Telemetrie-Monitor (v1.8): Kanalkatalog, Verlauf, Strom.
 mod telemetrie;
+/// „Flugzeug vermessen": geführte Schaltermessung (28.09.2026).
+mod vermessung;
 /// v1.7.44: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
 /// A-CDM-Werkzeug von VATSIM Spain. Nur lesend.
 mod vdgs;
@@ -56564,6 +56566,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            vermessung::vermessung_starten,
+            vermessung::vermessung_ruhe,
+            vermessung::vermessung_stellung,
+            vermessung::vermessung_schritt_abschliessen,
+            vermessung::vermessung_schritt_neu,
+            vermessung::vermessung_senden,
+            vermessung::vermessung_beenden,
             vdgs_fenster_oeffnen,
             fenster::fenster_an_inhalt_anpassen,
             vdgs_fenster_offen,

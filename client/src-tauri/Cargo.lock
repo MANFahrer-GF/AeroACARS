@@ -4675,6 +4675,7 @@ dependencies = [
  "sim-core",
  "thiserror 2.0.18",
  "tracing",
+ "tungstenite 0.29.0",
  "ureq 2.12.1",
 ]
 

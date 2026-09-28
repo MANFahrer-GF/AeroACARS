@@ -49,7 +49,10 @@ mod probe;
 mod profile;
 mod rref;
 pub mod szenerie;
+/// Flugzeug vermessen: alle Werte des geladenen Flugzeugs per Web-API v2.
+pub mod vermessung;
 mod web_api;
+pub use web_api::AircraftInfo;
 mod zusatz;
 
 pub use adapter::{ConnectionState, XPlaneAdapter};
