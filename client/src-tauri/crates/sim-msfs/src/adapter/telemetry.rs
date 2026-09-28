@@ -4470,13 +4470,19 @@ fn telemetry_to_snapshot_mit_pfad(
         // `airbus_xpdr_mode_label`. Unbekannte Werte → Standard-Rueckfall.
         airbus_xpdr_mode_label(t.ini_tcas_stby_state, t.ini_tcas_mode)
     } else if is_a350 {
-        // `L:INI_tcas_mode_pedestal`: Belegstand — das Paket
-        // (A350_Interior.behavior.xml) belegt nur 2=TA/RA und 3=TA ONLY;
-        // 0=STBY stammt allein aus HubHop (A350), bisher nicht am Paket
-        // bestaetigt. Die 1 ist fuer die A350 nicht belegt (die A300 nennt
-        // sie XPDR, das uebertragen wir nicht) → kein Label.
+        // `L:INI_tcas_mode_pedestal` 3=TA ONLY 2=TA/RA (Paket
+        // A350_Interior.behavior.xml). Gemessen 28.09.2026 mit „Flugzeug
+        // vermessen“ (A350-1000, Pilot Thorben2406): die 0 steht bei STBY
+        // UND bei ALT/XPNDR ohne TCAS — frueher hiess 0 immer „STBY“, ein
+        // Start mit ALT ohne TCAS lief so als „Transponder STBY“. Der
+        // Standard `TRANSPONDER STATE:1` trennt beides (gemessen STBY=1,
+        // an=5). Ohne ihn keine Aussage statt eines geratenen STBY.
         match t.ini_tcas_mode.round() as i64 {
-            0 => Some("STBY".to_string()),
+            0 => match t.std_transponder_state.map(|v| v.round() as i64) {
+                Some(0) | Some(1) => Some("STBY".to_string()),
+                Some(_) => Some("ALT".to_string()),
+                None => None,
+            },
             2 => Some("TA-RA".to_string()),
             3 => Some("TA".to_string()),
             _ => None,
@@ -8616,12 +8622,18 @@ mod tests {
         );
         assert_eq!(snap.xpdr_mode_label.as_deref(), Some("TA-RA"));
 
-        let tcas = |roh: f64| {
+        let tcas_mit = |roh: f64, zustand: Option<f64>| {
             let mut t = msfs2024_a350();
             t.ini_tcas_mode = roh;
+            t.std_transponder_state = zustand;
             telemetry_to_snapshot(t, Simulator::Msfs2024).xpdr_mode_label
         };
-        assert_eq!(tcas(0.0).as_deref(), Some("STBY"));
+        let tcas = |roh: f64| tcas_mit(roh, None);
+        // 0 = TCAS aus; STBY nur, wenn der Transponder selbst STBY meldet
+        // (gemessen 28.09.2026), sonst ALT — ohne Zustand keine Aussage.
+        assert_eq!(tcas_mit(0.0, Some(1.0)).as_deref(), Some("STBY"));
+        assert_eq!(tcas_mit(0.0, Some(5.0)).as_deref(), Some("ALT"));
+        assert_eq!(tcas(0.0), None);
         assert_eq!(tcas(3.0).as_deref(), Some("TA"));
         assert_eq!(tcas(1.0), None, "1 ist fuer die A350 nicht belegt");
 
@@ -9797,6 +9809,28 @@ mod tests {
         // A350: 2 = TA/RA, 3 = TA — die A330-Tabelle leakt nicht.
         let snap = runde2(A350.0, A350.1, &[("L:INI_tcas_mode_pedestal", 1.0)]);
         assert_eq!(snap.xpdr_mode_label, None);
+        // A350, gemessen 28.09.2026 (Thorben): TCAS 0 heisst nur mit
+        // Transponder-STBY „STBY“; bei ALT ohne TCAS ist der Transponder an.
+        for (tcas, zustand, want) in [
+            (0.0, 1.0, Some("STBY")),
+            (0.0, 5.0, Some("ALT")),
+            (3.0, 5.0, Some("TA")),
+            (2.0, 5.0, Some("TA-RA")),
+        ] {
+            let snap = runde2(
+                A350.0,
+                A350.1,
+                &[
+                    ("L:INI_tcas_mode_pedestal", tcas),
+                    ("TRANSPONDER STATE:1", zustand),
+                ],
+            );
+            assert_eq!(
+                snap.xpdr_mode_label.as_deref(),
+                want,
+                "tcas={tcas} zustand={zustand}"
+            );
+        }
         // Rueckfall Standard-SimVar, wenn die LVars nichts Belegtes liefern
         // (gemessen: STBY=1, AUTO am Boden=5, ON=4).
         for (roh, want) in [(1.0, "STBY"), (5.0, "GND"), (4.0, "ALT")] {

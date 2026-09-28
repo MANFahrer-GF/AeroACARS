@@ -75,6 +75,21 @@ pub struct Kandidat {
     pub werte: Vec<Option<f64>>,
 }
 
+/// Ändert sich ein Wert über alle Stellungen nur um einen winzigen Bruchteil
+/// seiner Größe (< 0,1 %), ist er kein Schalter, sondern Drift — gesehen am
+/// 28.09.2026 beim A350 (`L:CUR_WING_TEMP` 292,131 → 292,138 K). Schalter
+/// springen um ganze Stufen oder zwischen 0 und 1.
+fn nur_drift(werte: &[Option<f64>]) -> bool {
+    let zahlen: Vec<f64> = werte.iter().flatten().copied().collect();
+    if zahlen.len() != werte.len() || zahlen.is_empty() {
+        return false; // auftauchende/verschwindende Werte sind keine Drift
+    }
+    let min = zahlen.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = zahlen.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let groesse = zahlen.iter().fold(1.0_f64, |m, v| m.max(v.abs()));
+    max - min < groesse * 1e-3
+}
+
 /// Ist das ein Standardwert des Simulators (nachrangig im Bericht)?
 fn standard(name: &str) -> bool {
     name.starts_with("sim/") || name.starts_with("A:")
@@ -107,7 +122,7 @@ pub fn kandidaten(
                 || (0..werte.len()).all(|i| {
                     (0..i).all(|j| stellungen[i] != stellungen[j] || gleich(werte[i], werte[j]))
                 });
-            (wechselt && treu).then(|| Kandidat {
+            (wechselt && treu && !nur_drift(&werte)).then(|| Kandidat {
                 variable: k.clone(),
                 werte,
             })
@@ -786,6 +801,28 @@ mod tests {
         assert!(kandidaten(&[st(&[("a", 1.0)])], &[], &HashSet::new()).is_empty());
     }
 
+    /// Gemessen am A350 (Thorben, 28.09.2026): die Flügeltemperatur driftet
+    /// um Tausendstel und kam als „Kandidat“ durch — jetzt nicht mehr; ein
+    /// echter Schalter und kleine, aber echte Sprünge (Kurs 180 → 181) bleiben.
+    #[test]
+    fn winzige_drift_ist_kein_schalter() {
+        let staende = vec![
+            st(&[
+                ("L:CUR_WING_TEMP", 292.1313),
+                ("L:INI_LIGHTS_NOSE", 2.0),
+                ("A:HDG", 180.0),
+            ]),
+            st(&[
+                ("L:CUR_WING_TEMP", 292.1323),
+                ("L:INI_LIGHTS_NOSE", 1.0),
+                ("A:HDG", 181.0),
+            ]),
+        ];
+        let k = kandidaten(&staende, &[], &HashSet::new());
+        let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
+        assert_eq!(namen, ["L:INI_LIGHTS_NOSE", "A:HDG"]);
+    }
+
     /// In der Luft: AP an/aus/an. Der Schalter kehrt zurück, Sprit und Höhe
     /// driften weiter — nur der Schalter bleibt Kandidat.
     #[test]
@@ -799,7 +836,12 @@ mod tests {
         let k = kandidaten(&staende, &stellungen, &HashSet::new());
         let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
         assert_eq!(namen, ["L:INI_ap1_on"]);
-        // Ohne Stellungsnamen (alter Aufruf) bleiben alle, die sich ändern.
-        assert_eq!(kandidaten(&staende, &[], &HashSet::new()).len(), 3);
+        // Ohne Stellungsnamen greift die Treue-Regel nicht: Sprit bleibt
+        // (1 %), die Höhe (4 ft auf 35000) fällt als Drift heraus.
+        let ohne: Vec<String> = kandidaten(&staende, &[], &HashSet::new())
+            .into_iter()
+            .map(|k| k.variable)
+            .collect();
+        assert_eq!(ohne, ["L:INI_ap1_on", "A:FUEL"]);
     }
 }
