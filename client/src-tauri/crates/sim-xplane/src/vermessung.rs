@@ -115,18 +115,78 @@ fn flach(werte: &HashMap<i64, Wert>, namen: &HashMap<i64, String>) -> HashMap<St
 }
 
 /// Die Abo-Nachrichten, in Paketen zu [`PAKET`].
+#[cfg(test)]
 fn abo_nachrichten(ids: &[i64]) -> Vec<String> {
-    ids.chunks(PAKET)
-        .enumerate()
-        .map(|(i, c)| {
-            serde_json::json!({
-                "req_id": i + 1,
-                "type": "dataref_subscribe_values",
-                "params": { "datarefs": c.iter().map(|id| serde_json::json!({ "id": id })).collect::<Vec<_>>() },
-            })
-            .to_string()
-        })
-        .collect()
+    Abos::neu(ids).1
+}
+
+fn abo_nachricht(req_id: u64, ids: &[i64]) -> String {
+    serde_json::json!({
+        "req_id": req_id,
+        "type": "dataref_subscribe_values",
+        "params": { "datarefs": ids.iter().map(|id| serde_json::json!({ "id": id })).collect::<Vec<_>>() },
+    })
+    .to_string()
+}
+
+/// Offene Abo-Anfragen. X-Plane lehnt eine Anfrage GANZ ab, wenn auch nur
+/// ein Dataref darin nicht abonnierbar ist („A failed subscription event
+/// fails all datarefs sent", developer.x-plane.com, Web-API). Vorher fehlten
+/// dann stillschweigend alle 500 Werte des Pakets — beim ToLiss A320neo
+/// (Messung 28.09.2026) u. a. `AirbusFBW/AP1Engage`, obwohl er im Flug
+/// nachweislich mitläuft. Jetzt wird ein abgelehntes Paket halbiert und neu
+/// angemeldet, bis nur die einzelnen störrischen Datarefs übrig sind.
+struct Abos {
+    offen: HashMap<u64, Vec<i64>>,
+    naechste: u64,
+    abgelehnt: Vec<i64>,
+}
+
+impl Abos {
+    fn neu(ids: &[i64]) -> (Abos, Vec<String>) {
+        let mut a = Abos {
+            offen: HashMap::new(),
+            naechste: 1,
+            abgelehnt: Vec::new(),
+        };
+        let n = ids.chunks(PAKET).map(|c| a.anmelden(c.to_vec())).collect();
+        (a, n)
+    }
+
+    fn anmelden(&mut self, ids: Vec<i64>) -> String {
+        let id = self.naechste;
+        self.naechste += 1;
+        let n = abo_nachricht(id, &ids);
+        self.offen.insert(id, ids);
+        n
+    }
+
+    /// Antwort von X-Plane verarbeiten; liefert die neu zu sendenden
+    /// Abo-Nachrichten (die Hälften eines abgelehnten Pakets).
+    fn antwort(&mut self, text: &str) -> Vec<String> {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+            return Vec::new();
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("result") {
+            return Vec::new();
+        }
+        let Some(ids) = v
+            .get("req_id")
+            .and_then(|r| r.as_u64())
+            .and_then(|r| self.offen.remove(&r))
+        else {
+            return Vec::new();
+        };
+        if v.get("success").and_then(|s| s.as_bool()) != Some(false) {
+            return Vec::new();
+        }
+        if ids.len() == 1 {
+            self.abgelehnt.extend(ids);
+            return Vec::new();
+        }
+        let (a, b) = ids.split_at(ids.len() / 2);
+        vec![self.anmelden(a.to_vec()), self.anmelden(b.to_vec())]
+    }
 }
 
 pub struct Spiegel {
@@ -175,7 +235,8 @@ impl Spiegel {
             .map_err(|e| e.to_string())?;
         let (mut ws, _) = tungstenite::client(format!("ws://{HOST}/api/v2"), strom)
             .map_err(|e| format!("WebSocket-Handshake: {e}"))?;
-        for n in abo_nachrichten(&ids) {
+        let (mut abos, erste) = Abos::neu(&ids);
+        for n in erste {
             ws.send(Message::text(n))
                 .map_err(|e| format!("Abo senden: {e}"))?;
         }
@@ -190,7 +251,20 @@ impl Spiegel {
                 while !s2.load(Ordering::SeqCst) {
                     match ws.read() {
                         Ok(Message::Text(t)) => {
-                            nachricht_uebernehmen(t.as_str(), &mut w2.lock());
+                            if nachricht_uebernehmen(t.as_str(), &mut w2.lock()) == 0 {
+                                for n in abos.antwort(t.as_str()) {
+                                    if let Err(e) = ws.send(Message::text(n)) {
+                                        tracing::info!(error = %e, "X-Plane-Vermessung: Abo nachsenden");
+                                    }
+                                }
+                                if !abos.abgelehnt.is_empty() && abos.offen.is_empty() {
+                                    tracing::info!(
+                                        abgelehnt = abos.abgelehnt.len(),
+                                        "X-Plane-Vermessung: einzelne Datarefs nicht abonnierbar"
+                                    );
+                                    abos.abgelehnt.clear();
+                                }
+                            }
                         }
                         Ok(Message::Close(_)) => break,
                         Ok(_) => {}
@@ -290,6 +364,58 @@ mod tests {
         assert_eq!(s.get("laminar/a333/arr[1]"), Some(&0.5));
         assert_eq!(s.get("laminar/a333/arr[2]"), Some(&2.0));
         assert_eq!(s.len(), 4);
+    }
+
+    /// Ein abgelehntes Paket wird halbiert, bis nur der störrische Dataref
+    /// übrig bleibt — alle anderen werden angemeldet (ToLiss 28.09.2026).
+    #[test]
+    fn abgelehntes_paket_wird_bis_zum_stoerer_halbiert() {
+        let ids: Vec<i64> = (1..=8).collect();
+        let (mut a, erste) = Abos::neu(&ids);
+        assert_eq!(erste.len(), 1);
+        let stoerer = 6;
+        // X-Plane nachspielen: jede Anfrage mit dem Störer scheitert ganz.
+        let mut warteschlange = erste;
+        let mut angemeldet: Vec<i64> = Vec::new();
+        let mut runden = 0;
+        while let Some(n) = warteschlange.pop() {
+            runden += 1;
+            assert!(runden < 50, "halbiert nicht");
+            let v: serde_json::Value = serde_json::from_str(&n).unwrap();
+            let req = v["req_id"].as_u64().unwrap();
+            let drin: Vec<i64> = v["params"]["datarefs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d["id"].as_i64().unwrap())
+                .collect();
+            let ok = !drin.contains(&stoerer);
+            if ok {
+                angemeldet.extend(&drin);
+            }
+            warteschlange.extend(a.antwort(&format!(
+                r#"{{"req_id":{req},"success":{ok},"type":"result"}}"#
+            )));
+        }
+        angemeldet.sort_unstable();
+        assert_eq!(angemeldet, vec![1, 2, 3, 4, 5, 7, 8]);
+        assert_eq!(a.abgelehnt, vec![stoerer]);
+        assert!(a.offen.is_empty());
+    }
+
+    #[test]
+    fn erfolg_und_fremde_antworten_senden_nichts_nach() {
+        let (mut a, _) = Abos::neu(&[1, 2, 3]);
+        assert!(a
+            .antwort(r#"{"req_id":99,"success":false,"type":"result"}"#)
+            .is_empty());
+        assert!(a
+            .antwort(r#"{"data":{"1":0},"type":"dataref_update_values"}"#)
+            .is_empty());
+        assert!(a
+            .antwort(r#"{"req_id":1,"success":true,"type":"result"}"#)
+            .is_empty());
+        assert!(a.offen.is_empty());
     }
 
     #[test]
