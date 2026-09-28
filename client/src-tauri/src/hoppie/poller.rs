@@ -514,6 +514,19 @@ fn is_a_known_non_refusal_raw_text(text: &str) -> bool {
     t.eq_ignore_ascii_case("STANDBY") || t.eq_ignore_ascii_case("UNABLE CALL ON FREQ")
 }
 
+/// PDC-channel traffic by its shape: vSMR's `FSM …`/`CLD …` headers, or a
+/// clearance/refusal body. Never a logon verdict.
+fn looks_like_pdc_traffic(text: &str) -> bool {
+    let t = text.trim_start().to_ascii_uppercase();
+    t.starts_with("FSM ")
+        || t.starts_with("CLD ")
+        || t.contains(" PDC ")
+        || t.contains("CLRD")
+        || t.contains("CLEARED TO")
+        || t.contains("RCD REJECTED")
+        || t.contains("REVERT TO VOICE")
+}
+
 /// v0.19.x FIX: whether an inbound `HANDOVER <station>` directive should
 /// actually be honored. Hoppie has no cryptographic sender verification —
 /// any account can address a packet to any callsign — and this client
@@ -859,10 +872,20 @@ fn decide_raw_uplink(
             accepted: s.station_to_persist_on_accept(was_logged_on),
         };
     }
+    // External QS (Codex, 28.09.2026) P1: text that settles nothing must
+    // not be PRESUMED a refusal when it plainly is something else — an
+    // acceptance in wording we don't credit without MRN ("ACCEPTED"), or
+    // PDC traffic of the same station (a delivery desk can also be the
+    // logon target). The presumption stays for everything else: vSMR's own
+    // refusal wording is undocumented.
     let looks_like_a_refusal = match verdict {
         Some(LogonReply::Accepted) => false,
         Some(LogonReply::Refused) => true,
-        None => !is_a_known_non_refusal_raw_text(packet),
+        None => {
+            !is_a_known_non_refusal_raw_text(packet)
+                && !packet.to_ascii_uppercase().contains("ACCEPTED")
+                && !looks_like_pdc_traffic(packet)
+        }
     };
     let (superseded, cancelled_pending) =
         s.handle_undecodable_uplink(station, looks_like_a_refusal, now);
@@ -2483,6 +2506,21 @@ mod tests {
             assert_eq!(out.accepted, None, "{packet:?}");
             assert!(!s.is_logon_pending(), "{packet:?}");
             assert!(!s.is_logged_on(), "{packet:?}");
+        }
+    }
+
+    #[test]
+    fn headerless_text_that_is_not_a_refusal_leaves_the_logon_pending() {
+        // External QS (Codex, 28.09.2026) P1.
+        for packet in [
+            "ACCEPTED",
+            "FSM 2024 260918 ---- DLH2AS@DLH2AS@ RCD REJECTED @FLIGHT PLAN NOT HELD @REVERT TO VOICE PROCEDURES",
+            "CLD 0848 260823 EDDF PDC 009 SWR9PZCLRD TO @LSGG@",
+        ] {
+            let mut s = session_pending_logon_to("EDGG");
+            let out = decide_raw_uplink(&mut s, "EDGG", packet, chrono::Utc::now());
+            assert!(!out.cancelled_pending, "{packet:?}");
+            assert!(s.is_logon_pending(), "{packet:?}");
         }
     }
 

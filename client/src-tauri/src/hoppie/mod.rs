@@ -570,17 +570,24 @@ async fn ping_station(
 /// Identity of the connection (which session object) and of its state
 /// (`persist_generation` moves on every logon, acceptance, cancellation
 /// and session end) — see `hoppie_send_logon_request`'s pre-check.
-fn session_fingerprint(handle: &HoppieHandle) -> (usize, u64) {
-    (
-        Arc::as_ptr(&handle.session) as usize,
-        handle.session.lock().expect("hoppie session mutex").persist_generation(),
-    )
+///
+/// The session `Arc` itself is HELD (external QS, Codex 28.09.2026, P2):
+/// comparing a bare address could be fooled by a reconnect whose new
+/// session reuses the freed allocation.
+type SessionFingerprint = (Arc<StdMutex<HoppieSession>>, u64);
+
+fn session_fingerprint(handle: &HoppieHandle) -> SessionFingerprint {
+    let generation = handle.session.lock().expect("hoppie session mutex").persist_generation();
+    (Arc::clone(&handle.session), generation)
 }
 
 /// Refuse to act on a logon decision taken before the pre-check ping
 /// when the connection or its session changed during that ping.
-fn unchanged_during_precheck(before: (usize, u64), after: (usize, u64)) -> Result<(), UiError> {
-    if before == after {
+fn unchanged_during_precheck(
+    before: &SessionFingerprint,
+    after: &SessionFingerprint,
+) -> Result<(), UiError> {
+    if Arc::ptr_eq(&before.0, &after.0) && before.1 == after.1 {
         return Ok(());
     }
     Err(UiError::new(
@@ -1323,7 +1330,7 @@ pub async fn hoppie_send_logon_request(
             "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
         )
     })?;
-    unchanged_during_precheck(fingerprint_before, session_fingerprint(handle))?;
+    unchanged_during_precheck(&fingerprint_before, &session_fingerprint(handle))?;
 
     let explicit_to = if let Some(raw) = station {
         let trimmed = raw.trim().to_uppercase();
@@ -2050,11 +2057,19 @@ mod tests {
 
     #[test]
     fn a_state_change_during_the_precheck_aborts_the_logon() {
-        assert!(unchanged_during_precheck((7, 3), (7, 3)).is_ok());
+        let a = Arc::new(StdMutex::new(HoppieSession::new("SERVER".into())));
+        let b = Arc::new(StdMutex::new(HoppieSession::new("SERVER".into())));
+        assert!(unchanged_during_precheck(&(Arc::clone(&a), 3), &(Arc::clone(&a), 3)).is_ok());
         // Handover / acceptance / cancellation moved the generation.
-        assert_eq!(unchanged_during_precheck((7, 3), (7, 4)).unwrap_err().code, "hoppie_state_changed");
+        assert_eq!(
+            unchanged_during_precheck(&(Arc::clone(&a), 3), &(Arc::clone(&a), 4)).unwrap_err().code,
+            "hoppie_state_changed"
+        );
         // Reconnected: a different session object, even with an equal generation.
-        assert_eq!(unchanged_during_precheck((7, 3), (8, 3)).unwrap_err().code, "hoppie_state_changed");
+        assert_eq!(
+            unchanged_during_precheck(&(Arc::clone(&a), 3), &(b, 3)).unwrap_err().code,
+            "hoppie_state_changed"
+        );
     }
 
     #[test]

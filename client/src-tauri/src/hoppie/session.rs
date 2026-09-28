@@ -185,7 +185,6 @@ fn is_pdc_outcome(text: &str) -> bool {
         || t.contains("CLEARED TO")
         || t.contains("REJECTED")
         || t.contains("REVERT TO VOICE")
-        || t.contains("UNABLE")
 }
 
 impl HoppieSession {
@@ -409,6 +408,7 @@ impl HoppieSession {
             // and its still-open PDC traffic ends with it.
             self.pdc_requests.remove(&station);
             self.pdc_awaiting.remove(&station);
+            self.pdc_awaiting_replaced.remove(&station);
             self.supersede_pdc_uplinks_of(&station);
             self.ended_stations.insert(station);
             self.persist_generation += 1;
@@ -551,6 +551,8 @@ impl HoppieSession {
         // (external QS, Codex 28.09.2026, P3).
         self.pdc_awaiting
             .retain(|_, t| at - *t < chrono::Duration::minutes(PDC_FAST_POLL_MINUTES));
+        let live = &self.pdc_awaiting;
+        self.pdc_awaiting_replaced.retain(|st, _| live.contains_key(st));
         let replaced_wait = self.pdc_awaiting.insert(station.clone(), at);
         self.pdc_awaiting_replaced
             .insert(station.clone(), (at, replaced_wait));
@@ -565,7 +567,9 @@ impl HoppieSession {
     ///
     /// External QS (Codex, 28.09.2026) P2: only a POSITIVELY recognized
     /// PDC outcome ends the wait — a clearance (`CLD …`, "CLRD TO"), a
-    /// refusal ("RCD REJECTED", "REVERT TO VOICE", "UNABLE"). Anything
+    /// refusal ("RCD REJECTED", "REVERT TO VOICE"). A bare "UNABLE" is not:
+/// vSMR's "UNABLE CALL ON FREQ" or an unrelated CPDLC refusal of the same
+/// station (external QS, Codex 28.09.2026, P2). Anything
     /// else the same station sends (CURRENT ATC UNIT, a CPDLC instruction
     /// of an unrelated session, free text) leaves the 5-minute wait alone.
     pub fn note_pdc_inbound(&mut self, station: &str, text: &str) {
@@ -575,6 +579,7 @@ impl HoppieSession {
         }
         if is_pdc_outcome(text) {
             self.pdc_awaiting.remove(&station);
+            self.pdc_awaiting_replaced.remove(&station);
         }
     }
 
@@ -2019,5 +2024,15 @@ mod tests {
         s.note_pdc_request("EDDM", t0());
         s.note_pdc_request("EDDF", t0() + chrono::Duration::minutes(PDC_FAST_POLL_MINUTES + 1));
         assert_eq!(s.pdc_awaiting.len(), 1, "EDDM's wait expired and was dropped");
+        assert_eq!(s.pdc_awaiting_replaced.len(), 1, "and its restore note with it");
+    }
+
+    #[test]
+    fn an_unrelated_unable_keeps_the_pdc_wait() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", t0());
+        s.note_pdc_inbound("EDDM", "UNABLE CALL ON FREQ");
+        s.note_pdc_inbound("EDDM", "/data2/7/3/NE/UNABLE");
+        assert!(s.is_awaiting_pdc_answer(t0()));
     }
 }
