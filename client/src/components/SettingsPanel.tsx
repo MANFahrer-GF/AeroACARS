@@ -17,6 +17,7 @@ import { RemoteServerPanel } from "./RemoteServerPanel";
 import { MsfsHudPanel } from "./MsfsHudPanel";
 import { HoppieSettingsPanel } from "./HoppieSettingsPanel";
 import { BordbuchEinstellungen } from "./bordbuch/BordbuchEinstellungen";
+import { FlugzeugVermessen } from "./vermessen/FlugzeugVermessen";
 
 const ALL_KINDS: SimKind[] = [
   "msfs2024",
@@ -229,7 +230,7 @@ export function SettingsPanel({
   //     gebraucht, primär für Troubleshooting
   // Tab-Wahl wird in localStorage gemerkt, damit der Pilot beim nächsten
   // Settings-Öffnen wieder dort landet wo er war.
-  type SettingsTab = "simulator" | "required" | "extras" | "bordbuch" | "plugins" | "tech";
+  type SettingsTab = "simulator" | "required" | "extras" | "bordbuch" | "plugins" | "vermessen" | "tech";
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     try {
       const saved = localStorage.getItem("aeroacars.settings.activeTab");
@@ -239,6 +240,7 @@ export function SettingsPanel({
         saved === "extras" ||
         saved === "bordbuch" ||
         saved === "plugins" ||
+        saved === "vermessen" ||
         saved === "tech"
       ) {
         return saved;
@@ -276,7 +278,7 @@ export function SettingsPanel({
         role="tablist"
         aria-label={t("settings.title") ?? "Settings"}
       >
-        {(["simulator", "required", "extras", "bordbuch", "plugins", "tech"] as SettingsTab[]).map((tab) => {
+        {(["simulator", "required", "extras", "bordbuch", "plugins", "vermessen", "tech"] as SettingsTab[]).map((tab) => {
           const isActive = activeTab === tab;
           return (
             <button
@@ -614,6 +616,7 @@ export function SettingsPanel({
           „Plugins"-Tab).
       */}
       {activeTab === "bordbuch" && <BordbuchEinstellungen />}
+      {activeTab === "vermessen" && <FlugzeugVermessen />}
 
       {activeTab === "tech" && (
         <>

@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 
 const pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf-8"));
 const ERSATZ = resolve(process.cwd(), "src/dev/ipcBordbuchVorschau.ts");
+const ERSATZ_VERMESSEN = resolve(process.cwd(), "src/dev/ipcVermessenVorschau.ts");
 
 export default defineConfig({
   plugins: [
@@ -17,6 +18,7 @@ export default defineConfig({
       resolveId(source, importer) {
         if (source === "../../lib/ipc" && importer?.endsWith("bordbuch/BordbuchLandung.tsx")) return ERSATZ;
         if (source === "../lib/ipc" && importer?.endsWith("components/ResumeFlightBanner.tsx")) return ERSATZ;
+        if (source === "../../lib/ipc" && importer?.endsWith("vermessen/FlugzeugVermessen.tsx")) return ERSATZ_VERMESSEN;
         return null;
       },
     },

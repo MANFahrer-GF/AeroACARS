@@ -1,0 +1,205 @@
+/* „Flugzeug vermessen" — geführte Schaltermessung (28.09.2026). */
+
+.vm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 760px;
+}
+
+.vm-karte {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.vm-karte h3 { margin: 0; }
+.vm-karte p { margin: 0; line-height: 1.5; }
+.vm-mitte { align-items: center; text-align: center; padding: 32px 22px; }
+
+.vm-titel { font-size: 1.25rem; }
+.vm-dim { color: var(--text-dim); }
+.vm-klein { font-size: 0.82rem; }
+.vm-mono { font-family: var(--font-acars, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.86rem; }
+.vm-ok { color: var(--sem-ok); }
+.vm-warn { color: var(--sem-warn); }
+
+.vm-knoepfe { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 4px; }
+.vm-leise { margin-left: auto; }
+
+.vm-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.vm-fehler {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--sem-danger) 40%, var(--border));
+  background: var(--sem-danger-bg);
+  color: var(--sem-danger);
+}
+
+.vm-liste {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  background: var(--surface-2);
+}
+.vm-liste-titel { font-weight: 600; margin-bottom: 6px; }
+.vm-liste ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+
+.vm-status {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.vm-status--ok { background: var(--sem-ok-bg); color: var(--sem-ok); }
+.vm-status--warn { background: var(--sem-warn-bg); color: var(--sem-warn); }
+
+.vm-hinweis {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--sem-info-bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+.vm-hinweis--warn { background: var(--sem-warn-bg); }
+
+.vm-kopf { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+.vm-flugzeug { font-weight: 600; }
+
+/* Warte-Kreisel beim Verbinden */
+.vm-drehen {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: vm-drehen 0.9s linear infinite;
+}
+@keyframes vm-drehen { to { transform: rotate(360deg); } }
+
+/* Ruhemessung */
+.vm-fortschritt { display: grid; gap: 6px; }
+.vm-balken { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.vm-balken-fuellung {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  animation: vm-fuellen linear forwards;
+}
+@keyframes vm-fuellen { to { width: 100%; } }
+
+/* Schritt-Punkte oben */
+.vm-schritte { display: flex; gap: 6px; flex-wrap: wrap; }
+.vm-punkt {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.vm-punkt--fertig { background: var(--sem-ok); border-color: var(--sem-ok); }
+.vm-punkt--leer { background: var(--sem-warn); border-color: var(--sem-warn); }
+.vm-punkt--weg { background: var(--text-dim); border-color: var(--text-dim); opacity: 0.5; }
+.vm-punkt--jetzt { background: var(--accent); border-color: var(--accent); transform: scale(1.25); }
+
+/* Wo / heißt */
+.vm-info {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 12px 20px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.vm-info-titel { font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+.vm-frage { font-weight: 600; }
+
+/* Stellungen */
+.vm-stellungen { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.vm-stellung {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.vm-stellung-marke {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+.vm-stellung-name { font-weight: 600; }
+.vm-stellung-rueck { font-size: 0.85rem; color: var(--text-dim); text-align: right; }
+.vm-stellung--jetzt { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.vm-stellung--jetzt .vm-stellung-marke { background: var(--accent); color: var(--on-acc); }
+.vm-stellung--fertig .vm-stellung-marke { background: var(--sem-ok); color: var(--on-acc); }
+.vm-stellung--fertig .vm-stellung-rueck { color: var(--sem-ok); }
+.vm-stellung--leer .vm-stellung-marke { background: var(--sem-warn); color: var(--on-acc); }
+.vm-stellung--leer .vm-stellung-rueck { color: var(--sem-warn); }
+.vm-stellung--fehlt { opacity: 0.6; }
+.vm-stellung--offen { opacity: 0.55; }
+
+/* Die aktuelle Aufgabe */
+.vm-aufgabe {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 2px solid var(--accent);
+}
+.vm-aufgabe-text { font-size: 1.08rem; }
+.vm-aufgabe-text strong { font-size: 1.2rem; }
+
+.vm-ergebnis { display: grid; gap: 8px; padding: 12px 14px; border-radius: 10px; font-weight: 600; }
+.vm-ergebnis--ok { background: var(--sem-ok-bg); color: var(--sem-ok); }
+.vm-ergebnis--warn { background: var(--sem-warn-bg); color: var(--text); }
+.vm-beispiele { margin: 0; padding-left: 18px; font-weight: 400; color: var(--text); overflow-wrap: anywhere; }
+
+.vm-uebersicht { list-style: none; margin: 0; padding: 0; display: grid; }
+.vm-uebersicht li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vm-haken {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  background: var(--sem-ok-bg);
+  color: var(--sem-ok);
+}
+
+.vm-fuss { display: flex; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 10px; }
+
+@media (max-width: 640px) {
+  .vm-karte { padding: 16px; }
+  .vm-info { grid-template-columns: 1fr; }
+  .vm-leise { margin-left: 0; }
+}

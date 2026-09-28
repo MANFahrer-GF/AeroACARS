@@ -1154,7 +1154,9 @@
       "plugins_hint": "Flugzeug-spezifische Add-ons: PMDG-SDK (Boeing) und AeroACARS-X-Plane-Plugin. Werden automatisch erkannt sobald das passende Flugzeug geladen ist.",
       "tech_hint": "Diagnose, Debug-Werkzeuge und seltene Maintenance-Funktionen.",
       "bordbuch": "📓 Bordbuch",
-      "bordbuch_hint": "Was das Bordbuch abhakt, leise Hinweise im Flug, Kleinflugzeuge und VFR."
+      "bordbuch_hint": "Was das Bordbuch abhakt, leise Hinweise im Flug, Kleinflugzeuge und VFR.",
+      "vermessen": "📐 Flugzeug vermessen",
+      "vermessen_hint": "Hilf mit, dein Flugzeug richtig zu erkennen: Du schaltest im Cockpit, AeroACARS schaut zu."
     },
     "appearance_section": "Sprache & Darstellung",
     "language_label": "Sprache",
@@ -3301,5 +3303,165 @@
       "rolltempo_grenzen": "Grenze für das Rolltempo:"
     },
     "wert_atc": "NACH ATC"
+  },
+  "vermessen": {
+    "titel": "Flugzeug vermessen",
+    "einleitung": "Viele Add-on-Flugzeuge legen ihre Schalter an eigenen Stellen ab. Damit AeroACARS Strobes, Transponder, Klappen & Co. bei deinem Flugzeug richtig liest, schaltest du ein paar Schalter nacheinander um – AeroACARS schaut dabei zu und merkt sich, welche Werte mitgehen. Daraus bauen wir ein Profil für dein Flugzeug.",
+    "dauer": "Dauer: etwa 5 Minuten. Es wird nichts im Simulator verstellt – AeroACARS liest nur.",
+    "was_gesendet": "Gesendet werden nur Werte des Flugzeugs (keine persönlichen Daten außer deiner Pilotenkennung). Du findest die Messung danach auf live.kant.ovh/aircraft unter „Meine Einreichungen“ und kannst sie dort löschen.",
+    "vorher_titel": "Bevor du startest",
+    "vorher_sim": "Simulator läuft, Flugzeug ist geladen",
+    "vorher_boden": "Flugzeug steht am Boden (Gate oder Vorfeld), Parkbremse gesetzt",
+    "vorher_strom": "Strom ist an (Batterie oder Bodenstrom), damit die Schalter reagieren",
+    "vorher_pause": "Simulator läuft, nicht pausiert",
+    "sim_ok": "Simulator verbunden · {{flugzeug}}",
+    "sim_fehlt": "Kein Simulator verbunden",
+    "sim_luft": "Flugzeug ist in der Luft – bitte am Boden messen",
+    "starten": "Messung starten",
+    "abbrechen": "Messung abbrechen",
+    "abbrechen_frage": "Messung abbrechen? Bisher Gemessenes geht verloren.",
+    "verbinden_titel": "Verbinde mit dem Flugzeug …",
+    "verbinden_text": "AeroACARS liest alle Werte des Flugzeugs. Das dauert ein paar Sekunden.",
+    "verbunden": "{{anzahl}} Werte verbunden",
+    "ohne_scan": "Für dieses Flugzeug liegt noch kein Aircraft-Scan vor. Gemessen werden die Input-Events und die Standardwerte des Simulators. Tipp: Ein Scan auf live.kant.ovh/aircraft macht die Messung noch genauer.",
+    "mit_scan": "{{anzahl}} Variablennamen aus dem Aircraft-Scan dieses Flugzeugs.",
+    "ruhe_titel": "Ruhemessung",
+    "ruhe_text": "Bitte jetzt etwa 8 Sekunden nichts im Cockpit anfassen. AeroACARS merkt sich dabei, welche Werte sich von selbst ändern (Uhr, Anzeigen, Animationen) – die werden später ignoriert.",
+    "ruhe_start": "Bereit – Ruhemessung starten",
+    "ruhe_laeuft": "Nichts anfassen … ",
+    "ruhe_fertig": "{{anzahl}} Werte ändern sich von selbst und werden ignoriert.",
+    "weiter": "Weiter",
+    "schritt_von": "Schalter {{nr}} von {{von}}",
+    "wo": "Wo finde ich ihn?",
+    "heisst": "Heißt oft",
+    "hat_schalter": "Hat dein Flugzeug diesen Schalter?",
+    "ja_starten": "Ja – los geht's",
+    "nein_ueberspringen": "Nein, überspringen",
+    "stelle_auf": "Stelle den Schalter auf",
+    "erledigt": "Erledigt – steht so",
+    "gibt_es_nicht": "Diese Stellung gibt es nicht",
+    "letzte_raste": "Das war schon die letzte Stellung",
+    "messe": "Messe …",
+    "ausgang": "Ausgangsstellung gemerkt",
+    "bewegt_eins": "✓ 1 Wert hat sich bewegt",
+    "bewegt": "✓ {{anzahl}} Werte haben sich bewegt",
+    "nichts_bewegt": "Nichts hat sich bewegt. Stand der Schalter schon so, oder meldet das Flugzeug ihn nicht? Du kannst einfach weitermachen – oder den Schalter neu beginnen.",
+    "neu_beginnen": "Schalter neu beginnen",
+    "gefunden": "✓ {{anzahl}} Werte gehen mit diesem Schalter mit",
+    "nichts_gefunden": "Keine Werte gefunden – das Flugzeug meldet diesen Schalter vermutlich nicht. Auch das ist ein Ergebnis.",
+    "naechster": "Nächster Schalter",
+    "zur_uebersicht": "Zur Übersicht",
+    "fertig_titel": "Geschafft!",
+    "fertig_text": "Das hat AeroACARS gemessen. Mit „Senden“ geht es an uns, wir bauen daraus das Profil für dein Flugzeug.",
+    "uebersprungen": "hat das Flugzeug nicht",
+    "werte": "{{anzahl}} Werte",
+    "keine_werte": "nichts gefunden",
+    "senden": "An GSG senden",
+    "sendet": "Sende …",
+    "gesendet_titel": "Danke – angekommen!",
+    "gesendet_text": "Deine Messung ist bei uns. Du findest sie auf live.kant.ovh/aircraft unter „Meine Einreichungen“. Sobald das Profil fertig ist, kommt es mit einem AeroACARS-Update.",
+    "neue_messung": "Weiteres Flugzeug messen",
+    "fehler": "Das hat nicht geklappt: {{fehler}}",
+    "nochmal": "Nochmal versuchen",
+    "schritt": {
+      "beacon": {
+        "titel": "Beacon (Anti-Collision)",
+        "wo": "Overhead-Panel, Lichterreihe unten. Das rote Blinklicht oben und unten am Rumpf.",
+        "namen": "BEACON · ANTI COLL · ANTI-COLLISION"
+      },
+      "strobe": {
+        "titel": "Strobes",
+        "wo": "Overhead-Panel, Lichterreihe. Die weißen Blitzlichter an den Flügelspitzen. Bei Boeing oft der Schalter POSITION (STEADY / OFF / STROBE & STEADY).",
+        "namen": "STROBE · POSITION · STROBE & STEADY",
+        "hinweis": "Hat der Schalter nur zwei Stellungen, bei „AUTO“ einfach „Diese Stellung gibt es nicht“ wählen."
+      },
+      "nav": {
+        "titel": "Navigationslichter",
+        "wo": "Overhead-Panel, Lichterreihe. Die roten/grünen Positionslichter an den Flügelspitzen.",
+        "namen": "NAV · NAV & LOGO · POSITION"
+      },
+      "landelicht": {
+        "titel": "Landelicht",
+        "wo": "Overhead-Panel, Lichterreihe. Oft mehrere Schalter (links, rechts, Nase).",
+        "namen": "LANDING · LAND L/R · RETRACTABLE / FIXED",
+        "hinweis": "Bei mehreren Schaltern alle zusammen umschalten."
+      },
+      "taxilicht": {
+        "titel": "Taxi-Licht",
+        "wo": "Overhead-Panel, Lichterreihe. Das Licht am Bugfahrwerk.",
+        "namen": "TAXI · NOSE · TAXI & T.O."
+      },
+      "anschnall": {
+        "titel": "Anschnallzeichen",
+        "wo": "Overhead-Panel, meist bei den Kabinenzeichen neben „No Smoking“.",
+        "namen": "SEAT BELTS · FASTEN BELTS · SEAT BELT SIGN",
+        "hinweis": "Hat der Schalter kein AUTO, bei „AUTO“ einfach „Diese Stellung gibt es nicht“ wählen."
+      },
+      "transponder": {
+        "titel": "Transponder und TCAS",
+        "wo": "Mittelkonsole hinten (Pedestal), Transponder-/TCAS-Panel. Bei Airbus oft zwei Knöpfe: AUTO/ON und TA/RA.",
+        "namen": "STBY · ALT · XPNDR · AUTO · ON · TA ONLY · TA/RA",
+        "hinweis": "Die Namen heißen je Hersteller anders. Gibt es eine Stellung nicht, einfach „Diese Stellung gibt es nicht“."
+      },
+      "klappen": {
+        "titel": "Klappenhebel",
+        "wo": "Mittelkonsole, rechts neben den Schubhebeln.",
+        "namen": "FLAPS · FLAPS LEVER",
+        "hinweis": "Jede Raste einzeln, von eingefahren bis voll. Bei der letzten Raste „Das war schon die letzte Stellung“ wählen."
+      },
+      "spoiler": {
+        "titel": "Spoiler / Speedbrake",
+        "wo": "Mittelkonsole, links neben den Schubhebeln.",
+        "namen": "SPEED BRAKE · SPOILERS · ARM",
+        "hinweis": "ARMED heißt: Hebel in die Arm-Raste (bei Airbus hochziehen), so wie vor der Landung."
+      },
+      "autobrake": {
+        "titel": "Autobrake",
+        "wo": "Hauptinstrumentenbrett, meist neben dem Fahrwerkshebel. Knopf oder Tasten.",
+        "namen": "AUTO BRAKE · A/BRK · LO / MED / MAX · RTO",
+        "hinweis": "Alle Stufen, die dein Flugzeug hat. Bei der höchsten Stufe „Das war schon die letzte Stellung“ wählen."
+      },
+      "apu": {
+        "titel": "APU (Hilfstriebwerk)",
+        "wo": "Overhead-Panel, APU-Bereich.",
+        "namen": "APU MASTER · APU MASTER SW · APU",
+        "hinweis": "Nur den Master-Schalter – die APU muss nicht anlaufen."
+      },
+      "parkbremse": {
+        "titel": "Parkbremse",
+        "wo": "Mittelkonsole oder unter dem Hauptinstrumentenbrett.",
+        "namen": "PARKING BRAKE · PARK BRK"
+      }
+    },
+    "stellung": {
+      "aus": "AUS",
+      "an": "AN",
+      "off": "OFF",
+      "auto": "AUTO",
+      "on": "ON",
+      "stby": "STBY (Standby)",
+      "alt": "ALT / XPNDR (mit Höhe)",
+      "ta": "TA ONLY",
+      "tara": "TA/RA",
+      "klappen_up": "UP / 0 (eingefahren)",
+      "raste1": "1. Raste",
+      "raste2": "2. Raste",
+      "raste3": "3. Raste",
+      "raste4": "4. Raste",
+      "raste5": "5. Raste",
+      "raste6": "6. Raste",
+      "raste7": "7. Raste",
+      "spoiler_ein": "EINGEFAHREN (nicht armed)",
+      "spoiler_armed": "ARMED",
+      "ab_off": "OFF / DISARM",
+      "ab_rto": "RTO",
+      "ab_1": "1 / LO",
+      "ab_2": "2 / MED",
+      "ab_3": "3",
+      "ab_max": "MAX / HI",
+      "gesetzt": "GESETZT",
+      "geloest": "GELÖST"
+    },
+    "keine_bewegung": "keine Bewegung"
   }
 }

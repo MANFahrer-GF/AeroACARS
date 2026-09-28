@@ -1154,7 +1154,9 @@
       "plugins_hint": "Aircraft-specific add-ons: PMDG SDK (Boeing) and the AeroACARS X-Plane plugin. Detected automatically once the matching aircraft loads.",
       "tech_hint": "Diagnostics, debug tools and rarely used maintenance features.",
       "bordbuch": "📓 SOP Check",
-      "bordbuch_hint": "What the SOP Check ticks off, quiet hints in flight, light aircraft and VFR."
+      "bordbuch_hint": "What the SOP Check ticks off, quiet hints in flight, light aircraft and VFR.",
+      "vermessen": "📐 Measure aircraft",
+      "vermessen_hint": "Help AeroACARS read your aircraft correctly: you flip switches in the cockpit, AeroACARS watches."
     },
     "appearance_section": "Language & appearance",
     "language_label": "Language",
@@ -3301,5 +3303,165 @@
       "rolltempo_grenzen": "Taxi speed limit:"
     },
     "wert_atc": "PER ATC"
+  },
+  "vermessen": {
+    "titel": "Measure aircraft",
+    "einleitung": "Many add-on aircraft keep their switches in their own places. So that AeroACARS reads strobes, transponder, flaps and so on correctly for your aircraft, you flip a few switches one after another – AeroACARS watches and notes which values move with them. We then build a profile for your aircraft from that.",
+    "dauer": "Takes about 5 minutes. Nothing in the simulator is changed – AeroACARS only reads.",
+    "was_gesendet": "Only aircraft values are sent (no personal data apart from your pilot ID). You will find the measurement on live.kant.ovh/aircraft under “My submissions” and can delete it there.",
+    "vorher_titel": "Before you start",
+    "vorher_sim": "Simulator running, aircraft loaded",
+    "vorher_boden": "Aircraft on the ground (gate or apron), parking brake set",
+    "vorher_strom": "Power on (battery or ground power) so the switches work",
+    "vorher_pause": "Simulator running, not paused",
+    "sim_ok": "Simulator connected · {{flugzeug}}",
+    "sim_fehlt": "No simulator connected",
+    "sim_luft": "Aircraft is airborne – please measure on the ground",
+    "starten": "Start measurement",
+    "abbrechen": "Cancel measurement",
+    "abbrechen_frage": "Cancel the measurement? Everything measured so far will be lost.",
+    "verbinden_titel": "Connecting to the aircraft …",
+    "verbinden_text": "AeroACARS reads all values of the aircraft. This takes a few seconds.",
+    "verbunden": "{{anzahl}} values connected",
+    "ohne_scan": "There is no aircraft scan for this aircraft yet. Input events and the simulator's standard values are measured. Tip: a scan on live.kant.ovh/aircraft makes the measurement even more precise.",
+    "mit_scan": "{{anzahl}} variable names from this aircraft's scan.",
+    "ruhe_titel": "Quiet measurement",
+    "ruhe_text": "Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves (clock, displays, animations) – those are ignored later.",
+    "ruhe_start": "Ready – start quiet measurement",
+    "ruhe_laeuft": "Don't touch anything … ",
+    "ruhe_fertig": "{{anzahl}} values change by themselves and are ignored.",
+    "weiter": "Continue",
+    "schritt_von": "Switch {{nr}} of {{von}}",
+    "wo": "Where do I find it?",
+    "heisst": "Often labelled",
+    "hat_schalter": "Does your aircraft have this switch?",
+    "ja_starten": "Yes – let's go",
+    "nein_ueberspringen": "No, skip",
+    "stelle_auf": "Set the switch to",
+    "erledigt": "Done – it's set",
+    "gibt_es_nicht": "This position doesn't exist",
+    "letzte_raste": "That was already the last position",
+    "messe": "Measuring …",
+    "ausgang": "Starting position noted",
+    "bewegt_eins": "✓ 1 value moved",
+    "bewegt": "✓ {{anzahl}} values moved",
+    "nichts_bewegt": "Nothing moved. Was the switch already in that position, or does the aircraft not report it? You can simply carry on – or restart this switch.",
+    "neu_beginnen": "Restart this switch",
+    "gefunden": "✓ {{anzahl}} values move with this switch",
+    "nichts_gefunden": "No values found – the aircraft probably doesn't report this switch. That's a result too.",
+    "naechster": "Next switch",
+    "zur_uebersicht": "To the summary",
+    "fertig_titel": "Done!",
+    "fertig_text": "This is what AeroACARS measured. “Send” passes it to us, and we build the profile for your aircraft from it.",
+    "uebersprungen": "not on this aircraft",
+    "werte": "{{anzahl}} values",
+    "keine_werte": "nothing found",
+    "senden": "Send to GSG",
+    "sendet": "Sending …",
+    "gesendet_titel": "Thanks – received!",
+    "gesendet_text": "Your measurement has arrived. You'll find it on live.kant.ovh/aircraft under “My submissions”. Once the profile is ready it ships with an AeroACARS update.",
+    "neue_messung": "Measure another aircraft",
+    "fehler": "That didn't work: {{fehler}}",
+    "nochmal": "Try again",
+    "schritt": {
+      "beacon": {
+        "titel": "Beacon (anti-collision)",
+        "wo": "Overhead panel, lower row of light switches. The red flashing light on top of and below the fuselage.",
+        "namen": "BEACON · ANTI COLL · ANTI-COLLISION"
+      },
+      "strobe": {
+        "titel": "Strobes",
+        "wo": "Overhead panel, light switches. The white flashing lights at the wing tips. On Boeings often the POSITION switch (STEADY / OFF / STROBE & STEADY).",
+        "namen": "STROBE · POSITION · STROBE & STEADY",
+        "hinweis": "If the switch only has two positions, choose “This position doesn't exist” for AUTO."
+      },
+      "nav": {
+        "titel": "Navigation lights",
+        "wo": "Overhead panel, light switches. The red/green position lights at the wing tips.",
+        "namen": "NAV · NAV & LOGO · POSITION"
+      },
+      "landelicht": {
+        "titel": "Landing lights",
+        "wo": "Overhead panel, light switches. Often several switches (left, right, nose).",
+        "namen": "LANDING · LAND L/R · RETRACTABLE / FIXED",
+        "hinweis": "With several switches, flip them all together."
+      },
+      "taxilicht": {
+        "titel": "Taxi light",
+        "wo": "Overhead panel, light switches. The light on the nose gear.",
+        "namen": "TAXI · NOSE · TAXI & T.O."
+      },
+      "anschnall": {
+        "titel": "Seat belt sign",
+        "wo": "Overhead panel, usually with the cabin signs next to “No Smoking”.",
+        "namen": "SEAT BELTS · FASTEN BELTS · SEAT BELT SIGN",
+        "hinweis": "If there is no AUTO, choose “This position doesn't exist” for AUTO."
+      },
+      "transponder": {
+        "titel": "Transponder and TCAS",
+        "wo": "Rear centre console (pedestal), transponder/TCAS panel. On Airbus often two knobs: AUTO/ON and TA/RA.",
+        "namen": "STBY · ALT · XPNDR · AUTO · ON · TA ONLY · TA/RA",
+        "hinweis": "Names differ by manufacturer. If a position doesn't exist, choose “This position doesn't exist”."
+      },
+      "klappen": {
+        "titel": "Flap lever",
+        "wo": "Centre console, right of the thrust levers.",
+        "namen": "FLAPS · FLAPS LEVER",
+        "hinweis": "Each detent separately, from retracted to full. At the last detent choose “That was already the last position”."
+      },
+      "spoiler": {
+        "titel": "Spoilers / speedbrake",
+        "wo": "Centre console, left of the thrust levers.",
+        "namen": "SPEED BRAKE · SPOILERS · ARM",
+        "hinweis": "ARMED means: lever in the arm detent (on Airbus pull it up), as before landing."
+      },
+      "autobrake": {
+        "titel": "Autobrake",
+        "wo": "Main instrument panel, usually next to the gear lever. Knob or buttons.",
+        "namen": "AUTO BRAKE · A/BRK · LO / MED / MAX · RTO",
+        "hinweis": "Every setting your aircraft has. At the highest one choose “That was already the last position”."
+      },
+      "apu": {
+        "titel": "APU (auxiliary power unit)",
+        "wo": "Overhead panel, APU section.",
+        "namen": "APU MASTER · APU MASTER SW · APU",
+        "hinweis": "Only the master switch – the APU doesn't need to start."
+      },
+      "parkbremse": {
+        "titel": "Parking brake",
+        "wo": "Centre console or below the main instrument panel.",
+        "namen": "PARKING BRAKE · PARK BRK"
+      }
+    },
+    "stellung": {
+      "aus": "OFF",
+      "an": "ON",
+      "off": "OFF",
+      "auto": "AUTO",
+      "on": "ON",
+      "stby": "STBY (standby)",
+      "alt": "ALT / XPNDR (with altitude)",
+      "ta": "TA ONLY",
+      "tara": "TA/RA",
+      "klappen_up": "UP / 0 (retracted)",
+      "raste1": "1st detent",
+      "raste2": "2nd detent",
+      "raste3": "3rd detent",
+      "raste4": "4th detent",
+      "raste5": "5th detent",
+      "raste6": "6th detent",
+      "raste7": "7th detent",
+      "spoiler_ein": "RETRACTED (not armed)",
+      "spoiler_armed": "ARMED",
+      "ab_off": "OFF / DISARM",
+      "ab_rto": "RTO",
+      "ab_1": "1 / LO",
+      "ab_2": "2 / MED",
+      "ab_3": "3",
+      "ab_max": "MAX / HI",
+      "gesetzt": "SET",
+      "geloest": "RELEASED"
+    },
+    "keine_bewegung": "no movement"
   }
 }
