@@ -3534,13 +3534,14 @@
         "wann": "Im Anflug, bevor du die Autobrake für die Landung setzt – mindestens 2000 ft über Grund.",
         "frage": "Lassen sich die Autobrake-Stufen bei deinem Flugzeug erst in der Luft wählen (z. B. A220)? Sonst einfach überspringen – das hast du schon am Boden gemessen.",
         "wo": "Hauptinstrumentenbrett, meist neben dem Fahrwerkshebel: Autobrake-Knopf oder -Tasten.",
-        "namen": "AUTO BRAKE · A/BRK · OFF / LO / MED / HI",
-        "hinweis": "Nach der höchsten Stufe „Das war schon die letzte Stellung“. Zum Schluss die Stufe einstellen, mit der du landen willst.",
+        "namen": "AUTO BRAKE · A/BRK · OFF / LO / MED / HI · A380: DISARM / LO / L2 / L3 / HI",
+        "hinweis": "Alle Stufen, die dein Flugzeug in der Luft hat, der Reihe nach. Gibt es eine Stufe nicht (z. B. L3 beim A220), „Diese Stellung gibt es nicht“. Nach der höchsten Stufe „Das war schon die letzte Stellung“. BTV misst du im eigenen Schritt. Zum Schluss die Stufe einstellen, mit der du landen willst.",
         "tun": {
-          "0": "Ausgangslage: Autobrake auf OFF (bzw. DISARM). „Erledigt“ klicken.",
+          "0": "Ausgangslage: Autobrake auf OFF (A380: DISARM). „Erledigt“ klicken.",
           "1": "Autobrake auf LO stellen. Dann „Erledigt“.",
-          "2": "Autobrake auf MED stellen. Dann „Erledigt“.",
-          "3": "Autobrake auf HI (bzw. MAX) stellen, falls es das im Flug gibt. Dann „Erledigt“ – und danach die Stufe für deine Landung einstellen."
+          "2": "Nächste Stufe: MED (A380: L2). Dann „Erledigt“.",
+          "3": "Nächste Stufe: L3 (A380). Hat dein Flugzeug keine dritte Stufe, „Diese Stellung gibt es nicht“ wählen.",
+          "4": "Höchste Stufe: HI bzw. MAX, falls es die im Flug gibt. Dann „Erledigt“ – und danach die Stufe für deine Landung einstellen."
         }
       }
     },
@@ -3567,8 +3568,8 @@
       "ab_off": "OFF / DISARM",
       "ab_rto": "RTO",
       "ab_1": "1 / LO",
-      "ab_2": "2 / MED",
-      "ab_3": "3",
+      "ab_2": "2 / MED / L2",
+      "ab_3": "3 / L3",
       "ab_max": "MAX / HI",
       "gesetzt": "GESETZT",
       "geloest": "GELÖST",

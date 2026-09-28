@@ -83,11 +83,12 @@ export const SCHRITTE: SchrittDef[] = [
   // Autoland / CAT III: im ILS-Anflug mit APPR beide AP. Endet mit beiden an,
   // das Autoland läuft normal weiter.
   { schalter: "autoland", teil: "luft", stellungen: ["ein_ap", "zwei_ap", "ein_ap", "zwei_ap"] },
-  // Stufen, die sich erst in der Luft wählen lassen (A220: LO/MED/HI).
+  // Stufen, die sich erst in der Luft wählen lassen (A220: LO/MED/HI,
+  // A380: LO/L2/L3/HI — Messung 28.09.2026 hatte für L3 keinen Schritt).
   {
     schalter: "autobrake_luft",
     teil: "luft",
-    stellungen: ["ab_off", "ab_1", "ab_2", "ab_max"],
+    stellungen: ["ab_off", "ab_1", "ab_2", "ab_3", "ab_max"],
     offenesEnde: true,
   },
   { schalter: "btv", teil: "luft", stellungen: ["btv_aus", "btv_an", "btv_aus"] },

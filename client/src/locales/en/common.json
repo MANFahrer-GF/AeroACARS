@@ -3534,13 +3534,14 @@
         "wann": "On approach, before you set the autobrake for landing – at least 2000 ft above ground.",
         "frage": "Can the autobrake levels on your aircraft only be selected in the air (e.g. A220)? Otherwise just skip – you already measured that on the ground.",
         "wo": "Main instrument panel, usually next to the gear lever: autobrake knob or buttons.",
-        "namen": "AUTO BRAKE · A/BRK · OFF / LO / MED / HI",
-        "hinweis": "After the highest level choose “That was already the last position”. Finally set the level you want to land with.",
+        "namen": "AUTO BRAKE · A/BRK · OFF / LO / MED / HI · A380: DISARM / LO / L2 / L3 / HI",
+        "hinweis": "All levels your aircraft has in flight, in order. If a level does not exist (e.g. L3 on the A220), choose “This position doesn't exist”. After the highest level choose “That was already the last position”. BTV is measured in its own step. Finally set the level you want to land with.",
         "tun": {
-          "0": "Starting point: autobrake OFF (or DISARM). Click “Done”.",
+          "0": "Starting point: autobrake OFF (A380: DISARM). Click “Done”.",
           "1": "Set the autobrake to LO. Then “Done”.",
-          "2": "Set the autobrake to MED. Then “Done”.",
-          "3": "Set the autobrake to HI (or MAX), if available in flight. Then “Done” – and afterwards set the level for your landing."
+          "2": "Next level: MED (A380: L2). Then “Done”.",
+          "3": "Next level: L3 (A380). If your aircraft has no third level, choose “This position doesn't exist”.",
+          "4": "Highest level: HI or MAX, if available in flight. Then “Done” – and afterwards set the level for your landing."
         }
       }
     },
@@ -3567,8 +3568,8 @@
       "ab_off": "OFF / DISARM",
       "ab_rto": "RTO",
       "ab_1": "1 / LO",
-      "ab_2": "2 / MED",
-      "ab_3": "3",
+      "ab_2": "2 / MED / L2",
+      "ab_3": "3 / L3",
       "ab_max": "MAX / HI",
       "gesetzt": "SET",
       "geloest": "RELEASED",

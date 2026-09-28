@@ -987,6 +987,9 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON", "Number"),
     F::f64("L:A32NX_SWITCH_TCAS_POSITION", "Number"),
     F::f64("L:LIGHTING_STROBE_0", "Number"),
+    // iniBuilds A380, gemessen 28.09.2026 im Reiseflug (Thomas): 1 = HDG-
+    // Fenster gestrichelt (NAV, managed), 0 = HDG gewählt.
+    F::f64("L:INI_FCU_HDG_DASHED", "Number"),
     // Standard-SimVars. SEATBELTS/TRANSPONDER STATE dienen als Rueckfall fuer
     // die Muster, die sie laut Paket bedienen (siehe Mapping); alle drei
     // laufen zusaetzlich roh ins Flug-Log. GANZ ans Ende: anders als LVars
@@ -1530,6 +1533,8 @@ pub struct Telemetry {
     pub fbw_tcas_position: f64,
     /// FBW A32NX `L:LIGHTING_STROBE_0` 2 = OFF, 1 = AUTO, 0 = ON.
     pub fbw_strobe: f64,
+    /// iniBuilds A380 `L:INI_FCU_HDG_DASHED` 1 = NAV (managed), 0 = HDG.
+    pub ini_fcu_hdg_dashed: f64,
     /// `CABIN SEATBELTS ALERT SWITCH`. `None`, wenn der Block vor diesem
     /// Feld endet (SimVar abgelehnt) — dann darf der Rueckfall nicht
     /// "OFF" melden.
@@ -2269,6 +2274,7 @@ impl Telemetry {
         pull_f64!(t.fbw_apu_master);
         pull_f64!(t.fbw_tcas_position);
         pull_f64!(t.fbw_strobe);
+        pull_f64!(t.ini_fcu_hdg_dashed);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
         t.std_cabin_seatbelts_alert = read_f64(bytes, off);
@@ -3181,6 +3187,23 @@ fn telemetry_to_snapshot_mit_pfad(
             t.ap_altitude,
             t.ap_nav,
             t.a350_appr_light as i32 != 0 || t.a350_loc_light as i32 != 0 || t.ap_approach,
+        )
+    } else if is_a380 {
+        // iniBuilds A380, gemessen 28.09.2026 im Reiseflug (Thomas): dieselben
+        // FCU-LEDs wie beim A350 gehen mit (`L:INI_ap1_on`/`ap2_on` 1/0/1,
+        // APPR `L:INI_MCU_LAND_LIGHT` 0/1/0); die Standard-AP-SimVars
+        // nicht — LiveMap zeigte bei 4/4 A380-Flügen „AP nie an“. NAV/HDG
+        // aus `L:INI_FCU_HDG_DASHED` (1 = NAV, 0 = HDG), nur mit
+        // eingerastetem AP. ALT: der Standard `AUTOPILOT ALTITUDE LOCK`
+        // ging mit (1/0/1) und bleibt.
+        let master = t.a350_ap1_on as i32 != 0 || t.a350_ap2_on as i32 != 0 || t.ap_master;
+        let appr = t.a350_appr_light as i32 != 0 || t.a350_loc_light as i32 != 0 || t.ap_approach;
+        (
+            master,
+            (master && t.ini_fcu_hdg_dashed < 0.5) || t.ap_heading,
+            t.ap_altitude,
+            (master && !appr && t.ini_fcu_hdg_dashed >= 0.5) || t.ap_nav,
+            appr,
         )
     } else if is_ifly {
         // iFly 737 MAX 8 (v0.16.11): CMD-A-/CMD-B-LEDs am MCP
@@ -5676,8 +5699,8 @@ mod tests {
         // +40 (MD-11-Speedbrake x2, INI-Autobrake x3); Runde 3: +96 (12 FSS-
         // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2); A330 (26.09.2026): +16
         // (Strobe + ATC-Wahlschalter); FBW A32NX (28.09.2026): +32 (vier
-        // gemessene LVars).
-        assert_eq!(buf.len(), 3616, "total block size");
+        // gemessene LVars); A380 (28.09.2026): +8 (INI_FCU_HDG_DASHED).
+        assert_eq!(buf.len(), 3624, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -5990,12 +6013,13 @@ mod tests {
         assert_eq!(t.fbw_apu_master, 1370.0); // idx 370
         assert_eq!(t.fbw_tcas_position, 1371.0); // idx 371
         assert_eq!(t.fbw_strobe, 1372.0); // idx 372
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1373.0); // idx 373
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1374.0)); // idx 374
-        assert_eq!(t.std_light_landing_on_1, Some(1375.0)); // idx 375
-        assert_eq!(t.std_light_landing_on_2, Some(1376.0)); // idx 376
-        assert_eq!(t.std_transponder_state, Some(1377.0)); // idx 377, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 378, "letzter Index 377");
+        assert_eq!(t.ini_fcu_hdg_dashed, 1373.0); // idx 373, A380 (28.09.2026)
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1374.0); // idx 374
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1375.0)); // idx 375
+        assert_eq!(t.std_light_landing_on_1, Some(1376.0)); // idx 376
+        assert_eq!(t.std_light_landing_on_2, Some(1377.0)); // idx 377
+        assert_eq!(t.std_transponder_state, Some(1378.0)); // idx 378, zuletzt
+        assert_eq!(TELEMETRY_FIELDS.len(), 379, "letzter Index 378");
     }
 
     #[test]
@@ -9682,6 +9706,43 @@ mod tests {
         assert!(
             mit_b(FA50, &[], &[("CP_COSIDE_SYS_APU_BUTTON_MASTER", 0.0)]).apu_switch == Some(false)
         );
+    }
+
+    /// iniBuilds A380, Luftmessung Thomas 28.09.2026.
+    #[test]
+    fn a380_autopilot_aus_den_fcu_leds_gemessen() {
+        let ap = |werte: &[(&str, f64)]| {
+            let s = mit_b(A380, werte, &[]);
+            assert_eq!(s.aircraft_profile, AircraftProfile::IniA380);
+            (
+                s.autopilot_master,
+                s.autopilot_heading,
+                s.autopilot_nav,
+                s.autopilot_approach,
+            )
+        };
+        let (t, f) = (Some(true), Some(false));
+        // Reiseflug: AP1 an, NAV (HDG-Fenster gestrichelt).
+        assert_eq!(
+            ap(&[("L:INI_ap1_on", 1.0), ("L:INI_FCU_HDG_DASHED", 1.0)]),
+            (t, f, t, f)
+        );
+        // HDG gewählt.
+        assert_eq!(
+            ap(&[("L:INI_ap1_on", 1.0), ("L:INI_FCU_HDG_DASHED", 0.0)]),
+            (t, t, f, f)
+        );
+        // Nur AP2, APPR gedrückt: Anflug statt NAV.
+        assert_eq!(
+            ap(&[
+                ("L:INI_ap2_on", 1.0),
+                ("L:INI_FCU_HDG_DASHED", 1.0),
+                ("L:INI_MCU_LAND_LIGHT", 1.0)
+            ]),
+            (t, f, f, t)
+        );
+        // AP aus: keine Modi aus dem gestrichelten Fenster.
+        assert_eq!(ap(&[("L:INI_FCU_HDG_DASHED", 0.0)]), (f, f, f, f));
     }
 
     #[test]
