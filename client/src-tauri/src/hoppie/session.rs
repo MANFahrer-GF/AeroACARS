@@ -183,7 +183,9 @@ fn is_pdc_outcome(text: &str) -> bool {
         || t.contains(" PDC ")
         || t.contains("CLRD")
         || t.contains("CLEARED TO")
-        || t.contains("REJECTED")
+        // PDC-specific only: a "LOGON REJECTED" of the same station is
+        // about the logon (external QS, Codex 28.09.2026, P2).
+        || t.contains("RCD REJECTED")
         || t.contains("REVERT TO VOICE")
 }
 
@@ -2033,6 +2035,7 @@ mod tests {
         s.note_pdc_request("EDDM", t0());
         s.note_pdc_inbound("EDDM", "UNABLE CALL ON FREQ");
         s.note_pdc_inbound("EDDM", "/data2/7/3/NE/UNABLE");
+        s.note_pdc_inbound("EDDM", "/data2/8/1/NE/LOGON REJECTED");
         assert!(s.is_awaiting_pdc_answer(t0()));
     }
 }
