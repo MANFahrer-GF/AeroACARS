@@ -297,13 +297,13 @@ export function FlugzeugVermessen() {
     const n = lauf.current;
     // Boden oder Luft entscheidet der Simulator: am Boden die Schalter, in der
     // Luft der Autopilot (rastet am Boden nicht ein).
-    const t: Teil = sim?.snapshot?.on_ground === false ? "luft" : "boden";
-    setTeil(t);
-    setPlan(schritteFuer(t).filter((x) => auswahl.has(x.schalter)));
+    const neuerTeil: Teil = sim?.snapshot?.on_ground === false ? "luft" : "boden";
+    setTeil(neuerTeil);
+    setPlan(schritteFuer(neuerTeil).filter((x) => auswahl.has(x.schalter)));
     startNr.current = Math.floor(Math.random() * 2 ** 50);
     sitzung.current = null;
     try {
-      const a = await ausfuehren<StartAntwort>("vermessung_starten", { start: startNr.current, teil: t });
+      const a = await ausfuehren<StartAntwort>("vermessung_starten", { start: startNr.current, teil: neuerTeil });
       if (!a) return;
       sitzung.current = a.sitzung;
       setStart(a);

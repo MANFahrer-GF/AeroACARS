@@ -77,21 +77,7 @@
   line-height: 1.5;
 }
 .vm-hinweis--warn { background: var(--sem-warn-bg); }
-.vm-hinweis--ok { background: var(--sem-ok-bg); color: var(--sem-ok); font-weight: 600; }
 
-/* „Schon vermessen" */
-.vm-bestand summary { cursor: pointer; margin-bottom: 0; }
-.vm-bestand[open] summary { margin-bottom: 6px; }
-.vm-bestand ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
-.vm-bestand li {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-}
-.vm-bestand li:last-child { border-bottom: 0; }
 .vm-bestand-name { font-weight: 600; }
 
 .vm-kopf { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
@@ -241,36 +227,6 @@
 }
 .vm-auswahl-punkt { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .vm-auswahl-punkt input { width: 16px; height: 16px; accent-color: var(--accent); }
-.vm-bestand-meta { margin-left: 8px; font-weight: 400; font-size: 0.85rem; }
-.vm-bestand-teile { display: inline-flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.88rem; }
-
-/* „Stand für dieses Flugzeug" — Boden und Luft auf einen Blick */
-.vm-stand { display: grid; gap: 8px; }
-.vm-stand-titel { font-weight: 600; }
-.vm-stand-kacheln { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.vm-stand-kachel {
-  display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-}
-.vm-stand-kachel--ok { background: var(--sem-ok-bg); }
-.vm-stand-kachel--ok .vm-stand-kopf, .vm-stand-kachel--ok .vm-stand-text { color: var(--sem-ok); }
-.vm-stand-kachel--fehlt { background: var(--sem-warn-bg); }
-.vm-stand-kachel--fehlt .vm-stand-kopf { color: var(--sem-warn); }
-.vm-stand-kachel--jetzt { border: 2px solid var(--accent); }
-.vm-stand-kopf { display: flex; align-items: center; gap: 8px; font-weight: 700; }
-.vm-stand-marke {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border-radius: 50%;
-  font-size: 0.8rem; font-weight: 700; color: var(--on-acc);
-}
-.vm-stand-kachel--ok .vm-stand-marke { background: var(--sem-ok); }
-.vm-stand-kachel--fehlt .vm-stand-marke { background: var(--sem-warn); }
-.vm-stand-text { color: var(--text); line-height: 1.4; }
-.vm-stand-jetzt { font-size: 0.8rem; color: var(--accent); font-weight: 600; }
-@media (max-width: 640px) { .vm-stand-kacheln { grid-template-columns: 1fr; } }
 
 /* Übersicht aller Messungen: Boden und Luft als eigene Spalten */
 .vm-tabelle-rahmen { display: grid; gap: 6px; }
