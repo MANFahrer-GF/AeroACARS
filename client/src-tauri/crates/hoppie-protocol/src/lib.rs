@@ -19,12 +19,14 @@
 //!   lands in Phase 4 as its own isolated diff.
 //! - [`thread`] — MIN/MRN threading state machine for one CPDLC
 //!   connection.
+//! - [`logon_reply`] — reads a logon verdict from a reply's wording.
 //! - [`pdc`] — PDC-as-telex request/reply formatting (there is no
 //!   dedicated PDC wire type in the Hoppie protocol).
 
 pub mod cpdlc;
 pub mod elements;
 pub mod elements_data;
+pub mod logon_reply;
 pub mod pdc;
 pub mod thread;
 pub mod wire;

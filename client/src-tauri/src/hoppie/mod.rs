@@ -309,6 +309,10 @@ pub struct HoppieHandle {
     /// Resolved at connect time — reused by every send command so they
     /// don't need to re-resolve settings/active-flight state.
     from_callsign: String,
+    /// v1.9.5 (#hoppie-pdc-fast-poll): nudges the poller after a send so
+    /// it re-evaluates its cadence at once instead of finishing a baseline
+    /// sleep of up to 75 s first — see `poller::spawn`.
+    poll_wake: Arc<tokio::sync::Notify>,
 }
 
 impl Drop for HoppieHandle {
@@ -488,7 +492,20 @@ pub async fn hoppie_ping_station(
         (Arc::clone(&handle.http), handle.from_callsign.clone())
     };
     let logon = resolve_logon_code()?;
+    Ok(ping_station(&http, logon, from_callsign, station).await)
+}
 
+/// One `ping` round trip asking whether `station` is registered — shared
+/// by [`hoppie_ping_station`] (the badge) and the pre-logon check in
+/// [`hoppie_send_logon_request`]. Never fails: a failed CHECK comes back
+/// as `online: false` with `reason` set, which callers must not read as
+/// "offline".
+async fn ping_station(
+    http: &HoppieHttp,
+    logon: String,
+    from_callsign: String,
+    station: String,
+) -> StationStatus {
     let req = hoppie_protocol::wire::HoppieRequest {
         logon,
         from: from_callsign,
@@ -509,29 +526,54 @@ pub async fn hoppie_ping_station(
             let online = hoppie_protocol::wire::parse_ping_stations(&body)
                 .iter()
                 .any(|s| s.eq_ignore_ascii_case(&station));
-            Ok(StationStatus {
+            StationStatus {
                 station,
                 online,
                 reason: None,
-            })
+            }
         }
         // A bare `ok` carries no station list — nobody matched.
-        Ok(hoppie_protocol::wire::HoppieResponseLine::Ok) => Ok(StationStatus {
+        Ok(hoppie_protocol::wire::HoppieResponseLine::Ok) => StationStatus {
             station,
             online: false,
             reason: None,
-        }),
-        Ok(hoppie_protocol::wire::HoppieResponseLine::Error(reason)) => Ok(StationStatus {
+        },
+        Ok(hoppie_protocol::wire::HoppieResponseLine::Error(reason)) => StationStatus {
             station,
             online: false,
             reason: Some(reason),
-        }),
-        Err(e) => Ok(StationStatus {
+        },
+        Err(e) => StationStatus {
             station,
             online: false,
             reason: Some(e.message),
-        }),
+        },
     }
+}
+
+/// v1.9.5 (#hoppie-logon-precheck): whether a `REQUEST LOGON` to the
+/// pinged station should go out at all. Fenix (`FenixSystem.exe`) and
+/// FlyByWire (`AcarsConnector.isStationAvailable`) both ping first and
+/// refuse to send to a station that is not registered — the request
+/// would sit in a mailbox nobody reads while the pilot waits out the
+/// 180 s timeout, and a stale logon would greet the controller who
+/// connects later.
+///
+/// Only a DEFINITE "not registered" blocks. A check that itself failed
+/// (`reason` set: timeout, server error) lets the logon go out — the
+/// network being flaky is no reason to withhold the request.
+fn logon_precheck(status: &StationStatus) -> Result<(), UiError> {
+    if status.online || status.reason.is_some() {
+        return Ok(());
+    }
+    Err(UiError::new(
+        "hoppie_station_offline",
+        format!(
+            "{} ist gerade nicht bei Hoppie angemeldet — Logon nicht gesendet. \
+             Die CPDLC-Kennung der Station steht meist im ATIS (z. B. „CPDLC LOGON EDGG“).",
+            status.station
+        ),
+    ))
 }
 
 /// Start the poller. Idempotent — returns the current status without
@@ -680,6 +722,7 @@ pub async fn hoppie_connect(
     let last_error = Arc::new(StdMutex::new(None));
     let from_for_log = from.clone();
     let (stop_tx, stop_rx) = watch::channel(false);
+    let poll_wake = Arc::new(tokio::sync::Notify::new());
     poller::spawn(
         app.clone(),
         Arc::clone(&http),
@@ -692,6 +735,7 @@ pub async fn hoppie_connect(
         logon,
         settings.notify_os,
         stop_rx,
+        Arc::clone(&poll_wake),
     );
 
     *guard = Some(HoppieHandle {
@@ -704,6 +748,7 @@ pub async fn hoppie_connect(
         last_error,
         last_verify: Some(verify),
         from_callsign: from.clone(),
+        poll_wake,
     });
     log_activity_handle(
         &app,
@@ -1152,6 +1197,9 @@ async fn send_cpdlc_element(
             tracing::debug!("hoppie: skipped clearing an already-superseded open-session marker");
         }
     }
+    // The answer (to a logon, a request) can now come — let the poller
+    // switch to its fast cadence right away.
+    handle.poll_wake.notify_one();
     Ok(min)
 }
 
@@ -1171,6 +1219,36 @@ pub async fn hoppie_send_logon_request(
     state: tauri::State<'_, AppState>,
     station: Option<String>,
 ) -> Result<HoppieStatus, UiError> {
+    // v1.9.5 (#hoppie-logon-precheck): ask whether the target is even
+    // registered BEFORE anything else — in particular before logging off
+    // the station we are on, so a typo can no longer cost the pilot a
+    // working session. The lock is NOT held across the ping (up to 15 s):
+    // it would stall every other command, including a WILCO.
+    {
+        let (http, from_callsign, target) = {
+            let guard = state.hoppie.lock().await;
+            let handle = guard.as_ref().ok_or_else(|| {
+                UiError::new(
+                    "hoppie_not_connected",
+                    "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
+                )
+            })?;
+            let target = match station.as_deref().map(|r| r.trim().to_uppercase()) {
+                Some(t) if !t.is_empty() => t,
+                _ => handle.session.lock().expect("hoppie session mutex").addressee(),
+            };
+            (Arc::clone(&handle.http), handle.from_callsign.clone(), target)
+        };
+        if !target.is_empty() && target != settings::DEFAULT_STATION_ID {
+            let logon = resolve_logon_code()?;
+            let status = ping_station(&http, logon, from_callsign, target).await;
+            if let Some(reason) = &status.reason {
+                tracing::warn!(station = %status.station, reason = %reason, "hoppie: pre-logon check failed — sending the logon anyway");
+            }
+            logon_precheck(&status)?;
+        }
+    }
+
     let guard = state.hoppie.lock().await;
     let handle = guard.as_ref().ok_or_else(|| {
         UiError::new(
@@ -1518,6 +1596,10 @@ pub struct PdcRequestArgs {
     pub dest_icao: String,
     pub stand: String,
     pub atis_letter: String,
+    /// v1.9.5 (#hoppie-pdc-freetext): optional remark; absent from older
+    /// callers (the LAN bridge, tests), hence the default.
+    #[serde(default)]
+    pub free_text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1569,6 +1651,7 @@ pub async fn hoppie_send_pdc_request(
         dest_icao: request.dest_icao.trim().to_uppercase(),
         stand: request.stand.trim().to_uppercase(),
         atis_letter: request.atis_letter.trim().to_uppercase(),
+        free_text: hoppie_protocol::pdc::sanitize_free_text(&request.free_text),
     };
     let text = hoppie_protocol::pdc::format_pdc_request(&pdc_request);
     // v1.7.28 (#pdc-clearance-without-logon): the answer comes back on the
@@ -1600,6 +1683,8 @@ pub async fn hoppie_send_pdc_request(
         return Err(UiError::new("hoppie_pdc_rejected", reason));
     }
     tracing::info!(to = %wire_req.to, "hoppie: PDC-Anfrage gesendet");
+    // v1.9.5 (#hoppie-pdc-fast-poll): the clearance is now expected.
+    handle.poll_wake.notify_one();
 
     crate::record_datalink(
         &app,
@@ -1848,5 +1933,35 @@ mod tests {
         assert_eq!(status.pending_response_count, 0);
         assert!(status.last_error.is_none());
         assert!(status.logon_verified.is_none());
+    }
+
+    // --- v1.9.5 (#hoppie-logon-precheck) ---
+
+    fn status(online: bool, reason: Option<&str>) -> StationStatus {
+        StationStatus {
+            station: "EDGG".to_string(),
+            online,
+            reason: reason.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_registered_station_may_be_logged_on_to() {
+        assert!(logon_precheck(&status(true, None)).is_ok());
+    }
+
+    #[test]
+    fn a_definitely_unregistered_station_blocks_the_logon_with_its_name() {
+        let err = logon_precheck(&status(false, None)).unwrap_err();
+        assert_eq!(err.code, "hoppie_station_offline");
+        assert!(err.message.contains("EDGG"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_failed_check_never_blocks_the_logon() {
+        // "Couldn't ask" is not "not there" — a timeout or a server error
+        // must not withhold the request.
+        assert!(logon_precheck(&status(false, Some("timeout"))).is_ok());
+        assert!(logon_precheck(&status(false, Some("invalid logon code"))).is_ok());
     }
 }

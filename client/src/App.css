@@ -10313,6 +10313,10 @@ input.datalink-block__input {
   color: var(--text-dim);
   cursor: not-allowed;
 }
+/* v1.9.5: the optional PDC remark spans both grid columns. */
+.datalink-field--wide {
+  grid-column: 1 / -1;
+}
 /* The one field the pilot should fill next — exactly one at a time
    (README §3.3's focus rule), so the form reads without an error. */
 .datalink-field--focus input {

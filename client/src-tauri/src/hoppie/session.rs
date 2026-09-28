@@ -136,6 +136,13 @@ pub(crate) struct HoppieSession {
     /// station must not supersede another station's PDC clearance — only
     /// the end of THAT station's own standing does (see `end_current`).
     pdc_uplinks: HashMap<u32, String>,
+    /// v1.9.5 (#hoppie-pdc-fast-poll): PDC requests still waiting for
+    /// their answer, station -> when we asked. Drives the poller's fast
+    /// cadence for [`PDC_FAST_POLL_MINUTES`] (see
+    /// [`Self::is_awaiting_pdc_answer`]). Separate from
+    /// [`Self::pdc_requests`], which is the much longer TRUST window and
+    /// must outlive the answer (a revised clearance can follow).
+    pdc_awaiting: HashMap<String, chrono::DateTime<chrono::Utc>>,
 }
 
 /// Start of the wiring-internal uplink MIN range. GOLD/Hoppie wire MINs
@@ -147,6 +154,13 @@ pub(crate) const INTERNAL_UPLINK_MIN_BASE: u32 = 1_000_000;
 /// clearance (EDDM 15.09.: first answer after 2 min, revision after 13
 /// min) must fit; beyond that the request is no longer an invitation.
 pub(crate) const PDC_ANSWER_WINDOW_MINUTES: i64 = 90;
+
+/// How long after a PDC request the poller stays on its fast cadence
+/// while no answer has come. Hoppie asks for the fast rate only while a
+/// reply is actually expected; EDDM 15.09. answered after 2 min, and a
+/// desk that takes longer than this gets the normal 45-75 s cadence —
+/// its clearance then arrives at most one normal cycle later.
+pub(crate) const PDC_FAST_POLL_MINUTES: i64 = 5;
 
 impl HoppieSession {
     pub fn new(default_station: String) -> Self {
@@ -160,6 +174,7 @@ impl HoppieSession {
             pdc_requests: HashMap::new(),
             next_internal_uplink_min: INTERNAL_UPLINK_MIN_BASE,
             pdc_uplinks: HashMap::new(),
+            pdc_awaiting: HashMap::new(),
             // QS round 7 (07.09.2026, #pdc-session-model): the caller
             // (`settings.station_id`) normally defaults to `"SERVER"`
             // via serde — but only when the JSON key is MISSING
@@ -338,6 +353,7 @@ impl HoppieSession {
             // older PDC invitation from it — late traffic stays quarantined,
             // and its still-open PDC traffic ends with it.
             self.pdc_requests.remove(&station);
+            self.pdc_awaiting.remove(&station);
             self.supersede_pdc_uplinks_of(&station);
             self.ended_stations.insert(station);
             self.persist_generation += 1;
@@ -475,7 +491,34 @@ impl HoppieSession {
         if station.is_empty() {
             return None;
         }
+        self.pdc_awaiting.insert(station.clone(), at);
         self.pdc_requests.insert(station, at)
+    }
+
+    /// v1.9.5 (#hoppie-pdc-fast-poll): something arrived from `station`
+    /// (telex or CPDLC, `text` its payload). A real answer ends the wait
+    /// for our PDC request; an interim acknowledgement does not — vSMR
+    /// sends "RCD RECEIVED @REQUEST BEING PROCESSED @STANDBY" first and
+    /// the actual clearance (`CLD ...`) only when the controller acts.
+    pub fn note_pdc_inbound(&mut self, station: &str, text: &str) {
+        let station = normalize(station);
+        if !self.pdc_awaiting.contains_key(&station) {
+            return;
+        }
+        let t = text.to_uppercase();
+        let interim = t.contains("STANDBY") || t.contains("BEING PROCESSED") || t.contains("RCD RECEIVED");
+        if !interim {
+            self.pdc_awaiting.remove(&station);
+        }
+    }
+
+    /// Whether a PDC request made within the last
+    /// [`PDC_FAST_POLL_MINUTES`] is still unanswered — the poller then
+    /// polls at its fast rate, as it does for an open CPDLC message.
+    pub fn is_awaiting_pdc_answer(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.pdc_awaiting
+            .values()
+            .any(|at| now >= *at && now - *at < chrono::Duration::minutes(PDC_FAST_POLL_MINUTES))
     }
 
     /// Take back [`Self::note_pdc_request`] when Hoppie explicitly
@@ -493,6 +536,10 @@ impl HoppieSession {
         previous: Option<chrono::DateTime<chrono::Utc>>,
     ) {
         let station = normalize(station);
+        // Nothing was delivered, so no answer is coming for THIS request.
+        if self.pdc_awaiting.get(&station) == Some(&at) {
+            self.pdc_awaiting.remove(&station);
+        }
         if self.pdc_requests.get(&station) != Some(&at) {
             return;
         }
@@ -724,6 +771,26 @@ impl HoppieSession {
             _ => false,
         };
         (!authorized, cancelled)
+    }
+
+    /// v1.9.5 (#hoppie-logon-wording): an UNDECODABLE (headerless) uplink
+    /// from `from` whose wording says our logon was accepted (see
+    /// `hoppie_protocol::logon_reply`). Logs us on — in the thread AND the
+    /// session, in this one lock hold — but only when `from` is exactly
+    /// the station we are pending a logon to; the same narrow right
+    /// [`Self::is_authorized_to_answer_pending_logon`] grants a structured
+    /// answer. Returns whether it logged us on.
+    ///
+    /// Before this, such a message took [`Self::handle_undecodable_uplink`]'s
+    /// refusal presumption and cancelled the very logon it accepted.
+    pub fn accept_undecodable_logon_reply(&mut self, from: &str) -> bool {
+        if !self.is_authorized_to_answer_pending_logon(from) {
+            return false;
+        }
+        if !self.thread.accept_pending_logon() {
+            return false;
+        }
+        self.accept_logon(from)
     }
 }
 
@@ -1658,5 +1725,125 @@ mod tests {
             "the reused MIN belongs to another station"
         );
         assert!(s.thread.is_uplink_open(7));
+    }
+
+    // --- v1.9.5 (#hoppie-logon-wording) ---
+
+    /// A session pending a logon to `station`, thread and session in
+    /// lockstep exactly as `send_cpdlc_element` leaves them.
+    fn pending_logon_to(station: &str) -> (HoppieSession, u32) {
+        let mut s = HoppieSession::new(String::new());
+        let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").unwrap();
+        let resolved = hoppie_protocol::elements::resolve(spec, &[]).unwrap();
+        let (message, _event) = s.thread.record_sent(
+            spec.response,
+            None,
+            resolved.filled_text.clone(),
+            hoppie_protocol::elements::ParsedElement::Recognized(resolved),
+        );
+        s.begin_logon(station, message.min);
+        (s, message.min)
+    }
+
+    #[test]
+    fn a_headerless_acceptance_from_the_pending_station_logs_on_thread_and_session() {
+        let (mut s, _) = pending_logon_to("EDGG");
+        let was = s.is_logged_on();
+        assert!(s.accept_undecodable_logon_reply("edgg "));
+        assert!(s.is_logged_on(), "session level");
+        assert!(s.thread.is_logged_on(), "thread level");
+        assert!(!s.is_logon_pending());
+        assert_eq!(s.thread.pending_logon_min(), None);
+        assert_eq!(s.thread.pending_response_count(), 0);
+        assert_eq!(
+            s.station_to_persist_on_accept(was),
+            Some(("EDGG".to_string(), s.persist_generation())),
+            "the acceptance must be persisted like a structured one"
+        );
+    }
+
+    #[test]
+    fn a_headerless_acceptance_from_another_station_changes_nothing() {
+        let (mut s, min) = pending_logon_to("EDGG");
+        assert!(!s.accept_undecodable_logon_reply("EDMM"));
+        assert!(!s.is_logged_on());
+        assert!(!s.thread.is_logged_on());
+        assert_eq!(s.pending_logon_min(), Some(min));
+        assert_eq!(s.thread.pending_logon_min(), Some(min));
+    }
+
+    #[test]
+    fn a_headerless_acceptance_without_a_pending_logon_changes_nothing() {
+        let mut s = HoppieSession::new(String::new());
+        assert!(!s.accept_undecodable_logon_reply("EDGG"));
+        assert!(!s.is_logged_on());
+        assert!(!s.thread.is_logged_on());
+    }
+
+    #[test]
+    fn a_headerless_refusal_still_cancels_the_pending_logon() {
+        // The refusal path is unchanged — pinned so the new acceptance
+        // branch can't have swallowed it.
+        let (mut s, _) = pending_logon_to("EDGG");
+        let (superseded, cancelled) = s.handle_undecodable_uplink("EDGG", true, chrono::Utc::now());
+        assert!(!superseded);
+        assert!(cancelled);
+        assert!(!s.is_logon_pending());
+        assert!(!s.is_logged_on());
+    }
+
+    // --- v1.9.5 (#hoppie-pdc-fast-poll) ---
+
+    fn t0() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-09-28T18:38:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn a_fresh_pdc_request_is_awaited_for_the_fast_poll_window_only() {
+        let mut s = HoppieSession::new(String::new());
+        assert!(!s.is_awaiting_pdc_answer(t0()));
+        s.note_pdc_request("eddm", t0());
+        assert!(s.is_awaiting_pdc_answer(t0()));
+        assert!(s.is_awaiting_pdc_answer(t0() + chrono::Duration::seconds(299)));
+        assert!(!s.is_awaiting_pdc_answer(t0() + chrono::Duration::minutes(PDC_FAST_POLL_MINUTES)));
+    }
+
+    #[test]
+    fn the_clearance_ends_the_wait_but_the_standby_ack_does_not() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", t0());
+        s.note_pdc_inbound("EDDM", "FSM 1840 260928 EDDM UAE4TK RCD RECEIVED @REQUEST BEING PROCESSED @STANDBY");
+        assert!(s.is_awaiting_pdc_answer(t0()), "interim ack keeps the fast cadence");
+        s.note_pdc_inbound("EDDM", "/data2/35//WU/CLD 1840 260928 EDDM PDC 001 @UAE4TK@ CLRD TO @OMDB@");
+        assert!(!s.is_awaiting_pdc_answer(t0()), "the clearance is the answer");
+    }
+
+    #[test]
+    fn traffic_from_another_station_does_not_end_the_wait() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", t0());
+        s.note_pdc_inbound("EDGG", "CLIMB TO FL350");
+        assert!(s.is_awaiting_pdc_answer(t0()));
+    }
+
+    #[test]
+    fn a_rejected_pdc_request_is_not_awaited() {
+        let mut s = HoppieSession::new(String::new());
+        let prev = s.note_pdc_request("EDDM", t0());
+        s.forget_pdc_request("EDDM", t0(), prev);
+        assert!(!s.is_awaiting_pdc_answer(t0()));
+    }
+
+    #[test]
+    fn answering_the_pdc_keeps_the_longer_trust_window() {
+        // The fast-poll wait ends with the answer; the station's right
+        // to send a revised clearance (90 min) must not end with it.
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", t0());
+        s.note_pdc_inbound("EDDM", "CLD 1840 260928 EDDM PDC 001");
+        assert!(!s.is_awaiting_pdc_answer(t0()));
+        assert!(s.is_answering_our_pdc_request("EDDM", t0() + chrono::Duration::minutes(13)));
     }
 }

@@ -605,6 +605,24 @@ impl CpdlcThread {
         }
     }
 
+    /// The accepting counterpart of [`Self::abandon_pending_logon`]: an
+    /// undecodable (headerless) uplink from the station we are logging on
+    /// to said the logon was accepted (see [`crate::logon_reply`]).
+    /// Closes our `REQUEST LOGON` and marks the session logged on — the
+    /// same end state [`Self::record_received`] reaches for a structured
+    /// `LOGON ACCEPTED`. Returns `false` (and changes nothing) when no
+    /// logon is pending, so a stray acceptance can never log us on.
+    pub fn accept_pending_logon(&mut self) -> bool {
+        match self.logon_request_min.take() {
+            Some(pending) => {
+                self.close_open_entry(Direction::Downlink, pending);
+                self.logged_on = true;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn history(&self) -> &[ThreadEntry] {
         &self.history
     }
@@ -640,10 +658,22 @@ fn logon_outcome(message: &CpdlcMessage, logon_request_min: Option<u32>) -> Opti
             // MRN tying it to OUR logon makes it a logon refusal;
             // otherwise a later UNABLE would silently log us off.
             "UM0" if replies_to_our_logon => Some(false),
-            _ => None,
+            _ => wording_outcome(&message.element_text, replies_to_our_logon),
         },
-        ParsedElement::Raw(_) => None,
+        // v1.9.5 (#hoppie-logon-wording): controller clients word the
+        // answer differently ("LOGON SUCCESSFUL", "CONNECTION ACCEPTED",
+        // "FLIGHT PLAN NOT HELD" ...). Matching only the exact
+        // `UM_LOGON_ACCEPTED` text left every other wording on "pending"
+        // until the 180 s timeout — see `crate::logon_reply`.
+        ParsedElement::Raw(_) => wording_outcome(&message.element_text, replies_to_our_logon),
     }
+}
+
+/// [`logon_outcome`]'s fallback: the verdict carried by the TEXT, for
+/// everything that is not one of the two unambiguous elements above.
+fn wording_outcome(text: &str, replies_to_our_logon: bool) -> Option<bool> {
+    crate::logon_reply::classify(text, replies_to_our_logon)
+        .map(|r| r == crate::logon_reply::LogonReply::Accepted)
 }
 
 #[cfg(test)]
@@ -1440,5 +1470,99 @@ mod tests {
         );
         t.mark_logged_off();
         assert!(t.is_superseded_uplink(9));
+    }
+
+    // --- v1.9.5 (#hoppie-logon-wording): other clients' wording ---
+
+    #[test]
+    fn a_logon_reply_in_other_wording_logs_on_through_the_real_receive_path() {
+        for (packet, why) in [
+            ("/data2/7/1/NE/LOGON SUCCESSFUL", "PMDG wording, MRN"),
+            ("/data2/7/1/NE/CONNECTION ACCEPTED", "PMDG wording, MRN"),
+            ("/data2/7/1/NE/REQUEST ACCEPTED", "Fenix: any ACCEPTED with MRN"),
+            ("/data2/7//NE/CONNECTION ACCEPTED", "logon wording, no MRN"),
+            ("/data2/7//NE/LOGGED ON", "logon wording, no MRN"),
+            ("/data2/7//N/LOGON@ACCEPTED@EDGG", "@ line breaks, no MRN"),
+        ] {
+            let mut thread = CpdlcThread::new();
+            let logon = send(&mut thread, "DM_REQUEST_LOGON", &[], None);
+            assert_eq!(logon, 1);
+            receive(&mut thread, packet);
+            assert!(thread.is_logged_on(), "{why}: {packet}");
+            assert_eq!(thread.pending_logon_min(), None, "{why}: {packet}");
+            assert_eq!(
+                thread.pending_response_count(),
+                0,
+                "{why}: our REQUEST LOGON must no longer count as outstanding"
+            );
+        }
+    }
+
+    #[test]
+    fn an_acceptance_of_something_else_without_mrn_leaves_the_logon_pending() {
+        let mut thread = CpdlcThread::new();
+        send(&mut thread, "DM_REQUEST_LOGON", &[], None);
+        receive(&mut thread, "/data2/7//NE/PDC ACCEPTED");
+        assert!(!thread.is_logged_on());
+        assert_eq!(thread.pending_logon_min(), Some(1));
+    }
+
+    #[test]
+    fn a_refusal_wording_ends_the_attempt_without_logging_on() {
+        for packet in [
+            "/data2/7//NE/FLIGHT PLAN NOT HELD",
+            "/data2/7/1/NE/FLIGHT PLAN NOT HELD",
+            "/data2/7//NE/LOGON REJECTED",
+            "/data2/7/1/NE/REJECTED",
+        ] {
+            let mut thread = CpdlcThread::new();
+            send(&mut thread, "DM_REQUEST_LOGON", &[], None);
+            receive(&mut thread, packet);
+            assert!(!thread.is_logged_on(), "{packet}");
+            assert_eq!(thread.pending_logon_min(), None, "{packet}");
+            assert_eq!(thread.pending_response_count(), 0, "{packet}");
+        }
+    }
+
+    #[test]
+    fn logon_wording_without_a_pending_logon_changes_nothing() {
+        // Logged on, nothing pending: a later "LOGON REJECTED" (or a
+        // stray acceptance) must not flip the session either way.
+        let mut thread = CpdlcThread::new();
+        send(&mut thread, "DM_REQUEST_LOGON", &[], None);
+        receive(&mut thread, "/data2/1/1/NE/LOGON ACCEPTED");
+        assert!(thread.is_logged_on());
+        receive(&mut thread, "/data2/2//NE/LOGON REJECTED");
+        assert!(thread.is_logged_on());
+
+        let mut fresh = CpdlcThread::new();
+        receive(&mut fresh, "/data2/1//NE/CONNECTION ACCEPTED");
+        assert!(!fresh.is_logged_on());
+    }
+
+    #[test]
+    fn a_plain_unable_without_mrn_is_still_not_a_logon_refusal() {
+        // GOLD UM0 is a general "cannot comply"; the new wording fallback
+        // must not turn an MRN-less UNABLE into a refusal.
+        let mut thread = CpdlcThread::new();
+        send(&mut thread, "DM_REQUEST_LOGON", &[], None);
+        receive(&mut thread, "/data2/7//NE/UNABLE");
+        assert_eq!(thread.pending_logon_min(), Some(1));
+    }
+
+    #[test]
+    fn accept_pending_logon_only_acts_on_a_pending_logon() {
+        let mut idle = CpdlcThread::new();
+        assert!(!idle.accept_pending_logon());
+        assert!(!idle.is_logged_on());
+
+        let mut thread = CpdlcThread::new();
+        send(&mut thread, "DM_REQUEST_LOGON", &[], None);
+        assert!(thread.accept_pending_logon());
+        assert!(thread.is_logged_on());
+        assert_eq!(thread.pending_logon_min(), None);
+        assert_eq!(thread.pending_response_count(), 0);
+        // Second call: nothing pending any more.
+        assert!(!thread.accept_pending_logon());
     }
 }

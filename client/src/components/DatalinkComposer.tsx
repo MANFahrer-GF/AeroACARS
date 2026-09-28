@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, formatIpcError } from "../lib/ipc";
 import { useStationOnline, type StationStatus } from "../hooks/useStationOnline";
+import { cleanPdcRemark, PDC_REMARK_MAX } from "../lib/pdcRemark";
 import { StationBadge } from "./StationBadge";
 import type { DatalinkMode } from "./CpdlcPanel";
 
@@ -54,6 +55,7 @@ function tokenize(template: string, values: string[]): Token[] {
 }
 
 const PDC_TEMPLATE = "REQUEST PREDEP CLEARANCE @1 @2 TO @3 AT @4 STAND @5 ATIS @6";
+
 
 const CPDLC_MENU: { key: string; ids: string[] }[] = [
   { key: "request", ids: ["DM9", "DM10", "DM22", "DM25", "DM15", "DM26", "DM27"] },
@@ -142,6 +144,7 @@ export function DatalinkComposer({
     stand: "",
     atis_letter: "",
   });
+  const [remark, setRemark] = useState("");
 
   useEffect(() => {
     void invoke<FlightContext>("hoppie_get_flight_context").then((ctx) => {
@@ -210,7 +213,14 @@ export function DatalinkComposer({
           fields.dep_icao,
           fields.stand,
           fields.atis_letter,
-        ])
+        ]).concat(
+          remark.trim() !== ""
+            ? [
+                { text: " ", kind: "static" },
+                { text: remark.trim(), kind: "value" },
+              ]
+            : [],
+        )
       : selected
         ? tokenize(selected.template, values)
         : [];
@@ -239,6 +249,7 @@ export function DatalinkComposer({
           dest_icao: fields.dest_icao.trim().toUpperCase(),
           stand: fields.stand.trim().toUpperCase(),
           atis_letter: fields.atis_letter.trim().toUpperCase(),
+          free_text: remark.trim(),
         },
       });
       onChanged();
@@ -374,6 +385,23 @@ export function DatalinkComposer({
               <em className="datalink-field__note">{t("cpdlc.field_callsign_readonly")}</em>
             </span>
             <input type="text" value={callsign ?? ""} disabled readOnly title={t("cpdlc.field_callsign_hint")} />
+          </label>
+          {/* v1.9.5 (#hoppie-pdc-freetext): optional remark after the ATIS
+              letter, as Fenix/iniBuilds offer. Never counted as "open" —
+              an empty remark sends the request exactly as before. */}
+          <label className="datalink-field datalink-field--wide">
+            <span>
+              {t("cpdlc.field_remark")}
+              <em className="datalink-field__note">{t("cpdlc.field_remark_optional")}</em>
+            </span>
+            <input
+              type="text"
+              value={remark}
+              onChange={(e) => setRemark(cleanPdcRemark(e.target.value))}
+              maxLength={PDC_REMARK_MAX}
+              placeholder={t("cpdlc.field_remark_placeholder")}
+              disabled={busy}
+            />
           </label>
         </div>
       ) : (

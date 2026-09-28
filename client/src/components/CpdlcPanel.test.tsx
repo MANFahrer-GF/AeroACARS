@@ -416,3 +416,78 @@ describe("Reichweite des Rufzeichens", () => {
     expect(hinweis.closest(".datalink-status")).toBeNull();
   });
 });
+
+describe("v1.9.5 — PDC remark and logon pre-check", () => {
+  async function connect() {
+    const field = await openCallsignEditor();
+    await userEvent.type(field, "gsg123");
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.acars_start") }));
+    await screen.findByText(t("cpdlc.acars_online"));
+  }
+
+  async function fillPdc() {
+    const station = document.querySelector("#datalink-pdc-station-input") as HTMLInputElement;
+    await userEvent.clear(station);
+    await userEvent.type(station, "eddm");
+    for (const [label, value] of [
+      ["cpdlc.field_dep", "EDDM"],
+      ["cpdlc.field_dest", "OMDB"],
+      ["cpdlc.field_type", "A388"],
+      ["cpdlc.field_stand", "H12"],
+      ["cpdlc.field_atis", "K"],
+    ] as const) {
+      await userEvent.type(screen.getByLabelText(t(label)), value);
+    }
+  }
+
+  it("sends the remark cleaned up and shows it in the telex preview", async () => {
+    renderPanel();
+    await connect();
+    await fillPdc();
+    const remark = screen.getByPlaceholderText(t("cpdlc.field_remark_placeholder"));
+    // `{{` types a literal brace — `{` alone starts a key descriptor.
+    await userEvent.type(remark, "req {{de-icing}  pad 2");
+    expect(remark).toHaveValue("REQ DE-ICING PAD 2");
+    expect(document.querySelector(".datalink-preview__text")!.textContent).toContain(
+      "ATIS K REQ DE-ICING PAD 2",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.mode_pdc") }));
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.some((c) => c[0] === "hoppie_send_pdc_request")).toBe(true),
+    );
+    const call = invokeMock.mock.calls.find((c) => c[0] === "hoppie_send_pdc_request");
+    expect(call![1]).toMatchObject({
+      request: { recipient: "EDDM", atis_letter: "K", free_text: "REQ DE-ICING PAD 2" },
+    });
+  });
+
+  it("sends an empty remark when none was typed, and the preview ends at the ATIS letter", async () => {
+    renderPanel();
+    await connect();
+    await fillPdc();
+    expect(document.querySelector(".datalink-preview__text")!.textContent!.trimEnd()).toMatch(/ATIS K$/);
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.mode_pdc") }));
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.some((c) => c[0] === "hoppie_send_pdc_request")).toBe(true),
+    );
+    const call = invokeMock.mock.calls.find((c) => c[0] === "hoppie_send_pdc_request");
+    expect((call![1] as { request: { free_text: string } }).request.free_text).toBe("");
+  });
+
+  it("shows the backend's 'station not online' refusal to the pilot", async () => {
+    const impl = backend();
+    const offline = "EDGG ist gerade nicht bei Hoppie angemeldet — Logon nicht gesendet.";
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === "hoppie_send_logon_request"
+        ? Promise.reject({ code: "hoppie_station_offline", message: offline })
+        : impl(cmd, args),
+    );
+    renderPanel();
+    await connect();
+    await userEvent.click(screen.getByRole("tab", { name: t("cpdlc.mode_cpdlc") }));
+    await userEvent.type(screen.getByPlaceholderText(t("cpdlc.center_placeholder")), "edgg");
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.logon_send") }));
+    expect(await screen.findByText(offline)).toBeInTheDocument();
+  });
+});

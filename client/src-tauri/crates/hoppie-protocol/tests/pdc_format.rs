@@ -20,6 +20,7 @@ fn parse_fixture(text: &str) -> (PdcRequest, String) {
                 dest_icao: f[4].to_string(),
                 stand: f[5].to_string(),
                 atis_letter: f[6].to_string(),
+                free_text: String::new(),
             });
         } else if let Some(rest) = line.strip_prefix("REPLY|") {
             reply = Some(rest.to_string());

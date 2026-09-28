@@ -169,12 +169,28 @@ fn reorder_same_batch_envelopes(
 /// Pure — testable without tokio. Mirrors `lib.rs`'s
 /// `adaptive_tick_interval` shape (a pure Duration-selection function
 /// the loop calls each tick).
-pub fn poll_interval(pending_response_count: usize) -> Duration {
-    if pending_response_count > 0 {
+///
+/// v1.9.5 (#hoppie-pdc-fast-poll): `awaiting_pdc_answer` counts as a
+/// reply outstanding too. A PDC request is a telex, never in the CPDLC
+/// thread's open set, so the clearance used to sit on the server for up
+/// to 75 s — the one message the pilot is actively waiting for.
+pub fn poll_interval(pending_response_count: usize, awaiting_pdc_answer: bool) -> Duration {
+    if pending_response_count > 0 || awaiting_pdc_answer {
         Duration::from_secs(FAST_POLL_SECS)
     } else {
         randomized_baseline()
     }
+}
+
+/// The poll deadline after a wake-up: the earlier of the one already
+/// scheduled and `now + interval`. Pure, so the "never postpone" rule
+/// is testable without a runtime.
+fn next_deadline(
+    scheduled: tokio::time::Instant,
+    now: tokio::time::Instant,
+    interval: Duration,
+) -> tokio::time::Instant {
+    scheduled.min(now + interval)
 }
 
 /// Spawn the poll loop. Runs until `stop_rx` flips to `true` (fired by
@@ -192,6 +208,7 @@ pub fn spawn(
     logon: String,
     notify_os: bool,
     mut stop_rx: watch::Receiver<bool>,
+    wake: Arc<tokio::sync::Notify>,
 ) {
     tauri::async_runtime::spawn(async move {
         // The very first poll drains whatever the network queued while we
@@ -200,20 +217,41 @@ pub fn spawn(
         // otherwise starting the app after a long break means a burst of
         // notifications for messages that are long stale.
         let mut first_poll = true;
+        let current_interval = || {
+            let s = session.lock().expect("hoppie session mutex");
+            poll_interval(
+                s.thread.pending_response_count(),
+                s.is_awaiting_pdc_answer(chrono::Utc::now()),
+            )
+        };
+        let mut deadline = tokio::time::Instant::now() + current_interval();
         loop {
-            let interval = {
-                let s = session.lock().expect("hoppie session mutex");
-                poll_interval(s.thread.pending_response_count())
-            };
             tokio::select! {
                 res = stop_rx.changed() => {
                     if res.is_err() || *stop_rx.borrow() {
                         break;
                     }
                 }
-                _ = tokio::time::sleep(interval) => {
-                    poll_once(&app, &http, &session, &telex_log, &min_meta, &history_meta, &last_error, &from_callsign, &logon, notify_os && !first_poll).await;
+                // v1.9.5 (#hoppie-pdc-fast-poll): a send just went out.
+                // Without this the poller finished whatever baseline
+                // sleep it was in (up to 75 s) before switching to the
+                // fast cadence — so the answer to a logon or PDC could
+                // wait more than a minute on the server. Only ever
+                // SHORTENS the wait (`next_deadline`), never postpones a
+                // poll that was due sooner.
+                _ = wake.notified() => {
+                    deadline = next_deadline(deadline, tokio::time::Instant::now(), current_interval());
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    let code_rejected = poll_once(&app, &http, &session, &telex_log, &min_meta, &history_meta, &last_error, &from_callsign, &logon, notify_os && !first_poll).await;
                     first_poll = false;
+                    let wait = if code_rejected {
+                        tracing::warn!("hoppie: logon code refused — polling paused for {LOGON_CODE_REJECTED_BACKOFF_SECS} s");
+                        Duration::from_secs(LOGON_CODE_REJECTED_BACKOFF_SECS)
+                    } else {
+                        current_interval()
+                    };
+                    deadline = tokio::time::Instant::now() + wait;
                 }
             }
         }
@@ -346,10 +384,23 @@ fn parse_next_data_authority(msg: &cpdlc::CpdlcMessage) -> Option<String> {
 fn is_end_service(msg: &cpdlc::CpdlcMessage) -> bool {
     match &msg.parsed {
         hoppie_protocol::elements::ParsedElement::Recognized(r) => r.spec_id == "UM161",
-        hoppie_protocol::elements::ParsedElement::Raw(text) => {
-            text.trim().eq_ignore_ascii_case("LOGOFF")
-        }
+        hoppie_protocol::elements::ParsedElement::Raw(text) => is_bare_logoff(text),
     }
+}
+
+/// `LOGOFF` on its own, or v1.9.5 (#hoppie-logoff-from) `LOGOFF FROM
+/// <station>` — the form PMDG's `validate_logoff_from_station` also
+/// accepts. `@`/`_` count as spaces (Hoppie line breaks). A remark that
+/// merely MENTIONS the word ("LOGOFF EXPECTED SHORTLY") is not a
+/// session end.
+fn is_bare_logoff(text: &str) -> bool {
+    let n = text
+        .to_ascii_uppercase()
+        .replace(['@', '_'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    n == "LOGOFF" || (n.starts_with("LOGOFF FROM ") && n.split(' ').count() == 3)
 }
 
 /// Whether `text` is one of vSMR's two documented, LEGITIMATE raw-text
@@ -606,6 +657,87 @@ async fn send_logon(
     }
 }
 
+/// What an undecodable (headerless) CPDLC uplink did to the session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawUplinkOutcome {
+    /// Shown greyed out: the sender holds no live session with us.
+    superseded: bool,
+    /// Our pending logon was taken as refused and dropped.
+    cancelled_pending: bool,
+    /// Our pending logon was accepted — the station/generation to
+    /// persist (`HoppieSession::station_to_persist_on_accept`).
+    accepted: Option<(String, u64)>,
+}
+
+/// Decide what a headerless CPDLC uplink `packet` from `station` means for
+/// the session, in ONE lock hold (the caller passes the locked session).
+///
+/// v1.9.5 (#hoppie-logon-wording): the wording is read FIRST
+/// (`hoppie_protocol::logon_reply`). A headerless "CONNECTION ACCEPTED"
+/// from the station we are logging on to used to take the refusal
+/// presumption and CANCEL the very logon it accepted. Anything that is
+/// not an acceptance keeps the earlier rules: refusal wording, or any
+/// text other than vSMR's two known non-refusals, still counts as a
+/// refusal of a pending logon.
+fn decide_raw_uplink(
+    s: &mut HoppieSession,
+    station: &str,
+    packet: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> RawUplinkOutcome {
+    use hoppie_protocol::logon_reply::{classify, LogonReply};
+    let verdict = classify(packet, false);
+    let was_logged_on = s.is_logged_on();
+    if verdict == Some(LogonReply::Accepted) && s.accept_undecodable_logon_reply(station) {
+        return RawUplinkOutcome {
+            superseded: false,
+            cancelled_pending: false,
+            accepted: s.station_to_persist_on_accept(was_logged_on),
+        };
+    }
+    let looks_like_a_refusal = match verdict {
+        Some(LogonReply::Accepted) => false,
+        Some(LogonReply::Refused) => true,
+        None => !is_a_known_non_refusal_raw_text(packet),
+    };
+    let (superseded, cancelled_pending) =
+        s.handle_undecodable_uplink(station, looks_like_a_refusal, now);
+    RawUplinkOutcome {
+        superseded,
+        cancelled_pending,
+        accepted: None,
+    }
+}
+
+/// Record the open session once a facility has accepted us, so a run
+/// that dies without logging off can be cleaned up on the next connect.
+/// `accepted` is `HoppieSession::station_to_persist_on_accept`'s answer,
+/// captured while the lock that decided the acceptance was still held.
+///
+/// The guard is held THROUGH the write (QS round 10, external QS Finding
+/// 3): if a newer event — a disconnect, or a fresh logon — has run since
+/// `accepted` was decided, this write is stale and must be skipped; that
+/// newer event's own persistence call is authoritative instead.
+fn persist_accepted_session(
+    app: &AppHandle,
+    session: &StdMutex<HoppieSession>,
+    from_callsign: &str,
+    accepted: Option<(String, u64)>,
+) {
+    let Some((station, generation)) = accepted else {
+        return;
+    };
+    let s = session.lock().expect("hoppie session mutex");
+    if s.persist_generation() == generation {
+        crate::hoppie::settings::set_open_session(app, from_callsign, &station);
+    } else {
+        tracing::debug!(
+            station = %station,
+            "hoppie: skipped a now-stale open-session marker write — a newer session event already superseded it"
+        );
+    }
+}
+
 /// Everything `poll_once` does with an already-fetched poll response
 /// body — split out so it can be exercised in a test with a canned
 /// `content` string instead of a live HTTP round-trip. `HoppieHttp`
@@ -677,6 +809,10 @@ async fn process_poll_payload(
             // Telex traffic (PDC replies, free chat) — no MIN/MRN
             // threading, just appended in arrival order.
             let from = env.from.clone();
+            session
+                .lock()
+                .expect("hoppie session mutex")
+                .note_pdc_inbound(&from, &env.packet);
             telex_log
                 .lock()
                 .expect("hoppie telex_log mutex")
@@ -693,6 +829,12 @@ async fn process_poll_payload(
             }
             continue;
         }
+        // A CPDLC packet from a station we asked for a PDC — vSMR's `CLD`
+        // clearance comes this way — ends the fast-poll wait, header or not.
+        session
+            .lock()
+            .expect("hoppie session mutex")
+            .note_pdc_inbound(&env.from, &env.packet);
         match cpdlc::decode(&env.packet, Direction::Uplink) {
             Ok(mut msg) => {
                 // Sector handover: the current centre names the one
@@ -1270,17 +1412,7 @@ async fn process_poll_payload(
                 // event's own persistence call is authoritative instead —
                 // and nothing else touching this lock can interleave its
                 // own check-and-write while this one is still in progress.
-                if let Some((station, generation)) = accepted {
-                    let s = session.lock().expect("hoppie session mutex");
-                    if s.persist_generation() == generation {
-                        crate::hoppie::settings::set_open_session(app, from_callsign, &station);
-                    } else {
-                        tracing::debug!(
-                            station = %station,
-                            "hoppie: skipped a now-stale open-session marker write — a newer session event already superseded it"
-                        );
-                    }
-                }
+                persist_accepted_session(app, session, from_callsign, accepted);
                 if notify_os {
                     notify_new_message(app, &env.from);
                 }
@@ -1321,15 +1453,30 @@ async fn process_poll_payload(
                 // conventions (a plain interim `STANDBY` or "UNABLE CALL
                 // ON FREQ" ack), aborting a still-live logon attempt over
                 // an unrelated message.
-                let looks_like_a_refusal = !is_a_known_non_refusal_raw_text(&env.packet);
-                let (superseded, cancelled_pending) = session
-                    .lock()
-                    .expect("hoppie session mutex")
-                    .handle_undecodable_uplink(
-                        &this_station,
-                        looks_like_a_refusal,
-                        chrono::Utc::now(),
+                //
+                // v1.9.5 (#hoppie-logon-wording): the wording is read FIRST.
+                // A headerless "LOGON ACCEPTED"/"CONNECTION ACCEPTED" from
+                // the station we are logging on to used to fall through to
+                // the refusal presumption below and CANCEL the very logon
+                // it accepted. Now it logs us on, through the same session
+                // and persistence steps as a structured acceptance.
+                let RawUplinkOutcome {
+                    superseded,
+                    cancelled_pending,
+                    accepted,
+                } = decide_raw_uplink(
+                    &mut session.lock().expect("hoppie session mutex"),
+                    &this_station,
+                    &env.packet,
+                    chrono::Utc::now(),
+                );
+                if accepted.is_some() {
+                    tracing::info!(
+                        from = %this_station,
+                        "hoppie: headerless logon acceptance from our pending station — logged on"
                     );
+                }
+                persist_accepted_session(app, session, from_callsign, accepted);
                 if cancelled_pending {
                     tracing::warn!(
                         from = %this_station,
@@ -1377,7 +1524,7 @@ async fn poll_once(
     logon: &str,
     // False on the first poll of a session — see `spawn`'s `first_poll`.
     notify_os: bool,
-) {
+) -> bool {
     let req = HoppieRequest {
         logon: logon.to_string(),
         from: from_callsign.to_string(),
@@ -1416,7 +1563,9 @@ async fn poll_once(
                 "Hoppie: Abruf abgelehnt",
                 Some(reason.clone()),
             );
+            let code_rejected = is_logon_code_rejection(&reason);
             *last_error.lock().expect("hoppie last_error mutex") = Some(reason);
+            return code_rejected;
         }
         Err(e) => {
             log_activity_handle(
@@ -1428,7 +1577,23 @@ async fn poll_once(
             *last_error.lock().expect("hoppie last_error mutex") = Some(e.message);
         }
     }
+    false
 }
+
+/// v1.9.5 (#hoppie-logon-code-rejected): Hoppie's answer when the logon
+/// code itself is refused ("illegal logon code" — revoked, or changed on
+/// the website mid-session). Fenix stops polling on it until the code is
+/// changed; retrying every minute only hammers a volunteer-run server
+/// with requests that cannot succeed (and filed one warning per minute).
+fn is_logon_code_rejection(reason: &str) -> bool {
+    let r = reason.to_ascii_lowercase();
+    r.contains("illegal logon") || r.contains("invalid logon")
+}
+
+/// How long the poller waits after its logon code was refused. The
+/// pilot sees the error meanwhile; a reconnect with a fixed code starts
+/// a fresh poller at once.
+const LOGON_CODE_REJECTED_BACKOFF_SECS: u64 = 600;
 
 #[cfg(test)]
 mod tests {
@@ -1436,16 +1601,16 @@ mod tests {
 
     #[test]
     fn baseline_interval_is_within_the_docs_recommended_band() {
-        let interval = poll_interval(0);
+        let interval = poll_interval(0, false);
         assert!(interval >= Duration::from_secs(45));
         assert!(interval <= Duration::from_secs(75));
     }
 
     #[test]
     fn fast_interval_kicks_in_exactly_when_a_response_is_pending() {
-        assert_eq!(poll_interval(1), Duration::from_secs(FAST_POLL_SECS));
-        assert_eq!(poll_interval(5), Duration::from_secs(FAST_POLL_SECS));
-        let idle = poll_interval(0);
+        assert_eq!(poll_interval(1, false), Duration::from_secs(FAST_POLL_SECS));
+        assert_eq!(poll_interval(5, false), Duration::from_secs(FAST_POLL_SECS));
+        let idle = poll_interval(0, false);
         assert!(idle >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
         assert!(idle <= Duration::from_secs(BASELINE_POLL_MAX_SECS));
     }
@@ -1456,7 +1621,7 @@ mod tests {
     #[test]
     fn idle_interval_actually_varies() {
         let samples: std::collections::HashSet<u64> =
-            (0..40).map(|_| poll_interval(0).as_secs()).collect();
+            (0..40).map(|_| poll_interval(0, false).as_secs()).collect();
         assert!(
             samples.len() > 1,
             "40 draws all landed on the same value — that is not random"
@@ -1559,6 +1724,15 @@ mod tests {
         assert!(is_end_service(&recognized_uplink(6, "LOGOFF")));
         // Case/whitespace-tolerant, same discipline as `normalize_station`.
         assert!(is_end_service(&recognized_uplink(6, "  logoff ")));
+    }
+
+    #[test]
+    fn end_service_recognizes_logoff_from_a_named_station() {
+        assert!(is_end_service(&recognized_uplink(6, "LOGOFF FROM EDGG")));
+        assert!(is_end_service(&recognized_uplink(6, "@LOGOFF@FROM@EDGG@")));
+        // More words after the station are a remark, not the command.
+        assert!(!is_end_service(&recognized_uplink(6, "LOGOFF FROM EDGG IN 5 MIN")));
+        assert!(!is_end_service(&recognized_uplink(6, "LOGOFF FROM")));
     }
 
     #[test]
@@ -2074,5 +2248,121 @@ mod tests {
             false,
             MinCollisionResolution::SupersedeIncoming
         ));
+    }
+
+    // --- v1.9.5 (#hoppie-logon-wording): headerless logon answers ---
+
+    fn session_pending_logon_to(station: &str) -> HoppieSession {
+        let mut s = HoppieSession::new(String::new());
+        let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").unwrap();
+        let resolved = hoppie_protocol::elements::resolve(spec, &[]).unwrap();
+        let (message, _) = s.thread.record_sent(
+            spec.response,
+            None,
+            resolved.filled_text.clone(),
+            hoppie_protocol::elements::ParsedElement::Recognized(resolved),
+        );
+        s.begin_logon(station, message.min);
+        s
+    }
+
+    #[test]
+    fn a_headerless_acceptance_logs_on_instead_of_counting_as_a_refusal() {
+        for packet in ["CONNECTION ACCEPTED", "LOGON ACCEPTED", "logged on", "ACCEPTED"] {
+            let mut s = session_pending_logon_to("EDGG");
+            let out = decide_raw_uplink(&mut s, "EDGG", packet, chrono::Utc::now());
+            assert!(!out.cancelled_pending, "{packet:?} must not cancel the logon");
+            assert!(!out.superseded, "{packet:?}");
+            assert_eq!(out.accepted.as_ref().map(|(st, _)| st.as_str()), Some("EDGG"), "{packet:?}");
+            assert!(s.is_logged_on(), "{packet:?}");
+            assert!(s.thread.is_logged_on(), "{packet:?}");
+            assert_eq!(s.thread.pending_response_count(), 0, "{packet:?}");
+        }
+    }
+
+    #[test]
+    fn a_headerless_acceptance_from_a_stranger_neither_logs_on_nor_cancels() {
+        let mut s = session_pending_logon_to("EDGG");
+        let out = decide_raw_uplink(&mut s, "EDMM", "LOGON ACCEPTED", chrono::Utc::now());
+        assert_eq!(out.accepted, None);
+        assert!(!out.cancelled_pending);
+        assert!(out.superseded, "a stranger's text is shown greyed out");
+        assert!(s.is_logon_pending());
+        assert!(!s.is_logged_on());
+    }
+
+    #[test]
+    fn headerless_refusals_and_unknown_text_still_cancel_the_pending_logon() {
+        for packet in ["FLIGHT PLAN NOT HELD", "LOGON REJECTED", "NO FLIGHT PLAN"] {
+            let mut s = session_pending_logon_to("EDGG");
+            let out = decide_raw_uplink(&mut s, "EDGG", packet, chrono::Utc::now());
+            assert!(out.cancelled_pending, "{packet:?}");
+            assert_eq!(out.accepted, None, "{packet:?}");
+            assert!(!s.is_logon_pending(), "{packet:?}");
+            assert!(!s.is_logged_on(), "{packet:?}");
+        }
+    }
+
+    #[test]
+    fn headerless_interim_acks_leave_the_logon_pending() {
+        for packet in ["STANDBY", "UNABLE CALL ON FREQ"] {
+            let mut s = session_pending_logon_to("EDGG");
+            let out = decide_raw_uplink(&mut s, "EDGG", packet, chrono::Utc::now());
+            assert!(!out.cancelled_pending, "{packet:?}");
+            assert_eq!(out.accepted, None, "{packet:?}");
+            assert!(s.is_logon_pending(), "{packet:?}");
+        }
+    }
+
+    // --- v1.9.5 (#hoppie-pdc-fast-poll) ---
+
+    #[test]
+    fn an_unanswered_pdc_request_selects_the_fast_cadence() {
+        assert_eq!(poll_interval(0, true), Duration::from_secs(FAST_POLL_SECS));
+        assert_eq!(poll_interval(2, true), Duration::from_secs(FAST_POLL_SECS));
+    }
+
+    #[test]
+    fn a_wake_up_only_ever_brings_the_next_poll_forward() {
+        let now = tokio::time::Instant::now();
+        let far = now + Duration::from_secs(70);
+        let near = now + Duration::from_secs(5);
+        // Sleeping 70 s, a send makes 20 s the cadence: poll in 20 s.
+        assert_eq!(next_deadline(far, now, Duration::from_secs(20)), now + Duration::from_secs(20));
+        // A poll due in 5 s is never pushed back by a 20 s cadence.
+        assert_eq!(next_deadline(near, now, Duration::from_secs(20)), near);
+        // Nothing expected any more (baseline): the scheduled poll stays.
+        assert_eq!(next_deadline(far, now, Duration::from_secs(75)), far);
+    }
+
+    #[test]
+    fn a_pdc_request_through_the_session_switches_the_cadence_until_answered() {
+        // The same two calls the poll loop makes, on a real session.
+        let now = chrono::Utc::now();
+        let mut s = HoppieSession::new(String::new());
+        let cadence = |s: &HoppieSession| {
+            poll_interval(s.thread.pending_response_count(), s.is_awaiting_pdc_answer(now))
+        };
+        assert!(cadence(&s) >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
+        s.note_pdc_request("EDDM", now);
+        assert_eq!(cadence(&s), Duration::from_secs(FAST_POLL_SECS));
+        s.note_pdc_inbound("EDDM", "CLD 1840 260928 EDDM PDC 001 CLRD TO OMDB");
+        assert!(cadence(&s) >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
+    }
+
+    // --- v1.9.5 (#hoppie-logon-code-rejected) ---
+
+    #[test]
+    fn a_refused_logon_code_is_recognized_in_hoppies_wordings() {
+        assert!(is_logon_code_rejection("illegal logon code"));
+        assert!(is_logon_code_rejection("Illegal Logon Code"));
+        assert!(is_logon_code_rejection("invalid logon code"));
+    }
+
+    #[test]
+    fn other_poll_errors_keep_the_normal_cadence() {
+        assert!(!is_logon_code_rejection("callsign in use"));
+        assert!(!is_logon_code_rejection("timeout"));
+        assert!(!is_logon_code_rejection(""));
     }
 }
