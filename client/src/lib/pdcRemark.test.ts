@@ -16,6 +16,11 @@ describe("cleanPdcRemark", () => {
     expect(cleanPdcRemark("über → pad ✈ 2")).toBe("UEBER PAD 2");
   });
 
+  it("treats a no-break space and control characters as spaces, like the backend", () => {
+    expect(cleanPdcRemark("a\u00A0b")).toBe("A B");
+    expect(cleanPdcRemark("a\u0007b")).toBe("A B");
+  });
+
   it("caps at the backend's limit", () => {
     expect(cleanPdcRemark("x".repeat(PDC_REMARK_MAX + 10))).toHaveLength(PDC_REMARK_MAX);
     expect(PDC_REMARK_MAX).toBe(48);

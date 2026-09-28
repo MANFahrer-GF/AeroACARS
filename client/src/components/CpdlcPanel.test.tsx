@@ -92,6 +92,8 @@ function backend() {
 }
 
 beforeEach(() => {
+  // Every test starts without a station draft left over by the one before.
+  sessionStorage.clear();
   invokeMock.mockReset();
   const impl = backend();
   invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => impl(cmd, args));

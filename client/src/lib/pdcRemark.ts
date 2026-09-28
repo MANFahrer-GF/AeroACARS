@@ -17,7 +17,7 @@ export function cleanPdcRemark(raw: string): string {
     .replace(/Ö/g, "OE")
     .replace(/Ü/g, "UE")
     .replace(/ẞ/g, "SS")
-    .replace(/\s/g, " ")
+    .replace(/[\s\x00-\x1F\x7F]/g, " ")
     .replace(/[^\x20-\x7E]/g, "")
     .replace(/[{}]/g, "")
     .replace(/ +/g, " ")

@@ -35,10 +35,13 @@ pub struct PdcRequest {
 pub const FREE_TEXT_MAX_CHARS: usize = 48;
 
 /// Make a pilot's remark safe to put on the wire: uppercase (Hoppie's
-/// convention; vSMR matches case-sensitively), no `{`/`}` (they delimit
+/// convention; vSMR matches case-sensitively), printable ASCII only with
+/// German letters spelled out (Ä -> AE ...), no `{`/`}` (they delimit
 /// messages in the receiver's poll response — one stray brace would cut
-/// our request short at the controller), control characters as spaces, single
-/// spaces, at most [`FREE_TEXT_MAX_CHARS`].
+/// our request short at the controller), any whitespace or control
+/// character as a space, single spaces, at most [`FREE_TEXT_MAX_CHARS`].
+/// The panel's `cleanPdcRemark` (pdcRemark.ts) applies the same rules, so
+/// the preview shows what goes out.
 pub fn sanitize_free_text(raw: &str) -> String {
     // Printable ASCII only (external review P3): controller clients are
     // EuroScope plugins that mangle anything else. German letters are
@@ -53,7 +56,7 @@ pub fn sanitize_free_text(raw: &str) -> String {
                 'Ü' => vec!['U', 'E'],
                 'ß' | 'ẞ' => vec!['S', 'S'],
                 '{' | '}' => vec![],
-                c if c.is_control() => vec![' '],
+                c if c.is_control() || c.is_whitespace() => vec![' '],
                 c if c.is_ascii_graphic() || c == ' ' => vec![c],
                 _ => vec![],
             }
@@ -144,6 +147,8 @@ mod tests {
     fn sanitize_spells_out_german_letters_and_drops_other_non_ascii() {
         assert_eq!(sanitize_free_text("enteisung größer"), "ENTEISUNG GROESSER");
         assert_eq!(sanitize_free_text("über → pad ✈ 2"), "UEBER PAD 2");
+        // A no-break space is a space, as in the panel's preview.
+        assert_eq!(sanitize_free_text("a\u{00A0}b"), "A B");
     }
 
     #[test]
