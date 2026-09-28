@@ -5644,8 +5644,9 @@ mod tests {
         // 26.09.2026: +232 (29 Kanaele der Gruppe K, alle f64); Runde 2:
         // +40 (MD-11-Speedbrake x2, INI-Autobrake x3); Runde 3: +96 (12 FSS-
         // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2); A330 (26.09.2026): +16
-        // (Strobe + ATC-Wahlschalter).
-        assert_eq!(buf.len(), 3584, "total block size");
+        // (Strobe + ATC-Wahlschalter); FBW A32NX (28.09.2026): +32 (vier
+        // gemessene LVars).
+        assert_eq!(buf.len(), 3616, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6030,7 +6031,8 @@ mod tests {
         // Runde 3: zwoelf FSS-LVars und LIGHT LANDING ON:1/:2 dazu → 48 * 8
         // = 384. A330 (26.09.2026): zwei LVars dazu → 50 * 8 = 400.
         // Bordbuch (26.09.2026): drei ZULU-Felder dazu → 53 * 8 = 424.
-        buf.truncate(buf.len() - 424);
+        // FBW A32NX (28.09.2026): vier gemessene LVars dazu → 57 * 8 = 456.
+        buf.truncate(buf.len() - 456);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(t.fnx_xpdr_operation, 0.0, "Gruppe K = sicherer Default");
@@ -6040,6 +6042,7 @@ mod tests {
         );
         assert_eq!(t.fss_parkbrake_lever, 0.0, "Runde 3 = sicherer Default");
         assert_eq!(t.ini_tcas_stby_state, 0.0, "A330 = sicherer Default");
+        assert_eq!(t.fbw_park_brake_lever, 0.0, "FBW A32NX = sicherer Default");
         assert_eq!(
             t.std_light_landing_on_2, None,
             "Runde 3 = kein erfundener Wert"
@@ -9237,11 +9240,12 @@ mod tests {
         }
         let snap = runde2(FBW_A380X.0, FBW_A380X.1, &[("TRANSPONDER STATE:1", 4.0)]);
         assert_eq!(snap.xpdr_mode_label.as_deref(), Some("ALT"));
-        // Nicht bedient → kein Label (A32NX, Headwind).
-        for muster in [A32NX, HEADWIND] {
-            let snap = runde2(muster.0, muster.1, &[("TRANSPONDER STATE:1", 4.0)]);
-            assert_eq!(snap.xpdr_mode_label, None, "{}", muster.0);
-        }
+        // A32NX: am 28.09.2026 gemessen, der Standard geht mit (ALT=4).
+        let snap = runde2(A32NX.0, A32NX.1, &[("TRANSPONDER STATE:1", 4.0)]);
+        assert_eq!(snap.xpdr_mode_label.as_deref(), Some("ALT"));
+        // Nicht gemessen → kein Label (Headwind).
+        let snap = runde2(HEADWIND.0, HEADWIND.1, &[("TRANSPONDER STATE:1", 4.0)]);
+        assert_eq!(snap.xpdr_mode_label, None, "{}", HEADWIND.0);
         // Add-on-Label gewinnt.
         let snap = runde2(
             IFLY.0,
