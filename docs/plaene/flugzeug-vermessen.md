@@ -62,3 +62,24 @@ Ansätze sind erprobt und werden die Grundlage.
 
 - Automatische Profilerzeugung.
 - Messung im Flug (nur am Boden, damit nichts den Flug stört).
+
+## Teil 2 (geplant, nicht in diesem Update): Autopilot im Reiseflug
+
+Anlass 28.09.2026: Die LiveMap zeigt AP/HDG/ALT/NAV/APP aus dem Standard-
+SimVar `AUTOPILOT MASTER` & Co. Bei den meisten Airbus-Add-ons ist der tot.
+Flüge der letzten 45 Tage, Anteil „AP oberhalb FL200 nie an":
+A320 52/62 · A321 44/44 · A319 35/35 · A388 20/21 · A359 16/17 · B77L 10/16 ·
+B738 11/23 — dagegen A21N, BCS3, E55P, MD11 je 0.
+
+Am Boden nicht messbar: Thomas hat am 28.09. im iniBuilds-A380 am Gate AP1
+gedrückt — rastet nicht ein. Also eigener Teil, nur in der Luft:
+
+- erscheint, wenn das Flugzeug in der Luft ist (statt „bitte am Boden messen"),
+  Hinweis: nur im ruhigen Reiseflug, nicht in kritischer Phase bei ATC
+- Schritte: AP an/aus/an (endet AN) · lateral NAV/HDG/NAV · vertikal ALT/V/S/ALT
+  · APP/LOC optional im Anflug (überspringbar)
+- Ruhemessung in der Luft filtert Position, Sprit usw.; zusätzlich Kandidaten
+  nur, wenn gleiche Stellungen gleiche Werte liefern (an/aus/an → a/b/a)
+- Kandidaten aus dem A380-AAO-Profil: `L:INI_ap1_on`, `L:INI_ap2_on`,
+  `L:INI_ATHR_LIGHT`, `L:INI_MCU_LOC_LIGHT`, `L:INI_FCU_HDG_DASHED`
+- danach LiveMap-/Log-Felder je Profil aus den Messungen verdrahten
