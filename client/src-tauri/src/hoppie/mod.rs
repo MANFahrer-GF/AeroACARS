@@ -617,7 +617,7 @@ fn logon_precheck(status: &StationStatus) -> Result<(), UiError> {
         format!(
             "{} ist gerade nicht bei Hoppie angemeldet — Logon nicht gesendet. \
              Die CPDLC-Kennung der Station steht meist im ATIS (z. B. „CPDLC LOGON EDGG“). \
-             Nochmal „Logon senden“ schickt ihn trotzdem.",
+             Nochmal „Anmelden“ drücken schickt ihn trotzdem.",
             status.station
         ),
     ))
