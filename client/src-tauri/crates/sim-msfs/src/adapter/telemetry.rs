@@ -8639,9 +8639,8 @@ mod tests {
         t.spoilers_armed = true;
         t.ini_apu_master_switch = 1.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        // 26.09.2026 gemessen: ARMED ist beim A380 (MSFS 2024) nicht
-        // lesbar → "nicht messbar" statt eines ungeprueften Werts.
-        assert_eq!(snap.spoilers_armed, None);
+        // 28.09.2026 mit „Flugzeug vermessen" bestätigt: die LVar geht mit.
+        assert_eq!(snap.spoilers_armed, Some(true));
         assert_eq!(snap.apu_switch, Some(true));
         for (roh, want) in [(0.0, 2u8), (1.0, 1), (2.0, 0)] {
             let mut t = msfs2024_a380();
