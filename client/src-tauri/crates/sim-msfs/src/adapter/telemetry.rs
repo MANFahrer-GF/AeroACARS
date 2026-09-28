@@ -3451,6 +3451,12 @@ fn telemetry_to_snapshot_mit_pfad(
         // FBW A32NX, gemessen 28.09.2026: aus/an/aus → 0/1/0; die
         // Standard-SimVar `APU SWITCH` bewegte sich nicht — ERSETZEN.
         t.fbw_apu_master >= 0.5
+    } else if is_contrail_fa50 {
+        // Contrail FA50, gemessen 28.09.2026 (Michael K): am Gate ging nur
+        // `B:CP_COSIDE_SYS_APU_BUTTON_MASTER` mit (0/1/0), `APU SWITCH` nicht.
+        // Im Flug vom 12.07. stand die SimVar zeitweise auf an — deshalb
+        // ODER, nicht ersetzen.
+        t.apu_switch || b_wert(&t, "CP_COSIDE_SYS_APU_BUTTON_MASTER").is_some_and(|v| v >= 0.5)
     } else {
         t.apu_switch
     };
@@ -3619,6 +3625,11 @@ fn telemetry_to_snapshot_mit_pfad(
         // On (Paket Overhead/PanelPsgrSigns.xml:104-111) — zweistufig wie
         // der Standard-Rueckfall: an = ON (2), aus = OFF (0).
         Some(if t.fss_fasten_belt_sw != 0.0 { 2 } else { 0 })
+    } else if is_contrail_fa50 {
+        // Contrail FA50, gemessen 28.09.2026: `B:OVHD_INT_LT_BELTS` 0/1 (und
+        // `L:CTL_FA50_LIGHT_INT_SEATBELT_VALUE`); der Standard bewegte sich
+        // nicht, im Flug stand das Feld immer auf None. Zwei Stufen.
+        b_wert(&t, "OVHD_INT_LT_BELTS").map(|v| if v >= 0.5 { 2 } else { 0 })
     } else if standard_seatbelts_bedient {
         // Rueckfall Standard-SimVar `CABIN SEATBELTS ALERT SWITCH` (Bool,
         // "True if the Seatbelts switch is on") — nur fuer Muster, deren
@@ -4562,6 +4573,26 @@ fn telemetry_to_snapshot_mit_pfad(
             Some(2) => Some("TA".to_string()),
             Some(3) => Some("TA-RA".to_string()),
             _ => None,
+        }
+    } else if is_contrail_fa50 {
+        // Contrail FA50, gemessen 28.09.2026 (Michael K, eine Messung): der
+        // Standard `TRANSPONDER STATE:1` trennt STBY (1) und ALT (4), TCAS
+        // steht nur im Drehknopf `B:PDSTL_KNOB_MODE_SELECTOR` —
+        // STBY=0, TA/RA=1, TA=2, ALT=3.
+        match t.std_transponder_state.map(|v| v.round() as i64) {
+            None => None,
+            Some(0) => Some("OFF".to_string()),
+            Some(1) => Some("STBY".to_string()),
+            Some(z) => match b_wert(&t, "PDSTL_KNOB_MODE_SELECTOR").map(|v| v.round() as i64) {
+                Some(1) => Some("TA-RA".to_string()),
+                Some(2) => Some("TA".to_string()),
+                _ => match z {
+                    3 => Some("ON".to_string()),
+                    4 => Some("ALT".to_string()),
+                    5 => Some("GND".to_string()),
+                    _ => None,
+                },
+            },
         }
     } else if fbw_a32nx_gemessen {
         // FBW A32NX, gemessen 28.09.2026 (Thorben): der Standard
@@ -9612,6 +9643,45 @@ mod tests {
             None,
             &eingaben,
         )
+    }
+
+    const FA50: (&str, &str) = ("Contrail Falcon 50 - HB-IET", "FA50");
+
+    /// Contrail FA50, Messung Michael K 28.09.2026.
+    #[test]
+    fn b_fa50_anschnall_tcas_apu_gemessen() {
+        let snap = mit_b(FA50, &[], &[("OVHD_INT_LT_BELTS", 1.0)]);
+        assert_eq!(snap.aircraft_profile, AircraftProfile::ContrailFa50);
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(
+            mit_b(FA50, &[], &[("OVHD_INT_LT_BELTS", 0.0)]).seatbelts_sign,
+            Some(0)
+        );
+        assert_eq!(
+            mit_b(FA50, &[], &[]).seatbelts_sign,
+            None,
+            "ohne Event nichts erfinden"
+        );
+
+        let xpdr = |state: f64, knopf: f64| {
+            mit_b(
+                FA50,
+                &[("TRANSPONDER STATE:1", state)],
+                &[("PDSTL_KNOB_MODE_SELECTOR", knopf)],
+            )
+            .xpdr_mode_label
+        };
+        assert_eq!(xpdr(1.0, 0.0).as_deref(), Some("STBY"));
+        assert_eq!(xpdr(4.0, 3.0).as_deref(), Some("ALT"));
+        assert_eq!(xpdr(4.0, 2.0).as_deref(), Some("TA"));
+        assert_eq!(xpdr(4.0, 1.0).as_deref(), Some("TA-RA"));
+
+        assert!(
+            mit_b(FA50, &[], &[("CP_COSIDE_SYS_APU_BUTTON_MASTER", 1.0)]).apu_switch == Some(true)
+        );
+        assert!(
+            mit_b(FA50, &[], &[("CP_COSIDE_SYS_APU_BUTTON_MASTER", 0.0)]).apu_switch == Some(false)
+        );
     }
 
     #[test]

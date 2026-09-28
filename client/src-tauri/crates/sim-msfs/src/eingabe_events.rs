@@ -50,6 +50,11 @@ pub const POSITIVLISTE: &[&str] = &[
     "AIRLINER_LDG_AUTO_BRK",
     "AIRLINER_APU_MASTER_SWITCH",
     "AIRLINER_OVH_LTS_BEACON",
+    // Contrail Falcon 50 (MSFS 2024), gemessen 28.09.2026 (Michael K):
+    // Anschnallzeichen, Transponder-/TCAS-Knopf, APU-Master.
+    "OVHD_INT_LT_BELTS",
+    "PDSTL_KNOB_MODE_SELECTOR",
+    "CP_COSIDE_SYS_APU_BUTTON_MASTER",
 ];
 
 /// Wartezeit nach einem Flugzeugwechsel, bevor aufgezählt wird — direkt
