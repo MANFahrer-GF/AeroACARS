@@ -9,8 +9,11 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
   switch (cmd) {
     case "sim_status":
       return {
-        state: "connected", kind: "xplane12", available: true, last_error: null,
-        snapshot: { on_ground: !q.has("luft"), aircraft_title: "Boeing 777-300ER", aircraft_icao: "B77W" },
+        // ?msfs = iniBuilds-A380 in MSFS 2024 statt 777 in X-Plane.
+        state: "connected", kind: q.has("msfs") ? "msfs2024" : "xplane12", available: true, last_error: null,
+        snapshot: q.has("msfs")
+          ? { on_ground: !q.has("luft"), aircraft_title: "A380-800 RR Basic", aircraft_icao: "A388" }
+          : { on_ground: !q.has("luft"), aircraft_title: "Boeing 777-300ER", aircraft_icao: "B77W" },
       } as T;
     case "vermessung_starten":
       await warte(1500);
@@ -36,6 +39,20 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
     case "vermessung_schritt_neu":
       stellungenImSchritt = 0;
       return undefined as T;
+    case "vermessung_scan_namen":
+      // ?scan = für das geladene Flugzeug gibt es einen Scan.
+      return (q.has("scan") ? 235 : 0) as T;
+    case "vermessung_liste": {
+      // ?neu = geladenes Flugzeug ist noch nicht vermessen.
+      const tag = (d: number) => Date.UTC(2026, 8, d);
+      const liste = [
+        { sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: tag(28), anzahl: 2 },
+        { sim: "xplane", icao: "A333", titel: "Airbus A330-300", zuletzt: tag(27), anzahl: 1 },
+        { sim: "msfs", icao: "A20N", titel: "FenixA320 IAE", zuletzt: tag(24), anzahl: 1 },
+      ];
+      if (!q.has("neu")) liste.unshift({ sim: "xplane", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: tag(28), anzahl: 1 });
+      return (q.has("neu") && q.has("msfs") ? liste.filter((v) => v.icao !== "A388") : liste) as T;
+    }
     case "vermessung_senden":
       await warte(1200);
       return { id: "c12851fa8f8ef3b7d9493cb723d337b2" } as T;

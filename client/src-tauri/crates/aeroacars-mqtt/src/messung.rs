@@ -78,3 +78,34 @@ pub async fn lvar_namen(
         .map(|n| n.namen)
         .map_err(|e| NavdataError::BadResponse(e.to_string()))
 }
+
+/// Ein schon vermessenes Flugzeug (ohne Pilotenbezug).
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct Vermessen {
+    pub sim: Option<String>,
+    pub icao: Option<String>,
+    pub titel: Option<String>,
+    /// Jüngste Messung, ms seit 1970.
+    pub zuletzt: i64,
+    pub anzahl: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct VermessenListe {
+    flugzeuge: Vec<Vermessen>,
+}
+
+/// Welche Flugzeuge die VA schon vermessen hat.
+pub async fn vermessen(base: Option<&str>, token: &str) -> Result<Vec<Vermessen>, NavdataError> {
+    let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
+    let r = client
+        .get(url(base, "/vermessen"))
+        .bearer_auth(token)
+        .send()
+        .await?;
+    let r = pruefen(r).await?;
+    r.json::<VermessenListe>()
+        .await
+        .map(|l| l.flugzeuge)
+        .map_err(|e| NavdataError::BadResponse(e.to_string()))
+}

@@ -247,6 +247,22 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             }
             Err(e) => Err(e),
         },
+        "vermessung_scan_namen" => {
+            #[derive(Deserialize)]
+            struct A {
+                icao: String,
+                titel: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(
+                    crate::vermessung::vermessung_scan_namen(app.clone(), a.icao, a.titel).await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "vermessung_liste" => {
+            from_string_err(crate::vermessung::vermessung_liste(app.clone()).await)
+        }
         "vermessung_beenden" => match vm_args(body) {
             Ok(a) => {
                 crate::vermessung::vermessung_beenden(app.clone(), a.sitzung, a.start);

@@ -589,6 +589,35 @@ pub async fn vermessung_senden(
     Ok(SendenAntwort { id })
 }
 
+/// Schon vermessene Flugzeuge der VA (Startseite: „Schon vermessen").
+/// Ohne Anmeldung eine leere Liste — die Anzeige ist nur ein Hinweis.
+#[tauri::command]
+pub async fn vermessung_liste(
+    app: AppHandle,
+) -> Result<Vec<aeroacars_mqtt::messung::Vermessen>, String> {
+    let Some(token) = crate::bordbuch_token(&app) else {
+        return Ok(Vec::new());
+    };
+    aeroacars_mqtt::messung::vermessen(None, &token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Wie viele L:-Namen die Aircraft-Scans für dieses Flugzeug liefern
+/// (Startseite: „erst einen Scan machen?"). Nur MSFS braucht das.
+#[tauri::command]
+pub async fn vermessung_scan_namen(
+    app: AppHandle,
+    icao: String,
+    titel: String,
+) -> Result<usize, String> {
+    let token = crate::bordbuch_token(&app).ok_or("Nicht angemeldet")?;
+    aeroacars_mqtt::messung::lvar_namen(None, &token, &icao, &titel)
+        .await
+        .map(|n| n.len())
+        .map_err(|e| e.to_string())
+}
+
 /// Messung beenden (auch Abbrechen): Quelle schließen, alles verwerfen.
 /// Mit `sitzung` nur diese — ein verspätetes Beenden aus einem alten Lauf
 /// lässt eine neuere Messung stehen. Ohne (Seite verlassen mitten im

@@ -21,6 +21,9 @@ const h = vi.hoisted(() => ({
   amBoden: true,
   stellungImSchritt: 0,
   ruheSpaet: false,
+  scanNamen: 0,
+  kind: "xplane" as string,
+  liste: [] as Array<{ sim: string; icao: string; titel: string; zuletzt: number; anzahl: number }>,
   ruheLoesen: null as null | (() => void),
 }));
 
@@ -29,7 +32,7 @@ vi.mock("../../lib/ipc", () => ({
     h.aufrufe.push({ cmd, args });
     switch (cmd) {
       case "sim_status":
-        return Promise.resolve({ snapshot: { on_ground: h.amBoden, aircraft_title: "Boeing 777-300ER", aircraft_icao: "B77W" } });
+        return Promise.resolve({ kind: h.kind, snapshot: { on_ground: h.amBoden, aircraft_title: "Boeing 777-300ER", aircraft_icao: "B77W" } });
       case "vermessung_starten":
         return Promise.resolve({ sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W" }, anzahl_werte: 9312, l_namen: 0, sitzung: 7 });
       case "vermessung_ruhe":
@@ -43,6 +46,10 @@ vi.mock("../../lib/ipc", () => ({
       case "vermessung_schritt_abschliessen":
         h.stellungImSchritt = 0;
         return Promise.resolve({ kandidaten: args?.uebersprungen ? 0 : 4, beispiele: [] });
+      case "vermessung_scan_namen":
+        return Promise.resolve(h.scanNamen);
+      case "vermessung_liste":
+        return Promise.resolve(h.liste);
       case "vermessung_senden":
         return Promise.resolve({ id: "abc" });
       default:
@@ -51,7 +58,7 @@ vi.mock("../../lib/ipc", () => ({
   },
 }));
 
-import { FlugzeugVermessen } from "./FlugzeugVermessen";
+import { FlugzeugVermessen, schonVermessen } from "./FlugzeugVermessen";
 
 const klick = async (text: string | RegExp) => {
   fireEvent.click(await screen.findByRole("button", { name: text }));
@@ -63,9 +70,76 @@ beforeEach(() => {
   h.stellungImSchritt = 0;
   h.ruheSpaet = false;
   h.ruheLoesen = null;
+  h.liste = [];
+  h.scanNamen = 0;
+  h.kind = "xplane";
+});
+
+describe("schonVermessen", () => {
+  const liste = [
+    { sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: 1, anzahl: 1 },
+    { sim: "xplane", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: 2, anzahl: 3 },
+  ];
+  it("erkennt Titel und Muster, Groß-/Kleinschreibung egal", () => {
+    expect(schonVermessen(liste, " a380-800 rr basic ", "a388")?.zuletzt).toBe(1);
+  });
+  it("gleiche ICAO, anderes Add-on → nicht vermessen", () => {
+    expect(schonVermessen(liste, "FlyByWire A380X (A380-842)", "A388")).toBeNull();
+  });
+  it("gleicher Titel, andere ICAO → nicht vermessen", () => {
+    expect(schonVermessen(liste, "A380-800 RR Basic", "B748")).toBeNull();
+  });
+  it("ohne Titel keine Aussage", () => {
+    expect(schonVermessen(liste, "", "A388")).toBeNull();
+  });
 });
 
 describe("Flugzeug vermessen", () => {
+  it("Startseite: schon vermessenes Flugzeug wird erkannt, Liste zeigt den Bestand", async () => {
+    h.liste = [
+      { sim: "xplane", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: Date.UTC(2026, 8, 28), anzahl: 2 },
+      { sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: Date.UTC(2026, 8, 28), anzahl: 1 },
+    ];
+    render(<FlugzeugVermessen />);
+    expect(await screen.findByText(/Dieses Flugzeug ist schon vermessen/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Trotzdem messen" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Messung starten" })).toBeNull();
+    expect(screen.getByText("Schon vermessen (2)")).toBeTruthy();
+    expect(screen.getByText("A380-800 RR Basic")).toBeTruthy();
+    expect(screen.getByText(/B77W · X-Plane · .* · 2 Messungen/)).toBeTruthy();
+  });
+
+  it("Startseite MSFS ohne Scan: Tipp, erst einen Scan zu machen", async () => {
+    h.kind = "msfs2024";
+    render(<FlugzeugVermessen />);
+    expect(await screen.findByText(/Tipp: Mach zuerst einen Scan/)).toBeTruthy();
+    const scan = h.aufrufe.find((a) => a.cmd === "vermessung_scan_namen");
+    expect(scan?.args).toEqual({ icao: "B77W", titel: "Boeing 777-300ER" });
+  });
+
+  it("Startseite MSFS mit Scan: kein Tipp, Anzahl der Namen", async () => {
+    h.kind = "msfs2024";
+    h.scanNamen = 235;
+    render(<FlugzeugVermessen />);
+    expect(await screen.findByText(/235 Variablennamen werden mitgelesen/)).toBeTruthy();
+    expect(screen.queryByText(/Tipp: Mach zuerst einen Scan/)).toBeNull();
+  });
+
+  it("Startseite X-Plane: kein Scan-Hinweis, keine Anfrage", async () => {
+    render(<FlugzeugVermessen />);
+    await screen.findByText(/Simulator verbunden/);
+    expect(screen.queryByText(/Tipp: Mach zuerst einen Scan/)).toBeNull();
+    expect(h.aufrufe.some((a) => a.cmd === "vermessung_scan_namen")).toBe(false);
+  });
+
+  it("Startseite: noch nicht vermessen → normaler Start, kein Hinweis", async () => {
+    h.liste = [{ sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: 1, anzahl: 1 }];
+    render(<FlugzeugVermessen />);
+    await screen.findByText("Schon vermessen (1)");
+    expect(screen.getByRole("button", { name: "Messung starten" })).toBeTruthy();
+    expect(screen.queryByText(/Dieses Flugzeug ist schon vermessen/)).toBeNull();
+  });
+
   it("in der Luft lässt sich nicht starten", async () => {
     h.amBoden = false;
     render(<FlugzeugVermessen />);
@@ -103,7 +177,7 @@ describe("Flugzeug vermessen", () => {
     await klick("An GSG senden");
     expect(await screen.findByText("Danke – angekommen!")).toBeTruthy();
 
-    const cmds = h.aufrufe.map((a) => a.cmd).filter((c) => c !== "sim_status");
+    const cmds = h.aufrufe.map((a) => a.cmd).filter((c) => c !== "sim_status" && c !== "vermessung_liste");
     expect(cmds[0]).toBe("vermessung_starten");
     expect(cmds).toContain("vermessung_senden");
     expect(cmds[cmds.length - 1]).toBe("vermessung_beenden");
@@ -112,7 +186,7 @@ describe("Flugzeug vermessen", () => {
     expect(abschluesse[0]!.args).toEqual({ schalter: "beacon", uebersprungen: false, sitzung: 7 });
     expect(abschluesse[1]!.args).toEqual({ schalter: "strobe", uebersprungen: true, sitzung: 7 });
     // Jeder Befehl nach dem Start nennt die Sitzung (auch das Beenden).
-    const nachStart = h.aufrufe.filter((a) => a.cmd.startsWith("vermessung_") && a.cmd !== "vermessung_starten");
+    const nachStart = h.aufrufe.filter((a) => a.cmd.startsWith("vermessung_") && a.cmd !== "vermessung_starten" && a.cmd !== "vermessung_liste");
     expect(nachStart.every((a) => a.args?.sitzung === 7)).toBe(true);
     // Der Start trägt eine Kennung, das Beenden nennt sie wieder.
     const start = h.aufrufe.find((a) => a.cmd === "vermessung_starten")!.args?.start;

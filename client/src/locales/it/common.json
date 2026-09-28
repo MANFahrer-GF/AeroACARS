@@ -3419,7 +3419,7 @@
         "titel": "Autobrake",
         "wo": "Main instrument panel, usually next to the gear lever. Knob or buttons.",
         "namen": "AUTO BRAKE · A/BRK · LO / MED / MAX · RTO",
-        "hinweis": "Every setting your aircraft has. At the highest one choose “That was already the last position”."
+        "hinweis": "Tutti i livelli del tuo aereo. Al livello più alto scegli “Era già l'ultima posizione”. Salta i livelli che a terra tornano subito indietro (ad es. BTV sull'A380) – per quelli usa “Questa posizione non esiste”."
       },
       "apu": {
         "titel": "APU (auxiliary power unit)",
@@ -3462,6 +3462,13 @@
       "gesetzt": "SET",
       "geloest": "RELEASED"
     },
-    "keine_bewegung": "nessun movimento"
+    "keine_bewegung": "nessun movimento",
+    "schon_vermessen": "Questo aereo è già stato misurato (l'ultima volta il {{datum}}). Grazie! Misurarlo di nuovo ha senso solo dopo un aggiornamento importante dell'add-on.",
+    "trotzdem": "Misura comunque",
+    "liste_titel": "Già misurati ({{anzahl}})",
+    "liste_hinweis": "Questi aerei li abbiamo già. Il tuo aiuto serve per tutto ciò che non è in elenco.",
+    "messungen": "{{anzahl}} misurazioni",
+    "erst_scan": "Per questo aereo non c'è ancora un aircraft scan. Consiglio: fai prima uno scan in Impostazioni → “✈️ Plugin” → “🔬 Invia aereo per l'analisi”. La misurazione lo userà automaticamente e riconoscerà di più. Gli aerei cifrati dello Store non si possono scansionare – in quel caso misura e basta.",
+    "scan_da": "Aircraft scan disponibile – verranno letti anche {{anzahl}} nomi di variabili."
   }
 }

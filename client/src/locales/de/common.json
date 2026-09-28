@@ -3419,7 +3419,7 @@
         "titel": "Autobrake",
         "wo": "Hauptinstrumentenbrett, meist neben dem Fahrwerkshebel. Knopf oder Tasten.",
         "namen": "AUTO BRAKE · A/BRK · LO / MED / MAX · RTO",
-        "hinweis": "Alle Stufen, die dein Flugzeug hat. Bei der höchsten Stufe „Das war schon die letzte Stellung“ wählen."
+        "hinweis": "Alle Stufen, die dein Flugzeug hat. Bei der höchsten Stufe „Das war schon die letzte Stellung“ wählen. Stufen, die am Boden sofort zurückspringen (z. B. BTV beim A380), einfach auslassen – dafür „Diese Stellung gibt es nicht“."
       },
       "apu": {
         "titel": "APU (Hilfstriebwerk)",
@@ -3462,6 +3462,13 @@
       "gesetzt": "GESETZT",
       "geloest": "GELÖST"
     },
-    "keine_bewegung": "keine Bewegung"
+    "keine_bewegung": "keine Bewegung",
+    "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
+    "trotzdem": "Trotzdem messen",
+    "liste_titel": "Schon vermessen ({{anzahl}})",
+    "liste_hinweis": "Diese Flugzeuge haben wir schon. Deine Hilfe fehlt bei allem, was hier nicht steht.",
+    "messungen": "{{anzahl}} Messungen",
+    "erst_scan": "Für dieses Flugzeug liegt noch kein Aircraft-Scan vor. Tipp: Mach zuerst einen Scan unter Einstellungen → „✈️ Plugins“ → „🔬 Flugzeug zur Analyse einreichen“. Die Messung nutzt ihn danach automatisch und erkennt mehr. Verschlüsselte Store-Flugzeuge kann der Scan nicht lesen – dann einfach so messen.",
+    "scan_da": "Aircraft-Scan vorhanden – {{anzahl}} Variablennamen werden mitgelesen."
   }
 }

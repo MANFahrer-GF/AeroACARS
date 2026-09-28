@@ -73,6 +73,22 @@
   line-height: 1.5;
 }
 .vm-hinweis--warn { background: var(--sem-warn-bg); }
+.vm-hinweis--ok { background: var(--sem-ok-bg); color: var(--sem-ok); font-weight: 600; }
+
+/* „Schon vermessen" */
+.vm-bestand summary { cursor: pointer; margin-bottom: 0; }
+.vm-bestand[open] summary { margin-bottom: 6px; }
+.vm-bestand ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+.vm-bestand li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.vm-bestand li:last-child { border-bottom: 0; }
+.vm-bestand-name { font-weight: 600; }
 
 .vm-kopf { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
 .vm-flugzeug { font-weight: 600; }

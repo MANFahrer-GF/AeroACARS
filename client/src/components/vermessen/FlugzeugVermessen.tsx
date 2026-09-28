@@ -12,6 +12,29 @@ import type { SimStatus } from "../../types";
 import { SCHRITTE, type SchrittDef } from "./schritte";
 import "./vermessen.css";
 
+/** Ein schon vermessenes Flugzeug (vom Server, ohne Pilotenbezug). */
+export interface Vermessen {
+  sim: string | null;
+  icao: string | null;
+  titel: string | null;
+  zuletzt: number;
+  anzahl: number;
+}
+
+/** Ist das geladene Flugzeug schon vermessen? Abgleich über Muster UND
+ *  Titel — die ICAO allein trennt z. B. FlyByWire- und iniBuilds-A380 nicht.
+ *  Eine andere Lackierung mit anderem Titel wird nicht erkannt; dann wird
+ *  eben doppelt gemessen, das schadet nicht. */
+export function schonVermessen(liste: Vermessen[], titel?: string | null, icao?: string | null): Vermessen | null {
+  const t = (titel ?? "").trim().toLowerCase();
+  const i = (icao ?? "").trim().toUpperCase();
+  if (!t) return null;
+  return (
+    liste.find((v) => (v.titel ?? "").trim().toLowerCase() === t && (!i || !v.icao || v.icao.trim().toUpperCase() === i)) ??
+    null
+  );
+}
+
 interface StartAntwort {
   sim: "msfs" | "xplane";
   flugzeug: { titel?: string | null; icao?: string | null; autor?: string | null };
@@ -60,6 +83,19 @@ export function FlugzeugVermessen() {
   const [ergebnisse, setErgebnisse] = useState<Record<string, Ergebnis>>({});
   const [fehler, setFehler] = useState<string | null>(null);
   const [sim, setSim] = useState<SimStatus | null>(null);
+  const [vermessen, setVermessen] = useState<Vermessen[]>([]);
+
+  // „Schon vermessen" — bei jedem Zurück auf die Startseite neu holen.
+  useEffect(() => {
+    if (phase.art !== "start") return;
+    let lebt = true;
+    invoke<Vermessen[]>("vermessung_liste")
+      .then((l) => lebt && setVermessen(Array.isArray(l) ? l : []))
+      .catch(() => undefined);
+    return () => {
+      lebt = false;
+    };
+  }, [phase.art]);
   // Laufnummer: Abbrechen/Verlassen zählt hoch, eine danach noch
   // eintreffende Antwort ändert die Ansicht nicht mehr.
   const lauf = useRef(0);
@@ -293,7 +329,7 @@ export function FlugzeugVermessen() {
         </div>
       )}
 
-      {phase.art === "start" && <StartSeite sim={sim} onStart={() => void starten()} />}
+      {phase.art === "start" && <StartSeite sim={sim} vermessen={vermessen} onStart={() => void starten()} />}
 
       {phase.art === "verbinden" && (
         <section className="vm-karte vm-mitte">
@@ -396,12 +432,15 @@ export function FlugzeugVermessen() {
   );
 }
 
-function StartSeite({ sim, onStart }: { sim: SimStatus | null; onStart: () => void }) {
-  const { t } = useTranslation();
+function StartSeite({ sim, vermessen, onStart }: { sim: SimStatus | null; vermessen: Vermessen[]; onStart: () => void }) {
+  const { t, i18n } = useTranslation();
   const snap = sim?.snapshot ?? null;
   const verbunden = !!snap;
   const amBoden = snap?.on_ground !== false;
   const flugzeug = [snap?.aircraft_title, snap?.aircraft_icao].filter(Boolean).join(" · ");
+  const datum = (ms: number) => new Date(ms).toLocaleDateString(i18n.language || "de");
+  const schon = verbunden ? schonVermessen(vermessen, snap?.aircraft_title, snap?.aircraft_icao) : null;
+  const scanNamen = useScanNamen(sim);
   return (
     <section className="vm-karte">
       <h3 className="vm-titel">{t("vermessen.titel")}</h3>
@@ -419,14 +458,70 @@ function StartSeite({ sim, onStart }: { sim: SimStatus | null; onStart: () => vo
       <div className={`vm-status ${verbunden && amBoden ? "vm-status--ok" : "vm-status--warn"}`}>
         {!verbunden ? t("vermessen.sim_fehlt") : !amBoden ? t("vermessen.sim_luft") : t("vermessen.sim_ok", { flugzeug: flugzeug || "—" })}
       </div>
+      {schon && (
+        <p className="vm-hinweis vm-hinweis--ok">
+          ✓ {t("vermessen.schon_vermessen", { datum: datum(schon.zuletzt) })}
+        </p>
+      )}
+      {!schon && amBoden && scanNamen === 0 && <p className="vm-hinweis vm-hinweis--warn">{t("vermessen.erst_scan")}</p>}
+      {!schon && amBoden && scanNamen !== null && scanNamen > 0 && (
+        <p className="vm-klein vm-ok">✓ {t("vermessen.scan_da", { anzahl: scanNamen })}</p>
+      )}
       <p className="vm-klein vm-dim">{t("vermessen.was_gesendet")}</p>
       <div className="vm-knoepfe">
-        <button type="button" className="button button--primary" disabled={!verbunden || !amBoden} onClick={onStart}>
-          {t("vermessen.starten")}
+        <button
+          type="button"
+          className={schon ? "button" : "button button--primary"}
+          disabled={!verbunden || !amBoden}
+          onClick={onStart}
+        >
+          {schon ? t("vermessen.trotzdem") : t("vermessen.starten")}
         </button>
       </div>
+      {vermessen.length > 0 && (
+        <details className="vm-liste vm-bestand">
+          <summary className="vm-liste-titel">{t("vermessen.liste_titel", { anzahl: vermessen.length })}</summary>
+          <p className="vm-klein vm-dim">{t("vermessen.liste_hinweis")}</p>
+          <ul>
+            {vermessen.map((v, n) => (
+              <li key={`${v.sim}|${v.icao}|${v.titel}|${n}`}>
+                <span className="vm-bestand-name">{v.titel || "—"}</span>
+                <span className="vm-dim">
+                  {[v.icao, v.sim === "xplane" ? "X-Plane" : v.sim === "msfs" ? "MSFS" : null, datum(v.zuletzt)]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  {v.anzahl > 1 ? ` · ${t("vermessen.messungen", { anzahl: v.anzahl })}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
   );
+}
+
+/** MSFS: wie viele L:-Namen die Aircraft-Scans für das geladene Flugzeug
+ *  liefern. `null` = unbekannt/nicht MSFS (dann kein Hinweis). */
+function useScanNamen(sim: SimStatus | null): number | null {
+  const istMsfs = sim?.kind === "msfs2020" || sim?.kind === "msfs2024";
+  const titel = sim?.snapshot?.aircraft_title ?? "";
+  const icao = sim?.snapshot?.aircraft_icao ?? "";
+  const [stand, setStand] = useState<{ schluessel: string; anzahl: number | null }>({ schluessel: "", anzahl: null });
+  const schluessel = istMsfs && titel ? `${icao}|${titel}` : "";
+  useEffect(() => {
+    if (!schluessel) return;
+    let lebt = true;
+    invoke<number>("vermessung_scan_namen", { icao, titel })
+      .then((n) => lebt && setStand({ schluessel, anzahl: typeof n === "number" ? n : null }))
+      .catch(() => lebt && setStand({ schluessel, anzahl: null }));
+    return () => {
+      lebt = false;
+    };
+    // Nur bei Flugzeugwechsel neu fragen, nicht bei jedem Statustakt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schluessel]);
+  return schluessel && stand.schluessel === schluessel ? stand.anzahl : null;
 }
 
 function Kopf({ flugzeug, text }: { flugzeug: string; text?: string }) {

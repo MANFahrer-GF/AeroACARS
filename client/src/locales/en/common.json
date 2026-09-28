@@ -3419,7 +3419,7 @@
         "titel": "Autobrake",
         "wo": "Main instrument panel, usually next to the gear lever. Knob or buttons.",
         "namen": "AUTO BRAKE · A/BRK · LO / MED / MAX · RTO",
-        "hinweis": "Every setting your aircraft has. At the highest one choose “That was already the last position”."
+        "hinweis": "All levels your aircraft has. At the highest level choose “That was already the last position”. Skip levels that spring back at once on the ground (e.g. BTV on the A380) – use “This position doesn't exist” for them."
       },
       "apu": {
         "titel": "APU (auxiliary power unit)",
@@ -3462,6 +3462,13 @@
       "gesetzt": "SET",
       "geloest": "RELEASED"
     },
-    "keine_bewegung": "no movement"
+    "keine_bewegung": "no movement",
+    "schon_vermessen": "This aircraft has already been measured (last on {{datum}}). Thank you! Measuring again only makes sense after a major add-on update.",
+    "trotzdem": "Measure anyway",
+    "liste_titel": "Already measured ({{anzahl}})",
+    "liste_hinweis": "We already have these aircraft. Your help is needed for anything not on this list.",
+    "messungen": "{{anzahl}} measurements",
+    "erst_scan": "There is no aircraft scan for this aircraft yet. Tip: run a scan first under Settings → “✈️ Plugins” → “🔬 Submit aircraft for analysis”. The measurement then uses it automatically and detects more. Encrypted store aircraft can't be scanned – then just measure without it.",
+    "scan_da": "Aircraft scan available – {{anzahl}} variable names will be read as well."
   }
 }
