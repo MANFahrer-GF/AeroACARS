@@ -3381,13 +3381,14 @@
       "nav": {
         "titel": "Navigationslichter",
         "wo": "Overhead-Panel, Lichterreihe. Die roten/grünen Positionslichter an den Flügelspitzen.",
-        "namen": "NAV · NAV & LOGO · POSITION"
+        "namen": "NAV · NAV & LOGO · POSITION",
+        "hinweis": "Beim Airbus heißt die Taste NAV & LOGO und hat zwei Stellungen neben OFF: bei „AN“ die erste, dann die zweite. Hast du nur AUS und AN, nach „AN“ „Das war schon die letzte Stellung“."
       },
       "landelicht": {
         "titel": "Landelicht",
         "wo": "Overhead-Panel, Lichterreihe. Oft mehrere Schalter (links, rechts, Nase).",
         "namen": "LANDING · LAND L/R · RETRACTABLE / FIXED",
-        "hinweis": "Bei mehreren Schaltern alle zusammen umschalten."
+        "hinweis": "Beim Airbus hat der Landescheinwerfer drei Stellungen: ON, OFF und RETRACT (eingefahren). Erst OFF, dann ON, zum Schluss RETRACT. Hast du nur AUS und AN, nach „AN“ „Das war schon die letzte Stellung“."
       },
       "taxilicht": {
         "titel": "Taxi-Licht",
@@ -3586,7 +3587,9 @@
       "ein_ap": "ein Autopilot",
       "zwei_ap": "beide Autopiloten (CAT 3 DUAL)",
       "taxi_1": "TAXI (A220: NARROW)",
-      "taxi_2": "T.O. (A220: WIDE)"
+      "taxi_2": "T.O. (A220: WIDE)",
+      "nav_2": "NAV & LOGO – zweite Stellung (Airbus)",
+      "lande_retract": "RETRACT (eingefahren, Airbus)"
     },
     "keine_bewegung": "keine Bewegung",
     "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
@@ -3639,7 +3642,9 @@
     "profil_in_arbeit": "in Arbeit",
     "profil_geprueft": "geprüft",
     "profil_geprueft_hilfe": "Profil eingebaut und mit einer Messung am Flugzeug bestätigt.",
-    "profil_aus_scan": "aus Scan",
-    "profil_aus_scan_hilfe": "Profil eingebaut, aber nur aus den Variablennamen des Scans abgeleitet – eine Messung macht es genauer."
+    "profil_eigen": "eigenes Profil",
+    "profil_eigen_hilfe": "AeroACARS hat ein eigenes Profil für dieses Flugzeug ({{name}}) – noch nicht per Messung geprüft. Eine Messung zeigt, ob alles stimmt.",
+    "profil_standard": "nur Standard",
+    "profil_standard_hilfe": "Kein eigenes Profil – AeroACARS liest nur die Standardwerte des Simulators. Viele Add-ons bedienen die nicht; eine Messung hilft beim Profil."
   }
 }

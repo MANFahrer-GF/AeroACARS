@@ -114,6 +114,10 @@ pub struct ScanEintrag {
     /// „fertig" | „in_arbeit" | None — Profil-Stand, wie der Admin ihn setzt.
     pub profil: Option<String>,
     pub zuletzt: i64,
+    /// Herkunft: „client“/„web“ = Aircraft-Scan, „aao-profil“ /
+    /// „hersteller-doku“ = von uns hinterlegte Namensquelle.
+    #[serde(default)]
+    pub quelle: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]

@@ -670,6 +670,33 @@ pub async fn vermessung_scan_namen(
         .map_err(|e| e.to_string())
 }
 
+/// Ein Flugzeug der Übersicht: alle Titel, unter denen der Simulator es
+/// meldet, und das Muster.
+#[derive(serde::Deserialize)]
+pub struct ProfilAnfrage {
+    pub titel: Vec<String>,
+    #[serde(default)]
+    pub icao: Option<String>,
+}
+
+/// Hat AeroACARS für diese Flugzeuge ein eigenes MSFS-Profil? Je Eintrag der
+/// Profilname (z. B. „FenixA320“) oder `None` = nur Standardwerte. Für die
+/// Spalte „Profil“ der Übersicht (28.09.2026) — gleiche Erkennung wie im Flug.
+#[tauri::command]
+pub fn vermessung_profile(flugzeuge: Vec<ProfilAnfrage>) -> Vec<Option<String>> {
+    flugzeuge
+        .iter()
+        .map(|f| {
+            let icao = f.icao.as_deref().unwrap_or("");
+            f.titel.iter().find_map(|t| {
+                let p = sim_core::AircraftProfile::detect(t, icao);
+                (p != sim_core::AircraftProfile::Default).then(|| format!("{p:?}"))
+            })
+        })
+        .take(500)
+        .collect()
+}
+
 /// Messung beenden (auch Abbrechen): Quelle schließen, alles verwerfen.
 /// Mit `sitzung` nur diese — ein verspätetes Beenden aus einem alten Lauf
 /// lässt eine neuere Messung stehen. Ohne (Seite verlassen mitten im
@@ -804,6 +831,24 @@ mod tests {
     /// Gemessen am A350 (Thorben, 28.09.2026): die Flügeltemperatur driftet
     /// um Tausendstel und kam als „Kandidat“ durch — jetzt nicht mehr; ein
     /// echter Schalter und kleine, aber echte Sprünge (Kurs 180 → 181) bleiben.
+    #[test]
+    fn profile_der_uebersicht() {
+        let a = |titel: &[&str], icao: &str| ProfilAnfrage {
+            titel: titel.iter().map(|x| x.to_string()).collect(),
+            icao: Some(icao.into()),
+        };
+        let r = vermessung_profile(vec![
+            a(&["FenixA320 CFM SL"], "A320"),
+            a(&["Airbus A320neo FlyByWire"], "A20N"),
+            a(&["Asobo A320 Neo"], "A20N"),
+            a(&["irgendwas", "A350-1000 (No Cabin)"], "A35K"),
+        ]);
+        assert_eq!(r[0].as_deref(), Some("FenixA320"));
+        assert_eq!(r[1].as_deref(), Some("FbwA32nx"));
+        assert_eq!(r[2], None, "Asobo = nur Standard");
+        assert_eq!(r[3].as_deref(), Some("IniA350"), "irgendein Titel genügt");
+    }
+
     #[test]
     fn winzige_drift_ist_kein_schalter() {
         let staende = vec![

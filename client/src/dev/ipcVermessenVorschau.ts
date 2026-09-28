@@ -42,12 +42,23 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
     case "vermessung_scan_namen":
       // ?scan = für das geladene Flugzeug gibt es einen Scan.
       return (q.has("scan") ? 235 : 0) as T;
+    case "vermessung_profile": {
+      // grob wie AircraftProfile::detect im Client
+      const f = ((_args?.flugzeuge ?? []) as Array<{ titel: string[] }>);
+      const erkenne = (t: string) =>
+        /fenix/i.test(t) ? "FenixA320" : /flybywire|a32nx|a380x/i.test(t) ? "FbwA32nx" : /^A350|A380-800|A330/i.test(t) ? "IniA350"
+        : /synaptic|A220-300/i.test(t) ? "SynapticA220" : /ifly/i.test(t) ? "IFly737Max" : /falcon 50/i.test(t) ? "ContrailFa50" : null;
+      return f.map((x) => x.titel.map(erkenne).find(Boolean) ?? null) as T;
+    }
     case "vermessung_liste": {
       // Stand wie auf live.kant.ovh am 28.09.2026 (zwei A380-Messungen,
       // die Aircraft-Scans der VA). ?neu = A380 noch nicht vermessen.
       const tag = (d: number) => Date.UTC(2026, 8, d);
       const flugzeuge = q.has("neu") ? [] : [
-        { sim: "msfs", teil: "boden", icao: "A388", titel: "A380-800 RR Basic", zuletzt: tag(28), anzahl: 2, scan_namen: 235 },
+        { sim: "msfs", teil: "boden", icao: "A388", titel: "A380-800 RR Basic", zuletzt: tag(28), anzahl: 2, scan_namen: 1588, profil: "geprueft" },
+        { sim: "msfs", teil: "boden", icao: "A35K", titel: "A350-1000 (No Cabin)", zuletzt: tag(28), anzahl: 3, scan_namen: 1500, profil: "geprueft" },
+        { sim: "msfs", teil: "luft", icao: "A35K", titel: "A350-1000 (No Cabin)", zuletzt: tag(28), anzahl: 1, scan_namen: 1500, profil: "geprueft" },
+        { sim: "msfs", teil: "boden", icao: "A20N", titel: "Airbus A320neo FlyByWire", zuletzt: tag(28), anzahl: 1, scan_namen: 896, profil: "geprueft" },
       ];
       const scans = [
         { sim: "msfs", icao: "BCS3", paket: "Synaptic A220", titel_liste: ["Synaptic Simulations A220-300", "A220-300"], scan_namen: 156, profil: "in_arbeit", zuletzt: tag(28) },
@@ -57,6 +68,8 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
         { sim: "msfs", icao: "A20N", paket: "A32NX (Development)", titel_liste: ["Airbus A320 Neo FlyByWire"], scan_namen: 896, profil: null, zuletzt: tag(14) },
         { sim: "msfs", icao: "B38M", paket: "737MAX", titel_liste: ["iFly 737-MAX8 (166Seats)"], scan_namen: 1500, profil: null, zuletzt: tag(14) },
         { sim: "msfs", icao: "BE24", paket: "Sierra-C24R", titel_liste: ["Flysimware Sierra C24R G3X GNS530 C-GMTT"], scan_namen: 299, profil: "aus_scan", zuletzt: tag(6) },
+        { sim: "msfs", icao: "A320", paket: "Fenix A320 – L:-Namen aus HubHop", titel_liste: ["FenixA320", "FenixA320 CFM SL"], scan_namen: 1921, profil: null, zuletzt: tag(28) },
+        { sim: "msfs", icao: "A20N", paket: "Asobo A320neo", titel_liste: ["Asobo A320 Neo"], scan_namen: 0, profil: null, zuletzt: tag(3) },
         { sim: "xplane", icao: "A20N", paket: "ToLiSs A320 Hi Def", titel_liste: ["ToLiSs A320 Hi Def"], scan_namen: null, profil: "aus_scan", zuletzt: tag(5) },
         { sim: "xplane", icao: "B738", paket: "Boeing 737-800", titel_liste: ["Boeing 737-800"], scan_namen: null, profil: "aus_scan", zuletzt: tag(5) },
         { sim: "xplane", icao: "B738", paket: "Boeing 737-800X", titel_liste: ["Boeing 737-800X"], scan_namen: null, profil: "aus_scan", zuletzt: tag(5) },

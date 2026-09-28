@@ -56575,6 +56575,7 @@ pub fn run() {
             vermessung::vermessung_beenden,
             vermessung::vermessung_liste,
             vermessung::vermessung_scan_namen,
+            vermessung::vermessung_profile,
             vdgs_fenster_oeffnen,
             fenster::fenster_an_inhalt_anpassen,
             vdgs_fenster_offen,

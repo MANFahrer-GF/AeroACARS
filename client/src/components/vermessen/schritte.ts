@@ -43,8 +43,11 @@ export interface SchrittDef {
 export const SCHRITTE: SchrittDef[] = [
   { schalter: "beacon", teil: "boden", stellungen: ["aus", "an"] },
   { schalter: "strobe", teil: "boden", stellungen: ["off", "auto", "on"] },
-  { schalter: "nav", teil: "boden", stellungen: ["aus", "an"] },
-  { schalter: "landelicht", teil: "boden", stellungen: ["aus", "an"] },
+  // Airbus: NAV & LOGO in einer Taste mit zwei Stellungen (Fenix 0/1/2) —
+  // wer nur an/aus hat, wählt nach AN „letzte Stellung“.
+  { schalter: "nav", teil: "boden", stellungen: ["aus", "an", "nav_2"], offenesEnde: true },
+  // Airbus: ON / OFF / RETRACT — RETRACT als dritte, optionale Stellung.
+  { schalter: "landelicht", teil: "boden", stellungen: ["aus", "an", "lande_retract"], offenesEnde: true },
   // Airbus-Bugscheinwerfer OFF/TAXI/T.O., A220 OFF/NARROW/WIDE — manche
   // haben nur an/aus, dann nach zwei Stellungen „letzte Stellung“.
   { schalter: "taxilicht", teil: "boden", stellungen: ["aus", "taxi_1", "taxi_2"], offenesEnde: true },

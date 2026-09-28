@@ -263,6 +263,16 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        "vermessung_profile" => {
+            #[derive(Deserialize)]
+            struct A {
+                flugzeuge: Vec<crate::vermessung::ProfilAnfrage>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => ok_json(crate::vermessung::vermessung_profile(a.flugzeuge)),
+                Err(e) => Err(e),
+            }
+        }
         "vermessung_liste" => {
             from_string_err(crate::vermessung::vermessung_liste(app.clone()).await)
         }

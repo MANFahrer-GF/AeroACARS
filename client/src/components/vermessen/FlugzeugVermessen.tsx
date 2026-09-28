@@ -61,6 +61,8 @@ export interface ScanEintrag {
    *  dem Scan abgeleitet) | „in_arbeit" | null — wie der Admin ihn setzt. */
   profil: string | null;
   zuletzt: number;
+  /** „aao-profil“ / „hersteller-doku“ = hinterlegte Namensquelle, kein Scan. */
+  quelle?: string | null;
 }
 
 const PROFIL_RANG: Record<string, number> = { geprueft: 3, aus_scan: 2, in_arbeit: 1 };
@@ -122,8 +124,12 @@ export function uebersicht(liste: Vermessen[], scans: ScanEintrag[]): Zeile[] {
       treffer.profil = hoeher(treffer.profil, sc.profil);
       for (const t of sc.titel_liste) if (!treffer.titel_liste.some((x) => klein(x) === klein(t))) treffer.titel_liste.push(t);
     } else {
+      // Eine hinterlegte Namensquelle trägt einen Beschreibungstext als
+      // Paketnamen („… – L:-Namen aus HubHop“) — die Zeile heißt dann wie
+      // das Flugzeug.
+      const nurNamen = sc.quelle === "aao-profil" || sc.quelle === "hersteller-doku";
       zeilen.push({
-        titel: sc.paket ?? sc.titel_liste[0] ?? null,
+        titel: (nurNamen ? sc.titel_liste[0] : sc.paket) ?? sc.titel_liste[0] ?? sc.paket ?? null,
         icao: sc.icao,
         sim: sc.sim,
         titel_liste: [...sc.titel_liste],
@@ -591,6 +597,7 @@ function StartSeite({
   const moeglich = schritteFuer(teil);
   const gewaehlt = moeglich.filter((x) => auswahl.has(x.schalter)).length;
   const bestand = uebersicht(vermessen, scans);
+  const eigeneProfile = useEigeneProfile(bestand);
   // Tabelle: das geladene Flugzeug immer oben — auch, wenn es noch gar nicht
   // vermessen ist (dann „fehlt“ in beiden Spalten).
   const titelJetzt = (snap?.aircraft_title ?? "").trim().toLowerCase();
@@ -693,12 +700,19 @@ function StartSeite({
                     <span className="vm-zelle vm-zelle--ok" title={t("vermessen.profil_geprueft_hilfe")}>
                       ✓ {t("vermessen.profil_geprueft")}
                     </span>
-                  ) : v.profil === "aus_scan" ? (
-                    <span className="vm-zelle vm-zelle--fehlt" title={t("vermessen.profil_aus_scan_hilfe")}>
-                      {t("vermessen.profil_aus_scan")}
+                  ) : eigeneProfile.get(zeilenSchluessel(v)) || v.profil === "aus_scan" ? (
+                    <span
+                      className="vm-zelle vm-zelle--fehlt"
+                      title={t("vermessen.profil_eigen_hilfe", { name: eigeneProfile.get(zeilenSchluessel(v)) ?? "" })}
+                    >
+                      {t("vermessen.profil_eigen")}
                     </span>
                   ) : v.profil === "in_arbeit" ? (
                     <span className="vm-zelle vm-zelle--arbeit">{t("vermessen.profil_in_arbeit")}</span>
+                  ) : v.sim === "msfs" ? (
+                    <span className="vm-zelle vm-zelle--leise" title={t("vermessen.profil_standard_hilfe")}>
+                      {t("vermessen.profil_standard")}
+                    </span>
                   ) : (
                     <span className="vm-dim">–</span>
                   )}
@@ -762,6 +776,40 @@ function StartSeite({
       </details>
     </section>
   );
+}
+
+const zeilenSchluessel = (v: { sim: string | null; icao: string | null; titel: string | null }) =>
+  `${v.sim ?? ""}|${gross(v.icao)}|${klein(v.titel)}`;
+
+/** MSFS: hat AeroACARS für diese Zeilen ein eigenes Profil? (gleiche
+ *  Erkennung wie im Flug, im Client) — Schlüssel → Profilname. */
+function useEigeneProfile(zeilen: Zeile[]): Map<string, string> {
+  const msfs = zeilen.filter((z) => (z.sim ?? "msfs") === "msfs" && z.titel_liste.length > 0);
+  const schluessel = msfs.map(zeilenSchluessel).join("\n");
+  const [karte, setKarte] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!msfs.length) return;
+    let lebt = true;
+    invoke<Array<string | null>>("vermessung_profile", {
+      flugzeuge: msfs.map((z) => ({ titel: z.titel_liste, icao: z.icao })),
+    })
+      .then((r) => {
+        if (!lebt || !Array.isArray(r)) return;
+        const m = new Map<string, string>();
+        msfs.forEach((z, i) => {
+          const p = r[i];
+          if (p) m.set(zeilenSchluessel(z), p);
+        });
+        setKarte(m);
+      })
+      .catch(() => undefined);
+    return () => {
+      lebt = false;
+    };
+    // Nur neu fragen, wenn sich die Zeilen ändern.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schluessel]);
+  return karte;
 }
 
 /** Spalte „Variablen (Scan)": ob für das Muster L:-Namen vorliegen. */

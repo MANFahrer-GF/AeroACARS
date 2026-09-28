@@ -52,6 +52,11 @@ vi.mock("../../lib/ipc", () => ({
         return Promise.resolve(h.scanNamen);
       case "vermessung_liste":
         return Promise.resolve(h.liste);
+      case "vermessung_profile": {
+        // wie im Client: Fenix hat ein Profil, Asobo nicht
+        const f = (args?.flugzeuge ?? []) as Array<{ titel: string[] }>;
+        return Promise.resolve(f.map((x) => (x.titel.some((t) => t.startsWith("Fenix")) ? "FenixA320" : null)));
+      }
       case "vermessung_senden":
         return Promise.resolve({ id: "abc" });
       default:
@@ -205,6 +210,24 @@ describe("Flugzeug vermessen", () => {
     expect(zeilen[0]!.textContent).toContain("PMDG 777");
     expect(zeilen[0]!.textContent).toContain("✓ geprüft");
     expect(screen.getByRole("columnheader", { name: "Profil" })).toBeTruthy();
+  });
+
+  it("Profil-Spalte: eigenes Profil vs. nur Standard (MSFS), X-Plane ohne Aussage", async () => {
+    h.liste = {
+      flugzeuge: [],
+      scans: [
+        { sim: "msfs", icao: "A320", paket: "FenixA320", titel_liste: ["FenixA320 CFM SL"], scan_namen: 1921, profil: null, zuletzt: 2 },
+        { sim: "msfs", icao: "A20N", paket: "Asobo A320", titel_liste: ["Asobo A320 Neo"], scan_namen: 0, profil: null, zuletzt: 1 },
+        { sim: "xplane", icao: "B738", paket: "Boeing 737-800", titel_liste: ["Boeing 737-800"], scan_namen: null, profil: null, zuletzt: 1 },
+      ],
+    } as never;
+    render(<FlugzeugVermessen />);
+    const tabelle = await screen.findByRole("table");
+    await screen.findByText("eigenes Profil");
+    const text = (name: string) => [...tabelle.querySelectorAll("tbody tr")].find((z) => z.textContent?.includes(name))!.textContent!;
+    expect(text("FenixA320")).toContain("eigenes Profil");
+    expect(text("Asobo A320")).toContain("nur Standard");
+    expect(text("Boeing 737-800")).not.toContain("nur Standard");
   });
 
   it("Startseite: Boden und Luft desselben Flugzeugs in einer Zeile", async () => {
