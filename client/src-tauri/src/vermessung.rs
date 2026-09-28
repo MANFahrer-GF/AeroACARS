@@ -170,6 +170,10 @@ struct Sitzung {
     sim: &'static str,
     /// „boden" oder „luft" (Autopilot im Reiseflug).
     teil: &'static str,
+    /// MSFS: wie viele L:-Namen aus den Scans mitgelesen wurden — damit man
+    /// am Bericht sieht, ob die Variablen dabei waren (X-Plane: 0, braucht
+    /// keine).
+    l_namen: usize,
     flugzeug: Flugzeug,
     rauschen: HashSet<String>,
     anzahl_werte: usize,
@@ -358,6 +362,7 @@ pub async fn vermessung_starten(
             quelle,
             sim,
             teil,
+            l_namen,
             flugzeug: flugzeug.clone(),
             rauschen: HashSet::new(),
             anzahl_werte: 0,
@@ -571,6 +576,7 @@ fn bericht(s: &Sitzung) -> serde_json::Value {
         "client_version": env!("CARGO_PKG_VERSION"),
         "sim": s.sim,
         "teil": s.teil,
+        "l_namen": s.l_namen,
         "zeit_utc": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         "flugzeug": s.flugzeug,
         "anzahl_werte": s.anzahl_werte,

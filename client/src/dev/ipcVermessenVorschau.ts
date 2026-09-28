@@ -46,10 +46,10 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
       // ?neu = geladenes Flugzeug ist noch nicht vermessen.
       const tag = (d: number) => Date.UTC(2026, 8, d);
       const liste = [
-        { sim: "msfs", teil: "boden", icao: "A388", titel: "A380-800 RR Basic", zuletzt: tag(28), anzahl: 2 },
+        { sim: "msfs", teil: "boden", icao: "A388", titel: "A380-800 RR Basic", zuletzt: tag(28), anzahl: 2, scan_namen: 235 },
         { sim: "xplane", teil: "luft", icao: "A333", titel: "Airbus A330-300", zuletzt: tag(27), anzahl: 1 },
         { sim: "xplane", icao: "A333", titel: "Airbus A330-300", zuletzt: tag(27), anzahl: 1 },
-        { sim: "msfs", icao: "A20N", titel: "FenixA320 IAE", zuletzt: tag(24), anzahl: 1 },
+        { sim: "msfs", icao: "A20N", titel: "FenixA320 IAE", zuletzt: tag(24), anzahl: 1, scan_namen: 0 },
       ];
       if (!q.has("neu")) liste.unshift({ sim: "xplane", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: tag(28), anzahl: 1 });
       return (q.has("neu") && q.has("msfs") ? liste.filter((v) => v.icao !== "A388") : liste) as T;

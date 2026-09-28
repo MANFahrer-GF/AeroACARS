@@ -87,6 +87,10 @@ pub struct Vermessen {
     /// als Boden (QS 28.09.2026). Ältere Server liefern es nicht.
     #[serde(default)]
     pub teil: Option<String>,
+    /// MSFS: L:-Namen, die die Scans für dieses Flugzeug liefern (None =
+    /// X-Plane oder älterer Server).
+    #[serde(default)]
+    pub scan_namen: Option<u32>,
     pub icao: Option<String>,
     pub titel: Option<String>,
     /// Jüngste Messung, ms seit 1970.

@@ -17,6 +17,8 @@ export interface Vermessen {
   sim: string | null;
   /** „boden" | „luft" — ältere Server/Messungen ohne Angabe = Boden. */
   teil?: string | null;
+  /** MSFS: L:-Namen aus den Scans für dieses Flugzeug (null = X-Plane). */
+  scan_namen?: number | null;
   icao: string | null;
   titel: string | null;
   zuletzt: number;
@@ -47,11 +49,22 @@ export function schonVermessen(
 }
 
 /** Bestand je Flugzeug: Boden und Luft nebeneinander (Liste „Schon vermessen"). */
-export function jeFlugzeug(liste: Vermessen[]): Array<{ titel: string | null; icao: string | null; sim: string | null; boden: Vermessen | null; luft: Vermessen | null }> {
-  const aus = new Map<string, { titel: string | null; icao: string | null; sim: string | null; boden: Vermessen | null; luft: Vermessen | null }>();
+type Zeile = {
+  titel: string | null;
+  icao: string | null;
+  sim: string | null;
+  /** MSFS: L:-Namen aus den Scans (null = X-Plane/unbekannt). */
+  scan_namen: number | null;
+  boden: Vermessen | null;
+  luft: Vermessen | null;
+};
+
+export function jeFlugzeug(liste: Vermessen[]): Zeile[] {
+  const aus = new Map<string, Zeile>();
   for (const v of liste) {
     const k = `${v.sim ?? ""}|${(v.icao ?? "").trim().toUpperCase()}|${(v.titel ?? "").trim().toLowerCase()}`;
-    const e = aus.get(k) ?? { titel: v.titel, icao: v.icao, sim: v.sim, boden: null, luft: null };
+    const e = aus.get(k) ?? { titel: v.titel, icao: v.icao, sim: v.sim, scan_namen: null, boden: null, luft: null };
+    if (typeof v.scan_namen === "number") e.scan_namen = v.scan_namen;
     if ((v.teil ?? "boden") === "luft") e.luft = v;
     else e.boden = v;
     aus.set(k, e);
@@ -495,12 +508,37 @@ function StartSeite({
   const flugzeug = [snap?.aircraft_title, snap?.aircraft_icao].filter(Boolean).join(" · ");
   const datum = (ms: number) => new Date(ms).toLocaleDateString(i18n.language || "de");
   const schon = verbunden ? schonVermessen(vermessen, snap?.aircraft_title, snap?.aircraft_icao, teil) : null;
-  const andererTeil: Teil = luft ? "boden" : "luft";
-  const andererDa = verbunden ? schonVermessen(vermessen, snap?.aircraft_title, snap?.aircraft_icao, andererTeil) : null;
   const scanNamen = useScanNamen(sim);
   const moeglich = schritteFuer(teil);
   const gewaehlt = moeglich.filter((x) => auswahl.has(x.schalter)).length;
   const bestand = jeFlugzeug(vermessen);
+  // Tabelle: das geladene Flugzeug immer oben — auch, wenn es noch gar nicht
+  // vermessen ist (dann „fehlt“ in beiden Spalten).
+  const titelJetzt = (snap?.aircraft_title ?? "").trim().toLowerCase();
+  const icaoJetzt = (snap?.aircraft_icao ?? "").trim().toUpperCase();
+  const istGeladen = (v: { titel: string | null; icao: string | null }) =>
+    !!titelJetzt &&
+    (v.titel ?? "").trim().toLowerCase() === titelJetzt &&
+    (!icaoJetzt || !v.icao || v.icao.trim().toUpperCase() === icaoJetzt);
+  const geladenImBestand = bestand.filter(istGeladen);
+  const zeilen = [
+    ...(verbunden && titelJetzt
+      ? geladenImBestand.length > 0
+        ? geladenImBestand.map((v) => ({ ...v, geladen: true }))
+        : [
+            {
+              titel: snap?.aircraft_title ?? null,
+              icao: snap?.aircraft_icao ?? null,
+              sim: sim?.kind?.startsWith("msfs") ? "msfs" : sim?.kind?.startsWith("xplane") ? "xplane" : null,
+              scan_namen: null,
+              boden: null,
+              luft: null,
+              geladen: true,
+            },
+          ]
+      : []),
+    ...bestand.filter((v) => !(verbunden && istGeladen(v))).map((v) => ({ ...v, geladen: false })),
+  ];
   const vorher = luft
     ? ["luft_vorher_1", "luft_vorher_2", "luft_vorher_3", "luft_vorher_4"]
     : ["vorher_sim", "vorher_boden", "vorher_strom", "vorher_pause"];
@@ -522,18 +560,59 @@ function StartSeite({
           ? t("vermessen.sim_fehlt")
           : t(luft ? "vermessen.sim_ok_luft" : "vermessen.sim_ok", { flugzeug: flugzeug || "—" })}
       </div>
-      {schon && (
-        <p className="vm-hinweis vm-hinweis--ok">
-          ✓ {t(luft ? "vermessen.schon_vermessen_luft" : "vermessen.schon_vermessen", { datum: datum(schon.zuletzt) })}
-        </p>
-      )}
-      {verbunden && !andererDa && (
-        <p className="vm-klein vm-dim">{t(luft ? "vermessen.boden_fehlt" : "vermessen.luft_fehlt")}</p>
-      )}
+      <div className="vm-tabelle-rahmen">
+        <div className="vm-liste-titel">{t("vermessen.tabelle_titel")}</div>
+        <p className="vm-klein vm-dim">{t("vermessen.liste_hinweis")}</p>
+        <table className="vm-tabelle">
+          <thead>
+            <tr>
+              <th>{t("vermessen.spalte_flugzeug")}</th>
+              <th>{t("vermessen.stand_boden")}</th>
+              <th>{t("vermessen.stand_luft")}</th>
+              <th>{t("vermessen.spalte_scan")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {zeilen.map((v, n) => (
+              <tr key={`${v.sim}|${v.icao}|${v.titel}|${n}`} className={v.geladen ? "vm-zeile--geladen" : undefined}>
+                <td>
+                  <div className="vm-bestand-name">
+                    {v.titel || "—"}
+                    {v.geladen && <span className="vm-geladen">{t("vermessen.geladen")}</span>}
+                  </div>
+                  <div className="vm-dim vm-klein">
+                    {[v.icao, v.sim === "xplane" ? "X-Plane" : v.sim === "msfs" ? "MSFS" : null].filter(Boolean).join(" · ")}
+                  </div>
+                </td>
+                {(["boden", "luft"] as const).map((tl) => {
+                  const e = v[tl];
+                  return (
+                    <td key={tl}>
+                      {e ? (
+                        <span className="vm-zelle vm-zelle--ok">
+                          ✓ {datum(e.zuletzt)}
+                          {e.anzahl > 1 ? ` (${e.anzahl}×)` : ""}
+                        </span>
+                      ) : (
+                        <span className="vm-zelle vm-zelle--fehlt">{t("vermessen.fehlt")}</span>
+                      )}
+                    </td>
+                  );
+                })}
+                <td>
+                  <ScanZelle
+                    sim={v.sim}
+                    // Beim geladenen Flugzeug die frische Abfrage, sonst die Serverzahl.
+                    anzahl={v.geladen && scanNamen !== null ? scanNamen : v.scan_namen}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {schon && <p className="vm-hinweis">{t(luft ? "vermessen.stand_nochmal_luft" : "vermessen.stand_nochmal_boden")}</p>}
       {!schon && scanNamen === 0 && <p className="vm-hinweis vm-hinweis--warn">{t("vermessen.erst_scan")}</p>}
-      {!schon && scanNamen !== null && scanNamen > 0 && (
-        <p className="vm-klein vm-ok">✓ {t("vermessen.scan_da", { anzahl: scanNamen })}</p>
-      )}
       <p className="vm-klein vm-dim">{t("vermessen.was_gesendet")}</p>
       <div className="vm-knoepfe">
         <button
@@ -584,37 +663,19 @@ function StartSeite({
           </button>
         </div>
       </details>
-      {bestand.length > 0 && (
-        <details className="vm-liste vm-bestand">
-          <summary className="vm-liste-titel">{t("vermessen.liste_titel", { anzahl: bestand.length })}</summary>
-          <p className="vm-klein vm-dim">{t("vermessen.liste_hinweis")}</p>
-          <ul>
-            {bestand.map((v, n) => (
-              <li key={`${v.sim}|${v.icao}|${v.titel}|${n}`}>
-                <span className="vm-bestand-name">
-                  {v.titel || "—"}
-                  <span className="vm-dim vm-bestand-meta">
-                    {[v.icao, v.sim === "xplane" ? "X-Plane" : v.sim === "msfs" ? "MSFS" : null].filter(Boolean).join(" · ")}
-                  </span>
-                </span>
-                <span className="vm-bestand-teile">
-                  {(["boden", "luft"] as const).map((tl) => {
-                    const e = v[tl];
-                    return (
-                      <span key={tl} className={e ? "vm-ok" : "vm-dim"}>
-                        {e
-                          ? `✓ ${t(`vermessen.teil_${tl}`)} ${datum(e.zuletzt)}${e.anzahl > 1 ? ` (${e.anzahl}×)` : ""}`
-                          : `– ${t(`vermessen.teil_${tl}`)} ${t("vermessen.fehlt")}`}
-                      </span>
-                    );
-                  })}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
     </section>
+  );
+}
+
+/** Spalte „Variablen (Scan)": ob für das Muster L:-Namen vorliegen. */
+function ScanZelle({ sim, anzahl }: { sim: string | null; anzahl: number | null }) {
+  const { t } = useTranslation();
+  if (sim === "xplane") return <span className="vm-zelle vm-zelle--leise">{t("vermessen.scan_unnoetig")}</span>;
+  if (anzahl === null) return <span className="vm-dim">–</span>;
+  return anzahl > 0 ? (
+    <span className="vm-zelle vm-zelle--ok">✓ {t("vermessen.scan_anzahl", { anzahl })}</span>
+  ) : (
+    <span className="vm-zelle vm-zelle--fehlt">{t("vermessen.scan_keiner")}</span>
   );
 }
 

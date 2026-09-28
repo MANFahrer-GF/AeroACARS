@@ -97,20 +97,37 @@ describe("schonVermessen", () => {
 });
 
 describe("Flugzeug vermessen", () => {
-  it("Startseite: schon vermessenes Flugzeug wird erkannt, Liste zeigt den Bestand", async () => {
+  it("Startseite: Tabelle aller Messungen, geladenes Flugzeug oben, Boden und Luft als Spalten", async () => {
     h.liste = [
-      { sim: "xplane", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: Date.UTC(2026, 8, 28), anzahl: 2 },
       { sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: Date.UTC(2026, 8, 28), anzahl: 1 },
+      { sim: "xplane", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: Date.UTC(2026, 8, 28), anzahl: 2 },
     ];
     render(<FlugzeugVermessen />);
-    expect(await screen.findByText(/Dieses Flugzeug ist schon vermessen/)).toBeTruthy();
+    const tabelle = await screen.findByRole("table");
+    // ohne Aufklappen sichtbar, mit Spaltenköpfen Boden/Luft
+    expect(screen.getByRole("columnheader", { name: "Am Boden – Schalter" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "In der Luft – Autopilot" })).toBeTruthy();
+    const zeilen = tabelle.querySelectorAll("tbody tr");
+    expect(zeilen.length).toBe(2);
+    // geladene 777 steht oben, markiert; Boden gemessen (2×), Luft fehlt
+    expect(zeilen[0]!.className).toContain("vm-zeile--geladen");
+    expect(zeilen[0]!.textContent).toContain("Boeing 777-300ER");
+    expect(zeilen[0]!.textContent).toContain("geladen");
+    expect(zeilen[0]!.textContent).toMatch(/✓ .*\(2×\)/);
+    expect(zeilen[0]!.textContent).toContain("fehlt noch");
+    expect(zeilen[1]!.textContent).toContain("A380-800 RR Basic");
     expect(screen.getByRole("button", { name: "Trotzdem messen" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Messung starten" })).toBeNull();
-    expect(screen.getByText("Schon vermessen (2)")).toBeTruthy();
-    expect(screen.getByText("A380-800 RR Basic")).toBeTruthy();
-    expect(screen.getByText("B77W · X-Plane")).toBeTruthy();
-    expect(screen.getByText(/✓ Boden .*\(2×\)/)).toBeTruthy();
-    expect(screen.getAllByText("– Luft fehlt").length).toBe(2);
+  });
+
+  it("Startseite: noch nie vermessenes geladenes Flugzeug steht trotzdem oben, beides fehlt", async () => {
+    h.liste = [{ sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: 1, anzahl: 1 }];
+    render(<FlugzeugVermessen />);
+    const tabelle = await screen.findByRole("table");
+    const zeilen = tabelle.querySelectorAll("tbody tr");
+    expect(zeilen.length).toBe(2);
+    expect(zeilen[0]!.textContent).toContain("Boeing 777-300ER");
+    expect(zeilen[0]!.querySelectorAll(".vm-zelle--fehlt").length).toBe(2);
+    expect(screen.getByRole("button", { name: "Messung starten" })).toBeTruthy();
   });
 
   it("Startseite MSFS ohne Scan: Tipp, erst einen Scan zu machen", async () => {
@@ -121,17 +138,23 @@ describe("Flugzeug vermessen", () => {
     expect(scan?.args).toEqual({ icao: "B77W", titel: "Boeing 777-300ER" });
   });
 
-  it("Startseite MSFS mit Scan: kein Tipp, Anzahl der Namen", async () => {
+  it("Startseite MSFS mit Scan: kein Tipp, Spalte zeigt die Namen", async () => {
     h.kind = "msfs2024";
     h.scanNamen = 235;
+    h.liste = [{ sim: "msfs", icao: "A20N", titel: "FenixA320 IAE", zuletzt: 1, anzahl: 1, scan_namen: 0 }] as never;
     render(<FlugzeugVermessen />);
-    expect(await screen.findByText(/235 Variablennamen werden mitgelesen/)).toBeTruthy();
+    const tabelle = await screen.findByRole("table");
+    expect(screen.getByRole("columnheader", { name: "Variablen (Scan)" })).toBeTruthy();
+    await screen.findByText("✓ 235 Namen");
+    const zeilen = tabelle.querySelectorAll("tbody tr");
+    expect(zeilen[1]!.textContent).toContain("kein Scan");
     expect(screen.queryByText(/Tipp: Mach zuerst einen Scan/)).toBeNull();
   });
 
   it("Startseite X-Plane: kein Scan-Hinweis, keine Anfrage", async () => {
     render(<FlugzeugVermessen />);
     await screen.findByText(/Simulator verbunden/);
+    expect(await screen.findByText("nicht nötig")).toBeTruthy();
     expect(screen.queryByText(/Tipp: Mach zuerst einen Scan/)).toBeNull();
     expect(h.aufrufe.some((a) => a.cmd === "vermessung_scan_namen")).toBe(false);
   });
@@ -142,18 +165,18 @@ describe("Flugzeug vermessen", () => {
       { sim: "xplane", teil: "luft", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: 2, anzahl: 1 },
     ] as never;
     render(<FlugzeugVermessen />);
-    expect(await screen.findByText("Schon vermessen (1)")).toBeTruthy();
-    expect(screen.queryByText(/– (Boden|Luft) fehlt/)).toBeNull();
-    expect(screen.queryByText(/Tipp: Den Autopilot-Teil/)).toBeNull();
-    expect(screen.getByText(/Dieses Flugzeug ist schon vermessen/)).toBeTruthy();
+    const tabelle = await screen.findByRole("table");
+    const zeilen = tabelle.querySelectorAll("tbody tr");
+    expect(zeilen.length).toBe(1);
+    expect(zeilen[0]!.querySelectorAll(".vm-zelle--ok").length).toBe(2);
+    expect(tabelle.textContent).not.toContain("fehlt noch");
   });
 
   it("Startseite: noch nicht vermessen → normaler Start, kein Hinweis", async () => {
     h.liste = [{ sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: 1, anzahl: 1 }];
     render(<FlugzeugVermessen />);
-    await screen.findByText("Schon vermessen (1)");
+    await screen.findByRole("table");
     expect(screen.getByRole("button", { name: "Messung starten" })).toBeTruthy();
-    expect(screen.queryByText(/Dieses Flugzeug ist schon vermessen/)).toBeNull();
   });
 
   it("in der Luft: Autopilot-Teil mit eigenen Schritten", async () => {
