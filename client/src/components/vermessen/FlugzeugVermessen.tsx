@@ -140,7 +140,44 @@ export function uebersicht(liste: Vermessen[], scans: ScanEintrag[]): Zeile[] {
       });
     }
   }
-  return zeilen;
+  return familienZusammenfassen(zeilen);
+}
+
+/** Muster, die AeroACARS mit EINEM Profil liest, weil Cockpit und Variablen
+ *  gleich sind — in der Übersicht eine Zeile statt einer je Paket
+ *  (28.09.2026: Fenix A320 und das Zusatzpaket A319/A321 standen doppelt). */
+// Ohne Muster (ICAO): die Typen stehen im Namen, und ein geladener A321
+// muss die Zeile über den Titel treffen, nicht über „A320“.
+const FAMILIEN: Array<{ name: string; gehoert: (titel: string) => boolean }> = [
+  { name: "Fenix A319 / A320 / A321", gehoert: (x) => /^fenixa3(19|20|21)\b/i.test(x.trim()) },
+];
+
+const juenger = (a: Vermessen | null, b: Vermessen | null): Vermessen | null =>
+  !a ? b : !b ? a : { ...(a.zuletzt >= b.zuletzt ? a : b), anzahl: a.anzahl + b.anzahl };
+
+function familienZusammenfassen(zeilen: Zeile[]): Zeile[] {
+  const aus: Zeile[] = [];
+  const familie = new Map<string, Zeile>();
+  for (const z of zeilen) {
+    const f = FAMILIEN.find((f) => (z.sim ?? "msfs") === "msfs" && z.titel_liste.some(f.gehoert));
+    if (!f) {
+      aus.push(z);
+      continue;
+    }
+    const e = familie.get(f.name);
+    if (!e) {
+      const neu: Zeile = { ...z, titel: f.name, icao: null, sim: "msfs", titel_liste: [...z.titel_liste] };
+      familie.set(f.name, neu);
+      aus.push(neu);
+      continue;
+    }
+    e.boden = juenger(e.boden, z.boden);
+    e.luft = juenger(e.luft, z.luft);
+    if (z.scan_namen !== null && (e.scan_namen ?? -1) < z.scan_namen) e.scan_namen = z.scan_namen;
+    e.profil = hoeher(e.profil, z.profil);
+    for (const t of z.titel_liste) if (!e.titel_liste.some((x) => klein(x) === klein(t))) e.titel_liste.push(t);
+  }
+  return aus;
 }
 
 interface StartAntwort {

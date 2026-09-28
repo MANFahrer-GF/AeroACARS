@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
   ruheSpaet: false,
   scanNamen: 0,
   kind: "xplane" as string,
+  titel: "Boeing 777-300ER",
+  icao: "B77W",
   liste: [] as Array<{ sim: string; icao: string; titel: string; zuletzt: number; anzahl: number }>,
   ruheLoesen: null as null | (() => void),
 }));
@@ -34,7 +36,7 @@ vi.mock("../../lib/ipc", () => ({
     h.aufrufe.push({ cmd, args });
     switch (cmd) {
       case "sim_status":
-        return Promise.resolve({ kind: h.kind, snapshot: { on_ground: h.amBoden, aircraft_title: "Boeing 777-300ER", aircraft_icao: "B77W" } });
+        return Promise.resolve({ kind: h.kind, snapshot: { on_ground: h.amBoden, aircraft_title: h.titel, aircraft_icao: h.icao } });
       case "vermessung_starten":
         return Promise.resolve({ sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W" }, anzahl_werte: 9312, l_namen: 0, sitzung: 7 });
       case "vermessung_ruhe":
@@ -80,6 +82,8 @@ beforeEach(() => {
   h.liste = [];
   h.scanNamen = 0;
   h.kind = "xplane";
+  h.titel = "Boeing 777-300ER";
+  h.icao = "B77W";
 });
 
 describe("uebersicht: Messungen + Scans", () => {
@@ -111,6 +115,31 @@ describe("uebersicht: Messungen + Scans", () => {
     expect(a220.profil).toBe("in_arbeit");
     expect(a220.titel_liste).toContain("A220-300 - No Cabin");
     expect(z.find((x) => x.icao === "B738")!.profil).toBe("aus_scan");
+  });
+});
+
+describe("uebersicht: Fenix-Familie", () => {
+  const z = uebersicht(
+    [{ sim: "msfs", teil: "boden", icao: "A320", titel: "FenixA320 CFM SL", zuletzt: 9, anzahl: 3, profil: "geprueft" }],
+    [
+      { sim: "msfs", icao: "A320", paket: "Fenix A320 – L:-Namen aus HubHop", titel_liste: ["FenixA320", "FenixA320 CFM SL"], scan_namen: 1921, profil: null, zuletzt: 8, quelle: "hersteller-doku" },
+      { sim: "msfs", icao: "A319", paket: "Fenix Airbus A319 & A321", titel_liste: ["FenixA319 CFM SL HD", "FenixA321 IAE WF TC"], scan_namen: 40, profil: null, zuletzt: 7 },
+      { sim: "msfs", icao: "A20N", paket: "A32NX", titel_liste: ["Airbus A320neo FlyByWire"], scan_namen: 500, profil: null, zuletzt: 6 },
+    ],
+  );
+  it("A319, A320 und A321 stehen in einer Zeile, Messung und Titel bleiben erhalten", () => {
+    const fenix = z.filter((x) => x.titel_liste.some((t) => t.startsWith("Fenix")));
+    expect(fenix).toHaveLength(1);
+    expect(fenix[0]!.titel).toBe("Fenix A319 / A320 / A321");
+    expect(fenix[0]!.boden?.anzahl).toBe(3);
+    expect(fenix[0]!.profil).toBe("geprueft");
+    expect(fenix[0]!.scan_namen).toBe(1921);
+    expect(fenix[0]!.icao).toBeNull();
+    expect(fenix[0]!.titel_liste).toEqual(expect.arrayContaining(["FenixA320 CFM SL", "FenixA321 IAE WF TC"]));
+  });
+  it("andere A320 (FlyByWire) bleiben eigene Zeile", () => {
+    expect(z).toHaveLength(2);
+    expect(z.find((x) => x.icao === "A20N")?.titel).toBe("A32NX");
   });
 });
 
@@ -225,9 +254,25 @@ describe("Flugzeug vermessen", () => {
     const tabelle = await screen.findByRole("table");
     await screen.findByText("eigenes Profil");
     const text = (name: string) => [...tabelle.querySelectorAll("tbody tr")].find((z) => z.textContent?.includes(name))!.textContent!;
-    expect(text("FenixA320")).toContain("eigenes Profil");
+    expect(text("Fenix A319 / A320 / A321")).toContain("eigenes Profil");
     expect(text("Asobo A320")).toContain("nur Standard");
     expect(text("Boeing 737-800")).not.toContain("nur Standard");
+  });
+
+  it("Fenix-Familie: ein geladener A321 markiert die gemeinsame Zeile", async () => {
+    h.kind = "msfs2024";
+    h.titel = "FenixA321 IAE WF TC";
+    h.icao = "A321";
+    h.liste = {
+      flugzeuge: [{ sim: "msfs", teil: "boden", icao: "A320", titel: "FenixA320 CFM SL", zuletzt: 1, anzahl: 1 }],
+      scans: [{ sim: "msfs", icao: "A319", paket: "Fenix Airbus A319 & A321", titel_liste: ["FenixA321 IAE WF TC"], scan_namen: 40, profil: null, zuletzt: 2 }],
+    } as never;
+    render(<FlugzeugVermessen />);
+    const tabelle = await screen.findByRole("table");
+    const zeilen = tabelle.querySelectorAll("tbody tr");
+    expect(zeilen.length).toBe(1);
+    expect(zeilen[0]!.className).toContain("vm-zeile--geladen");
+    expect(zeilen[0]!.textContent).toContain("Fenix A319 / A320 / A321");
   });
 
   it("Startseite: Boden und Luft desselben Flugzeugs in einer Zeile", async () => {
