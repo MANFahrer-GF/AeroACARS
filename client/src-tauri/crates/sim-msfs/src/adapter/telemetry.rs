@@ -2335,9 +2335,9 @@ fn b_wert(t: &Telemetry, name: &str) -> Option<f64> {
 
 /// iniBuilds A380 (MSFS 2024) Autobrake aus den Input-Events, gemessen
 /// 26.09.2026 durch Drehen des Knopfes: `AIRLINER_MIP_LG_ABRK_KNOB`
-/// 0=DISARM 1=BTV 2=LO 3=L2 4=L3 5=HI. BTV=1 ist NICHT direkt beobachtet,
-/// sondern aus der Zaehlung abgeleitet — der Knopf springt am Boden aus
-/// BTV zurueck. `AIRLINER_MIP_LG_ABRK_RTO` 1 = RTO-Taste gedrueckt.
+/// 0=DISARM 1=BTV 2=LO 3=L2 4=L3 5=HI. BTV=1 gemessen 28.09.2026 im Anflug
+/// (0/1/0, mit Landebahn + Abrollweg im OANS — ohne springt der Knopf
+/// zurueck, auch in der Luft); LO/L2/HI = 2/3/5 in der Luftmessung bestaetigt. `AIRLINER_MIP_LG_ABRK_RTO` 1 = RTO-Taste gedrueckt.
 ///
 /// ⚠ Die RTO-Taste bleibt nach einmaligem Druecken den GANZEN Flug auf 1
 /// (UAE 424, 27.09.2026: RTO=1 vom Rollen bis nach der Landung) — das ist
