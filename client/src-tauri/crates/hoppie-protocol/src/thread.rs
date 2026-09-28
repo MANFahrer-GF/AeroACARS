@@ -605,6 +605,18 @@ impl CpdlcThread {
         }
     }
 
+    /// Whether `message` would settle our pending logon (accept OR
+    /// refuse) if recorded — exactly [`logon_outcome`]'s verdict, without
+    /// recording anything. The wiring layer MUST gate on this, not on a
+    /// list of element ids: since v1.9.5 a logon verdict can come in any
+    /// wording ([`crate::logon_reply`]), and a verdict from a sender other
+    /// than the station we asked must never reach [`Self::record_received`]
+    /// (it would log the thread on while the session, which checks the
+    /// sender, stays pending).
+    pub fn claims_logon_outcome(&self, message: &CpdlcMessage) -> bool {
+        logon_outcome(message, self.logon_request_min).is_some()
+    }
+
     /// The accepting counterpart of [`Self::abandon_pending_logon`]: an
     /// undecodable (headerless) uplink from the station we are logging on
     /// to said the logon was accepted (see [`crate::logon_reply`]).
@@ -1564,5 +1576,28 @@ mod tests {
         assert_eq!(thread.pending_response_count(), 0);
         // Second call: nothing pending any more.
         assert!(!thread.accept_pending_logon());
+    }
+
+    #[test]
+    fn claims_logon_outcome_covers_every_wording_that_would_settle_the_logon() {
+        let mut thread = CpdlcThread::new();
+        let decode = |p: &str| cpdlc::decode(p, els::Direction::Uplink).unwrap();
+        // Nothing pending: nothing can claim an outcome.
+        assert!(!thread.claims_logon_outcome(&decode("/data2/1//NE/LOGON ACCEPTED")));
+        send(&mut thread, "DM_REQUEST_LOGON", &[], None);
+        for p in [
+            "/data2/1//NE/LOGON ACCEPTED",
+            "/data2/1//NE/CONNECTION ACCEPTED",
+            "/data2/1//NE/FLIGHT PLAN NOT HELD",
+            "/data2/1/1/NE/UNABLE",
+            "/data2/1/1/NE/REQUEST ACCEPTED",
+        ] {
+            assert!(thread.claims_logon_outcome(&decode(p)), "{p}");
+        }
+        for p in ["/data2/1//NE/PDC ACCEPTED", "/data2/1//WU/CLIMB TO FL350", "/data2/1//NE/UNABLE"] {
+            assert!(!thread.claims_logon_outcome(&decode(p)), "{p}");
+        }
+        // Asking does not record: still pending.
+        assert_eq!(thread.pending_logon_min(), Some(1));
     }
 }

@@ -657,6 +657,15 @@ async fn send_logon(
     }
 }
 
+/// A decoded uplink that would settle our pending logon (accept or
+/// refuse, any wording) but comes from someone other than the station we
+/// asked. Such a message must never reach `record_received`: the thread
+/// would change its logon state while the session — which checks the
+/// sender — stays pending, and the two would drift apart.
+fn is_untrusted_logon_claim(s: &HoppieSession, msg: &cpdlc::CpdlcMessage, from: &str) -> bool {
+    s.thread.claims_logon_outcome(msg) && !s.is_authorized_to_answer_pending_logon(from)
+}
+
 /// What an undecodable (headerless) CPDLC uplink did to the session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawUplinkOutcome {
@@ -1020,15 +1029,13 @@ async fn process_poll_payload(
                 // "recorded as a superseded/untrusted entry, never as a
                 // fresh instruction" treatment as an abandoned-station
                 // uplink, since it's exactly as untrustworthy.
-                let claims_our_logon_outcome = matches!(
-                    &msg.parsed,
-                    hoppie_protocol::elements::ParsedElement::Recognized(r)
-                        if r.spec_id == "UM_LOGON_ACCEPTED" || r.spec_id == "UM0"
-                );
-                if claims_our_logon_outcome
-                    && s.thread.pending_logon_min().is_some()
-                    && !s.is_authorized_to_answer_pending_logon(&env.from)
-                {
+                //
+                // v1.9.5 (#hoppie-logon-wording): asks the automaton itself
+                // whether this message would settle the logon. The earlier
+                // `matches!` on `UM_LOGON_ACCEPTED`/`UM0` let every newly
+                // understood wording ("CONNECTION ACCEPTED", "FLIGHT PLAN
+                // NOT HELD" ...) past this gate — from ANY sender.
+                if is_untrusted_logon_claim(&s, &msg, &env.from) {
                     tracing::warn!(
                         min,
                         claimed_from = %this_station,
@@ -1101,7 +1108,7 @@ async fn process_poll_payload(
                 // `None` to force that.
                 let is_our_pending_logon_reply = s.is_our_pending_logon_reply(
                     &env.from,
-                    if claims_our_logon_outcome {
+                    if s.thread.claims_logon_outcome(&msg) {
                         msg.mrn
                     } else {
                         None
@@ -2364,5 +2371,24 @@ mod tests {
         assert!(!is_logon_code_rejection("callsign in use"));
         assert!(!is_logon_code_rejection("timeout"));
         assert!(!is_logon_code_rejection(""));
+    }
+
+    #[test]
+    fn a_logon_verdict_in_any_wording_from_a_stranger_is_untrusted() {
+        let s = session_pending_logon_to("EDGG");
+        for p in [
+            "/data2/3//NE/LOGON ACCEPTED",
+            "/data2/3//NE/CONNECTION ACCEPTED",
+            "/data2/3//NE/LOGGED ON",
+            "/data2/3//NE/FLIGHT PLAN NOT HELD",
+            "/data2/3/1/NE/UNABLE",
+        ] {
+            let msg = cpdlc::decode(p, Direction::Uplink).unwrap();
+            assert!(is_untrusted_logon_claim(&s, &msg, "EDMM"), "stranger: {p}");
+            assert!(!is_untrusted_logon_claim(&s, &msg, "edgg"), "our station: {p}");
+        }
+        // Ordinary traffic from anyone is not a logon claim at all.
+        let climb = cpdlc::decode("/data2/3//WU/CLIMB TO FL350", Direction::Uplink).unwrap();
+        assert!(!is_untrusted_logon_claim(&s, &climb, "EDMM"));
     }
 }
