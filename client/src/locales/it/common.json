@@ -3616,7 +3616,10 @@
     "scan_anzahl": "{{anzahl}} nomi",
     "scan_keiner": "nessuno scan",
     "spalte_profil": "Profilo",
-    "profil_fertig": "pronto",
-    "profil_in_arbeit": "in lavorazione"
+    "profil_in_arbeit": "in lavorazione",
+    "profil_geprueft": "verificato",
+    "profil_geprueft_hilfe": "Profilo integrato e confermato da una misurazione sull'aereo.",
+    "profil_aus_scan": "da scan",
+    "profil_aus_scan_hilfe": "Profilo integrato, ma ricavato solo dai nomi delle variabili dello scan – una misurazione lo rende più preciso."
   }
 }

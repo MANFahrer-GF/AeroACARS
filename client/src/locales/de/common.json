@@ -3616,7 +3616,10 @@
     "scan_anzahl": "{{anzahl}} Namen",
     "scan_keiner": "kein Scan",
     "spalte_profil": "Profil",
-    "profil_fertig": "fertig",
-    "profil_in_arbeit": "in Arbeit"
+    "profil_in_arbeit": "in Arbeit",
+    "profil_geprueft": "geprüft",
+    "profil_geprueft_hilfe": "Profil eingebaut und mit einer Messung am Flugzeug bestätigt.",
+    "profil_aus_scan": "aus Scan",
+    "profil_aus_scan_hilfe": "Profil eingebaut, aber nur aus den Variablennamen des Scans abgeleitet – eine Messung macht es genauer."
   }
 }

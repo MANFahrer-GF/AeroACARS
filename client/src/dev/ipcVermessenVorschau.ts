@@ -56,11 +56,11 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
         { sim: "msfs", icao: "A388", paket: "A380X (Development)", titel_liste: ["FlyByWire A380X (A380-842)"], scan_namen: 1290, profil: null, zuletzt: tag(14) },
         { sim: "msfs", icao: "A20N", paket: "A32NX (Development)", titel_liste: ["Airbus A320 Neo FlyByWire"], scan_namen: 1650, profil: null, zuletzt: tag(14) },
         { sim: "msfs", icao: "B38M", paket: "737MAX", titel_liste: ["iFly 737-MAX8 (166Seats)"], scan_namen: 960, profil: null, zuletzt: tag(14) },
-        { sim: "msfs", icao: "BE24", paket: "Sierra-C24R", titel_liste: ["Flysimware Sierra C24R G3X GNS530 C-GMTT"], scan_namen: 120, profil: "fertig", zuletzt: tag(6) },
-        { sim: "xplane", icao: "A20N", paket: "ToLiSs A320 Hi Def", titel_liste: ["ToLiSs A320 Hi Def"], scan_namen: null, profil: "fertig", zuletzt: tag(5) },
-        { sim: "xplane", icao: "B738", paket: "Boeing 737-800", titel_liste: ["Boeing 737-800"], scan_namen: null, profil: "fertig", zuletzt: tag(5) },
-        { sim: "xplane", icao: "B738", paket: "Boeing 737-800X", titel_liste: ["Boeing 737-800X"], scan_namen: null, profil: "fertig", zuletzt: tag(5) },
-        { sim: "msfs", icao: "FA50", paket: "Dassault Falcon 50", titel_liste: ["Contrail Falcon 50"], scan_namen: 310, profil: "fertig", zuletzt: tag(5) },
+        { sim: "msfs", icao: "BE24", paket: "Sierra-C24R", titel_liste: ["Flysimware Sierra C24R G3X GNS530 C-GMTT"], scan_namen: 120, profil: "aus_scan", zuletzt: tag(6) },
+        { sim: "xplane", icao: "A20N", paket: "ToLiSs A320 Hi Def", titel_liste: ["ToLiSs A320 Hi Def"], scan_namen: null, profil: "aus_scan", zuletzt: tag(5) },
+        { sim: "xplane", icao: "B738", paket: "Boeing 737-800", titel_liste: ["Boeing 737-800"], scan_namen: null, profil: "aus_scan", zuletzt: tag(5) },
+        { sim: "xplane", icao: "B738", paket: "Boeing 737-800X", titel_liste: ["Boeing 737-800X"], scan_namen: null, profil: "aus_scan", zuletzt: tag(5) },
+        { sim: "msfs", icao: "FA50", paket: "Dassault Falcon 50", titel_liste: ["Contrail Falcon 50"], scan_namen: 310, profil: "aus_scan", zuletzt: tag(5) },
       ];
       return { flugzeuge, scans } as T;
     }

@@ -91,6 +91,9 @@ pub struct Vermessen {
     /// X-Plane oder älterer Server).
     #[serde(default)]
     pub scan_namen: Option<u32>,
+    /// „geprueft" | „aus_scan" | „in_arbeit" | None (Admin-Status).
+    #[serde(default)]
+    pub profil: Option<String>,
     pub icao: Option<String>,
     pub titel: Option<String>,
     /// Jüngste Messung, ms seit 1970.

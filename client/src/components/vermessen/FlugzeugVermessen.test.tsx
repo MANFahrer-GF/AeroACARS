@@ -83,7 +83,7 @@ describe("uebersicht: Messungen + Scans", () => {
     { sim: "msfs", icao: "A388", paket: "iniBuilds A380 – L:-Namen aus AAO-Profil", titel_liste: ["A380-800 RR Basic"], scan_namen: 235, profil: null, zuletzt: 4 },
     { sim: "msfs", icao: "A388", paket: "A380X (Development)", titel_liste: ["FlyByWire A380X (A380-842)"], scan_namen: 900, profil: null, zuletzt: 3 },
     { sim: "msfs", icao: "BCS3", paket: "Synaptic A220", titel_liste: ["A220-300", "A220-300 - No Cabin"], scan_namen: 1200, profil: "in_arbeit", zuletzt: 2 },
-    { sim: "xplane", icao: "B738", paket: "Boeing 737-800", titel_liste: ["Boeing 737-800"], scan_namen: null, profil: "fertig", zuletzt: 1 },
+    { sim: "xplane", icao: "B738", paket: "Boeing 737-800", titel_liste: ["Boeing 737-800"], scan_namen: null, profil: "aus_scan", zuletzt: 1 },
   ];
   const z = uebersicht(messungen, scans);
   it("Scan zur Messung landet in derselben Zeile, fremdes Add-on gleicher ICAO nicht", () => {
@@ -92,13 +92,20 @@ describe("uebersicht: Messungen + Scans", () => {
     expect(z[0]!.boden?.anzahl).toBe(2);
     expect(z.find((x) => x.titel === "A380X (Development)")?.boden).toBeNull();
   });
+  it("Profil: der höhere Stand gewinnt (Messung geprüft vor Scan aus_scan)", () => {
+    const zz = uebersicht(
+      [{ ...messungen[0]!, profil: "geprueft" }],
+      [{ ...scans[0]!, profil: "aus_scan" }],
+    );
+    expect(zz[0]!.profil).toBe("geprueft");
+  });
   it("gescannt, nie vermessen: eigene Zeile mit Profil-Stand", () => {
     const a220 = z.find((x) => x.icao === "BCS3")!;
     expect(a220.boden).toBeNull();
     expect(a220.luft).toBeNull();
     expect(a220.profil).toBe("in_arbeit");
     expect(a220.titel_liste).toContain("A220-300 - No Cabin");
-    expect(z.find((x) => x.icao === "B738")!.profil).toBe("fertig");
+    expect(z.find((x) => x.icao === "B738")!.profil).toBe("aus_scan");
   });
 });
 
@@ -188,7 +195,7 @@ describe("Flugzeug vermessen", () => {
     h.kind = "msfs2024";
     h.liste = {
       flugzeuge: [],
-      scans: [{ sim: "msfs", icao: "B77W", paket: "PMDG 777", titel_liste: ["Boeing 777-300ER", "PMDG 777-300ER Emirates"], scan_namen: 50, profil: "fertig", zuletzt: 1 }],
+      scans: [{ sim: "msfs", icao: "B77W", paket: "PMDG 777", titel_liste: ["Boeing 777-300ER", "PMDG 777-300ER Emirates"], scan_namen: 50, profil: "geprueft", zuletzt: 1 }],
     } as never;
     render(<FlugzeugVermessen />);
     const tabelle = await screen.findByRole("table");
@@ -196,7 +203,7 @@ describe("Flugzeug vermessen", () => {
     expect(zeilen.length).toBe(1);
     expect(zeilen[0]!.className).toContain("vm-zeile--geladen");
     expect(zeilen[0]!.textContent).toContain("PMDG 777");
-    expect(zeilen[0]!.textContent).toContain("✓ fertig");
+    expect(zeilen[0]!.textContent).toContain("✓ geprüft");
     expect(screen.getByRole("columnheader", { name: "Profil" })).toBeTruthy();
   });
 

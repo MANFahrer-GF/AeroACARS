@@ -19,6 +19,8 @@ export interface Vermessen {
   teil?: string | null;
   /** MSFS: L:-Namen aus den Scans für dieses Flugzeug (null = X-Plane). */
   scan_namen?: number | null;
+  /** „geprueft" | „aus_scan" | „in_arbeit" | null. */
+  profil?: string | null;
   icao: string | null;
   titel: string | null;
   zuletzt: number;
@@ -55,10 +57,16 @@ export interface ScanEintrag {
   paket: string | null;
   titel_liste: string[];
   scan_namen: number | null;
-  /** „fertig" | „in_arbeit" | null — Profil-Stand, wie der Admin ihn setzt. */
+  /** „geprueft" (per Messung bestätigt) | „aus_scan" (eingebaut, nur aus
+   *  dem Scan abgeleitet) | „in_arbeit" | null — wie der Admin ihn setzt. */
   profil: string | null;
   zuletzt: number;
 }
+
+const PROFIL_RANG: Record<string, number> = { geprueft: 3, aus_scan: 2, in_arbeit: 1 };
+/** Der höhere von zwei Profil-Ständen. */
+const hoeher = (a: string | null | undefined, b: string | null | undefined) =>
+  ((a && PROFIL_RANG[a]) ?? 0) >= ((b && PROFIL_RANG[b]) ?? 0) ? (a ?? null) : (b ?? null);
 
 /** Eine Zeile der Übersichtstabelle. */
 export type Zeile = {
@@ -87,6 +95,7 @@ export function jeFlugzeug(liste: Vermessen[]): Zeile[] {
       aus.get(k) ??
       { titel: v.titel, icao: v.icao, sim: v.sim, titel_liste: v.titel ? [v.titel] : [], scan_namen: null, profil: null, boden: null, luft: null };
     if (typeof v.scan_namen === "number") e.scan_namen = v.scan_namen;
+    e.profil = hoeher(e.profil, v.profil);
     if ((v.teil ?? "boden") === "luft") e.luft = v;
     else e.boden = v;
     aus.set(k, e);
@@ -110,7 +119,7 @@ export function uebersicht(liste: Vermessen[], scans: ScanEintrag[]): Zeile[] {
     );
     if (treffer) {
       if (treffer.scan_namen === null && sc.scan_namen !== null) treffer.scan_namen = sc.scan_namen;
-      treffer.profil = treffer.profil ?? sc.profil;
+      treffer.profil = hoeher(treffer.profil, sc.profil);
       for (const t of sc.titel_liste) if (!treffer.titel_liste.some((x) => klein(x) === klein(t))) treffer.titel_liste.push(t);
     } else {
       zeilen.push({
@@ -680,8 +689,14 @@ function StartSeite({
                   />
                 </td>
                 <td>
-                  {v.profil === "fertig" ? (
-                    <span className="vm-zelle vm-zelle--ok">✓ {t("vermessen.profil_fertig")}</span>
+                  {v.profil === "geprueft" ? (
+                    <span className="vm-zelle vm-zelle--ok" title={t("vermessen.profil_geprueft_hilfe")}>
+                      ✓ {t("vermessen.profil_geprueft")}
+                    </span>
+                  ) : v.profil === "aus_scan" ? (
+                    <span className="vm-zelle vm-zelle--fehlt" title={t("vermessen.profil_aus_scan_hilfe")}>
+                      {t("vermessen.profil_aus_scan")}
+                    </span>
                   ) : v.profil === "in_arbeit" ? (
                     <span className="vm-zelle vm-zelle--arbeit">{t("vermessen.profil_in_arbeit")}</span>
                   ) : (
