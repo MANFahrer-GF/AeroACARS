@@ -489,5 +489,43 @@ describe("v1.9.5 — PDC remark and logon pre-check", () => {
     await userEvent.type(screen.getByPlaceholderText(t("cpdlc.center_placeholder")), "edgg");
     await userEvent.click(screen.getByRole("button", { name: t("cpdlc.logon_send") }));
     expect(await screen.findByText(offline)).toBeInTheDocument();
+    const first = invokeMock.mock.calls.filter((c) => c[0] === "hoppie_send_logon_request");
+    expect(first[0][1]).toMatchObject({ station: "EDGG", force: false });
+  });
+
+  it("sends anyway on the second click for the same station, but not for another one", async () => {
+    const impl = backend();
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === "hoppie_send_logon_request" && !(args as { force?: boolean }).force
+        ? Promise.reject({ code: "hoppie_station_offline", message: "offline" })
+        : impl(cmd, args),
+    );
+    renderPanel();
+    await connect();
+    await userEvent.click(screen.getByRole("tab", { name: t("cpdlc.mode_cpdlc") }));
+    const input = screen.getByPlaceholderText(t("cpdlc.center_placeholder"));
+    // The station draft survives in sessionStorage from the test before.
+    await userEvent.clear(input);
+    await userEvent.type(input, "edgg");
+    const send = () => userEvent.click(screen.getByRole("button", { name: t("cpdlc.logon_send") }));
+    await send();
+    await screen.findByText("offline");
+    // Station changed in between: the warning no longer applies.
+    await userEvent.clear(input);
+    await userEvent.type(input, "edmm");
+    await send();
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.filter((c) => c[0] === "hoppie_send_logon_request")).toHaveLength(2),
+    );
+    await send();
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.filter((c) => c[0] === "hoppie_send_logon_request")).toHaveLength(3),
+    );
+    const calls = invokeMock.mock.calls.filter((c) => c[0] === "hoppie_send_logon_request").map((c) => c[1]);
+    expect(calls).toEqual([
+      { station: "EDGG", force: false },
+      { station: "EDMM", force: false },
+      { station: "EDMM", force: true },
+    ]);
   });
 });

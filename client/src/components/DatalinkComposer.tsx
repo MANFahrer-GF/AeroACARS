@@ -252,6 +252,8 @@ export function DatalinkComposer({
           free_text: remark.trim(),
         },
       });
+      // A remark belongs to one request — never carried into the next.
+      setRemark("");
       onChanged();
     } catch (e) {
       setError(formatIpcError(e));

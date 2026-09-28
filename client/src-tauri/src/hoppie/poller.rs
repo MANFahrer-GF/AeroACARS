@@ -182,6 +182,12 @@ pub fn poll_interval(pending_response_count: usize, awaiting_pdc_answer: bool) -
     }
 }
 
+/// The cadence the poll loop uses — the one function `spawn` calls, so a
+/// test through it exercises exactly what the loop does.
+fn cadence(s: &HoppieSession, now: chrono::DateTime<chrono::Utc>) -> Duration {
+    poll_interval(s.thread.pending_response_count(), s.is_awaiting_pdc_answer(now))
+}
+
 /// The poll deadline after a wake-up: the earlier of the one already
 /// scheduled and `now + interval`. Pure, so the "never postpone" rule
 /// is testable without a runtime.
@@ -217,14 +223,13 @@ pub fn spawn(
         // otherwise starting the app after a long break means a burst of
         // notifications for messages that are long stale.
         let mut first_poll = true;
-        let current_interval = || {
-            let s = session.lock().expect("hoppie session mutex");
-            poll_interval(
-                s.thread.pending_response_count(),
-                s.is_awaiting_pdc_answer(chrono::Utc::now()),
-            )
-        };
+        let current_interval =
+            || cadence(&session.lock().expect("hoppie session mutex"), chrono::Utc::now());
         let mut deadline = tokio::time::Instant::now() + current_interval();
+        // Set while the logon code is refused: a send must not cut that
+        // pause short (external review P3) — it would only fetch another
+        // refusal.
+        let mut paused = false;
         loop {
             tokio::select! {
                 res = stop_rx.changed() => {
@@ -240,11 +245,14 @@ pub fn spawn(
                 // SHORTENS the wait (`next_deadline`), never postpones a
                 // poll that was due sooner.
                 _ = wake.notified() => {
-                    deadline = next_deadline(deadline, tokio::time::Instant::now(), current_interval());
+                    if !paused {
+                        deadline = next_deadline(deadline, tokio::time::Instant::now(), current_interval());
+                    }
                 }
                 _ = tokio::time::sleep_until(deadline) => {
                     let code_rejected = poll_once(&app, &http, &session, &telex_log, &min_meta, &history_meta, &last_error, &from_callsign, &logon, notify_os && !first_poll).await;
                     first_poll = false;
+                    paused = code_rejected;
                     let wait = if code_rejected {
                         tracing::warn!("hoppie: logon code refused — polling paused for {LOGON_CODE_REJECTED_BACKOFF_SECS} s");
                         Duration::from_secs(LOGON_CODE_REJECTED_BACKOFF_SECS)
@@ -591,18 +599,18 @@ async fn send_logon(
     };
     let (message, min) = {
         let mut s = session.lock().expect("hoppie session mutex");
-        let (message, _) = s.thread.record_sent(
+        // v1.7.21 (#pdc-session-model): the new pending attempt is tracked
+        // HERE, atomically with the MIN allocation — and since v1.9.5 in
+        // the order `record_logon_request` guarantees (external review
+        // 28.09.2026, P1).
+        let message = s.record_logon_request(
+            station,
             spec.response,
             None,
             resolved.filled_text.clone(),
             hoppie_protocol::elements::ParsedElement::Recognized(resolved),
         );
         let min = message.min;
-        // v1.7.21 (#pdc-session-model): started tracking the new pending
-        // attempt HERE, atomically with the MIN allocation — same
-        // discipline as `send_cpdlc_element` in mod.rs (see its doc
-        // comment for why this used to be a separate, non-atomic step).
-        s.begin_logon(station, min);
         (message, min)
     };
     min_meta.lock().expect("hoppie min_meta mutex").insert(
@@ -662,6 +670,13 @@ async fn send_logon(
 /// asked. Such a message must never reach `record_received`: the thread
 /// would change its logon state while the session — which checks the
 /// sender — stays pending, and the two would drift apart.
+///
+/// Known residual (external review 28.09.2026, P2, accepted): while a
+/// logon to X is pending, a PDC clearance from ANOTHER station Y that
+/// happens to carry logon wording ("LOGON"/"CONNECTION" + "ACCEPTED", or
+/// an MRN equal to our logon MIN) is quarantined here as well. vSMR's
+/// `CLD ...` clearances carry neither; letting it through instead would
+/// let Y settle our logon in the station-free thread.
 fn is_untrusted_logon_claim(s: &HoppieSession, msg: &cpdlc::CpdlcMessage, from: &str) -> bool {
     s.thread.claims_logon_outcome(msg) && !s.is_authorized_to_answer_pending_logon(from)
 }
@@ -2347,14 +2362,15 @@ mod tests {
         // The same two calls the poll loop makes, on a real session.
         let now = chrono::Utc::now();
         let mut s = HoppieSession::new(String::new());
-        let cadence = |s: &HoppieSession| {
-            poll_interval(s.thread.pending_response_count(), s.is_awaiting_pdc_answer(now))
-        };
-        assert!(cadence(&s) >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
+        assert!(cadence(&s, now) >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
         s.note_pdc_request("EDDM", now);
-        assert_eq!(cadence(&s), Duration::from_secs(FAST_POLL_SECS));
+        assert_eq!(cadence(&s, now), Duration::from_secs(FAST_POLL_SECS));
         s.note_pdc_inbound("EDDM", "CLD 1840 260928 EDDM PDC 001 CLRD TO OMDB");
-        assert!(cadence(&s) >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
+        assert!(cadence(&s, now) >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
+        // Past the 5-minute window an unanswered request no longer counts.
+        s.note_pdc_request("EDDF", now);
+        let later = now + chrono::Duration::minutes(crate::hoppie::session::PDC_FAST_POLL_MINUTES);
+        assert!(cadence(&s, later) >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
     }
 
     // --- v1.9.5 (#hoppie-logon-code-rejected) ---

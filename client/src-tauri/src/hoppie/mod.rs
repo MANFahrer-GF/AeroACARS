@@ -570,7 +570,8 @@ fn logon_precheck(status: &StationStatus) -> Result<(), UiError> {
         "hoppie_station_offline",
         format!(
             "{} ist gerade nicht bei Hoppie angemeldet — Logon nicht gesendet. \
-             Die CPDLC-Kennung der Station steht meist im ATIS (z. B. „CPDLC LOGON EDGG“).",
+             Die CPDLC-Kennung der Station steht meist im ATIS (z. B. „CPDLC LOGON EDGG“). \
+             Nochmal „Logon senden“ schickt ihn trotzdem.",
             status.station
         ),
     ))
@@ -1031,12 +1032,15 @@ async fn send_cpdlc_element(
             };
             (to, resolve_wire_mrn(&meta, mrn))
         };
-        let (message, _event) = session.thread.record_sent(
-            spec.response,
-            mrn,
-            filled_text,
-            hoppie_protocol::elements::ParsedElement::Recognized(resolved),
-        );
+        let parsed = hoppie_protocol::elements::ParsedElement::Recognized(resolved);
+        // A logon goes through `record_logon_request`, which ends the old
+        // session BEFORE recording the new request — see its doc comment
+        // (external review 28.09.2026, P1).
+        let message = if spec.id == "DM_REQUEST_LOGON" {
+            session.record_logon_request(&to, spec.response, mrn, filled_text, parsed)
+        } else {
+            session.thread.record_sent(spec.response, mrn, filled_text, parsed).0
+        };
         let min = message.min;
         // v1.7.21 (#pdc-session-model) — closes QS round 5's Finding 3:
         // the session-level bookkeeping (quarantine the old station /
@@ -1045,9 +1049,7 @@ async fn send_cpdlc_element(
         // not after a network round trip that might fail, leave, or
         // never return. See `session.rs`'s `end_current`/`begin_logon`
         // doc comments.
-        if spec.id == "DM_REQUEST_LOGON" {
-            session.begin_logon(&to, min);
-        } else if spec.id == "DM_LOGOFF" {
+        if spec.id == "DM_LOGOFF" {
             logoff_generation = Some(session.end_current());
         }
         (to, message, min, wire_mrn)
@@ -1218,7 +1220,20 @@ pub async fn hoppie_send_logon_request(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     station: Option<String>,
+    // v1.9.5: `true` = send even though the pre-check said "not
+    // registered". The panel sets it on the pilot's SECOND click after that
+    // warning — Hoppie's ping reply format is undocumented, and a wrong
+    // reading must never lock a pilot out of logging on.
+    force: Option<bool>,
 ) -> Result<HoppieStatus, UiError> {
+    // An explicitly blank station is a typing error — say so at once
+    // instead of pinging some other station first (external review P3).
+    if station.as_deref().is_some_and(|s| s.trim().is_empty()) {
+        return Err(UiError::new(
+            "hoppie_no_station",
+            "Keine ATC-Station angegeben — z. B. EDDF oder EDGG.",
+        ));
+    }
     // v1.9.5 (#hoppie-logon-precheck): ask whether the target is even
     // registered BEFORE anything else — in particular before logging off
     // the station we are on, so a typo can no longer cost the pilot a
@@ -1239,7 +1254,7 @@ pub async fn hoppie_send_logon_request(
             };
             (Arc::clone(&handle.http), handle.from_callsign.clone(), target)
         };
-        if !target.is_empty() && target != settings::DEFAULT_STATION_ID {
+        if force != Some(true) && !target.is_empty() && target != settings::DEFAULT_STATION_ID {
             let logon = resolve_logon_code()?;
             let status = ping_station(&http, logon, from_callsign, target).await;
             if let Some(reason) = &status.reason {
@@ -1671,9 +1686,12 @@ pub async fn hoppie_send_pdc_request(
         kind: hoppie_protocol::wire::PacketKind::Telex,
         packet: Some(text.clone()),
     };
-    if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) =
-        handle.http.send(&wire_req).await?
-    {
+    let sent = handle.http.send(&wire_req).await;
+    // v1.9.5 (#hoppie-pdc-fast-poll): wake the poller whatever the outcome
+    // — after a transport error the request may still have reached Hoppie
+    // (EDDM 15.09.), and its clearance is then expected just the same.
+    handle.poll_wake.notify_one();
+    if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) = sent? {
         tracing::warn!(to = %wire_req.to, reason = %reason, "hoppie: PDC-Anfrage abgelehnt");
         handle
             .session
@@ -1683,8 +1701,6 @@ pub async fn hoppie_send_pdc_request(
         return Err(UiError::new("hoppie_pdc_rejected", reason));
     }
     tracing::info!(to = %wire_req.to, "hoppie: PDC-Anfrage gesendet");
-    // v1.9.5 (#hoppie-pdc-fast-poll): the clearance is now expected.
-    handle.poll_wake.notify_one();
 
     crate::record_datalink(
         &app,

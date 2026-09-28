@@ -269,6 +269,34 @@ impl HoppieSession {
         self.persist_generation += 1;
     }
 
+    /// Record an outgoing `REQUEST LOGON` to `station` and start
+    /// pursuing it — the ONE place both send paths (manual logon in
+    /// mod.rs, automatic handover in poller.rs) go through.
+    ///
+    /// v1.9.5 (external review 28.09.2026, P1, pre-existing): the order
+    /// matters. The callers used to run `thread.record_sent` FIRST and
+    /// `begin_logon` second — and `begin_logon`'s `end_current` ->
+    /// `thread.mark_logged_off` then took the logon MIN that `record_sent`
+    /// had just set. Pressing "send logon" a second time to the SAME
+    /// station (what a pilot does after "no answer") left the session
+    /// `Pending` while the thread waited for nothing, so the station's
+    /// `LOGON ACCEPTED` settled nothing and the logon hung for the rest of
+    /// the flight. Ending the old session BEFORE recording the new request
+    /// keeps both in lockstep.
+    pub fn record_logon_request(
+        &mut self,
+        station: &str,
+        response: hoppie_protocol::cpdlc::ResponseRequirement,
+        mrn: Option<u32>,
+        text: String,
+        parsed: hoppie_protocol::elements::ParsedElement,
+    ) -> hoppie_protocol::cpdlc::CpdlcMessage {
+        self.end_current();
+        let (message, _event) = self.thread.record_sent(response, mrn, text, parsed);
+        self.begin_logon(station, message.min);
+        message
+    }
+
     /// Undo a [`Self::begin_logon`] whose `REQUEST_LOGON` never made it
     /// onto the wire (mirrors `CpdlcThread::rollback_sent`, called
     /// alongside it) — back to `None`, NOT quarantined: a request that
@@ -1845,5 +1873,58 @@ mod tests {
         s.note_pdc_inbound("EDDM", "CLD 1840 260928 EDDM PDC 001");
         assert!(!s.is_awaiting_pdc_answer(t0()));
         assert!(s.is_answering_our_pdc_request("EDDM", t0() + chrono::Duration::minutes(13)));
+    }
+
+    // --- v1.9.5: re-sending a logon to the same station (external review P1) ---
+
+    fn logon_request(s: &mut HoppieSession, station: &str) -> u32 {
+        let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").unwrap();
+        let resolved = hoppie_protocol::elements::resolve(spec, &[]).unwrap();
+        s.record_logon_request(
+            station,
+            spec.response,
+            None,
+            resolved.filled_text.clone(),
+            hoppie_protocol::elements::ParsedElement::Recognized(resolved),
+        )
+        .min
+    }
+
+    #[test]
+    fn a_second_logon_to_the_same_station_can_still_be_accepted() {
+        let mut s = HoppieSession::new(String::new());
+        logon_request(&mut s, "EDGG");
+        let second = logon_request(&mut s, "EDGG");
+        assert_eq!(s.pending_logon_min(), Some(second), "session pending the new attempt");
+        assert_eq!(s.thread.pending_logon_min(), Some(second), "thread pending the SAME attempt");
+
+        let was = s.thread.is_logged_on();
+        s.thread.record_received(
+            cpdlc::decode("/data2/4//NE/LOGON ACCEPTED", Direction::Uplink).unwrap(),
+        );
+        assert!(!was && s.thread.is_logged_on(), "the station's answer settles the logon");
+        assert!(s.accept_logon("EDGG"));
+        assert!(s.is_logged_on());
+        assert_eq!(s.thread.pending_response_count(), 0);
+    }
+
+    #[test]
+    fn a_second_headerless_acceptance_path_also_works_after_a_resend() {
+        let mut s = HoppieSession::new(String::new());
+        logon_request(&mut s, "EDGG");
+        logon_request(&mut s, "EDGG");
+        assert!(s.accept_undecodable_logon_reply("EDGG"));
+        assert!(s.is_logged_on() && s.thread.is_logged_on());
+    }
+
+    #[test]
+    fn logging_on_elsewhere_still_ends_the_previous_attempt() {
+        let mut s = HoppieSession::new(String::new());
+        let first = logon_request(&mut s, "EDGG");
+        let second = logon_request(&mut s, "EDMM");
+        assert_ne!(first, second);
+        assert_eq!(s.thread.pending_logon_min(), Some(second));
+        assert!(!s.is_authorized_to_answer_pending_logon("EDGG"));
+        assert!(s.is_authorized_to_answer_pending_logon("EDMM"));
     }
 }

@@ -1083,10 +1083,13 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             struct A {
                 #[serde(default)]
                 station: Option<String>,
+                #[serde(default)]
+                force: Option<bool>,
             }
             match parse_args::<A>(body) {
                 Ok(a) => from_uierr(
-                    crate::hoppie::hoppie_send_logon_request(app.clone(), st!(), a.station).await,
+                    crate::hoppie::hoppie_send_logon_request(app.clone(), st!(), a.station, a.force)
+                        .await,
                 ),
                 Err(e) => Err(e),
             }

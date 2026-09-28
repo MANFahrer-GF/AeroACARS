@@ -40,12 +40,25 @@ pub const FREE_TEXT_MAX_CHARS: usize = 48;
 /// our request short at the controller), control characters as spaces, single
 /// spaces, at most [`FREE_TEXT_MAX_CHARS`].
 pub fn sanitize_free_text(raw: &str) -> String {
+    // Printable ASCII only (external review P3): controller clients are
+    // EuroScope plugins that mangle anything else. German letters are
+    // spelled out the way a telex would, everything else is dropped.
     let cleaned: String = raw
+        .to_uppercase()
         .chars()
-        .filter(|c| !matches!(c, '{' | '}'))
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect::<String>()
-        .to_uppercase();
+        .flat_map(|c| -> Vec<char> {
+            match c {
+                'Ä' => vec!['A', 'E'],
+                'Ö' => vec!['O', 'E'],
+                'Ü' => vec!['U', 'E'],
+                'ß' | 'ẞ' => vec!['S', 'S'],
+                '{' | '}' => vec![],
+                c if c.is_control() => vec![' '],
+                c if c.is_ascii_graphic() || c == ' ' => vec![c],
+                _ => vec![],
+            }
+        })
+        .collect();
     let joined = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     joined.chars().take(FREE_TEXT_MAX_CHARS).collect::<String>().trim_end().to_string()
 }
@@ -125,6 +138,12 @@ mod tests {
         assert_eq!(sanitize_free_text("a}b{c"), "ABC");
         assert_eq!(sanitize_free_text("  two   spaces\t tab "), "TWO SPACES TAB");
         assert_eq!(sanitize_free_text("   "), "");
+    }
+
+    #[test]
+    fn sanitize_spells_out_german_letters_and_drops_other_non_ascii() {
+        assert_eq!(sanitize_free_text("enteisung größer"), "ENTEISUNG GROESSER");
+        assert_eq!(sanitize_free_text("über → pad ✈ 2"), "UEBER PAD 2");
     }
 
     #[test]

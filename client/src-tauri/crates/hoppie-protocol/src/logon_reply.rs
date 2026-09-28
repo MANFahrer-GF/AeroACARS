@@ -35,11 +35,12 @@ pub enum LogonReply {
     Refused,
 }
 
-/// Uppercase, `@`/`_` (Hoppie's line-break and filler conventions) as
-/// spaces, runs of whitespace collapsed.
+/// Uppercase, `@`/`_` (Hoppie's line-break and filler conventions) and
+/// sentence punctuation as spaces, runs of whitespace collapsed — so a
+/// headerless "ACCEPTED." reads like "ACCEPTED" (external review P3).
 fn normalize(text: &str) -> String {
     text.to_uppercase()
-        .replace(['@', '_'], " ")
+        .replace(['@', '_', '.', ',', '!', ';', ':'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -126,6 +127,8 @@ mod tests {
             "LOGON@ACCEPTED",
             "  LOGON   ACCEPTED  ",
             "CPDLC LOGON ACCEPTED BY EDGG",
+            "ACCEPTED.",
+            "LOGON ACCEPTED, EDGG",
         ] {
             assert_eq!(classify(text, false), A, "{text:?}");
         }

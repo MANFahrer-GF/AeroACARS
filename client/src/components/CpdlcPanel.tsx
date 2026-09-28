@@ -143,6 +143,11 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
   const [stationEditing, setStationEditing] = useState(false);
   const [logonBusy, setLogonBusy] = useState(false);
   const [logonError, setLogonError] = useState<string | null>(null);
+  // v1.9.5 (#hoppie-logon-precheck): the backend refuses a logon to a
+  // station Hoppie does not list as online. That reading rests on an
+  // undocumented reply format, so the pilot can always override it: the
+  // SECOND click for the same station sends anyway (`force`).
+  const [offlineWarnedFor, setOfflineWarnedFor] = useState<string | null>(null);
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const cooldownRunning = cooldownLeft > 0;
 
@@ -311,15 +316,19 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
 
   const sendLogon = async () => {
     if (logonBusy || cooldownLeft > 0) return;
+    const target = stationInput.trim().toUpperCase();
     setLogonBusy(true);
     setLogonError(null);
     try {
-      await invoke("hoppie_send_logon_request", { station: stationInput.trim().toUpperCase() });
+      await invoke("hoppie_send_logon_request", { station: target, force: offlineWarnedFor === target });
+      setOfflineWarnedFor(null);
       setCooldownLeft(LOGON_COOLDOWN_SECS);
       setStationEditing(false);
       clearStationDraft();
       onChanged();
     } catch (e) {
+      const code = (e as { code?: string } | null)?.code;
+      setOfflineWarnedFor(code === "hoppie_station_offline" ? target : null);
       setLogonError(formatIpcError(e));
     } finally {
       setLogonBusy(false);
