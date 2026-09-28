@@ -9351,16 +9351,18 @@ button.aa-livemap-events__row:hover {
 .aa-lb-cs { font-family: var(--font-mono); font-size: 18px; font-weight: 800; }
 .aa-lb-det-stats { margin-left: auto; display: flex; gap: 18px; }
 .aa-lb-v { font-family: var(--font-acars); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.aa-lb-det-row { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; margin-bottom: 14px; }
+.aa-lb-det-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 14px; margin-bottom: 14px; }
 .aa-lb-map { height: 440px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; position: relative; }
 .aa-lb-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px 14px; }
 .aa-lb-panel h3 { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted); }
 .aa-lb-logpanel { height: 440px; display: flex; flex-direction: column; }
 .aa-lb-log { flex: 1; overflow-y: auto; }
-.aa-lb-logrow { display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
+.aa-lb-logrow { display: grid; grid-template-columns: minmax(48px, max-content) minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
 .aa-lb-logrow:last-child { border-bottom: none; }
 .aa-lb-logrow .aa-lb-t { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 12px; }
 .aa-lb-logrow--phase .aa-lb-m { font-weight: 700; }
+/* Lange Meldungen umbrechen statt über den Rand zu laufen (28.09.2026). */
+.aa-lb-logrow .aa-lb-m { overflow-wrap: anywhere; }
 .aa-lb-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; }
 /* ---- Nachflug-Profil: gestapelte Bahnen, gemeinsame Zeitachse ----
    Ersetzt das alte Ein-Diagramm-Profil. Begründung in FlightProfile.tsx:
