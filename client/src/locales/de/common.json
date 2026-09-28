@@ -3313,7 +3313,7 @@
     "vorher_sim": "Simulator läuft, Flugzeug ist geladen",
     "vorher_boden": "Flugzeug steht am Boden (Gate oder Vorfeld), Parkbremse gesetzt",
     "vorher_strom": "Strom ist an (Batterie oder Bodenstrom), damit die Schalter reagieren",
-    "vorher_pause": "Simulator läuft, nicht pausiert",
+    "vorher_pause": "Nicht pausiert – sonst ändert sich beim Schalten nichts",
     "sim_ok": "Simulator verbunden · {{flugzeug}}",
     "sim_fehlt": "Kein Simulator verbunden",
     "sim_luft": "Flugzeug ist in der Luft – bitte am Boden messen",

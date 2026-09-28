@@ -3313,7 +3313,7 @@
     "vorher_sim": "Simulator running, aircraft loaded",
     "vorher_boden": "Aircraft on the ground (gate or apron), parking brake set",
     "vorher_strom": "Power on (battery or ground power) so the switches work",
-    "vorher_pause": "Simulator running, not paused",
+    "vorher_pause": "Non in pausa – altrimenti azionando gli interruttori non cambia nulla",
     "sim_ok": "Simulator connected · {{flugzeug}}",
     "sim_fehlt": "No simulator connected",
     "sim_luft": "Aircraft is airborne – please measure on the ground",
