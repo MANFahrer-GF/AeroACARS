@@ -19,9 +19,11 @@ export type Schalter =
   | "parkbremse"
   // Teil „luft" (28.09.2026): Autopilot rastet am Boden nicht ein.
   | "autopilot"
+  | "ap2"
   | "lateral"
   | "vertikal"
   | "anflug"
+  | "autoland"
   | "btv";
 
 /** „boden" = am Gate, „luft" = im Flug (Autopilot, Anflug). */
@@ -63,11 +65,17 @@ export const SCHRITTE: SchrittDef[] = [
   // In der Luft, im ruhigen Reiseflug. Jeweils zurück in die Ausgangslage —
   // die Auswertung verlangt dann gleiche Werte bei gleicher Stellung.
   { schalter: "autopilot", teil: "luft", stellungen: ["ap_an", "ap_aus", "ap_an"] },
+  // Zwei Autopiloten (Airbus AP1/AP2, Boeing CMD A/B): im Reiseflug ist immer
+  // nur einer drin — AP2 drücken, AP1 geht aus.
+  { schalter: "ap2", teil: "luft", stellungen: ["ap1_aktiv", "ap2_aktiv", "ap1_aktiv"] },
   { schalter: "lateral", teil: "luft", stellungen: ["nav_managed", "hdg_selected", "nav_managed"] },
   { schalter: "vertikal", teil: "luft", stellungen: ["alt_halten", "vs_modus", "alt_halten"] },
   // Nur im Anflug sinnvoll — überspringbar. Auch hier aus/an/aus, damit im
   // Flug driftende Werte (Position, Sprit) herausfallen.
   { schalter: "anflug", teil: "luft", stellungen: ["app_aus", "app_an", "app_aus"] },
+  // Autoland / CAT III: im ILS-Anflug mit APPR beide AP. Endet mit beiden an,
+  // das Autoland läuft normal weiter.
+  { schalter: "autoland", teil: "luft", stellungen: ["ein_ap", "zwei_ap", "ein_ap", "zwei_ap"] },
   { schalter: "btv", teil: "luft", stellungen: ["btv_aus", "btv_an", "btv_aus"] },
 ];
 

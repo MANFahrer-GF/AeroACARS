@@ -3461,6 +3461,18 @@
         "wo": "Airbus A380/A350: Autobrake-Knopf auf BTV (A380) bzw. BTV-Wahl am ND. Braucht die Landebahn im Flugplan.",
         "namen": "BTV · Brake To Vacate",
         "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. Im Anflug mit gewählter Bahn scharf schalten, zum Schluss wieder auf die Stufe, mit der du landen willst."
+      },
+      "ap2": {
+        "titel": "Zweiter Autopilot (AP1 / AP2)",
+        "wo": "Glareshield-Panel: Tasten AP1 und AP2 (Airbus) bzw. CMD A und CMD B (Boeing).",
+        "namen": "AP1 · AP2 · CMD A · CMD B",
+        "hinweis": "Im Reiseflug ist immer nur einer drin: AP2 drücken, dann übernimmt AP2 und AP1 geht aus. Danach wieder AP1. Hat dein Flugzeug nur einen Autopiloten, überspringen."
+      },
+      "autoland": {
+        "titel": "Autoland – beide Autopiloten (CAT III)",
+        "wo": "Glareshield-Panel: im ILS-Anflug mit APPR den zweiten AP dazuschalten (AP1 + AP2 bzw. CMD A + CMD B). Das FMA zeigt dann z. B. CAT 3 DUAL oder LAND 3.",
+        "namen": "CAT 3 DUAL · CAT 3 SINGLE · LAND 3 · LAND 2 · AUTOLAND",
+        "hinweis": "Nur im ILS-Anflug mit APPR armed. Einmal den zweiten AP zu, ab und wieder zu – am Ende bleiben beide an, dein Autoland läuft normal weiter."
       }
     },
     "stellung": {
@@ -3500,7 +3512,11 @@
       "app_aus": "APPR aus",
       "app_an": "APPR / LOC gedrückt (armed)",
       "btv_aus": "BTV aus",
-      "btv_an": "BTV scharf"
+      "btv_an": "BTV scharf",
+      "ap1_aktiv": "nur AP1 (bzw. CMD A)",
+      "ap2_aktiv": "nur AP2 (bzw. CMD B)",
+      "ein_ap": "ein Autopilot",
+      "zwei_ap": "beide Autopiloten (CAT 3 DUAL)"
     },
     "keine_bewegung": "keine Bewegung",
     "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
@@ -3515,8 +3531,8 @@
     "auswahl_alle": "Alle",
     "auswahl_keine": "Keine",
     "luft_titel": "Autopilot im Flug vermessen",
-    "luft_einleitung": "Den Autopiloten kann man nur in der Luft messen – am Boden rastet er nicht ein. Du schaltest ein paar Autopilot-Modi kurz um, AeroACARS schaut zu und merkt sich, welche Werte mitgehen. Danach zeigen LiveMap und Flug-Log bei deinem Flugzeug richtig an, ob AP, HDG, NAV, ALT und APPR aktiv sind.",
-    "luft_dauer": "Dauer: etwa 3 Minuten im Reiseflug. APPR/LOC und BTV gehen nur im Anflug – die kannst du überspringen oder später nachmessen.",
+    "luft_einleitung": "Den Autopiloten kann man nur in der Luft messen – am Boden rastet er nicht ein. Du schaltest ein paar Autopilot-Modi kurz um, AeroACARS schaut zu und merkt sich, welche Werte mitgehen. Danach zeigen LiveMap und Flug-Log bei deinem Flugzeug richtig an, ob AP, HDG, NAV, ALT, APPR und Autoland (CAT III) aktiv sind.",
+    "luft_dauer": "Dauer: etwa 3 Minuten im Reiseflug. APPR/LOC, Autoland (beide AP) und BTV gehen nur im Anflug – die kannst du überspringen oder später nachmessen.",
     "luft_vorher_1": "Ruhiger Reiseflug, Autopilot an, keine Kurven und kein Steig-/Sinkflug geplant",
     "luft_vorher_2": "Nicht kurz vor dem Top of Descent und nicht, während ATC gerade Anweisungen gibt",
     "luft_vorher_3": "Beim Schritt „AP AUS“ fliegst du ein paar Sekunden von Hand – Flugzeug ruhig halten",
@@ -3526,7 +3542,7 @@
     "luft_fehlt": "Tipp: Den Autopilot-Teil misst du auf einem Flug im Reiseflug – einfach im Flug wieder hier reinschauen.",
     "boden_fehlt": "Tipp: Die Schalter am Boden (Lichter, Klappen, Autobrake …) misst du am Gate – einfach nach der Landung wieder hier reinschauen.",
     "luft_starten": "Autopilot-Messung starten",
-    "auswahl_hinweis_luft": "Im Reiseflug gehen nur AP, NAV/HDG und ALT/V/S. APPR/LOC und BTV nur im Anflug – die kannst du dann separat messen.",
+    "auswahl_hinweis_luft": "Im Reiseflug gehen AP, AP1/AP2, NAV/HDG und ALT/V/S. APPR/LOC, Autoland und BTV nur im Anflug – die kannst du dann separat messen.",
     "ruhe_text_luft": "Der Autopilot fliegt. Bitte jetzt etwa 8 Sekunden nichts im Cockpit anfassen. AeroACARS merkt sich, welche Werte sich im Flug von selbst ändern (Position, Sprit, Uhr) – die werden später ignoriert.",
     "teil_boden": "Boden",
     "teil_luft": "Luft",

@@ -3461,6 +3461,18 @@
         "wo": "Airbus A380/A350: autobrake knob to BTV (A380) or BTV selection on the ND. Needs the runway in the flight plan.",
         "namen": "BTV · Brake To Vacate",
         "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected, finally set the level you want to land with."
+      },
+      "ap2": {
+        "titel": "Second autopilot (AP1 / AP2)",
+        "wo": "Glareshield panel: AP1 and AP2 buttons (Airbus) or CMD A and CMD B (Boeing).",
+        "namen": "AP1 · AP2 · CMD A · CMD B",
+        "hinweis": "In cruise only one can be engaged: press AP2, AP2 takes over and AP1 drops out. Then back to AP1. If your aircraft has only one autopilot, skip this."
+      },
+      "autoland": {
+        "titel": "Autoland – both autopilots (CAT III)",
+        "wo": "Glareshield panel: on an ILS approach with APPR engage the second AP as well (AP1 + AP2 or CMD A + CMD B). The FMA then shows e.g. CAT 3 DUAL or LAND 3.",
+        "namen": "CAT 3 DUAL · CAT 3 SINGLE · LAND 3 · LAND 2 · AUTOLAND",
+        "hinweis": "Only on an ILS approach with APPR armed. Add the second AP, remove it and add it again – at the end both stay on and your autoland continues normally."
       }
     },
     "stellung": {
@@ -3500,7 +3512,11 @@
       "app_aus": "APPR off",
       "app_an": "APPR / LOC pressed (armed)",
       "btv_aus": "BTV off",
-      "btv_an": "BTV armed"
+      "btv_an": "BTV armed",
+      "ap1_aktiv": "only AP1 (or CMD A)",
+      "ap2_aktiv": "only AP2 (or CMD B)",
+      "ein_ap": "one autopilot",
+      "zwei_ap": "both autopilots (CAT 3 DUAL)"
     },
     "keine_bewegung": "nessun movimento",
     "schon_vermessen": "Questo aereo è già stato misurato (l'ultima volta il {{datum}}). Grazie! Misurarlo di nuovo ha senso solo dopo un aggiornamento importante dell'add-on.",
@@ -3515,8 +3531,8 @@
     "auswahl_alle": "Tutti",
     "auswahl_keine": "Nessuno",
     "luft_titel": "Misura l'autopilota in volo",
-    "luft_einleitung": "L'autopilota si può misurare solo in volo – a terra non si inserisce. Cambi brevemente alcune modalità dell'autopilota, AeroACARS osserva e annota quali valori seguono. Poi la LiveMap e il log di volo mostrano correttamente per il tuo aereo se AP, HDG, NAV, ALT e APPR sono attivi.",
-    "luft_dauer": "Circa 3 minuti in crociera. APPR/LOC e BTV funzionano solo in avvicinamento – puoi saltarli o misurarli più tardi.",
+    "luft_einleitung": "L'autopilota si può misurare solo in volo – a terra non si inserisce. Cambi brevemente alcune modalità dell'autopilota, AeroACARS osserva e annota quali valori seguono. Poi la LiveMap e il log di volo mostrano correttamente per il tuo aereo se AP, HDG, NAV, ALT, APPR e autoland (CAT III) sono attivi.",
+    "luft_dauer": "Circa 3 minuti in crociera. APPR/LOC, autoland (entrambi gli AP) e BTV funzionano solo in avvicinamento – puoi saltarli o misurarli più tardi.",
     "luft_vorher_1": "Crociera tranquilla, autopilota inserito, nessuna virata né salita/discesa prevista",
     "luft_vorher_2": "Non poco prima del top of descent e non mentre l'ATC ti sta dando istruzioni",
     "luft_vorher_3": "Durante il passo “AP OFF” piloti a mano per qualche secondo – tieni l'aereo stabile",
@@ -3526,7 +3542,7 @@
     "luft_fehlt": "Consiglio: la parte autopilota si misura in crociera durante un volo – torna qui mentre voli.",
     "boden_fehlt": "Consiglio: gli interruttori (luci, flap, autobrake …) si misurano al gate – torna qui dopo l'atterraggio.",
     "luft_starten": "Avvia misurazione autopilota",
-    "auswahl_hinweis_luft": "In crociera funzionano solo AP, NAV/HDG e ALT/V/S. APPR/LOC e BTV solo in avvicinamento – misurali a parte.",
+    "auswahl_hinweis_luft": "In crociera funzionano AP, AP1/AP2, NAV/HDG e ALT/V/S. APPR/LOC, autoland e BTV solo in avvicinamento – misurali a parte.",
     "ruhe_text_luft": "L'autopilota vola. Per circa 8 secondi non toccare nulla in cabina. AeroACARS annota quali valori cambiano da soli in volo (posizione, carburante, orologio) – verranno ignorati.",
     "teil_boden": "Terra",
     "teil_luft": "Volo",

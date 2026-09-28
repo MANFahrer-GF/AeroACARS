@@ -3461,6 +3461,18 @@
         "wo": "Airbus A380/A350: autobrake knob to BTV (A380) or BTV selection on the ND. Needs the runway in the flight plan.",
         "namen": "BTV · Brake To Vacate",
         "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected, finally set the level you want to land with."
+      },
+      "ap2": {
+        "titel": "Second autopilot (AP1 / AP2)",
+        "wo": "Glareshield panel: AP1 and AP2 buttons (Airbus) or CMD A and CMD B (Boeing).",
+        "namen": "AP1 · AP2 · CMD A · CMD B",
+        "hinweis": "In cruise only one can be engaged: press AP2, AP2 takes over and AP1 drops out. Then back to AP1. If your aircraft has only one autopilot, skip this."
+      },
+      "autoland": {
+        "titel": "Autoland – both autopilots (CAT III)",
+        "wo": "Glareshield panel: on an ILS approach with APPR engage the second AP as well (AP1 + AP2 or CMD A + CMD B). The FMA then shows e.g. CAT 3 DUAL or LAND 3.",
+        "namen": "CAT 3 DUAL · CAT 3 SINGLE · LAND 3 · LAND 2 · AUTOLAND",
+        "hinweis": "Only on an ILS approach with APPR armed. Add the second AP, remove it and add it again – at the end both stay on and your autoland continues normally."
       }
     },
     "stellung": {
@@ -3500,7 +3512,11 @@
       "app_aus": "APPR off",
       "app_an": "APPR / LOC pressed (armed)",
       "btv_aus": "BTV off",
-      "btv_an": "BTV armed"
+      "btv_an": "BTV armed",
+      "ap1_aktiv": "only AP1 (or CMD A)",
+      "ap2_aktiv": "only AP2 (or CMD B)",
+      "ein_ap": "one autopilot",
+      "zwei_ap": "both autopilots (CAT 3 DUAL)"
     },
     "keine_bewegung": "no movement",
     "schon_vermessen": "This aircraft has already been measured (last on {{datum}}). Thank you! Measuring again only makes sense after a major add-on update.",
@@ -3515,8 +3531,8 @@
     "auswahl_alle": "All",
     "auswahl_keine": "None",
     "luft_titel": "Measure the autopilot in flight",
-    "luft_einleitung": "The autopilot can only be measured in the air – it won't engage on the ground. You briefly switch a few autopilot modes, AeroACARS watches and notes which values follow. Afterwards the LiveMap and flight log show correctly for your aircraft whether AP, HDG, NAV, ALT and APPR are active.",
-    "luft_dauer": "Takes about 3 minutes in cruise. APPR/LOC and BTV only work on approach – skip them or measure them later.",
+    "luft_einleitung": "The autopilot can only be measured in the air – it won't engage on the ground. You briefly switch a few autopilot modes, AeroACARS watches and notes which values follow. Afterwards the LiveMap and flight log show correctly for your aircraft whether AP, HDG, NAV, ALT, APPR and autoland (CAT III) are active.",
+    "luft_dauer": "Takes about 3 minutes in cruise. APPR/LOC, autoland (both APs) and BTV only work on approach – skip them or measure them later.",
     "luft_vorher_1": "Calm cruise, autopilot on, no turns and no climb or descent planned",
     "luft_vorher_2": "Not just before top of descent and not while ATC is giving you instructions",
     "luft_vorher_3": "During the “AP OFF” step you fly by hand for a few seconds – keep the aircraft steady",
@@ -3526,7 +3542,7 @@
     "luft_fehlt": "Tip: you measure the autopilot part in cruise on a flight – just come back here while flying.",
     "boden_fehlt": "Tip: you measure the switches (lights, flaps, autobrake …) at the gate – just come back here after landing.",
     "luft_starten": "Start autopilot measurement",
-    "auswahl_hinweis_luft": "In cruise only AP, NAV/HDG and ALT/V/S work. APPR/LOC and BTV only on approach – measure them separately then.",
+    "auswahl_hinweis_luft": "In cruise AP, AP1/AP2, NAV/HDG and ALT/V/S work. APPR/LOC, autoland and BTV only on approach – measure them separately then.",
     "ruhe_text_luft": "The autopilot is flying. Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves in flight (position, fuel, clock) – they will be ignored.",
     "teil_boden": "Ground",
     "teil_luft": "Air",
