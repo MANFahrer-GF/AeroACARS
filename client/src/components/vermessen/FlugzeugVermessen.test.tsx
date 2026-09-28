@@ -194,6 +194,32 @@ describe("Flugzeug vermessen", () => {
     expect(h.aufrufe.filter((a) => a.cmd === "vermessung_beenden").every((a) => a.args?.start === start)).toBe(true);
   });
 
+  it("nur die Autobrake nachmessen: ein Schalter, dann Übersicht", async () => {
+    render(<FlugzeugVermessen />);
+    await screen.findByText(/Simulator verbunden/);
+    fireEvent.click(screen.getByRole("button", { name: "Keine" }));
+    expect((screen.getByRole("button", { name: "Messung starten" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Autobrake" }));
+    expect(screen.getByText("Nur bestimmte Schalter messen (1 von 12)")).toBeTruthy();
+    await klick("Messung starten");
+    await klick(/Ruhemessung starten/);
+    await klick("Weiter");
+    expect(await screen.findByText("Schalter 1 von 1")).toBeTruthy();
+    expect(screen.getByText("Autobrake")).toBeTruthy();
+    await klick("Ja – los geht's");
+    await klick("Erledigt – steht so");
+    await screen.findByText("Ausgangsstellung gemerkt");
+    await klick("Erledigt – steht so");
+    await screen.findByText("✓ 3 Werte haben sich bewegt");
+    await klick("Das war schon die letzte Stellung");
+    await klick("Zur Übersicht");
+    expect(await screen.findByText("Geschafft!")).toBeTruthy();
+    // Übersicht nur mit dem gemessenen Schalter, kein „hat das Flugzeug nicht“.
+    expect(screen.queryByText("hat das Flugzeug nicht")).toBeNull();
+    const abschluesse = h.aufrufe.filter((a) => a.cmd === "vermessung_schritt_abschliessen");
+    expect(abschluesse.map((a) => a.args?.schalter)).toEqual(["autobrake"]);
+  });
+
   it("Klappen: nach zwei Rasten lässt sich die letzte Stellung wählen", async () => {
     render(<FlugzeugVermessen />);
     await screen.findByText(/Simulator verbunden/);

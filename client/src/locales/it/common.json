@@ -3469,6 +3469,10 @@
     "liste_hinweis": "Questi aerei li abbiamo già. Il tuo aiuto serve per tutto ciò che non è in elenco.",
     "messungen": "{{anzahl}} misurazioni",
     "erst_scan": "Per questo aereo non c'è ancora un aircraft scan. Consiglio: fai prima uno scan in Impostazioni → “✈️ Plugin” → “🔬 Invia aereo per l'analisi”. La misurazione lo userà automaticamente e riconoscerà di più. Gli aerei cifrati dello Store non si possono scansionare – in quel caso misura e basta.",
-    "scan_da": "Aircraft scan disponibile – verranno letti anche {{anzahl}} nomi di variabili."
+    "scan_da": "Aircraft scan disponibile – verranno letti anche {{anzahl}} nomi di variabili.",
+    "auswahl_titel": "Misura solo alcuni interruttori ({{anzahl}} di {{von}})",
+    "auswahl_hinweis": "Devi rimisurare solo un interruttore, ad es. l'autobrake? Spunta solo quello – la misurazione a riposo iniziale resta.",
+    "auswahl_alle": "Tutti",
+    "auswahl_keine": "Nessuno"
   }
 }

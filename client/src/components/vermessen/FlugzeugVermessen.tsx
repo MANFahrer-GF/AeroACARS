@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../../lib/ipc";
 import type { SimStatus } from "../../types";
-import { SCHRITTE, type SchrittDef } from "./schritte";
+import { SCHRITTE, type Schalter, type SchrittDef } from "./schritte";
 import "./vermessen.css";
 
 /** Ein schon vermessenes Flugzeug (vom Server, ohne Pilotenbezug). */
@@ -84,6 +84,10 @@ export function FlugzeugVermessen() {
   const [fehler, setFehler] = useState<string | null>(null);
   const [sim, setSim] = useState<SimStatus | null>(null);
   const [vermessen, setVermessen] = useState<Vermessen[]>([]);
+  // Welche Schalter gemessen werden (Startseite, voreingestellt alle) und
+  // der beim Start festgehaltene Plan — z. B. nur die Autobrake nachmessen.
+  const [auswahl, setAuswahl] = useState<Set<Schalter>>(() => new Set(SCHRITTE.map((x) => x.schalter)));
+  const [plan, setPlan] = useState<SchrittDef[]>(SCHRITTE);
 
   // „Schon vermessen" — bei jedem Zurück auf die Startseite neu holen.
   useEffect(() => {
@@ -177,6 +181,7 @@ export function FlugzeugVermessen() {
     setFehler(null);
     setPhase({ art: "verbinden" });
     const n = lauf.current;
+    setPlan(SCHRITTE.filter((x) => auswahl.has(x.schalter)));
     startNr.current = Math.floor(Math.random() * 2 ** 50);
     sitzung.current = null;
     try {
@@ -230,7 +235,7 @@ export function FlugzeugVermessen() {
   };
 
   const weiterNach = (nr: number) => {
-    if (nr + 1 < SCHRITTE.length) schrittBeginnen(nr + 1);
+    if (nr + 1 < plan.length) schrittBeginnen(nr + 1);
     else setPhase({ art: "fertig", sendet: false });
   };
 
@@ -247,7 +252,7 @@ export function FlugzeugVermessen() {
   const stellungMessenInnen = async (vorhanden: boolean) => {
     if (phase.art !== "schritt") return;
     const n = lauf.current;
-    const def = SCHRITTE[phase.nr]!;
+    const def = plan[phase.nr]!;
     const name = def.stellungen[phase.stellung]!;
     let rueck = phase.rueckmeldungen;
     if (vorhanden) {
@@ -278,7 +283,7 @@ export function FlugzeugVermessen() {
     if (phase.art !== "schritt" || belegt.current) return;
     belegt.current = true;
     try {
-      await abschliessen(SCHRITTE[phase.nr]!, true, [], phase.nr);
+      await abschliessen(plan[phase.nr]!, true, [], phase.nr);
     } finally {
       belegt.current = false;
     }
@@ -288,7 +293,7 @@ export function FlugzeugVermessen() {
     if (phase.art !== "schritt" || belegt.current) return;
     belegt.current = true;
     try {
-      const def = SCHRITTE[phase.nr]!;
+      const def = plan[phase.nr]!;
       await abschliessen(def, false, phase.rueckmeldungen, phase.nr);
     } finally {
       belegt.current = false;
@@ -329,7 +334,13 @@ export function FlugzeugVermessen() {
         </div>
       )}
 
-      {phase.art === "start" && <StartSeite sim={sim} vermessen={vermessen} onStart={() => void starten()} />}
+      {phase.art === "start" && <StartSeite
+          sim={sim}
+          vermessen={vermessen}
+          auswahl={auswahl}
+          onAuswahl={setAuswahl}
+          onStart={() => void starten()}
+        />}
 
       {phase.art === "verbinden" && (
         <section className="vm-karte vm-mitte">
@@ -370,6 +381,7 @@ export function FlugzeugVermessen() {
 
       {phase.art === "schritt" && (
         <SchrittKarte
+          plan={plan}
           phase={phase}
           ergebnisse={ergebnisse}
           onBeginnen={() => setPhase({ ...phase, begonnen: true })}
@@ -389,7 +401,7 @@ export function FlugzeugVermessen() {
           <h3>{t("vermessen.fertig_titel")}</h3>
           <p>{t("vermessen.fertig_text")}</p>
           <ul className="vm-uebersicht">
-            {SCHRITTE.map((s) => {
+            {plan.map((s) => {
               const e = ergebnisse[s.schalter];
               return (
                 <li key={s.schalter}>
@@ -432,7 +444,19 @@ export function FlugzeugVermessen() {
   );
 }
 
-function StartSeite({ sim, vermessen, onStart }: { sim: SimStatus | null; vermessen: Vermessen[]; onStart: () => void }) {
+function StartSeite({
+  sim,
+  vermessen,
+  auswahl,
+  onAuswahl,
+  onStart,
+}: {
+  sim: SimStatus | null;
+  vermessen: Vermessen[];
+  auswahl: Set<Schalter>;
+  onAuswahl: (a: Set<Schalter>) => void;
+  onStart: () => void;
+}) {
   const { t, i18n } = useTranslation();
   const snap = sim?.snapshot ?? null;
   const verbunden = !!snap;
@@ -472,12 +496,43 @@ function StartSeite({ sim, vermessen, onStart }: { sim: SimStatus | null; vermes
         <button
           type="button"
           className={schon ? "button" : "button button--primary"}
-          disabled={!verbunden || !amBoden}
+          disabled={!verbunden || !amBoden || auswahl.size === 0}
           onClick={onStart}
         >
           {schon ? t("vermessen.trotzdem") : t("vermessen.starten")}
         </button>
       </div>
+      <details className="vm-liste vm-auswahl">
+        <summary className="vm-liste-titel">
+          {t("vermessen.auswahl_titel", { anzahl: auswahl.size, von: SCHRITTE.length })}
+        </summary>
+        <p className="vm-klein vm-dim">{t("vermessen.auswahl_hinweis")}</p>
+        <div className="vm-auswahl-gitter">
+          {SCHRITTE.map((x) => (
+            <label key={x.schalter} className="vm-auswahl-punkt">
+              <input
+                type="checkbox"
+                checked={auswahl.has(x.schalter)}
+                onChange={(e) => {
+                  const neu = new Set(auswahl);
+                  if (e.target.checked) neu.add(x.schalter);
+                  else neu.delete(x.schalter);
+                  onAuswahl(neu);
+                }}
+              />
+              {t(`vermessen.schritt.${x.schalter}.titel`)}
+            </label>
+          ))}
+        </div>
+        <div className="vm-knoepfe">
+          <button type="button" className="vm-link" onClick={() => onAuswahl(new Set(SCHRITTE.map((x) => x.schalter)))}>
+            {t("vermessen.auswahl_alle")}
+          </button>
+          <button type="button" className="vm-link" onClick={() => onAuswahl(new Set())}>
+            {t("vermessen.auswahl_keine")}
+          </button>
+        </div>
+      </details>
       {vermessen.length > 0 && (
         <details className="vm-liste vm-bestand">
           <summary className="vm-liste-titel">{t("vermessen.liste_titel", { anzahl: vermessen.length })}</summary>
@@ -553,6 +608,7 @@ function Fortschritt({ sekunden, text }: { sekunden: number; text: string }) {
 }
 
 function SchrittKarte({
+  plan,
   phase,
   ergebnisse,
   onBeginnen,
@@ -564,6 +620,7 @@ function SchrittKarte({
   onWeiter,
   onAbbrechen,
 }: {
+  plan: SchrittDef[];
   phase: Extract<Phase, { art: "schritt" }>;
   ergebnisse: Record<string, Ergebnis>;
   onBeginnen: () => void;
@@ -576,7 +633,7 @@ function SchrittKarte({
   onAbbrechen: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const def = SCHRITTE[phase.nr]!;
+  const def = plan[phase.nr]!;
   const k = `vermessen.schritt.${def.schalter}`;
   const hinweis = i18n.exists(`${k}.hinweis`) ? t(`${k}.hinweis`) : null;
   const letzteRueck = phase.rueckmeldungen[phase.rueckmeldungen.length - 1];
@@ -587,7 +644,7 @@ function SchrittKarte({
   return (
     <section className="vm-karte">
       <div className="vm-schritte" aria-hidden>
-        {SCHRITTE.map((s, i) => (
+        {plan.map((s, i) => (
           <span
             key={s.schalter}
             className={`vm-punkt${i === phase.nr ? " vm-punkt--jetzt" : ""}${
@@ -602,7 +659,7 @@ function SchrittKarte({
           />
         ))}
       </div>
-      <div className="vm-dim vm-klein">{t("vermessen.schritt_von", { nr: phase.nr + 1, von: SCHRITTE.length })}</div>
+      <div className="vm-dim vm-klein">{t("vermessen.schritt_von", { nr: phase.nr + 1, von: plan.length })}</div>
       <h3 className="vm-titel">{t(`${k}.titel`)}</h3>
 
       <div className="vm-info">
@@ -710,7 +767,7 @@ function SchrittKarte({
               )}
               <div className="vm-knoepfe">
                 <button type="button" className="button button--primary" onClick={onWeiter}>
-                  {phase.nr + 1 < SCHRITTE.length ? t("vermessen.naechster") : t("vermessen.zur_uebersicht")}
+                  {phase.nr + 1 < plan.length ? t("vermessen.naechster") : t("vermessen.zur_uebersicht")}
                 </button>
                 <button type="button" className="button" onClick={onNeu}>
                   {t("vermessen.neu_beginnen")}

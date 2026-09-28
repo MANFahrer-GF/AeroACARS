@@ -219,3 +219,14 @@
   .vm-info { grid-template-columns: 1fr; }
   .vm-leise { margin-left: 0; }
 }
+
+/* Nur bestimmte Schalter messen */
+.vm-auswahl summary { cursor: pointer; }
+.vm-auswahl-gitter {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px 16px;
+  margin: 8px 0 4px;
+}
+.vm-auswahl-punkt { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.vm-auswahl-punkt input { width: 16px; height: 16px; accent-color: var(--accent); }

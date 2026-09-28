@@ -4408,16 +4408,13 @@ fn telemetry_to_snapshot_mit_pfad(
         // dazwischen. Die Standard-SimVar war auf allen 76 Fenix-Anfluegen
         // des Audits false.
         Some(t.spoilers_armed || t.fnx_speedbrake_handle < 0.5)
-    } else if is_a380 {
-        // iniBuilds A380 (MSFS 2024): ARMED ist gemessen NICHT lesbar
-        // (26.09.2026, Hebel bewegt: weder LVar noch Input-Event noch
-        // Standard-SimVar reagierten). `L:INI_SPOILERS_ARMED` stammt vom
-        // A350-Geschwister und ist beim A380 ungeprueft — lieber "nicht
-        // messbar" als ein ungepruefter Wert.
-        None
-    } else if is_a350 || is_a330 {
+    } else if is_a350 || is_a330 || is_a380 {
         // iniBuilds `L:INI_SPOILERS_ARMED` 1 = armiert (A330 gemessen
-        // 26.09.2026: 0/1).
+        // 26.09.2026: 0/1). A380: am 28.09.2026 mit „Flugzeug vermessen"
+        // bestätigt (Hebel ein/ARMED/ein → 0/1/0). Am 26.09. schien er
+        // unlesbar, weil das damalige Werkzeug L:-Variablen nur über die
+        // MobiFlight-Liste sah, in der die iniBuilds-Namen fehlen; Input-Event
+        // und Standard-SimVar bleiben beim A380 tatsächlich stumm.
         Some(t.spoilers_armed || t.ini_spoilers_armed != 0.0)
     } else if is_pmdg737 {
         // PMDG 737 ohne SDK: `L:switch_343_73X` > 0 = ARMED (HubHop-
@@ -9715,14 +9712,14 @@ mod tests {
         );
     }
 
+    /// Gemessen 28.09.2026 („Flugzeug vermessen", iniBuilds A380 in MSFS
+    /// 2024): nur `L:INI_SPOILERS_ARMED` geht mit dem Hebel, 0/1/0.
     #[test]
-    fn b_a380_spoiler_armed_nicht_messbar() {
-        let snap = mit_b(
-            A380,
-            &[("L:INI_SPOILERS_ARMED", 1.0), ("SPOILERS ARMED", 1.0)],
-            &[],
-        );
-        assert_eq!(snap.spoilers_armed, None);
+    fn b_a380_spoiler_armed_aus_der_lvar() {
+        let snap = mit_b(A380, &[("L:INI_SPOILERS_ARMED", 1.0)], &[]);
+        assert_eq!(snap.spoilers_armed, Some(true));
+        let snap = mit_b(A380, &[("L:INI_SPOILERS_ARMED", 0.0)], &[]);
+        assert_eq!(snap.spoilers_armed, Some(false));
         // Die A350 behaelt ihre LVar.
         let snap = mit_b(A350, &[("L:INI_SPOILERS_ARMED", 1.0)], &[]);
         assert_eq!(snap.spoilers_armed, Some(true));

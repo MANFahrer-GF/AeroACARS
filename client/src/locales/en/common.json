@@ -3469,6 +3469,10 @@
     "liste_hinweis": "We already have these aircraft. Your help is needed for anything not on this list.",
     "messungen": "{{anzahl}} measurements",
     "erst_scan": "There is no aircraft scan for this aircraft yet. Tip: run a scan first under Settings → “✈️ Plugins” → “🔬 Submit aircraft for analysis”. The measurement then uses it automatically and detects more. Encrypted store aircraft can't be scanned – then just measure without it.",
-    "scan_da": "Aircraft scan available – {{anzahl}} variable names will be read as well."
+    "scan_da": "Aircraft scan available – {{anzahl}} variable names will be read as well.",
+    "auswahl_titel": "Measure only selected switches ({{anzahl}} of {{von}})",
+    "auswahl_hinweis": "Only need to re-measure one switch, e.g. the autobrake? Tick just that one here – the quiet measurement at the start stays.",
+    "auswahl_alle": "All",
+    "auswahl_keine": "None"
   }
 }

@@ -3469,6 +3469,10 @@
     "liste_hinweis": "Diese Flugzeuge haben wir schon. Deine Hilfe fehlt bei allem, was hier nicht steht.",
     "messungen": "{{anzahl}} Messungen",
     "erst_scan": "Für dieses Flugzeug liegt noch kein Aircraft-Scan vor. Tipp: Mach zuerst einen Scan unter Einstellungen → „✈️ Plugins“ → „🔬 Flugzeug zur Analyse einreichen“. Die Messung nutzt ihn danach automatisch und erkennt mehr. Verschlüsselte Store-Flugzeuge kann der Scan nicht lesen – dann einfach so messen.",
-    "scan_da": "Aircraft-Scan vorhanden – {{anzahl}} Variablennamen werden mitgelesen."
+    "scan_da": "Aircraft-Scan vorhanden – {{anzahl}} Variablennamen werden mitgelesen.",
+    "auswahl_titel": "Nur bestimmte Schalter messen ({{anzahl}} von {{von}})",
+    "auswahl_hinweis": "Musst du nur einen Schalter nachmessen, z. B. die Autobrake? Dann hier nur den anhaken – die Ruhemessung am Anfang bleibt.",
+    "auswahl_alle": "Alle",
+    "auswahl_keine": "Keine"
   }
 }
