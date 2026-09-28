@@ -70,6 +70,9 @@ const BASE_URL: &str = "https://www.hoppie.nl/acars/system/connect.html";
 /// one client is still the right call for connection pooling.
 pub struct HoppieHttp {
     http: reqwest::Client,
+    /// Always [`BASE_URL`] in the app; the replay tests point it at a
+    /// local stand-in (see `HoppieHttp::for_test`).
+    base_url: String,
 }
 
 impl HoppieHttp {
@@ -82,7 +85,20 @@ impl HoppieHttp {
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .map_err(|e| UiError::new("hoppie_http_init", e.to_string()))?;
-        Ok(Self { http })
+        Ok(Self {
+            http,
+            base_url: BASE_URL.to_string(),
+        })
+    }
+
+    /// v1.9.5 (#hoppie-replay): a client talking to a local stand-in
+    /// server instead of hoppie.nl — tests only.
+    #[cfg(test)]
+    pub(crate) fn for_test(base_url: &str) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base_url: base_url.to_string(),
+        }
     }
 
     async fn send(
@@ -99,7 +115,7 @@ impl HoppieHttp {
         // /data2/ prefix percent-encodes to three.
         let resp = self
             .http
-            .post(BASE_URL)
+            .post(&self.base_url)
             .form(&pairs)
             .send()
             .await
@@ -1779,9 +1795,26 @@ pub async fn hoppie_get_thread(
         return Ok(Vec::new());
     };
 
+    Ok(thread_entries(
+        &handle.telex_log,
+        &handle.session,
+        &handle.min_meta,
+        &handle.history_meta,
+    ))
+}
+
+/// The message list exactly as the CPDLC tab receives it — telex and
+/// CPDLC merged, sorted by time. v1.9.5 (#hoppie-replay): a function of
+/// its own so the replay tests assert what the pilot actually sees.
+pub(crate) fn thread_entries(
+    telex_log: &StdMutex<Vec<TelexEntry>>,
+    session: &StdMutex<HoppieSession>,
+    min_meta: &StdMutex<MinMeta>,
+    history_meta: &StdMutex<HistoryMeta>,
+) -> Vec<ThreadEntryDto> {
     let mut entries = Vec::new();
     {
-        let log = handle.telex_log.lock().expect("hoppie telex_log mutex");
+        let log = telex_log.lock().expect("hoppie telex_log mutex");
         entries.extend(log.iter().map(|e| ThreadEntryDto {
             kind: if e.from_cpdlc_channel {
                 "cpdlc"
@@ -1808,13 +1841,10 @@ pub async fn hoppie_get_thread(
         }));
     }
     {
-        let session = handle.session.lock().expect("hoppie session mutex");
+        let session = session.lock().expect("hoppie session mutex");
         let thread = &session.thread;
-        let meta_by_min = handle.min_meta.lock().expect("hoppie min_meta mutex");
-        let history_meta = handle
-            .history_meta
-            .lock()
-            .expect("hoppie history_meta mutex");
+        let meta_by_min = min_meta.lock().expect("hoppie min_meta mutex");
+        let history_meta = history_meta.lock().expect("hoppie history_meta mutex");
         entries.extend(thread.history().iter().enumerate().map(|(idx, e)| {
             let (element_id, text) = match &e.message.parsed {
                 hoppie_protocol::elements::ParsedElement::Recognized(r) => {
@@ -1863,7 +1893,7 @@ pub async fn hoppie_get_thread(
         }));
     }
     entries.sort_by(|a, b| a.at.cmp(&b.at));
-    Ok(entries)
+    entries
 }
 
 #[cfg(test)]

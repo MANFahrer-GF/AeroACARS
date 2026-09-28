@@ -41,3 +41,26 @@ export function datalinkLines(raw: string): string[] {
 export function formatDatalinkText(raw: string): string {
   return datalinkLines(raw).join("\n");
 }
+
+/**
+ * v1.9.5 (#hoppie-replay) — a CPDLC instruction as ONE readable line.
+ *
+ * Controller software (TopSky and friends) wraps every value in '@' and
+ * pads fields with `_` and `||`: real uplinks read
+ * "CONTACT @LRWW 125.765@_@BUCHAREST RADAR" or
+ * "MONITOR ADVISORY @122.800@. THANKS ... @ACC SOFIA@||" (GSG flight
+ * logs, 19.09./31.07.2026). Split at every '@' that became
+ * "CONTACT / LRWW 125.765 / _ / BUCHAREST RADAR" — four rows for one
+ * instruction, with filler shown as content. Here '@' is a space, a
+ * token made only of `_`/`|` is dropped, and no space is left before
+ * punctuation. The wire text stays available unchanged under "Original".
+ */
+export function cpdlcLine(raw: string): string {
+  return raw
+    .replace(/@@/g, ` ${EMPTY_FIELD} `)
+    .replace(/@/g, " ")
+    .split(/\s+/)
+    .filter((token) => token !== "" && !/^[_|]+$/.test(token))
+    .join(" ")
+    .replace(/ ([.,;:])/g, "$1");
+}

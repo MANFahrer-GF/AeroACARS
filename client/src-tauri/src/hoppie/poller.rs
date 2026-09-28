@@ -272,14 +272,88 @@ pub fn spawn(
 /// existing tray-mode notification pattern in `lib.rs` (PIREP-
 /// cancelled-remotely). `body` deliberately omits the full message
 /// text (OS notifications can be visible on a locked screen).
-fn notify_new_message(app: &AppHandle, from: &str) {
-    use tauri_plugin_notification::NotificationExt;
-    let _ = app
-        .notification()
-        .builder()
-        .title("AeroACARS — CPDLC")
-        .body(format!("Neue Nachricht von {from}"))
-        .show();
+fn notify_new_message(effects: &dyn PollEffects, from: &str) {
+    effects.notify(from);
+}
+
+/// v1.9.5 (#hoppie-replay): everything the poll pipeline does OUTSIDE the
+/// session — activity log, flight-log datalink record, OS notification,
+/// the persisted open-session marker. Production passes the `AppHandle`;
+/// the replay tests pass a recorder, so the WHOLE receive path
+/// (`process_poll_payload`) runs in a test exactly as in flight, fed with
+/// real field traffic instead of invented message formats.
+pub(crate) trait PollEffects: Send + Sync {
+    fn activity(&self, level: ActivityLevel, message: String, detail: Option<String>);
+    #[allow(clippy::too_many_arguments)]
+    fn datalink(
+        &self,
+        direction: &str,
+        channel: &str,
+        station: Option<String>,
+        min: Option<u32>,
+        mrn: Option<u32>,
+        response_code: Option<String>,
+        text: String,
+    );
+    fn notify(&self, from: &str);
+    fn set_open_session(&self, callsign: &str, station: &str);
+    fn clear_open_session(&self);
+}
+
+impl PollEffects for AppHandle {
+    fn activity(&self, level: ActivityLevel, message: String, detail: Option<String>) {
+        log_activity_handle(self, level, message, detail);
+    }
+    fn datalink(
+        &self,
+        direction: &str,
+        channel: &str,
+        station: Option<String>,
+        min: Option<u32>,
+        mrn: Option<u32>,
+        response_code: Option<String>,
+        text: String,
+    ) {
+        crate::record_datalink(self, direction, channel, station, min, mrn, response_code, text);
+    }
+    fn notify(&self, from: &str) {
+        use tauri_plugin_notification::NotificationExt;
+        let _ = self
+            .notification()
+            .builder()
+            .title("AeroACARS — CPDLC")
+            .body(format!("Neue Nachricht von {from}"))
+            .show();
+    }
+    fn set_open_session(&self, callsign: &str, station: &str) {
+        crate::hoppie::settings::set_open_session(self, callsign, station);
+    }
+    fn clear_open_session(&self) {
+        crate::hoppie::settings::clear_open_session(self);
+    }
+}
+
+fn log_activity(
+    effects: &dyn PollEffects,
+    level: ActivityLevel,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
+    effects.activity(level, message.into(), detail);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_datalink(
+    effects: &dyn PollEffects,
+    direction: &str,
+    channel: &str,
+    station: Option<String>,
+    min: Option<u32>,
+    mrn: Option<u32>,
+    response_code: Option<String>,
+    text: String,
+) {
+    effects.datalink(direction, channel, station, min, mrn, response_code, text);
 }
 
 /// Clears the persisted open-session marker ONLY if `generation` still
@@ -303,10 +377,10 @@ fn notify_new_message(app: &AppHandle, from: &str) {
 /// `.await`) file write is what makes the compare-and-write atomic
 /// against any other thread that also needs this same lock before
 /// touching the marker file.
-fn clear_marker_if_current(app: &AppHandle, session: &StdMutex<HoppieSession>, generation: u64) {
+fn clear_marker_if_current(effects: &dyn PollEffects, session: &StdMutex<HoppieSession>, generation: u64) {
     let s = session.lock().expect("hoppie session mutex");
     if s.persist_generation() == generation {
-        crate::hoppie::settings::clear_open_session(app);
+        effects.clear_open_session();
     } else {
         tracing::debug!("hoppie: skipped clearing an already-superseded open-session marker");
     }
@@ -316,7 +390,12 @@ fn clear_marker_if_current(app: &AppHandle, session: &StdMutex<HoppieSession>, g
 /// how the network transfers a CPDLC session between centres. Pure, so
 /// the parsing is testable without a live connection.
 fn parse_handover(text: &str) -> Option<String> {
-    let trimmed = text.trim();
+    // v1.9.5 (#hoppie-replay): the network writes `HANDOVER @LRWW` — '@'
+    // is Hoppie's line-break/field marker (Fenix matches "HANDOVER @"
+    // literally). Taking the token as-is logged a pilot on to "@LRWW" on
+    // 19.09.2026 (flight log 1/RJPZxEvg7Gx1YLnl). '@' reads as a space.
+    let spaced = text.replace('@', " ");
+    let trimmed = spaced.trim();
     let next = trimmed.strip_prefix("HANDOVER")?;
     // v0.19.x FIX: require a separator after the literal word. Without
     // this, any free-text starting with the 8 characters "HANDOVER"
@@ -354,7 +433,8 @@ fn parse_handover(text: &str) -> Option<String> {
 fn parse_next_data_authority(msg: &cpdlc::CpdlcMessage) -> Option<String> {
     match &msg.parsed {
         hoppie_protocol::elements::ParsedElement::Recognized(r) if r.spec_id == "UM160" => {
-            let raw = r.values.first()?;
+            // Same '@' convention as `parse_handover`.
+            let raw = r.values.first()?.replace('@', " ");
             // QS round 06.09.2026: the generic placeholder resolver hands
             // back whatever text filled `@1` verbatim — it does not itself
             // check that a "single ICAO" placeholder actually IS a single
@@ -681,6 +761,42 @@ fn is_untrusted_logon_claim(s: &HoppieSession, msg: &cpdlc::CpdlcMessage, from: 
     s.thread.claims_logon_outcome(msg) && !s.is_authorized_to_answer_pending_logon(from)
 }
 
+/// v1.9.5 (#hoppie-replay): stations that END their session with us in
+/// this poll batch (HANDOVER, END SERVICE, LOGOFF) while still in
+/// control of it. Their reply-owed instructions from the same batch are
+/// the farewell — "CONTACT @LRWW 125.765" right before "HANDOVER @LRWW"
+/// (19.09.2026), "NO FURTHER ATC AVAIL MONITOR ADVISORY" right AFTER
+/// "LOGOFF" (06.09.2026) — and the controller waits for its WILCO. The
+/// session end used to supersede them (or, arriving after it, quarantine
+/// them) so the pilot could not answer at all. Determined up front, from
+/// the session as it was BEFORE this batch.
+fn farewell_stations(
+    envelopes: &[wire::InboundEnvelope],
+    s: &HoppieSession,
+) -> std::collections::HashSet<String> {
+    envelopes
+        .iter()
+        .filter(|env| env.kind == PacketKind::Cpdlc)
+        .filter_map(|env| {
+            let msg = cpdlc::decode(&env.packet, Direction::Uplink).ok()?;
+            let ends = parse_handover(&msg.element_text).is_some() || is_end_service(&msg);
+            (ends && s.is_authorized_to_control(&env.from)).then(|| normalize_station(&env.from))
+        })
+        .collect()
+}
+
+/// Whether `msg` from `station` is a farewell instruction (see
+/// [`farewell_stations`]): it owes a reply and its sender ends the
+/// session in this very batch. Such an uplink stays answerable — to its
+/// sender — and is never superseded by that session end.
+fn is_farewell_instruction(
+    farewell: &std::collections::HashSet<String>,
+    station: &str,
+    msg: &cpdlc::CpdlcMessage,
+) -> bool {
+    msg.response.requires_reply() && farewell.contains(&normalize_station(station))
+}
+
 /// What an undecodable (headerless) CPDLC uplink did to the session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawUplinkOutcome {
@@ -743,7 +859,7 @@ fn decide_raw_uplink(
 /// `accepted` was decided, this write is stale and must be skipped; that
 /// newer event's own persistence call is authoritative instead.
 fn persist_accepted_session(
-    app: &AppHandle,
+    effects: &dyn PollEffects,
     session: &StdMutex<HoppieSession>,
     from_callsign: &str,
     accepted: Option<(String, u64)>,
@@ -753,7 +869,7 @@ fn persist_accepted_session(
     };
     let s = session.lock().expect("hoppie session mutex");
     if s.persist_generation() == generation {
-        crate::hoppie::settings::set_open_session(app, from_callsign, &station);
+        effects.set_open_session(from_callsign, &station);
     } else {
         tracing::debug!(
             station = %station,
@@ -776,7 +892,7 @@ fn persist_accepted_session(
 /// the pilot's message log actually reads from), not a stand-in for it.
 #[allow(clippy::too_many_arguments)]
 async fn process_poll_payload(
-    app: &AppHandle,
+    effects: &dyn PollEffects,
     http: &HoppieHttp,
     content: &str,
     session: &StdMutex<HoppieSession>,
@@ -813,8 +929,8 @@ async fn process_poll_payload(
         let decoded = (env.kind == PacketKind::Cpdlc)
             .then(|| cpdlc::decode(&env.packet, Direction::Uplink).ok())
             .flatten();
-        crate::record_datalink(
-            app,
+        record_datalink(
+            effects,
             "uplink",
             match env.kind {
                 PacketKind::Cpdlc => "cpdlc",
@@ -828,6 +944,7 @@ async fn process_poll_payload(
         );
     }
     let envelopes = reorder_same_batch_envelopes(envelopes);
+    let farewell = farewell_stations(&envelopes, &session.lock().expect("hoppie session mutex"));
     for env in envelopes {
         if env.kind != PacketKind::Cpdlc {
             // Telex traffic (PDC replies, free chat) — no MIN/MRN
@@ -849,7 +966,7 @@ async fn process_poll_payload(
                     superseded: false,
                 });
             if notify_os {
-                notify_new_message(app, &from);
+                notify_new_message(effects, &from);
             }
             continue;
         }
@@ -884,8 +1001,8 @@ async fn process_poll_payload(
                             expected = %current_station,
                             "hoppie: ignoring HANDOVER from unexpected sender"
                         );
-                        log_activity_handle(
-                            app,
+                        log_activity(
+                            effects,
                             ActivityLevel::Warn,
                             format!(
                                 "CPDLC: HANDOVER-Anfrage an {next} von unerwartetem Absender \
@@ -898,8 +1015,8 @@ async fn process_poll_payload(
                             )),
                         );
                     } else {
-                        log_activity_handle(
-                            app,
+                        log_activity(
+                            effects,
                             ActivityLevel::Info,
                             format!("CPDLC: Übergabe an {next}"),
                             None,
@@ -918,7 +1035,7 @@ async fn process_poll_payload(
                         // forward.
                         let generation =
                             session.lock().expect("hoppie session mutex").end_current();
-                        clear_marker_if_current(app, session, generation);
+                        clear_marker_if_current(effects, session, generation);
                         send_logon(http, session, min_meta, from_callsign, logon, &next).await;
                         continue;
                     }
@@ -972,11 +1089,11 @@ async fn process_poll_payload(
                             let generation = s.end_current();
                             (next, generation)
                         };
-                        clear_marker_if_current(app, session, generation);
+                        clear_marker_if_current(effects, session, generation);
                         match next {
                             Some(next) => {
-                                log_activity_handle(
-                                    app,
+                                log_activity(
+                                    effects,
                                     ActivityLevel::Info,
                                     format!(
                                         "CPDLC: {current_station} hat den Dienst beendet — \
@@ -989,8 +1106,8 @@ async fn process_poll_payload(
                                 continue;
                             }
                             None => {
-                                log_activity_handle(
-                                    app,
+                                log_activity(
+                                    effects,
                                     ActivityLevel::Warn,
                                     format!(
                                         "CPDLC: {current_station} hat den Dienst beendet (END SERVICE)"
@@ -1070,7 +1187,7 @@ async fn process_poll_payload(
                             superseded: true,
                         });
                     if notify_os {
-                        notify_new_message(app, &env.from);
+                        notify_new_message(effects, &env.from);
                     }
                     continue;
                 }
@@ -1137,7 +1254,7 @@ async fn process_poll_payload(
                     &this_station,
                     is_our_pending_logon_reply,
                     chrono::Utc::now(),
-                );
+                ) && !is_farewell_instruction(&farewell, &this_station, &msg);
                 if is_untrusted_sender {
                     // `is_abandoned` doesn't change the decision (the
                     // allowlist above already covers it) — kept, and used
@@ -1166,7 +1283,7 @@ async fn process_poll_payload(
                             superseded: true,
                         });
                     if notify_os {
-                        notify_new_message(app, &env.from);
+                        notify_new_message(effects, &env.from);
                     }
                     continue;
                 }
@@ -1282,7 +1399,7 @@ async fn process_poll_payload(
                                 superseded: true,
                             });
                         if notify_os {
-                            notify_new_message(app, &env.from);
+                            notify_new_message(effects, &env.from);
                         }
                         continue;
                     }
@@ -1326,9 +1443,14 @@ async fn process_poll_payload(
                 // `HistoryMeta`'s doc comment for why display needs this
                 // instead of the MIN-keyed `min_meta` below.
                 let history_idx = s.thread.history().len();
+                let farewell_instruction = is_farewell_instruction(&farewell, &this_station, &msg);
                 s.thread.record_received(msg);
                 if trusted_only_by_pdc {
                     s.mark_pdc_uplink(min, &this_station);
+                } else if farewell_instruction {
+                    // Arrived BEFORE the station's session end in this
+                    // batch: exempt it from that end's supersede.
+                    s.thread.mark_uplink_session_independent(min);
                 }
                 let now_logged_on = s.thread.is_logged_on();
                 let thread_pending_after = s.thread.pending_logon_min();
@@ -1434,9 +1556,9 @@ async fn process_poll_payload(
                 // event's own persistence call is authoritative instead —
                 // and nothing else touching this lock can interleave its
                 // own check-and-write while this one is still in progress.
-                persist_accepted_session(app, session, from_callsign, accepted);
+                persist_accepted_session(effects, session, from_callsign, accepted);
                 if notify_os {
-                    notify_new_message(app, &env.from);
+                    notify_new_message(effects, &env.from);
                 }
             }
             // An undecodable CPDLC packet must still reach the
@@ -1498,7 +1620,7 @@ async fn process_poll_payload(
                         "hoppie: headerless logon acceptance from our pending station — logged on"
                     );
                 }
-                persist_accepted_session(app, session, from_callsign, accepted);
+                persist_accepted_session(effects, session, from_callsign, accepted);
                 if cancelled_pending {
                     tracing::warn!(
                         from = %this_station,
@@ -1519,7 +1641,7 @@ async fn process_poll_payload(
                         superseded,
                     });
                 if notify_os {
-                    notify_new_message(app, &from);
+                    notify_new_message(effects, &from);
                 }
             }
             Err(e) => {
@@ -1741,6 +1863,21 @@ mod tests {
     // audit ("ein unaufgeforderter LOGOFF matcht keinen Filter") — missing
     // it here reproduces the exact 38-minute-open-uplink field incident
     // this whole fix addresses.
+    #[test]
+    fn handover_reads_hoppies_at_sign_as_a_separator() {
+        // Verbatim from flight log 1/RJPZxEvg7Gx1YLnl (19.09.2026).
+        assert_eq!(parse_handover("HANDOVER @LRWW"), Some("LRWW".to_string()));
+        assert_eq!(parse_handover("HANDOVER @LRWW@"), Some("LRWW".to_string()));
+        assert_eq!(parse_handover("HANDOVER@LRWW"), Some("LRWW".to_string()));
+        assert_eq!(parse_handover("HANDOVER @"), None);
+    }
+
+    #[test]
+    fn next_data_authority_reads_the_at_sign_as_a_separator() {
+        let msg = recognized_uplink(5, "NEXT DATA AUTHORITY @LRBB@");
+        assert_eq!(parse_next_data_authority(&msg), Some("LRBB".to_string()));
+    }
+
     #[test]
     fn end_service_recognizes_a_bare_logoff_uplink() {
         assert!(is_end_service(&recognized_uplink(6, "LOGOFF")));
@@ -2408,3 +2545,7 @@ mod tests {
         assert!(!is_untrusted_logon_claim(&s, &climb, "EDMM"));
     }
 }
+
+#[cfg(test)]
+#[path = "replay_tests.rs"]
+mod replay_tests;

@@ -4,7 +4,7 @@
 // this, the pilot saw the whole thing as one unreadable line.
 
 import { describe, it, expect } from "vitest";
-import { datalinkLines, formatDatalinkText } from "./datalink";
+import { datalinkLines, formatDatalinkText, cpdlcLine } from "./datalink";
 
 // Verbatim shape of what the VATSIM UK controller plugin sends.
 const VSMR_CLEARANCE =
@@ -56,5 +56,27 @@ describe("datalinkLines", () => {
 
   it("joins back to newline-separated text", () => {
     expect(formatDatalinkText("CLR TO @EGLL@")).toBe("CLR TO\nEGLL");
+  });
+});
+
+// v1.9.5 (#hoppie-replay): verbatim uplinks from GSG flight logs.
+describe("cpdlcLine — real controller uplinks as one line", () => {
+  it.each([
+    ["CONTACT @LRWW 125.765@_@BUCHAREST RADAR", "CONTACT LRWW 125.765 BUCHAREST RADAR"],
+    ["CURRENT ATC UNIT@_@LRBB@_@BUCHAREST RADAR", "CURRENT ATC UNIT LRBB BUCHAREST RADAR"],
+    ["PROCEED DIRECT TO @INVED", "PROCEED DIRECT TO INVED"],
+    [
+      "MONITOR ADVISORY @122.800@. THANKS FOR USING CPDLC, BEST REGARDS @ACC SOFIA@||",
+      "MONITOR ADVISORY 122.800. THANKS FOR USING CPDLC, BEST REGARDS ACC SOFIA",
+    ],
+    ["MONITOR ADVISORY 122.8 GOODBYE", "MONITOR ADVISORY 122.8 GOODBYE"],
+    ["LOGON ACCEPTED", "LOGON ACCEPTED"],
+    ["SQUAWK @@ NOW", "SQUAWK N/A NOW"],
+  ])("%s", (raw, shown) => {
+    expect(cpdlcLine(raw)).toBe(shown);
+  });
+
+  it("keeps underscores inside a callsign", () => {
+    expect(cpdlcLine("CONTACT @EDDF_GND@ 121.800")).toBe("CONTACT EDDF_GND 121.800");
   });
 });

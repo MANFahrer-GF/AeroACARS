@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { syncedGet, syncedSet } from "../lib/syncedStorage";
 import { useTranslation } from "react-i18next";
-import { formatDatalinkText } from "../lib/datalink";
+import { cpdlcLine, formatDatalinkText } from "../lib/datalink";
 import { parseUplink, formatCtot, formatHeader, type ParsedUplink } from "../lib/datalinkParse";
 import { CpdlcQuickReply, TelexQuickReply, REQUEST_TOKENS } from "./CpdlcQuickReply";
 import type { ThreadEntry } from "../hooks/useCpdlcMessages";
@@ -357,7 +357,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
             </div>
           </>
         ) : (
-          <p className="datalink-uplink__raw">{formatDatalinkText(m.text)}</p>
+          <p className="datalink-uplink__raw">{m.kind === "cpdlc" ? cpdlcLine(m.text) : formatDatalinkText(m.text)}</p>
         )}
 
         {parsed.recognized && conditionsText !== "" && (
@@ -429,7 +429,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
             genuinely on the network. */}
         <span className="datalink-downlink__delivered">{t("cpdlc.delivered")}</span>
       </p>
-      <p className="datalink-downlink__text">{formatDatalinkText(m.text)}</p>
+      <p className="datalink-downlink__text">{m.kind === "cpdlc" ? cpdlcLine(m.text) : formatDatalinkText(m.text)}</p>
     </article>
   );
 
@@ -439,7 +439,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
         {m.direction === "sent" ? t("cpdlc.thread_sent") : (station ?? t("cpdlc.thread_received"))}
       </span>
       <span className="datalink-older-line__time">{formatUtcHms(m.at)}</span>
-      <span className="datalink-older-line__text">{formatDatalinkText(m.text)}</span>
+      <span className="datalink-older-line__text">{m.kind === "cpdlc" ? cpdlcLine(m.text) : formatDatalinkText(m.text)}</span>
     </p>
   );
 
