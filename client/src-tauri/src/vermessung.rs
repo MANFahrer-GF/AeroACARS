@@ -83,7 +83,16 @@ fn standard(name: &str) -> bool {
 /// Kandidaten eines Schritts: Werte, die sich über die Stellungen ändern und
 /// nicht zum Rauschen gehören. Add-on-Werte zuerst, dann nach Zahl
 /// verschiedener Werte, dann nach Name.
-pub fn kandidaten(staende: &[Stand], rauschen: &HashSet<String>) -> Vec<Kandidat> {
+///
+/// Kommt eine Stellung zweimal vor (an/aus/an), muss der Wert dort beide
+/// Male gleich sein — so fallen Werte heraus, die nur langsam wegdriften
+/// (Sprit, Höhe, Uhr), was in der Luft sonst massenhaft Kandidaten ergäbe.
+/// `stellungen` darf leer sein (dann ohne diese Prüfung).
+pub fn kandidaten(
+    staende: &[Stand],
+    stellungen: &[String],
+    rauschen: &HashSet<String>,
+) -> Vec<Kandidat> {
     if staende.len() < 2 {
         return Vec::new();
     }
@@ -94,7 +103,11 @@ pub fn kandidaten(staende: &[Stand], rauschen: &HashSet<String>) -> Vec<Kandidat
         .filter_map(|k| {
             let werte: Vec<Option<f64>> = staende.iter().map(|s| s.get(k).copied()).collect();
             let wechselt = werte.windows(2).any(|p| !gleich(p[0], p[1]));
-            wechselt.then(|| Kandidat {
+            let treu = stellungen.len() != werte.len()
+                || (0..werte.len()).all(|i| {
+                    (0..i).all(|j| stellungen[i] != stellungen[j] || gleich(werte[i], werte[j]))
+                });
+            (wechselt && treu).then(|| Kandidat {
                 variable: k.clone(),
                 werte,
             })
@@ -155,6 +168,8 @@ struct Sitzung {
     messung_id: String,
     quelle: Quelle,
     sim: &'static str,
+    /// „boden" oder „luft" (Autopilot im Reiseflug).
+    teil: &'static str,
     flugzeug: Flugzeug,
     rauschen: HashSet<String>,
     anzahl_werte: usize,
@@ -276,17 +291,28 @@ pub struct StartAntwort {
     sitzung: u64,
 }
 
-/// Messung starten. Nur am Boden und mit verbundenem Simulator.
+/// Messung starten, mit verbundenem Simulator. Teil „boden" (Schalter am
+/// Gate) nur am Boden, Teil „luft" (Autopilot — rastet am Boden nicht ein,
+/// am 28.09.2026 im A380 geprüft) nur in der Luft.
 #[tauri::command]
 pub async fn vermessung_starten(
     app: AppHandle,
     start: Option<u64>,
+    teil: Option<String>,
 ) -> Result<StartAntwort, String> {
     let snap = crate::current_snapshot(&app).ok_or(
         "Kein Simulator verbunden — bitte erst den Simulator starten und ein Flugzeug laden.",
     )?;
-    if !snap.on_ground {
+    let teil: &'static str = match teil.as_deref() {
+        None | Some("boden") => "boden",
+        Some("luft") => "luft",
+        Some(x) => return Err(format!("Unbekannter Teil „{x}“")),
+    };
+    if teil == "boden" && !snap.on_ground {
         return Err("Bitte nur am Boden messen (Parkposition, Parkbremse gesetzt).".into());
+    }
+    if teil == "luft" && snap.on_ground {
+        return Err("Der Autopilot-Teil geht nur in der Luft (im ruhigen Reiseflug).".into());
     }
     // Laufnummer VOR dem Warten auf einen anderen Start ziehen: wird dieser
     // Aufruf abgebrochen, während er wartet, merkt er es danach.
@@ -331,6 +357,7 @@ pub async fn vermessung_starten(
             messung_id: uuid::Uuid::new_v4().simple().to_string(),
             quelle,
             sim,
+            teil,
             flugzeug: flugzeug.clone(),
             rauschen: HashSet::new(),
             anzahl_werte: 0,
@@ -503,7 +530,7 @@ pub fn vermessung_schritt_abschliessen(
         let k = if uebersprungen {
             Vec::new()
         } else {
-            kandidaten(&staende, &s.rauschen)
+            kandidaten(&staende, &stellungen, &s.rauschen)
         };
         let beispiele = k.iter().take(3).cloned().collect();
         let n = k.len();
@@ -543,6 +570,7 @@ fn bericht(s: &Sitzung) -> serde_json::Value {
         "messung_id": s.messung_id,
         "client_version": env!("CARGO_PKG_VERSION"),
         "sim": s.sim,
+        "teil": s.teil,
         "zeit_utc": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         "flugzeug": s.flugzeug,
         "anzahl_werte": s.anzahl_werte,
@@ -708,7 +736,7 @@ mod tests {
                 ("x/fest", 5.0),
             ]),
         ];
-        let k = kandidaten(&staende, &rauschen);
+        let k = kandidaten(&staende, &[], &rauschen);
         let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
         assert_eq!(
             namen,
@@ -736,7 +764,7 @@ mod tests {
         a.insert("B:KNOPF".into(), 0.0);
         b.insert("B:KNOPF".into(), 1.0);
         c.insert("B:KNOPF".into(), 2.0);
-        let k = kandidaten(&[a, b, c], &HashSet::new());
+        let k = kandidaten(&[a, b, c], &[], &HashSet::new());
         assert_eq!(k.len(), MAX_KANDIDATEN);
         assert_eq!(
             k[0].variable, "B:KNOPF",
@@ -746,6 +774,23 @@ mod tests {
 
     #[test]
     fn eine_stellung_ergibt_keine_kandidaten() {
-        assert!(kandidaten(&[st(&[("a", 1.0)])], &HashSet::new()).is_empty());
+        assert!(kandidaten(&[st(&[("a", 1.0)])], &[], &HashSet::new()).is_empty());
+    }
+
+    /// In der Luft: AP an/aus/an. Der Schalter kehrt zurück, Sprit und Höhe
+    /// driften weiter — nur der Schalter bleibt Kandidat.
+    #[test]
+    fn gleiche_stellung_gleicher_wert() {
+        let staende = vec![
+            st(&[("L:INI_ap1_on", 1.0), ("A:FUEL", 100.0), ("A:ALT", 35000.0)]),
+            st(&[("L:INI_ap1_on", 0.0), ("A:FUEL", 99.0), ("A:ALT", 35000.0)]),
+            st(&[("L:INI_ap1_on", 1.0), ("A:FUEL", 98.0), ("A:ALT", 35004.0)]),
+        ];
+        let stellungen: Vec<String> = ["AN", "AUS", "AN"].iter().map(|x| x.to_string()).collect();
+        let k = kandidaten(&staende, &stellungen, &HashSet::new());
+        let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
+        assert_eq!(namen, ["L:INI_ap1_on"]);
+        // Ohne Stellungsnamen (alter Aufruf) bleiben alle, die sich ändern.
+        assert_eq!(kandidaten(&staende, &[], &HashSet::new()).len(), 3);
     }
 }

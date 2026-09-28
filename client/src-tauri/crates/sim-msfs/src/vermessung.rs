@@ -59,6 +59,22 @@ pub fn standard_felder() -> Vec<MessFeld> {
         ("APU PCT RPM", "Percent over 100"),
         ("BRAKE PARKING POSITION", "Bool"),
         ("BRAKE PARKING INDICATOR", "Bool"),
+        // Autopilot (Teil „luft", 28.09.2026): Standardwerte, die viele
+        // Add-ons NICHT bedienen — genau das soll die Messung zeigen.
+        ("AUTOPILOT MASTER", "Bool"),
+        ("AUTOPILOT DISENGAGED", "Bool"),
+        ("AUTOPILOT FLIGHT DIRECTOR ACTIVE", "Bool"),
+        ("AUTOPILOT HEADING LOCK", "Bool"),
+        ("AUTOPILOT NAV1 LOCK", "Bool"),
+        ("AUTOPILOT ALTITUDE LOCK", "Bool"),
+        ("AUTOPILOT VERTICAL HOLD", "Bool"),
+        ("AUTOPILOT FLIGHT LEVEL CHANGE", "Bool"),
+        ("AUTOPILOT APPROACH HOLD", "Bool"),
+        ("AUTOPILOT APPROACH ARM", "Bool"),
+        ("AUTOPILOT GLIDESLOPE HOLD", "Bool"),
+        ("AUTOPILOT BACKCOURSE HOLD", "Bool"),
+        ("AUTOPILOT MANAGED THROTTLE ACTIVE", "Bool"),
+        ("AUTOTHROTTLE ACTIVE", "Bool"),
     ]
     .into_iter()
     .map(|(v, e)| MessFeld {

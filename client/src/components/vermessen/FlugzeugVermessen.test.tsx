@@ -3,7 +3,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../locales/de/common.json";
-import { SCHRITTE } from "./schritte";
+import { schritteFuer } from "./schritte";
+
+const BODEN = schritteFuer("boden");
 
 beforeAll(async () => {
   if (!i18next.isInitialized) {
@@ -106,7 +108,9 @@ describe("Flugzeug vermessen", () => {
     expect(screen.queryByRole("button", { name: "Messung starten" })).toBeNull();
     expect(screen.getByText("Schon vermessen (2)")).toBeTruthy();
     expect(screen.getByText("A380-800 RR Basic")).toBeTruthy();
-    expect(screen.getByText(/B77W · X-Plane · .* · 2 Messungen/)).toBeTruthy();
+    expect(screen.getByText("B77W · X-Plane")).toBeTruthy();
+    expect(screen.getByText(/✓ Boden .*\(2×\)/)).toBeTruthy();
+    expect(screen.getAllByText("– Luft fehlt").length).toBe(2);
   });
 
   it("Startseite MSFS ohne Scan: Tipp, erst einen Scan zu machen", async () => {
@@ -132,6 +136,18 @@ describe("Flugzeug vermessen", () => {
     expect(h.aufrufe.some((a) => a.cmd === "vermessung_scan_namen")).toBe(false);
   });
 
+  it("Startseite: Boden und Luft desselben Flugzeugs in einer Zeile", async () => {
+    h.liste = [
+      { sim: "xplane", teil: "boden", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: 1, anzahl: 1 },
+      { sim: "xplane", teil: "luft", icao: "B77W", titel: "Boeing 777-300ER", zuletzt: 2, anzahl: 1 },
+    ] as never;
+    render(<FlugzeugVermessen />);
+    expect(await screen.findByText("Schon vermessen (1)")).toBeTruthy();
+    expect(screen.queryByText(/– (Boden|Luft) fehlt/)).toBeNull();
+    expect(screen.queryByText(/Tipp: Den Autopilot-Teil/)).toBeNull();
+    expect(screen.getByText(/Dieses Flugzeug ist schon vermessen/)).toBeTruthy();
+  });
+
   it("Startseite: noch nicht vermessen → normaler Start, kein Hinweis", async () => {
     h.liste = [{ sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: 1, anzahl: 1 }];
     render(<FlugzeugVermessen />);
@@ -140,11 +156,28 @@ describe("Flugzeug vermessen", () => {
     expect(screen.queryByText(/Dieses Flugzeug ist schon vermessen/)).toBeNull();
   });
 
-  it("in der Luft lässt sich nicht starten", async () => {
+  it("in der Luft: Autopilot-Teil mit eigenen Schritten", async () => {
     h.amBoden = false;
     render(<FlugzeugVermessen />);
-    expect(await screen.findByText(/in der Luft/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Messung starten" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByText("Autopilot im Flug vermessen")).toBeTruthy();
+    expect(screen.getByText(/In der Luft · Boeing 777-300ER/)).toBeTruthy();
+    // Auswahl zeigt nur die Luft-Schritte.
+    expect(screen.getByText("Nur bestimmte Schalter messen (5 von 5)")).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: "Beacon (Anti-Collision)" })).toBeNull();
+    await klick("Autopilot-Messung starten");
+    const start = h.aufrufe.find((a) => a.cmd === "vermessung_starten");
+    expect(start?.args?.teil).toBe("luft");
+    await klick(/Ruhemessung starten/);
+    await klick("Weiter");
+    expect(await screen.findByText("Autopilot (AP)")).toBeTruthy();
+    expect(screen.getByText("Schalter 1 von 5")).toBeTruthy();
+  });
+
+  it("am Boden: Start mit teil=boden", async () => {
+    render(<FlugzeugVermessen />);
+    await klick("Messung starten");
+    const start = h.aufrufe.find((a) => a.cmd === "vermessung_starten");
+    expect(start?.args?.teil).toBe("boden");
   });
 
   it("führt durch Ruhe, Schalter und Senden", async () => {
@@ -169,7 +202,7 @@ describe("Flugzeug vermessen", () => {
     await klick("Nächster Schalter");
 
     // Alle übrigen überspringen.
-    for (let i = 1; i < SCHRITTE.length; i++) {
+    for (let i = 1; i < BODEN.length; i++) {
       await klick("Nein, überspringen");
     }
     expect(await screen.findByText("Geschafft!")).toBeTruthy();
@@ -182,7 +215,7 @@ describe("Flugzeug vermessen", () => {
     expect(cmds).toContain("vermessung_senden");
     expect(cmds[cmds.length - 1]).toBe("vermessung_beenden");
     const abschluesse = h.aufrufe.filter((a) => a.cmd === "vermessung_schritt_abschliessen");
-    expect(abschluesse).toHaveLength(SCHRITTE.length);
+    expect(abschluesse).toHaveLength(BODEN.length);
     expect(abschluesse[0]!.args).toEqual({ schalter: "beacon", uebersprungen: false, sitzung: 7 });
     expect(abschluesse[1]!.args).toEqual({ schalter: "strobe", uebersprungen: true, sitzung: 7 });
     // Jeder Befehl nach dem Start nennt die Sitzung (auch das Beenden).
@@ -226,7 +259,7 @@ describe("Flugzeug vermessen", () => {
     await klick("Messung starten");
     await klick(/Ruhemessung starten/);
     await klick("Weiter");
-    const bisKlappen = SCHRITTE.findIndex((s) => s.schalter === "klappen");
+    const bisKlappen = BODEN.findIndex((s) => s.schalter === "klappen");
     for (let i = 0; i < bisKlappen; i++) await klick("Nein, überspringen");
     expect(await screen.findByText("Klappenhebel")).toBeTruthy();
     await klick("Ja – los geht's");
@@ -247,7 +280,7 @@ describe("Flugzeug vermessen", () => {
     await klick("Messung starten");
     await klick(/Ruhemessung starten/);
     await klick("Weiter");
-    const bisKlappen = SCHRITTE.findIndex((s) => s.schalter === "klappen");
+    const bisKlappen = BODEN.findIndex((s) => s.schalter === "klappen");
     for (let i = 0; i < bisKlappen; i++) await klick("Nein, überspringen");
     await klick("Ja – los geht's");
     await klick("Erledigt – steht so");

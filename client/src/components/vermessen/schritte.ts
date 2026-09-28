@@ -16,10 +16,20 @@ export type Schalter =
   | "spoiler"
   | "autobrake"
   | "apu"
-  | "parkbremse";
+  | "parkbremse"
+  // Teil „luft" (28.09.2026): Autopilot rastet am Boden nicht ein.
+  | "autopilot"
+  | "lateral"
+  | "vertikal"
+  | "anflug"
+  | "btv";
+
+/** „boden" = am Gate, „luft" = im Flug (Autopilot, Anflug). */
+export type Teil = "boden" | "luft";
 
 export interface SchrittDef {
   schalter: Schalter;
+  teil: Teil;
   /** Stellungen in dieser Reihenfolge (Schlüssel für `vermessen.stellung.*`). */
   stellungen: string[];
   /** Klappen/Autobrake: die Zahl der Rasten ist je Flugzeug verschieden —
@@ -28,24 +38,36 @@ export interface SchrittDef {
 }
 
 export const SCHRITTE: SchrittDef[] = [
-  { schalter: "beacon", stellungen: ["aus", "an"] },
-  { schalter: "strobe", stellungen: ["off", "auto", "on"] },
-  { schalter: "nav", stellungen: ["aus", "an"] },
-  { schalter: "landelicht", stellungen: ["aus", "an"] },
-  { schalter: "taxilicht", stellungen: ["aus", "an"] },
-  { schalter: "anschnall", stellungen: ["off", "auto", "on"] },
-  { schalter: "transponder", stellungen: ["stby", "alt", "auto", "ta", "tara"] },
+  { schalter: "beacon", teil: "boden", stellungen: ["aus", "an"] },
+  { schalter: "strobe", teil: "boden", stellungen: ["off", "auto", "on"] },
+  { schalter: "nav", teil: "boden", stellungen: ["aus", "an"] },
+  { schalter: "landelicht", teil: "boden", stellungen: ["aus", "an"] },
+  { schalter: "taxilicht", teil: "boden", stellungen: ["aus", "an"] },
+  { schalter: "anschnall", teil: "boden", stellungen: ["off", "auto", "on"] },
+  { schalter: "transponder", teil: "boden", stellungen: ["stby", "alt", "auto", "ta", "tara"] },
   {
     schalter: "klappen",
+    teil: "boden",
     stellungen: ["klappen_up", "raste1", "raste2", "raste3", "raste4", "raste5", "raste6", "raste7"],
     offenesEnde: true,
   },
-  { schalter: "spoiler", stellungen: ["spoiler_ein", "spoiler_armed", "spoiler_ein"] },
+  { schalter: "spoiler", teil: "boden", stellungen: ["spoiler_ein", "spoiler_armed", "spoiler_ein"] },
   {
     schalter: "autobrake",
+    teil: "boden",
     stellungen: ["ab_off", "ab_rto", "ab_1", "ab_2", "ab_3", "ab_max"],
     offenesEnde: true,
   },
-  { schalter: "apu", stellungen: ["aus", "an", "aus"] },
-  { schalter: "parkbremse", stellungen: ["gesetzt", "geloest", "gesetzt"] },
+  { schalter: "apu", teil: "boden", stellungen: ["aus", "an", "aus"] },
+  { schalter: "parkbremse", teil: "boden", stellungen: ["gesetzt", "geloest", "gesetzt"] },
+  // In der Luft, im ruhigen Reiseflug. Jeweils zurück in die Ausgangslage —
+  // die Auswertung verlangt dann gleiche Werte bei gleicher Stellung.
+  { schalter: "autopilot", teil: "luft", stellungen: ["ap_an", "ap_aus", "ap_an"] },
+  { schalter: "lateral", teil: "luft", stellungen: ["nav_managed", "hdg_selected", "nav_managed"] },
+  { schalter: "vertikal", teil: "luft", stellungen: ["alt_halten", "vs_modus", "alt_halten"] },
+  // Nur im Anflug sinnvoll — überspringbar.
+  { schalter: "anflug", teil: "luft", stellungen: ["app_aus", "app_an"] },
+  { schalter: "btv", teil: "luft", stellungen: ["btv_aus", "btv_an"] },
 ];
+
+export const schritteFuer = (teil: Teil) => SCHRITTE.filter((x) => x.teil === teil);

@@ -3431,6 +3431,36 @@
         "titel": "Parking brake",
         "wo": "Centre console or below the main instrument panel.",
         "namen": "PARKING BRAKE · PARK BRK"
+      },
+      "autopilot": {
+        "titel": "Autopilot (AP)",
+        "wo": "Glareshield panel (FCU/MCP), AP1, AP or CMD A button.",
+        "namen": "AP1 · AP2 · CMD A · A/P ENGAGE",
+        "hinweis": "When switching it off you fly by hand briefly – switch it back on right away. A warning (cavalry charge) is normal, just acknowledge it."
+      },
+      "lateral": {
+        "titel": "Lateral NAV / HDG",
+        "wo": "Glareshield panel: heading knob. Airbus: pull = HDG (selected), push = NAV (managed). Boeing: HDG SEL or LNAV.",
+        "namen": "NAV · LNAV · HDG · HDG SEL",
+        "hinweis": "Set the HDG value to your current heading first so the aircraft doesn't turn away."
+      },
+      "vertikal": {
+        "titel": "Vertical ALT / V/S",
+        "wo": "Glareshield panel: pull the V/S knob or press V/S; back with ALT (Airbus: push the altitude knob at the same altitude, Boeing: ALT HOLD).",
+        "namen": "ALT · ALT HOLD · V/S · FPA",
+        "hinweis": "Set V/S to 0 so the altitude holds. Then back to ALT."
+      },
+      "anflug": {
+        "titel": "Approach APPR / LOC",
+        "wo": "Glareshield panel: APPR or APP button, or LOC.",
+        "namen": "APPR · APP · LOC",
+        "hinweis": "Only makes sense on an ILS approach. Skip it in cruise."
+      },
+      "btv": {
+        "titel": "Autobrake BTV",
+        "wo": "Airbus A380/A350: autobrake knob to BTV (A380) or BTV selection on the ND. Needs the runway in the flight plan.",
+        "namen": "BTV · Brake To Vacate",
+        "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected."
       }
     },
     "stellung": {
@@ -3460,7 +3490,17 @@
       "ab_3": "3",
       "ab_max": "MAX / HI",
       "gesetzt": "SET",
-      "geloest": "RELEASED"
+      "geloest": "RELEASED",
+      "ap_an": "AP ON (engaged)",
+      "ap_aus": "AP OFF",
+      "nav_managed": "NAV / LNAV (managed)",
+      "hdg_selected": "HDG (selected)",
+      "alt_halten": "ALT (hold altitude)",
+      "vs_modus": "V/S",
+      "app_aus": "APPR off",
+      "app_an": "APPR / LOC pressed (armed)",
+      "btv_aus": "BTV off",
+      "btv_an": "BTV armed"
     },
     "keine_bewegung": "nessun movimento",
     "schon_vermessen": "Questo aereo è già stato misurato (l'ultima volta il {{datum}}). Grazie! Misurarlo di nuovo ha senso solo dopo un aggiornamento importante dell'add-on.",
@@ -3473,6 +3513,23 @@
     "auswahl_titel": "Misura solo alcuni interruttori ({{anzahl}} di {{von}})",
     "auswahl_hinweis": "Devi rimisurare solo un interruttore, ad es. l'autobrake? Spunta solo quello – la misurazione a riposo iniziale resta.",
     "auswahl_alle": "Tutti",
-    "auswahl_keine": "Nessuno"
+    "auswahl_keine": "Nessuno",
+    "luft_titel": "Misura l'autopilota in volo",
+    "luft_einleitung": "L'autopilota si può misurare solo in volo – a terra non si inserisce. Cambi brevemente alcune modalità dell'autopilota, AeroACARS osserva e annota quali valori seguono. Poi la LiveMap e il log di volo mostrano correttamente per il tuo aereo se AP, HDG, NAV, ALT e APPR sono attivi.",
+    "luft_dauer": "Circa 3 minuti in crociera. APPR/LOC e BTV funzionano solo in avvicinamento – puoi saltarli o misurarli più tardi.",
+    "luft_vorher_1": "Crociera tranquilla, autopilota inserito, nessuna virata né salita/discesa prevista",
+    "luft_vorher_2": "Non poco prima del top of descent e non mentre l'ATC ti sta dando istruzioni",
+    "luft_vorher_3": "Durante il passo “AP OFF” piloti a mano per qualche secondo – tieni l'aereo stabile",
+    "luft_vorher_4": "Dopo ogni passo tutto torna come prima (AP inserito, NAV, ALT)",
+    "sim_ok_luft": "In volo · {{flugzeug}}",
+    "schon_vermessen_luft": "L'autopilota di questo aereo è già stato misurato (l'ultima volta il {{datum}}). Grazie! Misurarlo di nuovo ha senso solo dopo un aggiornamento importante dell'add-on.",
+    "luft_fehlt": "Consiglio: la parte autopilota si misura in crociera durante un volo – torna qui mentre voli.",
+    "boden_fehlt": "Consiglio: gli interruttori (luci, flap, autobrake …) si misurano al gate – torna qui dopo l'atterraggio.",
+    "luft_starten": "Avvia misurazione autopilota",
+    "auswahl_hinweis_luft": "In crociera funzionano solo AP, NAV/HDG e ALT/V/S. APPR/LOC e BTV solo in avvicinamento – misurali a parte.",
+    "ruhe_text_luft": "L'autopilota vola. Per circa 8 secondi non toccare nulla in cabina. AeroACARS annota quali valori cambiano da soli in volo (posizione, carburante, orologio) – verranno ignorati.",
+    "teil_boden": "Terra",
+    "teil_luft": "Volo",
+    "fehlt": "manca"
   }
 }

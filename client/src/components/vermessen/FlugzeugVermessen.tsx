@@ -9,12 +9,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../../lib/ipc";
 import type { SimStatus } from "../../types";
-import { SCHRITTE, type Schalter, type SchrittDef } from "./schritte";
+import { SCHRITTE, schritteFuer, type Schalter, type SchrittDef, type Teil } from "./schritte";
 import "./vermessen.css";
 
 /** Ein schon vermessenes Flugzeug (vom Server, ohne Pilotenbezug). */
 export interface Vermessen {
   sim: string | null;
+  /** „boden" | „luft" — ältere Server/Messungen ohne Angabe = Boden. */
+  teil?: string | null;
   icao: string | null;
   titel: string | null;
   zuletzt: number;
@@ -25,14 +27,36 @@ export interface Vermessen {
  *  Titel — die ICAO allein trennt z. B. FlyByWire- und iniBuilds-A380 nicht.
  *  Eine andere Lackierung mit anderem Titel wird nicht erkannt; dann wird
  *  eben doppelt gemessen, das schadet nicht. */
-export function schonVermessen(liste: Vermessen[], titel?: string | null, icao?: string | null): Vermessen | null {
+export function schonVermessen(
+  liste: Vermessen[],
+  titel?: string | null,
+  icao?: string | null,
+  teil: Teil = "boden",
+): Vermessen | null {
   const t = (titel ?? "").trim().toLowerCase();
   const i = (icao ?? "").trim().toUpperCase();
   if (!t) return null;
   return (
-    liste.find((v) => (v.titel ?? "").trim().toLowerCase() === t && (!i || !v.icao || v.icao.trim().toUpperCase() === i)) ??
-    null
+    liste.find(
+      (v) =>
+        (v.teil ?? "boden") === teil &&
+        (v.titel ?? "").trim().toLowerCase() === t &&
+        (!i || !v.icao || v.icao.trim().toUpperCase() === i),
+    ) ?? null
   );
+}
+
+/** Bestand je Flugzeug: Boden und Luft nebeneinander (Liste „Schon vermessen"). */
+export function jeFlugzeug(liste: Vermessen[]): Array<{ titel: string | null; icao: string | null; sim: string | null; boden: Vermessen | null; luft: Vermessen | null }> {
+  const aus = new Map<string, { titel: string | null; icao: string | null; sim: string | null; boden: Vermessen | null; luft: Vermessen | null }>();
+  for (const v of liste) {
+    const k = `${v.sim ?? ""}|${(v.icao ?? "").trim().toUpperCase()}|${(v.titel ?? "").trim().toLowerCase()}`;
+    const e = aus.get(k) ?? { titel: v.titel, icao: v.icao, sim: v.sim, boden: null, luft: null };
+    if ((v.teil ?? "boden") === "luft") e.luft = v;
+    else e.boden = v;
+    aus.set(k, e);
+  }
+  return [...aus.values()];
 }
 
 interface StartAntwort {
@@ -88,6 +112,7 @@ export function FlugzeugVermessen() {
   // der beim Start festgehaltene Plan — z. B. nur die Autobrake nachmessen.
   const [auswahl, setAuswahl] = useState<Set<Schalter>>(() => new Set(SCHRITTE.map((x) => x.schalter)));
   const [plan, setPlan] = useState<SchrittDef[]>(SCHRITTE);
+  const [teil, setTeil] = useState<Teil>("boden");
 
   // „Schon vermessen" — bei jedem Zurück auf die Startseite neu holen.
   useEffect(() => {
@@ -181,11 +206,15 @@ export function FlugzeugVermessen() {
     setFehler(null);
     setPhase({ art: "verbinden" });
     const n = lauf.current;
-    setPlan(SCHRITTE.filter((x) => auswahl.has(x.schalter)));
+    // Boden oder Luft entscheidet der Simulator: am Boden die Schalter, in der
+    // Luft der Autopilot (rastet am Boden nicht ein).
+    const t: Teil = sim?.snapshot?.on_ground === false ? "luft" : "boden";
+    setTeil(t);
+    setPlan(schritteFuer(t).filter((x) => auswahl.has(x.schalter)));
     startNr.current = Math.floor(Math.random() * 2 ** 50);
     sitzung.current = null;
     try {
-      const a = await ausfuehren<StartAntwort>("vermessung_starten", { start: startNr.current });
+      const a = await ausfuehren<StartAntwort>("vermessung_starten", { start: startNr.current, teil: t });
       if (!a) return;
       sitzung.current = a.sitzung;
       setStart(a);
@@ -359,7 +388,7 @@ export function FlugzeugVermessen() {
             </p>
           )}
           <h3>{t("vermessen.ruhe_titel")}</h3>
-          <p>{t("vermessen.ruhe_text")}</p>
+          <p>{teil === "luft" ? t("vermessen.ruhe_text_luft") : t("vermessen.ruhe_text")}</p>
           {phase.laeuft && <Fortschritt sekunden={8} text={t("vermessen.ruhe_laeuft")} />}
           {phase.rauschen !== null && <p className="vm-ok">✓ {t("vermessen.ruhe_fertig", { anzahl: phase.rauschen })}</p>}
           <div className="vm-knoepfe">
@@ -460,35 +489,49 @@ function StartSeite({
   const { t, i18n } = useTranslation();
   const snap = sim?.snapshot ?? null;
   const verbunden = !!snap;
-  const amBoden = snap?.on_ground !== false;
+  // In der Luft gibt es den Autopilot-Teil, am Boden die Schalter.
+  const teil: Teil = snap?.on_ground === false ? "luft" : "boden";
+  const luft = teil === "luft";
   const flugzeug = [snap?.aircraft_title, snap?.aircraft_icao].filter(Boolean).join(" · ");
   const datum = (ms: number) => new Date(ms).toLocaleDateString(i18n.language || "de");
-  const schon = verbunden ? schonVermessen(vermessen, snap?.aircraft_title, snap?.aircraft_icao) : null;
+  const schon = verbunden ? schonVermessen(vermessen, snap?.aircraft_title, snap?.aircraft_icao, teil) : null;
+  const andererTeil: Teil = luft ? "boden" : "luft";
+  const andererDa = verbunden ? schonVermessen(vermessen, snap?.aircraft_title, snap?.aircraft_icao, andererTeil) : null;
   const scanNamen = useScanNamen(sim);
+  const moeglich = schritteFuer(teil);
+  const gewaehlt = moeglich.filter((x) => auswahl.has(x.schalter)).length;
+  const bestand = jeFlugzeug(vermessen);
+  const vorher = luft
+    ? ["luft_vorher_1", "luft_vorher_2", "luft_vorher_3", "luft_vorher_4"]
+    : ["vorher_sim", "vorher_boden", "vorher_strom", "vorher_pause"];
   return (
     <section className="vm-karte">
-      <h3 className="vm-titel">{t("vermessen.titel")}</h3>
-      <p>{t("vermessen.einleitung")}</p>
-      <p className="vm-dim">{t("vermessen.dauer")}</p>
+      <h3 className="vm-titel">{luft ? t("vermessen.luft_titel") : t("vermessen.titel")}</h3>
+      <p>{luft ? t("vermessen.luft_einleitung") : t("vermessen.einleitung")}</p>
+      <p className="vm-dim">{luft ? t("vermessen.luft_dauer") : t("vermessen.dauer")}</p>
       <div className="vm-liste">
         <div className="vm-liste-titel">{t("vermessen.vorher_titel")}</div>
         <ol>
-          <li>{t("vermessen.vorher_sim")}</li>
-          <li>{t("vermessen.vorher_boden")}</li>
-          <li>{t("vermessen.vorher_strom")}</li>
-          <li>{t("vermessen.vorher_pause")}</li>
+          {vorher.map((k) => (
+            <li key={k}>{t(`vermessen.${k}`)}</li>
+          ))}
         </ol>
       </div>
-      <div className={`vm-status ${verbunden && amBoden ? "vm-status--ok" : "vm-status--warn"}`}>
-        {!verbunden ? t("vermessen.sim_fehlt") : !amBoden ? t("vermessen.sim_luft") : t("vermessen.sim_ok", { flugzeug: flugzeug || "—" })}
+      <div className={`vm-status ${verbunden ? "vm-status--ok" : "vm-status--warn"}`}>
+        {!verbunden
+          ? t("vermessen.sim_fehlt")
+          : t(luft ? "vermessen.sim_ok_luft" : "vermessen.sim_ok", { flugzeug: flugzeug || "—" })}
       </div>
       {schon && (
         <p className="vm-hinweis vm-hinweis--ok">
-          ✓ {t("vermessen.schon_vermessen", { datum: datum(schon.zuletzt) })}
+          ✓ {t(luft ? "vermessen.schon_vermessen_luft" : "vermessen.schon_vermessen", { datum: datum(schon.zuletzt) })}
         </p>
       )}
-      {!schon && amBoden && scanNamen === 0 && <p className="vm-hinweis vm-hinweis--warn">{t("vermessen.erst_scan")}</p>}
-      {!schon && amBoden && scanNamen !== null && scanNamen > 0 && (
+      {verbunden && !andererDa && (
+        <p className="vm-klein vm-dim">{t(luft ? "vermessen.boden_fehlt" : "vermessen.luft_fehlt")}</p>
+      )}
+      {!schon && scanNamen === 0 && <p className="vm-hinweis vm-hinweis--warn">{t("vermessen.erst_scan")}</p>}
+      {!schon && scanNamen !== null && scanNamen > 0 && (
         <p className="vm-klein vm-ok">✓ {t("vermessen.scan_da", { anzahl: scanNamen })}</p>
       )}
       <p className="vm-klein vm-dim">{t("vermessen.was_gesendet")}</p>
@@ -496,19 +539,19 @@ function StartSeite({
         <button
           type="button"
           className={schon ? "button" : "button button--primary"}
-          disabled={!verbunden || !amBoden || auswahl.size === 0}
+          disabled={!verbunden || gewaehlt === 0}
           onClick={onStart}
         >
-          {schon ? t("vermessen.trotzdem") : t("vermessen.starten")}
+          {schon ? t("vermessen.trotzdem") : t(luft ? "vermessen.luft_starten" : "vermessen.starten")}
         </button>
       </div>
       <details className="vm-liste vm-auswahl">
         <summary className="vm-liste-titel">
-          {t("vermessen.auswahl_titel", { anzahl: auswahl.size, von: SCHRITTE.length })}
+          {t("vermessen.auswahl_titel", { anzahl: gewaehlt, von: moeglich.length })}
         </summary>
-        <p className="vm-klein vm-dim">{t("vermessen.auswahl_hinweis")}</p>
+        <p className="vm-klein vm-dim">{t(luft ? "vermessen.auswahl_hinweis_luft" : "vermessen.auswahl_hinweis")}</p>
         <div className="vm-auswahl-gitter">
-          {SCHRITTE.map((x) => (
+          {moeglich.map((x) => (
             <label key={x.schalter} className="vm-auswahl-punkt">
               <input
                 type="checkbox"
@@ -525,27 +568,46 @@ function StartSeite({
           ))}
         </div>
         <div className="vm-knoepfe">
-          <button type="button" className="vm-link" onClick={() => onAuswahl(new Set(SCHRITTE.map((x) => x.schalter)))}>
+          <button
+            type="button"
+            className="vm-link"
+            onClick={() => onAuswahl(new Set([...auswahl, ...moeglich.map((x) => x.schalter)]))}
+          >
             {t("vermessen.auswahl_alle")}
           </button>
-          <button type="button" className="vm-link" onClick={() => onAuswahl(new Set())}>
+          <button
+            type="button"
+            className="vm-link"
+            onClick={() => onAuswahl(new Set([...auswahl].filter((x) => !moeglich.some((m) => m.schalter === x))))}
+          >
             {t("vermessen.auswahl_keine")}
           </button>
         </div>
       </details>
-      {vermessen.length > 0 && (
+      {bestand.length > 0 && (
         <details className="vm-liste vm-bestand">
-          <summary className="vm-liste-titel">{t("vermessen.liste_titel", { anzahl: vermessen.length })}</summary>
+          <summary className="vm-liste-titel">{t("vermessen.liste_titel", { anzahl: bestand.length })}</summary>
           <p className="vm-klein vm-dim">{t("vermessen.liste_hinweis")}</p>
           <ul>
-            {vermessen.map((v, n) => (
+            {bestand.map((v, n) => (
               <li key={`${v.sim}|${v.icao}|${v.titel}|${n}`}>
-                <span className="vm-bestand-name">{v.titel || "—"}</span>
-                <span className="vm-dim">
-                  {[v.icao, v.sim === "xplane" ? "X-Plane" : v.sim === "msfs" ? "MSFS" : null, datum(v.zuletzt)]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  {v.anzahl > 1 ? ` · ${t("vermessen.messungen", { anzahl: v.anzahl })}` : ""}
+                <span className="vm-bestand-name">
+                  {v.titel || "—"}
+                  <span className="vm-dim vm-bestand-meta">
+                    {[v.icao, v.sim === "xplane" ? "X-Plane" : v.sim === "msfs" ? "MSFS" : null].filter(Boolean).join(" · ")}
+                  </span>
+                </span>
+                <span className="vm-bestand-teile">
+                  {(["boden", "luft"] as const).map((tl) => {
+                    const e = v[tl];
+                    return (
+                      <span key={tl} className={e ? "vm-ok" : "vm-dim"}>
+                        {e
+                          ? `✓ ${t(`vermessen.teil_${tl}`)} ${datum(e.zuletzt)}${e.anzahl > 1 ? ` (${e.anzahl}×)` : ""}`
+                          : `– ${t(`vermessen.teil_${tl}`)} ${t("vermessen.fehlt")}`}
+                      </span>
+                    );
+                  })}
                 </span>
               </li>
             ))}

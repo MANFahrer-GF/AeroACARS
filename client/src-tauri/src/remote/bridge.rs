@@ -72,6 +72,9 @@ struct VmSitzung {
     sitzung: Option<u64>,
     #[serde(default)]
     start: Option<u64>,
+    /// Nur beim Start: „boden" oder „luft".
+    #[serde(default)]
+    teil: Option<String>,
 }
 
 /// Ohne Argumente (null) = ohne Kennung; falsche Argumente sind ein Fehler
@@ -194,9 +197,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // schalten, am iPad „Erledigt" tippen. Jeder Befehl nennt die
         // Sitzung, damit ein verspäteter Befehl eine neuere nicht anfasst.
         "vermessung_starten" => match vm_args(body) {
-            Ok(a) => {
-                from_string_err(crate::vermessung::vermessung_starten(app.clone(), a.start).await)
-            }
+            Ok(a) => from_string_err(
+                crate::vermessung::vermessung_starten(app.clone(), a.start, a.teil).await,
+            ),
             Err(e) => Err(e),
         },
         "vermessung_ruhe" => match vm_args(body) {

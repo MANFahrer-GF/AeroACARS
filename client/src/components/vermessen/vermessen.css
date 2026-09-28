@@ -230,3 +230,5 @@
 }
 .vm-auswahl-punkt { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .vm-auswahl-punkt input { width: 16px; height: 16px; accent-color: var(--accent); }
+.vm-bestand-meta { margin-left: 8px; font-weight: 400; font-size: 0.85rem; }
+.vm-bestand-teile { display: inline-flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.88rem; }

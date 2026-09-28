@@ -3431,6 +3431,36 @@
         "titel": "Parkbremse",
         "wo": "Mittelkonsole oder unter dem Hauptinstrumentenbrett.",
         "namen": "PARKING BRAKE · PARK BRK"
+      },
+      "autopilot": {
+        "titel": "Autopilot (AP)",
+        "wo": "Glareshield-Panel (FCU/MCP), Taste AP1, AP oder CMD A.",
+        "namen": "AP1 · AP2 · CMD A · A/P ENGAGE",
+        "hinweis": "Beim Ausschalten fliegst du kurz von Hand – danach sofort wieder einschalten. Eine Warnung (Cavalry Charge) ist normal, einfach quittieren."
+      },
+      "lateral": {
+        "titel": "Seitenführung NAV / HDG",
+        "wo": "Glareshield-Panel: Heading-Knopf. Airbus: ziehen = HDG (selected), drücken = NAV (managed). Boeing: HDG SEL bzw. LNAV.",
+        "namen": "NAV · LNAV · HDG · HDG SEL",
+        "hinweis": "Vorher den HDG-Wert auf den aktuellen Kurs stellen, dann dreht das Flugzeug nicht weg."
+      },
+      "vertikal": {
+        "titel": "Höhe ALT / V/S",
+        "wo": "Glareshield-Panel: V/S-Knopf ziehen bzw. V/S-Taste; zurück mit ALT (Airbus: Höhenknopf drücken bei gleicher Höhe, Boeing: ALT HOLD).",
+        "namen": "ALT · ALT HOLD · V/S · FPA",
+        "hinweis": "V/S auf 0 stellen, dann bleibt die Höhe. Danach zurück auf ALT."
+      },
+      "anflug": {
+        "titel": "Anflug APPR / LOC",
+        "wo": "Glareshield-Panel: Taste APPR bzw. APP, oder LOC.",
+        "namen": "APPR · APP · LOC",
+        "hinweis": "Nur im Anflug mit ILS sinnvoll. Im Reiseflug einfach überspringen."
+      },
+      "btv": {
+        "titel": "Autobrake BTV",
+        "wo": "Airbus A380/A350: Autobrake-Knopf auf BTV (A380) bzw. BTV-Wahl am ND. Braucht die Landebahn im Flugplan.",
+        "namen": "BTV · Brake To Vacate",
+        "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. Im Anflug mit gewählter Bahn scharf schalten."
       }
     },
     "stellung": {
@@ -3460,7 +3490,17 @@
       "ab_3": "3",
       "ab_max": "MAX / HI",
       "gesetzt": "GESETZT",
-      "geloest": "GELÖST"
+      "geloest": "GELÖST",
+      "ap_an": "AP AN (eingerastet)",
+      "ap_aus": "AP AUS",
+      "nav_managed": "NAV / LNAV (managed)",
+      "hdg_selected": "HDG (selected)",
+      "alt_halten": "ALT (Höhe halten)",
+      "vs_modus": "V/S",
+      "app_aus": "APPR aus",
+      "app_an": "APPR / LOC gedrückt (armed)",
+      "btv_aus": "BTV aus",
+      "btv_an": "BTV scharf"
     },
     "keine_bewegung": "keine Bewegung",
     "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
@@ -3473,6 +3513,23 @@
     "auswahl_titel": "Nur bestimmte Schalter messen ({{anzahl}} von {{von}})",
     "auswahl_hinweis": "Musst du nur einen Schalter nachmessen, z. B. die Autobrake? Dann hier nur den anhaken – die Ruhemessung am Anfang bleibt.",
     "auswahl_alle": "Alle",
-    "auswahl_keine": "Keine"
+    "auswahl_keine": "Keine",
+    "luft_titel": "Autopilot im Flug vermessen",
+    "luft_einleitung": "Den Autopiloten kann man nur in der Luft messen – am Boden rastet er nicht ein. Du schaltest ein paar Autopilot-Modi kurz um, AeroACARS schaut zu und merkt sich, welche Werte mitgehen. Danach zeigen LiveMap und Flug-Log bei deinem Flugzeug richtig an, ob AP, HDG, NAV, ALT und APPR aktiv sind.",
+    "luft_dauer": "Dauer: etwa 3 Minuten im Reiseflug. APPR/LOC und BTV gehen nur im Anflug – die kannst du überspringen oder später nachmessen.",
+    "luft_vorher_1": "Ruhiger Reiseflug, Autopilot an, keine Kurven und kein Steig-/Sinkflug geplant",
+    "luft_vorher_2": "Nicht kurz vor dem Top of Descent und nicht, während ATC gerade Anweisungen gibt",
+    "luft_vorher_3": "Beim Schritt „AP AUS“ fliegst du ein paar Sekunden von Hand – Flugzeug ruhig halten",
+    "luft_vorher_4": "Nach jedem Schritt steht alles wieder wie vorher (AP an, NAV, ALT)",
+    "sim_ok_luft": "In der Luft · {{flugzeug}}",
+    "schon_vermessen_luft": "Der Autopilot dieses Flugzeugs ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal lohnt sich nur nach einem größeren Update des Add-ons.",
+    "luft_fehlt": "Tipp: Den Autopilot-Teil misst du auf einem Flug im Reiseflug – einfach im Flug wieder hier reinschauen.",
+    "boden_fehlt": "Tipp: Die Schalter am Boden (Lichter, Klappen, Autobrake …) misst du am Gate – einfach nach der Landung wieder hier reinschauen.",
+    "luft_starten": "Autopilot-Messung starten",
+    "auswahl_hinweis_luft": "Im Reiseflug gehen nur AP, NAV/HDG und ALT/V/S. APPR/LOC und BTV nur im Anflug – die kannst du dann separat messen.",
+    "ruhe_text_luft": "Der Autopilot fliegt. Bitte jetzt etwa 8 Sekunden nichts im Cockpit anfassen. AeroACARS merkt sich, welche Werte sich im Flug von selbst ändern (Position, Sprit, Uhr) – die werden später ignoriert.",
+    "teil_boden": "Boden",
+    "teil_luft": "Luft",
+    "fehlt": "fehlt"
   }
 }

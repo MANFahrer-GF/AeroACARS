@@ -46,7 +46,8 @@ export async function invoke<T = unknown>(cmd: string, _args?: Record<string, un
       // ?neu = geladenes Flugzeug ist noch nicht vermessen.
       const tag = (d: number) => Date.UTC(2026, 8, d);
       const liste = [
-        { sim: "msfs", icao: "A388", titel: "A380-800 RR Basic", zuletzt: tag(28), anzahl: 2 },
+        { sim: "msfs", teil: "boden", icao: "A388", titel: "A380-800 RR Basic", zuletzt: tag(28), anzahl: 2 },
+        { sim: "xplane", teil: "luft", icao: "A333", titel: "Airbus A330-300", zuletzt: tag(27), anzahl: 1 },
         { sim: "xplane", icao: "A333", titel: "Airbus A330-300", zuletzt: tag(27), anzahl: 1 },
         { sim: "msfs", icao: "A20N", titel: "FenixA320 IAE", zuletzt: tag(24), anzahl: 1 },
       ];
