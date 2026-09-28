@@ -24,6 +24,7 @@ export type Schalter =
   | "vertikal"
   | "anflug"
   | "autoland"
+  | "autobrake_luft"
   | "btv";
 
 /** „boden" = am Gate, „luft" = im Flug (Autopilot, Anflug). */
@@ -44,7 +45,9 @@ export const SCHRITTE: SchrittDef[] = [
   { schalter: "strobe", teil: "boden", stellungen: ["off", "auto", "on"] },
   { schalter: "nav", teil: "boden", stellungen: ["aus", "an"] },
   { schalter: "landelicht", teil: "boden", stellungen: ["aus", "an"] },
-  { schalter: "taxilicht", teil: "boden", stellungen: ["aus", "an"] },
+  // Airbus-Bugscheinwerfer OFF/TAXI/T.O., A220 OFF/NARROW/WIDE — manche
+  // haben nur an/aus, dann nach zwei Stellungen „letzte Stellung“.
+  { schalter: "taxilicht", teil: "boden", stellungen: ["aus", "taxi_1", "taxi_2"], offenesEnde: true },
   { schalter: "anschnall", teil: "boden", stellungen: ["off", "auto", "on"] },
   { schalter: "transponder", teil: "boden", stellungen: ["stby", "alt", "auto", "ta", "tara"] },
   {
@@ -76,6 +79,13 @@ export const SCHRITTE: SchrittDef[] = [
   // Autoland / CAT III: im ILS-Anflug mit APPR beide AP. Endet mit beiden an,
   // das Autoland läuft normal weiter.
   { schalter: "autoland", teil: "luft", stellungen: ["ein_ap", "zwei_ap", "ein_ap", "zwei_ap"] },
+  // Stufen, die sich erst in der Luft wählen lassen (A220: LO/MED/HI).
+  {
+    schalter: "autobrake_luft",
+    teil: "luft",
+    stellungen: ["ab_off", "ab_1", "ab_2", "ab_max"],
+    offenesEnde: true,
+  },
   { schalter: "btv", teil: "luft", stellungen: ["btv_aus", "btv_an", "btv_aus"] },
 ];
 

@@ -3388,8 +3388,9 @@
       },
       "taxilicht": {
         "titel": "Taxi light",
-        "wo": "Overhead panel, light switches. The light on the nose gear.",
-        "namen": "TAXI · NOSE · TAXI & T.O."
+        "wo": "Overhead panel, row of light switches. Airbus: NOSE light switch with OFF / TAXI / T.O.; A220: TAXI with OFF / NARROW / WIDE. On others often a simple on/off switch.",
+        "namen": "NOSE · TAXI · TAXI & T.O. · NARROW / WIDE",
+        "hinweis": "If your switch only has OFF and ON, choose “That was already the last position” after the second position."
       },
       "anschnall": {
         "titel": "Seat belt sign",
@@ -3419,7 +3420,7 @@
         "titel": "Autobrake",
         "wo": "Main instrument panel, usually next to the gear lever. Knob or buttons.",
         "namen": "AUTO BRAKE · A/BRK · LO / MED / MAX · RTO",
-        "hinweis": "All levels your aircraft has. At the highest level choose “That was already the last position”. Skip levels that spring back at once on the ground (e.g. BTV on the A380) – use “This position doesn't exist” for them."
+        "hinweis": "All levels your aircraft has on the ground. At the highest level choose “That was already the last position”. Skip levels that spring back at once on the ground (e.g. BTV on the A380) with “This position doesn't exist”. If only RTO and OFF can be selected on the ground (e.g. A220), choose “That was already the last position” after OFF – you then measure LO/MED/HI in the air part."
       },
       "apu": {
         "titel": "APU (auxiliary power unit)",
@@ -3523,6 +3524,20 @@
           "2": "Take one out again: press AP2 (Boeing: CMD B) once more, the FMA shows only AP1. If a single autopilot can't be switched off, choose “This position doesn't exist”. Then “Done”.",
           "3": "Both again: press AP2 (Boeing: CMD B). Now both stay on – your autoland continues normally. Click “Done”."
         }
+      },
+      "autobrake_luft": {
+        "titel": "Autobrake (on approach)",
+        "wann": "On approach, before you set the autobrake for landing – at least 2000 ft above ground.",
+        "frage": "Can the autobrake levels on your aircraft only be selected in the air (e.g. A220)? Otherwise just skip – you already measured that on the ground.",
+        "wo": "Main instrument panel, usually next to the gear lever: autobrake knob or buttons.",
+        "namen": "AUTO BRAKE · A/BRK · OFF / LO / MED / HI",
+        "hinweis": "After the highest level choose “That was already the last position”. Finally set the level you want to land with.",
+        "tun": {
+          "0": "Starting point: autobrake OFF (or DISARM). Click “Done”.",
+          "1": "Set the autobrake to LO. Then “Done”.",
+          "2": "Set the autobrake to MED. Then “Done”.",
+          "3": "Set the autobrake to HI (or MAX), if available in flight. Then “Done” – and afterwards set the level for your landing."
+        }
       }
     },
     "stellung": {
@@ -3566,7 +3581,9 @@
       "ap1_aktiv": "only AP1 (or CMD A)",
       "ap2_aktiv": "only AP2 (or CMD B)",
       "ein_ap": "one autopilot",
-      "zwei_ap": "both autopilots (CAT 3 DUAL)"
+      "zwei_ap": "both autopilots (CAT 3 DUAL)",
+      "taxi_1": "TAXI (A220: NARROW)",
+      "taxi_2": "T.O. (A220: WIDE)"
     },
     "keine_bewegung": "no movement",
     "schon_vermessen": "This aircraft has already been measured (last on {{datum}}). Thank you! Measuring again only makes sense after a major add-on update.",

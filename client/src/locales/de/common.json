@@ -3388,8 +3388,9 @@
       },
       "taxilicht": {
         "titel": "Taxi-Licht",
-        "wo": "Overhead-Panel, Lichterreihe. Das Licht am Bugfahrwerk.",
-        "namen": "TAXI · NOSE · TAXI & T.O."
+        "wo": "Overhead-Panel, Lichterreihe. Airbus: Bugscheinwerfer-Schalter NOSE mit OFF / TAXI / T.O.; A220: TAXI mit OFF / NARROW / WIDE. Bei anderen oft ein einfacher Schalter an/aus.",
+        "namen": "NOSE · TAXI · TAXI & T.O. · NARROW / WIDE",
+        "hinweis": "Hat dein Schalter nur AUS und AN, nach der zweiten Stellung „Das war schon die letzte Stellung“ wählen."
       },
       "anschnall": {
         "titel": "Anschnallzeichen",
@@ -3419,7 +3420,7 @@
         "titel": "Autobrake",
         "wo": "Hauptinstrumentenbrett, meist neben dem Fahrwerkshebel. Knopf oder Tasten.",
         "namen": "AUTO BRAKE · A/BRK · LO / MED / MAX · RTO",
-        "hinweis": "Alle Stufen, die dein Flugzeug hat. Bei der höchsten Stufe „Das war schon die letzte Stellung“ wählen. Stufen, die am Boden sofort zurückspringen (z. B. BTV beim A380), einfach auslassen – dafür „Diese Stellung gibt es nicht“."
+        "hinweis": "Alle Stufen, die dein Flugzeug am Boden hat. Bei der höchsten Stufe „Das war schon die letzte Stellung“ wählen. Stufen, die am Boden sofort zurückspringen (z. B. BTV beim A380), mit „Diese Stellung gibt es nicht“ auslassen. Lassen sich am Boden nur RTO und OFF wählen (z. B. A220), nach OFF „Das war schon die letzte Stellung“ – LO/MED/HI misst du dann im Luft-Teil."
       },
       "apu": {
         "titel": "APU (Hilfstriebwerk)",
@@ -3523,6 +3524,20 @@
           "2": "Einen wieder herausnehmen: AP2 (Boeing: CMD B) noch einmal drücken, im FMA steht wieder nur AP1. Lässt sich ein einzelner Autopilot nicht abschalten, „Diese Stellung gibt es nicht“ wählen. Dann „Erledigt“.",
           "3": "Wieder beide: AP2 (Boeing: CMD B) drücken. Jetzt bleiben beide an – dein Autoland läuft ganz normal weiter. „Erledigt“ klicken."
         }
+      },
+      "autobrake_luft": {
+        "titel": "Autobrake (im Anflug)",
+        "wann": "Im Anflug, bevor du die Autobrake für die Landung setzt – mindestens 2000 ft über Grund.",
+        "frage": "Lassen sich die Autobrake-Stufen bei deinem Flugzeug erst in der Luft wählen (z. B. A220)? Sonst einfach überspringen – das hast du schon am Boden gemessen.",
+        "wo": "Hauptinstrumentenbrett, meist neben dem Fahrwerkshebel: Autobrake-Knopf oder -Tasten.",
+        "namen": "AUTO BRAKE · A/BRK · OFF / LO / MED / HI",
+        "hinweis": "Nach der höchsten Stufe „Das war schon die letzte Stellung“. Zum Schluss die Stufe einstellen, mit der du landen willst.",
+        "tun": {
+          "0": "Ausgangslage: Autobrake auf OFF (bzw. DISARM). „Erledigt“ klicken.",
+          "1": "Autobrake auf LO stellen. Dann „Erledigt“.",
+          "2": "Autobrake auf MED stellen. Dann „Erledigt“.",
+          "3": "Autobrake auf HI (bzw. MAX) stellen, falls es das im Flug gibt. Dann „Erledigt“ – und danach die Stufe für deine Landung einstellen."
+        }
       }
     },
     "stellung": {
@@ -3566,7 +3581,9 @@
       "ap1_aktiv": "nur AP1 (bzw. CMD A)",
       "ap2_aktiv": "nur AP2 (bzw. CMD B)",
       "ein_ap": "ein Autopilot",
-      "zwei_ap": "beide Autopiloten (CAT 3 DUAL)"
+      "zwei_ap": "beide Autopiloten (CAT 3 DUAL)",
+      "taxi_1": "TAXI (A220: NARROW)",
+      "taxi_2": "T.O. (A220: WIDE)"
     },
     "keine_bewegung": "keine Bewegung",
     "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
