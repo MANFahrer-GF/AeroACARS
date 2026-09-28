@@ -178,6 +178,11 @@ pub enum FieldId {
     TolissBeacon,
     /// `AirbusFBW/SeatBeltSignsOn` — ToLiss-Anschnallzeichen, >0 = an.
     TolissSeatBeltSigns,
+    /// `AirbusFBW/APUMaster` — ToLiss-APU-Master, 0/1. Gemessen 28.09.2026
+    /// („Flugzeug vermessen“, ToLiss A320neo): 0/1/0 beim Schalten; der
+    /// Standard `sim/cockpit2/electrical/APU_running` bleibt beim ToLiss 0
+    /// (vier Flüge mit durchgehend „APU aus“, auch am Gate).
+    TolissApuMaster,
     /// `AirbusFBW/AutoBrkLo` / `AutoBrkMed` / `AutoBrkMax` — je 0/1,
     /// hoechstens einer gesetzt (kpcrew, xpcockpit, XHSI).
     TolissAutoBrkLo,
@@ -703,6 +708,10 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::TolissSeatBeltSigns,
     },
     DatarefEntry {
+        name: "AirbusFBW/APUMaster",
+        field: FieldId::TolissApuMaster,
+    },
+    DatarefEntry {
         name: "AirbusFBW/AutoBrkLo",
         field: FieldId::TolissAutoBrkLo,
     },
@@ -960,6 +969,7 @@ pub struct XPlaneState {
     pub b738_flap_lever: Option<f32>,
     pub toliss_beacon: Option<bool>,
     pub toliss_seatbelt_signs: Option<bool>,
+    pub toliss_apu_master: Option<bool>,
     pub toliss_autobrk_lo: Option<bool>,
     pub toliss_autobrk_med: Option<bool>,
     pub toliss_autobrk_max: Option<bool>,
@@ -1110,6 +1120,7 @@ pub fn addon_quelle(field: FieldId) -> bool {
             | FieldId::B738FlapLever
             | FieldId::TolissBeacon
             | FieldId::TolissSeatBeltSigns
+            | FieldId::TolissApuMaster
             | FieldId::TolissAutoBrkLo
             | FieldId::TolissAutoBrkMed
             | FieldId::TolissAutoBrkMax
@@ -1164,6 +1175,7 @@ impl XPlaneState {
             FieldId::B738FlapLever => self.b738_flap_lever = None,
             FieldId::TolissBeacon => self.toliss_beacon = None,
             FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = None,
+            FieldId::TolissApuMaster => self.toliss_apu_master = None,
             FieldId::TolissAutoBrkLo => self.toliss_autobrk_lo = None,
             FieldId::TolissAutoBrkMed => self.toliss_autobrk_med = None,
             FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = None,
@@ -1275,6 +1287,7 @@ impl XPlaneState {
             FieldId::B738FlapLever => self.b738_flap_lever = Some(value),
             FieldId::TolissBeacon => self.toliss_beacon = Some(value > 0.5),
             FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = Some(value > 0.5),
+            FieldId::TolissApuMaster => self.toliss_apu_master = Some(value > 0.5),
             FieldId::TolissAutoBrkLo => self.toliss_autobrk_lo = Some(value > 0.5),
             FieldId::TolissAutoBrkMed => self.toliss_autobrk_med = Some(value > 0.5),
             FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = Some(value > 0.5),
@@ -1532,7 +1545,8 @@ impl XPlaneState {
             ),
             // Pushback isn't a sim-managed thing in X-Plane.
             pushback_state: None,
-            apu_switch: Some(self.apu_switch),
+            // Standard ODER ToLiss-Master (der ToLiss setzt den Standard nie).
+            apu_switch: Some(self.apu_switch || self.toliss_apu_master == Some(true)),
             apu_pct_rpm: None,
             battery_master: Some(self.battery_master),
             avionics_master: Some(self.avionics_master),
@@ -2240,6 +2254,21 @@ mod cockpit_schalter_tests {
         assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(2));
         s.apply_field(FieldId::TolissSeatBeltSigns, 0.0);
         assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(0));
+    }
+
+    #[test]
+    fn toliss_apu_master_zaehlt_obwohl_der_standard_tot_ist() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApuSwitch, 0.0); // beim ToLiss immer 0
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).apu_switch, Some(false));
+        s.apply_field(FieldId::TolissApuMaster, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).apu_switch, Some(true));
+        s.apply_field(FieldId::TolissApuMaster, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).apu_switch, Some(false));
+        // Ohne ToLiss bleibt der Standard allein maßgeblich.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApuSwitch, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).apu_switch, Some(true));
     }
 
     #[test]
