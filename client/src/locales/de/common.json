@@ -3454,13 +3454,13 @@
         "titel": "Anflug APPR / LOC",
         "wo": "Glareshield-Panel: Taste APPR bzw. APP, oder LOC.",
         "namen": "APPR · APP · LOC",
-        "hinweis": "Nur im Anflug mit ILS sinnvoll. Im Reiseflug einfach überspringen."
+        "hinweis": "Nur im Anflug mit ILS sinnvoll. Im Reiseflug einfach überspringen. Nach dem Messen wieder aus (Taste nochmal drücken) – danach normal weiterfliegen."
       },
       "btv": {
         "titel": "Autobrake BTV",
         "wo": "Airbus A380/A350: Autobrake-Knopf auf BTV (A380) bzw. BTV-Wahl am ND. Braucht die Landebahn im Flugplan.",
         "namen": "BTV · Brake To Vacate",
-        "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. Im Anflug mit gewählter Bahn scharf schalten."
+        "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. Im Anflug mit gewählter Bahn scharf schalten, zum Schluss wieder auf die Stufe, mit der du landen willst."
       }
     },
     "stellung": {

@@ -3454,13 +3454,13 @@
         "titel": "Approach APPR / LOC",
         "wo": "Glareshield panel: APPR or APP button, or LOC.",
         "namen": "APPR · APP · LOC",
-        "hinweis": "Only makes sense on an ILS approach. Skip it in cruise."
+        "hinweis": "Only makes sense on an ILS approach. Skip it in cruise. After measuring switch it off again (press once more) – then continue as normal."
       },
       "btv": {
         "titel": "Autobrake BTV",
         "wo": "Airbus A380/A350: autobrake knob to BTV (A380) or BTV selection on the ND. Needs the runway in the flight plan.",
         "namen": "BTV · Brake To Vacate",
-        "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected."
+        "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected, finally set the level you want to land with."
       }
     },
     "stellung": {

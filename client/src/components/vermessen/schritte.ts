@@ -65,9 +65,10 @@ export const SCHRITTE: SchrittDef[] = [
   { schalter: "autopilot", teil: "luft", stellungen: ["ap_an", "ap_aus", "ap_an"] },
   { schalter: "lateral", teil: "luft", stellungen: ["nav_managed", "hdg_selected", "nav_managed"] },
   { schalter: "vertikal", teil: "luft", stellungen: ["alt_halten", "vs_modus", "alt_halten"] },
-  // Nur im Anflug sinnvoll — überspringbar.
-  { schalter: "anflug", teil: "luft", stellungen: ["app_aus", "app_an"] },
-  { schalter: "btv", teil: "luft", stellungen: ["btv_aus", "btv_an"] },
+  // Nur im Anflug sinnvoll — überspringbar. Auch hier aus/an/aus, damit im
+  // Flug driftende Werte (Position, Sprit) herausfallen.
+  { schalter: "anflug", teil: "luft", stellungen: ["app_aus", "app_an", "app_aus"] },
+  { schalter: "btv", teil: "luft", stellungen: ["btv_aus", "btv_an", "btv_aus"] },
 ];
 
 export const schritteFuer = (teil: Teil) => SCHRITTE.filter((x) => x.teil === teil);
