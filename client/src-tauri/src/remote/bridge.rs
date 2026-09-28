@@ -171,6 +171,46 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "activity_log_get" => ok_json(crate::activity_log_get(st!())),
         "landing_get_current" => ok_json(crate::landing_get_current(app.clone(), st!())),
         "landing_list" => ok_json(crate::landing_list(app.clone())),
+        // „Flugzeug vermessen" (28.09.2026) — auch vom Tablet aus: im Cockpit
+        // schalten, am iPad „Erledigt" tippen.
+        "vermessung_starten" => {
+            from_string_err(crate::vermessung::vermessung_starten(app.clone()).await)
+        }
+        "vermessung_ruhe" => from_string_err(crate::vermessung::vermessung_ruhe(app.clone()).await),
+        "vermessung_stellung" => {
+            #[derive(Deserialize)]
+            struct A {
+                stellung: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(
+                    crate::vermessung::vermessung_stellung(app.clone(), a.stellung).await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "vermessung_schritt_abschliessen" => {
+            #[derive(Deserialize)]
+            struct A {
+                schalter: String,
+                uebersprungen: bool,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(crate::vermessung::vermessung_schritt_abschliessen(
+                    a.schalter,
+                    a.uebersprungen,
+                )),
+                Err(e) => Err(e),
+            }
+        }
+        "vermessung_schritt_neu" => from_string_err(crate::vermessung::vermessung_schritt_neu()),
+        "vermessung_senden" => {
+            from_string_err(crate::vermessung::vermessung_senden(app.clone()).await)
+        }
+        "vermessung_beenden" => {
+            crate::vermessung::vermessung_beenden(app.clone());
+            ok_json(())
+        }
         // Bordbuch (26.09.2026) — 1:1 wie am PC.
         "bordbuch_liste" => ok_json(crate::bordbuch_liste(app.clone())),
         "bordbuch_live" => ok_json(crate::bordbuch_live(app.clone(), st!())),

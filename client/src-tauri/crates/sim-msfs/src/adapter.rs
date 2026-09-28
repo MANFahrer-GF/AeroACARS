@@ -1240,7 +1240,8 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 *shared.pmdg.lock() = PmdgSharedState::default();
                 // Input-Events gelten nur fuer die Verbindung, in der sie
                 // abonniert wurden.
-                *shared.eingaben.lock() = crate::eingabe_events::EingabeState::default();
+                // Ein laufender Messmodus bleibt an (QS Codex, 28.09.2026).
+                shared.eingaben.lock().neue_verbindung(Instant::now());
                 // Pause und „Telemetrie nicht echt" (Replay/Teleport/Vorspulen)
                 // gelten nur für die Verbindung, in der sie gemeldet wurden.
                 // Riss sie z. B. zwischen TELEPORT_START und _DONE ab, blieb die
@@ -1301,14 +1302,7 @@ fn run_dispatch(
     // keine — dort wird gar nicht erst gefragt, alles bleibt wie bisher.
     // Aufgezaehlt wird, sobald `AircraftLoaded` eintrifft. Ein laufender
     // Messmodus bleibt erhalten.
-    {
-        let mut g = shared.eingaben.lock();
-        let alle = g.ist_alle();
-        *g = crate::eingabe_events::EingabeState::default();
-        if alle {
-            g.alle_setzen(true, Instant::now());
-        }
-    }
+    shared.eingaben.lock().neue_verbindung(Instant::now());
     if simulator == Simulator::Msfs2020 {
         shared.eingaben.lock().nicht_verfuegbar();
     }

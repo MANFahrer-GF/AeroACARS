@@ -185,7 +185,7 @@ impl MessState {
 
     /// Datenblock eines Messblocks einlesen.
     pub fn einlesen(&mut self, request_id: u32, bytes: &[u8], jetzt: Instant) {
-        if !self.gueltig_ab.is_some_and(|t| jetzt >= t) {
+        if self.gueltig_ab.is_none_or(|t| jetzt < t) {
             return;
         }
         let Some(b) = request_id.checked_sub(ID_BASIS) else {
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(w.get("L:X_407"), Some(&2.0));
         assert_eq!(w.len(), 50);
         // Zu kurzer Block (Ausnahme unterwegs) → nichts.
-        s.einlesen(ID_BASIS + 0, &werte_block(&[1.0; 10]), spaeter);
+        s.einlesen(ID_BASIS, &werte_block(&[1.0; 10]), spaeter);
         assert_eq!(s.werte().len(), 50);
     }
 

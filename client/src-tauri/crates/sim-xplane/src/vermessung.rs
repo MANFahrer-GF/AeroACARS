@@ -133,6 +133,9 @@ pub struct Spiegel {
     werte: Arc<Mutex<HashMap<i64, Wert>>>,
     namen: HashMap<i64, String>,
     stop: Arc<AtomicBool>,
+    /// Fällt auf `false`, sobald der Lesefaden endet (X-Plane beendet,
+    /// Verbindung abgerissen) — danach wäre jeder Stand nur der alte Cache.
+    lebt: Arc<AtomicBool>,
     faden: Option<JoinHandle<()>>,
     pub flugzeug: AircraftInfo,
     pub abonniert: usize,
@@ -179,7 +182,8 @@ impl Spiegel {
 
         let werte = Arc::new(Mutex::new(HashMap::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (w2, s2) = (Arc::clone(&werte), Arc::clone(&stop));
+        let lebt = Arc::new(AtomicBool::new(true));
+        let (w2, s2, l2) = (Arc::clone(&werte), Arc::clone(&stop), Arc::clone(&lebt));
         let faden = std::thread::Builder::new()
             .name("xplane-vermessung".into())
             .spawn(move || {
@@ -198,6 +202,7 @@ impl Spiegel {
                         }
                     }
                 }
+                l2.store(false, Ordering::SeqCst);
                 let _ = ws.close(None);
             })
             .map_err(|e| e.to_string())?;
@@ -206,6 +211,7 @@ impl Spiegel {
             werte,
             namen,
             stop,
+            lebt,
             faden: Some(faden),
             flugzeug,
             abonniert: ids.len(),
@@ -215,6 +221,11 @@ impl Spiegel {
     /// Wie viele Datarefs schon einen Wert geliefert haben.
     pub fn verbunden(&self) -> usize {
         self.werte.lock().len()
+    }
+
+    /// Steht die Verbindung zu X-Plane noch?
+    pub fn lebt(&self) -> bool {
+        self.lebt.load(Ordering::SeqCst)
     }
 
     /// Alle aktuellen Werte, Arrays elementweise.

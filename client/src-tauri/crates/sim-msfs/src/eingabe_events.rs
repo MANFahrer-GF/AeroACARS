@@ -360,6 +360,17 @@ impl EingabeState {
                 self.faellig_ab = Some(jetzt);
             }
         } else {
+            // Eine noch laufende „alle"-Aufzählung und ihre offenen
+            // Startwert-Anfragen verwerfen — sonst abonniert eine verspätete
+            // Liste nach dem Abbruch doch noch alles (QS Codex, 28.09.2026).
+            if self.laufend.take().is_some() {
+                self.versuche = 0;
+                if !self.nicht_verfuegbar {
+                    self.faellig_ab = Some(jetzt);
+                }
+            }
+            self.get_anfragen
+                .retain(|_, n| POSITIVLISTE.contains(&n.as_str()));
             let weg: Vec<u64> = self
                 .abonniert
                 .iter()
@@ -372,6 +383,15 @@ impl EingabeState {
                 }
             }
             self.abmelden_offen.extend(weg);
+        }
+    }
+
+    /// Neue Verbindung: alles verwerfen, ein laufender Messmodus bleibt an.
+    pub fn neue_verbindung(&mut self, jetzt: Instant) {
+        let alle = self.alle;
+        *self = Self::default();
+        if alle {
+            self.alle_setzen(true, jetzt);
         }
     }
 
@@ -580,8 +600,19 @@ mod tests {
         s.alle_setzen(false, t1);
         assert_eq!(s.abmelden_nehmen(), vec![12]);
         assert!(s.abmelden_nehmen().is_empty());
+
         assert_eq!(s.werte().get("AIRLINER_IRGENDWAS"), None);
         assert_eq!(s.werte().get("AIRLINER_LIGHTS_EXT_STROBE"), Some(&1.0));
+
+        // Neuverbindung behält den Messmodus; Abbruch mitten in der
+        // Aufzählung lässt eine verspätete Liste nichts mehr abonnieren.
+        s.alle_setzen(true, t1);
+        s.neue_verbindung(t1);
+        assert!(s.ist_alle(), "Messmodus überlebt die Neuverbindung");
+        let req = s.aufzaehlung_starten(t1).expect("sofort fällig");
+        s.alle_setzen(false, t1);
+        let spaet = liste(req, 0, 1, &[("AIRLINER_ANDERES", 99, TYP_DOUBLE)]);
+        assert!(s.liste_aufnehmen(&spaet, t1).is_none());
     }
 
     #[test]

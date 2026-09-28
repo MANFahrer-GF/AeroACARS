@@ -17,6 +17,7 @@
 //! Befehle verdrahten nur. Nichts wird in den Simulator geschrieben.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -145,6 +146,11 @@ enum Quelle {
 }
 
 struct Sitzung {
+    /// Laufnummer (siehe [`LAUF`]).
+    nr: u64,
+    /// Kennung für den Server — erneutes Senden derselben Messung legt dort
+    /// keine zweite Einreichung an.
+    messung_id: String,
     quelle: Quelle,
     sim: &'static str,
     flugzeug: Flugzeug,
@@ -157,17 +163,39 @@ struct Sitzung {
 }
 
 static SITZUNG: Mutex<Option<Sitzung>> = Mutex::new(None);
+/// Zählt bei jedem Start und jedem Beenden hoch. Ein Befehl merkt sich die
+/// Nummer, mit der er begann; wurde inzwischen abgebrochen oder neu
+/// gestartet, fasst er die Sitzung nicht mehr an (QS Codex, 28.09.2026:
+/// eine alte Ruhemessung schrieb sonst ihr Rauschen in die neue Sitzung,
+/// ein abgebrochener Start hinterließ eine aktive Messung).
+static LAUF: AtomicU64 = AtomicU64::new(0);
+
+/// Starts laufen nacheinander (PC und LAN-Brücke gleichzeitig): die
+/// MSFS-Messquelle gibt es nur einmal, ein abgebrochener Start dürfte sie
+/// sonst einem neueren unter den Füßen wegräumen.
+static START: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+const ABGEBROCHEN: &str = "Die Messung wurde abgebrochen.";
 
 // `app` braucht nur der MSFS-Zweig (Windows).
 #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
-fn stand_lesen(app: &AppHandle, q: &Quelle) -> Stand {
+fn stand_lesen(app: &AppHandle, q: &Quelle) -> Result<Stand, String> {
     match q {
-        Quelle::XPlane(s) => s.schnappschuss(),
+        Quelle::XPlane(s) => {
+            if !s.lebt() {
+                return Err(
+                    "Die Verbindung zu X-Plane ist abgerissen — bitte die Messung \
+                            abbrechen und neu starten."
+                        .into(),
+                );
+            }
+            Ok(s.schnappschuss())
+        }
         #[cfg(target_os = "windows")]
         Quelle::Msfs => {
             let st = app.state::<crate::AppState>();
             let a = st.msfs.lock().expect("msfs lock");
-            a.vermessung_werte().into_iter().collect()
+            Ok(a.vermessung_werte().into_iter().collect())
         }
     }
 }
@@ -184,10 +212,23 @@ fn quelle_beenden(app: &AppHandle, q: Quelle) {
     let _ = app;
 }
 
-fn stand_jetzt(app: &AppHandle) -> Result<Stand, String> {
+/// Nummer der laufenden Sitzung.
+fn aktuelle_nr() -> Result<u64, String> {
     let g = SITZUNG.lock().map_err(|_| "Sperre")?;
-    let s = g.as_ref().ok_or("Keine Messung aktiv")?;
-    Ok(stand_lesen(app, &s.quelle))
+    Ok(g.as_ref().ok_or("Keine Messung aktiv")?.nr)
+}
+
+/// Die Sitzung `nr` — oder Fehler, wenn sie inzwischen beendet/ersetzt ist.
+fn mit_sitzung<T>(nr: u64, f: impl FnOnce(&mut Sitzung) -> Result<T, String>) -> Result<T, String> {
+    let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
+    match g.as_mut() {
+        Some(s) if s.nr == nr => f(s),
+        _ => Err(ABGEBROCHEN.into()),
+    }
+}
+
+fn stand_jetzt(app: &AppHandle, nr: u64) -> Result<Stand, String> {
+    mit_sitzung(nr, |s| stand_lesen(app, &s.quelle))
 }
 
 // ─── Befehle ──────────────────────────────────────────────────────────────
@@ -210,11 +251,10 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
     if !snap.on_ground {
         return Err("Bitte nur am Boden messen (Parkposition, Parkbremse gesetzt).".into());
     }
-    // Eine alte Sitzung sauber beenden.
-    let alt = SITZUNG.lock().map_err(|_| "Sperre")?.take();
-    if let Some(alt) = alt {
-        quelle_beenden(&app, alt.quelle);
-    }
+    let _start = START.lock().await;
+    // Eine alte Sitzung sauber beenden; ab hier gilt diese Laufnummer.
+    vermessung_beenden(app.clone());
+    let nr = LAUF.fetch_add(1, Ordering::SeqCst) + 1;
     let kind = crate::read_sim_config(&app).kind;
     let (quelle, sim, flugzeug, l_namen) = if kind.is_xplane() {
         let spiegel =
@@ -231,35 +271,50 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
     } else {
         msfs_starten(&app, &snap).await?
     };
-    *SITZUNG.lock().map_err(|_| "Sperre")? = Some(Sitzung {
-        quelle,
-        sim,
-        flugzeug: flugzeug.clone(),
-        rauschen: HashSet::new(),
-        anzahl_werte: 0,
-        stellungen: Vec::new(),
-        staende: Vec::new(),
-        schritte: Vec::new(),
-    });
+    {
+        let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
+        // Während des Verbindens abgebrochen (Seite verlassen) oder neu
+        // gestartet: diese Quelle gleich wieder schließen.
+        if LAUF.load(Ordering::SeqCst) != nr {
+            drop(g);
+            quelle_beenden(&app, quelle);
+            return Err(ABGEBROCHEN.into());
+        }
+        *g = Some(Sitzung {
+            nr,
+            messung_id: uuid::Uuid::new_v4().simple().to_string(),
+            quelle,
+            sim,
+            flugzeug: flugzeug.clone(),
+            rauschen: HashSet::new(),
+            anzahl_werte: 0,
+            stellungen: Vec::new(),
+            staende: Vec::new(),
+            schritte: Vec::new(),
+        });
+    }
     // Warten, bis die Werte da sind (höchstens ~12 s).
     let mut anzahl = 0;
     for _ in 0..24 {
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let n = stand_jetzt(&app)?.len();
+        let n = stand_jetzt(&app, nr)?.len();
         if n > 0 && n == anzahl {
             break; // stabil
         }
         anzahl = n;
     }
     if anzahl == 0 {
-        vermessung_beenden(app.clone());
+        if LAUF.load(Ordering::SeqCst) == nr {
+            vermessung_beenden(app.clone());
+        }
         return Err(
             "Vom Simulator kommen keine Werte an. Läuft er, und ist das Flugzeug geladen?".into(),
         );
     }
-    if let Some(s) = SITZUNG.lock().map_err(|_| "Sperre")?.as_mut() {
+    mit_sitzung(nr, |s| {
         s.anzahl_werte = anzahl;
-    }
+        Ok(())
+    })?;
     Ok(StartAntwort {
         sim,
         flugzeug,
@@ -313,17 +368,18 @@ pub struct RuheAntwort {
 /// Ruhemessung: sechs Stände über ~8 s; was sich ändert, ist Rauschen.
 #[tauri::command]
 pub async fn vermessung_ruhe(app: AppHandle) -> Result<RuheAntwort, String> {
-    let mut staende = vec![stand_jetzt(&app)?];
+    let nr = aktuelle_nr()?;
+    let mut staende = vec![stand_jetzt(&app, nr)?];
     for _ in 0..5 {
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        staende.push(stand_jetzt(&app)?);
+        staende.push(stand_jetzt(&app, nr)?);
     }
     let r = unruhig(&staende);
     let n = r.len();
-    let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
-    let s = g.as_mut().ok_or("Keine Messung aktiv")?;
-    s.rauschen = r;
-    Ok(RuheAntwort { rauschen: n })
+    mit_sitzung(nr, |s| {
+        s.rauschen = r;
+        Ok(RuheAntwort { rauschen: n })
+    })
 }
 
 #[derive(Serialize)]
@@ -340,23 +396,24 @@ pub async fn vermessung_stellung(
     app: AppHandle,
     stellung: String,
 ) -> Result<StellungAntwort, String> {
+    let nr = aktuelle_nr()?;
     tokio::time::sleep(NACHLAUF).await;
-    let stand = stand_jetzt(&app)?;
-    let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
-    let s = g.as_mut().ok_or("Keine Messung aktiv")?;
-    let antwort = match s.staende.last() {
-        Some(vorher) => StellungAntwort {
-            mitgegangen: mitgegangen(vorher, &stand, &s.rauschen),
-            erste: false,
-        },
-        None => StellungAntwort {
-            mitgegangen: 0,
-            erste: true,
-        },
-    };
-    s.stellungen.push(stellung.chars().take(60).collect());
-    s.staende.push(stand);
-    Ok(antwort)
+    let stand = stand_jetzt(&app, nr)?;
+    mit_sitzung(nr, |s| {
+        let antwort = match s.staende.last() {
+            Some(vorher) => StellungAntwort {
+                mitgegangen: mitgegangen(vorher, &stand, &s.rauschen),
+                erste: false,
+            },
+            None => StellungAntwort {
+                mitgegangen: 0,
+                erste: true,
+            },
+        };
+        s.stellungen.push(stellung.chars().take(60).collect());
+        s.staende.push(stand);
+        Ok(antwort)
+    })
 }
 
 #[derive(Serialize)]
@@ -373,6 +430,16 @@ pub fn vermessung_schritt_abschliessen(
 ) -> Result<SchrittAntwort, String> {
     let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
     let s = g.as_mut().ok_or("Keine Messung aktiv")?;
+    // Doppelklick: der zweite Abschluss fände leere Stände vor und würde
+    // das gerade gebildete Ergebnis durch null Kandidaten ersetzen.
+    if !uebersprungen && s.staende.is_empty() {
+        if let Some(x) = s.schritte.iter().find(|x| x.schalter == schalter) {
+            return Ok(SchrittAntwort {
+                kandidaten: x.kandidaten.len(),
+                beispiele: x.kandidaten.iter().take(3).cloned().collect(),
+            });
+        }
+    }
     let staende = std::mem::take(&mut s.staende);
     let stellungen = std::mem::take(&mut s.stellungen);
     let k = if uebersprungen {
@@ -413,6 +480,7 @@ pub fn vermessung_schritt_neu() -> Result<(), String> {
 fn bericht(s: &Sitzung) -> serde_json::Value {
     serde_json::json!({
         "werkzeug": format!("AeroACARS {}", env!("CARGO_PKG_VERSION")),
+        "messung_id": s.messung_id,
         "client_version": env!("CARGO_PKG_VERSION"),
         "sim": s.sim,
         "zeit_utc": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -462,6 +530,7 @@ pub async fn vermessung_senden(app: AppHandle) -> Result<SendenAntwort, String> 
 /// Messung beenden (auch Abbrechen): Quelle schließen, alles verwerfen.
 #[tauri::command]
 pub fn vermessung_beenden(app: AppHandle) {
+    LAUF.fetch_add(1, Ordering::SeqCst);
     let alt = SITZUNG.lock().ok().and_then(|mut g| g.take());
     if let Some(alt) = alt {
         quelle_beenden(&app, alt.quelle);

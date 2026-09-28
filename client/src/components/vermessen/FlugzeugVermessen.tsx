@@ -58,7 +58,11 @@ export function FlugzeugVermessen() {
   const [ergebnisse, setErgebnisse] = useState<Record<string, Ergebnis>>({});
   const [fehler, setFehler] = useState<string | null>(null);
   const [sim, setSim] = useState<SimStatus | null>(null);
-  const aktiv = useRef(false);
+  // Laufnummer: Abbrechen/Verlassen zählt hoch, eine danach noch
+  // eintreffende Antwort ändert die Ansicht nicht mehr.
+  const lauf = useRef(0);
+  // Ein Befehl läuft — Doppelklicks nicht zweimal senden.
+  const belegt = useRef(false);
 
   // Simulatorstatus für den Startbildschirm.
   useEffect(() => {
@@ -81,18 +85,31 @@ export function FlugzeugVermessen() {
     };
   }, [phase.art]);
 
-  // Verlässt der Pilot die Seite, Messung sauber beenden.
+  // Verlässt der Pilot die Seite, Messung sauber beenden — auch mitten im
+  // Verbinden (der Start bricht dann im Backend selbst ab).
   useEffect(
     () => () => {
-      if (aktiv.current) void invoke("vermessung_beenden").catch(() => undefined);
+      lauf.current++;
+      void invoke("vermessung_beenden").catch(() => undefined);
     },
     [],
   );
 
   const beenden = useCallback(async () => {
-    aktiv.current = false;
+    lauf.current++;
+    belegt.current = false;
     await invoke("vermessung_beenden").catch(() => undefined);
   }, []);
+
+  /** Einen Befehl ausführen; `null`, wenn inzwischen abgebrochen wurde. */
+  const ausfuehren = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
+    const n = lauf.current;
+    const a = await invoke<T>(cmd, args);
+    return lauf.current === n ? a : null;
+  };
+  const fehlerWennAktuell = (n: number, e: unknown) => {
+    if (lauf.current === n) setFehler(fehlerText(e));
+  };
 
   const abbrechen = async () => {
     if (!window.confirm(t("vermessen.abbrechen_frage"))) return;
@@ -105,13 +122,15 @@ export function FlugzeugVermessen() {
   const starten = async () => {
     setFehler(null);
     setPhase({ art: "verbinden" });
+    const n = lauf.current;
     try {
-      const a = await invoke<StartAntwort>("vermessung_starten");
-      aktiv.current = true;
+      const a = await ausfuehren<StartAntwort>("vermessung_starten");
+      if (!a) return;
       setStart(a);
       setErgebnisse({});
       setPhase({ art: "ruhe", laeuft: false, rauschen: null });
     } catch (e) {
+      if (lauf.current !== n) return;
       setFehler(fehlerText(e));
       setPhase({ art: "start" });
     }
@@ -119,10 +138,13 @@ export function FlugzeugVermessen() {
 
   const ruhe = async () => {
     setPhase({ art: "ruhe", laeuft: true, rauschen: null });
+    const n = lauf.current;
     try {
-      const r = await invoke<{ rauschen: number }>("vermessung_ruhe");
+      const r = await ausfuehren<{ rauschen: number }>("vermessung_ruhe");
+      if (!r) return;
       setPhase({ art: "ruhe", laeuft: false, rauschen: r.rauschen });
     } catch (e) {
+      if (lauf.current !== n) return;
       setFehler(fehlerText(e));
       setPhase({ art: "ruhe", laeuft: false, rauschen: null });
     }
@@ -132,11 +154,13 @@ export function FlugzeugVermessen() {
     setPhase({ art: "schritt", nr, begonnen: false, stellung: 0, rueckmeldungen: [], misst: false, abschluss: null });
 
   const abschliessen = async (def: SchrittDef, uebersprungen: boolean, rueck: Array<{ stellung: string; antwort: StellungAntwort | null }>, nr: number) => {
+    const n = lauf.current;
     try {
-      const a = await invoke<SchrittAntwort>("vermessung_schritt_abschliessen", {
+      const a = await ausfuehren<SchrittAntwort>("vermessung_schritt_abschliessen", {
         schalter: def.schalter,
         uebersprungen,
       });
+      if (!a) return;
       setErgebnisse((e) => ({ ...e, [def.schalter]: { uebersprungen, kandidaten: a.kandidaten } }));
       if (uebersprungen) {
         weiterNach(nr);
@@ -144,7 +168,7 @@ export function FlugzeugVermessen() {
         setPhase({ art: "schritt", nr, begonnen: true, stellung: def.stellungen.length, rueckmeldungen: rueck, misst: false, abschluss: a });
       }
     } catch (e) {
-      setFehler(fehlerText(e));
+      fehlerWennAktuell(n, e);
     }
   };
 
@@ -154,16 +178,29 @@ export function FlugzeugVermessen() {
   };
 
   const stellungMessen = async (vorhanden: boolean) => {
+    if (phase.art !== "schritt" || belegt.current) return;
+    belegt.current = true;
+    try {
+      await stellungMessenInnen(vorhanden);
+    } finally {
+      belegt.current = false;
+    }
+  };
+
+  const stellungMessenInnen = async (vorhanden: boolean) => {
     if (phase.art !== "schritt") return;
+    const n = lauf.current;
     const def = SCHRITTE[phase.nr]!;
     const name = def.stellungen[phase.stellung]!;
     let rueck = phase.rueckmeldungen;
     if (vorhanden) {
       setPhase({ ...phase, misst: true });
       try {
-        const a = await invoke<StellungAntwort>("vermessung_stellung", { stellung: t(`vermessen.stellung.${name}`) });
+        const a = await ausfuehren<StellungAntwort>("vermessung_stellung", { stellung: t(`vermessen.stellung.${name}`) });
+        if (!a) return;
         rueck = [...rueck, { stellung: name, antwort: a }];
       } catch (e) {
+        if (lauf.current !== n) return;
         setFehler(fehlerText(e));
         setPhase({ ...phase, misst: false });
         return;
@@ -180,10 +217,25 @@ export function FlugzeugVermessen() {
     }
   };
 
+  const ueberspringen = async () => {
+    if (phase.art !== "schritt" || belegt.current) return;
+    belegt.current = true;
+    try {
+      await abschliessen(SCHRITTE[phase.nr]!, true, [], phase.nr);
+    } finally {
+      belegt.current = false;
+    }
+  };
+
   const letzteStellung = async () => {
-    if (phase.art !== "schritt") return;
-    const def = SCHRITTE[phase.nr]!;
-    await abschliessen(def, false, phase.rueckmeldungen, phase.nr);
+    if (phase.art !== "schritt" || belegt.current) return;
+    belegt.current = true;
+    try {
+      const def = SCHRITTE[phase.nr]!;
+      await abschliessen(def, false, phase.rueckmeldungen, phase.nr);
+    } finally {
+      belegt.current = false;
+    }
   };
 
   const schrittNeu = async () => {
@@ -195,11 +247,14 @@ export function FlugzeugVermessen() {
   const senden = async () => {
     setFehler(null);
     setPhase({ art: "fertig", sendet: true });
+    const n = lauf.current;
     try {
-      const a = await invoke<{ id: string }>("vermessung_senden");
+      const a = await ausfuehren<{ id: string }>("vermessung_senden");
+      if (!a) return;
       await beenden();
       setPhase({ art: "gesendet", id: a.id });
     } catch (e) {
+      if (lauf.current !== n) return;
       setFehler(fehlerText(e));
       setPhase({ art: "fertig", sendet: false });
     }
@@ -259,7 +314,7 @@ export function FlugzeugVermessen() {
           phase={phase}
           ergebnisse={ergebnisse}
           onBeginnen={() => setPhase({ ...phase, begonnen: true })}
-          onUeberspringen={() => void abschliessen(SCHRITTE[phase.nr]!, true, [], phase.nr)}
+          onUeberspringen={() => void ueberspringen()}
           onErledigt={() => void stellungMessen(true)}
           onGibtEsNicht={() => void stellungMessen(false)}
           onLetzte={() => void letzteStellung()}

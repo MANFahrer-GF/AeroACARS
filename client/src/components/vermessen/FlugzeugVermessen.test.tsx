@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
   aufrufe: [] as Array<{ cmd: string; args?: Record<string, unknown> }>,
   amBoden: true,
   stellungImSchritt: 0,
+  ruheSpaet: false,
+  ruheLoesen: null as null | (() => void),
 }));
 
 vi.mock("../../lib/ipc", () => ({
@@ -31,6 +33,7 @@ vi.mock("../../lib/ipc", () => ({
       case "vermessung_starten":
         return Promise.resolve({ sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W" }, anzahl_werte: 9312, l_namen: 0 });
       case "vermessung_ruhe":
+        if (h.ruheSpaet) return new Promise((res) => (h.ruheLoesen = () => res({ rauschen: 214 })));
         return Promise.resolve({ rauschen: 214 });
       case "vermessung_stellung": {
         const erste = h.stellungImSchritt === 0;
@@ -58,6 +61,8 @@ beforeEach(() => {
   h.aufrufe = [];
   h.amBoden = true;
   h.stellungImSchritt = 0;
+  h.ruheSpaet = false;
+  h.ruheLoesen = null;
 });
 
 describe("Flugzeug vermessen", () => {
@@ -127,5 +132,42 @@ describe("Flugzeug vermessen", () => {
     await waitFor(() => expect(screen.getByText(/Werte gehen mit diesem Schalter mit/)).toBeTruthy());
     const letzter = h.aufrufe.filter((a) => a.cmd === "vermessung_schritt_abschliessen").pop();
     expect(letzter!.args).toEqual({ schalter: "klappen", uebersprungen: false });
+  });
+
+  it("Doppelklick auf „letzte Stellung“ schließt nur einmal ab", async () => {
+    render(<FlugzeugVermessen />);
+    await screen.findByText(/Simulator verbunden/);
+    await klick("Messung starten");
+    await klick(/Ruhemessung starten/);
+    await klick("Weiter");
+    const bisKlappen = SCHRITTE.findIndex((s) => s.schalter === "klappen");
+    for (let i = 0; i < bisKlappen; i++) await klick("Nein, überspringen");
+    await klick("Ja – los geht's");
+    await klick("Erledigt – steht so");
+    await screen.findByText("Ausgangsstellung gemerkt");
+    await klick("Erledigt – steht so");
+    await screen.findByText("✓ 3 Werte haben sich bewegt");
+    const knopf = screen.getByRole("button", { name: "Das war schon die letzte Stellung" });
+    fireEvent.click(knopf);
+    fireEvent.click(knopf);
+    await screen.findByText(/Werte gehen mit diesem Schalter mit/);
+    const klappen = h.aufrufe.filter((a) => a.cmd === "vermessung_schritt_abschliessen" && a.args?.schalter === "klappen");
+    expect(klappen).toHaveLength(1);
+  });
+
+  it("nach Abbruch ändert eine späte Antwort die Ansicht nicht mehr", async () => {
+    render(<FlugzeugVermessen />);
+    await screen.findByText(/Simulator verbunden/);
+    await klick("Messung starten");
+    h.ruheSpaet = true;
+    await klick(/Ruhemessung starten/);
+    // Ruhemessung läuft noch — abbrechen, dann kommt ihre Antwort.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await klick("Messung abbrechen");
+    expect(await screen.findByRole("button", { name: "Messung starten" })).toBeTruthy();
+    h.ruheLoesen!();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/Werte ändern sich von selbst/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Messung starten" })).toBeTruthy();
   });
 });
