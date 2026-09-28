@@ -9059,15 +9059,74 @@ impl From<ApiError> for UiError {
 /// (detent_label). Anlass: iFly-Flug 11.08.2026 — "Flaps 5" (Raste 3
 /// von 8) lief durchs Airbus-Prozentraster und hiess "1+F"; die
 /// Standard-Landung "Flaps 30" hiess "3".
-fn raster_flap_label(num_positions: u8, index: u8) -> Option<&'static str> {
+fn raster_flap_label(num_positions: u8, index: u8, icao: Option<&str>) -> Option<&'static str> {
     const B737: [&str; 9] = ["UP", "1", "2", "5", "10", "15", "25", "30", "40"];
     const B777: [&str; 7] = ["UP", "1", "5", "15", "20", "25", "30"];
     const AIRBUS: [&str; 5] = ["UP", "1", "2", "3", "FULL"];
+    // Airbus mit 1+F als eigener Raste: Fenix A32x meldet im Flug 5 Rasten,
+    // Index 0..=5 = UP/1/1+F/2/3/FULL (Flug-Logs 28.09.2026). Vorher stand
+    // im Aktivitaetslog "Raste 2/5". Nur fuer Airbus-Muster — 5 Rasten hat
+    // z. B. auch der CRJ (0/1/8/20/30/45).
+    const AIRBUS_1F: [&str; 6] = ["UP", "1", "1+F", "2", "3", "FULL"];
     match num_positions {
         8 => B737.get(index as usize).copied(),
         6 => B777.get(index as usize).copied(),
+        5 if icao.is_some_and(ist_airbus_mit_1f) => AIRBUS_1F.get(index as usize).copied(),
         4 => AIRBUS.get(index as usize).copied(),
         _ => None,
+    }
+}
+
+/// Airbus-Muster mit der Klappenstellung 1+F (A32x, A330, A340, A350).
+fn ist_airbus_mit_1f(icao: &str) -> bool {
+    matches!(
+        icao.trim().to_ascii_uppercase().as_str(),
+        "A318"
+            | "A319"
+            | "A320"
+            | "A321"
+            | "A19N"
+            | "A20N"
+            | "A21N"
+            | "A332"
+            | "A333"
+            | "A338"
+            | "A339"
+            | "A342"
+            | "A343"
+            | "A345"
+            | "A346"
+            | "A359"
+            | "A35K"
+    )
+}
+
+#[cfg(test)]
+mod raster_flap_label_tests {
+    use super::raster_flap_label;
+
+    #[test]
+    fn fenix_fuenf_rasten_mit_eins_plus_f() {
+        let l: Vec<_> = (0..=5)
+            .map(|i| raster_flap_label(5, i, Some("A320")))
+            .collect();
+        let soll = ["UP", "1", "1+F", "2", "3", "FULL"].map(Some);
+        assert_eq!(l, soll);
+        assert_eq!(raster_flap_label(5, 6, Some("A320")), None);
+    }
+
+    #[test]
+    fn fuenf_rasten_ohne_airbus_bleiben_ohne_namen() {
+        // CRJ: ebenfalls 5 Rasten, aber 1/8/20/30/45 — nicht raten.
+        assert_eq!(raster_flap_label(5, 2, Some("CRJ7")), None);
+        assert_eq!(raster_flap_label(5, 2, None), None);
+    }
+
+    #[test]
+    fn bisherige_tabellen_unveraendert() {
+        assert_eq!(raster_flap_label(4, 4, Some("A320")), Some("FULL"));
+        assert_eq!(raster_flap_label(8, 3, Some("B738")), Some("5"));
+        assert_eq!(raster_flap_label(6, 2, None), Some("5"));
     }
 }
 
@@ -51339,7 +51398,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // Rastenzahl -> echte Boeing-/Airbus-Namen), Prozent-Heuristik
         // nur noch als Rueckfall fuer Sims ohne die beiden SimVars.
         let label: String = match (snap.flap_num_positions, snap.flap_handle_index) {
-            (Some(num), Some(idx)) => raster_flap_label(num, idx)
+            (Some(num), Some(idx)) => raster_flap_label(num, idx, snap.aircraft_icao.as_deref())
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("Raste {idx}/{num}")),
             _ => {

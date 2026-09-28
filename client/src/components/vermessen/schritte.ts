@@ -43,16 +43,17 @@ export interface SchrittDef {
 export const SCHRITTE: SchrittDef[] = [
   { schalter: "beacon", teil: "boden", stellungen: ["aus", "an"] },
   { schalter: "strobe", teil: "boden", stellungen: ["off", "auto", "on"] },
-  // Airbus: NAV & LOGO in einer Taste mit zwei Stellungen (Fenix 0/1/2) —
-  // wer nur an/aus hat, wählt nach AN „letzte Stellung“.
-  { schalter: "nav", teil: "boden", stellungen: ["aus", "an", "nav_2"], offenesEnde: true },
-  // Airbus: ON / OFF / RETRACT — RETRACT als dritte, optionale Stellung.
-  { schalter: "landelicht", teil: "boden", stellungen: ["aus", "an", "lande_retract"], offenesEnde: true },
+  // Airbus: NAV & LOGO OFF / 1 / 2 (Fenix 0/1/2) — wer nur an/aus hat,
+  // wählt nach der zweiten Stellung „letzte Stellung“.
+  { schalter: "nav", teil: "boden", stellungen: ["aus", "nav_1", "nav_2"], offenesEnde: true },
+  // Airbus: RETRACT / OFF / ON — RETRACT als dritte, optionale Stellung
+  // (ohne RETRACT, z. B. Boeing, nach ON „letzte Stellung“).
+  { schalter: "landelicht", teil: "boden", stellungen: ["lande_off", "lande_on", "lande_retract"], offenesEnde: true },
   // Airbus-Bugscheinwerfer OFF/TAXI/T.O., A220 OFF/NARROW/WIDE — manche
   // haben nur an/aus, dann nach zwei Stellungen „letzte Stellung“.
   { schalter: "taxilicht", teil: "boden", stellungen: ["aus", "taxi_1", "taxi_2"], offenesEnde: true },
   { schalter: "anschnall", teil: "boden", stellungen: ["off", "auto", "on"] },
-  { schalter: "transponder", teil: "boden", stellungen: ["stby", "alt", "auto", "ta", "tara"] },
+  { schalter: "transponder", teil: "boden", stellungen: ["stby", "auto", "xpdr_on", "alt", "ta", "tara"] },
   {
     schalter: "klappen",
     teil: "boden",

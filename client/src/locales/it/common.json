@@ -3382,13 +3382,13 @@
         "titel": "Navigation lights",
         "wo": "Overhead panel, light switches. The red/green position lights at the wing tips.",
         "namen": "NAV · NAV & LOGO · POSITION",
-        "hinweis": "On Airbus the button is called NAV & LOGO and has two positions besides OFF: the first at “ON”, then the second. If you only have OFF and ON, choose “That was already the last position” after “ON”."
+        "hinweis": "On the Airbus the button is called NAV & LOGO and has three positions: OFF, 1 and 2. If yours only has OFF and ON, switch to ON at “1” and then choose “That was already the last position”."
       },
       "landelicht": {
         "titel": "Landing lights",
         "wo": "Overhead panel, light switches. Often several switches (left, right, nose).",
         "namen": "LANDING · LAND L/R · RETRACTABLE / FIXED",
-        "hinweis": "On Airbus the landing light has three positions: ON, OFF and RETRACT (stowed). First OFF, then ON, finally RETRACT. If you only have OFF and ON, choose “That was already the last position” after “ON”."
+        "hinweis": "On the Airbus the landing light has three positions: RETRACT (stowed), OFF (extended but off) and ON. Measure OFF first, then ON, finally RETRACT. If yours only has OFF and ON, choose “That was already the last position” after “ON”."
       },
       "taxilicht": {
         "titel": "Taxi light",
@@ -3406,7 +3406,7 @@
         "titel": "Transponder and TCAS",
         "wo": "Rear centre console (pedestal), transponder/TCAS panel. On Airbus often two knobs: AUTO/ON and TA/RA.",
         "namen": "STBY · ALT · XPNDR · AUTO · ON · TA ONLY · TA/RA",
-        "hinweis": "Names differ by manufacturer. If a position doesn't exist, choose “This position doesn't exist”."
+        "hinweis": "Airbus: STBY, AUTO and ON on the transponder knob, TA ONLY and TA/RA on the TCAS knob. Boeing: STBY, ALT OFF/ALT ON or XPNDR, TA ONLY, TA/RA. If a position does not exist, just choose “This position doesn't exist”."
       },
       "klappen": {
         "titel": "Flap lever",
@@ -3551,7 +3551,7 @@
       "auto": "AUTO",
       "on": "ON",
       "stby": "STBY (standby)",
-      "alt": "ALT / XPNDR (with altitude)",
+      "alt": "ALT / XPNDR (Boeing, with altitude)",
       "ta": "TA ONLY",
       "tara": "TA/RA",
       "klappen_up": "UP / 0 (retracted)",
@@ -3588,8 +3588,12 @@
       "zwei_ap": "both autopilots (CAT 3 DUAL)",
       "taxi_1": "TAXI (A220: NARROW)",
       "taxi_2": "T.O. (A220: WIDE)",
-      "nav_2": "NAV & LOGO – second position (Airbus)",
-      "lande_retract": "RETRACT (stowed, Airbus)"
+      "nav_2": "2 (Airbus NAV & LOGO)",
+      "lande_retract": "RETRACT (stowed, Airbus)",
+      "nav_1": "1 (Airbus NAV & LOGO) / ON",
+      "lande_off": "OFF",
+      "lande_on": "ON",
+      "xpdr_on": "ON (Airbus)"
     },
     "keine_bewegung": "nessun movimento",
     "schon_vermessen": "Questo aereo è già stato misurato (l'ultima volta il {{datum}}). Grazie! Misurarlo di nuovo ha senso solo dopo un aggiornamento importante dell'add-on.",

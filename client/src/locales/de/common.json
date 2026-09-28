@@ -3382,13 +3382,13 @@
         "titel": "Navigationslichter",
         "wo": "Overhead-Panel, Lichterreihe. Die roten/grünen Positionslichter an den Flügelspitzen.",
         "namen": "NAV · NAV & LOGO · POSITION",
-        "hinweis": "Beim Airbus heißt die Taste NAV & LOGO und hat zwei Stellungen neben OFF: bei „AN“ die erste, dann die zweite. Hast du nur AUS und AN, nach „AN“ „Das war schon die letzte Stellung“."
+        "hinweis": "Beim Airbus heißt die Taste NAV & LOGO und hat drei Stellungen: OFF, 1 und 2. Hast du nur AUS und AN, bei „1“ auf AN schalten und danach „Das war schon die letzte Stellung“."
       },
       "landelicht": {
         "titel": "Landelicht",
         "wo": "Overhead-Panel, Lichterreihe. Oft mehrere Schalter (links, rechts, Nase).",
         "namen": "LANDING · LAND L/R · RETRACTABLE / FIXED",
-        "hinweis": "Beim Airbus hat der Landescheinwerfer drei Stellungen: ON, OFF und RETRACT (eingefahren). Erst OFF, dann ON, zum Schluss RETRACT. Hast du nur AUS und AN, nach „AN“ „Das war schon die letzte Stellung“."
+        "hinweis": "Beim Airbus hat der Landescheinwerfer drei Stellungen: RETRACT (eingefahren), OFF (ausgefahren, aber aus) und ON. Gemessen wird erst OFF, dann ON, zum Schluss RETRACT. Hast du nur AUS und AN, nach „ON“ „Das war schon die letzte Stellung“."
       },
       "taxilicht": {
         "titel": "Taxi-Licht",
@@ -3406,7 +3406,7 @@
         "titel": "Transponder und TCAS",
         "wo": "Mittelkonsole hinten (Pedestal), Transponder-/TCAS-Panel. Bei Airbus oft zwei Knöpfe: AUTO/ON und TA/RA.",
         "namen": "STBY · ALT · XPNDR · AUTO · ON · TA ONLY · TA/RA",
-        "hinweis": "Die Namen heißen je Hersteller anders. Gibt es eine Stellung nicht, einfach „Diese Stellung gibt es nicht“."
+        "hinweis": "Airbus: STBY, AUTO und ON am Transponder-Knopf, TA ONLY und TA/RA am TCAS-Knopf. Boeing: STBY, ALT OFF/ALT ON bzw. XPNDR, TA ONLY, TA/RA. Gibt es eine Stellung nicht, einfach „Diese Stellung gibt es nicht“."
       },
       "klappen": {
         "titel": "Klappenhebel",
@@ -3551,7 +3551,7 @@
       "auto": "AUTO",
       "on": "ON",
       "stby": "STBY (Standby)",
-      "alt": "ALT / XPNDR (mit Höhe)",
+      "alt": "ALT / XPNDR (Boeing, mit Höhe)",
       "ta": "TA ONLY",
       "tara": "TA/RA",
       "klappen_up": "UP / 0 (eingefahren)",
@@ -3588,8 +3588,12 @@
       "zwei_ap": "beide Autopiloten (CAT 3 DUAL)",
       "taxi_1": "TAXI (A220: NARROW)",
       "taxi_2": "T.O. (A220: WIDE)",
-      "nav_2": "NAV & LOGO – zweite Stellung (Airbus)",
-      "lande_retract": "RETRACT (eingefahren, Airbus)"
+      "nav_2": "2 (Airbus NAV & LOGO)",
+      "lande_retract": "RETRACT (eingefahren, Airbus)",
+      "nav_1": "1 (Airbus NAV & LOGO) / AN",
+      "lande_off": "OFF",
+      "lande_on": "ON",
+      "xpdr_on": "ON (Airbus)"
     },
     "keine_bewegung": "keine Bewegung",
     "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
