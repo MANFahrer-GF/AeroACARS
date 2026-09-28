@@ -20,10 +20,13 @@
 //!
 //! - The uplink's MRN points at our `REQUEST LOGON`: the controller is
 //!   answering exactly that, so any accept/refuse wording counts.
-//! - No MRN (vSMR sets one on nothing): only wording that is about a
-//!   logon or connection counts. A bare `ACCEPTED` without MRN still
-//!   counts — PMDG takes it, and the caller has already checked that the
-//!   sender is the station we are logging on to.
+//! - No MRN (vSMR sets one on nothing): only wording that NAMES the
+//!   logon or connection counts ("LOGON ACCEPTED", "CONNECTION
+//!   REJECTED"). External QS (Codex, 28.09.2026) P1: a bare `ACCEPTED`
+//!   or vSMR's PDC refusal "FSM … RCD REJECTED @FLIGHT PLAN NOT HELD"
+//!   (real, EDDM 18.09.) from the same station would otherwise settle a
+//!   logon that was never mentioned — Fenix, too, reads "FLIGHT PLAN NOT
+//!   HELD" only as the answer to its logon's MIN.
 //!
 //! Refusal wording is checked FIRST, so `NOT ACCEPTED` or `LOGON
 //! ACCEPTED ... REJECTED` never reads as an acceptance.
@@ -64,12 +67,7 @@ fn says_accepted(n: &str) -> bool {
 /// Wording that can only be about a logon/connection — what an answer
 /// WITHOUT an MRN has to show before it may settle our logon.
 fn is_about_the_logon(n: &str) -> bool {
-    n == "ACCEPTED"
-        || n.contains("LOGON")
-        || n.contains("LOG ON")
-        || n.contains("LOGGED ON")
-        || n.contains("CONNECTION")
-        || n.contains("FLIGHT PLAN NOT HELD")
+    n.contains("LOGON") || n.contains("LOG ON") || n.contains("LOGGED ON") || n.contains("CONNECTION")
 }
 
 /// Read a logon verdict from `text`. `replies_to_our_logon` is true when
@@ -123,15 +121,30 @@ mod tests {
             "LOGON SUCCESSFUL",
             "CONNECTION ACCEPTED",
             "LOGGED ON",
-            "ACCEPTED",
             "LOGON@ACCEPTED",
             "  LOGON   ACCEPTED  ",
             "CPDLC LOGON ACCEPTED BY EDGG",
-            "ACCEPTED.",
+            "LOGON ACCEPTED.",
             "LOGON ACCEPTED, EDGG",
         ] {
             assert_eq!(classify(text, false), A, "{text:?}");
         }
+    }
+
+    #[test]
+    fn without_an_mrn_the_text_must_name_the_logon() {
+        // External QS (Codex, 28.09.2026) P1 — verbatim vSMR PDC refusal,
+        // EDDM 18.09.2026: must not settle a logon to the same station.
+        assert_eq!(
+            classify("FSM 2024 260918 ---- DLH2AS@DLH2AS@ RCD REJECTED @FLIGHT PLAN NOT HELD @REVERT TO VOICE PROCEDURES", false),
+            None
+        );
+        assert_eq!(classify("FLIGHT PLAN NOT HELD", false), None);
+        assert_eq!(classify("ACCEPTED", false), None);
+        assert_eq!(classify("ACCEPTED.", false), None);
+        // With the MRN on our logon, the same words DO answer it (Fenix).
+        assert_eq!(classify("FLIGHT PLAN NOT HELD", true), R);
+        assert_eq!(classify("ACCEPTED.", true), A);
     }
 
     #[test]
@@ -148,12 +161,12 @@ mod tests {
     #[test]
     fn refusal_wording_counts_and_beats_acceptance() {
         for text in [
-            "FLIGHT PLAN NOT HELD",
             "LOGON REJECTED",
             "CONNECTION REJECTED",
             "LOGON NOT ACCEPTED",
             "LOGON DENIED",
             "LOGON ACCEPTED - REJECTED",
+            "LOGON REJECTED - FLIGHT PLAN NOT HELD",
         ] {
             assert_eq!(classify(text, false), R, "{text:?} (no MRN)");
             assert_eq!(classify(text, true), R, "{text:?} (MRN)");

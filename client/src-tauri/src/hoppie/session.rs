@@ -143,6 +143,11 @@ pub(crate) struct HoppieSession {
     /// [`Self::pdc_requests`], which is the much longer TRUST window and
     /// must outlive the answer (a revised clearance can follow).
     pdc_awaiting: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// The wait a newer PDC request replaced, per station: (the newer
+    /// request's time, the wait it replaced). Lets
+    /// [`Self::forget_pdc_request`] restore the older, still-live wait
+    /// when the newer request is rejected (external QS, Codex 28.09.2026, P2).
+    pdc_awaiting_replaced: HashMap<String, (chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>,
 }
 
 /// Start of the wiring-internal uplink MIN range. GOLD/Hoppie wire MINs
@@ -162,6 +167,27 @@ pub(crate) const PDC_ANSWER_WINDOW_MINUTES: i64 = 90;
 /// its clearance then arrives at most one normal cycle later.
 pub(crate) const PDC_FAST_POLL_MINUTES: i64 = 5;
 
+/// Whether a message from the station we asked for a PDC is its OUTCOME
+/// — the clearance or a refusal — rather than an interim acknowledgement
+/// or unrelated traffic. Real shapes (GSG flight logs): vSMR's
+/// "FSM … RCD RECEIVED @REQUEST BEING PROCESSED @STANDBY" (interim),
+/// "CLD 0848 260823 EDDF PDC 009 … CLRD TO @LSGG@ …" (clearance),
+/// "FSM … RCD REJECTED @FLIGHT PLAN NOT HELD @REVERT TO VOICE PROCEDURES"
+/// (refusal); telex PDC desks answer "… CLRD TO …" / "CLEARED TO …".
+fn is_pdc_outcome(text: &str) -> bool {
+    let t = text.to_uppercase();
+    if t.contains("BEING PROCESSED") || t.contains("RCD RECEIVED") {
+        return false;
+    }
+    t.starts_with("CLD ")
+        || t.contains(" PDC ")
+        || t.contains("CLRD")
+        || t.contains("CLEARED TO")
+        || t.contains("REJECTED")
+        || t.contains("REVERT TO VOICE")
+        || t.contains("UNABLE")
+}
+
 impl HoppieSession {
     pub fn new(default_station: String) -> Self {
         let default_station = normalize(&default_station);
@@ -175,6 +201,7 @@ impl HoppieSession {
             next_internal_uplink_min: INTERNAL_UPLINK_MIN_BASE,
             pdc_uplinks: HashMap::new(),
             pdc_awaiting: HashMap::new(),
+            pdc_awaiting_replaced: HashMap::new(),
             // QS round 7 (07.09.2026, #pdc-session-model): the caller
             // (`settings.station_id`) normally defaults to `"SERVER"`
             // via serde — but only when the JSON key is MISSING
@@ -519,7 +546,14 @@ impl HoppieSession {
         if station.is_empty() {
             return None;
         }
-        self.pdc_awaiting.insert(station.clone(), at);
+        // Expired waits steer nothing any more — drop them so the map
+        // stays as small as the requests of the last few minutes
+        // (external QS, Codex 28.09.2026, P3).
+        self.pdc_awaiting
+            .retain(|_, t| at - *t < chrono::Duration::minutes(PDC_FAST_POLL_MINUTES));
+        let replaced_wait = self.pdc_awaiting.insert(station.clone(), at);
+        self.pdc_awaiting_replaced
+            .insert(station.clone(), (at, replaced_wait));
         self.pdc_requests.insert(station, at)
     }
 
@@ -528,14 +562,18 @@ impl HoppieSession {
     /// for our PDC request; an interim acknowledgement does not — vSMR
     /// sends "RCD RECEIVED @REQUEST BEING PROCESSED @STANDBY" first and
     /// the actual clearance (`CLD ...`) only when the controller acts.
+    ///
+    /// External QS (Codex, 28.09.2026) P2: only a POSITIVELY recognized
+    /// PDC outcome ends the wait — a clearance (`CLD …`, "CLRD TO"), a
+    /// refusal ("RCD REJECTED", "REVERT TO VOICE", "UNABLE"). Anything
+    /// else the same station sends (CURRENT ATC UNIT, a CPDLC instruction
+    /// of an unrelated session, free text) leaves the 5-minute wait alone.
     pub fn note_pdc_inbound(&mut self, station: &str, text: &str) {
         let station = normalize(station);
         if !self.pdc_awaiting.contains_key(&station) {
             return;
         }
-        let t = text.to_uppercase();
-        let interim = t.contains("STANDBY") || t.contains("BEING PROCESSED") || t.contains("RCD RECEIVED");
-        if !interim {
+        if is_pdc_outcome(text) {
             self.pdc_awaiting.remove(&station);
         }
     }
@@ -564,9 +602,17 @@ impl HoppieSession {
         previous: Option<chrono::DateTime<chrono::Utc>>,
     ) {
         let station = normalize(station);
-        // Nothing was delivered, so no answer is coming for THIS request.
+        // Nothing was delivered, so no answer is coming for THIS request —
+        // but a still-live wait it replaced comes back.
         if self.pdc_awaiting.get(&station) == Some(&at) {
-            self.pdc_awaiting.remove(&station);
+            match self.pdc_awaiting_replaced.get(&station) {
+                Some((newer, Some(older))) if *newer == at => {
+                    self.pdc_awaiting.insert(station.clone(), *older);
+                }
+                _ => {
+                    self.pdc_awaiting.remove(&station);
+                }
+            }
         }
         if self.pdc_requests.get(&station) != Some(&at) {
             return;
@@ -1926,5 +1972,52 @@ mod tests {
         assert_eq!(s.thread.pending_logon_min(), Some(second));
         assert!(!s.is_authorized_to_answer_pending_logon("EDGG"));
         assert!(s.is_authorized_to_answer_pending_logon("EDMM"));
+    }
+
+    // --- external QS (Codex, 28.09.2026) on the PDC wait ---
+
+    #[test]
+    fn unrelated_traffic_from_the_pdc_station_keeps_the_wait() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", t0());
+        s.note_pdc_inbound("EDDM", "/data2/2//NE/CURRENT ATC UNIT@_@EDDM@_@MUENCHEN DELIVERY");
+        s.note_pdc_inbound("EDDM", "PLEASE CHECK YOUR VDGS PANEL");
+        assert!(s.is_awaiting_pdc_answer(t0()));
+        // The real refusal ends it.
+        s.note_pdc_inbound(
+            "EDDM",
+            "/data2/47//NE/FSM 2024 260918 ---- DLH2AS@DLH2AS@ RCD REJECTED @FLIGHT PLAN NOT HELD @REVERT TO VOICE PROCEDURES",
+        );
+        assert!(!s.is_awaiting_pdc_answer(t0()));
+    }
+
+    #[test]
+    fn a_telex_clearance_ends_the_wait() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EGLL", t0());
+        s.note_pdc_inbound("EGLL", "BAW123 CLRD TO KJFK OFF 27R VIA CPT5J SQUAWK 1234");
+        assert!(!s.is_awaiting_pdc_answer(t0()));
+    }
+
+    #[test]
+    fn a_rejected_follow_up_restores_the_earlier_wait() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", t0());
+        let later = t0() + chrono::Duration::minutes(1);
+        let prev = s.note_pdc_request("EDDM", later);
+        s.forget_pdc_request("EDDM", later, prev);
+        assert!(
+            s.is_awaiting_pdc_answer(t0() + chrono::Duration::minutes(2)),
+            "the first, delivered request is still waiting"
+        );
+        assert!(!s.is_awaiting_pdc_answer(t0() + chrono::Duration::minutes(PDC_FAST_POLL_MINUTES)));
+    }
+
+    #[test]
+    fn expired_waits_are_pruned() {
+        let mut s = HoppieSession::new(String::new());
+        s.note_pdc_request("EDDM", t0());
+        s.note_pdc_request("EDDF", t0() + chrono::Duration::minutes(PDC_FAST_POLL_MINUTES + 1));
+        assert_eq!(s.pdc_awaiting.len(), 1, "EDDM's wait expired and was dropped");
     }
 }

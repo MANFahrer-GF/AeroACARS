@@ -567,6 +567,29 @@ async fn ping_station(
     }
 }
 
+/// Identity of the connection (which session object) and of its state
+/// (`persist_generation` moves on every logon, acceptance, cancellation
+/// and session end) — see `hoppie_send_logon_request`'s pre-check.
+fn session_fingerprint(handle: &HoppieHandle) -> (usize, u64) {
+    (
+        Arc::as_ptr(&handle.session) as usize,
+        handle.session.lock().expect("hoppie session mutex").persist_generation(),
+    )
+}
+
+/// Refuse to act on a logon decision taken before the pre-check ping
+/// when the connection or its session changed during that ping.
+fn unchanged_during_precheck(before: (usize, u64), after: (usize, u64)) -> Result<(), UiError> {
+    if before == after {
+        return Ok(());
+    }
+    Err(UiError::new(
+        "hoppie_state_changed",
+        "Während der Prüfung hat sich die Verbindung geändert (z. B. eine Übergabe) — \
+         Logon nicht gesendet. Bitte den aktuellen Stand ansehen und erneut senden.",
+    ))
+}
+
 /// v1.9.5 (#hoppie-logon-precheck): whether a `REQUEST LOGON` to the
 /// pinged station should go out at all. Fenix (`FenixSystem.exe`) and
 /// FlyByWire (`AcarsConnector.isStationAvailable`) both ping first and
@@ -1255,8 +1278,15 @@ pub async fn hoppie_send_logon_request(
     // the station we are on, so a typo can no longer cost the pilot a
     // working session. The lock is NOT held across the ping (up to 15 s):
     // it would stall every other command, including a WILCO.
-    {
-        let (http, from_callsign, target) = {
+    //
+    // External QS (Codex, 28.09.2026) P1: because the lock is released,
+    // the world can move meanwhile — the poller hands over, another
+    // client logs on, the connection is dropped and re-made. The state
+    // is fingerprinted before the ping and compared after re-locking; a
+    // changed state aborts instead of acting on a situation the pilot
+    // never saw (e.g. logging off the station a handover just reached).
+    let fingerprint_before = {
+        let (http, from_callsign, target, fingerprint) = {
             let guard = state.hoppie.lock().await;
             let handle = guard.as_ref().ok_or_else(|| {
                 UiError::new(
@@ -1268,7 +1298,12 @@ pub async fn hoppie_send_logon_request(
                 Some(t) if !t.is_empty() => t,
                 _ => handle.session.lock().expect("hoppie session mutex").addressee(),
             };
-            (Arc::clone(&handle.http), handle.from_callsign.clone(), target)
+            (
+                Arc::clone(&handle.http),
+                handle.from_callsign.clone(),
+                target,
+                session_fingerprint(handle),
+            )
         };
         if force != Some(true) && !target.is_empty() && target != settings::DEFAULT_STATION_ID {
             let logon = resolve_logon_code()?;
@@ -1278,7 +1313,8 @@ pub async fn hoppie_send_logon_request(
             }
             logon_precheck(&status)?;
         }
-    }
+        fingerprint
+    };
 
     let guard = state.hoppie.lock().await;
     let handle = guard.as_ref().ok_or_else(|| {
@@ -1287,6 +1323,7 @@ pub async fn hoppie_send_logon_request(
             "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
         )
     })?;
+    unchanged_during_precheck(fingerprint_before, session_fingerprint(handle))?;
 
     let explicit_to = if let Some(raw) = station {
         let trimmed = raw.trim().to_uppercase();
@@ -2009,5 +2046,40 @@ mod tests {
         // must not withhold the request.
         assert!(logon_precheck(&status(false, Some("timeout"))).is_ok());
         assert!(logon_precheck(&status(false, Some("invalid logon code"))).is_ok());
+    }
+
+    #[test]
+    fn a_state_change_during_the_precheck_aborts_the_logon() {
+        assert!(unchanged_during_precheck((7, 3), (7, 3)).is_ok());
+        // Handover / acceptance / cancellation moved the generation.
+        assert_eq!(unchanged_during_precheck((7, 3), (7, 4)).unwrap_err().code, "hoppie_state_changed");
+        // Reconnected: a different session object, even with an equal generation.
+        assert_eq!(unchanged_during_precheck((7, 3), (8, 3)).unwrap_err().code, "hoppie_state_changed");
+    }
+
+    #[test]
+    fn a_handover_moves_the_fingerprint_the_precheck_compares() {
+        // The generation `session_fingerprint` reads really moves when the
+        // poller hands over (end_current + a new pending logon).
+        let mut s = HoppieSession::new("SERVER".into());
+        let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").unwrap();
+        let resolved = hoppie_protocol::elements::resolve(spec, &[]).unwrap();
+        s.record_logon_request(
+            "LRBB",
+            spec.response,
+            None,
+            resolved.filled_text.clone(),
+            hoppie_protocol::elements::ParsedElement::Recognized(resolved.clone()),
+        );
+        let before = s.persist_generation();
+        s.end_current();
+        s.record_logon_request(
+            "LRWW",
+            spec.response,
+            None,
+            resolved.filled_text.clone(),
+            hoppie_protocol::elements::ParsedElement::Recognized(resolved),
+        );
+        assert_ne!(before, s.persist_generation());
     }
 }

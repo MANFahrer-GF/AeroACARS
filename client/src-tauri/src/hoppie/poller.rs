@@ -770,19 +770,43 @@ fn is_untrusted_logon_claim(s: &HoppieSession, msg: &cpdlc::CpdlcMessage, from: 
 /// session end used to supersede them (or, arriving after it, quarantine
 /// them) so the pilot could not answer at all. Determined up front, from
 /// the session as it was BEFORE this batch.
+///
+/// External QS (Codex, 28.09.2026) P1: a station we are still PENDING a
+/// logon to counts too when this very batch also carries its acceptance
+/// — "LOGON ACCEPTED, CONTACT …, HANDOVER" can arrive in one poll.
 fn farewell_stations(
     envelopes: &[wire::InboundEnvelope],
     s: &HoppieSession,
 ) -> std::collections::HashSet<String> {
-    envelopes
+    let decoded: Vec<(&str, cpdlc::CpdlcMessage)> = envelopes
         .iter()
         .filter(|env| env.kind == PacketKind::Cpdlc)
-        .filter_map(|env| {
-            let msg = cpdlc::decode(&env.packet, Direction::Uplink).ok()?;
-            let ends = parse_handover(&msg.element_text).is_some() || is_end_service(&msg);
-            (ends && s.is_authorized_to_control(&env.from)).then(|| normalize_station(&env.from))
-        })
+        .filter_map(|env| Some((env.from.as_str(), cpdlc::decode(&env.packet, Direction::Uplink).ok()?)))
+        .collect();
+    let accepts_in_batch = |from: &str| {
+        s.is_authorized_to_answer_pending_logon(from)
+            && decoded.iter().any(|(f, m)| {
+                normalize_station(f) == normalize_station(from) && accepts_our_logon(s, m)
+            })
+    };
+    decoded
+        .iter()
+        .filter(|(_, m)| parse_handover(&m.element_text).is_some() || is_end_service(m))
+        .filter(|(from, _)| s.is_authorized_to_control(from) || accepts_in_batch(from))
+        .map(|(from, _)| normalize_station(from))
         .collect()
+}
+
+/// Whether `msg` accepts our pending logon — the same verdict the thread
+/// reaches on `record_received` (`UM_LOGON_ACCEPTED`, or accepting wording
+/// per `hoppie_protocol::logon_reply`).
+fn accepts_our_logon(s: &HoppieSession, msg: &cpdlc::CpdlcMessage) -> bool {
+    let Some(pending) = s.thread.pending_logon_min() else {
+        return false;
+    };
+    matches!(&msg.parsed, hoppie_protocol::elements::ParsedElement::Recognized(r) if r.spec_id == "UM_LOGON_ACCEPTED")
+        || hoppie_protocol::logon_reply::classify(&msg.element_text, msg.mrn == Some(pending))
+            == Some(hoppie_protocol::logon_reply::LogonReply::Accepted)
 }
 
 /// Whether `msg` from `station` is a farewell instruction (see
@@ -2427,7 +2451,7 @@ mod tests {
 
     #[test]
     fn a_headerless_acceptance_logs_on_instead_of_counting_as_a_refusal() {
-        for packet in ["CONNECTION ACCEPTED", "LOGON ACCEPTED", "logged on", "ACCEPTED"] {
+        for packet in ["CONNECTION ACCEPTED", "LOGON ACCEPTED", "logged on", "LOGON ACCEPTED."] {
             let mut s = session_pending_logon_to("EDGG");
             let out = decide_raw_uplink(&mut s, "EDGG", packet, chrono::Utc::now());
             assert!(!out.cancelled_pending, "{packet:?} must not cancel the logon");
@@ -2533,7 +2557,7 @@ mod tests {
             "/data2/3//NE/LOGON ACCEPTED",
             "/data2/3//NE/CONNECTION ACCEPTED",
             "/data2/3//NE/LOGGED ON",
-            "/data2/3//NE/FLIGHT PLAN NOT HELD",
+            "/data2/3/1/NE/FLIGHT PLAN NOT HELD",
             "/data2/3/1/NE/UNABLE",
         ] {
             let msg = cpdlc::decode(p, Direction::Uplink).unwrap();

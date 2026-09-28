@@ -139,6 +139,8 @@ mod tests {
     fn sanitize_strips_braces_and_control_characters_and_uppercases() {
         assert_eq!(sanitize_free_text("de-ice {pad} 2\nplease"), "DE-ICE PAD 2 PLEASE");
         assert_eq!(sanitize_free_text("a}b{c"), "ABC");
+        // Same result as the panel's cleanPdcRemark (external QS P3).
+        assert_eq!(sanitize_free_text("REQ { PAD } 2"), "REQ PAD 2");
         assert_eq!(sanitize_free_text("  two   spaces\t tab "), "TWO SPACES TAB");
         assert_eq!(sanitize_free_text("   "), "");
     }

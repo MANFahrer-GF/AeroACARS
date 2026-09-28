@@ -1493,6 +1493,7 @@ mod tests {
             ("/data2/7/1/NE/CONNECTION ACCEPTED", "PMDG wording, MRN"),
             ("/data2/7/1/NE/REQUEST ACCEPTED", "Fenix: any ACCEPTED with MRN"),
             ("/data2/7//NE/CONNECTION ACCEPTED", "logon wording, no MRN"),
+            ("/data2/7/1/NE/ACCEPTED", "bare word, MRN on our logon"),
             ("/data2/7//NE/LOGGED ON", "logon wording, no MRN"),
             ("/data2/7//N/LOGON@ACCEPTED@EDGG", "@ line breaks, no MRN"),
         ] {
@@ -1522,7 +1523,6 @@ mod tests {
     #[test]
     fn a_refusal_wording_ends_the_attempt_without_logging_on() {
         for packet in [
-            "/data2/7//NE/FLIGHT PLAN NOT HELD",
             "/data2/7/1/NE/FLIGHT PLAN NOT HELD",
             "/data2/7//NE/LOGON REJECTED",
             "/data2/7/1/NE/REJECTED",
@@ -1588,13 +1588,18 @@ mod tests {
         for p in [
             "/data2/1//NE/LOGON ACCEPTED",
             "/data2/1//NE/CONNECTION ACCEPTED",
-            "/data2/1//NE/FLIGHT PLAN NOT HELD",
+            "/data2/1/1/NE/FLIGHT PLAN NOT HELD",
             "/data2/1/1/NE/UNABLE",
             "/data2/1/1/NE/REQUEST ACCEPTED",
         ] {
             assert!(thread.claims_logon_outcome(&decode(p)), "{p}");
         }
-        for p in ["/data2/1//NE/PDC ACCEPTED", "/data2/1//WU/CLIMB TO FL350", "/data2/1//NE/UNABLE"] {
+        for p in [
+            "/data2/1//NE/PDC ACCEPTED",
+            "/data2/1//WU/CLIMB TO FL350",
+            "/data2/1//NE/UNABLE",
+            "/data2/1//NE/FLIGHT PLAN NOT HELD",
+        ] {
             assert!(!thread.claims_logon_outcome(&decode(p)), "{p}");
         }
         // Asking does not record: still pending.

@@ -559,3 +559,55 @@ async fn an_instruction_left_open_across_polls_is_still_superseded_by_a_later_ha
     rig.poll(&[("LRBB", "cpdlc", "/data2/13//NE/HANDOVER @LRWW")]).await;
     assert_eq!(rig.wilco("LRBB", 6), Err("LRBB MIN 6 is superseded".to_string()));
 }
+
+/// External QS (Codex, 28.09.2026) P1: a PDC refusal from the station we
+/// are ALSO logging on to must not end the logon. Real packet: EDDM,
+/// 18.09.2026 (flight log 4/PQZk23KBgyOqQ0AN).
+#[tokio::test]
+async fn a_pdc_refusal_does_not_cancel_a_logon_to_the_same_station() {
+    let rig = Rig::new().await;
+    let logon = rig.logon("EDDM");
+    rig.pdc("EDDM");
+    rig.poll(&[(
+        "EDDM",
+        "cpdlc",
+        "/data2/47//NE/FSM 2024 260918 ---- DLH2AS@DLH2AS@ RCD REJECTED @FLIGHT PLAN NOT HELD @REVERT TO VOICE PROCEDURES",
+    )])
+    .await;
+    assert_eq!(rig.pending_to().as_deref(), Some("EDDM"), "the logon is still pending");
+    rig.poll(&[("EDDM", "cpdlc", &format!("/data2/48/{logon}/NE/LOGON ACCEPTED"))]).await;
+    assert_eq!(rig.logged_on_to().as_deref(), Some("EDDM"));
+}
+
+/// External QS (Codex, 28.09.2026) P1: acceptance, farewell instruction
+/// and handover all in the FIRST poll after the logon. Built from the
+/// real 19.09. packets.
+#[tokio::test]
+async fn accept_farewell_and_handover_in_one_poll() {
+    let rig = Rig::new().await;
+    let logon = rig.logon("LRBB");
+    rig.poll(&[
+        ("LRBB", "cpdlc", &format!("/data2/5/{logon}/NE/LOGON ACCEPTED")),
+        ("LRBB", "cpdlc", "/data2/12//WU/CONTACT @LRWW 125.765@_@BUCHAREST RADAR"),
+        ("LRBB", "cpdlc", "/data2/13//NE/HANDOVER @LRWW"),
+    ])
+    .await;
+    assert_eq!(rig.pending_to().as_deref(), Some("LRWW"));
+    assert_eq!(rig.wilco("LRBB", 12), Ok(("LRBB".to_string(), Some(12))));
+}
+
+/// …but a station we asked for a logon that REFUSES and hands over in
+/// the same poll has no farewell rights.
+#[tokio::test]
+async fn a_refusing_pending_station_gets_no_farewell_rights() {
+    let rig = Rig::new().await;
+    let logon = rig.logon("LRBB");
+    rig.poll(&[
+        ("LRBB", "cpdlc", &format!("/data2/5/{logon}/NE/UNABLE")),
+        ("LRBB", "cpdlc", "/data2/12//WU/CLIMB TO @FL410"),
+        ("LRBB", "cpdlc", "/data2/13//NE/LOGOFF"),
+    ])
+    .await;
+    assert_eq!(rig.logged_on_to(), None);
+    assert!(rig.wilco("LRBB", 12).is_err());
+}

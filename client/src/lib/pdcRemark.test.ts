@@ -5,6 +5,8 @@ describe("cleanPdcRemark", () => {
   it("uppercases, drops braces and collapses whitespace", () => {
     expect(cleanPdcRemark("req {de-icing}  pad\t2")).toBe("REQ DE-ICING PAD 2");
     expect(cleanPdcRemark("a}b{c")).toBe("ABC");
+    // Same result as the backend's sanitize_free_text (external QS P3).
+    expect(cleanPdcRemark("REQ { PAD } 2")).toBe("REQ PAD 2");
   });
 
   it("keeps a trailing space while typing but no leading one", () => {
