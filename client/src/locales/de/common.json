@@ -3493,12 +3493,12 @@
         "titel": "Autobrake BTV",
         "wo": "Airbus A380/A350: Autobrake-Knopf auf BTV (A380) bzw. BTV-Wahl am ND. Braucht die Landebahn im Flugplan.",
         "namen": "BTV · Brake To Vacate",
-        "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. Im Anflug mit gewählter Bahn scharf schalten, zum Schluss wieder auf die Stufe, mit der du landen willst.",
+        "hinweis": "Nur wenn dein Flugzeug BTV hat – sonst überspringen. A380: Zuerst im OANS (Navigationsdisplay) die Landebahn und den Abrollweg wählen – sonst springt der Knopf von BTV sofort zurück, und die Messung sieht nichts. Zum Schluss wieder die Stufe einstellen, mit der du landen willst.",
         "wann": "Im Anflug, die Landebahn steht im Flugplan, noch vor dem Aufsetzen.",
         "frage": "Hat dein Flugzeug BTV (z. B. A380 oder A350)? Sonst einfach überspringen.",
         "tun": {
           "0": "So lassen – BTV ist aus (Autobrake auf einer normalen Stufe oder aus). Einfach „Erledigt“ klicken.",
-          "1": "BTV scharf schalten – A380: den Autobrake-Knopf auf BTV drehen. A350: BTV am ND wählen und den Abrollweg setzen. Im FMA bzw. PFD erscheint BTV. Dann „Erledigt“.",
+          "1": "BTV scharf schalten – A380: erst im OANS Landebahn und Abrollweg wählen, dann den Autobrake-Knopf auf BTV drehen; er muss dort stehen bleiben. A350: BTV am ND wählen und den Abrollweg setzen. Im FMA bzw. PFD erscheint BTV. Dann „Erledigt“.",
           "2": "BTV wieder aus: zurück auf die Stufe von vorher. „Erledigt“ klicken und danach die Stufe einstellen, mit der du landen willst."
         }
       },

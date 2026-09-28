@@ -3493,12 +3493,12 @@
         "titel": "Autobrake BTV",
         "wo": "Airbus A380/A350: autobrake knob to BTV (A380) or BTV selection on the ND. Needs the runway in the flight plan.",
         "namen": "BTV · Brake To Vacate",
-        "hinweis": "Only if your aircraft has BTV – otherwise skip. Arm it on approach with the runway selected, finally set the level you want to land with.",
+        "hinweis": "Only if your aircraft has BTV – otherwise skip. A380: first select the runway and exit in the OANS (navigation display) – otherwise the knob springs back from BTV at once and the measurement sees nothing. Finally set the level you want to land with.",
         "wann": "On approach, the runway is in the flight plan, before touchdown.",
         "frage": "Does your aircraft have BTV (e.g. A380 or A350)? Otherwise just skip.",
         "tun": {
           "0": "Leave it – BTV is off (autobrake on a normal level or off). Just click “Done”.",
-          "1": "Arm BTV – A380: turn the autobrake knob to BTV. A350: select BTV on the ND and set the exit. BTV appears in the FMA/PFD. Then “Done”.",
+          "1": "Arm BTV – A380: first select runway and exit in the OANS, then turn the autobrake knob to BTV; it must stay there. A350: select BTV on the ND and set the exit. BTV appears in the FMA or PFD. Then “Done”.",
           "2": "BTV off again: back to the previous level. Click “Done”, then set the level you want to land with."
         }
       },
