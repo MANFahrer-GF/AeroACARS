@@ -183,6 +183,18 @@ pub enum FieldId {
     /// Standard `sim/cockpit2/electrical/APU_running` bleibt beim ToLiss 0
     /// (vier Flüge mit durchgehend „APU aus“, auch am Gate).
     TolissApuMaster,
+    /// `AirbusFBW/APLateralMode` / `APVerticalMode` — aktiver FMA-Modus als
+    /// Zahl; `APPRilluminated` / `LOCilluminated` — Lampen der FCU-Tasten.
+    /// Belegung wie XHSI (`FMA_A320.java`, QPAC/ToLiss): lateral 2 NAV,
+    /// 6/7 LOC*/LOC, 9 APP NAV, 101 HDG/TRK; vertikal 3/4 ALT CST*/ALT CST,
+    /// 6/7/8 G/S*/G/S/F-G/S, 10 FLARE, 11 LAND, 103/104/105 ALT*/ALT/ALT CRZ.
+    /// Namen stehen in der ToLiss-Datarefliste. Vorher standen HDG/NAV/ALT/
+    /// APPR beim ToLiss auf der LiveMap immer aus (Standard-Datarefs tot,
+    /// Flug-Log 28.09.2026).
+    TolissApLateralMode,
+    TolissApVerticalMode,
+    TolissApprIlluminated,
+    TolissLocIlluminated,
     /// `AirbusFBW/AutoBrkLo` / `AutoBrkMed` / `AutoBrkMax` — je 0/1,
     /// hoechstens einer gesetzt (kpcrew, xpcockpit, XHSI).
     TolissAutoBrkLo,
@@ -712,6 +724,22 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::TolissApuMaster,
     },
     DatarefEntry {
+        name: "AirbusFBW/APLateralMode",
+        field: FieldId::TolissApLateralMode,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/APVerticalMode",
+        field: FieldId::TolissApVerticalMode,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/APPRilluminated",
+        field: FieldId::TolissApprIlluminated,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/LOCilluminated",
+        field: FieldId::TolissLocIlluminated,
+    },
+    DatarefEntry {
         name: "AirbusFBW/AutoBrkLo",
         field: FieldId::TolissAutoBrkLo,
     },
@@ -970,6 +998,10 @@ pub struct XPlaneState {
     pub toliss_beacon: Option<bool>,
     pub toliss_seatbelt_signs: Option<bool>,
     pub toliss_apu_master: Option<bool>,
+    pub toliss_ap_lateral_mode: Option<f32>,
+    pub toliss_ap_vertical_mode: Option<f32>,
+    pub toliss_appr_lampe: Option<bool>,
+    pub toliss_loc_lampe: Option<bool>,
     pub toliss_autobrk_lo: Option<bool>,
     pub toliss_autobrk_med: Option<bool>,
     pub toliss_autobrk_max: Option<bool>,
@@ -1121,6 +1153,10 @@ pub fn addon_quelle(field: FieldId) -> bool {
             | FieldId::TolissBeacon
             | FieldId::TolissSeatBeltSigns
             | FieldId::TolissApuMaster
+            | FieldId::TolissApLateralMode
+            | FieldId::TolissApVerticalMode
+            | FieldId::TolissApprIlluminated
+            | FieldId::TolissLocIlluminated
             | FieldId::TolissAutoBrkLo
             | FieldId::TolissAutoBrkMed
             | FieldId::TolissAutoBrkMax
@@ -1176,6 +1212,10 @@ impl XPlaneState {
             FieldId::TolissBeacon => self.toliss_beacon = None,
             FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = None,
             FieldId::TolissApuMaster => self.toliss_apu_master = None,
+            FieldId::TolissApLateralMode => self.toliss_ap_lateral_mode = None,
+            FieldId::TolissApVerticalMode => self.toliss_ap_vertical_mode = None,
+            FieldId::TolissApprIlluminated => self.toliss_appr_lampe = None,
+            FieldId::TolissLocIlluminated => self.toliss_loc_lampe = None,
             FieldId::TolissAutoBrkLo => self.toliss_autobrk_lo = None,
             FieldId::TolissAutoBrkMed => self.toliss_autobrk_med = None,
             FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = None,
@@ -1288,6 +1328,10 @@ impl XPlaneState {
             FieldId::TolissBeacon => self.toliss_beacon = Some(value > 0.5),
             FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = Some(value > 0.5),
             FieldId::TolissApuMaster => self.toliss_apu_master = Some(value > 0.5),
+            FieldId::TolissApLateralMode => self.toliss_ap_lateral_mode = Some(value),
+            FieldId::TolissApVerticalMode => self.toliss_ap_vertical_mode = Some(value),
+            FieldId::TolissApprIlluminated => self.toliss_appr_lampe = Some(value > 0.5),
+            FieldId::TolissLocIlluminated => self.toliss_loc_lampe = Some(value > 0.5),
             FieldId::TolissAutoBrkLo => self.toliss_autobrk_lo = Some(value > 0.5),
             FieldId::TolissAutoBrkMed => self.toliss_autobrk_med = Some(value > 0.5),
             FieldId::TolissAutoBrkMax => self.toliss_autobrk_max = Some(value > 0.5),
@@ -1308,6 +1352,22 @@ impl XPlaneState {
     /// timestamp is stamped at conversion time (UTC now). Fields
     /// without an X-Plane equivalent stay at SimSnapshot's `Default`
     /// (None for Options, sensible zeros for required fields).
+    /// ToLiss-Autopilotmodi aus dem FMA: (HDG, NAV, ALT, APPR). Ohne
+    /// ToLiss-Werte alles `false` (dann gilt allein der Standard).
+    fn toliss_ap_modi(&self) -> (bool, bool, bool, bool) {
+        let modus = |v: Option<f32>| v.filter(|x| x.is_finite()).map(|x| x.round() as i32);
+        let lat = modus(self.toliss_ap_lateral_mode);
+        let vert = modus(self.toliss_ap_vertical_mode);
+        let hdg = lat == Some(101);
+        let nav = matches!(lat, Some(2 | 9));
+        let alt = matches!(vert, Some(3 | 4 | 103 | 104 | 105));
+        let appr = self.toliss_appr_lampe == Some(true)
+            || self.toliss_loc_lampe == Some(true)
+            || matches!(lat, Some(6 | 7))
+            || matches!(vert, Some(6 | 7 | 8 | 10 | 11));
+        (hdg, nav, alt, appr)
+    }
+
     pub fn to_snapshot(&self, simulator: Simulator) -> SimSnapshot {
         const M_PER_FT: f64 = 0.3048;
         const KT_PER_MS: f32 = 1.9438445; // 1 m/s = 1.9438 knots
@@ -1516,10 +1576,12 @@ impl XPlaneState {
             // tiebreaker pattern as the A346/Fenix LVar mapping on the
             // MSFS side.
             autopilot_master: Some(self.ap_master || self.toliss_ap1 || self.toliss_ap2),
-            autopilot_heading: Some(self.ap_heading),
-            autopilot_altitude: Some(self.ap_altitude),
-            autopilot_nav: Some(self.ap_nav),
-            autopilot_approach: Some(self.ap_approach),
+            // Standard ODER ToLiss-FMA (der ToLiss setzt die Standard-
+            // Statuswerte nie), siehe `toliss_ap_modi`.
+            autopilot_heading: Some(self.ap_heading || self.toliss_ap_modi().0),
+            autopilot_altitude: Some(self.ap_altitude || self.toliss_ap_modi().2),
+            autopilot_nav: Some(self.ap_nav || self.toliss_ap_modi().1),
+            autopilot_approach: Some(self.ap_approach || self.toliss_ap_modi().3),
             // v0.16.7: ToLiss `AirbusFBW/ATHRmode` (0 = off, >0 =
             // armed/active) is the first verified X-Plane A/THR state
             // source. Presence-gated via `toliss_athr_seen`: X-Plane
@@ -2254,6 +2316,40 @@ mod cockpit_schalter_tests {
         assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(2));
         s.apply_field(FieldId::TolissSeatBeltSigns, 0.0);
         assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(0));
+    }
+
+    #[test]
+    fn toliss_ap_modi_aus_dem_fma() {
+        let snap = |lat: f32, vert: f32, appr: f32| {
+            let mut s = XPlaneState::default();
+            s.apply_field(FieldId::TolissApLateralMode, lat);
+            s.apply_field(FieldId::TolissApVerticalMode, vert);
+            s.apply_field(FieldId::TolissApprIlluminated, appr);
+            s.apply_field(FieldId::TolissLocIlluminated, 0.0);
+            let x = s.to_snapshot(Simulator::XPlane12);
+            (
+                x.autopilot_heading,
+                x.autopilot_nav,
+                x.autopilot_altitude,
+                x.autopilot_approach,
+            )
+        };
+        let (t, f) = (Some(true), Some(false));
+        // Reiseflug NAV + ALT CRZ.
+        assert_eq!(snap(2.0, 105.0, 0.0), (f, t, t, f));
+        // HDG + V/S.
+        assert_eq!(snap(101.0, 107.0, 0.0), (t, f, f, f));
+        // APPR gedrückt (armed): Lampe, noch NAV/ALT.
+        assert_eq!(snap(2.0, 104.0, 1.0), (f, t, t, t));
+        // LOC + G/S eingefangen, Lampe aus.
+        assert_eq!(snap(7.0, 7.0, 0.0), (f, f, f, t));
+        // Kein Modus (-1): nichts.
+        assert_eq!(snap(-1.0, -1.0, 0.0), (f, f, f, f));
+        // Ohne ToLiss-Werte bleibt der Standard maßgeblich.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApHeading, 1.0);
+        let x = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!((x.autopilot_heading, x.autopilot_nav), (t, f));
     }
 
     #[test]

@@ -197,8 +197,20 @@ pub struct Spiegel {
     /// Verbindung abgerissen) — danach wäre jeder Stand nur der alte Cache.
     lebt: Arc<AtomicBool>,
     faden: Option<JoinHandle<()>>,
+    /// Datarefs, die X-Plane einzeln nicht abonnieren ließ (siehe [`Abos`]).
+    abgelehnt: Arc<Mutex<Vec<i64>>>,
     pub flugzeug: AircraftInfo,
     pub abonniert: usize,
+}
+
+/// Wie vollständig die Anmeldung war — geht mit dem Bericht zum Server,
+/// damit Lücken der Messung sichtbar sind statt still.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AboStand {
+    pub angemeldet: usize,
+    pub angekommen: usize,
+    pub abgelehnt: usize,
+    pub abgelehnt_namen: Vec<String>,
 }
 
 impl Spiegel {
@@ -244,7 +256,9 @@ impl Spiegel {
         let werte = Arc::new(Mutex::new(HashMap::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let lebt = Arc::new(AtomicBool::new(true));
+        let abgelehnt = Arc::new(Mutex::new(Vec::new()));
         let (w2, s2, l2) = (Arc::clone(&werte), Arc::clone(&stop), Arc::clone(&lebt));
+        let a2 = Arc::clone(&abgelehnt);
         let faden = std::thread::Builder::new()
             .name("xplane-vermessung".into())
             .spawn(move || {
@@ -257,12 +271,12 @@ impl Spiegel {
                                         tracing::info!(error = %e, "X-Plane-Vermessung: Abo nachsenden");
                                     }
                                 }
-                                if !abos.abgelehnt.is_empty() && abos.offen.is_empty() {
+                                if !abos.abgelehnt.is_empty() {
                                     tracing::info!(
                                         abgelehnt = abos.abgelehnt.len(),
                                         "X-Plane-Vermessung: einzelne Datarefs nicht abonnierbar"
                                     );
-                                    abos.abgelehnt.clear();
+                                    a2.lock().append(&mut abos.abgelehnt);
                                 }
                             }
                         }
@@ -287,9 +301,25 @@ impl Spiegel {
             stop,
             lebt,
             faden: Some(faden),
+            abgelehnt,
             flugzeug,
             abonniert: ids.len(),
         })
+    }
+
+    /// Stand der Anmeldung für den Bericht.
+    pub fn abo_stand(&self) -> AboStand {
+        let abgelehnt = self.abgelehnt.lock();
+        AboStand {
+            angemeldet: self.abonniert,
+            angekommen: self.verbunden(),
+            abgelehnt: abgelehnt.len(),
+            abgelehnt_namen: abgelehnt
+                .iter()
+                .filter_map(|id| self.namen.get(id).cloned())
+                .take(50)
+                .collect(),
+        }
     }
 
     /// Wie viele Datarefs schon einen Wert geliefert haben.
@@ -416,6 +446,89 @@ mod tests {
             .antwort(r#"{"req_id":1,"success":true,"type":"result"}"#)
             .is_empty());
         assert!(a.offen.is_empty());
+    }
+
+    /// Gegen ein laufendes X-Plane (Web-API auf 8086): meldet alles an wie
+    /// die Messung und zählt, was abgelehnt wird und was ankommt. Nur von
+    /// Hand: `cargo test -p sim-xplane live_abo_probe -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_abo_probe() {
+        let liste: Liste = ureq::get(&format!("http://{HOST}/api/v2/datarefs"))
+            .call()
+            .unwrap()
+            .into_json()
+            .unwrap();
+        let zahlen: Vec<Eintrag> = liste
+            .data
+            .into_iter()
+            .filter(|e| ist_zahl(&e.value_type))
+            .collect();
+        let namen: HashMap<i64, String> = zahlen.iter().map(|e| (e.id, e.name.clone())).collect();
+        let ids: Vec<i64> = zahlen.iter().map(|e| e.id).collect();
+        let strom = TcpStream::connect(HOST).unwrap();
+        strom
+            .set_read_timeout(Some(Duration::from_millis(400)))
+            .unwrap();
+        let (mut ws, _) = tungstenite::client(format!("ws://{HOST}/api/v2"), strom).unwrap();
+        let (mut abos, erste) = Abos::neu(&ids);
+        let erste_pakete = erste.len() as u64;
+        for n in erste {
+            ws.send(Message::text(n)).unwrap();
+        }
+        let mut werte = HashMap::new();
+        let mut erste_abgelehnt = 0usize;
+        let mut pakete_abgelehnt = 0usize;
+        let ende = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < ende {
+            match ws.read() {
+                Ok(Message::Text(t)) => {
+                    if nachricht_uebernehmen(t.as_str(), &mut werte) == 0 {
+                        let v: serde_json::Value = serde_json::from_str(t.as_str()).unwrap();
+                        if v["type"] == "result" && v["success"] == false {
+                            pakete_abgelehnt += 1;
+                            let r = v["req_id"].as_u64().unwrap_or(0);
+                            if r <= erste_pakete {
+                                erste_abgelehnt += abos.offen.get(&r).map_or(0, |x| x.len());
+                            }
+                            println!("abgelehnt req {r}: {}", t.as_str());
+                        }
+                        for n in abos.antwort(t.as_str()) {
+                            ws.send(Message::text(n)).unwrap();
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(e))
+                    if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                Err(e) => panic!("{e}"),
+            }
+        }
+        println!(
+            "angemeldet {} | angekommen {} | bisher (ohne Nachsenden) verloren {} | Pakete abgelehnt {} | einzeln nicht abonnierbar {} | noch offen {}",
+            ids.len(),
+            werte.len(),
+            erste_abgelehnt,
+            pakete_abgelehnt,
+            abos.abgelehnt.len(),
+            abos.offen.len()
+        );
+        for id in ids.iter().filter(|i| !werte.contains_key(i)).take(30) {
+            println!(
+                "  nie angekommen: {} ({})",
+                namen.get(id).map_or("?", |s| s.as_str()),
+                zahlen
+                    .iter()
+                    .find(|e| e.id == *id)
+                    .map_or("?", |e| e.value_type.as_str())
+            );
+        }
+        for id in abos.abgelehnt.iter().take(30) {
+            println!(
+                "  nicht abonnierbar: {}",
+                namen.get(id).map_or("?", |s| s.as_str())
+            );
+        }
     }
 
     #[test]

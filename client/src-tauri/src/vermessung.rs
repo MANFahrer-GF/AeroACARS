@@ -585,7 +585,7 @@ pub fn vermessung_schritt_neu(sitzung: Option<u64>) -> Result<(), String> {
 
 /// Der Bericht, wie er gesendet wird.
 fn bericht(s: &Sitzung) -> serde_json::Value {
-    serde_json::json!({
+    let mut b = serde_json::json!({
         "werkzeug": format!("AeroACARS {}", env!("CARGO_PKG_VERSION")),
         "messung_id": s.messung_id,
         "client_version": env!("CARGO_PKG_VERSION"),
@@ -597,7 +597,15 @@ fn bericht(s: &Sitzung) -> serde_json::Value {
         "anzahl_werte": s.anzahl_werte,
         "unruhig_anzahl": s.rauschen.len(),
         "schritte": s.schritte,
-    })
+    });
+    // X-Plane: Lücken der Anmeldung sichtbar machen (28.09.2026). Bei MSFS
+    // fehlt das Feld ganz — ältere Server nehmen kein `null` an.
+    if let Quelle::XPlane(sp) = &s.quelle {
+        if let Ok(v) = serde_json::to_value(sp.abo_stand()) {
+            b["abo"] = v;
+        }
+    }
+    b
 }
 
 #[derive(Serialize)]
