@@ -114,6 +114,10 @@ describe("Flugzeug vermessen", () => {
     // Jeder Befehl nach dem Start nennt die Sitzung (auch das Beenden).
     const nachStart = h.aufrufe.filter((a) => a.cmd.startsWith("vermessung_") && a.cmd !== "vermessung_starten");
     expect(nachStart.every((a) => a.args?.sitzung === 7)).toBe(true);
+    // Der Start trägt eine Kennung, das Beenden nennt sie wieder.
+    const start = h.aufrufe.find((a) => a.cmd === "vermessung_starten")!.args?.start;
+    expect(typeof start).toBe("number");
+    expect(h.aufrufe.filter((a) => a.cmd === "vermessung_beenden").every((a) => a.args?.start === start)).toBe(true);
   });
 
   it("Klappen: nach zwei Rasten lässt sich die letzte Stellung wählen", async () => {
@@ -172,5 +176,8 @@ describe("Flugzeug vermessen", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText(/Werte ändern sich von selbst/)).toBeNull();
     expect(screen.getByRole("button", { name: "Messung starten" })).toBeTruthy();
+    const ende = h.aufrufe.filter((a) => a.cmd === "vermessung_beenden");
+    expect(ende.length).toBeGreaterThan(0);
+    expect(ende.every((a) => typeof a.args?.start === "number")).toBe(true);
   });
 });

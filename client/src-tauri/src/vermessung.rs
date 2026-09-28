@@ -148,6 +148,8 @@ enum Quelle {
 struct Sitzung {
     /// Laufnummer (siehe [`LAUF`]).
     nr: u64,
+    /// Start-Kennung der Oberfläche (siehe [`vermessung_beenden`]).
+    start: Option<u64>,
     /// Kennung für den Server — erneutes Senden derselben Messung legt dort
     /// keine zweite Einreichung an.
     messung_id: String,
@@ -174,6 +176,15 @@ static LAUF: AtomicU64 = AtomicU64::new(0);
 /// MSFS-Messquelle gibt es nur einmal, ein abgebrochener Start dürfte sie
 /// sonst einem neueren unter den Füßen wegräumen.
 static START: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Abgesagte Starts (Kennung der Oberfläche): wer die Seite mitten im
+/// Verbinden verlässt, kennt die Sitzungsnummer noch nicht — er sagt seinen
+/// Start ab, ohne einen anderen, gleichzeitig laufenden zu treffen.
+static ABGESAGT: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+fn abgesagt(start: Option<u64>) -> bool {
+    start.is_some_and(|t| ABGESAGT.lock().map(|g| g.contains(&t)).unwrap_or(false))
+}
 
 const ABGEBROCHEN: &str = "Die Messung wurde abgebrochen.";
 
@@ -267,7 +278,10 @@ pub struct StartAntwort {
 
 /// Messung starten. Nur am Boden und mit verbundenem Simulator.
 #[tauri::command]
-pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> {
+pub async fn vermessung_starten(
+    app: AppHandle,
+    start: Option<u64>,
+) -> Result<StartAntwort, String> {
     let snap = crate::current_snapshot(&app).ok_or(
         "Kein Simulator verbunden — bitte erst den Simulator starten und ein Flugzeug laden.",
     )?;
@@ -278,7 +292,7 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
     // Aufruf abgebrochen, während er wartet, merkt er es danach.
     let nr = LAUF.fetch_add(1, Ordering::SeqCst) + 1;
     let _start = START.lock().await;
-    if LAUF.load(Ordering::SeqCst) != nr {
+    if LAUF.load(Ordering::SeqCst) != nr || abgesagt(start) {
         return Err(ABGEBROCHEN.into());
     }
     // Eine alte Sitzung sauber beenden.
@@ -306,13 +320,14 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
         let mut g = SITZUNG.lock().map_err(|_| "Sperre")?;
         // Während des Verbindens abgebrochen (Seite verlassen) oder neu
         // gestartet: diese Quelle gleich wieder schließen.
-        if LAUF.load(Ordering::SeqCst) != nr {
+        if LAUF.load(Ordering::SeqCst) != nr || abgesagt(start) {
             drop(g);
             quelle_beenden(&app, quelle);
             return Err(ABGEBROCHEN.into());
         }
         *g = Some(Sitzung {
             nr,
+            start,
             messung_id: uuid::Uuid::new_v4().simple().to_string(),
             quelle,
             sim,
@@ -328,6 +343,10 @@ pub async fn vermessung_starten(app: AppHandle) -> Result<StartAntwort, String> 
     let mut anzahl = 0;
     for _ in 0..24 {
         tokio::time::sleep(Duration::from_millis(500)).await;
+        if abgesagt(start) {
+            schliessen_wenn(&app, nr);
+            return Err(ABGEBROCHEN.into());
+        }
         let n = match stand_jetzt(&app, nr) {
             Ok(st) => st.len(),
             Err(e) => {
@@ -575,7 +594,28 @@ pub async fn vermessung_senden(
 /// lässt eine neuere Messung stehen. Ohne (Seite verlassen mitten im
 /// Verbinden) alles, auch einen noch laufenden Start.
 #[tauri::command]
-pub fn vermessung_beenden(app: AppHandle, sitzung: Option<u64>) {
+pub fn vermessung_beenden(app: AppHandle, sitzung: Option<u64>, start: Option<u64>) {
+    if let Some(t) = start {
+        // Genau diesen Start absagen (auch wenn er noch läuft) und seine
+        // Sitzung schließen, falls sie schon steht.
+        if let Ok(mut g) = ABGESAGT.lock() {
+            if g.len() >= 64 {
+                g.clear();
+            }
+            g.push(t);
+        }
+        let alt = SITZUNG.lock().ok().and_then(|mut g| {
+            if g.as_ref().is_some_and(|s| s.start == Some(t)) {
+                g.take()
+            } else {
+                None
+            }
+        });
+        if let Some(alt) = alt {
+            quelle_beenden(&app, alt.quelle);
+        }
+        return;
+    }
     if let Some(nr) = sitzung {
         if LAUF.load(Ordering::SeqCst) == nr {
             LAUF.fetch_add(1, Ordering::SeqCst);

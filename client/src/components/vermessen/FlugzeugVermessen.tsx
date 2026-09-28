@@ -67,6 +67,13 @@ export function FlugzeugVermessen() {
   const belegt = useRef(false);
   // Sitzung im Backend (ab erfolgreichem Start).
   const sitzung = useRef<number | null>(null);
+  // Kennung des eigenen Starts — damit trifft ein Abbruch mitten im
+  // Verbinden nur diesen Start, nie einen gleichzeitig vom iPad gestarteten.
+  const startNr = useRef<number | null>(null);
+  const beendenArgs = () => ({
+    ...(startNr.current === null ? {} : { start: startNr.current }),
+    ...(sitzung.current === null ? {} : { sitzung: sitzung.current }),
+  });
 
   // Simulatorstatus für den Startbildschirm.
   useEffect(() => {
@@ -94,9 +101,8 @@ export function FlugzeugVermessen() {
   useEffect(
     () => () => {
       lauf.current++;
-      // Mitten im Verbinden gibt es noch keine Nummer — dann alles beenden.
-      const nr = sitzung.current;
-      void invoke("vermessung_beenden", nr === null ? undefined : { sitzung: nr }).catch(() => undefined);
+      // Nie gestartet: nichts zu beenden.
+      if (startNr.current !== null) void invoke("vermessung_beenden", beendenArgs()).catch(() => undefined);
     },
     [],
   );
@@ -104,9 +110,12 @@ export function FlugzeugVermessen() {
   const beenden = useCallback(async () => {
     lauf.current++;
     belegt.current = false;
-    const nr = sitzung.current;
+    const args = beendenArgs();
     sitzung.current = null;
-    await invoke("vermessung_beenden", nr === null ? undefined : { sitzung: nr }).catch(() => undefined);
+    startNr.current = null;
+    if (args.start !== undefined || args.sitzung !== undefined) {
+      await invoke("vermessung_beenden", args).catch(() => undefined);
+    }
   }, []);
 
   /** Einen Befehl ausführen; `null`, wenn inzwischen abgebrochen wurde. */
@@ -132,8 +141,10 @@ export function FlugzeugVermessen() {
     setFehler(null);
     setPhase({ art: "verbinden" });
     const n = lauf.current;
+    startNr.current = Math.floor(Math.random() * 2 ** 50);
+    sitzung.current = null;
     try {
-      const a = await ausfuehren<StartAntwort>("vermessung_starten");
+      const a = await ausfuehren<StartAntwort>("vermessung_starten", { start: startNr.current });
       if (!a) return;
       sitzung.current = a.sitzung;
       setStart(a);

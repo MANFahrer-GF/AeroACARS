@@ -65,11 +65,23 @@ pub enum Dispatch {
 /// Deserialize `body` into a command-arg struct `T`. A malformed body
 /// (missing/extra/typed-wrong fields) becomes a `UiError` so the caller
 /// sees a clean 422 instead of a 500.
-/// Argumente der Vermessungsbefehle, die nur die Sitzung nennen.
+/// Argumente der Vermessungsbefehle, die nur Sitzung/Start nennen.
 #[derive(Deserialize, Default)]
 struct VmSitzung {
     #[serde(default)]
     sitzung: Option<u64>,
+    #[serde(default)]
+    start: Option<u64>,
+}
+
+/// Ohne Argumente (null) = ohne Kennung; falsche Argumente sind ein Fehler
+/// (ein `"sitzung":"7"` darf nicht still zu „alle" werden).
+fn vm_args(body: &Value) -> Result<VmSitzung, UiError> {
+    if body.is_null() {
+        Ok(VmSitzung::default())
+    } else {
+        parse_args(body)
+    }
 }
 
 fn parse_args<T: for<'de> Deserialize<'de>>(body: &Value) -> Result<T, UiError> {
@@ -181,14 +193,18 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // „Flugzeug vermessen" (28.09.2026) — auch vom Tablet aus: im Cockpit
         // schalten, am iPad „Erledigt" tippen. Jeder Befehl nennt die
         // Sitzung, damit ein verspäteter Befehl eine neuere nicht anfasst.
-        "vermessung_starten" => {
-            from_string_err(crate::vermessung::vermessung_starten(app.clone()).await)
-        }
-        "vermessung_ruhe" => {
-            // Ohne Argumente (null) = ohne Sitzungsangabe.
-            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
-            from_string_err(crate::vermessung::vermessung_ruhe(app.clone(), a.sitzung).await)
-        }
+        "vermessung_starten" => match vm_args(body) {
+            Ok(a) => {
+                from_string_err(crate::vermessung::vermessung_starten(app.clone(), a.start).await)
+            }
+            Err(e) => Err(e),
+        },
+        "vermessung_ruhe" => match vm_args(body) {
+            Ok(a) => {
+                from_string_err(crate::vermessung::vermessung_ruhe(app.clone(), a.sitzung).await)
+            }
+            Err(e) => Err(e),
+        },
         "vermessung_stellung" => {
             #[derive(Deserialize)]
             struct A {
@@ -221,21 +237,23 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
-        "vermessung_schritt_neu" => {
-            // Ohne Argumente (null) = ohne Sitzungsangabe.
-            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
-            from_string_err(crate::vermessung::vermessung_schritt_neu(a.sitzung))
-        }
-        "vermessung_senden" => {
-            // Ohne Argumente (null) = ohne Sitzungsangabe.
-            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
-            from_string_err(crate::vermessung::vermessung_senden(app.clone(), a.sitzung).await)
-        }
-        "vermessung_beenden" => {
-            let a = parse_args::<VmSitzung>(body).unwrap_or_default();
-            crate::vermessung::vermessung_beenden(app.clone(), a.sitzung);
-            ok_json(())
-        }
+        "vermessung_schritt_neu" => match vm_args(body) {
+            Ok(a) => from_string_err(crate::vermessung::vermessung_schritt_neu(a.sitzung)),
+            Err(e) => Err(e),
+        },
+        "vermessung_senden" => match vm_args(body) {
+            Ok(a) => {
+                from_string_err(crate::vermessung::vermessung_senden(app.clone(), a.sitzung).await)
+            }
+            Err(e) => Err(e),
+        },
+        "vermessung_beenden" => match vm_args(body) {
+            Ok(a) => {
+                crate::vermessung::vermessung_beenden(app.clone(), a.sitzung, a.start);
+                ok_json(())
+            }
+            Err(e) => Err(e),
+        },
         // Bordbuch (26.09.2026) — 1:1 wie am PC.
         "bordbuch_liste" => ok_json(crate::bordbuch_liste(app.clone())),
         "bordbuch_live" => ok_json(crate::bordbuch_live(app.clone(), st!())),
@@ -1190,6 +1208,17 @@ mod tests {
     //! camelCase rename survive.
     use super::*;
     use serde_json::json;
+
+    /// Vermessung: null = ohne Kennung, Zahl = Kennung, alles andere Fehler
+    /// (sonst würde ein kaputtes Beenden still alle Messungen treffen).
+    #[test]
+    fn vermessung_argumente() {
+        let leer = vm_args(&Value::Null).unwrap();
+        assert!(leer.sitzung.is_none() && leer.start.is_none());
+        let a = vm_args(&json!({ "sitzung": 7, "start": 99 })).unwrap();
+        assert_eq!((a.sitzung, a.start), (Some(7), Some(99)));
+        assert!(vm_args(&json!({ "sitzung": "7" })).is_err());
+    }
 
     #[test]
     fn parses_read_command_args() {
