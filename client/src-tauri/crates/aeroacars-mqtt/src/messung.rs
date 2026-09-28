@@ -98,13 +98,31 @@ pub struct Vermessen {
     pub anzahl: u32,
 }
 
-#[derive(Debug, Deserialize)]
-struct VermessenListe {
-    flugzeuge: Vec<Vermessen>,
+/// Ein Aircraft-Scan der VA (Übersichtstabelle: auch gescannte, aber noch
+/// nicht vermessene Flugzeuge).
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct ScanEintrag {
+    pub sim: Option<String>,
+    pub icao: Option<String>,
+    pub paket: Option<String>,
+    #[serde(default)]
+    pub titel_liste: Vec<String>,
+    pub scan_namen: Option<u32>,
+    /// „fertig" | „in_arbeit" | None — Profil-Stand, wie der Admin ihn setzt.
+    pub profil: Option<String>,
+    pub zuletzt: i64,
 }
 
-/// Welche Flugzeuge die VA schon vermessen hat.
-pub async fn vermessen(base: Option<&str>, token: &str) -> Result<Vec<Vermessen>, NavdataError> {
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct VermessenListe {
+    pub flugzeuge: Vec<Vermessen>,
+    /// Ältere Server liefern keine Scans.
+    #[serde(default)]
+    pub scans: Vec<ScanEintrag>,
+}
+
+/// Welche Flugzeuge die VA schon vermessen und gescannt hat.
+pub async fn vermessen(base: Option<&str>, token: &str) -> Result<VermessenListe, NavdataError> {
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
     let r = client
         .get(url(base, "/vermessen"))
@@ -114,7 +132,6 @@ pub async fn vermessen(base: Option<&str>, token: &str) -> Result<Vec<Vermessen>
     let r = pruefen(r).await?;
     r.json::<VermessenListe>()
         .await
-        .map(|l| l.flugzeuge)
         .map_err(|e| NavdataError::BadResponse(e.to_string()))
 }
 
@@ -134,5 +151,12 @@ mod tests {
         assert_eq!(l.flugzeuge[1].teil, None, "Altbestand ohne Teil");
         let aus = serde_json::to_value(&l.flugzeuge[0]).unwrap();
         assert_eq!(aus["teil"], "luft", "auch zur Oberfläche serialisiert");
+        assert!(l.scans.is_empty(), "älterer Server ohne scans");
+        let mit: VermessenListe = serde_json::from_str(
+            r#"{"flugzeuge":[],"scans":[{"sim":"msfs","icao":"BCS3","paket":"Synaptic A220","titel_liste":["A220-300"],"scan_namen":1200,"profil":"in_arbeit","zuletzt":5,"quelle":"client"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(mit.scans[0].titel_liste, ["A220-300"]);
+        assert_eq!(mit.scans[0].profil.as_deref(), Some("in_arbeit"));
     }
 }

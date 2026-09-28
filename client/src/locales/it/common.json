@@ -3572,7 +3572,7 @@
     "schon_vermessen": "Questo aereo è già stato misurato (l'ultima volta il {{datum}}). Grazie! Misurarlo di nuovo ha senso solo dopo un aggiornamento importante dell'add-on.",
     "trotzdem": "Misura comunque",
     "liste_titel": "Già misurati ({{anzahl}})",
-    "liste_hinweis": "Ogni aereo si misura una volta a terra (interruttori) e una volta in volo (autopilota). Dove c'è scritto “manca ancora”, la tua misurazione aiuta.",
+    "liste_hinweis": "Tutti gli aerei con una misurazione o un aircraft scan. Ognuno si misura una volta a terra (interruttori) e una volta in volo (autopilota) – dove c'è scritto “manca ancora”, la tua misurazione aiuta. L'elenco cresce da solo a ogni nuovo scan.",
     "messungen": "{{anzahl}} misurazioni",
     "erst_scan": "Per questo aereo non c'è ancora un aircraft scan. Consiglio: fai prima uno scan in Impostazioni → “✈️ Plugin” → “🔬 Invia aereo per l'analisi”. La misurazione lo userà automaticamente e riconoscerà di più. Gli aerei cifrati dello Store non si possono scansionare – in quel caso misura e basta.",
     "scan_da": "Aircraft scan disponibile – verranno letti anche {{anzahl}} nomi di variabili.",
@@ -3614,6 +3614,9 @@
     "spalte_scan": "Variabili (scan)",
     "scan_unnoetig": "non serve",
     "scan_anzahl": "{{anzahl}} nomi",
-    "scan_keiner": "nessuno scan"
+    "scan_keiner": "nessuno scan",
+    "spalte_profil": "Profilo",
+    "profil_fertig": "pronto",
+    "profil_in_arbeit": "in lavorazione"
   }
 }

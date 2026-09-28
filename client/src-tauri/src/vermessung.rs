@@ -628,9 +628,12 @@ pub async fn vermessung_senden(
 #[tauri::command]
 pub async fn vermessung_liste(
     app: AppHandle,
-) -> Result<Vec<aeroacars_mqtt::messung::Vermessen>, String> {
+) -> Result<aeroacars_mqtt::messung::VermessenListe, String> {
     let Some(token) = crate::bordbuch_token(&app) else {
-        return Ok(Vec::new());
+        return Ok(aeroacars_mqtt::messung::VermessenListe {
+            flugzeuge: Vec::new(),
+            scans: Vec::new(),
+        });
     };
     aeroacars_mqtt::messung::vermessen(None, &token)
         .await

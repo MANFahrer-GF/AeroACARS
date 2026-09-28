@@ -60,7 +60,7 @@ vi.mock("../../lib/ipc", () => ({
   },
 }));
 
-import { FlugzeugVermessen, schonVermessen } from "./FlugzeugVermessen";
+import { FlugzeugVermessen, schonVermessen, uebersicht } from "./FlugzeugVermessen";
 
 const klick = async (text: string | RegExp) => {
   fireEvent.click(await screen.findByRole("button", { name: text }));
@@ -75,6 +75,31 @@ beforeEach(() => {
   h.liste = [];
   h.scanNamen = 0;
   h.kind = "xplane";
+});
+
+describe("uebersicht: Messungen + Scans", () => {
+  const messungen = [{ sim: "msfs", teil: "boden", icao: "A388", titel: "A380-800 RR Basic", zuletzt: 5, anzahl: 2, scan_namen: 235 }];
+  const scans = [
+    { sim: "msfs", icao: "A388", paket: "iniBuilds A380 – L:-Namen aus AAO-Profil", titel_liste: ["A380-800 RR Basic"], scan_namen: 235, profil: null, zuletzt: 4 },
+    { sim: "msfs", icao: "A388", paket: "A380X (Development)", titel_liste: ["FlyByWire A380X (A380-842)"], scan_namen: 900, profil: null, zuletzt: 3 },
+    { sim: "msfs", icao: "BCS3", paket: "Synaptic A220", titel_liste: ["A220-300", "A220-300 - No Cabin"], scan_namen: 1200, profil: "in_arbeit", zuletzt: 2 },
+    { sim: "xplane", icao: "B738", paket: "Boeing 737-800", titel_liste: ["Boeing 737-800"], scan_namen: null, profil: "fertig", zuletzt: 1 },
+  ];
+  const z = uebersicht(messungen, scans);
+  it("Scan zur Messung landet in derselben Zeile, fremdes Add-on gleicher ICAO nicht", () => {
+    expect(z).toHaveLength(4);
+    expect(z[0]!.titel).toBe("A380-800 RR Basic");
+    expect(z[0]!.boden?.anzahl).toBe(2);
+    expect(z.find((x) => x.titel === "A380X (Development)")?.boden).toBeNull();
+  });
+  it("gescannt, nie vermessen: eigene Zeile mit Profil-Stand", () => {
+    const a220 = z.find((x) => x.icao === "BCS3")!;
+    expect(a220.boden).toBeNull();
+    expect(a220.luft).toBeNull();
+    expect(a220.profil).toBe("in_arbeit");
+    expect(a220.titel_liste).toContain("A220-300 - No Cabin");
+    expect(z.find((x) => x.icao === "B738")!.profil).toBe("fertig");
+  });
 });
 
 describe("schonVermessen", () => {
@@ -157,6 +182,22 @@ describe("Flugzeug vermessen", () => {
     expect(await screen.findByText("nicht nötig")).toBeTruthy();
     expect(screen.queryByText(/Tipp: Mach zuerst einen Scan/)).toBeNull();
     expect(h.aufrufe.some((a) => a.cmd === "vermessung_scan_namen")).toBe(false);
+  });
+
+  it("Startseite: geladenes Flugzeug über einen Lackierungstitel des Scans erkannt", async () => {
+    h.kind = "msfs2024";
+    h.liste = {
+      flugzeuge: [],
+      scans: [{ sim: "msfs", icao: "B77W", paket: "PMDG 777", titel_liste: ["Boeing 777-300ER", "PMDG 777-300ER Emirates"], scan_namen: 50, profil: "fertig", zuletzt: 1 }],
+    } as never;
+    render(<FlugzeugVermessen />);
+    const tabelle = await screen.findByRole("table");
+    const zeilen = tabelle.querySelectorAll("tbody tr");
+    expect(zeilen.length).toBe(1);
+    expect(zeilen[0]!.className).toContain("vm-zeile--geladen");
+    expect(zeilen[0]!.textContent).toContain("PMDG 777");
+    expect(zeilen[0]!.textContent).toContain("✓ fertig");
+    expect(screen.getByRole("columnheader", { name: "Profil" })).toBeTruthy();
   });
 
   it("Startseite: Boden und Luft desselben Flugzeugs in einer Zeile", async () => {

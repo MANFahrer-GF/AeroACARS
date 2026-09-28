@@ -302,3 +302,4 @@
 .vm-zelle--ok { background: var(--sem-ok-bg); color: var(--sem-ok); }
 .vm-zelle--fehlt { background: var(--sem-warn-bg); color: var(--sem-warn); }
 .vm-zelle--leise { background: var(--surface-2); color: var(--text-dim); font-weight: 500; }
+.vm-zelle--arbeit { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent); }

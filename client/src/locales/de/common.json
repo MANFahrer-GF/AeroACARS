@@ -3572,7 +3572,7 @@
     "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
     "trotzdem": "Trotzdem messen",
     "liste_titel": "Schon vermessen ({{anzahl}})",
-    "liste_hinweis": "Jedes Flugzeug wird einmal am Boden (Schalter) und einmal in der Luft (Autopilot) gemessen. Wo „fehlt noch“ steht, hilft deine Messung.",
+    "liste_hinweis": "Alle Flugzeuge mit Messung oder Aircraft-Scan. Jedes wird einmal am Boden (Schalter) und einmal in der Luft (Autopilot) gemessen – wo „fehlt noch“ steht, hilft deine Messung. Die Liste wächst von selbst mit jedem neuen Scan.",
     "messungen": "{{anzahl}} Messungen",
     "erst_scan": "Für dieses Flugzeug liegt noch kein Aircraft-Scan vor. Tipp: Mach zuerst einen Scan unter Einstellungen → „✈️ Plugins“ → „🔬 Flugzeug zur Analyse einreichen“. Die Messung nutzt ihn danach automatisch und erkennt mehr. Verschlüsselte Store-Flugzeuge kann der Scan nicht lesen – dann einfach so messen.",
     "scan_da": "Aircraft-Scan vorhanden – {{anzahl}} Variablennamen werden mitgelesen.",
@@ -3614,6 +3614,9 @@
     "spalte_scan": "Variablen (Scan)",
     "scan_unnoetig": "nicht nötig",
     "scan_anzahl": "{{anzahl}} Namen",
-    "scan_keiner": "kein Scan"
+    "scan_keiner": "kein Scan",
+    "spalte_profil": "Profil",
+    "profil_fertig": "fertig",
+    "profil_in_arbeit": "in Arbeit"
   }
 }

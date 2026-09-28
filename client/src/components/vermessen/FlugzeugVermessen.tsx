@@ -48,28 +48,84 @@ export function schonVermessen(
   );
 }
 
-/** Bestand je Flugzeug: Boden und Luft nebeneinander (Liste „Schon vermessen"). */
-type Zeile = {
+/** Ein Aircraft-Scan der VA (vom Server). */
+export interface ScanEintrag {
+  sim: string | null;
+  icao: string | null;
+  paket: string | null;
+  titel_liste: string[];
+  scan_namen: number | null;
+  /** „fertig" | „in_arbeit" | null — Profil-Stand, wie der Admin ihn setzt. */
+  profil: string | null;
+  zuletzt: number;
+}
+
+/** Eine Zeile der Übersichtstabelle. */
+export type Zeile = {
   titel: string | null;
   icao: string | null;
   sim: string | null;
+  /** Alle Titel, unter denen der Simulator dieses Flugzeug meldet
+   *  (Lackierungen) — für den Abgleich mit dem geladenen Flugzeug. */
+  titel_liste: string[];
   /** MSFS: L:-Namen aus den Scans (null = X-Plane/unbekannt). */
   scan_namen: number | null;
+  profil: string | null;
   boden: Vermessen | null;
   luft: Vermessen | null;
 };
 
+const klein = (x: string | null | undefined) => (x ?? "").trim().toLowerCase();
+const gross = (x: string | null | undefined) => (x ?? "").trim().toUpperCase();
+
+/** Bestand je Flugzeug: Boden und Luft nebeneinander. */
 export function jeFlugzeug(liste: Vermessen[]): Zeile[] {
   const aus = new Map<string, Zeile>();
   for (const v of liste) {
-    const k = `${v.sim ?? ""}|${(v.icao ?? "").trim().toUpperCase()}|${(v.titel ?? "").trim().toLowerCase()}`;
-    const e = aus.get(k) ?? { titel: v.titel, icao: v.icao, sim: v.sim, scan_namen: null, boden: null, luft: null };
+    const k = `${v.sim ?? ""}|${gross(v.icao)}|${klein(v.titel)}`;
+    const e =
+      aus.get(k) ??
+      { titel: v.titel, icao: v.icao, sim: v.sim, titel_liste: v.titel ? [v.titel] : [], scan_namen: null, profil: null, boden: null, luft: null };
     if (typeof v.scan_namen === "number") e.scan_namen = v.scan_namen;
     if ((v.teil ?? "boden") === "luft") e.luft = v;
     else e.boden = v;
     aus.set(k, e);
   }
   return [...aus.values()];
+}
+
+/** Übersicht: Messungen und Aircraft-Scans in einer Tabelle. Ein Scan
+ *  gehört zu einer Messung, wenn Simulator und Muster passen und der
+ *  gemessene Titel unter den Titeln des Scans ist; sonst eigene Zeile
+ *  (gescannt, aber noch nicht vermessen). */
+export function uebersicht(liste: Vermessen[], scans: ScanEintrag[]): Zeile[] {
+  const zeilen = jeFlugzeug(liste);
+  for (const sc of scans) {
+    const titel = sc.titel_liste.map(klein);
+    const treffer = zeilen.find(
+      (z) =>
+        (z.sim ?? "msfs") === (sc.sim ?? "msfs") &&
+        (!gross(z.icao) || !gross(sc.icao) || gross(z.icao) === gross(sc.icao)) &&
+        z.titel_liste.some((t) => titel.includes(klein(t))),
+    );
+    if (treffer) {
+      if (treffer.scan_namen === null && sc.scan_namen !== null) treffer.scan_namen = sc.scan_namen;
+      treffer.profil = treffer.profil ?? sc.profil;
+      for (const t of sc.titel_liste) if (!treffer.titel_liste.some((x) => klein(x) === klein(t))) treffer.titel_liste.push(t);
+    } else {
+      zeilen.push({
+        titel: sc.paket ?? sc.titel_liste[0] ?? null,
+        icao: sc.icao,
+        sim: sc.sim,
+        titel_liste: [...sc.titel_liste],
+        scan_namen: sc.scan_namen,
+        profil: sc.profil,
+        boden: null,
+        luft: null,
+      });
+    }
+  }
+  return zeilen;
 }
 
 interface StartAntwort {
@@ -121,6 +177,7 @@ export function FlugzeugVermessen() {
   const [fehler, setFehler] = useState<string | null>(null);
   const [sim, setSim] = useState<SimStatus | null>(null);
   const [vermessen, setVermessen] = useState<Vermessen[]>([]);
+  const [scans, setScans] = useState<ScanEintrag[]>([]);
   // Welche Schalter gemessen werden (Startseite, voreingestellt alle) und
   // der beim Start festgehaltene Plan — z. B. nur die Autobrake nachmessen.
   const [auswahl, setAuswahl] = useState<Set<Schalter>>(() => new Set(SCHRITTE.map((x) => x.schalter)));
@@ -131,8 +188,18 @@ export function FlugzeugVermessen() {
   useEffect(() => {
     if (phase.art !== "start") return;
     let lebt = true;
-    invoke<Vermessen[]>("vermessung_liste")
-      .then((l) => lebt && setVermessen(Array.isArray(l) ? l : []))
+    invoke<{ flugzeuge?: Vermessen[]; scans?: ScanEintrag[] } | Vermessen[]>("vermessung_liste")
+      .then((l) => {
+        if (!lebt) return;
+        // Ältere Form: nur die Liste der Messungen.
+        if (Array.isArray(l)) {
+          setVermessen(l);
+          setScans([]);
+        } else {
+          setVermessen(Array.isArray(l?.flugzeuge) ? l.flugzeuge : []);
+          setScans(Array.isArray(l?.scans) ? l.scans : []);
+        }
+      })
       .catch(() => undefined);
     return () => {
       lebt = false;
@@ -379,6 +446,7 @@ export function FlugzeugVermessen() {
       {phase.art === "start" && <StartSeite
           sim={sim}
           vermessen={vermessen}
+          scans={scans}
           auswahl={auswahl}
           onAuswahl={setAuswahl}
           onStart={() => void starten()}
@@ -489,12 +557,14 @@ export function FlugzeugVermessen() {
 function StartSeite({
   sim,
   vermessen,
+  scans,
   auswahl,
   onAuswahl,
   onStart,
 }: {
   sim: SimStatus | null;
   vermessen: Vermessen[];
+  scans: ScanEintrag[];
   auswahl: Set<Schalter>;
   onAuswahl: (a: Set<Schalter>) => void;
   onStart: () => void;
@@ -511,15 +581,15 @@ function StartSeite({
   const scanNamen = useScanNamen(sim);
   const moeglich = schritteFuer(teil);
   const gewaehlt = moeglich.filter((x) => auswahl.has(x.schalter)).length;
-  const bestand = jeFlugzeug(vermessen);
+  const bestand = uebersicht(vermessen, scans);
   // Tabelle: das geladene Flugzeug immer oben — auch, wenn es noch gar nicht
   // vermessen ist (dann „fehlt“ in beiden Spalten).
   const titelJetzt = (snap?.aircraft_title ?? "").trim().toLowerCase();
   const icaoJetzt = (snap?.aircraft_icao ?? "").trim().toUpperCase();
-  const istGeladen = (v: { titel: string | null; icao: string | null }) =>
+  const istGeladen = (v: Zeile) =>
     !!titelJetzt &&
-    (v.titel ?? "").trim().toLowerCase() === titelJetzt &&
-    (!icaoJetzt || !v.icao || v.icao.trim().toUpperCase() === icaoJetzt);
+    v.titel_liste.some((x) => klein(x) === titelJetzt) &&
+    (!icaoJetzt || !v.icao || gross(v.icao) === icaoJetzt);
   const geladenImBestand = bestand.filter(istGeladen);
   const zeilen = [
     ...(verbunden && titelJetzt
@@ -530,7 +600,9 @@ function StartSeite({
               titel: snap?.aircraft_title ?? null,
               icao: snap?.aircraft_icao ?? null,
               sim: sim?.kind?.startsWith("msfs") ? "msfs" : sim?.kind?.startsWith("xplane") ? "xplane" : null,
+              titel_liste: snap?.aircraft_title ? [snap.aircraft_title] : [],
               scan_namen: null,
+              profil: null,
               boden: null,
               luft: null,
               geladen: true,
@@ -570,6 +642,7 @@ function StartSeite({
               <th>{t("vermessen.stand_boden")}</th>
               <th>{t("vermessen.stand_luft")}</th>
               <th>{t("vermessen.spalte_scan")}</th>
+              <th>{t("vermessen.spalte_profil")}</th>
             </tr>
           </thead>
           <tbody>
@@ -605,6 +678,15 @@ function StartSeite({
                     // Beim geladenen Flugzeug die frische Abfrage, sonst die Serverzahl.
                     anzahl={v.geladen && scanNamen !== null ? scanNamen : v.scan_namen}
                   />
+                </td>
+                <td>
+                  {v.profil === "fertig" ? (
+                    <span className="vm-zelle vm-zelle--ok">✓ {t("vermessen.profil_fertig")}</span>
+                  ) : v.profil === "in_arbeit" ? (
+                    <span className="vm-zelle vm-zelle--arbeit">{t("vermessen.profil_in_arbeit")}</span>
+                  ) : (
+                    <span className="vm-dim">–</span>
+                  )}
                 </td>
               </tr>
             ))}
