@@ -1740,3 +1740,228 @@ TEST(dienst_m2_liste_verhungert_nicht) {
     PRUEFE(teile > 0 && gesehen == teile);
     for (int id : {3, 9, 16}) PRUEFE(w[id] > 0);
 }
+
+// =============================================================================
+// Nachprüfung der Codex-Abnahme (Drosselung je Dataref, ungebudgetierte Wege,
+// Abo-1-Teilbudget, vorgemerkte Fehler)
+// =============================================================================
+
+TEST(dienst_h4_drosselung_je_dataref_auch_bei_duplikaten) {
+    // Derselbe langsame Dataref 2000× in Abo 2 und 500× in Abo 3 (dazu 20
+    // billige Namen). Vorher hatte jeder EINTRAG seinen eigenen Zähler:
+    // 2500 Einträge × 3 Treffer — die Drosselung griff praktisch nie.
+    Aufbau a;
+    auto& langsam = a.welt.neu("addon/langsam", typ::F);
+    langsam.f = 7.0f;
+    langsam.kosten = 0.005;
+    std::vector<std::string> n2(2000, "addon/langsam"), n3(500, "addon/langsam");
+    for (int i = 0; i < 20; ++i) {
+        n3.push_back("addon/billig" + std::to_string(i));
+        a.welt.neu(n3.back(), typ::F).f = 1.0f;
+    }
+    a.hallo();
+    for (const auto& d : abo_datagramme(2, 5, n2, 1)) a.sende(d);
+    for (const auto& d : abo_datagramme(3, 20, n3, 1)) a.sende(d);
+    int getter_ab_2s = 0, w3 = 0;
+    double max_frame = 0.0;
+    for (int i = 0; i < 600; ++i) {
+        if (i % 60 == 0) a.sende("PING");
+        if (i == 120) getter_ab_2s = langsam.getter_aufrufe;
+        const double vorher = a.umg.zeit + 1.0 / 60.0;
+        a.frame();
+        max_frame = std::max(max_frame, a.umg.zeit - vorher);
+        for (auto& j : a.neue_vom_typ("w")) if (j.hole("abo")->zahl == 3) ++w3;
+    }
+    const int getter_8s = langsam.getter_aufrufe - getter_ab_2s;
+    std::printf("     2500 Duplikate eines 5-ms-Getters in 2 Abos: %d Aufrufe in 8 s, laengster Frame %.2f ms\n",
+                getter_8s, max_frame * 1000.0);
+    PRUEFE(getter_8s <= 10);   // gemeinsam gedrosselt: ≈ einmal je Sekunde
+    PRUEFE(max_frame <= grenzen::ZEITBUDGET_S + grenzen::SUCH_BUDGET_S + 0.005 + 1e-4);
+    PRUEFE_GLEICH(log_zaehle(a, "antwortet langsam"), 1);  // einmal je Dataref
+    PRUEFE(w3 >= 100);          // Abo 3 liefert weiter (Soll ≈ 200)
+}
+
+TEST(dienst_h4_drosseltabelle_voll_und_ausreisser_raeumen) {
+    // 800 verschiedene langsame Datarefs: die Tabelle verfolgt höchstens 768,
+    // meldet das einmal und läuft stabil weiter. Danach werden alle schnell:
+    // ein schneller Aufruf räumt die (noch nicht gedrosselten) Plätze.
+    Aufbau a;
+    std::vector<std::string> namen;
+    std::vector<ScheinRef*> refs;
+    for (int i = 0; i < 800; ++i) {
+        namen.push_back("addon/l" + std::to_string(i));
+        auto& r = a.welt.neu(namen.back(), typ::F);
+        r.kosten = 0.003;
+        refs.push_back(&r);
+    }
+    a.hallo();
+    for (const auto& d : abo_datagramme(2, 50, namen, 1)) a.sende(d);
+    a.frames(4000);
+    PRUEFE_GLEICH(log_zaehle(a, "Drosseltabelle voll"), 1);
+    PRUEFE_GLEICH(log_zaehle(a, "antwortet langsam"), grenzen::MAX_LANGSAM_MELDUNGEN);
+    for (auto* r : refs) r->kosten = 0.0;
+    a.d->flugzeug_geladen();  // leert die Tabelle
+    int vor = 0;
+    for (auto* r : refs) vor += r->getter_aufrufe;
+    a.frames(120);
+    int nach = 0;
+    for (auto* r : refs) nach += r->getter_aufrufe;
+    PRUEFE(nach - vor >= 800 * 50);  // wieder volle Rate für alle
+}
+
+TEST(dienst_h4_empfang_hat_ein_zeitbudget) {
+    Aufbau a;
+    a.hallo();
+    a.umg.tick_je_uhrabfrage = 0.0002;  // jede Uhrabfrage 0,2 ms
+    a.d->empfang_beginnen();
+    int n = 0;
+    while (n < grenzen::MAX_DATAGRAMME_JE_FRAME && a.d->empfang_weiter()) {
+        a.sende("PING");
+        ++n;
+    }
+    std::printf("     Empfang mit 0,2 ms je Uhrabfrage: %d Datagramme in diesem Frame\n", n);
+    PRUEFE(n >= 1 && n <= 4);
+    a.umg.tick_je_uhrabfrage = 0.0;
+    a.frame();
+    a.d->empfang_beginnen();
+    n = 0;
+    while (n < grenzen::MAX_DATAGRAMME_JE_FRAME && a.d->empfang_weiter()) { a.sende("PING"); ++n; }
+    PRUEFE_GLEICH(n, grenzen::MAX_DATAGRAMME_JE_FRAME);
+}
+
+TEST(dienst_h4_liste_zaehlt_erst_im_budget) {
+    Aufbau a;
+    for (int i = 0; i < 100; ++i) a.welt.neu("sim/z/n" + std::to_string(i), typ::F);
+    a.hallo();
+    a.sende("LISTE 3");
+    PRUEFE_GLEICH(a.welt.zaehlungen, 0);  // nicht beim Empfang
+    a.frame();
+    PRUEFE_GLEICH(a.welt.zaehlungen, 1);
+    int teile = 0, gesehen = 0;
+    for (int i = 0; i < 20 && (teile == 0 || gesehen < teile); ++i) {
+        a.frame();
+        for (auto& j : a.neue_vom_typ("liste")) { teile = static_cast<int>(j.hole("teile")->zahl); ++gesehen; }
+    }
+    PRUEFE(teile > 0 && gesehen == teile);
+}
+
+TEST(dienst_h4_flugzeugkennung_ist_budgetiert) {
+    // Jede der drei Kennungen kostet 0,4 ms (> Such-Budget 0,3 ms). Vorher
+    // lasen alle drei vor jedem Budget im selben Frame; jetzt eine je Frame.
+    Aufbau a;
+    for (const char* n : {"sim/aircraft/view/acf_ICAO", "sim/aircraft/view/acf_descrip",
+                          "sim/aircraft/view/acf_relative_path"}) {
+        a.welt.such(n)->kosten = 0.0004;
+    }
+    a.sende("HALLO 2 test");
+    a.neue();
+    int max_je_frame = 0, frames = 0;
+    std::vector<JWert> f;
+    while (f.empty() && frames < 20) {
+        int vorher = 0;
+        for (auto& r : a.welt.refs) vorher += r->getter_aufrufe;
+        a.frame();
+        ++frames;
+        int nachher = 0;
+        for (auto& r : a.welt.refs) nachher += r->getter_aufrufe;
+        max_je_frame = std::max(max_je_frame, nachher - vorher);
+        f = a.neue_vom_typ("flugzeug");
+    }
+    PRUEFE(!f.empty());
+    PRUEFE(max_je_frame <= 1);
+    PRUEFE(frames >= 3 && frames <= 5);
+    if (!f.empty()) {
+        PRUEFE_TEXT(f[0].hole("icao")->text, "A20N");
+        PRUEFE_TEXT(f[0].hole("pfad")->text, "Aircraft/A320/a320.acf");
+    }
+}
+
+TEST(dienst_m2_grosses_abo1_hungert_niemanden_aus) {
+    // Abo 1: 3000 Arrays, 50 Hz, 2 µs je Lesen → 6 ms je Runde, jeden Frame
+    // fällig. Vorher lief Abo 1 immer vor dem Rundlauf mit dem ganzen Budget
+    // — LISTE und Mess-Abo bekamen nie etwas. Jetzt: Teilbudget für Abo 1,
+    // der Rundlauf bekommt den Rest samt freier Einheit.
+    Aufbau a;
+    for (int i = 0; i < 64; ++i) a.welt.neu("arr/" + std::to_string(i), typ::VF).vf = std::vector<float>(16, 1.0f);
+    std::vector<std::string> mess;
+    for (int i = 0; i < 300; ++i) {
+        mess.push_back("mess/n" + std::to_string(i));
+        a.welt.neu(mess.back(), typ::F).f = 2.0f;
+    }
+    for (int i = 0; i < 3000; ++i) a.welt.neu("sim/liste/x" + std::to_string(i), typ::F);
+    a.welt.lese_kosten = 2e-6;
+    a.hallo();
+    std::string d = "ABO 1 50\n";
+    for (int i = 0; i < 3000; ++i) d += "arr/" + std::to_string(i % 64) + "\n";
+    a.sende(d);
+    for (const auto& x : abo_datagramme(3, 5, mess, 1)) a.sende(x);
+    a.frames(30);
+    a.sende("LISTE 12");
+    int teile = 0, gesehen = 0, frames = 0;
+    std::map<int, int> w;
+    for (; frames < 900 && (teile == 0 || gesehen < teile || w[3] < 5); ++frames) {
+        a.frames(1);
+        for (auto& j : a.neue()) {
+            if (art(j) == "liste") { teile = static_cast<int>(j.hole("teile")->zahl); ++gesehen; }
+            if (art(j) == "w") w[static_cast<int>(j.hole("abo")->zahl)]++;
+        }
+    }
+    std::printf("     Abo 1 dauerlastig: LISTE nach %d Frames fertig, Abo 3 %d, Abo 1 %d Pakete\n",
+                frames, w[3], w[1]);
+    PRUEFE(teile > 0 && gesehen == teile);
+    PRUEFE(w[3] >= 5);
+    PRUEFE(w[1] > 0);
+}
+
+TEST(dienst_m1_vorgemerkter_fehler_ueberlebt_vollen_socket) {
+    Aufbau a;
+    a.welt.neu("addon/text", typ::B).b = std::string(1024, 'x');
+    std::vector<std::string> namen(8192, "addon/text");
+    a.hallo();
+    for (const auto& d : abo_datagramme(3, 1, namen, 5)) a.sende(d);
+    // Bis das Abo am Budget verworfen und der Fehler vorgemerkt ist.
+    for (int i = 0; i < 60 && log_mit(a, "speicher_limit").empty(); ++i) a.frames(1);
+    PRUEFE(!log_mit(a, "speicher_limit").empty());
+    a.neue();
+    a.umg.ok_noch = 0;  // Socket voll
+    a.frames(3);
+    PRUEFE(a.neue_vom_typ("fehler").empty());
+    a.umg.ok_noch = -1;
+    a.frames(1);
+    const auto f = a.neue_vom_typ("fehler");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) {
+        PRUEFE_TEXT(f[0].hole("grund")->text, "speicher_limit");
+        PRUEFE(f[0].hole("abo")->zahl == 3 && f[0].hole("gen")->zahl == 5);
+    }
+}
+
+TEST(dienst_h4_ausreisser_fuellen_die_drosseltabelle_nicht) {
+    // 800 verschiedene Datarefs mit je EINEM Ausreißer (3 ms) — wie über
+    // einen langen Flug verstreut. Ein schneller Folgeaufruf räumt ihren
+    // Platz; die Tabelle läuft nicht voll, und ein später wirklich langsamer
+    // Dataref wird noch gedrosselt.
+    Aufbau a;
+    std::vector<std::string> namen;
+    std::vector<ScheinRef*> refs;
+    for (int i = 0; i < 800; ++i) {
+        namen.push_back("addon/a" + std::to_string(i));
+        refs.push_back(&a.welt.neu(namen.back(), typ::F));
+    }
+    auto& echt = a.welt.neu("addon/echt_langsam", typ::F);
+    namen.push_back("addon/echt_langsam");
+    a.hallo();
+    for (const auto& d : abo_datagramme(2, 20, namen, 1)) a.sende(d);
+    a.frames(30);
+    // In 16 Schüben zu je 50 (über den Flug verstreut): jeder Schub hat Zeit
+    // für seinen schnellen Folgeaufruf, bevor der nächste kommt.
+    for (int schub = 0; schub < 16; ++schub) {
+        for (int i = 0; i < 50; ++i) refs[static_cast<size_t>(schub * 50 + i)]->kosten_einmal = 0.003;
+        a.frames(150);
+    }
+    for (auto* r : refs) PRUEFE(r->kosten_einmal == 0.0);  // jeder Ausreißer ist passiert
+    echt.kosten = 0.005;
+    a.frames(300);
+    PRUEFE(log_mit(a, "Drosseltabelle voll").empty());
+    PRUEFE(!log_mit(a, "addon/echt_langsam antwortet langsam").empty());
+}

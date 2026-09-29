@@ -22,7 +22,9 @@
 //     neue Protokoll 2 kennt den alten Client nicht mehr (kein_hallo) und
 //     nimmt ein neues HALLO an; Protokoll 1 läuft nach Enable weiter. Wie bei
 //     X-Plane ruft die Attrappe den Flight-Loop eines abgeschalteten Plugins
-//     nicht auf.
+//     nicht auf. Dazu Protokoll 1 über den Zyklus (Nachprüfung Codex N1):
+//     abgeschaltet in der Luft, währenddessen gelandet → nach Enable KEIN
+//     Schein-Touchdown; danach Start und echte Landung → genau ein Touchdown.
 // Am Ende druckt sie die Protokoll-1-Rate und endet mit 1, wenn sie nicht
 // bei ~20 Hz lag (AGL 1000 m → Protokoll 1 im 0,05-s-Takt).
 //
@@ -71,6 +73,7 @@ bool g_xp11 = false;
 // auch wenn Port 52000 belegt ist (z. B. vom laufenden AeroACARS-Client).
 Ref* g_fnrml = nullptr;
 int g_p1_ticks = 0;
+std::vector<double> g_aufsetzer;  // Zeitpunkte von "touchdown captured" (Protokoll 1)
 XPLMFlightLoop_f g_cb = nullptr;
 void* g_cb_ref = nullptr;
 float g_cb_intervall = 0.0f;
@@ -135,7 +138,11 @@ void attrappe_info(XPLMDataRef h, InfoKopie* info) {
 
 extern "C" {
 
-XPLM_API void XPLMDebugString(const char* s) { std::fputs(s, stdout); std::fflush(stdout); }
+XPLM_API void XPLMDebugString(const char* s) {
+    if (std::strstr(s, "touchdown captured") != nullptr) g_aufsetzer.push_back(sekunden());
+    std::fputs(s, stdout);
+    std::fflush(stdout);
+}
 XPLM_API XPLMDataRef XPLMFindDataRef(const char* name) { return such(name); }
 XPLM_API int XPLMIsDataRefGood(XPLMDataRef h) { return h != nullptr; }
 XPLM_API XPLMDataTypeID XPLMGetDataRefTypes(XPLMDataRef h) { return static_cast<Ref*>(h)->typen; }
@@ -241,6 +248,7 @@ int main(int argc, char** argv) {
     struct Antwort { double t; std::string text; };
     std::vector<Antwort> antworten;
     bool z_hallo1 = false, z_aus = false, z_ein = false, z_ping2 = false, z_hallo2 = false;
+    bool z_start = false, z_landung = false;
     bool frei_nach_aus = false, belegt_nach_ein = false;
     int p1_ticks_ein = -1, p1_pakete_ein = -1;
 
@@ -293,6 +301,9 @@ int main(int argc, char** argv) {
             if (!z_aus && t > 2.0) {
                 z_aus = true;
                 disable();
+                // Während das Plugin aus ist: gelandet.
+                such("sim/flightmodel/position/y_agl")->f = 0.0f;
+                g_fnrml->f = 50000.0f;
                 frei_nach_aus = port_frei();
                 an_plugin("PING");  // geht ins Leere
                 std::printf("[Attrappe] Zyklus: XPluginDisable, Port 52001 %s\n", frei_nach_aus ? "frei" : "BELEGT");
@@ -307,6 +318,16 @@ int main(int argc, char** argv) {
                 std::printf("[Attrappe] Zyklus: XPluginEnable, Port 52001 %s\n", belegt_nach_ein ? "gebunden" : "FREI");
             }
             if (!z_ping2 && t > 3.5) { z_ping2 = true; an_plugin("PING"); }
+            if (!z_start && t > 4.5) {  // Start: wieder in der Luft
+                z_start = true;
+                such("sim/flightmodel/position/y_agl")->f = 100.0f;
+                g_fnrml->f = 0.0f;
+            }
+            if (!z_landung && t > 5.2) {  // echte Landung
+                z_landung = true;
+                such("sim/flightmodel/position/y_agl")->f = 0.0f;
+                g_fnrml->f = 50000.0f;
+            }
             if (!z_hallo2 && t > 4.0) { z_hallo2 = true; an_plugin("HALLO 2 attrappe"); }
             char a[9000];
             for (;;) {
@@ -368,7 +389,15 @@ int main(int argc, char** argv) {
         std::printf("[Attrappe] Zyklus: hallo=%d, Port frei nach Disable=%d, still waehrend aus=%d, "
                     "gebunden nach Enable=%d, kein_hallo danach=%d, neues hallo=%d, Protokoll 1 weiter=%d\n",
                     hallo1, frei_nach_aus, nichts_aus, belegt_nach_ein, kein_hallo, hallo2, p1_weiter);
-        zyklus_ok = hallo1 && frei_nach_aus && nichts_aus && belegt_nach_ein && kein_hallo && hallo2 && p1_weiter;
+        int schein = 0, echt = 0;
+        for (double t : g_aufsetzer) {
+            if (t >= 2.0 && t < 4.5) ++schein;
+            if (t >= 5.2) ++echt;
+        }
+        std::printf("[Attrappe] Zyklus: Touchdown nach Enable am Boden=%d (Soll 0), nach echter Landung=%d (Soll 1)\n",
+                    schein, echt);
+        zyklus_ok = hallo1 && frei_nach_aus && nichts_aus && belegt_nach_ein && kein_hallo && hallo2 &&
+                    p1_weiter && schein == 0 && echt == 1;
         std::printf("[Attrappe] Zyklus %s\n", zyklus_ok ? "gruen" : "ROT");
     }
 
@@ -390,8 +419,11 @@ int main(int argc, char** argv) {
     // steuerung der VM, nicht das Plugin. Das alte Plugin 0.5.13 verlangt
     // dasselbe Intervall (0,05 s).
     std::printf("[Attrappe] Bildrate %.1f fps\n", static_cast<double>(zaehler) / laufzeit);
-    const bool ticks_ok = tick_hz > 5.0 && tick_hz < 21.5;
-    const bool pakete_ok = !p1_da || (paket_hz > 5.0 && paket_hz < 21.5);
+    // Im Zyklus steht das Flugzeug zeitweise am Boden (unter 200 ft läuft
+    // Protokoll 1 absichtlich jeden Frame) — dort nur die Untergrenze.
+    const double obergrenze = zyklus ? 1e9 : 21.5;
+    const bool ticks_ok = tick_hz > 5.0 && tick_hz < obergrenze;
+    const bool pakete_ok = !p1_da || (paket_hz > 5.0 && paket_hz < obergrenze);
     // Protokoll 1 trägt seit 1.0.0 die Plugin-Version ("pv") in jedem Paket.
     const bool pv_ok = !p1_da || p1_pakete == p1_mit_pv;
     if (p1_da) std::printf("[Attrappe] Protokoll 1: %d von %d Paketen mit \"pv\"\n", p1_mit_pv, p1_pakete);

@@ -85,6 +85,7 @@ void Dienst::alles_verwerfen() noexcept {
     }
     liste_leeren();
     for (OffenerFehler& f : offene_fehler_) f = OffenerFehler{};
+    langsam_leeren();
 }
 
 void Dienst::abo_leeren(Abo& abo) noexcept {
@@ -261,7 +262,6 @@ void Dienst::sende_vorgemerkte_fehler() noexcept {
         // Gegen die Gesamtgrenze, nicht gegen die der kleinen Antworten: Beim
         // Empfang gehen höchstens 8 hinaus, hier ist also immer Platz für
         // mindestens 8 — mehr als 17 vorgemerkte gibt es nicht.
-        if (pakete_frame_ >= grenzen::MAX_PAKETE_JE_FRAME) return;
         char puffer[256];
         JsonSchreiber w(puffer, sizeof(puffer));
         w.roh("{\"p\":2,\"t\":\"fehler\",\"grund\":\"");
@@ -276,8 +276,12 @@ void Dienst::sende_vorgemerkte_fehler() noexcept {
         if (f.id >= 0) { w.roh(",\"id\":"); w.ganzzahl(f.id); }
         w.roh("}\n");
         if (!w.ueberlauf()) {
-            ++pakete_frame_;
-            umgebung_.sende(client_, w.daten(), w.laenge());
+            // Über den gemeinsamen Ausgang. VOLL (Frame-Grenze oder Socket-
+            // Puffer): vorgemerkt lassen, nächster Frame. Nur OK oder ein
+            // endgültiger FEHLER räumen den Platz (Nachprüfung Codex M1).
+            const SendeErgebnis r = sende_paket(w.daten(), w.laenge());
+            uhr_auffrischen();
+            if (r == SendeErgebnis::VOLL) return;
         }
         f = OffenerFehler{};
     }
@@ -325,20 +329,38 @@ double Dienst::nach_aufruf() noexcept {
     return d;
 }
 
-void Dienst::nach_fremdaufruf(Abo& abo, Eintrag& e) noexcept {
+void Dienst::nach_fremdaufruf(Abo& abo, Eintrag& e, DatarefHandle h) noexcept {
     const double d = nach_aufruf();
     garantie_ = false;
     if (d <= grenzen::LANGSAM_AUFRUF_S) {
         // Nur Treffer IN FOLGE zählen: ein einzelner Ausreißer (der Thread
-        // wurde vom Betriebssystem unterbrochen) drosselt nichts.
-        if (!e.langsam) e.langsam_treffer = 0;
+        // wurde vom Betriebssystem unterbrochen) drosselt nichts. Ein
+        // schneller Aufruf räumt den Platz eines noch nicht gedrosselten
+        // Handles wieder frei (die Tabelle füllt sich so nicht mit
+        // Ausreißern eines langen Flugs).
+        if (langsam_belegt_ == 0) return;
+        const size_t i = langsam_platz(h);
+        if (i < grenzen::LANGSAM_PLAETZE && !langsam_[i].gedrosselt) langsam_loeschen(i);
         return;
     }
-    if (e.langsam) return;
-    if (e.langsam_treffer < 255) ++e.langsam_treffer;
-    if (e.langsam_treffer < grenzen::LANGSAM_TREFFER) return;
-    e.langsam = true;
-    e.langsam_faellig = jetzt_ + grenzen::LANGSAM_INTERVALL_S;
+    // Der Zustand gehört dem DATAREF, nicht dem Eintrag: Duplikate desselben
+    // Namens (auch in verschiedenen Abos) zählen gemeinsam und werden
+    // gemeinsam gedrosselt.
+    Langsam* l = langsam_anlegen(h);
+    if (l == nullptr) {
+        if (!langsam_voll_gemeldet_) {
+            langsam_voll_gemeldet_ = true;
+            protokolliere("Protokoll 2: Drosseltabelle voll (%u langsame Datarefs) - weitere werden "
+                          "nicht gedrosselt",
+                          static_cast<unsigned>(langsam_belegt_));
+        }
+        return;
+    }
+    if (l->gedrosselt) return;
+    if (l->treffer < 255) ++l->treffer;
+    if (l->treffer < grenzen::LANGSAM_TREFFER) return;
+    l->gedrosselt = true;
+    l->faellig = jetzt_ + grenzen::LANGSAM_INTERVALL_S;
     if (langsam_meldungen_ < grenzen::MAX_LANGSAM_MELDUNGEN) {
         ++langsam_meldungen_;
         char idx[16] = {0};
@@ -350,13 +372,104 @@ void Dienst::nach_fremdaufruf(Abo& abo, Eintrag& e) noexcept {
     }
 }
 
-bool Dienst::langsam_faellig(const Eintrag& e) const noexcept {
-    return jetzt_ >= e.langsam_faellig && jetzt_ >= naechster_langsamer_;
+bool Dienst::langsam_faellig(const Langsam& l) const noexcept {
+    return jetzt_ >= l.faellig && jetzt_ >= naechster_langsamer_;
+}
+
+// ---- Drosseltabelle: offene Adressierung, lineare Sondierung --------------
+//
+// Fest dimensioniert (grenzen::LANGSAM_PLAETZE), höchstens 3/4 belegt, also
+// gibt es immer einen freien Platz und jede Suche endet. Löschen verschiebt
+// die Folgeeinträge zurück (keine Grabsteine), damit die Tabelle über einen
+// langen Flug nicht zuläuft. Keine Allokation.
+
+namespace {
+
+size_t streue(DatarefHandle h) noexcept {
+    uint64_t x = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(h));
+    x ^= x >> 29;
+    x *= 0x9E3779B97F4A7C15ull;
+    x ^= x >> 32;
+    return static_cast<size_t>(x);
+}
+
+constexpr size_t LANGSAM_MASKE = grenzen::LANGSAM_PLAETZE - 1;
+static_assert((grenzen::LANGSAM_PLAETZE & LANGSAM_MASKE) == 0, "Zweierpotenz");
+
+}  // namespace
+
+size_t Dienst::langsam_platz(DatarefHandle h) const noexcept {
+    if (h == nullptr || langsam_belegt_ == 0) return grenzen::LANGSAM_PLAETZE;
+    size_t i = streue(h) & LANGSAM_MASKE;
+    for (size_t n = 0; n < grenzen::LANGSAM_PLAETZE; ++n) {
+        if (langsam_[i].h == nullptr) return grenzen::LANGSAM_PLAETZE;
+        if (langsam_[i].h == h) return i;
+        i = (i + 1) & LANGSAM_MASKE;
+    }
+    return grenzen::LANGSAM_PLAETZE;
+}
+
+Dienst::Langsam* Dienst::langsam_finde(DatarefHandle h) noexcept {
+    const size_t i = langsam_platz(h);
+    return i < grenzen::LANGSAM_PLAETZE ? &langsam_[i] : nullptr;
+}
+
+bool Dienst::ist_gedrosselt(DatarefHandle h) const noexcept {
+    const size_t i = langsam_platz(h);
+    return i < grenzen::LANGSAM_PLAETZE && langsam_[i].gedrosselt;
+}
+
+Dienst::Langsam* Dienst::langsam_anlegen(DatarefHandle h) noexcept {
+    if (h == nullptr) return nullptr;
+    if (Langsam* l = langsam_finde(h)) return l;
+    if (langsam_belegt_ >= grenzen::LANGSAM_PLAETZE / 4 * 3) return nullptr;
+    size_t i = streue(h) & LANGSAM_MASKE;
+    while (langsam_[i].h != nullptr) i = (i + 1) & LANGSAM_MASKE;
+    langsam_[i] = Langsam{};
+    langsam_[i].h = h;
+    ++langsam_belegt_;
+    return &langsam_[i];
+}
+
+void Dienst::langsam_loeschen(size_t i) noexcept {
+    size_t j = i;
+    for (;;) {
+        j = (j + 1) & LANGSAM_MASKE;
+        if (langsam_[j].h == nullptr) break;
+        const size_t k = streue(langsam_[j].h) & LANGSAM_MASKE;
+        // Eintrag j darf auf das Loch i rücken, wenn sein Heimplatz k NICHT
+        // zyklisch in (i, j] liegt — sonst fände ihn die Suche dort nicht mehr.
+        const bool dazwischen = (i <= j) ? (i < k && k <= j) : (i < k || k <= j);
+        if (!dazwischen) {
+            langsam_[i] = langsam_[j];
+            i = j;
+        }
+    }
+    langsam_[i] = Langsam{};
+    --langsam_belegt_;
+}
+
+void Dienst::langsam_leeren() noexcept {
+    for (Langsam& l : langsam_) l = Langsam{};
+    langsam_belegt_ = 0;
 }
 
 // =============================================================================
 // Anfragen
 // =============================================================================
+
+void Dienst::empfang_beginnen() noexcept {
+    empfang_ende_ = umgebung_.jetzt() + grenzen::EMPFANG_BUDGET_S;
+    empfang_frei_ = true;
+}
+
+bool Dienst::empfang_weiter() noexcept {
+    if (empfang_frei_) {
+        empfang_frei_ = false;
+        return true;
+    }
+    return umgebung_.jetzt() < empfang_ende_;
+}
 
 void Dienst::empfange(const Absender& von, const char* daten, size_t laenge) noexcept {
     if (!bereit_) return;
@@ -605,9 +718,6 @@ Fehlergrund Dienst::aktiviere(uint32_t id, AboBau& bau) noexcept {
         const char* name = abo.text.daten() + e.name_ofs;
         e.darf_verwaisen = e.index != INDEX_UNGUELTIG && std::strncmp(name, "sim/", 4) != 0;
         if (e.darf_verwaisen) abo.hat_plugin_namen = true;
-        e.langsam = false;
-        e.langsam_treffer = 0;
-        e.langsam_faellig = 0.0;
         e.aktiv = Aufloesung{};
         e.kandidat = Aufloesung{};
         abo.eintraege.haenge_an(e);  // Kapazität reserviert
@@ -631,13 +741,12 @@ void Dienst::bearbeite_liste(const Anfrage& a) noexcept {
     // Eine neue LISTE ersetzt eine laufende (der Client wartet ohnehin nur auf
     // die jüngste Antwort).
     liste_leeren();
-    int gesamt = quelle_.anzahl_datarefs();
-    if (gesamt < 0) gesamt = 0;
-    if (gesamt > grenzen::MAX_LISTE_DATAREFS) gesamt = grenzen::MAX_LISTE_DATAREFS;
+    // XPLMCountDataRefs erst im ersten budgetierten Schritt (liste_schritt),
+    // nicht hier beim Empfang (Nachprüfung Codex H4).
     liste_.aktiv = true;
     liste_.sammeln = true;
     liste_.id = a.anfrage_id;
-    liste_.gesamt = gesamt;
+    liste_.gesamt = -1;
     liste_.cursor = 0;
     liste_.block_pos = 0;
     liste_.block_anzahl = 0;
@@ -681,9 +790,13 @@ void Dienst::frame_intern() noexcept {
 
     // Vorgemerkte Fehler (aus der Lieferung des letzten Frames) zuerst.
     sende_vorgemerkte_fehler();
-    pruefe_flugzeug();
 
-    // 1. Suchen — eigenes Zeitbudget, verteilt nach Dringlichkeit.
+    // 1. Flugzeugkennung und Suchen teilen sich das Such-Budget. Die
+    //    Kennung zuerst (fortsetzbar, eine Einheit je Dataref): nach einem
+    //    Flugzeugwechsel geht `flugzeug` so vor jeder Neusuche hinaus — die
+    //    Suche bekommt in einem Frame erst Budget, wenn die Kennung fertig ist.
+    beginne_budget(grenzen::SUCH_BUDGET_S);
+    pruefe_flugzeug();
     suchen_verteilen();
 
     // 2. Liefern — eigenes Budget (getrennt vom Suchen). Abo 1 (beim Client
@@ -692,8 +805,17 @@ void Dienst::frame_intern() noexcept {
     //    bekommt dann das ganze Budget samt freier Einheit. (Vorher kam LISTE
     //    immer zuletzt und verhungerte hinter einem Dauer-Abo, das jedes
     //    Budget aufbrauchte — Codex-Abnahme M2.)
-    beginne_budget(grenzen::ZEITBUDGET_S);
+    //    Abo 1 hat Vorrang (Pünktlichkeit), aber nur ein Teilbudget
+    //    (grenzen::ABO1_BUDGET_S): Danach beginnt für den Rundlauf der Rest
+    //    des Liefer-Budgets MIT einer eigenen freien Einheit — ein großes
+    //    oder teures Abo 1 kann die anderen und LISTE so nicht mehr
+    //    aushungern (Nachprüfung Codex M2).
+    beginne_budget(grenzen::ABO1_BUDGET_S);
+    const double liefer_ende = uhr_ + grenzen::ZEITBUDGET_S;
     bearbeite_abo_frame(abos_[0]);
+    uhr_auffrischen();
+    budget_ende_ = liefer_ende;
+    garantie_ = true;
     uint32_t teilnehmer[grenzen::MAX_ABOS + 1];
     uint32_t anzahl = 0;
     for (uint32_t i = 1; i < grenzen::MAX_ABOS; ++i) {
@@ -750,14 +872,12 @@ void Dienst::verwirf_laufende_runde(Abo& abo) noexcept {
 
 void Dienst::flugzeug_geladen() noexcept {
     flugzeug_offen_ = true;
+    flugzeug_stufe_ = -1;  // eine laufende Kennungs-Prüfung liest neu
+    // Anderes Flugzeug, andere Plugins: Drosselung neu bewerten.
+    langsam_leeren();
     for (Abo& a : abos_) {
         if (a.phase == Phase::LEER) continue;
         starte_pruefung(a, true, true);
-        // Anderes Flugzeug, andere Plugins: Drosselung neu bewerten.
-        for (size_t i = 0; i < a.eintraege.anzahl(); ++i) {
-            a.eintraege[i].langsam = false;
-            a.eintraege[i].langsam_treffer = 0;
-        }
         // Namen fremder Plugins können jetzt verwaist oder neu belegt sein
         // (Codex-Abnahme H2): Eine laufende Runde wird verworfen, und bis die
         // Neusuche übernommen ist, keine neue Runde mit alten Handles —
@@ -826,7 +946,7 @@ bool Dienst::pruef_schritt(Abo& abo) noexcept {
         // Periodisch: nur fehlende Namen und Arrays — und keine gedrosselten
         // (deren Längen-Accessor ist der langsame Getter selbst; neu gesucht
         // werden sie bei Anmeldung und Flugzeug-/Flughafenwechsel).
-        if (!abo.pruefung_alle && (!braucht_nachsuche(e) || e.langsam)) {
+        if (!abo.pruefung_alle && (!braucht_nachsuche(e) || ist_gedrosselt(e.aktiv.h))) {
             e.kandidat = e.aktiv;
             ++abo.pruef_cursor;
             continue;
@@ -862,7 +982,7 @@ void Dienst::suchen_verteilen() noexcept {
             starte_pruefung(a, false, false);
         }
     }
-    beginne_budget(grenzen::SUCH_BUDGET_S);
+    // Budget hat frame_intern schon begonnen (geteilt mit pruefe_flugzeug).
     for (;;) {
         Abo* bestes = nullptr;
         for (Abo& a : abos_) {
@@ -928,7 +1048,7 @@ bool Dienst::loese_auf(Abo& abo, Eintrag& e, Aufloesung* aus) noexcept {
         if (t & typ::VF)      { r.z = Zugriff::VF; n = quelle_.lese_vf(h, nullptr, 0, 0); }
         else if (t & typ::VI) { r.z = Zugriff::VI; n = quelle_.lese_vi(h, nullptr, 0, 0); }
         else                  { r.z = Zugriff::B;  n = quelle_.lese_b(h, nullptr, 0, 0); }
-        nach_fremdaufruf(abo, e);
+        nach_fremdaufruf(abo, e, h);
         r.laenge = begrenze(n, r.z == Zugriff::B ? grenzen::MAX_BYTES : grenzen::MAX_ARRAY_ELEMENTE);
         *aus = r;
         return true;
@@ -943,7 +1063,7 @@ bool Dienst::loese_auf(Abo& abo, Eintrag& e, Aufloesung* aus) noexcept {
     if (t & typ::VF)      { z = Zugriff::ELEM_VF; laenge = quelle_.lese_vf(h, nullptr, 0, 0); }
     else if (t & typ::VI) { z = Zugriff::ELEM_VI; laenge = quelle_.lese_vi(h, nullptr, 0, 0); }
     else                  { z = Zugriff::ELEM_B;  laenge = quelle_.lese_b(h, nullptr, 0, 0); }
-    nach_fremdaufruf(abo, e);
+    nach_fremdaufruf(abo, e, h);
     if (laenge <= 0 || index >= laenge) return true;
     r.z = z;
     r.laenge = 1;
@@ -1064,25 +1184,25 @@ bool Dienst::schreibe_wert(JsonSchreiber& w, Abo& abo, Eintrag& e, uint32_t k) n
             return false;  // ein fehlender Name liefert nie einen Wert
         case Zugriff::I: {
             const int v = quelle_.lese_i(h);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             w.ganzzahl(v);
             break;
         }
         case Zugriff::F: {
             const float v = quelle_.lese_f(h);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             w.zahl_f(v);
             break;
         }
         case Zugriff::D: {
             const double v = quelle_.lese_d(h);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             w.zahl_d(v);
             break;
         }
         case Zugriff::VI: {
             const int n = begrenze(quelle_.lese_vi(h, iwerte_, 0, laenge), laenge);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             w.zeichen('[');
             for (int i = 0; i < n; ++i) {
                 if (i > 0) w.zeichen(',');
@@ -1093,7 +1213,7 @@ bool Dienst::schreibe_wert(JsonSchreiber& w, Abo& abo, Eintrag& e, uint32_t k) n
         }
         case Zugriff::VF: {
             const int n = begrenze(quelle_.lese_vf(h, fwerte_, 0, laenge), laenge);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             w.zeichen('[');
             for (int i = 0; i < n; ++i) {
                 if (i > 0) w.zeichen(',');
@@ -1104,28 +1224,28 @@ bool Dienst::schreibe_wert(JsonSchreiber& w, Abo& abo, Eintrag& e, uint32_t k) n
         }
         case Zugriff::B: {
             const int n = begrenze(quelle_.lese_b(h, bytes_, 0, laenge), laenge);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             // Zeichenkette bis zum ersten NUL (ADR).
             w.text_bis_nul(reinterpret_cast<const char*>(bytes_), static_cast<size_t>(n));
             break;
         }
         case Zugriff::ELEM_VI: {
             const int n = quelle_.lese_vi(h, iwerte_, e.index, 1);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             if (n != 1) return false;
             w.ganzzahl(iwerte_[0]);
             break;
         }
         case Zugriff::ELEM_VF: {
             const int n = quelle_.lese_vf(h, fwerte_, e.index, 1);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             if (n != 1) return false;
             w.zahl_f(fwerte_[0]);
             break;
         }
         case Zugriff::ELEM_B: {
             const int n = quelle_.lese_b(h, bytes_, e.index, 1);
-            nach_fremdaufruf(abo, e);
+            nach_fremdaufruf(abo, e, h);
             if (n != 1) return false;
             w.ganzzahl(bytes_[0]);
             break;
@@ -1146,9 +1266,15 @@ bool Dienst::lese_schritt(Abo& abo) noexcept {
         // Gedrosselt (wiederholt langsamer Accessor, H4): nur wenn fällig.
         // Sonst fällt der Wert in dieser Runde aus — der Client behält den
         // letzten; Status und Wert bleiben wahr, sie kommen nur seltener.
-        if (e.langsam && !langsam_faellig(e)) {
-            ++abo.lese_cursor;
-            continue;
+        // Der Zustand gilt je Dataref: von 8192 Duplikaten wird je Sekunde
+        // höchstens eines gelesen.
+        const DatarefHandle h = e.aktiv.h;
+        if (langsam_belegt_ > 0) {
+            const Langsam* l = langsam_finde(h);
+            if (l != nullptr && l->gedrosselt && !langsam_faellig(*l)) {
+                ++abo.lese_cursor;
+                continue;
+            }
         }
         // Verwaist (Plugin entladen/abgeschaltet)? Dann liefert XPLM 0 —
         // also keinen Wert, und der Status geht sofort auf "fehlt" (neue
@@ -1156,7 +1282,7 @@ bool Dienst::lese_schritt(Abo& abo) noexcept {
         // laufenden Durchlaufs, damit er den Namen nicht wieder "da" macht.
         if (e.darf_verwaisen) {
             if (!darf_arbeiten()) return false;
-            const bool gut = quelle_.ist_gueltig(e.aktiv.h);
+            const bool gut = quelle_.ist_gueltig(h);
             nach_aufruf();
             if (!gut) {
                 e.aktiv = Aufloesung{};
@@ -1176,9 +1302,13 @@ bool Dienst::lese_schritt(Abo& abo) noexcept {
         // kürzer) oder wider Erwarten nicht passt, fällt in dieser Runde
         // aus — es wird nie abgeschnitten.
         const bool gut = schreibe_wert(w, abo, e, abo.lese_cursor);
-        if (e.langsam) {
-            e.langsam_faellig = jetzt_ + grenzen::LANGSAM_INTERVALL_S;
-            naechster_langsamer_ = jetzt_ + grenzen::LANGSAM_ABSTAND_S;
+        if (langsam_belegt_ > 0) {
+            // Neu suchen: nach_fremdaufruf kann Plätze verschoben haben.
+            Langsam* l = langsam_finde(h);
+            if (l != nullptr && l->gedrosselt) {
+                l->faellig = jetzt_ + grenzen::LANGSAM_INTERVALL_S;
+                naechster_langsamer_ = jetzt_ + grenzen::LANGSAM_ABSTAND_S;
+            }
         }
         if (gut) abo.stapel.uebernehme(w);
         ++abo.lese_cursor;
@@ -1330,6 +1460,14 @@ void Dienst::liste_schritt() noexcept {
     };
 
     if (liste_.sammeln) {
+        if (liste_.gesamt < 0) {
+            if (!darf_arbeiten()) return;
+            int gesamt = quelle_.anzahl_datarefs();
+            nach_aufruf();
+            if (gesamt < 0) gesamt = 0;
+            if (gesamt > grenzen::MAX_LISTE_DATAREFS) gesamt = grenzen::MAX_LISTE_DATAREFS;
+            liste_.gesamt = gesamt;
+        }
         for (;;) {
             if (liste_.block_pos >= liste_.block_anzahl) {
                 if (liste_.cursor >= liste_.gesamt) break;
@@ -1423,38 +1561,59 @@ void Dienst::liste_schritt() noexcept {
 // Flugzeug
 // =============================================================================
 
+// Liest eine Kennung (Byte-Dataref von X-Plane selbst). Nach jedem
+// XPLM-Aufruf die Uhr (Nachprüfung Codex H4) — die Kennung läuft unter dem
+// Such-Budget und ist eine Einheit je Dataref.
 bool Dienst::lies_kennung(DatarefHandle* h, const char* name, char* aus, size_t kap) noexcept {
     aus[0] = '\0';
-    if (*h == nullptr) *h = quelle_.finde(name);  // billig; bis er da ist
+    if (*h == nullptr) {  // billig; bis er da ist
+        *h = quelle_.finde(name);
+        nach_aufruf();
+    }
     if (*h == nullptr) return false;
     const int max = static_cast<int>(kap - 1);
     // In den großzügigen Arbeitspuffer lesen, dann begrenzt kopieren.
     const int n = begrenze(quelle_.lese_b(*h, bytes_, 0, max), max);
+    nach_aufruf();
     std::memcpy(aus, bytes_, static_cast<size_t>(n));
     aus[n] = '\0';
     // Zeichenkette endet am ersten NUL (text_laenge in der JSON-Ausgabe).
     return true;
 }
 
+// Fortsetzbar über Frames: Stufe 0..2 liest ICAO, Titel, Pfad (je eine
+// Einheit unter dem Such-Budget), Stufe 3 vergleicht und sendet. Vorher lief
+// die ganze Prüfung (bis zu drei Find + drei Getter + Senden) vor jedem
+// Budget.
 void Dienst::pruefe_flugzeug() noexcept {
-    if (!flugzeug_offen_ && jetzt_ < naechste_flugzeug_pruefung_) return;
-    naechste_flugzeug_pruefung_ = jetzt_ + grenzen::FLUGZEUG_PRUEFINTERVALL_S;
+    if (flugzeug_stufe_ < 0) {
+        if (!flugzeug_offen_ && jetzt_ < naechste_flugzeug_pruefung_) return;
+        naechste_flugzeug_pruefung_ = jetzt_ + grenzen::FLUGZEUG_PRUEFINTERVALL_S;
+        flugzeug_stufe_ = 0;
+    }
+    while (flugzeug_stufe_ < 3) {
+        if (!darf_arbeiten()) return;
+        switch (flugzeug_stufe_) {
+            case 0: lese_hat_[0] = lies_kennung(&h_icao_, "sim/aircraft/view/acf_ICAO", lese_icao_, sizeof(lese_icao_)); break;
+            case 1: lese_hat_[1] = lies_kennung(&h_titel_, "sim/aircraft/view/acf_descrip", lese_titel_, sizeof(lese_titel_)); break;
+            default: lese_hat_[2] = lies_kennung(&h_pfad_, "sim/aircraft/view/acf_relative_path", lese_pfad_, sizeof(lese_pfad_)); break;
+        }
+        ++flugzeug_stufe_;
+        einheit_fertig();
+    }
 
-    char icao[sizeof(gesendet_icao_)];
-    char titel[sizeof(gesendet_titel_)];
-    char pfad[sizeof(gesendet_pfad_)];
-    bool hat[3];
-    hat[0] = lies_kennung(&h_icao_, "sim/aircraft/view/acf_ICAO", icao, sizeof(icao));
-    hat[1] = lies_kennung(&h_titel_, "sim/aircraft/view/acf_descrip", titel, sizeof(titel));
-    hat[2] = lies_kennung(&h_pfad_, "sim/aircraft/view/acf_relative_path", pfad, sizeof(pfad));
-
+    const bool* hat = lese_hat_;
     const bool gleich = gesendet_gueltig_ &&
                         hat[0] == gesendet_hat_[0] && hat[1] == gesendet_hat_[1] &&
                         hat[2] == gesendet_hat_[2] &&
-                        std::strcmp(icao, gesendet_icao_) == 0 &&
-                        std::strcmp(titel, gesendet_titel_) == 0 &&
-                        std::strcmp(pfad, gesendet_pfad_) == 0;
-    if (gleich && !flugzeug_offen_) return;
+                        std::strcmp(lese_icao_, gesendet_icao_) == 0 &&
+                        std::strcmp(lese_titel_, gesendet_titel_) == 0 &&
+                        std::strcmp(lese_pfad_, gesendet_pfad_) == 0;
+    if (gleich && !flugzeug_offen_) {
+        flugzeug_stufe_ = -1;
+        return;
+    }
+    if (!darf_arbeiten()) return;  // Senden im nächsten Frame (Stufe 3 bleibt)
 
     JsonSchreiber w(paket_, sizeof(paket_));
     auto feld = [&w](const char* schluessel, bool vorhanden, const char* wert, size_t max) noexcept {
@@ -1464,24 +1623,29 @@ void Dienst::pruefe_flugzeug() noexcept {
     for (int versuch = 0; versuch < 2; ++versuch) {
         w.zurueck_zu(0);
         w.roh("{\"p\":2,\"t\":\"flugzeug\"");
-        feld(",\"icao\":", hat[0], icao, sizeof(icao));
-        feld(",\"titel\":", hat[1], titel, sizeof(titel));
+        feld(",\"icao\":", hat[0], lese_icao_, sizeof(lese_icao_));
+        feld(",\"titel\":", hat[1], lese_titel_, sizeof(lese_titel_));
         // Im (theoretischen) Fall, dass alles maskiert nicht in 8 KiB passt,
         // lieber den Pfad weglassen als die Meldung.
-        feld(",\"pfad\":", hat[2] && versuch == 0, pfad, sizeof(pfad));
+        feld(",\"pfad\":", hat[2] && versuch == 0, lese_pfad_, sizeof(lese_pfad_));
         w.roh("}\n");
         if (!w.ueberlauf()) break;
     }
+    flugzeug_stufe_ = -1;
     if (w.ueberlauf()) return;
     // Über den gemeinsamen Ausgang (M1). Kein Platz mehr in diesem Frame oder
-    // Socket voll: im nächsten Frame erneut (die Meldung bleibt offen).
-    if (sende_paket(w.daten(), w.laenge()) == SendeErgebnis::VOLL) {
+    // Socket voll: im nächsten Frame neu lesen und senden (die Meldung bleibt
+    // offen).
+    const SendeErgebnis r = sende_paket(w.daten(), w.laenge());
+    nach_aufruf();
+    einheit_fertig();
+    if (r == SendeErgebnis::VOLL) {
         flugzeug_offen_ = true;
         return;
     }
-    std::memcpy(gesendet_icao_, icao, sizeof(icao));
-    std::memcpy(gesendet_titel_, titel, sizeof(titel));
-    std::memcpy(gesendet_pfad_, pfad, sizeof(pfad));
+    std::memcpy(gesendet_icao_, lese_icao_, sizeof(lese_icao_));
+    std::memcpy(gesendet_titel_, lese_titel_, sizeof(lese_titel_));
+    std::memcpy(gesendet_pfad_, lese_pfad_, sizeof(lese_pfad_));
     for (int i = 0; i < 3; ++i) gesendet_hat_[i] = hat[i];
     gesendet_gueltig_ = true;
     flugzeug_offen_ = false;

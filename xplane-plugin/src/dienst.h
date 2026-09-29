@@ -159,6 +159,13 @@ public:
     // Einmal je Flight-Loop-Aufruf, NACH dem Empfang.
     void frame() noexcept;
 
+    // Zeitbudget für den Empfang (Nachprüfung Codex H4): dienst_xplm ruft
+    // empfang_beginnen() vor dem ersten Datagramm eines Frames und
+    // empfang_weiter() vor jedem weiteren; false = Rest bleibt im Socket bis
+    // zum nächsten Frame. Das erste Datagramm ist immer erlaubt.
+    void empfang_beginnen() noexcept;
+    bool empfang_weiter() noexcept;
+
     // XPLM_MSG_PLANE_LOADED mit Flugzeug 0 (Nutzerflugzeug).
     void flugzeug_geladen() noexcept;
     // XPLM_MSG_AIRPORT_LOADED.
@@ -198,11 +205,18 @@ private:
         uint32_t name_ofs;   // Basisname, NUL-terminiert, in Abo::text
         int32_t index;       // -1 = ganzer Dataref, -2 = ungültige Zeile
         bool darf_verwaisen; // nicht "sim/…": vor jedem Lesen XPLMIsDataRefGood
-        bool langsam;        // gedrosselt (grenzen::LANGSAM_*)
-        uint8_t langsam_treffer;  // langsame fremde Aufrufe in Folge
         Aufloesung aktiv;    // danach wird geliefert
         Aufloesung kandidat; // Ergebnis des laufenden Prüfdurchlaufs
-        double langsam_faellig;   // gedrosselt: frühestens dann wieder lesen
+    };
+    // Drosselzustand JE DATAREF (Handle), nicht je Eintrag (Nachprüfung
+    // Codex: 8192 Duplikate desselben langsamen Datarefs begannen je Eintrag
+    // bei 0 — die Drosselung griff nie). Feste Tabelle mit offener
+    // Adressierung; nur Handles mit einem langsamen Aufruf stehen darin.
+    struct Langsam {
+        DatarefHandle h = nullptr;  // nullptr = Platz frei
+        uint8_t treffer = 0;        // langsame Aufrufe in Folge
+        bool gedrosselt = false;
+        double faellig = 0.0;       // gedrosselt: frühestens dann wieder lesen
     };
     struct RohName {
         uint32_t ofs;
@@ -260,6 +274,8 @@ private:
         uint32_t id = 0;
         int gesamt = 0;
         int cursor = 0;        // nächster Index für XPLMGetDataRefsByIndex
+        // gesamt < 0: XPLMCountDataRefs steht noch aus (erster, budgetierter
+        // Schritt in liste_schritt — nicht mehr beim Empfang).
         int block_pos = 0;     // nächster Handle in handles_ …
         int block_anzahl = 0;  // … von so vielen geholten
         uint32_t ausgelassen = 0;
@@ -334,13 +350,20 @@ private:
     double nach_aufruf() noexcept;
     // Nach einem FREMDEN Accessor (Getter, Array-Länge): Dauer werten,
     // freie Einheit ist verbraucht.
-    void nach_fremdaufruf(Abo& abo, Eintrag& e) noexcept;
+    void nach_fremdaufruf(Abo& abo, Eintrag& e, DatarefHandle h) noexcept;
     void einheit_fertig() noexcept { garantie_ = false; }
+    // Drosseltabelle (je Handle)
+    size_t langsam_platz(DatarefHandle h) const noexcept;  // Index oder LANGSAM_PLAETZE
+    Langsam* langsam_finde(DatarefHandle h) noexcept;
+    Langsam* langsam_anlegen(DatarefHandle h) noexcept;   // nullptr = Tabelle voll
+    void langsam_loeschen(size_t i) noexcept;
+    void langsam_leeren() noexcept;
+    bool ist_gedrosselt(DatarefHandle h) const noexcept;
     // Nach eigener schwerer Arbeit (Status bauen, Pakete planen): Uhr neu
     // lesen, damit diese Zeit nicht dem nächsten fremden Accessor zugerechnet
     // wird (sonst gälte ein gesunder Dataref als langsam).
     void uhr_auffrischen() noexcept { uhr_ = umgebung_.jetzt(); }
-    bool langsam_faellig(const Eintrag& e) const noexcept;
+    bool langsam_faellig(const Langsam& l) const noexcept;
     void protokolliere(const char* format, ...) noexcept;
 
     Datenquelle& quelle_;
@@ -379,6 +402,12 @@ private:
     double naechste_flut_meldung_ = 0.0;
     double naechster_langsamer_ = 0.0;
     int langsam_meldungen_ = 0;
+    Langsam langsam_[grenzen::LANGSAM_PLAETZE];
+    size_t langsam_belegt_ = 0;
+    bool langsam_voll_gemeldet_ = false;
+    // Empfangsbudget (siehe empfang_beginnen)
+    double empfang_ende_ = 0.0;
+    bool empfang_frei_ = false;
 
     // Flugzeug
     bool flugzeug_offen_ = false;
@@ -391,6 +420,13 @@ private:
     char gesendet_pfad_[1025] = {0};
     bool gesendet_gueltig_ = false;
     bool gesendet_hat_[3] = {false, false, false};
+    // Laufende Prüfung der Kennung (fortsetzbar, budgetiert): -1 = ruht,
+    // 0..2 = als nächstes ICAO/Titel/Pfad lesen, 3 = vergleichen und senden.
+    int flugzeug_stufe_ = -1;
+    char lese_icao_[41] = {0};
+    char lese_titel_[261] = {0};
+    char lese_pfad_[1025] = {0};
+    bool lese_hat_[3] = {false, false, false};
 
     // Arbeitspuffer. Größer als je angefordert: ein fehlerhaftes Plugin, das
     // mehr Werte schreibt als erbeten, trifft Reserve statt fremden Speicher.

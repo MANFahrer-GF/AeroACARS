@@ -11,7 +11,8 @@ Drei Durchläufe:
      läuft weiter.
   4. "Zyklus" (Codex-Abnahme N1): XPluginDisable nach 2 s, XPluginEnable nach
      3 s — Port frei bzw. neu gebunden, neuer Dienst ohne alten Client,
-     Protokoll 1 danach weiter (die Attrappe prüft selbst, siehe dort).
+     Protokoll 1 danach weiter, kein Schein-Touchdown nach Enable am Boden,
+     genau einer nach der echten Landung (die Attrappe prüft selbst).
 
 Rückgabe 0 = grün, 1 = rot, 77 = übersprungen (Port 52001 schon belegt, z. B.
 weil X-Plane mit dem Plugin gerade läuft).
@@ -38,7 +39,7 @@ def port_frei(port: int) -> bool:
 
 def lauf(attrappe: str, plugin: str, sonde: str, modus: str) -> bool:
     print(f"=== {modus} ===", flush=True)
-    args = [attrappe, plugin, "6" if modus == "zyklus" else "12"] + ([modus] if modus in ("xp11", "zyklus") else [])
+    args = [attrappe, plugin, "7" if modus == "zyklus" else "12"] + ([modus] if modus in ("xp11", "zyklus") else [])
     blocker = None
     if modus == "port_belegt":
         blocker = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

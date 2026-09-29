@@ -246,7 +246,12 @@ bool oeffne_socket() noexcept {
 }
 
 void empfange_alles() noexcept {
+    // Höchstens 64 Datagramme UND höchstens grenzen::EMPFANG_BUDGET_S je
+    // Frame (Uhr nach jedem Datagramm samt seiner Antwort); der Rest bleibt
+    // im Socket bis zum nächsten Frame.
+    g_dienst->empfang_beginnen();
     for (int i = 0; i < grenzen::MAX_DATAGRAMME_JE_FRAME; ++i) {
+        if (!g_dienst->empfang_weiter()) break;
         sockaddr_in von;
         std::memset(&von, 0, sizeof(von));
         socklen_x von_laenge = static_cast<socklen_x>(sizeof(von));

@@ -279,7 +279,9 @@ int main(int argc, char** argv) {
                 else if (sonder < 3) { w.d->empfange(absender[0], gross2a.data(), gross2a.size()); s = gross2b; }
                 else if (sonder < 5) {
                     // PING-Flut: 63 + 1 Datagramme (die Empfangsgrenze je Frame).
-                    for (int k = 0; k < 63; ++k) w.d->empfange(absender[0], "PING", 4);
+                    // Mit Empfangsbudget wie im Plugin (dienst_xplm.cpp).
+                    w.d->empfang_beginnen();
+                    for (int k = 0; k < 63 && w.d->empfang_weiter(); ++k) w.d->empfange(absender[0], "PING", 4);
                     s = "PING";
                 }
                 const Absender& von = absender[rng() % 3 == 0 ? rng() % 3 : 0];
@@ -314,6 +316,8 @@ int main(int argc, char** argv) {
                 w.welt.namen_kosten = (rng() % 2) ? 0.0 : 3e-6;
                 w.welt.lese_kosten = (rng() % 3) ? 0.0 : 5e-6;
                 w.welt.refs[rng() % w.welt.refs.size()]->kosten = (rng() % 2) ? 0.0 : 0.003;
+                // Einzelne Ausreißer (Drosseltabelle: anlegen und wieder räumen).
+                for (int k = 0; k < 20; ++k) w.welt.refs[rng() % w.welt.refs.size()]->kosten_einmal = 0.003;
             } else if (r < 99) {
                 w.d->flughafen_geladen();
             } else {

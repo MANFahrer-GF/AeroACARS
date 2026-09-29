@@ -336,9 +336,36 @@ M1–M3, N1 im Plugin behoben (H1 betrifft den Client):
 - **Aktivieren/Deaktivieren (N1):** Netz nur im aktivierten Zustand.
   `XPluginDisable` verwirft Client/Abos/LISTE und schließt beide Sockets
   (Port frei, Warteschlange weg), `XPluginEnable` bindet neu. Die
-  Aufsetz-Erkennung von Protokoll 1 bleibt über Disable/Enable stehen
-  (Zurücksetzen hieße `prev_in_air = true` → Schein-Touchdown am Boden).
+  Aufsetz-Erkennung von Protokoll 1 synchronisiert sich im ersten Tick nach
+  Enable (siehe „Zweite Nachprüfung“).
 - **Neuer Fehlergrund:** `speicher_limit`.
+- **Zweite Nachprüfung (Codex, 29.09.2026):**
+  - *Drosselung je Dataref:* Der Langsam-Zustand gehört dem Handle, nicht
+    dem Eintrag (vorher begannen 8192 Duplikate je bei 0, die Drosselung
+    griff nie). Feste Tabelle mit offener Adressierung, 1024 Plätze, höchstens
+    768 verfolgt (danach eine Log-Zeile, weitere werden nicht gedrosselt);
+    ein schneller Aufruf räumt den Platz eines nicht gedrosselten Handles
+    (Rückwärtsverschiebung, keine Grabsteine). Keine Allokation.
+  - *Keine ungebudgetierten XPLM-Wege mehr im Frame:* `XPLMCountDataRefs`
+    nicht mehr beim Empfang, sondern als erster budgetierter LISTE-Schritt;
+    die `flugzeug`-Kennung fortsetzbar (eine Einheit je Dataref, Senden
+    eigene Einheit) unter dem Such-Budget und vor der Suche; Empfang mit
+    eigenem Zeitbudget 0,5 ms je Frame (Uhr nach jedem Datagramm samt
+    Antwort). Bewusst ausgenommen bleiben nur: die Kostenmessung beim Start
+    (einmalig ≈ 1–3 ms, Log.txt) und die Bearbeitung EINES Datagramms
+    (Parser ≤ 64 KiB, ggf. Speicher für einen ABO-Teil) — sie wird nie
+    mittendrin abgebrochen.
+  - *Abo 1 mit Teilbudget* (0,5 ms); der Rundlauf bekommt den Rest samt
+    eigener freier Einheit — ein großes Abo 1 hungert LISTE und Mess-Abos
+    nicht mehr aus. Überschreitung je Frame damit höchstens zwei fremde
+    Aufrufe (je eine freie Einheit).
+  - *Vorgemerkte Fehler* über den gemeinsamen Ausgang; bei VOLL bleiben sie
+    stehen.
+  - *Protokoll 1 nach Enable:* Der erste Tick synchronisiert (Bodenzustand
+    übernehmen, Ringpuffer und Tracker neu, keine Kante). Das ersetzt die
+    Regel „Aufsetz-Erkennung bleibt über Disable/Enable stehen“ oben; als
+    gewollte Nebenwirkung entfällt auch der Schein-Touchdown beim Laden am
+    Boden.
 - **H1 (Plugin-Seite geprüft):** `abo`-Antworten tragen `teil`/`teile`
   konsistent (gleiches `teile` in allen Teilen), und ein identisches `ABO`
   liefert den Status vollständig erneut (alle Teile) — das braucht der

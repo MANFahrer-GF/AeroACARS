@@ -133,8 +133,24 @@ constexpr double LANGSAM_AUFRUF_S = 0.002;
 constexpr int LANGSAM_TREFFER = 3;
 constexpr double LANGSAM_INTERVALL_S = 1.0;
 constexpr double LANGSAM_ABSTAND_S = 0.2;
-// Höchstens so viele "langsam"-Zeilen je Dienst im Log.txt (je Name eine).
+// Höchstens so viele "langsam"-Zeilen je Dienst im Log.txt (je Dataref eine).
 constexpr int MAX_LANGSAM_MELDUNGEN = 32;
+// Drosseltabelle je Dataref-Handle (offene Adressierung, Zweierpotenz). Es
+// stehen nur Handles darin, deren letzter Aufruf langsam war; ein schneller
+// Aufruf ohne Drosselung räumt den Platz wieder. Höchstens 3/4 belegt →
+// 768 gleichzeitig verfolgte langsame Datarefs, 24 KiB fest.
+constexpr size_t LANGSAM_PLAETZE = 1024;
+
+// Empfang: nach jedem Datagramm auf die Uhr; ist dieses Budget je Frame um,
+// bleiben weitere Datagramme bis zum nächsten Frame im Socket (zusätzlich
+// zur Grenze von 64 Datagrammen). Ein Datagramm (Parser ≤ 64 KiB, ggf. ein
+// ABO-Teil mit Speicher) wird immer ganz bearbeitet.
+constexpr double EMPFANG_BUDGET_S = 0.0005;
+
+// Anteil des Liefer-Budgets, den Abo 1 (Telemetrie, Vorrang) höchstens
+// bekommt; der Rest samt einer freien Einheit gehört dem Rundlauf (übrige
+// Abos + LISTE). Sonst könnte ein großes Abo 1 alles andere aushungern.
+constexpr double ABO1_BUDGET_S = 0.0005;
 
 // ---- Speicher (Codex-Abnahme H3) ---------------------------------------------
 //

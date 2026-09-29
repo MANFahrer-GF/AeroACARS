@@ -198,6 +198,15 @@ bool g_wsa_aktiv = false;
 // event packet once per landing. Both reset to safe defaults when the
 // plugin reloads.
 bool prev_in_air = true;
+
+// Erster Protokoll-1-Tick nach XPluginEnable (auch beim Laden): nur
+// synchronisieren. Nachprüfung Codex N1: Deaktiviert in der Luft, aktiviert
+// am Boden → prev_in_air stand noch auf "in der Luft", der erste Tick hätte
+// mit dem alten Ringpuffer einen Schein-Touchdown gemeldet. Jetzt übernimmt
+// der erste Tick den aktuellen Bodenzustand, leert Ringpuffer und
+// Sinkraten-Tracker und meldet in diesem Tick keine Kante. (Nebenwirkung,
+// gewollt: auch beim Laden am Boden kommt kein Schein-Touchdown mehr.)
+bool g_p1_sync = true;
 bool touchdown_captured = false;
 
 // v0.5.6: running peak-descent VS tracker. Updated every flight-loop
@@ -419,6 +428,16 @@ float protokoll1_tick() noexcept {
     const float  ias_kt      = read_float(g_drefs.ias_kt);
     const float  gs_ms       = read_float(g_drefs.gs_ms);
     const float  gs_kt       = gs_ms * 1.94384f;
+
+    // -- Synchronisation nach Enable (siehe g_p1_sync) --------------------
+    if (g_p1_sync) {
+        g_p1_sync = false;
+        g_vs_buffer_head = 0;
+        g_vs_buffer_count = 0;
+        g_airborne_vs_min = 0.0f;
+        touchdown_captured = false;
+        prev_in_air = (fnrml_n < GEAR_TOUCHDOWN_THRESHOLD_N);  // → keine Kante jetzt
+    }
 
     // -- Push to VS ring buffer (always, regardless of touchdown) --------
     {
@@ -722,6 +741,7 @@ PLUGIN_API void XPluginStop(void) {
     g_airborne_vs_min = 0.0f;
     g_seq = 0;
     g_p1_faellig = 0.0;
+    g_p1_sync = true;
 
     log_msg("AeroACARS X-Plane Plugin stopped cleanly");
 }
@@ -739,6 +759,7 @@ PLUGIN_API int XPluginEnable(void) {
     }
     dienst_start(AEROACARS_PLUGIN_VERSION);
     g_p1_faellig = 0.0;
+    g_p1_sync = true;  // erster Protokoll-1-Tick synchronisiert nur
     return 1;
 }
 
@@ -746,9 +767,10 @@ PLUGIN_API void XPluginDisable(void) {
     // Deaktiviert ruft X-Plane keine Callbacks — also auch nichts mehr zu
     // senden. Protokoll 2 verwirft Client, Abos und LISTE und schließt den
     // Steuer-Socket (Port 52001 frei, ungelesene Datagramme weg); Protokoll 1
-    // schließt seinen Socket. Die Aufsetz-Erkennung (prev_in_air, Ringpuffer)
-    // bleibt bewusst stehen: sie zurückzusetzen hieße prev_in_air = true, und
-    // beim Wiedereinschalten am Boden käme ein Schein-Touchdown.
+    // schließt seinen Socket. Die Aufsetz-Erkennung synchronisiert sich im
+    // ersten Tick nach dem nächsten Enable neu (g_p1_sync) — ein Wechsel
+    // Luft→Boden während der Deaktivierung ist kein Touchdown, den das
+    // Plugin gesehen hat.
     dienst_stopp();
     close_socket();
     log_msg("disabled: sockets closed (Protokoll 1 + 2)");

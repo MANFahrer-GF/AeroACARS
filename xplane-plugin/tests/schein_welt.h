@@ -38,6 +38,7 @@ struct ScheinRef {
     // jeder Aufruf seines Getters — auch die Längenabfrage (aus == nullptr),
     // denn in XPLM ist das derselbe Rückruf des besitzenden Plugins.
     double kosten = 0.0;
+    double kosten_einmal = 0.0;  // nur der NÄCHSTE Getter-Aufruf kostet das (Ausreißer)
     int getter_aufrufe = 0;    // Werte lesen
     int laengen_aufrufe = 0;   // Array-Länge abfragen
 };
@@ -57,6 +58,7 @@ public:
     int suchen = 0;
     int gueltig_pruefungen = 0;
     int namen_abfragen = 0;
+    int zaehlungen = 0;             // Aufrufe von anzahl_datarefs (XPLMCountDataRefs)
     std::unordered_map<std::string, ScheinRef*> nach_name;
     int ueberschuss = 0;            // schreibt so viele Werte MEHR als erbeten
 
@@ -98,7 +100,7 @@ public:
         return n > max ? max : n;
     }
     bool liste_verfuegbar() noexcept override { return liste_da; }
-    int anzahl_datarefs() noexcept override { return static_cast<int>(refs.size()); }
+    int anzahl_datarefs() noexcept override { ++zaehlungen; return static_cast<int>(refs.size()); }
     int datarefs_ab(int ab, int anzahl, aeroacars::DatarefHandle* aus) noexcept override {
         int n = 0;
         for (int k = ab; k < ab + anzahl && k < static_cast<int>(refs.size()); ++k) {
@@ -170,7 +172,8 @@ inline bool ScheinWelt::ist_gueltig(aeroacars::DatarefHandle h) noexcept {
 inline void ScheinWelt::lies(ScheinRef* ref) noexcept {
     ++lesezugriffe;
     ++ref->getter_aufrufe;
-    if (uhr != nullptr) uhr->zeit += lese_kosten + ref->kosten;
+    if (uhr != nullptr) uhr->zeit += lese_kosten + ref->kosten + ref->kosten_einmal;
+    ref->kosten_einmal = 0.0;
 }
 
 inline void ScheinWelt::laenge(ScheinRef* ref) noexcept {

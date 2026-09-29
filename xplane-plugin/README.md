@@ -187,7 +187,9 @@ PING
 ### Leistung und Sicherheit
 
 * Alles im Flight-Loop (Hauptthread), Sockets nicht blockierend. Höchstens 64
-  eingehende Datagramme je Frame.
+  eingehende Datagramme **und höchstens 0,5 ms Empfang** je Frame (Uhr nach
+  jedem Datagramm samt seiner Antwort; der Rest bleibt bis zum nächsten Frame
+  im Socket, ein Datagramm wird immer ganz bearbeitet).
 * **Ein gemeinsamer Ausgang:** höchstens **16 Pakete je Frame über alle
   Sendewege** (Antworten, `flugzeug`, Status, Werte, LISTE). Gezählt wird ein
   ganzer Flight-Loop-Aufruf: erst die Antworten beim Empfang, dann die
@@ -197,10 +199,13 @@ PING
   PING-Flut wird nicht zur Antwortflut, und der Lieferung bleiben immer
   mindestens 8 Pakete. Fehler, die erst während der Lieferung entstehen (Abo
   oder LISTE am Budget verworfen), gehen nie verloren: sie werden vorgemerkt
-  und im nächsten Frame vor allem anderen gesendet.
-* **Zeitbudgets je Frame:** 0,3 ms für Suchen, danach 1 ms für Lesen und
-  Senden. Die Uhr wird **nach jedem einzelnen XPLM-Aufruf** gelesen (Find,
-  IsDataRefGood, Types, Array-Länge, Getter, LISTE je Name); ist das Budget
+  und im nächsten Frame vor allem anderen über denselben Ausgang gesendet;
+  ist er voll, bleiben sie vorgemerkt.
+* **Zeitbudgets je Frame:** 0,3 ms für Flugzeugkennung und Suchen, danach
+  1 ms für Lesen und Senden. Die Uhr wird **nach jedem einzelnen
+  XPLM-Aufruf** gelesen (Find, IsDataRefGood, Types, Array-Länge, Getter,
+  LISTE je Name und `XPLMCountDataRefs`, die drei Kennungs-Datarefs für
+  `flugzeug` je einzeln, jedes Senden); ist das Budget
   erschöpft, endet die Arbeit vor dem nächsten Aufruf, ein angefangener
   Eintrag beginnt im nächsten Frame neu. Frei ist je Budget nur die erste
   Einheit, und die nur bis einschließlich ihres **einen** fremden Accessors —
@@ -211,17 +216,25 @@ PING
   eine harte Grenze ginge nur mit Isolation fremder Accessoren (eigener
   Prozess), die XPLM nicht erlaubt. Das Plugin tut, was geht: danach sofort
   aufhören, und einen Dataref, dessen Accessor **dreimal hintereinander**
-  länger als **2 ms** brauchte, **drosseln** — höchstens einmal je Sekunde
+  länger als **2 ms** brauchte, **drosseln** — der Zustand gilt **je
+  Dataref** (Handle), nicht je Eintrag: Duplikate desselben Namens, auch in
+  verschiedenen Abos, zählen und drosseln gemeinsam (feste Tabelle, 1024
+  Plätze, höchstens 768 gleichzeitig verfolgte langsame Datarefs; ein
+  schneller Aufruf räumt den Platz eines noch nicht gedrosselten wieder) —
+  höchstens einmal je Sekunde
   gelesen, über alle Abos höchstens ein gedrosselter Lesezugriff je 0,2 s,
   im 2-s-Nachsuchlauf übersprungen. Status und Werte bleiben wahr (kein
   `fehlt`), der Wert kommt nur seltener (der Client behält den letzten). Eine
   Zeile je Name im `Log.txt` (`… antwortet langsam …`, höchstens 32). Nach
   einem Flugzeugwechsel wird neu bewertet. Ein einzelner Ausreißer (der
   Thread wurde vom Betriebssystem unterbrochen) drosselt nichts.
-* Geliefert wird zuerst Abo 1 (beim Client die Telemetrie), dann im
-  Rundlauf über die **belegten** übrigen Abos **und LISTE** — jeder
-  Teilnehmer ist regelmäßig als erster dran und bekommt dann das ganze
-  Budget; eine LISTE verhungert nicht hinter Dauer-Abos.
+* Geliefert wird zuerst Abo 1 (beim Client die Telemetrie) mit einem
+  **Teilbudget von 0,5 ms**, dann im Rundlauf über die **belegten** übrigen
+  Abos **und LISTE** mit dem Rest des Budgets **und einer eigenen freien
+  Einheit** — jeder Teilnehmer ist regelmäßig als erster dran. Weder ein
+  großes Abo 1 noch ein Dauer-Abo kann LISTE oder andere Abos aushungern.
+  Im schlimmsten Fall kommen zum Budget je Frame zwei fremde Aufrufe hinzu
+  (die freie Einheit von Abo 1 und die des Rundlaufs).
 * **Speicherbudgets (hart):** je Abo **16 MiB**, alle Abos samt Teil-Abos
   zusammen **64 MiB**, LISTE **16 MiB**. Gezählt wird die reservierte
   Kapazität, mit dem schlimmsten Fall je Wert (der Ausgabestapel wird beim
@@ -282,6 +295,13 @@ Seit 1.0.0 schreibt der locale-feste JSON-Schreiber die beiden Pakete
 Reihenfolge und Nachkommastellen sind unverändert (für endliche Werte Byte
 für Byte die alte Ausgabe, Test `protokoll1_gleich_wie_bisher`); ein nicht
 endlicher Wert (NaN/±Inf) wird `null` statt des ungültigen `nan`.
+
+Der erste Protokoll-1-Tick nach `XPluginEnable` (auch beim Laden)
+synchronisiert nur: aktueller Bodenzustand wird übernommen, Ringpuffer und
+Sinkraten-Tracker neu, **keine Aufsetz-Kante in diesem Tick**. Sonst meldete
+ein Plugin, das in der Luft abgeschaltet und am Boden wieder eingeschaltet
+wird, einen Schein-Touchdown mit alten Werten — und ebenso eines, das am
+Boden geladen wird.
 
 Every packet is a single line of JSON terminated with `\n`. The
 schema is versioned via `"v":1`. Two packet types:
