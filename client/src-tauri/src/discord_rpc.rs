@@ -96,7 +96,10 @@ async fn refresh_app_id(manager: &Arc<DiscordPresenceManager>) -> Result<(), ()>
     // Seit 29.09.2026 mit Pilot-Token: der Server gibt die App-ID nur
     // noch GSG-Piloten (siehe live_zugang.rs). Vor der ersten Anmeldung
     // gibt es daher keine ID; `nach_anmeldung` holt sie dann nach.
-    let url = format!("{}/api/public/discord-rpc-config", crate::live_zugang::LIVE_BASIS);
+    let url = format!(
+        "{}/api/public/discord-rpc-config",
+        crate::live_zugang::LIVE_BASIS
+    );
     let mut anfrage = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
