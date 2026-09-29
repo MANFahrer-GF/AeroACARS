@@ -53392,6 +53392,7 @@ async fn xplane_install_plugin(
 ///     "protokoll":   0|1|2,   // AP7: 2 = Plugin liefert alle Werte
 ///     "plugin_version": string?, "xplane_version": u32?,
 ///     "veraltet":    bool,    // Plugin kann nur Protokoll 1
+///     "p2_nicht_erreichbar": bool, // Plugin >= 1.0, aber HALLO ohne Antwort
 ///     "namen_da": u32, "namen_fehlen": u32
 ///   }
 ///
@@ -53410,6 +53411,7 @@ fn xplane_premium_status(state: tauri::State<'_, AppState>) -> serde_json::Value
         "plugin_version": s.plugin_version,
         "xplane_version": s.xplane_version,
         "veraltet": s.veraltet,
+        "p2_nicht_erreichbar": s.p2_nicht_erreichbar,
         "namen_da": s.namen_da,
         "namen_fehlen": s.namen_fehlen,
     })

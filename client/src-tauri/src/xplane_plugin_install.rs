@@ -65,6 +65,9 @@ pub struct PluginInstallResult {
     pub installed_at: String,
     pub bytes_written: u64,
     pub files_written: u32,
+    /// Paket gegen die eingebettete SHA-256 geprueft? `false` nur in
+    /// Entwicklungsbuilds ohne Pruefsumme — die Oberflaeche zeigt es an.
+    pub geprueft: bool,
 }
 
 /// Best-effort detection of the X-Plane root directory.
@@ -237,7 +240,7 @@ pub async fn install_plugin(xplane_root: &Path) -> Result<PluginInstallResult, S
     tracing::info!(bytes = body.len(), "plugin zip downloaded");
 
     // ---- Pruefsumme (vor jedem Eingriff in die alte Installation) ----
-    pruefsumme_pruefen(&body, PLUGIN_SHA256)?;
+    let geprueft = pruefsumme_pruefen(&body, PLUGIN_SHA256)?;
 
     // ---- Wipe previous install if present ----
     if target_root.exists() {
@@ -325,6 +328,7 @@ pub async fn install_plugin(xplane_root: &Path) -> Result<PluginInstallResult, S
         installed_at: target_root.to_string_lossy().into_owned(),
         bytes_written,
         files_written,
+        geprueft,
     })
 }
 
@@ -347,13 +351,15 @@ fn sha256_hex(daten: &[u8]) -> String {
 /// * eingebettet, aber kein gueltiges SHA-256 (64 Hex-Zeichen): Fehler —
 ///   ein kaputter Build darf nicht still ungeprueft installieren.
 /// * Abweichung: Fehler, nichts wird angefasst.
-fn pruefsumme_pruefen(paket: &[u8], erwartet: Option<&str>) -> Result<(), String> {
+///
+/// `Ok(true)` = geprueft, `Ok(false)` = ungeprueft (keine Pruefsumme).
+fn pruefsumme_pruefen(paket: &[u8], erwartet: Option<&str>) -> Result<bool, String> {
     let Some(erwartet) = erwartet.map(str::trim).filter(|s| !s.is_empty()) else {
         tracing::warn!(
             "X-Plane-Plugin: keine Pruefsumme eingebettet (Entwicklungsbuild) — \
              Paket wird ungeprueft installiert"
         );
-        return Ok(());
+        return Ok(false);
     };
     if erwartet.len() != 64 || !erwartet.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(format!(
@@ -371,7 +377,7 @@ fn pruefsumme_pruefen(paket: &[u8], erwartet: Option<&str>) -> Result<(), String
         ));
     }
     tracing::info!(sha256 = %ist, "X-Plane-Plugin: Pruefsumme stimmt");
-    Ok(())
+    Ok(true)
 }
 
 /// macOS: `com.apple.quarantine` rekursiv entfernen, damit X-Plane das
@@ -412,7 +418,7 @@ mod tests {
 
     #[test]
     fn pruefsumme_stimmt_oder_bricht_ab() {
-        assert!(pruefsumme_pruefen(b"abc", Some(ABC)).is_ok());
+        assert_eq!(pruefsumme_pruefen(b"abc", Some(ABC)), Ok(true));
         assert!(pruefsumme_pruefen(b"abc", Some(&ABC.to_uppercase())).is_ok());
         assert!(pruefsumme_pruefen(b"abc", Some(&format!("  {ABC}\n"))).is_ok());
         let falsch = pruefsumme_pruefen(b"abd", Some(ABC)).unwrap_err();
@@ -422,8 +428,8 @@ mod tests {
     /// Entwicklungsbuild ohne Pruefsumme: installiert wie bisher.
     #[test]
     fn ohne_pruefsumme_wie_bisher() {
-        assert!(pruefsumme_pruefen(b"egal", None).is_ok());
-        assert!(pruefsumme_pruefen(b"egal", Some("")).is_ok());
+        assert_eq!(pruefsumme_pruefen(b"egal", None), Ok(false));
+        assert_eq!(pruefsumme_pruefen(b"egal", Some("")), Ok(false));
     }
 
     /// Kaputt eingebettete Pruefsumme: nie still ungeprueft installieren.

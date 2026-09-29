@@ -7,6 +7,8 @@ interface PluginInstallResult {
   installed_at: string;
   bytes_written: number;
   files_written: number;
+  /** false = ohne eingebettete Prüfsumme installiert (Entwicklungsbuild). */
+  geprueft?: boolean;
 }
 
 /**
@@ -45,6 +47,7 @@ export function XPlanePremiumPanel({ simState }: Props) {
   const [installing, setInstalling] = useState(false);
   const [installMessage, setInstallMessage] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [installUngeprueft, setInstallUngeprueft] = useState(false);
 
   // Poll status every 2 s — cheap, mutex read on the adapter side.
   useEffect(() => {
@@ -86,6 +89,7 @@ export function XPlanePremiumPanel({ simState }: Props) {
 
   const hasError = !!status.last_error;
   const veraltet = !!status.veraltet;
+  const unerreichbar = !veraltet && !!status.p2_nicht_erreichbar;
   const protokoll2 = status.protokoll === 2;
   const stateClass = hasError
     ? "pmdg-panel--warn"
@@ -99,6 +103,7 @@ export function XPlanePremiumPanel({ simState }: Props) {
     setInstalling(true);
     setInstallMessage(null);
     setInstallError(null);
+    setInstallUngeprueft(false);
     try {
       const result = await invoke<PluginInstallResult>(
         "xplane_install_plugin",
@@ -110,6 +115,7 @@ export function XPlanePremiumPanel({ simState }: Props) {
           files: result.files_written,
         }),
       );
+      setInstallUngeprueft(result.geprueft === false);
     } catch (err) {
       setInstallError(String(err));
     } finally {
@@ -163,6 +169,16 @@ export function XPlanePremiumPanel({ simState }: Props) {
           </p>
           <p>{t("xplane_premium_panel.bind_error_explanation")}</p>
           <pre className="pmdg-panel__code-block">{status.last_error}</pre>
+        </div>
+      )}
+
+      {/* Plugin ab 1.0 läuft, aber Protokoll 2 antwortet nicht */}
+      {!hasError && unerreichbar && (
+        <div className="pmdg-panel__warning">
+          <p className="pmdg-panel__warning-title">
+            ⚠️ {t("xplane_premium_panel.unreachable_title")}
+          </p>
+          <p>{t("xplane_premium_panel.unreachable_explanation")}</p>
         </div>
       )}
 
@@ -282,6 +298,14 @@ export function XPlanePremiumPanel({ simState }: Props) {
                 style={{ color: "var(--success-color, #2a8b2a)" }}
               >
                 ✅ {installMessage}
+              </p>
+            )}
+            {installUngeprueft && (
+              <p
+                className="pmdg-panel__hint"
+                style={{ color: "var(--warning-color, #b7791f)" }}
+              >
+                ⚠️ {t("xplane_premium_panel.install_unverified")}
               </p>
             )}
             {installError && (

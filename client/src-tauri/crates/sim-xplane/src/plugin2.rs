@@ -44,8 +44,20 @@ pub const HALLO_ABSTAND: Duration = Duration::from_secs(5);
 pub const PING_ABSTAND: Duration = Duration::from_secs(2);
 /// So lange ohne ein Paket, dann gilt die Sitzung als beendet.
 pub const STILLE: Duration = Duration::from_secs(3);
-/// Kommt auf ein ABO so lange kein Status, wird es erneut gesendet.
+/// Grundzeit fuer den Status eines ABO; dazu kommt Zeit je Name, siehe
+/// [`bestaetigung_fuer`]. (QS AP7 H1: das Plugin brauchte fuer 8192 Namen
+/// laenger als die frueheren festen 2 s — der Client sendete das Abo dann
+/// immer wieder neu, und kein Status kam je an.)
 pub const BESTAETIGUNG: Duration = Duration::from_secs(2);
+/// Hoechste Wartezeit auf einen Status (vor dem Rueckoff).
+pub const BESTAETIGUNG_MAX: Duration = Duration::from_secs(15);
+/// Hoechste Wartezeit zwischen zwei Neusendungen (Rueckoff).
+pub const RUECKOFF_MAX: Duration = Duration::from_secs(60);
+/// Obergrenze der Sendewarteschlange fuer ABO-Datagramme. Darueber wird
+/// ein Abo nicht eingereiht, sondern nach seiner Wartezeit neu versucht.
+pub const MAX_WARTESCHLANGE: usize = 4 * 1024 * 1024;
+/// Groesste Abo-Generation (`g<zahl>`, 1..=2^31-1).
+pub const MAX_GEN: u32 = 0x7FFF_FFFF;
 /// Groesstes Anfrage-Datagramm, das wir senden. Die ADR erlaubt 64 KiB; wir
 /// bleiben deutlich darunter, weil der Empfangspuffer des Plugins unter
 /// Windows ab Werk nur 64 KiB fasst — zwei grosse Datagramme hintereinander
@@ -95,7 +107,31 @@ pub fn anfrage_liste(id: u32) -> Vec<u8> {
 /// Darf dieser Name angemeldet werden? Nur druckbares ASCII ohne
 /// Leerzeichen, eine Zeile hoechstens [`MAX_ZEILE`] Byte (mit `\n`). Ein
 /// Index `[n]` am Ende ist erlaubt (das Plugin prueft ihn gegen die Laenge).
+///
+/// Gleich streng wie der Parser des Plugins (`xplane-plugin/src/anfrage.cpp`,
+/// `zerlege_name`): endet der Name auf `]`, muss davor `[<1–10 Ziffern>]`
+/// mit Wert ≤ 2^31−1 und ein nicht leerer Grundname stehen. Ein Name, den
+/// das Plugin ablehnen wuerde, geht gar nicht erst hinaus.
 pub fn name_gueltig(name: &str) -> bool {
+    if !name_zeichen_gueltig(name) {
+        return false;
+    }
+    let Some(rest) = name.strip_suffix(']') else {
+        return true;
+    };
+    let Some(auf) = rest.rfind('[') else {
+        return false;
+    };
+    let ziffern = &rest[auf + 1..];
+    auf > 0
+        && (1..=10).contains(&ziffern.len())
+        && ziffern.bytes().all(|b| b.is_ascii_digit())
+        && ziffern
+            .parse::<u64>()
+            .is_ok_and(|x| x <= u64::from(MAX_GEN))
+}
+
+fn name_zeichen_gueltig(name: &str) -> bool {
     !name.is_empty() && name.len() < MAX_ZEILE && name.bytes().all(|b| (0x21..=0x7e).contains(&b))
 }
 
@@ -112,14 +148,17 @@ pub struct AboPlan {
 }
 
 /// Abo in Datagramme zerlegen: je Datagramm hoechstens [`MAX_ANFRAGE`]
-/// Byte, hoechstens [`MAX_NAMEN`] Namen insgesamt, Rate 1–50 Hz.
-pub fn abo_plan(abo: u8, rate_hz: u32, namen: &[String]) -> AboPlan {
+/// Byte, hoechstens [`MAX_NAMEN`] Namen insgesamt, Rate 1–50 Hz. Jede
+/// Kopfzeile traegt als letztes Wort die Generation `g<gen>`; das Plugin gibt
+/// sie in `abo`/`w`/`fehler` zurueck.
+pub fn abo_plan(abo: u8, rate_hz: u32, gen: u32, namen: &[String]) -> AboPlan {
+    let gen = gen.clamp(1, MAX_GEN);
     let rate = rate_hz.clamp(1, 50);
     let mut draht_zu_lokal = Vec::new();
     let mut koerper: Vec<String> = Vec::new();
     let mut akt = String::new();
-    // Platz fuer die laengste Kopfzeile („ABO 16 50 999 999\n").
-    let platz = MAX_ANFRAGE - 32;
+    // Platz fuer die laengste Kopfzeile („ABO 16 50 9999 9999 g2147483647\n").
+    let platz = MAX_ANFRAGE - 48;
     for (i, n) in namen.iter().enumerate() {
         if draht_zu_lokal.len() >= MAX_NAMEN {
             break;
@@ -143,9 +182,9 @@ pub fn abo_plan(abo: u8, rate_hz: u32, namen: &[String]) -> AboPlan {
         .enumerate()
         .map(|(i, k)| {
             if teile == 1 {
-                format!("ABO {abo} {rate}\n{k}").into_bytes()
+                format!("ABO {abo} {rate} g{gen}\n{k}").into_bytes()
             } else {
-                format!("ABO {abo} {rate} {} {teile}\n{k}", i + 1).into_bytes()
+                format!("ABO {abo} {rate} {} {teile} g{gen}\n{k}", i + 1).into_bytes()
             }
         })
         .collect();
@@ -255,10 +294,13 @@ pub enum Antwort {
     },
     Abo {
         abo: u8,
+        /// Generation des Abos, auf das sich der Status bezieht.
+        gen: Option<u32>,
         st: Vec<(usize, NameStatus)>,
     },
     Werte {
         abo: u8,
+        gen: Option<u32>,
         seq: Option<u64>,
         v: Vec<(usize, Wert)>,
     },
@@ -279,6 +321,8 @@ pub enum Antwort {
         abo: Option<u8>,
         /// Betroffene `LISTE`-Anfrage, falls genannt.
         id: Option<u32>,
+        /// Generation des betroffenen Abos, falls genannt.
+        gen: Option<u32>,
     },
     /// Gueltiges Protokoll-2-Paket unbekannter Art (z. B. `pong`) — zaehlt
     /// als Lebenszeichen.
@@ -361,7 +405,11 @@ pub fn antwort_lesen(v: &serde_json::Value) -> Option<Antwort> {
                     Some((i, s))
                 })
                 .collect();
-            Antwort::Abo { abo, st }
+            Antwort::Abo {
+                abo,
+                gen: zahl_u32(v, "gen"),
+                st,
+            }
         }
         "w" => {
             let abo = abo_id(v)?;
@@ -377,6 +425,7 @@ pub fn antwort_lesen(v: &serde_json::Value) -> Option<Antwort> {
                 .collect();
             Antwort::Werte {
                 abo,
+                gen: zahl_u32(v, "gen"),
                 seq: v.get("seq").and_then(|s| s.as_u64()),
                 v: werte,
             }
@@ -401,6 +450,7 @@ pub fn antwort_lesen(v: &serde_json::Value) -> Option<Antwort> {
             grund: text(v, "grund").unwrap_or_default(),
             abo: abo_id(v),
             id: zahl_u32(v, "id"),
+            gen: zahl_u32(v, "gen"),
         },
         other => Antwort::Sonstige(other.to_string()),
     })
@@ -427,6 +477,22 @@ pub fn version_reicht(plugin: &str) -> bool {
 // =============================================================================
 // Sitzung (Zustandsautomat, ohne Socket)
 // =============================================================================
+
+/// Wartezeit auf den Status eines Abos: 2 s + 1 s je 2000 Namen, hoechstens
+/// [`BESTAETIGUNG_MAX`]. Gezaehlt ab dem Zeitpunkt, an dem der LETZTE Teil
+/// das Haus verlassen hat, nicht ab dem Einreihen.
+pub fn bestaetigung_fuer(namen: usize) -> Duration {
+    let ms = BESTAETIGUNG.as_millis() as u64 + (namen as u64) / 2;
+    Duration::from_millis(ms).min(BESTAETIGUNG_MAX)
+}
+
+/// Wartezeit nach der `versuche`-ten Sendung: nach der ersten und der
+/// ersten Wiederholung je die Grundzeit, danach verdoppelt bis
+/// [`RUECKOFF_MAX`].
+fn wartezeit(grund: Duration, versuche: u32) -> Duration {
+    let faktor = 1u32 << versuche.saturating_sub(2).min(6);
+    (grund * faktor).min(RUECKOFF_MAX.max(grund))
+}
 
 /// Ein gewuenschtes Abo.
 #[derive(Debug, Clone)]
@@ -472,6 +538,13 @@ pub enum Ereignis {
         abo: Option<u8>,
         id: Option<u32>,
     },
+    /// Auf dieses Abo kam nach der Wartezeit und einer Wiederholung kein
+    /// Status. Die Sitzung versucht es mit Rueckoff weiter; wer nicht warten
+    /// kann (Vermessung), weicht aus.
+    AboOhneAntwort {
+        abo: u8,
+        namen: Arc<Vec<String>>,
+    },
 }
 
 /// Empfaenger der Sitzung (der Adapter).
@@ -505,20 +578,43 @@ pub struct SitzungsInfo {
 struct Gesendet {
     rate: u32,
     namen: Arc<Vec<String>>,
+    /// Generation dieses Inhalts; ein identisches Neusenden behaelt sie.
+    gen: u32,
     draht_zu_lokal: Vec<usize>,
     datagramme: Vec<Vec<u8>>,
+    /// Teile noch in der Warteschlange — die Wartezeit laeuft noch nicht.
+    unterwegs: bool,
+    /// Letzter Teil hinaus (bzw. Einreihen abgelehnt).
     gesendet_um: Instant,
-    /// Status zu diesem Stand erhalten? Bis dahin werden Werte verworfen —
-    /// sie koennten noch zum vorigen Abo gleicher ID gehoeren.
+    /// Sendungen seit dem letzten Status.
+    versuche: u32,
+    /// `AboOhneAntwort` schon gemeldet?
+    gemeldet: bool,
+    /// Status zu dieser Generation erhalten?
     bestaetigt: bool,
     /// Letzter Status oder letzte Werte.
     lebenszeichen: Option<Instant>,
     /// Mindestens ein Name ist da — dann muessen auch Werte kommen.
     namen_da: bool,
+    /// Je Drahtindex: als „fehlt" gemeldet. Werte dafuer werden verworfen.
+    fehlt: Vec<bool>,
+}
+
+/// Ein ABO-Datagramm in der Warteschlange.
+struct Raus {
+    daten: Vec<u8>,
+    abo: u8,
+    letzter: bool,
 }
 
 /// Die Sitzung mit dem Plugin. Wird vom Plugin-Faden gefuehrt: `takt` in
 /// jedem Durchlauf, `empfangen` fuer jedes Protokoll-2-Paket.
+///
+/// Zwei Warteschlangen: `vorrang` (HALLO, PING, ENDE-ABO, LISTE — klein,
+/// geht in jedem Takt ganz hinaus) und `ausgang` (ABO-Datagramme, grosse mit
+/// [`SENDEABSTAND`], hoechstens [`MAX_WARTESCHLANGE`]). So verdraengt ein
+/// grosses Vermessungs-Abo nie den PING, und das Plugin verwirft die Sitzung
+/// nicht nach 5 s scheinbarer Stille.
 pub struct Sitzung {
     client_version: String,
     offen: bool,
@@ -527,8 +623,14 @@ pub struct Sitzung {
     letztes_paket: Option<Instant>,
     wunsch_gen: Option<u64>,
     abos: HashMap<u8, Gesendet>,
-    ausgang: VecDeque<Vec<u8>>,
+    vorrang: VecDeque<Vec<u8>>,
+    ausgang: VecDeque<Raus>,
+    ausgang_bytes: usize,
     letzter_grosser: Option<Instant>,
+    gen_zaehler: u32,
+    /// Nach dem Oeffnen: ungewuenschte IDs abbestellen (Abos einer frueheren
+    /// Sitzung, die das Plugin beim HALLO vom selben Port behaelt).
+    aufraeumen: bool,
     info: SitzungsInfo,
 }
 
@@ -542,8 +644,12 @@ impl Sitzung {
             letztes_paket: None,
             wunsch_gen: None,
             abos: HashMap::new(),
+            vorrang: VecDeque::new(),
             ausgang: VecDeque::new(),
+            ausgang_bytes: 0,
             letzter_grosser: None,
+            gen_zaehler: 0,
+            aufraeumen: false,
             info: SitzungsInfo::default(),
         }
     }
@@ -554,6 +660,15 @@ impl Sitzung {
 
     pub fn offen(&self) -> bool {
         self.offen
+    }
+
+    fn naechste_gen(&mut self) -> u32 {
+        self.gen_zaehler = if self.gen_zaehler >= MAX_GEN {
+            1
+        } else {
+            self.gen_zaehler + 1
+        };
+        self.gen_zaehler
     }
 
     /// Zeitgesteuerte Arbeit. Liefert die jetzt zu sendenden Datagramme.
@@ -575,7 +690,7 @@ impl Sitzung {
                     self.info.hallos_ohne_antwort = self.info.hallos_ohne_antwort.saturating_add(1);
                 }
                 self.letztes_hallo = Some(jetzt);
-                self.ausgang.push_back(anfrage_hallo(&self.client_version));
+                self.vorrang.push_back(anfrage_hallo(&self.client_version));
             }
         } else {
             if self
@@ -583,49 +698,124 @@ impl Sitzung {
                 .is_none_or(|t| jetzt.saturating_duration_since(t) >= PING_ABSTAND)
             {
                 self.letzter_ping = Some(jetzt);
-                self.ausgang.push_back(anfrage_ping());
+                self.vorrang.push_back(anfrage_ping());
             }
             let gen = ziel.wunsch_generation();
             if self.wunsch_gen != Some(gen) {
                 self.wunsch_gen = Some(gen);
                 self.abgleichen(ziel.wuensche(), jetzt);
             }
-            // Ohne Status nach BESTAETIGUNG, oder Werte versiegt, obwohl Namen
-            // da sind: das ganze Abo neu senden (ein Teil ging verloren, oder
-            // das Plugin hat es verworfen).
-            let mut neu: Vec<u8> = Vec::new();
-            for (id, g) in &self.abos {
-                let faellig = if g.bestaetigt {
-                    g.namen_da
-                        && g.lebenszeichen
-                            .is_none_or(|t| jetzt.saturating_duration_since(t) > STILLE)
-                } else {
-                    jetzt.saturating_duration_since(g.gesendet_um) > BESTAETIGUNG
-                };
-                if faellig {
-                    neu.push(*id);
-                }
-            }
-            for id in neu {
-                if let Some(g) = self.abos.get_mut(&id) {
-                    tracing::info!(abo = id, "X-Plane-Plugin: Abo ohne Antwort — neu gesendet");
-                    g.gesendet_um = jetzt;
-                    g.bestaetigt = false;
-                    g.lebenszeichen = None;
-                    self.ausgang.extend(g.datagramme.iter().cloned());
-                }
-            }
-            self.ausgang.extend(ziel.anfragen());
+            self.nachsenden(jetzt, ziel);
+            self.vorrang.extend(ziel.anfragen());
         }
         self.ausgang_leeren(jetzt)
     }
 
-    /// Kleine Datagramme sofort, grosse mit [`SENDEABSTAND`]; die Reihenfolge
-    /// bleibt erhalten.
+    /// Abos ohne Status (nach ihrer Wartezeit) oder mit versiegten Werten neu
+    /// senden — identisch, gleiche Generation, mit Rueckoff.
+    fn nachsenden(&mut self, jetzt: Instant, ziel: &dyn Ziel) {
+        let mut neu: Vec<u8> = Vec::new();
+        let mut melden: Vec<(u8, Arc<Vec<String>>)> = Vec::new();
+        for (id, g) in self.abos.iter_mut() {
+            if g.unterwegs {
+                continue;
+            }
+            let seit = jetzt.saturating_duration_since(g.gesendet_um);
+            if g.bestaetigt {
+                // Werte versiegt, obwohl Namen da sind.
+                if g.namen_da
+                    && g.lebenszeichen
+                        .is_none_or(|t| jetzt.saturating_duration_since(t) > STILLE)
+                    && seit > STILLE
+                {
+                    neu.push(*id);
+                }
+                continue;
+            }
+            let grund = bestaetigung_fuer(g.draht_zu_lokal.len());
+            if seit > wartezeit(grund, g.versuche) {
+                if g.versuche >= 2 && !g.gemeldet {
+                    // Wartezeit + eine Wiederholung ohne Status: melden, JETZT
+                    // nicht erneut senden — das Ziel entscheidet (Vermessung
+                    // zieht zurueck). Sonst naechster Versuch nach Rueckoff.
+                    g.gemeldet = true;
+                    g.versuche = g.versuche.saturating_add(1);
+                    g.gesendet_um = jetzt;
+                    melden.push((*id, Arc::clone(&g.namen)));
+                } else {
+                    neu.push(*id);
+                }
+            }
+        }
+        for (abo, namen) in melden {
+            tracing::info!(abo, "X-Plane-Plugin: Abo bleibt ohne Status");
+            ziel.ereignis(Ereignis::AboOhneAntwort { abo, namen });
+        }
+        for id in neu {
+            // Das Ziel kann das Abo inzwischen zurueckgezogen haben.
+            if self.abos.contains_key(&id) {
+                tracing::info!(
+                    abo = id,
+                    "X-Plane-Plugin: Abo ohne Antwort — erneut gesendet"
+                );
+                self.senden(id, jetzt);
+            }
+        }
+    }
+
+    /// Abo `id` (erneut) einreihen. Alte, noch wartende Teile desselben Abos
+    /// fliegen vorher raus (Neuplanen). Passt es nicht mehr in die
+    /// Warteschlange, gilt es als gesendet und kommt nach seiner Wartezeit
+    /// wieder dran.
+    fn senden(&mut self, id: u8, jetzt: Instant) {
+        self.aus_warteschlange(id);
+        let Some(g) = self.abos.get_mut(&id) else {
+            return;
+        };
+        g.versuche = g.versuche.saturating_add(1);
+        g.bestaetigt = false;
+        g.lebenszeichen = None;
+        let groesse: usize = g.datagramme.iter().map(Vec::len).sum();
+        if self.ausgang_bytes + groesse > MAX_WARTESCHLANGE {
+            tracing::warn!(
+                abo = id,
+                bytes = groesse,
+                "X-Plane-Plugin: Sendewarteschlange voll — Abo spaeter"
+            );
+            g.unterwegs = false;
+            g.gesendet_um = jetzt;
+            return;
+        }
+        let n = g.datagramme.len();
+        for (i, d) in g.datagramme.iter().enumerate() {
+            self.ausgang.push_back(Raus {
+                daten: d.clone(),
+                abo: id,
+                letzter: i + 1 == n,
+            });
+        }
+        self.ausgang_bytes += groesse;
+        g.unterwegs = true;
+    }
+
+    fn aus_warteschlange(&mut self, id: u8) {
+        let mut weg = 0;
+        self.ausgang.retain(|r| {
+            let bleibt = r.abo != id;
+            if !bleibt {
+                weg += r.daten.len();
+            }
+            bleibt
+        });
+        self.ausgang_bytes = self.ausgang_bytes.saturating_sub(weg);
+    }
+
+    /// Vorrang ganz; danach ABO-Datagramme, grosse mit [`SENDEABSTAND`]. Mit
+    /// dem letzten Teil eines Abos beginnt dessen Wartezeit.
     fn ausgang_leeren(&mut self, jetzt: Instant) -> Vec<Vec<u8>> {
-        let mut raus = Vec::new();
-        while let Some(d) = self.ausgang.front() {
-            if d.len() > GROSS {
+        let mut raus: Vec<Vec<u8>> = self.vorrang.drain(..).collect();
+        while let Some(r) = self.ausgang.front() {
+            if r.daten.len() > GROSS {
                 if self
                     .letzter_grosser
                     .is_some_and(|t| jetzt.saturating_duration_since(t) < SENDEABSTAND)
@@ -634,15 +824,23 @@ impl Sitzung {
                 }
                 self.letzter_grosser = Some(jetzt);
             }
-            if let Some(d) = self.ausgang.pop_front() {
-                raus.push(d);
+            let Some(r) = self.ausgang.pop_front() else {
+                break;
+            };
+            self.ausgang_bytes = self.ausgang_bytes.saturating_sub(r.daten.len());
+            if r.letzter {
+                if let Some(g) = self.abos.get_mut(&r.abo) {
+                    g.unterwegs = false;
+                    g.gesendet_um = jetzt;
+                }
             }
+            raus.push(r.daten);
         }
         raus
     }
 
     /// Gewuenschte Abos mit den gesendeten abgleichen: neue/geaenderte
-    /// senden, weggefallene abbestellen.
+    /// senden (neue Generation), weggefallene abbestellen.
     fn abgleichen(&mut self, wuensche: Vec<AboWunsch>, jetzt: Instant) {
         let mut behalten: HashSet<u8> = HashSet::new();
         for w in wuensche {
@@ -655,32 +853,40 @@ impl Sitzung {
                     continue;
                 }
             }
-            let plan = abo_plan(w.id, w.rate, &w.namen);
+            let gen = self.naechste_gen();
+            let plan = abo_plan(w.id, w.rate, gen, &w.namen);
             if plan.draht_zu_lokal.is_empty() {
                 continue;
             }
             behalten.insert(w.id);
-            self.ausgang.extend(plan.datagramme.iter().cloned());
             tracing::info!(
                 abo = w.id,
+                gen,
                 namen = plan.draht_zu_lokal.len(),
                 datagramme = plan.datagramme.len(),
                 rate = w.rate,
                 "X-Plane-Plugin: Abo angemeldet"
             );
+            let n = plan.draht_zu_lokal.len();
             self.abos.insert(
                 w.id,
                 Gesendet {
                     rate: w.rate,
                     namen: w.namen,
+                    gen,
                     draht_zu_lokal: plan.draht_zu_lokal,
                     datagramme: plan.datagramme,
+                    unterwegs: false,
                     gesendet_um: jetzt,
+                    versuche: 0,
+                    gemeldet: false,
                     bestaetigt: false,
                     lebenszeichen: None,
                     namen_da: false,
+                    fehlt: vec![false; n],
                 },
             );
+            self.senden(w.id, jetzt);
         }
         let weg: Vec<u8> = self
             .abos
@@ -690,7 +896,19 @@ impl Sitzung {
             .collect();
         for id in weg {
             self.abos.remove(&id);
-            self.ausgang.push_back(anfrage_ende_abo(id));
+            self.aus_warteschlange(id);
+            self.vorrang.push_back(anfrage_ende_abo(id));
+        }
+        if std::mem::take(&mut self.aufraeumen) {
+            // Nach dem (Wieder-)Oeffnen: alles abbestellen, was wir nicht
+            // wollen — das Plugin behaelt beim HALLO vom selben Port die Abos
+            // der vorigen Sitzung, sie liefen sonst verwaist weiter. Geht
+            // ueber den Vorrang VOR den neuen ABOs hinaus.
+            for id in 1..=MAX_ABO_ID {
+                if !behalten.contains(&id) {
+                    self.vorrang.push_back(anfrage_ende_abo(id));
+                }
+            }
         }
     }
 
@@ -719,7 +937,10 @@ impl Sitzung {
                 self.letzter_ping = Some(jetzt);
                 self.abos.clear();
                 self.ausgang.clear();
+                self.ausgang_bytes = 0;
+                self.vorrang.clear();
                 self.wunsch_gen = None;
+                self.aufraeumen = true;
                 tracing::info!(
                     plugin = %plugin,
                     xplane = ?xplane,
@@ -746,36 +967,53 @@ impl Sitzung {
         self.letztes_paket = Some(jetzt);
         match a {
             Antwort::Hallo { .. } => {}
-            Antwort::Abo { abo, st } => {
+            Antwort::Abo { abo, gen, st } => {
                 let Some(g) = self.abos.get_mut(&abo) else {
                     return;
                 };
+                // Status zu einem frueheren Inhalt dieser ID — nicht als
+                // Bestaetigung des neuen werten.
+                if gen.is_some_and(|x| x != g.gen) {
+                    return;
+                }
                 g.bestaetigt = true;
+                g.versuche = 0;
+                g.gemeldet = false;
                 g.lebenszeichen = Some(jetzt);
-                let st: Vec<(usize, NameStatus)> = st
-                    .into_iter()
-                    .filter_map(|(i, s)| g.draht_zu_lokal.get(i).map(|&l| (l, s)))
-                    .collect();
-                if st.iter().any(|(_, s)| s.da()) {
-                    g.namen_da = true;
+                let mut lokal = Vec::with_capacity(st.len());
+                for (i, s) in st {
+                    if let Some(&l) = g.draht_zu_lokal.get(i) {
+                        if let Some(f) = g.fehlt.get_mut(i) {
+                            *f = !s.da();
+                        }
+                        if s.da() {
+                            g.namen_da = true;
+                        }
+                        lokal.push((l, s));
+                    }
                 }
                 ziel.ereignis(Ereignis::Status {
                     abo,
                     namen: Arc::clone(&g.namen),
-                    st,
+                    st: lokal,
                 });
             }
-            Antwort::Werte { abo, v, .. } => {
+            Antwort::Werte { abo, gen, v, .. } => {
                 let Some(g) = self.abos.get_mut(&abo) else {
                     return;
                 };
-                if !g.bestaetigt {
-                    return;
+                match gen {
+                    Some(x) if x != g.gen => return,
+                    None if !g.bestaetigt => return,
+                    _ => {}
                 }
                 g.lebenszeichen = Some(jetzt);
                 g.namen_da = true;
+                // Ein Wert fuer einen als „fehlt" gemeldeten Namen wird
+                // verworfen (QS AP7 N1) — nie einen Wert erfinden.
                 let v: Vec<(usize, Wert)> = v
                     .into_iter()
+                    .filter(|(i, _)| !g.fehlt.get(*i).copied().unwrap_or(false))
                     .filter_map(|(i, w)| g.draht_zu_lokal.get(i).map(|&l| (l, w)))
                     .collect();
                 ziel.ereignis(Ereignis::Werte {
@@ -798,7 +1036,12 @@ impl Sitzung {
                 teile,
                 namen,
             }),
-            Antwort::Fehler { grund, abo, id } => {
+            Antwort::Fehler {
+                grund,
+                abo,
+                id,
+                gen,
+            } => {
                 if grund == "kein_hallo" {
                     // Das Plugin kennt uns nicht (mehr): X-Plane neu gestartet,
                     // Plugin neu geladen oder uns nach 5 s Stille vergessen.
@@ -808,7 +1051,13 @@ impl Sitzung {
                     self.schliessen(ziel);
                     return;
                 }
-                tracing::info!(grund = %grund, ?abo, ?id, "X-Plane-Plugin meldet Fehler");
+                // Fehler zu einem frueheren Inhalt dieser Abo-ID: erledigt.
+                if let (Some(a), Some(x)) = (abo, gen) {
+                    if self.abos.get(&a).is_some_and(|g| g.gen != x) {
+                        return;
+                    }
+                }
+                tracing::info!(grund = %grund, ?abo, ?id, ?gen, "X-Plane-Plugin meldet Fehler");
                 ziel.ereignis(Ereignis::Fehler { grund, abo, id });
             }
             Antwort::Sonstige(_) => {}
@@ -820,6 +1069,8 @@ impl Sitzung {
         self.info.offen = false;
         self.abos.clear();
         self.ausgang.clear();
+        self.ausgang_bytes = 0;
+        self.vorrang.clear();
         self.letztes_hallo = None;
         self.letzter_ping = None;
         self.wunsch_gen = None;
@@ -835,6 +1086,8 @@ impl Sitzung {
         let mut ids: Vec<u8> = self.abos.keys().copied().collect();
         ids.sort_unstable();
         self.abos.clear();
+        self.ausgang.clear();
+        self.ausgang_bytes = 0;
         self.offen = false;
         self.info.offen = false;
         ids.into_iter().map(anfrage_ende_abo).collect()
@@ -854,6 +1107,13 @@ mod tests {
         n.iter().map(|s| s.to_string()).collect()
     }
 
+    fn da() -> NameStatus {
+        NameStatus::Da {
+            typ: Typ::Float,
+            laenge: 1,
+        }
+    }
+
     #[test]
     fn anfragen_sind_textzeilen() {
         assert_eq!(anfrage_hallo("1.9.11"), b"HALLO 2 1.9.11\n");
@@ -863,22 +1123,35 @@ mod tests {
         assert_eq!(anfrage_liste(7), b"LISTE 7\n");
     }
 
+    /// Gleiche Regeln wie `zerlege_name` im Plugin (anfrage.cpp).
     #[test]
     fn namen_werden_streng_geprueft() {
         assert!(name_gueltig("sim/flightmodel/position/latitude"));
         assert!(name_gueltig("AirbusFBW/OHPLightSwitches[7]"));
+        assert!(name_gueltig("sim/a[2147483647]"));
+        assert!(name_gueltig("sim/offen[")); // kein `]` am Ende: gewoehnlicher Name
         assert!(!name_gueltig(""));
         assert!(!name_gueltig("mit leerzeichen"));
         assert!(!name_gueltig("zeile\numbruch"));
         assert!(!name_gueltig("umlaut/ä"));
         assert!(!name_gueltig(&"a".repeat(MAX_ZEILE)));
         assert!(name_gueltig(&"a".repeat(MAX_ZEILE - 1)));
+        assert!(!name_gueltig("sim/a]"), "] ohne [");
+        assert!(!name_gueltig("sim/a[]"), "leerer Index");
+        assert!(!name_gueltig("sim/a[x]"));
+        assert!(!name_gueltig("sim/a[-1]"));
+        assert!(!name_gueltig("sim/a[2147483648]"), "ueber 2^31-1");
+        assert!(!name_gueltig("sim/a[12345678901]"), "mehr als 10 Ziffern");
+        assert!(!name_gueltig("[3]"), "ohne Grundname");
     }
 
     #[test]
     fn kleines_abo_ist_ein_datagramm() {
-        let p = abo_plan(1, 50, &namen(&["sim/a", "sim/b[2]"]));
-        assert_eq!(p.datagramme, vec![b"ABO 1 50\nsim/a\nsim/b[2]\n".to_vec()]);
+        let p = abo_plan(1, 50, 4, &namen(&["sim/a", "sim/b[2]"]));
+        assert_eq!(
+            p.datagramme,
+            vec![b"ABO 1 50 g4\nsim/a\nsim/b[2]\n".to_vec()]
+        );
         assert_eq!(p.draht_zu_lokal, vec![0, 1]);
     }
 
@@ -886,25 +1159,26 @@ mod tests {
     /// ueberspringt sie.
     #[test]
     fn ungueltige_namen_verschieben_die_zuordnung() {
-        let p = abo_plan(2, 99, &namen(&["sim/a", "kaputt name", "sim/c"]));
-        assert_eq!(p.datagramme, vec![b"ABO 2 50\nsim/a\nsim/c\n".to_vec()]);
+        let p = abo_plan(2, 99, 1, &namen(&["sim/a", "kaputt name", "sim/c"]));
+        assert_eq!(p.datagramme, vec![b"ABO 2 50 g1\nsim/a\nsim/c\n".to_vec()]);
         assert_eq!(p.draht_zu_lokal, vec![0, 2]);
-        assert!(abo_plan(2, 0, &namen(&["x y"])).datagramme.is_empty());
+        assert!(abo_plan(2, 0, 1, &namen(&["x y"])).datagramme.is_empty());
         assert!(
-            String::from_utf8(abo_plan(2, 0, &namen(&["sim/a"])).datagramme[0].clone())
+            String::from_utf8(abo_plan(2, 0, 0, &namen(&["sim/a"])).datagramme[0].clone())
                 .unwrap()
-                .starts_with("ABO 2 1\n")
+                .starts_with("ABO 2 1 g1\n")
         );
     }
 
     /// Grosse Abos: mehrteilig, jedes Datagramm unter der Grenze, jede
-    /// Zeile ≤ 512 Byte, Reihenfolge und Anzahl bleiben, hoechstens 8192.
+    /// Zeile ≤ 512 Byte, Reihenfolge und Anzahl bleiben, hoechstens 8192,
+    /// jede Kopfzeile mit derselben Generation.
     #[test]
     fn grosses_abo_wird_geteilt() {
         let alle: Vec<String> = (0..9000)
             .map(|i| format!("laminar/B738/irgendwas/sehr/langer/name_{i:05}"))
             .collect();
-        let p = abo_plan(3, 5, &alle);
+        let p = abo_plan(3, 5, MAX_GEN, &alle);
         assert_eq!(p.draht_zu_lokal.len(), MAX_NAMEN);
         assert!(p.datagramme.len() > 1);
         let teile = p.datagramme.len();
@@ -913,7 +1187,10 @@ mod tests {
             assert!(d.len() <= MAX_ANFRAGE, "{} Byte", d.len());
             let s = String::from_utf8(d.clone()).unwrap();
             let mut zeilen = s.lines();
-            assert_eq!(zeilen.next().unwrap(), format!("ABO 3 5 {} {teile}", i + 1));
+            assert_eq!(
+                zeilen.next().unwrap(),
+                format!("ABO 3 5 {} {teile} g{MAX_GEN}", i + 1)
+            );
             for z in zeilen {
                 assert!(z.len() < MAX_ZEILE);
                 gelesen.push(z.to_string());
@@ -922,6 +1199,20 @@ mod tests {
         assert_eq!(gelesen.len(), MAX_NAMEN);
         assert_eq!(gelesen[0], alle[0]);
         assert_eq!(gelesen[MAX_NAMEN - 1], alle[MAX_NAMEN - 1]);
+    }
+
+    #[test]
+    fn wartezeit_waechst_mit_namen_und_versuchen() {
+        assert_eq!(bestaetigung_fuer(0), Duration::from_secs(2));
+        assert_eq!(bestaetigung_fuer(2000), Duration::from_secs(3));
+        assert_eq!(bestaetigung_fuer(8192), Duration::from_millis(6096));
+        assert_eq!(bestaetigung_fuer(100_000), BESTAETIGUNG_MAX);
+        let t = Duration::from_secs(3);
+        assert_eq!(wartezeit(t, 1), t);
+        assert_eq!(wartezeit(t, 2), t);
+        assert_eq!(wartezeit(t, 3), t * 2);
+        assert_eq!(wartezeit(t, 4), t * 4);
+        assert_eq!(wartezeit(t, 30), RUECKOFF_MAX);
     }
 
     #[test]
@@ -957,11 +1248,11 @@ mod tests {
         assert!(antwort_lesen(&json(r#"{"p":3,"t":"hallo","plugin":"9.0.0"}"#)).is_none());
     }
 
-    /// Beispiele wortgleich aus ADR-0004.
+    /// Beispiele aus ADR-0004 (mit der Generation der Protokoll-Ergaenzung).
     #[test]
     fn beispiele_aus_der_adr() {
         let a = antwort_lesen(&json(
-            r#"{"p":2,"t":"abo","abo":1,"teil":1,"teile":1,
+            r#"{"p":2,"t":"abo","abo":1,"gen":4,"teil":1,"teile":1,
  "st":[[0,"f",1],[1,"fehlt"],[2,"d",1],[3,"b",40],[4,"vf",8]]}"#,
         ))
         .unwrap();
@@ -969,14 +1260,9 @@ mod tests {
             a,
             Antwort::Abo {
                 abo: 1,
+                gen: Some(4),
                 st: vec![
-                    (
-                        0,
-                        NameStatus::Da {
-                            typ: Typ::Float,
-                            laenge: 1
-                        }
-                    ),
+                    (0, da()),
                     (1, NameStatus::Fehlt),
                     (
                         2,
@@ -1003,13 +1289,14 @@ mod tests {
             }
         );
         let w = antwort_lesen(&json(
-            r#"{"p":2,"t":"w","abo":1,"seq":812,"teil":1,"teile":1,"v":[[0,51.2345678],[2,8.5],[3,"A20N"],[4,[0,0,1]]]}"#,
+            r#"{"p":2,"t":"w","abo":1,"gen":4,"seq":812,"teil":1,"teile":1,"v":[[0,51.2345678],[2,8.5],[3,"A20N"],[4,[0,0,1]]]}"#,
         ))
         .unwrap();
         assert_eq!(
             w,
             Antwort::Werte {
                 abo: 1,
+                gen: Some(4),
                 seq: Some(812),
                 v: vec![
                     (0, Wert::Zahl(51.2345678)),
@@ -1049,7 +1336,8 @@ mod tests {
             Some(Antwort::Fehler {
                 grund: "zeile_zu_lang".into(),
                 abo: None,
-                id: None
+                id: None,
+                gen: None
             })
         );
     }
@@ -1065,6 +1353,7 @@ mod tests {
             w,
             Antwort::Werte {
                 abo: 1,
+                gen: None,
                 seq: None,
                 v: vec![(0, Wert::Zahl(1.5)), (3, Wert::Zahl(4.0))]
             }
@@ -1129,6 +1418,27 @@ mod tests {
             .collect()
     }
 
+    /// Die ENDE-ABO des Aufraeumens nach dem Oeffnen (IDs 1..=16 ohne die
+    /// gewuenschten) herausfiltern.
+    fn ohne_aufraeumen(d: Vec<String>) -> Vec<String> {
+        d.into_iter()
+            .filter(|x| !x.starts_with("ENDE-ABO"))
+            .collect()
+    }
+
+    fn status(abo: u8, gen: Option<u32>, st: Vec<(usize, NameStatus)>) -> Antwort {
+        Antwort::Abo { abo, gen, st }
+    }
+
+    fn werte(abo: u8, gen: Option<u32>, v: Vec<(usize, Wert)>) -> Antwort {
+        Antwort::Werte {
+            abo,
+            gen,
+            seq: None,
+            v,
+        }
+    }
+
     /// Ganzer Lebenslauf: HALLO, Sitzung auf, ABO, Status, Werte, PING,
     /// Stille → Sitzung zu → wieder HALLO.
     #[test]
@@ -1159,61 +1469,41 @@ mod tests {
             Ereignis::SitzungAuf { .. }
         ));
         let raus = text_von(&s.takt(t1, &z));
-        assert_eq!(raus, vec!["ABO 1 50\nsim/a\nsim/c\n"]);
+        // M1: erst alle ungewuenschten IDs abbestellen, dann das neue ABO.
+        let ende: Vec<&String> = raus.iter().filter(|x| x.starts_with("ENDE-ABO")).collect();
+        assert_eq!(ende.len(), 15);
+        assert!(!raus.contains(&"ENDE-ABO 1\n".to_string()));
+        assert_eq!(raus.last().unwrap(), "ABO 1 50 g1\nsim/a\nsim/c\n");
 
-        // Werte vor dem Status gehoeren womoeglich zu einem alten Abo.
-        s.empfangen(
-            Antwort::Werte {
-                abo: 1,
-                seq: None,
-                v: vec![(0, Wert::Zahl(1.0))],
-            },
-            t1,
-            &z,
-        );
+        // Werte vor dem Status (ohne Generation) gehoeren womoeglich zu
+        // einem alten Abo.
+        s.empfangen(werte(1, None, vec![(0, Wert::Zahl(1.0))]), t1, &z);
         assert_eq!(z.ereignisse.lock().len(), 1);
         s.empfangen(
-            Antwort::Abo {
-                abo: 1,
-                st: vec![
-                    (0, NameStatus::Fehlt),
-                    (
-                        1,
-                        NameStatus::Da {
-                            typ: Typ::Float,
-                            laenge: 1,
-                        },
-                    ),
-                ],
-            },
+            status(1, Some(1), vec![(0, NameStatus::Fehlt), (1, da())]),
             t1,
             &z,
         );
+        // N1: Wert fuer den als „fehlt" gemeldeten Draht-Index 0 verworfen.
         s.empfangen(
-            Antwort::Werte {
-                abo: 1,
-                seq: None,
-                v: vec![(1, Wert::Zahl(4.0)), (9, Wert::Zahl(9.0))],
-            },
+            werte(
+                1,
+                Some(1),
+                vec![
+                    (0, Wert::Zahl(7.0)),
+                    (1, Wert::Zahl(4.0)),
+                    (9, Wert::Zahl(9.0)),
+                ],
+            ),
             t1,
             &z,
         );
         {
             let e = z.ereignisse.lock();
             match &e[1] {
-                Ereignis::Status { abo: 1, st, .. } => assert_eq!(
-                    st,
-                    &vec![
-                        (0, NameStatus::Fehlt),
-                        (
-                            2,
-                            NameStatus::Da {
-                                typ: Typ::Float,
-                                laenge: 1
-                            }
-                        )
-                    ]
-                ),
+                Ereignis::Status { abo: 1, st, .. } => {
+                    assert_eq!(st, &vec![(0, NameStatus::Fehlt), (2, da())])
+                }
                 x => panic!("{x:?}"),
             }
             match &e[2] {
@@ -1224,6 +1514,7 @@ mod tests {
         // PING nach 2 s.
         let t2 = t1 + Duration::from_millis(2100);
         s.empfangen(Antwort::Sonstige("pong".into()), t2, &z);
+        s.empfangen(werte(1, Some(1), vec![(1, Wert::Zahl(4.0))]), t2, &z);
         assert_eq!(text_von(&s.takt(t2, &z)), vec!["PING\n"]);
         // 3 s Stille → zu, sofort neues HALLO.
         let t3 = t2 + Duration::from_millis(3100);
@@ -1248,15 +1539,7 @@ mod tests {
         assert!(s.info().zu_alt);
         assert!(z.ereignisse.lock().is_empty());
         // Werte ohne Sitzung werden nicht weitergereicht.
-        s.empfangen(
-            Antwort::Werte {
-                abo: 1,
-                seq: None,
-                v: vec![(0, Wert::Zahl(1.0))],
-            },
-            t0,
-            &z,
-        );
+        s.empfangen(werte(1, None, vec![(0, Wert::Zahl(1.0))]), t0, &z);
         assert!(z.ereignisse.lock().is_empty());
         // Fehler „protokoll" ohne Sitzung → ebenfalls zu alt.
         let mut s2 = Sitzung::neu("1.9.11");
@@ -1265,6 +1548,7 @@ mod tests {
                 grund: "protokoll_unbekannt".into(),
                 abo: None,
                 id: None,
+                gen: None,
             },
             t0,
             &z,
@@ -1273,7 +1557,7 @@ mod tests {
     }
 
     /// `kein_hallo` in der Sitzung: sofort zu, beim naechsten Takt HALLO.
-    /// Fehler mit Abo/ID werden mit diesen Angaben gelesen.
+    /// Fehler mit Abo/ID/Generation werden mit diesen Angaben gelesen.
     #[test]
     fn kein_hallo_schliesst_die_sitzung() {
         assert_eq!(
@@ -1283,15 +1567,19 @@ mod tests {
             Some(Antwort::Fehler {
                 grund: "liste_nicht_verfuegbar".into(),
                 abo: None,
-                id: Some(4)
+                id: Some(4),
+                gen: None
             })
         );
         assert_eq!(
-            antwort_lesen(&json(r#"{"p":2,"t":"fehler","grund":"speicher","abo":3}"#)),
+            antwort_lesen(&json(
+                r#"{"p":2,"t":"fehler","grund":"speicher","abo":3,"gen":9}"#
+            )),
             Some(Antwort::Fehler {
                 grund: "speicher".into(),
                 abo: Some(3),
-                id: None
+                id: None,
+                gen: Some(9)
             })
         );
         let z = TestZiel::default();
@@ -1304,6 +1592,7 @@ mod tests {
                 grund: "kein_hallo".into(),
                 abo: None,
                 id: None,
+                gen: None,
             },
             t,
             &z,
@@ -1316,8 +1605,8 @@ mod tests {
         assert_eq!(text_von(&s.takt(t, &z)), vec!["HALLO 2 1\n"]);
     }
 
-    /// Wunschaenderung: geaendertes Abo neu, weggefallenes abbestellt,
-    /// unveraendertes nicht erneut gesendet.
+    /// Wunschaenderung: geaendertes Abo neu (neue Generation), weggefallenes
+    /// abbestellt, unveraendertes nicht erneut gesendet.
     #[test]
     fn abgleich_der_wuensche() {
         let z = TestZiel::default();
@@ -1337,9 +1626,9 @@ mod tests {
         let mut s = Sitzung::neu("1");
         let t = Instant::now();
         s.empfangen(hallo_antwort("1.0.0"), t, &z);
-        let mut erste = text_von(&s.takt(t, &z));
+        let mut erste = ohne_aufraeumen(text_von(&s.takt(t, &z)));
         erste.sort();
-        assert_eq!(erste, vec!["ABO 1 50\nsim/a\n", "ABO 2 20\nsim/z\n"]);
+        assert_eq!(erste, vec!["ABO 1 50 g1\nsim/a\n", "ABO 2 20 g2\nsim/z\n"]);
         // Gleiche Generation: nichts.
         assert!(s.takt(t, &z).is_empty());
         *z.wuensche.lock() = vec![
@@ -1357,12 +1646,46 @@ mod tests {
         *z.gen.lock() += 1;
         let mut zweite = text_von(&s.takt(t, &z));
         zweite.sort();
-        assert_eq!(zweite, vec!["ABO 3 5\nsim/m\n", "ENDE-ABO 2\n"]);
+        assert_eq!(zweite, vec!["ABO 3 5 g3\nsim/m\n", "ENDE-ABO 2\n"]);
         assert_eq!(text_von(&s.beenden()), vec!["ENDE-ABO 1\n", "ENDE-ABO 3\n"]);
     }
 
-    /// Kein Status nach 2 s → das Abo geht erneut hinaus; versiegen die
-    /// Werte trotz vorhandener Namen, ebenfalls.
+    /// N2: Status/Werte einer frueheren Generation derselben ID bestaetigen
+    /// den neuen Inhalt nicht.
+    #[test]
+    fn alte_generation_wird_ignoriert() {
+        let z = TestZiel::default();
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 2,
+            rate: 20,
+            namen: Arc::new(namen(&["sim/alt"])),
+        }];
+        let mut s = Sitzung::neu("1");
+        let t = Instant::now();
+        s.empfangen(hallo_antwort("1.0.0"), t, &z);
+        s.takt(t, &z); // g1
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 2,
+            rate: 20,
+            namen: Arc::new(namen(&["sim/neu"])),
+        }];
+        *z.gen.lock() += 1;
+        assert!(text_von(&s.takt(t, &z)).contains(&"ABO 2 20 g2\nsim/neu\n".to_string()));
+        let vorher = z.ereignisse.lock().len();
+        s.empfangen(status(2, Some(1), vec![(0, da())]), t, &z);
+        s.empfangen(werte(2, Some(1), vec![(0, Wert::Zahl(1.0))]), t, &z);
+        assert_eq!(
+            z.ereignisse.lock().len(),
+            vorher,
+            "alte Generation durchgelassen"
+        );
+        s.empfangen(status(2, Some(2), vec![(0, da())]), t, &z);
+        s.empfangen(werte(2, Some(2), vec![(0, Wert::Zahl(2.0))]), t, &z);
+        assert_eq!(z.ereignisse.lock().len(), vorher + 2);
+    }
+
+    /// Kein Status → nach der Wartezeit identisch (gleiche Generation) neu;
+    /// versiegen die Werte trotz vorhandener Namen, ebenfalls.
     #[test]
     fn abo_ohne_antwort_wird_wiederholt() {
         let z = TestZiel::default();
@@ -1374,37 +1697,132 @@ mod tests {
         let mut s = Sitzung::neu("1");
         let t = Instant::now();
         s.empfangen(hallo_antwort("1.0.0"), t, &z);
-        assert_eq!(s.takt(t, &z).len(), 1);
+        assert_eq!(ohne_aufraeumen(text_von(&s.takt(t, &z))).len(), 1);
         // Lebenszeichen ohne Status (pong), damit die Sitzung offen bleibt.
         let t1 = t + Duration::from_millis(2100);
         s.empfangen(Antwort::Sonstige("pong".into()), t1, &z);
         let raus = text_von(&s.takt(t1, &z));
-        assert!(raus.contains(&"ABO 1 50\nsim/a\n".to_string()), "{raus:?}");
-        s.empfangen(
-            Antwort::Abo {
-                abo: 1,
-                st: vec![(
-                    0,
-                    NameStatus::Da {
-                        typ: Typ::Float,
-                        laenge: 1,
-                    },
-                )],
-            },
-            t1,
-            &z,
+        assert!(
+            raus.contains(&"ABO 1 50 g1\nsim/a\n".to_string()),
+            "{raus:?}"
         );
+        s.empfangen(status(1, Some(1), vec![(0, da())]), t1, &z);
         // Nur pong, keine Werte: nach 3 s wird neu angemeldet.
         let t2 = t1 + Duration::from_millis(3100);
         s.empfangen(Antwort::Sonstige("pong".into()), t2, &z);
         let raus = text_von(&s.takt(t2, &z));
-        assert!(raus.contains(&"ABO 1 50\nsim/a\n".to_string()), "{raus:?}");
+        assert!(
+            raus.contains(&"ABO 1 50 g1\nsim/a\n".to_string()),
+            "{raus:?}"
+        );
     }
 
-    /// Grosse Datagramme gehen mit Abstand hinaus, kleine dazwischen nicht
-    /// vor ihnen.
+    /// Simuliert ein LANGSAMES Plugin mit einem Mess-Abo aus 8192 Namen
+    /// (H1). Bewiesen wird:
+    /// * die Wartezeit waechst mit der Namenszahl, kein Neusenden nach 2 s;
+    /// * ohne Status: eine Wiederholung, dann `AboOhneAntwort`, danach nur
+    ///   noch mit Rueckoff — kein Endlos-Neusenden;
+    /// * PINGs gehen auch mitten im grossen ABO-Schub hinaus.
     #[test]
-    fn grosse_datagramme_mit_abstand() {
+    fn langsames_plugin_kein_endloses_neusenden() {
+        let z = TestZiel::default();
+        let viele: Vec<String> = (0..8192).map(|i| format!("sim/mess/wert_{i:05}")).collect();
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 3,
+            rate: 5,
+            namen: Arc::new(viele),
+        }];
+        let mut s = Sitzung::neu("1");
+        let t0 = Instant::now();
+        s.empfangen(hallo_antwort("1.0.0"), t0, &z);
+        let mut abo_kopfzeilen: Vec<(Duration, String)> = Vec::new();
+        let mut pings: Vec<Duration> = Vec::new();
+        let mut schritt = Duration::ZERO;
+        // 60 s in 20-ms-Schritten; das Plugin haelt die Sitzung mit pong am
+        // Leben, antwortet aber nie mit einem Status.
+        while schritt < Duration::from_secs(60) {
+            let jetzt = t0 + schritt;
+            s.empfangen(Antwort::Sonstige("pong".into()), jetzt, &z);
+            for d in text_von(&s.takt(jetzt, &z)) {
+                if d.starts_with("PING") {
+                    pings.push(schritt);
+                } else if d.starts_with("ABO 3 5 1 ") {
+                    abo_kopfzeilen.push((schritt, d.lines().next().unwrap().to_string()));
+                }
+            }
+            schritt += Duration::from_millis(20);
+        }
+        // Erste Sendung, 1 Wiederholung nach ≈ 6,1 s, Meldung ohne Sendung
+        // nach ≈ 12,2 s, dann Rueckoff (12,2 s, 24,4 s …): 60 s → 4 Sendungen.
+        let zeiten: Vec<f64> = abo_kopfzeilen
+            .iter()
+            .map(|(t, _)| t.as_secs_f64())
+            .collect();
+        assert_eq!(zeiten.len(), 4, "{zeiten:?}");
+        assert!(zeiten[2] - zeiten[1] > 17.0, "kein Rueckoff: {zeiten:?}");
+        assert!(
+            zeiten[1] - zeiten[0] > 5.5,
+            "zu frueh wiederholt: {zeiten:?}"
+        );
+        // Identisches Neusenden: dieselbe Generation.
+        assert!(abo_kopfzeilen.iter().all(|(_, k)| k.ends_with(" g1")));
+        let meldungen = z
+            .ereignisse
+            .lock()
+            .iter()
+            .filter(|e| matches!(e, Ereignis::AboOhneAntwort { abo: 3, .. }))
+            .count();
+        assert_eq!(meldungen, 1, "AboOhneAntwort genau einmal");
+        // PINGs regelmaessig, auch waehrend die ersten Teile hinausgehen.
+        assert!(pings
+            .windows(2)
+            .all(|w| (w[1] - w[0]) <= Duration::from_millis(2100)));
+        assert!(pings.len() >= 28, "{}", pings.len());
+    }
+
+    /// Dasselbe langsame Plugin, aber es antwortet nach 5 s (ein identisches
+    /// Neu-ABO setzt es nicht zurueck): genau eine Sendung, Status kommt an.
+    #[test]
+    fn langsames_plugin_mit_spaetem_status() {
+        let z = TestZiel::default();
+        let viele: Vec<String> = (0..8192).map(|i| format!("sim/mess/wert_{i:05}")).collect();
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 3,
+            rate: 5,
+            namen: Arc::new(viele),
+        }];
+        let mut s = Sitzung::neu("1");
+        let t0 = Instant::now();
+        s.empfangen(hallo_antwort("1.0.0"), t0, &z);
+        let mut sendungen = 0;
+        let mut schritt = Duration::ZERO;
+        while schritt < Duration::from_secs(20) {
+            let jetzt = t0 + schritt;
+            s.empfangen(Antwort::Sonstige("pong".into()), jetzt, &z);
+            if schritt == Duration::from_secs(5) {
+                s.empfangen(status(3, Some(1), vec![(0, da())]), jetzt, &z);
+            }
+            if schritt >= Duration::from_secs(5) {
+                s.empfangen(werte(3, Some(1), vec![(0, Wert::Zahl(1.0))]), jetzt, &z);
+            }
+            sendungen += text_von(&s.takt(jetzt, &z))
+                .iter()
+                .filter(|d| d.starts_with("ABO 3 5 1 "))
+                .count();
+            schritt += Duration::from_millis(20);
+        }
+        assert_eq!(sendungen, 1);
+        assert!(!z
+            .ereignisse
+            .lock()
+            .iter()
+            .any(|e| matches!(e, Ereignis::AboOhneAntwort { .. })));
+    }
+
+    /// Grosse Datagramme gehen mit Abstand hinaus; Vorrang (PING, ENDE-ABO)
+    /// wartet nicht hinter ihnen.
+    #[test]
+    fn grosse_datagramme_mit_abstand_vorrang_sofort() {
         let z = TestZiel::default();
         let viele: Vec<String> = (0..3000).map(|i| format!("sim/name/{i:06}")).collect();
         *z.wuensche.lock() = vec![AboWunsch {
@@ -1415,11 +1833,19 @@ mod tests {
         let mut s = Sitzung::neu("1");
         let t = Instant::now();
         s.empfangen(hallo_antwort("1.0.0"), t, &z);
-        let erste = s.takt(t, &z);
+        let erste = ohne_aufraeumen(text_von(&s.takt(t, &z)));
         // Nur das erste grosse; der Rest wartet.
         assert_eq!(erste.len(), 1);
         assert!(erste[0].len() > GROSS);
         assert!(s.takt(t + Duration::from_millis(5), &z).is_empty());
-        assert_eq!(s.takt(t + Duration::from_millis(25), &z).len(), 1);
+        // Wunsch zurueckgezogen: ENDE-ABO sofort, wartende Teile verworfen.
+        *z.wuensche.lock() = Vec::new();
+        *z.gen.lock() += 1;
+        assert_eq!(
+            text_von(&s.takt(t + Duration::from_millis(10), &z)),
+            vec!["ENDE-ABO 3\n"]
+        );
+        assert!(s.takt(t + Duration::from_millis(100), &z).is_empty());
+        assert_eq!(s.ausgang_bytes, 0);
     }
 }

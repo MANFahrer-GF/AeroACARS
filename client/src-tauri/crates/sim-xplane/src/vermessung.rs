@@ -244,13 +244,23 @@ pub struct AboStand {
     pub angekommen: usize,
     pub abgelehnt: usize,
     pub abgelehnt_namen: Vec<String>,
+    /// Woher die Werte kamen: „plugin" (Protokoll 2) oder „web_api". Ältere
+    /// Server verwerfen das Feld (zod-Objekt ohne `strict`), die lokale
+    /// Kopie des Berichts behält es.
+    pub quelle: &'static str,
 }
 
 impl Spiegel {
     /// Über das Plugin messen, wenn eine Sitzung besteht, sonst (oder wenn
     /// das Plugin die Liste nicht liefern kann) über die Web-API.
+    ///
+    /// QS AP7 H1: Bleibt ein Mess-Abo beim Plugin ohne Status, fällt DIESER
+    /// Lauf auf die Web-API zurück — wie ohne Plugin, statt still leer zu
+    /// bleiben. Der Bericht nennt die Quelle (`abo.quelle`).
     pub fn starten_mit(zugang: Option<PluginZugang>) -> Result<Spiegel, String> {
+        let mut host = HOST.to_string();
         if let Some(z) = zugang {
+            host = z.web_api_host();
             match plugin_starten(z) {
                 Ok(s) => return Ok(s),
                 Err(e) => tracing::info!(
@@ -259,7 +269,7 @@ impl Spiegel {
                 ),
             }
         }
-        Self::starten()
+        Self::starten_bei(&host)
     }
 
     /// Woher die Werte kommen („plugin" / „web_api"), fürs Protokoll.
@@ -272,12 +282,17 @@ impl Spiegel {
 
     /// Liste holen, verbinden, alles abonnieren, Lesefaden starten (Web-API).
     pub fn starten() -> Result<Spiegel, String> {
+        Self::starten_bei(HOST)
+    }
+
+    /// Wie [`Self::starten`], mit anderer Web-API-Adresse (`host:port`).
+    pub fn starten_bei(host: &str) -> Result<Spiegel, String> {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(3))
             .timeout_read(Duration::from_secs(30))
             .build();
         let liste: Liste = agent
-            .get(&format!("http://{HOST}/api/v2/datarefs"))
+            .get(&format!("http://{host}/api/v2/datarefs"))
             .call()
             .map_err(|e| format!("X-Plane-Web-API nicht erreichbar: {e}"))?
             .into_json()
@@ -293,15 +308,15 @@ impl Spiegel {
         let namen: HashMap<i64, String> = zahlen.iter().map(|e| (e.id, e.name.clone())).collect();
         let ids: Vec<i64> = zahlen.iter().map(|e| e.id).collect();
 
-        let flugzeug = WebApiClient::new()
+        let flugzeug = WebApiClient::mit_basis(&format!("http://{host}"))
             .fetch_aircraft_info(&mut DrefIdCache::default())
             .unwrap_or_default();
 
-        let strom = TcpStream::connect(HOST).map_err(|e| format!("WebSocket: {e}"))?;
+        let strom = TcpStream::connect(host).map_err(|e| format!("WebSocket: {e}"))?;
         strom
             .set_read_timeout(Some(Duration::from_millis(400)))
             .map_err(|e| e.to_string())?;
-        let (mut ws, _) = tungstenite::client(format!("ws://{HOST}/api/v2"), strom)
+        let (mut ws, _) = tungstenite::client(format!("ws://{host}/api/v2"), strom)
             .map_err(|e| format!("WebSocket-Handshake: {e}"))?;
         let (mut abos, erste) = Abos::neu(&ids);
         for n in erste {
@@ -380,6 +395,7 @@ impl Spiegel {
                         .filter_map(|id| w.namen.get(id).cloned())
                         .take(50)
                         .collect(),
+                    quelle: "web_api",
                 }
             }
             Art::Plugin(p) => p.messung.abo_stand(),
@@ -463,10 +479,40 @@ fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
         return Err("Das Plugin meldet keine Werte — ist ein Flugzeug geladen?".into());
     }
     zugang.wunsch_geaendert();
+    // Auf den Status aller Mess-Abos warten. Die Sitzung wartet je Abo mit
+    // der Namenszahl wachsend und wiederholt einmal; kommt dann nichts, meldet
+    // sie `AboOhneAntwort` — dieser Lauf nimmt dann die Web-API.
+    let groesstes = m.teile().iter().map(|t| t.len()).max().unwrap_or(0);
+    let schub = Duration::from_millis(anzahl as u64 / 8 + 20 * m.teile().len() as u64);
+    let ende = std::time::Instant::now()
+        + crate::plugin2::bestaetigung_fuer(groesstes) * 2
+        + schub
+        + Duration::from_secs(3);
+    loop {
+        std::thread::sleep(Duration::from_millis(50));
+        if !zugang.messung_aktiv(&m) {
+            zugang.messung_beenden(&m);
+            return Err("Plugin-Sitzung beendet".into());
+        }
+        match m.bereit() {
+            Some(Ok(())) => break,
+            Some(Err(e)) => {
+                zugang.messung_beenden(&m);
+                return Err(e);
+            }
+            None if std::time::Instant::now() >= ende => {
+                zugang.messung_beenden(&m);
+                return Err("Plugin bestätigt die Mess-Abos nicht".into());
+            }
+            None => {}
+        }
+    }
     // Flugzeug: Meldung des Plugins; Autor (nur Web-API) dazu, wenn die
     // Web-API dasselbe Flugzeug meint.
     let mut flugzeug = zugang.flugzeug().unwrap_or_default();
-    if let Ok(web) = WebApiClient::new().fetch_aircraft_info(&mut DrefIdCache::default()) {
+    if let Ok(web) = WebApiClient::mit_basis(&format!("http://{}", zugang.web_api_host()))
+        .fetch_aircraft_info(&mut DrefIdCache::default())
+    {
         if flugzeug.relative_path.is_none() || flugzeug.relative_path == web.relative_path {
             flugzeug.author = web.author;
             flugzeug.studio = web.studio;
@@ -515,6 +561,10 @@ pub(crate) struct P2Messung {
     /// Namen je Abo (Abo `ABO_MESSUNG_AB + k` = `teile[k]`).
     teile: Mutex<Vec<Arc<Vec<String>>>>,
     daten: Mutex<MessDaten>,
+    /// Abos (Index in `teile`), zu denen ein Status kam.
+    bestaetigt: Mutex<std::collections::HashSet<usize>>,
+    /// Ein Mess-Abo blieb ohne Status oder wurde abgelehnt.
+    gescheitert: Mutex<Option<String>>,
 }
 
 impl P2Messung {
@@ -524,7 +574,27 @@ impl P2Messung {
             liste: Mutex::new(ListeStand::default()),
             teile: Mutex::new(Vec::new()),
             daten: Mutex::new(MessDaten::default()),
+            bestaetigt: Mutex::new(std::collections::HashSet::new()),
+            gescheitert: Mutex::new(None),
         }
+    }
+
+    /// Ein Mess-Abo bleibt ohne Status (bzw. das Plugin lehnt es ab).
+    pub(crate) fn gescheitert_setzen(&self, grund: String) {
+        let mut g = self.gescheitert.lock();
+        if g.is_none() {
+            *g = Some(grund);
+        }
+    }
+
+    /// `Some(Ok)` wenn zu jedem Mess-Abo ein Status kam, `Some(Err)` wenn
+    /// eines scheiterte, sonst `None` (noch warten).
+    fn bereit(&self) -> Option<Result<(), String>> {
+        if let Some(g) = self.gescheitert.lock().clone() {
+            return Some(Err(format!("Plugin: {g}")));
+        }
+        let n = self.teile.lock().len();
+        (self.bestaetigt.lock().len() >= n).then_some(Ok(()))
     }
 
     pub(crate) fn liste_teil(&self, id: u32, teil: u32, teile: u32, namen: Vec<String>) {
@@ -593,6 +663,7 @@ impl P2Messung {
         let Some(a) = self.anfang(abo, namen) else {
             return;
         };
+        self.bestaetigt.lock().insert(a / MAX_NAMEN);
         let mut d = self.daten.lock();
         for (li, s) in st {
             if let Some(slot) = d.status.get_mut(a + li) {
@@ -689,6 +760,7 @@ impl P2Messung {
                 .count(),
             abgelehnt: fehlt.len(),
             abgelehnt_namen: fehlt.into_iter().take(50).cloned().collect(),
+            quelle: "plugin",
         }
     }
 }
@@ -973,6 +1045,22 @@ mod tests {
         assert_eq!(a.abgelehnt, 1);
         assert_eq!(a.abgelehnt_namen, vec!["sim/wert/8198".to_string()]);
         assert_eq!(m.verbunden(), 2);
+    }
+
+    /// Bereit erst mit Status zu JEDEM Mess-Abo; gescheitert schlägt alles.
+    #[test]
+    fn plugin_messung_bereit_oder_gescheitert() {
+        let m = P2Messung::neu(1);
+        m.abonnieren((0..9000).map(|i| format!("sim/wert/{i}")).collect());
+        let teile = m.teile();
+        assert_eq!(m.bereit(), None);
+        m.status(ABO_MESSUNG_AB, &teile[0], vec![(0, NameStatus::Fehlt)]);
+        assert_eq!(m.bereit(), None);
+        m.status(ABO_MESSUNG_AB + 1, &teile[1], vec![(0, NameStatus::Fehlt)]);
+        assert_eq!(m.bereit(), Some(Ok(())));
+        m.gescheitert_setzen("Abo 4 ohne Status".into());
+        m.gescheitert_setzen("zweiter Grund".into());
+        assert_eq!(m.bereit(), Some(Err("Plugin: Abo 4 ohne Status".into())));
     }
 
     #[test]

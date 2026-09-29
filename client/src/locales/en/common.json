@@ -1461,7 +1461,10 @@
     "names_label": "Values available",
     "active_hint_p2": "The plugin delivers every value straight from X-Plane: position at full precision, and each value is either really there or reported as missing. RREF and the Web API check rest while it delivers.",
     "outdated_title": "Plugin outdated",
-    "outdated_explanation": "The installed plugin only knows touchdown capture. All other values still come via RREF and the Web API. Reinstall the plugin for this AeroACARS version and restart X-Plane."
+    "outdated_explanation": "The installed plugin only knows touchdown capture. All other values still come via RREF and the Web API. Reinstall the plugin for this AeroACARS version and restart X-Plane.",
+    "unreachable_title": "Protocol 2 not reachable",
+    "unreachable_explanation": "The plugin is up to date and delivers touchdown capture, but does not answer on protocol 2 — port 52001 is probably held by another program (see X-Plane Log.txt). All other values still come via RREF and the Web API.",
+    "install_unverified": "Note: this package was installed without a checksum (development build of AeroACARS)."
   },
   "pilot_header": {
     "pos_label": "POS",

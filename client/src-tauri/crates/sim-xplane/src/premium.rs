@@ -73,7 +73,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::plugin2::{antwort_lesen, ist_p2, Sitzung, SitzungsInfo, Ziel, PLUGIN2_PORT};
+use crate::plugin2::{
+    antwort_lesen, ist_p2, version_reicht, Sitzung, SitzungsInfo, Ziel, PLUGIN2_PORT,
+};
 
 /// Loopback port the plugin sends to. Hardcoded by the plugin source —
 /// `xplane-plugin/src/plugin.cpp::AEROACARS_UDP_PORT`. Changing this
@@ -124,6 +126,10 @@ struct Envelope {
     /// `"telemetry"` or `"touchdown"`. Anything else → dropped.
     #[serde(default, rename = "type")]
     kind: String,
+    /// Plugin-Version, ab Plugin 1.0.0 in jedem Protokoll-1-Paket. Fehlt bei
+    /// v0.5.x.
+    #[serde(default)]
+    pv: Option<String>,
 }
 
 /// One-shot landing event from the plugin. Captured at the
@@ -204,6 +210,9 @@ pub struct PremiumStatus {
     /// Plugin laeuft, spricht aber kein (passendes) Protokoll 2 — es wird
     /// nur fuer das Aufsetzpaket genutzt. Anzeige „Plugin veraltet".
     pub veraltet: bool,
+    /// Plugin ab 1.0 laeuft (Protokoll 1 mit `pv`), aber `HALLO` bleibt
+    /// unbeantwortet — z. B. Steuerport 52001 belegt. Kein Update noetig.
+    pub p2_nicht_erreichbar: bool,
     /// Katalognamen, die das Plugin „da" meldet / „fehlt" meldet (vom
     /// Adapter ergaenzt; fehlende gehoeren meist zu anderen Flugzeugen).
     pub namen_da: u32,
@@ -220,6 +229,8 @@ struct PremiumShared {
     /// Letztes Protokoll-1-Paket (fuer „Protokoll 1 aktiv" / „veraltet").
     p1_last_at: Mutex<Option<Instant>>,
     p1_seen: AtomicBool,
+    /// `pv` aus dem letzten Protokoll-1-Paket.
+    p1_version: Mutex<Option<String>>,
     /// Stand der Protokoll-2-Sitzung (vom Faden gespiegelt).
     p2_info: Mutex<SitzungsInfo>,
     ever_seen: AtomicBool,
@@ -285,6 +296,7 @@ impl PremiumListener {
         // resets to false when the whole process exits.
         *self.shared.last_packet_at.lock() = None;
         *self.shared.p1_last_at.lock() = None;
+        *self.shared.p1_version.lock() = None;
         *self.shared.p2_info.lock() = SitzungsInfo::default();
         *self.shared.pending_touchdown.lock() = None;
         *self.shared.last_error.lock() = None;
@@ -317,6 +329,8 @@ impl PremiumListener {
         let active = frisch(*self.shared.last_packet_at.lock());
         let p1_aktiv = frisch(*self.shared.p1_last_at.lock());
         let info = self.shared.p2_info.lock().clone();
+        let p1_version = self.shared.p1_version.lock().clone();
+        let p1_gesehen = self.shared.p1_seen.load(Ordering::Relaxed);
         PremiumStatus {
             ever_seen: self.shared.ever_seen.load(Ordering::Relaxed),
             active,
@@ -328,8 +342,9 @@ impl PremiumListener {
             } else {
                 0
             },
-            veraltet: ist_veraltet(&info, self.shared.p1_seen.load(Ordering::Relaxed)),
-            plugin_version: info.plugin_version,
+            veraltet: ist_veraltet(&info, p1_gesehen, p1_version.as_deref()),
+            p2_nicht_erreichbar: p2_unerreichbar(&info, p1_version.as_deref()),
+            plugin_version: info.plugin_version.or(p1_version),
             xplane_version: info.xplane_version,
             namen_da: 0,
             namen_fehlen: 0,
@@ -359,12 +374,27 @@ impl Drop for PremiumListener {
 // =============================================================================
 
 /// Plugin veraltet? Antwortet mit zu alter Version bzw. lehnt Protokoll 2
-/// ab, oder schickt Protokoll 1, hat aber nie auf `HALLO` geantwortet.
-fn ist_veraltet(info: &SitzungsInfo, p1_gesehen: bool) -> bool {
+/// ab, oder schickt Protokoll 1 OHNE Version ≥ 1.0.0 (`pv`, v0.5.x kennt
+/// das Feld nicht) und hat nie auf `HALLO` geantwortet.
+fn ist_veraltet(info: &SitzungsInfo, p1_gesehen: bool, p1_version: Option<&str>) -> bool {
     if info.offen {
         return false;
     }
-    info.zu_alt || (p1_gesehen && !info.je_offen && info.hallos_ohne_antwort >= HALLOS_BIS_VERALTET)
+    let neues_plugin = p1_version.is_some_and(version_reicht);
+    info.zu_alt
+        || (p1_gesehen
+            && !neues_plugin
+            && !info.je_offen
+            && info.hallos_ohne_antwort >= HALLOS_BIS_VERALTET)
+}
+
+/// Neues Plugin (Protokoll 1 mit `pv` ≥ 1.0.0), aber keine Antwort auf
+/// `HALLO`: Protokoll 2 ist nicht erreichbar (QS AP7 N4) — nicht „veraltet".
+fn p2_unerreichbar(info: &SitzungsInfo, p1_version: Option<&str>) -> bool {
+    !info.offen
+        && !info.zu_alt
+        && p1_version.is_some_and(version_reicht)
+        && info.hallos_ohne_antwort >= HALLOS_BIS_VERALTET
 }
 
 fn run_listener(
@@ -532,6 +562,9 @@ fn handle_packet(bytes: &[u8], shared: &Arc<PremiumShared>) {
     *shared.last_packet_at.lock() = Some(jetzt);
     *shared.p1_last_at.lock() = Some(jetzt);
     shared.p1_seen.store(true, Ordering::Relaxed);
+    if env.pv.is_some() {
+        *shared.p1_version.lock() = env.pv.clone();
+    }
     shared.ever_seen.store(true, Ordering::Relaxed);
     shared.packet_count.fetch_add(1, Ordering::Relaxed);
 
@@ -674,26 +707,52 @@ mod tests {
     #[test]
     fn veraltet_erst_nach_unbeantworteten_hallos() {
         let mut info = SitzungsInfo::default();
-        assert!(!ist_veraltet(&info, true));
+        assert!(!ist_veraltet(&info, true, None));
         info.hallos_ohne_antwort = HALLOS_BIS_VERALTET;
-        assert!(ist_veraltet(&info, true));
+        assert!(ist_veraltet(&info, true, None));
         assert!(
-            !ist_veraltet(&info, false),
+            !ist_veraltet(&info, false, None),
             "ohne Plugin ist nichts veraltet"
         );
+        assert!(ist_veraltet(&info, true, Some("0.5.11")));
         info.je_offen = true;
-        assert!(!ist_veraltet(&info, true));
+        assert!(!ist_veraltet(&info, true, None));
         let zu_alt = SitzungsInfo {
             zu_alt: true,
             ..SitzungsInfo::default()
         };
-        assert!(ist_veraltet(&zu_alt, false));
+        assert!(ist_veraltet(&zu_alt, false, None));
         let offen = SitzungsInfo {
             offen: true,
             zu_alt: true,
             ..SitzungsInfo::default()
         };
-        assert!(!ist_veraltet(&offen, true));
+        assert!(!ist_veraltet(&offen, true, None));
+    }
+
+    /// N4: Protokoll 1 mit `pv` ≥ 1.0.0, HALLO unbeantwortet → „Protokoll 2
+    /// nicht erreichbar", nicht „veraltet".
+    #[test]
+    fn neues_plugin_ohne_antwort_ist_unerreichbar_nicht_veraltet() {
+        let info = SitzungsInfo {
+            hallos_ohne_antwort: HALLOS_BIS_VERALTET,
+            ..SitzungsInfo::default()
+        };
+        assert!(!ist_veraltet(&info, true, Some("1.0.0")));
+        assert!(p2_unerreichbar(&info, Some("1.0.0")));
+        assert!(!p2_unerreichbar(&info, None));
+        assert!(!p2_unerreichbar(&info, Some("0.5.11")));
+        let frisch = SitzungsInfo::default();
+        assert!(!p2_unerreichbar(&frisch, Some("1.0.0")));
+        let offen = SitzungsInfo {
+            offen: true,
+            ..info.clone()
+        };
+        assert!(!p2_unerreichbar(&offen, Some("1.0.0")));
+        // `pv` wird aus dem Protokoll-1-Paket gelesen.
+        let shared = Arc::new(PremiumShared::default());
+        handle_packet(br#"{"v":1,"type":"telemetry","pv":"1.0.0"}"#, &shared);
+        assert_eq!(shared.p1_version.lock().as_deref(), Some("1.0.0"));
     }
 
     #[test]

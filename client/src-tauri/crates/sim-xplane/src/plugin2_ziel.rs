@@ -593,13 +593,31 @@ impl Ziel for AdapterShared {
                     m.liste_teil(id, teil, teile, namen);
                 }
             }
-            Ereignis::Fehler { grund, id, .. } => {
-                // Fehler zur laufenden `LISTE` (nicht verfuegbar, Speicher …):
-                // die Messung faellt auf die Web-API zurueck.
+            Ereignis::Fehler { grund, id, abo } => {
                 if let Some(m) = self.messung() {
+                    // Fehler zur laufenden `LISTE` (nicht verfuegbar, Speicher …):
+                    // die Messung faellt auf die Web-API zurueck.
                     if grund == "liste_nicht_verfuegbar" || id == Some(m.liste_id) {
-                        m.liste_fehler(grund);
+                        m.liste_fehler(grund.clone());
                     }
+                    // Ein Mess-Abo abgelehnt (zu viele Namen, Speicher …).
+                    if abo.is_some_and(|a| a >= ABO_MESSUNG_AB) {
+                        m.gescheitert_setzen(grund);
+                    }
+                }
+            }
+            Ereignis::AboOhneAntwort { abo, .. } => {
+                // Die Sitzung versucht es weiter (Rueckoff). Die Vermessung
+                // wartet nicht: dieser Lauf nimmt die Web-API (QS AP7 H1).
+                if abo >= ABO_MESSUNG_AB {
+                    if let Some(m) = self.messung() {
+                        m.gescheitert_setzen(format!("Abo {abo} ohne Status"));
+                    }
+                } else {
+                    tracing::warn!(
+                        abo,
+                        "X-Plane-Plugin: Abo ohne Status — Werte kommen weiter ueber RREF"
+                    );
                 }
             }
         }
@@ -660,6 +678,12 @@ impl PluginZugang {
 
     pub(crate) fn flugzeug(&self) -> Option<AircraftInfo> {
         self.shared.p2_flugzeug()
+    }
+
+    /// `host:port` der Web-API dieses Adapters (Rueckfall der Vermessung).
+    pub(crate) fn web_api_host(&self) -> String {
+        let b = self.shared.web_api.trim_end_matches('/');
+        b.strip_prefix("http://").unwrap_or(b).to_string()
     }
 }
 

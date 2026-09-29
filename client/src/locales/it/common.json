@@ -1454,7 +1454,10 @@
     "names_label": "Valori disponibili",
     "active_hint_p2": "Il plugin fornisce ogni valore direttamente da X-Plane: posizione a piena precisione, e ogni valore o c'è davvero o viene segnalato come mancante. RREF e il controllo tramite Web API restano a riposo finché il plugin fornisce dati.",
     "outdated_title": "Plugin obsoleto",
-    "outdated_explanation": "Il plugin installato conosce solo la misura del touchdown. Gli altri valori continuano ad arrivare tramite RREF e Web API. Reinstalla il plugin di questa versione di AeroACARS e riavvia X-Plane."
+    "outdated_explanation": "Il plugin installato conosce solo la misura del touchdown. Gli altri valori continuano ad arrivare tramite RREF e Web API. Reinstalla il plugin di questa versione di AeroACARS e riavvia X-Plane.",
+    "unreachable_title": "Protocollo 2 non raggiungibile",
+    "unreachable_explanation": "Il plugin è aggiornato e fornisce la misura del touchdown, ma non risponde al protocollo 2 — probabilmente la porta 52001 è occupata da un altro programma (vedi Log.txt di X-Plane). Gli altri valori continuano ad arrivare tramite RREF e Web API.",
+    "install_unverified": "Nota: questo pacchetto è stato installato senza checksum (versione di sviluppo di AeroACARS)."
   },
   "pilot_header": {
     "pos_label": "POS",

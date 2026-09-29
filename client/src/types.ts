@@ -724,6 +724,9 @@ export interface XPlanePremiumStatus {
   xplane_version?: number | null;
   /** Plugin läuft, kann aber nur Protokoll 1 — Aktualisierung nötig. */
   veraltet?: boolean;
+  /** Plugin ab 1.0 läuft (Protokoll 1), antwortet aber nicht auf Protokoll 2
+   *  — z. B. Steuerport belegt. Kein Update nötig. */
+  p2_nicht_erreichbar?: boolean;
   /** Katalognamen, die das Plugin als vorhanden / fehlend meldet. */
   namen_da?: number;
   namen_fehlen?: number;

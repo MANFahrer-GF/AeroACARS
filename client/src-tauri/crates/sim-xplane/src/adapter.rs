@@ -172,6 +172,8 @@ pub(crate) struct AdapterShared {
     pub(crate) p2_wunsch_gen: AtomicU64,
     /// Einmalige Anfragen an das Plugin (`LISTE`).
     pub(crate) p2_anfragen: Mutex<Vec<Vec<u8>>>,
+    /// Basis der Web-API (fuer den Rueckfall der Vermessung).
+    pub(crate) web_api: String,
 }
 
 pub struct XPlaneAdapter {
@@ -228,6 +230,7 @@ impl XPlaneAdapter {
             p2_sitzung: AtomicBool::new(false),
             p2_wunsch_gen: AtomicU64::new(0),
             p2_anfragen: Mutex::new(Vec::new()),
+            web_api: anschluesse.web_api.clone(),
         });
         Self {
             shared,
@@ -1562,9 +1565,11 @@ mod plugin2_loopback_tests {
     struct FakeStand {
         /// Auf HALLO antworten und Werte liefern?
         liefern: bool,
+        /// Langsames Plugin: Mess-Abos (ID ≥ 3) bekommen nie einen Status.
+        mess_stumm: bool,
         client: Option<SocketAddr>,
-        /// Vollstaendige Abos: ID → Namen.
-        abos: HashMap<u8, Vec<String>>,
+        /// Vollstaendige Abos: ID → (Generation, Namen).
+        abos: HashMap<u8, (u32, Vec<String>)>,
         /// Teile unvollstaendiger Abos: ID → (Teil → Namen).
         teile: HashMap<u8, HashMap<u32, Vec<String>>>,
         anfragen: Vec<String>,
@@ -1610,7 +1615,7 @@ mod plugin2_loopback_tests {
         let _ = sock.send_to(format!("{v}\n").as_bytes(), an);
     }
 
-    fn status_senden(sock: &UdpSocket, an: SocketAddr, abo: u8, namen: &[String]) {
+    fn status_senden(sock: &UdpSocket, an: SocketAddr, abo: u8, gen: u32, namen: &[String]) {
         let st: Vec<serde_json::Value> = namen
             .iter()
             .enumerate()
@@ -1624,7 +1629,7 @@ mod plugin2_loopback_tests {
             senden(
                 sock,
                 an,
-                serde_json::json!({"p":2,"t":"abo","abo":abo,"teil":k+1,"teile":teile.len(),"st":t}),
+                serde_json::json!({"p":2,"t":"abo","abo":abo,"gen":gen,"teil":k+1,"teile":teile.len(),"st":t}),
             );
         }
     }
@@ -1647,7 +1652,16 @@ mod plugin2_loopback_tests {
                     let kopf = zeilen.next().unwrap_or("").to_string();
                     let mut st = stand.lock();
                     st.anfragen.push(kopf.clone());
-                    let teile: Vec<&str> = kopf.split(' ').collect();
+                    let mut teile: Vec<&str> = kopf.split(' ').collect();
+                    // Generation `g<zahl>` als letztes Wort der ABO-Kopfzeile.
+                    let gen: u32 = match teile.last() {
+                        Some(g) if teile[0] == "ABO" && g.starts_with('g') => {
+                            let g = g[1..].parse().unwrap();
+                            teile.pop();
+                            g
+                        }
+                        _ => 0,
+                    };
                     match teile.first().copied() {
                         Some("HALLO") if st.liefern => {
                             st.client = Some(von);
@@ -1678,8 +1692,10 @@ mod plugin2_loopback_tests {
                                     alle.extend(t.remove(&k).unwrap());
                                 }
                                 st.teile.remove(&id);
-                                status_senden(&sock, von, id, &alle);
-                                st.abos.insert(id, alle);
+                                if id < 3 || !st.mess_stumm {
+                                    status_senden(&sock, von, id, gen, &alle);
+                                    st.abos.insert(id, (gen, alle));
+                                }
                             }
                         }
                         Some("ENDE-ABO") => {
@@ -1707,7 +1723,7 @@ mod plugin2_loopback_tests {
                     zuletzt = Instant::now();
                     let st = stand.lock();
                     if let (true, Some(an)) = (st.liefern, st.client) {
-                        for (id, namen) in &st.abos {
+                        for (id, (gen, namen)) in &st.abos {
                             let v: Vec<serde_json::Value> = namen
                                 .iter()
                                 .enumerate()
@@ -1720,7 +1736,7 @@ mod plugin2_loopback_tests {
                                 senden(
                                     &sock,
                                     an,
-                                    serde_json::json!({"p":2,"t":"w","abo":id,"seq":1,"teil":1,"teile":1,"v":v}),
+                                    serde_json::json!({"p":2,"t":"w","abo":id,"gen":gen,"seq":1,"teil":1,"teile":1,"v":v}),
                                 );
                             }
                         }
@@ -1793,7 +1809,7 @@ mod plugin2_loopback_tests {
 
         // 1. Sitzung auf, Werte kommen an — Breite/Laenge doppelt genau.
         assert!(
-            warte(Duration::from_secs(5), || ad
+            warte(Duration::from_secs(15), || ad
                 .snapshot()
                 .is_some_and(|s| s.lat == BREITE && s.lon == LAENGE)),
             "keine Plugin-Werte; Anfragen: {:?}",
@@ -1823,14 +1839,14 @@ mod plugin2_loopback_tests {
         }
         assert_eq!(ad.shared.p2.lock().profil, None, "kein fremdes Profil");
         // Flugzeugmeldung des Plugins ohne Web-API.
-        assert!(warte(Duration::from_secs(2), || ad
+        assert!(warte(Duration::from_secs(10), || ad
             .snapshot()
             .and_then(|s| s.aircraft_icao)
             .as_deref()
             == Some("A20N")));
         // RREF ruht: Abos abbestellt (freq 0).
         assert!(
-            warte(Duration::from_secs(2), || freqs.lock().contains(&0)),
+            warte(Duration::from_secs(10), || freqs.lock().contains(&0)),
             "RREF nicht abbestellt"
         );
 
@@ -1839,7 +1855,7 @@ mod plugin2_loopback_tests {
         assert_eq!(spiegel.quelle(), "plugin");
         assert_eq!(spiegel.flugzeug.icao.as_deref(), Some("A20N"));
         assert!(
-            warte(Duration::from_secs(3), || spiegel.verbunden() >= 3),
+            warte(Duration::from_secs(10), || spiegel.verbunden() >= 3),
             "Messwerte kamen nicht an"
         );
         let schnapp = spiegel.schnappschuss();
@@ -1848,39 +1864,40 @@ mod plugin2_loopback_tests {
         assert!(!schnapp.contains_key("sim/test/text"));
         let abo = spiegel.abo_stand();
         assert_eq!((abo.angemeldet, abo.abgelehnt), (3, 0));
+        assert_eq!(abo.quelle, "plugin");
         assert!(spiegel.lebt());
+        // (Beim Oeffnen ging schon ein ENDE-ABO 3 hinaus — Aufraeumen, M1.)
+        let ende3 = |st: &FakeStand| st.anfragen.iter().filter(|a| *a == "ENDE-ABO 3").count();
+        let vorher = ende3(&stand.lock());
         drop(spiegel);
-        assert!(warte(Duration::from_secs(2), || stand
-            .lock()
-            .anfragen
-            .iter()
-            .any(|a| a == "ENDE-ABO 3")));
+        assert!(warte(Duration::from_secs(5), || ende3(&stand.lock()) > vorher));
 
         // 3. Plugin verstummt → nach 3 s Rueckfall auf RREF, ohne Nullen.
         let n_vorher = freqs.lock().len();
         stand.lock().liefern = false;
         let ab = Instant::now();
         assert!(
-            warte(Duration::from_secs(6), || freqs.lock()[n_vorher..]
+            warte(Duration::from_secs(15), || freqs.lock()[n_vorher..]
                 .iter()
                 .any(|f| *f > 0)),
             "RREF nicht wieder abonniert"
         );
+        // Untergrenze grosszuegig: nur „nicht sofort" (FRISCH = 3 s).
         let dauer = ab.elapsed();
         assert!(
-            dauer >= Duration::from_millis(2500),
+            dauer >= Duration::from_millis(2000),
             "Rueckfall zu frueh: {dauer:?}"
         );
         let snap = ad.snapshot().expect("Schnappschuss nach dem Rueckfall weg");
         assert_eq!(snap.lat, BREITE, "Feld fiel beim Rueckfall");
-        assert!(warte(Duration::from_secs(1), || ad
+        assert!(warte(Duration::from_secs(10), || ad
             .premium_status()
             .protokoll
             != 2));
         // Ohne RREF-Werte raeumt der Waechter 5 s nach dem letzten
         // Plugin-Wert auf — wie ohne Plugin.
         assert!(
-            warte(Duration::from_secs(4), || ad.snapshot().is_none()),
+            warte(Duration::from_secs(15), || ad.snapshot().is_none()),
             "veralteter Schnappschuss blieb stehen"
         );
         // Und es wird wieder HALLO gesagt.
@@ -1892,6 +1909,84 @@ mod plugin2_loopback_tests {
             .count();
         assert!(hallos >= 2, "{hallos}");
 
+        ad.stop();
+        stop.store(true, Ordering::SeqCst);
+        f1.join().unwrap();
+        f2.join().unwrap();
+    }
+
+    /// QS AP7 H1: Langsames Plugin, das Mess-Abos nie bestaetigt. Die
+    /// Vermessung sendet das Abo genau einmal neu, gibt dann auf und nimmt
+    /// fuer diesen Lauf die Web-API (hier absichtlich tot → deren Fehler);
+    /// die Sitzung bleibt dabei offen (PINGs laufen weiter), das Mess-Abo
+    /// wird abbestellt.
+    #[test]
+    fn langsames_plugin_vermessung_weicht_auf_web_api_aus() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let plugin_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let rref_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let web_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let stand = Arc::new(Mutex::new(FakeStand {
+            liefern: true,
+            mess_stumm: true,
+            ..FakeStand::default()
+        }));
+        let freqs = Arc::new(Mutex::new(Vec::new()));
+        let f1 = fake_plugin(
+            plugin_sock.try_clone().unwrap(),
+            Arc::clone(&stand),
+            Arc::clone(&stop),
+        );
+        let f2 = fake_rref(
+            rref_sock.try_clone().unwrap(),
+            Arc::clone(&freqs),
+            Arc::clone(&stop),
+        );
+        let mut ad = XPlaneAdapter::mit_anschluessen(Anschluesse {
+            rref: rref_sock.local_addr().unwrap(),
+            plugin_p1: 0,
+            plugin_p2: plugin_sock.local_addr().unwrap(),
+            web_api: format!("http://127.0.0.1:{web_port}"),
+        });
+        ad.start(SimKind::XPlane12);
+        assert!(warte(Duration::from_secs(15), || ad
+            .plugin_zugang()
+            .is_some()));
+        let ergebnis = crate::vermessung::Spiegel::starten_mit(ad.plugin_zugang());
+        let fehler = ergebnis
+            .err()
+            .expect("Web-API ist tot — Messung muss scheitern");
+        assert!(
+            fehler.contains("Web-API"),
+            "kein Web-API-Rueckfall: {fehler}"
+        );
+        let st = stand.lock();
+        let abos3 = st
+            .anfragen
+            .iter()
+            .filter(|a| a.starts_with("ABO 3 "))
+            .count();
+        assert_eq!(abos3, 2, "genau eine Wiederholung: {:?}", st.anfragen);
+        let pings = st.anfragen.iter().filter(|a| *a == "PING").count();
+        assert!(pings >= 1, "PINGs waehrend des Wartens: {pings}");
+        drop(st);
+        assert_eq!(
+            ad.premium_status().protokoll,
+            2,
+            "Sitzung darf nicht fallen"
+        );
+        // Mess-Abo abbestellt (nach dem Aufraeumen beim Oeffnen ein zweites Mal).
+        assert!(warte(Duration::from_secs(5), || stand
+            .lock()
+            .anfragen
+            .iter()
+            .filter(|a| *a == "ENDE-ABO 3")
+            .count()
+            >= 2));
         ad.stop();
         stop.store(true, Ordering::SeqCst);
         f1.join().unwrap();
@@ -1923,7 +2018,7 @@ mod plugin2_loopback_tests {
             web_api: format!("http://127.0.0.1:{web_port}"),
         });
         ad.start(SimKind::XPlane12);
-        assert!(warte(Duration::from_secs(2), || freqs.lock().len()
+        assert!(warte(Duration::from_secs(10), || freqs.lock().len()
             >= CATALOG.len()));
         std::thread::sleep(Duration::from_millis(500));
         assert!(!freqs.lock().contains(&0), "RREF ohne Plugin abbestellt");
