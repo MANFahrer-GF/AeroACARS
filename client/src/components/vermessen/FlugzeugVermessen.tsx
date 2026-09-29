@@ -950,7 +950,13 @@ function useScanNamen(sim: SimStatus | null): number | null {
   const titel = sim?.snapshot?.aircraft_title ?? "";
   const icao = sim?.snapshot?.aircraft_icao ?? "";
   const [stand, setStand] = useState<{ schluessel: string; anzahl: number | null }>({ schluessel: "", anzahl: null });
-  const schluessel = istMsfs && titel ? `${icao}|${titel}` : "";
+  // Cloud-QS 29.09.2026 (P3): der aircraft.cfg-Pfad kommt mit `AircraftLoaded`
+  // oft erst nach dem ersten Statustakt. Gehört er zum Schlüssel, fragt die
+  // Startseite neu, sobald er da ist — sonst blieb die Anzahl ohne
+  // Ordner-Zuordnung stehen (auch 0), obwohl die Messung den Pfad nutzt.
+  // Den Pfad selbst holt der Befehl aus dem Snapshot.
+  const pfad = sim?.snapshot?.cockpit_rohwerte?.cfg_pfad ?? "";
+  const schluessel = istMsfs && titel ? `${icao}|${titel}|${pfad}` : "";
   useEffect(() => {
     if (!schluessel) return;
     let lebt = true;

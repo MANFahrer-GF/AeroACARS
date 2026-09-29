@@ -2268,8 +2268,9 @@ TEST(dienst_gedrosselt_kein_doppelter_index_in_einer_runde) {
 }
 
 TEST(dienst_flugzeug_titel_aus_ui_name) {
-    // ToLiss: acf_descrip ist eine Beschreibung, der UI-Name der Titel, den
-    // auch der Scan des Clients nimmt.
+    // ToLiss: acf_descrip ist eine Beschreibung, der UI-Name der Name, den
+    // auch der Scan des Clients nimmt. titel bleibt acf_descrip (wie bis
+    // 1.0.0, Cloud-QS 29.09.2026), der UI-Name kommt als eigenes Feld.
     Aufbau a;
     a.welt.such("sim/aircraft/view/acf_descrip")->b =
         std::string("A320 with high fidelity system modelling") + std::string(40, '\0');
@@ -2280,9 +2281,10 @@ TEST(dienst_flugzeug_titel_aus_ui_name) {
     auto f = a.neue_vom_typ("flugzeug");
     PRUEFE_GLEICH(f.size(), size_t(1));
     if (!f.empty()) {
-        PRUEFE_TEXT(f[0].hole("titel")->text, "ToLiSs A320 Hi Def");  // getrimmt
-        PRUEFE(f[0].hole("beschreibung") != nullptr);
-        if (f[0].hole("beschreibung")) PRUEFE_TEXT(f[0].hole("beschreibung")->text, "A320 with high fidelity system modelling");
+        PRUEFE_TEXT(f[0].hole("titel")->text, "A320 with high fidelity system modelling");
+        PRUEFE(f[0].hole("ui_name") != nullptr);
+        if (f[0].hole("ui_name")) PRUEFE_TEXT(f[0].hole("ui_name")->text, "ToLiSs A320 Hi Def");  // getrimmt
+        PRUEFE(f[0].hole("beschreibung") == nullptr);
         PRUEFE_TEXT(f[0].hole("icao")->text, "A20N");
     }
     // Nur der UI-Name ändert sich → neue Meldung (2-s-Takt).
@@ -2290,19 +2292,34 @@ TEST(dienst_flugzeug_titel_aus_ui_name) {
     a.frames(150);
     f = a.neue_vom_typ("flugzeug");
     PRUEFE_GLEICH(f.size(), size_t(1));
-    if (!f.empty()) PRUEFE_TEXT(f[0].hole("titel")->text, "ToLiSs A321");
-    // Leerer UI-Name → Rückfall auf acf_descrip.
+    if (!f.empty() && f[0].hole("ui_name")) PRUEFE_TEXT(f[0].hole("ui_name")->text, "ToLiSs A321");
+    // Leerer UI-Name → kein Feld; titel unverändert acf_descrip.
     ui.b = std::string("   ") + std::string(200, '\0');
     a.d->flugzeug_geladen();
     a.frame();
     f = a.neue_vom_typ("flugzeug");
     PRUEFE_GLEICH(f.size(), size_t(1));
-    if (!f.empty()) PRUEFE_TEXT(f[0].hole("titel")->text, "A320 with high fidelity system modelling");
+    if (!f.empty()) {
+        PRUEFE_TEXT(f[0].hole("titel")->text, "A320 with high fidelity system modelling");
+        PRUEFE(f[0].hole("ui_name") == nullptr);
+    }
+    // Leere Beschreibung, UI-Name da → titel bleibt leer/null, kippt NICHT
+    // auf den UI-Namen (Cloud-QS P3).
+    a.welt.such("sim/aircraft/view/acf_descrip")->b = std::string(10, '\0');
+    ui.b = std::string("ToLiSs A320") + std::string(200, '\0');
+    a.d->flugzeug_geladen();
+    a.frame();
+    f = a.neue_vom_typ("flugzeug");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) {
+        PRUEFE(f[0].hole("titel")->art != JWert::Art::TEXT || f[0].hole("titel")->text.empty());
+        if (f[0].hole("ui_name")) PRUEFE_TEXT(f[0].hole("ui_name")->text, "ToLiSs A320");
+    }
 }
 
 TEST(dienst_flugzeug_ohne_ui_name_wie_bisher) {
-    // X-Plane 11: acf_ui_name gibt es nicht → titel = acf_descrip; ohne
-    // Beschreibung (leer) kein Feld "beschreibung", ohne Dataref titel null.
+    // X-Plane 11: acf_ui_name gibt es nicht → titel = acf_descrip, kein
+    // Feld "ui_name"; ohne Dataref titel null.
     Aufbau a;
     a.sende("HALLO 2 test");  // (hallo() würde die Meldung schon verbrauchen)
     a.frame();
@@ -2310,15 +2327,8 @@ TEST(dienst_flugzeug_ohne_ui_name_wie_bisher) {
     PRUEFE_GLEICH(f.size(), size_t(1));
     if (!f.empty()) {
         PRUEFE_TEXT(f[0].hole("titel")->text, "A320neo");
-        PRUEFE(f[0].hole("beschreibung") != nullptr);
-        if (f[0].hole("beschreibung")) PRUEFE_TEXT(f[0].hole("beschreibung")->text, "A320neo");
+        PRUEFE(f[0].hole("ui_name") == nullptr);
     }
-    a.welt.such("sim/aircraft/view/acf_descrip")->b = std::string(10, '\0');
-    a.d->flugzeug_geladen();
-    a.frame();
-    f = a.neue_vom_typ("flugzeug");
-    PRUEFE_GLEICH(f.size(), size_t(1));
-    if (!f.empty()) PRUEFE(f[0].hole("beschreibung") == nullptr);
     a.welt.such("sim/aircraft/view/acf_descrip")->registriert = false;
     Aufbau b;  // Dataref fehlt ganz (frischer Dienst, kein zwischengespeicherter Handle)
     b.welt.such("sim/aircraft/view/acf_descrip")->registriert = false;
@@ -2328,6 +2338,6 @@ TEST(dienst_flugzeug_ohne_ui_name_wie_bisher) {
     PRUEFE_GLEICH(f.size(), size_t(1));
     if (!f.empty()) {
         PRUEFE(f[0].hole("titel")->art == JWert::Art::NUL);
-        PRUEFE(f[0].hole("beschreibung") == nullptr);
+        PRUEFE(f[0].hole("ui_name") == nullptr);
     }
 }

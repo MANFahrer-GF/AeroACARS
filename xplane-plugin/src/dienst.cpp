@@ -1883,9 +1883,12 @@ void Dienst::pruefe_flugzeug() noexcept {
     }
     if (!darf_arbeiten()) return;  // Senden im nächsten Frame (Stufe 4 bleibt)
 
-    // UI-Name ohne Leerraum am Rand; leer zählt wie fehlend. Die Beschreibung
-    // bleibt als Rückfall-Titel unverändert (wie bis 1.0.0), als eigenes Feld
-    // nur, wenn sie mehr als Leerraum enthält.
+    // Format (Cloud-QS 29.09.2026, P3): `titel` = acf_descrip wie bis 1.0.0,
+    // der UI-Name als EIGENES Feld `ui_name` (ohne Leerraum am Rand; leer
+    // oder ohne Dataref: kein Feld). Vorher trug `titel` den UI-Namen und
+    // `beschreibung` die Beschreibung — ein älterer Client oder eine leere
+    // Beschreibung ließ den Titel still auf den UI-Namen kippen, und der
+    // Titel steuert Profilerkennung und Buchungsabgleich.
     auto rand = [](const char* t, size_t max, size_t* anfang) noexcept {
         auto leer = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
         size_t n = 0;
@@ -1896,9 +1899,8 @@ void Dienst::pruefe_flugzeug() noexcept {
         *anfang = a;
         return n - a;
     };
-    size_t ui_anfang = 0, be_anfang = 0;
+    size_t ui_anfang = 0;
     const size_t ui_laenge = hat[3] ? rand(lese_ui_, sizeof(lese_ui_), &ui_anfang) : 0;
-    const bool hat_beschreibung = hat[1] && rand(lese_titel_, sizeof(lese_titel_), &be_anfang) > 0;
 
     JsonSchreiber w(paket_, sizeof(paket_));
     auto feld = [&w](const char* schluessel, bool vorhanden, const char* wert, size_t max) noexcept {
@@ -1909,13 +1911,11 @@ void Dienst::pruefe_flugzeug() noexcept {
         w.zurueck_zu(0);
         w.roh("{\"p\":2,\"t\":\"flugzeug\"");
         feld(",\"icao\":", hat[0], lese_icao_, sizeof(lese_icao_));
+        feld(",\"titel\":", hat[1], lese_titel_, sizeof(lese_titel_));
         if (ui_laenge > 0) {
-            w.roh(",\"titel\":");
+            w.roh(",\"ui_name\":");
             w.text(lese_ui_ + ui_anfang, ui_laenge);
-        } else {
-            feld(",\"titel\":", hat[1], lese_titel_, sizeof(lese_titel_));
         }
-        if (hat_beschreibung) feld(",\"beschreibung\":", true, lese_titel_, sizeof(lese_titel_));
         // Im (theoretischen) Fall, dass alles maskiert nicht in 8 KiB passt,
         // lieber den Pfad weglassen als die Meldung.
         feld(",\"pfad\":", hat[2] && versuch == 0, lese_pfad_, sizeof(lese_pfad_));

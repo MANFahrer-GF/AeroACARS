@@ -61,8 +61,7 @@ pub struct AircraftInfo {
     /// (Profilerkennung, Buchungsabgleich haengen daran).
     pub descrip: Option<String>,
     /// `acf_ui_name` — Name wie in der X-Plane-Oberflaeche und im Scan
-    /// (`acf/_name`). Plugin-Meldung: `titel` (seit Plugin 1.0, zusammen mit
-    /// `beschreibung`).
+    /// (`acf/_name`). Plugin-Meldung: eigenes Feld `ui_name` (seit Plugin 1.0).
     pub ui_name: Option<String>,
     pub icao: Option<String>,
     pub tailnum: Option<String>,

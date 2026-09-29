@@ -2031,15 +2031,20 @@ pub fn muster_aufloesen(
         // Baureihe gehört, sonst aus dem Titel („A330-900“). Passt keins,
         // bleibt die Baureihe stehen. Nur die Bewertung ist betroffen; der
         // Buchungsabgleich läuft nicht über diese Funktion.
+        //
+        // Cloud-QS 29.09.2026 (P3a): der TITEL vor der Buchung. Er
+        // beschreibt, was tatsächlich geladen ist („A330-900neo“), die
+        // Buchung nur, was geplant war (A332 gebucht, A339 geflogen → sonst
+        // wieder die falsche Spannweite).
         if let Some(reihe) = nur_baureihe(&m) {
-            let gebucht = buchung_icao.trim().to_ascii_uppercase();
-            if gehoert_zu_baureihe(&gebucht, reihe) {
-                return Some(gebucht);
-            }
             if let Some(t) = flugzeug_titel.and_then(icao_aus_titel) {
                 if gehoert_zu_baureihe(&t, reihe) {
                     return Some(t);
                 }
+            }
+            let gebucht = buchung_icao.trim().to_ascii_uppercase();
+            if gehoert_zu_baureihe(&gebucht, reihe) {
+                return Some(gebucht);
             }
         }
         return Some(m);
@@ -2068,16 +2073,26 @@ fn nur_baureihe(code: &str) -> Option<&'static str> {
     }
 }
 
-/// Eine konkrete Variante der Reihe: gleiches Präfix, vier Zeichen (fünf
-/// mit Frachter-`F`), und nicht selbst nur die Baureihe.
+/// Varianten der Baureihen, die die Bewertung kennt (Grenzwerte in der App,
+/// Spur-/Spannweite in `landing-scoring/src/spurweite.rs`). Cloud-QS
+/// 29.09.2026 (P3b): vorher zählte jeder vierstellige Code mit passendem
+/// Präfix — B74S oder B74R landeten so bei Rückfallwerten statt bei der
+/// Familien-Variante, die die Baureihe bisher bekam.
+const BAUREIHEN_VARIANTEN: &[&str] = &[
+    "A306", "A30B", "A332", "A333", "A338", "A339", "A342", "A343", "A345", "A346", "A388", "B741",
+    "B742", "B743", "B744", "B748", "B772", "B773", "B77F", "B77L", "B77W", "B778", "B779", "B788",
+    "B789", "B78X",
+];
+
+/// Eine bekannte, konkrete Variante der Reihe (Frachter-`F` angehängt
+/// erlaubt: B748F → B748).
 fn gehoert_zu_baureihe(code: &str, praefix: &str) -> bool {
-    let n = code.chars().count();
-    code.starts_with(praefix)
-        && (n == 4 || (n == 5 && code.ends_with('F')))
-        && nur_baureihe(code).is_none()
-        && code
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    let basis = if code.chars().count() == 5 {
+        code.strip_suffix('F').unwrap_or(code)
+    } else {
+        code
+    };
+    code.starts_with(praefix) && BAUREIHEN_VARIANTEN.contains(&basis)
 }
 
 pub fn icao_aus_titel(titel: &str) -> Option<String> {
@@ -2598,10 +2613,26 @@ mod tests {
             muster_aufloesen(Some("A330"), "A339", titel).as_deref(),
             Some("A339")
         );
+        // Cloud-QS P3a: der Titel beschreibt das geladene Flugzeug und
+        // schlägt die Buchung (A332 gebucht, A330-900neo geflogen).
         assert_eq!(
-            muster_aufloesen(Some("A330"), "A333", Some("A330-300 VIP (RR)")).as_deref(),
-            Some("A333"),
-            "Buchung schlägt Titel"
+            muster_aufloesen(Some("A330"), "A332", titel).as_deref(),
+            Some("A339"),
+            "Titel schlägt Buchung"
+        );
+        // Titel ohne Variante: die Buchung entscheidet.
+        assert_eq!(
+            muster_aufloesen(Some("A330"), "A332", Some("Airbus Widebody TAP")).as_deref(),
+            Some("A332")
+        );
+        // Cloud-QS P3b: unbekannte Varianten (B74S, B74R) nicht übernehmen.
+        assert_eq!(
+            muster_aufloesen(Some("B747"), "B74S", None).as_deref(),
+            Some("B747")
+        );
+        assert_eq!(
+            muster_aufloesen(Some("A300"), "A30B", None).as_deref(),
+            Some("A30B")
         );
         // Ohne Buchung: der Titel.
         assert_eq!(

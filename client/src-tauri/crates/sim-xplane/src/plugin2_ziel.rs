@@ -207,21 +207,19 @@ fn profil_neu(shared: &AdapterShared, st: &mut P2Stand, web: Option<&HashSet<Str
 }
 
 /// Flugzeugmeldung des Plugins → [`AircraftInfo`], befuellt wie die Web-API:
-/// `descrip` = `acf_descrip`, `ui_name` = `acf_ui_name`. Seit Plugin 1.0
-/// kommt `titel` = UI-Name mit `beschreibung` = `acf_descrip`; aeltere
-/// Plugins senden nur `titel`, und der war `acf_descrip`.
+/// `descrip` = `titel` (in jeder Plugin-Version `acf_descrip`), `ui_name` =
+/// `ui_name` (seit Plugin 1.0, sonst fehlt es). Cloud-QS 29.09.2026: der
+/// Titel steuert Profilerkennung und Buchungsabgleich und darf deshalb nie
+/// still auf den UI-Namen kippen — weder bei leerer Beschreibung noch bei
+/// einem aelteren Client mit neuem Plugin.
 pub(crate) fn aircraft_aus_meldung(
     icao: Option<String>,
     titel: Option<String>,
-    beschreibung: Option<String>,
+    ui_name: Option<String>,
     pfad: Option<String>,
 ) -> AircraftInfo {
-    let (descrip, ui_name) = match beschreibung {
-        Some(b) => (Some(b), titel),
-        None => (titel, None),
-    };
     AircraftInfo {
-        descrip,
+        descrip: titel,
         ui_name,
         icao,
         relative_path: pfad,
@@ -484,10 +482,10 @@ impl AdapterShared {
         &self,
         icao: Option<String>,
         titel: Option<String>,
-        beschreibung: Option<String>,
+        ui_name: Option<String>,
         pfad: Option<String>,
     ) {
-        let neu = aircraft_aus_meldung(icao, titel, beschreibung, pfad);
+        let neu = aircraft_aus_meldung(icao, titel, ui_name, pfad);
         let web = self.addon_vorhanden.lock().clone();
         let wechsel = {
             let mut st = self.p2.lock();
@@ -624,9 +622,9 @@ impl Ziel for AdapterShared {
             Ereignis::Flugzeug {
                 icao,
                 titel,
-                beschreibung,
+                ui_name,
                 pfad,
-            } => self.flugzeug_melden(icao, titel, beschreibung, pfad),
+            } => self.flugzeug_melden(icao, titel, ui_name, pfad),
             Ereignis::Liste {
                 id,
                 teil,
@@ -750,8 +748,8 @@ mod tests {
     fn flugzeugmeldung_wie_web_api() {
         let neu = super::aircraft_aus_meldung(
             Some("A20N".into()),
-            Some("ToLiSs A320 Hi Def".into()),
             Some("A320 with high fidelity system modelling".into()),
+            Some("ToLiSs A320 Hi Def".into()),
             Some("Aircraft/ToLissA320_V1p1p7/a320.acf".into()),
         );
         assert_eq!(neu.ui_name.as_deref(), Some("ToLiSs A320 Hi Def"));
@@ -772,6 +770,11 @@ mod tests {
             alt.anzeige_titel().as_deref(),
             Some("A320 with high fidelity system modelling")
         );
+        // Leere Beschreibung, UI-Name da: der Titel bleibt leer und kippt
+        // nicht auf den UI-Namen (Cloud-QS 29.09.2026).
+        let leer = super::aircraft_aus_meldung(None, None, Some("ToLiSs A320".into()), None);
+        assert_eq!(leer.descrip, None);
+        assert_eq!(leer.ui_name.as_deref(), Some("ToLiSs A320"));
     }
 
     use super::*;

@@ -318,9 +318,9 @@ pub enum Antwort {
     Flugzeug {
         icao: Option<String>,
         titel: Option<String>,
-        /// Seit Plugin 1.0: `acf_descrip`; `titel` ist dann `acf_ui_name`.
-        /// Aeltere Plugins senden nur `titel` (= `acf_descrip`).
-        beschreibung: Option<String>,
+        /// Seit Plugin 1.0: `acf_ui_name` als eigenes Feld; `titel` bleibt
+        /// in jeder Plugin-Version `acf_descrip` (Cloud-QS 29.09.2026).
+        ui_name: Option<String>,
         pfad: Option<String>,
     },
     Liste {
@@ -457,7 +457,7 @@ pub fn antwort_lesen(v: &serde_json::Value) -> Option<Antwort> {
         "flugzeug" => Antwort::Flugzeug {
             icao: text(v, "icao"),
             titel: text(v, "titel"),
-            beschreibung: text(v, "beschreibung"),
+            ui_name: text(v, "ui_name"),
             pfad: text(v, "pfad"),
         },
         "liste" => Antwort::Liste {
@@ -602,9 +602,9 @@ pub enum Ereignis {
     Flugzeug {
         icao: Option<String>,
         titel: Option<String>,
-        /// Seit Plugin 1.0: `acf_descrip`; `titel` ist dann `acf_ui_name`.
-        /// Aeltere Plugins senden nur `titel` (= `acf_descrip`).
-        beschreibung: Option<String>,
+        /// Seit Plugin 1.0: `acf_ui_name` als eigenes Feld; `titel` bleibt
+        /// in jeder Plugin-Version `acf_descrip` (Cloud-QS 29.09.2026).
+        ui_name: Option<String>,
         pfad: Option<String>,
     },
     Liste {
@@ -1239,12 +1239,12 @@ impl Sitzung {
             Antwort::Flugzeug {
                 icao,
                 titel,
-                beschreibung,
+                ui_name,
                 pfad,
             } => ziel.ereignis(Ereignis::Flugzeug {
                 icao,
                 titel,
-                beschreibung,
+                ui_name,
                 pfad,
             }),
             Antwort::Liste {
@@ -1588,19 +1588,19 @@ mod tests {
             Some(Antwort::Flugzeug {
                 icao: Some("A20N".into()),
                 titel: Some("A320neo".into()),
-                beschreibung: None,
+                ui_name: None,
                 pfad: Some("Aircraft/x/a320.acf".into())
             })
         );
-        // Seit Plugin 1.0: UI-Name als Titel, Beschreibung daneben.
+        // Seit Plugin 1.0: titel bleibt acf_descrip, UI-Name als eigenes Feld.
         assert_eq!(
             antwort_lesen(&json(
-                r#"{"p":2,"t":"flugzeug","icao":"A20N","titel":"ToLiSs A320 Hi Def","beschreibung":"A320 with high fidelity system modelling","pfad":"Aircraft/ToLissA320_V1p1p7/a320.acf"}"#
+                r#"{"p":2,"t":"flugzeug","icao":"A20N","titel":"A320 with high fidelity system modelling","ui_name":"ToLiSs A320 Hi Def","pfad":"Aircraft/ToLissA320_V1p1p7/a320.acf"}"#
             )),
             Some(Antwort::Flugzeug {
                 icao: Some("A20N".into()),
-                titel: Some("ToLiSs A320 Hi Def".into()),
-                beschreibung: Some("A320 with high fidelity system modelling".into()),
+                titel: Some("A320 with high fidelity system modelling".into()),
+                ui_name: Some("ToLiSs A320 Hi Def".into()),
                 pfad: Some("Aircraft/ToLissA320_V1p1p7/a320.acf".into())
             })
         );

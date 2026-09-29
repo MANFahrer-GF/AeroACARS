@@ -498,8 +498,27 @@ async fn msfs_starten(
 fn cfg_pfad(snap: &sim_core::SimSnapshot) -> Option<String> {
     snap.cockpit_rohwerte
         .as_ref()
-        .and_then(|r| r.cfg_pfad.clone())
+        .and_then(|r| r.cfg_pfad.as_deref())
         .filter(|p| !p.trim().is_empty())
+        .map(pfad_kuerzen)
+}
+
+/// Cloud-QS 29.09.2026 (P2): MSFS meldet auch absolute Pfade
+/// (`C:\Users\…\LocalCache\Packages\Community\…`). Der Server nahm
+/// bis 300 Zeichen an und lehnte darüber die GANZE Messung ab. Alles vor
+/// `SimObjects` ist Installationsort und trägt keine Identität; bleibt es
+/// danach zu lang, zählen die letzten 300 Zeichen (dort steht der Ordner).
+fn pfad_kuerzen(p: &str) -> String {
+    let ab = match p.to_ascii_lowercase().find("simobjects") {
+        Some(i) => &p[i..],
+        None => p,
+    };
+    let n = ab.chars().count();
+    if n > 300 {
+        ab.chars().skip(n - 300).collect()
+    } else {
+        ab.to_string()
+    }
 }
 
 /// Pfad für die Scan-Namen-Abfrage der Startseite: nur, wenn der aktuelle
@@ -955,6 +974,28 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(cfg_pfad(&snap), None, "leerer Pfad zählt nicht");
+    }
+
+    #[test]
+    fn langer_pfad_wird_ab_simobjects_gekuerzt() {
+        let lang = format!(
+            r"C:\Users\{}\AppData\Local\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalCache\Packages\Community\pkg\SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG",
+            "x".repeat(300)
+        );
+        assert_eq!(
+            pfad_kuerzen(&lang),
+            r"SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG"
+        );
+        let ohne = format!("{}/X/aircraft.cfg", "ä".repeat(400));
+        let k = pfad_kuerzen(&ohne);
+        assert_eq!(
+            k.chars().count(),
+            300,
+            "Mehrbyte-Zeichen, kein Panik-Schnitt"
+        );
+        assert!(k.ends_with("/X/aircraft.cfg"));
+        let kurz = r"SimObjects\Airplanes\A\aircraft.cfg";
+        assert_eq!(pfad_kuerzen(kurz), kurz);
     }
 
     #[test]

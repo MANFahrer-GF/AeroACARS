@@ -269,6 +269,20 @@ describe("Flugzeug vermessen", () => {
     expect(screen.queryByText(/Tipp: Mach zuerst einen Scan/)).toBeNull();
   });
 
+  // Cloud-QS 29.09.2026 (P3): der aircraft.cfg-Pfad trifft oft erst nach dem
+  // ersten Statustakt ein. Dann muss die Startseite neu fragen, sonst bleibt
+  // die Anzahl ohne Ordner-Zuordnung stehen.
+  it("Startseite MSFS: Pfad kommt später → Scan-Namen werden neu abgefragt", async () => {
+    h.kind = "msfs2024";
+    render(<FlugzeugVermessen />);
+    await waitFor(() => expect(h.aufrufe.filter((a) => a.cmd === "vermessung_scan_namen").length).toBe(1));
+    h.pfad = String.raw`SimObjects\Airplanes\PMDG 777-300ER\aircraft.cfg`;
+    await waitFor(
+      () => expect(h.aufrufe.filter((a) => a.cmd === "vermessung_scan_namen").length).toBe(2),
+      { timeout: 5000 },
+    );
+  });
+
   it("Startseite X-Plane: kein Scan-Hinweis, keine Anfrage", async () => {
     render(<FlugzeugVermessen />);
     await screen.findByText(/Simulator verbunden/);
