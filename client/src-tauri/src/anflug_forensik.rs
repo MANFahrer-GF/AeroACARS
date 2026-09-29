@@ -402,9 +402,11 @@ fn im_fenster(
 /// Bodenhoehe der Sim-BAHN an der Landeschwelle: `msl − agl` der (bis zu
 /// drei) schwellennaechsten Proben ueber dem ersten Bahnstueck (0–600 m
 /// hinter der Landeschwelle, innerhalb der Bahnbreite), Median; mindestens
-/// zwei Proben. Sonst ersatzweise die letzte Probe vor dem Aufsetzen, die
-/// ueber der Bahn lag (Aufsetzpunkt). `None`, wenn keine Probe ueber der
-/// Bahn liegt.
+/// zwei Proben. Sonst ersatzweise die juengste Probe in genau diesem
+/// Stueck — nie eine weiter hinten auf der Bahn: Der Aufsetzpunkt liegt oft
+/// 400–1200 m hinter der Schwelle, bei 1–1,5 % Bahnneigung sind das
+/// 13–40 ft, und der Bezug schaltete faelschlich um (Cloud-QS 29.09.2026).
+/// `None`, wenn keine Probe ueber dem ersten Bahnstueck liegt.
 fn sim_boden_an_schwelle(proben: &[&ApproachBufferSample], bahn: &Bahnbezug) -> Option<f64> {
     let (bahn_ende_m, _) = bahn.zur_landeschwelle_m(bahn.ende_lat, bahn.ende_lon);
     // (laengs hinter der Landeschwelle, Bodenhoehe, Zeit)
@@ -421,11 +423,13 @@ fn sim_boden_an_schwelle(proben: &[&ApproachBufferSample], bahn: &Bahnbezug) -> 
                 .then_some((laengs_m, boden, s.at))
         })
         .collect();
-    let mut nah: Vec<(f64, f64)> = ueber_bahn
-        .iter()
+    let nah_mit_zeit: Vec<(f64, f64, DateTime<Utc>)> = ueber_bahn
+        .into_iter()
         .filter(|p| p.0 <= SIM_BODEN_LAENGS_M)
-        .map(|p| (p.0, p.1))
         .collect();
+    // Ersatz bei weniger als zwei Proben: die juengste im selben Stueck.
+    let ersatz = nah_mit_zeit.iter().max_by_key(|p| p.2).map(|p| p.1);
+    let mut nah: Vec<(f64, f64)> = nah_mit_zeit.iter().map(|p| (p.0, p.1)).collect();
     if nah.len() >= SIM_BODEN_MIN_PROBEN {
         nah.sort_by(|a, b| a.0.total_cmp(&b.0));
         nah.truncate(SIM_BODEN_PROBEN);
@@ -438,8 +442,7 @@ fn sim_boden_an_schwelle(proben: &[&ApproachBufferSample], bahn: &Bahnbezug) -> 
             (boeden[n / 2 - 1] + boeden[n / 2]) / 2.0
         });
     }
-    // Ersatz: der Aufsetzpunkt — die letzte Probe ueber der Bahn.
-    ueber_bahn.iter().max_by_key(|p| p.2).map(|p| p.1)
+    ersatz
 }
 
 /// Der Gleitpfad als Gerade durch die Landeschwelle in TCH-Hoehe.
@@ -1266,6 +1269,30 @@ mod tests {
         .gleitpfad
         .unwrap();
         assert_eq!(g.sim_boden_ft, None);
+    }
+
+    /// Cloud-QS 29.09.2026 (zweite Nachpruefung): Liegt ueber dem ersten
+    /// Bahnstueck keine Probe, darf der Ersatz NICHT vom Aufsetzpunkt weiter
+    /// hinten kommen. Hier steigt die Bahn bis 900 m um 30 ft (geneigte
+    /// Bahn) — der Bezug muss bei Navigraph bleiben.
+    #[test]
+    fn geneigte_bahn_aufsetzpunkt_schaltet_den_bezug_nicht_um() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let mut buf = mit_boden(SCHWELLE_ELEV, SCHWELLE_ELEV, 0);
+        buf.push_back(probe_bei(
+            0.5,
+            SCHWELLE_LAT + 900.0 / M_JE_GRAD,
+            SCHWELLE_LON,
+            0.0,
+            SCHWELLE_ELEV + 30.0,
+            2.0,
+        ));
+        let g = auswerten(&buf, Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap();
+        assert_eq!(g.hoehenbezug.as_deref(), Some("navigraph"));
+        assert_eq!(g.sim_boden_ft, None);
+        assert!(g.gesamt.unwrap().max_dots.abs() < 0.02);
     }
 
     #[test]
