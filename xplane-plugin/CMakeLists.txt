@@ -24,13 +24,25 @@
 # generator — the post-build step renames + relocates as needed.
 
 cmake_minimum_required(VERSION 3.20)
+
+# macOS-Mindestversion fest vorgeben (muss VOR project() stehen). Ohne diese
+# Zeile übernimmt der Compiler die SDK-Version des Build-Rechners als
+# Mindestversion — ein Release vom CI-Runner "macos-latest" trug dann z. B.
+# minos 15.0 und hätte sich auf älteren Macs nicht laden lassen. 11.0 (Big Sur)
+# ist das Älteste, was die libc++ aktueller Xcode-Versionen noch unterstützt,
+# und liegt unter X-Plane 12s eigener Mindestversion (macOS 12); die
+# arm64-Hälfte kann ohnehin nicht tiefer. Überschreibbar per
+# -DCMAKE_OSX_DEPLOYMENT_TARGET.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "macOS-Mindestversion des Plugins")
+
 project(AeroACARS_XPlane_Plugin
     # v0.7.17: Synced to the actual code state. Plugin had drifted
     # from VERSION 0.5.0 (initial commit) while plugin.cpp got
     # patches across 6 incremental versions (0.5.3 / 0.5.6 / 0.5.8
     # / 0.5.11 / 0.5.13). Every Log.txt line was misreporting v0.5.0.
     # See docs/qs/v0.7.16-fenix-beta-bugs.md N-004.
-    VERSION 0.5.13
+    # 1.0.0 (AP7): Dataref-Server, Protokoll 2 (ADR-0004). Protokoll 1 bleibt.
+    VERSION 1.0.0
     LANGUAGES CXX
     DESCRIPTION "AeroACARS X-Plane Premium Plugin"
 )
@@ -49,6 +61,9 @@ if(MSVC)
     add_compile_options(/W4 /permissive-)
     # /MP for parallel build, /Zc:__cplusplus to actually report C++17.
     add_compile_options(/MP /Zc:__cplusplus)
+    # Quelltexte sind UTF-8 (deutsche Kommentare); ohne /utf-8 liest MSVC sie
+    # je nach Systemsprache als ANSI-Codepage.
+    add_compile_options(/utf-8)
     # Stop windows.h from poisoning min/max macros.
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 else()
@@ -97,8 +112,18 @@ else()
 endif()
 
 # ---- Plugin target --------------------------------------------------------
+# Der XPLM-freie Kern (Parser, JSON, Pakete, Dienst) steht in einer eigenen
+# Liste, weil die Tests dieselben Dateien ohne XPLM übersetzen.
+set(AEROACARS_KERN_QUELLEN
+    src/anfrage.cpp
+    src/json_schreiber.cpp
+    src/pakete.cpp
+    src/dienst.cpp
+)
 add_library(AeroACARS MODULE
     src/plugin.cpp
+    src/dienst_xplm.cpp
+    ${AEROACARS_KERN_QUELLEN}
 )
 
 target_include_directories(AeroACARS PRIVATE
@@ -200,6 +225,94 @@ configure_file(
     "${CMAKE_BINARY_DIR}/AeroACARS/XPLM_SDK_LICENSE.txt"
     COPYONLY
 )
+
+# ---- Tests (ohne XPLM) ----------------------------------------------------
+# cmake -B build-tests -DAEROACARS_PLUGIN_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+# cmake --build build-tests --target aeroacars_tests aeroacars_fuzz
+# ctest --test-dir build-tests --output-on-failure
+#
+# Die Tests übersetzen den Kern ein zweites Mal — ohne XPLM, auf macOS und
+# Linux mit AddressSanitizer + UndefinedBehaviorSanitizer (abschaltbar über
+# AEROACARS_SANITIZER=OFF). Unter MSVC ohne Sanitizer.
+option(AEROACARS_PLUGIN_TESTS "Unit- und Fuzz-Tests des Plugin-Kerns bauen" OFF)
+option(AEROACARS_SANITIZER "Tests mit ASan/UBSan (nicht MSVC)" ON)
+
+if(AEROACARS_PLUGIN_TESTS)
+    enable_testing()
+
+    set(AEROACARS_TEST_FLAGS "")
+    if(NOT MSVC AND AEROACARS_SANITIZER)
+        set(AEROACARS_TEST_FLAGS
+            -fsanitize=address,undefined -fno-sanitize-recover=all
+            -fno-omit-frame-pointer)
+    endif()
+
+    function(aeroacars_testprogramm name)
+        add_executable(${name} ${ARGN} ${AEROACARS_KERN_QUELLEN})
+        target_include_directories(${name} PRIVATE src tests)
+        target_compile_definitions(${name} PRIVATE AEROACARS_PLUGIN_VERSION="${PROJECT_VERSION}")
+        if(MSVC)
+            target_compile_options(${name} PRIVATE /EHsc)
+        else()
+            target_compile_options(${name} PRIVATE ${AEROACARS_TEST_FLAGS})
+            target_link_options(${name} PRIVATE ${AEROACARS_TEST_FLAGS})
+        endif()
+        if(APPLE)
+            # Tests nur für die Architektur des Rechners: ASan-Universal-
+            # Binaries sind unnötig, und ausführen lässt sich ohnehin nur eine.
+            set_target_properties(${name} PROPERTIES
+                OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+        endif()
+    endfunction()
+
+    aeroacars_testprogramm(aeroacars_tests
+        tests/tests_main.cpp
+        tests/json_pruefer.cpp
+        tests/test_anfrage.cpp
+        tests/test_json.cpp
+        tests/test_pakete.cpp
+        tests/test_dienst.cpp
+    )
+    aeroacars_testprogramm(aeroacars_fuzz
+        tests/fuzz.cpp
+        tests/json_pruefer.cpp
+    )
+
+    add_test(NAME einheitstests COMMAND aeroacars_tests)
+    # Fester Startwert, feste Laufzeit (5 s): reproduzierbar und in der CI
+    # auf allen drei Plattformen bezahlbar.
+    add_test(NAME fuzz COMMAND aeroacars_fuzz 5 20260929)
+
+    # Sammelziel für die CI: baut alles, was die Tests brauchen.
+    add_custom_target(aeroacars_alle_tests)
+    add_dependencies(aeroacars_alle_tests aeroacars_tests aeroacars_fuzz)
+
+    # Ende-zu-Ende (macOS/Linux): die ECHTE .xpl in einer XPLM-Attrappe,
+    # dazu werkzeuge/plugin_sonde.py als Client. Prüft Socket-Schicht,
+    # Protokoll-1-Takt, X-Plane-11-Verhalten und belegten Port.
+    find_package(Python3 COMPONENTS Interpreter)
+    if(NOT WIN32 AND Python3_Interpreter_FOUND)
+        add_executable(aeroacars_attrappe tests/attrappe/xplm_attrappe.cpp)
+        target_include_directories(aeroacars_attrappe PRIVATE "${XPLM_SDK_ROOT}/CHeaders")
+        # XPLM=1: die Attrappe STELLT die XPLM-Funktionen bereit (sichtbar
+        # exportiert, damit das per dlopen geladene Plugin sie findet).
+        target_compile_definitions(aeroacars_attrappe PRIVATE XPLM=1)
+        target_link_libraries(aeroacars_attrappe PRIVATE ${CMAKE_DL_LIBS})
+        set_target_properties(aeroacars_attrappe PROPERTIES ENABLE_EXPORTS ON)
+        if(APPLE)
+            set_target_properties(aeroacars_attrappe PROPERTIES
+                OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+        endif()
+        add_dependencies(aeroacars_alle_tests aeroacars_attrappe AeroACARS)
+        add_test(NAME ende_zu_ende
+            COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/attrappe/ende_zu_ende.py"
+                    $<TARGET_FILE:aeroacars_attrappe>
+                    $<TARGET_FILE:AeroACARS>
+                    "${CMAKE_CURRENT_SOURCE_DIR}/werkzeuge/plugin_sonde.py")
+        set_tests_properties(ende_zu_ende PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    endif()
+endif()
 
 # ---- Diagnostic summary ---------------------------------------------------
 message(STATUS "──────────────────────────────────────────────────────────")

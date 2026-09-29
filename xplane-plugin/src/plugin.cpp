@@ -40,12 +40,35 @@
 // Wire format: line-delimited JSON over UDP. Every packet is a single line
 // terminated with `\n`. Schema versioned via "v":1. See README.md §"Wire
 // Format" for details.
+//
+// -----------------------------------------------------------------------------
+// Plugin 1.0.0: zwei Protokolle in einem Flight-Loop (ADR-0004)
+// -----------------------------------------------------------------------------
+//
+//   Protokoll 1 (dieser Datei, UNVERÄNDERT seit 0.5.13): `telemetry` und
+//   `touchdown` an 127.0.0.1:52000. Bleibt für ältere Clients; der neue
+//   Client wertet weiter `touchdown` aus. Schweigt in Pause/Replay wie bisher.
+//
+//   Protokoll 2 (dienst.cpp + dienst_xplm.cpp): Dataref-Server auf
+//   127.0.0.1:52001. Der Client meldet Namen an, das Plugin sucht, meldet den
+//   Status je Name ("fehlt" ist eine Tatsache, kein Schein-Nullwert) und
+//   liefert mit eigener Rate je Abo — auch in Pause und Replay.
+//
+// Es bleibt EIN Flight-Loop-Callback. Er ruft Protokoll 1 in genau dem Takt
+// auf, den Protokoll 1 selbst bestimmt (20 Hz, unter 200 ft AGL jeder Frame),
+// und Protokoll 2 bei jedem Aufruf. Solange Protokoll 2 nichts zu liefern hat,
+// gibt der Callback wie früher das Intervall von Protokoll 1 zurück — ohne
+// Client verhält sich das Plugin also exakt wie 0.5.13. Mit aktiven Abos
+// läuft der Callback jeden Frame (Raten bis 50 Hz), Protokoll 1 wird dann
+// über die Uhr auf seinen eigenen Takt gedrosselt.
 // =============================================================================
 
 #include <XPLM/XPLMDataAccess.h>
 #include <XPLM/XPLMDefs.h>
 #include <XPLM/XPLMProcessing.h>
 #include <XPLM/XPLMUtilities.h>
+
+#include "dienst_xplm.h"
 
 #include <cerrno>
 #include <cmath>
@@ -339,7 +362,10 @@ constexpr size_t PACKET_BUF_SIZE = 2048;
 // Returns the seconds-until-next-call. We tighten the rate when at low
 // AGL so the touchdown edge gets sub-frame resolution.
 
-float flight_loop_cb(float, float, int, void*) noexcept {
+// Protokoll 1 — bis auf den Namen (vorher flight_loop_cb) unverändert. Der
+// Rückgabewert ist weiterhin das gewünschte Intervall bis zum nächsten Tick;
+// flight_loop_cb unten setzt es um.
+float protokoll1_tick() noexcept {
     // Skip work entirely while the sim is paused or in replay — those
     // states give us frozen / weird telemetry that the AeroACARS client
     // wouldn't know how to interpret. Sim/replay-aware code is the
@@ -610,6 +636,39 @@ float flight_loop_cb(float, float, int, void*) noexcept {
     return FLIGHT_LOOP_BASE_INTERVAL_S;
 }
 
+// -- Takt für Protokoll 1, wenn der Callback jeden Frame läuft ---------------
+//
+// X-Plane ruft einen Callback mit Intervall 0,05 s im ersten Frame auf, in dem
+// 0,05 s vergangen sind. Genau das bildet die Uhr hier nach, wenn Protokoll 2
+// den Callback auf "jeden Frame" gestellt hat. Die Toleranz fängt Rundung der
+// float-Uhr (XPLMGetElapsedTime) ab, damit ein Tick bei 49,99 ms nicht einen
+// ganzen Frame zu spät kommt.
+constexpr double P1_TOLERANZ_S = 0.002;
+double g_p1_faellig = 0.0;  // XPLMGetElapsedTime-Sekunden; <= jetzt = fällig
+
+float flight_loop_cb(float, float, int, void*) noexcept {
+    const double jetzt = static_cast<double>(XPLMGetElapsedTime());
+
+    // -- Protokoll 1 in seinem eigenen Takt ---------------------------------
+    float p1_intervall = FLIGHT_LOOP_BASE_INTERVAL_S;
+    const bool p1_lief = (jetzt + P1_TOLERANZ_S >= g_p1_faellig);
+    if (p1_lief) {
+        p1_intervall = protokoll1_tick();
+        // Negativ = "jeden Frame" → im nächsten Aufruf wieder fällig.
+        g_p1_faellig = (p1_intervall > 0.0f) ? jetzt + static_cast<double>(p1_intervall) : jetzt;
+    }
+
+    // -- Protokoll 2 bei jedem Aufruf (auch in Pause/Replay) -----------------
+    const bool p2_jeder_frame = dienst_frame();
+    if (p2_jeder_frame) return FLIGHT_LOOP_FAST_INTERVAL;
+
+    // Ohne Lieferauftrag: exakt das Verhalten von 0.5.13 — das Intervall, das
+    // Protokoll 1 gerade verlangt hat, bzw. die Restzeit bis zu seinem Tick.
+    if (p1_lief) return p1_intervall;
+    const double rest = g_p1_faellig - jetzt;
+    return rest > 0.001 ? static_cast<float>(rest) : FLIGHT_LOOP_FAST_INTERVAL;
+}
+
 }  // namespace
 
 // =============================================================================
@@ -657,6 +716,11 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
         log_msg("warn: UDP socket setup failed; plugin loaded but inert");
     }
 
+    // Protokoll 2 (Dataref-Server). Scheitert es (Port 52001 belegt, kein
+    // Speicher), steht der Grund im Log und Protokoll 1 läuft allein weiter.
+    dienst_start(AEROACARS_PLUGIN_VERSION);
+    g_p1_faellig = 0.0;
+
     // Register the flight-loop callback. Returning 1 = plugin started OK.
     XPLMRegisterFlightLoopCallback(flight_loop_cb, FLIGHT_LOOP_BASE_INTERVAL_S, nullptr);
 
@@ -672,6 +736,7 @@ PLUGIN_API void XPluginStop(void) {
     //   2. Close the socket.
     //   3. Zero DataRef handles (defensive — plugin reload will re-find).
     XPLMUnregisterFlightLoopCallback(flight_loop_cb, nullptr);
+    dienst_stopp();
     close_socket();
 
     g_drefs = DataRefs{};
@@ -681,6 +746,7 @@ PLUGIN_API void XPluginStop(void) {
     touchdown_captured = false;
     g_airborne_vs_min = 0.0f;
     g_seq = 0;
+    g_p1_faellig = 0.0;
 
     log_msg("AeroACARS X-Plane Plugin stopped cleanly");
 }
@@ -695,6 +761,11 @@ PLUGIN_API void XPluginDisable(void) {
     // Same — no-op. State stays valid until XPluginStop.
 }
 
-PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void*) {
-    // We don't accept inter-plugin messages. Silent acknowledge is fine.
+PLUGIN_API void XPluginReceiveMessage(XPLMPluginID inFrom, int inMessage, void* inParam) {
+    // Nur X-Planes eigene Meldungen zu Flugzeug und Flughafen interessieren
+    // (Namen neu suchen, Flugzeugwechsel melden). Nachrichten anderer Plugins
+    // werden weiter nicht angenommen — ein fremdes Plugin, das zufällig
+    // dieselbe Nachrichtennummer benutzt, soll keine Neusuche auslösen.
+    if (inFrom != XPLM_PLUGIN_XPLANE) return;
+    dienst_nachricht(inMessage, inParam);
 }
