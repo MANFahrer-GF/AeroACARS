@@ -163,6 +163,55 @@ Client nimmt dann wie bisher die Web-API.
   nach dem Entpacken `com.apple.quarantine`. Ob X-Plane das ohne
   Apple-Developer-ID ohne Warnung lädt, wird am Mac mit X-Plane 12 geprüft.
 
+### 9. Umsetzung im Plugin 1.0.0 — Präzisierungen (AP7, 29.09.2026)
+
+Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
+(ausführlich in `xplane-plugin/README.md`, „Protokoll 2“):
+
+- **`PING` wird beantwortet** mit `{"p":2,"t":"pong"}` — sonst hätte ein
+  Client ohne Abo kein Lebenszeichen des Plugins für seine 3-s-Regel.
+- **Genau ein Befehl je Datagramm**; nur `ABO` hat Folgezeilen. `\r\n` wird
+  toleriert. Leere Zeilen mitten in der Namensliste sind ein Fehler.
+- **Fehler** tragen optional `zeile` (1-basiert), `abo`, `id`. Weitere Gründe:
+  `leere_anfrage`, `datagramm_zu_gross`, `unbekannter_befehl`,
+  `falsche_argumente`, `protokoll_ungueltig`, `abo_id_ungueltig`,
+  `rate_ungueltig`, `teil_ungueltig`, `name_ungueltig`, `index_ungueltig`,
+  `zu_viele_namen`, `ueberzaehlige_zeilen`, `kein_hallo`,
+  `abo_teil_reihenfolge`, `abo_teile_widerspruch`, `keine_namen`, `speicher`.
+  Ein fehlerhaftes `ABO` wird ganz verworfen; `ENDE-ABO` hat keine Antwort.
+- **Mehrteiliges ABO:** Teile strikt in Reihenfolge; Teil 1 beginnt immer neu;
+  Rate und Teilezahl müssen in allen Teilen gleich sein.
+- **Anmeldung:** Nur `HALLO 2` meldet an (andere Nummern bekommen trotzdem die
+  `hallo`-Antwort). `HALLO` von einem anderen Port verwirft die Abos des
+  alten Clients. Nach 5 s Stille wird der Client auch **vergessen** —
+  weitere Anfragen bekommen `kein_hallo`, damit ein nur hängender Client merkt,
+  dass seine Abos weg sind. Antworten auf Anfragen Fremder (`kein_hallo`,
+  Syntaxfehler) gehen an deren Absender.
+- **Arrays:** ganze Arrays höchstens 256 Elemente, Byte-Arrays höchstens
+  1024 Byte; die Länge im Status ist die gelieferte Länge. Unter Arrays gilt
+  `vf` vor `vi`. `name[i]` liefert `f` (aus `vf`) bzw. `i` (aus `vi` oder ein
+  Byte aus `b`); Index außerhalb der Länge oder Name ohne Array-Typ → `fehlt`.
+- **Verwaiste Datarefs** (Plugin des Flugzeugs entladen; `XPLMFindDataRef`
+  findet sie weiter, lesen ergäbe 0) gelten als `fehlt`
+  (`XPLMIsDataRefGood`). Die 2-s-Prüfung umfasst deshalb **alle** Namen, nicht
+  nur fehlende, und erkennt auch geänderte Array-Längen.
+- **Statuswechsel:** Ergebnisse einer Prüfung werden erst zwischen zwei
+  Lieferrunden übernommen; bei Änderung geht zuerst die vollständige neue
+  `abo`-Antwort hinaus, dann wieder Werte.
+- **Lieferung:** `seq` zählt je Abo. Große Abos verteilt das Zeitbudget über
+  mehrere Frames; die Werte einer Runde können aus aufeinanderfolgenden Frames
+  stammen. Sind alle Namen `fehlt`, kommt je Runde `"v":[]`.
+  Höchstens 16 Pakete je Frame (der Client sollte `SO_RCVBUF` ≥ 1 MiB setzen).
+- **`flugzeug`** kommt auch direkt nach jedem `HALLO`.
+- **`LISTE`** meldet nur abonnierbare Namen; eine neue `LISTE` ersetzt eine
+  laufende. Die XPLM-4.0-Funktionen werden per `XPLMFindSymbol` geholt (nur
+  bei XPLM ≥ 400), damit das Plugin unter X-Plane 11 weiter lädt.
+- **Takt:** Solange Protokoll 2 nichts liefert, gibt der Flight-Loop wie bisher
+  das Intervall von Protokoll 1 zurück; mit aktiven Abos läuft er jeden Frame,
+  Protokoll 1 wird dann über die Uhr auf seinen eigenen Takt gedrosselt.
+- **macOS:** Mindestversion der `mac.xpl` fest 11.0 (vorher ungesetzt = die
+  SDK-Version des Build-Rechners).
+
 ## Folgen
 
 - **Positiv:** Kein Schein-Nullwert mehr; „fehlt“ ist eine Tatsache. Profil-
