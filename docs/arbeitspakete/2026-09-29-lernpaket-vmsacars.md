@@ -334,10 +334,14 @@ erscheinen als „fehlt“ statt 0; Rückfall ohne Plugin funktioniert wie bishe
 
 ## Reihenfolge
 
-1. AP1a (G-Kanal mitschreiben) — klein, sofort Messdaten.
-2. AP2 (Deckel) — klein, klare Wirkung.
-3. AP3 (Hopser-Gegenprobe) — Analyse.
-4. AP7 (Plugin) — größter Brocken, eigener Zweig.
-5. AP4 → AP5 (Gleitpfad, dann Anflugruhe).
-6. AP6 (Profil je Funktion).
-7. AP1b/1c, sobald genug MSFS-Landungen mit dem neuen Kanal vorliegen.
+Korrigiert am 29.09.2026 (Thomas: „AP7 ist das letzte“):
+
+1. AP1a, AP2, AP3 — veröffentlicht mit v1.9.11 (29.09.2026).
+2. AP4 → AP5 (Gleitpfad, Anflugruhe) — gebaut, Cloud-QS „Freigabe: ja“,
+   Live-Seite (Recorder + Landungsanalyse) ebenso; wird mit AP7 ausgerollt.
+3. AP6 — als Code-Umbau verworfen (die Tabelle „Funktion × Profil“ gibt es
+   praktisch schon; ein Umbau änderte nichts). Stattdessen Messaufruf im Forum
+   (#44, 29.09.2026): Fenix- und PMDG-Autopilot sind durchgehend „aus“, belegt
+   an Flug-Logs; Anbindung je Add-on, sobald Luftmessungen vorliegen.
+4. AP7 (Plugin) — zuletzt, eigener Zweig `feat/ap7-xplane-plugin`, ADR-0004 neu.
+5. AP1b/1c, sobald genug MSFS-Landungen mit dem neuen G-Kanal vorliegen.
