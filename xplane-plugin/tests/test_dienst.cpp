@@ -1063,6 +1063,10 @@ TEST(dienst_n1_pause_nach_flugzeugwechsel) {
     // alte Handle meldet sich hier noch als gültig — die Prüfung beim Lesen
     // greift also NICHT; nur die Pause bis zur Neusuche verhindert Werte aus
     // alten Handles.
+    // ⚠ Diesen Zustand (nicht registriert, Handle gültig) gibt es im echten
+    // XPLM nicht: X-Plane zerstört Datarefs nie, und IsDataRefGood ist genau
+    // dann wahr, wenn ein Plugin den Namen gerade bereitstellt (Cloud-QS
+    // 29.09.2026). Der Test prüft die MECHANIK der Pause, kein reales Risiko.
     for (auto& r : a.welt.refs) if (r->name.rfind("toliss/", 0) == 0) r->registriert = false;
     a.d->flugzeug_geladen();
     bool abo2_wert_vor_status = false, abo2_status = false;
@@ -1119,7 +1123,8 @@ TEST(dienst_pause_nach_flugzeugwechsel_begrenzt) {
     a.frames(30, 1.0 / 30.0);
     a.neue();
     // Flugzeugwechsel: der Anzeige-Name ist beim neuen Flugzeug weg (Handle
-    // meldet sich noch gültig — nur die Pause schützt).
+    // meldet sich noch gültig — nur die Pause schützt). Wie oben: im echten
+    // XPLM unmöglicher Zustand, geprüft wird die Mechanik der Pause.
     anzeige.registriert = false;
     a.d->flugzeug_geladen();
     std::map<int, double> letzte_lieferung;

@@ -198,7 +198,7 @@ private:
         bool antwort_erneut = false;    // identisches ABO: Status noch einmal senden
         bool status_sofort = false;     // beim Lesen verwaist gefunden → neue Antwort
         bool pausiert = false;          // nach Flugzeugwechsel bis zur Neusuche …
-        double pause_bis = 0.0;         // … höchstens bis hierhin (grenzen::MAX_PAUSE_S)
+        double pause_bis = 0.0;         // … höchstens bis hierhin (grenzen::MAX_PAUSE_S); < 0: Uhr startet im nächsten Frame
         uint32_t pruef_cursor = 0;
         double naechste_pruefung = 0.0;
         // Ausgabe (abo-Antwort und Werte teilen sich Stapel und Plan; sie

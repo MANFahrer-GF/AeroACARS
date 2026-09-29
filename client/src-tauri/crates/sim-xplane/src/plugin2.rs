@@ -531,7 +531,12 @@ pub fn stille_fuer(abo: u8, rate_hz: u32, namen: usize) -> Duration {
         return STILLE;
     }
     let perioden = Duration::from_millis(5_000 / u64::from(rate_hz.clamp(1, 50)));
-    let je_namen = Duration::from_millis(1_000 + (namen as u64) / 2);
+    // 1 s + 2 s je 2000 Namen: Bei 14 × 8192 Namen lag die groesste Luecke
+    // zwischen zwei Lieferrunden bei 5,04 s, die alte Schwelle (1 s je 2000
+    // Namen) bei 5,1 s — zu knapp fuer langsamere Suchen im echten X-Plane
+    // (Nachpruefung AP7, 29.09.2026). Ein zu fruehes Neusenden setzt nichts
+    // zurueck, kostet aber Verkehr.
+    let je_namen = Duration::from_millis(1_000 + namen as u64);
     STILLE.max(perioden).max(je_namen)
 }
 
@@ -2081,7 +2086,7 @@ mod tests {
         assert_eq!(stille_fuer(1, 50, 8192), STILLE, "Katalog bleibt bei 3 s");
         assert_eq!(stille_fuer(2, 20, 10), STILLE);
         assert_eq!(stille_fuer(3, 1, 10), Duration::from_secs(5));
-        assert_eq!(stille_fuer(3, 5, 8192), Duration::from_millis(5_096));
+        assert_eq!(stille_fuer(3, 5, 8192), Duration::from_millis(9_192));
     }
 
     /// Nachpruefung N2: 8192-Namen-Mess-Abo, das Plugin liefert nur alle

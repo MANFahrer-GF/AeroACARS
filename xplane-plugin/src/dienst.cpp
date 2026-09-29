@@ -495,7 +495,10 @@ void Dienst::flugzeug_geladen() noexcept {
         // "sim/…"-Namen (Telemetrie) liefern ohne Pause weiter.
         if (a.hat_plugin_namen) {
             a.pausiert = true;
-            a.pause_bis = umgebung_.jetzt() + grenzen::MAX_PAUSE_S;
+            // Uhr startet erst im ersten Frame danach (Nachpruefung AP7):
+            // X-Plane laedt nach der Meldung oft Sekunden ohne Frame — ab der
+            // Meldung gezaehlt waere die Pause dann schon abgelaufen.
+            a.pause_bis = -1.0;
         }
     }
 }
@@ -905,6 +908,7 @@ void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
             [[fallthrough]];
         case Phase::BEREIT:
             if (abo.pausiert) {
+                if (abo.pause_bis < 0.0) abo.pause_bis = jetzt_ + grenzen::MAX_PAUSE_S;
                 if (jetzt_ < abo.pause_bis) return;
                 abo.pausiert = false;  // Grenze erreicht, Lesen prüft weiter auf Waisen
             }
