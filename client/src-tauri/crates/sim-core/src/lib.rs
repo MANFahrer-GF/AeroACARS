@@ -106,8 +106,9 @@ pub struct SimSnapshot {
     /// v0.7.19 (Accident-Detection): Adapter-Snapshot-Flag, true wenn
     /// der Sim ein hartes Crash-Signal liefert. MSFS setzt das aus dem
     /// `Crashed` System-Event (gelatcht im Adapter-Shared-State).
-    /// X-Plane setzt es in v0.7.19 nicht (= immer false; gemeinsame
-    /// Heuristik greift dort statt Sim-Event). `CrashReset` darf den
+    /// X-Plane seit v1.9.12 aus `sim/flightmodel2/misc/has_crashed`, nur
+    /// die Flanke 0 → 1 (vorher immer false; die gemeinsame Heuristik
+    /// greift bei beiden weiter). `CrashReset` darf den
     /// Adapter-Flag fuer neue Snapshots loeschen — der aktive Flug
     /// behaelt seinen Accident-Latch unabhaengig davon bis Flight-End/
     /// Cleanup. Spec docs/spec/v0.7.19-gaf707-crash-accident-detection.md.
@@ -187,6 +188,12 @@ pub struct SimSnapshot {
 
     // Identity
     pub aircraft_title: Option<String>,
+    /// X-Plane: `acf_ui_name` (Name wie in der Oberflaeche und im Aircraft-
+    /// Scan). Nur fuer die Zuordnung „Flugzeug vermessen“ — die Messung
+    /// traegt diesen Titel (29.09.2026). `aircraft_title` bleibt
+    /// `acf_descrip` (Profilerkennung, Buchungsabgleich). MSFS: `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aircraft_ui_name: Option<String>,
     pub aircraft_icao: Option<String>,
     /// Aircraft registration / tail number as set in the sim (e.g. "D-AILU").
     pub aircraft_registration: Option<String>,
@@ -945,6 +952,7 @@ impl Default for SimSnapshot {
             mach: None,
             empty_weight_kg: None,
             aircraft_title: None,
+            aircraft_ui_name: None,
             aircraft_icao: None,
             aircraft_registration: None,
             simulator: Simulator::default(),
@@ -1638,6 +1646,19 @@ impl AircraftProfile {
         }
     }
 
+    /// ICAO, die VOR der ATC-Stimme (`ATC MODEL`) gilt: fuer Profile, bei denen
+    /// das Add-on die Stimme nachweislich falsch belegt. iFly 737 MAX 8: alle
+    /// vier aircraft.cfg haben `atc_model = "…AC_MODEL B738.0.text"`, aber
+    /// `icao_type_designator = "B38M"` (Scan 29.09.2026); phpVMS fuehrt die
+    /// Maschinen als B38M (TUI/RYR/ENT … -B38M). Ohne Vorrang meldete der Client
+    /// B738 — Buchung, Scan und Messung passten nicht zusammen (Thomas).
+    pub fn icao_vorrang(self) -> Option<&'static str> {
+        match self {
+            Self::IflyMax8 => Some("B38M"),
+            _ => None,
+        }
+    }
+
     /// Short human-readable label for the activity log.
     pub fn label(self) -> &'static str {
         match self {
@@ -1683,8 +1704,10 @@ impl AircraftProfile {
 }
 
 /// Triebwerks-Rohsignale je Triebwerk (Index 0 = Triebwerk 1), siehe
-/// `SimSnapshot::engine_signals`. Die Vektoren haben immer dieselbe Länge:
-/// so viele Triebwerke, wie der Adapter abfragt (MSFS: 4).
+/// `SimSnapshot::engine_signals`. Die Vektoren haben dieselbe Länge: so
+/// viele Triebwerke, wie der Adapter abfragt (4). Ausnahme X-Plane (seit
+/// v1.9.12): `general_combustion`/`combustion_ex1` gibt es dort nicht, sie
+/// bleiben leer; `eng_combustion` traegt `ENGN_running`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct EngineSignals {
     /// MSFS `GENERAL ENG COMBUSTION:n` (laut SDK ein setzbarer Schalter).
@@ -1979,7 +2002,8 @@ pub fn normalize_icao_type(raw: &str) -> Option<String> {
 ///
 /// 1. **Der Simulator.** Was tatsächlich fliegt, schlägt was gebucht war —
 ///    wer anders fliegt als gebucht, soll die Grenzen des geflogenen
-///    Musters bekommen.
+///    Musters bekommen. Meldet er nur die Baureihe („A330“), wird sie
+///    aus Buchung oder Titel derselben Reihe präzisiert (seit v1.9.12).
 /// 2. **Die Buchung.** Verlässlich, solange der Pilot nach Plan fliegt.
 /// 3. **Der Flugzeugtitel.** Die Notlösung: „Airbus A320neo Lufthansa"
 ///    ergibt A20N. Ungenauer als die beiden anderen, aber besser als
@@ -1999,6 +2023,30 @@ pub fn muster_aufloesen(
     // Marketing-Namen zu und prüft die Plausibilität — genau die Stufe,
     // die hier fehlte.
     if let Some(m) = sim_atc_model.and_then(normalize_icao_type) {
+        // v1.9.12 (TAP, CS-TUK 17.09.2026): Meldet der Simulator nur die
+        // BAUREIHE („A330“), ist der Wert plausibel, aber unvollständig —
+        // die Familienregel der Bewertung machte daraus die A333, obwohl
+        // eine A339 flog (Spannweite 60,3 statt 64,0 m). Die genaue
+        // Variante kommt dann aus der Buchung, sofern sie zur selben
+        // Baureihe gehört, sonst aus dem Titel („A330-900“). Passt keins,
+        // bleibt die Baureihe stehen. Nur die Bewertung ist betroffen; der
+        // Buchungsabgleich läuft nicht über diese Funktion.
+        //
+        // Cloud-QS 29.09.2026 (P3a): der TITEL vor der Buchung. Er
+        // beschreibt, was tatsächlich geladen ist („A330-900neo“), die
+        // Buchung nur, was geplant war (A332 gebucht, A339 geflogen → sonst
+        // wieder die falsche Spannweite).
+        if let Some(reihe) = nur_baureihe(&m) {
+            if let Some(t) = flugzeug_titel.and_then(icao_aus_titel) {
+                if gehoert_zu_baureihe(&t, reihe) {
+                    return Some(t);
+                }
+            }
+            let gebucht = buchung_icao.trim().to_ascii_uppercase();
+            if gehoert_zu_baureihe(&gebucht, reihe) {
+                return Some(gebucht);
+            }
+        }
         return Some(m);
     }
     let gebucht = buchung_icao.trim();
@@ -2006,6 +2054,46 @@ pub fn muster_aufloesen(
         return Some(gebucht.to_ascii_uppercase());
     }
     flugzeug_titel.and_then(icao_aus_titel)
+}
+
+/// Baureihen-Codes ohne Variante, wie sie manche Add-ons als `ATC MODEL`
+/// melden. Gleiche Liste wie `familie_von` in der Bewertung des Clients.
+/// Rückgabe: das dreistellige Präfix, das alle Varianten der Reihe teilen
+/// (A330 → „A33“: A332, A333, A338, A339).
+fn nur_baureihe(code: &str) -> Option<&'static str> {
+    match code {
+        "A300" => Some("A30"),
+        "A330" => Some("A33"),
+        "A340" => Some("A34"),
+        "A380" => Some("A38"),
+        "B747" => Some("B74"),
+        "B777" => Some("B77"),
+        "B787" => Some("B78"),
+        _ => None,
+    }
+}
+
+/// Varianten der Baureihen, die die Bewertung kennt (Grenzwerte in der App
+/// UND Spur-/Spannweite in `landing-scoring/src/spurweite.rs`; 30.09.2026
+/// beide Tabellen um B77F/B778/B779 ergänzt, damit sie hier stehen dürfen). Cloud-QS
+/// 29.09.2026 (P3b): vorher zählte jeder vierstellige Code mit passendem
+/// Präfix — B74S oder B74R landeten so bei Rückfallwerten statt bei der
+/// Familien-Variante, die die Baureihe bisher bekam.
+pub const BAUREIHEN_VARIANTEN: &[&str] = &[
+    "A306", "A30B", "A332", "A333", "A338", "A339", "A342", "A343", "A345", "A346", "A388", "B741",
+    "B742", "B743", "B744", "B748", "B772", "B773", "B77L", "B77W", "B77F", "B778", "B779", "B788",
+    "B789", "B78X",
+];
+
+/// Eine bekannte, konkrete Variante der Reihe (Frachter-`F` angehängt
+/// erlaubt: B748F → B748).
+fn gehoert_zu_baureihe(code: &str, praefix: &str) -> bool {
+    let basis = if code.chars().count() == 5 {
+        code.strip_suffix('F').unwrap_or(code)
+    } else {
+        code
+    };
+    code.starts_with(praefix) && BAUREIHEN_VARIANTEN.contains(&basis)
 }
 
 pub fn icao_aus_titel(titel: &str) -> Option<String> {
@@ -2030,6 +2118,8 @@ const TITEL_MUSTER: &[(&str, &str)] = &[
     // ── Airbus ────────────────────────────────────────────────────────────
     ("A220-300", "BCS3"), // 42 Flüge — mit Abstand der häufigste Fall
     ("A220-100", "BCS1"),
+    ("A330-900", "A339"), // v1.9.12: 2 Flüge „Airbus A330-900neo TAP“ (Sim meldet nur A330)
+    ("A330-800", "A338"),
     ("A330-300", "A333"), // 9 Flüge (VIP, P2F, RR)
     ("A330-200", "A332"),
     ("A340-300", "A343"), // 3 Flüge (Freighter EIS1)
@@ -2383,6 +2473,21 @@ mod tests {
     }
 
     #[test]
+    fn icao_vorrang_nur_fuer_ifly_max8() {
+        assert_eq!(AircraftProfile::IflyMax8.icao_vorrang(), Some("B38M"));
+        // Gegenprobe: alle anderen Profile lassen die ATC-Stimme gelten.
+        for p in [
+            AircraftProfile::Default,
+            AircraftProfile::Pmdg737,
+            AircraftProfile::FenixA320,
+            AircraftProfile::IniA380,
+            AircraftProfile::FbwA32nx,
+        ] {
+            assert_eq!(p.icao_vorrang(), None, "{p:?}");
+        }
+    }
+
+    #[test]
     fn icao_fallback_fsr_phenom_300e_is_e55p() {
         assert_eq!(AircraftProfile::FsrPhenom300e.icao_fallback(), Some("E55P"));
     }
@@ -2496,6 +2601,97 @@ mod tests {
             muster_aufloesen(Some("A380-800"), "", Some("A380-800 RR Basic")),
             Some("A388".to_string())
         );
+    }
+
+    /// v1.9.12 (TAP, CS-TUA 08.09. / CS-TUK 17.09.2026): Das Add-on meldet
+    /// nur die Baureihe „A330“. Vorher gewann dieser Wert, die Bewertung
+    /// machte daraus A333 — Spannweite 60,3 statt 64,0 m.
+    #[test]
+    fn baureihe_vom_sim_wird_aus_buchung_oder_titel_praezisiert() {
+        let titel = Some("Airbus A330-900neo TAP");
+        // Buchung derselben Reihe gewinnt.
+        assert_eq!(
+            muster_aufloesen(Some("A330"), "A339", titel).as_deref(),
+            Some("A339")
+        );
+        // Cloud-QS P3a: der Titel beschreibt das geladene Flugzeug und
+        // schlägt die Buchung (A332 gebucht, A330-900neo geflogen).
+        assert_eq!(
+            muster_aufloesen(Some("A330"), "A332", titel).as_deref(),
+            Some("A339"),
+            "Titel schlägt Buchung"
+        );
+        // Titel ohne Variante: die Buchung entscheidet.
+        assert_eq!(
+            muster_aufloesen(Some("A330"), "A332", Some("Airbus Widebody TAP")).as_deref(),
+            Some("A332")
+        );
+        // Cloud-QS P3b: unbekannte Varianten (B74S, B74R) nicht übernehmen.
+        assert_eq!(
+            muster_aufloesen(Some("B747"), "B74S", None).as_deref(),
+            Some("B747")
+        );
+        assert_eq!(
+            muster_aufloesen(Some("A300"), "A30B", None).as_deref(),
+            Some("A30B")
+        );
+        // Ohne Buchung: der Titel.
+        assert_eq!(
+            muster_aufloesen(Some("A330"), "", titel).as_deref(),
+            Some("A339")
+        );
+        // Buchung einer ANDEREN Reihe: nicht übernehmen, Titel nehmen.
+        assert_eq!(
+            muster_aufloesen(Some("A330"), "B738", titel).as_deref(),
+            Some("A339")
+        );
+        // Nichts Passendes: Baureihe bleibt (die Bewertung wählt dann die
+        // Familien-Variante wie bisher).
+        assert_eq!(
+            muster_aufloesen(Some("A330"), "B738", Some("Airbus Widebody")).as_deref(),
+            Some("A330")
+        );
+        // Frachter-Buchung derselben Reihe.
+        assert_eq!(
+            muster_aufloesen(Some("B777"), "B77L", None).as_deref(),
+            Some("B77L")
+        );
+        assert_eq!(
+            muster_aufloesen(Some("B747"), "B748F", None).as_deref(),
+            Some("B748F")
+        );
+        // 777F und 777-9: beide Tabellen kennen sie (30.09.2026).
+        assert_eq!(
+            muster_aufloesen(Some("B777"), "B77F", None).as_deref(),
+            Some("B77F")
+        );
+        assert_eq!(
+            muster_aufloesen(Some("B777"), "B779", None).as_deref(),
+            Some("B779")
+        );
+        // A310 gehört nicht zur A300-Reihe.
+        assert_eq!(
+            muster_aufloesen(Some("A300"), "A310", None).as_deref(),
+            Some("A300")
+        );
+        // Konkreter Sim-Code bleibt unangetastet — der Sim gewinnt weiter.
+        assert_eq!(
+            muster_aufloesen(Some("A333"), "A339", titel).as_deref(),
+            Some("A333")
+        );
+    }
+
+    #[test]
+    fn titel_a330neo_varianten() {
+        assert_eq!(
+            icao_aus_titel("Airbus A330-900neo TAP").as_deref(),
+            Some("A339")
+        );
+        assert_eq!(
+            icao_aus_titel("Airbus A330-800neo").as_deref(),
+            Some("A338")
+        );
+        assert_eq!(icao_aus_titel("A330-300 VIP (RR)").as_deref(), Some("A333"));
     }
 
     /// Externe QS (Codex, 16.09.2026) P1: fünfstellige Sim-Schreibweisen

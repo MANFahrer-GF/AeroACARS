@@ -869,6 +869,39 @@
         "unstable": "Avvicinamento instabile — in realtà candidato a go-around. Completa il setup di approach prima, mantieni config + speed + V/S stabili entro 1000 ft AAL."
       }
     },
+    "anflug_forensik": {
+      "titel": "Sentiero di discesa e stabilità dell'avvicinamento",
+      "ohne_note": "Solo come riferimento – non incide sul punteggio. 1 dot = {{dot}}°, «+» = sopra il sentiero.",
+      "gleitpfad_gesamt": "Sentiero di discesa 1000–200 ft: in media {{mittel}} dot, scostamento massimo {{max}} dot ({{ft}} ft) · {{proben}} punti di misura",
+      "gleitpfad_tor": "{{tor}}: in media {{mittel}}, massimo {{max}} dot",
+      "tor_1000_500": "1000–500 ft",
+      "tor_500_200": "500–200 ft",
+      "bezug": "Riferimento: {{quelle}} · {{winkel}}° · TCH {{tch}} ft",
+      "bezug_tch_angenommen": "Riferimento: {{quelle}} · {{winkel}}° · TCH {{tch}} ft (presunta, assente nei navdata)",
+      "bezug_ohne_navdaten": "Riferimento: nessun navdata per la pista di atterraggio",
+      "quelle": {
+        "navigraph_ils": "sentiero ILS (Navigraph)",
+        "navigraph_bahn": "pista senza ILS, angolo standard (Navigraph)",
+        "angenommen_3grad": "3° presunti"
+      },
+      "grund": {
+        "keine_bahn": "Senza navdata per la pista di atterraggio il sentiero di discesa non si può ricostruire.",
+        "schwellenhoehe_fehlt": "I navdata non indicano l'elevazione della soglia, quindi il sentiero non viene ricostruito.",
+        "keine_proben": "Troppo pochi punti di misura tra 1000 e 200 ft prima della soglia."
+      },
+      "ruhe_titel": "Stabilità dell'avvicinamento",
+      "ruhe_seitenwechsel": "{{n}}× attraversato il sentiero",
+      "ruhe_nick": "velocità di beccheggio ±{{v}} °/s",
+      "ruhe_roll": "velocità di rollio ±{{v}} °/s",
+      "ruhe_schub": "{{v}} variazioni di spinta/min",
+      "erfasst_ab": "(rilevato da {{h}} ft)",
+      "hinweis_sim_boden": "Riferimento di quota: suolo del simulatore alla soglia ({{sim}} ft; i navdata indicano {{nav}} ft).",
+      "hinweis_sim_boden_ohne_navdaten": "Riferimento di quota: suolo del simulatore alla soglia ({{sim}} ft; i navdata non indicano l'elevazione della soglia).",
+      "schub_grund": {
+        "kein_n1": "spinta non rilevata senza dati N1",
+        "zu_kurz": "spinta misurata troppo brevemente"
+      }
+    },
     "approach_stability_help": {
       "title": "Stabilità avvicinamento — cosa significano i valori?",
       "close_label": "Chiudi ✕",
@@ -1445,7 +1478,19 @@
     "detect_failed": "Impossibile trovare X-Plane automaticamente — inserisci manualmente il percorso della cartella principale di X-Plane.",
     "install_button": "Installa plugin",
     "installing": "Installazione…",
-    "install_success": "Plugin installato in {{path}} ({{files}} file). Riavvia X-Plane, poi appare lo stato „live\"."
+    "install_success": "Plugin installato in {{path}} ({{files}} file). Riavvia X-Plane, poi appare lo stato „live\".",
+    "protocol_label": "Connessione",
+    "protocol_2": "Protocollo 2 — tutti i valori dal plugin",
+    "protocol_1": "Protocollo 1 — solo misura del touchdown",
+    "plugin_version_label": "Versione plugin",
+    "xplane_version_label": "X-Plane",
+    "names_label": "Valori disponibili",
+    "active_hint_p2": "Il plugin fornisce ogni valore direttamente da X-Plane: posizione a piena precisione, e ogni valore o c'è davvero o viene segnalato come mancante. RREF e il controllo tramite Web API restano a riposo finché il plugin fornisce dati.",
+    "outdated_title": "Plugin obsoleto",
+    "outdated_explanation": "Il plugin installato conosce solo la misura del touchdown. Gli altri valori continuano ad arrivare tramite RREF e Web API. Reinstalla il plugin di questa versione di AeroACARS e riavvia X-Plane.",
+    "unreachable_title": "Protocollo 2 non raggiungibile",
+    "unreachable_explanation": "Il plugin è aggiornato e fornisce la misura del touchdown, ma non risponde al protocollo 2 — probabilmente la porta 52001 è occupata da un altro programma (vedi Log.txt di X-Plane). Gli altri valori continuano ad arrivare tramite RREF e Web API.",
+    "install_unverified": "Nota: questo pacchetto è stato installato senza checksum (versione di sviluppo di AeroACARS)."
   },
   "pilot_header": {
     "pos_label": "POS",
@@ -3330,7 +3375,7 @@
     "verbinden_titel": "Connecting to the aircraft …",
     "verbinden_text": "AeroACARS reads all values of the aircraft. This takes a few seconds.",
     "verbunden": "{{anzahl}} values connected",
-    "ohne_scan": "There is no aircraft scan for this aircraft yet. Input events and the simulator's standard values are measured. Tip: a scan on live.kant.ovh/aircraft makes the measurement even more precise.",
+    "ohne_scan": "There is no aircraft scan for this aircraft yet. Input events, the simulator's standard values and the variables AeroACARS itself reads are measured. Tip: a scan on live.kant.ovh/aircraft makes the measurement even more precise.",
     "mit_scan": "{{anzahl}} variable names from this aircraft's scan.",
     "ruhe_titel": "Quiet measurement",
     "ruhe_text": "Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves (clock, displays, animations) – those are ignored later.",

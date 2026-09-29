@@ -21,6 +21,8 @@ import { GForceForensik } from "./GForceForensik";
 import { RunwayDiagramV2 } from "./RunwayDiagramV2";
 import { RunwayUtilizationHelpModal } from "./RunwayUtilizationHelpModal";
 import { ApproachStabilityCard } from "./ApproachStabilityCard";
+import { AnflugForensikInfo } from "./AnflugForensikInfo";
+import type { AnflugGleitpfad, AnflugRuhe } from "./AnflugForensikInfo";
 import { mapLandingRecordToV2Props } from "../dev/runwayDiagramV2Mapper";
 import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import { displayCallsign } from "../lib/callsign";
@@ -343,6 +345,12 @@ export interface LandingRecord {
    *  (LDA-basierter Score). UI rendert die neuen extra-Lines + erweiterten
    *  Rationale-/Warning-Keys nur wenn `>= 2`. */
   score_algorithm_version?: number | null;
+
+  /** Lernpaket AP4 (29.09.2026): geometrische Gleitpfad-Abweichung mit
+   *  Quelle — reine Forensik, keine Note. Fehlt bei älteren Landungen. */
+  anflug_gleitpfad?: AnflugGleitpfad | null;
+  /** Lernpaket AP5: Anflugruhe je Tor, nur Hinweis. */
+  anflug_ruhe?: AnflugRuhe | null;
 
   // ─── v0.7.6 P1-3: Runway-Geometry-Trust ──────────────────────────────
   // Spec docs/spec/v0.7.6-landing-payload-consistency.md §3 P1-3.
@@ -3657,6 +3665,12 @@ export function LandingDetail({
         }
         simKind={record.sim_kind}
         glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
+      />
+      {/* Lernpaket AP4/AP5: Gleitpfad + Anflugruhe als Info-Zeilen,
+          ohne Note und ohne Farbband. */}
+      <AnflugForensikInfo
+        gleitpfad={record.anflug_gleitpfad}
+        ruhe={record.anflug_ruhe}
       />
       {record.approach_samples.length >= 3 && (
         <section className="landing-section">

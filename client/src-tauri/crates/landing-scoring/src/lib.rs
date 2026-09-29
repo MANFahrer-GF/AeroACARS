@@ -14,6 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Lernpaket AP4/AP5 (29.09.2026): Datenform der Anflug-Forensik (keine Note).
+pub mod anflug_forensik;
 pub mod belag;
 pub mod gate;
 /// v1.7.35: Sprit-Auswertung ohne Note — siehe `sprit.rs`.

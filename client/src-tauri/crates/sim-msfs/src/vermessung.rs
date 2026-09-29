@@ -107,6 +107,24 @@ pub fn l_felder(namen: &[String]) -> Vec<MessFeld> {
         .collect()
 }
 
+/// L:-Felder der Messung aus zwei Quellen (29.09.2026): zuerst die
+/// L:-Variablen, die der Client selbst in seinen Profilen liest
+/// (`profil`, aus `TELEMETRY_FIELDS` — alle Profile, nicht nur das
+/// erkannte), dann die Scan-Namen vom Server. So bestätigt oder widerlegt
+/// jede Messung genau die heutige Zuordnung, auch ohne Scan — beim iFly
+/// 737 MAX (verschlüsselt, kein Scan) sah die Messung vorher keine einzige
+/// L:-Variable, obwohl der Client im selben Flug `L:VC_Autobrake_SW_VAL`
+/// las. Die Profilnamen stehen vorn, damit die Obergrenze sie nie
+/// verdrängt. Liefert die Felder und wie viele davon Profilnamen sind.
+pub fn l_felder_mit_profil(profil: &[&str], server: &[String]) -> (Vec<MessFeld>, usize) {
+    let profil: Vec<String> = profil.iter().map(|n| n.to_string()).collect();
+    let anzahl_profil = l_felder(&profil).len();
+    let alle: Vec<String> = profil.into_iter().chain(server.iter().cloned()).collect();
+    let felder = l_felder(&alle);
+    let anzahl_profil = anzahl_profil.min(felder.len());
+    (felder, anzahl_profil)
+}
+
 #[derive(Debug, Default)]
 pub struct MessState {
     gewuenscht: Vec<MessFeld>,
@@ -328,6 +346,36 @@ mod tests {
         let (b, alt) = s.zu_registrieren();
         assert!(b.is_empty());
         assert_eq!(alt, 1);
+    }
+
+    #[test]
+    fn profilnamen_vorn_ohne_doppelte() {
+        // Server-Liste kennt einen Profilnamen schon (einmal mit, einmal
+        // ohne Präfix) — er darf nur einmal gelesen werden.
+        let profil = ["L:VC_Autobrake_SW_VAL", "L:I_FCU_AP1", "L:I_FCU_AP1"];
+        let server = vec!["VC_Autobrake_SW_VAL".to_string(), "L:SCAN_X".to_string()];
+        let (felder, n) = l_felder_mit_profil(&profil, &server);
+        let namen: Vec<&str> = felder.iter().map(|f| f.simvar.as_str()).collect();
+        assert_eq!(namen, ["L:VC_Autobrake_SW_VAL", "L:I_FCU_AP1", "L:SCAN_X"]);
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn ohne_scan_bleiben_die_profilnamen() {
+        let (felder, n) = l_felder_mit_profil(&["L:VC_Autobrake_SW_VAL"], &[]);
+        assert_eq!(felder.len(), 1);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn obergrenze_verdraengt_keine_profilnamen() {
+        let profil = ["L:VC_Autobrake_SW_VAL", "L:I_FCU_AP1"];
+        let server: Vec<String> = (0..20_000).map(|i| format!("S_{i}")).collect();
+        let (felder, n) = l_felder_mit_profil(&profil, &server);
+        assert_eq!(n, 2);
+        assert_eq!(felder[0].simvar, "L:VC_Autobrake_SW_VAL");
+        // Mit den Standardfeldern passt alles in die Blöcke.
+        assert!(felder.len() + standard_felder().len() <= BLOCK * MAX_BLOECKE);
     }
 
     #[test]

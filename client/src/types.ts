@@ -300,6 +300,12 @@ export interface SimSnapshot {
    *  (their OEW is bogus — verified ~1422 kg for the A320neo). */
   empty_weight_kg: number | null;
   aircraft_title: string | null;
+  /** X-Plane: `acf_ui_name` — der Titel, den „Flugzeug vermessen“ für die
+   *  Messung nimmt (wie der Aircraft-Scan). Fehlt bei MSFS. */
+  aircraft_ui_name?: string | null;
+  /** Diagnose-Rohwerte; hier nur `cfg_pfad` = aircraft.cfg-Pfad aus MSFS
+   *  `AircraftLoaded` (Ordner-Abgleich in „Flugzeug vermessen“). */
+  cockpit_rohwerte?: { cfg_pfad?: string | null } | null;
   aircraft_icao: string | null;
   aircraft_registration: string | null;
   simulator: Simulator;
@@ -715,6 +721,21 @@ export interface XPlanePremiumStatus {
   /** Last error from the listener (e.g. bind failure). `null`
    *  while the listener is healthy. */
   last_error: string | null;
+  /** AP7: 2 = Plugin liefert alle Werte (Protokoll 2), 1 = nur das
+   *  Aufsetzpaket (Protokoll 1), 0 = nichts. Fehlt bei älteren Backends. */
+  protokoll?: 0 | 1 | 2;
+  /** Plugin-Version laut `hallo`-Antwort. */
+  plugin_version?: string | null;
+  /** X-Plane-Version laut Plugin, z. B. 12100. */
+  xplane_version?: number | null;
+  /** Plugin läuft, kann aber nur Protokoll 1 — Aktualisierung nötig. */
+  veraltet?: boolean;
+  /** Plugin ab 1.0 läuft (Protokoll 1), antwortet aber nicht auf Protokoll 2
+   *  — z. B. Steuerport belegt. Kein Update nötig. */
+  p2_nicht_erreichbar?: boolean;
+  /** Katalognamen, die das Plugin als vorhanden / fehlend meldet. */
+  namen_da?: number;
+  namen_fehlen?: number;
 }
 
 /** v0.7.18 (B-011): Verwaister PIREP auf phpVMS — Pilot kann ihn

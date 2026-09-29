@@ -189,6 +189,9 @@ struct Sitzung {
     /// am Bericht sieht, ob die Variablen dabei waren (X-Plane: 0, braucht
     /// keine).
     l_namen: usize,
+    /// MSFS: wie viele L:-Variablen aus den Client-Profilen mitgelesen
+    /// wurden (29.09.2026, auch ohne Scan). X-Plane: 0.
+    l_namen_profil: usize,
     flugzeug: Flugzeug,
     rauschen: HashSet<String>,
     anzahl_werte: usize,
@@ -346,18 +349,35 @@ pub async fn vermessung_starten(
         quelle_beenden(&app, alt.quelle);
     }
     let kind = crate::read_sim_config(&app).kind;
-    let (quelle, sim, flugzeug, l_namen) = if kind.is_xplane() {
-        let spiegel =
-            tauri::async_runtime::spawn_blocking(sim_xplane::vermessung::Spiegel::starten)
-                .await
-                .map_err(|e| e.to_string())??;
+    let (quelle, sim, flugzeug, (l_namen, l_namen_profil)) = if kind.is_xplane() {
+        // AP7: laeuft eine Sitzung mit dem Plugin (Protokoll 2), misst es
+        // ohne Web-API; sonst wie bisher ueber die Web-API.
+        let zugang = app
+            .state::<crate::AppState>()
+            .xplane
+            .lock()
+            .map_err(|_| "Sperre")?
+            .plugin_zugang();
+        let spiegel = tauri::async_runtime::spawn_blocking(move || {
+            sim_xplane::vermessung::Spiegel::starten_mit(zugang)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        tracing::info!(
+            quelle = spiegel.quelle(),
+            "Flugzeug vermessen: X-Plane verbunden"
+        );
+        // Titel = UI-Name (`acf_ui_name`, wie der Scan ihn aus `acf/_name`
+        // liest), sonst die Beschreibung — mit `acf_descrip` allein fand der
+        // Server nie den passenden Scan (ToLiss, 29.09.2026). Der Pfad ist
+        // `acf_relative_path`.
         let f = Flugzeug {
-            titel: spiegel.flugzeug.descrip.clone(),
+            titel: spiegel.flugzeug.anzeige_titel(),
             icao: spiegel.flugzeug.icao.clone(),
             autor: spiegel.flugzeug.author.clone(),
             pfad: spiegel.flugzeug.relative_path.clone(),
         };
-        (Quelle::XPlane(spiegel), "xplane", f, 0)
+        (Quelle::XPlane(spiegel), "xplane", f, (0, 0))
     } else {
         msfs_starten(&app, &snap).await?
     };
@@ -378,6 +398,7 @@ pub async fn vermessung_starten(
             sim,
             teil,
             l_namen,
+            l_namen_profil,
             flugzeug: flugzeug.clone(),
             rauschen: HashSet::new(),
             anzahl_werte: 0,
@@ -430,36 +451,93 @@ pub async fn vermessung_starten(
 async fn msfs_starten(
     app: &AppHandle,
     snap: &sim_core::SimSnapshot,
-) -> Result<(Quelle, &'static str, Flugzeug, usize), String> {
+) -> Result<(Quelle, &'static str, Flugzeug, (usize, usize)), String> {
     let titel = snap.aircraft_title.clone().unwrap_or_default();
     let icao = snap.aircraft_icao.clone().unwrap_or_default();
+    // Pfad der aircraft.cfg aus `AircraftLoaded` (z. B.
+    // `SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG`): der einzige
+    // stabile Schluessel des Flugzeugs — Titel sind Lackierungen, die ICAO
+    // kommt aus der ATC-Stimme (iFly MAX 8 meldete B738). Bis v1.9.11 wurde er
+    // nicht mitgeschickt, die Messung war nicht eindeutig zuzuordnen.
+    let pfad = cfg_pfad(snap);
     // L:-Namen aus dem Aircraft-Scan — SimConnect kann L:-Variablen nicht
     // aufzählen. Ohne Scan geht es mit B:-Events und Standardwerten weiter.
+    // Der Pfad lässt den Server den Scan über den SimObject-Ordner finden.
     let namen = match crate::bordbuch_token(app) {
-        Some(t) => aeroacars_mqtt::messung::lvar_namen(None, &t, &icao, &titel)
+        Some(t) => aeroacars_mqtt::messung::lvar_namen(None, &t, &icao, &titel, pfad.as_deref())
             .await
             .unwrap_or_default(),
         None => Vec::new(),
     };
     let n = namen.len();
-    {
+    // Dazu immer die L:-Variablen, die der Client selbst in seinen Profilen
+    // liest — so prüft jede Messung die heutige Zuordnung, auch ohne Scan.
+    let profil = {
         let st = app.state::<crate::AppState>();
-        st.msfs.lock().expect("msfs lock").vermessung_starten(namen);
-    }
+        // Ergebnis erst binden: als Schluss-Ausdruck lebte die Sperre
+        // (Temporary) laenger als `st` — Windows-CI E0597 (29.09.2026).
+        let n = st.msfs.lock().expect("msfs lock").vermessung_starten(namen);
+        n
+    };
+    tracing::info!(
+        scan = n,
+        profil,
+        "Flugzeug vermessen: MSFS-Messung mit L:-Namen aus Scan und Client-Profilen"
+    );
     let f = Flugzeug {
         titel: (!titel.is_empty()).then_some(titel),
         icao: (!icao.is_empty()).then_some(icao),
         autor: None,
-        pfad: None,
+        pfad,
     };
-    Ok((Quelle::Msfs, "msfs", f, n))
+    Ok((Quelle::Msfs, "msfs", f, (n, profil)))
+}
+
+/// aircraft.cfg-Pfad des geladenen Flugzeugs (MSFS `AircraftLoaded`),
+/// `None` solange der Simulator ihn noch nicht gemeldet hat.
+fn cfg_pfad(snap: &sim_core::SimSnapshot) -> Option<String> {
+    snap.cockpit_rohwerte
+        .as_ref()
+        .and_then(|r| r.cfg_pfad.as_deref())
+        .filter(|p| !p.trim().is_empty())
+        .map(pfad_kuerzen)
+}
+
+/// Cloud-QS 29.09.2026 (P2): MSFS meldet auch absolute Pfade
+/// (`C:\Users\…\LocalCache\Packages\Community\…`). Der Server nahm
+/// bis 300 Zeichen an und lehnte darüber die GANZE Messung ab. Alles vor
+/// `SimObjects` ist Installationsort und trägt keine Identität; bleibt es
+/// danach zu lang, zählen die letzten 300 Zeichen (dort steht der Ordner).
+fn pfad_kuerzen(p: &str) -> String {
+    let ab = match p.to_ascii_lowercase().find("simobjects") {
+        Some(i) => &p[i..],
+        None => p,
+    };
+    let n = ab.chars().count();
+    if n > 300 {
+        ab.chars().skip(n - 300).collect()
+    } else {
+        ab.to_string()
+    }
+}
+
+/// Pfad für die Scan-Namen-Abfrage der Startseite: nur, wenn der aktuelle
+/// Snapshot dasselbe Flugzeug zeigt, nach dem die Oberfläche fragt (gleicher
+/// Titel). Sonst — Flugzeugwechsel zwischen Anzeige und Abfrage — lieber
+/// ohne Pfad fragen als den Ordner eines anderen Flugzeugs mitschicken.
+fn cfg_pfad_fuer_titel(snap: &sim_core::SimSnapshot, titel: &str) -> Option<String> {
+    let t = snap.aircraft_title.as_deref().unwrap_or_default().trim();
+    if t.is_empty() || t != titel.trim() {
+        return None;
+    }
+    cfg_pfad(snap)
 }
 
 #[cfg(not(target_os = "windows"))]
 async fn msfs_starten(
     _app: &AppHandle,
     _snap: &sim_core::SimSnapshot,
-) -> Result<(Quelle, &'static str, Flugzeug, usize), String> {
+) -> Result<(Quelle, &'static str, Flugzeug, (usize, usize)), String> {
     Err("MSFS gibt es nur unter Windows.".into())
 }
 
@@ -605,6 +683,12 @@ fn bericht(s: &Sitzung) -> serde_json::Value {
             b["abo"] = v;
         }
     }
+    // MSFS: L:-Variablen aus den Client-Profilen (29.09.2026). Der Server
+    // (Zod-Objekt ohne `.strict()`) verwirft das Feld heute still, lehnt die
+    // Messung aber nicht ab; die lokale Kopie behält es.
+    if s.sim == "msfs" {
+        b["l_namen_profil"] = s.l_namen_profil.into();
+    }
     b
 }
 
@@ -672,7 +756,10 @@ pub async fn vermessung_scan_namen(
     titel: String,
 ) -> Result<usize, String> {
     let token = crate::bordbuch_token(&app).ok_or("Nicht angemeldet")?;
-    aeroacars_mqtt::messung::lvar_namen(None, &token, &icao, &titel)
+    // Den aircraft.cfg-Pfad kennt die Oberfläche nicht — er kommt aus dem
+    // aktuellen Snapshot, sofern der dasselbe Flugzeug zeigt.
+    let pfad = crate::current_snapshot(&app).and_then(|s| cfg_pfad_fuer_titel(&s, &titel));
+    aeroacars_mqtt::messung::lvar_namen(None, &token, &icao, &titel, pfad.as_deref())
         .await
         .map(|n| n.len())
         .map_err(|e| e.to_string())
@@ -855,6 +942,60 @@ mod tests {
         assert_eq!(r[1].as_deref(), Some("FbwA32nx"));
         assert_eq!(r[2], None, "Asobo = nur Standard");
         assert_eq!(r[3].as_deref(), Some("IniA350"), "irgendein Titel genügt");
+    }
+
+    /// Die Startseite fragt die Scan-Namen mit dem aircraft.cfg-Pfad ab —
+    /// aber nur, wenn der Snapshot dasselbe Flugzeug zeigt.
+    #[test]
+    fn scan_abfrage_nimmt_den_pfad_nur_zum_gleichen_titel() {
+        let mut snap = sim_core::SimSnapshot::default();
+        snap.aircraft_title = Some("ifly-aircraft-737max8-TUI DAMAH-189Seats".into());
+        assert_eq!(
+            cfg_pfad_fuer_titel(&snap, "ifly-aircraft-737max8-TUI DAMAH-189Seats"),
+            None,
+            "noch kein AircraftLoaded"
+        );
+        let pfad = r"SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG";
+        snap.cockpit_rohwerte = Some(sim_core::CockpitRohwerte {
+            cfg_pfad: Some(pfad.into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            cfg_pfad_fuer_titel(&snap, " ifly-aircraft-737max8-TUI DAMAH-189Seats ").as_deref(),
+            Some(pfad)
+        );
+        assert_eq!(
+            cfg_pfad_fuer_titel(&snap, "FenixA320 CFM SL"),
+            None,
+            "anderes Flugzeug"
+        );
+        snap.cockpit_rohwerte = Some(sim_core::CockpitRohwerte {
+            cfg_pfad: Some("  ".into()),
+            ..Default::default()
+        });
+        assert_eq!(cfg_pfad(&snap), None, "leerer Pfad zählt nicht");
+    }
+
+    #[test]
+    fn langer_pfad_wird_ab_simobjects_gekuerzt() {
+        let lang = format!(
+            r"C:\Users\{}\AppData\Local\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalCache\Packages\Community\pkg\SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG",
+            "x".repeat(300)
+        );
+        assert_eq!(
+            pfad_kuerzen(&lang),
+            r"SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG"
+        );
+        let ohne = format!("{}/X/aircraft.cfg", "ä".repeat(400));
+        let k = pfad_kuerzen(&ohne);
+        assert_eq!(
+            k.chars().count(),
+            300,
+            "Mehrbyte-Zeichen, kein Panik-Schnitt"
+        );
+        assert!(k.ends_with("/X/aircraft.cfg"));
+        let kurz = r"SimObjects\Airplanes\A\aircraft.cfg";
+        assert_eq!(pfad_kuerzen(kurz), kurz);
     }
 
     #[test]

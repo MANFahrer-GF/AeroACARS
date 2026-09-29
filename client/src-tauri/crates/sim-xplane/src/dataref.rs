@@ -240,6 +240,36 @@ pub enum FieldId {
     /// January 1st at the user's location"). Ein Tag Versatz um Mitternacht
     /// ist fuer den Sonnenstand belanglos (Deklination ±0,4°/Tag).
     LocalDateDays,
+    // ---- X-Plane-Luecken (Vergleich mit vmsACARS, 29.09.2026) ----
+    /// `sim/time/sim_speed` — Zeitraffer (int, „1 = realtime, 2 = 2x,
+    /// 0 = paused"). Fuellt `simulation_rate`.
+    SimSpeed,
+    /// `sim/time/ground_speed_flt` — Multiplikator auf die zurueckgelegte
+    /// Strecke („faster travel via double-distance"), unabhaengig vom
+    /// Zeitraffer. Geht mit in `simulation_rate`.
+    GroundSpeedFactor,
+    /// `sim/flightmodel2/misc/has_crashed` — int boolean, „True if the
+    /// aircraft is in a crashed state". Fuellt `crashed` (nur Flanke).
+    HasCrashed,
+    /// `sim/cockpit2/radios/actuators/transponder_code` — int, 0000-7777.
+    TransponderCode,
+    /// `sim/aircraft/controls/acf_flap_detents` — Rastenzahl des
+    /// Klappenhebels laut Flugzeugdatei (int).
+    FlapDetents,
+    /// `sim/aircraft/prop/acf_en_type[0]` — Triebwerksart (Enum): nur
+    /// Turbinen melden N1 (wie `TURB ENG N1` bei MSFS).
+    EngineType,
+    /// `sim/flightmodel/engine/ENGN_N1_[n]` — N1 in Prozent je Triebwerk.
+    Eng1N1,
+    Eng2N1,
+    Eng3N1,
+    Eng4N1,
+    /// `sim/flightmodel/engine/ENGN_FF_[n]` — Kraftstofffluss in kg/s je
+    /// Triebwerk.
+    Eng1FuelFlow,
+    Eng2FuelFlow,
+    Eng3FuelFlow,
+    Eng4FuelFlow,
 }
 
 /// One row in the catalog: a DataRef name + which snapshot field it
@@ -386,8 +416,11 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::GearNormalForceN,
     },
     DatarefEntry {
-        // 0..1 ratio
-        name: "sim/cockpit2/controls/parking_brake_ratio",
+        // 0..1 ratio (DataRefs.txt 12.4.3: „float [0..1] Parking Brake,
+        // 1 = max"). Live-Befund 29.09.2026: X-Plane protokolliert fuer den
+        // frueheren `sim/cockpit2/controls/parking_brake_ratio` „has been
+        // replaced" — dort steht er als REPLACED, dies ist der Nachfolger.
+        name: "sim/flightmodel/controls/parkbrake",
         field: FieldId::ParkingBrake,
     },
     // --- Gear / flaps (just gear[0] = nose-gear deploy ratio 0..1).
@@ -791,6 +824,65 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/time/local_date_days",
         field: FieldId::LocalDateDays,
     },
+    // ---- X-Plane-Luecken (29.09.2026) — alles Kern-Datarefs, Namen, Typen
+    // und Einheiten aus DataRefs.txt (X-Plane 12.4.3), keiner REPLACED.
+    // Kern-Namen liefert jedes Flugzeug (keine `addon_quelle`).
+    DatarefEntry {
+        name: "sim/time/sim_speed",
+        field: FieldId::SimSpeed,
+    },
+    DatarefEntry {
+        name: "sim/time/ground_speed_flt",
+        field: FieldId::GroundSpeedFactor,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel2/misc/has_crashed",
+        field: FieldId::HasCrashed,
+    },
+    DatarefEntry {
+        name: "sim/cockpit2/radios/actuators/transponder_code",
+        field: FieldId::TransponderCode,
+    },
+    DatarefEntry {
+        name: "sim/aircraft/controls/acf_flap_detents",
+        field: FieldId::FlapDetents,
+    },
+    DatarefEntry {
+        name: "sim/aircraft/prop/acf_en_type[0]",
+        field: FieldId::EngineType,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_N1_[0]",
+        field: FieldId::Eng1N1,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_N1_[1]",
+        field: FieldId::Eng2N1,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_N1_[2]",
+        field: FieldId::Eng3N1,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_N1_[3]",
+        field: FieldId::Eng4N1,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_FF_[0]",
+        field: FieldId::Eng1FuelFlow,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_FF_[1]",
+        field: FieldId::Eng2FuelFlow,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_FF_[2]",
+        field: FieldId::Eng3FuelFlow,
+    },
+    DatarefEntry {
+        name: "sim/flightmodel/engine/ENGN_FF_[3]",
+        field: FieldId::Eng4FuelFlow,
+    },
 ];
 
 /// v0.16.9: body-frame horizontal velocity, derived from the WORLD-frame
@@ -1015,6 +1107,28 @@ pub struct XPlaneState {
     pub a333_alt_rpt_knob: Option<f32>,
     pub zulu_time_sec: Option<f32>,
     pub local_date_days: Option<f32>,
+    // ---- X-Plane-Luecken (29.09.2026). `None` = noch nicht geliefert.
+    /// `sim/time/sim_speed` (1 = Echtzeit).
+    pub sim_speed: Option<f32>,
+    /// `sim/time/ground_speed_flt` (1 = normale Strecke).
+    pub ground_speed_faktor: Option<f32>,
+    /// Letzter Rohwert von `has_crashed`.
+    pub has_crashed_roh: Option<bool>,
+    /// `has_crashed` war seit dem letzten Verbindungsaufbau schon einmal 0.
+    /// Erst danach zaehlt eine 1 als Absturz — ein Flugzeug, das beim
+    /// Verbinden (oder nach dem Laden) schon im Absturzzustand steht, loest
+    /// keinen Unfall im laufenden Flug aus.
+    pub crash_scharf: bool,
+    /// Absturz ueber die Flanke 0 → 1 erkannt; faellt mit `has_crashed` = 0
+    /// (neuer Flug / Flugzeug neu geladen) wieder ab.
+    pub crashed: bool,
+    pub transponder_code: Option<f32>,
+    pub flap_detents: Option<f32>,
+    pub engine_type: Option<f32>,
+    /// `ENGN_N1_[0..3]` in Prozent.
+    pub eng_n1_pct: [Option<f32>; 4],
+    /// `ENGN_FF_[0..3]` in kg/s.
+    pub eng_ff_kg_s: [Option<f32>; 4],
     /// True once we've received at least one RREF packet — drives
     /// the connection state machine's transition into `Connected`.
     pub got_first_packet: bool,
@@ -1085,6 +1199,82 @@ fn schalter_0_1_2(roh: f32) -> Option<u8> {
     let r = roh.round();
     ((roh - r).abs() < 0.05 && (0.0..=2.0).contains(&r)).then_some(r as u8)
 }
+
+/// Zeitraffer in der Semantik von MSFS `SIMULATION RATE` (1.0 = Echtzeit):
+/// eingestellter Zeitraffer `sim/time/sim_speed` mal Strecken-Multiplikator
+/// `sim/time/ground_speed_flt`. X-Plane hat zwei Beschleuniger — der zweite
+/// laesst das Flugzeug bei Zeitraffer 1 doppelt so weit kommen und waere sonst
+/// unsichtbar (Cloud-QS 29.09.2026, N2).
+///
+/// Bewusst der Sollwert, nicht `sim/time/sim_speed_actual` (DataRefs.txt
+/// 3557, „takes into account fps limiting"): der schwankt mit der Bildrate
+/// und laege bei Echtzeit und wenig fps unter 1 — Rauschen, das jede
+/// Pruefung auf „≠ 1" ausloeste. MSFS meldet ebenfalls den Sollwert.
+///
+/// Fehlt ein Wert oder steht er auf 0 (`sim_speed` 0 = „paused" laut
+/// DataRefs.txt, die Pause meldet `sim/time/paused`; unter X-Plane 11 kann
+/// `ground_speed_flt` fehlen), zaehlt er als 1.
+fn sim_rate_aus(sim_speed: Option<f32>, ground_speed: Option<f32>) -> f32 {
+    let faktor = |v: Option<f32>| v.filter(|x| x.is_finite() && *x > 0.0).unwrap_or(1.0);
+    faktor(sim_speed) * faktor(ground_speed)
+}
+
+/// Squawk aus `transponder_code` (int 0000-7777) — dieselbe Form wie der
+/// MSFS-Pfad (`7000` = Squawk 7000). Nur Werte, deren vier Ziffern oktal
+/// sind; alles andere ist kein Transpondercode.
+fn squawk_aus(roh: Option<f32>) -> Option<u16> {
+    let v = roh.filter(|v| v.is_finite())?.round();
+    if !(0.0..=7777.0).contains(&v) {
+        return None;
+    }
+    let code = v as u16;
+    let oktal = [code / 1000, (code / 100) % 10, (code / 10) % 10, code % 10]
+        .iter()
+        .all(|z| *z <= 7);
+    oktal.then_some(code)
+}
+
+/// Klappenraste wie der MSFS-Pfad (`FLAPS HANDLE INDEX` /
+/// `FLAPS NUM HANDLE POSITIONS`): Index 0 = UP, Anzahl = hoechster Index.
+/// X-Plane legt die Rasten gleichmaessig ueber den Hebelweg
+/// (`flap_handle_request_ratio` 0..1), Raste i steht bei i / Rasten.
+///
+/// Gemessen 29.09.2026 (X-Plane 12.4.3, Laminar Boeing 737-800, Hebel
+/// UP → 40 → UP, Sonde ueber Plugin-Protokoll 2): `acf_flap_detents` = 8,
+/// Hebel genau 0 / 0,125 / … / 0,875 / 1,0 fuer UP/1/2/5/10/15/25/30/40,
+/// Rueckweg identisch. `flap_handle_deploy_ratio` und `flap1_deploy_ratio`
+/// laufen verzoegert hinterher (0,263 bzw. 0,133 beim Erreichen von 40) —
+/// der Hebel ist die richtige Quelle.
+/// 0 Rasten (stufenlose Klappen) oder unplausible Werte → `None`, dann
+/// greift wie bisher die Prozent-Heuristik.
+fn klappen_raste(hebel: f32, rasten: Option<f32>) -> (Option<u8>, Option<u8>) {
+    let Some(n) = rasten.filter(|v| v.is_finite()).map(|v| v.round() as i64) else {
+        return (None, None);
+    };
+    if !(1..=12).contains(&n) || !hebel.is_finite() {
+        return (None, None);
+    }
+    let idx = (hebel.clamp(0.0, 1.0) * n as f32).round() as i64;
+    if (0..=n).contains(&idx) {
+        (Some(idx as u8), Some(n as u8))
+    } else {
+        (None, None)
+    }
+}
+
+/// Turbine laut `acf_en_type` (DataRefs.txt: 5 = single spool jet,
+/// 7 = multi spool jet, 9 = free turboprop, 10 = fixed turboprop). Nur
+/// dort ist N1 eine Schubangabe — wie `TURB ENG N1` bei MSFS, das Kolben-
+/// und Elektromotoren nicht fuellen.
+fn ist_turbine(en_type: Option<f32>) -> bool {
+    en_type
+        .filter(|v| v.is_finite())
+        .is_some_and(|v| matches!(v.round() as i32, 5 | 7 | 9 | 10))
+}
+
+/// Kilogramm je Pfund (wie `KG_PER_LB` im MSFS-Adapter), fuer
+/// `EngineSignals::fuel_flow_pph`.
+const KG_JE_LB: f64 = 0.453_592_37;
 
 /// `speedbrake_ratio` unterhalb dieses Werts = SPEED BRAKE ARMED. Laut
 /// DataRefs.txt steht ARMED auf -0.5; die halbe Strecke faengt Rundung ab.
@@ -1231,6 +1421,33 @@ impl XPlaneState {
         }
     }
 
+    /// Wie [`Self::apply_field`], aber mit `f64` — fuer das Plugin
+    /// (Protokoll 2), das `double`-Datarefs in voller Genauigkeit liefert.
+    /// Position und Hoehen behalten sie bis in den Schnappschuss (RREF:
+    /// `float32`, Breite/Laenge auf ≈ 0,5 m gerundet); alle anderen Felder
+    /// sind ohnehin `f32` und gehen den gewohnten Weg.
+    pub fn apply_field_f64(&mut self, field: FieldId, value: f64) {
+        match field {
+            FieldId::Latitude => {
+                self.got_first_packet = true;
+                self.lat = value;
+            }
+            FieldId::Longitude => {
+                self.got_first_packet = true;
+                self.lon = value;
+            }
+            FieldId::AltitudeMslFt => {
+                self.got_first_packet = true;
+                self.altitude_msl_m = value * 0.3048;
+            }
+            FieldId::AltitudeAglFt => {
+                self.got_first_packet = true;
+                self.altitude_agl_m = value;
+            }
+            _ => self.apply_field(field, value as f32),
+        }
+    }
+
     /// Apply one decoded value to its `FieldId`.
     ///
     /// v0.12.2: the caller (the UDP listener) resolves the RREF index →
@@ -1345,6 +1562,29 @@ impl XPlaneState {
             FieldId::A333AltRptKnob => self.a333_alt_rpt_knob = Some(value),
             FieldId::ZuluTimeSec => self.zulu_time_sec = Some(value),
             FieldId::LocalDateDays => self.local_date_days = Some(value),
+            FieldId::SimSpeed => self.sim_speed = Some(value),
+            FieldId::GroundSpeedFactor => self.ground_speed_faktor = Some(value),
+            FieldId::HasCrashed => {
+                let roh = value > 0.5;
+                if !roh {
+                    self.crash_scharf = true;
+                    self.crashed = false;
+                } else if self.crash_scharf {
+                    self.crashed = true;
+                }
+                self.has_crashed_roh = Some(roh);
+            }
+            FieldId::TransponderCode => self.transponder_code = Some(value),
+            FieldId::FlapDetents => self.flap_detents = Some(value),
+            FieldId::EngineType => self.engine_type = Some(value),
+            FieldId::Eng1N1 => self.eng_n1_pct[0] = Some(value),
+            FieldId::Eng2N1 => self.eng_n1_pct[1] = Some(value),
+            FieldId::Eng3N1 => self.eng_n1_pct[2] = Some(value),
+            FieldId::Eng4N1 => self.eng_n1_pct[3] = Some(value),
+            FieldId::Eng1FuelFlow => self.eng_ff_kg_s[0] = Some(value),
+            FieldId::Eng2FuelFlow => self.eng_ff_kg_s[1] = Some(value),
+            FieldId::Eng3FuelFlow => self.eng_ff_kg_s[2] = Some(value),
+            FieldId::Eng4FuelFlow => self.eng_ff_kg_s[3] = Some(value),
         }
     }
 
@@ -1413,6 +1653,61 @@ impl XPlaneState {
         let (wind_gegen, wind_seitlich) =
             wind_body_kt(self.wind_x_ms, self.wind_z_ms, self.heading_true_deg);
 
+        // Klappenraste nur mit dem Standard-Hebel: der Zibo-Hebel hat eine
+        // eigene Skala; Profile mit eigener Klappenquelle (CL650, MD-11)
+        // raeumt `XPlaneAdapter::snapshot` ab.
+        let (flap_handle_index, flap_num_positions) = if self.b738_flap_lever.is_some() {
+            (None, None)
+        } else {
+            klappen_raste(self.flaps_handle, self.flap_detents)
+        };
+
+        // Triebwerke: N1 (%) und Kraftstofffluss (kg/s → kg/h) je Triebwerk.
+        // Das Urteil `engines_running` bleibt allein bei `ENGN_running`
+        // (Lehre PC-12, 16.09.2026) — N1 und Fluss sind nur Beleg und Anzeige.
+        let wert = |v: Option<f32>| v.filter(|x| x.is_finite()).map_or(0.0, f64::from);
+        let n1: [f64; 4] = self.eng_n1_pct.map(wert);
+        let ff_kg_h: [f64; 4] = self.eng_ff_kg_s.map(|v| wert(v) * 3600.0);
+        let laeuft = [
+            self.eng1_running,
+            self.eng2_running,
+            self.eng3_running,
+            self.eng4_running,
+        ];
+        // Wie der MSFS-Pfad: Praefix 1..k bis zum hoechsten Triebwerk, das
+        // laeuft oder > 5 % N1 hat; ohne ein Triebwerk ≥ 5 % kein Wert. Nur
+        // Turbinen — Kolben-/Elektromotoren liefern wie bei MSFS kein N1.
+        let eng_n1_pct: Option<Vec<f64>> = if ist_turbine(self.engine_type) {
+            let k = (0..4)
+                .filter(|&i| laeuft[i] || n1[i] > 5.0)
+                .map(|i| i + 1)
+                .max()
+                .unwrap_or(0);
+            let lebt = n1[..k].iter().cloned().fold(0.0_f64, f64::max) >= 5.0;
+            (k > 0 && lebt).then(|| n1[..k].to_vec())
+        } else {
+            None
+        };
+        let ff_summe_kg_h: f64 = ff_kg_h.iter().sum();
+        let fuel_flow_kg_per_h = (ff_summe_kg_h > 0.0).then_some(ff_summe_kg_h as f32);
+        let engine_signals = (self.eng_n1_pct.iter().any(Option::is_some)
+            || self.eng_ff_kg_s.iter().any(Option::is_some))
+        .then(|| sim_core::EngineSignals {
+            // Die beiden Combustion-Schalter gibt es nur bei MSFS.
+            general_combustion: Vec::new(),
+            combustion_ex1: Vec::new(),
+            // X-Plane `ENGN_running` („engine on and using fuel").
+            eng_combustion: laeuft.to_vec(),
+            // N1 nur bei Turbinen (dieselbe Pruefung wie `eng_n1_pct`); bei
+            // Kolben-/Elektromotoren leer — der Monitor zeigt dann kein N1.
+            n1_pct: if ist_turbine(self.engine_type) {
+                n1.to_vec()
+            } else {
+                Vec::new()
+            },
+            fuel_flow_pph: ff_kg_h.iter().map(|kg| kg / KG_JE_LB).collect(),
+        });
+
         SimSnapshot {
             timestamp: chrono::Utc::now(),
             lat: self.lat,
@@ -1453,11 +1748,12 @@ impl XPlaneState {
             // Zweiter G-Kanal gibt es nur unter MSFS (Lernpaket AP1a).
             g_semibody: None,
             on_ground: self.on_ground,
-            // v0.7.19: X-Plane setzt `crashed` in v0.7.19 NICHT (kein
-            // verifizierter Crash-DataRef). Die gemeinsame Heuristik
-            // greift bei harten Aufschlaegen. Spec §Leitentscheidung 3.
-            crashed: false,
-            crash_source: None,
+            // `sim/flightmodel2/misc/has_crashed` (29.09.2026), nur die Flanke
+            // 0 → 1 (siehe `crash_scharf`) und nie im Replay. Die gemeinsame
+            // Heuristik greift weiter bei harten Aufschlaegen.
+            crashed: self.crashed && !self.sim_in_replay,
+            crash_source: (self.crashed && !self.sim_in_replay)
+                .then(|| "xplane_crash_dataref".to_string()),
             gear_normal_force_n: Some(self.gear_normal_force_n),
             parking_brake: self.parking_brake_ratio > 0.5,
             stall_warning: self.stall_warning,
@@ -1468,15 +1764,15 @@ impl XPlaneState {
             // also fuer beide Faelle und der Pause-Akkumulator zaehlt.
             paused: self.sim_paused || self.sim_in_replay,
             slew_mode: false,
-            simulation_rate: 1.0,
+            // Zeitraffer × Strecken-Multiplikator, Semantik wie MSFS.
+            simulation_rate: sim_rate_aus(self.sim_speed, self.ground_speed_faktor),
             gear_position: self.gear_deploy,
             // Zibo: eigener Klappenhebel, sobald er ankommt; sonst der
             // Standard-Hebel (`flap_handle_request_ratio`, 0..1).
             flaps_position: self.b738_flap_lever.unwrap_or(self.flaps_handle),
-            // v1.5.3: Rasterindex/-anzahl sind MSFS-SimVars; X-Plane
-            // bleibt bei der Prozent-Heuristik (None -> alter Pfad).
-            flap_handle_index: None,
-            flap_num_positions: None,
+            // Raste aus Hebel + `acf_flap_detents` (siehe `klappen_raste`).
+            flap_handle_index,
+            flap_num_positions,
             engines_running: [
                 self.eng1_running,
                 self.eng2_running,
@@ -1535,14 +1831,15 @@ impl XPlaneState {
             },
             empty_weight_kg: oew,
             aircraft_title: None,
+            aircraft_ui_name: None,
             aircraft_icao: None,
             aircraft_registration: None,
             simulator,
             sim_version: None,
-            // Avionics — X-Plane exposes COM/NAV via separate
-            // DataRefs but addons disagree on conventions; keep
-            // None for Phase 2, revisit if a payware author asks.
-            transponder_code: None,
+            // Squawk aus `sim/cockpit2/radios/actuators/transponder_code`
+            // (derselbe Dataref wie im Telemetrie-Monitor). COM/NAV bleiben
+            // offen — Add-ons sind sich bei den Konventionen uneins.
+            transponder_code: squawk_aus(self.transponder_code),
             com1_mhz: None,
             com2_mhz: None,
             nav1_mhz: None,
@@ -1599,7 +1896,9 @@ impl XPlaneState {
                 None
             },
             autothrottle_is_arm: false,
-            fuel_flow_kg_per_h: None,
+            // Summe `ENGN_FF_` (kg/s → kg/h). 0 → None, dann leitet der
+            // Positions-Takt den Fluss wie bisher aus dem FOB-Verlauf ab.
+            fuel_flow_kg_per_h,
             // `speedbrake_ratio` meldet ARMED als -0.5 — als Stellung
             // ist das „eingefahren", als Zustand „scharf".
             spoilers_handle_position: Some(self.spoilers_handle.max(0.0)),
@@ -1739,7 +2038,7 @@ impl XPlaneState {
             managed_altitude: None,
             reverser_deployed: None,
             ground_spoilers_active: None,
-            eng_n1_pct: None,
+            eng_n1_pct,
             baro_std: None,
             fuel_per_tank_kg: None,
             below_gs_alert: None,
@@ -1750,7 +2049,7 @@ impl XPlaneState {
             // Streamer (post-Engine) — Adapter liefern immer None.
             shadow_phase: None,
             shadow_segment: None,
-            engine_signals: None,
+            engine_signals,
             // MSFS-Diagnosekanal (Audit 26.09.2026) — X-Plane fuellt ihn nicht.
             cockpit_rohwerte: None,
         }
@@ -2583,5 +2882,371 @@ mod pruefbericht_2026_09_26 {
             "sim/flightmodel/position/mag_psi"
         );
         assert!(!CATALOG.iter().any(|e| e.name.ends_with("/magpsi")));
+    }
+}
+
+#[cfg(test)]
+mod doppelt_genau_tests {
+    use super::*;
+
+    /// Protokoll 2 liefert `double`: Breite/Laenge bleiben bis in den
+    /// Schnappschuss genau (RREF-`float32` rundet auf ≈ 0,5 m).
+    #[test]
+    fn position_behaelt_volle_genauigkeit() {
+        let mut s = XPlaneState::default();
+        s.apply_field_f64(FieldId::Latitude, 51.234_567_891_2);
+        s.apply_field_f64(FieldId::Longitude, -8.765_432_109_8);
+        s.apply_field_f64(FieldId::AltitudeAglFt, 12.345_678_9);
+        assert!(s.got_first_packet);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.lat, 51.234_567_891_2);
+        assert_eq!(snap.lon, -8.765_432_109_8);
+        // float32 haette hier schon in der 6. Nachkommastelle abgewichen.
+        assert_ne!((51.234_567_891_2_f64 as f32) as f64, snap.lat);
+        // Uebrige Felder gehen den f32-Weg.
+        s.apply_field_f64(FieldId::OnGround, 1.0);
+        assert!(s.on_ground);
+    }
+}
+
+// ---- X-Plane-Luecken (Vergleich mit vmsACARS, 29.09.2026) ----
+#[cfg(test)]
+mod xplane_luecken_tests {
+    use super::*;
+
+    fn name_fuer(feld: FieldId) -> &'static str {
+        CATALOG
+            .iter()
+            .find(|e| e.field == feld)
+            .map(|e| e.name)
+            .expect("Feld im Katalog")
+    }
+
+    /// Zeilen aus DataRefs.txt (X-Plane 12.4.3), von Hand kopiert: Name,
+    /// Typ, Einheit. Keine davon ist dort als REPLACED markiert. Der Katalog
+    /// muss genau diese Namen treffen (ohne `[n]`), Arrays nur mit Index
+    /// innerhalb der Laenge, Skalare ohne Index.
+    const AUS_DATAREFS_TXT: &[(&str, &str, &str)] = &[
+        ("sim/flightmodel/controls/parkbrake", "float", "[0..1]"), // 1053
+        ("sim/time/sim_speed", "int", "ratio"),                    // 3556
+        ("sim/time/ground_speed_flt", "float", "ratio"),           // 3560
+        ("sim/flightmodel2/misc/has_crashed", "int", "boolean"),   // 5560
+        (
+            "sim/cockpit2/radios/actuators/transponder_code",
+            "int",
+            "transponder_code",
+        ), // 4647
+        ("sim/aircraft/controls/acf_flap_detents", "int", ""),     // 331
+        ("sim/aircraft/prop/acf_en_type", "int[16]", "enum"),      // 218
+        ("sim/flightmodel/engine/ENGN_N1_", "float[16]", "percent"), // 1490
+        ("sim/flightmodel/engine/ENGN_FF_", "float[16]", "kg/s"),  // 1485
+    ];
+
+    #[test]
+    fn namen_aus_datarefs_txt() {
+        let neu = [
+            FieldId::ParkingBrake,
+            FieldId::SimSpeed,
+            FieldId::GroundSpeedFactor,
+            FieldId::HasCrashed,
+            FieldId::TransponderCode,
+            FieldId::FlapDetents,
+            FieldId::EngineType,
+            FieldId::Eng1N1,
+            FieldId::Eng2N1,
+            FieldId::Eng3N1,
+            FieldId::Eng4N1,
+            FieldId::Eng1FuelFlow,
+            FieldId::Eng2FuelFlow,
+            FieldId::Eng3FuelFlow,
+            FieldId::Eng4FuelFlow,
+        ];
+        for f in neu {
+            let name = name_fuer(f);
+            let (grund, index) = match name.split_once('[') {
+                Some((g, rest)) => (
+                    g,
+                    rest.strip_suffix(']').map(|i| i.parse::<usize>().unwrap()),
+                ),
+                None => (name, None),
+            };
+            let (_, typ, _) = AUS_DATAREFS_TXT
+                .iter()
+                .find(|(n, _, _)| *n == grund)
+                .unwrap_or_else(|| panic!("{name} steht nicht in DataRefs.txt"));
+            match (typ.split_once('['), index) {
+                (Some((_, laenge)), Some(i)) => {
+                    let laenge: usize = laenge.trim_end_matches(']').parse().unwrap();
+                    assert!(i < laenge, "{name}: Index jenseits {laenge}");
+                }
+                (None, None) => {}
+                _ => panic!("{name}: Index passt nicht zum Typ {typ}"),
+            }
+            // Kern-Datarefs: keine Add-on-Quelle, gelten ohne Web-API-Beleg.
+            assert!(!addon_quelle(f), "{f:?}");
+        }
+        // Der REPLACED-Name (4099) ist raus.
+        assert!(!CATALOG
+            .iter()
+            .any(|e| e.name == "sim/cockpit2/controls/parking_brake_ratio"));
+    }
+
+    #[test]
+    fn feststellbremse_schwelle_bleibt() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ParkingBrake, 0.4);
+        assert!(!s.to_snapshot(Simulator::XPlane12).parking_brake);
+        s.apply_field(FieldId::ParkingBrake, 1.0);
+        assert!(s.to_snapshot(Simulator::XPlane12).parking_brake);
+    }
+
+    #[test]
+    fn zeitraffer_wie_msfs() {
+        let mut s = XPlaneState::default();
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).simulation_rate,
+            1.0,
+            "ohne Wert Echtzeit"
+        );
+        s.apply_field(FieldId::SimSpeed, 4.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 4.0);
+        // 0 = „paused" laut DataRefs.txt — die Pause meldet `sim/time/paused`.
+        s.apply_field(FieldId::SimSpeed, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 1.0);
+        s.apply_field(FieldId::SimSpeed, f32::NAN);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 1.0);
+        // Strecken-Multiplikator: bei Zeitraffer 1 doppelt so weit.
+        s.apply_field(FieldId::SimSpeed, 1.0);
+        s.apply_field(FieldId::GroundSpeedFactor, 2.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 2.0);
+        s.apply_field(FieldId::SimSpeed, 4.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 8.0);
+        // XP11/RREF ohne den Dataref: 0 → zaehlt als 1.
+        s.apply_field(FieldId::GroundSpeedFactor, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 4.0);
+    }
+
+    /// Nur die Flanke 0 → 1 ist ein Absturz. Ein Flugzeug, das beim
+    /// Verbinden schon im Absturzzustand steht (oder so geladen wird), loest
+    /// nichts aus; nach dem Neuladen (0) faellt der Zustand ab.
+    #[test]
+    fn absturz_nur_ueber_die_flanke() {
+        let mut s = XPlaneState::default();
+        let snap = |s: &XPlaneState| s.to_snapshot(Simulator::XPlane12);
+        assert!(!snap(&s).crashed);
+        s.apply_field(FieldId::HasCrashed, 1.0);
+        assert!(!snap(&s).crashed, "schon beim Verbinden abgestuerzt");
+        assert_eq!(snap(&s).crash_source, None);
+        s.apply_field(FieldId::HasCrashed, 0.0);
+        assert!(!snap(&s).crashed);
+        s.apply_field(FieldId::HasCrashed, 1.0);
+        let a = snap(&s);
+        assert!(a.crashed);
+        assert_eq!(a.crash_source.as_deref(), Some("xplane_crash_dataref"));
+        // Im Replay kein Absturz des laufenden Flugs.
+        s.apply_field(FieldId::SimInReplay, 1.0);
+        assert!(!snap(&s).crashed);
+        s.apply_field(FieldId::SimInReplay, 0.0);
+        assert!(snap(&s).crashed);
+        // Neu geladen.
+        s.apply_field(FieldId::HasCrashed, 0.0);
+        assert!(!snap(&s).crashed);
+        assert_eq!(snap(&s).crash_source, None);
+    }
+
+    #[test]
+    fn squawk_wie_msfs() {
+        let mut s = XPlaneState::default();
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).transponder_code, None);
+        s.apply_field(FieldId::TransponderCode, 7000.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).transponder_code,
+            Some(7000)
+        );
+        s.apply_field(FieldId::TransponderCode, 2573.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).transponder_code,
+            Some(2573)
+        );
+        // Keine oktalen Ziffern bzw. ausserhalb 0000-7777: kein Squawk.
+        for roh in [2583.0, 8000.0, -1.0, 12000.0, f32::NAN] {
+            s.apply_field(FieldId::TransponderCode, roh);
+            assert_eq!(
+                s.to_snapshot(Simulator::XPlane12).transponder_code,
+                None,
+                "{roh}"
+            );
+        }
+    }
+
+    /// Messung 29.09.2026, X-Plane 12.4.3, Laminar Boeing 737-800 (Thomas,
+    /// Hebel UP → 40 → UP): `acf_flap_detents` = 8, Hebelwerte genau wie hier.
+    /// Ergibt Index 0..8 bei 8 Rasten — im Aktivitaetslog die Boeing-Namen
+    /// UP/1/2/5/10/15/25/30/40 (`raster_flap_label`, Test in der App).
+    #[test]
+    fn klappenraste_laminar_737_gemessen() {
+        const HEBEL: [f32; 9] = [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0];
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::FlapDetents, 8.0);
+        let hin: Vec<(Option<u8>, Option<u8>)> = HEBEL
+            .iter()
+            .map(|&h| {
+                s.apply_field(FieldId::FlapsHandle, h);
+                let a = s.to_snapshot(Simulator::XPlane12);
+                (a.flap_handle_index, a.flap_num_positions)
+            })
+            .collect();
+        let soll: Vec<(Option<u8>, Option<u8>)> = (0..=8u8).map(|i| (Some(i), Some(8))).collect();
+        assert_eq!(hin, soll);
+        // Rueckweg identisch.
+        for (i, &h) in HEBEL.iter().enumerate().rev() {
+            s.apply_field(FieldId::FlapsHandle, h);
+            assert_eq!(
+                s.to_snapshot(Simulator::XPlane12).flap_handle_index,
+                Some(i as u8)
+            );
+        }
+    }
+
+    /// Messung 29.09.2026, X-Plane 12.4.3, Laminar Airbus A330-300 (A333,
+    /// Thomas, Hebel 3× 0 → FULL → 0, alle Durchgaenge gleich):
+    /// `acf_flap_detents` = 4, Hebel genau 0 / 0,25 / 0,5 / 0,75 / 1,0 fuer
+    /// 0/1/2/3/FULL. Keine eigene Raste fuer 1+F (die stellt der A330
+    /// selbst) — Index 0..4 bei 4 Rasten, im Log die 4-Rasten-Airbus-Namen.
+    #[test]
+    fn klappenraste_laminar_a330_gemessen() {
+        const HEBEL: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::FlapDetents, 4.0);
+        for _ in 0..3 {
+            for (i, &h) in HEBEL
+                .iter()
+                .enumerate()
+                .chain(HEBEL.iter().enumerate().rev())
+            {
+                s.apply_field(FieldId::FlapsHandle, h);
+                let a = s.to_snapshot(Simulator::XPlane12);
+                assert_eq!(
+                    (a.flap_handle_index, a.flap_num_positions),
+                    (Some(i as u8), Some(4)),
+                    "Hebel {h}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn klappenraste_aus_hebel_und_rastenzahl() {
+        let mut s = XPlaneState::default();
+        // Ohne Rastenzahl: alter Weg (Prozent-Heuristik).
+        s.apply_field(FieldId::FlapsHandle, 0.25);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!((a.flap_handle_index, a.flap_num_positions), (None, None));
+        // Airbus-Raster: 4 Rasten, Hebel 1/4 = Raste 1.
+        s.apply_field(FieldId::FlapDetents, 4.0);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(
+            (a.flap_handle_index, a.flap_num_positions),
+            (Some(1), Some(4))
+        );
+        s.apply_field(FieldId::FlapsHandle, 1.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).flap_handle_index,
+            Some(4)
+        );
+        // 737: 8 Rasten, Hebel auf 5/8 = Raste 5 (Flaps 15).
+        s.apply_field(FieldId::FlapDetents, 8.0);
+        s.apply_field(FieldId::FlapsHandle, 0.625);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(
+            (a.flap_handle_index, a.flap_num_positions),
+            (Some(5), Some(8))
+        );
+        assert_eq!(a.flaps_position, 0.625, "Stellung unveraendert");
+        // 0 Rasten (stufenlos) → keine Raste, keine Division durch 0.
+        s.apply_field(FieldId::FlapDetents, 0.0);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!((a.flap_handle_index, a.flap_num_positions), (None, None));
+        // Zibo-Hebel mit eigener Skala: keine Raste aus der Flugzeugdatei.
+        s.apply_field(FieldId::FlapDetents, 8.0);
+        s.apply_field(FieldId::B738FlapLever, 0.5);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!((a.flap_handle_index, a.flap_num_positions), (None, None));
+        assert_eq!(a.flaps_position, 0.5);
+    }
+
+    fn zweistrahler(s: &mut XPlaneState, n1: [f32; 2], ff_kg_s: [f32; 2]) {
+        s.apply_field(FieldId::Eng1N1, n1[0]);
+        s.apply_field(FieldId::Eng2N1, n1[1]);
+        s.apply_field(FieldId::Eng3N1, 0.0);
+        s.apply_field(FieldId::Eng4N1, 0.0);
+        s.apply_field(FieldId::Eng1FuelFlow, ff_kg_s[0]);
+        s.apply_field(FieldId::Eng2FuelFlow, ff_kg_s[1]);
+        s.apply_field(FieldId::Eng3FuelFlow, 0.0);
+        s.apply_field(FieldId::Eng4FuelFlow, 0.0);
+    }
+
+    #[test]
+    fn n1_und_kraftstofffluss_je_triebwerk() {
+        let mut s = XPlaneState::default();
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(a.eng_n1_pct, None);
+        assert_eq!(a.fuel_flow_kg_per_h, None);
+        assert!(a.engine_signals.is_none(), "ohne Werte kein Beleg");
+
+        s.apply_field(FieldId::EngineType, 7.0); // multi spool jet
+        s.apply_field(FieldId::Eng1Running, 1.0);
+        s.apply_field(FieldId::Eng2Running, 1.0);
+        zweistrahler(&mut s, [22.5, 21.0], [0.1, 0.12]);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(a.eng_n1_pct, Some(vec![22.5, 21.0]));
+        let summe = a.fuel_flow_kg_per_h.expect("Fluss in kg/h");
+        assert!((summe - 792.0).abs() < 0.01, "{summe}");
+        let sig = a.engine_signals.expect("Beleg je Triebwerk");
+        assert_eq!(sig.n1_pct, vec![22.5, 21.0, 0.0, 0.0]);
+        assert_eq!(sig.eng_combustion, vec![true, true, false, false]);
+        assert!(sig.general_combustion.is_empty() && sig.combustion_ex1.is_empty());
+        // 0,1 kg/s = 360 kg/h = 793,66 lb/h.
+        assert!((sig.fuel_flow_pph[0] - 793.664).abs() < 0.01);
+        assert_eq!(sig.fuel_flow_pph.len(), 4);
+
+        // Kolbenmotor: kein N1 (wie MSFS), auch nicht im Beleg; Fluss bleibt.
+        s.apply_field(FieldId::EngineType, 1.0);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(a.eng_n1_pct, None);
+        assert!(a.fuel_flow_kg_per_h.is_some());
+        let sig = a.engine_signals.expect("Beleg");
+        assert!(sig.n1_pct.is_empty());
+        assert_eq!(sig.fuel_flow_pph.len(), 4);
+    }
+
+    /// PFLICHT (Lehre PC-12, 16.09.2026): Das Urteil „Triebwerk laeuft"
+    /// kommt bei X-Plane allein aus `ENGN_running`. Windmuehlen-N1 am Stand
+    /// und selbst hohes N1 ohne `ENGN_running` aendern es nicht.
+    #[test]
+    fn triebwerk_laeuft_bleibt_bei_engn_running() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::EngineType, 9.0); // free turboprop (PC-12)
+        zweistrahler(&mut s, [0.3, 0.0], [0.0, 0.0]);
+        let a = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(a.engines_running, 0);
+        assert_eq!(a.eng_n1_pct, None, "Windmuehle ist kein Schub");
+        assert_eq!(a.fuel_flow_kg_per_h, None);
+        zweistrahler(&mut s, [45.0, 44.0], [0.0, 0.0]);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).engines_running, 0);
+        s.apply_field(FieldId::Eng1Running, 1.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).engines_running, 1);
+        // Stehendes Triebwerk 2 mit ~0 bleibt positionserhaltend im Praefix.
+        zweistrahler(&mut s, [60.0, 0.25], [0.2, 0.0]);
+        s.apply_field(FieldId::Eng2Running, 0.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).eng_n1_pct,
+            Some(vec![60.0])
+        );
+        s.apply_field(FieldId::Eng2Running, 1.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).eng_n1_pct,
+            Some(vec![60.0, 0.25])
+        );
     }
 }

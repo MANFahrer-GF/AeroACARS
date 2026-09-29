@@ -36,16 +36,51 @@
 //      - XPluginStop unregisters the flight loop, closes the socket,
 //        zeros every DataRef handle. A second XPluginStart afterwards
 //        starts from a known-good slate.
+//      - Seit 1.0.0 (Codex-Abnahme N1): Netz nur, solange das Plugin
+//        AKTIVIERT ist. XPluginEnable öffnet beide Sockets und startet
+//        Protokoll 2, XPluginDisable schließt beide (Port 52001 frei, alte
+//        Datagramme weg, Client und Abos vergessen). Das empfiehlt das SDK
+//        für Netzwerkressourcen; vorher blieb der Port über eine Deaktivierung
+//        hinweg belegt.
 //
 // Wire format: line-delimited JSON over UDP. Every packet is a single line
 // terminated with `\n`. Schema versioned via "v":1. See README.md §"Wire
 // Format" for details.
+//
+// -----------------------------------------------------------------------------
+// Plugin 1.0.0: zwei Protokolle in einem Flight-Loop (ADR-0004)
+// -----------------------------------------------------------------------------
+//
+//   Protokoll 1 (diese Datei, inhaltlich unverändert seit 0.5.13): `telemetry`
+//   und `touchdown` an 127.0.0.1:52000. Bleibt für ältere Clients; der neue
+//   Client wertet weiter `touchdown` aus. Schweigt in Pause/Replay wie bisher.
+//   Einzige Ergänzung seit 1.0.0: das Feld "pv" (Plugin-Version) — so erkennt
+//   der Client ein 1.0-Plugin auch dann, wenn dessen Protokoll 2 nicht
+//   antwortet (Port 52001 belegt), und meldet nicht fälschlich "veraltet".
+//   Alte Clients ignorieren unbekannte Felder.
+//
+//   Protokoll 2 (dienst.cpp + dienst_xplm.cpp): Dataref-Server auf
+//   127.0.0.1:52001. Der Client meldet Namen an, das Plugin sucht, meldet den
+//   Status je Name ("fehlt" ist eine Tatsache, kein Schein-Nullwert) und
+//   liefert mit eigener Rate je Abo — auch in Pause und Replay.
+//
+// Es bleibt EIN Flight-Loop-Callback. Er ruft Protokoll 1 in genau dem Takt
+// auf, den Protokoll 1 selbst bestimmt (20 Hz, unter 200 ft AGL jeder Frame),
+// und Protokoll 2 bei jedem Aufruf. Solange Protokoll 2 nichts zu liefern hat,
+// gibt der Callback wie früher das Intervall von Protokoll 1 zurück — ohne
+// Client verhält sich das Plugin also exakt wie 0.5.13. Mit aktiven Abos
+// läuft der Callback jeden Frame (Raten bis 50 Hz), Protokoll 1 wird dann
+// über die Uhr auf seinen eigenen Takt gedrosselt.
 // =============================================================================
 
 #include <XPLM/XPLMDataAccess.h>
 #include <XPLM/XPLMDefs.h>
 #include <XPLM/XPLMProcessing.h>
 #include <XPLM/XPLMUtilities.h>
+
+#include "dienst_xplm.h"
+#include "netz.h"
+#include "protokoll1.h"
 
 #include <cerrno>
 #include <cmath>
@@ -60,19 +95,14 @@
     #include <ws2tcpip.h>
     using socket_t = SOCKET;
     constexpr socket_t INVALID_SOCK = INVALID_SOCKET;
-    static inline void close_sock(socket_t s) { closesocket(s); }
-    static inline int sock_err() { return WSAGetLastError(); }
 #else
     #include <arpa/inet.h>
-    #include <fcntl.h>
     #include <netinet/in.h>
     #include <sys/socket.h>
     #include <sys/types.h>
     #include <unistd.h>
     using socket_t = int;
     constexpr socket_t INVALID_SOCK = -1;
-    static inline void close_sock(socket_t s) { close(s); }
-    static inline int sock_err() { return errno; }
 #endif
 
 // =============================================================================
@@ -107,7 +137,9 @@ static constexpr float GEAR_TOUCHDOWN_THRESHOLD_N = 1.0f;
 // VS lookback window for capturing the descent peak just before contact —
 // matches the AeroACARS-Rust-side sampler's window so the data semantics
 // are identical between premium-mode and UDP-fallback-mode.
-static constexpr int64_t VS_LOOKBACK_MS = 500;
+// (Seit v0.5.13 nicht mehr gelesen — die 30-Werte-Methode ersetzt das feste
+// Fenster; die Konstante bleibt als Doku des Client-Gegenstücks.)
+[[maybe_unused]] static constexpr int64_t VS_LOOKBACK_MS = 500;
 
 // Plugin metadata — matches X-Plane's plugin browser UI.
 static constexpr const char* PLUGIN_NAME = "AeroACARS Premium";
@@ -151,6 +183,12 @@ DataRefs g_drefs;
 // UDP socket state.
 socket_t g_sock = INVALID_SOCK;
 sockaddr_in g_dest{};
+#if IBM
+// WSAStartup/WSACleanup müssen paarweise laufen: WSACleanup nur, wenn das
+// WSAStartup dieses Plugins gelungen ist (sonst zählt es den Winsock-Zähler
+// eines anderen Plugins im selben Prozess herunter).
+bool g_wsa_aktiv = false;
+#endif
 
 // Per-tick state for touchdown detection.
 //
@@ -160,6 +198,15 @@ sockaddr_in g_dest{};
 // event packet once per landing. Both reset to safe defaults when the
 // plugin reloads.
 bool prev_in_air = true;
+
+// Erster Protokoll-1-Tick nach XPluginEnable (auch beim Laden): nur
+// synchronisieren. Nachprüfung Codex N1: Deaktiviert in der Luft, aktiviert
+// am Boden → prev_in_air stand noch auf "in der Luft", der erste Tick hätte
+// mit dem alten Ringpuffer einen Schein-Touchdown gemeldet. Jetzt übernimmt
+// der erste Tick den aktuellen Bodenzustand, leert Ringpuffer und
+// Sinkraten-Tracker und meldet in diesem Tick keine Kante. (Nebenwirkung,
+// gewollt: auch beim Laden am Boden kommt kein Schein-Touchdown mehr.)
+bool g_p1_sync = true;
 bool touchdown_captured = false;
 
 // v0.5.6: running peak-descent VS tracker. Updated every flight-loop
@@ -257,41 +304,43 @@ XPLMDataRef find_ref(const char* path) noexcept {
 // =============================================================================
 // UDP transport — non-blocking sendto, errors silently ignored
 // =============================================================================
+//
+// Eingerichtet von netz::oeffne (netz.h), wie der Steuer-Socket von
+// Protokoll 2: Scheitert "nicht blockierend", wird der Socket geschlossen und
+// Protokoll 1 bleibt aus (Log-Zeile) — vorher wurde die Rückgabe von
+// fcntl/ioctlsocket ignoriert (Codex-Abnahme H5), und ein blockierender
+// sendto() im Flight-Loop hätte X-Plane anhalten können.
 
-void make_socket_nonblocking(socket_t s) noexcept {
-#if IBM
-    u_long mode = 1;
-    ioctlsocket(s, FIONBIO, &mode);
-#else
-    int flags = fcntl(s, F_GETFL, 0);
-    if (flags >= 0) fcntl(s, F_SETFL, flags | O_NONBLOCK);
-#endif
+void log_zeile_p1(const char* zeile) {
+    log_msg(zeile);
 }
 
 bool open_socket() noexcept {
+    if (g_sock != INVALID_SOCK) return true;
 #if IBM
     WSADATA wsa{};
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
         log_msg("error: WSAStartup failed; UDP transport disabled");
         return false;
     }
+    g_wsa_aktiv = true;
 #endif
-    g_sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (g_sock == INVALID_SOCK) {
-        log_msgf("error: socket() failed (errno=%d); UDP transport disabled", sock_err());
+    const aeroacars::netz::Sock s =
+        aeroacars::netz::oeffne(aeroacars::netz::os_ops(), aeroacars::netz::Art::SENDER, 0,
+                                "Protokoll 1", &log_zeile_p1);
+    if (s == aeroacars::netz::KEIN_SOCKET) {
+#if IBM
+        WSACleanup();
+        g_wsa_aktiv = false;
+#endif
         return false;
     }
-    make_socket_nonblocking(g_sock);
+    g_sock = static_cast<socket_t>(s);
 
     g_dest = {};
     g_dest.sin_family = AF_INET;
     g_dest.sin_port = htons(AEROACARS_UDP_PORT);
-    if (inet_pton(AF_INET, AEROACARS_UDP_HOST, &g_dest.sin_addr) != 1) {
-        log_msgf("error: inet_pton failed for %s", AEROACARS_UDP_HOST);
-        close_sock(g_sock);
-        g_sock = INVALID_SOCK;
-        return false;
-    }
+    g_dest.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // = AEROACARS_UDP_HOST
     log_msgf("UDP socket open: forwarding to %s:%u",
              AEROACARS_UDP_HOST, (unsigned)AEROACARS_UDP_PORT);
     return true;
@@ -299,11 +348,14 @@ bool open_socket() noexcept {
 
 void close_socket() noexcept {
     if (g_sock != INVALID_SOCK) {
-        close_sock(g_sock);
+        aeroacars::netz::os_ops().schliesse(static_cast<aeroacars::netz::Sock>(g_sock));
         g_sock = INVALID_SOCK;
     }
 #if IBM
-    WSACleanup();
+    if (g_wsa_aktiv) {
+        WSACleanup();
+        g_wsa_aktiv = false;
+    }
 #endif
 }
 
@@ -319,13 +371,14 @@ void send_packet(const char* payload, size_t len) noexcept {
 }
 
 // =============================================================================
-// JSON building — printf-style with bounds checking
+// JSON building — protokoll1.cpp (locale-fest, NaN → null)
 // =============================================================================
 //
 // We deliberately avoid heap allocation in the flight loop. Each packet is
-// built into a fixed 2 KB stack buffer; if for some reason we overflow,
-// we truncate cleanly (vsnprintf is bounded). 2 KB is well above any
-// realistic packet size — a fully-populated telemetry frame is ~600 bytes.
+// built into a fixed 2 KB stack buffer; passt es nicht (unmöglich bei ~600
+// Byte), wird es nicht gesendet statt abgeschnitten. Seit 1.0.0 schreibt
+// protokoll1.cpp die Pakete statt snprintf — gleiches Feldschema, gleiche
+// Nachkommastellen, aber unabhängig von LC_NUMERIC (Codex-Abnahme M3).
 
 constexpr size_t PACKET_BUF_SIZE = 2048;
 
@@ -339,7 +392,10 @@ constexpr size_t PACKET_BUF_SIZE = 2048;
 // Returns the seconds-until-next-call. We tighten the rate when at low
 // AGL so the touchdown edge gets sub-frame resolution.
 
-float flight_loop_cb(float, float, int, void*) noexcept {
+// Protokoll 1 — bis auf den Namen (vorher flight_loop_cb) unverändert. Der
+// Rückgabewert ist weiterhin das gewünschte Intervall bis zum nächsten Tick;
+// flight_loop_cb unten setzt es um.
+float protokoll1_tick() noexcept {
     // Skip work entirely while the sim is paused or in replay — those
     // states give us frozen / weird telemetry that the AeroACARS client
     // wouldn't know how to interpret. Sim/replay-aware code is the
@@ -372,6 +428,16 @@ float flight_loop_cb(float, float, int, void*) noexcept {
     const float  ias_kt      = read_float(g_drefs.ias_kt);
     const float  gs_ms       = read_float(g_drefs.gs_ms);
     const float  gs_kt       = gs_ms * 1.94384f;
+
+    // -- Synchronisation nach Enable (siehe g_p1_sync) --------------------
+    if (g_p1_sync) {
+        g_p1_sync = false;
+        g_vs_buffer_head = 0;
+        g_vs_buffer_count = 0;
+        g_airborne_vs_min = 0.0f;
+        touchdown_captured = false;
+        prev_in_air = (fnrml_n < GEAR_TOUCHDOWN_THRESHOLD_N);  // → keine Kante jetzt
+    }
 
     // -- Push to VS ring buffer (always, regardless of touchdown) --------
     {
@@ -419,44 +485,25 @@ float flight_loop_cb(float, float, int, void*) noexcept {
 
     // -- Build + send the per-tick telemetry packet ----------------------
     {
+        aeroacars::Telemetrie t;
+        t.seq = ++g_seq;
+        t.ts = sim_t;
+        t.lat = lat;
+        t.lon = lon;
+        t.agl_ft = agl_ft;
+        t.vs_fpm_raw = vs_fpm_raw;
+        t.vs_fpm = vs_fpm;
+        t.fnrml_gear_n = fnrml_n;
+        t.on_ground = on_ground != 0;
+        t.g_normal = gnorm;
+        t.pitch_deg = pitch_deg;
+        t.bank_deg = bank_deg;
+        t.hdg_true = hdg_true;
+        t.ias_kt = ias_kt;
+        t.gs_kt = gs_kt;
         char buf[PACKET_BUF_SIZE];
-        int n = std::snprintf(buf, sizeof(buf),
-            "{"
-            "\"v\":1,"
-            "\"type\":\"telemetry\","
-            "\"seq\":%u,"
-            "\"ts\":%.6f,"
-            "\"lat\":%.7f,"
-            "\"lon\":%.7f,"
-            "\"agl_ft\":%.2f,"
-            "\"vs_fpm_raw\":%.2f,"
-            "\"vs_fpm\":%.2f,"
-            "\"fnrml_gear_n\":%.2f,"
-            "\"on_ground\":%s,"
-            "\"g_normal\":%.4f,"
-            "\"pitch_deg\":%.3f,"
-            "\"bank_deg\":%.3f,"
-            "\"hdg_true\":%.3f,"
-            "\"ias_kt\":%.2f,"
-            "\"gs_kt\":%.2f"
-            "}\n",
-            ++g_seq,
-            sim_t,
-            lat, lon,
-            static_cast<double>(agl_ft),
-            static_cast<double>(vs_fpm_raw),
-            static_cast<double>(vs_fpm),
-            static_cast<double>(fnrml_n),
-            on_ground != 0 ? "true" : "false",
-            static_cast<double>(gnorm),
-            static_cast<double>(pitch_deg),
-            static_cast<double>(bank_deg),
-            static_cast<double>(hdg_true),
-            static_cast<double>(ias_kt),
-            static_cast<double>(gs_kt));
-        if (n > 0 && static_cast<size_t>(n) < sizeof(buf)) {
-            send_packet(buf, static_cast<size_t>(n));
-        }
+        const size_t n = aeroacars::schreibe_telemetrie(buf, sizeof(buf), AEROACARS_PLUGIN_VERSION, t);
+        if (n > 0) send_packet(buf, n);
     }
 
     // -- Touchdown event packet (one-shot, frame-perfect) ---------------
@@ -550,46 +597,26 @@ float flight_loop_cb(float, float, int, void*) noexcept {
             vs_sample_count = 0;
         }
 
+        aeroacars::Aufsetzen a;
+        a.seq = ++g_seq;
+        a.ts = sim_t;
+        a.lat = lat;
+        a.lon = lon;
+        a.captured_vs_fpm = captured_vs;
+        a.captured_vs_source = vs_source;
+        a.captured_vs_window_ms = vs_window_ms;
+        a.captured_vs_samples = vs_sample_count;
+        a.captured_g_normal = gnorm;
+        a.captured_pitch_deg = pitch_deg;
+        a.captured_bank_deg = bank_deg;
+        a.captured_ias_kt = ias_kt;
+        a.captured_gs_kt = gs_kt;
+        a.captured_heading_deg = hdg_true;
+        a.fnrml_gear_n = fnrml_n;
+        a.agl_ft = agl_ft;
         char buf[PACKET_BUF_SIZE];
-        int n = std::snprintf(buf, sizeof(buf),
-            "{"
-            "\"v\":1,"
-            "\"type\":\"touchdown\","
-            "\"seq\":%u,"
-            "\"ts\":%.6f,"
-            "\"lat\":%.7f,"
-            "\"lon\":%.7f,"
-            "\"captured_vs_fpm\":%.2f,"
-            "\"captured_vs_source\":\"%s\","
-            "\"captured_vs_window_ms\":%d,"
-            "\"captured_vs_samples\":%d,"
-            "\"captured_g_normal\":%.4f,"
-            "\"captured_pitch_deg\":%.3f,"
-            "\"captured_bank_deg\":%.3f,"
-            "\"captured_ias_kt\":%.2f,"
-            "\"captured_gs_kt\":%.2f,"
-            "\"captured_heading_deg\":%.3f,"
-            "\"fnrml_gear_n\":%.2f,"
-            "\"agl_ft\":%.2f"
-            "}\n",
-            ++g_seq,
-            sim_t,
-            lat, lon,
-            static_cast<double>(captured_vs),
-            vs_source,
-            vs_window_ms,
-            vs_sample_count,
-            static_cast<double>(gnorm),
-            static_cast<double>(pitch_deg),
-            static_cast<double>(bank_deg),
-            static_cast<double>(ias_kt),
-            static_cast<double>(gs_kt),
-            static_cast<double>(hdg_true),
-            static_cast<double>(fnrml_n),
-            static_cast<double>(agl_ft));
-        if (n > 0 && static_cast<size_t>(n) < sizeof(buf)) {
-            send_packet(buf, static_cast<size_t>(n));
-        }
+        const size_t n = aeroacars::schreibe_aufsetzen(buf, sizeof(buf), AEROACARS_PLUGIN_VERSION, a);
+        if (n > 0) send_packet(buf, n);
         log_msgf("touchdown captured: vs=%.1f fpm  g=%.2f  ias=%.1f kt",
                  static_cast<double>(captured_vs),
                  static_cast<double>(gnorm),
@@ -608,6 +635,39 @@ float flight_loop_cb(float, float, int, void*) noexcept {
         return FLIGHT_LOOP_FAST_INTERVAL;  // every frame
     }
     return FLIGHT_LOOP_BASE_INTERVAL_S;
+}
+
+// -- Takt für Protokoll 1, wenn der Callback jeden Frame läuft ---------------
+//
+// X-Plane ruft einen Callback mit Intervall 0,05 s im ersten Frame auf, in dem
+// 0,05 s vergangen sind. Genau das bildet die Uhr hier nach, wenn Protokoll 2
+// den Callback auf "jeden Frame" gestellt hat. Die Toleranz fängt Rundung der
+// float-Uhr (XPLMGetElapsedTime) ab, damit ein Tick bei 49,99 ms nicht einen
+// ganzen Frame zu spät kommt.
+constexpr double P1_TOLERANZ_S = 0.002;
+double g_p1_faellig = 0.0;  // XPLMGetElapsedTime-Sekunden; <= jetzt = fällig
+
+float flight_loop_cb(float, float, int, void*) noexcept {
+    const double jetzt = static_cast<double>(XPLMGetElapsedTime());
+
+    // -- Protokoll 1 in seinem eigenen Takt ---------------------------------
+    float p1_intervall = FLIGHT_LOOP_BASE_INTERVAL_S;
+    const bool p1_lief = (jetzt + P1_TOLERANZ_S >= g_p1_faellig);
+    if (p1_lief) {
+        p1_intervall = protokoll1_tick();
+        // Negativ = "jeden Frame" → im nächsten Aufruf wieder fällig.
+        g_p1_faellig = (p1_intervall > 0.0f) ? jetzt + static_cast<double>(p1_intervall) : jetzt;
+    }
+
+    // -- Protokoll 2 bei jedem Aufruf (auch in Pause/Replay) -----------------
+    const bool p2_jeder_frame = dienst_frame();
+    if (p2_jeder_frame) return FLIGHT_LOOP_FAST_INTERVAL;
+
+    // Ohne Lieferauftrag: exakt das Verhalten von 0.5.13 — das Intervall, das
+    // Protokoll 1 gerade verlangt hat, bzw. die Restzeit bis zu seinem Tick.
+    if (p1_lief) return p1_intervall;
+    const double rest = g_p1_faellig - jetzt;
+    return rest > 0.001 ? static_cast<float>(rest) : FLIGHT_LOOP_FAST_INTERVAL;
 }
 
 }  // namespace
@@ -651,11 +711,9 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_drefs.sim_paused        = find_ref("sim/time/paused");
     g_drefs.sim_in_replay     = find_ref("sim/time/is_in_replay");
 
-    // Open UDP socket. Failure here is non-fatal — we just won't send
-    // packets, but the plugin still loads cleanly.
-    if (!open_socket()) {
-        log_msg("warn: UDP socket setup failed; plugin loaded but inert");
-    }
+    // Sockets und Protokoll 2 erst in XPluginEnable (N1): X-Plane ruft
+    // Enable direkt nach Start auf, wenn das Plugin aktiviert ist.
+    g_p1_faellig = 0.0;
 
     // Register the flight-loop callback. Returning 1 = plugin started OK.
     XPLMRegisterFlightLoopCallback(flight_loop_cb, FLIGHT_LOOP_BASE_INTERVAL_S, nullptr);
@@ -672,6 +730,7 @@ PLUGIN_API void XPluginStop(void) {
     //   2. Close the socket.
     //   3. Zero DataRef handles (defensive — plugin reload will re-find).
     XPLMUnregisterFlightLoopCallback(flight_loop_cb, nullptr);
+    dienst_stopp();
     close_socket();
 
     g_drefs = DataRefs{};
@@ -681,20 +740,47 @@ PLUGIN_API void XPluginStop(void) {
     touchdown_captured = false;
     g_airborne_vs_min = 0.0f;
     g_seq = 0;
+    g_p1_faellig = 0.0;
+    g_p1_sync = true;
 
     log_msg("AeroACARS X-Plane Plugin stopped cleanly");
 }
 
 PLUGIN_API int XPluginEnable(void) {
-    // Nothing to do — we run continuously while loaded. X-Plane only
-    // calls Disable/Enable on user request, not normally.
+    // Netz nur im aktivierten Zustand (Codex-Abnahme N1; so empfiehlt es das
+    // SDK für Netzwerkressourcen). Beide Protokolle sauber neu: frischer
+    // Protokoll-1-Socket, frischer Steuer-Socket auf 52001 mit leerer
+    // Warteschlange, Protokoll 2 ohne Client — der Client bekommt auf seine
+    // nächste Anfrage "kein_hallo" und meldet sich neu. Scheitert etwas,
+    // steht der Grund im Log und das Plugin bleibt trotzdem aktiviert
+    // (Rückgabe 1): X-Plane soll es nicht als kaputt markieren.
+    if (!open_socket()) {
+        log_msg("warn: UDP socket setup failed; Protokoll 1 inert");
+    }
+    dienst_start(AEROACARS_PLUGIN_VERSION);
+    g_p1_faellig = 0.0;
+    g_p1_sync = true;  // erster Protokoll-1-Tick synchronisiert nur
     return 1;
 }
 
 PLUGIN_API void XPluginDisable(void) {
-    // Same — no-op. State stays valid until XPluginStop.
+    // Deaktiviert ruft X-Plane keine Callbacks — also auch nichts mehr zu
+    // senden. Protokoll 2 verwirft Client, Abos und LISTE und schließt den
+    // Steuer-Socket (Port 52001 frei, ungelesene Datagramme weg); Protokoll 1
+    // schließt seinen Socket. Die Aufsetz-Erkennung synchronisiert sich im
+    // ersten Tick nach dem nächsten Enable neu (g_p1_sync) — ein Wechsel
+    // Luft→Boden während der Deaktivierung ist kein Touchdown, den das
+    // Plugin gesehen hat.
+    dienst_stopp();
+    close_socket();
+    log_msg("disabled: sockets closed (Protokoll 1 + 2)");
 }
 
-PLUGIN_API void XPluginReceiveMessage(XPLMPluginID, int, void*) {
-    // We don't accept inter-plugin messages. Silent acknowledge is fine.
+PLUGIN_API void XPluginReceiveMessage(XPLMPluginID inFrom, int inMessage, void* inParam) {
+    // Nur X-Planes eigene Meldungen zu Flugzeug und Flughafen interessieren
+    // (Namen neu suchen, Flugzeugwechsel melden). Nachrichten anderer Plugins
+    // werden weiter nicht angenommen — ein fremdes Plugin, das zufällig
+    // dieselbe Nachrichtennummer benutzt, soll keine Neusuche auslösen.
+    if (inFrom != XPLM_PLUGIN_XPLANE) return;
+    dienst_nachricht(inMessage, inParam);
 }

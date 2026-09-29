@@ -15,7 +15,8 @@ pub const ZUSATZ_HZ: i32 = 20;
 pub struct ZusatzAbos {
     /// (Kanal-ID, DataRef) — Position = Index − BASE.
     felder: Vec<(String, String)>,
-    werte: Vec<Option<f32>>,
+    /// f64, damit Werte des Plugins (Protokoll 2) ihre Genauigkeit behalten.
+    werte: Vec<Option<f64>>,
     /// Steigt bei jeder Aenderung der Liste; der Empfangsthread vergleicht
     /// sie mit dem Stand, den er abonniert hat.
     pub generation: u64,
@@ -49,9 +50,26 @@ impl ZusatzAbos {
             return false;
         }
         if let Some(slot) = self.werte.get_mut((index - ZUSATZ_INDEX_BASE) as usize) {
-            *slot = wert.is_finite().then_some(wert);
+            *slot = wert.is_finite().then_some(f64::from(wert));
         }
         true
+    }
+
+    /// Nur die DataRefs, in Listenreihenfolge — das Plugin-Abo (Protokoll 2)
+    /// meldet Status und Werte mit dieser Position.
+    pub fn datarefs(&self) -> Vec<String> {
+        self.felder.iter().map(|(_, d)| d.clone()).collect()
+    }
+
+    /// Wert vom Plugin an Position `pos`. `dataref` ist der Name, auf den
+    /// sich die Position bezieht: stimmt er nicht mehr (Liste inzwischen
+    /// geaendert), wird nichts geschrieben. `None` = fehlt/kein Wert.
+    pub fn plugin_wert(&mut self, pos: usize, dataref: &str, wert: Option<f64>) {
+        if self.felder.get(pos).is_some_and(|(_, d)| d == dataref) {
+            if let Some(slot) = self.werte.get_mut(pos) {
+                *slot = wert.filter(|x| x.is_finite());
+            }
+        }
     }
 
     /// Verbindung verloren: alte Werte nicht weiter als aktuell zeigen.
@@ -65,7 +83,7 @@ impl ZusatzAbos {
         self.felder
             .iter()
             .zip(&self.werte)
-            .filter_map(|((k, _), v)| v.map(|v| (k.clone(), v as f64)))
+            .filter_map(|((k, _), v)| v.map(|v| (k.clone(), v)))
             .collect()
     }
 }
@@ -123,6 +141,27 @@ mod tests {
         assert_eq!(z.generation, g);
         assert!(z.setzen(Vec::new()));
         assert!(z.abos().is_empty());
+    }
+
+    /// Protokoll 2: Werte mit voller Genauigkeit; eine Position, deren
+    /// DataRef inzwischen ein anderer ist, wird nicht beschrieben.
+    #[test]
+    fn plugin_werte_nur_zum_passenden_namen() {
+        let mut z = ZusatzAbos::default();
+        z.setzen(liste());
+        assert_eq!(
+            z.datarefs(),
+            vec![
+                "sim/flightmodel/position/alpha".to_string(),
+                "sim/cockpit2/engine/indicators/N2_percent[0]".to_string()
+            ]
+        );
+        z.plugin_wert(0, "sim/flightmodel/position/alpha", Some(5.123_456_789));
+        z.plugin_wert(1, "sim/anderer/name", Some(1.0));
+        assert_eq!(z.werte(), vec![("aoa".into(), 5.123_456_789)]);
+        z.plugin_wert(0, "sim/flightmodel/position/alpha", None);
+        assert!(z.werte().is_empty());
+        z.plugin_wert(9, "sim/flightmodel/position/alpha", Some(1.0));
     }
 
     #[test]

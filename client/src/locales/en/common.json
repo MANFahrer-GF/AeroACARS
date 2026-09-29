@@ -869,6 +869,39 @@
         "unstable": "Unstable approach — would be a real-world go-around candidate. Set up the approach earlier, keep config + speed + V/S stable by 1000 ft AAL."
       }
     },
+    "anflug_forensik": {
+      "titel": "Glide path and approach steadiness",
+      "ohne_note": "For context only – not part of the score. 1 dot = {{dot}}°, “+” = above the path.",
+      "gleitpfad_gesamt": "Glide path 1000–200 ft: average {{mittel}} dots, largest deviation {{max}} dots ({{ft}} ft) · {{proben}} data points",
+      "gleitpfad_tor": "{{tor}}: average {{mittel}}, largest {{max}} dots",
+      "tor_1000_500": "1000–500 ft",
+      "tor_500_200": "500–200 ft",
+      "bezug": "Reference: {{quelle}} · {{winkel}}° · TCH {{tch}} ft",
+      "bezug_tch_angenommen": "Reference: {{quelle}} · {{winkel}}° · TCH {{tch}} ft (assumed, missing in navdata)",
+      "bezug_ohne_navdaten": "Reference: no navdata for the landing runway",
+      "quelle": {
+        "navigraph_ils": "ILS glide slope (Navigraph)",
+        "navigraph_bahn": "runway without ILS, standard angle (Navigraph)",
+        "angenommen_3grad": "assumed 3°"
+      },
+      "grund": {
+        "keine_bahn": "Without navdata for the landing runway the glide path cannot be reconstructed.",
+        "schwellenhoehe_fehlt": "The navdata has no threshold elevation, so the glide path is not reconstructed.",
+        "keine_proben": "Too few data points between 1000 and 200 ft before the threshold."
+      },
+      "ruhe_titel": "Approach steadiness",
+      "ruhe_seitenwechsel": "{{n}}× crossed the path",
+      "ruhe_nick": "pitch rate ±{{v}} °/s",
+      "ruhe_roll": "roll rate ±{{v}} °/s",
+      "ruhe_schub": "{{v}} thrust changes/min",
+      "erfasst_ab": "(recorded from {{h}} ft)",
+      "hinweis_sim_boden": "Height reference: simulator ground at the threshold ({{sim}} ft; navdata says {{nav}} ft).",
+      "hinweis_sim_boden_ohne_navdaten": "Height reference: simulator ground at the threshold ({{sim}} ft; navdata has no threshold elevation).",
+      "schub_grund": {
+        "kein_n1": "thrust not recorded without N1 data",
+        "zu_kurz": "thrust measured too briefly"
+      }
+    },
     "approach_stability_help": {
       "title": "Approach stability — what do the values mean?",
       "close_label": "Close ✕",
@@ -1452,7 +1485,19 @@
     "detect_failed": "Could not auto-detect X-Plane — please enter the path to your X-Plane root folder manually.",
     "install_button": "Install plugin",
     "installing": "Installing …",
-    "install_success": "Plugin installed at {{path}} ({{files}} files). Restart X-Plane and the status will turn \"live\"."
+    "install_success": "Plugin installed at {{path}} ({{files}} files). Restart X-Plane and the status will turn \"live\".",
+    "protocol_label": "Connection",
+    "protocol_2": "Protocol 2 — all values from the plugin",
+    "protocol_1": "Protocol 1 — touchdown capture only",
+    "plugin_version_label": "Plugin version",
+    "xplane_version_label": "X-Plane",
+    "names_label": "Values available",
+    "active_hint_p2": "The plugin delivers every value straight from X-Plane: position at full precision, and each value is either really there or reported as missing. RREF and the Web API check rest while it delivers.",
+    "outdated_title": "Plugin outdated",
+    "outdated_explanation": "The installed plugin only knows touchdown capture. All other values still come via RREF and the Web API. Reinstall the plugin for this AeroACARS version and restart X-Plane.",
+    "unreachable_title": "Protocol 2 not reachable",
+    "unreachable_explanation": "The plugin is up to date and delivers touchdown capture, but does not answer on protocol 2 — port 52001 is probably held by another program (see X-Plane Log.txt). All other values still come via RREF and the Web API.",
+    "install_unverified": "Note: this package was installed without a checksum (development build of AeroACARS)."
   },
   "pilot_header": {
     "pos_label": "POS",
@@ -3330,7 +3375,7 @@
     "verbinden_titel": "Connecting to the aircraft …",
     "verbinden_text": "AeroACARS reads all values of the aircraft. This takes a few seconds.",
     "verbunden": "{{anzahl}} values connected",
-    "ohne_scan": "There is no aircraft scan for this aircraft yet. Input events and the simulator's standard values are measured. Tip: a scan on live.kant.ovh/aircraft makes the measurement even more precise.",
+    "ohne_scan": "There is no aircraft scan for this aircraft yet. Input events, the simulator's standard values and the variables AeroACARS itself reads are measured. Tip: a scan on live.kant.ovh/aircraft makes the measurement even more precise.",
     "mit_scan": "{{anzahl}} variable names from this aircraft's scan.",
     "ruhe_titel": "Quiet measurement",
     "ruhe_text": "Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves (clock, displays, animations) – those are ignored later.",

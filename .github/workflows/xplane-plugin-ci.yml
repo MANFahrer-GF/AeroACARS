@@ -10,6 +10,14 @@ name: X-Plane Plugin CI
 # release tag. Independent of release.yml — no artifacts get
 # uploaded to GitHub Releases here, just to the workflow's artifact
 # storage so we can inspect the .xpl files if needed.
+#
+# Plugin 1.0.0 (AP7, ADR-0004): zweiter Job "tests" — Unit-Tests und
+# Fuzz-Test des XPLM-freien Kerns (Parser, JSON, Pakete, Dienst) auf allen
+# drei Plattformen; macOS und Linux mit AddressSanitizer + UBSan.
+# Seit der Codex-Abnahme (H5) zusätzlich "netz_echt": die ECHTEN
+# Socket-Aufrufe (netz_os.cpp) auf allen drei Plattformen — unter Windows
+# der einzige Test mit echtem Winsock (die Ende-zu-Ende-Attrappe braucht
+# dlopen und läuft nur auf macOS/Linux, dort mit Deaktivieren/Aktivieren).
 
 on:
   push:
@@ -95,3 +103,62 @@ jobs:
           path: xplane-plugin/build/AeroACARS/64/${{ matrix.xpl_name }}
           if-no-files-found: error
           retention-days: 14
+
+  tests:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-2022
+            generator: 'Visual Studio 17 2022'
+            cmake_args: '-A x64'
+            os_label: 'Windows x64 (ohne Sanitizer)'
+          - platform: macos-latest
+            generator: 'Unix Makefiles'
+            cmake_args: '-DCMAKE_BUILD_TYPE=Debug'
+            os_label: 'macOS (ASan+UBSan)'
+          - platform: ubuntu-latest
+            generator: 'Unix Makefiles'
+            cmake_args: '-DCMAKE_BUILD_TYPE=Debug'
+            os_label: 'Linux (ASan+UBSan)'
+
+    runs-on: ${{ matrix.platform }}
+    name: Tests ${{ matrix.os_label }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure CMake (Tests)
+        working-directory: xplane-plugin
+        shell: bash
+        run: |
+          cmake -B build-tests -G "${{ matrix.generator }}" ${{ matrix.cmake_args }} -DAEROACARS_PLUGIN_TESTS=ON
+
+      - name: Build Tests
+        working-directory: xplane-plugin
+        shell: bash
+        run: |
+          cmake --build build-tests --config Debug --target aeroacars_alle_tests
+
+      # Einheitstests + 5 s Fuzz mit festem Startwert + netz_echt (siehe
+      # CMakeLists.txt); auf macOS/Linux zusätzlich Ende-zu-Ende: die echte
+      # .xpl in einer XPLM-Attrappe, abgefragt mit werkzeuge/plugin_sonde.py.
+      - name: Run Tests
+        working-directory: xplane-plugin
+        shell: bash
+        env:
+          # LeakSanitizer läuft unter Linux ab Werk mit; macOS kennt ihn nicht.
+          ASAN_OPTIONS: 'abort_on_error=1'
+          UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
+        run: |
+          ctest --test-dir build-tests -C Debug --output-on-failure
+
+      - name: Check plugin_sonde.py
+        if: matrix.platform == 'ubuntu-latest'
+        working-directory: xplane-plugin
+        shell: bash
+        run: |
+          python3 -m py_compile werkzeuge/plugin_sonde.py
+          python3 werkzeuge/plugin_sonde.py --help > /dev/null

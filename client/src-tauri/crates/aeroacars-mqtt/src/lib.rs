@@ -1579,6 +1579,17 @@ pub struct PirepPayload {
     /// byte-identical to before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_health: Option<ClientHealthReport>,
+
+    /// Lernpaket AP4/AP5 (29.09.2026, Entscheid Thomas): Gleitpfad-
+    /// Abweichung und Anflugruhe — reine Forensik, keine Note. DIESELBEN
+    /// Structs wie im lokalen `LandingRecord` (liegen in `landing-scoring`),
+    /// damit Client und Webapp dieselbe JSON-Form lesen. Bewusst NUR im
+    /// PIREP, nicht im Touchdown-Payload: der liegt knapp unter der
+    /// 10-KB-Grenze der MQTT-Nachrichten. Fehlt der Befund, fehlt das Feld.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anflug_gleitpfad: Option<landing_scoring::anflug_forensik::AnflugGleitpfad>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anflug_ruhe: Option<landing_scoring::anflug_forensik::AnflugRuhe>,
 }
 
 /// v0.20 (Process-Integrity): client-self-reported OBSERVATIONS about its

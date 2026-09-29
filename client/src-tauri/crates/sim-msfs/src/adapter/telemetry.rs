@@ -278,9 +278,10 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:S_OH_ELEC_BAT1", "Number"),
     F::f64("L:S_OH_ELEC_BAT2", "Number"),
     F::f64("L:S_OH_ELEC_EXT_PWR", "Number"),
-    // FCU button states — replace the unreliable `L:I_FCU_*` lamp
-    // LVars from earlier sessions. The S_ prefix is the button
-    // press state, which actually toggles cleanly.
+    // FCU-Tasten. Messung 29.09.2026: das sind nur Tastendruecke, kein
+    // Zustand — keine ging in einem Luft-Schritt mit. Der Zustand steht in
+    // den Lampen `L:I_FCU_*` (weiter unten, vor dem Standard-Schwanz). Die
+    // Tasten bleiben im Layout, damit keine Position verrutscht.
     F::f64("L:S_FCU_AP1", "Number"),
     F::f64("L:S_FCU_AP2", "Number"),
     F::f64("L:S_FCU_APPR", "Number"),
@@ -311,9 +312,10 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // Runway turnoff: 0 = off, 1 = on. Two separate lamps on the
     // nose gear strut; Fenix exposes them as one combined switch.
     F::f64("L:S_OH_EXT_LT_RWY_TURNOFF", "Number"),
-    // Landing lights L/R: 0 = retracted, 1 = off, 2 = on. The
-    // 3-position selector models the real A320 — retracted is the
-    // stowed position pre-takeoff.
+    // Landing lights L/R: 3-position selector (RETRACT/OFF/ON), 2 = ON.
+    // Messung 29.09.2026 (Pilot 25, FenixA320 CFM WF) las OFF 0, ON 2,
+    // RETRACT 1 — die 0/1-Belegung ist damit nicht sicher; das Mapping
+    // nutzt nur 2 = ON und ist davon nicht beruehrt.
     F::f64("L:S_OH_EXT_LT_LANDING_L", "Number"),
     F::f64("L:S_OH_EXT_LT_LANDING_R", "Number"),
     // Composite "BOTH" selector (line 680 in FNX32X_Interior.xml):
@@ -990,6 +992,19 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // iniBuilds A380, gemessen 28.09.2026 im Reiseflug (Thomas): 1 = HDG-
     // Fenster gestrichelt (NAV, managed), 0 = HDG gewählt.
     F::f64("L:INI_FCU_HDG_DASHED", "Number"),
+    // Fenix A320 CFM WF, gemessen 29.09.2026 im Reiseflug mit „Flugzeug
+    // vermessen" (Pilot 25, Einreichung 2eef246e): die FCU-LAMPEN sind der
+    // Zustand, die `L:S_FCU_*`-Tasten oben nur Tastendruecke (keine davon
+    // ging in einem Schritt mit). Die Standard-AP-SimVars bewegten sich in
+    // keinem Schritt — deshalb stand der Fenix-AP in allen Flug-Logs auf
+    // „aus". AP1 1/0/1 + AP2 0/1/0 (nur AP1 → nur AP2 → nur AP1), AP2
+    // 0/1/0/1 (ein AP → beide → ein AP → beide), A/THR 1/0/1, APPR 0/1/0,
+    // HDG-Fenster gestrichelt 1/0/1 (NAV → HDG → NAV).
+    F::f64("L:I_FCU_AP1", "Number"),
+    F::f64("L:I_FCU_AP2", "Number"),
+    F::f64("L:I_FCU_ATHR", "Number"),
+    F::f64("L:I_FCU_APPR", "Number"),
+    F::f64("L:B_FCU_HEADING_DASHED", "Number"),
     // Lernpaket vmsACARS (29.09.2026), AP1a: zweiter G-Kanal. vmsACARS 3
     // benotet die Landung unter MSFS aus `SEMIBODY LOADFACTOR Y` statt aus
     // `G FORCE`; unser `G FORCE` laeuft rund 614 ms hinter der Sinkrate
@@ -1542,6 +1557,17 @@ pub struct Telemetry {
     pub fbw_strobe: f64,
     /// iniBuilds A380 `L:INI_FCU_HDG_DASHED` 1 = NAV (managed), 0 = HDG.
     pub ini_fcu_hdg_dashed: f64,
+    /// Fenix `L:I_FCU_AP1` / `L:I_FCU_AP2` — FCU-Lampen, 1 = AP eingerastet
+    /// (gemessen 29.09.2026).
+    pub fnx_fcu_ap1_lampe: f64,
+    pub fnx_fcu_ap2_lampe: f64,
+    /// Fenix `L:I_FCU_ATHR` — A/THR-Lampe, 1 = an (gemessen 29.09.2026).
+    pub fnx_fcu_athr_lampe: f64,
+    /// Fenix `L:I_FCU_APPR` — APPR-Lampe, 1 = gedrueckt (gemessen 29.09.2026).
+    pub fnx_fcu_appr_lampe: f64,
+    /// Fenix `L:B_FCU_HEADING_DASHED` 1 = HDG-Fenster gestrichelt (NAV),
+    /// 0 = HDG gewaehlt (gemessen 29.09.2026).
+    pub fnx_fcu_hdg_dashed: f64,
     /// `SEMIBODY LOADFACTOR Y` (g). Zweiter G-Kanal zum Vergleich mit
     /// `G FORCE`. `None`, wenn der Block vor diesem Feld endet — eine
     /// erfundene 0 waere als G-Wert falsch.
@@ -1583,6 +1609,20 @@ pub const TOUCHDOWN_FIELDS: &[TelemetryField] = &[
     F::f64("PLANE TOUCHDOWN LATITUDE", "radians"),
     F::f64("PLANE TOUCHDOWN LONGITUDE", "radians"),
 ];
+
+/// Alle L:-Variablen, die der Client in irgendeinem Profil liest — für
+/// „Flugzeug vermessen" (29.09.2026). Direkt aus [`TELEMETRY_FIELDS`] und
+/// [`TOUCHDOWN_FIELDS`] abgeleitet, damit die Messung nie eine eigene,
+/// auseinanderlaufende Liste pflegt. Doppelte fallen erst in
+/// `vermessung::l_felder_mit_profil` weg.
+pub fn profil_lvar_namen() -> Vec<&'static str> {
+    TELEMETRY_FIELDS
+        .iter()
+        .chain(TOUCHDOWN_FIELDS)
+        .map(|f| f.name)
+        .filter(|n| n.starts_with("L:"))
+        .collect()
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Touchdown {
@@ -2286,6 +2326,11 @@ impl Telemetry {
         pull_f64!(t.fbw_tcas_position);
         pull_f64!(t.fbw_strobe);
         pull_f64!(t.ini_fcu_hdg_dashed);
+        pull_f64!(t.fnx_fcu_ap1_lampe);
+        pull_f64!(t.fnx_fcu_ap2_lampe);
+        pull_f64!(t.fnx_fcu_athr_lampe);
+        pull_f64!(t.fnx_fcu_appr_lampe);
+        pull_f64!(t.fnx_fcu_hdg_dashed);
         // Option: ein abgeschnittener Block bleibt None, nie 0 g.
         t.semibody_loadfactor_y = read_f64(bytes, off);
         off += 8;
@@ -3201,16 +3246,39 @@ fn telemetry_to_snapshot_mit_pfad(
         // Fenix entkoppelt ist, brauchen wir Option C aus B-008
         // (Suppression via Option<bool>).
         //
-        // Approach-Mode behaelt den Pulse-OR-Standard-Pfad — die
-        // APPR-LVAR ist beim Fenix in der Praxis stabiler weil
-        // sie an die Mode-Flag-Latch des FMA gebunden ist; falls
-        // Standard wired ist, gewinnt der.
+        // Messung 29.09.2026 („Flugzeug vermessen", FenixA320 CFM WF,
+        // Pilot 25, Reiseflug, Einreichung 2eef246e) widerlegt die Annahme
+        // oben: die Standard-AP-SimVars gingen in KEINEM Schritt mit (auch
+        // `AUTOPILOT MASTER` nicht) — darum „AP aus" in allen Fenix-Flug-
+        // Logs (20 Tage: A319 0/12, A321 0/39 Fluege mit AP oberhalb FL200).
+        // Die FCU-LAMPEN tragen den Zustand:
+        //   * `L:I_FCU_AP1` 1/0/1 und `L:I_FCU_AP2` 0/1/0 (nur AP1 → nur
+        //     AP2 → nur AP1); `L:I_FCU_AP2` 0/1/0/1 (ein AP → beide → ein
+        //     AP → beide). Eine Lampe an = Master eingerastet.
+        //   * `L:B_FCU_HEADING_DASHED` 1/0/1 (NAV → HDG → NAV) — wie beim
+        //     A380 nur mit eingerastetem AP gedeutet.
+        //   * `L:I_FCU_APPR` 0/1/0. Die fruehere Taste `L:S_FCU_APPR` ging
+        //     nicht mit (Tastendruck) und faellt aus der Deutung.
+        // Die „Flackern mit fremden Schaltern"-Sorge aus B-008 traf die
+        // Lampen in der Messung nicht: keine AP-Lampe ging in den Schritten
+        // HDG/NAV, ALT/V-S, A/THR, APPR oder Autobrake mit, die Ruhemessung
+        // fand nur zwei unruhige Werte, und wiederholte Stellungen hatten
+        // jeweils denselben Lampenwert (Treue-Pruefung).
+        // ALT bleibt beim Standard: `L:B_FCU_VERTICALSPEED_DASHED` (1/0/1
+        // ALT → V/S → ALT) heisst nur „nicht V/S“ — auch CLB/DES/OP CLB
+        // zeigen das Fenster gestrichelt. Nicht belegt, nicht raten.
+        // Fenix A319/A321: dieselbe FCU-Logik aus FenixSystem (ein
+        // Programm fuer alle drei Muster, dieselben `*_FCU_*`-Namen wie die
+        // uebrigen Fenix-Felder oben), darum familienweit — gemessen ist
+        // nur der A320.
+        let master = t.fnx_fcu_ap1_lampe >= 0.5 || t.fnx_fcu_ap2_lampe >= 0.5 || t.ap_master;
+        let appr = t.fnx_fcu_appr_lampe >= 0.5 || t.ap_approach;
         (
-            t.ap_master,
-            t.ap_heading,
+            master,
+            (master && t.fnx_fcu_hdg_dashed < 0.5) || t.ap_heading,
             t.ap_altitude,
-            t.ap_nav,
-            t.fnx_fcu_appr as i32 != 0 || t.ap_approach,
+            (master && !appr && t.fnx_fcu_hdg_dashed >= 0.5) || t.ap_nav,
+            appr,
         )
     } else if is_a346 {
         // Aerosoft A346: AP1- oder AP2-Lampe an = Master engaged;
@@ -4055,12 +4123,10 @@ fn telemetry_to_snapshot_mit_pfad(
     //   * A346: `L:AB_AP_ATHR_LIGHT_ON` — FCU-Annunciator-Lampe,
     //     echter Engagement-State (seit v0.16.3 subscribed, bislang
     //     ungemappt).
-    //   * Fenix: `L:S_FCU_ATHR` — Button-State-LVar. Achtung: die
-    //     Schwester-LVars S_FCU_AP1/AP2 erwiesen sich als Button-
-    //     PULSE (B-008); ob ATHR latcht oder pulst braucht Live-
-    //     Verifikation. Der A/THR-Log-Eintrag ist deshalb wie der
-    //     AP-Master debounced (AP_DEBOUNCE_SECS) — ein Puls fuehrt
-    //     dann schlimmstenfalls zu gar keinem Eintrag, nie zu Spam.
+    //   * Fenix: `L:I_FCU_ATHR` — FCU-Lampe, gemessen 29.09.2026. Die
+    //     fruehere Quelle `L:S_FCU_ATHR` ist wie S_FCU_AP1/AP2 (B-008)
+    //     nur ein Tastendruck. Der A/THR-Log-Eintrag bleibt wie der
+    //     AP-Master debounced (AP_DEBOUNCE_SECS).
     //   * Alle anderen (+ X-Plane): None → kein Log-Eintrag.
     let autothrottle_on = if is_a346 {
         Some(t.a346_athr_light as i32 != 0)
@@ -4068,7 +4134,11 @@ fn telemetry_to_snapshot_mit_pfad(
         // iniBuilds A350: A/THR-LED (INI_ATHR_LIGHT, HubHop-Output-Preset).
         Some(t.a350_athr_light as i32 != 0)
     } else if is_fenix {
-        Some(t.fnx_fcu_athr as i32 != 0)
+        // Gemessen 29.09.2026 (FenixA320 CFM WF, Pilot 25): A/THR-Lampe
+        // `L:I_FCU_ATHR` 1/0/1 (an → aus → an). Die Taste `L:S_FCU_ATHR`
+        // ging nicht mit (Tastendruck) — vorher las der Fenix A/THR darum
+        // praktisch immer „aus".
+        Some(t.fnx_fcu_athr_lampe >= 0.5)
     } else if is_fbw {
         // v0.16.10 (#Premium): FBW `A32NX_AUTOTHRUST_STATUS` (FBW-Doku):
         // 0=off, 1=armed, 2=active. "On" heisst hier AKTIV (>= 2) —
@@ -4945,6 +5015,7 @@ fn telemetry_to_snapshot_mit_pfad(
         mach: Some(t.mach as f32),
         empty_weight_kg,
         aircraft_title: Some(t.title).filter(|s| !s.is_empty()),
+        aircraft_ui_name: None,
         // v0.7.17 (B-001): Bei Profilen wie Fenix kommt `ATC MODEL`
         // oft leer aus dem Sim — Pilot sah dann „Type ?" im Activity-
         // Log. Fallback auf einen Profile-eigenen kanonischen ICAO
@@ -4961,7 +5032,12 @@ fn telemetry_to_snapshot_mit_pfad(
         // reinigt ATCCOM/Vendor-Tags, mappt bekannte Modellnamen auf ICAO
         // und validiert gegen das ICAO-Muster; bei Junk `None`, dann greift
         // der Profile-Fallback.
-        aircraft_icao: sim_core::normalize_icao_type(&t.atc_model)
+        // Profil-Vorrang (29.09.2026): Wo das Add-on die ATC-Stimme falsch
+        // belegt (iFly MAX 8 meldet B738), gilt die ICAO des Profils.
+        aircraft_icao: profile
+            .icao_vorrang()
+            .map(str::to_string)
+            .or_else(|| sim_core::normalize_icao_type(&t.atc_model))
             .or_else(|| profile.icao_fallback().map(str::to_string)),
         aircraft_registration: Some(t.atc_id).filter(|s| !s.is_empty()),
         simulator,
@@ -5753,8 +5829,9 @@ mod tests {
         // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2); A330 (26.09.2026): +16
         // (Strobe + ATC-Wahlschalter); FBW A32NX (28.09.2026): +32 (vier
         // gemessene LVars); A380 (28.09.2026): +8 (INI_FCU_HDG_DASHED);
-        // Lernpaket (29.09.2026): +8 (SEMIBODY LOADFACTOR Y).
-        assert_eq!(buf.len(), 3632, "total block size");
+        // Lernpaket (29.09.2026): +8 (SEMIBODY LOADFACTOR Y); Fenix-FCU-
+        // Lampen (29.09.2026): +40 (AP1, AP2, A/THR, APPR, HDG gestrichelt).
+        assert_eq!(buf.len(), 3672, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6068,13 +6145,18 @@ mod tests {
         assert_eq!(t.fbw_tcas_position, 1371.0); // idx 371
         assert_eq!(t.fbw_strobe, 1372.0); // idx 372
         assert_eq!(t.ini_fcu_hdg_dashed, 1373.0); // idx 373, A380 (28.09.2026)
-        assert_eq!(t.semibody_loadfactor_y, Some(1374.0)); // idx 374, Lernpaket
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1375.0); // idx 375
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1376.0)); // idx 376
-        assert_eq!(t.std_light_landing_on_1, Some(1377.0)); // idx 377
-        assert_eq!(t.std_light_landing_on_2, Some(1378.0)); // idx 378
-        assert_eq!(t.std_transponder_state, Some(1379.0)); // idx 379, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 380, "letzter Index 379");
+        assert_eq!(t.fnx_fcu_ap1_lampe, 1374.0); // idx 374, Fenix (29.09.2026)
+        assert_eq!(t.fnx_fcu_ap2_lampe, 1375.0); // idx 375
+        assert_eq!(t.fnx_fcu_athr_lampe, 1376.0); // idx 376
+        assert_eq!(t.fnx_fcu_appr_lampe, 1377.0); // idx 377
+        assert_eq!(t.fnx_fcu_hdg_dashed, 1378.0); // idx 378
+        assert_eq!(t.semibody_loadfactor_y, Some(1379.0)); // idx 379, Lernpaket
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1380.0); // idx 380
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1381.0)); // idx 381
+        assert_eq!(t.std_light_landing_on_1, Some(1382.0)); // idx 382
+        assert_eq!(t.std_light_landing_on_2, Some(1383.0)); // idx 383
+        assert_eq!(t.std_transponder_state, Some(1384.0)); // idx 384, zuletzt
+        assert_eq!(TELEMETRY_FIELDS.len(), 385, "letzter Index 384");
     }
 
     #[test]
@@ -6144,7 +6226,8 @@ mod tests {
         // FBW A32NX (28.09.2026): vier gemessene LVars dazu → 57 * 8 = 456.
         // A380 (28.09.2026): INI_FCU_HDG_DASHED dazu → 58 * 8 = 464.
         // Lernpaket (29.09.2026): SEMIBODY LOADFACTOR Y dazu → 59 * 8 = 472.
-        buf.truncate(buf.len() - 472);
+        // Fenix-FCU-Lampen (29.09.2026): fuenf LVars dazu → 64 * 8 = 512.
+        buf.truncate(buf.len() - 512);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -6160,6 +6243,8 @@ mod tests {
         assert_eq!(t.ini_tcas_stby_state, 0.0, "A330 = sicherer Default");
         assert_eq!(t.fbw_park_brake_lever, 0.0, "FBW A32NX = sicherer Default");
         assert_eq!(t.ini_fcu_hdg_dashed, 0.0, "A380 = sicherer Default");
+        assert_eq!(t.fnx_fcu_ap1_lampe, 0.0, "Fenix-FCU = sicherer Default");
+        assert_eq!(t.fnx_fcu_hdg_dashed, 0.0, "Fenix-FCU = sicherer Default");
         assert_eq!(
             t.std_light_landing_on_2, None,
             "Runde 3 = kein erfundener Wert"
@@ -6511,13 +6596,21 @@ mod tests {
         let snap = telemetry_to_snapshot(a346_telemetry(), Simulator::Msfs2024);
         assert_eq!(snap.autothrottle_on, Some(false));
 
-        // Fenix: `L:S_FCU_ATHR`.
+        // Fenix: Lampe `L:I_FCU_ATHR` (gemessen 29.09.2026: 1/0/1).
+        let mut t = Telemetry::default();
+        t.title = "FenixA320 CFM SL".into();
+        t.atc_model = "A320".into();
+        t.fnx_fcu_athr_lampe = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+        // Gegenprobe: Lampe aus, nur die Taste `L:S_FCU_ATHR` gedrueckt
+        // (Tastendruck, kein Zustand) → aus.
         let mut t = Telemetry::default();
         t.title = "FenixA320 CFM SL".into();
         t.atc_model = "A320".into();
         t.fnx_fcu_athr = 1.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.autothrottle_on, Some(true));
+        assert_eq!(snap.autothrottle_on, Some(false));
 
         // Default-Profil: None — auch wenn die (toten) LVar-Slots
         // zufaellig Werte tragen.
@@ -6526,8 +6619,112 @@ mod tests {
         t.atc_model = "A20N".into();
         t.a346_athr_light = 1.0;
         t.fnx_fcu_athr = 1.0;
+        t.fnx_fcu_athr_lampe = 1.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.autothrottle_on, None);
+    }
+
+    /// Fenix-FCU aus der Messung vom 29.09.2026 (FenixA320 CFM WF, Pilot 25,
+    /// Reiseflug, Einreichung 2eef246e). Rohwerte je Stellung wie gemessen;
+    /// die Standard-AP-SimVars standen in allen Schritten still (false).
+    fn fenix_fcu(ap1: f64, ap2: f64, appr: f64, hdg_dashed: f64) -> SimSnapshot {
+        let mut t = Telemetry::default();
+        t.title = "FenixA320 CFM WF".into();
+        t.atc_model = "A320".into();
+        t.fnx_fcu_ap1_lampe = ap1;
+        t.fnx_fcu_ap2_lampe = ap2;
+        t.fnx_fcu_appr_lampe = appr;
+        t.fnx_fcu_hdg_dashed = hdg_dashed;
+        telemetry_to_snapshot(t, Simulator::Msfs2024)
+    }
+
+    #[test]
+    fn fenix_ap_aus_den_fcu_lampen_gemessen() {
+        // Schritt „ap2": nur AP1 (AP1 1, AP2 0) → nur AP2 (0/1) → nur AP1.
+        for (ap1, ap2) in [(1.0, 0.0), (0.0, 1.0), (1.0, 0.0)] {
+            let snap = fenix_fcu(ap1, ap2, 0.0, 1.0);
+            assert_eq!(snap.autopilot_master, Some(true), "AP1 {ap1} AP2 {ap2}");
+        }
+        // Schritt „autoland": beide APs (AP1 1, AP2 1) bleibt eingerastet.
+        assert_eq!(fenix_fcu(1.0, 1.0, 1.0, 1.0).autopilot_master, Some(true));
+        // Gegenprobe: beide Lampen aus → AP aus, auch mit gestricheltem
+        // HDG-Fenster (FD allein) — kein NAV/HDG ohne AP.
+        let aus = fenix_fcu(0.0, 0.0, 0.0, 1.0);
+        assert_eq!(aus.autopilot_master, Some(false));
+        assert_eq!(aus.autopilot_nav, Some(false));
+        assert_eq!(aus.autopilot_heading, Some(false));
+        let aus = fenix_fcu(0.0, 0.0, 0.0, 0.0);
+        assert_eq!(aus.autopilot_heading, Some(false));
+    }
+
+    #[test]
+    fn fenix_nav_hdg_und_appr_gemessen() {
+        // Schritt „lateral": HDG-Fenster gestrichelt 1/0/1 = NAV → HDG → NAV.
+        let nav = fenix_fcu(1.0, 0.0, 0.0, 1.0);
+        assert_eq!(nav.autopilot_nav, Some(true));
+        assert_eq!(nav.autopilot_heading, Some(false));
+        let hdg = fenix_fcu(1.0, 0.0, 0.0, 0.0);
+        assert_eq!(hdg.autopilot_nav, Some(false));
+        assert_eq!(hdg.autopilot_heading, Some(true));
+        // Schritt „anflug": APPR-Lampe 0/1/0 (aus HDG heraus gedrueckt).
+        assert_eq!(
+            fenix_fcu(1.0, 0.0, 0.0, 0.0).autopilot_approach,
+            Some(false)
+        );
+        let appr = fenix_fcu(1.0, 0.0, 1.0, 0.0);
+        assert_eq!(appr.autopilot_approach, Some(true));
+        assert_eq!(appr.autopilot_nav, Some(false));
+    }
+
+    #[test]
+    fn fenix_tasten_allein_sind_kein_zustand() {
+        // Gegenprobe zur Messung: die Tasten `L:S_FCU_AP1/APPR/ATHR` gingen
+        // in keinem Schritt mit. Tastendruck ohne Lampe → alles aus.
+        let mut t = Telemetry::default();
+        t.title = "FenixA320 CFM WF".into();
+        t.atc_model = "A320".into();
+        t.fnx_fcu_ap1 = 1.0;
+        t.fnx_fcu_ap2 = 1.0;
+        t.fnx_fcu_appr = 1.0;
+        t.fnx_fcu_athr = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+        assert_eq!(snap.autopilot_approach, Some(false));
+        assert_eq!(snap.autothrottle_on, Some(false));
+    }
+
+    #[test]
+    fn fenix_lampen_gelten_fuer_a319_und_a321() {
+        // Eine FenixSystem-Logik fuer die ganze Familie (siehe Mapping).
+        for (titel, icao) in [
+            ("FenixA319 CFM WF HD", "A319"),
+            ("FenixA321 IAE SL SC", "A321"),
+        ] {
+            let mut t = Telemetry::default();
+            t.title = titel.into();
+            t.atc_model = icao.into();
+            t.fnx_fcu_ap2_lampe = 1.0;
+            t.fnx_fcu_athr_lampe = 1.0;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert!(snap.aircraft_profile.is_fenix(), "{titel}");
+            assert_eq!(snap.autopilot_master, Some(true), "{titel}");
+            assert_eq!(snap.autothrottle_on, Some(true), "{titel}");
+        }
+    }
+
+    #[test]
+    fn fenix_lampen_wirken_nicht_auf_andere_muster() {
+        // Tote Fenix-LVars auf einem Nicht-Fenix-Airbus aendern nichts.
+        let mut t = Telemetry::default();
+        t.title = "Asobo A320 Neo".into();
+        t.atc_model = "A20N".into();
+        t.fnx_fcu_ap1_lampe = 1.0;
+        t.fnx_fcu_appr_lampe = 1.0;
+        t.fnx_fcu_hdg_dashed = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+        assert_eq!(snap.autopilot_approach, Some(false));
+        assert_eq!(snap.autopilot_nav, Some(false));
     }
 
     #[test]
@@ -10302,6 +10499,46 @@ mod tests {
         );
         assert_eq!(a.seatbelts_sign, b.seatbelts_sign);
         assert_eq!(a.cockpit_rohwerte, b.cockpit_rohwerte);
+    }
+}
+
+#[cfg(test)]
+mod profil_lvar_tests {
+    use super::*;
+
+    /// Die Messung liest genau die L:-Variablen der Profile mit — geprüft
+    /// über die echte Kette bis zu den Messfeldern.
+    #[test]
+    fn messung_enthaelt_ifly_autobrake_und_fenix_fcu_lampen() {
+        let profil = profil_lvar_namen();
+        let (felder, n) = crate::vermessung::l_felder_mit_profil(&profil, &[]);
+        let namen: Vec<&str> = felder.iter().map(|f| f.simvar.as_str()).collect();
+        for soll in [
+            "L:VC_Autobrake_SW_VAL",
+            "L:I_FCU_AP1",
+            "L:I_FCU_ATHR",
+            "L:I_FCU_APPR",
+        ] {
+            assert!(namen.contains(&soll), "{soll} fehlt in der Messung");
+        }
+        assert_eq!(n, felder.len(), "ohne Scan sind alle Felder Profilnamen");
+        // Keine Standard-SimVar rutscht als L: hinein.
+        assert!(!namen.iter().any(|n| n.starts_with("L:PLANE ")));
+    }
+
+    #[test]
+    fn profilnamen_ohne_doppelte_und_unter_der_obergrenze() {
+        let (felder, n) = crate::vermessung::l_felder_mit_profil(&profil_lvar_namen(), &[]);
+        let einzeln: std::collections::HashSet<&str> =
+            felder.iter().map(|f| f.simvar.as_str()).collect();
+        assert_eq!(einzeln.len(), felder.len());
+        // Jeder saubere Profilname kommt an (keiner fällt still weg).
+        let eindeutig: std::collections::HashSet<&str> = profil_lvar_namen().into_iter().collect();
+        assert_eq!(n, eindeutig.len());
+        assert!(
+            felder.len() + crate::vermessung::standard_felder().len()
+                <= crate::vermessung::BLOCK * crate::vermessung::MAX_BLOECKE
+        );
     }
 }
 
