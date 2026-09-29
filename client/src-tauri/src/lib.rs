@@ -9091,7 +9091,7 @@ impl From<ApiError> for UiError {
 /// Rastenzahl — die Zahl der Rasten verraet die Familie:
 ///   9 Positionen (num=8, Index 0..8) -> Boeing 737: UP/1/2/5/10/15/25/30/40
 ///   7 Positionen (num=6)             -> Boeing 777: UP/1/5/15/20/25/30
-///   5 Positionen (num=4)             -> Airbus:     UP/1/2/3/FULL
+///   5 Positionen (num=4)             -> Airbus:     0/1/2/3/FULL
 /// Alles andere -> None, dann uebernimmt die alte Prozent-Heuristik
 /// (detent_label). Anlass: iFly-Flug 11.08.2026 — "Flaps 5" (Raste 3
 /// von 8) lief durchs Airbus-Prozentraster und hiess "1+F"; die
@@ -9099,12 +9099,14 @@ impl From<ApiError> for UiError {
 fn raster_flap_label(num_positions: u8, index: u8, icao: Option<&str>) -> Option<&'static str> {
     const B737: [&str; 9] = ["UP", "1", "2", "5", "10", "15", "25", "30", "40"];
     const B777: [&str; 7] = ["UP", "1", "5", "15", "20", "25", "30"];
-    const AIRBUS: [&str; 5] = ["UP", "1", "2", "3", "FULL"];
+    // Airbus-Hebel zeigt „0“, nicht „UP“ (Thomas, 29.09.2026) — gilt fuer
+    // MSFS und X-Plane gleich.
+    const AIRBUS: [&str; 5] = ["0", "1", "2", "3", "FULL"];
     // Airbus mit 1+F als eigener Raste: Fenix A32x meldet im Flug 5 Rasten,
-    // Index 0..=5 = UP/1/1+F/2/3/FULL (Flug-Logs 28.09.2026). Vorher stand
+    // Index 0..=5 = 0/1/1+F/2/3/FULL (Flug-Logs 28.09.2026). Vorher stand
     // im Aktivitaetslog "Raste 2/5". Nur fuer Airbus-Muster — 5 Rasten hat
     // z. B. auch der CRJ (0/1/8/20/30/45).
-    const AIRBUS_1F: [&str; 6] = ["UP", "1", "1+F", "2", "3", "FULL"];
+    const AIRBUS_1F: [&str; 6] = ["0", "1", "1+F", "2", "3", "FULL"];
     match num_positions {
         8 => B737.get(index as usize).copied(),
         6 => B777.get(index as usize).copied(),
@@ -9155,7 +9157,7 @@ mod raster_flap_label_tests {
         let l: Vec<_> = (0..=4)
             .map(|i| raster_flap_label(4, i, Some("A333")))
             .collect();
-        assert_eq!(l, ["UP", "1", "2", "3", "FULL"].map(Some));
+        assert_eq!(l, ["0", "1", "2", "3", "FULL"].map(Some));
         assert_eq!(raster_flap_label(4, 5, Some("A333")), None);
     }
 
@@ -9173,7 +9175,7 @@ mod raster_flap_label_tests {
         let l: Vec<_> = (0..=5)
             .map(|i| raster_flap_label(5, i, Some("A320")))
             .collect();
-        let soll = ["UP", "1", "1+F", "2", "3", "FULL"].map(Some);
+        let soll = ["0", "1", "1+F", "2", "3", "FULL"].map(Some);
         assert_eq!(l, soll);
         assert_eq!(raster_flap_label(5, 6, Some("A320")), None);
     }
@@ -9195,7 +9197,8 @@ mod raster_flap_label_tests {
 
 fn detent_label(detent: u8) -> &'static str {
     match detent {
-        0 => "UP",
+        // Airbus-Hebel zeigt „0“ (Thomas, 29.09.2026), wie `raster_flap_label`.
+        0 => "0",
         1 => "1",
         2 => "1+F",
         3 => "2",
