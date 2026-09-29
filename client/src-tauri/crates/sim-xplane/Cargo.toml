@@ -32,6 +32,9 @@ base64 = "0.22"
 # „Flugzeug vermessen": Web-API v2 per WebSocket (alle Werte live). Synchron,
 # ohne tokio; dieselbe Version wie im übrigen Baum (keine neue Abhängigkeit).
 tungstenite = "0.29"
+# Plugin-Socket (Protokoll 2): groesserer Empfangspuffer fuer LISTE- und
+# Vermessungsschuebe. Steckt schon im Baum (tokio/mio), keine neue Kiste.
+socket2 = "0.6"
 
 [lints]
 workspace = true

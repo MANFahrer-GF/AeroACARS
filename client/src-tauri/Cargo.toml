@@ -185,6 +185,9 @@ regex = "1"
 # AeroACARS/`. Default features cover deflate, which is what GitHub
 # Actions' `zip` action uses. No native deps.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# AP7 (ADR-0004 §8): SHA-256 des Plugin-Pakets pruefen. Steckt schon im Baum
+# (ueber tauri/rustls), keine neue Kiste.
+sha2 = "0.10"
 
 # v0.9.0 (#GlitchTip): Sentry-Rust SDK. Sendet anonymisierte Panics +
 # capture_message-Calls an GlitchTip (Sentry-API-kompatibel). DSN
