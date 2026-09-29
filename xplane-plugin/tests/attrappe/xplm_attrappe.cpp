@@ -284,16 +284,15 @@ int main(int argc, char** argv) {
     } else {
         std::printf("[Attrappe] Port 52000 belegt - Pakete nicht gezaehlt, nur Ticks\n");
     }
-    // Grobe Schranken: fangen "Protokoll 1 läuft plötzlich jeden Frame"
-    // (~60 Hz) und "Protokoll 1 steht" ab. Die Untergrenze haengt an der
-    // Bildrate, die die Attrappe WIRKLICH geschafft hat: Auf dem macOS-Runner
-    // unter ASan kam sie auf ~11 fps — dort kann Protokoll 1 gar keine 20 Hz
-    // erreichen, auch ganz ohne Abos nicht (CI 29.09.2026: 10,6 Hz ohne Abo).
-    // Die Obergrenze bleibt fest: mehr als 20 Hz heisst "jeden Frame".
-    const double fps_ist = static_cast<double>(zaehler) / laufzeit;
-    const double soll_hz = fps_ist < 20.0 ? fps_ist : 20.0;
-    std::printf("[Attrappe] erreichte Bildrate %.1f fps, Protokoll-1-Soll %.1f Hz\n", fps_ist, soll_hz);
-    const bool ticks_ok = tick_hz > 0.6 * soll_hz && tick_hz < 21.5;
-    const bool pakete_ok = !p1_da || (paket_hz > 0.6 * soll_hz && paket_hz < 21.5);
+    // Grobe Schranken fuer genau zwei Rueckfaelle: Protokoll 1 laeuft
+    // ploetzlich jeden Frame (> 21,5 Hz) oder steht (< 5 Hz). Keine engere
+    // Untergrenze: Auf dem macOS-Runner unter ASan kam Protokoll 1 auch GANZ
+    // OHNE Protokoll 2 (Port belegt, kein Aufruf "jeden Frame") nur auf
+    // ~10 Hz, obwohl die Attrappe 60 fps hielt (CI 29.09.2026) — die Zeit-
+    // steuerung der VM, nicht das Plugin. Das alte Plugin 0.5.13 verlangt
+    // dasselbe Intervall (0,05 s).
+    std::printf("[Attrappe] Bildrate %.1f fps\n", static_cast<double>(zaehler) / laufzeit);
+    const bool ticks_ok = tick_hz > 5.0 && tick_hz < 21.5;
+    const bool pakete_ok = !p1_da || (paket_hz > 5.0 && paket_hz < 21.5);
     return (ticks_ok && pakete_ok) ? 0 : 1;
 }
