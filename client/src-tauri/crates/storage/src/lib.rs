@@ -863,7 +863,27 @@ pub struct LandingRecord {
     /// deserialisierbar (None).
     #[serde(default)]
     pub score_algorithm_version: Option<u8>,
+
+    // ─── Lernpaket AP4/AP5 (29.09.2026) — Anflug-Forensik ohne Note ──
+    //
+    // Reine Befunde: keine Unternote, kein Stabilitaets-Gate, kein Deckel
+    // liest diese Felder. Sie stehen NUR lokal (und in der Datensicherung),
+    // nicht in MQTT/PIREP — die Nachrichten dort brechen ueber 10 KB ab.
+    // Alte landing_history.json bleibt ueber `serde(default)` lesbar.
+    /// Geometrische Abweichung vom Gleitpfad der gelandeten Bahn (AP4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anflug_gleitpfad: Option<AnflugGleitpfad>,
+    /// Anflugruhe je Tor 1000–500 / 500–200 ft (AP5), nur als Hinweis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anflug_ruhe: Option<AnflugRuhe>,
 }
+
+// Lernpaket AP4/AP5: die Forensik-Structs liegen in `landing-scoring`,
+// weil derselbe Block auch in den PIREP-Payload (`aeroacars-mqtt`) geht —
+// EINE Definition fuer Datensatz und Leitung, damit die JSON-Form nicht
+// auseinanderlaeuft. Hier re-exportiert, damit `storage::AnflugGleitpfad`
+// weiter gilt.
+pub use landing_scoring::anflug_forensik::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor};
 
 /// v0.7.1: Stability-Gate-Window-Metadaten (Spec §5.4).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1649,6 +1669,51 @@ mod merge_tests {
             merged[0].pirep_id, "P10",
             "die ältesten zehn müssen weg sein"
         );
+    }
+
+    /// Lernpaket AP4/AP5 (29.09.2026): Ein Datensatz von vor diesen Feldern
+    /// bleibt lesbar (und schreibt sie nicht als `null` zurueck); ein neuer
+    /// traegt Gleitpfad und Anflugruhe unveraendert ueber die Platte.
+    #[test]
+    fn anflug_forensik_alt_lesbar_und_neu_verlustfrei() {
+        let alt = rec("P1", "2026-06-07T10:00:00Z", "2026-06-07T10:05:00Z");
+        assert_eq!(alt.anflug_gleitpfad, None);
+        assert_eq!(alt.anflug_ruhe, None);
+        let v = serde_json::to_value(&alt).unwrap();
+        assert!(v.get("anflug_gleitpfad").is_none());
+
+        let neu = mit(
+            alt,
+            serde_json::json!({
+                "anflug_gleitpfad": {
+                    "quelle": "navigraph_ils", "winkel_deg": 3.0, "tch_ft": 50.0,
+                    "hoehenbezug": "navigraph", "schwellenhoehe_navigraph_ft": 300.0,
+                    "gesamt": {"proben": 60, "mittel_abs_dots": 0.4,
+                               "max_dots": -1.2, "max_abw_ft": -38.0}
+                },
+                "anflug_ruhe": {
+                    "hoehenbezug": "schwelle",
+                    "tor_500_200": {"proben": 25, "dauer_s": 24.0,
+                                    "pfad_vorzeichenwechsel": 2,
+                                    "schub_umkehr_pro_min": null}
+                }
+            }),
+        );
+        let g = neu.anflug_gleitpfad.as_ref().unwrap();
+        assert_eq!(g.quelle, "navigraph_ils");
+        assert!(!g.tch_angenommen, "fehlendes Feld = nicht angenommen");
+        assert_eq!(g.gesamt.as_ref().unwrap().max_dots, -1.2);
+        let r = neu.anflug_ruhe.as_ref().unwrap();
+        assert_eq!(r.tor_1000_500, None);
+        assert_eq!(
+            r.tor_500_200.as_ref().unwrap().pfad_vorzeichenwechsel,
+            Some(2)
+        );
+
+        let zurueck: LandingRecord =
+            serde_json::from_value(serde_json::to_value(&neu).unwrap()).unwrap();
+        assert_eq!(zurueck.anflug_gleitpfad, neu.anflug_gleitpfad);
+        assert_eq!(zurueck.anflug_ruhe, neu.anflug_ruhe);
     }
 }
 

@@ -169,6 +169,94 @@ Server nicht erreichbar ist (Navdaten-Zwischenspeicher im Client prüfen).
 
 **Abnahme:** Wert + Quelle im Analyse-JSON und im Landungs-Tab; Korpus-Plausibilität.
 
+**Ergebnis (29.09.2026, Zweig `feat/lernpaket-ap4-6`):**
+- Neues Modul `client/src-tauri/src/anflug_forensik.rs` (reine Funktionen). Je Probe des
+  Anflug-Puffers: Entfernung vor der Landeschwelle über `runway::projiziere_auf_bahn`
+  (Achse Schwelle→Gegenende der Navdaten), versetzte Schwelle über
+  `displacement_not_in_geometry_ft` (dieselbe Größe wie in `assess_touchdown`, kein doppelter
+  Abzug seit AIRAC 2608). Sollhöhe = Schwellenhöhe + TCH + d·tan θ. Winkel wird **vom
+  Gleitweg-Bezugspunkt (GPI = TCH/tan θ hinter der Schwelle)** gemessen:
+  `atan(h/(d+GPI)) − θ` — so misst auch ein echtes ILS, und auf der Pfadgeraden ist die
+  Abweichung in jeder Entfernung exakt 0. 1 Dot = 0,35° × θ/3 (QS-Korrektur 6), + = über dem Pfad.
+- Nur Proben vor der Schwelle, im Gleitwegsektor ±10° (QS-Korrektur 5), Steuerkurs
+  ≤ 90° zur Bahn, letzte 5 min vor dem Aufsetzen, 1000–200 ft über der Schwelle; Tore
+  1000–500 / 500–200; je Tor mind. 5 Proben. Ausgabe: mittlere |Abw.| in Dots, größte
+  Abweichung in Dots und ft mit Vorzeichen, Probenzahl.
+- Quelle: `navigraph_ils` (`ils.is_some()`), `navigraph_bahn` (Navigraph-Bahn ohne ILS),
+  `angenommen_3grad` (keine Navdaten-Bahn → **keine Werte**, Grund `keine_bahn`). Am
+  Wert von `glideslope_angle`/`tch_ft` ist die Echtheit nicht ablesbar (serde-Standard
+  3,0/50, Server schreibt fehlende TCH als **0** und Nicht-ILS-Winkel als 3,0) — deshalb
+  entscheidet `ils`, und TCH 0 gilt als unbekannt → 50 ft mit `tch_angenommen: true`.
+  Fehlt die Schwellenhöhe → Grund `schwellenhoehe_fehlt`, keine Werte.
+- `ApproachBufferSample` hat jetzt `lat`/`lon` (Option, nie Grund zum Verwerfen einer Probe).
+- Speicherung: `LandingRecord.anflug_gleitpfad` (serde default, alte Datensätze lesbar),
+  Analyse-JSON `landing_analysis.anflug_gleitpfad` (damit im Flug-Log-Ereignis
+  `landing_analysis`), Landungs-Tab: Info-Zeilen unter der Approach-Stability-Card
+  (`AnflugForensikInfo.tsx`), Texte DE/EN/IT. **Keine** Änderung an MQTT/PIREP, Noten,
+  Gate oder Deckel; keine Neuberechnung alter Landungen.
+- Grenzen: Im Flug-Log steht der Wert nur, wenn der Stempel vor dem Touchdown-Dump lief
+  (Normalfall), im Datensatz immer. Korpus-Plausibilität steht noch aus (braucht Flüge mit
+  dieser Fassung).
+
+**QS-Korrekturen (Cloud-Prüfer, 29.09.2026, „Freigabe: nein“ → behoben):**
+1. Größte Abweichung: Dots und ft kommen jetzt von DERSELBEN Probe (vorher zwei getrennte
+   Maxima, „−1,2 Dots (+60 ft)“).
+2. Nachziehen nach Bahnwechsel: `anflug_forensik_nachziehen` läuft in
+   `bahn_upgrade_anwenden` (Navigraph-Upgrade beim Einreichen) und in
+   `bahn_am_aufsetzpunkt_nachholen` (Szenerie ersetzt Schwelle/Ende/Versatz), wenn sich die
+   Forensik-Bahn geändert hat — nur für eine schon gestempelte Landung (kein
+   Durchstart-Reset dazwischen) und nur mit Proben vor dem Aufsetzen im Puffer; gleicher
+   Zeitpunkt/gleiches Fenster/gleiche Platzhöhe wie beim Stempel.
+3. Eigener Forensik-Ringpuffer (`anflug_forensik_puffer`, 400 Proben ≈ 5 min), an derselben
+   Stelle und mit demselben Plausibilitätsfilter befüllt wie `approach_buffer`; die
+   120er-Kappe bleibt (trägt über `compute_approach_stddev` die Note). Je Tor
+   `oberste_hoehe_ft`, Anzeige „erfasst ab X ft“, wenn ein Tor nicht von oben an erfasst ist.
+   Veralteter Kommentar an `APPROACH_BUFFER_MAX` berichtigt.
+4. Sim-Boden: `msl − agl` der (bis zu 3) schwellennächsten Proben (±600 m längs, ±100 m quer),
+   Median. Weicht er > 20 ft von der Navigraph-Schwellenhöhe ab (oder fehlt diese), gilt der
+   Sim-Boden: `hoehenbezug` = `sim_boden`, dazu `schwellenhoehe_navigraph_ft` und
+   `sim_boden_ft`; neutraler Hinweis im Landungs-Tab.
+5. Gleitpfad-Sektor ±10° vom GPI aus (echter Gleitweg ≈ ±8°), Abstand `hypot(d+GPI, quer)`.
+   Die Anflugruhe ist an keinen Sektor gebunden.
+6. Dot = 0,35° × θ/3 (bei 3° unverändert, EGLC 5,5° ≈ 0,64°), `grad_je_dot` gespeichert.
+7. `schub_grund`: `kein_n1` / `zu_kurz` getrennt, eigener Text je Grund.
+- Außerdem: N1-Mittel nur über Triebwerke mit N1 ≥ 5 % (ein stehendes Triebwerk halbierte
+  sonst jede Schubänderung); ohne Bahn werden `winkel_deg`/`tch_ft` nicht mehr gespeichert.
+  Neue Tests u. a. für Querversatz, Gegenkurs, Ost-West-Bahn, handgerechnete Punkte
+  (h = 50 + d·tan 3°, bis 2,75 NM), Versatz über echten Bahntreffer, Nachziehen nach Upgrade.
+
+**Zusatz (Entscheid Thomas 29.09.2026): PIREP, Flug-Log, eine Anzeige für Client und Webapp**
+- Die Structs liegen jetzt in `landing-scoring` (`anflug_forensik.rs`), `storage`
+  re-exportiert sie — eine Definition für LandingRecord und PIREP.
+- `PirepPayload.anflug_gleitpfad` / `.anflug_ruhe` (additiv, fehlen ohne Befund), befüllt
+  in `build_pirep_payload` aus dem finalen Stand. NICHT im Touchdown-Payload (10-KB-Grenze).
+  Größe: voll befüllt (drei Tore, Sim-Boden, Schub) 557 + 412 = 969 Bytes; dafür legt der
+  Client die Werte gerundet ab (Dots/Raten 0,01, ft/s 0,1, Höhen ganze Fuß) —
+  ungerundete f32 waren 1074 Bytes.
+- Flug-Log: Ändert `anflug_forensik_nachziehen` die Werte, schreibt `emit_landing_finalized`
+  einmal ein Ereignis `landing_analysis_nachtrag` (`payload`: `edge_at`,
+  `anflug_gleitpfad`, `anflug_ruhe`) vor `landing_finalized`.
+- `AnflugForensikInfo.tsx` steht in `scripts/anzeige-sync.mjs` (DATEIEN). Nur React +
+  react-i18next, Schlüssel als Literale bzw. Vorspann (`quelle.`, `grund.`,
+  `schub_grund.`), Props = die beiden Blöcke. Der Abgleich in aeroacars-live
+  (`node scripts/anzeige-sync.mjs --schreiben`) steht noch aus: bis dahin sind die zwei
+  Tests in `AnzeigeSync.test.tsx` rot (Trockenlauf gegen eine Kopie: 1 Datei, 75
+  Beschriftungen, danach „auf beiden Seiten gleich“).
+
+**Nachprüfung (Cloud-Prüfer auf 105f3264, 29.09.2026) — zwei neue Fehler aus den Korrekturen:**
+- A: Der Sim-Boden wurde auch VOR der Schwelle gemessen (Wasser/Klippe/Senke: KLGA, LPMA,
+  TNCM, LXGB) und schaltete den Bezug grundlos um. Jetzt nur Proben über der Bahn:
+  0–600 m hinter der Landeschwelle, |quer| ≤ max(halbe Bahnbreite, 30 m), mind. 2 Proben;
+  ersatzweise die letzte Probe über der Bahn vor dem Aufsetzen.
+- B: Der 400er-Puffer ließ bei Touch-and-Go/Platzrunde und nach einem Durchstart den
+  vorigen Anflug einfließen. Jetzt Schnittzeitpunkt `anflug_forensik_ab`, gesetzt beim
+  Touch-and-Go-Reset, in `check_go_around` und im FSM-Touch-and-Go; Proben davor zählen
+  nicht (Gleitpfad, Ruhe, Sim-Boden). Das Nachziehen nutzt den Schnitt, der beim Stempel
+  galt. Zeitpunkt statt Leeren, damit der Puffer für die Diagnose bleibt und ein
+  späterer Schnitt einen gemachten Stempel nicht verändert.
+- C: Der Nachtrag `landing_analysis_nachtrag` wird jetzt auch im Warteschlangen-Zweig
+  vor `FlightEnded` geschrieben (einmal, dieselbe Fahne).
+
 ---
 
 ## AP5 — Anflugruhe (Forensik ohne Note)
@@ -181,6 +269,25 @@ Vorzeichenwechsel der Pfadabweichung (braucht AP4), Nick-/Roll-Ruckeln,
 Schub-Umkehrungen je Minute. Tore 1000 / 500 ft. Anzeige als Hinweis, **keine Note**.
 
 **Abhängigkeit:** AP4.
+
+**Ergebnis (29.09.2026, Zweig `feat/lernpaket-ap4-6`):**
+- `ApproachBufferSample` um `pitch_deg` und `n1_mittel_pct` (Mittel aus `eng_n1_pct`)
+  erweitert. Je Tor 1000–500 / 500–200 ft (Bezug Schwellenhöhe, sonst Platzhöhe):
+  - Seitenwechsel der Pfadabweichung aus AP4, Totband ±0,1 Dot (≈ 7 ft bei 2 NM —
+    Probenrauschen zählt nicht als Korrektur); ohne AP4-Pfad `None`.
+  - Nick-/Roll-Unruhe = Standardabweichung der Nick-/Rollrate in °/s (Paare mit
+    0,2–5 s Abstand, mind. 4 Raten). Eine konstante Rate ergibt 0; Ein- und Ausleiten
+    einer Kurve oder das Abfangen ändern die Rate und zählen mit — der Wert misst
+    Bewegung um die Achse, nicht nur Pendeln.
+  - Schub-Umkehrungen je Minute aus mittlerem N1 mit Hysterese 2 % N1 (A/THR- und
+    Hebelkorrekturen liegen bei 3–10 %, darunter Regelrauschen); mind. 10 s Dauer.
+- **Weggelassen:** Schub bei X-Plane (der Adapter liest weder N1 noch Hebelstellung,
+  `eng_n1_pct` ist dort immer `None`) und bei Kolbenmotoren/MSFS-Add-ons ohne lebendes
+  N1 — dort steht `None` und im Landungs-Tab „ohne N1-Daten nicht erfasst", kein
+  erfundener Wert. Eine stetige Schubhebel-Stellung führt der SimSnapshot für keinen der
+  beiden Sims (nur das Rasten-Label `thrust_gate` einzelner Add-on-Profile).
+- Speicherung wie AP4: `LandingRecord.anflug_ruhe`, `landing_analysis.anflug_ruhe`,
+  Hinweiszeile im Landungs-Tab ohne Farbe und ohne Wertung. Keine Note.
 
 ---
 
@@ -227,10 +334,14 @@ erscheinen als „fehlt“ statt 0; Rückfall ohne Plugin funktioniert wie bishe
 
 ## Reihenfolge
 
-1. AP1a (G-Kanal mitschreiben) — klein, sofort Messdaten.
-2. AP2 (Deckel) — klein, klare Wirkung.
-3. AP3 (Hopser-Gegenprobe) — Analyse.
-4. AP7 (Plugin) — größter Brocken, eigener Zweig.
-5. AP4 → AP5 (Gleitpfad, dann Anflugruhe).
-6. AP6 (Profil je Funktion).
-7. AP1b/1c, sobald genug MSFS-Landungen mit dem neuen Kanal vorliegen.
+Korrigiert am 29.09.2026 (Thomas: „AP7 ist das letzte“):
+
+1. AP1a, AP2, AP3 — veröffentlicht mit v1.9.11 (29.09.2026).
+2. AP4 → AP5 (Gleitpfad, Anflugruhe) — gebaut, Cloud-QS „Freigabe: ja“,
+   Live-Seite (Recorder + Landungsanalyse) ebenso; wird mit AP7 ausgerollt.
+3. AP6 — als Code-Umbau verworfen (die Tabelle „Funktion × Profil“ gibt es
+   praktisch schon; ein Umbau änderte nichts). Stattdessen Messaufruf im Forum
+   (#44, 29.09.2026): Fenix- und PMDG-Autopilot sind durchgehend „aus“, belegt
+   an Flug-Logs; Anbindung je Add-on, sobald Luftmessungen vorliegen.
+4. AP7 (Plugin) — zuletzt, eigener Zweig `feat/ap7-xplane-plugin`, ADR-0004 neu.
+5. AP1b/1c, sobald genug MSFS-Landungen mit dem neuen G-Kanal vorliegen.

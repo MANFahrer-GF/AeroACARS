@@ -85,6 +85,11 @@ export const DATEIEN = [
   // v1.7.40: Sprit je Wegpunkt — in der Sprit-Sektion der Landeauswertung.
   "components/SpritWegpunkte.tsx",
   "lib/sprit.ts",
+  // Lernpaket AP4/AP5 (Entscheid Thomas 29.09.2026): Gleitpfad und
+  // Anflugruhe — Info-Zeilen ohne Note. Client: aus dem LandingRecord;
+  // Webapp: aus dem PIREP-Payload (`anflug_gleitpfad` / `anflug_ruhe`,
+  // dieselbe JSON-Form). Keine Importe ausser React/react-i18next.
+  "components/AnflugForensikInfo.tsx",
 ];
 
 /**
