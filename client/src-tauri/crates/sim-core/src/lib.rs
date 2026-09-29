@@ -1639,6 +1639,19 @@ impl AircraftProfile {
         }
     }
 
+    /// ICAO, die VOR der ATC-Stimme (`ATC MODEL`) gilt: fuer Profile, bei denen
+    /// das Add-on die Stimme nachweislich falsch belegt. iFly 737 MAX 8: alle
+    /// vier aircraft.cfg haben `atc_model = "…AC_MODEL B738.0.text"`, aber
+    /// `icao_type_designator = "B38M"` (Scan 29.09.2026); phpVMS fuehrt die
+    /// Maschinen als B38M (TUI/RYR/ENT … -B38M). Ohne Vorrang meldete der Client
+    /// B738 — Buchung, Scan und Messung passten nicht zusammen (Thomas).
+    pub fn icao_vorrang(self) -> Option<&'static str> {
+        match self {
+            Self::IflyMax8 => Some("B38M"),
+            _ => None,
+        }
+    }
+
     /// Short human-readable label for the activity log.
     pub fn label(self) -> &'static str {
         match self {
@@ -2383,6 +2396,21 @@ mod tests {
         // werden — Detection prueft auf alle drei Marker.
         let p = AircraftProfile::detect("FSReborn Lear 75", "LJ75");
         assert_eq!(p, AircraftProfile::Default);
+    }
+
+    #[test]
+    fn icao_vorrang_nur_fuer_ifly_max8() {
+        assert_eq!(AircraftProfile::IflyMax8.icao_vorrang(), Some("B38M"));
+        // Gegenprobe: alle anderen Profile lassen die ATC-Stimme gelten.
+        for p in [
+            AircraftProfile::Default,
+            AircraftProfile::Pmdg737,
+            AircraftProfile::FenixA320,
+            AircraftProfile::IniA380,
+            AircraftProfile::FbwA32nx,
+        ] {
+            assert_eq!(p.icao_vorrang(), None, "{p:?}");
+        }
     }
 
     #[test]

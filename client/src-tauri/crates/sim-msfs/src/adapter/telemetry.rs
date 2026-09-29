@@ -5031,7 +5031,12 @@ fn telemetry_to_snapshot_mit_pfad(
         // reinigt ATCCOM/Vendor-Tags, mappt bekannte Modellnamen auf ICAO
         // und validiert gegen das ICAO-Muster; bei Junk `None`, dann greift
         // der Profile-Fallback.
-        aircraft_icao: sim_core::normalize_icao_type(&t.atc_model)
+        // Profil-Vorrang (29.09.2026): Wo das Add-on die ATC-Stimme falsch
+        // belegt (iFly MAX 8 meldet B738), gilt die ICAO des Profils.
+        aircraft_icao: profile
+            .icao_vorrang()
+            .map(str::to_string)
+            .or_else(|| sim_core::normalize_icao_type(&t.atc_model))
             .or_else(|| profile.icao_fallback().map(str::to_string)),
         aircraft_registration: Some(t.atc_id).filter(|s| !s.is_empty()),
         simulator,
