@@ -243,6 +243,20 @@ Server nicht erreichbar ist (Navdaten-Zwischenspeicher im Client prüfen).
   Tests in `AnzeigeSync.test.tsx` rot (Trockenlauf gegen eine Kopie: 1 Datei, 75
   Beschriftungen, danach „auf beiden Seiten gleich“).
 
+**Nachprüfung (Cloud-Prüfer auf 105f3264, 29.09.2026) — zwei neue Fehler aus den Korrekturen:**
+- A: Der Sim-Boden wurde auch VOR der Schwelle gemessen (Wasser/Klippe/Senke: KLGA, LPMA,
+  TNCM, LXGB) und schaltete den Bezug grundlos um. Jetzt nur Proben über der Bahn:
+  0–600 m hinter der Landeschwelle, |quer| ≤ max(halbe Bahnbreite, 30 m), mind. 2 Proben;
+  ersatzweise die letzte Probe über der Bahn vor dem Aufsetzen.
+- B: Der 400er-Puffer ließ bei Touch-and-Go/Platzrunde und nach einem Durchstart den
+  vorigen Anflug einfließen. Jetzt Schnittzeitpunkt `anflug_forensik_ab`, gesetzt beim
+  Touch-and-Go-Reset, in `check_go_around` und im FSM-Touch-and-Go; Proben davor zählen
+  nicht (Gleitpfad, Ruhe, Sim-Boden). Das Nachziehen nutzt den Schnitt, der beim Stempel
+  galt. Zeitpunkt statt Leeren, damit der Puffer für die Diagnose bleibt und ein
+  späterer Schnitt einen gemachten Stempel nicht verändert.
+- C: Der Nachtrag `landing_analysis_nachtrag` wird jetzt auch im Warteschlangen-Zweig
+  vor `FlightEnded` geschrieben (einmal, dieselbe Fahne).
+
 ---
 
 ## AP5 — Anflugruhe (Forensik ohne Note)
@@ -262,8 +276,9 @@ Schub-Umkehrungen je Minute. Tore 1000 / 500 ft. Anzeige als Hinweis, **keine No
   - Seitenwechsel der Pfadabweichung aus AP4, Totband ±0,1 Dot (≈ 7 ft bei 2 NM —
     Probenrauschen zählt nicht als Korrektur); ohne AP4-Pfad `None`.
   - Nick-/Roll-Unruhe = Standardabweichung der Nick-/Rollrate in °/s (Paare mit
-    0,2–5 s Abstand, mind. 4 Raten). Gleichmäßiges Drehen ergibt 0, nur das Hin und Her
-    zählt.
+    0,2–5 s Abstand, mind. 4 Raten). Eine konstante Rate ergibt 0; Ein- und Ausleiten
+    einer Kurve oder das Abfangen ändern die Rate und zählen mit — der Wert misst
+    Bewegung um die Achse, nicht nur Pendeln.
   - Schub-Umkehrungen je Minute aus mittlerem N1 mit Hysterese 2 % N1 (A/THR- und
     Hebelkorrekturen liegen bei 3–10 %, darunter Regelrauschen); mind. 10 s Dauer.
 - **Weggelassen:** Schub bei X-Plane (der Adapter liest weder N1 noch Hebelstellung,

@@ -91,13 +91,23 @@ const TCH_ANNAHME_FT: f64 = 50.0;
 /// Unterschiede (Bahnneigung, Rundung der Navdaten auf ganze Fuss) sollen
 /// den Bezug nicht umschalten.
 const SIM_BODEN_TOLERANZ_FT: f64 = 20.0;
-/// Proben, die hoechstens so weit laengs und quer von der Landeschwelle
-/// liegen, verraten die Sim-Bodenhoehe an der Schwelle.
+/// Nur Proben UEBER DER BAHN verraten die Bodenhoehe der Sim-Bahn: hoechstens
+/// so weit HINTER der Landeschwelle …
+///
+/// ⚠ Nicht davor (Nachpruefung 29.09.2026, Befund A): Vor der Schwelle
+/// liegt Gelaende, Wasser oder eine Klippe — KLGA rund 20 ft ueber dem
+/// Wasser, LPMA/TNCM/LXGB mit Meer vor der Bahn, dazu jede Senke im Mesh.
+/// Dort gemessen, schaltete der Bezug grundlos auf „Sim-Boden" und
+/// verschob den Pfad um fast einen Dot je 20 ft.
 const SIM_BODEN_LAENGS_M: f64 = 600.0;
-const SIM_BODEN_QUER_M: f64 = 100.0;
+/// … und hoechstens so weit neben der Achse (halbe Bahnbreite, mindestens
+/// 30 m, wenn die Breite unbekannt oder schmaler ist).
+const SIM_BODEN_QUER_MIN_M: f64 = 30.0;
 /// Median ueber die schwellennaechsten Proben — eine einzelne Probe ueber
 /// einem Gebaeude oder einer Bodenwelle soll den Bezug nicht bestimmen.
 const SIM_BODEN_PROBEN: usize = 3;
+/// So viele Proben ueber dem ersten Bahnstueck braucht der Median.
+const SIM_BODEN_MIN_PROBEN: usize = 2;
 
 /// Totband fuer den Seitenwechsel: erst ab ±0,1 Dot (bei 3° 0,035°) gilt
 /// eine Probe als „ueber" oder „unter" dem Pfad. Bei 2 NM sind das rund
@@ -161,6 +171,9 @@ pub(crate) struct Bahnbezug {
     pub winkel_deg: f64,
     /// Die Bahn hat eine ILS-Anlage (`NavRunway::ils`).
     pub hat_ils: bool,
+    /// Halbe Bahnbreite in Metern, mindestens `SIM_BODEN_QUER_MIN_M` —
+    /// nur fuer die Sim-Boden-Messung ueber der Bahn.
+    pub halbe_breite_m: f64,
 }
 
 impl Bahnbezug {
@@ -180,6 +193,11 @@ impl Bahnbezug {
             tch_ft: Some(nav.tch_ft as f64).filter(|t| *t > 0.0),
             winkel_deg: nav.glideslope_angle,
             hat_ils: nav.ils.is_some(),
+            halbe_breite_m: nav
+                .width_ft
+                .map(|w| w as f64 / FT_JE_M / 2.0)
+                .unwrap_or(0.0)
+                .max(SIM_BODEN_QUER_MIN_M),
         }
     }
 
@@ -381,11 +399,16 @@ fn im_fenster(
         .collect()
 }
 
-/// Bodenhoehe des Simulators an der Landeschwelle: `msl − agl` der (bis zu
-/// drei) schwellennaechsten Proben, Median. `None`, wenn keine Probe nah
-/// genug an der Schwelle liegt.
+/// Bodenhoehe der Sim-BAHN an der Landeschwelle: `msl − agl` der (bis zu
+/// drei) schwellennaechsten Proben ueber dem ersten Bahnstueck (0–600 m
+/// hinter der Landeschwelle, innerhalb der Bahnbreite), Median; mindestens
+/// zwei Proben. Sonst ersatzweise die letzte Probe vor dem Aufsetzen, die
+/// ueber der Bahn lag (Aufsetzpunkt). `None`, wenn keine Probe ueber der
+/// Bahn liegt.
 fn sim_boden_an_schwelle(proben: &[&ApproachBufferSample], bahn: &Bahnbezug) -> Option<f64> {
-    let mut nah: Vec<(f64, f64)> = proben
+    let (bahn_ende_m, _) = bahn.zur_landeschwelle_m(bahn.ende_lat, bahn.ende_lon);
+    // (laengs hinter der Landeschwelle, Bodenhoehe, Zeit)
+    let ueber_bahn: Vec<(f64, f64, DateTime<Utc>)> = proben
         .iter()
         .filter_map(|s| {
             let (lat, lon) = (s.lat?, s.lon?);
@@ -394,18 +417,29 @@ fn sim_boden_an_schwelle(proben: &[&ApproachBufferSample], bahn: &Bahnbezug) -> 
                 return None;
             }
             let (laengs_m, quer_m) = bahn.zur_landeschwelle_m(lat, lon);
-            (laengs_m.abs() <= SIM_BODEN_LAENGS_M && quer_m.abs() <= SIM_BODEN_QUER_M)
-                .then_some((laengs_m.abs(), boden))
+            (laengs_m >= 0.0 && laengs_m <= bahn_ende_m && quer_m.abs() <= bahn.halbe_breite_m)
+                .then_some((laengs_m, boden, s.at))
         })
         .collect();
-    if nah.is_empty() {
-        return None;
+    let mut nah: Vec<(f64, f64)> = ueber_bahn
+        .iter()
+        .filter(|p| p.0 <= SIM_BODEN_LAENGS_M)
+        .map(|p| (p.0, p.1))
+        .collect();
+    if nah.len() >= SIM_BODEN_MIN_PROBEN {
+        nah.sort_by(|a, b| a.0.total_cmp(&b.0));
+        nah.truncate(SIM_BODEN_PROBEN);
+        let mut boeden: Vec<f64> = nah.into_iter().map(|n| n.1).collect();
+        boeden.sort_by(|a, b| a.total_cmp(b));
+        let n = boeden.len();
+        return Some(if n % 2 == 1 {
+            boeden[n / 2]
+        } else {
+            (boeden[n / 2 - 1] + boeden[n / 2]) / 2.0
+        });
     }
-    nah.sort_by(|a, b| a.0.total_cmp(&b.0));
-    nah.truncate(SIM_BODEN_PROBEN);
-    let mut boeden: Vec<f64> = nah.into_iter().map(|n| n.1).collect();
-    boeden.sort_by(|a, b| a.total_cmp(b));
-    Some(boeden[boeden.len() / 2])
+    // Ersatz: der Aufsetzpunkt — die letzte Probe ueber der Bahn.
+    ueber_bahn.iter().max_by_key(|p| p.2).map(|p| p.1)
 }
 
 /// Der Gleitpfad als Gerade durch die Landeschwelle in TCH-Hoehe.
@@ -667,8 +701,10 @@ fn umkehrungen(werte: &[f64], totband: f64) -> u32 {
 }
 
 /// Streuung (Standardabweichung) der Aenderungsrate in °/s. Eine
-/// gleichmaessige Drehung hat die Streuung 0 — gemessen wird das Hin und
-/// Her, nicht das Einleiten einer Kurve oder das Abfangen.
+/// gleichmaessige Drehung (konstante Rate) hat die Streuung 0. Das Ein- und
+/// Ausleiten einer Kurve oder das Abfangen ist aber eine Aenderung der Rate
+/// und ZAEHLT mit — der Wert misst Bewegung um die Achse, nicht nur ein
+/// Pendeln. Deshalb ist er ein Hinweis, keine Note.
 fn raten_streuung(folge: &[(DateTime<Utc>, f64)]) -> Option<f64> {
     let raten: Vec<f64> = folge
         .windows(2)
@@ -734,6 +770,7 @@ mod tests {
             tch_ft: tch,
             winkel_deg: winkel,
             hat_ils: ils,
+            halbe_breite_m: 30.0,
         }
     }
 
@@ -1115,47 +1152,82 @@ mod tests {
         assert!(ges.max_dots.abs() < 0.02, "{}", ges.max_dots);
     }
 
-    /// Befund 4: Der Sim-Boden an der Schwelle liegt 30 ft ueber der
-    /// Navigraph-Hoehe; der Pilot fliegt sauber gegen die Sim-Welt.
+    /// Anflug 1000 → 60 ft genau auf dem Pfad der SIM-Bahn (Bodenhoehe
+    /// `bahn_boden`); das Gelaende VOR der Schwelle liegt auf `vorfeld`
+    /// (dort misst `agl` gegen das Vorfeld). Mit `ueber_bahn` kommen
+    /// `n_bahn` Proben ueber dem ersten Bahnstueck dazu (50 … 550 m hinter
+    /// der Schwelle, 30 … 10 ft).
+    fn mit_boden(bahn_boden: f64, vorfeld: f64, n_bahn: usize) -> VecDeque<ApproachBufferSample> {
+        let tan3 = 3.0_f64.to_radians().tan();
+        let mut buf = VecDeque::new();
+        let mut h = 1000.0;
+        let mut t = 100.0;
+        while h >= 60.0 {
+            let d_ft = (h - 50.0) / tan3;
+            let lat = SCHWELLE_LAT - d_ft / FT_JE_M / M_JE_GRAD;
+            let mut p = probe_bei(t, lat, SCHWELLE_LON, 0.0, bahn_boden, h);
+            p.agl_ft = (bahn_boden + h - vorfeld) as f32;
+            buf.push_back(p);
+            h -= 10.0;
+            t -= 1.0;
+        }
+        for i in 0..n_bahn {
+            let laengs_m = 50.0 + 100.0 * i as f64;
+            let lat = SCHWELLE_LAT + laengs_m / M_JE_GRAD;
+            let hoehe = 30.0 - 4.0 * i as f64;
+            buf.push_back(probe_bei(t, lat, SCHWELLE_LON, 0.0, bahn_boden, hoehe));
+            t -= 1.0;
+        }
+        buf
+    }
+
+    /// Befund 4: Die Sim-Bahn liegt 30 ft ueber der Navigraph-Hoehe; der
+    /// Pilot fliegt sauber gegen die Sim-Welt.
     #[test]
     fn sim_boden_30_ft_daneben_wird_zum_bezug() {
         let b = bahn(true, Some(50.0), 0.0);
         let sim_boden = SCHWELLE_ELEV + 30.0;
-        let tan3 = 3.0_f64.to_radians().tan();
-        let mit_boden = |boden: f64, bis_zur_schwelle: bool| -> VecDeque<ApproachBufferSample> {
-            let unten = if bis_zur_schwelle { 60.0 } else { 200.0 };
-            let mut buf = VecDeque::new();
-            let mut h = 1000.0;
-            let mut t = 100.0;
-            while h >= unten {
-                let d_ft = (h - 50.0) / tan3;
-                let lat = SCHWELLE_LAT - d_ft / FT_JE_M / M_JE_GRAD;
-                buf.push_back(probe_bei(t, lat, SCHWELLE_LON, 0.0, boden, h));
-                h -= 10.0;
-                t -= 1.0;
-            }
-            buf
-        };
-        let g = auswerten(&mit_boden(sim_boden, true), Some(&b), Some(td()), None)
-            .gleitpfad
-            .unwrap();
+        let g = auswerten(
+            &mit_boden(sim_boden, sim_boden, 4),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap();
         assert_eq!(g.hoehenbezug.as_deref(), Some("sim_boden"));
         assert_eq!(g.schwellenhoehe_navigraph_ft, Some(300.0));
         assert_eq!(g.sim_boden_ft, Some(330.0));
         assert!(g.gesamt.unwrap().max_dots.abs() < 0.02);
 
-        // Gegenprobe 1: ohne Proben nahe der Schwelle bleibt Navigraph der
+        // Ersatz: nur EINE Probe ueber der Bahn (Aufsetzpunkt) reicht dann.
+        let g = auswerten(
+            &mit_boden(sim_boden, sim_boden, 1),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap();
+        assert_eq!(g.hoehenbezug.as_deref(), Some("sim_boden"));
+
+        // Gegenprobe 1: ohne Proben ueber der Bahn bleibt Navigraph der
         // Bezug — und derselbe Anflug liegt dann 30 ft zu hoch.
-        let g = auswerten(&mit_boden(sim_boden, false), Some(&b), Some(td()), None)
-            .gleitpfad
-            .unwrap();
+        let g = auswerten(
+            &mit_boden(sim_boden, sim_boden, 0),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap();
         assert_eq!(g.hoehenbezug.as_deref(), Some("navigraph"));
         assert_eq!(g.sim_boden_ft, None);
         assert!((g.gesamt.unwrap().max_abw_ft - 30.0).abs() < 0.5);
 
         // Gegenprobe 2: 10 ft Unterschied schalten nicht um.
         let g = auswerten(
-            &mit_boden(SCHWELLE_ELEV + 10.0, true),
+            &mit_boden(SCHWELLE_ELEV + 10.0, SCHWELLE_ELEV + 10.0, 4),
             Some(&b),
             Some(td()),
             None,
@@ -1164,6 +1236,36 @@ mod tests {
         .unwrap();
         assert_eq!(g.hoehenbezug.as_deref(), Some("navigraph"));
         assert_eq!(g.sim_boden_ft, Some(310.0));
+    }
+
+    /// Befund A der Nachpruefung: Gelaende (Wasser, Senke) VOR der Schwelle
+    /// liegt 40 ft tiefer, die Bahn selbst auf Navigraph-Hoehe. Die Proben
+    /// ueber dem Vorfeld duerfen den Bezug NICHT umschalten.
+    #[test]
+    fn gelaende_vor_der_schwelle_schaltet_den_bezug_nicht_um() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let g = auswerten(
+            &mit_boden(SCHWELLE_ELEV, SCHWELLE_ELEV - 40.0, 4),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap();
+        assert_eq!(g.hoehenbezug.as_deref(), Some("navigraph"));
+        assert_eq!(g.sim_boden_ft, Some(300.0), "gemessen ueber der Bahn");
+        assert!(g.gesamt.unwrap().max_dots.abs() < 0.02);
+        // Gegenprobe: ganz ohne Bahnproben gibt es auch keinen Sim-Boden —
+        // das Vorfeld allein zaehlt nie.
+        let g = auswerten(
+            &mit_boden(SCHWELLE_ELEV, SCHWELLE_ELEV - 40.0, 0),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap();
+        assert_eq!(g.sim_boden_ft, None);
     }
 
     #[test]
@@ -1353,10 +1455,12 @@ mod tests {
             // Sim-Boden 33,3 ft ueber Navigraph (nur msl − agl zaehlt).
             s.agl_ft -= 33.3;
         }
-        // Proben nahe der Schwelle fuer den Sim-Boden.
-        for (i, d) in [900.0, 500.0, 200.0].iter().enumerate() {
-            let h = 50.0 + d * 3.0_f64.to_radians().tan();
-            let mut p = probe(8.0 - i as f64, 0.0, *d, h);
+        // Proben ueber dem ersten Bahnstueck fuer den Sim-Boden.
+        for (i, (d, h)) in [(-300.0, 60.0), (-900.0, 50.0), (-1500.0, 45.0)]
+            .iter()
+            .enumerate()
+        {
+            let mut p = probe(8.0 - i as f64, 0.0, *d, *h);
             p.agl_ft -= 33.3;
             buf.push_back(p);
         }

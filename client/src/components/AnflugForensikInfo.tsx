@@ -9,10 +9,14 @@
 // aus dem LandingRecord) und in der Webapp auf live.kant.ovh (Daten aus dem
 // PIREP-Payload, Felder `anflug_gleitpfad` / `anflug_ruhe`). Kanonisch ist
 // der Client, die Webapp bekommt eine Kopie über `scripts/anzeige-sync.mjs`.
-// Deshalb: keine Client-Importe, nur React + react-i18next, und die
-// Schlüssel als LITERALE (`t("landing.anflug_forensik.…")`) — der Abgleich
-// liest die Schlüssel aus dem Quelltext und sähe einen zusammengesetzten
-// Vorspann aus einer Variablen nicht.
+// Deshalb: keine Client-Importe, nur React + react-i18next. Der Abgleich
+// liest die Schlüssel aus dem Quelltext; er erkennt zwei Formen, und nur
+// diese stehen hier:
+//   * Literale: `t("landing.anflug_forensik.titel")`
+//   * ein literaler Vorspann mit EINER Einsetzung am Ende:
+//     `t(\`landing.anflug_forensik.quelle.${…}\`)` (ebenso `grund.`,
+//     `schub_grund.`) — abgeglichen wird dann jeder Eintrag unter dem
+//     Vorspann. Eine Variable im Vorspann selbst sähe er nicht.
 
 import { useTranslation } from "react-i18next";
 

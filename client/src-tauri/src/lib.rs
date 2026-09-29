@@ -6956,6 +6956,10 @@ struct FlightStats {
     /// Die Forensik wurde nach einem Bahnwechsel neu gerechnet und steht
     /// noch nicht im Flug-Log (`anflug_forensik_nachtrag_ereignis`).
     anflug_forensik_nachtrag_offen: bool,
+    /// Schnitt: Proben bis hier gehoeren zu einem abgebrochenen Anflug
+    /// (`anflug_forensik_schneiden`). Und der Schnitt, der beim Stempel galt.
+    anflug_forensik_ab: Option<DateTime<Utc>>,
+    anflug_forensik_ab_gestempelt: Option<DateTime<Utc>>,
     /// Yaw-Rate am TD (heading-Aenderung pro Sekunde) in deg/sec.
     /// Hoch = Ground-Loop-Risk.
     landing_yaw_rate_deg_per_sec: Option<f32>,
@@ -9535,6 +9539,9 @@ fn check_go_around(
             ));
             stats.lowest_agl_during_approach_ft = None;
             stats.go_around_climb_pending_since = None;
+            // Lernpaket AP4/AP5: der abgebrochene Anflug zaehlt nicht fuer
+            // die Forensik der naechsten Landung.
+            anflug_forensik_schneiden(stats, Some(now));
             // v0.5.11: reset climb_peak_msl so the missed-approach
             // climb back up tracks fresh peaks. Without this, the
             // prior peak (the cruise altitude) stays as reference,
@@ -24920,13 +24927,7 @@ fn emit_landing_finalized(app: &AppHandle, flight: &ActiveFlight) {
     // Lernpaket AP4/AP5: Hat ein Bahnwechsel die Anflug-Forensik nach dem
     // `landing_analysis`-Ereignis neu gerechnet, den korrigierten Stand ins
     // Log schreiben — VOR dem Abschluss-Ereignis.
-    let nachtrag = {
-        let mut s = flight.stats.lock().expect("flight stats");
-        anflug_forensik_nachtrag_ereignis(&mut s)
-    };
-    if let Some(ereignis) = nachtrag {
-        record_event(app, &flight.pirep_id, &ereignis);
-    }
+    anflug_forensik_nachtrag_schreiben(app, flight);
     // Aktuell: nimmt den letzten validated TD-Score (single-shot, bis
     // Multi-TD-Episodes voll integriert sind).
     let (final_vs, final_score_label) = {
@@ -30910,6 +30911,9 @@ async fn flight_end(
                     // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
                     record_landing_for_filed_flight(&app, &flight, &mut stats, &effective_arr_icao);
                 }
+                // Lernpaket AP4/AP5 (Nachpruefung, Befund C): auch im
+                // Warteschlangen-Zweig den Forensik-Nachtrag vor `FlightEnded`.
+                anflug_forensik_nachtrag_schreiben(&app, &flight);
                 clear_persisted_flight(&app, Some(&flight.pirep_id));
                 log_activity(
                     &state,
@@ -42837,22 +42841,34 @@ fn anflug_forensik_stempeln(
     td: Option<DateTime<Utc>>,
     platzhoehe_ft: Option<f32>,
 ) {
+    let ab = stats.anflug_forensik_ab;
+    anflug_forensik_rechnen(stats, fenster, td, platzhoehe_ft, ab);
+}
+
+/// Die eigentliche Rechnung: Puffer ab dem Schnitt `ab` (Proben davor
+/// gehoeren zu einem abgebrochenen Anflug), optional auf `fenster` vor
+/// `td` begrenzt. Zeitpunkt, Fenster und Schnitt werden gemerkt, damit
+/// `anflug_forensik_nachziehen` exakt dieselben Proben ansieht.
+fn anflug_forensik_rechnen(
+    stats: &mut FlightStats,
+    fenster: Option<chrono::Duration>,
+    td: Option<DateTime<Utc>>,
+    platzhoehe_ft: Option<f32>,
+    ab: Option<DateTime<Utc>>,
+) {
     let bahn = anflug_forensik_bahn(stats);
     let ergebnis = {
-        let gefenstert = match (fenster, td) {
-            (Some(dauer), Some(t)) => Some(approach_buffer_window(
-                &stats.anflug_forensik_puffer,
-                t,
-                dauer,
-            )),
-            _ => None,
+        let proben: std::collections::VecDeque<ApproachBufferSample> = stats
+            .anflug_forensik_puffer
+            .iter()
+            .filter(|s| ab.is_none_or(|ab| s.at > ab))
+            .cloned()
+            .collect();
+        let proben = match (fenster, td) {
+            (Some(dauer), Some(t)) => approach_buffer_window(&proben, t, dauer),
+            _ => proben,
         };
-        anflug_forensik::auswerten(
-            gefenstert.as_ref().unwrap_or(&stats.anflug_forensik_puffer),
-            bahn.as_ref(),
-            td,
-            platzhoehe_ft.map(f64::from),
-        )
+        anflug_forensik::auswerten(&proben, bahn.as_ref(), td, platzhoehe_ft.map(f64::from))
     };
     // Laeuft die Dump-Auswertung des Samplers schon VOR diesem Stempel,
     // steht das Analyse-JSON bereits — dann hier nachtragen, damit
@@ -42863,6 +42879,32 @@ fn anflug_forensik_stempeln(
     stats.anflug_forensik = ergebnis;
     stats.anflug_forensik_td = td;
     stats.anflug_forensik_fenster = fenster;
+    stats.anflug_forensik_ab_gestempelt = ab;
+}
+
+/// Setzt den Schnitt fuer die Anflug-Forensik (Nachpruefung 29.09.2026,
+/// Befund B): Alles, was bis jetzt im Forensik-Puffer steht, gehoert zu
+/// einem ABGEBROCHENEN Anflug (Durchstarten, Touch-and-Go). Der Puffer ist
+/// laenger als eine Platzrunde, und der vorige Anflug liegt auf derselben
+/// Bahn, mit demselben Kurs, im selben Sektor — ohne Schnitt floesse er in
+/// Gleitpfad, Ruhe und Sim-Boden der naechsten Landung ein.
+///
+/// Warum ein Zeitpunkt und kein Leeren: Der Puffer bleibt fuer die Diagnose
+/// erhalten, und das Nachziehen nach einem Bahnwechsel rechnet mit dem
+/// Schnitt, der beim Stempel galt (`anflug_forensik_ab_gestempelt`) — ein
+/// spaeterer Schnitt kann einen gemachten Stempel so nicht veraendern.
+///
+/// `jetzt` = Zeitpunkt der Erkennung; ohne ihn gilt die letzte Probe im
+/// Puffer. Der spaetere der beiden wird genommen.
+fn anflug_forensik_schneiden(stats: &mut FlightStats, jetzt: Option<DateTime<Utc>>) {
+    let letzte = stats.anflug_forensik_puffer.back().map(|s| s.at);
+    let schnitt = match (jetzt, letzte) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
+    if schnitt.is_some() {
+        stats.anflug_forensik_ab = schnitt;
+    }
 }
 
 /// Die Bahn der Forensik: Navdaten-Geometrie plus versetzte Schwelle.
@@ -42915,12 +42957,26 @@ fn anflug_forensik_nachziehen(stats: &mut FlightStats, flight: &ActiveFlight) {
         ist_platzhoehe_navdaten_ft(flight, stats),
     );
     let fenster = stats.anflug_forensik_fenster;
+    let ab = stats.anflug_forensik_ab_gestempelt;
     let vorher = stats.anflug_forensik.clone();
-    anflug_forensik_stempeln(stats, fenster, Some(td), platzhoehe);
+    anflug_forensik_rechnen(stats, fenster, Some(td), platzhoehe, ab);
     if stats.anflug_forensik != vorher {
         // Das Flug-Log traegt noch den alten Stand — beim Einreichen
         // nachtragen (`emit_landing_finalized`).
         stats.anflug_forensik_nachtrag_offen = true;
+    }
+}
+
+/// Schreibt den Forensik-Nachtrag ins Flug-Log, falls einer offen ist —
+/// aus JEDEM Abschluss-Pfad (eingereicht, manuell, Warteschlange). Die
+/// „nur einmal"-Fahne sitzt in `anflug_forensik_nachtrag_ereignis`.
+fn anflug_forensik_nachtrag_schreiben(app: &AppHandle, flight: &ActiveFlight) {
+    let nachtrag = {
+        let mut s = flight.stats.lock().expect("flight stats");
+        anflug_forensik_nachtrag_ereignis(&mut s)
+    };
+    if let Some(ereignis) = nachtrag {
+        record_event(app, &flight.pirep_id, &ereignis);
     }
 }
 
@@ -42972,8 +43028,10 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.anflug_forensik_td = None;
     stats.anflug_forensik_fenster = None;
     stats.anflug_forensik_nachtrag_offen = false;
-    // Der Forensik-Puffer selbst bleibt — wie `approach_buffer`: der
-    // naechste Anflug steht darin, die Auswertung begrenzt ueber die Zeit.
+    stats.anflug_forensik_ab_gestempelt = None;
+    // Der Forensik-Puffer selbst bleibt; der Schnitt trennt den
+    // abgebrochenen Anflug vom naechsten (Befund B, siehe dort).
+    anflug_forensik_schneiden(stats, None);
     stats.rollout_distance_m = None;
     // ── Bahndisziplin: ALLES, nicht nur die Zahlen ───────────────────
     //
@@ -45429,6 +45487,8 @@ fn step_flight_at(
                             // Score-Einfluss (`go_around_count` fliesst nicht in
                             // `landing_scoring`).
                             stats.go_around_count = stats.go_around_count.saturating_add(1);
+                            // Lernpaket AP4/AP5: Schnitt fuer die Forensik.
+                            anflug_forensik_schneiden(&mut stats, Some(now));
                             let ga_count = stats.go_around_count;
                             let tg_count = stats
                                 .touchdown_events
@@ -70794,6 +70854,92 @@ mod anflug_forensik_verdrahtung_tests {
             stats.anflug_forensik_puffer.back().unwrap().at,
             td() + chrono::Duration::seconds(999)
         );
+    }
+
+    /// Bahn 36 bei 50°N/8°E, Schwelle auf 300 ft, ILS 3°, TCH 50 ft.
+    fn nav_36() -> aeroacars_mqtt::navdata::NavRunway {
+        serde_json::from_value(serde_json::json!({
+            "designator": "36", "magnetic_course": 360.0, "true_course": 360.0,
+            "length_ft": 9000, "width_ft": 148,
+            "threshold": {"lat": 50.0, "lon": 8.0, "elev_ft": 300},
+            "end": {"lat": 50.03, "lon": 8.0, "elev_ft": 310},
+            "ils": {"freq_mhz": 110.1, "course": 360.0, "category": 1},
+            "glideslope_angle": 3.0, "tch_ft": 50
+        }))
+        .unwrap()
+    }
+
+    /// Ein Anflug 1000 → 200 ft ueber `push_approach_sample`, die letzte
+    /// Probe bei `ende`, `abw_deg` ueber dem 3°-Pfad (vom GPI aus).
+    fn anflug_bis(stats: &mut FlightStats, ende: DateTime<Utc>, abw_deg: f64) {
+        const M_JE_GRAD: f64 = 6_371_000.0 * std::f64::consts::PI / 180.0;
+        let ist = (3.0 + abw_deg).to_radians();
+        let gpi = 50.0 / 3.0_f64.to_radians().tan();
+        for i in 0..=40 {
+            let h = 1000.0 - 20.0 * i as f64;
+            let d_m = (h / ist.tan() - gpi) / 3.280_839_895;
+            let mut snap = SimSnapshot::default();
+            snap.lat = 50.0 - d_m / M_JE_GRAD;
+            snap.lon = 8.0;
+            snap.altitude_msl_ft = 300.0 + h;
+            snap.altitude_agl_ft = h;
+            snap.vertical_speed_fpm = -700.0;
+            let at = ende - chrono::Duration::seconds(40 - i as i64);
+            push_approach_sample(stats, &snap, at);
+        }
+    }
+
+    fn gesamt(stats: &FlightStats) -> storage::GleitpfadTor {
+        let g = stats.anflug_forensik.gleitpfad.clone().expect("Gleitpfad");
+        g.gesamt.expect("Werte")
+    }
+
+    /// Befund B: Touch-and-Go, 240 s spaeter die Landung. Der erste Anflug
+    /// lag 1 Dot zu hoch, der zweite genau auf dem Pfad — er allein zaehlt.
+    #[test]
+    fn touch_and_go_schneidet_den_vorigen_anflug_ab() {
+        let mut stats = FlightStats::default();
+        stats.runway_nav_geometry = Some(nav_36());
+        anflug_bis(&mut stats, td() - chrono::Duration::seconds(250), 0.35);
+        // Wegsteigen nach dem Aufsetzen: die Episode wird zurueckgesetzt.
+        clear_approach_stability_and_rollout(&mut stats);
+        anflug_bis(&mut stats, td() - chrono::Duration::seconds(10), 0.0);
+
+        anflug_forensik_stempeln(&mut stats, None, Some(td()), None);
+        let ges = gesamt(&stats);
+        assert!(ges.max_dots.abs() < 0.03, "{}", ges.max_dots);
+        assert!(ges.proben <= 41, "nur der zweite Anflug: {}", ges.proben);
+
+        // Gegenprobe: ohne Schnitt mischt sich der erste Anflug hinein.
+        stats.anflug_forensik_ab = None;
+        anflug_forensik_stempeln(&mut stats, None, Some(td()), None);
+        let ges = gesamt(&stats);
+        assert!(ges.max_dots > 0.9, "{}", ges.max_dots);
+    }
+
+    /// Befund B, Durchstart ohne Bodenberuehrung: `check_go_around` setzt
+    /// den Schnitt.
+    #[test]
+    fn durchstart_schneidet_den_vorigen_anflug_ab() {
+        let mut stats = FlightStats::default();
+        stats.runway_nav_geometry = Some(nav_36());
+        let ga = td() - chrono::Duration::seconds(240);
+        anflug_bis(&mut stats, ga - chrono::Duration::seconds(20), 0.35);
+        stats.lowest_agl_during_approach_ft = Some(250.0);
+        stats.go_around_climb_pending_since = Some(ga - chrono::Duration::seconds(20));
+        let mut snap = SimSnapshot::default();
+        snap.altitude_agl_ft = 800.0;
+        snap.vertical_speed_fpm = 1500.0;
+        snap.engines_running = 2;
+        snap.on_ground = false;
+        let phase = check_go_around(&mut stats, &snap, ga);
+        assert_eq!(phase, Some(FlightPhase::Climb));
+        assert_eq!(stats.anflug_forensik_ab, Some(ga));
+
+        anflug_bis(&mut stats, td() - chrono::Duration::seconds(10), 0.0);
+        anflug_forensik_stempeln(&mut stats, None, Some(td()), None);
+        let ges = gesamt(&stats);
+        assert!(ges.max_dots.abs() < 0.03, "{}", ges.max_dots);
     }
 
     #[test]
