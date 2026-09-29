@@ -869,6 +869,33 @@
         "unstable": "Avvicinamento instabile — in realtà candidato a go-around. Completa il setup di approach prima, mantieni config + speed + V/S stabili entro 1000 ft AAL."
       }
     },
+    "anflug_forensik": {
+      "titel": "Sentiero di discesa e stabilità dell'avvicinamento",
+      "ohne_note": "Solo come riferimento – non incide sul punteggio. 1 dot = 0,35°, «+» = sopra il sentiero.",
+      "gleitpfad_gesamt": "Sentiero di discesa 1000–200 ft: in media {{mittel}} dot, scostamento massimo {{max}} dot ({{ft}} ft) · {{proben}} punti di misura",
+      "gleitpfad_tor": "{{tor}}: in media {{mittel}}, massimo {{max}} dot",
+      "tor_1000_500": "1000–500 ft",
+      "tor_500_200": "500–200 ft",
+      "bezug": "Riferimento: {{quelle}} · {{winkel}}° · TCH {{tch}} ft",
+      "bezug_tch_angenommen": "Riferimento: {{quelle}} · {{winkel}}° · TCH {{tch}} ft (presunta, assente nei navdata)",
+      "bezug_ohne_navdaten": "Riferimento: nessun navdata per la pista di atterraggio",
+      "quelle": {
+        "navigraph_ils": "sentiero ILS (Navigraph)",
+        "navigraph_bahn": "pista senza ILS, angolo standard (Navigraph)",
+        "angenommen_3grad": "3° presunti"
+      },
+      "grund": {
+        "keine_bahn": "Senza navdata per la pista di atterraggio il sentiero di discesa non si può ricostruire.",
+        "schwellenhoehe_fehlt": "I navdata non indicano l'elevazione della soglia, quindi il sentiero non viene ricostruito.",
+        "keine_proben": "Troppo pochi punti di misura tra 1000 e 200 ft prima della soglia."
+      },
+      "ruhe_titel": "Stabilità dell'avvicinamento",
+      "ruhe_seitenwechsel": "{{n}}× attraversato il sentiero",
+      "ruhe_nick": "velocità di beccheggio ±{{v}} °/s",
+      "ruhe_roll": "velocità di rollio ±{{v}} °/s",
+      "ruhe_schub": "{{v}} variazioni di spinta/min",
+      "ruhe_schub_fehlt": "Variazioni di spinta: non rilevate senza dati N1 (es. X-Plane o motore a pistoni)."
+    },
     "approach_stability_help": {
       "title": "Stabilità avvicinamento — cosa significano i valori?",
       "close_label": "Chiudi ✕",

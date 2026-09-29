@@ -869,6 +869,33 @@
         "unstable": "Unstable approach — would be a real-world go-around candidate. Set up the approach earlier, keep config + speed + V/S stable by 1000 ft AAL."
       }
     },
+    "anflug_forensik": {
+      "titel": "Glide path and approach steadiness",
+      "ohne_note": "For context only – not part of the score. 1 dot = 0.35°, “+” = above the path.",
+      "gleitpfad_gesamt": "Glide path 1000–200 ft: average {{mittel}} dots, largest deviation {{max}} dots ({{ft}} ft) · {{proben}} data points",
+      "gleitpfad_tor": "{{tor}}: average {{mittel}}, largest {{max}} dots",
+      "tor_1000_500": "1000–500 ft",
+      "tor_500_200": "500–200 ft",
+      "bezug": "Reference: {{quelle}} · {{winkel}}° · TCH {{tch}} ft",
+      "bezug_tch_angenommen": "Reference: {{quelle}} · {{winkel}}° · TCH {{tch}} ft (assumed, missing in navdata)",
+      "bezug_ohne_navdaten": "Reference: no navdata for the landing runway",
+      "quelle": {
+        "navigraph_ils": "ILS glide slope (Navigraph)",
+        "navigraph_bahn": "runway without ILS, standard angle (Navigraph)",
+        "angenommen_3grad": "assumed 3°"
+      },
+      "grund": {
+        "keine_bahn": "Without navdata for the landing runway the glide path cannot be reconstructed.",
+        "schwellenhoehe_fehlt": "The navdata has no threshold elevation, so the glide path is not reconstructed.",
+        "keine_proben": "Too few data points between 1000 and 200 ft before the threshold."
+      },
+      "ruhe_titel": "Approach steadiness",
+      "ruhe_seitenwechsel": "{{n}}× crossed the path",
+      "ruhe_nick": "pitch rate ±{{v}} °/s",
+      "ruhe_roll": "roll rate ±{{v}} °/s",
+      "ruhe_schub": "{{v}} thrust changes/min",
+      "ruhe_schub_fehlt": "Thrust changes: not recorded without N1 data (e.g. X-Plane or piston engine)."
+    },
     "approach_stability_help": {
       "title": "Approach stability — what do the values mean?",
       "close_label": "Close ✕",

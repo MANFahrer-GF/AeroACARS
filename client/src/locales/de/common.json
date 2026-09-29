@@ -869,6 +869,33 @@
         "unstable": "Unstabiler Anflug — in der Realität Go-Around-Kandidat. Approach-Setup früher fertig haben, Konfig + Speed + V/S bis 1000 ft AAL stabil halten."
       }
     },
+    "anflug_forensik": {
+      "titel": "Gleitpfad und Anflugruhe",
+      "ohne_note": "Zur Einordnung – fließt nicht in die Note ein. 1 Dot = 0,35°, „+“ = über dem Pfad.",
+      "gleitpfad_gesamt": "Gleitpfad 1000–200 ft: im Mittel {{mittel}} Dots, größte Abweichung {{max}} Dots ({{ft}} ft) · {{proben}} Messpunkte",
+      "gleitpfad_tor": "{{tor}}: im Mittel {{mittel}}, größte {{max}} Dots",
+      "tor_1000_500": "1000–500 ft",
+      "tor_500_200": "500–200 ft",
+      "bezug": "Bezug: {{quelle}} · {{winkel}}° · TCH {{tch}} ft",
+      "bezug_tch_angenommen": "Bezug: {{quelle}} · {{winkel}}° · TCH {{tch}} ft (angenommen, fehlt in den Navdaten)",
+      "bezug_ohne_navdaten": "Bezug: keine Navdaten zur gelandeten Bahn",
+      "quelle": {
+        "navigraph_ils": "ILS-Gleitweg (Navigraph)",
+        "navigraph_bahn": "Bahn ohne ILS, Standardwinkel (Navigraph)",
+        "angenommen_3grad": "angenommene 3°"
+      },
+      "grund": {
+        "keine_bahn": "Ohne Navdaten zur gelandeten Bahn lässt sich der Gleitpfad nicht nachrechnen.",
+        "schwellenhoehe_fehlt": "Die Navdaten nennen keine Schwellenhöhe – der Gleitpfad wird deshalb nicht nachgerechnet.",
+        "keine_proben": "Zwischen 1000 und 200 ft vor der Schwelle liegen zu wenige Messpunkte."
+      },
+      "ruhe_titel": "Anflugruhe",
+      "ruhe_seitenwechsel": "{{n}}× Seitenwechsel am Pfad",
+      "ruhe_nick": "Nickrate ±{{v}} °/s",
+      "ruhe_roll": "Rollrate ±{{v}} °/s",
+      "ruhe_schub": "{{v}} Schubwechsel/min",
+      "ruhe_schub_fehlt": "Schubwechsel: ohne N1-Daten nicht erfasst (z. B. X-Plane oder Kolbenmotor)."
+    },
     "approach_stability_help": {
       "title": "Approach-Stability — was bedeuten die Kennzahlen?",
       "close_label": "Schließen ✕",

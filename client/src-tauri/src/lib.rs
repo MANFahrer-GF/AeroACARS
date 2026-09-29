@@ -9,6 +9,9 @@
 // mehr. Recorder auf live.kant.ovh macht das jetzt zentral (eine Quelle,
 // VA-Owner-kontrolliert via Webapp-Admin-Settings). Audit Q4-2026-05 (C1).
 mod accident;
+/// Lernpaket AP4/AP5 (29.09.2026) — Gleitpfad-Abweichung und Anflugruhe,
+/// reine Forensik ohne Wirkung auf die Note.
+mod anflug_forensik;
 mod arrival;
 /// v1.7.0 — Ausfahrten aus der OSM-Bodenkarte (Spec §8.6).
 mod ausfahrten;
@@ -6938,6 +6941,10 @@ struct FlightStats {
     // Phase 3 — Aggregate
     /// Anzahl Stall-Warnings im Final + Approach.
     approach_stall_warning_count: u32,
+    /// Lernpaket AP4/AP5 (29.09.2026): Gleitpfad-Abweichung und Anflugruhe
+    /// dieser Landung — reine Forensik, keine Note liest das. Gesetzt neben
+    /// der Stabilitaets-Auswertung, siehe `anflug_forensik_stempeln`.
+    anflug_forensik: anflug_forensik::AnflugForensik,
     /// Yaw-Rate am TD (heading-Aenderung pro Sekunde) in deg/sec.
     /// Hoch = Ground-Loop-Risk.
     landing_yaw_rate_deg_per_sec: Option<f32>,
@@ -9209,6 +9216,20 @@ pub struct ApproachBufferSample {
     pub flaps_position: f32,
     pub selected_runway: Option<String>,
     pub stall_warning: bool,
+    /// Lernpaket AP4 (29.09.2026): Position fuer die geometrische
+    /// Gleitpfad-Abweichung. `None`, wenn der Simulator keine endliche
+    /// Position liefert — die Probe bleibt trotzdem im Puffer, die
+    /// Stabilitaets-Auswertung braucht sie nicht.
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    /// Lernpaket AP5: Nicklage fuer die Nick-Unruhe. MSFS und X-Plane
+    /// liefern sie beide.
+    pub pitch_deg: Option<f32>,
+    /// Lernpaket AP5: mittleres N1 aller laufenden Triebwerke in %, fuer die
+    /// Schub-Umkehrungen. Nur MSFS mit Turbinen fuellt `eng_n1_pct`;
+    /// X-Plane und Kolbenmotoren liefern `None` — dann gibt es keinen
+    /// Schubwert, statt einen zu erfinden.
+    pub n1_mittel_pct: Option<f32>,
 }
 
 /// Obergrenze fuer eine physikalisch moegliche Sinkrate im Anflug.
@@ -9345,6 +9366,18 @@ fn push_approach_sample(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTi
         flaps_position: snap.flaps_position,
         selected_runway: snap.selected_runway.clone(),
         stall_warning: snap.stall_warning,
+        // Lernpaket AP4/AP5: fehlende oder kaputte Werte werden `None`, die
+        // Probe selbst bleibt — der Plausibilitaetsfilter oben entscheidet
+        // weiter nur ueber die Fluglage.
+        lat: Some(snap.lat).filter(|v| v.is_finite()),
+        lon: Some(snap.lon).filter(|v| v.is_finite()),
+        pitch_deg: Some(snap.pitch_deg).filter(|v| v.is_finite()),
+        n1_mittel_pct: snap
+            .eng_n1_pct
+            .as_ref()
+            .filter(|n1| !n1.is_empty())
+            .map(|n1| (n1.iter().sum::<f64>() / n1.len() as f64) as f32)
+            .filter(|v| v.is_finite()),
     });
     while stats.approach_buffer.len() > APPROACH_BUFFER_MAX {
         stats.approach_buffer.pop_front();
@@ -28204,6 +28237,9 @@ where
         // v1.6.7: bump 7→8 — Minderverbrauch bis 15 % voll bepunktet;
         // Bahn-Auslastung auf die echte genutzte Strecke umgestellt.
         score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
+        // Lernpaket AP4/AP5 (29.09.2026): reine Forensik, nur lokal.
+        anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
+        anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
     })
 }
 
@@ -36130,6 +36166,19 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     stats.approach_stable_at_da = stab_v2.stable_at_da;
                                     stats.approach_stall_warning_count =
                                         stab_v2.stall_warning_count;
+                                    // Lernpaket AP4/AP5: wie im FSM-Pfad,
+                                    // aber auf das Sampler-Fenster begrenzt.
+                                    let platzhoehe = anflug_bezugshoehe_ft(
+                                        &stats,
+                                        &flight.arr_airport,
+                                        ist_platzhoehe_navdaten_ft(&flight, &stats),
+                                    );
+                                    anflug_forensik_stempeln(
+                                        &mut stats,
+                                        Some(&windowed_buf),
+                                        td_ts,
+                                        platzhoehe,
+                                    );
                                     tracing::info!(
                                         pirep_id = %flight.pirep_id,
                                         vs_dev_fpm = ?stab_v2.vs_deviation_fpm,
@@ -36456,6 +36505,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // (siehe compute_landing_analysis). Zudem konnte sie
                 // konstruktiv nur nach unten korrigieren — den häufigeren
                 // Fall „zu weich gemeldet" hätte sie nie erfasst.
+                // Lernpaket AP4/AP5: Gleitpfad und Anflugruhe mit ins
+                // Analyse-JSON (und damit ins Flug-Log), sofern die Landung
+                // schon gestempelt ist. Nur lokal — die MQTT-Nutzlast liest
+                // aus diesem JSON einzelne Schluessel, nie das Ganze.
+                let mut analysis = analysis;
+                stats.anflug_forensik.in_analyse_json(&mut analysis);
                 stats.landing_analysis = Some(analysis.clone());
                 // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde):
                 // `peak_g_post_500ms` steht in `analysis` HIER schon fertig
@@ -42686,6 +42741,47 @@ fn sampler_path_rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     bahndisziplin_tick(stats, snap);
 }
 
+/// Lernpaket AP4/AP5 (29.09.2026): Gleitpfad-Abweichung und Anflugruhe
+/// fuer die gerade gestempelte Landung.
+///
+/// Gerechnet wird gegen die Bahn aus der Aufsetz-Korrelation
+/// (`runway_nav_geometry`, nur Navigraph) — dieselbe, gegen die das
+/// Stabilitaets-Gate seinen Gleitwinkel nimmt. Die versetzte Schwelle kommt
+/// aus `displacement_not_in_geometry_ft`, genau wie in `assess_touchdown`:
+/// was schon in der Geometrie steckt, wird nicht ein zweites Mal verschoben.
+///
+/// `puffer` = `None` heisst: der ganze Anflug-Puffer (FSM-Pfad); der
+/// Sampler-Pfad reicht sein Zeitfenster herein. Keine Note, kein Gate und
+/// kein Deckel liest das Ergebnis.
+fn anflug_forensik_stempeln(
+    stats: &mut FlightStats,
+    puffer: Option<&std::collections::VecDeque<ApproachBufferSample>>,
+    td: Option<DateTime<Utc>>,
+    platzhoehe_ft: Option<f32>,
+) {
+    let bahn = stats.runway_nav_geometry.as_ref().map(|nav| {
+        let versatz_ft = stats
+            .runway_match
+            .as_ref()
+            .map(displacement_not_in_geometry_ft)
+            .unwrap_or(0);
+        anflug_forensik::Bahnbezug::aus_navdaten(nav, versatz_ft as f64)
+    });
+    let ergebnis = anflug_forensik::auswerten(
+        puffer.unwrap_or(&stats.approach_buffer),
+        bahn.as_ref(),
+        td,
+        platzhoehe_ft.map(f64::from),
+    );
+    // Laeuft die Dump-Auswertung des Samplers schon VOR diesem Stempel,
+    // steht das Analyse-JSON bereits — dann hier nachtragen, damit
+    // Datensatz und Analyse dieselben Werte tragen.
+    if let Some(analyse) = stats.landing_analysis.as_mut() {
+        ergebnis.in_analyse_json(analyse);
+    }
+    stats.anflug_forensik = ergebnis;
+}
+
 /// v0.16.6: per-episode reset of the approach-stability stats + rollout
 /// fields — called from the sampler's climb-out reset (touch-and-go) right
 /// next to the `landing_lat`/`landing_lon` re-arm. The FINAL touchdown of a
@@ -42713,6 +42809,7 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_window_sample_count = None;
     stats.approach_stable_at_da = None;
     stats.approach_stall_warning_count = 0;
+    stats.anflug_forensik = Default::default();
     stats.rollout_distance_m = None;
     // ── Bahndisziplin: ALLES, nicht nur die Zahlen ───────────────────
     //
@@ -44866,6 +44963,14 @@ fn step_flight_at(
                 stats.approach_window_sample_count = Some(stab_v2.window_sample_count);
                 stats.approach_stable_at_da = stab_v2.stable_at_da;
                 stats.approach_stall_warning_count = stab_v2.stall_warning_count;
+                // Lernpaket AP4/AP5: Forensik neben dem Gate, gegen dieselbe
+                // Bahn und denselben Puffer — ohne Rueckwirkung auf das Gate.
+                let platzhoehe = anflug_bezugshoehe_ft(
+                    &stats,
+                    &flight.arr_airport,
+                    ist_platzhoehe_navdaten_ft(&flight, &stats),
+                );
+                anflug_forensik_stempeln(&mut stats, None, td_ts, platzhoehe);
 
                 // ─── v0.5.26 Per-Touchdown-Metriken ─────────────────
                 // Wing-Strike-Severity: |bank_at_td| / max_bank × 100%.
@@ -58206,6 +58311,10 @@ mod canonical_landing_rate_fpm_tests {
                     flaps_position: 1.0,
                     selected_runway: None,
                     stall_warning: false,
+                    lat: None,
+                    lon: None,
+                    pitch_deg: None,
+                    n1_mittel_pct: None,
                 });
             }
             compute_approach_stddev(&buf, None)
@@ -62286,6 +62395,10 @@ mod sim_pause_tests {
             flaps_position: flaps,
             selected_runway: None,
             stall_warning: false,
+            lat: None,
+            lon: None,
+            pitch_deg: None,
+            n1_mittel_pct: None,
         }
     }
 
@@ -68094,6 +68207,10 @@ mod v0_16_6_bush_completeness_tests {
             flaps_position: 1.0,
             selected_runway: None,
             stall_warning: false,
+            lat: None,
+            lon: None,
+            pitch_deg: None,
+            n1_mittel_pct: None,
         }
     }
 
@@ -70302,6 +70419,105 @@ mod v0_16_6_bush_completeness_tests {
         assert_eq!(stats.rollout_last_lat, None);
         assert_eq!(stats.rollout_last_lon, None);
         assert_eq!(stats.rollout_finalize_reason, None);
+    }
+}
+
+// ======================================================================
+// Lernpaket AP4/AP5 (29.09.2026) — Verdrahtung der Anflug-Forensik
+// ======================================================================
+//
+// Die Rechnung selbst pruefen die Tests in `anflug_forensik.rs`. Hier geht
+// es um den Weg: Sammelt der Puffer die neuen Groessen, nimmt der Stempel
+// die gelandete Bahn, landet das Ergebnis im Analyse-JSON und wird es beim
+// Durchstarten wieder geloescht?
+#[cfg(test)]
+mod anflug_forensik_verdrahtung_tests {
+    use super::*;
+    use chrono::TimeZone;
+    use sim_core::SimSnapshot;
+
+    fn td() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 9, 29, 12, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn puffer_sammelt_position_nick_und_mittleres_n1() {
+        let mut stats = FlightStats::default();
+        let mut snap = SimSnapshot::default();
+        snap.lat = 50.1;
+        snap.lon = 8.2;
+        snap.pitch_deg = 2.5;
+        snap.eng_n1_pct = Some(vec![60.0, 62.0]);
+        push_approach_sample(&mut stats, &snap, td());
+        let s = stats.approach_buffer.back().expect("Probe im Puffer");
+        assert_eq!(s.lat, Some(50.1));
+        assert_eq!(s.lon, Some(8.2));
+        assert_eq!(s.pitch_deg, Some(2.5));
+        assert_eq!(s.n1_mittel_pct, Some(61.0));
+
+        // Kaputte Position / kein N1 (X-Plane): die Probe BLEIBT, nur die
+        // neuen Felder sind leer — die Stabilitaets-Auswertung braucht sie
+        // nicht und darf keine Probe dadurch verlieren.
+        snap.lat = f64::NAN;
+        snap.eng_n1_pct = None;
+        push_approach_sample(&mut stats, &snap, td());
+        assert_eq!(stats.approach_buffer.len(), 2);
+        let s = stats.approach_buffer.back().unwrap();
+        assert_eq!(s.lat, None);
+        assert_eq!(s.n1_mittel_pct, None);
+    }
+
+    #[test]
+    fn stempel_rechnet_gegen_die_gelandete_bahn_und_traegt_ins_analyse_json() {
+        const M_JE_GRAD: f64 = 6_371_000.0 * std::f64::consts::PI / 180.0;
+        let mut stats = FlightStats::default();
+        stats.runway_nav_geometry = Some(
+            serde_json::from_value(serde_json::json!({
+                "designator": "36", "magnetic_course": 360.0, "true_course": 360.0,
+                "length_ft": 9000,
+                "threshold": {"lat": 50.0, "lon": 8.0, "elev_ft": 300},
+                "end": {"lat": 50.03, "lon": 8.0, "elev_ft": 310},
+                "ils": {"freq_mhz": 110.1, "course": 360.0, "category": 1},
+                "glideslope_angle": 3.0, "tch_ft": 50
+            }))
+            .unwrap(),
+        );
+        // Anflug 1 Dot (0,35°) UEBER dem Pfad, 1000 → 200 ft.
+        let ist = 3.35_f64.to_radians();
+        let gpi = 50.0 / 3.0_f64.to_radians().tan();
+        for i in 0..=40 {
+            let h = 1000.0 - 20.0 * i as f64;
+            let d_m = (h / ist.tan() - gpi) / 3.280_839_895;
+            let mut snap = SimSnapshot::default();
+            snap.lat = 50.0 - d_m / M_JE_GRAD;
+            snap.lon = 8.0;
+            snap.altitude_msl_ft = 300.0 + h;
+            snap.altitude_agl_ft = h;
+            snap.vertical_speed_fpm = -700.0;
+            push_approach_sample(
+                &mut stats,
+                &snap,
+                td() - chrono::Duration::seconds(50 - i as i64),
+            );
+        }
+        stats.landing_analysis = Some(serde_json::json!({ "sample_count": 12 }));
+
+        anflug_forensik_stempeln(&mut stats, None, Some(td()), None);
+
+        let g = stats.anflug_forensik.gleitpfad.clone().expect("Gleitpfad");
+        assert_eq!(g.quelle, "navigraph_ils");
+        let ges = g.gesamt.expect("Werte");
+        assert!((ges.max_dots - 1.0).abs() < 0.03, "{}", ges.max_dots);
+        let analyse = stats.landing_analysis.as_ref().unwrap();
+        assert_eq!(analyse["sample_count"], 12, "Bestand bleibt");
+        assert_eq!(analyse["anflug_gleitpfad"]["quelle"], "navigraph_ils");
+
+        // Durchstarten/Touch-and-Go: der naechste Anflug beginnt leer.
+        clear_approach_stability_and_rollout(&mut stats);
+        assert_eq!(
+            stats.anflug_forensik,
+            anflug_forensik::AnflugForensik::default()
+        );
     }
 }
 

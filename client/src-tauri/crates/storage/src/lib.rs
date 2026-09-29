@@ -863,6 +863,109 @@ pub struct LandingRecord {
     /// deserialisierbar (None).
     #[serde(default)]
     pub score_algorithm_version: Option<u8>,
+
+    // ─── Lernpaket AP4/AP5 (29.09.2026) — Anflug-Forensik ohne Note ──
+    //
+    // Reine Befunde: keine Unternote, kein Stabilitaets-Gate, kein Deckel
+    // liest diese Felder. Sie stehen NUR lokal (und in der Datensicherung),
+    // nicht in MQTT/PIREP — die Nachrichten dort brechen ueber 10 KB ab.
+    // Alte landing_history.json bleibt ueber `serde(default)` lesbar.
+    /// Geometrische Abweichung vom Gleitpfad der gelandeten Bahn (AP4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anflug_gleitpfad: Option<AnflugGleitpfad>,
+    /// Anflugruhe je Tor 1000–500 / 500–200 ft (AP5), nur als Hinweis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anflug_ruhe: Option<AnflugRuhe>,
+}
+
+/// Lernpaket AP4 (29.09.2026): Abweichung vom Gleitpfad der tatsaechlich
+/// gelandeten Bahn, geometrisch aus Position und Hoehe — nicht mehr nur
+/// Soll-V/S gegen Ist-V/S. Reine Forensik, keine Note.
+///
+/// Vorzeichen: **positiv = ueber dem Pfad**. Ein Dot = 0,35° (wie
+/// vmsACARS; zwei Dots = Vollausschlag 0,7°).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AnflugGleitpfad {
+    /// Woher der Bezugspfad kommt: `navigraph_ils` (Bahn hat ein ILS),
+    /// `navigraph_bahn` (Navigraph-Bahn ohne ILS, Winkel der Bahn) oder
+    /// `angenommen_3grad` (keine Navdaten-Bahn — dann auch keine Werte).
+    pub quelle: String,
+    /// Verwendeter Gleitwinkel in Grad.
+    pub winkel_deg: f32,
+    /// Verwendete Schwellenueberflughoehe (TCH) in Fuss.
+    pub tch_ft: f32,
+    /// `true`, wenn die Navdaten keine TCH fuehren und 50 ft angenommen
+    /// wurden (der Server schreibt dann 0).
+    #[serde(default)]
+    pub tch_angenommen: bool,
+    /// Hoehe der Landeschwelle in Fuss MSL, `None` wenn unbekannt.
+    #[serde(default)]
+    pub schwellenhoehe_ft: Option<f32>,
+    /// Um so viele Fuss wurde die Schwelle der Navdaten Richtung Bahn
+    /// verschoben (versetzte Schwelle, soweit nicht schon in der Geometrie).
+    #[serde(default)]
+    pub versatz_ft: f32,
+    /// Warum es keine Werte gibt: `keine_bahn`, `schwellenhoehe_fehlt`
+    /// oder `keine_proben`. `None`, wenn gerechnet wurde.
+    #[serde(default)]
+    pub grund_ohne_werte: Option<String>,
+    /// 1000 bis 200 ft ueber der Schwelle.
+    #[serde(default)]
+    pub gesamt: Option<GleitpfadTor>,
+    /// 1000 bis 500 ft ueber der Schwelle.
+    #[serde(default)]
+    pub tor_1000_500: Option<GleitpfadTor>,
+    /// 500 bis 200 ft ueber der Schwelle.
+    #[serde(default)]
+    pub tor_500_200: Option<GleitpfadTor>,
+}
+
+/// Kennwerte der Gleitpfad-Abweichung in einem Hoehenband.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GleitpfadTor {
+    /// Anzahl Proben im Band (vor der Schwelle, im Anflugsektor).
+    pub proben: u32,
+    /// Mittlere |Abweichung| in Dots.
+    pub mittel_abs_dots: f32,
+    /// Groesste Abweichung in Dots, mit Vorzeichen (+ = ueber dem Pfad).
+    pub max_dots: f32,
+    /// Groesste Hoehenabweichung in Fuss, mit Vorzeichen (+ = zu hoch).
+    pub max_abw_ft: f32,
+}
+
+/// Lernpaket AP5 (29.09.2026): Anflugruhe — nur Hinweis, keine Note.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AnflugRuhe {
+    /// Bezug der Hoehenbaender: `schwelle` (Navdaten-Schwellenhoehe) oder
+    /// `platz` (Platzhoehe, wenn die Schwelle unbekannt ist).
+    pub hoehenbezug: String,
+    #[serde(default)]
+    pub tor_1000_500: Option<RuheTor>,
+    #[serde(default)]
+    pub tor_500_200: Option<RuheTor>,
+}
+
+/// Kennwerte der Anflugruhe in einem Hoehenband. Jeder Wert ist `None`,
+/// wenn er sich in diesem Band nicht verlaesslich messen liess.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RuheTor {
+    pub proben: u32,
+    /// Zeit zwischen erster und letzter Probe im Band, Sekunden.
+    pub dauer_s: f32,
+    /// Wie oft die Pfadabweichung die Seite gewechselt hat (ueber/unter
+    /// dem Pfad), mit Totband ±0,1 Dot. `None` ohne Gleitpfad (AP4).
+    #[serde(default)]
+    pub pfad_vorzeichenwechsel: Option<u32>,
+    /// Streuung der Nickrate in °/s.
+    #[serde(default)]
+    pub nick_unruhe_deg_s: Option<f32>,
+    /// Streuung der Rollrate in °/s.
+    #[serde(default)]
+    pub roll_unruhe_deg_s: Option<f32>,
+    /// Richtungswechsel des Schubs (mittleres N1) je Minute, Totband 2 %.
+    /// `None`, wenn der Simulator kein N1 liefert (X-Plane, Kolben).
+    #[serde(default)]
+    pub schub_umkehr_pro_min: Option<f32>,
 }
 
 /// v0.7.1: Stability-Gate-Window-Metadaten (Spec §5.4).
@@ -1649,6 +1752,51 @@ mod merge_tests {
             merged[0].pirep_id, "P10",
             "die ältesten zehn müssen weg sein"
         );
+    }
+
+    /// Lernpaket AP4/AP5 (29.09.2026): Ein Datensatz von vor diesen Feldern
+    /// bleibt lesbar (und schreibt sie nicht als `null` zurueck); ein neuer
+    /// traegt Gleitpfad und Anflugruhe unveraendert ueber die Platte.
+    #[test]
+    fn anflug_forensik_alt_lesbar_und_neu_verlustfrei() {
+        let alt = rec("P1", "2026-06-07T10:00:00Z", "2026-06-07T10:05:00Z");
+        assert_eq!(alt.anflug_gleitpfad, None);
+        assert_eq!(alt.anflug_ruhe, None);
+        let v = serde_json::to_value(&alt).unwrap();
+        assert!(v.get("anflug_gleitpfad").is_none());
+
+        let neu = mit(
+            alt,
+            serde_json::json!({
+                "anflug_gleitpfad": {
+                    "quelle": "navigraph_ils", "winkel_deg": 3.0, "tch_ft": 50.0,
+                    "schwellenhoehe_ft": 300.0,
+                    "gesamt": {"proben": 60, "mittel_abs_dots": 0.4,
+                               "max_dots": -1.2, "max_abw_ft": -38.0}
+                },
+                "anflug_ruhe": {
+                    "hoehenbezug": "schwelle",
+                    "tor_500_200": {"proben": 25, "dauer_s": 24.0,
+                                    "pfad_vorzeichenwechsel": 2,
+                                    "schub_umkehr_pro_min": null}
+                }
+            }),
+        );
+        let g = neu.anflug_gleitpfad.as_ref().unwrap();
+        assert_eq!(g.quelle, "navigraph_ils");
+        assert!(!g.tch_angenommen, "fehlendes Feld = nicht angenommen");
+        assert_eq!(g.gesamt.as_ref().unwrap().max_dots, -1.2);
+        let r = neu.anflug_ruhe.as_ref().unwrap();
+        assert_eq!(r.tor_1000_500, None);
+        assert_eq!(
+            r.tor_500_200.as_ref().unwrap().pfad_vorzeichenwechsel,
+            Some(2)
+        );
+
+        let zurueck: LandingRecord =
+            serde_json::from_value(serde_json::to_value(&neu).unwrap()).unwrap();
+        assert_eq!(zurueck.anflug_gleitpfad, neu.anflug_gleitpfad);
+        assert_eq!(zurueck.anflug_ruhe, neu.anflug_ruhe);
     }
 }
 
