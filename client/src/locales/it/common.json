@@ -3375,7 +3375,7 @@
     "verbinden_titel": "Connecting to the aircraft …",
     "verbinden_text": "AeroACARS reads all values of the aircraft. This takes a few seconds.",
     "verbunden": "{{anzahl}} values connected",
-    "ohne_scan": "There is no aircraft scan for this aircraft yet. Input events and the simulator's standard values are measured. Tip: a scan on live.kant.ovh/aircraft makes the measurement even more precise.",
+    "ohne_scan": "There is no aircraft scan for this aircraft yet. Input events, the simulator's standard values and the variables AeroACARS itself reads are measured. Tip: a scan on live.kant.ovh/aircraft makes the measurement even more precise.",
     "mit_scan": "{{anzahl}} variable names from this aircraft's scan.",
     "ruhe_titel": "Quiet measurement",
     "ruhe_text": "Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves (clock, displays, animations) – those are ignored later.",

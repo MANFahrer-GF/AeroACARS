@@ -3375,7 +3375,7 @@
     "verbinden_titel": "Verbinde mit dem Flugzeug …",
     "verbinden_text": "AeroACARS liest alle Werte des Flugzeugs. Das dauert ein paar Sekunden.",
     "verbunden": "{{anzahl}} Werte verbunden",
-    "ohne_scan": "Für dieses Flugzeug liegt noch kein Aircraft-Scan vor. Gemessen werden die Input-Events und die Standardwerte des Simulators. Tipp: Ein Scan auf live.kant.ovh/aircraft macht die Messung noch genauer.",
+    "ohne_scan": "Für dieses Flugzeug liegt noch kein Aircraft-Scan vor. Gemessen werden die Input-Events, die Standardwerte des Simulators und die Variablen, die AeroACARS selbst liest. Tipp: Ein Scan auf live.kant.ovh/aircraft macht die Messung noch genauer.",
     "mit_scan": "{{anzahl}} Variablennamen aus dem Aircraft-Scan dieses Flugzeugs.",
     "ruhe_titel": "Ruhemessung",
     "ruhe_text": "Bitte jetzt etwa 8 Sekunden nichts im Cockpit anfassen. AeroACARS merkt sich dabei, welche Werte sich von selbst ändern (Uhr, Anzeigen, Animationen) – die werden später ignoriert.",

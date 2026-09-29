@@ -1610,6 +1610,20 @@ pub const TOUCHDOWN_FIELDS: &[TelemetryField] = &[
     F::f64("PLANE TOUCHDOWN LONGITUDE", "radians"),
 ];
 
+/// Alle L:-Variablen, die der Client in irgendeinem Profil liest — für
+/// „Flugzeug vermessen" (29.09.2026). Direkt aus [`TELEMETRY_FIELDS`] und
+/// [`TOUCHDOWN_FIELDS`] abgeleitet, damit die Messung nie eine eigene,
+/// auseinanderlaufende Liste pflegt. Doppelte fallen erst in
+/// `vermessung::l_felder_mit_profil` weg.
+pub fn profil_lvar_namen() -> Vec<&'static str> {
+    TELEMETRY_FIELDS
+        .iter()
+        .chain(TOUCHDOWN_FIELDS)
+        .map(|f| f.name)
+        .filter(|n| n.starts_with("L:"))
+        .collect()
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Touchdown {
     pub vs_fps: f64,
@@ -10479,6 +10493,46 @@ mod tests {
         );
         assert_eq!(a.seatbelts_sign, b.seatbelts_sign);
         assert_eq!(a.cockpit_rohwerte, b.cockpit_rohwerte);
+    }
+}
+
+#[cfg(test)]
+mod profil_lvar_tests {
+    use super::*;
+
+    /// Die Messung liest genau die L:-Variablen der Profile mit — geprüft
+    /// über die echte Kette bis zu den Messfeldern.
+    #[test]
+    fn messung_enthaelt_ifly_autobrake_und_fenix_fcu_lampen() {
+        let profil = profil_lvar_namen();
+        let (felder, n) = crate::vermessung::l_felder_mit_profil(&profil, &[]);
+        let namen: Vec<&str> = felder.iter().map(|f| f.simvar.as_str()).collect();
+        for soll in [
+            "L:VC_Autobrake_SW_VAL",
+            "L:I_FCU_AP1",
+            "L:I_FCU_ATHR",
+            "L:I_FCU_APPR",
+        ] {
+            assert!(namen.contains(&soll), "{soll} fehlt in der Messung");
+        }
+        assert_eq!(n, felder.len(), "ohne Scan sind alle Felder Profilnamen");
+        // Keine Standard-SimVar rutscht als L: hinein.
+        assert!(!namen.iter().any(|n| n.starts_with("L:PLANE ")));
+    }
+
+    #[test]
+    fn profilnamen_ohne_doppelte_und_unter_der_obergrenze() {
+        let (felder, n) = crate::vermessung::l_felder_mit_profil(&profil_lvar_namen(), &[]);
+        let einzeln: std::collections::HashSet<&str> =
+            felder.iter().map(|f| f.simvar.as_str()).collect();
+        assert_eq!(einzeln.len(), felder.len());
+        // Jeder saubere Profilname kommt an (keiner fällt still weg).
+        let eindeutig: std::collections::HashSet<&str> = profil_lvar_namen().into_iter().collect();
+        assert_eq!(n, eindeutig.len());
+        assert!(
+            felder.len() + crate::vermessung::standard_felder().len()
+                <= crate::vermessung::BLOCK * crate::vermessung::MAX_BLOECKE
+        );
     }
 }
 

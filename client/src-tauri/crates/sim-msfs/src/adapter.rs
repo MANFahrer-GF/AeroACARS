@@ -1067,16 +1067,21 @@ impl MsfsAdapter {
 
     // ---- „Flugzeug vermessen" (28.09.2026) ----
 
-    /// Messung starten: Standard-SimVars der Schalter + diese L:-Namen
-    /// blockweise lesen, dazu ALLE Input-Events abonnieren.
-    pub fn vermessung_starten(&self, l_namen: Vec<String>) {
+    /// Messung starten: Standard-SimVars der Schalter, die L:-Variablen
+    /// aller Client-Profile und diese L:-Namen (Scan) blockweise lesen,
+    /// dazu ALLE Input-Events abonnieren. Liefert, wie viele Profilnamen
+    /// mitgelesen werden.
+    pub fn vermessung_starten(&self, l_namen: Vec<String>) -> usize {
         let mut felder = crate::vermessung::standard_felder();
-        felder.extend(crate::vermessung::l_felder(&l_namen));
+        let (l, profil) =
+            crate::vermessung::l_felder_mit_profil(&telemetry::profil_lvar_namen(), &l_namen);
+        felder.extend(l);
         self.shared.messung.lock().setzen(felder);
         self.shared
             .eingaben
             .lock()
             .alle_setzen(true, Instant::now());
+        profil
     }
 
     /// Messung beenden: Bloecke abbauen, zusaetzliche Abos abmelden.

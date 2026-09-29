@@ -189,6 +189,9 @@ struct Sitzung {
     /// am Bericht sieht, ob die Variablen dabei waren (X-Plane: 0, braucht
     /// keine).
     l_namen: usize,
+    /// MSFS: wie viele L:-Variablen aus den Client-Profilen mitgelesen
+    /// wurden (29.09.2026, auch ohne Scan). X-Plane: 0.
+    l_namen_profil: usize,
     flugzeug: Flugzeug,
     rauschen: HashSet<String>,
     anzahl_werte: usize,
@@ -346,7 +349,7 @@ pub async fn vermessung_starten(
         quelle_beenden(&app, alt.quelle);
     }
     let kind = crate::read_sim_config(&app).kind;
-    let (quelle, sim, flugzeug, l_namen) = if kind.is_xplane() {
+    let (quelle, sim, flugzeug, (l_namen, l_namen_profil)) = if kind.is_xplane() {
         // AP7: laeuft eine Sitzung mit dem Plugin (Protokoll 2), misst es
         // ohne Web-API; sonst wie bisher ueber die Web-API.
         let zugang = app
@@ -370,7 +373,7 @@ pub async fn vermessung_starten(
             autor: spiegel.flugzeug.author.clone(),
             pfad: spiegel.flugzeug.relative_path.clone(),
         };
-        (Quelle::XPlane(spiegel), "xplane", f, 0)
+        (Quelle::XPlane(spiegel), "xplane", f, (0, 0))
     } else {
         msfs_starten(&app, &snap).await?
     };
@@ -391,6 +394,7 @@ pub async fn vermessung_starten(
             sim,
             teil,
             l_namen,
+            l_namen_profil,
             flugzeug: flugzeug.clone(),
             rauschen: HashSet::new(),
             anzahl_werte: 0,
@@ -443,7 +447,7 @@ pub async fn vermessung_starten(
 async fn msfs_starten(
     app: &AppHandle,
     snap: &sim_core::SimSnapshot,
-) -> Result<(Quelle, &'static str, Flugzeug, usize), String> {
+) -> Result<(Quelle, &'static str, Flugzeug, (usize, usize)), String> {
     let titel = snap.aircraft_title.clone().unwrap_or_default();
     let icao = snap.aircraft_icao.clone().unwrap_or_default();
     // L:-Namen aus dem Aircraft-Scan — SimConnect kann L:-Variablen nicht
@@ -455,24 +459,31 @@ async fn msfs_starten(
         None => Vec::new(),
     };
     let n = namen.len();
-    {
+    // Dazu immer die L:-Variablen, die der Client selbst in seinen Profilen
+    // liest — so prüft jede Messung die heutige Zuordnung, auch ohne Scan.
+    let profil = {
         let st = app.state::<crate::AppState>();
-        st.msfs.lock().expect("msfs lock").vermessung_starten(namen);
-    }
+        st.msfs.lock().expect("msfs lock").vermessung_starten(namen)
+    };
+    tracing::info!(
+        scan = n,
+        profil,
+        "Flugzeug vermessen: MSFS-Messung mit L:-Namen aus Scan und Client-Profilen"
+    );
     let f = Flugzeug {
         titel: (!titel.is_empty()).then_some(titel),
         icao: (!icao.is_empty()).then_some(icao),
         autor: None,
         pfad: None,
     };
-    Ok((Quelle::Msfs, "msfs", f, n))
+    Ok((Quelle::Msfs, "msfs", f, (n, profil)))
 }
 
 #[cfg(not(target_os = "windows"))]
 async fn msfs_starten(
     _app: &AppHandle,
     _snap: &sim_core::SimSnapshot,
-) -> Result<(Quelle, &'static str, Flugzeug, usize), String> {
+) -> Result<(Quelle, &'static str, Flugzeug, (usize, usize)), String> {
     Err("MSFS gibt es nur unter Windows.".into())
 }
 
@@ -617,6 +628,12 @@ fn bericht(s: &Sitzung) -> serde_json::Value {
         if let Ok(v) = serde_json::to_value(sp.abo_stand()) {
             b["abo"] = v;
         }
+    }
+    // MSFS: L:-Variablen aus den Client-Profilen (29.09.2026). Der Server
+    // (Zod-Objekt ohne `.strict()`) verwirft das Feld heute still, lehnt die
+    // Messung aber nicht ab; die lokale Kopie behält es.
+    if s.sim == "msfs" {
+        b["l_namen_profil"] = s.l_namen_profil.into();
     }
     b
 }
