@@ -836,10 +836,17 @@ mod tests {
         vec![
             crate::sub_landing_rate::sub_landing_rate(300.0),
             crate::sub_g_force::sub_g_force(g),
-            SubScoreEntry::scored("bounces", "l", 100, "0".into(), "x", Band::Good),
-            SubScoreEntry::scored("stability", "l", 100, "-".into(), "x", Band::Good),
-            SubScoreEntry::scored("rollout", "l", 100, "-".into(), "x", Band::Good),
-            SubScoreEntry::scored("touchdown_point", "l", 100, "-".into(), "x", Band::Good),
+            SubScoreEntry::scored("bounces", "l", 100, "0".into(), "clean_set", Band::Good),
+            SubScoreEntry::scored("stability", "l", 100, "-".into(), "clean_set", Band::Good),
+            SubScoreEntry::scored("rollout", "l", 100, "-".into(), "clean_set", Band::Good),
+            SubScoreEntry::scored(
+                "touchdown_point",
+                "l",
+                100,
+                "-".into(),
+                "clean_set",
+                Band::Good,
+            ),
         ]
     }
 

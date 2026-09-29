@@ -45068,8 +45068,7 @@ fn step_flight_at(
                 }
                 if let (true, Some(boden)) = (in_bounce_window, stats.bounce_boden_agl_ft) {
                     let ueber_boden = snap.altitude_agl_ft - boden;
-                    if !stats.bounce_armed_above_threshold
-                        && ueber_boden > BOUNCE_AGL_THRESHOLD_FT
+                    if !stats.bounce_armed_above_threshold && ueber_boden > BOUNCE_AGL_THRESHOLD_FT
                     {
                         stats.bounce_armed_above_threshold = true;
                     } else if stats.bounce_armed_above_threshold
