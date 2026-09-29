@@ -143,6 +143,13 @@ PING
   Werte einer Runde stammen dann aus aufeinanderfolgenden Frames.
 * Sind alle Namen eines Abos `fehlt`, kommt trotzdem je Runde ein Paket mit
   `"v":[]` (Lebenszeichen).
+* **Flugzeugwechsel mitten in einer Runde:** `XPLM_MSG_PLANE_LOADED` verwirft
+  bei Abos mit Plugin-Namen (nicht `sim/…`) eine laufende Lese- oder
+  Senderunde sofort — Werte, die vor dem Wechsel gelesen wurden, gehen nie
+  mehr hinaus, und eine Runde mischt nie altes und neues Flugzeug. Der Client
+  sieht dann höchstens eine unvollständige Runde (wie bei UDP-Verlust). War
+  gerade eine `abo`-Antwort unterwegs, kommt nach der Neusuche eine
+  vollständige neue, und bis dahin keine Werte.
 * **Suche und Statuswechsel:** Alle Namen werden beim Anmelden, bei
   `XPLM_MSG_PLANE_LOADED` (Flugzeug 0) und bei `XPLM_MSG_AIRPORT_LOADED`
   gesucht; alle 2 s werden fehlende Namen und Arrays (Länge) nachgeprüft.
@@ -172,20 +179,64 @@ PING
   `teil_ungueltig`, `generation_ungueltig`, `zu_viele_namen`,
   `ueberzaehlige_zeilen`, `kein_hallo`, `abo_teil_reihenfolge`,
   `abo_teile_widerspruch`, `keine_namen`, `liste_nicht_verfuegbar`,
-  `speicher`. Optional mit `zeile` (1-basiert), `abo` + `gen` (immer
-  zusammen) und `id`. Ein ABO wird nur bei Rahmenfehlern (Kopfzeile, zu viele
+  `speicher`, `speicher_limit`. Optional mit `zeile` (1-basiert), `abo` +
+  `gen` (immer zusammen) und `id`. Ein ABO wird nur bei Rahmenfehlern (Kopfzeile, zu viele
   Namen, Teile, Datagramm zu groß) ganz verworfen; einzelne ungültige Namen
   bekommen `fehlt`.
 
 ### Leistung und Sicherheit
 
-* Alles im Flight-Loop (Hauptthread), Socket nicht blockierend. Höchstens 64
-  eingehende Datagramme und 16 ausgehende Pakete je Frame.
+* Alles im Flight-Loop (Hauptthread), Sockets nicht blockierend. Höchstens 64
+  eingehende Datagramme je Frame.
+* **Ein gemeinsamer Ausgang:** höchstens **16 Pakete je Frame über alle
+  Sendewege** (Antworten, `flugzeug`, Status, Werte, LISTE). Gezählt wird ein
+  ganzer Flight-Loop-Aufruf: erst die Antworten beim Empfang, dann die
+  Lieferung. Kleine Einzelantworten (`hallo`, `pong`, `fehler`,
+  `abo_empfangen`) haben Vorrang, aber höchstens **8 je Frame**; der Rest
+  wird verworfen und alle 10 s als Summe ins Log geschrieben — eine
+  PING-Flut wird nicht zur Antwortflut, und der Lieferung bleiben immer
+  mindestens 8 Pakete. Fehler, die erst während der Lieferung entstehen (Abo
+  oder LISTE am Budget verworfen), gehen nie verloren: sie werden vorgemerkt
+  und im nächsten Frame vor allem anderen gesendet.
 * **Zeitbudgets je Frame:** 0,3 ms für Suchen, danach 1 ms für Lesen und
-  Senden. Geliefert wird zuerst Abo 1 (beim Client die Telemetrie), dann im
-  Rundlauf über die **belegten** übrigen Abos. Die erste Arbeitseinheit je
-  Budget ist frei, damit auch ein einzelnes langsames Plugin-Dataref nicht
-  jeden Fortschritt verhindert.
+  Senden. Die Uhr wird **nach jedem einzelnen XPLM-Aufruf** gelesen (Find,
+  IsDataRefGood, Types, Array-Länge, Getter, LISTE je Name); ist das Budget
+  erschöpft, endet die Arbeit vor dem nächsten Aufruf, ein angefangener
+  Eintrag beginnt im nächsten Frame neu. Frei ist je Budget nur die erste
+  Einheit, und die nur bis einschließlich ihres **einen** fremden Accessors —
+  sonst könnte ein einziges teures Dataref jeden Fortschritt verhindern.
+* **Das ist ein weiches Budget.** Einen fremden Accessor (Getter oder
+  Array-Länge eines anderen Plugins) ruft XPLM synchron im Hauptthread auf;
+  braucht er 20 ms, steht X-Plane 20 ms — das kann kein Plugin unterbrechen,
+  eine harte Grenze ginge nur mit Isolation fremder Accessoren (eigener
+  Prozess), die XPLM nicht erlaubt. Das Plugin tut, was geht: danach sofort
+  aufhören, und einen Dataref, dessen Accessor **dreimal hintereinander**
+  länger als **2 ms** brauchte, **drosseln** — höchstens einmal je Sekunde
+  gelesen, über alle Abos höchstens ein gedrosselter Lesezugriff je 0,2 s,
+  im 2-s-Nachsuchlauf übersprungen. Status und Werte bleiben wahr (kein
+  `fehlt`), der Wert kommt nur seltener (der Client behält den letzten). Eine
+  Zeile je Name im `Log.txt` (`… antwortet langsam …`, höchstens 32). Nach
+  einem Flugzeugwechsel wird neu bewertet. Ein einzelner Ausreißer (der
+  Thread wurde vom Betriebssystem unterbrochen) drosselt nichts.
+* Geliefert wird zuerst Abo 1 (beim Client die Telemetrie), dann im
+  Rundlauf über die **belegten** übrigen Abos **und LISTE** — jeder
+  Teilnehmer ist regelmäßig als erster dran und bekommt dann das ganze
+  Budget; eine LISTE verhungert nicht hinter Dauer-Abos.
+* **Speicherbudgets (hart):** je Abo **16 MiB**, alle Abos samt Teil-Abos
+  zusammen **64 MiB**, LISTE **16 MiB**. Gezählt wird die reservierte
+  Kapazität, mit dem schlimmsten Fall je Wert (der Ausgabestapel wird beim
+  Anmelden für die längste mögliche Zahl reserviert, damit beim Lesen nichts
+  mehr allokiert wird) — und je Eintrag: 8192-mal derselbe 1024-Byte-Dataref
+  kostet 8192 × 6153 Byte ≈ 48 MiB und wird abgelehnt. Überschreitung →
+  `{"p":2,"t":"fehler","grund":"speicher_limit","abo":…,"gen":…}` (bzw. mit
+  `"id"` bei LISTE) statt Allokation. Scheitert ein fertiges ABO (oder später
+  seine Werte-Reserve nach einer Nachsuche), ist die ID danach leer; reißt
+  das Budget schon beim Empfang eines Teils, bleibt — wie bei jedem
+  Aufbaufehler — das bisherige Abo dieser ID unverändert.
+  Größenordnung legitimer Fälle: Abo 1 (≈ 200 Namen) ≈ 30 KiB; Vermessung mit
+  14 Abos × 8192 typischen Namen (5 % ganze 256er-Arrays) ≈ 47 MiB gemessen;
+  ein einzelnes Abo mit 3400 ganzen 256er-Arrays ≈ 15 MiB; LISTE mit 40 000
+  Namen ≈ 2,5 MiB.
 * Beim Start misst das Plugin einmal die Kosten von `XPLMFindDataRef` und
   `XPLMIsDataRefGood` und schreibt sie ins `Log.txt`
   (`Protokoll 2: Kosten je Aufruf - …`).
@@ -198,8 +249,21 @@ PING
   `malloc` mit Fehlerprüfung → `fehler/speicher` statt Absturz.
 * Die XPLM-4.0-Funktionen für `LISTE` werden per `XPLMFindSymbol` geholt
   (nur bei XPLM ≥ 400) — das Plugin lädt deshalb weiter unter X-Plane 11.
+* **Sockets** (beide Protokolle, `src/netz.cpp`): jede Rückgabe wird
+  geprüft. Scheitert „nicht blockierend“ (`fcntl`/`ioctlsocket(FIONBIO)`),
+  wird der Socket geschlossen und das jeweilige Protokoll bleibt aus — ein
+  blockierender Socket im Flight-Loop könnte X-Plane anhalten. Unter Windows
+  ebenso bei `SO_EXCLUSIVEADDRUSE` (sonst könnte ein anderes Programm den
+  Steuer-Port mitbinden); scheitert nur `SIO_UDP_CONNRESET`, gibt es eine
+  Warnung und Protokoll 2 läuft (Empfangsfehler nach einem beendeten Client
+  werden übersprungen).
 * Ist Port 52001 belegt, schreibt das Plugin eine Zeile ins `Log.txt` und
   läuft nur mit Protokoll 1 weiter.
+* **Aktivieren/Deaktivieren** (Plugin-Admin): Netz nur, solange das Plugin
+  aktiviert ist. `XPluginDisable` verwirft Client, Abos und LISTE und
+  schließt beide Sockets (Port 52001 frei, ungelesene Datagramme weg);
+  `XPluginEnable` bindet neu. Der Client bekommt danach `kein_hallo` und
+  meldet sich neu an.
 * **Empfehlung Client:** Empfangspuffer (`SO_RCVBUF`) ≥ 1 MiB — große Abos
   und `LISTE` kommen mit bis zu 128 KiB je Frame; Windows hat ab Werk 64 KiB.
 
@@ -211,6 +275,13 @@ neue Client wertet weiter `touchdown` aus. Einzige Ergänzung ab 1.0.0: das
 Feld `"pv":"1.0.0"` (Plugin-Version) in beiden Paketen — so erkennt der
 Client ein aktuelles Plugin auch, wenn dessen Protokoll 2 nicht antwortet
 (Port 52001 belegt). Alte Clients ignorieren das Feld.
+
+Seit 1.0.0 schreibt der locale-feste JSON-Schreiber die beiden Pakete
+(`src/protokoll1.cpp`) statt `snprintf`: Stellt ein anderes Plugin
+`LC_NUMERIC` auf Dezimalkomma, bleibt es beim Punkt. Feldschema,
+Reihenfolge und Nachkommastellen sind unverändert (für endliche Werte Byte
+für Byte die alte Ausgabe, Test `protokoll1_gleich_wie_bisher`); ein nicht
+endlicher Wert (NaN/±Inf) wird `null` statt des ungültigen `nan`.
 
 Every packet is a single line of JSON terminated with `\n`. The
 schema is versioned via `"v":1`. Two packet types:
@@ -344,12 +415,21 @@ ctest --test-dir build-tests --output-on-failure
   Dienst (`src/dienst.cpp`) gegen eine Schein-X-Plane-Welt
   (`tests/schein_welt.h`): Status, Raten, Zeitbudget, Nachsuche, verwaiste
   Datarefs, Zeitüberschreitung, mehrteilige Abos, LISTE, voller Socket.
-* `fuzz` — 5 s zufällige und verstümmelte Eingaben gegen Parser und Dienst
-  (fester Startwert; `aeroacars_fuzz <sekunden> <startwert>` für längere
-  Läufe).
+  Dazu Protokoll 1 (Format gegen das alte `snprintf`, NaN, Locale) und die
+  Socket-Einrichtung mit einer Attrappe, die jeden Betriebssystemaufruf
+  scheitern lässt. `aeroacars_tests <teilname>` führt nur passende Tests aus.
+* `fuzz` — 5 s zufällige und verstümmelte Eingaben gegen Parser und Dienst,
+  dazu PING-Fluten, langsame Accessoren, Abos am Speicherbudget; geprüft
+  werden auch die Bytebudgets und die 16 Pakete je Frame (fester Startwert;
+  `aeroacars_fuzz <sekunden> <startwert>` für längere Läufe).
+* `netz_echt` (alle drei Plattformen, auch Windows) — die echten
+  Socket-Aufrufe: Steuer-Socket wirklich nicht blockierend, zweiter Socket
+  auf demselben Port scheitert, Sender erreicht den Steuer-Socket.
 * `ende_zu_ende` (macOS/Linux) — die echte `.xpl` in einer XPLM-Attrappe
   (`tests/attrappe/`), abgefragt mit `werkzeuge/plugin_sonde.py pruefung`;
-  dazu X-Plane-11-Verhalten und belegter Port 52001.
+  dazu X-Plane-11-Verhalten, belegter Port 52001 und ein Zyklus
+  Deaktivieren/Aktivieren. Wird übersprungen (77), wenn Port 52001 belegt
+  ist (X-Plane mit dem Plugin läuft).
 * Unter macOS/Linux mit AddressSanitizer + UBSan
   (`-DAEROACARS_SANITIZER=OFF` schaltet ab), unter Windows ohne.
 
@@ -405,6 +485,9 @@ Quelltexte:
 | `src/anfrage.cpp` | Anfrage-Parser (rein, XPLM-frei) |
 | `src/json_schreiber.cpp` | JSON in festen Puffer (rein, XPLM-frei) |
 | `src/pakete.cpp` | Aufteilung in Pakete ≤ 8 KiB (rein, XPLM-frei) |
+| `src/protokoll1.cpp` | Pakete `telemetry`/`touchdown` (rein, XPLM-frei) |
+| `src/netz.cpp` | Regel zum Einrichten beider Sockets (rein, prüfbar) |
+| `src/netz_os.cpp` | die echten Socket-Aufrufe (Winsock/POSIX) |
 | `src/grenzen.h` | alle Obergrenzen an einer Stelle |
 
 ## DataRefs read (Protokoll 1)

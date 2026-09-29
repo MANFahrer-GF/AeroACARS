@@ -138,25 +138,34 @@ void JsonSchreiber::ganzzahl(int64_t wert) noexcept {
 
 // Übernimmt eine printf-Zahl und macht sie locale-fest: Ziffern, '-', '+',
 // 'e' bleiben; jede andere Bytefolge (das Dezimaltrennzeichen der Locale,
-// auch mehrbytige) wird zu genau einem '.'.
-void JsonSchreiber::zahl_aus_printf(const char* formatiert, int n) noexcept {
-    if (n <= 0) { null(); return; }
-    char aus[48];
+// auch mehrbytige) wird zu genau einem '.'. Schreibt direkt in den Puffer
+// (kein Zwischenpuffer fester Länge — "%.7f" von 1e300 hat über 300 Stellen
+// und darf nicht still abgeschnitten werden).
+void JsonSchreiber::zahl_aus_printf(const char* formatiert, size_t n) noexcept {
+    if (n == 0) { null(); return; }
+    auto zahlzeichen = [](char c) noexcept {
+        return (c >= '0' && c <= '9') || c == '-' || c == '+' || c == 'e' || c == 'E';
+    };
+    // Zwei Durchgänge: erst die Ausgabelänge zählen (ein mehrbytiges
+    // Trennzeichen wird zu EINEM '.'), dann genau so viel Platz verlangen.
     size_t k = 0;
     bool im_fremden = false;
-    for (int i = 0; i < n && k < sizeof(aus); ++i) {
+    for (size_t i = 0; i < n; ++i) {
+        if (zahlzeichen(formatiert[i])) { ++k; im_fremden = false; }
+        else if (!im_fremden)           { ++k; im_fremden = true; }
+    }
+    if (!platz(k)) return;
+    im_fremden = false;
+    for (size_t i = 0; i < n; ++i) {
         const char c = formatiert[i];
-        const bool zahlzeichen = (c >= '0' && c <= '9') || c == '-' || c == '+' ||
-                                 c == 'e' || c == 'E';
-        if (zahlzeichen) {
-            aus[k++] = c;
+        if (zahlzeichen(c)) {
+            puffer_[laenge_++] = c;
             im_fremden = false;
         } else if (!im_fremden) {
-            aus[k++] = '.';
+            puffer_[laenge_++] = '.';
             im_fremden = true;
         }
     }
-    roh(aus, k);
 }
 
 void JsonSchreiber::zahl_d(double wert) noexcept {
@@ -164,7 +173,7 @@ void JsonSchreiber::zahl_d(double wert) noexcept {
     char tmp[48];
     const int n = std::snprintf(tmp, sizeof(tmp), "%.17g", wert);
     if (n <= 0 || static_cast<size_t>(n) >= sizeof(tmp)) { null(); return; }
-    zahl_aus_printf(tmp, n);
+    zahl_aus_printf(tmp, static_cast<size_t>(n));
 }
 
 void JsonSchreiber::zahl_f(float wert) noexcept {
@@ -172,7 +181,19 @@ void JsonSchreiber::zahl_f(float wert) noexcept {
     char tmp[48];
     const int n = std::snprintf(tmp, sizeof(tmp), "%.9g", static_cast<double>(wert));
     if (n <= 0 || static_cast<size_t>(n) >= sizeof(tmp)) { null(); return; }
-    zahl_aus_printf(tmp, n);
+    zahl_aus_printf(tmp, static_cast<size_t>(n));
+}
+
+void JsonSchreiber::zahl_fest(double wert, int nachkommastellen) noexcept {
+    if (!std::isfinite(wert)) { null(); return; }
+    if (nachkommastellen < 0) nachkommastellen = 0;
+    if (nachkommastellen > 17) nachkommastellen = 17;
+    // Größter endlicher double: 309 Vorkommastellen + Vorzeichen + Punkt
+    // (evtl. mehrbytig) + 17 Nachkommastellen < 400.
+    char tmp[400];
+    const int n = std::snprintf(tmp, sizeof(tmp), "%.*f", nachkommastellen, wert);
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(tmp)) { null(); return; }
+    zahl_aus_printf(tmp, static_cast<size_t>(n));
 }
 
 }  // namespace aeroacars

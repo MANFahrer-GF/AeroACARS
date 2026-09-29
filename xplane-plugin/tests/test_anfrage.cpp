@@ -306,7 +306,7 @@ TEST(liste) {
 
 TEST(fehlergruende_sind_eindeutig) {
     std::set<std::string> gesehen;
-    for (int g = 0; g <= static_cast<int>(Fehlergrund::GENERATION_UNGUELTIG); ++g) {
+    for (int g = 0; g <= static_cast<int>(Fehlergrund::SPEICHER_LIMIT); ++g) {
         const std::string t = fehlergrund_text(static_cast<Fehlergrund>(g));
         PRUEFE(!t.empty());
         PRUEFE(gesehen.insert(t).second);
@@ -314,6 +314,7 @@ TEST(fehlergruende_sind_eindeutig) {
     }
     PRUEFE_TEXT(fehlergrund_text(Fehlergrund::LISTE_NICHT_VERFUEGBAR), "liste_nicht_verfuegbar");
     PRUEFE_TEXT(fehlergrund_text(Fehlergrund::ZEILE_ZU_LANG), "zeile_zu_lang");
+    PRUEFE_TEXT(fehlergrund_text(Fehlergrund::SPEICHER_LIMIT), "speicher_limit");
 }
 
 TEST(ist_gueltiger_name) {

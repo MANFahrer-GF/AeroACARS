@@ -3,6 +3,7 @@
 #include "testrahmen.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace testrahmen {
 Test*& erster_test() {
@@ -19,7 +20,10 @@ int& pruefzahl() {
 }
 }  // namespace testrahmen
 
-int main() {
+// aeroacars_tests [teilname] — ohne Argument alle Tests, sonst nur die, deren
+// Name `teilname` enthält (für Gegenproben einzelner Befunde).
+int main(int argc, char** argv) {
+    const char* filter = argc > 1 ? argv[1] : nullptr;
     // Registrierung stellt voran — umdrehen, damit die Reihenfolge der Datei
     // entspricht (lesbarere Ausgabe).
     testrahmen::Test* umgedreht = nullptr;
@@ -32,6 +36,7 @@ int main() {
     int tests = 0;
     int rote = 0;
     for (testrahmen::Test* t = umgedreht; t != nullptr; t = t->naechster) {
+        if (filter != nullptr && std::strstr(t->name, filter) == nullptr) continue;
         const int vorher = testrahmen::fehlerzahl();
         t->fn();
         ++tests;

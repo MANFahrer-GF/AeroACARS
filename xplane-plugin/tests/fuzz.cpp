@@ -13,8 +13,12 @@
 //            Zusagen aus anfrage.h gelten.
 //   Teil B — Dienst: Ströme aus gültigen, verstümmelten und zufälligen
 //            Anfragen von mehreren Absendern, dazwischen Frames, Zeitsprünge,
-//            Flugzeugwechsel, verwaiste Datarefs, volle Sockets. JEDES
-//            gesendete Paket muss gültiges JSON ≤ 8192 Byte sein.
+//            Flugzeugwechsel (auch mitten in einer Runde), verwaiste Datarefs,
+//            volle Sockets, PING-Fluten, langsame fremde Accessoren, Abos am
+//            Speicherbudget. JEDES gesendete Paket muss gültiges JSON ≤ 8192
+//            Byte sein; außerdem gelten nach jedem Schritt die Bytebudgets
+//            (grenzen::MAX_BYTES_*) und je Frame höchstens
+//            grenzen::MAX_PAKETE_JE_FRAME Pakete (Codex-Abnahme H3, M1).
 //
 // Unter ASan/UBSan (macOS/Linux) bricht jeder Speicherfehler sofort ab.
 // =============================================================================
@@ -188,6 +192,8 @@ struct Welt {
     std::unique_ptr<Dienst> d;
     size_t geprueft = 0;
 
+    long am_socket_frame = 0;  // Stand von umg.am_socket am Ende des letzten Frames
+
     Welt() {
         welt.uhr = &umg;
         welt.neu("sim/aircraft/view/acf_ICAO", typ::B).b = "A20N";
@@ -203,6 +209,8 @@ struct Welt {
         welt.neu("sim/c", typ::I);
         welt.neu("n", typ::I);
         welt.neu("x", typ::F);
+        welt.neu("sim/bgross", typ::B).b = std::string(1024, 'q');  // Speicherbudget
+        welt.neu("addon/langsam", typ::VF).vf = std::vector<float>(40, 2.0f);
         for (int i = 0; i < 400; ++i) welt.neu("gen/" + std::to_string(i), typ::F);
         welt.ueberschuss = 3;
         Kennung k;
@@ -250,6 +258,12 @@ int main(int argc, char** argv) {
     // ---- Teil B: Dienst --------------------------------------------------------
     long dienst_anfragen = 0, frames = 0, pakete = 0, welten = 0;
     const Absender absender[] = {{0x7F000001u, 50000}, {0x7F000001u, 50001}, {0x7F000001u, 1}};
+    // Abos, die das Speicherbudget sprengen (H3): viele Male derselbe große
+    // Dataref, einteilig (< 64 KiB) und als zweiteiliges ABO.
+    std::string gross = "ABO 7 1 g2\n";
+    for (int i = 0; i < 5000; ++i) gross += "sim/bgross\n";
+    std::string gross2a = "ABO 8 1 1 2\n", gross2b = "ABO 8 1 2 2\n";
+    for (int i = 0; i < 4096; ++i) { gross2a += "sim/vf\n"; gross2b += "sim/vf\n"; }
     const auto ende_b = uhr::now() + std::chrono::duration<double>(sekunden / 2);
     while (uhr::now() < ende_b) {
         Welt w;
@@ -260,6 +274,14 @@ int main(int argc, char** argv) {
                 std::string s = erzeuge(rng, 50);
                 // Oft zuerst ein gültiges HALLO, sonst passiert zu wenig.
                 if (rng() % 4 == 0) s = "HALLO 2 fuzz";
+                const unsigned sonder = rng() % 100;
+                if (sonder < 2) s = gross;
+                else if (sonder < 3) { w.d->empfange(absender[0], gross2a.data(), gross2a.size()); s = gross2b; }
+                else if (sonder < 5) {
+                    // PING-Flut: 63 + 1 Datagramme (die Empfangsgrenze je Frame).
+                    for (int k = 0; k < 63; ++k) w.d->empfange(absender[0], "PING", 4);
+                    s = "PING";
+                }
                 const Absender& von = absender[rng() % 3 == 0 ? rng() % 3 : 0];
                 w.d->empfange(von, s.data(), s.size());
                 ++dienst_anfragen;
@@ -270,6 +292,12 @@ int main(int argc, char** argv) {
                 if (rng() % 30 == 0) w.umg.fehler_noch = static_cast<int>(rng() % 3);
                 w.d->frame();
                 ++frames;
+                // Gemeinsamer Ausgang (M1): vom Ende des letzten Frames (inkl.
+                // der Antworten beim Empfang dazwischen) bis zum Ende dieses.
+                if (w.umg.am_socket - w.am_socket_frame > grenzen::MAX_PAKETE_JE_FRAME) {
+                    fehler("mehr als 16 Pakete in einem Frame", std::to_string(w.umg.am_socket - w.am_socket_frame));
+                }
+                w.am_socket_frame = w.umg.am_socket;
             } else if (r < 94) {
                 auto& ref = *w.welt.refs[rng() % w.welt.refs.size()];
                 ref.registriert = rng() % 3 != 0;
@@ -279,9 +307,13 @@ int main(int argc, char** argv) {
             } else if (r < 96) {
                 w.d->flugzeug_geladen();
             } else if (r < 97) {
-                // Kosten der XPLM-Aufrufe schwanken lassen (Budgets).
+                // Kosten der XPLM-Aufrufe schwanken lassen (Budgets), dazu ein
+                // mal schneller, mal sehr langsamer fremder Accessor (H4).
                 w.welt.such_kosten = (rng() % 2) ? 0.0 : 2e-6;
                 w.welt.gueltig_kosten = (rng() % 2) ? 0.0 : 1e-6;
+                w.welt.namen_kosten = (rng() % 2) ? 0.0 : 3e-6;
+                w.welt.lese_kosten = (rng() % 3) ? 0.0 : 5e-6;
+                w.welt.refs[rng() % w.welt.refs.size()]->kosten = (rng() % 2) ? 0.0 : 0.003;
             } else if (r < 99) {
                 w.d->flughafen_geladen();
             } else {
@@ -289,6 +321,8 @@ int main(int argc, char** argv) {
             }
             pakete += static_cast<long>(w.umg.gesendet.size() - w.geprueft);
             w.pruefe_ausgabe();
+            if (w.d->speicher_abos() > grenzen::MAX_BYTES_ABOS) fehler("Speicherbudget Abos", "");
+            if (w.d->speicher_liste() > grenzen::MAX_BYTES_LISTE) fehler("Speicherbudget LISTE", "");
         }
     }
 

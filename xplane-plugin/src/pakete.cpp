@@ -37,20 +37,37 @@ bool ElementListe::uebernehme(const JsonSchreiber& w) noexcept {
     return true;
 }
 
-bool ElementListe::sorge_fuer_platz(size_t max_element) noexcept {
-    if (text_.kapazitaet() - text_.anzahl() < max_element) {
-        size_t neu = text_.kapazitaet() < 4096 ? 4096 : text_.kapazitaet();
-        while (neu - text_.anzahl() < max_element) {
-            if (neu > (SIZE_MAX / 2)) return false;
-            neu *= 2;
+ElementListe::Platz ElementListe::sorge_fuer_platz(size_t max_element, size_t max_bytes) noexcept {
+    const size_t ENDE = sizeof(uint32_t);
+    if (max_element > SIZE_MAX - text_.anzahl()) return Platz::SPEICHER;
+    const size_t text_noetig = text_.anzahl() + max_element;
+    const bool text_voll = text_.kapazitaet() < text_noetig;
+    const bool enden_voll = enden_.anzahl() == enden_.kapazitaet();
+    if (!text_voll && !enden_voll) return Platz::OK;
+
+    // Mindestens nötig …
+    const size_t t_min = text_voll ? text_noetig : text_.kapazitaet();
+    const size_t e_min = enden_voll ? enden_.anzahl() + 1 : enden_.kapazitaet();
+    if (e_min > (SIZE_MAX - t_min) / ENDE) return Platz::SPEICHER;
+    if (t_min + e_min * ENDE > max_bytes) return Platz::LIMIT;
+
+    // … gewünscht: verdoppeln (wenige Umkopierungen), aber nie übers Budget.
+    size_t e = enden_.kapazitaet();
+    if (enden_voll) {
+        e = e < 256 ? 256 : (e > SIZE_MAX / (2 * ENDE) ? e_min : e * 2);
+        if (t_min + e * ENDE > max_bytes) e = e_min;
+    }
+    size_t t = text_.kapazitaet();
+    if (text_voll) {
+        t = t < 4096 ? 4096 : t;
+        while (t < text_noetig) {
+            if (t > SIZE_MAX / 2) return Platz::SPEICHER;
+            t *= 2;
         }
-        if (!text_.reserviere(neu)) return false;
+        if (t + e * ENDE > max_bytes) t = max_bytes - e * ENDE;  // ≥ t_min (oben geprüft)
     }
-    if (enden_.anzahl() == enden_.kapazitaet()) {
-        const size_t neu = enden_.kapazitaet() < 256 ? 256 : enden_.kapazitaet() * 2;
-        if (!enden_.reserviere(neu)) return false;
-    }
-    return true;
+    if (!text_.reserviere(t) || !enden_.reserviere(e)) return Platz::SPEICHER;
+    return Platz::OK;
 }
 
 size_t dezimalstellen(uint32_t wert) noexcept {

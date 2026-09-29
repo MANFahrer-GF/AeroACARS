@@ -187,7 +187,7 @@ TEST(elementliste_ueberlauf) {
     PRUEFE_GLEICH(l.anzahl(), size_t(2));
     PRUEFE_TEXT(std::string(l.element(1), l.element_laenge(1)), "5678");
     // Wachsen für LISTE.
-    PRUEFE(l.sorge_fuer_platz(10000));
+    PRUEFE(l.sorge_fuer_platz(10000, SIZE_MAX) == ElementListe::Platz::OK);
     JsonSchreiber d = l.schreiber();
     d.roh(std::string(10000, 'z').c_str());
     PRUEFE(l.uebernehme(d));

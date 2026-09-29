@@ -34,6 +34,12 @@ struct ScheinRef {
     std::string b;
     bool gueltig = true;       // false = verwaist
     bool registriert = true;   // false = XPLMFindDataRef findet ihn (noch) nicht
+    // Teurer FREMDER Accessor (Codex-Abnahme H4): so viele Sekunden kostet
+    // jeder Aufruf seines Getters — auch die Längenabfrage (aus == nullptr),
+    // denn in XPLM ist das derselbe Rückruf des besitzenden Plugins.
+    double kosten = 0.0;
+    int getter_aufrufe = 0;    // Werte lesen
+    int laengen_aufrufe = 0;   // Array-Länge abfragen
 };
 
 class ScheinUmgebung;
@@ -46,9 +52,11 @@ public:
     double lese_kosten = 0.0;       // Sekunden je Lesezugriff
     double such_kosten = 0.0;       // Sekunden je finde()
     double gueltig_kosten = 0.0;    // Sekunden je ist_gueltig()
+    double namen_kosten = 0.0;      // Sekunden je name_von() (LISTE)
     int lesezugriffe = 0;
     int suchen = 0;
     int gueltig_pruefungen = 0;
+    int namen_abfragen = 0;
     std::unordered_map<std::string, ScheinRef*> nach_name;
     int ueberschuss = 0;            // schreibt so viele Werte MEHR als erbeten
 
@@ -70,19 +78,19 @@ public:
     int typen(aeroacars::DatarefHandle h) noexcept override {
         return static_cast<ScheinRef*>(h)->typen;
     }
-    int lese_i(aeroacars::DatarefHandle h) noexcept override { lies(); return r(h)->i; }
-    float lese_f(aeroacars::DatarefHandle h) noexcept override { lies(); return r(h)->f; }
-    double lese_d(aeroacars::DatarefHandle h) noexcept override { lies(); return r(h)->d; }
+    int lese_i(aeroacars::DatarefHandle h) noexcept override { lies(r(h)); return r(h)->i; }
+    float lese_f(aeroacars::DatarefHandle h) noexcept override { lies(r(h)); return r(h)->f; }
+    double lese_d(aeroacars::DatarefHandle h) noexcept override { lies(r(h)); return r(h)->d; }
     int lese_vi(aeroacars::DatarefHandle h, int* aus, int ab, int max) noexcept override {
-        return kopiere(r(h)->vi, aus, ab, max);
+        return kopiere(r(h), r(h)->vi, aus, ab, max);
     }
     int lese_vf(aeroacars::DatarefHandle h, float* aus, int ab, int max) noexcept override {
-        return kopiere(r(h)->vf, aus, ab, max);
+        return kopiere(r(h), r(h)->vf, aus, ab, max);
     }
     int lese_b(aeroacars::DatarefHandle h, void* aus, int ab, int max) noexcept override {
         const std::string& s = r(h)->b;
-        if (aus == nullptr) return static_cast<int>(s.size());
-        lies();
+        if (aus == nullptr) { laenge(r(h)); return static_cast<int>(s.size()); }
+        lies(r(h));
         int n = 0;
         for (int k = ab; k >= 0 && k < static_cast<int>(s.size()) && n < max + ueberschuss; ++k) {
             static_cast<char*>(aus)[n++] = s[static_cast<size_t>(k)];
@@ -98,17 +106,16 @@ public:
         }
         return n;
     }
-    const char* name_von(aeroacars::DatarefHandle h) noexcept override {
-        return static_cast<ScheinRef*>(h)->name.c_str();
-    }
+    const char* name_von(aeroacars::DatarefHandle h) noexcept override;
 
 private:
     static ScheinRef* r(aeroacars::DatarefHandle h) { return static_cast<ScheinRef*>(h); }
-    void lies() noexcept;
+    void lies(ScheinRef* ref) noexcept;
+    void laenge(ScheinRef* ref) noexcept;
     template <typename T>
-    int kopiere(const std::vector<T>& v, T* aus, int ab, int max) noexcept {
-        if (aus == nullptr) return static_cast<int>(v.size());
-        lies();
+    int kopiere(ScheinRef* ref, const std::vector<T>& v, T* aus, int ab, int max) noexcept {
+        if (aus == nullptr) { laenge(ref); return static_cast<int>(v.size()); }
+        lies(ref);
         int n = 0;
         // `ueberschuss` bildet ein fehlerhaftes Plugin nach, das über max
         // hinaus schreibt — der Dienst muss dafür Reserve im Puffer haben.
@@ -127,11 +134,16 @@ public:
     std::vector<std::string> log;
     int voll_noch = 0;    // so viele Sendeversuche melden VOLL
     int fehler_noch = 0;  // so viele Sendeversuche melden FEHLER
+    int ok_noch = -1;     // ≥ 0: nur noch so viele Pakete gehen durch, danach VOLL
+    long am_socket = 0;   // Sendeversuche, die den Socket erreichten (OK + FEHLER)
 
     aeroacars::SendeErgebnis sende(const aeroacars::Absender& an, const char* daten,
                                    size_t laenge) noexcept override {
         if (voll_noch > 0) { --voll_noch; return aeroacars::SendeErgebnis::VOLL; }
+        if (ok_noch == 0) return aeroacars::SendeErgebnis::VOLL;
+        ++am_socket;
         if (fehler_noch > 0) { --fehler_noch; return aeroacars::SendeErgebnis::FEHLER; }
+        if (ok_noch > 0) --ok_noch;
         gesendet.emplace_back(an, std::string(daten, laenge));
         return aeroacars::SendeErgebnis::OK;
     }
@@ -155,7 +167,19 @@ inline bool ScheinWelt::ist_gueltig(aeroacars::DatarefHandle h) noexcept {
     return static_cast<ScheinRef*>(h)->gueltig;
 }
 
-inline void ScheinWelt::lies() noexcept {
+inline void ScheinWelt::lies(ScheinRef* ref) noexcept {
     ++lesezugriffe;
-    if (uhr != nullptr) uhr->zeit += lese_kosten;
+    ++ref->getter_aufrufe;
+    if (uhr != nullptr) uhr->zeit += lese_kosten + ref->kosten;
+}
+
+inline void ScheinWelt::laenge(ScheinRef* ref) noexcept {
+    ++ref->laengen_aufrufe;
+    if (uhr != nullptr) uhr->zeit += ref->kosten;
+}
+
+inline const char* ScheinWelt::name_von(aeroacars::DatarefHandle h) noexcept {
+    ++namen_abfragen;
+    if (uhr != nullptr) uhr->zeit += namen_kosten;
+    return static_cast<ScheinRef*>(h)->name.c_str();
 }

@@ -120,6 +120,8 @@ Antworten (Auswahl, alle mit `"p":2`):
   64 eingehende Datagramme je Frame.
 - **Zeitbudget:** Lesen und Senden höchstens **1 ms je Frame**. Ein großes Abo
   (Flugzeug vermessen, tausende Namen) wird über mehrere Frames verteilt.
+  Das ist ein **weiches** Budget (siehe §9, Nachtrag Codex-Abnahme): einen
+  fremden Accessor kann das Plugin nicht unterbrechen.
 - Keine Allokation im heißen Pfad außer beim (Neu-)Anmelden.
 
 ### 5. Aufzählung für „Flugzeug vermessen“
@@ -137,7 +139,8 @@ Client nimmt dann wie bisher die Web-API.
   - `-fno-exceptions`, jede XPLM-Rückgabe geprüft, keine rohen Indizes;
   - der Anfrage-Parser und der JSON-Schreiber sind reine Funktionen mit
     **eigenen Unit-Tests und einem Fuzz-Test** (Plugin-CI, alle drei Plattformen);
-  - harte Obergrenzen für Zeilen, Namen, Abos, Paketgrößen.
+  - harte Obergrenzen für Zeilen, Namen, Abos, Paketgrößen und — seit der
+    Codex-Abnahme — Bytes (§9).
 - **Startschutz:** Misslingt das Binden des Steuer-Sockets (Port belegt), bleibt
   das Plugin beim Protokoll-1-Senden und schreibt eine Zeile ins X-Plane-Log.
 
@@ -266,6 +269,80 @@ Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
   also kein Beleg für das Flugzeug; der Client braucht einen Zweitbeleg
   (Wert ≠ 0, Web-API oder RREF-Bestätigung), bevor er daraus ein Profil
   ableitet.
+
+#### Nachtrag nach der Codex-Abnahme (29.09.2026, verbindlich)
+
+Unabhängige Abnahme durch Codex („nicht freigabefähig“), Befunde H2–H5,
+M1–M3, N1 im Plugin behoben (H1 betrifft den Client):
+
+- **Flugzeugwechsel mitten in einer Runde (H2):** `XPLM_MSG_PLANE_LOADED`
+  verwirft bei Abos mit Plugin-Namen eine laufende Runde: `LESEN`/`SENDEN`
+  → `BEREIT` (Stapel und Paketcursor zurück, schon geplante Pakete gehen
+  nicht mehr hinaus), `ANTWORT` → `NEU` mit erzwungener vollständiger neuer
+  Status-Antwort nach der Neusuche; in `NEU` gibt es keine Werte. Danach gilt
+  die Pause wie bisher (bis zur Übernahme der Neusuche, höchstens 0,5 s).
+  Werte des alten Flugzeugs gehen nach dem Wechsel nie mehr hinaus, und eine
+  Runde mischt nie beide. Abos nur mit `sim/…`-Namen liefern weiter.
+- **Speicher (H3):** harte Bytebudgets — je Abo 16 MiB, alle Abos samt
+  Teil-Abos 64 MiB, LISTE 16 MiB — gezählt als reservierte Kapazität mit dem
+  schlimmsten Fall je Wert und je Eintrag (Duplikate zählen einzeln).
+  Überschreitung → `fehler`/`speicher_limit` (mit `abo`+`gen` bzw. `id`);
+  ein fertiges ABO, das scheitert, hinterlässt die ID leer (ein Aufbaufehler
+  beim Empfang eines Teils lässt wie immer das bisherige Abo stehen). Warum 16/64 statt der zuerst
+  erwogenen 8/32: Der Client vermisst mit bis zu 14 Abos × 8192 Namen, und
+  LISTE liefert Namen gruppiert — ein Abo kann Tausende ganzer 256er-Arrays
+  enthalten (3400 davon ≈ 15 MiB). Gemessen in der Schein-Welt: Abo 1 +
+  14 × 8192 typische Namen ≈ 47 MiB. Vorher war der schlimmste Fall
+  unbegrenzt (16 × 48 MiB).
+- **Zeit (H4):** Die Uhr wird nach **jedem einzelnen** XPLM-Aufruf gelesen
+  (Find, IsDataRefGood, Types, Array-Länge, Getter; LISTE je Name statt je
+  256er-Block). Ist das Budget erschöpft, endet die Arbeit vor dem nächsten
+  Aufruf; ein angefangener Eintrag beginnt im nächsten Frame neu (auch die
+  Verwaist-Prüfung gilt nur im Moment ihres Aufrufs). Frei ist je Budget nur
+  die erste Einheit bis einschließlich ihres einen fremden Accessors.
+  **Ehrliche Einordnung:** Das bleibt ein weiches Budget. XPLM ruft fremde
+  Accessoren synchron im Hauptthread auf; eine harte Grenze wäre nur mit
+  Isolation (eigener Prozess) möglich, die XPLM nicht bietet. Ein Dataref,
+  dessen Accessor dreimal **in Folge** länger als 2 ms braucht, wird
+  gedrosselt: höchstens einmal je Sekunde gelesen, über alle Abos höchstens
+  ein gedrosselter Zugriff je 0,2 s, im 2-s-Nachsuchlauf übersprungen; eine
+  Zeile je Name ins `Log.txt` (höchstens 32). Entschieden gegen „aus der
+  Lieferung nehmen mit `fehlt`“: `fehlt` heißt „existiert nicht“, der Client
+  würde daraus falsche Profilschlüsse ziehen. Der Client behält bei einer
+  Runde ohne diesen Index den letzten Wert. Nach einem Flugzeugwechsel wird
+  neu bewertet.
+- **Sockets (H5):** beide Sockets richtet eine Funktion ein (`netz::oeffne`),
+  jede Rückgabe geprüft. „Nicht blockierend“ gescheitert → Socket zu,
+  Protokoll aus, Log. Windows: `SO_EXCLUSIVEADDRUSE` gescheitert → Protokoll
+  2 aus (sonst könnte ein anderes Programm mitbinden); `SIO_UDP_CONNRESET`
+  gescheitert → nur Warnung. Die Betriebssystemaufrufe liegen hinter einer
+  Schnittstelle; alle Fehlerpfade sind auf jeder Plattform getestet, die
+  echten Aufrufe zusätzlich auf allen drei (auch Windows).
+- **Ausgang (M1):** Alle Sendewege teilen sich die 16 Pakete je Frame
+  (gezählt über einen Flight-Loop-Aufruf: Empfang + Lieferung). Kleine
+  Einzelantworten haben Vorrang, höchstens 8 je Frame; der Überschuss wird
+  verworfen und alle 10 s summiert protokolliert. `flugzeug` zählt mit.
+  Fehler aus der Lieferung werden vorgemerkt und im nächsten Frame zuerst
+  gesendet — nie verworfen.
+- **LISTE (M2):** Teilnehmer im Rundlauf der Lieferung wie ein Abo (nach
+  Abo 1), bekommt also regelmäßig das ganze Budget.
+- **Protokoll 1 (M3):** `telemetry` und `touchdown` schreibt der locale-feste
+  JSON-Schreiber; Feldschema, Reihenfolge und Nachkommastellen unverändert
+  (für endliche Werte Byte für Byte die alte Ausgabe), NaN/±Inf → `null`.
+  Hinweis für den Client: seine Protokoll-1-Felder sind `f32` mit
+  `serde(default)` — `null` lässt dort das Paket scheitern (wie vorher `nan`,
+  nur jetzt als gültiges JSON erkennbar); robuster wäre `Option`/NaN-Default
+  im Client.
+- **Aktivieren/Deaktivieren (N1):** Netz nur im aktivierten Zustand.
+  `XPluginDisable` verwirft Client/Abos/LISTE und schließt beide Sockets
+  (Port frei, Warteschlange weg), `XPluginEnable` bindet neu. Die
+  Aufsetz-Erkennung von Protokoll 1 bleibt über Disable/Enable stehen
+  (Zurücksetzen hieße `prev_in_air = true` → Schein-Touchdown am Boden).
+- **Neuer Fehlergrund:** `speicher_limit`.
+- **H1 (Plugin-Seite geprüft):** `abo`-Antworten tragen `teil`/`teile`
+  konsistent (gleiches `teile` in allen Teilen), und ein identisches `ABO`
+  liefert den Status vollständig erneut (alle Teile) — das braucht der
+  Client, um ein verlorenes Fragment nachzufordern.
 
 ## Folgen
 

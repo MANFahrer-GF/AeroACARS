@@ -80,6 +80,8 @@ enum class Fehlergrund : uint8_t {
     LISTE_NICHT_VERFUEGBAR, // X-Plane älter als 12 (XPLM < 4.0)
     SPEICHER,               // Allokation gescheitert — Anfrage verworfen
     GENERATION_UNGUELTIG,   // ABO: "g<zahl>" nicht 1 … 2^31 − 1
+    SPEICHER_LIMIT,         // Bytebudget (grenzen::MAX_BYTES_*) überschritten
+    // Neue Gründe immer HIER anhängen (Tests zählen bis zum letzten).
 };
 
 const char* fehlergrund_text(Fehlergrund grund) noexcept;

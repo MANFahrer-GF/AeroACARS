@@ -16,10 +16,13 @@
 //    klappt, der erste Aufruf bringt X-Plane zum Absturz.
 //
 // 2. Der Steuer-Socket bindet nur 127.0.0.1 und prüft trotzdem jede
-//    Absenderadresse. Unter Windows verhindert SO_EXCLUSIVEADDRUSE, dass ein
-//    anderes Programm denselben Port mitbindet und Anfragen abgreift, und
-//    SIO_UDP_CONNRESET = aus verhindert, dass ein ICMP "Port unreachable"
-//    (Client beendet) jeden folgenden recvfrom() mit WSAECONNRESET abbricht.
+//    Absenderadresse. Eingerichtet wird er von netz::oeffne (netz.h): Unter
+//    Windows verhindert SO_EXCLUSIVEADDRUSE, dass ein anderes Programm
+//    denselben Port mitbindet und Anfragen abgreift, und SIO_UDP_CONNRESET =
+//    aus, dass ein ICMP "Port unreachable" (Client beendet) jeden folgenden
+//    recvfrom() mit WSAECONNRESET abbricht. Jede Rückgabe wird geprüft;
+//    scheitert "nicht blockierend" oder die exklusive Bindung, bleibt
+//    Protokoll 2 aus (Codex-Abnahme H5).
 //
 // 3. Kein eigener Thread: Empfangen und Senden laufen nicht blockierend im
 //    Flight-Loop; alle XPLM-Aufrufe bleiben im Hauptthread.
@@ -29,6 +32,7 @@
 
 #include "dienst.h"
 #include "grenzen.h"
+#include "netz.h"
 
 #include <XPLM/XPLMDataAccess.h>
 #include <XPLM/XPLMDefs.h>
@@ -45,14 +49,10 @@
 #if IBM
     #include <winsock2.h>
     #include <ws2tcpip.h>
-    #ifndef SIO_UDP_CONNRESET
-        #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
-    #endif
     namespace { using socket_t = SOCKET; using socklen_x = int; }
     #define AA_INVALID_SOCK INVALID_SOCKET
 #else
     #include <arpa/inet.h>
-    #include <fcntl.h>
     #include <netinet/in.h>
     #include <sys/socket.h>
     #include <sys/types.h>
@@ -214,11 +214,7 @@ bool g_fremd_gemeldet = false;
 
 void schliesse_socket() noexcept {
     if (g_sock != AA_INVALID_SOCK) {
-#if IBM
-        closesocket(g_sock);
-#else
-        close(g_sock);
-#endif
+        netz::os_ops().schliesse(static_cast<netz::Sock>(g_sock));
         g_sock = AA_INVALID_SOCK;
     }
 #if IBM
@@ -238,58 +234,14 @@ bool oeffne_socket() noexcept {
     }
     g_wsa = true;
 #endif
-    g_sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (g_sock == AA_INVALID_SOCK) {
-        char t[128];
-        std::snprintf(t, sizeof(t), "Protokoll 2: socket() gescheitert (Fehler %d) - Protokoll 2 aus",
-                      sock_fehler());
-        log_zeile(t);
-        schliesse_socket();
+    // Jede Rückgabe geprüft, Regel und Begründung in netz.h (H5).
+    const netz::Sock s = netz::oeffne(netz::os_ops(), netz::Art::STEUER, grenzen::STEUER_PORT,
+                                      "Protokoll 2", &log_zeile);
+    if (s == netz::KEIN_SOCKET) {
+        schliesse_socket();  // nur noch WSACleanup
         return false;
     }
-
-#if IBM
-    BOOL exklusiv = TRUE;
-    setsockopt(g_sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
-               reinterpret_cast<const char*>(&exklusiv), static_cast<socklen_x>(sizeof(exklusiv)));
-    DWORD aus = 0, bytes = 0;
-    WSAIoctl(g_sock, SIO_UDP_CONNRESET, &aus, sizeof(aus), nullptr, 0, &bytes, nullptr, nullptr);
-    u_long nicht_blockierend = 1;
-    ioctlsocket(g_sock, FIONBIO, &nicht_blockierend);
-#else
-    const int flags = fcntl(g_sock, F_GETFL, 0);
-    if (flags < 0 || fcntl(g_sock, F_SETFL, flags | O_NONBLOCK) < 0) {
-        // Ein blockierender Socket im Flight-Loop könnte X-Plane anhalten —
-        // dann lieber gar kein Protokoll 2.
-        log_zeile("Protokoll 2: Socket nicht auf nicht-blockierend stellbar - Protokoll 2 aus");
-        schliesse_socket();
-        return false;
-    }
-#endif
-    // Puffer großzügig (nur ein Wunsch an das System; Fehler sind egal).
-    int sendepuffer = 1 << 20;
-    int empfangspuffer = 1 << 18;
-    setsockopt(g_sock, SOL_SOCKET, SO_SNDBUF,
-               reinterpret_cast<const char*>(&sendepuffer), static_cast<socklen_x>(sizeof(sendepuffer)));
-    setsockopt(g_sock, SOL_SOCKET, SO_RCVBUF,
-               reinterpret_cast<const char*>(&empfangspuffer), static_cast<socklen_x>(sizeof(empfangspuffer)));
-
-    sockaddr_in adresse;
-    std::memset(&adresse, 0, sizeof(adresse));
-    adresse.sin_family = AF_INET;
-    adresse.sin_port = htons(grenzen::STEUER_PORT);
-    adresse.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (::bind(g_sock, reinterpret_cast<const sockaddr*>(&adresse),
-               static_cast<socklen_x>(sizeof(adresse))) != 0) {
-        char t[200];
-        std::snprintf(t, sizeof(t),
-                      "Protokoll 2: Port 127.0.0.1:%u belegt (Fehler %d) - Protokoll 2 aus, "
-                      "Protokoll 1 laeuft weiter",
-                      static_cast<unsigned>(grenzen::STEUER_PORT), sock_fehler());
-        log_zeile(t);
-        schliesse_socket();
-        return false;
-    }
+    g_sock = static_cast<socket_t>(s);
     return true;
 }
 

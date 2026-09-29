@@ -45,6 +45,7 @@ const char* fehlergrund_text(Fehlergrund grund) noexcept {
         case Fehlergrund::LISTE_NICHT_VERFUEGBAR: return "liste_nicht_verfuegbar";
         case Fehlergrund::SPEICHER:               return "speicher";
         case Fehlergrund::GENERATION_UNGUELTIG:   return "generation_ungueltig";
+        case Fehlergrund::SPEICHER_LIMIT:         return "speicher_limit";
     }
     return "unbekannt";
 }

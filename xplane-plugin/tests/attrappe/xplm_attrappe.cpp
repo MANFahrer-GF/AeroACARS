@@ -2,7 +2,7 @@
 // XPLM-Attrappe: lädt die gebaute .xpl wie X-Plane und treibt ihren Flight-Loop
 // =============================================================================
 //
-//   aeroacars_attrappe <pfad/zu/mac.xpl|lin.xpl> <sekunden> [xp11]
+//   aeroacars_attrappe <pfad/zu/mac.xpl|lin.xpl> <sekunden> [xp11|zyklus]
 //
 // Das Programm stellt die XPLM-Funktionen bereit, die das Plugin benutzt
 // (Datarefs, Flight-Loop, Log, Versionen, XPLMFindSymbol), lädt das Plugin
@@ -15,6 +15,14 @@
 //   * schickt nach 2 s XPLM_MSG_PLANE_LOADED (Flugzeug 0) und wechselt nach
 //     4 s die ICAO-Kennung,
 //   * mit "xp11" meldet sie XPLM 303 und kennt die XPLM-4.0-Symbole nicht.
+//   * mit "zyklus" (Codex-Abnahme N1) spielt sie selbst den Client und
+//     schaltet das Plugin nach 2 s ab (XPluginDisable) und nach 3 s wieder
+//     ein (XPluginEnable), wie der Plugin-Admin von X-Plane. Geprüft wird:
+//     Port 52001 ist nach Disable frei, nach Enable wieder gebunden; das
+//     neue Protokoll 2 kennt den alten Client nicht mehr (kein_hallo) und
+//     nimmt ein neues HALLO an; Protokoll 1 läuft nach Enable weiter. Wie bei
+//     X-Plane ruft die Attrappe den Flight-Loop eines abgeschalteten Plugins
+//     nicht auf.
 // Am Ende druckt sie die Protokoll-1-Rate und endet mit 1, wenn sie nicht
 // bei ~20 Hz lag (AGL 1000 m → Protokoll 1 im 0,05-s-Takt).
 //
@@ -176,6 +184,7 @@ int main(int argc, char** argv) {
     }
     const double laufzeit = std::atof(argv[2]);
     g_xp11 = argc > 3 && std::strcmp(argv[3], "xp11") == 0;
+    const bool zyklus = argc > 3 && std::strcmp(argv[3], "zyklus") == 0;
 
     // Welt: die Datarefs von Protokoll 1, die Flugzeug-Kennung, ein paar
     // typische Namen und viele Füllnamen für LISTE.
@@ -211,6 +220,29 @@ int main(int argc, char** argv) {
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     const bool p1_da = bind(p1, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0;
     fcntl(p1, F_SETFL, fcntl(p1, F_GETFL, 0) | O_NONBLOCK);
+
+    // Zyklus: die Attrappe als Client von Protokoll 2 (eigener Port).
+    const int cl = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in steuer{};
+    steuer.sin_family = AF_INET;
+    steuer.sin_port = htons(52001);
+    steuer.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    fcntl(cl, F_SETFL, fcntl(cl, F_GETFL, 0) | O_NONBLOCK);
+    auto an_plugin = [&](const char* text) {
+        sendto(cl, text, std::strlen(text), 0, reinterpret_cast<sockaddr*>(&steuer), sizeof(steuer));
+    };
+    // Lässt sich 127.0.0.1:52001 gerade binden (= Plugin hat ihn nicht)?
+    auto port_frei = [&]() {
+        const int t = socket(AF_INET, SOCK_DGRAM, 0);
+        const bool frei = bind(t, reinterpret_cast<sockaddr*>(&steuer), sizeof(steuer)) == 0;
+        close(t);
+        return frei;
+    };
+    struct Antwort { double t; std::string text; };
+    std::vector<Antwort> antworten;
+    bool z_hallo1 = false, z_aus = false, z_ein = false, z_ping2 = false, z_hallo2 = false;
+    bool frei_nach_aus = false, belegt_nach_ein = false;
+    int p1_ticks_ein = -1, p1_pakete_ein = -1;
 
     void* bib = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!bib) {
@@ -256,7 +288,36 @@ int main(int argc, char** argv) {
             icao_gewechselt = true;
             such("sim/aircraft/view/acf_ICAO")->b = std::string("B738") + std::string(36, '\0');
         }
-        if (g_cb && t >= naechster_aufruf) {
+        if (zyklus) {
+            if (!z_hallo1 && t > 1.0) { z_hallo1 = true; an_plugin("HALLO 2 attrappe"); }
+            if (!z_aus && t > 2.0) {
+                z_aus = true;
+                disable();
+                frei_nach_aus = port_frei();
+                an_plugin("PING");  // geht ins Leere
+                std::printf("[Attrappe] Zyklus: XPluginDisable, Port 52001 %s\n", frei_nach_aus ? "frei" : "BELEGT");
+            }
+            if (!z_ein && t > 3.0) {
+                z_ein = true;
+                if (enable() != 1) std::printf("[Attrappe] Zyklus: XPluginEnable gab nicht 1 zurueck\n");
+                belegt_nach_ein = !port_frei();
+                p1_ticks_ein = g_p1_ticks;
+                p1_pakete_ein = p1_pakete;
+                naechster_aufruf = t;
+                std::printf("[Attrappe] Zyklus: XPluginEnable, Port 52001 %s\n", belegt_nach_ein ? "gebunden" : "FREI");
+            }
+            if (!z_ping2 && t > 3.5) { z_ping2 = true; an_plugin("PING"); }
+            if (!z_hallo2 && t > 4.0) { z_hallo2 = true; an_plugin("HALLO 2 attrappe"); }
+            char a[9000];
+            for (;;) {
+                const auto m = recv(cl, a, sizeof(a) - 1, 0);
+                if (m <= 0) break;
+                antworten.push_back({t, std::string(a, static_cast<size_t>(m))});
+            }
+        }
+        // Wie X-Plane: Callbacks eines abgeschalteten Plugins laufen nicht.
+        const bool abgeschaltet = zyklus && z_aus && !z_ein;
+        if (g_cb && !abgeschaltet && t >= naechster_aufruf) {
             const double vorher = sekunden();
             const float r = g_cb(static_cast<float>(t - letzter_aufruf), static_cast<float>(t - letzter_aufruf),
                                  static_cast<int>(zaehler), g_cb_ref);
@@ -289,6 +350,27 @@ int main(int argc, char** argv) {
     stop();
     dlclose(bib);
     close(p1);
+    close(cl);
+
+    bool zyklus_ok = true;
+    if (zyklus) {
+        auto gesehen = [&](double von, double bis, const char* teil) {
+            for (const auto& a : antworten) {
+                if (a.t >= von && a.t < bis && a.text.find(teil) != std::string::npos) return true;
+            }
+            return false;
+        };
+        const bool hallo1 = gesehen(1.0, 2.0, "\"t\":\"hallo\"");
+        const bool nichts_aus = !gesehen(2.0, 3.0, "\"p\":2");
+        const bool kein_hallo = gesehen(3.5, 4.0, "kein_hallo");
+        const bool hallo2 = gesehen(4.0, laufzeit + 1.0, "\"t\":\"hallo\"");
+        const bool p1_weiter = g_p1_ticks > p1_ticks_ein && (!p1_da || p1_pakete > p1_pakete_ein);
+        std::printf("[Attrappe] Zyklus: hallo=%d, Port frei nach Disable=%d, still waehrend aus=%d, "
+                    "gebunden nach Enable=%d, kein_hallo danach=%d, neues hallo=%d, Protokoll 1 weiter=%d\n",
+                    hallo1, frei_nach_aus, nichts_aus, belegt_nach_ein, kein_hallo, hallo2, p1_weiter);
+        zyklus_ok = hallo1 && frei_nach_aus && nichts_aus && belegt_nach_ein && kein_hallo && hallo2 && p1_weiter;
+        std::printf("[Attrappe] Zyklus %s\n", zyklus_ok ? "gruen" : "ROT");
+    }
 
     const double tick_hz = g_p1_ticks / laufzeit;
     const double paket_hz = p1_pakete / laufzeit;
@@ -313,5 +395,5 @@ int main(int argc, char** argv) {
     // Protokoll 1 trägt seit 1.0.0 die Plugin-Version ("pv") in jedem Paket.
     const bool pv_ok = !p1_da || p1_pakete == p1_mit_pv;
     if (p1_da) std::printf("[Attrappe] Protokoll 1: %d von %d Paketen mit \"pv\"\n", p1_mit_pv, p1_pakete);
-    return (ticks_ok && pakete_ok && pv_ok) ? 0 : 1;
+    return (ticks_ok && pakete_ok && pv_ok && zyklus_ok) ? 0 : 1;
 }

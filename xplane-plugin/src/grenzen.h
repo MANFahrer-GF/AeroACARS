@@ -46,6 +46,14 @@ constexpr int MAX_DATAGRAMME_JE_FRAME = 64;
 // Clients (Windows hat ab Werk nur 64 KiB): 16 × 8 KiB = 128 KiB je Frame.
 constexpr int MAX_PAKETE_JE_FRAME = 16;
 
+// Davon höchstens so viele kleine Einzelantworten (hallo, pong, fehler,
+// abo_empfangen) je Frame. Alle Sendewege teilen sich die 16 oben; die
+// kleinen Antworten kommen zuerst (sie entstehen beim Empfang, vor der
+// Lieferung) und haben so Vorrang, dürfen die Lieferung aber nie ganz
+// verdrängen: Eine PING-Flut (64 Datagramme je Frame) wird zu höchstens 8
+// Antworten, der Rest wird gezählt und verworfen (Codex-Abnahme M1).
+constexpr int MAX_KLEINE_JE_FRAME = 8;
+
 // ---- Anfragen --------------------------------------------------------------
 
 constexpr uint32_t PROTOKOLL = 2;
@@ -110,6 +118,48 @@ constexpr double MAX_PAUSE_S = 0.5;
 
 // Flugzeug-Kennung (ICAO/Titel/Pfad) wird so oft auf Änderung geprüft.
 constexpr double FLUGZEUG_PRUEFINTERVALL_S = 2.0;
+
+// Ein einzelner Aufruf eines FREMDEN Accessors (Getter oder Array-Länge eines
+// anderen Plugins) gilt ab dieser Dauer als langsam. Das Zeitbudget kann ihn
+// nicht unterbrechen — XPLM ruft den Accessor synchron im Hauptthread auf —,
+// es kann nur danach aufhören. Ein Dataref, der so oft HINTEREINANDER
+// langsam war, wird gedrosselt (Codex-Abnahme H4): höchstens einmal je
+// LANGSAM_INTERVALL_S gelesen und über alle Abos höchstens ein gedrosselter
+// Lesezugriff je LANGSAM_ABSTAND_S. Status und Wert bleiben wahr ("fehlt"
+// wäre eine Lüge), der Wert kommt nur seltener. Drei Treffer in Folge, damit
+// ein einzelner Ausreißer (Betriebssystem unterbricht den Thread) keine
+// gesunde Telemetrie drosselt.
+constexpr double LANGSAM_AUFRUF_S = 0.002;
+constexpr int LANGSAM_TREFFER = 3;
+constexpr double LANGSAM_INTERVALL_S = 1.0;
+constexpr double LANGSAM_ABSTAND_S = 0.2;
+// Höchstens so viele "langsam"-Zeilen je Dienst im Log.txt (je Name eine).
+constexpr int MAX_LANGSAM_MELDUNGEN = 32;
+
+// ---- Speicher (Codex-Abnahme H3) ---------------------------------------------
+//
+// Harte Bytebudgets für alles, was ein Client über Abos und LISTE belegen
+// kann. Gezählt wird die tatsächlich reservierte Kapazität (Namen, Einträge,
+// Paketplan und der Ausgabestapel mit dem SCHLIMMSTEN Fall je Wert — 17
+// Zeichen je float, 6 je Byte), und zwar je Eintrag: 8192-mal derselbe
+// 1024-Byte-Dataref kostet 8192 × 6153 Byte ≈ 48 MiB und wird abgelehnt.
+// Bei Überschreitung: {"p":2,"t":"fehler","grund":"speicher_limit",…} statt
+// Allokation.
+//
+// Größenordnung (gemessen in der Schein-Welt, tests/test_dienst.cpp):
+//   * Abo 1 (≈ 200 Namen, Skalare): ≈ 30 KiB (gerechnet).
+//   * Ein Mess-Abo mit 8192 typischen Namen (60 % Skalare, 35 % kleine
+//     Arrays 8–24, 5 % ganze Arrays à 256): ≈ 3,4 MiB. Der Client vermisst
+//     mit bis zu 14 Abos (3–16) zu je 8192 Namen: Abo 1 + 14 Mess-Abos
+//     ≈ 47 MiB (dienst_h3_legitime_vermessung_passt).
+//   * Ballung: LISTE liefert Namen gruppiert; ein Abo mit 3400 ganzen
+//     256er-Arrays braucht ≈ 14,4 MiB — deshalb 16 MiB je Abo, nicht 8.
+//   * LISTE mit 40 000 Namen: ≈ 2,5 MiB.
+// Obergrenze für den ganzen Dienst damit ≈ 64 + 16 MiB (vorher unbegrenzt:
+// 16 Abos × 48 MiB).
+constexpr size_t MAX_BYTES_JE_ABO = size_t(16) << 20;
+constexpr size_t MAX_BYTES_ABOS   = size_t(64) << 20;   // alle Abos + Teil-Abos
+constexpr size_t MAX_BYTES_LISTE  = size_t(16) << 20;
 
 // ---- LISTE -----------------------------------------------------------------
 

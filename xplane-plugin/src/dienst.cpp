@@ -23,6 +23,9 @@ constexpr size_t STATUS_MAX = 20;
 // "[k," + "]" um jeden Wert.
 constexpr size_t WERT_RAHMEN = 1 + 4 + 1 + 1;
 
+// Platz der LISTE im Rundlauf der Lieferung (hinter den 16 Abo-Plätzen).
+constexpr uint32_t LISTE_PLATZ = static_cast<uint32_t>(grenzen::MAX_ABOS);
+
 int32_t begrenze(int n, int max) noexcept {
     if (n < 0) return 0;
     return n > max ? max : n;
@@ -60,6 +63,19 @@ size_t Dienst::aktive_abos() const noexcept {
     return n;
 }
 
+const char* Dienst::abo_phase(uint32_t id) const noexcept {
+    if (id < grenzen::MIN_ABO_ID || id > grenzen::MAX_ABO_ID) return "leer";
+    switch (abos_[id - 1].phase) {
+        case Phase::LEER:    return "leer";
+        case Phase::NEU:     return "neu";
+        case Phase::ANTWORT: return "antwort";
+        case Phase::BEREIT:  return "bereit";
+        case Phase::LESEN:   return "lesen";
+        case Phase::SENDEN:  return "senden";
+    }
+    return "leer";
+}
+
 void Dienst::alles_verwerfen() noexcept {
     for (Abo& a : abos_) abo_leeren(a);
     for (AboBau& b : bau_) {
@@ -68,6 +84,7 @@ void Dienst::alles_verwerfen() noexcept {
         b.namen.freigeben();
     }
     liste_leeren();
+    for (OffenerFehler& f : offene_fehler_) f = OffenerFehler{};
 }
 
 void Dienst::abo_leeren(Abo& abo) noexcept {
@@ -103,6 +120,8 @@ void Dienst::liste_leeren() noexcept {
     liste_.teile = 0;
     liste_.paket_cursor = 0;
     liste_.cursor = 0;
+    liste_.block_pos = 0;
+    liste_.block_anzahl = 0;
     liste_.gesamt = 0;
     liste_.ausgelassen = 0;
 }
@@ -126,13 +145,68 @@ void Dienst::protokolliere(const char* format, ...) noexcept {
 }
 
 // =============================================================================
-// Senden
+// Speicher (Codex-Abnahme H3)
 // =============================================================================
+//
+// Gezählt wird die RESERVIERTE Kapazität, nicht der Inhalt: Das ist, was der
+// X-Plane-Prozess tatsächlich belegt, und der Ausgabestapel ist absichtlich
+// für den schlimmsten Fall jedes Werts reserviert (keine Allokation beim
+// Lesen). Jeder Eintrag zählt einzeln — 8192-mal derselbe Name kostet
+// 8192-mal (der Stapel hält 8192 Werte).
+
+size_t Dienst::abo_bytes(const Abo& a) noexcept {
+    return a.text.kapazitaet() + a.eintraege.kapazitaet() * sizeof(Eintrag) +
+           a.grenzen.kapazitaet() * sizeof(uint32_t) + a.stapel.kapazitaet_bytes() +
+           a.stapel.kapazitaet_elemente() * sizeof(uint32_t);
+}
+
+size_t Dienst::bau_bytes(const AboBau& b) noexcept {
+    return b.text.kapazitaet() + b.namen.kapazitaet() * sizeof(RohName);
+}
+
+size_t Dienst::speicher_abos() const noexcept {
+    size_t n = 0;
+    for (const Abo& a : abos_) n += abo_bytes(a);
+    for (const AboBau& b : bau_) n += bau_bytes(b);
+    return n;
+}
+
+size_t Dienst::speicher_liste() const noexcept {
+    return liste_.namen.belegt_bytes() + liste_.grenzen.kapazitaet() * sizeof(uint32_t);
+}
+
+bool Dienst::abo_speicher_passt(size_t alt, size_t neu) const noexcept {
+    if (neu > grenzen::MAX_BYTES_JE_ABO) return false;
+    const size_t gesamt = speicher_abos();
+    const size_t ohne = gesamt >= alt ? gesamt - alt : 0;
+    return ohne <= grenzen::MAX_BYTES_ABOS - neu;  // neu ≤ MAX_BYTES_JE_ABO < MAX_BYTES_ABOS
+}
+
+// =============================================================================
+// Senden (Codex-Abnahme M1: ein gemeinsamer, begrenzter Ausgang)
+// =============================================================================
+//
+// Jeder Sendeweg zählt gegen grenzen::MAX_PAKETE_JE_FRAME. Die Zähler laufen
+// vom Empfang (vor frame()) bis zum Ende von frame() — das ist ein Aufruf des
+// Flight-Loops. Reihenfolge und damit Vorrang: kleine Einzelantworten beim
+// Empfang (höchstens MAX_KLEINE_JE_FRAME), dann `flugzeug`, dann Status,
+// Werte und LISTE mit dem Rest.
 
 void Dienst::sende_einzeln(const Absender& an, const JsonSchreiber& w) noexcept {
     if (w.ueberlauf() || w.laenge() == 0) return;
-    // Einzelne Antworten (hallo, pong, fehler, flugzeug) werden nicht
-    // wiederholt: sie sind klein, und der Client fragt bei Bedarf erneut.
+    if (kleine_frame_ >= grenzen::MAX_KLEINE_JE_FRAME ||
+        pakete_frame_ >= grenzen::MAX_PAKETE_JE_FRAME) {
+        // Flut (z. B. 64 PING in einem Frame): verwerfen statt zur
+        // Antwortflut werden. Gezählt und höchstens alle 10 s gemeldet. Der
+        // Client verliert nichts Wichtiges — hallo, pong, abo_empfangen und
+        // fehler fragt er bei Bedarf erneut an.
+        ++kleine_verworfen_;
+        return;
+    }
+    ++kleine_frame_;
+    ++pakete_frame_;
+    // Einzelne Antworten werden nicht wiederholt: sie sind klein, und der
+    // Client fragt bei Bedarf erneut.
     umgebung_.sende(an, w.daten(), w.laenge());
 }
 
@@ -171,6 +245,44 @@ void Dienst::sende_fehler(const Absender& an, Fehlergrund grund, uint32_t zeile,
     sende_einzeln(an, w);
 }
 
+void Dienst::fehler_vormerken(Fehlergrund grund, uint32_t abo, uint32_t gen, int64_t id) noexcept {
+    const size_t platz = (abo >= grenzen::MIN_ABO_ID && abo <= grenzen::MAX_ABO_ID)
+                             ? abo - 1 : grenzen::MAX_ABOS;
+    OffenerFehler& f = offene_fehler_[platz];
+    f.grund = grund;
+    f.abo = abo;
+    f.gen = gen;
+    f.id = id;
+}
+
+void Dienst::sende_vorgemerkte_fehler() noexcept {
+    for (OffenerFehler& f : offene_fehler_) {
+        if (f.grund == Fehlergrund::KEINER) continue;
+        // Gegen die Gesamtgrenze, nicht gegen die der kleinen Antworten: Beim
+        // Empfang gehen höchstens 8 hinaus, hier ist also immer Platz für
+        // mindestens 8 — mehr als 17 vorgemerkte gibt es nicht.
+        if (pakete_frame_ >= grenzen::MAX_PAKETE_JE_FRAME) return;
+        char puffer[256];
+        JsonSchreiber w(puffer, sizeof(puffer));
+        w.roh("{\"p\":2,\"t\":\"fehler\",\"grund\":\"");
+        w.roh(fehlergrund_text(f.grund));
+        w.zeichen('"');
+        if (f.abo != 0) {
+            w.roh(",\"abo\":");
+            w.ganzzahl(f.abo);
+            w.roh(",\"gen\":");
+            w.ganzzahl(f.gen);
+        }
+        if (f.id >= 0) { w.roh(",\"id\":"); w.ganzzahl(f.id); }
+        w.roh("}\n");
+        if (!w.ueberlauf()) {
+            ++pakete_frame_;
+            umgebung_.sende(client_, w.daten(), w.laenge());
+        }
+        f = OffenerFehler{};
+    }
+}
+
 SendeErgebnis Dienst::sende_paket(const char* daten, size_t laenge) noexcept {
     if (pakete_frame_ >= grenzen::MAX_PAKETE_JE_FRAME) return SendeErgebnis::VOLL;
     const SendeErgebnis r = umgebung_.sende(client_, daten, laenge);
@@ -178,15 +290,68 @@ SendeErgebnis Dienst::sende_paket(const char* daten, size_t laenge) noexcept {
     return r;
 }
 
-// Zeitbudget: Die erste Arbeitseinheit jedes Frames ist frei (sonst könnte ein
-// einziges langsames Plugin-Dataref, das das Budget allein sprengt, jeden
-// Fortschritt verhindern); danach entscheidet die Uhr.
-bool Dienst::darf_arbeiten() noexcept {
-    if (garantie_) {
-        garantie_ = false;
-        return true;
+// =============================================================================
+// Zeitbudget (Codex-Abnahme H4)
+// =============================================================================
+//
+// Vorher: je Arbeitseinheit einmal auf die Uhr sehen, die erste Einheit des
+// Frames ganz ohne Uhr. Eine Sucheinheit waren aber bis zu vier XPLM-Aufrufe
+// (Find, IsGood, Types, Array-Länge), eine LISTE-Einheit 256 Namen.
+//
+// Jetzt: Nach JEDEM XPLM-Aufruf wird die Uhr gelesen (nach_aufruf), vor jedem
+// Aufruf gegen das Budget geprüft (darf_arbeiten). Frei ist nur die erste
+// Einheit je Budget und Frame, und auch die nur bis einschließlich ihres
+// einen fremden Accessors (nach_fremdaufruf) — höchstens also drei billige
+// XPLM-interne Aufrufe plus EIN fremder. Bricht das Budget mitten in einem
+// Eintrag, beginnt der nächste Frame diesen Eintrag neu (ein halbes Ergebnis
+// wird nie aufgehoben — insbesondere gilt eine Verwaist-Prüfung nur in dem
+// Moment, in dem sie gemacht wurde).
+//
+// Das bleibt ein WEICHES Budget: Einen fremden Accessor, der 20 ms braucht,
+// kann kein Plugin unterbrechen; die Uhr sieht ihn erst danach. Was das
+// Plugin tun kann: danach sofort aufhören und einen wiederholt langsamen
+// Dataref drosseln (grenzen::LANGSAM_*).
+
+void Dienst::beginne_budget(double dauer) noexcept {
+    uhr_ = umgebung_.jetzt();
+    budget_ende_ = uhr_ + dauer;
+    garantie_ = true;
+}
+
+double Dienst::nach_aufruf() noexcept {
+    const double t = umgebung_.jetzt();
+    const double d = t - uhr_;
+    uhr_ = t;
+    return d;
+}
+
+void Dienst::nach_fremdaufruf(Abo& abo, Eintrag& e) noexcept {
+    const double d = nach_aufruf();
+    garantie_ = false;
+    if (d <= grenzen::LANGSAM_AUFRUF_S) {
+        // Nur Treffer IN FOLGE zählen: ein einzelner Ausreißer (der Thread
+        // wurde vom Betriebssystem unterbrochen) drosselt nichts.
+        if (!e.langsam) e.langsam_treffer = 0;
+        return;
     }
-    return umgebung_.jetzt() < budget_ende_;
+    if (e.langsam) return;
+    if (e.langsam_treffer < 255) ++e.langsam_treffer;
+    if (e.langsam_treffer < grenzen::LANGSAM_TREFFER) return;
+    e.langsam = true;
+    e.langsam_faellig = jetzt_ + grenzen::LANGSAM_INTERVALL_S;
+    if (langsam_meldungen_ < grenzen::MAX_LANGSAM_MELDUNGEN) {
+        ++langsam_meldungen_;
+        char idx[16] = {0};
+        if (e.index >= 0) std::snprintf(idx, sizeof(idx), "[%d]", static_cast<int>(e.index));
+        protokolliere("Protokoll 2: Dataref %s%s antwortet langsam (%.1f ms je Aufruf, Abo %u) - "
+                      "wird hoechstens alle %.0f s gelesen",
+                      abo.text.daten() + e.name_ofs, idx, d * 1000.0,
+                      static_cast<unsigned>(abo.id), grenzen::LANGSAM_INTERVALL_S);
+    }
+}
+
+bool Dienst::langsam_faellig(const Eintrag& e) const noexcept {
+    return jetzt_ >= e.langsam_faellig && jetzt_ >= naechster_langsamer_;
 }
 
 // =============================================================================
@@ -318,6 +483,31 @@ void Dienst::bearbeite_abo(const Anfrage& a) noexcept {
         sende_fehler(client_, Fehlergrund::ZU_VIELE_NAMEN, 0, id, gen, -1);
         return;
     }
+    // Speicher für diesen Teil GENAU reservieren (nicht verdoppeln: die
+    // Kapazität wandert mit dem letzten Teil ins Abo und zählt dort) — und
+    // vorher gegen die Budgets prüfen (H3).
+    size_t teil_text = 0;
+    for (size_t i = 0; i < a.namen_anzahl; ++i) {
+        teil_text += (a.namen[i].ungueltig ? 0 : a.namen[i].basis_laenge) + 1u;
+    }
+    const size_t text_noetig = bau.text.anzahl() + teil_text;
+    const size_t namen_noetig = bau.namen.anzahl() + a.namen_anzahl;
+    {
+        const size_t alt = bau_bytes(bau);
+        const size_t text_kap = text_noetig > bau.text.kapazitaet() ? text_noetig : bau.text.kapazitaet();
+        const size_t namen_kap = namen_noetig > bau.namen.kapazitaet() ? namen_noetig : bau.namen.kapazitaet();
+        if (text_noetig > 0x7FFFFFFFu ||
+            !abo_speicher_passt(alt, text_kap + namen_kap * sizeof(RohName))) {
+            verwerfe_bau();
+            sende_fehler(client_, Fehlergrund::SPEICHER_LIMIT, 0, id, gen, -1);
+            return;
+        }
+    }
+    if (!bau.text.reserviere(text_noetig) || !bau.namen.reserviere(namen_noetig)) {
+        verwerfe_bau();
+        sende_fehler(client_, Fehlergrund::SPEICHER, 0, id, gen, -1);
+        return;
+    }
     for (size_t i = 0; i < a.namen_anzahl; ++i) {
         const NameRef& n = a.namen[i];
         const size_t ofs = bau.text.anzahl();
@@ -325,8 +515,8 @@ void Dienst::bearbeite_abo(const Anfrage& a) noexcept {
         // Ungültige Zeile: leerer Name, Index-Marke "ungültig" (Status fehlt).
         const int32_t index = n.ungueltig ? INDEX_UNGUELTIG : n.index;
         const size_t laenge = n.ungueltig ? 0 : n.basis_laenge;
-        if (ofs > 0x7FFFFFFFu ||
-            !bau.text.haenge_an(n.basis, laenge) ||
+        // Kapazität ist reserviert: haenge_an wächst hier nicht mehr.
+        if (!bau.text.haenge_an(n.basis, laenge) ||
             !bau.text.haenge_an(nul) ||
             !bau.namen.haenge_an(RohName{static_cast<uint32_t>(ofs), index})) {
             verwerfe_bau();
@@ -348,14 +538,16 @@ void Dienst::bearbeite_abo(const Anfrage& a) noexcept {
         // Dasselbe ABO noch einmal (Client hat nachgefragt, weil der Status
         // auf sich warten ließ): NICHTS zurücksetzen — eine laufende Suche
         // liefe sonst jedes Mal von vorn und käme nie an. Ist der Status schon
-        // draußen, geht er noch einmal hinaus.
+        // draußen, geht er noch einmal VOLLSTÄNDIG hinaus (alle Teile) — so
+        // kann der Client ein verlorenes Status-Fragment nachfordern.
         if (!alt.erste_antwort) alt.antwort_erneut = true;
         sende_abo_empfangen(id, gen, n_namen);
         verwerfe_bau();
         return;
     }
-    if (!aktiviere(id, bau)) {
-        sende_fehler(client_, Fehlergrund::SPEICHER, 0, id, gen, -1);
+    const Fehlergrund f = aktiviere(id, bau);
+    if (f != Fehlergrund::KEINER) {
+        sende_fehler(client_, f, 0, id, gen, -1);
     } else {
         sende_abo_empfangen(id, gen, n_namen);
     }
@@ -382,17 +574,27 @@ bool Dienst::gleiches_abo(const Abo& abo, const AboBau& bau) noexcept {
     return true;
 }
 
-bool Dienst::aktiviere(uint32_t id, AboBau& bau) noexcept {
+Fehlergrund Dienst::aktiviere(uint32_t id, AboBau& bau) noexcept {
     Abo& abo = abos_[id - 1];
-    abo_leeren(abo);  // ein neues ABO mit gleicher ID ersetzt das alte
-
     const size_t n = bau.namen.anzahl();
+
+    // Budget VOR dem Abräumen prüfen: nachher belegt das neue Abo den Text
+    // des Aufbaus plus Einträge, Paketplan und den Stapel für die erste
+    // Status-Antwort; das alte Abo und der Aufbau sind dann frei. Ein neues
+    // ABO mit gleicher ID ersetzt das alte auch dann, wenn es selbst am
+    // Budget scheitert — danach ist Abo <id> leer, nie ein Gemisch.
+    const size_t neu = bau.text.kapazitaet() + n * sizeof(Eintrag) + (n + 2) * sizeof(uint32_t) +
+                       n * STATUS_MAX + n * sizeof(uint32_t);
+    const bool passt = abo_speicher_passt(abo_bytes(abo) + bau_bytes(bau), neu);
+    abo_leeren(abo);  // ein neues ABO mit gleicher ID ersetzt das alte
+    if (!passt) return Fehlergrund::SPEICHER_LIMIT;
+
     abo.text.uebernehme(bau.text);
     if (!abo.eintraege.reserviere(n) ||
         !abo.grenzen.reserviere(n + 2) ||
         !abo.stapel.reserviere(n * STATUS_MAX, n)) {
         abo_leeren(abo);
-        return false;
+        return Fehlergrund::SPEICHER;
     }
     for (size_t i = 0; i < n; ++i) {
         Eintrag e;
@@ -403,6 +605,9 @@ bool Dienst::aktiviere(uint32_t id, AboBau& bau) noexcept {
         const char* name = abo.text.daten() + e.name_ofs;
         e.darf_verwaisen = e.index != INDEX_UNGUELTIG && std::strncmp(name, "sim/", 4) != 0;
         if (e.darf_verwaisen) abo.hat_plugin_namen = true;
+        e.langsam = false;
+        e.langsam_treffer = 0;
+        e.langsam_faellig = 0.0;
         e.aktiv = Aufloesung{};
         e.kandidat = Aufloesung{};
         abo.eintraege.haenge_an(e);  // Kapazität reserviert
@@ -415,7 +620,7 @@ bool Dienst::aktiviere(uint32_t id, AboBau& bau) noexcept {
     abo.erste_antwort = true;
     abo.seq = 0;
     starte_pruefung(abo, true, true);  // sofort suchen, nicht erst in 2 s
-    return true;
+    return Fehlergrund::KEINER;
 }
 
 void Dienst::bearbeite_liste(const Anfrage& a) noexcept {
@@ -434,6 +639,8 @@ void Dienst::bearbeite_liste(const Anfrage& a) noexcept {
     liste_.id = a.anfrage_id;
     liste_.gesamt = gesamt;
     liste_.cursor = 0;
+    liste_.block_pos = 0;
+    liste_.block_anzahl = 0;
     liste_.ausgelassen = 0;
 }
 
@@ -443,10 +650,24 @@ void Dienst::bearbeite_liste(const Anfrage& a) noexcept {
 
 void Dienst::frame() noexcept {
     if (!bereit_) return;
-    jetzt_ = umgebung_.jetzt();
-    budget_ende_ = jetzt_ + grenzen::ZEITBUDGET_S;
+    frame_intern();
+    // Der gemeinsame Ausgang (M1) zählt einen Flight-Loop-Aufruf: erst die
+    // Antworten beim Empfang, dann dieser Frame. Deshalb erst HIER zurück —
+    // die Antworten des nächsten Empfangs zählen dann zum nächsten Frame.
     pakete_frame_ = 0;
-    garantie_ = true;
+    kleine_frame_ = 0;
+}
+
+void Dienst::frame_intern() noexcept {
+    jetzt_ = umgebung_.jetzt();
+    uhr_ = jetzt_;
+
+    if (kleine_verworfen_ > 0 && jetzt_ >= naechste_flut_meldung_) {
+        protokolliere("Protokoll 2: %u kleine Antworten verworfen (hoechstens %d je Frame)",
+                      static_cast<unsigned>(kleine_verworfen_), grenzen::MAX_KLEINE_JE_FRAME);
+        kleine_verworfen_ = 0;
+        naechste_flut_meldung_ = jetzt_ + 10.0;
+    }
 
     if (!client_aktiv_) return;
     if (jetzt_ - letzte_anfrage_ > grenzen::CLIENT_TIMEOUT_S) {
@@ -458,30 +679,73 @@ void Dienst::frame() noexcept {
         return;
     }
 
+    // Vorgemerkte Fehler (aus der Lieferung des letzten Frames) zuerst.
+    sende_vorgemerkte_fehler();
     pruefe_flugzeug();
 
     // 1. Suchen — eigenes Zeitbudget, verteilt nach Dringlichkeit.
     suchen_verteilen();
-    // Das Liefer-Budget beginnt erst nach dem Suchen (getrennte Budgets).
-    budget_ende_ = umgebung_.jetzt() + grenzen::ZEITBUDGET_S;
 
-    // 2. Liefern — Abo 1 (beim Client die Telemetrie) immer zuerst, danach
-    //    Rundlauf NUR über belegte Abos: jedes ist regelmäßig als erstes dran.
-    //    (Vorher lief der Rundlauf über alle 16 Plätze; leere Plätze zählten
-    //    mit, und das Abo hinter einem großen bekam fast nie das Budget.)
+    // 2. Liefern — eigenes Budget (getrennt vom Suchen). Abo 1 (beim Client
+    //    die Telemetrie) immer zuerst, danach Rundlauf NUR über belegte Abos
+    //    UND die LISTE: jeder Teilnehmer ist regelmäßig als erster dran und
+    //    bekommt dann das ganze Budget samt freier Einheit. (Vorher kam LISTE
+    //    immer zuletzt und verhungerte hinter einem Dauer-Abo, das jedes
+    //    Budget aufbrauchte — Codex-Abnahme M2.)
+    beginne_budget(grenzen::ZEITBUDGET_S);
     bearbeite_abo_frame(abos_[0]);
-    uint32_t belegt[grenzen::MAX_ABOS];
+    uint32_t teilnehmer[grenzen::MAX_ABOS + 1];
     uint32_t anzahl = 0;
     for (uint32_t i = 1; i < grenzen::MAX_ABOS; ++i) {
-        if (abos_[i].phase != Phase::LEER) belegt[anzahl++] = i;
+        if (abos_[i].phase != Phase::LEER) teilnehmer[anzahl++] = i;
     }
+    if (liste_.aktiv) teilnehmer[anzahl++] = LISTE_PLATZ;
     if (anzahl > 0) {
         const uint32_t start = rundlauf_++ % anzahl;
         for (uint32_t k = 0; k < anzahl; ++k) {
-            bearbeite_abo_frame(abos_[belegt[(start + k) % anzahl]]);
+            const uint32_t t = teilnehmer[(start + k) % anzahl];
+            if (t == LISTE_PLATZ) {
+                liste_schritt();
+            } else {
+                bearbeite_abo_frame(abos_[t]);
+            }
         }
     }
-    liste_schritt();
+}
+
+void Dienst::verwirf_laufende_runde(Abo& abo) noexcept {
+    switch (abo.phase) {
+        case Phase::LESEN:
+        case Phase::SENDEN:
+            // Werte, die vor dem Wechsel gelesen wurden (auch schon geplante,
+            // noch nicht gesendete Pakete), gehören zum alten Flugzeug. Die
+            // Runde endet hier; der Client sieht höchstens eine unvollständige
+            // Runde (wie bei UDP-Verlust) und nie einen alten Wert danach.
+            abo.stapel.leeren();
+            abo.lese_cursor = 0;
+            abo.paket_cursor = 0;
+            abo.teile = 0;
+            abo.phase = Phase::BEREIT;
+            break;
+        case Phase::ANTWORT:
+            // Status des alten Flugzeugs, womöglich schon zum Teil draußen.
+            // Nicht zu Ende senden. Zurück nach NEU: dort gibt es KEINE Werte,
+            // bis die Neusuche übernommen ist und ein vollständiger neuer
+            // Status draußen ist (antwort_erneut erzwingt ihn, auch wenn sich
+            // nichts geändert hat). BEREIT wäre falsch — nach der Pausen-
+            // grenze kämen Werte zu einem Status, den der Client nie ganz
+            // bekommen hat.
+            abo.stapel.leeren();
+            abo.paket_cursor = 0;
+            abo.teile = 0;
+            abo.antwort_erneut = true;
+            abo.phase = Phase::NEU;
+            break;
+        case Phase::LEER:
+        case Phase::NEU:
+        case Phase::BEREIT:
+            break;
+    }
 }
 
 void Dienst::flugzeug_geladen() noexcept {
@@ -489,11 +753,19 @@ void Dienst::flugzeug_geladen() noexcept {
     for (Abo& a : abos_) {
         if (a.phase == Phase::LEER) continue;
         starte_pruefung(a, true, true);
-        // Namen fremder Plugins können jetzt verwaist sein: bis die Neusuche
-        // übernommen ist, keine Runde mit alten Handles — höchstens
-        // grenzen::MAX_PAUSE_S lang (Begründung dort). Abos nur mit
-        // "sim/…"-Namen (Telemetrie) liefern ohne Pause weiter.
+        // Anderes Flugzeug, andere Plugins: Drosselung neu bewerten.
+        for (size_t i = 0; i < a.eintraege.anzahl(); ++i) {
+            a.eintraege[i].langsam = false;
+            a.eintraege[i].langsam_treffer = 0;
+        }
+        // Namen fremder Plugins können jetzt verwaist oder neu belegt sein
+        // (Codex-Abnahme H2): Eine laufende Runde wird verworfen, und bis die
+        // Neusuche übernommen ist, keine neue Runde mit alten Handles —
+        // höchstens grenzen::MAX_PAUSE_S lang (Begründung dort). Abos nur mit
+        // "sim/…"-Namen (Telemetrie) liefern ohne Pause weiter; X-Planes
+        // eigene Datarefs wechseln mit dem Flugzeug nicht den Besitzer.
         if (a.hat_plugin_namen) {
+            verwirf_laufende_runde(a);
             a.pausiert = true;
             // Uhr startet erst im ersten Frame danach (Nachpruefung AP7):
             // X-Plane laedt nach der Meldung oft Sekunden ohne Frame — ab der
@@ -538,22 +810,32 @@ bool Dienst::braucht_nachsuche(const Eintrag& e) noexcept {
 }
 
 // Ein Eintrag des Prüfdurchlaufs: übersprungene Einträge (periodischer
-// Durchlauf, vorhandener Einzelwert) kosten keinen XPLM-Aufruf und zählen
-// nicht; der Schritt endet nach genau einer echten Suche.
-void Dienst::pruef_schritt(Abo& abo) noexcept {
+// Durchlauf, vorhandener Einzelwert, gedrosselter Dataref) kosten keinen
+// XPLM-Aufruf und zählen nicht; der Schritt endet nach genau einer echten
+// Suche. false: Budget mitten in der Suche erschöpft — der Eintrag bleibt
+// offen und beginnt im nächsten Frame neu.
+bool Dienst::pruef_schritt(Abo& abo) noexcept {
     const size_t n = abo.eintraege.anzahl();
     while (abo.pruef_cursor < n) {
         Eintrag& e = abo.eintraege[abo.pruef_cursor];
-        ++abo.pruef_cursor;
         if (e.index == INDEX_UNGUELTIG) {
             e.kandidat = Aufloesung{};
+            ++abo.pruef_cursor;
             continue;
         }
-        if (!abo.pruefung_alle && !braucht_nachsuche(e)) {
+        // Periodisch: nur fehlende Namen und Arrays — und keine gedrosselten
+        // (deren Längen-Accessor ist der langsame Getter selbst; neu gesucht
+        // werden sie bei Anmeldung und Flugzeug-/Flughafenwechsel).
+        if (!abo.pruefung_alle && (!braucht_nachsuche(e) || e.langsam)) {
             e.kandidat = e.aktiv;
+            ++abo.pruef_cursor;
             continue;
         }
-        e.kandidat = loese_auf(abo.text.daten() + e.name_ofs, e.index);
+        Aufloesung r;
+        if (!loese_auf(abo, e, &r)) return false;
+        e.kandidat = r;
+        ++abo.pruef_cursor;
+        einheit_fertig();
         break;
     }
     if (abo.pruef_cursor >= n) {
@@ -561,6 +843,7 @@ void Dienst::pruef_schritt(Abo& abo) noexcept {
         abo.pruefung_fertig = true;
         abo.naechste_pruefung = jetzt_ + grenzen::NACHSUCHE_INTERVALL_S;
     }
+    return true;
 }
 
 // Verteilt das Such-Budget (grenzen::SUCH_BUDGET_S) auf die laufenden
@@ -579,8 +862,7 @@ void Dienst::suchen_verteilen() noexcept {
             starte_pruefung(a, false, false);
         }
     }
-    const double ende = umgebung_.jetzt() + grenzen::SUCH_BUDGET_S;
-    bool frei = true;  // eine Suche je Frame ist immer erlaubt
+    beginne_budget(grenzen::SUCH_BUDGET_S);
     for (;;) {
         Abo* bestes = nullptr;
         for (Abo& a : abos_) {
@@ -596,9 +878,8 @@ void Dienst::suchen_verteilen() noexcept {
         }
         if (bestes == nullptr) return;
         while (bestes->pruefung_laeuft) {
-            if (!frei && umgebung_.jetzt() >= ende) return;
-            frei = false;
-            pruef_schritt(*bestes);
+            if (!darf_arbeiten()) return;
+            if (!pruef_schritt(*bestes)) return;
         }
     }
 }
@@ -607,49 +888,67 @@ void Dienst::suchen_verteilen() noexcept {
 // Abos
 // =============================================================================
 
-Dienst::Aufloesung Dienst::loese_auf(const char* name, int32_t index) noexcept {
-    Aufloesung r;
-    if (index == INDEX_UNGUELTIG || name[0] == '\0') return r;
+// Sucht einen Namen auf. Vor JEDEM XPLM-Aufruf gegen das Budget, nach jedem
+// die Uhr (H4). false = Budget dazwischen erschöpft; *aus ist dann bedeutungslos.
+bool Dienst::loese_auf(Abo& abo, Eintrag& e, Aufloesung* aus) noexcept {
+    *aus = Aufloesung{};
+    const char* name = abo.text.daten() + e.name_ofs;
+    const int32_t index = e.index;
+    if (index == INDEX_UNGUELTIG || name[0] == '\0') return true;
+
+    if (!darf_arbeiten()) return false;
     const DatarefHandle h = quelle_.finde(name);
-    if (h == nullptr) return r;
+    nach_aufruf();
+    if (h == nullptr) return true;
+
     // Verwaist: Das Plugin, das den Namen angelegt hat, ist entladen (z. B.
     // nach Flugzeugwechsel). XPLMFindDataRef findet ihn weiter, lesen ergibt
     // aber 0 — genau die Lüge, die Protokoll 2 abschaffen soll.
-    if (!quelle_.ist_gueltig(h)) return r;
+    if (!darf_arbeiten()) return false;
+    const bool gut = quelle_.ist_gueltig(h);
+    nach_aufruf();
+    if (!gut) return true;
+
+    if (!darf_arbeiten()) return false;
     const int t = quelle_.typen(h);
+    nach_aufruf();
+
+    Aufloesung r;
     r.h = h;
     if (index < 0) {
         // Vorrang bei mehreren Typen (ADR): double > float > int > Arrays >
         // Bytes; unter den Arrays float vor int.
-        if (t & typ::D)      { r.z = Zugriff::D; r.laenge = 1; }
-        else if (t & typ::F) { r.z = Zugriff::F; r.laenge = 1; }
-        else if (t & typ::I) { r.z = Zugriff::I; r.laenge = 1; }
-        else if (t & typ::VF) {
-            r.z = Zugriff::VF;
-            r.laenge = begrenze(quelle_.lese_vf(h, nullptr, 0, 0), grenzen::MAX_ARRAY_ELEMENTE);
-        } else if (t & typ::VI) {
-            r.z = Zugriff::VI;
-            r.laenge = begrenze(quelle_.lese_vi(h, nullptr, 0, 0), grenzen::MAX_ARRAY_ELEMENTE);
-        } else if (t & typ::B) {
-            r.z = Zugriff::B;
-            r.laenge = begrenze(quelle_.lese_b(h, nullptr, 0, 0), grenzen::MAX_BYTES);
-        } else {
-            r = Aufloesung{};
-        }
-        return r;
+        if (t & typ::D)      { r.z = Zugriff::D; r.laenge = 1; *aus = r; return true; }
+        if (t & typ::F)      { r.z = Zugriff::F; r.laenge = 1; *aus = r; return true; }
+        if (t & typ::I)      { r.z = Zugriff::I; r.laenge = 1; *aus = r; return true; }
+        if (!(t & (typ::VF | typ::VI | typ::B))) return true;  // kein lesbarer Typ → fehlt
+        // Array-Länge: der fremde Accessor (mit nullptr aufgerufen).
+        if (!darf_arbeiten()) return false;
+        int n = 0;
+        if (t & typ::VF)      { r.z = Zugriff::VF; n = quelle_.lese_vf(h, nullptr, 0, 0); }
+        else if (t & typ::VI) { r.z = Zugriff::VI; n = quelle_.lese_vi(h, nullptr, 0, 0); }
+        else                  { r.z = Zugriff::B;  n = quelle_.lese_b(h, nullptr, 0, 0); }
+        nach_fremdaufruf(abo, e);
+        r.laenge = begrenze(n, r.z == Zugriff::B ? grenzen::MAX_BYTES : grenzen::MAX_ARRAY_ELEMENTE);
+        *aus = r;
+        return true;
     }
     // Array-Element: nur bei Array-Typen, Index gegen die AKTUELLE Länge.
     // Außerhalb der Länge gilt der Name als fehlend — wächst das Array später,
     // findet ihn der nächste Prüfdurchlauf.
+    if (!(t & (typ::VF | typ::VI | typ::B))) return true;
+    if (!darf_arbeiten()) return false;
     int laenge = -1;
     Zugriff z = Zugriff::FEHLT;
-    if (t & typ::VF)      { laenge = quelle_.lese_vf(h, nullptr, 0, 0); z = Zugriff::ELEM_VF; }
-    else if (t & typ::VI) { laenge = quelle_.lese_vi(h, nullptr, 0, 0); z = Zugriff::ELEM_VI; }
-    else if (t & typ::B)  { laenge = quelle_.lese_b(h, nullptr, 0, 0);  z = Zugriff::ELEM_B; }
-    if (z == Zugriff::FEHLT || laenge <= 0 || index >= laenge) return Aufloesung{};
+    if (t & typ::VF)      { z = Zugriff::ELEM_VF; laenge = quelle_.lese_vf(h, nullptr, 0, 0); }
+    else if (t & typ::VI) { z = Zugriff::ELEM_VI; laenge = quelle_.lese_vi(h, nullptr, 0, 0); }
+    else                  { z = Zugriff::ELEM_B;  laenge = quelle_.lese_b(h, nullptr, 0, 0); }
+    nach_fremdaufruf(abo, e);
+    if (laenge <= 0 || index >= laenge) return true;
     r.z = z;
     r.laenge = 1;
-    return r;
+    *aus = r;
+    return true;
 }
 
 size_t Dienst::wert_max(const Aufloesung& a) noexcept {
@@ -681,7 +980,7 @@ const char* status_art(uint8_t z) noexcept {
 
 }  // namespace
 
-bool Dienst::uebernehme_pruefung(Abo& abo, bool* geaendert) noexcept {
+Fehlergrund Dienst::uebernehme_pruefung(Abo& abo, bool* geaendert) noexcept {
     *geaendert = false;
     size_t werte_bytes = 0;
     const size_t n = abo.eintraege.anzahl();
@@ -698,8 +997,14 @@ bool Dienst::uebernehme_pruefung(Abo& abo, bool* geaendert) noexcept {
     const size_t status_bytes = n * STATUS_MAX;
     const size_t noetig = werte_bytes > status_bytes ? werte_bytes : status_bytes;
     // Wachsen nur beim Übernehmen (= Neu-Anmelden im Sinne der ADR), nie beim
-    // Lesen. Schrumpfen lohnt nicht.
-    return abo.stapel.reserviere(noetig, n);
+    // Lesen. Schrumpfen lohnt nicht. Vorher gegen die Budgets (H3): hier
+    // entscheidet sich, was die Werte eines Abos im schlimmsten Fall kosten.
+    const size_t kap = abo.stapel.kapazitaet_bytes();
+    if (noetig > kap) {
+        const size_t alt = abo_bytes(abo);
+        if (!abo_speicher_passt(alt, alt - kap + noetig)) return Fehlergrund::SPEICHER_LIMIT;
+    }
+    return abo.stapel.reserviere(noetig, n) ? Fehlergrund::KEINER : Fehlergrund::SPEICHER;
 }
 
 bool Dienst::bereite_antwort(Abo& abo) noexcept {
@@ -744,7 +1049,11 @@ void Dienst::starte_runde(Abo& abo) noexcept {
     abo.phase = Phase::LESEN;
 }
 
-bool Dienst::schreibe_wert(JsonSchreiber& w, const Eintrag& e, uint32_t k) noexcept {
+// Liest EINEN Wert (genau ein fremder Accessor-Aufruf) und schreibt ihn als
+// [k,wert]. Die Uhr wird direkt nach dem Accessor gelesen, VOR dem
+// Formatieren — sonst zählte die eigene JSON-Arbeit (bis 256 Zahlen) zur
+// Dauer des fremden Getters.
+bool Dienst::schreibe_wert(JsonSchreiber& w, Abo& abo, Eintrag& e, uint32_t k) noexcept {
     const DatarefHandle h = e.aktiv.h;
     const int laenge = e.aktiv.laenge;
     w.zeichen('[');
@@ -753,17 +1062,27 @@ bool Dienst::schreibe_wert(JsonSchreiber& w, const Eintrag& e, uint32_t k) noexc
     switch (e.aktiv.z) {
         case Zugriff::FEHLT:
             return false;  // ein fehlender Name liefert nie einen Wert
-        case Zugriff::I:
-            w.ganzzahl(quelle_.lese_i(h));
+        case Zugriff::I: {
+            const int v = quelle_.lese_i(h);
+            nach_fremdaufruf(abo, e);
+            w.ganzzahl(v);
             break;
-        case Zugriff::F:
-            w.zahl_f(quelle_.lese_f(h));
+        }
+        case Zugriff::F: {
+            const float v = quelle_.lese_f(h);
+            nach_fremdaufruf(abo, e);
+            w.zahl_f(v);
             break;
-        case Zugriff::D:
-            w.zahl_d(quelle_.lese_d(h));
+        }
+        case Zugriff::D: {
+            const double v = quelle_.lese_d(h);
+            nach_fremdaufruf(abo, e);
+            w.zahl_d(v);
             break;
+        }
         case Zugriff::VI: {
             const int n = begrenze(quelle_.lese_vi(h, iwerte_, 0, laenge), laenge);
+            nach_fremdaufruf(abo, e);
             w.zeichen('[');
             for (int i = 0; i < n; ++i) {
                 if (i > 0) w.zeichen(',');
@@ -774,6 +1093,7 @@ bool Dienst::schreibe_wert(JsonSchreiber& w, const Eintrag& e, uint32_t k) noexc
         }
         case Zugriff::VF: {
             const int n = begrenze(quelle_.lese_vf(h, fwerte_, 0, laenge), laenge);
+            nach_fremdaufruf(abo, e);
             w.zeichen('[');
             for (int i = 0; i < n; ++i) {
                 if (i > 0) w.zeichen(',');
@@ -784,22 +1104,32 @@ bool Dienst::schreibe_wert(JsonSchreiber& w, const Eintrag& e, uint32_t k) noexc
         }
         case Zugriff::B: {
             const int n = begrenze(quelle_.lese_b(h, bytes_, 0, laenge), laenge);
+            nach_fremdaufruf(abo, e);
             // Zeichenkette bis zum ersten NUL (ADR).
             w.text_bis_nul(reinterpret_cast<const char*>(bytes_), static_cast<size_t>(n));
             break;
         }
-        case Zugriff::ELEM_VI:
-            if (quelle_.lese_vi(h, iwerte_, e.index, 1) != 1) return false;
+        case Zugriff::ELEM_VI: {
+            const int n = quelle_.lese_vi(h, iwerte_, e.index, 1);
+            nach_fremdaufruf(abo, e);
+            if (n != 1) return false;
             w.ganzzahl(iwerte_[0]);
             break;
-        case Zugriff::ELEM_VF:
-            if (quelle_.lese_vf(h, fwerte_, e.index, 1) != 1) return false;
+        }
+        case Zugriff::ELEM_VF: {
+            const int n = quelle_.lese_vf(h, fwerte_, e.index, 1);
+            nach_fremdaufruf(abo, e);
+            if (n != 1) return false;
             w.zahl_f(fwerte_[0]);
             break;
-        case Zugriff::ELEM_B:
-            if (quelle_.lese_b(h, bytes_, e.index, 1) != 1) return false;
+        }
+        case Zugriff::ELEM_B: {
+            const int n = quelle_.lese_b(h, bytes_, e.index, 1);
+            nach_fremdaufruf(abo, e);
+            if (n != 1) return false;
             w.ganzzahl(bytes_[0]);
             break;
+        }
     }
     w.zeichen(']');
     return !w.ueberlauf();
@@ -809,26 +1139,50 @@ bool Dienst::lese_schritt(Abo& abo) noexcept {
     const uint32_t n = static_cast<uint32_t>(abo.eintraege.anzahl());
     while (abo.lese_cursor < n) {
         Eintrag& e = abo.eintraege[abo.lese_cursor];
-        if (e.aktiv.z != Zugriff::FEHLT) {
+        if (e.aktiv.z == Zugriff::FEHLT) {
+            ++abo.lese_cursor;
+            continue;
+        }
+        // Gedrosselt (wiederholt langsamer Accessor, H4): nur wenn fällig.
+        // Sonst fällt der Wert in dieser Runde aus — der Client behält den
+        // letzten; Status und Wert bleiben wahr, sie kommen nur seltener.
+        if (e.langsam && !langsam_faellig(e)) {
+            ++abo.lese_cursor;
+            continue;
+        }
+        // Verwaist (Plugin entladen/abgeschaltet)? Dann liefert XPLM 0 —
+        // also keinen Wert, und der Status geht sofort auf "fehlt" (neue
+        // abo-Antwort nach dieser Runde). Auch der Kandidat eines
+        // laufenden Durchlaufs, damit er den Namen nicht wieder "da" macht.
+        if (e.darf_verwaisen) {
             if (!darf_arbeiten()) return false;
-            // Verwaist (Plugin entladen/abgeschaltet)? Dann liefert XPLM 0 —
-            // also keinen Wert, und der Status geht sofort auf "fehlt" (neue
-            // abo-Antwort nach dieser Runde). Auch der Kandidat eines
-            // laufenden Durchlaufs, damit er den Namen nicht wieder "da" macht.
-            if (e.darf_verwaisen && !quelle_.ist_gueltig(e.aktiv.h)) {
+            const bool gut = quelle_.ist_gueltig(e.aktiv.h);
+            nach_aufruf();
+            if (!gut) {
                 e.aktiv = Aufloesung{};
                 e.kandidat = Aufloesung{};
                 abo.status_sofort = true;
                 ++abo.lese_cursor;
+                einheit_fertig();
                 continue;
             }
-            JsonSchreiber w = abo.stapel.schreiber();
-            // Ein Element, das nicht gelesen werden konnte (Array inzwischen
-            // kürzer) oder wider Erwarten nicht passt, fällt in dieser Runde
-            // aus — es wird nie abgeschnitten.
-            if (schreibe_wert(w, e, abo.lese_cursor)) abo.stapel.uebernehme(w);
         }
+        // Zwischen Verwaist-Prüfung und Getter noch einmal gegen das Budget.
+        // Endet es hier, prüft der nächste Frame den Eintrag neu — die Prüfung
+        // von eben gilt nur jetzt, nicht im nächsten Frame.
+        if (!darf_arbeiten()) return false;
+        JsonSchreiber w = abo.stapel.schreiber();
+        // Ein Element, das nicht gelesen werden konnte (Array inzwischen
+        // kürzer) oder wider Erwarten nicht passt, fällt in dieser Runde
+        // aus — es wird nie abgeschnitten.
+        const bool gut = schreibe_wert(w, abo, e, abo.lese_cursor);
+        if (e.langsam) {
+            e.langsam_faellig = jetzt_ + grenzen::LANGSAM_INTERVALL_S;
+            naechster_langsamer_ = jetzt_ + grenzen::LANGSAM_ABSTAND_S;
+        }
+        if (gut) abo.stapel.uebernehme(w);
         ++abo.lese_cursor;
+        einheit_fertig();
     }
     return true;
 }
@@ -846,8 +1200,11 @@ bool Dienst::sende_schritt(Abo& abo) noexcept {
             ++abo.paket_cursor;
             continue;
         }
-        if (sende_paket(paket_, len) == SendeErgebnis::VOLL) return false;
+        const SendeErgebnis r = sende_paket(paket_, len);
+        nach_aufruf();
+        if (r == SendeErgebnis::VOLL) return false;
         ++abo.paket_cursor;
+        einheit_fertig();
     }
     return true;
 }
@@ -858,7 +1215,7 @@ void Dienst::abo_verwerfen_mit_fehler(Abo& abo, Fehlergrund grund) noexcept {
     protokolliere("Protokoll 2: Abo %u verworfen (%s)", static_cast<unsigned>(id),
                   fehlergrund_text(grund));
     abo_leeren(abo);
-    sende_fehler(client_, grund, 0, id, gen, -1);
+    fehler_vormerken(grund, id, gen, -1);
 }
 
 void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
@@ -871,8 +1228,9 @@ void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
         abo.pruefung_fertig = false;
         abo.pausiert = false;
         bool geaendert = false;
-        if (!uebernehme_pruefung(abo, &geaendert)) {
-            abo_verwerfen_mit_fehler(abo, Fehlergrund::SPEICHER);
+        const Fehlergrund f = uebernehme_pruefung(abo, &geaendert);
+        if (f != Fehlergrund::KEINER) {
+            abo_verwerfen_mit_fehler(abo, f);
             return;
         }
         if (geaendert || abo.erste_antwort || abo.antwort_erneut || abo.status_sofort) {
@@ -884,6 +1242,7 @@ void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
                 return;
             }
         }
+        uhr_auffrischen();
     } else if ((abo.antwort_erneut || abo.status_sofort) && abo.phase == Phase::BEREIT) {
         // Status noch einmal (identisches ABO) oder sofort neu (beim Lesen
         // verwaist gefunden) — ohne auf den nächsten Durchlauf zu warten.
@@ -893,9 +1252,10 @@ void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
             abo_verwerfen_mit_fehler(abo, Fehlergrund::SPEICHER);
             return;
         }
+        uhr_auffrischen();
     }
 
-    // 4. Zustand weiterschalten. Die Fälle fallen absichtlich durch: ein
+    // 2. Zustand weiterschalten. Die Fälle fallen absichtlich durch: ein
     //    kleines Abo erledigt Lesen und Senden im selben Frame.
     switch (abo.phase) {
         case Phase::LEER:
@@ -939,6 +1299,7 @@ void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
             }
             abo.paket_cursor = 0;
             abo.phase = Phase::SENDEN;
+            uhr_auffrischen();
             [[fallthrough]];
         }
         case Phase::SENDEN:
@@ -951,41 +1312,65 @@ void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
 // =============================================================================
 // LISTE
 // =============================================================================
+//
+// Budget je NAME (H4): ein Name = ein XPLMGetDataRefInfo. Die 256 Handles
+// eines Blocks bleiben über Frames hinweg in handles_ (Datarefs werden nie
+// zerstört, die Handles bleiben gültig); vorher kam nach EINER Budgetprüfung
+// ein ganzer Block. Speicher mit eigenem Budget (grenzen::MAX_BYTES_LISTE).
 
 void Dienst::liste_schritt() noexcept {
     if (!liste_.aktiv) return;
 
+    auto aufgeben = [this](Fehlergrund grund) noexcept {
+        const uint32_t id = liste_.id;
+        protokolliere("Protokoll 2: LISTE %u abgebrochen (%s)", static_cast<unsigned>(id),
+                      fehlergrund_text(grund));
+        liste_leeren();
+        fehler_vormerken(grund, 0, 0, id);
+    };
+
     if (liste_.sammeln) {
-        while (liste_.cursor < liste_.gesamt) {
+        for (;;) {
+            if (liste_.block_pos >= liste_.block_anzahl) {
+                if (liste_.cursor >= liste_.gesamt) break;
+                if (!darf_arbeiten()) return;
+                int block = liste_.gesamt - liste_.cursor;
+                if (block > grenzen::LISTE_BLOCK) block = grenzen::LISTE_BLOCK;
+                const int geholt = begrenze(quelle_.datarefs_ab(liste_.cursor, block, handles_), block);
+                nach_aufruf();
+                if (geholt == 0) {
+                    // Weniger Datarefs als gemeldet — mit dem Bestand weitermachen.
+                    liste_.gesamt = liste_.cursor;
+                    break;
+                }
+                liste_.cursor += geholt;
+                liste_.block_pos = 0;
+                liste_.block_anzahl = geholt;
+            }
             if (!darf_arbeiten()) return;
-            int block = liste_.gesamt - liste_.cursor;
-            if (block > grenzen::LISTE_BLOCK) block = grenzen::LISTE_BLOCK;
-            const int geholt = begrenze(quelle_.datarefs_ab(liste_.cursor, block, handles_), block);
-            if (geholt == 0) {
-                // Weniger Datarefs als gemeldet — mit dem Bestand weitermachen.
-                liste_.gesamt = liste_.cursor;
-                break;
+            const DatarefHandle h = handles_[liste_.block_pos];
+            const char* name = h ? quelle_.name_von(h) : nullptr;
+            nach_aufruf();
+            ++liste_.block_pos;
+            einheit_fertig();
+            const size_t n = name ? text_laenge(name, grenzen::MAX_ZEILE + 1) : 0;
+            // Nur abonnierbare Namen melden: was nicht durch den
+            // ABO-Parser käme, nützt dem Client nichts.
+            if (!ist_abonnierbarer_name(name, n)) {
+                ++liste_.ausgelassen;
+                continue;
             }
-            for (int j = 0; j < geholt; ++j) {
-                const char* name = handles_[j] ? quelle_.name_von(handles_[j]) : nullptr;
-                const size_t n = name ? text_laenge(name, grenzen::MAX_ZEILE + 1) : 0;
-                // Nur abonnierbare Namen melden: was nicht durch den
-                // ABO-Parser käme, nützt dem Client nichts.
-                if (!ist_abonnierbarer_name(name, n)) {
-                    ++liste_.ausgelassen;
-                    continue;
-                }
-                if (!liste_.namen.sorge_fuer_platz(json_max_text(n))) {
-                    const uint32_t id = liste_.id;
-                    liste_leeren();
-                    sende_fehler(client_, Fehlergrund::SPEICHER, 0, 0, 0, id);
-                    return;
-                }
-                JsonSchreiber w = liste_.namen.schreiber();
-                w.text(name, n);
-                liste_.namen.uebernehme(w);
+            const size_t budget = grenzen::MAX_BYTES_LISTE -
+                                  liste_.grenzen.kapazitaet() * sizeof(uint32_t);
+            const ElementListe::Platz platz = liste_.namen.sorge_fuer_platz(json_max_text(n), budget);
+            if (platz != ElementListe::Platz::OK) {
+                aufgeben(platz == ElementListe::Platz::LIMIT ? Fehlergrund::SPEICHER_LIMIT
+                                                             : Fehlergrund::SPEICHER);
+                return;
             }
-            liste_.cursor += geholt;
+            JsonSchreiber w = liste_.namen.schreiber();
+            w.text(name, n);
+            liste_.namen.uebernehme(w);
         }
         // Gesammelt: planen.
         const size_t anzahl = liste_.namen.anzahl();
@@ -993,19 +1378,19 @@ void Dienst::liste_schritt() noexcept {
         p.roh("{\"p\":2,\"t\":\"liste\",\"id\":");
         p.ganzzahl(liste_.id);
         liste_.praefix_laenge = p.laenge();
+        if (liste_.namen.belegt_bytes() + (anzahl + 2) * sizeof(uint32_t) > grenzen::MAX_BYTES_LISTE) {
+            aufgeben(Fehlergrund::SPEICHER_LIMIT);
+            return;
+        }
         if (!liste_.grenzen.reserviere(anzahl + 2)) {
-            const uint32_t id = liste_.id;
-            liste_leeren();
-            sende_fehler(client_, Fehlergrund::SPEICHER, 0, 0, 0, id);
+            aufgeben(Fehlergrund::SPEICHER);
             return;
         }
         liste_.teile = plane_pakete(liste_.praefix_laenge, 1, liste_.namen,
                                     liste_.grenzen.daten(), liste_.grenzen.kapazitaet(),
                                     grenzen::MAX_PAKET);
         if (liste_.teile == 0) {
-            const uint32_t id = liste_.id;
-            liste_leeren();
-            sende_fehler(client_, Fehlergrund::SPEICHER, 0, 0, 0, id);
+            aufgeben(Fehlergrund::SPEICHER);
             return;
         }
         protokolliere("Protokoll 2: LISTE %u - %u Namen in %u Paketen (%u nicht abonnierbar ausgelassen)",
@@ -1014,6 +1399,7 @@ void Dienst::liste_schritt() noexcept {
                       static_cast<unsigned>(liste_.ausgelassen));
         liste_.sammeln = false;
         liste_.paket_cursor = 0;
+        uhr_auffrischen();
     }
 
     while (liste_.paket_cursor < liste_.teile) {
@@ -1022,8 +1408,13 @@ void Dienst::liste_schritt() noexcept {
                                           liste_.praefix, liste_.praefix_laenge, "n",
                                           liste_.namen, liste_.grenzen.daten(),
                                           liste_.paket_cursor, liste_.teile);
-        if (len != 0 && sende_paket(paket_, len) == SendeErgebnis::VOLL) return;
+        if (len != 0) {
+            const SendeErgebnis r = sende_paket(paket_, len);
+            nach_aufruf();
+            if (r == SendeErgebnis::VOLL) return;
+        }
         ++liste_.paket_cursor;
+        einheit_fertig();
     }
     liste_leeren();  // fertig: Speicher sofort zurückgeben
 }
@@ -1082,8 +1473,11 @@ void Dienst::pruefe_flugzeug() noexcept {
         if (!w.ueberlauf()) break;
     }
     if (w.ueberlauf()) return;
-    if (umgebung_.sende(client_, w.daten(), w.laenge()) == SendeErgebnis::VOLL) {
-        return;  // im nächsten Prüftakt erneut
+    // Über den gemeinsamen Ausgang (M1). Kein Platz mehr in diesem Frame oder
+    // Socket voll: im nächsten Frame erneut (die Meldung bleibt offen).
+    if (sende_paket(w.daten(), w.laenge()) == SendeErgebnis::VOLL) {
+        flugzeug_offen_ = true;
+        return;
     }
     std::memcpy(gesendet_icao_, icao, sizeof(icao));
     std::memcpy(gesendet_titel_, titel, sizeof(titel));

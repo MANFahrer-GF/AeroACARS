@@ -9,6 +9,9 @@ Drei Durchläufe:
   2. "X-Plane 11": LISTE meldet liste_nicht_verfuegbar, sonst alles gleich.
   3. Port 52001 belegt: Plugin lädt trotzdem, meldet es im Log, Protokoll 1
      läuft weiter.
+  4. "Zyklus" (Codex-Abnahme N1): XPluginDisable nach 2 s, XPluginEnable nach
+     3 s — Port frei bzw. neu gebunden, neuer Dienst ohne alten Client,
+     Protokoll 1 danach weiter (die Attrappe prüft selbst, siehe dort).
 
 Rückgabe 0 = grün, 1 = rot, 77 = übersprungen (Port 52001 schon belegt, z. B.
 weil X-Plane mit dem Plugin gerade läuft).
@@ -35,7 +38,7 @@ def port_frei(port: int) -> bool:
 
 def lauf(attrappe: str, plugin: str, sonde: str, modus: str) -> bool:
     print(f"=== {modus} ===", flush=True)
-    args = [attrappe, plugin, "12"] + (["xp11"] if modus == "xp11" else [])
+    args = [attrappe, plugin, "6" if modus == "zyklus" else "12"] + ([modus] if modus in ("xp11", "zyklus") else [])
     blocker = None
     if modus == "port_belegt":
         blocker = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -44,7 +47,7 @@ def lauf(attrappe: str, plugin: str, sonde: str, modus: str) -> bool:
     ok = True
     try:
         time.sleep(1.0)
-        if modus != "port_belegt":
+        if modus in ("xp12", "xp11"):
             s = subprocess.run([sys.executable, sonde, "pruefung"], capture_output=True, text=True, timeout=60)
             print(s.stdout, s.stderr, flush=True)
             if s.returncode != 0:
@@ -64,6 +67,7 @@ def lauf(attrappe: str, plugin: str, sonde: str, modus: str) -> bool:
         "xp12": ["Protokoll 2 bereit", "LISTE ja", "Client angemeldet", "Kosten je Aufruf"],
         "xp11": ["Protokoll 2 bereit", "LISTE nein", "Client angemeldet", "Kosten je Aufruf"],
         "port_belegt": ["belegt", "Protokoll 1 laeuft weiter"],
+        "zyklus": ["Protokoll 2 bereit", "disabled: sockets closed", "[Attrappe] Zyklus gruen"],
     }[modus]
     for text in erwartet:
         if text not in log:
@@ -71,6 +75,9 @@ def lauf(attrappe: str, plugin: str, sonde: str, modus: str) -> bool:
             ok = False
     if modus == "port_belegt" and "Protokoll 2 bereit" in log:
         print("FEHLER: Protokoll 2 trotz belegtem Port bereit")
+        ok = False
+    if modus == "zyklus" and log.count("Protokoll 2 bereit") != 2:
+        print("FEHLER: Protokoll 2 nicht genau zweimal gestartet (Enable, Enable nach Disable)")
         ok = False
     return ok
 
@@ -83,7 +90,7 @@ def main() -> int:
     if not port_frei(52001):
         print("Port 52001 ist belegt (läuft X-Plane mit dem Plugin?) - übersprungen")
         return 77
-    ergebnisse = [lauf(attrappe, plugin, sonde, m) for m in ("xp12", "xp11", "port_belegt")]
+    ergebnisse = [lauf(attrappe, plugin, sonde, m) for m in ("xp12", "xp11", "port_belegt", "zyklus")]
     print("Ergebnis:", "gruen" if all(ergebnisse) else "rot")
     return 0 if all(ergebnisse) else 1
 

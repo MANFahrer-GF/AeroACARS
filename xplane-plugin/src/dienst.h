@@ -36,6 +36,27 @@
 //     XPLM_MSG_PLANE_LOADED (Flugzeug 0) / XPLM_MSG_AIRPORT_LOADED. Der
 //     2-s-Durchlauf prüft nur fehlende Namen und Arrays (Länge); verwaiste
 //     Einzelwerte fängt die Prüfung beim Lesen.
+//   * XPLM_MSG_PLANE_LOADED verwirft bei Abos mit Plugin-Namen eine LAUFENDE
+//     Runde (LESEN/SENDEN → BEREIT, ANTWORT → NEU): Werte, die vor dem
+//     Wechsel gelesen wurden, gehen nie mehr hinaus, und eine Runde mischt
+//     nie altes und neues Flugzeug (Codex-Abnahme H2).
+//
+// Zeit (Codex-Abnahme H4): Suche und Lieferung haben je ein Zeitbudget. Die
+// Uhr wird nach JEDEM einzelnen XPLM-Aufruf gelesen; ist das Budget
+// erschöpft, endet die Arbeit vor dem nächsten Aufruf, ein angefangener
+// Eintrag beginnt im nächsten Frame neu. Frei (ohne Uhr) ist je Budget und
+// Frame nur die erste Arbeitseinheit bis einschließlich ihres EINEN fremden
+// Accessor-Aufrufs — sonst könnte ein einziges teures Dataref jeden
+// Fortschritt verhindern. Das ist ein WEICHES Budget: Einen fremden Accessor
+// kann das Plugin nicht unterbrechen, nur danach aufhören und ihn, wenn er
+// wiederholt langsam ist, drosseln (grenzen::LANGSAM_*).
+//
+// Speicher (H3): harte Bytebudgets je Abo, für alle Abos und für LISTE
+// (grenzen::MAX_BYTES_*), sonst fehler/speicher_limit.
+//
+// Ausgang (M1): Alle Sendewege teilen sich höchstens
+// grenzen::MAX_PAKETE_JE_FRAME Pakete je Frame; kleine Einzelantworten
+// höchstens grenzen::MAX_KLEINE_JE_FRAME davon, der Überschuss wird verworfen.
 // =============================================================================
 
 #pragma once
@@ -153,6 +174,12 @@ public:
     // -- Einblick für Tests ----------------------------------------------------
     bool client_angemeldet() const noexcept { return client_aktiv_; }
     size_t aktive_abos() const noexcept;
+    // "leer", "neu", "antwort", "bereit", "lesen", "senden".
+    const char* abo_phase(uint32_t id) const noexcept;
+    // Belegte Bytes (reservierte Kapazität) wie für die Budgets gezählt.
+    size_t speicher_abos() const noexcept;
+    size_t speicher_liste() const noexcept;
+    bool liste_laeuft() const noexcept { return liste_.aktiv; }
 
 private:
     enum class Zugriff : uint8_t {
@@ -171,8 +198,11 @@ private:
         uint32_t name_ofs;   // Basisname, NUL-terminiert, in Abo::text
         int32_t index;       // -1 = ganzer Dataref, -2 = ungültige Zeile
         bool darf_verwaisen; // nicht "sim/…": vor jedem Lesen XPLMIsDataRefGood
+        bool langsam;        // gedrosselt (grenzen::LANGSAM_*)
+        uint8_t langsam_treffer;  // langsame fremde Aufrufe in Folge
         Aufloesung aktiv;    // danach wird geliefert
         Aufloesung kandidat; // Ergebnis des laufenden Prüfdurchlaufs
+        double langsam_faellig;   // gedrosselt: frühestens dann wieder lesen
     };
     struct RohName {
         uint32_t ofs;
@@ -229,7 +259,9 @@ private:
         bool sammeln = false;
         uint32_t id = 0;
         int gesamt = 0;
-        int cursor = 0;
+        int cursor = 0;        // nächster Index für XPLMGetDataRefsByIndex
+        int block_pos = 0;     // nächster Handle in handles_ …
+        int block_anzahl = 0;  // … von so vielen geholten
         uint32_t ausgelassen = 0;
         ElementListe namen;
         Feld<uint32_t> grenzen;
@@ -243,21 +275,25 @@ private:
     void bearbeite_hallo(const Absender& von, const Anfrage& a) noexcept;
     void bearbeite_abo(const Anfrage& a) noexcept;
     void bearbeite_liste(const Anfrage& a) noexcept;
-    bool aktiviere(uint32_t id, AboBau& bau) noexcept;
+    Fehlergrund aktiviere(uint32_t id, AboBau& bau) noexcept;
+
+    void frame_intern() noexcept;
 
     // Abos
     void bearbeite_abo_frame(Abo& abo) noexcept;
     void suchen_verteilen() noexcept;
-    void pruef_schritt(Abo& abo) noexcept;
+    bool pruef_schritt(Abo& abo) noexcept;  // false = Budget erschöpft
     static bool braucht_nachsuche(const Eintrag& e) noexcept;
     static bool gleiches_abo(const Abo& abo, const AboBau& bau) noexcept;
-    Aufloesung loese_auf(const char* name, int32_t index) noexcept;
-    bool uebernehme_pruefung(Abo& abo, bool* geaendert) noexcept;
+    // false = Budget zwischen zwei XPLM-Aufrufen erschöpft (Eintrag unerledigt).
+    bool loese_auf(Abo& abo, Eintrag& e, Aufloesung* aus) noexcept;
+    Fehlergrund uebernehme_pruefung(Abo& abo, bool* geaendert) noexcept;
+    void verwirf_laufende_runde(Abo& abo) noexcept;
     bool bereite_antwort(Abo& abo) noexcept;
     void starte_runde(Abo& abo) noexcept;
     bool lese_schritt(Abo& abo) noexcept;   // true = Runde fertig gelesen
     bool sende_schritt(Abo& abo) noexcept;  // true = alle Pakete draußen
-    bool schreibe_wert(JsonSchreiber& w, const Eintrag& e, uint32_t k) noexcept;
+    bool schreibe_wert(JsonSchreiber& w, Abo& abo, Eintrag& e, uint32_t k) noexcept;
     void abo_leeren(Abo& abo) noexcept;
     void abo_verwerfen_mit_fehler(Abo& abo, Fehlergrund grund) noexcept;
     void starte_pruefung(Abo& abo, bool alle, bool dringend) noexcept;
@@ -269,16 +305,42 @@ private:
     void pruefe_flugzeug() noexcept;
     bool lies_kennung(DatarefHandle* h, const char* name, char* aus, size_t kap) noexcept;
 
+    // Speicher (H3)
+    static size_t abo_bytes(const Abo& a) noexcept;
+    static size_t bau_bytes(const AboBau& b) noexcept;
+    // true, wenn ein Objekt, das jetzt `alt` Bytes belegt, auf `neu` Bytes
+    // wachsen darf (je Abo und für alle Abos zusammen).
+    bool abo_speicher_passt(size_t alt, size_t neu) const noexcept;
+
     // Senden
     void sende_einzeln(const Absender& an, const JsonSchreiber& w) noexcept;
     // `abo` != 0 → "abo" und "gen" werden mitgeschickt; `id` >= 0 → "id".
     void sende_fehler(const Absender& an, Fehlergrund grund, uint32_t zeile,
                       uint32_t abo, uint32_t gen, int64_t id) noexcept;
     void sende_abo_empfangen(uint32_t abo, uint32_t gen, size_t namen) noexcept;
+    // Fehler, die WÄHREND der Lieferung entstehen (Abo oder LISTE am Budget
+    // verworfen): nie verwerfen — erst vormerken, dann am Anfang des nächsten
+    // Frames vor aller Lieferung senden (M1: sonst hätten die Pakete der Abos
+    // davor die 16 schon verbraucht, und der Client erführe nie, warum sein
+    // Abo verschwand).
+    void fehler_vormerken(Fehlergrund grund, uint32_t abo, uint32_t gen, int64_t id) noexcept;
+    void sende_vorgemerkte_fehler() noexcept;
     SendeErgebnis sende_paket(const char* daten, size_t laenge) noexcept;
 
-    // Budget
-    bool darf_arbeiten() noexcept;
+    // Budget (H4)
+    void beginne_budget(double dauer) noexcept;
+    bool darf_arbeiten() const noexcept { return garantie_ || uhr_ < budget_ende_; }
+    // Nach jedem XPLM-Aufruf: Uhr lesen; Rückgabe = Dauer seit dem letzten Lesen.
+    double nach_aufruf() noexcept;
+    // Nach einem FREMDEN Accessor (Getter, Array-Länge): Dauer werten,
+    // freie Einheit ist verbraucht.
+    void nach_fremdaufruf(Abo& abo, Eintrag& e) noexcept;
+    void einheit_fertig() noexcept { garantie_ = false; }
+    // Nach eigener schwerer Arbeit (Status bauen, Pakete planen): Uhr neu
+    // lesen, damit diese Zeit nicht dem nächsten fremden Accessor zugerechnet
+    // wird (sonst gälte ein gesunder Dataref als langsam).
+    void uhr_auffrischen() noexcept { uhr_ = umgebung_.jetzt(); }
+    bool langsam_faellig(const Eintrag& e) const noexcept;
     void protokolliere(const char* format, ...) noexcept;
 
     Datenquelle& quelle_;
@@ -290,6 +352,16 @@ private:
     Absender client_{};
     double letzte_anfrage_ = 0.0;
 
+    struct OffenerFehler {
+        Fehlergrund grund = Fehlergrund::KEINER;  // KEINER = Platz frei
+        uint32_t abo = 0;
+        uint32_t gen = 0;
+        int64_t id = -1;
+    };
+    // Je Abo ein Platz, dazu einer für LISTE: mehr kann zwischen zwei Frames
+    // nicht entstehen (ein Abo wird höchstens einmal verworfen).
+    OffenerFehler offene_fehler_[grenzen::MAX_ABOS + 1];
+
     Abo abos_[grenzen::MAX_ABOS];
     AboBau bau_[grenzen::MAX_ABOS];
     ListeLauf liste_;
@@ -298,9 +370,15 @@ private:
 
     // Frame-Zustand
     double jetzt_ = 0.0;
+    double uhr_ = 0.0;            // zuletzt gelesene Uhr (nach jedem XPLM-Aufruf)
     double budget_ende_ = 0.0;
-    int pakete_frame_ = 0;
-    bool garantie_ = false;
+    bool garantie_ = false;       // erste Einheit des laufenden Budgets frei
+    int pakete_frame_ = 0;        // alle Sendewege, zurück am Ende von frame()
+    int kleine_frame_ = 0;        // davon kleine Einzelantworten
+    uint32_t kleine_verworfen_ = 0;
+    double naechste_flut_meldung_ = 0.0;
+    double naechster_langsamer_ = 0.0;
+    int langsam_meldungen_ = 0;
 
     // Flugzeug
     bool flugzeug_offen_ = false;

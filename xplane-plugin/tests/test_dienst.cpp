@@ -635,8 +635,13 @@ TEST(dienst_zeitbudget_verteilt_grosses_abo) {
 TEST(dienst_grosses_abo_pakete_und_puffer) {
     Aufbau a;
     std::string abo_text;
-    // 8192 Namen, davon viele lange Arrays → viele volle Pakete.
-    for (int i = 0; i < 8192; ++i) {
+    // 3000 Namen, alle ganze Arrays mit 256 floats → viele volle Pakete.
+    // (Bis zur Codex-Abnahme 8192 — das sind im schlimmsten Fall 8192 × 4361
+    // Byte ≈ 34 MiB Ausgabestapel und liegt seit H3 über dem Budget je Abo
+    // (16 MiB); dienst_h3_speicher_limit_je_abo prüft genau diese Ablehnung.
+    // 3000 × 4361 ≈ 12,5 MiB passt.)
+    constexpr int N = 3000;
+    for (int i = 0; i < N; ++i) {
         const std::string n = "arr" + std::to_string(i % 64);
         abo_text += n + "\n";
     }
@@ -646,12 +651,12 @@ TEST(dienst_grosses_abo_pakete_und_puffer) {
     }
     a.welt.ueberschuss = 50;  // fehlerhaftes Plugin schreibt über max hinaus
     a.hallo();
-    // In zwei Teilen (ein Datagramm darf höchstens 64 KiB haben).
+    // In zwei Teilen (wie der Client bei großen Abos).
     std::string t1 = "ABO 1 1 1 2\n", t2 = "ABO 1 1 2 2\n";
     size_t pos = 0;
-    for (int i = 0; i < 8192; ++i) {
+    for (int i = 0; i < N; ++i) {
         const size_t nl = abo_text.find('\n', pos);
-        (i < 4096 ? t1 : t2) += abo_text.substr(pos, nl - pos + 1);
+        (i < N / 2 ? t1 : t2) += abo_text.substr(pos, nl - pos + 1);
         pos = nl + 1;
     }
     a.sende(t1);
@@ -679,14 +684,15 @@ TEST(dienst_grosses_abo_pakete_und_puffer) {
         if (i % 60 == 0) a.sende("PING");
         if (je_seq.size() >= 2) break;  // erste Lieferung ist vollständig
     }
-    PRUEFE(max_je_frame <= grenzen::MAX_PAKETE_JE_FRAME + 1);  // + evtl. flugzeug
-    PRUEFE_GLEICH(st.size(), size_t(8192));
+    // Seit M1 zählt auch `flugzeug` gegen die 16 (vorher + 1).
+    PRUEFE(max_je_frame <= grenzen::MAX_PAKETE_JE_FRAME);
+    PRUEFE_GLEICH(st.size(), size_t(N));
     if (!st.empty()) PRUEFE_TEXT(status_text(st[0]), "vf,256");
-    // Eine vollständige Lieferung: alle 8192 Werte, je 256 Elemente.
+    // Eine vollständige Lieferung: alle Werte, je 256 Elemente.
     PRUEFE(je_seq.size() >= 2);
     if (!je_seq.empty()) {
         const auto& erste = je_seq.begin()->second;
-        PRUEFE_GLEICH(erste.size(), size_t(8192));
+        PRUEFE_GLEICH(erste.size(), size_t(N));
         bool alle_256 = true;
         for (auto& kv : erste) alle_256 = alle_256 && kv.second == 256;
         PRUEFE(alle_256);
@@ -890,8 +896,11 @@ TEST(dienst_h1_identisches_abo_setzt_nichts_zurueck) {
     PRUEFE_GLEICH(abo_pakete, 1);  // Status genau einmal erneut
     PRUEFE_GLEICH(empfangen, 1);
     // Neue Generation = neues Abo (Suche neu).
+    // (8192 Namen × 2,2 µs Suche bei 0,3 ms je Frame ≈ 60 Frames. Seit die Uhr
+    // nach jedem XPLM-Aufruf gilt, beginnt ein am Budget abgebrochener
+    // Eintrag im nächsten Frame neu — ein Frame mehr; daher 90 statt 60.)
     for (const auto& d : abo_datagramme(2, 1, namen, 6)) a.sende(d);
-    a.frames(60);
+    a.frames(90);
     p = a.neue();
     bool gen6 = false;
     for (auto& j : p) if (art(j) == "w" && j.hole("gen")->zahl == 6) gen6 = true;
@@ -1153,4 +1162,581 @@ TEST(dienst_pause_nach_flugzeugwechsel_begrenzt) {
         std::printf("     Mess-Abo %d: groesste Luecke nach Flugzeugwechsel %.2f s\n", id, groesste_luecke[id]);
         PRUEFE(groesste_luecke[id] > 0.0 && groesste_luecke[id] < 1.0);
     }
+}
+
+// =============================================================================
+// Codex-Abnahme (H1–H4, M1, M2)
+// =============================================================================
+
+namespace {
+
+// Hat irgendein "w"-Paket in `pakete` einen Wert (auch in Arrays), der == x ist?
+bool enthaelt_wert(const std::vector<JWert>& pakete, double x) {
+    for (const auto& p : pakete) {
+        if (art(p) != "w") continue;
+        for (const auto& e : p.hole("v")->feld) {
+            const JWert& w = e.feld[1];
+            if (w.art == JWert::Art::ZAHL && w.zahl == x) return true;
+            if (w.art == JWert::Art::FELD) {
+                for (const auto& z : w.feld) if (z.art == JWert::Art::ZAHL && z.zahl == x) return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::string log_mit(const Aufbau& a, const std::string& teil) {
+    for (const auto& z : a.umg.log) if (z.find(teil) != std::string::npos) return z;
+    return "";
+}
+
+int log_zaehle(const Aufbau& a, const std::string& teil) {
+    int n = 0;
+    for (const auto& z : a.umg.log) if (z.find(teil) != std::string::npos) ++n;
+    return n;
+}
+
+}  // namespace
+
+TEST(dienst_h2_flugzeugwechsel_mitten_im_lesen) {
+    // Altes Flugzeug: alle Plugin-Werte 1.0; neues Flugzeug: 2.0. Lesen kostet
+    // 100 µs je Wert → 1 ms Budget ≈ 10 Werte je Frame → eine Runde mit 400
+    // Namen liest über ~40 Frames. Mitten darin: XPLM_MSG_PLANE_LOADED.
+    Aufbau a;
+    std::string abo = "ABO 2 1 g3\n";
+    std::vector<ScheinRef*> refs;
+    for (int i = 0; i < 400; ++i) {
+        auto& r = a.welt.neu("toliss/w" + std::to_string(i), typ::F);
+        r.f = 1.0f;
+        refs.push_back(&r);
+        abo += "toliss/w" + std::to_string(i) + "\n";
+    }
+    a.hallo();
+    a.sende(abo);
+    a.welt.lese_kosten = 1e-4;
+    bool mitten = false;
+    for (int i = 0; i < 200 && !mitten; ++i) {
+        const int vorher = a.welt.lesezugriffe;
+        a.frames(1);
+        // Nach diesem Frame: Runde angefangen (Werte gelesen), noch nicht fertig.
+        mitten = std::string(a.d->abo_phase(2)) == "lesen" && a.welt.lesezugriffe > vorher;
+    }
+    PRUEFE(mitten);
+    PRUEFE_TEXT(a.d->abo_phase(2), "lesen");
+    a.neue();
+    for (auto* r : refs) r->f = 2.0f;
+    a.d->flugzeug_geladen();
+    PRUEFE_TEXT(a.d->abo_phase(2), "bereit");  // Runde verworfen
+    std::vector<JWert> nachher;
+    for (int i = 0; i < 300; ++i) {  // 5 s
+        a.frames(1);
+        for (auto& j : a.neue()) nachher.push_back(j);
+        if (i % 60 == 0) a.sende("PING");
+    }
+    PRUEFE(!enthaelt_wert(nachher, 1.0));  // nie ein Wert des alten Flugzeugs
+    PRUEFE(enthaelt_wert(nachher, 2.0));   // Lieferung läuft danach weiter
+    // Das flugzeug-Paket kommt vor dem ersten neuen Wert.
+    size_t erst_flugzeug = nachher.size(), erster_wert = nachher.size();
+    for (size_t k = 0; k < nachher.size(); ++k) {
+        if (art(nachher[k]) == "flugzeug" && erst_flugzeug == nachher.size()) erst_flugzeug = k;
+        if (art(nachher[k]) == "w" && erster_wert == nachher.size()) erster_wert = k;
+    }
+    PRUEFE(erst_flugzeug < erster_wert);
+}
+
+TEST(dienst_h2_flugzeugwechsel_mitten_im_senden) {
+    // 1500 Plugin-Arrays à 64 floats → eine Runde ≈ 26 Pakete; höchstens 16
+    // je Frame, das Senden läuft also über mindestens zwei Frames.
+    Aufbau a;
+    std::vector<std::string> namen;
+    std::vector<ScheinRef*> refs;
+    for (int i = 0; i < 1500; ++i) {
+        namen.push_back("addon/arr" + std::to_string(i));
+        auto& r = a.welt.neu(namen.back(), typ::VF);
+        r.vf = std::vector<float>(64, 1.0f);
+        refs.push_back(&r);
+    }
+    a.hallo();
+    for (const auto& d : abo_datagramme(5, 1, namen, 1)) a.sende(d);
+    int teile_vorher = 0, seq_unterbrochen = -1;
+    for (int i = 0; i < 400; ++i) {
+        a.frames(1);
+        for (auto& j : a.neue_vom_typ("w")) {
+            seq_unterbrochen = static_cast<int>(j.hole("seq")->zahl);
+            teile_vorher = static_cast<int>(j.hole("teil")->zahl);
+        }
+        if (std::string(a.d->abo_phase(5)) == "senden" && teile_vorher > 0) break;
+    }
+    PRUEFE_TEXT(a.d->abo_phase(5), "senden");
+    PRUEFE(teile_vorher > 0);
+    for (auto* r : refs) r->vf.assign(64, 2.0f);
+    a.d->flugzeug_geladen();
+    std::vector<JWert> nachher;
+    for (int i = 0; i < 300; ++i) {
+        a.frames(1);
+        for (auto& j : a.neue()) nachher.push_back(j);
+        if (i % 60 == 0) a.sende("PING");
+    }
+    PRUEFE(!enthaelt_wert(nachher, 1.0));  // kein Rest der alten Runde
+    PRUEFE(enthaelt_wert(nachher, 2.0));
+    for (const auto& j : nachher) {
+        if (art(j) == "w") PRUEFE(static_cast<int>(j.hole("seq")->zahl) != seq_unterbrochen);
+    }
+}
+
+TEST(dienst_h2_flugzeugwechsel_mitten_in_der_statusantwort) {
+    // Status von 8192 Namen ≈ 15 Pakete. Nach 5 Paketen ist der Socket voll
+    // (ok_noch) — die Status-Antwort steckt mitten im Senden, als das
+    // Flugzeug wechselt. Danach: kein Wert, bis ein VOLLSTÄNDIGER neuer
+    // Status draußen ist (die ersten 5 Teile allein zählen nicht).
+    Aufbau a;
+    for (int i = 0; i < 64; ++i) a.welt.neu("addon/a" + std::to_string(i), typ::VF).vf = std::vector<float>(64, 1.0f);
+    std::vector<std::string> namen;
+    for (int i = 0; i < 8192; ++i) namen.push_back("addon/a" + std::to_string(i % 64));
+    a.hallo();
+    for (const auto& d : abo_datagramme(6, 1, namen, 9)) a.sende(d);
+    a.neue();
+    a.umg.ok_noch = 5;
+    a.frames(1);
+    PRUEFE_TEXT(a.d->abo_phase(6), "antwort");
+    const auto teil_status = a.neue_vom_typ("abo");
+    PRUEFE_GLEICH(teil_status.size(), size_t(5));
+    a.d->flugzeug_geladen();
+    PRUEFE_TEXT(a.d->abo_phase(6), "neu");
+    a.umg.ok_noch = -1;
+    std::vector<JWert> p;
+    for (int i = 0; i < 200; ++i) {
+        a.frames(1);
+        for (auto& j : a.neue()) p.push_back(j);
+    }
+    // Danach: ein vollständiger Status (Teile 1..n lückenlos, gleiches
+    // "teile"), und kein einziger Wert vor seinem letzten Teil.
+    std::set<int> teile;
+    int teile_soll = 0;
+    bool w_vor_status = false, teile_gemischt = false;
+    for (const auto& j : p) {
+        if (art(j) == "abo" && (teile_soll == 0 || static_cast<int>(teile.size()) < teile_soll)) {
+            const int t = static_cast<int>(j.hole("teile")->zahl);
+            if (teile_soll != 0 && t != teile_soll) teile_gemischt = true;
+            teile_soll = t;
+            teile.insert(static_cast<int>(j.hole("teil")->zahl));
+        }
+        if (art(j) == "w" && (teile_soll == 0 || static_cast<int>(teile.size()) < teile_soll)) w_vor_status = true;
+    }
+    PRUEFE(teile_soll > 5);
+    PRUEFE_GLEICH(static_cast<int>(teile.size()), teile_soll);
+    PRUEFE(!teile_gemischt);
+    PRUEFE(!w_vor_status);
+    PRUEFE(!werte_aus(p).empty());  // danach wird wieder geliefert
+}
+
+TEST(dienst_h1_mehrteiliger_status_und_vollstaendige_wiederholung) {
+    // Der Client setzt mehrteilige Status-Antworten zusammen und fordert bei
+    // einer Lücke per identischem ABO nach (Client-Seite von H1). Plugin-
+    // Seite: teil/teile konsistent, und das Neu-ABO liefert ALLE Teile erneut.
+    Aufbau a;
+    std::vector<std::string> namen;
+    for (int i = 0; i < 4000; ++i) {
+        namen.push_back("sim/h1/n" + std::to_string(i));
+        if (i % 3) a.welt.neu(namen.back(), typ::F);
+    }
+    a.hallo();
+    const auto datagramme = abo_datagramme(7, 1, namen, 4);
+    for (const auto& d : datagramme) a.sende(d);
+    auto sammle_status = [&a]() {
+        std::map<int, std::vector<JWert>> teile;
+        int teile_soll = -1;
+        bool konsistent = true;
+        for (int i = 0; i < 60; ++i) {
+            a.frames(1);
+            for (auto& j : a.neue_vom_typ("abo")) {
+                const int t = static_cast<int>(j.hole("teile")->zahl);
+                if (teile_soll >= 0 && t != teile_soll) konsistent = false;
+                teile_soll = t;
+                if (j.hole("gen")->zahl != 4 || j.hole("abo")->zahl != 7) konsistent = false;
+                for (auto& e : j.hole("st")->feld) teile[static_cast<int>(j.hole("teil")->zahl)].push_back(e);
+            }
+        }
+        PRUEFE(konsistent);
+        std::vector<JWert> st;
+        for (int k = 1; k <= teile_soll; ++k) {
+            PRUEFE(teile.count(k));
+            for (auto& e : teile[k]) st.push_back(e);
+        }
+        PRUEFE_GLEICH(static_cast<int>(teile.size()), teile_soll);
+        return std::make_pair(teile_soll, st);
+    };
+    const auto erst = sammle_status();
+    PRUEFE(erst.first > 1);
+    PRUEFE_GLEICH(erst.second.size(), size_t(4000));
+    for (const auto& d : datagramme) a.sende(d);  // identisch: Nachforderung
+    const auto noch = sammle_status();
+    PRUEFE_GLEICH(noch.first, erst.first);
+    PRUEFE_GLEICH(noch.second.size(), size_t(4000));
+    for (size_t k = 0; k < noch.second.size() && k < erst.second.size(); ++k) {
+        PRUEFE(noch.second[k].feld[0].zahl == static_cast<double>(k));
+        PRUEFE_TEXT(status_text(noch.second[k]), status_text(erst.second[k]));
+    }
+}
+
+TEST(dienst_h3_speicher_limit_je_abo) {
+    // 8192-mal derselbe 1024-Byte-Dataref: je Eintrag 6153 Byte Werte-Reserve
+    // → ≈ 48 MiB. Vorher reserviert, jetzt fehler/speicher_limit.
+    Aufbau a;
+    a.welt.neu("addon/text", typ::B).b = std::string(1024, 'x');
+    a.welt.neu("sim/x", typ::F).f = 1.0f;
+    std::vector<std::string> namen(8192, "addon/text");
+    a.hallo();
+    a.sende("ABO 1 10\nsim/x");
+    for (const auto& d : abo_datagramme(3, 1, namen, 11)) a.sende(d);
+    std::vector<JWert> p;
+    for (int i = 0; i < 60; ++i) {
+        a.frames(1);
+        for (auto& j : a.neue()) p.push_back(j);
+    }
+    bool limit = false;
+    for (const auto& j : p) {
+        if (art(j) == "fehler" && j.hole("grund")->text == "speicher_limit") {
+            limit = true;
+            PRUEFE(j.hole("abo")->zahl == 3);
+            PRUEFE(j.hole("gen")->zahl == 11);
+        }
+        if (art(j) == "w") PRUEFE(j.hole("abo")->zahl != 3);
+    }
+    PRUEFE(limit);
+    PRUEFE_TEXT(a.d->abo_phase(3), "leer");
+    PRUEFE(a.d->speicher_abos() < (size_t(1) << 20));   // wieder frei
+    PRUEFE(!log_mit(a, "speicher_limit").empty());
+    PRUEFE(!werte_aus(p).empty());                        // Abo 1 unberührt
+    // Dasselbe mit 8192 × ganzem 256er-Array (≈ 34 MiB).
+    a.welt.neu("addon/arr", typ::VF).vf = std::vector<float>(300, 1.0f);
+    std::vector<std::string> arr(8192, "addon/arr");
+    for (const auto& d : abo_datagramme(4, 1, arr, 1)) a.sende(d);
+    limit = false;
+    for (int i = 0; i < 60; ++i) {
+        a.frames(1);
+        for (auto& j : a.neue()) {
+            if (art(j) == "fehler" && j.hole("grund")->text == "speicher_limit" && j.hole("abo")->zahl == 4) limit = true;
+        }
+    }
+    PRUEFE(limit);
+    PRUEFE(a.d->speicher_abos() <= grenzen::MAX_BYTES_ABOS);
+}
+
+TEST(dienst_h3_speicher_limit_gesamt) {
+    // Je Abo 3400 ganze 256er-Arrays ≈ 15 MiB (unter 16 MiB je Abo). Vier
+    // passen in 64 MiB, das fünfte nicht — die ersten vier bleiben unberührt.
+    Aufbau a;
+    a.welt.neu("addon/arr", typ::VF).vf = std::vector<float>(256, 0.5f);
+    std::vector<std::string> namen(3400, "addon/arr");
+    a.hallo();
+    std::map<int, int> w_je_abo;
+    std::map<int, std::string> fehler;
+    auto laufen = [&](int frames) {
+        for (int i = 0; i < frames; ++i) {
+            a.frames(1);
+            for (auto& j : a.neue()) {
+                const int id = j.hole("abo") ? static_cast<int>(j.hole("abo")->zahl) : 0;
+                if (art(j) == "w") w_je_abo[id]++;
+                if (art(j) == "fehler") fehler[id] = j.hole("grund")->text;
+            }
+        }
+    };
+    for (int id = 2; id <= 5; ++id) {
+        for (const auto& d : abo_datagramme(id, 1, namen, 1)) a.sende(d);
+        laufen(30);
+    }
+    PRUEFE(fehler.empty());
+    PRUEFE(a.d->speicher_abos() <= grenzen::MAX_BYTES_ABOS);
+    std::printf("     4 Abos x 3400 ganze 256er-Arrays: %.1f MiB belegt\n",
+                static_cast<double>(a.d->speicher_abos()) / (1 << 20));
+    for (const auto& d : abo_datagramme(6, 1, namen, 1)) a.sende(d);
+    w_je_abo.clear();
+    laufen(120);
+    PRUEFE(fehler.count(6) && fehler[6] == "speicher_limit");
+    PRUEFE_TEXT(a.d->abo_phase(6), "leer");
+    for (int id = 2; id <= 5; ++id) {
+        PRUEFE(!fehler.count(id));
+        PRUEFE(w_je_abo[id] > 0);
+    }
+    PRUEFE(a.d->speicher_abos() <= grenzen::MAX_BYTES_ABOS);
+}
+
+TEST(dienst_h3_legitime_vermessung_passt) {
+    // Größter legitimer Fall beim Client: Abo 1 (≈ 200 Namen) plus Vermessung
+    // mit 14 Abos (3–16) zu je 8192 Namen — 60 % Skalare, 35 % kleine Arrays
+    // (8–24), 5 % lange Arrays (300 → 256). Nichts darf am Budget scheitern.
+    Aufbau a;
+    std::map<int, std::vector<std::string>> abos;
+    std::vector<std::string> tele;
+    for (int i = 0; i < 200; ++i) {
+        tele.push_back("sim/tele/n" + std::to_string(i));
+        a.welt.neu(tele.back(), typ::D).d = i;
+    }
+    abos[1] = abo_datagramme(1, 20, tele, 1);
+    int k = 0;
+    for (int id = 3; id <= 16; ++id) {
+        std::vector<std::string> namen;
+        for (int i = 0; i < 8192; ++i, ++k) {
+            namen.push_back("mess/" + std::to_string(id) + "/dataref_mit_typischem_namen_" + std::to_string(i));
+            auto& r = a.welt.neu(namen.back(), 0);
+            const int art_nr = k % 20;
+            if (art_nr == 0) { r.typen = typ::VF; r.vf = std::vector<float>(300, 0.25f); }
+            else if (art_nr < 8) { r.typen = typ::VF; r.vf = std::vector<float>(8 + (k % 17), 1.5f); }
+            else { r.typen = (k % 2) ? typ::F : typ::I; r.f = 3.0f; r.i = 3; }
+        }
+        abos[id] = abo_datagramme(id, 1, namen, 1);
+    }
+    a.hallo();
+    const auto m = treibe(a, abos, 60.0);
+    bool fehler = false;
+    for (auto& j : a.neue()) if (art(j) == "fehler") fehler = true;
+    PRUEFE(!fehler);
+    PRUEFE(log_mit(a, "speicher").empty());
+    for (int id : {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) PRUEFE(m.erster_status.count(id));
+    std::printf("     Abo 1 + 14 x 8192 Mess-Namen: %.1f MiB belegt (Budget %zu MiB)\n",
+                static_cast<double>(a.d->speicher_abos()) / (1 << 20), grenzen::MAX_BYTES_ABOS >> 20);
+    PRUEFE(a.d->speicher_abos() <= grenzen::MAX_BYTES_ABOS);
+}
+
+TEST(dienst_h3_liste_speicher_limit) {
+    // 40 000 Namen à ≈ 60 Byte passen (≈ 2,5 MiB); 36 000 Namen à 510 Byte
+    // (≈ 18 MiB) nicht → fehler/speicher_limit mit id, Speicher wieder frei.
+    Aufbau a;
+    for (int i = 0; i < 40000; ++i) a.welt.neu("sim/liste/ein_typischer_dataref_name_" + std::to_string(i), typ::F);
+    // 1 µs je Name → ≈ 1000 Namen je Frame: das Sammeln läuft über viele
+    // Frames, die Prüfung nach jedem Frame sieht also auch den Höchststand.
+    a.welt.namen_kosten = 1e-6;
+    a.hallo();
+    a.sende("LISTE 5");
+    int teile = 0, gesehen = 0;
+    for (int i = 0; i < 2000 && (teile == 0 || gesehen < teile); ++i) {
+        a.frames(1);
+        for (auto& j : a.neue_vom_typ("liste")) { teile = static_cast<int>(j.hole("teile")->zahl); ++gesehen; }
+        PRUEFE(a.d->speicher_liste() <= grenzen::MAX_BYTES_LISTE);
+    }
+    PRUEFE(teile > 0 && gesehen == teile);
+    for (int i = 0; i < 36000; ++i) {
+        std::string n = "addon/" + std::to_string(i) + "/";
+        n += std::string(510 - n.size(), 'q');
+        a.welt.neu(n, typ::F);
+    }
+    a.sende("LISTE 6");
+    bool limit = false;
+    for (int i = 0; i < 3000 && !limit; ++i) {
+        a.frames(1);
+        PRUEFE(a.d->speicher_liste() <= grenzen::MAX_BYTES_LISTE);
+        for (auto& j : a.neue()) {
+            if (art(j) == "fehler" && j.hole("grund")->text == "speicher_limit") {
+                limit = true;
+                PRUEFE(j.hole("id")->zahl == 6);
+            }
+        }
+    }
+    PRUEFE(limit);
+    PRUEFE(!a.d->liste_laeuft());
+    PRUEFE_GLEICH(a.d->speicher_liste(), size_t(0));
+}
+
+TEST(dienst_h4_teurer_accessor_wird_gedrosselt) {
+    // 50 billige Plugin-Namen und einer, dessen Getter 5 ms braucht. Rate 20.
+    Aufbau a;
+    std::string abo = "ABO 2 20\n";
+    for (int i = 0; i < 50; ++i) {
+        a.welt.neu("addon/n" + std::to_string(i), typ::F).f = 1.0f;
+        abo += "addon/n" + std::to_string(i) + "\n";
+    }
+    auto& langsam = a.welt.neu("addon/langsam", typ::F);
+    langsam.f = 7.0f;
+    langsam.kosten = 0.005;
+    abo += "addon/langsam\n";
+    a.hallo();
+    a.sende(abo);
+    double max_frame = 0.0;
+    int w_pakete = 0, langsam_werte = 0;
+    int getter_ab_2s = -1;
+    bool fehlt = false;
+    for (int i = 0; i < 600; ++i) {  // 10 s bei 60 fps
+        if (i % 60 == 0) a.sende("PING");
+        if (i == 120) getter_ab_2s = langsam.getter_aufrufe;
+        const double vorher = a.umg.zeit + 1.0 / 60.0;
+        a.frame();
+        max_frame = std::max(max_frame, a.umg.zeit - vorher);
+        for (auto& j : a.neue()) {
+            if (art(j) == "abo") {
+                for (auto& e : j.hole("st")->feld) if (e.feld[0].zahl == 50 && e.feld[1].text == "fehlt") fehlt = true;
+            }
+            if (art(j) != "w") continue;
+            ++w_pakete;
+            for (auto& e : j.hole("v")->feld) if (e.feld[0].zahl == 50) ++langsam_werte;
+        }
+    }
+    const int getter_8s = langsam.getter_aufrufe - getter_ab_2s;
+    std::printf("     5-ms-Getter: %d Aufrufe in 8 s (gedrosselt), laengster Frame %.2f ms, %d Lieferungen\n",
+                getter_8s, max_frame * 1000.0, w_pakete);
+    // Nie zwei langsame Aufrufe in einem Frame: ≤ 1 ms Budget + ein fremder Aufruf.
+    PRUEFE(max_frame <= grenzen::ZEITBUDGET_S + grenzen::SUCH_BUDGET_S + 0.005 + 1e-4);
+    // Gedrosselt: höchstens einmal je Sekunde (Soll 8, etwas Spiel).
+    PRUEFE(getter_8s <= 10);
+    PRUEFE(langsam_werte >= 5);                 // Wert kommt weiter, nur seltener
+    PRUEFE(!fehlt);                             // Status bleibt wahr (nicht "fehlt")
+    PRUEFE(w_pakete >= 190);                    // die anderen Namen: ~20 Hz
+    PRUEFE_GLEICH(log_zaehle(a, "addon/langsam antwortet langsam"), 1);  // einmal im Log
+    // Neues Flugzeug: Drosselung neu bewerten (der Name gehört evtl. einem
+    // anderen Plugin) — nach drei langsamen Aufrufen wieder gedrosselt.
+    langsam.kosten = 0.0;
+    a.d->flugzeug_geladen();
+    const int vor = langsam.getter_aufrufe;
+    for (int i = 0; i < 120; ++i) {
+        if (i % 60 == 0) a.sende("PING");
+        a.frame();
+    }
+    PRUEFE(langsam.getter_aufrufe - vor >= 30);  // wieder volle Rate (Soll 40)
+}
+
+TEST(dienst_h4_einzelner_ausreisser_drosselt_nicht) {
+    // Drei Mal je zwei langsame Aufrufe, dazwischen schnelle: sechs langsame
+    // insgesamt, aber nie drei IN FOLGE → keine Drosselung. (Ohne die
+    // Folge-Regel würde der dritte Ausreißer irgendwann drosseln.)
+    Aufbau a;
+    auto& r = a.welt.neu("addon/zucker", typ::F);
+    a.hallo();
+    a.sende("ABO 2 20\naddon/zucker");
+    a.frames(10);
+    for (int zyklus = 0; zyklus < 3; ++zyklus) {
+        r.kosten = 0.005;
+        const int start = r.getter_aufrufe;
+        for (int i = 0; i < 60 && r.getter_aufrufe - start < 2; ++i) a.frames(1);
+        r.kosten = 0.0;
+        a.frames(30);
+    }
+    const int vor = r.getter_aufrufe;
+    a.frames(120);
+    PRUEFE(log_mit(a, "antwortet langsam").empty());
+    PRUEFE(r.getter_aufrufe - vor >= 30);  // volle Rate
+}
+
+TEST(dienst_h4_uhr_nach_jedem_aufruf_bei_der_suche) {
+    // Suche: finde kostet 0,2 ms, die Array-Länge (fremder Accessor) 0,05 ms.
+    // Vorher lief nach einer Uhrprüfung die GANZE zweite Einheit (0,5 ms statt
+    // 0,3 ms Budget); jetzt endet die Suche vor dem nächsten Aufruf.
+    Aufbau a;
+    std::string abo = "ABO 2 1\n";
+    for (int i = 0; i < 40; ++i) {
+        auto& r = a.welt.neu("addon/arr" + std::to_string(i), typ::VF);
+        r.vf = std::vector<float>(4, 1.0f);
+        r.kosten = 0.00005;
+        abo += "addon/arr" + std::to_string(i) + "\n";
+    }
+    a.welt.such_kosten = 0.0002;
+    a.hallo();
+    a.sende(abo);
+    int max_laengen = 0, max_suchen = 0, frames = 0;
+    bool status = false;
+    while (!status && frames < 200) {
+        int l = 0;
+        int laengen_vorher = 0;
+        for (auto& r : a.welt.refs) laengen_vorher += r->laengen_aufrufe;
+        const int suchen_vorher = a.welt.suchen;
+        a.frames(1);
+        ++frames;
+        for (auto& r : a.welt.refs) l += r->laengen_aufrufe;
+        max_laengen = std::max(max_laengen, l - laengen_vorher);
+        max_suchen = std::max(max_suchen, a.welt.suchen - suchen_vorher);
+        status = !a.neue_vom_typ("abo").empty();
+    }
+    std::printf("     Suche: hoechstens %d finde + %d Laengen je Frame, Status nach %d Frames\n",
+                max_suchen, max_laengen, frames);
+    PRUEFE(status);
+    PRUEFE(max_laengen <= 1);  // nur die freie Einheit erreicht ihren fremden Aufruf
+    PRUEFE(max_suchen <= 2);   // die zweite Einheit endet nach finde
+}
+
+TEST(dienst_h4_liste_je_name_budgetiert) {
+    Aufbau a;
+    for (int i = 0; i < 3000; ++i) a.welt.neu("sim/l/n" + std::to_string(i), typ::F);
+    a.welt.namen_kosten = 0.00005;  // 50 µs je XPLMGetDataRefInfo
+    a.hallo();
+    a.sende("LISTE 9");
+    int max_namen = 0, teile = 0, gesehen = 0;
+    for (int i = 0; i < 1000 && (teile == 0 || gesehen < teile); ++i) {
+        const int vorher = a.welt.namen_abfragen;
+        a.frames(1);
+        max_namen = std::max(max_namen, a.welt.namen_abfragen - vorher);
+        for (auto& j : a.neue_vom_typ("liste")) { teile = static_cast<int>(j.hole("teile")->zahl); ++gesehen; }
+    }
+    std::printf("     LISTE: hoechstens %d Namen je Frame (vorher bis 256)\n", max_namen);
+    PRUEFE(teile > 0 && gesehen == teile);
+    PRUEFE(max_namen <= 22);  // 1 ms / 50 µs = 20, plus freie Einheit
+}
+
+TEST(dienst_m1_gemeinsamer_ausgang) {
+    // Eine Runde ≈ 6000 × 25 Byte ≈ 19 Pakete — mehr, als ein Frame darf. Die
+    // Lieferung will also jeden Frame alle 16; zusammen mit 8 pong wären es
+    // 24, wenn die Antworten beim Empfang nicht mitzählten.
+    Aufbau a;
+    std::vector<std::string> namen;
+    for (int i = 0; i < 6000; ++i) {
+        namen.push_back("sim/m1/n" + std::to_string(i));
+        a.welt.neu(namen.back(), typ::D).d = i + 0.12345678901234;
+    }
+    a.hallo();
+    for (const auto& d : abo_datagramme(2, 50, namen, 1)) a.sende(d);
+    a.frames(5);
+    a.neue();
+    int max_je_frame = 0, max_pong = 0, w_gesamt = 0;
+    for (int f = 0; f < 120; ++f) {
+        const size_t vorher = a.umg.gesendet.size();
+        // PING-Flut: 60 PINGs + 4 kaputte Anfragen je Frame (64 = Empfangsgrenze).
+        for (int k = 0; k < 60; ++k) a.sende("PING");
+        for (int k = 0; k < 4; ++k) a.sende("QUATSCH", ANDERER);
+        if (f % 20 == 0) a.d->flugzeug_geladen();
+        a.frame();
+        max_je_frame = std::max(max_je_frame, static_cast<int>(a.umg.gesendet.size() - vorher));
+        int pong = 0;
+        for (auto& j : a.neue()) {
+            if (art(j) == "pong") ++pong;
+            if (art(j) == "w") ++w_gesamt;
+        }
+        max_pong = std::max(max_pong, pong);
+    }
+    std::printf("     Flut: hoechstens %d Pakete je Frame, davon %d pong; %d Werte-Pakete\n",
+                max_je_frame, max_pong, w_gesamt);
+    PRUEFE(max_je_frame <= grenzen::MAX_PAKETE_JE_FRAME);
+    PRUEFE(max_pong <= grenzen::MAX_KLEINE_JE_FRAME);
+    PRUEFE(max_pong >= 1);         // Lebenszeichen kommt trotzdem
+    // ≥ 8 Pakete je Frame bleiben der Lieferung; im Mittel etwas weniger, weil
+    // der Frame mit dem Rest einer Runde keine neue beginnt (gemessen 6,7).
+    PRUEFE(w_gesamt >= 120 * 6);
+    PRUEFE(!log_mit(a, "kleine Antworten verworfen").empty());
+}
+
+TEST(dienst_m2_liste_verhungert_nicht) {
+    // Drei Dauer-Abos (je 3000 Arrays, 50 Hz), jedes Lesen 2 µs → eine Runde
+    // braucht 6 ms, jedes Budget ist jeden Frame erschöpft. Vorher kam LISTE
+    // nie dran; jetzt ist sie im Rundlauf jeden vierten Frame als erste dran.
+    Aufbau a;
+    for (int i = 0; i < 64; ++i) a.welt.neu("arr/" + std::to_string(i), typ::VF).vf = std::vector<float>(16, 1.0f);
+    for (int i = 0; i < 3000; ++i) a.welt.neu("sim/liste/n" + std::to_string(i), typ::F);
+    a.welt.lese_kosten = 2e-6;
+    a.hallo();
+    for (int id : {3, 9, 16}) {
+        std::string d = "ABO " + std::to_string(id) + " 50\n";
+        for (int i = 0; i < 3000; ++i) d += "arr/" + std::to_string(i % 64) + "\n";
+        a.sende(d);
+    }
+    a.frames(30);
+    a.sende("LISTE 77");
+    int teile = 0, gesehen = 0, frames = 0;
+    std::map<int, int> w;
+    for (; frames < 600 && (teile == 0 || gesehen < teile); ++frames) {
+        a.frames(1);
+        for (auto& j : a.neue()) {
+            if (art(j) == "liste") { teile = static_cast<int>(j.hole("teile")->zahl); ++gesehen; }
+            if (art(j) == "w") w[static_cast<int>(j.hole("abo")->zahl)]++;
+        }
+    }
+    std::printf("     LISTE neben drei Dauer-Abos: fertig nach %d Frames\n", frames);
+    PRUEFE(teile > 0 && gesehen == teile);
+    for (int id : {3, 9, 16}) PRUEFE(w[id] > 0);
 }

@@ -56,8 +56,17 @@ public:
     bool uebernehme(const JsonSchreiber& w) noexcept;
 
     // Wie oben, aber wächst bei Bedarf (für LISTE, deren Größe vorab unbekannt
-    // ist). `max_element` ist die Höchstlänge des nächsten Elements.
-    bool sorge_fuer_platz(size_t max_element) noexcept;
+    // ist). `max_element` ist die Höchstlänge des nächsten Elements. Danach
+    // belegt die Liste höchstens `max_bytes` (Text + Endpositionen, siehe
+    // belegt_bytes): Wachstum verdoppelt, wird an der Grenze aber auf den
+    // Rest gekappt; passt selbst das nächste Element nicht mehr → LIMIT.
+    enum class Platz : uint8_t { OK, LIMIT, SPEICHER };
+    Platz sorge_fuer_platz(size_t max_element, size_t max_bytes) noexcept;
+
+    // Reservierte Bytes (Kapazität, nicht Inhalt) — das zählt fürs Budget.
+    size_t belegt_bytes() const noexcept {
+        return text_.kapazitaet() + enden_.kapazitaet() * sizeof(uint32_t);
+    }
 
     size_t anzahl() const noexcept { return enden_.anzahl(); }
     size_t bytes() const noexcept { return text_.anzahl(); }

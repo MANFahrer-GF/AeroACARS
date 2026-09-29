@@ -56,6 +56,10 @@ public:
     void ganzzahl(int64_t wert) noexcept;
     void zahl_d(double wert) noexcept;
     void zahl_f(float wert) noexcept;
+    // Feste Nachkommastellen wie printf("%.<n>f") — für Protokoll 1, dessen
+    // Zahlenformat alte Clients kennen (Codex-Abnahme M3). Locale-fest wie
+    // zahl_d, NaN/±Inf → null. `nachkommastellen` 0 … 17.
+    void zahl_fest(double wert, int nachkommastellen) noexcept;
     void null() noexcept;
 
     size_t laenge() const noexcept { return laenge_; }
@@ -71,7 +75,7 @@ public:
 
 private:
     bool platz(size_t n) noexcept;
-    void zahl_aus_printf(const char* formatiert, int n) noexcept;
+    void zahl_aus_printf(const char* formatiert, size_t n) noexcept;
 
     char* puffer_;
     size_t kapazitaet_;

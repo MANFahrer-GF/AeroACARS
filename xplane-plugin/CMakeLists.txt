@@ -124,10 +124,13 @@ set(AEROACARS_KERN_QUELLEN
     src/json_schreiber.cpp
     src/pakete.cpp
     src/dienst.cpp
+    src/protokoll1.cpp
+    src/netz.cpp
 )
 add_library(AeroACARS MODULE
     src/plugin.cpp
     src/dienst_xplm.cpp
+    src/netz_os.cpp
     ${AEROACARS_KERN_QUELLEN}
 )
 
@@ -283,20 +286,33 @@ if(AEROACARS_PLUGIN_TESTS)
         tests/test_json.cpp
         tests/test_pakete.cpp
         tests/test_dienst.cpp
+        tests/test_protokoll1.cpp
+        tests/test_netz.cpp
     )
     aeroacars_testprogramm(aeroacars_fuzz
         tests/fuzz.cpp
         tests/json_pruefer.cpp
     )
+    # Die ECHTEN Socket-Aufrufe (netz_os.cpp) — auf allen drei Plattformen,
+    # also auch unter Windows, wo es keinen Ende-zu-Ende-Test gibt
+    # (Codex-Abnahme H5).
+    aeroacars_testprogramm(aeroacars_netz_echt
+        tests/test_netz_echt.cpp
+        src/netz_os.cpp
+    )
+    if(WIN32)
+        target_link_libraries(aeroacars_netz_echt PRIVATE ws2_32)
+    endif()
 
     add_test(NAME einheitstests COMMAND aeroacars_tests)
     # Fester Startwert, feste Laufzeit (5 s): reproduzierbar und in der CI
     # auf allen drei Plattformen bezahlbar.
     add_test(NAME fuzz COMMAND aeroacars_fuzz 5 20260929)
+    add_test(NAME netz_echt COMMAND aeroacars_netz_echt)
 
     # Sammelziel für die CI: baut alles, was die Tests brauchen.
     add_custom_target(aeroacars_alle_tests)
-    add_dependencies(aeroacars_alle_tests aeroacars_tests aeroacars_fuzz)
+    add_dependencies(aeroacars_alle_tests aeroacars_tests aeroacars_fuzz aeroacars_netz_echt)
 
     # Ende-zu-Ende (macOS/Linux): die ECHTE .xpl in einer XPLM-Attrappe,
     # dazu werkzeuge/plugin_sonde.py als Client. Prüft Socket-Schicht,
