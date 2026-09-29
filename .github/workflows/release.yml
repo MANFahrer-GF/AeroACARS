@@ -140,7 +140,10 @@ jobs:
   # .app.tar.gz, plus the matching .sig) to the GitHub release that
   # `tauri-action` creates / updates for this tag.
   build:
-    needs: release-preflight
+    # AP7 (29.09.2026): erst das Plugin-Paket, dann die App — die App traegt
+    # die SHA-256 des Pakets fest eingebaut und installiert nur ein Paket,
+    # das genau dazu passt (ADR-0004 §8).
+    needs: [release-preflight, plugin-zip]
     permissions:
       contents: write
     strategy:
@@ -212,6 +215,9 @@ jobs:
           # Build laeuft trotzdem durch.
           AEROACARS_SENTRY_DSN: ${{ secrets.AEROACARS_SENTRY_DSN }}
           VITE_SENTRY_DSN_CLIENT: ${{ secrets.VITE_SENTRY_DSN_CLIENT }}
+          # AP7: Pruefsumme des X-Plane-Plugin-Pakets aus `plugin-zip`. Rust
+          # liest sie per option_env!() in src-tauri/src/xplane_plugin_install.rs.
+          AEROACARS_XPLANE_PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
         with:
           projectPath: client
           tagName: ${{ github.ref_name }}
@@ -295,6 +301,15 @@ jobs:
         run: |
           cmake --build build --config Release --target AeroACARS
 
+      # AP7: ad-hoc-Signatur fuer macOS (ADR-0004 §8). Ohne Apple-Developer-ID;
+      # der Client entfernt beim Installieren die Quarantaene.
+      - name: Ad-hoc sign mac.xpl
+        if: matrix.xpl_name == 'mac.xpl'
+        working-directory: xplane-plugin
+        run: |
+          codesign --force --sign - build/AeroACARS/64/mac.xpl
+          codesign --verify --verbose build/AeroACARS/64/mac.xpl
+
       - name: List build output (debug)
         working-directory: xplane-plugin
         shell: bash
@@ -309,16 +324,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # ---- X-Plane Premium Plugin: package + upload to release ----
-  # Downloads all three .xpl artifacts, assembles the X-Plane fat-
-  # plugin folder layout, and uploads `AeroACARS-XPlane-Plugin-vX.zip`
-  # to the GitHub draft release. Pilots can drop that zip straight
-  # into <X-Plane>/Resources/plugins/.
-  plugin-package:
-    needs: [plugin-build, build]
+  # ---- X-Plane Plugin: Paket bauen + Pruefsumme (VOR der App) ----
+  # Laedt die drei .xpl, baut das X-Plane-Ordnerlayout, packt EINMAL und
+  # gibt die SHA-256 genau dieser Datei weiter. Dieselbe Datei geht spaeter
+  # unveraendert in den Draft — neu gepackt wuerde sie eine andere Summe
+  # tragen (Zeitstempel im Zip).
+  plugin-zip:
+    needs: plugin-build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      sha256: ${{ steps.summe.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v7
 
@@ -353,6 +370,48 @@ jobs:
         working-directory: pkg
         run: |
           zip -r ../AeroACARS-XPlane-Plugin-${{ github.ref_name }}.zip AeroACARS
+
+      - name: SHA-256
+        id: summe
+        run: |
+          set -euo pipefail
+          SUMME=$(sha256sum "AeroACARS-XPlane-Plugin-${{ github.ref_name }}.zip" | cut -d' ' -f1)
+          echo "sha256=$SUMME" >> "$GITHUB_OUTPUT"
+          echo "Plugin-Paket SHA-256: $SUMME"
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: xplane-plugin-zip
+          path: AeroACARS-XPlane-Plugin-${{ github.ref_name }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---- X-Plane Plugin + Flow-Widget: in den Draft hochladen (NACH der App) ----
+  # Der Draft entsteht erst im `build`-Job (tauri-action). Das Plugin-Paket
+  # ist dasselbe, dessen Summe in der App steckt — hier nur noch geprueft
+  # und hochgeladen.
+  plugin-package:
+    needs: [plugin-zip, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download plugin zip
+        uses: actions/download-artifact@v8
+        with:
+          name: xplane-plugin-zip
+          path: .
+
+      - name: Verify SHA-256 against the app build
+        run: |
+          set -euo pipefail
+          IST=$(sha256sum "AeroACARS-XPlane-Plugin-${{ github.ref_name }}.zip" | cut -d' ' -f1)
+          SOLL="${{ needs.plugin-zip.outputs.sha256 }}"
+          echo "ist=$IST soll=$SOLL"
+          test "$IST" = "$SOLL"
 
       - name: Upload zip to release
         env:
