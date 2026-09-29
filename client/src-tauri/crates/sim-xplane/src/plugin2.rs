@@ -510,6 +510,31 @@ pub fn status_wartezeit_angenommen(namen: usize) -> Duration {
     ANGENOMMEN_WARTEN + Duration::from_millis((namen as u64) / 2)
 }
 
+/// Ab wann ein bestaetigtes Abo als „Werte versiegt" gilt und identisch
+/// neu gesendet wird (QS AP7, Befund N2 der Nachpruefung).
+///
+/// * Abo 1 (Katalog, 50 Hz, ~100 Namen): fest [`STILLE`] = 3 s — wie die
+///   Sitzung selbst; dort zaehlt schnelles Wiederanmelden.
+/// * sonst das Groesste aus
+///   - 3 s (Untergrenze wie oben),
+///   - 5 Perioden der Rate (5 Hz → 1 s; 1 Hz → 5 s): vier ausgefallene
+///     Lieferrunden sind noch kein Versiegen,
+///   - 1 s + 1 s je 2000 Namen: das Plugin verteilt grosse Abos wegen seines
+///     Zeitbudgets (1 ms je Bild, Rundlauf ueber alle Abos) ueber viele
+///     Bilder; bei 14 Mess-Abos zu je 8192 Namen lagen 4–5 s zwischen zwei
+///     Runden eines Abos — 1 s + 4,1 s = 5,1 s deckt das. Mit festen 3 s
+///     wurde laufend identisch neu gesendet (je ~25 × 16 KB), was mit den
+///     Werten konkurrierte und die 4-MiB-Grenze der Warteschlange erreichen
+///     konnte.
+pub fn stille_fuer(abo: u8, rate_hz: u32, namen: usize) -> Duration {
+    if abo == 1 {
+        return STILLE;
+    }
+    let perioden = Duration::from_millis(5_000 / u64::from(rate_hz.clamp(1, 50)));
+    let je_namen = Duration::from_millis(1_000 + (namen as u64) / 2);
+    STILLE.max(perioden).max(je_namen)
+}
+
 /// Wartezeit nach der `versuche`-ten Sendung: nach der ersten und der
 /// ersten Wiederholung je die Grundzeit, danach verdoppelt bis
 /// [`RUECKOFF_MAX`].
@@ -749,10 +774,11 @@ impl Sitzung {
             let seit = jetzt.saturating_duration_since(g.gesendet_um);
             if g.bestaetigt {
                 // Werte versiegt, obwohl Namen da sind.
+                let stille = stille_fuer(*id, g.rate, g.draht_zu_lokal.len());
                 if g.namen_da
                     && g.lebenszeichen
-                        .is_none_or(|t| jetzt.saturating_duration_since(t) > STILLE)
-                    && seit > STILLE
+                        .is_none_or(|t| jetzt.saturating_duration_since(t) > stille)
+                    && seit > stille
                 {
                     neu.push(*id);
                 }
@@ -2047,6 +2073,63 @@ mod tests {
         // Lebenszeichen: bei 5 s noch offen.
         s.takt(t + Duration::from_secs(5), &z);
         assert!(s.offen());
+    }
+
+    #[test]
+    fn stille_schwelle_je_abo() {
+        assert_eq!(stille_fuer(1, 50, 120), STILLE);
+        assert_eq!(stille_fuer(1, 50, 8192), STILLE, "Katalog bleibt bei 3 s");
+        assert_eq!(stille_fuer(2, 20, 10), STILLE);
+        assert_eq!(stille_fuer(3, 1, 10), Duration::from_secs(5));
+        assert_eq!(stille_fuer(3, 5, 8192), Duration::from_millis(5_096));
+    }
+
+    /// Nachpruefung N2: 8192-Namen-Mess-Abo, das Plugin liefert nur alle
+    /// 4,5 s eine Runde (Rundlauf ueber 14 grosse Abos) — kein Neusenden.
+    /// Bleiben die Werte dann ganz aus, wird nach der Schwelle neu gesendet.
+    #[test]
+    fn langsame_lieferrunden_sind_kein_versiegen() {
+        let z = TestZiel::default();
+        let viele: Vec<String> = (0..8192).map(|i| format!("sim/mess/wert_{i:05}")).collect();
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 5,
+            rate: 5,
+            namen: Arc::new(viele),
+        }];
+        let mut s = Sitzung::neu("1");
+        let t0 = Instant::now();
+        s.empfangen(hallo_antwort("1.0.0"), t0, &z);
+        let mut sendungen: Vec<Duration> = Vec::new();
+        let mut schritt = Duration::ZERO;
+        let mut naechste_runde = Duration::from_secs(1);
+        while schritt < Duration::from_secs(40) {
+            let jetzt = t0 + schritt;
+            s.empfangen(Antwort::Sonstige("pong".into()), jetzt, &z);
+            if schritt == Duration::from_millis(500) {
+                s.empfangen(status(5, Some(1), vec![(0, da())]), jetzt, &z);
+            }
+            // Lieferrunden alle 4,5 s bis 25 s, dann nichts mehr.
+            if schritt >= naechste_runde && schritt < Duration::from_secs(25) {
+                s.empfangen(werte(5, Some(1), vec![(0, Wert::Zahl(1.0))]), jetzt, &z);
+                naechste_runde += Duration::from_millis(4500);
+            }
+            if text_von(&s.takt(jetzt, &z))
+                .iter()
+                .any(|d| d.starts_with("ABO 5 5 1 "))
+            {
+                sendungen.push(schritt);
+            }
+            schritt += Duration::from_millis(20);
+        }
+        assert_eq!(sendungen[0], Duration::ZERO);
+        assert!(
+            sendungen[1..].iter().all(|t| *t > Duration::from_secs(25)),
+            "Neusenden trotz Lieferung: {sendungen:?}"
+        );
+        assert!(
+            sendungen.len() >= 2,
+            "versiegte Werte nicht bemerkt: {sendungen:?}"
+        );
     }
 
     /// Grosse Datagramme gehen mit Abstand hinaus; Vorrang (PING, ENDE-ABO)

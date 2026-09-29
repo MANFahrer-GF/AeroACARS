@@ -567,6 +567,9 @@ pub(crate) struct P2Messung {
     bestaetigt: Mutex<std::collections::HashSet<usize>>,
     /// Ein Mess-Abo blieb ohne Status oder wurde abgelehnt.
     gescheitert: Mutex<Option<String>>,
+    /// Mess-Abos (Index in `teile`), die im Lauf ausgefallen sind — ihre
+    /// Werte sind nicht mehr aktuell und zaehlen nicht.
+    verloren: Mutex<std::collections::HashSet<usize>>,
 }
 
 impl P2Messung {
@@ -578,7 +581,27 @@ impl P2Messung {
             daten: Mutex::new(MessDaten::default()),
             bestaetigt: Mutex::new(std::collections::HashSet::new()),
             gescheitert: Mutex::new(None),
+            verloren: Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    /// Ein Mess-Abo ist gescheitert (ohne Status/Werte trotz Wiederholung,
+    /// oder vom Plugin abgelehnt). Vor dem Start: der Lauf nimmt die Web-API.
+    /// Mitten im Lauf: seine Namen gelten ab jetzt als abgelehnt — der
+    /// Bericht sagt das ehrlich (`abo.abgelehnt`/`abgelehnt_namen`), statt
+    /// eingefrorene Werte als Messung auszugeben.
+    pub(crate) fn abo_gescheitert(&self, abo: u8, grund: String) {
+        if let Some(k) = abo.checked_sub(ABO_MESSUNG_AB).map(usize::from) {
+            if k < self.teile.lock().len() && self.verloren.lock().insert(k) {
+                tracing::warn!(abo, grund = %grund, "X-Plane-Vermessung: Mess-Abo ausgefallen");
+            }
+        }
+        self.gescheitert_setzen(grund);
+    }
+
+    /// Liegt Name `i` in einem ausgefallenen Mess-Abo?
+    fn ist_verloren(verloren: &std::collections::HashSet<usize>, i: usize) -> bool {
+        verloren.contains(&(i / MAX_NAMEN))
     }
 
     /// Ein Mess-Abo bleibt ohne Status (bzw. das Plugin lehnt es ab).
@@ -704,10 +727,11 @@ impl P2Messung {
     /// Alle Zahlen, Arrays als `name[i]` (bis [`MAX_ARRAY`]) — wie der
     /// Web-API-Spiegel.
     fn schnappschuss(&self) -> HashMap<String, f64> {
+        let verloren = self.verloren.lock().clone();
         let d = self.daten.lock();
         let mut aus = HashMap::with_capacity(d.namen.len());
         for (i, w) in d.werte.iter().enumerate() {
-            if Self::ist_text(d.status[i]) {
+            if Self::ist_text(d.status[i]) || Self::ist_verloren(&verloren, i) {
                 continue;
             }
             match w {
@@ -732,36 +756,58 @@ impl P2Messung {
     }
 
     fn verbunden(&self) -> usize {
+        let verloren = self.verloren.lock().clone();
         let d = self.daten.lock();
         d.werte
             .iter()
             .zip(&d.status)
-            .filter(|(w, s)| Self::zahl_wert(w) && !Self::ist_text(**s))
+            .enumerate()
+            .filter(|(i, (w, s))| {
+                Self::zahl_wert(w) && !Self::ist_text(**s) && !Self::ist_verloren(&verloren, *i)
+            })
             .count()
     }
 
     /// Wie bei der Web-API: angemeldet = Zahlen-Namen (Text-Datarefs zählen
     /// nicht, die Web-API meldet sie gar nicht erst an), abgelehnt = vom
-    /// Plugin als „fehlt" gemeldet.
+    /// Plugin als „fehlt" gemeldet ODER in einem im Lauf ausgefallenen
+    /// Mess-Abo (Nachpruefung AP7: der Bericht darf keine eingefrorenen Werte
+    /// als gemessen ausgeben). Die Namen der ausgefallenen Abos stehen hinter
+    /// den „fehlt"-Namen in `abgelehnt_namen` (hoechstens 50, Server-Schema).
     fn abo_stand(&self) -> AboStand {
+        let verloren = self.verloren.lock().clone();
         let d = self.daten.lock();
-        let fehlt: Vec<&String> = d
-            .status
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| **s == Some(NameStatus::Fehlt))
-            .map(|(i, _)| &d.namen[i])
+        let zahl_name = |i: usize| !Self::ist_text(d.status[i]);
+        let fehlt: Vec<&String> = (0..d.namen.len())
+            .filter(|&i| {
+                d.status[i] == Some(NameStatus::Fehlt) && !Self::ist_verloren(&verloren, i)
+            })
+            .map(|i| &d.namen[i])
+            .collect();
+        let ausgefallen: Vec<&String> = (0..d.namen.len())
+            .filter(|&i| {
+                Self::ist_verloren(&verloren, i)
+                    && zahl_name(i)
+                    && d.status[i] != Some(NameStatus::Fehlt)
+            })
+            .map(|i| &d.namen[i])
             .collect();
         AboStand {
-            angemeldet: d.status.iter().filter(|s| !Self::ist_text(**s)).count(),
-            angekommen: d
-                .werte
-                .iter()
-                .zip(&d.status)
-                .filter(|(w, s)| Self::zahl_wert(w) && !Self::ist_text(**s))
+            angemeldet: (0..d.namen.len()).filter(|&i| zahl_name(i)).count(),
+            angekommen: (0..d.namen.len())
+                .filter(|&i| {
+                    Self::zahl_wert(&d.werte[i])
+                        && zahl_name(i)
+                        && !Self::ist_verloren(&verloren, i)
+                })
                 .count(),
-            abgelehnt: fehlt.len(),
-            abgelehnt_namen: fehlt.into_iter().take(50).cloned().collect(),
+            abgelehnt: fehlt.len() + ausgefallen.len(),
+            abgelehnt_namen: fehlt
+                .into_iter()
+                .chain(ausgefallen)
+                .take(50)
+                .cloned()
+                .collect(),
             quelle: "plugin",
         }
     }
@@ -1063,6 +1109,50 @@ mod tests {
         m.gescheitert_setzen("Abo 4 ohne Status".into());
         m.gescheitert_setzen("zweiter Grund".into());
         assert_eq!(m.bereit(), Some(Err("Plugin: Abo 4 ohne Status".into())));
+    }
+
+    /// Nachpruefung AP7: ein Mess-Abo faellt MITTEN im Lauf aus. Seine
+    /// (eingefrorenen) Werte verschwinden aus dem Schnappschuss, der Bericht
+    /// zaehlt seine Namen als abgelehnt; das andere Abo bleibt unberuehrt.
+    #[test]
+    fn ausgefallenes_mess_abo_wird_ehrlich_berichtet() {
+        let m = P2Messung::neu(1);
+        m.abonnieren((0..8200).map(|i| format!("sim/wert/{i}")).collect());
+        let teile = m.teile();
+        assert_eq!(teile[1].len(), 8);
+        m.status(ABO_MESSUNG_AB, &teile[0], vec![(0, NameStatus::Fehlt)]);
+        let da = NameStatus::Da {
+            typ: Typ::Float,
+            laenge: 1,
+        };
+        m.status(
+            ABO_MESSUNG_AB + 1,
+            &teile[1],
+            (0..8).map(|i| (i, da)).collect(),
+        );
+        m.werte(ABO_MESSUNG_AB, &teile[0], vec![(1, P2Wert::Zahl(1.0))]);
+        m.werte(
+            ABO_MESSUNG_AB + 1,
+            &teile[1],
+            vec![(0, P2Wert::Zahl(2.0)), (1, P2Wert::Zahl(3.0))],
+        );
+        assert_eq!(m.verbunden(), 3);
+        m.abo_gescheitert(ABO_MESSUNG_AB + 1, "Abo 4 ohne Status".into());
+        let s = m.schnappschuss();
+        assert_eq!(s.get("sim/wert/1"), Some(&1.0));
+        assert!(!s.contains_key("sim/wert/8192"), "eingefrorener Wert");
+        assert_eq!(m.verbunden(), 1);
+        let a = m.abo_stand();
+        assert_eq!(a.quelle, "plugin");
+        assert_eq!(a.angemeldet, 8200);
+        assert_eq!(a.angekommen, 1);
+        assert_eq!(a.abgelehnt, 1 + 8);
+        assert_eq!(a.abgelehnt_namen[0], "sim/wert/0");
+        assert_eq!(a.abgelehnt_namen[1], "sim/wert/8192");
+        assert_eq!(a.abgelehnt_namen.len(), 9);
+        // Fremde Abo-Nummern (Katalog) aendern nichts.
+        m.abo_gescheitert(1, "egal".into());
+        assert_eq!(m.abo_stand().abgelehnt, 9);
     }
 
     #[test]

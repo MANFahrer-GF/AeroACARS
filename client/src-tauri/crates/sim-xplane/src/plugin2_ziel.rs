@@ -601,8 +601,8 @@ impl Ziel for AdapterShared {
                         m.liste_fehler(grund.clone());
                     }
                     // Ein Mess-Abo abgelehnt (zu viele Namen, Speicher …).
-                    if abo.is_some_and(|a| a >= ABO_MESSUNG_AB) {
-                        m.gescheitert_setzen(grund);
+                    if let Some(a) = abo.filter(|a| *a >= ABO_MESSUNG_AB) {
+                        m.abo_gescheitert(a, grund);
                     }
                 }
             }
@@ -611,7 +611,7 @@ impl Ziel for AdapterShared {
                 // wartet nicht: dieser Lauf nimmt die Web-API (QS AP7 H1).
                 if abo >= ABO_MESSUNG_AB {
                     if let Some(m) = self.messung() {
-                        m.gescheitert_setzen(format!("Abo {abo} ohne Status"));
+                        m.abo_gescheitert(abo, format!("Abo {abo} ohne Status"));
                     }
                 } else {
                     tracing::warn!(
