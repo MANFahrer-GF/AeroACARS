@@ -247,7 +247,10 @@ Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
   beginnt, prüft das Plugin `XPLMIsDataRefGood`; ist er verwaist, fällt der
   Wert aus und der Status geht sofort auf `fehlt`. Nach
   `XPLM_MSG_PLANE_LOADED` pausieren Abos mit solchen Namen die Lieferung, bis
-  die Neusuche übernommen ist. Die tatsächlichen Kosten von `XPLMFindDataRef`
+  die Neusuche übernommen ist, höchstens aber 0,5 s (Nachprüfung: viele
+  8192er-Mess-Abos lagen sonst über 15 s still; kleine Abos wie Abo 1/2 sind
+  durch „kürzester Rest zuerst“ vorher fertig, große schützt danach die
+  Prüfung beim Lesen). Die tatsächlichen Kosten von `XPLMFindDataRef`
   und `XPLMIsDataRefGood` misst das Plugin beim Start und schreibt sie ins
   `Log.txt`.
 - **`pv` in Protokoll 1:** `telemetry` und `touchdown` tragen zusätzlich

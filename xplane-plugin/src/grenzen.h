@@ -99,6 +99,15 @@ constexpr double NACHSUCHE_INTERVALL_S = 2.0;
 // und ein Client, der nach 2 s neu anmeldete, bekam nie einen Status.)
 constexpr double SUCH_BUDGET_S = 0.0003;
 
+// Nach XPLM_MSG_PLANE_LOADED pausieren Abos mit Plugin-Namen, bis ihre
+// Neusuche übernommen ist — aber höchstens so lange. Kleine Abos (beim Client
+// Abo 1/2: Anzeige, Flugzustand) sucht die Reihenfolge "kürzester Rest
+// zuerst" in wenigen Frames neu, sie sind also voll geschützt. Große
+// Mess-Abos (8192 Namen, viele davon) bräuchten sonst viele Sekunden Pause;
+// nach der Grenze liefern sie weiter, und die IsDataRefGood-Prüfung vor jedem
+// Lesen hält verwaiste Namen trotzdem heraus.
+constexpr double MAX_PAUSE_S = 0.5;
+
 // Flugzeug-Kennung (ICAO/Titel/Pfad) wird so oft auf Änderung geprüft.
 constexpr double FLUGZEUG_PRUEFINTERVALL_S = 2.0;
 

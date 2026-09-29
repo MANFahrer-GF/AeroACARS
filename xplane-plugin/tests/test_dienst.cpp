@@ -1044,7 +1044,10 @@ TEST(dienst_n1_verwaist_beim_lesen) {
 TEST(dienst_n1_pause_nach_flugzeugwechsel) {
     Aufbau a;
     setze_xplm_kosten(a);
-    a.welt.such_kosten = 5e-6;  // Neusuche über mehrere Frames
+    // Neusuche über mehrere Frames, aber innerhalb der Pausen-Grenze
+    // (grenzen::MAX_PAUSE_S); was danach gilt, prüft
+    // dienst_pause_nach_flugzeugwechsel_begrenzt.
+    a.welt.such_kosten = 3e-6;
     std::string plugin_abo = "ABO 2 30\n";
     for (int i = 0; i < 1000; ++i) {
         a.welt.neu("toliss/n" + std::to_string(i), typ::F).f = 1.0f;
@@ -1094,4 +1097,55 @@ TEST(dienst_liste_ohne_index_namen) {
     }
     PRUEFE(namen.count("sim/b"));
     PRUEFE(!namen.count("sim/a[3]"));
+}
+
+TEST(dienst_pause_nach_flugzeugwechsel_begrenzt) {
+    // Nachprüfung AP7: sechs Mess-Abos mit je 8192 Plugin-Namen bei 3 µs je
+    // Suche brauchten ~16 s Neusuche — so lange lieferten sie vorher nichts.
+    Aufbau a;
+    setze_xplm_kosten(a);
+    a.welt.such_kosten = 3e-6;
+    // Abo 1: kleines Anzeige-Abo mit einem Plugin-Namen.
+    auto& anzeige = a.welt.neu("toliss/anzeige", typ::F);
+    anzeige.f = 7.0f;
+    std::map<int, std::vector<std::string>> abos;
+    abos[1] = abo_datagramme(1, 20, {"toliss/anzeige"}, 1);
+    for (int id = 3; id <= 8; ++id) {
+        abos[id] = abo_datagramme(id, 5, vermessungs_namen(a, "mess" + std::to_string(id) + "/n", 8192), 1);
+    }
+    a.hallo();
+    const auto m = treibe(a, abos, 60.0);
+    for (int id : {1, 3, 4, 5, 6, 7, 8}) PRUEFE(m.erster_status.count(id));
+    a.frames(30, 1.0 / 30.0);
+    a.neue();
+    // Flugzeugwechsel: der Anzeige-Name ist beim neuen Flugzeug weg (Handle
+    // meldet sich noch gültig — nur die Pause schützt).
+    anzeige.registriert = false;
+    a.d->flugzeug_geladen();
+    std::map<int, double> letzte_lieferung;
+    std::map<int, double> groesste_luecke;
+    bool anzeige_wert_vor_status = false, anzeige_status = false;
+    const double t0 = a.umg.zeit;
+    for (int id = 3; id <= 8; ++id) letzte_lieferung[id] = t0;
+    for (int i = 0; i < 150; ++i) {  // 5 s
+        a.frame(1.0 / 30.0);
+        if (i % 30 == 0) a.sende("PING");
+        for (auto& j : a.neue()) {
+            const int id = j.hole("abo") ? static_cast<int>(j.hole("abo")->zahl) : 0;
+            if (id == 1 && art(j) == "abo") anzeige_status = true;
+            if (id == 1 && art(j) == "w" && !anzeige_status) {
+                for (auto& e : j.hole("v")->feld) if (e.feld[0].zahl == 0) anzeige_wert_vor_status = true;
+            }
+            if (id >= 3 && art(j) == "w" && j.hole("teil")->zahl == 1) {
+                groesste_luecke[id] = std::max(groesste_luecke[id], a.umg.zeit - letzte_lieferung[id]);
+                letzte_lieferung[id] = a.umg.zeit;
+            }
+        }
+    }
+    PRUEFE(anzeige_status);            // Abo 1 neu gesucht (kleinster Rest zuerst) …
+    PRUEFE(!anzeige_wert_vor_status);  // … und bis dahin geschützt
+    for (int id = 3; id <= 8; ++id) {
+        std::printf("     Mess-Abo %d: groesste Luecke nach Flugzeugwechsel %.2f s\n", id, groesste_luecke[id]);
+        PRUEFE(groesste_luecke[id] > 0.0 && groesste_luecke[id] < 1.0);
+    }
 }

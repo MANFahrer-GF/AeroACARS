@@ -157,8 +157,9 @@ PING
   mit `sim/` beginnt, prüft das Plugin `XPLMIsDataRefGood`. Ist er verwaist,
   fällt der Wert aus und der Status geht **sofort** auf `fehlt` (neue
   `abo`-Antwort nach der Runde). Nach `XPLM_MSG_PLANE_LOADED` pausieren Abos
-  mit solchen Namen die Lieferung, bis die Neusuche übernommen ist; Abos nur
-  mit `sim/…`-Namen liefern weiter.
+  mit solchen Namen die Lieferung, bis die Neusuche übernommen ist (höchstens
+  0,5 s — danach schützt die Prüfung beim Lesen); Abos nur mit
+  `sim/…`-Namen liefern weiter.
 * **`flugzeug`** nach jedem `HALLO`, nach `XPLM_MSG_PLANE_LOADED` und wenn sich
   ICAO/Titel/Pfad ändern (Prüfung alle 2 s). Fehlt ein Dataref → `null`.
 * **`LISTE`** meldet nur abonnierbare Namen (druckbares ASCII, ≤ 512 Byte,

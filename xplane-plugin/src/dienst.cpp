@@ -490,9 +490,13 @@ void Dienst::flugzeug_geladen() noexcept {
         if (a.phase == Phase::LEER) continue;
         starte_pruefung(a, true, true);
         // Namen fremder Plugins können jetzt verwaist sein: bis die Neusuche
-        // übernommen ist, keine Runde mit alten Handles. Abos nur mit
+        // übernommen ist, keine Runde mit alten Handles — höchstens
+        // grenzen::MAX_PAUSE_S lang (Begründung dort). Abos nur mit
         // "sim/…"-Namen (Telemetrie) liefern ohne Pause weiter.
-        if (a.hat_plugin_namen) a.pausiert = true;
+        if (a.hat_plugin_namen) {
+            a.pausiert = true;
+            a.pause_bis = umgebung_.jetzt() + grenzen::MAX_PAUSE_S;
+        }
     }
 }
 
@@ -900,7 +904,11 @@ void Dienst::bearbeite_abo_frame(Abo& abo) noexcept {
             abo.faellig = jetzt_;  // Werte sofort, nicht erst nach 1/rate
             [[fallthrough]];
         case Phase::BEREIT:
-            if (abo.pausiert || jetzt_ < abo.faellig) return;
+            if (abo.pausiert) {
+                if (jetzt_ < abo.pause_bis) return;
+                abo.pausiert = false;  // Grenze erreicht, Lesen prüft weiter auf Waisen
+            }
+            if (jetzt_ < abo.faellig) return;
             starte_runde(abo);
             // Nächster Termin vom Soll aus, damit die Rate im Mittel stimmt;
             // hinkt der Sim hinterher, kein Nachholen im Stoß.
