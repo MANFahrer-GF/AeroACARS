@@ -250,7 +250,11 @@ Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
   die Neusuche übernommen ist, höchstens aber 0,5 s (Nachprüfung: viele
   8192er-Mess-Abos lagen sonst über 15 s still; kleine Abos wie Abo 1/2 sind
   durch „kürzester Rest zuerst“ vorher fertig, große schützt danach die
-  Prüfung beim Lesen). Die tatsächlichen Kosten von `XPLMFindDataRef`
+  Prüfung beim Lesen). Die 0,5 s zählen ab dem ersten Frame nach der
+  Meldung, nicht ab der Meldung selbst — X-Plane lädt danach oft Sekunden
+  ohne Frame. Die Pause ist eine Zusatzsicherung: XPLM zerstört Datarefs nie,
+  `XPLMIsDataRefGood` ist genau dann wahr, wenn ein Plugin den Namen gerade
+  bereitstellt. Die tatsächlichen Kosten von `XPLMFindDataRef`
   und `XPLMIsDataRefGood` misst das Plugin beim Start und schreibt sie ins
   `Log.txt`.
 - **`pv` in Protokoll 1:** `telemetry` und `touchdown` tragen zusätzlich
