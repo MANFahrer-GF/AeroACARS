@@ -283,6 +283,30 @@ describe("Flugzeug vermessen", () => {
     );
   });
 
+  // 30.09.2026: „geprüft“ nur mit Boden UND Luft; ist nur ein Teil geprüft,
+  // zeigt die Profil-Spalte die Zwischenstufe.
+  it("Profil-Spalte: nur Boden geprüft → „Boden geprüft“, beide → „geprüft“", async () => {
+    h.kind = "msfs2024";
+    h.liste = {
+      flugzeuge: [
+        { sim: "msfs", teil: "boden", icao: "A20N", titel: "Airbus A320neo FlyByWire", zuletzt: 3, anzahl: 1, profil: "aus_scan", profil_teile: ["boden"] },
+        { sim: "msfs", teil: "boden", icao: "A35K", titel: "A350-1000 (No Cabin)", zuletzt: 2, anzahl: 1, profil: "geprueft", profil_teile: ["boden", "luft"] },
+        { sim: "msfs", teil: "luft", icao: "A35K", titel: "A350-1000 (No Cabin)", zuletzt: 2, anzahl: 1, profil: "geprueft", profil_teile: ["boden", "luft"] },
+        { sim: "msfs", teil: "boden", icao: "C172", titel: "Cessna Alt", zuletzt: 1, anzahl: 1, profil: null },
+      ],
+      scans: [],
+    } as never;
+    render(<FlugzeugVermessen />);
+    const tabelle = await screen.findByRole("table");
+    const zeile = (name: string) => [...tabelle.querySelectorAll("tbody tr")].find((r) => r.textContent?.includes(name))!;
+    await waitFor(() => expect(zeile("FlyByWire").textContent).toContain("Boden geprüft"));
+    expect(zeile("FlyByWire").querySelector(".vm-zelle--teil")?.getAttribute("title")).toContain("Luft fehlt noch");
+    expect(zeile("A350").textContent).toContain("✓ geprüft");
+    expect(zeile("A350").textContent).not.toContain("Boden geprüft");
+    // Älterer Server ohne profil_teile: wie bisher, keine Zwischenstufe.
+    expect(zeile("Cessna Alt").textContent).not.toContain("geprüft");
+  });
+
   it("Startseite X-Plane: kein Scan-Hinweis, keine Anfrage", async () => {
     render(<FlugzeugVermessen />);
     await screen.findByText(/Simulator verbunden/);

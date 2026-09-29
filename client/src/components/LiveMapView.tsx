@@ -30,6 +30,7 @@ import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
+import { useLiveZugangTakt } from "../lib/liveInhalt";
 import {
   laengeNebenVorgaenger,
   ohneDatumsgrenzenSprung,
@@ -384,6 +385,7 @@ interface Props {
 
 export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing, sichtbar = true }: Props) {
   const grundlage = useKartengrundlage();
+  const zugangTakt = useLiveZugangTakt();
   // Die Karte wird einmalig gebaut; der Schlüssel kommt erst danach vom
   // Server. Über diesen Verweis liest `kartenAnfrage` bei jeder Kachel
   // den aktuellen Stand — siehe dort.
@@ -582,7 +584,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         // Karte auf live.kant.ovh, damit beide dasselbe zeigen.
         // Alle Hoehenbaender auf einmal — gefiltert wird auf der Karte.
         const sektoren = await ladeSektoren(
-          "alle", abbruch.signal, undefined, netz,
+          "alle", abbruch.signal, netz,
         );
         if (beendet) return;
         setzen(
@@ -671,7 +673,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // der Effekt lief dann nicht neu, und man musste erst auf "Aus" und
     // zurueck (Feldbefund Thomas, 16.08.2026). Genau die Falle, die eine
     // abgeleitete Groesse in einer Abhaengigkeitsliste aufmacht.
-  }, [netz, mapReady, sichtbar]);
+    // `zugangTakt`: nach der Anmeldung am Live-Server sofort neu holen
+    // (vorher evtl. 401), nicht erst beim naechsten 30-s-Takt.
+  }, [netz, mapReady, sichtbar, zugangTakt]);
 
   // Hoehenregler: wirkt augenblicklich auf die schon geladenen Sektoren.
   useEffect(() => {

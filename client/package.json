@@ -1,7 +1,8 @@
 {
   "name": "aeroacars-client",
   "private": true,
-  "version": "1.9.12",
+  "license": "UNLICENSED",
+  "version": "1.9.13",
   "type": "module",
   "description": "AeroACARS desktop client — Tauri 2 + React + TypeScript",
   "scripts": {

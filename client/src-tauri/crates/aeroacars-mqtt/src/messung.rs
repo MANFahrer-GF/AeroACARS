@@ -129,6 +129,11 @@ pub struct Vermessen {
     /// liefern nur `titel`.
     #[serde(default)]
     pub titel_liste: Vec<String>,
+    /// Geprüfte Teile dieses Flugzeugs („boden“, „luft“) über beide Zeilen
+    /// hinweg — Zwischenstufe „Boden geprüft“ (Server ab 30.09.2026).
+    /// Ältere Server: leer.
+    #[serde(default)]
+    pub profil_teile: Vec<String>,
     /// Jüngste Messung, ms seit 1970.
     pub zuletzt: i64,
     pub anzahl: u32,
@@ -282,5 +287,15 @@ mod tests {
         assert_eq!(aus["flugzeuge"][0]["ordner"], "ifly 737-max8-189seats");
         assert_eq!(aus["flugzeuge"][0]["titel_liste"][1], "ifly TUI");
         assert_eq!(aus["scans"][0]["ordner"][1], "ifly 737-max8-189seats");
+        assert_eq!(
+            aus["flugzeuge"][0]["profil_teile"],
+            serde_json::json!([]),
+            "älterer Server ohne profil_teile → leer"
+        );
+        let neu: VermessenListe = serde_json::from_str(
+            r#"{"flugzeuge":[{"sim":"msfs","teil":"boden","icao":"A20N","titel":"FBW","zuletzt":1,"anzahl":1,"profil":"aus_scan","profil_teile":["boden"]}],"scans":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(neu.flugzeuge[0].profil_teile, ["boden"]);
     }
 }

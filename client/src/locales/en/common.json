@@ -1042,9 +1042,10 @@
     }
   },
   "about": {
+    "lizenz": "© {{jahr}} Thomas Kant · Proprietary, for German Sky Group pilots only. Redistribution and circumventing the access restriction are prohibited.",
     "tagline": "Modern ACARS for phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
     "purpose_title": "What is AeroACARS?",
-    "purpose_body": "A modern open-source ACARS client — Tauri-based, Rust + React, cross-platform. Captures telemetry from the sim, scores landings with industry-grounded thresholds, correlates touchdowns to runway-centerline precision, and ships clean PIREPs to phpVMS.",
+    "purpose_body": "A modern ACARS client for the German Sky Group — Tauri-based, Rust + React, cross-platform. Captures telemetry from the sim, scores landings with industry-grounded thresholds, correlates touchdowns to runway-centerline precision, and ships clean PIREPs to phpVMS.",
     "acknowledgements_title": "Shoulders AeroACARS stands on",
     "acknowledgements_intro": "These projects were studied, measured, or referenced extensively:",
     "thresholds_title": "Score thresholds — verified sources",
@@ -3711,6 +3712,9 @@
     "profil_in_arbeit": "in progress",
     "profil_geprueft": "verified",
     "profil_geprueft_hilfe": "Profile built in and confirmed by a measurement on the aircraft.",
+    "profil_boden_geprueft": "Ground verified",
+    "profil_luft_geprueft": "Air verified",
+    "profil_teil_hilfe": "One part is confirmed by a measurement, {{fehlt}} is still missing. \"Verified\" only applies once ground and air are both confirmed.",
     "profil_eigen": "own profile",
     "profil_eigen_hilfe": "AeroACARS has its own profile for this aircraft ({{name}}) – not yet verified by a measurement. A measurement shows whether everything is right.",
     "profil_standard": "standard only",

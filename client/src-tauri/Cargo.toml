@@ -21,10 +21,11 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.9.12"
+version = "1.9.13"
 edition = "2021"
-license = "MIT"
-authors = ["Thomas Kant <github@MANFahrer-GF>", "AeroACARS contributors"]
+# Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
+license = "LicenseRef-AeroACARS-Proprietary"
+authors = ["Thomas Kant <github@MANFahrer-GF>"]
 publish = false
 
 [workspace.dependencies]

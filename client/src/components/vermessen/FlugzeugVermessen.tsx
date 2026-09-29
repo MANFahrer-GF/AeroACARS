@@ -27,6 +27,8 @@ export interface Vermessen {
   ordner?: string | null;
   /** Alle gemessenen Titel (Lackierungen) dieses Flugzeugs. */
   titel_liste?: string[];
+  /** Geprüfte Teile („boden“, „luft“) des Flugzeugs (Server ab 30.09.2026). */
+  profil_teile?: string[];
   zuletzt: number;
   anzahl: number;
 }
@@ -135,12 +137,20 @@ export type Zeile = {
   /** MSFS: L:-Namen aus den Scans (null = X-Plane/unbekannt). */
   scan_namen: number | null;
   profil: string | null;
+  /** Geprüfte Teile — nur einer = Zwischenstufe „Boden/Luft geprüft“. */
+  profil_teile: string[];
   boden: Vermessen | null;
   luft: Vermessen | null;
 };
 
 const klein = (x: string | null | undefined) => (x ?? "").trim().toLowerCase();
 const gross = (x: string | null | undefined) => (x ?? "").trim().toUpperCase();
+
+/** Geprüfte Teile vereinen (Reihenfolge boden, luft). */
+const teileDazu = (ziel: string[], neu: readonly string[] | null | undefined) => {
+  for (const t of neu ?? []) if ((t === "boden" || t === "luft") && !ziel.includes(t)) ziel.push(t);
+  ziel.sort((x, y) => (x === "boden" ? -1 : 1) - (y === "boden" ? -1 : 1));
+};
 
 /** Titel ohne Dubletten (Groß/Klein egal) anhängen. */
 const titelDazu = (ziel: string[], neu: Array<string | null | undefined>) => {
@@ -155,10 +165,11 @@ export function jeFlugzeug(liste: Vermessen[]): Zeile[] {
     const k = v.ordner ? `${v.sim ?? ""}|o:${klein(v.ordner)}` : `${v.sim ?? ""}|${gross(v.icao)}|${klein(v.titel)}`;
     const e =
       aus.get(k) ??
-      { titel: v.titel, icao: v.icao, sim: v.sim, titel_liste: [], ordner: v.ordner ? [klein(v.ordner)] : [], scan_namen: null, profil: null, boden: null, luft: null };
+      { titel: v.titel, icao: v.icao, sim: v.sim, titel_liste: [], ordner: v.ordner ? [klein(v.ordner)] : [], scan_namen: null, profil: null, profil_teile: [], boden: null, luft: null };
     titelDazu(e.titel_liste, [v.titel, ...(v.titel_liste ?? [])]);
     if (typeof v.scan_namen === "number") e.scan_namen = v.scan_namen;
     e.profil = hoeher(e.profil, v.profil);
+    teileDazu(e.profil_teile, v.profil_teile);
     if ((v.teil ?? "boden") === "luft") e.luft = v;
     else e.boden = v;
     aus.set(k, e);
@@ -207,6 +218,7 @@ export function uebersicht(liste: Vermessen[], scans: ScanEintrag[]): Zeile[] {
         ordner: [...scOrdner],
         scan_namen: sc.scan_namen,
         profil: sc.profil,
+        profil_teile: [],
         boden: null,
         luft: null,
       });
@@ -238,7 +250,7 @@ function familienZusammenfassen(zeilen: Zeile[]): Zeile[] {
     }
     const e = familie.get(f.name);
     if (!e) {
-      const neu: Zeile = { ...z, titel: f.name, icao: null, sim: "msfs", titel_liste: [...z.titel_liste], ordner: [...z.ordner] };
+      const neu: Zeile = { ...z, titel: f.name, icao: null, sim: "msfs", titel_liste: [...z.titel_liste], ordner: [...z.ordner], profil_teile: [...z.profil_teile] };
       familie.set(f.name, neu);
       aus.push(neu);
       continue;
@@ -247,6 +259,7 @@ function familienZusammenfassen(zeilen: Zeile[]): Zeile[] {
     e.luft = juenger(e.luft, z.luft);
     if (z.scan_namen !== null && (e.scan_namen ?? -1) < z.scan_namen) e.scan_namen = z.scan_namen;
     e.profil = hoeher(e.profil, z.profil);
+    teileDazu(e.profil_teile, z.profil_teile);
     titelDazu(e.titel_liste, z.titel_liste);
     for (const o of z.ordner) if (!e.ordner.includes(o)) e.ordner.push(o);
   }
@@ -738,6 +751,7 @@ function StartSeite({
               ordner: ordnerGeladen ? [ordnerGeladen] : [],
               scan_namen: null,
               profil: null,
+              profil_teile: [],
               boden: null,
               luft: null,
               geladen: true,
@@ -818,6 +832,17 @@ function StartSeite({
                   {v.profil === "geprueft" ? (
                     <span className="vm-zelle vm-zelle--ok" title={t("vermessen.profil_geprueft_hilfe")}>
                       ✓ {t("vermessen.profil_geprueft")}
+                    </span>
+                  ) : v.profil_teile.length === 1 ? (
+                    // Zwischenstufe (30.09.2026): ein Teil geprüft, der andere
+                    // fehlt noch — „geprüft“ gilt erst mit Boden UND Luft.
+                    <span
+                      className="vm-zelle vm-zelle--teil"
+                      title={t("vermessen.profil_teil_hilfe", {
+                        fehlt: t(v.profil_teile[0] === "boden" ? "vermessen.teil_luft" : "vermessen.teil_boden"),
+                      })}
+                    >
+                      ✓ {t(v.profil_teile[0] === "boden" ? "vermessen.profil_boden_geprueft" : "vermessen.profil_luft_geprueft")}
                     </span>
                   ) : eigeneProfile.get(zeilenSchluessel(v)) || v.profil === "aus_scan" ? (
                     <span

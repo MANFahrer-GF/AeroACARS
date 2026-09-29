@@ -258,4 +258,6 @@
 .vm-zelle--ok { background: var(--sem-ok-bg); color: var(--sem-ok); }
 .vm-zelle--fehlt { background: var(--sem-warn-bg); color: var(--sem-warn); }
 .vm-zelle--leise { background: var(--surface-2); color: var(--text-dim); font-weight: 500; }
+/* Zwischenstufe „Boden/Luft geprüft“: grün, aber zurückgenommen. */
+.vm-zelle--teil { background: color-mix(in srgb, var(--sem-ok) 10%, var(--surface)); color: var(--sem-ok); border: 1px dashed color-mix(in srgb, var(--sem-ok) 45%, transparent); }
 .vm-zelle--arbeit { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent); }

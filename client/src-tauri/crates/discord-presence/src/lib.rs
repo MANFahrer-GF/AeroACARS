@@ -317,8 +317,10 @@ impl DiscordPresenceManager {
             let mut inner = self.inner.lock().await;
             inner.state.status = PresenceStatus::Error;
             inner.state.error_message = Some(
-                "Discord-App-ID ist nicht vom Server konfiguriert. Der VA-Owner \
-                 muss sie im Webapp-Admin → Settings → Discord setzen."
+                "Discord-App-ID noch nicht vom Server erhalten. Sie kommt nach \
+                 der Anmeldung automatisch; bleibt sie aus, ist der Server nicht \
+                 erreichbar oder der VA-Owner hat sie im Webapp-Admin → \
+                 Settings → Discord nicht gesetzt."
                     .to_string(),
             );
             return Err(anyhow!("missing Discord app_id from server"));

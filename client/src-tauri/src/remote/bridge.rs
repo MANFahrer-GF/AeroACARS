@@ -147,6 +147,19 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             ok_json(crate::navdata_zwischenspeicher_bestand(app.clone()))
         }
         "sim_status" => ok_json(crate::sim_status(app.clone(), st!())),
+        // Skin, Kartenstil, VATGlasses fuer das Tablet — mit dem Token des
+        // PCs geholt, das Token selbst geht NICHT ueber die Bruecke. Der
+        // Befehl laesst nur eine feste Liste von Pfaden zu (live_zugang.rs).
+        "live_inhalt" => {
+            #[derive(Deserialize)]
+            struct A {
+                pfad: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::live_zugang::live_inhalt(a.pfad).await),
+                Err(e) => Err(e),
+            }
+        }
         // v1.8.1: Telemetrie-Monitor auf dem Tablet. Jedes Tablet meldet sich
         // mit eigener Geraetekennung (`lan:<geraet>`); die Frames kommen
         // ueber den eigenen Telemetrie-Kanal der Ereignisverbindung (10/s).
