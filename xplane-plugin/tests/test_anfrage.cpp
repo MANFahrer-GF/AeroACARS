@@ -19,6 +19,7 @@ struct Ergebnis {
     Anfrage a;
     std::vector<std::string> namen;
     std::vector<int32_t> index;
+    std::vector<bool> ungueltig;
     std::string version;
 };
 
@@ -31,8 +32,10 @@ Ergebnis zerlege(const std::string& s, size_t kapazitaet = grenzen::MAX_NAMEN_JE
     if (!s.empty()) std::memcpy(kopie, s.data(), s.size());
     e.ok = zerlege_anfrage(kopie, s.size(), puffer.data(), kapazitaet, &e.a);
     for (size_t i = 0; i < e.a.namen_anzahl; ++i) {
-        e.namen.emplace_back(e.a.namen[i].basis, e.a.namen[i].basis_laenge);
-        e.index.push_back(e.a.namen[i].index);
+        const NameRef& n = e.a.namen[i];
+        e.namen.emplace_back(n.basis ? std::string(n.basis, n.basis_laenge) : std::string());
+        e.index.push_back(n.index);
+        e.ungueltig.push_back(n.ungueltig);
     }
     if (e.a.client_version) e.version.assign(e.a.client_version, e.a.client_version_laenge);
     std::free(kopie);
@@ -56,6 +59,24 @@ void pruefe_fehler(const std::string& s, Fehlergrund g, uint32_t zeile, const ch
 }
 
 #define FEHLER(s, g, z) pruefe_fehler((s), Fehlergrund::g, (z), #s)
+
+// Seit der Cloud-QS: ein ungültiger EINZELNER Name verwirft nicht mehr das
+// Abo, sondern steht als "ungültig" (Status fehlt) an seiner Stelle.
+void pruefe_einzeln_ungueltig(const std::string& s, size_t pos, const char* wo) {
+    const Ergebnis e = zerlege(s);
+    bool ok = e.ok && e.a.befehl == Befehl::ABO && e.namen.size() > pos && e.ungueltig[pos] &&
+              e.a.ungueltige_namen == 1;
+    for (size_t i = 0; ok && i < e.namen.size(); ++i) {
+        if (i != pos && e.ungueltig[i]) ok = false;
+    }
+    if (!ok) {
+        testrahmen::melde(__FILE__, __LINE__, std::string(wo) + ": Name " + std::to_string(pos) +
+                                                   " sollte einzeln ungueltig sein (" + grund(e) + ")");
+    }
+    ++testrahmen::pruefzahl();
+}
+
+#define UNGUELTIG_AN(s, pos) pruefe_einzeln_ungueltig((s), (pos), #s)
 
 }  // namespace
 
@@ -180,11 +201,11 @@ TEST(zeilenlaengen_511_512_513) {
     PRUEFE_GLEICH(e512.namen[0].size(), size_t(512));
     PRUEFE(zerlege("ABO 1 1\n" + n512 + "\r\n").ok);  // \r zählt zum Zeilenende
     PRUEFE(zerlege("ABO 1 1\n" + n512).ok);           // letzte Zeile ohne \n
-    FEHLER("ABO 1 1\n" + n513 + "\n", ZEILE_ZU_LANG, 2);
-    FEHLER("ABO 1 1\na\n" + n513, ZEILE_ZU_LANG, 3);
+    UNGUELTIG_AN("ABO 1 1\n" + n513 + "\n", 0);
+    UNGUELTIG_AN("ABO 1 1\na\n" + n513, 1);
     // Index zählt zur Zeile: 508 + "[12]" = 512 ok, 509 + "[12]" = 513 zu lang.
     PRUEFE(zerlege("ABO 1 1\n" + std::string(508, 'd') + "[12]").ok);
-    FEHLER("ABO 1 1\n" + std::string(509, 'd') + "[12]", ZEILE_ZU_LANG, 2);
+    UNGUELTIG_AN("ABO 1 1\n" + std::string(509, 'd') + "[12]", 0);
     // Befehlszeile selbst.
     FEHLER("HALLO 2 " + std::string(505, 'v'), ZEILE_ZU_LANG, 1);
     FEHLER(std::string(513, 'P'), ZEILE_ZU_LANG, 1);
@@ -192,18 +213,18 @@ TEST(zeilenlaengen_511_512_513) {
 }
 
 TEST(ungueltige_namen) {
-    FEHLER("ABO 1 1\nsim/\xC3\xA4", NAME_UNGUELTIG, 2);        // UTF-8 ä
-    FEHLER("ABO 1 1\nsim/\xFF", NAME_UNGUELTIG, 2);            // kaputtes Byte
-    FEHLER("ABO 1 1\nsim/a b", NAME_UNGUELTIG, 2);             // Leerzeichen
-    FEHLER("ABO 1 1\n sim/a", NAME_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\nsim/a ", NAME_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\nsim/a\tb", NAME_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\nsim/a\rb", NAME_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\nsim/\x7F", NAME_UNGUELTIG, 2);
-    FEHLER(std::string("ABO 1 1\nsim/a\0b", 15), NAME_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na\n\nb", NAME_UNGUELTIG, 3);              // leere Zeile mitten drin
-    FEHLER("ABO 1 1\na\n\n", NAME_UNGUELTIG, 3);               // zweites \n = leere Zeile
-    FEHLER("ABO 1 1\na\nb\xC3", NAME_UNGUELTIG, 3);
+    UNGUELTIG_AN("ABO 1 1\nsim/\xC3\xA4", 0);        // UTF-8 ä
+    UNGUELTIG_AN("ABO 1 1\nsim/\xFF", 0);            // kaputtes Byte
+    UNGUELTIG_AN("ABO 1 1\nsim/a b", 0);             // Leerzeichen
+    UNGUELTIG_AN("ABO 1 1\n sim/a", 0);
+    UNGUELTIG_AN("ABO 1 1\nsim/a ", 0);
+    UNGUELTIG_AN("ABO 1 1\nsim/a\tb", 0);
+    UNGUELTIG_AN("ABO 1 1\nsim/a\rb", 0);
+    UNGUELTIG_AN("ABO 1 1\nsim/\x7F", 0);
+    UNGUELTIG_AN(std::string("ABO 1 1\nsim/a\0b", 15), 0);
+    UNGUELTIG_AN("ABO 1 1\na\n\nb", 1);              // leere Zeile mitten drin
+    UNGUELTIG_AN("ABO 1 1\na\n\n", 1);               // zweites \n = leere Zeile
+    UNGUELTIG_AN("ABO 1 1\na\nb\xC3", 1);
     // Anführungszeichen und Backslash sind druckbares ASCII → erlaubt.
     const Ergebnis e = zerlege("ABO 1 1\nx\"y\\z");
     PRUEFE(e.ok);
@@ -229,17 +250,17 @@ TEST(indizes) {
     PRUEFE_TEXT(basis("a[3]x"), "a[3]x");      // endet nicht auf ] → kein Index
     PRUEFE_GLEICH(idx("a[3]x"), -1);
     PRUEFE_TEXT(basis("a[b"), "a[b");
-    FEHLER("ABO 1 1\na[-1]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na[+1]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na[]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na[x]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na[1x]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na[2147483648]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na[4294967295]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na[99999999999]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\na]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\n]", INDEX_UNGUELTIG, 2);
-    FEHLER("ABO 1 1\n[3]", NAME_UNGUELTIG, 2);
+    UNGUELTIG_AN("ABO 1 1\na[-1]", 0);
+    UNGUELTIG_AN("ABO 1 1\na[+1]", 0);
+    UNGUELTIG_AN("ABO 1 1\na[]", 0);
+    UNGUELTIG_AN("ABO 1 1\na[x]", 0);
+    UNGUELTIG_AN("ABO 1 1\na[1x]", 0);
+    UNGUELTIG_AN("ABO 1 1\na[2147483648]", 0);
+    UNGUELTIG_AN("ABO 1 1\na[4294967295]", 0);
+    UNGUELTIG_AN("ABO 1 1\na[99999999999]", 0);
+    UNGUELTIG_AN("ABO 1 1\na]", 0);
+    UNGUELTIG_AN("ABO 1 1\n]", 0);
+    UNGUELTIG_AN("ABO 1 1\n[3]", 0);
 }
 
 TEST(namenszahl_8192_und_8193) {
@@ -285,7 +306,7 @@ TEST(liste) {
 
 TEST(fehlergruende_sind_eindeutig) {
     std::set<std::string> gesehen;
-    for (int g = 0; g <= static_cast<int>(Fehlergrund::SPEICHER); ++g) {
+    for (int g = 0; g <= static_cast<int>(Fehlergrund::GENERATION_UNGUELTIG); ++g) {
         const std::string t = fehlergrund_text(static_cast<Fehlergrund>(g));
         PRUEFE(!t.empty());
         PRUEFE(gesehen.insert(t).second);
@@ -305,4 +326,53 @@ TEST(ist_gueltiger_name) {
     PRUEFE(ist_gueltiger_name(lang.c_str(), 512));
     const std::string zu_lang(513, 'a');
     PRUEFE(!ist_gueltiger_name(zu_lang.c_str(), 513));
+}
+
+TEST(abo_generation) {
+    const Ergebnis e = zerlege("ABO 1 50 g4\nsim/x");
+    PRUEFE(e.ok);
+    PRUEFE_GLEICH(e.a.generation, 4u);
+    PRUEFE_GLEICH(e.a.rate_hz, 50u);
+    const Ergebnis t = zerlege("ABO 3 5 1 2 g17\nsim/x");
+    PRUEFE(t.ok);
+    PRUEFE_GLEICH(t.a.generation, 17u);
+    PRUEFE_GLEICH(t.a.teil, 1u);
+    PRUEFE_GLEICH(t.a.teile, 2u);
+    PRUEFE_GLEICH(zerlege("ABO 1 5\nx").a.generation, 0u);  // ohne g: 0
+    PRUEFE(zerlege("ABO 1 5 g2147483647\nx").ok);
+    FEHLER("ABO 1 5 g0\nx", GENERATION_UNGUELTIG, 1);
+    FEHLER("ABO 1 5 g\nx", GENERATION_UNGUELTIG, 1);
+    FEHLER("ABO 1 5 g-1\nx", GENERATION_UNGUELTIG, 1);
+    FEHLER("ABO 1 5 g2147483648\nx", GENERATION_UNGUELTIG, 1);
+    FEHLER("ABO 1 5 gx\nx", GENERATION_UNGUELTIG, 1);
+    FEHLER("ABO 1 5 1 2 3 g4\nx", FALSCHE_ARGUMENTE, 1);
+    FEHLER("ABO 1 5 g4 1 2\nx", FALSCHE_ARGUMENTE, 1);  // g nur als LETZTES Wort
+    FEHLER("ABO 1 5 g4 2\nx", TEIL_UNGUELTIG, 1);
+    // Fehlerantworten tragen Generation und ID schon mit.
+    const Ergebnis f = zerlege("ABO 3 99 g8\nx");
+    PRUEFE(!f.ok);
+    PRUEFE_GLEICH(f.a.generation, 8u);
+    PRUEFE_GLEICH(f.a.abo_id, 3u);
+}
+
+TEST(ungueltige_namen_zaehlen_mit) {
+    const Ergebnis e = zerlege("ABO 1 5\nsim/a\nkaputt]\nsim/\xC3\xA4\n\nsim/b[2]\n" +
+                               std::string(600, 'x') + "\nsim/c");
+    PRUEFE(e.ok);
+    PRUEFE_GLEICH(e.namen.size(), size_t(7));
+    PRUEFE_GLEICH(e.a.ungueltige_namen, size_t(4));
+    const bool soll[] = {false, true, true, true, false, true, false};
+    for (size_t i = 0; i < 7 && i < e.ungueltig.size(); ++i) PRUEFE(e.ungueltig[i] == soll[i]);
+    PRUEFE_TEXT(e.namen[4], "sim/b");
+    PRUEFE_GLEICH(e.index[4], 2);
+    PRUEFE_TEXT(e.namen[6], "sim/c");
+}
+
+TEST(abonnierbare_namen) {
+    PRUEFE(ist_abonnierbarer_name("sim/a", 5));
+    PRUEFE(ist_abonnierbarer_name("a[3", 3));
+    PRUEFE(!ist_abonnierbarer_name("a[3]", 4));
+    PRUEFE(!ist_abonnierbarer_name("a]", 2));
+    PRUEFE(!ist_abonnierbarer_name("a b", 3));
+    PRUEFE(!ist_abonnierbarer_name("", 0));
 }

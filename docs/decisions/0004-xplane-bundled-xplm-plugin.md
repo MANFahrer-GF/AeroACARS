@@ -171,16 +171,17 @@ Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
 - **`PING` wird beantwortet** mit `{"p":2,"t":"pong"}` — sonst hätte ein
   Client ohne Abo kein Lebenszeichen des Plugins für seine 3-s-Regel.
 - **Genau ein Befehl je Datagramm**; nur `ABO` hat Folgezeilen. `\r\n` wird
-  toleriert. Leere Zeilen mitten in der Namensliste sind ein Fehler.
-- **Fehler** tragen optional `zeile` (1-basiert), `abo`, `id`. Weitere Gründe:
-  `leere_anfrage`, `datagramm_zu_gross`, `unbekannter_befehl`,
-  `falsche_argumente`, `protokoll_ungueltig`, `abo_id_ungueltig`,
-  `rate_ungueltig`, `teil_ungueltig`, `name_ungueltig`, `index_ungueltig`,
-  `zu_viele_namen`, `ueberzaehlige_zeilen`, `kein_hallo`,
-  `abo_teil_reihenfolge`, `abo_teile_widerspruch`, `keine_namen`, `speicher`.
-  Ein fehlerhaftes `ABO` wird ganz verworfen; `ENDE-ABO` hat keine Antwort.
+  toleriert.
+- **Fehler** tragen optional `zeile` (1-basiert), `abo` + `gen` (immer
+  zusammen), `id`. Gründe: `leere_anfrage`, `datagramm_zu_gross`,
+  `zeile_zu_lang` (Befehlszeile), `unbekannter_befehl`, `falsche_argumente`,
+  `protokoll_ungueltig`, `abo_id_ungueltig`, `rate_ungueltig`,
+  `teil_ungueltig`, `generation_ungueltig`, `zu_viele_namen`,
+  `ueberzaehlige_zeilen`, `kein_hallo`, `abo_teil_reihenfolge`,
+  `abo_teile_widerspruch`, `keine_namen`, `liste_nicht_verfuegbar`,
+  `speicher`.
 - **Mehrteiliges ABO:** Teile strikt in Reihenfolge; Teil 1 beginnt immer neu;
-  Rate und Teilezahl müssen in allen Teilen gleich sein.
+  Rate, Teilezahl und Generation müssen in allen Teilen gleich sein.
 - **Anmeldung:** Nur `HALLO 2` meldet an (andere Nummern bekommen trotzdem die
   `hallo`-Antwort). `HALLO` von einem anderen Port verwirft die Abos des
   alten Clients. Nach 5 s Stille wird der Client auch **vergessen** —
@@ -193,8 +194,7 @@ Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
   Byte aus `b`); Index außerhalb der Länge oder Name ohne Array-Typ → `fehlt`.
 - **Verwaiste Datarefs** (Plugin des Flugzeugs entladen; `XPLMFindDataRef`
   findet sie weiter, lesen ergäbe 0) gelten als `fehlt`
-  (`XPLMIsDataRefGood`). Die 2-s-Prüfung umfasst deshalb **alle** Namen, nicht
-  nur fehlende, und erkennt auch geänderte Array-Längen.
+  (`XPLMIsDataRefGood`) — siehe Nachtrag Cloud-QS unten.
 - **Statuswechsel:** Ergebnisse einer Prüfung werden erst zwischen zwei
   Lieferrunden übernommen; bei Änderung geht zuerst die vollständige neue
   `abo`-Antwort hinaus, dann wieder Werte.
@@ -211,6 +211,54 @@ Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
   Protokoll 1 wird dann über die Uhr auf seinen eigenen Takt gedrosselt.
 - **macOS:** Mindestversion der `mac.xpl` fest 11.0 (vorher ungesetzt = die
   SDK-Version des Build-Rechners).
+
+#### Nachtrag nach der Cloud-QS (29.09.2026, verbindlich für Plugin und Client)
+
+- **Generation:** Jede ABO-Kopfzeile trägt als LETZTES Wort `g<zahl>`
+  (1 … 2^31 − 1), z. B. `ABO 3 5 1 2 g17`, `ABO 1 50 g4`. Das Plugin gibt
+  `"gen"` in jeder `abo`-, `w`-, `abo_empfangen`- und abo-bezogenen
+  `fehler`-Antwort zurück. Ohne g-Wort gilt `gen` = 0.
+- **Gleiches ABO** (gleiche ID, Rate, Namensliste, Generation) setzt nichts
+  zurück: eine laufende Suche läuft weiter, ein schon gesendeter Status geht
+  noch einmal hinaus. (Vorher begann jedes erneute ABO die Suche bei 0 — mit
+  der Client-Regel „nach 2 s neu senden“ bekamen 8192 Namen nie einen Status.)
+- **`abo_empfangen`:** Jedes angenommene ABO (auch ein gleiches) wird sofort
+  mit `{"p":2,"t":"abo_empfangen","abo":N,"gen":G,"namen":K}` bestätigt. Grund:
+  ein einzelnes 8192er-Abo hat seinen Status zwar in ~0,6 s, sechs davon
+  nacheinander aber erst nach bis zu ~3,7 s (gemessen, Schein-Welt 30 fps).
+  Der Client wartet nach einer Bestätigung auf den Status, statt neu zu senden.
+- **Einzelne ungültige Namen** (leer, > 512 Byte, Leerzeichen, Nicht-ASCII,
+  kaputter Index) verwerfen nicht mehr das ganze Abo, sondern bekommen
+  `"fehlt"`; die Zeile zählt normal mit, die Indizes bleiben stabil. Fehler
+  für das ganze Abo nur bei Rahmenfehlern (Kopfzeile, zu viele Namen, Teile,
+  Datagramm zu groß). `LISTE` meldet nur Namen, die als ganzer Dataref
+  abonnierbar sind (dieselbe Prüfung wie der Parser, zusätzlich nicht auf `]`
+  endend).
+- **`ENDE-ABO`** hat nie eine Antwort, auch für eine ID ohne Abo (kein Fehler).
+- **Suche mit eigenem Zeitbudget:** 0,3 ms je Frame (vorher feste 64 Suchen
+  je Frame), getrennt vom Liefer-Budget (1 ms). Reihenfolge: dringende Suchen
+  (Anmeldung, Flugzeug-/Flughafenwechsel) vor den periodischen, darunter das
+  Abo mit dem kleinsten Rest zuerst. Der 2-s-Durchlauf prüft nur fehlende
+  Namen und Arrays (Länge).
+- **Lieferung:** Abo 1 (beim Client die Telemetrie) zuerst, dann Rundlauf nur
+  über die belegten übrigen Abos (vorher über alle 16 Plätze; höhere IDs
+  verhungerten hinter einem großen Abo).
+- **Verwaist beim Lesen:** Vor jedem Lesen eines Namens, der nicht mit `sim/`
+  beginnt, prüft das Plugin `XPLMIsDataRefGood`; ist er verwaist, fällt der
+  Wert aus und der Status geht sofort auf `fehlt`. Nach
+  `XPLM_MSG_PLANE_LOADED` pausieren Abos mit solchen Namen die Lieferung, bis
+  die Neusuche übernommen ist. Die tatsächlichen Kosten von `XPLMFindDataRef`
+  und `XPLMIsDataRefGood` misst das Plugin beim Start und schreibt sie ins
+  `Log.txt`.
+- **`pv` in Protokoll 1:** `telemetry` und `touchdown` tragen zusätzlich
+  `"pv":"<Plugin-Version>"`. So erkennt der Client ein 1.0-Plugin auch, wenn
+  dessen Protokoll 2 nicht antwortet (Port 52001 belegt), und meldet nicht
+  „Plugin veraltet“. Sonst bleibt Protokoll 1 unverändert.
+- **Client-Regel `laminar/*`:** X-Plane registriert `laminar/B738/*` (und
+  andere `laminar/…`-Namen) bei jedem Flugzeug. Ein Status „da“ ist dort
+  also kein Beleg für das Flugzeug; der Client braucht einen Zweitbeleg
+  (Wert ≠ 0, Web-API oder RREF-Bestätigung), bevor er daraus ein Profil
+  ableitet.
 
 ## Folgen
 

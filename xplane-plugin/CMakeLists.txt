@@ -64,6 +64,11 @@ if(MSVC)
     # Quelltexte sind UTF-8 (deutsche Kommentare); ohne /utf-8 liest MSVC sie
     # je nach Systemsprache als ANSI-Codepage.
     add_compile_options(/utf-8)
+    # "Keine Ausnahmen" auch unter Windows: CMake setzt für MSVC ab Werk
+    # /EHsc in CMAKE_CXX_FLAGS. Das nehmen wir global heraus; das Plugin
+    # bekommt unten /EHs-c- + _HAS_EXCEPTIONS=0 (wie -fno-exceptions), die
+    # Tests setzen /EHsc für sich wieder.
+    string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     # Stop windows.h from poisoning min/max macros.
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 else()
@@ -125,6 +130,12 @@ add_library(AeroACARS MODULE
     src/dienst_xplm.cpp
     ${AEROACARS_KERN_QUELLEN}
 )
+
+if(MSVC)
+    # /wd4577: "noexcept ohne Ausnahmemodus" — genau das ist hier gewollt.
+    target_compile_options(AeroACARS PRIVATE /EHs-c- /wd4577)
+    target_compile_definitions(AeroACARS PRIVATE _HAS_EXCEPTIONS=0)
+endif()
 
 target_include_directories(AeroACARS PRIVATE
     "${XPLM_SDK_ROOT}/CHeaders"

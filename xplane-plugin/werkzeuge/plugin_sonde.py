@@ -103,8 +103,8 @@ class Sonde:
         self.letzter_ping = time.monotonic()
         return self.warte_auf("hallo", 2.0)
 
-    def abo_senden(self, abo_id: int, rate: int, namen: list[str]) -> None:
-        """Schickt ein ABO, bei Bedarf mehrteilig (Datagramme ≤ 60 KiB)."""
+    def abo_senden(self, abo_id: int, rate: int, namen: list[str], gen: int = 1) -> None:
+        """Schickt ein ABO mit Generation, bei Bedarf mehrteilig (≤ 60 KiB je Teil)."""
         teile: list[list[str]] = [[]]
         groesse = 0
         for n in namen:
@@ -114,10 +114,10 @@ class Sonde:
             teile[-1].append(n)
             groesse += len(n) + 1
         if len(teile) == 1:
-            self.sende(f"ABO {abo_id} {rate}\n" + "".join(n + "\n" for n in namen))
+            self.sende(f"ABO {abo_id} {rate} g{gen}\n" + "".join(n + "\n" for n in namen))
             return
         for k, t in enumerate(teile, start=1):
-            self.sende(f"ABO {abo_id} {rate} {k} {len(teile)}\n" + "".join(n + "\n" for n in t))
+            self.sende(f"ABO {abo_id} {rate} {k} {len(teile)} g{gen}\n" + "".join(n + "\n" for n in t))
 
 
 def sammle_teile(pakete: list[dict], feld: str) -> list:
@@ -129,11 +129,17 @@ def sammle_teile(pakete: list[dict], feld: str) -> list:
     return aus
 
 
-def lies_status(sonde: Sonde, abo_id: int, dauer: float = 3.0):
-    """Wartet auf eine vollständige abo-Antwort. Werte davor werden ignoriert."""
+def lies_status(sonde: Sonde, abo_id: int, dauer: float = 3.0, info: dict | None = None):
+    """Wartet auf eine vollständige abo-Antwort. Werte davor werden ignoriert.
+    In `info` landen abo_empfangen und die Zeit bis zum Status."""
     teile: dict[int, dict] = {}
+    t0 = time.monotonic()
     for _, j in sonde.empfange(dauer):
         if not j:
+            continue
+        if j.get("t") == "abo_empfangen" and j.get("abo") == abo_id:
+            if info is not None:
+                info["empfangen"] = j
             continue
         if j.get("t") == "fehler":
             print("  fehler:", j)
@@ -141,6 +147,9 @@ def lies_status(sonde: Sonde, abo_id: int, dauer: float = 3.0):
         if j.get("t") == "abo" and j.get("abo") == abo_id:
             teile[j["teil"]] = j
             if len(teile) == j["teile"]:
+                if info is not None:
+                    info["sekunden"] = time.monotonic() - t0
+                    info["gen"] = j.get("gen")
                 return sammle_teile(list(teile.values()), "st")
     return None
 
@@ -291,11 +300,16 @@ def befehl_pruefung(sonde: Sonde, args) -> int:
         "sim/time/paused[0]",                      # fehlt (Skalar mit Index)
         "gibt/es/nicht/aeroacars_sonde",           # fehlt
     ]
-    sonde.abo_senden(1, 10, namen)
-    st = lies_status(sonde, 1)
+    namen.append("name mit leerzeichen")        # ungültig → fehlt, Abo bleibt
+    info: dict = {}
+    sonde.abo_senden(1, 10, namen, gen=7)
+    st = lies_status(sonde, 1, info=info)
     pruefe(st is not None and len(st) == len(namen), f"Status für {len(namen)} Namen")
+    e = info.get("empfangen")
+    pruefe(e is not None and e.get("gen") == 7 and e.get("namen") == len(namen), f"abo_empfangen: {e}")
+    pruefe(info.get("gen") == 7, f"Generation in der abo-Antwort: {info.get('gen')}")
     if st:
-        erwartung = ["d", "d", "b", "i", "i", "vf", "f", "fehlt", "fehlt", "fehlt"]
+        erwartung = ["d", "d", "b", "i", "i", "vf", "f", "fehlt", "fehlt", "fehlt", "fehlt"]
         for s, soll in zip(st, erwartung):
             pruefe(s[1] == soll, f"{namen[s[0]]}: {status_text(s)} (erwartet {soll})")
     print("3. Werte 3 s lang bei 10 Hz")
@@ -303,6 +317,8 @@ def befehl_pruefung(sonde: Sonde, args) -> int:
     t0 = time.monotonic()
     for _, j in sonde.empfange(3.0):
         if j and j.get("t") == "w" and j.get("abo") == 1:
+            if j.get("gen") != 7:
+                sonde.probleme.append(f"w-Paket ohne gen 7: {j.get('gen')}")
             for idx, wert in j["v"]:
                 gesehen[idx] = wert
             if j["teil"] == j["teile"]:
@@ -311,13 +327,20 @@ def befehl_pruefung(sonde: Sonde, args) -> int:
     pruefe(7.0 <= hz <= 11.0, f"Rate {hz:.1f} Hz (Soll 10)")
     pruefe(0 in gesehen and isinstance(gesehen[0], float), f"Breite {gesehen.get(0)}")
     pruefe(2 in gesehen and isinstance(gesehen[2], str), f"ICAO {gesehen.get(2)!r}")
-    pruefe(not any(i in gesehen for i in (7, 8, 9)), "fehlende Namen liefern keinen Wert")
-    sonde.sende("ENDE-ABO 1\n")
+    pruefe(not any(i in gesehen for i in (7, 8, 9, 10)), "fehlende Namen liefern keinen Wert")
 
-    print("4. Fehlerbehandlung")
-    sonde.sende("ABO 1 10\nname mit leerzeichen\n")
+    print("4. Gleiches ABO, Fehlerbehandlung")
+    sonde.abo_senden(1, 10, namen, gen=7)
+    info2: dict = {}
+    st2 = lies_status(sonde, 1, dauer=2.0, info=info2)
+    pruefe(st2 is not None and info2.get("empfangen") is not None,
+           "gleiches ABO: Bestätigung + Status erneut, ohne Neustart")
+    sonde.sende("ENDE-ABO 1\n")
+    sonde.sende("ENDE-ABO 9\n")                # ohne Abo: keine Antwort, kein Fehler
+    sonde.sende("ABO 2 99 g3\nsim/time/paused\n")
     fj = sonde.warte_auf("fehler", 1.0)
-    pruefe(fj is not None and fj.get("grund") == "name_ungueltig", f"fehler-Antwort: {fj}")
+    pruefe(fj is not None and fj.get("grund") == "rate_ungueltig" and fj.get("gen") == 3,
+           f"fehler-Antwort: {fj}")
 
     print("5. LISTE")
     sonde.sende("LISTE 5\n")

@@ -44,6 +44,7 @@ const char* fehlergrund_text(Fehlergrund grund) noexcept {
         case Fehlergrund::KEINE_NAMEN:            return "keine_namen";
         case Fehlergrund::LISTE_NICHT_VERFUEGBAR: return "liste_nicht_verfuegbar";
         case Fehlergrund::SPEICHER:               return "speicher";
+        case Fehlergrund::GENERATION_UNGUELTIG:   return "generation_ungueltig";
     }
     return "unbekannt";
 }
@@ -180,6 +181,13 @@ Fehlergrund zerlege_name(const Stueck& zeile, NameRef* name) noexcept {
 
 }  // namespace
 
+bool ist_abonnierbarer_name(const char* name, size_t laenge) noexcept {
+    // Ein Name, der auf ']' endet, würde im ABO als Array-Element gelesen
+    // ("a[3]" = Element 3 von "a") oder als kaputter Index — als ganzer Name
+    // ist er nicht abonnierbar.
+    return ist_gueltiger_name(name, laenge) && name[laenge - 1] != ']';
+}
+
 bool ist_gueltiger_name(const char* name, size_t laenge) noexcept {
     if (name == nullptr || laenge == 0 || laenge > grenzen::MAX_ZEILE) return false;
     for (size_t i = 0; i < laenge; ++i) {
@@ -213,7 +221,7 @@ bool zerlege_anfrage(const char* daten, size_t laenge,
                             1);
     }
 
-    constexpr size_t MAX_WOERTER = 5;
+    constexpr size_t MAX_WOERTER = 6;  // ABO id rate teil teile g<n>
     Stueck w[MAX_WOERTER];
     // Erst das Befehlswort allein prüfen: ein unlesbares erstes Wort ist ein
     // unbekannter Befehl, kein Argumentfehler.
@@ -292,7 +300,20 @@ bool zerlege_anfrage(const char* daten, size_t laenge,
             break;
         }
         case Befehl::ABO: {
-            if (n_woerter != 3 && n_woerter != 5) {
+            // Optionales letztes Wort "g<zahl>": Generation des Abos (der Client
+            // zählt sie bei jeder inhaltlichen Änderung hoch). Wird zuerst
+            // gelesen, damit auch Fehlerantworten sie schon tragen.
+            size_t n_kopf = n_woerter;
+            if (n_kopf >= 4 && w[n_kopf - 1].n >= 1 && w[n_kopf - 1].p[0] == 'g') {
+                uint32_t gen = 0;
+                if (!lies_zahl(w[n_kopf - 1].p + 1, w[n_kopf - 1].n - 1, &gen) ||
+                    gen == 0 || gen > 0x7FFFFFFFu) {
+                    return fehler(Fehlergrund::GENERATION_UNGUELTIG, 1);
+                }
+                out->generation = gen;
+                --n_kopf;
+            }
+            if (n_kopf != 3 && n_kopf != 5) {
                 return fehler(Fehlergrund::FALSCHE_ARGUMENTE, 1);
             }
             uint32_t id = 0, rate = 0;
@@ -300,13 +321,13 @@ bool zerlege_anfrage(const char* daten, size_t laenge,
                 id < grenzen::MIN_ABO_ID || id > grenzen::MAX_ABO_ID) {
                 return fehler(Fehlergrund::ABO_ID_UNGUELTIG, 1);
             }
+            out->abo_id = id;  // gleich setzen: Fehlerantworten nennen das Abo
             if (!lies_zahl(w[2].p, w[2].n, &rate) ||
                 rate < grenzen::MIN_RATE_HZ || rate > grenzen::MAX_RATE_HZ) {
                 return fehler(Fehlergrund::RATE_UNGUELTIG, 1);
             }
-            out->abo_id = id;
             out->rate_hz = rate;
-            if (n_woerter == 5) {
+            if (n_kopf == 5) {
                 uint32_t teil = 0, teile = 0;
                 if (!lies_zahl(w[3].p, w[3].n, &teil) ||
                     !lies_zahl(w[4].p, w[4].n, &teile) ||
@@ -319,19 +340,23 @@ bool zerlege_anfrage(const char* daten, size_t laenge,
                 out->mehrteilig = true;
             }
 
-            // Namenszeilen.
+            // Namenszeilen. Jede Zeile ist ein Name und zählt mit — auch eine
+            // ungültige (leer, zu lang, Nicht-ASCII, kaputter Index). Sie
+            // verwirft NICHT das ganze Abo, sondern bekommt den Status
+            // "fehlt": die Nummerierung bleibt stabil, und ein einzelner
+            // seltsamer Name aus einer Flugzeugliste kostet nicht alle anderen.
             size_t kapazitaet = namen_kapazitaet;
             if (kapazitaet > grenzen::MAX_NAMEN_JE_ABO) kapazitaet = grenzen::MAX_NAMEN_JE_ABO;
             size_t anzahl = 0;
             uint32_t zeilennummer = 1;
             while (naechste_zeile(daten, laenge, &pos, &zeile)) {
                 ++zeilennummer;
-                if (zeile.n > grenzen::MAX_ZEILE) {
-                    return fehler(Fehlergrund::ZEILE_ZU_LANG, zeilennummer);
-                }
                 NameRef name;
-                const Fehlergrund g = zerlege_name(zeile, &name);
-                if (g != Fehlergrund::KEINER) return fehler(g, zeilennummer);
+                if (zerlege_name(zeile, &name) != Fehlergrund::KEINER) {
+                    name = NameRef{};
+                    name.ungueltig = true;
+                    ++out->ungueltige_namen;
+                }
                 if (anzahl >= kapazitaet || namen_puffer == nullptr) {
                     return fehler(Fehlergrund::ZU_VIELE_NAMEN, zeilennummer);
                 }

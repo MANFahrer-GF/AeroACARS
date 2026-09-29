@@ -65,6 +65,11 @@ const char* const VORLAGEN[] = {
     "ABO 3 1 2 2\nsim/c\n",
     "ABO 16 5\r\nAirbusFBW/APU_Avail\r\nsim/vf[7]\r\n",
     "ABO 4 20\nx\ny\nz\nsim/vi[2]\nsim/b\nfehlt/ganz\n",
+    "ABO 5 30 g7\nsim/a\nkaputt]\nsim/\xc3\xa4\n\nsim/c\n",
+    "ABO 6 2 1 2 g3\nAirbusFBW/APU_Avail\n",
+    "ABO 6 2 2 2 g3\nsim/vf[0]\n",
+    "ABO 6 2 1 1 g3\nAirbusFBW/APU_Avail\n",
+    "ENDE-ABO 15\n",
 };
 
 const char SONDERZEICHEN[] = {'\n', '\r', ' ', '[', ']', '0', '9', '-', '\0', '\t',
@@ -144,16 +149,24 @@ void pruefe_parser(const std::string& s, std::vector<NameRef>& puffer) {
         if (a.befehl == Befehl::KEINER) fehler("ok ohne Befehl", s);
         if (a.namen_anzahl > kap || a.namen_anzahl > grenzen::MAX_NAMEN_JE_ABO) fehler("zu viele Namen", s);
         if (a.namen_anzahl > 0 && a.befehl != Befehl::ABO) fehler("Namen ohne ABO", s);
+        size_t ungueltige = 0;
         for (size_t i = 0; i < a.namen_anzahl; ++i) {
             const NameRef& n = a.namen[i];
+            if (n.ungueltig) {
+                ++ungueltige;
+                if (n.basis != nullptr || n.basis_laenge != 0 || n.index != -1) fehler("ungueltiger Name mit Inhalt", s);
+                continue;
+            }
             if (n.basis < block || n.basis + n.basis_laenge > block + s.size()) fehler("Name ausserhalb", s);
             if (n.basis_laenge == 0 || n.basis_laenge > grenzen::MAX_ZEILE) fehler("Namenslaenge", s);
             if (!ist_gueltiger_name(n.basis, n.basis_laenge)) fehler("ungueltiger Name akzeptiert", s);
             if (n.index < -1) fehler("Index < -1", s);
         }
+        if (ungueltige != a.ungueltige_namen) fehler("Zahl ungueltiger Namen", s);
         if (a.befehl == Befehl::ABO) {
             if (a.abo_id < 1 || a.abo_id > 16 || a.rate_hz < 1 || a.rate_hz > 50) fehler("ABO-Grenzen", s);
             if (a.teil < 1 || a.teil > a.teile || a.teile > grenzen::MAX_ABO_TEILE) fehler("Teil-Grenzen", s);
+            if (a.generation > 0x7FFFFFFFu) fehler("Generation", s);
         }
         if (a.befehl == Befehl::HALLO) {
             if (a.client_version < block || a.client_version + a.client_version_laenge > block + s.size() ||
@@ -263,8 +276,12 @@ int main(int argc, char** argv) {
                 ref.gueltig = rng() % 3 != 0;
                 if (!ref.vf.empty()) ref.vf.resize(rng() % 400, 0.5f);
                 if (!ref.b.empty() || ref.typen == typ::B) ref.b = zufall_bytes(rng, 80);
-            } else if (r < 97) {
+            } else if (r < 96) {
                 w.d->flugzeug_geladen();
+            } else if (r < 97) {
+                // Kosten der XPLM-Aufrufe schwanken lassen (Budgets).
+                w.welt.such_kosten = (rng() % 2) ? 0.0 : 2e-6;
+                w.welt.gueltig_kosten = (rng() % 2) ? 0.0 : 1e-6;
             } else if (r < 99) {
                 w.d->flughafen_geladen();
             } else {

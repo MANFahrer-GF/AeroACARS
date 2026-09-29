@@ -185,11 +185,13 @@ TEST(dienst_ohne_hallo_und_fremde_protokolle) {
     PRUEFE_GLEICH(p.size(), size_t(1));
     PRUEFE_TEXT(art(p[0]), "hallo");
     PRUEFE(!a.d->client_angemeldet());
-    // Syntaxfehler: fehler mit Zeile.
-    a.sende("ABO 1 10\nsim/a b");
+    // Kopfzeilenfehler: fehler mit Zeile, ID und Generation.
+    a.sende("ABO 3 99 g7\nsim/a");
     p = a.neue();
-    PRUEFE_TEXT(p[0].hole("grund")->text, "name_ungueltig");
-    PRUEFE(p[0].hole("zeile")->zahl == 2);
+    PRUEFE_TEXT(p[0].hole("grund")->text, "rate_ungueltig");
+    PRUEFE(p[0].hole("zeile")->zahl == 1);
+    PRUEFE(p[0].hole("abo")->zahl == 3);
+    PRUEFE(p[0].hole("gen")->zahl == 7);
 }
 
 TEST(dienst_ping_pong) {
@@ -236,7 +238,15 @@ TEST(dienst_abo_status_und_werte) {
             "sim/b[0]\n"                           // 11 i (Byte)
             "sim/nan\n"                            // 12 f → null
             "sim/leer\n");                         // 13 fehlt
-    PRUEFE(a.neue().empty());  // Antwort erst nach der Suche im Frame
+    {
+        // Sofort nur die Empfangsbestätigung; der Status erst nach der Suche.
+        auto sofort = a.neue();
+        PRUEFE_GLEICH(sofort.size(), size_t(1));
+        if (!sofort.empty()) {
+            PRUEFE_TEXT(art(sofort[0]), "abo_empfangen");
+            PRUEFE(sofort[0].hole("namen")->zahl == 14);
+        }
+    }
     a.frame();
     auto p = a.neue();
     auto st = status_aus(p);
@@ -737,4 +747,351 @@ TEST(dienst_braucht_jeden_frame) {
     PRUEFE(a.d->braucht_jeden_frame());
     a.sende("ENDE-ABO 1");
     PRUEFE(!a.d->braucht_jeden_frame());
+}
+
+// =============================================================================
+// Cloud-QS (H1, N1, N3, Generation)
+// =============================================================================
+
+namespace {
+
+// ABO-Datagramme wie der Client: ≤ 60 000 Byte je Teil, Generation am Ende.
+std::vector<std::string> abo_datagramme(int id, int rate, const std::vector<std::string>& namen, int gen) {
+    std::vector<std::string> koerper(1);
+    for (const auto& n : namen) {
+        if (koerper.back().size() + n.size() + 1 > 60000) koerper.emplace_back();
+        koerper.back() += n + "\n";
+    }
+    std::vector<std::string> aus;
+    for (size_t k = 0; k < koerper.size(); ++k) {
+        std::string kopf = "ABO " + std::to_string(id) + " " + std::to_string(rate);
+        if (koerper.size() > 1) kopf += " " + std::to_string(k + 1) + " " + std::to_string(koerper.size());
+        kopf += " g" + std::to_string(gen) + "\n";
+        aus.push_back(kopf + koerper[k]);
+    }
+    return aus;
+}
+
+// Grobe Kosten echter XPLM-Aufrufe (Hash-Suche + Handle-Prüfung), damit die
+// Zeitbudgets in der Schein-Welt wirken. Am echten X-Plane misst das Plugin
+// die Werte beim Start selbst (Log.txt).
+void setze_xplm_kosten(Aufbau& a) {
+    a.welt.such_kosten = 0.5e-6;
+    a.welt.gueltig_kosten = 0.2e-6;
+    a.welt.lese_kosten = 0.1e-6;
+}
+
+std::vector<std::string> vermessungs_namen(Aufbau& a, const std::string& praefix, int n) {
+    std::vector<std::string> namen;
+    for (int i = 0; i < n; ++i) {
+        const std::string name = praefix + std::to_string(i);
+        // Jeder fünfte fehlt (wie beim Vermessen: viele Kandidaten gibt es nicht).
+        if (i % 5 != 0) a.welt.neu(name, i % 3 == 0 ? typ::I : typ::F).f = static_cast<float>(i);
+        namen.push_back(name);
+    }
+    return namen;
+}
+
+// Treibt den Dienst mit 30 fps wie der Client: PING je Sekunde, und ein ABO,
+// dessen Status nach 2 s nicht da ist, wird neu geschickt (Client-Regel aus
+// der Cloud-QS). Liefert je Abo die Zeit bis zur vollständigen abo-Antwort.
+struct Messung {
+    std::map<int, double> erster_status;  // id → Sekunden ab Anmeldung
+    std::map<int, int> neusendungen;
+    std::map<int, int> w_pakete;
+    std::map<int, int> empfangen;         // abo_empfangen je id
+    int abo_antworten = 0;  // vollständige Antworten (Pakete mit teil 1)
+};
+
+Messung treibe(Aufbau& a, const std::map<int, std::vector<std::string>>& abos, double max_s,
+               double neu_nach_s = 2.0) {
+    Messung m;
+    const double fps = 30.0;
+    const double t0 = a.umg.zeit;
+    std::map<int, double> gesendet_um;
+    std::map<int, std::map<int, int>> teile;  // id → teil → 1
+    for (const auto& kv : abos) {
+        for (const auto& d : kv.second) a.sende(d);
+        gesendet_um[kv.first] = a.umg.zeit;
+    }
+    double seit_ping = 0.0;
+    while (a.umg.zeit - t0 < max_s) {
+        a.frame(1.0 / fps);
+        seit_ping += 1.0 / fps;
+        if (seit_ping >= 1.0) { a.sende("PING"); seit_ping = 0.0; }
+        for (auto& j : a.neue()) {
+            const std::string t = art(j);
+            if (t == "abo_empfangen") { m.empfangen[static_cast<int>(j.hole("abo")->zahl)]++; continue; }
+            if (t == "w") { m.w_pakete[static_cast<int>(j.hole("abo")->zahl)]++; continue; }
+            if (t != "abo") continue;
+            if (j.hole("teil")->zahl == 1) ++m.abo_antworten;
+            const int id = static_cast<int>(j.hole("abo")->zahl);
+            teile[id][static_cast<int>(j.hole("teil")->zahl)] = 1;
+            if (static_cast<int>(teile[id].size()) == static_cast<int>(j.hole("teile")->zahl) &&
+                !m.erster_status.count(id)) {
+                m.erster_status[id] = a.umg.zeit - t0;
+            }
+        }
+        bool alle = true;
+        for (const auto& kv : abos) {
+            if (m.erster_status.count(kv.first)) continue;
+            alle = false;
+            if (a.umg.zeit - gesendet_um[kv.first] >= neu_nach_s) {
+                for (const auto& d : kv.second) a.sende(d);
+                gesendet_um[kv.first] = a.umg.zeit;
+                m.neusendungen[kv.first]++;
+            }
+        }
+        if (alle) break;
+    }
+    return m;
+}
+
+}  // namespace
+
+TEST(dienst_h1_8192_namen_status_unter_1s) {
+    Aufbau a;
+    setze_xplm_kosten(a);
+    const auto namen = vermessungs_namen(a, "vermessung/kandidat_", 8192);
+    a.hallo();
+    const auto m = treibe(a, {{2, abo_datagramme(2, 1, namen, 1)}}, 30.0);
+    PRUEFE(m.erster_status.count(2));
+    const double t = m.erster_status.count(2) ? m.erster_status.at(2) : 99.0;
+    std::printf("     8192 Namen @30 fps: erster Status nach %.2f s, %d Neusendungen\n", t,
+                m.neusendungen.count(2) ? m.neusendungen.at(2) : 0);
+    PRUEFE(t < 1.0);
+    PRUEFE(!m.neusendungen.count(2));
+    PRUEFE_GLEICH(m.empfangen.at(2), 1);  // sofortige Empfangsbestätigung
+}
+
+TEST(dienst_h1_identisches_abo_setzt_nichts_zurueck) {
+    Aufbau a;
+    setze_xplm_kosten(a);
+    a.welt.such_kosten = 2e-6;  // absichtlich langsam: Suche braucht > 1 s
+    const auto namen = vermessungs_namen(a, "v/", 8192);
+    a.hallo();
+    // Aggressiver Client: schickt alle 0,25 s dasselbe ABO. Vorher begann
+    // die Suche jedes Mal bei 0 und kam nie an.
+    const auto m = treibe(a, {{2, abo_datagramme(2, 1, namen, 5)}}, 30.0, 0.25);
+    PRUEFE(m.erster_status.count(2));
+    std::printf("     8192 Namen, 2 us/Suche, Neusenden alle 0,25 s: Status nach %.2f s, %d Neusendungen\n",
+                m.erster_status.count(2) ? m.erster_status.at(2) : 99.0,
+                m.neusendungen.count(2) ? m.neusendungen.at(2) : 0);
+    PRUEFE_GLEICH(m.abo_antworten, 1);  // genau EINE vollständige Antwort
+    // Nach dem Status: identisches ABO → Status noch einmal, Werte laufen weiter.
+    for (const auto& d : abo_datagramme(2, 1, namen, 5)) a.sende(d);
+    a.frames(5);
+    auto p = a.neue();
+    int abo_pakete = 0, empfangen = 0;
+    for (auto& j : p) {
+        if (art(j) == "abo" && j.hole("teil")->zahl == 1) { ++abo_pakete; PRUEFE(j.hole("gen")->zahl == 5); }
+        if (art(j) == "abo_empfangen") ++empfangen;
+    }
+    PRUEFE_GLEICH(abo_pakete, 1);  // Status genau einmal erneut
+    PRUEFE_GLEICH(empfangen, 1);
+    // Neue Generation = neues Abo (Suche neu).
+    for (const auto& d : abo_datagramme(2, 1, namen, 6)) a.sende(d);
+    a.frames(60);
+    p = a.neue();
+    bool gen6 = false;
+    for (auto& j : p) if (art(j) == "w" && j.hole("gen")->zahl == 6) gen6 = true;
+    PRUEFE(gen6);
+}
+
+TEST(dienst_h1_sechs_mal_8192_und_telemetrie) {
+    Aufbau a;
+    setze_xplm_kosten(a);
+    std::map<int, std::vector<std::string>> abos;
+    // Abo 1: Telemetrie (sim/…, 20 Hz).
+    std::vector<std::string> tele;
+    for (int i = 0; i < 20; ++i) {
+        const std::string n = "sim/tele/" + std::to_string(i);
+        a.welt.neu(n, typ::D).d = i;
+        tele.push_back(n);
+    }
+    abos[1] = abo_datagramme(1, 20, tele, 1);
+    for (int id = 2; id <= 7; ++id) {
+        abos[id] = abo_datagramme(id, 1, vermessungs_namen(a, "abo" + std::to_string(id) + "/n", 8192), 1);
+    }
+    a.hallo();
+    const double t0 = a.umg.zeit;
+    const auto m = treibe(a, abos, 30.0);
+    for (int id = 1; id <= 7; ++id) {
+        PRUEFE(m.erster_status.count(id));
+        std::printf("     Abo %d: erster Status nach %.2f s, %d Neusendungen\n", id,
+                    m.erster_status.count(id) ? m.erster_status.at(id) : 99.0,
+                    m.neusendungen.count(id) ? m.neusendungen.at(id) : 0);
+    }
+    // Telemetrie: Status im ersten Frame, danach durchgehend ~20 Hz, auch
+    // während sechs große Abos suchen.
+    PRUEFE(m.erster_status.count(1) && m.erster_status.at(1) < 0.05);
+    const double dauer = a.umg.zeit - t0;
+    const double hz = m.w_pakete.count(1) ? m.w_pakete.at(1) / dauer : 0.0;
+    std::printf("     Telemetrie waehrend der Suche: %.1f Hz (Soll 20)\n", hz);
+    PRUEFE(hz > 17.0);
+    // Das erste große Abo deutlich unter 1 s (kürzester Rest zuerst).
+    double erstes = 99.0;
+    for (int id = 2; id <= 7; ++id) {
+        if (m.erster_status.count(id) && m.erster_status.at(id) < erstes) erstes = m.erster_status.at(id);
+    }
+    PRUEFE(erstes < 1.0);
+}
+
+TEST(dienst_h1_rundlauf_nur_ueber_belegte_abos) {
+    // Drei schwere Liefer-Abos (je 3000 Arrays) hinter Abo 3: vorher verhungerten
+    // die höheren IDs. Jetzt müssen alle regelmäßig liefern.
+    Aufbau a;
+    for (int i = 0; i < 64; ++i) a.welt.neu("arr/" + std::to_string(i), typ::VF).vf = std::vector<float>(64, 1.0f);
+    a.welt.neu("sim/x", typ::F);
+    a.hallo();
+    for (int id : {3, 9, 16}) {
+        std::string d = "ABO " + std::to_string(id) + " 10\n";
+        for (int i = 0; i < 3000; ++i) d += "arr/" + std::to_string(i % 64) + "\n";
+        a.sende(d);
+    }
+    a.sende("ABO 1 20\nsim/x");
+    std::map<int, int> runden;
+    for (int i = 0; i < 300; ++i) {
+        a.frame(1.0 / 30.0);
+        if (i % 30 == 0) a.sende("PING");
+        for (auto& j : a.neue_vom_typ("w")) {
+            if (j.hole("teil")->zahl == j.hole("teile")->zahl) runden[static_cast<int>(j.hole("abo")->zahl)]++;
+        }
+    }
+    for (int id : {1, 3, 9, 16}) {
+        std::printf("     Abo %d: %d vollstaendige Lieferungen in 10 s\n", id, runden[id]);
+        PRUEFE(runden[id] > 0);
+    }
+    PRUEFE(runden[1] > 150);  // Abo 1 behält Vorrang (Soll 200 in 10 s)
+    // Keines der drei gleich schweren Abos bekommt weniger als die Hälfte des besten.
+    const int maxi = std::max({runden[3], runden[9], runden[16]});
+    for (int id : {3, 9, 16}) PRUEFE(runden[id] * 2 >= maxi);
+}
+
+TEST(dienst_generation_in_allen_antworten) {
+    Aufbau a;
+    a.welt.neu("sim/x", typ::F);
+    a.hallo();
+    a.sende("ABO 4 10 g42\nsim/x");
+    a.frame();
+    auto p = a.neue();
+    PRUEFE_GLEICH(p.size(), size_t(3));  // abo_empfangen, abo, w
+    PRUEFE_TEXT(a.umg.gesendet[a.umg.gesendet.size() - 3].second,
+                "{\"p\":2,\"t\":\"abo_empfangen\",\"abo\":4,\"gen\":42,\"namen\":1}\n");
+    for (auto& j : p) PRUEFE(j.hole("gen") && j.hole("gen")->zahl == 42);
+    // Teile mit anderer Generation passen nicht zusammen.
+    a.sende("ABO 5 10 1 2 g1\nsim/x");
+    a.sende("ABO 5 10 2 2 g2\nsim/x");
+    p = a.neue();
+    PRUEFE_TEXT(p.back().hole("grund")->text, "abo_teile_widerspruch");
+    PRUEFE(p.back().hole("gen")->zahl == 2);
+    // Ohne g-Token: gen 0.
+    a.sende("ABO 6 10\nsim/x");
+    a.frame();
+    for (auto& j : a.neue()) PRUEFE(j.hole("gen") && j.hole("gen")->zahl == 0);
+}
+
+TEST(dienst_n3_ungueltige_namen_einzeln_fehlt) {
+    Aufbau a;
+    a.welt.neu("sim/x", typ::F).f = 1.0f;
+    a.welt.neu("sim/y", typ::F).f = 2.0f;
+    a.hallo();
+    a.sende("ABO 1 10\nsim/x\nkaputt]\nname mit leerzeichen\nsim/\xC3\xA4\nsim/y");
+    a.frame();
+    auto p = a.neue();
+    auto st = status_aus(p);
+    PRUEFE_GLEICH(st.size(), size_t(5));
+    const char* soll[] = {"f,1", "fehlt", "fehlt", "fehlt", "f,1"};
+    for (size_t k = 0; k < st.size() && k < 5; ++k) PRUEFE_TEXT(status_text(st[k]), soll[k]);
+    auto w = werte_aus(p);
+    PRUEFE(w.count(0) && w.count(4) && w[4].zahl == 2.0);
+}
+
+TEST(dienst_n1_verwaist_beim_lesen) {
+    Aufbau a;
+    auto& plug = a.welt.neu("toliss/apu", typ::I);
+    plug.i = 1;
+    a.welt.neu("sim/x", typ::F).f = 3.0f;
+    a.hallo();
+    a.sende("ABO 1 30\ntoliss/apu\nsim/x");
+    a.frame();
+    PRUEFE_TEXT(status_text(status_aus(a.neue())[0]), "i,1");
+    // Plugin abgeschaltet, OHNE PLANE_LOADED: der nächste Lesezugriff merkt es.
+    plug.gueltig = false;
+    std::vector<JWert> p;
+    for (int i = 0; i < 4; ++i) {
+        a.frame(1.0 / 30.0);
+        for (auto& j : a.neue()) p.push_back(j);
+    }
+    bool wert_nach_verwaisen = false, neue_antwort = false;
+    for (auto& j : p) {
+        if (art(j) == "abo") {
+            neue_antwort = true;
+            PRUEFE_TEXT(status_text(j.hole("st")->feld[0]), "fehlt");
+        }
+        if (art(j) == "w") {
+            for (auto& e : j.hole("v")->feld) if (e.feld[0].zahl == 0) wert_nach_verwaisen = true;
+        }
+    }
+    PRUEFE(!wert_nach_verwaisen);  // nie eine Schein-0
+    PRUEFE(neue_antwort);           // Status sofort, nicht erst nach 2 s
+    // sim/… wird nie geprüft (X-Plane-eigene Datarefs verwaisen nicht).
+    const int vorher = a.welt.gueltig_pruefungen;
+    a.frames(30);
+    PRUEFE(a.welt.gueltig_pruefungen - vorher < 5);
+}
+
+TEST(dienst_n1_pause_nach_flugzeugwechsel) {
+    Aufbau a;
+    setze_xplm_kosten(a);
+    a.welt.such_kosten = 5e-6;  // Neusuche über mehrere Frames
+    std::string plugin_abo = "ABO 2 30\n";
+    for (int i = 0; i < 1000; ++i) {
+        a.welt.neu("toliss/n" + std::to_string(i), typ::F).f = 1.0f;
+        plugin_abo += "toliss/n" + std::to_string(i) + "\n";
+    }
+    a.welt.neu("sim/x", typ::F);
+    a.hallo();
+    a.sende(plugin_abo);
+    a.sende("ABO 1 30\nsim/x");
+    for (int i = 0; i < 60; ++i) a.frame(1.0 / 30.0);
+    a.neue();
+    // Flugzeugwechsel: toliss/* sind beim neuen Flugzeug nicht mehr da. Der
+    // alte Handle meldet sich hier noch als gültig — die Prüfung beim Lesen
+    // greift also NICHT; nur die Pause bis zur Neusuche verhindert Werte aus
+    // alten Handles.
+    for (auto& r : a.welt.refs) if (r->name.rfind("toliss/", 0) == 0) r->registriert = false;
+    a.d->flugzeug_geladen();
+    bool abo2_wert_vor_status = false, abo2_status = false;
+    int abo1_werte = 0, frames_bis_status = 0;
+    for (int i = 0; i < 60 && !abo2_status; ++i) {
+        a.frame(1.0 / 30.0);
+        ++frames_bis_status;
+        for (auto& j : a.neue()) {
+            const int id = j.hole("abo") ? static_cast<int>(j.hole("abo")->zahl) : 0;
+            if (art(j) == "w" && id == 1) ++abo1_werte;
+            if (art(j) == "w" && id == 2 && !j.hole("v")->feld.empty()) abo2_wert_vor_status = true;
+            if (art(j) == "abo" && id == 2) abo2_status = true;
+        }
+    }
+    std::printf("     Neusuche 1000 Namen nach Flugzeugwechsel: %d Frames\n", frames_bis_status);
+    PRUEFE(abo2_status);
+    PRUEFE(!abo2_wert_vor_status);   // keine Werte aus alten Handles
+    PRUEFE(frames_bis_status > 1);   // die Pause war wirklich nötig
+    PRUEFE(abo1_werte >= frames_bis_status - 1);  // Telemetrie lief ohne Pause weiter
+}
+
+TEST(dienst_liste_ohne_index_namen) {
+    Aufbau a;
+    a.welt.neu("sim/a[3]", typ::F);
+    a.welt.neu("sim/b", typ::F);
+    a.hallo();
+    a.sende("LISTE 1");
+    std::set<std::string> namen;
+    for (int i = 0; i < 10; ++i) {
+        a.frame();
+        for (auto& j : a.neue_vom_typ("liste")) for (auto& n : j.hole("n")->feld) namen.insert(n.text);
+    }
+    PRUEFE(namen.count("sim/b"));
+    PRUEFE(!namen.count("sim/a[3]"));
 }

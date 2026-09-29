@@ -41,6 +41,7 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -67,17 +68,22 @@ void* g_cb_ref = nullptr;
 float g_cb_intervall = 0.0f;
 const auto g_start = std::chrono::steady_clock::now();
 
+// Wie X-Plane: Suche über eine Hash-Tabelle (die Kostenmessung des Plugins
+// beim Start misst damit etwas Ähnliches wie am echten Sim).
+std::unordered_map<std::string, Ref*> g_nach_name;
+
 Ref* neu(const std::string& name, int typen) {
     Ref* r = new Ref();
     r->name = name;
     r->typen = typen;
     g_refs.push_back(r);
+    g_nach_name.emplace(name, r);
     return r;
 }
 
 Ref* such(const char* name) {
-    for (Ref* r : g_refs) if (r->name == name) return r;
-    return nullptr;
+    auto it = g_nach_name.find(name);
+    return it == g_nach_name.end() ? nullptr : it->second;
 }
 
 double sekunden() {
@@ -231,7 +237,7 @@ int main(int argc, char** argv) {
     const double frame = 1.0 / 60.0;
     double naechster_aufruf = g_cb_intervall > 0 ? sekunden() + g_cb_intervall : 0.0;
     double letzter_aufruf = sekunden();
-    int aufrufe = 0, jeder_frame = 0, p1_pakete = 0;
+    int aufrufe = 0, jeder_frame = 0, p1_pakete = 0, p1_mit_pv = 0;
     long zaehler = 0;
     bool flugzeug_gemeldet = false, icao_gewechselt = false;
     double max_dauer = 0.0;
@@ -262,7 +268,13 @@ int main(int argc, char** argv) {
             }
         }
         char puffer[4096];
-        while (p1_da && recv(p1, puffer, sizeof(puffer), 0) > 0) ++p1_pakete;
+        for (;;) {
+            const auto n = p1_da ? recv(p1, puffer, sizeof(puffer) - 1, 0) : -1;
+            if (n <= 0) break;
+            ++p1_pakete;
+            puffer[n] = '\0';
+            if (std::strstr(puffer, "\"pv\":\"") != nullptr) ++p1_mit_pv;
+        }
         ++zaehler;
         // Fester 60-fps-Raster (bis zum nächsten Frame-Termin schlafen, nicht
         // "16,7 ms ab jetzt" — sonst bremst die Laufzeit jedes Frames mit).
@@ -294,5 +306,8 @@ int main(int argc, char** argv) {
     std::printf("[Attrappe] Bildrate %.1f fps\n", static_cast<double>(zaehler) / laufzeit);
     const bool ticks_ok = tick_hz > 5.0 && tick_hz < 21.5;
     const bool pakete_ok = !p1_da || (paket_hz > 5.0 && paket_hz < 21.5);
-    return (ticks_ok && pakete_ok) ? 0 : 1;
+    // Protokoll 1 trägt seit 1.0.0 die Plugin-Version ("pv") in jedem Paket.
+    const bool pv_ok = !p1_da || p1_pakete == p1_mit_pv;
+    if (p1_da) std::printf("[Attrappe] Protokoll 1: %d von %d Paketen mit \"pv\"\n", p1_mit_pv, p1_pakete);
+    return (ticks_ok && pakete_ok && pv_ok) ? 0 : 1;
 }

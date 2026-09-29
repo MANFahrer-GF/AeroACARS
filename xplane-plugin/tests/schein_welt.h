@@ -19,6 +19,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -43,14 +44,19 @@ public:
     bool liste_da = true;
     ScheinUmgebung* uhr = nullptr;  // für langsame Lesezugriffe
     double lese_kosten = 0.0;       // Sekunden je Lesezugriff
+    double such_kosten = 0.0;       // Sekunden je finde()
+    double gueltig_kosten = 0.0;    // Sekunden je ist_gueltig()
     int lesezugriffe = 0;
     int suchen = 0;
+    int gueltig_pruefungen = 0;
+    std::unordered_map<std::string, ScheinRef*> nach_name;
     int ueberschuss = 0;            // schreibt so viele Werte MEHR als erbeten
 
     ScheinRef& neu(const std::string& name, int typen) {
         refs.emplace_back(new ScheinRef());
         refs.back()->name = name;
         refs.back()->typen = typen;
+        nach_name.emplace(name, refs.back().get());
         return *refs.back();
     }
     ScheinRef* such(const std::string& name) {
@@ -58,16 +64,9 @@ public:
         return nullptr;
     }
 
-    aeroacars::DatarefHandle finde(const char* name) noexcept override {
-        ++suchen;
-        for (auto& r : refs) {
-            if (r->registriert && r->name == name) return r.get();
-        }
-        return nullptr;
-    }
-    bool ist_gueltig(aeroacars::DatarefHandle h) noexcept override {
-        return static_cast<ScheinRef*>(h)->gueltig;
-    }
+    // Wie XPLM: Hash-Suche über den Namen.
+    aeroacars::DatarefHandle finde(const char* name) noexcept override;
+    bool ist_gueltig(aeroacars::DatarefHandle h) noexcept override;
     int typen(aeroacars::DatarefHandle h) noexcept override {
         return static_cast<ScheinRef*>(h)->typen;
     }
@@ -142,6 +141,19 @@ public:
     }
     void protokolliere(const char* zeile) noexcept override { log.emplace_back(zeile); }
 };
+
+inline aeroacars::DatarefHandle ScheinWelt::finde(const char* name) noexcept {
+    ++suchen;
+    if (uhr != nullptr) uhr->zeit += such_kosten;
+    auto it = nach_name.find(name);
+    return (it != nach_name.end() && it->second->registriert) ? it->second : nullptr;
+}
+
+inline bool ScheinWelt::ist_gueltig(aeroacars::DatarefHandle h) noexcept {
+    ++gueltig_pruefungen;
+    if (uhr != nullptr) uhr->zeit += gueltig_kosten;
+    return static_cast<ScheinRef*>(h)->gueltig;
+}
 
 inline void ScheinWelt::lies() noexcept {
     ++lesezugriffe;

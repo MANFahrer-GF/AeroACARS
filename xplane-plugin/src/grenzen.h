@@ -92,8 +92,12 @@ constexpr double CLIENT_TIMEOUT_S = 5.0;
 // Prüfdurchlauf (Nachsuche fehlender Namen, Waisen, Längen) je Abo.
 constexpr double NACHSUCHE_INTERVALL_S = 2.0;
 
-// Höchstens so viele Dataref-Suchen je Frame, über alle Abos (ADR 3).
-constexpr int MAX_SUCHEN_JE_FRAME = 64;
+// Zeitbudget für Dataref-Suchen je Frame, über alle Abos — getrennt vom
+// Liefer-Budget, damit das Anmelden großer Abos weder die Lieferung
+// verdrängt noch von ihr verdrängt wird. (Bis zur Cloud-QS: feste 64 Suchen
+// je Frame — 8192 Namen brauchten damit ≥ 128 Frames, bei 30 fps über 4 s,
+// und ein Client, der nach 2 s neu anmeldete, bekam nie einen Status.)
+constexpr double SUCH_BUDGET_S = 0.0003;
 
 // Flugzeug-Kennung (ICAO/Titel/Pfad) wird so oft auf Änderung geprüft.
 constexpr double FLUGZEUG_PRUEFINTERVALL_S = 2.0;

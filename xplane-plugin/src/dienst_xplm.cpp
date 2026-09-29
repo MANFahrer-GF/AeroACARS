@@ -326,6 +326,37 @@ void empfange_alles() noexcept {
     }
 }
 
+// Misst beim Start einmal grob, was die XPLM-Aufrufe kosten, auf die sich
+// Such- und Lieferbudget stützen, und schreibt es ins Log.txt. Die Budgets
+// sind Zeitbudgets und brauchen das nicht — aber so lässt sich am echten
+// X-Plane ablesen, wie viele Namen je Frame tatsächlich gesucht und wie teuer
+// die Verwaist-Prüfung vor jedem Lesen ist. Kostet einmalig ≈ 1–3 ms.
+void messe_xplm_kosten() noexcept {
+    using namespace std::chrono;
+    constexpr int N = 500;
+    const XPLMDataRef lat = XPLMFindDataRef("sim/flightmodel/position/latitude");
+    auto mikro = [](steady_clock::time_point a, steady_clock::time_point b) {
+        return duration<double, std::micro>(b - a).count() / N;
+    };
+    const auto t0 = steady_clock::now();
+    for (int i = 0; i < N; ++i) (void)XPLMFindDataRef("sim/flightmodel/position/latitude");
+    const auto t1 = steady_clock::now();
+    for (int i = 0; i < N; ++i) (void)XPLMFindDataRef("aeroacars/messung/gibt_es_nicht");
+    const auto t2 = steady_clock::now();
+    int gut = 0;
+    if (lat != nullptr) {
+        for (int i = 0; i < N; ++i) gut += XPLMIsDataRefGood(lat);
+    }
+    const auto t3 = steady_clock::now();
+    char t[256];
+    std::snprintf(t, sizeof(t),
+                  "Protokoll 2: Kosten je Aufruf - XPLMFindDataRef %.3f us (Treffer) / %.3f us "
+                  "(Fehlgriff), XPLMIsDataRefGood %.3f us",
+                  mikro(t0, t1), mikro(t1, t2), lat ? mikro(t2, t3) : -1.0);
+    log_zeile(t);
+    (void)gut;
+}
+
 }  // namespace
 
 bool dienst_start(const char* plugin_version) noexcept {
@@ -367,6 +398,7 @@ bool dienst_start(const char* plugin_version) noexcept {
         return false;
     }
     g_fremd_gemeldet = false;
+    messe_xplm_kosten();
 
     char t[200];
     std::snprintf(t, sizeof(t),

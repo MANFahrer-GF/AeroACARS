@@ -68,7 +68,7 @@ Status je Name und liefert. **Ein fehlender Name liefert nie einen Wert** —
 
 ```
 HALLO <protokoll> <client-version>
-ABO <abo-id> <rate-hz> [<teil> <teile>]
+ABO <abo-id> <rate-hz> [<teil> <teile>] [g<generation>]
 <name>
 <name>[<index>]
 …
@@ -86,16 +86,23 @@ PING
 | Zahlen | nur Dezimalziffern, höchstens 10 Stellen |
 | Namen | 1–512 Byte druckbares ASCII `0x21–0x7E` (kein Leerzeichen, kein UTF-8) |
 | Index | Name endet auf `]` → `name[<ziffern>]`, 0 … 2147483647 |
+| ungültiger Name (leer, zu lang, Nicht-ASCII, kaputter Index) | zählt mit, Status `fehlt` — das Abo bleibt |
+| Generation `g<n>` | optional, LETZTES Wort der ABO-Zeile, 1 … 2147483647; ohne = 0 |
 | `abo-id` / `rate-hz` | 1–16 / 1–50 |
 | Namen je Abo | ≤ 8192 (über alle Teile) |
 | `teil` / `teile` | 1 ≤ teil ≤ teile ≤ 8192; Teile in Reihenfolge 1, 2, 3 … |
 | `anfrage-id` (LISTE) | 0 … 2147483647 |
-| leere Zeile mitten in der Namensliste | Fehler (würde die Nummerierung verschieben) |
 
 * Ein `ABO` mit gleicher ID ersetzt das alte — erst mit dem letzten Teil.
   Ein Teil 1 beginnt immer neu. Fehlender, doppelter oder vertauschter Teil →
-  `abo_teil_reihenfolge`, andere Rate/Teilezahl als in Teil 1 →
+  `abo_teil_reihenfolge`, andere Rate/Teilezahl/Generation als in Teil 1 →
   `abo_teile_widerspruch`; der ganze Aufbau ist dann verworfen.
+* **Gleiches ABO** (gleiche ID, Rate, Generation und Namensliste) setzt
+  **nichts** zurück: eine laufende Suche läuft weiter, ein schon gesendeter
+  Status geht noch einmal hinaus. Neue Generation = neues Abo.
+* Jedes angenommene ABO (auch ein gleiches) wird sofort mit `abo_empfangen`
+  bestätigt; der Status folgt, sobald alle Namen gesucht sind.
+* `ENDE-ABO` hat keine Antwort — auch nicht für eine ID ohne Abo (kein Fehler).
 * Jede Anfrage außer `HALLO` braucht vorher ein `HALLO 2 …` vom selben
   Absender, sonst `kein_hallo`. Ein `HALLO` mit anderer Protokollnummer wird
   beantwortet (`"p":2`), meldet den Client aber nicht an.
@@ -108,11 +115,12 @@ PING
 ```json
 {"p":2,"t":"hallo","plugin":"1.0.0","xplane":12100,"xplm":430}
 {"p":2,"t":"pong"}
-{"p":2,"t":"abo","abo":1,"teil":1,"teile":1,"st":[[0,"d",1],[1,"fehlt"],[2,"vf",8],[3,"b",40]]}
-{"p":2,"t":"w","abo":1,"seq":812,"teil":1,"teile":1,"v":[[0,51.234567890123449],[2,[0,0,1]],[3,"A20N"]]}
+{"p":2,"t":"abo_empfangen","abo":1,"gen":4,"namen":4}
+{"p":2,"t":"abo","abo":1,"gen":4,"teil":1,"teile":1,"st":[[0,"d",1],[1,"fehlt"],[2,"vf",8],[3,"b",40]]}
+{"p":2,"t":"w","abo":1,"gen":4,"seq":812,"teil":1,"teile":1,"v":[[0,51.234567890123449],[2,[0,0,1]],[3,"A20N"]]}
 {"p":2,"t":"flugzeug","icao":"A20N","titel":"A320neo","pfad":"Aircraft/…/a320.acf"}
 {"p":2,"t":"liste","id":7,"teil":3,"teile":40,"n":["sim/…","…"]}
-{"p":2,"t":"fehler","grund":"zeile_zu_lang","zeile":3,"abo":1}
+{"p":2,"t":"fehler","grund":"rate_ungueltig","zeile":1,"abo":1,"gen":4}
 ```
 
 * **Status** (`st`) je Name in Anmeldereihenfolge: `[k,"i"|"f"|"d",1]`,
@@ -135,34 +143,51 @@ PING
   Werte einer Runde stammen dann aus aufeinanderfolgenden Frames.
 * Sind alle Namen eines Abos `fehlt`, kommt trotzdem je Runde ein Paket mit
   `"v":[]` (Lebenszeichen).
-* **Statuswechsel:** Die Namen werden beim Anmelden, alle 2 s, bei
-  `XPLM_MSG_PLANE_LOADED` (Flugzeug 0) und bei `XPLM_MSG_AIRPORT_LOADED` neu
-  geprüft (höchstens 64 Suchen je Frame). Geprüft wird auch, ob ein gefundener
-  Name **verwaist** ist (sein Plugin wurde entladen, `XPLMIsDataRefGood`) —
-  dann gilt er als `fehlt` statt 0 zu liefern — und ob sich eine Array-Länge
-  geändert hat. Ändert sich ein Status, kommt zuerst eine neue vollständige
+* **Suche und Statuswechsel:** Alle Namen werden beim Anmelden, bei
+  `XPLM_MSG_PLANE_LOADED` (Flugzeug 0) und bei `XPLM_MSG_AIRPORT_LOADED`
+  gesucht; alle 2 s werden fehlende Namen und Arrays (Länge) nachgeprüft.
+  Gesucht wird in einem eigenen Zeitbudget (0,3 ms je Frame), dringende
+  Suchen (Anmeldung, Wechsel) vor periodischen, darunter das Abo mit dem
+  kleinsten Rest zuerst — ein kleines Abo hat seinen Status nach einem Frame,
+  8192 Namen brauchen gemessen ~0,6 s bei 30 fps (Schein-Welt mit 0,5 µs je
+  Suche). Ändert sich ein Status, kommt zuerst eine neue vollständige
   `abo`-Antwort und erst danach wieder Werte.
+* **Verwaiste Datarefs** (Plugin entladen oder abgeschaltet; `XPLMFindDataRef`
+  findet sie weiter, lesen ergäbe 0): Vor jedem Lesen eines Namens, der nicht
+  mit `sim/` beginnt, prüft das Plugin `XPLMIsDataRefGood`. Ist er verwaist,
+  fällt der Wert aus und der Status geht **sofort** auf `fehlt` (neue
+  `abo`-Antwort nach der Runde). Nach `XPLM_MSG_PLANE_LOADED` pausieren Abos
+  mit solchen Namen die Lieferung, bis die Neusuche übernommen ist; Abos nur
+  mit `sim/…`-Namen liefern weiter.
 * **`flugzeug`** nach jedem `HALLO`, nach `XPLM_MSG_PLANE_LOADED` und wenn sich
   ICAO/Titel/Pfad ändern (Prüfung alle 2 s). Fehlt ein Dataref → `null`.
-* **`LISTE`** meldet nur abonnierbare Namen (druckbares ASCII, ≤ 512 Byte).
+* **`LISTE`** meldet nur abonnierbare Namen (druckbares ASCII, ≤ 512 Byte,
+  nicht auf `]` endend — sonst würde das ABO ihn als Array-Element lesen).
   Eine neue `LISTE` ersetzt eine laufende. Ohne XPLM 4.0 (X-Plane 11):
   `{"p":2,"t":"fehler","grund":"liste_nicht_verfuegbar","id":…}`.
-* **Fehlergründe:** `leere_anfrage`, `datagramm_zu_gross`, `zeile_zu_lang`,
-  `unbekannter_befehl`, `falsche_argumente`, `protokoll_ungueltig`,
-  `abo_id_ungueltig`, `rate_ungueltig`, `teil_ungueltig`, `name_ungueltig`,
-  `index_ungueltig`, `zu_viele_namen`, `ueberzaehlige_zeilen`, `kein_hallo`,
-  `abo_teil_reihenfolge`, `abo_teile_widerspruch`, `keine_namen`,
-  `liste_nicht_verfuegbar`, `speicher`. Optional mit `zeile` (1-basiert),
-  `abo` und `id`. Ein fehlerhaftes `ABO` wird **ganz** verworfen.
-  `ENDE-ABO` hat keine Antwort.
+* **Fehlergründe:** `leere_anfrage`, `datagramm_zu_gross`, `zeile_zu_lang`
+  (Befehlszeile), `unbekannter_befehl`, `falsche_argumente`,
+  `protokoll_ungueltig`, `abo_id_ungueltig`, `rate_ungueltig`,
+  `teil_ungueltig`, `generation_ungueltig`, `zu_viele_namen`,
+  `ueberzaehlige_zeilen`, `kein_hallo`, `abo_teil_reihenfolge`,
+  `abo_teile_widerspruch`, `keine_namen`, `liste_nicht_verfuegbar`,
+  `speicher`. Optional mit `zeile` (1-basiert), `abo` + `gen` (immer
+  zusammen) und `id`. Ein ABO wird nur bei Rahmenfehlern (Kopfzeile, zu viele
+  Namen, Teile, Datagramm zu groß) ganz verworfen; einzelne ungültige Namen
+  bekommen `fehlt`.
 
 ### Leistung und Sicherheit
 
 * Alles im Flight-Loop (Hauptthread), Socket nicht blockierend. Höchstens 64
   eingehende Datagramme und 16 ausgehende Pakete je Frame.
-* **Zeitbudget 1 ms je Frame** für Suchen, Lesen und Senden, im Rundlauf über
-  die Abos. Die erste Arbeitseinheit je Frame ist frei, damit auch ein einzelnes
-  langsames Plugin-Dataref nicht jeden Fortschritt verhindert.
+* **Zeitbudgets je Frame:** 0,3 ms für Suchen, danach 1 ms für Lesen und
+  Senden. Geliefert wird zuerst Abo 1 (beim Client die Telemetrie), dann im
+  Rundlauf über die **belegten** übrigen Abos. Die erste Arbeitseinheit je
+  Budget ist frei, damit auch ein einzelnes langsames Plugin-Dataref nicht
+  jeden Fortschritt verhindert.
+* Beim Start misst das Plugin einmal die Kosten von `XPLMFindDataRef` und
+  `XPLMIsDataRefGood` und schreibt sie ins `Log.txt`
+  (`Protokoll 2: Kosten je Aufruf - …`).
 * Solange Protokoll 2 nichts zu liefern hat, läuft der Flight-Loop im Takt von
   Protokoll 1 (20 Hz, unter 200 ft AGL jeden Frame); mit aktiven Abos jeden
   Frame, Protokoll 1 wird dann über die Uhr auf seinen Takt gedrosselt.
@@ -181,7 +206,10 @@ PING
 
 Unverändert seit Plugin 0.5.13: `telemetry` und `touchdown` an
 `127.0.0.1:52000`, im selben Takt wie bisher, schweigt in Pause/Replay. Der
-neue Client wertet weiter `touchdown` aus.
+neue Client wertet weiter `touchdown` aus. Einzige Ergänzung ab 1.0.0: das
+Feld `"pv":"1.0.0"` (Plugin-Version) in beiden Paketen — so erkennt der
+Client ein aktuelles Plugin auch, wenn dessen Protokoll 2 nicht antwortet
+(Port 52001 belegt). Alte Clients ignorieren das Feld.
 
 Every packet is a single line of JSON terminated with `\n`. The
 schema is versioned via `"v":1`. Two packet types:
@@ -193,7 +221,7 @@ ground). Used as a heartbeat — the client uses it to know the plugin
 is alive but trusts the standard RREF stream for the live values.
 
 ```json
-{"v":1,"type":"telemetry","seq":12345,"ts":1234.567890,
+{"v":1,"pv":"1.0.0","type":"telemetry","seq":12345,"ts":1234.567890,
  "lat":50.0345678,"lon":8.5712345,
  "agl_ft":2150.40,"vs_fpm_raw":-285.40,"vs_fpm":-285.10,
  "fnrml_gear_n":0.00,"on_ground":false,"g_normal":0.9970,
@@ -211,7 +239,7 @@ lookback, pitch- and bank-attitude at the edge, etc. Re-arms when
 AGL climbs back above 50 ft so a touch-and-go gets two events.
 
 ```json
-{"v":1,"type":"touchdown","seq":12450,"ts":1289.012345,
+{"v":1,"pv":"1.0.0","type":"touchdown","seq":12450,"ts":1289.012345,
  "lat":50.0411111,"lon":8.5811111,
  "captured_vs_fpm":-285.4,"captured_g_normal":1.18,
  "captured_pitch_deg":3.4,"captured_bank_deg":0.2,

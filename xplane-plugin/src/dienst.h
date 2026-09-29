@@ -25,14 +25,17 @@
 //                                              fällig nach 1/rate s ──►  ▼ │
 //                                                                  LESEN ─► SENDEN
 //
-//   * Ein Prüfdurchlauf sucht jeden Namen (höchstens 64 Suchen je Frame) und
-//     schreibt das Ergebnis in `kandidat`. Gelesen wird nur aus `aktiv`.
+//   * Ein Prüfdurchlauf sucht die Namen (eigenes Zeitbudget je Frame, siehe
+//     suchen_verteilen) und schreibt das Ergebnis in `kandidat`. Gelesen wird
+//     nur aus `aktiv`.
 //   * Übernommen wird ein fertiger Durchlauf nur zwischen zwei Lieferrunden
 //     (NEU oder BEREIT). Hat sich ein Status geändert, geht zuerst eine neue
 //     abo-Antwort hinaus, dann erst wieder Werte — der Client sieht nie einen
 //     Wert zu einem Index, dessen Status er noch nicht kennt.
 //   * Durchläufe starten beim Anmelden, alle 2 s, und sofort bei
-//     XPLM_MSG_PLANE_LOADED (Flugzeug 0) / XPLM_MSG_AIRPORT_LOADED.
+//     XPLM_MSG_PLANE_LOADED (Flugzeug 0) / XPLM_MSG_AIRPORT_LOADED. Der
+//     2-s-Durchlauf prüft nur fehlende Namen und Arrays (Länge); verwaiste
+//     Einzelwerte fängt die Prüfung beim Lesen.
 // =============================================================================
 
 #pragma once
@@ -160,9 +163,14 @@ private:
         Zugriff z = Zugriff::FEHLT;
         int32_t laenge = 0;  // Status-Länge: 1 für Skalare/Elemente
     };
+    // Index-Wert für eine Zeile, die kein gültiger Name war (Status "fehlt",
+    // wird nie gesucht).
+    static constexpr int32_t INDEX_UNGUELTIG = -2;
+
     struct Eintrag {
         uint32_t name_ofs;   // Basisname, NUL-terminiert, in Abo::text
-        int32_t index;       // -1 = ganzer Dataref
+        int32_t index;       // -1 = ganzer Dataref, -2 = ungültige Zeile
+        bool darf_verwaisen; // nicht "sim/…": vor jedem Lesen XPLMIsDataRefGood
         Aufloesung aktiv;    // danach wird geliefert
         Aufloesung kandidat; // Ergebnis des laufenden Prüfdurchlaufs
     };
@@ -176,13 +184,20 @@ private:
         Phase phase = Phase::LEER;
         uint32_t id = 0;
         uint32_t rate = 0;
+        uint32_t generation = 0;
         double periode = 1.0;
         Feld<char> text;
         Feld<Eintrag> eintraege;
+        bool hat_plugin_namen = false;  // mindestens ein Eintrag darf_verwaisen
         // Prüfdurchlauf
         bool pruefung_laeuft = false;
         bool pruefung_fertig = false;
+        bool pruefung_alle = true;      // false: nur fehlende Namen + Arrays
+        bool pruefung_dringend = true;  // Anmeldung / Flugzeugwechsel: vor periodischen
         bool erste_antwort = true;
+        bool antwort_erneut = false;    // identisches ABO: Status noch einmal senden
+        bool status_sofort = false;     // beim Lesen verwaist gefunden → neue Antwort
+        bool pausiert = false;          // nach Flugzeugwechsel bis zur Neusuche
         uint32_t pruef_cursor = 0;
         double naechste_pruefung = 0.0;
         // Ausgabe (abo-Antwort und Werte teilen sich Stapel und Plan; sie
@@ -202,6 +217,7 @@ private:
     struct AboBau {
         bool aktiv = false;
         uint32_t rate = 0;
+        uint32_t generation = 0;
         uint32_t teile = 0;
         uint32_t naechster = 0;
         Feld<char> text;
@@ -230,6 +246,10 @@ private:
 
     // Abos
     void bearbeite_abo_frame(Abo& abo) noexcept;
+    void suchen_verteilen() noexcept;
+    void pruef_schritt(Abo& abo) noexcept;
+    static bool braucht_nachsuche(const Eintrag& e) noexcept;
+    static bool gleiches_abo(const Abo& abo, const AboBau& bau) noexcept;
     Aufloesung loese_auf(const char* name, int32_t index) noexcept;
     bool uebernehme_pruefung(Abo& abo, bool* geaendert) noexcept;
     bool bereite_antwort(Abo& abo) noexcept;
@@ -239,7 +259,7 @@ private:
     bool schreibe_wert(JsonSchreiber& w, const Eintrag& e, uint32_t k) noexcept;
     void abo_leeren(Abo& abo) noexcept;
     void abo_verwerfen_mit_fehler(Abo& abo, Fehlergrund grund) noexcept;
-    void starte_pruefung_neu(Abo& abo) noexcept;
+    void starte_pruefung(Abo& abo, bool alle, bool dringend) noexcept;
     static size_t wert_max(const Aufloesung& a) noexcept;
 
     // LISTE, Flugzeug
@@ -250,8 +270,10 @@ private:
 
     // Senden
     void sende_einzeln(const Absender& an, const JsonSchreiber& w) noexcept;
+    // `abo` != 0 → "abo" und "gen" werden mitgeschickt; `id` >= 0 → "id".
     void sende_fehler(const Absender& an, Fehlergrund grund, uint32_t zeile,
-                      uint32_t abo, int64_t id) noexcept;
+                      uint32_t abo, uint32_t gen, int64_t id) noexcept;
+    void sende_abo_empfangen(uint32_t abo, uint32_t gen, size_t namen) noexcept;
     SendeErgebnis sende_paket(const char* daten, size_t laenge) noexcept;
 
     // Budget
@@ -277,7 +299,6 @@ private:
     double jetzt_ = 0.0;
     double budget_ende_ = 0.0;
     int pakete_frame_ = 0;
-    int suchen_frame_ = 0;
     bool garantie_ = false;
 
     // Flugzeug

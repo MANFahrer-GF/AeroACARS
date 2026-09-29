@@ -26,10 +26,16 @@
 //     Werkzeuge unter Windows das gern anhängen; sonst ist '\r' ungültig.
 //   * Argumente sind durch GENAU ein Leerzeichen getrennt.
 //   * Zahlen sind reine Dezimalziffern (kein Vorzeichen, höchstens 10 Stellen).
-//   * Leere Zeilen mitten in der Namensliste sind ein Fehler — sie würden die
-//     Nummerierung der Namen stillschweigend verschieben.
+//   * ABO trägt optional als LETZTES Wort die Generation "g<zahl>"
+//     (1 … 2^31 − 1): ABO <id> <rate> [<teil> <teile>] [g<zahl>].
+//   * Jede Zeile nach der ABO-Zeile ist genau ein Name und zählt mit. Eine
+//     ungültige Zeile (leer, > 512 Byte, Leerzeichen, Nicht-ASCII, kaputter
+//     Index) verwirft NICHT das Abo, sondern wird als NameRef mit
+//     `ungueltig = true` geliefert (Status "fehlt").
 //   * Ein Name endet nur dann auf einen Index, wenn er auf "]" endet; dann
-//     muss "[<ziffern>]" davorstehen, sonst ist es index_ungueltig.
+//     muss "[<ziffern>]" davorstehen, sonst ist der Name ungültig.
+//   * Fehler für die ganze Anfrage gibt es bei ABO nur noch für den Rahmen:
+//     Kopfzeile, zu viele Namen, Datagramm zu groß.
 // =============================================================================
 
 #pragma once
@@ -73,6 +79,7 @@ enum class Fehlergrund : uint8_t {
     KEINE_NAMEN,            // Abo ohne einen einzigen Namen
     LISTE_NICHT_VERFUEGBAR, // X-Plane älter als 12 (XPLM < 4.0)
     SPEICHER,               // Allokation gescheitert — Anfrage verworfen
+    GENERATION_UNGUELTIG,   // ABO: "g<zahl>" nicht 1 … 2^31 − 1
 };
 
 const char* fehlergrund_text(Fehlergrund grund) noexcept;
@@ -82,6 +89,7 @@ struct NameRef {
     const char* basis = nullptr;  // Name ohne "[i]"
     uint16_t basis_laenge = 0;    // 1..512
     int32_t index = -1;           // -1 = ganzer Dataref, sonst Array-Element
+    bool ungueltig = false;       // Zeile war kein gültiger Name → Status "fehlt"
 };
 
 struct Anfrage {
@@ -98,6 +106,8 @@ struct Anfrage {
     uint32_t teil = 1;    // bei einteiligem ABO 1/1
     uint32_t teile = 1;
     bool mehrteilig = false;
+    uint32_t generation = 0;  // "g<zahl>" am Ende der ABO-Zeile, 0 = ohne
+    size_t ungueltige_namen = 0;
 
     // ABO: Namen in Reihenfolge; `namen` zeigt in den Puffer des Aufrufers.
     const NameRef* namen = nullptr;
@@ -122,5 +132,9 @@ bool zerlege_anfrage(const char* daten, size_t laenge,
 // 1..512 Byte, nur druckbares ASCII 0x21–0x7E. Wird auch von LISTE benutzt,
 // damit nur abonnierbare Namen gemeldet werden.
 bool ist_gueltiger_name(const char* name, size_t laenge) noexcept;
+
+// Wie ist_gueltiger_name, aber zusätzlich nicht auf ']' endend — nur solche
+// Namen lassen sich als GANZER Dataref abonnieren. LISTE meldet nur diese.
+bool ist_abonnierbarer_name(const char* name, size_t laenge) noexcept;
 
 }  // namespace aeroacars

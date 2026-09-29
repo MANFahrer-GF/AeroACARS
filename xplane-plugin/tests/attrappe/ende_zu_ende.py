@@ -61,8 +61,8 @@ def lauf(attrappe: str, plugin: str, sonde: str, modus: str) -> bool:
         print(f"FEHLER: Attrappe endete mit {host.returncode} (Protokoll-1-Rate?)")
         ok = False
     erwartet = {
-        "xp12": ["Protokoll 2 bereit", "LISTE ja", "Client angemeldet"],
-        "xp11": ["Protokoll 2 bereit", "LISTE nein", "Client angemeldet"],
+        "xp12": ["Protokoll 2 bereit", "LISTE ja", "Client angemeldet", "Kosten je Aufruf"],
+        "xp11": ["Protokoll 2 bereit", "LISTE nein", "Client angemeldet", "Kosten je Aufruf"],
         "port_belegt": ["belegt", "Protokoll 1 laeuft weiter"],
     }[modus]
     for text in erwartet:

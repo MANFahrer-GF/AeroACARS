@@ -45,9 +45,13 @@
 // Plugin 1.0.0: zwei Protokolle in einem Flight-Loop (ADR-0004)
 // -----------------------------------------------------------------------------
 //
-//   Protokoll 1 (dieser Datei, UNVERÄNDERT seit 0.5.13): `telemetry` und
-//   `touchdown` an 127.0.0.1:52000. Bleibt für ältere Clients; der neue
+//   Protokoll 1 (diese Datei, inhaltlich unverändert seit 0.5.13): `telemetry`
+//   und `touchdown` an 127.0.0.1:52000. Bleibt für ältere Clients; der neue
 //   Client wertet weiter `touchdown` aus. Schweigt in Pause/Replay wie bisher.
+//   Einzige Ergänzung seit 1.0.0: das Feld "pv" (Plugin-Version) — so erkennt
+//   der Client ein 1.0-Plugin auch dann, wenn dessen Protokoll 2 nicht
+//   antwortet (Port 52001 belegt), und meldet nicht fälschlich "veraltet".
+//   Alte Clients ignorieren unbekannte Felder.
 //
 //   Protokoll 2 (dienst.cpp + dienst_xplm.cpp): Dataref-Server auf
 //   127.0.0.1:52001. Der Client meldet Namen an, das Plugin sucht, meldet den
@@ -174,6 +178,12 @@ DataRefs g_drefs;
 // UDP socket state.
 socket_t g_sock = INVALID_SOCK;
 sockaddr_in g_dest{};
+#if IBM
+// WSAStartup/WSACleanup müssen paarweise laufen: WSACleanup nur, wenn das
+// WSAStartup dieses Plugins gelungen ist (sonst zählt es den Winsock-Zähler
+// eines anderen Plugins im selben Prozess herunter).
+bool g_wsa_aktiv = false;
+#endif
 
 // Per-tick state for touchdown detection.
 //
@@ -298,6 +308,7 @@ bool open_socket() noexcept {
         log_msg("error: WSAStartup failed; UDP transport disabled");
         return false;
     }
+    g_wsa_aktiv = true;
 #endif
     g_sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (g_sock == INVALID_SOCK) {
@@ -326,7 +337,10 @@ void close_socket() noexcept {
         g_sock = INVALID_SOCK;
     }
 #if IBM
-    WSACleanup();
+    if (g_wsa_aktiv) {
+        WSACleanup();
+        g_wsa_aktiv = false;
+    }
 #endif
 }
 
@@ -449,6 +463,7 @@ float protokoll1_tick() noexcept {
         int n = std::snprintf(buf, sizeof(buf),
             "{"
             "\"v\":1,"
+            "\"pv\":\"" AEROACARS_PLUGIN_VERSION "\","
             "\"type\":\"telemetry\","
             "\"seq\":%u,"
             "\"ts\":%.6f,"
@@ -580,6 +595,7 @@ float protokoll1_tick() noexcept {
         int n = std::snprintf(buf, sizeof(buf),
             "{"
             "\"v\":1,"
+            "\"pv\":\"" AEROACARS_PLUGIN_VERSION "\","
             "\"type\":\"touchdown\","
             "\"seq\":%u,"
             "\"ts\":%.6f,"
