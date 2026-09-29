@@ -13309,19 +13309,6 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         return;
     }
 
-    // Ab hier gilt das Token (Cache oder frisch provisioniert). Skin,
-    // Kartenstil und VATGlasses holen sich ihre Inhalte daraufhin neu —
-    // vorher bekamen sie vom Server 401 und blieben bei der Vorgabe
-    // (29.09.2026, siehe live_zugang.rs). Das Tablet ueber die LAN-Bruecke
-    // bekommt dasselbe Signal.
-    live_zugang::token_setzen(Some(inhalte_token));
-    let _ = tauri::Emitter::emit(&app, "live-zugang-bereit", ());
-    state.remote_events.send(remote::RemoteEvent::new(
-        "live-zugang-bereit",
-        serde_json::Value::Null,
-    ));
-    discord_rpc::nach_anmeldung();
-
     // v0.13.0 Slice 6: Take the integrity-flag receiver and forward
     // each event as a Tauri event "integrity-flag" to the React UI.
     // Done once per Handle creation — Handle::take_integrity_rx is
@@ -13398,7 +13385,24 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
             return;
         }
         *mqtt_guard = Some(handle);
+        // Unter derselben Sperre wie die Installation: ein paralleler
+        // Logout (`stoppe_mqtt_publisher` nimmt diese Sperre, danach
+        // `clear_mqtt_credentials_cache`) leert das Token damit sicher
+        // NACH dem Setzen — es bleibt nie das eines Abgemeldeten stehen.
+        live_zugang::token_setzen(Some(inhalte_token));
     }
+
+    // Ab hier gilt das Token (Cache oder frisch provisioniert). Skin,
+    // Kartenstil und VATGlasses holen sich ihre Inhalte daraufhin neu —
+    // vorher bekamen sie vom Server 401 und blieben bei der Vorgabe
+    // (29.09.2026, siehe live_zugang.rs). Das Tablet ueber die LAN-Bruecke
+    // bekommt dasselbe Signal.
+    let _ = tauri::Emitter::emit(&app, "live-zugang-bereit", ());
+    state.remote_events.send(remote::RemoteEvent::new(
+        "live-zugang-bereit",
+        serde_json::Value::Null,
+    ));
+    discord_rpc::nach_anmeldung();
     *state
         .mqtt_owner_epoch
         .lock()

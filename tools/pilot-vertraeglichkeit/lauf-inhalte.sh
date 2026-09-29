@@ -5,7 +5,9 @@ C=${CLIENT_TAURI_DIR:-$PWD/../../client/src-tauri}
 cp $(dirname $0)/e2e_server.ts $R/src/__e2e_server.ts
 # Auch bei Abbruch (Strg-C, Fehler) aufraeumen — die Datei darf nicht im
 # Recorder-Baum liegen bleiben und versehentlich mitgehen.
-trap 'pkill -f "__e2e_server" 2>/dev/null; rm -f $R/src/__e2e_server.ts' EXIT INT TERM
+trap 'pkill -f "__e2e_server" 2>/dev/null; rm -f $R/src/__e2e_server.ts' EXIT
+# zsh beendet das Skript bei INT/TERM-Trap nicht von selbst.
+trap 'exit 130' INT TERM
 lauf() { # name, server-env..., --, test-env...
   local name=$1; shift; local senv=(); while [ "$1" != "--" ]; do senv+=("$1"); shift; done; shift
   pkill -f "__e2e_server" 2>/dev/null; sleep 1
