@@ -264,7 +264,8 @@ export interface LandingRecord {
   forensic_sample_count?: number | null;
 
   // v0.8.3 (#8): Forensische Bounce-Counts — surface fuer den Pilot,
-  // damit „kleine" Hopser (5-14 ft, per Spec score-frei) trotzdem
+  // damit „kleine" Hopser (bei Altdatensaetzen 5-14 ft, damals score-frei;
+  // seit Lernpaket AP3 29.09.2026 zaehlt ab 5 ft beides gleich) trotzdem
   // sichtbar werden statt im UI als „0 Bounces" verloren zu gehen.
   // Quelle: touchdown_v2::compute_landing_rate Forensik-Pipeline.
   /// Hoechster gemessener AGL-Wert in Post-TD-Hopsern, ft.
@@ -274,7 +275,8 @@ export interface LandingRecord {
   /// Anzahl Hopser >= 5 ft. Subset: forensic_bounce_count >= scored.
   /// Wenn > 0 aber bounce_count = 0 → rein score-freie Hopser.
   forensic_bounce_count?: number | null;
-  /// Anzahl Hopser >= 15 ft (= was im Score bestraft wird,
+  /// Anzahl gewerteter Hopser (seit Lernpaket AP3 >= 5 ft, Altdaten >= 15 ft;
+  /// = was im Score bestraft wird,
   /// identisch mit bounce_count nach Override-Pfad).
   scored_bounce_count?: number | null;
 
@@ -2036,7 +2038,9 @@ function QuickFlags({ record }: { record: LandingRecord }) {
   }
 
   // BOUNCE × n
-  // v0.8.3 (#8): Auch score-freie Hopser (5-14 ft) zeigen. Vorher
+  // v0.8.3 (#8): Auch score-freie Hopser (5-14 ft) zeigen. Seit Lernpaket
+  // AP3 (29.09.2026) sind Forensik- und Wertungsschwelle gleich (5 ft) —
+  // dieser Zweig greift dann nur noch fuer Altdatensaetze. Vorher
   // landeten 14-ft-Hopser stumm bei bounce_count=0 — Pilot dachte
   // „nicht erkannt" (Reported 2026-05-14 Adrian, TD #167).
   //

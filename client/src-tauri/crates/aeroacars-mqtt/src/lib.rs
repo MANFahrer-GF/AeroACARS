@@ -685,8 +685,13 @@ pub struct TouchdownPayload {
     pub sideslip_deg: Option<f32>,
     pub headwind_kt: Option<f32>,
     pub crosswind_kt: Option<f32>,
+    /// Diskrete Touchdown-Klasse (100/80/60/30/0) — bleibt so, darauf sind
+    /// Recorder und Webapp gebaut. Die Gesamtnote (inkl. Deckel, Lernpaket
+    /// AP2) erreicht den Recorder ueber `PirepPayload.landing_score`;
+    /// `score_label`/`score_grade` unten gehoeren zur GESAMTNOTE, nicht zu
+    /// diesem Feld (Codex-QS 29.09.2026: der Text darunter sagte anderes).
     pub score: Option<i32>,
-    /// v0.20.0: Klasse und Note zum `score` — EINGEFROREN, nicht ableitbar.
+    /// v0.20.0: Klasse und Note zur Gesamtnote — EINGEFROREN, nicht ableitbar.
     ///
     /// Vorher trug `score` die diskrete Touchdown-Klasse (100/80/60/30/0) und
     /// die Webapp leitete das Label mit einer EIGENEN Schwellen-Leiter daraus
@@ -715,7 +720,8 @@ pub struct TouchdownPayload {
     /// unvollstaendig.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forensic_bounce_count: Option<u8>,
-    /// v0.8.3 (#8): Score-relevante Hopser >= 15 ft AGL (
+    /// v0.8.3 (#8): Score-relevante Hopser >= 5 ft ueber Bodenhoehe (seit
+    /// Lernpaket AP3 29.09.2026; Clients davor: >= 15 ft AGL) (
     /// `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`). Subset von
     /// `forensic_bounce_count`. Was in den Landing-Score-Sub-Score
     /// „bounces" einfliesst — ueber `scored_bounce_count_for_score()`.

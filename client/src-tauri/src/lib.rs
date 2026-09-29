@@ -28066,7 +28066,8 @@ where
 
         // ─── v0.8.3 (#8) — Forensische Bounce-Counts ins LandingRecord ───
         // Damit das UI „Light bounce X ft erkannt (score-frei)" zeigen
-        // kann auch bei 5-14 ft Hopsern, die per Spec score-frei sind.
+        // kann auch bei 5-14 ft Hopsern, die bis Lernpaket AP3 (29.09.2026)
+        // score-frei waren; seitdem zaehlen sie ab 5 ft auch in der Note.
         // Reported 2026-05-14 Adrian: Touchdown #167 hatte
         // bounce_max_agl_ft=14.05, aber UI zeigte bounce_count=0 →
         // Pilot dachte "nicht erkannt".
