@@ -211,6 +211,13 @@ const TABELLE: &[(&str, f64, f64)] = &[
     ("B77F", 10.97, 64.80),
     ("B77L", 10.97, 64.80),
     ("B77W", 10.97, 64.80),
+    // 777X (Nachtrag 30.09.2026): Spannweite ausgefahren 71,76 m (Wikipedia
+    // „Boeing 777X“ nach Boeing-ACAP; FAA EB 94B: 71,7 m / gefaltet 64,8 m).
+    // Bei der Landung sind die Spitzen ausgefahren. Spur: laut FAA EB 94B
+    // gleiche Taxiway Design Group wie die übrige 777-Klasse; eine eigene
+    // Spurangabe lag nicht vor, daher der 777-Wert.
+    ("B778", 10.97, 71.76),
+    ("B779", 10.97, 71.76),
     ("B788", 9.75, 60.12),
     ("B789", 9.75, 60.12),
     ("B78X", 9.75, 60.12),

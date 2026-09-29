@@ -10684,7 +10684,7 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
             typical_vref_kt: Some(160.0),
             is_fallback: false,
         },
-        "B772" | "B773" | "B77L" | "B77W" | "B778" | "B779" => AircraftLimits {
+        "B772" | "B773" | "B77L" | "B77W" | "B77F" | "B778" | "B779" => AircraftLimits {
             max_bank_landing_deg: 8.0,
             typical_vref_kt: Some(150.0),
             is_fallback: false,
@@ -78790,5 +78790,30 @@ mod bordbuch_persistenz_tests {
         let mut neu = FlightStats::default();
         zurueck.apply_to(&mut neu);
         assert_eq!(serde_json::to_value(&neu.bordbuch).unwrap(), vorher);
+    }
+}
+
+/// Wächter (30.09.2026): Die Baureihen-Regel in `sim_core::muster_aufloesen`
+/// übernimmt nur Varianten aus `BAUREIHEN_VARIANTEN`. Jede davon muss in
+/// BEIDEN Tabellen der Bewertung stehen — sonst verliert ein Flug Grenzwerte
+/// oder Spur-/Spannweite, die er über die Familien-Variante noch hatte.
+/// Gegenprobe: ein Code, den keine Tabelle kennt, muss durchfallen.
+#[cfg(test)]
+mod baureihen_varianten_waechter {
+    use super::aircraft_limits_exakt;
+    use landing_scoring::spurweite::{spannweite_m, spurweite_m};
+
+    fn in_beiden(c: &str) -> bool {
+        !aircraft_limits_exakt(c).is_fallback
+            && spurweite_m(Some(c)).is_some()
+            && spannweite_m(Some(c)).is_some()
+    }
+
+    #[test]
+    fn jede_variante_steht_in_grenzwerten_und_spurweite() {
+        for c in sim_core::BAUREIHEN_VARIANTEN {
+            assert!(in_beiden(c), "{c} fehlt in Grenzwerten oder Spurweite");
+        }
+        assert!(!in_beiden("B74S"), "Gegenprobe: B74S kennt keine Tabelle");
     }
 }
