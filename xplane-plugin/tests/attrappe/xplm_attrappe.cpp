@@ -59,7 +59,7 @@ struct Ref {
 
 std::vector<Ref*> g_refs;
 bool g_xp11 = false;
-// fnrml_gear liest nur Protokoll 1 (einmal je Tick) → Zähler = Protokoll-1-Ticks,
+// fnrml_gear per XPLMGetDataf liest nur Protokoll 1 (einmal je Tick) → Zähler = Protokoll-1-Ticks,
 // auch wenn Port 52000 belegt ist (z. B. vom laufenden AeroACARS-Client).
 Ref* g_fnrml = nullptr;
 int g_p1_ticks = 0;
@@ -183,7 +183,11 @@ int main(int argc, char** argv) {
     neu("sim/flightmodel/position/longitude", xplmType_Double | xplmType_Float)->d = 8.571234567890123;
     neu("sim/flightmodel/position/y_agl", xplmType_Float)->f = 1000.0f;
     neu("sim/flightmodel/position/local_vy", xplmType_Float)->f = -2.0f;
-    g_fnrml = neu("sim/flightmodel/forces/fnrml_gear", xplmType_Float);
+    // Auch als double registriert: Ein Protokoll-2-Abo (der echte Client
+    // abonniert fnrml_gear mit 50 Hz) liest dann per XPLMGetDatad — nur das
+    // Lesen per XPLMGetDataf (Protokoll 1) zaehlt als Tick. Sonst meldete die
+    // Attrappe mit echtem Client ~47 Hz „Protokoll 1“ (29.09.2026).
+    g_fnrml = neu("sim/flightmodel/forces/fnrml_gear", xplmType_Float | xplmType_Double);
     neu("sim/flightmodel/failures/onground_any", xplmType_Int);
     neu("sim/flightmodel2/misc/gforce_normal", xplmType_Float)->f = 1.0f;
     neu("sim/flightmodel/position/theta", xplmType_Float)->f = 2.5f;
