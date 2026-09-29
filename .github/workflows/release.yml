@@ -201,6 +201,18 @@ jobs:
             echo "AEROACARS_NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # AP7 (Cloud-QS 29.09.2026): Ohne Pruefsumme installierte die App das
+      # X-Plane-Plugin nur mit Warnung ungeprueft. In einem Release darf das
+      # nicht passieren — hier ausdruecklich sperren.
+      - name: Require X-Plane plugin SHA-256
+        shell: bash
+        run: |
+          SUMME="${{ needs.plugin-zip.outputs.sha256 }}"
+          if [[ ! "$SUMME" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Keine gueltige SHA-256 des X-Plane-Plugin-Pakets ('$SUMME')"
+            exit 1
+          fi
+
       - name: Build + sign (Tauri)
         uses: tauri-apps/tauri-action@v0
         env:
