@@ -11,8 +11,15 @@
 //! allen ~7800 IDs (≈170 KB) antwortete X-Plane 12.4.3 gar nicht.
 //!
 //! Nur lesen — es wird nichts in X-Plane geschrieben.
+//!
+//! **Plugin (Protokoll 2, AP7):** Besteht eine Sitzung mit dem
+//! AeroACARS-Plugin, holt die Messung die Namen per `LISTE` und abonniert
+//! sie ueber das Plugin (Abos 3–16, je ≤ 8192 Namen, 5 Hz) — ohne Web-API,
+//! ohne deren Paketverluste, und auch unter X-Plane 11 ohne Web-API. Die
+//! Web-API bleibt der Rueckfall (kein Plugin, `liste_nicht_verfuegbar`,
+//! Zeitueberschreitung). Das Berichtsschema bleibt gleich.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::ErrorKind;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +31,8 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use tungstenite::Message;
 
+use crate::plugin2::{name_gueltig, NameStatus, Typ, Wert as P2Wert, MAX_NAMEN};
+use crate::plugin2_ziel::{PluginZugang, ABO_MESSUNG_AB};
 use crate::web_api::{AircraftInfo, DrefIdCache, WebApiClient};
 
 /// Datarefs je Abo-Nachricht.
@@ -189,7 +198,20 @@ impl Abos {
     }
 }
 
+/// Laufende Messung: alle Werte des Flugzeugs, über das Plugin oder die
+/// Web-API.
 pub struct Spiegel {
+    art: Art,
+    pub flugzeug: AircraftInfo,
+    pub abonniert: usize,
+}
+
+enum Art {
+    WebApi(WebSpiegel),
+    Plugin(PluginSpiegel),
+}
+
+struct WebSpiegel {
     werte: Arc<Mutex<HashMap<i64, Wert>>>,
     namen: HashMap<i64, String>,
     stop: Arc<AtomicBool>,
@@ -199,8 +221,19 @@ pub struct Spiegel {
     faden: Option<JoinHandle<()>>,
     /// Datarefs, die X-Plane einzeln nicht abonnieren ließ (siehe [`Abos`]).
     abgelehnt: Arc<Mutex<Vec<i64>>>,
-    pub flugzeug: AircraftInfo,
-    pub abonniert: usize,
+    abonniert: usize,
+}
+
+struct PluginSpiegel {
+    zugang: PluginZugang,
+    messung: Arc<P2Messung>,
+}
+
+impl Drop for PluginSpiegel {
+    fn drop(&mut self) {
+        // Abos 3.. abbestellen.
+        self.zugang.messung_beenden(&self.messung);
+    }
 }
 
 /// Wie vollständig die Anmeldung war — geht mit dem Bericht zum Server,
@@ -214,7 +247,30 @@ pub struct AboStand {
 }
 
 impl Spiegel {
-    /// Liste holen, verbinden, alles abonnieren, Lesefaden starten.
+    /// Über das Plugin messen, wenn eine Sitzung besteht, sonst (oder wenn
+    /// das Plugin die Liste nicht liefern kann) über die Web-API.
+    pub fn starten_mit(zugang: Option<PluginZugang>) -> Result<Spiegel, String> {
+        if let Some(z) = zugang {
+            match plugin_starten(z) {
+                Ok(s) => return Ok(s),
+                Err(e) => tracing::info!(
+                    grund = %e,
+                    "X-Plane-Vermessung: Plugin kann nicht messen — Web-API"
+                ),
+            }
+        }
+        Self::starten()
+    }
+
+    /// Woher die Werte kommen („plugin" / „web_api"), fürs Protokoll.
+    pub fn quelle(&self) -> &'static str {
+        match self.art {
+            Art::WebApi(_) => "web_api",
+            Art::Plugin(_) => "plugin",
+        }
+    }
+
+    /// Liste holen, verbinden, alles abonnieren, Lesefaden starten (Web-API).
     pub fn starten() -> Result<Spiegel, String> {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(3))
@@ -296,12 +352,15 @@ impl Spiegel {
             .map_err(|e| e.to_string())?;
 
         Ok(Spiegel {
-            werte,
-            namen,
-            stop,
-            lebt,
-            faden: Some(faden),
-            abgelehnt,
+            art: Art::WebApi(WebSpiegel {
+                werte,
+                namen,
+                stop,
+                lebt,
+                faden: Some(faden),
+                abgelehnt,
+                abonniert: ids.len(),
+            }),
             flugzeug,
             abonniert: ids.len(),
         })
@@ -309,36 +368,332 @@ impl Spiegel {
 
     /// Stand der Anmeldung für den Bericht.
     pub fn abo_stand(&self) -> AboStand {
-        let abgelehnt = self.abgelehnt.lock();
-        AboStand {
-            angemeldet: self.abonniert,
-            angekommen: self.verbunden(),
-            abgelehnt: abgelehnt.len(),
-            abgelehnt_namen: abgelehnt
-                .iter()
-                .filter_map(|id| self.namen.get(id).cloned())
-                .take(50)
-                .collect(),
+        match &self.art {
+            Art::WebApi(w) => {
+                let abgelehnt = w.abgelehnt.lock();
+                AboStand {
+                    angemeldet: w.abonniert,
+                    angekommen: w.werte.lock().len(),
+                    abgelehnt: abgelehnt.len(),
+                    abgelehnt_namen: abgelehnt
+                        .iter()
+                        .filter_map(|id| w.namen.get(id).cloned())
+                        .take(50)
+                        .collect(),
+                }
+            }
+            Art::Plugin(p) => p.messung.abo_stand(),
         }
     }
 
     /// Wie viele Datarefs schon einen Wert geliefert haben.
     pub fn verbunden(&self) -> usize {
-        self.werte.lock().len()
+        match &self.art {
+            Art::WebApi(w) => w.werte.lock().len(),
+            Art::Plugin(p) => p.messung.verbunden(),
+        }
     }
 
     /// Steht die Verbindung zu X-Plane noch?
     pub fn lebt(&self) -> bool {
-        self.lebt.load(Ordering::SeqCst)
+        match &self.art {
+            Art::WebApi(w) => w.lebt.load(Ordering::SeqCst),
+            Art::Plugin(p) => p.zugang.messung_aktiv(&p.messung),
+        }
     }
 
     /// Alle aktuellen Werte, Arrays elementweise.
     pub fn schnappschuss(&self) -> HashMap<String, f64> {
-        flach(&self.werte.lock(), &self.namen)
+        match &self.art {
+            Art::WebApi(w) => flach(&w.werte.lock(), &w.namen),
+            Art::Plugin(p) => p.messung.schnappschuss(),
+        }
     }
 }
 
-impl Drop for Spiegel {
+// ─── Messung über das Plugin (Protokoll 2) ────────────────────────────────
+
+/// Höchstens so viele Namen (Abos 3–16 zu je 8192).
+const MAX_MESSNAMEN: usize = (crate::plugin2::MAX_ABO_ID - ABO_MESSUNG_AB + 1) as usize * MAX_NAMEN;
+/// So lange auf die vollständige `LISTE` warten (je Versuch).
+const LISTE_WARTEN: Duration = Duration::from_secs(8);
+
+fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
+    let mut namen = None;
+    // Zwei Versuche: bei vielen Teilen kann auf dem Loopback einer
+    // verloren gehen.
+    for _ in 0..2 {
+        let m = zugang.messung_starten(|id| Arc::new(P2Messung::neu(id)));
+        let ende = std::time::Instant::now() + LISTE_WARTEN;
+        let ergebnis = loop {
+            std::thread::sleep(Duration::from_millis(50));
+            if !zugang.messung_aktiv(&m) {
+                break Some(Err("Plugin-Sitzung beendet".to_string()));
+            }
+            if let Some(r) = m.liste_ergebnis() {
+                break Some(r);
+            }
+            if std::time::Instant::now() >= ende {
+                break None;
+            }
+        };
+        match ergebnis {
+            Some(Ok(n)) => {
+                namen = Some((m, n));
+                break;
+            }
+            Some(Err(e)) => {
+                zugang.messung_beenden(&m);
+                return Err(e);
+            }
+            None => {
+                tracing::info!(
+                    "X-Plane-Vermessung: Namensliste des Plugins unvollständig — neuer Versuch"
+                );
+                zugang.messung_beenden(&m);
+            }
+        }
+    }
+    let Some((m, n)) = namen else {
+        return Err("Namensliste des Plugins kam nicht vollständig an".into());
+    };
+    let anzahl = m.abonnieren(n);
+    if anzahl == 0 {
+        zugang.messung_beenden(&m);
+        return Err("Das Plugin meldet keine Werte — ist ein Flugzeug geladen?".into());
+    }
+    zugang.wunsch_geaendert();
+    // Flugzeug: Meldung des Plugins; Autor (nur Web-API) dazu, wenn die
+    // Web-API dasselbe Flugzeug meint.
+    let mut flugzeug = zugang.flugzeug().unwrap_or_default();
+    if let Ok(web) = WebApiClient::new().fetch_aircraft_info(&mut DrefIdCache::default()) {
+        if flugzeug.relative_path.is_none() || flugzeug.relative_path == web.relative_path {
+            flugzeug.author = web.author;
+            flugzeug.studio = web.studio;
+            flugzeug.tailnum = web.tailnum;
+            if flugzeug.descrip.is_none() {
+                flugzeug.descrip = web.descrip;
+            }
+            if flugzeug.icao.is_none() {
+                flugzeug.icao = web.icao;
+            }
+            if flugzeug.relative_path.is_none() {
+                flugzeug.relative_path = web.relative_path;
+            }
+        }
+    }
+    tracing::info!(
+        namen = anzahl,
+        "X-Plane-Vermessung über das Plugin (Protokoll 2)"
+    );
+    Ok(Spiegel {
+        art: Art::Plugin(PluginSpiegel { zugang, messung: m }),
+        flugzeug,
+        abonniert: anzahl,
+    })
+}
+
+#[derive(Default)]
+struct ListeStand {
+    teile: Option<u32>,
+    stuecke: BTreeMap<u32, Vec<String>>,
+    fehler: Option<String>,
+}
+
+#[derive(Default)]
+struct MessDaten {
+    namen: Vec<String>,
+    status: Vec<Option<NameStatus>>,
+    werte: Vec<Option<P2Wert>>,
+}
+
+/// Eine Messung über das Plugin: `LISTE` sammeln, dann Status und Werte je
+/// Name. Der Adapter reicht die Ereignisse der Abos 3–16 hierher.
+pub(crate) struct P2Messung {
+    pub(crate) liste_id: u32,
+    liste: Mutex<ListeStand>,
+    /// Namen je Abo (Abo `ABO_MESSUNG_AB + k` = `teile[k]`).
+    teile: Mutex<Vec<Arc<Vec<String>>>>,
+    daten: Mutex<MessDaten>,
+}
+
+impl P2Messung {
+    pub(crate) fn neu(liste_id: u32) -> Self {
+        Self {
+            liste_id,
+            liste: Mutex::new(ListeStand::default()),
+            teile: Mutex::new(Vec::new()),
+            daten: Mutex::new(MessDaten::default()),
+        }
+    }
+
+    pub(crate) fn liste_teil(&self, id: u32, teil: u32, teile: u32, namen: Vec<String>) {
+        if id != self.liste_id || teil == 0 || teil > teile {
+            return;
+        }
+        let mut l = self.liste.lock();
+        l.teile = Some(teile.max(1));
+        l.stuecke.insert(teil, namen);
+    }
+
+    pub(crate) fn liste_fehler(&self, grund: String) {
+        self.liste.lock().fehler = Some(grund);
+    }
+
+    /// `None`, solange Teile fehlen.
+    fn liste_ergebnis(&self) -> Option<Result<Vec<String>, String>> {
+        let l = self.liste.lock();
+        if let Some(f) = &l.fehler {
+            return Some(Err(format!("Plugin: {f}")));
+        }
+        let t = l.teile?;
+        if !(1..=t).all(|i| l.stuecke.contains_key(&i)) {
+            return None;
+        }
+        Some(Ok(l.stuecke.values().flatten().cloned().collect()))
+    }
+
+    /// Namen festlegen (gültige, ohne Doppelte, höchstens [`MAX_MESSNAMEN`])
+    /// und in Abos zu je [`MAX_NAMEN`] teilen. Liefert die Anzahl.
+    fn abonnieren(&self, namen: Vec<String>) -> usize {
+        let mut gesehen = std::collections::HashSet::new();
+        let mut n: Vec<String> = namen
+            .into_iter()
+            .filter(|x| name_gueltig(x) && gesehen.insert(x.clone()))
+            .collect();
+        if n.len() > MAX_MESSNAMEN {
+            tracing::warn!(
+                namen = n.len(),
+                "X-Plane-Vermessung: mehr Namen als Abos — gekürzt"
+            );
+            n.truncate(MAX_MESSNAMEN);
+        }
+        *self.teile.lock() = n.chunks(MAX_NAMEN).map(|c| Arc::new(c.to_vec())).collect();
+        let mut d = self.daten.lock();
+        d.status = vec![None; n.len()];
+        d.werte = vec![None; n.len()];
+        d.namen = n;
+        d.namen.len()
+    }
+
+    pub(crate) fn teile(&self) -> Vec<Arc<Vec<String>>> {
+        self.teile.lock().clone()
+    }
+
+    /// Anfang des Abos in der Gesamtliste — nur, wenn `namen` noch genau
+    /// die Liste dieses Abos ist.
+    fn anfang(&self, abo: u8, namen: &Arc<Vec<String>>) -> Option<usize> {
+        let k = usize::from(abo.checked_sub(ABO_MESSUNG_AB)?);
+        let t = self.teile.lock();
+        let teil = t.get(k)?;
+        (Arc::ptr_eq(teil, namen) || **teil == **namen).then_some(k * MAX_NAMEN)
+    }
+
+    pub(crate) fn status(&self, abo: u8, namen: &Arc<Vec<String>>, st: Vec<(usize, NameStatus)>) {
+        let Some(a) = self.anfang(abo, namen) else {
+            return;
+        };
+        let mut d = self.daten.lock();
+        for (li, s) in st {
+            if let Some(slot) = d.status.get_mut(a + li) {
+                *slot = Some(s);
+            }
+            if !s.da() {
+                if let Some(w) = d.werte.get_mut(a + li) {
+                    *w = None;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn werte(&self, abo: u8, namen: &Arc<Vec<String>>, v: Vec<(usize, P2Wert)>) {
+        let Some(a) = self.anfang(abo, namen) else {
+            return;
+        };
+        let mut d = self.daten.lock();
+        for (li, w) in v {
+            if let Some(slot) = d.werte.get_mut(a + li) {
+                *slot = Some(w);
+            }
+        }
+    }
+
+    fn ist_text(s: Option<NameStatus>) -> bool {
+        matches!(
+            s,
+            Some(NameStatus::Da {
+                typ: Typ::Bytes | Typ::Unbekannt,
+                ..
+            })
+        )
+    }
+
+    /// Alle Zahlen, Arrays als `name[i]` (bis [`MAX_ARRAY`]) — wie der
+    /// Web-API-Spiegel.
+    fn schnappschuss(&self) -> HashMap<String, f64> {
+        let d = self.daten.lock();
+        let mut aus = HashMap::with_capacity(d.namen.len());
+        for (i, w) in d.werte.iter().enumerate() {
+            if Self::ist_text(d.status[i]) {
+                continue;
+            }
+            match w {
+                Some(P2Wert::Zahl(x)) if x.is_finite() => {
+                    aus.insert(d.namen[i].clone(), *x);
+                }
+                Some(P2Wert::Liste(l)) => {
+                    for (j, x) in l.iter().take(MAX_ARRAY).enumerate() {
+                        if x.is_finite() {
+                            aus.insert(format!("{}[{j}]", d.namen[i]), *x);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        aus
+    }
+
+    fn zahl_wert(w: &Option<P2Wert>) -> bool {
+        matches!(w, Some(P2Wert::Zahl(_) | P2Wert::Liste(_)))
+    }
+
+    fn verbunden(&self) -> usize {
+        let d = self.daten.lock();
+        d.werte
+            .iter()
+            .zip(&d.status)
+            .filter(|(w, s)| Self::zahl_wert(w) && !Self::ist_text(**s))
+            .count()
+    }
+
+    /// Wie bei der Web-API: angemeldet = Zahlen-Namen (Text-Datarefs zählen
+    /// nicht, die Web-API meldet sie gar nicht erst an), abgelehnt = vom
+    /// Plugin als „fehlt" gemeldet.
+    fn abo_stand(&self) -> AboStand {
+        let d = self.daten.lock();
+        let fehlt: Vec<&String> = d
+            .status
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| **s == Some(NameStatus::Fehlt))
+            .map(|(i, _)| &d.namen[i])
+            .collect();
+        AboStand {
+            angemeldet: d.status.iter().filter(|s| !Self::ist_text(**s)).count(),
+            angekommen: d
+                .werte
+                .iter()
+                .zip(&d.status)
+                .filter(|(w, s)| Self::zahl_wert(w) && !Self::ist_text(**s))
+                .count(),
+            abgelehnt: fehlt.len(),
+            abgelehnt_namen: fehlt.into_iter().take(50).cloned().collect(),
+        }
+    }
+}
+
+impl Drop for WebSpiegel {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(f) = self.faden.take() {
@@ -529,6 +884,95 @@ mod tests {
                 namen.get(id).map_or("?", |s| s.as_str())
             );
         }
+    }
+
+    /// Plugin-Messung: Liste in beliebiger Teilreihenfolge, erst vollständig
+    /// ein Ergebnis; fremde Anfrage-IDs zählen nicht.
+    #[test]
+    fn plugin_liste_wird_zusammengesetzt() {
+        let m = P2Messung::neu(7);
+        m.liste_teil(7, 2, 2, vec!["sim/c".into()]);
+        assert!(m.liste_ergebnis().is_none());
+        m.liste_teil(8, 1, 2, vec!["fremd/a".into()]);
+        assert!(m.liste_ergebnis().is_none());
+        m.liste_teil(7, 1, 2, vec!["sim/a".into(), "sim/b".into()]);
+        assert_eq!(
+            m.liste_ergebnis(),
+            Some(Ok(vec!["sim/a".into(), "sim/b".into(), "sim/c".into()]))
+        );
+        let f = P2Messung::neu(1);
+        f.liste_fehler("liste_nicht_verfuegbar".into());
+        assert!(matches!(f.liste_ergebnis(), Some(Err(_))));
+    }
+
+    /// Mehr als 8192 Namen → mehrere Abos; Status und Werte landen am
+    /// richtigen Namen, „fehlt" zählt als abgelehnt, Text-Datarefs zählen
+    /// nicht, Arrays elementweise.
+    #[test]
+    fn plugin_messung_ordnet_werte_zu() {
+        let m = P2Messung::neu(1);
+        let mut namen: Vec<String> = (0..9000).map(|i| format!("sim/wert/{i}")).collect();
+        namen.push("sim/wert/0".into()); // doppelt
+        namen.push("kaputt name".into()); // ungültig
+        assert_eq!(m.abonnieren(namen), 9000);
+        let teile = m.teile();
+        assert_eq!(teile.len(), 2);
+        assert_eq!(teile[0].len(), MAX_NAMEN);
+        // Abo 4 = zweiter Teil; lokaler Index 5 = Name 8197.
+        m.status(
+            ABO_MESSUNG_AB + 1,
+            &teile[1],
+            vec![
+                (
+                    5,
+                    NameStatus::Da {
+                        typ: Typ::Float,
+                        laenge: 1,
+                    },
+                ),
+                (6, NameStatus::Fehlt),
+                (
+                    7,
+                    NameStatus::Da {
+                        typ: Typ::Bytes,
+                        laenge: 40,
+                    },
+                ),
+                (
+                    8,
+                    NameStatus::Da {
+                        typ: Typ::FloatArray,
+                        laenge: 3,
+                    },
+                ),
+            ],
+        );
+        m.werte(
+            ABO_MESSUNG_AB + 1,
+            &teile[1],
+            vec![
+                (5, P2Wert::Zahl(1.25)),
+                (7, P2Wert::Text("A20N".into())),
+                (8, P2Wert::Liste(vec![0.0, f64::NAN, 2.0])),
+            ],
+        );
+        // Werte zu einer veralteten Liste werden verworfen.
+        m.werte(
+            ABO_MESSUNG_AB + 1,
+            &Arc::new(vec!["sim/anders".into()]),
+            vec![(0, P2Wert::Zahl(9.0))],
+        );
+        let s = m.schnappschuss();
+        assert_eq!(s.get("sim/wert/8197"), Some(&1.25));
+        assert_eq!(s.get("sim/wert/8200[0]"), Some(&0.0));
+        assert_eq!(s.get("sim/wert/8200[2]"), Some(&2.0));
+        assert_eq!(s.len(), 3);
+        let a = m.abo_stand();
+        assert_eq!(a.angemeldet, 8999, "Text-Dataref zählt nicht");
+        assert_eq!(a.angekommen, 2);
+        assert_eq!(a.abgelehnt, 1);
+        assert_eq!(a.abgelehnt_namen, vec!["sim/wert/8198".to_string()]);
+        assert_eq!(m.verbunden(), 2);
     }
 
     #[test]

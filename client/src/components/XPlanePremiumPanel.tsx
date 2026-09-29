@@ -26,6 +26,10 @@ interface PluginInstallResult {
  *          `<root>/Resources/plugins/AeroACARS/`.
  *  3. **Bind error** (port 52000 held by something else) — red
  *     warning panel.
+ *  4. **Protokoll 2** (AP7, Plugin ab 1.0) — das Plugin liefert alle
+ *     Werte; zeigt Plugin-/X-Plane-Version und vorhandene Werte.
+ *  5. **Veraltet** — Plugin spricht nur Protokoll 1 (v0.5.x): Hinweis
+ *     plus Installationsfeld zum Aktualisieren.
  *
  * Architectural twin of `PmdgPremiumPanel`. Polls
  * `xplane_premium_status` every 2 s.
@@ -81,11 +85,15 @@ export function XPlanePremiumPanel({ simState }: Props) {
   if (!status) return null;
 
   const hasError = !!status.last_error;
+  const veraltet = !!status.veraltet;
+  const protokoll2 = status.protokoll === 2;
   const stateClass = hasError
     ? "pmdg-panel--warn"
     : status.active
       ? "pmdg-panel--active"
       : "pmdg-panel--inactive";
+  // Installationsfeld: ohne Plugin, und wenn es veraltet ist (Update).
+  const showInstall = !hasError && (!status.active || veraltet);
 
   async function handleInstall() {
     setInstalling(true);
@@ -136,6 +144,17 @@ export function XPlanePremiumPanel({ simState }: Props) {
         )}
       </header>
 
+      {/* Plugin läuft, kann aber nur Protokoll 1 */}
+      {!hasError && veraltet && (
+        <div className="pmdg-panel__warning">
+          <p className="pmdg-panel__warning-title">
+            ⚠️ {t("xplane_premium_panel.outdated_title")}
+            {status.plugin_version ? ` (${status.plugin_version})` : ""}
+          </p>
+          <p>{t("xplane_premium_panel.outdated_explanation")}</p>
+        </div>
+      )}
+
       {/* Bind error — port 52000 held by something else */}
       {hasError && (
         <div className="pmdg-panel__warning">
@@ -153,6 +172,46 @@ export function XPlanePremiumPanel({ simState }: Props) {
           <div className="pmdg-panel__metrics">
             <div className="pmdg-panel__metric">
               <span className="pmdg-panel__metric-label">
+                {t("xplane_premium_panel.protocol_label")}
+              </span>
+              <span className="pmdg-panel__metric-value">
+                {protokoll2
+                  ? t("xplane_premium_panel.protocol_2")
+                  : t("xplane_premium_panel.protocol_1")}
+              </span>
+            </div>
+            {status.plugin_version && (
+              <div className="pmdg-panel__metric">
+                <span className="pmdg-panel__metric-label">
+                  {t("xplane_premium_panel.plugin_version_label")}
+                </span>
+                <span className="pmdg-panel__metric-value">
+                  {status.plugin_version}
+                </span>
+              </div>
+            )}
+            {protokoll2 && status.xplane_version != null && (
+              <div className="pmdg-panel__metric">
+                <span className="pmdg-panel__metric-label">
+                  {t("xplane_premium_panel.xplane_version_label")}
+                </span>
+                <span className="pmdg-panel__metric-value">
+                  {xplaneVersion(status.xplane_version)}
+                </span>
+              </div>
+            )}
+            {protokoll2 && status.namen_da != null && (
+              <div className="pmdg-panel__metric">
+                <span className="pmdg-panel__metric-label">
+                  {t("xplane_premium_panel.names_label")}
+                </span>
+                <span className="pmdg-panel__metric-value">
+                  {status.namen_da.toLocaleString()}
+                </span>
+              </div>
+            )}
+            <div className="pmdg-panel__metric">
+              <span className="pmdg-panel__metric-label">
                 {t("xplane_premium_panel.packets_label")}
               </span>
               <span className="pmdg-panel__metric-value">
@@ -161,19 +220,23 @@ export function XPlanePremiumPanel({ simState }: Props) {
             </div>
           </div>
           <p className="pmdg-panel__hint">
-            {t("xplane_premium_panel.active_hint")}
+            {protokoll2
+              ? t("xplane_premium_panel.active_hint_p2")
+              : t("xplane_premium_panel.active_hint")}
           </p>
         </div>
       )}
 
-      {/* Inactive — show install panel */}
-      {!hasError && !status.active && (
+      {/* Inactive or outdated — show install panel */}
+      {showInstall && (
         <div className="pmdg-panel__active">
-          <p className="pmdg-panel__hint">
-            {simState === "connected"
-              ? t("xplane_premium_panel.inactive_hint_xp_running")
-              : t("xplane_premium_panel.inactive_hint_xp_not_running")}
-          </p>
+          {!status.active && (
+            <p className="pmdg-panel__hint">
+              {simState === "connected"
+                ? t("xplane_premium_panel.inactive_hint_xp_running")
+                : t("xplane_premium_panel.inactive_hint_xp_not_running")}
+            </p>
+          )}
 
           <div style={{ marginTop: "0.75rem" }}>
             <label
@@ -234,4 +297,12 @@ export function XPlanePremiumPanel({ simState }: Props) {
       )}
     </section>
   );
+}
+
+/** X-Plane meldet die Version als Ganzzahl (12100 = 12.10, 11550 = 11.55). */
+function xplaneVersion(v: number): string {
+  if (!Number.isFinite(v) || v < 1000) return String(v);
+  const haupt = Math.floor(v / 1000);
+  const neben = Math.floor((v % 1000) / 10);
+  return `${haupt}.${String(neben).padStart(2, "0")}`;
 }

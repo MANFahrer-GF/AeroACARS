@@ -1452,7 +1452,16 @@
     "detect_failed": "Could not auto-detect X-Plane — please enter the path to your X-Plane root folder manually.",
     "install_button": "Install plugin",
     "installing": "Installing …",
-    "install_success": "Plugin installed at {{path}} ({{files}} files). Restart X-Plane and the status will turn \"live\"."
+    "install_success": "Plugin installed at {{path}} ({{files}} files). Restart X-Plane and the status will turn \"live\".",
+    "protocol_label": "Connection",
+    "protocol_2": "Protocol 2 — all values from the plugin",
+    "protocol_1": "Protocol 1 — touchdown capture only",
+    "plugin_version_label": "Plugin version",
+    "xplane_version_label": "X-Plane",
+    "names_label": "Values available",
+    "active_hint_p2": "The plugin delivers every value straight from X-Plane: position at full precision, and each value is either really there or reported as missing. RREF and the Web API check rest while it delivers.",
+    "outdated_title": "Plugin outdated",
+    "outdated_explanation": "The installed plugin only knows touchdown capture. All other values still come via RREF and the Web API. Reinstall the plugin for this AeroACARS version and restart X-Plane."
   },
   "pilot_header": {
     "pos_label": "POS",

@@ -715,6 +715,18 @@ export interface XPlanePremiumStatus {
   /** Last error from the listener (e.g. bind failure). `null`
    *  while the listener is healthy. */
   last_error: string | null;
+  /** AP7: 2 = Plugin liefert alle Werte (Protokoll 2), 1 = nur das
+   *  Aufsetzpaket (Protokoll 1), 0 = nichts. Fehlt bei älteren Backends. */
+  protokoll?: 0 | 1 | 2;
+  /** Plugin-Version laut `hallo`-Antwort. */
+  plugin_version?: string | null;
+  /** X-Plane-Version laut Plugin, z. B. 12100. */
+  xplane_version?: number | null;
+  /** Plugin läuft, kann aber nur Protokoll 1 — Aktualisierung nötig. */
+  veraltet?: boolean;
+  /** Katalognamen, die das Plugin als vorhanden / fehlend meldet. */
+  namen_da?: number;
+  namen_fehlen?: number;
 }
 
 /** v0.7.18 (B-011): Verwaister PIREP auf phpVMS — Pilot kann ihn

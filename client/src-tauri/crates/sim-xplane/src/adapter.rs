@@ -35,12 +35,43 @@ const STALE_TIMEOUT: Duration = Duration::from_secs(5);
 use sim_core::{SimKind, SimSnapshot, Simulator};
 
 use crate::dataref::{addon_quelle, XPlaneState, CATALOG};
-use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown};
+use crate::plugin2::{Ziel, PLUGIN2_PORT};
+use crate::plugin2_ziel::{
+    ist_kern, katalog_plan, kennung_ueberlagern, KatalogPlan, P2Stand, PluginZugang,
+};
+use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};
 use crate::profile::{build_active_catalog, profile_index_for_title, ActiveEntry, PROFILES};
 use crate::rref::{decode_response, encode_request};
 use crate::web_api::{AircraftInfo, DrefIdCache, WebApiClient};
 use crate::zusatz::{ZusatzAbos, ZUSATZ_HZ};
 use crate::{SUBSCRIPTION_HZ, XPLANE_LISTEN_PORT};
+
+/// Wohin der Adapter spricht. Ab Werk die festen X-Plane- und
+/// Plugin-Ports; Tests setzen freie Ports, damit sie nicht mit einem
+/// laufenden Client oder Simulator kollidieren.
+#[derive(Debug, Clone)]
+pub struct Anschluesse {
+    /// X-Planes RREF-Port (Abos gehen dorthin).
+    pub rref: std::net::SocketAddr,
+    /// Eigener Port fuer das Plugin (Protokoll 1 kommt hier an, Protokoll 2
+    /// wird von hier aus angefragt). 0 = beliebiger freier Port.
+    pub plugin_p1: u16,
+    /// Steuerport des Plugins (Protokoll 2).
+    pub plugin_p2: std::net::SocketAddr,
+    /// Basis der X-Plane-Web-API.
+    pub web_api: String,
+}
+
+impl Default for Anschluesse {
+    fn default() -> Self {
+        Self {
+            rref: std::net::SocketAddr::from(([127, 0, 0, 1], XPLANE_LISTEN_PORT)),
+            plugin_p1: PREMIUM_UDP_PORT,
+            plugin_p2: std::net::SocketAddr::from(([127, 0, 0, 1], PLUGIN2_PORT)),
+            web_api: "http://127.0.0.1:8086".into(),
+        }
+    }
+}
 
 /// v0.12.2 (LE1): RREF index base for the aircraft-profile probes.
 /// Probe subscriptions get one index each starting here — far above any
@@ -76,23 +107,23 @@ pub struct DatarefSample {
     pub has_value: bool,
 }
 
-struct AdapterShared {
-    state: Mutex<ConnectionState>,
+pub(crate) struct AdapterShared {
+    pub(crate) state: Mutex<ConnectionState>,
     last_error: Mutex<Option<String>>,
     /// Parsed accumulated DataRef state. Mutated from the listener
     /// thread, read by `snapshot()` and `subscribed_datarefs()`.
-    parsed: Mutex<XPlaneState>,
+    pub(crate) parsed: Mutex<XPlaneState>,
     /// Per-index "has X-Plane sent us this DataRef yet?" flag — for
     /// the debug panel.
-    seen: Mutex<Vec<bool>>,
+    pub(crate) seen: Mutex<Vec<bool>>,
     /// Per-index last raw float value (for debug panel display).
-    last_values: Mutex<Vec<f32>>,
+    pub(crate) last_values: Mutex<Vec<f32>>,
     /// v0.12.2 (LE6): the **active catalog** the listener is currently
     /// subscribed to — the static `CATALOG` with the detected aircraft
     /// profile's dataref overrides applied. Same length/indices as
     /// `CATALOG`. The listener owns the working copy and publishes it
     /// here so the debug panel shows the dataref names actually in use.
-    active_catalog: Mutex<Vec<ActiveEntry>>,
+    pub(crate) active_catalog: Mutex<Vec<ActiveEntry>>,
     /// Aircraft identity from the X-Plane 12.1+ Web API. Empty
     /// `AircraftInfo` (all fields None) until the poller's first
     /// successful response, OR forever if the Web API is unreachable
@@ -101,13 +132,13 @@ struct AdapterShared {
     aircraft: Mutex<AircraftInfo>,
     /// Zusatzwerte des Telemetrie-Monitors (v1.8), eigene RREF-Abos ab
     /// `ZUSATZ_INDEX_BASE`. Leer, solange der Monitor zu ist.
-    zusatz: Mutex<ZusatzAbos>,
+    pub(crate) zusatz: Mutex<ZusatzAbos>,
     /// Add-on-Datarefs und Profil-Proben, die das geladene Flugzeug laut
     /// Web-API wirklich hat (Name ohne „[n]"). `None`, solange die Web-API
     /// nichts bestaetigt hat (X-Plane 11, Web-API aus, erste Sekunden) —
     /// dann gelten nur die Standardwerte. Grund: RREF liefert fuer JEDEN
     /// Namen Werte, auch fuer fehlende (gemessen 27.09.2026).
-    addon_vorhanden: Mutex<Option<HashSet<String>>>,
+    pub(crate) addon_vorhanden: Mutex<Option<HashSet<String>>>,
     /// Zaehlt jede Aenderung von `addon_vorhanden`; der Listener leert
     /// daraufhin Felder, deren Quelle weggefallen ist.
     addon_generation: AtomicU64,
@@ -123,10 +154,29 @@ struct AdapterShared {
     web_schreiben: Mutex<()>,
     /// Tells the worker thread to stop. Polled in the recv loop.
     stop: AtomicBool,
+    // ---- Plugin, Protokoll 2 (AP7, siehe `plugin2_ziel.rs`) ----
+    /// Sitzungsstand: Status je Name, Profil, Flugzeugmeldung, Messung.
+    /// Sperrfolge: `p2` vor `parsed`/`seen`/`last_values`/`zusatz`/
+    /// `active_catalog`, nie umgekehrt.
+    pub(crate) p2: Mutex<P2Stand>,
+    /// Das Katalog-Abo (Abo 1), einmal gebaut.
+    pub(crate) p2_plan: KatalogPlan,
+    /// Bezugspunkt fuer `p2_katalog_ms`.
+    pub(crate) p2_basis: Instant,
+    /// Zeitpunkt (ms seit `p2_basis`) der letzten Katalogwerte des Plugins,
+    /// 0 = keine. Solange frisch, ruht RREF.
+    pub(crate) p2_katalog_ms: AtomicU64,
+    /// Besteht gerade eine Protokoll-2-Sitzung?
+    pub(crate) p2_sitzung: AtomicBool,
+    /// Steigt, wenn sich die gewuenschten Abos aendern (Monitor, Messung).
+    pub(crate) p2_wunsch_gen: AtomicU64,
+    /// Einmalige Anfragen an das Plugin (`LISTE`).
+    pub(crate) p2_anfragen: Mutex<Vec<Vec<u8>>>,
 }
 
 pub struct XPlaneAdapter {
     shared: Arc<AdapterShared>,
+    anschluesse: Anschluesse,
     worker: Option<JoinHandle<()>>,
     /// Web API poller (X-Plane 12.1+ Settings → Network → Web Server).
     /// Independently joined so we always tear down both threads on
@@ -152,6 +202,11 @@ impl Default for XPlaneAdapter {
 
 impl XPlaneAdapter {
     pub fn new() -> Self {
+        Self::mit_anschluessen(Anschluesse::default())
+    }
+
+    /// Adapter mit eigenen Ports (Tests, siehe [`Anschluesse`]).
+    pub fn mit_anschluessen(anschluesse: Anschluesse) -> Self {
         let shared = Arc::new(AdapterShared {
             state: Mutex::new(ConnectionState::Disconnected),
             last_error: Mutex::new(None),
@@ -166,9 +221,17 @@ impl XPlaneAdapter {
             web_lauf: AtomicU64::new(0),
             web_schreiben: Mutex::new(()),
             stop: AtomicBool::new(false),
+            p2: Mutex::new(P2Stand::default()),
+            p2_plan: katalog_plan(),
+            p2_basis: Instant::now(),
+            p2_katalog_ms: AtomicU64::new(0),
+            p2_sitzung: AtomicBool::new(false),
+            p2_wunsch_gen: AtomicU64::new(0),
+            p2_anfragen: Mutex::new(Vec::new()),
         });
         Self {
             shared,
+            anschluesse,
             worker: None,
             web_api_worker: None,
             premium: PremiumListener::new(),
@@ -208,11 +271,16 @@ impl XPlaneAdapter {
         for v in self.shared.last_values.lock().iter_mut() {
             *v = 0.0;
         }
+        *self.shared.p2.lock() = P2Stand::default();
+        self.shared.p2_katalog_ms.store(0, Ordering::SeqCst);
+        self.shared.p2_sitzung.store(false, Ordering::SeqCst);
+        self.shared.p2_anfragen.lock().clear();
         self.shared.stop.store(false, Ordering::SeqCst);
         let shared_for_udp = Arc::clone(&self.shared);
+        let rref_ziel = self.anschluesse.rref;
         let udp_handle = std::thread::Builder::new()
             .name("xplane-udp".into())
-            .spawn(move || run_listener(shared_for_udp))
+            .spawn(move || run_listener(shared_for_udp, rref_ziel))
             .expect("spawn xplane-udp thread");
         self.worker = Some(udp_handle);
         let shared_for_web = Arc::clone(&self.shared);
@@ -220,14 +288,22 @@ impl XPlaneAdapter {
             let _w = self.shared.web_schreiben.lock();
             self.shared.web_lauf.fetch_add(1, Ordering::SeqCst) + 1
         };
+        let web_basis = self.anschluesse.web_api.clone();
         let web_handle = std::thread::Builder::new()
             .name("xplane-web-api".into())
-            .spawn(move || run_web_api_poller(shared_for_web, lauf))
+            .spawn(move || run_web_api_poller(shared_for_web, lauf, web_basis))
             .expect("spawn xplane-web-api thread");
         self.web_api_worker = Some(web_handle);
         // Start the premium plugin listener too. No-op unless the
         // optional X-Plane Plugin is installed — see `premium.rs`.
-        self.premium.start();
+        // Ab Plugin 1.0 fuehrt derselbe Faden die Protokoll-2-Sitzung;
+        // Ziel der Werte ist dieser Adapter.
+        let ziel: Arc<dyn Ziel> = Arc::clone(&self.shared) as Arc<dyn Ziel>;
+        self.premium.start_mit(
+            self.anschluesse.plugin_p1,
+            self.anschluesse.plugin_p2,
+            Some(ziel),
+        );
         tracing::info!(?kind, "X-Plane adapter started");
     }
 
@@ -260,7 +336,21 @@ impl XPlaneAdapter {
     /// `active=true` when we've received a packet within the last
     /// 3 s — drives the "X-PLANE PREMIUM" badge in the UI.
     pub fn premium_status(&self) -> PremiumStatus {
-        self.premium.status()
+        let mut s = self.premium.status();
+        let st = self.shared.p2.lock();
+        if st.offen {
+            s.namen_da = st.status.iter().filter(|x| **x == Some(true)).count() as u32;
+            s.namen_fehlen = st.status.iter().filter(|x| **x == Some(false)).count() as u32;
+        }
+        s
+    }
+
+    /// Zugang zur Plugin-Sitzung fuer „Flugzeug vermessen" — `None`, wenn
+    /// gerade keine Protokoll-2-Sitzung besteht (dann Web-API).
+    pub fn plugin_zugang(&self) -> Option<PluginZugang> {
+        self.shared.p2.lock().offen.then(|| PluginZugang {
+            shared: Arc::clone(&self.shared),
+        })
     }
 
     /// Drain a pending plugin-emitted touchdown event, if any. The
@@ -304,6 +394,8 @@ impl XPlaneAdapter {
     }
 
     pub fn snapshot(&self) -> Option<SimSnapshot> {
+        // Sperrfolge: `p2` nie waehrend `parsed` gehalten (siehe AdapterShared).
+        let plugin_flugzeug = self.shared.p2_flugzeug();
         let parsed = self.shared.parsed.lock();
         if !parsed.got_first_packet {
             return None;
@@ -319,15 +411,19 @@ impl XPlaneAdapter {
         // reachable (X-Plane <12.1, or pilot didn't enable it). The
         // SimSnapshot fields default to None in that path so the
         // existing "(unknown)" UI label still shows.
+        //
+        // Protokoll 2: die Flugzeugmeldung des Plugins hat Vorrang (frisch
+        // bei jedem Wechsel); die Web-API fuellt nur, was sie nicht hat.
         let aircraft = self.shared.aircraft.lock();
-        if aircraft.descrip.is_some() {
-            snap.aircraft_title = aircraft.descrip.clone();
+        let (titel, icao, kennz) = kennung_ueberlagern(plugin_flugzeug.as_ref(), &aircraft);
+        if titel.is_some() {
+            snap.aircraft_title = titel;
         }
-        if aircraft.icao.is_some() {
-            snap.aircraft_icao = aircraft.icao.clone();
+        if icao.is_some() {
+            snap.aircraft_icao = icao;
         }
-        if aircraft.tailnum.is_some() {
-            snap.aircraft_registration = aircraft.tailnum.clone();
+        if kennz.is_some() {
+            snap.aircraft_registration = kennz;
         }
         Some(snap)
     }
@@ -347,7 +443,10 @@ impl XPlaneAdapter {
     /// Leere Liste = Abos beenden. Der Empfangsthread gleicht im naechsten
     /// Durchlauf ab.
     pub fn zusatz_setzen(&self, felder: Vec<(String, String)>) {
-        self.shared.zusatz.lock().setzen(felder);
+        if self.shared.zusatz.lock().setzen(felder) {
+            // Protokoll 2: Abo 2 neu abgleichen.
+            self.shared.p2_wunsch_gen.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     /// Aktuelle Zusatzwerte: (Kanal-ID, Rohwert des DataRefs).
@@ -395,7 +494,7 @@ impl Drop for XPlaneAdapter {
 /// the laggy Web API title (polled every 30 s, so up to 30 s stale)
 /// must NOT revive a profile the probe already retired (QS-R2/P2).
 /// When nothing points at a profile the result is `None` → base catalog.
-fn desired_profile(
+pub(crate) fn desired_profile(
     title: Option<&str>,
     probe_fresh: &[bool],
     probe_seen: &[bool],
@@ -451,7 +550,7 @@ mod icmp_rueckmeldung_tests {
 }
 
 /// Grundname eines Datarefs ohne Array-Index („…[7]" → „…").
-fn grundname(name: &str) -> &str {
+pub(crate) fn grundname(name: &str) -> &str {
     name.split('[').next().unwrap_or(name)
 }
 
@@ -547,7 +646,11 @@ fn probe_gilt(
 /// title-match via the Web API overlay plus an RREF probe — and on a
 /// match rebuilds the active catalog with the profile's dataref
 /// overrides and re-subscribes (LE6).
-fn run_listener(shared: Arc<AdapterShared>) {
+///
+/// AP7: Liefert das Plugin (Protokoll 2) Katalogwerte, ruht dieser Faden —
+/// Abos abbestellt, RREF-Pakete verworfen — und uebernimmt nahtlos wieder,
+/// sobald sie versiegen (siehe `plugin2_ziel.rs`, „Uebergabe").
+fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
     use std::net::UdpSocket;
 
     let socket = match UdpSocket::bind("127.0.0.1:0") {
@@ -570,8 +673,6 @@ fn run_listener(shared: Arc<AdapterShared>) {
         .unwrap_or_else(|_| "?".into());
     tracing::info!(local = %local_addr, "X-Plane UDP socket bound");
 
-    let xplane_addr = format!("127.0.0.1:{XPLANE_LISTEN_PORT}");
-
     // ---- v0.12.2: active catalog + aircraft-profile state ----
     // `active` is the static CATALOG with the detected profile's
     // dataref overrides applied (LE6) — same length/indices as CATALOG.
@@ -591,6 +692,11 @@ fn run_listener(shared: Arc<AdapterShared>) {
     // uebernommen hat (siehe `AdapterShared::addon_vorhanden`).
     let mut addon_gen_gesehen: u64 = u64::MAX;
     let mut vorhanden: Option<HashSet<String>> = None;
+    // `vorhanden` stammt aus der Plugin-Sitzung (Rueckfall), nicht von der
+    // Web-API — gilt nur fuer dieses Flugzeug (siehe Leergewicht).
+    let mut vorhanden_aus_plugin = false;
+    // Das Plugin (Protokoll 2) liefert — RREF ruht.
+    let mut rref_ruht = false;
     // Ersatz ohne Web-API: Quellen, die schon einmal ungleich 0 waren.
     let mut ungleich_null: HashSet<&'static str> = HashSet::new();
     // Leergewicht als Kennung des geladenen Flugzeugs — kommt per RREF, also
@@ -605,7 +711,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
     let subscribe_catalog = |sock: &UdpSocket, cat: &[ActiveEntry]| {
         for (i, entry) in cat.iter().enumerate() {
             let req = encode_request(SUBSCRIPTION_HZ as i32, i as i32, entry.name);
-            if let Err(e) = sock.send_to(&req, &xplane_addr) {
+            if let Err(e) = sock.send_to(&req, xplane_addr) {
                 tracing::trace!(
                     error = %e,
                     dataref = entry.name,
@@ -620,7 +726,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
     let subscribe_probes = |sock: &UdpSocket| {
         for (pi, prof) in PROFILES.iter().enumerate() {
             let req = encode_request(1, DISCOVERY_INDEX_BASE + pi as i32, prof.probe_dataref);
-            let _ = sock.send_to(&req, &xplane_addr);
+            let _ = sock.send_to(&req, xplane_addr);
         }
     };
     // Cancel all probe subscriptions (freq = 0) — best-effort cleanup
@@ -629,7 +735,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
     let unsubscribe_probes = |sock: &UdpSocket| {
         for (pi, prof) in PROFILES.iter().enumerate() {
             let stop = encode_request(0, DISCOVERY_INDEX_BASE + pi as i32, prof.probe_dataref);
-            let _ = sock.send_to(&stop, &xplane_addr);
+            let _ = sock.send_to(&stop, xplane_addr);
         }
     };
 
@@ -645,7 +751,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
                 std::thread::sleep(Duration::from_millis(30));
             }
             let req = encode_request(hz, *idx, dataref);
-            let _ = sock.send_to(&req, &xplane_addr);
+            let _ = sock.send_to(&req, xplane_addr);
         }
     };
 
@@ -679,6 +785,12 @@ fn run_listener(shared: Arc<AdapterShared>) {
                 sim_hoert_nicht_gemeldet = false;
                 let pairs = decode_response(&buf[..n]);
                 if pairs.is_empty() {
+                    continue;
+                }
+                // Plugin liefert: RREF-Nachzuegler (X-Plane sendet nach dem
+                // Abbestellen noch kurz) nicht schreiben — nie zwei Quellen
+                // fuer ein Feld.
+                if rref_ruht || shared.p2_frisch() {
                     continue;
                 }
                 // `last_packet_at` erst setzen, wenn ein KATALOGWERT dabei war
@@ -725,6 +837,12 @@ fn run_listener(shared: Arc<AdapterShared>) {
                                     ungleich_null.clear();
                                     for t in probe_last_seen.iter_mut() {
                                         *t = None;
+                                    }
+                                    // Vom Plugin uebernommene Quellen galten fuer
+                                    // das alte Flugzeug — verwerfen.
+                                    if vorhanden_aus_plugin {
+                                        vorhanden = None;
+                                        vorhanden_aus_plugin = false;
                                     }
                                     if vorhanden.is_none() {
                                         for e in CATALOG.iter().filter(|e| addon_quelle(e.field)) {
@@ -807,6 +925,80 @@ fn run_listener(shared: Arc<AdapterShared>) {
             }
         }
 
+        // ---- AP7: Uebergabe an das Plugin (Protokoll 2) und zurueck ----
+        let plugin_liefert = shared.p2_frisch();
+        if plugin_liefert && !rref_ruht {
+            // Plugin uebernimmt: RREF-Abos abbestellen (freq 0) und die
+            // Quellen, die hier galten, als Beleg weiterreichen (Kern-Namen
+            // `laminar/…`, siehe `plugin2_ziel::ist_kern`).
+            let vorab: HashSet<String> = CATALOG
+                .iter()
+                .filter(|e| {
+                    addon_quelle(e.field)
+                        && eintrag_gilt(e.field, e.name, vorhanden.as_ref(), &ungleich_null)
+                })
+                .map(|e| grundname(e.name).to_string())
+                .chain(
+                    PROFILES
+                        .iter()
+                        .filter(|p| probe_gilt(p.probe_dataref, vorhanden.as_ref(), &ungleich_null))
+                        .map(|p| grundname(p.probe_dataref).to_string()),
+                )
+                .collect();
+            shared.p2_vorab_setzen(vorab);
+            for (i, entry) in active.iter().enumerate() {
+                let req = encode_request(0, i as i32, entry.name);
+                let _ = socket.send_to(&req, xplane_addr);
+            }
+            unsubscribe_probes(&socket);
+            zusatz_senden(&socket, &zusatz_abonniert, 0);
+            zusatz_abonniert.clear();
+            last_packet_at = None;
+            rref_ruht = true;
+            tracing::info!("X-Plane: Plugin (Protokoll 2) liefert — RREF-Abos abbestellt");
+        } else if !plugin_liefert && rref_ruht {
+            // Rueckfall: Profil und geltende Quellen aus der Plugin-Sitzung
+            // uebernehmen und sofort neu abonnieren. Die Felder behalten bis
+            // zum ersten RREF-Wert den letzten Plugin-Wert — nichts faellt
+            // auf 0. Der Stale-Waechter zaehlt ab dem letzten Plugin-Wert.
+            let (profil, gilt) = shared.p2_uebergabe();
+            active_profile = profil;
+            active = build_active_catalog(profil.map(|pi| &PROFILES[pi]));
+            *shared.active_catalog.lock() = active.clone();
+            for t in probe_last_seen.iter_mut() {
+                *t = None;
+            }
+            if let Some(pi) = profil {
+                if let Some(t) = probe_last_seen.get_mut(pi) {
+                    *t = Some(Instant::now());
+                }
+            }
+            vorhanden = Some(gilt);
+            vorhanden_aus_plugin = true;
+            addon_gen_gesehen = shared.addon_generation.load(Ordering::SeqCst);
+            ungleich_null.clear();
+            last_packet_at = Some(shared.p2_letzte_werte().unwrap_or_else(Instant::now));
+            subscribe_catalog(&socket, &active);
+            subscribe_probes(&socket);
+            let (gen_jetzt, abos_jetzt) = {
+                let z = shared.zusatz.lock();
+                (z.generation, z.abos())
+            };
+            zusatz_senden(&socket, &abos_jetzt, ZUSATZ_HZ);
+            zusatz_abonniert = abos_jetzt;
+            zusatz_generation = gen_jetzt;
+            last_resubscribe_at = Instant::now();
+            rref_ruht = false;
+            tracing::info!(
+                profil = ?profil.map(|pi| PROFILES[pi].name),
+                "X-Plane: Plugin liefert nicht mehr — zurueck auf RREF"
+            );
+        }
+        if rref_ruht {
+            // Profil, Quellen, Zusatzwerte und Verbindung fuehrt das Plugin.
+            continue;
+        }
+
         // ---- v0.12.2 (LE1/LE6): aircraft-profile detection ----
         // Re-evaluated every tick from the two LE1 signals:
         //   * title — case-insensitive substring match on the Web API
@@ -826,6 +1018,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
         if gen != addon_gen_gesehen {
             addon_gen_gesehen = gen;
             vorhanden = shared.addon_vorhanden.lock().clone();
+            vorhanden_aus_plugin = false;
             let mut parsed = shared.parsed.lock();
             for e in CATALOG.iter() {
                 if addon_quelle(e.field)
@@ -958,7 +1151,7 @@ fn run_listener(shared: Arc<AdapterShared>) {
     // every probe so we don't leave X-Plane streaming into the void.
     for (i, entry) in active.iter().enumerate() {
         let req = encode_request(0, i as i32, entry.name);
-        let _ = socket.send_to(&req, &xplane_addr);
+        let _ = socket.send_to(&req, xplane_addr);
     }
     unsubscribe_probes(&socket);
     zusatz_senden(&socket, &zusatz_abonniert, 0);
@@ -974,8 +1167,8 @@ fn run_listener(shared: Arc<AdapterShared>) {
 /// identity rarely changes mid-flight. On repeated failures
 /// (X-Plane <12.1, or Web API not enabled in Settings → Network)
 /// we back off further so we don't spam.
-fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
-    let client = WebApiClient::new();
+fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64, basis: String) {
+    let client = WebApiClient::mit_basis(&basis);
     // Darf dieser Faden noch schreiben? Nein nach `stop()` oder einem
     // Neustart (neue Laufnummer).
     let aktiv =
@@ -1012,7 +1205,15 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
                 // Flugzeug); beim Wechsel ohne Altlasten.
                 let neues_flugzeug = info.relative_path != geprueft_fuer;
                 let mut ergebnisse: Vec<(&str, Option<bool>)> = Vec::new();
-                for n in zu_pruefende_datarefs() {
+                // Liefert das Plugin (Protokoll 2), meldet es die Existenz
+                // selbst — geprueft werden nur noch die Kern-Namen
+                // (`laminar/…`), bei denen die Registrierung allein nichts
+                // beweist (siehe `plugin2_ziel::ist_kern`).
+                let plugin = shared.p2_frisch();
+                for n in zu_pruefende_datarefs()
+                    .into_iter()
+                    .filter(|n| !plugin || ist_kern(n))
+                {
                     // Bis zu zwei GETs je Name — zwischendurch aufs Stoppen
                     // achten, sonst haengt `stop()` (Codex-Befund).
                     if !aktiv() {
@@ -1035,7 +1236,14 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64) {
                 if !aktiv() {
                     return;
                 }
-                if noch_dasselbe {
+                // Nur Kern-Namen geprueft, aber das Plugin liefert inzwischen
+                // nicht mehr: dieser halbe Stand taugt fuer RREF nicht (er
+                // striche dort ToLiss & Co.) — verwerfen und gleich
+                // vollstaendig pruefen.
+                let halb = plugin && !shared.p2_frisch();
+                if halb {
+                    sofort = true;
+                } else if noch_dasselbe {
                     let mut v = shared.addon_vorhanden.lock();
                     let neu = vorhanden_neu(v.as_ref(), neues_flugzeug, &ergebnisse);
                     if v.as_ref() != Some(&neu) {
@@ -1333,5 +1541,398 @@ mod tests {
             desired_profile(Some(CL650_TITLE), &[true], &[true]),
             Some(0)
         );
+    }
+}
+
+/// Echter Loopback-Test mit einem kleinen Schein-Plugin (AP7): Sitzung auf,
+/// Werte kommen an (doppelt genau), fehlender Name bleibt leer, RREF ruht,
+/// Vermessung ueber das Plugin, Sitzung bricht ab → Rueckfall auf RREF ohne
+/// Nullen. Alle Ports frei gewaehlt — kollidiert nicht mit einem laufenden
+/// Client oder X-Plane.
+#[cfg(test)]
+mod plugin2_loopback_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::net::{SocketAddr, UdpSocket};
+
+    const BREITE: f64 = 51.234_567_890_1;
+    const LAENGE: f64 = 8.543_210_987_6;
+
+    #[derive(Default)]
+    struct FakeStand {
+        /// Auf HALLO antworten und Werte liefern?
+        liefern: bool,
+        client: Option<SocketAddr>,
+        /// Vollstaendige Abos: ID → Namen.
+        abos: HashMap<u8, Vec<String>>,
+        /// Teile unvollstaendiger Abos: ID → (Teil → Namen).
+        teile: HashMap<u8, HashMap<u32, Vec<String>>>,
+        anfragen: Vec<String>,
+    }
+
+    /// Status wie ein echtes Plugin: Profil-Proben/Ersetzungen fremder
+    /// Flugzeuge und der ToLiss-AP1 fehlen, Position ist `double`.
+    fn fake_status(name: &str) -> serde_json::Value {
+        if name.starts_with("abus/")
+            || name.starts_with("CL650/")
+            || name.starts_with("Rotate/")
+            || name == "AirbusFBW/AP1Engage"
+        {
+            serde_json::json!("fehlt")
+        } else if name.ends_with("/latitude") || name.ends_with("/longitude") {
+            serde_json::json!("d")
+        } else if name == "sim/test/text" {
+            serde_json::json!("b")
+        } else if name == "sim/test/feld" {
+            serde_json::json!("vf")
+        } else {
+            serde_json::json!("f")
+        }
+    }
+
+    fn fake_wert(name: &str) -> Option<serde_json::Value> {
+        Some(match name {
+            "sim/flightmodel/position/latitude" => serde_json::json!(BREITE),
+            "sim/flightmodel/position/longitude" => serde_json::json!(LAENGE),
+            "sim/flightmodel/position/y_agl" => serde_json::json!(0.5),
+            "AirbusFBW/APUMaster" => serde_json::json!(1),
+            // Kern-Name mit Wert 0: „da", aber ohne zweiten Beleg.
+            "laminar/B738/knob/transponder_pos" => serde_json::json!(0),
+            "sim/test/eins" => serde_json::json!(1.5),
+            "sim/test/zwei" => serde_json::json!(2.5),
+            "sim/test/text" => serde_json::json!("A20N"),
+            "sim/test/feld" => serde_json::json!([1.0, 2.0, 3.0]),
+            _ => return None,
+        })
+    }
+
+    fn senden(sock: &UdpSocket, an: SocketAddr, v: serde_json::Value) {
+        let _ = sock.send_to(format!("{v}\n").as_bytes(), an);
+    }
+
+    fn status_senden(sock: &UdpSocket, an: SocketAddr, abo: u8, namen: &[String]) {
+        let st: Vec<serde_json::Value> = namen
+            .iter()
+            .enumerate()
+            .map(|(i, n)| match fake_status(n) {
+                serde_json::Value::String(s) if s == "fehlt" => serde_json::json!([i, "fehlt"]),
+                t => serde_json::json!([i, t, 1]),
+            })
+            .collect();
+        let teile: Vec<&[serde_json::Value]> = st.chunks(150).collect();
+        for (k, t) in teile.iter().enumerate() {
+            senden(
+                sock,
+                an,
+                serde_json::json!({"p":2,"t":"abo","abo":abo,"teil":k+1,"teile":teile.len(),"st":t}),
+            );
+        }
+    }
+
+    /// Schein-Plugin: beantwortet HALLO/ABO/LISTE, liefert alle 50 ms Werte.
+    fn fake_plugin(
+        sock: UdpSocket,
+        stand: Arc<Mutex<FakeStand>>,
+        stop: Arc<AtomicBool>,
+    ) -> JoinHandle<()> {
+        sock.set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 65536];
+            let mut zuletzt = Instant::now();
+            while !stop.load(Ordering::SeqCst) {
+                if let Ok((n, von)) = sock.recv_from(&mut buf) {
+                    let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let mut zeilen = text.lines();
+                    let kopf = zeilen.next().unwrap_or("").to_string();
+                    let mut st = stand.lock();
+                    st.anfragen.push(kopf.clone());
+                    let teile: Vec<&str> = kopf.split(' ').collect();
+                    match teile.first().copied() {
+                        Some("HALLO") if st.liefern => {
+                            st.client = Some(von);
+                            senden(
+                                &sock,
+                                von,
+                                serde_json::json!({"p":2,"t":"hallo","plugin":"1.0.0","xplane":12100,"xplm":430}),
+                            );
+                            senden(
+                                &sock,
+                                von,
+                                serde_json::json!({"p":2,"t":"flugzeug","icao":"A20N","titel":"A320neo Test","pfad":"Aircraft/Test/a320.acf"}),
+                            );
+                        }
+                        Some("ABO") if st.liefern => {
+                            let id: u8 = teile[1].parse().unwrap();
+                            let (teil, anzahl) = if teile.len() == 5 {
+                                (teile[3].parse().unwrap(), teile[4].parse().unwrap())
+                            } else {
+                                (1u32, 1u32)
+                            };
+                            let namen: Vec<String> = zeilen.map(str::to_string).collect();
+                            let t = st.teile.entry(id).or_default();
+                            t.insert(teil, namen);
+                            if t.len() as u32 == anzahl {
+                                let mut alle = Vec::new();
+                                for k in 1..=anzahl {
+                                    alle.extend(t.remove(&k).unwrap());
+                                }
+                                st.teile.remove(&id);
+                                status_senden(&sock, von, id, &alle);
+                                st.abos.insert(id, alle);
+                            }
+                        }
+                        Some("ENDE-ABO") => {
+                            let id: u8 = teile[1].parse().unwrap();
+                            st.abos.remove(&id);
+                        }
+                        Some("LISTE") if st.liefern => {
+                            let id: u32 = teile[1].parse().unwrap();
+                            // Absichtlich in umgekehrter Reihenfolge.
+                            senden(
+                                &sock,
+                                von,
+                                serde_json::json!({"p":2,"t":"liste","id":id,"teil":2,"teile":2,"n":["sim/test/feld"]}),
+                            );
+                            senden(
+                                &sock,
+                                von,
+                                serde_json::json!({"p":2,"t":"liste","id":id,"teil":1,"teile":2,"n":["sim/test/eins","sim/test/zwei","sim/test/text"]}),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                if zuletzt.elapsed() >= Duration::from_millis(50) {
+                    zuletzt = Instant::now();
+                    let st = stand.lock();
+                    if let (true, Some(an)) = (st.liefern, st.client) {
+                        for (id, namen) in &st.abos {
+                            let v: Vec<serde_json::Value> = namen
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, n)| fake_status(n) != serde_json::json!("fehlt"))
+                                .filter_map(|(i, n)| {
+                                    fake_wert(n).map(|w| serde_json::json!([i, w]))
+                                })
+                                .collect();
+                            if !v.is_empty() {
+                                senden(
+                                    &sock,
+                                    an,
+                                    serde_json::json!({"p":2,"t":"w","abo":id,"seq":1,"teil":1,"teile":1,"v":v}),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Schein-X-Plane fuer RREF: nimmt Abos an, antwortet nie. Merkt sich
+    /// die Frequenz jeder Anfrage.
+    fn fake_rref(
+        sock: UdpSocket,
+        freqs: Arc<Mutex<Vec<i32>>>,
+        stop: Arc<AtomicBool>,
+    ) -> JoinHandle<()> {
+        sock.set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 1024];
+            while !stop.load(Ordering::SeqCst) {
+                if let Ok((n, _)) = sock.recv_from(&mut buf) {
+                    if n == crate::rref::RREF_REQUEST_SIZE && &buf[0..4] == b"RREF" {
+                        let f = i32::from_le_bytes([buf[5], buf[6], buf[7], buf[8]]);
+                        freqs.lock().push(f);
+                    }
+                }
+            }
+        })
+    }
+
+    fn warte(bis: Duration, mut ok: impl FnMut() -> bool) -> bool {
+        let ende = Instant::now() + bis;
+        while Instant::now() < ende {
+            if ok() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        ok()
+    }
+
+    #[test]
+    fn sitzung_werte_vermessung_und_rueckfall() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let plugin_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let rref_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        // Ein Port, an dem sicher nichts lauscht (Web-API aus).
+        let web_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let anschluesse = Anschluesse {
+            rref: rref_sock.local_addr().unwrap(),
+            plugin_p1: 0,
+            plugin_p2: plugin_sock.local_addr().unwrap(),
+            web_api: format!("http://127.0.0.1:{web_port}"),
+        };
+        let stand = Arc::new(Mutex::new(FakeStand {
+            liefern: true,
+            ..FakeStand::default()
+        }));
+        let freqs = Arc::new(Mutex::new(Vec::new()));
+        let f1 = fake_plugin(plugin_sock, Arc::clone(&stand), Arc::clone(&stop));
+        let f2 = fake_rref(rref_sock, Arc::clone(&freqs), Arc::clone(&stop));
+
+        let mut ad = XPlaneAdapter::mit_anschluessen(anschluesse);
+        ad.start(SimKind::XPlane12);
+
+        // 1. Sitzung auf, Werte kommen an — Breite/Laenge doppelt genau.
+        assert!(
+            warte(Duration::from_secs(5), || ad
+                .snapshot()
+                .is_some_and(|s| s.lat == BREITE && s.lon == LAENGE)),
+            "keine Plugin-Werte; Anfragen: {:?}",
+            stand.lock().anfragen
+        );
+        assert!(stand
+            .lock()
+            .anfragen
+            .iter()
+            .any(|a| a.starts_with("HALLO 2 ")));
+        assert_eq!(ad.state(), ConnectionState::Connected);
+        let st = ad.premium_status();
+        assert_eq!(st.protokoll, 2);
+        assert_eq!(st.plugin_version.as_deref(), Some("1.0.0"));
+        assert_eq!(st.xplane_version, Some(12100));
+        assert!(!st.veraltet);
+        assert!(st.namen_da > 0 && st.namen_fehlen > 0);
+        {
+            let p = ad.shared.parsed.lock();
+            // Fehlender Name bleibt leer.
+            assert!(!p.toliss_ap1);
+            // Vorhandene Add-on-Quelle gilt (ohne Web-API).
+            assert_eq!(p.toliss_apu_master, Some(true));
+            // Kern-Name „da" mit Wert 0 und ohne zweiten Beleg: bleibt leer
+            // (sonst Transponder „TEST" bei jedem Flugzeug).
+            assert_eq!(p.b738_xpdr_knob, None);
+        }
+        assert_eq!(ad.shared.p2.lock().profil, None, "kein fremdes Profil");
+        // Flugzeugmeldung des Plugins ohne Web-API.
+        assert!(warte(Duration::from_secs(2), || ad
+            .snapshot()
+            .and_then(|s| s.aircraft_icao)
+            .as_deref()
+            == Some("A20N")));
+        // RREF ruht: Abos abbestellt (freq 0).
+        assert!(
+            warte(Duration::from_secs(2), || freqs.lock().contains(&0)),
+            "RREF nicht abbestellt"
+        );
+
+        // 2. Flugzeug vermessen ueber das Plugin.
+        let spiegel = crate::vermessung::Spiegel::starten_mit(ad.plugin_zugang()).expect("Messung");
+        assert_eq!(spiegel.quelle(), "plugin");
+        assert_eq!(spiegel.flugzeug.icao.as_deref(), Some("A20N"));
+        assert!(
+            warte(Duration::from_secs(3), || spiegel.verbunden() >= 3),
+            "Messwerte kamen nicht an"
+        );
+        let schnapp = spiegel.schnappschuss();
+        assert_eq!(schnapp.get("sim/test/eins"), Some(&1.5));
+        assert_eq!(schnapp.get("sim/test/feld[2]"), Some(&3.0));
+        assert!(!schnapp.contains_key("sim/test/text"));
+        let abo = spiegel.abo_stand();
+        assert_eq!((abo.angemeldet, abo.abgelehnt), (3, 0));
+        assert!(spiegel.lebt());
+        drop(spiegel);
+        assert!(warte(Duration::from_secs(2), || stand
+            .lock()
+            .anfragen
+            .iter()
+            .any(|a| a == "ENDE-ABO 3")));
+
+        // 3. Plugin verstummt → nach 3 s Rueckfall auf RREF, ohne Nullen.
+        let n_vorher = freqs.lock().len();
+        stand.lock().liefern = false;
+        let ab = Instant::now();
+        assert!(
+            warte(Duration::from_secs(6), || freqs.lock()[n_vorher..]
+                .iter()
+                .any(|f| *f > 0)),
+            "RREF nicht wieder abonniert"
+        );
+        let dauer = ab.elapsed();
+        assert!(
+            dauer >= Duration::from_millis(2500),
+            "Rueckfall zu frueh: {dauer:?}"
+        );
+        let snap = ad.snapshot().expect("Schnappschuss nach dem Rueckfall weg");
+        assert_eq!(snap.lat, BREITE, "Feld fiel beim Rueckfall");
+        assert!(warte(Duration::from_secs(1), || ad
+            .premium_status()
+            .protokoll
+            != 2));
+        // Ohne RREF-Werte raeumt der Waechter 5 s nach dem letzten
+        // Plugin-Wert auf — wie ohne Plugin.
+        assert!(
+            warte(Duration::from_secs(4), || ad.snapshot().is_none()),
+            "veralteter Schnappschuss blieb stehen"
+        );
+        // Und es wird wieder HALLO gesagt.
+        let hallos = stand
+            .lock()
+            .anfragen
+            .iter()
+            .filter(|a| a.starts_with("HALLO"))
+            .count();
+        assert!(hallos >= 2, "{hallos}");
+
+        ad.stop();
+        stop.store(true, Ordering::SeqCst);
+        f1.join().unwrap();
+        f2.join().unwrap();
+    }
+
+    /// Ohne Plugin (niemand am Steuerport): keine Sitzung, RREF bleibt
+    /// abonniert und wird nie abbestellt — wie vor AP7.
+    #[test]
+    fn ohne_plugin_bleibt_rref() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let rref_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let tot = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let web_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let freqs = Arc::new(Mutex::new(Vec::new()));
+        let f = fake_rref(
+            rref_sock.try_clone().unwrap(),
+            Arc::clone(&freqs),
+            Arc::clone(&stop),
+        );
+        let mut ad = XPlaneAdapter::mit_anschluessen(Anschluesse {
+            rref: rref_sock.local_addr().unwrap(),
+            plugin_p1: 0,
+            plugin_p2: tot.local_addr().unwrap(),
+            web_api: format!("http://127.0.0.1:{web_port}"),
+        });
+        ad.start(SimKind::XPlane12);
+        assert!(warte(Duration::from_secs(2), || freqs.lock().len()
+            >= CATALOG.len()));
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!freqs.lock().contains(&0), "RREF ohne Plugin abbestellt");
+        let st = ad.premium_status();
+        assert_eq!(st.protokoll, 0);
+        assert!(!st.veraltet);
+        assert!(ad.plugin_zugang().is_none());
+        ad.stop();
+        stop.store(true, Ordering::SeqCst);
+        f.join().unwrap();
     }
 }

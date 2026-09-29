@@ -347,10 +347,23 @@ pub async fn vermessung_starten(
     }
     let kind = crate::read_sim_config(&app).kind;
     let (quelle, sim, flugzeug, l_namen) = if kind.is_xplane() {
-        let spiegel =
-            tauri::async_runtime::spawn_blocking(sim_xplane::vermessung::Spiegel::starten)
-                .await
-                .map_err(|e| e.to_string())??;
+        // AP7: laeuft eine Sitzung mit dem Plugin (Protokoll 2), misst es
+        // ohne Web-API; sonst wie bisher ueber die Web-API.
+        let zugang = app
+            .state::<crate::AppState>()
+            .xplane
+            .lock()
+            .map_err(|_| "Sperre")?
+            .plugin_zugang();
+        let spiegel = tauri::async_runtime::spawn_blocking(move || {
+            sim_xplane::vermessung::Spiegel::starten_mit(zugang)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        tracing::info!(
+            quelle = spiegel.quelle(),
+            "Flugzeug vermessen: X-Plane verbunden"
+        );
         let f = Flugzeug {
             titel: spiegel.flugzeug.descrip.clone(),
             icao: spiegel.flugzeug.icao.clone(),

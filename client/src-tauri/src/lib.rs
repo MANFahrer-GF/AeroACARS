@@ -53389,6 +53389,10 @@ async fn xplane_install_plugin(
 ///     "ever_seen":   bool,    // any packet this session
 ///     "packet_count": u64,    // total since adapter start
 ///     "last_error":  string?  // bind-failure reason, if any
+///     "protokoll":   0|1|2,   // AP7: 2 = Plugin liefert alle Werte
+///     "plugin_version": string?, "xplane_version": u32?,
+///     "veraltet":    bool,    // Plugin kann nur Protokoll 1
+///     "namen_da": u32, "namen_fehlen": u32
 ///   }
 ///
 /// Inert when the active sim isn't X-Plane (returns all-false).
@@ -53402,6 +53406,12 @@ fn xplane_premium_status(state: tauri::State<'_, AppState>) -> serde_json::Value
         "ever_seen": s.ever_seen,
         "packet_count": s.packet_count,
         "last_error": err,
+        "protokoll": s.protokoll,
+        "plugin_version": s.plugin_version,
+        "xplane_version": s.xplane_version,
+        "veraltet": s.veraltet,
+        "namen_da": s.namen_da,
+        "namen_fehlen": s.namen_fehlen,
     })
 }
 

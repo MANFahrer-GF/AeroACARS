@@ -23,6 +23,13 @@
 //!   * <http://www.nuclearprojects.com/xplane/xplaneref.html>
 //!   * <https://forums.x-plane.org/forums/topic/110870-x-plane-11-udp-interface-rref/>
 //!
+//! ## Plugin (Protokoll 2, ADR-0004 in der Fassung vom 29.09.2026)
+//!
+//! Ist das AeroACARS-Plugin ab 1.0 installiert, liefert es Werte und
+//! Existenz je Name selbst (`plugin2.rs`, `plugin2_ziel.rs`); RREF und die
+//! Web-API-Existenzpruefung ruhen dann. Ohne Plugin (oder mit v0.5.x) laeuft
+//! alles wie unten beschrieben.
+//!
 //! ## Why all-floats
 //!
 //! RREF returns every DataRef as a `float32`, even for booleans or
@@ -44,6 +51,10 @@
 
 mod adapter;
 mod dataref;
+/// Protokoll 2 des AeroACARS-X-Plane-Plugins (ADR-0004): Anfragen, Antworten,
+/// Sitzungs-Uhr — ohne Socket, rein pruefbar.
+pub mod plugin2;
+mod plugin2_ziel;
 mod premium;
 mod probe;
 mod profile;
@@ -55,7 +66,9 @@ mod web_api;
 pub use web_api::AircraftInfo;
 mod zusatz;
 
-pub use adapter::{ConnectionState, XPlaneAdapter};
+pub use adapter::{Anschluesse, ConnectionState, XPlaneAdapter};
+pub use plugin2::PLUGIN2_PORT;
+pub use plugin2_ziel::PluginZugang;
 pub use premium::{PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};
 pub use probe::is_xplane_running;
 

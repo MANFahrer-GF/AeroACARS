@@ -1452,7 +1452,16 @@
     "detect_failed": "Konnte X-Plane nicht automatisch finden — bitte den Pfad zum X-Plane-Hauptordner manuell eintragen.",
     "install_button": "Plugin installieren",
     "installing": "Wird installiert …",
-    "install_success": "Plugin installiert in {{path}} ({{files}} Dateien). X-Plane neu starten, dann erscheint der „live\"-Status."
+    "install_success": "Plugin installiert in {{path}} ({{files}} Dateien). X-Plane neu starten, dann erscheint der „live\"-Status.",
+    "protocol_label": "Verbindung",
+    "protocol_2": "Protokoll 2 — alle Werte vom Plugin",
+    "protocol_1": "Protokoll 1 — nur Aufsetzmessung",
+    "plugin_version_label": "Plugin-Version",
+    "xplane_version_label": "X-Plane",
+    "names_label": "Werte vorhanden",
+    "active_hint_p2": "Das Plugin liefert alle Werte direkt aus X-Plane: Position in voller Genauigkeit, und jeder Wert ist entweder wirklich da oder wird als fehlend gemeldet. RREF und die Web-API-Prüfung ruhen, solange es liefert.",
+    "outdated_title": "Plugin veraltet",
+    "outdated_explanation": "Das installierte Plugin kennt nur die Aufsetzmessung. Die übrigen Werte kommen weiter über RREF und die Web-API. Installiere das Plugin dieser AeroACARS-Version neu und starte X-Plane neu."
   },
   "pilot_header": {
     "pos_label": "POS",

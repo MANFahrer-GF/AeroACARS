@@ -1445,7 +1445,16 @@
     "detect_failed": "Impossibile trovare X-Plane automaticamente — inserisci manualmente il percorso della cartella principale di X-Plane.",
     "install_button": "Installa plugin",
     "installing": "Installazione…",
-    "install_success": "Plugin installato in {{path}} ({{files}} file). Riavvia X-Plane, poi appare lo stato „live\"."
+    "install_success": "Plugin installato in {{path}} ({{files}} file). Riavvia X-Plane, poi appare lo stato „live\".",
+    "protocol_label": "Connessione",
+    "protocol_2": "Protocollo 2 — tutti i valori dal plugin",
+    "protocol_1": "Protocollo 1 — solo misura del touchdown",
+    "plugin_version_label": "Versione plugin",
+    "xplane_version_label": "X-Plane",
+    "names_label": "Valori disponibili",
+    "active_hint_p2": "Il plugin fornisce ogni valore direttamente da X-Plane: posizione a piena precisione, e ogni valore o c'è davvero o viene segnalato come mancante. RREF e il controllo tramite Web API restano a riposo finché il plugin fornisce dati.",
+    "outdated_title": "Plugin obsoleto",
+    "outdated_explanation": "Il plugin installato conosce solo la misura del touchdown. Gli altri valori continuano ad arrivare tramite RREF e Web API. Reinstalla il plugin di questa versione di AeroACARS e riavvia X-Plane."
   },
   "pilot_header": {
     "pos_label": "POS",

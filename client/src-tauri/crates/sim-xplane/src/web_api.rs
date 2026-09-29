@@ -137,6 +137,14 @@ impl WebApiClient {
         }
     }
 
+    /// Wie [`Self::new`], mit anderer Basis (Tests: ein Port, an dem nichts
+    /// lauscht).
+    pub fn mit_basis(basis: &str) -> Self {
+        let mut c = Self::new();
+        c.base_url = basis.trim_end_matches('/').to_string();
+        c
+    }
+
     /// Look up the numeric id for one DataRef name. Cached.
     fn discover_id(&self, cache: &mut DrefIdCache, name: &'static str) -> Result<i64, WebApiError> {
         if let Some(id) = cache.ids.get(name).copied() {

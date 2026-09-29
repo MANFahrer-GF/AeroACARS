@@ -1231,6 +1231,33 @@ impl XPlaneState {
         }
     }
 
+    /// Wie [`Self::apply_field`], aber mit `f64` — fuer das Plugin
+    /// (Protokoll 2), das `double`-Datarefs in voller Genauigkeit liefert.
+    /// Position und Hoehen behalten sie bis in den Schnappschuss (RREF:
+    /// `float32`, Breite/Laenge auf ≈ 0,5 m gerundet); alle anderen Felder
+    /// sind ohnehin `f32` und gehen den gewohnten Weg.
+    pub fn apply_field_f64(&mut self, field: FieldId, value: f64) {
+        match field {
+            FieldId::Latitude => {
+                self.got_first_packet = true;
+                self.lat = value;
+            }
+            FieldId::Longitude => {
+                self.got_first_packet = true;
+                self.lon = value;
+            }
+            FieldId::AltitudeMslFt => {
+                self.got_first_packet = true;
+                self.altitude_msl_m = value * 0.3048;
+            }
+            FieldId::AltitudeAglFt => {
+                self.got_first_packet = true;
+                self.altitude_agl_m = value;
+            }
+            _ => self.apply_field(field, value as f32),
+        }
+    }
+
     /// Apply one decoded value to its `FieldId`.
     ///
     /// v0.12.2: the caller (the UDP listener) resolves the RREF index →
@@ -2583,5 +2610,29 @@ mod pruefbericht_2026_09_26 {
             "sim/flightmodel/position/mag_psi"
         );
         assert!(!CATALOG.iter().any(|e| e.name.ends_with("/magpsi")));
+    }
+}
+
+#[cfg(test)]
+mod doppelt_genau_tests {
+    use super::*;
+
+    /// Protokoll 2 liefert `double`: Breite/Laenge bleiben bis in den
+    /// Schnappschuss genau (RREF-`float32` rundet auf ≈ 0,5 m).
+    #[test]
+    fn position_behaelt_volle_genauigkeit() {
+        let mut s = XPlaneState::default();
+        s.apply_field_f64(FieldId::Latitude, 51.234_567_891_2);
+        s.apply_field_f64(FieldId::Longitude, -8.765_432_109_8);
+        s.apply_field_f64(FieldId::AltitudeAglFt, 12.345_678_9);
+        assert!(s.got_first_packet);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.lat, 51.234_567_891_2);
+        assert_eq!(snap.lon, -8.765_432_109_8);
+        // float32 haette hier schon in der 6. Nachkommastelle abgewichen.
+        assert_ne!((51.234_567_891_2_f64 as f32) as f64, snap.lat);
+        // Uebrige Felder gehen den f32-Weg.
+        s.apply_field_f64(FieldId::OnGround, 1.0);
+        assert!(s.on_ground);
     }
 }

@@ -26,6 +26,11 @@
 //!      `read::ZipFile` reader — never holds the whole archive in
 //!      memory.
 //!   4. Refuses paths containing `..` (zip-slip mitigation).
+//!   5. (AP7, ADR-0004 §8) Prueft das Paket gegen die SHA-256-Pruefsumme,
+//!      die die Release-Pipeline beim Bauen einbettet
+//!      (`AEROACARS_XPLANE_PLUGIN_SHA256`) — VOR dem Loeschen der alten
+//!      Installation. Stimmt sie nicht, bleibt alles, wie es war.
+//!   6. macOS: entfernt nach dem Entpacken `com.apple.quarantine`.
 //!
 //! The download is a one-shot reqwest GET with a 60 s timeout. The
 //! caller (UI) shows a progress indicator; we don't surface byte
@@ -37,6 +42,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+/// SHA-256 des Plugin-Pakets dieser Version, von der Release-Pipeline beim
+/// Bauen gesetzt (baut das Plugin VOR der App). Fehlt sie (lokaler
+/// Entwicklungsbuild), wird mit Warnung ohne Pruefung installiert.
+const PLUGIN_SHA256: Option<&str> = option_env!("AEROACARS_XPLANE_PLUGIN_SHA256");
 
 /// GitHub release asset URL template. We resolve the running app's
 /// version (set in `Cargo.toml [workspace.package] version`) at
@@ -225,6 +236,9 @@ pub async fn install_plugin(xplane_root: &Path) -> Result<PluginInstallResult, S
         .map_err(|e| format!("failed to read plugin zip body: {e}"))?;
     tracing::info!(bytes = body.len(), "plugin zip downloaded");
 
+    // ---- Pruefsumme (vor jedem Eingriff in die alte Installation) ----
+    pruefsumme_pruefen(&body, PLUGIN_SHA256)?;
+
     // ---- Wipe previous install if present ----
     if target_root.exists() {
         if let Err(e) = fs::remove_dir_all(&target_root) {
@@ -297,6 +311,10 @@ pub async fn install_plugin(xplane_root: &Path) -> Result<PluginInstallResult, S
         files_written += 1;
     }
 
+    // ---- macOS: Quarantaene-Kennzeichen entfernen ----
+    #[cfg(target_os = "macos")]
+    quarantaene_entfernen(&target_root);
+
     tracing::info!(
         target = %target_root.display(),
         bytes = bytes_written,
@@ -313,3 +331,136 @@ pub async fn install_plugin(xplane_root: &Path) -> Result<PluginInstallResult, S
 // v0.7.13: `uninstall_plugin` entfernt — der einzige Caller war der
 // `xplane_uninstall_plugin` Tauri-Command, der mangels UI-Button nie
 // gerufen wurde. Audit Q4-2026-05.
+
+/// SHA-256 als Kleinbuchstaben-Hex.
+fn sha256_hex(daten: &[u8]) -> String {
+    Sha256::digest(daten)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Paket gegen die eingebettete Pruefsumme pruefen.
+///
+/// * keine Pruefsumme eingebettet (Entwicklungsbuild): Warnung, `Ok` —
+///   installiert wie bisher. Im Release setzt die Pipeline sie immer.
+/// * eingebettet, aber kein gueltiges SHA-256 (64 Hex-Zeichen): Fehler —
+///   ein kaputter Build darf nicht still ungeprueft installieren.
+/// * Abweichung: Fehler, nichts wird angefasst.
+fn pruefsumme_pruefen(paket: &[u8], erwartet: Option<&str>) -> Result<(), String> {
+    let Some(erwartet) = erwartet.map(str::trim).filter(|s| !s.is_empty()) else {
+        tracing::warn!(
+            "X-Plane-Plugin: keine Pruefsumme eingebettet (Entwicklungsbuild) — \
+             Paket wird ungeprueft installiert"
+        );
+        return Ok(());
+    };
+    if erwartet.len() != 64 || !erwartet.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "Eingebettete Plugin-Pruefsumme ist kein SHA-256 ({erwartet:?}) — \
+             Installation abgebrochen."
+        ));
+    }
+    let ist = sha256_hex(paket);
+    if !ist.eq_ignore_ascii_case(erwartet) {
+        tracing::warn!(%ist, %erwartet, "X-Plane-Plugin: Pruefsumme stimmt nicht");
+        return Err(format!(
+            "Das heruntergeladene Plugin-Paket stimmt nicht mit dieser AeroACARS-Version \
+             ueberein (SHA-256 {ist}, erwartet {erwartet}). Nichts wurde veraendert — \
+             bitte spaeter erneut versuchen."
+        ));
+    }
+    tracing::info!(sha256 = %ist, "X-Plane-Plugin: Pruefsumme stimmt");
+    Ok(())
+}
+
+/// macOS: `com.apple.quarantine` rekursiv entfernen, damit X-Plane das
+/// ad-hoc signierte `mac.xpl` ohne Gatekeeper-Sperre laedt. Fehler nur
+/// protokollieren — ohne Kennzeichen (unser Prozess schreibt die Dateien
+/// selbst) meldet `xattr` nichts, und ein Fehlschlag verhindert die
+/// Installation nicht.
+#[cfg(target_os = "macos")]
+fn quarantaene_entfernen(ordner: &Path) {
+    match std::process::Command::new("/usr/bin/xattr")
+        .args(["-dr", "com.apple.quarantine"])
+        .arg(ordner)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            tracing::info!(ordner = %ordner.display(), "X-Plane-Plugin: Quarantaene entfernt");
+        }
+        Ok(out) => tracing::warn!(
+            code = ?out.status.code(),
+            stderr = %String::from_utf8_lossy(&out.stderr),
+            "X-Plane-Plugin: xattr meldet einen Fehler"
+        ),
+        Err(e) => tracing::warn!(error = %e, "X-Plane-Plugin: xattr nicht ausfuehrbar"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bekannter Pruefwert (FIPS 180-2, „abc").
+    const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn sha256_bekannter_wert() {
+        assert_eq!(sha256_hex(b"abc"), ABC);
+    }
+
+    #[test]
+    fn pruefsumme_stimmt_oder_bricht_ab() {
+        assert!(pruefsumme_pruefen(b"abc", Some(ABC)).is_ok());
+        assert!(pruefsumme_pruefen(b"abc", Some(&ABC.to_uppercase())).is_ok());
+        assert!(pruefsumme_pruefen(b"abc", Some(&format!("  {ABC}\n"))).is_ok());
+        let falsch = pruefsumme_pruefen(b"abd", Some(ABC)).unwrap_err();
+        assert!(falsch.contains("erwartet"), "{falsch}");
+    }
+
+    /// Entwicklungsbuild ohne Pruefsumme: installiert wie bisher.
+    #[test]
+    fn ohne_pruefsumme_wie_bisher() {
+        assert!(pruefsumme_pruefen(b"egal", None).is_ok());
+        assert!(pruefsumme_pruefen(b"egal", Some("")).is_ok());
+    }
+
+    /// Kaputt eingebettete Pruefsumme: nie still ungeprueft installieren.
+    #[test]
+    fn kaputte_pruefsumme_bricht_ab() {
+        assert!(pruefsumme_pruefen(b"abc", Some("abc123")).is_err());
+        assert!(pruefsumme_pruefen(b"abc", Some(&"g".repeat(64))).is_err());
+    }
+
+    /// Echt am Dateisystem: Kennzeichen setzen, entfernen, weg.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn quarantaene_wird_entfernt() {
+        let ordner =
+            std::env::temp_dir().join(format!("aeroacars-quarantaene-{}", std::process::id()));
+        let unter = ordner.join("64");
+        std::fs::create_dir_all(&unter).unwrap();
+        let datei = unter.join("mac.xpl");
+        std::fs::write(&datei, b"plugin").unwrap();
+        let gesetzt = std::process::Command::new("/usr/bin/xattr")
+            .args(["-w", "com.apple.quarantine", "0081;00000000;Test;"])
+            .arg(&datei)
+            .status()
+            .unwrap();
+        assert!(gesetzt.success());
+        let lesen = || {
+            std::process::Command::new("/usr/bin/xattr")
+                .args(["-p", "com.apple.quarantine"])
+                .arg(&datei)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        assert!(lesen(), "Kennzeichen nicht gesetzt");
+        quarantaene_entfernen(&ordner);
+        assert!(!lesen(), "Kennzeichen noch da");
+        let _ = std::fs::remove_dir_all(&ordner);
+    }
+}
