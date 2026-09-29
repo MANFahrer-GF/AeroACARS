@@ -12,8 +12,7 @@
 // Datenquelle: github.com/lennycolton/vatglasses-data, CC BY-NC-SA 4.0.
 
 import { mitZeitgrenze } from "./abbruch";
-
-const STANDARD_BASIS = "https://live.kant.ovh";
+import { liveInhalt } from "./liveInhalt";
 
 /** Welches Netz die Karte zeigt. Nie beide zugleich — zwei Netze
  *  uebereinander ergeben ein Bild, in dem niemand mehr erkennt, wer
@@ -80,7 +79,6 @@ export async function ladeSektoren(
    *  vorher sichtbar auseinanderliefen. */
   fl: number | "alle",
   signal?: AbortSignal,
-  basis: string = STANDARD_BASIS,
   /** Welches Netz. IVAO laeuft ueber DIESELBE Route und dieselbe
    *  Zuordnung, nur mit anderer Quelle — der Server entscheidet anhand
    *  dieses Werts. Ohne Angabe bleibt es bei VATSIM. */
@@ -89,11 +87,9 @@ export async function ladeSektoren(
   try {
     const wert = fl === "alle" ? "alle" : String(Math.round(fl));
     const q = netz === "ivao" ? `&netz=ivao` : "";
-    const res = await fetch(`${basis}/api/vatglasses?fl=${wert}${q}`, {
-      signal: mitZeitgrenze(signal, SEKTOREN_ZEITGRENZE_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const d = (await res.json()) as {
+    // Seit 29.09.2026 ueber Rust mit Pilot-Token (liveInhalt) — der Server
+    // gibt die Sektoren nur noch GSG-Piloten.
+    const d = await liveInhalt<{
       flaechen?: GeoJSON.FeatureCollection;
       marken?: GeoJSON.FeatureCollection;
       abgedeckt?: string[];
@@ -108,7 +104,8 @@ export async function ladeSektoren(
         firFlaechen?: GeoJSON.FeatureCollection;
         firMarken?: GeoJSON.FeatureCollection;
       };
-    };
+    } | null>(`/api/vatglasses?fl=${wert}${q}`, mitZeitgrenze(signal, SEKTOREN_ZEITGRENZE_MS))
+      ?? {};
     const l = leer();
     return {
       flaechen: d.flaechen ?? l.flaechen,

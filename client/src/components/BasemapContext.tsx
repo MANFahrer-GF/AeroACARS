@@ -33,6 +33,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { liveInhalt, useLiveZugangTakt } from "../lib/liveInhalt";
 
 /** Was die Karten brauchen. */
 export interface Kartengrundlage {
@@ -161,14 +162,12 @@ export function useKartengrundlage(): Kartengrundlage {
 
 interface Props {
   children: ReactNode;
-  /** Abweichender Endpunkt — für Tests und die Entwicklung. */
-  endpunkt?: string;
 }
 
-export function BasemapProvider({
-  children,
-  endpunkt = "https://live.kant.ovh/api/basemap",
-}: Props) {
+export function BasemapProvider({ children }: Props) {
+  // Seit 29.09.2026 nur mit Pilot-Token (liveInhalt); nach der Anmeldung
+  // holt der Takt den Stil samt Schluessel neu.
+  const zugangTakt = useLiveZugangTakt();
   const [grundlage, setGrundlage] = useState<Kartengrundlage>(() => {
     try {
       const abgelegt = localStorage.getItem(SPEICHER);
@@ -183,12 +182,7 @@ export function BasemapProvider({
     const ac = new AbortController();
     void (async () => {
       try {
-        const r = await fetch(endpunkt, {
-          signal: ac.signal,
-          headers: { Accept: "application/json" },
-        });
-        if (!r.ok) return;
-        const roh = (await r.json()) as unknown;
+        const roh = await liveInhalt<unknown>("/api/basemap", ac.signal);
         const frisch = ausAntwort(roh);
         setGrundlage(frisch);
         try {
@@ -197,13 +191,13 @@ export function BasemapProvider({
           // Voller Speicher ist kein Grund, die Karte nicht zu zeigen.
         }
       } catch {
-        // Offline oder Server weg: Es bleibt beim abgelegten oder
-        // eingebauten Stand. Kein Fehler für den Piloten — die Karte
-        // sieht dann aus wie vorher.
+        // Offline, Server weg oder noch nicht angemeldet: Es bleibt beim
+        // abgelegten oder eingebauten Stand. Kein Fehler für den Piloten —
+        // die Karte sieht dann aus wie vorher.
       }
     })();
     return () => ac.abort();
-  }, [endpunkt]);
+  }, [zugangTakt]);
 
   return (
     <BasemapContext.Provider value={grundlage}>

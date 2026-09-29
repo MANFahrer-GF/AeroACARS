@@ -210,7 +210,7 @@ export function AboutPanel({ onShowReleaseNotes }: Props) {
       </div>
 
       <footer className="about__footer">
-        <p>© {new Date().getFullYear()} AeroACARS Project · MIT License</p>
+        <p>{t("about.lizenz", { jahr: new Date().getFullYear() })}</p>
         <p>{info?.credit}</p>
       </footer>
     </section>

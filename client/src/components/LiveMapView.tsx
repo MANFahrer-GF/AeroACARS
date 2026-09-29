@@ -582,7 +582,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         // Karte auf live.kant.ovh, damit beide dasselbe zeigen.
         // Alle Hoehenbaender auf einmal — gefiltert wird auf der Karte.
         const sektoren = await ladeSektoren(
-          "alle", abbruch.signal, undefined, netz,
+          "alle", abbruch.signal, netz,
         );
         if (beendet) return;
         setzen(

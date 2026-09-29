@@ -93,22 +93,37 @@ async fn refresh_app_id(manager: &Arc<DiscordPresenceManager>) -> Result<(), ()>
     struct Resp {
         rpc_app_id: String,
     }
-    // Recorder-URL ist die gleiche wie fuer phpVMS-Position-Posts (= aus
-    // Login-State); wir nutzen aber den festen Public-Pfad — keine Auth.
-    // Wenn die VPS-URL noch nicht konfiguriert ist, fallen wir auf die
-    // Default-VPS aus dem `aeroacars-mqtt`-Crate zurueck.
-    let url = "https://live.kant.ovh/api/public/discord-rpc-config";
-    let resp = reqwest::Client::builder()
+    // Seit 29.09.2026 mit Pilot-Token: der Server gibt die App-ID nur
+    // noch GSG-Piloten (siehe live_zugang.rs). Vor der ersten Anmeldung
+    // gibt es daher keine ID; `nach_anmeldung` holt sie dann nach.
+    let url = format!("{}/api/public/discord-rpc-config", crate::live_zugang::LIVE_BASIS);
+    let mut anfrage = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|_| ())?
-        .get(url)
-        .send()
-        .await
-        .map_err(|_| ())?;
+        .get(url);
+    if let Some(token) = crate::live_zugang::pilot_token() {
+        anfrage = anfrage.bearer_auth(token);
+    }
+    let resp = anfrage.send().await.map_err(|_| ())?;
+    if !resp.status().is_success() {
+        return Err(());
+    }
     let cfg: Resp = resp.json().await.map_err(|_| ())?;
     manager.set_app_id(cfg.rpc_app_id).await;
     Ok(())
+}
+
+/// Nach erfolgreicher Anmeldung am Live-Server: App-ID nachziehen und die
+/// gespeicherten Einstellungen erneut anwenden. Beim Start war das Token
+/// evtl. noch nicht da, dann blieb die ID leer und Discord aus.
+pub(crate) fn nach_anmeldung() {
+    let Some(m) = manager() else { return };
+    tauri::async_runtime::spawn(async move {
+        if refresh_app_id(&m).await.is_ok() {
+            let _ = m.apply_settings(m.current_settings().await).await;
+        }
+    });
 }
 
 fn manager() -> Option<Arc<DiscordPresenceManager>> {

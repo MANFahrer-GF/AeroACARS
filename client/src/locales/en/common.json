@@ -1042,6 +1042,7 @@
     }
   },
   "about": {
+    "lizenz": "© {{jahr}} Thomas Kant · Proprietary, for German Sky Group pilots only. Redistribution and circumventing the access restriction are prohibited.",
     "tagline": "Modern ACARS for phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
     "purpose_title": "What is AeroACARS?",
     "purpose_body": "A modern open-source ACARS client — Tauri-based, Rust + React, cross-platform. Captures telemetry from the sim, scores landings with industry-grounded thresholds, correlates touchdowns to runway-centerline precision, and ships clean PIREPs to phpVMS.",

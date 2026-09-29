@@ -7,8 +7,15 @@
  *  Seitdem holt auch der Client alles und filtert selbst.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { ladeSektoren } from "./vatglassesKarte";
 import { readFileSync } from "node:fs";
+
+const holen = vi.fn();
+vi.mock("./ipc", () => ({
+  invoke: (...a: unknown[]) => holen(...a),
+  listen: vi.fn(async () => () => {}),
+}));
+
+import { ladeSektoren } from "./vatglassesKarte";
 
 const leer = { type: "FeatureCollection", features: [] };
 const antwort = {
@@ -21,17 +28,15 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("Sektor-Abruf", () => {
   it("reicht \"alle\" unveraendert an den Server durch", async () => {
-    const holen = vi.fn().mockResolvedValue({ ok: true, json: async () => antwort });
-    vi.stubGlobal("fetch", holen);
+    holen.mockReset().mockResolvedValue(antwort);
     await ladeSektoren("alle");
-    expect(holen.mock.calls[0][0]).toContain("fl=alle");
+    expect(holen.mock.calls[0][1].pfad).toContain("fl=alle");
   });
 
   it("rundet eine einzelne Flugflaeche weiterhin", async () => {
-    const holen = vi.fn().mockResolvedValue({ ok: true, json: async () => antwort });
-    vi.stubGlobal("fetch", holen);
+    holen.mockReset().mockResolvedValue(antwort);
     await ladeSektoren(247.6);
-    expect(holen.mock.calls[0][0]).toContain("fl=248");
+    expect(holen.mock.calls[0][1].pfad).toContain("fl=248");
   });
 });
 
