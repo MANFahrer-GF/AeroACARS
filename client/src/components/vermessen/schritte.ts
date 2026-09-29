@@ -22,6 +22,7 @@ export type Schalter =
   | "ap2"
   | "lateral"
   | "vertikal"
+  | "athr"
   | "anflug"
   | "autoland"
   | "autobrake_luft"
@@ -77,6 +78,9 @@ export const SCHRITTE: SchrittDef[] = [
   { schalter: "ap2", teil: "luft", stellungen: ["ap1_aktiv", "ap2_aktiv", "ap1_aktiv"] },
   { schalter: "lateral", teil: "luft", stellungen: ["nav_managed", "hdg_selected", "nav_managed"] },
   { schalter: "vertikal", teil: "luft", stellungen: ["alt_halten", "vs_modus", "alt_halten"] },
+  // Autothrottle (28.09.2026): beim A380 nie belegt, weil kein Schritt ihn
+  // schaltete. An/aus/an, endet wieder an.
+  { schalter: "athr", teil: "luft", stellungen: ["athr_an", "athr_aus", "athr_an"] },
   // Nur im Anflug sinnvoll — überspringbar. Auch hier aus/an/aus, damit im
   // Flug driftende Werte (Position, Sprit) herausfallen.
   { schalter: "anflug", teil: "luft", stellungen: ["app_aus", "app_an", "app_aus"] },

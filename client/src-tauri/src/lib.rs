@@ -6039,6 +6039,9 @@ struct TelemetrySample {
     at: DateTime<Utc>,
     vs_fpm: f32,
     g_force: f32,
+    /// Lernpaket AP1a (29.09.2026): MSFS `SEMIBODY LOADFACTOR Y`, nur zum
+    /// Vergleich mit `g_force` — geht in keine Note. `None` bei X-Plane.
+    g_semibody: Option<f32>,
     on_ground: bool,
     /// AGL altitude — drives bounce detection (35 ft up / 5 ft return,
     /// BeatMyLanding-aligned). Sourced from `altitude_agl_ft` directly.
@@ -6176,6 +6179,7 @@ impl From<TelemetrySample> for TouchdownWindowSample {
             at: s.at,
             vs_fpm: s.vs_fpm,
             g_force: s.g_force,
+            g_semibody: s.g_semibody,
             on_ground: s.on_ground,
             agl_ft: s.agl_ft,
             msl_ft: Some(s.msl_ft),
@@ -6740,6 +6744,9 @@ struct FlightStats {
     /// Replaces the noisy `was_on_ground && !on_ground` flicker we
     /// used pre-Tier-1, which was tripping on gear-strut oscillation.
     bounce_armed_above_threshold: bool,
+    /// Lernpaket AP3: Hoehe ueber Grund beim ersten Bodenkontakt im
+    /// Hopser-Fenster — Bezug fuer `BOUNCE_AGL_THRESHOLD_FT`/`_RETURN_FT`.
+    bounce_boden_agl_ft: Option<f64>,
     /// Sideslip / crab angle at the moment of touchdown, in degrees.
     /// Computed from `heading_true_deg − groundtrack` where the
     /// ground track is reconstructed from the last few ring-buffer
@@ -11523,19 +11530,22 @@ const BOUNCE_MIN_DAUER_MS: i64 = 300;
 /// X-Plane, alle 5 nur bei extrem harten MSFS-Landungen (vs <= -500 fpm).
 /// Reported von Adrian (2026-05-14 PR-Kontext, Beispiel #167).
 ///
-/// Neuer Wert 15 ft = `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`, damit
-/// der live-Streamer-Tally und der Forensics-Override-Pfad gegen
-/// dieselbe Schwelle messen. Forensic-only Bounces unter 15 ft fliessen
-/// weiterhin nur in den touchdown_v2-Pfad ein (5-ft Forensic-Threshold),
-/// werden nicht in `stats.bounce_count` gezaehlt. f64 to match
-/// `SimSnapshot::altitude_agl_ft`.
-const BOUNCE_AGL_THRESHOLD_FT: f64 = 15.0;
+/// Wert = `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`, damit der
+/// live-Streamer-Tally und der Forensics-Override-Pfad gegen dieselbe
+/// Schwelle messen. f64 to match `SimSnapshot::altitude_agl_ft`.
+///
+/// Lernpaket AP3 (29.09.2026): 5 ft und seitdem RELATIV zur Bodenhoehe
+/// beim ersten Bodenkontakt (`FlightStats::bounce_boden_agl_ft`), wie der
+/// 50-Hz-Pfad seit dem THY42-Fix. Die Hoehe ueber Grund wird am
+/// Schwerpunkt gemessen — ein grosses Flugzeug steht am Boden schon bei
+/// rund 20 ft (td 1403: 19,6 ft); absolut gemessen koennte es nie unter
+/// eine Rueckkehrschwelle von 5 ft fallen.
+const BOUNCE_AGL_THRESHOLD_FT: f64 = 5.0;
 
-/// AGL altitude (ft) the aircraft must come back below to count one
-/// bounce. The detector arms when AGL crosses up through THRESHOLD
-/// and fires when it crosses back down through RETURN. Matches
-/// BeatMyLanding's `BounceRadioAltReturnFeet`.
-const BOUNCE_AGL_RETURN_FT: f64 = 5.0;
+/// Hoehe ueber der Bodenhoehe (ft), unter die das Flugzeug nach dem
+/// Scharfschalten zurueck muss, damit ein Hopser zaehlt — oder es meldet
+/// wieder Bodenkontakt. Relativ wie `BOUNCE_AGL_THRESHOLD_FT`.
+const BOUNCE_AGL_RETURN_FT: f64 = 2.0;
 
 /// Max samples retained in `FlightStats::approach_buffer`. Position
 /// streamer ticks every 5-8 s during Approach/Final, so 120 samples
@@ -24192,6 +24202,11 @@ fn build_pirep_payload(
         landing_score_label: payload_landing_score
             .map(|s| aggregate_score_label(s.clamp(0, 100) as u8).to_string()),
         landing_score_grade: payload_landing_score.map(|s| letter_grade(s).to_string()),
+        // Nur wenn die Note aus dem Aggregat stammt (nicht aus dem
+        // Touchdown-Rückfall) und der Deckel sie wirklich gesenkt hat.
+        landing_score_deckel: aggregate_master
+            .and_then(|_| landing_scoring::master_deckel_wirksam(&payload_sub_scores))
+            .map(str::to_string),
         go_around_count: Some(stats.go_around_count),
         touchdown_count: Some(touchdown_count),
         dep_gate: stats.dep_gate.clone(),
@@ -27734,6 +27749,11 @@ where
     fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
     let computed_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
     let aggregate_master = landing_scoring::aggregate_master_score(&computed_sub_scores);
+    // Lernpaket AP2: nur wenn die Gesamtnote tatsaechlich gedeckelt ist,
+    // traegt der Datensatz den Grund — die Anzeige erklaert damit die Note.
+    let score_deckel = aggregate_master
+        .and(landing_scoring::master_deckel_wirksam(&computed_sub_scores))
+        .map(|grund| grund.to_string());
     // Ohne Touchdown-Klasse gibt es keinen Rückfall — und ohne Rate liefert
     // `aggregate_master_score` ohnehin `None` ("lieber gar keine Note als
     // eine geschenkte"). Beides zusammen heisst: keine Bewertung.
@@ -27916,6 +27936,7 @@ where
         score_numeric,
         score_label: score_label.map(|s| s.to_string()),
         grade_letter: grade.map(|g| g.to_string()),
+        score_deckel,
 
         landing_rate_fpm,
         landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
@@ -28050,7 +28071,8 @@ where
 
         // ─── v0.8.3 (#8) — Forensische Bounce-Counts ins LandingRecord ───
         // Damit das UI „Light bounce X ft erkannt (score-frei)" zeigen
-        // kann auch bei 5-14 ft Hopsern, die per Spec score-frei sind.
+        // kann auch bei 5-14 ft Hopsern, die bis Lernpaket AP3 (29.09.2026)
+        // score-frei waren; seitdem zaehlen sie ab 5 ft auch in der Note.
         // Reported 2026-05-14 Adrian: Touchdown #167 hatte
         // bounce_max_agl_ft=14.05, aber UI zeigte bounce_count=0 →
         // Pilot dachte "nicht erkannt".
@@ -34767,6 +34789,43 @@ fn compute_landing_analysis(
     let pg_500 = peak_g_window(500);
     let pg_1000 = peak_g_window(1000);
 
+    // Lernpaket AP1a (29.09.2026): Vergleich zweier MSFS-G-Kanaele. Fuer
+    // jeden Kanal die Spitze im Fenster −500 ms … +2000 ms um die Kante und
+    // ihr Versatz zur Kante. Kommt die Spitze von `SEMIBODY LOADFACTOR Y`
+    // ueber viele Landungen deutlich frueher als die von `G FORCE`, ist er
+    // der verzoegerungsaermere Kanal (AP1b). Rein forensisch, keine Note.
+    let g_spitze_mit_versatz = |kanal: &dyn Fn(&TouchdownWindowSample) -> Option<f32>| {
+        let mut best: Option<(f32, i64)> = None;
+        for s in samples {
+            let dt = s.at.timestamp_millis() - edge_ms;
+            if !(-500..=2000).contains(&dt) {
+                continue;
+            }
+            if let Some(g) = kanal(s) {
+                if best.map_or(true, |(b, _)| g > b) {
+                    best = Some((g, dt));
+                }
+            }
+        }
+        best
+    };
+    let g_force_spitze = g_spitze_mit_versatz(&|s| Some(s.g_force));
+    let semibody_spitze = g_spitze_mit_versatz(&|s| s.g_semibody);
+    let semibody_post = |window_ms: i64| -> Option<f32> {
+        samples
+            .iter()
+            .filter(|s| {
+                let ts = s.at.timestamp_millis();
+                ts >= edge_ms && ts <= edge_ms + window_ms
+            })
+            .filter_map(|s| s.g_semibody)
+            .fold(None, |acc: Option<f32>, g| {
+                Some(acc.map_or(g, |a| a.max(g)))
+            })
+    };
+    let semibody_500 = semibody_post(500);
+    let semibody_1000 = semibody_post(1000);
+
     // v0.7.17 (B-009): G-Force-Forensik — analog Sinkrate-Forensik.
     //
     // Sample-basierte robuste Statistiken statt naivem max(), damit
@@ -35184,6 +35243,14 @@ fn compute_landing_analysis(
         "scored_g_method": scored.method.as_str(),
         // v0.7.17 (B-009): G-Force-Forensik
         "g_at_edge": g_at_edge,
+        // Lernpaket AP1a (29.09.2026): zweiter MSFS-G-Kanal zum Vergleich.
+        // Versatz in ms relativ zur Kante (negativ = davor). Nur Forensik.
+        "g_force_spitze": g_force_spitze.map(|(g, _)| g),
+        "g_force_spitze_versatz_ms": g_force_spitze.map(|(_, dt)| dt),
+        "semibody_g_spitze": semibody_spitze.map(|(g, _)| g),
+        "semibody_g_spitze_versatz_ms": semibody_spitze.map(|(_, dt)| dt),
+        "semibody_g_peak_post_500ms": semibody_500,
+        "semibody_g_peak_post_1000ms": semibody_1000,
         "g_smoothed_250ms_post": g_smoothed_250ms_post,
         "g_median_post_500ms": g_median_post_500ms,
         "g_p95_post_500ms": g_p95_post_500ms,
@@ -35575,6 +35642,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // where a real sink averages to ~0 by the touchdown moment.
                 vs_fpm: snap.touchdown_vs_source_fpm(),
                 g_force: snap.g_force,
+                g_semibody: snap.g_semibody,
                 on_ground: snap.on_ground,
                 agl_ft: snap.altitude_agl_ft as f32,
                 msl_ft: snap.altitude_msl_ft as f32,
@@ -36640,7 +36708,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     //
                     // v0.7.6 P1-2: `scored_bounce_count` aus dem Analysis-JSON
                     // ist die SSoT fuer den Sub-Score (filtert auf
-                    // BOUNCE_SCORED_MIN_AGL_FT = 15 ft). Vorher hat das hier
+                    // BOUNCE_SCORED_MIN_AGL_FT, seit Lernpaket AP3 5 ft). Vorher hat das hier
                     // nur die Legacy-Klassifikation (LandingScore::classify)
                     // mit dem 5-ft-Forensic-Count gefuettert UND `s.bounce_count`
                     // wurde nicht zurueckgeschrieben → der spaetere PIREP-Build
@@ -44692,6 +44760,10 @@ fn step_flight_at(
 
                 // Reset bounce state for the new analyzer window.
                 stats.bounce_armed_above_threshold = false;
+                // Lernpaket AP3 / Codex-QS: Die Bodenhoehe gleich hier vom
+                // Aufsetz-Schnappschuss nehmen. Erst beim naechsten Tick
+                // gesetzt, ginge ein Hopser, der vorher beginnt, verloren.
+                stats.bounce_boden_agl_ft = snap.on_ground.then_some(snap.altitude_agl_ft);
                 stats.bounce_count = 0;
 
                 // ---- Landing Analyzer (Stage 1) ----
@@ -44989,21 +45061,32 @@ fn step_flight_at(
                 // tripped on gear-strut oscillation and over-counted
                 // bounces on a clean landing.
                 //
-                // Arm: AGL crosses up through BOUNCE_AGL_THRESHOLD_FT
-                //      (v0.8.3: 15 ft = touchdown_v2 SCORED-Threshold,
-                //       gesenkt von 35 ft weil typische Hopser nie zaehlten).
-                // Fire: AGL drops back below BOUNCE_AGL_RETURN_FT
-                //      (5 ft, `BounceRadioAltReturnFeet`).
+                // Arm: Hoehe ueber der Bodenhoehe steigt ueber
+                //      BOUNCE_AGL_THRESHOLD_FT (5 ft = touchdown_v2
+                //      SCORED-Threshold; Lernpaket AP3, vorher 15 ft absolut).
+                // Fire: Bodenkontakt oder zurueck unter
+                //      BOUNCE_AGL_RETURN_FT (2 ft ueber Bodenhoehe).
                 // Both must happen inside BOUNCE_WINDOW_SECS for a bounce
                 // to count — past that we assume the pilot did a touch-
                 // and-go or got airborne again deliberately.
-                if in_bounce_window {
+                // Lernpaket AP3: beide Schwellen relativ zur Bodenhoehe beim
+                // ersten Bodenkontakt im Fenster; vorher wird nicht scharf
+                // geschaltet.
+                if in_bounce_window && stats.bounce_boden_agl_ft.is_none() && snap.on_ground {
+                    stats.bounce_boden_agl_ft = Some(snap.altitude_agl_ft);
+                }
+                if let (true, Some(boden)) = (in_bounce_window, stats.bounce_boden_agl_ft) {
+                    let ueber_boden = snap.altitude_agl_ft - boden;
+                    // Nur in der Luft scharfschalten (Codex-QS): Ein AGL-
+                    // Sprung bei gesetztem Bodenflag (Gelaende, Ausreisser)
+                    // ist kein Hopser — der 50-Hz-Pfad verlangt dasselbe.
                     if !stats.bounce_armed_above_threshold
-                        && snap.altitude_agl_ft > BOUNCE_AGL_THRESHOLD_FT
+                        && !snap.on_ground
+                        && ueber_boden > BOUNCE_AGL_THRESHOLD_FT
                     {
                         stats.bounce_armed_above_threshold = true;
                     } else if stats.bounce_armed_above_threshold
-                        && snap.altitude_agl_ft < BOUNCE_AGL_RETURN_FT
+                        && (snap.on_ground || ueber_boden < BOUNCE_AGL_RETURN_FT)
                     {
                         stats.bounce_count = stats.bounce_count.saturating_add(1);
                         stats.bounce_armed_above_threshold = false;
@@ -45134,6 +45217,7 @@ fn step_flight_at(
                             landung_episode_zuruecksetzen(&mut stats);
                             sprit_durchstart_zuruecksetzen(&mut stats);
                             stats.bounce_armed_above_threshold = false;
+                            stats.bounce_boden_agl_ft = None;
                             stats.touch_and_go_pending_since = None;
                             // CRITICAL: also clear the GA tracker so the
                             // NEXT approach starts with a fresh AGL
@@ -59176,6 +59260,7 @@ mod touchdown_vs_estimator_tests {
             at,
             vs_fpm,
             g_force: 1.0,
+            g_semibody: None,
             on_ground: false,
             agl_ft,
             msl_ft: agl_ft + 500.0,
@@ -60698,30 +60783,34 @@ mod v0_7_6_payload_consistency_tests {
 
     #[test]
     fn bounce_thresholds_are_pinned_to_spec() {
-        // Spec §3 P1-2: 5 ft forensic, 15 ft scored. Aenderung der Werte
-        // ist eine Spec-Aenderung — dieser Test schlaegt fehl wenn jemand
-        // die Werte still-und-leise verschiebt.
+        // Spec §3 P1-2: 5 ft forensic; scored seit Lernpaket AP3
+        // (29.09.2026) ebenfalls 5 ft statt 15 ft — Begruendung und
+        // Messung am Live-Bestand siehe `BOUNCE_SCORED_MIN_AGL_FT`.
+        // Aenderung der Werte ist eine Spec-Aenderung — dieser Test schlaegt
+        // fehl wenn jemand die Werte still-und-leise verschiebt.
         assert_eq!(touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT, 5.0);
-        assert_eq!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT, 15.0);
+        assert_eq!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT, 5.0);
     }
 
     #[test]
-    fn bounce_scored_strictly_greater_than_forensic() {
-        // Sanity: scored MUSS strikt groesser sein als forensic, sonst
-        // ist der ganze "kleine Hopser sichtbar, nicht bestraft"-Trick
-        // sinnlos.
-        assert!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT > touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
+    fn bounce_scored_never_below_forensic() {
+        // Sanity: was benotet wird, muss auch forensisch sichtbar sein.
+        // Seit Lernpaket AP3 sind beide Schwellen gleich (5 ft) — jeder
+        // sichtbare Hopser ab 5 ft ist ein „high bounce" und zaehlt.
+        assert!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT >= touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
     }
 
     #[test]
-    fn sas9987_bounce_class_passes_forensic_fails_scored() {
-        // SAS9987 v0.7.5 Real-Beleg: bounce_max_agl_ft = 13.57.
-        // Mit den v0.7.6-Schwellen muss das gelten:
-        //   - >= BOUNCE_FORENSIC_MIN_AGL_FT (5 ft)   → forensisch zaehlt
-        //   - <  BOUNCE_SCORED_MIN_AGL_FT (15 ft)    → score-frei
+    fn sas9987_bounce_class_counts_since_lernpaket_ap3() {
+        // SAS9987 v0.7.5 Real-Beleg: bounce_max_agl_ft = 13.57. Galt bis
+        // Lernpaket AP3 als score-freier „Federwerk-Hopser" (15-ft-Schwelle);
+        // 13,6 ft sind aber ein echtes Wiederabheben und zaehlen jetzt.
+        // Das Bodenflag-Flackern (Live-Bestand: bis 4,8 ft) bleibt draussen.
         let bounce_height = 13.57_f32;
         assert!(bounce_height >= touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
-        assert!(bounce_height < touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+        assert!(bounce_height >= touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+        let flackern_max = 4.8_f32; // td 1474, 3,1 s „in der Luft"
+        assert!(flackern_max < touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
     }
 
     #[test]
@@ -63394,6 +63483,7 @@ mod merge_touchdown_profile_tests {
             at: td() + chrono::Duration::milliseconds(t_ms),
             vs_fpm,
             g_force: 1.0,
+            g_semibody: None,
             on_ground: t_ms >= 0,
             agl_ft: 0.0,
             msl_ft: 0.0 + 500.0,
@@ -63488,6 +63578,7 @@ mod touchdown_metadata_stamp_tests {
             at,
             vs_fpm: -350.0,
             g_force: 1.4,
+            g_semibody: None,
             on_ground,
             agl_ft: if on_ground { 0.0 } else { 12.0 },
             msl_ft: if on_ground { 0.0 } else { 12.0 } + 500.0,
@@ -70420,6 +70511,7 @@ mod msfs_touchdown_delag_replay_golden {
             at: parse_rfc3339(v["at"].as_str().expect("sample.at")),
             vs_fpm: f("vs_fpm"),
             g_force: f("g_force"),
+            g_semibody: None,
             on_ground: v
                 .get("on_ground")
                 .and_then(|x| x.as_bool())
@@ -70678,6 +70770,7 @@ mod msfs_agl_flare_tests {
             at: base + chrono::Duration::milliseconds(ms),
             vs_fpm,
             g_force: 1.0,
+            g_semibody: None,
             on_ground,
             agl_ft,
             msl_ft: Some(agl_ft + 500.0),
@@ -70974,6 +71067,7 @@ mod msfs_agl_flare_tests {
                                 .with_timezone(&Utc),
                             vs_fpm: f("vs_fpm"),
                             g_force: f("g_force"),
+                            g_semibody: None,
                             on_ground: sv
                                 .get("on_ground")
                                 .and_then(|x| x.as_bool())
@@ -71561,6 +71655,7 @@ mod msfs_agl_flare_tests {
                                 .with_timezone(&Utc),
                             vs_fpm: f("vs_fpm"),
                             g_force: f("g_force"),
+                            g_semibody: None,
                             on_ground: sv
                                 .get("on_ground")
                                 .and_then(|x| x.as_bool())
@@ -73142,6 +73237,7 @@ mod spur_aufloesung_tests {
             at: td + chrono::Duration::milliseconds((t_s * 1000.0) as i64),
             vs_fpm: 0.0,
             g_force: 1.0,
+            g_semibody: None,
             on_ground: true,
             agl_ft: 0.0,
             msl_ft: 300.0,

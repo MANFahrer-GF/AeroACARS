@@ -203,7 +203,7 @@
     "info": {
       "landing_rate": "Vertical speed at the moment of touchdown, in feet per minute. Negative = descending. The target corridor of 90–250 fpm is deliberate — a professional standard, not “as soft as possible”: well below 90 fpm usually means a long float that delays braking and spoiler deployment. Beyond 600 fpm of sink a real hard-landing inspection would be due.\n\nSince v1.6.3 this is measured from the actual height trace over the final third of a second before touchdown, no longer from the simulator's vertical speed indicator, which is sluggish like a real cockpit instrument. If the simulator freezes the altitude readout, no calculation is done and the instrument value is used instead.",
       "g_force": "Peak G load in the 1.5-second window around touchdown. 1.0 G is smooth, above 1.4 G is clearly noticeable, above 1.7 G triggers a hard-landing inspection (Boeing 737 FCOM).",
-      "bounces": "How many times the aircraft climbed back above 35 ft AGL after the first touchdown and re-landed (BeatMyLanding algorithm). 0 = clean set; each bounce drops the score.",
+      "bounces": "How many times the aircraft climbed back more than 5 ft above the ground after the first touchdown and touched down again (older landings: from 15 ft). 0 = clean set; each bounce drops the score.",
       "stability": "Stability evaluation over the stable-approach gate (0–1000 ft HAT, flare-cutoff last 3 s before TD). Backend computes seven factors: V/S jerk, bank σ (vector-filtered), IAS σ, sink-rate violation, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Details and thresholds are in the approach-stability card further down.",
       "rollout": "Share of the usable runway length (LDA) your landing used — measured from the threshold: first the distance to touchdown, then the rollout until you clear the runway (~40 kt). What is scored is how much runway is left afterwards: below 60 % is full marks, from 90 % it gets tight — risky on a wet runway. Click „🛬 How is this calculated?“ for the full explanation.",
       "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (block − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
@@ -286,9 +286,9 @@
       "hard_g": "Touched down hard. Reduce thrust earlier and use a smoother flare.",
       "severe_g": "G-critical — review the entire approach profile.",
       "clean_set": "Perfect — set down once and stayed put.",
-      "one_bounce": "Hold pitch (or raise slightly) at TD instead of pushing forward, then set down softly.",
-      "two_bounces": "Bouncing comes from over-flaring or excess sink rate. Fly a more stable approach.",
-      "many_bounces": "Multiple bounces indicate an unstable TD profile. Consider a go-around if unsure.",
+      "one_bounce": "Bounce above 5 ft: per Airbus procedure (FCTM), hold pitch attitude and go around – do not push forward. Usually caused by excess sink rate or over-flaring.",
+      "two_bounces": "Several bounces above 5 ft: Airbus procedure calls for a go-around already at the first one (hold pitch, do not push forward). Fly a more stable approach and flare less.",
+      "many_bounces": "Repeated bounces above 5 ft: per Airbus procedure, hold pitch and go around instead of touching down again. Indicates an unstable touchdown profile.",
       "very_stable": "Textbook stable approach — V/S and bank barely moved.",
       "stable": "Stable approach. Keep on the constant glideslope.",
       "average_stability": "OK, but reduce pitch and V/S oscillations — small corrections, not big ones.",
@@ -1002,6 +1002,10 @@
         "sim_crash_signature_at_touchdown": "The touchdown looked like a simulator crash.",
         "sonstiges": "Another automatic review reason applied."
       }
+    },
+    "deckel": {
+      "harte_landung": "Capped at 40 points: hard landing from 1.75 g. Good rollout or touchdown point values do not offset it.",
+      "ueberlast": "Capped at 14 points: overload from 2.6 g."
     }
   },
   "about": {
@@ -3476,6 +3480,19 @@
           "2": "Back to the mode from the start – Airbus: push the altitude knob. Boeing: press VNAV or ALT HOLD, whichever was active before. The FMA shows the same as at the start. Then “Done”."
         }
       },
+      "athr": {
+        "titel": "Autothrottle (A/THR)",
+        "wo": "Glareshield panel (FCU/MCP): A/THR button (Airbus) or A/T ARM switch (Boeing). It can also be disconnected with the button on the thrust lever.",
+        "namen": "A/THR · A/T · A/T ARM · SPEED",
+        "hinweis": "In calm cruise, thrust levers in the CL detent (Airbus). When disconnected the thrust stays where it is (Airbus: THR LK) – switch it back on right away.",
+        "wann": "In calm cruise with the autothrottle on, right after the autopilot steps.",
+        "frage": "Is the autothrottle on right now (A/THR or SPEED/MACH in the FMA)?",
+        "tun": {
+          "0": "Leave it – the autothrottle is on (Airbus: A/THR white in the top right of the FMA, button lit). Click “Done”.",
+          "1": "Switch the autothrottle off – Airbus: press the A/THR button on the FCU (thrust stays, THR LK appears in the FMA). Boeing: press the button on the thrust lever. Then “Done”.",
+          "2": "Switch it on again – Airbus: press the A/THR button again, A/THR shows in the FMA again. Boeing: arm A/T and select SPEED. Then “Done”."
+        }
+      },
       "anflug": {
         "titel": "Approach APPR / LOC",
         "wo": "Glareshield panel: APPR or APP button, or LOC.",
@@ -3594,7 +3611,9 @@
       "nav_1": "1 (Airbus NAV & LOGO) / ON",
       "lande_off": "OFF",
       "lande_on": "ON",
-      "xpdr_on": "ON (Airbus)"
+      "xpdr_on": "ON (Airbus)",
+      "athr_an": "A/THR ON (active)",
+      "athr_aus": "A/THR OFF"
     },
     "keine_bewegung": "no movement",
     "schon_vermessen": "This aircraft has already been measured (last on {{datum}}). Thank you! Measuring again only makes sense after a major add-on update.",
@@ -3609,18 +3628,18 @@
     "auswahl_alle": "All",
     "auswahl_keine": "None",
     "luft_titel": "Measure the autopilot in flight",
-    "luft_einleitung": "The autopilot can only be measured in the air – it won't engage on the ground. You briefly switch a few autopilot modes, AeroACARS watches and notes which values follow. Afterwards the LiveMap and flight log show correctly for your aircraft whether AP, HDG, NAV, ALT, APPR and autoland (CAT III) are active.",
+    "luft_einleitung": "The autopilot can only be measured in the air – it won't engage on the ground. You briefly switch a few autopilot modes, AeroACARS watches and notes which values follow. Afterwards the LiveMap and flight log show correctly for your aircraft whether AP, HDG, NAV, ALT, A/THR, APPR and autoland (CAT III) are active.",
     "luft_dauer": "Takes about 3 minutes in cruise. APPR/LOC, autoland (both APs) and BTV only work on approach – skip them or measure them later.",
     "luft_vorher_1": "Calm cruise, autopilot on, no turns and no climb or descent planned",
     "luft_vorher_2": "Not just before top of descent and not while ATC is giving you instructions",
     "luft_vorher_3": "During the “AP OFF” step you fly by hand for a few seconds – keep the aircraft steady",
-    "luft_vorher_4": "After each step everything is back as before (AP on, NAV, ALT)",
+    "luft_vorher_4": "After each step everything is back as before (AP on, NAV, ALT, A/THR)",
     "sim_ok_luft": "In flight · {{flugzeug}}",
     "schon_vermessen_luft": "This aircraft's autopilot has already been measured (last on {{datum}}). Thank you! Measuring again only makes sense after a major add-on update.",
     "luft_fehlt": "Tip: you measure the autopilot part in cruise on a flight – just come back here while flying.",
     "boden_fehlt": "Tip: you measure the switches (lights, flaps, autobrake …) at the gate – just come back here after landing.",
     "luft_starten": "Start autopilot measurement",
-    "auswahl_hinweis_luft": "In cruise AP, AP1/AP2, NAV/HDG and ALT/V/S work. APPR/LOC, autoland and BTV only on approach – measure them separately then.",
+    "auswahl_hinweis_luft": "In cruise AP, AP1/AP2, NAV/HDG, ALT/V/S and A/THR work. APPR/LOC, autoland and BTV only on approach – measure them separately then.",
     "ruhe_text_luft": "The autopilot is flying. Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves in flight (position, fuel, clock) – they will be ignored.",
     "teil_boden": "Ground",
     "teil_luft": "Air",

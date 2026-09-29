@@ -37,6 +37,12 @@ pub const T_G_HARD: f32 = 1.70;
 pub const T_G_SEVERE: f32 = 2.10;
 
 pub fn sub_g_force(peak_g: f32) -> SubScoreEntry {
+    // Lernpaket AP2: der Zahlenwert reist mit — der Deckel der Gesamtnote
+    // (`aggregate_master_score`) braucht genau dieses G.
+    punkte(peak_g).mit_messwert(peak_g)
+}
+
+fn punkte(peak_g: f32) -> SubScoreEntry {
     let value = format!("{:.2} G", peak_g);
 
     if peak_g < T_G_SMOOTH {

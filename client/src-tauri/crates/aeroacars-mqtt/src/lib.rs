@@ -685,8 +685,13 @@ pub struct TouchdownPayload {
     pub sideslip_deg: Option<f32>,
     pub headwind_kt: Option<f32>,
     pub crosswind_kt: Option<f32>,
+    /// Diskrete Touchdown-Klasse (100/80/60/30/0) — bleibt so, darauf sind
+    /// Recorder und Webapp gebaut. Die Gesamtnote (inkl. Deckel, Lernpaket
+    /// AP2) erreicht den Recorder ueber `PirepPayload.landing_score`;
+    /// `score_label`/`score_grade` unten gehoeren zur GESAMTNOTE, nicht zu
+    /// diesem Feld (Codex-QS 29.09.2026: der Text darunter sagte anderes).
     pub score: Option<i32>,
-    /// v0.20.0: Klasse und Note zum `score` — EINGEFROREN, nicht ableitbar.
+    /// v0.20.0: Klasse und Note zur Gesamtnote — EINGEFROREN, nicht ableitbar.
     ///
     /// Vorher trug `score` die diskrete Touchdown-Klasse (100/80/60/30/0) und
     /// die Webapp leitete das Label mit einer EIGENEN Schwellen-Leiter daraus
@@ -707,15 +712,16 @@ pub struct TouchdownPayload {
     pub bounce_count: Option<u8>,
     /// v0.8.3 (#8): Forensisch erkannte Hopser >= 5 ft AGL (
     /// `touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT`). Wird unabhaengig
-    /// vom Score gezaehlt — auch „kleine" Hopser (5-14 ft), die per
-    /// Spec score-frei sind, tauchen hier auf. Wenn `Some(0)` und
-    /// `bounce_count > 0`: alle Hopser sind ueber 15 ft (scored).
+    /// vom Score gezaehlt. Seit Lernpaket AP3 (29.09.2026) gilt fuer die
+    /// Wertung dieselbe 5-ft-Schwelle; bei Altdaten (Client vor AP3) waren
+    /// Hopser von 5-14 ft score-frei und erst ab 15 ft gewertet.
     /// Wenn `Some(n)` und `bounce_count = 0`: ausschliesslich
     /// score-freie Hopser. None = pre-v0.8.3 PIREP / Sampler-Buffer
     /// unvollstaendig.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forensic_bounce_count: Option<u8>,
-    /// v0.8.3 (#8): Score-relevante Hopser >= 15 ft AGL (
+    /// v0.8.3 (#8): Score-relevante Hopser >= 5 ft ueber Bodenhoehe (seit
+    /// Lernpaket AP3 29.09.2026; Clients davor: >= 15 ft AGL) (
     /// `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`). Subset von
     /// `forensic_bounce_count`. Was in den Landing-Score-Sub-Score
     /// „bounces" einfliesst — ueber `scored_bounce_count_for_score()`.
@@ -1344,6 +1350,16 @@ pub struct PirepPayload {
     pub landing_score_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_score_grade: Option<String>,
+    /// Lernpaket AP2 (29.09.2026): Grund, aus dem der Deckel die
+    /// `landing_score` gesenkt hat (`"harte_landung"` ab 1,75 g → max. 40,
+    /// `"ueberlast"` ab 2,6 g → max. 14). Nur gesetzt, wenn der Deckel die
+    /// Note WIRKLICH senkt (`landing_scoring::master_deckel_wirksam`). Der
+    /// PIREP-Feed der Webapp zeigt damit den Hinweis des Landungs-Tabs, ohne
+    /// die Regel nachzurechnen; die Touchdown-Ansicht zeigt ihn (noch) nicht,
+    /// der Recorder reicht das Feld nicht auf die Touchdown-Zeile weiter.
+    /// Additiv; alte Clients senden das Feld nicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_score_deckel: Option<String>,
     pub go_around_count: Option<u32>,
     pub touchdown_count: Option<u32>,
     pub dep_gate: Option<String>,

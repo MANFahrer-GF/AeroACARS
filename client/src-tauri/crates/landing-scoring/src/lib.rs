@@ -107,6 +107,13 @@ pub struct SubScoreEntry {
     /// `extra` bekommen, behandeln es als leere Liste (`#[serde(default)]`).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub extra: Vec<String>,
+    /// Lernpaket AP2 (29.09.2026): der gemessene Zahlenwert hinter der
+    /// Teilnote, wo eine spaetere Regel ihn braucht — bisher nur `g_force`
+    /// (G auf der Referenzkette, dieselbe Zahl, aus der die Teilnote
+    /// entsteht). `value` ist fuer die Anzeige formatiert und taugt dafuer
+    /// nicht. Alte Payloads ohne das Feld lesen es als `None`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub messwert: Option<f32>,
 }
 
 impl SubScoreEntry {
@@ -125,6 +132,7 @@ impl SubScoreEntry {
             reason: Some(reason.to_string()),
             warning: None,
             extra: Vec::new(),
+            messwert: None,
         }
     }
 
@@ -152,6 +160,7 @@ impl SubScoreEntry {
             reason: None,
             warning: None,
             extra: Vec::new(),
+            messwert: None,
         }
     }
 
@@ -169,6 +178,12 @@ impl SubScoreEntry {
     /// gesetzte Warning.
     pub fn with_warning(mut self, warning: Option<String>) -> Self {
         self.warning = warning;
+        self
+    }
+
+    /// Lernpaket AP2 Builder: haengt den Messwert an (siehe `messwert`).
+    pub fn mit_messwert(mut self, messwert: f32) -> Self {
+        self.messwert = Some(messwert);
         self
     }
 }
@@ -606,7 +621,67 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
         wsum += w;
     }
     if wsum > 0.0 {
-        Some((sum / wsum).round() as u8)
+        let mittel = (sum / wsum).round() as u8;
+        Some(match master_deckel(subs) {
+            Some((_, obergrenze)) => mittel.min(obergrenze),
+            None => mittel,
+        })
+    } else {
+        None
+    }
+}
+
+/// Wie [`master_deckel`], aber nur wenn der Deckel die Gesamtnote
+/// tatsaechlich SENKT. Liegt der Mittelwert schon darunter, aendert der
+/// Deckel nichts — dann darf auch keine Anzeige „gedeckelt" behaupten
+/// (Codex-QS 29.09.2026).
+pub fn master_deckel_wirksam(subs: &[SubScoreEntry]) -> Option<&'static str> {
+    let (grund, obergrenze) = master_deckel(subs)?;
+    let ohne_deckel: Vec<SubScoreEntry> = subs
+        .iter()
+        .cloned()
+        .map(|mut s| {
+            s.messwert = None;
+            s
+        })
+        .collect();
+    let mittel = aggregate_master_score(&ohne_deckel)?;
+    (mittel > obergrenze).then_some(grund)
+}
+
+/// Lernpaket AP2 (29.09.2026): ab dieser G-Last ist die Gesamtnote
+/// hoechstens [`DECKEL_HART_PUNKTE`] — eine harte Landung laesst sich
+/// nicht mit sauberem Ausrollen und gutem Aufsetzpunkt ausgleichen.
+/// Uebernommen aus vmsACARS 3 (`LandingScorer`, 1,75 g → 40, 2,6 g → 15).
+pub const DECKEL_HART_G: f32 = 1.75;
+pub const DECKEL_HART_PUNKTE: u8 = 40;
+/// Ab dieser G-Last Ueberlast: Gesamtnote hoechstens
+/// [`DECKEL_UEBERLAST_PUNKTE`].
+pub const DECKEL_UEBERLAST_G: f32 = 2.6;
+/// 14 statt der 15 von vmsACARS: Die Klassenleiter (`aggregate_score_label`)
+/// nennt erst Werte UNTER 15 „severe". Mit 15 hiesse ein Ueberlast-Deckel
+/// „hard" — waehrend die G-Kette dieselbe Landung schon ab 2,10 g als
+/// Severe fuehrt (Codex-QS 29.09.2026).
+pub const DECKEL_UEBERLAST_PUNKTE: u8 = 14;
+
+/// Greift ein Deckel auf die Gesamtnote? Liefert Kennung und Obergrenze.
+///
+/// Massgeblich ist der Messwert der G-Teilnote — G auf der Referenzkette,
+/// also dieselbe Zahl, aus der `g_force` bewertet wird (X-Plane ist dort
+/// schon auf MSFS umgerechnet). Ohne bewertete G-Teilnote kein Deckel:
+/// Ein fehlender Messwert darf nie eine Strafe ausloesen.
+pub fn master_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
+    let g = subs
+        .iter()
+        .find(|s| s.key == "g_force" && !s.skipped)
+        .and_then(|s| s.messwert)?;
+    if !g.is_finite() {
+        return None;
+    }
+    if g >= DECKEL_UEBERLAST_G {
+        Some(("ueberlast", DECKEL_UEBERLAST_PUNKTE))
+    } else if g >= DECKEL_HART_G {
+        Some(("harte_landung", DECKEL_HART_PUNKTE))
     } else {
         None
     }
@@ -775,6 +850,95 @@ mod tests {
         assert_eq!(band_from_points(45), Band::Ok);
         assert_eq!(band_from_points(44), Band::Bad);
         assert_eq!(band_from_points(0), Band::Bad);
+    }
+
+    /// Lernpaket AP2: Landung mit sehr guten Nebenachsen, aber hartem
+    /// Aufsetzen. Ohne Deckel kaeme der Mittelwert auf 70.
+    fn harte_landung_mit_guten_nebenachsen(g: f32) -> Vec<SubScoreEntry> {
+        vec![
+            crate::sub_landing_rate::sub_landing_rate(300.0),
+            crate::sub_g_force::sub_g_force(g),
+            SubScoreEntry::scored("bounces", "l", 100, "0".into(), "clean_set", Band::Good),
+            SubScoreEntry::scored("stability", "l", 100, "-".into(), "clean_set", Band::Good),
+            SubScoreEntry::scored("rollout", "l", 100, "-".into(), "clean_set", Band::Good),
+            SubScoreEntry::scored(
+                "touchdown_point",
+                "l",
+                100,
+                "-".into(),
+                "clean_set",
+                Band::Good,
+            ),
+        ]
+    }
+
+    #[test]
+    fn deckel_greift_ab_175_g() {
+        let unter = harte_landung_mit_guten_nebenachsen(1.74);
+        assert_eq!(master_deckel(&unter), None, "1,74 g = kein Deckel");
+        assert!(aggregate_master_score(&unter).unwrap() > DECKEL_HART_PUNKTE);
+
+        let hart = harte_landung_mit_guten_nebenachsen(DECKEL_HART_G);
+        assert_eq!(
+            master_deckel(&hart),
+            Some(("harte_landung", DECKEL_HART_PUNKTE))
+        );
+        assert_eq!(aggregate_master_score(&hart), Some(DECKEL_HART_PUNKTE));
+    }
+
+    #[test]
+    fn deckel_ueberlast_ab_26_g() {
+        let subs = harte_landung_mit_guten_nebenachsen(DECKEL_UEBERLAST_G);
+        assert_eq!(
+            master_deckel(&subs),
+            Some(("ueberlast", DECKEL_UEBERLAST_PUNKTE))
+        );
+        assert_eq!(aggregate_master_score(&subs), Some(DECKEL_UEBERLAST_PUNKTE));
+    }
+
+    #[test]
+    fn deckel_hebt_nie_an_und_braucht_einen_messwert() {
+        // Ein Deckel ist eine Obergrenze, keine Untergrenze: liegt der
+        // Mittelwert schon darunter, bleibt er stehen.
+        let mut schlecht = harte_landung_mit_guten_nebenachsen(1.9);
+        for s in schlecht.iter_mut().skip(2) {
+            s.score = 0;
+        }
+        assert!(aggregate_master_score(&schlecht).unwrap() < DECKEL_HART_PUNKTE);
+
+        // Ohne Messwert (alte Payloads, formatiertes `value` allein)
+        // kein Deckel — ein fehlender Wert darf nie strafen.
+        let mut ohne = harte_landung_mit_guten_nebenachsen(2.0);
+        ohne[1].messwert = None;
+        assert_eq!(master_deckel(&ohne), None);
+
+        // Uebersprungene G-Teilnote → kein Deckel.
+        let mut skip = harte_landung_mit_guten_nebenachsen(2.0);
+        skip[1] = SubScoreEntry::skipped("g_force", "l", "insufficient_samples");
+        assert_eq!(master_deckel(&skip), None);
+    }
+
+    #[test]
+    fn deckel_grund_nur_wenn_er_die_note_senkt() {
+        // Greift: guter Mittelwert, harte Landung → gesenkt, Grund gesetzt.
+        let hart = harte_landung_mit_guten_nebenachsen(1.9);
+        assert_eq!(master_deckel_wirksam(&hart), Some("harte_landung"));
+
+        // Mittelwert liegt schon unter 40 → Deckel aendert nichts, also
+        // auch kein Grund (sonst behauptet die Anzeige etwas Falsches).
+        let mut schlecht = harte_landung_mit_guten_nebenachsen(1.9);
+        for s in schlecht.iter_mut().skip(2) {
+            s.score = 0;
+        }
+        assert!(master_deckel(&schlecht).is_some());
+        assert_eq!(master_deckel_wirksam(&schlecht), None);
+    }
+
+    #[test]
+    fn ueberlast_deckel_liegt_unter_der_severe_grenze() {
+        // `aggregate_score_label` nennt erst Werte < 15 „severe" (lib.rs
+        // des Clients); der Ueberlast-Deckel muss darunter liegen.
+        assert!(DECKEL_UEBERLAST_PUNKTE < 15);
     }
 
     #[test]

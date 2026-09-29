@@ -44,15 +44,22 @@ pub const FORENSICS_VERSION: u8 = 2;
 /// Tab durch. Erscheint im PIREP als `forensic_bounce_count`.
 pub const BOUNCE_FORENSIC_MIN_AGL_FT: f32 = 5.0;
 
-/// Mindestens 15 ft AGL-Excursion damit ein Wiederabheben im Sub-Score
-/// **bestraft** wird. Hoch genug dass ein "echter" Bounce (Pitch-Up nach
-/// harter Landung) erfasst wird, aber nicht jeder Federwerk-Hopser den
-/// Pilot bestraft. Erscheint im PIREP als `scored_bounce_count` und
-/// landet im `landing-scoring::sub_bounces`-Sub-Score.
+/// Mindestens 5 ft AGL-Excursion (relativ zur Bodenhoehe beim Aufsetzen)
+/// damit ein Wiederabheben im Sub-Score **bestraft** wird. Erscheint im
+/// PIREP als `scored_bounce_count` und landet im
+/// `landing-scoring::sub_bounces`-Sub-Score.
 ///
-/// v0.7.7+: Schwelle bei 15.0 ft eingependelt nach Echt-Daten-Review,
-/// kein Patch notwendig — Beobachtungs-Sample war ausgeglichen.
-pub const BOUNCE_SCORED_MIN_AGL_FT: f32 = 15.0;
+/// Lernpaket AP3 (29.09.2026): von 15 auf 5 ft gesenkt, gleich der
+/// Forensik-Schwelle. Gemessen an 1344 Landungen des Live-Recorders: alle
+/// Luftphasen ab 5 ft waren echte Hopser (td 1403: +384 fpm, 12,6 ft,
+/// 3,6 s), das Bodenflag-Flackern blieb durchweg darunter. 5 ft ist auch
+/// die Grenze der Airline-SOPs zwischen „light bounce" (Landung fortsetzen)
+/// und „high bounce" (Durchstart, Airbus FCTM). Die alte Begruendung
+/// (SAS9987, 13,6 ft als „Federwerk-Hopser") traegt nicht: So weit federt
+/// kein Fahrwerk. Die Dauer-Bedingung (`BOUNCE_MIN_DAUER_MS`) bleibt; eine
+/// reine Zeitregel waere am Flackern gescheitert (td 1492: 7,1 s bei 0,1 ft).
+/// Wirkung: +9 von 1344 Landungen bekommen einen Hopser in die Note.
+pub const BOUNCE_SCORED_MIN_AGL_FT: f32 = 5.0;
 
 /// Seaplane / amphibian water-touchdown descent gate (fpm). A water touchdown
 /// is the floats / hull SETTLING onto the water — the impact V/S must be a
@@ -1401,6 +1408,7 @@ mod tests {
             at,
             vs_fpm,
             g_force,
+            g_semibody: None,
             on_ground,
             agl_ft,
             msl_ft: Some(agl_ft + 500.0),
@@ -1691,6 +1699,7 @@ mod tests {
             at,
             vs_fpm: -200.0,
             g_force: 1.2,
+            g_semibody: None,
             on_ground: true,
             agl_ft: 1.0,
             msl_ft: Some(1.0 + 500.0),
@@ -1969,6 +1978,7 @@ mod tests {
             at: DateTime::<Utc>::from_timestamp_millis(at_ms).unwrap(),
             vs_fpm,
             g_force,
+            g_semibody: None,
             on_ground,
             agl_ft,
             msl_ft: Some(agl_ft + 500.0),

@@ -7883,6 +7883,14 @@ input:disabled {
   text-transform: uppercase;
 }
 
+/* Lernpaket AP2: Hinweis, dass die Gesamtnote gedeckelt ist. */
+.report-hero__deckel {
+  margin-top: 2mm;
+  font-size: 10pt;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
 /* Score-Aufschlüsselung — Balken. */
 .report-bars {
   display: flex;
