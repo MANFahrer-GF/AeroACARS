@@ -1005,7 +1005,7 @@
     },
     "deckel": {
       "harte_landung": "Gedeckelt auf höchstens 40 Punkte: harte Landung ab 1,75 g. Gute Werte bei Ausrollen oder Aufsetzpunkt gleichen das nicht aus.",
-      "ueberlast": "Gedeckelt auf höchstens 15 Punkte: Überlast ab 2,6 g."
+      "ueberlast": "Gedeckelt auf höchstens 14 Punkte: Überlast ab 2,6 g."
     }
   },
   "about": {

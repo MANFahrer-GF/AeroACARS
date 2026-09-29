@@ -707,9 +707,9 @@ pub struct TouchdownPayload {
     pub bounce_count: Option<u8>,
     /// v0.8.3 (#8): Forensisch erkannte Hopser >= 5 ft AGL (
     /// `touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT`). Wird unabhaengig
-    /// vom Score gezaehlt — auch „kleine" Hopser (5-14 ft), die per
-    /// Spec score-frei sind, tauchen hier auf. Wenn `Some(0)` und
-    /// `bounce_count > 0`: alle Hopser sind ueber 15 ft (scored).
+    /// vom Score gezaehlt. Seit Lernpaket AP3 (29.09.2026) gilt fuer die
+    /// Wertung dieselbe 5-ft-Schwelle; bei Altdaten (Client vor AP3) waren
+    /// Hopser von 5-14 ft score-frei und erst ab 15 ft gewertet.
     /// Wenn `Some(n)` und `bounce_count = 0`: ausschliesslich
     /// score-freie Hopser. None = pre-v0.8.3 PIREP / Sampler-Buffer
     /// unvollstaendig.

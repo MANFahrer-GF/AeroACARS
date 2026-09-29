@@ -353,7 +353,8 @@ pub struct LandingRecord {
     pub grade_letter: Option<String>,
     /// Lernpaket AP2 (29.09.2026): Welcher Deckel die Gesamtnote begrenzt
     /// hat — `"harte_landung"` (ab 1,75 g, max. 40) oder `"ueberlast"`
-    /// (ab 2,6 g, max. 15). `None` = ungedeckelt oder alter Datensatz.
+    /// (ab 2,6 g, max. 14). `None` = ungedeckelt (oder der Deckel senkte
+    /// die Note nicht) oder alter Datensatz.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_deckel: Option<String>,
 
@@ -647,7 +648,8 @@ pub struct LandingRecord {
     /// score-freie Hopser — UI zeigt dezenten „Light bounce"-Hinweis.
     #[serde(default)]
     pub forensic_bounce_count: Option<u8>,
-    /// Anzahl score-relevanter Hopser (>= 15 ft AGL). Was in
+    /// Anzahl score-relevanter Hopser (>= 5 ft ueber Bodenhoehe seit
+    /// Lernpaket AP3 29.09.2026; Altdatensaetze: >= 15 ft). Was in
     /// `bounce_count` und den Landing-Score einfliesst.
     #[serde(default)]
     pub scored_bounce_count: Option<u8>,

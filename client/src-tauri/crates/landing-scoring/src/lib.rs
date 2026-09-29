@@ -631,6 +631,24 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
     }
 }
 
+/// Wie [`master_deckel`], aber nur wenn der Deckel die Gesamtnote
+/// tatsaechlich SENKT. Liegt der Mittelwert schon darunter, aendert der
+/// Deckel nichts — dann darf auch keine Anzeige „gedeckelt" behaupten
+/// (Codex-QS 29.09.2026).
+pub fn master_deckel_wirksam(subs: &[SubScoreEntry]) -> Option<&'static str> {
+    let (grund, obergrenze) = master_deckel(subs)?;
+    let ohne_deckel: Vec<SubScoreEntry> = subs
+        .iter()
+        .cloned()
+        .map(|mut s| {
+            s.messwert = None;
+            s
+        })
+        .collect();
+    let mittel = aggregate_master_score(&ohne_deckel)?;
+    (mittel > obergrenze).then_some(grund)
+}
+
 /// Lernpaket AP2 (29.09.2026): ab dieser G-Last ist die Gesamtnote
 /// hoechstens [`DECKEL_HART_PUNKTE`] — eine harte Landung laesst sich
 /// nicht mit sauberem Ausrollen und gutem Aufsetzpunkt ausgleichen.
@@ -640,7 +658,11 @@ pub const DECKEL_HART_PUNKTE: u8 = 40;
 /// Ab dieser G-Last Ueberlast: Gesamtnote hoechstens
 /// [`DECKEL_UEBERLAST_PUNKTE`].
 pub const DECKEL_UEBERLAST_G: f32 = 2.6;
-pub const DECKEL_UEBERLAST_PUNKTE: u8 = 15;
+/// 14 statt der 15 von vmsACARS: Die Klassenleiter (`aggregate_score_label`)
+/// nennt erst Werte UNTER 15 „severe". Mit 15 hiesse ein Ueberlast-Deckel
+/// „hard" — waehrend die G-Kette dieselbe Landung schon ab 2,10 g als
+/// Severe fuehrt (Codex-QS 29.09.2026).
+pub const DECKEL_UEBERLAST_PUNKTE: u8 = 14;
 
 /// Greift ein Deckel auf die Gesamtnote? Liefert Kennung und Obergrenze.
 ///
@@ -894,6 +916,29 @@ mod tests {
         let mut skip = harte_landung_mit_guten_nebenachsen(2.0);
         skip[1] = SubScoreEntry::skipped("g_force", "l", "no_g");
         assert_eq!(master_deckel(&skip), None);
+    }
+
+    #[test]
+    fn deckel_grund_nur_wenn_er_die_note_senkt() {
+        // Greift: guter Mittelwert, harte Landung → gesenkt, Grund gesetzt.
+        let hart = harte_landung_mit_guten_nebenachsen(1.9);
+        assert_eq!(master_deckel_wirksam(&hart), Some("harte_landung"));
+
+        // Mittelwert liegt schon unter 40 → Deckel aendert nichts, also
+        // auch kein Grund (sonst behauptet die Anzeige etwas Falsches).
+        let mut schlecht = harte_landung_mit_guten_nebenachsen(1.9);
+        for s in schlecht.iter_mut().skip(2) {
+            s.score = 0;
+        }
+        assert!(master_deckel(&schlecht).is_some());
+        assert_eq!(master_deckel_wirksam(&schlecht), None);
+    }
+
+    #[test]
+    fn ueberlast_deckel_liegt_unter_der_severe_grenze() {
+        // `aggregate_score_label` nennt erst Werte < 15 „severe" (lib.rs
+        // des Clients); der Ueberlast-Deckel muss darunter liegen.
+        assert!(DECKEL_UEBERLAST_PUNKTE < 15);
     }
 
     #[test]

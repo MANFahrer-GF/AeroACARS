@@ -54,7 +54,9 @@ Thomas: „ganz nice“.
 **Umsetzung:**
 - Deckel auf die **Gesamtnote**, G-Grenzen auf den Wert der Referenzkette
   (`scored_g_fuer_punkte`), nicht auf Roh-G.
-- Vorschlag Grenzen (vor Einbau am Korpus prüfen): ≥ 1,75 g → max. 40; ≥ 2,6 g → max. 15.
+- Grenzen: ≥ 1,75 g → max. 40; ≥ 2,6 g → max. **14** (Codex-QS 29.09.: mit 15 hieße der
+  Überlast-Fall in der Klassenleiter „hard“, „severe“ beginnt erst unter 15). Der Grund
+  (`score_deckel`) steht nur im Datensatz, wenn der Deckel die Note wirklich senkt.
   Zusätzlich prüfen, ob ein Sinkraten-Gegenstück nötig ist (≥ 600 fpm), damit der
   Deckel nicht allein am G-Kanal hängt.
 - Grund des Deckels als Kennung am Ergebnis (`deckel: "hard_landing" | "overstress"`),

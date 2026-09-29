@@ -27747,8 +27747,8 @@ where
     // Lernpaket AP2: nur wenn die Gesamtnote tatsaechlich gedeckelt ist,
     // traegt der Datensatz den Grund — die Anzeige erklaert damit die Note.
     let score_deckel = aggregate_master
-        .and(landing_scoring::master_deckel(&computed_sub_scores))
-        .map(|(grund, _)| grund.to_string());
+        .and(landing_scoring::master_deckel_wirksam(&computed_sub_scores))
+        .map(|grund| grund.to_string());
     // Ohne Touchdown-Klasse gibt es keinen Rückfall — und ohne Rate liefert
     // `aggregate_master_score` ohnehin `None` ("lieber gar keine Note als
     // eine geschenkte"). Beides zusammen heisst: keine Bewertung.
@@ -44754,7 +44754,10 @@ fn step_flight_at(
 
                 // Reset bounce state for the new analyzer window.
                 stats.bounce_armed_above_threshold = false;
-                stats.bounce_boden_agl_ft = None;
+                // Lernpaket AP3 / Codex-QS: Die Bodenhoehe gleich hier vom
+                // Aufsetz-Schnappschuss nehmen. Erst beim naechsten Tick
+                // gesetzt, ginge ein Hopser, der vorher beginnt, verloren.
+                stats.bounce_boden_agl_ft = snap.on_ground.then_some(snap.altitude_agl_ft);
                 stats.bounce_count = 0;
 
                 // ---- Landing Analyzer (Stage 1) ----
@@ -45068,7 +45071,12 @@ fn step_flight_at(
                 }
                 if let (true, Some(boden)) = (in_bounce_window, stats.bounce_boden_agl_ft) {
                     let ueber_boden = snap.altitude_agl_ft - boden;
-                    if !stats.bounce_armed_above_threshold && ueber_boden > BOUNCE_AGL_THRESHOLD_FT
+                    // Nur in der Luft scharfschalten (Codex-QS): Ein AGL-
+                    // Sprung bei gesetztem Bodenflag (Gelaende, Ausreisser)
+                    // ist kein Hopser — der 50-Hz-Pfad verlangt dasselbe.
+                    if !stats.bounce_armed_above_threshold
+                        && !snap.on_ground
+                        && ueber_boden > BOUNCE_AGL_THRESHOLD_FT
                     {
                         stats.bounce_armed_above_threshold = true;
                     } else if stats.bounce_armed_above_threshold

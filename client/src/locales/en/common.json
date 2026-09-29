@@ -1005,7 +1005,7 @@
     },
     "deckel": {
       "harte_landung": "Capped at 40 points: hard landing from 1.75 g. Good rollout or touchdown point values do not offset it.",
-      "ueberlast": "Capped at 15 points: overload from 2.6 g."
+      "ueberlast": "Capped at 14 points: overload from 2.6 g."
     }
   },
   "about": {

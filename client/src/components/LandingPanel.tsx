@@ -268,7 +268,8 @@ export interface LandingRecord {
   // sichtbar werden statt im UI als „0 Bounces" verloren zu gehen.
   // Quelle: touchdown_v2::compute_landing_rate Forensik-Pipeline.
   /// Hoechster gemessener AGL-Wert in Post-TD-Hopsern, ft.
-  /// >= 5 ft = sichtbar (forensic), >= 15 ft = scored.
+  /// >= 5 ft = sichtbar und seit Lernpaket AP3 (29.09.2026) auch gewertet;
+  /// Altdatensaetze: gewertet erst ab 15 ft.
   bounce_max_agl_ft?: number | null;
   /// Anzahl Hopser >= 5 ft. Subset: forensic_bounce_count >= scored.
   /// Wenn > 0 aber bounce_count = 0 → rein score-freie Hopser.
