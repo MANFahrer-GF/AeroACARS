@@ -6945,6 +6945,14 @@ struct FlightStats {
     /// dieser Landung — reine Forensik, keine Note liest das. Gesetzt neben
     /// der Stabilitaets-Auswertung, siehe `anflug_forensik_stempeln`.
     anflug_forensik: anflug_forensik::AnflugForensik,
+    /// Eigener Ringpuffer der Anflug-Forensik: dieselben Proben wie
+    /// `approach_buffer` (gleiche Stelle, gleicher Plausibilitaetsfilter),
+    /// aber bis `ANFLUG_FORENSIK_PUFFER_MAX` statt 120 — die 120er-Kappe
+    /// traegt ueber `compute_approach_stddev` die Note und bleibt deshalb.
+    anflug_forensik_puffer: std::collections::VecDeque<ApproachBufferSample>,
+    /// Aufsetzzeit und Fenster des letzten Stempels — fuer das Nachziehen.
+    anflug_forensik_td: Option<DateTime<Utc>>,
+    anflug_forensik_fenster: Option<chrono::Duration>,
     /// Yaw-Rate am TD (heading-Aenderung pro Sekunde) in deg/sec.
     /// Hoch = Ground-Loop-Risk.
     landing_yaw_rate_deg_per_sec: Option<f32>,
@@ -9225,10 +9233,10 @@ pub struct ApproachBufferSample {
     /// Lernpaket AP5: Nicklage fuer die Nick-Unruhe. MSFS und X-Plane
     /// liefern sie beide.
     pub pitch_deg: Option<f32>,
-    /// Lernpaket AP5: mittleres N1 aller laufenden Triebwerke in %, fuer die
-    /// Schub-Umkehrungen. Nur MSFS mit Turbinen fuellt `eng_n1_pct`;
-    /// X-Plane und Kolbenmotoren liefern `None` — dann gibt es keinen
-    /// Schubwert, statt einen zu erfinden.
+    /// Lernpaket AP5: mittleres N1 in %, fuer die Schub-Umkehrungen — ueber
+    /// die Triebwerke mit N1 ≥ 5 % (siehe `n1_mittel_laufend`). Nur MSFS mit
+    /// Turbinen fuellt `eng_n1_pct`; X-Plane und Kolbenmotoren liefern
+    /// `None` — dann gibt es keinen Schubwert, statt einen zu erfinden.
     pub n1_mittel_pct: Option<f32>,
 }
 
@@ -9372,15 +9380,17 @@ fn push_approach_sample(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTi
         lat: Some(snap.lat).filter(|v| v.is_finite()),
         lon: Some(snap.lon).filter(|v| v.is_finite()),
         pitch_deg: Some(snap.pitch_deg).filter(|v| v.is_finite()),
-        n1_mittel_pct: snap
-            .eng_n1_pct
-            .as_ref()
-            .filter(|n1| !n1.is_empty())
-            .map(|n1| (n1.iter().sum::<f64>() / n1.len() as f64) as f32)
-            .filter(|v| v.is_finite()),
+        n1_mittel_pct: n1_mittel_laufend(snap.eng_n1_pct.as_deref()),
     });
     while stats.approach_buffer.len() > APPROACH_BUFFER_MAX {
         stats.approach_buffer.pop_front();
+    }
+    // Lernpaket AP4/AP5: dieselbe Probe in den laengeren Forensik-Puffer.
+    if let Some(probe) = stats.approach_buffer.back().cloned() {
+        stats.anflug_forensik_puffer.push_back(probe);
+        while stats.anflug_forensik_puffer.len() > ANFLUG_FORENSIK_PUFFER_MAX {
+            stats.anflug_forensik_puffer.pop_front();
+        }
     }
 }
 
@@ -11580,10 +11590,42 @@ const BOUNCE_AGL_THRESHOLD_FT: f64 = 5.0;
 /// wieder Bodenkontakt. Relativ wie `BOUNCE_AGL_THRESHOLD_FT`.
 const BOUNCE_AGL_RETURN_FT: f64 = 2.0;
 
-/// Max samples retained in `FlightStats::approach_buffer`. Position
-/// streamer ticks every 5-8 s during Approach/Final, so 120 samples
-/// ≈ 10-15 min — plenty to cover even a long ILS approach.
+/// Max samples retained in `FlightStats::approach_buffer`.
+///
+/// ⚠ Die alte Rechnung „5–8 s je Probe, 120 Proben ≈ 10–15 min" stimmt
+/// nicht mehr: `push_approach_sample` laeuft je `step_flight`-Takt, und der
+/// ist unter 1500 ft etwa 1 s bzw. 0,75 s. 120 Proben decken damit nur rund
+/// 1,5–2 min — bei 120 kt beginnt das Fenster schon unter 1000 ft (QS
+/// 29.09.2026, Lernpaket AP4, Befund 3). Die Kappe bleibt trotzdem: ueber
+/// `compute_approach_stddev` → `sub_stability` traegt dieser Puffer die
+/// Note, und die aendert das Lernpaket nicht. Die Forensik hat ihren
+/// eigenen, laengeren Puffer (`ANFLUG_FORENSIK_PUFFER_MAX`).
 const APPROACH_BUFFER_MAX: usize = 120;
+
+/// Laenge des Forensik-Puffers (Lernpaket AP4/AP5): 400 Proben ≈ 5 min bei
+/// 0,75 s — so viel, wie die Auswertung ohnehin hoechstens ansieht
+/// (`ANFLUG_FENSTER_S`). Ein GA-Anflug mit 300 fpm braucht von 1000 ft gut
+/// drei Minuten.
+const ANFLUG_FORENSIK_PUFFER_MAX: usize = 400;
+
+/// Mittleres N1 der Triebwerke, die laufen (N1 ≥ 5 %).
+///
+/// `eng_n1_pct` ist ein positionserhaltendes Praefix-Feld: ein stehendes
+/// Triebwerk steht darin mit ~0. Mitgemittelt halbierte es das Mittel — und
+/// damit jede Schubaenderung, die Hysterese von 2 % N1 wirkte dann wie 4 %.
+/// Deshalb zaehlen nur Werte ab 5 % (Leerlauf-N1 liegt bei ~20 %, dieselbe
+/// Grenze wie die „lebt"-Pruefung im MSFS-Adapter).
+fn n1_mittel_laufend(n1: Option<&[f64]>) -> Option<f32> {
+    let laufend: Vec<f64> = n1?
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite() && *v >= 5.0)
+        .collect();
+    if laufend.is_empty() {
+        return None;
+    }
+    Some((laufend.iter().sum::<f64>() / laufend.len() as f64) as f32)
+}
 
 /// Primary rollout-end trigger: groundspeed at which we consider the
 /// pilot has finished using the runway and is about to clear at a
@@ -36175,7 +36217,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     );
                                     anflug_forensik_stempeln(
                                         &mut stats,
-                                        Some(&windowed_buf),
+                                        Some(stab_window),
                                         td_ts,
                                         platzhoehe,
                                     );
@@ -41033,7 +41075,13 @@ fn bahn_am_aufsetzpunkt_nachholen(stats: &mut FlightStats, flight: &ActiveFlight
     ) {
         return false;
     }
+    let forensik_bahn_vorher = anflug_forensik_bahn_kennung(stats);
     korreliere_bahn(stats, flight, simulator, la, lo, hd);
+    // Lernpaket AP4 (QS 29.09.2026, Befund 2): Die Szenerie kann Schwelle,
+    // Gegenende und Versatz ersetzt haben — dann die Forensik nachziehen.
+    if anflug_forensik_bahn_kennung(stats) != forensik_bahn_vorher {
+        anflug_forensik_nachziehen(stats, flight);
+    }
     true
 }
 
@@ -41930,6 +41978,7 @@ fn bahn_upgrade_anwenden(flight: &ActiveFlight, stats: &mut FlightStats) -> bool
         stats.runway_match
     );
     let alte_achse = alte_achse_von(stats);
+    let forensik_bahn_vorher = anflug_forensik_bahn_kennung(stats);
     let finalized = finalize_runway_correlation(flight, stats);
     stats.runway_match = finalized.runway_match;
     stats.runway_source = finalized.runway_source;
@@ -41940,6 +41989,11 @@ fn bahn_upgrade_anwenden(flight: &ActiveFlight, stats: &mut FlightStats) -> bool
     spur_auf_neue_achse(stats, alte_achse.as_ref());
     // Das Drittel haengt an der Bahn — hier genauso wie beim Nachholen.
     drittel_nachfuehren(stats);
+    // Lernpaket AP4 (QS 29.09.2026, Befund 2): die Forensik folgt der Bahn.
+    // Nur Forensik — kein Einfluss auf Revision, Nachtrag oder Note.
+    if anflug_forensik_bahn_kennung(stats) != forensik_bahn_vorher {
+        anflug_forensik_nachziehen(stats, flight);
+    }
     let nachher = format!(
         "{:?}|{:?}|{:?}|{:?}",
         bahn_herkunft(stats),
@@ -42750,29 +42804,38 @@ fn sampler_path_rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
 /// aus `displacement_not_in_geometry_ft`, genau wie in `assess_touchdown`:
 /// was schon in der Geometrie steckt, wird nicht ein zweites Mal verschoben.
 ///
-/// `puffer` = `None` heisst: der ganze Anflug-Puffer (FSM-Pfad); der
-/// Sampler-Pfad reicht sein Zeitfenster herein. Keine Note, kein Gate und
-/// kein Deckel liest das Ergebnis.
+/// Gelesen wird NUR der Forensik-Puffer (`anflug_forensik_puffer`), nie
+/// `approach_buffer` — der ist fuer die Note auf 120 Proben gekappt und
+/// schnitte das 1000-ft-Tor ab (QS 29.09.2026, Befund 3).
+///
+/// `fenster` = `None` heisst: der ganze Puffer (FSM-Pfad, die Auswertung
+/// begrenzt selbst auf 5 min vor dem Aufsetzen); der Sampler-Pfad reicht
+/// sein 180-s-Fenster herein. Zeitpunkt und Fenster werden gemerkt, damit
+/// `anflug_forensik_nachziehen` nach einem Bahnwechsel GENAU so rechnet.
+/// Keine Note, kein Gate und kein Deckel liest das Ergebnis.
 fn anflug_forensik_stempeln(
     stats: &mut FlightStats,
-    puffer: Option<&std::collections::VecDeque<ApproachBufferSample>>,
+    fenster: Option<chrono::Duration>,
     td: Option<DateTime<Utc>>,
     platzhoehe_ft: Option<f32>,
 ) {
-    let bahn = stats.runway_nav_geometry.as_ref().map(|nav| {
-        let versatz_ft = stats
-            .runway_match
-            .as_ref()
-            .map(displacement_not_in_geometry_ft)
-            .unwrap_or(0);
-        anflug_forensik::Bahnbezug::aus_navdaten(nav, versatz_ft as f64)
-    });
-    let ergebnis = anflug_forensik::auswerten(
-        puffer.unwrap_or(&stats.approach_buffer),
-        bahn.as_ref(),
-        td,
-        platzhoehe_ft.map(f64::from),
-    );
+    let bahn = anflug_forensik_bahn(stats);
+    let ergebnis = {
+        let gefenstert = match (fenster, td) {
+            (Some(dauer), Some(t)) => Some(approach_buffer_window(
+                &stats.anflug_forensik_puffer,
+                t,
+                dauer,
+            )),
+            _ => None,
+        };
+        anflug_forensik::auswerten(
+            gefenstert.as_ref().unwrap_or(&stats.anflug_forensik_puffer),
+            bahn.as_ref(),
+            td,
+            platzhoehe_ft.map(f64::from),
+        )
+    };
     // Laeuft die Dump-Auswertung des Samplers schon VOR diesem Stempel,
     // steht das Analyse-JSON bereits — dann hier nachtragen, damit
     // Datensatz und Analyse dieselben Werte tragen.
@@ -42780,6 +42843,61 @@ fn anflug_forensik_stempeln(
         ergebnis.in_analyse_json(analyse);
     }
     stats.anflug_forensik = ergebnis;
+    stats.anflug_forensik_td = td;
+    stats.anflug_forensik_fenster = fenster;
+}
+
+/// Die Bahn der Forensik: Navdaten-Geometrie plus versetzte Schwelle.
+fn anflug_forensik_bahn(stats: &FlightStats) -> Option<anflug_forensik::Bahnbezug> {
+    stats.runway_nav_geometry.as_ref().map(|nav| {
+        let versatz_ft = stats
+            .runway_match
+            .as_ref()
+            .map(displacement_not_in_geometry_ft)
+            .unwrap_or(0);
+        anflug_forensik::Bahnbezug::aus_navdaten(nav, versatz_ft as f64)
+    })
+}
+
+/// Was an der Bahn die Forensik bestimmt — zum Vergleich vor/nach einem
+/// Bahnwechsel.
+fn anflug_forensik_bahn_kennung(stats: &FlightStats) -> String {
+    format!("{:?}", anflug_forensik_bahn(stats))
+}
+
+/// Rechnet die Forensik neu, nachdem sich die Bahn geaendert hat
+/// (QS 29.09.2026, Befund 2): Navigraph-Upgrade beim Einreichen
+/// (`bahn_upgrade_anwenden`) oder spaet eingetroffene Szenerie
+/// (`bahn_am_aufsetzpunkt_nachholen`, ersetzt Schwelle/Ende/Versatz).
+///
+/// Nur, wenn DIESE Landung schon gestempelt wurde — nach einem
+/// Durchstart-Reset ist `anflug_forensik` leer und bleibt es — und der
+/// Puffer Proben vor dem Aufsetzen hat (nach einem Neustart ist er leer:
+/// dann bleibt der alte Wert stehen statt „keine Proben" zu behaupten).
+/// Gleicher Zeitpunkt, gleiches Fenster und dieselbe Platzhoehe wie beim
+/// Stempel. Sperrreihenfolge stats → navdata wie in
+/// `finalize_runway_correlation`.
+fn anflug_forensik_nachziehen(stats: &mut FlightStats, flight: &ActiveFlight) {
+    if stats.anflug_forensik.gleitpfad.is_none() {
+        return;
+    }
+    let Some(td) = stats
+        .anflug_forensik_td
+        .or(stats.landing_at)
+        .or(stats.sampler_touchdown_at)
+    else {
+        return;
+    };
+    if !stats.anflug_forensik_puffer.iter().any(|s| s.at < td) {
+        return;
+    }
+    let platzhoehe = anflug_bezugshoehe_ft(
+        stats,
+        &flight.arr_airport,
+        ist_platzhoehe_navdaten_ft(flight, stats),
+    );
+    let fenster = stats.anflug_forensik_fenster;
+    anflug_forensik_stempeln(stats, fenster, Some(td), platzhoehe);
 }
 
 /// v0.16.6: per-episode reset of the approach-stability stats + rollout
@@ -42810,6 +42928,10 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_stable_at_da = None;
     stats.approach_stall_warning_count = 0;
     stats.anflug_forensik = Default::default();
+    stats.anflug_forensik_td = None;
+    stats.anflug_forensik_fenster = None;
+    // Der Forensik-Puffer selbst bleibt — wie `approach_buffer`: der
+    // naechste Anflug steht darin, die Auswertung begrenzt ueber die Zeit.
     stats.rollout_distance_m = None;
     // ── Bahndisziplin: ALLES, nicht nur die Zahlen ───────────────────
     //
@@ -65125,6 +65247,120 @@ mod touchdown_metadata_stamp_tests {
         );
     }
 
+    /// Lernpaket AP4 (QS 29.09.2026): Die versetzte Schwelle der Forensik
+    /// kommt ueber `displacement_not_in_geometry_ft` aus dem echten
+    /// Bahntreffer — voller Versatz, solange die Geometrie ihn nicht
+    /// bestaetigt; 0, wenn er schon in der Geometrie steckt.
+    #[test]
+    fn forensik_versatz_folgt_dem_bahntreffer() {
+        let mut stats = FlightStats::default();
+        stats.runway_nav_geometry = Some(eddp_nav_fixture().runways[0].clone());
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(500.0, 1000));
+        assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 1000.0);
+        let mut bestaetigt = eddp_26r_match_with_raw_td_and_displacement(500.0, 1000);
+        bestaetigt.geometry_implied_displaced_threshold_ft = 1000;
+        stats.runway_match = Some(bestaetigt);
+        assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 0.0);
+    }
+
+    /// Ein Anflug auf die EDDP 26R (Navigraph-Schwelle), 1000 → 200 ft,
+    /// in den Sekunden vor `td_at()`.
+    fn eddp_26r_anflug_in_den_forensik_puffer(stats: &mut FlightStats) {
+        let (tl, tn) = (EDDP_26R_THR_LAT, EDDP_26R_THR_LON);
+        let nav = eddp_nav_fixture();
+        let (el, en) = (nav.runways[0].far_end.lat, nav.runways[0].far_end.lon);
+        // Einheitsrichtung Ende → Schwelle, lokal flach (wenige km).
+        let cos_lat = tl.to_radians().cos();
+        let (dy, dx) = (tl - el, (tn - en) * cos_lat);
+        let n = dy.hypot(dx);
+        let m_je_grad = 6_371_000.0 * std::f64::consts::PI / 180.0;
+        for i in 0..=40 {
+            let h = 1000.0 - 20.0 * i as f64;
+            let d_m = (h - 50.0) / 3.0_f64.to_radians().tan() / 3.280_839_895;
+            let mut s = ApproachBufferSample {
+                at: td_at() - chrono::Duration::seconds(50 - i as i64),
+                agl_ft: h as f32,
+                msl_ft: (465.0 + h) as f32,
+                gs_kt: 140.0,
+                ias_kt: 140.0,
+                vs_fpm: -700.0,
+                bank_deg: 0.0,
+                heading_true_deg: 265.7,
+                gear_position: 1.0,
+                flaps_position: 1.0,
+                selected_runway: None,
+                stall_warning: false,
+                lat: None,
+                lon: None,
+                pitch_deg: Some(2.5),
+                n1_mittel_pct: None,
+            };
+            s.lat = Some(tl + dy / n * d_m / m_je_grad);
+            s.lon = Some(tn + dx / n * d_m / (m_je_grad * cos_lat));
+            stats.anflug_forensik_puffer.push_back(s);
+        }
+    }
+
+    /// Befund 2: Gestempelt wurde gegen die vorlaeufige OurAirports-Bahn —
+    /// ohne Navdaten, also ohne Werte. Beim Einreichen kommt die
+    /// Navigraph-Bahn: die Forensik zieht nach und hat jetzt Werte.
+    #[test]
+    fn forensik_zieht_nach_dem_navdaten_upgrade_nach() {
+        let flight = flight_fixture("EDDF");
+        let (mut stats, snap) = divert_score_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        eddp_26r_anflug_in_den_forensik_puffer(&mut stats);
+        anflug_forensik_stempeln(&mut stats, None, Some(td_at()), None);
+        let vorher = stats.anflug_forensik.gleitpfad.clone().unwrap();
+        assert_eq!(vorher.grund_ohne_werte.as_deref(), Some("keine_bahn"));
+
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture_displaced());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+        assert!(bahn_upgrade_anwenden(&flight, &mut stats));
+
+        let nachher = stats.anflug_forensik.gleitpfad.clone().unwrap();
+        assert_eq!(nachher.quelle, "navigraph_bahn");
+        assert_eq!(nachher.grund_ohne_werte, None);
+        assert!(nachher.gesamt.is_some(), "{nachher:?}");
+        // Die 4000 ft versetzte Schwelle der Navdaten sind beruecksichtigt.
+        assert_eq!(nachher.versatz_ft, Some(4000.0));
+    }
+
+    /// Riegel: Nach einem Durchstart-Reset gibt es nichts nachzuziehen — ein
+    /// Bahnwechsel darf keinen Befund fuer eine Landung erfinden, die noch
+    /// nicht stattgefunden hat.
+    #[test]
+    fn forensik_zieht_nach_einem_durchstart_reset_nicht_nach() {
+        let flight = flight_fixture("EDDF");
+        let (mut stats, snap) = divert_score_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        eddp_26r_anflug_in_den_forensik_puffer(&mut stats);
+        anflug_forensik_stempeln(&mut stats, None, Some(td_at()), None);
+        clear_approach_stability_and_rollout(&mut stats);
+
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture_displaced());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+        bahn_upgrade_anwenden(&flight, &mut stats);
+        assert_eq!(
+            stats.anflug_forensik,
+            anflug_forensik::AnflugForensik::default()
+        );
+    }
+
     /// ⚠ Das Einreich-Upgrade rebasiert die Spur wie das Nachholen.
     ///
     /// Sonst schickt `bahn_nachtrag_bauen` die Spur gegen die alte Achse
@@ -70465,6 +70701,46 @@ mod anflug_forensik_verdrahtung_tests {
         let s = stats.approach_buffer.back().unwrap();
         assert_eq!(s.lat, None);
         assert_eq!(s.n1_mittel_pct, None);
+
+        // Ein stehendes Triebwerk (N1 ≈ 0) halbiert das Mittel nicht.
+        snap.lat = 50.1;
+        snap.eng_n1_pct = Some(vec![62.0, 0.3]);
+        push_approach_sample(&mut stats, &snap, td());
+        assert_eq!(
+            stats.approach_buffer.back().unwrap().n1_mittel_pct,
+            Some(62.0)
+        );
+    }
+
+    /// Befund 3: Der Forensik-Puffer bekommt dieselben Proben, haelt aber
+    /// 400 statt 120 — die Notenkappe bleibt unberuehrt.
+    #[test]
+    fn forensik_puffer_haelt_laenger_als_der_notenpuffer() {
+        let mut stats = FlightStats::default();
+        let mut snap = SimSnapshot::default();
+        snap.lat = 50.0;
+        snap.lon = 8.0;
+        for i in 0..450 {
+            snap.altitude_msl_ft = 2000.0 - i as f64;
+            push_approach_sample(&mut stats, &snap, td() + chrono::Duration::seconds(i));
+        }
+        assert_eq!(stats.approach_buffer.len(), APPROACH_BUFFER_MAX);
+        assert_eq!(
+            stats.anflug_forensik_puffer.len(),
+            ANFLUG_FORENSIK_PUFFER_MAX
+        );
+        // Beide enden mit derselben Probe.
+        assert_eq!(
+            stats.anflug_forensik_puffer.back().unwrap().at,
+            stats.approach_buffer.back().unwrap().at
+        );
+        // Eine verworfene (unplausible) Probe landet in KEINEM der beiden.
+        snap.vertical_speed_fpm = f32::NAN;
+        push_approach_sample(&mut stats, &snap, td() + chrono::Duration::seconds(999));
+        assert_ne!(
+            stats.anflug_forensik_puffer.back().unwrap().at,
+            td() + chrono::Duration::seconds(999)
+        );
     }
 
     #[test]

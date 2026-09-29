@@ -871,7 +871,7 @@
     },
     "anflug_forensik": {
       "titel": "Gleitpfad und Anflugruhe",
-      "ohne_note": "Zur Einordnung – fließt nicht in die Note ein. 1 Dot = 0,35°, „+“ = über dem Pfad.",
+      "ohne_note": "Zur Einordnung – fließt nicht in die Note ein. 1 Dot = {{dot}}°, „+“ = über dem Pfad.",
       "gleitpfad_gesamt": "Gleitpfad 1000–200 ft: im Mittel {{mittel}} Dots, größte Abweichung {{max}} Dots ({{ft}} ft) · {{proben}} Messpunkte",
       "gleitpfad_tor": "{{tor}}: im Mittel {{mittel}}, größte {{max}} Dots",
       "tor_1000_500": "1000–500 ft",
@@ -894,7 +894,13 @@
       "ruhe_nick": "Nickrate ±{{v}} °/s",
       "ruhe_roll": "Rollrate ±{{v}} °/s",
       "ruhe_schub": "{{v}} Schubwechsel/min",
-      "ruhe_schub_fehlt": "Schubwechsel: ohne N1-Daten nicht erfasst (z. B. X-Plane oder Kolbenmotor)."
+      "erfasst_ab": "(erfasst ab {{h}} ft)",
+      "hinweis_sim_boden": "Höhenbezug: Boden des Simulators an der Schwelle ({{sim}} ft; Navdaten nennen {{nav}} ft).",
+      "hinweis_sim_boden_ohne_navdaten": "Höhenbezug: Boden des Simulators an der Schwelle ({{sim}} ft; die Navdaten nennen keine Schwellenhöhe).",
+      "schub_grund": {
+        "kein_n1": "Schub ohne N1-Daten nicht erfasst",
+        "zu_kurz": "Schub zu kurz gemessen"
+      }
     },
     "approach_stability_help": {
       "title": "Approach-Stability — was bedeuten die Kennzahlen?",

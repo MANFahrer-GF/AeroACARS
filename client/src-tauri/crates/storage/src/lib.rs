@@ -882,29 +882,43 @@ pub struct LandingRecord {
 /// gelandeten Bahn, geometrisch aus Position und Hoehe — nicht mehr nur
 /// Soll-V/S gegen Ist-V/S. Reine Forensik, keine Note.
 ///
-/// Vorzeichen: **positiv = ueber dem Pfad**. Ein Dot = 0,35° (wie
-/// vmsACARS; zwei Dots = Vollausschlag 0,7°).
+/// Vorzeichen: **positiv = ueber dem Pfad**. Ein Dot = 0,35° × θ/3 (bei 3°
+/// genau vmsACARS: 0,35°, zwei Dots = Vollausschlag 0,7°).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AnflugGleitpfad {
     /// Woher der Bezugspfad kommt: `navigraph_ils` (Bahn hat ein ILS),
     /// `navigraph_bahn` (Navigraph-Bahn ohne ILS, Winkel der Bahn) oder
     /// `angenommen_3grad` (keine Navdaten-Bahn — dann auch keine Werte).
     pub quelle: String,
-    /// Verwendeter Gleitwinkel in Grad.
-    pub winkel_deg: f32,
-    /// Verwendete Schwellenueberflughoehe (TCH) in Fuss.
-    pub tch_ft: f32,
+    /// Verwendeter Gleitwinkel in Grad. `None` ohne Bahn — dann wurde
+    /// nichts gerechnet, und kein Wert soll eine Rechnung vortaeuschen.
+    #[serde(default)]
+    pub winkel_deg: Option<f32>,
+    /// Verwendete Schwellenueberflughoehe (TCH) in Fuss, `None` ohne Bahn.
+    #[serde(default)]
+    pub tch_ft: Option<f32>,
     /// `true`, wenn die Navdaten keine TCH fuehren und 50 ft angenommen
     /// wurden (der Server schreibt dann 0).
     #[serde(default)]
     pub tch_angenommen: bool,
-    /// Hoehe der Landeschwelle in Fuss MSL, `None` wenn unbekannt.
+    /// Groesse eines Dots in Grad (0,35° × θ/3), `None` ohne Bahn.
     #[serde(default)]
-    pub schwellenhoehe_ft: Option<f32>,
+    pub grad_je_dot: Option<f32>,
+    /// Hoehenbezug des Pfads: `navigraph` (Schwellenhoehe der Navdaten)
+    /// oder `sim_boden` (Bodenhoehe des Simulators an der Schwelle, wenn
+    /// sie um mehr als 20 ft abweicht oder die Navdaten keine nennen).
+    #[serde(default)]
+    pub hoehenbezug: Option<String>,
+    /// Schwellenhoehe laut Navdaten in Fuss MSL.
+    #[serde(default)]
+    pub schwellenhoehe_navigraph_ft: Option<f32>,
+    /// Bodenhoehe des Simulators an der Schwelle (msl − agl), Fuss MSL.
+    #[serde(default)]
+    pub sim_boden_ft: Option<f32>,
     /// Um so viele Fuss wurde die Schwelle der Navdaten Richtung Bahn
     /// verschoben (versetzte Schwelle, soweit nicht schon in der Geometrie).
     #[serde(default)]
-    pub versatz_ft: f32,
+    pub versatz_ft: Option<f32>,
     /// Warum es keine Werte gibt: `keine_bahn`, `schwellenhoehe_fehlt`
     /// oder `keine_proben`. `None`, wenn gerechnet wurde.
     #[serde(default)]
@@ -923,21 +937,26 @@ pub struct AnflugGleitpfad {
 /// Kennwerte der Gleitpfad-Abweichung in einem Hoehenband.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct GleitpfadTor {
-    /// Anzahl Proben im Band (vor der Schwelle, im Anflugsektor).
+    /// Anzahl Proben im Band (vor der Schwelle, im Gleitwegsektor).
     pub proben: u32,
     /// Mittlere |Abweichung| in Dots.
     pub mittel_abs_dots: f32,
     /// Groesste Abweichung in Dots, mit Vorzeichen (+ = ueber dem Pfad).
     pub max_dots: f32,
-    /// Groesste Hoehenabweichung in Fuss, mit Vorzeichen (+ = zu hoch).
+    /// Hoehenabweichung DERSELBEN Probe in Fuss, mit Vorzeichen.
     pub max_abw_ft: f32,
+    /// Hoechste ausgewertete Probe im Band, ft ueber der Schwelle — zeigt,
+    /// ob das Band wirklich von oben an erfasst ist.
+    #[serde(default)]
+    pub oberste_hoehe_ft: Option<f32>,
 }
 
 /// Lernpaket AP5 (29.09.2026): Anflugruhe — nur Hinweis, keine Note.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AnflugRuhe {
-    /// Bezug der Hoehenbaender: `schwelle` (Navdaten-Schwellenhoehe) oder
-    /// `platz` (Platzhoehe, wenn die Schwelle unbekannt ist).
+    /// Bezug der Hoehenbaender: `schwelle` (Navdaten-Schwellenhoehe),
+    /// `sim_boden` (Bodenhoehe des Simulators an der Schwelle) oder `platz`
+    /// (Platzhoehe, wenn beides fehlt).
     pub hoehenbezug: String,
     #[serde(default)]
     pub tor_1000_500: Option<RuheTor>,
@@ -952,6 +971,9 @@ pub struct RuheTor {
     pub proben: u32,
     /// Zeit zwischen erster und letzter Probe im Band, Sekunden.
     pub dauer_s: f32,
+    /// Hoechste Probe im Band, ft ueber dem Bezug.
+    #[serde(default)]
+    pub oberste_hoehe_ft: Option<f32>,
     /// Wie oft die Pfadabweichung die Seite gewechselt hat (ueber/unter
     /// dem Pfad), mit Totband ±0,1 Dot. `None` ohne Gleitpfad (AP4).
     #[serde(default)]
@@ -963,9 +985,13 @@ pub struct RuheTor {
     #[serde(default)]
     pub roll_unruhe_deg_s: Option<f32>,
     /// Richtungswechsel des Schubs (mittleres N1) je Minute, Totband 2 %.
-    /// `None`, wenn der Simulator kein N1 liefert (X-Plane, Kolben).
     #[serde(default)]
     pub schub_umkehr_pro_min: Option<f32>,
+    /// Warum `schub_umkehr_pro_min` fehlt: `kein_n1` (Simulator liefert
+    /// kein N1 — X-Plane, Kolben) oder `zu_kurz` (N1 da, aber < 5 Proben
+    /// oder < 10 s im Band).
+    #[serde(default)]
+    pub schub_grund: Option<String>,
 }
 
 /// v0.7.1: Stability-Gate-Window-Metadaten (Spec §5.4).
@@ -1770,7 +1796,7 @@ mod merge_tests {
             serde_json::json!({
                 "anflug_gleitpfad": {
                     "quelle": "navigraph_ils", "winkel_deg": 3.0, "tch_ft": 50.0,
-                    "schwellenhoehe_ft": 300.0,
+                    "hoehenbezug": "navigraph", "schwellenhoehe_navigraph_ft": 300.0,
                     "gesamt": {"proben": 60, "mittel_abs_dots": 0.4,
                                "max_dots": -1.2, "max_abw_ft": -38.0}
                 },

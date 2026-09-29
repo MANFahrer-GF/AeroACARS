@@ -24,21 +24,31 @@
 //!
 //! `msl_ft` im Anflug-Puffer ist die geometrische (wahre) Hoehe aus dem
 //! Simulator — MSFS `PLANE ALTITUDE`, X-Plane `elevation` —, nicht die
-//! barometrisch angezeigte. Genau das braucht der Vergleich mit der
-//! Schwellenhoehe aus den Navdaten: ein Kaltwetter- oder QNH-Fehler im
-//! Hoehenmesser verschiebt diese Rechnung nicht (ein echtes ILS misst den
-//! Winkel ebenfalls geometrisch).
+//! barometrisch angezeigte. Ein Kaltwetter- oder QNH-Fehler im Hoehenmesser
+//! verschiebt diese Rechnung also nicht.
+//!
+//! Der Bezug ist trotzdem nicht blind die Schwellenhoehe der Navdaten: Der
+//! Pilot fliegt gegen die Welt des SIMULATORS. Liegt deren Boden an der
+//! Schwelle um mehr als 20 ft neben der Navigraph-Hoehe (Gelaendenetz,
+//! Szenerie), gilt der Sim-Boden — sonst erschiene ein sauber geflogener
+//! Anflug durchgehend „zu hoch" oder „zu tief" (QS 29.09.2026, Befund 4).
 
 use chrono::{DateTime, Utc};
 use storage::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor};
 
 use crate::ApproachBufferSample;
 
-/// Ein Dot = 0,35°. So rechnet vmsACARS (voller Ausschlag 0,7° = 2 Dots),
-/// und so steht es sinngemaess im ICAO Annex 10: die Gleitweg-Anzeige hat
-/// ihren Vollausschlag bei rund 0,12 × Gleitwinkel, bei 3° also 0,36°
-/// je Dot. Wir BENOTEN das nicht — die Dots sind nur die gewohnte Einheit.
-pub(crate) const GRAD_JE_DOT: f64 = 0.35;
+/// Ein Dot bei 3° Gleitwinkel: 0,35° — so rechnet vmsACARS (Vollausschlag
+/// 0,7° = 2 Dots). Die Anzeige eines echten Gleitwegs skaliert mit dem
+/// Winkel (ICAO Annex 10: Vollausschlag bei rund 0,12 × θ), deshalb gilt
+/// allgemein 0,35° × θ/3: bei 3° unveraendert, beim 5,5°-Anflug in London
+/// City rund 0,64°. Wir BENOTEN das nicht — die Dots sind nur die gewohnte
+/// Einheit.
+const GRAD_JE_DOT_BEI_3_GRAD: f64 = 0.35;
+
+pub(crate) fn grad_je_dot(winkel_deg: f64) -> f64 {
+    GRAD_JE_DOT_BEI_3_GRAD * winkel_deg / 3.0
+}
 
 /// Obere Grenze des ausgewerteten Anflugs, ft ueber der Schwelle.
 const HOEHE_OBEN_FT: f64 = 1000.0;
@@ -55,10 +65,12 @@ const HOEHE_UNTEN_FT: f64 = 200.0;
 /// zurueck (Platzrunde) und darf nicht mitgerechnet werden.
 const ANFLUG_FENSTER_S: i64 = 300;
 
-/// Halber Oeffnungswinkel des Anflugsektors um die verlaengerte Achse.
-/// ±35° ist die Abdeckung eines Landekurssenders (ICAO Annex 10) — wer
-/// ausserhalb steht, hat keinen Bezug zu diesem Gleitpfad.
-const SEKTOR_HALBWINKEL_DEG: f64 = 35.0;
+/// Halber Oeffnungswinkel des Gleitwegsektors, vom Gleitweg-Bezugspunkt
+/// aus gemessen. Ein echter Gleitwegsender deckt seitlich nur rund ±8° ab
+/// (ICAO Annex 10) — ausserhalb gibt es keine Gleitweganzeige, also auch
+/// keine Abweichung. ±10° laesst etwas Luft fuer die Lage des Senders.
+/// Die ANFLUGRUHE ist an keinen Sektor gebunden (sie braucht keine Bahn).
+const GLEITWEG_SEKTOR_HALBWINKEL_DEG: f64 = 10.0;
 
 /// „Grob in Anflugrichtung": mehr als 90° zwischen Steuerkurs und
 /// Bahnrichtung ist Gegen- oder Queranflug, keine Endanflugprobe.
@@ -74,10 +86,23 @@ const MIN_PROBEN_JE_TOR: usize = 5;
 /// Bahn, das ist bei 1 NM Entfernung weniger als 0,03°.
 const TCH_ANNAHME_FT: f64 = 50.0;
 
-/// Totband fuer den Seitenwechsel: erst ab ±0,1 Dot (0,035°) gilt eine
-/// Probe als „ueber" oder „unter" dem Pfad. Bei 2 NM sind das rund 7 ft —
-/// weniger als die Hoehe, um die ein Flugzeug zwischen zwei Proben schon
-/// durch normale Luftbewegung schwankt. Ohne Totband zaehlte jede
+/// Ab dieser Abweichung zwischen Sim-Boden und Navigraph-Schwellenhoehe
+/// gilt der Sim-Boden. 20 ft sind bei 1 NM rund 0,2° — fast ein Dot. Kleinere
+/// Unterschiede (Bahnneigung, Rundung der Navdaten auf ganze Fuss) sollen
+/// den Bezug nicht umschalten.
+const SIM_BODEN_TOLERANZ_FT: f64 = 20.0;
+/// Proben, die hoechstens so weit laengs und quer von der Landeschwelle
+/// liegen, verraten die Sim-Bodenhoehe an der Schwelle.
+const SIM_BODEN_LAENGS_M: f64 = 600.0;
+const SIM_BODEN_QUER_M: f64 = 100.0;
+/// Median ueber die schwellennaechsten Proben — eine einzelne Probe ueber
+/// einem Gebaeude oder einer Bodenwelle soll den Bezug nicht bestimmen.
+const SIM_BODEN_PROBEN: usize = 3;
+
+/// Totband fuer den Seitenwechsel: erst ab ±0,1 Dot (bei 3° 0,035°) gilt
+/// eine Probe als „ueber" oder „unter" dem Pfad. Bei 2 NM sind das rund
+/// 7 ft — weniger als die Hoehe, um die ein Flugzeug zwischen zwei Proben
+/// schon durch normale Luftbewegung schwankt. Ohne Totband zaehlte jede
 /// Probe, die den Pfad nur streift, als Korrektur.
 const PFAD_TOTBAND_DOTS: f64 = 0.1;
 
@@ -107,6 +132,12 @@ pub(crate) const QUELLE_ANGENOMMEN_3GRAD: &str = "angenommen_3grad";
 const GRUND_KEINE_BAHN: &str = "keine_bahn";
 const GRUND_SCHWELLENHOEHE_FEHLT: &str = "schwellenhoehe_fehlt";
 const GRUND_KEINE_PROBEN: &str = "keine_proben";
+
+const SCHUB_GRUND_KEIN_N1: &str = "kein_n1";
+const SCHUB_GRUND_ZU_KURZ: &str = "zu_kurz";
+
+const HOEHENBEZUG_NAVIGRAPH: &str = "navigraph";
+const HOEHENBEZUG_SIM_BODEN: &str = "sim_boden";
 
 const FT_JE_M: f64 = 3.280_839_895;
 
@@ -151,6 +182,20 @@ impl Bahnbezug {
             hat_ils: nav.ils.is_some(),
         }
     }
+
+    /// Laengs- und Querabstand einer Position zur LANDEschwelle, in Metern.
+    /// Laengs positiv in Landerichtung (hinter der Schwelle), negativ davor.
+    fn zur_landeschwelle_m(&self, lat: f64, lon: f64) -> (f64, f64) {
+        let (laengs_m, quer_m) = crate::runway::projiziere_auf_bahn(
+            self.schwelle_lat,
+            self.schwelle_lon,
+            self.ende_lat,
+            self.ende_lon,
+            lat,
+            lon,
+        );
+        (laengs_m - self.versatz_ft / FT_JE_M, quer_m)
+    }
 }
 
 /// Eine Probe, fertig fuer beide Auswertungen.
@@ -159,7 +204,7 @@ struct Punkt {
     at: DateTime<Utc>,
     hoehe_ft: f64,
     /// Pfadabweichung in Dots / ft — `None`, wenn die Probe nicht vor der
-    /// Schwelle im Anflugsektor lag oder es keinen Pfad gibt.
+    /// Schwelle im Gleitwegsektor lag oder es keinen Pfad gibt.
     abw_dots: Option<f64>,
     abw_ft: Option<f64>,
     pitch_deg: Option<f64>,
@@ -210,12 +255,14 @@ pub(crate) fn quelle(bahn: Option<&Bahnbezug>) -> &'static str {
 
 /// Wertet den Anflug-Puffer aus.
 ///
+/// * `buf`: der Forensik-Puffer (`FlightStats::anflug_forensik_puffer`),
+///   ggf. schon auf ein Zeitfenster begrenzt.
 /// * `bahn`: Navdaten der gelandeten Bahn; `None` → Quelle
-///   `angenommen_3grad`, KEINE Gleitpfad-Werte (ohne Schwelle gibt es
-///   nichts zu rechnen — erfinden wir keine).
+///   `angenommen_3grad`, KEINE Gleitpfad-Werte und auch kein Winkel/TCH
+///   (ohne Schwelle gibt es nichts zu rechnen — erfinden wir keine).
 /// * `td`: Aufsetzzeitpunkt; nur Proben davor zaehlen.
 /// * `platzhoehe_ft`: Rueckfall fuer die Hoehenbaender der Anflugruhe,
-///   wenn die Schwellenhoehe fehlt (dieselbe Bezugshoehe wie das
+///   wenn es keinen Schwellenbezug gibt (dieselbe Bezugshoehe wie das
 ///   Stabilitaets-Gate).
 pub(crate) fn auswerten(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
@@ -223,55 +270,72 @@ pub(crate) fn auswerten(
     td: Option<DateTime<Utc>>,
     platzhoehe_ft: Option<f64>,
 ) -> AnflugForensik {
-    let quelle = quelle(bahn);
-    let winkel_deg = bahn
-        .map(|b| b.winkel_deg)
-        // Dieselbe Plausibilisierung wie ueberall im Client (2,0–7,5°).
-        .filter(|g| (2.0..=7.5).contains(g))
-        .unwrap_or(3.0);
-    let (tch_ft, tch_angenommen) = match bahn.and_then(|b| b.tch_ft) {
-        Some(t) => (t, false),
-        None => (TCH_ANNAHME_FT, true),
-    };
-    let schwellenhoehe = bahn.and_then(|b| b.schwellenhoehe_ft);
-
     let mut gleitpfad = AnflugGleitpfad {
-        quelle: quelle.to_string(),
-        winkel_deg: winkel_deg as f32,
-        tch_ft: tch_ft as f32,
-        tch_angenommen,
-        schwellenhoehe_ft: schwellenhoehe.map(|h| h as f32),
-        versatz_ft: bahn.map(|b| b.versatz_ft as f32).unwrap_or(0.0),
+        quelle: quelle(bahn).to_string(),
         ..Default::default()
     };
+    let proben = im_fenster(buf, td);
 
-    // Hoehenbezug der Baender: Schwelle, sonst Platz.
-    let (bezug_ft, bezug_name) = match (schwellenhoehe, platzhoehe_ft) {
-        (Some(s), _) => (Some(s), "schwelle"),
-        (None, Some(p)) => (Some(p), "platz"),
-        (None, None) => (None, "platz"),
-    };
-
-    let pfad = match (bahn, schwellenhoehe) {
-        (None, _) => {
-            gleitpfad.grund_ohne_werte = Some(GRUND_KEINE_BAHN.to_string());
-            None
+    // Pfad und Hoehenbezug — nur mit Bahn.
+    let mut pfad: Option<Pfad> = None;
+    let mut schwellenbezug: Option<(f64, &'static str)> = None;
+    match bahn {
+        None => gleitpfad.grund_ohne_werte = Some(GRUND_KEINE_BAHN.to_string()),
+        Some(b) => {
+            // Dieselbe Plausibilisierung wie ueberall im Client (2,0–7,5°).
+            let winkel_deg = Some(b.winkel_deg)
+                .filter(|g| (2.0..=7.5).contains(g))
+                .unwrap_or(3.0);
+            let (tch_ft, tch_angenommen) = match b.tch_ft {
+                Some(t) => (t, false),
+                None => (TCH_ANNAHME_FT, true),
+            };
+            gleitpfad.winkel_deg = Some(winkel_deg as f32);
+            gleitpfad.tch_ft = Some(tch_ft as f32);
+            gleitpfad.tch_angenommen = tch_angenommen;
+            gleitpfad.grad_je_dot = Some(grad_je_dot(winkel_deg) as f32);
+            gleitpfad.versatz_ft = Some(b.versatz_ft as f32);
+            gleitpfad.schwellenhoehe_navigraph_ft = b.schwellenhoehe_ft.map(|h| h as f32);
+            let sim_boden = sim_boden_an_schwelle(&proben, b);
+            gleitpfad.sim_boden_ft = sim_boden.map(|h| h as f32);
+            let bezug = match (b.schwellenhoehe_ft, sim_boden) {
+                (Some(n), Some(s)) if (s - n).abs() > SIM_BODEN_TOLERANZ_FT => {
+                    Some((s, HOEHENBEZUG_SIM_BODEN))
+                }
+                (Some(n), _) => Some((n, HOEHENBEZUG_NAVIGRAPH)),
+                // Navdaten ohne Schwellenhoehe: der Sim-Boden ist dann der
+                // einzige Bezug — und der, gegen den geflogen wurde.
+                (None, Some(s)) => Some((s, HOEHENBEZUG_SIM_BODEN)),
+                (None, None) => None,
+            };
+            match bezug {
+                Some((hoehe, name)) => {
+                    gleitpfad.hoehenbezug = Some(name.to_string());
+                    pfad = Some(Pfad::neu(b, hoehe, winkel_deg, tch_ft));
+                    schwellenbezug = Some((hoehe, name));
+                }
+                None => {
+                    gleitpfad.grund_ohne_werte = Some(GRUND_SCHWELLENHOEHE_FEHLT.to_string());
+                }
+            }
         }
-        (Some(_), None) => {
-            gleitpfad.grund_ohne_werte = Some(GRUND_SCHWELLENHOEHE_FEHLT.to_string());
-            None
-        }
-        (Some(b), Some(_)) => Some(Pfad::neu(b, winkel_deg, tch_ft)),
-    };
+    }
 
-    let Some(bezug_ft) = bezug_ft else {
+    // Hoehenbezug der Baender: Schwelle (Navigraph oder Sim-Boden), sonst Platz.
+    let bezug = match (schwellenbezug, platzhoehe_ft) {
+        (Some((h, HOEHENBEZUG_SIM_BODEN)), _) => Some((h, "sim_boden")),
+        (Some((h, _)), _) => Some((h, "schwelle")),
+        (None, Some(p)) => Some((p, "platz")),
+        (None, None) => None,
+    };
+    let Some((bezug_ft, bezug_name)) = bezug else {
         return AnflugForensik {
             gleitpfad: Some(gleitpfad),
             ruhe: None,
         };
     };
 
-    let punkte = punkte_im_anflug(buf, td, bezug_ft, pfad.as_ref());
+    let punkte = punkte_im_anflug(&proben, bezug_ft, pfad.as_ref());
 
     if pfad.is_some() {
         gleitpfad.gesamt = gleitpfad_tor(&punkte, HOEHE_UNTEN_FT, HOEHE_OBEN_FT);
@@ -296,85 +360,13 @@ pub(crate) fn auswerten(
     }
 }
 
-/// Der Gleitpfad als Gerade durch die Schwelle in TCH-Hoehe.
-struct Pfad {
-    bahn: Bahnbezug,
-    winkel_rad: f64,
-    tch_ft: f64,
-    achse_deg: f64,
-}
-
-impl Pfad {
-    fn neu(bahn: &Bahnbezug, winkel_deg: f64, tch_ft: f64) -> Self {
-        Self {
-            achse_deg: peilung_deg(
-                bahn.schwelle_lat,
-                bahn.schwelle_lon,
-                bahn.ende_lat,
-                bahn.ende_lon,
-            ),
-            bahn: bahn.clone(),
-            winkel_rad: winkel_deg.to_radians(),
-            tch_ft,
-        }
-    }
-
-    /// Abweichung (Dots, ft) einer Probe, oder `None`, wenn sie nicht vor
-    /// der Landeschwelle im Anflugsektor liegt.
-    ///
-    /// # Welcher Winkel
-    ///
-    /// Ein ILS-Gleitweg ist eine WINKEL-Anzeige um den Gleitweg-Bezugspunkt
-    /// (GPI) — dort, wo der Pfad die Bahnoberflaeche trifft, TCH / tan(θ)
-    /// hinter der Schwelle. Der Ist-Winkel ist also
-    /// `atan(h / (d + TCH/tan θ))` mit h = Hoehe ueber der Schwelle und d =
-    /// Entfernung VOR der Schwelle; die Abweichung ist Ist-Winkel − θ. Wer
-    /// genau auf der Geraden `h = TCH + d·tan θ` fliegt, hat damit exakt 0°
-    /// — unabhaengig von der Entfernung. Der Winkel von der SCHWELLE aus
-    /// (`atan((h−0)/d)`) waere dagegen auf dem Pfad nie 0 und liefe kurz vor
-    /// der Schwelle gegen 90°.
-    fn abweichung(&self, s: &ApproachBufferSample, hoehe_ft: f64) -> Option<(f64, f64)> {
-        let (lat, lon) = (s.lat?, s.lon?);
-        let (laengs_m, quer_m) = crate::runway::projiziere_auf_bahn(
-            self.bahn.schwelle_lat,
-            self.bahn.schwelle_lon,
-            self.bahn.ende_lat,
-            self.bahn.ende_lon,
-            lat,
-            lon,
-        );
-        // Entfernung VOR der Landeschwelle: die Navdaten-Schwelle, um den
-        // Versatz Richtung Bahn verschoben.
-        let d_m = self.bahn.versatz_ft / FT_JE_M - laengs_m;
-        if d_m <= 0.0 {
-            return None; // ueber oder hinter der Schwelle
-        }
-        if quer_m.abs() > d_m * SEKTOR_HALBWINKEL_DEG.to_radians().tan() {
-            return None; // ausserhalb des Anflugsektors
-        }
-        if winkel_diff_deg(s.heading_true_deg as f64, self.achse_deg) > KURS_TOLERANZ_DEG {
-            return None; // nicht in Anflugrichtung
-        }
-        let d_ft = d_m * FT_JE_M;
-        let tan_w = self.winkel_rad.tan();
-        let soll_ft = self.tch_ft + d_ft * tan_w;
-        let abw_ft = hoehe_ft - soll_ft;
-        let gpi_ft = self.tch_ft / tan_w;
-        let ist_rad = hoehe_ft.atan2(d_ft + gpi_ft);
-        let abw_deg = (ist_rad - self.winkel_rad).to_degrees();
-        Some((abw_deg / GRAD_JE_DOT, abw_ft))
-    }
-}
-
-fn punkte_im_anflug(
+/// Proben vor dem Aufsetzen, hoechstens `ANFLUG_FENSTER_S` alt.
+fn im_fenster(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
     td: Option<DateTime<Utc>>,
-    bezug_ft: f64,
-    pfad: Option<&Pfad>,
-) -> Vec<Punkt> {
-    let anker = match td.or_else(|| buf.back().map(|s| s.at)) {
-        Some(a) => a,
-        None => return Vec::new(),
+) -> Vec<&ApproachBufferSample> {
+    let Some(anker) = td.or_else(|| buf.back().map(|s| s.at)) else {
+        return Vec::new();
     };
     let fruehestens = anker - chrono::Duration::seconds(ANFLUG_FENSTER_S);
     buf.iter()
@@ -386,12 +378,119 @@ fn punkte_im_anflug(
                     s.at <= anker
                 }
         })
+        .collect()
+}
+
+/// Bodenhoehe des Simulators an der Landeschwelle: `msl − agl` der (bis zu
+/// drei) schwellennaechsten Proben, Median. `None`, wenn keine Probe nah
+/// genug an der Schwelle liegt.
+fn sim_boden_an_schwelle(proben: &[&ApproachBufferSample], bahn: &Bahnbezug) -> Option<f64> {
+    let mut nah: Vec<(f64, f64)> = proben
+        .iter()
+        .filter_map(|s| {
+            let (lat, lon) = (s.lat?, s.lon?);
+            let boden = s.msl_ft as f64 - s.agl_ft as f64;
+            if !boden.is_finite() {
+                return None;
+            }
+            let (laengs_m, quer_m) = bahn.zur_landeschwelle_m(lat, lon);
+            (laengs_m.abs() <= SIM_BODEN_LAENGS_M && quer_m.abs() <= SIM_BODEN_QUER_M)
+                .then_some((laengs_m.abs(), boden))
+        })
+        .collect();
+    if nah.is_empty() {
+        return None;
+    }
+    nah.sort_by(|a, b| a.0.total_cmp(&b.0));
+    nah.truncate(SIM_BODEN_PROBEN);
+    let mut boeden: Vec<f64> = nah.into_iter().map(|n| n.1).collect();
+    boeden.sort_by(|a, b| a.total_cmp(b));
+    Some(boeden[boeden.len() / 2])
+}
+
+/// Der Gleitpfad als Gerade durch die Landeschwelle in TCH-Hoehe.
+struct Pfad {
+    bahn: Bahnbezug,
+    bezug_ft: f64,
+    winkel_rad: f64,
+    tch_ft: f64,
+    grad_je_dot: f64,
+    achse_deg: f64,
+}
+
+impl Pfad {
+    fn neu(bahn: &Bahnbezug, bezug_ft: f64, winkel_deg: f64, tch_ft: f64) -> Self {
+        Self {
+            achse_deg: peilung_deg(
+                bahn.schwelle_lat,
+                bahn.schwelle_lon,
+                bahn.ende_lat,
+                bahn.ende_lon,
+            ),
+            bahn: bahn.clone(),
+            bezug_ft,
+            winkel_rad: winkel_deg.to_radians(),
+            tch_ft,
+            grad_je_dot: grad_je_dot(winkel_deg),
+        }
+    }
+
+    /// Abweichung (Dots, ft) einer Probe, oder `None`, wenn sie nicht vor
+    /// der Landeschwelle im Gleitwegsektor liegt.
+    ///
+    /// # Welcher Winkel
+    ///
+    /// Ein ILS-Gleitweg ist eine WINKEL-Anzeige um den Gleitweg-Bezugspunkt
+    /// (GPI) — dort, wo der Pfad die Bahnoberflaeche trifft, TCH / tan(θ)
+    /// hinter der Schwelle. Gerechnet wird deshalb der Hoehenwinkel vom GPI
+    /// aus: `atan(h / r)` mit h = Hoehe ueber der Schwelle und
+    /// r = `hypot(d + GPI, quer)` (d = Entfernung VOR der Schwelle, quer =
+    /// seitlicher Versatz). Die Abweichung ist dieser Winkel − θ. Wer genau
+    /// auf der Geraden `h = TCH + d·tan θ` fliegt, hat damit exakt 0° —
+    /// unabhaengig von der Entfernung. Das ist die Geometrie, die ein
+    /// Gleitwegsender abbildet, nicht dessen Messung: die tatsaechliche
+    /// Antennenlage (seitlich neben der Bahn) und die Form seines Strahls
+    /// kennen die Navdaten nicht. Der Winkel von der SCHWELLE aus
+    /// (`atan(h/d)`) waere auf dem Pfad nie 0 und liefe kurz vor der
+    /// Schwelle gegen 90°.
+    fn abweichung(&self, s: &ApproachBufferSample) -> Option<(f64, f64)> {
+        let (lat, lon) = (s.lat?, s.lon?);
+        let (laengs_m, quer_m) = self.bahn.zur_landeschwelle_m(lat, lon);
+        let d_ft = -laengs_m * FT_JE_M;
+        if d_ft <= 0.0 {
+            return None; // ueber oder hinter der Schwelle
+        }
+        if winkel_diff_deg(s.heading_true_deg as f64, self.achse_deg) > KURS_TOLERANZ_DEG {
+            return None; // nicht in Anflugrichtung
+        }
+        let tan_w = self.winkel_rad.tan();
+        let gpi_ft = self.tch_ft / tan_w;
+        let laengs_ab_gpi_ft = d_ft + gpi_ft;
+        let quer_ft = quer_m * FT_JE_M;
+        if quer_ft.abs().atan2(laengs_ab_gpi_ft).to_degrees() > GLEITWEG_SEKTOR_HALBWINKEL_DEG {
+            return None; // ausserhalb des Gleitwegsektors
+        }
+        let r_ft = laengs_ab_gpi_ft.hypot(quer_ft);
+        let hoehe_ft = s.msl_ft as f64 - self.bezug_ft;
+        let abw_ft = hoehe_ft - r_ft * tan_w;
+        let abw_deg = (hoehe_ft.atan2(r_ft) - self.winkel_rad).to_degrees();
+        Some((abw_deg / self.grad_je_dot, abw_ft))
+    }
+}
+
+fn punkte_im_anflug(
+    proben: &[&ApproachBufferSample],
+    bezug_ft: f64,
+    pfad: Option<&Pfad>,
+) -> Vec<Punkt> {
+    proben
+        .iter()
         .filter_map(|s| {
             let hoehe_ft = s.msl_ft as f64 - bezug_ft;
             if !hoehe_ft.is_finite() || !(HOEHE_UNTEN_FT..=HOEHE_OBEN_FT).contains(&hoehe_ft) {
                 return None;
             }
-            let abw = pfad.and_then(|p| p.abweichung(s, hoehe_ft));
+            let abw = pfad.and_then(|p| p.abweichung(s));
             Some(Punkt {
                 at: s.at,
                 hoehe_ft,
@@ -416,28 +515,32 @@ fn im_band(p: &Punkt, unten: f64, oben: f64) -> bool {
 }
 
 fn gleitpfad_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<GleitpfadTor> {
-    let werte: Vec<(f64, f64)> = punkte
+    // (Dots, ft, Hoehe) JE PROBE — Dots und Fuss der groessten Abweichung
+    // muessen von derselben Probe stammen (QS 29.09.2026, Befund 1: zwei
+    // getrennte Maxima zeigten „−1,2 Dots (+60 ft)").
+    let werte: Vec<(f64, f64, f64)> = punkte
         .iter()
         .filter(|p| im_band(p, unten, oben))
-        .filter_map(|p| Some((p.abw_dots?, p.abw_ft?)))
+        .filter_map(|p| Some((p.abw_dots?, p.abw_ft?, p.hoehe_ft)))
         .collect();
     if werte.len() < MIN_PROBEN_JE_TOR {
         return None;
     }
     let mittel = werte.iter().map(|w| w.0.abs()).sum::<f64>() / werte.len() as f64;
-    let max_dots = werte
-        .iter()
-        .map(|w| w.0)
-        .fold(0.0_f64, |a, b| if b.abs() > a.abs() { b } else { a });
-    let max_ft = werte
-        .iter()
-        .map(|w| w.1)
-        .fold(0.0_f64, |a, b| if b.abs() > a.abs() { b } else { a });
+    let groesste = werte.iter().copied().fold((0.0_f64, 0.0_f64), |a, w| {
+        if w.0.abs() > a.0.abs() {
+            (w.0, w.1)
+        } else {
+            a
+        }
+    });
+    let oberste = werte.iter().map(|w| w.2).fold(f64::MIN, f64::max);
     Some(GleitpfadTor {
         proben: werte.len() as u32,
         mittel_abs_dots: mittel as f32,
-        max_dots: max_dots as f32,
-        max_abw_ft: max_ft as f32,
+        max_dots: groesste.0 as f32,
+        max_abw_ft: groesste.1 as f32,
+        oberste_hoehe_ft: Some(oberste as f32),
     })
 }
 
@@ -447,6 +550,7 @@ fn ruhe_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<RuheTor> {
         return None;
     }
     let dauer_s = sekunden(band[0].at, band[band.len() - 1].at);
+    let oberste = band.iter().map(|p| p.hoehe_ft).fold(f64::MIN, f64::max);
 
     let abw: Vec<f64> = band.iter().filter_map(|p| p.abw_dots).collect();
     let pfad_vorzeichenwechsel =
@@ -462,23 +566,28 @@ fn ruhe_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<RuheTor> {
         .iter()
         .filter_map(|p| Some((p.at, p.n1_pct?)))
         .collect();
-    let schub_umkehr_pro_min = if n1.len() >= MIN_PROBEN_JE_TOR {
-        let dauer = sekunden(n1[0].0, n1[n1.len() - 1].0);
-        (dauer >= MIN_DAUER_SCHUB_S).then(|| {
-            let werte: Vec<f64> = n1.iter().map(|w| w.1).collect();
-            (umkehrungen(&werte, SCHUB_TOTBAND_PCT) as f64 / (dauer / 60.0)) as f32
-        })
+    let (schub_umkehr_pro_min, schub_grund) = if n1.is_empty() {
+        (None, Some(SCHUB_GRUND_KEIN_N1))
     } else {
-        None
+        let dauer = sekunden(n1[0].0, n1[n1.len() - 1].0);
+        if n1.len() < MIN_PROBEN_JE_TOR || dauer < MIN_DAUER_SCHUB_S {
+            (None, Some(SCHUB_GRUND_ZU_KURZ))
+        } else {
+            let werte: Vec<f64> = n1.iter().map(|w| w.1).collect();
+            let rate = umkehrungen(&werte, SCHUB_TOTBAND_PCT) as f64 / (dauer / 60.0);
+            (Some(rate as f32), None)
+        }
     };
 
     Some(RuheTor {
         proben: band.len() as u32,
         dauer_s: dauer_s as f32,
+        oberste_hoehe_ft: Some(oberste as f32),
         pfad_vorzeichenwechsel,
         nick_unruhe_deg_s: raten_streuung(&nick).map(|v| v as f32),
         roll_unruhe_deg_s: raten_streuung(&roll).map(|v| v as f32),
         schub_umkehr_pro_min,
+        schub_grund: schub_grund.map(str::to_string),
     })
 }
 
@@ -591,20 +700,22 @@ mod tests {
     use chrono::TimeZone;
     use std::collections::VecDeque;
 
-    // Bahn von Sued nach Nord (Kurs 360°): Meridiane sind Grosskreise, die
-    // Sollgeometrie laesst sich damit exakt hinschreiben. Anflug von Sueden.
+    // Standardbahn von Sued nach Nord (Kurs 360°): Meridiane sind
+    // Grosskreise, die Sollgeometrie laesst sich damit exakt hinschreiben.
+    // Anflug von Sueden. Eine Ost-West-Bahn hat ihren eigenen Test.
     const SCHWELLE_LAT: f64 = 50.0;
     const SCHWELLE_LON: f64 = 8.0;
     const SCHWELLE_ELEV: f64 = 300.0;
     /// Meter je Breitengrad auf der Kugel, mit der `projiziere_auf_bahn`
     /// rechnet (R = 6 371 000 m).
     const M_JE_GRAD: f64 = 6_371_000.0 * std::f64::consts::PI / 180.0;
+    const FT_JE_NM: f64 = 1852.0 / 0.3048;
 
     fn td() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 9, 29, 12, 0, 0).unwrap()
     }
 
-    fn bahn(ils: bool, tch: Option<f64>, versatz_ft: f64) -> Bahnbezug {
+    fn bahn_mit(ils: bool, tch: Option<f64>, versatz_ft: f64, winkel: f64) -> Bahnbezug {
         Bahnbezug {
             schwelle_lat: SCHWELLE_LAT,
             schwelle_lon: SCHWELLE_LON,
@@ -613,8 +724,41 @@ mod tests {
             versatz_ft,
             schwellenhoehe_ft: Some(SCHWELLE_ELEV),
             tch_ft: tch,
-            winkel_deg: 3.0,
+            winkel_deg: winkel,
             hat_ils: ils,
+        }
+    }
+
+    fn bahn(ils: bool, tch: Option<f64>, versatz_ft: f64) -> Bahnbezug {
+        bahn_mit(ils, tch, versatz_ft, 3.0)
+    }
+
+    /// Freie Probe: Position, Kurs, wahre Hoehe und Sim-Bodenhoehe.
+    fn probe_bei(
+        t_s: f64,
+        lat: f64,
+        lon: f64,
+        kurs: f32,
+        boden: f64,
+        h_ft: f64,
+    ) -> ApproachBufferSample {
+        ApproachBufferSample {
+            at: td() - chrono::Duration::milliseconds((t_s * 1000.0) as i64),
+            agl_ft: h_ft as f32,
+            msl_ft: (boden + h_ft) as f32,
+            gs_kt: 140.0,
+            ias_kt: 140.0,
+            vs_fpm: -700.0,
+            bank_deg: 0.0,
+            heading_true_deg: kurs,
+            gear_position: 1.0,
+            flaps_position: 1.0,
+            selected_runway: None,
+            stall_warning: false,
+            lat: Some(lat),
+            lon: Some(lon),
+            pitch_deg: Some(2.5),
+            n1_mittel_pct: Some(60.0),
         }
     }
 
@@ -623,32 +767,27 @@ mod tests {
     /// dem Aufsetzen.
     fn probe(t_s: f64, nullpunkt_ft: f64, d_ft: f64, h_ft: f64) -> ApproachBufferSample {
         let nord_m = (nullpunkt_ft - d_ft) / FT_JE_M;
-        ApproachBufferSample {
-            at: td() - chrono::Duration::milliseconds((t_s * 1000.0) as i64),
-            agl_ft: h_ft as f32,
-            msl_ft: (SCHWELLE_ELEV + h_ft) as f32,
-            gs_kt: 140.0,
-            ias_kt: 140.0,
-            vs_fpm: -700.0,
-            bank_deg: 0.0,
-            heading_true_deg: 0.0,
-            gear_position: 1.0,
-            flaps_position: 1.0,
-            selected_runway: None,
-            stall_warning: false,
-            lat: Some(SCHWELLE_LAT + nord_m / M_JE_GRAD),
-            lon: Some(SCHWELLE_LON),
-            pitch_deg: Some(2.5),
-            n1_mittel_pct: Some(60.0),
-        }
+        probe_bei(
+            t_s,
+            SCHWELLE_LAT + nord_m / M_JE_GRAD,
+            SCHWELLE_LON,
+            0.0,
+            SCHWELLE_ELEV,
+            h_ft,
+        )
     }
 
     /// Ein Anflug von 1000 bis 200 ft, Proben im Sekundentakt, jede Probe
-    /// genau `winkel_abw_deg` ueber dem 3°-Pfad (vom GPI aus gesehen).
-    fn anflug(nullpunkt_ft: f64, tch: f64, winkel_abw_deg: f64) -> VecDeque<ApproachBufferSample> {
-        let w = 3.0_f64.to_radians();
-        let gpi = tch / w.tan();
-        let ist = (3.0 + winkel_abw_deg).to_radians();
+    /// genau `winkel_abw_deg` ueber dem Pfad mit Winkel `winkel` (vom GPI
+    /// aus gesehen).
+    fn anflug_mit(
+        nullpunkt_ft: f64,
+        tch: f64,
+        winkel: f64,
+        winkel_abw_deg: f64,
+    ) -> VecDeque<ApproachBufferSample> {
+        let gpi = tch / winkel.to_radians().tan();
+        let ist = (winkel + winkel_abw_deg).to_radians();
         let mut buf = VecDeque::new();
         let n = 80;
         for i in 0..=n {
@@ -660,6 +799,10 @@ mod tests {
         buf
     }
 
+    fn anflug(nullpunkt_ft: f64, tch: f64, winkel_abw_deg: f64) -> VecDeque<ApproachBufferSample> {
+        anflug_mit(nullpunkt_ft, tch, 3.0, winkel_abw_deg)
+    }
+
     #[test]
     fn genau_auf_dem_pfad_ist_null_dots() {
         let b = bahn(true, Some(50.0), 0.0);
@@ -667,6 +810,7 @@ mod tests {
         let g = f.gleitpfad.unwrap();
         assert_eq!(g.quelle, "navigraph_ils");
         assert_eq!(g.grund_ohne_werte, None);
+        assert_eq!(g.hoehenbezug.as_deref(), Some("navigraph"));
         let ges = g.gesamt.unwrap();
         assert!(ges.proben >= 75, "fast alle Proben zaehlen: {}", ges.proben);
         assert!(
@@ -682,11 +826,51 @@ mod tests {
         );
     }
 
+    /// Unabhaengig von der GPI-Formel: Hoehen per Hand gerechnet,
+    /// h = 50 ft + d · tan 3° (tan 3° = 0,0524078), auf 0,1 ft gerundet.
+    #[test]
+    fn handgerechnete_punkte_bis_drei_meilen_liegen_auf_dem_pfad() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let punkte = [
+            (2.75, 925.7),
+            (2.5, 846.1),
+            (2.0, 686.9),
+            (1.5, 527.7),
+            (1.0, 368.4),
+        ];
+        let buf: VecDeque<_> = punkte
+            .iter()
+            .enumerate()
+            .map(|(i, (nm, h))| probe(60.0 - 10.0 * i as f64, 0.0, nm * FT_JE_NM, *h))
+            .collect();
+        let ges = auswerten(&buf, Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap()
+            .gesamt
+            .unwrap();
+        assert_eq!(ges.proben, 5);
+        assert!(ges.max_dots.abs() < 0.005, "{}", ges.max_dots);
+        assert!(ges.max_abw_ft.abs() < 0.2, "{} ft", ges.max_abw_ft);
+
+        // 30 ft hoeher bei 2 NM (12 152 ft vor dem GPI-Bezug + 954 ft):
+        // atan(716,9 / 13 106) = 3,131° → +0,131° = +0,37 Dots.
+        let mut hoch = buf.clone();
+        hoch[2].msl_ft += 30.0;
+        let ges = auswerten(&hoch, Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap()
+            .gesamt
+            .unwrap();
+        assert!((ges.max_dots - 0.374).abs() < 0.01, "{}", ges.max_dots);
+        assert!((ges.max_abw_ft - 30.0).abs() < 0.2, "{}", ges.max_abw_ft);
+    }
+
     #[test]
     fn null_komma_35_grad_darueber_ist_plus_ein_dot() {
         let b = bahn(true, Some(50.0), 0.0);
         let f = auswerten(&anflug(0.0, 50.0, 0.35), Some(&b), Some(td()), None);
         let g = f.gleitpfad.unwrap();
+        assert_eq!(g.grad_je_dot, Some(0.35));
         for tor in [
             g.gesamt.unwrap(),
             g.tor_1000_500.unwrap(),
@@ -709,6 +893,62 @@ mod tests {
             ges.max_dots
         );
         assert!(ges.max_abw_ft < 0.0);
+    }
+
+    #[test]
+    fn steilanflug_skaliert_den_dot_mit_dem_winkel() {
+        // London City: 5,5°. Ein Dot = 0,35 × 5,5/3 = 0,6417°.
+        let b = bahn_mit(true, Some(50.0), 0.0, 5.5);
+        let g = auswerten(
+            &anflug_mit(0.0, 50.0, 5.5, 0.6417),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap();
+        assert!((g.grad_je_dot.unwrap() - 0.6417).abs() < 0.001);
+        let ges = g.gesamt.unwrap();
+        assert!((ges.max_dots - 1.0).abs() < 0.02, "{}", ges.max_dots);
+        // 0,35° ueber einem 5,5°-Pfad ist nur gut ein halber Dot.
+        let ges = auswerten(
+            &anflug_mit(0.0, 50.0, 5.5, 0.35),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap()
+        .gesamt
+        .unwrap();
+        assert!((ges.max_dots - 0.545).abs() < 0.02, "{}", ges.max_dots);
+    }
+
+    #[test]
+    fn groesste_abweichung_nennt_dots_und_fuss_derselben_probe() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let mut buf = anflug(0.0, 50.0, 0.0);
+        // Oben weit draussen +60 ft: kleiner Winkel (≈ +0,5 Dots) …
+        let oben = buf.iter().position(|s| s.agl_ft <= 900.0).unwrap();
+        buf[oben].msl_ft += 60.0;
+        // … unten nah an der Schwelle −45 ft: grosser Winkel (≈ −1,5 Dots).
+        let unten = buf.iter().position(|s| s.agl_ft <= 250.0).unwrap();
+        buf[unten].msl_ft -= 45.0;
+        let ges = auswerten(&buf, Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap()
+            .gesamt
+            .unwrap();
+        assert!(
+            ges.max_dots < -1.4,
+            "Dot-Maximum ist die untere Probe: {}",
+            ges.max_dots
+        );
+        assert!(
+            (ges.max_abw_ft + 45.0).abs() < 0.5,
+            "Fuss derselben Probe, nicht das +60-ft-Maximum: {}",
+            ges.max_abw_ft
+        );
     }
 
     #[test]
@@ -787,6 +1027,137 @@ mod tests {
         );
     }
 
+    /// Seitlicher Versatz: 20° neben der Achse (vom GPI aus) liegt ausserhalb
+    /// jedes Gleitwegsenders — kein Gleitpfadwert, aber die Anflugruhe zaehlt
+    /// die Proben weiter. 5° daneben auf dem Pfad (Abstand ueber `hypot`)
+    /// ergibt 0 Dots.
+    #[test]
+    fn querversatz_20_grad_faellt_aus_dem_gleitpfad_aber_nicht_aus_der_ruhe() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let tan3 = 3.0_f64.to_radians().tan();
+        let gpi = 50.0 / tan3;
+        let versetzt = |seitwinkel: f64| -> VecDeque<ApproachBufferSample> {
+            (0..=40)
+                .map(|i| {
+                    let h = 1000.0 - 20.0 * i as f64;
+                    let r = h / tan3; // Abstand vom GPI auf dem Pfad
+                    let laengs = r * seitwinkel.to_radians().cos() - gpi;
+                    let quer_m = r * seitwinkel.to_radians().sin() / FT_JE_M;
+                    let lat = SCHWELLE_LAT - laengs / FT_JE_M / M_JE_GRAD;
+                    let lon = SCHWELLE_LON + quer_m / (M_JE_GRAD * SCHWELLE_LAT.to_radians().cos());
+                    probe_bei(50.0 - i as f64, lat, lon, 0.0, SCHWELLE_ELEV, h)
+                })
+                .collect()
+        };
+        let f = auswerten(&versetzt(20.0), Some(&b), Some(td()), None);
+        let g = f.gleitpfad.unwrap();
+        assert!(g.gesamt.is_none());
+        assert_eq!(g.grund_ohne_werte.as_deref(), Some("keine_proben"));
+        let r = f.ruhe.expect("Ruhe braucht keinen Sektor");
+        assert!(r.tor_1000_500.unwrap().nick_unruhe_deg_s.is_some());
+
+        let ges = auswerten(&versetzt(5.0), Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap()
+            .gesamt
+            .unwrap();
+        assert!(ges.proben >= 38, "{}", ges.proben);
+        assert!(ges.max_dots.abs() < 0.03, "{}", ges.max_dots);
+    }
+
+    #[test]
+    fn gegenkurs_ist_keine_endanflugprobe() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let mut buf = anflug(0.0, 50.0, 0.0);
+        for s in buf.iter_mut() {
+            s.heading_true_deg = 180.0;
+        }
+        let g = auswerten(&buf, Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap();
+        assert!(g.gesamt.is_none());
+        assert_eq!(g.grund_ohne_werte.as_deref(), Some("keine_proben"));
+    }
+
+    #[test]
+    fn ost_west_bahn_rechnet_genauso() {
+        // Bahn 27: Schwelle im Osten, Landerichtung West (270°), Anflug von
+        // Osten ueber einen Breitenkreis.
+        let m_je_grad_lon = M_JE_GRAD * SCHWELLE_LAT.to_radians().cos();
+        let b = Bahnbezug {
+            ende_lat: SCHWELLE_LAT,
+            ende_lon: SCHWELLE_LON - 3000.0 / m_je_grad_lon,
+            ..bahn(true, Some(50.0), 0.0)
+        };
+        let tan3 = 3.0_f64.to_radians().tan();
+        let buf: VecDeque<_> = (0..=40)
+            .map(|i| {
+                let h = 1000.0 - 20.0 * i as f64;
+                let d_ft = (h - 50.0) / tan3;
+                let lon = SCHWELLE_LON + d_ft / FT_JE_M / m_je_grad_lon;
+                probe_bei(50.0 - i as f64, SCHWELLE_LAT, lon, 270.0, SCHWELLE_ELEV, h)
+            })
+            .collect();
+        let ges = auswerten(&buf, Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap()
+            .gesamt
+            .unwrap();
+        assert!(ges.proben >= 38, "{}", ges.proben);
+        assert!(ges.max_dots.abs() < 0.02, "{}", ges.max_dots);
+    }
+
+    /// Befund 4: Der Sim-Boden an der Schwelle liegt 30 ft ueber der
+    /// Navigraph-Hoehe; der Pilot fliegt sauber gegen die Sim-Welt.
+    #[test]
+    fn sim_boden_30_ft_daneben_wird_zum_bezug() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let sim_boden = SCHWELLE_ELEV + 30.0;
+        let tan3 = 3.0_f64.to_radians().tan();
+        let mit_boden = |boden: f64, bis_zur_schwelle: bool| -> VecDeque<ApproachBufferSample> {
+            let unten = if bis_zur_schwelle { 60.0 } else { 200.0 };
+            let mut buf = VecDeque::new();
+            let mut h = 1000.0;
+            let mut t = 100.0;
+            while h >= unten {
+                let d_ft = (h - 50.0) / tan3;
+                let lat = SCHWELLE_LAT - d_ft / FT_JE_M / M_JE_GRAD;
+                buf.push_back(probe_bei(t, lat, SCHWELLE_LON, 0.0, boden, h));
+                h -= 10.0;
+                t -= 1.0;
+            }
+            buf
+        };
+        let g = auswerten(&mit_boden(sim_boden, true), Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap();
+        assert_eq!(g.hoehenbezug.as_deref(), Some("sim_boden"));
+        assert_eq!(g.schwellenhoehe_navigraph_ft, Some(300.0));
+        assert_eq!(g.sim_boden_ft, Some(330.0));
+        assert!(g.gesamt.unwrap().max_dots.abs() < 0.02);
+
+        // Gegenprobe 1: ohne Proben nahe der Schwelle bleibt Navigraph der
+        // Bezug — und derselbe Anflug liegt dann 30 ft zu hoch.
+        let g = auswerten(&mit_boden(sim_boden, false), Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap();
+        assert_eq!(g.hoehenbezug.as_deref(), Some("navigraph"));
+        assert_eq!(g.sim_boden_ft, None);
+        assert!((g.gesamt.unwrap().max_abw_ft - 30.0).abs() < 0.5);
+
+        // Gegenprobe 2: 10 ft Unterschied schalten nicht um.
+        let g = auswerten(
+            &mit_boden(SCHWELLE_ELEV + 10.0, true),
+            Some(&b),
+            Some(td()),
+            None,
+        )
+        .gleitpfad
+        .unwrap();
+        assert_eq!(g.hoehenbezug.as_deref(), Some("navigraph"));
+        assert_eq!(g.sim_boden_ft, Some(310.0));
+    }
+
     #[test]
     fn ohne_navdaten_nur_quelle_und_keine_werte() {
         let f = auswerten(
@@ -798,6 +1169,11 @@ mod tests {
         let g = f.gleitpfad.unwrap();
         assert_eq!(g.quelle, "angenommen_3grad");
         assert_eq!(g.grund_ohne_werte.as_deref(), Some("keine_bahn"));
+        // Nichts, was eine Rechnung vortaeuscht.
+        assert_eq!(g.winkel_deg, None);
+        assert_eq!(g.tch_ft, None);
+        assert_eq!(g.grad_je_dot, None);
+        assert_eq!(g.hoehenbezug, None);
         assert!(g.gesamt.is_none() && g.tor_1000_500.is_none() && g.tor_500_200.is_none());
         // Die Anflugruhe laeuft ueber die Platzhoehe weiter — nur ohne
         // Seitenwechsel, denn der braucht einen Pfad.
@@ -836,9 +1212,10 @@ mod tests {
             .unwrap();
         assert_eq!(g.quelle, "navigraph_ils");
         assert!(g.tch_angenommen);
-        assert_eq!(g.tch_ft, 50.0);
+        assert_eq!(g.tch_ft, Some(50.0));
 
-        // Schwellenhoehe fehlt → Quelle ja, Werte nein, mit Grund.
+        // Schwellenhoehe fehlt und kein Sim-Boden an der Schwelle → Quelle
+        // ja, Werte nein, mit Grund.
         let mut ohne_hoehe = bahn(true, Some(50.0), 0.0);
         ohne_hoehe.schwellenhoehe_ft = None;
         let g = auswerten(&anflug(0.0, 50.0, 0.0), Some(&ohne_hoehe), Some(td()), None)
@@ -846,6 +1223,30 @@ mod tests {
             .unwrap();
         assert_eq!(g.grund_ohne_werte.as_deref(), Some("schwellenhoehe_fehlt"));
         assert!(g.gesamt.is_none());
+    }
+
+    #[test]
+    fn oberste_hoehe_zeigt_ein_unvollstaendig_erfasstes_tor() {
+        let b = bahn(true, Some(50.0), 0.0);
+        // Der Puffer beginnt erst bei 700 ft.
+        let buf: VecDeque<_> = anflug(0.0, 50.0, 0.0)
+            .into_iter()
+            .filter(|s| s.agl_ft <= 700.0)
+            .collect();
+        let f = auswerten(&buf, Some(&b), Some(td()), None);
+        let g = f.gleitpfad.unwrap();
+        let oben = g.tor_1000_500.unwrap().oberste_hoehe_ft.unwrap();
+        assert!((oben - 700.0).abs() < 1.0, "{}", oben);
+        let unten = g.tor_500_200.unwrap().oberste_hoehe_ft.unwrap();
+        assert!((unten - 500.0).abs() < 1.0, "{}", unten);
+        let r = f
+            .ruhe
+            .unwrap()
+            .tor_1000_500
+            .unwrap()
+            .oberste_hoehe_ft
+            .unwrap();
+        assert!((r - 700.0).abs() < 1.0, "{}", r);
     }
 
     #[test]
@@ -881,6 +1282,7 @@ mod tests {
         let unten = r.tor_500_200.unwrap();
         assert_eq!(oben.nick_unruhe_deg_s, Some(0.0), "gleichmaessiger Nick");
         assert_eq!(oben.schub_umkehr_pro_min, Some(0.0));
+        assert_eq!(oben.schub_grund, None);
         assert_eq!(oben.pfad_vorzeichenwechsel, Some(0), "auf dem Pfad");
         assert!(
             unten.nick_unruhe_deg_s.unwrap() > 1.5,
@@ -896,17 +1298,36 @@ mod tests {
     }
 
     #[test]
-    fn ohne_n1_kein_schubwert() {
+    fn schubgrund_unterscheidet_kein_n1_und_zu_kurz() {
+        let b = bahn(true, Some(50.0), 0.0);
         // X-Plane und Kolbenmotoren liefern kein N1 — dann fehlt der Wert,
         // statt 0 Umkehrungen zu behaupten.
-        let b = bahn(true, Some(50.0), 0.0);
         let mut buf = anflug(0.0, 50.0, 0.0);
         for s in buf.iter_mut() {
             s.n1_mittel_pct = None;
         }
         let r = auswerten(&buf, Some(&b), Some(td()), None).ruhe.unwrap();
-        assert_eq!(r.tor_1000_500.unwrap().schub_umkehr_pro_min, None);
-        assert_eq!(r.tor_500_200.unwrap().schub_umkehr_pro_min, None);
+        let oben = r.tor_1000_500.unwrap();
+        assert_eq!(oben.schub_umkehr_pro_min, None);
+        assert_eq!(oben.schub_grund.as_deref(), Some("kein_n1"));
+
+        // N1 nur in drei Proben des oberen Tors → gemessen, aber zu kurz.
+        let mut n = 0;
+        for s in buf.iter_mut() {
+            if s.agl_ft > 500.0 && n < 3 {
+                s.n1_mittel_pct = Some(60.0);
+                n += 1;
+            }
+        }
+        let r = auswerten(&buf, Some(&b), Some(td()), None).ruhe.unwrap();
+        assert_eq!(
+            r.tor_1000_500.unwrap().schub_grund.as_deref(),
+            Some("zu_kurz")
+        );
+        assert_eq!(
+            r.tor_500_200.unwrap().schub_grund.as_deref(),
+            Some("kein_n1")
+        );
     }
 
     #[test]

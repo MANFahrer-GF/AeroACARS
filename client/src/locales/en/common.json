@@ -871,7 +871,7 @@
     },
     "anflug_forensik": {
       "titel": "Glide path and approach steadiness",
-      "ohne_note": "For context only – not part of the score. 1 dot = 0.35°, “+” = above the path.",
+      "ohne_note": "For context only – not part of the score. 1 dot = {{dot}}°, “+” = above the path.",
       "gleitpfad_gesamt": "Glide path 1000–200 ft: average {{mittel}} dots, largest deviation {{max}} dots ({{ft}} ft) · {{proben}} data points",
       "gleitpfad_tor": "{{tor}}: average {{mittel}}, largest {{max}} dots",
       "tor_1000_500": "1000–500 ft",
@@ -894,7 +894,13 @@
       "ruhe_nick": "pitch rate ±{{v}} °/s",
       "ruhe_roll": "roll rate ±{{v}} °/s",
       "ruhe_schub": "{{v}} thrust changes/min",
-      "ruhe_schub_fehlt": "Thrust changes: not recorded without N1 data (e.g. X-Plane or piston engine)."
+      "erfasst_ab": "(recorded from {{h}} ft)",
+      "hinweis_sim_boden": "Height reference: simulator ground at the threshold ({{sim}} ft; navdata says {{nav}} ft).",
+      "hinweis_sim_boden_ohne_navdaten": "Height reference: simulator ground at the threshold ({{sim}} ft; navdata has no threshold elevation).",
+      "schub_grund": {
+        "kein_n1": "thrust not recorded without N1 data",
+        "zu_kurz": "thrust measured too briefly"
+      }
     },
     "approach_stability_help": {
       "title": "Approach stability — what do the values mean?",

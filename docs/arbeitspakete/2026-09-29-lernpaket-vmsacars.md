@@ -177,8 +177,8 @@ Server nicht erreichbar ist (Navdaten-Zwischenspeicher im Client prüfen).
   Abzug seit AIRAC 2608). Sollhöhe = Schwellenhöhe + TCH + d·tan θ. Winkel wird **vom
   Gleitweg-Bezugspunkt (GPI = TCH/tan θ hinter der Schwelle)** gemessen:
   `atan(h/(d+GPI)) − θ` — so misst auch ein echtes ILS, und auf der Pfadgeraden ist die
-  Abweichung in jeder Entfernung exakt 0. 1 Dot = 0,35°, + = über dem Pfad.
-- Nur Proben vor der Schwelle, im ±35°-Sektor (Landekurssender-Abdeckung), Steuerkurs
+  Abweichung in jeder Entfernung exakt 0. 1 Dot = 0,35° × θ/3 (QS-Korrektur 6), + = über dem Pfad.
+- Nur Proben vor der Schwelle, im Gleitwegsektor ±10° (QS-Korrektur 5), Steuerkurs
   ≤ 90° zur Bahn, letzte 5 min vor dem Aufsetzen, 1000–200 ft über der Schwelle; Tore
   1000–500 / 500–200; je Tor mind. 5 Proben. Ausgabe: mittlere |Abw.| in Dots, größte
   Abweichung in Dots und ft mit Vorzeichen, Probenzahl.
@@ -194,13 +194,36 @@ Server nicht erreichbar ist (Navdaten-Zwischenspeicher im Client prüfen).
   `landing_analysis`), Landungs-Tab: Info-Zeilen unter der Approach-Stability-Card
   (`AnflugForensikInfo.tsx`), Texte DE/EN/IT. **Keine** Änderung an MQTT/PIREP, Noten,
   Gate oder Deckel; keine Neuberechnung alter Landungen.
-- Grenzen: Gerechnet wird gegen die Bahn der Aufsetz-Korrelation (bei einem späteren
-  Divert-Upgrade in `finalize_runway_correlation` nicht nachgezogen). Der Puffer hält
-  120 Proben (~2 min bei 1 s unter 1500 ft) — bei sehr langsamen GA-Anflügen fehlt ggf. der
-  Anfang des 1000-ft-Tors (sichtbar an der Probenzahl). Stempel im FSM- und im
-  Sampler-Pfad; im Flug-Log steht der Wert nur, wenn der Stempel vor dem Touchdown-Dump
-  lief (Normalfall), im Datensatz immer. Korpus-Plausibilität steht noch aus (braucht
-  Flüge mit dieser Fassung).
+- Grenzen: Im Flug-Log steht der Wert nur, wenn der Stempel vor dem Touchdown-Dump lief
+  (Normalfall), im Datensatz immer. Korpus-Plausibilität steht noch aus (braucht Flüge mit
+  dieser Fassung).
+
+**QS-Korrekturen (Cloud-Prüfer, 29.09.2026, „Freigabe: nein“ → behoben):**
+1. Größte Abweichung: Dots und ft kommen jetzt von DERSELBEN Probe (vorher zwei getrennte
+   Maxima, „−1,2 Dots (+60 ft)“).
+2. Nachziehen nach Bahnwechsel: `anflug_forensik_nachziehen` läuft in
+   `bahn_upgrade_anwenden` (Navigraph-Upgrade beim Einreichen) und in
+   `bahn_am_aufsetzpunkt_nachholen` (Szenerie ersetzt Schwelle/Ende/Versatz), wenn sich die
+   Forensik-Bahn geändert hat — nur für eine schon gestempelte Landung (kein
+   Durchstart-Reset dazwischen) und nur mit Proben vor dem Aufsetzen im Puffer; gleicher
+   Zeitpunkt/gleiches Fenster/gleiche Platzhöhe wie beim Stempel.
+3. Eigener Forensik-Ringpuffer (`anflug_forensik_puffer`, 400 Proben ≈ 5 min), an derselben
+   Stelle und mit demselben Plausibilitätsfilter befüllt wie `approach_buffer`; die
+   120er-Kappe bleibt (trägt über `compute_approach_stddev` die Note). Je Tor
+   `oberste_hoehe_ft`, Anzeige „erfasst ab X ft“, wenn ein Tor nicht von oben an erfasst ist.
+   Veralteter Kommentar an `APPROACH_BUFFER_MAX` berichtigt.
+4. Sim-Boden: `msl − agl` der (bis zu 3) schwellennächsten Proben (±600 m längs, ±100 m quer),
+   Median. Weicht er > 20 ft von der Navigraph-Schwellenhöhe ab (oder fehlt diese), gilt der
+   Sim-Boden: `hoehenbezug` = `sim_boden`, dazu `schwellenhoehe_navigraph_ft` und
+   `sim_boden_ft`; neutraler Hinweis im Landungs-Tab.
+5. Gleitpfad-Sektor ±10° vom GPI aus (echter Gleitweg ≈ ±8°), Abstand `hypot(d+GPI, quer)`.
+   Die Anflugruhe ist an keinen Sektor gebunden.
+6. Dot = 0,35° × θ/3 (bei 3° unverändert, EGLC 5,5° ≈ 0,64°), `grad_je_dot` gespeichert.
+7. `schub_grund`: `kein_n1` / `zu_kurz` getrennt, eigener Text je Grund.
+- Außerdem: N1-Mittel nur über Triebwerke mit N1 ≥ 5 % (ein stehendes Triebwerk halbierte
+  sonst jede Schubänderung); ohne Bahn werden `winkel_deg`/`tch_ft` nicht mehr gespeichert.
+  Neue Tests u. a. für Querversatz, Gegenkurs, Ost-West-Bahn, handgerechnete Punkte
+  (h = 50 + d·tan 3°, bis 2,75 NM), Versatz über echten Bahntreffer, Nachziehen nach Upgrade.
 
 ---
 

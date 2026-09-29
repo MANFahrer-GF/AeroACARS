@@ -871,7 +871,7 @@
     },
     "anflug_forensik": {
       "titel": "Sentiero di discesa e stabilità dell'avvicinamento",
-      "ohne_note": "Solo come riferimento – non incide sul punteggio. 1 dot = 0,35°, «+» = sopra il sentiero.",
+      "ohne_note": "Solo come riferimento – non incide sul punteggio. 1 dot = {{dot}}°, «+» = sopra il sentiero.",
       "gleitpfad_gesamt": "Sentiero di discesa 1000–200 ft: in media {{mittel}} dot, scostamento massimo {{max}} dot ({{ft}} ft) · {{proben}} punti di misura",
       "gleitpfad_tor": "{{tor}}: in media {{mittel}}, massimo {{max}} dot",
       "tor_1000_500": "1000–500 ft",
@@ -894,7 +894,13 @@
       "ruhe_nick": "velocità di beccheggio ±{{v}} °/s",
       "ruhe_roll": "velocità di rollio ±{{v}} °/s",
       "ruhe_schub": "{{v}} variazioni di spinta/min",
-      "ruhe_schub_fehlt": "Variazioni di spinta: non rilevate senza dati N1 (es. X-Plane o motore a pistoni)."
+      "erfasst_ab": "(rilevato da {{h}} ft)",
+      "hinweis_sim_boden": "Riferimento di quota: suolo del simulatore alla soglia ({{sim}} ft; i navdata indicano {{nav}} ft).",
+      "hinweis_sim_boden_ohne_navdaten": "Riferimento di quota: suolo del simulatore alla soglia ({{sim}} ft; i navdata non indicano l'elevazione della soglia).",
+      "schub_grund": {
+        "kein_n1": "spinta non rilevata senza dati N1",
+        "zu_kurz": "spinta misurata troppo brevemente"
+      }
     },
     "approach_stability_help": {
       "title": "Stabilità avvicinamento — cosa significano i valori?",
