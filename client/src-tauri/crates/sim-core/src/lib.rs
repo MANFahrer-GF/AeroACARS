@@ -106,8 +106,9 @@ pub struct SimSnapshot {
     /// v0.7.19 (Accident-Detection): Adapter-Snapshot-Flag, true wenn
     /// der Sim ein hartes Crash-Signal liefert. MSFS setzt das aus dem
     /// `Crashed` System-Event (gelatcht im Adapter-Shared-State).
-    /// X-Plane setzt es in v0.7.19 nicht (= immer false; gemeinsame
-    /// Heuristik greift dort statt Sim-Event). `CrashReset` darf den
+    /// X-Plane seit v1.9.12 aus `sim/flightmodel2/misc/has_crashed`, nur
+    /// die Flanke 0 → 1 (vorher immer false; die gemeinsame Heuristik
+    /// greift bei beiden weiter). `CrashReset` darf den
     /// Adapter-Flag fuer neue Snapshots loeschen — der aktive Flug
     /// behaelt seinen Accident-Latch unabhaengig davon bis Flight-End/
     /// Cleanup. Spec docs/spec/v0.7.19-gaf707-crash-accident-detection.md.
@@ -1683,8 +1684,10 @@ impl AircraftProfile {
 }
 
 /// Triebwerks-Rohsignale je Triebwerk (Index 0 = Triebwerk 1), siehe
-/// `SimSnapshot::engine_signals`. Die Vektoren haben immer dieselbe Länge:
-/// so viele Triebwerke, wie der Adapter abfragt (MSFS: 4).
+/// `SimSnapshot::engine_signals`. Die Vektoren haben dieselbe Länge: so
+/// viele Triebwerke, wie der Adapter abfragt (4). Ausnahme X-Plane (seit
+/// v1.9.12): `general_combustion`/`combustion_ex1` gibt es dort nicht, sie
+/// bleiben leer; `eng_combustion` traegt `ENGN_running`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct EngineSignals {
     /// MSFS `GENERAL ENG COMBUSTION:n` (laut SDK ein setzbarer Schalter).

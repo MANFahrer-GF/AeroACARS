@@ -322,13 +322,16 @@ fn sprit_verbraucht(k: &Kontext) -> Option<f64> {
     Some((basis - k.s.fuel_total_kg as f64).max(0.0))
 }
 
-/// Sim-Rate: X-Plane meldet im Snapshot fest 1,0 — dort gilt der Zusatzwert
-/// `sim/time/sim_speed` (Rueckfall in `zahl_wert`), sonst kein Wert.
+/// Sim-Rate: Bei X-Plane zeigt der Monitor den Rohwert des Zusatzabos
+/// `sim/time/sim_speed` (Rueckfall in `zahl_wert`), ohne Abo kein Wert. Der
+/// Snapshot traegt ihn seit 29.09.2026 ebenfalls, setzt aber ohne Wert 1,0 —
+/// das waere hier ein erfundenes „Echtzeit".
 fn sim_rate(k: &Kontext) -> Option<f64> {
     (!ist_xplane(k)).then_some(k.s.simulation_rate as f64)
 }
-/// Absturz: X-Plane meldet im Snapshot fest `false` — dort gilt
-/// `sim/flightmodel2/misc/has_crashed` (Zusatzwert).
+/// Absturz: Bei X-Plane der Rohwert `sim/flightmodel2/misc/has_crashed`
+/// (Zusatzwert). Der Snapshot meldet nur die Flanke 0 → 1 (Unfall im Flug),
+/// der Monitor zeigt den Zustand.
 fn absturz(k: &Kontext) -> Option<f64> {
     (!ist_xplane(k)).then(|| if k.s.crashed { 1.0 } else { 0.0 })
 }
@@ -1805,9 +1808,12 @@ pub static KATALOG: &[Kanal] = &[
     k("bodenhoehe", Gruppe::Umgebung, "ft", 0)
         .q(Quelle::Zusatz)
         .msfs("GROUND ALTITUDE", "feet", 1.0),
+    // X-Plane: tatsaechlicher Luftdruck auf Meereshoehe in Pascal
+    // (DataRefs.txt 12.4.3; `sim/weather/barometer_sealevel_inhg` ist REPLACED).
     k("qnh_meer", Gruppe::Umgebung, "hPa", 0)
         .q(Quelle::Zusatz)
-        .msfs("SEA LEVEL PRESSURE", "millibars", 1.0),
+        .msfs("SEA LEVEL PRESSURE", "millibars", 1.0)
+        .xp("sim/weather/region/sealevel_pressure_pas", 0.01),
     // ---- Sim ----
     k("pause", Gruppe::Sim, "", 0)
         .schalter()

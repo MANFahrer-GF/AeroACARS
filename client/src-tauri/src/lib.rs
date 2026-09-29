@@ -1934,7 +1934,8 @@ mod resume_discontinuity_tests {
         assert!(ergebnis.is_ok(), "unter 4x nie scharf: {ergebnis:?}");
     }
 
-    /// X-Plane meldet die Sim-Rate nicht (fest 1.0). Unter Zeitbeschleunigung
+    /// Ohne gemeldete Sim-Rate (fest 1.0 — X-Plane bis v1.9.12, X-Plane 11
+    /// ohne Wert). Unter Zeitbeschleunigung
     /// bewegt sich das Flugzeug trotzdem gleichmaessig schnell — das muss als
     /// ruhig gelten. Ein Teleport danach bleibt ein Sprung
     /// (Cloud-QS 24.09.2026, dritte Runde).
@@ -9241,9 +9242,10 @@ pub struct ApproachBufferSample {
     /// liefern sie beide.
     pub pitch_deg: Option<f32>,
     /// Lernpaket AP5: mittleres N1 in %, fuer die Schub-Umkehrungen — ueber
-    /// die Triebwerke mit N1 ≥ 5 % (siehe `n1_mittel_laufend`). Nur MSFS mit
-    /// Turbinen fuellt `eng_n1_pct`; X-Plane und Kolbenmotoren liefern
-    /// `None` — dann gibt es keinen Schubwert, statt einen zu erfinden.
+    /// die Triebwerke mit N1 ≥ 5 % (siehe `n1_mittel_laufend`). Nur Turbinen
+    /// fuellen `eng_n1_pct` (MSFS `TURB ENG N1`, X-Plane `ENGN_N1_` seit
+    /// v1.9.12); Kolben- und Elektromotoren liefern `None` — dann gibt es
+    /// keinen Schubwert, statt einen zu erfinden.
     pub n1_mittel_pct: Option<f32>,
 }
 
@@ -54692,8 +54694,8 @@ impl SimRuhe {
         });
         // Dazu der vorige Takt: Ein zeitbeschleunigter Flug bewegt sich
         // GLEICHMAESSIG, jeder Takt etwa gleich weit — ein Teleport ist ein
-        // einzelner Ausreisser. Das wirkt bei jedem Simulator, auch bei
-        // X-Plane, das die Sim-Rate nicht meldet (fest 1.0; Cloud-QS
+        // einzelner Ausreisser. Das wirkt bei jedem Simulator, auch ohne
+        // gemeldete Sim-Rate (X-Plane bis v1.9.12 fest 1.0; Cloud-QS
         // 24.09.2026). Das Dreifache laesst Luft fuer ungleiche Takte.
         //
         // Gedeckelt auf das, was ueberhaupt fliegbar ist (16-fache

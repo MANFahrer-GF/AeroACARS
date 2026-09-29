@@ -32,12 +32,16 @@ use serde::Deserialize;
 /// Subset of `acf_*` DataRefs we care about. Each shows up in the
 /// PIREP-detail / Activity-Log so the pilot can confirm we identified
 /// the right aircraft.
+///
+/// `sim/aircraft/view/acf_studio` stand hier bis 29.09.2026 — X-Plane
+/// 12.4.3 kennt ihn nicht (fehlt in DataRefs.txt). Die Suche danach schlug
+/// bei jeder Abfrage fehl, ohne die anderen Werte zu stoeren; gelesen wurde
+/// das Feld nirgends. Entfernt.
 const AIRCRAFT_DATAREFS: &[&str] = &[
     "sim/aircraft/view/acf_descrip",
     "sim/aircraft/view/acf_ICAO",
     "sim/aircraft/view/acf_tailnum",
     "sim/aircraft/view/acf_author",
-    "sim/aircraft/view/acf_studio",
     "sim/aircraft/view/acf_relative_path",
 ];
 
@@ -49,7 +53,6 @@ pub struct AircraftInfo {
     pub icao: Option<String>,
     pub tailnum: Option<String>,
     pub author: Option<String>,
-    pub studio: Option<String>,
     pub relative_path: Option<String>,
 }
 
@@ -63,7 +66,6 @@ impl AircraftInfo {
             &self.icao,
             &self.tailnum,
             &self.author,
-            &self.studio,
             &self.relative_path,
         ]
         .iter()
@@ -262,7 +264,6 @@ impl WebApiClient {
                 "sim/aircraft/view/acf_ICAO" => info.icao = value,
                 "sim/aircraft/view/acf_tailnum" => info.tailnum = value,
                 "sim/aircraft/view/acf_author" => info.author = value,
-                "sim/aircraft/view/acf_studio" => info.studio = value,
                 "sim/aircraft/view/acf_relative_path" => info.relative_path = value,
                 _ => {}
             }

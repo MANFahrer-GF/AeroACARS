@@ -517,7 +517,6 @@ fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
     {
         if flugzeug.relative_path.is_none() || flugzeug.relative_path == web.relative_path {
             flugzeug.author = web.author;
-            flugzeug.studio = web.studio;
             flugzeug.tailnum = web.tailnum;
             if flugzeug.descrip.is_none() {
                 flugzeug.descrip = web.descrip;

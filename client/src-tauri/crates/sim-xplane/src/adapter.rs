@@ -399,6 +399,10 @@ impl XPlaneAdapter {
     pub fn snapshot(&self) -> Option<SimSnapshot> {
         // Sperrfolge: `p2` nie waehrend `parsed` gehalten (siehe AdapterShared).
         let plugin_flugzeug = self.shared.p2_flugzeug();
+        // Ein Profil mit eigener Klappenquelle (CL650, MD-11) schreibt seine
+        // eigene Skala in den Klappenhebel — die Rasten der Flugzeugdatei
+        // passen dazu nicht. Vor `parsed` gelesen, nie beide zugleich.
+        let klappen_aus_profil = klappen_aus_profil(&self.shared.active_catalog.lock());
         let parsed = self.shared.parsed.lock();
         if !parsed.got_first_packet {
             return None;
@@ -408,6 +412,11 @@ impl XPlaneAdapter {
             _ => Simulator::XPlane12,
         };
         let mut snap = parsed.to_snapshot(sim);
+        drop(parsed);
+        if klappen_aus_profil {
+            snap.flap_handle_index = None;
+            snap.flap_num_positions = None;
+        }
         // Overlay aircraft identity from the Web API poller (X-Plane
         // 12.1+ Settings → Network → Web Server). Stays None until the
         // first successful poll, OR forever when the Web API isn't
@@ -478,6 +487,17 @@ impl Drop for XPlaneAdapter {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Liest der aktive Katalog den Klappenhebel aus einer Profil-Quelle statt
+/// aus `flap_handle_request_ratio`? Dann gibt es keine Rastenangabe.
+pub(crate) fn klappen_aus_profil(aktiv: &[ActiveEntry]) -> bool {
+    aktiv.iter().any(|e| {
+        e.field == crate::dataref::FieldId::FlapsHandle
+            && CATALOG
+                .iter()
+                .any(|c| c.field == e.field && c.name != e.name)
+    })
 }
 
 /// v0.12.2 (LE1): decide which aircraft profile should be active from
@@ -1473,6 +1493,34 @@ mod quellen_tests {
         assert!(liste.contains(&"laminar/A333/transponder/ta_ra_knob_pos"));
         assert!(!liste.iter().any(|n| n.contains('[')));
         assert!(!liste.contains(&"sim/cockpit2/switches/strobe_lights_on"));
+    }
+}
+
+#[cfg(test)]
+mod klappen_profil_tests {
+    use super::*;
+
+    /// Profile mit eigener Klappenquelle (CL650, MD-11) verlieren die
+    /// Rastenangabe der Flugzeugdatei; ohne Profil und beim 737-Profil
+    /// (nur AP-Modi ersetzt) bleibt sie.
+    #[test]
+    fn rasten_nur_mit_dem_standard_hebel() {
+        assert!(!klappen_aus_profil(&build_active_catalog(None)));
+        for p in PROFILES {
+            let eigen = p
+                .overrides
+                .iter()
+                .any(|o| o.field == crate::dataref::FieldId::FlapsHandle);
+            assert_eq!(
+                klappen_aus_profil(&build_active_catalog(Some(p))),
+                eigen,
+                "{}",
+                p.name
+            );
+        }
+        assert!(klappen_aus_profil(&build_active_catalog(Some(
+            &PROFILES[0]
+        ))));
     }
 }
 
