@@ -120,11 +120,21 @@ async fn refresh_app_id(manager: &Arc<DiscordPresenceManager>) -> Result<(), ()>
 /// Nach erfolgreicher Anmeldung am Live-Server: App-ID nachziehen und die
 /// gespeicherten Einstellungen erneut anwenden. Beim Start war das Token
 /// evtl. noch nicht da, dann blieb die ID leer und Discord aus.
+///
+/// Drei Versuche (sofort, nach 10 s, nach 60 s), damit ein einzelner
+/// Netz-Aussetzer Discord nicht bis zum naechsten Einstellungs-Klick
+/// ausschaltet.
 pub(crate) fn nach_anmeldung() {
     let Some(m) = manager() else { return };
     tauri::async_runtime::spawn(async move {
-        if refresh_app_id(&m).await.is_ok() {
-            let _ = m.apply_settings(m.current_settings().await).await;
+        for warten in [0u64, 10, 60] {
+            if warten > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(warten)).await;
+            }
+            if refresh_app_id(&m).await.is_ok() {
+                let _ = m.apply_settings(m.current_settings().await).await;
+                return;
+            }
         }
     });
 }

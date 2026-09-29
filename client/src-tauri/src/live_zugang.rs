@@ -27,8 +27,23 @@ use std::time::Duration;
 /// Unser Server. Dieselbe Adresse wie Provisioning und Navdaten.
 pub(crate) const LIVE_BASIS: &str = "https://live.kant.ovh";
 
-/// Das Provisioning-Token des angemeldeten Piloten, falls schon vorhanden.
+/// Das Token der laufenden MQTT-Verbindung. Gesetzt nach erfolgreicher
+/// Provisionierung, geleert beim Abmelden.
+static LAUFENDES_TOKEN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+pub(crate) fn token_setzen(token: Option<String>) {
+    if let Ok(mut t) = LAUFENDES_TOKEN.write() {
+        *t = token.filter(|t| !t.trim().is_empty());
+    }
+}
+
+/// Das Provisioning-Token des angemeldeten Piloten, falls schon vorhanden:
+/// zuerst das der laufenden Verbindung, sonst das gespeicherte (vor der
+/// Provisionierung, z. B. direkt nach dem Start).
 pub(crate) fn pilot_token() -> Option<String> {
+    if let Some(t) = LAUFENDES_TOKEN.read().ok().and_then(|t| t.clone()) {
+        return Some(t);
+    }
     secrets::load_api_key(crate::MQTT_KEYRING_PASSWORD)
         .ok()
         .flatten()

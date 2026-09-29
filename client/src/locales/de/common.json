@@ -1045,7 +1045,7 @@
     "lizenz": "© {{jahr}} Thomas Kant · Proprietär, nur für Piloten der German Sky Group. Weitergabe und Umgehung der Zugangsbeschränkung sind untersagt.",
     "tagline": "Modernes ACARS für phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
     "purpose_title": "Was ist AeroACARS?",
-    "purpose_body": "Moderner Open-Source-ACARS-Client — Tauri-basiert, Rust + React, Cross-Platform. Erfasst Telemetrie aus dem Sim, analysiert Landungen mit Industrie-Schwellen, korreliert Touchdowns auf Runway-Centerline-Genauigkeit und shipped saubere PIREPs an phpVMS.",
+    "purpose_body": "Moderner ACARS-Client der German Sky Group — Tauri-basiert, Rust + React, Cross-Platform. Erfasst Telemetrie aus dem Sim, analysiert Landungen mit Industrie-Schwellen, korreliert Touchdowns auf Runway-Centerline-Genauigkeit und shipped saubere PIREPs an phpVMS.",
     "acknowledgements_title": "Schultern, auf denen AeroACARS steht",
     "acknowledgements_intro": "Diese Projekte wurden ausgiebig studiert, vermessen oder als Referenz benutzt:",
     "thresholds_title": "Score-Schwellen — verifizierte Quellen",

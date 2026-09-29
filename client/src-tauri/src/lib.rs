@@ -13282,6 +13282,11 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         resp.into()
     };
 
+    // Dasselbe Token, mit dem MQTT gleich laeuft, auch fuer die Inhalte
+    // (Skin, Kartenstil, VATGlasses, Discord) — nicht erneut aus dem
+    // Speicher lesen: schlug das Schreiben dort fehl, haette `live_inhalt`
+    // sonst die ganze Sitzung kein oder ein altes Token.
+    let inhalte_token = cfg.password.clone();
     let handle = match start(cfg) {
         Ok(h) => h,
         Err(e) => {
@@ -13309,6 +13314,7 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
     // vorher bekamen sie vom Server 401 und blieben bei der Vorgabe
     // (29.09.2026, siehe live_zugang.rs). Das Tablet ueber die LAN-Bruecke
     // bekommt dasselbe Signal.
+    live_zugang::token_setzen(Some(inhalte_token));
     let _ = tauri::Emitter::emit(&app, "live-zugang-bereit", ());
     state.remote_events.send(remote::RemoteEvent::new(
         "live-zugang-bereit",
@@ -14358,6 +14364,7 @@ async fn stoppe_mqtt_publisher(state: &tauri::State<'_, AppState>) {
 /// re-provisions cleanly. The phpVMS API key in `KEYRING_ACCOUNT`
 /// already gets cleared by the existing logout flow.
 fn clear_mqtt_credentials_cache() {
+    live_zugang::token_setzen(None);
     for key in [
         MQTT_KEYRING_USERNAME,
         MQTT_KEYRING_PASSWORD,

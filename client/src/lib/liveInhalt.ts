@@ -77,15 +77,18 @@ export function useLiveZugangTakt(): number {
   useEffect(() => {
     let weg: (() => void) | undefined;
     let aus = false;
-    void listen("live-zugang-bereit", () => setTakt((t) => t + 1))
-      .then((f) => {
-        if (aus) f();
-        else weg = f;
-      })
-      .catch(() => {
-        // Ohne Ereigniskanal (Test, Browser ohne Bruecke) bleibt es beim
-        // ersten Abruf.
-      });
+    // Ohne Ereigniskanal (Test, Browser ohne Bruecke) bleibt es beim
+    // ersten Abruf — auch wenn `listen` gar nicht erst aufrufbar ist.
+    try {
+      void listen("live-zugang-bereit", () => setTakt((t) => t + 1))
+        .then((f) => {
+          if (aus) f();
+          else weg = f;
+        })
+        .catch(() => {});
+    } catch {
+      // siehe oben
+    }
     return () => {
       aus = true;
       weg?.();

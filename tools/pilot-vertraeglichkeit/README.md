@@ -15,9 +15,10 @@ Erwartung: 1–3 grün mit 0 Fehlern; Szenario 4 (neuer Pilot + >60 falsche Schl
 aus DERSELBEN Adresse) darf 429 liefern — das ist der einzige dokumentierte Rest.
 
 ## Ablauf
-1. `e2e_server.ts` nach `<aeroacars-live>/recorder/src/__e2e_server.ts` kopieren
-   (startet den Recorder auf 127.0.0.1:47831 + eine Attrappe der GSG-Webseite auf :47832;
-   NICHT committen).
+1. `e2e_server.ts` startet den Recorder auf 127.0.0.1:47831 + eine Attrappe der
+   GSG-Webseite auf :47832. Die Skripte kopieren ihn selbst als
+   `<aeroacars-live>/recorder/src/__e2e_server.ts` und entfernen ihn am Ende wieder,
+   auch bei Abbruch (NICHT committen).
 2. `e2e_recorder.rs` nach `<client>/src-tauri/crates/aeroacars-mqtt/tests/` kopieren.
 3. `./lauf-alle.sh` (Umgebungsvariablen `RECORDER_DIR`, `CLIENT_TAURI_DIR` anpassen).
    Ergebnis je Szenario in `$TMPDIR/pilot-vertraeglichkeit/e2e-*.log`.

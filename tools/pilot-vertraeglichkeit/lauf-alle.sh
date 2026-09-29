@@ -2,6 +2,10 @@
 S=${TMPDIR:-/tmp}/pilot-vertraeglichkeit; mkdir -p $S
 R=${RECORDER_DIR:-$HOME/Claude/aeroacars-live/recorder}
 C=${CLIENT_TAURI_DIR:-$HOME/Claude/aeroacars-src/client/src-tauri}
+cp $(dirname $0)/e2e_server.ts $R/src/__e2e_server.ts
+# Auch bei Abbruch (Strg-C, Fehler) aufraeumen — die Datei darf nicht im
+# Recorder-Baum liegen bleiben und versehentlich mitgehen.
+trap 'pkill -f "__e2e_server" 2>/dev/null; rm -f $R/src/__e2e_server.ts' EXIT INT TERM
 szenario() { # name bekannt(0/1) extra-env...
   local name=$1 bekannt=$2; shift 2
   pkill -f "__e2e_server" 2>/dev/null; sleep 1
