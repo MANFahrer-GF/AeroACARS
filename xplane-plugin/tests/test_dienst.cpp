@@ -2266,3 +2266,68 @@ TEST(dienst_gedrosselt_kein_doppelter_index_in_einer_runde) {
     PRUEFE(je_seq.size() >= 3);
     PRUEFE_GLEICH(doppelt, 0);
 }
+
+TEST(dienst_flugzeug_titel_aus_ui_name) {
+    // ToLiss: acf_descrip ist eine Beschreibung, der UI-Name der Titel, den
+    // auch der Scan des Clients nimmt.
+    Aufbau a;
+    a.welt.such("sim/aircraft/view/acf_descrip")->b =
+        std::string("A320 with high fidelity system modelling") + std::string(40, '\0');
+    auto& ui = a.welt.neu("sim/aircraft/view/acf_ui_name", typ::B);
+    ui.b = std::string("  ToLiSs A320 Hi Def \t") + std::string(200, '\0');
+    a.sende("HALLO 2 test");  // (hallo() würde die Meldung schon verbrauchen)
+    a.frame();
+    auto f = a.neue_vom_typ("flugzeug");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) {
+        PRUEFE_TEXT(f[0].hole("titel")->text, "ToLiSs A320 Hi Def");  // getrimmt
+        PRUEFE(f[0].hole("beschreibung") != nullptr);
+        if (f[0].hole("beschreibung")) PRUEFE_TEXT(f[0].hole("beschreibung")->text, "A320 with high fidelity system modelling");
+        PRUEFE_TEXT(f[0].hole("icao")->text, "A20N");
+    }
+    // Nur der UI-Name ändert sich → neue Meldung (2-s-Takt).
+    ui.b = std::string("ToLiSs A321") + std::string(200, '\0');
+    a.frames(150);
+    f = a.neue_vom_typ("flugzeug");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) PRUEFE_TEXT(f[0].hole("titel")->text, "ToLiSs A321");
+    // Leerer UI-Name → Rückfall auf acf_descrip.
+    ui.b = std::string("   ") + std::string(200, '\0');
+    a.d->flugzeug_geladen();
+    a.frame();
+    f = a.neue_vom_typ("flugzeug");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) PRUEFE_TEXT(f[0].hole("titel")->text, "A320 with high fidelity system modelling");
+}
+
+TEST(dienst_flugzeug_ohne_ui_name_wie_bisher) {
+    // X-Plane 11: acf_ui_name gibt es nicht → titel = acf_descrip; ohne
+    // Beschreibung (leer) kein Feld "beschreibung", ohne Dataref titel null.
+    Aufbau a;
+    a.sende("HALLO 2 test");  // (hallo() würde die Meldung schon verbrauchen)
+    a.frame();
+    auto f = a.neue_vom_typ("flugzeug");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) {
+        PRUEFE_TEXT(f[0].hole("titel")->text, "A320neo");
+        PRUEFE(f[0].hole("beschreibung") != nullptr);
+        if (f[0].hole("beschreibung")) PRUEFE_TEXT(f[0].hole("beschreibung")->text, "A320neo");
+    }
+    a.welt.such("sim/aircraft/view/acf_descrip")->b = std::string(10, '\0');
+    a.d->flugzeug_geladen();
+    a.frame();
+    f = a.neue_vom_typ("flugzeug");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) PRUEFE(f[0].hole("beschreibung") == nullptr);
+    a.welt.such("sim/aircraft/view/acf_descrip")->registriert = false;
+    Aufbau b;  // Dataref fehlt ganz (frischer Dienst, kein zwischengespeicherter Handle)
+    b.welt.such("sim/aircraft/view/acf_descrip")->registriert = false;
+    b.sende("HALLO 2 test");
+    b.frame();
+    f = b.neue_vom_typ("flugzeug");
+    PRUEFE_GLEICH(f.size(), size_t(1));
+    if (!f.empty()) {
+        PRUEFE(f[0].hole("titel")->art == JWert::Art::NUL);
+        PRUEFE(f[0].hole("beschreibung") == nullptr);
+    }
+}

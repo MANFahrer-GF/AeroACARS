@@ -118,7 +118,7 @@ PING
 {"p":2,"t":"abo_empfangen","abo":1,"gen":4,"namen":4}
 {"p":2,"t":"abo","abo":1,"gen":4,"teil":1,"teile":1,"st":[[0,"d",1],[1,"fehlt"],[2,"vf",8],[3,"b",40]]}
 {"p":2,"t":"w","abo":1,"gen":4,"seq":812,"teil":1,"teile":1,"v":[[0,51.234567890123449],[2,[0,0,1]],[3,"A20N"]]}
-{"p":2,"t":"flugzeug","icao":"A20N","titel":"A320neo","pfad":"Aircraft/…/a320.acf"}
+{"p":2,"t":"flugzeug","icao":"A333","titel":"Airbus A330-300","beschreibung":"Airbus long range widebody twin","pfad":"Aircraft/Laminar Research/Airbus A330-300/A330.acf"}
 {"p":2,"t":"liste","id":7,"teil":3,"teile":40,"n":["sim/…","…"]}
 {"p":2,"t":"fehler","grund":"rate_ungueltig","zeile":1,"abo":1,"gen":4}
 ```
@@ -169,7 +169,15 @@ PING
   0,5 s — danach schützt die Prüfung beim Lesen); Abos nur mit
   `sim/…`-Namen liefern weiter.
 * **`flugzeug`** nach jedem `HALLO`, nach `XPLM_MSG_PLANE_LOADED` und wenn sich
-  ICAO/Titel/Pfad ändern (Prüfung alle 2 s). Fehlt ein Dataref → `null`.
+  ICAO, UI-Name, Beschreibung oder Pfad ändern (Prüfung alle 2 s, je Dataref
+  eine Einheit unter dem Such-Budget). Fehlt ein Dataref → `null`.
+  * `titel` = `sim/aircraft/view/acf_ui_name` (der Name im X-Plane-UI, z. B.
+    „ToLiSs A320 Hi Def“ — denselben nimmt der Flugzeug-Scan des Clients),
+    bis zum NUL, Leerraum am Rand entfernt. Fehlt er (X-Plane 11) oder ist er
+    leer: Rückfall auf `acf_descrip` wie bis 1.0.0.
+  * `beschreibung` = `acf_descrip` (bei vielen Add-ons eine Beschreibung wie
+    „A320 with high fidelity system modelling“), nur wenn nicht leer.
+    Zusätzliches Feld; ältere Clients ignorieren es.
 * **`LISTE`** meldet nur abonnierbare Namen (druckbares ASCII, ≤ 512 Byte,
   nicht auf `]` endend — sonst würde das ABO ihn als Array-Element lesen).
   Eine neue `LISTE` ersetzt eine laufende. Ohne XPLM 4.0 (X-Plane 11):
@@ -533,8 +541,8 @@ Quelltexte:
 ## DataRefs read (Protokoll 1)
 
 Protokoll 2 liest genau die Namen, die der Client abonniert, plus für die
-`flugzeug`-Meldung `sim/aircraft/view/acf_ICAO`, `acf_descrip` und
-`acf_relative_path`.
+`flugzeug`-Meldung `sim/aircraft/view/acf_ICAO`, `acf_ui_name`,
+`acf_descrip` und `acf_relative_path`.
 
 | DataRef                                                    | Used for                          |
 |------------------------------------------------------------|-----------------------------------|

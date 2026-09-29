@@ -1837,23 +1837,31 @@ int Dienst::lies_kennung(DatarefHandle* h, const char* name, char* aus, size_t k
     return 1;
 }
 
-// Fortsetzbar über Frames: Stufe 0..2 liest ICAO, Titel, Pfad (je eine
-// Einheit unter dem Such-Budget), Stufe 3 vergleicht und sendet. Vorher lief
-// die ganze Prüfung (bis zu drei Find + drei Getter + Senden) vor jedem
-// Budget.
+// Fortsetzbar über Frames: Stufe 0..3 liest ICAO, Beschreibung, Pfad und
+// UI-Namen (je eine Einheit unter dem Such-Budget), Stufe 4 vergleicht und
+// sendet. Vorher lief die ganze Prüfung (bis zu drei Find + drei Getter +
+// Senden) vor jedem Budget.
+//
+// `titel` ist der Name, wie ihn X-Plane im UI zeigt (acf_ui_name, z. B.
+// "ToLiSs A320 Hi Def") — denselben nimmt der Szenerie-/Flugzeug-Scan des
+// Clients; acf_descrip ist bei vielen Add-ons eine Beschreibung ("A320 with
+// high fidelity system modelling"), Messung und Scan passten so nie
+// zusammen. Fehlt acf_ui_name (X-Plane 11) oder ist er leer, gilt wie bisher
+// acf_descrip. Die Beschreibung kommt zusätzlich als `beschreibung`.
 void Dienst::pruefe_flugzeug() noexcept {
     if (flugzeug_stufe_ < 0) {
         if (!flugzeug_offen_ && jetzt_ < naechste_flugzeug_pruefung_) return;
         naechste_flugzeug_pruefung_ = jetzt_ + grenzen::FLUGZEUG_PRUEFINTERVALL_S;
         flugzeug_stufe_ = 0;
     }
-    while (flugzeug_stufe_ < 3) {
+    while (flugzeug_stufe_ < 4) {
         if (!darf_arbeiten()) return;
         int r;
         switch (flugzeug_stufe_) {
             case 0: r = lies_kennung(&h_icao_, "sim/aircraft/view/acf_ICAO", lese_icao_, sizeof(lese_icao_)); break;
             case 1: r = lies_kennung(&h_titel_, "sim/aircraft/view/acf_descrip", lese_titel_, sizeof(lese_titel_)); break;
-            default: r = lies_kennung(&h_pfad_, "sim/aircraft/view/acf_relative_path", lese_pfad_, sizeof(lese_pfad_)); break;
+            case 2: r = lies_kennung(&h_pfad_, "sim/aircraft/view/acf_relative_path", lese_pfad_, sizeof(lese_pfad_)); break;
+            default: r = lies_kennung(&h_ui_, "sim/aircraft/view/acf_ui_name", lese_ui_, sizeof(lese_ui_)); break;
         }
         if (r < 0) return;  // Budget zwischen finde und Lesen um
         lese_hat_[flugzeug_stufe_] = r > 0;
@@ -1864,15 +1872,33 @@ void Dienst::pruefe_flugzeug() noexcept {
     const bool* hat = lese_hat_;
     const bool gleich = gesendet_gueltig_ &&
                         hat[0] == gesendet_hat_[0] && hat[1] == gesendet_hat_[1] &&
-                        hat[2] == gesendet_hat_[2] &&
+                        hat[2] == gesendet_hat_[2] && hat[3] == gesendet_hat_[3] &&
                         std::strcmp(lese_icao_, gesendet_icao_) == 0 &&
                         std::strcmp(lese_titel_, gesendet_titel_) == 0 &&
-                        std::strcmp(lese_pfad_, gesendet_pfad_) == 0;
+                        std::strcmp(lese_pfad_, gesendet_pfad_) == 0 &&
+                        std::strcmp(lese_ui_, gesendet_ui_) == 0;
     if (gleich && !flugzeug_offen_) {
         flugzeug_stufe_ = -1;
         return;
     }
-    if (!darf_arbeiten()) return;  // Senden im nächsten Frame (Stufe 3 bleibt)
+    if (!darf_arbeiten()) return;  // Senden im nächsten Frame (Stufe 4 bleibt)
+
+    // UI-Name ohne Leerraum am Rand; leer zählt wie fehlend. Die Beschreibung
+    // bleibt als Rückfall-Titel unverändert (wie bis 1.0.0), als eigenes Feld
+    // nur, wenn sie mehr als Leerraum enthält.
+    auto rand = [](const char* t, size_t max, size_t* anfang) noexcept {
+        auto leer = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+        size_t n = 0;
+        while (n < max && t[n] != '\0') ++n;
+        size_t a = 0;
+        while (a < n && leer(t[a])) ++a;
+        while (n > a && leer(t[n - 1])) --n;
+        *anfang = a;
+        return n - a;
+    };
+    size_t ui_anfang = 0, be_anfang = 0;
+    const size_t ui_laenge = hat[3] ? rand(lese_ui_, sizeof(lese_ui_), &ui_anfang) : 0;
+    const bool hat_beschreibung = hat[1] && rand(lese_titel_, sizeof(lese_titel_), &be_anfang) > 0;
 
     JsonSchreiber w(paket_, sizeof(paket_));
     auto feld = [&w](const char* schluessel, bool vorhanden, const char* wert, size_t max) noexcept {
@@ -1883,7 +1909,13 @@ void Dienst::pruefe_flugzeug() noexcept {
         w.zurueck_zu(0);
         w.roh("{\"p\":2,\"t\":\"flugzeug\"");
         feld(",\"icao\":", hat[0], lese_icao_, sizeof(lese_icao_));
-        feld(",\"titel\":", hat[1], lese_titel_, sizeof(lese_titel_));
+        if (ui_laenge > 0) {
+            w.roh(",\"titel\":");
+            w.text(lese_ui_ + ui_anfang, ui_laenge);
+        } else {
+            feld(",\"titel\":", hat[1], lese_titel_, sizeof(lese_titel_));
+        }
+        if (hat_beschreibung) feld(",\"beschreibung\":", true, lese_titel_, sizeof(lese_titel_));
         // Im (theoretischen) Fall, dass alles maskiert nicht in 8 KiB passt,
         // lieber den Pfad weglassen als die Meldung.
         feld(",\"pfad\":", hat[2] && versuch == 0, lese_pfad_, sizeof(lese_pfad_));
@@ -1905,7 +1937,8 @@ void Dienst::pruefe_flugzeug() noexcept {
     std::memcpy(gesendet_icao_, lese_icao_, sizeof(lese_icao_));
     std::memcpy(gesendet_titel_, lese_titel_, sizeof(lese_titel_));
     std::memcpy(gesendet_pfad_, lese_pfad_, sizeof(lese_pfad_));
-    for (int i = 0; i < 3; ++i) gesendet_hat_[i] = hat[i];
+    std::memcpy(gesendet_ui_, lese_ui_, sizeof(lese_ui_));
+    for (int i = 0; i < 4; ++i) gesendet_hat_[i] = hat[i];
     gesendet_gueltig_ = true;
     flugzeug_offen_ = false;
 }

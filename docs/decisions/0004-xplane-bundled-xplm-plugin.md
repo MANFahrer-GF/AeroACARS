@@ -88,7 +88,7 @@ Antworten (Auswahl, alle mit `"p":2`):
 {"p":2,"t":"abo","abo":1,"teil":1,"teile":1,
  "st":[[0,"f",1],[1,"fehlt"],[2,"d",1],[3,"b",40],[4,"vf",8]]}
 {"p":2,"t":"w","abo":1,"seq":812,"teil":1,"teile":1,"v":[[0,51.2345678],[2,8.5],[3,"A20N"],[4,[0,0,1]]]}
-{"p":2,"t":"flugzeug","icao":"A20N","titel":"A320neo","pfad":"Aircraft/…/a320.acf"}
+{"p":2,"t":"flugzeug","icao":"A333","titel":"Airbus A330-300","beschreibung":"Airbus long range widebody twin","pfad":"Aircraft/Laminar Research/Airbus A330-300/A330.acf"}
 {"p":2,"t":"liste","id":7,"teil":3,"teile":40,"n":["sim/…","…"]}
 {"p":2,"t":"fehler","grund":"zeile_zu_lang"}
 ```
@@ -107,7 +107,8 @@ Antworten (Auswahl, alle mit `"p":2`):
   (höchstens 64 Suchen je Frame). Ändert sich ein Status, schickt das Plugin
   eine neue `abo`-Antwort.
 - Beim Flugzeugwechsel schickt das Plugin `flugzeug` (aus
-  `sim/aircraft/view/acf_ICAO`, `acf_descrip`, `acf_relative_path`).
+  `sim/aircraft/view/acf_ICAO`, `acf_ui_name` bzw. ersatzweise
+  `acf_descrip`, `acf_relative_path`; siehe §9).
 - Das Plugin liefert nur, solange der Client lebt: ohne `PING`/Anfrage für 5 s
   werden alle Abos verworfen (ein abgestürzter Client lässt keine Last im Sim).
 - Pause und Replay: Lieferung läuft weiter, `sim/time/paused` und
@@ -206,6 +207,17 @@ Die Punkte 1–6 sind wie beschrieben umgesetzt. Wo die ADR offen war, gilt
   stammen. Sind alle Namen `fehlt`, kommt je Runde `"v":[]`.
   Höchstens 16 Pakete je Frame (der Client sollte `SO_RCVBUF` ≥ 1 MiB setzen).
 - **`flugzeug`** kommt auch direkt nach jedem `HALLO`.
+- **`flugzeug`-Titel (Nachtrag 29.09.2026):** `titel` ist
+  `sim/aircraft/view/acf_ui_name` (b[250], „ACF name as seen in the UI“, bis
+  NUL, Leerraum am Rand entfernt) — derselbe Name, den der Flugzeug-Scan des
+  Clients nimmt. Bis dahin stand dort `acf_descrip`, bei vielen Add-ons eine
+  Beschreibung (ToLiss: „A320 with high fidelity system modelling“ statt
+  „ToLiSs A320 Hi Def“), Messung und Scan passten nie zusammen. Live
+  gemessen (X-Plane 12.4.3, Laminar A330): `acf_ui_name` „Airbus A330-300“,
+  `acf_descrip` „Airbus long range widebody twin“. Fehlt `acf_ui_name`
+  (X-Plane 11) oder ist er leer, gilt `acf_descrip` wie bisher. Zusätzlich
+  (additiv) `beschreibung` = `acf_descrip`, wenn nicht leer. Die Kennung
+  liest damit vier Datarefs, je eine Einheit unter dem Such-Budget.
 - **`LISTE`** meldet nur abonnierbare Namen; eine neue `LISTE` ersetzt eine
   laufende. Die XPLM-4.0-Funktionen werden per `XPLMFindSymbol` geholt (nur
   bei XPLM ≥ 400), damit das Plugin unter X-Plane 11 weiter lädt.

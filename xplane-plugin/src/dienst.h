@@ -439,18 +439,22 @@ private:
     DatarefHandle h_icao_ = nullptr;
     DatarefHandle h_titel_ = nullptr;
     DatarefHandle h_pfad_ = nullptr;
+    DatarefHandle h_ui_ = nullptr;    // sim/aircraft/view/acf_ui_name (fehlt evtl. bei XP11)
     char gesendet_icao_[41] = {0};
     char gesendet_titel_[261] = {0};
     char gesendet_pfad_[1025] = {0};
     bool gesendet_gueltig_ = false;
-    bool gesendet_hat_[3] = {false, false, false};
+    char gesendet_ui_[251] = {0};
+    bool gesendet_hat_[4] = {false, false, false, false};
     // Laufende Prüfung der Kennung (fortsetzbar, budgetiert): -1 = ruht,
-    // 0..2 = als nächstes ICAO/Titel/Pfad lesen, 3 = vergleichen und senden.
+    // 0..3 = als nächstes ICAO/Beschreibung/Pfad/UI-Name lesen, 4 = vergleichen
+    // und senden.
     int flugzeug_stufe_ = -1;
     char lese_icao_[41] = {0};
     char lese_titel_[261] = {0};
     char lese_pfad_[1025] = {0};
-    bool lese_hat_[3] = {false, false, false};
+    char lese_ui_[251] = {0};
+    bool lese_hat_[4] = {false, false, false, false};
 
     // Arbeitspuffer. Größer als je angefordert: ein fehlerhaftes Plugin, das
     // mehr Werte schreibt als erbeten, trifft Reserve statt fremden Speicher.
