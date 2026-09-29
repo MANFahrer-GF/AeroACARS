@@ -1450,6 +1450,8 @@ impl XPlaneState {
             aircraft_wind_x_kt: wind_seitlich,
             aircraft_wind_z_kt: wind_gegen.map(|g| -g),
             g_force: self.g_force,
+            // Zweiter G-Kanal gibt es nur unter MSFS (Lernpaket AP1a).
+            g_semibody: None,
             on_ground: self.on_ground,
             // v0.7.19: X-Plane setzt `crashed` in v0.7.19 NICHT (kein
             // verifizierter Crash-DataRef). Die gemeinsame Heuristik

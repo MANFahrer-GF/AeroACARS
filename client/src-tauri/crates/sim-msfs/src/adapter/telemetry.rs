@@ -990,6 +990,13 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // iniBuilds A380, gemessen 28.09.2026 im Reiseflug (Thomas): 1 = HDG-
     // Fenster gestrichelt (NAV, managed), 0 = HDG gewählt.
     F::f64("L:INI_FCU_HDG_DASHED", "Number"),
+    // Lernpaket vmsACARS (29.09.2026), AP1a: zweiter G-Kanal. vmsACARS 3
+    // benotet die Landung unter MSFS aus `SEMIBODY LOADFACTOR Y` statt aus
+    // `G FORCE`; unser `G FORCE` laeuft rund 614 ms hinter der Sinkrate
+    // her. Erst nur mitschreiben und vergleichen, die Note bleibt bei
+    // `G FORCE`. Standard seit FSX, wird nicht abgelehnt — darum VOR dem
+    // riskanten Standard-SimVar-Schwanz.
+    F::f64("SEMIBODY LOADFACTOR Y", "Number"),
     // Standard-SimVars. SEATBELTS/TRANSPONDER STATE dienen als Rueckfall fuer
     // die Muster, die sie laut Paket bedienen (siehe Mapping); alle drei
     // laufen zusaetzlich roh ins Flug-Log. GANZ ans Ende: anders als LVars
@@ -1535,6 +1542,10 @@ pub struct Telemetry {
     pub fbw_strobe: f64,
     /// iniBuilds A380 `L:INI_FCU_HDG_DASHED` 1 = NAV (managed), 0 = HDG.
     pub ini_fcu_hdg_dashed: f64,
+    /// `SEMIBODY LOADFACTOR Y` (g). Zweiter G-Kanal zum Vergleich mit
+    /// `G FORCE`. `None`, wenn der Block vor diesem Feld endet — eine
+    /// erfundene 0 waere als G-Wert falsch.
+    pub semibody_loadfactor_y: Option<f64>,
     /// `CABIN SEATBELTS ALERT SWITCH`. `None`, wenn der Block vor diesem
     /// Feld endet (SimVar abgelehnt) — dann darf der Rueckfall nicht
     /// "OFF" melden.
@@ -2275,6 +2286,9 @@ impl Telemetry {
         pull_f64!(t.fbw_tcas_position);
         pull_f64!(t.fbw_strobe);
         pull_f64!(t.ini_fcu_hdg_dashed);
+        // Option: ein abgeschnittener Block bleibt None, nie 0 g.
+        t.semibody_loadfactor_y = read_f64(bytes, off);
+        off += 8;
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
         t.std_cabin_seatbelts_alert = read_f64(bytes, off);
@@ -4836,6 +4850,7 @@ fn telemetry_to_snapshot_mit_pfad(
         aircraft_wind_x_kt: Some(-t.aircraft_wind_x_kt as f32),
         aircraft_wind_z_kt: Some(t.aircraft_wind_z_kt as f32),
         g_force: t.g_force as f32,
+        g_semibody: t.semibody_loadfactor_y.map(|g| g as f32),
         on_ground: t.on_ground,
         // v0.7.19: crashed/crash_source kommen NICHT aus dem Telemetry-
         // Tick sondern aus dem SimConnect-System-Event `Crashed`. Der
@@ -5699,8 +5714,9 @@ mod tests {
         // +40 (MD-11-Speedbrake x2, INI-Autobrake x3); Runde 3: +96 (12 FSS-
         // E-Jet-LVars) +16 (LIGHT LANDING ON:1/:2); A330 (26.09.2026): +16
         // (Strobe + ATC-Wahlschalter); FBW A32NX (28.09.2026): +32 (vier
-        // gemessene LVars); A380 (28.09.2026): +8 (INI_FCU_HDG_DASHED).
-        assert_eq!(buf.len(), 3624, "total block size");
+        // gemessene LVars); A380 (28.09.2026): +8 (INI_FCU_HDG_DASHED);
+        // Lernpaket (29.09.2026): +8 (SEMIBODY LOADFACTOR Y).
+        assert_eq!(buf.len(), 3632, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6014,12 +6030,13 @@ mod tests {
         assert_eq!(t.fbw_tcas_position, 1371.0); // idx 371
         assert_eq!(t.fbw_strobe, 1372.0); // idx 372
         assert_eq!(t.ini_fcu_hdg_dashed, 1373.0); // idx 373, A380 (28.09.2026)
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1374.0); // idx 374
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1375.0)); // idx 375
-        assert_eq!(t.std_light_landing_on_1, Some(1376.0)); // idx 376
-        assert_eq!(t.std_light_landing_on_2, Some(1377.0)); // idx 377
-        assert_eq!(t.std_transponder_state, Some(1378.0)); // idx 378, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 379, "letzter Index 378");
+        assert_eq!(t.semibody_loadfactor_y, Some(1374.0)); // idx 374, Lernpaket
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1375.0); // idx 375
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1376.0)); // idx 376
+        assert_eq!(t.std_light_landing_on_1, Some(1377.0)); // idx 377
+        assert_eq!(t.std_light_landing_on_2, Some(1378.0)); // idx 378
+        assert_eq!(t.std_transponder_state, Some(1379.0)); // idx 379, zuletzt
+        assert_eq!(TELEMETRY_FIELDS.len(), 380, "letzter Index 379");
     }
 
     #[test]
@@ -6088,9 +6105,14 @@ mod tests {
         // Bordbuch (26.09.2026): drei ZULU-Felder dazu → 53 * 8 = 424.
         // FBW A32NX (28.09.2026): vier gemessene LVars dazu → 57 * 8 = 456.
         // A380 (28.09.2026): INI_FCU_HDG_DASHED dazu → 58 * 8 = 464.
-        buf.truncate(buf.len() - 464);
+        // Lernpaket (29.09.2026): SEMIBODY LOADFACTOR Y dazu → 59 * 8 = 472.
+        buf.truncate(buf.len() - 472);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
+        assert_eq!(
+            t.semibody_loadfactor_y, None,
+            "zweiter G-Kanal = kein erfundenes 0 g"
+        );
         assert_eq!(t.fnx_xpdr_operation, 0.0, "Gruppe K = sicherer Default");
         assert_eq!(
             t.std_transponder_state, None,

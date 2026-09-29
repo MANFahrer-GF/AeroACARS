@@ -97,6 +97,11 @@ pub struct SimSnapshot {
 
     // Forces & flags
     pub g_force: f32,
+    /// Zweiter G-Kanal (MSFS `SEMIBODY LOADFACTOR Y`), nur zum Vergleich
+    /// mit `g_force` — fliesst nicht in die Note. `None` bei X-Plane und
+    /// wenn MSFS ihn nicht liefert (Lernpaket vmsACARS, AP1a, 29.09.2026).
+    #[serde(default)]
+    pub g_semibody: Option<f32>,
     pub on_ground: bool,
     /// v0.7.19 (Accident-Detection): Adapter-Snapshot-Flag, true wenn
     /// der Sim ein hartes Crash-Signal liefert. MSFS setzt das aus dem
@@ -905,6 +910,7 @@ impl Default for SimSnapshot {
             aircraft_wind_x_kt: None,
             aircraft_wind_z_kt: None,
             g_force: 1.0,
+            g_semibody: None,
             on_ground: true,
             crashed: false,
             crash_source: None,

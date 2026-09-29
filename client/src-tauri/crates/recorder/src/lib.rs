@@ -312,6 +312,11 @@ pub struct TouchdownWindowSample {
     pub at: DateTime<Utc>,
     pub vs_fpm: f32,
     pub g_force: f32,
+    /// Lernpaket AP1a (29.09.2026): MSFS `SEMIBODY LOADFACTOR Y` je Probe,
+    /// zum Vergleich der Verzoegerung gegen `g_force`. Fehlt in alten Logs
+    /// und bei X-Plane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub g_semibody: Option<f32>,
     pub on_ground: bool,
     pub agl_ft: f32,
     /// v1.6.9 — Hoehe ueber dem Meeresspiegel. Additiv: aeltere
@@ -643,6 +648,7 @@ mod scored_g_tests {
             at,
             vs_fpm: 0.0,
             g_force: g,
+            g_semibody: None,
             on_ground: false,
             agl_ft: 0.0,
             msl_ft: Some(0.0 + 500.0),

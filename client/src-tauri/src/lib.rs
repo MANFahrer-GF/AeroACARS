@@ -6039,6 +6039,9 @@ struct TelemetrySample {
     at: DateTime<Utc>,
     vs_fpm: f32,
     g_force: f32,
+    /// Lernpaket AP1a (29.09.2026): MSFS `SEMIBODY LOADFACTOR Y`, nur zum
+    /// Vergleich mit `g_force` — geht in keine Note. `None` bei X-Plane.
+    g_semibody: Option<f32>,
     on_ground: bool,
     /// AGL altitude — drives bounce detection (35 ft up / 5 ft return,
     /// BeatMyLanding-aligned). Sourced from `altitude_agl_ft` directly.
@@ -6176,6 +6179,7 @@ impl From<TelemetrySample> for TouchdownWindowSample {
             at: s.at,
             vs_fpm: s.vs_fpm,
             g_force: s.g_force,
+            g_semibody: s.g_semibody,
             on_ground: s.on_ground,
             agl_ft: s.agl_ft,
             msl_ft: Some(s.msl_ft),
@@ -34767,6 +34771,43 @@ fn compute_landing_analysis(
     let pg_500 = peak_g_window(500);
     let pg_1000 = peak_g_window(1000);
 
+    // Lernpaket AP1a (29.09.2026): Vergleich zweier MSFS-G-Kanaele. Fuer
+    // jeden Kanal die Spitze im Fenster −500 ms … +2000 ms um die Kante und
+    // ihr Versatz zur Kante. Kommt die Spitze von `SEMIBODY LOADFACTOR Y`
+    // ueber viele Landungen deutlich frueher als die von `G FORCE`, ist er
+    // der verzoegerungsaermere Kanal (AP1b). Rein forensisch, keine Note.
+    let g_spitze_mit_versatz = |kanal: &dyn Fn(&TouchdownWindowSample) -> Option<f32>| {
+        let mut best: Option<(f32, i64)> = None;
+        for s in samples {
+            let dt = s.at.timestamp_millis() - edge_ms;
+            if !(-500..=2000).contains(&dt) {
+                continue;
+            }
+            if let Some(g) = kanal(s) {
+                if best.map_or(true, |(b, _)| g > b) {
+                    best = Some((g, dt));
+                }
+            }
+        }
+        best
+    };
+    let g_force_spitze = g_spitze_mit_versatz(&|s| Some(s.g_force));
+    let semibody_spitze = g_spitze_mit_versatz(&|s| s.g_semibody);
+    let semibody_post = |window_ms: i64| -> Option<f32> {
+        samples
+            .iter()
+            .filter(|s| {
+                let ts = s.at.timestamp_millis();
+                ts >= edge_ms && ts <= edge_ms + window_ms
+            })
+            .filter_map(|s| s.g_semibody)
+            .fold(None, |acc: Option<f32>, g| {
+                Some(acc.map_or(g, |a| a.max(g)))
+            })
+    };
+    let semibody_500 = semibody_post(500);
+    let semibody_1000 = semibody_post(1000);
+
     // v0.7.17 (B-009): G-Force-Forensik — analog Sinkrate-Forensik.
     //
     // Sample-basierte robuste Statistiken statt naivem max(), damit
@@ -35184,6 +35225,14 @@ fn compute_landing_analysis(
         "scored_g_method": scored.method.as_str(),
         // v0.7.17 (B-009): G-Force-Forensik
         "g_at_edge": g_at_edge,
+        // Lernpaket AP1a (29.09.2026): zweiter MSFS-G-Kanal zum Vergleich.
+        // Versatz in ms relativ zur Kante (negativ = davor). Nur Forensik.
+        "g_force_spitze": g_force_spitze.map(|(g, _)| g),
+        "g_force_spitze_versatz_ms": g_force_spitze.map(|(_, dt)| dt),
+        "semibody_g_spitze": semibody_spitze.map(|(g, _)| g),
+        "semibody_g_spitze_versatz_ms": semibody_spitze.map(|(_, dt)| dt),
+        "semibody_g_peak_post_500ms": semibody_500,
+        "semibody_g_peak_post_1000ms": semibody_1000,
         "g_smoothed_250ms_post": g_smoothed_250ms_post,
         "g_median_post_500ms": g_median_post_500ms,
         "g_p95_post_500ms": g_p95_post_500ms,
@@ -35575,6 +35624,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // where a real sink averages to ~0 by the touchdown moment.
                 vs_fpm: snap.touchdown_vs_source_fpm(),
                 g_force: snap.g_force,
+                g_semibody: snap.g_semibody,
                 on_ground: snap.on_ground,
                 agl_ft: snap.altitude_agl_ft as f32,
                 msl_ft: snap.altitude_msl_ft as f32,
@@ -59176,6 +59226,7 @@ mod touchdown_vs_estimator_tests {
             at,
             vs_fpm,
             g_force: 1.0,
+            g_semibody: None,
             on_ground: false,
             agl_ft,
             msl_ft: agl_ft + 500.0,
@@ -63394,6 +63445,7 @@ mod merge_touchdown_profile_tests {
             at: td() + chrono::Duration::milliseconds(t_ms),
             vs_fpm,
             g_force: 1.0,
+            g_semibody: None,
             on_ground: t_ms >= 0,
             agl_ft: 0.0,
             msl_ft: 0.0 + 500.0,
@@ -63488,6 +63540,7 @@ mod touchdown_metadata_stamp_tests {
             at,
             vs_fpm: -350.0,
             g_force: 1.4,
+            g_semibody: None,
             on_ground,
             agl_ft: if on_ground { 0.0 } else { 12.0 },
             msl_ft: if on_ground { 0.0 } else { 12.0 } + 500.0,
@@ -70420,6 +70473,7 @@ mod msfs_touchdown_delag_replay_golden {
             at: parse_rfc3339(v["at"].as_str().expect("sample.at")),
             vs_fpm: f("vs_fpm"),
             g_force: f("g_force"),
+            g_semibody: None,
             on_ground: v
                 .get("on_ground")
                 .and_then(|x| x.as_bool())
@@ -70678,6 +70732,7 @@ mod msfs_agl_flare_tests {
             at: base + chrono::Duration::milliseconds(ms),
             vs_fpm,
             g_force: 1.0,
+            g_semibody: None,
             on_ground,
             agl_ft,
             msl_ft: Some(agl_ft + 500.0),
@@ -70974,6 +71029,7 @@ mod msfs_agl_flare_tests {
                                 .with_timezone(&Utc),
                             vs_fpm: f("vs_fpm"),
                             g_force: f("g_force"),
+                            g_semibody: None,
                             on_ground: sv
                                 .get("on_ground")
                                 .and_then(|x| x.as_bool())
@@ -71561,6 +71617,7 @@ mod msfs_agl_flare_tests {
                                 .with_timezone(&Utc),
                             vs_fpm: f("vs_fpm"),
                             g_force: f("g_force"),
+                            g_semibody: None,
                             on_ground: sv
                                 .get("on_ground")
                                 .and_then(|x| x.as_bool())
@@ -73142,6 +73199,7 @@ mod spur_aufloesung_tests {
             at: td + chrono::Duration::milliseconds((t_s * 1000.0) as i64),
             vs_fpm: 0.0,
             g_force: 1.0,
+            g_semibody: None,
             on_ground: true,
             agl_ft: 0.0,
             msl_ft: 300.0,
