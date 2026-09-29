@@ -463,18 +463,31 @@ async fn msfs_starten(
     // liest — so prüft jede Messung die heutige Zuordnung, auch ohne Scan.
     let profil = {
         let st = app.state::<crate::AppState>();
-        st.msfs.lock().expect("msfs lock").vermessung_starten(namen)
+        // Ergebnis erst binden: als Schluss-Ausdruck lebte die Sperre
+        // (Temporary) laenger als `st` — Windows-CI E0597 (29.09.2026).
+        let n = st.msfs.lock().expect("msfs lock").vermessung_starten(namen);
+        n
     };
     tracing::info!(
         scan = n,
         profil,
         "Flugzeug vermessen: MSFS-Messung mit L:-Namen aus Scan und Client-Profilen"
     );
+    // Pfad der aircraft.cfg aus `AircraftLoaded` (z. B.
+    // `SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG`): der einzige
+    // stabile Schluessel des Flugzeugs — Titel sind Lackierungen, die ICAO
+    // kommt aus der ATC-Stimme (iFly MAX 8 meldet B738). Bis v1.9.11 wurde er
+    // nicht mitgeschickt, die Messung war nicht eindeutig zuzuordnen.
+    let pfad = snap
+        .cockpit_rohwerte
+        .as_ref()
+        .and_then(|r| r.cfg_pfad.clone())
+        .filter(|p| !p.trim().is_empty());
     let f = Flugzeug {
         titel: (!titel.is_empty()).then_some(titel),
         icao: (!icao.is_empty()).then_some(icao),
         autor: None,
-        pfad: None,
+        pfad,
     };
     Ok((Quelle::Msfs, "msfs", f, (n, profil)))
 }
