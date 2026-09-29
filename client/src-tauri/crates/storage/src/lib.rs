@@ -351,6 +351,11 @@ pub struct LandingRecord {
     pub score_label: Option<String>,
     #[serde(default)]
     pub grade_letter: Option<String>,
+    /// Lernpaket AP2 (29.09.2026): Welcher Deckel die Gesamtnote begrenzt
+    /// hat — `"harte_landung"` (ab 1,75 g, max. 40) oder `"ueberlast"`
+    /// (ab 2,6 g, max. 15). `None` = ungedeckelt oder alter Datensatz.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_deckel: Option<String>,
 
     // Touchdown vitals
     #[serde(default)]

@@ -27738,6 +27738,11 @@ where
     fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
     let computed_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
     let aggregate_master = landing_scoring::aggregate_master_score(&computed_sub_scores);
+    // Lernpaket AP2: nur wenn die Gesamtnote tatsaechlich gedeckelt ist,
+    // traegt der Datensatz den Grund — die Anzeige erklaert damit die Note.
+    let score_deckel = aggregate_master
+        .and(landing_scoring::master_deckel(&computed_sub_scores))
+        .map(|(grund, _)| grund.to_string());
     // Ohne Touchdown-Klasse gibt es keinen Rückfall — und ohne Rate liefert
     // `aggregate_master_score` ohnehin `None` ("lieber gar keine Note als
     // eine geschenkte"). Beides zusammen heisst: keine Bewertung.
@@ -27920,6 +27925,7 @@ where
         score_numeric,
         score_label: score_label.map(|s| s.to_string()),
         grade_letter: grade.map(|g| g.to_string()),
+        score_deckel,
 
         landing_rate_fpm,
         landing_peak_vs_fpm: stats.landing_peak_vs_fpm,

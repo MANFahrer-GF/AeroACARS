@@ -1002,6 +1002,10 @@
         "sim_crash_signature_at_touchdown": "L'atterraggio sembrava un crash del simulatore.",
         "sonstiges": "Si è applicato un altro motivo di verifica automatica."
       }
+    },
+    "deckel": {
+      "harte_landung": "Limitato a massimo 40 punti: atterraggio duro da 1,75 g. Buoni valori di rullaggio o punto di contatto non lo compensano.",
+      "ueberlast": "Limitato a massimo 15 punti: sovraccarico da 2,6 g."
     }
   },
   "about": {

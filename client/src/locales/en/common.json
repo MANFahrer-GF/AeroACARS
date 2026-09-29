@@ -1002,6 +1002,10 @@
         "sim_crash_signature_at_touchdown": "The touchdown looked like a simulator crash.",
         "sonstiges": "Another automatic review reason applied."
       }
+    },
+    "deckel": {
+      "harte_landung": "Capped at 40 points: hard landing from 1.75 g. Good rollout or touchdown point values do not offset it.",
+      "ueberlast": "Capped at 15 points: overload from 2.6 g."
     }
   },
   "about": {
