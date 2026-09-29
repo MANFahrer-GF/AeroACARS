@@ -2073,15 +2073,16 @@ fn nur_baureihe(code: &str) -> Option<&'static str> {
     }
 }
 
-/// Varianten der Baureihen, die die Bewertung kennt (Grenzwerte in der App,
-/// Spur-/Spannweite in `landing-scoring/src/spurweite.rs`). Cloud-QS
+/// Varianten der Baureihen, die die Bewertung kennt (Grenzwerte in der App
+/// UND Spur-/Spannweite in `landing-scoring/src/spurweite.rs`; B77F steht nur
+/// in der Spurweite, B778/B779 nur in den Grenzwerten — sie fehlen deshalb,
+/// dort bleibt es bei der Familien-Variante wie bis v1.9.11). Cloud-QS
 /// 29.09.2026 (P3b): vorher zählte jeder vierstellige Code mit passendem
 /// Präfix — B74S oder B74R landeten so bei Rückfallwerten statt bei der
 /// Familien-Variante, die die Baureihe bisher bekam.
 const BAUREIHEN_VARIANTEN: &[&str] = &[
     "A306", "A30B", "A332", "A333", "A338", "A339", "A342", "A343", "A345", "A346", "A388", "B741",
-    "B742", "B743", "B744", "B748", "B772", "B773", "B77F", "B77L", "B77W", "B778", "B779", "B788",
-    "B789", "B78X",
+    "B742", "B743", "B744", "B748", "B772", "B773", "B77L", "B77W", "B788", "B789", "B78X",
 ];
 
 /// Eine bekannte, konkrete Variante der Reihe (Frachter-`F` angehängt
@@ -2658,6 +2659,12 @@ mod tests {
         assert_eq!(
             muster_aufloesen(Some("B747"), "B748F", None).as_deref(),
             Some("B748F")
+        );
+        // B77F kennt die Grenzwerttabelle nicht → Baureihe bleibt, die
+        // Bewertung wählt wie bisher die Familien-Variante (B77W).
+        assert_eq!(
+            muster_aufloesen(Some("B777"), "B77F", None).as_deref(),
+            Some("B777")
         );
         // A310 gehört nicht zur A300-Reihe.
         assert_eq!(
