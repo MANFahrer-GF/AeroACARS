@@ -914,7 +914,7 @@ mod tests {
 
         // Uebersprungene G-Teilnote → kein Deckel.
         let mut skip = harte_landung_mit_guten_nebenachsen(2.0);
-        skip[1] = SubScoreEntry::skipped("g_force", "l", "no_g");
+        skip[1] = SubScoreEntry::skipped("g_force", "l", "insufficient_samples");
         assert_eq!(master_deckel(&skip), None);
     }
 
