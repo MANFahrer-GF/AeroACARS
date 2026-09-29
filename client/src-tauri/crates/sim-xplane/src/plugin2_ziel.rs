@@ -594,6 +594,18 @@ impl Ziel for AdapterShared {
                 }
             }
             Ereignis::Fehler { grund, id, abo } => {
+                // Abo 1 (Katalog) / 2 (Monitor) vom Plugin abgelehnt — z. B.
+                // `speicher_limit` (Bytebudget des Plugins), `speicher`,
+                // `zu_viele_namen`. Die Sitzung meldet es mit Rueckoff erneut
+                // an; bis dahin laufen die Werte weiter ueber RREF (RREF ruht
+                // nur, solange Katalogwerte des Plugins frisch sind).
+                if let Some(a) = abo.filter(|a| *a < ABO_MESSUNG_AB) {
+                    tracing::warn!(
+                        abo = a,
+                        grund = %grund,
+                        "X-Plane-Plugin lehnt Abo ab — Werte weiter ueber RREF"
+                    );
+                }
                 if let Some(m) = self.messung() {
                     // Fehler zur laufenden `LISTE` (nicht verfuegbar, Speicher …):
                     // die Messung faellt auf die Web-API zurueck.

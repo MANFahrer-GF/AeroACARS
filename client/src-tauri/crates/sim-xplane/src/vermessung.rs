@@ -1110,6 +1110,16 @@ mod tests {
         assert_eq!(m.bereit(), Some(Err("Plugin: Abo 4 ohne Status".into())));
     }
 
+    /// `speicher_limit` (Bytebudget des Plugins, Stand dc4493dc) zu einem
+    /// Mess-Abo: der Lauf nimmt die Web-API, wie bei jedem Abo-Fehler.
+    #[test]
+    fn speicher_limit_fuehrt_zur_web_api() {
+        let m = P2Messung::neu(1);
+        m.abonnieren((0..20).map(|i| format!("sim/wert/{i}")).collect());
+        m.abo_gescheitert(ABO_MESSUNG_AB, "speicher_limit".into());
+        assert_eq!(m.bereit(), Some(Err("Plugin: speicher_limit".into())));
+    }
+
     /// Nachpruefung AP7: ein Mess-Abo faellt MITTEN im Lauf aus. Seine
     /// (eingefrorenen) Werte verschwinden aus dem Schnappschuss, der Bericht
     /// zaehlt seine Namen als abgelehnt; das andere Abo bleibt unberuehrt.

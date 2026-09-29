@@ -121,10 +121,10 @@ struct Envelope {
     /// Schema version. Plugin emits `1` today. Any non-1 value gets
     /// dropped at parse time so future incompatible upgrades don't
     /// confuse us.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     v: u32,
     /// `"telemetry"` or `"touchdown"`. Anything else → dropped.
-    #[serde(default, rename = "type")]
+    #[serde(default, rename = "type", deserialize_with = "null_als_standard")]
     kind: String,
     /// Plugin-Version, ab Plugin 1.0.0 in jedem Protokoll-1-Paket. Fehlt bei
     /// v0.5.x.
@@ -147,40 +147,46 @@ struct Envelope {
 ///   * `ts` — plugin's sim-time-elapsed seconds at edge. Only
 ///     useful for diagnostics (gap-detection across the seq
 ///     counter is more reliable).
+///
+/// `null` (Plugin ab 1.0 schreibt nicht endliche Zahlen so, statt `NaN`):
+/// das Paket bleibt gueltig. Die Messwerte `captured_vs_fpm` und
+/// `captured_g_normal` werden dann `NaN` = „nicht gemessen" — nie 0, das
+/// waere eine erfundene Traumlandung; der Aufrufer nimmt nur endliche Werte.
+/// Alle anderen Felder: `null` wie fehlend (Standardwert).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PremiumTouchdown {
-    #[serde(default)]
+    #[serde(default = "nicht_gemessen", deserialize_with = "zahl_oder_nan")]
     pub captured_vs_fpm: f32,
-    #[serde(default)]
+    #[serde(default = "nicht_gemessen", deserialize_with = "zahl_oder_nan")]
     pub captured_g_normal: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_pitch_deg: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_bank_deg: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_ias_kt: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_gs_kt: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_heading_deg: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub lat: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub lon: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub fnrml_gear_n: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub agl_ft: f32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub ts: f64,
     /// v0.5.11 plugin diagnostic metadata (optional, plugins from
     /// older versions don't send these). Lets the client log which
     /// AGL-window tier the plugin used and how many samples it had.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_vs_source: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_vs_window_ms: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_als_standard")]
     pub captured_vs_samples: u32,
     /// Wall-clock time we received this packet on the client side.
     /// Useful for the UI layer ("touchdown captured 0.4 s ago").
@@ -602,6 +608,28 @@ fn handle_packet(bytes: &[u8], shared: &Arc<PremiumShared>) {
     }
 }
 
+/// `null` → Standardwert des Typs (wie ein fehlendes Feld).
+fn null_als_standard<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
+/// Messwert ohne Wert: `NaN` = „nicht gemessen".
+fn nicht_gemessen() -> f32 {
+    f32::NAN
+}
+
+/// Zahl oder `null` → `NaN`.
+fn zahl_oder_nan<'de, D>(d: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<f32>::deserialize(d)?.unwrap_or(f32::NAN))
+}
+
 fn trim_trailing_ws(bytes: &[u8]) -> &[u8] {
     let mut end = bytes.len();
     while end > 0 && matches!(bytes[end - 1], b'\n' | b'\r' | b' ' | b'\t') {
@@ -664,6 +692,54 @@ mod tests {
         assert_eq!(td.unwrap().captured_vs_fpm as i32, -300);
         let td2 = shared.pending_touchdown.lock().take();
         assert!(td2.is_none());
+    }
+
+    /// Plugin ab 1.0 schreibt nicht endliche Zahlen als `null`. Das Paket
+    /// bleibt gueltig; Sinkrate/g ohne Messung werden `NaN` („nicht
+    /// gemessen", nie 0), alle anderen Felder wie fehlend.
+    #[test]
+    fn touchdown_mit_null_wird_nicht_verworfen() {
+        let shared = Arc::new(PremiumShared::default());
+        handle_packet(
+            br#"{"v":1,"type":"touchdown","pv":"1.0.0","seq":3,"ts":null,"lat":50.1,"lon":null,"captured_vs_fpm":null,"captured_vs_source":"agl","captured_vs_window_ms":500,"captured_vs_samples":12,"captured_g_normal":null,"captured_pitch_deg":null,"captured_bank_deg":1.5,"captured_ias_kt":null,"captured_gs_kt":131.0,"captured_heading_deg":null,"fnrml_gear_n":null,"agl_ft":null}"#,
+            &shared,
+        );
+        assert_eq!(shared.packet_count.load(Ordering::Relaxed), 1);
+        let td = shared
+            .pending_touchdown
+            .lock()
+            .take()
+            .expect("Aufsetzpaket trotz null angenommen");
+        assert!(td.captured_vs_fpm.is_nan(), "keine erfundene 0 fpm");
+        assert!(td.captured_g_normal.is_nan());
+        assert_eq!(td.captured_pitch_deg, 0.0);
+        assert_eq!(td.lon, 0.0);
+        assert_eq!(td.ts, 0.0);
+        assert_eq!(td.lat, 50.1);
+        assert_eq!(td.captured_bank_deg, 1.5);
+        assert_eq!(td.captured_gs_kt, 131.0);
+        assert_eq!(td.captured_vs_samples, 12);
+        // Gemessene Werte bleiben, fehlende Felder wie bisher.
+        handle_packet(
+            br#"{"v":1,"type":"touchdown","captured_vs_fpm":-212.5,"captured_g_normal":1.31}"#,
+            &shared,
+        );
+        let td = shared.pending_touchdown.lock().take().unwrap();
+        assert_eq!(td.captured_vs_fpm, -212.5);
+        assert!((td.captured_g_normal - 1.31).abs() < 1e-6);
+        assert_eq!(td.captured_pitch_deg, 0.0);
+    }
+
+    /// Telemetriepaket mit `null` zaehlt weiter als Lebenszeichen.
+    #[test]
+    fn telemetrie_mit_null_zaehlt() {
+        let shared = Arc::new(PremiumShared::default());
+        handle_packet(
+            br#"{"v":1,"type":"telemetry","pv":"1.0.0","seq":9,"ts":null,"lat":null,"lon":null,"vs_fpm":null,"g_normal":null,"on_ground":false}"#,
+            &shared,
+        );
+        assert_eq!(shared.packet_count.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.p1_version.lock().as_deref(), Some("1.0.0"));
     }
 
     #[test]

@@ -55,6 +55,9 @@ pub const BESTAETIGUNG_MAX: Duration = Duration::from_secs(15);
 /// schon angenommen hat — dann fehlt nur noch die Suche der Namen (bei
 /// 6 × 8192 Namen bis ≈ 3,7 s fuer das letzte Abo, gemessen im Plugin).
 pub const ANGENOMMEN_WARTEN: Duration = Duration::from_secs(10);
+/// Laengste Pause zwischen zwei Teilen einer Status-Antwort, siehe
+/// [`status_luecke_fuer`].
+pub const STATUS_LUECKE: Duration = Duration::from_secs(3);
 /// Hoechste Wartezeit zwischen zwei Neusendungen (Rueckoff).
 pub const RUECKOFF_MAX: Duration = Duration::from_secs(60);
 /// Obergrenze der Sendewarteschlange fuer ABO-Datagramme. Darueber wird
@@ -300,6 +303,10 @@ pub enum Antwort {
         abo: u8,
         /// Generation des Abos, auf das sich der Status bezieht.
         gen: Option<u32>,
+        /// Teil `teil` von `teile` (1-basiert). Der Status eines grossen
+        /// Abos kommt in mehreren Datagrammen; fehlt die Angabe, 1 von 1.
+        teil: u32,
+        teile: u32,
         st: Vec<(usize, NameStatus)>,
     },
     Werte {
@@ -420,6 +427,8 @@ pub fn antwort_lesen(v: &serde_json::Value) -> Option<Antwort> {
             Antwort::Abo {
                 abo,
                 gen: zahl_u32(v, "gen"),
+                teil: zahl_u32(v, "teil").unwrap_or(1),
+                teile: zahl_u32(v, "teile").unwrap_or(1),
                 st,
             }
         }
@@ -540,6 +549,16 @@ pub fn stille_fuer(abo: u8, rate_hz: u32, namen: usize) -> Duration {
     STILLE.max(perioden).max(je_namen)
 }
 
+/// Ab wann eine unvollstaendige Status-Antwort als lueckenhaft gilt (seit
+/// dem letzten Teil): [`STATUS_LUECKE`], bei grossen Abos 1 s + 1 s je 1000
+/// Namen — das Plugin verteilt grosse Status wie die Werte ueber viele
+/// Bilder (siehe [`stille_fuer`]). Danach wird das identische ABO neu
+/// gesendet; das Plugin schickt dann den ganzen Status noch einmal
+/// (`antwort_erneut`, Plugin-Stand dc4493dc).
+pub fn status_luecke_fuer(namen: usize) -> Duration {
+    STATUS_LUECKE.max(Duration::from_millis(1_000 + namen as u64))
+}
+
 /// Wartezeit nach der `versuche`-ten Sendung: nach der ersten und der
 /// ersten Wiederholung je die Grundzeit, danach verdoppelt bis
 /// [`RUECKOFF_MAX`].
@@ -654,6 +673,29 @@ struct Gesendet {
     namen_da: bool,
     /// Je Drahtindex: als „fehlt" gemeldet. Werte dafuer werden verworfen.
     fehlt: Vec<bool>,
+    /// Teile einer mehrteiligen Status-Antwort dieser Generation, bis sie
+    /// vollstaendig ist (QS AP7 H1, Codex). Erst dann gilt das Abo als
+    /// bestaetigt und das Ziel erfaehrt den Status.
+    status_teile: Option<StatusTeile>,
+}
+
+/// Sammelstand einer mehrteiligen Status-Antwort.
+struct StatusTeile {
+    teile: u32,
+    /// Teil (1-basiert) → Eintraege mit Draht-Indizes.
+    stuecke: std::collections::BTreeMap<u32, Vec<(usize, NameStatus)>>,
+    /// Letzter Teil angekommen.
+    zuletzt: Instant,
+}
+
+impl StatusTeile {
+    fn neu(teile: u32, jetzt: Instant) -> Self {
+        Self {
+            teile,
+            stuecke: std::collections::BTreeMap::new(),
+            zuletzt: jetzt,
+        }
+    }
 }
 
 /// Ein ABO-Datagramm in der Warteschlange.
@@ -688,6 +730,49 @@ pub struct Sitzung {
     /// Sitzung, die das Plugin beim HALLO vom selben Port behaelt).
     aufraeumen: bool,
     info: SitzungsInfo,
+}
+
+/// Einen Teil der Status-Antwort einsortieren. Liefert den ganzen Status
+/// (Teile in Reihenfolge), sobald alle `teile` da sind; sonst `None`.
+///
+/// * Teile duerfen in beliebiger Reihenfolge kommen.
+/// * Ein doppelter Teil ersetzt den frueheren; ein erneuter Teil 1 beginnt
+///   eine neue Runde (das Plugin schickt den Status nach einer Aenderung
+///   oder auf ein identisches ABO ganz neu).
+/// * Andere Teilezahl als bisher: neue Runde.
+/// * `teil` 0 oder groesser als `teile`: verworfen.
+fn status_sammeln(
+    g: &mut Gesendet,
+    teil: u32,
+    teile: u32,
+    st: Vec<(usize, NameStatus)>,
+    jetzt: Instant,
+) -> Option<Vec<(usize, NameStatus)>> {
+    if teil == 0 || teile == 0 || teil > teile {
+        tracing::debug!(
+            teil,
+            teile,
+            "X-Plane-Plugin: Status-Teil ohne gueltige Nummer"
+        );
+        return None;
+    }
+    if teile == 1 {
+        g.status_teile = None;
+        return Some(st);
+    }
+    let t = g
+        .status_teile
+        .get_or_insert_with(|| StatusTeile::neu(teile, jetzt));
+    if t.teile != teile || (teil == 1 && t.stuecke.contains_key(&1)) {
+        *t = StatusTeile::neu(teile, jetzt);
+    }
+    t.stuecke.insert(teil, st);
+    t.zuletzt = jetzt;
+    if t.stuecke.len() < teile as usize {
+        return None;
+    }
+    let t = g.status_teile.take()?;
+    Some(t.stuecke.into_values().flatten().collect())
 }
 
 impl Sitzung {
@@ -776,6 +861,22 @@ impl Sitzung {
             if g.unterwegs {
                 continue;
             }
+            // Status-Antwort mit Luecke: ein Teil ging verloren. Identisch neu
+            // anfordern — sonst fehlte ein Teil der Status dauerhaft.
+            if let Some(t) = &g.status_teile {
+                if jetzt.saturating_duration_since(t.zuletzt)
+                    > status_luecke_fuer(g.draht_zu_lokal.len())
+                {
+                    tracing::info!(
+                        abo = *id,
+                        erhalten = t.stuecke.len(),
+                        teile = t.teile,
+                        "X-Plane-Plugin: Status unvollstaendig — Abo erneut angefordert"
+                    );
+                    neu.push(*id);
+                    continue;
+                }
+            }
             let seit = jetzt.saturating_duration_since(g.gesendet_um);
             if g.bestaetigt {
                 // Werte versiegt, obwohl Namen da sind.
@@ -837,6 +938,8 @@ impl Sitzung {
         g.bestaetigt = false;
         g.angenommen = false;
         g.lebenszeichen = None;
+        // Das Plugin schickt den ganzen Status neu — Reste verwerfen.
+        g.status_teile = None;
         let groesse: usize = g.datagramme.iter().map(Vec::len).sum();
         if self.ausgang_bytes + groesse > MAX_WARTESCHLANGE {
             tracing::warn!(
@@ -947,6 +1050,7 @@ impl Sitzung {
                     lebenszeichen: None,
                     namen_da: false,
                     fehlt: vec![false; n],
+                    status_teile: None,
                 },
             );
             self.senden(w.id, jetzt);
@@ -1030,7 +1134,13 @@ impl Sitzung {
         self.letztes_paket = Some(jetzt);
         match a {
             Antwort::Hallo { .. } => {}
-            Antwort::Abo { abo, gen, st } => {
+            Antwort::Abo {
+                abo,
+                gen,
+                teil,
+                teile,
+                st,
+            } => {
                 let Some(g) = self.abos.get_mut(&abo) else {
                     return;
                 };
@@ -1039,6 +1149,10 @@ impl Sitzung {
                 if gen.is_some_and(|x| x != g.gen) {
                     return;
                 }
+                let Some(st) = status_sammeln(g, teil, teile, st, jetzt) else {
+                    // Weitere Teile stehen aus (oder kaputter Teil).
+                    return;
+                };
                 g.bestaetigt = true;
                 g.versuche = 0;
                 g.gemeldet = false;
@@ -1171,6 +1285,7 @@ impl Sitzung {
                 g.versuche = 0;
                 g.gemeldet = false;
                 g.namen_da = false;
+                g.status_teile = None;
             }
             self.senden(abo, jetzt);
         }
@@ -1373,6 +1488,8 @@ mod tests {
             Antwort::Abo {
                 abo: 1,
                 gen: Some(4),
+                teil: 1,
+                teile: 1,
                 st: vec![
                     (0, da()),
                     (1, NameStatus::Fehlt),
@@ -1539,7 +1656,23 @@ mod tests {
     }
 
     fn status(abo: u8, gen: Option<u32>, st: Vec<(usize, NameStatus)>) -> Antwort {
-        Antwort::Abo { abo, gen, st }
+        status_teil(abo, gen, 1, 1, st)
+    }
+
+    fn status_teil(
+        abo: u8,
+        gen: Option<u32>,
+        teil: u32,
+        teile: u32,
+        st: Vec<(usize, NameStatus)>,
+    ) -> Antwort {
+        Antwort::Abo {
+            abo,
+            gen,
+            teil,
+            teile,
+            st,
+        }
     }
 
     fn werte(abo: u8, gen: Option<u32>, v: Vec<(usize, Wert)>) -> Antwort {
@@ -2165,5 +2298,238 @@ mod tests {
         );
         assert!(s.takt(t + Duration::from_millis(100), &z).is_empty());
         assert_eq!(s.ausgang_bytes, 0);
+    }
+
+    // ---- Befund H1 (Codex): mehrteilige Status-Antworten ----
+
+    /// Offene Sitzung mit Abo 3 aus vier Namen, gesendet und vom Plugin
+    /// angenommen (dann wartet die Sitzung bis zu 10 s auf den Status).
+    fn vier_namen_abo(z: &TestZiel, t0: Instant) -> Sitzung {
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 3,
+            rate: 5,
+            namen: Arc::new(namen(&["sim/a", "sim/b", "sim/c", "sim/d"])),
+        }];
+        let mut s = Sitzung::neu("1");
+        s.empfangen(hallo_antwort("1.0.0"), t0, z);
+        assert!(text_von(&s.takt(t0, z)).contains(&ABO_VIER.to_string()));
+        s.empfangen(
+            Antwort::AboEmpfangen {
+                abo: 3,
+                gen: Some(1),
+                namen: Some(4),
+            },
+            t0,
+            z,
+        );
+        s
+    }
+
+    const ABO_VIER: &str = "ABO 3 5 g1\nsim/a\nsim/b\nsim/c\nsim/d\n";
+
+    fn stati(z: &TestZiel) -> Vec<Vec<(usize, NameStatus)>> {
+        z.ereignisse
+            .lock()
+            .iter()
+            .filter_map(|e| match e {
+                Ereignis::Status { st, .. } => Some(st.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn status_teile_werden_gelesen() {
+        let a = antwort_lesen(&json(
+            r#"{"p":2,"t":"abo","abo":3,"gen":1,"teil":2,"teile":3,"st":[[5,"fehlt"]]}"#,
+        ));
+        assert_eq!(
+            a,
+            Some(status_teil(3, Some(1), 2, 3, vec![(5, NameStatus::Fehlt)]))
+        );
+        // Ohne Angabe: 1 von 1.
+        let a = antwort_lesen(&json(r#"{"p":2,"t":"abo","abo":3,"st":[]}"#));
+        assert_eq!(a, Some(status_teil(3, None, 1, 1, vec![])));
+    }
+
+    /// Vertauschte Teile: erst wenn alle da sind, gilt das Abo als
+    /// bestaetigt — dann ein einziger Status in Namensreihenfolge.
+    #[test]
+    fn vertauschte_status_teile_ergeben_einen_status() {
+        let z = TestZiel::default();
+        let t0 = Instant::now();
+        let mut s = vier_namen_abo(&z, t0);
+        s.empfangen(
+            status_teil(3, Some(1), 2, 2, vec![(2, da()), (3, NameStatus::Fehlt)]),
+            t0,
+            &z,
+        );
+        assert!(stati(&z).is_empty(), "halber Status gemeldet");
+        s.empfangen(
+            status_teil(3, Some(1), 1, 2, vec![(0, da()), (1, da())]),
+            t0,
+            &z,
+        );
+        assert_eq!(
+            stati(&z),
+            vec![vec![
+                (0, da()),
+                (1, da()),
+                (2, da()),
+                (3, NameStatus::Fehlt)
+            ]]
+        );
+        // „fehlt" aus Teil 2 wirkt: Wert fuer Name 3 verworfen.
+        s.empfangen(
+            werte(3, Some(1), vec![(1, Wert::Zahl(1.0)), (3, Wert::Zahl(9.0))]),
+            t0,
+            &z,
+        );
+        match z.ereignisse.lock().last() {
+            Some(Ereignis::Werte { v, .. }) => assert_eq!(v, &vec![(1, Wert::Zahl(1.0))]),
+            x => panic!("{x:?}"),
+        }
+        // Kein Neusenden: der Status ist vollstaendig.
+        let t1 = t0 + Duration::from_millis(2500);
+        s.empfangen(Antwort::Sonstige("pong".into()), t1, &z);
+        s.empfangen(werte(3, Some(1), vec![(0, Wert::Zahl(1.0))]), t1, &z);
+        assert!(!text_von(&s.takt(t1, &z)).contains(&ABO_VIER.to_string()));
+    }
+
+    /// Doppelter Teil ersetzt den frueheren; ein neuer Teil 1 beginnt eine
+    /// neue Runde (Status nach Aenderung oder auf identisches ABO).
+    #[test]
+    fn doppelte_status_teile() {
+        let z = TestZiel::default();
+        let t0 = Instant::now();
+        let mut s = vier_namen_abo(&z, t0);
+        s.empfangen(status_teil(3, Some(1), 1, 3, vec![(0, da())]), t0, &z);
+        s.empfangen(
+            status_teil(3, Some(1), 2, 3, vec![(1, NameStatus::Fehlt)]),
+            t0,
+            &z,
+        );
+        s.empfangen(status_teil(3, Some(1), 2, 3, vec![(1, da())]), t0, &z);
+        assert!(stati(&z).is_empty());
+        s.empfangen(
+            status_teil(3, Some(1), 3, 3, vec![(2, da()), (3, da())]),
+            t0,
+            &z,
+        );
+        assert_eq!(
+            stati(&z),
+            vec![vec![(0, da()), (1, da()), (2, da()), (3, da())]]
+        );
+        // Neue Runde: Teil 1 erneut, Teil 2 verloren, dann wieder Teil 1 —
+        // die angebrochene Runde zaehlt nicht mit.
+        s.empfangen(
+            status_teil(3, Some(1), 1, 2, vec![(0, NameStatus::Fehlt)]),
+            t0,
+            &z,
+        );
+        s.empfangen(
+            status_teil(3, Some(1), 1, 2, vec![(0, da()), (1, da())]),
+            t0,
+            &z,
+        );
+        assert_eq!(stati(&z).len(), 1);
+        s.empfangen(
+            status_teil(3, Some(1), 2, 2, vec![(2, da()), (3, da())]),
+            t0,
+            &z,
+        );
+        assert_eq!(stati(&z).len(), 2);
+        assert_eq!(stati(&z)[1][0], (0, da()));
+        // Kaputte Teilnummern werden verworfen.
+        s.empfangen(status_teil(3, Some(1), 0, 2, vec![(0, da())]), t0, &z);
+        s.empfangen(status_teil(3, Some(1), 3, 2, vec![(0, da())]), t0, &z);
+        assert_eq!(stati(&z).len(), 2);
+    }
+
+    /// Fehlender Teil: kein Status, keine Bestaetigung — nach der Luecke
+    /// wird das identische ABO (gleiche Generation) neu angefordert; das
+    /// Plugin schickt dann den ganzen Status erneut.
+    #[test]
+    fn fehlender_status_teil_fordert_neu_an() {
+        let z = TestZiel::default();
+        let t0 = Instant::now();
+        let mut s = vier_namen_abo(&z, t0);
+        let t_teil = t0 + Duration::from_millis(500);
+        s.empfangen(status_teil(3, Some(1), 1, 3, vec![(0, da())]), t_teil, &z);
+        s.empfangen(status_teil(3, Some(1), 3, 3, vec![(3, da())]), t_teil, &z);
+        let mut neu_um = None;
+        let mut schritt = Duration::from_millis(500);
+        while schritt < Duration::from_secs(6) {
+            let jetzt = t0 + schritt;
+            s.empfangen(Antwort::Sonstige("pong".into()), jetzt, &z);
+            if text_von(&s.takt(jetzt, &z)).contains(&ABO_VIER.to_string()) {
+                neu_um = Some(schritt);
+                break;
+            }
+            schritt += Duration::from_millis(100);
+        }
+        let neu_um = neu_um.expect("lueckenhafter Status nie neu angefordert");
+        let luecke = status_luecke_fuer(4);
+        assert!(
+            neu_um > Duration::from_millis(500) + luecke
+                && neu_um <= Duration::from_millis(700) + luecke,
+            "{neu_um:?}"
+        );
+        assert!(stati(&z).is_empty(), "unvollstaendiger Status gemeldet");
+        // Vollstaendige Wiederholung → genau ein Status.
+        let t = t0 + neu_um;
+        s.empfangen(status_teil(3, Some(1), 1, 3, vec![(0, da())]), t, &z);
+        s.empfangen(
+            status_teil(3, Some(1), 2, 3, vec![(1, da()), (2, da())]),
+            t,
+            &z,
+        );
+        s.empfangen(status_teil(3, Some(1), 3, 3, vec![(3, da())]), t, &z);
+        assert_eq!(stati(&z).len(), 1);
+        assert_eq!(stati(&z)[0].len(), 4);
+    }
+
+    /// `speicher_limit` (Bytebudget des Plugins) geht wie jeder abo-bezogene
+    /// Fehler ans Ziel (Vermessung: Web-API-Rueckfall; Abo 1: Log, RREF
+    /// bleibt). Zu einer alten Generation wird er verschluckt.
+    #[test]
+    fn speicher_limit_geht_ans_ziel() {
+        let a = antwort_lesen(&json(
+            r#"{"p":2,"t":"fehler","grund":"speicher_limit","abo":3,"gen":1}"#,
+        ));
+        assert_eq!(
+            a,
+            Some(Antwort::Fehler {
+                grund: "speicher_limit".into(),
+                abo: Some(3),
+                id: None,
+                gen: Some(1),
+            })
+        );
+        let z = TestZiel::default();
+        let t0 = Instant::now();
+        let mut s = vier_namen_abo(&z, t0);
+        s.empfangen(
+            Antwort::Fehler {
+                grund: "speicher_limit".into(),
+                abo: Some(3),
+                id: None,
+                gen: Some(7),
+            },
+            t0,
+            &z,
+        );
+        assert!(!z
+            .ereignisse
+            .lock()
+            .iter()
+            .any(|e| matches!(e, Ereignis::Fehler { .. })));
+        s.empfangen(a.unwrap(), t0, &z);
+        assert!(z.ereignisse.lock().iter().any(|e| matches!(
+            e,
+            Ereignis::Fehler { grund, abo: Some(3), .. } if grund == "speicher_limit"
+        )));
+        // Kein sofortiges Neusenden (Rueckoff wie ohne Status).
+        assert!(!text_von(&s.takt(t0, &z)).contains(&ABO_VIER.to_string()));
     }
 }

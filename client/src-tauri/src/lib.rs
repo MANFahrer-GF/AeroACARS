@@ -35908,9 +35908,13 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     );
                 } else if stats.pending_td_at.is_none() {
                     // Premium ist der erste Edge — neuer Candidate.
+                    // Plugin ab 1.0: `null` = nicht gemessen (NaN) — dann
+                    // bleibt die Stelle leer und der Sampler-Wert gilt.
                     stats.pending_td_at = Some(now);
-                    stats.pending_td_premium_vs = Some(td.captured_vs_fpm);
-                    stats.pending_td_premium_g = Some(td.captured_g_normal);
+                    stats.pending_td_premium_vs =
+                        Some(td.captured_vs_fpm).filter(|v| v.is_finite());
+                    stats.pending_td_premium_g =
+                        Some(td.captured_g_normal).filter(|v| v.is_finite());
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
                         captured_vs_fpm = td.captured_vs_fpm,
@@ -35929,8 +35933,10 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         .pending_td_at
                         .map(|t| (now - t).num_milliseconds())
                         .unwrap_or(0);
-                    stats.pending_td_premium_vs = Some(td.captured_vs_fpm);
-                    stats.pending_td_premium_g = Some(td.captured_g_normal);
+                    stats.pending_td_premium_vs =
+                        Some(td.captured_vs_fpm).filter(|v| v.is_finite());
+                    stats.pending_td_premium_g =
+                        Some(td.captured_g_normal).filter(|v| v.is_finite());
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
                         captured_vs_fpm = td.captured_vs_fpm,
