@@ -6744,6 +6744,9 @@ struct FlightStats {
     /// Replaces the noisy `was_on_ground && !on_ground` flicker we
     /// used pre-Tier-1, which was tripping on gear-strut oscillation.
     bounce_armed_above_threshold: bool,
+    /// Lernpaket AP3: Hoehe ueber Grund beim ersten Bodenkontakt im
+    /// Hopser-Fenster — Bezug fuer `BOUNCE_AGL_THRESHOLD_FT`/`_RETURN_FT`.
+    bounce_boden_agl_ft: Option<f64>,
     /// Sideslip / crab angle at the moment of touchdown, in degrees.
     /// Computed from `heading_true_deg − groundtrack` where the
     /// ground track is reconstructed from the last few ring-buffer
@@ -11527,19 +11530,22 @@ const BOUNCE_MIN_DAUER_MS: i64 = 300;
 /// X-Plane, alle 5 nur bei extrem harten MSFS-Landungen (vs <= -500 fpm).
 /// Reported von Adrian (2026-05-14 PR-Kontext, Beispiel #167).
 ///
-/// Neuer Wert 15 ft = `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`, damit
-/// der live-Streamer-Tally und der Forensics-Override-Pfad gegen
-/// dieselbe Schwelle messen. Forensic-only Bounces unter 15 ft fliessen
-/// weiterhin nur in den touchdown_v2-Pfad ein (5-ft Forensic-Threshold),
-/// werden nicht in `stats.bounce_count` gezaehlt. f64 to match
-/// `SimSnapshot::altitude_agl_ft`.
-const BOUNCE_AGL_THRESHOLD_FT: f64 = 15.0;
+/// Wert = `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`, damit der
+/// live-Streamer-Tally und der Forensics-Override-Pfad gegen dieselbe
+/// Schwelle messen. f64 to match `SimSnapshot::altitude_agl_ft`.
+///
+/// Lernpaket AP3 (29.09.2026): 5 ft und seitdem RELATIV zur Bodenhoehe
+/// beim ersten Bodenkontakt (`FlightStats::bounce_boden_agl_ft`), wie der
+/// 50-Hz-Pfad seit dem THY42-Fix. Die Hoehe ueber Grund wird am
+/// Schwerpunkt gemessen — ein grosses Flugzeug steht am Boden schon bei
+/// rund 20 ft (td 1403: 19,6 ft); absolut gemessen koennte es nie unter
+/// eine Rueckkehrschwelle von 5 ft fallen.
+const BOUNCE_AGL_THRESHOLD_FT: f64 = 5.0;
 
-/// AGL altitude (ft) the aircraft must come back below to count one
-/// bounce. The detector arms when AGL crosses up through THRESHOLD
-/// and fires when it crosses back down through RETURN. Matches
-/// BeatMyLanding's `BounceRadioAltReturnFeet`.
-const BOUNCE_AGL_RETURN_FT: f64 = 5.0;
+/// Hoehe ueber der Bodenhoehe (ft), unter die das Flugzeug nach dem
+/// Scharfschalten zurueck muss, damit ein Hopser zaehlt — oder es meldet
+/// wieder Bodenkontakt. Relativ wie `BOUNCE_AGL_THRESHOLD_FT`.
+const BOUNCE_AGL_RETURN_FT: f64 = 2.0;
 
 /// Max samples retained in `FlightStats::approach_buffer`. Position
 /// streamer ticks every 5-8 s during Approach/Final, so 120 samples
@@ -36696,7 +36702,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     //
                     // v0.7.6 P1-2: `scored_bounce_count` aus dem Analysis-JSON
                     // ist die SSoT fuer den Sub-Score (filtert auf
-                    // BOUNCE_SCORED_MIN_AGL_FT = 15 ft). Vorher hat das hier
+                    // BOUNCE_SCORED_MIN_AGL_FT, seit Lernpaket AP3 5 ft). Vorher hat das hier
                     // nur die Legacy-Klassifikation (LandingScore::classify)
                     // mit dem 5-ft-Forensic-Count gefuettert UND `s.bounce_count`
                     // wurde nicht zurueckgeschrieben → der spaetere PIREP-Build
@@ -44748,6 +44754,7 @@ fn step_flight_at(
 
                 // Reset bounce state for the new analyzer window.
                 stats.bounce_armed_above_threshold = false;
+                stats.bounce_boden_agl_ft = None;
                 stats.bounce_count = 0;
 
                 // ---- Landing Analyzer (Stage 1) ----
@@ -45045,21 +45052,28 @@ fn step_flight_at(
                 // tripped on gear-strut oscillation and over-counted
                 // bounces on a clean landing.
                 //
-                // Arm: AGL crosses up through BOUNCE_AGL_THRESHOLD_FT
-                //      (v0.8.3: 15 ft = touchdown_v2 SCORED-Threshold,
-                //       gesenkt von 35 ft weil typische Hopser nie zaehlten).
-                // Fire: AGL drops back below BOUNCE_AGL_RETURN_FT
-                //      (5 ft, `BounceRadioAltReturnFeet`).
+                // Arm: Hoehe ueber der Bodenhoehe steigt ueber
+                //      BOUNCE_AGL_THRESHOLD_FT (5 ft = touchdown_v2
+                //      SCORED-Threshold; Lernpaket AP3, vorher 15 ft absolut).
+                // Fire: Bodenkontakt oder zurueck unter
+                //      BOUNCE_AGL_RETURN_FT (2 ft ueber Bodenhoehe).
                 // Both must happen inside BOUNCE_WINDOW_SECS for a bounce
                 // to count — past that we assume the pilot did a touch-
                 // and-go or got airborne again deliberately.
-                if in_bounce_window {
+                // Lernpaket AP3: beide Schwellen relativ zur Bodenhoehe beim
+                // ersten Bodenkontakt im Fenster; vorher wird nicht scharf
+                // geschaltet.
+                if in_bounce_window && stats.bounce_boden_agl_ft.is_none() && snap.on_ground {
+                    stats.bounce_boden_agl_ft = Some(snap.altitude_agl_ft);
+                }
+                if let (true, Some(boden)) = (in_bounce_window, stats.bounce_boden_agl_ft) {
+                    let ueber_boden = snap.altitude_agl_ft - boden;
                     if !stats.bounce_armed_above_threshold
-                        && snap.altitude_agl_ft > BOUNCE_AGL_THRESHOLD_FT
+                        && ueber_boden > BOUNCE_AGL_THRESHOLD_FT
                     {
                         stats.bounce_armed_above_threshold = true;
                     } else if stats.bounce_armed_above_threshold
-                        && snap.altitude_agl_ft < BOUNCE_AGL_RETURN_FT
+                        && (snap.on_ground || ueber_boden < BOUNCE_AGL_RETURN_FT)
                     {
                         stats.bounce_count = stats.bounce_count.saturating_add(1);
                         stats.bounce_armed_above_threshold = false;
@@ -45190,6 +45204,7 @@ fn step_flight_at(
                             landung_episode_zuruecksetzen(&mut stats);
                             sprit_durchstart_zuruecksetzen(&mut stats);
                             stats.bounce_armed_above_threshold = false;
+                            stats.bounce_boden_agl_ft = None;
                             stats.touch_and_go_pending_since = None;
                             // CRITICAL: also clear the GA tracker so the
                             // NEXT approach starts with a fresh AGL
@@ -60755,30 +60770,34 @@ mod v0_7_6_payload_consistency_tests {
 
     #[test]
     fn bounce_thresholds_are_pinned_to_spec() {
-        // Spec §3 P1-2: 5 ft forensic, 15 ft scored. Aenderung der Werte
-        // ist eine Spec-Aenderung — dieser Test schlaegt fehl wenn jemand
-        // die Werte still-und-leise verschiebt.
+        // Spec §3 P1-2: 5 ft forensic; scored seit Lernpaket AP3
+        // (29.09.2026) ebenfalls 5 ft statt 15 ft — Begruendung und
+        // Messung am Live-Bestand siehe `BOUNCE_SCORED_MIN_AGL_FT`.
+        // Aenderung der Werte ist eine Spec-Aenderung — dieser Test schlaegt
+        // fehl wenn jemand die Werte still-und-leise verschiebt.
         assert_eq!(touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT, 5.0);
-        assert_eq!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT, 15.0);
+        assert_eq!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT, 5.0);
     }
 
     #[test]
-    fn bounce_scored_strictly_greater_than_forensic() {
-        // Sanity: scored MUSS strikt groesser sein als forensic, sonst
-        // ist der ganze "kleine Hopser sichtbar, nicht bestraft"-Trick
-        // sinnlos.
-        assert!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT > touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
+    fn bounce_scored_never_below_forensic() {
+        // Sanity: was benotet wird, muss auch forensisch sichtbar sein.
+        // Seit Lernpaket AP3 sind beide Schwellen gleich (5 ft) — jeder
+        // sichtbare Hopser ab 5 ft ist ein „high bounce" und zaehlt.
+        assert!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT >= touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
     }
 
     #[test]
-    fn sas9987_bounce_class_passes_forensic_fails_scored() {
-        // SAS9987 v0.7.5 Real-Beleg: bounce_max_agl_ft = 13.57.
-        // Mit den v0.7.6-Schwellen muss das gelten:
-        //   - >= BOUNCE_FORENSIC_MIN_AGL_FT (5 ft)   → forensisch zaehlt
-        //   - <  BOUNCE_SCORED_MIN_AGL_FT (15 ft)    → score-frei
+    fn sas9987_bounce_class_counts_since_lernpaket_ap3() {
+        // SAS9987 v0.7.5 Real-Beleg: bounce_max_agl_ft = 13.57. Galt bis
+        // Lernpaket AP3 als score-freier „Federwerk-Hopser" (15-ft-Schwelle);
+        // 13,6 ft sind aber ein echtes Wiederabheben und zaehlen jetzt.
+        // Das Bodenflag-Flackern (Live-Bestand: bis 4,8 ft) bleibt draussen.
         let bounce_height = 13.57_f32;
         assert!(bounce_height >= touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
-        assert!(bounce_height < touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+        assert!(bounce_height >= touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+        let flackern_max = 4.8_f32; // td 1474, 3,1 s „in der Luft"
+        assert!(flackern_max < touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
     }
 
     #[test]

@@ -128,7 +128,14 @@ Grenze bei 5 ft (Airbus Safety First, „A Focus on the Landing Flare“). FDM-P
 erkennen einen Hopser an Boden→Luft→Boden am Luft/Boden-Schalter plus Anstieg der
 Radiohöhe; eine veröffentlichte Standard-Schwelle haben wir nicht belegt.
 
-**Empfehlung an Thomas:** Wertungsschwelle von 15 ft auf **5 ft** senken (= Forensik-
+**Beschlossen und umgesetzt (Thomas, 29.09.2026):** 5 ft mit Hinweistext.
+`BOUNCE_SCORED_MIN_AGL_FT` 15 → 5 ft; Streamer-Rückfall misst jetzt relativ zur
+Bodenhöhe beim ersten Bodenkontakt (Scharf > 5 ft, zurück bei Bodenkontakt oder < 2 ft),
+vorher absolut 15/5 ft; Tipp-Texte der Hopser-Teilnote (DE/EN/IT) nennen das
+Airbus-Verfahren (Fluglage halten, durchstarten, nicht nachdrücken). Offen: Texte der
+aeroacars-live-Webapp prüfen, falls sie eigene Übersetzungen hat.
+
+**Empfehlung an Thomas (ursprünglich):** Wertungsschwelle von 15 ft auf **5 ft** senken (= Forensik-
 schwelle = „high bounce“-Grenze der SOPs), UND-Regel mit ≥ 0,3 s bleibt. Wirkung: +9 von
 1344 Landungen (0,7 %) bekommen einen Hopser in die Note. Keine Zeitregel. Keine
 Neuberechnung alter Landungen. Optional ein Hinweis im Bericht: „Hopser über 5 ft —
