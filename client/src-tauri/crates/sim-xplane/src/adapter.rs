@@ -1693,6 +1693,13 @@ mod plugin2_loopback_tests {
                                 }
                                 st.teile.remove(&id);
                                 if id < 3 || !st.mess_stumm {
+                                    // Wie das Plugin ab dem Cloud-QS-Stand: erst
+                                    // die Annahme, dann der Status.
+                                    senden(
+                                        &sock,
+                                        von,
+                                        serde_json::json!({"p":2,"t":"abo_empfangen","abo":id,"gen":gen,"namen":alle.len()}),
+                                    );
                                     status_senden(&sock, von, id, gen, &alle);
                                     st.abos.insert(id, (gen, alle));
                                 }
@@ -1915,7 +1922,8 @@ mod plugin2_loopback_tests {
         f2.join().unwrap();
     }
 
-    /// QS AP7 H1: Langsames Plugin, das Mess-Abos nie bestaetigt. Die
+    /// QS AP7 H1: Langsames (aelteres) Plugin, das Mess-Abos weder annimmt
+    /// (`abo_empfangen`) noch bestaetigt. Die
     /// Vermessung sendet das Abo genau einmal neu, gibt dann auf und nimmt
     /// fuer diesen Lauf die Web-API (hier absichtlich tot → deren Fehler);
     /// die Sitzung bleibt dabei offen (PINGs laufen weiter), das Mess-Abo

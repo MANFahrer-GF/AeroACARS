@@ -484,8 +484,10 @@ fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
     // sie `AboOhneAntwort` — dieser Lauf nimmt dann die Web-API.
     let groesstes = m.teile().iter().map(|t| t.len()).max().unwrap_or(0);
     let schub = Duration::from_millis(anzahl as u64 / 8 + 20 * m.teile().len() as u64);
+    // Obergrenze nach der laengeren Wartezeit (Plugin hat mit
+    // `abo_empfangen` angenommen); ohne Annahme meldet die Sitzung frueher.
     let ende = std::time::Instant::now()
-        + crate::plugin2::bestaetigung_fuer(groesstes) * 2
+        + crate::plugin2::status_wartezeit_angenommen(groesstes) * 2
         + schub
         + Duration::from_secs(3);
     loop {

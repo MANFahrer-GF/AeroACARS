@@ -51,6 +51,10 @@ pub const STILLE: Duration = Duration::from_secs(3);
 pub const BESTAETIGUNG: Duration = Duration::from_secs(2);
 /// Hoechste Wartezeit auf einen Status (vor dem Rueckoff).
 pub const BESTAETIGUNG_MAX: Duration = Duration::from_secs(15);
+/// Grundzeit fuer den Status, wenn das Plugin das ABO mit `abo_empfangen`
+/// schon angenommen hat — dann fehlt nur noch die Suche der Namen (bei
+/// 6 × 8192 Namen bis ≈ 3,7 s fuer das letzte Abo, gemessen im Plugin).
+pub const ANGENOMMEN_WARTEN: Duration = Duration::from_secs(10);
 /// Hoechste Wartezeit zwischen zwei Neusendungen (Rueckoff).
 pub const RUECKOFF_MAX: Duration = Duration::from_secs(60);
 /// Obergrenze der Sendewarteschlange fuer ABO-Datagramme. Darueber wird
@@ -315,6 +319,14 @@ pub enum Antwort {
         teile: u32,
         namen: Vec<String>,
     },
+    /// Das Plugin hat ein ABO angenommen (Status folgt). Seit Plugin
+    /// 1.0.0 (Cloud-QS AP7) fuer jedes ABO, auch ein identisches.
+    AboEmpfangen {
+        abo: u8,
+        gen: Option<u32>,
+        /// Anzahl der angenommenen Namen.
+        namen: Option<u32>,
+    },
     Fehler {
         grund: String,
         /// Betroffenes Abo, falls genannt.
@@ -446,6 +458,11 @@ pub fn antwort_lesen(v: &serde_json::Value) -> Option<Antwort> {
                 .filter_map(|n| n.as_str().map(str::to_string))
                 .collect(),
         },
+        "abo_empfangen" => Antwort::AboEmpfangen {
+            abo: abo_id(v)?,
+            gen: zahl_u32(v, "gen"),
+            namen: zahl_u32(v, "namen"),
+        },
         "fehler" => Antwort::Fehler {
             grund: text(v, "grund").unwrap_or_default(),
             abo: abo_id(v),
@@ -484,6 +501,13 @@ pub fn version_reicht(plugin: &str) -> bool {
 pub fn bestaetigung_fuer(namen: usize) -> Duration {
     let ms = BESTAETIGUNG.as_millis() as u64 + (namen as u64) / 2;
     Duration::from_millis(ms).min(BESTAETIGUNG_MAX)
+}
+
+/// Wartezeit auf den Status, nachdem das Plugin das ABO mit
+/// `abo_empfangen` angenommen hat: 10 s + 1 s je 2000 Namen. Grosszuegig,
+/// damit viele grosse Abos nicht unnoetig neu gesendet werden.
+pub fn status_wartezeit_angenommen(namen: usize) -> Duration {
+    ANGENOMMEN_WARTEN + Duration::from_millis((namen as u64) / 2)
 }
 
 /// Wartezeit nach der `versuche`-ten Sendung: nach der ersten und der
@@ -592,6 +616,8 @@ struct Gesendet {
     gemeldet: bool,
     /// Status zu dieser Generation erhalten?
     bestaetigt: bool,
+    /// `abo_empfangen` zu dieser Generation erhalten (Plugin hat das Abo)?
+    angenommen: bool,
     /// Letzter Status oder letzte Werte.
     lebenszeichen: Option<Instant>,
     /// Mindestens ein Name ist da — dann muessen auch Werte kommen.
@@ -732,7 +758,11 @@ impl Sitzung {
                 }
                 continue;
             }
-            let grund = bestaetigung_fuer(g.draht_zu_lokal.len());
+            let grund = if g.angenommen {
+                status_wartezeit_angenommen(g.draht_zu_lokal.len())
+            } else {
+                bestaetigung_fuer(g.draht_zu_lokal.len())
+            };
             if seit > wartezeit(grund, g.versuche) {
                 if g.versuche >= 2 && !g.gemeldet {
                     // Wartezeit + eine Wiederholung ohne Status: melden, JETZT
@@ -774,6 +804,7 @@ impl Sitzung {
         };
         g.versuche = g.versuche.saturating_add(1);
         g.bestaetigt = false;
+        g.angenommen = false;
         g.lebenszeichen = None;
         let groesse: usize = g.datagramme.iter().map(Vec::len).sum();
         if self.ausgang_bytes + groesse > MAX_WARTESCHLANGE {
@@ -881,6 +912,7 @@ impl Sitzung {
                     versuche: 0,
                     gemeldet: false,
                     bestaetigt: false,
+                    angenommen: false,
                     lebenszeichen: None,
                     namen_da: false,
                     fehlt: vec![false; n],
@@ -1022,6 +1054,9 @@ impl Sitzung {
                     v,
                 });
             }
+            Antwort::AboEmpfangen { abo, gen, namen } => {
+                self.abo_empfangen(abo, gen, namen, jetzt);
+            }
             Antwort::Flugzeug { icao, titel, pfad } => {
                 ziel.ereignis(Ereignis::Flugzeug { icao, titel, pfad })
             }
@@ -1061,6 +1096,52 @@ impl Sitzung {
                 ziel.ereignis(Ereignis::Fehler { grund, abo, id });
             }
             Antwort::Sonstige(_) => {}
+        }
+    }
+
+    /// `abo_empfangen`: Das Plugin hat das Abo dieser Generation. Ab jetzt
+    /// gilt die grosszuegige Status-Wartezeit. Nennt es eine andere
+    /// Namenszahl, als wir gesendet haben (Teil verloren/verstuemmelt),
+    /// wird das Abo mit neuer Generation neu gesendet.
+    fn abo_empfangen(&mut self, abo: u8, gen: Option<u32>, namen: Option<u32>, jetzt: Instant) {
+        let neu_planen = {
+            let Some(g) = self.abos.get_mut(&abo) else {
+                return;
+            };
+            if gen.is_some_and(|x| x != g.gen) {
+                return;
+            }
+            let gesendet = g.draht_zu_lokal.len();
+            if namen.is_some_and(|n| n as usize != gesendet) {
+                tracing::warn!(
+                    abo,
+                    gesendet,
+                    angenommen = ?namen,
+                    "X-Plane-Plugin: Abo mit anderer Namenszahl angenommen — neu mit neuer Generation"
+                );
+                true
+            } else {
+                if !g.bestaetigt {
+                    g.angenommen = true;
+                    g.unterwegs = false;
+                    g.gesendet_um = jetzt;
+                }
+                false
+            }
+        };
+        if neu_planen {
+            let gen = self.naechste_gen();
+            if let Some(g) = self.abos.get_mut(&abo) {
+                let plan = abo_plan(abo, g.rate, gen, &g.namen);
+                g.gen = gen;
+                g.fehlt = vec![false; plan.draht_zu_lokal.len()];
+                g.draht_zu_lokal = plan.draht_zu_lokal;
+                g.datagramme = plan.datagramme;
+                g.versuche = 0;
+                g.gemeldet = false;
+                g.namen_da = false;
+            }
+            self.senden(abo, jetzt);
         }
     }
 
@@ -1817,6 +1898,155 @@ mod tests {
             .lock()
             .iter()
             .any(|e| matches!(e, Ereignis::AboOhneAntwort { .. })));
+    }
+
+    /// `abo_empfangen` (Plugin ab Cloud-QS-Stand): das Abo ist angenommen,
+    /// der Status kommt spaet (hier 9 s — ohne Annahme waere nach ≈ 6,1 s
+    /// neu gesendet worden; gemessen im Plugin bis ≈ 3,7 s). Kein Neusenden,
+    /// keine Meldung.
+    #[test]
+    fn abo_empfangen_verlaengert_die_wartezeit() {
+        assert_eq!(
+            antwort_lesen(&json(
+                r#"{"p":2,"t":"abo_empfangen","abo":3,"gen":7,"namen":8192}"#
+            )),
+            Some(Antwort::AboEmpfangen {
+                abo: 3,
+                gen: Some(7),
+                namen: Some(8192)
+            })
+        );
+        assert_eq!(
+            status_wartezeit_angenommen(8192),
+            Duration::from_millis(14_096)
+        );
+        let z = TestZiel::default();
+        let viele: Vec<String> = (0..8192).map(|i| format!("sim/mess/wert_{i:05}")).collect();
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 3,
+            rate: 5,
+            namen: Arc::new(viele),
+        }];
+        let mut s = Sitzung::neu("1");
+        let t0 = Instant::now();
+        s.empfangen(hallo_antwort("1.0.0"), t0, &z);
+        let mut sendungen = 0;
+        let mut schritt = Duration::ZERO;
+        while schritt < Duration::from_secs(20) {
+            let jetzt = t0 + schritt;
+            s.empfangen(Antwort::Sonstige("pong".into()), jetzt, &z);
+            sendungen += text_von(&s.takt(jetzt, &z))
+                .iter()
+                .filter(|d| d.starts_with("ABO 3 5 1 "))
+                .count();
+            if schritt == Duration::from_millis(400) {
+                s.empfangen(
+                    Antwort::AboEmpfangen {
+                        abo: 3,
+                        gen: Some(1),
+                        namen: Some(8192),
+                    },
+                    jetzt,
+                    &z,
+                );
+            }
+            if schritt == Duration::from_secs(9) {
+                s.empfangen(status(3, Some(1), vec![(0, da())]), jetzt, &z);
+            }
+            if schritt >= Duration::from_secs(9) {
+                s.empfangen(werte(3, Some(1), vec![(0, Wert::Zahl(1.0))]), jetzt, &z);
+            }
+            schritt += Duration::from_millis(20);
+        }
+        assert_eq!(sendungen, 1, "unnoetig neu gesendet");
+        assert!(!z
+            .ereignisse
+            .lock()
+            .iter()
+            .any(|e| matches!(e, Ereignis::AboOhneAntwort { .. })));
+    }
+
+    /// `abo_empfangen` mit anderer Namenszahl oder fremder Generation.
+    #[test]
+    fn abo_empfangen_mit_falscher_namenszahl_sendet_neu() {
+        let z = TestZiel::default();
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 2,
+            rate: 20,
+            namen: Arc::new(namen(&["sim/a", "sim/b", "sim/c"])),
+        }];
+        let mut s = Sitzung::neu("1");
+        let t = Instant::now();
+        s.empfangen(hallo_antwort("1.0.0"), t, &z);
+        let erste = ohne_aufraeumen(text_von(&s.takt(t, &z)));
+        assert_eq!(erste, vec!["ABO 2 20 g1\nsim/a\nsim/b\nsim/c\n"]);
+        // Fremde Generation: nichts.
+        s.empfangen(
+            Antwort::AboEmpfangen {
+                abo: 2,
+                gen: Some(9),
+                namen: Some(1),
+            },
+            t,
+            &z,
+        );
+        assert!(s.takt(t, &z).is_empty());
+        // Richtige Generation, falsche Zahl → neu mit g2.
+        s.empfangen(
+            Antwort::AboEmpfangen {
+                abo: 2,
+                gen: Some(1),
+                namen: Some(2),
+            },
+            t,
+            &z,
+        );
+        assert_eq!(
+            text_von(&s.takt(t, &z)),
+            vec!["ABO 2 20 g2\nsim/a\nsim/b\nsim/c\n"]
+        );
+        // Status zur alten Generation zaehlt nicht mehr.
+        let vorher = z.ereignisse.lock().len();
+        s.empfangen(status(2, Some(1), vec![(0, da())]), t, &z);
+        assert_eq!(z.ereignisse.lock().len(), vorher);
+        // Passende Annahme: kein weiteres Senden.
+        s.empfangen(
+            Antwort::AboEmpfangen {
+                abo: 2,
+                gen: Some(2),
+                namen: Some(3),
+            },
+            t,
+            &z,
+        );
+        // Lebenszeichen, sonst schloesse die Sitzung nach 3 s Stille.
+        s.empfangen(
+            Antwort::Sonstige("pong".into()),
+            t + Duration::from_secs(5),
+            &z,
+        );
+        assert_eq!(
+            text_von(&s.takt(t + Duration::from_secs(5), &z)),
+            vec!["PING\n"]
+        );
+    }
+
+    /// Unbekannte Antworttypen eines neueren Plugins: gelesen als
+    /// `Sonstige`, zaehlen als Lebenszeichen, loesen sonst nichts aus.
+    #[test]
+    fn unbekannte_typen_werden_still_ignoriert() {
+        let a = antwort_lesen(&json(r#"{"p":2,"t":"zukunft","abo":1,"x":[1,2]}"#)).unwrap();
+        assert_eq!(a, Antwort::Sonstige("zukunft".into()));
+        let z = TestZiel::default();
+        let mut s = Sitzung::neu("1");
+        let t = Instant::now();
+        s.empfangen(hallo_antwort("1.0.0"), t, &z);
+        let vorher = z.ereignisse.lock().len();
+        s.empfangen(a, t + Duration::from_millis(2900), &z);
+        assert_eq!(z.ereignisse.lock().len(), vorher);
+        // Lebenszeichen: bei 5 s noch offen.
+        s.takt(t + Duration::from_secs(5), &z);
+        assert!(s.offen());
     }
 
     /// Grosse Datagramme gehen mit Abstand hinaus; Vorrang (PING, ENDE-ABO)
