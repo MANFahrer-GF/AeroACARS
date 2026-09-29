@@ -225,6 +225,24 @@ Server nicht erreichbar ist (Navdaten-Zwischenspeicher im Client prüfen).
   Neue Tests u. a. für Querversatz, Gegenkurs, Ost-West-Bahn, handgerechnete Punkte
   (h = 50 + d·tan 3°, bis 2,75 NM), Versatz über echten Bahntreffer, Nachziehen nach Upgrade.
 
+**Zusatz (Entscheid Thomas 29.09.2026): PIREP, Flug-Log, eine Anzeige für Client und Webapp**
+- Die Structs liegen jetzt in `landing-scoring` (`anflug_forensik.rs`), `storage`
+  re-exportiert sie — eine Definition für LandingRecord und PIREP.
+- `PirepPayload.anflug_gleitpfad` / `.anflug_ruhe` (additiv, fehlen ohne Befund), befüllt
+  in `build_pirep_payload` aus dem finalen Stand. NICHT im Touchdown-Payload (10-KB-Grenze).
+  Größe: voll befüllt (drei Tore, Sim-Boden, Schub) 557 + 412 = 969 Bytes; dafür legt der
+  Client die Werte gerundet ab (Dots/Raten 0,01, ft/s 0,1, Höhen ganze Fuß) —
+  ungerundete f32 waren 1074 Bytes.
+- Flug-Log: Ändert `anflug_forensik_nachziehen` die Werte, schreibt `emit_landing_finalized`
+  einmal ein Ereignis `landing_analysis_nachtrag` (`payload`: `edge_at`,
+  `anflug_gleitpfad`, `anflug_ruhe`) vor `landing_finalized`.
+- `AnflugForensikInfo.tsx` steht in `scripts/anzeige-sync.mjs` (DATEIEN). Nur React +
+  react-i18next, Schlüssel als Literale bzw. Vorspann (`quelle.`, `grund.`,
+  `schub_grund.`), Props = die beiden Blöcke. Der Abgleich in aeroacars-live
+  (`node scripts/anzeige-sync.mjs --schreiben`) steht noch aus: bis dahin sind die zwei
+  Tests in `AnzeigeSync.test.tsx` rot (Trockenlauf gegen eine Kopie: 1 Datei, 75
+  Beschriftungen, danach „auf beiden Seiten gleich“).
+
 ---
 
 ## AP5 — Anflugruhe (Forensik ohne Note)

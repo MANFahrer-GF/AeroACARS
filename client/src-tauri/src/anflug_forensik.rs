@@ -293,11 +293,11 @@ pub(crate) fn auswerten(
             gleitpfad.winkel_deg = Some(winkel_deg as f32);
             gleitpfad.tch_ft = Some(tch_ft as f32);
             gleitpfad.tch_angenommen = tch_angenommen;
-            gleitpfad.grad_je_dot = Some(grad_je_dot(winkel_deg) as f32);
+            gleitpfad.grad_je_dot = Some(runden(grad_je_dot(winkel_deg), 4));
             gleitpfad.versatz_ft = Some(b.versatz_ft as f32);
             gleitpfad.schwellenhoehe_navigraph_ft = b.schwellenhoehe_ft.map(|h| h as f32);
             let sim_boden = sim_boden_an_schwelle(&proben, b);
-            gleitpfad.sim_boden_ft = sim_boden.map(|h| h as f32);
+            gleitpfad.sim_boden_ft = sim_boden.map(|h| runden(h, 1));
             let bezug = match (b.schwellenhoehe_ft, sim_boden) {
                 (Some(n), Some(s)) if (s - n).abs() > SIM_BODEN_TOLERANZ_FT => {
                     Some((s, HOEHENBEZUG_SIM_BODEN))
@@ -537,10 +537,10 @@ fn gleitpfad_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<GleitpfadTor
     let oberste = werte.iter().map(|w| w.2).fold(f64::MIN, f64::max);
     Some(GleitpfadTor {
         proben: werte.len() as u32,
-        mittel_abs_dots: mittel as f32,
-        max_dots: groesste.0 as f32,
-        max_abw_ft: groesste.1 as f32,
-        oberste_hoehe_ft: Some(oberste as f32),
+        mittel_abs_dots: runden(mittel, 2),
+        max_dots: runden(groesste.0, 2),
+        max_abw_ft: runden(groesste.1, 1),
+        oberste_hoehe_ft: Some(runden(oberste, 0)),
     })
 }
 
@@ -575,20 +575,28 @@ fn ruhe_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<RuheTor> {
         } else {
             let werte: Vec<f64> = n1.iter().map(|w| w.1).collect();
             let rate = umkehrungen(&werte, SCHUB_TOTBAND_PCT) as f64 / (dauer / 60.0);
-            (Some(rate as f32), None)
+            (Some(runden(rate, 2)), None)
         }
     };
 
     Some(RuheTor {
         proben: band.len() as u32,
-        dauer_s: dauer_s as f32,
-        oberste_hoehe_ft: Some(oberste as f32),
+        dauer_s: runden(dauer_s, 1),
+        oberste_hoehe_ft: Some(runden(oberste, 0)),
         pfad_vorzeichenwechsel,
-        nick_unruhe_deg_s: raten_streuung(&nick).map(|v| v as f32),
-        roll_unruhe_deg_s: raten_streuung(&roll).map(|v| v as f32),
+        nick_unruhe_deg_s: raten_streuung(&nick).map(|v| runden(v, 2)),
+        roll_unruhe_deg_s: raten_streuung(&roll).map(|v| runden(v, 2)),
         schub_umkehr_pro_min,
         schub_grund: schub_grund.map(str::to_string),
     })
+}
+
+/// Rundet fuer die Ablage. Die Anzeige braucht hoechstens eine
+/// Nachkommastelle; ungerundete f32 („0.42341217") machten beide Bloecke im
+/// PIREP ueber 1 KB gross, ohne eine einzige Information mehr zu tragen.
+fn runden(v: f64, stellen: i32) -> f32 {
+    let f = 10f64.powi(stellen);
+    ((v * f).round() / f) as f32
 }
 
 fn sekunden(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
@@ -1328,6 +1336,49 @@ mod tests {
             r.tor_500_200.unwrap().schub_grund.as_deref(),
             Some("kein_n1")
         );
+    }
+
+    /// Was der Client wirklich ablegt, passt in das PIREP-Budget (< 1 KB
+    /// fuer beide Bloecke) — auch bei krummen Messwerten und mit allen
+    /// Feldern belegt (Sim-Boden, drei Tore, Schub).
+    #[test]
+    fn echte_auswertung_bleibt_gerundet_unter_einem_kilobyte() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let mut buf = anflug(0.0, 50.0, 0.1234567);
+        for (i, s) in buf.iter_mut().enumerate() {
+            s.msl_ft += (i as f32 * 0.731).sin() * 7.3;
+            s.pitch_deg = Some(2.5 + (i as f32 * 1.37).sin() * 0.83);
+            s.bank_deg = (i as f32 * 0.91).cos() * 1.77;
+            s.n1_mittel_pct = Some(58.0 + (i as f32 * 0.43).sin() * 4.1);
+            // Sim-Boden 33,3 ft ueber Navigraph (nur msl − agl zaehlt).
+            s.agl_ft -= 33.3;
+        }
+        // Proben nahe der Schwelle fuer den Sim-Boden.
+        for (i, d) in [900.0, 500.0, 200.0].iter().enumerate() {
+            let h = 50.0 + d * 3.0_f64.to_radians().tan();
+            let mut p = probe(8.0 - i as f64, 0.0, *d, h);
+            p.agl_ft -= 33.3;
+            buf.push_back(p);
+        }
+        let f = auswerten(&buf, Some(&b), Some(td()), None);
+        let g = f.gleitpfad.unwrap();
+        assert_eq!(g.hoehenbezug.as_deref(), Some("sim_boden"));
+        let r = f.ruhe.unwrap();
+        assert!(r
+            .tor_500_200
+            .as_ref()
+            .unwrap()
+            .schub_umkehr_pro_min
+            .is_some());
+        let tor = g.gesamt.as_ref().unwrap();
+        assert_eq!(
+            tor.max_dots,
+            (tor.max_dots * 100.0).round() / 100.0,
+            "auf 0,01 gerundet"
+        );
+        let laenge =
+            serde_json::to_string(&g).unwrap().len() + serde_json::to_string(&r).unwrap().len();
+        assert!(laenge < 1024, "{laenge} Bytes");
     }
 
     #[test]

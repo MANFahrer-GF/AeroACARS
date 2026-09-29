@@ -6953,6 +6953,9 @@ struct FlightStats {
     /// Aufsetzzeit und Fenster des letzten Stempels — fuer das Nachziehen.
     anflug_forensik_td: Option<DateTime<Utc>>,
     anflug_forensik_fenster: Option<chrono::Duration>,
+    /// Die Forensik wurde nach einem Bahnwechsel neu gerechnet und steht
+    /// noch nicht im Flug-Log (`anflug_forensik_nachtrag_ereignis`).
+    anflug_forensik_nachtrag_offen: bool,
     /// Yaw-Rate am TD (heading-Aenderung pro Sekunde) in deg/sec.
     /// Hoch = Ground-Loop-Risk.
     landing_yaw_rate_deg_per_sec: Option<f32>,
@@ -24446,6 +24449,11 @@ fn build_pirep_payload(
         // mehr — siehe `sub_rollout_v2`.
         score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
         client_health: build_client_health_report(&stats),
+        // Lernpaket AP4/AP5 (Entscheid Thomas 29.09.2026): Forensik ohne
+        // Note, im finalen Stand — `apply_finalized_runway_correlation` lief
+        // beim Bau des Bodys, ein Bahnwechsel ist damit schon nachgezogen.
+        anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
+        anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
     }
 }
 
@@ -24909,6 +24917,16 @@ fn finalize_filed_pirep(
 /// `ActiveFlight`. Der PIREP-Queue-Worker kann es nicht: dort ist die
 /// `ActiveFlight` beim Queueing bereits verworfen.
 fn emit_landing_finalized(app: &AppHandle, flight: &ActiveFlight) {
+    // Lernpaket AP4/AP5: Hat ein Bahnwechsel die Anflug-Forensik nach dem
+    // `landing_analysis`-Ereignis neu gerechnet, den korrigierten Stand ins
+    // Log schreiben — VOR dem Abschluss-Ereignis.
+    let nachtrag = {
+        let mut s = flight.stats.lock().expect("flight stats");
+        anflug_forensik_nachtrag_ereignis(&mut s)
+    };
+    if let Some(ereignis) = nachtrag {
+        record_event(app, &flight.pirep_id, &ereignis);
+    }
     // Aktuell: nimmt den letzten validated TD-Score (single-shot, bis
     // Multi-TD-Episodes voll integriert sind).
     let (final_vs, final_score_label) = {
@@ -42897,7 +42915,30 @@ fn anflug_forensik_nachziehen(stats: &mut FlightStats, flight: &ActiveFlight) {
         ist_platzhoehe_navdaten_ft(flight, stats),
     );
     let fenster = stats.anflug_forensik_fenster;
+    let vorher = stats.anflug_forensik.clone();
     anflug_forensik_stempeln(stats, fenster, Some(td), platzhoehe);
+    if stats.anflug_forensik != vorher {
+        // Das Flug-Log traegt noch den alten Stand — beim Einreichen
+        // nachtragen (`emit_landing_finalized`).
+        stats.anflug_forensik_nachtrag_offen = true;
+    }
+}
+
+/// Das Nachtrags-Ereignis fuer das Flug-Log — einmal, und nur wenn
+/// `anflug_forensik_nachziehen` die Werte wirklich geaendert hat.
+fn anflug_forensik_nachtrag_ereignis(stats: &mut FlightStats) -> Option<FlightLogEvent> {
+    if !stats.anflug_forensik_nachtrag_offen {
+        return None;
+    }
+    stats.anflug_forensik_nachtrag_offen = false;
+    let mut payload = serde_json::json!({
+        "edge_at": stats.anflug_forensik_td.map(|t| t.to_rfc3339()),
+    });
+    stats.anflug_forensik.in_analyse_json(&mut payload);
+    Some(FlightLogEvent::LandingAnalysisNachtrag {
+        timestamp: Utc::now(),
+        payload,
+    })
 }
 
 /// v0.16.6: per-episode reset of the approach-stability stats + rollout
@@ -42930,6 +42971,7 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.anflug_forensik = Default::default();
     stats.anflug_forensik_td = None;
     stats.anflug_forensik_fenster = None;
+    stats.anflug_forensik_nachtrag_offen = false;
     // Der Forensik-Puffer selbst bleibt — wie `approach_buffer`: der
     // naechste Anflug steht darin, die Auswertung begrenzt ueber die Zeit.
     stats.rollout_distance_m = None;
@@ -65331,6 +65373,17 @@ mod touchdown_metadata_stamp_tests {
         assert!(nachher.gesamt.is_some(), "{nachher:?}");
         // Die 4000 ft versetzte Schwelle der Navdaten sind beruecksichtigt.
         assert_eq!(nachher.versatz_ft, Some(4000.0));
+
+        // Das Flug-Log bekommt den korrigierten Stand — genau einmal.
+        let ereignis = anflug_forensik_nachtrag_ereignis(&mut stats).expect("Nachtrag");
+        let zeile = serde_json::to_value(&ereignis).unwrap();
+        assert_eq!(zeile["type"], "landing_analysis_nachtrag");
+        assert_eq!(
+            zeile["payload"]["anflug_gleitpfad"]["quelle"],
+            "navigraph_bahn"
+        );
+        assert!(zeile["payload"]["edge_at"].is_string());
+        assert!(anflug_forensik_nachtrag_ereignis(&mut stats).is_none());
     }
 
     /// Riegel: Nach einem Durchstart-Reset gibt es nichts nachzuziehen — ein

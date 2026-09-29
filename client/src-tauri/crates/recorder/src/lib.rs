@@ -212,6 +212,17 @@ pub enum FlightLogEvent {
         edge_at: DateTime<Utc>,
         analysis: serde_json::Value,
     },
+    /// Lernpaket AP4/AP5 (29.09.2026): Gleitpfad und Anflugruhe wurden nach
+    /// dem `LandingAnalysis`-Ereignis NEU gerechnet, weil sich die Bahn
+    /// geaendert hat (Navigraph-Upgrade beim Einreichen, spaet
+    /// eingetroffene Szenerie). Traegt den korrigierten Stand, damit das
+    /// hochgeladene Log nicht beim alten stehen bleibt. `payload` =
+    /// `{ "edge_at", "anflug_gleitpfad", "anflug_ruhe" }` — dieselbe
+    /// JSON-Form wie im PIREP. Reine Forensik, keine Note.
+    LandingAnalysisNachtrag {
+        timestamp: DateTime<Utc>,
+        payload: serde_json::Value,
+    },
     /// PIREP filed (clean or manual) or cancelled. Closes the log.
     FlightEnded {
         timestamp: DateTime<Utc>,
