@@ -1350,6 +1350,14 @@ pub struct PirepPayload {
     pub landing_score_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_score_grade: Option<String>,
+    /// Lernpaket AP2 (29.09.2026): Grund, aus dem der Deckel die
+    /// `landing_score` gesenkt hat (`"harte_landung"` ab 1,75 g → max. 40,
+    /// `"ueberlast"` ab 2,6 g → max. 14). Nur gesetzt, wenn der Deckel die
+    /// Note WIRKLICH senkt (`landing_scoring::master_deckel_wirksam`) — die
+    /// Webapp zeigt damit denselben Hinweis wie der Landungs-Tab, ohne die
+    /// Regel nachzurechnen. Additiv; alte Clients senden das Feld nicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_score_deckel: Option<String>,
     pub go_around_count: Option<u32>,
     pub touchdown_count: Option<u32>,
     pub dep_gate: Option<String>,

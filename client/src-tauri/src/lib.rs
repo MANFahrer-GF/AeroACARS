@@ -24202,6 +24202,11 @@ fn build_pirep_payload(
         landing_score_label: payload_landing_score
             .map(|s| aggregate_score_label(s.clamp(0, 100) as u8).to_string()),
         landing_score_grade: payload_landing_score.map(|s| letter_grade(s).to_string()),
+        // Nur wenn die Note aus dem Aggregat stammt (nicht aus dem
+        // Touchdown-Rückfall) und der Deckel sie wirklich gesenkt hat.
+        landing_score_deckel: aggregate_master
+            .and_then(|_| landing_scoring::master_deckel_wirksam(&payload_sub_scores))
+            .map(str::to_string),
         go_around_count: Some(stats.go_around_count),
         touchdown_count: Some(touchdown_count),
         dep_gate: stats.dep_gate.clone(),
