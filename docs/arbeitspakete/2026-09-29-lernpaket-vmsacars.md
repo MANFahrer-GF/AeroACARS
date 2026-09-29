@@ -97,9 +97,42 @@ Landungen sich ändern (Liste an Thomas); neue Flüge only.
 - **dah3181:** 3,8 s und 8,1 ft — ein echter kleiner Hopser. Wir erfassen ihn forensisch,
   benoten ihn aber nicht (Wertungsschwelle 15 ft); vmsACARS würde ihn benoten.
 
-**Empfehlung:** Regel nicht übernehmen. Offene Frage an Thomas: Soll ein Hopser ab
-≥ 3 s Luftzeit auch unter 15 ft in die Note zählen? Vor einer Änderung am großen
-Korpus (Live-Recorder) messen — 15 Fixtures reichen dafür nicht.
+**Empfehlung (Fixtures):** vmsACARS-Regel nicht übernehmen.
+
+**Nachmessung am Live-Recorder (29.09.2026, `touchdowns.window_json`, 1344 Landungen,
+nur lesend):** 306 Luftphasen nach dem ersten Bodenkontakt.
+
+| Höhe \ Dauer | < 0,3 s | 0,3–1 s | 1–3 s | ≥ 3 s |
+|---|---|---|---|---|
+| < 2 ft | 65 | 103 | 85 | 2 |
+| 2–5 ft | 0 | 0 | 30 | 5 |
+| 5–15 ft | 0 | 0 | 2 | 8 |
+| ≥ 15 ft | 0 | 0 | 0 | 3 |
+
+- vmsACARS-Regel (≥ 2 ft ODER ≥ 1 s) hätte **127** Landungen als Hopser gezählt — fast
+  alles Bodenflag-Flackern. td 1492: 7,1 s „in der Luft“ bei 0,1 ft. Eine reine
+  Zeitregel ist damit widerlegt.
+- Heute benotet (≥ 15 ft): 3 Landungen. Nur Forensik (5–15 ft): **9** Landungen.
+- Die 5–15-ft-Fälle sind echte Hopser: td 1403 (142 kt, +384 fpm, 12,6 ft, 3,6 s),
+  td 603 (9,8 ft, 5,6 s), td 841 (63 kt, mehrfaches Springen bis 10,5 ft).
+- Unter 5 ft liegt kein einziger Fall, der eindeutig ein Hopser ist; das Flackern
+  reicht bis knapp 5 ft (td 1474: 4,8 ft, 3,1 s).
+- Begründung der 15 ft (v0.7.6/0.7.7, SAS9987 13,6 ft als „Federwerk-Hopser“) ist
+  physikalisch nicht haltbar: Federweg des Fahrwerks liegt weit unter 1 m. Die Schwelle
+  stammt aus der Zeit, bevor die Höhe relativ zur Bodenhöhe beim Aufsetzen gemessen wurde
+  (Fix THY42).
+
+**Realität:** Airbus FCTM unterscheidet „light bounce“ (Fluglage halten, Landung
+fortsetzen) und „high bounce“ (Fluglage halten, Durchstart); Airline-SOPs setzen die
+Grenze bei 5 ft (Airbus Safety First, „A Focus on the Landing Flare“). FDM-Programme
+erkennen einen Hopser an Boden→Luft→Boden am Luft/Boden-Schalter plus Anstieg der
+Radiohöhe; eine veröffentlichte Standard-Schwelle haben wir nicht belegt.
+
+**Empfehlung an Thomas:** Wertungsschwelle von 15 ft auf **5 ft** senken (= Forensik-
+schwelle = „high bounce“-Grenze der SOPs), UND-Regel mit ≥ 0,3 s bleibt. Wirkung: +9 von
+1344 Landungen (0,7 %) bekommen einen Hopser in die Note. Keine Zeitregel. Keine
+Neuberechnung alter Landungen. Optional ein Hinweis im Bericht: „Hopser über 5 ft —
+nach Airbus-Verfahren wäre ein Durchstart vorgesehen“ (nur Text, keine Zusatzstrafe).
 
 ---
 
