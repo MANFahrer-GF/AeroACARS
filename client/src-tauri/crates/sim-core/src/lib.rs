@@ -188,6 +188,12 @@ pub struct SimSnapshot {
 
     // Identity
     pub aircraft_title: Option<String>,
+    /// X-Plane: `acf_ui_name` (Name wie in der Oberflaeche und im Aircraft-
+    /// Scan). Nur fuer die Zuordnung „Flugzeug vermessen“ — die Messung
+    /// traegt diesen Titel (29.09.2026). `aircraft_title` bleibt
+    /// `acf_descrip` (Profilerkennung, Buchungsabgleich). MSFS: `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aircraft_ui_name: Option<String>,
     pub aircraft_icao: Option<String>,
     /// Aircraft registration / tail number as set in the sim (e.g. "D-AILU").
     pub aircraft_registration: Option<String>,
@@ -946,6 +952,7 @@ impl Default for SimSnapshot {
             mach: None,
             empty_weight_kg: None,
             aircraft_title: None,
+            aircraft_ui_name: None,
             aircraft_icao: None,
             aircraft_registration: None,
             simulator: Simulator::default(),

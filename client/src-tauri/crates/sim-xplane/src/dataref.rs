@@ -1831,6 +1831,7 @@ impl XPlaneState {
             },
             empty_weight_kg: oew,
             aircraft_title: None,
+            aircraft_ui_name: None,
             aircraft_icao: None,
             aircraft_registration: None,
             simulator,

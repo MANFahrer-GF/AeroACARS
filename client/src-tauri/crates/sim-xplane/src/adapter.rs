@@ -37,7 +37,8 @@ use sim_core::{SimKind, SimSnapshot, Simulator};
 use crate::dataref::{addon_quelle, XPlaneState, CATALOG};
 use crate::plugin2::{Ziel, PLUGIN2_PORT};
 use crate::plugin2_ziel::{
-    ist_kern, katalog_plan, kennung_ueberlagern, KatalogPlan, P2Stand, PluginZugang,
+    ist_kern, katalog_plan, kennung_ueberlagern, ui_name_ueberlagern, KatalogPlan, P2Stand,
+    PluginZugang,
 };
 use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};
 use crate::profile::{build_active_catalog, profile_index_for_title, ActiveEntry, PROFILES};
@@ -431,6 +432,9 @@ impl XPlaneAdapter {
         if titel.is_some() {
             snap.aircraft_title = titel;
         }
+        // Nur fuer „Flugzeug vermessen“: derselbe Titel, den die Messung
+        // traegt (acf_ui_name) — der Titel oben bleibt acf_descrip.
+        snap.aircraft_ui_name = ui_name_ueberlagern(plugin_flugzeug.as_ref(), &aircraft);
         if icao.is_some() {
             snap.aircraft_icao = icao;
         }

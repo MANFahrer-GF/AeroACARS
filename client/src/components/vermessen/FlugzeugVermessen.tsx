@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../../lib/ipc";
-import type { SimStatus } from "../../types";
+import type { SimSnapshot, SimStatus } from "../../types";
 import { SCHRITTE, schritteFuer, type Schalter, type SchrittDef, type Teil } from "./schritte";
 import "./vermessen.css";
 
@@ -23,29 +23,78 @@ export interface Vermessen {
   profil?: string | null;
   icao: string | null;
   titel: string | null;
+  /** MSFS: SimObject-Ordner der Messung (Server ab 29.09.2026). */
+  ordner?: string | null;
+  /** Alle gemessenen Titel (Lackierungen) dieses Flugzeugs. */
+  titel_liste?: string[];
   zuletzt: number;
   anzahl: number;
 }
 
-/** Ist das geladene Flugzeug schon vermessen? Abgleich über Muster UND
- *  Titel — die ICAO allein trennt z. B. FlyByWire- und iniBuilds-A380 nicht.
- *  Eine andere Lackierung mit anderem Titel wird nicht erkannt; dann wird
- *  eben doppelt gemessen, das schadet nicht. */
+/** SimObject-Ordner eines aircraft.cfg-Pfads — gleiche Regel wie der Server
+ *  (`simObjektOrdner` im Recorder): das Segment nach `SimObjects/<Kategorie>/`,
+ *  Slash/Backslash und Groß-/Kleinschreibung egal. Ohne SimObjects-Segment
+ *  der Ordner über der aircraft.cfg. Lackierungen zeigen auf den Ordner des
+ *  Basisflugzeugs (iFly TUI → `ifly 737-max8-189seats`). */
+export function simObjektOrdner(pfad?: string | null): string | null {
+  const teile = (pfad ?? "").replace(/\\/g, "/").split("/").map((t) => t.trim().toLowerCase()).filter((t) => t !== "");
+  const so = teile.indexOf("simobjects");
+  if (so >= 0 && teile.length > so + 3) return teile[so + 2]!;
+  const n = teile.length;
+  if (n >= 2 && teile[n - 1] === "aircraft.cfg") return teile[n - 2]!;
+  return null;
+}
+
+/** Ordner des geladenen Flugzeugs (MSFS, aus `AircraftLoaded`); X-Plane und
+ *  MSFS kurz nach dem Start: null → Abgleich über den Titel. */
+export function ordnerDesGeladenen(snap?: Pick<SimSnapshot, "cockpit_rohwerte"> | null): string | null {
+  return simObjektOrdner(snap?.cockpit_rohwerte?.cfg_pfad);
+}
+
+/** Titel, unter denen das geladene Flugzeug gemessen sein kann: X-Plane-
+ *  Messungen tragen seit 29.09.2026 den UI-Namen (`acf_ui_name`, wie der
+ *  Scan), ältere die Beschreibung (`acf_descrip` = Schnappschuss-Titel).
+ *  Beide zählen. Der erste ist der Titel einer neuen Messung. */
+export function titelDesGeladenen(snap?: Pick<SimSnapshot, "aircraft_title" | "aircraft_ui_name"> | null): string[] {
+  const t: string[] = [];
+  for (const x of [snap?.aircraft_ui_name, snap?.aircraft_title]) {
+    const s = (x ?? "").trim();
+    if (s && !t.some((y) => y.toLowerCase() === s.toLowerCase())) t.push(s);
+  }
+  return t;
+}
+
+/** Ist das geladene Flugzeug schon vermessen?
+ *  1. MSFS mit Ordner (29.09.2026): gleicher SimObject-Ordner — egal welche
+ *     Lackierung (iFly TUI gemessen, iFly RYR geladen = schon vermessen).
+ *  2. Sonst Muster UND Titel — die ICAO allein trennt z. B. FlyByWire- und
+ *     iniBuilds-A380 nicht. Eine Messung mit BEKANNTEM anderem Ordner zählt
+ *     dabei nie, auch bei gleichem Titel (verschiedene Add-ons). `titel` darf
+ *     mehrere Titel nennen (X-Plane: UI-Name und Beschreibung); verglichen
+ *     wird mit allen gemessenen Titeln der Zeile. */
 export function schonVermessen(
   liste: Vermessen[],
-  titel?: string | null,
+  titel?: string | readonly string[] | null,
   icao?: string | null,
   teil: Teil = "boden",
+  ordner?: string | null,
 ): Vermessen | null {
-  const t = (titel ?? "").trim().toLowerCase();
-  const i = (icao ?? "").trim().toUpperCase();
-  if (!t) return null;
+  const imTeil = liste.filter((v) => (v.teil ?? "boden") === teil);
+  const o = (ordner ?? "").trim().toLowerCase();
+  if (o) {
+    const treffer = imTeil.find((v) => klein(v.ordner) === o);
+    if (treffer) return treffer;
+  }
+  const titelListe = typeof titel === "string" ? [titel] : (titel ?? []);
+  const t = new Set(titelListe.map(klein).filter((x) => x !== ""));
+  const i = gross(icao);
+  if (t.size === 0) return null;
   return (
-    liste.find(
+    imTeil.find(
       (v) =>
-        (v.teil ?? "boden") === teil &&
-        (v.titel ?? "").trim().toLowerCase() === t &&
-        (!i || !v.icao || v.icao.trim().toUpperCase() === i),
+        !(o && v.ordner && klein(v.ordner) !== o) &&
+        [v.titel, ...(v.titel_liste ?? [])].some((x) => t.has(klein(x))) &&
+        (!i || !v.icao || gross(v.icao) === i),
     ) ?? null
   );
 }
@@ -63,6 +112,8 @@ export interface ScanEintrag {
   zuletzt: number;
   /** „aao-profil“ / „hersteller-doku“ = hinterlegte Namensquelle, kein Scan. */
   quelle?: string | null;
+  /** MSFS: SimObject-Ordner aus der Dateiliste des Scans. */
+  ordner?: string[];
 }
 
 const PROFIL_RANG: Record<string, number> = { geprueft: 3, aus_scan: 2, in_arbeit: 1 };
@@ -78,6 +129,9 @@ export type Zeile = {
   /** Alle Titel, unter denen der Simulator dieses Flugzeug meldet
    *  (Lackierungen) — für den Abgleich mit dem geladenen Flugzeug. */
   titel_liste: string[];
+  /** MSFS: SimObject-Ordner dieses Flugzeugs (aus Messungen und Scans) —
+   *  der eindeutige Abgleich; leer = unbekannt, dann zählt der Titel. */
+  ordner: string[];
   /** MSFS: L:-Namen aus den Scans (null = X-Plane/unbekannt). */
   scan_namen: number | null;
   profil: string | null;
@@ -88,14 +142,21 @@ export type Zeile = {
 const klein = (x: string | null | undefined) => (x ?? "").trim().toLowerCase();
 const gross = (x: string | null | undefined) => (x ?? "").trim().toUpperCase();
 
-/** Bestand je Flugzeug: Boden und Luft nebeneinander. */
+/** Titel ohne Dubletten (Groß/Klein egal) anhängen. */
+const titelDazu = (ziel: string[], neu: Array<string | null | undefined>) => {
+  for (const t of neu) if (t && t.trim() && !ziel.some((x) => klein(x) === klein(t))) ziel.push(t);
+};
+
+/** Bestand je Flugzeug: Boden und Luft nebeneinander. MSFS-Messungen mit
+ *  Ordner gehören über den Ordner zusammen, alle anderen über Titel+ICAO. */
 export function jeFlugzeug(liste: Vermessen[]): Zeile[] {
   const aus = new Map<string, Zeile>();
   for (const v of liste) {
-    const k = `${v.sim ?? ""}|${gross(v.icao)}|${klein(v.titel)}`;
+    const k = v.ordner ? `${v.sim ?? ""}|o:${klein(v.ordner)}` : `${v.sim ?? ""}|${gross(v.icao)}|${klein(v.titel)}`;
     const e =
       aus.get(k) ??
-      { titel: v.titel, icao: v.icao, sim: v.sim, titel_liste: v.titel ? [v.titel] : [], scan_namen: null, profil: null, boden: null, luft: null };
+      { titel: v.titel, icao: v.icao, sim: v.sim, titel_liste: [], ordner: v.ordner ? [klein(v.ordner)] : [], scan_namen: null, profil: null, boden: null, luft: null };
+    titelDazu(e.titel_liste, [v.titel, ...(v.titel_liste ?? [])]);
     if (typeof v.scan_namen === "number") e.scan_namen = v.scan_namen;
     e.profil = hoeher(e.profil, v.profil);
     if ((v.teil ?? "boden") === "luft") e.luft = v;
@@ -106,23 +167,33 @@ export function jeFlugzeug(liste: Vermessen[]): Zeile[] {
 }
 
 /** Übersicht: Messungen und Aircraft-Scans in einer Tabelle. Ein Scan
- *  gehört zu einer Messung, wenn Simulator und Muster passen und der
- *  gemessene Titel unter den Titeln des Scans ist; sonst eigene Zeile
- *  (gescannt, aber noch nicht vermessen). */
+ *  gehört zu einer Messung, wenn Simulator passt und
+ *  - beide Ordner kennen und einer übereinstimmt (MSFS, eindeutig), oder
+ *  - (Ordner fehlt auf einer Seite) das Muster passt und der gemessene
+ *    Titel unter den Titeln des Scans ist.
+ *  Kennen beide Ordner und keiner stimmt überein, sind es verschiedene
+ *  Flugzeuge, auch bei gleichem Titel. Sonst eigene Zeile (gescannt, aber
+ *  noch nicht vermessen). */
 export function uebersicht(liste: Vermessen[], scans: ScanEintrag[]): Zeile[] {
   const zeilen = jeFlugzeug(liste);
   for (const sc of scans) {
     const titel = sc.titel_liste.map(klein);
-    const treffer = zeilen.find(
-      (z) =>
-        (z.sim ?? "msfs") === (sc.sim ?? "msfs") &&
-        (!gross(z.icao) || !gross(sc.icao) || gross(z.icao) === gross(sc.icao)) &&
-        z.titel_liste.some((t) => titel.includes(klein(t))),
-    );
+    const scOrdner = (sc.ordner ?? []).map(klein);
+    const gleicherSim = (z: Zeile) => (z.sim ?? "msfs") === (sc.sim ?? "msfs");
+    const treffer =
+      zeilen.find((z) => gleicherSim(z) && z.ordner.some((o) => scOrdner.includes(o))) ??
+      zeilen.find(
+        (z) =>
+          gleicherSim(z) &&
+          !(z.ordner.length > 0 && scOrdner.length > 0) &&
+          (!gross(z.icao) || !gross(sc.icao) || gross(z.icao) === gross(sc.icao)) &&
+          z.titel_liste.some((t) => titel.includes(klein(t))),
+      );
     if (treffer) {
       if (treffer.scan_namen === null && sc.scan_namen !== null) treffer.scan_namen = sc.scan_namen;
       treffer.profil = hoeher(treffer.profil, sc.profil);
-      for (const t of sc.titel_liste) if (!treffer.titel_liste.some((x) => klein(x) === klein(t))) treffer.titel_liste.push(t);
+      titelDazu(treffer.titel_liste, sc.titel_liste);
+      for (const o of scOrdner) if (!treffer.ordner.includes(o)) treffer.ordner.push(o);
     } else {
       // Eine hinterlegte Namensquelle trägt einen Beschreibungstext als
       // Paketnamen („… – L:-Namen aus HubHop“) — die Zeile heißt dann wie
@@ -133,6 +204,7 @@ export function uebersicht(liste: Vermessen[], scans: ScanEintrag[]): Zeile[] {
         icao: sc.icao,
         sim: sc.sim,
         titel_liste: [...sc.titel_liste],
+        ordner: [...scOrdner],
         scan_namen: sc.scan_namen,
         profil: sc.profil,
         boden: null,
@@ -166,7 +238,7 @@ function familienZusammenfassen(zeilen: Zeile[]): Zeile[] {
     }
     const e = familie.get(f.name);
     if (!e) {
-      const neu: Zeile = { ...z, titel: f.name, icao: null, sim: "msfs", titel_liste: [...z.titel_liste] };
+      const neu: Zeile = { ...z, titel: f.name, icao: null, sim: "msfs", titel_liste: [...z.titel_liste], ordner: [...z.ordner] };
       familie.set(f.name, neu);
       aus.push(neu);
       continue;
@@ -175,7 +247,8 @@ function familienZusammenfassen(zeilen: Zeile[]): Zeile[] {
     e.luft = juenger(e.luft, z.luft);
     if (z.scan_namen !== null && (e.scan_namen ?? -1) < z.scan_namen) e.scan_namen = z.scan_namen;
     e.profil = hoeher(e.profil, z.profil);
-    for (const t of z.titel_liste) if (!e.titel_liste.some((x) => klein(x) === klein(t))) e.titel_liste.push(t);
+    titelDazu(e.titel_liste, z.titel_liste);
+    for (const o of z.ordner) if (!e.ordner.includes(o)) e.ordner.push(o);
   }
   return aus;
 }
@@ -627,9 +700,13 @@ function StartSeite({
   // In der Luft gibt es den Autopilot-Teil, am Boden die Schalter.
   const teil: Teil = snap?.on_ground === false ? "luft" : "boden";
   const luft = teil === "luft";
-  const flugzeug = [snap?.aircraft_title, snap?.aircraft_icao].filter(Boolean).join(" · ");
+  // X-Plane: UI-Name zuerst (so heißt die Messung), dann die Beschreibung.
+  const titelGeladen = titelDesGeladenen(snap);
+  const messTitel = titelGeladen[0] ?? null;
+  const flugzeug = [messTitel, snap?.aircraft_icao].filter(Boolean).join(" · ");
   const datum = (ms: number) => new Date(ms).toLocaleDateString(i18n.language || "de");
-  const schon = verbunden ? schonVermessen(vermessen, snap?.aircraft_title, snap?.aircraft_icao, teil) : null;
+  const ordnerGeladen = ordnerDesGeladenen(snap);
+  const schon = verbunden ? schonVermessen(vermessen, titelGeladen, snap?.aircraft_icao, teil, ordnerGeladen) : null;
   const scanNamen = useScanNamen(sim);
   const moeglich = schritteFuer(teil);
   const gewaehlt = moeglich.filter((x) => auswahl.has(x.schalter)).length;
@@ -637,23 +714,28 @@ function StartSeite({
   const eigeneProfile = useEigeneProfile(bestand);
   // Tabelle: das geladene Flugzeug immer oben — auch, wenn es noch gar nicht
   // vermessen ist (dann „fehlt“ in beiden Spalten).
-  const titelJetzt = (snap?.aircraft_title ?? "").trim().toLowerCase();
+  const titelJetzt = new Set(titelGeladen.map(klein));
   const icaoJetzt = (snap?.aircraft_icao ?? "").trim().toUpperCase();
+  // Zuerst über den Ordner (MSFS, jede Lackierung); eine Zeile mit anderem
+  // bekannten Ordner ist ein anderes Flugzeug, auch bei gleichem Titel.
   const istGeladen = (v: Zeile) =>
-    !!titelJetzt &&
-    v.titel_liste.some((x) => klein(x) === titelJetzt) &&
+    ordnerGeladen && v.ordner.length > 0
+      ? v.ordner.includes(ordnerGeladen)
+      : titelJetzt.size > 0 &&
+    v.titel_liste.some((x) => titelJetzt.has(klein(x))) &&
     (!icaoJetzt || !v.icao || gross(v.icao) === icaoJetzt);
   const geladenImBestand = bestand.filter(istGeladen);
   const zeilen = [
-    ...(verbunden && titelJetzt
+    ...(verbunden && titelJetzt.size > 0
       ? geladenImBestand.length > 0
         ? geladenImBestand.map((v) => ({ ...v, geladen: true }))
         : [
             {
-              titel: snap?.aircraft_title ?? null,
+              titel: messTitel,
               icao: snap?.aircraft_icao ?? null,
               sim: sim?.kind?.startsWith("msfs") ? "msfs" : sim?.kind?.startsWith("xplane") ? "xplane" : null,
-              titel_liste: snap?.aircraft_title ? [snap.aircraft_title] : [],
+              titel_liste: titelGeladen,
+              ordner: ordnerGeladen ? [ordnerGeladen] : [],
               scan_namen: null,
               profil: null,
               boden: null,

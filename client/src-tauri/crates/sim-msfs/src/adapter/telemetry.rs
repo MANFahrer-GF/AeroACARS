@@ -5015,6 +5015,7 @@ fn telemetry_to_snapshot_mit_pfad(
         mach: Some(t.mach as f32),
         empty_weight_kg,
         aircraft_title: Some(t.title).filter(|s| !s.is_empty()),
+        aircraft_ui_name: None,
         // v0.7.17 (B-001): Bei Profilen wie Fenix kommt `ATC MODEL`
         // oft leer aus dem Sim — Pilot sah dann „Type ?" im Activity-
         // Log. Fallback auf einen Profile-eigenen kanonischen ICAO

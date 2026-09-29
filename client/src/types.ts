@@ -300,6 +300,12 @@ export interface SimSnapshot {
    *  (their OEW is bogus — verified ~1422 kg for the A320neo). */
   empty_weight_kg: number | null;
   aircraft_title: string | null;
+  /** X-Plane: `acf_ui_name` — der Titel, den „Flugzeug vermessen“ für die
+   *  Messung nimmt (wie der Aircraft-Scan). Fehlt bei MSFS. */
+  aircraft_ui_name?: string | null;
+  /** Diagnose-Rohwerte; hier nur `cfg_pfad` = aircraft.cfg-Pfad aus MSFS
+   *  `AircraftLoaded` (Ordner-Abgleich in „Flugzeug vermessen“). */
+  cockpit_rohwerte?: { cfg_pfad?: string | null } | null;
   aircraft_icao: string | null;
   aircraft_registration: string | null;
   simulator: Simulator;

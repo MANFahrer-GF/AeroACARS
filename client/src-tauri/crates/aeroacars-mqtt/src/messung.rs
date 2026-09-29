@@ -120,6 +120,15 @@ pub struct Vermessen {
     pub profil: Option<String>,
     pub icao: Option<String>,
     pub titel: Option<String>,
+    /// MSFS: SimObject-Ordner aus dem aircraft.cfg-Pfad der Messung (Server
+    /// ab 29.09.2026) — eindeutiger Abgleich mit dem geladenen Flugzeug,
+    /// über alle Lackierungen hinweg. Ältere Server/Messungen: None.
+    #[serde(default)]
+    pub ordner: Option<String>,
+    /// Alle gemessenen Titel dieses Flugzeugs (Lackierungen); ältere Server
+    /// liefern nur `titel`.
+    #[serde(default)]
+    pub titel_liste: Vec<String>,
     /// Jüngste Messung, ms seit 1970.
     pub zuletzt: i64,
     pub anzahl: u32,
@@ -142,6 +151,10 @@ pub struct ScanEintrag {
     /// „hersteller-doku“ = von uns hinterlegte Namensquelle.
     #[serde(default)]
     pub quelle: Option<String>,
+    /// MSFS: SimObject-Ordner aus der Dateiliste des Scans (Server ab
+    /// 29.09.2026).
+    #[serde(default)]
+    pub ordner: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
@@ -253,5 +266,21 @@ mod tests {
         .unwrap();
         assert_eq!(mit.scans[0].titel_liste, ["A220-300"]);
         assert_eq!(mit.scans[0].profil.as_deref(), Some("in_arbeit"));
+        assert!(mit.scans[0].ordner.is_empty(), "älterer Server ohne ordner");
+    }
+
+    /// Ordner und Titel-Liste (Server ab 29.09.2026) kommen bis zur
+    /// Oberfläche durch — ohne sie könnte sie nicht über den Ordner abgleichen.
+    #[test]
+    fn vermessen_reicht_ordner_durch() {
+        let l: VermessenListe = serde_json::from_str(
+            r#"{"flugzeuge":[{"sim":"msfs","teil":"boden","icao":"B38M","titel":"ifly RYR","ordner":"ifly 737-max8-189seats","titel_liste":["ifly RYR","ifly TUI"],"zuletzt":1,"anzahl":2}],
+                "scans":[{"sim":"msfs","icao":"B38M","paket":"737MAX","titel_liste":[],"scan_namen":1873,"profil":null,"zuletzt":5,"ordner":["ifly 737-max8","ifly 737-max8-189seats"]}]}"#,
+        )
+        .unwrap();
+        let aus = serde_json::to_value(&l).unwrap();
+        assert_eq!(aus["flugzeuge"][0]["ordner"], "ifly 737-max8-189seats");
+        assert_eq!(aus["flugzeuge"][0]["titel_liste"][1], "ifly TUI");
+        assert_eq!(aus["scans"][0]["ordner"][1], "ifly 737-max8-189seats");
     }
 }

@@ -27,6 +27,9 @@ const h = vi.hoisted(() => ({
   kind: "xplane" as string,
   titel: "Boeing 777-300ER",
   icao: "B77W",
+  /** aircraft.cfg-Pfad (MSFS) bzw. UI-Name (X-Plane) im Schnappschuss. */
+  pfad: null as string | null,
+  uiName: null as string | null,
   liste: [] as Array<{ sim: string; icao: string; titel: string; zuletzt: number; anzahl: number }>,
   ruheLoesen: null as null | (() => void),
 }));
@@ -36,7 +39,16 @@ vi.mock("../../lib/ipc", () => ({
     h.aufrufe.push({ cmd, args });
     switch (cmd) {
       case "sim_status":
-        return Promise.resolve({ kind: h.kind, snapshot: { on_ground: h.amBoden, aircraft_title: h.titel, aircraft_icao: h.icao } });
+        return Promise.resolve({
+          kind: h.kind,
+          snapshot: {
+            on_ground: h.amBoden,
+            aircraft_title: h.titel,
+            aircraft_icao: h.icao,
+            ...(h.uiName ? { aircraft_ui_name: h.uiName } : {}),
+            ...(h.pfad ? { cockpit_rohwerte: { cfg_pfad: h.pfad } } : {}),
+          },
+        });
       case "vermessung_starten":
         return Promise.resolve({ sim: "xplane", flugzeug: { titel: "Boeing 777-300ER", icao: "B77W" }, anzahl_werte: 9312, l_namen: 0, sitzung: 7 });
       case "vermessung_ruhe":
@@ -67,7 +79,7 @@ vi.mock("../../lib/ipc", () => ({
   },
 }));
 
-import { FlugzeugVermessen, schonVermessen, uebersicht } from "./FlugzeugVermessen";
+import { FlugzeugVermessen, schonVermessen, simObjektOrdner, uebersicht } from "./FlugzeugVermessen";
 
 const klick = async (text: string | RegExp) => {
   fireEvent.click(await screen.findByRole("button", { name: text }));
@@ -84,6 +96,8 @@ beforeEach(() => {
   h.kind = "xplane";
   h.titel = "Boeing 777-300ER";
   h.icao = "B77W";
+  h.pfad = null;
+  h.uiName = null;
 });
 
 describe("uebersicht: Messungen + Scans", () => {
@@ -159,6 +173,44 @@ describe("schonVermessen", () => {
   });
   it("ohne Titel keine Aussage", () => {
     expect(schonVermessen(liste, "", "A388")).toBeNull();
+  });
+
+  // 29.09.2026: Abgleich über den SimObject-Ordner (MSFS) und beide Titel (X-Plane).
+  const ifly = { sim: "msfs", icao: "B38M", titel: "ifly-aircraft-737max8-TUI DAMAH-189Seats", ordner: "ifly 737-max8-189seats", zuletzt: 3, anzahl: 1 };
+  it("MSFS: iFly in TUI vermessen, in RYR geladen → schon vermessen (Ordner)", () => {
+    const o = simObjektOrdner(String.raw`SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG`);
+    expect(o).toBe("ifly 737-max8-189seats");
+    expect(schonVermessen([ifly], "ifly-aircraft-737max8-RYR EI-HGA", "B38M", "boden", o)?.zuletzt).toBe(3);
+  });
+  it("MSFS: gleicher Titel, anderer Ordner → nicht verwechselt", () => {
+    const a350 = { sim: "msfs", icao: "A35K", titel: "A350-1000 (No Cabin)", ordner: "a350", zuletzt: 4, anzahl: 1 };
+    expect(schonVermessen([a350], "A350-1000 (No Cabin)", "A35K", "boden", "anderes_a350")).toBeNull();
+    // ohne Ordner des Geladenen (AircraftLoaded noch nicht da): Titel wie bisher
+    expect(schonVermessen([a350], "A350-1000 (No Cabin)", "A35K", "boden", null)?.zuletzt).toBe(4);
+  });
+  it("MSFS: alte Messung ohne Ordner passt weiter über den Titel", () => {
+    expect(schonVermessen(liste, "A380-800 RR Basic", "A388", "boden", "inibuilds-a380")?.zuletzt).toBe(1);
+  });
+  it("MSFS: Titel aus titel_liste (andere gemessene Lackierung) zählt", () => {
+    const zeile = { ...ifly, ordner: null, titel: "x", titel_liste: ["x", "ifly RYR"] };
+    expect(schonVermessen([zeile], "IFLY RYR", "B38M")?.zuletzt).toBe(3);
+  });
+  it("X-Plane: alte Messung (acf_descrip) und neue (UI-Name) beide erkannt", () => {
+    const geladen = ["ToLiSs A320 Hi Def", "A320 with high fidelity system modelling"];
+    const alt = { sim: "xplane", icao: "A20N", titel: "A320 with high fidelity system modelling", zuletzt: 5, anzahl: 3 };
+    const neu = { sim: "xplane", icao: "A20N", titel: "ToLiSs A320 Hi Def", zuletzt: 6, anzahl: 1 };
+    expect(schonVermessen([alt], geladen, "A20N")?.zuletzt).toBe(5);
+    expect(schonVermessen([neu], geladen, "A20N")?.zuletzt).toBe(6);
+  });
+});
+
+describe("simObjektOrdner (wie der Server)", () => {
+  it("Preset, Groß/Klein, Slash/Backslash, Rand", () => {
+    expect(simObjektOrdner(String.raw`SimObjects\Airplanes\FNX_32X\presets\fnx\FNX_320_CFM_SL\config\aircraft.CFG`)).toBe("fnx_32x");
+    expect(simObjektOrdner("pkg/SimObjects/AirPlanes/ Synaptic_A220 /common/config/aircraft.cfg")).toBe("synaptic_a220");
+    expect(simObjektOrdner("X/aircraft.cfg")).toBe("x");
+    expect(simObjektOrdner("Aircraft/ToLissA320_V1p1p7/a320.acf")).toBeNull();
+    expect(simObjektOrdner(null)).toBeNull();
   });
 });
 
@@ -257,6 +309,58 @@ describe("Flugzeug vermessen", () => {
     expect(text("Fenix A319 / A320 / A321")).toContain("eigenes Profil");
     expect(text("Asobo A320")).toContain("nur Standard");
     expect(text("Boeing 737-800")).not.toContain("nur Standard");
+  });
+
+  it("MSFS: iFly in TUI vermessen, in RYR geladen → „schon vermessen“ und „geladen“", async () => {
+    h.kind = "msfs2024";
+    h.titel = "ifly-aircraft-737max8-RYR EI-HGA";
+    h.icao = "B38M";
+    h.pfad = String.raw`SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG`;
+    h.liste = {
+      flugzeuge: [{ sim: "msfs", teil: "boden", icao: "B38M", titel: "ifly-aircraft-737max8-TUI DAMAH-189Seats", ordner: "ifly 737-max8-189seats", titel_liste: ["ifly-aircraft-737max8-TUI DAMAH-189Seats"], zuletzt: 1, anzahl: 1 }],
+      scans: [
+        { sim: "msfs", icao: "B38M", paket: "737MAX", titel_liste: ["iFly 737-MAX8 (189Seats)"], scan_namen: 1873, profil: null, zuletzt: 2, ordner: ["ifly 737-max8", "ifly 737-max8-189seats"] },
+        // anderes Add-on mit ähnlichem Titel-Teil: bleibt eigene, nicht geladene Zeile
+        { sim: "msfs", icao: "B38M", paket: "PMDG 737 MAX 8", titel_liste: ["ifly-aircraft-737max8-RYR EI-HGA"], scan_namen: 900, profil: null, zuletzt: 3, ordner: ["pmdg 737-8"] },
+      ],
+    } as never;
+    render(<FlugzeugVermessen />);
+    expect(await screen.findByText(deCommon.vermessen.stand_nochmal_boden)).toBeTruthy();
+    const tabelle = await screen.findByRole("table");
+    const zeilen = [...tabelle.querySelectorAll("tbody tr")];
+    expect(zeilen.length).toBe(2);
+    const geladen = zeilen.filter((z) => z.className.includes("vm-zeile--geladen"));
+    expect(geladen.length).toBe(1);
+    expect(geladen[0]!.textContent).toContain("ifly-aircraft-737max8-TUI DAMAH-189Seats");
+    // Zwei Zeilen: der iFly-Scan ist über den Ordner in die Messzeile
+    // gewandert (sonst drei), der PMDG-Scan bleibt trotz gleichem Titel eigen.
+    expect(zeilen.find((z) => z.textContent?.includes("PMDG 737 MAX 8"))!.className).not.toContain("vm-zeile--geladen");
+  });
+
+  it("X-Plane: neue Messung mit UI-Name → „schon vermessen“ und „geladen“", async () => {
+    h.titel = "A320 with high fidelity system modelling";
+    h.uiName = "ToLiSs A320 Hi Def";
+    h.icao = "A20N";
+    h.liste = {
+      flugzeuge: [{ sim: "xplane", teil: "boden", icao: "A20N", titel: "ToLiSs A320 Hi Def", zuletzt: 1, anzahl: 1 }],
+      scans: [{ sim: "xplane", icao: "A20N", paket: "ToLissA320_V1p2p1", titel_liste: ["ToLiSs A320 Hi Def"], scan_namen: null, profil: null, zuletzt: 2 }],
+    } as never;
+    render(<FlugzeugVermessen />);
+    expect(await screen.findByText(deCommon.vermessen.stand_nochmal_boden)).toBeTruthy();
+    const zeilen = (await screen.findByRole("table")).querySelectorAll("tbody tr");
+    expect(zeilen.length).toBe(1);
+    expect(zeilen[0]!.className).toContain("vm-zeile--geladen");
+  });
+
+  it("X-Plane: alte Messung mit acf_descrip-Titel → „schon vermessen“", async () => {
+    h.titel = "A320 with high fidelity system modelling";
+    h.uiName = "ToLiSs A320 Hi Def";
+    h.icao = "A20N";
+    h.liste = [{ sim: "xplane", icao: "A20N", titel: "A320 with high fidelity system modelling", zuletzt: 1, anzahl: 3 }];
+    render(<FlugzeugVermessen />);
+    expect(await screen.findByText(deCommon.vermessen.stand_nochmal_boden)).toBeTruthy();
+    const zeilen = (await screen.findByRole("table")).querySelectorAll("tbody tr");
+    expect(zeilen[0]!.className).toContain("vm-zeile--geladen");
   });
 
   it("Fenix-Familie: ein geladener A321 markiert die gemeinsame Zeile", async () => {

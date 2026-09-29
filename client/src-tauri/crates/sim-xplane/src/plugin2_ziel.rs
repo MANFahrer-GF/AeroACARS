@@ -253,6 +253,21 @@ pub(crate) fn kennung_ueberlagern(
     (titel, icao, kennz)
 }
 
+/// UI-Name (`acf_ui_name`) fuer den Schnappschuss — gleiche Vorrangregel
+/// wie [`kennung_ueberlagern`]: Plugin zuerst, die Web-API nur, wenn sie
+/// dasselbe Flugzeug meint.
+pub(crate) fn ui_name_ueberlagern(
+    plugin: Option<&AircraftInfo>,
+    web: &AircraftInfo,
+) -> Option<String> {
+    let leer = |s: &Option<String>| s.as_ref().filter(|x| !x.trim().is_empty()).cloned();
+    let Some(p) = plugin else {
+        return leer(&web.ui_name);
+    };
+    let dasselbe = p.relative_path.is_none() || p.relative_path == web.relative_path;
+    leer(&p.ui_name).or_else(|| dasselbe.then(|| leer(&web.ui_name)).flatten())
+}
+
 impl AdapterShared {
     fn jetzt_ms(&self) -> u64 {
         (self.p2_basis.elapsed().as_millis() as u64).max(1)
@@ -875,5 +890,49 @@ mod tests {
                 Some("D-ABCD".into())
             )
         );
+    }
+
+    /// UI-Name: Plugin vor Web-API, die Web-API nur fuer dasselbe Flugzeug.
+    #[test]
+    fn ui_name_plugin_vor_web_api() {
+        let web = AircraftInfo {
+            ui_name: Some("Zibo 737-800".into()),
+            relative_path: Some("Aircraft/B737/b738.acf".into()),
+            ..AircraftInfo::default()
+        };
+        assert_eq!(
+            ui_name_ueberlagern(None, &web).as_deref(),
+            Some("Zibo 737-800")
+        );
+        let anderes = AircraftInfo {
+            relative_path: Some("Aircraft/A330/a330.acf".into()),
+            ..AircraftInfo::default()
+        };
+        assert_eq!(
+            ui_name_ueberlagern(Some(&anderes), &web),
+            None,
+            "veraltete Web-API"
+        );
+        let gleich = AircraftInfo {
+            relative_path: Some("Aircraft/B737/b738.acf".into()),
+            ..AircraftInfo::default()
+        };
+        assert_eq!(
+            ui_name_ueberlagern(Some(&gleich), &web).as_deref(),
+            Some("Zibo 737-800")
+        );
+        let eigen = AircraftInfo {
+            ui_name: Some("ToLiSs A320 Hi Def".into()),
+            ..AircraftInfo::default()
+        };
+        assert_eq!(
+            ui_name_ueberlagern(Some(&eigen), &web).as_deref(),
+            Some("ToLiSs A320 Hi Def")
+        );
+        let leer = AircraftInfo {
+            ui_name: Some(" ".into()),
+            ..AircraftInfo::default()
+        };
+        assert_eq!(ui_name_ueberlagern(None, &leer), None);
     }
 }
