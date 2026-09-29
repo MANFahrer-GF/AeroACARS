@@ -169,6 +169,39 @@ Server nicht erreichbar ist (Navdaten-Zwischenspeicher im Client prüfen).
 
 **Abnahme:** Wert + Quelle im Analyse-JSON und im Landungs-Tab; Korpus-Plausibilität.
 
+**Ergebnis (29.09.2026, Zweig `feat/lernpaket-ap4-6`):**
+- Neues Modul `client/src-tauri/src/anflug_forensik.rs` (reine Funktionen). Je Probe des
+  Anflug-Puffers: Entfernung vor der Landeschwelle über `runway::projiziere_auf_bahn`
+  (Achse Schwelle→Gegenende der Navdaten), versetzte Schwelle über
+  `displacement_not_in_geometry_ft` (dieselbe Größe wie in `assess_touchdown`, kein doppelter
+  Abzug seit AIRAC 2608). Sollhöhe = Schwellenhöhe + TCH + d·tan θ. Winkel wird **vom
+  Gleitweg-Bezugspunkt (GPI = TCH/tan θ hinter der Schwelle)** gemessen:
+  `atan(h/(d+GPI)) − θ` — so misst auch ein echtes ILS, und auf der Pfadgeraden ist die
+  Abweichung in jeder Entfernung exakt 0. 1 Dot = 0,35°, + = über dem Pfad.
+- Nur Proben vor der Schwelle, im ±35°-Sektor (Landekurssender-Abdeckung), Steuerkurs
+  ≤ 90° zur Bahn, letzte 5 min vor dem Aufsetzen, 1000–200 ft über der Schwelle; Tore
+  1000–500 / 500–200; je Tor mind. 5 Proben. Ausgabe: mittlere |Abw.| in Dots, größte
+  Abweichung in Dots und ft mit Vorzeichen, Probenzahl.
+- Quelle: `navigraph_ils` (`ils.is_some()`), `navigraph_bahn` (Navigraph-Bahn ohne ILS),
+  `angenommen_3grad` (keine Navdaten-Bahn → **keine Werte**, Grund `keine_bahn`). Am
+  Wert von `glideslope_angle`/`tch_ft` ist die Echtheit nicht ablesbar (serde-Standard
+  3,0/50, Server schreibt fehlende TCH als **0** und Nicht-ILS-Winkel als 3,0) — deshalb
+  entscheidet `ils`, und TCH 0 gilt als unbekannt → 50 ft mit `tch_angenommen: true`.
+  Fehlt die Schwellenhöhe → Grund `schwellenhoehe_fehlt`, keine Werte.
+- `ApproachBufferSample` hat jetzt `lat`/`lon` (Option, nie Grund zum Verwerfen einer Probe).
+- Speicherung: `LandingRecord.anflug_gleitpfad` (serde default, alte Datensätze lesbar),
+  Analyse-JSON `landing_analysis.anflug_gleitpfad` (damit im Flug-Log-Ereignis
+  `landing_analysis`), Landungs-Tab: Info-Zeilen unter der Approach-Stability-Card
+  (`AnflugForensikInfo.tsx`), Texte DE/EN/IT. **Keine** Änderung an MQTT/PIREP, Noten,
+  Gate oder Deckel; keine Neuberechnung alter Landungen.
+- Grenzen: Gerechnet wird gegen die Bahn der Aufsetz-Korrelation (bei einem späteren
+  Divert-Upgrade in `finalize_runway_correlation` nicht nachgezogen). Der Puffer hält
+  120 Proben (~2 min bei 1 s unter 1500 ft) — bei sehr langsamen GA-Anflügen fehlt ggf. der
+  Anfang des 1000-ft-Tors (sichtbar an der Probenzahl). Stempel im FSM- und im
+  Sampler-Pfad; im Flug-Log steht der Wert nur, wenn der Stempel vor dem Touchdown-Dump
+  lief (Normalfall), im Datensatz immer. Korpus-Plausibilität steht noch aus (braucht
+  Flüge mit dieser Fassung).
+
 ---
 
 ## AP5 — Anflugruhe (Forensik ohne Note)
@@ -181,6 +214,24 @@ Vorzeichenwechsel der Pfadabweichung (braucht AP4), Nick-/Roll-Ruckeln,
 Schub-Umkehrungen je Minute. Tore 1000 / 500 ft. Anzeige als Hinweis, **keine Note**.
 
 **Abhängigkeit:** AP4.
+
+**Ergebnis (29.09.2026, Zweig `feat/lernpaket-ap4-6`):**
+- `ApproachBufferSample` um `pitch_deg` und `n1_mittel_pct` (Mittel aus `eng_n1_pct`)
+  erweitert. Je Tor 1000–500 / 500–200 ft (Bezug Schwellenhöhe, sonst Platzhöhe):
+  - Seitenwechsel der Pfadabweichung aus AP4, Totband ±0,1 Dot (≈ 7 ft bei 2 NM —
+    Probenrauschen zählt nicht als Korrektur); ohne AP4-Pfad `None`.
+  - Nick-/Roll-Unruhe = Standardabweichung der Nick-/Rollrate in °/s (Paare mit
+    0,2–5 s Abstand, mind. 4 Raten). Gleichmäßiges Drehen ergibt 0, nur das Hin und Her
+    zählt.
+  - Schub-Umkehrungen je Minute aus mittlerem N1 mit Hysterese 2 % N1 (A/THR- und
+    Hebelkorrekturen liegen bei 3–10 %, darunter Regelrauschen); mind. 10 s Dauer.
+- **Weggelassen:** Schub bei X-Plane (der Adapter liest weder N1 noch Hebelstellung,
+  `eng_n1_pct` ist dort immer `None`) und bei Kolbenmotoren/MSFS-Add-ons ohne lebendes
+  N1 — dort steht `None` und im Landungs-Tab „ohne N1-Daten nicht erfasst", kein
+  erfundener Wert. Eine stetige Schubhebel-Stellung führt der SimSnapshot für keinen der
+  beiden Sims (nur das Rasten-Label `thrust_gate` einzelner Add-on-Profile).
+- Speicherung wie AP4: `LandingRecord.anflug_ruhe`, `landing_analysis.anflug_ruhe`,
+  Hinweiszeile im Landungs-Tab ohne Farbe und ohne Wertung. Keine Note.
 
 ---
 
