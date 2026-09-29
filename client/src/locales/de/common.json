@@ -3480,6 +3480,19 @@
           "2": "Zurück in die Betriebsart vom Anfang – Airbus: Höhenknopf drücken. Boeing: VNAV bzw. ALT HOLD drücken, je nachdem was vorher drin war. Im FMA steht wieder dasselbe wie am Anfang. Dann „Erledigt“."
         }
       },
+      "athr": {
+        "titel": "Autothrottle (A/THR)",
+        "wo": "Glareshield-Panel (FCU/MCP): Taste A/THR (Airbus) bzw. A/T ARM-Schalter (Boeing). Ausschalten auch mit der Taste am Schubhebel.",
+        "namen": "A/THR · A/T · A/T ARM · SPEED",
+        "hinweis": "Im ruhigen Reiseflug, Schub in der CL-Raste (Airbus). Beim Ausschalten bleibt der Schub stehen (Airbus: THR LK) – danach sofort wieder einschalten.",
+        "wann": "Im ruhigen Reiseflug, Autothrottle an, direkt nach den Autopilot-Schritten.",
+        "frage": "Ist die Autothrottle gerade an (A/THR bzw. SPEED/MACH im FMA)?",
+        "tun": {
+          "0": "So lassen – die Autothrottle ist an (Airbus: A/THR weiß im FMA oben rechts, Taste leuchtet). „Erledigt“ klicken.",
+          "1": "Autothrottle ausschalten – Airbus: A/THR-Taste auf der FCU drücken (der Schub bleibt stehen, im FMA erscheint THR LK). Boeing: die Taste am Schubhebel drücken. Dann „Erledigt“.",
+          "2": "Wieder einschalten – Airbus: A/THR-Taste erneut drücken, im FMA steht wieder A/THR. Boeing: A/T ARM einschalten und SPEED wählen. Dann „Erledigt“."
+        }
+      },
       "anflug": {
         "titel": "Anflug APPR / LOC",
         "wo": "Glareshield-Panel: Taste APPR bzw. APP, oder LOC.",
@@ -3598,7 +3611,9 @@
       "nav_1": "1 (Airbus NAV & LOGO) / AN",
       "lande_off": "OFF",
       "lande_on": "ON",
-      "xpdr_on": "ON (Airbus)"
+      "xpdr_on": "ON (Airbus)",
+      "athr_an": "A/THR AN (aktiv)",
+      "athr_aus": "A/THR AUS"
     },
     "keine_bewegung": "keine Bewegung",
     "schon_vermessen": "Dieses Flugzeug ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal messen lohnt sich nur nach einem größeren Update des Add-ons.",
@@ -3613,18 +3628,18 @@
     "auswahl_alle": "Alle",
     "auswahl_keine": "Keine",
     "luft_titel": "Autopilot im Flug vermessen",
-    "luft_einleitung": "Den Autopiloten kann man nur in der Luft messen – am Boden rastet er nicht ein. Du schaltest ein paar Autopilot-Modi kurz um, AeroACARS schaut zu und merkt sich, welche Werte mitgehen. Danach zeigen LiveMap und Flug-Log bei deinem Flugzeug richtig an, ob AP, HDG, NAV, ALT, APPR und Autoland (CAT III) aktiv sind.",
+    "luft_einleitung": "Den Autopiloten kann man nur in der Luft messen – am Boden rastet er nicht ein. Du schaltest ein paar Autopilot-Modi kurz um, AeroACARS schaut zu und merkt sich, welche Werte mitgehen. Danach zeigen LiveMap und Flug-Log bei deinem Flugzeug richtig an, ob AP, HDG, NAV, ALT, A/THR, APPR und Autoland (CAT III) aktiv sind.",
     "luft_dauer": "Dauer: etwa 3 Minuten im Reiseflug. APPR/LOC, Autoland (beide AP) und BTV gehen nur im Anflug – die kannst du überspringen oder später nachmessen.",
     "luft_vorher_1": "Ruhiger Reiseflug, Autopilot an, keine Kurven und kein Steig-/Sinkflug geplant",
     "luft_vorher_2": "Nicht kurz vor dem Top of Descent und nicht, während ATC gerade Anweisungen gibt",
     "luft_vorher_3": "Beim Schritt „AP AUS“ fliegst du ein paar Sekunden von Hand – Flugzeug ruhig halten",
-    "luft_vorher_4": "Nach jedem Schritt steht alles wieder wie vorher (AP an, NAV, ALT)",
+    "luft_vorher_4": "Nach jedem Schritt steht alles wieder wie vorher (AP an, NAV, ALT, A/THR)",
     "sim_ok_luft": "In der Luft · {{flugzeug}}",
     "schon_vermessen_luft": "Der Autopilot dieses Flugzeugs ist schon vermessen (zuletzt am {{datum}}). Danke! Noch einmal lohnt sich nur nach einem größeren Update des Add-ons.",
     "luft_fehlt": "Tipp: Den Autopilot-Teil misst du auf einem Flug im Reiseflug – einfach im Flug wieder hier reinschauen.",
     "boden_fehlt": "Tipp: Die Schalter am Boden (Lichter, Klappen, Autobrake …) misst du am Gate – einfach nach der Landung wieder hier reinschauen.",
     "luft_starten": "Autopilot-Messung starten",
-    "auswahl_hinweis_luft": "Im Reiseflug gehen AP, AP1/AP2, NAV/HDG und ALT/V/S. APPR/LOC, Autoland und BTV nur im Anflug – die kannst du dann separat messen.",
+    "auswahl_hinweis_luft": "Im Reiseflug gehen AP, AP1/AP2, NAV/HDG, ALT/V/S und A/THR. APPR/LOC, Autoland und BTV nur im Anflug – die kannst du dann separat messen.",
     "ruhe_text_luft": "Der Autopilot fliegt. Bitte jetzt etwa 8 Sekunden nichts im Cockpit anfassen. AeroACARS merkt sich, welche Werte sich im Flug von selbst ändern (Position, Sprit, Uhr) – die werden später ignoriert.",
     "teil_boden": "Boden",
     "teil_luft": "Luft",

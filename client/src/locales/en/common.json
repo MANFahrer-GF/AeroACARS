@@ -3480,6 +3480,19 @@
           "2": "Back to the mode from the start – Airbus: push the altitude knob. Boeing: press VNAV or ALT HOLD, whichever was active before. The FMA shows the same as at the start. Then “Done”."
         }
       },
+      "athr": {
+        "titel": "Autothrottle (A/THR)",
+        "wo": "Glareshield panel (FCU/MCP): A/THR button (Airbus) or A/T ARM switch (Boeing). It can also be disconnected with the button on the thrust lever.",
+        "namen": "A/THR · A/T · A/T ARM · SPEED",
+        "hinweis": "In calm cruise, thrust levers in the CL detent (Airbus). When disconnected the thrust stays where it is (Airbus: THR LK) – switch it back on right away.",
+        "wann": "In calm cruise with the autothrottle on, right after the autopilot steps.",
+        "frage": "Is the autothrottle on right now (A/THR or SPEED/MACH in the FMA)?",
+        "tun": {
+          "0": "Leave it – the autothrottle is on (Airbus: A/THR white in the top right of the FMA, button lit). Click “Done”.",
+          "1": "Switch the autothrottle off – Airbus: press the A/THR button on the FCU (thrust stays, THR LK appears in the FMA). Boeing: press the button on the thrust lever. Then “Done”.",
+          "2": "Switch it on again – Airbus: press the A/THR button again, A/THR shows in the FMA again. Boeing: arm A/T and select SPEED. Then “Done”."
+        }
+      },
       "anflug": {
         "titel": "Approach APPR / LOC",
         "wo": "Glareshield panel: APPR or APP button, or LOC.",
@@ -3598,7 +3611,9 @@
       "nav_1": "1 (Airbus NAV & LOGO) / ON",
       "lande_off": "OFF",
       "lande_on": "ON",
-      "xpdr_on": "ON (Airbus)"
+      "xpdr_on": "ON (Airbus)",
+      "athr_an": "A/THR ON (active)",
+      "athr_aus": "A/THR OFF"
     },
     "keine_bewegung": "no movement",
     "schon_vermessen": "This aircraft has already been measured (last on {{datum}}). Thank you! Measuring again only makes sense after a major add-on update.",
@@ -3613,18 +3628,18 @@
     "auswahl_alle": "All",
     "auswahl_keine": "None",
     "luft_titel": "Measure the autopilot in flight",
-    "luft_einleitung": "The autopilot can only be measured in the air – it won't engage on the ground. You briefly switch a few autopilot modes, AeroACARS watches and notes which values follow. Afterwards the LiveMap and flight log show correctly for your aircraft whether AP, HDG, NAV, ALT, APPR and autoland (CAT III) are active.",
+    "luft_einleitung": "The autopilot can only be measured in the air – it won't engage on the ground. You briefly switch a few autopilot modes, AeroACARS watches and notes which values follow. Afterwards the LiveMap and flight log show correctly for your aircraft whether AP, HDG, NAV, ALT, A/THR, APPR and autoland (CAT III) are active.",
     "luft_dauer": "Takes about 3 minutes in cruise. APPR/LOC, autoland (both APs) and BTV only work on approach – skip them or measure them later.",
     "luft_vorher_1": "Calm cruise, autopilot on, no turns and no climb or descent planned",
     "luft_vorher_2": "Not just before top of descent and not while ATC is giving you instructions",
     "luft_vorher_3": "During the “AP OFF” step you fly by hand for a few seconds – keep the aircraft steady",
-    "luft_vorher_4": "After each step everything is back as before (AP on, NAV, ALT)",
+    "luft_vorher_4": "After each step everything is back as before (AP on, NAV, ALT, A/THR)",
     "sim_ok_luft": "In flight · {{flugzeug}}",
     "schon_vermessen_luft": "This aircraft's autopilot has already been measured (last on {{datum}}). Thank you! Measuring again only makes sense after a major add-on update.",
     "luft_fehlt": "Tip: you measure the autopilot part in cruise on a flight – just come back here while flying.",
     "boden_fehlt": "Tip: you measure the switches (lights, flaps, autobrake …) at the gate – just come back here after landing.",
     "luft_starten": "Start autopilot measurement",
-    "auswahl_hinweis_luft": "In cruise AP, AP1/AP2, NAV/HDG and ALT/V/S work. APPR/LOC, autoland and BTV only on approach – measure them separately then.",
+    "auswahl_hinweis_luft": "In cruise AP, AP1/AP2, NAV/HDG, ALT/V/S and A/THR work. APPR/LOC, autoland and BTV only on approach – measure them separately then.",
     "ruhe_text_luft": "The autopilot is flying. Please don't touch anything in the cockpit for about 8 seconds. AeroACARS notes which values change by themselves in flight (position, fuel, clock) – they will be ignored.",
     "teil_boden": "Ground",
     "teil_luft": "Air",

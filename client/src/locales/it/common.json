@@ -3480,6 +3480,19 @@
           "2": "Back to the mode from the start – Airbus: push the altitude knob. Boeing: press VNAV or ALT HOLD, whichever was active before. The FMA shows the same as at the start. Then “Done”."
         }
       },
+      "athr": {
+        "titel": "Autothrottle (A/THR)",
+        "wo": "Glareshield panel (FCU/MCP): A/THR button (Airbus) or A/T ARM switch (Boeing). It can also be disconnected with the button on the thrust lever.",
+        "namen": "A/THR · A/T · A/T ARM · SPEED",
+        "hinweis": "In calm cruise, thrust levers in the CL detent (Airbus). When disconnected the thrust stays where it is (Airbus: THR LK) – switch it back on right away.",
+        "wann": "In calm cruise with the autothrottle on, right after the autopilot steps.",
+        "frage": "Is the autothrottle on right now (A/THR or SPEED/MACH in the FMA)?",
+        "tun": {
+          "0": "Leave it – the autothrottle is on (Airbus: A/THR white in the top right of the FMA, button lit). Click “Done”.",
+          "1": "Switch the autothrottle off – Airbus: press the A/THR button on the FCU (thrust stays, THR LK appears in the FMA). Boeing: press the button on the thrust lever. Then “Done”.",
+          "2": "Switch it on again – Airbus: press the A/THR button again, A/THR shows in the FMA again. Boeing: arm A/T and select SPEED. Then “Done”."
+        }
+      },
       "anflug": {
         "titel": "Approach APPR / LOC",
         "wo": "Glareshield panel: APPR or APP button, or LOC.",
@@ -3598,7 +3611,9 @@
       "nav_1": "1 (Airbus NAV & LOGO) / ON",
       "lande_off": "OFF",
       "lande_on": "ON",
-      "xpdr_on": "ON (Airbus)"
+      "xpdr_on": "ON (Airbus)",
+      "athr_an": "A/THR ON (active)",
+      "athr_aus": "A/THR OFF"
     },
     "keine_bewegung": "nessun movimento",
     "schon_vermessen": "Questo aereo è già stato misurato (l'ultima volta il {{datum}}). Grazie! Misurarlo di nuovo ha senso solo dopo un aggiornamento importante dell'add-on.",

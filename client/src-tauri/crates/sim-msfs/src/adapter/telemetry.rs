@@ -2349,9 +2349,10 @@ fn b_wert(t: &Telemetry, name: &str) -> Option<f64> {
 
 /// iniBuilds A380 (MSFS 2024) Autobrake aus den Input-Events, gemessen
 /// 26.09.2026 durch Drehen des Knopfes: `AIRLINER_MIP_LG_ABRK_KNOB`
-/// 0=DISARM 1=BTV 2=LO 3=L2 4=L3 5=HI. BTV=1 ist NICHT direkt beobachtet,
-/// sondern aus der Zaehlung abgeleitet — der Knopf springt am Boden aus
-/// BTV zurueck. `AIRLINER_MIP_LG_ABRK_RTO` 1 = RTO-Taste gedrueckt.
+/// 0=DISARM 1=BTV 2=LO 3=L2 4=L3 5=HI. BTV=1 gemessen 28.09.2026 im Anflug
+/// (0/1/0, mit Landebahn + Abrollweg im OANS — ohne springt der Knopf
+/// zurueck, auch in der Luft); LO/L2/HI = 2/3/5 in der Luftmessung
+/// bestaetigt. `AIRLINER_MIP_LG_ABRK_RTO` 1 = RTO-Taste gedrueckt.
 ///
 /// ⚠ Die RTO-Taste bleibt nach einmaligem Druecken den GANZEN Flug auf 1
 /// (UAE 424, 27.09.2026: RTO=1 vom Rollen bis nach der Landung) — das ist
@@ -2359,6 +2360,42 @@ fn b_wert(t: &Telemetry, name: &str) -> Option<f64> {
 /// deshalb Vorrang; RTO gilt nur, solange der Knopf auf DISARM steht.
 /// Vorher stand bei jeder A380-Landung „RTO", obwohl L2 gewaehlt war.
 /// Kein Event → None.
+/// iniBuilds A380: der tatsaechlich scharfe Zustand aus `L:INI_AUTOBRAKE_LEVEL`
+/// — gemessen am Boden (28.09.2026, 07:14) und im Anflug (18:58/20:44):
+/// 0=DISARM 1=BTV 4=RTO 5=LO 6=L2 7=L3 8=HI. Anders als die RTO-Taste
+/// faellt er nach dem Start zurueck: AIB 422 (28.09.2026) zeigte ueber
+/// Knopf + Taste 2481-mal „RTO" in der Luft, weil die Taste auf 1 blieb.
+///
+/// Stufe 0 heisst DISARM nur, wenn der Knopf auch auf DISARM steht (bzw.
+/// nur die Taste gemeldet wird); steht der Knopf auf einer Stufe, gilt er —
+/// Schutz, falls die LVar einmal nicht belegt ist. Ohne Events und mit
+/// Stufe 0 bleibt es beim bisherigen Weg (`a380_autobrake_label`).
+fn a380_autobrake(level: f64, knopf: Option<f64>, rto: Option<f64>) -> Option<String> {
+    let n = level.round();
+    if (level - n).abs() < 0.25 {
+        let aus_level = match n as i64 {
+            1 => Some("BTV"),
+            4 => Some("RTO"),
+            5 => Some("LO"),
+            6 => Some("L2"),
+            7 => Some("L3"),
+            8 => Some("HI"),
+            _ => None,
+        };
+        if let Some(l) = aus_level {
+            return Some(l.to_string());
+        }
+        if n == 0.0 {
+            match knopf.map(f64::round) {
+                Some(k) if k == 0.0 => return Some("DISARM".to_string()),
+                Some(_) => return a380_autobrake_label(knopf, None),
+                None => {}
+            }
+        }
+    }
+    a380_autobrake_label(knopf, rto)
+}
+
 fn a380_autobrake_label(knopf: Option<f64>, rto: Option<f64>) -> Option<String> {
     let rto_gedrueckt = rto.is_some_and(|v| (v - 1.0).abs() < 0.25);
     let Some(k) = knopf else {
@@ -3848,11 +3885,12 @@ fn telemetry_to_snapshot_mit_pfad(
             .to_string(),
         )
     } else if is_a380 {
-        // iniBuilds A380 (MSFS 2024): nur ueber die Input-Events lesbar
-        // (Knopf + RTO-Taste, siehe `a380_autobrake_label`). Die
-        // `L:INI_AUTOBRAKE_*`-LVars sind beim A380 unbelegt und laufen nur
-        // roh mit — ohne Event also weiter None.
-        a380_autobrake_label(
+        // iniBuilds A380: `L:INI_AUTOBRAKE_LEVEL` ist der echte Zustand
+        // (gemessen 28.09.2026, siehe `a380_autobrake`); Knopf + RTO-Taste
+        // (Input-Events) bleiben Rueckfall. Frueher hiess es hier, die
+        // LVars seien beim A380 unbelegt — die Messungen zeigen das Gegenteil.
+        a380_autobrake(
+            t.ini_autobrake_level,
             b_wert(&t, "AIRLINER_MIP_LG_ABRK_KNOB"),
             b_wert(&t, "AIRLINER_MIP_LG_ABRK_RTO"),
         )
@@ -9839,16 +9877,42 @@ mod tests {
             let snap = mit_b(A380, &[], &[("AIRLINER_MIP_LG_ABRK_KNOB", roh)]);
             assert_eq!(snap.autobrake.as_deref(), Some(want), "Knopf roh={roh}");
         }
-        // RTO-Taste gedrueckt und Knopf auf DISARM → RTO.
+        // RTO scharf (am Boden gemessen: Stufe 4, Taste 1, Knopf 0) → RTO.
         let snap = mit_b(
             A380,
-            &[],
+            &[("L:INI_AUTOBRAKE_LEVEL", 4.0)],
             &[
                 ("AIRLINER_MIP_LG_ABRK_KNOB", 0.0),
                 ("AIRLINER_MIP_LG_ABRK_RTO", 1.0),
             ],
         );
         assert_eq!(snap.autobrake.as_deref(), Some("RTO"));
+        // AIB 422 (28.09.2026): nach dem Start Stufe 0, Knopf DISARM, die
+        // Taste haengt auf 1 → DISARM, nicht RTO.
+        let snap = mit_b(
+            A380,
+            &[("L:INI_AUTOBRAKE_LEVEL", 0.0)],
+            &[
+                ("AIRLINER_MIP_LG_ABRK_KNOB", 0.0),
+                ("AIRLINER_MIP_LG_ABRK_RTO", 1.0),
+            ],
+        );
+        assert_eq!(snap.autobrake.as_deref(), Some("DISARM"));
+        // Stufe aus der LVar, gemessen: 1 BTV, 5 LO, 6 L2, 7 L3, 8 HI.
+        for (lv, knopf, want) in [
+            (1.0, 1.0, "BTV"),
+            (5.0, 2.0, "LO"),
+            (6.0, 3.0, "L2"),
+            (7.0, 4.0, "L3"),
+            (8.0, 5.0, "HI"),
+        ] {
+            let snap = mit_b(
+                A380,
+                &[("L:INI_AUTOBRAKE_LEVEL", lv)],
+                &[("AIRLINER_MIP_LG_ABRK_KNOB", knopf)],
+            );
+            assert_eq!(snap.autobrake.as_deref(), Some(want), "Stufe {lv}");
+        }
         // UAE 424 (27.09.2026): RTO blieb den ganzen Flug auf 1, der Pilot
         // stellte im Anflug L2 (Knopf 3) — die Landestufe gilt.
         let snap = mit_b(
