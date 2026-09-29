@@ -206,6 +206,29 @@ fn profil_neu(shared: &AdapterShared, st: &mut P2Stand, web: Option<&HashSet<Str
     }
 }
 
+/// Flugzeugmeldung des Plugins → [`AircraftInfo`], befuellt wie die Web-API:
+/// `descrip` = `acf_descrip`, `ui_name` = `acf_ui_name`. Seit Plugin 1.0
+/// kommt `titel` = UI-Name mit `beschreibung` = `acf_descrip`; aeltere
+/// Plugins senden nur `titel`, und der war `acf_descrip`.
+pub(crate) fn aircraft_aus_meldung(
+    icao: Option<String>,
+    titel: Option<String>,
+    beschreibung: Option<String>,
+    pfad: Option<String>,
+) -> AircraftInfo {
+    let (descrip, ui_name) = match beschreibung {
+        Some(b) => (Some(b), titel),
+        None => (titel, None),
+    };
+    AircraftInfo {
+        descrip,
+        ui_name,
+        icao,
+        relative_path: pfad,
+        ..AircraftInfo::default()
+    }
+}
+
 /// Kennung fuer den Schnappschuss: (Titel, ICAO, Kennzeichen). Das Plugin
 /// hat Vorrang; die Web-API fuellt, was es nicht meldet. Das Kennzeichen
 /// (nur Web-API) nur, wenn die Web-API dasselbe Flugzeug meint — sie fragt
@@ -442,13 +465,14 @@ impl AdapterShared {
         }
     }
 
-    fn flugzeug_melden(&self, icao: Option<String>, titel: Option<String>, pfad: Option<String>) {
-        let neu = AircraftInfo {
-            descrip: titel,
-            icao,
-            relative_path: pfad,
-            ..AircraftInfo::default()
-        };
+    fn flugzeug_melden(
+        &self,
+        icao: Option<String>,
+        titel: Option<String>,
+        beschreibung: Option<String>,
+        pfad: Option<String>,
+    ) {
+        let neu = aircraft_aus_meldung(icao, titel, beschreibung, pfad);
         let web = self.addon_vorhanden.lock().clone();
         let wechsel = {
             let mut st = self.p2.lock();
@@ -582,7 +606,12 @@ impl Ziel for AdapterShared {
                     }
                 }
             },
-            Ereignis::Flugzeug { icao, titel, pfad } => self.flugzeug_melden(icao, titel, pfad),
+            Ereignis::Flugzeug {
+                icao,
+                titel,
+                beschreibung,
+                pfad,
+            } => self.flugzeug_melden(icao, titel, beschreibung, pfad),
             Ereignis::Liste {
                 id,
                 teil,
@@ -701,6 +730,35 @@ impl PluginZugang {
 
 #[cfg(test)]
 mod tests {
+    /// Plugin 1.0 und aeltere Plugins fuellen `AircraftInfo` wie die Web-API.
+    #[test]
+    fn flugzeugmeldung_wie_web_api() {
+        let neu = super::aircraft_aus_meldung(
+            Some("A20N".into()),
+            Some("ToLiSs A320 Hi Def".into()),
+            Some("A320 with high fidelity system modelling".into()),
+            Some("Aircraft/ToLissA320_V1p1p7/a320.acf".into()),
+        );
+        assert_eq!(neu.ui_name.as_deref(), Some("ToLiSs A320 Hi Def"));
+        assert_eq!(
+            neu.descrip.as_deref(),
+            Some("A320 with high fidelity system modelling"),
+            "Schnappschuss-Titel bleibt die Beschreibung"
+        );
+        assert_eq!(neu.anzeige_titel().as_deref(), Some("ToLiSs A320 Hi Def"));
+        let alt = super::aircraft_aus_meldung(
+            None,
+            Some("A320 with high fidelity system modelling".into()),
+            None,
+            None,
+        );
+        assert_eq!(alt.ui_name, None, "altes Plugin: titel war acf_descrip");
+        assert_eq!(
+            alt.anzeige_titel().as_deref(),
+            Some("A320 with high fidelity system modelling")
+        );
+    }
+
     use super::*;
 
     /// Jeder Katalogname, jede Ersetzung und jede Probe steht genau einmal

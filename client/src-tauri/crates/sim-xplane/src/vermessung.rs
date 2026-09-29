@@ -521,6 +521,9 @@ fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
             if flugzeug.descrip.is_none() {
                 flugzeug.descrip = web.descrip;
             }
+            if flugzeug.ui_name.is_none() {
+                flugzeug.ui_name = web.ui_name;
+            }
             if flugzeug.icao.is_none() {
                 flugzeug.icao = web.icao;
             }

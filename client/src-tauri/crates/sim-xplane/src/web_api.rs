@@ -37,8 +37,16 @@ use serde::Deserialize;
 /// 12.4.3 kennt ihn nicht (fehlt in DataRefs.txt). Die Suche danach schlug
 /// bei jeder Abfrage fehl, ohne die anderen Werte zu stoeren; gelesen wurde
 /// das Feld nirgends. Entfernt.
+///
+/// `acf_ui_name` (29.09.2026, DataRefs.txt 12.4.3: „ACF name as seen in the
+/// UI“) ist der Name, den auch der Aircraft-Scan aus `acf/_name` liest —
+/// `acf_descrip` ist nur die Beschreibung („A320 with high fidelity system
+/// modelling“) und passte nie zum Scan. Aeltere X-Plane-Versionen kennen den
+/// Namen evtl. nicht; dann bleibt das Feld leer, die anderen Werte kommen
+/// trotzdem (Fehler je Feld werden geschluckt).
 const AIRCRAFT_DATAREFS: &[&str] = &[
     "sim/aircraft/view/acf_descrip",
+    "sim/aircraft/view/acf_ui_name",
     "sim/aircraft/view/acf_ICAO",
     "sim/aircraft/view/acf_tailnum",
     "sim/aircraft/view/acf_author",
@@ -49,7 +57,13 @@ const AIRCRAFT_DATAREFS: &[&str] = &[
 /// (`Default`) until the first successful poll.
 #[derive(Debug, Clone, Default)]
 pub struct AircraftInfo {
+    /// `acf_descrip` — Beschreibung; bleibt der Titel des Schnappschusses
+    /// (Profilerkennung, Buchungsabgleich haengen daran).
     pub descrip: Option<String>,
+    /// `acf_ui_name` — Name wie in der X-Plane-Oberflaeche und im Scan
+    /// (`acf/_name`). Plugin-Meldung: `titel` (seit Plugin 1.0, zusammen mit
+    /// `beschreibung`).
+    pub ui_name: Option<String>,
     pub icao: Option<String>,
     pub tailnum: Option<String>,
     pub author: Option<String>,
@@ -63,6 +77,7 @@ impl AircraftInfo {
     pub fn has_any(&self) -> bool {
         [
             &self.descrip,
+            &self.ui_name,
             &self.icao,
             &self.tailnum,
             &self.author,
@@ -70,6 +85,17 @@ impl AircraftInfo {
         ]
         .iter()
         .any(|v| v.as_ref().is_some_and(|s| !s.is_empty()))
+    }
+
+    /// Titel fuer Messung und Scan-Abgleich: der UI-Name, sonst (X-Plane
+    /// ohne `acf_ui_name`, altes Plugin) die Beschreibung.
+    pub fn anzeige_titel(&self) -> Option<String> {
+        [&self.ui_name, &self.descrip]
+            .into_iter()
+            .flatten()
+            .map(|s| s.trim())
+            .find(|s| !s.is_empty())
+            .map(str::to_string)
     }
 }
 
@@ -261,6 +287,7 @@ impl WebApiClient {
             };
             match *name {
                 "sim/aircraft/view/acf_descrip" => info.descrip = value,
+                "sim/aircraft/view/acf_ui_name" => info.ui_name = value,
                 "sim/aircraft/view/acf_ICAO" => info.icao = value,
                 "sim/aircraft/view/acf_tailnum" => info.tailnum = value,
                 "sim/aircraft/view/acf_author" => info.author = value,
@@ -369,6 +396,26 @@ impl ValueData {
 
 #[cfg(test)]
 mod tests {
+    /// Messtitel: UI-Name vor Beschreibung, leere Werte zaehlen nicht.
+    #[test]
+    fn anzeige_titel_ui_name_vor_beschreibung() {
+        let mut a = super::AircraftInfo {
+            descrip: Some("A320 with high fidelity system modelling".into()),
+            ui_name: Some("ToLiSs A320 Hi Def".into()),
+            ..Default::default()
+        };
+        assert_eq!(a.anzeige_titel().as_deref(), Some("ToLiSs A320 Hi Def"));
+        a.ui_name = Some("  ".into());
+        assert_eq!(
+            a.anzeige_titel().as_deref(),
+            Some("A320 with high fidelity system modelling"),
+            "X-Plane 11 ohne acf_ui_name"
+        );
+        a.descrip = None;
+        assert_eq!(a.anzeige_titel(), None);
+        assert!(super::AIRCRAFT_DATAREFS.contains(&"sim/aircraft/view/acf_ui_name"));
+    }
+
     use super::*;
 
     #[test]

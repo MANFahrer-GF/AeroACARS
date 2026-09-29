@@ -58,18 +58,42 @@ struct Namen {
     namen: Vec<String>,
 }
 
+/// Anfrage für [`lvar_namen`] — getrennt, damit Tests die fertige URL
+/// (Kodierung von Leerzeichen, Backslashes, Klammern) prüfen können.
+///
+/// `pfad` ist der aircraft.cfg-Pfad aus `AircraftLoaded` (z. B.
+/// `SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG`). Der Server
+/// ordnet darüber den Scan eindeutig zu (SimObject-Ordner); ohne Pfad bleibt
+/// es beim Abgleich über ICAO und Titel. Ein leerer Pfad wird nicht
+/// gesendet, damit ältere Server nichts Neues sehen.
+fn lvar_namen_anfrage(
+    client: &reqwest::Client,
+    base: Option<&str>,
+    token: &str,
+    icao: &str,
+    titel: &str,
+    pfad: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let mut q = vec![("icao", icao), ("titel", titel)];
+    if let Some(p) = pfad.map(str::trim).filter(|p| !p.is_empty()) {
+        q.push(("pfad", p));
+    }
+    client
+        .get(url(base, "/lvar-namen"))
+        .query(&q)
+        .bearer_auth(token)
+}
+
 /// L:-Namen aus den Aircraft-Scans, die zu diesem Flugzeug passen.
 pub async fn lvar_namen(
     base: Option<&str>,
     token: &str,
     icao: &str,
     titel: &str,
+    pfad: Option<&str>,
 ) -> Result<Vec<String>, NavdataError> {
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
-    let r = client
-        .get(url(base, "/lvar-namen"))
-        .query(&[("icao", icao), ("titel", titel)])
-        .bearer_auth(token)
+    let r = lvar_namen_anfrage(&client, base, token, icao, titel, pfad)
         .send()
         .await?;
     let r = pruefen(r).await?;
@@ -145,6 +169,70 @@ pub async fn vermessen(base: Option<&str>, token: &str) -> Result<VermessenListe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn anfrage_url(pfad: Option<&str>) -> reqwest::Url {
+        lvar_namen_anfrage(
+            &reqwest::Client::new(),
+            Some("https://live.example/"),
+            "tok",
+            "B38M",
+            "ifly-aircraft-737max8-TUI DAMAH-189Seats",
+            pfad,
+        )
+        .build()
+        .unwrap()
+        .url()
+        .clone()
+    }
+
+    /// Der aircraft.cfg-Pfad geht vollständig und dekodierbar mit — auch
+    /// Backslashes, Leerzeichen und Groß-/Kleinschreibung bleiben erhalten.
+    #[test]
+    fn lvar_namen_schickt_den_pfad_kodiert_mit() {
+        let pfad = r"SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG";
+        let u = anfrage_url(Some(pfad));
+        assert_eq!(u.path(), "/api/ascan/lvar-namen");
+        let q: Vec<(String, String)> = u.query_pairs().into_owned().collect();
+        assert_eq!(
+            q,
+            [
+                ("icao".to_string(), "B38M".to_string()),
+                (
+                    "titel".to_string(),
+                    "ifly-aircraft-737max8-TUI DAMAH-189Seats".to_string()
+                ),
+                ("pfad".to_string(), pfad.to_string()),
+            ]
+        );
+        // Roh kodiert: Backslash als %5C, kein nackter Backslash in der URL.
+        let roh = u.query().unwrap();
+        assert!(roh.contains("pfad=SimObjects%5CAirplanes%5CiFly"), "{roh}");
+        assert!(!roh.contains('\\'), "{roh}");
+    }
+
+    /// Ohne Pfad (älterer Stand, X-Plane, `AircraftLoaded` noch nicht da)
+    /// fehlt der Parameter ganz — kein leeres `pfad=`.
+    #[test]
+    fn lvar_namen_ohne_pfad_kein_parameter() {
+        for p in [None, Some(""), Some("   ")] {
+            let u = anfrage_url(p);
+            assert!(
+                !u.query_pairs().any(|(k, _)| k == "pfad"),
+                "{p:?} → {}",
+                u.query().unwrap_or_default()
+            );
+        }
+        // Umgebende Leerzeichen werden abgeschnitten.
+        let u = anfrage_url(Some("  SimObjects/Airplanes/FNX_32X/aircraft.cfg \n"));
+        let pfad = u
+            .query_pairs()
+            .find(|(k, _)| k == "pfad")
+            .map(|(_, v)| v.into_owned());
+        assert_eq!(
+            pfad.as_deref(),
+            Some("SimObjects/Airplanes/FNX_32X/aircraft.cfg")
+        );
+    }
 
     /// Die Liste muss `teil` bis zur Oberfläche durchreichen.
     #[test]

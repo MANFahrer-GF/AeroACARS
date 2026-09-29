@@ -318,6 +318,9 @@ pub enum Antwort {
     Flugzeug {
         icao: Option<String>,
         titel: Option<String>,
+        /// Seit Plugin 1.0: `acf_descrip`; `titel` ist dann `acf_ui_name`.
+        /// Aeltere Plugins senden nur `titel` (= `acf_descrip`).
+        beschreibung: Option<String>,
         pfad: Option<String>,
     },
     Liste {
@@ -454,6 +457,7 @@ pub fn antwort_lesen(v: &serde_json::Value) -> Option<Antwort> {
         "flugzeug" => Antwort::Flugzeug {
             icao: text(v, "icao"),
             titel: text(v, "titel"),
+            beschreibung: text(v, "beschreibung"),
             pfad: text(v, "pfad"),
         },
         "liste" => Antwort::Liste {
@@ -598,6 +602,9 @@ pub enum Ereignis {
     Flugzeug {
         icao: Option<String>,
         titel: Option<String>,
+        /// Seit Plugin 1.0: `acf_descrip`; `titel` ist dann `acf_ui_name`.
+        /// Aeltere Plugins senden nur `titel` (= `acf_descrip`).
+        beschreibung: Option<String>,
         pfad: Option<String>,
     },
     Liste {
@@ -1229,9 +1236,17 @@ impl Sitzung {
             Antwort::AboEmpfangen { abo, gen, namen } => {
                 self.abo_empfangen(abo, gen, namen, jetzt);
             }
-            Antwort::Flugzeug { icao, titel, pfad } => {
-                ziel.ereignis(Ereignis::Flugzeug { icao, titel, pfad })
-            }
+            Antwort::Flugzeug {
+                icao,
+                titel,
+                beschreibung,
+                pfad,
+            } => ziel.ereignis(Ereignis::Flugzeug {
+                icao,
+                titel,
+                beschreibung,
+                pfad,
+            }),
             Antwort::Liste {
                 id,
                 teil,
@@ -1573,7 +1588,20 @@ mod tests {
             Some(Antwort::Flugzeug {
                 icao: Some("A20N".into()),
                 titel: Some("A320neo".into()),
+                beschreibung: None,
                 pfad: Some("Aircraft/x/a320.acf".into())
+            })
+        );
+        // Seit Plugin 1.0: UI-Name als Titel, Beschreibung daneben.
+        assert_eq!(
+            antwort_lesen(&json(
+                r#"{"p":2,"t":"flugzeug","icao":"A20N","titel":"ToLiSs A320 Hi Def","beschreibung":"A320 with high fidelity system modelling","pfad":"Aircraft/ToLissA320_V1p1p7/a320.acf"}"#
+            )),
+            Some(Antwort::Flugzeug {
+                icao: Some("A20N".into()),
+                titel: Some("ToLiSs A320 Hi Def".into()),
+                beschreibung: Some("A320 with high fidelity system modelling".into()),
+                pfad: Some("Aircraft/ToLissA320_V1p1p7/a320.acf".into())
             })
         );
         assert_eq!(

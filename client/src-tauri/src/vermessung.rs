@@ -367,8 +367,12 @@ pub async fn vermessung_starten(
             quelle = spiegel.quelle(),
             "Flugzeug vermessen: X-Plane verbunden"
         );
+        // Titel = UI-Name (`acf_ui_name`, wie der Scan ihn aus `acf/_name`
+        // liest), sonst die Beschreibung — mit `acf_descrip` allein fand der
+        // Server nie den passenden Scan (ToLiss, 29.09.2026). Der Pfad ist
+        // `acf_relative_path`.
         let f = Flugzeug {
-            titel: spiegel.flugzeug.descrip.clone(),
+            titel: spiegel.flugzeug.anzeige_titel(),
             icao: spiegel.flugzeug.icao.clone(),
             autor: spiegel.flugzeug.author.clone(),
             pfad: spiegel.flugzeug.relative_path.clone(),
@@ -450,10 +454,17 @@ async fn msfs_starten(
 ) -> Result<(Quelle, &'static str, Flugzeug, (usize, usize)), String> {
     let titel = snap.aircraft_title.clone().unwrap_or_default();
     let icao = snap.aircraft_icao.clone().unwrap_or_default();
+    // Pfad der aircraft.cfg aus `AircraftLoaded` (z. B.
+    // `SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG`): der einzige
+    // stabile Schluessel des Flugzeugs — Titel sind Lackierungen, die ICAO
+    // kommt aus der ATC-Stimme (iFly MAX 8 meldete B738). Bis v1.9.11 wurde er
+    // nicht mitgeschickt, die Messung war nicht eindeutig zuzuordnen.
+    let pfad = cfg_pfad(snap);
     // L:-Namen aus dem Aircraft-Scan — SimConnect kann L:-Variablen nicht
     // aufzählen. Ohne Scan geht es mit B:-Events und Standardwerten weiter.
+    // Der Pfad lässt den Server den Scan über den SimObject-Ordner finden.
     let namen = match crate::bordbuch_token(app) {
-        Some(t) => aeroacars_mqtt::messung::lvar_namen(None, &t, &icao, &titel)
+        Some(t) => aeroacars_mqtt::messung::lvar_namen(None, &t, &icao, &titel, pfad.as_deref())
             .await
             .unwrap_or_default(),
         None => Vec::new(),
@@ -473,16 +484,6 @@ async fn msfs_starten(
         profil,
         "Flugzeug vermessen: MSFS-Messung mit L:-Namen aus Scan und Client-Profilen"
     );
-    // Pfad der aircraft.cfg aus `AircraftLoaded` (z. B.
-    // `SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG`): der einzige
-    // stabile Schluessel des Flugzeugs — Titel sind Lackierungen, die ICAO
-    // kommt aus der ATC-Stimme (iFly MAX 8 meldet B738). Bis v1.9.11 wurde er
-    // nicht mitgeschickt, die Messung war nicht eindeutig zuzuordnen.
-    let pfad = snap
-        .cockpit_rohwerte
-        .as_ref()
-        .and_then(|r| r.cfg_pfad.clone())
-        .filter(|p| !p.trim().is_empty());
     let f = Flugzeug {
         titel: (!titel.is_empty()).then_some(titel),
         icao: (!icao.is_empty()).then_some(icao),
@@ -490,6 +491,27 @@ async fn msfs_starten(
         pfad,
     };
     Ok((Quelle::Msfs, "msfs", f, (n, profil)))
+}
+
+/// aircraft.cfg-Pfad des geladenen Flugzeugs (MSFS `AircraftLoaded`),
+/// `None` solange der Simulator ihn noch nicht gemeldet hat.
+fn cfg_pfad(snap: &sim_core::SimSnapshot) -> Option<String> {
+    snap.cockpit_rohwerte
+        .as_ref()
+        .and_then(|r| r.cfg_pfad.clone())
+        .filter(|p| !p.trim().is_empty())
+}
+
+/// Pfad für die Scan-Namen-Abfrage der Startseite: nur, wenn der aktuelle
+/// Snapshot dasselbe Flugzeug zeigt, nach dem die Oberfläche fragt (gleicher
+/// Titel). Sonst — Flugzeugwechsel zwischen Anzeige und Abfrage — lieber
+/// ohne Pfad fragen als den Ordner eines anderen Flugzeugs mitschicken.
+fn cfg_pfad_fuer_titel(snap: &sim_core::SimSnapshot, titel: &str) -> Option<String> {
+    let t = snap.aircraft_title.as_deref().unwrap_or_default().trim();
+    if t.is_empty() || t != titel.trim() {
+        return None;
+    }
+    cfg_pfad(snap)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -715,7 +737,10 @@ pub async fn vermessung_scan_namen(
     titel: String,
 ) -> Result<usize, String> {
     let token = crate::bordbuch_token(&app).ok_or("Nicht angemeldet")?;
-    aeroacars_mqtt::messung::lvar_namen(None, &token, &icao, &titel)
+    // Den aircraft.cfg-Pfad kennt die Oberfläche nicht — er kommt aus dem
+    // aktuellen Snapshot, sofern der dasselbe Flugzeug zeigt.
+    let pfad = crate::current_snapshot(&app).and_then(|s| cfg_pfad_fuer_titel(&s, &titel));
+    aeroacars_mqtt::messung::lvar_namen(None, &token, &icao, &titel, pfad.as_deref())
         .await
         .map(|n| n.len())
         .map_err(|e| e.to_string())
@@ -898,6 +923,38 @@ mod tests {
         assert_eq!(r[1].as_deref(), Some("FbwA32nx"));
         assert_eq!(r[2], None, "Asobo = nur Standard");
         assert_eq!(r[3].as_deref(), Some("IniA350"), "irgendein Titel genügt");
+    }
+
+    /// Die Startseite fragt die Scan-Namen mit dem aircraft.cfg-Pfad ab —
+    /// aber nur, wenn der Snapshot dasselbe Flugzeug zeigt.
+    #[test]
+    fn scan_abfrage_nimmt_den_pfad_nur_zum_gleichen_titel() {
+        let mut snap = sim_core::SimSnapshot::default();
+        snap.aircraft_title = Some("ifly-aircraft-737max8-TUI DAMAH-189Seats".into());
+        assert_eq!(
+            cfg_pfad_fuer_titel(&snap, "ifly-aircraft-737max8-TUI DAMAH-189Seats"),
+            None,
+            "noch kein AircraftLoaded"
+        );
+        let pfad = r"SimObjects\Airplanes\iFly 737-MAX8-189Seats\aircraft.CFG";
+        snap.cockpit_rohwerte = Some(sim_core::CockpitRohwerte {
+            cfg_pfad: Some(pfad.into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            cfg_pfad_fuer_titel(&snap, " ifly-aircraft-737max8-TUI DAMAH-189Seats ").as_deref(),
+            Some(pfad)
+        );
+        assert_eq!(
+            cfg_pfad_fuer_titel(&snap, "FenixA320 CFM SL"),
+            None,
+            "anderes Flugzeug"
+        );
+        snap.cockpit_rohwerte = Some(sim_core::CockpitRohwerte {
+            cfg_pfad: Some("  ".into()),
+            ..Default::default()
+        });
+        assert_eq!(cfg_pfad(&snap), None, "leerer Pfad zählt nicht");
     }
 
     #[test]
