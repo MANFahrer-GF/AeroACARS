@@ -144,8 +144,9 @@ PING
 * Sind alle Namen eines Abos `fehlt`, kommt trotzdem je Runde ein Paket mit
   `"v":[]` (Lebenszeichen).
 * **Flugzeugwechsel mitten in einer Runde:** `XPLM_MSG_PLANE_LOADED` verwirft
-  bei Abos mit Plugin-Namen (nicht `sim/…`) eine laufende Lese- oder
-  Senderunde sofort — Werte, die vor dem Wechsel gelesen wurden, gehen nie
+  bei jedem Abo eine laufende Lese- oder Senderunde sofort (Abos nur mit
+  `sim/…`-Namen beginnen gleich eine neue, Abos mit Plugin-Namen pausieren
+  bis zur Neusuche, höchstens 0,5 s) — Werte, die vor dem Wechsel gelesen wurden, gehen nie
   mehr hinaus, und eine Runde mischt nie altes und neues Flugzeug. Der Client
   sieht dann höchstens eine unvollständige Runde (wie bei UDP-Verlust). War
   gerade eine `abo`-Antwort unterwegs, kommt nach der Neusuche eine
@@ -220,8 +221,16 @@ PING
   Dataref** (Handle), nicht je Eintrag: Duplikate desselben Namens, auch in
   verschiedenen Abos, zählen und drosseln gemeinsam (feste Tabelle, 1024
   Plätze, höchstens 768 gleichzeitig verfolgte langsame Datarefs; ein
-  schneller Aufruf räumt den Platz eines noch nicht gedrosselten wieder) —
-  höchstens einmal je Sekunde
+  schneller Aufruf räumt den Platz eines noch nicht gedrosselten wieder).
+  Ist ein gedrosselter Dataref an der Reihe, bedient **ein** Getter-Aufruf
+  **alle** seine Einträge der Runde (bei Array-Elementen wird das Array
+  einmal über ein Fenster bis 256 Elemente gelesen, weiter auseinander
+  liegende Indizes kommen reihum dran); die 0,2-s-Sperre geht an den am
+  **längsten wartenden** gedrosselten Dataref — kein Wert verhungert. Die
+  Suche fragt die Array-Länge je Dataref einmal je Durchlauf, bei
+  gedrosselten nur, wenn sie ohnehin dran sind. **Fünf schnelle** gedrosselte
+  Lesungen in Folge heben die Drosselung wieder auf (Log einmal). Gedrosselt
+  heißt: höchstens einmal je Sekunde
   gelesen, über alle Abos höchstens ein gedrosselter Lesezugriff je 0,2 s,
   im 2-s-Nachsuchlauf übersprungen. Status und Werte bleiben wahr (kein
   `fehlt`), der Wert kommt nur seltener (der Client behält den letzten). Eine
@@ -230,11 +239,16 @@ PING
   Thread wurde vom Betriebssystem unterbrochen) drosselt nichts.
 * Geliefert wird zuerst Abo 1 (beim Client die Telemetrie) mit einem
   **Teilbudget von 0,5 ms**, dann im Rundlauf über die **belegten** übrigen
-  Abos **und LISTE** mit dem Rest des Budgets **und einer eigenen freien
-  Einheit** — jeder Teilnehmer ist regelmäßig als erster dran. Weder ein
-  großes Abo 1 noch ein Dauer-Abo kann LISTE oder andere Abos aushungern.
-  Im schlimmsten Fall kommen zum Budget je Frame zwei fremde Aufrufe hinzu
-  (die freie Einheit von Abo 1 und die des Rundlaufs).
+  Abos **und LISTE** mit dem Rest des Budgets — jeder Teilnehmer ist
+  regelmäßig als erster dran. Weder ein großes Abo 1 noch ein Dauer-Abo kann
+  LISTE oder andere Abos aushungern.
+* **Höchstens zwei fremde Aufrufe über dem Budget je Frame:** Such- und
+  Liefer-Budget bilden zusammen eine Frame-Grenze (1,3 ms). Danach beginnt
+  je Frame höchstens **ein** weiterer fremder Accessor (die freie Einheit),
+  reihum vergeben an Suche, Abo 1 und Rundlauf (jeder ist spätestens jeden
+  dritten Frame dran). Der schlimmste Frame ist also 1,3 ms + der eine
+  Aufruf, der im Budget begann und sich als langsam herausstellte, + die
+  freie Einheit.
 * **Speicherbudgets (hart):** je Abo **16 MiB**, alle Abos samt Teil-Abos
   zusammen **64 MiB**, LISTE **16 MiB**. Gezählt wird die reservierte
   Kapazität, mit dem schlimmsten Fall je Wert (der Ausgabestapel wird beim
@@ -297,11 +311,15 @@ für Byte die alte Ausgabe, Test `protokoll1_gleich_wie_bisher`); ein nicht
 endlicher Wert (NaN/±Inf) wird `null` statt des ungültigen `nan`.
 
 Der erste Protokoll-1-Tick nach `XPluginEnable` (auch beim Laden)
-synchronisiert nur: aktueller Bodenzustand wird übernommen, Ringpuffer und
-Sinkraten-Tracker neu, **keine Aufsetz-Kante in diesem Tick**. Sonst meldete
-ein Plugin, das in der Luft abgeschaltet und am Boden wieder eingeschaltet
-wird, einen Schein-Touchdown mit alten Werten — und ebenso eines, das am
-Boden geladen wird.
+synchronisiert nur: aktueller Bodenzustand (`fnrml_gear` ≥ 1 N) wird
+übernommen, Ringpuffer und Sinkraten-Tracker neu, **keine Aufsetz-Kante in
+diesem Tick**. Sonst meldete ein Plugin, das in der Luft abgeschaltet und am
+Boden wieder eingeschaltet wird, einen Schein-Touchdown mit alten Werten.
+Grenzen: Ein Aufsetzen genau in diesem einen Tick würde nicht gemeldet
+(Fenster: ein Tick; der Ringpuffer wäre ohnehin leer). Beim Laden am Boden
+entfällt der alte Schein-Touchdown nur, wenn X-Plane `fnrml_gear` schon im
+ersten Tick mit der Last meldet — zeigt der erste Tick noch 0 N, gilt das
+Flugzeug als in der Luft und die folgende Kante wird wie bisher gemeldet.
 
 Every packet is a single line of JSON terminated with `\n`. The
 schema is versioned via `"v":1`. Two packet types:

@@ -36,7 +36,7 @@
 //     XPLM_MSG_PLANE_LOADED (Flugzeug 0) / XPLM_MSG_AIRPORT_LOADED. Der
 //     2-s-Durchlauf prüft nur fehlende Namen und Arrays (Länge); verwaiste
 //     Einzelwerte fängt die Prüfung beim Lesen.
-//   * XPLM_MSG_PLANE_LOADED verwirft bei Abos mit Plugin-Namen eine LAUFENDE
+//   * XPLM_MSG_PLANE_LOADED verwirft bei JEDEM Abo eine LAUFENDE
 //     Runde (LESEN/SENDEN → BEREIT, ANTWORT → NEU): Werte, die vor dem
 //     Wechsel gelesen wurden, gehen nie mehr hinaus, und eine Runde mischt
 //     nie altes und neues Flugzeug (Codex-Abnahme H2).
@@ -205,6 +205,7 @@ private:
         uint32_t name_ofs;   // Basisname, NUL-terminiert, in Abo::text
         int32_t index;       // -1 = ganzer Dataref, -2 = ungültige Zeile
         bool darf_verwaisen; // nicht "sim/…": vor jedem Lesen XPLMIsDataRefGood
+        uint32_t bedient_runde;  // seq der Runde, in der er schon bedient wurde (gedrosselt)
         Aufloesung aktiv;    // danach wird geliefert
         Aufloesung kandidat; // Ergebnis des laufenden Prüfdurchlaufs
     };
@@ -215,8 +216,14 @@ private:
     struct Langsam {
         DatarefHandle h = nullptr;  // nullptr = Platz frei
         uint8_t treffer = 0;        // langsame Aufrufe in Folge
+        uint8_t schnell = 0;        // gedrosselt: schnelle Aufrufe in Folge (Hysterese)
         bool gedrosselt = false;
+        bool laenge_bekannt = false;
+        bool skalar_zuletzt = false;  // Handle mit Skalar- UND Array-Zugriff: abwechseln
+        int32_t laenge = 0;         // zuletzt gemessene Array-Länge (Suche)
+        int32_t fenster = 0;        // Elementfenster > 256 Indizes: nächster Anfang
         double faellig = 0.0;       // gedrosselt: frühestens dann wieder lesen
+        double gesehen = -1e9;      // zuletzt fällig von einer Runde angetroffen
     };
     struct RohName {
         uint32_t ofs;
@@ -245,6 +252,10 @@ private:
         double pause_bis = 0.0;         // … höchstens bis hierhin (grenzen::MAX_PAUSE_S); < 0: Uhr startet im nächsten Frame
         uint32_t pruef_cursor = 0;
         double naechste_pruefung = 0.0;
+        // Länge je Handle im laufenden Prüfdurchlauf (Duplikate und Elemente
+        // desselben Arrays folgen meist aufeinander und teilen sie).
+        DatarefHandle such_h = nullptr;
+        int32_t such_n = 0;
         // Ausgabe (abo-Antwort und Werte teilen sich Stapel und Plan; sie
         // laufen nie gleichzeitig)
         ElementListe stapel;
@@ -319,7 +330,8 @@ private:
     void liste_schritt() noexcept;
     void liste_leeren() noexcept;
     void pruefe_flugzeug() noexcept;
-    bool lies_kennung(DatarefHandle* h, const char* name, char* aus, size_t kap) noexcept;
+    // 1 = gelesen, 0 = Dataref fehlt, -1 = Budget zwischen finde und Lesen um.
+    int lies_kennung(DatarefHandle* h, const char* name, char* aus, size_t kap) noexcept;
 
     // Speicher (H3)
     static size_t abo_bytes(const Abo& a) noexcept;
@@ -345,7 +357,8 @@ private:
 
     // Budget (H4)
     void beginne_budget(double dauer) noexcept;
-    bool darf_arbeiten() const noexcept { return garantie_ || uhr_ < budget_ende_; }
+    // `fremd` = der nächste Aufruf ist ein fremder Accessor (Getter, Länge).
+    bool darf_arbeiten(bool fremd = false) noexcept;
     // Nach jedem XPLM-Aufruf: Uhr lesen; Rückgabe = Dauer seit dem letzten Lesen.
     double nach_aufruf() noexcept;
     // Nach einem FREMDEN Accessor (Getter, Array-Länge): Dauer werten,
@@ -363,7 +376,14 @@ private:
     // lesen, damit diese Zeit nicht dem nächsten fremden Accessor zugerechnet
     // wird (sonst gälte ein gesunder Dataref als langsam).
     void uhr_auffrischen() noexcept { uhr_ = umgebung_.jetzt(); }
-    bool langsam_faellig(const Langsam& l) const noexcept;
+    // Darf ein gedrosselter Handle JETZT gelesen werden? (fällig, Sperre
+    // offen, kein länger wartender vor ihm). Merkt "gesehen".
+    bool darf_langsam_lesen(Langsam& l) noexcept;
+    void waehle_langsam_vorrang() noexcept;
+    // Ein Getter-Aufruf für einen gedrosselten Handle bedient ALLE seine
+    // noch offenen Einträge dieser Runde. false = Budget.
+    bool bediene_gedrosselt(Abo& abo, uint32_t k) noexcept;
+    bool array_laenge(Abo& abo, Eintrag& e, DatarefHandle h, int t, int* n) noexcept;
     void protokolliere(const char* format, ...) noexcept;
 
     Datenquelle& quelle_;
@@ -401,6 +421,14 @@ private:
     uint32_t kleine_verworfen_ = 0;
     double naechste_flut_meldung_ = 0.0;
     double naechster_langsamer_ = 0.0;
+    DatarefHandle langsam_vorrang_ = nullptr;  // am längsten wartender (je Frame)
+    double langsam_vorrang_faellig_ = 0.0;
+    // Frame-Grenze und freie Einheit (grenzen::FRAME_BUDGET_S)
+    double frame_ende_ = 0.0;
+    int frei_frame_ = 0;
+    int phase_nr_ = 0;       // 0 Suche, 1 Abo 1, 2 Rundlauf
+    int prioritaet_ = 0;     // ab dieser Phase darf die freie Einheit genutzt werden
+    uint32_t frame_zaehler_ = 0;
     int langsam_meldungen_ = 0;
     Langsam langsam_[grenzen::LANGSAM_PLAETZE];
     size_t langsam_belegt_ = 0;

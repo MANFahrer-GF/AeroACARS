@@ -1965,3 +1965,231 @@ TEST(dienst_h4_ausreisser_fuellen_die_drosseltabelle_nicht) {
     PRUEFE(log_mit(a, "Drosseltabelle voll").empty());
     PRUEFE(!log_mit(a, "addon/echt_langsam antwortet langsam").empty());
 }
+
+// =============================================================================
+// Nachprüfung Claude (f03e072d): Drosselung fair, sparsam und umkehrbar
+// =============================================================================
+
+TEST(dienst_drossel_ein_aufruf_bedient_alle_elemente) {
+    // Nachweis A: addon/eng[0..7] eines langsamen Arrays. Vorher bekam nur
+    // eng[0] Werte (29 in 30 s), eng[1..7] keinen einzigen.
+    Aufbau a;
+    auto& eng = a.welt.neu("addon/eng", typ::VF);
+    eng.vf = {10, 11, 12, 13, 14, 15, 16, 17};
+    eng.kosten = 0.005;
+    std::string abo = "ABO 2 20\n";
+    for (int i = 0; i < 8; ++i) abo += "addon/eng[" + std::to_string(i) + "]\n";
+    a.hallo();
+    a.sende(abo);
+    std::map<int, int> je_index;
+    std::map<int, double> letzter;
+    bool falsch = false;
+    const int getter_vor = eng.getter_aufrufe;
+    for (int i = 0; i < 1800; ++i) {  // 30 s
+        if (i % 60 == 0) a.sende("PING");
+        a.frame();
+        for (auto& j : a.neue_vom_typ("w")) {
+            for (auto& e : j.hole("v")->feld) {
+                const int k = static_cast<int>(e.feld[0].zahl);
+                ++je_index[k];
+                if (e.feld[1].zahl != 10 + k) falsch = true;  // richtiges Element
+            }
+        }
+    }
+    std::printf("     eng[0..7] gedrosselt, Werte in 30 s:");
+    for (int k = 0; k < 8; ++k) std::printf(" %d", je_index[k]);
+    std::printf(" (Getter-Aufrufe %d)\n", eng.getter_aufrufe - getter_vor);
+    for (int k = 0; k < 8; ++k) PRUEFE(je_index[k] >= 20);
+    PRUEFE(!falsch);
+    PRUEFE(eng.getter_aufrufe - getter_vor <= 40);  // ≈ einer je Sekunde, nicht 8
+}
+
+TEST(dienst_drossel_sperre_reihum_ueber_handles) {
+    // Nachweis B: 10 langsame Datarefs. Vorher bekamen die hinteren Indizes
+    // (5–9) in 50 s nichts. Jetzt geht die 0,2-s-Sperre an den am längsten
+    // wartenden: je ≈ 0,5 Werte/s für alle.
+    Aufbau a;
+    std::string abo = "ABO 2 20\n";
+    for (int i = 0; i < 10; ++i) {
+        auto& r = a.welt.neu("addon/s" + std::to_string(i), typ::F);
+        r.f = static_cast<float>(i);
+        r.kosten = 0.005;
+        abo += "addon/s" + std::to_string(i) + "\n";
+    }
+    a.hallo();
+    a.sende(abo);
+    std::map<int, int> je_index;
+    for (int i = 0; i < 3000; ++i) {  // 50 s
+        if (i % 60 == 0) a.sende("PING");
+        a.frame();
+        for (auto& j : a.neue_vom_typ("w")) {
+            for (auto& e : j.hole("v")->feld) ++je_index[static_cast<int>(e.feld[0].zahl)];
+        }
+    }
+    int mini = 1 << 30, maxi = 0;
+    std::printf("     10 langsame Datarefs, Werte in 50 s:");
+    for (int k = 0; k < 10; ++k) {
+        std::printf(" %d", je_index[k]);
+        mini = std::min(mini, je_index[k]);
+        maxi = std::max(maxi, je_index[k]);
+    }
+    std::printf("\n");
+    PRUEFE(mini >= 15);          // Soll ≈ 25 (5 Lesungen/s über 10 Handles)
+    PRUEFE(maxi <= 2 * mini);    // fair
+}
+
+TEST(dienst_drossel_suche_fragt_laenge_je_handle) {
+    // 256 Elemente eines langsamen Arrays: vorher 256 Längenaufrufe je
+    // Suchlauf (≈ 1,3 s bei 5 ms), auch nach Flughafen-/Flugzeugwechsel.
+    Aufbau a;
+    auto& gross = a.welt.neu("addon/gross", typ::VF);
+    gross.vf = std::vector<float>(256, 1.0f);
+    gross.kosten = 0.005;
+    std::string abo = "ABO 2 5\n";
+    for (int i = 0; i < 256; ++i) abo += "addon/gross[" + std::to_string(i) + "]\n";
+    a.hallo();
+    a.sende(abo);
+    for (int i = 0; i < 20 && a.neue_vom_typ("abo").empty(); ++i) a.frames(1);
+    std::printf("     Anmeldung 256 Elemente: %d Laengenaufrufe\n", gross.laengen_aufrufe);
+    PRUEFE(gross.laengen_aufrufe <= 1);  // eine Länge je Handle und Durchlauf
+    a.frames(300);                        // gedrosselt (Werte-Getter langsam)
+    const int vor = gross.laengen_aufrufe;
+    a.d->flughafen_geladen();             // dringender Lauf über alle 256
+    a.frames(120);
+    std::printf("     dringender Lauf danach: %d Laengenaufrufe\n", gross.laengen_aufrufe - vor);
+    PRUEFE(gross.laengen_aufrufe - vor <= 1);
+    PRUEFE(!log_mit(a, "addon/gross").empty());  // war wirklich gedrosselt
+}
+
+TEST(dienst_drossel_hoechstens_zwei_fremde_aufrufe_je_frame) {
+    // Langsame (4 ms) Accessoren gleichzeitig in Abo 1, Abo 2 und in der
+    // Suche (Array-Längen neuer Abos). Vorher bis zu drei je Frame (12 ms).
+    Aufbau a;
+    std::string abo1 = "ABO 1 50\n", abo2 = "ABO 2 50\n";
+    for (int i = 0; i < 20; ++i) {
+        a.welt.neu("addon/a" + std::to_string(i), typ::F).kosten = 0.004;
+        a.welt.neu("addon/b" + std::to_string(i), typ::F).kosten = 0.004;
+        abo1 += "addon/a" + std::to_string(i) + "\n";
+        abo2 += "addon/b" + std::to_string(i) + "\n";
+        auto& arr = a.welt.neu("addon/arr" + std::to_string(i), typ::VF);
+        arr.vf = std::vector<float>(4, 1.0f);
+        arr.kosten = 0.004;
+    }
+    a.hallo();
+    a.sende(abo1);
+    a.sende(abo2);
+    double max_frame = 0.0;
+    std::map<int, int> w;
+    for (int i = 0; i < 600; ++i) {
+        if (i % 60 == 0) a.sende("PING");
+        if (i % 10 == 0 && i < 400) {  // laufend neue Abos mit langsamen Längen
+            a.sende("ABO " + std::to_string(3 + (i / 10) % 10) + " 5 g" + std::to_string(i + 1) +
+                    "\naddon/arr" + std::to_string((i / 10) % 20));
+        }
+        const double vorher = a.umg.zeit + 1.0 / 60.0;
+        a.frame();
+        max_frame = std::max(max_frame, a.umg.zeit - vorher);
+        for (auto& j : a.neue_vom_typ("w")) w[static_cast<int>(j.hole("abo")->zahl)]++;
+    }
+    std::printf("     4-ms-Accessoren in Suche, Abo 1, Abo 2: laengster Frame %.2f ms\n", max_frame * 1000.0);
+    PRUEFE(max_frame <= grenzen::FRAME_BUDGET_S + 2 * 0.004 + 2e-4);
+    PRUEFE(w[1] > 0 && w[2] > 0);  // beide kommen voran
+}
+
+TEST(dienst_drossel_wird_aufgehoben) {
+    // Nachweis C: Der Accessor wird wieder schnell → nach 5 schnellen
+    // gedrosselten Lesungen wieder volle Rate, einmal im Log.
+    Aufbau a;
+    auto& r = a.welt.neu("addon/erholt", typ::F);
+    r.kosten = 0.005;
+    a.hallo();
+    a.sende("ABO 2 20\naddon/erholt");
+    a.frames(300);
+    PRUEFE(!log_mit(a, "addon/erholt antwortet langsam").empty());
+    r.kosten = 0.0;
+    a.frames(600);  // ≥ 5 gedrosselte Lesungen (≈ 1/s)
+    PRUEFE_GLEICH(log_zaehle(a, "addon/erholt antwortet wieder schnell"), 1);
+    const int vor = r.getter_aufrufe;
+    a.frames(120);
+    PRUEFE(r.getter_aufrufe - vor >= 35);  // volle Rate (Soll 40 in 2 s)
+}
+
+TEST(dienst_h2_auch_reine_sim_abos_verwerfen_die_runde) {
+    // Nachweis: reines sim/-Abo, Runde über viele Frames; Wechsel mittendrin.
+    // Vorher gingen danach noch vor dem Wechsel gelesene Werte hinaus.
+    Aufbau a;
+    std::string abo = "ABO 1 1\n";
+    std::vector<ScheinRef*> refs;
+    for (int i = 0; i < 400; ++i) {
+        auto& r = a.welt.neu("sim/h2/n" + std::to_string(i), typ::F);
+        r.f = 1.0f;
+        refs.push_back(&r);
+        abo += "sim/h2/n" + std::to_string(i) + "\n";
+    }
+    a.hallo();
+    a.sende(abo);
+    a.welt.lese_kosten = 1e-4;
+    bool mitten = false;
+    for (int i = 0; i < 200 && !mitten; ++i) {
+        const int vorher = a.welt.lesezugriffe;
+        a.frames(1);
+        mitten = std::string(a.d->abo_phase(1)) == "lesen" && a.welt.lesezugriffe > vorher;
+    }
+    PRUEFE(mitten);
+    a.neue();
+    for (auto* r : refs) r->f = 2.0f;
+    a.d->flugzeug_geladen();
+    std::vector<JWert> nachher;
+    for (int i = 0; i < 240; ++i) {
+        a.frames(1);
+        for (auto& j : a.neue()) nachher.push_back(j);
+    }
+    PRUEFE(!enthaelt_wert(nachher, 1.0));
+    PRUEFE(enthaelt_wert(nachher, 2.0));  // ohne Pause weiter
+    size_t flugzeug = nachher.size(), wert = nachher.size();
+    for (size_t k = 0; k < nachher.size(); ++k) {
+        if (art(nachher[k]) == "flugzeug" && flugzeug == nachher.size()) flugzeug = k;
+        if (art(nachher[k]) == "w" && wert == nachher.size()) wert = k;
+    }
+    PRUEFE(flugzeug < wert);
+}
+
+TEST(dienst_h3_ersatz_abo_nahe_am_gesamtbudget) {
+    // Abos 2–5 (je ≈ 14,4 MiB) + Abo 6 (≈ 4,8 MiB) ≈ 62 MiB. Ersatz für
+    // Abo 2 mit ≈ 4 MiB Namenstext: vorher zählte das alte Abo 2 beim Aufbau
+    // mit → speicher_limit, obwohl es nach dem Ersatz passt.
+    Aufbau a;
+    a.welt.neu("addon/arr", typ::VF).vf = std::vector<float>(256, 0.5f);
+    std::vector<std::string> gross(3400, "addon/arr"), klein(1100, "addon/arr");
+    a.hallo();
+    std::map<int, std::string> fehler;
+    auto laufen = [&](int frames) {
+        for (int i = 0; i < frames; ++i) {
+            a.frames(1);
+            for (auto& j : a.neue_vom_typ("fehler")) fehler[static_cast<int>(j.hole("abo")->zahl)] = j.hole("grund")->text;
+        }
+    };
+    for (int id = 2; id <= 5; ++id) { for (const auto& d : abo_datagramme(id, 1, gross, 1)) a.sende(d); laufen(20); }
+    for (const auto& d : abo_datagramme(6, 1, klein, 1)) a.sende(d);
+    laufen(20);
+    PRUEFE(fehler.empty());
+    std::printf("     vor dem Ersatz: %.1f MiB\n", static_cast<double>(a.d->speicher_abos()) / (1 << 20));
+    std::vector<std::string> lang;
+    for (int i = 0; i < 8192; ++i) {
+        std::string n = "addon/ersatz/" + std::to_string(i) + "/";
+        n += std::string(480 - n.size(), 'x');
+        lang.push_back(n);
+    }
+    for (const auto& d : abo_datagramme(2, 1, lang, 2)) a.sende(d);
+    bool status_gen2 = false;
+    for (int i = 0; i < 120 && !status_gen2; ++i) {
+        a.frames(1);
+        for (auto& j : a.neue()) {
+            if (art(j) == "fehler") fehler[static_cast<int>(j.hole("abo")->zahl)] = j.hole("grund")->text;
+            if (art(j) == "abo" && j.hole("abo")->zahl == 2 && j.hole("gen")->zahl == 2) status_gen2 = true;
+        }
+    }
+    PRUEFE(!fehler.count(2));
+    PRUEFE(status_gen2);
+    PRUEFE(a.d->speicher_abos() <= grenzen::MAX_BYTES_ABOS);
+}

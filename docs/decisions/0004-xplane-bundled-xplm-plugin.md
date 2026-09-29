@@ -276,13 +276,15 @@ Unabhängige Abnahme durch Codex („nicht freigabefähig“), Befunde H2–H5,
 M1–M3, N1 im Plugin behoben (H1 betrifft den Client):
 
 - **Flugzeugwechsel mitten in einer Runde (H2):** `XPLM_MSG_PLANE_LOADED`
-  verwirft bei Abos mit Plugin-Namen eine laufende Runde: `LESEN`/`SENDEN`
+  verwirft eine laufende Runde (seit der dritten Nachprüfung bei allen Abos): `LESEN`/`SENDEN`
   → `BEREIT` (Stapel und Paketcursor zurück, schon geplante Pakete gehen
   nicht mehr hinaus), `ANTWORT` → `NEU` mit erzwungener vollständiger neuer
   Status-Antwort nach der Neusuche; in `NEU` gibt es keine Werte. Danach gilt
   die Pause wie bisher (bis zur Übernahme der Neusuche, höchstens 0,5 s).
   Werte des alten Flugzeugs gehen nach dem Wechsel nie mehr hinaus, und eine
-  Runde mischt nie beide. Abos nur mit `sim/…`-Namen liefern weiter.
+  Runde mischt nie beide. Seit der dritten Nachprüfung gilt das Verwerfen
+  für ALLE Abos; Abos nur mit `sim/…`-Namen pausieren nicht, sondern
+  beginnen sofort eine neue Runde.
 - **Speicher (H3):** harte Bytebudgets — je Abo 16 MiB, alle Abos samt
   Teil-Abos 64 MiB, LISTE 16 MiB — gezählt als reservierte Kapazität mit dem
   schlimmsten Fall je Wert und je Eintrag (Duplikate zählen einzeln).
@@ -363,9 +365,38 @@ M1–M3, N1 im Plugin behoben (H1 betrifft den Client):
     stehen.
   - *Protokoll 1 nach Enable:* Der erste Tick synchronisiert (Bodenzustand
     übernehmen, Ringpuffer und Tracker neu, keine Kante). Das ersetzt die
-    Regel „Aufsetz-Erkennung bleibt über Disable/Enable stehen“ oben; als
-    gewollte Nebenwirkung entfällt auch der Schein-Touchdown beim Laden am
-    Boden.
+    Regel „Aufsetz-Erkennung bleibt über Disable/Enable stehen“ oben.
+    Grenzen siehe dritte Nachprüfung.
+- **Dritte Nachprüfung (Claude, 29.09.2026; Live-Messung X-Plane 12.4.3:
+  XPLMFindDataRef 0,12 µs, IsDataRefGood 0,01 µs — langsame Accessoren sind
+  die Ausnahme fehlerhafter Add-ons; die Drosselung ist ein Schutz und darf
+  im Normalfall nichts verschlechtern und nie Werte verhungern lassen):**
+  - *Kein Verhungern:* Ein fälliger gedrosselter Handle wird mit EINEM
+    Getter-Aufruf gelesen, der ALLE seine Einträge der Runde bedient (Arrays
+    über ein Fenster ≤ 256 Elemente bzw. 1024 Byte, weiter auseinander
+    liegende Indizes reihum; Skalar- und Array-Zugriffe desselben Handles
+    abwechselnd). Die 0,2-s-Sperre geht an den am längsten wartenden
+    gedrosselten Handle (kleinstes `faellig` unter denen, die eine Runde in
+    den letzten 2 s fällig angetroffen hat).
+  - *Suche sparsam:* Array-Länge je Handle einmal je Prüfdurchlauf;
+    gedrosselte Handles mit bekannter Länge werden auch in dringenden Läufen
+    nur gefragt, wenn sie ohnehin dran sind.
+  - *Höchstens zwei fremde Aufrufe über dem Budget je Frame:* Frame-Grenze =
+    Such- + Liefer-Budget (1,3 ms); danach höchstens eine freie Einheit je
+    Frame, reihum an Suche, Abo 1, Rundlauf. (Vorher je Phase eine: bis zu
+    drei.)
+  - *Hysterese:* Fünf schnelle gedrosselte Lesungen in Folge heben die
+    Drosselung auf (Log einmal).
+  - *Kennung:* zwischen `XPLMFindDataRef` und dem Lesen noch einmal gegen das
+    Budget.
+  - *Ersatz-ABO:* Das alte Abo derselben ID zählt beim Aufbau des Ersatzes
+    nicht mit (es wird ersetzt). Bis zum letzten Teil belegen altes Abo und
+    Aufbau zusammen vorübergehend höchstens 16 MiB über dem Gesamtbudget.
+  - *Protokoll-1-Synchronisation, Grenzen:* Ein Aufsetzen genau im
+    Synchronisations-Tick wird nicht gemeldet (ein Tick; der Ringpuffer wäre
+    leer). Der Wegfall des Schein-Touchdowns beim Laden am Boden gilt nur,
+    wenn `fnrml_gear` schon im ersten Tick ≥ 1 N ist; meldet X-Plane dort
+    noch 0 N, bleibt es beim bisherigen Verhalten (Kante im nächsten Tick).
 - **H1 (Plugin-Seite geprüft):** `abo`-Antworten tragen `teil`/`teile`
   konsistent (gleiches `teile` in allen Teilen), und ein identisches `ABO`
   liefert den Status vollständig erneut (alle Teile) — das braucht der

@@ -140,6 +140,14 @@ constexpr int MAX_LANGSAM_MELDUNGEN = 32;
 // Aufruf ohne Drosselung räumt den Platz wieder. Höchstens 3/4 belegt →
 // 768 gleichzeitig verfolgte langsame Datarefs, 24 KiB fest.
 constexpr size_t LANGSAM_PLAETZE = 1024;
+// Hysterese: so viele SCHNELLE gedrosselte Lesungen in Folge heben die
+// Drosselung wieder auf (der Accessor ist wieder gesund) — bei einer Lesung
+// je Sekunde also nach ≈ 5 s.
+constexpr int LANGSAM_ERHOLUNG = 5;
+// Ein gedrosselter Dataref gilt als "wartend", wenn eine Runde ihn in den
+// letzten so vielen Sekunden fällig angetroffen hat. Die 0,2-s-Sperre geht
+// reihum an den am längsten wartenden (ältestes `faellig` zuerst).
+constexpr double LANGSAM_GESEHEN_S = 2.0;
 
 // Empfang: nach jedem Datagramm auf die Uhr; ist dieses Budget je Frame um,
 // bleiben weitere Datagramme bis zum nächsten Frame im Socket (zusätzlich
@@ -151,6 +159,15 @@ constexpr double EMPFANG_BUDGET_S = 0.0005;
 // bekommt; der Rest samt einer freien Einheit gehört dem Rundlauf (übrige
 // Abos + LISTE). Sonst könnte ein großes Abo 1 alles andere aushungern.
 constexpr double ABO1_BUDGET_S = 0.0005;
+
+// Frame-Grenze für fremde Accessoren (Nachprüfung Claude, Punkt 3): Such-
+// und Liefer-Budget zusammen. Nach ihr beginnt je Frame höchstens EIN
+// weiterer fremder Accessor-Aufruf (die "freie Einheit"), reihum vergeben an
+// Suche, Abo 1 und Rundlauf — jeder ist spätestens jeden dritten Frame dran.
+// Damit liegt ein Frame höchstens zwei fremde Aufrufe über dem Budget: der
+// eine, der innerhalb des Budgets begann und sich als langsam herausstellte,
+// und die freie Einheit.
+constexpr double FRAME_BUDGET_S = SUCH_BUDGET_S + ZEITBUDGET_S;
 
 // ---- Speicher (Codex-Abnahme H3) ---------------------------------------------
 //

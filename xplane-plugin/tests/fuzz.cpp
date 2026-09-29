@@ -74,6 +74,10 @@ const char* const VORLAGEN[] = {
     "ABO 6 2 2 2 g3\nsim/vf[0]\n",
     "ABO 6 2 1 1 g3\nAirbusFBW/APU_Avail\n",
     "ENDE-ABO 15\n",
+    // Duplikate und Elemente eines (zeitweise langsamen) Arrays: gedrosselt
+    // bedient EIN Aufruf alle (Fenster, reihum).
+    "ABO 9 20\naddon/langsam\naddon/langsam[3]\naddon/langsam[39]\naddon/langsam\nsim/vf[299]\nsim/vf[0]\nsim/vf\n",
+    "ABO 10 50\naddon/langsam[0]\naddon/langsam[1]\naddon/langsam[2]\naddon/langsam[0]\n",
 };
 
 const char SONDERZEICHEN[] = {'\n', '\r', ' ', '[', ']', '0', '9', '-', '\0', '\t',
