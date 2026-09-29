@@ -286,6 +286,12 @@ fn tw_da<const N: usize>(k: &Kontext, _: f64) -> bool {
 fn tw_verlaesslich<const N: usize>(k: &Kontext, v: f64) -> bool {
     tw_da::<N>(k, v) && !ini_a380(k)
 }
+/// Luftdruck auf Meereshoehe: X-Plane 11 kennt `sealevel_pressure_pas`
+/// nicht, RREF liefert dann 0 — kein „0 hPa" zeigen. Gemessene Rekorde
+/// liegen bei 870 und 1084 hPa.
+fn luftdruck_plausibel(_: &Kontext, v: f64) -> bool {
+    (850.0..=1100.0).contains(&v)
+}
 /// Grenzfahrten: 0 oder weniger heisst „hat das Muster nicht".
 fn positiv(_: &Kontext, v: f64) -> bool {
     v > 0.0
@@ -365,6 +371,10 @@ fn soll_mach(k: &Kontext) -> Option<f64> {
     k.z("soll_fahrt_xp")
 }
 
+/// N1 je Triebwerk. X-Plane (seit v1.9.12) fuellt `engine_signals.n1_pct`
+/// aus `ENGN_N1_` nur bei Turbinen (`acf_en_type`) — Kolbenmotoren zeigen wie
+/// bei MSFS kein N1. Die frueheren Zusatzabos `N1_percent[n]` sind deshalb
+/// weg (sie haetten Kolbenmotoren wieder ein N1 gegeben).
 fn n1<const I: usize>(k: &Kontext) -> Option<f64> {
     if let Some(es) = &k.s.engine_signals {
         if let Some(v) = es.n1_pct.get(I) {
@@ -864,19 +874,15 @@ pub static KATALOG: &[Kanal] = &[
     k("triebwerke_laufen", Gruppe::Triebwerke, "", 0).zahl(|k| Some(k.s.engines_running as f64)),
     k("n1_1", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<0>)
-        .xp("sim/cockpit2/engine/indicators/N1_percent[0]", 1.0)
         .pruef(tw_verlaesslich::<1>),
     k("n1_2", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<1>)
-        .xp("sim/cockpit2/engine/indicators/N1_percent[1]", 1.0)
         .pruef(tw_verlaesslich::<2>),
     k("n1_3", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<2>)
-        .xp("sim/cockpit2/engine/indicators/N1_percent[2]", 1.0)
         .pruef(tw_verlaesslich::<3>),
     k("n1_4", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<3>)
-        .xp("sim/cockpit2/engine/indicators/N1_percent[3]", 1.0)
         .pruef(tw_verlaesslich::<4>),
     k("n2_1", Gruppe::Triebwerke, "%", 1)
         .q(Quelle::Zusatz)
@@ -1813,7 +1819,8 @@ pub static KATALOG: &[Kanal] = &[
     k("qnh_meer", Gruppe::Umgebung, "hPa", 0)
         .q(Quelle::Zusatz)
         .msfs("SEA LEVEL PRESSURE", "millibars", 1.0)
-        .xp("sim/weather/region/sealevel_pressure_pas", 0.01),
+        .xp("sim/weather/region/sealevel_pressure_pas", 0.01)
+        .pruef(luftdruck_plausibel),
     // ---- Sim ----
     k("pause", Gruppe::Sim, "", 0)
         .schalter()
@@ -2911,6 +2918,40 @@ mod tests {
             assert!(!einheit.is_empty(), "{sv} ohne Einheit");
             assert!(KATALOG.iter().any(|k| k.id == id));
         }
+    }
+
+    /// Cloud-QS N4/N5: X-Plane-Kolbenmotor zeigt kein N1 (kein Zusatzabo
+    /// mehr), Turbine aus dem Beleg; Meeresdruck 0 (XP11) bleibt leer.
+    #[test]
+    fn xplane_n1_nur_turbine_und_meeresdruck_plausibel() {
+        assert!(!xplane_zusatzfelder()
+            .iter()
+            .any(|(_, d)| d.contains("N1_percent")));
+        let kolben = SimSnapshot {
+            engine_signals: Some(EngineSignals {
+                n1_pct: Vec::new(),
+                fuel_flow_pph: vec![20.0, 0.0, 0.0, 0.0],
+                eng_combustion: vec![true, false, false, false],
+                ..EngineSignals::default()
+            }),
+            ..xplane()
+        };
+        let f = frame(&kolben, &HashMap::new());
+        assert_eq!(wert(&f, "n1_1"), None);
+        assert_eq!(wert(&f, "laeuft_1"), Some(1.0));
+        let turbine = SimSnapshot {
+            engine_signals: Some(EngineSignals {
+                n1_pct: vec![61.5, 0.0, 0.0, 0.0],
+                ..EngineSignals::default()
+            }),
+            ..xplane()
+        };
+        assert_eq!(wert(&frame(&turbine, &HashMap::new()), "n1_1"), Some(61.5));
+        let z = zusatz_umrechnen(vec![("qnh_meer".into(), 0.0)], true);
+        assert_eq!(wert(&frame(&xplane(), &z), "qnh_meer"), None, "XP11: 0 Pa");
+        let z = zusatz_umrechnen(vec![("qnh_meer".into(), 101_720.0)], true);
+        let hpa = wert(&frame(&xplane(), &z), "qnh_meer").expect("hPa");
+        assert!((hpa - 1017.2).abs() < 0.01, "{hpa}");
     }
 
     #[test]

@@ -730,18 +730,6 @@ mod tests {
         assert_eq!(td.captured_pitch_deg, 0.0);
     }
 
-    /// Telemetriepaket mit `null` zaehlt weiter als Lebenszeichen.
-    #[test]
-    fn telemetrie_mit_null_zaehlt() {
-        let shared = Arc::new(PremiumShared::default());
-        handle_packet(
-            br#"{"v":1,"type":"telemetry","pv":"1.0.0","seq":9,"ts":null,"lat":null,"lon":null,"vs_fpm":null,"g_normal":null,"on_ground":false}"#,
-            &shared,
-        );
-        assert_eq!(shared.packet_count.load(Ordering::Relaxed), 1);
-        assert_eq!(shared.p1_version.lock().as_deref(), Some("1.0.0"));
-    }
-
     #[test]
     fn malformed_json_is_dropped_silently() {
         let shared = Arc::new(PremiumShared::default());

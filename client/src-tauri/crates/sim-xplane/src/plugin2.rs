@@ -679,23 +679,16 @@ struct Gesendet {
     status_teile: Option<StatusTeile>,
 }
 
-/// Sammelstand einer mehrteiligen Status-Antwort.
+/// Sammelstand einer mehrteiligen Status-Antwort (eine Runde).
 struct StatusTeile {
     teile: u32,
-    /// Teil (1-basiert) → Eintraege mit Draht-Indizes.
-    stuecke: std::collections::BTreeMap<u32, Vec<(usize, NameStatus)>>,
+    /// Eintraege der Teile 1..naechster-1, in Reihenfolge.
+    st: Vec<(usize, NameStatus)>,
+    /// Naechster erwarteter Teil; 0 = Runde gebrochen (Teil fehlt, doppelt
+    /// oder vertauscht) — dann zaehlt erst ein neuer Teil 1.
+    naechster: u32,
     /// Letzter Teil angekommen.
     zuletzt: Instant,
-}
-
-impl StatusTeile {
-    fn neu(teile: u32, jetzt: Instant) -> Self {
-        Self {
-            teile,
-            stuecke: std::collections::BTreeMap::new(),
-            zuletzt: jetzt,
-        }
-    }
 }
 
 /// Ein ABO-Datagramm in der Warteschlange.
@@ -732,15 +725,16 @@ pub struct Sitzung {
     info: SitzungsInfo,
 }
 
-/// Einen Teil der Status-Antwort einsortieren. Liefert den ganzen Status
-/// (Teile in Reihenfolge), sobald alle `teile` da sind; sonst `None`.
+/// Einen Teil der Status-Antwort einsortieren. Liefert den ganzen Status,
+/// sobald eine Runde vollstaendig ist; sonst `None`.
 ///
-/// * Teile duerfen in beliebiger Reihenfolge kommen.
-/// * Ein doppelter Teil ersetzt den frueheren; ein erneuter Teil 1 beginnt
-///   eine neue Runde (das Plugin schickt den Status nach einer Aenderung
-///   oder auf ein identisches ABO ganz neu).
-/// * Andere Teilezahl als bisher: neue Runde.
-/// * `teil` 0 oder groesser als `teile`: verworfen.
+/// Eine Runde beginnt mit Teil 1 und laeuft lueckenlos aufsteigend bis
+/// `teile` — so, wie das Plugin sendet (`paket_cursor`). Alles andere
+/// (fehlender, doppelter, vertauschter Teil, andere Teilezahl) bricht die
+/// Runde: nichts wird geraten oder umsortiert, Teile zweier Runden derselben
+/// Generation koennen sich so nie mischen (Cloud-QS 29.09.2026, N6). Eine
+/// gebrochene Runde bleibt als Marke stehen; nach der Luecke fordert
+/// `nachsenden` den ganzen Status neu an. Ein neuer Teil 1 beginnt immer neu.
 fn status_sammeln(
     g: &mut Gesendet,
     teil: u32,
@@ -756,23 +750,44 @@ fn status_sammeln(
         );
         return None;
     }
-    if teile == 1 {
-        g.status_teile = None;
-        return Some(st);
-    }
-    let t = g
-        .status_teile
-        .get_or_insert_with(|| StatusTeile::neu(teile, jetzt));
-    if t.teile != teile || (teil == 1 && t.stuecke.contains_key(&1)) {
-        *t = StatusTeile::neu(teile, jetzt);
-    }
-    t.stuecke.insert(teil, st);
-    t.zuletzt = jetzt;
-    if t.stuecke.len() < teile as usize {
+    if teil == 1 {
+        if teile == 1 {
+            g.status_teile = None;
+            return Some(st);
+        }
+        g.status_teile = Some(StatusTeile {
+            teile,
+            st,
+            naechster: 2,
+            zuletzt: jetzt,
+        });
         return None;
     }
-    let t = g.status_teile.take()?;
-    Some(t.stuecke.into_values().flatten().collect())
+    match g.status_teile.as_mut() {
+        Some(t) if t.naechster == teil && t.teile == teile => {
+            t.st.extend(st);
+            t.naechster += 1;
+            t.zuletzt = jetzt;
+            if t.naechster <= teile {
+                return None;
+            }
+            g.status_teile.take().map(|t| t.st)
+        }
+        _ => {
+            tracing::debug!(
+                teil,
+                teile,
+                "X-Plane-Plugin: Status-Teil ausser der Reihe — Runde verworfen"
+            );
+            g.status_teile = Some(StatusTeile {
+                teile,
+                st: Vec::new(),
+                naechster: 0,
+                zuletzt: jetzt,
+            });
+            None
+        }
+    }
 }
 
 impl Sitzung {
@@ -862,18 +877,30 @@ impl Sitzung {
                 continue;
             }
             // Status-Antwort mit Luecke: ein Teil ging verloren. Identisch neu
-            // anfordern — sonst fehlte ein Teil der Status dauerhaft.
+            // anfordern — sonst fehlte ein Teil der Status dauerhaft. Mit
+            // Rueckoff wie beim ausbleibenden Status, und nach Wartezeit + einer
+            // Wiederholung einmal `AboOhneAntwort` (Cloud-QS 29.09.2026, M1):
+            // ein Status, der jedes Mal ein Teil verliert, erzeugt sonst alle
+            // 3 s ein neues ABO, ohne dass jemand davon erfaehrt.
             if let Some(t) = &g.status_teile {
-                if jetzt.saturating_duration_since(t.zuletzt)
-                    > status_luecke_fuer(g.draht_zu_lokal.len())
-                {
+                let grenze = wartezeit(status_luecke_fuer(g.draht_zu_lokal.len()), g.versuche);
+                if jetzt.saturating_duration_since(t.zuletzt) > grenze {
                     tracing::info!(
                         abo = *id,
-                        erhalten = t.stuecke.len(),
+                        naechster_teil = t.naechster,
                         teile = t.teile,
-                        "X-Plane-Plugin: Status unvollstaendig — Abo erneut angefordert"
+                        versuche = g.versuche,
+                        "X-Plane-Plugin: Status unvollstaendig"
                     );
-                    neu.push(*id);
+                    g.status_teile = None;
+                    if g.versuche >= 2 && !g.gemeldet {
+                        g.gemeldet = true;
+                        g.versuche = g.versuche.saturating_add(1);
+                        g.gesendet_um = jetzt;
+                        melden.push((*id, Arc::clone(&g.namen)));
+                    } else {
+                        neu.push(*id);
+                    }
                     continue;
                 }
             }
@@ -2352,21 +2379,22 @@ mod tests {
         assert_eq!(a, Some(status_teil(3, None, 1, 1, vec![])));
     }
 
-    /// Vertauschte Teile: erst wenn alle da sind, gilt das Abo als
-    /// bestaetigt — dann ein einziger Status in Namensreihenfolge.
+    /// Teile in Reihenfolge: erst wenn alle da sind, gilt das Abo als
+    /// bestaetigt — dann ein einziger Status in Namensreihenfolge; „fehlt"
+    /// aus dem letzten Teil wirkt auf die Werte.
     #[test]
-    fn vertauschte_status_teile_ergeben_einen_status() {
+    fn status_teile_ergeben_einen_status() {
         let z = TestZiel::default();
         let t0 = Instant::now();
         let mut s = vier_namen_abo(&z, t0);
         s.empfangen(
-            status_teil(3, Some(1), 2, 2, vec![(2, da()), (3, NameStatus::Fehlt)]),
+            status_teil(3, Some(1), 1, 2, vec![(0, da()), (1, da())]),
             t0,
             &z,
         );
         assert!(stati(&z).is_empty(), "halber Status gemeldet");
         s.empfangen(
-            status_teil(3, Some(1), 1, 2, vec![(0, da()), (1, da())]),
+            status_teil(3, Some(1), 2, 2, vec![(2, da()), (3, NameStatus::Fehlt)]),
             t0,
             &z,
         );
@@ -2379,7 +2407,6 @@ mod tests {
                 (3, NameStatus::Fehlt)
             ]]
         );
-        // „fehlt" aus Teil 2 wirkt: Wert fuer Name 3 verworfen.
         s.empfangen(
             werte(3, Some(1), vec![(1, Wert::Zahl(1.0)), (3, Wert::Zahl(9.0))]),
             t0,
@@ -2396,21 +2423,54 @@ mod tests {
         assert!(!text_von(&s.takt(t1, &z)).contains(&ABO_VIER.to_string()));
     }
 
-    /// Doppelter Teil ersetzt den frueheren; ein neuer Teil 1 beginnt eine
-    /// neue Runde (Status nach Aenderung oder auf identisches ABO).
+    /// Vertauschte oder doppelte Teile brechen die Runde: kein Status, kein
+    /// Raten — nach der Luecke wird der ganze Status neu angefordert.
     #[test]
-    fn doppelte_status_teile() {
+    fn vertauschte_und_doppelte_teile_brechen_die_runde() {
+        for folge in [&[2u32, 1, 3][..], &[1, 2, 2, 3][..], &[1, 3, 2][..]] {
+            let z = TestZiel::default();
+            let t0 = Instant::now();
+            let mut s = vier_namen_abo(&z, t0);
+            for &teil in folge {
+                s.empfangen(
+                    status_teil(3, Some(1), teil, 3, vec![(teil as usize, da())]),
+                    t0,
+                    &z,
+                );
+            }
+            assert!(stati(&z).is_empty(), "{folge:?} als Status gemeldet");
+            let t1 = t0 + status_luecke_fuer(4) + Duration::from_millis(100);
+            s.empfangen(Antwort::Sonstige("pong".into()), t1, &z);
+            assert!(
+                text_von(&s.takt(t1, &z)).contains(&ABO_VIER.to_string()),
+                "{folge:?} nicht neu angefordert"
+            );
+        }
+    }
+
+    /// Cloud-QS N6: zwei Runden derselben Generation mischen sich nicht. Eine
+    /// angebrochene Runde (Teil 3 verloren) und eine neue, deren Teil 1
+    /// verloren ging: die Teile 2/3 der neuen Runde ergeben mit dem alten
+    /// Teil 1 KEINEN Status. Erst eine vollstaendige Runde zaehlt.
+    #[test]
+    fn runden_derselben_generation_mischen_sich_nicht() {
         let z = TestZiel::default();
         let t0 = Instant::now();
         let mut s = vier_namen_abo(&z, t0);
-        s.empfangen(status_teil(3, Some(1), 1, 3, vec![(0, da())]), t0, &z);
+        let alt = |i| (i, NameStatus::Fehlt);
+        s.empfangen(status_teil(3, Some(1), 1, 3, vec![alt(0)]), t0, &z);
+        s.empfangen(status_teil(3, Some(1), 2, 3, vec![alt(1)]), t0, &z);
+        // Teil 3 der alten und Teil 1 der neuen Runde verloren.
+        s.empfangen(status_teil(3, Some(1), 2, 3, vec![(1, da())]), t0, &z);
         s.empfangen(
-            status_teil(3, Some(1), 2, 3, vec![(1, NameStatus::Fehlt)]),
+            status_teil(3, Some(1), 3, 3, vec![(2, da()), (3, da())]),
             t0,
             &z,
         );
+        assert!(stati(&z).is_empty(), "gemischter Status gemeldet");
+        // Neue vollstaendige Runde.
+        s.empfangen(status_teil(3, Some(1), 1, 3, vec![(0, da())]), t0, &z);
         s.empfangen(status_teil(3, Some(1), 2, 3, vec![(1, da())]), t0, &z);
-        assert!(stati(&z).is_empty());
         s.empfangen(
             status_teil(3, Some(1), 3, 3, vec![(2, da()), (3, da())]),
             t0,
@@ -2420,30 +2480,62 @@ mod tests {
             stati(&z),
             vec![vec![(0, da()), (1, da()), (2, da()), (3, da())]]
         );
-        // Neue Runde: Teil 1 erneut, Teil 2 verloren, dann wieder Teil 1 —
-        // die angebrochene Runde zaehlt nicht mit.
-        s.empfangen(
-            status_teil(3, Some(1), 1, 2, vec![(0, NameStatus::Fehlt)]),
-            t0,
-            &z,
-        );
-        s.empfangen(
-            status_teil(3, Some(1), 1, 2, vec![(0, da()), (1, da())]),
-            t0,
-            &z,
-        );
-        assert_eq!(stati(&z).len(), 1);
-        s.empfangen(
-            status_teil(3, Some(1), 2, 2, vec![(2, da()), (3, da())]),
-            t0,
-            &z,
-        );
-        assert_eq!(stati(&z).len(), 2);
-        assert_eq!(stati(&z)[1][0], (0, da()));
         // Kaputte Teilnummern werden verworfen.
         s.empfangen(status_teil(3, Some(1), 0, 2, vec![(0, da())]), t0, &z);
         s.empfangen(status_teil(3, Some(1), 3, 2, vec![(0, da())]), t0, &z);
-        assert_eq!(stati(&z).len(), 2);
+        assert_eq!(stati(&z).len(), 1);
+    }
+
+    /// Cloud-QS M1: verliert JEDE Status-Runde ein Teil, wird mit Rueckoff
+    /// neu angefordert (nicht alle 3 s endlos) und einmal `AboOhneAntwort`
+    /// gemeldet — Abo 1: Log, RREF bleibt; Vermessung: Web-API.
+    #[test]
+    fn dauernde_status_luecke_mit_rueckoff_und_meldung() {
+        let z = TestZiel::default();
+        let t0 = Instant::now();
+        let mut s = vier_namen_abo(&z, t0);
+        let mut anforderungen: Vec<Duration> = Vec::new();
+        let mut schritt = Duration::ZERO;
+        let mut teil_faellig = Some(Duration::from_millis(200));
+        while schritt < Duration::from_secs(120) {
+            let jetzt = t0 + schritt;
+            s.empfangen(Antwort::Sonstige("pong".into()), jetzt, &z);
+            // Das Plugin antwortet auf jedes ABO mit Teil 1 von 2; Teil 2
+            // geht jedes Mal verloren.
+            if teil_faellig.is_some_and(|t| schritt >= t) {
+                teil_faellig = None;
+                s.empfangen(status_teil(3, Some(1), 1, 2, vec![(0, da())]), jetzt, &z);
+            }
+            if text_von(&s.takt(jetzt, &z)).contains(&ABO_VIER.to_string()) {
+                anforderungen.push(schritt);
+                s.empfangen(
+                    Antwort::AboEmpfangen {
+                        abo: 3,
+                        gen: Some(1),
+                        namen: Some(4),
+                    },
+                    jetzt,
+                    &z,
+                );
+                teil_faellig = Some(schritt + Duration::from_millis(200));
+            }
+            schritt += Duration::from_millis(100);
+        }
+        assert!(stati(&z).is_empty());
+        let meldungen = z
+            .ereignisse
+            .lock()
+            .iter()
+            .filter(|e| matches!(e, Ereignis::AboOhneAntwort { abo: 3, .. }))
+            .count();
+        assert_eq!(meldungen, 1, "genau eine Meldung");
+        // Bei festen 3 s waeren es in 120 s rund 35 Anforderungen.
+        assert!(anforderungen.len() <= 8, "ohne Rueckoff: {anforderungen:?}");
+        let abstaende: Vec<Duration> = anforderungen.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            abstaende.last().unwrap() > abstaende.first().unwrap(),
+            "Abstand waechst nicht: {abstaende:?}"
+        );
     }
 
     /// Fehlender Teil: kein Status, keine Bestaetigung — nach der Luecke

@@ -244,6 +244,10 @@ pub enum FieldId {
     /// `sim/time/sim_speed` — Zeitraffer (int, „1 = realtime, 2 = 2x,
     /// 0 = paused"). Fuellt `simulation_rate`.
     SimSpeed,
+    /// `sim/time/ground_speed_flt` — Multiplikator auf die zurueckgelegte
+    /// Strecke („faster travel via double-distance"), unabhaengig vom
+    /// Zeitraffer. Geht mit in `simulation_rate`.
+    GroundSpeedFactor,
     /// `sim/flightmodel2/misc/has_crashed` — int boolean, „True if the
     /// aircraft is in a crashed state". Fuellt `crashed` (nur Flanke).
     HasCrashed,
@@ -828,6 +832,10 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::SimSpeed,
     },
     DatarefEntry {
+        name: "sim/time/ground_speed_flt",
+        field: FieldId::GroundSpeedFactor,
+    },
+    DatarefEntry {
         name: "sim/flightmodel2/misc/has_crashed",
         field: FieldId::HasCrashed,
     },
@@ -1102,6 +1110,8 @@ pub struct XPlaneState {
     // ---- X-Plane-Luecken (29.09.2026). `None` = noch nicht geliefert.
     /// `sim/time/sim_speed` (1 = Echtzeit).
     pub sim_speed: Option<f32>,
+    /// `sim/time/ground_speed_flt` (1 = normale Strecke).
+    pub ground_speed_faktor: Option<f32>,
     /// Letzter Rohwert von `has_crashed`.
     pub has_crashed_roh: Option<bool>,
     /// `has_crashed` war seit dem letzten Verbindungsaufbau schon einmal 0.
@@ -1190,14 +1200,23 @@ fn schalter_0_1_2(roh: f32) -> Option<u8> {
     ((roh - r).abs() < 0.05 && (0.0..=2.0).contains(&r)).then_some(r as u8)
 }
 
-/// Zeitraffer aus `sim/time/sim_speed` in der Semantik von MSFS
-/// `SIMULATION RATE` (1.0 = Echtzeit). Fehlt der Wert oder steht er auf 0
-/// („paused" laut DataRefs.txt — die Pause selbst meldet `sim/time/paused`),
-/// gilt Echtzeit wie bisher.
-fn sim_rate_aus(sim_speed: Option<f32>) -> f32 {
-    sim_speed
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .unwrap_or(1.0)
+/// Zeitraffer in der Semantik von MSFS `SIMULATION RATE` (1.0 = Echtzeit):
+/// eingestellter Zeitraffer `sim/time/sim_speed` mal Strecken-Multiplikator
+/// `sim/time/ground_speed_flt`. X-Plane hat zwei Beschleuniger — der zweite
+/// laesst das Flugzeug bei Zeitraffer 1 doppelt so weit kommen und waere sonst
+/// unsichtbar (Cloud-QS 29.09.2026, N2).
+///
+/// Bewusst der Sollwert, nicht `sim/time/sim_speed_actual` (DataRefs.txt
+/// 3557, „takes into account fps limiting"): der schwankt mit der Bildrate
+/// und laege bei Echtzeit und wenig fps unter 1 — Rauschen, das jede
+/// Pruefung auf „≠ 1" ausloeste. MSFS meldet ebenfalls den Sollwert.
+///
+/// Fehlt ein Wert oder steht er auf 0 (`sim_speed` 0 = „paused" laut
+/// DataRefs.txt, die Pause meldet `sim/time/paused`; unter X-Plane 11 kann
+/// `ground_speed_flt` fehlen), zaehlt er als 1.
+fn sim_rate_aus(sim_speed: Option<f32>, ground_speed: Option<f32>) -> f32 {
+    let faktor = |v: Option<f32>| v.filter(|x| x.is_finite() && *x > 0.0).unwrap_or(1.0);
+    faktor(sim_speed) * faktor(ground_speed)
 }
 
 /// Squawk aus `transponder_code` (int 0000-7777) — dieselbe Form wie der
@@ -1219,6 +1238,13 @@ fn squawk_aus(roh: Option<f32>) -> Option<u16> {
 /// `FLAPS NUM HANDLE POSITIONS`): Index 0 = UP, Anzahl = hoechster Index.
 /// X-Plane legt die Rasten gleichmaessig ueber den Hebelweg
 /// (`flap_handle_request_ratio` 0..1), Raste i steht bei i / Rasten.
+///
+/// Gemessen 29.09.2026 (X-Plane 12.4.3, Laminar Boeing 737-800, Hebel
+/// UP → 40 → UP, Sonde ueber Plugin-Protokoll 2): `acf_flap_detents` = 8,
+/// Hebel genau 0 / 0,125 / … / 0,875 / 1,0 fuer UP/1/2/5/10/15/25/30/40,
+/// Rueckweg identisch. `flap_handle_deploy_ratio` und `flap1_deploy_ratio`
+/// laufen verzoegert hinterher (0,263 bzw. 0,133 beim Erreichen von 40) —
+/// der Hebel ist die richtige Quelle.
 /// 0 Rasten (stufenlose Klappen) oder unplausible Werte → `None`, dann
 /// greift wie bisher die Prozent-Heuristik.
 fn klappen_raste(hebel: f32, rasten: Option<f32>) -> (Option<u8>, Option<u8>) {
@@ -1537,6 +1563,7 @@ impl XPlaneState {
             FieldId::ZuluTimeSec => self.zulu_time_sec = Some(value),
             FieldId::LocalDateDays => self.local_date_days = Some(value),
             FieldId::SimSpeed => self.sim_speed = Some(value),
+            FieldId::GroundSpeedFactor => self.ground_speed_faktor = Some(value),
             FieldId::HasCrashed => {
                 let roh = value > 0.5;
                 if !roh {
@@ -1671,7 +1698,13 @@ impl XPlaneState {
             combustion_ex1: Vec::new(),
             // X-Plane `ENGN_running` („engine on and using fuel").
             eng_combustion: laeuft.to_vec(),
-            n1_pct: n1.to_vec(),
+            // N1 nur bei Turbinen (dieselbe Pruefung wie `eng_n1_pct`); bei
+            // Kolben-/Elektromotoren leer — der Monitor zeigt dann kein N1.
+            n1_pct: if ist_turbine(self.engine_type) {
+                n1.to_vec()
+            } else {
+                Vec::new()
+            },
             fuel_flow_pph: ff_kg_h.iter().map(|kg| kg / KG_JE_LB).collect(),
         });
 
@@ -1731,8 +1764,8 @@ impl XPlaneState {
             // also fuer beide Faelle und der Pause-Akkumulator zaehlt.
             paused: self.sim_paused || self.sim_in_replay,
             slew_mode: false,
-            // `sim/time/sim_speed` — Semantik wie MSFS (1.0 = Echtzeit).
-            simulation_rate: sim_rate_aus(self.sim_speed),
+            // Zeitraffer × Strecken-Multiplikator, Semantik wie MSFS.
+            simulation_rate: sim_rate_aus(self.sim_speed, self.ground_speed_faktor),
             gear_position: self.gear_deploy,
             // Zibo: eigener Klappenhebel, sobald er ankommt; sonst der
             // Standard-Hebel (`flap_handle_request_ratio`, 0..1).
@@ -2888,57 +2921,73 @@ mod xplane_luecken_tests {
             .expect("Feld im Katalog")
     }
 
-    /// Jeder neue Name steht so in DataRefs.txt (X-Plane 12.4.3), keiner als
-    /// REPLACED; die Zeilen stehen im Kommentar.
+    /// Zeilen aus DataRefs.txt (X-Plane 12.4.3), von Hand kopiert: Name,
+    /// Typ, Einheit. Keine davon ist dort als REPLACED markiert. Der Katalog
+    /// muss genau diese Namen treffen (ohne `[n]`), Arrays nur mit Index
+    /// innerhalb der Laenge, Skalare ohne Index.
+    const AUS_DATAREFS_TXT: &[(&str, &str, &str)] = &[
+        ("sim/flightmodel/controls/parkbrake", "float", "[0..1]"), // 1053
+        ("sim/time/sim_speed", "int", "ratio"),                    // 3556
+        ("sim/time/ground_speed_flt", "float", "ratio"),           // 3560
+        ("sim/flightmodel2/misc/has_crashed", "int", "boolean"),   // 5560
+        (
+            "sim/cockpit2/radios/actuators/transponder_code",
+            "int",
+            "transponder_code",
+        ), // 4647
+        ("sim/aircraft/controls/acf_flap_detents", "int", ""),     // 331
+        ("sim/aircraft/prop/acf_en_type", "int[16]", "enum"),      // 218
+        ("sim/flightmodel/engine/ENGN_N1_", "float[16]", "percent"), // 1490
+        ("sim/flightmodel/engine/ENGN_FF_", "float[16]", "kg/s"),  // 1485
+    ];
+
     #[test]
     fn namen_aus_datarefs_txt() {
-        // 1053: „sim/flightmodel/controls/parkbrake float y [0..1]"; der
-        // alte `sim/cockpit2/controls/parking_brake_ratio` (4099) ist REPLACED.
-        assert_eq!(
-            name_fuer(FieldId::ParkingBrake),
-            "sim/flightmodel/controls/parkbrake"
-        );
-        assert!(!CATALOG
-            .iter()
-            .any(|e| e.name.ends_with("parking_brake_ratio")));
-        assert_eq!(name_fuer(FieldId::SimSpeed), "sim/time/sim_speed"); // 3556
-        assert_eq!(
-            name_fuer(FieldId::HasCrashed),
-            "sim/flightmodel2/misc/has_crashed" // 5560
-        );
-        assert_eq!(
-            name_fuer(FieldId::TransponderCode),
-            "sim/cockpit2/radios/actuators/transponder_code" // 4647
-        );
-        assert_eq!(
-            name_fuer(FieldId::FlapDetents),
-            "sim/aircraft/controls/acf_flap_detents" // 331
-        );
-        assert_eq!(
-            name_fuer(FieldId::EngineType),
-            "sim/aircraft/prop/acf_en_type[0]" // 218
-        );
-        assert_eq!(
-            name_fuer(FieldId::Eng4N1),
-            "sim/flightmodel/engine/ENGN_N1_[3]" // 1490
-        );
-        assert_eq!(
-            name_fuer(FieldId::Eng1FuelFlow),
-            "sim/flightmodel/engine/ENGN_FF_[0]" // 1485
-        );
-        // Kern-Datarefs: keine Add-on-Quelle, gelten ohne Web-API-Beleg.
-        for f in [
+        let neu = [
+            FieldId::ParkingBrake,
             FieldId::SimSpeed,
+            FieldId::GroundSpeedFactor,
             FieldId::HasCrashed,
             FieldId::TransponderCode,
             FieldId::FlapDetents,
             FieldId::EngineType,
             FieldId::Eng1N1,
+            FieldId::Eng2N1,
+            FieldId::Eng3N1,
+            FieldId::Eng4N1,
             FieldId::Eng1FuelFlow,
-        ] {
+            FieldId::Eng2FuelFlow,
+            FieldId::Eng3FuelFlow,
+            FieldId::Eng4FuelFlow,
+        ];
+        for f in neu {
+            let name = name_fuer(f);
+            let (grund, index) = match name.split_once('[') {
+                Some((g, rest)) => (
+                    g,
+                    rest.strip_suffix(']').map(|i| i.parse::<usize>().unwrap()),
+                ),
+                None => (name, None),
+            };
+            let (_, typ, _) = AUS_DATAREFS_TXT
+                .iter()
+                .find(|(n, _, _)| *n == grund)
+                .unwrap_or_else(|| panic!("{name} steht nicht in DataRefs.txt"));
+            match (typ.split_once('['), index) {
+                (Some((_, laenge)), Some(i)) => {
+                    let laenge: usize = laenge.trim_end_matches(']').parse().unwrap();
+                    assert!(i < laenge, "{name}: Index jenseits {laenge}");
+                }
+                (None, None) => {}
+                _ => panic!("{name}: Index passt nicht zum Typ {typ}"),
+            }
+            // Kern-Datarefs: keine Add-on-Quelle, gelten ohne Web-API-Beleg.
             assert!(!addon_quelle(f), "{f:?}");
-            assert!(name_fuer(f).starts_with("sim/"), "{f:?}");
         }
+        // Der REPLACED-Name (4099) ist raus.
+        assert!(!CATALOG
+            .iter()
+            .any(|e| e.name == "sim/cockpit2/controls/parking_brake_ratio"));
     }
 
     #[test]
@@ -2965,6 +3014,15 @@ mod xplane_luecken_tests {
         assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 1.0);
         s.apply_field(FieldId::SimSpeed, f32::NAN);
         assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 1.0);
+        // Strecken-Multiplikator: bei Zeitraffer 1 doppelt so weit.
+        s.apply_field(FieldId::SimSpeed, 1.0);
+        s.apply_field(FieldId::GroundSpeedFactor, 2.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 2.0);
+        s.apply_field(FieldId::SimSpeed, 4.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 8.0);
+        // XP11/RREF ohne den Dataref: 0 → zaehlt als 1.
+        s.apply_field(FieldId::GroundSpeedFactor, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).simulation_rate, 4.0);
     }
 
     /// Nur die Flanke 0 → 1 ist ein Absturz. Ein Flugzeug, das beim
@@ -3017,6 +3075,62 @@ mod xplane_luecken_tests {
                 None,
                 "{roh}"
             );
+        }
+    }
+
+    /// Messung 29.09.2026, X-Plane 12.4.3, Laminar Boeing 737-800 (Thomas,
+    /// Hebel UP → 40 → UP): `acf_flap_detents` = 8, Hebelwerte genau wie hier.
+    /// Ergibt Index 0..8 bei 8 Rasten — im Aktivitaetslog die Boeing-Namen
+    /// UP/1/2/5/10/15/25/30/40 (`raster_flap_label`, Test in der App).
+    #[test]
+    fn klappenraste_laminar_737_gemessen() {
+        const HEBEL: [f32; 9] = [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0];
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::FlapDetents, 8.0);
+        let hin: Vec<(Option<u8>, Option<u8>)> = HEBEL
+            .iter()
+            .map(|&h| {
+                s.apply_field(FieldId::FlapsHandle, h);
+                let a = s.to_snapshot(Simulator::XPlane12);
+                (a.flap_handle_index, a.flap_num_positions)
+            })
+            .collect();
+        let soll: Vec<(Option<u8>, Option<u8>)> = (0..=8u8).map(|i| (Some(i), Some(8))).collect();
+        assert_eq!(hin, soll);
+        // Rueckweg identisch.
+        for (i, &h) in HEBEL.iter().enumerate().rev() {
+            s.apply_field(FieldId::FlapsHandle, h);
+            assert_eq!(
+                s.to_snapshot(Simulator::XPlane12).flap_handle_index,
+                Some(i as u8)
+            );
+        }
+    }
+
+    /// Messung 29.09.2026, X-Plane 12.4.3, Laminar Airbus A330-300 (A333,
+    /// Thomas, Hebel 3× 0 → FULL → 0, alle Durchgaenge gleich):
+    /// `acf_flap_detents` = 4, Hebel genau 0 / 0,25 / 0,5 / 0,75 / 1,0 fuer
+    /// 0/1/2/3/FULL. Keine eigene Raste fuer 1+F (die stellt der A330
+    /// selbst) — Index 0..4 bei 4 Rasten, im Log die 4-Rasten-Airbus-Namen.
+    #[test]
+    fn klappenraste_laminar_a330_gemessen() {
+        const HEBEL: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::FlapDetents, 4.0);
+        for _ in 0..3 {
+            for (i, &h) in HEBEL
+                .iter()
+                .enumerate()
+                .chain(HEBEL.iter().enumerate().rev())
+            {
+                s.apply_field(FieldId::FlapsHandle, h);
+                let a = s.to_snapshot(Simulator::XPlane12);
+                assert_eq!(
+                    (a.flap_handle_index, a.flap_num_positions),
+                    (Some(i as u8), Some(4)),
+                    "Hebel {h}"
+                );
+            }
         }
     }
 
@@ -3095,12 +3209,14 @@ mod xplane_luecken_tests {
         assert!((sig.fuel_flow_pph[0] - 793.664).abs() < 0.01);
         assert_eq!(sig.fuel_flow_pph.len(), 4);
 
-        // Kolbenmotor: kein N1 (wie MSFS), Fluss und Beleg bleiben.
+        // Kolbenmotor: kein N1 (wie MSFS), auch nicht im Beleg; Fluss bleibt.
         s.apply_field(FieldId::EngineType, 1.0);
         let a = s.to_snapshot(Simulator::XPlane12);
         assert_eq!(a.eng_n1_pct, None);
         assert!(a.fuel_flow_kg_per_h.is_some());
-        assert!(a.engine_signals.is_some());
+        let sig = a.engine_signals.expect("Beleg");
+        assert!(sig.n1_pct.is_empty());
+        assert_eq!(sig.fuel_flow_pph.len(), 4);
     }
 
     /// PFLICHT (Lehre PC-12, 16.09.2026): Das Urteil „Triebwerk laeuft"

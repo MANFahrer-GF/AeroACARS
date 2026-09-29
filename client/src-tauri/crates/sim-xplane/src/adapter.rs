@@ -1502,25 +1502,39 @@ mod klappen_profil_tests {
 
     /// Profile mit eigener Klappenquelle (CL650, MD-11) verlieren die
     /// Rastenangabe der Flugzeugdatei; ohne Profil und beim 737-Profil
-    /// (nur AP-Modi ersetzt) bleibt sie.
+    /// (nur AP-Modi ersetzt) bleibt sie. Geprueft ueber `snapshot()`, den
+    /// Weg, den die App nimmt.
     #[test]
     fn rasten_nur_mit_dem_standard_hebel() {
-        assert!(!klappen_aus_profil(&build_active_catalog(None)));
+        let ad = XPlaneAdapter::default();
+        {
+            let mut p = ad.shared.parsed.lock();
+            p.apply_field(crate::dataref::FieldId::FlapDetents, 4.0);
+            p.apply_field(crate::dataref::FieldId::FlapsHandle, 0.5);
+        }
+        let raste = |ad: &XPlaneAdapter| {
+            let s = ad.snapshot().expect("Schnappschuss");
+            (s.flap_handle_index, s.flap_num_positions)
+        };
+        assert_eq!(raste(&ad), (Some(2), Some(4)), "ohne Profil");
+        let mut geprueft_eigen = 0;
         for p in PROFILES {
+            *ad.shared.active_catalog.lock() = build_active_catalog(Some(p));
             let eigen = p
                 .overrides
                 .iter()
                 .any(|o| o.field == crate::dataref::FieldId::FlapsHandle);
-            assert_eq!(
-                klappen_aus_profil(&build_active_catalog(Some(p))),
-                eigen,
-                "{}",
-                p.name
-            );
+            let soll = if eigen {
+                geprueft_eigen += 1;
+                (None, None)
+            } else {
+                (Some(2), Some(4))
+            };
+            assert_eq!(raste(&ad), soll, "{}", p.name);
         }
-        assert!(klappen_aus_profil(&build_active_catalog(Some(
-            &PROFILES[0]
-        ))));
+        assert!(geprueft_eigen >= 2, "CL650 und MD-11");
+        *ad.shared.active_catalog.lock() = build_active_catalog(None);
+        assert_eq!(raste(&ad), (Some(2), Some(4)), "Profil wieder weg");
     }
 }
 

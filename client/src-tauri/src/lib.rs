@@ -1934,10 +1934,11 @@ mod resume_discontinuity_tests {
         assert!(ergebnis.is_ok(), "unter 4x nie scharf: {ergebnis:?}");
     }
 
-    /// Ohne gemeldete Sim-Rate (fest 1.0 — X-Plane bis v1.9.12, X-Plane 11
-    /// ohne Wert). Unter Zeitbeschleunigung
-    /// bewegt sich das Flugzeug trotzdem gleichmaessig schnell — das muss als
-    /// ruhig gelten. Ein Teleport danach bleibt ein Sprung
+    /// Ohne passende Sim-Rate im Snapshot: X-Plane vor v1.9.12 meldete fest
+    /// 1.0; seither `sim_speed` × `ground_speed_flt` (Sollwerte — ein von der
+    /// Bildrate gebremster Zeitraffer bleibt darin unsichtbar), ohne die
+    /// Datarefs wieder 1.0. Unter Zeitbeschleunigung bewegt sich das Flugzeug
+    /// trotzdem gleichmaessig schnell — das muss als ruhig gelten. Ein Teleport danach bleibt ein Sprung
     /// (Cloud-QS 24.09.2026, dritte Runde).
     #[test]
     fn resume_gate_ohne_gemeldete_sim_rate() {
@@ -6801,6 +6802,12 @@ struct FlightStats {
     /// Jetzt: Premium-VS/G ueberlebt die 1.1s-Validation-Latenz im Pending-State.
     pending_td_premium_vs: Option<f32>,
     pending_td_premium_g: Option<f32>,
+    /// Hat eine Plugin-Aufsetzmeldung diesen Kandidaten schon belegt? Eigener
+    /// Merker, weil `pending_td_premium_vs` seit Plugin 1.0 auch nach einer
+    /// Meldung leer sein kann (`null` = nicht gemessen) — sonst haengte sich
+    /// ein Hopser-Echo an und ueberschriebe das endliche g der ersten
+    /// Meldung (Cloud-QS 29.09.2026, N1).
+    pending_td_premium_gesehen: bool,
     /// v0.5.5: running peak-descent VS tracker. Updated every sampler
     /// tick while AGL ≤ 250 ft (low-altitude / final approach territory).
     /// Picks the most negative pitch-corrected VS seen ONLY in the
@@ -9134,6 +9141,32 @@ fn ist_airbus_mit_1f(icao: &str) -> bool {
 #[cfg(test)]
 mod raster_flap_label_tests {
     use super::raster_flap_label;
+
+    /// X-Plane, Laminar Boeing 737-800 (gemessen 29.09.2026, X-Plane 12.4.3):
+    /// 8 Rasten, Hebel 0 … 1 in Achteln → Index 0..=8 (Test
+    /// `klappenraste_laminar_737_gemessen` im X-Plane-Adapter). Im
+    /// Aktivitaetslog die Boeing-Namen.
+    /// X-Plane, Laminar Airbus A330-300 (gemessen 29.09.2026, X-Plane
+    /// 12.4.3): 4 Rasten, Hebel in Vierteln → Index 0..=4, ohne eigene
+    /// 1+F-Raste. Bei Airbus-ICAO mit 4 Rasten die 4-Rasten-Namen, nicht die
+    /// 5-Rasten-Tabelle mit 1+F und nicht verschoben.
+    #[test]
+    fn laminar_a330_vier_rasten_ohne_eins_plus_f() {
+        let l: Vec<_> = (0..=4)
+            .map(|i| raster_flap_label(4, i, Some("A333")))
+            .collect();
+        assert_eq!(l, ["UP", "1", "2", "3", "FULL"].map(Some));
+        assert_eq!(raster_flap_label(4, 5, Some("A333")), None);
+    }
+
+    #[test]
+    fn laminar_737_acht_rasten_boeing_namen() {
+        let l: Vec<_> = (0..=8)
+            .map(|i| raster_flap_label(8, i, Some("B738")))
+            .collect();
+        let soll = ["UP", "1", "2", "5", "10", "15", "25", "30", "40"].map(Some);
+        assert_eq!(l, soll);
+    }
 
     #[test]
     fn fenix_fuenf_rasten_mit_eins_plus_f() {
@@ -11619,6 +11652,166 @@ const APPROACH_BUFFER_MAX: usize = 120;
 /// (`ANFLUG_FENSTER_S`). Ein GA-Anflug mit 300 fpm braucht von 1000 ft gut
 /// drei Minuten.
 const ANFLUG_FORENSIK_PUFFER_MAX: usize = 400;
+
+/// Was mit einer Aufsetzmeldung des X-Plane-Plugins geschah.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PremiumTd {
+    /// Ausserhalb der Flugphase oder Aufsetzen schon abgeschlossen.
+    Verworfen,
+    /// Das Plugin ist der erste Edge — neuer Kandidat.
+    NeuerKandidat,
+    /// An den Kandidaten des RREF-/Fahrwerkskraft-Edges angehaengt.
+    Angehaengt { pending_age_ms: i64 },
+    /// Der Kandidat traegt schon eine Plugin-Meldung (Hopser-Echo).
+    Wiederholt,
+}
+
+/// Aufsetzmeldung des Plugins in den Kandidaten uebernehmen.
+///
+/// `vs_fpm`/`g` sind `NaN`, wenn das Plugin `null` schickte (nicht
+/// gemessen, Plugin ab 1.0) — dann bleibt die Stelle leer und beim
+/// VALIDATED gilt der Sampler-Wert (`td_werte_mit_premium`). Ob der
+/// Kandidat schon eine Plugin-Meldung hat, entscheidet der eigene Merker
+/// `pending_td_premium_gesehen`, nicht `pending_td_premium_vs` (das darf nach
+/// einer Meldung leer sein).
+fn premium_td_uebernehmen(
+    stats: &mut FlightStats,
+    vs_fpm: f32,
+    g: f32,
+    capturable_phase: bool,
+    now: DateTime<Utc>,
+) -> PremiumTd {
+    if !capturable_phase || stats.sampler_touchdown_at.is_some() {
+        return PremiumTd::Verworfen;
+    }
+    if stats.pending_td_premium_gesehen {
+        // Erste Premium-Messung war frame-genauer.
+        return PremiumTd::Wiederholt;
+    }
+    let ergebnis = match stats.pending_td_at {
+        None => {
+            stats.pending_td_at = Some(now);
+            PremiumTd::NeuerKandidat
+        }
+        // Round-4 P2 fix: RREF/gear-force hat pending_td_at gesetzt, das
+        // Premium-Event kommt einen Tick spaeter — anhaengen, pending_td_at
+        // bleibt am frueheren Edge.
+        Some(t) => PremiumTd::Angehaengt {
+            pending_age_ms: (now - t).num_milliseconds(),
+        },
+    };
+    stats.pending_td_premium_vs = Some(vs_fpm).filter(|v| v.is_finite());
+    stats.pending_td_premium_g = Some(g).filter(|v| v.is_finite());
+    stats.pending_td_premium_gesehen = true;
+    ergebnis
+}
+
+/// Sinkrate und g des bestaetigten Aufsetzens: Plugin-Werte, wo endlich
+/// gemessen, sonst die Werte des Samplers.
+fn td_werte_mit_premium(stats: &FlightStats, impact_vs: f32, g_peak: f32) -> (f32, f32) {
+    (
+        stats
+            .pending_td_premium_vs
+            .filter(|v| v.is_finite())
+            .unwrap_or(impact_vs),
+        stats
+            .pending_td_premium_g
+            .filter(|v| v.is_finite())
+            .unwrap_or(g_peak),
+    )
+}
+
+#[cfg(test)]
+mod premium_td_tests {
+    use super::*;
+
+    /// Kette Plugin-Paket (JSON mit `null`) → Uebernahme → VALIDATED-Werte.
+    fn aufsetzen(json: &str) -> sim_xplane::PremiumTouchdown {
+        serde_json::from_str(json).expect("Aufsetzpaket")
+    }
+
+    fn kandidat() -> FlightStats {
+        FlightStats::new()
+    }
+
+    /// Cloud-QS N1: erste Meldung ohne Sinkrate (`null`), aber mit g. Das
+    /// Hopser-Echo im Fenster haengt sich NICHT an und ueberschreibt das g
+    /// der ersten Meldung nicht; die Sinkrate kommt vom Sampler.
+    #[test]
+    fn hopser_echo_ueberschreibt_die_erste_meldung_nicht() {
+        let mut st = kandidat();
+        let t0 = Utc::now();
+        let erste = aufsetzen(r#"{"captured_vs_fpm":null,"captured_g_normal":1.42}"#);
+        assert_eq!(
+            premium_td_uebernehmen(
+                &mut st,
+                erste.captured_vs_fpm,
+                erste.captured_g_normal,
+                true,
+                t0
+            ),
+            PremiumTd::NeuerKandidat
+        );
+        assert_eq!(st.pending_td_premium_vs, None);
+        let echo = aufsetzen(r#"{"captured_vs_fpm":-95.0,"captured_g_normal":1.05}"#);
+        assert_eq!(
+            premium_td_uebernehmen(
+                &mut st,
+                echo.captured_vs_fpm,
+                echo.captured_g_normal,
+                true,
+                t0 + chrono::Duration::milliseconds(400)
+            ),
+            PremiumTd::Wiederholt
+        );
+        let (vs, g) = td_werte_mit_premium(&st, -310.0, 1.2);
+        assert_eq!(vs, -310.0, "Sinkrate vom Sampler, nicht vom Echo");
+        assert_eq!(g, 1.42, "g der ersten Meldung bleibt");
+    }
+
+    /// RREF-Edge zuerst, Plugin einen Tick spaeter: angehaengt; gemessene
+    /// Werte gewinnen, `null` faellt auf den Sampler zurueck — nie 0.
+    #[test]
+    fn plugin_nach_rref_edge_und_null_kette() {
+        let mut st = kandidat();
+        let t0 = Utc::now();
+        st.pending_td_at = Some(t0);
+        let td = aufsetzen(r#"{"captured_vs_fpm":-212.5,"captured_g_normal":null}"#);
+        assert_eq!(
+            premium_td_uebernehmen(
+                &mut st,
+                td.captured_vs_fpm,
+                td.captured_g_normal,
+                true,
+                t0 + chrono::Duration::milliseconds(20)
+            ),
+            PremiumTd::Angehaengt { pending_age_ms: 20 }
+        );
+        assert_eq!(st.pending_td_at, Some(t0));
+        assert_eq!(td_werte_mit_premium(&st, -260.0, 1.31), (-212.5, 1.31));
+        // Beide `null`: der Sampler traegt alles.
+        let mut st = kandidat();
+        let td = aufsetzen(r#"{"captured_vs_fpm":null,"captured_g_normal":null}"#);
+        premium_td_uebernehmen(&mut st, td.captured_vs_fpm, td.captured_g_normal, true, t0);
+        assert_eq!(td_werte_mit_premium(&st, -260.0, 1.31), (-260.0, 1.31));
+    }
+
+    #[test]
+    fn ausserhalb_der_phase_verworfen() {
+        let mut st = kandidat();
+        let t0 = Utc::now();
+        assert_eq!(
+            premium_td_uebernehmen(&mut st, -200.0, 1.2, false, t0),
+            PremiumTd::Verworfen
+        );
+        assert!(st.pending_td_at.is_none() && !st.pending_td_premium_gesehen);
+        st.sampler_touchdown_at = Some(t0);
+        assert_eq!(
+            premium_td_uebernehmen(&mut st, -200.0, 1.2, true, t0),
+            PremiumTd::Verworfen
+        );
+    }
+}
 
 /// Mittleres N1 der Triebwerke, die laufen (N1 ≥ 5 %).
 ///
@@ -35897,63 +36090,50 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // bush hops that land before the 500 ft Takeoff→Climb gate).
                 let capturable_phase =
                     is_touchdown_capturable_phase(stats.phase, stats.was_airborne);
-                if !capturable_phase || stats.sampler_touchdown_at.is_some() {
-                    // Out-of-phase (Boden/Taxi) oder TD schon abgeschlossen → drop.
-                    tracing::debug!(
-                        pirep_id = %flight.pirep_id,
-                        captured_vs_fpm = td.captured_vs_fpm,
-                        capturable_phase = capturable_phase,
-                        td_already_captured = stats.sampler_touchdown_at.is_some(),
-                        "premium TD event dropped (out of phase or TD already finalised)"
-                    );
-                } else if stats.pending_td_at.is_none() {
-                    // Premium ist der erste Edge — neuer Candidate.
-                    // Plugin ab 1.0: `null` = nicht gemessen (NaN) — dann
-                    // bleibt die Stelle leer und der Sampler-Wert gilt.
-                    stats.pending_td_at = Some(now);
-                    stats.pending_td_premium_vs =
-                        Some(td.captured_vs_fpm).filter(|v| v.is_finite());
-                    stats.pending_td_premium_g =
-                        Some(td.captured_g_normal).filter(|v| v.is_finite());
-                    tracing::info!(
-                        pirep_id = %flight.pirep_id,
-                        captured_vs_fpm = td.captured_vs_fpm,
-                        captured_g = td.captured_g_normal,
-                        source = "x-plane-plugin-premium",
-                        "v0.7.0 premium TD candidate detected — pending validation in 1.1s"
-                    );
-                } else if stats.pending_td_premium_vs.is_none() {
-                    // Round-4 P2 fix: RREF/gear-force hat bereits pending_td_at
-                    // gesetzt, Premium-UDP-Event kommt einen Tick spaeter.
-                    // Vorher (Bug): Event wurde durch den Guard verworfen, der
-                    // Premium-Override fiel beim VALIDATED-Block still weg.
-                    // Jetzt: Premium-Werte werden an den bestehenden Candidate
-                    // angehaengt. pending_td_at bleibt am frueheren RREF-Edge.
-                    let pending_age_ms = stats
-                        .pending_td_at
-                        .map(|t| (now - t).num_milliseconds())
-                        .unwrap_or(0);
-                    stats.pending_td_premium_vs =
-                        Some(td.captured_vs_fpm).filter(|v| v.is_finite());
-                    stats.pending_td_premium_g =
-                        Some(td.captured_g_normal).filter(|v| v.is_finite());
-                    tracing::info!(
-                        pirep_id = %flight.pirep_id,
-                        captured_vs_fpm = td.captured_vs_fpm,
-                        captured_g = td.captured_g_normal,
-                        pending_age_ms = pending_age_ms,
-                        source = "x-plane-plugin-premium-late",
-                        "v0.7.0 premium TD attached to existing RREF pending candidate"
-                    );
-                } else {
-                    // Pending hat bereits Premium-Werte — Re-Trigger ignorieren,
-                    // erste Premium-Messung war frame-perfekter.
-                    tracing::debug!(
-                        pirep_id = %flight.pirep_id,
-                        captured_vs_fpm = td.captured_vs_fpm,
-                        existing_premium_vs = stats.pending_td_premium_vs,
-                        "premium TD re-trigger ignored — first premium edge already pending"
-                    );
+                match premium_td_uebernehmen(
+                    &mut stats,
+                    td.captured_vs_fpm,
+                    td.captured_g_normal,
+                    capturable_phase,
+                    now,
+                ) {
+                    PremiumTd::Verworfen => {
+                        // Out-of-phase (Boden/Taxi) oder TD schon abgeschlossen.
+                        tracing::debug!(
+                            pirep_id = %flight.pirep_id,
+                            captured_vs_fpm = td.captured_vs_fpm,
+                            capturable_phase = capturable_phase,
+                            td_already_captured = stats.sampler_touchdown_at.is_some(),
+                            "premium TD event dropped (out of phase or TD already finalised)"
+                        );
+                    }
+                    PremiumTd::NeuerKandidat => {
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            captured_vs_fpm = td.captured_vs_fpm,
+                            captured_g = td.captured_g_normal,
+                            source = "x-plane-plugin-premium",
+                            "v0.7.0 premium TD candidate detected — pending validation in 1.1s"
+                        );
+                    }
+                    PremiumTd::Angehaengt { pending_age_ms } => {
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            captured_vs_fpm = td.captured_vs_fpm,
+                            captured_g = td.captured_g_normal,
+                            pending_age_ms = pending_age_ms,
+                            source = "x-plane-plugin-premium-late",
+                            "v0.7.0 premium TD attached to existing RREF pending candidate"
+                        );
+                    }
+                    PremiumTd::Wiederholt => {
+                        tracing::debug!(
+                            pirep_id = %flight.pirep_id,
+                            captured_vs_fpm = td.captured_vs_fpm,
+                            existing_premium_vs = stats.pending_td_premium_vs,
+                            "premium TD re-trigger ignored — first premium edge already pending"
+                        );
+                    }
                 }
             }
 
@@ -36094,15 +36274,18 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 // Round-3 P2 fix: Premium-VS aus pending-state
                                 // (wurde beim Premium-Edge gespeichert weil
                                 // take_premium_touchdown() drain ist).
-                                stats.sampler_touchdown_vs_fpm =
-                                    stats.pending_td_premium_vs.or(Some(impact_vs));
-                                stats.sampler_touchdown_g_force = stats
-                                    .pending_td_premium_g
-                                    .or(Some(result.g_force_peak_in_window));
+                                let (vs, g) = td_werte_mit_premium(
+                                    &stats,
+                                    impact_vs,
+                                    result.g_force_peak_in_window,
+                                );
+                                stats.sampler_touchdown_vs_fpm = Some(vs);
+                                stats.sampler_touchdown_g_force = Some(g);
                                 open_touchdown_capture_window(&mut stats, pending_at);
                                 stats.pending_td_at = None;
                                 stats.pending_td_premium_vs = None;
                                 stats.pending_td_premium_g = None;
+                                stats.pending_td_premium_gesehen = false;
 
                                 // v0.15.24: Phase-independent touchdown METADATA.
                                 //
@@ -36363,6 +36546,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 stats.pending_td_at = None;
                                 stats.pending_td_premium_vs = None;
                                 stats.pending_td_premium_g = None;
+                                stats.pending_td_premium_gesehen = false;
                             }
                         }
                     } else {
@@ -36370,6 +36554,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         stats.pending_td_at = None;
                         stats.pending_td_premium_vs = None;
                         stats.pending_td_premium_g = None;
+                        stats.pending_td_premium_gesehen = false;
                     }
                 }
             }
@@ -54700,9 +54885,11 @@ impl SimRuhe {
         });
         // Dazu der vorige Takt: Ein zeitbeschleunigter Flug bewegt sich
         // GLEICHMAESSIG, jeder Takt etwa gleich weit — ein Teleport ist ein
-        // einzelner Ausreisser. Das wirkt bei jedem Simulator, auch ohne
-        // gemeldete Sim-Rate (X-Plane bis v1.9.12 fest 1.0; Cloud-QS
-        // 24.09.2026). Das Dreifache laesst Luft fuer ungleiche Takte.
+        // einzelner Ausreisser. Das wirkt bei jedem Simulator, auch wenn die
+        // gemeldete Sim-Rate nicht passt: X-Plane vor v1.9.12 meldete fest
+        // 1.0 (Cloud-QS 24.09.2026); seither der eingestellte Zeitraffer mal
+        // Strecken-Multiplikator — Sollwerte, nicht die tatsaechlich erreichte
+        // Rate. Das Dreifache laesst Luft fuer ungleiche Takte.
         //
         // Gedeckelt auf das, was ueberhaupt fliegbar ist (16-fache
         // Beschleunigung bei `RESUME_MAX_PLAUSIBEL_KT`, in 2 s rund 11 km):
