@@ -160,14 +160,18 @@ constexpr double EMPFANG_BUDGET_S = 0.0005;
 // Abos + LISTE). Sonst könnte ein großes Abo 1 alles andere aushungern.
 constexpr double ABO1_BUDGET_S = 0.0005;
 
-// Frame-Grenze für fremde Accessoren (Nachprüfung Claude, Punkt 3): Such-
-// und Liefer-Budget zusammen. Nach ihr beginnt je Frame höchstens EIN
-// weiterer fremder Accessor-Aufruf (die "freie Einheit"), reihum vergeben an
-// Suche, Abo 1 und Rundlauf — jeder ist spätestens jeden dritten Frame dran.
-// Damit liegt ein Frame höchstens zwei fremde Aufrufe über dem Budget: der
-// eine, der innerhalb des Budgets begann und sich als langsam herausstellte,
-// und die freie Einheit.
+// Summe der Budgets je Frame (Suche + Lieferung) — nur zur Einordnung.
 constexpr double FRAME_BUDGET_S = SUCH_BUDGET_S + ZEITBUDGET_S;
+
+// Höchstens so viele LANGSAME fremde Aufrufe (> LANGSAM_AUFRUF_S) je Frame;
+// danach beginnt in diesem Frame kein fremder Accessor mehr. Die Grenze
+// hängt an tatsächlich langsamen Aufrufen, nicht an der Uhr: Eine frühere
+// Fassung (Frame-Grenze = Frame-Start + 1,3 ms) ließ einen einzigen
+// langsamen Such-Aufruf Abo 1 (Telemetrie) den Getter kosten — die
+// Telemetrie fiel auf 5–11 Hz (Nachprüfung Claude, Nachweis H). Jetzt behält
+// jede Phase ihr eigenes Budget samt freier Einheit, und kein Frame hat mehr
+// als zwei langsame fremde Aufrufe.
+constexpr int MAX_LANGSAME_JE_FRAME = 2;
 
 // ---- Speicher (Codex-Abnahme H3) ---------------------------------------------
 //

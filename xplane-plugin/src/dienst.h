@@ -423,12 +423,8 @@ private:
     double naechster_langsamer_ = 0.0;
     DatarefHandle langsam_vorrang_ = nullptr;  // am längsten wartender (je Frame)
     double langsam_vorrang_faellig_ = 0.0;
-    // Frame-Grenze und freie Einheit (grenzen::FRAME_BUDGET_S)
-    double frame_ende_ = 0.0;
-    int frei_frame_ = 0;
-    int phase_nr_ = 0;       // 0 Suche, 1 Abo 1, 2 Rundlauf
-    int prioritaet_ = 0;     // ab dieser Phase darf die freie Einheit genutzt werden
-    uint32_t frame_zaehler_ = 0;
+    // Langsame fremde Aufrufe in diesem Frame (grenzen::MAX_LANGSAME_JE_FRAME)
+    int langsame_frame_ = 0;
     int langsam_meldungen_ = 0;
     Langsam langsam_[grenzen::LANGSAM_PLAETZE];
     size_t langsam_belegt_ = 0;

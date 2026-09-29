@@ -2193,3 +2193,76 @@ TEST(dienst_h3_ersatz_abo_nahe_am_gesamtbudget) {
     PRUEFE(status_gen2);
     PRUEFE(a.d->speicher_abos() <= grenzen::MAX_BYTES_ABOS);
 }
+
+TEST(dienst_telemetrie_behaelt_rate_neben_langsamer_suche) {
+    // Nachweis H: Abo 1 mit 50 schnellen sim/-Floats @ 20 Hz, Abo 2 mit 400
+    // verschiedenen langsamen Arrays (3 ms). Mit der Frame-Grenze aus Such-
+    // und Liefer-Budget kostete ein langsamer Such-Aufruf Abo 1 den Getter:
+    // 46, 114, 201 … Pakete je 10 s. Soll: durchgehend ≈ 200.
+    Aufbau a;
+    std::string abo1 = "ABO 1 20\n";
+    for (int i = 0; i < 50; ++i) {
+        a.welt.neu("sim/tele/f" + std::to_string(i), typ::F).f = 1.0f;
+        abo1 += "sim/tele/f" + std::to_string(i) + "\n";
+    }
+    std::vector<std::string> langsam;
+    for (int i = 0; i < 400; ++i) {
+        langsam.push_back("addon/arr" + std::to_string(i));
+        auto& r = a.welt.neu(langsam.back(), typ::VF);
+        r.vf = std::vector<float>(8, 1.0f);
+        r.kosten = 0.003;
+    }
+    a.hallo();
+    a.sende(abo1);
+    for (const auto& d : abo_datagramme(2, 20, langsam, 1)) a.sende(d);
+    std::vector<int> je_10s;
+    int zaehler = 0;
+    double max_frame = 0.0;
+    for (int i = 0; i < 60 * 40; ++i) {  // 40 s
+        if (i % 60 == 0) a.sende("PING");
+        const double vorher = a.umg.zeit + 1.0 / 60.0;
+        a.frame();
+        max_frame = std::max(max_frame, a.umg.zeit - vorher);
+        for (auto& j : a.neue_vom_typ("w")) if (j.hole("abo")->zahl == 1) ++zaehler;
+        if ((i + 1) % 600 == 0) { je_10s.push_back(zaehler); zaehler = 0; }
+    }
+    std::printf("     Abo-1-Pakete je 10 s neben 400 langsamen Arrays:");
+    for (int n : je_10s) std::printf(" %d", n);
+    std::printf(" (laengster Frame %.2f ms)\n", max_frame * 1000.0);
+    for (int n : je_10s) PRUEFE(n >= 180);  // ≈ 20 Hz durchgehend
+    PRUEFE(max_frame <= grenzen::FRAME_BUDGET_S + 2 * 0.003 + 3e-4);
+}
+
+TEST(dienst_gedrosselt_kein_doppelter_index_in_einer_runde) {
+    // Nachweis I: addon/x steht vorn und hinten in einem Abo, dazwischen
+    // 300 Namen à 0,3 ms (1 ms Budget je Frame → Runde ≈ 1,7 s). In Runde 2 wird addon/x beim vorderen
+    // Eintrag gedrosselt (dritter langsamer Aufruf in Folge) und ist beim
+    // hinteren fällig. Vorher bediente der gedrosselte Aufruf den vorderen
+    // Eintrag noch einmal — doppelter Index in derselben Runde.
+    Aufbau a;
+    auto& x = a.welt.neu("addon/x", typ::F);
+    x.kosten = 0.005;
+    std::vector<std::string> namen{"addon/x"};
+    for (int i = 0; i < 300; ++i) {
+        namen.push_back("sim/i/n" + std::to_string(i));
+        a.welt.neu(namen.back(), typ::F);
+    }
+    namen.push_back("addon/x");
+    a.welt.lese_kosten = 3e-4;
+    a.hallo();
+    for (const auto& d : abo_datagramme(2, 1, namen, 1)) a.sende(d);
+    std::map<int, std::map<int, int>> je_seq;  // seq → index → Anzahl
+    for (int i = 0; i < 60 * 12; ++i) {
+        if (i % 60 == 0) a.sende("PING");
+        a.frame();
+        for (auto& j : a.neue_vom_typ("w")) {
+            const int s = static_cast<int>(j.hole("seq")->zahl);
+            for (auto& e : j.hole("v")->feld) je_seq[s][static_cast<int>(e.feld[0].zahl)]++;
+        }
+    }
+    int doppelt = 0;
+    for (auto& kv : je_seq) for (auto& iv : kv.second) if (iv.second > 1) ++doppelt;
+    PRUEFE(!log_mit(a, "addon/x antwortet langsam").empty());  // wirklich gedrosselt
+    PRUEFE(je_seq.size() >= 3);
+    PRUEFE_GLEICH(doppelt, 0);
+}

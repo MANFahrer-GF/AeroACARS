@@ -381,10 +381,16 @@ M1–M3, N1 im Plugin behoben (H1 betrifft den Client):
   - *Suche sparsam:* Array-Länge je Handle einmal je Prüfdurchlauf;
     gedrosselte Handles mit bekannter Länge werden auch in dringenden Läufen
     nur gefragt, wenn sie ohnehin dran sind.
-  - *Höchstens zwei fremde Aufrufe über dem Budget je Frame:* Frame-Grenze =
-    Such- + Liefer-Budget (1,3 ms); danach höchstens eine freie Einheit je
-    Frame, reihum an Suche, Abo 1, Rundlauf. (Vorher je Phase eine: bis zu
-    drei.)
+  - *Höchstens zwei langsame fremde Aufrufe je Frame:* Jede Phase (Suche,
+    Abo 1, Rundlauf) behält Budget und freie erste Einheit; nach zwei
+    fremden Aufrufen > 2 ms beginnt im Frame kein fremder Accessor mehr
+    (vorher bis zu drei). Eine Zwischenfassung mit Frame-Grenze nach der Uhr
+    (Frame-Start + 1,3 ms) ließ einen langsamen Such-Aufruf die Telemetrie
+    von Abo 1 verdrängen (Nachweis H: 5–11 Hz statt 20 Hz) und wurde
+    ersetzt.
+  - *Kein doppelter Index:* Ein regulär gelesener Eintrag gilt für die Runde
+    als bedient; wird sein Handle später in derselben Runde gedrosselt und
+    fällig, bedient ihn der gedrosselte Aufruf nicht noch einmal.
   - *Hysterese:* Fünf schnelle gedrosselte Lesungen in Folge heben die
     Drosselung auf (Log einmal).
   - *Kennung:* zwischen `XPLMFindDataRef` und dem Lesen noch einmal gegen das

@@ -323,21 +323,15 @@ void Dienst::beginne_budget(double dauer) noexcept {
     garantie_ = true;
 }
 
-// Vor jedem XPLM-Aufruf. Innerhalb des Budgets UND der Frame-Grenze immer.
-// Darüber nur im Rahmen der freien Einheit: interne (billige) Aufrufe der
-// laufenden Einheit ja; ein FREMDER Accessor nur, wenn die eine freie
-// Einheit dieses Frames noch da ist und die Phase an der Reihe ist
-// (grenzen::FRAME_BUDGET_S). So liegt kein Frame mehr als zwei fremde
-// Aufrufe über dem Budget.
+// Vor jedem XPLM-Aufruf. Jede Phase (Suche, Abo 1, Rundlauf) hat ihr
+// eigenes Budget und ihre freie erste Einheit. Übergreifend gilt nur: Nach
+// zwei LANGSAMEN fremden Aufrufen (grenzen::MAX_LANGSAME_JE_FRAME) beginnt in
+// diesem Frame kein fremder Accessor mehr. So verdrängt ein langsamer
+// Such-Aufruf die Telemetrie nicht, und kein Frame hat mehr als zwei
+// langsame fremde Aufrufe.
 bool Dienst::darf_arbeiten(bool fremd) noexcept {
-    if (uhr_ < budget_ende_ && uhr_ < frame_ende_) return true;
-    if (!garantie_) return false;
-    if (!fremd) return true;
-    if (frei_frame_ > 0 && phase_nr_ >= prioritaet_) {
-        --frei_frame_;
-        return true;
-    }
-    return false;
+    if (fremd && langsame_frame_ >= grenzen::MAX_LANGSAME_JE_FRAME) return false;
+    return garantie_ || uhr_ < budget_ende_;
 }
 
 double Dienst::nach_aufruf() noexcept {
@@ -350,6 +344,7 @@ double Dienst::nach_aufruf() noexcept {
 void Dienst::nach_fremdaufruf(Abo& abo, Eintrag& e, DatarefHandle h) noexcept {
     const double d = nach_aufruf();
     garantie_ = false;
+    if (d > grenzen::LANGSAM_AUFRUF_S) ++langsame_frame_;
     if (d <= grenzen::LANGSAM_AUFRUF_S) {
         // Nur Treffer IN FOLGE zählen: ein einzelner Ausreißer (der Thread
         // wurde vom Betriebssystem unterbrochen) drosselt nichts. Ein
@@ -861,11 +856,8 @@ void Dienst::frame_intern() noexcept {
     //    Kennung zuerst (fortsetzbar, eine Einheit je Dataref): nach einem
     //    Flugzeugwechsel geht `flugzeug` so vor jeder Neusuche hinaus — die
     //    Suche bekommt in einem Frame erst Budget, wenn die Kennung fertig ist.
-    frame_ende_ = umgebung_.jetzt() + grenzen::FRAME_BUDGET_S;
-    frei_frame_ = 1;
-    prioritaet_ = static_cast<int>(frame_zaehler_++ % 3u);
+    langsame_frame_ = 0;
     waehle_langsam_vorrang();
-    phase_nr_ = 0;
     beginne_budget(grenzen::SUCH_BUDGET_S);
     pruefe_flugzeug();
     suchen_verteilen();
@@ -881,12 +873,10 @@ void Dienst::frame_intern() noexcept {
     //    des Liefer-Budgets MIT einer eigenen freien Einheit — ein großes
     //    oder teures Abo 1 kann die anderen und LISTE so nicht mehr
     //    aushungern (Nachprüfung Codex M2).
-    phase_nr_ = 1;
     beginne_budget(grenzen::ABO1_BUDGET_S);
     const double liefer_ende = uhr_ + grenzen::ZEITBUDGET_S;
     bearbeite_abo_frame(abos_[0]);
     uhr_auffrischen();
-    phase_nr_ = 2;
     budget_ende_ = liefer_ende;
     garantie_ = true;
     uint32_t teilnehmer[grenzen::MAX_ABOS + 1];
@@ -1421,6 +1411,10 @@ bool Dienst::lese_schritt(Abo& abo) noexcept {
         // aus — es wird nie abgeschnitten.
         const bool gut = schreibe_wert(w, abo, e, abo.lese_cursor);
         if (gut) abo.stapel.uebernehme(w);
+        // In dieser Runde erledigt — wird der Handle später in derselben
+        // Runde gedrosselt und fällig, bedient bediene_gedrosselt diesen
+        // Eintrag nicht noch einmal (sonst doppelter Index, Nachweis I).
+        e.bedient_runde = abo.seq;
         ++abo.lese_cursor;
         einheit_fertig();
     }

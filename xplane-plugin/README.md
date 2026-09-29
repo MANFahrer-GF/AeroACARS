@@ -242,13 +242,15 @@ PING
   Abos **und LISTE** mit dem Rest des Budgets — jeder Teilnehmer ist
   regelmäßig als erster dran. Weder ein großes Abo 1 noch ein Dauer-Abo kann
   LISTE oder andere Abos aushungern.
-* **Höchstens zwei fremde Aufrufe über dem Budget je Frame:** Such- und
-  Liefer-Budget bilden zusammen eine Frame-Grenze (1,3 ms). Danach beginnt
-  je Frame höchstens **ein** weiterer fremder Accessor (die freie Einheit),
-  reihum vergeben an Suche, Abo 1 und Rundlauf (jeder ist spätestens jeden
-  dritten Frame dran). Der schlimmste Frame ist also 1,3 ms + der eine
-  Aufruf, der im Budget begann und sich als langsam herausstellte, + die
-  freie Einheit.
+* **Höchstens zwei langsame fremde Aufrufe je Frame:** Jede Phase (Suche,
+  Abo 1, Rundlauf) behält ihr eigenes Budget samt freier erster Einheit. Nach
+  **zwei** fremden Aufrufen, die länger als 2 ms dauerten, beginnt in diesem
+  Frame kein fremder Accessor mehr. Die Grenze hängt an tatsächlich langsamen
+  Aufrufen, nicht an der Uhr — so verdrängt ein langsamer Such-Aufruf die
+  Telemetrie von Abo 1 nicht (eine frühere Fassung mit Frame-Grenze nach der
+  Uhr ließ sie neben langsamen Arrays auf 5–11 Hz fallen). Der schlimmste
+  Frame: Summe der Budgets (1,3 ms) + zwei langsame Aufrufe (+ je Phase ein
+  Aufruf knapp unter 2 ms).
 * **Speicherbudgets (hart):** je Abo **16 MiB**, alle Abos samt Teil-Abos
   zusammen **64 MiB**, LISTE **16 MiB**. Gezählt wird die reservierte
   Kapazität, mit dem schlimmsten Fall je Wert (der Ausgabestapel wird beim
