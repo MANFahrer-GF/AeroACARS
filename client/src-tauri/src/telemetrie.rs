@@ -250,29 +250,46 @@ fn bank_anzeige(k: &Kontext) -> Option<f64> {
     Some(if ist_msfs(k) { -b } else { b })
 }
 
-/// iniBuilds A380 (MSFS): N1, EGT und Schubhebel aus den Standardvariablen
-/// sind nicht verlaesslich — Live-Messung 26.09.2026 ueber die LAN-Bruecke:
-/// N1 68,6 % bei MAN TOGA, EGT 29–33 °C im Leerlauf und 136 °C bei 68 % N1,
-/// Schubhebel IDLE = 4 %, CL = FLX = TOGA = 62 %.
+/// iniBuilds A380 (MSFS): EGT und Schubhebel kommen NICHT aus den
+/// Standardvariablen, sondern aus iniBuilds-eigenen L:-Variablen.
+///
+/// Gemessen 30.09.2026 mit Thomas am Boden in EDDP (A380-800 RR Basic,
+/// Trent 972), Standard gegen ECAM:
+/// * **EGT**: Standard `GENERAL ENG EXHAUST GAS TEMPERATURE` 29–33 °C im
+///   Leerlauf, 136 °C bei ~70 % N1 — falsch. `L:INI_ENG{n}_EGT` 495 °C
+///   (IDLE) / 676 °C (CL); E/WD bei CL 627–637 °C.
+/// * **Schubhebel**: Standard `GENERAL ENG THROTTLE LEVER POSITION` zeigte
+///   bei CL, FLX und TOGA gleich ~62 % (das ist eher THR, nicht der Hebel).
+///   `L:INI_AUTOTHRUST_TLA:{n}` ist der Hebelwinkel: IDLE 0°, CL 25°
+///   (Airbus-Rasten: FLX/MCT 35°, TOGA 45°) → Anzeige in % von TOGA.
+/// * **N1**: Standard `TURB ENG N1` = `L:INI_ENG{n}_N1` = E/WD (69,7 % gegen
+///   69,6–70,0 % bei CL). Die Sperre vom 26.09. („N1 68,6 % bei MAN TOGA“)
+///   verwechselte die grosse E/WD-Rundanzeige — die ist beim A380 THR,
+///   nicht N1. N1 bleibt deshalb beim Standardwert.
 fn ini_a380(k: &Kontext) -> bool {
     ist_msfs(k) && k.s.aircraft_profile == AircraftProfile::IniA380
 }
-/// Kanaele, die beim iniBuilds A380 leer bleiben und als „nicht
-/// verlaesslich" markiert werden.
-pub const NICHT_VERLAESSLICH_A380: [&str; 12] = [
-    "n1_1",
-    "n1_2",
-    "n1_3",
-    "n1_4",
-    "egt_1",
-    "egt_2",
-    "egt_3",
-    "egt_4",
-    "schubhebel_1",
-    "schubhebel_2",
-    "schubhebel_3",
-    "schubhebel_4",
-];
+/// Hebelwinkel TOGA beim Airbus (Grad) — 100 % der Hebelanzeige.
+const AIRBUS_TLA_TOGA_GRAD: f64 = 45.0;
+/// EGT beim iniBuilds A380 aus `L:INI_ENG{N}_EGT`, sonst Standard.
+fn egt<const N: usize>(k: &Kontext) -> Option<f64> {
+    if !ini_a380(k) {
+        return None; // → Standardwert des Kanals
+    }
+    // Genau 0 heisst: Variable gibt es nicht (MSFS liest unbekannte L:-Namen
+    // als 0) — gemessen ist nur Triebwerk 1. Lieber „–“ als „0 °C“.
+    k.z(["egt_ini_1", "egt_ini_2", "egt_ini_3", "egt_ini_4"][N - 1])
+        .filter(|v| *v != 0.0)
+}
+/// Schubhebel beim iniBuilds A380 aus `L:INI_AUTOTHRUST_TLA:{N}` (Grad),
+/// als % von TOGA; Umkehrschub ergibt negative Werte. Sonst Standard.
+fn schubhebel<const N: usize>(k: &Kontext) -> Option<f64> {
+    if !ini_a380(k) {
+        return None;
+    }
+    k.z(["tla_ini_1", "tla_ini_2", "tla_ini_3", "tla_ini_4"][N - 1])
+        .map(|grad| grad / AIRBUS_TLA_TOGA_GRAD * 100.0)
+}
 
 /// Triebwerk `N` (1..4) gibt es laut `triebwerke_anzahl`. Ohne Angabe gilt
 /// jedes als vorhanden — sonst zeigte der Zweistrahler auf MSFS fuer
@@ -282,9 +299,6 @@ fn tw_da<const N: usize>(k: &Kontext, _: f64) -> bool {
         Some(n) if n >= 1.0 => (N as f64) <= n.round(),
         _ => true,
     }
-}
-fn tw_verlaesslich<const N: usize>(k: &Kontext, v: f64) -> bool {
-    tw_da::<N>(k, v) && !ini_a380(k)
 }
 /// Luftdruck auf Meereshoehe: X-Plane 11 kennt `sealevel_pressure_pas`
 /// nicht, RREF liefert dann 0 — kein „0 hPa" zeigen. Gemessene Rekorde
@@ -874,16 +888,16 @@ pub static KATALOG: &[Kanal] = &[
     k("triebwerke_laufen", Gruppe::Triebwerke, "", 0).zahl(|k| Some(k.s.engines_running as f64)),
     k("n1_1", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<0>)
-        .pruef(tw_verlaesslich::<1>),
+        .pruef(tw_da::<1>),
     k("n1_2", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<1>)
-        .pruef(tw_verlaesslich::<2>),
+        .pruef(tw_da::<2>),
     k("n1_3", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<2>)
-        .pruef(tw_verlaesslich::<3>),
+        .pruef(tw_da::<3>),
     k("n1_4", Gruppe::Triebwerke, "%", 1)
         .zahl(n1::<3>)
-        .pruef(tw_verlaesslich::<4>),
+        .pruef(tw_da::<4>),
     k("n2_1", Gruppe::Triebwerke, "%", 1)
         .q(Quelle::Zusatz)
         .msfs("TURB ENG N2:1", "percent", 1.0)
@@ -906,24 +920,28 @@ pub static KATALOG: &[Kanal] = &[
         .pruef(tw_da::<4>),
     k("egt_1", Gruppe::Triebwerke, "°C", 0)
         .q(Quelle::Zusatz)
+        .zahl(egt::<1>)
         .msfs("GENERAL ENG EXHAUST GAS TEMPERATURE:1", "celsius", 1.0)
         .xp("sim/flightmodel2/engines/EGT_deg_cel[0]", 1.0)
-        .pruef(tw_verlaesslich::<1>),
+        .pruef(tw_da::<1>),
     k("egt_2", Gruppe::Triebwerke, "°C", 0)
         .q(Quelle::Zusatz)
+        .zahl(egt::<2>)
         .msfs("GENERAL ENG EXHAUST GAS TEMPERATURE:2", "celsius", 1.0)
         .xp("sim/flightmodel2/engines/EGT_deg_cel[1]", 1.0)
-        .pruef(tw_verlaesslich::<2>),
+        .pruef(tw_da::<2>),
     k("egt_3", Gruppe::Triebwerke, "°C", 0)
         .q(Quelle::Zusatz)
+        .zahl(egt::<3>)
         .msfs("GENERAL ENG EXHAUST GAS TEMPERATURE:3", "celsius", 1.0)
         .xp("sim/flightmodel2/engines/EGT_deg_cel[2]", 1.0)
-        .pruef(tw_verlaesslich::<3>),
+        .pruef(tw_da::<3>),
     k("egt_4", Gruppe::Triebwerke, "°C", 0)
         .q(Quelle::Zusatz)
+        .zahl(egt::<4>)
         .msfs("GENERAL ENG EXHAUST GAS TEMPERATURE:4", "celsius", 1.0)
         .xp("sim/flightmodel2/engines/EGT_deg_cel[3]", 1.0)
-        .pruef(tw_verlaesslich::<4>),
+        .pruef(tw_da::<4>),
     k("ff_1", Gruppe::Triebwerke, "kg/h", 0)
         .zahl(ff::<0>)
         .xp("sim/cockpit2/engine/indicators/fuel_flow_kg_sec[0]", 3600.0)
@@ -978,24 +996,64 @@ pub static KATALOG: &[Kanal] = &[
         .pruef(tw_da::<4>),
     k("schubhebel_1", Gruppe::Triebwerke, "%", 0)
         .q(Quelle::Zusatz)
+        .zahl(schubhebel::<1>)
         .msfs("GENERAL ENG THROTTLE LEVER POSITION:1", "percent", 1.0)
         .xp("sim/cockpit2/engine/actuators/throttle_ratio[0]", 100.0)
-        .pruef(tw_verlaesslich::<1>),
+        .pruef(tw_da::<1>),
     k("schubhebel_2", Gruppe::Triebwerke, "%", 0)
         .q(Quelle::Zusatz)
+        .zahl(schubhebel::<2>)
         .msfs("GENERAL ENG THROTTLE LEVER POSITION:2", "percent", 1.0)
         .xp("sim/cockpit2/engine/actuators/throttle_ratio[1]", 100.0)
-        .pruef(tw_verlaesslich::<2>),
+        .pruef(tw_da::<2>),
     k("schubhebel_3", Gruppe::Triebwerke, "%", 0)
         .q(Quelle::Zusatz)
+        .zahl(schubhebel::<3>)
         .msfs("GENERAL ENG THROTTLE LEVER POSITION:3", "percent", 1.0)
         .xp("sim/cockpit2/engine/actuators/throttle_ratio[2]", 100.0)
-        .pruef(tw_verlaesslich::<3>),
+        .pruef(tw_da::<3>),
     k("schubhebel_4", Gruppe::Triebwerke, "%", 0)
         .q(Quelle::Zusatz)
+        .zahl(schubhebel::<4>)
         .msfs("GENERAL ENG THROTTLE LEVER POSITION:4", "percent", 1.0)
         .xp("sim/cockpit2/engine/actuators/throttle_ratio[3]", 100.0)
-        .pruef(tw_verlaesslich::<4>),
+        .pruef(tw_da::<4>),
+    // iniBuilds A380: Quellen fuer egt_1 / schubhebel_1 (siehe `ini_a380`).
+    k("egt_ini_1", Gruppe::Triebwerke, "°C", 0)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_ENG1_EGT", "number", 1.0)
+        .intern(),
+    k("tla_ini_1", Gruppe::Triebwerke, "°", 1)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_AUTOTHRUST_TLA:1", "number", 1.0)
+        .intern(),
+    // iniBuilds A380: Quellen fuer egt_2 / schubhebel_2 (siehe `ini_a380`).
+    k("egt_ini_2", Gruppe::Triebwerke, "°C", 0)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_ENG2_EGT", "number", 1.0)
+        .intern(),
+    k("tla_ini_2", Gruppe::Triebwerke, "°", 1)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_AUTOTHRUST_TLA:2", "number", 1.0)
+        .intern(),
+    // iniBuilds A380: Quellen fuer egt_3 / schubhebel_3 (siehe `ini_a380`).
+    k("egt_ini_3", Gruppe::Triebwerke, "°C", 0)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_ENG3_EGT", "number", 1.0)
+        .intern(),
+    k("tla_ini_3", Gruppe::Triebwerke, "°", 1)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_AUTOTHRUST_TLA:3", "number", 1.0)
+        .intern(),
+    // iniBuilds A380: Quellen fuer egt_4 / schubhebel_4 (siehe `ini_a380`).
+    k("egt_ini_4", Gruppe::Triebwerke, "°C", 0)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_ENG4_EGT", "number", 1.0)
+        .intern(),
+    k("tla_ini_4", Gruppe::Triebwerke, "°", 1)
+        .q(Quelle::Zusatz)
+        .msfs("L:INI_AUTOTHRUST_TLA:4", "number", 1.0)
+        .intern(),
     k("umkehr_1", Gruppe::Triebwerke, "%", 0)
         .q(Quelle::Zusatz)
         .msfs("TURB ENG REVERSE NOZZLE PERCENT:1", "percent", 1.0)
@@ -1849,10 +1907,11 @@ pub static KATALOG: &[Kanal] = &[
     k("flugzeug", Gruppe::Flugzeug, "", 0).text(|k| k.s.aircraft_title.clone()),
     k("muster", Gruppe::Flugzeug, "", 0).text(|k| k.s.aircraft_icao.clone()),
     k("kennzeichen", Gruppe::Flugzeug, "", 0).text(|k| k.s.aircraft_registration.clone()),
-    // Kanaele, deren Standardwert dieses Muster nicht verlaesslich liefert
-    // (leerzeichengetrennte IDs). Die Oberflaeche markiert sie.
-    k("nicht_verlaesslich", Gruppe::Flugzeug, "", 0)
-        .text(|k| ini_a380(k).then(|| NICHT_VERLAESSLICH_A380.join(" "))),
+    // Kanaele, deren Wert dieses Muster nicht verlaesslich liefert
+    // (leerzeichengetrennte IDs). Die Oberflaeche graut sie aus. Derzeit
+    // keiner: Der iniBuilds A380 hat seit 30.09.2026 eigene Quellen fuer
+    // EGT und Schubhebel, N1 war richtig (siehe `ini_a380`).
+    k("nicht_verlaesslich", Gruppe::Flugzeug, "", 0).text(|_| None),
 ];
 
 /// Katalog-Eintrag, wie ihn die Oberflaeche bekommt.
@@ -2821,45 +2880,76 @@ mod tests {
         }
     }
 
+    /// iniBuilds A380: EGT und Schubhebel aus den iniBuilds-L:-Variablen, N1
+    /// aus dem Standard — Werte der Messung vom 30.09.2026 (EDDP, CL).
     #[test]
-    fn inibuilds_a380_n1_egt_schubhebel_nicht_verlaesslich() {
-        // Live 26.09.2026: MAN TOGA, N1 68,6 %, EGT 136 °C, Hebel 62 %.
+    fn inibuilds_a380_egt_und_hebel_aus_ini_variablen_n1_standard() {
         let s = SimSnapshot {
             aircraft_profile: AircraftProfile::IniA380,
             engine_signals: Some(EngineSignals {
                 general_combustion: vec![true; 4],
                 combustion_ex1: vec![true; 4],
                 eng_combustion: vec![true; 4],
-                n1_pct: vec![68.6; 4],
-                fuel_flow_pph: vec![26_000.0; 4],
+                n1_pct: vec![69.7; 4],
+                fuel_flow_pph: vec![14_330.0; 4],
             }),
             ..msfs()
         };
         let z = zusatz_umrechnen(
             vec![
                 ("triebwerke_anzahl".into(), 4.0),
+                // Standard: falsch beim A380
                 ("egt_1".into(), 136.0),
                 ("schubhebel_1".into(), 62.0),
-                ("n2_1".into(), 91.0),
+                // iniBuilds
+                ("egt_ini_1".into(), 629.0),
+                ("egt_ini_4".into(), 637.0),
+                ("egt_ini_3".into(), 0.0),
+                ("tla_ini_1".into(), 25.0),
+                ("tla_ini_2".into(), 45.0),
+                ("tla_ini_3".into(), 0.0),
+                ("n2_1".into(), 84.8),
             ],
             false,
         );
         let f = frame(&s, &z);
-        for id in NICHT_VERLAESSLICH_A380 {
-            assert_eq!(wert(&f, id), None, "{id}");
+        assert_eq!(wert(&f, "n1_1"), Some(69.7), "N1 bleibt Standard");
+        assert_eq!(wert(&f, "n1_4"), Some(69.7));
+        assert_eq!(wert(&f, "egt_1"), Some(629.0), "EGT aus L:INI_ENG1_EGT");
+        assert_eq!(wert(&f, "egt_4"), Some(637.0));
+        assert_eq!(
+            wert(&f, "egt_2"),
+            None,
+            "keine INI-EGT → kein Wert, nicht der falsche Standard"
+        );
+        assert_eq!(wert(&f, "egt_3"), None, "0 = Variable fehlt → kein Wert");
+        // TLA 25° = CL → 56 % von TOGA (45°), TOGA = 100 %, IDLE = 0.
+        let cl = wert(&f, "schubhebel_1").expect("Hebel 1");
+        assert!((cl - 55.6).abs() < 0.1, "{cl}");
+        assert_eq!(wert(&f, "schubhebel_2"), Some(100.0));
+        assert_eq!(wert(&f, "schubhebel_3"), Some(0.0));
+        assert_eq!(wert(&f, "n2_1"), Some(84.8), "N2 bleibt");
+        assert_eq!(
+            text(&f, "nicht_verlaesslich"),
+            None,
+            "nichts mehr ausgegraut"
+        );
+        // Die Quellkanaele erscheinen nicht in der Liste.
+        for id in ["egt_ini_1", "tla_ini_1"] {
+            assert!(
+                KATALOG.iter().any(|k| k.id == id && k.intern),
+                "{id} intern"
+            );
         }
-        assert_eq!(wert(&f, "n2_1"), Some(91.0), "N2 bleibt");
-        assert!(wert(&f, "ff_1").is_some(), "FF bleibt");
-        let liste = text(&f, "nicht_verlaesslich").expect("Markierung");
-        assert!(liste.split(' ').any(|id| id == "egt_1"));
-        // Anderes Muster: unveraendert.
-        let a350 = SimSnapshot {
+        // Anderes Muster: Standardwerte, INI-Variablen werden ignoriert.
+        let andere = SimSnapshot {
             aircraft_profile: AircraftProfile::default(),
             ..s
         };
-        let f = frame(&a350, &z);
+        let f = frame(&andere, &z);
         assert_eq!(wert(&f, "egt_1"), Some(136.0));
-        assert_eq!(text(&f, "nicht_verlaesslich"), None);
+        assert_eq!(wert(&f, "schubhebel_1"), Some(62.0));
+        assert_eq!(wert(&f, "egt_4"), None);
     }
 
     #[test]

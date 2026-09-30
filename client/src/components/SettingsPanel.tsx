@@ -357,11 +357,11 @@ export function SettingsPanel({
               ))}
             </select>
           </label>
-          {automatisch && kind !== null && (
-            <p className="settings__row-hint">
-              {t("settings.simulator_auto_hinweis", { sim: t(`sim.kinds.${kind}`) })}
-            </p>
-          )}
+          <SimVerbindungsStatus
+            automatisch={automatisch}
+            kind={simStatus?.kind ?? kind}
+            status={simStatus}
+          />
         </div>
       )}
 
@@ -1043,5 +1043,59 @@ function FlightLogsManager({
         {doneMsg && <p className="storage-card__done">{doneMsg}</p>}
       </div>
     </>
+  );
+}
+
+/**
+ * Verbindungsstand gross und deutlich unter der Simulator-Auswahl
+ * (v1.9.14, Feldbefund Thomas 30.09.2026: der kleine Hinweis „Automatisch
+ * eingestellt: MSFS 2024“ war kaum zu lesen und sagte nicht, ob die
+ * Verbindung wirklich steht). Zeigt den ECHTEN Zustand aus `sim_status`.
+ */
+function SimVerbindungsStatus({
+  automatisch,
+  kind,
+  status,
+}: {
+  automatisch: boolean;
+  kind: SimKind | null;
+  status: SimStatus | null;
+}) {
+  const { t } = useTranslation();
+  if (kind === null || kind === "off") return null;
+  const sim = t(`sim.kinds.${kind}`);
+  const zustand = status?.state ?? "disconnected";
+  const flugzeug = status?.snapshot?.aircraft_title?.trim();
+  let titel: string;
+  let detail: string;
+  if (zustand === "connected") {
+    titel = t("settings.sim_status.verbunden", { sim });
+    detail = flugzeug
+      ? t("settings.sim_status.flugzeug", { flugzeug })
+      : t("settings.sim_status.verbunden_ohne_flugzeug");
+  } else if (zustand === "connecting") {
+    titel = t("settings.sim_status.verbindet", { sim });
+    detail = t("settings.sim_status.verbindet_detail");
+  } else if (automatisch) {
+    titel = t("settings.sim_status.auto_keiner");
+    detail = t("settings.sim_status.auto_keiner_detail");
+  } else {
+    titel = t("settings.sim_status.nicht_verbunden", { sim });
+    detail = t("settings.sim_status.nicht_verbunden_detail");
+  }
+  const art = automatisch ? t("settings.sim_status.art_auto") : t("settings.sim_status.art_fest");
+  return (
+    <div
+      className={`settings__sim-status settings__sim-status--${zustand}`}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="settings__sim-status-punkt" aria-hidden="true" />
+      <div className="settings__sim-status-text">
+        <strong>{titel}</strong>
+        <span>{detail}</span>
+        <span className="settings__sim-status-art">{art}</span>
+      </div>
+    </div>
   );
 }

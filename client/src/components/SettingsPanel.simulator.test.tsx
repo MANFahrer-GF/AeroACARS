@@ -39,7 +39,7 @@ beforeEach(() => {
   aufrufe.length = 0;
 });
 
-function bauen() {
+function bauen(simStatus: unknown = null) {
   localStorage.setItem("aeroacars.settings.activeTab", "simulator");
   const props = {
     debugMode: false,
@@ -54,24 +54,47 @@ function bauen() {
     onChatAnChange: vi.fn(),
     chatTon: true,
     onChatTonChange: vi.fn(),
+    simStatus,
   };
   render(<SettingsPanel {...(props as never)} />);
   return screen.getByRole("combobox", { name: /Aktiver Simulator/ }) as HTMLSelectElement;
 }
 
 describe("Simulator-Auswahl", () => {
-  it("zeigt „Automatisch“ und den erkannten Simulator", async () => {
-    auswahl = { automatisch: true, kind: "xplane12" };
-    const select = bauen();
+  // Der Verbindungsstand steht gross unter der Auswahl — mit dem ECHTEN
+  // Zustand, nicht nur „eingestellt“ (Feldbefund Thomas 30.09.2026).
+  it("verbunden: Simulator und Flugzeug gross im Statusblock", async () => {
+    auswahl = { automatisch: true, kind: "msfs2024" };
+    const select = bauen({
+      state: "connected",
+      kind: "msfs2024",
+      snapshot: { aircraft_title: "A380-800 RR Basic" },
+      last_error: null,
+      available: true,
+    });
     await waitFor(() => expect(select.value).toBe("auto"));
-    expect(screen.getByText(/Automatisch eingestellt: X-Plane 12/)).toBeTruthy();
+    const block = screen.getByRole("status");
+    expect(block.className).toContain("settings__sim-status--connected");
+    expect(block.querySelector("strong")?.textContent).toBe("Verbunden mit MSFS 2024");
+    expect(block.textContent).toContain("Flugzeug: A380-800 RR Basic");
+    expect(block.textContent).toContain("Automatisch erkannt");
   });
 
-  it("Handwahl bleibt Handwahl — ohne Hinweis auf die Automatik", async () => {
-    auswahl = { automatisch: false, kind: "msfs2024" };
-    const select = bauen();
-    await waitFor(() => expect(select.value).toBe("msfs2024"));
-    expect(screen.queryByText(/Automatisch eingestellt/)).toBeNull();
+  it("Automatik ohne laufenden Simulator sagt das deutlich", async () => {
+    auswahl = { automatisch: true, kind: "msfs2024" };
+    bauen({ state: "disconnected", kind: "msfs2024", snapshot: null, last_error: null, available: true });
+    const block = await screen.findByRole("status");
+    expect(block.querySelector("strong")?.textContent).toBe("Kein Simulator gefunden");
+  });
+
+  it("Handwahl: fest eingestellt, nicht verbunden", async () => {
+    auswahl = { automatisch: false, kind: "xplane12" };
+    const select = bauen({ state: "disconnected", kind: "xplane12", snapshot: null, last_error: null, available: true });
+    await waitFor(() => expect(select.value).toBe("xplane12"));
+    const block = screen.getByRole("status");
+    expect(block.querySelector("strong")?.textContent).toBe("X-Plane 12 nicht verbunden");
+    expect(block.textContent).toContain("Fest eingestellt");
+    expect(block.textContent).not.toContain("Automatisch erkannt");
   });
 
   it("schickt beim Umstellen „auto“ bzw. den gewählten Simulator", async () => {
