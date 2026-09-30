@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { syncedSet, syncedRemove } from "../lib/syncedStorage";
-import { invoke, isTauri, formatIpcError } from "../lib/ipc";
+import { invoke, isTauri, formatIpcError, listen } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { setLanguage, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, type SupportedLanguage } from "../i18n";
 import type { ActiveFlightInfo, SimKind, SimStatus } from "../types";
@@ -90,6 +90,8 @@ export function SettingsPanel({
 }: Props) {
   const { t, i18n } = useTranslation();
   const [kind, setKind] = useState<SimKind | null>(null);
+  // v1.9.14: „Automatisch“ — `kind` ist dann der erkannte Simulator.
+  const [automatisch, setAutomatisch] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // v0.7.8: SimBrief Integration Settings — Username + User-ID.
@@ -191,23 +193,45 @@ export function SettingsPanel({
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const laden = async () => {
       try {
-        const k = await invoke<string>("sim_get_kind");
-        if (!cancelled) setKind(k as SimKind);
+        const a = await invoke<{ automatisch: boolean; kind: string }>("sim_get_auswahl");
+        if (!cancelled) {
+          setKind(a.kind as SimKind);
+          setAutomatisch(a.automatisch);
+        }
       } catch {
         if (!cancelled) setKind("off");
       }
-    })();
+    };
+    void laden();
+    // Der Waechter hat umgestellt → den erkannten Simulator nachziehen.
+    let weg: (() => void) | undefined;
+    try {
+      void listen("sim-auswahl-geaendert", () => void laden())
+        .then((f) => {
+          if (cancelled) f();
+          else weg = f;
+        })
+        .catch(() => {});
+    } catch {
+      // ohne Ereigniskanal (Test, Browser) bleibt es beim ersten Stand
+    }
     return () => {
       cancelled = true;
+      weg?.();
     };
   }, []);
 
-  async function handleKindChange(next: SimKind) {
+  async function handleKindChange(next: SimKind | "auto") {
     if (busy) return;
     setBusy(true);
-    setKind(next);
+    if (next === "auto") {
+      setAutomatisch(true);
+    } else {
+      setAutomatisch(false);
+      setKind(next);
+    }
     try {
       await invoke("sim_set_kind", { kind: next });
     } catch {
@@ -321,10 +345,11 @@ export function SettingsPanel({
               {t("settings.simulator_label")}
             </span>
             <select
-              value={kind ?? "off"}
-              onChange={(e) => handleKindChange(e.target.value as SimKind)}
+              value={automatisch ? "auto" : (kind ?? "off")}
+              onChange={(e) => handleKindChange(e.target.value as SimKind | "auto")}
               disabled={busy || kind === null}
             >
+              <option value="auto">{t("sim.kinds.auto")}</option>
               {ALL_KINDS.map((k) => (
                 <option key={k} value={k}>
                   {t(`sim.kinds.${k}`)}
@@ -332,6 +357,11 @@ export function SettingsPanel({
               ))}
             </select>
           </label>
+          {automatisch && kind !== null && (
+            <p className="settings__row-hint">
+              {t("settings.simulator_auto_hinweis", { sim: t(`sim.kinds.${kind}`) })}
+            </p>
+          )}
         </div>
       )}
 

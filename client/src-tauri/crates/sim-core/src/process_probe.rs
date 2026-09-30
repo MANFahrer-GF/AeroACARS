@@ -119,8 +119,77 @@ pub fn sim_process_alive(kind: SimKind) -> ProcessLiveness {
     }
 }
 
+/// Welche Simulatoren laufen gerade? Fuer die automatische Auswahl
+/// (v1.9.14). Nur die FAMILIE ist hier sicher; die genaue Fassung
+/// (2020/2024, 11/12) meldet der Simulator erst beim Verbinden selbst.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LaufendeSimulatoren {
+    /// Irgendein MSFS-Prozess (`FlightSimulator*.exe`).
+    pub msfs: bool,
+    /// Der Prozess heisst ausdruecklich `FlightSimulator2024.exe`.
+    pub msfs2024_name: bool,
+    pub xplane: bool,
+}
+
+/// Ordnet Prozessnamen den Simulatoren zu. Getrennt von der Prozessliste,
+/// damit sie ohne laufenden Simulator testbar ist.
+pub fn simulatoren_aus_namen<'a>(namen: impl IntoIterator<Item = &'a str>) -> LaufendeSimulatoren {
+    let mut l = LaufendeSimulatoren::default();
+    for n in namen {
+        let klein = n.to_ascii_lowercase();
+        // MSFS gibt es nur unter Windows. 2020 heisst `FlightSimulator.exe`,
+        // 2024 `FlightSimulator2024.exe` — laut Kommentar oben aber auch
+        // schon unter dem alten Namen gesehen; deshalb entscheidet ueber
+        // die Fassung spaeter die Kennung beim Verbinden.
+        if klein == "flightsimulator.exe" || klein == "flightsimulator2024.exe" {
+            l.msfs = true;
+            l.msfs2024_name |= klein == "flightsimulator2024.exe";
+        }
+        // X-Plane: Windows `X-Plane.exe`, macOS `X-Plane` (Bundle-Programm,
+        // nachgesehen 30.09.2026), Linux `X-Plane-x86_64`.
+        if klein == "x-plane.exe" || klein == "x-plane" || klein == "x-plane-x86_64" {
+            l.xplane = true;
+        }
+    }
+    l
+}
+
+/// Liest die Prozessliste einmal. `None`, wenn sie nicht lesbar war.
+pub fn laufende_simulatoren() -> Option<LaufendeSimulatoren> {
+    let mut system = sysinfo::System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    let namen: Vec<String> = system
+        .processes()
+        .values()
+        .filter_map(|p| p.name().to_str().map(str::to_owned))
+        .collect();
+    if namen.is_empty() {
+        return None;
+    }
+    Some(simulatoren_aus_namen(namen.iter().map(String::as_str)))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn simulatoren_werden_am_namen_erkannt() {
+        use super::simulatoren_aus_namen as f;
+        let l = f(["explorer.exe", "FlightSimulator2024.exe"]);
+        assert!(l.msfs && l.msfs2024_name && !l.xplane);
+        let l = f(["FlightSimulator.exe"]);
+        assert!(l.msfs && !l.msfs2024_name);
+        assert!(f(["X-Plane.exe"]).xplane);
+        assert!(f(["X-Plane"]).xplane);
+        assert!(f(["X-Plane-x86_64"]).xplane);
+        // Ähnliche Namen zaehlen nicht: Installer, Plane Maker, Launcher.
+        let l = f([
+            "X-Plane 12 Installer",
+            "Plane Maker",
+            "FlightSimulator2024Launcher.exe",
+        ]);
+        assert_eq!(l, Default::default());
+    }
+
     use super::*;
 
     #[test]

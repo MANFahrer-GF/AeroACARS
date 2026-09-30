@@ -1221,6 +1221,7 @@
     "simulator_section": "Simulatore",
     "simulator_label": "Simulatore attivo",
     "simulator_hint": "Scegli il tuo simulatore. AeroACARS si connette automaticamente non appena il simulatore viene avviato.",
+    "simulator_auto_hinweis": "Impostato automaticamente: {{sim}}. AeroACARS riconosce da solo il simulatore in esecuzione; durante un volo non cambia mai.",
     "filing_section": "Invio PIREP",
     "auto_file_label": "Invia PIREP automaticamente",
     "auto_file_hint": "Invia il PIREP automaticamente quando il volo raggiunge la fase „Arrivato\" (al gate, motori spenti, freno di parcheggio inserito). Se la validazione fallisce il pulsante „Termina volo\" rimane disponibile.",
@@ -1546,6 +1547,7 @@
     "connecting_hint": "In attesa del simulatore… l'adapter si connette automaticamente non appena è in esecuzione.",
     "xplane_phase2": "Il supporto X-Plane funziona tramite il plugin AeroACARS (Impostazioni → Plugin). Una volta installato e X-Plane avviato, i dati live arrivano automaticamente.",
     "kinds": {
+      "auto": "Automatico",
       "off": "Off",
       "msfs2024": "MSFS 2024",
       "msfs2020": "MSFS 2020",

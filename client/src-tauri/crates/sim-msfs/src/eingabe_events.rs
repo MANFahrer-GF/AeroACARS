@@ -415,9 +415,75 @@ impl EingabeState {
     }
 }
 
+/// Paketkennungen der eigenen `UnsubscribeInputEvent`-Aufrufe.
+///
+/// Beim Flugzeugwechsel werden die Abos des VORIGEN Flugzeugs abgemeldet;
+/// das neue kennt diese Events oft nicht, und MSFS lehnt jede Abmeldung mit
+/// `UNRECOGNIZED_ID` ab. Das ist erwartet — stand aber als Warnung im Log
+/// und kam im Health-Report als „neues Fehlermuster“ an (54-mal bei vier
+/// Piloten, 30.09.2026). Nur Ablehnungen GENAU dieser Pakete gelten als
+/// erwartet; jede andere Ausnahme bleibt eine Warnung.
+#[derive(Debug, Default)]
+pub struct AbmeldePakete(std::collections::VecDeque<u32>);
+
+/// So viele Abmelde-Pakete merken — reicht fuer mehrere Flugzeugwechsel
+/// (je Flugzeug einige Dutzend Input-Events).
+pub const ABMELDE_PAKETE_MAX: usize = 512;
+
+impl AbmeldePakete {
+    /// Eine Paketkennung merken; die aeltesten fallen heraus.
+    pub fn merken(&mut self, send_id: u32) {
+        if self.0.len() >= ABMELDE_PAKETE_MAX {
+            self.0.pop_front();
+        }
+        self.0.push_back(send_id);
+    }
+
+    /// Ist diese Ausnahme die erwartete Ablehnung einer eigenen Abmeldung?
+    pub fn erwartet_abgelehnt(&self, ausnahme: &str, send_id: u32) -> bool {
+        ausnahme == "UNRECOGNIZED_ID" && self.0.contains(&send_id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ablehnungen eigener Abmeldungen sind erwartet — aber NUR genau die.
+    #[test]
+    fn abmeldung_abgelehnt_nur_fuer_eigene_pakete_erwartet() {
+        let mut p = AbmeldePakete::default();
+        p.merken(462);
+        p.merken(463);
+        assert!(p.erwartet_abgelehnt("UNRECOGNIZED_ID", 462));
+        assert!(p.erwartet_abgelehnt("UNRECOGNIZED_ID", 463));
+        // Fremdes Paket oder andere Ausnahme: bleibt eine Warnung.
+        assert!(!p.erwartet_abgelehnt("UNRECOGNIZED_ID", 464));
+        assert!(!p.erwartet_abgelehnt("NAME_UNRECOGNIZED", 462));
+        assert!(!AbmeldePakete::default().erwartet_abgelehnt("UNRECOGNIZED_ID", 462));
+    }
+
+    #[test]
+    fn abmelde_gedaechtnis_ist_begrenzt() {
+        let mut p = AbmeldePakete::default();
+        for id in 0..(ABMELDE_PAKETE_MAX as u32 + 10) {
+            p.merken(id);
+        }
+        assert_eq!(p.len(), ABMELDE_PAKETE_MAX);
+        assert!(
+            !p.erwartet_abgelehnt("UNRECOGNIZED_ID", 0),
+            "die aeltesten fallen heraus"
+        );
+        assert!(p.erwartet_abgelehnt("UNRECOGNIZED_ID", ABMELDE_PAKETE_MAX as u32 + 9));
+    }
 
     fn kopf(id: u32) -> Vec<u8> {
         let mut v = Vec::new();

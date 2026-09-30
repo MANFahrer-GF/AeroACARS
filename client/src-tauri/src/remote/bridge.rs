@@ -184,6 +184,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             }
         }
         "sim_get_kind" => ok_json(crate::sim_get_kind(app.clone())),
+        "sim_get_auswahl" => ok_json(crate::sim_get_auswahl(app.clone())),
         "pmdg_status" => ok_json(crate::pmdg_status(st!())),
         "flight_status" => ok_json(crate::flight_status(app.clone(), st!())),
         "flight_get_track" => ok_json(crate::flight_get_track(st!())),
