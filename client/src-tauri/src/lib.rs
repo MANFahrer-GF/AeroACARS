@@ -53199,17 +53199,40 @@ struct SimConfig {
 /// Adapter zeigten dann auf verschiedene Simulatoren.
 static SIM_WAHL_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Neuinstallation: noch nie angemeldet (`site.json` fehlt) und noch keine
-/// Simulator-Auswahl gespeichert → „Automatisch“ als Voreinstellung
-/// schreiben. Laeuft einmal ganz frueh im Setup — beim ersten Login wird
-/// `site.json` geschrieben, BEVOR die Auswahl das erste Mal gelesen wird;
-/// eine Pruefung erst beim Lesen hielte jeden neuen Piloten fuer einen
-/// Bestandspiloten.
+/// Neuinstallation → „Automatisch“ als Voreinstellung schreiben.
+///
+/// Neu ist, wer NICHTS von einem frueheren Lauf hat: keine Simulator-
+/// Auswahl, keine Seite, keinen Geheimnisspeicher und kein Aktivitaetslog.
+///
+/// ⚠ `site.json` allein reicht nicht (QS-Befund 1, 30.09.2026): Sie wird
+/// bei jedem Abmelden geloescht, und `sim.json` gibt es nur, wenn der Pilot
+/// den Simulator je von Hand gewaehlt hat — ein abgemeldeter Bestandspilot
+/// mit Voreinstellung sah damit aus wie eine Neuinstallation.
+/// `secrets.json` und `activity_log.json` ueberstehen das Abmelden.
+///
+/// Laeuft als ERSTES im Setup, bevor irgendetwas davon geschrieben wird.
 fn sim_config_bei_neuinstallation(app: &AppHandle) {
     let (Ok(sim), Ok(site)) = (sim_config_path(app), site_config_path(app)) else {
         return;
     };
-    if sim.exists() || site.exists() {
+    let gibt_es = |p: Option<PathBuf>| p.map(|p| p.exists());
+    let spuren = [
+        Some(sim.exists()),
+        Some(site.exists()),
+        gibt_es(
+            app.path()
+                .app_data_dir()
+                .ok()
+                .map(|d| d.join("secrets.json")),
+        ),
+        gibt_es(
+            app.path()
+                .app_config_dir()
+                .ok()
+                .map(|d| d.join(ACTIVITY_LOG_FILE)),
+        ),
+    ];
+    if !sim_auto::ist_neuinstallation(&spuren) {
         return;
     }
     let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
@@ -53223,9 +53246,19 @@ fn sim_config_bei_neuinstallation(app: &AppHandle) {
 }
 
 /// Die gespeicherte Auswahl anwenden (Login, Sitzung wiederhergestellt).
+///
+/// Fehlt `sim.json` noch (Bestandspilot, der nie von Hand gewaehlt hat),
+/// wird die bisherige Voreinstellung jetzt als HANDWAHL festgeschrieben —
+/// damit gilt er auch nach einem spaeteren Abmelden nie als Neuinstallation.
 fn gespeicherte_sim_wahl_anwenden(app: &AppHandle, state: &tauri::State<'_, AppState>) -> SimKind {
     let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
-    let kind = read_sim_config(app).kind;
+    let cfg = read_sim_config(app);
+    if sim_config_path(app).is_ok_and(|p| !p.exists()) {
+        if let Err(e) = write_sim_config(app, &cfg) {
+            tracing::warn!(error = %e.message, "Simulator-Auswahl nicht festgeschrieben");
+        }
+    }
+    let kind = cfg.kind;
     apply_sim_kind(state, kind);
     kind
 }
@@ -53396,12 +53429,17 @@ fn sim_automatik_schritt(
     if !cfg.automatisch {
         return;
     }
-    // Waehrend eines Flugs nie umstellen.
+    // Waehrend eines Flugs nie umstellen — auch nicht, solange einer gerade
+    // entsteht (Flugstart, Uebernahme, Wiederaufnahme, Auto-Start; dann ist
+    // `active_flight` noch leer, QS-Befund 2, 30.09.2026).
     if state
-        .active_flight
-        .lock()
-        .expect("active_flight lock")
-        .is_some()
+        .flight_setup_in_progress
+        .load(std::sync::atomic::Ordering::SeqCst)
+        || state
+            .active_flight
+            .lock()
+            .expect("active_flight lock")
+            .is_some()
     {
         return;
     }
@@ -57223,6 +57261,10 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
+            // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
+            // geschrieben werden, an denen ein frueherer Lauf erkannt wird.
+            sim_config_bei_neuinstallation(app.handle());
             // ⚠ Das Szenerie-Verzeichnis GLEICH BEIM START bauen.
             //
             // Auf macOS fragt das System beim ersten Zugriff auf die
@@ -57257,9 +57299,7 @@ pub fn run() {
                 }
             }
 
-            // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
-            // Auswahl — VOR jedem Login, siehe `sim_config_bei_neuinstallation`.
-            sim_config_bei_neuinstallation(app.handle());
+            // v1.9.14: Waechter fuer die Simulator-Automatik.
             sim_automatik_starten(app.handle().clone());
 
             // v0.7.14: alte Pilot-Local-Webhook-Datei `discord-webhook.txt`

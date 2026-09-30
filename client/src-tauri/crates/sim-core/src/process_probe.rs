@@ -126,7 +126,9 @@ pub fn sim_process_alive(kind: SimKind) -> ProcessLiveness {
 pub struct LaufendeSimulatoren {
     /// Irgendein MSFS-Prozess (`FlightSimulator*.exe`).
     pub msfs: bool,
-    /// Der Prozess heisst ausdruecklich `FlightSimulator2024.exe`.
+    /// Der Prozess heisst ausdruecklich `FlightSimulator2024.exe`. Nur zur
+    /// Auskunft: Die Automatik stellt bei MSFS ohnehin auf 2024 und laesst
+    /// die Kennung beim Verbinden entscheiden.
     pub msfs2024_name: bool,
     pub xplane: bool,
 }
@@ -156,8 +158,14 @@ pub fn simulatoren_aus_namen<'a>(namen: impl IntoIterator<Item = &'a str>) -> La
 
 /// Liest die Prozessliste einmal. `None`, wenn sie nicht lesbar war.
 pub fn laufende_simulatoren() -> Option<LaufendeSimulatoren> {
+    // Nur die Namen — keine CPU-, Speicher- oder Plattenwerte je Prozess
+    // (laeuft alle 5 s, solange kein Simulator verbunden ist).
     let mut system = sysinfo::System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::new(),
+    );
     let namen: Vec<String> = system
         .processes()
         .values()

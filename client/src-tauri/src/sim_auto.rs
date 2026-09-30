@@ -55,6 +55,13 @@ pub(crate) fn fassung_aus_xplane_version(version: u32) -> Option<SimKind> {
     }
 }
 
+/// Neuinstallation? `spuren` sagt je Datei eines frueheren Laufs, ob es sie
+/// gibt (`None` = Pfad nicht bestimmbar). Neu nur, wenn es KEINE gibt; im
+/// Zweifel gilt der Pilot als Bestand — dem wird nichts umgestellt.
+pub(crate) fn ist_neuinstallation(spuren: &[Option<bool>]) -> bool {
+    spuren.iter().all(|s| *s == Some(false))
+}
+
 fn gleiche_familie(a: SimKind, b: SimKind) -> bool {
     (a.is_msfs() && b.is_msfs()) || (a.is_xplane() && b.is_xplane())
 }
@@ -108,6 +115,41 @@ mod tests {
             msfs2024_name: false,
             xplane,
         })
+    }
+
+    #[test]
+    fn neuinstallation_nur_ohne_jede_spur() {
+        // Reihenfolge wie im Aufrufer: sim.json, site.json, secrets.json,
+        // activity_log.json.
+        assert!(ist_neuinstallation(&[Some(false); 4]));
+        // Abgemeldeter Bestandspilot ohne Handwahl: site.json und sim.json
+        // fehlen, Geheimnisse und Aktivitaetslog sind noch da → Bestand
+        // (QS-Befund 1, 30.09.2026).
+        assert!(!ist_neuinstallation(&[
+            Some(false),
+            Some(false),
+            Some(true),
+            Some(true)
+        ]));
+        assert!(!ist_neuinstallation(&[
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(true)
+        ]));
+        assert!(!ist_neuinstallation(&[
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false)
+        ]));
+        // Pfad nicht bestimmbar: im Zweifel Bestand.
+        assert!(!ist_neuinstallation(&[
+            Some(false),
+            Some(false),
+            None,
+            Some(false)
+        ]));
     }
 
     #[test]
