@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { syncedSet, syncedRemove } from "../lib/syncedStorage";
-import { invoke, isTauri, formatIpcError } from "../lib/ipc";
+import { invoke, isTauri, formatIpcError, listen } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { setLanguage, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, type SupportedLanguage } from "../i18n";
 import type { ActiveFlightInfo, SimKind, SimStatus } from "../types";
@@ -90,6 +90,8 @@ export function SettingsPanel({
 }: Props) {
   const { t, i18n } = useTranslation();
   const [kind, setKind] = useState<SimKind | null>(null);
+  // v1.9.14: „Automatisch“ — `kind` ist dann der erkannte Simulator.
+  const [automatisch, setAutomatisch] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // v0.7.8: SimBrief Integration Settings — Username + User-ID.
@@ -191,23 +193,45 @@ export function SettingsPanel({
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const laden = async () => {
       try {
-        const k = await invoke<string>("sim_get_kind");
-        if (!cancelled) setKind(k as SimKind);
+        const a = await invoke<{ automatisch: boolean; kind: string }>("sim_get_auswahl");
+        if (!cancelled) {
+          setKind(a.kind as SimKind);
+          setAutomatisch(a.automatisch);
+        }
       } catch {
         if (!cancelled) setKind("off");
       }
-    })();
+    };
+    void laden();
+    // Der Waechter hat umgestellt → den erkannten Simulator nachziehen.
+    let weg: (() => void) | undefined;
+    try {
+      void listen("sim-auswahl-geaendert", () => void laden())
+        .then((f) => {
+          if (cancelled) f();
+          else weg = f;
+        })
+        .catch(() => {});
+    } catch {
+      // ohne Ereigniskanal (Test, Browser) bleibt es beim ersten Stand
+    }
     return () => {
       cancelled = true;
+      weg?.();
     };
   }, []);
 
-  async function handleKindChange(next: SimKind) {
+  async function handleKindChange(next: SimKind | "auto") {
     if (busy) return;
     setBusy(true);
-    setKind(next);
+    if (next === "auto") {
+      setAutomatisch(true);
+    } else {
+      setAutomatisch(false);
+      setKind(next);
+    }
     try {
       await invoke("sim_set_kind", { kind: next });
     } catch {
@@ -321,10 +345,11 @@ export function SettingsPanel({
               {t("settings.simulator_label")}
             </span>
             <select
-              value={kind ?? "off"}
-              onChange={(e) => handleKindChange(e.target.value as SimKind)}
+              value={automatisch ? "auto" : (kind ?? "off")}
+              onChange={(e) => handleKindChange(e.target.value as SimKind | "auto")}
               disabled={busy || kind === null}
             >
+              <option value="auto">{t("sim.kinds.auto")}</option>
               {ALL_KINDS.map((k) => (
                 <option key={k} value={k}>
                   {t(`sim.kinds.${k}`)}
@@ -332,6 +357,11 @@ export function SettingsPanel({
               ))}
             </select>
           </label>
+          <SimVerbindungsStatus
+            automatisch={automatisch}
+            kind={simStatus?.kind ?? kind}
+            status={simStatus}
+          />
         </div>
       )}
 
@@ -1013,5 +1043,64 @@ function FlightLogsManager({
         {doneMsg && <p className="storage-card__done">{doneMsg}</p>}
       </div>
     </>
+  );
+}
+
+/**
+ * Verbindungsstand gross und deutlich unter der Simulator-Auswahl
+ * (v1.9.14, Feldbefund Thomas 30.09.2026: der kleine Hinweis „Automatisch
+ * eingestellt: MSFS 2024“ war kaum zu lesen und sagte nicht, ob die
+ * Verbindung wirklich steht). Zeigt den ECHTEN Zustand aus `sim_status`.
+ */
+function SimVerbindungsStatus({
+  automatisch,
+  kind,
+  status,
+}: {
+  automatisch: boolean;
+  kind: SimKind | null;
+  status: SimStatus | null;
+}) {
+  const { t } = useTranslation();
+  if (kind === null || kind === "off") return null;
+  const sim = t(`sim.kinds.${kind}`);
+  const zustand = status?.state ?? "disconnected";
+  const flugzeug = status?.snapshot?.aircraft_title?.trim();
+  let titel: string;
+  let detail: string;
+  if (zustand === "connected") {
+    titel = t("settings.sim_status.verbunden", { sim });
+    detail = flugzeug
+      ? t("settings.sim_status.flugzeug", { flugzeug })
+      : t("settings.sim_status.verbunden_ohne_flugzeug");
+  } else if (!automatisch && status && !status.available) {
+    // Nur bei Handwahl: Im Automatik-Modus stellt der Waechter selbst um,
+    // sobald X-Plane laeuft — dort waere „bitte X-Plane waehlen“ falsch.
+    titel = t("settings.sim_status.nicht_verfuegbar", { sim });
+    detail = t("settings.sim_status.nicht_verfuegbar_detail");
+  } else if (zustand === "connecting") {
+    titel = t("settings.sim_status.verbindet", { sim });
+    detail = t("settings.sim_status.verbindet_detail");
+  } else if (automatisch) {
+    titel = t("settings.sim_status.auto_keiner");
+    detail = t("settings.sim_status.auto_keiner_detail");
+  } else {
+    titel = t("settings.sim_status.nicht_verbunden", { sim });
+    detail = t("settings.sim_status.nicht_verbunden_detail");
+  }
+  const art = automatisch ? t("settings.sim_status.art_auto") : t("settings.sim_status.art_fest");
+  return (
+    <div
+      className={`settings__sim-status settings__sim-status--${zustand}`}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="settings__sim-status-punkt" aria-hidden="true" />
+      <div className="settings__sim-status-text">
+        <strong>{titel}</strong>
+        <span>{detail}</span>
+        <span className="settings__sim-status-art">{art}</span>
+      </div>
+    </div>
   );
 }

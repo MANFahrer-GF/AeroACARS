@@ -1797,6 +1797,13 @@ fn run_dispatch(
                     // (Befund 21.09.2026). Ein Feld wird deshalb nur noch
                     // bei `NAME_UNRECOGNIZED` und nur als Vermutung genannt.
                     let name = facility::ausnahme_name(exception);
+                    if conn.abmelde_pakete.erwartet_abgelehnt(name, send_id) {
+                        tracing::debug!(
+                            send_id,
+                            "Abmeldung eines Input-Events des vorigen Flugzeugs abgelehnt (erwartet)"
+                        );
+                        continue;
+                    }
                     let feld_vermutet = if name == "NAME_UNRECOGNIZED" {
                         TELEMETRY_FIELDS.get(index as usize).map(|f| f.name)
                     } else {
@@ -2373,6 +2380,15 @@ struct Connection {
     /// Zurueckweisungen von `AddToFacilityDefinition`.
     facility_feld_send_ids: Vec<(u32, String)>,
     inspector_send_ids: Vec<(u32, u32)>,
+    /// Paketkennungen der letzten `UnsubscribeInputEvent`-Aufrufe.
+    ///
+    /// Beim Flugzeugwechsel werden die Abos des VORIGEN Flugzeugs
+    /// abgemeldet; das neue kennt diese Events oft nicht, und MSFS lehnt
+    /// jede Abmeldung mit `UNRECOGNIZED_ID` ab. Das ist erwartet — stand
+    /// aber als Warnung im Log und kam im Health-Report als „neues
+    /// Fehlermuster“ an (54-mal bei 4 Piloten, 30.09.2026). Nur Ablehnungen
+    /// GENAU dieser Pakete gelten als erwartet; alle anderen bleiben Warnung.
+    abmelde_pakete: crate::eingabe_events::AbmeldePakete,
 }
 
 impl Connection {
@@ -2396,6 +2412,7 @@ impl Connection {
             handle,
             facility_feld_send_ids: Vec::new(),
             inspector_send_ids: Vec::new(),
+            abmelde_pakete: Default::default(),
         })
     }
 
@@ -3106,7 +3123,14 @@ impl Connection {
     /// kann schon weg sein).
     fn eingaben_abmelden(&mut self, hashes: &[u64]) {
         for h in hashes {
-            unsafe { sys::SimConnect_UnsubscribeInputEvent(self.handle, *h) };
+            let hr = unsafe { sys::SimConnect_UnsubscribeInputEvent(self.handle, *h) };
+            if hr != 0 {
+                continue;
+            }
+            let mut id: sys::DWORD = 0;
+            if unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut id) } == 0 {
+                self.abmelde_pakete.merken(id);
+            }
         }
     }
 

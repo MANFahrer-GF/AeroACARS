@@ -2352,6 +2352,48 @@ button:disabled {
   color: var(--text-muted);
 }
 
+/* v1.9.14: Verbindungsstand unter der Simulator-Auswahl — gross und
+   deutlich statt kleiner Hinweiszeile (Feldbefund 30.09.2026). */
+.settings__sim-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--sim-status-farbe) 45%, transparent);
+  background: color-mix(in srgb, var(--sim-status-farbe) 12%, transparent);
+  --sim-status-farbe: var(--text-muted);
+}
+.settings__sim-status--connected { --sim-status-farbe: var(--success); }
+.settings__sim-status--connecting { --sim-status-farbe: var(--warning); }
+.settings__sim-status-punkt {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--sim-status-farbe);
+}
+.settings__sim-status-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.settings__sim-status-text strong {
+  font-size: 16px;
+  line-height: 1.3;
+}
+.settings__sim-status-text span {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.settings__sim-status-art {
+  color: var(--text-muted);
+  font-size: 12px !important;
+}
+
 .settings__field {
   display: flex;
   flex-direction: column;

@@ -331,6 +331,10 @@ pub struct Profile {
     pub simbrief_username: Option<String>,
 }
 
+/// Profil-Abfrage ohne `rank.subfleets` (siehe `Client::get_profile`).
+/// Der Wert von `with` darf "subfleets" nicht enthalten.
+pub const PROFIL_PFAD: &str = "/api/user?with=airline,rank";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rank {
     #[serde(default)]
@@ -1499,9 +1503,18 @@ impl Client {
         }
     }
 
-    /// `GET /api/user`
+    /// `GET /api/user` — ohne die Flottenliste des Rangs.
+    ///
+    /// phpVMS haengt an das Profil standardmaessig `rank.subfleets` an, also
+    /// jede Subfleet samt Flugzeugen, die der Rang fliegen darf. Bei der GSG
+    /// sind das 1,44 MB und rund 8 s — und das beim Start, beim Login und bei
+    /// jedem Auffrischen, bevor Simulator und Live-Verbindung starten
+    /// (gemessen 30.09.2026). Der Client liest vom Rang nur den Namen.
+    /// Enthaelt `with` das Wort "subfleets" nicht, laesst phpVMS die Liste weg
+    /// (`Api\UserController::index`): 645 Bytes, 1,3 s, alle uebrigen Felder
+    /// gleich.
     pub async fn get_profile(&self) -> Result<Profile, ApiError> {
-        self.get_data("/api/user").await
+        self.get_data(PROFIL_PFAD).await
     }
 
     /// `GET /api/user/bids`
@@ -2793,6 +2806,23 @@ mod positions_wire_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Das Profil kommt ohne `rank.subfleets` (1,44 MB, ~8 s bei der GSG).
+    /// Geprueft wird die URL, die wirklich rausgeht — Pfad und Abfrage.
+    #[test]
+    fn profil_abfrage_laesst_die_flottenliste_weg() {
+        let c = Client::new(Connection::new("https://example.com", "k").unwrap()).unwrap();
+        let url = c.endpoint(PROFIL_PFAD).unwrap();
+        assert_eq!(url.path(), "/api/user");
+        let with: Vec<String> = url
+            .query_pairs()
+            .filter(|(k, _)| k == "with")
+            .map(|(_, v)| v.into_owned())
+            .collect();
+        assert_eq!(with.len(), 1, "genau ein with-Parameter: {url}");
+        // phpVMS laedt die Subfleets, sobald `with` fehlt ODER das Wort enthaelt.
+        assert!(!with[0].contains("subfleets"), "{url}");
+    }
 
     // ---- same_host_redirect_decision (v0.19.x/v0.20.x FIX: X-API-Key redirect leak) ----
 

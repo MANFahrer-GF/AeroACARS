@@ -43,6 +43,7 @@ mod sentry_init;
 mod discord_rpc;
 // Inhalte von live.kant.ovh nur mit Pilot-Token (29.09.2026).
 mod live_zugang;
+mod sim_auto;
 // v0.6.0 — neuer zentraler State-Owner. Aktiviert wenn die Env-Var
 // AEROACARS_LEGACY_STREAMER NICHT gesetzt ist (Default = neu). Bei
 // Problemen kann der Pilot auf Legacy zurueck via Env-Var ohne Re-Install.
@@ -12829,8 +12830,7 @@ async fn phpvms_login(
     drop(setup_guard);
 
     // Auto-start the simulator adapter using the persisted selection.
-    let saved_kind = read_sim_config(&app).kind;
-    apply_sim_kind(&state, saved_kind);
+    let saved_kind = gespeicherte_sim_wahl_anwenden(&app, &state);
 
     // Try to resume an in-progress flight (e.g. after a client crash).
     try_resume_flight(&app, &state).await;
@@ -14716,8 +14716,7 @@ async fn phpvms_load_session(
             // worden.
             drop(setup_guard);
             // Auto-start the simulator adapter when we restore an existing session.
-            let saved_kind = read_sim_config(&app).kind;
-            apply_sim_kind(&state, saved_kind);
+            let saved_kind = gespeicherte_sim_wahl_anwenden(&app, &state);
             try_resume_flight(&app, &state).await;
             // Throttle "Session restored" entries: at most once per
             // 60 s. A session-restore is benign noise on rapid Tauri
@@ -53179,10 +53178,96 @@ fn build_position_log(_snap: &SimSnapshot) -> Option<String> {
 
 // ---- Simulator selection + status ----
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 struct SimConfig {
+    /// Der Simulator, auf den der Adapter gerade eingestellt ist. Im
+    /// Automatik-Modus stellt ihn der Waechter um (`sim_automatik_starten`).
     #[serde(default)]
     kind: SimKind,
+    /// „Automatisch“ gewaehlt (v1.9.14). Alte Dateien haben das Feld nicht
+    /// und bleiben damit bei der Handwahl — Entscheidung Thomas 30.09.2026:
+    /// Bestandspiloten nichts umstellen, nur Neuinstallationen bekommen die
+    /// Automatik (siehe `sim_config_bei_neuinstallation`).
+    #[serde(default)]
+    automatisch: bool,
+}
+
+/// Haelt Handwahl, Waechter und Anwenden beim Start auseinander: Lesen,
+/// Schreiben und `apply_sim_kind` laufen darunter als EIN Schritt. Sonst
+/// koennte der Waechter zwischen „Pilot waehlt X-Plane von Hand“ und dem
+/// Anwenden seine eigene Wahl dazwischenschieben — Datei und laufender
+/// Adapter zeigten dann auf verschiedene Simulatoren.
+static SIM_WAHL_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Neuinstallation → „Automatisch“ als Voreinstellung schreiben.
+///
+/// Neu ist, wer NICHTS von einem frueheren Lauf hat: keine Simulator-
+/// Auswahl, keine Seite, keinen Geheimnisspeicher und kein Aktivitaetslog.
+///
+/// ⚠ `site.json` allein reicht nicht (QS-Befund 1, 30.09.2026): Sie wird
+/// bei jedem Abmelden geloescht, und `sim.json` gibt es nur, wenn der Pilot
+/// den Simulator je von Hand gewaehlt hat — ein abgemeldeter Bestandspilot
+/// mit Voreinstellung sah damit aus wie eine Neuinstallation.
+/// `secrets.json` und `activity_log.json` ueberstehen das Abmelden.
+///
+/// Laeuft als ERSTES im Setup, bevor irgendetwas davon geschrieben wird.
+fn sim_config_bei_neuinstallation(app: &AppHandle) {
+    let (Ok(sim), Ok(site)) = (sim_config_path(app), site_config_path(app)) else {
+        return;
+    };
+    let gibt_es = |p: Option<PathBuf>| p.map(|p| p.exists());
+    let spuren = [
+        Some(sim.exists()),
+        Some(site.exists()),
+        gibt_es(
+            app.path()
+                .app_data_dir()
+                .ok()
+                .map(|d| d.join("secrets.json")),
+        ),
+        gibt_es(
+            app.path()
+                .app_config_dir()
+                .ok()
+                .map(|d| d.join(ACTIVITY_LOG_FILE)),
+        ),
+    ];
+    if !sim_auto::ist_neuinstallation(&spuren) {
+        return;
+    }
+    let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    // Auf dem Mac gibt es kein MSFS — dort mit X-Plane 12 beginnen, sonst
+    // stuende bis zum ersten X-Plane-Start „MSFS 2024“ da (QS 30.09.2026).
+    let kind = if cfg!(target_os = "macos") {
+        SimKind::XPlane12
+    } else {
+        SimKind::default()
+    };
+    let cfg = SimConfig {
+        kind,
+        automatisch: true,
+    };
+    if let Err(e) = write_sim_config(app, &cfg) {
+        tracing::warn!(error = %e.message, "Neuinstallation: Simulator-Automatik nicht gespeichert");
+    }
+}
+
+/// Die gespeicherte Auswahl anwenden (Login, Sitzung wiederhergestellt).
+///
+/// Fehlt `sim.json` noch (Bestandspilot, der nie von Hand gewaehlt hat),
+/// wird die bisherige Voreinstellung jetzt als HANDWAHL festgeschrieben —
+/// damit gilt er auch nach einem spaeteren Abmelden nie als Neuinstallation.
+fn gespeicherte_sim_wahl_anwenden(app: &AppHandle, state: &tauri::State<'_, AppState>) -> SimKind {
+    let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    let cfg = read_sim_config(app);
+    if sim_config_path(app).is_ok_and(|p| !p.exists()) {
+        if let Err(e) = write_sim_config(app, &cfg) {
+            tracing::warn!(error = %e.message, "Simulator-Auswahl nicht festgeschrieben");
+        }
+    }
+    let kind = cfg.kind;
+    apply_sim_kind(state, kind);
+    kind
 }
 
 /// Zwischenspeicher der Simulator-Auswahl — im RAM, nicht auf der Platte.
@@ -53274,6 +53359,130 @@ fn write_sim_config(app: &AppHandle, cfg: &SimConfig) -> Result<(), UiError> {
     Ok(())
 }
 
+/// Verbunden? Und welche Fassung meldet der Simulator selbst?
+fn sim_verbindung_und_fassung(
+    state: &tauri::State<'_, AppState>,
+    kind: SimKind,
+) -> (bool, Option<SimKind>) {
+    if kind.is_xplane() {
+        let xp = state.xplane.lock().expect("xplane lock");
+        let verbunden = matches!(xp.state(), sim_xplane::ConnectionState::Connected);
+        let p = xp.premium_status();
+        // Nur eine gerade aktive Plugin-Verbindung zaehlt; ein alter Stand
+        // stammt womoeglich vom vorigen Simulator.
+        let gemeldet = p
+            .active
+            .then_some(p.xplane_version)
+            .flatten()
+            .and_then(sim_auto::fassung_aus_xplane_version);
+        return (verbunden, gemeldet);
+    }
+    #[cfg(target_os = "windows")]
+    if kind.is_msfs() {
+        let msfs = state.msfs.lock().expect("msfs lock");
+        let verbunden = matches!(msfs.state(), sim_msfs::ConnectionState::Connected);
+        let gemeldet = msfs
+            .szenerie_schnappschuss("")
+            .kennung
+            .as_deref()
+            .and_then(sim_auto::fassung_aus_msfs_kennung);
+        return (verbunden, gemeldet);
+    }
+    (false, None)
+}
+
+/// Waechter fuer „Automatisch“ (v1.9.14). Schaut alle 5 s nach und stellt
+/// um — NIE waehrend eines Flugs. Die Entscheidung steht in `sim_auto`.
+fn sim_automatik_starten(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut takt = tokio::time::interval(std::time::Duration::from_secs(5));
+        takt.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            takt.tick().await;
+            let cfg = read_sim_config(&app);
+            if !cfg.automatisch {
+                continue;
+            }
+            // Die Prozessliste nur lesen, wenn der eingestellte Simulator
+            // nicht verbunden ist — und ausserhalb der Sperre (sie kostet
+            // einige Millisekunden).
+            let verbunden = {
+                let state = app.state::<AppState>();
+                sim_verbindung_und_fassung(&state, cfg.kind).0
+            };
+            let laufend = if verbunden {
+                None
+            } else {
+                tokio::task::spawn_blocking(sim_core::process_probe::laufende_simulatoren)
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            let state = app.state::<AppState>();
+            sim_automatik_schritt(&app, &state, laufend);
+        }
+    });
+}
+
+/// Ein Schritt des Waechters, unter der Sperre: erneut lesen, pruefen,
+/// umstellen.
+fn sim_automatik_schritt(
+    app: &AppHandle,
+    state: &tauri::State<'_, AppState>,
+    laufend: Option<sim_core::process_probe::LaufendeSimulatoren>,
+) {
+    let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    let cfg = read_sim_config(app);
+    if !cfg.automatisch {
+        return;
+    }
+    // Waehrend eines Flugs nie umstellen — auch nicht, solange einer gerade
+    // entsteht (Flugstart, Uebernahme, Wiederaufnahme, Auto-Start; dann ist
+    // `active_flight` noch leer, QS-Befund 2, 30.09.2026).
+    if state
+        .flight_setup_in_progress
+        .load(std::sync::atomic::Ordering::SeqCst)
+        || state
+            .active_flight
+            .lock()
+            .expect("active_flight lock")
+            .is_some()
+    {
+        return;
+    }
+    let (verbunden, gemeldet) = sim_verbindung_und_fassung(state, cfg.kind);
+    let Some(neu) = sim_auto::naechste_wahl(cfg.kind, verbunden, laufend, gemeldet) else {
+        return;
+    };
+    let neu_cfg = SimConfig {
+        kind: neu,
+        automatisch: true,
+    };
+    if let Err(e) = write_sim_config(app, &neu_cfg) {
+        tracing::warn!(error = %e.message, "Simulator-Automatik: Auswahl nicht gespeichert");
+        return;
+    }
+    apply_sim_kind(state, neu);
+    tracing::info!(von = ?cfg.kind, nach = ?neu, "Simulator automatisch umgestellt");
+    log_activity(
+        state,
+        ActivityLevel::Info,
+        format!("Simulator automatisch erkannt: {}", sim_anzeigename(neu)),
+        None,
+    );
+    let _ = tauri::Emitter::emit(app, "sim-auswahl-geaendert", kind_str(neu));
+}
+
+fn sim_anzeigename(kind: SimKind) -> &'static str {
+    match kind {
+        SimKind::Off => "aus",
+        SimKind::Msfs2020 => "MSFS 2020",
+        SimKind::Msfs2024 => "MSFS 2024",
+        SimKind::XPlane11 => "X-Plane 11",
+        SimKind::XPlane12 => "X-Plane 12",
+    }
+}
+
 /// Apply the selected kind to whichever adapter handles it. Always
 /// stops the inactive adapter so we never have both listening
 /// simultaneously (= duplicate snapshots in `current_snapshot`).
@@ -53330,14 +53539,44 @@ fn sim_get_kind(app: AppHandle) -> String {
     kind_str(read_sim_config(&app).kind).to_string()
 }
 
+#[derive(Serialize)]
+pub struct SimAuswahl {
+    automatisch: bool,
+    /// Der Simulator, auf den gerade eingestellt ist (bei „Automatisch“ der
+    /// erkannte).
+    kind: &'static str,
+}
+
+/// Auswahl fuer die Einstellungen: „Automatisch“ oder Handwahl, dazu der
+/// aktuell eingestellte Simulator.
+#[tauri::command]
+fn sim_get_auswahl(app: AppHandle) -> SimAuswahl {
+    let cfg = read_sim_config(&app);
+    SimAuswahl {
+        automatisch: cfg.automatisch,
+        kind: kind_str(cfg.kind),
+    }
+}
+
 /// Persist a new sim selection AND apply it to the running adapter.
-/// Accepts: "off" | "msfs2020" | "msfs2024" | "xplane11" | "xplane12".
+/// Accepts: "auto" | "off" | "msfs2020" | "msfs2024" | "xplane11" | "xplane12".
+/// "auto" (v1.9.14) laesst den Adapter stehen; der Waechter stellt um.
 #[tauri::command]
 fn sim_set_kind(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     kind: String,
 ) -> Result<(), UiError> {
+    if kind == "auto" {
+        // Den Adapter so lassen, wie er ist — der Waechter stellt innerhalb
+        // weniger Sekunden um, wenn ein anderer Simulator laeuft.
+        let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cfg = read_sim_config(&app);
+        cfg.automatisch = true;
+        write_sim_config(&app, &cfg)?;
+        tracing::info!(kind = ?cfg.kind, "sim selection: automatic");
+        return Ok(());
+    }
     let parsed = match kind.as_str() {
         "off" => SimKind::Off,
         "msfs2020" => SimKind::Msfs2020,
@@ -53351,7 +53590,14 @@ fn sim_set_kind(
             ))
         }
     };
-    write_sim_config(&app, &SimConfig { kind: parsed })?;
+    let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    write_sim_config(
+        &app,
+        &SimConfig {
+            kind: parsed,
+            automatisch: false,
+        },
+    )?;
     apply_sim_kind(&state, parsed);
     tracing::info!(?parsed, "sim kind selected");
     Ok(())
@@ -57022,6 +57268,10 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
+            // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
+            // geschrieben werden, an denen ein frueherer Lauf erkannt wird.
+            sim_config_bei_neuinstallation(app.handle());
             // ⚠ Das Szenerie-Verzeichnis GLEICH BEIM START bauen.
             //
             // Auf macOS fragt das System beim ersten Zugriff auf die
@@ -57055,6 +57305,9 @@ pub fn run() {
                     tracing::error!(error = %e, "could not resolve app_data_dir for secrets");
                 }
             }
+
+            // v1.9.14: Waechter fuer die Simulator-Automatik.
+            sim_automatik_starten(app.handle().clone());
 
             // v0.7.14: alte Pilot-Local-Webhook-Datei `discord-webhook.txt`
             // aus v0.7.13 loeschen. Discord-Posts macht ab v0.7.14 der
@@ -57345,6 +57598,7 @@ pub fn run() {
             set_simbrief_settings,
             verify_simbrief_identifier,
             sim_get_kind,
+            sim_get_auswahl,
             sim_set_kind,
             sim_status,
             sim_force_resync,
