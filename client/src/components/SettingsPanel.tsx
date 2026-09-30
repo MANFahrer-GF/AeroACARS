@@ -1073,7 +1073,9 @@ function SimVerbindungsStatus({
     detail = flugzeug
       ? t("settings.sim_status.flugzeug", { flugzeug })
       : t("settings.sim_status.verbunden_ohne_flugzeug");
-  } else if (status && !status.available) {
+  } else if (!automatisch && status && !status.available) {
+    // Nur bei Handwahl: Im Automatik-Modus stellt der Waechter selbst um,
+    // sobald X-Plane laeuft — dort waere „bitte X-Plane waehlen“ falsch.
     titel = t("settings.sim_status.nicht_verfuegbar", { sim });
     detail = t("settings.sim_status.nicht_verfuegbar_detail");
   } else if (zustand === "connecting") {

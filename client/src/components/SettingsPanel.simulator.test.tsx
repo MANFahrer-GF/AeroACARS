@@ -87,6 +87,20 @@ describe("Simulator-Auswahl", () => {
     expect(block.querySelector("strong")?.textContent).toBe("Kein Simulator gefunden");
   });
 
+  it("Automatik auf dem Mac: kein „bitte X-Plane wählen“, sondern „kein Simulator“", async () => {
+    auswahl = { automatisch: true, kind: "msfs2024" };
+    bauen({ state: "disconnected", kind: "msfs2024", snapshot: null, last_error: null, available: false });
+    const block = await screen.findByRole("status");
+    expect(block.querySelector("strong")?.textContent).toBe("Kein Simulator gefunden");
+  });
+
+  it("Handwahl MSFS auf dem Mac: nicht verfügbar", async () => {
+    auswahl = { automatisch: false, kind: "msfs2024" };
+    bauen({ state: "disconnected", kind: "msfs2024", snapshot: null, last_error: null, available: false });
+    const block = await screen.findByRole("status");
+    expect(block.querySelector("strong")?.textContent).toBe("MSFS 2024 ist auf diesem Rechner nicht verfügbar");
+  });
+
   it("Handwahl: fest eingestellt, nicht verbunden", async () => {
     auswahl = { automatisch: false, kind: "xplane12" };
     const select = bauen({ state: "disconnected", kind: "xplane12", snapshot: null, last_error: null, available: true });

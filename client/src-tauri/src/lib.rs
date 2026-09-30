@@ -53236,8 +53236,15 @@ fn sim_config_bei_neuinstallation(app: &AppHandle) {
         return;
     }
     let _sperre = SIM_WAHL_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    // Auf dem Mac gibt es kein MSFS — dort mit X-Plane 12 beginnen, sonst
+    // stuende bis zum ersten X-Plane-Start „MSFS 2024“ da (QS 30.09.2026).
+    let kind = if cfg!(target_os = "macos") {
+        SimKind::XPlane12
+    } else {
+        SimKind::default()
+    };
     let cfg = SimConfig {
-        kind: SimKind::default(),
+        kind,
         automatisch: true,
     };
     if let Err(e) = write_sim_config(app, &cfg) {
