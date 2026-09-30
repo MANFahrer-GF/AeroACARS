@@ -213,6 +213,21 @@ jobs:
             exit 1
           fi
 
+      # macOS: Apple-Signatur + Notarisierung (Developer ID). Ohne eingetragene
+      # Secrets bleibt der Mac-Build unsigniert wie bisher —
+      # siehe .github/scripts/apple-signatur-vorbereiten.sh + docs/macos-signierung.md.
+      - name: Apple-Signatur vorbereiten (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_SECRET: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: .github/scripts/apple-signatur-vorbereiten.sh
+
       - name: Build + sign (Tauri)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -255,6 +270,13 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      # Eingerichtete Signatur muss auch greifen — sonst rot statt still
+      # unsigniert an die Piloten.
+      - name: Apple-Signatur pruefen (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: .github/scripts/apple-app-pruefen.sh client/src-tauri/target/aarch64-apple-darwin/release/bundle/macos
 
   # ---- X-Plane Premium Plugin: per-platform build ----
   # Builds the optional native X-Plane plugin on each platform. Produces
@@ -313,14 +335,20 @@ jobs:
         run: |
           cmake --build build --config Release --target AeroACARS
 
-      # AP7: ad-hoc-Signatur fuer macOS (ADR-0004 §8). Ohne Apple-Developer-ID;
-      # der Client entfernt beim Installieren die Quarantaene.
-      - name: Ad-hoc sign mac.xpl
+      # macOS: mit eingetragenen Apple-Secrets Developer-ID-Signatur +
+      # Notarisierung, sonst ad-hoc wie bisher (AP7, ADR-0004 §8; der Client
+      # entfernt beim Installieren die Quarantaene).
+      - name: Sign mac.xpl
         if: matrix.xpl_name == 'mac.xpl'
-        working-directory: xplane-plugin
-        run: |
-          codesign --force --sign - build/AeroACARS/64/mac.xpl
-          codesign --verify --verbose build/AeroACARS/64/mac.xpl
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_SECRET: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: .github/scripts/apple-plugin-signieren.sh xplane-plugin/build/AeroACARS/64/mac.xpl
 
       - name: List build output (debug)
         working-directory: xplane-plugin

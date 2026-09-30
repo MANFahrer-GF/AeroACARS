@@ -17,6 +17,11 @@ name: Dev Build (unsigned, manual)
 # das Quarantaene-Flag), dann normal per Doppelklick oeffnen.
 on:
   workflow_dispatch:
+    inputs:
+      apple_signieren:
+        description: 'macOS mit Apple Developer ID signieren + notarisieren (Secrets noetig)'
+        type: boolean
+        default: false
 
 jobs:
   dev-build-windows:
@@ -79,10 +84,29 @@ jobs:
         working-directory: client
         run: npm ci
 
-      - name: Build (unsigned, no updater artifacts)
+      # Nur auf Wunsch (Schalter beim Starten des Laufs): gleiche Signatur wie
+      # im Release, um sie ohne Tag zu pruefen.
+      - name: Apple-Signatur vorbereiten
+        if: inputs.apple_signieren
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_SECRET: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: .github/scripts/apple-signatur-vorbereiten.sh
+
+      - name: Build (no updater artifacts)
         shell: bash
         working-directory: client
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Apple-Signatur pruefen
+        if: inputs.apple_signieren
+        shell: bash
+        run: .github/scripts/apple-app-pruefen.sh client/src-tauri/target/aarch64-apple-darwin/release/bundle/macos
 
       - name: Upload DMG
         uses: actions/upload-artifact@v7
