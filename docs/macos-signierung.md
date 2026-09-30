@@ -63,7 +63,7 @@ ablegen oder löschen — sie gehören nicht in den Tauschordner.
 Actions → **Dev Build (unsigned, manual)** → *Run workflow* → Branch wählen,
 Haken **apple_signieren** setzen. Der Schritt „Apple-Signatur pruefen“ muss
 grün sein; er verlangt von Gatekeeper `source=Notarized Developer ID`.
-Die DMG aus dem Lauf öffnet sich danach auf jedem Mac ohne Warnung.
+Die App aus der DMG öffnet sich danach auf jedem Mac ohne Warnung (geprüft wird die App, die DMG selbst ist nicht notarisiert).
 
 ## Wie es gebaut ist
 

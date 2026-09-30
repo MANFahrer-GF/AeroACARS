@@ -1232,6 +1232,8 @@
       "nicht_verbunden": "{{sim}} non connesso",
       "nicht_verbunden_detail": "Avvia il simulatore – AeroACARS si connetterà da solo.",
       "art_auto": "Rilevato automaticamente · non cambia mai durante un volo",
+      "nicht_verfuegbar": "{{sim}} non è disponibile su questo computer",
+      "nicht_verfuegbar_detail": "MSFS esiste solo su Windows. Scegli X-Plane o usa AeroACARS sul PC Windows.",
       "art_fest": "Selezione fissa"
     },
     "filing_section": "Invio PIREP",

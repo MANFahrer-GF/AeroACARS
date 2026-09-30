@@ -1232,6 +1232,8 @@
       "nicht_verbunden": "{{sim}} nicht verbunden",
       "nicht_verbunden_detail": "Starte den Simulator – AeroACARS verbindet sich dann selbst.",
       "art_auto": "Automatisch erkannt · während eines Flugs wird nie umgestellt",
+      "nicht_verfuegbar": "{{sim}} ist auf diesem Rechner nicht verfügbar",
+      "nicht_verfuegbar_detail": "MSFS gibt es nur unter Windows. Bitte X-Plane wählen oder AeroACARS auf dem Windows-PC nutzen.",
       "art_fest": "Fest eingestellt"
     },
     "filing_section": "PIREP-Filing",

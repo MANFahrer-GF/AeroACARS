@@ -226,6 +226,8 @@ jobs:
           APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8_SECRET: ${{ secrets.APPLE_API_KEY_P8 }}
+          # Release: signierte Mac-App ist Pflicht (Release-Notes versprechen sie).
+          AEROACARS_SIGNATUR_PFLICHT: "1"
         run: .github/scripts/apple-signatur-vorbereiten.sh
 
       - name: Build + sign (Tauri)
@@ -348,6 +350,8 @@ jobs:
           APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8_SECRET: ${{ secrets.APPLE_API_KEY_P8 }}
+          # Release: signierte Mac-App ist Pflicht (Release-Notes versprechen sie).
+          AEROACARS_SIGNATUR_PFLICHT: "1"
         run: .github/scripts/apple-plugin-signieren.sh xplane-plugin/build/AeroACARS/64/mac.xpl
 
       - name: List build output (debug)

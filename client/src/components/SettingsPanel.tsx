@@ -1073,6 +1073,9 @@ function SimVerbindungsStatus({
     detail = flugzeug
       ? t("settings.sim_status.flugzeug", { flugzeug })
       : t("settings.sim_status.verbunden_ohne_flugzeug");
+  } else if (status && !status.available) {
+    titel = t("settings.sim_status.nicht_verfuegbar", { sim });
+    detail = t("settings.sim_status.nicht_verfuegbar_detail");
   } else if (zustand === "connecting") {
     titel = t("settings.sim_status.verbindet", { sim });
     detail = t("settings.sim_status.verbindet_detail");

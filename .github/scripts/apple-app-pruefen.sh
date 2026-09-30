@@ -22,12 +22,15 @@ fi
 echo "Pruefe $app"
 
 codesign --verify --deep --strict --verbose=2 "$app"
+# Erst in eine Variable: `codesign … | grep -q` bricht unter pipefail
+# sporadisch mit SIGPIPE ab, sobald grep frueh fertig ist (QS-Befund 2).
+details=$(codesign -d --verbose=4 "$app" 2>&1)
 # Hardened Runtime ist Pflicht fuer die Notarisierung.
-if ! codesign -d --verbose=4 "$app" 2>&1 | grep -q 'flags=.*runtime'; then
+if ! grep -q 'flags=.*runtime' <<<"$details"; then
   echo "::error::Hardened Runtime fehlt"
   exit 1
 fi
-codesign -d --verbose=4 "$app" 2>&1 | grep -E '^(Authority|TeamIdentifier)=' || true
+grep -E '^(Authority|TeamIdentifier)=' <<<"$details" || true
 
 xcrun stapler validate "$app"
 

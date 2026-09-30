@@ -271,15 +271,24 @@ fn ini_a380(k: &Kontext) -> bool {
 }
 /// Hebelwinkel TOGA beim Airbus (Grad) — 100 % der Hebelanzeige.
 const AIRBUS_TLA_TOGA_GRAD: f64 = 45.0;
+/// Beim A380 KEINEN Wert zeigen — auch nicht den Standardwert des Kanals.
+///
+/// `zahl_wert` faellt bei `None` auf den Standardwert zurueck; der ist beim
+/// A380 nachweislich falsch (QS-Befund 1, 30.09.2026). `NaN` verhindert den
+/// Rueckfall und wird danach als „kein Wert“ ausgefiltert.
+const KEIN_WERT_OHNE_RUECKFALL: Option<f64> = Some(f64::NAN);
+
 /// EGT beim iniBuilds A380 aus `L:INI_ENG{N}_EGT`, sonst Standard.
 fn egt<const N: usize>(k: &Kontext) -> Option<f64> {
     if !ini_a380(k) {
         return None; // → Standardwert des Kanals
     }
     // Genau 0 heisst: Variable gibt es nicht (MSFS liest unbekannte L:-Namen
-    // als 0) — gemessen ist nur Triebwerk 1. Lieber „–“ als „0 °C“.
+    // als 0) — gemessen ist nur Triebwerk 1. Lieber „–“ als „0 °C“ oder als
+    // der falsche Standardwert.
     k.z(["egt_ini_1", "egt_ini_2", "egt_ini_3", "egt_ini_4"][N - 1])
         .filter(|v| *v != 0.0)
+        .or(KEIN_WERT_OHNE_RUECKFALL)
 }
 /// Schubhebel beim iniBuilds A380 aus `L:INI_AUTOTHRUST_TLA:{N}` (Grad),
 /// als % von TOGA; Umkehrschub ergibt negative Werte. Sonst Standard.
@@ -289,6 +298,7 @@ fn schubhebel<const N: usize>(k: &Kontext) -> Option<f64> {
     }
     k.z(["tla_ini_1", "tla_ini_2", "tla_ini_3", "tla_ini_4"][N - 1])
         .map(|grad| grad / AIRBUS_TLA_TOGA_GRAD * 100.0)
+        .or(KEIN_WERT_OHNE_RUECKFALL)
 }
 
 /// Triebwerk `N` (1..4) gibt es laut `triebwerke_anzahl`. Ohne Angabe gilt
@@ -2905,6 +2915,10 @@ mod tests {
                 ("egt_ini_1".into(), 629.0),
                 ("egt_ini_4".into(), 637.0),
                 ("egt_ini_3".into(), 0.0),
+                // Standardwerte, die beim A380 NICHT durchkommen duerfen.
+                ("egt_2".into(), 31.0),
+                ("egt_3".into(), 30.0),
+                ("schubhebel_4".into(), 62.0),
                 ("tla_ini_1".into(), 25.0),
                 ("tla_ini_2".into(), 45.0),
                 ("tla_ini_3".into(), 0.0),
@@ -2928,6 +2942,11 @@ mod tests {
         assert!((cl - 55.6).abs() < 0.1, "{cl}");
         assert_eq!(wert(&f, "schubhebel_2"), Some(100.0));
         assert_eq!(wert(&f, "schubhebel_3"), Some(0.0));
+        assert_eq!(
+            wert(&f, "schubhebel_4"),
+            None,
+            "ohne TLA kein Rueckfall auf den Standard"
+        );
         assert_eq!(wert(&f, "n2_1"), Some(84.8), "N2 bleibt");
         assert_eq!(
             text(&f, "nicht_verlaesslich"),

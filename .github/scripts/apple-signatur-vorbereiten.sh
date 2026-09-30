@@ -3,7 +3,7 @@
 #
 # Liest die Repo-Secrets (als Umgebungsvariablen *_SECRET hereingereicht) und
 # gibt sie in der Form weiter, die Tauri erwartet — ueber $GITHUB_ENV an die
-# folgenden Schritte. Fehlt eines, bleibt der Build UNSIGNIERT wie bis v1.9.14
+# folgenden Schritte. Fehlt eines, bleibt der Build UNSIGNIERT wie bis v1.9.13
 # (kein Fehler): ein Release darf nicht daran scheitern, dass die Schluessel
 # noch nicht eingetragen sind.
 #
@@ -23,6 +23,13 @@ for v in APPLE_CERTIFICATE_SECRET APPLE_CERTIFICATE_PASSWORD_SECRET \
 done
 
 if (( ${#fehlt[@]} > 0 )); then
+  # Im Release Pflicht (AEROACARS_SIGNATUR_PFLICHT=1): Die Release-Notes
+  # versprechen eine signierte Mac-App — dann darf keine unsignierte
+  # rausgehen (QS-Befund 4).
+  if [[ "${AEROACARS_SIGNATUR_PFLICHT:-0}" == "1" ]]; then
+    echo "::error::Apple-Signatur Pflicht, es fehlen: ${fehlt[*]}"
+    exit 1
+  fi
   if (( ${#fehlt[@]} < 6 )); then
     # Teilweise eingetragen: das ist fast sicher ein Versehen — laut sagen,
     # aber nicht abbrechen (unsigniert ist der bisherige, funktionierende Weg).
