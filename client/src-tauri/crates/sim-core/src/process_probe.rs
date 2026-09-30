@@ -60,12 +60,27 @@ fn process_names_for(kind: SimKind) -> &'static [&'static str] {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn process_names_for(kind: SimKind) -> &'static [&'static str] {
     match kind {
-        // MSFS has no native Linux/macOS build — nothing to look for.
+        // MSFS has no native Linux build — nothing to look for.
         SimKind::Msfs2020 | SimKind::Msfs2024 => &[],
         SimKind::XPlane11 | SimKind::XPlane12 => &["X-Plane-x86_64"],
+        SimKind::Off => &[],
+    }
+}
+
+/// macOS: Das Programm im Bundle heisst `X-Plane`
+/// (`X-Plane.app/Contents/MacOS/X-Plane`, nachgesehen an einer echten
+/// X-Plane-12-Installation am 30.09.2026). Hier stand bis v1.9.13 der
+/// Linux-Name `X-Plane-x86_64` — auf dem Mac galt X-Plane damit bei jedem
+/// Verbindungsabriss als beendet.
+#[cfg(target_os = "macos")]
+fn process_names_for(kind: SimKind) -> &'static [&'static str] {
+    match kind {
+        // MSFS has no native macOS build — nothing to look for.
+        SimKind::Msfs2020 | SimKind::Msfs2024 => &[],
+        SimKind::XPlane11 | SimKind::XPlane12 => &["X-Plane"],
         SimKind::Off => &[],
     }
 }
