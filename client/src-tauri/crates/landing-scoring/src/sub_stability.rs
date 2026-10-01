@@ -10,6 +10,7 @@
 //! Diese Funktion bleibt als `sub_stability_legacy` erhalten fuer
 //! Goldenset-Backward-Compat-Tests.
 
+use crate::anflug_urteil::{punkte_deckel, AnflugUrteil};
 use crate::{band_from_points, SubScoreEntry};
 
 /// Phase-0 Legacy 2-Faktor-Stability. Returns `None` wenn beide
@@ -17,6 +18,7 @@ use crate::{band_from_points, SubScoreEntry};
 pub fn sub_stability_legacy(
     sigma_vs_fpm: Option<f32>,
     sigma_bank_deg: Option<f32>,
+    urteil: Option<AnflugUrteil>,
 ) -> Option<SubScoreEntry> {
     if sigma_vs_fpm.is_none() && sigma_bank_deg.is_none() {
         return None;
@@ -73,7 +75,15 @@ pub fn sub_stability_legacy(
     } else {
         0
     };
+    // v1.9.16: Deckel aus dem Anflug-Urteil. Die Streuung allein sah
+    // nicht, was die Karte „Anflug-Stabilitaet" zeigt: DLH2248 stand dort
+    // auf PARTIAL und bekam trotzdem 100 Punkte „sehr stabil". Ein Anflug,
+    // der nicht STABLE ist, darf diese Achse nicht voll bekommen.
     let points = vs_band.min(bk_band);
+    let points = match punkte_deckel(urteil) {
+        Some(deckel) => points.min(deckel),
+        None => points,
+    };
 
     let rationale = if points >= 90 {
         "very_stable"
@@ -103,12 +113,12 @@ mod tests {
     use super::*;
 
     fn run(vs: Option<f32>, bk: Option<f32>) -> Option<(u8, String)> {
-        sub_stability_legacy(vs, bk).map(|s| (s.points, s.rationale_key.unwrap()))
+        sub_stability_legacy(vs, bk, None).map(|s| (s.points, s.rationale_key.unwrap()))
     }
 
     #[test]
     fn both_none_returns_none() {
-        assert!(sub_stability_legacy(None, None).is_none());
+        assert!(sub_stability_legacy(None, None, None).is_none());
     }
 
     /// Was die Bewertung "stabil" NENNT, muss auch volle Punkte geben.
@@ -177,11 +187,28 @@ mod tests {
         // JS Math.round(250.5) = 251 (away-from-zero auf .5).
         // Rust f32::round: "ties round away from zero" → identisch.
         // → 250.5 rundet zu 251 in beiden Sprachen.
-        let s = sub_stability_legacy(Some(250.5), Some(4.0)).unwrap();
+        let s = sub_stability_legacy(Some(250.5), Some(4.0), None).unwrap();
         assert_eq!(s.value.unwrap(), "σ 251 fpm / 4.0°");
 
         // Auch andere Werte testen
-        let s = sub_stability_legacy(Some(80.0), Some(2.5)).unwrap();
+        let s = sub_stability_legacy(Some(80.0), Some(2.5), None).unwrap();
         assert_eq!(s.value.unwrap(), "σ 80 fpm / 2.5°");
+    }
+
+    /// Das Urteil deckelt die Achse, auch bei perfekter Streuung.
+    #[test]
+    fn urteil_deckelt_die_stabilitaetsachse() {
+        let punkte = |u| {
+            sub_stability_legacy(Some(100.0), Some(0.5), u)
+                .unwrap()
+                .points
+        };
+        assert_eq!(punkte(None), 100);
+        assert_eq!(punkte(Some(AnflugUrteil::Stable)), 100);
+        assert_eq!(punkte(Some(AnflugUrteil::Partial)), 80);
+        assert_eq!(punkte(Some(AnflugUrteil::Unstable)), 45);
+        // Der Deckel hebt nichts an: schlechtere Streuung bleibt schlechter.
+        let s = sub_stability_legacy(Some(500.0), Some(1.0), Some(AnflugUrteil::Partial));
+        assert_eq!(s.unwrap().points, 45);
     }
 }

@@ -933,8 +933,8 @@
         },
         "sink_rate": {
           "label": "Sink rate",
-          "body": "EXCESSIVE when ANY sample in the gate sank faster than the stable-approach limit. The limit is −1000 fpm on a 3° glidepath and scales with the real published glidepath (≈ −1334 fpm on a 4° approach like Tromsø, ≈ −1834 fpm on London City's 5.5°) — a correctly-flown steep approach is therefore NOT falsely flagged. FSF ALAR / FAA AC 120-71B sink-rate criterion.",
-          "thresholds": "OK = never below the limit · EXCESSIVE = once or more below it (−1000 fpm at 3°, scaled by the real glidepath)"
+          "body": "EXCESSIVE when the sink rate in the gate stayed faster than the stable-approach limit for at least 3 seconds in a row (a brief spike does not count). The limit is −1000 fpm on a 3° glidepath and scales with the real published glidepath (≈ −1334 fpm on a 4° approach like Tromsø, ≈ −1834 fpm on London City's 5.5°) — a correctly-flown steep approach is therefore NOT falsely flagged. FSF ALAR / FAA AC 120-71B sink-rate criterion.",
+          "thresholds": "OK = never below the limit · EXCESSIVE = at least 3 s in a row below it (−1000 fpm at 3°, scaled by the real glidepath)"
         },
         "landing_config": {
           "label": "Landing config",

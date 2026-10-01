@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// Lernpaket AP4/AP5 (29.09.2026): Datenform der Anflug-Forensik (keine Note).
 pub mod anflug_forensik;
+pub mod anflug_urteil;
 pub mod belag;
 pub mod gate;
 /// v1.7.35: Sprit-Auswertung ohne Note — siehe `sprit.rs`.
@@ -213,6 +214,10 @@ pub struct LandingScoringInput {
     pub bounce_count: Option<u32>,
     pub approach_vs_stddev_fpm: Option<f32>,
     pub approach_bank_stddev_deg: Option<f32>,
+    /// v1.9.16: die sieben Gate-Messwerte hinter dem STABLE/PARTIAL/UNSTABLE-
+    /// Urteil — siehe `anflug_urteil`. Leer (Altbestand, Tests) = kein Urteil,
+    /// kein Deckel auf der Stabilitaetsachse.
+    pub anflug: anflug_urteil::AnflugWerte,
     pub rollout_distance_m: Option<f32>,
     pub fuel_efficiency_pct: Option<f32>,
     // Phase 2 (F1 + F2 + F3): VFR/ZFW + Fuel-Asymmetrie
@@ -389,6 +394,7 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     if let Some(stab) = sub_stability::sub_stability_legacy(
         input.approach_vs_stddev_fpm,
         input.approach_bank_stddev_deg,
+        anflug_urteil::anflug_urteil(&input.anflug),
     ) {
         out.push(stab);
     }
@@ -1150,6 +1156,8 @@ mod tests {
     /// fehlten.
     fn voll_besetzter_eingang() -> LandingScoringInput {
         LandingScoringInput {
+            // v1.9.16: auch das Anflug-Urteil gehoert zum vollen Eingang.
+            anflug: anflug_urteil::AnflugWerte::default(),
             diverted: None,
             // v1.7.32: echte Werte, damit der Waechter auch die
             // Gutschrift-Zweige der OFP-Achse durchlaeuft.

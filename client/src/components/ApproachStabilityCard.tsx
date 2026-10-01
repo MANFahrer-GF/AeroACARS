@@ -19,6 +19,10 @@
 //   V/S vs. 3°-ILS     < 100 fpm · 100–200 · > 200
 //   Max V/S-Dev <500ft < 200 fpm · 200–400 · > 400
 //
+// ⚠ Dieselben Grenzen stehen im Backend: landing_scoring::anflug_urteil
+// (deckelt die Stabilitätsachse: PARTIAL ≤ 80, UNSTABLE ≤ 45). Wer hier
+// eine Grenze ändert, muss dort mitziehen.
+//
 // STABLE-GATE-Pill: 0 bad-Werte → STABLE; 1–2 → PARTIAL; ≥3 → UNSTABLE.
 // "bad" für Bools = excessive_sink=true / stable_config=false.
 

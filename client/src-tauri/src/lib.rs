@@ -9528,7 +9528,7 @@ fn should_push_approach_sample(
 /// fresh approach window) and when the FSM exits Final into Landing
 /// (a successful touchdown invalidates the approach minimum).
 fn update_lowest_approach_agl(stats: &mut FlightStats, snap: &SimSnapshot) {
-    let agl = snap.altitude_agl_ft as f32;
+    let agl = hoehe_fuer_durchstart(stats, snap);
     // Only track positive AGL — a brief negative reading from a sim
     // glitch (terrain mesh hiccup) would poison the minimum and make
     // every subsequent sample look like a 200 ft go-around climb.
@@ -9540,6 +9540,25 @@ fn update_lowest_approach_agl(stats: &mut FlightStats, snap: &SimSnapshot) {
             .lowest_agl_during_approach_ft
             .map_or(agl, |prev| prev.min(agl)),
     );
+}
+
+/// Hoehe, an der der Durchstart-Detektor misst.
+///
+/// v1.9.16 (DLH2248, LFLL, 01.10.2026): Bisher immer AGL — die Hoehe ueber
+/// dem Gelaende UNTER dem Flugzeug. Vor huegeligem Anflug springt sie um
+/// hunderte Fuss, ohne dass das Flugzeug steigt: Die AGL fiel auf 709 ft
+/// und stand 40 s spaeter bei 1359 ft, waehrend die Hoehe ueber der Bahn
+/// (HAT) nie unter 1164 ft kam. Der Pilot hatte auf 1200 ft abgefangen,
+/// kein Durchstart — der Detektor meldete trotzdem einen und setzte die
+/// Flugphase auf Climb zurueck.
+///
+/// Mit bekannter Platzhoehe daher HAT (MSL − Platzhoehe), wie das
+/// Stabilitaets-Gate; ohne sie bleibt es bei AGL (bisheriges Verhalten).
+fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> f32 {
+    match stats.arr_airport_elevation_ft {
+        Some(elev) => snap.altitude_msl_ft as f32 - elev,
+        None => snap.altitude_agl_ft as f32,
+    }
 }
 
 /// Detect a go-around in progress: aircraft has climbed
@@ -9559,11 +9578,20 @@ fn check_go_around(
     now: DateTime<Utc>,
 ) -> Option<FlightPhase> {
     let lowest = stats.lowest_agl_during_approach_ft?;
-    let agl = snap.altitude_agl_ft as f32;
+    let agl = hoehe_fuer_durchstart(stats, snap);
     // Need at least *some* descent to have happened — otherwise a
     // pilot intercepting the glideslope from above would trip the
     // detector the moment we entered Approach.
-    if lowest > 1500.0 {
+    //
+    // v1.9.16: Mit HAT liegt die Grenze am Stabilitaets-Gate (1000 ft):
+    // Ein Abfangen oder Wiederansteigen OBERHALB davon ist kein
+    // Fehlanflug, sondern ein Hoehenmanoever im Anflug.
+    let obergrenze = if stats.arr_airport_elevation_ft.is_some() {
+        1000.0
+    } else {
+        1500.0
+    };
+    if lowest > obergrenze {
         return None;
     }
     let conds = agl > lowest + GO_AROUND_AGL_RECOVERY_FT
@@ -11031,6 +11059,30 @@ pub struct ApproachStabilityV2 {
     pub stall_warning_count: u32,
 }
 
+/// Mindestdauer unter der Sinkgrenze, ab der „excessive sink" gilt.
+///
+/// v1.9.16: Bis dahin genuegte EIN Sample. Ein einzelner Ausreisser —
+/// Boe, Sim-Zittern — machte den Anflug zu „excessive". Jetzt zaehlt die
+/// Grenze (−1000 fpm bei 3°, mit dem Gleitwinkel skaliert), wenn sie
+/// mindestens so lange am Stueck unterschritten wird. Die Grenze selbst
+/// bleibt hart; nur kurzes Ueberschiessen kostet nichts.
+const SINK_TOLERANZ_MS: i64 = 3000;
+
+fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], grenze_fpm: f64) -> bool {
+    let mut lauf_start: Option<DateTime<Utc>> = None;
+    for s in samples {
+        if f64::from(s.vs_fpm) < grenze_fpm {
+            let start = *lauf_start.get_or_insert(s.at);
+            if (s.at - start).num_milliseconds() >= SINK_TOLERANZ_MS {
+                return true;
+            }
+        } else {
+            lauf_start = None;
+        }
+    }
+    false
+}
+
 /// v0.5.25: Stable-Approach-Gate-konformes Stability-Maß.
 ///
 /// FAA AC 120-71B / EASA SUPP-32 definieren Stable-Approach-Gate als
@@ -11181,11 +11233,10 @@ fn compute_approach_stability_v2(
     // bei 3° bleibt's −1000 fpm, bei 5,5° (z.B. EGLC) ~−1834 fpm, sodass ein
     // korrekt geflogener Steilanflug nicht fälschlich „excessive" ist.
     let excessive_sink_threshold = -1000.0 * gs_factor;
-    out.excessive_sink = Some(
-        gate_samples
-            .iter()
-            .any(|s| f64::from(s.vs_fpm) < excessive_sink_threshold),
-    );
+    out.excessive_sink = Some(sinkrate_zu_lange_unter(
+        &gate_samples,
+        excessive_sink_threshold,
+    ));
 
     // 6) Stable-Config: Gear+Flaps am 1000-ft-Sample (= aeltester
     //    Sample im Gate, = der mit hoechster Hoehe).
@@ -11387,9 +11438,7 @@ fn compute_approach_stability_v2(
         // liegt die Soll-Sinkrate am DA-Gate physikalisch schon über −1000 fpm
         // (4° @143 kt ≈ −1013 fpm), sodass `stable_at_da` dort mathematisch NIE
         // erreichbar war. Jetzt winkel-korrekt → identisch zum 1000-ft-Gate.
-        let da_excess_sink = da_samples
-            .iter()
-            .any(|s| f64::from(s.vs_fpm) < excessive_sink_threshold);
+        let da_excess_sink = sinkrate_zu_lange_unter(&da_samples, excessive_sink_threshold);
         // Strenger Cutoff bei DA: jerk < 80, bank < 3°, ias < 8 kt
         let da_stable = da_jerk < 80.0 && da_bank_sd < 3.0 && da_ias_sd < 8.0 && !da_excess_sink;
         out.stable_at_da = Some(da_stable);
@@ -27304,9 +27353,15 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// verschiebt sich um bis zu 2 Punkte (91→90, 74→72, 97→96, weil die
 /// verbleibenden Achsen die Gewichtung neu unter sich aufteilen).
 ///
+/// **17 seit v1.9.16**: Die Stabilitaetsachse ist an das Anflug-Urteil der
+/// Karte gebunden (`landing_scoring::anflug_urteil`): PARTIAL deckelt sie
+/// auf 80, UNSTABLE auf 45. Anlass DLH2248 (01.10.2026): Karte PARTIAL,
+/// Achse 100 Punkte. Dazu zaehlt die Sinkgrenze erst nach 3 s am Stueck.
+/// Altbuchungen werden nicht neu gerechnet.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 16;
+const SCORE_ALGORITHMUS_VERSION: u8 = 17;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -27378,6 +27433,17 @@ fn scoring_eingang(
         },
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
         approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
+        // v1.9.16: Messwerte hinter dem Anflug-Urteil (STABLE/PARTIAL/UNSTABLE).
+        // Gerechnet wird NUR in `landing_scoring::anflug_urteil`.
+        anflug: landing_scoring::anflug_urteil::AnflugWerte {
+            vs_jerk_fpm: stats.approach_vs_jerk_fpm,
+            bank_stddev_deg: stats.approach_bank_stddev_filtered_deg,
+            ias_stddev_kt: stats.approach_ias_stddev_kt,
+            excessive_sink: stats.approach_excessive_sink,
+            stable_config: stats.approach_stable_config,
+            vs_deviation_fpm: stats.approach_vs_deviation_fpm,
+            max_vs_deviation_below_500_fpm: stats.approach_max_vs_deviation_below_500_fpm,
+        },
         rollout_distance_m: stats.rollout_distance_m.map(|m| m as f32),
         planned_burn_kg: stats.planned_burn_kg,
         actual_trip_burn_kg: actual_burn_for_record(stats),
@@ -59747,6 +59813,72 @@ mod touch_and_go_go_around_tests {
         assert!(stats.pending_acars_logs[0].contains("Go-around"));
     }
 
+    /// DLH2248 (LFLL, 01.10.2026): Pilot faengt auf 1200 ft ueber der Bahn
+    /// ab. Das Gelaende darunter schwankt, die AGL springt von 709 auf 1359 ft
+    /// — die Hoehe ueber der Bahn (HAT) kam nie unter 1164 ft. Kein Durchstart.
+    #[test]
+    fn go_around_ignoriert_gelaendesprung_ueber_dem_gate() {
+        let mut stats = FlightStats::default();
+        stats.arr_airport_elevation_ft = Some(814.0);
+        let mut tief = snap_at(709.0, -560.0, false);
+        tief.altitude_msl_ft = 814.0 + 1164.0;
+        update_lowest_approach_agl(&mut stats, &tief);
+        assert_eq!(stats.lowest_agl_during_approach_ft, Some(1164.0));
+        let mut hoch = snap_at(1359.0, 500.0, false);
+        hoch.altitude_msl_ft = 814.0 + 1372.0;
+        let now = t0();
+        assert!(check_go_around(&mut stats, &hoch, now).is_none());
+        assert!(check_go_around(
+            &mut stats,
+            &hoch,
+            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 5)
+        )
+        .is_none());
+        assert_eq!(stats.go_around_count, 0);
+    }
+
+    /// Dasselbe Gelaende, aber ein echter Durchstart unter dem Gate: Der
+    /// Detektor muss weiter greifen — gemessen in HAT.
+    #[test]
+    fn go_around_greift_unter_dem_gate_in_hat() {
+        let mut stats = FlightStats::default();
+        stats.arr_airport_elevation_ft = Some(814.0);
+        let mut tief = snap_at(300.0, -600.0, false);
+        tief.altitude_msl_ft = 814.0 + 400.0;
+        update_lowest_approach_agl(&mut stats, &tief);
+        let mut hoch = snap_at(900.0, 1200.0, false);
+        hoch.altitude_msl_ft = 814.0 + 700.0;
+        let now = t0();
+        assert!(check_go_around(&mut stats, &hoch, now).is_none());
+        let out = check_go_around(
+            &mut stats,
+            &hoch,
+            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+        );
+        assert!(matches!(out, Some(FlightPhase::Climb)));
+    }
+
+    /// Umgekehrt: AGL springt hoch, die Hoehe ueber der Bahn aber nicht —
+    /// unter dem Gate darf das kein Durchstart sein.
+    #[test]
+    fn go_around_ignoriert_agl_sprung_unter_dem_gate() {
+        let mut stats = FlightStats::default();
+        stats.arr_airport_elevation_ft = Some(814.0);
+        let mut tief = snap_at(300.0, -600.0, false);
+        tief.altitude_msl_ft = 814.0 + 400.0;
+        update_lowest_approach_agl(&mut stats, &tief);
+        let mut gelaende_fall = snap_at(900.0, 500.0, false);
+        gelaende_fall.altitude_msl_ft = 814.0 + 420.0;
+        let now = t0();
+        check_go_around(&mut stats, &gelaende_fall, now);
+        assert!(check_go_around(
+            &mut stats,
+            &gelaende_fall,
+            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 5)
+        )
+        .is_none());
+    }
+
     #[test]
     fn go_around_does_not_fire_below_recovery_threshold() {
         let mut stats = FlightStats::default();
@@ -63104,8 +63236,19 @@ mod sim_pause_tests {
         gear: f32,
         flaps: f32,
     ) -> ApproachBufferSample {
+        // v1.9.16: eine Sekunde je Aufruf — die Sinkgrenze zaehlt erst nach
+        // 3 s am Stueck, ein Helfer mit gleichem Zeitstempel koennte das
+        // nie pruefen.
+        thread_local! {
+            static NAECHSTE_SEKUNDE: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+        }
+        let sek = NAECHSTE_SEKUNDE.with(|c| {
+            let v = c.get();
+            c.set(v + 1);
+            v
+        });
         ApproachBufferSample {
-            at: Utc::now(),
+            at: DateTime::<Utc>::from_timestamp(1_790_000_000 + sek, 0).unwrap(),
             agl_ft: agl,
             msl_ft: agl,
             gs_kt: gs,
@@ -63732,6 +63875,56 @@ mod sim_pause_tests {
         );
     }
 
+    /// v1.9.16: Ein Ausreisser unter −1000 fpm ist kein „excessive sink" —
+    /// erst 3 s am Stueck.
+    #[test]
+    fn sinkgrenze_toleriert_kurzes_ueberschreiten() {
+        let kurz: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0),
+            approach_sample(800.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
+            approach_sample(700.0, 130.0, 132.0, -1050.0, 1.0, 1.0),
+            approach_sample(600.0, 130.0, 132.0, -700.0, 1.0, 1.0),
+            approach_sample(500.0, 130.0, 132.0, -650.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .collect();
+        let out = compute_approach_stability_v2(&kurz, None, None, None, None, Default::default());
+        assert_eq!(out.excessive_sink, Some(false), "2 s unter der Grenze");
+
+        let lang: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0),
+            approach_sample(800.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
+            approach_sample(700.0, 130.0, 132.0, -1150.0, 1.0, 1.0),
+            approach_sample(600.0, 130.0, 132.0, -1200.0, 1.0, 1.0),
+            approach_sample(500.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .collect();
+        let out = compute_approach_stability_v2(&lang, None, None, None, None, Default::default());
+        assert_eq!(
+            out.excessive_sink,
+            Some(true),
+            "3 s am Stueck unter der Grenze"
+        );
+    }
+
+    /// Die Toleranz zaehlt AM STUECK: zwei Ausreisser mit Pause dazwischen
+    /// addieren sich nicht.
+    #[test]
+    fn sinkgrenze_zaehlt_nur_am_stueck() {
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
+            approach_sample(800.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
+            approach_sample(700.0, 130.0, 132.0, -700.0, 1.0, 1.0),
+            approach_sample(600.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
+            approach_sample(500.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        assert_eq!(out.excessive_sink, Some(false));
+    }
+
     #[test]
     fn landing_config_ok_with_flaps_extended() {
         let buf: std::collections::VecDeque<ApproachBufferSample> = [
@@ -63777,6 +63970,7 @@ mod sim_pause_tests {
         // nutzt σ, nicht diese Felder) — reine Anzeige/„stable"-Korrektur.
         let buf: std::collections::VecDeque<ApproachBufferSample> = [
             approach_sample(900.0, 120.0, 132.0, -1170.0, 1.0, 0.85),
+            approach_sample(700.0, 119.0, 131.0, -1160.0, 1.0, 0.85),
             approach_sample(600.0, 118.0, 130.0, -1150.0, 1.0, 0.85),
             approach_sample(300.0, 115.0, 128.0, -1120.0, 1.0, 0.85),
         ]
@@ -63832,6 +64026,7 @@ mod sim_pause_tests {
         // ist steilanflug-typisch hoch.
         let buf: std::collections::VecDeque<ApproachBufferSample> = [
             approach_sample(180.0, 120.0, 132.0, -1150.0, 1.0, 0.85),
+            approach_sample(150.0, 120.0, 132.0, -1145.0, 1.0, 0.85),
             approach_sample(120.0, 119.0, 131.0, -1140.0, 1.0, 0.85),
             approach_sample(60.0, 118.0, 130.0, -1120.0, 1.0, 0.85),
         ]
@@ -69143,10 +69338,12 @@ mod v0_16_6_bush_completeness_tests {
             900.0,
             -1500.0,
         ));
+        // v1.9.16: die Sinkgrenze zaehlt erst nach 3 s am Stueck — der
+        // Gift-Lauf muss so lang sein, sonst waere er ein tolerierter Ausreisser.
         buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(1005),
+            td() - chrono::Duration::seconds(1007),
             600.0,
-            800.0,
+            -1400.0,
         ));
         buf.push_back(sample_at(
             td() - chrono::Duration::seconds(1000),
