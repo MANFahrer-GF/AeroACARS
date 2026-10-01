@@ -2389,6 +2389,16 @@ struct Connection {
     /// Fehlermuster“ an (54-mal bei 4 Piloten, 30.09.2026). Nur Ablehnungen
     /// GENAU dieser Pakete gelten als erwartet; alle anderen bleiben Warnung.
     abmelde_pakete: crate::eingabe_events::AbmeldePakete,
+    /// Gibt es auf DIESER Verbindung schon die Zusatzdefinition (Telemetrie-
+    /// Monitor)? Nur dann wird sie vor dem Umbau gestoppt und geleert.
+    ///
+    /// Vorher geschah das auch beim allerersten Mal. Der Rueckgabewert war
+    /// zwar 0, MSFS lehnte beide Aufrufe aber spaeter asynchron mit
+    /// `UNRECOGNIZED_ID` ab — das Paar im Health-Report (69× bei fuenf
+    /// Piloten, auch mit 1.9.14; Befund 30.09.2026).
+    zusatz_angelegt: bool,
+    /// Dasselbe fuer die Inspektor-Definition (Debug-Modus).
+    inspektor_angelegt: bool,
 }
 
 impl Connection {
@@ -2413,6 +2423,8 @@ impl Connection {
             facility_feld_send_ids: Vec::new(),
             inspector_send_ids: Vec::new(),
             abmelde_pakete: Default::default(),
+            zusatz_angelegt: false,
+            inspektor_angelegt: false,
         })
     }
 
@@ -2662,12 +2674,18 @@ impl Connection {
     /// no per-field "remove" call. An empty watchlist is valid (just
     /// clears the definition and skips the request).
     fn register_inspector(&mut self, watches: &[InspectorWatch]) -> Result<(), String> {
-        let hr =
-            unsafe { sys::SimConnect_ClearDataDefinition(self.handle, INSPECTOR_DEFINITION_ID) };
-        // ClearDataDefinition returns S_OK even when the definition
-        // didn't exist yet — non-zero is a real error.
-        if hr != 0 {
-            return Err(format!("ClearDataDefinition returned 0x{hr:08X}"));
+        // Nur leeren, was es gibt: ClearDataDefinition gibt zwar auch fuer
+        // eine noch nicht vorhandene Definition S_OK zurueck, MSFS lehnt sie
+        // dann aber asynchron mit UNRECOGNIZED_ID ab (Befund 30.09.2026).
+        if self.inspektor_angelegt {
+            let hr = unsafe {
+                sys::SimConnect_ClearDataDefinition(self.handle, INSPECTOR_DEFINITION_ID)
+            };
+            // Non-zero is a real error.
+            if hr != 0 {
+                return Err(format!("ClearDataDefinition returned 0x{hr:08X}"));
+            }
+            self.inspektor_angelegt = false;
         }
         // Rebuilt below, one entry per successfully-issued
         // AddToDataDefinition call — this is what lets a later async
@@ -2700,6 +2718,7 @@ impl Connection {
                     w.name
                 ));
             }
+            self.inspektor_angelegt = true;
             // AddToDataDefinition frequently reports success (hr == 0)
             // synchronously even for a name SimConnect can't actually
             // resolve — MSFS only raises SIMCONNECT_RECV_EXCEPTION for
@@ -2728,28 +2747,31 @@ impl Connection {
         felder: &[(usize, crate::zusatz::ZusatzFeld)],
     ) -> Result<Vec<(u32, usize)>, String> {
         // Laufende Anfrage zuerst stoppen, sonst liefert SimConnect waehrend
-        // des Umbaus Bloecke im alten Raster.
-        let hr = unsafe {
-            sys::SimConnect_RequestDataOnSimObject(
-                self.handle,
-                ZUSATZ_REQUEST_ID,
-                ZUSATZ_DEFINITION_ID,
-                sys::SIMCONNECT_OBJECT_ID_USER,
-                sys::SIMCONNECT_PERIOD_NEVER,
-                0,
-                0,
-                0,
-                0,
-            )
-        };
-        // Beim allerersten Mal existiert die Definition noch nicht — eine
-        // Ablehnung hier ist harmlos und wird nur vermerkt.
-        if hr != 0 {
-            tracing::debug!("Zusatzanfrage stoppen: 0x{hr:08X}");
-        }
-        let hr = unsafe { sys::SimConnect_ClearDataDefinition(self.handle, ZUSATZ_DEFINITION_ID) };
-        if hr != 0 {
-            return Err(format!("ClearDataDefinition (Zusatz) returned 0x{hr:08X}"));
+        // des Umbaus Bloecke im alten Raster. Nur wenn es sie gibt — siehe
+        // `zusatz_angelegt`.
+        if self.zusatz_angelegt {
+            let hr = unsafe {
+                sys::SimConnect_RequestDataOnSimObject(
+                    self.handle,
+                    ZUSATZ_REQUEST_ID,
+                    ZUSATZ_DEFINITION_ID,
+                    sys::SIMCONNECT_OBJECT_ID_USER,
+                    sys::SIMCONNECT_PERIOD_NEVER,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            if hr != 0 {
+                tracing::debug!("Zusatzanfrage stoppen: 0x{hr:08X}");
+            }
+            let hr =
+                unsafe { sys::SimConnect_ClearDataDefinition(self.handle, ZUSATZ_DEFINITION_ID) };
+            if hr != 0 {
+                return Err(format!("ClearDataDefinition (Zusatz) returned 0x{hr:08X}"));
+            }
+            self.zusatz_angelegt = false;
         }
         let mut kennungen = Vec::with_capacity(felder.len());
         if felder.is_empty() {
@@ -2801,6 +2823,7 @@ impl Connection {
                 "RequestDataOnSimObject (Zusatz) returned 0x{hr:08X}"
             ));
         }
+        self.zusatz_angelegt = true;
         Ok(kennungen)
     }
 
@@ -2813,9 +2836,13 @@ impl Connection {
         bloecke: &[Vec<(usize, crate::vermessung::MessFeld)>],
         alt: usize,
     ) -> Result<Vec<(u32, usize, usize)>, String> {
-        for b in 0..alt.max(bloecke.len()) {
+        // Nur die `alt` wirklich angelegten Bloecke stoppen und leeren. Bis
+        // v1.9.14 ging die Schleife bis `alt.max(bloecke.len())` — beim Start
+        // einer Messung also auch ueber Bloecke, die es noch nicht gab; MSFS
+        // lehnte jeden davon zweifach mit `UNRECOGNIZED_ID` ab (Befund
+        // 30.09.2026: 8 Ablehnungen = 4 Bloecke × Stoppen + Leeren).
+        for b in 0..alt {
             let id = crate::vermessung::ID_BASIS + b as u32;
-            // Fehler egal: beim ersten Mal gibt es den Block noch nicht.
             unsafe {
                 sys::SimConnect_RequestDataOnSimObject(
                     self.handle,
