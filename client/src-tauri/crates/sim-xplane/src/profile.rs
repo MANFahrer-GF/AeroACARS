@@ -205,8 +205,12 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
     // CMD-A-Lampe (im Zibo-Scan belegt, `B738_Datarefs.txt` „AUTOPILOT
     // LIGHTS"). CMD B kommt als eigene Quelle `B738CmdB` dazu
     // (`dataref.rs`); der Autopilot gilt als an, wenn A ODER B leuchtet —
-    // auch CMD B allein (Copilot fliegt). Wie jeder `laminar/…`-Name zaehlt
-    // eine Lampe erst nach ihrem ersten Wert ≠ 0 (`plugin2_ziel::ist_kern`).
+    // auch CMD B allein (Copilot fliegt). Die CMD-A-Lampe gilt als Profil-
+    // Ersetzung sofort; die Katalogquelle CMD B wie jeder `laminar/…`-Name
+    // erst nach ihrem ersten Wert ≠ 0 (`plugin2_ziel::ist_kern`). Der
+    // Standard-737 von X-Plane 12 hat dieselben Lua-Datarefs (geprueft
+    // 01.10.2026: cmd_a/b_status, taxi_light_brightness_pos,
+    // capt_probes_pos; kein logo_light → Logo bleibt dort = Nav).
     XplaneAircraftProfile {
         name: "Laminar/Zibo 737-800",
         title_match: &["boeing", "737-800"],

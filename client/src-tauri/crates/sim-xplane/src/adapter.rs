@@ -1939,15 +1939,16 @@ mod plugin2_loopback_tests {
             ad.snapshot()
                 .is_some_and(|s| s.autopilot_master == Some(true))
         });
-        // Zibo-Audit 01.10.2026: Taxilicht, Sonden-Heizung, Logo, Anti-Eis,
-        // A/T-ARM und Master Caution aus den Zibo-Schaltern.
+        // Zibo-Audit 01.10.2026: Taxilicht, Sonden-Heizung, Logo, Anti-Eis
+        // und Master Caution aus den Zibo-Schaltern. (A/T-ARM wird gelesen,
+        // aber nicht ausgegeben — siehe `autothrottle_is_arm` in dataref.rs.)
         let schalter = warte(Duration::from_secs(15), || {
             ad.snapshot().is_some_and(|s| {
                 s.light_taxi == Some(true)
                     && s.pitot_heat == Some(true)
                     && s.light_logo == Some(true)
                     && s.engine_anti_ice == Some(true)
-                    && s.autothrottle_is_arm
+                    && !s.autothrottle_is_arm
                     && s.master_caution == Some(true)
             })
         });

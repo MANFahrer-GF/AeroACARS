@@ -2399,6 +2399,10 @@ struct Connection {
     zusatz_angelegt: bool,
     /// Dasselbe fuer die Inspektor-Definition (Debug-Modus).
     inspektor_angelegt: bool,
+    /// Hoechste Zahl Messbloecke, die auf dieser Verbindung angefasst
+    /// wurden — auch in einem abgebrochenen Aufbau. So werden beim naechsten
+    /// Versuch auch halb angelegte Bloecke gestoppt und geleert (QS 01.10.).
+    mess_bloecke_beruehrt: usize,
 }
 
 impl Connection {
@@ -2425,6 +2429,7 @@ impl Connection {
             abmelde_pakete: Default::default(),
             zusatz_angelegt: false,
             inspektor_angelegt: false,
+            mess_bloecke_beruehrt: 0,
         })
     }
 
@@ -2799,6 +2804,10 @@ impl Connection {
                     feld.simvar
                 ));
             }
+            // Ab dem ersten Feld gibt es die Definition — auch wenn ein
+            // spaeteres Feld scheitert, muss der naechste Versuch sie leeren,
+            // sonst wuerde sie doppelt befuellt (QS 01.10.2026).
+            self.zusatz_angelegt = true;
             let mut send_id: sys::DWORD = 0;
             let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
             if hr == 0 {
@@ -2823,7 +2832,6 @@ impl Connection {
                 "RequestDataOnSimObject (Zusatz) returned 0x{hr:08X}"
             ));
         }
-        self.zusatz_angelegt = true;
         Ok(kennungen)
     }
 
@@ -2841,7 +2849,8 @@ impl Connection {
         // einer Messung also auch ueber Bloecke, die es noch nicht gab; MSFS
         // lehnte jeden davon zweifach mit `UNRECOGNIZED_ID` ab (Befund
         // 30.09.2026: 8 Ablehnungen = 4 Bloecke × Stoppen + Leeren).
-        for b in 0..alt {
+        // `mess_bloecke_beruehrt` deckt einen vorher abgebrochenen Aufbau ab.
+        for b in 0..alt.max(self.mess_bloecke_beruehrt) {
             let id = crate::vermessung::ID_BASIS + b as u32;
             unsafe {
                 sys::SimConnect_RequestDataOnSimObject(
@@ -2858,9 +2867,11 @@ impl Connection {
                 sys::SimConnect_ClearDataDefinition(self.handle, id);
             }
         }
+        self.mess_bloecke_beruehrt = 0;
         let mut kennungen = Vec::new();
         for (b, block) in bloecke.iter().enumerate() {
             let id = crate::vermessung::ID_BASIS + b as u32;
+            self.mess_bloecke_beruehrt = b + 1;
             for (p, (_, feld)) in block.iter().enumerate() {
                 let (Ok(cname), Ok(cunit)) = (
                     std::ffi::CString::new(feld.simvar.as_str()),

@@ -1974,8 +1974,12 @@ impl XPlaneState {
             } else {
                 None
             },
-            // Zibo/Laminar-737: A/T-ARM-Lampe; sonst unbekannt = false.
-            autothrottle_is_arm: self.b738_at_arm.unwrap_or(false),
+            // `autothrottle_is_arm` ist nur ein Zusatz zu `autothrottle_on`
+            // („dessen An ist ARM“) — beim Zibo gibt es fuer
+            // `autothrottle_on` keine Quelle, die ARM-Lampe haette also keine
+            // Wirkung und leuchtet auch bei aktivem A/T (QS 01.10.2026).
+            // `b738_at_arm` wird gelesen, aber noch nicht ausgegeben.
+            autothrottle_is_arm: false,
             // Summe `ENGN_FF_` (kg/s → kg/h). 0 → None, dann leitet der
             // Positions-Takt den Fluss wie bisher aus dem FOB-Verlauf ab.
             fuel_flow_kg_per_h,
@@ -2395,7 +2399,10 @@ mod toliss_autoflight_tests {
         );
         assert_eq!(z.engine_anti_ice, Some(true), "Triebwerk 2 an");
         assert_eq!(z.wing_anti_ice, Some(false));
-        assert!(z.autothrottle_is_arm);
+        // A/T-ARM wird gelesen, aber nicht ausgegeben (ohne Quelle fuer
+        // `autothrottle_on` haette es keine Wirkung, QS 01.10.2026).
+        assert_eq!(s.b738_at_arm, Some(true));
+        assert!(!z.autothrottle_is_arm);
         assert_eq!(z.master_caution, Some(true));
 
         // Flugzeugwechsel: Quellen vergessen → wieder unbekannt.
