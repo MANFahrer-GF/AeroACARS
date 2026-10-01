@@ -197,15 +197,28 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
     //
     // Wir biegen die AP-MODUS-Felder auf die 737-echten MCP-Annunciator-
     // Lights (0/1) — authentischer als die generischen sim/cockpit2-Status.
-    // ApMaster bleibt bewusst auf dem robusten Standard-`servos_on`: das
-    // faengt CMD A ODER B (ein einzelnes Override koennte das nicht) und
-    // wird vom XP-Kern-Autopilot fuer beide 737-Varianten getrieben.
-    // Am kurzen Demo-Flug gegenzupruefen (Thomas hat XP-Demo + Zibo).
+    //
+    // ApMaster (01.10.2026, Michel THY 372, Zibo, Plugin 1.0): die alte
+    // Annahme „`servos_on` wird vom XP-Kern-Autopilot getrieben" war falsch —
+    // der Zibo fliegt mit eigenem Autopiloten, `servos_on` blieb 2,5 h auf 0,
+    // obwohl die Hoehe auf FL360 ueber 70 min nur 8,5 ft streute. Jetzt die
+    // CMD-A-Lampe (im Zibo-Scan belegt, `B738_Datarefs.txt` „AUTOPILOT
+    // LIGHTS"). Sie leuchtet bei jedem normalen AP-Betrieb, auch im
+    // Zweikanal-Anflug (A+B). Grenze: nur CMD B allein (Copilot fliegt)
+    // zaehlt als „aus" — ein Feld kann nur einen Dataref lesen.
+    // Wie jeder `laminar/…`-Name gilt sie erst nach dem ersten Wert ≠ 0
+    // (`plugin2_ziel::ist_kern`); bis zum ersten Einschalten ist der
+    // Autopilot „unbekannt" statt „aus".
     XplaneAircraftProfile {
         name: "Laminar/Zibo 737-800",
         title_match: &["boeing", "737-800"],
         probe_dataref: "laminar/B738/autopilot/cmd_a_status",
         overrides: &[
+            DatarefOverride {
+                field: FieldId::ApMaster,
+                dataref: "laminar/B738/autopilot/cmd_a_status",
+                mapping: ValueMapping::Passthrough,
+            },
             DatarefOverride {
                 field: FieldId::ApHeading,
                 dataref: "laminar/B738/autopilot/hdg_sel_status",
@@ -444,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn zibo737_active_catalog_overrides_ap_modes_but_not_master() {
+    fn zibo737_active_catalog_overrides_ap_modes_and_master() {
         let z = PROFILES
             .iter()
             .find(|p| p.name == "Laminar/Zibo 737-800")
@@ -461,13 +474,23 @@ mod tests {
             .find(|e| e.field == FieldId::ApApproach)
             .unwrap();
         assert_eq!(app.name, "laminar/B738/autopilot/app_status");
-        // ApMaster bewusst NICHT ueberschrieben — bleibt auf servos_on
-        // (faengt CMD A ODER B).
+        // ApMaster auf die CMD-A-Lampe (01.10.2026): `servos_on` treibt der
+        // Zibo nicht, es blieb einen ganzen Flug mit Autopilot auf 0.
         let master = active
             .iter()
             .find(|e| e.field == FieldId::ApMaster)
             .unwrap();
-        assert_eq!(master.name, "sim/cockpit2/autopilot/servos_on");
+        assert_eq!(master.name, "laminar/B738/autopilot/cmd_a_status");
+        // Gegenprobe: ohne Profil bleibt der Standard-Autopilot.
+        let basis = build_active_catalog(None);
+        assert_eq!(
+            basis
+                .iter()
+                .find(|e| e.field == FieldId::ApMaster)
+                .unwrap()
+                .name,
+            "sim/cockpit2/autopilot/servos_on"
+        );
         // Lockstep: gleiche Katalog-Laenge (nur bestehende Felder gebogen).
         assert_eq!(active.len(), CATALOG.len());
     }
