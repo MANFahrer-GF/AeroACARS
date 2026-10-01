@@ -1636,6 +1636,8 @@ mod plugin2_loopback_tests {
         /// Zibo 737-800X statt A320: Flugzeugmeldung und CMD-A-Lampe an,
         /// `servos_on` bleibt 0 (wie im echten Flug, 30.09.2026).
         zibo: bool,
+        /// Zibo: nur CMD B an (Copilot fliegt), CMD A aus.
+        zibo_nur_cmd_b: bool,
         client: Option<SocketAddr>,
         /// Vollstaendige Abos: ID → (Generation, Namen).
         abos: HashMap<u8, (u32, Vec<String>)>,
@@ -1664,10 +1666,15 @@ mod plugin2_loopback_tests {
         }
     }
 
-    fn fake_wert(name: &str, zibo: bool) -> Option<serde_json::Value> {
+    fn fake_wert(name: &str, zibo: bool, nur_b: bool) -> Option<serde_json::Value> {
         if zibo {
             match name {
-                "laminar/B738/autopilot/cmd_a_status" => return Some(serde_json::json!(1)),
+                "laminar/B738/autopilot/cmd_a_status" => {
+                    return Some(serde_json::json!(if nur_b { 0 } else { 1 }))
+                }
+                "laminar/B738/autopilot/cmd_b_status" => {
+                    return Some(serde_json::json!(if nur_b { 1 } else { 0 }))
+                }
                 "sim/cockpit2/autopilot/servos_on" => return Some(serde_json::json!(0)),
                 _ => {}
             }
@@ -1816,7 +1823,8 @@ mod plugin2_loopback_tests {
                                 .enumerate()
                                 .filter(|(_, n)| fake_status(n) != serde_json::json!("fehlt"))
                                 .filter_map(|(i, n)| {
-                                    fake_wert(n, st.zibo).map(|w| serde_json::json!([i, w]))
+                                    fake_wert(n, st.zibo, st.zibo_nur_cmd_b)
+                                        .map(|w| serde_json::json!([i, w]))
                                 })
                                 .collect();
                             if !v.is_empty() {
@@ -1871,6 +1879,16 @@ mod plugin2_loopback_tests {
     /// setzt). Ganze Kette: Schein-Plugin → Profil → Snapshot.
     #[test]
     fn zibo_autopilot_aus_der_cmd_a_lampe() {
+        zibo_autopilot_lauf(false);
+    }
+
+    /// CMD B allein (Copilot fliegt): ebenfalls Autopilot an.
+    #[test]
+    fn zibo_autopilot_nur_cmd_b() {
+        zibo_autopilot_lauf(true);
+    }
+
+    fn zibo_autopilot_lauf(nur_b: bool) {
         let stop = Arc::new(AtomicBool::new(false));
         let plugin_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
         let rref_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -1888,6 +1906,7 @@ mod plugin2_loopback_tests {
         let stand = Arc::new(Mutex::new(FakeStand {
             liefern: true,
             zibo: true,
+            zibo_nur_cmd_b: nur_b,
             ..FakeStand::default()
         }));
         let freqs = Arc::new(Mutex::new(Vec::new()));
@@ -1918,7 +1937,7 @@ mod plugin2_loopback_tests {
         );
         assert!(
             ap,
-            "Autopilot nicht an — CMD-A-Lampe kam nicht im Snapshot an"
+            "Autopilot nicht an (nur CMD B: {nur_b}) — Lampe kam nicht im Snapshot an"
         );
     }
 

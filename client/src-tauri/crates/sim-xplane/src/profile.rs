@@ -203,12 +203,10 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
     // der Zibo fliegt mit eigenem Autopiloten, `servos_on` blieb 2,5 h auf 0,
     // obwohl die Hoehe auf FL360 ueber 70 min nur 8,5 ft streute. Jetzt die
     // CMD-A-Lampe (im Zibo-Scan belegt, `B738_Datarefs.txt` „AUTOPILOT
-    // LIGHTS"). Sie leuchtet bei jedem normalen AP-Betrieb, auch im
-    // Zweikanal-Anflug (A+B). Grenze: nur CMD B allein (Copilot fliegt)
-    // zaehlt als „aus" — ein Feld kann nur einen Dataref lesen.
-    // Wie jeder `laminar/…`-Name gilt sie erst nach dem ersten Wert ≠ 0
-    // (`plugin2_ziel::ist_kern`); bis zum ersten Einschalten ist der
-    // Autopilot „unbekannt" statt „aus".
+    // LIGHTS"). CMD B kommt als eigene Quelle `B738CmdB` dazu
+    // (`dataref.rs`); der Autopilot gilt als an, wenn A ODER B leuchtet —
+    // auch CMD B allein (Copilot fliegt). Wie jeder `laminar/…`-Name zaehlt
+    // eine Lampe erst nach ihrem ersten Wert ≠ 0 (`plugin2_ziel::ist_kern`).
     XplaneAircraftProfile {
         name: "Laminar/Zibo 737-800",
         title_match: &["boeing", "737-800"],
