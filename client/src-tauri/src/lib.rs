@@ -9554,29 +9554,42 @@ fn update_lowest_approach_agl(stats: &mut FlightStats, snap: &SimSnapshot) {
 ///
 /// Mit bekannter Platzhoehe daher HAT (MSL − Platzhoehe), wie das
 /// Stabilitaets-Gate; ohne sie bleibt es bei AGL (bisheriges Verhalten).
-fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> (f32, bool) {
+fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> (f32, f32) {
     let agl = snap.altitude_agl_ft as f32;
     match stats.arr_airport_elevation_ft {
         Some(elev) => {
             let hat = snap.altitude_msl_ft as f32 - elev;
+            let diff = (hat - agl).abs();
             // Die Platzhoehe ist die des GEPLANTEN Ziels. Nach einem Ausweichen
-            // auf einen anderen Platz waere HAT um die Hoehendifferenz
-            // verschoben (negativ oder ueberhoeht) — dann gilt AGL wie zuvor,
-            // statt den Detektor mit einer falschen Bezugshoehe zu blenden.
-            if hat > 0.0 && (hat - agl).abs() <= HAT_AGL_PLAUSIBEL_FT {
-                (hat, true)
+            // auf einen anderen Platz (oder bei falscher Platzhoehe) waere HAT
+            // um die Differenz verschoben — dann gilt AGL wie zuvor, statt den
+            // Detektor mit einer falschen Bezugshoehe zu blenden.
+            if hat > 0.0 && diff <= HAT_AGL_PLAUSIBEL_FT {
+                // Die enge 1000-ft-Obergrenze nur, wenn HAT und AGL
+                // zusammenpassen (Gelaende, kein Hoehenfehler); bei groesserer
+                // Differenz bleibt es bei der weiten Grenze von 1500 ft.
+                let obergrenze = if diff <= HAT_AGL_VERTRAUT_FT {
+                    1000.0
+                } else {
+                    1500.0
+                };
+                (hat, obergrenze)
             } else {
-                (agl, false)
+                (agl, 1500.0)
             }
         }
-        None => (agl, false),
+        None => (agl, 1500.0),
     }
 }
 
 /// Groesster Unterschied HAT↔AGL, den der Durchstart-Detektor noch als
 /// „gleicher Platz" liest. Gelaende vor Bergplaetzen schwankt um einige
-/// hundert Fuss (DLH2248: 455 ft); 1500 ft liegt klar darueber.
-const HAT_AGL_PLAUSIBEL_FT: f32 = 1500.0;
+/// hundert Fuss (DLH2248: 455 ft).
+const HAT_AGL_PLAUSIBEL_FT: f32 = 1200.0;
+/// Bis zu dieser Differenz gilt HAT als verlaesslich genug fuer die enge
+/// Obergrenze (tiefster Punkt ≤ 1000 ft HAT). Darueber koennte die
+/// Platzhoehe falsch sein — dann bleibt die weite Grenze wie vor v1.9.16.
+const HAT_AGL_VERTRAUT_FT: f32 = 600.0;
 
 /// Detect a go-around in progress: aircraft has climbed
 /// `GO_AROUND_AGL_RECOVERY_FT` above the lowest AGL seen during this
@@ -9595,7 +9608,7 @@ fn check_go_around(
     now: DateTime<Utc>,
 ) -> Option<FlightPhase> {
     let lowest = stats.lowest_agl_during_approach_ft?;
-    let (agl, ist_hat) = hoehe_fuer_durchstart(stats, snap);
+    let (agl, obergrenze) = hoehe_fuer_durchstart(stats, snap);
     // Need at least *some* descent to have happened — otherwise a
     // pilot intercepting the glideslope from above would trip the
     // detector the moment we entered Approach.
@@ -9603,7 +9616,6 @@ fn check_go_around(
     // v1.9.16: Mit HAT liegt die Grenze am Stabilitaets-Gate (1000 ft):
     // Ein Abfangen oder Wiederansteigen OBERHALB davon ist kein
     // Fehlanflug, sondern ein Hoehenmanoever im Anflug.
-    let obergrenze = if ist_hat { 1000.0 } else { 1500.0 };
     if lowest > obergrenze {
         return None;
     }
@@ -11083,7 +11095,15 @@ const SINK_TOLERANZ_MS: i64 = 10_000;
 
 fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], grenze_fpm: f64) -> bool {
     let mut lauf_start: Option<DateTime<Utc>> = None;
+    let mut vorher: Option<DateTime<Utc>> = None;
     for s in samples {
+        // Eine Luecke im Buffer (Sim-Pause: der Zaehler friert ein) darf
+        // keinen Lauf ueberbruecken — zwei Samples vor und nach der Pause
+        // sind keine 10 s Sinkflug.
+        if vorher.is_some_and(|v| (s.at - v).num_milliseconds() > SINK_MAX_LUECKE_MS) {
+            lauf_start = None;
+        }
+        vorher = Some(s.at);
         if f64::from(s.vs_fpm) < grenze_fpm {
             let start = *lauf_start.get_or_insert(s.at);
             if (s.at - start).num_milliseconds() >= SINK_TOLERANZ_MS {
@@ -11095,6 +11115,9 @@ fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], grenze_fpm: f64) -
     }
     false
 }
+
+/// Groesster Abstand zweier Samples innerhalb eines Laufs (Kadenz ~1 s).
+const SINK_MAX_LUECKE_MS: i64 = 4000;
 
 /// v0.5.25: Stable-Approach-Gate-konformes Stability-Maß.
 ///
@@ -26757,6 +26780,16 @@ fn fill_v2_rollout_fields(
     input.runway_true_course_deg = rm.map(|m| m.heading_true_deg);
     // Drehfluegler/Wasserflugzeuge richten sich nicht an einer Bahnachse aus.
     input.nicht_konventionell = stats.landing_nicht_konventionell;
+    // Anflug-Stabilitaet misst ein 3°-Gleitpfad-Modell. Heli/Wasserflugzeug
+    // fliegen anders; ihre σ-Werte werden schon bei der Auswertung genullt
+    // (siehe `category.is_non_conventional()` beim Landen), aber die
+    // gefilterten v2-Felder bleiben gesetzt und `canonical_*` bevorzugt sie.
+    // Ohne diesen Schnitt deckelte das Anflug-Urteil (v1.9.16) sie auf 80/45.
+    if stats.landing_nicht_konventionell {
+        input.approach_vs_stddev_fpm = None;
+        input.approach_bank_stddev_deg = None;
+        input.anflug = Default::default();
+    }
     // Seitenwind-Kompensation der Ausrichtungs-Achse: rechtweisender Wind
     // beim Aufsetzen plus Bezugsgeschwindigkeit fuer den Vorhaltewinkel.
     input.landing_wind_direction_deg = stats.landing_wind_direction_deg;
@@ -59827,46 +59860,55 @@ mod touch_and_go_go_around_tests {
         assert!(stats.pending_acars_logs[0].contains("Go-around"));
     }
 
+    /// Karte, Anflug-Urteil und Stabilitaetsachse muessen dieselben sieben
+    /// Werte aus denselben Feldern lesen (Bank-Streuung: v2 vor Legacy).
+    /// Jedes Feld bekommt einen eigenen Wert — vertauschte Felder fallen auf.
+    #[test]
+    fn anflug_urteil_liest_dieselben_felder_wie_die_karte() {
+        let mut stats = FlightStats::default();
+        stats.approach_vs_jerk_fpm = Some(11.0);
+        stats.approach_bank_stddev_filtered_deg = None;
+        stats.approach_bank_stddev_deg = Some(7.5);
+        stats.approach_ias_stddev_kt = Some(33.0);
+        stats.approach_excessive_sink = Some(true);
+        stats.approach_stable_config = Some(false);
+        stats.approach_vs_deviation_fpm = Some(44.0);
+        stats.approach_max_vs_deviation_below_500_fpm = Some(55.0);
+        let a = scoring_eingang(&stats, None, None, None).anflug;
+        assert_eq!(a.vs_jerk_fpm, Some(11.0));
+        assert_eq!(a.bank_stddev_deg, Some(7.5), "Legacy, wenn v2 fehlt");
+        assert_eq!(a.ias_stddev_kt, Some(33.0));
+        assert_eq!(a.excessive_sink, Some(true));
+        assert_eq!(a.stable_config, Some(false));
+        assert_eq!(a.vs_deviation_fpm, Some(44.0));
+        assert_eq!(a.max_vs_deviation_below_500_fpm, Some(55.0));
+        stats.approach_bank_stddev_filtered_deg = Some(1.0);
+        let a = scoring_eingang(&stats, None, None, None).anflug;
+        assert_eq!(a.bank_stddev_deg, Some(1.0), "v2 gewinnt");
+    }
+
+    /// Hubschrauber/Wasserflugzeug: kein Anflug-Urteil, keine Stabilitaets-
+    /// achse — sonst deckelte das 3°-Modell sie auf 80/45.
+    #[test]
+    fn nicht_konventionell_bekommt_kein_anflug_urteil() {
+        let mut stats = FlightStats::default();
+        stats.landing_nicht_konventionell = true;
+        stats.approach_vs_stddev_filtered_fpm = Some(900.0);
+        stats.approach_bank_stddev_filtered_deg = Some(12.0);
+        stats.approach_vs_jerk_fpm = Some(400.0);
+        stats.approach_excessive_sink = Some(true);
+        let mut eingang = scoring_eingang(&stats, None, None, None);
+        fill_v2_rollout_fields(&mut eingang, &stats, "EDDM");
+        assert_eq!(eingang.approach_vs_stddev_fpm, None);
+        assert_eq!(eingang.approach_bank_stddev_deg, None);
+        assert_eq!(eingang.anflug, Default::default());
+        let subs = landing_scoring::compute_sub_scores(&eingang);
+        assert!(!subs.iter().any(|s| s.key == "stability"));
+    }
+
     /// DLH2248 (LFLL, 01.10.2026): Pilot faengt auf 1200 ft ueber der Bahn
     /// ab. Das Gelaende darunter schwankt, die AGL springt von 709 auf 1359 ft
     /// — die Hoehe ueber der Bahn (HAT) kam nie unter 1164 ft. Kein Durchstart.
-    /// Karte, Anflug-Urteil und Stabilitaetsachse muessen dieselbe Bank-
-    /// Streuung lesen: v2-Fenster vor Legacy — nicht nur das v2-Feld.
-    #[test]
-    fn anflug_urteil_liest_dieselbe_bankstreuung_wie_die_karte() {
-        let mut stats = FlightStats::default();
-        stats.approach_bank_stddev_filtered_deg = None;
-        stats.approach_bank_stddev_deg = Some(7.5);
-        let eingang = scoring_eingang(&stats, None, None, None);
-        assert_eq!(eingang.anflug.bank_stddev_deg, Some(7.5));
-        stats.approach_bank_stddev_filtered_deg = Some(1.0);
-        let eingang = scoring_eingang(&stats, None, None, None);
-        assert_eq!(eingang.anflug.bank_stddev_deg, Some(1.0));
-    }
-
-    /// Ausweichen auf einen Platz mit anderer Hoehe: Die Platzhoehe des
-    /// geplanten Ziels waere falsch — der Detektor faellt auf AGL zurueck und
-    /// erkennt den Durchstart wie vor v1.9.16.
-    #[test]
-    fn go_around_faellt_bei_falscher_platzhoehe_auf_agl_zurueck() {
-        let mut stats = FlightStats::default();
-        stats.arr_airport_elevation_ft = Some(5_330.0); // geplant: Nairobi
-        let mut tief = snap_at(400.0, -600.0, false);
-        tief.altitude_msl_ft = 100.0 + 400.0; // ausgewichen: Platz auf 100 ft
-        update_lowest_approach_agl(&mut stats, &tief);
-        assert_eq!(stats.lowest_agl_during_approach_ft, Some(400.0));
-        let mut hoch = snap_at(700.0, 1200.0, false);
-        hoch.altitude_msl_ft = 100.0 + 700.0;
-        let now = t0();
-        assert!(check_go_around(&mut stats, &hoch, now).is_none());
-        let out = check_go_around(
-            &mut stats,
-            &hoch,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
-        );
-        assert!(matches!(out, Some(FlightPhase::Climb)));
-    }
-
     #[test]
     fn go_around_ignoriert_gelaendesprung_ueber_dem_gate() {
         let mut stats = FlightStats::default();
@@ -59890,6 +59932,29 @@ mod touch_and_go_go_around_tests {
 
     /// Dasselbe Gelaende, aber ein echter Durchstart unter dem Gate: Der
     /// Detektor muss weiter greifen — gemessen in HAT.
+    /// Platzhoehe um 900 ft falsch (Ausweichplatz, falsche phpVMS-Hoehe):
+    /// ein echter Durchstart aus 150 ft AGL darf nicht still verschwinden —
+    /// die enge 1000-ft-Grenze gilt nur, wenn HAT und AGL zusammenpassen.
+    #[test]
+    fn go_around_bleibt_bei_platzhoehenfehler_von_900_ft_erkennbar() {
+        let mut stats = FlightStats::default();
+        stats.arr_airport_elevation_ft = Some(100.0);
+        let mut tief = snap_at(150.0, -600.0, false);
+        tief.altitude_msl_ft = 1_000.0 + 150.0; // Platz liegt in Wahrheit auf 1000 ft
+        update_lowest_approach_agl(&mut stats, &tief);
+        assert_eq!(stats.lowest_agl_during_approach_ft, Some(1_050.0));
+        let mut hoch = snap_at(450.0, 1200.0, false);
+        hoch.altitude_msl_ft = 1_000.0 + 450.0;
+        let now = t0();
+        check_go_around(&mut stats, &hoch, now);
+        let out = check_go_around(
+            &mut stats,
+            &hoch,
+            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+        );
+        assert!(matches!(out, Some(FlightPhase::Climb)));
+    }
+
     #[test]
     fn go_around_greift_unter_dem_gate_in_hat() {
         let mut stats = FlightStats::default();
@@ -63287,7 +63352,7 @@ mod sim_pause_tests {
         gear: f32,
         flaps: f32,
     ) -> ApproachBufferSample {
-        // v1.9.16: fuenf Sekunden je Aufruf — die Sinkgrenze zaehlt erst nach
+        // v1.9.16: zwei Sekunden je Aufruf — die Sinkgrenze zaehlt erst nach
         // 10 s am Stueck, ein Helfer mit gleichem Zeitstempel koennte das
         // nie pruefen.
         thread_local! {
@@ -63299,7 +63364,7 @@ mod sim_pause_tests {
             v
         });
         ApproachBufferSample {
-            at: DateTime::<Utc>::from_timestamp(1_790_000_000 + sek * 5, 0).unwrap(),
+            at: DateTime::<Utc>::from_timestamp(1_790_000_000 + sek * 2, 0).unwrap(),
             agl_ft: agl,
             msl_ft: agl,
             gs_kt: gs,
@@ -63930,27 +63995,21 @@ mod sim_pause_tests {
     /// erst 10 s am Stueck.
     #[test]
     fn sinkgrenze_toleriert_kurzes_ueberschreiten() {
-        let kurz: std::collections::VecDeque<ApproachBufferSample> = [
-            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0),
-            approach_sample(800.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
-            approach_sample(700.0, 130.0, 132.0, -1050.0, 1.0, 1.0),
-            approach_sample(600.0, 130.0, 132.0, -700.0, 1.0, 1.0),
-            approach_sample(500.0, 130.0, 132.0, -650.0, 1.0, 1.0),
-        ]
-        .into_iter()
-        .collect();
+        let reihe = |vs: &[f32]| -> std::collections::VecDeque<ApproachBufferSample> {
+            vs.iter()
+                .enumerate()
+                .map(|(i, v)| approach_sample(900.0 - 50.0 * i as f32, 130.0, 132.0, *v, 1.0, 1.0))
+                .collect()
+        };
+        // 3 Samples (4 s) unter der Grenze: toleriert.
+        let kurz = reihe(&[-650.0, -1100.0, -1050.0, -1080.0, -700.0, -650.0]);
         let out = compute_approach_stability_v2(&kurz, None, None, None, None, Default::default());
-        assert_eq!(out.excessive_sink, Some(false), "5 s unter der Grenze");
+        assert_eq!(out.excessive_sink, Some(false), "4 s unter der Grenze");
 
-        let lang: std::collections::VecDeque<ApproachBufferSample> = [
-            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0),
-            approach_sample(800.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
-            approach_sample(700.0, 130.0, 132.0, -1150.0, 1.0, 1.0),
-            approach_sample(600.0, 130.0, 132.0, -1200.0, 1.0, 1.0),
-            approach_sample(500.0, 130.0, 132.0, -1100.0, 1.0, 1.0),
-        ]
-        .into_iter()
-        .collect();
+        // 6 Samples (10 s) am Stueck: excessive.
+        let lang = reihe(&[
+            -650.0, -1100.0, -1150.0, -1200.0, -1100.0, -1120.0, -1100.0, -700.0,
+        ]);
         let out = compute_approach_stability_v2(&lang, None, None, None, None, Default::default());
         assert_eq!(
             out.excessive_sink,
@@ -63959,8 +64018,33 @@ mod sim_pause_tests {
         );
     }
 
-    /// Die Toleranz zaehlt AM STUECK: zwei Ausreisser mit Pause dazwischen
-    /// addieren sich nicht.
+    /// Sim-Pause: zwei Samples unter der Grenze mit grosser Luecke
+    /// dazwischen sind keine 10 s Sinkflug.
+    #[test]
+    fn sinkgrenze_ueberbrueckt_keine_buffer_luecke() {
+        let base = DateTime::<Utc>::from_timestamp(1_790_100_000, 0).unwrap();
+        let mk = |sek: i64, vs: f32| {
+            let mut s = approach_sample(800.0, 130.0, 132.0, vs, 1.0, 1.0);
+            s.at = base + chrono::Duration::seconds(sek);
+            s
+        };
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            mk(0, -1100.0),
+            mk(1, -1100.0),
+            mk(15, -1100.0),
+            mk(16, -1100.0),
+        ]
+        .into_iter()
+        .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        assert_eq!(out.excessive_sink, Some(false), "Luecke von 14 s");
+        // Gegenprobe: lueckenlos 11 s unter der Grenze zaehlt.
+        let dicht: std::collections::VecDeque<ApproachBufferSample> =
+            (0..12).map(|i| mk(i, -1100.0)).collect();
+        let out = compute_approach_stability_v2(&dicht, None, None, None, None, Default::default());
+        assert_eq!(out.excessive_sink, Some(true));
+    }
+
     #[test]
     fn sinkgrenze_zaehlt_nur_am_stueck() {
         let buf: std::collections::VecDeque<ApproachBufferSample> = [
@@ -64021,7 +64105,9 @@ mod sim_pause_tests {
         // nutzt σ, nicht diese Felder) — reine Anzeige/„stable"-Korrektur.
         let buf: std::collections::VecDeque<ApproachBufferSample> = [
             approach_sample(900.0, 120.0, 132.0, -1170.0, 1.0, 0.85),
+            approach_sample(800.0, 120.0, 132.0, -1165.0, 1.0, 0.85),
             approach_sample(700.0, 119.0, 131.0, -1160.0, 1.0, 0.85),
+            approach_sample(650.0, 119.0, 131.0, -1155.0, 1.0, 0.85),
             approach_sample(600.0, 118.0, 130.0, -1150.0, 1.0, 0.85),
             approach_sample(300.0, 115.0, 128.0, -1120.0, 1.0, 0.85),
         ]
@@ -64077,6 +64163,8 @@ mod sim_pause_tests {
         // ist steilanflug-typisch hoch.
         let buf: std::collections::VecDeque<ApproachBufferSample> = [
             approach_sample(180.0, 120.0, 132.0, -1150.0, 1.0, 0.85),
+            approach_sample(170.0, 120.0, 132.0, -1148.0, 1.0, 0.85),
+            approach_sample(160.0, 120.0, 132.0, -1146.0, 1.0, 0.85),
             approach_sample(150.0, 120.0, 132.0, -1145.0, 1.0, 0.85),
             approach_sample(120.0, 119.0, 131.0, -1140.0, 1.0, 0.85),
             approach_sample(60.0, 118.0, 130.0, -1120.0, 1.0, 0.85),
@@ -69390,12 +69478,10 @@ mod v0_16_6_bush_completeness_tests {
             -1500.0,
         ));
         // v1.9.16: die Sinkgrenze zaehlt erst nach 10 s am Stueck — der
-        // Gift-Lauf muss 10 s lang sein, sonst waere er ein tolerierter Ausreisser.
-        buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(1007),
-            600.0,
-            -1400.0,
-        ));
+        // Gift-Lauf muss 10 s lang und lueckenlos (≤ 4 s Abstand) sein.
+        for (sek, vs) in [(1007, -1400.0), (1004, -1300.0), (1001, -1200.0)] {
+            buf.push_back(sample_at(td() - chrono::Duration::seconds(sek), 600.0, vs));
+        }
         buf.push_back(sample_at(
             td() - chrono::Duration::seconds(1000),
             300.0,
@@ -69450,7 +69536,7 @@ mod v0_16_6_bush_completeness_tests {
         let unwindowed =
             compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(
-            unwindowed.window_sample_count, 7,
+            unwindowed.window_sample_count, 9,
             "None = old behaviour: every gate-band sample counts"
         );
         assert_eq!(

@@ -23,7 +23,8 @@
 // (deckelt die Stabilitätsachse: PARTIAL ≤ 80, UNSTABLE ≤ 45). Wer hier
 // eine Grenze ändert, muss dort mitziehen.
 //
-// STABLE-GATE-Pill: 0 bad-Werte → STABLE; 1–2 → PARTIAL; ≥3 → UNSTABLE.
+// STABLE-GATE-Pill: alles grün → STABLE; ≥ 2 bad ODER bad+ok ≥ 3 → UNSTABLE;
+// sonst PARTIAL (so rechnet auch das Backend).
 // "bad" für Bools = excessive_sink=true / stable_config=false.
 
 import { useState } from "react";
