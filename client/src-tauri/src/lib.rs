@@ -9528,7 +9528,7 @@ fn should_push_approach_sample(
 /// fresh approach window) and when the FSM exits Final into Landing
 /// (a successful touchdown invalidates the approach minimum).
 fn update_lowest_approach_agl(stats: &mut FlightStats, snap: &SimSnapshot) {
-    let agl = hoehe_fuer_durchstart(stats, snap);
+    let (agl, _) = hoehe_fuer_durchstart(stats, snap);
     // Only track positive AGL — a brief negative reading from a sim
     // glitch (terrain mesh hiccup) would poison the minimum and make
     // every subsequent sample look like a 200 ft go-around climb.
@@ -9554,12 +9554,29 @@ fn update_lowest_approach_agl(stats: &mut FlightStats, snap: &SimSnapshot) {
 ///
 /// Mit bekannter Platzhoehe daher HAT (MSL − Platzhoehe), wie das
 /// Stabilitaets-Gate; ohne sie bleibt es bei AGL (bisheriges Verhalten).
-fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> f32 {
+fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> (f32, bool) {
+    let agl = snap.altitude_agl_ft as f32;
     match stats.arr_airport_elevation_ft {
-        Some(elev) => snap.altitude_msl_ft as f32 - elev,
-        None => snap.altitude_agl_ft as f32,
+        Some(elev) => {
+            let hat = snap.altitude_msl_ft as f32 - elev;
+            // Die Platzhoehe ist die des GEPLANTEN Ziels. Nach einem Ausweichen
+            // auf einen anderen Platz waere HAT um die Hoehendifferenz
+            // verschoben (negativ oder ueberhoeht) — dann gilt AGL wie zuvor,
+            // statt den Detektor mit einer falschen Bezugshoehe zu blenden.
+            if hat > 0.0 && (hat - agl).abs() <= HAT_AGL_PLAUSIBEL_FT {
+                (hat, true)
+            } else {
+                (agl, false)
+            }
+        }
+        None => (agl, false),
     }
 }
+
+/// Groesster Unterschied HAT↔AGL, den der Durchstart-Detektor noch als
+/// „gleicher Platz" liest. Gelaende vor Bergplaetzen schwankt um einige
+/// hundert Fuss (DLH2248: 455 ft); 1500 ft liegt klar darueber.
+const HAT_AGL_PLAUSIBEL_FT: f32 = 1500.0;
 
 /// Detect a go-around in progress: aircraft has climbed
 /// `GO_AROUND_AGL_RECOVERY_FT` above the lowest AGL seen during this
@@ -9578,7 +9595,7 @@ fn check_go_around(
     now: DateTime<Utc>,
 ) -> Option<FlightPhase> {
     let lowest = stats.lowest_agl_during_approach_ft?;
-    let agl = hoehe_fuer_durchstart(stats, snap);
+    let (agl, ist_hat) = hoehe_fuer_durchstart(stats, snap);
     // Need at least *some* descent to have happened — otherwise a
     // pilot intercepting the glideslope from above would trip the
     // detector the moment we entered Approach.
@@ -9586,11 +9603,7 @@ fn check_go_around(
     // v1.9.16: Mit HAT liegt die Grenze am Stabilitaets-Gate (1000 ft):
     // Ein Abfangen oder Wiederansteigen OBERHALB davon ist kein
     // Fehlanflug, sondern ein Hoehenmanoever im Anflug.
-    let obergrenze = if stats.arr_airport_elevation_ft.is_some() {
-        1000.0
-    } else {
-        1500.0
-    };
+    let obergrenze = if ist_hat { 1000.0 } else { 1500.0 };
     if lowest > obergrenze {
         return None;
     }
@@ -27437,7 +27450,8 @@ fn scoring_eingang(
         // Gerechnet wird NUR in `landing_scoring::anflug_urteil`.
         anflug: landing_scoring::anflug_urteil::AnflugWerte {
             vs_jerk_fpm: stats.approach_vs_jerk_fpm,
-            bank_stddev_deg: stats.approach_bank_stddev_filtered_deg,
+            // Dieselbe Zahl wie Karte und Stabilitaetsachse (v2 vor Legacy).
+            bank_stddev_deg: stats.canonical_bank_stddev_deg(),
             ias_stddev_kt: stats.approach_ias_stddev_kt,
             excessive_sink: stats.approach_excessive_sink,
             stable_config: stats.approach_stable_config,
@@ -59816,6 +59830,43 @@ mod touch_and_go_go_around_tests {
     /// DLH2248 (LFLL, 01.10.2026): Pilot faengt auf 1200 ft ueber der Bahn
     /// ab. Das Gelaende darunter schwankt, die AGL springt von 709 auf 1359 ft
     /// — die Hoehe ueber der Bahn (HAT) kam nie unter 1164 ft. Kein Durchstart.
+    /// Karte, Anflug-Urteil und Stabilitaetsachse muessen dieselbe Bank-
+    /// Streuung lesen: v2-Fenster vor Legacy — nicht nur das v2-Feld.
+    #[test]
+    fn anflug_urteil_liest_dieselbe_bankstreuung_wie_die_karte() {
+        let mut stats = FlightStats::default();
+        stats.approach_bank_stddev_filtered_deg = None;
+        stats.approach_bank_stddev_deg = Some(7.5);
+        let eingang = scoring_eingang(&stats, None, None, None);
+        assert_eq!(eingang.anflug.bank_stddev_deg, Some(7.5));
+        stats.approach_bank_stddev_filtered_deg = Some(1.0);
+        let eingang = scoring_eingang(&stats, None, None, None);
+        assert_eq!(eingang.anflug.bank_stddev_deg, Some(1.0));
+    }
+
+    /// Ausweichen auf einen Platz mit anderer Hoehe: Die Platzhoehe des
+    /// geplanten Ziels waere falsch — der Detektor faellt auf AGL zurueck und
+    /// erkennt den Durchstart wie vor v1.9.16.
+    #[test]
+    fn go_around_faellt_bei_falscher_platzhoehe_auf_agl_zurueck() {
+        let mut stats = FlightStats::default();
+        stats.arr_airport_elevation_ft = Some(5_330.0); // geplant: Nairobi
+        let mut tief = snap_at(400.0, -600.0, false);
+        tief.altitude_msl_ft = 100.0 + 400.0; // ausgewichen: Platz auf 100 ft
+        update_lowest_approach_agl(&mut stats, &tief);
+        assert_eq!(stats.lowest_agl_during_approach_ft, Some(400.0));
+        let mut hoch = snap_at(700.0, 1200.0, false);
+        hoch.altitude_msl_ft = 100.0 + 700.0;
+        let now = t0();
+        assert!(check_go_around(&mut stats, &hoch, now).is_none());
+        let out = check_go_around(
+            &mut stats,
+            &hoch,
+            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+        );
+        assert!(matches!(out, Some(FlightPhase::Climb)));
+    }
+
     #[test]
     fn go_around_ignoriert_gelaendesprung_ueber_dem_gate() {
         let mut stats = FlightStats::default();
