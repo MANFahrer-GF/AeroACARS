@@ -162,6 +162,23 @@ pub enum FieldId {
     /// schreibt in den Standard-`transponder_mode` fuer jede Flugstellung
     /// nur 2 — der Schalter ist die einzige Quelle fuer ALT/TA/RA.
     B738XpdrKnob,
+    /// `laminar/B738/autopilot/cmd_b_status` — CMD-B-Lampe (0/1) des
+    /// Laminar/Zibo-737 (`B738_Datarefs.txt` „AUTOPILOT LIGHTS“). CMD A
+    /// liest das Zibo-Profil als ApMaster; zusammen: Autopilot an, wenn
+    /// A ODER B leuchtet (01.10.2026, Thomas: „auch CMD B?“).
+    B738CmdB,
+    /// `laminar/B738/toggle_switch/logo_light` — Logo-Licht-Schalter (0/1; vmsACARS: an bei 1). Zibo-Audit 01.10.2026.
+    B738LogoLight,
+    /// `laminar/B738/ice/wing_heat_pos` — WING ANTI ICE (0-off, 1-on, Zibo-Doku). Zibo-Audit 01.10.2026.
+    B738WingHeat,
+    /// `laminar/B738/ice/eng1_heat_pos` — ENGINE 1 ANTI ICE (0-off, 1-on, Zibo-Doku). Zibo-Audit 01.10.2026.
+    B738Eng1Heat,
+    /// `laminar/B738/ice/eng2_heat_pos` — ENGINE 2 ANTI ICE (0-off, 1-on, Zibo-Doku). Zibo-Audit 01.10.2026.
+    B738Eng2Heat,
+    /// `laminar/B738/autopilot/autothrottle_status` — A/T-ARM-Lampe (Zibo-Doku „AUTOPILOT LIGHTS“). Zibo-Audit 01.10.2026.
+    B738AtArm,
+    /// `laminar/B738/annunciator/master_caution_light` — MASTER CAUTION (Zibo-Doku „CAUTION LIGHT“). Zibo-Audit 01.10.2026.
+    B738MasterCaution,
     /// `laminar/B738/toggle_switch/seatbelt_sign_pos` — 0=OFF 1=AUTO 2=ON.
     B738SeatbeltSign,
     /// `laminar/B738/annunciator/speedbrake_armed` — >0 = SPEED BRAKE ARMED.
@@ -729,6 +746,34 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::B738XpdrKnob,
     },
     DatarefEntry {
+        name: "laminar/B738/autopilot/cmd_b_status",
+        field: FieldId::B738CmdB,
+    },
+    DatarefEntry {
+        name: "laminar/B738/toggle_switch/logo_light",
+        field: FieldId::B738LogoLight,
+    },
+    DatarefEntry {
+        name: "laminar/B738/ice/wing_heat_pos",
+        field: FieldId::B738WingHeat,
+    },
+    DatarefEntry {
+        name: "laminar/B738/ice/eng1_heat_pos",
+        field: FieldId::B738Eng1Heat,
+    },
+    DatarefEntry {
+        name: "laminar/B738/ice/eng2_heat_pos",
+        field: FieldId::B738Eng2Heat,
+    },
+    DatarefEntry {
+        name: "laminar/B738/autopilot/autothrottle_status",
+        field: FieldId::B738AtArm,
+    },
+    DatarefEntry {
+        name: "laminar/B738/annunciator/master_caution_light",
+        field: FieldId::B738MasterCaution,
+    },
+    DatarefEntry {
         name: "laminar/B738/toggle_switch/seatbelt_sign_pos",
         field: FieldId::B738SeatbeltSign,
     },
@@ -1083,6 +1128,15 @@ pub struct XPlaneState {
     // bestaetigt ist (`addon_quelle`).
     pub light_beacon_legacy: Option<bool>,
     pub b738_xpdr_knob: Option<f32>,
+    /// CMD-B-Lampe (Laminar/Zibo 737); `false`, solange nicht bestaetigt.
+    pub b738_cmd_b: bool,
+    // Zibo-Audit 01.10.2026 — `None`, solange die Quelle nicht bestaetigt ist.
+    pub b738_logo_light: Option<bool>,
+    pub b738_wing_heat: Option<bool>,
+    pub b738_eng1_heat: Option<bool>,
+    pub b738_eng2_heat: Option<bool>,
+    pub b738_at_arm: Option<bool>,
+    pub b738_master_caution: Option<bool>,
     pub b738_seatbelt_sign: Option<f32>,
     pub b738_speedbrake_armed: Option<bool>,
     pub b738_autobrake_pos: Option<f32>,
@@ -1336,6 +1390,13 @@ pub fn addon_quelle(field: FieldId) -> bool {
             | FieldId::TolissAthrMode
             | FieldId::LightBeaconLegacy
             | FieldId::B738XpdrKnob
+            | FieldId::B738CmdB
+            | FieldId::B738LogoLight
+            | FieldId::B738WingHeat
+            | FieldId::B738Eng1Heat
+            | FieldId::B738Eng2Heat
+            | FieldId::B738AtArm
+            | FieldId::B738MasterCaution
             | FieldId::B738SeatbeltSign
             | FieldId::B738SpeedbrakeArmed
             | FieldId::B738AutobrakePos
@@ -1395,6 +1456,13 @@ impl XPlaneState {
             }
             FieldId::LightBeaconLegacy => self.light_beacon_legacy = None,
             FieldId::B738XpdrKnob => self.b738_xpdr_knob = None,
+            FieldId::B738CmdB => self.b738_cmd_b = false,
+            FieldId::B738LogoLight => self.b738_logo_light = None,
+            FieldId::B738WingHeat => self.b738_wing_heat = None,
+            FieldId::B738Eng1Heat => self.b738_eng1_heat = None,
+            FieldId::B738Eng2Heat => self.b738_eng2_heat = None,
+            FieldId::B738AtArm => self.b738_at_arm = None,
+            FieldId::B738MasterCaution => self.b738_master_caution = None,
             FieldId::B738SeatbeltSign => self.b738_seatbelt_sign = None,
             FieldId::B738SpeedbrakeArmed => self.b738_speedbrake_armed = None,
             FieldId::B738AutobrakePos => self.b738_autobrake_pos = None,
@@ -1538,6 +1606,13 @@ impl XPlaneState {
             // Bordbuch-Audit 26.09.2026 — anwesenheitsgesteuerte Schalter
             FieldId::LightBeaconLegacy => self.light_beacon_legacy = Some(value > 0.5),
             FieldId::B738XpdrKnob => self.b738_xpdr_knob = Some(value),
+            FieldId::B738CmdB => self.b738_cmd_b = value > 0.5,
+            FieldId::B738LogoLight => self.b738_logo_light = Some(value > 0.5),
+            FieldId::B738WingHeat => self.b738_wing_heat = Some(value > 0.5),
+            FieldId::B738Eng1Heat => self.b738_eng1_heat = Some(value > 0.5),
+            FieldId::B738Eng2Heat => self.b738_eng2_heat = Some(value > 0.5),
+            FieldId::B738AtArm => self.b738_at_arm = Some(value > 0.5),
+            FieldId::B738MasterCaution => self.b738_master_caution = Some(value > 0.5),
             FieldId::B738SeatbeltSign => self.b738_seatbelt_sign = Some(value),
             FieldId::B738SpeedbrakeArmed => self.b738_speedbrake_armed = Some(value > 0.5),
             FieldId::B738AutobrakePos => self.b738_autobrake_pos = Some(value),
@@ -1860,7 +1935,9 @@ impl XPlaneState {
             light_taxi: Some(self.light_taxi),
             light_nav: Some(self.light_nav),
             // X-Plane's nav-light DataRef covers logo on most payware.
-            light_logo: Some(self.light_nav),
+            // Zibo/Laminar-737: eigener Logo-Schalter; sonst wie bisher die
+            // Nav-Lichter (X-Planes Konvention fuer die meisten Payware).
+            light_logo: Some(self.b738_logo_light.unwrap_or(self.light_nav)),
             // 3-Stufen-Schalter, wo ein Add-on ihn liefert (Laminar-A330);
             // sonst nur der binaere Effekt in `light_strobe`.
             strobe_state: self
@@ -1874,7 +1951,9 @@ impl XPlaneState {
             // aircraft that serves them simply wins the OR). Same
             // tiebreaker pattern as the A346/Fenix LVar mapping on the
             // MSFS side.
-            autopilot_master: Some(self.ap_master || self.toliss_ap1 || self.toliss_ap2),
+            autopilot_master: Some(
+                self.ap_master || self.toliss_ap1 || self.toliss_ap2 || self.b738_cmd_b,
+            ),
             // Standard ODER ToLiss-FMA (der ToLiss setzt die Standard-
             // Statuswerte nie), siehe `toliss_ap_modi`.
             autopilot_heading: Some(self.ap_heading || self.toliss_ap_modi().0),
@@ -1895,6 +1974,11 @@ impl XPlaneState {
             } else {
                 None
             },
+            // `autothrottle_is_arm` ist nur ein Zusatz zu `autothrottle_on`
+            // („dessen An ist ARM“) — beim Zibo gibt es fuer
+            // `autothrottle_on` keine Quelle, die ARM-Lampe haette also keine
+            // Wirkung und leuchtet auch bei aktivem A/T (QS 01.10.2026).
+            // `b738_at_arm` wird gelesen, aber noch nicht ausgegeben.
             autothrottle_is_arm: false,
             // Summe `ENGN_FF_` (kg/s → kg/h). 0 → None, dann leitet der
             // Positions-Takt den Fluss wie bisher aus dem FOB-Verlauf ab.
@@ -1914,8 +1998,13 @@ impl XPlaneState {
             battery_master: Some(self.battery_master),
             avionics_master: Some(self.avionics_master),
             pitot_heat: Some(self.pitot_heat),
-            engine_anti_ice: None,
-            wing_anti_ice: None,
+            // Zibo/Laminar-737 (Doku „ANTI ICE SWITCHES“); andere Muster:
+            // unbekannt.
+            engine_anti_ice: match (self.b738_eng1_heat, self.b738_eng2_heat) {
+                (None, None) => None,
+                (a, b) => Some(a == Some(true) || b == Some(true)),
+            },
+            wing_anti_ice: self.b738_wing_heat,
             // v0.3.0 — Boeing 737-family lights via laminar/B738/...
             // DataRef. Some(...) when the value is non-zero in the
             // RREF feed; None when the DataRef doesn't exist on the
@@ -2031,7 +2120,7 @@ impl XPlaneState {
             vref_kt: None,
             flex_temp_c: None,
             thrust_gate: None,
-            master_caution: None,
+            master_caution: self.b738_master_caution,
             master_warning: None,
             managed_speed: None,
             managed_heading: None,
@@ -2280,6 +2369,84 @@ mod toliss_autoflight_tests {
         s.apply_field(FieldId::TolissAp2, 1.0);
         let snap = s.to_snapshot(Simulator::XPlane12);
         assert_eq!(snap.autopilot_master, Some(true));
+    }
+
+    /// Zibo-Audit 01.10.2026: Logo, Anti-Eis, A/T-ARM und Master Caution
+    /// aus den Zibo-Quellen; ohne Zibo bleiben sie unbekannt (None) bzw.
+    /// fallen auf das Bisherige zurueck (Logo = Nav).
+    #[test]
+    fn zibo_quellen_im_snapshot() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::LightNav, 1.0);
+        let leer = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(leer.light_logo, Some(true), "ohne Zibo: Logo = Nav");
+        assert_eq!(leer.engine_anti_ice, None);
+        assert_eq!(leer.wing_anti_ice, None);
+        assert_eq!(leer.master_caution, None);
+        assert!(!leer.autothrottle_is_arm);
+
+        s.apply_field(FieldId::B738LogoLight, 0.0);
+        s.apply_field(FieldId::B738Eng1Heat, 0.0);
+        s.apply_field(FieldId::B738Eng2Heat, 1.0);
+        s.apply_field(FieldId::B738WingHeat, 0.0);
+        s.apply_field(FieldId::B738AtArm, 1.0);
+        s.apply_field(FieldId::B738MasterCaution, 1.0);
+        let z = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(
+            z.light_logo,
+            Some(false),
+            "Zibo-Logo-Schalter aus, obwohl Nav an"
+        );
+        assert_eq!(z.engine_anti_ice, Some(true), "Triebwerk 2 an");
+        assert_eq!(z.wing_anti_ice, Some(false));
+        // A/T-ARM wird gelesen, aber nicht ausgegeben (ohne Quelle fuer
+        // `autothrottle_on` haette es keine Wirkung, QS 01.10.2026).
+        assert_eq!(s.b738_at_arm, Some(true));
+        assert!(!z.autothrottle_is_arm);
+        assert_eq!(z.master_caution, Some(true));
+
+        // Flugzeugwechsel: Quellen vergessen → wieder unbekannt.
+        for f in [
+            FieldId::B738LogoLight,
+            FieldId::B738Eng1Heat,
+            FieldId::B738Eng2Heat,
+            FieldId::B738WingHeat,
+            FieldId::B738AtArm,
+            FieldId::B738MasterCaution,
+        ] {
+            assert!(addon_quelle(f), "{f:?} muss Add-on-Quelle sein");
+            s.addon_leeren(f);
+        }
+        let weg = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(weg.light_logo, Some(true));
+        assert_eq!(weg.engine_anti_ice, None);
+        assert_eq!(weg.master_caution, None);
+        assert!(!weg.autothrottle_is_arm);
+    }
+
+    /// Zibo/Laminar 737 (01.10.2026): CMD B allein (Copilot fliegt) zaehlt
+    /// als Autopilot an; ApMaster ist im Zibo-Profil die CMD-A-Lampe.
+    #[test]
+    fn b738_cmd_b_allein_heisst_autopilot_an() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApMaster, 0.0); // CMD A aus
+        s.apply_field(FieldId::B738CmdB, 1.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autopilot_master,
+            Some(true)
+        );
+        s.apply_field(FieldId::B738CmdB, 0.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autopilot_master,
+            Some(false)
+        );
+        // Quelle vergessen (Flugzeugwechsel) → kein Rest-„an“.
+        s.apply_field(FieldId::B738CmdB, 1.0);
+        s.addon_leeren(FieldId::B738CmdB);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autopilot_master,
+            Some(false)
+        );
     }
 
     #[test]

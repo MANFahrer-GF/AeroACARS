@@ -1633,6 +1633,11 @@ mod plugin2_loopback_tests {
         liefern: bool,
         /// Langsames Plugin: Mess-Abos (ID ≥ 3) bekommen nie einen Status.
         mess_stumm: bool,
+        /// Zibo 737-800X statt A320: Flugzeugmeldung und CMD-A-Lampe an,
+        /// `servos_on` bleibt 0 (wie im echten Flug, 30.09.2026).
+        zibo: bool,
+        /// Zibo: nur CMD B an (Copilot fliegt), CMD A aus.
+        zibo_nur_cmd_b: bool,
         client: Option<SocketAddr>,
         /// Vollstaendige Abos: ID → (Generation, Namen).
         abos: HashMap<u8, (u32, Vec<String>)>,
@@ -1661,7 +1666,32 @@ mod plugin2_loopback_tests {
         }
     }
 
-    fn fake_wert(name: &str) -> Option<serde_json::Value> {
+    fn fake_wert(name: &str, zibo: bool, nur_b: bool) -> Option<serde_json::Value> {
+        if zibo {
+            match name {
+                "laminar/B738/autopilot/cmd_a_status" => {
+                    return Some(serde_json::json!(if nur_b { 0 } else { 1 }))
+                }
+                "laminar/B738/autopilot/cmd_b_status" => {
+                    return Some(serde_json::json!(if nur_b { 1 } else { 0 }))
+                }
+                "sim/cockpit2/autopilot/servos_on" => return Some(serde_json::json!(0)),
+                // Zibo-Audit 01.10.2026: Schalter, die der Zibo selbst traegt.
+                "laminar/B738/toggle_switch/taxi_light_brightness_pos" => {
+                    return Some(serde_json::json!(2))
+                }
+                "laminar/B738/toggle_switch/capt_probes_pos"
+                | "laminar/B738/toggle_switch/logo_light"
+                | "laminar/B738/ice/eng1_heat_pos"
+                | "laminar/B738/annunciator/master_caution_light"
+                | "laminar/B738/autopilot/autothrottle_status" => {
+                    return Some(serde_json::json!(1))
+                }
+                "sim/cockpit2/switches/taxi_light_on"
+                | "sim/cockpit2/ice/ice_pitot_heat_on_pilot" => return Some(serde_json::json!(0)),
+                _ => {}
+            }
+        }
         Some(match name {
             "sim/flightmodel/position/latitude" => serde_json::json!(BREITE),
             "sim/flightmodel/position/longitude" => serde_json::json!(LAENGE),
@@ -1739,7 +1769,11 @@ mod plugin2_loopback_tests {
                             senden(
                                 &sock,
                                 von,
-                                serde_json::json!({"p":2,"t":"flugzeug","icao":"A20N","titel":"A320neo Test","pfad":"Aircraft/Test/a320.acf"}),
+                                if st.zibo {
+                                    serde_json::json!({"p":2,"t":"flugzeug","icao":"B738","titel":"Boeing 737-800X","ui_name":"Boeing 737-800X (4k)","pfad":"Aircraft/B737-800X/b738_4k.acf"})
+                                } else {
+                                    serde_json::json!({"p":2,"t":"flugzeug","icao":"A20N","titel":"A320neo Test","pfad":"Aircraft/Test/a320.acf"})
+                                },
                             );
                         }
                         Some("ABO") if st.liefern => {
@@ -1802,7 +1836,8 @@ mod plugin2_loopback_tests {
                                 .enumerate()
                                 .filter(|(_, n)| fake_status(n) != serde_json::json!("fehlt"))
                                 .filter_map(|(i, n)| {
-                                    fake_wert(n).map(|w| serde_json::json!([i, w]))
+                                    fake_wert(n, st.zibo, st.zibo_nur_cmd_b)
+                                        .map(|w| serde_json::json!([i, w]))
                                 })
                                 .collect();
                             if !v.is_empty() {
@@ -1850,6 +1885,97 @@ mod plugin2_loopback_tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         ok()
+    }
+
+    /// Zibo 737-800X (01.10.2026, Michel THY 372): der Autopilot kommt aus
+    /// der CMD-A-Lampe des Zibo, nicht aus `servos_on` (das der Zibo nie
+    /// setzt). Ganze Kette: Schein-Plugin → Profil → Snapshot.
+    #[test]
+    fn zibo_autopilot_aus_der_cmd_a_lampe() {
+        zibo_autopilot_lauf(false);
+    }
+
+    /// CMD B allein (Copilot fliegt): ebenfalls Autopilot an.
+    #[test]
+    fn zibo_autopilot_nur_cmd_b() {
+        zibo_autopilot_lauf(true);
+    }
+
+    fn zibo_autopilot_lauf(nur_b: bool) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let plugin_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let rref_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let web_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let anschluesse = Anschluesse {
+            rref: rref_sock.local_addr().unwrap(),
+            plugin_p1: 0,
+            plugin_p2: plugin_sock.local_addr().unwrap(),
+            web_api: format!("http://127.0.0.1:{web_port}"),
+        };
+        let stand = Arc::new(Mutex::new(FakeStand {
+            liefern: true,
+            zibo: true,
+            zibo_nur_cmd_b: nur_b,
+            ..FakeStand::default()
+        }));
+        let freqs = Arc::new(Mutex::new(Vec::new()));
+        let f1 = fake_plugin(plugin_sock, Arc::clone(&stand), Arc::clone(&stop));
+        let f2 = fake_rref(rref_sock, Arc::clone(&freqs), Arc::clone(&stop));
+        let mut ad = XPlaneAdapter::mit_anschluessen(anschluesse);
+        ad.start(SimKind::XPlane12);
+
+        let profil_ok = warte(Duration::from_secs(15), || {
+            ad.shared
+                .p2
+                .lock()
+                .profil
+                .is_some_and(|pi| PROFILES[pi].name == "Laminar/Zibo 737-800")
+        });
+        let ap = warte(Duration::from_secs(15), || {
+            ad.snapshot()
+                .is_some_and(|s| s.autopilot_master == Some(true))
+        });
+        // Zibo-Audit 01.10.2026: Taxilicht, Sonden-Heizung, Logo, Anti-Eis
+        // und Master Caution aus den Zibo-Schaltern. (A/T-ARM wird gelesen,
+        // aber nicht ausgegeben — siehe `autothrottle_is_arm` in dataref.rs.)
+        let schalter = warte(Duration::from_secs(15), || {
+            ad.snapshot().is_some_and(|s| {
+                s.light_taxi == Some(true)
+                    && s.pitot_heat == Some(true)
+                    && s.light_logo == Some(true)
+                    && s.engine_anti_ice == Some(true)
+                    && !s.autothrottle_is_arm
+                    && s.master_caution == Some(true)
+            })
+        });
+        let letzter = ad.snapshot();
+        stop.store(true, Ordering::SeqCst);
+        ad.stop();
+        let _ = f1.join();
+        let _ = f2.join();
+        assert!(
+            profil_ok,
+            "Zibo-Profil nicht aktiv: {:?}",
+            stand.lock().anfragen
+        );
+        assert!(
+            ap,
+            "Autopilot nicht an (nur CMD B: {nur_b}) — Lampe kam nicht im Snapshot an"
+        );
+        assert!(
+            schalter,
+            "Zibo-Schalter kamen nicht an: taxi={:?} pitot={:?} logo={:?} anti_eis={:?} at_arm={:?} caution={:?}",
+            letzter.as_ref().map(|s| s.light_taxi),
+            letzter.as_ref().map(|s| s.pitot_heat),
+            letzter.as_ref().map(|s| s.light_logo),
+            letzter.as_ref().map(|s| s.engine_anti_ice),
+            letzter.as_ref().map(|s| s.autothrottle_is_arm),
+            letzter.as_ref().map(|s| s.master_caution),
+        );
     }
 
     #[test]

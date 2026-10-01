@@ -197,15 +197,45 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
     //
     // Wir biegen die AP-MODUS-Felder auf die 737-echten MCP-Annunciator-
     // Lights (0/1) — authentischer als die generischen sim/cockpit2-Status.
-    // ApMaster bleibt bewusst auf dem robusten Standard-`servos_on`: das
-    // faengt CMD A ODER B (ein einzelnes Override koennte das nicht) und
-    // wird vom XP-Kern-Autopilot fuer beide 737-Varianten getrieben.
-    // Am kurzen Demo-Flug gegenzupruefen (Thomas hat XP-Demo + Zibo).
+    //
+    // ApMaster (01.10.2026, Michel THY 372, Zibo, Plugin 1.0): die alte
+    // Annahme „`servos_on` wird vom XP-Kern-Autopilot getrieben" war falsch —
+    // der Zibo fliegt mit eigenem Autopiloten, `servos_on` blieb 2,5 h auf 0,
+    // obwohl die Hoehe auf FL360 ueber 70 min nur 8,5 ft streute. Jetzt die
+    // CMD-A-Lampe (im Zibo-Scan belegt, `B738_Datarefs.txt` „AUTOPILOT
+    // LIGHTS"). CMD B kommt als eigene Quelle `B738CmdB` dazu
+    // (`dataref.rs`); der Autopilot gilt als an, wenn A ODER B leuchtet —
+    // auch CMD B allein (Copilot fliegt). Die CMD-A-Lampe gilt als Profil-
+    // Ersetzung sofort; die Katalogquelle CMD B wie jeder `laminar/…`-Name
+    // erst nach ihrem ersten Wert ≠ 0 (`plugin2_ziel::ist_kern`). Der
+    // Standard-737 von X-Plane 12 hat dieselben Lua-Datarefs (geprueft
+    // 01.10.2026: cmd_a/b_status, taxi_light_brightness_pos,
+    // capt_probes_pos; kein logo_light → Logo bleibt dort = Nav).
     XplaneAircraftProfile {
         name: "Laminar/Zibo 737-800",
         title_match: &["boeing", "737-800"],
         probe_dataref: "laminar/B738/autopilot/cmd_a_status",
         overrides: &[
+            DatarefOverride {
+                field: FieldId::ApMaster,
+                dataref: "laminar/B738/autopilot/cmd_a_status",
+                mapping: ValueMapping::Passthrough,
+            },
+            // Zibo-Audit 01.10.2026 (Michel THY 372): Taxilicht und
+            // Sonden-Heizung standen den ganzen Flug auf „aus“ — der Zibo
+            // setzt die Standard-Schalter nicht. Taxilicht: Helligkeits-
+            // stellung, an bei 2 (wie vmsACARS `Zibo738.js`); Sonden-Heizung:
+            // Kapitaensschalter (Doku „PROBES ANTI ICE CAPTAIN“, 0/1).
+            DatarefOverride {
+                field: FieldId::LightTaxi,
+                dataref: "laminar/B738/toggle_switch/taxi_light_brightness_pos",
+                mapping: ValueMapping::DetentTable(&[0.0, 0.0, 1.0]),
+            },
+            DatarefOverride {
+                field: FieldId::PitotHeat,
+                dataref: "laminar/B738/toggle_switch/capt_probes_pos",
+                mapping: ValueMapping::Passthrough,
+            },
             DatarefOverride {
                 field: FieldId::ApHeading,
                 dataref: "laminar/B738/autopilot/hdg_sel_status",
@@ -444,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn zibo737_active_catalog_overrides_ap_modes_but_not_master() {
+    fn zibo737_active_catalog_overrides_ap_modes_and_master() {
         let z = PROFILES
             .iter()
             .find(|p| p.name == "Laminar/Zibo 737-800")
@@ -461,13 +491,41 @@ mod tests {
             .find(|e| e.field == FieldId::ApApproach)
             .unwrap();
         assert_eq!(app.name, "laminar/B738/autopilot/app_status");
-        // ApMaster bewusst NICHT ueberschrieben — bleibt auf servos_on
-        // (faengt CMD A ODER B).
+        // ApMaster auf die CMD-A-Lampe (01.10.2026): `servos_on` treibt der
+        // Zibo nicht, es blieb einen ganzen Flug mit Autopilot auf 0.
         let master = active
             .iter()
             .find(|e| e.field == FieldId::ApMaster)
             .unwrap();
-        assert_eq!(master.name, "sim/cockpit2/autopilot/servos_on");
+        assert_eq!(master.name, "laminar/B738/autopilot/cmd_a_status");
+        // Gegenprobe: ohne Profil bleibt der Standard-Autopilot.
+        let basis = build_active_catalog(None);
+        assert_eq!(
+            basis
+                .iter()
+                .find(|e| e.field == FieldId::ApMaster)
+                .unwrap()
+                .name,
+            "sim/cockpit2/autopilot/servos_on"
+        );
+        // Zibo-Audit 01.10.2026: Taxilicht (an bei Stellung 2) und
+        // Sonden-Heizung aus den Zibo-Schaltern.
+        let taxi = active
+            .iter()
+            .find(|e| e.field == FieldId::LightTaxi)
+            .unwrap();
+        assert_eq!(
+            taxi.name,
+            "laminar/B738/toggle_switch/taxi_light_brightness_pos"
+        );
+        assert_eq!(taxi.mapping.map(0.0), Some(0.0));
+        assert_eq!(taxi.mapping.map(1.0), Some(0.0));
+        assert_eq!(taxi.mapping.map(2.0), Some(1.0));
+        let pitot = active
+            .iter()
+            .find(|e| e.field == FieldId::PitotHeat)
+            .unwrap();
+        assert_eq!(pitot.name, "laminar/B738/toggle_switch/capt_probes_pos");
         // Lockstep: gleiche Katalog-Laenge (nur bestehende Felder gebogen).
         assert_eq!(active.len(), CATALOG.len());
     }
