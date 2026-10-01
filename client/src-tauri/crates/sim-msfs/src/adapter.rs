@@ -1315,6 +1315,12 @@ fn run_dispatch(
     // ihn mit einer Ausnahme ab, kennt er keine Input-Events.
     let mut eingabe_send_id: Option<u32> = None;
 
+    // Telemetrie-Monitor: scheitert das Anlegen, wird erst nach einer Pause
+    // erneut versucht und der Fehler nur EINMAL je Serie gemeldet. Ohne
+    // Bremse kam bei jedem Tick eine Warnung (Log-Flut im Health-Report).
+    let mut zusatz_naechster_versuch = Instant::now();
+    let mut zusatz_fehler_gemeldet = false;
+
     // v1.7.14 — die offenen Facility-Lieferungen, nach Anfragekennung
     // getrennt.
     //
@@ -1368,7 +1374,7 @@ fn run_dispatch(
         // abbauen. Scheitert es, bleibt `dirty` stehen und der naechste
         // Tick versucht es erneut.
         let zusatz_offen = shared.zusatz.lock().dirty;
-        if zusatz_offen {
+        if zusatz_offen && Instant::now() >= zusatz_naechster_versuch {
             let felder = shared.zusatz.lock().zu_registrieren();
             match conn.register_zusatz(&felder) {
                 Ok(kennungen) => {
@@ -1377,9 +1383,14 @@ fn run_dispatch(
                         .zusatz
                         .lock()
                         .registriert(reihenfolge, kennungen, Instant::now());
+                    zusatz_fehler_gemeldet = false;
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "Zusatzwerte fuer den Telemetrie-Monitor nicht angelegt");
+                    zusatz_naechster_versuch = Instant::now() + Duration::from_secs(5);
+                    if !zusatz_fehler_gemeldet {
+                        zusatz_fehler_gemeldet = true;
+                        tracing::warn!(error = %e, "Zusatzwerte fuer den Telemetrie-Monitor nicht angelegt");
+                    }
                 }
             }
         }
@@ -2773,8 +2784,11 @@ impl Connection {
             }
             let hr =
                 unsafe { sys::SimConnect_ClearDataDefinition(self.handle, ZUSATZ_DEFINITION_ID) };
+            // Eine Ablehnung ist KEIN Grund abzubrechen: ohne Abbruch lief die
+            // Schleife 11 min lang im Takt von ~20/s auf denselben Fehler
+            // (13240 Warnungen, 30.09.2026). `register_messung` macht es so.
             if hr != 0 {
-                return Err(format!("ClearDataDefinition (Zusatz) returned 0x{hr:08X}"));
+                tracing::debug!("Zusatzdefinition leeren: 0x{hr:08X}");
             }
             self.zusatz_angelegt = false;
         }
