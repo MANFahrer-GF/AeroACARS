@@ -933,8 +933,8 @@
         },
         "sink_rate": {
           "label": "Sink rate",
-          "body": "EXCESSIVE quando la velocità di discesa nel gate supera il limite stable-approach per almeno 3 secondi consecutivi (un picco breve non conta). Il limite è −1000 fpm su 3° e scala con il sentiero di planata reale pubblicato (≈ −1334 fpm su un avvicinamento a 4° come Tromsø, ≈ −1834 fpm sui 5,5° di London City) — un avvicinamento ripido volato correttamente NON viene quindi segnalato erroneamente. Criterio sink-rate FSF ALAR / FAA AC 120-71B.",
-          "thresholds": "OK = mai sotto il limite · EXCESSIVE = almeno 3 s consecutivi sotto (−1000 fpm a 3°, scalato sul sentiero di planata reale)"
+          "body": "EXCESSIVE quando la velocità di discesa nel gate supera il limite stable-approach per almeno 10 secondi consecutivi (un picco breve non conta). Il limite è −1000 fpm su 3° e scala con il sentiero di planata reale pubblicato (≈ −1334 fpm su un avvicinamento a 4° come Tromsø, ≈ −1834 fpm sui 5,5° di London City) — un avvicinamento ripido volato correttamente NON viene quindi segnalato erroneamente. Criterio sink-rate FSF ALAR / FAA AC 120-71B.",
+          "thresholds": "OK = mai sotto il limite · EXCESSIVE = almeno 10 s consecutivi sotto (−1000 fpm a 3°, scalato sul sentiero di planata reale)"
         },
         "landing_config": {
           "label": "Landing config",

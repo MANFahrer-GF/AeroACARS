@@ -11064,9 +11064,9 @@ pub struct ApproachStabilityV2 {
 /// v1.9.16: Bis dahin genuegte EIN Sample. Ein einzelner Ausreisser —
 /// Boe, Sim-Zittern — machte den Anflug zu „excessive". Jetzt zaehlt die
 /// Grenze (−1000 fpm bei 3°, mit dem Gleitwinkel skaliert), wenn sie
-/// mindestens so lange am Stueck unterschritten wird. Die Grenze selbst
+/// mindestens 10 s am Stueck unterschritten wird. Die Grenze selbst
 /// bleibt hart; nur kurzes Ueberschiessen kostet nichts.
-const SINK_TOLERANZ_MS: i64 = 3000;
+const SINK_TOLERANZ_MS: i64 = 10_000;
 
 fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], grenze_fpm: f64) -> bool {
     let mut lauf_start: Option<DateTime<Utc>> = None;
@@ -27356,7 +27356,7 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// **17 seit v1.9.16**: Die Stabilitaetsachse ist an das Anflug-Urteil der
 /// Karte gebunden (`landing_scoring::anflug_urteil`): PARTIAL deckelt sie
 /// auf 80, UNSTABLE auf 45. Anlass DLH2248 (01.10.2026): Karte PARTIAL,
-/// Achse 100 Punkte. Dazu zaehlt die Sinkgrenze erst nach 3 s am Stueck.
+/// Achse 100 Punkte. Dazu zaehlt die Sinkgrenze erst nach 10 s am Stueck.
 /// Altbuchungen werden nicht neu gerechnet.
 ///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
@@ -63236,8 +63236,8 @@ mod sim_pause_tests {
         gear: f32,
         flaps: f32,
     ) -> ApproachBufferSample {
-        // v1.9.16: eine Sekunde je Aufruf — die Sinkgrenze zaehlt erst nach
-        // 3 s am Stueck, ein Helfer mit gleichem Zeitstempel koennte das
+        // v1.9.16: fuenf Sekunden je Aufruf — die Sinkgrenze zaehlt erst nach
+        // 10 s am Stueck, ein Helfer mit gleichem Zeitstempel koennte das
         // nie pruefen.
         thread_local! {
             static NAECHSTE_SEKUNDE: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
@@ -63248,7 +63248,7 @@ mod sim_pause_tests {
             v
         });
         ApproachBufferSample {
-            at: DateTime::<Utc>::from_timestamp(1_790_000_000 + sek, 0).unwrap(),
+            at: DateTime::<Utc>::from_timestamp(1_790_000_000 + sek * 5, 0).unwrap(),
             agl_ft: agl,
             msl_ft: agl,
             gs_kt: gs,
@@ -63876,7 +63876,7 @@ mod sim_pause_tests {
     }
 
     /// v1.9.16: Ein Ausreisser unter −1000 fpm ist kein „excessive sink" —
-    /// erst 3 s am Stueck.
+    /// erst 10 s am Stueck.
     #[test]
     fn sinkgrenze_toleriert_kurzes_ueberschreiten() {
         let kurz: std::collections::VecDeque<ApproachBufferSample> = [
@@ -63889,7 +63889,7 @@ mod sim_pause_tests {
         .into_iter()
         .collect();
         let out = compute_approach_stability_v2(&kurz, None, None, None, None, Default::default());
-        assert_eq!(out.excessive_sink, Some(false), "2 s unter der Grenze");
+        assert_eq!(out.excessive_sink, Some(false), "5 s unter der Grenze");
 
         let lang: std::collections::VecDeque<ApproachBufferSample> = [
             approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0),
@@ -63904,7 +63904,7 @@ mod sim_pause_tests {
         assert_eq!(
             out.excessive_sink,
             Some(true),
-            "3 s am Stueck unter der Grenze"
+            "10 s am Stueck unter der Grenze"
         );
     }
 
@@ -69338,8 +69338,8 @@ mod v0_16_6_bush_completeness_tests {
             900.0,
             -1500.0,
         ));
-        // v1.9.16: die Sinkgrenze zaehlt erst nach 3 s am Stueck — der
-        // Gift-Lauf muss so lang sein, sonst waere er ein tolerierter Ausreisser.
+        // v1.9.16: die Sinkgrenze zaehlt erst nach 10 s am Stueck — der
+        // Gift-Lauf muss 10 s lang sein, sonst waere er ein tolerierter Ausreisser.
         buf.push_back(sample_at(
             td() - chrono::Duration::seconds(1007),
             600.0,

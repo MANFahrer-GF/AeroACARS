@@ -933,8 +933,8 @@
         },
         "sink_rate": {
           "label": "Sink Rate",
-          "body": "EXCESSIVE wenn die Sinkrate im Gate mindestens 3 Sekunden am Stück steiler war als die Stable-Approach-Grenze (ein kurzer Ausreißer zählt nicht). Die Grenze ist −1000 fpm auf 3° und skaliert mit dem ECHTEN publizierten Gleitweg (≈ −1334 fpm auf 4° wie Tromsø, ≈ −1834 fpm auf London Citys 5,5°) — ein korrekt geflogener Steilanflug wird also NICHT fälschlich geflaggt. FSF-ALAR / FAA-AC-120-71B Sink-Rate-Kriterium.",
-          "thresholds": "OK = nie unter der Grenze · EXCESSIVE = mindestens 3 s am Stück darunter (−1000 fpm bei 3°, mit dem echten Gleitweg skaliert)"
+          "body": "EXCESSIVE wenn die Sinkrate im Gate mindestens 10 Sekunden am Stück steiler war als die Stable-Approach-Grenze (ein kurzer Ausreißer zählt nicht). Die Grenze ist −1000 fpm auf 3° und skaliert mit dem ECHTEN publizierten Gleitweg (≈ −1334 fpm auf 4° wie Tromsø, ≈ −1834 fpm auf London Citys 5,5°) — ein korrekt geflogener Steilanflug wird also NICHT fälschlich geflaggt. FSF-ALAR / FAA-AC-120-71B Sink-Rate-Kriterium.",
+          "thresholds": "OK = nie unter der Grenze · EXCESSIVE = mindestens 10 s am Stück darunter (−1000 fpm bei 3°, mit dem echten Gleitweg skaliert)"
         },
         "landing_config": {
           "label": "Landing-Config",
