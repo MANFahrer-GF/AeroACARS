@@ -341,6 +341,7 @@
     },
     "skipped_label": "non valutato",
     "skipped_reason": {
+      "anflug_nicht_gemessen": "Avvicinamento non misurato nel gate dei 1000 ft (troppi pochi campioni) — non valutato, ma nemmeno punteggio massimo: totale al massimo 97.",
       "no_planned_burn": "Nessun trip-burn OFP pianificato — non valutato (nessuna penalità).",
       "no_actual_burn": "Dati di decollo non registrati (fase di decollo saltata) — trip-burn reale non determinabile (nessuna penalità).",
       "no_planned_zfw": "Nessun ZFW inserito — VFR/manuale senza valutazione del loadsheet (nessuna penalità).",
@@ -374,6 +375,9 @@
       "kein_streckenbezug": "Volo turistico o tratta molto breve — senza una distanza pianificata utilizzabile non c'è confronto (nessuna penalità)."
     },
     "warn": {
+      "anflug_partial": "⚠ Avvicinamento solo in parte stabile — asse limitato a 80 punti",
+      "anflug_unstable": "⚠ Avvicinamento instabile — asse limitato a 45 punti",
+      "anflug_nicht_gemessen": "⚠ Avvicinamento non misurato nel gate — punteggio totale al massimo 97",
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",
       "planned_burn_may_be_off": "⚠ Sospetto: trip-burn pianificato potrebbe essere troppo alto — verificare OFP burn",
       "runway_axis_unverified": "⚠ Asse pista non confermato dallo scenario — lo scostamento laterale è valutato, i dati della pista no"
@@ -1037,6 +1041,9 @@
       }
     },
     "deckel": {
+      "anflug_partial": "Stabilità limitata a 80 punti: avvicinamento solo in parte stabile (stable gate non raggiunto) — quindi niente 100.",
+      "anflug_unstable": "Stabilità limitata a 45 punti: avvicinamento instabile (stable gate mancato).",
+      "anflug_nicht_gemessen": "Limitato a 97 punti: avvicinamento non misurato nel gate — senza misura niente punteggio massimo.",
       "harte_landung": "Limitato a massimo 40 punti: atterraggio duro da 1,75 g. Buoni valori di rullaggio o punto di contatto non lo compensano.",
       "ueberlast": "Limitato a massimo 14 punti: sovraccarico da 2,6 g."
     }

@@ -341,6 +341,7 @@
     },
     "skipped_label": "nicht bewertet",
     "skipped_reason": {
+      "anflug_nicht_gemessen": "Anflug im 1000-ft-Gate nicht gemessen (zu wenige Messpunkte) — keine Bewertung, aber auch keine Bestnote: Gesamtnote höchstens 97.",
       "no_planned_burn": "Kein OFP-Trip-Burn geplant — wird nicht bewertet (kein Penalty).",
       "no_actual_burn": "Takeoff-Daten nicht erfasst (Takeoff-Phase übersprungen) — tatsächlicher Trip-Burn nicht ermittelbar (kein Penalty).",
       "no_planned_zfw": "Kein ZFW eingetragen — VFR/Manual ohne Loadsheet-Wertung (kein Penalty).",
@@ -374,6 +375,9 @@
       "kein_streckenbezug": "Rundflug oder sehr kurze Strecke — ohne brauchbare Plandistanz gibt es keinen Vergleich (kein Abzug)."
     },
     "warn": {
+      "anflug_partial": "⚠ Anflug nur teilweise stabil — Achse auf höchstens 80 Punkte begrenzt",
+      "anflug_unstable": "⚠ Anflug instabil — Achse auf höchstens 45 Punkte begrenzt",
+      "anflug_nicht_gemessen": "⚠ Anflug im Gate nicht gemessen — Gesamtnote höchstens 97",
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",
       "planned_burn_may_be_off": "⚠ Verdacht: geplanter Trip-Burn könnte zu hoch sein — OFP-Burn prüfen",
       "runway_axis_unverified": "⚠ Bahnachse nicht durch die Szenerie bestätigt — der seitliche Versatz ist bewertet, die Bahndaten sind es nicht"
@@ -1037,6 +1041,9 @@
       }
     },
     "deckel": {
+      "anflug_partial": "Stabilität auf höchstens 80 Punkte begrenzt: Anflug nur teilweise stabil (STABLE-GATE nicht erreicht) — daher keine 100.",
+      "anflug_unstable": "Stabilität auf höchstens 45 Punkte begrenzt: Anflug instabil (STABLE-GATE verfehlt).",
+      "anflug_nicht_gemessen": "Gedeckelt auf höchstens 97 Punkte: Anflug im Gate nicht gemessen — ohne Messung keine Bestnote.",
       "harte_landung": "Gedeckelt auf höchstens 40 Punkte: harte Landung ab 1,75 g. Gute Werte bei Ausrollen oder Aufsetzpunkt gleichen das nicht aus.",
       "ueberlast": "Gedeckelt auf höchstens 14 Punkte: Überlast ab 2,6 g."
     }

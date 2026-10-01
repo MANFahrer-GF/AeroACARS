@@ -397,6 +397,16 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         anflug_urteil::anflug_urteil(&input.anflug),
     ) {
         out.push(stab);
+    } else if scoring_input_has_v2_fields(input) && !input.nicht_konventionell {
+        // v1.9.16: Anflug nicht gemessen (zu wenig Samples im Gate). Die
+        // Achse bleibt sichtbar als „nicht bewertet" und traegt die Marke,
+        // an der `master_deckel` die Bestnote sperrt: ohne Messung keine
+        // 100 Punkte.
+        out.push(SubScoreEntry::skipped(
+            "stability",
+            "landing.sub.stability",
+            ANFLUG_NICHT_GEMESSEN,
+        ));
     }
     // v0.10.0 (#runway-utilization-score): Wenn die v2-Datenlage da ist,
     // wird der neue LDA-basierte Sub-Score gerechnet (auch bei
@@ -645,11 +655,23 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
 /// (Codex-QS 29.09.2026).
 pub fn master_deckel_wirksam(subs: &[SubScoreEntry]) -> Option<&'static str> {
     let (grund, obergrenze) = master_deckel(subs)?;
+    // PARTIAL/UNSTABLE: Der Abzug steckt schon IN der Stabilitaetsachse
+    // (sie wurde gesenkt, sonst gaebe es die Marke nicht). Die Anzeige
+    // erklaert ihn, auch wenn der Mittelwert den Deckel nicht mehr beruehrt.
+    if grund == "anflug_partial" || grund == "anflug_unstable" {
+        return Some(grund);
+    }
     let ohne_deckel: Vec<SubScoreEntry> = subs
         .iter()
         .cloned()
         .map(|mut s| {
             s.messwert = None;
+            if s.key == "stability" {
+                s.warning = None;
+                if s.skipped {
+                    s.reason = None;
+                }
+            }
             s
         })
         .collect();
@@ -679,19 +701,48 @@ pub const DECKEL_UEBERLAST_PUNKTE: u8 = 14;
 /// schon auf MSFS umgerechnet). Ohne bewertete G-Teilnote kein Deckel:
 /// Ein fehlender Messwert darf nie eine Strafe ausloesen.
 pub fn master_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
-    let g = subs
+    let g_deckel = subs
         .iter()
         .find(|s| s.key == "g_force" && !s.skipped)
-        .and_then(|s| s.messwert)?;
-    if !g.is_finite() {
-        return None;
+        .and_then(|s| s.messwert)
+        .filter(|g| g.is_finite())
+        .and_then(|g| {
+            if g >= DECKEL_UEBERLAST_G {
+                Some(("ueberlast", DECKEL_UEBERLAST_PUNKTE))
+            } else if g >= DECKEL_HART_G {
+                Some(("harte_landung", DECKEL_HART_PUNKTE))
+            } else {
+                None
+            }
+        });
+    // Der niedrigere Deckel gewinnt; bei Gleichstand die G-Last.
+    match (g_deckel, anflug_deckel(subs)) {
+        (Some(g), Some(a)) => Some(if a.1 < g.1 { a } else { g }),
+        (g, a) => g.or(a),
     }
-    if g >= DECKEL_UEBERLAST_G {
-        Some(("ueberlast", DECKEL_UEBERLAST_PUNKTE))
-    } else if g >= DECKEL_HART_G {
-        Some(("harte_landung", DECKEL_HART_PUNKTE))
+}
+
+/// Marke der Stabilitaetsachse: Anflug im Gate nicht gemessen.
+pub const ANFLUG_NICHT_GEMESSEN: &str = "anflug_nicht_gemessen";
+/// Hoechstnote ohne Anflugmessung und bei PARTIAL — beides ist „nicht
+/// stabil bestaetigt". Bei PARTIAL (Achse ≤ 80, Gewicht 2 von 13) liegt die
+/// Gesamtnote rechnerisch ohnehin bei hoechstens 97; die Zahl macht das fest.
+pub const DECKEL_ANFLUG_OFFEN_PUNKTE: u8 = 97;
+/// Bei UNSTABLE (Achse ≤ 45) rechnerisch hoechstens 92.
+pub const DECKEL_ANFLUG_UNSTABIL_PUNKTE: u8 = 92;
+
+fn anflug_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
+    let stab = subs.iter().find(|s| s.key == "stability")?;
+    let marke = if stab.skipped {
+        stab.reason.as_deref()
     } else {
-        None
+        stab.warning.as_deref()
+    };
+    match marke? {
+        "anflug_nicht_gemessen" => Some((ANFLUG_NICHT_GEMESSEN, DECKEL_ANFLUG_OFFEN_PUNKTE)),
+        "anflug_partial" => Some(("anflug_partial", DECKEL_ANFLUG_OFFEN_PUNKTE)),
+        "anflug_unstable" => Some(("anflug_unstable", DECKEL_ANFLUG_UNSTABIL_PUNKTE)),
+        _ => None,
     }
 }
 
@@ -940,6 +991,101 @@ mod tests {
         }
         assert!(master_deckel(&schlecht).is_some());
         assert_eq!(master_deckel_wirksam(&schlecht), None);
+    }
+
+    fn alles_hundert_mit_stabilitaet(stab: SubScoreEntry) -> Vec<SubScoreEntry> {
+        let mk =
+            |k: &str| SubScoreEntry::scored(k, "l", 100, "x".into(), "very_stable", Band::Good);
+        vec![
+            mk("landing_rate"),
+            mk("g_force"),
+            mk("bounces"),
+            stab,
+            mk("rollout"),
+        ]
+    }
+
+    /// Anflug nicht STABLE: Achse gedeckelt, Gesamtnote nie 100, Anzeige
+    /// nennt den Grund — auch wenn der Mittelwert den Deckel nicht beruehrt.
+    #[test]
+    fn nicht_stabiler_anflug_gibt_keine_hundert() {
+        use crate::anflug_urteil::AnflugUrteil;
+        for (u, max, grund) in [
+            (AnflugUrteil::Partial, 97, "anflug_partial"),
+            (AnflugUrteil::Unstable, 92, "anflug_unstable"),
+        ] {
+            let stab = sub_stability::sub_stability_legacy(Some(50.0), Some(0.5), Some(u)).unwrap();
+            let subs = alles_hundert_mit_stabilitaet(stab);
+            assert!(aggregate_master_score(&subs).unwrap() <= max, "{grund}");
+            assert_eq!(master_deckel_wirksam(&subs), Some(grund));
+        }
+        // STABLE: voll, kein Hinweis.
+        let stab = sub_stability::sub_stability_legacy(
+            Some(50.0),
+            Some(0.5),
+            Some(crate::anflug_urteil::AnflugUrteil::Stable),
+        )
+        .unwrap();
+        let subs = alles_hundert_mit_stabilitaet(stab);
+        assert_eq!(aggregate_master_score(&subs), Some(100));
+        assert_eq!(master_deckel_wirksam(&subs), None);
+    }
+
+    /// Ohne Gate-Messung keine Bestnote — mit und ohne Streuungswerte.
+    #[test]
+    fn ohne_anflugmessung_keine_bestnote() {
+        let skip = SubScoreEntry::skipped("stability", "l", ANFLUG_NICHT_GEMESSEN);
+        let subs = alles_hundert_mit_stabilitaet(skip);
+        assert_eq!(aggregate_master_score(&subs), Some(97));
+        assert_eq!(master_deckel_wirksam(&subs), Some(ANFLUG_NICHT_GEMESSEN));
+
+        let stab = sub_stability::sub_stability_legacy(Some(50.0), Some(0.5), None).unwrap();
+        let subs = alles_hundert_mit_stabilitaet(stab);
+        assert_eq!(aggregate_master_score(&subs), Some(97));
+
+        // Liegt der Mittelwert schon darunter, behauptet die Anzeige nichts.
+        let mut schlecht = alles_hundert_mit_stabilitaet(SubScoreEntry::skipped(
+            "stability",
+            "l",
+            ANFLUG_NICHT_GEMESSEN,
+        ));
+        schlecht[0].score = 50;
+        assert_eq!(master_deckel_wirksam(&schlecht), None);
+    }
+
+    /// Der niedrigere Deckel gewinnt: harte Landung schlaegt Anflug.
+    #[test]
+    fn g_deckel_gewinnt_gegen_anflug_deckel() {
+        let mut subs = harte_landung_mit_guten_nebenachsen(1.9);
+        subs.push(SubScoreEntry::skipped(
+            "stability",
+            "l",
+            ANFLUG_NICHT_GEMESSEN,
+        ));
+        assert_eq!(
+            master_deckel(&subs),
+            Some(("harte_landung", DECKEL_HART_PUNKTE))
+        );
+    }
+
+    /// Drehfluegler/Wasserflugzeug haben keine Stabilitaetsachse — dort darf
+    /// „nicht gemessen" keine Bestnote sperren.
+    #[test]
+    fn nicht_konventionell_bekommt_keine_anflug_sperre() {
+        let input = LandingScoringInput {
+            vs_fpm: Some(-150.0),
+            runway_length_m: Some(3000.0),
+            nicht_konventionell: true,
+            ..Default::default()
+        };
+        let subs = compute_sub_scores(&input);
+        assert!(!subs.iter().any(|s| s.key == "stability"));
+        let normal = LandingScoringInput {
+            nicht_konventionell: false,
+            ..input
+        };
+        let subs = compute_sub_scores(&normal);
+        assert!(subs.iter().any(|s| s.key == "stability" && s.skipped));
     }
 
     #[test]

@@ -341,6 +341,7 @@
     },
     "skipped_label": "not scored",
     "skipped_reason": {
+      "anflug_nicht_gemessen": "Approach not measured in the 1000 ft gate (too few samples) — not scored, but no top score either: overall score at most 97.",
       "no_planned_burn": "No OFP trip burn planned — not scored (no penalty).",
       "no_actual_burn": "Takeoff data not captured (takeoff phase skipped) — actual trip burn cannot be derived (no penalty).",
       "no_planned_zfw": "No ZFW entered — VFR/manual without loadsheet scoring (no penalty).",
@@ -374,6 +375,9 @@
       "kein_streckenbezug": "Scenic flight or very short leg — without a usable planned distance there is nothing to compare (no penalty)."
     },
     "warn": {
+      "anflug_partial": "⚠ Approach only partly stable — axis capped at 80 points",
+      "anflug_unstable": "⚠ Unstable approach — axis capped at 45 points",
+      "anflug_nicht_gemessen": "⚠ Approach not measured in the gate — overall score at most 97",
       "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",
       "planned_burn_may_be_off": "⚠ Suspected: planned trip-burn may be too high — verify OFP burn",
       "runway_axis_unverified": "⚠ Runway axis not confirmed by the scenery — the lateral offset is graded, the runway data is not"
@@ -1037,6 +1041,9 @@
       }
     },
     "deckel": {
+      "anflug_partial": "Stability capped at 80 points: approach only partly stable (stable gate not met) — so no 100.",
+      "anflug_unstable": "Stability capped at 45 points: unstable approach (stable gate missed).",
+      "anflug_nicht_gemessen": "Capped at 97 points: approach not measured in the gate — no top score without a measurement.",
       "harte_landung": "Capped at 40 points: hard landing from 1.75 g. Good rollout or touchdown point values do not offset it.",
       "ueberlast": "Capped at 14 points: overload from 2.6 g."
     }

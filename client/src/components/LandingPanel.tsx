@@ -119,7 +119,8 @@ export interface LandingRecord {
   /// `null` bei nicht bewertbarer Landung.
   grade_letter: string | null;
   /// Lernpaket AP2: Grund, warum die Gesamtnote gedeckelt ist
-  /// ("harte_landung" ab 1,75 g, "ueberlast" ab 2,6 g). Fehlt bei alten
+  /// ("harte_landung" ab 1,75 g, "ueberlast" ab 2,6 g, "anflug_partial",
+  /// "anflug_unstable", "anflug_nicht_gemessen"). Fehlt bei alten
   /// Datensaetzen und ungedeckelten Landungen.
   score_deckel?: string | null;
 
@@ -2641,7 +2642,10 @@ export function LandingReport({
           </div>
           <div className="report-hero__label">{heroLabel}</div>
           {record.score_deckel === "harte_landung" ||
-          record.score_deckel === "ueberlast" ? (
+          record.score_deckel === "ueberlast" ||
+          record.score_deckel === "anflug_partial" ||
+          record.score_deckel === "anflug_unstable" ||
+          record.score_deckel === "anflug_nicht_gemessen" ? (
             <div className="report-hero__deckel">
               {t(`landing.deckel.${record.score_deckel}`)}
             </div>

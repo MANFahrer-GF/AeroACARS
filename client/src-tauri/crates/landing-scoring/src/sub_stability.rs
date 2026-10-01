@@ -80,9 +80,18 @@ pub fn sub_stability_legacy(
     // auf PARTIAL und bekam trotzdem 100 Punkte „sehr stabil". Ein Anflug,
     // der nicht STABLE ist, darf diese Achse nicht voll bekommen.
     let points = vs_band.min(bk_band);
+    let roh_punkte = points;
     let points = match punkte_deckel(urteil) {
         Some(deckel) => points.min(deckel),
         None => points,
+    };
+    // Marke fuer Anzeige und Gesamtnote: Anflug nicht gemessen bzw. die
+    // Achse wurde vom Urteil WIRKLICH gesenkt (siehe `master_deckel`).
+    let marke: Option<&str> = match urteil {
+        None => Some("anflug_nicht_gemessen"),
+        Some(AnflugUrteil::Partial) if roh_punkte > points => Some("anflug_partial"),
+        Some(AnflugUrteil::Unstable) if roh_punkte > points => Some("anflug_unstable"),
+        _ => None,
     };
 
     let rationale = if points >= 90 {
@@ -98,14 +107,16 @@ pub fn sub_stability_legacy(
     };
 
     let value = format!("σ {} fpm / {:.1}°", vs.round() as i32, bk);
-    Some(SubScoreEntry::scored(
+    let mut eintrag = SubScoreEntry::scored(
         "stability",
         "landing.sub.stability",
         points,
         value,
         rationale,
         band_from_points(points),
-    ))
+    );
+    eintrag.warning = marke.map(str::to_string);
+    Some(eintrag)
 }
 
 #[cfg(test)]
