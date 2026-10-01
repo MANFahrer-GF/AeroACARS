@@ -1676,6 +1676,19 @@ mod plugin2_loopback_tests {
                     return Some(serde_json::json!(if nur_b { 1 } else { 0 }))
                 }
                 "sim/cockpit2/autopilot/servos_on" => return Some(serde_json::json!(0)),
+                // Zibo-Audit 01.10.2026: Schalter, die der Zibo selbst traegt.
+                "laminar/B738/toggle_switch/taxi_light_brightness_pos" => {
+                    return Some(serde_json::json!(2))
+                }
+                "laminar/B738/toggle_switch/capt_probes_pos"
+                | "laminar/B738/toggle_switch/logo_light"
+                | "laminar/B738/ice/eng1_heat_pos"
+                | "laminar/B738/annunciator/master_caution_light"
+                | "laminar/B738/autopilot/autothrottle_status" => {
+                    return Some(serde_json::json!(1))
+                }
+                "sim/cockpit2/switches/taxi_light_on"
+                | "sim/cockpit2/ice/ice_pitot_heat_on_pilot" => return Some(serde_json::json!(0)),
                 _ => {}
             }
         }
@@ -1926,6 +1939,19 @@ mod plugin2_loopback_tests {
             ad.snapshot()
                 .is_some_and(|s| s.autopilot_master == Some(true))
         });
+        // Zibo-Audit 01.10.2026: Taxilicht, Sonden-Heizung, Logo, Anti-Eis,
+        // A/T-ARM und Master Caution aus den Zibo-Schaltern.
+        let schalter = warte(Duration::from_secs(15), || {
+            ad.snapshot().is_some_and(|s| {
+                s.light_taxi == Some(true)
+                    && s.pitot_heat == Some(true)
+                    && s.light_logo == Some(true)
+                    && s.engine_anti_ice == Some(true)
+                    && s.autothrottle_is_arm
+                    && s.master_caution == Some(true)
+            })
+        });
+        let letzter = ad.snapshot();
         stop.store(true, Ordering::SeqCst);
         ad.stop();
         let _ = f1.join();
@@ -1938,6 +1964,16 @@ mod plugin2_loopback_tests {
         assert!(
             ap,
             "Autopilot nicht an (nur CMD B: {nur_b}) — Lampe kam nicht im Snapshot an"
+        );
+        assert!(
+            schalter,
+            "Zibo-Schalter kamen nicht an: taxi={:?} pitot={:?} logo={:?} anti_eis={:?} at_arm={:?} caution={:?}",
+            letzter.as_ref().map(|s| s.light_taxi),
+            letzter.as_ref().map(|s| s.pitot_heat),
+            letzter.as_ref().map(|s| s.light_logo),
+            letzter.as_ref().map(|s| s.engine_anti_ice),
+            letzter.as_ref().map(|s| s.autothrottle_is_arm),
+            letzter.as_ref().map(|s| s.master_caution),
         );
     }
 

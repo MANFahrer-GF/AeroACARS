@@ -217,6 +217,21 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
                 dataref: "laminar/B738/autopilot/cmd_a_status",
                 mapping: ValueMapping::Passthrough,
             },
+            // Zibo-Audit 01.10.2026 (Michel THY 372): Taxilicht und
+            // Sonden-Heizung standen den ganzen Flug auf „aus“ — der Zibo
+            // setzt die Standard-Schalter nicht. Taxilicht: Helligkeits-
+            // stellung, an bei 2 (wie vmsACARS `Zibo738.js`); Sonden-Heizung:
+            // Kapitaensschalter (Doku „PROBES ANTI ICE CAPTAIN“, 0/1).
+            DatarefOverride {
+                field: FieldId::LightTaxi,
+                dataref: "laminar/B738/toggle_switch/taxi_light_brightness_pos",
+                mapping: ValueMapping::DetentTable(&[0.0, 0.0, 1.0]),
+            },
+            DatarefOverride {
+                field: FieldId::PitotHeat,
+                dataref: "laminar/B738/toggle_switch/capt_probes_pos",
+                mapping: ValueMapping::Passthrough,
+            },
             DatarefOverride {
                 field: FieldId::ApHeading,
                 dataref: "laminar/B738/autopilot/hdg_sel_status",
@@ -489,6 +504,24 @@ mod tests {
                 .name,
             "sim/cockpit2/autopilot/servos_on"
         );
+        // Zibo-Audit 01.10.2026: Taxilicht (an bei Stellung 2) und
+        // Sonden-Heizung aus den Zibo-Schaltern.
+        let taxi = active
+            .iter()
+            .find(|e| e.field == FieldId::LightTaxi)
+            .unwrap();
+        assert_eq!(
+            taxi.name,
+            "laminar/B738/toggle_switch/taxi_light_brightness_pos"
+        );
+        assert_eq!(taxi.mapping.map(0.0), Some(0.0));
+        assert_eq!(taxi.mapping.map(1.0), Some(0.0));
+        assert_eq!(taxi.mapping.map(2.0), Some(1.0));
+        let pitot = active
+            .iter()
+            .find(|e| e.field == FieldId::PitotHeat)
+            .unwrap();
+        assert_eq!(pitot.name, "laminar/B738/toggle_switch/capt_probes_pos");
         // Lockstep: gleiche Katalog-Laenge (nur bestehende Felder gebogen).
         assert_eq!(active.len(), CATALOG.len());
     }
