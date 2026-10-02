@@ -7837,6 +7837,14 @@ struct FlightStats {
     /// snapshot rate or SimConnect's PLANE TOUCHDOWN * latching.
     snapshot_buffer: std::collections::VecDeque<TelemetrySample>,
 
+    /// Inventur 02.10.2026 (B1): Langsame Spur fuer die Ueberflughoehe an der
+    /// Schwelle (TCH). Der 5-s-`snapshot_buffer` reicht dafuer nicht: Bei
+    /// Verkehrsflugzeugen liegen ~10 s zwischen Schwelle und Aufsetzen — die
+    /// Probe an der Schwelle war schon heraus, TCH fehlte bei ~85 % der
+    /// Landungen (Wert nur bei ≤ 4,7 s). Hier: ~2,5 Hz, nur im Anflug unter
+    /// `SCHWELLENSPUR_MAX_AGL_FT`, die letzten `SCHWELLENSPUR_SECS` Sekunden.
+    schwellen_spur: std::collections::VecDeque<TelemetrySample>,
+
     /// Bis wohin der 50-Hz-Puffer schon in die Spur gelegt wurde.
     ///
     /// Ohne diesen Merker wuerde bei jedem Tick der ganze Ringpuffer
@@ -36129,6 +36137,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 gear_normal_force_n: snap.gear_normal_force_n,
                 total_weight_kg: snap.total_weight_kg,
             });
+            if let Some(probe) = stats.snapshot_buffer.back().copied() {
+                schwellenspur_fuehren(&mut stats, probe);
+            }
             // Bodenhöhe des Flugzeugs mitmessen, solange es ruhig am Boden
             // steht oder rollt (Befund DLH 880, `touchdown_v2::BodenhoehenReferenz`).
             //
@@ -42111,10 +42122,12 @@ fn korreliere_bahn(
 
     // v0.8.0 F5 — TCH (Threshold-Crossing-Height) Actual: siehe
     // `tch_actual_from_buffer`.
-    stats.runway_tch_actual_ft = stats
-        .runway_nav_geometry
-        .as_ref()
-        .and_then(|geom| tch_actual_from_buffer(geom, &stats.snapshot_buffer));
+    // Erst der 50-Hz-Puffer (genau, aber nur 5 s — reicht bei Aufsetzern kurz
+    // hinter der Schwelle), sonst die langsame Schwellenspur (Inventur B1).
+    stats.runway_tch_actual_ft = stats.runway_nav_geometry.as_ref().and_then(|geom| {
+        tch_actual_from_buffer(geom, &stats.snapshot_buffer)
+            .or_else(|| tch_interpoliert(geom, &stats.schwellen_spur))
+    });
 
     // ⚠ GANZ zum Schluss. `drittel_nachfuehren` liest den Bahntreffer,
     // der weiter oben erst entsteht — davor gerufen setzt es das Feld
@@ -42124,6 +42137,70 @@ fn korreliere_bahn(
     if stats.szenerie_auskunft.is_some() {
         stats.szenerie_status_fest = Some(szenerie_status(stats));
     }
+}
+
+/// Schwellenspur: nur im Anflug aufzeichnen (darueber ist die Schwelle weit).
+const SCHWELLENSPUR_MAX_AGL_FT: f64 = 600.0;
+/// Abstand der Proben (~2,5 Hz; bei 70 m/s ≈ 28 m — die Hoehe an der Schwelle
+/// wird zwischen zwei Proben interpoliert, nicht abgelesen).
+const SCHWELLENSPUR_TAKT_MS: i64 = 400;
+/// Wie weit zurueck die Spur reicht — traegt auch langsame GA-Anfluege
+/// (Schwelle → Aufsetzen bis ~25 s) und einen Hopser.
+const SCHWELLENSPUR_SECS: i64 = 60;
+
+/// Fuehrt die Schwellenspur: nimmt die aktuelle Probe auf (wenn Anflug und
+/// Takt), und schneidet alles ab, was aelter als `SCHWELLENSPUR_SECS` ist.
+/// Das Abschneiden laeuft IMMER — sonst blieben die Proben nach dem
+/// Aufsetzen stehen und wuerden eine spaetere Landung (Touch-and-Go)
+/// verfaelschen.
+fn schwellenspur_fuehren(stats: &mut FlightStats, probe: TelemetrySample) {
+    let im_anflug = !probe.on_ground && (probe.agl_ft as f64) < SCHWELLENSPUR_MAX_AGL_FT;
+    let takt_ok = stats.schwellen_spur.back().map_or(true, |l| {
+        (probe.at - l.at).num_milliseconds() >= SCHWELLENSPUR_TAKT_MS
+    });
+    if im_anflug && takt_ok {
+        stats.schwellen_spur.push_back(probe);
+    }
+    while stats
+        .schwellen_spur
+        .front()
+        .is_some_and(|f| (probe.at - f.at).num_seconds() > SCHWELLENSPUR_SECS)
+    {
+        stats.schwellen_spur.pop_front();
+    }
+}
+
+/// TCH aus der langsamen Spur: wie `tch_actual_from_buffer`, aber die Hoehe
+/// wird zwischen der letzten Probe VOR und der ersten HINTER der Schwelle
+/// linear nach der Laengsentfernung interpoliert. Ohne Probe vor der
+/// Schwelle (Spur beginnt dahinter) oder ohne Probe dahinter: `None`.
+fn tch_interpoliert(
+    geom: &aeroacars_mqtt::navdata::NavRunway,
+    buffer: &std::collections::VecDeque<TelemetrySample>,
+) -> Option<f32> {
+    let mut vorher: Option<(f64, f32)> = None;
+    for s in buffer.iter() {
+        let along = runway::along_track_m_signed(
+            geom.threshold.lat,
+            geom.threshold.lon,
+            geom.far_end.lat,
+            geom.far_end.lon,
+            s.lat,
+            s.lon,
+        );
+        if along < 0.0 {
+            vorher = Some((along, s.agl_ft));
+            continue;
+        }
+        let (a0, h0) = vorher?;
+        let spanne = along - a0;
+        if spanne <= 0.0 {
+            return None;
+        }
+        let anteil = (-a0 / spanne).clamp(0.0, 1.0);
+        return Some(h0 + (s.agl_ft - h0) * anteil as f32);
+    }
+    None
 }
 
 /// v0.8.0 F5 (Threshold-Crossing-Height Actual): scan the buffer
@@ -67372,6 +67449,70 @@ mod touchdown_metadata_stamp_tests {
         buffer.push_back(tch_sample(lat2, lon2, 20.0)); // later — must NOT win
 
         assert_eq!(tch_actual_from_buffer(&rw, &buffer), Some(48.0));
+    }
+
+    /// Inventur B1: Die Hoehe an der Schwelle wird zwischen der Probe davor und
+    /// der Probe dahinter interpoliert, nicht von der ersten dahinter gelesen.
+    #[test]
+    fn tch_interpoliert_zwischen_den_proben_vor_und_hinter_der_schwelle() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        let mut buffer = std::collections::VecDeque::new();
+        let (a0, o0) = point_along(thr, end, -0.01);
+        buffer.push_back(tch_sample(a0, o0, 62.0));
+        let (a1, o1) = point_along(thr, end, 0.002);
+        buffer.push_back(tch_sample(a1, o1, 48.0));
+        // Anteil 0,01 / 0,012 = 5/6 des Weges von 62 nach 48 ft.
+        let tch = tch_interpoliert(&rw, &buffer).expect("Schwelle ueberflogen");
+        assert!((tch - (62.0 - 14.0 * 5.0 / 6.0)).abs() < 0.2, "TCH {tch}");
+        // Der 5-s-Puffer-Weg liefert hier den Rohwert der ersten Probe dahinter —
+        // die Interpolation ist genauer und darf davon abweichen.
+        assert_eq!(tch_actual_from_buffer(&rw, &buffer), Some(48.0));
+    }
+
+    #[test]
+    fn tch_interpoliert_ohne_klammer_gibt_nichts() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        // Spur beginnt schon hinter der Schwelle.
+        let mut buffer = std::collections::VecDeque::new();
+        let (a, o) = point_along(thr, end, 0.005);
+        buffer.push_back(tch_sample(a, o, 40.0));
+        assert_eq!(tch_interpoliert(&rw, &buffer), None);
+        // Schwelle nie erreicht.
+        let mut buffer = std::collections::VecDeque::new();
+        let (a, o) = point_along(thr, end, -0.02);
+        buffer.push_back(tch_sample(a, o, 90.0));
+        assert_eq!(tch_interpoliert(&rw, &buffer), None);
+        assert_eq!(
+            tch_interpoliert(&rw, &std::collections::VecDeque::new()),
+            None
+        );
+    }
+
+    /// Die Schwellenspur nimmt nur Anflug-Proben im Takt auf und schneidet
+    /// Altes ab — auch dann, wenn die neue Probe selbst nicht aufgenommen wird.
+    #[test]
+    fn schwellenspur_nimmt_anflug_proben_im_takt_und_schneidet_ab() {
+        let mut stats = FlightStats::default();
+        let t0 = DateTime::<Utc>::from_timestamp(1_790_200_000, 0).unwrap();
+        let probe = |ms: i64, agl: f32, boden: bool| TelemetrySample {
+            at: t0 + chrono::Duration::milliseconds(ms),
+            agl_ft: agl,
+            on_ground: boden,
+            ..Default::default()
+        };
+        schwellenspur_fuehren(&mut stats, probe(0, 300.0, false));
+        schwellenspur_fuehren(&mut stats, probe(100, 295.0, false)); // zu dicht
+        schwellenspur_fuehren(&mut stats, probe(400, 290.0, false));
+        schwellenspur_fuehren(&mut stats, probe(800, 900.0, false)); // zu hoch
+        schwellenspur_fuehren(&mut stats, probe(1200, 5.0, true)); // am Boden
+        assert_eq!(stats.schwellen_spur.len(), 2);
+        // Nach 61 s faellt alles heraus, auch ohne neue Aufnahme.
+        schwellenspur_fuehren(&mut stats, probe(61_500, 5.0, true));
+        assert!(stats.schwellen_spur.is_empty());
     }
 
     #[test]
