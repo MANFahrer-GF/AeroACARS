@@ -10651,6 +10651,15 @@ fn muster_kandidaten(upper: &str) -> Vec<String> {
             "B747" => Some("B744"),
             "B777" => Some("B77W"),
             "B787" => Some("B789"),
+            // 02.10.2026 (Inventur, LJ35): Das Learjet-35A-Addon meldet als
+            // ATC-Modell „35A" statt des ICAO-Codes LJ35. Der Code war
+            // „brauchbar" (kein Marketing-Name), loeste aber keine Tabelle
+            // auf: Vref und Spannweite fehlten bei jedem Flug. Hier, in der
+            // Tabellenaufloesung, und NICHT in `map_model_name_to_icao` —
+            // dort wuerde es die Musteridentitaet des Clients (Auto-Start,
+            // PIREP) aendern; fuer den Buchungsabgleich gibt es den Alias
+            // auf dem Server.
+            "35A" | "35" => Some("LJ35"),
             _ => None,
         }
     }
@@ -67586,6 +67595,20 @@ mod touchdown_metadata_stamp_tests {
         // Gegenprobe: unbelegte Muster bleiben ehrlich im Rueckfall.
         assert!(aircraft_limits_for("DA50").is_fallback);
         assert!(aircraft_limits_for("YK18").is_fallback);
+    }
+
+    /// Inventur (LJ35): Das Learjet-35A-Addon meldet „35A". Mit der
+    /// Familienregel loesen Vref, Bank-Grenze und Spannweite auf LJ35 auf.
+    #[test]
+    fn learjet_35a_loest_ueber_die_familienregel_auf() {
+        let l = aircraft_limits_for("35A");
+        assert!(!l.is_fallback, "35A muss in der Tabelle landen");
+        assert_eq!(l.typical_vref_kt, Some(125.0));
+        let spann =
+            muster_fuer_typtabelle(Some("35A"), |m| landing_scoring::spurweite::spannweite_m(m));
+        assert_eq!(spann, Some(12.04));
+        // Gegenprobe: die direkte Schreibweise bleibt unveraendert.
+        assert_eq!(aircraft_limits_for("LJ35").typical_vref_kt, Some(125.0));
     }
 
     #[test]
