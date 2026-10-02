@@ -41946,6 +41946,12 @@ fn korreliere_bahn(
     // ⚠ Die BISHERIGE Bahnachse, bevor sie ersetzt wird — die Rollspur
     // ist gegen sie projiziert. Siehe `spur_auf_neue_achse`.
     let alte_achse = alte_achse_von(stats);
+    // Fuer TCH weiter unten: War es schon DIESE Bahn, bleibt ein einmal
+    // gemessener Wert stehen, auch wenn das Nachholen die Spur nicht mehr hat.
+    let alte_bahn = stats
+        .runway_match
+        .as_ref()
+        .map(|m| (m.airport_ident.clone(), m.runway_ident.clone()));
     // v0.16.24: Navdata-Cache gegen den ECHTEN Landeflughafen befragen,
     // nicht gegen den geplanten `arr_airport`. Bei einem On-Plan-Landing
     // ist der nächste Airport zum Touchdown == `arr_airport`, also bleibt
@@ -42133,10 +42139,21 @@ fn korreliere_bahn(
     // `tch_actual_from_buffer`.
     // Erst der 50-Hz-Puffer (genau, aber nur 5 s — reicht bei Aufsetzern kurz
     // hinter der Schwelle), sonst die langsame Schwellenspur (Inventur B1).
+    let tch_vorher = stats.runway_tch_actual_ft;
     stats.runway_tch_actual_ft = stats.runway_nav_geometry.as_ref().and_then(|geom| {
         tch_actual_from_buffer(geom, &stats.snapshot_buffer)
             .or_else(|| tch_interpoliert(geom, &stats.schwellen_spur))
     });
+    // Das Nachholen der Bahn (spaete Szenerie) rechnet oft MINUTEN nach dem
+    // Aufsetzen — die 60-s-Spur ist dann leer. Ein beim Aufsetzen gemessener
+    // Wert der SELBEN Bahn bleibt deshalb stehen, statt zu None zu werden.
+    let neue_bahn = stats
+        .runway_match
+        .as_ref()
+        .map(|m| (m.airport_ident.clone(), m.runway_ident.clone()));
+    if stats.runway_tch_actual_ft.is_none() && alte_bahn.is_some() && alte_bahn == neue_bahn {
+        stats.runway_tch_actual_ft = tch_vorher;
+    }
 
     // ⚠ GANZ zum Schluss. `drittel_nachfuehren` liest den Bahntreffer,
     // der weiter oben erst entsteht — davor gerufen setzt es das Feld
@@ -42179,15 +42196,27 @@ fn schwellenspur_fuehren(stats: &mut FlightStats, probe: TelemetrySample) {
     }
 }
 
+/// Groesster Abstand zweier Proben (Laengsmaß), ueber den noch interpoliert
+/// wird. Bei ~2,5 Hz und 70 m/s liegen Proben ~28 m auseinander; eine Luecke
+/// (Sim-Pause, Aufzeichnungsloch) ueber 150 m gibt keine belastbare Hoehe.
+const TCH_MAX_KLAMMER_M: f64 = 150.0;
+/// Plausibler Bereich fuer eine Ueberflughoehe an der Schwelle.
+const TCH_PLAUSIBEL_FT: std::ops::RangeInclusive<f32> = 0.0..=300.0;
+
 /// TCH aus der langsamen Spur: wie `tch_actual_from_buffer`, aber die Hoehe
 /// wird zwischen der letzten Probe VOR und der ersten HINTER der Schwelle
-/// linear nach der Laengsentfernung interpoliert. Ohne Probe vor der
-/// Schwelle (Spur beginnt dahinter) oder ohne Probe dahinter: `None`.
+/// linear nach der Laengsentfernung interpoliert.
+///
+/// Gilt der LETZTE Schwellenuebergang der Spur: nach einem Tiefanflug oder
+/// Durchstart (Spur reicht 60 s zurueck) zaehlt der Ueberflug der Landung,
+/// nicht der aelteste. `None` ohne Probe vor der Schwelle, ohne Probe dahinter,
+/// bei einer Luecke ueber `TCH_MAX_KLAMMER_M` oder einem unplausiblen Wert.
 fn tch_interpoliert(
     geom: &aeroacars_mqtt::navdata::NavRunway,
     buffer: &std::collections::VecDeque<TelemetrySample>,
 ) -> Option<f32> {
     let mut vorher: Option<(f64, f32)> = None;
+    let mut letzter: Option<f32> = None;
     for s in buffer.iter() {
         let along = runway::along_track_m_signed(
             geom.threshold.lat,
@@ -42199,17 +42228,21 @@ fn tch_interpoliert(
         );
         if along < 0.0 {
             vorher = Some((along, s.agl_ft));
+            // Wieder vor der Schwelle: ein frueherer Uebergang gilt nicht mehr.
+            letzter = None;
             continue;
         }
-        let (a0, h0) = vorher?;
-        let spanne = along - a0;
-        if spanne <= 0.0 {
-            return None;
+        if let Some((a0, h0)) = vorher.take() {
+            let spanne = along - a0;
+            if spanne > 0.0 && spanne <= TCH_MAX_KLAMMER_M {
+                let anteil = (-a0 / spanne).clamp(0.0, 1.0);
+                letzter = Some(h0 + (s.agl_ft - h0) * anteil as f32);
+            } else {
+                letzter = None;
+            }
         }
-        let anteil = (-a0 / spanne).clamp(0.0, 1.0);
-        return Some(h0 + (s.agl_ft - h0) * anteil as f32);
     }
-    None
+    letzter.filter(|h| h.is_finite() && TCH_PLAUSIBEL_FT.contains(h))
 }
 
 /// v0.8.0 F5 (Threshold-Crossing-Height Actual): scan the buffer
@@ -67478,6 +67511,81 @@ mod touchdown_metadata_stamp_tests {
         // Der 5-s-Puffer-Weg liefert hier den Rohwert der ersten Probe dahinter —
         // die Interpolation ist genauer und darf davon abweichen.
         assert_eq!(tch_actual_from_buffer(&rw, &buffer), Some(48.0));
+    }
+
+    /// QS-Review: Nach einem Tiefanflug/Durchstart reicht die 60-s-Spur ueber
+    /// zwei Schwellenuebergaenge — es zaehlt der LETZTE (die Landung).
+    #[test]
+    fn tch_interpoliert_nimmt_den_letzten_schwellenuebergang() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        let mut buffer = std::collections::VecDeque::new();
+        // Erster Ueberflug (Tiefanflug, 20 ft), dann wieder vor die Schwelle.
+        for (frac, agl) in [
+            (-0.0004, 25.0),
+            (0.0004, 15.0),
+            (-0.0004, 90.0),
+            (-0.0001, 70.0),
+            (0.0001, 52.0),
+        ] {
+            let (a, o) = point_along(thr, end, frac);
+            buffer.push_back(tch_sample(a, o, agl));
+        }
+        let tch = tch_interpoliert(&rw, &buffer).expect("zweiter Ueberflug");
+        assert!(
+            tch > 50.0 && tch < 70.0,
+            "es zaehlt der letzte Uebergang, war {tch}"
+        );
+    }
+
+    /// QS-Review: Eine Luecke ueber die Schwelle (Sim-Pause) oder ein
+    /// unplausibler Wert gibt kein TCH — lieber leer als erfunden.
+    #[test]
+    fn tch_interpoliert_verwirft_luecken_und_unplausibles() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        let (a0, o0) = point_along(thr, end, -0.2);
+        let (a1, o1) = point_along(thr, end, 0.2);
+        let mut luecke = std::collections::VecDeque::new();
+        luecke.push_back(tch_sample(a0, o0, 60.0));
+        luecke.push_back(tch_sample(a1, o1, 50.0));
+        assert_eq!(
+            tch_interpoliert(&rw, &luecke),
+            None,
+            "Luecke ueber ~hunderte Meter"
+        );
+        let (b0, p0) = point_along(thr, end, -0.0005);
+        let (b1, p1) = point_along(thr, end, 0.0005);
+        let mut hoch = std::collections::VecDeque::new();
+        hoch.push_back(tch_sample(b0, p0, 900.0));
+        hoch.push_back(tch_sample(b1, p1, 880.0));
+        assert_eq!(
+            tch_interpoliert(&rw, &hoch),
+            None,
+            "900 ft ist keine Ueberflughoehe"
+        );
+    }
+
+    /// Inventur B3: Die vier nachgetragenen Muster erreichen die Tabelle —
+    /// mit Vref (Abweichung wird bewertet) und Klassen-Bank-Grenze.
+    #[test]
+    fn nachgetragene_muster_haben_vref_und_bankgrenze() {
+        for (icao, vref, bank) in [
+            ("PC12", 85.0, 12.0),
+            ("LJ35", 125.0, 8.0),
+            ("BE60", 85.0, 15.0),
+            ("E13L", 128.0, 8.0),
+        ] {
+            let l = aircraft_limits_for(icao);
+            assert!(!l.is_fallback, "{icao} steht nicht in der Tabelle");
+            assert_eq!(l.typical_vref_kt, Some(vref), "{icao}");
+            assert_eq!(l.max_bank_landing_deg, bank, "{icao}");
+        }
+        // Gegenprobe: unbelegte Muster bleiben ehrlich im Rueckfall.
+        assert!(aircraft_limits_for("DA50").is_fallback);
+        assert!(aircraft_limits_for("YK18").is_fallback);
     }
 
     #[test]
