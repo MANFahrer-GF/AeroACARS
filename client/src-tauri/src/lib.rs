@@ -41493,7 +41493,7 @@ fn bahn_am_aufsetzpunkt_nachholen(stats: &mut FlightStats, flight: &ActiveFlight
         return false;
     }
     let forensik_bahn_vorher = anflug_forensik_bahn_kennung(stats);
-    korreliere_bahn(stats, flight, simulator, la, lo, hd);
+    korreliere_bahn(stats, flight, simulator, la, lo, hd, true);
     // Lernpaket AP4 (QS 29.09.2026, Befund 2): Die Szenerie kann Schwelle,
     // Gegenende und Versatz ersetzt haben — dann die Forensik nachziehen.
     if anflug_forensik_bahn_kennung(stats) != forensik_bahn_vorher {
@@ -41525,7 +41525,15 @@ fn correlate_touchdown_runway(
     });
     // Womit gerechnet wurde — das Nachholen rechnet mit demselben.
     stats.aufsetz_simulator = Some(snap.simulator);
-    korreliere_bahn(stats, flight, snap.simulator, rw_lat, rw_lon, rw_hdg_true);
+    korreliere_bahn(
+        stats,
+        flight,
+        snap.simulator,
+        rw_lat,
+        rw_lon,
+        rw_hdg_true,
+        false,
+    );
 }
 
 /// Fuehrt das alte `landing_touchdown_zone` dem neuen `td_third` nach.
@@ -41951,6 +41959,12 @@ fn korreliere_bahn(
     rw_lat: f64,
     rw_lon: f64,
     rw_hdg_true: f32,
+    // `true` NUR beim spaeten Nachholen derselben Landung
+    // (`bahn_am_aufsetzpunkt_nachholen`): dort darf ein beim Aufsetzen
+    // gemessener TCH-Wert stehen bleiben. Beim ersten Korrelieren eines
+    // Aufsetzens (auch Touch-and-Go, Durchstart-Landung) gilt nur, was DIESES
+    // Aufsetzen ergibt — sonst bekaeme die zweite Landung den Wert der ersten.
+    nachholen: bool,
 ) {
     // ⚠ Die BISHERIGE Bahnachse, bevor sie ersetzt wird — die Rollspur
     // ist gegen sie projiziert. Siehe `spur_auf_neue_achse`.
@@ -42160,9 +42174,13 @@ fn korreliere_bahn(
         .runway_match
         .as_ref()
         .map(|m| (m.airport_ident.clone(), m.runway_ident.clone()));
-    if stats.runway_tch_actual_ft.is_none() && alte_bahn.is_some() && alte_bahn == neue_bahn {
-        stats.runway_tch_actual_ft = tch_vorher;
-    }
+    stats.runway_tch_actual_ft = tch_nach_korrelation(
+        stats.runway_tch_actual_ft,
+        tch_vorher,
+        &alte_bahn,
+        &neue_bahn,
+        nachholen,
+    );
 
     // ⚠ GANZ zum Schluss. `drittel_nachfuehren` liest den Bahntreffer,
     // der weiter oben erst entsteht — davor gerufen setzt es das Feld
@@ -42209,8 +42227,32 @@ fn schwellenspur_fuehren(stats: &mut FlightStats, probe: TelemetrySample) {
 /// wird. Bei ~2,5 Hz und 70 m/s liegen Proben ~28 m auseinander; eine Luecke
 /// (Sim-Pause, Aufzeichnungsloch) ueber 150 m gibt keine belastbare Hoehe.
 const TCH_MAX_KLAMMER_M: f64 = 150.0;
-/// Plausibler Bereich fuer eine Ueberflughoehe an der Schwelle.
-const TCH_PLAUSIBEL_FT: std::ops::RangeInclusive<f32> = 0.0..=300.0;
+/// Plausibler Bereich fuer eine Ueberflughoehe an der Schwelle. Leicht
+/// negativ ist erlaubt: die Hoehe ueber Grund schwankt um die Nullmarke
+/// (der 5-s-Puffer nimmt sie ebenfalls ungeprueft).
+const TCH_PLAUSIBEL_FT: std::ops::RangeInclusive<f32> = -5.0..=300.0;
+
+/// Entscheidet, welcher TCH-Wert nach dem Korrelieren gilt.
+///
+/// * Neu gemessen → der neue Wert.
+/// * Nichts neu gemessen: nur beim NACHHOLEN derselben Landung auf derselben
+///   Bahn bleibt der beim Aufsetzen gemessene Wert stehen (die 60-s-Spur ist
+///   Minuten spaeter leer). Bei einem frischen Aufsetzen — Touch-and-Go,
+///   Durchstart-Landung — nie: Sonst bekaeme die zweite Landung den Wert der
+///   ersten (QS-Review 02.10.2026).
+fn tch_nach_korrelation(
+    neu: Option<f32>,
+    vorher: Option<f32>,
+    alte_bahn: &Option<(String, String)>,
+    neue_bahn: &Option<(String, String)>,
+    nachholen: bool,
+) -> Option<f32> {
+    neu.or_else(|| {
+        (nachholen && alte_bahn.is_some() && alte_bahn == neue_bahn)
+            .then_some(vorher)
+            .flatten()
+    })
+}
 
 /// TCH aus der langsamen Spur: wie `tch_actual_from_buffer`, aber die Hoehe
 /// wird zwischen der letzten Probe VOR und der ersten HINTER der Schwelle
@@ -67609,6 +67651,59 @@ mod touchdown_metadata_stamp_tests {
         assert_eq!(spann, Some(12.04));
         // Gegenprobe: die direkte Schreibweise bleibt unveraendert.
         assert_eq!(aircraft_limits_for("LJ35").typical_vref_kt, Some(125.0));
+    }
+
+    /// QS-Review (zweite Pruefung): Beim ersten Korrelieren eines Aufsetzens
+    /// zaehlt nur dieses Aufsetzen. Beim Nachholen derselben Landung bleibt der
+    /// Wert; auf einer anderen Bahn nie.
+    #[test]
+    fn tch_wert_bleibt_nur_beim_nachholen_derselben_bahn_stehen() {
+        let eddp = Some(("EDDP".to_string(), "26R".to_string()));
+        let andere = Some(("EDDP".to_string(), "08L".to_string()));
+        // Frisches Aufsetzen (Touch-and-Go) auf derselben Bahn, nichts gemessen: kein alter Wert.
+        assert_eq!(
+            tch_nach_korrelation(None, Some(48.0), &eddp, &eddp, false),
+            None
+        );
+        // Nachholen derselben Landung: Wert bleibt.
+        assert_eq!(
+            tch_nach_korrelation(None, Some(48.0), &eddp, &eddp, true),
+            Some(48.0)
+        );
+        // Nachholen, aber die Bahn hat gewechselt: kein Wert der falschen Bahn.
+        assert_eq!(
+            tch_nach_korrelation(None, Some(48.0), &eddp, &andere, true),
+            None
+        );
+        // Ohne vorherige Bahn nichts zu behalten.
+        assert_eq!(
+            tch_nach_korrelation(None, Some(48.0), &None, &eddp, true),
+            None
+        );
+        // Ein neu gemessener Wert gewinnt immer.
+        assert_eq!(
+            tch_nach_korrelation(Some(55.0), Some(48.0), &eddp, &eddp, true),
+            Some(55.0)
+        );
+        assert_eq!(
+            tch_nach_korrelation(Some(55.0), Some(48.0), &eddp, &eddp, false),
+            Some(55.0)
+        );
+    }
+
+    /// Leicht negative Hoehe ueber Grund an der Schwelle (Messrauschen) ist plausibel.
+    #[test]
+    fn tch_interpoliert_laesst_minimal_negative_hoehe_zu() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        let (a0, o0) = point_along(thr, end, -0.0005);
+        let (a1, o1) = point_along(thr, end, 0.0005);
+        let mut buffer = std::collections::VecDeque::new();
+        buffer.push_back(tch_sample(a0, o0, 1.0));
+        buffer.push_back(tch_sample(a1, o1, -2.0));
+        let tch = tch_interpoliert(&rw, &buffer).expect("-0,5 ft ist plausibel");
+        assert!(tch < 0.0 && tch > -5.0, "{tch}");
     }
 
     #[test]
