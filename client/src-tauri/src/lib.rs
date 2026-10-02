@@ -10847,7 +10847,10 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
         // GA Twins (piston). v0.8.3: BE58 (Baron) + PA34 (Seneca) +
         // AEST (Aerostar) hinzugefuegt — Reports zeigten GSG-Piloten mit
         // Baron/Seneca landeten mit Airliner-Bank-Limits (8° statt 15°).
-        "BE58" | "BE76" | "PA34" | "PA44" | "AEST" => AircraftLimits {
+        // 02.10.2026 (Inventur): BE60 (Duke) nachgetragen — typischer
+        // Anflug ~85 kt wie die uebrigen Kolben-Twins. Wert typisch, nicht
+        // aus dem POH abgeleitet; Thomas bestaetigt.
+        "BE58" | "BE60" | "BE76" | "PA34" | "PA44" | "AEST" => AircraftLimits {
             max_bank_landing_deg: 15.0,
             typical_vref_kt: Some(85.0),
             is_fallback: false,
@@ -10873,7 +10876,10 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
             typical_vref_kt: Some(75.0),
             is_fallback: false,
         },
-        "SR20" | "SR22" | "SR2T" => AircraftLimits {
+        // 02.10.2026 (Inventur): DA50 (1,3 x Vso ≈ 80 kt) und YK18 (Yak-18T,
+        // Anflug ~140 km/h ≈ 76 kt) nachgetragen — typische Werte, nicht aus
+        // dem POH abgeleitet; Thomas bestaetigt.
+        "SR20" | "SR22" | "SR2T" | "DA50" | "YK18" => AircraftLimits {
             max_bank_landing_deg: 12.0,
             typical_vref_kt: Some(80.0),
             is_fallback: false,
@@ -10889,6 +10895,25 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
         "M20P" | "M20T" | "MU2" => AircraftLimits {
             max_bank_landing_deg: 12.0,
             typical_vref_kt: Some(80.0),
+            is_fallback: false,
+        },
+
+        // ─── Nachgetragen 02.10.2026 (Inventur der Messkanaele) ───────────
+        //
+        // Die Vref-Abweichung fehlte bei diesen Mustern, weil sie nicht in
+        // der Tabelle standen (Sim liefert keine Vref, siehe Inventur B3).
+        // Werte TYPISCH (Familienwerte), nicht aus dem jeweiligen POH/FCOM
+        // abgeleitet — vor Verlass Thomas abstimmen.
+        // Pilatus PC-12: Anflug mit Landeklappen 40°, ~85 KIAS.
+        "PC12" => AircraftLimits {
+            max_bank_landing_deg: 12.0,
+            typical_vref_kt: Some(85.0),
+            is_fallback: false,
+        },
+        // Learjet 35: Vref je nach Gewicht ~120-135 kt.
+        "LJ35" => AircraftLimits {
+            max_bank_landing_deg: 8.0,
+            typical_vref_kt: Some(125.0),
             is_fallback: false,
         },
 
@@ -10981,7 +11006,8 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
             typical_vref_kt: Some(122.0),
             is_fallback: false,
         },
-        "E135" | "E145" => AircraftLimits {
+        // 02.10.2026: E13L (Legacy 600, E135-Familie) nachgetragen.
+        "E135" | "E145" | "E13L" => AircraftLimits {
             max_bank_landing_deg: 8.0,
             typical_vref_kt: Some(128.0),
             is_fallback: false,

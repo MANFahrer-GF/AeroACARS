@@ -4119,14 +4119,17 @@ fn telemetry_to_snapshot_mit_pfad(
             (None, None)
         };
 
-    // v1.9.17 (DLH 2248, BCS3, 01.10.2026): Beim Synaptic A220 las der
-    // Hebel-LVar den GANZEN Flug 0.0, waehrend die Raste (FLAPS HANDLE INDEX)
-    // 0 → 5 lief. Die Landekonfiguration galt damit als „nicht bewertbar"
-    // (Klappenkanal bewegt sich nie) — Fahrwerk war korrekt gelesen. Liefert
-    // der LVar nichts, obwohl die Raste gesetzt ist, gilt die Raste: Stufe
-    // geteilt durch Rastenzahl, dieselbe Skala wie der LVar (Stufe 5 = 1.0).
-    let flaps_position = match (is_synaptic_a220, flap_handle_index, flap_num_positions) {
-        (true, Some(idx), Some(num)) if flaps_position < 0.001 && idx > 0 => {
+    // v1.9.17 (DLH 2248, BCS3, 01.10.2026; Inventur 02.10.2026): Beim Synaptic
+    // A220 las der Hebel-LVar den GANZEN Flug 0.0, waehrend die Raste
+    // (FLAPS HANDLE INDEX) 0 → 5 lief. Die Landekonfiguration galt damit als
+    // „nicht bewertbar" (Klappenkanal bewegt sich nie) — das Fahrwerk war
+    // korrekt gelesen. Die Raste liefert bei allen 49 inventarisierten
+    // MSFS-Typen Werte, deshalb gilt der Rueckgriff fuer ALLE Muster, nicht
+    // nur den A220: Liefert der Klappenwert nichts, obwohl die Raste gesetzt
+    // ist, zaehlt die Raste — Stufe geteilt durch Rastenzahl, dieselbe Skala
+    // wie der LVar (Stufe 5 von 5 = 1.0). Ein lesender Wert hat Vorrang.
+    let flaps_position = match (flap_handle_index, flap_num_positions) {
+        (Some(idx), Some(num)) if flaps_position < 0.001 && idx > 0 => {
             (idx as f32 / num as f32).clamp(0.0, 1.0)
         }
         _ => flaps_position,
@@ -8661,11 +8664,37 @@ mod tests {
         t.flap_handle_index = 5.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert!((snap.flaps_position - 0.6).abs() < 1e-6);
-        // Andere Muster bleiben unberuehrt (kein stiller Rueckgriff).
+        // Ein lesender Klappenwert hat bei JEDEM Muster Vorrang vor der Raste.
         let mut t = Telemetry::default();
-        t.flaps_position = 0.0;
+        t.flaps_position = 0.25;
         t.flap_num_positions = 5.0;
         t.flap_handle_index = 5.0;
+        assert!((telemetry_to_snapshot(t, Simulator::Msfs2024).flaps_position - 0.25).abs() < 1e-6);
+    }
+
+    /// Inventur 02.10.2026: Der Rueckgriff gilt fuer jedes Muster, nicht nur
+    /// den A220 — die Raste liefert bei allen inventarisierten MSFS-Typen.
+    #[test]
+    fn klappenwert_faellt_bei_jedem_muster_auf_die_raste_zurueck() {
+        let mut t = Telemetry::default();
+        t.flaps_position = 0.0;
+        t.flap_num_positions = 4.0;
+        t.flap_handle_index = 3.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!((snap.flaps_position - 0.75).abs() < 1e-6);
+        // Eingefahren bleibt eingefahren, ohne Raste bleibt der Wert.
+        let mut t = Telemetry::default();
+        t.flaps_position = 0.0;
+        t.flap_num_positions = 4.0;
+        t.flap_handle_index = 0.0;
+        assert_eq!(
+            telemetry_to_snapshot(t, Simulator::Msfs2024).flaps_position,
+            0.0
+        );
+        let mut t = Telemetry::default();
+        t.flaps_position = 0.0;
+        t.flap_num_positions = 0.0; // SimVar nicht gefuellt
+        t.flap_handle_index = 3.0;
         assert_eq!(
             telemetry_to_snapshot(t, Simulator::Msfs2024).flaps_position,
             0.0
