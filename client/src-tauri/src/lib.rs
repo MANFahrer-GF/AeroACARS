@@ -10884,10 +10884,7 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
             typical_vref_kt: Some(75.0),
             is_fallback: false,
         },
-        // 02.10.2026 (Inventur): DA50 (1,3 x Vso ≈ 80 kt) und YK18 (Yak-18T,
-        // Anflug ~140 km/h ≈ 76 kt) nachgetragen — typische Werte, nicht aus
-        // dem POH abgeleitet; Thomas bestaetigt.
-        "SR20" | "SR22" | "SR2T" | "DA50" | "YK18" => AircraftLimits {
+        "SR20" | "SR22" | "SR2T" => AircraftLimits {
             max_bank_landing_deg: 12.0,
             typical_vref_kt: Some(80.0),
             is_fallback: false,
