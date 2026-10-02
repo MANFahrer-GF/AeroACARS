@@ -39,11 +39,14 @@ Die Bewertung stützt sich auf Messkanäle, die je Simulator und Flugzeug versch
 
 - Fehlen scheinbar bei 37 von 60 (ab 1.9.0), aber nur, weil die Felder erst mit v1.9.12 kamen. Bei Clients ab 1.9.14: **0 von 20 fehlen**.
 
-### B5 — weitere Felder mit Lücken, **Ursache offen**
+### B5 — weitere Felder mit Lücken — **aufgelöst (Untersuchung 02.10.2026)**
 
 - `vs_gelaende_fpm` / `vs_eigensinken_fpm`: 10 von 60 (BCS3 2/4, LJ35 2/3, E195 2/4, …).
 - `runway_exits` / `clearance_side`: 4 von 60 (AC11, B738, E190, BCS3).
-- Bei beiden habe ich die Ursache **nicht untersucht**.
+- **`vs_gelaende_fpm` / `vs_eigensinken_fpm` — Defekt, belegt.** Die Rechnung wandte die Riegel „mindestens 3 verschiedene Werte“ und „höchstens 120 ms Stillstand“ auch auf die **Bodenhöhe** (MSL − AGL) an. Ebenes Gelände steht legitim still, die Aufschlüsselung wurde dann ganz verworfen. Nachgerechnet an 59 von 60 Landungen: bei allen 9 ohne Wert ist die Geländespur konstant, bei allen 50 mit Wert nicht. **Behoben** in der Sammelversion (Bodenhöhe ohne Bewegungsriegel; Geländeanteil 0, Eigensinken = gemessene Rate).
+- **`runway_exits` / `clearance_side` — zwei getrennte Ursachen, nicht gebaut.** (1) 3 Landungen mit Client 1.9.8–1.9.10: `rollout_finalized` kam ohne Bahnblock (`rollout_final = false`); ab 1.9.11 sind 14 von 14 vollständig, ein Fix dazwischen ist im Verlauf nicht erkennbar. (2) `runway_exits` wird nur beim Aufsetzen berechnet; fehlt die Platzkarte dann, wird es nicht nachgeholt (AC11/EDHE, EDDM 08L, BCS3/EDDC). Vorschlag (klein bis mittel, **nicht in dieser Version**): Ausfahrten beim Abschluss des Ausrollens neu rechnen, Zustand „keine Karte beim Aufsetzen“ gegen „Karte da, keine Ausfahrt“ speichern, Grund für `bahn: None` im Ereignis mitschicken.
+- **LJ35 ohne `wingspan_m`:** Die Tabelle kennt den LJ35 (12,04 m), trotzdem steht die Spannweite nicht im Payload; die Auflösung des Musters bei diesen Flügen habe ich nicht nachvollzogen — **offen**.
+- **Kein Defekt, aber leere Anzeige:** `td_third`/`td_in_tdz` fehlen bei Bahnen unter 1200 m (AC11/EDHE, 676 m) — gewollt, die Anzeige sollte „Bahn zu kurz für Aufsetzzone“ sagen statt ein leeres Feld zu zeigen.
 
 ### B6 — Rohkanäle je Simulator (Teil B)
 
@@ -88,7 +91,7 @@ Zahlen = Anzahl Flugzeugtypen, bei denen der Kanal in den jüngsten Logs Werte l
 Auffällig:
 - **MSFS:** Fahrwerk und beide Klappenkanäle sind fast überall da. **Die Raste (`flap_handle_index`) liefert bei allen 49 Typen Werte** — als allgemeiner Rückfall für den Klappenwert tauglich. Der Klappen**wert** ist nur beim BCS3 konstant.
 - **MSFS:** Vref/Vapp aus dem Sim gibt es praktisch nie (1 von 49) — die eigene Tabelle ist die Hauptquelle, nicht ein Notbehelf. Schubumkehr, Bodenspoiler, Fahrwerkskraft fehlen bei fast allen.
-- **X-Plane:** Raste fehlt bei 8 von 9 Typen (kein Rückfall möglich). Der Klappenwert ist bei B742, B752, B763, DH8D, E13L, E170 in den jüngsten Logs konstant — **ob das mit aktuellen Clients noch so ist, ist offen** (nur 6 X-Plane-Landungen ab 1.9.0, davon Config vorhanden bei A20N, A21N, B738, B77W, DH8D, E75L; die Logs können aus älteren Clients stammen).
+- **X-Plane:** Raste fehlt in **allen** 247 X-Plane-Logs (kein Rückfall möglich). **Korrektur der ersten Fassung:** Die „konstanten“ Klappenwerte bei B742, B752, B763, DH8D, E13L, E170 stammen von Clients ≤ 1.8.2. Mit aktuellen Clients bewegen sich Klappen und Fahrwerk bei allen sechs X-Plane-Typen, von denen es Landungen ab 1.9.3 gibt (B77W, E175, A21N, A20N, DH8D, B738). Für B742, B752, B763, E170, E190, A320, A321 u. a. gibt es **keine Daten eines aktuellen Clients** — dort ist nichts belegt.
 - Festes Fahrwerk (C152, C172, C182, C208, DA40) zeigt „konstant“ — das ist korrekt, kein Defekt.
 
 ## 4. Was strukturell fehlt
@@ -110,7 +113,9 @@ Auffällig:
 
 Grundsatz bleibt: **ohne Messung keine Note** (kein stilles „bestanden“, keine Strafe).
 
-## 6. Vorgeschlagene Sammelversion (v1.9.17)
+## 6. Vorgeschlagene Sammelversion (v1.9.17) — **Stand der Umsetzung 02.10.2026**
+
+Gebaut auf Branch `feat/sammelversion-messkanaele`: Maßnahme 1 (Raste als Rückfall für alle MSFS-Muster), 2 (TCH aus langsamer Schwellenspur mit Interpolation), 3 (Vref: PC12, LJ35, BE60, E13L — DA50 und YK18 bewusst **nicht**, Wert unbelegt), 4 (`/api/admin/kanal-luecken` im Recorder + Health-Mail-Modul v0.1.37), dazu B5/A (Geländeanteil). Nicht gebaut: B5/B (Ausfahrten), LJ35-Spannweite, X-Plane-Nachmessung.
 
 | # | Maßnahme | Evidenz | Aufwand |
 |---|---|---|---|
