@@ -35128,72 +35128,80 @@ fn compute_landing_analysis(
     // Fenster, dieselben Riegel wie oben — nur ueber eine andere Groesse.
     // Beides wird NUR ANGEZEIGT und geht in keine Punktzahl ein: erst
     // messen, dann entscheiden.
-    let steigung_ueber_fenster =
-        |wert: &dyn Fn(&TouchdownWindowSample) -> Option<f32>| -> Option<f32> {
-            let lo = edge_ms - AGL_FENSTER_MS;
-            let punkte: Vec<(f64, f64)> = samples
-                .iter()
-                .filter(|s| {
-                    let ts = s.at.timestamp_millis();
-                    ts >= lo && ts <= edge_ms && !s.on_ground
-                })
-                .filter_map(|s| {
-                    let y = wert(s)?;
-                    if !y.is_finite() {
-                        return None;
-                    }
-                    Some((s.at.timestamp_millis() as f64 / 1000.0, y as f64))
-                })
-                .collect();
-            if punkte.len() < AGL_MIN_SAMPLES {
-                return None;
-            }
-            let spanne = punkte.last()?.0 - punkte.first()?.0;
-            if spanne < AGL_MIN_SPANNE_S {
-                return None;
-            }
-            // Dieselben Riegel wie die Hoehenkurve selbst — eine eingefrorene
-            // Spur liest sich sonst als „kein Sinkflug" und schiebt die ganze
-            // Bewegung dem jeweils anderen Anteil zu. Der Vergleich mit dem
-            // Werkzeug von Arderos hat die Luecke aufgedeckt: es verlangt
-            // ausdruecklich fuenf UNTERSCHIEDLICHE Zeitstempel, meine erste
-            // Fassung zaehlte nur Messpunkte.
-            let verschiedene = punkte
-                .iter()
-                .map(|p| (p.1 * 1000.0).round() as i64)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len();
-            if verschiedene < AGL_MIN_VERSCHIEDENE {
-                return None;
-            }
-            let mut laengster_stillstand_ms = 0_i64;
-            let mut lauf_start = punkte[0].0;
-            for paar in punkte.windows(2) {
-                if (paar[1].1 - paar[0].1).abs() < 1e-4 {
-                    let dauer = ((paar[1].0 - lauf_start) * 1000.0).round() as i64;
-                    laengster_stillstand_ms = laengster_stillstand_ms.max(dauer);
-                } else {
-                    lauf_start = paar[1].0;
+    //
+    // v1.9.17 (Inventur 02.10.2026, B5/A): `bewegung_pruefen` schaltet die
+    // Riegel „genug verschiedene Werte" und „kein Stillstand" ein. Fuer die
+    // Hoehe ueber dem Meeresspiegel gelten sie (eingefrorene Spur = wertlos),
+    // fuer die BODENHOEHE nicht: Ebenes Gelaende steht legitim still. Die
+    // Riegel verwarfen dort die ganze Aufschluesselung — bei 10 von 60
+    // Landungen (flache Plaetze), obwohl AGL und MSL einwandfrei waren.
+    let steigung_ueber_fenster = |wert: &dyn Fn(&TouchdownWindowSample) -> Option<f32>,
+                                  bewegung_pruefen: bool|
+     -> Option<f32> {
+        let lo = edge_ms - AGL_FENSTER_MS;
+        let punkte: Vec<(f64, f64)> = samples
+            .iter()
+            .filter(|s| {
+                let ts = s.at.timestamp_millis();
+                ts >= lo && ts <= edge_ms && !s.on_ground
+            })
+            .filter_map(|s| {
+                let y = wert(s)?;
+                if !y.is_finite() {
+                    return None;
                 }
-            }
-            if laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS {
-                return None;
-            }
-            let n = punkte.len() as f64;
-            let mx = punkte.iter().map(|p| p.0).sum::<f64>() / n;
-            let my = punkte.iter().map(|p| p.1).sum::<f64>() / n;
-            let sxx: f64 = punkte.iter().map(|p| (p.0 - mx).powi(2)).sum();
-            if sxx < 1e-9 {
-                return None;
-            }
-            let sxy: f64 = punkte.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
-            let fpm = (sxy / sxx) * 60.0;
-            if fpm.is_finite() {
-                Some(fpm as f32)
+                Some((s.at.timestamp_millis() as f64 / 1000.0, y as f64))
+            })
+            .collect();
+        if punkte.len() < AGL_MIN_SAMPLES {
+            return None;
+        }
+        let spanne = punkte.last()?.0 - punkte.first()?.0;
+        if spanne < AGL_MIN_SPANNE_S {
+            return None;
+        }
+        // Dieselben Riegel wie die Hoehenkurve selbst — eine eingefrorene
+        // Spur liest sich sonst als „kein Sinkflug" und schiebt die ganze
+        // Bewegung dem jeweils anderen Anteil zu. Der Vergleich mit dem
+        // Werkzeug von Arderos hat die Luecke aufgedeckt: es verlangt
+        // ausdruecklich fuenf UNTERSCHIEDLICHE Zeitstempel, meine erste
+        // Fassung zaehlte nur Messpunkte.
+        let verschiedene = punkte
+            .iter()
+            .map(|p| (p.1 * 1000.0).round() as i64)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        if bewegung_pruefen && verschiedene < AGL_MIN_VERSCHIEDENE {
+            return None;
+        }
+        let mut laengster_stillstand_ms = 0_i64;
+        let mut lauf_start = punkte[0].0;
+        for paar in punkte.windows(2) {
+            if (paar[1].1 - paar[0].1).abs() < 1e-4 {
+                let dauer = ((paar[1].0 - lauf_start) * 1000.0).round() as i64;
+                laengster_stillstand_ms = laengster_stillstand_ms.max(dauer);
             } else {
-                None
+                lauf_start = paar[1].0;
             }
-        };
+        }
+        if bewegung_pruefen && laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS {
+            return None;
+        }
+        let n = punkte.len() as f64;
+        let mx = punkte.iter().map(|p| p.0).sum::<f64>() / n;
+        let my = punkte.iter().map(|p| p.1).sum::<f64>() / n;
+        let sxx: f64 = punkte.iter().map(|p| (p.0 - mx).powi(2)).sum();
+        if sxx < 1e-9 {
+            return None;
+        }
+        let sxy: f64 = punkte.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
+        let fpm = (sxy / sxx) * 60.0;
+        if fpm.is_finite() {
+            Some(fpm as f32)
+        } else {
+            None
+        }
+    };
     // Nur wenn die Hoehenkurve selbst getragen hat — sonst waere die
     // Aufschluesselung eine Erklaerung fuer eine Zahl, die gar nicht von
     // ihr stammt.
@@ -35209,12 +35217,16 @@ fn compute_landing_analysis(
     // lesen laesst, und die einzige, in der eine falsche Richtung sofort
     // auffaellt (die Summe geht dann nicht auf).
     let (vs_gelaende, vs_eigensinken) = if let Some(gemessen) = vs_geometrie {
-        let boden_bewegung =
-            steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft.map(|m| m - s.agl_ft));
-        let msl = steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft);
+        let boden_bewegung = steigung_ueber_fenster(
+            &|s: &TouchdownWindowSample| s.msl_ft.map(|m| m - s.agl_ft),
+            // Ebenes Gelaende steht legitim still (Steigung 0).
+            false,
+        );
+        let msl = steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft, true);
         match (boden_bewegung, msl) {
             (Some(boden), Some(eigen)) => {
-                let gelaende = -boden;
+                // `+ 0.0` macht aus −0,0 (ebener Boden) eine ehrliche 0.
+                let gelaende = -boden + 0.0;
                 // Die Probe: die Aufschluesselung MUSS die gemessene Zahl
                 // ergeben. Geht sie nicht auf, stimmt an einer der drei
                 // Groessen etwas nicht (eingefrorene Spur, Gelaendesprung,
@@ -72951,6 +72963,31 @@ mod msfs_agl_flare_tests {
         assert_eq!(uebernehmen(Some(-234.0), Some(-235.0)), Some(-235.0));
         // Ohne Kandidat bleibt es leer.
         assert_eq!(uebernehmen(Some(-234.0), None), None);
+    }
+
+    /// Inventur B5/A (02.10.2026): Ebenes Gelaende steht legitim still. Dort
+    /// fiel die ganze Aufschluesselung weg (10 von 60 Landungen), obwohl AGL
+    /// und MSL einwandfrei sanken. Jetzt: Gelaendeanteil 0, Eigensinken =
+    /// gemessene Rate.
+    #[test]
+    fn ebenes_gelaende_liefert_die_aufschluesselung_mit_gelaende_null() {
+        let b = Utc::now();
+        let samples: Vec<TouchdownWindowSample> = (0..12)
+            .map(|i| {
+                let t = i as f32 * 0.025;
+                let msl = 1000.0 - 5.0 * t;
+                tw_msl(b, (t * 1000.0) as i64, msl - 900.0, msl, 2.0, false, -300.0)
+            })
+            .collect();
+        let edge = b + chrono::Duration::milliseconds(275);
+        let a = compute_landing_analysis(&samples, edge, Simulator::Msfs2024, None);
+        let hole = |k: &str| a.get(k).and_then(|v| v.as_f64()).map(|v| v as f32);
+        let gemessen = hole("vs_at_edge_fpm").expect("Hoehenkurve");
+        let gelaende = hole("vs_gelaende_fpm").expect("ebenes Gelaende hat einen Anteil: 0");
+        let eigen = hole("vs_eigensinken_fpm").expect("Eigensinken");
+        assert_eq!(gelaende, 0.0, "Boden steht, Beitrag ist null (nicht −0)");
+        assert!(gelaende.is_sign_positive());
+        assert!((eigen - gemessen).abs() < 5.0, "{eigen} gegen {gemessen}");
     }
 
     /// QS gegen das Werkzeug von Arderos: es verlangt fuenf
