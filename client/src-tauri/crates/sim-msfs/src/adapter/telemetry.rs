@@ -4119,6 +4119,19 @@ fn telemetry_to_snapshot_mit_pfad(
             (None, None)
         };
 
+    // v1.9.17 (DLH 2248, BCS3, 01.10.2026): Beim Synaptic A220 las der
+    // Hebel-LVar den GANZEN Flug 0.0, waehrend die Raste (FLAPS HANDLE INDEX)
+    // 0 → 5 lief. Die Landekonfiguration galt damit als „nicht bewertbar"
+    // (Klappenkanal bewegt sich nie) — Fahrwerk war korrekt gelesen. Liefert
+    // der LVar nichts, obwohl die Raste gesetzt ist, gilt die Raste: Stufe
+    // geteilt durch Rastenzahl, dieselbe Skala wie der LVar (Stufe 5 = 1.0).
+    let flaps_position = match (is_synaptic_a220, flap_handle_index, flap_num_positions) {
+        (true, Some(idx), Some(num)) if flaps_position < 0.001 && idx > 0 => {
+            (idx as f32 / num as f32).clamp(0.0, 1.0)
+        }
+        _ => flaps_position,
+    };
+
     // A/THR (v0.16.4): nur Profile mit verifizierter State-Quelle.
     //   * A346: `L:AB_AP_ATHR_LIGHT_ON` — FCU-Annunciator-Lampe,
     //     echter Engagement-State (seit v0.16.3 subscribed, bislang
@@ -8613,6 +8626,50 @@ mod tests {
         t.syn_flap_lever = 4.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert!(snap.flaps_position >= 0.70);
+    }
+
+    /// DLH 2248 (01.10.2026): LVar liest 0.0, die Raste steht auf 4/5 bzw. 5/5
+    /// — die Klappen gelten als gesetzt, sonst ist die Landekonfiguration
+    /// „nicht bewertbar".
+    #[test]
+    fn synaptic_a220_faellt_auf_die_hebelraste_zurueck_wenn_der_lvar_null_liest() {
+        for (idx, erwartet) in [(5.0, 1.0_f32), (4.0, 0.8), (2.0, 0.4)] {
+            let mut t = synaptic_a220_telemetry();
+            t.syn_flap_lever = 0.0;
+            t.flap_num_positions = 5.0;
+            t.flap_handle_index = idx;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert!(
+                (snap.flaps_position - erwartet).abs() < 1e-6,
+                "Raste {idx}: {}",
+                snap.flaps_position
+            );
+        }
+        // Eingefahren bleibt eingefahren.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 0.0;
+        t.flap_num_positions = 5.0;
+        t.flap_handle_index = 0.0;
+        assert_eq!(
+            telemetry_to_snapshot(t, Simulator::Msfs2024).flaps_position,
+            0.0
+        );
+        // Ein lesender LVar hat Vorrang vor der Raste.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 0.6;
+        t.flap_num_positions = 5.0;
+        t.flap_handle_index = 5.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!((snap.flaps_position - 0.6).abs() < 1e-6);
+        // Andere Muster bleiben unberuehrt (kein stiller Rueckgriff).
+        let mut t = Telemetry::default();
+        t.flaps_position = 0.0;
+        t.flap_num_positions = 5.0;
+        t.flap_handle_index = 5.0;
+        assert_eq!(
+            telemetry_to_snapshot(t, Simulator::Msfs2024).flaps_position,
+            0.0
+        );
     }
 
     #[test]
