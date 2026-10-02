@@ -10866,7 +10866,7 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
         // Baron/Seneca landeten mit Airliner-Bank-Limits (8° statt 15°).
         // 02.10.2026 (Inventur): BE60 (Duke) nachgetragen — typischer
         // Anflug ~85 kt wie die uebrigen Kolben-Twins. Wert typisch, nicht
-        // aus dem POH abgeleitet; Thomas bestaetigt.
+        // aus dem POH abgeleitet — vor Verlass Thomas abstimmen.
         "BE58" | "BE60" | "BE76" | "PA34" | "PA44" | "AEST" => AircraftLimits {
             max_bank_landing_deg: 15.0,
             typical_vref_kt: Some(85.0),
