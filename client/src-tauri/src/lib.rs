@@ -6350,6 +6350,11 @@ struct FlightStats {
     /// Zeitpunkt der Distanz-Basislinie — ohne ihn laesst sich ein Sprung
     /// nicht von einem Flug unterscheiden. Siehe `segment_is_flown`.
     last_pos_at: Option<DateTime<Utc>>,
+    /// Sim-Rate der vorigen Probe fuer die Streckenzaehlung. Nicht
+    /// persistiert: Nach einem Neustart gilt fuer die erste Probe die
+    /// aktuelle Rate (Default 0 verliert gegen sie im `max`), meist ist sie
+    /// wegen der Zeitluecke ohnehin eine Luecke.
+    last_sim_rate: f32,
     distance_nm: f64,
     position_count: u32,
 
@@ -43932,6 +43937,38 @@ fn classify_segment(
     dt_secs: Option<f64>,
     limits: SegmentLimits,
 ) -> SegmentVerdict {
+    classify_segment_rate(prev, cur, alt_jump_ft, dt_secs, limits, None)
+}
+
+/// Obergrenze der Sim-Rate, mit der die erlaubte Strecke wachsen darf —
+/// dieselbe wie bei der Auto-Start-Sprungpruefung: ein Teleport ueber
+/// hunderte km darf auch bei Zeitraffer nie als Flug durchgehen.
+const SIMRATE_STRECKE_MAX: f64 = 16.0;
+
+/// Spielraum auf die gemeldete Groundspeed bei Zeitraffer: Die GS stammt
+/// aus einer Probe, das Segment dauert mehrere Sekunden (Beschleunigung,
+/// Rundung der Sim-Rate). Wie bei der Auto-Start-Sprungpruefung (dort x2),
+/// hier enger, weil jeder Fehler dauerhaft im Logbuch steht.
+const ZEITRAFFER_GS_SPIELRAUM: f64 = 1.5;
+
+/// Wie `classify_segment`, aber mit Zeitraffer `(sim_rate, groundspeed_kt)`.
+///
+/// Bei 8x legt das Flugzeug je echter Sekunde achtmal so viel Strecke
+/// zurueck. Die Erweiterung haengt bewusst an der GEMELDETEN Groundspeed
+/// (gedeckelt auf `RESUME_MAX_PLAUSIBEL_KT`), nicht an der festen
+/// 2200-kt-Grenze: sonst liessen 16x und eine 120-s-Luecke rechnerisch
+/// ~11.700 NM als Flug durch (QS 03.10.2026) — ein Teleport ueber die
+/// Weltkarte bei laufender Telemetrie haette im Logbuch gestanden.
+/// Ohne GS oder bei Rate <= 1 gilt die normale Grenze; sie wird nie kleiner
+/// (Zeitlupe). Die Luecken-Grenze (`max_dt_secs`) bleibt in echter Zeit.
+fn classify_segment_rate(
+    prev: (f64, f64),
+    cur: (f64, f64),
+    alt_jump_ft: Option<f64>,
+    dt_secs: Option<f64>,
+    limits: SegmentLimits,
+    zeitraffer: Option<(f64, f64)>,
+) -> SegmentVerdict {
     if is_null_island(cur.0, cur.1) || is_null_island(prev.0, prev.1) {
         return SegmentVerdict::Jump("Null-Position");
     }
@@ -43955,7 +43992,19 @@ fn classify_segment(
     }
     let erlaubt = match limits.flat_max_dist_nm {
         Some(fest) => fest,
-        None => limits.max_speed_kt * (dt / 3600.0) + limits.slack_nm,
+        None => {
+            let normal = limits.max_speed_kt * (dt / 3600.0) + limits.slack_nm;
+            match zeitraffer {
+                Some((rate, gs_kt)) if rate.is_finite() && gs_kt.is_finite() && rate > 1.0 => {
+                    let rate = rate.min(SIMRATE_STRECKE_MAX);
+                    let gs = gs_kt.clamp(0.0, RESUME_MAX_PLAUSIBEL_KT);
+                    let beschleunigt =
+                        gs * ZEITRAFFER_GS_SPIELRAUM * rate * (dt / 3600.0) + limits.slack_nm;
+                    normal.max(beschleunigt)
+                }
+                _ => normal,
+            }
+        }
     };
     if d_nm > erlaubt {
         SegmentVerdict::Jump("Positionssprung")
@@ -44275,17 +44324,31 @@ fn step_flight_at(
         let dt = stats
             .last_pos_at
             .map(|t| (now - t).num_milliseconds() as f64 / 1000.0);
-        let urteil = classify_segment(
+        // Zeitraffer: Ein Segment gilt mit der hoeheren der beiden Raten —
+        // wechselt die Rate mitten im Takt, gehoert die Strecke zur schnelleren
+        // Seite (Feldbefund TGW 882: 1201 NM bei 8x/16x als „zu schnell"
+        // verworfen, im PIREP 1753 statt 2956 NM).
+        // Groundspeed ebenso: die hoehere aus voriger und aktueller Probe.
+        let rate = f64::from(stats.last_sim_rate.max(snap.simulation_rate));
+        let gs_kt = f64::from(
+            stats
+                .last_known_gs_kt
+                .unwrap_or(0.0)
+                .max(snap.groundspeed_kt),
+        );
+        let urteil = classify_segment_rate(
             (prev_lat, prev_lon),
             (snap.lat, snap.lon),
             None,
             dt,
             ODOMETER_LIMITS,
+            Some((rate, gs_kt)),
         );
         if d_m > DISTANCE_EPSILON_M && urteil == SegmentVerdict::Flown {
             stats.distance_nm += d_m / 1852.0;
         }
     }
+    stats.last_sim_rate = snap.simulation_rate;
     let sprit_dt_s = stats
         .last_pos_at
         .map(|t| (now - t).num_milliseconds() as f64 / 1000.0);
@@ -70038,6 +70101,113 @@ mod v0_16_6_bush_completeness_tests {
 
     fn urteil(von: (f64, f64), nach: (f64, f64), dt: Option<f64>) -> SegmentVerdict {
         classify_segment(von, nach, None, dt, ODOMETER_LIMITS)
+    }
+
+    /// Reiseflug-GS fuer die Zeitraffer-Tests.
+    const GS_REISE: f64 = 450.0;
+
+    fn urteil_rate(von: (f64, f64), nach: (f64, f64), dt: f64, rate: f64) -> SegmentVerdict {
+        classify_segment_rate(
+            von,
+            nach,
+            None,
+            Some(dt),
+            ODOMETER_LIMITS,
+            Some((rate, GS_REISE)),
+        )
+    }
+
+    /// ~5 NM oestlich von BER: in 5 s real nur mit Zeitraffer fliegbar
+    /// (Reiseflug 450 kt x 8 x 5 s = 5 NM). Feldbefund TGW 882.
+    const BER_5NM: (f64, f64) = (52.36, 13.6363);
+
+    #[test]
+    fn zeitraffer_strecke_wird_gezaehlt_statt_als_sprung_verworfen() {
+        assert_eq!(
+            urteil_rate(BER, BER_5NM, 5.0, 1.0),
+            SegmentVerdict::Jump("Positionssprung"),
+            "ohne Zeitraffer bleibt das ein Sprung"
+        );
+        assert_eq!(urteil_rate(BER, BER_5NM, 5.0, 8.0), SegmentVerdict::Flown);
+    }
+
+    #[test]
+    fn teleport_bleibt_auch_bei_zeitraffer_ein_sprung() {
+        for rate in [8.0, 16.0, 1000.0] {
+            assert_eq!(
+                urteil_rate(BER, FRA, 4.0, rate),
+                SegmentVerdict::Jump("Positionssprung"),
+                "232 NM in 4 s darf bei Rate {rate} nie als Flug zaehlen"
+            );
+        }
+    }
+
+    #[test]
+    fn rate_ueber_der_obergrenze_wird_gedeckelt() {
+        // 5 NM in 0,1 s waeren nur bei Rate > 1000 moeglich.
+        assert_eq!(
+            urteil_rate(BER, BER_5NM, 0.1, 1000.0),
+            SegmentVerdict::Jump("Positionssprung")
+        );
+    }
+
+    #[test]
+    fn rate_unter_eins_oder_unsinn_verkleinert_die_grenze_nie() {
+        for rate in [0.25, 0.5, 0.0, -3.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                urteil_rate(BER, BER_NAH, 4.0, rate),
+                urteil(BER, BER_NAH, Some(4.0)),
+                "Rate {rate} darf das Urteil gegenueber 1x nicht aendern"
+            );
+        }
+        assert_eq!(urteil_rate(BER, BER_NAH, 4.0, 0.25), SegmentVerdict::Flown);
+    }
+
+    #[test]
+    fn lange_luecke_bei_16x_laesst_keinen_weltkarten_sprung_durch() {
+        // QS 03.10.2026: Mit 2200 kt x 16 haetten 60 s ~587 NM erlaubt.
+        // Mit der gemeldeten GS (450 kt x 1,5 x 16) sind es ~181 NM —
+        // BER->FRA (232 NM) bleibt ein Sprung, auch bei Unsinns-GS.
+        assert_eq!(
+            urteil_rate(BER, FRA, 60.0, 16.0),
+            SegmentVerdict::Jump("Positionssprung")
+        );
+        assert_eq!(
+            classify_segment_rate(
+                BER,
+                FRA,
+                None,
+                Some(30.0),
+                ODOMETER_LIMITS,
+                Some((16.0, 50_000.0))
+            ),
+            SegmentVerdict::Jump("Positionssprung"),
+            "GS wird auf 700 kt gedeckelt (30 s x 16 x 700 x 1,5 = 140 NM)"
+        );
+    }
+
+    #[test]
+    fn zeitraffer_ohne_groundspeed_bleibt_bei_der_normalen_grenze() {
+        assert_eq!(
+            classify_segment_rate(
+                BER,
+                BER_5NM,
+                None,
+                Some(5.0),
+                ODOMETER_LIMITS,
+                Some((8.0, 0.0))
+            ),
+            SegmentVerdict::Jump("Positionssprung")
+        );
+        assert_eq!(
+            classify_segment_rate(BER, BER_5NM, None, Some(5.0), ODOMETER_LIMITS, None),
+            SegmentVerdict::Jump("Positionssprung")
+        );
+    }
+
+    #[test]
+    fn zeitraffer_verlaengert_keine_funkstille() {
+        assert_eq!(urteil_rate(BER, BER_NAH, 300.0, 16.0), SegmentVerdict::Gap);
     }
 
     // ---- RESET_LIMITS: das erprobte Verhalten der Aufzeichnungsschleife

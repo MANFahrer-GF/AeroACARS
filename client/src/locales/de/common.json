@@ -1797,6 +1797,11 @@
     "wartet_titel": "Warte auf den Simulator",
     "wartet_lange": "Das dauert ungewöhnlich lange. Ist der Simulator pausiert, im Slew-Modus oder läuft Zeitbeschleunigung? Bis dahin zeichnet AeroACARS nichts auf."
   },
+  "simrate": {
+    "titel": "Sim-Rate steht auf {{rate}}×",
+    "schneller": "Die Simulation läuft seit über 2 Minuten nicht mit 1×. Zeitraffer kann Flugzeit, Verbrauch und Auswertung verfälschen — bitte zurück auf 1×.",
+    "langsamer": "Die Simulation läuft seit über 2 Minuten langsamer als in Echtzeit. Das kann Flugzeit, Verbrauch und Auswertung verfälschen — bitte zurück auf 1×."
+  },
   "active_flight": {
     "title": "Aktiver Flug",
     "phase": {

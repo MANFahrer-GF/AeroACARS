@@ -1790,6 +1790,11 @@
     "wartet_titel": "In attesa del simulatore",
     "wartet_lange": "Ci vuole più del solito. Il simulatore è in pausa, in modalità slew o con accelerazione del tempo? Fino ad allora AeroACARS non registra nulla."
   },
+  "simrate": {
+    "titel": "La velocità di simulazione è {{rate}}×",
+    "schneller": "Da oltre 2 minuti la simulazione non gira a 1×. L'accelerazione del tempo può falsare tempo di volo, consumo e valutazione — torna a 1×.",
+    "langsamer": "Da oltre 2 minuti la simulazione gira più lenta del tempo reale. Può falsare tempo di volo, consumo e valutazione — torna a 1×."
+  },
   "active_flight": {
     "title": "Volo attivo",
     "phase": {
