@@ -499,6 +499,34 @@ jobs:
             "AeroACARS-MSFS-Flow-Widget-${{ github.ref_name }}.zip" \
             --clobber
 
+      # Das native MSFS-2024-Panel ist ein GEBAUTES Paket (fspackagetool aus
+      # dem MSFS-SDK laeuft nur auf Windows mit SDK, nicht in dieser CI). Das
+      # fertige Ergebnis liegt in msfs-panel/paket/ und faellt hier mit dem
+      # Release ab, wie das Flow-Widget. Wer das Panel aendert, baut es neu
+      # (msfs-panel/BAUEN.bat) und ersetzt msfs-panel/paket/aeroacars-panel.
+      - name: Check built MSFS panel package
+        run: |
+          set -euo pipefail
+          P=msfs-panel/paket/aeroacars-panel
+          test -f "$P/manifest.json"
+          test -f "$P/layout.json"
+          test -f "$P/InGamePanels/aeroacars-panel.spb"
+          grep -o '"package_version": *"[0-9.]*"' "$P/manifest.json"
+
+      - name: Zip MSFS panel
+        run: |
+          cd msfs-panel/paket
+          zip -r ../../AeroACARS-MSFS-Panel-${{ github.ref_name }}.zip \
+            aeroacars-panel INSTALLATION.txt
+
+      - name: Upload MSFS panel to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            "AeroACARS-MSFS-Panel-${{ github.ref_name }}.zip" \
+            --clobber
+
   # ---- Finalise the release (manual gate ab v0.9.0) ----
   #
   # **QS-Hotfix F1 (v0.9.0):** vorher hat dieser Job den Draft sofort nach

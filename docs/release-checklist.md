@@ -180,6 +180,20 @@ den letzten Stand von Flow mitziehen").
       panel_server, /panel/*-Routen): prüfen, ob das Widget die Änderung
       braucht — Server und Widget sind ein Wire-Paar wie Client/Recorder.
 
+## 6c. Natives MSFS-Panel (gebautes Paket) mitziehen
+
+Das Panel ist ein GEBAUTES Paket (fspackagetool, nur Windows + MSFS-SDK).
+Das fertige Ergebnis liegt in `msfs-panel/paket/aeroacars-panel/`; der
+Release-Job `plugin-package` zippt es als `AeroACARS-MSFS-Panel-vX.Y.Z.zip`
+an den Draft.
+
+- [ ] Hat sich `msfs-panel/Build/` seit dem letzten Paket geaendert?
+      Dann auf Windows mit `msfs-panel/BAUEN.bat` neu bauen, den
+      Community-Ordner `aeroacars-panel` nach `msfs-panel/paket/` kopieren
+      und `package_version` in `manifest.json` pruefen.
+- [ ] Nach dem Tag: das Asset `AeroACARS-MSFS-Panel-vX.Y.Z.zip` am Draft
+      pruefen (Version im manifest).
+
 ## 7. Release-Tag + GitHub-Actions
 
 - [ ] PR auf `main` gemerget

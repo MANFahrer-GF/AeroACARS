@@ -1,0 +1,26 @@
+AeroACARS - natives MSFS-2024-Panel (Version siehe aeroacars-panel/manifest.json)
+===============================================================================
+
+DEUTSCH
+1. MSFS 2024 beenden.
+2. Den Ordner "aeroacars-panel" aus dieser ZIP in euren Community-Ordner kopieren
+   (Einstellungen > Allgemein > Datenverwaltung > Pakete > Community-Ordner oeffnen).
+   Liegt dort schon ein Ordner "aeroacars-panel" oder "aeroacars-msfs-panel",
+   zuerst loeschen - zwei Pakete mit derselben Panel-Kennung vertragen sich nicht.
+3. MSFS starten. In der Toolbar erscheint "AeroACARS".
+4. AeroACARS muss laufen. Das Panel holt seine Daten nur von eurem
+   eigenen Rechner (127.0.0.1:47847). Abschaltbar in AeroACARS unter
+   Einstellungen > MSFS-In-Sim-HUD.
+Zum Schliessen das Toolbar-Symbol benutzen.
+
+ENGLISH
+1. Close MSFS 2024.
+2. Copy the folder "aeroacars-panel" from this ZIP into your Community folder
+   (Settings > General > Data Management > Packages > Open Community Folder).
+   If a folder "aeroacars-panel" or "aeroacars-msfs-panel" is already there,
+   delete it first - two packages with the same panel id do not work together.
+3. Start MSFS. "AeroACARS" appears in the toolbar.
+4. AeroACARS must be running. The panel only reads from your own PC
+   (127.0.0.1:47847). It can be switched off in AeroACARS under
+   Settings > MSFS In-Sim HUD.
+Close the panel with the toolbar icon.

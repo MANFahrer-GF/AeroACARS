@@ -1,0 +1,33 @@
+{
+  "dependencies": [
+    {
+      "name": "fs-base-propdefs",
+      "package_version": "0.1.2"
+    },
+    {
+      "name": "fs-base-ui",
+      "package_version": "0.1.10"
+    },
+    {
+      "name": "asobo-vcockpits-core",
+      "package_version": "0.1.12"
+    }
+  ],
+  "content_type": "MISC",
+  "title": "AeroACARS Flight Review",
+  "manufacturer": "AeroACARS",
+  "creator": "AeroACARS",
+  "package_version": "0.13.1",
+  "minimum_game_version": "1.8.16",
+  "minimum_compatibility_version": "8.11.0.236",
+  "export_type": "Community",
+  "builder": "Microsoft Flight Simulator 2024",
+  "package_order_hint": "PANEL_PATCH",
+  "release_notes": {
+    "neutral": {
+      "LastUpdate": "",
+      "OlderHistory": ""
+    }
+  },
+  "total_package_size": "102931"
+}

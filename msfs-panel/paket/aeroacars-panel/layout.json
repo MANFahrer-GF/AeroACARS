@@ -1,0 +1,49 @@
+{
+  "content": [
+    {
+      "path": "html_ui/icons/toolbar/icon_toolbar_aeroacars_panel.svg",
+      "size": 357,
+      "date": 134355226260000000
+    },
+    {
+      "path": "html_ui/ingamepanels/aeroacarspanel/aeroacarspanel.html",
+      "size": 2696,
+      "date": 134355226260000000
+    },
+    {
+      "path": "html_ui/ingamepanels/aeroacarspanel/panel-chrome.js",
+      "size": 29578,
+      "date": 134355226260000000
+    },
+    {
+      "path": "html_ui/ingamepanels/aeroacarspanel/panel-frame.css",
+      "size": 1657,
+      "date": 134355226260000000
+    },
+    {
+      "path": "html_ui/ingamepanels/aeroacarspanel/panel-frame.js",
+      "size": 4304,
+      "date": 134355226260000000
+    },
+    {
+      "path": "html_ui/ingamepanels/aeroacarspanel/panel.css",
+      "size": 9761,
+      "date": 134355226260000000
+    },
+    {
+      "path": "html_ui/ingamepanels/aeroacarspanel/panel.js",
+      "size": 53533,
+      "date": 134355226260000000
+    },
+    {
+      "path": "html_ui/textures/menu/toolbar/icon_toolbar_aeroacars_panel.svg",
+      "size": 357,
+      "date": 134355226260000000
+    },
+    {
+      "path": "ingamepanels/aeroacars-panel.spb",
+      "size": 688,
+      "date": 134355226260000002
+    }
+  ]
+}
