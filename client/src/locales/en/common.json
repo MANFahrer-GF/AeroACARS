@@ -1797,6 +1797,11 @@
     "wartet_titel": "Waiting for the simulator",
     "wartet_lange": "This is taking unusually long. Is the simulator paused, in slew mode, or running at a higher sim rate? AeroACARS records nothing until then."
   },
+  "simrate": {
+    "titel": "Sim rate is {{rate}}×",
+    "schneller": "The simulation has been running at something other than 1× for over 2 minutes. Time acceleration can distort flight time, fuel use and scoring — please return to 1×.",
+    "langsamer": "The simulation has been running slower than real time for over 2 minutes. That can distort flight time, fuel use and scoring — please return to 1×."
+  },
   "active_flight": {
     "title": "Active flight",
     "phase": {

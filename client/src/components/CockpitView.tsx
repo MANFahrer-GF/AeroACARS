@@ -19,6 +19,7 @@ const WEATHER_BRIEFING_URL = "https://german-sky-group.eu/weatherbriefing";
 // Loadsheet visuell zum aktiven Flug gehört statt als getrennte
 // Section unter dem WeatherBriefing zu hängen.
 import { DivertBanner } from "./DivertBanner";
+import { SimRateHinweis } from "./SimRateHinweis";
 import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
 import { BordbuchHinweis } from "./bordbuch/BordbuchHinweis";
 import { Notice } from "./ui";
@@ -329,6 +330,12 @@ export function CockpitView({
           onFiledSuccess={handleFiledSuccess}
         />
       )}
+
+      {/* Sim-Rate-Hinweis (03.10.2026): erst nach 2 Minuten Abweichung von 1×. */}
+      <SimRateHinweis
+        rate={simSnapshot?.simulation_rate}
+        aktiv={!activeFlight.was_just_resumed}
+      />
 
       {/* Der Sprung-Banner hängt im App-Rahmen (App.tsx), damit er auf
           JEDEM Reiter erscheint — siehe dortigen Kommentar. */}
