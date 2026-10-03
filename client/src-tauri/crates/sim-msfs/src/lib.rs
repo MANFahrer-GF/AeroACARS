@@ -40,6 +40,8 @@ mod adapter;
 /// MSFS-2024-Input-Events (B:-Variablen): Deutung + Ablauf, plattformunabhaengig.
 pub mod eingabe_events;
 pub mod facility;
+/// Frist fuer einen Handle ohne Lebenszeichen — plattformunabhaengig.
+pub(crate) mod handle_frist;
 /// „Flugzeug vermessen": Messkanal fuer L:/A:-Variablen, plattformunabhaengig.
 pub mod vermessung;
 /// Zusatzwerte fuer den Telemetrie-Monitor — Logik plattformunabhaengig.

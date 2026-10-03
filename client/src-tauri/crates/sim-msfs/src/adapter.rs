@@ -1125,9 +1125,11 @@ impl Drop for MsfsAdapter {
 fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
     // Outer reconnect loop. SimConnect_Open returns E_FAIL while MSFS
     // isn't running; we simply retry every 2s until it's up.
+    let mut letzter_open_fehler: Option<String> = None;
     while !stop.load(Ordering::Relaxed) {
         match Connection::open("AeroACARS") {
             Ok(mut conn) => {
+                letzter_open_fehler = None;
                 tracing::info!("SimConnect_Open succeeded — registering data definition");
                 // ⚠ Neue Verbindung heisst neuer Kontext. Der Simulator
                 // kann neu gestartet, ein anderer sein (MSFS 2020 gegen
@@ -1269,6 +1271,13 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
             }
             Err(e) => {
                 let msg = format!("SimConnect_Open failed: {e}");
+                // Bisher stumm: ein Dauer-Gelb liess sich im Log nicht
+                // von „MSFS laeuft nicht“ unterscheiden. Nur bei neuem
+                // Text melden, der Versuch kommt alle 2 s.
+                if letzter_open_fehler.as_deref() != Some(msg.as_str()) {
+                    tracing::info!(fehler = %msg, "SimConnect_Open gescheitert — versuche weiter");
+                    letzter_open_fehler = Some(msg.clone());
+                }
                 set_error(&shared, msg);
                 *shared.state.lock() = ConnectionState::Connecting;
             }
@@ -1288,6 +1297,8 @@ fn run_dispatch(
     kind: SimKind,
 ) {
     let mut last_data = Instant::now();
+    let mut letztes_lebenszeichen = Instant::now();
+    let mut handshake_gesehen = false;
     let mut got_first = false;
     // Log-Durchsicht 26.09.2026: blinkende MASTER-Lampen im schnellen Takt
     // zusammenfassen, bevor der 3-s-Streamer sie abtastet (sim_core::lampen).
@@ -1536,10 +1547,20 @@ fn run_dispatch(
 
         // Drain whatever messages SimConnect has queued for us.
         loop {
-            match conn.get_next_dispatch() {
+            let vorher = conn.empfangen;
+            let nachricht = conn.get_next_dispatch();
+            // Jede Nachricht — auch Pause, AircraftLoaded, Facility und
+            // unbekannte IDs — ist ein Lebenszeichen des Handles (Codex-
+            // Befunde 03.10.2026: eine absolute Frist ab Open kappte einen
+            // lebenden Handle; unbekannte Nachrichten zaehlten nicht).
+            if conn.empfangen != vorher {
+                letztes_lebenszeichen = Instant::now();
+            }
+            match nachricht {
                 Ok(None) => break, // queue empty
                 Ok(Some(DispatchMsg::Open { kennung })) => {
                     tracing::info!(%kennung, "SimConnect_RECV_OPEN — handshake done");
+                    handshake_gesehen = true;
                     shared.szenerie.lock().kennung_setzen(Some(kennung));
                 }
                 Ok(Some(DispatchMsg::Quit)) => {
@@ -2342,6 +2363,21 @@ fn run_dispatch(
             tracing::warn!("no SimConnect data for {:?} — reconnecting", STALE_TIMEOUT);
             return;
         }
+        // Nie Daten gesehen: der Handle kann tot sein, ohne dass je ein
+        // QUIT kam. Neu oeffnen statt ewig zu warten.
+        if !got_first
+            && crate::handle_frist::erste_daten_ueberfaellig(
+                handshake_gesehen,
+                letztes_lebenszeichen.elapsed(),
+            )
+        {
+            tracing::warn!(
+                handshake_gesehen,
+                seit_s = letztes_lebenszeichen.elapsed().as_secs(),
+                "SimConnect offen, aber nie Daten — oeffne neu"
+            );
+            return;
+        }
 
         thread::sleep(Duration::from_millis(50));
     }
@@ -2380,6 +2416,10 @@ fn sleep_or_stop(stop: &Arc<AtomicBool>, dur: Duration) {
 /// the worker loop drives. `Drop` calls `SimConnect_Close`.
 struct Connection {
     handle: sys::HANDLE,
+    /// Wie viele Nachrichten dieser Handle bisher geliefert hat — auch
+    /// unbekannte, die `get_next_dispatch` als `None` zurueckgibt. Nur fuer
+    /// die Lebenszeichen-Uhr in `run_dispatch`.
+    empfangen: u64,
     /// `(send_id, watch_id)` captured while registering the inspector
     /// data definition — lets a later async SIMCONNECT_RECV_EXCEPTION be
     /// attributed back to the specific watch whose AddToDataDefinition
@@ -2434,6 +2474,7 @@ impl Connection {
             return Err(format!("HRESULT 0x{hr:08X}"));
         }
         Ok(Self {
+            empfangen: 0,
             handle,
             facility_feld_send_ids: Vec::new(),
             inspector_send_ids: Vec::new(),
@@ -3307,6 +3348,9 @@ impl Connection {
         if p_data.is_null() || cb_data == 0 {
             return Ok(None);
         }
+        // Eine echte Nachricht ist da — gleich welcher Art. Zaehlt als
+        // Lebenszeichen, auch wenn sie unten als unbekannt verworfen wird.
+        self.empfangen = self.empfangen.wrapping_add(1);
         let recv = unsafe { &*p_data };
         let id = recv.dwID;
         let msg = match id {
