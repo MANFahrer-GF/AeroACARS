@@ -51,6 +51,7 @@ dependencies = [
  "sim-xplane",
  "storage",
  "subtle",
+ "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
