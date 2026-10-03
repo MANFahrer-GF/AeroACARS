@@ -1,22 +1,21 @@
 # AeroACARS — natives MSFS-2024-Panel
 
-> ## ⛔ BEGRABEN (Entscheidung Thomas, 10.08.2026)
+> ## Stand 03.10.2026: ersetzt durch v0.13.x — Ziehen funktioniert
 >
-> **Keine weiteren Paketrunden fuer das native Panel.** Nach drei
-> Portierungs-Staenden, elf Paketfassungen, zwei Forum-Workarounds,
-> einem GSX-Pro-Vergleich und einem Quellcode-basierten Fix-Versuch
-> laesst sich das Panel-Fenster in der aktuellen Sim-Version nicht
-> verschieben — auch die historisch als "ziehbar" erinnerte Fassung
-> wurde frisch nachgebaut und zieht nicht (FINAL-BEFUND, Windows-Session
-> 10.08.2026). Der Weg fuer Piloten ist das **Flow-Pro-Widget**; als
-> Drittweg liefert der Panel-Server das HUD unter
-> `http://127.0.0.1:47847/hud` im Browser aus.
+> Das fruehere "begraben" (10.08.2026) ist ueberholt. Ein laufendes
+> Fremd-Panel (SOQA Airport Moving Map, MSFS 2024) zeigte die
+> Standardbauweise, die uns fehlte: `<ingame-ui>` in eigenem Wurzel-
+> Element (`TemplateElement`, `checkAutoload()`), alle Titelleisten-
+> Skripte und Button-Templates, `panelInvisible` bleibt stehen
+> (`panel-frame.js`). Seit v0.12.3 laesst sich das Fenster ziehen
+> (Feldtest Thomas), v0.13.x macht die Titelleiste zum duennen Griff.
+> `panel-chrome.js` ist ersetzt und wird nicht mehr geladen.
 >
-> Der Verzeichnisstand bleibt als Referenz und als Quelle der
-> `include_str!`-Einbettung der /hud-Route — `panel.js`/`panel.css`
-> werden weiter mit dem Flow-Widget synchron gehalten.
-
-
+> **Bauen (Windows):** `BAUEN.bat` doppelklicken. fspackagetool braucht
+> die PROJEKT-Datei `Build/aeroacars-panel-project.xml`, nicht die
+> Paketdefinition. **Zwei Pakete mit derselben Panel-Kennung vertragen
+> sich nicht** — das Skript raeumt `aeroacars-msfs-panel` weg.
+>
 Der gleiche HUD-Streifen wie das Flow-Pro-Widget, nur als eigenes
 Toolbar-Panel im Simulator. **Der Pilot entscheidet, welchen Weg er
 nimmt** — beide funktionieren eigenstaendig, keiner braucht den anderen.

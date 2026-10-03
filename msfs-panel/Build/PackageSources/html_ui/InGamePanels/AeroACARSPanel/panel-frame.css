@@ -1,0 +1,46 @@
+/* Nur nativ geladen (Flow sieht diese Datei nie). Der Streifen aus
+   panel.css ist dort absolut positioniert und zieht per Flow-Drag; im
+   nativen Rahmen sitzt er stattdessen in #aa2-host unter der Titelleiste
+   und der Sim bewegt das ganze Fenster. */
+.aa2-host {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  overflow: hidden;
+}
+.aa2-host .aa2-strip {
+  position: relative;
+  cursor: default;
+  margin: 0;
+  border-radius: 0;
+}
+
+/* v0.13.0: schlanke Fensterdekoration. Der Sim zieht Fenster NUR an der
+   Titelleiste, ganz ohne sie geht es nicht. Also: Titelleiste auf einen
+   duennen Griff verkleinern, Titel und Knoepfe unsichtbar (damit auch der
+   Schliessen-Knopf nicht versehentlich trifft - Forum: Absturzausloeser),
+   Rahmen und Hintergrund weg. Schliessen: Toolbar-Symbol.
+   Die Waehler stammen aus dem Muster des Referenz-Panels
+   (ingame-ui-header, .icons); fehlt einer, bleibt nur die normale
+   Titelleiste uebrig - das Panel funktioniert trotzdem. */
+ingame-ui#AeroACARSPanel {
+  border-width: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  background-color: transparent !important;
+}
+ingame-ui#AeroACARSPanel ingame-ui-header {
+  height: calc(var(--screenHeight, 1080) * 0.014px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background-color: rgba(255, 255, 255, 0.16) !important;
+  border-radius: 4px 4px 0 0;
+  cursor: move;
+}
+ingame-ui#AeroACARSPanel ingame-ui-header:hover {
+  background-color: rgba(255, 255, 255, 0.34) !important;
+}
+ingame-ui#AeroACARSPanel ingame-ui-header * {
+  visibility: hidden !important;
+}

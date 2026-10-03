@@ -2,65 +2,66 @@
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Cache-control" content="NO-CACHE">
   <title>AeroACARS</title>
+  <link rel="stylesheet" href="/SCSS/common.css" />
   <link rel="stylesheet" href="panel.css" />
+  <link rel="stylesheet" href="panel-frame.css" />
 
   <!--
-    v0.10.0 (10.08.2026) — <ingame-ui> ist ZURUECK, und diesmal mit dem
-    entscheidenden fehlenden Teil.
+    v0.12.0 (03.10.2026) — Geruest nach dem Muster eines laufenden
+    Fremd-Panels (SOQA Airport Moving Map, MSFS 2024). Nichts davon ist
+    kopiert; es ist die Asobo-Standardbauweise, die wir bisher nicht
+    hatten:
 
-    Quelle, endlich im Volltext lesbar (devsupport-Thread 13657, alle 20
-    Beitraege): Der Entwickler von "All in One" (ErDebugger) hat exakt
-    unser Problem geloest und mit Screenshots belegt, dass sein Panel
-    seither wieder VERSCHIEBBAR ist. Sein Befund:
-
-      "Asobo has added the hide class to all <ingame-ui>, making them
-       hidden by default. [...] The solution is to remove that class.
-       If you also want the panel to be DRAGGABLE, you need to remove
-       the panelInvisible class as well."
-
-    Das heisst: Das Ziehen macht die ingameUi-KOMPONENTE selbst — es gibt
-    es NUR mit <ingame-ui> samt Framework-Importen. Alle Varianten ohne
-    (v0.4.0 bis v0.9.0) konnten nie verschiebbar werden; ohne die
-    Komponente existiert schlicht kein Zieh-Code. Und die Varianten MIT
-    <ingame-ui> (v0.3.0, Runde 2/3) haben die Asobo-Klassen nie
-    entfernt — deshalb waren auch sie fest. Beides zusammen gab es noch
-    nie; genau das ist v0.10.0. Das Entfernen macht panel-chrome.js,
-    gestaffelt, weil der Sim die Klassen nach dem Aufbau setzt.
-
-    Weitere gesicherte Fakten aus demselben Thread:
-    - Das <title> im <head> wird seit SU2 ignoriert; es zaehlt NUR das
-      title-Attribut am <ingame-ui> (Umberto67, #13).
-    - Die Komponente setzt seit SU2 eigene CSS-Variablen --min-width /
-      --open-min-height, die die Groesse brechen; auf panelReady
-      zuruecksetzen (fearlessfrog, #20). Macht panel-chrome.js.
-    - Die X/Pin-Knoepfe der Titelleiste stuerzen den Sim ab
-      (fearlessfrog, #20) — unsere schlanke Leiste versteckt sie durch
-      overflow:hidden gleich mit.
-    - KEIN content-fit: unabhaengig davon kaputt (Asobo-Ticket 18144).
+    1. <ingame-ui> steckt in einem EIGENEN Wurzel-Element
+       (<ingamepanel-aeroacars>, erbt von TemplateElement, wird in
+       panel-frame.js registriert, am Ende checkAutoload()).
+    2. Alle Framework-Skripte + Button-Templates, die die Titelleiste
+       braucht (ohne sie rendern deren Knoepfe mit 0x0).
+    3. class="ingameUiFrame panelInvisible" BLEIBT stehen — wir
+       entfernen nichts (v0.10.0 tat es nach Forum-Tipp, ohne Erfolg).
+    4. Der Streifen sitzt in #aa2-host unterhalb der Titelleiste; der
+       Rahmen schrumpft auf Titelleiste + Streifen (panel-frame.js),
+       der Bildschirm darunter bleibt frei.
   -->
   <script type="text/javascript" src="/JS/coherent.js"></script>
   <script type="text/javascript" src="/JS/common.js"></script>
+  <script type="text/javascript" src="/JS/dataStorage.js"></script>
   <script type="text/javascript" src="/JS/buttons.js"></script>
+  <script type="text/javascript" src="/JS/simvar.js"></script>
+  <script type="text/javascript" src="/JS/Inputs.js"></script>
   <script type="text/javascript" src="/JS/Services/ToolBarPanels.js"></script>
 
+  <link rel="import" href="/templates/NewPushButton/NewPushButton.html" />
+  <link rel="import" href="/templates/ToggleButton/toggleButton.html" />
+  <link rel="import" href="/templates/tabMenu/tabMenu.html" />
+  <link rel="import" href="/templates/NewListButton/NewListButton.html" />
   <link rel="import" href="/templates/ingameUi/ingameUi.html" />
   <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
+
+  <script type="text/javascript" src="panel-frame.js"></script>
 </head>
-<body class="aa2-nativ">
-  <ingame-ui
-    id="AeroACARSPanel"
-    panel-id="PANEL_AEROACARS_PANEL"
-    title="AeroACARS"
-    class="ingameUiFrame"
-    resize="both"
-    auto-inside=""
-    data-input-group="INGAME-UI"
-  >
-    <div class="aa2-strip"></div>
-  </ingame-ui>
+<body class="aa2-nativ border-box">
+  <ingamepanel-aeroacars>
+    <ingame-ui
+      id="AeroACARSPanel"
+      panel-id="PANEL_AEROACARS_PANEL"
+      title="AeroACARS"
+      class="ingameUiFrame panelInvisible"
+      content-fit="false"
+      auto-inside=""
+      data-input-group="INGAME-UI"
+      min-width="20"
+      min-height="8"
+      resize="both"
+    >
+      <div id="aa2-host" class="aa2-host">
+        <div class="aa2-strip"></div>
+      </div>
+    </ingame-ui>
+  </ingamepanel-aeroacars>
 
   <script type="text/javascript" src="panel.js"></script>
-  <script type="text/javascript" src="panel-chrome.js"></script>
 </body>
 </html>
