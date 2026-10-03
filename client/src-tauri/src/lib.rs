@@ -44,6 +44,8 @@ mod discord_rpc;
 // Inhalte von live.kant.ovh nur mit Pilot-Token (29.09.2026).
 mod live_zugang;
 mod sim_auto;
+// 03.10.2026: Zustand der Anzeigekomponente (WebView2) beim Start ins Log.
+mod webview_diagnose;
 // v0.6.0 — neuer zentraler State-Owner. Aktiviert wenn die Env-Var
 // AEROACARS_LEGACY_STREAMER NICHT gesetzt ist (Default = neu). Bei
 // Problemen kann der Pilot auf Legacy zurueck via Env-Var ohne Re-Install.
@@ -57498,6 +57500,9 @@ pub fn run() {
     // Pilot-Consent wird im Setup-Hook bzw. vom Frontend per Command gesetzt;
     // bis dahin verwirft before_send alle Events (Default-Consent = aus).
     sentry_init::init();
+    // 03.10.2026: eine Zeile zur Anzeigekomponente, im eigenen Faden — der Start
+    // wartet nicht darauf (Anlass: Max G., Fenster nicht anlegbar).
+    webview_diagnose::protokollieren("com.aeroacars.app");
     // Die Startzeile schreibt init_tracing() selbst, mit PID und
     // Log-Verzeichnis — und vor allem, bevor irgendetwas anderes laufen
     // und abstürzen kann.
