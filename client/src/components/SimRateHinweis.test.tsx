@@ -77,8 +77,12 @@ describe("Hilfsfunktionen", () => {
     expect(simRateWeichtAb(0.5)).toBe(true);
     expect(simRateWeichtAb(16)).toBe(true);
   });
-  it("formatiert mit Dezimalkomma", () => {
+  it("formatiert mit dem Dezimalzeichen der Sprache", () => {
     expect(simRateText(0.25)).toBe("0,25");
+    expect(simRateText(0.25, "de")).toBe("0,25");
+    expect(simRateText(0.25, "it")).toBe("0,25");
+    expect(simRateText(0.25, "en")).toBe("0.25");
+    expect(simRateText(8, "en")).toBe("8");
     expect(simRateText(8)).toBe("8");
   });
 });

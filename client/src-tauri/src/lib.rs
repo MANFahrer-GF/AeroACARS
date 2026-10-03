@@ -70131,6 +70131,46 @@ mod v0_16_6_bush_completeness_tests {
         assert_eq!(urteil_rate(BER, BER_5NM, 5.0, 8.0), SegmentVerdict::Flown);
     }
 
+    /// Kantentest der Formel (Abnahme 03.10.2026: Faktor 1,5, +1 NM und die
+    /// Kappung der Groundspeed waren nur in der Richtung getestet; ein Faktor
+    /// 3 oder 1 haette alle anderen Tests bestanden).
+    /// Bei 8x, 60 s und 450 kt: 450 x 1,5 x 8 x 60/3600 + 1 = 91 NM erlaubt.
+    /// Ein Breitengrad sind 60,04 NM, 1,49 Grad also 89,5 und 1,55 Grad 93,1 NM.
+    #[test]
+    fn zeitraffer_grenze_liegt_bei_faktor_eineinhalb_plus_einer_meile() {
+        let von = (52.0, 13.5);
+        assert_eq!(
+            urteil_rate(von, (52.0 + 1.49, 13.5), 60.0, 8.0),
+            SegmentVerdict::Flown,
+            "89,5 NM liegen unter der Grenze von 91 NM"
+        );
+        assert_eq!(
+            urteil_rate(von, (52.0 + 1.55, 13.5), 60.0, 8.0),
+            SegmentVerdict::Jump("Positionssprung"),
+            "93,1 NM liegen ueber der Grenze von 91 NM"
+        );
+    }
+
+    /// Die Groundspeed wird auf 700 kt gekappt: 700 x 1,5 x 8 x 60/3600 + 1 =
+    /// 141 NM. 2,2 Grad sind 132 NM, 2,4 Grad 144 NM — auch wenn der Sim
+    /// 1000 kt meldet.
+    #[test]
+    fn zeitraffer_kappt_die_groundspeed_bei_700_knoten() {
+        let von = (52.0, 13.5);
+        let urteil = |dlat: f64| {
+            classify_segment_rate(
+                von,
+                (52.0 + dlat, 13.5),
+                None,
+                Some(60.0),
+                ODOMETER_LIMITS,
+                Some((8.0, 1000.0)),
+            )
+        };
+        assert_eq!(urteil(2.2), SegmentVerdict::Flown);
+        assert_eq!(urteil(2.4), SegmentVerdict::Jump("Positionssprung"));
+    }
+
     #[test]
     fn teleport_bleibt_auch_bei_zeitraffer_ein_sprung() {
         for rate in [8.0, 16.0, 1000.0] {

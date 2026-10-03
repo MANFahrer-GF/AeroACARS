@@ -12,14 +12,14 @@ export function SimRateHinweis({
   rate: number | null | undefined;
   aktiv: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const abweichend = useSimRateHinweis(rate, aktiv);
   if (abweichend === null) return null;
   const langsamer = abweichend < 1;
   return (
     <Notice
       tone="warn"
-      level={t("simrate.titel", { rate: simRateText(abweichend) })}
+      level={t("simrate.titel", { rate: simRateText(abweichend, i18n.language) })}
       data-testid="simrate-hinweis"
       detail={<span>{t(langsamer ? "simrate.langsamer" : "simrate.schneller")}</span>}
     />

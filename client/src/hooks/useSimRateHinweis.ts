@@ -14,10 +14,11 @@ export function simRateWeichtAb(rate: number | null | undefined): boolean {
   return Math.abs(rate - 1) > TOLERANZ;
 }
 
-/** Rate fuer die Anzeige: ganze Zahl ohne Komma, sonst hoechstens 2 Stellen. */
-export function simRateText(rate: number): string {
-  const gerundet = Math.round(rate * 100) / 100;
-  return String(gerundet).replace(".", ",");
+/** Rate fuer die Anzeige: ganze Zahl ohne Nachkomma, sonst hoechstens 2 Stellen,
+ *  mit dem Dezimalzeichen der Anzeigesprache (de/it „0,25“, en „0.25“).
+ *  Abnahme 03.10.2026: das Komma war fest eingebaut, Englisch zeigte „0,25×“. */
+export function simRateText(rate: number, sprache = "de"): string {
+  return new Intl.NumberFormat(sprache, { maximumFractionDigits: 2 }).format(rate);
 }
 
 /** Liefert die Rate, wenn sie seit mindestens `HINWEIS_NACH_MS` abweicht,
