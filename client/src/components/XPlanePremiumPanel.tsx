@@ -77,8 +77,11 @@ export function XPlanePremiumPanel({ simState }: Props) {
   useEffect(() => {
     let cancelled = false;
     void invoke<string | null>("xplane_detect_install_path").then((path) => {
-      if (!cancelled && path && installPath === "") {
-        setInstallPath(path);
+      // Nur ein noch leeres Feld füllen — aktueller Wert, nicht der vom
+      // Start: kommt die Erkennung spät (Netzlaufwerk in X-Planes Liste),
+      // darf sie einen inzwischen getippten Pfad nicht überschreiben.
+      if (!cancelled && path) {
+        setInstallPath((jetzt) => (jetzt === "" ? path : jetzt));
       }
     });
     return () => {
