@@ -10938,6 +10938,17 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
             typical_vref_kt: Some(125.0),
             is_fallback: false,
         },
+        // Hawker 800XP (H25B), 04.10.2026 (Inventur: 3/3 Landungen ohne
+        // Vref-Abweichung). Belege: Hawker-800XP-Leistungsarbeitsblatt
+        // VREF 113 kt (Scribd, Gewicht nicht genannt); NTSB/AAR-16/03:
+        // 125 kt bei 22.286 lb, Klappen 45 (Hawker 700A, Ueberladung).
+        // Max. Landegewicht 23.350 lb. 115 kt = typisches Landegewicht,
+        // Familienwert — vor Verlass Thomas abstimmen.
+        "H25B" => AircraftLimits {
+            max_bank_landing_deg: 8.0,
+            typical_vref_kt: Some(115.0),
+            is_fallback: false,
+        },
 
         // ─── Nachgetragen 16.08.2026 nach Messung gegen die echte Flotte ──
         //
@@ -67712,6 +67723,7 @@ mod touchdown_metadata_stamp_tests {
         for (icao, vref, bank) in [
             ("PC12", 85.0, 12.0),
             ("LJ35", 125.0, 8.0),
+            ("H25B", 115.0, 8.0),
             ("BE60", 85.0, 15.0),
             ("E13L", 128.0, 8.0),
         ] {
