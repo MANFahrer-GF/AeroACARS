@@ -24,6 +24,7 @@
 // =============================================================================
 
 #include "anfrage.h"
+#include "band.h"
 #include "dienst.h"
 #include "grenzen.h"
 #include "json_pruefer.h"
@@ -60,6 +61,10 @@ const char* const VORLAGEN[] = {
     "HALLO 2 1.9.12\n",
     "HALLO 2 x",
     "PING\n",
+    "BAND 1 0 2\nntvor 12 s\tdmPIREP\nbp\tniDLH 400\tdlRoute\tnvEDDF > KJFK\n",
+    "BAND 1 0 2\n\ngp\tniDLH 400\tnz87\tweFIRM\tdlRate\tnv-455\n",
+    "BAND 2147483647 1 0\n",
+    "BAND 3 0 1\nnv\t\tgv\n",
     "PING",
     "LISTE 7\n",
     "ENDE-ABO 3\n",
@@ -175,6 +180,28 @@ void pruefe_parser(const std::string& s, std::vector<NameRef>& puffer) {
             if (a.abo_id < 1 || a.abo_id > 16 || a.rate_hz < 1 || a.rate_hz > 50) fehler("ABO-Grenzen", s);
             if (a.teil < 1 || a.teil > a.teile || a.teile > grenzen::MAX_ABO_TEILE) fehler("Teil-Grenzen", s);
             if (a.generation > 0x7FFFFFFFu) fehler("Generation", s);
+        }
+        if (a.befehl == Befehl::BAND) {
+            // Rest liegt im Datagramm; der Körperparser darf nie darüber hinaus lesen.
+            if (a.band_rest < block || a.band_rest + a.band_rest_laenge > block + s.size()) fehler("Band-Rest ausserhalb", s);
+            if (a.band_seq > grenzen::BAND_SEQ_MAX || a.band_zeilen > grenzen::BAND_MAX_ZEILEN) fehler("Band-Kopf", s);
+            static BandBild bild;
+            uint32_t fz = 0;
+            if (band_zerlege_koerper(a.band_zeilen, a.band_ruhig, a.band_rest, a.band_rest_laenge, &bild, &fz)) {
+                if (bild.zeilen != a.band_zeilen) fehler("Band-Zeilenzahl", s);
+                for (int z = 0; z < bild.zeilen; ++z) {
+                    if (bild.zeile[z].text_n > grenzen::MAX_ZEILE) fehler("Band-Zeile", s);
+                for (int k = 0; k < bild.zeile[z].laeufe_n; ++k) {
+                    const BandLauf& l = bild.zeile[z].laeufe[k];
+                    if (!band_ist_farbe(l.farbe) || !band_ist_art(l.art) ||
+                        l.ofs + l.laenge > bild.zeile[z].text_n || (l.art == 'p' && l.laenge != 0)) {
+                        fehler("Band-Lauf", s);
+                    }
+                }
+                }
+            } else if (fz < 2) {
+                fehler("Band-Fehlerzeile", s);
+            }
         }
         if (a.befehl == Befehl::HALLO) {
             if (a.client_version < block || a.client_version + a.client_version_laenge > block + s.size() ||

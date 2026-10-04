@@ -51,6 +51,8 @@
 
 mod adapter;
 mod dataref;
+/// X-Plane-HUD-Band (ADR-0005): Port der Anzeige von `panel.js` als Textzeilen.
+pub mod hud_band;
 /// Protokoll 2 des AeroACARS-X-Plane-Plugins (ADR-0004): Anfragen, Antworten,
 /// Sitzungs-Uhr — ohne Socket, rein pruefbar.
 pub mod plugin2;

@@ -62,6 +62,7 @@
 #pragma once
 
 #include "anfrage.h"
+#include "band.h"
 #include "feld.h"
 #include "grenzen.h"
 #include "pakete.h"
@@ -177,6 +178,10 @@ public:
 
     // Alle Abos, Teil-Abos und LISTE verwerfen (Client bleibt angemeldet).
     void alles_verwerfen() noexcept;
+
+    // HUD-Band (ADR-0005). Der Dienst nimmt BAND-Nachrichten an; gezeichnet
+    // wird in band_xplm.cpp. Der Zeiger gilt, solange der Dienst lebt.
+    Band& band() noexcept { return band_; }
 
     // -- Einblick für Tests ----------------------------------------------------
     bool client_angemeldet() const noexcept { return client_aktiv_; }
@@ -302,6 +307,7 @@ private:
     void bearbeite_hallo(const Absender& von, const Anfrage& a) noexcept;
     void bearbeite_abo(const Anfrage& a) noexcept;
     void bearbeite_liste(const Anfrage& a) noexcept;
+    void bearbeite_band(const Absender& von, const Anfrage& a) noexcept;
     Fehlergrund aktiviere(uint32_t id, AboBau& bau) noexcept;
 
     void frame_intern() noexcept;
@@ -389,6 +395,7 @@ private:
     Datenquelle& quelle_;
     Umgebung& umgebung_;
     Kennung kennung_;
+    Band band_;  // HUD-Band (ADR-0005): eigener Zustand, vom Dataref-Dienst getrennt
     bool bereit_ = false;
 
     bool client_aktiv_ = false;

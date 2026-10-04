@@ -15,6 +15,7 @@ import { getConsent, setConsent } from "../lib/sentry";
 import { DiscordRpcPanel } from "./DiscordRpcPanel";
 import { RemoteServerPanel } from "./RemoteServerPanel";
 import { MsfsHudPanel } from "./MsfsHudPanel";
+import { XplaneBandPanel } from "./XplaneBandPanel";
 import { HoppieSettingsPanel } from "./HoppieSettingsPanel";
 import { BordbuchEinstellungen } from "./bordbuch/BordbuchEinstellungen";
 import { FlugzeugVermessen } from "./vermessen/FlugzeugVermessen";
@@ -610,6 +611,9 @@ export function SettingsPanel({
               Panel-Server des In-Sim-HUD. Default = an; wirkt beim
               nächsten Start. */}
           {isTauri && <MsfsHudPanel />}
+
+          {/* ADR-0005: Schalter für das X-Plane-HUD-Band. Default = an. */}
+          {isTauri && <XplaneBandPanel />}
 
           {/* v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC-Client ueber das
               Hoppie-ACARS-Netzwerk. Opt-In, Default = aus. */}

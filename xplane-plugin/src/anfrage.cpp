@@ -46,6 +46,7 @@ const char* fehlergrund_text(Fehlergrund grund) noexcept {
         case Fehlergrund::SPEICHER:               return "speicher";
         case Fehlergrund::GENERATION_UNGUELTIG:   return "generation_ungueltig";
         case Fehlergrund::SPEICHER_LIMIT:         return "speicher_limit";
+        case Fehlergrund::BAND_UNGUELTIG:         return "band_ungueltig";
     }
     return "unbekannt";
 }
@@ -238,17 +239,22 @@ bool zerlege_anfrage(const char* daten, size_t laenge,
         else if (gleich(befehl, "ENDE-ABO")) out->befehl = Befehl::ENDE_ABO;
         else if (gleich(befehl, "LISTE"))    out->befehl = Befehl::LISTE;
         else if (gleich(befehl, "PING"))     out->befehl = Befehl::PING;
+        else if (gleich(befehl, "BAND"))     out->befehl = Befehl::BAND;
         else return setze_fehler(out, Fehlergrund::UNBEKANNTER_BEFEHL, 1);
     }
     const size_t n_woerter = zerlege_woerter(zeile, w, MAX_WOERTER);
+    // Ein kaputter BAND-Kopf heißt immer band_ungueltig (ADR-0005).
+    const Fehlergrund kopf_fehler = (out->befehl == Befehl::BAND)
+                                        ? Fehlergrund::BAND_UNGUELTIG
+                                        : Fehlergrund::FALSCHE_ARGUMENTE;
     if (n_woerter == 0 || n_woerter > MAX_WOERTER) {
         out->befehl = Befehl::KEINER;
-        return setze_fehler(out, Fehlergrund::FALSCHE_ARGUMENTE, 1);
+        return setze_fehler(out, kopf_fehler, 1);
     }
     for (size_t i = 1; i < n_woerter; ++i) {
         if (!nur_namenszeichen(w[i])) {
             out->befehl = Befehl::KEINER;
-            return setze_fehler(out, Fehlergrund::FALSCHE_ARGUMENTE, 1);
+            return setze_fehler(out, kopf_fehler, 1);
         }
     }
 
@@ -299,6 +305,27 @@ bool zerlege_anfrage(const char* daten, size_t laenge,
         case Befehl::PING: {
             if (n_woerter != 1) return fehler(Fehlergrund::FALSCHE_ARGUMENTE, 1);
             break;
+        }
+        case Befehl::BAND: {
+            // Jeder Fehler im Kopf heißt band_ungueltig (ADR-0005); die
+            // Folgezeilen prüft band_zerlege_koerper, hier bleiben sie roh.
+            if (n_woerter != 4) return fehler(Fehlergrund::BAND_UNGUELTIG, 1);
+            uint32_t seq = 0, zeilen = 0;
+            if (!lies_zahl(w[1].p, w[1].n, &seq) || seq > grenzen::BAND_SEQ_MAX) {
+                return fehler(Fehlergrund::BAND_UNGUELTIG, 1);
+            }
+            if (w[2].n != 1 || (w[2].p[0] != '0' && w[2].p[0] != '1')) {
+                return fehler(Fehlergrund::BAND_UNGUELTIG, 1);
+            }
+            if (!lies_zahl(w[3].p, w[3].n, &zeilen) || zeilen > grenzen::BAND_MAX_ZEILEN) {
+                return fehler(Fehlergrund::BAND_UNGUELTIG, 1);
+            }
+            out->band_seq = seq;
+            out->band_ruhig = (w[2].p[0] == '1');
+            out->band_zeilen = zeilen;
+            out->band_rest = daten + pos;
+            out->band_rest_laenge = laenge - pos;
+            return true;
         }
         case Befehl::ABO: {
             // Optionales letztes Wort "g<zahl>": Generation des Abos (der Client

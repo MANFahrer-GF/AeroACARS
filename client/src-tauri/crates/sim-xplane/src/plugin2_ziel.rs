@@ -565,6 +565,18 @@ impl Ziel for AdapterShared {
         std::mem::take(&mut *self.p2_anfragen.lock())
     }
 
+    fn band(&self) -> Option<(u64, Arc<crate::hud_band::BandFrame>)> {
+        self.band.holen()
+    }
+
+    fn band_wunsch(&self) -> bool {
+        self.band.wunsch()
+    }
+
+    fn band_bereit(&self, bereit: bool) {
+        self.band.set_bereit(bereit);
+    }
+
     fn ereignis(&self, e: Ereignis) {
         match e {
             Ereignis::SitzungAuf { .. } => {

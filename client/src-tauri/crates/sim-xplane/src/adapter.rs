@@ -173,6 +173,8 @@ pub(crate) struct AdapterShared {
     pub(crate) p2_wunsch_gen: AtomicU64,
     /// Einmalige Anfragen an das Plugin (`LISTE`).
     pub(crate) p2_anfragen: Mutex<Vec<Vec<u8>>>,
+    /// Uebergabeplatz des HUD-Bands (ADR-0005), von der App gefuellt.
+    pub(crate) band: Arc<crate::hud_band::BandSlot>,
     /// Basis der Web-API (fuer den Rueckfall der Vermessung).
     pub(crate) web_api: String,
 }
@@ -231,6 +233,7 @@ impl XPlaneAdapter {
             p2_sitzung: AtomicBool::new(false),
             p2_wunsch_gen: AtomicU64::new(0),
             p2_anfragen: Mutex::new(Vec::new()),
+            band: Arc::new(crate::hud_band::BandSlot::default()),
             web_api: anschluesse.web_api.clone(),
         });
         Self {
@@ -347,6 +350,13 @@ impl XPlaneAdapter {
             s.namen_fehlen = st.status.iter().filter(|x| **x == Some(false)).count() as u32;
         }
         s
+    }
+
+    /// Uebergabeplatz des HUD-Bands (ADR-0005): die App legt dort im Takt das
+    /// fertige Band ab; die Plugin-Sitzung sendet es. Bleibt ueber
+    /// `start()`/`stop()` derselbe.
+    pub fn band_slot(&self) -> Arc<crate::hud_band::BandSlot> {
+        Arc::clone(&self.shared.band)
     }
 
     /// Zugang zur Plugin-Sitzung fuer „Flugzeug vermessen" — `None`, wenn

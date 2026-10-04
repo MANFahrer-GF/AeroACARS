@@ -34,6 +34,7 @@ mod runway_assessment;
 mod stands;
 pub mod szenerie_bahn;
 mod ui_state;
+mod xplane_band;
 mod xplane_plugin_install;
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
 // Spec: docs/spec/v0.9.0-glitchtip-self-hosted.md
@@ -12506,6 +12507,19 @@ fn activity_log_get(state: tauri::State<'_, AppState>) -> Vec<ActivityEntry> {
 #[tauri::command]
 fn panel_server_get_enabled(app: AppHandle) -> bool {
     panel_server::is_enabled(&app)
+}
+
+/// Einstellung „X-Plane-Band senden" (ADR-0005), Standard an, wirkt sofort.
+#[tauri::command]
+fn xplane_band_get_enabled(app: AppHandle) -> bool {
+    xplane_band::is_enabled(&app)
+}
+
+#[tauri::command]
+fn xplane_band_set_enabled(app: AppHandle, enabled: bool) -> Result<bool, UiError> {
+    xplane_band::set_enabled(&app, enabled).map_err(|e| UiError::new("xplane_band_config", e))?;
+    tracing::info!(enabled, "xplane_band: setting changed");
+    Ok(enabled)
 }
 
 #[tauri::command]
@@ -57752,6 +57766,8 @@ pub fn run() {
             // gated behind an opt-in setting the way remote::start_server
             // (below) is.
             panel_server::spawn(app.handle().clone());
+            // ADR-0005: Takt fuer das X-Plane-HUD-Band (baut nur bei Bedarf).
+            xplane_band::spawn(app.handle().clone());
             // Persist the boot-time state (restored log + banner)
             // immediately so a crash before any activity event still
             // keeps the banner visible on next launch.
@@ -58051,6 +58067,8 @@ pub fn run() {
             // Panel-Server des In-Sim-HUD. Wirkt beim nächsten App-Start.
             panel_server_get_enabled,
             panel_server_set_enabled,
+            xplane_band_get_enabled,
+            xplane_band_set_enabled,
             // v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC client over the
             // Hoppie ACARS network. Opt-in (default OFF), started only
             // via hoppie_connect once the pilot has enabled it and

@@ -198,6 +198,23 @@ constexpr size_t MAX_BYTES_JE_ABO = size_t(16) << 20;
 constexpr size_t MAX_BYTES_ABOS   = size_t(64) << 20;   // alle Abos + Teil-Abos
 constexpr size_t MAX_BYTES_LISTE  = size_t(16) << 20;
 
+// ---- Band (ADR-0005) ---------------------------------------------------------
+
+// Zeilen je BAND-Nachricht (0 = Band ausblenden).
+constexpr size_t BAND_MAX_ZEILEN = 4;
+// Läufe je Zeile: ein Lauf braucht mindestens Farb- und Artzeichen, zwischen
+// zwei Läufen steht ein TAB → 3n − 1 ≤ 512.
+constexpr size_t BAND_MAX_LAEUFE = (MAX_ZEILE + 1) / 3;
+// Kein angenommenes Band seit so vielen Sekunden → das Plugin zeigt selbst
+// "AeroACARS nicht erreichbar" (nur, nachdem schon ein Band kam).
+constexpr double BAND_FRIST_S = 5.0;
+// seq: 0 … 2^31 − 1; ab dieser Differenz nach unten gilt eine kleinere seq als
+// Überlauf des Zählers (also als neu).
+constexpr uint32_t BAND_SEQ_MAX = 0x7FFFFFFFu;
+constexpr uint32_t BAND_SEQ_WRAP = 0x40000000u;
+// Größere Prefs-Dateien werden nicht gelesen.
+constexpr size_t BAND_PREFS_MAX = 1024;
+
 // ---- LISTE -----------------------------------------------------------------
 
 // Obergrenze für die Zahl der Datarefs, die LISTE überhaupt anfasst. X-Plane 12

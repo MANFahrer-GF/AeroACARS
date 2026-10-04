@@ -37,6 +37,12 @@ pub const PROTOKOLL: u32 = 2;
 pub const PLUGIN2_PORT: u16 = 52001;
 /// Aelteste Plugin-Version, deren Protokoll 2 wir annehmen.
 pub const MIN_PLUGIN: (u32, u32, u32) = (1, 0, 0);
+/// Erste Plugin-Version mit dem Befehl `BAND` (ADR-0005).
+pub const BAND_AB: (u32, u32, u32) = (1, 1, 0);
+/// Hoechstens ein Band je Sekunde, ausser bei Lagewechsel.
+pub const BAND_ABSTAND: Duration = Duration::from_secs(1);
+/// Abstand, in dem die Sitzung nach einem neuen Band der App schaut.
+const BAND_PRUEFUNG: Duration = Duration::from_millis(100);
 /// Abstand der HALLO-Anfragen, solange keine Sitzung besteht.
 pub const HALLO_ABSTAND: Duration = Duration::from_secs(5);
 /// Abstand der PINGs in der Sitzung. Das Plugin verwirft alle Abos nach 5 s
@@ -499,6 +505,11 @@ pub fn version_teile(s: &str) -> Option<(u32, u32, u32)> {
     Some((a, b, c))
 }
 
+/// Kann dieses Plugin `BAND` (ab 1.1.0)?
+pub fn kann_band(plugin: &str) -> bool {
+    version_teile(plugin).is_some_and(|v| v >= BAND_AB)
+}
+
 /// Reicht diese Plugin-Version fuer Protokoll 2?
 pub fn version_reicht(plugin: &str) -> bool {
     version_teile(plugin).is_some_and(|v| v >= MIN_PLUGIN)
@@ -639,6 +650,17 @@ pub trait Ziel: Send + Sync {
     fn anfragen(&self) -> Vec<Vec<u8>> {
         Vec::new()
     }
+    /// Juengstes Band der App (Version, Inhalt), siehe
+    /// [`crate::hud_band::BandSlot`]. Ohne Band `None`.
+    fn band(&self) -> Option<(u64, Arc<crate::hud_band::BandFrame>)> {
+        None
+    }
+    /// Einstellung „X-Plane-Band senden".
+    fn band_wunsch(&self) -> bool {
+        true
+    }
+    /// Die Sitzung meldet: Plugin angemeldet und BAND-faehig (oder nicht).
+    fn band_bereit(&self, _bereit: bool) {}
 }
 
 /// Stand der Sitzung fuer die Oberflaeche.
@@ -730,6 +752,63 @@ pub struct Sitzung {
     /// Sitzung, die das Plugin beim HALLO vom selben Port behaelt).
     aufraeumen: bool,
     info: SitzungsInfo,
+    band: BandStand,
+}
+
+/// Sendestand des Bands (ADR-0005).
+struct BandStand {
+    /// Naechste `seq`; steigt streng, auch ueber Sitzungen hinweg.
+    seq: u32,
+    /// In dieser Sitzung schon ein Band gesendet?
+    gesendet: bool,
+    /// `BAND … 0 0` gesendet und seither kein neues Band?
+    aus: bool,
+    letzter: Option<Instant>,
+    letzte_pruefung: Option<Instant>,
+    version: Option<u64>,
+    lage: Option<crate::hud_band::Lage>,
+    /// Zuletzt an die App gemeldetes `band_bereit`.
+    bereit_gemeldet: bool,
+    /// Zaehler der `band_ungueltig`-Antworten (Log nicht fluten).
+    ungueltig: u32,
+}
+
+impl BandStand {
+    fn neu() -> Self {
+        // Startwert aus der Uhr: ein neu gestarteter Client liegt ueber dem
+        // Stand des vorigen Laufs, auch wenn das Plugin dessen letzte `seq`
+        // behalten hat (hoechstens ein Band je Sekunde).
+        let sek = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        Self {
+            seq: (sek & 0x7FFF_FFFF) as u32,
+            gesendet: false,
+            aus: false,
+            letzter: None,
+            letzte_pruefung: None,
+            version: None,
+            lage: None,
+            bereit_gemeldet: false,
+            ungueltig: 0,
+        }
+    }
+
+    fn naechste_seq(&mut self) -> u32 {
+        let s = self.seq;
+        self.seq = if s >= 0x7FFF_FFFF { 0 } else { s + 1 };
+        s
+    }
+
+    /// Neue Sitzung: das Plugin kennt uns neu; `seq` laeuft weiter.
+    fn sitzung_zuruecksetzen(&mut self) {
+        self.gesendet = false;
+        self.aus = false;
+        self.letzter = None;
+        self.letzte_pruefung = None;
+        self.version = None;
+        self.lage = None;
+    }
 }
 
 /// Einen Teil der Status-Antwort einsortieren. Liefert den ganzen Status,
@@ -814,7 +893,14 @@ impl Sitzung {
             gen_zaehler: 0,
             aufraeumen: false,
             info: SitzungsInfo::default(),
+            band: BandStand::neu(),
         }
+    }
+
+    /// Nur fuer Tests: feste Start-`seq`.
+    #[cfg(test)]
+    pub(crate) fn band_seq_setzen(&mut self, seq: u32) {
+        self.band.seq = seq;
     }
 
     pub fn info(&self) -> &SitzungsInfo {
@@ -870,8 +956,67 @@ impl Sitzung {
             }
             self.nachsenden(jetzt, ziel);
             self.vorrang.extend(ziel.anfragen());
+            self.band_takt(jetzt, ziel);
         }
         self.ausgang_leeren(jetzt)
+    }
+
+    /// Das HUD-Band (ADR-0005): hoechstens 1x/s, sofort bei Lagewechsel,
+    /// nur mit angemeldetem Plugin ab 1.1.0 und eingeschalteter Einstellung.
+    /// Wird die Einstellung ausgeschaltet, geht EINMAL `BAND <seq> 0 0`
+    /// hinaus und danach nichts mehr.
+    fn band_takt(&mut self, jetzt: Instant, ziel: &dyn Ziel) {
+        let faehig = self.info.plugin_version.as_deref().is_some_and(kann_band);
+        let wunsch = ziel.band_wunsch();
+        let bereit = faehig && wunsch;
+        if self.band.bereit_gemeldet != bereit {
+            self.band.bereit_gemeldet = bereit;
+            ziel.band_bereit(bereit);
+        }
+        if !faehig {
+            return;
+        }
+        if !wunsch {
+            if self.band.gesendet && !self.band.aus {
+                let seq = self.band.naechste_seq();
+                self.vorrang
+                    .push_back(crate::hud_band::aus_datagramm(seq).into_bytes());
+                self.band.aus = true;
+                self.band.version = None;
+                self.band.lage = None;
+            }
+            return;
+        }
+        if self
+            .band
+            .letzte_pruefung
+            .is_some_and(|t| jetzt.saturating_duration_since(t) < BAND_PRUEFUNG)
+        {
+            return;
+        }
+        self.band.letzte_pruefung = Some(jetzt);
+        let Some((version, frame)) = ziel.band() else {
+            return;
+        };
+        if self.band.version == Some(version) {
+            return;
+        }
+        let lagewechsel = self.band.lage != Some(frame.lage);
+        let faellig = self
+            .band
+            .letzter
+            .is_none_or(|t| jetzt.saturating_duration_since(t) >= BAND_ABSTAND);
+        if !(lagewechsel || faellig) {
+            return;
+        }
+        let seq = self.band.naechste_seq();
+        self.vorrang
+            .push_back(frame.zu_datagramm(seq, frame.ruhig).into_bytes());
+        self.band.version = Some(version);
+        self.band.lage = Some(frame.lage);
+        self.band.letzter = Some(jetzt);
+        self.band.gesendet = true;
+        self.band.aus = false;
     }
 
     /// Abos ohne Status (nach ihrer Wartezeit) oder mit versiegten Werten neu
@@ -1273,6 +1418,18 @@ impl Sitzung {
                     self.schliessen(ziel);
                     return;
                 }
+                if grund == "band_ungueltig" {
+                    // Kein Nutzerfehler: ins Log (erstes Mal und dann alle 60),
+                    // nicht an das Ziel weiterreichen.
+                    if self.band.ungueltig % 60 == 0 {
+                        tracing::warn!(
+                            anzahl = self.band.ungueltig + 1,
+                            "X-Plane-Plugin hat ein BAND verworfen (band_ungueltig)"
+                        );
+                    }
+                    self.band.ungueltig = self.band.ungueltig.saturating_add(1);
+                    return;
+                }
                 // Fehler zu einem frueheren Inhalt dieser Abo-ID: erledigt.
                 if let (Some(a), Some(x)) = (abo, gen) {
                     if self.abos.get(&a).is_some_and(|g| g.gen != x) {
@@ -1343,6 +1500,11 @@ impl Sitzung {
         self.letztes_hallo = None;
         self.letzter_ping = None;
         self.wunsch_gen = None;
+        self.band.sitzung_zuruecksetzen();
+        if self.band.bereit_gemeldet {
+            self.band.bereit_gemeldet = false;
+            ziel.band_bereit(false);
+        }
         ziel.ereignis(Ereignis::SitzungZu);
     }
 
@@ -1359,7 +1521,15 @@ impl Sitzung {
         self.ausgang_bytes = 0;
         self.offen = false;
         self.info.offen = false;
-        ids.into_iter().map(anfrage_ende_abo).collect()
+        let mut aus: Vec<Vec<u8>> = Vec::new();
+        // Sauber abmelden: das Band ausblenden, falls eines steht.
+        if self.band.gesendet && !self.band.aus {
+            let seq = self.band.naechste_seq();
+            aus.push(crate::hud_band::aus_datagramm(seq).into_bytes());
+            self.band.aus = true;
+        }
+        aus.extend(ids.into_iter().map(anfrage_ende_abo));
+        aus
     }
 }
 
@@ -2653,3 +2823,7 @@ mod tests {
         assert!(!text_von(&s.takt(t0, &z)).contains(&ABO_VIER.to_string()));
     }
 }
+
+#[cfg(test)]
+#[path = "plugin2_band_tests.rs"]
+mod band_tests;

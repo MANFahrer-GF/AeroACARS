@@ -2656,6 +2656,12 @@
       "kein_eintrag_wo_aendern": "nessuna voce CDM — callsign nella scheda PDC/CPDLC"
     }
   },
+  "xplane_band": {
+    "section_title": "Banda HUD di X-Plane",
+    "intro": "La banda nel simulatore (plugin AeroACARS Premium dalla 1.1.0) mostra la stessa visualizzazione dell'HUD MSFS.",
+    "toggle_label": "Invia la banda X-Plane",
+    "toggle_hint": "Predefinito: attivo. Disattivata, la banda si nasconde nel simulatore; ha effetto subito."
+  },
   "msfs_hud": {
     "section_title": "HUD in-sim per MSFS",
     "intro": "La striscia HUD dentro il simulatore (widget Flow Pro) riceve i dati da un server locale su questo PC (porta 47847, raggiungibile solo da questo PC).",

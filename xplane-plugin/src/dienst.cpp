@@ -45,7 +45,7 @@ size_t text_laenge(const char* s, size_t max) noexcept {
 // =============================================================================
 
 Dienst::Dienst(Datenquelle& quelle, Umgebung& umgebung, const Kennung& kennung) noexcept
-    : quelle_(quelle), umgebung_(umgebung), kennung_(kennung) {
+    : quelle_(quelle), umgebung_(umgebung), kennung_(kennung), band_(umgebung.jetzt()) {
     // Der einzige Grundspeicher: Platz für die Namen EINES Datagramms (die
     // Namen selbst bleiben im Datagramm, hier stehen nur Zeiger + Index).
     bereit_ = namen_puffer_.reserviere(grenzen::MAX_NAMEN_JE_ABO);
@@ -578,9 +578,25 @@ void Dienst::empfange(const Absender& von, const char* daten, size_t laenge) noe
         case Befehl::ABO:
             bearbeite_abo(a);
             break;
+        case Befehl::BAND:
+            bearbeite_band(von, a);
+            break;
         case Befehl::HALLO:
         case Befehl::KEINER:
             break;
+    }
+}
+
+void Dienst::bearbeite_band(const Absender& von, const Anfrage& a) noexcept {
+    // Fire-and-forget: eine gültige Nachricht bekommt keine Antwort. Eine zu
+    // alte seq (verspätetes UDP-Paket) wird still verworfen; ein ungültiges
+    // Datagramm beantwortet das Plugin, das bisherige Band bleibt stehen.
+    uint32_t fehler_zeile = 0;
+    const BandErgebnis r = band_.uebernehme(a.band_seq, a.band_ruhig, a.band_zeilen,
+                                            a.band_rest, a.band_rest_laenge,
+                                            umgebung_.jetzt(), &fehler_zeile);
+    if (r == BandErgebnis::UNGUELTIG) {
+        sende_fehler(von, Fehlergrund::BAND_UNGUELTIG, fehler_zeile, 0, 0, -1);
     }
 }
 
@@ -590,6 +606,7 @@ void Dienst::bearbeite_hallo(const Absender& von, const Anfrage& a) noexcept {
             // Neuer Client (oder derselbe nach Neustart mit neuem Port): alles
             // vom alten verwerfen — dessen Abos kennt der neue nicht.
             alles_verwerfen();
+            band_.neuer_client();  // seine seq beginnt von vorn; das Band bleibt stehen
             client_ = von;
             client_aktiv_ = true;
             char version[grenzen::MAX_CLIENT_VERSION + 1];

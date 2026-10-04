@@ -1342,6 +1342,12 @@
       "revoke_done": "Devices disconnected ✓"
     }
   },
+  "xplane_band": {
+    "section_title": "X-Plane HUD band",
+    "intro": "The band inside the simulator (AeroACARS Premium plugin 1.1.0 or newer) shows the same display as the MSFS HUD.",
+    "toggle_label": "Send X-Plane band",
+    "toggle_hint": "Default: on. Switched off, the band hides itself in the sim; takes effect immediately."
+  },
   "msfs_hud": {
     "section_title": "MSFS in-sim HUD",
     "intro": "The HUD strip inside the simulator (Flow Pro widget) gets its data from a local server on this PC (port 47847, reachable from this PC only).",

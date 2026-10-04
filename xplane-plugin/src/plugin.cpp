@@ -29,8 +29,11 @@
 //      - No filesystem I/O, no malloc inside the hot path.
 //
 //   3. NEVER persist state outside the plugin's address space.
-//      - No file writes, no registry edits, no env-var tweaks.
+//      - No registry edits, no env-var tweaks.
 //      - Plugin is purely read-only against X-Plane state.
+//      - Einzige Ausnahme seit 1.1.0: das HUD-Band merkt sich Position, Größe
+//        und An/Aus in Output/preferences/AeroACARS-Band.txt (ADR-0005),
+//        geschrieben nur bei einer Änderung durch den Spieler.
 //
 //   4. CLEAN SHUTDOWN on plugin reload.
 //      - XPluginStop unregisters the flight loop, closes the socket,
@@ -78,6 +81,7 @@
 #include <XPLM/XPLMProcessing.h>
 #include <XPLM/XPLMUtilities.h>
 
+#include "band_xplm.h"
 #include "dienst_xplm.h"
 #include "netz.h"
 #include "protokoll1.h"
@@ -661,6 +665,7 @@ float flight_loop_cb(float, float, int, void*) noexcept {
 
     // -- Protokoll 2 bei jedem Aufruf (auch in Pause/Replay) -----------------
     const bool p2_jeder_frame = dienst_frame();
+    band_frame();  // Sichtbarkeit des HUD-Bands (ADR-0005), blockiert nie
     if (p2_jeder_frame) return FLIGHT_LOOP_FAST_INTERVAL;
 
     // Ohne Lieferauftrag: exakt das Verhalten von 0.5.13 — das Intervall, das
@@ -730,6 +735,7 @@ PLUGIN_API void XPluginStop(void) {
     //   2. Close the socket.
     //   3. Zero DataRef handles (defensive — plugin reload will re-find).
     XPLMUnregisterFlightLoopCallback(flight_loop_cb, nullptr);
+    band_stopp();
     dienst_stopp();
     close_socket();
 
@@ -758,6 +764,7 @@ PLUGIN_API int XPluginEnable(void) {
         log_msg("warn: UDP socket setup failed; Protokoll 1 inert");
     }
     dienst_start(AEROACARS_PLUGIN_VERSION);
+    band_start();  // nach dem Dienst: das Band liest seinen Zustand von dort
     g_p1_faellig = 0.0;
     g_p1_sync = true;  // erster Protokoll-1-Tick synchronisiert nur
     return 1;
@@ -771,6 +778,7 @@ PLUGIN_API void XPluginDisable(void) {
     // ersten Tick nach dem nächsten Enable neu (g_p1_sync) — ein Wechsel
     // Luft→Boden während der Deaktivierung ist kein Touchdown, den das
     // Plugin gesehen hat.
+    band_stopp();
     dienst_stopp();
     close_socket();
     log_msg("disabled: sockets closed (Protokoll 1 + 2)");

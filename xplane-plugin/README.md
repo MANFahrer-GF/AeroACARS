@@ -8,7 +8,7 @@ capture**.
 | Field          | Value                                                   |
 |----------------|---------------------------------------------------------|
 | Plugin name    | `AeroACARS Premium`                                     |
-| Version        | 1.0.0 (Protokoll 2 = Dataref-Server, ADR-0004)          |
+| Version        | 1.1.0 (Protokoll 2 + HUD-Band, ADR-0004/0005)           |
 | Signature      | `com.aeroacars.xplane.premium`                          |
 | Wire format    | Line-delimited JSON over UDP loopback                   |
 | Loopback port  | `127.0.0.1:52000` Protokoll 1 (Plugin → Client)         |
@@ -75,11 +75,12 @@ ABO <abo-id> <rate-hz> [<teil> <teile>] [g<generation>]
 ENDE-ABO <abo-id>
 LISTE <anfrage-id>
 PING
+BAND <seq> <ruhig> <zeilen>      (+ Folgezeilen, siehe „HUD-Band“)
 ```
 
 | Regel | Wert |
 |---|---|
-| Befehle je Datagramm | genau einer; nur `ABO` hat Folgezeilen |
+| Befehle je Datagramm | genau einer; nur `ABO` (Namen) und `BAND` (Zeilen) haben Folgezeilen |
 | Datagramm | ≤ 65536 Byte, sonst `datagramm_zu_gross` |
 | Zeile | ≤ 512 Byte ohne Zeilenende; `\n`, ein `\r` davor wird toleriert |
 | Trennung | genau ein Leerzeichen zwischen Argumenten |
@@ -113,7 +114,7 @@ PING
 ### Antworten (eine JSON-Zeile je Datagramm, ≤ 8192 Byte inkl. `\n`)
 
 ```json
-{"p":2,"t":"hallo","plugin":"1.0.0","xplane":12100,"xplm":430}
+{"p":2,"t":"hallo","plugin":"1.1.0","xplane":12100,"xplm":430}
 {"p":2,"t":"pong"}
 {"p":2,"t":"abo_empfangen","abo":1,"gen":4,"namen":4}
 {"p":2,"t":"abo","abo":1,"gen":4,"teil":1,"teile":1,"st":[[0,"d",1],[1,"fehlt"],[2,"vf",8],[3,"b",40]]}
@@ -121,6 +122,7 @@ PING
 {"p":2,"t":"flugzeug","icao":"A333","titel":"Airbus A330-300","beschreibung":"Airbus long range widebody twin","pfad":"Aircraft/Laminar Research/Airbus A330-300/A330.acf"}
 {"p":2,"t":"liste","id":7,"teil":3,"teile":40,"n":["sim/…","…"]}
 {"p":2,"t":"fehler","grund":"rate_ungueltig","zeile":1,"abo":1,"gen":4}
+{"p":2,"t":"fehler","grund":"band_ungueltig","zeile":3}
 ```
 
 * **Status** (`st`) je Name in Anmeldereihenfolge: `[k,"i"|"f"|"d",1]`,
@@ -303,6 +305,113 @@ PING
   meldet sich neu an.
 * **Empfehlung Client:** Empfangspuffer (`SO_RCVBUF`) ≥ 1 MiB — große Abos
   und `LISTE` kommen mit bis zu 128 KiB je Frame; Windows hat ab Werk 64 KiB.
+
+## HUD-Band (ab Plugin 1.1.0)
+
+Verbindliche Spezifikation: `docs/decisions/0005-xplane-hud-band.md`. Das
+Plugin zeichnet ein Band wie das Flow-Widget / MSFS-Panel direkt in X-Plane.
+**Die App rechnet, das Plugin zeichnet:** Texte und Farben kommen fertig vom
+Client, das Plugin enthält keine Fachlogik.
+
+### Befehl `BAND`
+
+```
+BAND <seq> <ruhig> <zeilen>
+<zeile 1>
+<zeile 2>
+```
+
+Ein Datagramm, keine Antwort bei Erfolg. Braucht vorher `HALLO 2` (sonst
+`kein_hallo`). Der Client sollte `BAND` nur senden, wenn die `hallo`-Antwort
+`"plugin"` ≥ 1.1.0 meldet (ältere Plugins antworten `unbekannter_befehl`).
+
+* `seq` 0 … 2147483647. Das Plugin verwirft **still** jede `seq`, die nicht
+  größer als die letzte angenommene ist (Überlauf: liegt die neue mehr als
+  2^30 *unter* der letzten, gilt sie als neu). Nach einem neuen `HALLO` (neuer
+  Client) beginnt die Zählung von vorn; das angezeigte Band bleibt stehen.
+* `ruhig` `0`/`1`: `1` dimmt das Band auf die halbe Helligkeit, bei
+  Mausberührung wieder voll.
+* `zeilen` 0 … 4. **0 blendet das Band aus** (keine Folgezeilen); es bleibt
+  unsichtbar, bis wieder ein Band mit ≥ 1 Zeile kommt.
+* Jede Zeile ≤ 512 Byte, nur `0x20–0x7E` und TAB. **Jede Zeile endet mit
+  `\n`**, auch die letzte (fehlt es dort, ist es auch gültig); `\r` im Körper
+  ist ungültig. Eine **leere Zeile** (nur `\n`) hat keine Läufe und belegt
+  keine Höhe.
+* Zeile = **Läufe**, durch TAB getrennt; Lauf = Farbzeichen + Artzeichen + Text
+  (mindestens 2 Zeichen).
+  Farben: `n` normal · `d` gedämpft · `g` gut · `w` Warnung · `b` schlecht · `a` Akzent.
+  Arten (Stil wie `panel.css` des MSFS-Panels):
+
+  | Art | Bedeutung | Schrift (Open Sans) |
+  |---|---|---|
+  | `t` | Ticker-Alter (mind. 62 px breit) | 11 px Bold |
+  | `m` | Ticker-Meldung | 11 px Regular |
+  | `p` | Statuspunkt (Text **leer**) | 7-px-Kreis |
+  | `i` | Kennung | 13 px Bold |
+  | `s` | Lage-Text | 13 px SemiBold |
+  | `l` | Zellen-Beschriftung, GROSS, gesperrt 0,09 em | 9 px Bold |
+  | `v` | Zellen-Wert | 15 px Bold |
+  | `x` | Anhang | 13 px SemiBold |
+  | `z` | Landenote | 24 px Bold |
+  | `e` | Noten-Etikett als Pille (Lauffarbe 24 %), GROSS, 0,08 em | 10 px Bold (CSS 800) |
+
+  Abstände setzt das Plugin: Beschriftung→Wert und Alter→Meldung 5 px,
+  Note→Etikett 9 px, sonst 13 px. Zwischen zwei belegten Zeilen eine Haarlinie.
+* **Ungültig** (Kopf, Zeilenzahl, Zeichen, Farbe, Länge) → ganze Nachricht
+  verworfen, `{"p":2,"t":"fehler","grund":"band_ungueltig","zeile":N}` (`zeile`
+  = betroffene Zeile des Datagramms, Kopf = 1); das bisherige Band bleibt.
+
+Sichtbarkeit: Vor dem ersten gültigen `BAND` mit ≥ 1 Zeile wird **nichts**
+gezeichnet. Kommt danach 5 s lang kein angenommenes Band mehr (und wurde nicht
+per `zeilen=0` ausgeblendet), ersetzt das Plugin Zeile 1 durch
+roten Punkt + `AeroACARS nicht erreichbar - laeuft die App?`; die übrigen
+Zeilen bleiben stehen.
+
+### Zeichnung
+
+Optik wie das Flow-Widget: Kasten `rgba(13,17,24,.88)`, Rand 1 px
+`rgba(255,255,255,.13)`, Radius 7, Innenabstand 9/15 px, Schrift **Open Sans**
+(eingebettet, SIL OFL 1.1 — `third_party/opensans/OFL.txt`, wird als
+`OpenSans_OFL.txt` mit ausgeliefert) mit Textschatten (1 px tiefer, 75 %
+schwarz). Die Schrift wird per `stb_truetype` (`third_party/stb`, MIT/Public
+Domain) für die aktuelle Stufe in 2× Auflösung in einen Atlas gebacken; das
+Mausrad ändert die Größen, nicht die Matrix.
+
+* **Zeichenweg texturiert** (Standard): alles — auch Flächen, Rand, Punkt —
+  als texturierte Quads mit einer Textur (X-Plane 12/Metal zeigt
+  untexturierte GL-Flächen nicht, Feldtest 04.10.2026). Textur entsteht im
+  Flight-Loop, nie im Zeichen-Callback.
+* **Selbstprüfung:** beim ersten Zeichnen liest das Plugin an der Boxmitte
+  per `glReadPixels` drei Werte: vorher, nach X-Planes eigener dunkler Box
+  (Kontrolle — beweist, dass das Rücklesen Zeichnungen sieht) und nach einem
+  eigenen texturierten Prüfquadrat. Rohwerte stehen im Log
+  (`[AeroACARS] Band: Selbstpruefung: …`). Nur bei **eindeutigem** Befund
+  (Kontrolle sichtbar, Prüfquadrat zweimal nicht) oder einem GL-Fehler beim
+  eigenen Zeichnen schaltet es für die Sitzung auf den **Rückfall**
+  `XPLMDrawTranslucentDarkBox` + `XPLMDrawString` (X-Plane-Schrift, immer
+  lesbar). Sagt das Rücklesen nichts aus (Nacht, Bridge liest nicht), bleibt
+  es nach 20 Versuchen beim texturierten Weg. Ebenfalls im Log:
+  `GL_VERSION`/`GL_RENDERER` und der gewählte Weg.
+
+### Bedienung
+
+* **Ziehen:** linke Maustaste irgendwo auf dem Band. Klicks (links wie rechts)
+  gehen nicht ins Spiel, solange das Band getroffen wird.
+* **Größe:** Mausrad über dem Band, Stufen 0,6 · 0,8 · 1,0 · 1,25 · 1,5 · 2,0 · 3,0.
+* **Menü** *Plugins → AeroACARS*: Band ein/aus (dauerhafte Spieler-Einstellung)
+  · Band groesser · Band kleiner · Band zuruecksetzen (Position + Größe).
+* **Merken:** `Output/preferences/AeroACARS-Band.txt` (`schlüssel=wert`: `an`,
+  `stufe` = 0 … 6, `x`/`y` = linke obere Ecke). Geschrieben nur bei einer
+  Änderung (Maus loslassen, Menü, Rad mit 1 s Verzögerung), gelesen beim Start,
+  Position auf den Bildschirm geklemmt. Standard: an, 1,0, oben mittig. Eine
+  kaputte Datei ergibt die Standardwerte.
+* Erste Fassung: nur 2D (kein VR-Positionierungsmodus), keine Klick-Interaktion.
+
+### Update
+
+Das Plugin ist **nicht auto-updatefähig**. Wer von 1.0.x kommt, ersetzt den
+Ordner `Resources/plugins/AeroACARS/` von Hand durch die 1.1.0-Fassung und
+startet X-Plane neu.
 
 ## Protokoll 1 (bleibt für ältere Clients)
 

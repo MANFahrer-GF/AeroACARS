@@ -392,3 +392,11 @@ void dienst_nachricht(int nachricht, void* parameter) noexcept {
         g_dienst->flughafen_geladen();
     }
 }
+
+aeroacars::Band* dienst_band() noexcept {
+    return g_dienst != nullptr ? &g_dienst->band() : nullptr;
+}
+
+double dienst_jetzt() noexcept {
+    return g_umgebung.jetzt();
+}

@@ -17,6 +17,8 @@
 //   ENDE-ABO <abo-id>
 //   LISTE <anfrage-id>
 //   PING
+//   BAND <seq> <ruhig> <zeilen>   (+ <zeilen> Folgezeilen, ADR-0005; Kopf hier,
+//                                     Zeilen prüft band.cpp)
 //
 // Regeln, die über die ADR hinaus festgelegt sind (README „Protokoll 2“):
 //   * Genau EIN Befehl je Datagramm. Nur ABO darf Folgezeilen (Namen) haben;
@@ -52,6 +54,7 @@ enum class Befehl : uint8_t {
     ENDE_ABO,
     LISTE,
     PING,
+    BAND,
 };
 
 // Fehlergründe. Die Texte (fehlergrund_text) sind Teil des Protokolls:
@@ -81,6 +84,7 @@ enum class Fehlergrund : uint8_t {
     SPEICHER,               // Allokation gescheitert — Anfrage verworfen
     GENERATION_UNGUELTIG,   // ABO: "g<zahl>" nicht 1 … 2^31 − 1
     SPEICHER_LIMIT,         // Bytebudget (grenzen::MAX_BYTES_*) überschritten
+    BAND_UNGUELTIG,         // BAND: Kopf, Zeilenzahl, Zeichen, Läufe oder Farben falsch
     // Neue Gründe immer HIER anhängen (Tests zählen bis zum letzten).
 };
 
@@ -117,6 +121,14 @@ struct Anfrage {
 
     // LISTE
     uint32_t anfrage_id = 0;
+
+    // BAND: Kopf geprüft; der Rest des Datagramms (die Folgezeilen) zeigt ins
+    // Datagramm und wird von band_zerlege_koerper geprüft.
+    uint32_t band_seq = 0;
+    bool band_ruhig = false;
+    uint32_t band_zeilen = 0;
+    const char* band_rest = nullptr;
+    size_t band_rest_laenge = 0;
 
     // Fehler: grund != KEINER heißt, die Anfrage ist als Ganzes verworfen.
     Fehlergrund fehler = Fehlergrund::KEINER;

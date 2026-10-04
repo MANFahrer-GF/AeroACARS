@@ -22,3 +22,10 @@ bool dienst_frame() noexcept;
 
 // Weitergereicht aus XPluginReceiveMessage.
 void dienst_nachricht(int nachricht, void* parameter) noexcept;
+
+// HUD-Band (ADR-0005): der Zustand lebt im Dienst. nullptr, solange der
+// Dienst nicht läuft. Der Zeiger gilt bis dienst_stopp().
+namespace aeroacars { class Band; }
+aeroacars::Band* dienst_band() noexcept;
+// Dieselbe Uhr (Sekunden, monoton), mit der der Dienst Bänder abstempelt.
+double dienst_jetzt() noexcept;

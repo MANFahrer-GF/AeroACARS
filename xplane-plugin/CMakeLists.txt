@@ -42,7 +42,8 @@ project(AeroACARS_XPlane_Plugin
     # / 0.5.11 / 0.5.13). Every Log.txt line was misreporting v0.5.0.
     # See docs/qs/v0.7.16-fenix-beta-bugs.md N-004.
     # 1.0.0 (AP7): Dataref-Server, Protokoll 2 (ADR-0004). Protokoll 1 bleibt.
-    VERSION 1.0.0
+    VERSION 1.1.0
+    # 1.1.0: HUD-Band (BAND-Befehl, Fenster, Menü), ADR-0005.
     LANGUAGES CXX
     DESCRIPTION "AeroACARS X-Plane Premium Plugin"
 )
@@ -119,8 +120,21 @@ endif()
 # ---- Plugin target --------------------------------------------------------
 # Der XPLM-freie Kern (Parser, JSON, Pakete, Dienst) steht in einer eigenen
 # Liste, weil die Tests dieselben Dateien ohne XPLM übersetzen.
+# HUD-Band: Open Sans (SIL OFL 1.1) wird als Byte-Feld eingebettet, erzeugt
+# beim Konfigurieren aus third_party/opensans/*.ttf.
+include(werkzeuge/schrift_einbetten.cmake)
+set(AEROACARS_SCHRIFT_CPP "${CMAKE_BINARY_DIR}/generiert/schrift_daten.cpp")
+aeroacars_schrift_einbetten("${AEROACARS_SCHRIFT_CPP}"
+    OPENSANS_REGULAR  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/opensans/OpenSans-Regular.ttf"
+    OPENSANS_SEMIBOLD "${CMAKE_CURRENT_SOURCE_DIR}/third_party/opensans/OpenSans-SemiBold.ttf"
+    OPENSANS_BOLD     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/opensans/OpenSans-Bold.ttf")
+
 set(AEROACARS_KERN_QUELLEN
     src/anfrage.cpp
+    src/band.cpp
+    src/band_layout.cpp
+    src/band_schrift.cpp
+    ${AEROACARS_SCHRIFT_CPP}
     src/json_schreiber.cpp
     src/pakete.cpp
     src/dienst.cpp
@@ -130,6 +144,7 @@ set(AEROACARS_KERN_QUELLEN
 add_library(AeroACARS MODULE
     src/plugin.cpp
     src/dienst_xplm.cpp
+    src/band_xplm.cpp
     src/netz_os.cpp
     ${AEROACARS_KERN_QUELLEN}
 )
@@ -141,6 +156,7 @@ if(MSVC)
 endif()
 
 target_include_directories(AeroACARS PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb"
     "${XPLM_SDK_ROOT}/CHeaders"
     "${XPLM_SDK_ROOT}/CHeaders/XPLM"
     "${XPLM_SDK_ROOT}/CHeaders/Widgets"
@@ -161,6 +177,7 @@ if(WIN32)
     target_link_libraries(AeroACARS PRIVATE
         "${XPLM_SDK_ROOT}/Libraries/Win/XPLM_64.lib"
         ws2_32  # Winsock for our UDP socket
+        opengl32  # HUD-Band (band_xplm.cpp)
     )
     # X-Plane expects .xpl files, not .dll. Override suffix.
     set_target_properties(AeroACARS PROPERTIES
@@ -195,6 +212,8 @@ elseif(APPLE)
         "-undefined" "dynamic_lookup"
         "-Wl,-flat_namespace"
     )
+    # HUD-Band zeichnet mit Fixed-Function-OpenGL (band_xplm.cpp).
+    target_link_libraries(AeroACARS PRIVATE "-framework OpenGL")
 elseif(UNIX)
     # Linux: no import library, no framework. X-Plane's main binary
     # provides every XPLM* symbol at load time; the .xpl just ships
@@ -204,6 +223,9 @@ elseif(UNIX)
     # passes `--as-needed` and would warn about unused libraries —
     # we don't link any, so this is fine. We deliberately do NOT pass
     # `-Wl,--no-undefined` (which would error on every XPLM* call).
+    # HUD-Band zeichnet mit Fixed-Function-OpenGL (band_xplm.cpp); braucht die
+    # GL-Header (Debian/Ubuntu: libgl-dev).
+    target_link_libraries(AeroACARS PRIVATE GL)
     set_target_properties(AeroACARS PROPERTIES
         # CMake auto-prepends "lib" to MODULE libs on Unix; X-Plane
         # expects exactly `lin.xpl` (no prefix).
@@ -239,6 +261,18 @@ configure_file(
     "${CMAKE_BINARY_DIR}/AeroACARS/XPLM_SDK_LICENSE.txt"
     COPYONLY
 )
+# HUD-Band: eingebettete Schrift (OFL verlangt die Lizenz beim Weitergeben)
+# und stb_truetype (MIT/Public Domain).
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/opensans/OFL.txt"
+    "${CMAKE_BINARY_DIR}/AeroACARS/OpenSans_OFL.txt"
+    COPYONLY
+)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/LICENSE"
+    "${CMAKE_BINARY_DIR}/AeroACARS/stb_LICENSE.txt"
+    COPYONLY
+)
 
 # ---- Tests (ohne XPLM) ----------------------------------------------------
 # cmake -B build-tests -DAEROACARS_PLUGIN_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
@@ -263,7 +297,8 @@ if(AEROACARS_PLUGIN_TESTS)
 
     function(aeroacars_testprogramm name)
         add_executable(${name} ${ARGN} ${AEROACARS_KERN_QUELLEN})
-        target_include_directories(${name} PRIVATE src tests)
+        target_include_directories(${name} PRIVATE src tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb")
         target_compile_definitions(${name} PRIVATE AEROACARS_PLUGIN_VERSION="${PROJECT_VERSION}")
         if(MSVC)
             target_compile_options(${name} PRIVATE /EHsc)
@@ -279,16 +314,27 @@ if(AEROACARS_PLUGIN_TESTS)
         endif()
     endfunction()
 
+    # Golden-Datagramme des Rust-Clients (hud_band_golden.json): beide Seiten
+    # sollen nachweislich dasselbe Format sprechen.
+    set(AEROACARS_BAND_GOLDEN
+        "${CMAKE_CURRENT_SOURCE_DIR}/../client/src-tauri/crates/sim-xplane/testdata/hud_band_golden.json")
+
     aeroacars_testprogramm(aeroacars_tests
         tests/tests_main.cpp
         tests/json_pruefer.cpp
         tests/test_anfrage.cpp
+        tests/test_band.cpp
+        tests/test_band_layout.cpp
         tests/test_json.cpp
         tests/test_pakete.cpp
         tests/test_dienst.cpp
         tests/test_protokoll1.cpp
         tests/test_netz.cpp
     )
+    if(EXISTS "${AEROACARS_BAND_GOLDEN}")
+        target_compile_definitions(aeroacars_tests PRIVATE
+            AEROACARS_BAND_GOLDEN="${AEROACARS_BAND_GOLDEN}")
+    endif()
     aeroacars_testprogramm(aeroacars_fuzz
         tests/fuzz.cpp
         tests/json_pruefer.cpp

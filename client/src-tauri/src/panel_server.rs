@@ -478,7 +478,7 @@ async fn status_handler(
 /// Regel identisch zu phpVMS' eigenem `Flight::atc()` (Airline-ICAO +
 /// callsign, sonst + flight_number), nur mit Leerzeichen als Trenner —
 /// so wie es die App seit jeher anzeigt.
-fn with_display_callsign(value: &mut serde_json::Value) {
+pub(crate) fn with_display_callsign(value: &mut serde_json::Value) {
     let Some(obj) = value.as_object_mut() else {
         return;
     };

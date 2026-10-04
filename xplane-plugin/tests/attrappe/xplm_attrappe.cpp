@@ -34,6 +34,9 @@
 
 #include <XPLM/XPLMDataAccess.h>
 #include <XPLM/XPLMDefs.h>
+#include <XPLM/XPLMDisplay.h>
+#include <XPLM/XPLMGraphics.h>
+#include <XPLM/XPLMMenus.h>
 #include <XPLM/XPLMPlugin.h>
 #include <XPLM/XPLMProcessing.h>
 #include <XPLM/XPLMUtilities.h>
@@ -173,6 +176,61 @@ XPLM_API void XPLMGetVersions(int* xp, int* xplm, XPLMHostApplicationID* host) {
     *xplm = g_xp11 ? 303 : 430;
     *host = 1;
 }
+
+// ---- HUD-Band (Plugin 1.1.0): Fenster, Menü, Schrift, Prefs -----------------------
+// Nur so viel, dass das Plugin sich laden, starten und beenden lässt; gezeichnet
+// wird in der Attrappe nichts (kein Fenstersystem).
+XPLM_API void XPLMGetPrefsPath(char* p) { std::strcpy(p, "/nonexistent-aeroacars-attrappe/X-Plane.prf"); }
+XPLM_API const char* XPLMGetDirectorySeparator(void) { return "/"; }
+XPLM_API char* XPLMExtractFileAndPath(char* p) {
+    char* sl = std::strrchr(p, '/');
+    if (sl == nullptr) return p;
+    *sl = '\0';
+    return sl + 1;
+}
+XPLM_API void XPLMGetFontDimensions(XPLMFontID, int* w, int* h, int* d) {
+    if (w) *w = 6;
+    if (h) *h = 9;
+    if (d) *d = 0;
+}
+XPLM_API float XPLMMeasureString(XPLMFontID, const char*, int n) { return 6.0f * static_cast<float>(n); }
+XPLM_API void XPLMDrawString(float*, int, int, const char*, int*, XPLMFontID) {}
+XPLM_API void XPLMSetGraphicsState(int, int, int, int, int, int, int) {}
+XPLM_API void XPLMDrawTranslucentDarkBox(int, int, int, int) {}
+XPLM_API void XPLMBindTexture2d(int, int) {}
+XPLM_API void XPLMGenerateTextureNumbers(int* ids, int n) {
+    static int naechste = 1;
+    for (int i = 0; i < n; ++i) ids[i] = naechste++;
+}
+XPLM_API int XPLMHasFeature(const char*) { return 1; }
+XPLM_API void XPLMEnableFeature(const char*, int) {}
+XPLM_API XPLMWindowID XPLMCreateWindowEx(XPLMCreateWindow_t*) { static int fenster; return &fenster; }
+XPLM_API void XPLMDestroyWindow(XPLMWindowID) {}
+XPLM_API void XPLMGetWindowGeometry(XPLMWindowID, int* l, int* t, int* r, int* b) {
+    if (l) *l = 0;
+    if (t) *t = 0;
+    if (r) *r = 0;
+    if (b) *b = 0;
+}
+XPLM_API void XPLMSetWindowGeometry(XPLMWindowID, int, int, int, int) {}
+XPLM_API int XPLMGetWindowIsVisible(XPLMWindowID) { return 0; }
+XPLM_API void XPLMSetWindowIsVisible(XPLMWindowID, int) {}
+XPLM_API void XPLMGetScreenBoundsGlobal(int* l, int* t, int* r, int* b) {
+    if (l) *l = 0;
+    if (t) *t = 1080;
+    if (r) *r = 1920;
+    if (b) *b = 0;
+}
+XPLM_API void XPLMGetMouseLocationGlobal(int* x, int* y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+}
+XPLM_API XPLMMenuID XPLMFindPluginsMenu(void) { static int menue; return &menue; }
+XPLM_API XPLMMenuID XPLMCreateMenu(const char*, XPLMMenuID, int, XPLMMenuHandler_f, void*) { static int menue2; return &menue2; }
+XPLM_API void XPLMDestroyMenu(XPLMMenuID) {}
+XPLM_API int XPLMAppendMenuItem(XPLMMenuID, const char*, void*, int) { static int n = 0; return n++; }
+XPLM_API void XPLMCheckMenuItem(XPLMMenuID, int, XPLMMenuCheck) {}
+XPLM_API void XPLMRemoveMenuItem(XPLMMenuID, int) {}
 XPLM_API void* XPLMFindSymbol(const char* name) {
     if (g_xp11) return nullptr;
     void* p = nullptr;
