@@ -325,6 +325,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: OpenGL-Header (Linux, fuer das HUD-Band)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl-dev
+
       - name: Configure CMake
         working-directory: xplane-plugin
         shell: bash
@@ -405,6 +409,9 @@ jobs:
         run: |
           cp xplane-plugin/README.md pkg/AeroACARS/README.md
           cp xplane-plugin/third_party/XPSDK430/license.txt pkg/AeroACARS/XPLM_SDK_LICENSE.txt
+          # Schrift im HUD-Band (Plugin 1.1.0): OFL verlangt die Lizenz bei jeder Weitergabe.
+          cp xplane-plugin/third_party/opensans/OFL.txt pkg/AeroACARS/OpenSans_OFL.txt
+          cp xplane-plugin/third_party/stb/LICENSE pkg/AeroACARS/stb_LICENSE.txt
 
       - name: Show staged folder
         run: |

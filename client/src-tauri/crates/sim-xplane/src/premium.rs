@@ -498,6 +498,12 @@ fn run_listener(
     for d in sitzung.beenden() {
         let _ = socket.send_to(&d, p2_ziel);
     }
+    // Ohne laufenden Listener baut die App kein Band mehr (QS-Befund F2,
+    // 04.10.2026: nach Sim-Wechsel blieb „bereit" stehen und der 500-ms-Takt
+    // rechnete ins Leere). Bedingungslos, auch wenn nie „bereit" gemeldet wurde.
+    if let Some(z) = ziel.as_deref() {
+        z.band_bereit(false);
+    }
     *shared.p2_info.lock() = sitzung.info().clone();
     tracing::info!("X-Plane premium listener stopped");
 }
@@ -641,6 +647,42 @@ fn trim_trailing_ws(bytes: &[u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QS-Befund F2 (04.10.2026): Nach dem Stopp des Listeners (Sim-Wechsel)
+    /// muss „bereit" zurueckgesetzt sein, sonst baut die App weiter Baender ins
+    /// Leere. Auch dann, wenn die Sitzung selbst nie „bereit" gemeldet hat
+    /// (Plugin 1.0.0) - der Slot ist hier von aussen vorbelegt.
+    #[test]
+    fn stopp_setzt_band_bereit_zurueck() {
+        struct SlotZiel(Arc<crate::hud_band::BandSlot>);
+        impl Ziel for SlotZiel {
+            fn wunsch_generation(&self) -> u64 {
+                0
+            }
+            fn wuensche(&self) -> Vec<crate::plugin2::AboWunsch> {
+                Vec::new()
+            }
+            fn ereignis(&self, _e: crate::plugin2::Ereignis) {}
+            fn band_bereit(&self, b: bool) {
+                self.0.set_bereit(b);
+            }
+        }
+        let slot = Arc::new(crate::hud_band::BandSlot::default());
+        slot.set_bereit(true);
+        let p1 = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = p1.local_addr().unwrap().port();
+        drop(p1);
+        let p2 = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let p2_ziel = p2.local_addr().unwrap();
+        let mut l = PremiumListener::new();
+        l.start_mit(port, p2_ziel, Some(Arc::new(SlotZiel(Arc::clone(&slot)))));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        l.stop();
+        assert!(
+            !slot.bereit(),
+            "nach dem Stopp darf die App kein Band mehr bauen"
+        );
+    }
 
     #[test]
     fn parses_valid_touchdown_packet() {
