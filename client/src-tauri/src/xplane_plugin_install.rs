@@ -186,6 +186,22 @@ fn detect_linux() -> Option<PathBuf> {
     candidates.into_iter().find(|p| looks_like_xplane_root(p))
 }
 
+/// Ordner aus dem Auswahldialog zum X-Plane-Hauptordner machen. Piloten
+/// waehlen oft einen Unterordner (`Resources`, `Resources/plugins`) oder auf
+/// dem Mac `X-Plane.app` — deshalb bis zu drei Ebenen nach oben suchen.
+/// `None`, wenn dort nirgends ein X-Plane liegt.
+pub fn normalize_install_path(path: &Path) -> Option<PathBuf> {
+    let mut kandidat = Some(path);
+    for _ in 0..4 {
+        let k = kandidat?;
+        if looks_like_xplane_root(k) {
+            return Some(k.to_path_buf());
+        }
+        kandidat = k.parent();
+    }
+    None
+}
+
 /// Heuristic: an X-Plane root directory contains a `Resources/plugins/`
 /// folder. Every X-Plane install has this; nothing else does.
 fn looks_like_xplane_root(path: &Path) -> bool {
@@ -406,6 +422,29 @@ fn quarantaene_entfernen(ordner: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gewaehlter_unterordner_fuehrt_zum_hauptordner() {
+        let basis = std::env::temp_dir().join(format!("aa-xp-wahl-{}", std::process::id()));
+        let root = basis.join("X-Plane 12");
+        std::fs::create_dir_all(root.join("Resources").join("plugins")).unwrap();
+        std::fs::create_dir_all(root.join("X-Plane.app").join("Contents")).unwrap();
+        for gewaehlt in [
+            root.clone(),
+            root.join("Resources"),
+            root.join("Resources").join("plugins"),
+            root.join("X-Plane.app"),
+        ] {
+            assert_eq!(
+                super::normalize_install_path(&gewaehlt).as_deref(),
+                Some(root.as_path()),
+                "{gewaehlt:?}"
+            );
+        }
+        // Ein Ordner ohne X-Plane (auch nicht darueber) bleibt ohne Treffer.
+        assert_eq!(super::normalize_install_path(&basis), None);
+        let _ = std::fs::remove_dir_all(&basis);
+    }
+
     use super::*;
 
     /// Bekannter Pruefwert (FIPS 180-2, „abc").

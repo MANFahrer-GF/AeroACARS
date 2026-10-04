@@ -1529,7 +1529,10 @@
     "unreachable_explanation": "Das Plugin ist aktuell und liefert die Aufsetzmessung, antwortet aber nicht auf Protokoll 2 — vermutlich ist der Port 52001 von einem anderen Programm belegt (siehe X-Plane-Log.txt). Die übrigen Werte kommen weiter über RREF und die Web-API.",
     "install_unverified": "Hinweis: Dieses Paket wurde ohne Prüfsumme installiert (Entwicklungsversion von AeroACARS).",
     "band_outdated_title": "Plugin ohne HUD-Band",
-    "band_outdated_explanation": "Telemetrie und Landemessung laufen normal. Für das HUD-Band im Simulator braucht es Plugin {{min}}: Plugin unten neu installieren und X-Plane neu starten."
+    "band_outdated_explanation": "Telemetrie und Landemessung laufen normal. Für das HUD-Band im Simulator braucht es Plugin {{min}}: Plugin unten neu installieren und X-Plane neu starten.",
+    "browse_button": "Ordner wählen …",
+    "browse_title": "X-Plane-Hauptordner wählen",
+    "browse_not_xplane": "In diesem Ordner liegt kein X-Plane. Bitte den Ordner wählen, in dem X-Plane und der Unterordner „Resources“ liegen (z. B. „X-Plane 12“)."
   },
   "pilot_header": {
     "pos_label": "POS",

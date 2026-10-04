@@ -780,6 +780,16 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // v1.5.6: X-Plane-Plugin-Installation. Beides laeuft auf dem HOST
         // (dessen X-Plane-Ordner) — das Tablet ist nur die Fernbedienung.
         "xplane_detect_install_path" => ok_json(crate::xplane_detect_install_path().await),
+        "xplane_check_install_path" => {
+            #[derive(Deserialize)]
+            struct A {
+                path: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => ok_json(crate::xplane_check_install_path(a.path).await),
+                Err(e) => Err(e),
+            }
+        }
         "xplane_install_plugin" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]

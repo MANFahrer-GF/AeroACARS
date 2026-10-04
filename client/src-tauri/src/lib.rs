@@ -54562,6 +54562,19 @@ async fn xplane_detect_install_path() -> Option<String> {
     .unwrap_or(None)
 }
 
+/// Prueft einen im Dialog gewaehlten Ordner und liefert den X-Plane-
+/// Hauptordner (auch wenn ein Unterordner gewaehlt wurde), sonst `None`.
+/// Fuer Piloten, bei denen die Auto-Erkennung nichts findet.
+#[tauri::command]
+async fn xplane_check_install_path(path: String) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        xplane_plugin_install::normalize_install_path(std::path::Path::new(&path))
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+    .unwrap_or(None)
+}
+
 /// Download the matching plugin zip from this AeroACARS version's
 /// GitHub release and extract it into `<install_dir>/Resources/
 /// plugins/AeroACARS/`. Idempotent — overwrites in place. Returns
@@ -58056,6 +58069,7 @@ pub fn run() {
             telemetrie_fenster_oeffnen,
             xplane_premium_status,
             xplane_detect_install_path,
+            xplane_check_install_path,
             xplane_install_plugin,
             auto_start_set_enabled,
             auto_start_get_enabled,

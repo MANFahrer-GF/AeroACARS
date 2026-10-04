@@ -1529,7 +1529,10 @@
     "unreachable_explanation": "The plugin is up to date and delivers touchdown capture, but does not answer on protocol 2 — port 52001 is probably held by another program (see X-Plane Log.txt). All other values still come via RREF and the Web API.",
     "install_unverified": "Note: this package was installed without a checksum (development build of AeroACARS).",
     "band_outdated_title": "Plugin without HUD band",
-    "band_outdated_explanation": "Telemetry and touchdown capture work as usual. The in-sim HUD band needs plugin {{min}}: reinstall the plugin below and restart X-Plane."
+    "band_outdated_explanation": "Telemetry and touchdown capture work as usual. The in-sim HUD band needs plugin {{min}}: reinstall the plugin below and restart X-Plane.",
+    "browse_button": "Choose folder…",
+    "browse_title": "Choose the X-Plane root folder",
+    "browse_not_xplane": "No X-Plane found in this folder. Please choose the folder that contains X-Plane and its \"Resources\" subfolder (e.g. \"X-Plane 12\")."
   },
   "pilot_header": {
     "pos_label": "POS",

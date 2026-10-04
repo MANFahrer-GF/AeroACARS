@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../lib/ipc";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import type { SimConnectionState, XPlanePremiumStatus } from "../types";
 import { BAND_MIN_PLUGIN, bandBrauchtUpdate } from "../lib/pluginVersion";
@@ -123,6 +124,35 @@ export function XPlanePremiumPanel({ simState }: Props) {
       setInstallError(String(err));
     } finally {
       setInstalling(false);
+    }
+  }
+
+  // Ordner per System-Dialog wählen — für Piloten, bei denen die
+  // Auto-Erkennung nichts findet. Die App prüft die Wahl und geht von einem
+  // Unterordner (Resources, X-Plane.app) selbst zum Hauptordner hoch.
+  async function handleBrowse() {
+    try {
+      const gewaehlt = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: installPath.trim() || undefined,
+        title: t("xplane_premium_panel.browse_title"),
+      });
+      if (typeof gewaehlt !== "string") return;
+      const root = await invoke<string | null>("xplane_check_install_path", {
+        path: gewaehlt,
+      });
+      if (root) {
+        setInstallPath(root);
+        setInstallError(null);
+        setInstallMessage(t("xplane_premium_panel.detect_success"));
+      } else {
+        setInstallPath(gewaehlt);
+        setInstallMessage(null);
+        setInstallError(t("xplane_premium_panel.browse_not_xplane"));
+      }
+    } catch (err) {
+      setInstallError(String(err));
     }
   }
 
@@ -293,6 +323,13 @@ export function XPlanePremiumPanel({ simState }: Props) {
                 disabled={installing}
               >
                 {t("xplane_premium_panel.detect_button")}
+              </button>
+              <button
+                type="button"
+                onClick={handleBrowse}
+                disabled={installing}
+              >
+                {t("xplane_premium_panel.browse_button")}
               </button>
             </div>
             <button
