@@ -72,7 +72,11 @@ pub struct PluginInstallResult {
 
 /// Best-effort detection of the X-Plane root directory.
 ///
-/// We check, in order:
+/// ZUERST X-Planes eigene Installationsliste (`x-plane_install_12.txt`,
+/// dann `_11.txt`): X-Plane schreibt dort jeden bekannten Installationsort,
+/// eine Zeile je Pfad — auf jeder Platte, auch bei Steam. Bis v1.9.21 las die
+/// Erkennung sie nicht und fand X-Plane ausserhalb weniger fester Ordner nie
+/// (Feldbefund 04.10.2026). Danach die alten Wege:
 ///   * Windows: `HKCU\Software\Laminar Research\X-Plane 12\Path`
 ///     and the X-Plane 11 equivalent (X-Plane writes these on first
 ///     run since version 11.10).
@@ -83,6 +87,9 @@ pub struct PluginInstallResult {
 /// Returns `None` if nothing is found — the UI then offers a folder-
 /// picker so the pilot can point us at their install manually.
 pub fn detect_install_path() -> Option<PathBuf> {
+    if let Some(p) = erster_aus_install_listen(&install_listen()) {
+        return Some(p);
+    }
     #[cfg(target_os = "windows")]
     {
         if let Some(p) = detect_windows() {
@@ -124,11 +131,16 @@ fn detect_windows() -> Option<PathBuf> {
         "HKCU\\Software\\Laminar Research\\X-Plane 12",
         "HKCU\\Software\\Laminar Research\\X-Plane 11",
     ] {
-        let out = Command::new("reg")
+        // Startet reg.exe nicht, NICHT abbrechen: die festen Ordner unten
+        // sollen trotzdem geprueft werden (bis v1.9.21 beendete `?` hier
+        // die ganze Suche).
+        let Ok(out) = Command::new("reg")
             .args(["query", key, "/v", "Path"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .ok()?;
+        else {
+            continue;
+        };
         if !out.status.success() {
             continue;
         }
@@ -151,6 +163,8 @@ fn detect_windows() -> Option<PathBuf> {
         "C:\\X-Plane 11",
         "D:\\X-Plane 12",
         "D:\\X-Plane 11",
+        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\X-Plane 12",
+        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\X-Plane 11",
     ] {
         let p = PathBuf::from(candidate);
         if looks_like_xplane_root(&p) {
@@ -170,6 +184,8 @@ fn detect_macos() -> Option<PathBuf> {
         home.join("X-Plane 11"),
         home.join("Applications").join("X-Plane 12"),
         home.join("Applications").join("X-Plane 11"),
+        home.join("Library/Application Support/Steam/steamapps/common/X-Plane 12"),
+        home.join("Library/Application Support/Steam/steamapps/common/X-Plane 11"),
     ];
     candidates.into_iter().find(|p| looks_like_xplane_root(p))
 }
@@ -182,8 +198,53 @@ fn detect_linux() -> Option<PathBuf> {
         home.join("X-Plane 11"),
         PathBuf::from("/opt/X-Plane 12"),
         PathBuf::from("/opt/X-Plane 11"),
+        home.join(".steam/steam/steamapps/common/X-Plane 12"),
+        home.join(".local/share/Steam/steamapps/common/X-Plane 12"),
     ];
     candidates.into_iter().find(|p| looks_like_xplane_root(p))
+}
+
+/// Wo X-Plane seine Installationsliste ablegt (12 vor 11):
+/// Windows `%LOCALAPPDATA%`, macOS `~/Library/Preferences`, Linux `~/.x-plane`.
+fn install_listen() -> Vec<PathBuf> {
+    let ordner: Option<PathBuf> = if cfg!(target_os = "windows") {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Preferences"))
+    } else {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".x-plane"))
+    };
+    let Some(ordner) = ordner else {
+        return Vec::new();
+    };
+    ["x-plane_install_12.txt", "x-plane_install_11.txt"]
+        .iter()
+        .map(|n| ordner.join(n))
+        .collect()
+}
+
+/// Zeilen der Installationsliste als Pfade: BOM, `\r`, Leerzeilen und
+/// Leerraum am Rand fallen weg. Bytes statt `read_to_string`, damit ein
+/// Pfad in einer Nicht-UTF-8-Kodierung die uebrigen Zeilen nicht verwirft.
+pub(crate) fn pfade_aus_install_liste(roh: &[u8]) -> Vec<PathBuf> {
+    let text = String::from_utf8_lossy(roh);
+    text.trim_start_matches('\u{feff}')
+        .lines()
+        .map(str::trim)
+        .filter(|z| !z.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// Erster Eintrag aus den Listen, der wirklich ein X-Plane ist. Eintraege zu
+/// geloeschten Installationen bleiben in der Liste stehen — deshalb jeden
+/// pruefen, nicht die erste Zeile glauben.
+fn erster_aus_install_listen(dateien: &[PathBuf]) -> Option<PathBuf> {
+    dateien
+        .iter()
+        .filter_map(|d| std::fs::read(d).ok())
+        .flat_map(|roh| pfade_aus_install_liste(&roh))
+        .find(|p| looks_like_xplane_root(p))
 }
 
 /// Ordner aus dem Auswahldialog zum X-Plane-Hauptordner machen. Piloten
@@ -422,6 +483,48 @@ fn quarantaene_entfernen(ordner: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn install_liste_wird_robust_gelesen() {
+        let roh = "\u{feff}C:\\X-Plane 12\\\r\n\r\n  D:\\Spiele\\X-Plane 12  \r\n".as_bytes();
+        let p = super::pfade_aus_install_liste(roh);
+        assert_eq!(
+            p,
+            vec![
+                std::path::PathBuf::from("C:\\X-Plane 12\\"),
+                std::path::PathBuf::from("D:\\Spiele\\X-Plane 12"),
+            ]
+        );
+        // Kaputte Bytes verwerfen nicht die ganze Liste.
+        let mut kaputt = b"/a/\xff\xfe\n".to_vec();
+        kaputt.extend_from_slice(b"/b\n");
+        assert_eq!(super::pfade_aus_install_liste(&kaputt).len(), 2);
+    }
+
+    #[test]
+    fn install_liste_ueberspringt_geloeschte_installationen() {
+        let basis = std::env::temp_dir().join(format!("aa-xp-liste-{}", std::process::id()));
+        let echt = basis.join("Platte E").join("X-Plane 12");
+        std::fs::create_dir_all(echt.join("Resources").join("plugins")).unwrap();
+        let liste12 = basis.join("x-plane_install_12.txt");
+        let weg = basis.join("geloescht").join("X-Plane 12");
+        std::fs::write(
+            &liste12,
+            format!("{}\n{}/\n", weg.display(), echt.display()),
+        )
+        .unwrap();
+        let fehlt = basis.join("x-plane_install_11.txt");
+        let gefunden = super::erster_aus_install_listen(&[liste12.clone(), fehlt.clone()]);
+        assert_eq!(
+            gefunden.as_deref().map(super::normalize_install_path),
+            Some(Some(echt.clone()))
+        );
+        // Ohne Listen (oder nur mit toten Eintraegen) kein Treffer.
+        assert_eq!(super::erster_aus_install_listen(&[fehlt]), None);
+        std::fs::write(&liste12, format!("{}\n", weg.display())).unwrap();
+        assert_eq!(super::erster_aus_install_listen(&[liste12]), None);
+        let _ = std::fs::remove_dir_all(&basis);
+    }
+
     #[test]
     fn gewaehlter_unterordner_fuehrt_zum_hauptordner() {
         let basis = std::env::temp_dir().join(format!("aa-xp-wahl-{}", std::process::id()));
