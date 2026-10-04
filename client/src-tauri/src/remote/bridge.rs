@@ -1237,6 +1237,18 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // X-Plane-Band (ADR-0005) — dieselbe Begruendung wie beim Panel-Server.
+        "xplane_band_get_enabled" => ok_json(crate::xplane_band_get_enabled(app.clone())),
+        "xplane_band_set_enabled" => {
+            #[derive(Deserialize)]
+            struct A {
+                enabled: bool,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::xplane_band_set_enabled(app.clone(), a.enabled)),
+                Err(e) => Err(e),
+            }
+        }
         _ => return Dispatch::Unknown,
     };
 
