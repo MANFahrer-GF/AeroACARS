@@ -117,4 +117,23 @@ describe("X-Plane-Hauptordner per Dialog", () => {
     await flush();
     expect(invokeMock).not.toHaveBeenCalledWith("xplane_check_install_path", expect.anything());
   });
+
+  it("eine späte Auto-Erkennung überschreibt einen getippten Pfad nicht", async () => {
+    let erkannt: (p: string) => void = () => {};
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === "xplane_premium_status")
+        return { active: false, ever_seen: false, packet_count: 0, last_error: null };
+      if (cmd === "xplane_detect_install_path") return new Promise<string>((ok) => (erkannt = ok));
+      throw new Error(`unerwarteter Befehl: ${String(cmd)}`);
+    });
+    render(<XPlanePremiumPanel simState="disconnected" />);
+    await flush();
+    const feld = screen.getByLabelText("X-Plane-Hauptordner") as HTMLInputElement;
+    fireEvent.change(feld, { target: { value: "/Getippt/X-Plane 12" } });
+    await act(async () => {
+      erkannt("/Erkannt/X-Plane 12");
+      await Promise.resolve();
+    });
+    expect(feld.value).toBe("/Getippt/X-Plane 12");
+  });
 });
