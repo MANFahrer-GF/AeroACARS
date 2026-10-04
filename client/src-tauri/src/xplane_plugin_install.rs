@@ -87,27 +87,55 @@ pub struct PluginInstallResult {
 /// Returns `None` if nothing is found — the UI then offers a folder-
 /// picker so the pilot can point us at their install manually.
 pub fn detect_install_path() -> Option<PathBuf> {
-    if let Some(p) = erster_aus_install_listen(&install_listen()) {
+    detect_install_path_mit(&Umgebung::echt())
+}
+
+/// Die Teile der Umgebung, aus denen die Erkennung liest — eigener Typ,
+/// damit ein Test die GANZE Erkennung mit einem nachgebauten Rechner
+/// durchlaufen kann (QS-Wunsch Thomas 04.10.2026: „funktioniert sie
+/// ueberhaupt?"), statt nur Einzelteile.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Umgebung {
+    pub home: Option<PathBuf>,
+    pub localappdata: Option<PathBuf>,
+}
+
+impl Umgebung {
+    fn echt() -> Self {
+        Self {
+            home: std::env::var_os("HOME").map(PathBuf::from),
+            localappdata: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        }
+    }
+}
+
+pub(crate) fn detect_install_path_mit(u: &Umgebung) -> Option<PathBuf> {
+    if let Some(p) = erster_aus_install_listen(&install_listen(u)) {
+        tracing::info!(path = %p.display(), "X-Plane erkannt: ueber X-Planes Installationsliste");
         return Some(p);
     }
     #[cfg(target_os = "windows")]
     {
         if let Some(p) = detect_windows() {
+            tracing::info!(path = %p.display(), "X-Plane erkannt: Registry oder fester Ordner");
             return Some(p);
         }
     }
     #[cfg(target_os = "macos")]
     {
-        if let Some(p) = detect_macos() {
+        if let Some(p) = detect_macos(u.home.as_deref()) {
+            tracing::info!(path = %p.display(), "X-Plane erkannt: fester Ordner");
             return Some(p);
         }
     }
     #[cfg(target_os = "linux")]
     {
-        if let Some(p) = detect_linux() {
+        if let Some(p) = detect_linux(u.home.as_deref()) {
+            tracing::info!(path = %p.display(), "X-Plane erkannt: fester Ordner");
             return Some(p);
         }
     }
+    tracing::info!("X-Plane nicht erkannt (Installationsliste und feste Ordner ohne Treffer)");
     None
 }
 
@@ -175,8 +203,8 @@ fn detect_windows() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn detect_macos() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+fn detect_macos(home: Option<&Path>) -> Option<PathBuf> {
+    let home = home?.to_path_buf();
     let candidates: Vec<PathBuf> = vec![
         PathBuf::from("/Applications/X-Plane 12"),
         PathBuf::from("/Applications/X-Plane 11"),
@@ -191,8 +219,8 @@ fn detect_macos() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn detect_linux() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+fn detect_linux(home: Option<&Path>) -> Option<PathBuf> {
+    let home = home?.to_path_buf();
     let candidates: Vec<PathBuf> = vec![
         home.join("X-Plane 12"),
         home.join("X-Plane 11"),
@@ -206,13 +234,15 @@ fn detect_linux() -> Option<PathBuf> {
 
 /// Wo X-Plane seine Installationsliste ablegt (12 vor 11):
 /// Windows `%LOCALAPPDATA%`, macOS `~/Library/Preferences`, Linux `~/.x-plane`.
-fn install_listen() -> Vec<PathBuf> {
+fn install_listen(u: &Umgebung) -> Vec<PathBuf> {
     let ordner: Option<PathBuf> = if cfg!(target_os = "windows") {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+        u.localappdata.clone()
     } else if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Preferences"))
+        u.home
+            .as_ref()
+            .map(|h| h.join("Library").join("Preferences"))
     } else {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".x-plane"))
+        u.home.as_ref().map(|h| h.join(".x-plane"))
     };
     let Some(ordner) = ordner else {
         return Vec::new();
@@ -483,6 +513,79 @@ fn quarantaene_entfernen(ordner: &Path) {
 
 #[cfg(test)]
 mod tests {
+    /// Nachgebauter Rechner, auf dem die ALTE Erkennung (feste Ordner) X-Plane
+    /// nicht fand: X-Plane liegt in einem eigenen Ordner auf „Platte E", nur
+    /// X-Planes eigene Liste nennt ihn. Die ganze Erkennung muss ihn finden —
+    /// auf jedem System an der Stelle, an der X-Plane die Liste ablegt.
+    fn nachgebauter_rechner(
+        name: &str,
+    ) -> (std::path::PathBuf, super::Umgebung, std::path::PathBuf) {
+        let basis = std::env::temp_dir().join(format!("aa-xp-e2e-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&basis);
+        let home = basis.join("home");
+        let appdata = basis.join("appdata");
+        let xp = basis.join("Platte E").join("Spiele").join("X-Plane 12");
+        std::fs::create_dir_all(xp.join("Resources").join("plugins")).unwrap();
+        let listen_ordner = if cfg!(target_os = "windows") {
+            appdata.clone()
+        } else if cfg!(target_os = "macos") {
+            home.join("Library").join("Preferences")
+        } else {
+            home.join(".x-plane")
+        };
+        std::fs::create_dir_all(&listen_ordner).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let u = super::Umgebung {
+            home: Some(home),
+            localappdata: Some(appdata),
+        };
+        (basis, u, xp)
+    }
+
+    #[test]
+    fn erkennung_findet_x_plane_ausserhalb_fester_ordner() {
+        let (basis, u, xp) = nachgebauter_rechner("liste");
+        let liste = super::install_listen(&u)[0].clone();
+        // Erste Zeile: geloeschte Installation, zweite: die echte (mit Trenner).
+        std::fs::write(
+            &liste,
+            format!(
+                "{}\r\n{}{}\r\n",
+                basis.join("alt").join("X-Plane 12").display(),
+                xp.display(),
+                std::path::MAIN_SEPARATOR
+            ),
+        )
+        .unwrap();
+        let gefunden = super::detect_install_path_mit(&u).expect("X-Plane muss gefunden werden");
+        assert_eq!(super::normalize_install_path(&gefunden), Some(xp.clone()));
+        let _ = std::fs::remove_dir_all(&basis);
+    }
+
+    #[test]
+    fn erkennung_ohne_liste_findet_den_nachgebauten_ordner_nicht() {
+        // Gegenstueck: ohne X-Planes Liste liegt der Ordner ausserhalb aller
+        // festen Pfade — genau der Fall, an dem die alte Version scheiterte.
+        let (basis, u, xp) = nachgebauter_rechner("ohne");
+        let gefunden = super::detect_install_path_mit(&u);
+        assert_ne!(
+            gefunden.as_deref().and_then(super::normalize_install_path),
+            Some(xp)
+        );
+        let _ = std::fs::remove_dir_all(&basis);
+    }
+
+    /// Echte Umgebung dieses Rechners (nur von Hand: `-- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn erkennung_auf_diesem_rechner() {
+        println!("Erkannt: {:?}", super::detect_install_path());
+        println!(
+            "Liste: {:?}",
+            super::erster_aus_install_listen(&super::install_listen(&super::Umgebung::echt()))
+        );
+    }
+
     #[test]
     fn install_liste_wird_robust_gelesen() {
         let roh = "\u{feff}C:\\X-Plane 12\\\r\n\r\n  D:\\Spiele\\X-Plane 12  \r\n".as_bytes();
