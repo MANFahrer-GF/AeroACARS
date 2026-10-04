@@ -200,3 +200,13 @@ Ergebnis ins Log (`Band: Zeichenweg texturiert OK` bzw. `... RUECKFALL`). Bei
 GL-Fehler oder fehlender Fläche schaltet es auf X-Plane-Box + `XPLMDrawString`
 zurück — das Band bleibt immer lesbar. Texturen werden nur außerhalb des
 Zeichen-Callbacks erzeugt (Start/Flight-Loop).
+
+### Nachtrag QS 04.10.2026 (Cloud-Prüfung)
+* Einstellung „aus": `BAND <seq> 0 0` geht sofort und danach **alle 5 s erneut**
+  (`BAND_AUS_ABSTAND`), nicht nur einmal — ein verlorenes UDP-Datagramm oder ein
+  App-Neustart mit „aus" ließ sonst ein altes Band stehen.
+* Endet der X-Plane-Listener (Sim-Wechsel), meldet er `band_bereit(false)`;
+  die App baut dann kein Band mehr.
+* Die App zeigt einen Hinweis, wenn ein Plugin mit Protokoll 2, aber < 1.1.0
+  verbunden ist (Plugins-Tab mit Installationsknopf und beim Band-Schalter).
+* CI/Release: `libgl-dev` für den Linux-Build; Lizenzen OpenSans OFL und stb im Plugin-Zip.

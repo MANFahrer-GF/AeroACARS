@@ -1346,7 +1346,8 @@
     "section_title": "X-Plane-HUD-Band",
     "intro": "Das Band im Simulator (Plugin AeroACARS Premium ab 1.1.0) zeigt dieselbe Anzeige wie das MSFS-HUD.",
     "toggle_label": "X-Plane-Band senden",
-    "toggle_hint": "Standard: an. Ausgeschaltet blendet sich das Band im Sim aus; wirkt sofort."
+    "toggle_hint": "Standard: an. Ausgeschaltet blendet sich das Band im Sim aus; wirkt sofort.",
+    "plugin_too_old": "Installiert ist Plugin {{version}}. Das Band braucht {{min}}: unter Einstellungen → Plugins „Plugin installieren“ klicken und X-Plane neu starten."
   },
   "msfs_hud": {
     "section_title": "MSFS-In-Sim-HUD",
@@ -1526,7 +1527,9 @@
     "outdated_explanation": "Das installierte Plugin kennt nur die Aufsetzmessung. Die übrigen Werte kommen weiter über RREF und die Web-API. Installiere das Plugin dieser AeroACARS-Version neu und starte X-Plane neu.",
     "unreachable_title": "Protokoll 2 nicht erreichbar",
     "unreachable_explanation": "Das Plugin ist aktuell und liefert die Aufsetzmessung, antwortet aber nicht auf Protokoll 2 — vermutlich ist der Port 52001 von einem anderen Programm belegt (siehe X-Plane-Log.txt). Die übrigen Werte kommen weiter über RREF und die Web-API.",
-    "install_unverified": "Hinweis: Dieses Paket wurde ohne Prüfsumme installiert (Entwicklungsversion von AeroACARS)."
+    "install_unverified": "Hinweis: Dieses Paket wurde ohne Prüfsumme installiert (Entwicklungsversion von AeroACARS).",
+    "band_outdated_title": "Plugin ohne HUD-Band",
+    "band_outdated_explanation": "Telemetrie und Landemessung laufen normal. Für das HUD-Band im Simulator braucht es Plugin {{min}}: Plugin unten neu installieren und X-Plane neu starten."
   },
   "pilot_header": {
     "pos_label": "POS",

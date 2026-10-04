@@ -77,4 +77,19 @@ describe("XplaneBandPanel", () => {
     expect(box.checked).toBe(true);
     expect(screen.getByText(/kein Konfigurationsverzeichnis/)).toBeTruthy();
   });
+
+  it("zeigt den Hinweis bei Plugin 1.0.0 und schweigt ab 1.1.0", async () => {
+    for (const [version, erwartet] of [["1.0.0", true], ["1.1.0", false]] as const) {
+      invokeMock.mockImplementation(async (cmd: unknown) => {
+        if (cmd === "xplane_band_get_enabled") return true;
+        if (cmd === "xplane_premium_status")
+          return { active: true, ever_seen: true, packet_count: 1, last_error: null, protokoll: 2, plugin_version: version, veraltet: false };
+        throw new Error(`unerwarteter Befehl: ${String(cmd)}`);
+      });
+      render(<XplaneBandPanel />);
+      await flush();
+      expect(screen.queryByText(/Installiert ist Plugin 1\.0\.0/) !== null).toBe(erwartet);
+      cleanup();
+    }
+  });
 });

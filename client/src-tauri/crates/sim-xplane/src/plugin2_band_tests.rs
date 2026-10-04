@@ -117,39 +117,48 @@ fn band_einmal_pro_sekunde_und_sofort_bei_lagewechsel() {
 }
 
 #[test]
-fn einstellung_aus_sendet_einmal_null_null_und_seq_steigt_weiter() {
+fn einstellung_aus_blendet_aus_wiederholt_und_seq_steigt_weiter() {
     let z = BandZiel::neu();
     z.slot.setze(frame(Lage::Bereit, true));
     let t0 = Instant::now();
     let mut s = offene_sitzung("1.1.0", &z, t0);
     assert_eq!(schritt(&mut s, &z, t0 + ms(100)), vec!["BAND 100 1 1\n\n"]);
-    // Ausschalten: genau einmal BAND 101 0 0, danach nichts mehr.
+    // Ausschalten: sofort BAND 101 0 0, dann kein Band, nur alle 5 s das Aus.
     z.slot.set_wunsch(false);
     assert_eq!(schritt(&mut s, &z, t0 + ms(300)), vec!["BAND 101 0 0\n"]);
     z.slot.setze(frame(Lage::Anflug, false));
-    for i in 0..20 {
+    for i in 0..16 {
         assert!(
             schritt(&mut s, &z, t0 + ms(400 + i * 300)).is_empty(),
-            "bei ausgeschalteter Einstellung kein Versand"
+            "vor Ablauf von 5 s kein weiteres Datagramm"
         );
     }
+    assert_eq!(
+        schritt(&mut s, &z, t0 + ms(5300)),
+        vec!["BAND 102 0 0\n"],
+        "das Aus wird wiederholt (ein verlorenes Datagramm darf kein Band stehen lassen)"
+    );
     assert!(!z.slot.bereit());
     // Wieder an: das (neue) Band geht sofort hinaus, seq geht weiter hoch.
     z.slot.set_wunsch(true);
     z.slot.setze(frame(Lage::Anflug, false));
-    assert_eq!(schritt(&mut s, &z, t0 + ms(7000)), vec!["BAND 102 0 1\n\n"]);
+    assert_eq!(schritt(&mut s, &z, t0 + ms(7000)), vec!["BAND 103 0 1\n\n"]);
 }
 
 #[test]
-fn einstellung_von_anfang_an_aus_sendet_gar_nichts() {
+fn einstellung_von_anfang_an_aus_blendet_nur_aus() {
+    // Neustart der App mit Einstellung „aus", das Plugin zeigt evtl. noch ein
+    // altes Band: sofort ausblenden, danach alle 5 s wiederholen, nie ein Band.
     let z = BandZiel::neu();
     z.slot.set_wunsch(false);
     z.slot.setze(frame(Lage::Bereit, true));
     let t0 = Instant::now();
     let mut s = offene_sitzung("1.1.0", &z, t0);
-    for i in 0..10 {
+    assert_eq!(schritt(&mut s, &z, t0), vec!["BAND 100 0 0\n"]);
+    for i in 1..16 {
         assert!(schritt(&mut s, &z, t0 + ms(i * 300)).is_empty());
     }
+    assert_eq!(schritt(&mut s, &z, t0 + ms(5000)), vec!["BAND 101 0 0\n"]);
     assert!(s.beenden().iter().all(|d| !d.starts_with(b"BAND")));
 }
 

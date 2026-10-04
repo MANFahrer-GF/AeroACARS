@@ -43,6 +43,11 @@ pub const BAND_AB: (u32, u32, u32) = (1, 1, 0);
 pub const BAND_ABSTAND: Duration = Duration::from_secs(1);
 /// Abstand, in dem die Sitzung nach einem neuen Band der App schaut.
 const BAND_PRUEFUNG: Duration = Duration::from_millis(100);
+/// Abstand, in dem bei ausgeschalteter Einstellung `BAND <seq> 0 0` wiederholt
+/// wird (QS-Befund H2, 04.10.2026): ein einzelnes verlorenes UDP-Datagramm
+/// oder ein Neustart der App mit Einstellung „aus" liess sonst ein altes Band
+/// stehen, das nach 5 s „nicht erreichbar" zeigte.
+pub const BAND_AUS_ABSTAND: Duration = Duration::from_secs(5);
 /// Abstand der HALLO-Anfragen, solange keine Sitzung besteht.
 pub const HALLO_ABSTAND: Duration = Duration::from_secs(5);
 /// Abstand der PINGs in der Sitzung. Das Plugin verwirft alle Abos nach 5 s
@@ -764,6 +769,8 @@ struct BandStand {
     /// `BAND … 0 0` gesendet und seither kein neues Band?
     aus: bool,
     letzter: Option<Instant>,
+    /// Letztes `BAND … 0 0` bei ausgeschalteter Einstellung.
+    letztes_aus: Option<Instant>,
     letzte_pruefung: Option<Instant>,
     version: Option<u64>,
     lage: Option<crate::hud_band::Lage>,
@@ -786,6 +793,7 @@ impl BandStand {
             gesendet: false,
             aus: false,
             letzter: None,
+            letztes_aus: None,
             letzte_pruefung: None,
             version: None,
             lage: None,
@@ -963,8 +971,9 @@ impl Sitzung {
 
     /// Das HUD-Band (ADR-0005): hoechstens 1x/s, sofort bei Lagewechsel,
     /// nur mit angemeldetem Plugin ab 1.1.0 und eingeschalteter Einstellung.
-    /// Wird die Einstellung ausgeschaltet, geht EINMAL `BAND <seq> 0 0`
-    /// hinaus und danach nichts mehr.
+    /// Ist die Einstellung aus, geht `BAND <seq> 0 0` sofort und danach alle
+    /// [`BAND_AUS_ABSTAND`] erneut hinaus (UDP kann verlieren; die App kann mit
+    /// „aus" neu starten, waehrend das Plugin noch ein Band zeigt).
     fn band_takt(&mut self, jetzt: Instant, ziel: &dyn Ziel) {
         let faehig = self.info.plugin_version.as_deref().is_some_and(kann_band);
         let wunsch = ziel.band_wunsch();
@@ -977,16 +986,22 @@ impl Sitzung {
             return;
         }
         if !wunsch {
-            if self.band.gesendet && !self.band.aus {
+            let faellig = self
+                .band
+                .letztes_aus
+                .is_none_or(|t| jetzt.saturating_duration_since(t) >= BAND_AUS_ABSTAND);
+            if faellig {
                 let seq = self.band.naechste_seq();
                 self.vorrang
                     .push_back(crate::hud_band::aus_datagramm(seq).into_bytes());
+                self.band.letztes_aus = Some(jetzt);
                 self.band.aus = true;
                 self.band.version = None;
                 self.band.lage = None;
             }
             return;
         }
+        self.band.letztes_aus = None;
         if self
             .band
             .letzte_pruefung

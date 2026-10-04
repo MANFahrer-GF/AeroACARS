@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { SimConnectionState, XPlanePremiumStatus } from "../types";
+import { BAND_MIN_PLUGIN, bandBrauchtUpdate } from "../lib/pluginVersion";
 
 interface PluginInstallResult {
   installed_at: string;
@@ -96,8 +97,10 @@ export function XPlanePremiumPanel({ simState }: Props) {
     : status.active
       ? "pmdg-panel--active"
       : "pmdg-panel--inactive";
+  // Plugin mit Protokoll 2, aber zu alt für das HUD-Band (QS-Hinweis H1).
+  const ohneBand = !hasError && bandBrauchtUpdate(status);
   // Installationsfeld: ohne Plugin, und wenn es veraltet ist (Update).
-  const showInstall = !hasError && (!status.active || veraltet);
+  const showInstall = !hasError && (!status.active || veraltet || ohneBand);
 
   async function handleInstall() {
     setInstalling(true);
@@ -158,6 +161,16 @@ export function XPlanePremiumPanel({ simState }: Props) {
             {status.plugin_version ? ` (${status.plugin_version})` : ""}
           </p>
           <p>{t("xplane_premium_panel.outdated_explanation")}</p>
+        </div>
+      )}
+
+      {/* Plugin läuft mit Protokoll 2, kennt aber das HUD-Band nicht */}
+      {ohneBand && (
+        <div className="pmdg-panel__warning">
+          <p className="pmdg-panel__warning-title">
+            ⚠️ {t("xplane_premium_panel.band_outdated_title")} ({status.plugin_version})
+          </p>
+          <p>{t("xplane_premium_panel.band_outdated_explanation", { min: BAND_MIN_PLUGIN })}</p>
         </div>
       )}
 
