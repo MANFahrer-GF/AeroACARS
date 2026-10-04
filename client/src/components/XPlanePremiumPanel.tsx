@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "../lib/ipc";
+import { invoke, isTauri } from "../lib/ipc";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import type { SimConnectionState, XPlanePremiumStatus } from "../types";
@@ -147,7 +147,10 @@ export function XPlanePremiumPanel({ simState }: Props) {
         setInstallError(null);
         setInstallMessage(t("xplane_premium_panel.detect_success"));
       } else {
-        setInstallPath(gewaehlt);
+        // Einen vorher erkannten, gültigen Pfad nicht überschreiben
+        // (Cloud-QS v1.9.21); ohne Pfad die Wahl zeigen, damit man sieht,
+        // was geprüft wurde.
+        if (installPath.trim() === "") setInstallPath(gewaehlt);
         setInstallMessage(null);
         setInstallError(t("xplane_premium_panel.browse_not_xplane"));
       }
@@ -324,13 +327,17 @@ export function XPlanePremiumPanel({ simState }: Props) {
               >
                 {t("xplane_premium_panel.detect_button")}
               </button>
-              <button
-                type="button"
-                onClick={handleBrowse}
-                disabled={installing}
-              >
-                {t("xplane_premium_panel.browse_button")}
-              </button>
+              {/* Nur in der Desktop-App: auf dem Tablet (LAN-Brücke) gibt es
+                  keinen Ordner-Dialog des Host-Rechners. */}
+              {isTauri && (
+                <button
+                  type="button"
+                  onClick={handleBrowse}
+                  disabled={installing}
+                >
+                  {t("xplane_premium_panel.browse_button")}
+                </button>
+              )}
             </div>
             <button
               type="button"

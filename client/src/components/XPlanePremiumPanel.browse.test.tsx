@@ -10,8 +10,12 @@ import deCommon from "../locales/de/common.json";
 
 const invokeMock = vi.fn();
 const openMock = vi.fn();
+let tauri = true;
 vi.mock("../lib/ipc", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
+  get isTauri() {
+    return tauri;
+  },
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -31,6 +35,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  tauri = true;
   cleanup();
   invokeMock.mockReset();
   openMock.mockReset();
@@ -77,6 +82,30 @@ describe("X-Plane-Hauptordner per Dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ordner wählen …" }));
     await flush();
     expect(screen.getByText(/In diesem Ordner liegt kein X-Plane/)).toBeTruthy();
+    // Ohne vorherigen Pfad zeigt das Feld die geprüfte Wahl.
+    expect((screen.getByLabelText("X-Plane-Hauptordner") as HTMLInputElement).value).toBe(
+      "/Spiele/X-Plane 12/Resources",
+    );
+  });
+
+  it("überschreibt einen gültigen Pfad nicht mit einer falschen Wahl", async () => {
+    befehle(null);
+    openMock.mockResolvedValue("/Spiele/X-Plane 12/Resources");
+    render(<XPlanePremiumPanel simState="disconnected" />);
+    await flush();
+    const feld = screen.getByLabelText("X-Plane-Hauptordner") as HTMLInputElement;
+    fireEvent.change(feld, { target: { value: "/Richtig/X-Plane 12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ordner wählen …" }));
+    await flush();
+    expect(feld.value).toBe("/Richtig/X-Plane 12");
+  });
+
+  it("zeigt den Knopf auf dem Tablet nicht", async () => {
+    tauri = false;
+    befehle(null);
+    render(<XPlanePremiumPanel simState="disconnected" />);
+    await flush();
+    expect(screen.queryByRole("button", { name: "Ordner wählen …" })).toBeNull();
   });
 
   it("Abbrechen im Dialog ändert nichts", async () => {

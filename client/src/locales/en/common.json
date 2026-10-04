@@ -1512,7 +1512,7 @@
     "install_path_placeholder": "e.g. C:\\X-Plane 12  (or /Applications/X-Plane 12)",
     "detect_button": "Auto-detect",
     "detect_success": "X-Plane install found — you can install now.",
-    "detect_failed": "Could not auto-detect X-Plane — please enter the path to your X-Plane root folder manually.",
+    "detect_failed": "Could not auto-detect X-Plane — please use \"Choose folder…\" to select your X-Plane root folder or enter the path.",
     "install_button": "Install plugin",
     "installing": "Installing …",
     "install_success": "Plugin installed at {{path}} ({{files}} files). Restart X-Plane and the status will turn \"live\".",
