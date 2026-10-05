@@ -201,11 +201,15 @@ export function approachTdLineIndex(
   return firstPos - 1 + frac;
 }
 
-/** Dot-Streifen: Grenze der Darstellung. Am PFD ist bei 2 Dots
- *  Vollausschlag; die Achse reicht bis 3, damit echte Abweichungen darüber
- *  (QAF434: 2,71) als Kurve sichtbar bleiben statt flach am Rand zu kleben.
- *  Erst jenseits von 3 wird abgeschnitten. */
-const DOT_ACHSE = 3;
+/** Dot-Streifen: Achse mindestens ±3 (am PFD ist bei 2 Dots Vollausschlag),
+ *  bei größeren Abweichungen bis ±6 mitwachsend — nahe der Schwelle werden
+ *  Dots sehr empfindlich (THY39: +5 bei 100 ft), und eine flach am Rand
+ *  klebende Linie sähe aus wie ein Messwert. Erst jenseits von 6 wird
+ *  abgeschnitten. */
+const DOT_ACHSE_MIN = 3;
+const DOT_ACHSE_MAX = 6;
+/** Farbe der Dot-Kurve: auf dunklem Bildschirm und hellem Papier lesbar. */
+const DOT_FARBE = "#8b5cf6";
 
 /** Dots zu einer Zeit (ms relativ zum Aufsetzen), linear zwischen den
  *  Punkten der Kurve; `null` außerhalb der Kurve. */
@@ -283,8 +287,13 @@ export function ApproachChart({
     .map((p) => ({ p, i: indexZurZeit(samples, p.t * 1000) }))
     .filter((q): q is { p: GleitpfadPunkt; i: number } => q.i != null);
   const mitStreifen = dotPunkte.length >= 2;
-  const streifen = { top: hOben + 26, h: 130 };
+  const streifen = { top: hOben + 26, h: 200 };
   const h = mitStreifen ? streifen.top + streifen.h + 34 : hOben;
+  const DOT_ACHSE = Math.min(
+    DOT_ACHSE_MAX,
+    Math.max(DOT_ACHSE_MIN, Math.ceil(Math.max(0, ...dotPunkte.map((q) => Math.abs(q.p.d))))),
+  );
+  const dotTicks = Array.from({ length: 2 * DOT_ACHSE + 1 }, (_, k) => DOT_ACHSE - k);
   const yDot = (d: number) =>
     streifen.top +
     streifen.h / 2 -
@@ -344,6 +353,9 @@ export function ApproachChart({
       i = j + 1;
     }
   }
+  // Grenzen des Stable Gate auf der Zeitachse — im Streifen als Linien statt
+  // Fläche: die Flächenfarbe mischte sich mit den Ampelbändern.
+  const gateZone = zones.find((z) => z.kind === "gate");
   const zoneFill = (k: string) =>
     k === "gate" ? "rgba(56,189,248,0.10)"
     : k === "flare" ? "rgba(234,179,8,0.16)"
@@ -486,18 +498,9 @@ export function ApproachChart({
 
       {mitStreifen && (
         <g>
-          <text x={pad.left} y={streifen.top - 8} fontSize="12" fill="#94a3b8">
+          <text x={pad.left} y={streifen.top - 8} fontSize="13" fontWeight="600" fill="#94a3b8">
             {t("landing.vs_chart.gleitpfad_titel")}
           </text>
-          {zones.map((z, idx) => {
-            if (z.kind !== "gate") return null;
-            const x0 = z.start > 0 ? (x(z.start - 1) + x(z.start)) / 2 : x(z.start) - 2;
-            const x1 = z.end < samples.length - 1 ? (x(z.end) + x(z.end + 1)) / 2 : x(z.end) + 2;
-            return (
-              <rect key={idx} x={x0} y={streifen.top} width={Math.max(0, x1 - x0)}
-                    height={streifen.h} fill={zoneFill(z.kind)} />
-            );
-          })}
           {/* Bänder wie die Stufen des Gleitpfads im Anflug-Urteil: gut
               unter 1 Dot, schlecht ab 2 Dots. */}
           {(
@@ -513,11 +516,27 @@ export function ApproachChart({
                   height={yDot(u) - yDot(o)} fill={f} />
           ))}
           <rect x={pad.left} y={streifen.top} width={innerW} height={streifen.h}
-                fill="none" stroke="rgba(255,255,255,0.15)" />
-          {[3, 2, 1, 0, -1, -2, -3].map((d) => (
+                fill="none" stroke="rgba(148,163,184,0.45)" />
+          {gateZone && (() => {
+            const x0 = gateZone.start > 0 ? (x(gateZone.start - 1) + x(gateZone.start)) / 2 : x(gateZone.start);
+            const x1 = gateZone.end < samples.length - 1 ? (x(gateZone.end) + x(gateZone.end + 1)) / 2 : x(gateZone.end);
+            return (
+              <g>
+                {[x0, x1].map((gx) => (
+                  <line key={gx} x1={gx} y1={streifen.top} x2={gx} y2={streifen.top + streifen.h}
+                        stroke="#38bdf8" strokeWidth="1.2" strokeDasharray="6 4" />
+                ))}
+                <text x={(x0 + x1) / 2} y={streifen.top + 14} textAnchor="middle" fontSize="12"
+                      fill="#38bdf8">
+                  {t("landing.chart_zone.gate")}
+                </text>
+              </g>
+            );
+          })()}
+          {dotTicks.map((d) => (
             <g key={d}>
               <line x1={pad.left} y1={yDot(d)} x2={pad.left + innerW} y2={yDot(d)}
-                    stroke={d === 0 ? "#64748b" : "rgba(255,255,255,0.07)"}
+                    stroke={d === 0 ? "#64748b" : "rgba(148,163,184,0.18)"}
                     strokeDasharray={d === 0 ? "5 4" : undefined} />
               <text x={pad.left - 8} y={yDot(d) + 4} textAnchor="end" fontSize="12"
                     fill={d === 0 ? "#94a3b8" : "#64748b"}>
@@ -531,14 +550,14 @@ export function ApproachChart({
             d={dotPunkte
               .map((q, k) => `${k === 0 ? "M" : "L"} ${x(q.i).toFixed(1)} ${yDot(q.p.d).toFixed(1)}`)
               .join(" ")}
-            fill="none" stroke="#a78bfa" strokeWidth="2" />
+            fill="none" stroke={DOT_FARBE} strokeWidth="3" />
           {groessteAbw && (
             <g>
-              <circle cx={x(groessteAbw.i)} cy={yDot(groessteAbw.p.d)} r="4" fill="#a78bfa" />
+              <circle cx={x(groessteAbw.i)} cy={yDot(groessteAbw.p.d)} r="5" fill={DOT_FARBE} />
               <text x={x(groessteAbw.i) + (x(groessteAbw.i) > pad.left + innerW - 300 ? -8 : 8)}
                     textAnchor={x(groessteAbw.i) > pad.left + innerW - 300 ? "end" : "start"}
                     y={yDot(groessteAbw.p.d) + (groessteAbw.p.d > 0 ? 16 : -8)}
-                    fontSize="11" fill="#c4b5fd">
+                    fontSize="13" fontWeight="600" fill={DOT_FARBE}>
                 {t("landing.vs_chart.gleitpfad_max", {
                   d: `${groessteAbw.p.d > 0 ? "+" : "−"}${Math.abs(groessteAbw.p.d).toFixed(2)}`,
                   h: Math.round(groessteAbw.p.h),
@@ -583,7 +602,7 @@ export function ApproachChart({
                   stroke="#38bdf8" strokeWidth="1" strokeDasharray="3 3" />
             {dotsBeiHover != null && (
               <g>
-                <circle cx={hx} cy={yDot(dotsBeiHover)} r="4" fill="#a78bfa"
+                <circle cx={hx} cy={yDot(dotsBeiHover)} r="5" fill={DOT_FARBE}
                         stroke="#0e1420" strokeWidth="1.5" />
                 {/* Skala wie am PFD, rechts im Streifen: zwei Punkte je Seite.
                     Die Raute zeigt, wo der PFAD liegt — Flugzeug zu hoch,
@@ -666,7 +685,8 @@ export function AnflugGrafikAbschnitt({
             />
           </div>
           {gleitpfadVerlauf && gleitpfadVerlauf.length >= 2 && (
-            <p className="landing-chart__hinweis">
+            // Nur der (i)-Knopf zum Streifen — auf Papier überflüssig.
+            <p className="landing-chart__hinweis nur-bildschirm">
               {t("landing.vs_chart.gleitpfad_titel")}{" "}
               <InfoBadge explanation={t("landing.erklaer.grafik.gleitpfad")} />
             </p>

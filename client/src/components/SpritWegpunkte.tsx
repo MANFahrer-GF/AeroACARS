@@ -25,7 +25,6 @@
 import { useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { kg, type SpritAmpel, type SpritWegpunkt } from "../lib/sprit";
-import { useDruck } from "../lib/druck";
 
 export type { SpritAmpel, SpritWegpunkt };
 
@@ -143,9 +142,10 @@ export interface SpritWegpunkteProps {
 
 export function SpritWegpunkte(p: SpritWegpunkteProps) {
   const { t } = useTranslation();
-  // Im PDF-Bericht aufgeklappt — auf Papier lässt sich nichts antippen.
-  const druck = useDruck();
-  const [offen, setOffen] = useState(p.offen ?? druck);
+  // Im PDF-Bericht bleibt die Tabelle zu wie auf dem Bildschirm: bei
+  // Langstrecken füllte sie aufgeklappt sechs Seiten (THY39, 06.10.2026).
+  // Die Zusammenfassungszeile nennt den letzten Wegpunkt und die Landung.
+  const [offen, setOffen] = useState(p.offen ?? false);
   const zeilen = p.zeilen ?? [];
   if (zeilen.length < 2) return null;
 

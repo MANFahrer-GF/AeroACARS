@@ -7390,10 +7390,21 @@ input:disabled {
   .nur-bildschirm {
     display: none !important;
   }
+  /* Abschnitte bleiben zusammen (Thomas 06.10.2026: „Die Trennung der
+     Seiten passt nicht" — Karten rissen mitten durch). Passt ein Abschnitt
+     nicht mehr auf die Seite, beginnt er auf der nächsten; ist er höher
+     als eine Seite, bricht Chrome ihn trotzdem — dann halten die inneren
+     Blöcke zusammen. Der Querformat-Anhang ist davon ausgenommen (er ist
+     keine .landing-section und hat seine eigene Regel oben). */
+  .landing-report .landing-section,
   .landing-report .landing-keyvals > div,
   .landing-report .sinkrate-tile,
   .landing-report .landing-chart,
-  .landing-report .landing-headline {
+  .landing-report .landing-stability-chart,
+  .landing-report .landing-headline,
+  .landing-report [data-testid="gate-kacheln"],
+  .landing-report .sinkrate-forensik-section,
+  .landing-report .bb-cl-abschnitt {
     break-inside: avoid;
     page-break-inside: avoid;
   }

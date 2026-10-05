@@ -45,15 +45,17 @@ describe("Dot-Streifen", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Gleitpfad in Dots");
     // Kurve: ein Pfad mit fünf Punkten in der Streifenfarbe.
-    const kurve = container.querySelector('path[stroke="#a78bfa"]');
+    const kurve = container.querySelector('path[stroke="#8b5cf6"]');
     expect(kurve?.getAttribute("d")?.match(/[ML]/g)?.length).toBe(5);
     // Markiert wird 2,22 bei 209 ft, nicht 4,98 kurz vor der Schwelle.
     expect(text).toContain("größte Abweichung im Gate +2.22 bei 209 ft");
     expect(text).not.toContain("4.98");
-    // Kreis der Marke bei +2,22 Dots: yDot = 346 + 65 − 2,22/3 · 65 = 362,9.
-    const kreis = container.querySelector('circle[r="4"][fill="#a78bfa"]');
-    expect(Number(kreis?.getAttribute("cy"))).toBeCloseTo(362.9, 1);
-    expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 1120 510");
+    // Achse wächst bis ±5 mit (größter Wert 4,98) — nichts klebt am Rand.
+    // Kreis der Marke bei +2,22 Dots: yDot = 346 + 100 − 2,22/5 · 100 = 401,6.
+    const kreis = container.querySelector('circle[r="5"][fill="#8b5cf6"]');
+    expect(Number(kreis?.getAttribute("cy"))).toBeCloseTo(401.6, 1);
+    expect(text).toContain("+5");
+    expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 1120 580");
   });
 
   it("ohne Kurve: kein Streifen, Grafik so hoch wie bisher, Hinweis darunter", () => {
