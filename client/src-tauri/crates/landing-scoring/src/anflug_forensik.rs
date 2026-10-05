@@ -192,6 +192,10 @@ mod tests {
             gesamt: Some(tor()),
             tor_1000_500: Some(tor()),
             tor_500_200: Some(tor()),
+            // Die Gleitpfad-Kurve (05.10.2026) hat ein eigenes Budget je
+            // Punkt, geprueft in `echte_auswertung_bleibt_gerundet_unter_
+            // einem_kilobyte` (App-Crate). Hier zaehlt die Zusammenfassung.
+            verlauf: Vec::new(),
         };
         let r = AnflugRuhe {
             hoehenbezug: "sim_boden".into(),
