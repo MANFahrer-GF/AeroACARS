@@ -119,8 +119,24 @@ pub fn nach_aenderung_sichern<R: Runtime>(window: &tauri::Window<R>, event: &tau
             match schritt {
                 Schritt::Warten(dauer) => std::thread::sleep(dauer),
                 Schritt::Sichern => {
-                    if let Err(e) = app.save_window_state(gemerkte_eigenschaften()) {
-                        tracing::warn!(error = %e, "Fensterlage ließ sich nicht sichern");
+                    // NUR auf dem Hauptfaden sichern (Feldbefund Adrian,
+                    // 04.10.2026, v1.9.22: Fenster beim Klick auf X
+                    // eingefroren, App lief im Hintergrund weiter).
+                    // `save_window_state` sperrt den Cache des Plugins und
+                    // fragt DANN das Fenster ab — von hier aus wartet jede
+                    // Abfrage auf den Hauptfaden. Kommt dort gleichzeitig ein
+                    // Fensterereignis an (X, Minimieren, Verschieben), will
+                    // dessen Plugin-Handler denselben Cache: beide warten
+                    // ewig aufeinander. Auf dem Hauptfaden laufen Abfragen
+                    // und Handler nacheinander.
+                    let app_haupt = app.clone();
+                    let gesendet = app.run_on_main_thread(move || {
+                        if let Err(e) = app_haupt.save_window_state(gemerkte_eigenschaften()) {
+                            tracing::warn!(error = %e, "Fensterlage ließ sich nicht sichern");
+                        }
+                    });
+                    if let Err(e) = gesendet {
+                        tracing::warn!(error = %e, "Fensterlage: Hauptfaden nicht erreichbar");
                     }
                     if !sicherung().nach_dem_sichern() {
                         break;
