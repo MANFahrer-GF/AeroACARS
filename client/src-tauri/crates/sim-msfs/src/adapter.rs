@@ -250,6 +250,28 @@ impl Shared {
 /// (Stopp-Flag, SimConnect_Close) dauert Millisekunden.
 const STOPP_FRIST: Duration = Duration::from_secs(3);
 
+/// Ein angehaltener Worker auf dem Weg hinaus — siehe
+/// [`MsfsAdapter::stopp_anstossen`]. Wird ohne Sperre abgewartet.
+#[must_use]
+pub struct WorkerAbschied {
+    handle: JoinHandle<()>,
+}
+
+impl WorkerAbschied {
+    /// Wartet höchstens [`STOPP_FRIST`]. Bis v1.9.23 stand hier ein
+    /// unbegrenztes `join()` (trotz gegenteiligem Kommentar):
+    /// SimConnect_Close kann hängen, wenn MSFS selbst weg ist.
+    /// `false` = Worker hängt (wird abgekoppelt).
+    pub fn abwarten(self) -> bool {
+        if worker_endet_binnen(&self.handle, STOPP_FRIST) {
+            let _ = self.handle.join();
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// `true`, wenn der Faden binnen `frist` fertig ist (dann blockiert ein
 /// anschließendes `join` nicht mehr).
 fn worker_endet_binnen(h: &JoinHandle<()>, frist: Duration) -> bool {
@@ -734,27 +756,39 @@ impl MsfsAdapter {
         self.worker = Some(handle);
     }
 
+    /// Stoppt und wartet begrenzt ([`STOPP_FRIST`]). Wer den Adapter hinter
+    /// einer Sperre hält, nimmt stattdessen [`Self::stopp_anstossen`] und
+    /// wartet AUSSERHALB der Sperre — sonst hängen alle anderen Leser bis
+    /// zu 3 s mit (QS v1.9.24: `sim_status` fragt alle 500 ms).
     pub fn stop(&mut self) {
+        let sauber = self
+            .stopp_anstossen()
+            .map(WorkerAbschied::abwarten)
+            .unwrap_or(true);
+        self.nach_abschied(sauber);
+    }
+
+    /// Erster Teil des Stopps, sofort: Stopp-Flag setzen und den Worker
+    /// herausgeben. Bis [`Self::nach_abschied`] darf niemand `start` rufen
+    /// (lib.rs: alle Aufrufer halten `SIM_WAHL_SPERRE`).
+    #[must_use]
+    pub fn stopp_anstossen(&mut self) -> Option<WorkerAbschied> {
         self.stop.store(true, Ordering::SeqCst);
-        if let Some(h) = self.worker.take() {
-            // Begrenzt warten: SimConnect_Close im Worker kann hängen, wenn
-            // MSFS selbst weg ist. Bis v1.9.23 stand hier ein unbegrenztes
-            // join() (trotz gegenteiligem Kommentar) — und gewartet wurde
-            // unter der msfs-Sperre, an der auch Oberflächen-Befehle hängen.
-            if worker_endet_binnen(&h, STOPP_FRIST) {
-                let _ = h.join();
-            } else {
-                // Abkoppeln. Der alte Worker räumt beim späten Aufwachen
-                // seinen Zustand ab (Snapshot, Touchdown, PMDG) — darum
-                // bekommt alles Weitere einen frischen gemeinsamen Zustand;
-                // der alte schreibt nur noch in seinen verwaisten.
-                tracing::warn!(
-                    frist_s = STOPP_FRIST.as_secs(),
-                    "MSFS-Worker endet nicht (SimConnect_Close hängt?) — abgekoppelt, frischer Zustand"
-                );
-                self.shared = Arc::new(Shared::neu());
-                drop(h);
-            }
+        self.worker.take().map(|handle| WorkerAbschied { handle })
+    }
+
+    /// Letzter Teil des Stopps. `sauber == false` (Worker hing): abkoppeln.
+    /// Der alte Worker räumt beim späten Aufwachen seinen Zustand ab
+    /// (Snapshot, Touchdown, PMDG) — darum bekommt alles Weitere einen
+    /// frischen gemeinsamen Zustand; der alte schreibt nur noch in seinen
+    /// verwaisten.
+    pub fn nach_abschied(&mut self, sauber: bool) {
+        if !sauber {
+            tracing::warn!(
+                frist_s = STOPP_FRIST.as_secs(),
+                "MSFS-Worker endet nicht (SimConnect_Close hängt?) — abgekoppelt, frischer Zustand"
+            );
+            self.shared = Arc::new(Shared::neu());
         }
         *self.shared.state.lock() = ConnectionState::Disconnected;
         tracing::info!("MSFS raw adapter stopped");
@@ -3693,6 +3727,34 @@ mod stopp_tests {
         assert!(!Arc::ptr_eq(&alt, &a.shared), "frischer Zustand fehlt");
         assert_eq!(a.state(), ConnectionState::Disconnected);
         assert!(a.worker.is_none());
+    }
+
+    /// So nutzt lib.rs `apply_sim_kind` den Adapter hinter einer Sperre:
+    /// anstoßen unter der Sperre, abwarten OHNE. Ein Leser (wie `sim_status`
+    /// alle 500 ms) kommt während des Wartens sofort an die Sperre.
+    #[test]
+    fn abwarten_ohne_sperre_haelt_leser_nicht_auf() {
+        let m = Arc::new(std::sync::Mutex::new(MsfsAdapter::new()));
+        m.lock().unwrap().worker =
+            Some(thread::spawn(|| thread::sleep(Duration::from_millis(1500))));
+        let abschied = m.lock().unwrap().stopp_anstossen();
+        let m2 = Arc::clone(&m);
+        let leser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200)); // mitten ins Warten
+            let t0 = Instant::now();
+            let a = m2.lock().unwrap();
+            let _ = a.state();
+            t0.elapsed()
+        });
+        let sauber = abschied.map(WorkerAbschied::abwarten).unwrap_or(true);
+        assert!(sauber, "Worker endet nach 1,5 s, also binnen der Frist");
+        let gewartet = leser.join().unwrap();
+        assert!(
+            gewartet < Duration::from_millis(200),
+            "Leser wartete {gewartet:?}"
+        );
+        m.lock().unwrap().nach_abschied(sauber);
+        assert_eq!(m.lock().unwrap().state(), ConnectionState::Disconnected);
     }
 
     #[test]

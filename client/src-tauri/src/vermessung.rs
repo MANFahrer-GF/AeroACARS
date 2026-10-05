@@ -796,7 +796,7 @@ pub fn vermessung_profile(flugzeuge: Vec<ProfilAnfrage>) -> Vec<Option<String>> 
 /// Mit `sitzung` nur diese — ein verspätetes Beenden aus einem alten Lauf
 /// lässt eine neuere Messung stehen. Ohne (Seite verlassen mitten im
 /// Verbinden) alles, auch einen noch laufenden Start.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vermessung_beenden(app: AppHandle, sitzung: Option<u64>, start: Option<u64>) {
     if let Some(t) = start {
         // Genau diesen Start absagen (auch wenn er noch läuft) und seine

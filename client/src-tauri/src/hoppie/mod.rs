@@ -421,7 +421,7 @@ fn build_status(handle: &Option<HoppieHandle>) -> HoppieStatus {
 // Tauri commands
 // ----------------------------------------------------------------------
 
-#[tauri::command(async)]
+#[tauri::command]
 pub fn hoppie_get_settings(app: AppHandle) -> HoppieSettings {
     settings::read_settings(&app)
 }

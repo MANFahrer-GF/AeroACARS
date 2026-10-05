@@ -29304,7 +29304,7 @@ fn bordbuch_markieren(
     Ok(neu)
 }
 
-#[tauri::command(async)]
+#[tauri::command]
 fn bordbuch_einstellungen_holen(app: AppHandle) -> bordbuch::Einstellungen {
     bordbuch_einstellungen(&app)
 }
@@ -53889,14 +53889,22 @@ fn sim_anzeigename(kind: SimKind) -> &'static str {
 /// simultaneously (= duplicate snapshots in `current_snapshot`).
 fn apply_sim_kind(state: &tauri::State<'_, AppState>, kind: SimKind) {
     // Stop both adapters first; we'll start exactly one (or none) below.
+    // v1.9.24: MSFS nur unter der Sperre ANSTOSSEN, das (begrenzte) Warten
+    // auf den Worker läuft ohne Sperre — sonst hängen sim_status & Co. bis
+    // zu 3 s mit. Sicher, weil alle Aufrufer SIM_WAHL_SPERRE halten: bis
+    // nach_abschied startet niemand einen neuen Worker.
     #[cfg(target_os = "windows")]
-    {
-        let mut msfs = state.msfs.lock().expect("msfs lock");
-        msfs.stop();
-    }
+    let msfs_abschied = state.msfs.lock().expect("msfs lock").stopp_anstossen();
     {
         let mut xp = state.xplane.lock().expect("xplane lock");
         xp.stop();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let sauber = msfs_abschied
+            .map(sim_msfs::WorkerAbschied::abwarten)
+            .unwrap_or(true);
+        state.msfs.lock().expect("msfs lock").nach_abschied(sauber);
     }
 
     if kind.is_msfs() {
