@@ -11,6 +11,9 @@ import type { SpritAuswertung } from "./sprit";
 import type { AnflugGleitpfad, AnflugRuhe } from "../components/AnflugForensikInfo";
 import type { GatePunkt } from "./stableGate";
 
+/** Kategorie der Gesamtnote (Rust `aggregate_score_label`). */
+export type LandingCategory = "smooth" | "acceptable" | "firm" | "hard" | "severe";
+
 export interface LandingProfilePoint {
   t_ms: number;
   vs_fpm: number;

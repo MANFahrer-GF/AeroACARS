@@ -149,7 +149,8 @@
       "partly_stable_approach": "AVVICINAMENTO PARZ. STABILE",
       "vor_der_schwelle": "PRIMA DELLA SOGLIA",
       "overrun": "OVERRUN",
-      "neben_der_bahn": "FUORI PISTA"
+      "neben_der_bahn": "FUORI PISTA",
+      "go_around": "RIATTACCATA × {{count}}"
     },
     "fuel": "Carburante",
     "plan_burn": "Piano",
@@ -1213,6 +1214,15 @@
       "links": "sinistra",
       "mitte": "centro",
       "hinweis": "Scostamento e distanza dalla soglia sono calcolati dal punto di contatto rispetto alla geometria della pista. Se sembrano poco plausibili, apri le coordinate in Google Maps e confrontale con la pista reale."
+    },
+    "kopf": {
+      "ohne_pirep": "Rapporto di volo in attesa — la valutazione arriva con il PIREP",
+      "version": "AeroACARS {{version}}"
+    },
+    "bahn_vertrauen": {
+      "icao_mismatch": "Aeroporto errato rilevato — geometria nascosta",
+      "centerline_offset_too_large": "Contatto lontano dal centro pista — geometria nascosta",
+      "negative_float_distance": "Contatto prima della soglia — geometria nascosta"
     }
   },
   "about": {

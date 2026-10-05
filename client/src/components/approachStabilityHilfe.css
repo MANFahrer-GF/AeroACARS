@@ -1,4 +1,5 @@
-/* Inhalt der Hilfe zur Anflug-Karte (ApproachStabilityHilfeInhalt.tsx).
+/* Inhalt der Hilfe-Dialoge (ApproachStabilityHilfeInhalt.tsx,
+ * RunwayUtilizationHilfeInhalt.tsx).
  * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Die Regeln
  * stehen im Client auch in components/ui/ui.css (andere Hilfe-Dialoge nutzen
  * sie); hier als Kopien mit Spezifität 0. */
@@ -7,6 +8,17 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-4, 16px);
+}
+
+:where(.helpmodal__formula) {
+  background: var(--sem-ok-bg, rgba(62, 207, 142, 0.12));
+  border: 1px solid color-mix(in srgb, var(--sem-ok, #3ecf8e) 35%, transparent);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-400, 13px);
+  color: var(--sem-ok, #3ecf8e);
+  white-space: pre-line;
 }
 
 :where(.helpmodal__threshold) {
@@ -39,4 +51,37 @@
   border: 1px solid var(--line, #2a3541);
   border-radius: var(--r-md);
   padding: 10px 14px;
+}
+
+:where(.helpmodal__table-wrap) {
+  border: 1px solid var(--line, #2a3541);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+:where(.helpmodal__table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-300, 12px);
+}
+
+:where(.helpmodal__table) thead tr {
+  background: var(--surface-2);
+}
+
+:where(.helpmodal__table) tbody tr {
+  border-top: 1px solid var(--line, #2a3541);
+}
+
+:where(.helpmodal__th) {
+  text-align: left;
+  padding: 8px 12px;
+  font-weight: var(--fw-bold, 700);
+  font-size: var(--fs-300, 12px);
+  color: var(--text-dim, #8695a3);
+}
+
+:where(.helpmodal__td) {
+  padding: 8px 12px;
+  vertical-align: top;
 }

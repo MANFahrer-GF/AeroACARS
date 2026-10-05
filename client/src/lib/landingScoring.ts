@@ -287,7 +287,9 @@ export function computeSubScores(p: {
 
 // ─── Master-Score (Mirror von LandingScore::classify in lib.rs) ─────
 
-export type LandingCategory = "smooth" | "acceptable" | "firm" | "hard" | "severe";
+// Seit 05.10.2026 in lib/landungsDatensatz.ts (gespiegelt).
+import type { LandingCategory } from "./landungsDatensatz";
+export type { LandingCategory };
 
 const CATEGORY_ORDER: LandingCategory[] = ["smooth", "acceptable", "firm", "hard", "severe"];
 const CATEGORY_NUMERIC: Record<LandingCategory, number> = {

@@ -1339,6 +1339,10 @@ pub struct PirepPayload {
     pub landing_weight_kg: Option<f32>,
     pub planned_tow_kg: Option<f32>,
     pub planned_ldw_kg: Option<f32>,
+    /// Score-Version 19 (QS 05.10.2026): geplanter Block-Treibstoff, damit
+    /// die Webapp dieselbe Soll/Ist-Tabelle zeigt wie der Client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub planned_block_fuel_kg: Option<f32>,
     pub peak_altitude_ft: Option<i32>,
     pub landing_vs_fpm: Option<i32>,
     pub landing_score: Option<i32>,

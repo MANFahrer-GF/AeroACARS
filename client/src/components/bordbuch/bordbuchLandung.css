@@ -1,0 +1,138 @@
+/* Bordbuch in der Landungsanzeige (BordbuchLandungsAnzeige.tsx,
+ * BordbuchCheckliste.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Die Regeln
+ * stehen im Client auch in bordbuch.css (die übrigen Bordbuch-Ansichten
+ * nutzen sie); hier als Kopien mit Spezifität 0. */
+
+:where(.bb-checkliste) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px 22px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-family: var(--font-acars, "B612 Mono", "SF Mono", Menlo, Consolas, monospace);
+}
+
+:where(.bb-cl-abschnitt) ul { list-style: none; margin: 0; padding: 0; }
+
+:where(.bb-cl-kopf) {
+  display: flex;
+  justify-content: space-between;
+  font-family: inherit;
+  font-size: var(--fs-200, 11px);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim, #8695a3);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px;
+  margin-bottom: 4px;
+}
+
+:where(.bb-cl-zahl) { color: var(--text-dim, #8695a3); }
+
+:where(.bb-cl-zeile) {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-300, 12px);
+  text-align: left;
+  cursor: default;
+}
+
+:where(.bb-cl-zeile:disabled) { opacity: 1; }
+
+:where(.bb-cl-zeile:not(:disabled)) { cursor: pointer; }
+
+:where(.bb-cl-zeile:not(:disabled):hover) .bb-cl-name { text-decoration: underline dotted; }
+
+:where(.bb-cl-marke) { width: 12px; flex: 0 0 12px; color: var(--sem-ok, #3ecf8e); display: inline-flex; align-self: center; }
+
+:where(.bb-cl-name) { white-space: nowrap; }
+
+:where(.bb-cl-linie) { flex: 1; min-width: 10px; border-bottom: 1px dotted var(--text-dim, #8695a3); opacity: 0.6; transform: translateY(-3px); }
+
+:where(.bb-cl-wert) { white-space: nowrap; }
+
+:where(.bb-cl-zusatz) { font-size: var(--fs-200, 11px); color: var(--text-dim, #8695a3); padding: 0 0 4px 18px; font-family: var(--font-sans, system-ui, sans-serif); }
+
+:where(.bb-cl-nm) { line-height: 1.4; }
+
+:where(.bb-st-erledigt) .bb-cl-wert { color: var(--sem-ok, #3ecf8e); }
+
+:where(.bb-st-nach_atc) .bb-cl-wert, :where(.bb-st-nach_atc) .bb-cl-marke { color: var(--sem-info, #7fa8c9); }
+
+:where(.bb-st-diesmal_ohne) .bb-cl-name, :where(.bb-st-diesmal_ohne) .bb-cl-wert { color: var(--text-dim, #8695a3); }
+
+:where(.bb-st-nicht_messbar) .bb-cl-name, :where(.bb-st-nicht_messbar) .bb-cl-wert { color: var(--text-dim, #8695a3); }
+
+:where(.bb-st-nicht_messbar) .bb-cl-wert { font-size: var(--fs-200, 11px); letter-spacing: 0.04em; }
+
+:where(.bb-st-offen) .bb-cl-name, :where(.bb-st-offen) .bb-cl-wert { color: var(--text-dim, #8695a3); }
+
+:where(.bb-bestaetigung) .bb-cl-name { font-style: normal; }
+
+:where(.bb-cl-aktion) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 8px 18px;
+  font-family: system-ui, sans-serif;
+}
+
+:where(.bb-cl-aktion-hinweis) { font-size: var(--fs-200, 11px); color: var(--text-dim, #8695a3); }
+
+:where(.bb-knopf) {
+  border: 1px solid var(--sem-info, #7fa8c9);
+  color: var(--sem-info, #7fa8c9);
+  background: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: var(--fs-300, 12px);
+  cursor: pointer;
+}
+
+:where(.bb-knopf:disabled) { opacity: 0.5; cursor: default; }
+
+:where(.bb-knopf--leise) { border-color: var(--border); color: var(--text-dim, #8695a3); }
+
+:where(.bb-aus-hinweis) { color: var(--text-dim, #8695a3); font-size: var(--fs-300, 12px); line-height: 1.5; }
+
+:where(.bb-landung-bilanz) { margin: 0 0 10px; font-size: var(--fs-400, 13px); color: var(--text-dim, #8695a3); }
+
+:where(.bb-landung-bilanz) strong { color: var(--text); }
+
+:where(.bb-bericht) .bb-checkliste { break-inside: avoid; }
+
+:where(.bb-bericht) .bb-cl-abschnitt { break-inside: avoid; }
+
+:where(.bb-bericht) {
+  --text: #111827;
+  --text-dim: #4b5563;
+  --border: #9ca3af;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --sem-ok: #0a6b45;
+  --sem-info: #1d4ed8;
+  --sem-warn: #92400e;
+  --acc: #1d4ed8;
+  color: var(--text);
+}
+
+:where(.bb-bericht) .bb-checkliste { background: none; border-color: var(--border); }
+
+:where(.bb-bericht) .bb-cl-zeile { color: var(--text); }
+
+:where(.bb-bericht) .bb-cl-linie { border-bottom-color: #888; }
+
+:where(.bb-cl-gesehen) { color: var(--text-dim, #8695a3); font-style: normal; }
+
+:where(.bb-profil-liste) .bb-cl-gesehen { font-size: var(--fs-200, 11px); padding-left: 0; margin-top: 2px; }

@@ -10,6 +10,13 @@ import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import "./rohdatenAbschnitt.css";
 
+/** ISO-Zeit in UTC, auf Millisekunden — unabhängig davon, wie die Quelle
+ *  sie geschrieben hat (Rust: bis Mikrosekunden, Webapp: Millisekunden). */
+function zeitUtc(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toISOString();
+}
+
 export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
   const lat = record.landing_lat;
@@ -41,7 +48,7 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
             </a>
           ),
         )}
-        {zeile(t("landing.rohdaten.zeit"), record.touchdown_at)}
+        {zeile(t("landing.rohdaten.zeit"), zeitUtc(record.touchdown_at))}
         {zeile(
           t("landing.rohdaten.kurs"),
           `${record.landing_heading_true_deg != null ? `${record.landing_heading_true_deg.toFixed(2)}°T` : "—"} / ${

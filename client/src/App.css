@@ -2102,82 +2102,25 @@ button:disabled {
 /* v0.7.18 (B-012) — Off-airport Touchdown-Banner im LandingPanel.
    Drei Stile je nach Resolution-Source: Divert (gelb), Nearest (orange),
    No-Nearest (rot). */
-.off-airport-banner {
-  margin: 12px 0;
-  padding: 12px 14px;
-  border-radius: var(--r-sm);
-  border-left: 4px solid;
-  font-size: 0.9rem;
-  line-height: 1.45;
-}
-.off-airport-banner__head {
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-.off-airport-banner__line {
-  font-size: 0.85rem;
-}
-.off-airport-banner__line strong {
-  font-family: var(--font-mono);
-}
-.off-airport-banner__hint {
-  font-size: 0.78rem;
-  color: var(--fg-dim, var(--text-muted));
-}
-.off-airport-banner--divert {
-  background: color-mix(in srgb, var(--warn, #f59e0b) 8%, var(--surface));
-  border-left-color: var(--warn, #f59e0b);
-}
-.off-airport-banner--nearest {
-  background: color-mix(in srgb, #f97316 10%, var(--surface));
-  border-left-color: #f97316;
-}
-.off-airport-banner--no-nearest {
-  background: color-mix(in srgb, var(--danger, #d33) 10%, var(--surface));
-  border-left-color: var(--danger, #d33);
-}
+
+
+
+
+
+
+
+
 
 /* v0.7.19 GAF-707 — Accident-Banner als Primary-Klassifikation im
    LandingPanel. Confirmed = roter Top-Level-Banner (vor Off-airport
    und Score-Breakdown). Suspected = gelber Review-Banner. */
-.accident-banner {
-  margin: 16px 0;
-  padding: 14px 16px;
-  border-radius: var(--r-sm);
-  border-left: 6px solid;
-  font-size: 0.95rem;
-  line-height: 1.45;
-}
-.accident-banner__head {
-  font-weight: 800;
-  font-size: 1.05rem;
-  margin-bottom: 6px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-.accident-banner__body {
-  margin-bottom: 8px;
-}
-.accident-banner__kind {
-  font-size: 0.88rem;
-  margin-bottom: 6px;
-}
-.accident-banner__reasons {
-  margin: 4px 0 0;
-  padding-left: 1.25rem;
-  font-size: 0.82rem;
-  font-family: var(--font-mono);
-  color: var(--fg-dim, var(--text-muted));
-}
-.accident-banner--confirmed {
-  background: color-mix(in srgb, var(--danger, #d33) 18%, var(--surface));
-  border-left-color: var(--danger, #d33);
-  color: var(--text, inherit);
-}
-.accident-banner--suspected {
-  background: color-mix(in srgb, var(--warn, #f59e0b) 12%, var(--surface));
-  border-left-color: var(--warn, #f59e0b);
-}
+
+
+
+
+
+
+
 
 /* v0.7.18 (B-011) — Orphan-Flight-Cleanup-UI im Settings-Tab.
    Stark eingerueckt + sichtbar abgesetzt (gelbe/rote Akzente), damit
@@ -5847,91 +5790,28 @@ input:disabled {
   background: rgba(239, 68, 68, 0.08);
 }
 
-.landing-headline {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 1rem 1.25rem;
-}
 
-.landing-grade-big {
-  font-size: 2.4rem;
-  font-weight: 700;
-  color: #000;
-  border-radius: var(--r-md);
-  padding: 0.4rem 0.9rem;
-  min-width: 4rem;
-  text-align: center;
-}
 
-.landing-headline__text h2 {
-  margin: 0;
-  font-size: 1.2rem;
-}
 
-.landing-headline__sub {
-  font-size: 0.9rem;
-  color: var(--text-muted);
-  margin-top: 0.2rem;
-}
+
+
+
+
 
 /* Score-Version 19: Deckel-Grund der Gesamtnote im Kopf. */
-.landing-headline__deckel {
-  margin-top: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--warning, #f59e0b);
-}
 
-.landing-headline__aircraft {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  margin-top: 0.2rem;
-}
+
+
 
 /* v0.5.47 — Quick-Flag-Chips direkt unter dem Headline-Block.
    Spiegelt die Webapp-Chips (LandingAnalysis.tsx Header). Pilot
    sieht auf-einen-Blick was die Auffälligkeiten sind. */
-.landing-flags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0.4rem 0 0.6rem 0;
-}
-.landing-flag {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.landing-flag--warn {
-  background: rgba(251, 191, 36, 0.18);
-  color: var(--sem-warn);
-  border: 1px solid rgba(251, 191, 36, 0.4);
-}
-.landing-flag--err {
-  background: rgba(239, 68, 68, 0.18);
-  color: var(--sem-danger);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-}
 
-.landing-preview-badge {
-  display: inline-block;
-  margin-left: 0.5rem;
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  background: #38bdf8;
-  color: #000;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-}
+
+
+
+
+
 
 /* Field feedback (2026-08-03): this card embeds the full LandingDetail
    report (charts, tiles, everything) right above the overview's own
@@ -6213,96 +6093,29 @@ input:disabled {
 
 /* ---- Score breakdown ---- */
 
-.landing-subscores {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.75rem;
-}
 
-.landing-subscore {
-  background: var(--surface-2);
-  border-left: 4px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 0.75rem 0.9rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
-}
 
-.landing-subscore--good {
-  border-left-color: #22c55e;
-}
-.landing-subscore--ok {
-  border-left-color: #eab308;
-}
-.landing-subscore--bad {
-  border-left-color: #ef4444;
-}
 
-.landing-subscore__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  gap: 0.5rem;
-}
 
-.landing-subscore__points {
-  font-weight: 600;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
 
-.landing-subscore__value {
-  font-size: 1.1rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  /* v1.6.3: zweizeilig erlaubt statt abschneiden.
-     Die Ausrichtungs-Achse trägt seit der Seitenwind-Gutschrift bis zu
-     211 px ("102 m · 14.9° (−5.0° XW)"); bei maximiertem Fenster stehen
-     in der Fünf-Spalten-Aufteilung nur 188 px zur Verfügung. Abgeschnitten
-     wurde ausgerechnet die Gutschrift — also genau die Angabe, die die
-     Punktzahl erklärt — und ein Tooltip fehlte. Umbruch statt Ellipse
-     löst das für jede Achse; die Karte wächst um eine Zeile mit. */
-  white-space: normal;
-  overflow-wrap: anywhere;
-  line-height: 1.25;
-}
 
-.landing-subscore__bar {
-  height: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
-  overflow: hidden;
-}
 
-.landing-subscore__fill {
-  height: 100%;
-  border-radius: 3px;
-  background: currentColor;
-  opacity: 0.65;
-  transition: width 0.3s ease;
-}
 
-.landing-subscore--good .landing-subscore__fill {
-  background: #22c55e;
-}
-.landing-subscore--ok .landing-subscore__fill {
-  background: #eab308;
-}
-.landing-subscore--bad .landing-subscore__fill {
-  background: #ef4444;
-}
 
-.landing-subscore__rationale {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  line-height: 1.3;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ---- (i) info badge ---- */
 
@@ -6329,44 +6142,17 @@ input:disabled {
 
 /* ---- Coach tip ---- */
 
-.landing-coach {
-  margin-top: 1rem;
-  padding: 0.85rem 1rem;
-  border-radius: var(--r-md);
-  border-left: 4px solid;
-  background: var(--surface-2);
-}
 
-.landing-coach--good {
-  border-left-color: #22c55e;
-  background: rgba(34, 197, 94, 0.06);
-}
-.landing-coach--ok {
-  border-left-color: #eab308;
-  background: rgba(234, 179, 8, 0.06);
-}
-.landing-coach--bad {
-  border-left-color: #ef4444;
-  background: rgba(239, 68, 68, 0.06);
-}
 
-.landing-coach__head {
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin-bottom: 0.4rem;
-}
 
-.landing-coach__head strong {
-  color: var(--text);
-}
 
-.landing-coach__body {
-  margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.4;
-}
+
+
+
+
+
+
+
 
 /* ---- New Touchdown grid: chart | keyvals | wind ---- */
 
@@ -6419,61 +6205,24 @@ input:disabled {
    dieser Kasten erklärt warum. Bewusst in Warn-Gelb, nicht in Rot: Es ist
    kein Fehler des Piloten, sondern eine Lücke in unserer Messung. */
 
-.landing-nicht-bewertbar {
-  margin-bottom: 0.9rem;
-  padding: 0.75rem 0.9rem;
-  border: 1px solid var(--sem-warn);
-  border-radius: 10px;
-  background: var(--sem-warn-bg);
-}
 
-.landing-nicht-bewertbar__titel {
-  font-weight: 700;
-  color: var(--sem-warn);
-  margin-bottom: 0.3rem;
-}
 
-.landing-nicht-bewertbar__text {
-  font-size: 0.86rem;
-  line-height: 1.45;
-}
 
-.landing-nicht-bewertbar__zahlen {
-  margin-top: 0.45rem;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
 
-.landing-nicht-bewertbar__rat {
-  margin-top: 0.4rem;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
+
+
+
+
+
 
 /* Die Sinkraten-Kachel ohne Messwert — kein Zahlenplatz, nur die Aussage. */
 
 
 /* ---- Personal-best line in the headline ---- */
 
-.landing-headline__pb {
-  margin-top: 0.35rem;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
 
-.landing-best-badge {
-  display: inline-block;
-  margin-left: 0.5rem;
-  padding: 0.1rem 0.55rem;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #facc15, #f59e0b);
-  color: #000;
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
+
+
 
 /* ======================================================================
  * Confirm-Dialog (in-app, replaces window.confirm() — see

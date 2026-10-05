@@ -12,8 +12,8 @@ import {
   buildRolloutExtraLines,
   buildRolloutValueLabel,
   isRolloutV3,
-  rolloutLdaMeters,
-} from "./LandingPanel";
+} from "./LandungsBewertung";
+import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import type { LandingRecord, LandingRunwayMatch } from "./LandingPanel";
 import deCommon from "../locales/de/common.json";
 

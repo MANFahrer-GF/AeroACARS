@@ -24661,6 +24661,7 @@ fn build_pirep_payload(
         landing_weight_kg: stats.landing_weight_kg.map(|w| w as f32),
         planned_tow_kg: stats.planned_tow_kg,
         planned_ldw_kg: stats.planned_ldw_kg,
+        planned_block_fuel_kg: stats.planned_block_fuel_kg,
         peak_altitude_ft: stats.peak_altitude_ft.map(|v| v.round() as i32),
         landing_vs_fpm: body.landing_rate.map(|r| r as i32),
         // v0.7.1 P1.3-Fix: gewichteter Aggregate-Score

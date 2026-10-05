@@ -41,7 +41,7 @@
 //
 // Der Prüfmodus läuft in `client/src/components/AnzeigeSync.test.tsx` mit.
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,6 +122,18 @@ export const DATEIEN = [
   "components/ApproachStabilityCard.tsx",
   "components/ApproachStabilityHilfeInhalt.tsx",
   "components/approachStabilityHilfe.css",
+  "components/LandungsBewertung.tsx",
+  "components/landungsBewertung.css",
+  "components/ForensicsBadge.tsx",
+  "components/RunwayUtilizationHilfeInhalt.tsx",
+  "lib/callsign.ts",
+  "lib/runwayGeometry.ts",
+  "components/bordbuch/BordbuchLandungsAnzeige.tsx",
+  "components/bordbuch/BordbuchCheckliste.tsx",
+  "components/bordbuch/Symbole.tsx",
+  "components/bordbuch/gesehen.ts",
+  "components/bordbuch/bordbuchLandung.css",
+  "lib/bordbuch.ts",
 ];
 
 /**
@@ -131,6 +143,10 @@ export const DATEIEN = [
  * den Baum-Test ruhigzustellen.
  */
 export const AUSNAHMEN = {
+  "./RunwayUtilizationHelpModal":
+    "Dialog-Hülle der Hilfe zur Bahn-Auslastung — repo-eigener " +
+    "Dialog-Baustein; der Inhalt (RunwayUtilizationHilfeInhalt.tsx) ist " +
+    "gespiegelt",
   "./ApproachStabilityHelpModal":
     "Dialog-Hülle der Anflug-Hilfe — sitzt wie das Glossar im repo-eigenen " +
     "Dialog-Baustein; der Inhalt (ApproachStabilityHilfeInhalt.tsx) ist " +
@@ -245,8 +261,21 @@ export function benoetigteSchluessel() {
       const p = resolve(CLIENT, rel);
       if (!existsSync(p)) continue;
       const text = readFileSync(p, "utf-8");
-      for (const m of text.matchAll(/["'`]([a-z_]+(?:\.[\w]+)+)["'`]/g)) {
+      for (const m of text.matchAll(/["'`]([a-z_][a-z0-9_]*(?:\.[\w]+)+)["'`]/g)) {
         if (hatSchluessel(de, m[1])) alle.add(m[1]);
+      }
+      // Zusammengesetzt ohne Punkt vor dem Platzhalter: t(`a.b_${x}`) —
+      // jeder Text, dessen Schlüssel mit „a.b_" beginnt. So fehlten der
+      // Webapp „runway_v2.tooltip_word_after/left" (Bahn-Tooltip zeigte den
+      // rohen Schlüssel).
+      for (const m of text.matchAll(/\bt\(\s*`([a-z_][a-z0-9_]*(?:\.[\w]+)*\.[\w]*[_\w])\$\{/g)) {
+        const vorspann = m[1];
+        const punkt = vorspann.lastIndexOf(".");
+        const eltern = vorspann.slice(0, punkt);
+        const anfang = vorspann.slice(punkt + 1);
+        for (const b of blaetter(de, eltern)) {
+          if (b.slice(eltern.length + 1).startsWith(anfang)) alle.add(b);
+        }
       }
     }
   }
@@ -390,6 +419,9 @@ function schreibe() {
     const alt = existsSync(b) ? readFileSync(b, "utf-8") : null;
     const neu = readFileSync(a, "utf-8");
     if (alt !== neu) {
+      // Unterordner (z. B. components/bordbuch) gibt es in der Webapp evtl.
+      // noch nicht.
+      mkdirSync(dirname(b), { recursive: true });
       writeFileSync(b, neu, "utf-8");
       console.log(`  kopiert  ${rel}`);
       n++;

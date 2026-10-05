@@ -149,7 +149,8 @@
       "partly_stable_approach": "ANFLUG TEILWEISE STABIL",
       "vor_der_schwelle": "VOR DER SCHWELLE",
       "overrun": "OVERRUN",
-      "neben_der_bahn": "NEBEN DER BAHN"
+      "neben_der_bahn": "NEBEN DER BAHN",
+      "go_around": "DURCHSTART × {{count}}"
     },
     "fuel": "Treibstoff",
     "plan_burn": "Plan",
@@ -1213,6 +1214,15 @@
       "links": "links",
       "mitte": "Mitte",
       "hinweis": "Versatz und Schwellenabstand werden aus dem Aufsetzpunkt gegen die Bahngeometrie gerechnet. Wirken sie unplausibel: Koordinaten in Google Maps öffnen und mit der echten Bahn vergleichen."
+    },
+    "kopf": {
+      "ohne_pirep": "Flugbericht steht noch aus — die Bewertung kommt mit dem PIREP",
+      "version": "AeroACARS {{version}}"
+    },
+    "bahn_vertrauen": {
+      "icao_mismatch": "Falscher Flughafen erkannt — Geometrie ausgeblendet",
+      "centerline_offset_too_large": "Touchdown weit von Runway-Mitte — Geometrie ausgeblendet",
+      "negative_float_distance": "Touchdown vor Threshold — Geometrie ausgeblendet"
     }
   },
   "about": {

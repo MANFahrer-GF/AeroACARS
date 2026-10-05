@@ -149,7 +149,8 @@
       "partly_stable_approach": "APPROACH PARTLY STABLE",
       "vor_der_schwelle": "BEFORE THRESHOLD",
       "overrun": "OVERRUN",
-      "neben_der_bahn": "OFF THE RUNWAY"
+      "neben_der_bahn": "OFF THE RUNWAY",
+      "go_around": "GO-AROUND × {{count}}"
     },
     "fuel": "Fuel",
     "plan_burn": "Plan",
@@ -1213,6 +1214,15 @@
       "links": "left",
       "mitte": "centre",
       "hinweis": "Offset and threshold distance are computed from the touchdown point against the runway geometry. If they look implausible, open the coordinates in Google Maps and compare with the real runway."
+    },
+    "kopf": {
+      "ohne_pirep": "Flight report still pending — the score comes with the PIREP",
+      "version": "AeroACARS {{version}}"
+    },
+    "bahn_vertrauen": {
+      "icao_mismatch": "Wrong airport detected — geometry hidden",
+      "centerline_offset_too_large": "Touchdown far from the runway centre — geometry hidden",
+      "negative_float_distance": "Touchdown before the threshold — geometry hidden"
     }
   },
   "about": {
