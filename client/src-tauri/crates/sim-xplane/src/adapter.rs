@@ -566,15 +566,20 @@ pub(crate) fn desired_profile(
 /// ein aktives Profil bleibt, solange seine Probe frisch ist. Sonst verloere
 /// die FF777 (`titel_und_probe`) beim Rueckfall vom Plugin ihr Profil, das
 /// das Plugin mit seinem Titel gesetzt hatte (Codex 05.10.2026).
+///
+/// `probe_traegt`: frisch UND zuletzt ≠ 0. RREF antwortet auch fuer
+/// fehlende Datarefs mit 0 — „frisch" allein hielte das Profil nach einem
+/// Flugzeugwechsel fest (Codex-Nachpruefung).
 pub(crate) fn rref_profil(
     title: Option<&str>,
     aktiv: Option<usize>,
     probe_fresh: &[bool],
     probe_seen: &[bool],
+    probe_traegt: &[bool],
 ) -> Option<usize> {
     match desired_profile(title, probe_fresh, probe_seen) {
         None if title.is_none() => {
-            aktiv.filter(|&pi| probe_fresh.get(pi).copied().unwrap_or(false))
+            aktiv.filter(|&pi| probe_traegt.get(pi).copied().unwrap_or(false))
         }
         d => d,
     }
@@ -761,6 +766,10 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
     // when there is no Web API title (XP11 / Web API off), the case the
     // old `last_title`-diff logic missed.
     let mut probe_last_seen: Vec<Option<Instant>> = vec![None; PROFILES.len()];
+    // Letzter Probenwert ungleich 0? RREF antwortet auch fuer fehlende
+    // Datarefs (mit 0) — nur ein Wert ≠ 0 traegt `rref_profil`s Halten
+    // ohne Titel (Codex-Nachpruefung 05.10.2026).
+    let mut probe_nicht_null: Vec<bool> = vec![false; PROFILES.len()];
     // Stand der bestaetigten Add-on-Quellen, den dieser Thread zuletzt
     // uebernommen hat (siehe `AdapterShared::addon_vorhanden`).
     let mut addon_gen_gesehen: u64 = u64::MAX;
@@ -891,6 +900,9 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                         if let Some(slot) = probe_last_seen.get_mut(pi) {
                             *slot = Some(Instant::now());
                         }
+                        if let Some(nn) = probe_nicht_null.get_mut(pi) {
+                            *nn = p.value != 0.0;
+                        }
                         if p.value != 0.0 {
                             if let Some(prof) = PROFILES.get(pi) {
                                 ungleich_null.insert(grundname(prof.probe_dataref));
@@ -911,6 +923,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                                     for t in probe_last_seen.iter_mut() {
                                         *t = None;
                                     }
+                                    probe_nicht_null.fill(false);
                                     // Vom Plugin uebernommene Quellen galten fuer
                                     // das alte Flugzeug — verwerfen.
                                     if vorhanden_aus_plugin {
@@ -1041,9 +1054,15 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             for t in probe_last_seen.iter_mut() {
                 *t = None;
             }
+            probe_nicht_null.fill(false);
             if let Some(pi) = profil {
                 if let Some(t) = probe_last_seen.get_mut(pi) {
                     *t = Some(Instant::now());
+                }
+                // Das Plugin hatte die Probe bestaetigt; der erste RREF-Wert
+                // ueberschreibt das (0 → Profil faellt weg).
+                if let Some(nn) = probe_nicht_null.get_mut(pi) {
+                    *nn = true;
                 }
             }
             vorhanden = Some(gilt);
@@ -1128,11 +1147,17 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             .zip(&probe_bestaetigt)
             .map(|(t, &ok)| ok && t.is_some())
             .collect();
+        let probe_traegt: Vec<bool> = probe_fresh
+            .iter()
+            .zip(&probe_nicht_null)
+            .map(|(&f, &nn)| f && nn)
+            .collect();
         let desired = rref_profil(
             current_title.as_deref(),
             active_profile,
             &probe_fresh,
             &probe_seen,
+            &probe_traegt,
         );
 
         if desired != active_profile {
@@ -1710,17 +1735,23 @@ mod tests {
         let mut frisch = vec![false; n];
         frisch[ff] = true;
         let keine = vec![false; n];
-        // Kein Titel, Profil aktiv, Probe frisch → bleibt.
-        assert_eq!(rref_profil(None, Some(ff), &frisch, &frisch), Some(ff));
-        // Probe verstummt (Flugzeugwechsel) → Basis-Katalog.
-        assert_eq!(rref_profil(None, Some(ff), &keine, &frisch), None);
-        // Bekannter, fremder Titel → weg, auch mit frischer Probe.
+        // Kein Titel, Profil aktiv, Probe frisch und ≠ 0 → bleibt.
         assert_eq!(
-            rref_profil(Some("Airbus A350-900"), Some(ff), &frisch, &frisch),
+            rref_profil(None, Some(ff), &frisch, &frisch, &frisch),
+            Some(ff)
+        );
+        // Probe frisch, aber 0 (RREF fuer fehlenden Dataref nach einem
+        // Flugzeugwechsel) → Basis-Katalog (Codex-Nachpruefung).
+        assert_eq!(rref_profil(None, Some(ff), &frisch, &frisch, &keine), None);
+        // Probe verstummt → Basis-Katalog.
+        assert_eq!(rref_profil(None, Some(ff), &keine, &frisch, &keine), None);
+        // Bekannter, fremder Titel → weg, auch mit tragender Probe.
+        assert_eq!(
+            rref_profil(Some("Airbus A350-900"), Some(ff), &frisch, &frisch, &frisch),
             None
         );
         // Ohne aktives Profil setzt eine Probe allein es nicht.
-        assert_eq!(rref_profil(None, None, &frisch, &frisch), None);
+        assert_eq!(rref_profil(None, None, &frisch, &frisch, &frisch), None);
     }
 
     /// Ganze Kette mit Michels Werten: aktiver FF777-Katalog → Hebel 0.5
