@@ -2158,7 +2158,11 @@ mod plugin2_loopback_tests {
         let schnapp = spiegel.schnappschuss();
         assert_eq!(schnapp.get("sim/test/eins"), Some(&1.5));
         assert_eq!(schnapp.get("sim/test/feld[2]"), Some(&3.0));
-        assert!(!schnapp.contains_key("sim/test/text"));
+        // Seit 05.10.2026 (FF777) zaehlen Texte mit: als Kennzahl im Stand,
+        // der Text kommt ueber `Spiegel::text` zurueck.
+        let k = *schnapp.get("sim/test/text").expect("Text im Stand");
+        assert_eq!(spiegel.text("sim/test/text", k).as_deref(), Some("A20N"));
+        assert_eq!(spiegel.text("sim/test/eins", 1.5), None);
         let abo = spiegel.abo_stand();
         assert_eq!((abo.angemeldet, abo.abgelehnt), (3, 0));
         assert_eq!(abo.quelle, "plugin");
