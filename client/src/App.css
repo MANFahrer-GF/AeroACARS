@@ -5878,6 +5878,14 @@ input:disabled {
   margin-top: 0.2rem;
 }
 
+/* Score-Version 19: Deckel-Grund der Gesamtnote im Kopf. */
+.landing-headline__deckel {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--warning, #f59e0b);
+}
+
 .landing-headline__aircraft {
   font-size: 0.85rem;
   color: var(--text-muted);
@@ -7931,6 +7939,13 @@ input:disabled {
   font-size: 10pt;
   font-weight: 600;
   color: #b91c1c;
+}
+
+/* Score-Version 19: Gründe des Stable Gate im Bericht. */
+.report-gate-gruende {
+  margin: 2mm 0 0;
+  padding-left: 5mm;
+  font-size: 9pt;
 }
 
 /* Score-Aufschlüsselung — Balken. */

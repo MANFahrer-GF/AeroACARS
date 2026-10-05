@@ -31,6 +31,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApproachStabilityHelpModal } from "./ApproachStabilityHelpModal";
+import { GATE_STELLEN, gateGruende, gateUrteil, type GatePunkt } from "../lib/stableGate";
 
 type Band = "good" | "ok" | "bad" | "missing";
 
@@ -55,6 +56,11 @@ interface Props {
    *  wird die V/S-vs-ILS-Kachel mit dem echten Winkel beschriftet — der Wert
    *  selbst kommt schon winkel-korrekt aus dem Backend. null → Standard 3°. */
   glideslopeAngleDeg?: number | null;
+  /** Score-Version 19: Prüfliste aus dem Datensatz (`sub_scores[stability]
+   *  .gate`). Vorhanden → Kacheln, Urteil und Gründe kommen von dort, die
+   *  Karte rechnet nichts nach. Fehlt sie (ältere Landungen), bleibt die
+   *  bisherige Darstellung mit sieben Kacheln. */
+  gate?: GatePunkt[] | null;
 }
 
 function bandForRange(
@@ -89,8 +95,9 @@ function formatSimKind(simKind: string | null | undefined): string | null {
 }
 
 export function ApproachStabilityCard(props: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
+  const gate = props.gate && props.gate.length > 0 ? props.gate : null;
 
   const bands: Band[] = [
     bandForRange(props.vsJerkFpm, 100, 200),
@@ -107,7 +114,7 @@ export function ApproachStabilityCard(props: Props) {
   const missingCount = bands.filter((b) => b === "missing").length;
   // Wenn ALLE 7 Werte fehlen (= Legacy-PIREP), zeigen wir keinen Pill,
   // sondern nur den Legacy-Hinweis.
-  const isLegacy = missingCount === bands.length;
+  const isLegacy = missingCount === bands.length && !gate;
   // STABLE = alle Werte im grünen Band.
   // UNSTABLE = ab 2 harten Verletzungen ODER insgesamt ≥3 Werte außerhalb.
   // Sonst PARTIAL (= 1 bad oder 1–2 ok).
@@ -115,6 +122,9 @@ export function ApproachStabilityCard(props: Props) {
   if (badCount === 0 && okCount === 0) pillKey = "stable";
   else if (badCount >= 2 || badCount + okCount >= 3) pillKey = "unstable";
   else pillKey = "partial";
+  // Neue Landungen: das Urteil aus dem Datensatz, nicht nachgerechnet.
+  if (gate) pillKey = gateUrteil(gate) ?? pillKey;
+  const gruende = gate ? gateGruende(t, gate, i18n.language) : [];
 
   const pillColor =
     pillKey === "stable" ? "#22c55e" :
@@ -216,8 +226,65 @@ export function ApproachStabilityCard(props: Props) {
         </div>
       )}
 
-      {/* 7-Kacheln-Grid */}
-      {!isLegacy && (
+      {/* Score-Version 19: sechs Prüfungen aus dem Datensatz + Gründe */}
+      {gate && (
+        <>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+              gap: 8,
+              marginBottom: 12,
+            }}
+          >
+            {gate.map((p) => (
+              <Tile
+                key={p.key}
+                label={t(`landing.gate.label.${p.key}`)}
+                value={
+                  p.wert != null
+                    ? p.wert.toLocaleString(i18n.language, {
+                        minimumFractionDigits: GATE_STELLEN[p.key] ?? 1,
+                        maximumFractionDigits: GATE_STELLEN[p.key] ?? 1,
+                      })
+                    : t(`landing.gate.wert.${p.key}_${p.stufe === "gut" ? "ok" : "nein"}`)
+                }
+                unit={p.wert != null ? t(`landing.gate.einheit.${p.key}`) : undefined}
+                band={p.stufe === "gut" ? "good" : p.stufe === "mittel" ? "ok" : "bad"}
+              />
+            ))}
+          </div>
+          {gruende.length > 0 && (
+            <div
+              data-testid="gate-gruende"
+              style={{ fontSize: "0.84rem", marginBottom: 10, lineHeight: 1.45 }}
+            >
+              <b>{t("landing.gate.grund_titel")}</b>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                {gruende.map((g) => (
+                  <li key={g}>{g}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 6,
+              background: coachBg,
+              border: `1px solid ${coachBorder}55`,
+              fontSize: "0.86rem",
+              lineHeight: 1.45,
+              color: coachBorder,
+            }}
+          >
+            {t(`landing.approach_stability_card.coach.${coachKey}`)}
+          </div>
+        </>
+      )}
+
+      {/* 7-Kacheln-Grid (Landungen vor Score-Version 19) */}
+      {!isLegacy && !gate && (
         <>
           <div
             style={{

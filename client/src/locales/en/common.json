@@ -145,7 +145,11 @@
       "bounce_light": "Light bounce (no score impact)",
       "bounce_light_with_height": "Light bounce {{ft}} ft (no score impact)",
       "off_centerline": "OFF-CENTERLINE",
-      "unstable_approach": "UNSTABLE APPROACH"
+      "unstable_approach": "UNSTABLE APPROACH",
+      "partly_stable_approach": "APPROACH PARTLY STABLE",
+      "vor_der_schwelle": "BEFORE THRESHOLD",
+      "overrun": "OVERRUN",
+      "neben_der_bahn": "OFF THE RUNWAY"
     },
     "fuel": "Fuel",
     "plan_burn": "Plan",
@@ -161,7 +165,7 @@
     "trip_burn": "Trip burn",
     "zfw": "ZFW",
     "no_plan_hint": "No plan values available — no SimBrief OFP was loaded for this flight. On your next flight, watch the activity log for a \"SimBrief OFP fetched\" entry at start; if it's missing, the bid had no plan or the fetch failed silently.",
-    "loadsheet_score": "Plan accuracy",
+    "loadsheet_score": "Plan adherence (no score)",
     "score_breakdown": "Score breakdown",
     "coach_title": "What to focus on next time",
     "trend": "Trend",
@@ -202,16 +206,17 @@
     },
     "info": {
       "landing_rate": "Vertical speed at the moment of touchdown, in feet per minute. Negative = descending. The target corridor of 90–250 fpm is deliberate — a professional standard, not “as soft as possible”: well below 90 fpm usually means a long float that delays braking and spoiler deployment. Beyond 600 fpm of sink a real hard-landing inspection would be due.\n\nSince v1.6.3 this is measured from the actual height trace over the final third of a second before touchdown, no longer from the simulator's vertical speed indicator, which is sluggish like a real cockpit instrument. If the simulator freezes the altitude readout, no calculation is done and the instrument value is used instead.",
-      "g_force": "Peak G load in the 1.5-second window around touchdown. 1.0 G is smooth, above 1.4 G is clearly noticeable, above 1.7 G triggers a hard-landing inspection (Boeing 737 FCOM).",
+      "g_force": "Scored g-load at touchdown. Below 1.20 g full points, below 1.40 g 80, below 1.70 g 45, above that 20 or 0. From 1.75 g the overall score is at most 40, from 2.6 g at most 14.",
       "bounces": "How many times the aircraft climbed back more than 5 ft above the ground after the first touchdown and touched down again (older landings: from 15 ft). 0 = clean set; each bounce drops the score.",
-      "stability": "Stability evaluation over the stable-approach gate (0–1000 ft HAT, flare-cutoff last 3 s before TD). Backend computes seven factors: V/S jerk, bank σ (vector-filtered), IAS σ, sink-rate violation, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Details and thresholds are in the approach-stability card further down.",
+      "stability": "Two things: this part's points come from how steady the approach was (scatter of sink rate and bank). The stable gate checks six points from 1000 ft: glide path (below 1 dot on average), steady speed, steady bank, even sink rate, no excessive sink for more than 10 seconds, landing configuration at 1000 ft. Only partly stable caps the overall score at 80, unstable at 45. Details and limits in the \"Approach stability\" card.",
       "rollout": "Share of the usable runway length (LDA) your landing used — measured from the threshold: first the distance to touchdown, then the rollout until you clear the runway (~40 kt). What is scored is how much runway is left afterwards: below 60 % is full marks, from 90 % it gets tight — risky on a wet runway. Click „🛬 How is this calculated?“ for the full explanation.",
       "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (block − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
-      "loadsheet": "Presence of loadsheet data (ZFW + TOW in the plan). VFR/manual flights without dispatch data skip this sub-score — no 0-penalty. The detailed plan-vs-actual evaluation (block fuel, TOW, LDW, ZFW) appears in the fuel area as the „Plan accuracy\" score.",
-      "score_section": "Seven sub-scores of 0–100 points each (descent rate, G-force, bounces, approach stability, runway usage, touchdown point, alignment). Each tile shows the value, the score and a coloured bar (green/amber/red). The weakest category becomes the next improvement target in the coaching tip. Fuel is no longer scored as of v1.7.35 — it appears as its own breakdown below.",
-      "runway_section": "Visualisation of your touchdown on the runway. The cyan dot marks the touchdown point; the green band shows the rollout distance until you cleared the runway (high-speed exit at ~40 kt). Values below: total length, centerline offset, distance past threshold, runway utilization as a percentage.",
-      "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight; ZFW = zero fuel weight. Plan values come from the SimBrief OFP if available. The „Plan accuracy\" score below evaluates the Block/TOW/LDW/ZFW deltas (penalty above >5 %, heavier above >10 %).",
-      "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis, while the “Crosswind” tile beside it uses the wind relative to the aircraft nose. Both figures are correct — they simply refer to different directions, and the crab angle is exactly what lies between them."
+      "loadsheet": "Older landings only: whether loadsheet data was present (ZFW + TOW in the plan). No longer part of the score since v1.7.12.",
+      "score_section": "Seven parts of 0–100 points: sink rate, g-force, bounces, approach stability, runway discipline, alignment, touchdown point. The overall score is their weighted average, but never better than the weakest part allows: a fair part at most 80, a poor one at most 60, a dangerous event (before the threshold, overrun, off the runway, two or more bounces, from 1.75 g) at most 40. Fuel and loadsheet are shown for reference and do not count.",
+      "runway_section": "Visualisation of your touchdown on the runway. The blue marker is the touchdown point, the green band the rollout. Values below are for reference: total length, distance to the centreline, distance past the threshold, runway utilisation in percent. Scored are runway discipline, alignment and touchdown point (see the parts above).",
+      "fuel_section": "Block = fuel at off-block; TO fuel = at the take-off point; LDG fuel = at touchdown; TOW, LDW, ZFW = weights. Planned values come from the SimBrief OFP. \"Plan adherence\" below shows the deviations for reference — it does not count towards the score.",
+      "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis, while the “Crosswind” tile beside it uses the wind relative to the aircraft nose. Both figures are correct — they simply refer to different directions, and the crab angle is exactly what lies between them.",
+      "runway_discipline": "Runway discipline: how far your outer wheel stayed from the runway edge during the rollout. Centred (up to 75% of the half-width) full points, further out 85, at the edge 55, wheels off the runway 20, past the runway end (overrun) 0. Off the runway or an overrun caps the overall score at 40."
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
@@ -339,7 +344,7 @@
       "vorlauf": "Pre-gate",
       "gate": "Scored",
       "flare": "Flare",
-      "tooltip": "Scored samples are between 0 and 1000 ft AGL. The last 3 seconds before touchdown (flare manoeuvre) are excluded — the flare is scored in its own block."
+      "tooltip": "Shaded: the gate window up to 1000 ft. The glide path counts between 1000 and 200 ft; the flare just before touchdown is not part of the gate."
     },
     "skipped_label": "not scored",
     "skipped_reason": {
@@ -352,9 +357,9 @@
       "no_planned_tow": "No TOW planned — loadsheet scoring skipped (no penalty).",
       "missing_length": "Runway length unavailable — runway utilization cannot be computed.",
       "missing_rollout_distance": "Rollout distance not captured — runway utilization not scored.",
-      "missing_td_distance": "TD distance to threshold not captured — runway utilization not scored.",
-      "untrusted_geometry": "Runway geometry not trusted — runway utilization not scored.",
-      "off_airport_landing": "Off-airport landing — no known runway, no runway utilization computed.",
+      "missing_td_distance": "Touchdown distance from the threshold not recorded — this part is not scored.",
+      "untrusted_geometry": "Runway geometry not trustworthy — this part is not scored.",
+      "off_airport_landing": "No known runway (off-airport) — this part is not scored.",
       "invalid_lda": "LDA data inconsistent (runway length less than displaced threshold) — runway utilization skipped.",
       "fallback": "Not scored.",
       "missing_centerline_offset": "Centreline offset not measurable",
@@ -365,7 +370,7 @@
       "alignment_off_airport": "No runway identified — alignment not assessable",
       "alignment_untrusted_geometry": "Runway data unreliable — alignment not scored",
       "not_applicable_for_category": "Not meaningful for this type (no runway axis)",
-      "invalid_geometry": "Runway measurements unusable (no valid number) — runway utilization not scored.",
+      "invalid_geometry": "Runway measurements unusable — this part is not scored.",
       "diverted": "Diverted — a different route was flown than planned, so comparing against the OFP measures the detour, not the pilot.",
       "runway_width_unknown": "No width is on file for this runway — it is the yardstick for the lateral distance.",
       "track_width_unknown": "The track width of this type is not on file; without it the position of the wheels cannot be determined.",
@@ -535,8 +540,8 @@
     "forensics_section": "Touchdown forensics (50 Hz)",
     "forensics_unavailable": "Forensics buffer unavailable (pre-v0.5.39 or sample gap)",
     "flare_section": "Flare quality",
-    "flare_score": "Flare score",
-    "flare_score_hint": "Endpoint V/S dominates + bonus for V/S reduction. 100 = gentle touchdown.",
+    "flare_score": "Flare (no score)",
+    "flare_score_hint": "For reference: sink rate at the end of the flare plus a bonus for reducing it. Not part of the landing score.",
     "flare_breakdown": "End sink {{vs}} fpm → {{ep}} pts · reduction {{red}} fpm → +{{bonus}} pts",
     "flare_reduction": "Sink-rate reduction",
     "flare_reduction_hint": "How much the pilot reduced the sink rate before TD (positive = flare helped)",
@@ -608,7 +613,7 @@
       "robust_section_title": "Robust statistics (spike-resistant)",
       "robust_section_subtitle": "Median and 95th percentile filter out single sim-frame spikes. If they are noticeably lower than the peak, the peak was a spike — not a real impact.",
       "score_section_title": "What AeroACARS scores",
-      "score_section_subtitle": "Master score favors sink rate over G — V/S is what maintenance rules actually define.",
+      "score_section_subtitle": "Sink rate and g-force weigh the same (3 of 13 shares each).",
       "tile_edge": "Edge (touchdown frame)",
       "tile_250ms": "250 ms mean",
       "tile_500ms": "500 ms (peak)",
@@ -623,7 +628,7 @@
       "score_basis_sublabel": "EMA-smoothed peak · FOQA method",
       "raw_peak_detail": "Raw 50 Hz peak: {{g}} G · sim single-frame, not scored",
       "score_strut_force": "Gear normal force: {{force}} N",
-      "score_vs_leads": "Sink rate was smooth (< 200 fpm) — master score is not dragged down by G. Pilot error unlikely.",
+      "score_vs_leads": "The sink rate was gentle (< 200 fpm) — the g-spike more likely came from the gear or the sim than from the pilot. It still counts: g-force is its own part of the score.",
       "tip": {
         "sim_strut": "High G from sim landing-gear compression. Your sink rate was smooth — not a pilot error. This is common on small GA aircraft where the sim's strut spring model is harder than real life.",
         "real_impact": "Real hard impact: V/S and G both agree on a high value. Flare earlier, reduce throttle sooner.",
@@ -879,7 +884,7 @@
     },
     "anflug_forensik": {
       "titel": "Glide path and approach steadiness",
-      "ohne_note": "For context only – not part of the score. 1 dot = {{dot}}°, “+” = above the path.",
+      "ohne_note": "Glide path Ø counts towards the stable gate from AeroACARS 1.9.26 (good below 1 dot); the gates are for reference. 1 dot = {{dot}}°, \"+\" = above the path.",
       "gleitpfad_gesamt": "Glide path 1000–200 ft: average {{mittel}} dots, largest deviation {{max}} dots ({{ft}} ft) · {{proben}} data points",
       "gleitpfad_tor": "{{tor}}: average {{mittel}}, largest {{max}} dots",
       "tor_1000_500": "1000–500 ft",
@@ -914,10 +919,10 @@
       "title": "Approach stability — what do the values mean?",
       "close_label": "Close ✕",
       "close_aria": "Close approach-stability help",
-      "intro": "Stable-approach concept per FAA AC 120-71B: from 1000 ft above the touchdown point all approach parameters (sink rate, bank, speed, configuration) should be within tight tolerances and stay there. AeroACARS measures this stability sample by sample across the entire gate window and shows seven values.",
+      "intro": "Stable-approach concept per FAA AC 120-71B and the Flight Safety Foundation: from 1000 ft above the touchdown point the approach should be stable — on the glide path, steady in speed and bank, without sustained excessive sink, in landing configuration. AeroACARS checks six points for this. Each check uses an average or a duration, never a single outlier.",
       "gate": {
         "heading": "The stability gate",
-        "body": "The gate window contains all approach samples between 0 and 1000 ft above the touchdown point (HAT). The last 3 seconds before TD (flare manoeuvre) are excluded. If the airport elevation isn't known, the system falls back to AGL filtering (the card shows which one)."
+        "body": "The gate window covers the approach samples up to 1000 ft above the touchdown point (HAT); the flare just before touchdown does not count. The glide path is measured between 1000 and 200 ft. If the field elevation is unknown, height above ground (AGL) is used — the card shows it."
       },
       "pill": {
         "heading": "The STABLE-GATE pill",
@@ -958,6 +963,11 @@
           "label": "Max V/S dev < 500 ft",
           "body": "Maximum single deviation from the 3° ILS below 500 ft HAT — this phase is safety critical. Even a single big spike shows up.",
           "thresholds": "< 200 fpm very close to profile · 200–400 fpm okay · > 400 fpm single spike below 500 ft"
+        },
+        "gleitpfad": {
+          "label": "Glide path Ø",
+          "body": "Average deviation from the glide path between 1000 and 200 ft, in dots as on the PFD (1 dot ≈ 0.35° on an ILS). Measured against the real glide path from the nav data. Without nav data (e.g. a visual approach) the check is skipped.",
+          "thresholds": "< 1 dot good · 1–2 dots fair · from 2 dots poor"
         }
       }
     },
@@ -1051,7 +1061,52 @@
       "anflug_unstable_gesamt": "Capped at 45 points: unstable approach (stable gate missed). A good touchdown does not offset it.",
       "anflug_nicht_gemessen": "Capped at 97 points: approach not measured in the gate — no top score without a measurement.",
       "harte_landung": "Capped at 40 points: hard landing from 1.75 g. Good rollout or touchdown point values do not offset it.",
-      "ueberlast": "Capped at 14 points: overload from 2.6 g."
+      "ueberlast": "Capped at 14 points: overload from 2.6 g.",
+      "vor_der_schwelle": "Capped at 40 points: touched down before the threshold. Good values elsewhere do not offset it.",
+      "overrun": "Capped at 40 points: rolled past the end of the runway (overrun).",
+      "neben_der_bahn": "Capped at 40 points: wheels off the runway. Good values elsewhere do not offset it.",
+      "mehrfach_hopser": "Capped at 40 points: two or more bounces. Airbus procedure would have called for a go-around.",
+      "teil_schlecht": "Capped at 60 points: {{teil}} was poor. The overall score is never better than the weakest part allows.",
+      "teil_mittel": "Capped at 80 points: {{teil}} was only fair. The overall score is never better than the weakest part allows.",
+      "ein_teil": "one part of the landing"
+    },
+    "gesamt": {
+      "smooth": "excellent",
+      "acceptable": "good",
+      "firm": "sufficient",
+      "hard": "poor",
+      "severe": "insufficient"
+    },
+    "gate": {
+      "grund_titel": "Why not stable:",
+      "label": {
+        "gleitpfad": "Glide path Ø",
+        "fahrt": "Speed σ",
+        "querneigung": "Bank σ",
+        "ruck": "Sink-rate jerk",
+        "sinken": "Sink rate",
+        "konfiguration": "Landing config"
+      },
+      "einheit": {
+        "gleitpfad": "dots",
+        "fahrt": "kt",
+        "querneigung": "°",
+        "ruck": "fpm"
+      },
+      "wert": {
+        "sinken_ok": "ok",
+        "sinken_nein": "too high",
+        "konfiguration_ok": "complete",
+        "konfiguration_nein": "incomplete"
+      },
+      "grund": {
+        "gleitpfad": "Glide path: off by {{wert}} dots on average (good below {{grenze}})",
+        "fahrt": "Speed unsteady: scatter {{wert}} kt (good below {{grenze}})",
+        "querneigung": "Bank unsteady: scatter {{wert}}° (good below {{grenze}})",
+        "ruck": "Sink rate jumpy: {{wert}} fpm jerk (good below {{grenze}})",
+        "sinken": "Sink rate too high for more than 10 seconds",
+        "konfiguration": "Gear or flaps not in landing position at 1000 ft"
+      }
     }
   },
   "about": {

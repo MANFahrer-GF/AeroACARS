@@ -390,6 +390,10 @@ pub fn sub_alignment(input: &AlignmentInput) -> SubScoreEntry {
         grund,
         crate::band_from_points(punkte),
     )
+    // Score-Version 19: Anteil der Bahnhaelfte als Messwert — ueber 1,0
+    // stand das Fahrwerk neben der Bahn, das deckelt die Gesamtnote
+    // (`master_deckel`), unabhaengig davon, welches Wort die Begruendung nennt.
+    .mit_messwert(anteil)
 }
 
 #[cfg(test)]

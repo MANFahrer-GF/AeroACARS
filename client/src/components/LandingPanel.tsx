@@ -46,6 +46,7 @@ import {
   SOLLBAND_TOLERANZ_FPM,
 } from "../lib/anflugSollband";
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
+import { gateAus, gateGruende, gateUrteil, type GatePunkt } from "../lib/stableGate";
 
 // ---- Types (mirror storage::LandingRecord on the Rust side) -------------
 
@@ -480,6 +481,8 @@ export interface SubScoreEntry {
    *  Renderer alter Versionen ignorieren das Feld schweigend. Default
    *  bei pre-v0.10-Records: leeres Array. */
   extra?: string[];
+  /** Score-Version 19: Prüfliste des Stable Gate (nur `stability`). */
+  gate?: GatePunkt[] | null;
 }
 
 export interface ApproachSample {
@@ -502,21 +505,6 @@ export interface ApproachSample {
   gs_kt?: number | null;
 }
 
-/** v0.12.7: Flare-Score-Aufschlüsselung — der „Flare-Score" ist
- *  Endsink-Eimer + Flare-Bonus (1:1 lib.rs:13727-13745). Offengelegt,
- *  damit der Pilot nachvollziehen kann, woher die Punkte kommen
- *  (Pilot-Befund Michel/GSG: Score 40 neben „kein Flare" wirkte wirr). */
-function flareSubScores(
-  vsEnd?: number | null,
-  reduction?: number | null,
-): { endpoint: number; bonus: number; total: number } | null {
-  if (vsEnd == null || reduction == null) return null;
-  const endpoint =
-    vsEnd > -75 ? 100 : vsEnd > -150 ? 80 : vsEnd > -300 ? 60 : vsEnd > -500 ? 40 : 20;
-  const bonus =
-    reduction > 400 ? 20 : reduction > 200 ? 15 : reduction > 100 ? 10 : reduction > 50 ? 5 : 0;
-  return { endpoint, bonus, total: Math.max(0, Math.min(100, endpoint + bonus)) };
-}
 
 // ---- Score breakdown ---------------------------------------------------
 //
@@ -551,6 +539,11 @@ export interface SubScore {
   /** v0.10.0 — Warning-Wert (z.B. "pre_displaced_threshold") für die
    *  Warning-Pill. UI lookup: `landing.warn.<warning>`. */
   warning?: string;
+  /** Score-Version 19: Prüfliste des Stable Gate (nur `stability`). */
+  gate?: GatePunkt[] | null;
+  /** i18n-Schlüssel des Achsennamens aus dem Datensatz (z. B.
+   *  „landing.sub.runway_discipline" für die Bahn-Achse ab v2). */
+  label_key?: string | null;
 }
 
 // v0.5.47 — Sub-Score-Berechnung delegiert an die zentrale Lib.
@@ -587,6 +580,9 @@ function getSubScores(r: LandingRecord): SubScore[] {
         skipReason: s.reason,
         extra: s.extra ?? [],
         warning: s.warning,
+        gate: s.gate ?? null,
+        // Ohne den Schlüssel hieß die Bahndisziplin-Achse „Bahn-Auslastung".
+        label_key: s.label_key ?? null,
       };
     });
   }
@@ -921,7 +917,30 @@ export const DECKEL_MIT_TEXT: ReadonlySet<string> = new Set([
   "anflug_partial_gesamt",
   "anflug_unstable_gesamt",
   "anflug_nicht_gemessen",
+  // Score-Version 19: gefährliche Ereignisse (höchstens 40).
+  "vor_der_schwelle",
+  "overrun",
+  "neben_der_bahn",
+  "mehrfach_hopser",
 ]);
+
+/** Text zum Deckel-Grund der Gesamtnote. Ab Score-Version 19 nennen
+ *  `teil_mittel_<achse>` / `teil_schlecht_<achse>` den Teil, der die Note
+ *  begrenzt hat — ein Satz mit Platzhalter statt einer Zeile je Achse.
+ *  `null` für unbekannte Gründe (dann keine Zeile statt eines rohen
+ *  Schlüssels). */
+export function deckelText(
+  t: (k: string, o?: Record<string, unknown>) => string,
+  grund: string,
+): string | null {
+  if (DECKEL_MIT_TEXT.has(grund)) return t(`landing.deckel.${grund}`);
+  const m = /^teil_(mittel|schlecht)(?:_([a-z_]+))?$/.exec(grund);
+  if (!m) return null;
+  // Die Bahn-Achse heißt im v2-Pfad „Bahndisziplin" (label_key).
+  const achse = m[2] === "rollout" ? "runway_discipline" : m[2];
+  const teil = achse ? t(`landing.sub.${achse}`) : t("landing.deckel.ein_teil");
+  return t(`landing.deckel.teil_${m[1]}`, { teil });
+}
 
 export function recordCategory(r: LandingRecord): LandingCategory | null {
   // Ohne Bewertung gibt es keine Kategorie.
@@ -946,8 +965,16 @@ export function recordCategory(r: LandingRecord): LandingCategory | null {
  *  `aggregate_score_label()` produces. Since QS 2026-08-04 this is the ONE
  *  way the category word reaches the screen (overview list, chart, and the
  *  report headline all go through here), so the two can no longer drift. */
-export function rateCategoryWord(cat: LandingCategory): string {
-  return cat.toUpperCase();
+/** Wort der GESAMTNOTE zur Kategorie (Score-Version 19): „hervorragend /
+ *  gut / ausreichend / mangelhaft / ungenügend" statt „smooth … severe" —
+ *  die beschreiben einen Touchdown, nicht die Note (eine butterweiche
+ *  Landung nach instabilem Anflug hieß sonst „HARD"). Die Kategorie selbst
+ *  (Farben, Kennung im Datensatz) bleibt unverändert. */
+export function rateCategoryWord(
+  cat: LandingCategory,
+  t: (k: string) => string,
+): string {
+  return t(`landing.gesamt.${cat}`).toUpperCase();
 }
 
 // ---- VS Curve chart -----------------------------------------------------
@@ -1623,7 +1650,7 @@ function ScoreBreakdown({
   subs: SubScore[];
   record: LandingRecord;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // v0.11.0-dev: Pilot-Hilfe-Modal für den "Bahn-Auslastung"-Sub-Score.
   // Wird über den "🛬 Wie wird das berechnet?"-Button am Boden der
   // rollout-Card geöffnet. Andere Sub-Scores behalten ihren bestehenden
@@ -1691,7 +1718,10 @@ function ScoreBreakdown({
         // und ihre Extra-Zeilen sprach-lokalisiert aus den Record-Feldern.
         // Alt-v2-Records (< 3) zeigen den sprachneutralen Rust-`value`
         // bzw. die gespeicherten `extra`-Strings unverändert (Legacy).
-        const isV3Rollout = s.key === "rollout" && isRolloutV3(record);
+        // Score-Version 19: Bahndisziplin (label_key) ist die bewertete Bahn-
+        // Achse — dann der eingefrorene Wert, keine Auslastungs-Zeilen.
+        const bahndisziplin = s.label_key === "landing.sub.runway_discipline";
+        const isV3Rollout = s.key === "rollout" && isRolloutV3(record) && !bahndisziplin;
         const extraLines = isV3Rollout
           ? buildRolloutExtraLines(record, t)
           : (s.extra ?? []);
@@ -1708,10 +1738,14 @@ function ScoreBreakdown({
                 {achsenLabel(t, s)}
                 {/* v0.11.0-dev: kein i-Tooltip für rollout — der
                     "🛬 Wie wird das berechnet?"-Button am Boden öffnet
-                    bereits das ausführliche Modal. */}
-                {s.key !== "rollout" && (
+                    bereits das ausführliche Modal. Score-Version 19: die
+                    Bahndisziplin hat ihren eigenen i-Text statt des
+                    Auslastungs-Modals. */}
+                {s.key !== "rollout" ? (
                   <InfoBadge explanation={t(`landing.info.${s.key}`)} />
-                )}
+                ) : bahndisziplin ? (
+                  <InfoBadge explanation={t("landing.info.runway_discipline")} />
+                ) : null}
               </span>
               <span className="landing-subscore__points">{s.points} PTS</span>
             </div>
@@ -1742,6 +1776,17 @@ function ScoreBreakdown({
                 {t(`landing.warn.${s.warning}`)}
               </div>
             )}
+            {/* Score-Version 19: das Warum gleich unter dem Hinweis. */}
+            {s.key === "stability" && gateGruende(t, s.gate, i18n.language).length > 0 && (
+              <ul
+                data-testid="stabilitaet-gruende"
+                style={{ margin: "4px 0 0", paddingLeft: 18, fontSize: "0.75rem" }}
+              >
+                {gateGruende(t, s.gate, i18n.language).map((g) => (
+                  <li key={g}>{g}</li>
+                ))}
+              </ul>
+            )}
             {extraLines.length > 0 && (
               <ul
                 className="landing-subscore__extra"
@@ -1762,7 +1807,7 @@ function ScoreBreakdown({
             {/* v0.11.0-dev: Pilot-Hilfe-Button nur auf der rollout-Card.
                 Öffnet RunwayUtilizationHelpModal mit Formel, allen Bändern,
                 Heavy-Bonus, Pre-Displaced-Cap und Skip-Reasons. */}
-            {s.key === "rollout" && (
+            {s.key === "rollout" && !bahndisziplin && (
               <button
                 type="button"
                 onClick={() => setRunwayUtilHelpOpen(true)}
@@ -1805,7 +1850,8 @@ function CoachTip({ subs }: { subs: SubScore[] }) {
   return (
     <div
       className={`landing-coach landing-coach--${
-        worst.points >= 85 ? "good" : worst.points >= 65 ? "ok" : "bad"
+        // Bänder der Bewertung (band_from_points): ab 75 gut, ab 45 mittel.
+        worst.points >= 75 ? "good" : worst.points >= 45 ? "ok" : "bad"
       }`}
     >
       <div className="landing-coach__head">
@@ -2093,20 +2139,38 @@ function QuickFlags({ record }: { record: LandingRecord }) {
     });
   }
 
-  // OFF-CENTERLINE — > 5 m vom Centerline weg ist auffällig
-  if (record.runway_match && Math.abs(record.runway_match.centerline_distance_m) > 5) {
+  // Score-Version 19: Mittellinie, Anflug und gefährliche Ereignisse aus
+  // den eingefrorenen Teilnoten bzw. dem Deckel — keine eigenen Grenzen.
+  const gate = gateAus(record.sub_scores);
+  const ausrichtung = record.sub_scores?.find((x) => x.key === "alignment" && !x.skipped);
+  const gefahr = record.score_deckel;
+  if (gefahr === "vor_der_schwelle" || gefahr === "overrun" || gefahr === "neben_der_bahn") {
+    flags.push({ label: t(`landing.flag.${gefahr}`), tone: "err" });
+  }
+
+  // OFF-CENTERLINE — ab v19 aus der Ausrichtungs-Note (unter 75 Punkte),
+  // vorher > 5 m vom Centerline weg.
+  if (
+    gate || ausrichtung
+      ? ausrichtung != null && (ausrichtung.points ?? ausrichtung.score) < 75
+      : record.runway_match && Math.abs(record.runway_match.centerline_distance_m) > 5
+  ) {
     flags.push({
       label: t("landing.flag.off_centerline"),
       tone: "warn",
     });
   }
 
-  // UNSTABLE APPROACH — σ V/S > 400 (Score-Lib-Schwelle für "bad")
-  if ((record.approach_vs_stddev_fpm ?? 0) > 400) {
+  // ANFLUG — ab v19 das Stable-Gate-Urteil des Datensatzes; vorher
+  // σ V/S > 400 (Score-Lib-Schwelle für "bad").
+  const urteil = gateUrteil(gate);
+  if (gate ? urteil === "unstable" : (record.approach_vs_stddev_fpm ?? 0) > 400) {
     flags.push({
       label: t("landing.flag.unstable_approach"),
-      tone: "warn",
+      tone: gate ? "err" : "warn",
     });
+  } else if (urteil === "partial") {
+    flags.push({ label: t("landing.flag.partly_stable_approach"), tone: "warn" });
   }
 
   if (flags.length === 0) return null;
@@ -2163,7 +2227,7 @@ function LandingRateChart({ records }: { records: LandingRecord[] }) {
           {legendCats.map((cat) => (
             <span key={cat} className="landing-ov-chart__legend-item">
               <i className={`landing-ov-chart__swatch landing-ov-chart__swatch--${cat}`} />
-              {rateCategoryWord(cat)}
+              {rateCategoryWord(cat, t)}
             </span>
           ))}
         </div>
@@ -2508,7 +2572,7 @@ export function LandingReport({
   /** Bordbuch des Flugs (27.09.2026) — vorab geladen, der Druck wartet nicht. */
   bordbuch?: BordbuchEintrag | null;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const callsign = record.airline_icao
     ? displayCallsign(record.airline_icao, record.flight_number)
@@ -2546,17 +2610,20 @@ export function LandingReport({
       ? t("landing.report.accident_label")
       : kategorie == null
       ? t("landing.nicht_bewertbar.kurz")
-      : rateCategoryWord(kategorie);
+      : rateCategoryWord(kategorie, t);
 
   // Sub-Score-Balken: Farbe nach Punkten (grün / amber / rot).
   const barColor = (pts: number) =>
-    pts >= 80 ? "#22c55e" : pts >= 55 ? "#f59e0b" : "#ef4444";
+    // Bänder der Bewertung (band_from_points): ab 75 gut, ab 45 mittel.
+    pts >= 75 ? "#22c55e" : pts >= 45 ? "#f59e0b" : "#ef4444";
 
   const rm = record.runway_match;
 
   // v0.12.8-dev: Anflug-Stabilität — sichtbar wenn mindestens eines der
   // 7 Stability-v2-Felder vorhanden ist (alte PIREPs ohne sie zeigen die
   // "no_data"-Hint). Bools zählen nur als vorhanden wenn != null.
+  // Score-Version 19: Prüfliste des Stable Gate (falls vorhanden).
+  const reportGate = gateAus(record.sub_scores);
   const hasStability =
     record.approach_vs_jerk_fpm != null ||
     record.approach_bank_stddev_deg != null ||
@@ -2656,9 +2723,9 @@ export function LandingReport({
             )}
           </div>
           <div className="report-hero__label">{heroLabel}</div>
-          {record.score_deckel && DECKEL_MIT_TEXT.has(record.score_deckel) ? (
+          {record.score_deckel && deckelText(t, record.score_deckel) ? (
             <div className="report-hero__deckel">
-              {t(`landing.deckel.${record.score_deckel}`)}
+              {deckelText(t, record.score_deckel)}
             </div>
           ) : null}
         </div>
@@ -2760,7 +2827,25 @@ export function LandingReport({
           accent="#7c3aed"
         >
           {hasStability ? (
+            <>
             <div className="report-tiles">
+              {reportGate && (
+                <ReportTile
+                  label={t("landing.approach_stability_card.title")}
+                  value={t(`landing.approach_stability_card.pill_${gateUrteil(reportGate) ?? "stable"}`)}
+                />
+              )}
+              {reportGate?.find((p) => p.key === "gleitpfad")?.wert != null && (
+                <ReportTile
+                  label={t("landing.gate.label.gleitpfad")}
+                  value={`${reportGate
+                    .find((p) => p.key === "gleitpfad")!
+                    .wert!.toLocaleString(i18n.language, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })} ${t("landing.gate.einheit.gleitpfad")}`}
+                />
+              )}
               {record.approach_vs_jerk_fpm != null && (
                 <ReportTile
                   label={t(
@@ -2785,7 +2870,7 @@ export function LandingReport({
                   value={fmtNumber(record.approach_ias_stddev_kt, 1, "kt")}
                 />
               )}
-              {record.approach_vs_deviation_fpm != null && (
+              {!reportGate && record.approach_vs_deviation_fpm != null && (
                 <ReportTile
                   label={(() => {
                     const gs = record.runway_match?.glideslope_angle_deg;
@@ -2802,7 +2887,7 @@ export function LandingReport({
                   value={fmtNumber(record.approach_vs_deviation_fpm, 0, "fpm")}
                 />
               )}
-              {record.approach_max_vs_deviation_below_500_fpm != null && (
+              {!reportGate && record.approach_max_vs_deviation_below_500_fpm != null && (
                 <ReportTile
                   label={t(
                     "landing.approach_stability_card.tiles.max_vs_dev.label",
@@ -2847,6 +2932,14 @@ export function LandingReport({
                 />
               )}
             </div>
+            {reportGate && gateGruende(t, reportGate, i18n.language).length > 0 && (
+              <ul className="report-gate-gruende">
+                {gateGruende(t, reportGate, i18n.language).map((g) => (
+                  <li key={g}>{g}</li>
+                ))}
+              </ul>
+            )}
+          </>
           ) : (
             <div className="report-empty">
               {t("landing.report.no_data")}
@@ -3450,7 +3543,7 @@ export function LandingDetail({
               ? t("landing.accident.primary_label")
               : record.score_numeric == null
               ? t("landing.nicht_bewertbar.kurz", { defaultValue: "nicht bewertbar" })
-              : rateCategoryWord(recordCategory(record) ?? "firm")}
+              : rateCategoryWord(recordCategory(record) ?? "firm", t)}
             {record.score_numeric != null ? <>{" "}· {record.score_numeric}/100</> : null} ·{" "}
             {fmtDateTime(record.touchdown_at)}
             {isPreview && (
@@ -3460,6 +3553,15 @@ export function LandingDetail({
               <span className="landing-best-badge">★ {t("landing.new_best")}</span>
             )}
           </div>
+          {/* Score-Version 19: warum die Note gedeckelt ist — auf dem
+              Bildschirm, nicht nur im PDF (vorher nur dort). */}
+          {record.accident !== true &&
+            record.score_deckel &&
+            deckelText(t, record.score_deckel) && (
+              <div className="landing-headline__deckel" data-testid="kopf-deckel">
+                {deckelText(t, record.score_deckel)}
+              </div>
+            )}
           {record.aircraft_title && (
             <div className="landing-headline__aircraft">
               {record.aircraft_title}
@@ -3680,6 +3782,7 @@ export function LandingDetail({
         }
         simKind={record.sim_kind}
         glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
+        gate={gateAus(record.sub_scores)}
       />
       {/* Lernpaket AP4/AP5: Gleitpfad + Anflugruhe als Info-Zeilen,
           ohne Note und ohne Farbband. */}
@@ -3747,30 +3850,16 @@ export function LandingDetail({
           </h3>
           <div className="landing-flare">
             <div className="landing-flare__score">
-              <div className="landing-flare__score-num" data-band={
-                record.flare_quality_score >= 80 ? "good" :
-                record.flare_quality_score >= 60 ? "ok" : "bad"
-              }>
+              {/* Score-Version 19: kein Teil der Note — keine Ampel, keine
+                  Punkte-Aufschlüsselung, nur der Wert zur Einordnung. */}
+              <div className="landing-flare__score-num">
                 {record.flare_quality_score}
               </div>
               <div className="landing-flare__score-label">
                 {t("landing.flare_score")}
               </div>
               <div className="landing-flare__score-hint">
-                {(() => {
-                  const bd = flareSubScores(
-                    record.vs_at_flare_end_fpm,
-                    record.flare_reduction_fpm,
-                  );
-                  if (!bd) return t("landing.flare_score_hint");
-                  // v0.12.7: Aufschlüsselung statt statischem Hinweis.
-                  return t("landing.flare_breakdown", {
-                    vs: Math.round(record.vs_at_flare_end_fpm ?? 0),
-                    ep: bd.endpoint,
-                    red: Math.round(record.flare_reduction_fpm ?? 0),
-                    bonus: bd.bonus,
-                  });
-                })()}
+                {t("landing.flare_score_hint")}
               </div>
             </div>
             <dl className="landing-keyvals landing-flare__metrics">

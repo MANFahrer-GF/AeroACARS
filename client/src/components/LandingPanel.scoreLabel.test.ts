@@ -44,9 +44,11 @@ describe("recordCategory — eine Quelle fuer Uebersicht und Bericht", () => {
     // Beide Anzeigestellen gehen durch dieselben zwei Funktionen — hier
     // nachgestellt fuer den real gemessenen Fall (88 Punkte, Note A).
     const r = rec("smooth", 88);
-    const uebersicht = rateCategoryWord(recordCategory(r));
-    const bericht = rateCategoryWord(recordCategory(r));
-    expect(uebersicht).toBe("SMOOTH");
+    // Score-Version 19: das Wort der Gesamtnote kommt aus `landing.gesamt.*`.
+    const t = (k: string) => k;
+    const uebersicht = rateCategoryWord(recordCategory(r)!, t);
+    const bericht = rateCategoryWord(recordCategory(r)!, t);
+    expect(uebersicht).toBe("LANDING.GESAMT.SMOOTH");
     expect(bericht).toBe(uebersicht);
   });
 });

@@ -19,7 +19,6 @@
 import { useTranslation } from "react-i18next";
 import type { LandingRecord, LandingProfilePoint } from "./LandingPanel";
 import {
-  T_VS_SMOOTH_FPM,
   T_VS_FIRM_FPM,
   T_VS_HARD_FPM,
   T_VS_SEVERE_FPM,
@@ -193,10 +192,15 @@ export function pickCoachingTip(args: {
 /// hartcodierte 200/400/600/1000 hier, jetzt importiert).
 export type Tone = "good" | "neutral" | "warn" | "err" | "err-severe";
 
+/// Score-Version 19: „gut" bis zur Oberkante des Zielkorridors — die
+/// Sinkraten-Achse gibt bis 250 fpm volle Punkte (sub_landing_rate.rs,
+/// `VS_TARGET_CORRIDOR_TOP_FPM`); 200–250 fpm erschien vorher „neutral".
+const VS_KORRIDOR_OBEN_FPM = 250;
+
 export function vsTone(vs: number | null | undefined): Tone | null {
   if (vs == null) return null;
   const abs = Math.abs(vs);
-  if (abs < T_VS_SMOOTH_FPM) return "good";
+  if (abs < VS_KORRIDOR_OBEN_FPM) return "good";
   if (abs < T_VS_FIRM_FPM) return "neutral";
   if (abs < T_VS_HARD_FPM) return "warn";
   if (abs < T_VS_SEVERE_FPM) return "err";

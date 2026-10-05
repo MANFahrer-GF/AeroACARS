@@ -10,14 +10,15 @@
 import { useTranslation } from "react-i18next";
 import { Button, Modal } from "./ui";
 
+// Score-Version 19: sechs Prüfungen, Gleitpfad zuerst. Die beiden
+// Sinkraten-Abweichungen gegen das 3°-Ideal zählen nicht mehr (GSG1709).
 const TILE_KEYS = [
-  "vs_jerk",
-  "bank_sigma",
+  "gleitpfad",
   "ias_sigma",
+  "bank_sigma",
+  "vs_jerk",
   "sink_rate",
   "landing_config",
-  "vs_vs_ils",
-  "max_vs_dev",
 ] as const;
 
 interface Props {

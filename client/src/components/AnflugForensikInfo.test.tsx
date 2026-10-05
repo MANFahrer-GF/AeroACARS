@@ -59,7 +59,7 @@ describe("AnflugForensikInfo", () => {
     expect(t).toContain("500–200 ft: im Mittel 0,6, größte −1,3 Dots");
     expect(t).toContain("Bezug: ILS-Gleitweg (Navigraph) · 3,0° · TCH 50 ft");
     expect(t).toContain("1 Dot = 0,35°");
-    expect(t).toContain("fließt nicht in die Note ein");
+    expect(t).toContain("zählt ab AeroACARS 1.9.26 zum Stable Gate");
     // Vollständig erfasst → kein Hinweis, kein Sim-Boden-Hinweis.
     expect(t).not.toContain("erfasst ab");
     expect(t).not.toContain("Boden des Simulators");

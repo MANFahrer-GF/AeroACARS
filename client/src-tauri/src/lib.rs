@@ -24630,9 +24630,9 @@ fn build_pirep_payload(
     fill_v2_rollout_fields(&mut scoring_input, &stats, effective_arr_icao);
     let payload_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
     let aggregate_master = landing_scoring::aggregate_master_score(&payload_sub_scores);
-    let payload_landing_score = aggregate_master
-        .map(|m| m as i32)
-        .or_else(|| stats.landing_score.map(|s| s.numeric()));
+    // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
+    // keinen Deckel. Ohne Gesamtnote (keine Sinkrate) gibt es keine Note.
+    let payload_landing_score = aggregate_master.map(|m| m as i32);
     aeroacars_mqtt::PirepPayload {
         ts: Utc::now().timestamp_millis(),
         // v0.11.1: Pilot-Client-Version mitsenden
@@ -24675,7 +24675,7 @@ fn build_pirep_payload(
         landing_score_label: payload_landing_score
             .map(|s| aggregate_score_label(s.clamp(0, 100) as u8).to_string()),
         landing_score_grade: payload_landing_score.map(|s| letter_grade(s).to_string()),
-        // Nur wenn die Note aus dem Aggregat stammt (nicht aus dem
+        // Nur wenn es eine Gesamtnote gibt (seit Score-Version 19 ohne
         // Touchdown-Rückfall) und der Deckel sie wirklich gesenkt hat.
         landing_score_deckel: aggregate_master
             .and_then(|_| landing_scoring::master_deckel_wirksam(&payload_sub_scores))
@@ -26964,6 +26964,23 @@ fn compute_aggregate_master_score(
 /// Mapping jetzt: A+/A → smooth · B+/B → acceptable · C/D → firm ·
 /// F → hard (bzw. severe unter 15). Die PUNKTE aendern sich nicht, nur
 /// das Wort daneben.
+/// Wort der Gesamtnote fuer phpVMS-Feld und Notizen (Englisch wie bisher die
+/// Klassenwoerter dort). Dieselben Schwellen wie [`aggregate_score_label`];
+/// die Oberflaeche zeigt es uebersetzt (`landing.gesamt.*`).
+fn gesamtnote_wort(numeric: i32) -> &'static str {
+    if numeric >= 88 {
+        "excellent"
+    } else if numeric >= 75 {
+        "good"
+    } else if numeric >= 50 {
+        "sufficient"
+    } else if numeric >= 15 {
+        "poor"
+    } else {
+        "insufficient"
+    }
+}
+
 fn aggregate_score_label(aggregate: u8) -> &'static str {
     if aggregate >= 88 {
         "smooth"
@@ -26997,10 +27014,49 @@ pub(crate) struct LandingVerdict {
 }
 
 impl LandingVerdict {
-    /// "A (smooth) — 92/100" — das Format, das phpVMS-Feld und Notizen teilen.
+    /// "A (excellent) — 92/100" — das Format, das phpVMS-Feld und Notizen
+    /// teilen. Score-Version 19: das Wort beschreibt die GESAMTNOTE, nicht
+    /// den Touchdown (vorher „F (hard)" fuer eine butterweiche Landung nach
+    /// instabilem Anflug). `label` bleibt die Kennung fuer Farben/Webapp.
     fn headline(&self) -> String {
-        format!("{} ({}) — {}/100", self.grade, self.label, self.numeric)
+        format!(
+            "{} ({}) — {}/100",
+            self.grade,
+            gesamtnote_wort(self.numeric),
+            self.numeric
+        )
     }
+}
+
+/// Die Messwerte hinter dem Anflug-Urteil (STABLE/PARTIAL/UNSTABLE) — EINE
+/// Quelle fuer Note, Deckel und `approach_stable_at_gate` im Payload.
+/// Gerechnet wird NUR in `landing_scoring::anflug_urteil`.
+///
+/// Score-Version 19: Gleitpfad (Durchschnitt in Dots, 1000–200 ft) statt der
+/// beiden Sinkraten-Abweichungen gegen eine ideale 3°-Sinkrate (GSG1709).
+fn anflug_werte(stats: &FlightStats) -> landing_scoring::anflug_urteil::AnflugWerte {
+    landing_scoring::anflug_urteil::AnflugWerte {
+        vs_jerk_fpm: stats.approach_vs_jerk_fpm,
+        // Dieselbe Zahl wie Karte und Stabilitaetsachse (v2 vor Legacy).
+        bank_stddev_deg: stats.canonical_bank_stddev_deg(),
+        ias_stddev_kt: stats.approach_ias_stddev_kt,
+        excessive_sink: stats.approach_excessive_sink,
+        stable_config: stats.approach_stable_config,
+        gleitpfad_dots: stats
+            .anflug_forensik
+            .gleitpfad
+            .as_ref()
+            .and_then(|g| g.gesamt.as_ref())
+            .map(|t| t.mittel_abs_dots),
+    }
+}
+
+/// `approach_stable_at_gate` fuer Payloads: dasselbe Urteil wie die Note
+/// (vorher eine eigene, lockerere Pruefung — bei 249 Landungen „stabil",
+/// waehrend die Note „teilweise" sagte).
+fn anflug_stabil_am_gate(stats: &FlightStats) -> Option<bool> {
+    landing_scoring::anflug_urteil::anflug_urteil(&anflug_werte(stats))
+        .map(|u| u == landing_scoring::anflug_urteil::AnflugUrteil::Stable)
 }
 
 fn canonical_landing_verdict(
@@ -27008,18 +27064,17 @@ fn canonical_landing_verdict(
     stats: &FlightStats,
     effective_arr_icao: &str,
 ) -> Option<LandingVerdict> {
-    let touchdown_class = stats.landing_score?;
-    let aggregate = compute_aggregate_master_score(
+    stats.landing_score?;
+    // Score-Version 19: ohne Gesamtnote kein Urteil — die Touchdown-Klasse
+    // als Rueckfall kannte keinen Deckel (Vorlage Punktesystem, Punkt 7).
+    let m = compute_aggregate_master_score(
         stats,
         muster_fuer_landung(stats, &flight.aircraft_icao),
         effective_arr_icao,
         &flight.arr_airport,
         flight.plan_strecke_nm,
-    );
-    let (label, numeric) = match aggregate {
-        Some(m) => (aggregate_score_label(m), m as i32),
-        None => (touchdown_class.label(), touchdown_class.numeric()),
-    };
+    )?;
+    let (label, numeric) = (aggregate_score_label(m), m as i32);
     Some(LandingVerdict {
         numeric,
         label,
@@ -27483,9 +27538,15 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// 45, nicht nur die Achse (Anlass QAF434, 05.10.2026: PARTIAL und trotzdem
 /// 96). Altbuchungen werden nicht neu gerechnet.
 ///
+/// **19 seit v1.9.26**: „Schwaechster Teil begrenzt" — gefaehrliches
+/// Ereignis (vor der Schwelle, Overrun, neben der Bahn, ab zwei Hopsern)
+/// hoechstens 40, ein Teil unter 45 Punkten hoechstens 60, unter 75
+/// hoechstens 80. Kein Rueckfall mehr auf die Touchdown-Klasse. Anlass
+/// QAF419 (vor der Schwelle, 92) und AIB424 (neben der Bahn, 91).
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 18;
+const SCORE_ALGORITHMUS_VERSION: u8 = 19;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -27559,16 +27620,7 @@ fn scoring_eingang(
         approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
         // v1.9.16: Messwerte hinter dem Anflug-Urteil (STABLE/PARTIAL/UNSTABLE).
         // Gerechnet wird NUR in `landing_scoring::anflug_urteil`.
-        anflug: landing_scoring::anflug_urteil::AnflugWerte {
-            vs_jerk_fpm: stats.approach_vs_jerk_fpm,
-            // Dieselbe Zahl wie Karte und Stabilitaetsachse (v2 vor Legacy).
-            bank_stddev_deg: stats.canonical_bank_stddev_deg(),
-            ias_stddev_kt: stats.approach_ias_stddev_kt,
-            excessive_sink: stats.approach_excessive_sink,
-            stable_config: stats.approach_stable_config,
-            vs_deviation_fpm: stats.approach_vs_deviation_fpm,
-            max_vs_deviation_below_500_fpm: stats.approach_max_vs_deviation_below_500_fpm,
-        },
+        anflug: anflug_werte(stats),
         rollout_distance_m: stats.rollout_distance_m.map(|m| m as f32),
         planned_burn_kg: stats.planned_burn_kg,
         actual_trip_burn_kg: actual_burn_for_record(stats),
@@ -28235,11 +28287,11 @@ where
         None if nicht_bewertbar.is_some() => None,
         None => return None,
     };
-    let touchdown_class = match stats.landing_score {
-        Some(k) => Some(k),
-        None if nicht_bewertbar.is_some() => None,
-        None => return None,
-    };
+    // Ohne Touchdown-Klasse kein Datensatz (ausser „nicht bewertbar") —
+    // die Klasse selbst ist seit Score-Version 19 kein Rueckfall mehr.
+    if stats.landing_score.is_none() && nicht_bewertbar.is_none() {
+        return None;
+    }
     // v0.7.1 P1.3-Fix + Round-2 P2-Fix: score_numeric UND score_label
     // beide aus dem Aggregate-Score, damit sie semantisch zueinander
     // passen. Vorher: "SMOOTH · 77/100" (Label aus Touchdown-Klasse,
@@ -28268,15 +28320,12 @@ where
     let score_deckel = aggregate_master
         .and(landing_scoring::master_deckel_wirksam(&computed_sub_scores))
         .map(|grund| grund.to_string());
-    // Ohne Touchdown-Klasse gibt es keinen Rückfall — und ohne Rate liefert
-    // `aggregate_master_score` ohnehin `None` ("lieber gar keine Note als
-    // eine geschenkte"). Beides zusammen heisst: keine Bewertung.
-    let score_numeric = aggregate_master
-        .map(|m| m as i32)
-        .or_else(|| touchdown_class.map(|k| k.numeric()));
-    let score_label = aggregate_master
-        .map(aggregate_score_label)
-        .or_else(|| touchdown_class.map(|k| k.label()));
+    // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
+    // keinen Deckel (Vorlage Punktesystem, Punkt 7). Ohne Rate liefert
+    // `aggregate_master_score` `None` ("lieber gar keine Note als eine
+    // geschenkte") — dann keine Bewertung.
+    let score_numeric = aggregate_master.map(|m| m as i32);
+    let score_label = aggregate_master.map(aggregate_score_label);
     let grade = score_numeric.map(letter_grade);
 
     // Compute fuel-efficiency once so the Landing tab doesn't have to
@@ -30935,8 +30984,8 @@ async fn flight_end(
             &flight.arr_airport,
             flight.plan_strecke_nm,
         )
-        .map(|m| m as i32)
-        .or_else(|| stats.landing_score.map(|s| s.numeric()));
+        // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse.
+        .map(|m| m as i32);
         let distance_nm = stats.distance_nm;
         let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
         // phpVMS does its own divert bookkeeping — but only if the PIREP carries
@@ -39577,7 +39626,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 approach_bank_stddev_filtered_deg: stats
                                     .approach_bank_stddev_filtered_deg,
                                 approach_runway_changed_late: stats.approach_runway_changed_late,
-                                approach_stable_at_gate: stats.approach_stable_at_gate,
+                                // Score-Version 19: dasselbe Urteil wie die Note.
+                                approach_stable_at_gate: anflug_stabil_am_gate(&stats),
                                 approach_window_sample_count: stats.approach_window_sample_count,
                                 approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
                                 approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
@@ -60186,7 +60236,7 @@ mod touch_and_go_go_around_tests {
         assert!(stats.pending_acars_logs[0].contains("Go-around"));
     }
 
-    /// Karte, Anflug-Urteil und Stabilitaetsachse muessen dieselben sieben
+    /// Karte, Anflug-Urteil und Stabilitaetsachse muessen dieselben sechs
     /// Werte aus denselben Feldern lesen (Bank-Streuung: v2 vor Legacy).
     /// Jedes Feld bekommt einen eigenen Wert — vertauschte Felder fallen auf.
     #[test]
@@ -60198,16 +60248,21 @@ mod touch_and_go_go_around_tests {
         stats.approach_ias_stddev_kt = Some(33.0);
         stats.approach_excessive_sink = Some(true);
         stats.approach_stable_config = Some(false);
-        stats.approach_vs_deviation_fpm = Some(44.0);
-        stats.approach_max_vs_deviation_below_500_fpm = Some(55.0);
+        // Score-Version 19: Gleitpfad statt der Sinkraten-Abweichungen.
+        stats.anflug_forensik.gleitpfad = Some(landing_scoring::anflug_forensik::AnflugGleitpfad {
+            gesamt: Some(landing_scoring::anflug_forensik::GleitpfadTor {
+                mittel_abs_dots: 0.66,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
         let a = scoring_eingang(&stats, None, None, None).anflug;
         assert_eq!(a.vs_jerk_fpm, Some(11.0));
         assert_eq!(a.bank_stddev_deg, Some(7.5), "Legacy, wenn v2 fehlt");
         assert_eq!(a.ias_stddev_kt, Some(33.0));
         assert_eq!(a.excessive_sink, Some(true));
         assert_eq!(a.stable_config, Some(false));
-        assert_eq!(a.vs_deviation_fpm, Some(44.0));
-        assert_eq!(a.max_vs_deviation_below_500_fpm, Some(55.0));
+        assert_eq!(a.gleitpfad_dots, Some(0.66));
         stats.approach_bank_stddev_filtered_deg = Some(1.0);
         let a = scoring_eingang(&stats, None, None, None).anflug;
         assert_eq!(a.bank_stddev_deg, Some(1.0), "v2 gewinnt");

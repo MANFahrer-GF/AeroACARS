@@ -145,7 +145,11 @@
       "bounce_light": "Rimbalzo leggero (senza penalità)",
       "bounce_light_with_height": "Rimbalzo leggero {{ft}} ft (senza penalità)",
       "off_centerline": "FUORI ASSE",
-      "unstable_approach": "AVVICINAMENTO INSTABILE"
+      "unstable_approach": "AVVICINAMENTO INSTABILE",
+      "partly_stable_approach": "AVVICINAMENTO PARZ. STABILE",
+      "vor_der_schwelle": "PRIMA DELLA SOGLIA",
+      "overrun": "OVERRUN",
+      "neben_der_bahn": "FUORI PISTA"
     },
     "fuel": "Carburante",
     "plan_burn": "Piano",
@@ -161,7 +165,7 @@
     "trip_burn": "Consumo viaggio",
     "zfw": "ZFW",
     "no_plan_hint": "Nessun valore pianificato disponibile — per questo volo non è stato caricato alcun OFP SimBrief. Al prossimo volo controlla il log delle attività per la voce „SimBrief OFP caricato\" all'avvio; se manca, il bid non aveva un piano o il fetch è fallito.",
-    "loadsheet_score": "Precisione del piano",
+    "loadsheet_score": "Aderenza al piano (nessun punteggio)",
     "score_breakdown": "Dettaglio punteggio",
     "coach_title": "Cosa migliorare al prossimo avvicinamento",
     "trend": "Trend",
@@ -202,16 +206,17 @@
     },
     "info": {
       "landing_rate": "Velocità verticale nell'istante del contatto, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo di 90–250 fpm è voluto — standard professionale, non «il più morbido possibile»: ben sotto i 90 fpm significa di solito una lunga richiamata che ritarda frenata e spoiler. Oltre 600 fpm di discesa sarebbe dovuta un'ispezione per atterraggio duro.\n\nDalla v1.6.3 la misura viene dall'andamento reale della quota nell'ultimo terzo di secondo prima del contatto, non più dal variometro del simulatore, lento come uno strumento di bordo reale. Se il simulatore blocca temporaneamente la lettura della quota, non si calcola nulla e si usa il valore dello strumento.",
-      "g_force": "Carico G massimo nella finestra di 1,5 secondi attorno al touchdown. 1,0 G = morbido, da 1,4 G chiaramente percepibile, da 1,7 G strutturalmente critico (soglia hard-landing FCOM Boeing 737).",
+      "g_force": "Carico G valutato al contatto. Sotto 1,20 g punteggio pieno, sotto 1,40 g 80, sotto 1,70 g 45, oltre 20 o 0. Da 1,75 g il punteggio totale è al massimo 40, da 2,6 g al massimo 14.",
       "bounces": "Quante volte l'aereo è risalito di oltre 5 ft dal suolo dopo il primo touchdown ed è tornato a toccare (atterraggi precedenti: da 15 ft). 0 = atterraggio pulito; ogni rimbalzo riduce il punteggio.",
-      "stability": "Valutazione di stabilità sullo stable-approach gate (0–1000 ft HAT, flare-cutoff ultimi 3 s prima del TD). Il backend calcola sette fattori: V/S jerk, bank σ (vector-filtered), IAS σ, violazione sink rate, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Dettagli e soglie nella scheda Stabilità avvicinamento più in basso.",
+      "stability": "Due cose: i punti di questa parte vengono dalla regolarità dell'avvicinamento (dispersione di rateo e inclinazione). Lo stable gate controlla sei punti da 1000 ft: sentiero (in media sotto 1 dot), velocità regolare, inclinazione regolare, rateo uniforme, nessuna discesa eccessiva per oltre 10 secondi, configurazione d'atterraggio a 1000 ft. Solo in parte stabile limita il punteggio totale a 80, instabile a 45. Dettagli e limiti nella scheda \"Stabilità dell'avvicinamento\".",
       "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua landata ha usato — misurata dalla soglia: prima la distanza fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Viene valutato quanta pista resta: sotto il 60 % è punteggio pieno, dal 90 % diventa stretto — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?“ per la spiegazione completa.",
       "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (block − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
-      "loadsheet": "Presenza dei dati di loadsheet (ZFW + TOW nel piano). Voli VFR/manuali senza dati dispatch saltano questo sub-score — nessuna penalità. La valutazione dettagliata piano-vs-reale (block fuel, TOW, LDW, ZFW) appare nell'area carburante come punteggio „Precisione del piano\".",
-      "score_section": "Sette sotto-punteggi da 0–100 punti (rateo di discesa, forza G, rimbalzi, stabilità in avvicinamento, utilizzo pista, punto di contatto, allineamento). Ogni riquadro mostra valore, punteggio e barra colorata (verde/giallo/rosso). La categoria più debole diventa il prossimo obiettivo nel consiglio del coach. Dalla v1.7.35 il carburante non viene più valutato — appare come analisi separata qui sotto.",
-      "runway_section": "Visualizzazione del touchdown sulla pista. Il simbolo blu indica il punto di tocco, la banda verde mostra la distanza di rollout fino all'uscita dalla pista (highspeed-exit a ~40 kt). Valori sotto: lunghezza totale, scostamento dall'asse, distanza dalla soglia, utilizzo pista in percentuale.",
-      "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio; ZFW = zero fuel weight. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Il punteggio „Precisione del piano\" sotto valuta le deviazioni Block/TOW/LDW/ZFW (penalty sopra >5 %, più pesante sopra >10 %).",
-      "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva."
+      "loadsheet": "Solo atterraggi più vecchi: presenza dei dati loadsheet (ZFW + TOW nel piano). Non fa più parte del punteggio dalla v1.7.12.",
+      "score_section": "Sette parti da 0–100 punti: rateo di discesa, forza G, rimbalzi, stabilità dell'avvicinamento, disciplina di pista, allineamento, punto di contatto. Il punteggio totale è la loro media ponderata, ma mai migliore di quanto consenta la parte più debole: una parte discreta al massimo 80, una scarsa al massimo 60, un evento pericoloso (prima della soglia, overrun, fuori pista, due o più rimbalzi, da 1,75 g) al massimo 40. Carburante e loadsheet sono solo indicativi e non contano.",
+      "runway_section": "Visualizzazione del contatto sulla pista. Il segno blu è il punto di contatto, la banda verde il rullaggio. Valori sotto a titolo indicativo: lunghezza totale, distanza dalla linea centrale, distanza oltre la soglia, utilizzo pista in percentuale. Valutati sono disciplina di pista, allineamento e punto di contatto (vedi le parti sopra).",
+      "fuel_section": "Block = carburante allo sblocco; TO fuel = al punto di decollo; LDG fuel = al contatto; TOW, LDW, ZFW = pesi. I valori pianificati vengono dall'OFP SimBrief. L'\"aderenza al piano\" sotto mostra gli scostamenti a titolo indicativo — non conta per il punteggio.",
+      "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva.",
+      "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun limitano il punteggio totale a 40."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -339,7 +344,7 @@
       "vorlauf": "Pre-gate",
       "gate": "Valutato",
       "flare": "Flare",
-      "tooltip": "Vengono valutati i campioni tra 0 e 1000 ft AGL. Gli ultimi 3 secondi prima del touchdown (manovra di flare) sono esclusi — il flare viene valutato nel proprio blocco."
+      "tooltip": "Evidenziata: la finestra del gate fino a 1000 ft. Il sentiero conta tra 1000 e 200 ft; la richiamata appena prima del contatto non fa parte del gate."
     },
     "skipped_label": "non valutato",
     "skipped_reason": {
@@ -352,9 +357,9 @@
       "no_planned_tow": "Nessun TOW pianificato — valutazione loadsheet saltata (nessuna penalità).",
       "missing_length": "Lunghezza pista non disponibile — utilizzo pista non calcolabile.",
       "missing_rollout_distance": "Distanza rollout non rilevata — utilizzo pista non valutato.",
-      "missing_td_distance": "Distanza TD dalla soglia non rilevata — utilizzo pista non valutato.",
-      "untrusted_geometry": "Geometria pista non affidabile — utilizzo pista non valutato.",
-      "off_airport_landing": "Atterraggio fuori aeroporto — nessuna pista nota, nessun utilizzo pista calcolato.",
+      "missing_td_distance": "Distanza del contatto dalla soglia non rilevata — questa parte non viene valutata.",
+      "untrusted_geometry": "Geometria pista non affidabile — questa parte non viene valutata.",
+      "off_airport_landing": "Nessuna pista nota (fuori aeroporto) — questa parte non viene valutata.",
       "invalid_lda": "Dati LDA inconsistenti (lunghezza pista inferiore al displaced threshold) — utilizzo pista saltato.",
       "fallback": "Non valutato.",
       "missing_centerline_offset": "Scostamento dall'asse non misurabile",
@@ -365,7 +370,7 @@
       "alignment_off_airport": "Nessuna pista identificata — allineamento non valutabile",
       "alignment_untrusted_geometry": "Dati pista non affidabili — allineamento non valutato",
       "not_applicable_for_category": "Non significativo per questo tipo (nessun asse pista)",
-      "invalid_geometry": "Misurazioni pista inutilizzabili (nessun valore valido) — utilizzo pista non valutato.",
+      "invalid_geometry": "Misure della pista inutilizzabili — questa parte non viene valutata.",
       "diverted": "Dirottato — è stata volata una rotta diversa da quella pianificata, quindi il confronto con l'OFP misura la deviazione, non il pilota.",
       "runway_width_unknown": "Per questa pista non è registrata alcuna larghezza — è il metro per la distanza laterale.",
       "track_width_unknown": "La carreggiata di questo modello non è registrata; senza di essa non si può determinare la posizione delle ruote.",
@@ -535,8 +540,8 @@
     "forensics_section": "Forensica touchdown (50 Hz)",
     "forensics_unavailable": "Buffer forensico non disponibile (pre-v0.5.39 o gap di campionamento)",
     "flare_section": "Qualità del flare",
-    "flare_score": "Punteggio flare",
-    "flare_score_hint": "Endpoint del rateo di discesa domina + bonus per riduzione. 100 = touchdown morbido.",
+    "flare_score": "Richiamata (nessun punteggio)",
+    "flare_score_hint": "A titolo indicativo: rateo a fine richiamata più un bonus per la riduzione. Non fa parte del punteggio d'atterraggio.",
     "flare_breakdown": "Sink finale {{vs}} fpm → {{ep}} pti · riduzione {{red}} fpm → +{{bonus}} pti",
     "flare_reduction": "Riduzione rateo di discesa",
     "flare_reduction_hint": "Di quanto il pilota ha ridotto il rateo di discesa prima del TD",
@@ -608,7 +613,7 @@
       "robust_section_title": "Statistiche robuste (resistenti ai picchi)",
       "robust_section_subtitle": "Mediana e 95° percentile filtrano picchi singoli del sim. Se sono notevolmente sotto al picco, il picco era uno spike — non un impatto reale.",
       "score_section_title": "Cosa valuta AeroACARS",
-      "score_section_subtitle": "Il master score privilegia la velocità verticale rispetto al G — V/S è ciò che le regole di manutenzione definiscono.",
+      "score_section_subtitle": "Rateo di discesa e forza G pesano uguale (3 su 13 quote ciascuno).",
       "tile_edge": "Edge (frame touchdown)",
       "tile_250ms": "Media 250 ms",
       "tile_500ms": "500 ms (picco)",
@@ -623,7 +628,7 @@
       "score_basis_sublabel": "Picco livellato EMA · metodo FOQA",
       "raw_peak_detail": "Picco grezzo 50 Hz: {{g}} G · frame singolo del sim, non valutato",
       "score_strut_force": "Forza normale carrello: {{force}} N",
-      "score_vs_leads": "Velocità verticale morbida (< 200 fpm) — master score non viene abbassato dal G. Errore pilota improbabile.",
+      "score_vs_leads": "Il rateo era morbido (< 200 fpm) — il picco G viene più probabilmente dal carrello o dal sim che dal pilota. Conta comunque: la forza G è una parte del punteggio.",
       "tip": {
         "sim_strut": "G elevato per compressione carrello del sim. La tua velocità verticale era morbida — nessun errore del pilota. Frequente su aerei GA piccoli dove il modello della molla del carrello è più duro della realtà.",
         "real_impact": "Impatto reale duro: V/S e G concordano entrambi su un valore alto. Flare prima, riduci la manetta prima.",
@@ -879,7 +884,7 @@
     },
     "anflug_forensik": {
       "titel": "Sentiero di discesa e stabilità dell'avvicinamento",
-      "ohne_note": "Solo come riferimento – non incide sul punteggio. 1 dot = {{dot}}°, «+» = sopra il sentiero.",
+      "ohne_note": "Il sentiero Ø conta per lo stable gate da AeroACARS 1.9.26 (buono sotto 1 dot); le fasce sono indicative. 1 dot = {{dot}}°, \"+\" = sopra il sentiero.",
       "gleitpfad_gesamt": "Sentiero di discesa 1000–200 ft: in media {{mittel}} dot, scostamento massimo {{max}} dot ({{ft}} ft) · {{proben}} punti di misura",
       "gleitpfad_tor": "{{tor}}: in media {{mittel}}, massimo {{max}} dot",
       "tor_1000_500": "1000–500 ft",
@@ -914,10 +919,10 @@
       "title": "Stabilità avvicinamento — cosa significano i valori?",
       "close_label": "Chiudi ✕",
       "close_aria": "Chiudi aiuto stabilità avvicinamento",
-      "intro": "Concetto stable-approach secondo FAA AC 120-71B: da 1000 ft sopra il punto di touchdown tutti i parametri di avvicinamento (rateo di discesa, bank, velocità, configurazione) devono essere in tolleranze strette e rimanervi. AeroACARS misura questa stabilità sample-per-sample sull'intero gate window e mostra sette valori.",
+      "intro": "Concetto di avvicinamento stabilizzato secondo FAA AC 120-71B e Flight Safety Foundation: da 1000 ft sopra il punto di contatto l'avvicinamento deve essere stabile — sul sentiero, regolare in velocità e inclinazione, senza discesa eccessiva prolungata, in configurazione d'atterraggio. AeroACARS controlla sei punti. Ogni controllo usa una media o una durata, mai un singolo valore anomalo.",
       "gate": {
         "heading": "Il gate di stabilità",
-        "body": "Il gate window contiene tutti i campioni di avvicinamento da 0 a 1000 ft sopra il punto di touchdown (HAT). Gli ultimi 3 secondi prima del TD (manovra di flare) sono esclusi. Se la quota dell'aeroporto non è nota, si passa al filtro AGL come fallback (la scheda lo indica)."
+        "body": "La finestra del gate comprende i campioni fino a 1000 ft sopra il punto di contatto (HAT); la richiamata appena prima del contatto non conta. Il sentiero viene misurato tra 1000 e 200 ft. Se l'elevazione dell'aeroporto è sconosciuta si usa l'altezza dal suolo (AGL) — la scheda lo indica."
       },
       "pill": {
         "heading": "La pill STABLE GATE",
@@ -958,6 +963,11 @@
           "label": "Max V/S dev < 500 ft",
           "body": "Deviazione massima singola dal 3° ILS sotto 500 ft HAT — questa fase è critica per la sicurezza. Anche un singolo spike grande appare.",
           "thresholds": "< 200 fpm molto vicino al profilo · 200–400 fpm ok · > 400 fpm spike singolo sotto 500 ft"
+        },
+        "gleitpfad": {
+          "label": "Sentiero Ø",
+          "body": "Scostamento medio dal sentiero tra 1000 e 200 ft, in dot come sul PFD (1 dot ≈ 0,35° su un ILS). Misurato rispetto al sentiero reale dei dati di navigazione. Senza dati (es. avvicinamento a vista) il controllo viene saltato.",
+          "thresholds": "< 1 dot buono · 1–2 dot discreto · da 2 dot scarso"
         }
       }
     },
@@ -1051,7 +1061,52 @@
       "anflug_unstable_gesamt": "Limitato a massimo 45 punti: avvicinamento instabile (stable gate mancato). Un buon contatto non lo compensa.",
       "anflug_nicht_gemessen": "Limitato a 97 punti: avvicinamento non misurato nel gate — senza misura niente punteggio massimo.",
       "harte_landung": "Limitato a massimo 40 punti: atterraggio duro da 1,75 g. Buoni valori di rullaggio o punto di contatto non lo compensano.",
-      "ueberlast": "Limitato a massimo 14 punti: sovraccarico da 2,6 g."
+      "ueberlast": "Limitato a massimo 14 punti: sovraccarico da 2,6 g.",
+      "vor_der_schwelle": "Limitato a massimo 40 punti: contatto prima della soglia. Buoni valori altrove non lo compensano.",
+      "overrun": "Limitato a massimo 40 punti: uscita oltre la fine della pista (overrun).",
+      "neben_der_bahn": "Limitato a massimo 40 punti: ruote fuori pista. Buoni valori altrove non lo compensano.",
+      "mehrfach_hopser": "Limitato a massimo 40 punti: due o più rimbalzi. Secondo la procedura Airbus sarebbe stata dovuta una riattaccata.",
+      "teil_schlecht": "Limitato a massimo 60 punti: {{teil}} era scarso. Il punteggio totale non è mai migliore di quanto consenta la parte più debole.",
+      "teil_mittel": "Limitato a massimo 80 punti: {{teil}} era solo discreto. Il punteggio totale non è mai migliore di quanto consenta la parte più debole.",
+      "ein_teil": "una parte dell’atterraggio"
+    },
+    "gesamt": {
+      "smooth": "eccellente",
+      "acceptable": "buono",
+      "firm": "sufficiente",
+      "hard": "scarso",
+      "severe": "insufficiente"
+    },
+    "gate": {
+      "grund_titel": "Perché non stabile:",
+      "label": {
+        "gleitpfad": "Sentiero Ø",
+        "fahrt": "Velocità σ",
+        "querneigung": "Inclinazione σ",
+        "ruck": "Strappo rateo",
+        "sinken": "Rateo di discesa",
+        "konfiguration": "Configurazione"
+      },
+      "einheit": {
+        "gleitpfad": "dot",
+        "fahrt": "kt",
+        "querneigung": "°",
+        "ruck": "fpm"
+      },
+      "wert": {
+        "sinken_ok": "ok",
+        "sinken_nein": "troppo alto",
+        "konfiguration_ok": "completa",
+        "konfiguration_nein": "incompleta"
+      },
+      "grund": {
+        "gleitpfad": "Sentiero: in media {{wert}} dot fuori (buono sotto {{grenze}})",
+        "fahrt": "Velocità irregolare: dispersione {{wert}} kt (buono sotto {{grenze}})",
+        "querneigung": "Inclinazione irregolare: dispersione {{wert}}° (buono sotto {{grenze}})",
+        "ruck": "Rateo di discesa a scatti: {{wert}} fpm di strappo (buono sotto {{grenze}})",
+        "sinken": "Rateo di discesa troppo alto per oltre 10 secondi",
+        "konfiguration": "Carrello o flap non in configurazione d’atterraggio a 1000 ft"
+      }
     }
   },
   "about": {

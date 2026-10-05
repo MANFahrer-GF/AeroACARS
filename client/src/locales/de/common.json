@@ -145,7 +145,11 @@
       "bounce_light": "Light bounce (score-frei)",
       "bounce_light_with_height": "Light bounce {{ft}} ft (score-frei)",
       "off_centerline": "ABSEITS DER MITTELLINIE",
-      "unstable_approach": "UNSTABILER ANFLUG"
+      "unstable_approach": "UNSTABILER ANFLUG",
+      "partly_stable_approach": "ANFLUG TEILWEISE STABIL",
+      "vor_der_schwelle": "VOR DER SCHWELLE",
+      "overrun": "OVERRUN",
+      "neben_der_bahn": "NEBEN DER BAHN"
     },
     "fuel": "Treibstoff",
     "plan_burn": "Plan",
@@ -161,7 +165,7 @@
     "trip_burn": "Trip Burn",
     "zfw": "ZFW",
     "no_plan_hint": "Keine SOLL-Werte verfügbar — für diesen Flug wurde kein SimBrief-OFP geladen. Achte beim nächsten Flug auf den Activity-Log-Eintrag „SimBrief OFP geladen“ beim Start; fehlt der, hatte der Bid keinen Plan oder der Fetch schlug fehl.",
-    "loadsheet_score": "Plan-Treue",
+    "loadsheet_score": "Plan-Treue (keine Note)",
     "score_breakdown": "Score-Aufschlüsselung",
     "coach_title": "Worauf du beim nächsten Anflug achten kannst",
     "trend": "Trend",
@@ -202,16 +206,17 @@
     },
     "info": {
       "landing_rate": "Vertikalgeschwindigkeit im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Der Zielkorridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich“: deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen und Spoiler-Ausfahren verzögert. Ab 600 fpm Sinken ist real eine Hard-Landing-Inspektion fällig.\n\nGemessen wird seit v1.6.3 aus dem tatsächlichen Höhenverlauf der letzten Drittelsekunde vor dem Aufsetzen, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators — der ist träge wie ein echtes Cockpit-Instrument. Steht die Höhe im Simulator zeitweise still, wird nicht gerechnet, sondern der Instrumentenwert genommen.",
-      "g_force": "Maximale G-Belastung im 1,5-Sekunden-Fenster um den Touchdown. 1,0 G = ruhig, ab 1,4 G deutlich spürbar, ab 1,7 G strukturkritisch (Boeing 737 FCOM Hard-Landing-Schwelle).",
+      "g_force": "Gewertete G-Last beim Aufsetzen. Unter 1,20 G volle Punkte, unter 1,40 G 80, unter 1,70 G 45, darüber 20 oder 0. Ab 1,75 G ist die Gesamtnote höchstens 40, ab 2,6 G höchstens 14.",
       "bounces": "Wie oft das Flugzeug nach dem ersten Aufsetzen wieder mehr als 5 ft über den Boden gestiegen und erneut aufgesetzt ist (ältere Landungen: ab 15 ft). 0 = sauber gesetzt; jeder Bounce drückt den Score.",
-      "stability": "Stabilitäts-Auswertung über das Stable-Approach-Gate (0–1000 ft HAT, Flare-Cutoff letzte 3 s vor TD). Backend rechnet sieben Faktoren: V/S-Jerk, Bank σ (vector-filtered), IAS σ, Sink-Rate-Verletzung, Landing-Config, V/S vs. 3°-ILS, Max V/S-Dev <500 ft. Details + Schwellwerte stehen in der Approach-Stability-Card weiter unten.",
+      "stability": "Zwei Dinge: Die Punkte dieser Achse kommen aus der Ruhe des Anflugs (Streuung von Sinkrate und Querneigung). Das Stable Gate prüft ab 1000 ft sechs Punkte: Gleitpfad (im Schnitt unter 1 Dot), ruhige Fahrt, ruhige Querneigung, gleichmäßige Sinkrate, kein zu starkes Sinken über 10 Sekunden, Landekonfiguration bei 1000 ft. Nur teilweise stabil begrenzt die Gesamtnote auf 80, instabil auf 45. Details und Grenzen in der Karte „Anflug-Stabilität\".",
       "rollout": "Anteil der nutzbaren Bahnlänge (LDA), den deine Landung gebraucht hat — gemessen ab der Schwelle: erst die Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Gewertet wird, wie viel Bahn danach noch übrig ist: unter 60 % gibt es die volle Punktzahl, ab 90 % wird es knapp — bei nasser Bahn riskant. Klick „🛬 Wie wird das berechnet?“ für die volle Erklärung.",
       "fuel": "Treue zum SimBrief-OFP-Trip-Burn. Vergleicht den tatsächlichen Verbrauch (Block − Landing-Fuel) gegen den geplanten Trip-Burn. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend); Minderverbrauch wird NICHT bestraft. Bei >15 % unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
-      "loadsheet": "Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Im VFR-/Manual-Mode ohne Dispatch-Daten wird dieser Sub-Score übersprungen — kein 0-Penalty. Die detaillierte Plan-vs-Real-Bewertung (Block-Fuel, TOW, LDW, ZFW) siehst du im Treibstoff-Bereich als „Plan-Treue\"-Score.",
-      "score_section": "Sieben Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, Aufsetzpunkt, Ausrichtung). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen. Der Sprit wird seit v1.7.35 nicht mehr benotet — er steht als eigene Auswertung darunter.",
-      "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band zeigt die Ausrollstrecke bis zum Abrollen von der Bahn (Highspeed-Exit bei ~40 kt). Werte unten: Gesamtlänge, Centerline-Abweichung, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent.",
-      "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (Leergewicht + Last + TO Fuel); LDW = Landing Weight; ZFW = Zero Fuel Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Der „Plan-Treue\"-Score unten bewertet die Abweichungen Block/TOW/LDW/ZFW (Penalty ab >5 %, schwerer ab >10 %).",
-      "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse, die Kachel „Seitenwind“ daneben mit dem Wind bezogen auf die Flugzeugnase. Beide Zahlen stimmen — sie beziehen sich nur auf verschiedene Richtungen, und zwischen diesen liegt genau der Vorhaltewinkel."
+      "loadsheet": "Nur bei älteren Landungen: Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Zählt seit v1.7.12 nicht mehr zur Note.",
+      "score_section": "Sieben Teile à 0–100 Punkte: Sinkrate, G-Kraft, Hopser, Anflug-Stabilität, Bahndisziplin, Ausrichtung, Aufsetzpunkt. Die Gesamtnote ist ihr gewichteter Durchschnitt, aber nie besser, als der schwächste Teil erlaubt: ein mittlerer Teil höchstens 80, ein schlechter höchstens 60, ein gefährliches Ereignis (vor der Schwelle, Overrun, neben der Bahn, ab zwei Hopsern, ab 1,75 g) höchstens 40. Sprit und Loadsheet stehen zur Einordnung da und zählen nicht.",
+      "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band die Ausrollstrecke. Werte unten zur Einordnung: Gesamtlänge, Abstand zur Mittellinie, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent. Bewertet werden Bahndisziplin, Ausrichtung und Aufsetzpunkt (siehe Teilnoten oben).",
+      "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = am Startpunkt; LDG Fuel = bei Touchdown; TOW, LDW, ZFW = Gewichte. Plan-Werte stammen aus dem SimBrief-OFP. Die „Plan-Treue\" unten zeigt die Abweichungen zur Einordnung — sie zählt nicht zur Note.",
+      "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse, die Kachel „Seitenwind“ daneben mit dem Wind bezogen auf die Flugzeugnase. Beide Zahlen stimmen — sie beziehen sich nur auf verschiedene Richtungen, und zwischen diesen liegt genau der Vorhaltewinkel.",
+      "runway_discipline": "Bahndisziplin: wie weit dein äußeres Rad beim Ausrollen vom Bahnrand entfernt blieb. Mittig (bis 75 % der halben Bahnbreite) volle Punkte, weiter außen 85, am Rand 55, mit Rädern daneben 20, über das Bahnende hinaus (Overrun) 0. Neben der Bahn oder Overrun begrenzt die Gesamtnote auf höchstens 40."
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
@@ -339,7 +344,7 @@
       "vorlauf": "Vorlauf",
       "gate": "Bewertet",
       "flare": "Flare",
-      "tooltip": "Bewertet werden Anflug-Samples zwischen 0 und 1000 ft AGL. Die letzten 3 Sekunden vor Touchdown (Flare-Manöver) sind ausgeschlossen — der Flare wird im separaten Flare-Block bewertet."
+      "tooltip": "Hinterlegt: das Gate-Fenster bis 1000 ft. Der Gleitpfad zählt zwischen 1000 und 200 ft; der Flare kurz vor dem Aufsetzen gehört nicht zum Gate."
     },
     "skipped_label": "nicht bewertet",
     "skipped_reason": {
@@ -352,9 +357,9 @@
       "no_planned_tow": "Kein TOW geplant — Loadsheet-Wertung übersprungen (kein Penalty).",
       "missing_length": "Bahnlänge nicht verfügbar — Bahn-Auslastung kann nicht berechnet werden.",
       "missing_rollout_distance": "Rollout-Distanz nicht erfasst — Bahn-Auslastung wird nicht bewertet.",
-      "missing_td_distance": "TD-Distanz zur Schwelle nicht erfasst — Bahn-Auslastung wird nicht bewertet.",
-      "untrusted_geometry": "Bahn-Geometrie nicht vertrauenswürdig — Bahn-Auslastung wird nicht bewertet.",
-      "off_airport_landing": "Off-Airport-Landung — keine bekannte Bahn, keine Bahn-Auslastung berechnet.",
+      "missing_td_distance": "Aufsetzpunkt zur Schwelle nicht erfasst — dieser Teil wird nicht bewertet.",
+      "untrusted_geometry": "Bahn-Geometrie nicht vertrauenswürdig — dieser Teil wird nicht bewertet.",
+      "off_airport_landing": "Keine bekannte Bahn (Off-Airport) — dieser Teil wird nicht bewertet.",
       "invalid_lda": "LDA-Daten inkonsistent (Bahnlänge kleiner als Displaced-Threshold) — Bahn-Auslastung übersprungen.",
       "fallback": "Nicht bewertet.",
       "missing_centerline_offset": "Kein Versatz zur Mittellinie messbar",
@@ -365,7 +370,7 @@
       "alignment_off_airport": "Keine erkannte Bahn — Ausrichtung nicht bewertbar",
       "alignment_untrusted_geometry": "Bahndaten nicht verlässlich — Ausrichtung nicht bewertet",
       "not_applicable_for_category": "Für dieses Muster nicht sinnvoll (keine Bahnachse)",
-      "invalid_geometry": "Bahn-Messwerte unbrauchbar (kein gültiger Zahlenwert) — Bahn-Auslastung nicht bewertet.",
+      "invalid_geometry": "Bahn-Messwerte unbrauchbar — dieser Teil wird nicht bewertet.",
       "diverted": "Ausgewichen — es wurde eine andere Strecke geflogen als geplant, ein Vergleich mit dem OFP misst den Umweg statt den Piloten.",
       "runway_width_unknown": "Für diese Bahn ist keine Breite hinterlegt — sie ist der Maßstab für den seitlichen Abstand.",
       "track_width_unknown": "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen.",
@@ -535,8 +540,8 @@
     "forensics_section": "Touchdown-Forensik (50 Hz)",
     "forensics_unavailable": "Forensik-Buffer nicht verfügbar (Pre-v0.5.39 oder Sample-Lücke)",
     "flare_section": "Flare-Qualität",
-    "flare_score": "Flare-Score",
-    "flare_score_hint": "Endpoint-Sinkrate dominiert + Bonus für Sinkraten-Reduktion. 100 = sanfter Touchdown.",
+    "flare_score": "Abfangbogen (keine Note)",
+    "flare_score_hint": "Zur Einordnung: Sinkrate am Ende des Abfangens plus Bonus fürs Verringern. Zählt nicht zur Landebewertung.",
     "flare_breakdown": "Endsink {{vs}} fpm → {{ep}} Pkt · Reduktion {{red}} fpm → +{{bonus}} Pkt",
     "flare_reduction": "Sinkraten-Reduktion",
     "flare_reduction_hint": "Wieviel der Pilot die Sinkrate vor TD reduziert hat (positiv = Flare hat geholfen)",
@@ -608,7 +613,7 @@
       "robust_section_title": "Robuste Statistiken (Spike-resistent)",
       "robust_section_subtitle": "Median und 95-Percentile filtern einzelne Sim-Frame-Spikes raus. Wenn diese deutlich kleiner sind als der Peak, war der Peak ein Spike — kein echter Impact.",
       "score_section_title": "Was AeroACARS scort",
-      "score_section_subtitle": "Master-Score bevorzugt Sinkrate über G — V/S ist das was Wartungs-Bestimmungen definieren.",
+      "score_section_subtitle": "Sinkrate und G-Kraft zählen gleich stark (je 3 von 13 Anteilen).",
       "tile_edge": "Edge (Aufsetz-Frame)",
       "tile_250ms": "250 ms Mittel",
       "tile_500ms": "500 ms (Peak)",
@@ -623,7 +628,7 @@
       "score_basis_sublabel": "EMA-geglätteter Peak · FOQA-Methode",
       "raw_peak_detail": "Roh-Peak 50 Hz: {{g}} G · Sim-Einzelbild, nicht bewertet",
       "score_strut_force": "Fahrwerks-Normalkraft: {{force}} N",
-      "score_vs_leads": "Sinkrate war smooth (< 200 fpm) — Master-Score wird nicht durch G heruntergezogen. Pilotenfehler unwahrscheinlich.",
+      "score_vs_leads": "Die Sinkrate war sanft (< 200 fpm) — die G-Spitze kam eher vom Fahrwerk oder Sim als vom Piloten. Sie zählt trotzdem: G-Kraft ist ein eigener Teil der Note.",
       "tip": {
         "sim_strut": "Hohe G durch Sim-Fahrwerks-Compression. Deine Sinkrate war smooth — kein Pilotenfehler. Das passiert besonders bei kleinen GA-Aircraft, deren Fahrwerks-Federn der Sim oft härter modelliert als die Realität.",
         "real_impact": "Echter harter Impact: V/S und G stimmen beide hoch überein. Mehr Flare vor Aufsetzen, früher Throttle reduzieren.",
@@ -879,7 +884,7 @@
     },
     "anflug_forensik": {
       "titel": "Gleitpfad und Anflugruhe",
-      "ohne_note": "Zur Einordnung – fließt nicht in die Note ein. 1 Dot = {{dot}}°, „+“ = über dem Pfad.",
+      "ohne_note": "Gleitpfad Ø zählt ab AeroACARS 1.9.26 zum Stable Gate (gut unter 1 Dot); die Tore sind zur Einordnung. 1 Dot = {{dot}}°, „+“ = über dem Pfad.",
       "gleitpfad_gesamt": "Gleitpfad 1000–200 ft: im Mittel {{mittel}} Dots, größte Abweichung {{max}} Dots ({{ft}} ft) · {{proben}} Messpunkte",
       "gleitpfad_tor": "{{tor}}: im Mittel {{mittel}}, größte {{max}} Dots",
       "tor_1000_500": "1000–500 ft",
@@ -914,10 +919,10 @@
       "title": "Approach-Stability — was bedeuten die Kennzahlen?",
       "close_label": "Schließen ✕",
       "close_aria": "Approach-Stability-Hilfe schließen",
-      "intro": "Stable-Approach-Konzept nach FAA AC 120-71B: ab 1000 ft über dem Aufsetzpunkt sollen alle Anflug-Parameter (Sinkrate, Bank, Speed, Konfiguration) in engen Toleranzen sein und bleiben. AeroACARS misst diese Stabilität sample-basiert über das gesamte Gate-Window und zeigt sieben Kennzahlen.",
+      "intro": "Stable-Approach-Konzept nach FAA AC 120-71B und Flight Safety Foundation: ab 1000 ft über dem Aufsetzpunkt soll der Anflug stabil sein — auf dem Gleitpfad, ruhig in Fahrt und Querneigung, ohne anhaltend zu starkes Sinken, in Landekonfiguration. AeroACARS prüft dafür sechs Punkte. Jede Prüfung beruht auf einem Durchschnitt oder einer Dauer, nie auf einem einzelnen Ausreißer.",
       "gate": {
         "heading": "Das Stability-Gate",
-        "body": "Das Gate-Window umfasst alle Approach-Samples von 0 bis 1000 ft Höhe über dem Aufsetzpunkt (HAT) — die letzten 3 Sekunden vor TD (Flare-Manöver) sind ausgeschlossen. Wenn die Airport-Elevation nicht bekannt ist, wird auf AGL als Fallback gewechselt (Pill in der Card zeigt es)."
+        "body": "Das Gate-Fenster umfasst die Anflug-Messpunkte bis 1000 ft über dem Aufsetzpunkt (HAT); der Flare kurz vor dem Aufsetzen zählt nicht. Der Gleitpfad wird zwischen 1000 und 200 ft gemessen. Ist die Platzhöhe unbekannt, wird über Grund (AGL) gerechnet — die Karte zeigt es an."
       },
       "pill": {
         "heading": "Die STABLE-GATE-Pill",
@@ -958,6 +963,11 @@
           "label": "Max V/S-Dev < 500 ft",
           "body": "Maximale Einzel-Abweichung von 3°-ILS unter 500 ft HAT — diese Phase ist sicherheitskritisch. Selbst ein einzelner großer Spike wird sichtbar.",
           "thresholds": "< 200 fpm sehr nah am Profil · 200–400 fpm okay · > 400 fpm Einzel-Spike unter 500 ft"
+        },
+        "gleitpfad": {
+          "label": "Gleitpfad Ø",
+          "body": "Durchschnittliche Abweichung vom Gleitpfad zwischen 1000 und 200 ft, in Dots wie auf dem PFD (1 Dot ≈ 0,35° beim ILS). Gemessen gegen den echten Gleitweg aus den Navdaten. Ohne Navdaten (z. B. Sichtanflug) entfällt die Prüfung.",
+          "thresholds": "< 1 Dot gut · 1–2 Dots mittel · ab 2 Dots schlecht"
         }
       }
     },
@@ -1051,7 +1061,52 @@
       "anflug_unstable_gesamt": "Gedeckelt auf höchstens 45 Punkte: Anflug instabil (Stable Gate verfehlt). Ein guter Touchdown gleicht das nicht aus.",
       "anflug_nicht_gemessen": "Gedeckelt auf höchstens 97 Punkte: Anflug im Gate nicht gemessen — ohne Messung keine Bestnote.",
       "harte_landung": "Gedeckelt auf höchstens 40 Punkte: harte Landung ab 1,75 g. Gute Werte bei Ausrollen oder Aufsetzpunkt gleichen das nicht aus.",
-      "ueberlast": "Gedeckelt auf höchstens 14 Punkte: Überlast ab 2,6 g."
+      "ueberlast": "Gedeckelt auf höchstens 14 Punkte: Überlast ab 2,6 g.",
+      "vor_der_schwelle": "Gedeckelt auf höchstens 40 Punkte: vor der Schwelle aufgesetzt. Gute Werte in anderen Teilen gleichen das nicht aus.",
+      "overrun": "Gedeckelt auf höchstens 40 Punkte: über das Bahnende hinaus gerollt (Overrun).",
+      "neben_der_bahn": "Gedeckelt auf höchstens 40 Punkte: Räder neben der Bahn. Gute Werte in anderen Teilen gleichen das nicht aus.",
+      "mehrfach_hopser": "Gedeckelt auf höchstens 40 Punkte: zwei oder mehr Hopser. Nach Airbus-Verfahren wäre ein Durchstart fällig gewesen.",
+      "teil_schlecht": "Gedeckelt auf höchstens 60 Punkte: {{teil}} war schlecht. Die Gesamtnote ist nie besser, als der schwächste Teil erlaubt.",
+      "teil_mittel": "Gedeckelt auf höchstens 80 Punkte: {{teil}} war nur mittel. Die Gesamtnote ist nie besser, als der schwächste Teil erlaubt.",
+      "ein_teil": "ein Teil der Landung"
+    },
+    "gesamt": {
+      "smooth": "hervorragend",
+      "acceptable": "gut",
+      "firm": "ausreichend",
+      "hard": "mangelhaft",
+      "severe": "ungenügend"
+    },
+    "gate": {
+      "grund_titel": "Warum nicht stabil:",
+      "label": {
+        "gleitpfad": "Gleitpfad Ø",
+        "fahrt": "Fahrt σ",
+        "querneigung": "Querneigung σ",
+        "ruck": "Sinkraten-Ruck",
+        "sinken": "Sinkrate",
+        "konfiguration": "Landekonfiguration"
+      },
+      "einheit": {
+        "gleitpfad": "Dots",
+        "fahrt": "kt",
+        "querneigung": "°",
+        "ruck": "fpm"
+      },
+      "wert": {
+        "sinken_ok": "ok",
+        "sinken_nein": "zu stark",
+        "konfiguration_ok": "komplett",
+        "konfiguration_nein": "nicht komplett"
+      },
+      "grund": {
+        "gleitpfad": "Gleitpfad: im Schnitt {{wert}} Dots daneben (gut unter {{grenze}})",
+        "fahrt": "Fahrt unruhig: Streuung {{wert}} kt (gut unter {{grenze}})",
+        "querneigung": "Querneigung unruhig: Streuung {{wert}}° (gut unter {{grenze}})",
+        "ruck": "Sinkrate sprunghaft: {{wert}} fpm Ruck (gut unter {{grenze}})",
+        "sinken": "Sinkrate über 10 Sekunden am Stück zu hoch",
+        "konfiguration": "Fahrwerk oder Klappen bei 1000 ft nicht in Landestellung"
+      }
     }
   },
   "about": {

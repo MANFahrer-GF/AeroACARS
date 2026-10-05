@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { DECKEL_MIT_TEXT } from "../components/LandingPanel";
+import { DECKEL_MIT_TEXT, deckelText } from "../components/LandingPanel";
 
 /**
  * Jeder Schlüssel, den die Bewertung erzeugt, braucht in ALLEN drei
@@ -68,19 +68,37 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
   // DECKEL_-Obergrenze und die Kennungs-Konstanten ANFLUG_* (05.10.2026).
   const deckel = [
     ...[...quelle.matchAll(/Some\(\(\s*"([a-z0-9_]+)",\s*DECKEL_/g)].map((m) => m[1]!),
-    ...[...quelle.matchAll(/pub const ANFLUG_[A-Z_]+: &str = "([a-z0-9_]+)"/g)].map((m) => m[1]!),
+    ...[...quelle.matchAll(/pub const (?:ANFLUG|GEFAHR)_[A-Z_]+: &str = "([a-z0-9_]+)"/g)].map(
+      (m) => m[1]!,
+    ),
   ];
+  // Score-Version 19: „schwächster Teil begrenzt" — `teil_mittel_<achse>`.
+  const teilDeckel = [...quelle.matchAll(/=> "(teil_(?:mittel|schlecht)[a-z_]*)"/g)].map(
+    (m) => m[1]!,
+  );
 
   it("erzeugt mindestens die bekannten Schlüssel", () => {
     expect(skipGruende).toContain("no_planned_burn");
     expect(warnungen).toContain("planned_burn_may_be_off");
     expect(deckel).toEqual(
-      expect.arrayContaining(["harte_landung", "ueberlast", "anflug_partial_gesamt"]),
+      expect.arrayContaining([
+        "harte_landung",
+        "ueberlast",
+        "anflug_partial_gesamt",
+        "vor_der_schwelle",
+        "mehrfach_hopser",
+      ]),
+    );
+    expect(teilDeckel).toEqual(
+      expect.arrayContaining(["teil_mittel_touchdown_point", "teil_schlecht_rollout", "teil_mittel"]),
     );
   });
 
   it("jeder Deckel-Grund erscheint im Landungsbericht", () => {
-    const fehlend = [...new Set(deckel)].filter((k) => !DECKEL_MIT_TEXT.has(k));
+    // Feste Gründe stehen in DECKEL_MIT_TEXT, Teil-Gründe zeigt deckelText().
+    const fehlend = [...new Set(deckel)].filter(
+      (k) => !DECKEL_MIT_TEXT.has(k) && deckelText((x) => x, k) == null,
+    );
     expect(fehlend, "Grund fehlt in DECKEL_MIT_TEXT (LandingPanel.tsx)").toEqual([]);
   });
 
@@ -98,8 +116,32 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
     });
 
     it(`${code}: jeder Deckel-Grund hat einen Text`, () => {
-      const fehlend = [...DECKEL_MIT_TEXT].filter((k) => !hatText(daten, "deckel", k));
+      const fehlend = [...DECKEL_MIT_TEXT, "teil_mittel", "teil_schlecht", "ein_teil"].filter(
+        (k) => !hatText(daten, "deckel", k),
+      );
       expect(fehlend, `ohne Eintrag zeigt der Bericht landing.deckel.<name>`).toEqual([]);
+    });
+
+    it(`${code}: jeder Teil-Deckel nennt einen Teil mit Namen`, () => {
+      // Der Teil kommt aus `landing.sub.<achse>`; ohne Eintrag stünde der
+      // rohe Schlüssel im Satz.
+      const t = (k: string, o?: Record<string, unknown>) => {
+        const [gruppe, name] = k.split(".").slice(1);
+        const w = (daten as any)?.landing?.[gruppe!]?.[name!];
+        return typeof w === "string" ? w.replace("{{teil}}", String(o?.teil ?? "")) : `FEHLT:${k}`;
+      };
+      const fehlend = [...new Set(teilDeckel)]
+        .map((k) => [k, deckelText(t, k)] as const)
+        .filter(([, text]) => text == null || text.includes("FEHLT:"))
+        .map(([k]) => k);
+      expect(fehlend).toEqual([]);
+    });
+
+    it(`${code}: jede Kategorie hat ein Wort für die Gesamtnote`, () => {
+      const fehlend = ["smooth", "acceptable", "firm", "hard", "severe"].filter(
+        (k) => !hatText(daten, "gesamt", k),
+      );
+      expect(fehlend).toEqual([]);
     });
 
     it(`${code}: jede Warnung hat einen Text`, () => {
