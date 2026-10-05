@@ -162,6 +162,13 @@ void band_klemme_position(const BandRechteck& schirm, int breite, int hoehe,
 // Standard: oben mittig.
 void band_standard_position(const BandRechteck& schirm, int breite, int hoehe,
                             int* links, int* oben) noexcept;
+// Wohin das Fenster VOR dem Zeichnen muss: X-Plane ruft den Zeichen-Callback
+// für ein Fenster ganz außerhalb des Schirms nie auf — und erst dort wird es
+// platziert. Der Schirm-Ursprung ist nicht immer (0,0) (Feldbefund 05.10.2026:
+// X-Plane auf externem Monitor, Schirm y −1080…0). Noch nicht platziert →
+// Standardposition, sonst nur auf den Schirm klemmen.
+void band_vor_dem_zeigen(const BandRechteck& schirm, const BandRechteck& fenster, bool platziert,
+                         int* links, int* oben) noexcept;
 
 struct BandPrefs {
     bool an = true;

@@ -227,6 +227,21 @@ void band_standard_position(const BandRechteck& schirm, int breite, int hoehe,
     *oben = o;
 }
 
+void band_vor_dem_zeigen(const BandRechteck& schirm, const BandRechteck& fenster, bool platziert,
+                         int* links, int* oben) noexcept {
+    const int breite = fenster.rechts - fenster.links;
+    const int hoehe = fenster.oben - fenster.unten;
+    int l = fenster.links;
+    int o = fenster.oben;
+    if (platziert) {
+        band_klemme_position(schirm, breite, hoehe, &l, &o);
+    } else {
+        band_standard_position(schirm, breite, hoehe, &l, &o);
+    }
+    *links = l;
+    *oben = o;
+}
+
 namespace {
 
 size_t schreibe_zahl(char* aus, size_t kap, size_t pos, long wert) noexcept {

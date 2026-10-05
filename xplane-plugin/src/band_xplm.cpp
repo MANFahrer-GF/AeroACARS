@@ -209,6 +209,19 @@ void passe_fenster_an(int w, int h) noexcept {
     }
 }
 
+// Im Flight-Loop: das Fenster liegt immer (wenigstens teilweise) auf dem
+// Schirm, auch beim ersten Zeigen und nach einem Monitor-/Größenwechsel.
+// Die endgültige Größe und gemerkte Position setzt passe_fenster_an() im Draw.
+void halte_auf_schirm() noexcept {
+    BandRechteck f;
+    XPLMGetWindowGeometry(g.fenster, &f.links, &f.oben, &f.rechts, &f.unten);
+    int nl = f.links, no = f.oben;
+    band_vor_dem_zeigen(schirm(), f, g.platziert, &nl, &no);
+    if (nl != f.links || no != f.oben) {
+        XPLMSetWindowGeometry(g.fenster, nl, no, nl + (f.rechts - f.links), no - (f.oben - f.unten));
+    }
+}
+
 BandAtlas g_atlas;
 BandLayout g_layout;
 
@@ -892,6 +905,7 @@ void band_frame() noexcept {
     const bool soll = g.prefs.an && bild != nullptr && band_hat_inhalt(*bild);
     // Atlas/Textur erst, wenn es etwas zu zeigen gibt — und hier, nicht im Draw.
     if (soll && g.weg == Weg::TEXTURIERT) bereite_textur();
+    if (soll) halte_auf_schirm();  // vor dem Zeigen: sonst ruft X-Plane auf_zeichnen nie auf
     if (soll != g.sichtbar || soll != (XPLMGetWindowIsVisible(g.fenster) != 0)) {
         XPLMSetWindowIsVisible(g.fenster, soll ? 1 : 0);
         g.sichtbar = soll;

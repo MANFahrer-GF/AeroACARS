@@ -439,6 +439,29 @@ TEST(band_standardposition_oben_mittig) {
     PRUEFE(o <= 1080 && o > 1000);
 }
 
+// Feldbefund 05.10.2026 (Michel, Mac, X-Plane auf externem Monitor): Schirm
+// laut Log "L-190 T0 R1730 B-1080". Das Fenster entstand bei y 100…140 — ganz
+// oberhalb des Schirms; X-Plane rief den Zeichen-Callback nie auf, das Band
+// blieb unsichtbar.
+TEST(band_vor_dem_zeigen_zweiter_monitor) {
+    const BandRechteck s{-190, 0, 1730, -1080};
+    const BandRechteck start{100, 140, 500, 100};  // wie band_start() es anlegt
+    int l = 0, o = 0;
+    band_vor_dem_zeigen(s, start, false, &l, &o);
+    PRUEFE_GLEICH(l, 570);                 // oben mittig auf DIESEM Schirm
+    PRUEFE_GLEICH(o, -12);
+    PRUEFE(o <= s.oben && o - 40 >= s.unten);
+    // Schon platziert, Schirm danach gewechselt: zurück auf den Schirm klemmen.
+    band_vor_dem_zeigen(s, start, true, &l, &o);
+    PRUEFE_GLEICH(l, 100);
+    PRUEFE_GLEICH(o, 0);
+    // Liegt es drin, bleibt es, wo der Pilot es hingezogen hat.
+    const BandRechteck drin{-100, -500, 300, -540};
+    band_vor_dem_zeigen(s, drin, true, &l, &o);
+    PRUEFE_GLEICH(l, -100);
+    PRUEFE_GLEICH(o, -500);
+}
+
 TEST(band_prefs_runde) {
     BandPrefs p;
     p.an = false;
