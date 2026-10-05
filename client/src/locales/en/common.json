@@ -344,6 +344,8 @@
     "skipped_label": "not scored",
     "skipped_reason": {
       "anflug_nicht_gemessen": "Approach not measured in the 1000 ft gate (too few samples) — not scored, but no top score either: overall score at most 97.",
+      "anflug_partial": "Approach only partly stable (stable gate not met) — the scatter could not be measured, the verdict still applies: overall score at most 80.",
+      "anflug_unstable": "Unstable approach (stable gate missed) — the scatter could not be measured, the verdict still applies: overall score at most 45.",
       "no_planned_burn": "No OFP trip burn planned — not scored (no penalty).",
       "no_actual_burn": "Takeoff data not captured (takeoff phase skipped) — actual trip burn cannot be derived (no penalty).",
       "no_planned_zfw": "No ZFW entered — VFR/manual without loadsheet scoring (no penalty).",

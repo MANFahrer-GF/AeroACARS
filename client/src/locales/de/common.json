@@ -344,6 +344,8 @@
     "skipped_label": "nicht bewertet",
     "skipped_reason": {
       "anflug_nicht_gemessen": "Anflug im 1000-ft-Gate nicht gemessen (zu wenige Messpunkte) — keine Bewertung, aber auch keine Bestnote: Gesamtnote höchstens 97.",
+      "anflug_partial": "Anflug nur teilweise stabil (Stable Gate nicht erreicht) — die Streuung war nicht messbar, das Urteil gilt trotzdem: Gesamtnote höchstens 80.",
+      "anflug_unstable": "Anflug instabil (Stable Gate verfehlt) — die Streuung war nicht messbar, das Urteil gilt trotzdem: Gesamtnote höchstens 45.",
       "no_planned_burn": "Kein OFP-Trip-Burn geplant — wird nicht bewertet (kein Penalty).",
       "no_actual_burn": "Takeoff-Daten nicht erfasst (Takeoff-Phase übersprungen) — tatsächlicher Trip-Burn nicht ermittelbar (kein Penalty).",
       "no_planned_zfw": "Kein ZFW eingetragen — VFR/Manual ohne Loadsheet-Wertung (kein Penalty).",

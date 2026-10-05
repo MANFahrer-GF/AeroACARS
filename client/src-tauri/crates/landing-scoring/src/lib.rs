@@ -391,10 +391,11 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     }
     out.push(sub_bounces::sub_bounces(input.bounce_count.unwrap_or(0)));
 
+    let urteil = anflug_urteil::anflug_urteil(&input.anflug);
     if let Some(stab) = sub_stability::sub_stability_legacy(
         input.approach_vs_stddev_fpm,
         input.approach_bank_stddev_deg,
-        anflug_urteil::anflug_urteil(&input.anflug),
+        urteil,
     ) {
         out.push(stab);
     } else if scoring_input_has_v2_fields(input) && !input.nicht_konventionell {
@@ -402,10 +403,19 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         // Achse bleibt sichtbar als „nicht bewertet" und traegt die Marke,
         // an der `master_deckel` die Bestnote sperrt: ohne Messung keine
         // 100 Punkte.
+        //
+        // Score-Version 18 (Cloud-QS 05.10.2026): Fehlt nur die Streuung,
+        // liegt aber ein Urteil vor (eigene Stichprobe), zaehlt das Urteil —
+        // sonst kaeme ein PARTIAL/UNSTABLE-Anflug mit Deckel 97 davon.
+        let grund = match urteil {
+            Some(anflug_urteil::AnflugUrteil::Partial) => "anflug_partial",
+            Some(anflug_urteil::AnflugUrteil::Unstable) => "anflug_unstable",
+            _ => ANFLUG_NICHT_GEMESSEN,
+        };
         out.push(SubScoreEntry::skipped(
             "stability",
             "landing.sub.stability",
-            ANFLUG_NICHT_GEMESSEN,
+            grund,
         ));
     }
     // v0.10.0 (#runway-utilization-score): Wenn die v2-Datenlage da ist,
@@ -655,12 +665,10 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
 /// (Codex-QS 29.09.2026).
 pub fn master_deckel_wirksam(subs: &[SubScoreEntry]) -> Option<&'static str> {
     let (grund, obergrenze) = master_deckel(subs)?;
-    // PARTIAL/UNSTABLE: Die Anzeige nennt den Grund immer — auch wenn der
-    // Mittelwert schon darunter liegt, stimmt „Gesamtnote hoechstens 80/45",
-    // und der Pilot sieht, warum der Anflug zaehlt.
-    if grund == ANFLUG_PARTIAL_GESAMT || grund == ANFLUG_UNSTABLE_GESAMT {
-        return Some(grund);
-    }
+    // Auch PARTIAL/UNSTABLE nur, wenn der Deckel die Note wirklich senkt
+    // (Cloud-QS 05.10.2026): „Gedeckelt auf hoechstens 80 … ein guter
+    // Touchdown gleicht das nicht aus" unter einer 62 waere irrefuehrend.
+    // Den Anflug nennt dann der Hinweis an der Stabilitaetsachse.
     let ohne_deckel: Vec<SubScoreEntry> = subs
         .iter()
         .cloned()
@@ -1057,10 +1065,62 @@ mod tests {
                 .unwrap();
         assert!(stab.score < 80, "Achse {}", stab.score);
         assert_eq!(stab.warning.as_deref(), Some("anflug_partial"));
+        let subs = alles_hundert_mit_stabilitaet(stab);
         assert_eq!(
-            master_deckel(&alles_hundert_mit_stabilitaet(stab)),
+            master_deckel(&subs),
             Some((ANFLUG_PARTIAL_GESAMT, DECKEL_ANFLUG_PARTIAL_PUNKTE))
         );
+        // Ohne Deckel laege das Mittel darueber — die Note selbst sinkt.
+        assert_eq!(aggregate_master_score(&subs), Some(80));
+    }
+
+    /// Cloud-QS 05.10.2026: Liegt die Note schon unter dem Deckel, behauptet
+    /// die Anzeige kein „gedeckelt" (sonst stuende „ein guter Touchdown
+    /// gleicht das nicht aus" unter einer 62). Der Deckel gilt trotzdem.
+    #[test]
+    fn anflug_deckel_ohne_wirkung_wird_nicht_gemeldet() {
+        use crate::anflug_urteil::AnflugUrteil;
+        let stab =
+            sub_stability::sub_stability_legacy(Some(50.0), Some(0.5), Some(AnflugUrteil::Partial))
+                .unwrap();
+        let mut subs = alles_hundert_mit_stabilitaet(stab);
+        subs[0].score = 20; // Sinkrate schwach → Mittel < 80
+        assert!(aggregate_master_score(&subs).unwrap() < 80);
+        assert!(master_deckel(&subs).is_some());
+        assert_eq!(master_deckel_wirksam(&subs), None);
+    }
+
+    /// Cloud-QS 05.10.2026: Urteil vorhanden, Streuung fehlt (eigene
+    /// Stichprobe) — vorher „nicht gemessen" mit Deckel 97. Jetzt zaehlt das
+    /// Urteil.
+    #[test]
+    fn urteil_ohne_streuung_deckelt_trotzdem() {
+        let input = LandingScoringInput {
+            vs_fpm: Some(-150.0),
+            runway_length_m: Some(3000.0),
+            anflug: anflug_urteil::AnflugWerte {
+                stable_config: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let subs = compute_sub_scores(&input);
+        let stab = subs.iter().find(|s| s.key == "stability").unwrap();
+        assert!(stab.skipped);
+        assert_eq!(stab.reason.as_deref(), Some("anflug_partial"));
+        assert_eq!(
+            master_deckel(&subs),
+            Some((ANFLUG_PARTIAL_GESAMT, DECKEL_ANFLUG_PARTIAL_PUNKTE))
+        );
+        assert!(aggregate_master_score(&subs).unwrap() <= 80);
+        // Gegenprobe: ganz ohne Urteil bleibt es „nicht gemessen".
+        let ohne = LandingScoringInput {
+            anflug: Default::default(),
+            ..input
+        };
+        let subs = compute_sub_scores(&ohne);
+        let stab = subs.iter().find(|s| s.key == "stability").unwrap();
+        assert_eq!(stab.reason.as_deref(), Some(ANFLUG_NICHT_GEMESSEN));
     }
 
     /// Anflug nicht STABLE: Gesamtnote gedeckelt (Score-Version 18), Anzeige

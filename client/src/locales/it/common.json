@@ -344,6 +344,8 @@
     "skipped_label": "non valutato",
     "skipped_reason": {
       "anflug_nicht_gemessen": "Avvicinamento non misurato nel gate dei 1000 ft (troppi pochi campioni) — non valutato, ma nemmeno punteggio massimo: totale al massimo 97.",
+      "anflug_partial": "Avvicinamento solo in parte stabile (stable gate non raggiunto) — la dispersione non era misurabile, il giudizio vale comunque: punteggio totale al massimo 80.",
+      "anflug_unstable": "Avvicinamento instabile (stable gate mancato) — la dispersione non era misurabile, il giudizio vale comunque: punteggio totale al massimo 45.",
       "no_planned_burn": "Nessun trip-burn OFP pianificato — non valutato (nessuna penalità).",
       "no_actual_burn": "Dati di decollo non registrati (fase di decollo saltata) — trip-burn reale non determinabile (nessuna penalità).",
       "no_planned_zfw": "Nessun ZFW inserito — VFR/manuale senza valutazione del loadsheet (nessuna penalità).",
