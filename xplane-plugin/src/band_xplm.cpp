@@ -182,6 +182,24 @@ BandRechteck schirm() noexcept {
     return r;
 }
 
+struct Monitore {
+    BandRechteck m[BAND_MONITORE_MAX];
+    int n = 0;
+};
+
+void sammle_monitor(int, int l, int o, int r, int u, void* ref) noexcept {
+    Monitore& a = *static_cast<Monitore*>(ref);
+    if (a.n < BAND_MONITORE_MAX && r > l && o > u) a.m[a.n++] = BandRechteck{l, o, r, u};
+}
+
+// Der echte Monitor, auf den das Band (an der Stelle `fenster`) gehört — nie
+// eine Lücke des globalen Schirms (Codex-QS v1.9.23).
+BandRechteck schirm_fuer(const BandRechteck& fenster) noexcept {
+    Monitore a;
+    XPLMGetAllMonitorBoundsGlobal(&sammle_monitor, &a);
+    return band_waehle_schirm(a.m, a.n, fenster, schirm());
+}
+
 // Setzt Größe (und bei Bedarf Position) des Fensters. links/oben bleiben,
 // wenn das Fenster schon platziert ist; sonst gemerkte Position bzw. Standard
 // (oben mittig). Immer auf den Schirm geklemmt.
@@ -190,18 +208,17 @@ void passe_fenster_an(int w, int h) noexcept {
     if (h < 1) h = 1;
     int l = 0, o = 0, r = 0, u = 0;
     XPLMGetWindowGeometry(g.fenster, &l, &o, &r, &u);
-    const BandRechteck s = schirm();
     int nl = l, no = o;
     if (!g.platziert || !g.prefs.pos_gesetzt) {
         if (!g.platziert && g.prefs.pos_gesetzt) {
             nl = g.prefs.links;
             no = g.prefs.oben;
-            band_klemme_position(s, w, h, &nl, &no);
+            band_klemme_position(schirm_fuer(BandRechteck{nl, no, nl + w, no - h}), w, h, &nl, &no);
         } else {
-            band_standard_position(s, w, h, &nl, &no);
+            band_standard_position(schirm_fuer(BandRechteck{l, o, l + w, o - h}), w, h, &nl, &no);
         }
     } else {
-        band_klemme_position(s, w, h, &nl, &no);
+        band_klemme_position(schirm_fuer(BandRechteck{l, o, l + w, o - h}), w, h, &nl, &no);
     }
     g.platziert = true;
     if (nl != l || no != o || (r - l) != w || (o - u) != h) {
@@ -213,10 +230,11 @@ void passe_fenster_an(int w, int h) noexcept {
 // Schirm, auch beim ersten Zeigen und nach einem Monitor-/Größenwechsel.
 // Die endgültige Größe und gemerkte Position setzt passe_fenster_an() im Draw.
 void halte_auf_schirm() noexcept {
+    if (g.ziehen) return;  // beim Ziehen darf das Band über Monitorgrenzen
     BandRechteck f;
     XPLMGetWindowGeometry(g.fenster, &f.links, &f.oben, &f.rechts, &f.unten);
     int nl = f.links, no = f.oben;
-    band_vor_dem_zeigen(schirm(), f, g.platziert, &nl, &no);
+    band_vor_dem_zeigen(schirm_fuer(f), f, g.platziert, &nl, &no);
     if (nl != f.links || no != f.oben) {
         XPLMSetWindowGeometry(g.fenster, nl, no, nl + (f.rechts - f.links), no - (f.oben - f.unten));
     }

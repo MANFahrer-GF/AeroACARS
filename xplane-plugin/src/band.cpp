@@ -9,6 +9,7 @@
 
 #include "band.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace aeroacars {
@@ -240,6 +241,25 @@ void band_vor_dem_zeigen(const BandRechteck& schirm, const BandRechteck& fenster
     }
     *links = l;
     *oben = o;
+}
+
+BandRechteck band_waehle_schirm(const BandRechteck* monitore, int n, const BandRechteck& fenster,
+                                const BandRechteck& global) noexcept {
+    if (monitore == nullptr || n <= 0) return global;
+    int beste = 0;
+    long long beste_flaeche = 0;
+    for (int i = 0; i < n; ++i) {
+        const BandRechteck& m = monitore[i];
+        const long long b = static_cast<long long>(std::min(m.rechts, fenster.rechts)) -
+                            std::max(m.links, fenster.links);
+        const long long h = static_cast<long long>(std::min(m.oben, fenster.oben)) -
+                            std::max(m.unten, fenster.unten);
+        if (b > 0 && h > 0 && b * h > beste_flaeche) {
+            beste_flaeche = b * h;
+            beste = i;
+        }
+    }
+    return monitore[beste];
 }
 
 namespace {

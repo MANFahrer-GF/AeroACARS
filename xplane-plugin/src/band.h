@@ -169,6 +169,14 @@ void band_standard_position(const BandRechteck& schirm, int breite, int hoehe,
 // Standardposition, sonst nur auf den Schirm klemmen.
 void band_vor_dem_zeigen(const BandRechteck& schirm, const BandRechteck& fenster, bool platziert,
                          int* links, int* oben) noexcept;
+// Mehrere Vollbild-Monitore unterschiedlicher Größe: der globale Schirm
+// enthält Lücken, die kein Monitor zeigt (XPLMDisplay.h). Darum auf einen
+// echten Monitor klemmen: den, der das Fenster am meisten überdeckt;
+// überdeckt keiner, den ersten. Ohne Monitore (Fenstermodus: das SDK meldet
+// nur Vollbild-Monitore) gilt der globale Schirm.
+constexpr int BAND_MONITORE_MAX = 8;
+BandRechteck band_waehle_schirm(const BandRechteck* monitore, int n, const BandRechteck& fenster,
+                                const BandRechteck& global) noexcept;
 
 struct BandPrefs {
     bool an = true;

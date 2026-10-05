@@ -462,6 +462,31 @@ TEST(band_vor_dem_zeigen_zweiter_monitor) {
     PRUEFE_GLEICH(o, -500);
 }
 
+// Codex-QS v1.9.23: zwei Vollbild-Monitore unterschiedlicher Größe — der
+// globale Schirm enthält eine Lücke, die kein Monitor zeigt.
+TEST(band_waehle_schirm_echter_monitor) {
+    const BandRechteck global{0, 1440, 4480, 0};
+    const BandRechteck mon[2] = {{0, 1440, 2560, 0}, {2560, 1080, 4480, 0}};
+    // Überdeckt keinen Monitor (liegt in der Lücke über Monitor 2): der erste.
+    BandRechteck s = band_waehle_schirm(mon, 2, BandRechteck{3000, 1400, 3400, 1360}, global);
+    PRUEFE_GLEICH(s.rechts, 2560);
+    // Größte Überdeckung gewinnt.
+    s = band_waehle_schirm(mon, 2, BandRechteck{2500, 500, 2900, 460}, global);
+    PRUEFE_GLEICH(s.links, 2560);
+    // Fenstermodus: das SDK meldet keine Monitore → globaler Schirm.
+    s = band_waehle_schirm(nullptr, 0, BandRechteck{100, 140, 500, 100}, global);
+    PRUEFE_GLEICH(s.oben, 1440);
+    PRUEFE_GLEICH(s.rechts, 4480);
+    // Ragt das Band nur ein Stück in die Lücke: auf den Monitor darunter klemmen.
+    const BandRechteck halb{3000, 1100, 3400, 1060};
+    s = band_waehle_schirm(mon, 2, halb, global);
+    PRUEFE_GLEICH(s.links, 2560);
+    int l = 0, o = 0;
+    band_vor_dem_zeigen(s, halb, true, &l, &o);
+    PRUEFE_GLEICH(l, 3000);
+    PRUEFE_GLEICH(o, 1080);
+}
+
 TEST(band_prefs_runde) {
     BandPrefs p;
     p.an = false;

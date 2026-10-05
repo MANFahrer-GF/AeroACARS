@@ -221,6 +221,9 @@ XPLM_API void XPLMGetScreenBoundsGlobal(int* l, int* t, int* r, int* b) {
     if (r) *r = 1920;
     if (b) *b = 0;
 }
+XPLM_API void XPLMGetAllMonitorBoundsGlobal(XPLMReceiveMonitorBoundsGlobal_f f, void* ref) {
+    if (f) f(0, 0, 1080, 1920, 0, ref);  // Plugin 1.1.1: Band klemmt auf echte Monitore
+}
 XPLM_API void XPLMGetMouseLocationGlobal(int* x, int* y) {
     if (x) *x = 0;
     if (y) *y = 0;

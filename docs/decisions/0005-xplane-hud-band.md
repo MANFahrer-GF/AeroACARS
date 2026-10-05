@@ -221,3 +221,9 @@ Seit 1.1.1 holt `band_frame` das Fenster vor dem Zeigen und in jedem Frame auf
 den Schirm (`band_vor_dem_zeigen`: unplatziert → Standardposition, sonst
 klemmen). Die App bietet Plugins mit Band, aber älter als ihr eigenes
 (`PLUGIN_AKTUELL`), das Update an („Plugin-Update verfügbar").
+Codex-QS: Bei mehreren Vollbild-Monitoren unterschiedlicher Größe enthält der
+globale Schirm Lücken. Platziert und geklemmt wird deshalb auf den echten
+Monitor aus `XPLMGetAllMonitorBoundsGlobal` (`band_waehle_schirm`: größte
+Überdeckung, sonst der erste; Fenstermodus ohne Vollbild-Monitore → globaler
+Schirm). Beim Ziehen greift das nicht ein; nach dem Loslassen landet ein Band,
+das über zwei Monitore ragt, ganz auf dem, der es am meisten zeigt.
