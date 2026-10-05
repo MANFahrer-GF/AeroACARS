@@ -28,6 +28,7 @@ import {
   T_VS_SMOOTH_FPM,
   T_VS_FIRM_FPM,
 } from "../lib/bewertungsGrenzen";
+import { InfoBadge } from "./InfoBadge";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pure functions — testbar isoliert
@@ -158,7 +159,7 @@ export function GForceForensik({ record }: { record: LandingRecord }) {
 
   return (
     <section className="landing-section landing-section--gforce-forensik">
-      <h3>{t("landing.gforce_forensik.title")}</h3>
+      <h3>{t("landing.gforce_forensik.title")}{" "}<InfoBadge explanation={t("landing.erklaer.gkraft_forensik")} /></h3>
 
       {/* Block [1] — Aufklaerungs-Block (cyan border, gleich wie Sinkrate) */}
       <div className="sinkrate-forensik-intro">

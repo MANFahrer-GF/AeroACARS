@@ -922,7 +922,13 @@ export function LandungsKopf({
             : record.score_numeric == null
             ? t("landing.nicht_bewertbar.kurz", { defaultValue: "nicht bewertbar" })
             : rateCategoryWord(recordCategory(record) ?? "firm", t)}
-          {record.score_numeric != null ? <>{" "}· {record.score_numeric}/100</> : null} ·{" "}
+          {record.score_numeric != null ? (
+            <>
+              {" "}· {record.score_numeric}/100{" "}
+              <InfoBadge explanation={t("landing.erklaer.kopf_note")} />
+            </>
+          ) : null}{" "}
+          ·{" "}
           {fmtDateTime(record.touchdown_at, i18n.language)}
           {isPreview && (
             <span className="landing-preview-badge">{t("landing.preview")}</span>

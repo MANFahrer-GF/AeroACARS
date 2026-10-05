@@ -19,6 +19,7 @@
 //     Vorspann. Eine Variable im Vorspann selbst sähe er nicht.
 
 import { useTranslation } from "react-i18next";
+import { InfoBadge } from "./InfoBadge";
 
 export interface GleitpfadTor {
   proben: number;
@@ -167,6 +168,7 @@ export function AnflugForensikInfo({ gleitpfad, ruhe }: Props) {
     <section className="landing-section landing-anflug-forensik" data-testid="anflug-forensik">
       <h3 style={{ margin: "0 0 4px", fontSize: "0.95rem" }}>
         {t("landing.anflug_forensik.titel")}
+        <InfoBadge explanation={t("landing.erklaer.forensik.gleitpfad")} />
       </h3>
       <div style={{ fontSize: "0.74rem", opacity: 0.6, marginBottom: 8 }}>
         {t("landing.anflug_forensik.ohne_note", { dot: zahl(dot, 2) })}
@@ -218,7 +220,10 @@ export function AnflugForensikInfo({ gleitpfad, ruhe }: Props) {
 
       {ruheZeilen.length > 0 && (
         <div style={{ fontSize: "0.84rem", lineHeight: 1.5 }}>
-          <div style={{ fontWeight: 600 }}>{t("landing.anflug_forensik.ruhe_titel")}</div>
+          <div style={{ fontWeight: 600 }}>
+            {t("landing.anflug_forensik.ruhe_titel")}{" "}
+            <InfoBadge explanation={t("landing.erklaer.forensik.ruhe")} />
+          </div>
           {ruheZeilen.map((z) => (
             <div key={z}>{z}</div>
           ))}

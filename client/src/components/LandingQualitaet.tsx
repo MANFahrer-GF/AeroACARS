@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import { distanzHinterSchwelle } from "../lib/landungsFormat";
 import "./landungForensik.css";
+import { InfoBadge } from "./InfoBadge";
 
 type Ton = "good" | "neutral" | "warn" | "err";
 
@@ -45,8 +46,10 @@ function Kachel({
 }) {
   const { t } = useTranslation();
   return (
-    <div className={`sinkrate-tile sinkrate-tile--${wert == null ? "na" : (ton ?? "neutral")}`} title={hinweis}>
-      <div className="sinkrate-tile__label">{label}</div>
+    <div className={`sinkrate-tile sinkrate-tile--${wert == null ? "na" : (ton ?? "neutral")}`}>
+      <div className="sinkrate-tile__label">
+        {label} <InfoBadge explanation={hinweis} />
+      </div>
       <div className="sinkrate-tile__value">
         {wert ?? t("landing.quality.na")}
         {wert != null && einheit && <span className="sinkrate-tile__unit">{einheit}</span>}

@@ -35,6 +35,39 @@ describe.each(LANDUNGS_FAELLE.map((f) => [f.name, f] as const))(
       return render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);
     };
 
+    // 05.10.2026 (Thomas: jeder Wert erklärt, eine Variante — der (i)-Knopf):
+    // Jede Beschriftung eines Werts trägt einen (i)-Knopf, keine Erklärung
+    // steckt mehr nur im Hover-Titel.
+    it("jeder Wert hat einen (i)-Knopf", () => {
+      // Mit echtem METAR (LTFM, THY39), damit auch dessen Einträge geprüft werden.
+      const r = { ...datensatz(fall), arr_metar: "LTFM 052020Z 06009KT 9999 SCT026 17/12 Q1022 NOSIG" };
+      const { container } = render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);
+      const ohne = (sel: string) =>
+        [...container.querySelectorAll(sel)]
+          .filter((e) => !e.querySelector(".info-badge"))
+          .map((e) => `${sel}: ${e.textContent}`);
+      const beschriftungen = [
+        ".landing-keyvals dt",
+        ".metar-eintrag__k",
+        ".landing-section--quality .sinkrate-tile__label",
+        '[data-testid="gate-kacheln"] > div > div:first-child',
+      ];
+      for (const sel of beschriftungen) {
+        expect(container.querySelectorAll(sel).length, `${sel} kommt vor`).toBeGreaterThan(0);
+      }
+      expect(beschriftungen.flatMap(ohne)).toEqual([]);
+      // Forensik-Abschnitte (je nach Datenlage mit oder ohne 50-Hz-Werte):
+      // die Überschrift erklärt, welcher Wert bewertet wird.
+      const forensik = [...container.querySelectorAll("section h3")].filter((h) =>
+        /forensik/i.test(h.textContent ?? ""),
+      );
+      expect(forensik.length).toBeGreaterThan(0);
+      expect(forensik.filter((h) => !h.querySelector(".info-badge")).map((h) => h.textContent)).toEqual([]);
+      expect(container.querySelector(".landing-headline .info-badge"), "Note im Kopf").not.toBeNull();
+      // Keine Erklärung mehr nur als Hover-Titel auf einer Wertkachel.
+      expect(container.querySelectorAll(".landing-keyvals > div[title], .sinkrate-tile[title]").length).toBe(0);
+    });
+
     it("Note, Wort und Deckel-Satz im Kopf", () => {
       const { container, queryByTestId } = zeige();
       const kopf = container.querySelector(".landing-headline")!.textContent ?? "";

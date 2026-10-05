@@ -18,6 +18,7 @@ import {
 import type { ApproachSample, LandingProfilePoint } from "../lib/landungsDatensatz";
 import type { GleitpfadPunkt } from "./AnflugForensikInfo";
 import "./anflugGrafik.css";
+import { InfoBadge } from "./InfoBadge";
 
 // v0.12.8: Touchdown-Nahaufnahme — 50-Hz-Window, exakt wie auf dem VPS.
 // Zeitbasierte X-Achse (−4 s … +3 s), Touchdown als senkrechte Linie,
@@ -653,7 +654,10 @@ export function AnflugGrafikAbschnitt({
     <section className="landing-section">
       {anflug && (
         <>
-          <h3>{t("landing.approach_stability")}</h3>
+          <h3>
+            {t("landing.approach_stability")}
+            <InfoBadge explanation={t("landing.erklaer.grafik.anflug")} />
+          </h3>
           <div className="landing-stability-chart">
             <ApproachChart
               samples={samples}
@@ -661,6 +665,12 @@ export function AnflugGrafikAbschnitt({
               gleitpfadVerlauf={gleitpfadVerlauf}
             />
           </div>
+          {gleitpfadVerlauf && gleitpfadVerlauf.length >= 2 && (
+            <p className="landing-chart__hinweis">
+              {t("landing.vs_chart.gleitpfad_titel")}{" "}
+              <InfoBadge explanation={t("landing.erklaer.grafik.gleitpfad")} />
+            </p>
+          )}
           {!(gleitpfadVerlauf && gleitpfadVerlauf.length >= 2) && (
             <p className="landing-chart__hinweis">{t("landing.vs_chart.gleitpfad_fehlt")}</p>
           )}
@@ -668,7 +678,10 @@ export function AnflugGrafikAbschnitt({
       )}
       {nah && (
         <>
-          <h3 style={anflug ? { marginTop: 18 } : undefined}>{t("landing.vs_curve_section")}</h3>
+          <h3 style={anflug ? { marginTop: 18 } : undefined}>
+            {t("landing.vs_curve_section")}
+            <InfoBadge explanation={t("landing.erklaer.grafik.nah")} />
+          </h3>
           <div className="landing-stability-chart">
             <VsCurveChart profile={profile} />
           </div>

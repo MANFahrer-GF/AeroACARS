@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import { fmtNumber, fmtSigned } from "../lib/landungsFormat";
 import "./flareAbschnitt.css";
+import { InfoBadge } from "./InfoBadge";
 
 export function FlareAbschnitt({ record }: { record: LandingRecord }) {
   const a = record.abfangen;
@@ -30,13 +31,19 @@ function AbfangenNeu({ record }: { record: LandingRecord }) {
       <h3>{t("landing.abfangen.titel")}</h3>
       <div className="landing-flare">
         <dl className="landing-keyvals landing-flare__metrics">
-          <div title={t("landing.abfangen.dauer_hint") ?? undefined}>
-            <dt>{t("landing.abfangen.dauer")}</dt>
+          <div>
+            <dt>
+              {t("landing.abfangen.dauer")}{" "}
+              <InfoBadge explanation={t("landing.abfangen.dauer_hint")} />
+            </dt>
             <dd>{fmtNumber(a.dauer_ab_50ft_s, 1, "s")}</dd>
           </div>
           {a.vs_50ft_fpm != null && (
-            <div title={t("landing.abfangen.vs_hint") ?? undefined}>
-              <dt>{t("landing.abfangen.vs")}</dt>
+            <div>
+              <dt>
+                {t("landing.abfangen.vs")}{" "}
+                <InfoBadge explanation={t("landing.abfangen.vs_hint")} />
+              </dt>
               <dd>
                 {fmtNumber(a.vs_50ft_fpm, 0, "fpm")}
                 {a.vs_aufsetzen_fpm != null && <> → {fmtNumber(a.vs_aufsetzen_fpm, 0, "fpm")}</>}
@@ -44,20 +51,29 @@ function AbfangenNeu({ record }: { record: LandingRecord }) {
             </div>
           )}
           {a.reduktion_fpm != null && (
-            <div title={t("landing.abfangen.reduktion_hint") ?? undefined}>
-              <dt>{t("landing.abfangen.reduktion")}</dt>
+            <div>
+              <dt>
+                {t("landing.abfangen.reduktion")}{" "}
+                <InfoBadge explanation={t("landing.abfangen.reduktion_hint")} />
+              </dt>
               <dd>{fmtSigned(a.reduktion_fpm, 0, "fpm")}</dd>
             </div>
           )}
           {a.beginn_hoehe_ft != null && (
-            <div title={t("landing.abfangen.beginn_hint") ?? undefined}>
-              <dt>{t("landing.abfangen.beginn")}</dt>
+            <div>
+              <dt>
+                {t("landing.abfangen.beginn")}{" "}
+                <InfoBadge explanation={t("landing.abfangen.beginn_hint")} />
+              </dt>
               <dd>{fmtNumber(a.beginn_hoehe_ft, 0, "ft")}</dd>
             </div>
           )}
           {a.schweben_s != null && (
-            <div title={t("landing.abfangen.schweben_hint") ?? undefined}>
-              <dt>{t("landing.abfangen.schweben")}</dt>
+            <div>
+              <dt>
+                {t("landing.abfangen.schweben")}{" "}
+                <InfoBadge explanation={t("landing.abfangen.schweben_hint")} />
+              </dt>
               <dd>
                 {fmtNumber(a.schweben_s, 1, "s")}
                 {a.schweben_m != null && a.schweben_m > 0 && <> · {fmtNumber(a.schweben_m, 0, "m")}</>}
@@ -65,8 +81,11 @@ function AbfangenNeu({ record }: { record: LandingRecord }) {
             </div>
           )}
           {a.max_vs_fpm != null && a.max_vs_fpm > 0 && (
-            <div title={t("landing.abfangen.steigen_hint") ?? undefined}>
-              <dt>{t("landing.abfangen.steigen")}</dt>
+            <div>
+              <dt>
+                {t("landing.abfangen.steigen")}{" "}
+                <InfoBadge explanation={t("landing.abfangen.steigen_hint")} />
+              </dt>
               <dd>{fmtSigned(a.max_vs_fpm, 0, "fpm")}</dd>
             </div>
           )}
@@ -107,26 +126,38 @@ function AbfangenAlt({ record }: { record: LandingRecord }) {
             die Webapp zeigt sie nicht). Nur die Messwerte. */}
         <dl className="landing-keyvals landing-flare__metrics">
           {record.peak_vs_pre_flare_fpm != null && (
-            <div title={t("landing.flare_pre_vs_hint") ?? undefined}>
-              <dt>{t("landing.flare_pre_vs")}</dt>
+            <div>
+              <dt>
+                {t("landing.flare_pre_vs")}{" "}
+                <InfoBadge explanation={t("landing.flare_pre_vs_hint")} />
+              </dt>
               <dd>{fmtNumber(record.peak_vs_pre_flare_fpm, 0, "fpm")}</dd>
             </div>
           )}
           {record.vs_at_flare_end_fpm != null && (
-            <div title={t("landing.flare_end_vs_hint") ?? undefined}>
-              <dt>{t("landing.flare_end_vs")}</dt>
+            <div>
+              <dt>
+                {t("landing.flare_end_vs")}{" "}
+                <InfoBadge explanation={t("landing.flare_end_vs_hint")} />
+              </dt>
               <dd>{fmtNumber(record.vs_at_flare_end_fpm, 0, "fpm")}</dd>
             </div>
           )}
           {record.flare_reduction_fpm != null && (
-            <div title={t("landing.flare_reduction_hint") ?? undefined}>
-              <dt>{t("landing.flare_reduction")}</dt>
+            <div>
+              <dt>
+                {t("landing.flare_reduction")}{" "}
+                <InfoBadge explanation={t("landing.flare_reduction_hint")} />
+              </dt>
               <dd>{fmtSigned(record.flare_reduction_fpm, 0, "fpm")}</dd>
             </div>
           )}
           {record.flare_dvs_dt_fpm_per_sec != null && (
-            <div title={t("landing.flare_dvs_dt_hint") ?? undefined}>
-              <dt>{t("landing.flare_dvs_dt")}</dt>
+            <div>
+              <dt>
+                {t("landing.flare_dvs_dt")}{" "}
+                <InfoBadge explanation={t("landing.flare_dvs_dt_hint")} />
+              </dt>
               <dd>{fmtSigned(record.flare_dvs_dt_fpm_per_sec, 0, "fpm/s")}</dd>
             </div>
           )}

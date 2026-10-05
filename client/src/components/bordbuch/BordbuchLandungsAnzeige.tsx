@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { bilanz, type Eintrag, type Regel } from "../../lib/bordbuch";
 import { BordbuchCheckliste } from "./BordbuchCheckliste";
 import "./bordbuchLandung.css";
+import { InfoBadge } from "../InfoBadge";
 
 /** Kopfzeile „11 von 13 Punkten erledigt" bzw. der Aus-Hinweis. */
 export function Kopf({ e, druck = false }: { e: Eintrag; druck?: boolean }) {
@@ -40,7 +41,7 @@ export function BordbuchLandungsAbschnitt({
   if (!eintrag) return null;
   return (
     <section className="landing-section bb-landung">
-      <h3>{t("bordbuch.titel")}</h3>
+      <h3>{t("bordbuch.titel")}{" "}<InfoBadge explanation={t("landing.erklaer.bordbuch")} /></h3>
       <Kopf e={eintrag} />
       {!eintrag.aus_grund && (
         <BordbuchCheckliste

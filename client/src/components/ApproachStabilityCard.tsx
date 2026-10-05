@@ -40,6 +40,7 @@ import {
   gateWert,
   type GatePunkt,
 } from "../lib/stableGate";
+import { InfoBadge } from "./InfoBadge";
 
 type Band = "good" | "ok" | "bad" | "missing";
 
@@ -184,6 +185,7 @@ export function ApproachStabilityCard(props: Props) {
       >
         <h3 style={{ margin: 0, fontSize: "1rem" }}>
           {t("landing.approach_stability_card.title")}
+          {!isLegacy && <InfoBadge explanation={t("landing.erklaer.gate.urteil")} />}
         </h3>
         {!isLegacy && (
           <span
@@ -265,6 +267,7 @@ export function ApproachStabilityCard(props: Props) {
                 value={gateWert(t, p, i18n.language)}
                 unit={gateEinheit(t, p)}
                 band={p.stufe === "gut" ? "good" : p.stufe === "mittel" ? "ok" : "bad"}
+                info={t(`landing.erklaer.gate.${p.key}`)}
               />
             ))}
           </div>
@@ -304,6 +307,7 @@ export function ApproachStabilityCard(props: Props) {
               value={fmtNumOrDash(props.vsJerkFpm, 0)}
               unit={t("landing.approach_stability_card.tiles.vs_jerk.unit")}
               band={bands[0]}
+              info={t("landing.erklaer.tile.vs_jerk")}
             />
             <Tile
               label={t(
@@ -314,6 +318,7 @@ export function ApproachStabilityCard(props: Props) {
                 "landing.approach_stability_card.tiles.bank_sigma.unit",
               )}
               band={bands[1]}
+              info={t("landing.erklaer.tile.bank_sigma")}
             />
             <Tile
               label={t(
@@ -324,6 +329,7 @@ export function ApproachStabilityCard(props: Props) {
                 "landing.approach_stability_card.tiles.ias_sigma.unit",
               )}
               band={bands[2]}
+              info={t("landing.erklaer.tile.ias_sigma")}
             />
             <Tile
               label={t(
@@ -341,6 +347,7 @@ export function ApproachStabilityCard(props: Props) {
                       )
               }
               band={bands[3]}
+              info={t("landing.erklaer.tile.sink_rate")}
             />
             <Tile
               label={t(
@@ -360,6 +367,7 @@ export function ApproachStabilityCard(props: Props) {
                       )
               }
               band={bands[4]}
+              info={t("landing.erklaer.tile.landing_config")}
             />
             <Tile
               label={
@@ -378,6 +386,7 @@ export function ApproachStabilityCard(props: Props) {
                 "landing.approach_stability_card.tiles.vs_vs_ils.unit",
               )}
               band={bands[5]}
+              info={t("landing.erklaer.tile.vs_vs_ils")}
             />
             <Tile
               label={t(
@@ -388,6 +397,7 @@ export function ApproachStabilityCard(props: Props) {
                 "landing.approach_stability_card.tiles.max_vs_dev.unit",
               )}
               band={bands[6]}
+              info={t("landing.erklaer.tile.max_vs_dev")}
             />
           </div>
 
@@ -460,11 +470,14 @@ function Tile({
   value,
   unit,
   band,
+  info,
 }: {
   label: string;
   value: string;
   unit?: string;
   band: Band;
+  /** Erklärung hinter dem (i)-Knopf (05.10.2026). */
+  info?: string;
 }) {
   const color = BAND_COLORS[band];
   return (
@@ -490,6 +503,7 @@ function Tile({
         }}
       >
         {label}
+        {info && <> <InfoBadge explanation={info} /></>}
       </div>
       <div
         style={{

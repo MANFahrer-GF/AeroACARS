@@ -11,6 +11,7 @@ import type { LandingRecord } from "../lib/landungsDatensatz";
 import { fensterWerteGueltig, fmtNumber, fmtSigned, scoreG } from "../lib/landungsFormat";
 import { scoreBasisVs } from "./SinkrateForensik";
 import "./touchdownAbschnitt.css";
+import { InfoBadge } from "./InfoBadge";
 
 // v0.12.8-dev: Wind-Visualisierung — animiertes Stromlinien-Feld. Der Wind
 // "weht" sichtbar über die Karte: Richtung = echte Anströmrichtung relativ
@@ -106,7 +107,7 @@ export function WindCompass({
       </svg>
       <div className="windflow__overlay">
         <div className="windflow__top">
-          <span className="windflow__cap">{t("landing.wind")}</span>
+          <span className="windflow__cap">{t("landing.wind")}{" "}<InfoBadge explanation={t("landing.erklaer.td.wind")} /></span>
         </div>
         {calm ? (
           <div className="windflow__hero">
@@ -170,14 +171,14 @@ export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
               (= Score-Basis nach v0.7.11 = vs_at_edge_fpm) + die
               Aufprall-Werte. Kein Werte-Dschungel mehr. */}
           <div>
-            <dt>{t("landing.landing_rate")}</dt>
+            <dt>{t("landing.landing_rate")}{" "}<InfoBadge explanation={t("landing.erklaer.td.sinkrate")} /></dt>
             {/* v0.7.17 (B-015): Edge-Wert bevorzugen — Touchdown-Card
                 zeigte bisher `landing_rate_fpm` (Streamer-Tick), was
                 meist 30-50 fpm vom echten Aufsetz-Moment abwich. */}
             <dd>{fmtNumber(scoreBasisVs(record), 0, "fpm")}</dd>
           </div>
           <div>
-            <dt>{t("landing.g_force")}</dt>
+            <dt>{t("landing.g_force")}{" "}<InfoBadge explanation={t("landing.erklaer.td.g")} /></dt>
             {/* v0.20.0: scoreG() statt Roh-G am Touchdown-Frame — sonst
                 zeigt diese Kachel eine andere Zahl als der G-Balken
                 daneben, der auf dem EMA-Wert bewertet. */}
@@ -188,31 +189,31 @@ export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
               Aufsetz-Frame (Webapp „Touchdown G") — eine andere Größe
               als der bewertete EMA-Wert darüber. */}
           <div>
-            <dt>{t("landing.g_force_frame")}</dt>
+            <dt>{t("landing.g_force_frame")}{" "}<InfoBadge explanation={t("landing.erklaer.td.g_frame")} /></dt>
             <dd>{fmtNumber(record.landing_g_force, 2, "G")}</dd>
           </div>
           <div>
-            <dt>{t("landing.pitch")}</dt>
+            <dt>{t("landing.pitch")}{" "}<InfoBadge explanation={t("landing.erklaer.td.pitch")} /></dt>
             <dd>{fmtSigned(record.landing_pitch_deg, 1, "°")}</dd>
           </div>
           <div>
-            <dt>{t("landing.bank")}</dt>
+            <dt>{t("landing.bank")}{" "}<InfoBadge explanation={t("landing.erklaer.td.bank")} /></dt>
             <dd>{fmtSigned(record.landing_bank_deg, 1, "°")}</dd>
           </div>
           <div>
-            <dt>{t("landing.speed")}</dt>
+            <dt>{t("landing.speed")}{" "}<InfoBadge explanation={t("landing.erklaer.td.ias")} /></dt>
             <dd>{fmtNumber(record.landing_speed_kt, 0, "kt")}</dd>
           </div>
           <div>
-            <dt>{t("landing.groundspeed")}</dt>
+            <dt>{t("landing.groundspeed")}{" "}<InfoBadge explanation={t("landing.erklaer.td.gs")} /></dt>
             <dd>{fmtNumber(record.landing_groundspeed_kt, 0, "kt")}</dd>
           </div>
           <div>
-            <dt>{t("landing.sideslip")}</dt>
+            <dt>{t("landing.sideslip")}{" "}<InfoBadge explanation={t("landing.erklaer.td.sideslip")} /></dt>
             <dd>{fmtSigned(record.touchdown_sideslip_deg, 1, "°")}</dd>
           </div>
           <div>
-            <dt>{t("landing.bounces")}</dt>
+            <dt>{t("landing.bounces")}{" "}<InfoBadge explanation={t("landing.erklaer.td.hopser")} /></dt>
             <dd>
               {fensterWerteGueltig(record)
                 ? record.bounce_count
@@ -220,11 +221,11 @@ export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
             </dd>
           </div>
           <div>
-            <dt>{t("landing.heading")}</dt>
+            <dt>{t("landing.heading")}{" "}<InfoBadge explanation={t("landing.erklaer.td.hdg_mag")} /></dt>
             <dd>{fmtNumber(record.landing_heading_deg, 0, "°")}</dd>
           </div>
           <div>
-            <dt>{t("landing.heading_true")}</dt>
+            <dt>{t("landing.heading_true")}{" "}<InfoBadge explanation={t("landing.erklaer.td.hdg_true")} /></dt>
             <dd>{fmtNumber(record.landing_heading_true_deg, 0, "°")}</dd>
           </div>
         </dl>

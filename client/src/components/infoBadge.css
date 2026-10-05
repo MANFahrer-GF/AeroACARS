@@ -30,6 +30,24 @@
     color 0.15s ease;
 }
 
+/* Die Webapp gibt auf Touch-Geräten jedem Knopf mindestens 44 px
+   (pointer: coarse) — der (i)-Knopf wurde riesig und schnitt die
+   Beschriftung ab. Sichtbar bleibt er 16 px; antippen lässt er sich über
+   eine unsichtbare, größere Fläche. */
+.info-badge,
+.info-badge__close {
+  min-width: 0;
+  min-height: 0;
+}
+.info-badge {
+  position: relative;
+}
+.info-badge::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+}
+
 .info-badge:hover,
 .info-badge:hover:not(:disabled),
 .info-badge--open {
@@ -39,10 +57,10 @@
 }
 
 .info-badge__popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: -8px;
-  z-index: 30;
+  /* Fest über der Seite, Lage aus InfoBadge.tsx (top/left inline) — so
+     schneidet keine Wertzeile mit overflow: hidden das Fenster ab. */
+  position: fixed;
+  z-index: 1000;
   width: 280px;
   max-width: calc(100vw - 32px);
   padding: 0.7rem 2rem 0.7rem 0.85rem;
@@ -63,7 +81,7 @@
   content: "";
   position: absolute;
   top: -6px;
-  left: 12px;
+  left: var(--pfeil, 12px);
   width: 12px;
   height: 12px;
   background: var(--surface, #141a21);
@@ -72,14 +90,11 @@
   transform: rotate(45deg);
 }
 
-.info-badge__popover--flip-left {
-  left: auto;
-  right: -8px;
-}
-
-.info-badge__popover--flip-left::before {
-  left: auto;
-  right: 12px;
+/* Über dem Knopf: Pfeil unten. */
+.info-badge__popover--oben::before {
+  top: auto;
+  bottom: -6px;
+  transform: rotate(225deg);
 }
 
 .info-badge__close {

@@ -1257,6 +1257,62 @@
       "schweben_hint": "Zeit und Strecke fast waagerecht (Sinkrate über −100 fpm) vor dem Aufsetzen. Nur Einordnung — die Dauer ab 50 ft ist der bewertete Wert.",
       "steigen": "Wieder gestiegen",
       "steigen_hint": "Größte Steigrate zwischen 50 ft und Aufsetzen. Über +50 fpm gilt das als Ballooning: Teil „Abfangen“ höchstens 50 Punkte."
+    },
+    "erklaer": {
+      "kopf_note": "Die Buchstaben-Note fasst die Gesamtnote zusammen: A+ ab 95, A ab 88, B+ ab 82, B ab 75, C ab 65, D ab 50, darunter F. Die Gesamtnote ist der gewichtete Durchschnitt der Teilnoten (Sinkrate und G-Kraft je 3, Hopser, Anflug-Stabilität und Abfangen je 2, die übrigen je 1) — aber nie besser, als der schwächste Teil erlaubt: ein mittlerer Teil (45–74 Punkte) begrenzt auf 80, ein schlechter (unter 45) auf 60, ein gefährliches Ereignis (vor der Schwelle, über das Bahnende, neben der Bahn, zwei Hopser) auf 40.",
+      "td": {
+        "sinkrate": "Sinkrate im Moment des ersten Bodenkontakts, aus der Höhenkurve. Zählt zur Note (Teil Sinkrate, Gewicht 3): 90–249 fpm 100 Punkte, unter 90 fpm 85 (Hinweis auf langes Abfangen), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, ab 1000 fpm 0.",
+        "g": "Bewertete G-Kraft beim Aufsetzen: leicht geglätteter Spitzenwert (wie ein Flugdatenschreiber), ohne einzelne 50-Hz-Ausreißer. Zählt zur Note (Teil G-Kraft, Gewicht 3): unter 1,20 G 100 Punkte, unter 1,40 G 80, unter 1,70 G 45, unter 2,10 G 20. Ab 1,75 G ist die Gesamtnote höchstens 40, ab 2,6 G höchstens 14.",
+        "g_frame": "G-Kraft genau im Bild des Bodenkontakts, ungeglättet. Nur zur Einordnung — bewertet wird die G-Kraft darüber.",
+        "pitch": "Nicklage beim Aufsetzen, + = Nase oben. Bei Verkehrsflugzeugen meist etwa +2 bis +6°; deutlich mehr erhöht die Gefahr, mit dem Heck aufzusetzen. Zählt nicht zur Note.",
+        "bank": "Querlage beim Aufsetzen. Gut ist nahe 0°; je größer, desto näher kommt die Tragfläche dem Boden (siehe Wing-Strike-Risiko). Zählt nicht zur Note.",
+        "ias": "Angezeigte Fahrt beim Aufsetzen. Wie weit sie von der Landegeschwindigkeit (Vref) abweicht, steht bei der Aufsetz-Qualität. Zählt nicht zur Note.",
+        "gs": "Geschwindigkeit über Grund beim Aufsetzen. Bei Gegenwind kleiner als die angezeigte Fahrt, bei Rückenwind größer — sie bestimmt Ausrollstrecke und Bremsbedarf. Zählt nicht zur Note.",
+        "sideslip": "Winkel zwischen Flugrichtung und Rumpfachse beim Aufsetzen (Vorhaltewinkel bei Seitenwind). Gut ist nahe 0°: vor dem Aufsetzen ausgerichtet. Zählt nicht direkt zur Note; die Teilnote Ausrichtung bewertet Lage und Kurs zur Bahn.",
+        "hopser": "Wie oft das Flugzeug nach dem ersten Bodenkontakt wieder abgehoben hat. Zählt zur Note (Teil Hopser, Gewicht 2): 0 = 100 Punkte, 1 = 70, 2 = 40 (und die Gesamtnote höchstens 40), 3 und mehr = 15.",
+        "hdg_mag": "Kurs beim Aufsetzen, missweisend (magnetisch) — die Bezugsgröße der Bahnbezeichnung. Zählt nicht zur Note.",
+        "hdg_true": "Kurs beim Aufsetzen, rechtweisend (geografisch Nord). Mit ihm vergleicht die Teilnote Ausrichtung den Kurs der Bahn.",
+        "wind": "Wind beim Aufsetzen aus dem Simulator, zerlegt in Gegen- bzw. Rückenwind und Seitenwind zur Bahn. Zählt nicht zur Note; die Teilnote Ausrichtung berücksichtigt den Seitenwind."
+      },
+      "metar": {
+        "titel": "Die Wettermeldung des Zielflughafens zur Landezeit, wie sie der Client beim Flug abgerufen hat. Nur zur Einordnung, zählt nicht zur Note.",
+        "wind": "Windrichtung (woher, in Grad) und Stärke in Knoten, mit Böen. Nur zur Einordnung.",
+        "sicht": "Horizontale Sicht. ≥ 10 km heißt unbegrenzt im Sinne der Meldung. Nur zur Einordnung.",
+        "wetter": "Aktuelles Wetter (z. B. Regen, Nebel, Gewitter), mit Stärke. Nur zur Einordnung.",
+        "wolken": "Bewölkung mit Höhe der Untergrenze über dem Platz. Nur zur Einordnung.",
+        "temp_tau": "Temperatur und Taupunkt. Liegen sie eng beieinander, ist mit Nebel oder tiefen Wolken zu rechnen. Nur zur Einordnung.",
+        "qnh": "Luftdruck auf Meereshöhe — die Höhenmessereinstellung für den Anflug. Nur zur Einordnung."
+      },
+      "gate": {
+        "gleitpfad": "Mittlere Abweichung vom Gleitpfad der gelandeten Bahn zwischen 1000 und 200 ft, in Dots (1 Dot = 0,35° bei 3°). Gut unter 1, schlecht ab 2. Prüfpunkt des Stable Gate — das Gate begrenzt die Gesamtnote.",
+        "fahrt": "Wie stark die Fahrt im Stable Gate schwankte (Standardabweichung der angezeigten Fahrt). Gut unter 5 kt, schlecht ab 8 kt. Prüfpunkt des Stable Gate.",
+        "querneigung": "Wie stark die Querlage im Stable Gate schwankte (Standardabweichung). Gut unter 3°, schlecht ab 6°. Prüfpunkt des Stable Gate.",
+        "ruck": "Wie ruckartig sich die Sinkrate von Messpunkt zu Messpunkt änderte. Gut unter 100 fpm, schlecht ab 200 fpm. Prüfpunkt des Stable Gate.",
+        "sinken": "Ob die Sinkrate im Stable Gate mindestens 10 s am Stück über der Grenze lag (bei 3° Gleitwinkel −1000 fpm, bei steileren Anflügen entsprechend mehr). Prüfpunkt des Stable Gate.",
+        "konfiguration": "Ob das Flugzeug beim Eintritt ins Stable Gate (1000 ft) in Landekonfiguration war: Fahrwerk unten, Landeklappen gesetzt. Prüfpunkt des Stable Gate.",
+        "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, Gesamtnote höchstens 45. Sonst PARTIAL, Gesamtnote höchstens 80. Ohne Messung höchstens 97."
+      },
+      "tile": {
+        "vs_jerk": "Wie ruckartig sich die Sinkrate im Anflug änderte, gemittelt von Messpunkt zu Messpunkt. Kleiner ist ruhiger.",
+        "bank_sigma": "Wie stark die Querlage im Anflug schwankte (Standardabweichung, geglättet). Kleiner ist ruhiger.",
+        "ias_sigma": "Wie stark die Fahrt im Anflug schwankte (Standardabweichung). Kleiner ist ruhiger.",
+        "sink_rate": "Ob die Sinkrate im Anflug mindestens 10 s am Stück über der Stabilitätsgrenze lag.",
+        "landing_config": "Ob Fahrwerk und Landeklappen rechtzeitig gesetzt waren.",
+        "vs_vs_ils": "Mittlere Abweichung der Sinkrate von der Soll-Sinkrate für den Gleitwinkel. Nur zur Einordnung.",
+        "max_vs_dev": "Größte Abweichung von der Soll-Sinkrate unterhalb von 500 ft. Nur zur Einordnung."
+      },
+      "grafik": {
+        "anflug": "Sinkrate über die letzten rund zwei Minuten vor dem Aufsetzen. Grünes Band: Soll-Sinkrate aus Gleitwinkel und Geschwindigkeit über Grund, ±100 fpm. Rote Linie: Stabilitätsgrenze. Blau hinterlegt ist das Stable Gate, gelb der Flare. Die Grafik ordnet ein — bewertet wird über die Anflug-Stabilität.",
+        "gleitpfad": "Abweichung vom Gleitpfad der gelandeten Bahn je Messpunkt, in Dots auf derselben Zeitachse. + = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD). Der Mittelwert zwischen 1000 und 200 ft ist Prüfpunkt des Stable Gate. Antippen zeigt den Wert und die Raute wie im Cockpit.",
+        "nah": "50-Hz-Nahaufnahme von 4 s vor bis 10 s nach dem Aufsetzen: wie die Sinkrate im Flare abgebaut wurde und ob das Flugzeug wieder abhob. Aus dieser Kurve stammt die Sinkrate beim Aufsetzen."
+      },
+      "forensik": {
+        "gleitpfad": "Geometrische Abweichung vom Gleitpfad der tatsächlich gelandeten Bahn, aus Position und wahrer Höhe gerechnet. Der Mittelwert 1000–200 ft ist Prüfpunkt des Stable Gate (gut unter 1 Dot); die Tore 1000–500 und 500–200 ft sind zur Einordnung.",
+        "ruhe": "Wie ruhig der Anflug geflogen wurde: Seitenwechsel um den Pfad, Unruhe in Nick- und Rollrate, Schubwechsel je Minute. Nur zur Einordnung, zählt nicht zur Note."
+      },
+      "sinkrate_forensik": "Dieselbe Landung, verschieden gemittelt: Je nach Fenster ergeben sich andere Sinkraten. Bewertet wird die Sinkrate im Moment des Bodenkontakts (oben im Bericht); die übrigen Werte zeigen, wie sie zustande kam.",
+      "gkraft_forensik": "Dieselbe Landung, verschieden gemessen: Rohwerte im 50-Hz-Takt, Mittel und Perzentile. Bewertet wird der leicht geglättete Spitzenwert (G-Kraft oben im Bericht); die übrigen Werte sind zur Einordnung.",
+      "bordbuch": "Was der Client auf diesem Flug an Abläufen erkannt hat — Lichter, Transponder, APU, Rolltempo und mehr — und wann. Erledigtes wird gezählt, nichts wird getadelt. Zählt nicht zur Note."
     }
   },
   "about": {

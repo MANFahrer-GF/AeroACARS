@@ -35,6 +35,7 @@ import {
 // (e.g. 1.25 G: green here, neutral there). Importing the single real
 // implementation instead of re-deriving it closes that drift for good.
 import { gTone } from "./GForceForensik";
+import { InfoBadge } from "./InfoBadge";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pure functions — gut testbar isoliert von React
@@ -298,7 +299,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
     const noticeKey = pickForensicsLegacyKey(record);
     return (
       <section className="landing-section">
-        <h3>{t("landing.sinkrate_forensik.title")}</h3>
+        <h3>{t("landing.sinkrate_forensik.title")}{" "}<InfoBadge explanation={t("landing.erklaer.sinkrate_forensik")} /></h3>
         <div className="sinkrate-forensik-legacy">
           {t(`landing.sinkrate_forensik.${noticeKey}`)}
         </div>
@@ -344,7 +345,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
 
   return (
     <section className="landing-section landing-section--sinkrate-forensik">
-      <h3>{t("landing.sinkrate_forensik.title")}</h3>
+      <h3>{t("landing.sinkrate_forensik.title")}{" "}<InfoBadge explanation={t("landing.erklaer.sinkrate_forensik")} /></h3>
       {/* v1.6.9 — Variante C: nur wenn es etwas zu sagen gibt. */}
       {(() => {
         const h = sinkrateHinweis(record);

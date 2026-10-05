@@ -1257,6 +1257,62 @@
       "schweben_hint": "Time and distance almost level (sink rate above −100 fpm) before touchdown. For context only — the time from 50 ft is the graded value.",
       "steigen": "Climbed again",
       "steigen_hint": "Highest climb rate between 50 ft and touchdown. Above +50 fpm this counts as ballooning: part “Flare” at most 50 points."
+    },
+    "erklaer": {
+      "kopf_note": "The letter grade summarises the overall score: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score is the weighted average of the parts (sink rate and G-force 3 each, bounces, approach stability and flare 2 each, the rest 1 each) — but never better than the weakest part allows: a medium part (45–74 points) caps at 80, a poor one (below 45) at 60, a dangerous event (before the threshold, past the runway end, off the runway, two bounces) at 40.",
+      "td": {
+        "sinkrate": "Sink rate at the moment of first ground contact, from the height curve. Counts towards the grade (part sink rate, weight 3): 90–249 fpm 100 points, below 90 fpm 85 (sign of a long flare), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, from 1000 fpm 0.",
+        "g": "Graded G-force at touchdown: lightly smoothed peak (like a flight data recorder), without single 50 Hz spikes. Counts towards the grade (part G-force, weight 3): below 1.20 G 100 points, below 1.40 G 80, below 1.70 G 45, below 2.10 G 20. From 1.75 G the overall score is at most 40, from 2.6 G at most 14.",
+        "g_frame": "G-force exactly in the frame of ground contact, unsmoothed. For context only — the G-force above is graded.",
+        "pitch": "Pitch attitude at touchdown, + = nose up. For airliners usually about +2 to +6°; much more raises the risk of a tail strike. Does not count towards the grade.",
+        "bank": "Bank angle at touchdown. Close to 0° is good; the larger, the closer the wing gets to the ground (see wing strike risk). Does not count towards the grade.",
+        "ias": "Indicated airspeed at touchdown. How far it is from the reference speed (Vref) is shown under touchdown quality. Does not count towards the grade.",
+        "gs": "Ground speed at touchdown. With a headwind lower than the indicated airspeed, with a tailwind higher — it drives rollout distance and braking. Does not count towards the grade.",
+        "sideslip": "Angle between flight path and fuselage axis at touchdown (crab angle in a crosswind). Close to 0° is good: aligned before touchdown. Does not count directly; the part alignment grades position and heading relative to the runway.",
+        "hopser": "How often the aircraft lifted off again after first ground contact. Counts towards the grade (part bounces, weight 2): 0 = 100 points, 1 = 70, 2 = 40 (and the overall score at most 40), 3 or more = 15.",
+        "hdg_mag": "Heading at touchdown, magnetic — the reference of the runway designator. Does not count towards the grade.",
+        "hdg_true": "Heading at touchdown, true (geographic north). The part alignment compares it with the runway course.",
+        "wind": "Wind at touchdown from the simulator, split into head/tailwind and crosswind relative to the runway. Does not count towards the grade; the part alignment takes the crosswind into account."
+      },
+      "metar": {
+        "titel": "The weather report of the destination at landing time, as the client fetched it during the flight. For context only, does not count towards the grade.",
+        "wind": "Wind direction (from, in degrees) and speed in knots, with gusts. For context only.",
+        "sicht": "Horizontal visibility. ≥ 10 km means unrestricted in terms of the report. For context only.",
+        "wetter": "Present weather (e.g. rain, fog, thunderstorm), with intensity. For context only.",
+        "wolken": "Clouds with base height above the airfield. For context only.",
+        "temp_tau": "Temperature and dew point. When they are close together, expect fog or low clouds. For context only.",
+        "qnh": "Sea-level pressure — the altimeter setting for the approach. For context only."
+      },
+      "gate": {
+        "gleitpfad": "Average deviation from the glide path of the landing runway between 1000 and 200 ft, in dots (1 dot = 0.35° at 3°). Good below 1, poor from 2. Check of the stable gate — the gate caps the overall score.",
+        "fahrt": "How much the speed varied in the stable gate (standard deviation of indicated airspeed). Good below 5 kt, poor from 8 kt. Check of the stable gate.",
+        "querneigung": "How much the bank angle varied in the stable gate (standard deviation). Good below 3°, poor from 6°. Check of the stable gate.",
+        "ruck": "How abruptly the sink rate changed from sample to sample. Good below 100 fpm, poor from 200 fpm. Check of the stable gate.",
+        "sinken": "Whether the sink rate in the stable gate exceeded the limit for at least 10 s in a row (−1000 fpm at a 3° glide path, correspondingly more on steeper approaches). Check of the stable gate.",
+        "konfiguration": "Whether the aircraft was in landing configuration when entering the stable gate (1000 ft): gear down, landing flaps set. Check of the stable gate.",
+        "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, overall score at most 45. Otherwise PARTIAL, overall score at most 80. Without measurement at most 97."
+      },
+      "tile": {
+        "vs_jerk": "How abruptly the sink rate changed during the approach, averaged from sample to sample. Lower is calmer.",
+        "bank_sigma": "How much the bank angle varied during the approach (standard deviation, smoothed). Lower is calmer.",
+        "ias_sigma": "How much the speed varied during the approach (standard deviation). Lower is calmer.",
+        "sink_rate": "Whether the sink rate during the approach exceeded the stability limit for at least 10 s in a row.",
+        "landing_config": "Whether gear and landing flaps were set in time.",
+        "vs_vs_ils": "Average deviation of the sink rate from the target sink rate for the glide angle. For context only.",
+        "max_vs_dev": "Largest deviation from the target sink rate below 500 ft. For context only."
+      },
+      "grafik": {
+        "anflug": "Sink rate over roughly the last two minutes before touchdown. Green band: target sink rate from glide angle and ground speed, ±100 fpm. Red line: stability limit. Blue background is the stable gate, yellow the flare. The chart gives context — grading is done via approach stability.",
+        "gleitpfad": "Deviation from the glide path of the landing runway per sample, in dots on the same time axis. + = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD). The average between 1000 and 200 ft is a check of the stable gate. Tap to see the value and the diamond as in the cockpit.",
+        "nah": "50 Hz close-up from 4 s before to 10 s after touchdown: how the sink rate was reduced in the flare and whether the aircraft lifted off again. The touchdown sink rate comes from this curve."
+      },
+      "forensik": {
+        "gleitpfad": "Geometric deviation from the glide path of the runway actually landed on, computed from position and true altitude. The average 1000–200 ft is a check of the stable gate (good below 1 dot); the gates 1000–500 and 500–200 ft are for context.",
+        "ruhe": "How calmly the approach was flown: side changes around the path, unrest in pitch and roll rate, thrust changes per minute. For context only, does not count towards the grade."
+      },
+      "sinkrate_forensik": "The same landing, averaged differently: different windows give different sink rates. Graded is the sink rate at the moment of ground contact (top of the report); the other values show how it came about.",
+      "gkraft_forensik": "The same landing, measured differently: raw 50 Hz values, means and percentiles. Graded is the lightly smoothed peak (G-force at the top of the report); the other values are for context.",
+      "bordbuch": "What the client recognised on this flight — lights, transponder, APU, taxi speed and more — and when. Completed items are counted, nothing is criticised. Does not count towards the grade."
     }
   },
   "about": {
