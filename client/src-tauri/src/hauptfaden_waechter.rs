@@ -15,11 +15,21 @@
 //! keine Warteschlange an. Schlief der Rechner (der Wächter selbst kam viel
 //! zu spät dran), zählt die Pause nicht als Hänger.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Runtime};
+
+/// Ab `ExitRequested` blockiert das geordnete Herunterfahren den Hauptfaden
+/// gewollt (Hoppie-Logoff bis 15 s, MQTT) — dann schweigt der Wächter
+/// (QS v1.9.24: sonst Fehlalarm in GlitchTip bei jedem langsamen Logoff).
+static BEENDEN: AtomicBool = AtomicBool::new(false);
+
+/// Aus dem `ExitRequested`-Zweig. Die App bricht ein Beenden nie ab.
+pub(crate) fn beenden_beginnt() {
+    BEENDEN.store(true, Ordering::Release);
+}
 
 /// Ab hier gilt der Hauptfaden als hängend. Großzügig: echte Arbeit auf dem
 /// Hauptfaden dauert Millisekunden, ein Hänger dauert, bis der Pilot die
@@ -94,6 +104,9 @@ pub(crate) fn starten<R: Runtime>(app: AppHandle<R>) {
             let mut letzter_takt = Instant::now();
             loop {
                 std::thread::sleep(TAKT);
+                if BEENDEN.load(Ordering::Acquire) {
+                    break;
+                }
                 let verspaetung = letzter_takt.elapsed().saturating_sub(TAKT);
                 letzter_takt = Instant::now();
                 let verschlafen = verspaetung.as_millis() as u64 >= VERSCHLAFEN_AB_MS;

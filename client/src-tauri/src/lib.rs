@@ -58156,6 +58156,9 @@ pub fn run() {
                 clear_run_sentinel(app_handle);
             }
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                // Das Herunterfahren unten blockiert den Hauptfaden gewollt
+                // (Hoppie-Logoff bis 15 s) — kein Fall für den Wächter.
+                hauptfaden_waechter::beenden_beginnt();
                 let app_for_mqtt = app_handle.clone();
                 tauri::async_runtime::block_on(async move {
                     let state = app_for_mqtt.state::<AppState>();
