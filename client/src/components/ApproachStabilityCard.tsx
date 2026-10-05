@@ -445,6 +445,7 @@ export function ApproachStabilityCard(props: Props) {
 
       {/* Help-Button — immer sichtbar, auch bei Legacy */}
       <button
+        className="nur-bildschirm"
         type="button"
         onClick={() => setHelpOpen(true)}
         style={{

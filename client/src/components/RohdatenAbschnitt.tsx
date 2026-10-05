@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import "./rohdatenAbschnitt.css";
+import { useDruck } from "../lib/druck";
 
 /** ISO-Zeit in UTC, auf Millisekunden — unabhängig davon, wie die Quelle
  *  sie geschrieben hat (Rust: bis Mikrosekunden, Webapp: Millisekunden). */
@@ -19,6 +20,7 @@ function zeitUtc(iso: string): string {
 
 export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
+  const druck = useDruck();
   const lat = record.landing_lat;
   const lon = record.landing_lon;
   const koord = lat != null && lon != null ? `${lat.toFixed(7)}, ${lon.toFixed(7)}` : "—";
@@ -36,7 +38,7 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
     </div>
   );
   return (
-    <details className="landing-section rohdaten">
+    <details className="landing-section rohdaten" open={druck || undefined}>
       <summary>{t("landing.rohdaten.title")}</summary>
       <div className="rohdaten__liste">
         {zeile(

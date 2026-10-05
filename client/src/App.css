@@ -6922,6 +6922,50 @@ input:disabled {
   background: #ffffff;
 }
 
+/* 05.10.2026: Der Bericht druckt dieselben Abschnitte wie der Bildschirm
+   (LandungsAbschnitte in LandingPanel.tsx). Die App läuft meist im dunklen
+   Design — auf Papier gelten die hellen Werte des Clients (:root). Die
+   abgeleiteten Variablen werden hier neu gebunden, sonst erben sie die
+   schon aufgelösten dunklen Werte von <html>. */
+.landing-report {
+  --acc: #0a66ce;
+  --acc-quiet: rgba(10, 102, 206, 0.1);
+  --line: #d3dbe3;
+  --tape: #f1f4f8;
+  --text-dim: #5c6975;
+  --tick: #c3ccd6;
+  --sem-ok: #0e7c55;
+  --sem-ok-bg: rgba(14, 124, 85, 0.1);
+  --sem-warn: #8a5a00;
+  --sem-warn-bg: rgba(138, 90, 0, 0.1);
+  --sem-danger: #c0362a;
+  --sem-danger-bg: rgba(192, 54, 42, 0.09);
+  --sem-info: #2a5f8a;
+  --sem-info-bg: rgba(42, 95, 138, 0.1);
+  --on-acc: #ffffff;
+  --shadow-color: rgba(16, 24, 32, 0.14);
+  --scale-excellent: #15803d;
+  --scale-good: #4d7c0f;
+  --scale-fair: #a16207;
+  --scale-poor: #c2410c;
+  --scale-bad: #dc2626;
+  --scale-critical: #b91c1c;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f7f9fb;
+  --surface-3: #edf1f5;
+  --text: #0d1418;
+  --text-muted: var(--text-dim);
+  --border: var(--line);
+  --fg: var(--text);
+  --fg-dim: var(--text-muted);
+  --warn: var(--sem-warn);
+  --warning: var(--sem-warn);
+  --danger: var(--sem-danger);
+  --accent: var(--acc);
+  color-scheme: light;
+}
+
 /* v0.12.8-dev: KEIN fixes A4-Box-Paradigma mehr. Der Report ist EIN
    fließendes Dokument — der Browser paginiert selbst, der @page-Rand
    (siehe @media print) liefert den druckbaren Rahmen. Damit entfallen
@@ -7337,6 +7381,25 @@ input:disabled {
   }
   .landing-report-print {
     display: block !important;
+  }
+  /* Bildschirm-Abschnitte auf Papier (05.10.2026): (i)-Knöpfe sind ein
+     Werkzeug, kein Inhalt. Kleine Blöcke bleiben zusammen; ganze
+     Abschnitte NICHT (`avoid` auf hohen Abschnitten hinterlässt leere
+     Seiten — siehe Querformat-Regel oben). */
+  .landing-report .info-badge-wrap,
+  .nur-bildschirm {
+    display: none !important;
+  }
+  .landing-report .landing-keyvals > div,
+  .landing-report .sinkrate-tile,
+  .landing-report .landing-chart,
+  .landing-report .landing-headline {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .landing-report .landing-section h3 {
+    break-after: avoid;
+    page-break-after: avoid;
   }
 }
 

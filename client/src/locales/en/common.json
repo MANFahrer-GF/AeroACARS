@@ -1037,7 +1037,8 @@
       "rwy_length": "Runway length",
       "rwy_lda": "Landable portion",
       "yes": "yes",
-      "no": "no"
+      "no": "no",
+      "bahn_im_anhang": "The runway diagram with touchdown point, rollout track and key figures is on the landscape pages at the end of the report."
     },
     "ov_mixed_versions": "The chart below shows landings from before and after the sink-rate measurement changed (v1.6.3) side by side — a step in it is expected and not an error.",
     "nicht_bewertbar": {

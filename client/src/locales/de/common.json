@@ -1037,7 +1037,8 @@
       "rwy_length": "Bahnlänge",
       "rwy_lda": "Davon landbar",
       "yes": "ja",
-      "no": "nein"
+      "no": "nein",
+      "bahn_im_anhang": "Die Bahn-Grafik mit Aufsetzpunkt, Rollspur und Kennzahlen steht auf den Querformat-Seiten am Ende des Berichts."
     },
     "ov_mixed_versions": "Die Kurve unten zeigt Landungen von vor und nach der Umstellung der Sinkraten-Messung (v1.6.3) nebeneinander — ein Sprung darin ist zu erwarten und kein Fehler.",
     "nicht_bewertbar": {

@@ -106,6 +106,9 @@ export const DATEIEN = [
   "components/GForceForensik.tsx",
   "components/landungForensik.css",
   "lib/landungsFormat.ts",
+  // 05.10.2026: Druck-Schalter — der PDF-Bericht druckt die Abschnitte
+  // aufgeklappt (SpritWegpunkte, Rohdaten, Sinkrate-Details).
+  "lib/druck.ts",
   "components/TouchdownAbschnitt.tsx",
   "components/touchdownAbschnitt.css",
   "components/FlareAbschnitt.tsx",

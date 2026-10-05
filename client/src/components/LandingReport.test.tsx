@@ -100,6 +100,12 @@ describe("PDF-Bericht der Landeanalyse", () => {
       "Die Klasse ist gesetzt, aber @media print blendet sie nicht aus.",
     ).toBe(true);
 
+    // Seit der Bericht die Bildschirm-Abschnitte druckt (05.10.2026): auch
+    // deren Knöpfe tragen die Druck-Ausblendung.
+    const hilfe = [...markup.matchAll(/<button[^>]*>([^<]*Was bedeuten die Werte[^<]*)</g)];
+    for (const h of hilfe) expect(h[0]).toContain("nur-bildschirm");
+    expect(druckblock.includes(".nur-bildschirm")).toBe(true);
+
     // Gegenprobe der Erkennung selbst: Findet der Test die Texte überhaupt?
     expect(
       bedienung.length,
@@ -181,17 +187,32 @@ describe("PDF-Bericht der Landeanalyse", () => {
   });
 
   it("zeigt keinen leeren Verlaufs-Abschnitt", () => {
-    // Nach dem Querformat-Umbau zählte `hasCharts` die Bahn-Grafik noch
-    // mit, obwohl sie den Abschnitt verlassen hatte: „Profile & Verläufe"
-    // rendert dann als Überschrift mit grauem Kasten und nichts darin.
-    const quelle = readFileSync(resolve(__dirname, "LandingPanel.tsx"), "utf-8");
-    const zeile = /const hasCharts = [^;]+;/.exec(quelle);
-    expect(zeile, "hasCharts nicht gefunden").not.toBeNull();
-    expect(
-      zeile![0].includes("v2Props"),
-      "`hasCharts` zählt die Bahn-Grafik mit, die längst eine eigene Seite " +
-        "hat — der Abschnitt rendert dann leer.",
-    ).toBe(false);
+    // Früher prüfte das eine Variable im Quelltext (`hasCharts`). Seit der
+    // Bericht dieselben Abschnitte wie der Bildschirm druckt (05.10.2026),
+    // gibt es sie nicht mehr — geprüft wird, was gedruckt wird: Ohne
+    // Messpunkte darf keine Grafik-Überschrift ohne Grafik stehen.
+    const o = MOCK_LANDING_OPTIONS.find((x) => x.key === "d_kante")!;
+    const r = {
+      ...(o.build() as unknown as LandingRecord),
+      approach_samples: [],
+      touchdown_profile: [],
+    } as LandingRecord;
+    const markup = renderToStaticMarkup(<LandingReport record={r} />);
+    expect(markup).not.toContain("landing-stability-chart");
+    // Gegenprobe: mit Messpunkten ist die Grafik da.
+    const mit = {
+      ...r,
+      approach_samples: Array.from({ length: 5 }, (_, i) => ({
+        vs_fpm: -700,
+        bank_deg: 0,
+        t_ms: (i - 4) * 1000,
+        agl_ft: 500 - i * 50,
+        is_scored_gate: true,
+        is_flare: false,
+        gs_kt: 130,
+      })),
+    } as LandingRecord;
+    expect(renderToStaticMarkup(<LandingReport record={mit} />)).toContain("landing-stability-chart");
   });
 
   it("titelt die Bahn-Grafik nur einmal", () => {
@@ -218,23 +239,21 @@ describe("PDF-Bericht der Landeanalyse", () => {
   });
 
   it("stellt zwei Bahnlängen nicht unbeschriftet nebeneinander", () => {
+    // Befund 24.08.2026: 3250 m (baulich) und 2952 m (landbar) ohne
+    // Angabe, welche welche ist. Seit 05.10.2026 druckt der Bericht die
+    // Bildschirm-Abschnitte; die Bahn-Grafik nennt nur die landbare Länge.
+    // Steht die bauliche trotzdem irgendwo, muss sie beschriftet sein.
+    const o = MOCK_LANDING_OPTIONS.find((x) => x.key === "d_kante")!;
+    const r = o.build() as unknown as LandingRecord;
+    const baulich = Math.round((r.runway_match?.length_ft ?? 0) * 0.3048);
     const zeilen = texte(bericht("d_kante"));
-    // Alle „NNNN m"-Angaben im Bericht, die eine Bahnlänge sein könnten.
-    const laengen = new Set(
-      zeilen
-        .map((z) => /^(\d{3,5}) m$/.exec(z)?.[1])
-        .filter(Boolean)
-        .map(Number)
-        .filter((m) => m >= 500),
-    );
-    // Stehen mehrere da, muss für jede eine Beschriftung existieren.
-    if (laengen.size > 1) {
-      const hatLda = zeilen.some((z) => /Davon landbar|Landable|atterrabile/.test(z));
+    if (zeilen.some((z) => z.includes(`${baulich} m`))) {
       expect(
-        hatLda,
-        `Der Bericht zeigt ${[...laengen].join(" m und ")} m — zwei ` +
-          "verschiedene Bahnlängen ohne Angabe, welche welche ist.",
+        zeilen.some((z) => /Davon landbar|Landable|atterrabile/.test(z)),
+        `Die bauliche Länge ${baulich} m steht ohne Angabe neben der landbaren.`,
       ).toBe(true);
     }
+    // Und die Lage, die den Befund auslöste, gibt es im Beispiel wirklich.
+    expect(baulich).toBeGreaterThan(500);
   });
 });

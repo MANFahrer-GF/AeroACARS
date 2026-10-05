@@ -36,6 +36,7 @@ import {
 // implementation instead of re-deriving it closes that drift for good.
 import { gTone } from "./GForceForensik";
 import { InfoBadge } from "./InfoBadge";
+import { useDruck } from "../lib/druck";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pure functions — gut testbar isoliert von React
@@ -290,6 +291,7 @@ export function selectTraceSamples(
 
 export function SinkrateForensik({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
+  const druck = useDruck();
 
   if (!hasForensics(record)) {
     // v0.7.20 (QS-Befund GSG219): zwei verschiedene Texte je nach
@@ -470,7 +472,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
 
       {/* Block [6] — Details (collapsible) */}
       {(trace.length >= 3 || record.peak_g_post_500ms != null) && (
-        <details className="sinkrate-forensik-details">
+        <details className="sinkrate-forensik-details" open={druck || undefined}>
           <summary>{t("landing.sinkrate_forensik.details_summary")}</summary>
           {trace.length >= 3 && (
             <PositionTrace samples={trace} />

@@ -10,9 +10,8 @@ import {
 } from "../lib/namenNachladen";
 import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
-import { BordbuchBericht, BordbuchLandungsAbschnitt, useBordbuchEintrag } from "./bordbuch/BordbuchLandung";
+import { BordbuchLandungsAbschnitt, useBordbuchEintrag } from "./bordbuch/BordbuchLandung";
 import type { Eintrag as BordbuchEintrag } from "../lib/bordbuch";
-import { hauptzahlText as spritHauptzahl, kg as spritKg, minuten as spritMinuten, reserveAbstand as spritReserveAbstand } from "../lib/sprit";
 import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
 import { RunwayDiagramV2 } from "./RunwayDiagramV2";
@@ -35,9 +34,9 @@ import {
 } from "../lib/landingScoring";
 // Anfluggrafik und 50-Hz-Nahaufnahme: components/AnflugGrafik.tsx
 // (gespiegelt in die Webapp).
-import { AnflugGrafikAbschnitt, ApproachChart, VsCurveChart } from "./AnflugGrafik";
+import { AnflugGrafikAbschnitt } from "./AnflugGrafik";
 // Zahlformate, scoreG, Fenster-Gültigkeit: lib/landungsFormat.ts (gespiegelt).
-import { fensterWerteGueltig, fmtNumber, fmtSigned, scoreG } from "../lib/landungsFormat";
+import { fensterWerteGueltig, scoreG } from "../lib/landungsFormat";
 import { TouchdownAbschnitt } from "./TouchdownAbschnitt";
 // Kopf, Banner, Hinweise, Teilnoten: components/LandungsBewertung.tsx (gespiegelt).
 import {
@@ -48,10 +47,6 @@ import {
   LandungsKopf,
   NichtBewertbarKasten,
   BahnUeberschrift,
-  achsenLabel,
-  coachTipKey,
-  fmtDateTime,
-  gradeColor,
   rateCategoryWord,
   recordCategory,
   subScoresAusDatensatz,
@@ -66,8 +61,7 @@ import { MetarAbschnitt } from "./MetarAbschnitt";
 import { RohdatenAbschnitt } from "./RohdatenAbschnitt";
 export { scoreG };
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
-import { gateAus, gateGruende, gateMarke, gateUrteil } from "../lib/stableGate";
-import { deckelText } from "../lib/landungsUrteil";
+import { gateAus, gateMarke } from "../lib/stableGate";
 // Datensatz-Typen: lib/landungsDatensatz.ts (gespiegelt in die Webapp).
 import type {
   ApproachSample,
@@ -77,6 +71,7 @@ import type {
   LandingRunwayMatch,
   SubScoreEntry,
 } from "../lib/landungsDatensatz";
+import { DruckKontext } from "../lib/druck";
 export type {
   ApproachSample,
   GateWindow,
@@ -524,33 +519,6 @@ function ReportHeader() {
   );
 }
 
-/** Section-Überschrift mit kurzem Akzent-Strich. v0.12.8-dev: jede
- *  Section bekommt eine eigene Akzentfarbe (`accent`) — wird als CSS-
- *  Variable `--report-accent` gesetzt und färbt Titel, Strich und die
- *  Kachel-Akzente. Bringt Farbe in den sonst sehr weißen Report. */
-function ReportSection({
-  title,
-  accent = "#2563eb",
-  children,
-}: {
-  title: string;
-  accent?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      className="report-section"
-      style={{ ["--report-accent" as string]: accent } as React.CSSProperties}
-    >
-      <h3 className="report-section__title">
-        {title}
-        <span className="report-section__rule" />
-      </h3>
-      {children}
-    </section>
-  );
-}
-
 /** Dunkle Karte um ein Chart — die Chart-Komponenten zeichnen helle
  *  Strokes auf transparentem Grund und wären auf weißem Papier
  *  unsichtbar. Die explizite Breite sorgt für korrektes SVG-Sizing
@@ -566,18 +534,6 @@ function ReportChartCard({
     <div className="report-chart-card">
       <div className="report-chart-card__caption">{caption}</div>
       <div className="report-chart-card__panel">{children}</div>
-    </div>
-  );
-}
-
-/** Eine Touchdown-Kennwert-Kachel: Label + großer Wert. */
-function ReportTile({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <div className="report-tile">
-      <div className="report-tile__label">{label}</div>
-      <div className="report-tile__value">{value}</div>
-      {/* v1.7.35: Detailzeile fuer den Druck — dort hilft kein Tooltip. */}
-      {detail && <div className="report-tile__detail">{detail}</div>}
     </div>
   );
 }
@@ -599,79 +555,19 @@ export function LandingReport({
   /** Bordbuch des Flugs (27.09.2026) — vorab geladen, der Druck wartet nicht. */
   bordbuch?: BordbuchEintrag | null;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
 
   const callsign = record.airline_icao
     ? displayCallsign(record.airline_icao, record.flight_number)
     : record.flight_number;
 
   const subs = useMemo(() => computeSubScores(record), [record]);
-  const scored = subs.filter((s) => !s.skipped);
-  const worst = scored.length
-    ? [...scored].sort((a, b) => a.points - b.points)[0]
-    : null;
-
-  // Charts nur rendern, wenn genug Datenpunkte da sind (gleiche
-  // Schwellen wie LandingDetail).
-  const hasApproach = record.approach_samples.length >= 3;
-  const hasCloseup = record.touchdown_profile.length >= 5;
+  // Die Bahn-Grafik steht im Druck auf einer eigenen Querformat-Seite am
+  // Ende (Lesbarkeit, siehe `BERICHT_SCHRIFT_MINDEST`).
   const v2Props =
     record.runway_match && (record.runway_geometry_trusted ?? true)
       ? mapLandingRecordToV2Props(record)
       : null;
-  // Die Bahn-Grafik zählt hier NICHT mehr mit: Sie hat seit dem
-  // Querformat-Umbau eine eigene Seite und steht nicht mehr in diesem
-  // Abschnitt. Blieb sie in der Bedingung, rendert „Profile & Verläufe"
-  // als leere Überschrift mit grauem Kasten darunter — im gedruckten PDF
-  // gesehen, nicht vermutet.
-  const hasCharts = hasApproach || hasCloseup;
-
-  // Score-Label: bei Confirmed Accident → "ABSTURZ ERKANNT".
-  // QS 2026-08-04: liest bewusst ueber `recordCategory`/`rateCategoryWord`
-  // statt direkt `record.score_label` — eine Anzeigequelle fuer Uebersicht
-  // UND Bericht, damit beide nicht wieder auseinanderlaufen koennen. Die
-  // Frische des Feldes stellt inzwischen `landing_list` (Rust) sicher.
-  const kategorie = recordCategory(record);
-  const heroLabel =
-    record.accident === true
-      ? t("landing.report.accident_label")
-      : kategorie == null
-      ? t("landing.nicht_bewertbar.kurz")
-      : rateCategoryWord(kategorie, t);
-
-  // Sub-Score-Balken: Farbe nach Punkten (grün / amber / rot).
-  const barColor = (pts: number) =>
-    // Bänder der Bewertung (band_from_points): ab 75 gut, ab 45 mittel.
-    pts >= 75 ? "#22c55e" : pts >= 45 ? "#f59e0b" : "#ef4444";
-
-  const rm = record.runway_match;
-
-  // v0.12.8-dev: Anflug-Stabilität — sichtbar wenn mindestens eines der
-  // 7 Stability-v2-Felder vorhanden ist (alte PIREPs ohne sie zeigen die
-  // "no_data"-Hint). Bools zählen nur als vorhanden wenn != null.
-  // Score-Version 19: Prüfliste des Stable Gate (falls vorhanden).
-  const reportGate = gateAus(record.sub_scores);
-  const hasStability =
-    record.approach_vs_jerk_fpm != null ||
-    record.approach_bank_stddev_deg != null ||
-    record.approach_ias_stddev_kt != null ||
-    record.approach_vs_deviation_fpm != null ||
-    record.approach_max_vs_deviation_below_500_fpm != null ||
-    record.approach_stable_config != null ||
-    record.approach_excessive_sink != null;
-
-  // v0.12.8-dev: Sprit & Gewicht — sichtbar wenn irgendein Fuel/Weight-
-  // Feld da ist (gleiche Bedingung wie die Loadsheet-Section im
-  // on-screen LandingDetail).
-  const hasFuel =
-    record.planned_burn_kg != null ||
-    record.actual_trip_burn_kg != null ||
-    record.block_fuel_kg != null ||
-    record.takeoff_fuel_kg != null ||
-    record.landing_fuel_kg != null ||
-    record.takeoff_weight_kg != null ||
-    record.landing_weight_kg != null ||
-    record.fuel_efficiency_pct != null;
 
   return (
     // v0.12.8-dev: EIN fließendes Dokument — kein <ReportPage>-A4-Box-
@@ -681,617 +577,23 @@ export function LandingReport({
     <div className="landing-report report-page">
       <ReportHeader />
 
-      {/* ── Identität & Score ──────────────────────────────────────── */}
-      <div className="report-identity">
-        <div className="report-identity__callsign">{callsign}</div>
-        <div className="report-identity__route">
-          <span>{record.dpt_airport}</span>
-          <span className="report-identity__arrow">→</span>
-          <span>{record.arr_airport}</span>
-        </div>
-        <div className="report-identity__meta">
-          <div>
-            <span className="report-identity__k">
-              {t("landing.report.aircraft")}
-            </span>
-            <span className="report-identity__v">
-              {record.aircraft_title ?? "—"}
-              {record.aircraft_registration
-                ? ` · ${record.aircraft_registration}`
-                : ""}
-              {record.aircraft_icao ? ` · ${record.aircraft_icao}` : ""}
-            </span>
-          </div>
-          <div>
-            <span className="report-identity__k">
-              {t("landing.report.simulator")}
-            </span>
-            <span className="report-identity__v">
-              {record.sim_kind ?? "—"}
-            </span>
-          </div>
-          <div>
-            <span className="report-identity__k">
-              {t("landing.report.touchdown_time")}
-            </span>
-            <span className="report-identity__v">
-              {fmtDateTime(record.touchdown_at, i18n.language)}
-            </span>
-          </div>
-        </div>
-      </div>
+      {/* Dieselben Abschnitte wie auf dem Bildschirm (05.10.2026). Der
+          frühere Berichtskopf (Rufzeichen, Route, Luftfahrzeug, Simulator,
+          Zeit) entfällt: Der Kopf der Ansicht nennt das alles schon. Im
+          Druck sind Aufklapper geöffnet (DruckKontext). */}
+      <DruckKontext.Provider value={true}>
+      <LandungsAbschnitte
+        record={record}
+        subs={subs}
+        callsign={callsign}
+        isPreview={false}
+        isNewBest={false}
+        personalBest={null}
+        bordbuchEintrag={bordbuch}
+        druck
+      />
+      </DruckKontext.Provider>
 
-      <div
-        className="report-hero"
-        style={{
-          borderLeft: `7px solid ${gradeColor(record.grade_letter)}`,
-        }}
-      >
-        <div
-          className="report-hero__badge"
-          style={{ background: gradeColor(record.grade_letter) }}
-        >
-          {record.grade_letter ?? "—"}
-        </div>
-        <div className="report-hero__text">
-          <div className="report-hero__score">
-            {record.score_numeric != null ? (
-              <>
-                {record.score_numeric}
-                <span className="report-hero__of">
-                  {" "}
-                  {t("landing.report.hero_of")}
-                </span>
-              </>
-            ) : (
-              <span className="report-hero__of">
-                {t("landing.nicht_bewertbar.kein_wert")}
-              </span>
-            )}
-          </div>
-          <div className="report-hero__label">{heroLabel}</div>
-          {record.score_deckel && deckelText(t, record.score_deckel) ? (
-            <div className="report-hero__deckel">
-              {deckelText(t, record.score_deckel)}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <ReportSection title={t("landing.report.breakdown")}>
-        <div className="report-bars">
-          {subs.map((s) => (
-            <div key={s.key} className="report-bar">
-              <div className="report-bar__head">
-                <span className="report-bar__label">
-                  {achsenLabel(t, s)}
-                </span>
-                <span className="report-bar__pts">
-                  {s.skipped
-                    ? t("landing.skipped_label")
-                    : `${s.points} PTS`}
-                </span>
-              </div>
-              <div className="report-bar__track">
-                {!s.skipped && (
-                  <div
-                    className="report-bar__fill"
-                    style={{
-                      width: `${Math.max(0, Math.min(100, s.points))}%`,
-                      background: barColor(s.points),
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </ReportSection>
-
-      {worst && (
-        <ReportSection title={t("landing.report.coach")}>
-          <div className="report-coach">
-            <div className="report-coach__focus">
-              {achsenLabel(t, worst)}
-            </div>
-            <p className="report-coach__body">
-              {t(coachTipKey(worst.rationale))}
-            </p>
-          </div>
-        </ReportSection>
-      )}
-
-      {/* ── Touchdown-Kennwerte (frische Seite) ────────────────────── */}
-      <div className="report-break-before">
-        <ReportSection title={t("landing.report.touchdown_section")}>
-          <div className="report-tiles">
-            <ReportTile
-              label={t("landing.landing_rate")}
-              value={fmtNumber(scoreBasisVs(record), 0, "fpm")}
-            />
-            <ReportTile
-              label={t("landing.g_force")}
-              /* v0.20.0: scoreG() — dieselbe Zahl, auf der der G-Balken
-                 bewertet. `landing_g_force` ist der Roh-Wert am Touchdown-
-                 Frame und wich sichtbar vom bewerteten EMA-Wert ab. */
-              value={fmtNumber(scoreG(record), 2, "G")}
-            />
-            <ReportTile
-              label={t("landing.pitch")}
-              value={fmtSigned(record.landing_pitch_deg, 1, "°")}
-            />
-            <ReportTile
-              label={t("landing.bank")}
-              value={fmtSigned(record.landing_bank_deg, 1, "°")}
-            />
-            <ReportTile
-              label={t("landing.speed")}
-              value={fmtNumber(record.landing_speed_kt, 0, "kt")}
-            />
-            <ReportTile
-              label={t("landing.sideslip")}
-              value={fmtSigned(record.touchdown_sideslip_deg, 1, "°")}
-            />
-            <ReportTile
-              label={t("landing.bounces")}
-              value={
-                fensterWerteGueltig(record)
-                  ? String(record.bounce_count)
-                  : t("landing.nicht_bewertbar.kein_wert")
-              }
-            />
-            <ReportTile
-              label={t("landing.heading")}
-              value={fmtNumber(record.landing_heading_deg, 0, "°")}
-            />
-          </div>
-        </ReportSection>
-
-        {/* v0.12.8-dev: NEUE Section — Anflug-Stabilität. Felder +
-            Labels gespiegelt von ApproachStabilityCard für Konsistenz. */}
-        <ReportSection
-          title={t("landing.report.stability_section")}
-          accent="#7c3aed"
-        >
-          {hasStability ? (
-            <>
-            <div className="report-tiles">
-              {reportGate && (
-                <ReportTile
-                  label={t("landing.approach_stability_card.title")}
-                  value={t(`landing.approach_stability_card.pill_${gateUrteil(reportGate, gateMarke(record.sub_scores)) ?? "stable"}`)}
-                />
-              )}
-              {reportGate?.find((p) => p.key === "gleitpfad")?.wert != null && (
-                <ReportTile
-                  label={t("landing.gate.label.gleitpfad")}
-                  value={`${reportGate
-                    .find((p) => p.key === "gleitpfad")!
-                    .wert!.toLocaleString(i18n.language, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })} ${t("landing.gate.einheit.gleitpfad")}`}
-                />
-              )}
-              {record.approach_vs_jerk_fpm != null && (
-                <ReportTile
-                  label={t(
-                    "landing.approach_stability_card.tiles.vs_jerk.label",
-                  )}
-                  value={fmtNumber(record.approach_vs_jerk_fpm, 0, "fpm")}
-                />
-              )}
-              {record.approach_bank_stddev_deg != null && (
-                <ReportTile
-                  label={t(
-                    "landing.approach_stability_card.tiles.bank_sigma.label",
-                  )}
-                  value={fmtNumber(record.approach_bank_stddev_deg, 1, "°")}
-                />
-              )}
-              {record.approach_ias_stddev_kt != null && (
-                <ReportTile
-                  label={t(
-                    "landing.approach_stability_card.tiles.ias_sigma.label",
-                  )}
-                  value={fmtNumber(record.approach_ias_stddev_kt, 1, "kt")}
-                />
-              )}
-              {!reportGate && record.approach_vs_deviation_fpm != null && (
-                <ReportTile
-                  label={(() => {
-                    const gs = record.runway_match?.glideslope_angle_deg;
-                    return gs != null &&
-                      gs >= 2 &&
-                      gs <= 7.5 &&
-                      Math.abs(gs - 3) > 0.05
-                      ? t(
-                          "landing.approach_stability_card.tiles.vs_vs_ils.label_custom",
-                          { angle: String(gs) },
-                        )
-                      : t("landing.approach_stability_card.tiles.vs_vs_ils.label");
-                  })()}
-                  value={fmtNumber(record.approach_vs_deviation_fpm, 0, "fpm")}
-                />
-              )}
-              {!reportGate && record.approach_max_vs_deviation_below_500_fpm != null && (
-                <ReportTile
-                  label={t(
-                    "landing.approach_stability_card.tiles.max_vs_dev.label",
-                  )}
-                  value={fmtNumber(
-                    record.approach_max_vs_deviation_below_500_fpm,
-                    0,
-                    "fpm",
-                  )}
-                />
-              )}
-              {record.approach_stable_config != null && (
-                <ReportTile
-                  label={t(
-                    "landing.approach_stability_card.tiles.landing_config.label",
-                  )}
-                  value={
-                    record.approach_stable_config
-                      ? t(
-                          "landing.approach_stability_card.tiles.landing_config.value_ok",
-                        )
-                      : t(
-                          "landing.approach_stability_card.tiles.landing_config.value_partial",
-                        )
-                  }
-                />
-              )}
-              {record.approach_excessive_sink != null && (
-                <ReportTile
-                  label={t(
-                    "landing.approach_stability_card.tiles.sink_rate.label",
-                  )}
-                  value={
-                    record.approach_excessive_sink
-                      ? t(
-                          "landing.approach_stability_card.tiles.sink_rate.value_excessive",
-                        )
-                      : t(
-                          "landing.approach_stability_card.tiles.sink_rate.value_ok",
-                        )
-                  }
-                />
-              )}
-            </div>
-            {reportGate && gateGruende(t, reportGate, i18n.language).length > 0 && (
-              <ul className="report-gate-gruende">
-                {gateGruende(t, reportGate, i18n.language).map((g) => (
-                  <li key={g}>{g}</li>
-                ))}
-              </ul>
-            )}
-          </>
-          ) : (
-            <div className="report-empty">
-              {t("landing.report.no_data")}
-            </div>
-          )}
-        </ReportSection>
-      </div>
-
-      {/* ── Wind & Bahn (frische Seite) ────────────────────────────── */}
-      <div className="report-break-before">
-        <ReportSection
-          title={t("landing.report.wind_section")}
-          accent="#0891b2"
-        >
-          {(() => {
-            const hw = record.headwind_kt;
-            const xw = record.crosswind_kt;
-            if (hw == null && xw == null) {
-              return (
-                <div className="report-empty">
-                  {t("landing.report.no_data")}
-                </div>
-              );
-            }
-            const hwV = hw ?? 0;
-            const xwV = xw ?? 0;
-            const total = Math.sqrt(hwV * hwV + xwV * xwV);
-            const hwLabel =
-              hwV < -0.5
-                ? t("landing.wind_tailwind")
-                : t("landing.wind_headwind");
-            const xwSide =
-              xwV >= 0
-                ? t("landing.wind_side_right")
-                : t("landing.wind_side_left");
-            return (
-              <div className="report-tiles">
-                <ReportTile
-                  label={hwLabel}
-                  value={fmtNumber(Math.abs(hwV), 0, "kt")}
-                />
-                <ReportTile
-                  label={`${t("landing.wind_crosswind")} · ${xwSide}`}
-                  value={fmtNumber(Math.abs(xwV), 0, "kt")}
-                />
-                <ReportTile
-                  label={t("landing.wind_total")}
-                  value={fmtNumber(total, 0, "kt")}
-                />
-              </div>
-            );
-          })()}
-        </ReportSection>
-
-        <ReportSection
-          title={t("landing.report.runway_section")}
-          accent="#0d9488"
-        >
-          {rm ? (
-            <div className="report-tiles">
-              <ReportTile
-                label={t("landing.runway")}
-                value={`${rm.airport_ident} ${rm.runway_ident}`}
-              />
-              <ReportTile
-                label={t("landing.report.rwy_length")}
-                value={fmtNumber(rm.length_ft * 0.3048, 0, "m")}
-              />
-              {/* Die landbare Länge — aber nur, wenn sie abweicht.
-
-                  Auf derselben Seite standen zwei verschiedene
-                  Bahnlängen: hier 3250 m (die bauliche), in der Grafik
-                  darunter 2952 m (nach der versetzten Schwelle). Beide
-                  stimmen, keine sagte welche sie ist, und der Leser
-                  hatte keine Möglichkeit, sie zu vereinbaren.
-
-                  Bei einer Bahn ohne versetzte Schwelle sind sie gleich
-                  — dann wäre eine zweite Kachel nur Rauschen. */}
-              {(() => {
-                const lda = rolloutLdaMeters(rm);
-                const voll = rm.length_ft * 0.3048;
-                if (lda == null || Math.abs(voll - lda) < 1) return null;
-                return (
-                  <ReportTile
-                    label={t("landing.report.rwy_lda")}
-                    value={fmtNumber(lda, 0, "m")}
-                  />
-                );
-              })()}
-              <ReportTile
-                label={t("landing.report.rwy_surface")}
-                value={rm.surface || "—"}
-              />
-              {record.td_distance_from_threshold_m != null && (
-                <ReportTile
-                  label={t("landing.report.td_distance")}
-                  value={fmtNumber(
-                    record.td_distance_from_threshold_m,
-                    0,
-                    "m",
-                  )}
-                />
-              )}
-              {record.td_in_tdz != null && (
-                <ReportTile
-                  label={t("landing.report.in_tdz")}
-                  value={
-                    record.td_in_tdz
-                      ? t("landing.report.yes")
-                      : t("landing.report.no")
-                  }
-                />
-              )}
-              {record.aim_delta_m != null && (
-                <ReportTile
-                  label={t("landing.report.aim_delta")}
-                  value={fmtSigned(record.aim_delta_m, 0, "m")}
-                />
-              )}
-              {Number.isFinite(rm.centerline_distance_m) && (
-                <ReportTile
-                  label={t("landing.report.centerline")}
-                  value={fmtNumber(
-                    Math.abs(rm.centerline_distance_m),
-                    1,
-                    "m",
-                  )}
-                />
-              )}
-              {record.rollout_distance_m != null && (
-                <ReportTile
-                  label={t("landing.report.rollout_dist")}
-                  value={fmtNumber(record.rollout_distance_m, 0, "m")}
-                />
-              )}
-            </div>
-          ) : (
-            <div className="report-empty">
-              {t("landing.report.no_data")}
-            </div>
-          )}
-        </ReportSection>
-
-        {/* v0.12.8-dev: NEUE Section — Sprit & Gewicht (Plan vs. Ist).
-            Felder + Labels gespiegelt von der Loadsheet-Section im
-            on-screen LandingDetail. */}
-        <ReportSection
-          title={t("landing.report.fuel_section")}
-          accent="#d97706"
-        >
-          {hasFuel ? (
-            <div className="report-tiles">
-              {/* v1.7.35: die fertige Sprit-Auswertung zuerst — nur gerendert. */}
-              {record.sprit?.bis_sinkflug && (
-                <ReportTile
-                  label={t("landing.sprit.report_bis_sinkflug")}
-                  value={spritHauptzahl(record.sprit.bis_sinkflug, "bis_sinkflug")}
-                />
-              )}
-              {record.sprit?.anflug && (
-                <ReportTile
-                  label={t("landing.sprit.report_anflug")}
-                  value={spritHauptzahl(record.sprit.anflug, "anflug")}
-                />
-              )}
-              {record.sprit?.zeit_unter_schwelle_min != null && record.sprit.schwelle_ft != null && (
-                <ReportTile
-                  label={t("landing.sprit.report_zeit")}
-                  value={t("landing.sprit.zeit_wert", { min: spritMinuten(record.sprit.zeit_unter_schwelle_min), ft: spritKg(record.sprit.schwelle_ft) })}
-                />
-              )}
-              {/* v1.7.36: der Rollsprit — erst damit ist der Bericht von
-                  Triebwerk an bis Triebwerk aus vollständig. */}
-              {record.sprit?.rollen_vor_start && (
-                <ReportTile
-                  label={t("landing.sprit.rollen_vor_start")}
-                  value={`${spritKg(record.sprit.rollen_vor_start.ist_kg)} kg`}
-                  detail={`Plan ${spritKg(record.sprit.rollen_vor_start.plan_kg)} kg`}
-                />
-              )}
-              {record.sprit?.rollen_nach_landung_kg != null && (
-                <ReportTile
-                  label={t("landing.sprit.report_rollen_nach")}
-                  value={`${spritKg(record.sprit.rollen_nach_landung_kg)} kg`}
-                />
-              )}
-              {record.sprit && (
-                <ReportTile
-                  label={t("landing.sprit.report_reserve")}
-                  value={
-                    // v1.7.37: Abstand in kg wie in der Sektion; die Quote nur
-                    // noch fuer aeltere Datensaetze ohne das Feld.
-                    spritReserveAbstand(record.sprit) != null
-                      ? `${record.sprit.reserve.status === "intakt" ? "✓" : "⚠"} ${
-                          spritReserveAbstand(record.sprit)! > 0 ? "+" : spritReserveAbstand(record.sprit)! < 0 ? "−" : ""
-                        }${spritKg(Math.abs(spritReserveAbstand(record.sprit)!))} kg`
-                      : record.sprit.reserve.status === "intakt"
-                      ? `✓ ${Math.round(record.sprit.reserve.quote_pct)} %`
-                      : record.sprit.reserve.status === "unterschritten"
-                        ? `⚠ ${Math.round(record.sprit.reserve.quote_pct)} %`
-                        : t("landing.sprit.badge_np")
-                  }
-                />
-              )}
-              {record.sprit?.extra_getankt_kg != null && record.sprit.extra_genutzt_kg != null && (
-                <ReportTile
-                  label={t("landing.sprit.report_extra")}
-                  value={record.sprit.extra_getankt_kg <= 0 ? t("landing.sprit.extra_keins") : `${spritKg(record.sprit.extra_getankt_kg)} kg`}
-                  detail={
-                    record.sprit.extra_getankt_kg <= 0
-                      ? undefined
-                      : t("landing.sprit.extra_detail", {
-                          genutzt: spritKg(record.sprit.extra_genutzt_kg),
-                          ungenutzt: spritKg(record.sprit.extra_ungenutzt_kg),
-                        })
-                  }
-                />
-              )}
-              {(record.planned_burn_kg != null ||
-                record.actual_trip_burn_kg != null) && (
-                <ReportTile
-                  label={`${t("landing.trip_burn")} · ${t(
-                    "landing.actual_burn",
-                  )}`}
-                  value={fmtNumber(record.actual_trip_burn_kg, 0, "kg")}
-                />
-              )}
-              {record.planned_burn_kg != null && (
-                <ReportTile
-                  label={`${t("landing.trip_burn")} · ${t(
-                    "landing.plan_burn",
-                  )}`}
-                  value={fmtNumber(record.planned_burn_kg, 0, "kg")}
-                />
-              )}
-              {/* v1.7.35: Diese beiden stammen aus der abgeschafften Achse und
-                  rechnen ueber den GANZEN Trip — neben den Phasen oben waere das
-                  eine dritte, anders gerechnete Prozentzahl. Sie bleiben nur fuer
-                  Datensaetze ohne Auswertung (vor v1.7.35). */}
-              {!record.sprit && record.fuel_efficiency_kg_diff != null && (
-                <ReportTile
-                  label={t("landing.report.fuel_diff")}
-                  value={fmtSigned(record.fuel_efficiency_kg_diff, 0, "kg")}
-                />
-              )}
-              {!record.sprit && record.fuel_efficiency_pct != null && (
-                <ReportTile
-                  label={t("landing.report.fuel_efficiency")}
-                  value={fmtSigned(record.fuel_efficiency_pct, 1, "%")}
-                />
-              )}
-              {record.block_fuel_kg != null && (
-                <ReportTile
-                  label={t("landing.block_fuel")}
-                  value={fmtNumber(record.block_fuel_kg, 0, "kg")}
-                />
-              )}
-              {record.landing_fuel_kg != null && (
-                <ReportTile
-                  label={t("landing.landing_fuel")}
-                  value={fmtNumber(record.landing_fuel_kg, 0, "kg")}
-                />
-              )}
-              {record.takeoff_weight_kg != null && (
-                <ReportTile
-                  label={t("landing.tow")}
-                  value={fmtNumber(record.takeoff_weight_kg, 0, "kg")}
-                />
-              )}
-              {record.landing_weight_kg != null && (
-                <ReportTile
-                  label={t("landing.ldw")}
-                  value={fmtNumber(record.landing_weight_kg, 0, "kg")}
-                />
-              )}
-            </div>
-          ) : (
-            <div className="report-empty">
-              {t("landing.report.no_data")}
-            </div>
-          )}
-        </ReportSection>
-      </div>
-
-      {/* ── Bordbuch (27.09.2026) ─────────────────────────────────────
-          Kein Seitenumbruch davor: die Checkliste ist kurz und soll nicht
-          allein auf einem Blatt stehen. */}
-      {bordbuch && (
-        <ReportSection title={t("bordbuch.titel")}>
-          <BordbuchBericht eintrag={bordbuch} />
-        </ReportSection>
-      )}
-
-      {/* ── Profile & Verläufe (frische Seite) ─────────────────────── */}
-      {hasCharts && (
-        <div className="report-break-before">
-          <ReportSection title={t("landing.report.charts_section")}>
-            <div className="report-charts">
-              {hasApproach && (
-                <ReportChartCard
-                  caption={t("landing.report.approach_chart")}
-                >
-                  <ApproachChart
-                    samples={record.approach_samples}
-                    glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
-                  />
-                </ReportChartCard>
-              )}
-              {hasCloseup && (
-                <ReportChartCard caption={t("landing.report.vs_curve")}>
-                  <VsCurveChart profile={record.touchdown_profile} />
-                </ReportChartCard>
-              )}
-            </div>
-          </ReportSection>
-        </div>
-      )}
-
-      {/* EINE Fußzeile — am Ende des Fließtextes, VOR dem Anhang.
-
-          Hinter der Querformat-Grafik bekam sie eine eigene, sonst leere
-          Seite: vierzig Zeichen auf einem Blatt. Was nach einem benannten
-          `@page` kommt, braucht wieder eine eigene Seite. Die Grafik ist
-          jetzt ein abgesetzter Anhang, die Fußzeile schliesst den
-          Fließtext ab. */}
       <ReportFooter />
 
       {/* Die Bahn-Grafik bekommt eine eigene QUERFORMAT-Seite.
@@ -1325,6 +627,194 @@ export function LandingReport({
       )}
 
     </div>
+  );
+}
+
+/** Die Abschnitte der Landungsansicht — EIN Baustein für den Bildschirm
+ *  (LandingDetail) und den PDF-Bericht (LandingReport). Bis 05.10.2026 hatte
+ *  der Bericht einen eigenen Nachbau mit eigenen Kacheln; ihm fehlten
+ *  Forensik, Abfangen, Gleitpfad, Gate-Kacheln, Hinweise, Aufsetz-Qualität
+ *  und METAR (Thomas: „dieselben Abschnitte wie der Bildschirm"). */
+function LandungsAbschnitte({
+  record,
+  subs,
+  callsign,
+  isPreview,
+  isNewBest,
+  personalBest,
+  bordbuchEintrag,
+  onBordbuchMarkieren,
+  druck = false,
+}: {
+  record: LandingRecord;
+  subs: SubScore[];
+  callsign: string;
+  isPreview: boolean;
+  isNewBest: boolean;
+  personalBest: LandingRecord | null;
+  bordbuchEintrag: BordbuchEintrag | null | undefined;
+  onBordbuchMarkieren?: Parameters<typeof BordbuchLandungsAbschnitt>[0]["onMarkieren"];
+  /** Im PDF-Bericht: Bahn-Grafik auf die Querformat-Seite am Ende. */
+  druck?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {/* Kasten „nicht bewertbar", Kopf, Banner, Hinweise und Teilnoten:
+          gespiegelt (LandungsBewertung.tsx) — dieselbe Darstellung in der
+          Webapp. */}
+      <NichtBewertbarKasten record={record} />
+      <LandungsKopf
+        record={record}
+        callsign={callsign}
+        isPreview={isPreview}
+        isNewBest={isNewBest}
+        personalBest={personalBest}
+      />
+      {/* v0.7.19 GAF-707 Accident-Detection: rot/gelber Banner als
+          Primary-Klassifikation OBERHALB von Off-Airport + Score-
+          Breakdown. GAF 707 darf hier nicht als normale Hard-Landing
+          erscheinen. Spec §AeroACARS Client Tab "Landung".
+          v0.7.18 (B-012): Off-airport-Banner wenn der Touchdown nicht
+          beim geplanten Destination-Airport war. Quelle ist die
+          backend-resolution (runway_match / nearest_25nm / planned_fallback).
+          v0.5.47 — Quick-Flag-Chips direkt unter dem Headline-Block.
+          Pilot sieht auf einen Blick was die Auffälligkeiten sind.
+          Webapp hat das schon; jetzt auch im Client für visuelle Parität. */}
+      <AccidentBanner record={record} />
+      <OffAirportBanner record={record} />
+      <QuickFlags record={record} />
+      <BewertungsAbschnitt record={record} subs={subs} />
+
+      {/* Runway */}
+      {record.runway_match && (() => {
+        // v0.7.6 P1-3: Runway-Geometry-Trust check.
+        // - trusted ?? true → alte v0.7.5-PIREPs werden wie trusted
+        //   behandelt (Backward-Compat).
+        // - Bei untrusted: Centerline-Offset, Past-Threshold, runway_used_pct
+        //   und das RunwayDiagram ausblenden. Rollout bleibt sichtbar
+        //   (kommt aus GPS-Track).
+        // - "no_runway_match" zeigt KEINEN Alarm-Pill (Privatplatz normal).
+        const geometryTrusted = record.runway_geometry_trusted ?? true;
+        return (
+          <section className="landing-section">
+            {/* Titel, Erklärung, Warnung bei unsicherer Geometrie:
+                gespiegelt (LandungsBewertung.tsx, BahnUeberschrift). */}
+            <BahnUeberschrift record={record} />
+            {(() => {
+              // v0.8.2: alte RunwayDiagram → RunwayDiagramV2.
+              //
+              // v0.8.3.1 (Hotfix): die legacy <dl>-Liste die hier vorher
+              // ZUSAETZLICH rendert wurde entfernt — V2 hat alle Felder
+              // (bahn/laenge/hinter-schwelle/mittellinie/rollout/bahn-
+              // auslastung/navdata/tdz/aim/tch/dds) als eigene Pills.
+              // Vorher liefen beide parallel und zeigten WIDERSPRECHENDE
+              // Werte: Bahn-Auslastung 52% (V2: (td_dist+rollout)/length)
+              // vs 38% (legacy: rollout/length). Reported von Thomas
+              // 2026-05-18 mit Fenix-A320 EVRA-Landung.
+              //
+              // Bei untrusted geometry NICHTS rendern — die trust-Warn-
+              // Box oberhalb erklaert dem Piloten warum (vorher zeigten
+              // einige legacy-Felder auch bei untrusted weiter, was
+              // inkonsistent zur V2-Logik war).
+              //
+              // Bei v2Props=null trotz trusted geometry → das ist ein
+              // Mapping-Bug, kein UI-Fallback. Tritt nicht auf weil
+              // mapLandingRecordToV2Props bei trusted records komplett
+              // ist (alle Pflichtfelder kommen aus record.runway_match,
+              // das bei trusted=true garantiert vollstaendig ist).
+              if (!geometryTrusted) return null;
+              // Im Druck steht die Grafik auf der Querformat-Seite am Ende
+              // (LandingReport, `.report-bahn-quer`) — hier nur der Kopf
+              // und der Verweis, sonst stünde ein leerer Kasten da.
+              if (druck) return <p className="report-bahn-verweis">{t("landing.report.bahn_im_anhang")}</p>;
+              const v2Props = mapLandingRecordToV2Props(record);
+              return v2Props ? <RunwayDiagramV2 {...v2Props} /> : null;
+            })()}
+          </section>
+        );
+      })()}
+
+      {/* Touchdown-Werte + Windkompass: gespiegelt (TouchdownAbschnitt.tsx). */}
+      <TouchdownAbschnitt record={record} />
+
+      {/* METAR am Zielflughafen: gespiegelt (MetarAbschnitt.tsx). */}
+      <MetarAbschnitt metar={record.arr_metar} />
+
+      {/* Approach stability — v0.11.0-dev: 7-Kacheln-Card analog zur
+          aeroacars-live-Webapp (V/S-Jerk, Bank σ, IAS σ, Sink Rate,
+          Landing-Config, V/S vs. 3°-ILS, Max V/S-Dev <500ft) plus
+          STABLE-GATE-Pill und Coaching. Der alte schmale Stability-
+          Indicator (nur σ-V/S und σ-Bank) ist abgelöst — alle Werte
+          kommen direkt aus dem Backend (compute_approach_stability_v2),
+          die Card rendert nur. Der Approach-Chart darunter bleibt. */}
+      <ApproachStabilityCard
+        vsJerkFpm={record.approach_vs_jerk_fpm}
+        bankStddevDeg={record.approach_bank_stddev_deg}
+        iasStddevKt={record.approach_ias_stddev_kt}
+        excessiveSink={record.approach_excessive_sink}
+        stableConfig={record.approach_stable_config}
+        vsDeviationFpm={record.approach_vs_deviation_fpm}
+        maxVsDeviationBelow500Fpm={
+          record.approach_max_vs_deviation_below_500_fpm
+        }
+        usedHat={record.approach_used_hat}
+        sampleCount={
+          record.gate_window?.sample_count ?? record.approach_samples.length
+        }
+        simKind={record.sim_kind}
+        glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
+        gate={gateAus(record.sub_scores)}
+        marke={gateMarke(record.sub_scores)}
+        runwayChangedLate={record.approach_runway_changed_late}
+        stableAtDa={record.approach_stable_at_da}
+        stallWarningCount={record.approach_stall_warning_count}
+      />
+      {/* Aufsetz-Qualität (keine Note): gespiegelt (LandingQualitaet.tsx). */}
+      <LandingQualitaet record={record} />
+      {/* Lernpaket AP4/AP5: Gleitpfad + Anflugruhe als Info-Zeilen,
+          ohne Note und ohne Farbband. */}
+      <AnflugForensikInfo
+        gleitpfad={record.anflug_gleitpfad}
+        ruhe={record.anflug_ruhe}
+      />
+      {/* Anfluggrafik + 50-Hz-Nahaufnahme: gespiegelt (AnflugGrafik.tsx). */}
+      <AnflugGrafikAbschnitt
+        samples={record.approach_samples}
+        profile={record.touchdown_profile}
+        glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
+        gleitpfadVerlauf={record.anflug_gleitpfad?.verlauf}
+      />
+
+      {/* v0.7.8: Sinkrate-Forensik — erklaert dem Piloten warum die
+          Landerate so ist wie sie ist. Spec docs/spec/v0.7.8-landing-rate-
+          explainability.md. Rendert nur wenn 50-Hz-Forensik-Felder
+          vorhanden sind (hasForensics()), sonst kompakter Legacy-Hinweis. */}
+      <SinkrateForensik record={record} />
+
+      {/* v0.7.17 (B-009): G-Force-Forensik — analog zur Sinkrate-Forensik.
+          Erklaert warum AeroACARS bei butterweichen Landungen manchmal hohe
+          G-Werte misst (Sim-Strut-Compression statt echtem Pilot-Impact)
+          und der Master-Score trotzdem als „Smooth" klassifiziert wird. */}
+      {/* Die G-Forensik stammt komplett aus dem Aufsetzfenster. Reichte es
+          nicht, entfällt die Sektion — auch bei gültiger MSFS-Sinkrate
+          (Prüfbefund 13.09.2026: sonst volle G-Kacheln für ungemessene Daten). */}
+      {fensterWerteGueltig(record) && <GForceForensik record={record} />}
+
+      {/* Abfangbogen (keine Note): gespiegelt (FlareAbschnitt.tsx). */}
+      <FlareAbschnitt record={record} />
+
+
+      {/* Bordbuch dieses Flugs — was der Pilot an SOPs abgehakt hat. */}
+      <BordbuchLandungsAbschnitt eintrag={bordbuchEintrag ?? null} onMarkieren={onBordbuchMarkieren} />
+
+      {/* Treibstoff + Gewicht (Sprit-Auswertung, Soll/Ist): gespiegelt
+          (LadeblattAbschnitt.tsx). */}
+      <LadeblattAbschnitt record={record} />
+
+      {/* Rohdaten zur Nachprüfung: gespiegelt (RohdatenAbschnitt.tsx). */}
+      <RohdatenAbschnitt record={record} />
+    </>
   );
 }
 
@@ -1510,156 +1000,16 @@ export function LandingDetail({
           und ebenso, wenn er inzwischen freigegeben wurde. */}
       {!isPreview && <PruefstatusKasten status={pruefstatus} />}
 
-      {/* Kasten „nicht bewertbar", Kopf, Banner, Hinweise und Teilnoten:
-          gespiegelt (LandungsBewertung.tsx) — dieselbe Darstellung in der
-          Webapp. */}
-      <NichtBewertbarKasten record={record} />
-      <LandungsKopf
+      <LandungsAbschnitte
         record={record}
+        subs={subs}
         callsign={callsign}
         isPreview={isPreview}
         isNewBest={isNewBest}
         personalBest={personalBest}
+        bordbuchEintrag={bordbuch.eintrag}
+        onBordbuchMarkieren={bordbuch.markieren}
       />
-      {/* v0.7.19 GAF-707 Accident-Detection: rot/gelber Banner als
-          Primary-Klassifikation OBERHALB von Off-Airport + Score-
-          Breakdown. GAF 707 darf hier nicht als normale Hard-Landing
-          erscheinen. Spec §AeroACARS Client Tab "Landung".
-          v0.7.18 (B-012): Off-airport-Banner wenn der Touchdown nicht
-          beim geplanten Destination-Airport war. Quelle ist die
-          backend-resolution (runway_match / nearest_25nm / planned_fallback).
-          v0.5.47 — Quick-Flag-Chips direkt unter dem Headline-Block.
-          Pilot sieht auf einen Blick was die Auffälligkeiten sind.
-          Webapp hat das schon; jetzt auch im Client für visuelle Parität. */}
-      <AccidentBanner record={record} />
-      <OffAirportBanner record={record} />
-      <QuickFlags record={record} />
-      <BewertungsAbschnitt record={record} subs={subs} />
-
-      {/* Runway */}
-      {record.runway_match && (() => {
-        // v0.7.6 P1-3: Runway-Geometry-Trust check.
-        // - trusted ?? true → alte v0.7.5-PIREPs werden wie trusted
-        //   behandelt (Backward-Compat).
-        // - Bei untrusted: Centerline-Offset, Past-Threshold, runway_used_pct
-        //   und das RunwayDiagram ausblenden. Rollout bleibt sichtbar
-        //   (kommt aus GPS-Track).
-        // - "no_runway_match" zeigt KEINEN Alarm-Pill (Privatplatz normal).
-        const geometryTrusted = record.runway_geometry_trusted ?? true;
-        return (
-          <section className="landing-section">
-            {/* Titel, Erklärung, Warnung bei unsicherer Geometrie:
-                gespiegelt (LandungsBewertung.tsx, BahnUeberschrift). */}
-            <BahnUeberschrift record={record} />
-            {(() => {
-              // v0.8.2: alte RunwayDiagram → RunwayDiagramV2.
-              //
-              // v0.8.3.1 (Hotfix): die legacy <dl>-Liste die hier vorher
-              // ZUSAETZLICH rendert wurde entfernt — V2 hat alle Felder
-              // (bahn/laenge/hinter-schwelle/mittellinie/rollout/bahn-
-              // auslastung/navdata/tdz/aim/tch/dds) als eigene Pills.
-              // Vorher liefen beide parallel und zeigten WIDERSPRECHENDE
-              // Werte: Bahn-Auslastung 52% (V2: (td_dist+rollout)/length)
-              // vs 38% (legacy: rollout/length). Reported von Thomas
-              // 2026-05-18 mit Fenix-A320 EVRA-Landung.
-              //
-              // Bei untrusted geometry NICHTS rendern — die trust-Warn-
-              // Box oberhalb erklaert dem Piloten warum (vorher zeigten
-              // einige legacy-Felder auch bei untrusted weiter, was
-              // inkonsistent zur V2-Logik war).
-              //
-              // Bei v2Props=null trotz trusted geometry → das ist ein
-              // Mapping-Bug, kein UI-Fallback. Tritt nicht auf weil
-              // mapLandingRecordToV2Props bei trusted records komplett
-              // ist (alle Pflichtfelder kommen aus record.runway_match,
-              // das bei trusted=true garantiert vollstaendig ist).
-              if (!geometryTrusted) return null;
-              const v2Props = mapLandingRecordToV2Props(record);
-              return v2Props ? <RunwayDiagramV2 {...v2Props} /> : null;
-            })()}
-          </section>
-        );
-      })()}
-
-      {/* Touchdown-Werte + Windkompass: gespiegelt (TouchdownAbschnitt.tsx). */}
-      <TouchdownAbschnitt record={record} />
-
-      {/* METAR am Zielflughafen: gespiegelt (MetarAbschnitt.tsx). */}
-      <MetarAbschnitt metar={record.arr_metar} />
-
-      {/* Approach stability — v0.11.0-dev: 7-Kacheln-Card analog zur
-          aeroacars-live-Webapp (V/S-Jerk, Bank σ, IAS σ, Sink Rate,
-          Landing-Config, V/S vs. 3°-ILS, Max V/S-Dev <500ft) plus
-          STABLE-GATE-Pill und Coaching. Der alte schmale Stability-
-          Indicator (nur σ-V/S und σ-Bank) ist abgelöst — alle Werte
-          kommen direkt aus dem Backend (compute_approach_stability_v2),
-          die Card rendert nur. Der Approach-Chart darunter bleibt. */}
-      <ApproachStabilityCard
-        vsJerkFpm={record.approach_vs_jerk_fpm}
-        bankStddevDeg={record.approach_bank_stddev_deg}
-        iasStddevKt={record.approach_ias_stddev_kt}
-        excessiveSink={record.approach_excessive_sink}
-        stableConfig={record.approach_stable_config}
-        vsDeviationFpm={record.approach_vs_deviation_fpm}
-        maxVsDeviationBelow500Fpm={
-          record.approach_max_vs_deviation_below_500_fpm
-        }
-        usedHat={record.approach_used_hat}
-        sampleCount={
-          record.gate_window?.sample_count ?? record.approach_samples.length
-        }
-        simKind={record.sim_kind}
-        glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
-        gate={gateAus(record.sub_scores)}
-        marke={gateMarke(record.sub_scores)}
-        runwayChangedLate={record.approach_runway_changed_late}
-        stableAtDa={record.approach_stable_at_da}
-        stallWarningCount={record.approach_stall_warning_count}
-      />
-      {/* Aufsetz-Qualität (keine Note): gespiegelt (LandingQualitaet.tsx). */}
-      <LandingQualitaet record={record} />
-      {/* Lernpaket AP4/AP5: Gleitpfad + Anflugruhe als Info-Zeilen,
-          ohne Note und ohne Farbband. */}
-      <AnflugForensikInfo
-        gleitpfad={record.anflug_gleitpfad}
-        ruhe={record.anflug_ruhe}
-      />
-      {/* Anfluggrafik + 50-Hz-Nahaufnahme: gespiegelt (AnflugGrafik.tsx). */}
-      <AnflugGrafikAbschnitt
-        samples={record.approach_samples}
-        profile={record.touchdown_profile}
-        glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
-        gleitpfadVerlauf={record.anflug_gleitpfad?.verlauf}
-      />
-
-      {/* v0.7.8: Sinkrate-Forensik — erklaert dem Piloten warum die
-          Landerate so ist wie sie ist. Spec docs/spec/v0.7.8-landing-rate-
-          explainability.md. Rendert nur wenn 50-Hz-Forensik-Felder
-          vorhanden sind (hasForensics()), sonst kompakter Legacy-Hinweis. */}
-      <SinkrateForensik record={record} />
-
-      {/* v0.7.17 (B-009): G-Force-Forensik — analog zur Sinkrate-Forensik.
-          Erklaert warum AeroACARS bei butterweichen Landungen manchmal hohe
-          G-Werte misst (Sim-Strut-Compression statt echtem Pilot-Impact)
-          und der Master-Score trotzdem als „Smooth" klassifiziert wird. */}
-      {/* Die G-Forensik stammt komplett aus dem Aufsetzfenster. Reichte es
-          nicht, entfällt die Sektion — auch bei gültiger MSFS-Sinkrate
-          (Prüfbefund 13.09.2026: sonst volle G-Kacheln für ungemessene Daten). */}
-      {fensterWerteGueltig(record) && <GForceForensik record={record} />}
-
-      {/* Abfangbogen (keine Note): gespiegelt (FlareAbschnitt.tsx). */}
-      <FlareAbschnitt record={record} />
-
-
-      {/* Bordbuch dieses Flugs — was der Pilot an SOPs abgehakt hat. */}
-      <BordbuchLandungsAbschnitt eintrag={bordbuch.eintrag} onMarkieren={bordbuch.markieren} />
-
-      {/* Treibstoff + Gewicht (Sprit-Auswertung, Soll/Ist): gespiegelt
-          (LadeblattAbschnitt.tsx). */}
-      <LadeblattAbschnitt record={record} />
-
-      {/* Rohdaten zur Nachprüfung: gespiegelt (RohdatenAbschnitt.tsx). */}
-      <RohdatenAbschnitt record={record} />
     </div>
   );
 }
