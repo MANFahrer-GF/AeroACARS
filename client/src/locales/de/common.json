@@ -202,7 +202,8 @@
       "loadsheet": "Loadsheet",
       "alignment": "Ausrichtung",
       "runway_discipline": "Bahndisziplin",
-      "touchdown_point": "Aufsetzpunkt"
+      "touchdown_point": "Aufsetzpunkt",
+      "abfangen": "Abfangen"
     },
     "info": {
       "landing_rate": "Vertikalgeschwindigkeit im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Der Zielkorridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich“: deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen und Spoiler-Ausfahren verzögert. Ab 600 fpm Sinken ist real eine Hard-Landing-Inspektion fällig.\n\nGemessen wird seit v1.6.3 aus dem tatsächlichen Höhenverlauf der letzten Drittelsekunde vor dem Aufsetzen, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators — der ist träge wie ein echtes Cockpit-Instrument. Steht die Höhe im Simulator zeitweise still, wird nicht gerechnet, sondern der Instrumentenwert genommen.",
@@ -274,7 +275,12 @@
       "outboard": "Etwas außermittig",
       "edge_reached": "⚠ Nah am Bahnrand",
       "off_pavement": "⚠ Neben die befestigte Fläche",
-      "overrun": "⚠ Über das Bahnende hinaus"
+      "overrun": "⚠ Über das Bahnende hinaus",
+      "flare_normal": "Abfangen im üblichen Rahmen",
+      "flare_lang": "Langes Abfangen",
+      "flare_sehr_lang": "Sehr langes Abfangen",
+      "flare_zu_lang": "⚠ Viel zu langes Abfangen",
+      "ballooning": "Im Abfangen wieder gestiegen"
     },
     "tip": {
       "smooth_touchdown": "Genau so — leichter Flare zur richtigen Zeit, sanfte Reduzierung der Sinkrate kurz vor TD.",
@@ -333,7 +339,12 @@
       "outboard": "Leicht neben der Mitte, aber mit Reserve zum Rand. Bei Seitenwind früh mit dem Seitenruder gegenhalten, statt erst nach dem Aufsetzen zu korrigieren.",
       "edge_reached": "Das äußere Rad kam bis an den Rand der befestigten Fläche. Auf schmalen Bahnen ist der Puffer klein — die Seitenwindkorrektur schon im Endanflug ausfliegen und die Mittellinie beim Ausrollen halten.",
       "off_pavement": "Das äußere Rad hat die befestigte Fläche verlassen. Beim Ausrollen die Mittellinie aktiv halten; nach dem Aufsetzen zuerst die Richtung, dann die Bremsen.",
-      "overrun": "Über das Bahnende hinausgerollt. Hier stimmt die Kette aus Aufsetzpunkt, Anfluggeschwindigkeit und Bremseinsatz nicht — die Bahnlänge vor dem Anflug gegen das Landegewicht prüfen und im Zweifel durchstarten."
+      "overrun": "Über das Bahnende hinausgerollt. Hier stimmt die Kette aus Aufsetzpunkt, Anfluggeschwindigkeit und Bremseinsatz nicht — die Bahnlänge vor dem Anflug gegen das Landegewicht prüfen und im Zweifel durchstarten.",
+      "flare_normal": "Vom 50-ft-Durchgang bis zum Aufsetzen im üblichen Rahmen (Linienflugzeug bis 10 s, Kleinflugzeug bis 16 s).",
+      "flare_lang": "Etwas lang abgefangen (Linienflugzeug 10–12 s, Kleinflugzeug 16–20 s ab 50 ft). Den Flare nicht strecken: Airbus und Boeing fliegen das Flugzeug in der Aufsetzzone auf die Bahn — ein weiches Aufsetzen ist nicht das Ziel.",
+      "flare_sehr_lang": "Sehr lang abgefangen (Linienflugzeug 12–15 s, Kleinflugzeug 20–24 s ab 50 ft). Dabei setzt über die Hälfte der Flüge hinter der Aufsetzzone auf. Flare später beginnen (Airbus: 30–40 ft), Schub rechtzeitig auf Leerlauf.",
+      "flare_zu_lang": "Über der Bahn geschwebt (Linienflugzeug über 15 s, Kleinflugzeug über 24 s ab 50 ft). Airbus verlangt in diesem Fall ein Durchstarten statt eines Rettungsversuchs.",
+      "ballooning": "Das Flugzeug ist im Abfangen um mehr als 50 fpm wieder gestiegen (Ballooning) — meist zu starkes Ziehen oder Schub nicht im Leerlauf. Nachgeben statt weiter ziehen, notfalls durchstarten."
     },
     "forensics": {
       "label": "Forensik v2",
@@ -599,7 +610,8 @@
       "bucket_bewertet": "bewertet",
       "gelaende_hinweis": "Auf dieser Bahn steigt der Boden dem Flugzeug entgegen: {{gelaende}} fpm der gemessenen Sinkrate kommen vom Gelände, nicht von dir. Dein eigener Sinkflug lag bei {{eigensinken}} fpm. Für die Bewertung zählt weiterhin der gemessene Wert — der Hinweis steht hier, damit du ihn einordnen kannst.",
       "sim_abstand_hinweis": "Der Simulator meldet für dieselbe Landung {{referenz}} fpm — {{abstand}} fpm Unterschied. So große Abstände entstehen bei Hopsern oder wenn das Fahrwerk anders misst als der Rumpf. Bewertet wird unser Wert; beide stehen hier nebeneinander, damit du es einordnen kannst.",
-      "gelaende_hinweis_steigend": "Auf dieser Bahn steigt der Boden dem Flugzeug entgegen: die gemessenen {{gelaende}} fpm kommen vom Gelände, nicht von dir — im Messfenster bist du sogar noch mit {{eigensinken}} fpm gestiegen. Für die Bewertung zählt weiterhin der gemessene Wert."
+      "gelaende_hinweis_steigend": "Auf dieser Bahn steigt der Boden dem Flugzeug entgegen: die gemessenen {{gelaende}} fpm kommen vom Gelände, nicht von dir — im Messfenster bist du sogar noch mit {{eigensinken}} fpm gestiegen. Für die Bewertung zählt weiterhin der gemessene Wert.",
+      "vs_50ft_label": "Sinkrate bei 50 ft:"
     },
     "gforce_forensik": {
       "title": "💪 G-Kraft-Forensik",
@@ -1223,6 +1235,21 @@
       "icao_mismatch": "Falscher Flughafen erkannt — Geometrie ausgeblendet",
       "centerline_offset_too_large": "Touchdown weit von Runway-Mitte — Geometrie ausgeblendet",
       "negative_float_distance": "Touchdown vor Threshold — Geometrie ausgeblendet"
+    },
+    "abfangen": {
+      "titel": "Abfangen (Flare)",
+      "dauer": "Dauer ab 50 ft",
+      "dauer_hint": "Zeit vom letzten Durchgang durch 50 ft über der Bahn bis zum Aufsetzen. Zählt zur Note (Teil „Abfangen“): Linienflugzeug bis 10 s voll, ab 12 s deutlicher Abzug; Kleinflugzeug bis 16 s voll.",
+      "vs": "Sinkrate 50 ft → Aufsetzen",
+      "vs_hint": "Sinkrate beim Durchgang durch 50 ft und am ersten Bodenkontakt (aus der Höhenkurve).",
+      "reduktion": "Abgebaute Sinkrate",
+      "reduktion_hint": "Um so viel hat der Flare die Sinkrate zwischen 50 ft und Aufsetzen verringert (positiv = abgebaut). Nur Einordnung.",
+      "beginn": "Flare-Beginn",
+      "beginn_hint": "Höhe, ab der die Sinkrate um mindestens 50 fpm unter den 50-ft-Wert zurückging. Airbus empfiehlt rund 30 ft (A320-Familie) bzw. 40 ft (A321, Großraum). Nur Einordnung.",
+      "schweben": "Schweben",
+      "schweben_hint": "Zeit und Strecke fast waagerecht (Sinkrate über −100 fpm) vor dem Aufsetzen. Nur Einordnung — die Dauer ab 50 ft ist der bewertete Wert.",
+      "steigen": "Wieder gestiegen",
+      "steigen_hint": "Größte Steigrate zwischen 50 ft und Aufsetzen. Über +50 fpm gilt das als Ballooning: Teil „Abfangen“ höchstens 50 Punkte."
     }
   },
   "about": {

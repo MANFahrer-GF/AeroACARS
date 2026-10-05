@@ -24850,6 +24850,7 @@ fn build_pirep_payload(
         // beim Bau des Bodys, ein Bahnwechsel ist damit schon nachgezogen.
         anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
         anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
+        abfangen: abfangen_aus_analyse(&stats),
     }
 }
 
@@ -27686,6 +27687,9 @@ fn scoring_eingang(
         fahrwerk_spurweite_m: stats.fahrwerk_spurweite_m.or_else(|| {
             muster_fuer_typtabelle(muster, |m| landing_scoring::spurweite::spurweite_m(m))
         }),
+        // 05.10.2026: Abfangen über die Höhe, gemessen beim Aufsetzen
+        // (`abfangen_messen`). Fehlt es (Altbestand), gibt es die Achse nicht.
+        abfangen: abfangen_aus_analyse(stats),
         ..Default::default()
     }
 }
@@ -28771,6 +28775,7 @@ where
         // Lernpaket AP4/AP5 (29.09.2026): reine Forensik, nur lokal.
         anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
         anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
+        abfangen: abfangen_aus_analyse(&stats),
         // Score-Version 19: dieselben Quellen wie im Touchdown-Payload, damit
         // Client und Webapp dieselben Werte zeigen.
         landing_groundspeed_kt: stats.landing_groundspeed_kt,
@@ -37077,6 +37082,22 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // aus diesem JSON einzelne Schluessel, nie das Ganze.
                 let mut analysis = analysis;
                 stats.anflug_forensik.in_analyse_json(&mut analysis);
+                // 05.10.2026: Abfangen über die Höhe — Messung für die
+                // Teilnote `abfangen` (landing-scoring/src/abfangen.rs).
+                let abfangen = abfangen_messen(
+                    &stats,
+                    &samples,
+                    edge_at,
+                    analysis
+                        .get("vs_at_edge_fpm")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32),
+                );
+                if let (Some(obj), Ok(v)) =
+                    (analysis.as_object_mut(), serde_json::to_value(&abfangen))
+                {
+                    obj.insert("abfangen".to_string(), v);
+                }
                 stats.landing_analysis = Some(analysis.clone());
                 // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde):
                 // `peak_g_post_500ms` steht in `analysis` HIER schon fertig
@@ -43554,6 +43575,65 @@ fn anflug_forensik_schneiden(stats: &mut FlightStats, jetzt: Option<DateTime<Utc
     if schnitt.is_some() {
         stats.anflug_forensik_ab = schnitt;
     }
+}
+
+/// Die beim Aufsetzen gemessenen Abfang-Werte aus dem Analyse-JSON —
+/// eine Quelle für Bewertung, Datensatz und PIREP.
+fn abfangen_aus_analyse(stats: &FlightStats) -> Option<landing_scoring::abfangen::Abfangen> {
+    stats
+        .landing_analysis
+        .as_ref()
+        .and_then(|v| v.get("abfangen"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// Wie lange vom letzten 50-ft-Durchgang bis zum Aufsetzen abgefangen
+/// wurde (05.10.2026, Teilnote `abfangen`).
+///
+/// Höhe = wahre Höhe der Anflugprobe minus wahre Höhe beim ersten
+/// Bodenkontakt im 50-Hz-Fenster — dieselbe Rechnung wie im Korpus, aus dem
+/// die Bänder stammen (Server: `alt_ft` minus `alt_ft` am ersten
+/// Bodenpunkt). So fällt der Versatz des Bezugspunkts weg (B772 meldet am
+/// Aufsetzen ~16 ft über Grund). Ohne wahre Höhe im Fenster gilt die Höhe
+/// über Grund, ebenfalls gegen den Wert am ersten Bodenkontakt.
+///
+/// Proben nur aus dem laufenden Anflug: ab dem Schnitt eines Durchstartens
+/// (`anflug_forensik_ab`), höchstens 60 s vor dem Aufsetzen.
+fn abfangen_messen(
+    stats: &FlightStats,
+    fenster: &[TouchdownWindowSample],
+    edge_at: DateTime<Utc>,
+    vs_aufsetzen_fpm: Option<f32>,
+) -> landing_scoring::abfangen::Abfangen {
+    let boden = fenster.iter().find(|s| s.on_ground && s.at >= edge_at);
+    let bezug: Option<(bool, f32)> = match boden {
+        Some(b) => match b.msl_ft.filter(|m| m.is_finite()) {
+            Some(m) => Some((true, m)),
+            None => Some((false, b.agl_ft)),
+        },
+        None => None,
+    };
+    let Some((mit_msl, bezug_ft)) = bezug else {
+        return landing_scoring::abfangen::Abfangen {
+            vs_aufsetzen_fpm,
+            grund_ohne_werte: Some("kein_bodenbezug".to_string()),
+            ..Default::default()
+        };
+    };
+    let ab = stats.anflug_forensik_ab;
+    let punkte: Vec<landing_scoring::abfangen::AbfangPunkt> = stats
+        .anflug_forensik_puffer
+        .iter()
+        .filter(|s| ab.is_none_or(|ab| s.at > ab))
+        .filter(|s| s.at <= edge_at && (edge_at - s.at).num_seconds() <= 60)
+        .map(|s| landing_scoring::abfangen::AbfangPunkt {
+            t_ms: (s.at - edge_at).num_milliseconds(),
+            hoehe_ft: if mit_msl { s.msl_ft } else { s.agl_ft } - bezug_ft,
+            vs_fpm: s.vs_fpm,
+            gs_kt: s.gs_kt,
+        })
+        .collect();
+    landing_scoring::abfangen::messen(&punkte, vs_aufsetzen_fpm)
 }
 
 /// Die Bahn der Forensik: Navdaten-Geometrie plus versetzte Schwelle.
@@ -80286,5 +80366,105 @@ mod baureihen_varianten_waechter {
             assert!(in_beiden(c), "{c} fehlt in Grenzwerten oder Spurweite");
         }
         assert!(!in_beiden("B74S"), "Gegenprobe: B74S kennt keine Tabelle");
+    }
+}
+
+/// Abfangen (05.10.2026): von der Pufferprobe über das Analyse-JSON bis zur
+/// Teilnote — die Kette, an der eine reine Crate-Prüfung nichts merkt.
+#[cfg(test)]
+mod abfangen_verdrahtung_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn td() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 5, 12, 0, 0).unwrap()
+    }
+
+    /// Anflugprobe `t_ms` vor dem Aufsetzen auf `hoehe_ft` über der Bahn.
+    /// Die Bahn liegt auf 300 ft; die Höhe über Grund trägt wie beim B772
+    /// 16 ft Bezugspunkt-Versatz, den die Messung herausrechnen muss.
+    fn probe(t_ms: i64, hoehe_ft: f32, vs_fpm: f32) -> ApproachBufferSample {
+        ApproachBufferSample {
+            at: td() + chrono::Duration::milliseconds(t_ms),
+            agl_ft: hoehe_ft + 16.0,
+            msl_ft: 300.0 + 16.0 + hoehe_ft,
+            gs_kt: 133.0,
+            ias_kt: 135.0,
+            vs_fpm,
+            bank_deg: 0.0,
+            heading_true_deg: 0.0,
+            gear_position: 1.0,
+            flaps_position: 1.0,
+            selected_runway: None,
+            stall_warning: false,
+            lat: None,
+            lon: None,
+            pitch_deg: None,
+            n1_mittel_pct: None,
+        }
+    }
+
+    fn boden() -> TouchdownWindowSample {
+        TouchdownWindowSample {
+            at: td() + chrono::Duration::milliseconds(20),
+            vs_fpm: -40.0,
+            g_force: 1.05,
+            g_semibody: None,
+            on_ground: true,
+            agl_ft: 16.0,
+            msl_ft: Some(316.0),
+            heading_true_deg: 0.0,
+            groundspeed_kt: 130.0,
+            indicated_airspeed_kt: 130.0,
+            true_airspeed_kt: 130.0,
+            lat: 0.0,
+            lon: 0.0,
+            pitch_deg: 3.0,
+            bank_deg: 0.0,
+            gear_normal_force_n: None,
+            total_weight_kg: None,
+        }
+    }
+
+    /// 14 s ab 50 ft: sehr lang für ein Linienflugzeug → 50 Punkte (nach
+    /// Score-Version 19 deckelt das die Gesamtnote auf 80).
+    #[test]
+    fn langes_schweben_kommt_als_teilnote_an() {
+        let mut stats = FlightStats::default();
+        // Ein Anflug von 60 ft, gleichmäßig in 16,8 s auf 0 ft.
+        for i in 0..=34 {
+            let t = -16_800 + i * 500;
+            let h = 60.0 * (-(t as f32)) / 16_800.0;
+            stats.anflug_forensik_puffer.push_back(probe(t, h, -210.0));
+        }
+        let a = abfangen_messen(&stats, &[boden()], td(), Some(-40.0));
+        assert_eq!(a.grund_ohne_werte, None, "{a:?}");
+        assert_eq!(a.dauer_ab_50ft_s, Some(14.0));
+
+        stats.landing_analysis = Some(serde_json::json!({
+            "abfangen": serde_json::to_value(&a).unwrap()
+        }));
+        let eingang = scoring_eingang(&stats, Some("A320"), None, None);
+        let subs = landing_scoring::compute_sub_scores(&eingang);
+        let s = subs
+            .iter()
+            .find(|s| s.key == "abfangen")
+            .expect("Teilnote abfangen");
+        assert_eq!(s.points, 50);
+
+        // Gegenprobe: ohne Messung keine Teilnote.
+        stats.landing_analysis = Some(serde_json::json!({}));
+        let eingang = scoring_eingang(&stats, Some("A320"), None, None);
+        assert!(!landing_scoring::compute_sub_scores(&eingang)
+            .iter()
+            .any(|s| s.key == "abfangen"));
+    }
+
+    #[test]
+    fn ohne_bodenkontakt_keine_werte() {
+        let stats = FlightStats::default();
+        let a = abfangen_messen(&stats, &[], td(), Some(-100.0));
+        assert_eq!(a.grund_ohne_werte.as_deref(), Some("kein_bodenbezug"));
+        assert_eq!(a.dauer_ab_50ft_s, None);
     }
 }

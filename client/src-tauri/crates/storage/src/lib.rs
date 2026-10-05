@@ -876,6 +876,10 @@ pub struct LandingRecord {
     /// Anflugruhe je Tor 1000–500 / 500–200 ft (AP5), nur als Hinweis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anflug_ruhe: Option<AnflugRuhe>,
+    /// 05.10.2026: Abfangen über die Höhe — Messwerte der Teilnote
+    /// `abfangen` (Dauer ab 50 ft, Schweben, Wieder-Steigen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abfangen: Option<landing_scoring::abfangen::Abfangen>,
 
     // ─── Score-Version 19 (QS 05.10.2026): Client und Webapp zeigen dasselbe ──
     //

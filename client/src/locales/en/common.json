@@ -202,7 +202,8 @@
       "loadsheet": "Loadsheet",
       "alignment": "Alignment",
       "runway_discipline": "Runway discipline",
-      "touchdown_point": "Touchdown point"
+      "touchdown_point": "Touchdown point",
+      "abfangen": "Flare"
     },
     "info": {
       "landing_rate": "Vertical speed at the moment of touchdown, in feet per minute. Negative = descending. The target corridor of 90–250 fpm is deliberate — a professional standard, not “as soft as possible”: well below 90 fpm usually means a long float that delays braking and spoiler deployment. Beyond 600 fpm of sink a real hard-landing inspection would be due.\n\nSince v1.6.3 this is measured from the actual height trace over the final third of a second before touchdown, no longer from the simulator's vertical speed indicator, which is sluggish like a real cockpit instrument. If the simulator freezes the altitude readout, no calculation is done and the instrument value is used instead.",
@@ -274,7 +275,12 @@
       "outboard": "Slightly off centre",
       "edge_reached": "⚠ Close to the runway edge",
       "off_pavement": "⚠ Off the paved surface",
-      "overrun": "⚠ Past the end of the runway"
+      "overrun": "⚠ Past the end of the runway",
+      "flare_normal": "Flare within the usual range",
+      "flare_lang": "Long flare",
+      "flare_sehr_lang": "Very long flare",
+      "flare_zu_lang": "⚠ Far too long flare",
+      "ballooning": "Climbed again during the flare"
     },
     "tip": {
       "smooth_touchdown": "Exactly right — flare timing was on point and the descent rate bled off cleanly.",
@@ -333,7 +339,12 @@
       "outboard": "Slightly off the centreline, but with margin to the edge. In a crosswind, apply rudder early rather than correcting after touchdown.",
       "edge_reached": "The outboard wheel reached the edge of the paved surface. On narrow runways the margin is small — fly out the crosswind correction on final and hold the centreline through the rollout.",
       "off_pavement": "The outboard wheel left the paved surface. Actively hold the centreline through the rollout; after touchdown, direction first, brakes second.",
-      "overrun": "Rolled out past the end of the runway. The chain of touchdown point, approach speed and braking does not add up here — check runway length against landing weight before the approach, and go around if in doubt."
+      "overrun": "Rolled out past the end of the runway. The chain of touchdown point, approach speed and braking does not add up here — check runway length against landing weight before the approach, and go around if in doubt.",
+      "flare_normal": "From crossing 50 ft to touchdown within the usual range (airliner up to 10 s, light aircraft up to 16 s).",
+      "flare_lang": "A rather long flare (airliner 10–12 s, light aircraft 16–20 s from 50 ft). Do not prolong the flare: Airbus and Boeing fly the aircraft onto the runway in the touchdown zone — a smooth touchdown is not the goal.",
+      "flare_sehr_lang": "A very long flare (airliner 12–15 s, light aircraft 20–24 s from 50 ft). More than half of such flights touch down beyond the touchdown zone. Start the flare later (Airbus: 30–40 ft) and bring thrust to idle in time.",
+      "flare_zu_lang": "Floated above the runway (airliner over 15 s, light aircraft over 24 s from 50 ft). Airbus requires a go-around in this case instead of trying to save the landing.",
+      "ballooning": "The aircraft climbed again by more than 50 fpm during the flare (ballooning) — usually too much back pressure or thrust not at idle. Relax the pull instead of pulling more; go around if needed."
     },
     "forensics": {
       "label": "Forensics v2",
@@ -599,7 +610,8 @@
       "bucket_bewertet": "scored",
       "gelaende_hinweis": "On this runway the ground rises towards the aircraft: {{gelaende}} fpm of the measured sink rate come from the terrain, not from you. Your own descent was {{eigensinken}} fpm. Scoring still uses the measured value — this note is here so you can put it in context.",
       "sim_abstand_hinweis": "The simulator reports {{referenz}} fpm for the same landing — a difference of {{abstand}} fpm. Gaps this size come from bounces or from the gear measuring differently than the fuselage. Scoring uses our value; both are shown side by side so you can judge it.",
-      "gelaende_hinweis_steigend": "On this runway the ground rises towards the aircraft: the measured {{gelaende}} fpm come from the terrain, not from you — within the measurement window you were in fact still climbing at {{eigensinken}} fpm. Scoring still uses the measured value."
+      "gelaende_hinweis_steigend": "On this runway the ground rises towards the aircraft: the measured {{gelaende}} fpm come from the terrain, not from you — within the measurement window you were in fact still climbing at {{eigensinken}} fpm. Scoring still uses the measured value.",
+      "vs_50ft_label": "Sink rate at 50 ft:"
     },
     "gforce_forensik": {
       "title": "💪 G-Force Forensics",
@@ -1223,6 +1235,21 @@
       "icao_mismatch": "Wrong airport detected — geometry hidden",
       "centerline_offset_too_large": "Touchdown far from the runway centre — geometry hidden",
       "negative_float_distance": "Touchdown before the threshold — geometry hidden"
+    },
+    "abfangen": {
+      "titel": "Flare",
+      "dauer": "Time from 50 ft",
+      "dauer_hint": "Time from the last crossing of 50 ft above the runway to touchdown. Counts towards the grade (part “Flare”): airliner full points up to 10 s, clear deduction from 12 s; light aircraft full points up to 16 s.",
+      "vs": "Sink rate 50 ft → touchdown",
+      "vs_hint": "Sink rate when crossing 50 ft and at first ground contact (from the height curve).",
+      "reduktion": "Sink rate reduced",
+      "reduktion_hint": "How much the flare reduced the sink rate between 50 ft and touchdown (positive = reduced). For context only.",
+      "beginn": "Flare start",
+      "beginn_hint": "Height at which the sink rate had dropped at least 50 fpm below the 50 ft value. Airbus recommends about 30 ft (A320 family) or 40 ft (A321, widebodies). For context only.",
+      "schweben": "Floating",
+      "schweben_hint": "Time and distance almost level (sink rate above −100 fpm) before touchdown. For context only — the time from 50 ft is the graded value.",
+      "steigen": "Climbed again",
+      "steigen_hint": "Highest climb rate between 50 ft and touchdown. Above +50 fpm this counts as ballooning: part “Flare” at most 50 points."
     }
   },
   "about": {

@@ -14,6 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 05.10.2026: Abfangen (Flare) über die Höhe — Messung und Teilnote.
+pub mod abfangen;
 /// Lernpaket AP4/AP5 (29.09.2026): Datenform der Anflug-Forensik (keine Note).
 pub mod anflug_forensik;
 pub mod anflug_urteil;
@@ -255,6 +257,9 @@ pub struct LandingScoringInput {
     pub bahn_geometrie_aus_szenerie: Option<bool>,
     // Phase 3 hook (Flare-Sub-Score kommt in Phase 3/F6).
     pub flare_quality_score: Option<u8>,
+    /// 05.10.2026: Abfangen über die Höhe (`abfangen::messen`). `None` =
+    /// keine Messung (Altbestand) — dann gibt es die Achse nicht.
+    pub abfangen: Option<abfangen::Abfangen>,
     /// v0.7.17 (N-002): ICAO type designator des geflogenen
     /// Aircraft (z.B. "A320", "B738", "C172"). Wird vom `sub_rollout`-
     /// Score genutzt um die Bahn-Auslastung-Schwellen aircraft-
@@ -535,6 +540,13 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         ));
     }
 
+    // 05.10.2026: Abfangen — wie lange vom letzten 50-ft-Durchgang bis zum
+    // Aufsetzen. Ohne Messung keine Achse (siehe `abfangen.rs`).
+    if let Some(s) = abfangen::sub_abfangen(input.abfangen.as_ref(), input.aircraft_icao.as_deref())
+    {
+        out.push(s);
+    }
+
     // ⚠ `sub_fuel` wird NICHT MEHR bewertet (v1.7.35).
     //
     // # Warum die Achse raus ist
@@ -661,6 +673,10 @@ fn gewichtetes_mittel(subs: &[SubScoreEntry]) -> Option<u8> {
             // Explizit gelistet, damit sie nicht still ueber den `_`-Default
             // mitlaeuft.
             "touchdown_point" => 1.0,
+            // 05.10.2026: Abfangen — Gewicht 2 (Entscheidung Thomas). Mit
+            // dem Aufsetzpunkt zusammen kostet langes Schweben damit etwa so
+            // viel, wie die weichere Sinkrate (Gewicht 3) einbringt.
+            "abfangen" => 2.0,
             "fuel" => 1.0,
             // ⚠ Gewicht bleibt stehen, die Achse wird aber nicht mehr
             // ausgegeben (v1.7.12, siehe `compute_sub_scores`). Gleiches
@@ -803,6 +819,7 @@ fn teil_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
         (true, "rollout") => "teil_schlecht_rollout",
         (true, "alignment") => "teil_schlecht_alignment",
         (true, "touchdown_point") => "teil_schlecht_touchdown_point",
+        (true, "abfangen") => "teil_schlecht_abfangen",
         (true, _) => "teil_schlecht",
         (false, "landing_rate") => "teil_mittel_landing_rate",
         (false, "g_force") => "teil_mittel_g_force",
@@ -811,6 +828,7 @@ fn teil_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
         (false, "rollout") => "teil_mittel_rollout",
         (false, "alignment") => "teil_mittel_alignment",
         (false, "touchdown_point") => "teil_mittel_touchdown_point",
+        (false, "abfangen") => "teil_mittel_abfangen",
         (false, _) => "teil_mittel",
     };
     Some((
@@ -1680,6 +1698,7 @@ mod tests {
             // Set the flare-quality input HIGH: if a `flare` sub-score were
             // ever (wrongly) wired on this field, it would emit here.
             flare_quality_score: Some(100),
+            abfangen: None,
             aircraft_icao: Some("A320".into()),
             td_distance_from_threshold_m: Some(400.0),
             landing_float_distance_m: Some(200.0),

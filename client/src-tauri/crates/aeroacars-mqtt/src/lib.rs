@@ -1594,6 +1594,10 @@ pub struct PirepPayload {
     pub anflug_gleitpfad: Option<landing_scoring::anflug_forensik::AnflugGleitpfad>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anflug_ruhe: Option<landing_scoring::anflug_forensik::AnflugRuhe>,
+    /// 05.10.2026: Messwerte des Abfangens (Teilnote `abfangen`), < 300 Byte.
+    /// Wie die Forensik nur im PIREP; der Recorder legt sie in den Touchdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abfangen: Option<landing_scoring::abfangen::Abfangen>,
 }
 
 /// v0.20 (Process-Integrity): client-self-reported OBSERVATIONS about its

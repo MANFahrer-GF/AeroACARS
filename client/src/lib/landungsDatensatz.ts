@@ -230,6 +230,9 @@ export interface LandingRecord {
   flare_dvs_dt_fpm_per_sec?: number | null;
   flare_quality_score?: number | null;
   flare_detected?: boolean | null;
+  /** 05.10.2026: Abfangen über die Höhe — Messwerte der Teilnote
+   *  `abfangen` (landing-scoring/src/abfangen.rs). Fehlt bei älteren Flügen. */
+  abfangen?: Abfangen | null;
   forensic_sample_count?: number | null;
 
   // v0.8.3 (#8): Forensische Bounce-Counts — surface fuer den Pilot,
@@ -437,6 +440,20 @@ export interface SubScoreEntry {
   extra?: string[];
   /** Score-Version 19: Prüfliste des Stable Gate (nur `stability`). */
   gate?: GatePunkt[] | null;
+}
+
+/** Abfangen (Flare) ab dem letzten 50-ft-Durchgang — gleiche Felder wie
+ *  `landing_scoring::abfangen::Abfangen`. */
+export interface Abfangen {
+  dauer_ab_50ft_s?: number | null;
+  vs_50ft_fpm?: number | null;
+  beginn_hoehe_ft?: number | null;
+  vs_aufsetzen_fpm?: number | null;
+  reduktion_fpm?: number | null;
+  schweben_s?: number | null;
+  schweben_m?: number | null;
+  max_vs_fpm?: number | null;
+  grund_ohne_werte?: string | null;
 }
 
 export interface ApproachSample {

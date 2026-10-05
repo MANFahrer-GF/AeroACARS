@@ -1,10 +1,15 @@
-// Abfangbogen (Flare) — zur Einordnung, KEINE Note (seit Score-Version 19
-// ohne eigene Zahl 0–100).
+// Abfangbogen (Flare).
 //
 // GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Bis
 // 05.10.2026 hieß der Abschnitt im Client „Flare-Qualität", in der Webapp
 // „Abfangbogen (keine Note)" mit anderen Beschriftungen und einer selbst
-// gerechneten Reduktion. Sichtbar, sobald einer der Messwerte da ist.
+// gerechneten Reduktion.
+//
+// Seit 05.10.2026 misst der Client das Abfangen über die Höhe (ab dem
+// letzten 50-ft-Durchgang) und bewertet die Dauer als Teilnote `abfangen`.
+// Flüge mit dieser Messung zeigen sie; ältere zeigen unverändert die alten
+// Werte aus den 2 s vor dem Aufsetzen — die waren nie eine Note, und bei
+// langem Schweben meldeten sie fälschlich „Kein Flare" (QAF434, THY39).
 
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
@@ -12,6 +17,66 @@ import { fmtNumber, fmtSigned } from "../lib/landungsFormat";
 import "./flareAbschnitt.css";
 
 export function FlareAbschnitt({ record }: { record: LandingRecord }) {
+  const a = record.abfangen;
+  if (a && a.dauer_ab_50ft_s != null) return <AbfangenNeu record={record} />;
+  return <AbfangenAlt record={record} />;
+}
+
+function AbfangenNeu({ record }: { record: LandingRecord }) {
+  const { t } = useTranslation();
+  const a = record.abfangen!;
+  return (
+    <section className="landing-section landing-section--flare">
+      <h3>{t("landing.abfangen.titel")}</h3>
+      <div className="landing-flare">
+        <dl className="landing-keyvals landing-flare__metrics">
+          <div title={t("landing.abfangen.dauer_hint") ?? undefined}>
+            <dt>{t("landing.abfangen.dauer")}</dt>
+            <dd>{fmtNumber(a.dauer_ab_50ft_s, 1, "s")}</dd>
+          </div>
+          {a.vs_50ft_fpm != null && (
+            <div title={t("landing.abfangen.vs_hint") ?? undefined}>
+              <dt>{t("landing.abfangen.vs")}</dt>
+              <dd>
+                {fmtNumber(a.vs_50ft_fpm, 0, "fpm")}
+                {a.vs_aufsetzen_fpm != null && <> → {fmtNumber(a.vs_aufsetzen_fpm, 0, "fpm")}</>}
+              </dd>
+            </div>
+          )}
+          {a.reduktion_fpm != null && (
+            <div title={t("landing.abfangen.reduktion_hint") ?? undefined}>
+              <dt>{t("landing.abfangen.reduktion")}</dt>
+              <dd>{fmtSigned(a.reduktion_fpm, 0, "fpm")}</dd>
+            </div>
+          )}
+          {a.beginn_hoehe_ft != null && (
+            <div title={t("landing.abfangen.beginn_hint") ?? undefined}>
+              <dt>{t("landing.abfangen.beginn")}</dt>
+              <dd>{fmtNumber(a.beginn_hoehe_ft, 0, "ft")}</dd>
+            </div>
+          )}
+          {a.schweben_s != null && (
+            <div title={t("landing.abfangen.schweben_hint") ?? undefined}>
+              <dt>{t("landing.abfangen.schweben")}</dt>
+              <dd>
+                {fmtNumber(a.schweben_s, 1, "s")}
+                {a.schweben_m != null && a.schweben_m > 0 && <> · {fmtNumber(a.schweben_m, 0, "m")}</>}
+              </dd>
+            </div>
+          )}
+          {a.max_vs_fpm != null && a.max_vs_fpm > 0 && (
+            <div title={t("landing.abfangen.steigen_hint") ?? undefined}>
+              <dt>{t("landing.abfangen.steigen")}</dt>
+              <dd>{fmtSigned(a.max_vs_fpm, 0, "fpm")}</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+    </section>
+  );
+}
+
+function AbfangenAlt({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
   if (
     record.peak_vs_pre_flare_fpm == null &&

@@ -317,7 +317,10 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
   const tipKey = pickCoachingTip({
     buckets,
     peakGPost500ms: record.peak_g_post_500ms,
-    flareReductionFpm: record.flare_reduction_fpm,
+    // 05.10.2026: mit Höhenmessung (Abfangen ab 50 ft) zählt deren
+    // Reduktion — die alte aus den 2 s vor TD meldete bei langem Schweben
+    // fälschlich „Kein Flare" (QAF434, THY39).
+    flareReductionFpm: record.abfangen?.reduktion_fpm ?? record.flare_reduction_fpm,
     vsAtEdgeFpm: record.vs_at_edge_fpm,
     vsSmoothed1500ms: record.vs_smoothed_1500ms_fpm,
   });
@@ -332,9 +335,12 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
   // consistent endpoints (AGL on the AGL path, SimVar on fallback); reading
   // it here keeps both panels and the detection flag in lockstep. Positive =
   // the flare reduced the sink rate; null/≤0 = no reduction.
-  const flareReduction = record.flare_reduction_fpm != null
-    ? Math.round(record.flare_reduction_fpm)
-    : null;
+  // 05.10.2026: Flüge mit Abfang-Messung zeigen Sinkrate bei 50 ft und die
+  // Reduktion bis zum Aufsetzen; ältere unverändert die 2-s-Werte.
+  const abf = record.abfangen?.vs_50ft_fpm != null ? record.abfangen : null;
+  const vorFlare = abf ? abf.vs_50ft_fpm : record.peak_vs_pre_flare_fpm;
+  const flareRoh = abf ? abf.reduktion_fpm : record.flare_reduction_fpm;
+  const flareReduction = flareRoh != null ? Math.round(flareRoh) : null;
 
   return (
     <section className="landing-section landing-section--sinkrate-forensik">
@@ -437,13 +443,13 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
           quelle={record.vs_at_edge_quelle ?? null}
           landingSource={record.landing_source ?? null}
         />
-        {record.peak_vs_pre_flare_fpm != null && (
+        {vorFlare != null && (
           <div className="sinkrate-forensik-pre-flare">
             <span className="sinkrate-forensik-pre-flare__label">
-              {t("landing.sinkrate_forensik.peak_pre_flare_label")}
+              {t(abf ? "landing.sinkrate_forensik.vs_50ft_label" : "landing.sinkrate_forensik.peak_pre_flare_label")}
             </span>
             <span className="sinkrate-forensik-pre-flare__value">
-              {Math.round(record.peak_vs_pre_flare_fpm)} fpm
+              {Math.round(vorFlare)} fpm
             </span>
             {flareReduction != null && (
               <span className="sinkrate-forensik-pre-flare__reduction">

@@ -202,7 +202,8 @@
       "loadsheet": "Loadsheet",
       "alignment": "Allineamento",
       "runway_discipline": "Disciplina di pista",
-      "touchdown_point": "Punto di tocco"
+      "touchdown_point": "Punto di tocco",
+      "abfangen": "Richiamata"
     },
     "info": {
       "landing_rate": "Velocità verticale nell'istante del contatto, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo di 90–250 fpm è voluto — standard professionale, non «il più morbido possibile»: ben sotto i 90 fpm significa di solito una lunga richiamata che ritarda frenata e spoiler. Oltre 600 fpm di discesa sarebbe dovuta un'ispezione per atterraggio duro.\n\nDalla v1.6.3 la misura viene dall'andamento reale della quota nell'ultimo terzo di secondo prima del contatto, non più dal variometro del simulatore, lento come uno strumento di bordo reale. Se il simulatore blocca temporaneamente la lettura della quota, non si calcola nulla e si usa il valore dello strumento.",
@@ -274,7 +275,12 @@
       "outboard": "Leggermente decentrato",
       "edge_reached": "⚠ Vicino al bordo pista",
       "off_pavement": "⚠ Fuori dalla superficie pavimentata",
-      "overrun": "⚠ Oltre il fine pista"
+      "overrun": "⚠ Oltre il fine pista",
+      "flare_normal": "Richiamata nella norma",
+      "flare_lang": "Richiamata lunga",
+      "flare_sehr_lang": "Richiamata molto lunga",
+      "flare_zu_lang": "⚠ Richiamata decisamente troppo lunga",
+      "ballooning": "Risalito durante la richiamata"
     },
     "tip": {
       "smooth_touchdown": "Esattamente così — flare leggero al momento giusto, riduzione dolce del rateo di discesa appena prima del TD.",
@@ -333,7 +339,12 @@
       "outboard": "Leggermente fuori asse, ma con margine dal bordo. Con vento al traverso agisci sul timone in anticipo, invece di correggere dopo il contatto.",
       "edge_reached": "La ruota esterna ha raggiunto il bordo della superficie pavimentata. Su piste strette il margine è ridotto: esaurisci la correzione di vento in finale e mantieni l'asse durante la corsa.",
       "off_pavement": "La ruota esterna ha lasciato la superficie pavimentata. Mantieni attivamente l'asse durante la corsa; dopo il contatto prima la direzione, poi i freni.",
-      "overrun": "Corsa oltre il fine pista. Qui la catena punto di contatto, velocità di avvicinamento e frenata non torna — verifica la lunghezza pista rispetto al peso di atterraggio prima dell'avvicinamento e, nel dubbio, riattacca."
+      "overrun": "Corsa oltre il fine pista. Qui la catena punto di contatto, velocità di avvicinamento e frenata non torna — verifica la lunghezza pista rispetto al peso di atterraggio prima dell'avvicinamento e, nel dubbio, riattacca.",
+      "flare_normal": "Dal passaggio a 50 ft al contatto nella norma (aereo di linea fino a 10 s, aereo leggero fino a 16 s).",
+      "flare_lang": "Richiamata piuttosto lunga (aereo di linea 10–12 s, aereo leggero 16–20 s da 50 ft). Non prolungare la richiamata: Airbus e Boeing portano l’aereo sulla pista nella zona di contatto — un atterraggio morbido non è l’obiettivo.",
+      "flare_sehr_lang": "Richiamata molto lunga (aereo di linea 12–15 s, aereo leggero 20–24 s da 50 ft). Più della metà di questi voli tocca oltre la zona di contatto. Iniziare la richiamata più tardi (Airbus: 30–40 ft) e portare la spinta al minimo in tempo.",
+      "flare_zu_lang": "Galleggiamento sopra la pista (aereo di linea oltre 15 s, aereo leggero oltre 24 s da 50 ft). In questo caso Airbus richiede una riattaccata invece di cercare di salvare l’atterraggio.",
+      "ballooning": "Durante la richiamata l’aereo è risalito di oltre 50 fpm (ballooning) — di solito troppa pressione a cabrare o spinta non al minimo. Allentare invece di tirare di più; se necessario riattaccare."
     },
     "forensics": {
       "label": "Forensica v2",
@@ -599,7 +610,8 @@
       "bucket_bewertet": "valutato",
       "gelaende_hinweis": "Su questa pista il terreno sale verso l'aeromobile: {{gelaende}} fpm della velocità di discesa misurata vengono dal terreno, non da te. La tua discesa era di {{eigensinken}} fpm. La valutazione usa comunque il valore misurato — questa nota serve a contestualizzarlo.",
       "sim_abstand_hinweis": "Il simulatore riporta {{referenz}} fpm per la stessa landata — {{abstand}} fpm di differenza. Scarti così grandi nascono da rimbalzi o quando il carrello misura diversamente dalla fusoliera. La valutazione usa il nostro valore; entrambi sono mostrati affiancati.",
-      "gelaende_hinweis_steigend": "Su questa pista il terreno sale verso l'aeromobile: i {{gelaende}} fpm misurati vengono dal terreno, non da te — nella finestra di misura stavi addirittura ancora salendo a {{eigensinken}} fpm. La valutazione usa comunque il valore misurato."
+      "gelaende_hinweis_steigend": "Su questa pista il terreno sale verso l'aeromobile: i {{gelaende}} fpm misurati vengono dal terreno, non da te — nella finestra di misura stavi addirittura ancora salendo a {{eigensinken}} fpm. La valutazione usa comunque il valore misurato.",
+      "vs_50ft_label": "Rateo a 50 ft:"
     },
     "gforce_forensik": {
       "title": "💪 Forensica forza-G",
@@ -1223,6 +1235,21 @@
       "icao_mismatch": "Aeroporto errato rilevato — geometria nascosta",
       "centerline_offset_too_large": "Contatto lontano dal centro pista — geometria nascosta",
       "negative_float_distance": "Contatto prima della soglia — geometria nascosta"
+    },
+    "abfangen": {
+      "titel": "Richiamata (flare)",
+      "dauer": "Durata da 50 ft",
+      "dauer_hint": "Tempo dall’ultimo passaggio a 50 ft sopra la pista al contatto. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta da 12 s; aereo leggero punteggio pieno fino a 16 s.",
+      "vs": "Rateo di discesa 50 ft → contatto",
+      "vs_hint": "Rateo di discesa al passaggio a 50 ft e al primo contatto col suolo (dalla curva di quota).",
+      "reduktion": "Rateo ridotto",
+      "reduktion_hint": "Di quanto la richiamata ha ridotto il rateo di discesa tra 50 ft e il contatto (positivo = ridotto). Solo per contesto.",
+      "beginn": "Inizio richiamata",
+      "beginn_hint": "Quota alla quale il rateo era sceso di almeno 50 fpm sotto il valore a 50 ft. Airbus raccomanda circa 30 ft (famiglia A320) o 40 ft (A321, widebody). Solo per contesto.",
+      "schweben": "Galleggiamento",
+      "schweben_hint": "Tempo e distanza quasi in volo livellato (rateo sopra −100 fpm) prima del contatto. Solo per contesto — il valore valutato è la durata da 50 ft.",
+      "steigen": "Risalito",
+      "steigen_hint": "Massimo rateo di salita tra 50 ft e il contatto. Oltre +50 fpm conta come ballooning: parte “Richiamata” al massimo 50 punti."
     }
   },
   "about": {

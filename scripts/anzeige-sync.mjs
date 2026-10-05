@@ -205,6 +205,11 @@ function schluesselAusQuelltext(text) {
 function vorspaenneAusQuelltext(text) {
   const raus = new Set();
   for (const m of text.matchAll(/\bt\(\s*`([\w.]+)\.\$\{/g)) raus.add(m[1]);
+  // Auch ausserhalb von t(): `coachTipKey` baut `landing.tip.${grund}` in
+  // einer Hilfsfunktion. Das sah der Abgleich nicht — der Webapp fehlten bis
+  // zum 05.10.2026 54 Coach-Tipps, sie zeigte den rohen Schluessel. Was kein
+  // Sprachpfad ist, liefert unter `blaetter()` nichts und schadet nicht.
+  for (const m of text.matchAll(/`([a-z_][\w]*(?:\.[\w]+)+)\.\$\{/g)) raus.add(m[1]);
   return raus;
 }
 
