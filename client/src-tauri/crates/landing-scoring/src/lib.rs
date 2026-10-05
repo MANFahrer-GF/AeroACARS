@@ -407,16 +407,19 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         // Score-Version 18 (Cloud-QS 05.10.2026): Fehlt nur die Streuung,
         // liegt aber ein Urteil vor (eigene Stichprobe), zaehlt das Urteil —
         // sonst kaeme ein PARTIAL/UNSTABLE-Anflug mit Deckel 97 davon.
-        let grund = match urteil {
-            Some(anflug_urteil::AnflugUrteil::Partial) => "anflug_partial",
-            Some(anflug_urteil::AnflugUrteil::Unstable) => "anflug_unstable",
-            _ => ANFLUG_NICHT_GEMESSEN,
-        };
-        out.push(SubScoreEntry::skipped(
-            "stability",
-            "landing.sub.stability",
-            grund,
-        ));
+        // Je Grund ein eigener Aufruf mit Literal: `i18nSchluessel.test.ts`
+        // liest die Skip-Gruende per Muster aus dem Quelltext.
+        out.push(match urteil {
+            Some(anflug_urteil::AnflugUrteil::Partial) => {
+                SubScoreEntry::skipped("stability", "landing.sub.stability", "anflug_partial")
+            }
+            Some(anflug_urteil::AnflugUrteil::Unstable) => {
+                SubScoreEntry::skipped("stability", "landing.sub.stability", "anflug_unstable")
+            }
+            _ => {
+                SubScoreEntry::skipped("stability", "landing.sub.stability", ANFLUG_NICHT_GEMESSEN)
+            }
+        });
     }
     // v0.10.0 (#runway-utilization-score): Wenn die v2-Datenlage da ist,
     // wird der neue LDA-basierte Sub-Score gerechnet (auch bei
@@ -1123,8 +1126,8 @@ mod tests {
         assert_eq!(stab.reason.as_deref(), Some(ANFLUG_NICHT_GEMESSEN));
     }
 
-    /// Anflug nicht STABLE: Gesamtnote gedeckelt (Score-Version 18), Anzeige
-    /// nennt den Grund — auch wenn der Mittelwert den Deckel nicht beruehrt.
+    /// Anflug nicht STABLE: Gesamtnote gedeckelt (Score-Version 18), die
+    /// Anzeige nennt den Grund, weil der Deckel hier wirklich senkt.
     #[test]
     fn nicht_stabiler_anflug_gibt_keine_hundert() {
         use crate::anflug_urteil::AnflugUrteil;
