@@ -421,7 +421,7 @@ fn build_status(handle: &Option<HoppieHandle>) -> HoppieStatus {
 // Tauri commands
 // ----------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hoppie_get_settings(app: AppHandle) -> HoppieSettings {
     settings::read_settings(&app)
 }
@@ -432,7 +432,7 @@ pub fn hoppie_set_settings(app: AppHandle, settings: HoppieSettings) -> HoppieSe
     settings
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hoppie_set_logon_code(code: String) -> Result<(), UiError> {
     let trimmed = code.trim();
     if trimmed.is_empty() {
@@ -445,14 +445,14 @@ pub fn hoppie_set_logon_code(code: String) -> Result<(), UiError> {
         .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hoppie_has_logon_code() -> Result<bool, UiError> {
     Ok(secrets::load_api_key(HOPPIE_LOGON_CODE_ACCOUNT)
         .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))?
         .is_some())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hoppie_clear_logon_code() -> Result<(), UiError> {
     secrets::delete_api_key(HOPPIE_LOGON_CODE_ACCOUNT)
         .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))
@@ -938,7 +938,7 @@ fn flight_context(app: &AppHandle) -> FlightContext {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hoppie_get_flight_context(app: AppHandle) -> FlightContext {
     flight_context(&app)
 }

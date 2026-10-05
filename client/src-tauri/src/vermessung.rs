@@ -605,7 +605,7 @@ pub struct SchrittAntwort {
 }
 
 /// Schalter fertig (oder übersprungen): Kandidaten bilden, neu beginnen.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vermessung_schritt_abschliessen(
     schalter: String,
     uebersprungen: bool,

@@ -12500,7 +12500,7 @@ pub(crate) fn record_datalink(
 
 /// `GET` the entire activity log. Frontend polls this every couple of
 /// seconds; `ACTIVITY_LOG_CAPACITY` keeps the payload bounded.
-#[tauri::command]
+#[tauri::command(async)]
 fn activity_log_get(state: tauri::State<'_, AppState>) -> Vec<ActivityEntry> {
     let log = state.activity_log.lock().expect("activity_log lock");
     log.iter().cloned().collect()
@@ -12517,13 +12517,13 @@ fn activity_log_get(state: tauri::State<'_, AppState>) -> Vec<ActivityEntry> {
 /// den A/B-Test „stürzt es auch OHNE Panel-Server ab?", ohne auf v1.4.7
 /// zurückzumüssen. Wirkt beim nächsten App-Start (bewusst kein
 /// Laufzeit-Stopp/-Start — siehe `panel_server::set_enabled`).
-#[tauri::command]
+#[tauri::command(async)]
 fn panel_server_get_enabled(app: AppHandle) -> bool {
     panel_server::is_enabled(&app)
 }
 
 /// Einstellung „X-Plane-Band senden" (ADR-0005), Standard an, wirkt sofort.
-#[tauri::command]
+#[tauri::command(async)]
 fn xplane_band_get_enabled(app: AppHandle) -> bool {
     xplane_band::is_enabled(&app)
 }
@@ -12552,7 +12552,7 @@ pub(crate) fn activity_log_tail(state: &AppState, limit: usize) -> Vec<ActivityE
 
 /// Wipe the activity log. Useful when the pilot starts a fresh session
 /// and doesn't want the previous flight's chatter cluttering the panel.
-#[tauri::command]
+#[tauri::command(async)]
 fn activity_log_clear(state: tauri::State<'_, AppState>) {
     let mut log = state.activity_log.lock().expect("activity_log lock");
     log.clear();
@@ -12605,7 +12605,7 @@ fn normalize_derived_scores(mut r: LandingRecord) -> LandingRecord {
 
 /// List every persisted landing record, newest first. Used by the
 /// Landing tab's list view.
-#[tauri::command]
+#[tauri::command(async)]
 fn landing_list(app: AppHandle) -> Vec<LandingRecord> {
     open_landing_store(&app)
         .and_then(|s| s.list().ok())
@@ -12624,7 +12624,7 @@ fn landing_list(app: AppHandle) -> Vec<LandingRecord> {
 /// pilot what their landing looks like *right now* without having to
 /// wait for the PIREP to be filed. Returns None when there is no
 /// active flight or when the touchdown hasn't happened yet.
-#[tauri::command]
+#[tauri::command(async)]
 fn landing_get_current(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<LandingRecord> {
     let flight = {
         let guard = state.active_flight.lock().expect("active_flight lock");
@@ -12687,7 +12687,7 @@ fn landing_get_current(app: AppHandle, state: tauri::State<'_, AppState>) -> Opt
 /// Delete a landing record. Lets the user clean up bad/test entries
 /// from the Landing tab. Best-effort — returns Ok(()) even if the
 /// record didn't exist.
-#[tauri::command]
+#[tauri::command(async)]
 fn landing_delete(app: AppHandle, pirep_id: String) -> Result<(), UiError> {
     let Some(store) = open_landing_store(&app) else {
         return Err(UiError::new(
@@ -15295,7 +15295,7 @@ struct VerifySimBriefResult {
 ///
 /// Returns an empty vec when no flight is active or no airport is
 /// within `arrival::NEAREST_SEARCH_RADIUS_NM` of the current position.
-#[tauri::command]
+#[tauri::command(async)]
 fn divert_nearest_airports(
     state: tauri::State<'_, AppState>,
     limit: Option<usize>,
@@ -15628,7 +15628,7 @@ async fn news_fetch(state: tauri::State<'_, AppState>) -> Result<Vec<NewsItem>, 
 /// v0.7.9: Read aktuelles Callsign-Mismatch-Warning. Frontend pollt das
 /// nach jedem `flight_refresh_simbrief` um zu prueefen ob das Warning-
 /// Banner gezeigt werden soll.
-#[tauri::command]
+#[tauri::command(async)]
 fn ofp_callsign_warning_get(state: tauri::State<AppState>) -> Option<OfpCallsignWarning> {
     state
         .ofp_callsign_warning
@@ -18111,7 +18111,7 @@ fn phase_to_snake(phase: FlightPhase) -> &'static str {
 /// Karten-Ansicht (Dots der geplanten Route + TOC/TOD). Leer, wenn kein
 /// aktiver Flug / kein OFP (VFR/Manual/Resume) — die Map fällt dann auf eine
 /// Great-Circle-Linie Dep→Arr zurück.
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_get_route_fixes(state: tauri::State<'_, AppState>) -> Vec<api_client::RouteFix> {
     let guard = state.active_flight.lock().expect("active_flight lock");
     match guard.as_ref() {
@@ -18171,7 +18171,7 @@ fn entfernung_zur_zeile(
         .map(|(_, f)| ::geo::distance_m(lat, lon, f.lat, f.lon) / 1852.0)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_sprit_wegpunkte(state: tauri::State<'_, AppState>) -> SpritWegpunkteDto {
     let guard = state.active_flight.lock().expect("active_flight lock");
     let Some(flight) = guard.as_ref() else {
@@ -18318,7 +18318,7 @@ async fn fremde_flugroute(pirep_id: String) -> Result<Vec<FremdePunkt>, UiError>
 /// Vollbild, anders als der gedrosselte Webview-Snapshot-Poll). Leer, wenn
 /// kein aktiver Flug. Das Frontend spiegelt das via `setTrack` in den
 /// trackStore und rendert die Linie daraus.
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_get_track(state: tauri::State<'_, AppState>) -> Vec<[f64; 2]> {
     let guard = state.active_flight.lock().expect("active_flight lock");
     match guard.as_ref() {
@@ -18508,7 +18508,7 @@ async fn logbook_pirep(
         .map_err(UiError::from)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<ActiveFlightInfo> {
     let guard = state.active_flight.lock().expect("active_flight lock");
     let flight = guard.as_ref()?;
@@ -18555,7 +18555,7 @@ struct FlightLogStatsDto {
 /// Disk usage of the per-flight JSONL recorder files. Powers the
 /// Settings → Speicher section so the user knows how much is on disk
 /// before they hit "alle löschen".
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_logs_stats(app: AppHandle) -> Result<FlightLogStatsDto, UiError> {
     let dir = app
         .path()
@@ -18582,7 +18582,7 @@ struct DeletedDto {
 /// Settings — never automatically — so the active flight's log (if it
 /// exists) gets removed too. The streamer just recreates it on the
 /// next event append.
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_logs_delete_all(app: AppHandle) -> Result<DeletedDto, UiError> {
     let dir = app
         .path()
@@ -18601,7 +18601,7 @@ fn flight_logs_delete_all(app: AppHandle) -> Result<DeletedDto, UiError> {
 /// Delete per-flight JSONL files older than `older_than_days` (mtime).
 /// Called from the JS layer once per app launch when the user has the
 /// auto-purge toggle on (default 30 days).
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_logs_purge_older_than(
     app: AppHandle,
     older_than_days: u32,
@@ -18658,7 +18658,7 @@ pub struct ResumableFlight {
 ///
 /// Deshalb diese Frage, die OHNE Netz beantwortbar ist: Die Datei liegt auf
 /// der Platte oder nicht.
-#[tauri::command]
+#[tauri::command(async)]
 fn flight_wiederaufnahme_steht_aus(app: AppHandle, state: tauri::State<'_, AppState>) -> bool {
     // Ein bereits aufgenommener Flug zaehlt auch — dann ist die Frage
     // ohnehin beantwortet und die Phase da.
@@ -29242,7 +29242,7 @@ fn spawn_bordbuch_abgleich(app: &AppHandle) {
 
 /// Liste für Logbuch/Routine — ohne Höhenprofil und Rohwerte (die holt die
 /// Einzelansicht), damit auch hunderte Flüge schnell ankommen.
-#[tauri::command]
+#[tauri::command(async)]
 fn bordbuch_liste(app: AppHandle) -> Vec<bordbuch::Eintrag> {
     bordbuch_speicher(&app)
         .map(|sp| sp.alle())
@@ -29258,13 +29258,13 @@ fn bordbuch_liste(app: AppHandle) -> Vec<bordbuch::Eintrag> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn bordbuch_eintrag(app: AppHandle, pirep_id: String) -> Option<bordbuch::Eintrag> {
     bordbuch_speicher(&app)?.holen(&pirep_id)
 }
 
 /// Laufender Flug: was bisher abgehakt ist, dazu ein leiser Hinweis.
-#[tauri::command]
+#[tauri::command(async)]
 fn bordbuch_live(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -29286,7 +29286,7 @@ fn bordbuch_live(
 }
 
 /// Pilot tippt einen Punkt an: „nach ATC-Anweisung" (oder zurück).
-#[tauri::command]
+#[tauri::command(async)]
 fn bordbuch_markieren(
     app: AppHandle,
     pirep_id: String,
@@ -29304,7 +29304,7 @@ fn bordbuch_markieren(
     Ok(neu)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn bordbuch_einstellungen_holen(app: AppHandle) -> bordbuch::Einstellungen {
     bordbuch_einstellungen(&app)
 }
@@ -53935,7 +53935,7 @@ fn kind_str(kind: SimKind) -> &'static str {
 }
 
 /// `GET` the persisted sim selection.
-#[tauri::command]
+#[tauri::command(async)]
 fn sim_get_kind(app: AppHandle) -> String {
     kind_str(read_sim_config(&app).kind).to_string()
 }
@@ -53950,7 +53950,7 @@ pub struct SimAuswahl {
 
 /// Auswahl fuer die Einstellungen: „Automatisch“ oder Handwahl, dazu der
 /// aktuell eingestellte Simulator.
-#[tauri::command]
+#[tauri::command(async)]
 fn sim_get_auswahl(app: AppHandle) -> SimAuswahl {
     let cfg = read_sim_config(&app);
     SimAuswahl {
@@ -53962,7 +53962,7 @@ fn sim_get_auswahl(app: AppHandle) -> SimAuswahl {
 /// Persist a new sim selection AND apply it to the running adapter.
 /// Accepts: "auto" | "off" | "msfs2020" | "msfs2024" | "xplane11" | "xplane12".
 /// "auto" (v1.9.14) laesst den Adapter stehen; der Waechter stellt um.
-#[tauri::command]
+#[tauri::command(async)]
 fn sim_set_kind(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -54004,7 +54004,7 @@ fn sim_set_kind(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sim_status(app: AppHandle, state: tauri::State<'_, AppState>) -> SimStatus {
     let kind = read_sim_config(&app).kind;
 
@@ -54079,7 +54079,7 @@ fn sim_status(app: AppHandle, state: tauri::State<'_, AppState>) -> SimStatus {
 /// automatic 5 s stale-timeout doesn't cover (sim paused while
 /// changing flight, SimConnect trickles stale data, etc.) without
 /// any "skip the gate" override semantics.
-#[tauri::command]
+#[tauri::command(async)]
 fn sim_force_resync(app: AppHandle, state: tauri::State<'_, AppState>) {
     let kind = read_sim_config(&app).kind;
     if kind.is_xplane() {
@@ -54126,7 +54126,7 @@ struct PmdgStatusDto {
     looks_like_sdk_disabled: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pmdg_status(state: tauri::State<'_, AppState>) -> PmdgStatusDto {
     #[cfg(target_os = "windows")]
     {
@@ -54180,7 +54180,7 @@ pub(crate) struct InspectorAddArgs {
     kind: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspector_add(
     _state: tauri::State<'_, AppState>,
     args: InspectorAddArgs,
@@ -54217,7 +54217,7 @@ fn inspector_add(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspector_remove(_state: tauri::State<'_, AppState>, id: u32) -> Result<(), UiError> {
     #[cfg(target_os = "windows")]
     {
@@ -54232,7 +54232,7 @@ fn inspector_remove(_state: tauri::State<'_, AppState>, id: u32) -> Result<(), U
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspector_list(_state: tauri::State<'_, AppState>) -> Vec<serde_json::Value> {
     #[cfg(target_os = "windows")]
     {
@@ -54534,7 +54534,7 @@ fn spawn_telemetrie_takt(app: AppHandle) {
 /// fixed at compile time — every DataRef we subscribe is shown.
 /// Pilots use this to verify the UDP feed is alive and the Sim is
 /// responding to RREF subscriptions.
-#[tauri::command]
+#[tauri::command(async)]
 fn xplane_inspector_list(state: tauri::State<'_, AppState>) -> Vec<serde_json::Value> {
     let adapter = state.xplane.lock().expect("xplane lock");
     adapter
@@ -54614,7 +54614,7 @@ async fn xplane_install_plugin(
 ///   }
 ///
 /// Inert when the active sim isn't X-Plane (returns all-false).
-#[tauri::command]
+#[tauri::command(async)]
 fn xplane_premium_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
     let adapter = state.xplane.lock().expect("xplane lock");
     let s = adapter.premium_status();
@@ -56261,7 +56261,7 @@ fn write_auto_start_persisted(app: &AppHandle, enabled: bool) {
 ///
 /// Liefert `None` wenn alles passt (kein Skip kürzlich) oder Auto-
 /// Start aus ist.
-#[tauri::command]
+#[tauri::command(async)]
 fn auto_start_skip_status(state: tauri::State<'_, AppState>) -> Option<AutoStartSkipDto> {
     if !state.auto_start_enabled.load(Ordering::Relaxed) {
         return None;
@@ -56348,7 +56348,7 @@ fn set_auto_file_enabled(enabled: bool, state: tauri::State<'_, AppState>) {
 /// Ein Zwischenspeicher, den niemand sehen kann, verrottet unbemerkt:
 /// Man merkt erst beim naechsten Flug ohne Netz, dass er leer war.
 /// Deshalb ist er abfragbar — auch wenn ihn im Alltag niemand braucht.
-#[tauri::command]
+#[tauri::command(async)]
 fn navdata_zwischenspeicher_bestand(app: AppHandle) -> serde_json::Value {
     let (anzahl, bytes) = navdata_cache::bestand(&app);
     serde_json::json!({

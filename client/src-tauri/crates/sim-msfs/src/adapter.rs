@@ -225,6 +225,44 @@ struct Shared {
     messung: Mutex<crate::vermessung::MessState>,
 }
 
+impl Shared {
+    fn neu() -> Self {
+        Shared {
+            state: Mutex::new(ConnectionState::Disconnected),
+            snapshot: Mutex::new(None),
+            last_error: Mutex::new(None),
+            szenerie: Mutex::new(sim_core::szenerie::Auftragsbuch::neu()),
+            szenerie_offen: AtomicBool::new(false),
+            sim_paused: AtomicBool::new(false),
+            sim_unecht_tiefe: AtomicI32::new(0),
+            sim_crashed: AtomicBool::new(false),
+            touchdown: Mutex::new(None),
+            inspector: Mutex::new(InspectorState::default()),
+            zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
+            pmdg: Mutex::new(PmdgSharedState::default()),
+            eingaben: Mutex::new(crate::eingabe_events::EingabeState::default()),
+            messung: Mutex::new(crate::vermessung::MessState::default()),
+        }
+    }
+}
+
+/// So lange darf der Worker zum Beenden brauchen. Ein normales Ende
+/// (Stopp-Flag, SimConnect_Close) dauert Millisekunden.
+const STOPP_FRIST: Duration = Duration::from_secs(3);
+
+/// `true`, wenn der Faden binnen `frist` fertig ist (dann blockiert ein
+/// anschließendes `join` nicht mehr).
+fn worker_endet_binnen(h: &JoinHandle<()>, frist: Duration) -> bool {
+    let t0 = Instant::now();
+    while !h.is_finished() {
+        if t0.elapsed() >= frist {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    true
+}
+
 /// Convert a PMDG NG3 (737-specific) snapshot to the generic
 /// `sim_core::PmdgState` shape. The FSM, activity log, and PIREP
 /// code consume `PmdgState` so they don't have to branch on
@@ -667,22 +705,7 @@ impl Default for MsfsAdapter {
 impl MsfsAdapter {
     pub fn new() -> Self {
         Self {
-            shared: Arc::new(Shared {
-                state: Mutex::new(ConnectionState::Disconnected),
-                snapshot: Mutex::new(None),
-                last_error: Mutex::new(None),
-                szenerie: Mutex::new(sim_core::szenerie::Auftragsbuch::neu()),
-                szenerie_offen: AtomicBool::new(false),
-                sim_paused: AtomicBool::new(false),
-                sim_unecht_tiefe: AtomicI32::new(0),
-                sim_crashed: AtomicBool::new(false),
-                touchdown: Mutex::new(None),
-                inspector: Mutex::new(InspectorState::default()),
-                zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
-                pmdg: Mutex::new(PmdgSharedState::default()),
-                eingaben: Mutex::new(crate::eingabe_events::EingabeState::default()),
-                messung: Mutex::new(crate::vermessung::MessState::default()),
-            }),
+            shared: Arc::new(Shared::neu()),
             worker: None,
             stop: Arc::new(AtomicBool::new(false)),
         }
@@ -714,10 +737,24 @@ impl MsfsAdapter {
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(h) = self.worker.take() {
-            // Give the worker a moment to wind down cleanly. We don't
-            // join indefinitely — SimConnect_Close inside the worker
-            // can hang if MSFS itself is gone.
-            let _ = h.join();
+            // Begrenzt warten: SimConnect_Close im Worker kann hängen, wenn
+            // MSFS selbst weg ist. Bis v1.9.23 stand hier ein unbegrenztes
+            // join() (trotz gegenteiligem Kommentar) — und gewartet wurde
+            // unter der msfs-Sperre, an der auch Oberflächen-Befehle hängen.
+            if worker_endet_binnen(&h, STOPP_FRIST) {
+                let _ = h.join();
+            } else {
+                // Abkoppeln. Der alte Worker räumt beim späten Aufwachen
+                // seinen Zustand ab (Snapshot, Touchdown, PMDG) — darum
+                // bekommt alles Weitere einen frischen gemeinsamen Zustand;
+                // der alte schreibt nur noch in seinen verwaisten.
+                tracing::warn!(
+                    frist_s = STOPP_FRIST.as_secs(),
+                    "MSFS-Worker endet nicht (SimConnect_Close hängt?) — abgekoppelt, frischer Zustand"
+                );
+                self.shared = Arc::new(Shared::neu());
+                drop(h);
+            }
         }
         *self.shared.state.lock() = ConnectionState::Disconnected;
         tracing::info!("MSFS raw adapter stopped");
@@ -3626,4 +3663,49 @@ fn _link_assertions() {
     let _ = Utc::now();
     let _ = Simulator::Msfs2024;
     let _ = AircraftProfile::Default;
+}
+
+#[cfg(test)]
+mod stopp_tests {
+    use super::*;
+
+    /// Feldbefund-Klasse (QS v1.9.24): hängt SimConnect_Close, darf `stop`
+    /// nicht ewig warten — es läuft unter der msfs-Sperre, an der auch
+    /// Oberflächen-Befehle hängen. Mit dem alten unbegrenzten join() dauert
+    /// dieser Test 6 s und wird rot.
+    #[test]
+    fn haengender_worker_wird_nach_der_frist_abgekoppelt() {
+        let mut a = MsfsAdapter::new();
+        let alt = Arc::clone(&a.shared);
+        a.worker = Some(thread::spawn(|| thread::sleep(Duration::from_secs(6))));
+        let t0 = Instant::now();
+        a.stop();
+        let dauer = t0.elapsed();
+        assert!(
+            dauer < Duration::from_millis(4500),
+            "stop wartete {dauer:?}"
+        );
+        assert!(
+            dauer >= STOPP_FRIST,
+            "Frist muss abgewartet werden, war {dauer:?}"
+        );
+        // Der abgekoppelte Worker schreibt nur noch in seinen alten Zustand.
+        assert!(!Arc::ptr_eq(&alt, &a.shared), "frischer Zustand fehlt");
+        assert_eq!(a.state(), ConnectionState::Disconnected);
+        assert!(a.worker.is_none());
+    }
+
+    #[test]
+    fn normales_ende_behaelt_den_zustand() {
+        let mut a = MsfsAdapter::new();
+        let alt = Arc::clone(&a.shared);
+        a.worker = Some(thread::spawn(|| {}));
+        let t0 = Instant::now();
+        a.stop();
+        assert!(t0.elapsed() < Duration::from_secs(1));
+        assert!(
+            Arc::ptr_eq(&alt, &a.shared),
+            "ohne Hänger kein neuer Zustand"
+        );
+    }
 }

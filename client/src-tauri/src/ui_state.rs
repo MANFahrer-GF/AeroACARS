@@ -86,7 +86,7 @@ fn save_to_disk(app: &AppHandle, map: &HashMap<String, String>) {
 }
 
 /// Alle gespiegelten Werte. Erstes Lesen holt sie von der Platte.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ui_state_get_all(app: AppHandle) -> HashMap<String, String> {
     let store = app.state::<UiStateStore>();
     let mut guard = store.inner.lock().expect("ui_state poisoned");
