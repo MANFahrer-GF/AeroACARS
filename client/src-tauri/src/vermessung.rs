@@ -107,10 +107,15 @@ fn standard(name: &str) -> bool {
 /// Male gleich sein — so fallen Werte heraus, die nur langsam wegdriften
 /// (Sprit, Höhe, Uhr), was in der Luft sonst massenhaft Kandidaten ergäbe.
 /// `stellungen` darf leer sein (dann ohne diese Prüfung).
+///
+/// `texte`: Text-Datarefs (X-Plane). Ihre Werte sind laufende Nummern, keine
+/// Messgrößen — der Drift-Filter würde Nachbarnummern (1500/1501) sonst als
+/// „kaum verändert" verwerfen (Codex 05.10.2026).
 pub fn kandidaten(
     staende: &[Stand],
     stellungen: &[String],
     rauschen: &HashSet<String>,
+    texte: &HashSet<String>,
 ) -> Vec<Kandidat> {
     if staende.len() < 2 {
         return Vec::new();
@@ -126,7 +131,8 @@ pub fn kandidaten(
                 || (0..werte.len()).all(|i| {
                     (0..i).all(|j| stellungen[i] != stellungen[j] || gleich(werte[i], werte[j]))
                 });
-            (wechselt && treu && !nur_drift(&werte)).then(|| Kandidat {
+            let drift = !texte.contains(k.as_str()) && nur_drift(&werte);
+            (wechselt && treu && !drift).then(|| Kandidat {
                 variable: k.clone(),
                 werte,
                 texte: None,
@@ -666,7 +672,12 @@ pub fn vermessung_schritt_abschliessen(
         let mut k = if uebersprungen {
             Vec::new()
         } else {
-            kandidaten(&staende, &stellungen, &s.rauschen)
+            let texte = match &s.quelle {
+                Quelle::XPlane(sp) => sp.text_namen(),
+                #[cfg(target_os = "windows")]
+                Quelle::Msfs => HashSet::new(),
+            };
+            kandidaten(&staende, &stellungen, &s.rauschen, &texte)
         };
         if let Quelle::XPlane(sp) = &s.quelle {
             for kd in &mut k {
@@ -969,7 +980,7 @@ mod tests {
                 ("x/fest", 5.0),
             ]),
         ];
-        let k = kandidaten(&staende, &[], &rauschen);
+        let k = kandidaten(&staende, &[], &rauschen, &HashSet::new());
         let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
         assert_eq!(
             namen,
@@ -997,7 +1008,7 @@ mod tests {
         a.insert("B:KNOPF".into(), 0.0);
         b.insert("B:KNOPF".into(), 1.0);
         c.insert("B:KNOPF".into(), 2.0);
-        let k = kandidaten(&[a, b, c], &[], &HashSet::new());
+        let k = kandidaten(&[a, b, c], &[], &HashSet::new(), &HashSet::new());
         assert_eq!(k.len(), MAX_KANDIDATEN);
         assert_eq!(
             k[0].variable, "B:KNOPF",
@@ -1007,7 +1018,7 @@ mod tests {
 
     #[test]
     fn eine_stellung_ergibt_keine_kandidaten() {
-        assert!(kandidaten(&[st(&[("a", 1.0)])], &[], &HashSet::new()).is_empty());
+        assert!(kandidaten(&[st(&[("a", 1.0)])], &[], &HashSet::new(), &HashSet::new()).is_empty());
     }
 
     /// Gemessen am A350 (Thorben, 28.09.2026): die Flügeltemperatur driftet
@@ -1099,7 +1110,7 @@ mod tests {
                 ("A:HDG", 181.0),
             ]),
         ];
-        let k = kandidaten(&staende, &[], &HashSet::new());
+        let k = kandidaten(&staende, &[], &HashSet::new(), &HashSet::new());
         let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
         assert_eq!(namen, ["L:INI_LIGHTS_NOSE", "A:HDG"]);
     }
@@ -1114,15 +1125,32 @@ mod tests {
             st(&[("L:INI_ap1_on", 1.0), ("A:FUEL", 98.0), ("A:ALT", 35004.0)]),
         ];
         let stellungen: Vec<String> = ["AN", "AUS", "AN"].iter().map(|x| x.to_string()).collect();
-        let k = kandidaten(&staende, &stellungen, &HashSet::new());
+        let k = kandidaten(&staende, &stellungen, &HashSet::new(), &HashSet::new());
         let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
         assert_eq!(namen, ["L:INI_ap1_on"]);
         // Ohne Stellungsnamen greift die Treue-Regel nicht: Sprit bleibt
         // (1 %), die Höhe (4 ft auf 35000) fällt als Drift heraus.
-        let ohne: Vec<String> = kandidaten(&staende, &[], &HashSet::new())
+        let ohne: Vec<String> = kandidaten(&staende, &[], &HashSet::new(), &HashSet::new())
             .into_iter()
             .map(|k| k.variable)
             .collect();
         assert_eq!(ohne, ["L:INI_ap1_on", "A:FUEL"]);
+    }
+
+    /// Codex 05.10.2026: Text-Nummern sind keine Messgrößen. 1500 → 1501
+    /// ist bei einem Text ein echter Wechsel, bei einer Zahl Drift.
+    #[test]
+    fn text_nummern_umgehen_den_drift_filter() {
+        let staende = vec![
+            st(&[("1-sim/output/fma/roll", 1500.0), ("zahl", 1500.0)]),
+            st(&[("1-sim/output/fma/roll", 1501.0), ("zahl", 1501.0)]),
+            st(&[("1-sim/output/fma/roll", 1500.0), ("zahl", 1500.0)]),
+        ];
+        let texte: HashSet<String> = ["1-sim/output/fma/roll".to_string()].into_iter().collect();
+        let k = kandidaten(&staende, &[], &HashSet::new(), &texte);
+        let namen: Vec<&str> = k.iter().map(|k| k.variable.as_str()).collect();
+        assert_eq!(namen, ["1-sim/output/fma/roll"]);
+        // Gegenprobe: ohne Text-Kennzeichnung fiele der Text als Drift heraus.
+        assert!(kandidaten(&staende, &[], &HashSet::new(), &HashSet::new()).is_empty());
     }
 }

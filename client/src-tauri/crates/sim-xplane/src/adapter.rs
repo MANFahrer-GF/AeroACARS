@@ -561,6 +561,25 @@ pub(crate) fn desired_profile(
         .filter(|&pi| !probe_seen.get(pi).copied().unwrap_or(false))
 }
 
+/// Profilwahl im RREF-Pfad. Wie [`desired_profile`], nur: Kennt der RREF-Pfad
+/// keinen Titel (Web-API aus), ist das „unbekannt", nicht „passt nicht" —
+/// ein aktives Profil bleibt, solange seine Probe frisch ist. Sonst verloere
+/// die FF777 (`titel_und_probe`) beim Rueckfall vom Plugin ihr Profil, das
+/// das Plugin mit seinem Titel gesetzt hatte (Codex 05.10.2026).
+pub(crate) fn rref_profil(
+    title: Option<&str>,
+    aktiv: Option<usize>,
+    probe_fresh: &[bool],
+    probe_seen: &[bool],
+) -> Option<usize> {
+    match desired_profile(title, probe_fresh, probe_seen) {
+        None if title.is_none() => {
+            aktiv.filter(|&pi| probe_fresh.get(pi).copied().unwrap_or(false))
+        }
+        d => d,
+    }
+}
+
 /// Ob ein Empfangsfehler nur die ICMP-Rueckmeldung „Port nicht erreichbar"
 /// auf ein eigenes RREF-Paket ist. Windows meldet sie auf UDP-Sockets als
 /// `WSAECONNRESET` (10054 → `ConnectionReset`), Linux/macOS je nach Lage
@@ -1109,7 +1128,12 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             .zip(&probe_bestaetigt)
             .map(|(t, &ok)| ok && t.is_some())
             .collect();
-        let desired = desired_profile(current_title.as_deref(), &probe_fresh, &probe_seen);
+        let desired = rref_profil(
+            current_title.as_deref(),
+            active_profile,
+            &probe_fresh,
+            &probe_seen,
+        );
 
         if desired != active_profile {
             match desired {
@@ -1571,7 +1595,7 @@ mod klappen_profil_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::desired_profile;
+    use super::{desired_profile, rref_profil};
 
     // The only profile shipped today (index 0) is the Hot-Start CL650.
     const CL650_TITLE: &str = "Challenger 650 published by X-Aviation";
@@ -1672,6 +1696,31 @@ mod tests {
             desired_profile(Some("Boeing 777-300ER"), &keine, &keine),
             None
         );
+    }
+
+    /// Codex 05.10.2026: Rueckfall vom Plugin auf RREF ohne Web-API — das
+    /// vom Plugin gesetzte FF777-Profil bleibt, solange die Probe frisch ist.
+    #[test]
+    fn ff777_bleibt_beim_rueckfall_ohne_titel() {
+        let ff = crate::profile::PROFILES
+            .iter()
+            .position(|p| p.name == "FlightFactor 777")
+            .unwrap();
+        let n = crate::profile::PROFILES.len();
+        let mut frisch = vec![false; n];
+        frisch[ff] = true;
+        let keine = vec![false; n];
+        // Kein Titel, Profil aktiv, Probe frisch → bleibt.
+        assert_eq!(rref_profil(None, Some(ff), &frisch, &frisch), Some(ff));
+        // Probe verstummt (Flugzeugwechsel) → Basis-Katalog.
+        assert_eq!(rref_profil(None, Some(ff), &keine, &frisch), None);
+        // Bekannter, fremder Titel → weg, auch mit frischer Probe.
+        assert_eq!(
+            rref_profil(Some("Airbus A350-900"), Some(ff), &frisch, &frisch),
+            None
+        );
+        // Ohne aktives Profil setzt eine Probe allein es nicht.
+        assert_eq!(rref_profil(None, None, &frisch, &frisch), None);
     }
 
     /// Ganze Kette mit Michels Werten: aktiver FF777-Katalog → Hebel 0.5
@@ -2164,7 +2213,8 @@ mod plugin2_loopback_tests {
         assert_eq!(spiegel.text("sim/test/text", k).as_deref(), Some("A20N"));
         assert_eq!(spiegel.text("sim/test/eins", 1.5), None);
         let abo = spiegel.abo_stand();
-        assert_eq!((abo.angemeldet, abo.abgelehnt), (3, 0));
+        // eins, zwei, feld und (seit 05.10.2026) der Text.
+        assert_eq!((abo.angemeldet, abo.abgelehnt), (4, 0));
         assert_eq!(abo.quelle, "plugin");
         assert!(spiegel.lebt());
         // (Beim Oeffnen ging schon ein ENDE-ABO 3 hinaus — Aufraeumen, M1.)

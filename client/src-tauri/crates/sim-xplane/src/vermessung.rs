@@ -103,47 +103,47 @@ const MAX_TEXT: usize = 64;
 /// Obergrenze des Wörterbuchs (verschiedene Texte je Messung).
 const MAX_WOERTER: usize = 20_000;
 
-/// Kennzahl eines Texts für den Stand (FNV-1a, 32 Bit — als `f64` exakt).
-/// Gleicher Text, gleiche Zahl; so laufen Text-Datarefs durch dieselbe
-/// Kandidatensuche wie Zahlen.
-fn text_kennzahl(t: &str) -> f64 {
-    let mut h: u32 = 0x811c_9dc5;
-    for b in t.bytes() {
-        h ^= u32::from(b);
-        h = h.wrapping_mul(0x0100_0193);
-    }
-    f64::from(h)
-}
-
-/// Text-Datarefs einer Messung: welche Namen Text sind, und welcher Text
-/// hinter einer Kennzahl steht.
+/// Text-Datarefs einer Messung: welche Namen Text sind, und welche Nummer
+/// jeder Text im Stand trägt. Jeder verschiedene Text bekommt eine eigene
+/// laufende Nummer (1, 2, 3 …) — gleicher Text, gleiche Zahl, verschiedene
+/// Texte nie dieselbe (Codex 05.10.2026: ein 32-Bit-Hash ließ „H67“ und
+/// „WTAA“ zusammenfallen). So laufen Texte durch dieselbe Kandidatensuche
+/// wie Zahlen; den Drift-Filter umgehen sie dort (`text_namen`).
 #[derive(Default)]
 struct Texte {
     namen: std::collections::HashSet<String>,
-    woerter: HashMap<u32, String>,
+    nummer: HashMap<String, u32>,
+    woerter: Vec<String>,
 }
 
 impl Texte {
-    /// Texte in den Stand übernehmen (als Kennzahl) und merken.
+    /// Texte in den Stand übernehmen (als Nummer) und merken. Ist das
+    /// Wörterbuch voll, fehlen neue Texte im Stand (statt falsch zu zählen).
     fn einfuegen(&mut self, stand: &mut HashMap<String, f64>, texte: Vec<(String, String)>) {
         for (name, text) in texte {
             if text.chars().count() > MAX_TEXT {
                 continue;
             }
-            let k = text_kennzahl(&text);
-            if self.woerter.len() < MAX_WOERTER {
-                self.woerter.entry(k as u32).or_insert(text);
-            }
+            let nr = match self.nummer.get(&text) {
+                Some(&nr) => nr,
+                None if self.woerter.len() < MAX_WOERTER => {
+                    self.woerter.push(text.clone());
+                    let nr = self.woerter.len() as u32;
+                    self.nummer.insert(text, nr);
+                    nr
+                }
+                None => continue,
+            };
             self.namen.insert(name.clone());
-            stand.insert(name, k);
+            stand.insert(name, f64::from(nr));
         }
     }
 
     fn text(&self, name: &str, wert: f64) -> Option<String> {
-        if !self.namen.contains(name) {
+        if !self.namen.contains(name) || wert < 1.0 || wert.fract() != 0.0 {
             return None;
         }
-        self.woerter.get(&(wert as u32)).cloned()
+        self.woerter.get(wert as usize - 1).cloned()
     }
 }
 
@@ -523,6 +523,12 @@ impl Spiegel {
     pub fn text(&self, name: &str, wert: f64) -> Option<String> {
         self.texte.lock().text(name, wert)
     }
+
+    /// Namen der Text-Datarefs — ihre Nummern sind keine Messwerte, der
+    /// Drift-Filter der Kandidatensuche darf sie nicht anwenden.
+    pub fn text_namen(&self) -> std::collections::HashSet<String> {
+        self.texte.lock().namen.clone()
+    }
 }
 
 // ─── Messung über das Plugin (Protokoll 2) ────────────────────────────────
@@ -610,10 +616,18 @@ fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
     // Flugzeug: Meldung des Plugins; Autor (nur Web-API) dazu, wenn die
     // Web-API dasselbe Flugzeug meint.
     let mut flugzeug = zugang.flugzeug().unwrap_or_default();
-    if let Ok(web) = WebApiClient::mit_basis(&format!("http://{}", zugang.web_api_host()))
+    match WebApiClient::mit_basis(&format!("http://{}", zugang.web_api_host()))
         .fetch_aircraft_info(&mut DrefIdCache::default())
     {
-        if flugzeug.relative_path.is_none() || flugzeug.relative_path == web.relative_path {
+        // Nicht still (Codex 05.10.2026): ohne Web-API fehlen Autor und
+        // Kennzeichen; die App greift fuer leere Kennungen auf den Flug zurueck.
+        Err(e) => tracing::info!(
+            fehler = %e,
+            "Flugzeug vermessen: Web-API-Kennung zum Plugin nicht lesbar"
+        ),
+        Ok(web)
+            if flugzeug.relative_path.is_none() || flugzeug.relative_path == web.relative_path =>
+        {
             flugzeug.author = web.author;
             flugzeug.tailnum = web.tailnum;
             if flugzeug.descrip.is_none() {
@@ -629,6 +643,7 @@ fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
                 flugzeug.relative_path = web.relative_path;
             }
         }
+        Ok(_) => {}
     }
     tracing::info!(
         namen = anzahl,
@@ -867,8 +882,14 @@ impl P2Messung {
             .collect()
     }
 
-    fn zahl_wert(w: &Option<P2Wert>) -> bool {
-        matches!(w, Some(P2Wert::Zahl(_) | P2Wert::Liste(_)))
+    /// Hat dieser Name einen Wert? Seit 05.10.2026 zählen Texte mit — sie
+    /// werden gemessen wie bei der Web-API (Codex: Plugin- und Web-API-
+    /// Bericht zählten sonst verschieden).
+    fn wert_da(w: &Option<P2Wert>) -> bool {
+        matches!(
+            w,
+            Some(P2Wert::Zahl(_) | P2Wert::Liste(_) | P2Wert::Text(_))
+        )
     }
 
     fn verbunden(&self) -> usize {
@@ -878,14 +899,12 @@ impl P2Messung {
             .iter()
             .zip(&d.status)
             .enumerate()
-            .filter(|(i, (w, s))| {
-                Self::zahl_wert(w) && !Self::ist_text(**s) && !Self::ist_verloren(&verloren, *i)
-            })
+            .filter(|(i, (w, _))| Self::wert_da(w) && !Self::ist_verloren(&verloren, *i))
             .count()
     }
 
-    /// Wie bei der Web-API: angemeldet = Zahlen-Namen (Text-Datarefs zählen
-    /// nicht, die Web-API meldet sie gar nicht erst an), abgelehnt = vom
+    /// Wie bei der Web-API: angemeldet = alle Namen (seit 05.10.2026 auch
+    /// Text-Datarefs, die Web-API meldet sie ebenfalls an), abgelehnt = vom
     /// Plugin als „fehlt" gemeldet ODER in einem im Lauf ausgefallenen
     /// Mess-Abo (Nachpruefung AP7: der Bericht darf keine eingefrorenen Werte
     /// als gemessen ausgeben). Die Namen der ausgefallenen Abos stehen hinter
@@ -893,7 +912,6 @@ impl P2Messung {
     fn abo_stand(&self) -> AboStand {
         let verloren = self.verloren.lock().clone();
         let d = self.daten.lock();
-        let zahl_name = |i: usize| !Self::ist_text(d.status[i]);
         let fehlt: Vec<&String> = (0..d.namen.len())
             .filter(|&i| {
                 d.status[i] == Some(NameStatus::Fehlt) && !Self::ist_verloren(&verloren, i)
@@ -901,21 +919,13 @@ impl P2Messung {
             .map(|i| &d.namen[i])
             .collect();
         let ausgefallen: Vec<&String> = (0..d.namen.len())
-            .filter(|&i| {
-                Self::ist_verloren(&verloren, i)
-                    && zahl_name(i)
-                    && d.status[i] != Some(NameStatus::Fehlt)
-            })
+            .filter(|&i| Self::ist_verloren(&verloren, i) && d.status[i] != Some(NameStatus::Fehlt))
             .map(|i| &d.namen[i])
             .collect();
         AboStand {
-            angemeldet: (0..d.namen.len()).filter(|&i| zahl_name(i)).count(),
+            angemeldet: d.namen.len(),
             angekommen: (0..d.namen.len())
-                .filter(|&i| {
-                    Self::zahl_wert(&d.werte[i])
-                        && zahl_name(i)
-                        && !Self::ist_verloren(&verloren, i)
-                })
+                .filter(|&i| Self::wert_da(&d.werte[i]) && !Self::ist_verloren(&verloren, i))
                 .count(),
             abgelehnt: fehlt.len() + ausgefallen.len(),
             abgelehnt_namen: fehlt
@@ -1206,12 +1216,18 @@ mod tests {
         assert_eq!(s.get("sim/wert/8200[0]"), Some(&0.0));
         assert_eq!(s.get("sim/wert/8200[2]"), Some(&2.0));
         assert_eq!(s.len(), 3);
+        // Texte stehen nicht im Zahlen-Schnappschuss, aber in `texte()` —
+        // und zählen seit 05.10.2026 in Anmeldung und Ankunft mit.
+        assert_eq!(
+            m.texte(),
+            vec![("sim/wert/8199".to_string(), "A20N".to_string())]
+        );
         let a = m.abo_stand();
-        assert_eq!(a.angemeldet, 8999, "Text-Dataref zählt nicht");
-        assert_eq!(a.angekommen, 2);
+        assert_eq!(a.angemeldet, 9000);
+        assert_eq!(a.angekommen, 3);
         assert_eq!(a.abgelehnt, 1);
         assert_eq!(a.abgelehnt_namen, vec!["sim/wert/8198".to_string()]);
-        assert_eq!(m.verbunden(), 2);
+        assert_eq!(m.verbunden(), 3);
     }
 
     /// Bereit erst mit Status zu JEDEM Mess-Abo; gescheitert schlägt alles.
@@ -1292,10 +1308,10 @@ mod tests {
         assert!(!messbar("int_array_ohne_typ"));
     }
 
-    /// Text-Datarefs gehen als Kennzahl durch den Stand; der Text kommt
+    /// Text-Datarefs gehen als Nummer durch den Stand; der Text kommt
     /// über `Texte::text` zurück, aber nur für Text-Namen.
     #[test]
-    fn text_dataref_wird_kennzahl_mit_text() {
+    fn text_dataref_wird_nummer_mit_text() {
         let mut w = HashMap::new();
         let mut namen = HashMap::new();
         namen.insert(1, "1-sim/output/fma/roll".to_string());
@@ -1313,11 +1329,26 @@ mod tests {
         let mut t = Texte::default();
         t.einfuegen(&mut stand, texte_flach(&w, &namen));
         let k = stand["1-sim/output/fma/roll"];
-        assert_eq!(k, text_kennzahl("LNAV"));
+        assert_eq!(k, 1.0);
         assert_eq!(t.text("1-sim/output/fma/roll", k).as_deref(), Some("LNAV"));
         assert_eq!(t.text("sim/zahl", 3.0), None);
-        // Anderer Text, andere Kennzahl.
-        assert_ne!(text_kennzahl("LNAV"), text_kennzahl("HDG SEL"));
+        // Gleicher Text, gleiche Nummer; verschiedene Texte nie dieselbe —
+        // auch „H67“/„WTAA“, die im alten 32-Bit-Hash gleich waren (Codex).
+        let mut s = HashMap::new();
+        t.einfuegen(
+            &mut s,
+            vec![
+                ("a".into(), "H67".into()),
+                ("b".into(), "WTAA".into()),
+                ("c".into(), "LNAV".into()),
+            ],
+        );
+        assert_ne!(s["a"], s["b"]);
+        assert_eq!(s["c"], k);
+        assert_eq!(t.text("a", s["a"]).as_deref(), Some("H67"));
+        assert_eq!(t.text("b", s["b"]).as_deref(), Some("WTAA"));
+        assert_eq!(t.text("a", 0.0), None);
+        assert_eq!(t.text("a", 1.5), None);
         // Lange Texte (CDU-Bildschirm) bleiben draußen.
         let mut s2 = HashMap::new();
         t.einfuegen(&mut s2, vec![("lang".into(), "x".repeat(MAX_TEXT + 1))]);
