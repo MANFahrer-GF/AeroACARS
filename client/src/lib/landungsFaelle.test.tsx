@@ -6,10 +6,17 @@
 // webapp/src/__tests__/landungsFaelle.test.tsx. Weichen die Seiten ab, wird
 // eine der beiden rot.
 import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { LandingDetail, type LandingRecord } from "../components/LandingPanel";
 import { MOCK_LANDING_OPTIONS } from "../dev/mockLandingRecords";
 import { LANDUNGS_FAELLE, type LandungsFall } from "./landungsFaelle";
+import { seitenText } from "./seitenText";
+import THY39 from "./landungsFaelle.thy39.json";
+import THY39_TEXT from "./landungsFaelle.thy39.txt?raw";
+
+// Uhrzeiten zeigt die Seite in Ortszeit — fest wie beim Piloten, damit die
+// Erwartung auf der CI (UTC) dieselbe ist.
+process.env.TZ = "Europe/Berlin";
 
 function datensatz(f: LandungsFall): LandingRecord {
   const basis = MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord;
@@ -94,3 +101,23 @@ describe.each(LANDUNGS_FAELLE.map((f) => [f.name, f] as const))(
     });
   },
 );
+
+// 06.10.2026 (Thomas: „haargenau gleich, nichts erfinden, nichts weglassen"):
+// die GANZE Seite eines echten Flugs. THY39 (FAOR → LTFM, 05.10.2026) mit
+// Dot-Kurve und Abfang-Werten aus dem Client-Flugprotokoll. Die Erwartung
+// (landungsFaelle.thy39.txt) ist der Text, den der Client zeigt — AeroACARS
+// ist federführend. Sie ist gespiegelt; die Webapp rendert denselben Flug
+// aus Recorder-Touchdown und Messpunkten und muss Zeile für Zeile dasselbe
+// zeigen (webapp/src/__tests__/landungsFaelle.test.tsx). Ausgenommen nur die
+// App-Bedienung: hier Zurück/PDF/Löschen, dort der Pilotenlink.
+describe("Ganze Seite wie die Webapp — THY39", () => {
+  it("derselbe Text bis auf die App-Bedienung", async () => {
+    const r = THY39 as unknown as LandingRecord;
+    const { container } = render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);
+    const erwartet = THY39_TEXT.split("\n").filter(Boolean);
+    // Gegenprobe: die Erwartung trägt die nachgeladenen Teile wirklich.
+    expect(erwartet).toContain("Gleitpfad in Dots (Abweichung vom Gleitpfad der gelandeten Bahn)");
+    expect(erwartet).toContain("💪 G-Kraft-Forensik");
+    await waitFor(() => expect(seitenText(container, [".landing-detail__top"])).toEqual(erwartet));
+  });
+});

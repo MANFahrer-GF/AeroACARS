@@ -1,0 +1,596 @@
+B+
+THY39 · FAOR → LTFM
+GUT · 87/100
+i
+· 5.10.2026, 22:31:34
+Forensik v2
+Confidence: Hoch
+Sprit
+Reserve intakt
+AeroACARS 1.9.24
+Score-Aufschlüsselung
+i
+Sinkrate
+i
+85 PTS
+-46 fpm
+Sehr weich aufgesetzt — mögliches langes Abfangen
+G-Kraft
+i
+100 PTS
+1.04 G
+Sehr ruhiger G-Aufbau
+Hopser
+i
+100 PTS
+0
+Sauber gesetzt
+Anflug-Stabilität
+i
+45 PTS
+σ 217 fpm / 1.2°
+Durchschnittlich stabil
+⚠ Anflug instabil (Stable Gate verfehlt)
+Bahndisziplin
+i
+100 PTS
+7.1 m Versatz · äußeres Rad 13.0 m von der Mitte · Rand +19.5 m
+Mittig auf der Bahn
+Ausrichtung
+i
+100 PTS
+3 m · 3.9° (−3.4° XW)
+Sauber auf der Mittellinie
+Aufsetzpunkt
+i
+85 PTS
+820 m · Ziel 400 m · Δ +420 m
+In der Aufsetzzone
+Abfangen
+i
+80 PTS
+11.2 s ab 50 ft
+Langes Abfangen
+Worauf du beim nächsten Anflug achten kannst · Anflug-Stabilität
+OK, aber Pitch- und V/S-Schwankungen reduzieren — kleine Korrekturen statt großer.
+Runway
+i
+🛬
+LTFM
+·
+Bahn 35R
+·
+4100 m
+·
+65 m breit
+Datenquelle: VPS Navdata (AIRAC 2610) ✓
+ⓘ Begriffe erklärt
+Landeschwelle (Threshold) — Beginn des landbaren Bahn-Teils.Bahn-Ende — Ende des landbaren Bahn-Teils.Aufsetzzone (Touchdown Zone, TDZ): erste 900 m der Bahn. Soll-Aufsetz-Bereich nach ICAO Annex 14.
+AUFSETZZONE (TDZ) 900 m
+AIM-POINT 400 m
+Aim-Point — die zwei großen weißen Quadrate auf der echten Bahn (hier gelb gezeichnet). Pilot zielt im Anflug auf diese Markierung; durch den Flare setzt er typisch 50–150 m DAHINTER auf (= Anfang der TDZ). Position: 400 m hinter Schwelle.
+LÄNGS — WO AUFGESETZT, WO GERÄUMT
+BAHN-ENDE
+BAHN GERÄUMT
+1993 m · 28 kt · Ausfahrt C8 rechts
+Aufsetzpunkt (Touchdown): 820 m hinter Schwelle, 3.1 m rechts der Mittellinie.
+35R
+17L
+4100 m
+TD 820 m · 3.1 m rechts
+0 m
+300 m
+600 m
+900 m
+1200 m
+1500 m
+1800 m
+2100 m
+2400 m
+3000 m
+3600 m
+Strg + Mausrad zoomt · Ziehen verschiebt
+−
++
+Schwelle
+Aufsetzzone (TDZ)
+Ziel-Markierung (AIM)
+Aufsetzpunkt (TD)
+QUER — WO DIE RÄDER LIEFEN
+· Spurweite 10.7 m
+15.7× überhöht · in sich maßstäblich
+B1B/A10
+B1B/C1A +2
+C3A
+B3B
+B3B/C4A +2
+B4B
+B5B
+C6
+C7
+C8
+C9
+C10
+B9B/C11
+C11
+C12
+C12/C13 +2
+C13
+C14
+Spur läuft weiter — real bis 110 m
+1
+2
+3
+0
+10
+10
+20
+20
+32 m
+32 m
+LINKS
+RECHTS
+Kante
+Mitte
+Kante
+Blick von oben auf die ganze Bahn — aber quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung zur Mitte sichtbar werden. Das Band sind die beiden Hauptfahrwerke, die Linie darin ihre Mitte, die Punkte die Messungen. Die Streckung verbiegt Winkel: Eine Ausfahrt sieht hier wie ein Haken aus — wie sie wirklich verlief, zeigt die Lupe darunter.
+Aufsetzpunkt (TD)
+Spur — 139 gemessene Stützpunkte
+nach dem Räumen — gemessen, nicht mehr gewertet
+Ausfahrten (OSM) · genutzte hervorgehoben
+▲ Querversatz bewertet bis hier — danach nur noch gezeichnet
+neben der Bahn — unbefestigt
+ABROLLEN — IM ECHTEN MASSSTAB
+längs und quer gleicher Maßstab · Winkel wie gefahren
+C8
+C7
+3
+Landerichtung →
+50 m
+Ausschnitt um die Stelle, an der die Bahn verlassen wurde — längs und quer im selben Maßstab, also mit den echten Winkeln. So ist das Flugzeug abgerollt.
+Spur der Hauptfahrwerke, Punkte = Messungen
+Rollweg aus OpenStreetMap (23 m breit angenommen) — kräftig: der genommene
+③ hier hat die Spur die Bahn verlassen
+1
+Aufsetzen · 820 m hinter der Schwelle · 3.1 m rechts
+2
+Größter Versatz bis zur Messschwelle · bei 1132 m · 7.1 m rechts · äußeres Rad 19.5 m vor der Kante
+3
+Bahn geräumt · 1993 m · 28 kt · rechts
+Bahnbreite
+64.9 m
+Spannweite
+64.8 m
+Spurweite
+10.7 m
+Bahn
+LTFM/35R
+Länge
+4100 m
+Hinter Schwelle
+820 m
+Mittellinie
+3.1 m RECHTS
+Ausrollstrecke
+1078 m
+Bahn-Auslastung
+46 %
+Touchdown-Zone
+✓ erstes Drittel
+Aim-Point
+400 m · Δ +420 m · long landing
+Anflug-Profil (TCH)
+78 ft (Δ +23) · Räder ca. 53 ft · über FAA-Maximum
+Navdata-Quelle
+VPS Navdata · AIRAC 2610
+Flugzeug
+Gewicht
+192.0 t (Δ +2.3 t)
+TD-IAS
+130 kt
+P / B
+5.5° / -0.1°
+G-Kraft
+1.04 g
+Wind
+HW 5 XW 5 R
+Touchdown
+Sinkrate
+i
+-46 fpm
+G-Kraft
+i
+1.04 G
+G im Aufsetz-Frame
+i
+1.09 G
+Pitch
+i
++5.5 °
+Bank
+i
+-0.1 °
+IAS bei TD
+i
+130 kt
+GS bei TD
+i
+127 kt
+Sideslip / Crab
+i
+-3.6 °
+Hopser
+i
+0
+Heading (missweisend)
+i
+357 °
+Heading (rechtweisend)
+i
+3 °
+Wind bei TD
+i
+5
+kt
+Seitenwind · von rechts
+35R
+Gegenwind 5 kt
+Gesamtwind 7 kt
+METAR am Zielflughafen
+i
+METAR LTFM 052020Z 06009KT 9999 SCT026 17/12 Q1022 NOSIG
+Wind
+i
+060° / 09 kt
+Sicht
+i
+≥ 10 km
+Wolken
+i
+aufgelockert 2600 ft
+Temp/Tau
+i
+17°C / 12°C
+QNH
+i
+1022 hPa / 30.18 inHg
+🛬 Approach-Stability
+i
+✗ UNSTABLE
+Stable-Approach-Gate-Auswertung über HAT (Height Above Touchdown) ≤ 1000 ft · 93 Samples
+Datenquelle: MSFS
+V/S-Jerk
+i
+31
+fpm/tick
+Bank σ (gefiltert)
+i
+1.2
+°
+IAS σ
+i
+17.4
+kt
+Sink Rate
+i
+EXCESSIVE
+Landing-Config
+i
+GEAR/FLAPS ✓
+V/S vs. 3°-ILS
+i
+127
+fpm
+Max V/S-Dev < 500 ft
+i
+306
+fpm
+Unstabiler Anflug — in der Realität Go-Around-Kandidat. Approach-Setup früher fertig haben, Konfig + Speed + V/S bis 1000 ft AAL stabil halten.
+Bei 200 ft (Entscheidungshöhe) stabil.
+ⓘ Was bedeuten die Werte?
+Aufsetz-Qualität (zur Einordnung, keine Note)
+Wing-Strike-Risiko
+i
+1%
+Aufsetz-Drittel
+i
+Zone 1 ✓
+Hinter der Schwelle
+i
+820
+m
+Vref-Abw. (~ICAO)
+i
+-10
+kt
+Gierrate
+i
+0.0
+°/s
+Bremsenergie
+i
+—
+Gleitpfad und Anflugruhe
+i
+Gleitpfad Ø zählt ab AeroACARS 1.9.26 zum Stable Gate (gut unter 1 Dot); die Tore sind zur Einordnung. 1 Dot = 0,35°, „+“ = über dem Pfad.
+Gleitpfad 1000–200 ft: im Mittel 0,9 Dots, größte Abweichung +2,2 Dots (+43 ft) · 53 Messpunkte
+1000–500 ft: im Mittel 0,4, größte +0,9 Dots
+500–200 ft: im Mittel 1,5, größte +2,2 Dots
+Bezug: ILS-Gleitweg (Navigraph) · 3,0° · TCH 55 ft
+Anflugruhe
+i
+1000–500 ft: 0× Seitenwechsel am Pfad · Nickrate ±0,1 °/s · Rollrate ±0,1 °/s · 0,0 Schubwechsel/min
+500–200 ft: 0× Seitenwechsel am Pfad · Nickrate ±0,5 °/s · Rollrate ±1,2 °/s · 0,0 Schubwechsel/min
+Anflug-Stabilität
+i
+-1200
+-800
+-400
+0
+Stabilitätsgrenze −1000 fpm
+Touchdown
+Anflug-Start
+Touchdown
+Sinkrate (fpm)
+Vorlauf
+Bewertet
+Flare
+Soll-Sinkrate 3° ±100 fpm
+Gleitpfad in Dots (Abweichung vom Gleitpfad der gelandeten Bahn)
+Bewertet
++5
++4
++3
++2
++1
+0
+−1
+−2
+−3
+−4
+−5
+größte Abweichung im Gate +2.22 bei 209 ft
+Dots
++ = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD). Rechts beim Darüberfahren oder Antippen: die Raute wie im Cockpit.
+Gleitpfad in Dots (Abweichung vom Gleitpfad der gelandeten Bahn)
+i
+Touchdown-Nahaufnahme (50 Hz) — inkl. 10 s nach TD
+i
+-400
+-200
+0
+Touchdown
+-3.9 s
++10.0 s
+Sinkrate (fpm)
+🎯 Sinkrate-Forensik
+i
+📊 Welche Sinkrate ist die „richtige“?
+Je nach Mittelungsfenster bekommst du unterschiedliche Werte für denselben Touchdown. Volanta und Cockpit-VSI mitteln über 0,5–1,5 s und filtern Spitzen heraus, damit eine Böe nicht jeden Touchdown als harte Landung markiert. AeroACARS bewertet den Wert direkt im Aufsetz-Moment (Engineering-Standard nach FAR 25.473 — er misst die Belastung der Fahrwerksstruktur).
+Seit v1.6.3 stammt dieser bewertete Wert aus dem tatsächlichen Höhenverlauf, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators. Der ist träge wie ein echtes Instrument und lag in MSFS je nach Abfangbogen bis zu 90 fpm daneben. Die vier Mittelwerte unten kommen weiterhin aus dem Instrument — dass die bewertete Sinkrate von ihnen abweicht, ist deshalb kein Fehler, sondern der Unterschied zwischen Messverfahren und Instrument.
+📺 Was dein Cockpit / Volanta anzeigt
+Mittel über verschiedene Zeitfenster — Spikes ausgeglättet. Vergleiche mit dem Score-Block unten.
+1,5 s Mittel
+-44
+fpm
+1,0 s Mittel
+-48
+fpm
+0,5 s Mittel
+· Volanta-Default-Glättung
+-50
+fpm
+0,25 s Mittel
+-51
+fpm
+Wie sich deine Sinkrate in jeder Phase entwickelt hat
+Die ersten drei Balken kommen aus den Mittelwerten oben, also vom Instrument. Der letzte ist der bewertete Wert aus dem Höhenverlauf — er darf deshalb von seinen Nachbarn abweichen.
+−1.5 s … −1.0 s
+-37
+fpm
+−1.0 s … −0.5 s
+-45
+fpm
+−0.5 s … −0.25 s
+-50
+fpm
+bewertet
+-46
+fpm
+⭐ Was AeroACARS scort
+Engineering-Standard FAR 25.473 — Belastung am Fahrwerk im Aufsetz-Moment.
+Bewertete Sinkrate
+Score-Basis
+-46
+fpm
+Quelle:
+Höhenverlauf
+Ausgleichsgerade über die letzte Drittelsekunde des Höhenverlaufs — Basis für den Sinkraten-Sub-Score (Engineering-Standard nach FAR 25.473).
+Sinkrate bei 50 ft:
+-649 fpm
+· Flare hat Sinkrate um 603 fpm reduziert
+💡 Sauberer Touchdown — Sinkrate gleichmäßig, kein Drop im Final.
+🔧 Mehr Details (Position-Trace + Aufprall-G)
+📍 Letzte 3 Sekunden vor Touchdown
+Momentaufnahmen aus dem Touchdown-Buffer — nicht Score-Basis, nur zur Veranschaulichung des Verlaufs.
+t = -3.0 s
+vs = -136 fpm
+AGL 19 ft
+t = -2.0 s
+vs = -44 fpm
+AGL 20 ft
+t = -1.0 s
+vs = -41 fpm
+AGL 19 ft
+t = -0.5 s
+vs = -49 fpm
+AGL 18 ft
+t = -0.1 s
+vs = -51 fpm
+AGL 18 ft
+💥 Aufprall-Belastung
+Peak-G nach Touchdown (500 ms)
+1.05
+G
+Peak-G nach Touchdown (1 s)
+1.05
+G
+💪 G-Kraft-Forensik
+i
+📊 Welche G-Kraft ist die richtige?
+AeroACARS bewertet die Aufsetz-G-Kraft wie eine echte Flugdaten-Überwachung (FOQA): das G-Signal wird leicht geglättet (EMA, ~100 ms), dann der Spitzenwert genommen. Das entfernt die überscharfen 50-Hz-Einzelbild-Spitzen — der bewertete Wert entspricht dem, was ein echter Flugschreiber aufzeichnen würde. Der rohe 50-Hz-Spitzenwert bleibt unten als Forensik-Detail sichtbar.
+Seit v1.6.2 wird der Wert zusätzlich auf eine gemeinsame Bezugsgröße umgerechnet, bevor er in Punkte und in die Unfall-Erkennung geht. Grund: MSFS liefert einen bereits gedämpften Instrumentenwert, X-Plane die rohe Messgröße — bei identischem Aufsetzstoß standen dadurch sehr unterschiedliche Zahlen auf derselben Skala. Angezeigt wird weiterhin der Messwert deines Simulators.
+📺 G-Verlauf um den Touchdown
+Rohwerte (50 Hz) — Forensik-Detail, nicht der bewertete Wert.
+Edge (Aufsetz-Frame)
+1.02
+G
+250 ms Mittel
+· Volanta-Default-Glättung
+1.03
+G
+500 ms (Peak)
+· Roh 50 Hz
+1.05
+G
+1 s (Peak)
+· Roh 50 Hz
+1.05
+G
+🎯 Robuste Statistiken (Spike-resistent)
+Median und 95-Percentile filtern einzelne Sim-Frame-Spikes raus. Wenn diese deutlich kleiner sind als der Peak, war der Peak ein Spike — kein echter Impact.
+Median 500 ms
+1.04
+G
+95-Percentile
+1.05
+G
+⭐ Was AeroACARS scort
+Sinkrate und G-Kraft zählen gleich stark (je 3 von 13 Anteilen).
+Bewertete G-Kraft
+EMA-geglätteter Peak · FOQA-Methode
+1.04
+G
+Roh-Peak 50 Hz: 1.05 G · Sim-Einzelbild, nicht bewertet
+💡 Sauberer G-Verlauf — keine Auffälligkeiten beim Aufsetzen.
+Abfangen (Flare)
+Dauer ab 50 ft
+i
+11.2 s
+Sinkrate 50 ft → Aufsetzen
+i
+-649 fpm → -46 fpm
+Abgebaute Sinkrate
+i
++603 fpm
+Flare-Beginn
+i
+32 ft
+Schweben
+i
+2.3 s · 150 m
+Loadsheet
+i
+Sprit
+keine Note
+ⓘ
+Bis Sinkflug
+−4,5
+%
+Sinkflug + Anflug
++53,5
+%
+Unter 8 325 ft
+9
+min
+Final Reserve
++8 298
+kg
+Bis Sinkflug
+−4,5 %
+53 220 kg gegen Plan 55 710 kg
+Sinkflug + Anflug
++53,5 %
+829 kg gegen Plan 540 kg · 9 min unter 8 325 ft · 60 NM (Plan 76)
+Rollen vor Start
+−13,5 %
+519 kg gegen Plan 600 kg
+Rollen nach Landung
+201 kg
+ohne Plan — SimBrief plant nur das Rollen zum Start
+Sprit-Leiter · Block · 65 279 kg
+Taxi600 kg
+Trip56 250 kg
+Contingency2 813 kg
+Alternate3 212 kg
+Final Reserve2 404 kg
+abgehoben mit 64 751 kg
+gelandet mit 10 702 kg
+Contingency unberührt · Alternate + Final Reserve unangetastet
+▶
+Sprit · Wegpunkt für Wegpunkt
+zuletzt LTFM 20:31z
+SimBrief 8 429 kg
+Ist 10 702 kg
+2 201 kg weniger verbraucht
+Landung ≈ 10 702 kg
+Final Reserve
+✓ intakt — 10 702 kg gelandet = 2 404 kg Final Reserve + 8 298 kg darüber
+Extra Fuel
+kein Extra getankt
+⛽
+Treibstoff
+Block
+65279 kg
+—
+TO Fuel
+64751 kg
+—
+LDG Fuel
+10702 kg
+—
+Trip Burn
+54049 kg
+≈
+-2201 kg
+Plan
+56250 kg
+⚖️
+Gewicht
+TOW
+246059 kg
+✓
++72 kg
+Plan
+245987 kg
+LDW
+192010 kg
+≈
++2273 kg
+Plan
+189737 kg
+ZFW
+181308 kg
+✓
+-0 kg
+Plan
+181308 kg
+Rohdaten zur Nachprüfung
+Aufsetzpunkt (Koordinaten)
+41.2692960, 28.7276548
+Google Maps ↗
+Aufsetzen (UTC)
+2026-10-05T20:31:34.137Z
+Kurs rechtweisend / missweisend
+3.05°T / 357.04°M
+Bahn
+LTFM / 35R
+Versatz zur Mittellinie (m, mit Vorzeichen)
++3.08 m (rechts)
+Hinter der Schwelle (m, mit Vorzeichen)
++819.97 m
+Ausrollstrecke
+1078 m
+AeroACARS-Version
+1.9.24
+Versatz und Schwellenabstand werden aus dem Aufsetzpunkt gegen die Bahngeometrie gerechnet. Wirken sie unplausibel: Koordinaten in Google Maps öffnen und mit der echten Bahn vergleichen.

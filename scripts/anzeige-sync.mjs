@@ -96,6 +96,10 @@ export const DATEIEN = [
   "lib/landungsUrteil.ts",
   // Gleichheitstest: dieselben Fälle und Erwartungen auf beiden Seiten.
   "lib/landungsFaelle.ts",
+  // 06.10.2026: die ganze Seite eines echten Flugs (THY39) — Zerlegung in
+  // Zeilen und der erwartete Text, beide byte-gleich.
+  "lib/seitenText.ts",
+  "lib/landungsFaelle.thy39.txt",
   // Abschnitte der Landungsanzeige — ein Code für Client und Webapp
   // (QS 05.10.2026, „alles genau bei beiden angezeigt").
   "lib/landungsDatensatz.ts",
