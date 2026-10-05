@@ -28770,6 +28770,25 @@ where
         // Lernpaket AP4/AP5 (29.09.2026): reine Forensik, nur lokal.
         anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
         anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
+        // Score-Version 19: dieselben Quellen wie im Touchdown-Payload, damit
+        // Client und Webapp dieselben Werte zeigen.
+        landing_groundspeed_kt: stats.landing_groundspeed_kt,
+        landing_heading_true_deg: stats.landing_heading_true_deg,
+        go_around_count: Some(stats.go_around_count),
+        landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
+        landing_touchdown_zone: zone_fuer_leitung(flight, stats),
+        landing_float_distance_m: stats.landing_float_distance_m,
+        landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
+        landing_vref_source: stats.landing_vref_source.map(|s| s.to_string()),
+        landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
+        landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
+        arr_metar: stats.arr_metar_raw.clone().filter(|m| !m.is_empty()),
+        client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        landing_lat: stats.landing_lat,
+        landing_lon: stats.landing_lon,
+        approach_runway_changed_late: Some(stats.approach_runway_changed_late),
+        approach_stable_at_da: stats.approach_stable_at_da,
+        approach_stall_warning_count: Some(stats.approach_stall_warning_count),
     })
 }
 

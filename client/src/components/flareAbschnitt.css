@@ -1,0 +1,92 @@
+/* Abfangbogen (FlareAbschnitt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Rahmen und
+ * Wertliste: Kopien mit Spezifität 0 (im Client auch in App.css). */
+
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 1rem 1.25rem;
+}
+
+:where(.landing-section) h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+:where(.landing-keyvals) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 1.25rem;
+  margin: 0;
+}
+
+:where(.landing-keyvals) > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  min-width: 0; /* allow truncation in narrow columns */
+}
+
+:where(.landing-keyvals) dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.landing-keyvals) dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.landing-section--flare h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.landing-flare__chip {
+  font-size: 0.7rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+}
+
+.landing-flare__chip--ok {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--sem-ok, #3ecf8e);
+  border: 1px solid rgba(63, 185, 80, 0.4);
+}
+
+.landing-flare__chip--warn {
+  background: rgba(210, 153, 34, 0.15);
+  color: var(--sem-warn, #f2b24c);
+  border: 1px solid rgba(210, 153, 34, 0.4);
+}
+
+.landing-flare {
+  /* Score-Version 19: nur noch die Messwerte (die Flare-Zahl ist entfallen). */
+  display: block;
+}
+
+.landing-flare__metrics {
+  /* erbt landing-keyvals — keine override-Regeln, nur leichte Anpassung */
+  align-self: start;
+}

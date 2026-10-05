@@ -1,0 +1,78 @@
+/* Treibstoff und Gewicht (LadeblattAbschnitt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Rahmen:
+ * Kopie mit Spezifität 0 (im Client auch in App.css). */
+
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 1rem 1.25rem;
+}
+
+:where(.landing-section) h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.landing-fuelbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.landing-fuelbar__row {
+  display: grid;
+  grid-template-columns: 110px 1fr 90px;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+}
+
+.landing-fuelbar__label {
+  color: var(--text-muted);
+}
+
+.landing-fuelbar__track {
+  height: 12px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.landing-fuelbar__fill {
+  height: 100%;
+  border-radius: var(--r-sm);
+  transition: width 0.3s ease;
+}
+
+.landing-fuelbar__fill--plan {
+  background: #38bdf8;
+}
+
+.landing-fuelbar__fill--under {
+  background: #22c55e;
+}
+
+.landing-fuelbar__fill--over {
+  background: #f97316;
+}
+
+.landing-fuelbar__value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-weight: 600;
+}
+
+.landing-no-plan-hint {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 7px;
+  padding: 0.7rem 0.95rem;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.88rem;
+  color: var(--text);
+  line-height: 1.4;
+}

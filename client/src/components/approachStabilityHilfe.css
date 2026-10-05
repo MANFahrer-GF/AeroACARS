@@ -1,0 +1,42 @@
+/* Inhalt der Hilfe zur Anflug-Karte (ApproachStabilityHilfeInhalt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Die Regeln
+ * stehen im Client auch in components/ui/ui.css (andere Hilfe-Dialoge nutzen
+ * sie); hier als Kopien mit Spezifität 0. */
+
+:where(.helpmodal__body) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 16px);
+}
+
+:where(.helpmodal__threshold) {
+  font-size: var(--fs-200, 11px);
+  color: var(--sem-ok, #3ecf8e);
+  font-family: var(--font-mono);
+  padding: 4px 8px;
+  background: var(--sem-ok-bg, rgba(62, 207, 142, 0.12));
+  border: 1px solid color-mix(in srgb, var(--sem-ok, #3ecf8e) 25%, transparent);
+  border-radius: var(--r-sm);
+  display: inline-block;
+}
+
+:where(.helpmodal__heading) {
+  margin: 0 0 8px;
+  font-size: var(--fs-500, 16px);
+  font-weight: var(--fw-bold, 700);
+  color: var(--text);
+}
+
+:where(.helpmodal__p) {
+  margin: 0;
+  font-size: var(--fs-400, 13px);
+  line-height: var(--lh-normal, 1.55);
+  color: var(--text-dim, #8695a3);
+}
+
+:where(.helpmodal__panel) {
+  background: var(--surface-2);
+  border: 1px solid var(--line, #2a3541);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+}

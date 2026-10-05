@@ -1,0 +1,40 @@
+/* Anfluggrafik und 50-Hz-Nahaufnahme (AnflugGrafik.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). */
+
+.landing-chart {
+  width: 100%;
+  /* v0.12.7-fix: Höhe folgt dem viewBox-Seitenverhältnis (1120×320),
+     vorher fixe 200px → die Kurve wurde bei preserveAspectRatio="meet"
+     mittig klein gequetscht mit toten Rändern. Jetzt volle Box-Breite. */
+  height: auto;
+  display: block;
+  color: var(--text-muted);
+}
+
+.landing-chart--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-style: italic;
+}
+
+.landing-stability-chart {
+  margin-top: 1rem;
+}
+
+/* Rahmen und Überschrift des Abschnitts (wie im Client in App.css);
+ * :where() hält die Spezifität bei 0. */
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 6px);
+  padding: 1rem 1.25rem;
+}
+
+:where(.landing-section) h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}

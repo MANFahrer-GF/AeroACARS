@@ -1,0 +1,62 @@
+/* METAR am Zielflughafen (MetarAbschnitt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Aussehen
+ * aus der Webapp übernommen (.la-metar*). */
+
+.metar-roh {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 4px);
+  padding: 10px 12px;
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.metar-auswertung {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.metar-eintrag {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 4px);
+}
+
+.metar-eintrag__k {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.metar-eintrag__v {
+  font-size: 0.85rem;
+  color: var(--text);
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 6px);
+  padding: 1rem 1.25rem;
+}
+
+:where(.landing-section) h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}

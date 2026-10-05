@@ -1,0 +1,53 @@
+/* Rohdaten zur Nachprüfung (RohdatenAbschnitt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). */
+
+.rohdaten > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.rohdaten__liste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.rohdaten__zeile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.82rem;
+}
+
+.rohdaten__k {
+  min-width: 220px;
+  color: var(--text-muted);
+}
+
+.rohdaten__v {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text);
+}
+
+.rohdaten__link {
+  font-size: 0.78rem;
+}
+
+.rohdaten__hinweis {
+  margin: 10px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 6px);
+  padding: 1rem 1.25rem;
+}

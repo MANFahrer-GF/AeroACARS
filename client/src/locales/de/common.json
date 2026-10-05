@@ -65,7 +65,7 @@
     "back_to_list": "Zurück zur Liste",
     "delete": "Löschen",
     "confirm_delete": "Diese Landung wirklich aus der Historie löschen?",
-    "bounces": "Bounces",
+    "bounces": "Hopser",
     "col_grade": "Note",
     "col_when": "Datum",
     "col_route": "Strecke",
@@ -101,7 +101,7 @@
     "bank": "Bank",
     "speed": "IAS bei TD",
     "sideslip": "Sideslip / Crab",
-    "heading": "Heading",
+    "heading": "Heading (missweisend)",
     "approach_stability": "Anflug-Stabilität",
     "vs_stddev": "V/S-Streuung (σ)",
     "bank_stddev": "Bank-Streuung (σ)",
@@ -538,8 +538,7 @@
     "bounce_max_agl_hint": "Höchste AGL-Höhe nach erstem Touchdown — wie weit ist das Flugzeug nach dem Aufsetzen wieder hoch gekommen",
     "forensics_section": "Touchdown-Forensik (50 Hz)",
     "forensics_unavailable": "Forensik-Buffer nicht verfügbar (Pre-v0.5.39 oder Sample-Lücke)",
-    "flare_section": "Flare-Qualität",
-    "flare_breakdown": "Endsink {{vs}} fpm → {{ep}} Pkt · Reduktion {{red}} fpm → +{{bonus}} Pkt",
+    "flare_section": "Abfangbogen (zur Einordnung, keine Note)",
     "flare_reduction": "Sinkraten-Reduktion",
     "flare_reduction_hint": "Wieviel der Pilot die Sinkrate vor TD reduziert hat (positiv = Flare hat geholfen)",
     "flare_dvs_dt": "dSinkrate/dt",
@@ -877,6 +876,12 @@
         "stable": "✨ Sauberer stabilisierter Anflug — alle Parameter im Toleranzband bei 1000 ft. So bleiben.",
         "partial": "Anflug grundsätzlich ok, aber einzelne Parameter außerhalb der Toleranz — siehe Kacheln, ggf. Stabilized-Approach-Kriterien nochmal durchgehen.",
         "unstable": "Unstabiler Anflug — in der Realität Go-Around-Kandidat. Approach-Setup früher fertig haben, Konfig + Speed + V/S bis 1000 ft AAL stabil halten."
+      },
+      "extra": {
+        "rwy_change": "Bahnwechsel unter 1500 ft (ATC) — dieser Abschnitt ist aus der Querlagen-Bewertung ausgenommen.",
+        "da_stabil": "Bei 200 ft (Entscheidungshöhe) stabil.",
+        "da_nicht_stabil": "Bei 200 ft (Entscheidungshöhe) nicht mehr stabil.",
+        "stall": "Stall-Warnungen im Anflug: {{count}}"
       }
     },
     "anflug_forensik": {
@@ -1119,6 +1124,95 @@
         "sinken": "Sinkrate über 10 Sekunden am Stück zu hoch",
         "konfiguration": "Fahrwerk oder Klappen bei 1000 ft nicht in Landestellung"
       }
+    },
+    "groundspeed": "GS bei TD",
+    "g_force_frame": "G im Aufsetz-Frame",
+    "heading_true": "Heading (rechtweisend)",
+    "quality": {
+      "title": "Aufsetz-Qualität (zur Einordnung, keine Note)",
+      "na": "—",
+      "flag_wing_strike": "⚠ WING-STRIKE-RISIKO",
+      "flag_long_landing": "LANGE LANDUNG",
+      "trust": {
+        "icao_mismatch": "Falscher Flughafen erkannt",
+        "centerline_offset_too_large": "Touchdown zu weit von der Bahnmitte",
+        "negative_float_distance": "Touchdown vor der Schwelle"
+      },
+      "wing_strike": "Wing-Strike-Risiko",
+      "wing_strike_hint": "Querlage beim Aufsetzen im Verhältnis zur Grenze, ab der die Tragfläche den Boden berührt. Unter 40 % sicher, ab 80 % kritisch nah an der Grenze.",
+      "zone": "Aufsetz-Drittel",
+      "zone_wert": {
+        "1": "Zone 1 ✓",
+        "2": "Zone 2",
+        "3": "Zone 3 ⚠"
+      },
+      "zone_hint": "FAA-Drittel: Zone 1 = erstes Drittel der Bahn (richtig), Zone 2 = mittleres Drittel (lang), Zone 3 = letztes Drittel (Overrun-Gefahr).",
+      "distanz": "Hinter der Schwelle",
+      "distanz_hint": "Distanz von der Landeschwelle bis zum Aufsetzpunkt. Üblich 300–400 m; über 1000 m ist sehr lang (Overrun-Gefahr auf kurzen Bahnen).",
+      "distanz_hint_vor": "VOR der Landeschwelle aufgesetzt — ein negativer Wert sind Meter vor der Schwelle.",
+      "vref_label": {
+        "pmdg": "Vref-Abw. (PMDG)",
+        "fbw": "Vref-Abw. (FBW)",
+        "icao_default": "Vref-Abw. (~ICAO)",
+        "unbekannt": "Vref-Abweichung"
+      },
+      "vref_hint": {
+        "pmdg": "IAS beim Aufsetzen gegen die Vref aus dem PMDG-FMC (genau). Negativ = zu langsam, positiv = zu schnell.",
+        "fbw": "IAS beim Aufsetzen gegen die Vref aus dem FBW-Connector (genau). Negativ = zu langsam, positiv = zu schnell.",
+        "icao_default": "IAS beim Aufsetzen gegen eine allgemeine ICAO-Vref. ⚠ Näherung, kann ±5 kt von der echten Vref abweichen — das Toleranzband ist deshalb breiter.",
+        "unbekannt": "IAS beim Aufsetzen gegen Vref. Quelle der Vref unbekannt."
+      },
+      "gierrate": "Gierrate",
+      "gierrate_hint": "Kursänderung pro Sekunde beim Aufsetzen. Hoch = nicht ausgerichtet aufgesetzt, Gefahr des Ausbrechens bei Seitenwind.",
+      "bremsenergie": "Bremsenergie",
+      "bremsenergie_hint": "Näherung: (½ × Masse × IAS²) / Ausrollstrecke. Hoch = starke thermische Last der Bremsen."
+    },
+    "metar": {
+      "title": "METAR am Zielflughafen",
+      "wind": "Wind",
+      "sicht": "Sicht",
+      "wetter": "Wetter",
+      "wolken": "Wolken",
+      "temp_tau": "Temp/Tau",
+      "variabel": "variabel",
+      "boeen": "Böen {{kt}} kt",
+      "stark": "stark",
+      "leicht": "leicht",
+      "wolke": {
+        "FEW": "wenige",
+        "SCT": "aufgelockert",
+        "BKN": "durchbrochen",
+        "OVC": "bedeckt"
+      },
+      "wx": {
+        "DZ": "Niesel",
+        "RA": "Regen",
+        "SN": "Schnee",
+        "SG": "Schneegriesel",
+        "BR": "leichter Nebel",
+        "FG": "Nebel",
+        "FU": "Rauch",
+        "HZ": "Trockendunst",
+        "TS": "Gewitter",
+        "SH": "Schauer",
+        "FZ": "gefrierend",
+        "VC": "in Sichtweite"
+      }
+    },
+    "rohdaten": {
+      "title": "Rohdaten zur Nachprüfung",
+      "koordinaten": "Aufsetzpunkt (Koordinaten)",
+      "zeit": "Aufsetzen (UTC)",
+      "kurs": "Kurs rechtweisend / missweisend",
+      "bahn": "Bahn",
+      "versatz": "Versatz zur Mittellinie (m, mit Vorzeichen)",
+      "schwelle": "Hinter der Schwelle (m, mit Vorzeichen)",
+      "ausrollen": "Ausrollstrecke",
+      "version": "AeroACARS-Version",
+      "rechts": "rechts",
+      "links": "links",
+      "mitte": "Mitte",
+      "hinweis": "Versatz und Schwellenabstand werden aus dem Aufsetzpunkt gegen die Bahngeometrie gerechnet. Wirken sie unplausibel: Koordinaten in Google Maps öffnen und mit der echten Bahn vergleichen."
     }
   },
   "about": {

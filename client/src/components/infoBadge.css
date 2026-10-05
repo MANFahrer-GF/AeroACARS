@@ -1,0 +1,104 @@
+/* (i)-Knopf (InfoBadge.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). */
+
+.info-badge-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.info-badge {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.info-badge:hover,
+.info-badge:hover:not(:disabled),
+.info-badge--open {
+  background: var(--accent, #38bdf8);
+  color: var(--on-acc, #04121c);
+  border-color: var(--accent, #38bdf8);
+}
+
+.info-badge__popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -8px;
+  z-index: 30;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  padding: 0.7rem 2rem 0.7rem 0.85rem;
+  background: var(--surface, #141a21);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  font-size: 0.85rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.info-badge__popover::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 12px;
+  width: 12px;
+  height: 12px;
+  background: var(--surface, #141a21);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.info-badge__popover--flip-left {
+  left: auto;
+  right: -8px;
+}
+
+.info-badge__popover--flip-left::before {
+  left: auto;
+  right: 12px;
+}
+
+.info-badge__close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  border-radius: var(--r-sm);
+}
+
+.info-badge__close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}

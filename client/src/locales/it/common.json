@@ -101,7 +101,7 @@
     "bank": "Bank",
     "speed": "IAS al TD",
     "sideslip": "Sideslip / Crab",
-    "heading": "Heading",
+    "heading": "Heading (magnetico)",
     "approach_stability": "Stabilità avvicinamento",
     "vs_stddev": "Dispersione V/S (σ)",
     "bank_stddev": "Dispersione Bank (σ)",
@@ -538,8 +538,7 @@
     "bounce_max_agl_hint": "Massima altezza AGL dopo il primo touchdown",
     "forensics_section": "Forensica touchdown (50 Hz)",
     "forensics_unavailable": "Buffer forensico non disponibile (pre-v0.5.39 o gap di campionamento)",
-    "flare_section": "Qualità del flare",
-    "flare_breakdown": "Sink finale {{vs}} fpm → {{ep}} pti · riduzione {{red}} fpm → +{{bonus}} pti",
+    "flare_section": "Flare (indicativo, senza punteggio)",
     "flare_reduction": "Riduzione rateo di discesa",
     "flare_reduction_hint": "Di quanto il pilota ha ridotto il rateo di discesa prima del TD",
     "flare_dvs_dt": "dRateo/dt",
@@ -877,6 +876,12 @@
         "stable": "✨ Avvicinamento stabilizzato pulito — tutti i parametri nella fascia di tolleranza a 1000 ft. Mantieni così.",
         "partial": "Avvicinamento sostanzialmente ok, ma alcuni parametri fuori tolleranza — vedi le tile e rivedi i criteri di stabilized-approach se serve.",
         "unstable": "Avvicinamento instabile — in realtà candidato a go-around. Completa il setup di approach prima, mantieni config + speed + V/S stabili entro 1000 ft AAL."
+      },
+      "extra": {
+        "rwy_change": "Cambio pista sotto 1500 ft (ATC) — questo tratto è escluso dalla valutazione dell'inclinazione.",
+        "da_stabil": "Stabile a 200 ft (altitudine di decisione).",
+        "da_nicht_stabil": "Non più stabile a 200 ft (altitudine di decisione).",
+        "stall": "Avvisi di stallo in avvicinamento: {{count}}"
       }
     },
     "anflug_forensik": {
@@ -1119,6 +1124,95 @@
         "sinken": "Rateo di discesa troppo alto per oltre 10 secondi",
         "konfiguration": "Carrello o flap non in configurazione d’atterraggio a 1000 ft"
       }
+    },
+    "groundspeed": "GS al TD",
+    "g_force_frame": "G al frame di contatto",
+    "heading_true": "Heading (vero)",
+    "quality": {
+      "title": "Qualità del contatto (indicativa, senza punteggio)",
+      "na": "—",
+      "flag_wing_strike": "⚠ RISCHIO WING-STRIKE",
+      "flag_long_landing": "ATTERRAGGIO LUNGO",
+      "trust": {
+        "icao_mismatch": "Aeroporto errato rilevato",
+        "centerline_offset_too_large": "Contatto troppo lontano dall'asse pista",
+        "negative_float_distance": "Contatto prima della soglia"
+      },
+      "wing_strike": "Rischio wing-strike",
+      "wing_strike_hint": "Inclinazione al contatto rispetto al limite oltre il quale l'ala tocca il suolo. Sotto il 40 % sicuro, dall'80 % criticamente vicino al limite.",
+      "zone": "Terzo di contatto",
+      "zone_wert": {
+        "1": "Zona 1 ✓",
+        "2": "Zona 2",
+        "3": "Zona 3 ⚠"
+      },
+      "zone_hint": "Terzi FAA: zona 1 = primo terzo della pista (corretto), zona 2 = terzo centrale (lungo), zona 3 = ultimo terzo (rischio di overrun).",
+      "distanz": "Oltre la soglia",
+      "distanz_hint": "Distanza dalla soglia di atterraggio al punto di contatto. Tipica 300–400 m; oltre 1000 m è molto lunga (rischio di overrun su piste corte).",
+      "distanz_hint_vor": "Contatto PRIMA della soglia di atterraggio — un valore negativo sono metri prima della soglia.",
+      "vref_label": {
+        "pmdg": "Scost. Vref (PMDG)",
+        "fbw": "Scost. Vref (FBW)",
+        "icao_default": "Scost. Vref (~ICAO)",
+        "unbekannt": "Scostamento Vref"
+      },
+      "vref_hint": {
+        "pmdg": "IAS al contatto rispetto alla Vref dell'FMC PMDG (precisa). Negativo = troppo lento, positivo = troppo veloce.",
+        "fbw": "IAS al contatto rispetto alla Vref del connettore FBW (precisa). Negativo = troppo lento, positivo = troppo veloce.",
+        "icao_default": "IAS al contatto rispetto a una Vref ICAO generica. ⚠ Approssimazione, può differire di ±5 kt dalla Vref reale — per questo la banda di tolleranza è più ampia.",
+        "unbekannt": "IAS al contatto rispetto alla Vref. Fonte della Vref sconosciuta."
+      },
+      "gierrate": "Velocità di imbardata",
+      "gierrate_hint": "Variazione di prua al secondo al contatto. Alta = non allineato al contatto, rischio di uscita laterale con vento al traverso.",
+      "bremsenergie": "Energia di frenata",
+      "bremsenergie_hint": "Approssimazione: (½ × massa × IAS²) / corsa di arresto. Alta = forte carico termico sui freni."
+    },
+    "metar": {
+      "title": "METAR a destinazione",
+      "wind": "Vento",
+      "sicht": "Visibilità",
+      "wetter": "Fenomeni",
+      "wolken": "Nubi",
+      "temp_tau": "Temp/rugiada",
+      "variabel": "variabile",
+      "boeen": "raffiche {{kt}} kt",
+      "stark": "forte",
+      "leicht": "debole",
+      "wolke": {
+        "FEW": "poche",
+        "SCT": "sparse",
+        "BKN": "frammentate",
+        "OVC": "coperto"
+      },
+      "wx": {
+        "DZ": "pioviggine",
+        "RA": "pioggia",
+        "SN": "neve",
+        "SG": "granelli di neve",
+        "BR": "foschia",
+        "FG": "nebbia",
+        "FU": "fumo",
+        "HZ": "caligine",
+        "TS": "temporale",
+        "SH": "rovesci",
+        "FZ": "congelante",
+        "VC": "nelle vicinanze"
+      }
+    },
+    "rohdaten": {
+      "title": "Dati grezzi per la verifica",
+      "koordinaten": "Punto di contatto (coordinate)",
+      "zeit": "Contatto (UTC)",
+      "kurs": "Prua vera / magnetica",
+      "bahn": "Pista",
+      "versatz": "Scostamento dall'asse (m, con segno)",
+      "schwelle": "Oltre la soglia (m, con segno)",
+      "ausrollen": "Corsa di arresto",
+      "version": "Versione AeroACARS",
+      "rechts": "destra",
+      "links": "sinistra",
+      "mitte": "centro",
+      "hinweis": "Scostamento e distanza dalla soglia sono calcolati dal punto di contatto rispetto alla geometria della pista. Se sembrano poco plausibili, apri le coordinate in Google Maps e confrontale con la pista reale."
     }
   },
   "about": {

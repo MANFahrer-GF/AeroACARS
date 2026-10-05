@@ -6106,22 +6106,9 @@ input:disabled {
 
 /* ---- Charts ---- */
 
-.landing-chart {
-  width: 100%;
-  /* v0.12.7-fix: Höhe folgt dem viewBox-Seitenverhältnis (1120×320),
-     vorher fixe 200px → die Kurve wurde bei preserveAspectRatio="meet"
-     mittig klein gequetscht mit toten Rändern. Jetzt volle Box-Breite. */
-  height: auto;
-  display: block;
-  color: var(--text-muted);
-}
 
-.landing-chart--empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-style: italic;
-}
+
+
 
 .landing-runway {
   width: 100%;
@@ -6131,171 +6118,45 @@ input:disabled {
 
 /* v0.12.8-dev: Wind-Visualisierung — animiertes Stromlinien-Feld mit
    Hero-Zahl. Der Wind "weht" sichtbar über die Karte. */
-.windflow {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  min-height: 172px;
-  border-radius: var(--r-md);
-  background: radial-gradient(125% 125% at 18% 0%, #1e293b 0%, #0b1120 100%);
-  align-self: start;
-}
 
-.windflow__field {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
 
-@keyframes windflow-streak {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(560px);
-  }
-}
 
-.windflow__streak {
-  animation-name: windflow-streak;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
-  will-change: transform;
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .windflow__streak {
-    animation: none;
-  }
-}
 
-.windflow__overlay {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 0.6rem;
-  min-height: 172px;
-  box-sizing: border-box;
-  padding: 0.85rem 1rem;
-}
 
-.windflow__top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 
-.windflow__cap {
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.55);
-}
+
+
+
+
+
+
+
 
 /* Landebahn-Streifen — waagerecht, sitzt UNTER der Hero-Zahl. */
-.windflow__runway {
-  position: relative;
-  height: 30px;
-  border-radius: var(--r-sm);
-  background: rgba(2, 6, 23, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-}
 
-.windflow__rwy-keys {
-  position: absolute;
-  left: 8px;
-  top: 6px;
-  bottom: 6px;
-  width: 15px;
-  background: repeating-linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.55) 0 3px,
-    transparent 3px 7px
-  );
-}
 
-.windflow__rwy-line {
-  position: absolute;
-  left: 58px;
-  right: 22px;
-  top: 50%;
-  border-top: 2.5px dashed rgba(255, 255, 255, 0.42);
-}
 
-.windflow__rwy-id {
-  position: absolute;
-  left: 32px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 0.8rem;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  color: rgba(255, 255, 255, 0.72);
-}
 
-.windflow__hero {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.55rem;
-}
 
-.windflow__hero-num {
-  font-size: 3.6rem;
-  font-weight: 800;
-  line-height: 0.82;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
-}
 
-.windflow__hero-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  padding-bottom: 0.3rem;
-}
 
-.windflow__hero-unit {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.72);
-}
 
-.windflow__hero-sub {
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: rgba(255, 255, 255, 0.62);
-}
 
-.windflow__hero-label {
-  font-size: 1.55rem;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.88);
-}
 
-.windflow__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
 
-.windflow__chip {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.82);
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 999px;
-  padding: 0.22rem 0.62rem;
-  font-variant-numeric: tabular-nums;
-  backdrop-filter: blur(2px);
-}
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ---- Stability ---- */
 
@@ -6332,54 +6193,23 @@ input:disabled {
 
 /* ---- Fuel bar ---- */
 
-.landing-fuelbar {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
 
-.landing-fuelbar__row {
-  display: grid;
-  grid-template-columns: 110px 1fr 90px;
-  align-items: center;
-  gap: 0.6rem;
-  font-size: 0.9rem;
-}
 
-.landing-fuelbar__label {
-  color: var(--text-muted);
-}
 
-.landing-fuelbar__track {
-  height: 12px;
-  background: var(--surface-2);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-}
 
-.landing-fuelbar__fill {
-  height: 100%;
-  border-radius: var(--r-sm);
-  transition: width 0.3s ease;
-}
 
-.landing-fuelbar__fill--plan {
-  background: #38bdf8;
-}
 
-.landing-fuelbar__fill--under {
-  background: #22c55e;
-}
 
-.landing-fuelbar__fill--over {
-  background: #f97316;
-}
 
-.landing-fuelbar__value {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  font-weight: 600;
-}
+
+
+
+
+
+
+
+
+
 
 /* ---- Score breakdown ---- */
 
@@ -6476,110 +6306,26 @@ input:disabled {
 
 /* ---- (i) info badge ---- */
 
-.info-badge-wrap {
-  position: relative;
-  display: inline-flex;
-  margin-left: 0.4rem;
-  vertical-align: middle;
-}
 
-.info-badge {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 700;
-  font-family: Georgia, "Times New Roman", serif;
-  font-style: italic;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
 
-.info-badge:hover,
-.info-badge:hover:not(:disabled),
-.info-badge--open {
-  background: var(--accent, #38bdf8);
-  color: var(--on-acc);
-  border-color: var(--accent, #38bdf8);
-}
 
-.info-badge__popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: -8px;
-  z-index: 30;
-  width: 280px;
-  max-width: calc(100vw - 32px);
-  padding: 0.7rem 2rem 0.7rem 0.85rem;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-  font-size: 0.85rem;
-  font-weight: 400;
-  letter-spacing: normal;
-  text-transform: none;
-  line-height: 1.45;
-  white-space: normal;
-}
 
-.info-badge__popover::before {
-  content: "";
-  position: absolute;
-  top: -6px;
-  left: 12px;
-  width: 12px;
-  height: 12px;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  border-top: 1px solid var(--border);
-  transform: rotate(45deg);
-}
+
+
+
+
+
 
 /* Flip variant: popover anchors to the right edge of the badge instead
    of the left. Used when the badge sits close to the viewport's right
    edge and the default placement would clip the popover off-screen. */
-.info-badge__popover--flip-left {
-  left: auto;
-  right: -8px;
-}
 
-.info-badge__popover--flip-left::before {
-  left: auto;
-  right: 12px;
-}
 
-.info-badge__close {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-  border-radius: var(--r-sm);
-}
 
-.info-badge__close:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
+
+
+
+
 
 /* ---- Coach tip ---- */
 
@@ -6648,9 +6394,6 @@ input:disabled {
 
 /* ---- Stability section gets full width now that wind moved out ---- */
 
-.landing-stability-chart {
-  margin-top: 1rem;
-}
 
 /* ---- v0.5.43: Flare-Quality Section ----
  * Layout: links eine Score-Display-Karte (gross, farbig je band),
@@ -6658,42 +6401,17 @@ input:disabled {
  * Gleicher visueller Sprache wie StabilityIndicator damit's
  * harmonisch in den Landing-Tab integriert wirkt.
  */
-.landing-section--flare h3 {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
 
-.landing-flare__chip {
-  font-size: 0.7rem;
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 600;
-  padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-}
 
-.landing-flare__chip--ok {
-  background: rgba(63, 185, 80, 0.15);
-  color: var(--sem-ok);
-  border: 1px solid rgba(63, 185, 80, 0.4);
-}
 
-.landing-flare__chip--warn {
-  background: rgba(210, 153, 34, 0.15);
-  color: var(--sem-warn);
-  border: 1px solid rgba(210, 153, 34, 0.4);
-}
 
-.landing-flare {
-  /* Score-Version 19: nur noch die Messwerte (die Flare-Zahl ist entfallen). */
-  display: block;
-}
 
-.landing-flare__metrics {
-  /* erbt landing-keyvals — keine override-Regeln, nur leichte Anpassung */
-  align-self: start;
-}
+
+
+
+
+
+
 
 /* ---- Landung erkannt, aber nicht gemessen ----
    Untersuchung 12.09.2026 (CFG 2090): Eine Landung ohne aufgezeichneten
@@ -6734,11 +6452,7 @@ input:disabled {
 }
 
 /* Die Sinkraten-Kachel ohne Messwert — kein Zahlenplatz, nur die Aussage. */
-.sinkrate-score-tile__value--leer {
-  font-size: 0.95rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
+
 
 /* ---- Personal-best line in the headline ---- */
 
@@ -7017,16 +6731,7 @@ input:disabled {
 /* v0.4.2: Hint im Landung-Tab wenn keine SOLL-Werte verfügbar
  * (kein SimBrief-OFP für den Flug). Blauer Info-Banner statt nur
  * stille leere Tabellen-Zellen. */
-.landing-no-plan-hint {
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  border-radius: 7px;
-  padding: 0.7rem 0.95rem;
-  margin: 0.5rem 0 1rem;
-  font-size: 0.88rem;
-  color: var(--text);
-  line-height: 1.4;
-}
+
 
 /* v0.5.38: Visual Stable-Approach-Advisory Banner.
  * Erscheint im Cockpit-Tab wenn der Anflug die FAA-Kriterien (Bank,
@@ -7344,354 +7049,110 @@ input:disabled {
    Borders, keine neue Farb-Palette — nur cyan-Akzent fuer den Aufklaerungs-
    Block (gleich wie VPS-Web 50-Hz-Card). */
 
-.landing-section--sinkrate-forensik {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
+
 
 /* Aufklaerungs-Block — cyan-Akzent wie VPS-Web */
-.sinkrate-forensik-intro {
-  padding: 10px 14px;
-  border-left: 3px solid var(--sem-info);
-  background: rgba(6, 182, 212, 0.06);
-  border-radius: var(--r-sm);
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-.sinkrate-forensik-intro__header {
-  font-weight: 600;
-  color: var(--sem-info);
-  margin-bottom: 4px;
-}
-.sinkrate-forensik-intro__body {
-  color: var(--fg);
-  opacity: 0.92;
-  white-space: pre-line;
-}
+
+
+
 
 /* Sub-Section-Pattern */
-.sinkrate-forensik-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.sinkrate-forensik-section__title {
-  font-weight: 600;
-  font-size: 0.92rem;
-  color: var(--fg);
-}
-.sinkrate-forensik-section__subtitle {
-  font-size: 0.78rem;
-  color: var(--fg-dim);
-  line-height: 1.4;
-}
+
+
+
 
 /* 4-Tile-Reihe (Pattern wie landing-stability) */
-.sinkrate-forensik-tiles {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-}
-.sinkrate-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
-.sinkrate-tile__label {
-  font-size: 0.72rem;
-  color: var(--fg-dim);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.sinkrate-tile__hint {
-  text-transform: none;
-  letter-spacing: 0;
-  opacity: 0.7;
-}
-.sinkrate-tile__value {
-  font-family: var(--font-mono, monospace);
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--fg);
-}
-.sinkrate-tile__unit {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--fg-dim);
-}
-.sinkrate-tile--good .sinkrate-tile__value { color: var(--sem-ok); }
-.sinkrate-tile--neutral .sinkrate-tile__value { color: var(--sem-info); }
-.sinkrate-tile--warn .sinkrate-tile__value { color: var(--sem-warn); }
-.sinkrate-tile--err .sinkrate-tile__value { color: var(--sem-danger); }
-.sinkrate-tile--err-severe .sinkrate-tile__value { color: var(--scale-critical); }
-.sinkrate-tile--na .sinkrate-tile__value { color: var(--fg-dim); }
-.sinkrate-tile--na {
-  cursor: help;
-  opacity: 0.85;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Score-Basis (gross + prominent) */
-.sinkrate-score-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px;
-  border-radius: var(--r-sm);
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.10), rgba(6, 182, 212, 0.03));
-  border: 1px solid rgba(6, 182, 212, 0.30);
-}
+
 /* v0.7.8 QS-Round-9: "Bewertete Sinkrate" gross + "Score-Basis" klein
    als Sublabel — pilot-freundlicher als die alte Pill-Optik. */
-.sinkrate-score-tile__heading {
-  font-size: 0.92rem;
-  font-weight: 700;
-  color: var(--fg);
-  letter-spacing: 0.02em;
-}
-.sinkrate-score-tile__sublabel {
-  font-size: 0.7rem;
-  color: var(--fg-dim);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin-bottom: 2px;
-}
-.sinkrate-score-tile__value {
-  font-family: var(--font-mono, monospace);
-  font-size: 2.3rem;
-  font-weight: 800;
-  line-height: 1.1;
-  color: var(--fg);
-}
-.sinkrate-score-tile--good .sinkrate-score-tile__value { color: var(--sem-ok); }
-.sinkrate-score-tile--neutral .sinkrate-score-tile__value { color: var(--sem-info); }
-.sinkrate-score-tile--warn .sinkrate-score-tile__value { color: var(--sem-warn); }
-.sinkrate-score-tile--err .sinkrate-score-tile__value { color: var(--sem-danger); }
-.sinkrate-score-tile--err-severe .sinkrate-score-tile__value { color: var(--scale-critical); }
-.sinkrate-score-tile__unit {
-  font-size: 0.95rem;
-  font-weight: 500;
-  color: var(--fg-dim);
-}
-.sinkrate-score-tile__source {
-  font-size: 0.74rem;
-  color: var(--fg-dim);
-}
-.sinkrate-score-tile__source-code {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
-  padding: 1px 4px;
-  margin-left: 4px;
-  background: var(--surface-2);
-  border-radius: 3px;
-}
-.sinkrate-score-tile__hint {
-  font-size: 0.72rem;
-  color: var(--fg-dim);
-  line-height: 1.4;
-}
 
-.sinkrate-forensik-pre-flare {
-  font-size: 0.82rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
-  color: var(--fg);
-}
-.sinkrate-forensik-pre-flare__label {
-  color: var(--fg-dim);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-size: 0.7rem;
-}
-.sinkrate-forensik-pre-flare__value {
-  font-family: var(--font-mono, monospace);
-  font-weight: 700;
-}
-.sinkrate-forensik-pre-flare__reduction {
-  color: var(--fg-dim);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Bucket-Bars */
-.sinkrate-buckets {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.sinkrate-bucket-row {
-  display: grid;
-  grid-template-columns: 120px 1fr 80px;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.78rem;
-}
-.sinkrate-bucket-row__label {
-  font-family: var(--font-mono, monospace);
-  color: var(--fg-dim);
-}
-.sinkrate-bucket-row__bar {
-  height: 8px;
-  background: var(--surface-2);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.sinkrate-bucket-row__fill {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.2s ease;
-  background: linear-gradient(90deg, #22c55e, #86efac);
-}
-.sinkrate-bucket-row__fill--good { background: linear-gradient(90deg, #22c55e, #34d399); }
-.sinkrate-bucket-row__fill--neutral { background: linear-gradient(90deg, #34d399, #67e8f9); }
-.sinkrate-bucket-row__fill--warn { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
-.sinkrate-bucket-row__fill--err { background: linear-gradient(90deg, #f59e0b, #ef4444); }
-.sinkrate-bucket-row__fill--err-severe { background: linear-gradient(90deg, #ef4444, #b91c1c); }
-.sinkrate-bucket-row__value {
-  font-family: var(--font-mono, monospace);
-  font-weight: 600;
-  text-align: right;
-  color: var(--fg);
-}
-.sinkrate-bucket-row__unit {
-  font-size: 0.7rem;
-  color: var(--fg-dim);
-  font-weight: 500;
-}
 
-.sinkrate-forensik-trend-note {
-  margin-top: 6px;
-  padding: 6px 10px;
-  border-radius: var(--r-sm);
-  background: rgba(239, 68, 68, 0.08);
-  border-left: 2px solid #ef4444;
-  font-size: 0.78rem;
-  color: var(--fg);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Coaching-Tipp — eine Zeile, leicht gehoben.
    v0.7.8 QS-Round-9: kein Purple mehr (war §4.5/V6-Verstoss).
    v0.7.8 QS-Round-10: Border auf 1 px (V6 strict — keine Borders >1 px).
    Subtle Highlight via surface-2 + cyan-Akzent (passt zum
    existierenden Aufklaerungs-Block-Stil). */
-.sinkrate-forensik-coach {
-  padding: 8px 12px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  border-left: 1px solid var(--sem-info);
-  font-size: 0.85rem;
-  line-height: 1.45;
-  color: var(--fg);
-}
+
 
 /* <details> Collapsible */
-.sinkrate-forensik-details {
-  margin-top: 4px;
-}
-.sinkrate-forensik-details > summary {
-  cursor: pointer;
-  font-size: 0.78rem;
-  color: var(--fg-dim);
-  padding: 4px 0;
-  user-select: none;
-}
-.sinkrate-forensik-details > summary:hover {
-  color: var(--fg);
-}
-.sinkrate-forensik-details[open] > summary {
-  margin-bottom: 8px;
-}
+
+
+
+
 
 /* Position-Trace-Tabelle */
-.sinkrate-trace {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.sinkrate-trace__title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--fg);
-}
-.sinkrate-trace__caption {
-  font-size: 0.72rem;
-  color: var(--fg-dim);
-  font-style: italic;
-  line-height: 1.4;
-}
-.sinkrate-trace__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.78rem;
-}
-.sinkrate-trace__table td {
-  padding: 3px 8px;
-  border-bottom: 1px solid var(--border);
-}
-.sinkrate-trace__t { color: var(--fg-dim); width: 30%; }
-.sinkrate-trace__vs { color: var(--fg); width: 35%; }
-.sinkrate-trace__agl { color: var(--fg-dim); }
+
+
+
+
+
+
+
+
 
 /* Aufprall-Belastung */
-.sinkrate-impact {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.sinkrate-impact__title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--fg);
-}
-.sinkrate-impact__tiles {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-}
-.sinkrate-impact__tile {
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
-.sinkrate-impact__label {
-  font-size: 0.7rem;
-  color: var(--fg-dim);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.sinkrate-impact__value {
-  font-family: var(--font-mono, monospace);
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--fg);
-}
-.sinkrate-impact__value span {
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--fg-dim);
-}
-.sinkrate-impact__tile--good .sinkrate-impact__value { color: var(--sem-ok); }
-.sinkrate-impact__tile--neutral .sinkrate-impact__value { color: var(--sem-info); }
-.sinkrate-impact__tile--warn .sinkrate-impact__value { color: var(--sem-warn); }
-.sinkrate-impact__tile--err .sinkrate-impact__value { color: var(--sem-danger); }
-.sinkrate-impact__tile--err-severe .sinkrate-impact__value { color: var(--scale-critical); }
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Legacy-Notice (pre-Forensik-PIREPs) */
-.sinkrate-forensik-legacy {
-  padding: 10px 14px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  color: var(--fg-dim);
-  font-size: 0.85rem;
-}
+
 
 /* ─── v0.12.8-dev: PDF-Export der Landungs-Analyse ──────────────────────
  *
@@ -11125,16 +10586,7 @@ input.datalink-block__input {
    wenn Gelände oder die Sim-Referenz etwas zu erklären haben). Ton wie
    die übrigen Hinweisflächen: ruhig, nicht alarmierend — es ist eine
    Einordnung, keine Warnung. */
-.sinkrate-aufschluesselung {
-  margin: 8px 0 12px;
-  padding: 9px 11px;
-  border: 1px solid var(--sem-warn);
-  border-radius: 8px;
-  background: var(--sem-warn-bg);
-  font-size: 0.86rem;
-  line-height: 1.5;
-  max-width: 76ch;
-}
+
 
 /* ---------------------------------------------------------------------------
    Pflicht-Riegel (v1.7.6) — erst aktualisieren, dann fliegen.

@@ -17,12 +17,17 @@
 // - Pattern wie StabilityIndicator/CoachTip/QuickFlags in LandingPanel.tsx
 
 import { useTranslation } from "react-i18next";
-import type { LandingRecord, LandingProfilePoint } from "./LandingPanel";
+import "./landungForensik.css";
+// `istBewertbar` lebt in lib/landungsFormat.ts (ohne CSS, auch in reinen
+// Node-Tests ladbar); hier weiter exportiert für bestehende Aufrufer.
+import { istBewertbar } from "../lib/landungsFormat";
+export { istBewertbar };
+import type { LandingRecord, LandingProfilePoint } from "../lib/landungsDatensatz";
 import {
   T_VS_FIRM_FPM,
   T_VS_HARD_FPM,
   T_VS_SEVERE_FPM,
-} from "../lib/landingScoring";
+} from "../lib/bewertungsGrenzen";
 // v0.19.x FIX: this file used to define its OWN hardcoded 3-band G-color
 // function (1.4/1.7, no "neutral"/"err-severe") that disagreed with
 // GForceForensik's real 5-band T_G_* ladder — the SAME peak-G value shown
@@ -222,15 +227,6 @@ export function vsTone(vs: number | null | undefined): Tone | null {
 /// Negative-Check gegen Float-Noise / Pre-Touchdown-Bumps: nur Werte
 /// < 0 zaehlen als gueltiger Edge (im Sim positives V/S beim TD =
 /// Ballooning oder Sample-Glitch, nicht der echte Aufsetz-Moment).
-/// Ist diese Landung überhaupt bewertbar?
-///
-/// Landungen ohne ausreichende Aufzeichnung haben keine Sinkrate. Sie
-/// dürfen deshalb in keine Statistik einfliessen — ein Mittelwert über
-/// "keine Zahl" ist keine Zahl, und als weichste Landung dürfte eine
-/// gelten, die niemand gemessen hat.
-export function istBewertbar(record: { landung_nicht_bewertbar?: unknown }): boolean {
-  return record.landung_nicht_bewertbar == null;
-}
 
 export function scoreBasisVs(record: Pick<LandingRecord,
   "vs_at_edge_fpm" | "landing_peak_vs_fpm" | "landing_rate_fpm"

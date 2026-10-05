@@ -96,6 +96,32 @@ export const DATEIEN = [
   "lib/landungsUrteil.ts",
   // Gleichheitstest: dieselben Fälle und Erwartungen auf beiden Seiten.
   "lib/landungsFaelle.ts",
+  // Abschnitte der Landungsanzeige — ein Code für Client und Webapp
+  // (QS 05.10.2026, „alles genau bei beiden angezeigt").
+  "lib/landungsDatensatz.ts",
+  "lib/bewertungsGrenzen.ts",
+  "components/AnflugGrafik.tsx",
+  "components/anflugGrafik.css",
+  "components/SinkrateForensik.tsx",
+  "components/GForceForensik.tsx",
+  "components/landungForensik.css",
+  "lib/landungsFormat.ts",
+  "components/TouchdownAbschnitt.tsx",
+  "components/touchdownAbschnitt.css",
+  "components/FlareAbschnitt.tsx",
+  "components/flareAbschnitt.css",
+  "components/LandingQualitaet.tsx",
+  "components/InfoBadge.tsx",
+  "components/infoBadge.css",
+  "components/LadeblattAbschnitt.tsx",
+  "components/ladeblattAbschnitt.css",
+  "components/MetarAbschnitt.tsx",
+  "components/metarAbschnitt.css",
+  "components/RohdatenAbschnitt.tsx",
+  "components/rohdatenAbschnitt.css",
+  "components/ApproachStabilityCard.tsx",
+  "components/ApproachStabilityHilfeInhalt.tsx",
+  "components/approachStabilityHilfe.css",
 ];
 
 /**
@@ -105,6 +131,10 @@ export const DATEIEN = [
  * den Baum-Test ruhigzustellen.
  */
 export const AUSNAHMEN = {
+  "./ApproachStabilityHelpModal":
+    "Dialog-Hülle der Anflug-Hilfe — sitzt wie das Glossar im repo-eigenen " +
+    "Dialog-Baustein; der Inhalt (ApproachStabilityHilfeInhalt.tsx) ist " +
+    "gespiegelt",
   "./RunwayGlossaryModal":
     "sitzt im repo-eigenen Dialog-Baustein (./ui) mit anderer " +
     "Schnittstelle; zeigt nur i18n-Texte, die ohnehin in beiden " +
@@ -206,6 +236,19 @@ export function benoetigteSchluessel() {
   const de = sprachdatei(CLIENT, "de");
   if (de != null) {
     for (const v of vorspaenne) for (const b of blaetter(de, v)) alle.add(b);
+    // Schlüssel als Zeichenkette ausserhalb eines direkten t("…")-Aufrufs —
+    // etwa `t(bedingung ? "landing.a" : "landing.b")`. Am 05.10.2026 fehlten
+    // der Webapp so drei Texte (u. a. „Bei 200 ft stabil"); sie zeigte den
+    // rohen Schlüssel. Gezählt wird jede Zeichenkette, die in der deutschen
+    // Datei ein Text ist.
+    for (const rel of DATEIEN) {
+      const p = resolve(CLIENT, rel);
+      if (!existsSync(p)) continue;
+      const text = readFileSync(p, "utf-8");
+      for (const m of text.matchAll(/["'`]([a-z_]+(?:\.[\w]+)+)["'`]/g)) {
+        if (hatSchluessel(de, m[1])) alle.add(m[1]);
+      }
+    }
   }
   return [...alle].sort();
 }

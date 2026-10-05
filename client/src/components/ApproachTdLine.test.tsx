@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { approachTdLineIndex } from "./LandingPanel";
+import { approachTdLineIndex } from "./AnflugGrafik";
 
 // v0.13.15 (Pilot-Befund ViolonC 2026-05-31): die rote TD-Linie im
 // ANFLUG-STABILITÄT-Chart stand bei +0.5 s statt 0.0 s, weil das letzte

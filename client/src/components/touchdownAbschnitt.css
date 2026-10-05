@@ -1,0 +1,250 @@
+/* Touchdown-Abschnitt und Windkompass (TouchdownAbschnitt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Rahmen,
+ * Raster und Wertliste stehen im Client auch in App.css; die Kopien hier
+ * haben über :where() Spezifität 0. */
+
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 1rem 1.25rem;
+}
+
+:where(.landing-section) h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+:where(.landing-grid) {
+  display: grid;
+  gap: 1.5rem;
+}
+
+:where(.landing-keyvals) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 1.25rem;
+  margin: 0;
+}
+
+:where(.landing-keyvals) > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  min-width: 0; /* allow truncation in narrow columns */
+}
+
+:where(.landing-keyvals) dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.landing-keyvals) dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.landing-grid--td) {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.windflow {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  min-height: 172px;
+  border-radius: var(--r-md);
+  background: radial-gradient(125% 125% at 18% 0%, #1e293b 0%, #0b1120 100%);
+  align-self: start;
+}
+
+.windflow__field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+@keyframes windflow-streak {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(560px);
+  }
+}
+
+.windflow__streak {
+  animation-name: windflow-streak;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+.windflow__overlay {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.6rem;
+  min-height: 172px;
+  box-sizing: border-box;
+  padding: 0.85rem 1rem;
+}
+
+.windflow__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.windflow__cap {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.windflow__runway {
+  position: relative;
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.windflow__rwy-keys {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  bottom: 6px;
+  width: 15px;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.55) 0 3px,
+    transparent 3px 7px
+  );
+}
+
+.windflow__rwy-line {
+  position: absolute;
+  left: 58px;
+  right: 22px;
+  top: 50%;
+  border-top: 2.5px dashed rgba(255, 255, 255, 0.42);
+}
+
+.windflow__rwy-id {
+  position: absolute;
+  left: 32px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.windflow__hero {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+
+.windflow__hero-num {
+  font-size: 3.6rem;
+  font-weight: 800;
+  line-height: 0.82;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
+}
+
+.windflow__hero-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-bottom: 0.3rem;
+}
+
+.windflow__hero-unit {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.windflow__hero-sub {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.windflow__hero-label {
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.windflow__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.windflow__chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  padding: 0.22rem 0.62rem;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .windflow__streak {
+    animation: none;
+  }
+}
+
+/* Raster des Abschnitts auf schmalen Breiten — im Client steht dasselbe in
+ * App.css; hier für die Webapp, mit Spezifität 0. */
+@media (max-width: 1100px) {
+  :where(.landing-grid--td) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  :where(.landing-grid--td) > .windflow {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  :where(.landing-grid--td) {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,456 @@
+/* Sinkrate- und G-Kraft-Forensik der Landungsanzeige.
+ *
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN) zusammen mit
+ * SinkrateForensik.tsx und GForceForensik.tsx, die diese Datei importieren.
+ * Bis 05.10.2026 standen die Regeln in App.css des Clients; die Webapp hatte
+ * eine eigene, abweichende Fassung der Abschnitte.
+ *
+ * Farben: die semantischen Variablen des Clients; die Webapp kennt sie
+ * nicht, dort greifen die Rückfallwerte (= Dunkelmodus des Clients). */
+
+/* Rahmen eines Abschnitts. Im Client steht dieselbe Regel in App.css;
+ * :where() hält die Spezifität bei 0, damit sie dort nichts überschreibt. */
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 6px);
+  padding: 1rem 1.25rem;
+}
+
+:where(.landing-section) h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.sinkrate-score-tile__value--leer {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.landing-section--sinkrate-forensik {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sinkrate-forensik-intro {
+  padding: 10px 14px;
+  border-left: 3px solid var(--sem-info, #7fa8c9);
+  background: rgba(6, 182, 212, 0.06);
+  border-radius: var(--r-sm);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.sinkrate-forensik-intro__header {
+  font-weight: 600;
+  color: var(--sem-info, #7fa8c9);
+  margin-bottom: 4px;
+}
+
+.sinkrate-forensik-intro__body {
+  color: var(--fg);
+  opacity: 0.92;
+  white-space: pre-line;
+}
+
+.sinkrate-forensik-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sinkrate-forensik-section__title {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--fg);
+}
+
+.sinkrate-forensik-section__subtitle {
+  font-size: 0.78rem;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+.sinkrate-forensik-tiles {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.sinkrate-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.sinkrate-tile__label {
+  font-size: 0.72rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sinkrate-tile__hint {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+.sinkrate-tile__value {
+  font-family: var(--font-mono, monospace);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.sinkrate-tile__unit {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--fg-dim);
+}
+
+.sinkrate-tile--good .sinkrate-tile__value { color: var(--sem-ok, #3ecf8e); }
+
+.sinkrate-tile--neutral .sinkrate-tile__value { color: var(--sem-info, #7fa8c9); }
+
+.sinkrate-tile--warn .sinkrate-tile__value { color: var(--sem-warn, #f2b24c); }
+
+.sinkrate-tile--err .sinkrate-tile__value { color: var(--sem-danger, #ff5c4d); }
+
+.sinkrate-tile--err-severe .sinkrate-tile__value { color: var(--scale-critical, #f87171); }
+
+.sinkrate-tile--na .sinkrate-tile__value { color: var(--fg-dim); }
+
+.sinkrate-tile--na {
+  cursor: help;
+  opacity: 0.85;
+}
+
+.sinkrate-score-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.10), rgba(6, 182, 212, 0.03));
+  border: 1px solid rgba(6, 182, 212, 0.30);
+}
+
+.sinkrate-score-tile__heading {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--fg);
+  letter-spacing: 0.02em;
+}
+
+.sinkrate-score-tile__sublabel {
+  font-size: 0.7rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.sinkrate-score-tile__value {
+  font-family: var(--font-mono, monospace);
+  font-size: 2.3rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--fg);
+}
+
+.sinkrate-score-tile--good .sinkrate-score-tile__value { color: var(--sem-ok, #3ecf8e); }
+
+.sinkrate-score-tile--neutral .sinkrate-score-tile__value { color: var(--sem-info, #7fa8c9); }
+
+.sinkrate-score-tile--warn .sinkrate-score-tile__value { color: var(--sem-warn, #f2b24c); }
+
+.sinkrate-score-tile--err .sinkrate-score-tile__value { color: var(--sem-danger, #ff5c4d); }
+
+.sinkrate-score-tile--err-severe .sinkrate-score-tile__value { color: var(--scale-critical, #f87171); }
+
+.sinkrate-score-tile__unit {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--fg-dim);
+}
+
+.sinkrate-score-tile__source {
+  font-size: 0.74rem;
+  color: var(--fg-dim);
+}
+
+.sinkrate-score-tile__source-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  padding: 1px 4px;
+  margin-left: 4px;
+  background: var(--surface-2);
+  border-radius: 3px;
+}
+
+.sinkrate-score-tile__hint {
+  font-size: 0.72rem;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+.sinkrate-forensik-pre-flare {
+  font-size: 0.82rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  color: var(--fg);
+}
+
+.sinkrate-forensik-pre-flare__label {
+  color: var(--fg-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+
+.sinkrate-forensik-pre-flare__value {
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+}
+
+.sinkrate-forensik-pre-flare__reduction {
+  color: var(--fg-dim);
+}
+
+.sinkrate-buckets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sinkrate-bucket-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 80px;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.sinkrate-bucket-row__label {
+  font-family: var(--font-mono, monospace);
+  color: var(--fg-dim);
+}
+
+.sinkrate-bucket-row__bar {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sinkrate-bucket-row__fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.2s ease;
+  background: linear-gradient(90deg, #22c55e, #86efac);
+}
+
+.sinkrate-bucket-row__fill--good { background: linear-gradient(90deg, #22c55e, #34d399); }
+
+.sinkrate-bucket-row__fill--neutral { background: linear-gradient(90deg, #34d399, #67e8f9); }
+
+.sinkrate-bucket-row__fill--warn { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+
+.sinkrate-bucket-row__fill--err { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+
+.sinkrate-bucket-row__fill--err-severe { background: linear-gradient(90deg, #ef4444, #b91c1c); }
+
+.sinkrate-bucket-row__value {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  text-align: right;
+  color: var(--fg);
+}
+
+.sinkrate-bucket-row__unit {
+  font-size: 0.7rem;
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+
+.sinkrate-forensik-trend-note {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 2px solid #ef4444;
+  font-size: 0.78rem;
+  color: var(--fg);
+}
+
+.sinkrate-forensik-coach {
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-left: 1px solid var(--sem-info, #7fa8c9);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--fg);
+}
+
+.sinkrate-forensik-details {
+  margin-top: 4px;
+}
+
+.sinkrate-forensik-details > summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--fg-dim);
+  padding: 4px 0;
+  user-select: none;
+}
+
+.sinkrate-forensik-details > summary:hover {
+  color: var(--fg);
+}
+
+.sinkrate-forensik-details[open] > summary {
+  margin-bottom: 8px;
+}
+
+.sinkrate-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sinkrate-trace__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.sinkrate-trace__caption {
+  font-size: 0.72rem;
+  color: var(--fg-dim);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.sinkrate-trace__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+}
+
+.sinkrate-trace__table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sinkrate-trace__t { color: var(--fg-dim); width: 30%; }
+
+.sinkrate-trace__vs { color: var(--fg); width: 35%; }
+
+.sinkrate-trace__agl { color: var(--fg-dim); }
+
+.sinkrate-impact {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sinkrate-impact__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.sinkrate-impact__tiles {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.sinkrate-impact__tile {
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.sinkrate-impact__label {
+  font-size: 0.7rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sinkrate-impact__value {
+  font-family: var(--font-mono, monospace);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.sinkrate-impact__value span {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--fg-dim);
+}
+
+.sinkrate-impact__tile--good .sinkrate-impact__value { color: var(--sem-ok, #3ecf8e); }
+
+.sinkrate-impact__tile--neutral .sinkrate-impact__value { color: var(--sem-info, #7fa8c9); }
+
+.sinkrate-impact__tile--warn .sinkrate-impact__value { color: var(--sem-warn, #f2b24c); }
+
+.sinkrate-impact__tile--err .sinkrate-impact__value { color: var(--sem-danger, #ff5c4d); }
+
+.sinkrate-impact__tile--err-severe .sinkrate-impact__value { color: var(--scale-critical, #f87171); }
+
+.sinkrate-forensik-legacy {
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+
+.sinkrate-aufschluesselung {
+  margin: 8px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--sem-warn, #f2b24c);
+  border-radius: 8px;
+  background: var(--sem-warn-bg, rgba(242, 178, 76, 0.12));
+  font-size: 0.86rem;
+  line-height: 1.5;
+  max-width: 76ch;
+}
+
+/* Aufsetz-Qualität (LandingQualitaet.tsx) — Marke in der Überschrift. */
+.landing-quality__flag {
+  margin-left: 0.6rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+.landing-quality__flag--warn {
+  color: var(--sem-warn, #f2b24c);
+  border: 1px solid var(--sem-warn, #f2b24c);
+}
+.landing-quality__flag--err {
+  color: var(--sem-danger, #ff5c4d);
+  border: 1px solid var(--sem-danger, #ff5c4d);
+}

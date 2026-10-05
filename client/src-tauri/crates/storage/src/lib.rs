@@ -876,6 +876,55 @@ pub struct LandingRecord {
     /// Anflugruhe je Tor 1000–500 / 500–200 ft (AP5), nur als Hinweis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anflug_ruhe: Option<AnflugRuhe>,
+
+    // ─── Score-Version 19 (QS 05.10.2026): Client und Webapp zeigen dasselbe ──
+    //
+    // Diese Werte gingen bisher nur in den Touchdown-Payload (Webapp), nicht in
+    // die eigene Aufzeichnung — der Client konnte sie deshalb nicht zeigen.
+    // Dieselben Quellen wie im Payload (siehe `build_landing_record`).
+    /// Geschwindigkeit über Grund beim Aufsetzen, kt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_groundspeed_kt: Option<f32>,
+    /// Rechtweisender Kurs beim Aufsetzen (`landing_heading_deg` ist missweisend).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_heading_true_deg: Option<f32>,
+    /// Durchstarts im Flug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_around_count: Option<u32>,
+    /// Landing Quality (zur Einordnung, keine Note).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_wing_strike_severity_pct: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_touchdown_zone: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_float_distance_m: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_vref_deviation_kt: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_vref_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_yaw_rate_deg_per_sec: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_brake_energy_proxy: Option<f32>,
+    /// METAR am Zielflughafen (roh).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arr_metar: Option<String>,
+    /// Client-Version, die die Landung aufgezeichnet hat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_version: Option<String>,
+    /// Aufsetzpunkt (Grad), zur Nachprüfung der Bahnwerte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_lat: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_lon: Option<f64>,
+    /// Anflug: Bahnwechsel unter 1500 ft (ATC), stabil bei 200 ft (DA),
+    /// Stall-Warnungen — Messwerte, die die Webapp schon hatte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_runway_changed_late: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_stable_at_da: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_stall_warning_count: Option<u32>,
 }
 
 // Lernpaket AP4/AP5: die Forensik-Structs liegen in `landing-scoring`,

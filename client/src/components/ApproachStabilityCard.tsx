@@ -72,6 +72,11 @@ interface Props {
   /** Marke der Stabilitätsachse (anflug_partial/anflug_unstable) — trägt
    *  das eingefrorene Urteil; die Karte zählt nichts selbst. */
   marke?: string | null;
+  /** Messwerte zur Einordnung (keine Note): Bahnwechsel unter 1500 ft,
+   *  stabil bei 200 ft (DA), Zahl der Stall-Warnungen im Anflug. */
+  runwayChangedLate?: boolean | null;
+  stableAtDa?: boolean | null;
+  stallWarningCount?: number | null;
 }
 
 function bandForRange(
@@ -150,9 +155,12 @@ export function ApproachStabilityCard(props: Props) {
   const coachBorder = pillColor;
 
   const sim = formatSimKind(props.simKind);
-  const sublineKey =
-    props.sampleCount == null || props.sampleCount === 0
-      ? "subline_no_samples"
+  const ohneMuster = props.sampleCount == null || props.sampleCount === 0;
+  // Mit Prüfliste (v19) gibt es das Urteil — „keine Samples" wäre dort
+  // falsch; ohne Musterzahl entfällt die Zeile dann ganz.
+  const sublineKey: string | null =
+    ohneMuster
+      ? gate ? null : "subline_no_samples"
       : props.usedHat === false
         ? "subline_agl"
         : "subline_hat";
@@ -203,9 +211,10 @@ export function ApproachStabilityCard(props: Props) {
           marginBottom: 4,
         }}
       >
-        {t(`landing.approach_stability_card.${sublineKey}`, {
-          count: props.sampleCount ?? 0,
-        })}
+        {sublineKey &&
+          t(`landing.approach_stability_card.${sublineKey}`, {
+            count: props.sampleCount ?? 0,
+          })}
       </div>
 
       {/* Datenquelle */}
@@ -241,6 +250,7 @@ export function ApproachStabilityCard(props: Props) {
       {gate && (
         <>
           <div
+            data-testid="gate-kacheln"
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
@@ -271,19 +281,9 @@ export function ApproachStabilityCard(props: Props) {
               </ul>
             </div>
           )}
-          <div
-            style={{
-              padding: "10px 12px",
-              borderRadius: 6,
-              background: coachBg,
-              border: `1px solid ${coachBorder}55`,
-              fontSize: "0.86rem",
-              lineHeight: 1.45,
-              color: coachBorder,
-            }}
-          >
-            {t(`landing.approach_stability_card.coach.${coachKey}`)}
-          </div>
+          {/* Score-Version 19: kein allgemeiner Coach-Satz mehr („Anflug
+              grundsätzlich ok …") — die Gründe oben nennen genau, was nicht
+              stabil war (QS 05.10.2026, Vergleich Client/Webapp). */}
         </>
       )}
 
@@ -406,6 +406,31 @@ export function ApproachStabilityCard(props: Props) {
             {t(`landing.approach_stability_card.coach.${coachKey}`)}
           </div>
         </>
+      )}
+
+      {/* Messwerte zur Einordnung — bis 05.10.2026 nur in der Webapp und dort
+          nur als Teil eigener Coaching-Sätze. Hier ohne Urteil. */}
+      {(props.runwayChangedLate != null ||
+        props.stableAtDa != null ||
+        (props.stallWarningCount ?? 0) > 0) && (
+        <ul
+          data-testid="anflug-zusatz"
+          style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: "0.82rem", lineHeight: 1.5, opacity: 0.85 }}
+        >
+          {props.runwayChangedLate === true && <li>{t("landing.approach_stability_card.extra.rwy_change")}</li>}
+          {props.stableAtDa != null && (
+            <li>
+              {t(
+                props.stableAtDa
+                  ? "landing.approach_stability_card.extra.da_stabil"
+                  : "landing.approach_stability_card.extra.da_nicht_stabil",
+              )}
+            </li>
+          )}
+          {(props.stallWarningCount ?? 0) > 0 && (
+            <li>{t("landing.approach_stability_card.extra.stall", { count: props.stallWarningCount ?? 0 })}</li>
+          )}
+        </ul>
       )}
 
       {/* Help-Button — immer sichtbar, auch bei Legacy */}

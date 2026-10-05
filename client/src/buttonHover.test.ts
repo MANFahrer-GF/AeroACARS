@@ -10,7 +10,24 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const css = readFileSync(resolve(__dirname, "App.css"), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
+/** App.css und die CSS-Dateien der Bauteile (seit 05.10.2026 bringen die
+ *  gespiegelten Abschnitte der Landungsanzeige ihre Regeln selbst mit, z. B.
+ *  components/infoBadge.css) — alle gelten global. */
+function alleCss(): string {
+  const teile = [readFileSync(resolve(__dirname, "App.css"), "utf-8")];
+  const lauf = (dir: string) => {
+    for (const n of readdirSync(dir)) {
+      const p = join(dir, n);
+      if (statSync(p).isDirectory()) lauf(p);
+      else if (p.endsWith(".css") && !p.endsWith("App.css") && !p.includes(`${"/"}dev${"/"}`)) {
+        teile.push(readFileSync(p, "utf-8"));
+      }
+    }
+  };
+  lauf(join(__dirname, "components"));
+  return teile.join("\n");
+}
+const css = alleCss().replace(/\/\*[\s\S]*?\*\//g, "");
 const regeln = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
   selektoren: m[1].split(",").map((s) => s.trim()),
   inhalt: m[2],

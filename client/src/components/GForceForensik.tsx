@@ -18,7 +18,8 @@
 // gepflegt werden kann.
 
 import { useTranslation } from "react-i18next";
-import type { LandingRecord } from "./LandingPanel";
+import "./landungForensik.css";
+import type { LandingRecord } from "../lib/landungsDatensatz";
 import {
   T_G_SMOOTH,
   T_G_FIRM,
@@ -26,7 +27,7 @@ import {
   T_G_SEVERE,
   T_VS_SMOOTH_FPM,
   T_VS_FIRM_FPM,
-} from "../lib/landingScoring";
+} from "../lib/bewertungsGrenzen";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pure functions — testbar isoliert

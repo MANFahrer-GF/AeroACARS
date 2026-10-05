@@ -101,7 +101,7 @@
     "bank": "Bank",
     "speed": "IAS at TD",
     "sideslip": "Sideslip / crab",
-    "heading": "Heading",
+    "heading": "Heading (magnetic)",
     "approach_stability": "Approach stability",
     "vs_stddev": "V/S stddev (σ)",
     "bank_stddev": "Bank stddev (σ)",
@@ -538,8 +538,7 @@
     "bounce_max_agl_hint": "Max AGL height after first touchdown — how far the aircraft came back up after touching down",
     "forensics_section": "Touchdown forensics (50 Hz)",
     "forensics_unavailable": "Forensics buffer unavailable (pre-v0.5.39 or sample gap)",
-    "flare_section": "Flare quality",
-    "flare_breakdown": "End sink {{vs}} fpm → {{ep}} pts · reduction {{red}} fpm → +{{bonus}} pts",
+    "flare_section": "Flare (for reference, not scored)",
     "flare_reduction": "Sink-rate reduction",
     "flare_reduction_hint": "How much the pilot reduced the sink rate before TD (positive = flare helped)",
     "flare_dvs_dt": "dSink/dt",
@@ -877,6 +876,12 @@
         "stable": "✨ Clean stabilised approach — all parameters within tolerance at 1000 ft. Keep it like this.",
         "partial": "Approach basically OK, but some parameters out of tolerance — see the tiles, and review the stabilized-approach criteria as needed.",
         "unstable": "Unstable approach — would be a real-world go-around candidate. Set up the approach earlier, keep config + speed + V/S stable by 1000 ft AAL."
+      },
+      "extra": {
+        "rwy_change": "Runway change below 1500 ft (ATC) — this part is excluded from the bank assessment.",
+        "da_stabil": "Stable at 200 ft (decision altitude).",
+        "da_nicht_stabil": "No longer stable at 200 ft (decision altitude).",
+        "stall": "Stall warnings during the approach: {{count}}"
       }
     },
     "anflug_forensik": {
@@ -1119,6 +1124,95 @@
         "sinken": "Sink rate too high for more than 10 seconds",
         "konfiguration": "Gear or flaps not in landing position at 1000 ft"
       }
+    },
+    "groundspeed": "GS at TD",
+    "g_force_frame": "G at touchdown frame",
+    "heading_true": "Heading (true)",
+    "quality": {
+      "title": "Touchdown quality (for reference, not scored)",
+      "na": "—",
+      "flag_wing_strike": "⚠ WING-STRIKE RISK",
+      "flag_long_landing": "LONG LANDING",
+      "trust": {
+        "icao_mismatch": "Wrong airport detected",
+        "centerline_offset_too_large": "Touchdown too far from the centreline",
+        "negative_float_distance": "Touchdown before the threshold"
+      },
+      "wing_strike": "Wing-strike risk",
+      "wing_strike_hint": "Bank at touchdown relative to the limit at which the wing touches the ground. Below 40 % safe, from 80 % critically close to the limit.",
+      "zone": "Touchdown third",
+      "zone_wert": {
+        "1": "Zone 1 ✓",
+        "2": "Zone 2",
+        "3": "Zone 3 ⚠"
+      },
+      "zone_hint": "FAA thirds: zone 1 = first third of the runway (correct), zone 2 = middle third (long), zone 3 = last third (overrun risk).",
+      "distanz": "Past the threshold",
+      "distanz_hint": "Distance from the landing threshold to the touchdown point. Typical 300–400 m; above 1000 m is very long (overrun risk on short runways).",
+      "distanz_hint_vor": "Touched down BEFORE the landing threshold — a negative value is metres before the threshold.",
+      "vref_label": {
+        "pmdg": "Vref dev. (PMDG)",
+        "fbw": "Vref dev. (FBW)",
+        "icao_default": "Vref dev. (~ICAO)",
+        "unbekannt": "Vref deviation"
+      },
+      "vref_hint": {
+        "pmdg": "IAS at touchdown against the Vref from the PMDG FMC (precise). Negative = too slow, positive = too fast.",
+        "fbw": "IAS at touchdown against the Vref from the FBW connector (precise). Negative = too slow, positive = too fast.",
+        "icao_default": "IAS at touchdown against a generic ICAO Vref. ⚠ Approximation, may differ by ±5 kt from the real Vref — the tolerance band is wider for that reason.",
+        "unbekannt": "IAS at touchdown against Vref. Source of the Vref unknown."
+      },
+      "gierrate": "Yaw rate",
+      "gierrate_hint": "Heading change per second at touchdown. High = not aligned at touchdown, risk of veering off in a crosswind.",
+      "bremsenergie": "Brake energy",
+      "bremsenergie_hint": "Approximation: (½ × mass × IAS²) / rollout distance. High = heavy thermal load on the brakes."
+    },
+    "metar": {
+      "title": "METAR at destination",
+      "wind": "Wind",
+      "sicht": "Visibility",
+      "wetter": "Weather",
+      "wolken": "Clouds",
+      "temp_tau": "Temp/dew",
+      "variabel": "variable",
+      "boeen": "gusts {{kt}} kt",
+      "stark": "heavy",
+      "leicht": "light",
+      "wolke": {
+        "FEW": "few",
+        "SCT": "scattered",
+        "BKN": "broken",
+        "OVC": "overcast"
+      },
+      "wx": {
+        "DZ": "drizzle",
+        "RA": "rain",
+        "SN": "snow",
+        "SG": "snow grains",
+        "BR": "mist",
+        "FG": "fog",
+        "FU": "smoke",
+        "HZ": "haze",
+        "TS": "thunderstorm",
+        "SH": "showers",
+        "FZ": "freezing",
+        "VC": "in the vicinity"
+      }
+    },
+    "rohdaten": {
+      "title": "Raw data for verification",
+      "koordinaten": "Touchdown point (coordinates)",
+      "zeit": "Touchdown (UTC)",
+      "kurs": "Heading true / magnetic",
+      "bahn": "Runway",
+      "versatz": "Centreline offset (m, signed)",
+      "schwelle": "Past the threshold (m, signed)",
+      "ausrollen": "Rollout distance",
+      "version": "AeroACARS version",
+      "rechts": "right",
+      "links": "left",
+      "mitte": "centre",
+      "hinweis": "Offset and threshold distance are computed from the touchdown point against the runway geometry. If they look implausible, open the coordinates in Google Maps and compare with the real runway."
     }
   },
   "about": {
