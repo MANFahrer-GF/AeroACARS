@@ -218,7 +218,10 @@ void passe_fenster_an(int w, int h) noexcept {
             band_standard_position(schirm_fuer(BandRechteck{l, o, l + w, o - h}), w, h, &nl, &no);
         }
     } else {
-        band_klemme_position(schirm_fuer(BandRechteck{l, o, l + w, o - h}), w, h, &nl, &no);
+        // Beim Ziehen wie auf_klick nur auf den globalen Schirm: das Band darf
+        // über Monitorgrenzen; auf einen Monitor kommt es beim Loslassen.
+        const BandRechteck s = g.ziehen ? schirm() : schirm_fuer(BandRechteck{l, o, l + w, o - h});
+        band_klemme_position(s, w, h, &nl, &no);
     }
     g.platziert = true;
     if (nl != l || no != o || (r - l) != w || (o - u) != h) {
@@ -764,11 +767,21 @@ int auf_klick(XPLMWindowID, int x, int y, XPLMMouseStatus status, void*) noexcep
                 }
             }
             break;
-        case xplm_MouseUp:
-            if (g.ziehen && g.bewegt) prefs_aendern_sofort();
+        case xplm_MouseUp: {
+            const bool gezogen = g.ziehen && g.bewegt;
             g.ziehen = false;
             g.bewegt = false;
+            if (gezogen) {
+                // Erst auf den Monitor holen, dann genau diese Stelle merken.
+                halte_auf_schirm();
+                int l = 0, o = 0, r = 0, u = 0;
+                XPLMGetWindowGeometry(g.fenster, &l, &o, &r, &u);
+                g.prefs.links = l;
+                g.prefs.oben = o;
+                prefs_aendern_sofort();
+            }
             break;
+        }
         default:
             break;
     }
