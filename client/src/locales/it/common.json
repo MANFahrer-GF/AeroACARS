@@ -234,6 +234,7 @@
       "many_bounces": "Diversi rimbalzi",
       "very_stable": "Avvicinamento molto stabile",
       "stable": "Avvicinamento stabile",
+      "partly_stable": "Solo in parte stabile",
       "average_stability": "Stabilità media",
       "unstable_approach": "Avvicinamento irrequieto",
       "very_unstable": "Molto instabile",
@@ -291,6 +292,7 @@
       "many_bounces": "Rimbalzi ripetuti oltre 5 ft: secondo la procedura Airbus mantieni l'assetto e riattacca invece di riappoggiare. Indica un profilo di contatto instabile.",
       "very_stable": "Avvicinamento esemplare — V/S e bank con poche oscillazioni.",
       "stable": "Avvicinamento stabile. Mantieni glideslope costante.",
+      "partly_stable": "Solo in parte stabile: lo stable gate (da 1000 ft) non è stato raggiunto del tutto — di solito rateo di discesa o sentiero non abbastanza regolari. Stabilizza prima, piccole correzioni.",
       "average_stability": "OK, ma riduci le oscillazioni di pitch e V/S — piccole correzioni invece di grandi.",
       "unstable_approach": "Avvicinamento irrequieto. Verifica i criteri di stabilized-approach: configurazione, speed, V/S, track da 1000 ft AAL.",
       "very_unstable": "Avvicinamento molto instabile — in realtà candidato a go-around. Completa il setup di approach prima.",
@@ -375,8 +377,8 @@
       "kein_streckenbezug": "Volo turistico o tratta molto breve — senza una distanza pianificata utilizzabile non c'è confronto (nessuna penalità)."
     },
     "warn": {
-      "anflug_partial": "⚠ Avvicinamento solo in parte stabile — asse limitato a 80 punti",
-      "anflug_unstable": "⚠ Avvicinamento instabile — asse limitato a 45 punti",
+      "anflug_partial": "⚠ Avvicinamento solo in parte stabile (stable gate non raggiunto)",
+      "anflug_unstable": "⚠ Avvicinamento instabile (stable gate mancato)",
       "anflug_nicht_gemessen": "⚠ Avvicinamento non misurato nel gate — punteggio totale al massimo 97",
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",
       "planned_burn_may_be_off": "⚠ Sospetto: trip-burn pianificato potrebbe essere troppo alto — verificare OFP burn",
@@ -917,7 +919,7 @@
       },
       "pill": {
         "heading": "La pill STABLE GATE",
-        "body": "✓ STABLE = tutti e sette i valori nella fascia verde. ⚠ PARTIAL = 1–2 valori fuori (giallo o rosso). ✗ UNSTABLE = 3 o più valori fuori. In realtà un avvicinamento UNSTABLE sarebbe un candidato a go-around."
+        "body": "✓ STABLE = tutti e sette i valori nella fascia verde. ⚠ PARTIAL = 1–2 valori fuori, al massimo uno rosso. ✗ UNSTABLE = due valori rossi, oppure tre o più fuori. Effetto sul punteggio: PARTIAL al massimo 80, UNSTABLE al massimo 45 punti in totale — un buon contatto non lo compensa. Nella realtà un avvicinamento UNSTABLE sarebbe un candidato alla riattaccata."
       },
       "tiles": {
         "vs_jerk": {
@@ -1043,6 +1045,8 @@
     "deckel": {
       "anflug_partial": "Stabilità limitata a 80 punti: avvicinamento solo in parte stabile (stable gate non raggiunto) — quindi niente 100.",
       "anflug_unstable": "Stabilità limitata a 45 punti: avvicinamento instabile (stable gate mancato).",
+      "anflug_partial_gesamt": "Limitato a massimo 80 punti: avvicinamento solo in parte stabile (stable gate non raggiunto). Un buon contatto non lo compensa.",
+      "anflug_unstable_gesamt": "Limitato a massimo 45 punti: avvicinamento instabile (stable gate mancato). Un buon contatto non lo compensa.",
       "anflug_nicht_gemessen": "Limitato a 97 punti: avvicinamento non misurato nel gate — senza misura niente punteggio massimo.",
       "harte_landung": "Limitato a massimo 40 punti: atterraggio duro da 1,75 g. Buoni valori di rullaggio o punto di contatto non lo compensano.",
       "ueberlast": "Limitato a massimo 14 punti: sovraccarico da 2,6 g."

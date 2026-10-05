@@ -20,7 +20,8 @@
 //   Max V/S-Dev <500ft < 200 fpm · 200–400 · > 400
 //
 // ⚠ Dieselben Grenzen stehen im Backend: landing_scoring::anflug_urteil
-// (deckelt die Stabilitätsachse: PARTIAL ≤ 80, UNSTABLE ≤ 45). Wer hier
+// (deckelt Stabilitätsachse UND seit Score-Version 18 die Gesamtnote:
+// PARTIAL ≤ 80, UNSTABLE ≤ 45). Wer hier
 // eine Grenze ändert, muss dort mitziehen.
 //
 // STABLE-GATE-Pill: alles grün → STABLE; ≥ 2 bad ODER bad+ok ≥ 3 → UNSTABLE;

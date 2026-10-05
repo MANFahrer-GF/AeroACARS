@@ -234,6 +234,7 @@
       "many_bounces": "Several bounces",
       "very_stable": "Very stable approach",
       "stable": "Stable approach",
+      "partly_stable": "Only partly stable",
       "average_stability": "Average stability",
       "unstable_approach": "Unstable approach",
       "very_unstable": "Very unstable",
@@ -291,6 +292,7 @@
       "many_bounces": "Repeated bounces above 5 ft: per Airbus procedure, hold pitch and go around instead of touching down again. Indicates an unstable touchdown profile.",
       "very_stable": "Textbook stable approach — V/S and bank barely moved.",
       "stable": "Stable approach. Keep on the constant glideslope.",
+      "partly_stable": "Only partly stable: the stable gate (from 1000 ft) was not fully met — usually sink rate or glide path not steady enough. Stabilise earlier, small corrections.",
       "average_stability": "OK, but reduce pitch and V/S oscillations — small corrections, not big ones.",
       "unstable_approach": "Approach was choppy. Check stabilized-approach criteria: config, speed, V/S, track by 1000 ft AAL.",
       "very_unstable": "Very unstable approach — would be a real-world go-around candidate. Set up the approach earlier.",
@@ -375,8 +377,8 @@
       "kein_streckenbezug": "Scenic flight or very short leg — without a usable planned distance there is nothing to compare (no penalty)."
     },
     "warn": {
-      "anflug_partial": "⚠ Approach only partly stable — axis capped at 80 points",
-      "anflug_unstable": "⚠ Unstable approach — axis capped at 45 points",
+      "anflug_partial": "⚠ Approach only partly stable (stable gate not met)",
+      "anflug_unstable": "⚠ Unstable approach (stable gate missed)",
       "anflug_nicht_gemessen": "⚠ Approach not measured in the gate — overall score at most 97",
       "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",
       "planned_burn_may_be_off": "⚠ Suspected: planned trip-burn may be too high — verify OFP burn",
@@ -917,7 +919,7 @@
       },
       "pill": {
         "heading": "The STABLE-GATE pill",
-        "body": "✓ STABLE = all seven values in the green band. ⚠ PARTIAL = 1–2 values out (yellow or red). ✗ UNSTABLE = 3 or more values out. In real life an UNSTABLE approach would be a go-around candidate."
+        "body": "✓ STABLE = all seven figures in the green band. ⚠ PARTIAL = 1–2 values outside, at most one of them red. ✗ UNSTABLE = two values red, or three or more outside. Effect on the score: PARTIAL at most 80, UNSTABLE at most 45 points overall — a good touchdown does not offset it. In real life an UNSTABLE approach would be a go-around candidate."
       },
       "tiles": {
         "vs_jerk": {
@@ -1043,6 +1045,8 @@
     "deckel": {
       "anflug_partial": "Stability capped at 80 points: approach only partly stable (stable gate not met) — so no 100.",
       "anflug_unstable": "Stability capped at 45 points: unstable approach (stable gate missed).",
+      "anflug_partial_gesamt": "Capped at 80 points: approach only partly stable (stable gate not met). A good touchdown does not offset it.",
+      "anflug_unstable_gesamt": "Capped at 45 points: unstable approach (stable gate missed). A good touchdown does not offset it.",
       "anflug_nicht_gemessen": "Capped at 97 points: approach not measured in the gate — no top score without a measurement.",
       "harte_landung": "Capped at 40 points: hard landing from 1.75 g. Good rollout or touchdown point values do not offset it.",
       "ueberlast": "Capped at 14 points: overload from 2.6 g."

@@ -80,17 +80,18 @@ pub fn sub_stability_legacy(
     // auf PARTIAL und bekam trotzdem 100 Punkte „sehr stabil". Ein Anflug,
     // der nicht STABLE ist, darf diese Achse nicht voll bekommen.
     let points = vs_band.min(bk_band);
-    let roh_punkte = points;
     let points = match punkte_deckel(urteil) {
         Some(deckel) => points.min(deckel),
         None => points,
     };
-    // Marke fuer Anzeige und Gesamtnote: Anflug nicht gemessen bzw. die
-    // Achse wurde vom Urteil WIRKLICH gesenkt (siehe `master_deckel`).
+    // Marke fuer Anzeige und Gesamtnote (siehe `master_deckel`). Seit
+    // Score-Version 18 (05.10.2026, Thomas nach QAF434) deckelt PARTIAL/
+    // UNSTABLE die GESAMTNOTE — deshalb immer, nicht nur wenn die Achse
+    // gesenkt wurde: Lag sie schon unter 80, fehlte sonst der Gesamtdeckel.
     let marke: Option<&str> = match urteil {
         None => Some("anflug_nicht_gemessen"),
-        Some(AnflugUrteil::Partial) if roh_punkte > points => Some("anflug_partial"),
-        Some(AnflugUrteil::Unstable) if roh_punkte > points => Some("anflug_unstable"),
+        Some(AnflugUrteil::Partial) => Some("anflug_partial"),
+        Some(AnflugUrteil::Unstable) => Some("anflug_unstable"),
         _ => None,
     };
 
@@ -104,6 +105,16 @@ pub fn sub_stability_legacy(
         "unstable_approach"
     } else {
         "very_unstable"
+    };
+    // QAF434 (05.10.2026): 80 Punkte hiessen „Stabiler Anflug", direkt
+    // ueber dem Hinweis „nur teilweise stabil". Das Urteil bestimmt das
+    // Wort mit — wer das Gate nicht schafft, liest nie „stabil".
+    let rationale = match urteil {
+        Some(AnflugUrteil::Partial) if matches!(rationale, "very_stable" | "stable") => {
+            "partly_stable"
+        }
+        Some(AnflugUrteil::Unstable) if rationale != "very_unstable" => "unstable_approach",
+        _ => rationale,
     };
 
     let value = format!("σ {} fpm / {:.1}°", vs.round() as i32, bk);
@@ -221,5 +232,34 @@ mod tests {
         // Der Deckel hebt nichts an: schlechtere Streuung bleibt schlechter.
         let s = sub_stability_legacy(Some(500.0), Some(1.0), Some(AnflugUrteil::Partial));
         assert_eq!(s.unwrap().points, 45);
+    }
+
+    /// QAF434: Wer das Gate nicht schafft, liest nie „stabil".
+    #[test]
+    fn begruendung_folgt_dem_urteil() {
+        let wort = |vs: f32, u| {
+            sub_stability_legacy(Some(vs), Some(0.5), u)
+                .unwrap()
+                .rationale_key
+                .unwrap()
+        };
+        assert_eq!(
+            wort(50.0, Some(AnflugUrteil::Stable)),
+            "landing.rat.very_stable"
+        );
+        assert_eq!(
+            wort(50.0, Some(AnflugUrteil::Partial)),
+            "landing.rat.partly_stable"
+        );
+        assert_eq!(
+            wort(50.0, Some(AnflugUrteil::Unstable)),
+            "landing.rat.unstable_approach"
+        );
+        assert_eq!(wort(50.0, None), "landing.rat.very_stable");
+        // Schon schlechteres Wort aus der Streuung bleibt.
+        assert_eq!(
+            wort(1200.0, Some(AnflugUrteil::Unstable)),
+            "landing.rat.very_unstable"
+        );
     }
 }

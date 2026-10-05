@@ -234,6 +234,7 @@
       "many_bounces": "Mehrere Bounces",
       "very_stable": "Sehr stabiler Anflug",
       "stable": "Stabiler Anflug",
+      "partly_stable": "Nur teilweise stabil",
       "average_stability": "Durchschnittlich stabil",
       "unstable_approach": "Unruhiger Anflug",
       "very_unstable": "Sehr unruhig",
@@ -291,6 +292,7 @@
       "many_bounces": "Wiederholte Hopser über 5 ft: Nach Airbus-Verfahren Fluglage halten und durchstarten, statt weiter aufzusetzen. Deutet auf ein instabiles Aufsetzprofil.",
       "very_stable": "Beispielhaft stabiler Anflug — V/S und Bank kaum Schwankungen.",
       "stable": "Stabiler Anflug. Auf konstantem Glideslope bleiben.",
+      "partly_stable": "Nur teilweise stabil: Das Stable Gate (ab 1000 ft) wurde nicht ganz erreicht — meist Sinkrate oder Gleitpfad nicht ruhig genug. Früher stabilisieren, kleine Korrekturen.",
       "average_stability": "OK, aber Pitch- und V/S-Schwankungen reduzieren — kleine Korrekturen statt großer.",
       "unstable_approach": "Anflug war unruhig. Stabilized-Approach-Kriterien prüfen: Konfig, Speed, V/S, Track ab 1000 ft AAL.",
       "very_unstable": "Sehr unruhiger Anflug — in der Realität Go-Around-Kandidat. Approach-Setup früher fertig haben.",
@@ -375,8 +377,8 @@
       "kein_streckenbezug": "Rundflug oder sehr kurze Strecke — ohne brauchbare Plandistanz gibt es keinen Vergleich (kein Abzug)."
     },
     "warn": {
-      "anflug_partial": "⚠ Anflug nur teilweise stabil — Achse auf höchstens 80 Punkte begrenzt",
-      "anflug_unstable": "⚠ Anflug instabil — Achse auf höchstens 45 Punkte begrenzt",
+      "anflug_partial": "⚠ Anflug nur teilweise stabil (Stable Gate nicht erreicht)",
+      "anflug_unstable": "⚠ Anflug instabil (Stable Gate verfehlt)",
       "anflug_nicht_gemessen": "⚠ Anflug im Gate nicht gemessen — Gesamtnote höchstens 97",
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",
       "planned_burn_may_be_off": "⚠ Verdacht: geplanter Trip-Burn könnte zu hoch sein — OFP-Burn prüfen",
@@ -917,7 +919,7 @@
       },
       "pill": {
         "heading": "Die STABLE-GATE-Pill",
-        "body": "✓ STABLE = alle sieben Kennzahlen im grünen Band. ⚠ PARTIAL = 1–2 Werte außerhalb (gelb oder rot). ✗ UNSTABLE = 3+ Werte außerhalb. In der Realität wäre ein UNSTABLE-Approach ein Go-Around-Kandidat."
+        "body": "✓ STABLE = alle sieben Kennzahlen im grünen Band. ⚠ PARTIAL = 1–2 Werte außerhalb, davon höchstens einer rot. ✗ UNSTABLE = zwei Werte rot oder drei und mehr außerhalb. Folge für die Note: bei PARTIAL höchstens 80, bei UNSTABLE höchstens 45 Punkte gesamt — ein guter Touchdown gleicht das nicht aus. In der Realität wäre ein UNSTABLE-Approach ein Go-Around-Kandidat."
       },
       "tiles": {
         "vs_jerk": {
@@ -1043,6 +1045,8 @@
     "deckel": {
       "anflug_partial": "Stabilität auf höchstens 80 Punkte begrenzt: Anflug nur teilweise stabil (STABLE-GATE nicht erreicht) — daher keine 100.",
       "anflug_unstable": "Stabilität auf höchstens 45 Punkte begrenzt: Anflug instabil (STABLE-GATE verfehlt).",
+      "anflug_partial_gesamt": "Gedeckelt auf höchstens 80 Punkte: Anflug nur teilweise stabil (Stable Gate nicht erreicht). Ein guter Touchdown gleicht das nicht aus.",
+      "anflug_unstable_gesamt": "Gedeckelt auf höchstens 45 Punkte: Anflug instabil (Stable Gate verfehlt). Ein guter Touchdown gleicht das nicht aus.",
       "anflug_nicht_gemessen": "Gedeckelt auf höchstens 97 Punkte: Anflug im Gate nicht gemessen — ohne Messung keine Bestnote.",
       "harte_landung": "Gedeckelt auf höchstens 40 Punkte: harte Landung ab 1,75 g. Gute Werte bei Ausrollen oder Aufsetzpunkt gleichen das nicht aus.",
       "ueberlast": "Gedeckelt auf höchstens 14 Punkte: Überlast ab 2,6 g."

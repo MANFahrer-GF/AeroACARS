@@ -655,10 +655,10 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
 /// (Codex-QS 29.09.2026).
 pub fn master_deckel_wirksam(subs: &[SubScoreEntry]) -> Option<&'static str> {
     let (grund, obergrenze) = master_deckel(subs)?;
-    // PARTIAL/UNSTABLE: Der Abzug steckt schon IN der Stabilitaetsachse
-    // (sie wurde gesenkt, sonst gaebe es die Marke nicht). Die Anzeige
-    // erklaert ihn, auch wenn der Mittelwert den Deckel nicht mehr beruehrt.
-    if grund == "anflug_partial" || grund == "anflug_unstable" {
+    // PARTIAL/UNSTABLE: Die Anzeige nennt den Grund immer — auch wenn der
+    // Mittelwert schon darunter liegt, stimmt „Gesamtnote hoechstens 80/45",
+    // und der Pilot sieht, warum der Anflug zaehlt.
+    if grund == ANFLUG_PARTIAL_GESAMT || grund == ANFLUG_UNSTABLE_GESAMT {
         return Some(grund);
     }
     let ohne_deckel: Vec<SubScoreEntry> = subs
@@ -724,12 +724,20 @@ pub fn master_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
 
 /// Marke der Stabilitaetsachse: Anflug im Gate nicht gemessen.
 pub const ANFLUG_NICHT_GEMESSEN: &str = "anflug_nicht_gemessen";
-/// Hoechstnote ohne Anflugmessung und bei PARTIAL — beides ist „nicht
-/// stabil bestaetigt". Bei PARTIAL (Achse ≤ 80, Gewicht 2 von 13) liegt die
-/// Gesamtnote rechnerisch ohnehin bei hoechstens 97; die Zahl macht das fest.
+/// Hoechstnote ohne Anflugmessung — „nicht stabil bestaetigt", aber auch
+/// nicht nachweislich schlecht.
 pub const DECKEL_ANFLUG_OFFEN_PUNKTE: u8 = 97;
-/// Bei UNSTABLE (Achse ≤ 45) rechnerisch hoechstens 92.
-pub const DECKEL_ANFLUG_UNSTABIL_PUNKTE: u8 = 92;
+/// Score-Version 18 (05.10.2026): Ein nur teilweise stabiler Anflug deckelt
+/// die GESAMTNOTE, nicht nur die Stabilitaetsachse. Vorher (v1.9.16) hiess
+/// PARTIAL nur „Achse ≤ 80" — bei Gewicht 2 von 13 blieben gesamt bis 97
+/// (QAF434: PARTIAL und 96 Punkte). Thomas: „wie kann man gesamt dann noch
+/// 96 Punkte bekommen, wenn der Anflug nicht gut ist".
+pub const DECKEL_ANFLUG_PARTIAL_PUNKTE: u8 = 80;
+/// Instabiler Anflug: Gesamtnote hoechstens 45 (wie die Achse).
+pub const DECKEL_ANFLUG_UNSTABIL_PUNKTE: u8 = 45;
+/// Deckel-Kennungen der Gesamtnote ab Score-Version 18.
+pub const ANFLUG_PARTIAL_GESAMT: &str = "anflug_partial_gesamt";
+pub const ANFLUG_UNSTABLE_GESAMT: &str = "anflug_unstable_gesamt";
 
 fn anflug_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
     let stab = subs.iter().find(|s| s.key == "stability")?;
@@ -740,8 +748,11 @@ fn anflug_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
     };
     match marke? {
         "anflug_nicht_gemessen" => Some((ANFLUG_NICHT_GEMESSEN, DECKEL_ANFLUG_OFFEN_PUNKTE)),
-        "anflug_partial" => Some(("anflug_partial", DECKEL_ANFLUG_OFFEN_PUNKTE)),
-        "anflug_unstable" => Some(("anflug_unstable", DECKEL_ANFLUG_UNSTABIL_PUNKTE)),
+        // Eigene Kennungen fuer den Gesamtdeckel (Score-Version 18): Alte
+        // Datensaetze tragen `anflug_partial` mit der Bedeutung „nur Achse,
+        // gesamt bis 97" — ihr Text muss stimmen bleiben.
+        "anflug_partial" => Some((ANFLUG_PARTIAL_GESAMT, DECKEL_ANFLUG_PARTIAL_PUNKTE)),
+        "anflug_unstable" => Some((ANFLUG_UNSTABLE_GESAMT, DECKEL_ANFLUG_UNSTABIL_PUNKTE)),
         _ => None,
     }
 }
@@ -1005,14 +1016,61 @@ mod tests {
         ]
     }
 
-    /// Anflug nicht STABLE: Achse gedeckelt, Gesamtnote nie 100, Anzeige
+    /// QAF434 (05.10.2026): Anflug PARTIAL, Achsen wie im PIREP —
+    /// Stabilitaet 80, Aufsetzpunkt 85, Rest 100. Unter Score-Version 17
+    /// ergab das 96; jetzt deckelt PARTIAL die Gesamtnote auf 80.
+    #[test]
+    fn qaf434_teilweise_stabil_hoechstens_80_gesamt() {
+        use crate::anflug_urteil::AnflugUrteil;
+        let mk = |k: &str, p: u8| {
+            SubScoreEntry::scored(k, "l", p, "x".into(), "very_stable", Band::Good)
+        };
+        let stab =
+            sub_stability::sub_stability_legacy(Some(50.0), Some(0.5), Some(AnflugUrteil::Partial))
+                .unwrap();
+        assert_eq!(stab.score, 80);
+        let subs = vec![
+            mk("landing_rate", 100),
+            mk("g_force", 100),
+            mk("bounces", 100),
+            stab,
+            mk("rollout", 100),
+            mk("alignment", 100),
+            mk("touchdown_point", 85),
+        ];
+        // Gegenprobe: ohne Deckel kaeme das gewichtete Mittel ueber 80.
+        let mut ohne = subs.clone();
+        ohne[3].warning = None;
+        assert!(aggregate_master_score(&ohne).unwrap() > 90);
+        assert_eq!(aggregate_master_score(&subs), Some(80));
+        assert_eq!(master_deckel_wirksam(&subs), Some(ANFLUG_PARTIAL_GESAMT));
+    }
+
+    /// Lag die Stabilitaetsachse schon unter dem Urteilsdeckel (hier 50 aus
+    /// der Querneigung), muss der Gesamtdeckel trotzdem greifen — vorher
+    /// setzte die Achse die Marke nur, wenn sie selbst gesenkt wurde.
+    #[test]
+    fn gesamtdeckel_auch_wenn_die_achse_schon_niedriger_war() {
+        use crate::anflug_urteil::AnflugUrteil;
+        let stab =
+            sub_stability::sub_stability_legacy(Some(50.0), Some(7.0), Some(AnflugUrteil::Partial))
+                .unwrap();
+        assert!(stab.score < 80, "Achse {}", stab.score);
+        assert_eq!(stab.warning.as_deref(), Some("anflug_partial"));
+        assert_eq!(
+            master_deckel(&alles_hundert_mit_stabilitaet(stab)),
+            Some((ANFLUG_PARTIAL_GESAMT, DECKEL_ANFLUG_PARTIAL_PUNKTE))
+        );
+    }
+
+    /// Anflug nicht STABLE: Gesamtnote gedeckelt (Score-Version 18), Anzeige
     /// nennt den Grund — auch wenn der Mittelwert den Deckel nicht beruehrt.
     #[test]
     fn nicht_stabiler_anflug_gibt_keine_hundert() {
         use crate::anflug_urteil::AnflugUrteil;
         for (u, max, grund) in [
-            (AnflugUrteil::Partial, 97, "anflug_partial"),
-            (AnflugUrteil::Unstable, 92, "anflug_unstable"),
+            (AnflugUrteil::Partial, 80, ANFLUG_PARTIAL_GESAMT),
+            (AnflugUrteil::Unstable, 45, ANFLUG_UNSTABLE_GESAMT),
         ] {
             let stab = sub_stability::sub_stability_legacy(Some(50.0), Some(0.5), Some(u)).unwrap();
             let subs = alles_hundert_mit_stabilitaet(stab);

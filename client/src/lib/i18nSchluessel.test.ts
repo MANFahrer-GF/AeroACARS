@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { DECKEL_MIT_TEXT } from "../components/LandingPanel";
 
 /**
  * Jeder Schlüssel, den die Bewertung erzeugt, braucht in ALLEN drei
@@ -63,9 +64,24 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
     (m) => m[1]!,
   );
 
+  // Deckel-Gruende der Gesamtnote (`master_deckel`): Literale vor einer
+  // DECKEL_-Obergrenze und die Kennungs-Konstanten ANFLUG_* (05.10.2026).
+  const deckel = [
+    ...[...quelle.matchAll(/Some\(\(\s*"([a-z0-9_]+)",\s*DECKEL_/g)].map((m) => m[1]!),
+    ...[...quelle.matchAll(/pub const ANFLUG_[A-Z_]+: &str = "([a-z0-9_]+)"/g)].map((m) => m[1]!),
+  ];
+
   it("erzeugt mindestens die bekannten Schlüssel", () => {
     expect(skipGruende).toContain("no_planned_burn");
     expect(warnungen).toContain("planned_burn_may_be_off");
+    expect(deckel).toEqual(
+      expect.arrayContaining(["harte_landung", "ueberlast", "anflug_partial_gesamt"]),
+    );
+  });
+
+  it("jeder Deckel-Grund erscheint im Landungsbericht", () => {
+    const fehlend = [...new Set(deckel)].filter((k) => !DECKEL_MIT_TEXT.has(k));
+    expect(fehlend, "Grund fehlt in DECKEL_MIT_TEXT (LandingPanel.tsx)").toEqual([]);
   });
 
   for (const code of SPRACHEN) {
@@ -79,6 +95,11 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
         `ohne Eintrag zeigt die Landeansicht den rohen Schlüssel ` +
           `landing.skipped_reason.<name>`,
       ).toEqual([]);
+    });
+
+    it(`${code}: jeder Deckel-Grund hat einen Text`, () => {
+      const fehlend = [...DECKEL_MIT_TEXT].filter((k) => !hatText(daten, "deckel", k));
+      expect(fehlend, `ohne Eintrag zeigt der Bericht landing.deckel.<name>`).toEqual([]);
     });
 
     it(`${code}: jede Warnung hat einen Text`, () => {

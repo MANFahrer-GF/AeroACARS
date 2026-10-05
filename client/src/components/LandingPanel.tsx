@@ -120,7 +120,8 @@ export interface LandingRecord {
   grade_letter: string | null;
   /// Lernpaket AP2: Grund, warum die Gesamtnote gedeckelt ist
   /// ("harte_landung" ab 1,75 g, "ueberlast" ab 2,6 g, "anflug_partial",
-  /// "anflug_unstable", "anflug_nicht_gemessen"). Fehlt bei alten
+  /// "anflug_unstable", "anflug_nicht_gemessen"; ab Score-Version 18
+  /// "anflug_partial_gesamt" ≤ 80 und "anflug_unstable_gesamt" ≤ 45). Fehlt bei alten
   /// Datensaetzen und ungedeckelten Landungen.
   score_deckel?: string | null;
 
@@ -908,6 +909,20 @@ function fmtDeDe(v: number, digits = 0): string {
  *  The `default` arm is a pure safety net for a label the backend might add
  *  later — it must never be reached with today's five values, and it
  *  deliberately does NOT reintroduce a second threshold ladder. */
+/** Deckel-Gruende der Gesamtnote mit eigenem Text (`landing.deckel.*`).
+ *  „anflug_partial"/„anflug_unstable" stammen aus Score-Version 17 (nur die
+ *  Achse gedeckelt), die `_gesamt`-Gruende ab 18 (Gesamtnote ≤ 80 / ≤ 45).
+ *  `i18nSchluessel.test.ts` haelt die Liste gegen den Rust-Quelltext. */
+export const DECKEL_MIT_TEXT: ReadonlySet<string> = new Set([
+  "harte_landung",
+  "ueberlast",
+  "anflug_partial",
+  "anflug_unstable",
+  "anflug_partial_gesamt",
+  "anflug_unstable_gesamt",
+  "anflug_nicht_gemessen",
+]);
+
 export function recordCategory(r: LandingRecord): LandingCategory | null {
   // Ohne Bewertung gibt es keine Kategorie.
   //
@@ -2641,11 +2656,7 @@ export function LandingReport({
             )}
           </div>
           <div className="report-hero__label">{heroLabel}</div>
-          {record.score_deckel === "harte_landung" ||
-          record.score_deckel === "ueberlast" ||
-          record.score_deckel === "anflug_partial" ||
-          record.score_deckel === "anflug_unstable" ||
-          record.score_deckel === "anflug_nicht_gemessen" ? (
+          {record.score_deckel && DECKEL_MIT_TEXT.has(record.score_deckel) ? (
             <div className="report-hero__deckel">
               {t(`landing.deckel.${record.score_deckel}`)}
             </div>

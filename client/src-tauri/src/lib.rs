@@ -27479,9 +27479,13 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Achse 100 Punkte. Dazu zaehlt die Sinkgrenze erst nach 10 s am Stueck.
 /// Altbuchungen werden nicht neu gerechnet.
 ///
+/// **18 seit v1.9.25**: PARTIAL/UNSTABLE deckeln die GESAMTNOTE auf 80 bzw.
+/// 45, nicht nur die Achse (Anlass QAF434, 05.10.2026: PARTIAL und trotzdem
+/// 96). Altbuchungen werden nicht neu gerechnet.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 17;
+const SCORE_ALGORITHMUS_VERSION: u8 = 18;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
