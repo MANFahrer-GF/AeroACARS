@@ -53,10 +53,14 @@ struct Eintrag {
     value_type: String,
 }
 
-fn ist_zahl(typ: &str) -> bool {
+/// Zahlen und (seit 05.10.2026) Text (`data`): FlightFactor gibt seine
+/// Cockpitanzeigen fast nur als Text aus (777-Handbuch S. 10: „all except
+/// the MCP datarefs are string type“) — ohne Text fand die Luft-Messung der
+/// FF777 keinen einzigen Autopilot-Wert.
+fn messbar(typ: &str) -> bool {
     matches!(
         typ,
-        "int" | "float" | "double" | "int_array" | "float_array"
+        "int" | "float" | "double" | "int_array" | "float_array" | "data"
     )
 }
 
@@ -65,6 +69,7 @@ fn ist_zahl(typ: &str) -> bool {
 enum Wert {
     Zahl(f64),
     Liste(Vec<f64>),
+    Text(String),
 }
 
 fn wert_aus_json(v: &serde_json::Value) -> Option<Wert> {
@@ -76,7 +81,69 @@ fn wert_aus_json(v: &serde_json::Value) -> Option<Wert> {
                 .map(|x| x.as_f64().unwrap_or(f64::NAN))
                 .collect(),
         )),
+        // `data` kommt als base64 (siehe Test „QTMzMw==“ = „A333“).
+        serde_json::Value::String(b64) => {
+            use base64::Engine as _;
+            let roh = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+            Some(Wert::Text(text_aus_bytes(&roh)))
+        }
         _ => None,
+    }
+}
+
+/// Bytes bis zur ersten Null, ohne Rand-Leerzeichen.
+fn text_aus_bytes(roh: &[u8]) -> String {
+    let ende = roh.iter().position(|&b| b == 0).unwrap_or(roh.len());
+    String::from_utf8_lossy(&roh[..ende]).trim().to_string()
+}
+
+/// Längere Texte (CDU-Bildschirm, Listen) kommen nicht ins Wörterbuch —
+/// ein Schalterzustand ist kurz, und das Wörterbuch bleibt klein.
+const MAX_TEXT: usize = 64;
+/// Obergrenze des Wörterbuchs (verschiedene Texte je Messung).
+const MAX_WOERTER: usize = 20_000;
+
+/// Kennzahl eines Texts für den Stand (FNV-1a, 32 Bit — als `f64` exakt).
+/// Gleicher Text, gleiche Zahl; so laufen Text-Datarefs durch dieselbe
+/// Kandidatensuche wie Zahlen.
+fn text_kennzahl(t: &str) -> f64 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in t.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    f64::from(h)
+}
+
+/// Text-Datarefs einer Messung: welche Namen Text sind, und welcher Text
+/// hinter einer Kennzahl steht.
+#[derive(Default)]
+struct Texte {
+    namen: std::collections::HashSet<String>,
+    woerter: HashMap<u32, String>,
+}
+
+impl Texte {
+    /// Texte in den Stand übernehmen (als Kennzahl) und merken.
+    fn einfuegen(&mut self, stand: &mut HashMap<String, f64>, texte: Vec<(String, String)>) {
+        for (name, text) in texte {
+            if text.chars().count() > MAX_TEXT {
+                continue;
+            }
+            let k = text_kennzahl(&text);
+            if self.woerter.len() < MAX_WOERTER {
+                self.woerter.entry(k as u32).or_insert(text);
+            }
+            self.namen.insert(name.clone());
+            stand.insert(name, k);
+        }
+    }
+
+    fn text(&self, name: &str, wert: f64) -> Option<String> {
+        if !self.namen.contains(name) {
+            return None;
+        }
+        self.woerter.get(&(wert as u32)).cloned()
     }
 }
 
@@ -118,9 +185,21 @@ fn flach(werte: &HashMap<i64, Wert>, namen: &HashMap<i64, String>) -> HashMap<St
                     }
                 }
             }
+            Wert::Text(_) => {}
         }
     }
     aus
+}
+
+/// Die Text-Werte (Name, Text) — kommen über [`Texte`] in den Stand.
+fn texte_flach(werte: &HashMap<i64, Wert>, namen: &HashMap<i64, String>) -> Vec<(String, String)> {
+    werte
+        .iter()
+        .filter_map(|(id, w)| match w {
+            Wert::Text(t) => Some((namen.get(id)?.clone(), t.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Die Abo-Nachrichten, in Paketen zu [`PAKET`].
@@ -204,6 +283,7 @@ pub struct Spiegel {
     art: Art,
     pub flugzeug: AircraftInfo,
     pub abonniert: usize,
+    texte: Mutex<Texte>,
 }
 
 enum Art {
@@ -300,7 +380,7 @@ impl Spiegel {
         let zahlen: Vec<Eintrag> = liste
             .data
             .into_iter()
-            .filter(|e| ist_zahl(&e.value_type))
+            .filter(|e| messbar(&e.value_type))
             .collect();
         if zahlen.is_empty() {
             return Err("X-Plane meldet keine Werte — ist ein Flugzeug geladen?".into());
@@ -308,9 +388,15 @@ impl Spiegel {
         let namen: HashMap<i64, String> = zahlen.iter().map(|e| (e.id, e.name.clone())).collect();
         let ids: Vec<i64> = zahlen.iter().map(|e| e.id).collect();
 
+        // Fehler nicht still schlucken (05.10.2026: FF777-Messung kam ohne
+        // jede Kennung an, im Log stand nichts); die App greift dann auf
+        // die Kennung des laufenden Flugs zurueck.
         let flugzeug = WebApiClient::mit_basis(&format!("http://{host}"))
             .fetch_aircraft_info(&mut DrefIdCache::default())
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                tracing::warn!(fehler = %e, "Flugzeug vermessen: Kennung von der Web-API nicht lesbar");
+                AircraftInfo::default()
+            });
 
         let strom = TcpStream::connect(host).map_err(|e| format!("WebSocket: {e}"))?;
         strom
@@ -378,6 +464,7 @@ impl Spiegel {
             }),
             flugzeug,
             abonniert: ids.len(),
+            texte: Mutex::new(Texte::default()),
         })
     }
 
@@ -418,12 +505,23 @@ impl Spiegel {
         }
     }
 
-    /// Alle aktuellen Werte, Arrays elementweise.
+    /// Alle aktuellen Werte, Arrays elementweise, Texte als Kennzahl
+    /// (siehe [`Spiegel::text`]).
     pub fn schnappschuss(&self) -> HashMap<String, f64> {
-        match &self.art {
-            Art::WebApi(w) => flach(&w.werte.lock(), &w.namen),
-            Art::Plugin(p) => p.messung.schnappschuss(),
-        }
+        let (mut stand, texte) = match &self.art {
+            Art::WebApi(w) => {
+                let werte = w.werte.lock();
+                (flach(&werte, &w.namen), texte_flach(&werte, &w.namen))
+            }
+            Art::Plugin(p) => (p.messung.schnappschuss(), p.messung.texte()),
+        };
+        self.texte.lock().einfuegen(&mut stand, texte);
+        stand
+    }
+
+    /// Der Text hinter einem Stand-Wert, wenn `name` ein Text-Dataref ist.
+    pub fn text(&self, name: &str, wert: f64) -> Option<String> {
+        self.texte.lock().text(name, wert)
     }
 }
 
@@ -540,6 +638,7 @@ fn plugin_starten(zugang: PluginZugang) -> Result<Spiegel, String> {
         art: Art::Plugin(PluginSpiegel { zugang, messung: m }),
         flugzeug,
         abonniert: anzahl,
+        texte: Mutex::new(Texte::default()),
     })
 }
 
@@ -753,6 +852,21 @@ impl P2Messung {
         aus
     }
 
+    /// Die Text-Werte (Name, Text), ohne verlorene Abos.
+    fn texte(&self) -> Vec<(String, String)> {
+        let verloren = self.verloren.lock().clone();
+        let d = self.daten.lock();
+        d.werte
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !Self::ist_verloren(&verloren, *i))
+            .filter_map(|(i, w)| match w {
+                Some(P2Wert::Text(t)) => Some((d.namen[i].clone(), text_aus_bytes(t.as_bytes()))),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn zahl_wert(w: &Option<P2Wert>) -> bool {
         matches!(w, Some(P2Wert::Zahl(_) | P2Wert::Liste(_)))
     }
@@ -852,7 +966,10 @@ mod tests {
             r#"{"data":{"500556762880":0,"12":[1.0,0.5,2],"13":"QTMzMw=="},"type":"dataref_update_values"}"#,
             &mut w,
         );
-        assert_eq!(n, 2, "Text-Werte (base64) werden nicht gespiegelt");
+        // Seit 05.10.2026 kommen Text-Werte (base64) mit — als Text, nicht
+        // als Zahl (siehe `text_dataref_wird_kennzahl_mit_text`).
+        assert_eq!(n, 3);
+        assert_eq!(w.get(&13), Some(&Wert::Text("A333".into())));
         nachricht_uebernehmen(
             r#"{"data":{"500556762880":1},"type":"dataref_update_values"}"#,
             &mut w,
@@ -939,7 +1056,7 @@ mod tests {
         let zahlen: Vec<Eintrag> = liste
             .data
             .into_iter()
-            .filter(|e| ist_zahl(&e.value_type))
+            .filter(|e| messbar(&e.value_type))
             .collect();
         let namen: HashMap<i64, String> = zahlen.iter().map(|e| (e.id, e.name.clone())).collect();
         let ids: Vec<i64> = zahlen.iter().map(|e| e.id).collect();
@@ -1168,9 +1285,43 @@ mod tests {
     }
 
     #[test]
-    fn nur_zahlen_typen() {
-        assert!(ist_zahl("int") && ist_zahl("float_array") && ist_zahl("double"));
-        assert!(!ist_zahl("data"));
+    fn messbare_typen() {
+        assert!(messbar("int") && messbar("float_array") && messbar("double"));
+        // 05.10.2026: Text dazu (FF777 gibt Anzeigen als Text aus).
+        assert!(messbar("data"));
+        assert!(!messbar("int_array_ohne_typ"));
+    }
+
+    /// Text-Datarefs gehen als Kennzahl durch den Stand; der Text kommt
+    /// über `Texte::text` zurück, aber nur für Text-Namen.
+    #[test]
+    fn text_dataref_wird_kennzahl_mit_text() {
+        let mut w = HashMap::new();
+        let mut namen = HashMap::new();
+        namen.insert(1, "1-sim/output/fma/roll".to_string());
+        namen.insert(2, "sim/zahl".to_string());
+        assert_eq!(
+            nachricht_uebernehmen(
+                // „LNAV\0\0“ und eine Zahl
+                r#"{"data":{"1":"TE5BVgAA","2":3},"type":"dataref_update_values"}"#,
+                &mut w,
+            ),
+            2
+        );
+        let mut stand = flach(&w, &namen);
+        assert_eq!(stand.len(), 1, "Text nicht als Zahl");
+        let mut t = Texte::default();
+        t.einfuegen(&mut stand, texte_flach(&w, &namen));
+        let k = stand["1-sim/output/fma/roll"];
+        assert_eq!(k, text_kennzahl("LNAV"));
+        assert_eq!(t.text("1-sim/output/fma/roll", k).as_deref(), Some("LNAV"));
+        assert_eq!(t.text("sim/zahl", 3.0), None);
+        // Anderer Text, andere Kennzahl.
+        assert_ne!(text_kennzahl("LNAV"), text_kennzahl("HDG SEL"));
+        // Lange Texte (CDU-Bildschirm) bleiben draußen.
+        let mut s2 = HashMap::new();
+        t.einfuegen(&mut s2, vec![("lang".into(), "x".repeat(MAX_TEXT + 1))]);
+        assert!(s2.is_empty());
     }
 
     #[test]

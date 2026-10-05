@@ -73,6 +73,10 @@ pub fn mitgegangen(vorher: &Stand, jetzt: &Stand, rauschen: &HashSet<String>) ->
 pub struct Kandidat {
     pub variable: String,
     pub werte: Vec<Option<f64>>,
+    /// Text-Datarefs (X-Plane `data`, 05.10.2026): `werte` sind dann nur
+    /// Kennzahlen, hier steht der Text je Stellung.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub texte: Option<Vec<Option<String>>>,
 }
 
 /// Ändert sich ein Wert über alle Stellungen nur um einen winzigen Bruchteil
@@ -125,6 +129,7 @@ pub fn kandidaten(
             (wechselt && treu && !nur_drift(&werte)).then(|| Kandidat {
                 variable: k.clone(),
                 werte,
+                texte: None,
             })
         })
         .collect();
@@ -367,16 +372,13 @@ pub async fn vermessung_starten(
             quelle = spiegel.quelle(),
             "Flugzeug vermessen: X-Plane verbunden"
         );
-        // Titel = UI-Name (`acf_ui_name`, wie der Scan ihn aus `acf/_name`
-        // liest), sonst die Beschreibung — mit `acf_descrip` allein fand der
-        // Server nie den passenden Scan (ToLiss, 29.09.2026). Der Pfad ist
-        // `acf_relative_path`.
-        let f = Flugzeug {
-            titel: spiegel.flugzeug.anzeige_titel(),
-            icao: spiegel.flugzeug.icao.clone(),
-            autor: spiegel.flugzeug.author.clone(),
-            pfad: spiegel.flugzeug.relative_path.clone(),
-        };
+        let poller = app
+            .state::<crate::AppState>()
+            .xplane
+            .lock()
+            .map_err(|_| "Sperre")?
+            .flugzeug();
+        let f = xplane_flugzeug(&spiegel.flugzeug, &poller, &snap);
         (Quelle::XPlane(spiegel), "xplane", f, (0, 0))
     } else {
         msfs_starten(&app, &snap).await?
@@ -445,6 +447,42 @@ pub async fn vermessung_starten(
         l_namen,
         sitzung: nr,
     })
+}
+
+/// Kennung einer X-Plane-Messung. Titel = UI-Name (`acf_ui_name`, wie der
+/// Scan ihn aus `acf/_name` liest), sonst die Beschreibung — mit
+/// `acf_descrip` allein fand der Server nie den passenden Scan (ToLiss,
+/// 29.09.2026). Der Pfad ist `acf_relative_path`.
+///
+/// 05.10.2026 (FF777, Michel): die eigene Abfrage der Messung kam leer
+/// zurueck, obwohl der laufende Flug „Boeing 777-300ER“/B77W kannte. Dann
+/// gilt die Kennung des Web-API-Pollers als Ganzes (nicht feldweise
+/// gemischt, sonst stammen Pfad und Titel womoeglich von zwei Flugzeugen),
+/// zuletzt Titel und ICAO aus dem Snapshot (Plugin-Sitzung ohne Web-API).
+fn xplane_flugzeug(
+    messung: &sim_xplane::AircraftInfo,
+    poller: &sim_xplane::AircraftInfo,
+    snap: &sim_core::SimSnapshot,
+) -> Flugzeug {
+    let quelle = if messung.has_any() {
+        messung
+    } else {
+        tracing::warn!(
+            poller = poller.has_any(),
+            "Flugzeug vermessen: Messung ohne Kennung — nehme die des laufenden Flugs"
+        );
+        poller
+    };
+    Flugzeug {
+        titel: quelle.anzeige_titel().or_else(|| {
+            snap.aircraft_ui_name
+                .clone()
+                .or_else(|| snap.aircraft_title.clone())
+        }),
+        icao: quelle.icao.clone().or_else(|| snap.aircraft_icao.clone()),
+        autor: quelle.author.clone(),
+        pfad: quelle.relative_path.clone(),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -625,11 +663,23 @@ pub fn vermessung_schritt_abschliessen(
         }
         let staende = std::mem::take(&mut s.staende);
         let stellungen = std::mem::take(&mut s.stellungen);
-        let k = if uebersprungen {
+        let mut k = if uebersprungen {
             Vec::new()
         } else {
             kandidaten(&staende, &stellungen, &s.rauschen)
         };
+        if let Quelle::XPlane(sp) = &s.quelle {
+            for kd in &mut k {
+                let t: Vec<Option<String>> = kd
+                    .werte
+                    .iter()
+                    .map(|w| w.and_then(|w| sp.text(&kd.variable, w)))
+                    .collect();
+                if t.iter().any(Option::is_some) {
+                    kd.texte = Some(t);
+                }
+            }
+        }
         let beispiele = k.iter().take(3).cloned().collect();
         let n = k.len();
         s.schritte.retain(|x| x.schalter != schalter);
@@ -839,6 +889,43 @@ mod tests {
 
     fn st(p: &[(&str, f64)]) -> Stand {
         p.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    /// 05.10.2026: Michels FF777-Messung kam mit leerer Kennung an, der
+    /// laufende Flug kannte das Flugzeug.
+    #[test]
+    fn xplane_kennung_aus_dem_laufenden_flug_wenn_messung_leer() {
+        let leer = sim_xplane::AircraftInfo::default();
+        let poller = sim_xplane::AircraftInfo {
+            descrip: Some("Boeing 777-300ER".into()),
+            icao: Some("B77W".into()),
+            relative_path: Some("Aircraft/FF777/777-300ER.acf".into()),
+            author: Some("FlightFactor".into()),
+            ..Default::default()
+        };
+        let snap = sim_core::SimSnapshot::default();
+        let f = xplane_flugzeug(&leer, &poller, &snap);
+        assert_eq!(f.titel.as_deref(), Some("Boeing 777-300ER"));
+        assert_eq!(f.icao.as_deref(), Some("B77W"));
+        assert_eq!(f.pfad.as_deref(), Some("Aircraft/FF777/777-300ER.acf"));
+        assert_eq!(f.autor.as_deref(), Some("FlightFactor"));
+
+        // Hat die Messung eine Kennung, gilt sie — nichts vom Poller dazu.
+        let messung = sim_xplane::AircraftInfo {
+            ui_name: Some("ToLiSs A320 Hi Def".into()),
+            ..Default::default()
+        };
+        let f = xplane_flugzeug(&messung, &poller, &snap);
+        assert_eq!(f.titel.as_deref(), Some("ToLiSs A320 Hi Def"));
+        assert_eq!(f.pfad, None);
+
+        // Beide leer (Plugin-Sitzung ohne Web-API): Titel/ICAO vom Snapshot.
+        let mut snap = sim_core::SimSnapshot::default();
+        snap.aircraft_title = Some("Boeing 777-300ER".into());
+        snap.aircraft_icao = Some("B77W".into());
+        let f = xplane_flugzeug(&leer, &leer, &snap);
+        assert_eq!(f.titel.as_deref(), Some("Boeing 777-300ER"));
+        assert_eq!(f.icao.as_deref(), Some("B77W"));
     }
 
     #[test]

@@ -19,6 +19,11 @@ use crate::dataref::{FieldId, CATALOG};
 /// number; `1.51` is not a clean detent and must not snap to `2`.
 pub const DETENT_TOLERANCE: f32 = 0.05;
 
+/// Spielraum fuer `ValueMapping::ArmedAt`. Die FF777 lieferte in zwei
+/// Fluegen genau 0.5; eng gehalten, damit ein Hebel, der im Flug durch die
+/// Mitte faehrt, nicht als ARMED zaehlt.
+pub const ARMED_TOLERANCE: f32 = 0.01;
+
 /// How a raw RREF value is mapped onto the internal field value.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueMapping {
@@ -33,6 +38,10 @@ pub enum ValueMapping {
     /// `flaps_cmd_pos_deg` = 0/15/28/35/50) instead of a lever index or
     /// a 0..1 ratio. Non-finite → no value; empty table → no value.
     DegreeTable(&'static [(f32, f32)]),
+    /// 05.10.2026: Hebel, dessen ARMED-Raste auf diesem Wert steht statt
+    /// auf X-Planes -0.5. Ein Wert genau dort wird zu -0.5 (ARMED nach
+    /// DataRefs.txt), alles andere bleibt wie geliefert.
+    ArmedAt(f32),
 }
 
 impl ValueMapping {
@@ -78,6 +87,16 @@ impl ValueMapping {
                     })
                     .map(|&(_, ratio)| ratio)
             }
+            ValueMapping::ArmedAt(raste) => {
+                if !raw.is_finite() {
+                    return None;
+                }
+                Some(if (raw - raste).abs() < ARMED_TOLERANCE {
+                    -0.5
+                } else {
+                    raw
+                })
+            }
         }
     }
 }
@@ -103,6 +122,10 @@ pub struct XplaneAircraftProfile {
     /// Signature dataref for the probe stage (LE1 stage 2): if X-Plane
     /// returns a value for it, the aircraft is this profile's aircraft.
     pub probe_dataref: &'static str,
+    /// Nur mit Titel UND bestaetigter Probe aktiv. Fuer Profile, deren
+    /// Probe zu einer ganzen Herstellerfamilie gehoert (FlightFactor
+    /// `1-sim/…`) und deren Titel auch fremde Muster tragen.
+    pub titel_und_probe: bool,
     /// Dataref-source overrides applied while this profile is active.
     pub overrides: &'static [DatarefOverride],
 }
@@ -151,6 +174,7 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
         name: "Hot Start CL650",
         title_match: &["challenger 650", "x-aviation"],
         probe_dataref: "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR",
+        titel_und_probe: false,
         overrides: &[
             DatarefOverride {
                 field: FieldId::FlapsHandle,
@@ -181,6 +205,7 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
         name: "Rotate MD-11",
         title_match: &["rotate", "md-11"],
         probe_dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
+        titel_und_probe: false,
         overrides: &[DatarefOverride {
             field: FieldId::FlapsHandle,
             dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
@@ -215,6 +240,7 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
         name: "Laminar/Zibo 737-800",
         title_match: &["boeing", "737-800"],
         probe_dataref: "laminar/B738/autopilot/cmd_a_status",
+        titel_und_probe: false,
         overrides: &[
             DatarefOverride {
                 field: FieldId::ApMaster,
@@ -258,11 +284,35 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
             },
         ],
     },
+    // 05.10.2026 — FlightFactor 777v2 (X-Plane 12). Pilot-Befund Michel
+    // (SIA375 27.09., NWS419 05.10.): der Speedbrake-Hebel steht in ARMED
+    // auf +0.5 in `speedbrake_ratio` statt auf -0.5 — beide Fluege 0 → 0.5
+    // im Anflug, Sprung auf 1.0 genau beim Aufsetzen (Auto-Ausfahren,
+    // cockpit.pdf S. 72: „ARMED — after landing, automatically moves speed
+    // brake lever to UP“). `spoilers_armed` blieb dadurch immer false.
+    // Probe aus `cduDatarefs.txt` des Pakets („/ok int does cdu work“);
+    // `1-sim/…` tragen alle FlightFactor-Muster, der Titel „777“ auch die
+    // freie Stratosphere-777 — deshalb nur mit beidem.
+    XplaneAircraftProfile {
+        name: "FlightFactor 777",
+        title_match: &["777"],
+        probe_dataref: "1-sim/cduL/ok",
+        titel_und_probe: true,
+        overrides: &[DatarefOverride {
+            field: FieldId::SpoilersHandle,
+            dataref: "sim/cockpit2/controls/speedbrake_ratio",
+            mapping: ValueMapping::ArmedAt(0.5),
+        }],
+    },
 ];
 
-/// LE1 stage 1: first profile whose title-match accepts `title`.
+/// LE1 stage 1: first profile whose title-match accepts `title`. Profile,
+/// die zusaetzlich die Probe brauchen (`titel_und_probe`), zaehlen hier
+/// nicht.
 pub fn profile_index_for_title(title: &str) -> Option<usize> {
-    PROFILES.iter().position(|p| p.matches_title(title))
+    PROFILES
+        .iter()
+        .position(|p| !p.titel_und_probe && p.matches_title(title))
 }
 
 /// One row of the **active catalog** (LE6): the dataref the adapter

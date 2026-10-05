@@ -367,6 +367,13 @@ impl XPlaneAdapter {
         })
     }
 
+    /// Letzte Flugzeugkennung des Web-API-Pollers (leer, bis er einmal
+    /// geantwortet hat). Rueckfall fuer „Flugzeug vermessen", wenn die
+    /// eigene Abfrage der Messung nichts liefert (05.10.2026, FF777).
+    pub fn flugzeug(&self) -> AircraftInfo {
+        self.shared.aircraft.lock().clone()
+    }
+
     /// Drain a pending plugin-emitted touchdown event, if any. The
     /// flight sampler in the main app calls this each tick after
     /// the standard `snapshot()` read; if Some, the values override
@@ -531,12 +538,22 @@ pub(crate) fn klappen_aus_profil(aktiv: &[ActiveEntry]) -> bool {
 /// the laggy Web API title (polled every 30 s, so up to 30 s stale)
 /// must NOT revive a profile the probe already retired (QS-R2/P2).
 /// When nothing points at a profile the result is `None` → base catalog.
+/// Ein Profil mit `titel_und_probe` gilt nur, wenn auch der Titel passt.
 pub(crate) fn desired_profile(
     title: Option<&str>,
     probe_fresh: &[bool],
     probe_seen: &[bool],
 ) -> Option<usize> {
-    if let Some(pi) = probe_fresh.iter().position(|&fresh| fresh) {
+    let titel_passt = |pi: usize| {
+        PROFILES
+            .get(pi)
+            .is_some_and(|p| !p.titel_und_probe || title.is_some_and(|t| p.matches_title(t)))
+    };
+    if let Some(pi) = probe_fresh
+        .iter()
+        .enumerate()
+        .position(|(pi, &fresh)| fresh && titel_passt(pi))
+    {
         return Some(pi);
     }
     title
@@ -1619,6 +1636,77 @@ mod tests {
         assert_eq!(
             desired_profile(Some(CL650_TITLE), &[true], &[true]),
             Some(0)
+        );
+    }
+
+    /// 05.10.2026: die FF777 braucht Titel UND Probe — `1-sim/cduL/ok`
+    /// haben alle FlightFactor-Muster, „777“ im Titel auch die freie
+    /// Stratosphere-777.
+    #[test]
+    fn ff777_braucht_titel_und_probe() {
+        let ff = crate::profile::PROFILES
+            .iter()
+            .position(|p| p.name == "FlightFactor 777")
+            .expect("FF777-Profil vorhanden");
+        let n = crate::profile::PROFILES.len();
+        let nur = |i: usize| {
+            let mut v = vec![false; n];
+            v[i] = true;
+            v
+        };
+        let keine = vec![false; n];
+        // Michels Titel (acf_descrip im Log NWS419) + Probe → Profil.
+        assert_eq!(
+            desired_profile(Some("Boeing 777-300ER"), &nur(ff), &nur(ff)),
+            Some(ff)
+        );
+        // Probe ohne passenden Titel (anderes FlightFactor-Muster) → nichts.
+        assert_eq!(
+            desired_profile(Some("Airbus A350-900"), &nur(ff), &nur(ff)),
+            None
+        );
+        // Probe ohne Titel (Web-API aus) → nichts.
+        assert_eq!(desired_profile(None, &nur(ff), &nur(ff)), None);
+        // Titel ohne Probe (Stratosphere-777) → nichts.
+        assert_eq!(
+            desired_profile(Some("Boeing 777-300ER"), &keine, &keine),
+            None
+        );
+    }
+
+    /// Ganze Kette mit Michels Werten: aktiver FF777-Katalog → Hebel 0.5
+    /// ist ARMED und eingefahren, 1.0 ausgefahren und nicht ARMED.
+    #[test]
+    fn ff777_hebel_halb_ist_armed() {
+        use crate::dataref::{FieldId, XPlaneState};
+        use sim_core::Simulator;
+        let ff = crate::profile::PROFILES
+            .iter()
+            .find(|p| p.name == "FlightFactor 777")
+            .unwrap();
+        let aktiv = crate::profile::build_active_catalog(Some(ff));
+        let hebel = aktiv
+            .iter()
+            .find(|e| e.field == FieldId::SpoilersHandle)
+            .unwrap();
+        let snap = |roh: f32| {
+            let mut s = XPlaneState::default();
+            s.apply_field(FieldId::SpoilersHandle, hebel.mapping.map(roh).unwrap());
+            s.to_snapshot(Simulator::XPlane12)
+        };
+        assert_eq!(snap(0.5).spoilers_armed, Some(true));
+        assert_eq!(snap(0.5).spoilers_handle_position, Some(0.0));
+        assert_eq!(snap(1.0).spoilers_armed, Some(false));
+        assert_eq!(snap(1.0).spoilers_handle_position, Some(1.0));
+        assert_eq!(snap(0.0).spoilers_armed, Some(false));
+        // Hebel auf dem Weg durch die Mitte (Log: 0.8/0.9) bleibt Stellung.
+        assert_eq!(snap(0.45).spoilers_armed, Some(false));
+        // Gegenprobe: ohne Profil ist 0.5 halb ausgefahren, nicht ARMED.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::SpoilersHandle, 0.5);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).spoilers_armed,
+            Some(false)
         );
     }
 }

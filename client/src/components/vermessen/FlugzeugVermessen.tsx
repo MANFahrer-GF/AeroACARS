@@ -280,7 +280,8 @@ interface StellungAntwort {
 }
 interface SchrittAntwort {
   kandidaten: number;
-  beispiele: Array<{ variable: string; werte: Array<number | null> }>;
+  // `texte`: Text-Datarefs (X-Plane) — `werte` sind dann nur Kennzahlen.
+  beispiele: Array<{ variable: string; werte: Array<number | null>; texte?: Array<string | null> }>;
 }
 
 type Ergebnis = { uebersprungen: boolean; kandidaten: number };
@@ -1198,7 +1199,10 @@ function SchrittKarte({
                 <ul className="vm-beispiele vm-mono">
                   {phase.abschluss.beispiele.map((b) => (
                     <li key={b.variable}>
-                      {b.variable}: {b.werte.map((w) => (w == null ? "—" : String(Math.round(w * 1000) / 1000))).join(" / ")}
+                      {b.variable}:{" "}
+                      {b.texte
+                        ? b.texte.map((x) => (x == null ? "—" : `"${x}"`)).join(" / ")
+                        : b.werte.map((w) => (w == null ? "—" : String(Math.round(w * 1000) / 1000))).join(" / ")}
                     </li>
                   ))}
                 </ul>

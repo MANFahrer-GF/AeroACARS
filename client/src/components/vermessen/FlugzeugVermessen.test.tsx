@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   uiName: null as string | null,
   liste: [] as Array<{ sim: string; icao: string; titel: string; zuletzt: number; anzahl: number }>,
   ruheLoesen: null as null | (() => void),
+  beispiele: [] as Array<{ variable: string; werte: Array<number | null>; texte?: Array<string | null> }>,
 }));
 
 vi.mock("../../lib/ipc", () => ({
@@ -61,7 +62,7 @@ vi.mock("../../lib/ipc", () => ({
       }
       case "vermessung_schritt_abschliessen":
         h.stellungImSchritt = 0;
-        return Promise.resolve({ kandidaten: args?.uebersprungen ? 0 : 4, beispiele: [] });
+        return Promise.resolve({ kandidaten: args?.uebersprungen ? 0 : 4, beispiele: h.beispiele });
       case "vermessung_scan_namen":
         return Promise.resolve(h.scanNamen);
       case "vermessung_liste":
@@ -98,6 +99,7 @@ beforeEach(() => {
   h.icao = "B77W";
   h.pfad = null;
   h.uiName = null;
+  h.beispiele = [];
 });
 
 describe("uebersicht: Messungen + Scans", () => {
@@ -532,6 +534,28 @@ describe("Flugzeug vermessen", () => {
     expect(screen.queryByText("hat das Flugzeug nicht")).toBeNull();
     const abschluesse = h.aufrufe.filter((a) => a.cmd === "vermessung_schritt_abschliessen");
     expect(abschluesse.map((a) => a.args?.schalter)).toEqual(["autobrake"]);
+  });
+
+  it("Text-Datarefs (X-Plane) zeigen den Text statt der Kennzahl", async () => {
+    h.beispiele = [
+      { variable: "1-sim/output/fma/roll", werte: [123456789, 987654321], texte: ["LNAV", "HDG SEL"] },
+      { variable: "sim/zahl", werte: [0, 1] },
+    ];
+    render(<FlugzeugVermessen />);
+    await screen.findByText(/Simulator verbunden/);
+    fireEvent.click(screen.getByRole("button", { name: "Keine" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Autobrake" }));
+    await klick("Messung starten");
+    await klick(/Ruhemessung starten/);
+    await klick("Weiter");
+    await klick("Ja – los geht's");
+    await klick("Erledigt – steht so");
+    await screen.findByText("Ausgangsstellung gemerkt");
+    await klick("Erledigt – steht so");
+    await klick("Das war schon die letzte Stellung");
+    expect(await screen.findByText(/"LNAV" \/ "HDG SEL"/)).toBeTruthy();
+    expect(screen.queryByText(/123456789/)).toBeNull();
+    expect(screen.getByText(/sim\/zahl: 0 \/ 1/)).toBeTruthy();
   });
 
   it("Klappen: nach zwei Rasten lässt sich die letzte Stellung wählen", async () => {
