@@ -97,6 +97,64 @@ fn sicherung() -> std::sync::MutexGuard<'static, Sicherung> {
     SICHERUNG.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Die einzige erlaubte Stelle für `save_window_state`; läuft nur aus der
+/// Hauptfaden-Aufgabe in `auf_hauptfaden_sichern`.
+#[allow(clippy::disallowed_methods)]
+fn jetzt_sichern<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), tauri_plugin_window_state::Error> {
+    app.save_window_state(gemerkte_eigenschaften())
+}
+
+/// Wie lange der Sicher-Faden auf die Quittung des Hauptfadens wartet.
+const QUITTUNG_SPAETESTENS: Duration = Duration::from_secs(5);
+
+/// Sichert die Fensterlage — AUSSCHLIESSLICH auf dem Hauptfaden.
+///
+/// Feldbefund Adrian (04.10.2026, v1.9.22, Windows): Fenster fror beim Klick
+/// auf X ein, die App lief im Hintergrund weiter. `save_window_state` sperrt
+/// den Cache des Plugins und fragt DANN das Fenster ab. Aus einem Nebenfaden
+/// wartet jede dieser Abfragen auf den Hauptfaden; behandelt der gleichzeitig
+/// ein Fensterereignis (X, Minimieren, Verschieben), will der Handler des
+/// Plugins denselben Cache — beide warten ewig aufeinander. Auf dem
+/// Hauptfaden laufen Abfragen und Handler nacheinander.
+///
+/// Erzwungen per `clippy::disallowed_methods` (clippy.toml): ein Aufruf von
+/// `save_window_state` an anderer Stelle bricht die CI.
+///
+/// Wartet auf die Quittung, damit „gesichert" auch wirklich gesichert
+/// heißt (Codex-QS v1.9.24) — der Aufrufer ist der Sicher-Faden, nie der
+/// Hauptfaden selbst.
+fn auf_hauptfaden_sichern<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let (quittung, warten) = std::sync::mpsc::channel::<Duration>();
+    let app_haupt = app.clone();
+    let gesendet = app.run_on_main_thread(move || {
+        let t0 = Instant::now();
+        if let Err(e) = jetzt_sichern(&app_haupt) {
+            tracing::warn!(error = %e, "Fensterlage ließ sich nicht sichern");
+        }
+        let _ = quittung.send(t0.elapsed());
+    });
+    if let Err(e) = gesendet {
+        tracing::warn!(error = %e, "Fensterlage: Hauptfaden nicht erreichbar");
+        return;
+    }
+    match warten.recv_timeout(QUITTUNG_SPAETESTENS) {
+        // Datei-Schreiben läuft jetzt auf dem Hauptfaden — sichtbar machen,
+        // falls es je spürbar wird (Virenscanner, langsamer Datenträger).
+        Ok(dauer) if dauer >= Duration::from_millis(100) => {
+            tracing::warn!(
+                dauer_ms = dauer.as_millis() as u64,
+                "Fensterlage sichern dauerte lange"
+            );
+        }
+        Ok(_) => {}
+        Err(_) => tracing::warn!(
+            "Fensterlage: Hauptfaden hat nach 5 s nicht quittiert (beschäftigt oder beendet)"
+        ),
+    }
+}
+
 pub fn nach_aenderung_sichern<R: Runtime>(window: &tauri::Window<R>, event: &tauri::WindowEvent) {
     if window.label() != HAUPTFENSTER {
         return;
@@ -119,25 +177,7 @@ pub fn nach_aenderung_sichern<R: Runtime>(window: &tauri::Window<R>, event: &tau
             match schritt {
                 Schritt::Warten(dauer) => std::thread::sleep(dauer),
                 Schritt::Sichern => {
-                    // NUR auf dem Hauptfaden sichern (Feldbefund Adrian,
-                    // 04.10.2026, v1.9.22: Fenster beim Klick auf X
-                    // eingefroren, App lief im Hintergrund weiter).
-                    // `save_window_state` sperrt den Cache des Plugins und
-                    // fragt DANN das Fenster ab — von hier aus wartet jede
-                    // Abfrage auf den Hauptfaden. Kommt dort gleichzeitig ein
-                    // Fensterereignis an (X, Minimieren, Verschieben), will
-                    // dessen Plugin-Handler denselben Cache: beide warten
-                    // ewig aufeinander. Auf dem Hauptfaden laufen Abfragen
-                    // und Handler nacheinander.
-                    let app_haupt = app.clone();
-                    let gesendet = app.run_on_main_thread(move || {
-                        if let Err(e) = app_haupt.save_window_state(gemerkte_eigenschaften()) {
-                            tracing::warn!(error = %e, "Fensterlage ließ sich nicht sichern");
-                        }
-                    });
-                    if let Err(e) = gesendet {
-                        tracing::warn!(error = %e, "Fensterlage: Hauptfaden nicht erreichbar");
-                    }
+                    auf_hauptfaden_sichern(&app);
                     if !sicherung().nach_dem_sichern() {
                         break;
                     }

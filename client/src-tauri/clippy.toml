@@ -1,0 +1,7 @@
+# Verbotene Aufrufe (Lint `disallowed_methods`, in Cargo.toml auf "deny").
+disallowed-methods = [
+    # Deadlock beim Klick auf X (Feldbefund 04.10.2026, v1.9.22): sperrt den
+    # Plugin-Cache und fragt DANN das Fenster ab - aus einem Nebenfaden wartet
+    # das auf den Hauptfaden, dessen Fenster-Handler denselben Cache will.
+    { path = "tauri_plugin_window_state::AppHandleExt::save_window_state", reason = "nur ueber fenster::auf_hauptfaden_sichern (Hauptfaden), sonst Deadlock" },
+]

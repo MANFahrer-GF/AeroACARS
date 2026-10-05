@@ -27,6 +27,8 @@ pub mod bordbuch;
 /// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
 mod fahrwerk;
 mod fenster;
+/// v1.9.24: meldet eine eingefrorene Oberfläche (Hauptfaden haengt) ins Log/GlitchTip.
+mod hauptfaden_waechter;
 mod navdata_cache;
 mod replay_erkennung;
 mod runway;
@@ -57843,6 +57845,8 @@ pub fn run() {
                 // notification on critical-state transitions.
                 spawn_tray_updater(app.handle().clone());
             }
+            // v1.9.24: eingefrorene Oberflaeche sichtbar machen (Anlass Adrian, 04.10.2026).
+            hauptfaden_waechter::starten(app.handle().clone());
             // v0.5.11: try to start MQTT live-tracking publisher in
             // the background. Non-fatal — if no API key is present
             // yet (fresh install, user hasn't logged in) it just

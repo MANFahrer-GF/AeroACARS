@@ -107,6 +107,8 @@ unsafe_op_in_unsafe_fn = "deny"
 [workspace.lints.clippy]
 todo = "warn"
 dbg_macro = "warn"
+# clippy.toml: verbotene Aufrufe mit Deadlock-Gefahr (v1.9.24) - bricht die CI.
+disallowed_methods = "deny"
 
 # ---- The Tauri application itself ----
 
