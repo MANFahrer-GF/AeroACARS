@@ -42,8 +42,9 @@ project(AeroACARS_XPlane_Plugin
     # / 0.5.11 / 0.5.13). Every Log.txt line was misreporting v0.5.0.
     # See docs/qs/v0.7.16-fenix-beta-bugs.md N-004.
     # 1.0.0 (AP7): Dataref-Server, Protokoll 2 (ADR-0004). Protokoll 1 bleibt.
-    VERSION 1.1.0
+    VERSION 1.1.1
     # 1.1.0: HUD-Band (BAND-Befehl, Fenster, Menü), ADR-0005.
+    # 1.1.1: Band auch auf einem zweiten Monitor (Fenster vor dem Zeigen auf den Schirm).
     LANGUAGES CXX
     DESCRIPTION "AeroACARS X-Plane Premium Plugin"
 )

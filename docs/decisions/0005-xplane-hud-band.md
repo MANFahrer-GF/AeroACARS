@@ -210,3 +210,14 @@ Zeichen-Callbacks erzeugt (Start/Flight-Loop).
 * Die App zeigt einen Hinweis, wenn ein Plugin mit Protokoll 2, aber < 1.1.0
   verbunden ist (Plugins-Tab mit Installationsknopf und beim Band-Schalter).
 * CI/Release: `libgl-dev` für den Linux-Build; Lizenzen OpenSans OFL und stb im Plugin-Zip.
+
+### Nachtrag 05.10.2026 — Plugin 1.1.1: Band auf zweitem Monitor
+Feldbefund (Mac, X-Plane 12.4.4-b3 auf externem Monitor): Band unsichtbar.
+Der globale Schirm lag bei `L-190 T0 R1730 B-1080`; `band_start` legte das
+Fenster fest bei y 100…140 an — ganz außerhalb. X-Plane ruft für ein Fenster
+außerhalb des Schirms den Zeichen-Callback nicht auf, platziert wurde aber nur
+dort. Merkmal im Log: `Schriftatlas …` erscheint, keine `Selbstpruefung`-Zeile.
+Seit 1.1.1 holt `band_frame` das Fenster vor dem Zeigen und in jedem Frame auf
+den Schirm (`band_vor_dem_zeigen`: unplatziert → Standardposition, sonst
+klemmen). Die App bietet Plugins mit Band, aber älter als ihr eigenes
+(`PLUGIN_AKTUELL`), das Update an („Plugin-Update verfügbar").

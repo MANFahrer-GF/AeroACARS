@@ -1516,6 +1516,8 @@
     "install_unverified": "Nota: questo pacchetto è stato installato senza checksum (versione di sviluppo di AeroACARS).",
     "band_outdated_title": "Plugin senza banda HUD",
     "band_outdated_explanation": "Telemetria e misura del touchdown funzionano normalmente. La banda HUD nel simulatore richiede il plugin {{min}}: reinstalla il plugin qui sotto e riavvia X-Plane.",
+    "update_available_title": "Aggiornamento del plugin disponibile",
+    "update_available_explanation": "Il plugin {{neu}} corregge: la banda HUD restava invisibile quando X-Plane girava su un secondo monitor. Reinstalla il plugin qui sotto e riavvia X-Plane.",
     "browse_button": "Scegli cartella…",
     "browse_title": "Scegli la cartella principale di X-Plane",
     "browse_not_xplane": "In questa cartella non c'è X-Plane. Scegli la cartella che contiene X-Plane e la sottocartella \"Resources\" (ad es. \"X-Plane 12\")."

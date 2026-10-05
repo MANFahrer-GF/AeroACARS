@@ -3,7 +3,12 @@ import { invoke, isTauri } from "../lib/ipc";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import type { SimConnectionState, XPlanePremiumStatus } from "../types";
-import { BAND_MIN_PLUGIN, bandBrauchtUpdate } from "../lib/pluginVersion";
+import {
+  BAND_MIN_PLUGIN,
+  PLUGIN_AKTUELL,
+  bandBrauchtUpdate,
+  pluginUpdateEmpfohlen,
+} from "../lib/pluginVersion";
 
 interface PluginInstallResult {
   installed_at: string;
@@ -103,8 +108,10 @@ export function XPlanePremiumPanel({ simState }: Props) {
       : "pmdg-panel--inactive";
   // Plugin mit Protokoll 2, aber zu alt für das HUD-Band (QS-Hinweis H1).
   const ohneBand = !hasError && bandBrauchtUpdate(status);
+  // Kann das Band, ist aber älter als das Plugin dieser App (1.1.1: zweiter Monitor).
+  const updateEmpfohlen = !hasError && pluginUpdateEmpfohlen(status);
   // Installationsfeld: ohne Plugin, und wenn es veraltet ist (Update).
-  const showInstall = !hasError && (!status.active || veraltet || ohneBand);
+  const showInstall = !hasError && (!status.active || veraltet || ohneBand || updateEmpfohlen);
 
   async function handleInstall() {
     setInstalling(true);
@@ -207,6 +214,16 @@ export function XPlanePremiumPanel({ simState }: Props) {
             ⚠️ {t("xplane_premium_panel.band_outdated_title")} ({status.plugin_version})
           </p>
           <p>{t("xplane_premium_panel.band_outdated_explanation", { min: BAND_MIN_PLUGIN })}</p>
+        </div>
+      )}
+
+      {/* Plugin kann das Band, es gibt aber ein neueres zu dieser App */}
+      {updateEmpfohlen && (
+        <div className="pmdg-panel__warning">
+          <p className="pmdg-panel__warning-title">
+            {t("xplane_premium_panel.update_available_title")} ({status.plugin_version} → {PLUGIN_AKTUELL})
+          </p>
+          <p>{t("xplane_premium_panel.update_available_explanation", { neu: PLUGIN_AKTUELL })}</p>
         </div>
       )}
 

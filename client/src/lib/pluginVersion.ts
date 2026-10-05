@@ -31,3 +31,19 @@ export function bandBrauchtUpdate(
   if (!s.plugin_version) return false;
   return versionKleiner(s.plugin_version, BAND_MIN_PLUGIN) === true;
 }
+
+// Plugin-Version, die zu dieser App gehört (xplane-plugin/CMakeLists.txt,
+// Wächter in pluginVersion.test.ts). Das Plugin-Paket lädt die App passend
+// zu ihrer eigenen Version herunter.
+export const PLUGIN_AKTUELL = "1.1.1";
+
+/** Kann das Band schon, ist aber älter als das Plugin dieser App? Dann
+ *  Update anbieten (1.1.1: Band auf zweitem Monitor). Schweigt, wo
+ *  `bandBrauchtUpdate` oder „veraltet" schon einen Hinweis zeigen. */
+export function pluginUpdateEmpfohlen(
+  s: Pick<XPlanePremiumStatus, "active" | "protokoll" | "plugin_version" | "veraltet"> | null,
+): boolean {
+  if (!s || !s.active || s.protokoll !== 2 || s.veraltet) return false;
+  if (!s.plugin_version || bandBrauchtUpdate(s)) return false;
+  return versionKleiner(s.plugin_version, PLUGIN_AKTUELL) === true;
+}
