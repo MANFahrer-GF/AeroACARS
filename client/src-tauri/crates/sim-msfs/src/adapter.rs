@@ -3732,6 +3732,10 @@ mod stopp_tests {
     /// So nutzt lib.rs `apply_sim_kind` den Adapter hinter einer Sperre:
     /// anstoßen unter der Sperre, abwarten OHNE. Ein Leser (wie `sim_status`
     /// alle 500 ms) kommt während des Wartens sofort an die Sperre.
+    ///
+    /// ⚠ Grenze: belegt die geteilte API, NICHT, dass `apply_sim_kind` sie so
+    /// benutzt (dort hängt `tauri::State` dran). Wer dort wieder
+    /// `state.msfs.lock().stop()` schreibt, bleibt hier grün.
     #[test]
     fn abwarten_ohne_sperre_haelt_leser_nicht_auf() {
         let m = Arc::new(std::sync::Mutex::new(MsfsAdapter::new()));
