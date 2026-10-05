@@ -47,6 +47,12 @@
   cursor: default;
 }
 
+/* Die Webapp hat eine eigene `button`-Regel (Schriftgröße 14 px), die gegen
+   die Kopie mit Spezifität 0 gewinnt — die Zeilen standen dort größer als im
+   Client. Mit der Klasse (0,1,0) gilt wieder dieselbe Größe; im Client ist
+   der Wert ohnehin derselbe wie in bordbuch.css. */
+:where(.bb-landung) .bb-cl-zeile { font-size: var(--fs-300, 12px); font-family: inherit; }
+
 :where(.bb-cl-zeile:disabled) { opacity: 1; }
 
 :where(.bb-cl-zeile:not(:disabled)) { cursor: pointer; }
