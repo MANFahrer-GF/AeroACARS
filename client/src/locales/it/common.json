@@ -165,7 +165,6 @@
     "trip_burn": "Consumo viaggio",
     "zfw": "ZFW",
     "no_plan_hint": "Nessun valore pianificato disponibile — per questo volo non è stato caricato alcun OFP SimBrief. Al prossimo volo controlla il log delle attività per la voce „SimBrief OFP caricato\" all'avvio; se manca, il bid non aveva un piano o il fetch è fallito.",
-    "loadsheet_score": "Aderenza al piano (nessun punteggio)",
     "score_breakdown": "Dettaglio punteggio",
     "coach_title": "Cosa migliorare al prossimo avvicinamento",
     "trend": "Trend",
@@ -195,7 +194,7 @@
     "sub": {
       "landing_rate": "Rateo discesa",
       "g_force": "Forza G",
-      "bounces": "Qualità rimbalzo",
+      "bounces": "Rimbalzi",
       "stability": "Stabilità avvicinamento",
       "rollout": "Pista utilizzata",
       "fuel": "Aderenza OFP",
@@ -540,8 +539,6 @@
     "forensics_section": "Forensica touchdown (50 Hz)",
     "forensics_unavailable": "Buffer forensico non disponibile (pre-v0.5.39 o gap di campionamento)",
     "flare_section": "Qualità del flare",
-    "flare_score": "Richiamata (nessun punteggio)",
-    "flare_score_hint": "A titolo indicativo: rateo a fine richiamata più un bonus per la riduzione. Non fa parte del punteggio d'atterraggio.",
     "flare_breakdown": "Sink finale {{vs}} fpm → {{ep}} pti · riduzione {{red}} fpm → +{{bonus}} pti",
     "flare_reduction": "Riduzione rateo di discesa",
     "flare_reduction_hint": "Di quanto il pilota ha ridotto il rateo di discesa prima del TD",
@@ -926,7 +923,7 @@
       },
       "pill": {
         "heading": "La pill STABLE GATE",
-        "body": "✓ STABLE = tutti e sette i valori nella fascia verde. ⚠ PARTIAL = 1–2 valori fuori, al massimo uno rosso. ✗ UNSTABLE = due valori rossi, oppure tre o più fuori. Effetto sul punteggio: PARTIAL al massimo 80, UNSTABLE al massimo 45 punti in totale — un buon contatto non lo compensa. Nella realtà un avvicinamento UNSTABLE sarebbe un candidato alla riattaccata."
+        "body": "✓ STABLE = tutti e sei i controlli buoni. ⚠ PARTIAL = 1–2 controlli fuori, al massimo uno scarso. ✗ UNSTABLE = due controlli scarsi, oppure tre o più fuori. Effetto sul punteggio: PARTIAL al massimo 80, UNSTABLE al massimo 45 punti in totale — un buon contatto non lo compensa. Nella realtà un avvicinamento UNSTABLE sarebbe un candidato alla riattaccata."
       },
       "tiles": {
         "vs_jerk": {
@@ -1069,6 +1066,21 @@
       "teil_schlecht": "Limitato a massimo 60 punti: {{teil}} era scarso. Il punteggio totale non è mai migliore di quanto consenta la parte più debole.",
       "teil_mittel": "Limitato a massimo 80 punti: {{teil}} era solo discreto. Il punteggio totale non è mai migliore di quanto consenta la parte più debole.",
       "ein_teil": "una parte dell’atterraggio"
+    },
+    "deckel_kurz": {
+      "harte_landung": "Limitato: max. 40 (da 1,75 g)",
+      "ueberlast": "Limitato: max. 14 (da 2,6 g)",
+      "anflug_partial": "Avvicinamento solo parzialmente stabile",
+      "anflug_unstable": "Avvicinamento instabile",
+      "anflug_partial_gesamt": "Limitato: max. 80 (avvicinamento parzialmente stabile)",
+      "anflug_unstable_gesamt": "Limitato: max. 45 (avvicinamento instabile)",
+      "anflug_nicht_gemessen": "Limitato: max. 97 (avvicinamento non misurato)",
+      "vor_der_schwelle": "Limitato: max. 40 (prima della soglia)",
+      "overrun": "Limitato: max. 40 (overrun)",
+      "neben_der_bahn": "Limitato: max. 40 (fuori pista)",
+      "mehrfach_hopser": "Limitato: max. 40 (più rimbalzi)",
+      "teil_mittel": "Limitato: max. 80 ({{teil}})",
+      "teil_schlecht": "Limitato: max. 60 ({{teil}})"
     },
     "gesamt": {
       "smooth": "eccellente",

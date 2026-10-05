@@ -165,7 +165,6 @@
     "trip_burn": "Trip burn",
     "zfw": "ZFW",
     "no_plan_hint": "No plan values available — no SimBrief OFP was loaded for this flight. On your next flight, watch the activity log for a \"SimBrief OFP fetched\" entry at start; if it's missing, the bid had no plan or the fetch failed silently.",
-    "loadsheet_score": "Plan adherence (no score)",
     "score_breakdown": "Score breakdown",
     "coach_title": "What to focus on next time",
     "trend": "Trend",
@@ -195,7 +194,7 @@
     "sub": {
       "landing_rate": "Landing rate",
       "g_force": "G force",
-      "bounces": "Bounce quality",
+      "bounces": "Bounces",
       "stability": "Approach stability",
       "rollout": "Runway used",
       "fuel": "OFP compliance",
@@ -540,8 +539,6 @@
     "forensics_section": "Touchdown forensics (50 Hz)",
     "forensics_unavailable": "Forensics buffer unavailable (pre-v0.5.39 or sample gap)",
     "flare_section": "Flare quality",
-    "flare_score": "Flare (no score)",
-    "flare_score_hint": "For reference: sink rate at the end of the flare plus a bonus for reducing it. Not part of the landing score.",
     "flare_breakdown": "End sink {{vs}} fpm → {{ep}} pts · reduction {{red}} fpm → +{{bonus}} pts",
     "flare_reduction": "Sink-rate reduction",
     "flare_reduction_hint": "How much the pilot reduced the sink rate before TD (positive = flare helped)",
@@ -926,7 +923,7 @@
       },
       "pill": {
         "heading": "The STABLE-GATE pill",
-        "body": "✓ STABLE = all seven figures in the green band. ⚠ PARTIAL = 1–2 values outside, at most one of them red. ✗ UNSTABLE = two values red, or three or more outside. Effect on the score: PARTIAL at most 80, UNSTABLE at most 45 points overall — a good touchdown does not offset it. In real life an UNSTABLE approach would be a go-around candidate."
+        "body": "✓ STABLE = all six checks good. ⚠ PARTIAL = 1–2 checks outside, at most one of them poor. ✗ UNSTABLE = two checks poor, or three or more outside. Effect on the score: PARTIAL at most 80, UNSTABLE at most 45 points overall — a good touchdown does not offset it. In real life an UNSTABLE approach would be a go-around candidate."
       },
       "tiles": {
         "vs_jerk": {
@@ -1069,6 +1066,21 @@
       "teil_schlecht": "Capped at 60 points: {{teil}} was poor. The overall score is never better than the weakest part allows.",
       "teil_mittel": "Capped at 80 points: {{teil}} was only fair. The overall score is never better than the weakest part allows.",
       "ein_teil": "one part of the landing"
+    },
+    "deckel_kurz": {
+      "harte_landung": "Capped: max. 40 (from 1.75 g)",
+      "ueberlast": "Capped: max. 14 (from 2.6 g)",
+      "anflug_partial": "Approach only partly stable",
+      "anflug_unstable": "Approach unstable",
+      "anflug_partial_gesamt": "Capped: max. 80 (approach partly stable)",
+      "anflug_unstable_gesamt": "Capped: max. 45 (approach unstable)",
+      "anflug_nicht_gemessen": "Capped: max. 97 (approach not measured)",
+      "vor_der_schwelle": "Capped: max. 40 (before the threshold)",
+      "overrun": "Capped: max. 40 (overrun)",
+      "neben_der_bahn": "Capped: max. 40 (off the runway)",
+      "mehrfach_hopser": "Capped: max. 40 (multiple bounces)",
+      "teil_mittel": "Capped: max. 80 ({{teil}})",
+      "teil_schlecht": "Capped: max. 60 ({{teil}})"
     },
     "gesamt": {
       "smooth": "excellent",

@@ -90,6 +90,12 @@ export const DATEIEN = [
   // Webapp: aus dem PIREP-Payload (`anflug_gleitpfad` / `anflug_ruhe`,
   // dieselbe JSON-Form). Keine Importe ausser React/react-i18next.
   "components/AnflugForensikInfo.tsx",
+  // Score-Version 19 (QS 05.10.2026): Stable-Gate-Urteil, Deckel-Texte und
+  // Hinweis-Marken — eine Quelle für Client und Webapp.
+  "lib/stableGate.ts",
+  "lib/landungsUrteil.ts",
+  // Gleichheitstest: dieselben Fälle und Erwartungen auf beiden Seiten.
+  "lib/landungsFaelle.ts",
 ];
 
 /**

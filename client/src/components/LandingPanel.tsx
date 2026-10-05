@@ -46,7 +46,8 @@ import {
   SOLLBAND_TOLERANZ_FPM,
 } from "../lib/anflugSollband";
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
-import { gateAus, gateGruende, gateUrteil, type GatePunkt } from "../lib/stableGate";
+import { gateAus, gateGruende, gateMarke, gateUrteil, type GatePunkt } from "../lib/stableGate";
+import { deckelText, landungsMarkenV19 } from "../lib/landungsUrteil";
 
 // ---- Types (mirror storage::LandingRecord on the Rust side) -------------
 
@@ -905,43 +906,6 @@ function fmtDeDe(v: number, digits = 0): string {
  *  The `default` arm is a pure safety net for a label the backend might add
  *  later — it must never be reached with today's five values, and it
  *  deliberately does NOT reintroduce a second threshold ladder. */
-/** Deckel-Gruende der Gesamtnote mit eigenem Text (`landing.deckel.*`).
- *  „anflug_partial"/„anflug_unstable" stammen aus Score-Version 17 (nur die
- *  Achse gedeckelt), die `_gesamt`-Gruende ab 18 (Gesamtnote ≤ 80 / ≤ 45).
- *  `i18nSchluessel.test.ts` haelt die Liste gegen den Rust-Quelltext. */
-export const DECKEL_MIT_TEXT: ReadonlySet<string> = new Set([
-  "harte_landung",
-  "ueberlast",
-  "anflug_partial",
-  "anflug_unstable",
-  "anflug_partial_gesamt",
-  "anflug_unstable_gesamt",
-  "anflug_nicht_gemessen",
-  // Score-Version 19: gefährliche Ereignisse (höchstens 40).
-  "vor_der_schwelle",
-  "overrun",
-  "neben_der_bahn",
-  "mehrfach_hopser",
-]);
-
-/** Text zum Deckel-Grund der Gesamtnote. Ab Score-Version 19 nennen
- *  `teil_mittel_<achse>` / `teil_schlecht_<achse>` den Teil, der die Note
- *  begrenzt hat — ein Satz mit Platzhalter statt einer Zeile je Achse.
- *  `null` für unbekannte Gründe (dann keine Zeile statt eines rohen
- *  Schlüssels). */
-export function deckelText(
-  t: (k: string, o?: Record<string, unknown>) => string,
-  grund: string,
-): string | null {
-  if (DECKEL_MIT_TEXT.has(grund)) return t(`landing.deckel.${grund}`);
-  const m = /^teil_(mittel|schlecht)(?:_([a-z_]+))?$/.exec(grund);
-  if (!m) return null;
-  // Die Bahn-Achse heißt im v2-Pfad „Bahndisziplin" (label_key).
-  const achse = m[2] === "rollout" ? "runway_discipline" : m[2];
-  const teil = achse ? t(`landing.sub.${achse}`) : t("landing.deckel.ein_teil");
-  return t(`landing.deckel.teil_${m[1]}`, { teil });
-}
-
 export function recordCategory(r: LandingRecord): LandingCategory | null {
   // Ohne Bewertung gibt es keine Kategorie.
   //
@@ -2089,88 +2053,86 @@ function QuickFlags({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
   const flags: { label: string; tone: "warn" | "err" }[] = [];
 
-  // HARD LANDING — V/S oder Peak-G erreichen Hard/Severe-Schwellen
-  // (gespiegelt aus landingScoring.ts T_VS_HARD_FPM / T_G_HARD).
-  // v0.20.0: ueber scoreBasisVs() statt handkopierter Kaskade (siehe oben).
-  // v0.12.3 (LE9): G-Flag auf dem gescorten (EMA) Wert, nicht dem Roh-Peak.
-  const peakVs = scoreBasisVs(record);
-  const gForFlag = scoreG(record) ?? 0;
-  // Ohne gemessene Sinkrate gibt es auch kein "hart" — die Landung war
-  // vielleicht hart, wir wissen es nur nicht.
-  const isHardVs = peakVs != null && Math.abs(peakVs) >= 600;
-  const isHardG = gForFlag >= 1.7;
-  if (isHardVs || isHardG) {
-    const severe = (peakVs != null && Math.abs(peakVs) >= 1000) || gForFlag >= 2.1;
-    flags.push({
-      label: severe ? t("landing.flag.severe") : t("landing.flag.hard"),
-      tone: "err",
-    });
-  }
-
-  // BOUNCE × n
-  // v0.8.3 (#8): Auch score-freie Hopser (5-14 ft) zeigen. Seit Lernpaket
-  // AP3 (29.09.2026) sind Forensik- und Wertungsschwelle gleich (5 ft) —
-  // dieser Zweig greift dann nur noch fuer Altdatensaetze. Vorher
-  // landeten 14-ft-Hopser stumm bei bounce_count=0 — Pilot dachte
-  // „nicht erkannt" (Reported 2026-05-14 Adrian, TD #167).
-  //
-  // Drei Faelle:
-  //   bounce_count > 0                            → wie bisher, voller Flag
-  //   bounce_count = 0, forensic_bounce_count > 0 → Light-bounce-Hinweis
-  //   alle 0                                       → kein Flag
   // Ohne gemessenes Aufsetzfenster kein Hopser-Flag: Ein Hopser zwischen
   // zwei fehlenden Proben bleibt unsichtbar, und "0 Hopser" läse sich dann
   // als saubere Landung (Prüfbefund 13.09.2026).
   const hopserGemessen = fensterWerteGueltig(record);
-  if (hopserGemessen && record.bounce_count > 0) {
-    flags.push({
-      label: `${t("landing.flag.bounce")} × ${record.bounce_count}`,
-      tone: record.bounce_count >= 2 ? "err" : "warn",
-    });
-  } else if (hopserGemessen && (record.forensic_bounce_count ?? 0) > 0) {
-    const heightFt = record.bounce_max_agl_ft != null
-      ? Math.round(record.bounce_max_agl_ft)
-      : null;
-    flags.push({
-      label: heightFt != null
-        ? t("landing.flag.bounce_light_with_height", { ft: heightFt })
-        : t("landing.flag.bounce_light"),
-      tone: "warn",
-    });
-  }
 
-  // Score-Version 19: Mittellinie, Anflug und gefährliche Ereignisse aus
-  // den eingefrorenen Teilnoten bzw. dem Deckel — keine eigenen Grenzen.
+  // Score-Version 19 (QS 05.10.2026): alle Marken aus lib/landungsUrteil.ts —
+  // dieselbe Datei erzeugt sie in der Webapp. Gelesen wird nur, was die
+  // Bewertung eingefroren hat; keine eigenen Grenzen.
   const gate = gateAus(record.sub_scores);
-  const ausrichtung = record.sub_scores?.find((x) => x.key === "alignment" && !x.skipped);
-  const gefahr = record.score_deckel;
-  if (gefahr === "vor_der_schwelle" || gefahr === "overrun" || gefahr === "neben_der_bahn") {
-    flags.push({ label: t(`landing.flag.${gefahr}`), tone: "err" });
-  }
+  if (gate != null || (record.score_algorithm_version ?? 0) >= 19) {
+    flags.push(
+      ...landungsMarkenV19(
+        {
+          subs: record.sub_scores ?? [],
+          deckel: record.score_deckel,
+          urteil: gateUrteil(gate, gateMarke(record.sub_scores)),
+          bounceCount: hopserGemessen ? record.bounce_count : 0,
+          forensicBounceCount: hopserGemessen ? record.forensic_bounce_count : 0,
+          bounceMaxAglFt: record.bounce_max_agl_ft,
+        },
+        t,
+      ),
+    );
+  } else {
+    // Altbestand (vor Score-Version 19) bleibt, wie er war.
+    // HARD LANDING — V/S oder Peak-G erreichen Hard/Severe-Schwellen
+    // (gespiegelt aus landingScoring.ts T_VS_HARD_FPM / T_G_HARD).
+    // v0.20.0: ueber scoreBasisVs() statt handkopierter Kaskade (siehe oben).
+    // v0.12.3 (LE9): G-Flag auf dem gescorten (EMA) Wert, nicht dem Roh-Peak.
+    const peakVs = scoreBasisVs(record);
+    const gForFlag = scoreG(record) ?? 0;
+    // Ohne gemessene Sinkrate gibt es auch kein "hart" — die Landung war
+    // vielleicht hart, wir wissen es nur nicht.
+    const isHardVs = peakVs != null && Math.abs(peakVs) >= 600;
+    const isHardG = gForFlag >= 1.7;
+    if (isHardVs || isHardG) {
+      const severe = (peakVs != null && Math.abs(peakVs) >= 1000) || gForFlag >= 2.1;
+      flags.push({
+        label: severe ? t("landing.flag.severe") : t("landing.flag.hard"),
+        tone: "err",
+      });
+    }
 
-  // OFF-CENTERLINE — ab v19 aus der Ausrichtungs-Note (unter 75 Punkte),
-  // vorher > 5 m vom Centerline weg.
-  if (
-    gate || ausrichtung
-      ? ausrichtung != null && (ausrichtung.points ?? ausrichtung.score) < 75
-      : record.runway_match && Math.abs(record.runway_match.centerline_distance_m) > 5
-  ) {
-    flags.push({
-      label: t("landing.flag.off_centerline"),
-      tone: "warn",
-    });
-  }
+    // BOUNCE × n
+    // v0.8.3 (#8): Auch score-freie Hopser (5-14 ft) zeigen. Drei Faelle:
+    //   bounce_count > 0                            → voller Flag
+    //   bounce_count = 0, forensic_bounce_count > 0 → Light-bounce-Hinweis
+    //   alle 0                                       → kein Flag
+    if (hopserGemessen && record.bounce_count > 0) {
+      flags.push({
+        label: `${t("landing.flag.bounce")} × ${record.bounce_count}`,
+        tone: record.bounce_count >= 2 ? "err" : "warn",
+      });
+    } else if (hopserGemessen && (record.forensic_bounce_count ?? 0) > 0) {
+      const heightFt = record.bounce_max_agl_ft != null
+        ? Math.round(record.bounce_max_agl_ft)
+        : null;
+      flags.push({
+        label: heightFt != null
+          ? t("landing.flag.bounce_light_with_height", { ft: heightFt })
+          : t("landing.flag.bounce_light"),
+        tone: "warn",
+      });
+    }
 
-  // ANFLUG — ab v19 das Stable-Gate-Urteil des Datensatzes; vorher
-  // σ V/S > 400 (Score-Lib-Schwelle für "bad").
-  const urteil = gateUrteil(gate);
-  if (gate ? urteil === "unstable" : (record.approach_vs_stddev_fpm ?? 0) > 400) {
-    flags.push({
-      label: t("landing.flag.unstable_approach"),
-      tone: gate ? "err" : "warn",
-    });
-  } else if (urteil === "partial") {
-    flags.push({ label: t("landing.flag.partly_stable_approach"), tone: "warn" });
+    // OFF-CENTERLINE — > 5 m vom Centerline weg.
+    if (record.runway_match && Math.abs(record.runway_match.centerline_distance_m) > 5) {
+      flags.push({
+        label: t("landing.flag.off_centerline"),
+        tone: "warn",
+      });
+    }
+
+    // UNSTABLE APPROACH — σ V/S > 400 (Score-Lib-Schwelle für "bad").
+    if ((record.approach_vs_stddev_fpm ?? 0) > 400) {
+      flags.push({
+        label: t("landing.flag.unstable_approach"),
+        tone: "warn",
+      });
+    }
   }
 
   if (flags.length === 0) return null;
@@ -2832,7 +2794,7 @@ export function LandingReport({
               {reportGate && (
                 <ReportTile
                   label={t("landing.approach_stability_card.title")}
-                  value={t(`landing.approach_stability_card.pill_${gateUrteil(reportGate) ?? "stable"}`)}
+                  value={t(`landing.approach_stability_card.pill_${gateUrteil(reportGate, gateMarke(record.sub_scores)) ?? "stable"}`)}
                 />
               )}
               {reportGate?.find((p) => p.key === "gleitpfad")?.wert != null && (
@@ -3783,6 +3745,7 @@ export function LandingDetail({
         simKind={record.sim_kind}
         glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
         gate={gateAus(record.sub_scores)}
+        marke={gateMarke(record.sub_scores)}
       />
       {/* Lernpaket AP4/AP5: Gleitpfad + Anflugruhe als Info-Zeilen,
           ohne Note und ohne Farbband. */}
@@ -3833,7 +3796,10 @@ export function LandingDetail({
           Approach-Stability. Nur sichtbar wenn die 50-Hz-Forensik-Felder
           gefuellt sind (= v0.5.39+ Sampler hat den Buffer-Dump geschafft).
           Pre-v0.5.39 PIREPs zeigen die Section nicht. */}
-      {record.flare_quality_score != null && (
+      {(record.peak_vs_pre_flare_fpm != null ||
+        record.vs_at_flare_end_fpm != null ||
+        record.flare_reduction_fpm != null ||
+        record.flare_dvs_dt_fpm_per_sec != null) && (
         <section className="landing-section landing-section--flare">
           <h3>
             {t("landing.flare_section")}
@@ -3849,19 +3815,9 @@ export function LandingDetail({
             )}
           </h3>
           <div className="landing-flare">
-            <div className="landing-flare__score">
-              {/* Score-Version 19: kein Teil der Note — keine Ampel, keine
-                  Punkte-Aufschlüsselung, nur der Wert zur Einordnung. */}
-              <div className="landing-flare__score-num">
-                {record.flare_quality_score}
-              </div>
-              <div className="landing-flare__score-label">
-                {t("landing.flare_score")}
-              </div>
-              <div className="landing-flare__score-hint">
-                {t("landing.flare_score_hint")}
-              </div>
-            </div>
+            {/* Score-Version 19: kein Teil der Note — die frühere
+                Flare-Zahl 0–100 ist entfallen (sah aus wie eine Note,
+                die Webapp zeigt sie nicht). Nur die Messwerte. */}
             <dl className="landing-keyvals landing-flare__metrics">
               {record.peak_vs_pre_flare_fpm != null && (
                 <div title={t("landing.flare_pre_vs_hint") ?? undefined}>
@@ -3936,9 +3892,11 @@ export function LandingDetail({
               2-Spalten-Grid auf breiten Screens (≥ 720 px Card-Breite,
               CSS minmax sorgt für auto-fit). Auf schmalen Screens
               stapeln sich die zwei Cards automatisch untereinander. So
-              entsteht klarer Rhythmus: 2 kompakte Cards oben, 1 Hero-
-              Score-Card (LoadsheetScore) unten — keine endlose vertikale
-              Liste mehr, kein „Klotz"-Effekt. */}
+              entsteht klarer Rhythmus statt einer endlosen vertikalen
+              Liste. Score-Version 19: die frühere „Plan-Treue"-Karte mit
+              eigener 0–100-Zahl ist entfallen — sie war keine Note der
+              Bewertung, sah aber wie eine aus; die Abweichungen stehen in
+              den Tabellen hier. */}
           <div
             style={{
               display: "grid",
@@ -4001,297 +3959,8 @@ export function LandingDetail({
               ]}
             />
           </div>
-          <LoadsheetScore record={record} />
         </section>
       )}
-    </div>
-  );
-}
-
-// ---- Loadsheet-Bewertung (v0.3.0) ----------------------------------------
-//
-// Numerischer Score 0-100 basierend auf Abweichungen Plan vs. IST. Nicht
-// blockierend — nur Information für den Piloten ("nächstes Mal weniger
-// Reserve-Sprit"). Score wird auch im PIREP-Custom-Field gepostet.
-//
-// Algorithmus:
-// - Start bei 100
-// - Pro Wert (Block-Fuel, ZFW, TOW, LDW): Δ > 5 % → -5 Punkte
-// - Pro Wert: Δ > 10 % → -15 Punkte (additiv: also bei 12% sind's -20)
-// - Niemals < 0
-// - Wenn keine Plan-Werte vorhanden, kein Score (komplette Sektion blendet aus)
-
-interface LoadsheetScoreInput {
-  block_fuel_kg: number | null;
-  takeoff_weight_kg: number | null;
-  landing_weight_kg: number | null;
-  takeoff_fuel_kg: number | null;
-  planned_block_fuel_kg: number | null;
-  planned_tow_kg: number | null;
-  planned_ldw_kg: number | null;
-  planned_zfw_kg: number | null;
-}
-
-function LoadsheetScore({ record }: { record: LoadsheetScoreInput }) {
-  const { t } = useTranslation();
-
-  // Berechne Δ% für jeden vergleichbaren Wert.
-  const items = [
-    {
-      label: "Block-Fuel",
-      ist: record.block_fuel_kg,
-      soll: record.planned_block_fuel_kg,
-    },
-    {
-      label: "TOW",
-      ist: record.takeoff_weight_kg,
-      soll: record.planned_tow_kg,
-    },
-    {
-      label: "LDW",
-      ist: record.landing_weight_kg,
-      soll: record.planned_ldw_kg,
-    },
-    {
-      label: "ZFW",
-      ist:
-        record.takeoff_weight_kg != null && record.takeoff_fuel_kg != null
-          ? record.takeoff_weight_kg - record.takeoff_fuel_kg
-          : null,
-      soll: record.planned_zfw_kg,
-    },
-  ];
-
-  // Nur Items mit beidem vergleichbar.
-  const comparable = items.filter(
-    (i) => i.ist != null && i.soll != null && i.soll > 0,
-  );
-
-  if (comparable.length === 0) return null; // Kein Plan → keine Bewertung
-
-  // Score berechnen + Penalty-Liste sammeln für Anzeige.
-  let score = 100;
-  const breakdown: Array<{ label: string; pct: number; penalty: number }> = [];
-  for (const item of comparable) {
-    const ist = item.ist!;
-    const soll = item.soll!;
-    const pct = Math.abs((ist - soll) / soll) * 100;
-    let penalty = 0;
-    if (pct > 10) penalty += 15;
-    else if (pct > 5) penalty += 5;
-    score -= penalty;
-    breakdown.push({ label: item.label, pct, penalty });
-  }
-  score = Math.max(0, score);
-
-  // v0.11.0-dev: Score-Farbe als hex statt CSS-Klasse — wird sowohl im
-  // Donut-Ring (SVG-stroke) als auch im Center-Label gebraucht, dort per
-  // String-Suffix (`${scoreColor}12` etc.) zu einer Alpha-Variante
-  // verlängert — das geht nur mit echten Hex-Strings, nicht mit
-  // var(--token). Redesign: war ein einziger Wert je Stufe (Dunkel-
-  // Werte), unter 4.5:1 im Hellmodus (bis 1.82:1). Jetzt derselbe
-  // dataset.theme-Check wie in FlightProfile.tsx/LiveMapView.tsx/
-  // LogbookView.tsx — beide Sätze einzeln gegen --surface-2 auf
-  // >=4.5:1 verifiziert (tools/contrast.py).
-  const isDark = document.documentElement.dataset.theme === "dark";
-  const scoreColor = isDark
-    ? score >= 90
-      ? "#22c55e"
-      : score >= 70
-        ? "#eab308"
-        : "#ef4444"
-    : score >= 90
-      ? "#15803d"
-      : score >= 70
-        ? "#a16207"
-        : "#dc2626";
-  // War rgba(255,255,255,0.08) — ein Weiss-Schleier, der im Hellmodus zur
-  // Wirkungslosigkeit verblasst (Weiss auf Weiss). --line ist in beiden
-  // Themes als sichtbare, aber dezente Trennfarbe abgestimmt.
-  const ringBg = isDark
-    ? "rgba(255,255,255,0.08)"
-    : "rgba(15,23,42,0.08)";
-
-  // Donut-Ring-Geometrie. Radius 36 in einem 80×80-Viewport (= 8 PX margin)
-  // mit 8 PX stroke-width. Circumference = 2π·r.
-  const RING_R = 36;
-  const RING_CIRC = 2 * Math.PI * RING_R;
-  const ringFilled = (score / 100) * RING_CIRC;
-
-  return (
-    <div
-      className="loadsheet-score loadsheet-score--hero"
-      style={{
-        marginTop: "1rem",
-        // Gradient-Background statt Flat-Color, plus subtler farbiger Glow
-        // im Score-Band — gibt der Hero-Card mehr „Premium"-Anmutung ohne
-        // aus dem Dark-Theme zu fallen.
-        background: `linear-gradient(135deg, ${scoreColor}12, ${scoreColor}04 60%, transparent), var(--surface-2)`,
-        border: `1px solid ${scoreColor}3a`,
-        borderLeft: `4px solid ${scoreColor}`,
-        borderRadius: 12,
-        padding: "16px 18px",
-        display: "grid",
-        gridTemplateColumns: "auto 1fr",
-        gap: 18,
-        alignItems: "center",
-        boxShadow: `0 0 24px ${scoreColor}14, inset 0 1px 0 rgba(255,255,255,0.04)`,
-      }}
-    >
-      {/* SVG-Donut mit Score in der Mitte. Mount-Animation via
-          stroke-dashoffset: Start vom leeren Ring, animiert in 0.7 s
-          auf den finalen Score-Wert — sieht modern aus, kostet nichts. */}
-      <div
-        style={{
-          position: "relative",
-          width: 92,
-          height: 92,
-          flexShrink: 0,
-          filter: `drop-shadow(0 0 8px ${scoreColor}40)`,
-        }}
-      >
-        <svg
-          width={92}
-          height={92}
-          viewBox="0 0 92 92"
-          style={{ transform: "rotate(-90deg)" }}
-        >
-          <defs>
-            <linearGradient
-              id={`donut-grad-${score}`}
-              x1="0%"
-              y1="0%"
-              x2="100%"
-              y2="100%"
-            >
-              <stop offset="0%" stopColor={scoreColor} stopOpacity={1} />
-              <stop offset="100%" stopColor={scoreColor} stopOpacity={0.7} />
-            </linearGradient>
-          </defs>
-          <circle
-            cx={46}
-            cy={46}
-            r={RING_R}
-            fill="none"
-            stroke={ringBg}
-            strokeWidth={8}
-          />
-          <circle
-            cx={46}
-            cy={46}
-            r={RING_R}
-            fill="none"
-            stroke={`url(#donut-grad-${score})`}
-            strokeWidth={8}
-            strokeLinecap="round"
-            strokeDasharray={RING_CIRC}
-            strokeDashoffset={RING_CIRC - ringFilled}
-            style={{
-              transition:
-                "stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-          />
-        </svg>
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            color: scoreColor,
-            fontWeight: 700,
-            lineHeight: 1,
-          }}
-        >
-          <span
-            style={{
-              fontSize: "1.65rem",
-              fontVariantNumeric: "tabular-nums",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {score}
-          </span>
-          <span
-            style={{
-              fontSize: "0.62rem",
-              fontWeight: 500,
-              opacity: 0.7,
-              marginTop: 3,
-              letterSpacing: "0.04em",
-            }}
-          >
-            / 100
-          </span>
-        </div>
-      </div>
-
-      {/* Title + Breakdown-Pills */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: "0.74rem",
-            fontWeight: 700,
-            color: "var(--text-muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-          }}
-        >
-          <span>📋</span>
-          <span>{t("landing.loadsheet_score")}</span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-          }}
-        >
-          {breakdown.map((b) => {
-            const pillColor =
-              b.pct < 5 ? "#22c55e" : b.pct < 10 ? "#eab308" : "#ef4444";
-            const pillIcon = b.pct < 5 ? "✓" : b.pct < 10 ? "⚠" : "✕";
-            const pctText =
-              b.pct >= 0.05 ? `${b.pct.toFixed(1)}%` : "0%";
-            return (
-              <span
-                key={b.label}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 7,
-                  padding: "4px 11px",
-                  borderRadius: 999,
-                  background: `${pillColor}1c`,
-                  border: `1px solid ${pillColor}50`,
-                  fontSize: "0.78rem",
-                  fontVariantNumeric: "tabular-nums",
-                  color: "var(--text)",
-                  boxShadow: `0 0 0 1px ${pillColor}10`,
-                }}
-              >
-                <span style={{ color: pillColor, fontWeight: 700, fontSize: "0.72rem" }}>
-                  {pillIcon}
-                </span>
-                <span style={{ fontWeight: 600 }}>{b.label}</span>
-                <span style={{ opacity: 0.72, fontSize: "0.74rem" }}>
-                  {pctText}
-                </span>
-                {b.penalty > 0 && (
-                  <span style={{ color: pillColor, fontWeight: 700 }}>
-                    −{b.penalty}
-                  </span>
-                )}
-              </span>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }

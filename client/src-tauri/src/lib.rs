@@ -42636,7 +42636,12 @@ fn bahn_upgrade_anwenden(flight: &ActiveFlight, stats: &mut FlightStats) -> bool
     // Das Drittel haengt an der Bahn — hier genauso wie beim Nachholen.
     drittel_nachfuehren(stats);
     // Lernpaket AP4 (QS 29.09.2026, Befund 2): die Forensik folgt der Bahn.
-    // Nur Forensik — kein Einfluss auf Revision, Nachtrag oder Note.
+    // Kein Einfluss auf Revision oder Nachtrag. Seit Score-Version 19 aber
+    // auf die Note: der Gleitpfad (gesamt.mittel_abs_dots) ist eine Pruefung
+    // des Stable Gate. Ein Bahnwechsel nach dem Aufsetzen kann das Urteil im
+    // Live-Touchdown (`approach_stable_at_gate`) vom spaeteren PIREP-Urteil
+    // abweichen lassen; Record und PIREP rechnen danach und tragen das
+    // richtige (QS 05.10.2026).
     if anflug_forensik_bahn_kennung(stats) != forensik_bahn_vorher {
         anflug_forensik_nachziehen(stats, flight);
     }
@@ -60266,6 +60271,70 @@ mod touch_and_go_go_around_tests {
         stats.approach_bank_stddev_filtered_deg = Some(1.0);
         let a = scoring_eingang(&stats, None, None, None).anflug;
         assert_eq!(a.bank_stddev_deg, Some(1.0), "v2 gewinnt");
+    }
+
+    /// Score-Version 19 (QS 05.10.2026): `approach_stable_at_gate` im
+    /// Payload ist dasselbe Urteil wie in der Note — vorher eine eigene,
+    /// lockerere Pruefung (GSG1709: Payload „stabil", Note „teilweise").
+    #[test]
+    fn stable_at_gate_ist_das_urteil_der_note() {
+        let mut stats = FlightStats::default();
+        assert_eq!(anflug_stabil_am_gate(&stats), None, "nichts gemessen");
+        stats.approach_vs_jerk_fpm = Some(20.0);
+        stats.approach_bank_stddev_deg = Some(1.0);
+        stats.approach_ias_stddev_kt = Some(1.0);
+        stats.approach_excessive_sink = Some(false);
+        stats.approach_stable_config = Some(true);
+        stats.anflug_forensik.gleitpfad = Some(landing_scoring::anflug_forensik::AnflugGleitpfad {
+            gesamt: Some(landing_scoring::anflug_forensik::GleitpfadTor {
+                mittel_abs_dots: 0.24,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert_eq!(anflug_stabil_am_gate(&stats), Some(true), "GSG1709");
+        // QAF434: Gleitpfad 1,69 Dots → teilweise → nicht stabil.
+        stats
+            .anflug_forensik
+            .gleitpfad
+            .as_mut()
+            .unwrap()
+            .gesamt
+            .as_mut()
+            .unwrap()
+            .mittel_abs_dots = 1.69;
+        assert_eq!(anflug_stabil_am_gate(&stats), Some(false), "QAF434");
+        assert_eq!(
+            landing_scoring::anflug_urteil::anflug_urteil(&anflug_werte(&stats)),
+            Some(landing_scoring::anflug_urteil::AnflugUrteil::Partial)
+        );
+    }
+
+    /// Das Wort im phpVMS-Feld beschreibt die Gesamtnote (gleiche Schwellen
+    /// wie die Kategorie), nicht den Touchdown.
+    #[test]
+    fn gesamtnote_wort_folgt_den_schwellen() {
+        assert_eq!(gesamtnote_wort(100), "excellent");
+        assert_eq!(gesamtnote_wort(88), "excellent");
+        assert_eq!(gesamtnote_wort(87), "good");
+        assert_eq!(gesamtnote_wort(75), "good");
+        assert_eq!(gesamtnote_wort(74), "sufficient");
+        assert_eq!(gesamtnote_wort(50), "sufficient");
+        assert_eq!(gesamtnote_wort(45), "poor");
+        assert_eq!(gesamtnote_wort(14), "insufficient");
+        for n in [0, 14, 15, 49, 50, 74, 75, 87, 88, 100] {
+            // Gleiche Stufe wie die Kategorie-Kennung.
+            let k = aggregate_score_label(n as u8);
+            let w = gesamtnote_wort(n);
+            let erwartet = match k {
+                "smooth" => "excellent",
+                "acceptable" => "good",
+                "firm" => "sufficient",
+                "hard" => "poor",
+                _ => "insufficient",
+            };
+            assert_eq!(w, erwartet, "{n}");
+        }
     }
 
     /// Hubschrauber/Wasserflugzeug: kein Anflug-Urteil, keine Stabilitaets-

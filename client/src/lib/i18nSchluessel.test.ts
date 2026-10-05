@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { DECKEL_MIT_TEXT, deckelText } from "../components/LandingPanel";
+import { DECKEL_MIT_TEXT, deckelText } from "./landungsUrteil";
 
 /**
  * Jeder Schlüssel, den die Bewertung erzeugt, braucht in ALLEN drei
@@ -99,7 +99,7 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
     const fehlend = [...new Set(deckel)].filter(
       (k) => !DECKEL_MIT_TEXT.has(k) && deckelText((x) => x, k) == null,
     );
-    expect(fehlend, "Grund fehlt in DECKEL_MIT_TEXT (LandingPanel.tsx)").toEqual([]);
+    expect(fehlend, "Grund fehlt in DECKEL_MIT_TEXT (lib/landungsUrteil.ts)").toEqual([]);
   });
 
   for (const code of SPRACHEN) {

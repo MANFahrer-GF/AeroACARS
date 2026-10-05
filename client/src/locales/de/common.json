@@ -165,7 +165,6 @@
     "trip_burn": "Trip Burn",
     "zfw": "ZFW",
     "no_plan_hint": "Keine SOLL-Werte verfügbar — für diesen Flug wurde kein SimBrief-OFP geladen. Achte beim nächsten Flug auf den Activity-Log-Eintrag „SimBrief OFP geladen“ beim Start; fehlt der, hatte der Bid keinen Plan oder der Fetch schlug fehl.",
-    "loadsheet_score": "Plan-Treue (keine Note)",
     "score_breakdown": "Score-Aufschlüsselung",
     "coach_title": "Worauf du beim nächsten Anflug achten kannst",
     "trend": "Trend",
@@ -195,7 +194,7 @@
     "sub": {
       "landing_rate": "Sinkrate",
       "g_force": "G-Kraft",
-      "bounces": "Bounce-Qualität",
+      "bounces": "Hopser",
       "stability": "Anflug-Stabilität",
       "rollout": "Bahn-Auslastung",
       "fuel": "OFP-Treue",
@@ -540,8 +539,6 @@
     "forensics_section": "Touchdown-Forensik (50 Hz)",
     "forensics_unavailable": "Forensik-Buffer nicht verfügbar (Pre-v0.5.39 oder Sample-Lücke)",
     "flare_section": "Flare-Qualität",
-    "flare_score": "Abfangbogen (keine Note)",
-    "flare_score_hint": "Zur Einordnung: Sinkrate am Ende des Abfangens plus Bonus fürs Verringern. Zählt nicht zur Landebewertung.",
     "flare_breakdown": "Endsink {{vs}} fpm → {{ep}} Pkt · Reduktion {{red}} fpm → +{{bonus}} Pkt",
     "flare_reduction": "Sinkraten-Reduktion",
     "flare_reduction_hint": "Wieviel der Pilot die Sinkrate vor TD reduziert hat (positiv = Flare hat geholfen)",
@@ -926,7 +923,7 @@
       },
       "pill": {
         "heading": "Die STABLE-GATE-Pill",
-        "body": "✓ STABLE = alle sieben Kennzahlen im grünen Band. ⚠ PARTIAL = 1–2 Werte außerhalb, davon höchstens einer rot. ✗ UNSTABLE = zwei Werte rot oder drei und mehr außerhalb. Folge für die Note: bei PARTIAL höchstens 80, bei UNSTABLE höchstens 45 Punkte gesamt — ein guter Touchdown gleicht das nicht aus. In der Realität wäre ein UNSTABLE-Approach ein Go-Around-Kandidat."
+        "body": "✓ STABLE = alle sechs Prüfungen gut. ⚠ PARTIAL = 1–2 Prüfungen außerhalb, davon höchstens eine schlecht. ✗ UNSTABLE = zwei Prüfungen schlecht oder drei und mehr außerhalb. Folge für die Note: bei PARTIAL höchstens 80, bei UNSTABLE höchstens 45 Punkte gesamt — ein guter Touchdown gleicht das nicht aus. In der Realität wäre ein UNSTABLE-Approach ein Go-Around-Kandidat."
       },
       "tiles": {
         "vs_jerk": {
@@ -1069,6 +1066,21 @@
       "teil_schlecht": "Gedeckelt auf höchstens 60 Punkte: {{teil}} war schlecht. Die Gesamtnote ist nie besser, als der schwächste Teil erlaubt.",
       "teil_mittel": "Gedeckelt auf höchstens 80 Punkte: {{teil}} war nur mittel. Die Gesamtnote ist nie besser, als der schwächste Teil erlaubt.",
       "ein_teil": "ein Teil der Landung"
+    },
+    "deckel_kurz": {
+      "harte_landung": "Gedeckelt: max. 40 (ab 1,75 g)",
+      "ueberlast": "Gedeckelt: max. 14 (ab 2,6 g)",
+      "anflug_partial": "Anflug nur teilweise stabil",
+      "anflug_unstable": "Anflug instabil",
+      "anflug_partial_gesamt": "Gedeckelt: max. 80 (Anflug teilweise stabil)",
+      "anflug_unstable_gesamt": "Gedeckelt: max. 45 (Anflug instabil)",
+      "anflug_nicht_gemessen": "Gedeckelt: max. 97 (Anflug nicht gemessen)",
+      "vor_der_schwelle": "Gedeckelt: max. 40 (vor der Schwelle)",
+      "overrun": "Gedeckelt: max. 40 (Overrun)",
+      "neben_der_bahn": "Gedeckelt: max. 40 (neben der Bahn)",
+      "mehrfach_hopser": "Gedeckelt: max. 40 (mehrere Hopser)",
+      "teil_mittel": "Gedeckelt: max. 80 ({{teil}})",
+      "teil_schlecht": "Gedeckelt: max. 60 ({{teil}})"
     },
     "gesamt": {
       "smooth": "hervorragend",

@@ -39,7 +39,7 @@ const qaf434: GatePunkt[] = [
 
 describe("ApproachStabilityCard mit Prüfliste (Score-Version 19)", () => {
   it("QAF434: teilweise stabil, und der Grund steht da", () => {
-    render(<ApproachStabilityCard sampleCount={90} gate={qaf434} />);
+    render(<ApproachStabilityCard sampleCount={90} gate={qaf434} marke="anflug_partial" />);
     expect(screen.getByText("⚠ PARTIAL")).toBeTruthy();
     const gruende = screen.getByTestId("gate-gruende").textContent ?? "";
     expect(gruende).toContain("Gleitpfad: im Schnitt 1,69 Dots daneben (gut unter 1)");
@@ -59,8 +59,8 @@ describe("ApproachStabilityCard mit Prüfliste (Score-Version 19)", () => {
     expect(screen.queryByTestId("gate-gruende")).toBeNull();
   });
 
-  it("Urteil kommt aus der Prüfliste, nicht aus den alten Feldern", () => {
-    // Alte Felder würden UNSTABLE ergeben — die Prüfliste sagt STABLE.
+  it("Urteil kommt aus der Marke der Note, nicht aus den alten Feldern", () => {
+    // Alte Felder würden UNSTABLE ergeben — die Note sagt STABLE (keine Marke).
     render(
       <ApproachStabilityCard
         sampleCount={90}
@@ -71,5 +71,12 @@ describe("ApproachStabilityCard mit Prüfliste (Score-Version 19)", () => {
       />,
     );
     expect(screen.getByText("✓ STABLE GATE")).toBeTruthy();
+  });
+
+  it("die Karte zählt nicht selbst — UNSTABLE nur, wenn die Note es sagt", () => {
+    // Eine mittlere Prüfung, aber die eingefrorene Marke sagt „instabil":
+    // die Karte folgt der Note (eine Zählregel, nur in Rust).
+    render(<ApproachStabilityCard sampleCount={90} gate={qaf434} marke="anflug_unstable" />);
+    expect(screen.getByText(/UNSTABLE/)).toBeTruthy();
   });
 });

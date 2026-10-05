@@ -6686,55 +6686,8 @@ input:disabled {
 }
 
 .landing-flare {
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) 1fr;
-  gap: 1.5rem;
-  align-items: center;
-}
-
-@media (max-width: 720px) {
-  .landing-flare {
-    grid-template-columns: 1fr;
-  }
-}
-
-.landing-flare__score {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding: 1.25rem 0.5rem;
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.025));
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-}
-
-.landing-flare__score-num {
-  font-size: 3.5rem;
-  font-weight: 800;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.landing-flare__score-num[data-band="good"] { color: var(--sem-ok); }
-.landing-flare__score-num[data-band="ok"]   { color: var(--sem-warn); }
-.landing-flare__score-num[data-band="bad"]  { color: var(--sem-danger); }
-
-.landing-flare__score-label {
-  margin-top: 0.4rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.landing-flare__score-hint {
-  margin-top: 0.45rem;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-  max-width: 220px;
+  /* Score-Version 19: nur noch die Messwerte (die Flare-Zahl ist entfallen). */
+  display: block;
 }
 
 .landing-flare__metrics {

@@ -31,7 +31,15 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApproachStabilityHelpModal } from "./ApproachStabilityHelpModal";
-import { GATE_STELLEN, gateGruende, gateUrteil, type GatePunkt } from "../lib/stableGate";
+import {
+  gateEinheit,
+  gateGrundTitel,
+  gateGruende,
+  gateLabel,
+  gateUrteil,
+  gateWert,
+  type GatePunkt,
+} from "../lib/stableGate";
 
 type Band = "good" | "ok" | "bad" | "missing";
 
@@ -61,6 +69,9 @@ interface Props {
    *  Karte rechnet nichts nach. Fehlt sie (ältere Landungen), bleibt die
    *  bisherige Darstellung mit sieben Kacheln. */
   gate?: GatePunkt[] | null;
+  /** Marke der Stabilitätsachse (anflug_partial/anflug_unstable) — trägt
+   *  das eingefrorene Urteil; die Karte zählt nichts selbst. */
+  marke?: string | null;
 }
 
 function bandForRange(
@@ -123,7 +134,7 @@ export function ApproachStabilityCard(props: Props) {
   else if (badCount >= 2 || badCount + okCount >= 3) pillKey = "unstable";
   else pillKey = "partial";
   // Neue Landungen: das Urteil aus dem Datensatz, nicht nachgerechnet.
-  if (gate) pillKey = gateUrteil(gate) ?? pillKey;
+  if (gate) pillKey = gateUrteil(gate, props.marke) ?? pillKey;
   const gruende = gate ? gateGruende(t, gate, i18n.language) : [];
 
   const pillColor =
@@ -240,16 +251,9 @@ export function ApproachStabilityCard(props: Props) {
             {gate.map((p) => (
               <Tile
                 key={p.key}
-                label={t(`landing.gate.label.${p.key}`)}
-                value={
-                  p.wert != null
-                    ? p.wert.toLocaleString(i18n.language, {
-                        minimumFractionDigits: GATE_STELLEN[p.key] ?? 1,
-                        maximumFractionDigits: GATE_STELLEN[p.key] ?? 1,
-                      })
-                    : t(`landing.gate.wert.${p.key}_${p.stufe === "gut" ? "ok" : "nein"}`)
-                }
-                unit={p.wert != null ? t(`landing.gate.einheit.${p.key}`) : undefined}
+                label={gateLabel(t, p.key)}
+                value={gateWert(t, p, i18n.language)}
+                unit={gateEinheit(t, p)}
                 band={p.stufe === "gut" ? "good" : p.stufe === "mittel" ? "ok" : "bad"}
               />
             ))}
@@ -259,7 +263,7 @@ export function ApproachStabilityCard(props: Props) {
               data-testid="gate-gruende"
               style={{ fontSize: "0.84rem", marginBottom: 10, lineHeight: 1.45 }}
             >
-              <b>{t("landing.gate.grund_titel")}</b>
+              <b>{gateGrundTitel(t)}</b>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
                 {gruende.map((g) => (
                   <li key={g}>{g}</li>

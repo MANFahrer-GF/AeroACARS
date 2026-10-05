@@ -1701,6 +1701,91 @@ mod tests {
         }
     }
 
+    /// Die Falldatei des Gleichheitstests (client/src/lib/landungsFaelle.ts)
+    /// fuehrt GSG1709 mit 99 Punkten ohne Deckel: Teilnoten aus dem Flug,
+    /// Stabilitaet mit dem v19-Gate (σ 84 fpm / 0,9° → 100). Haelt die
+    /// Zahl dort an der Rechnung hier fest.
+    #[test]
+    fn gsg1709_v19_gesamtnote() {
+        let teil = |key: &str, punkte: u8| {
+            SubScoreEntry::scored(
+                key,
+                "x",
+                punkte,
+                String::new(),
+                "x",
+                band_from_points(punkte),
+            )
+        };
+        let subs = vec![
+            teil("landing_rate", 100),
+            teil("g_force", 100),
+            teil("bounces", 100),
+            teil("stability", 100),
+            teil("rollout", 100),
+            teil("alignment", 100),
+            teil("touchdown_point", 85),
+        ];
+        assert_eq!(master_deckel(&subs), None);
+        assert_eq!(aggregate_master_score(&subs), Some(99));
+    }
+
+    /// Ende zu Ende (QS 05.10.2026): Die Gefahr-Deckel erkennen ihren
+    /// Fall an den Begruendungs-Schluesseln der Teilnoten. Dieser Test
+    /// geht vom Eingang aus — benennt eine Teilnote ihren Schluessel um,
+    /// faellt der Deckel hier auf, nicht erst im Flug.
+    #[test]
+    fn gefahr_deckel_greift_vom_eingang_aus() {
+        // Aufsetzpunkt und Bahndisziplin werden nur auf erkannter Bahn
+        // bewertet — wie im echten Flug.
+        let auf_der_bahn = || LandingScoringInput {
+            airport_source: Some("runway_match".into()),
+            ..voll_besetzter_eingang()
+        };
+        let sauber = compute_sub_scores(&auf_der_bahn());
+        assert_eq!(
+            gefahr_deckel(&sauber),
+            None,
+            "der volle Eingang ist ungefaehrlich"
+        );
+
+        let faelle: [(LandingScoringInput, &str); 3] = [
+            (
+                LandingScoringInput {
+                    bounce_count: Some(2),
+                    ..auf_der_bahn()
+                },
+                GEFAHR_MEHRFACH_HOPSER,
+            ),
+            (
+                LandingScoringInput {
+                    td_distance_from_threshold_m: Some(-40.0),
+                    ..auf_der_bahn()
+                },
+                GEFAHR_VOR_DER_SCHWELLE,
+            ),
+            (
+                LandingScoringInput {
+                    bahn_overrun_m: Some(60.0),
+                    ..auf_der_bahn()
+                },
+                GEFAHR_OVERRUN,
+            ),
+        ];
+        for (eingang, grund) in faelle {
+            let subs = compute_sub_scores(&eingang);
+            assert_eq!(
+                master_deckel(&subs),
+                Some((grund, DECKEL_GEFAHR_PUNKTE)),
+                "{grund}"
+            );
+            assert!(
+                aggregate_master_score(&subs).unwrap() <= DECKEL_GEFAHR_PUNKTE,
+                "{grund}: Gesamtnote ueber dem Deckel"
+            );
+        }
+    }
+
     #[test]
     fn compute_sub_scores_never_emits_flare() {
         let rich = voll_besetzter_eingang();

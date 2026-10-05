@@ -3,6 +3,13 @@
 // landing_scoring::anflug_urteil). Die Oberfläche rechnet das Urteil nicht
 // mehr selbst nach — vorher stand bei GSG1709 „Stabiler Anflug" neben
 // „teilweise stabil", ohne dass irgendwo stand, warum.
+//
+// GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN): Client und
+// Webapp zeigen Urteil, Werte und Gründe aus GENAU dieser Datei. Texte nur
+// über `t()` — die Sprachschlüssel übernimmt der Abgleich mit.
+
+/** Übersetzer, wie `useTranslation().t` ihn liefert. */
+export type Uebersetzer = (k: string, o?: Record<string, unknown>) => string;
 
 export interface GatePunkt {
   /** `gleitpfad` | `fahrt` | `querneigung` | `ruck` | `sinken` | `konfiguration` */
@@ -14,15 +21,27 @@ export interface GatePunkt {
 
 export type GateUrteil = "stable" | "partial" | "unstable";
 
-/** Wie `anflug_urteil::urteil_aus`: alles gut → stable; zwei schlecht oder
- *  drei außerhalb von „gut" → unstable; sonst partial. */
-export function gateUrteil(gate: GatePunkt[] | null | undefined): GateUrteil | null {
+/** Das Urteil, wie der Client es eingefroren hat: die Marke der
+ *  Stabilitätsachse (`warning` bzw. bei übersprungener Achse `reason`).
+ *  Keine eigene Zählregel — die steht nur in `anflug_urteil::urteil_aus`
+ *  (QS 05.10.2026: zwei TS-Kopien hätten bei einer Schwellenänderung in
+ *  Rust still abweichen können). `null` ohne Prüfliste (Altbestand). */
+export function gateUrteil(
+  gate: GatePunkt[] | null | undefined,
+  marke: string | null | undefined,
+): GateUrteil | null {
   if (!gate || gate.length === 0) return null;
-  const schlecht = gate.filter((p) => p.stufe === "schlecht").length;
-  const mittel = gate.filter((p) => p.stufe === "mittel").length;
-  if (schlecht === 0 && mittel === 0) return "stable";
-  if (schlecht >= 2 || schlecht + mittel >= 3) return "unstable";
-  return "partial";
+  if (marke === "anflug_unstable") return "unstable";
+  if (marke === "anflug_partial") return "partial";
+  return "stable";
+}
+
+/** Marke der Stabilitätsachse eines Datensatzes (warning, sonst reason). */
+export function gateMarke(
+  subs: Array<{ key: string; warning?: string | null; reason?: string | null }> | null | undefined,
+): string | null {
+  const s = subs?.find((x) => x.key === "stability");
+  return s?.warning ?? s?.reason ?? null;
 }
 
 /** Nachkommastellen je Prüfung für die Anzeige. */
@@ -43,7 +62,7 @@ function zahl(v: number, stellen: number, lang: string): string {
 /** Begründungen für alles, was nicht „gut" war — in der Reihenfolge des
  *  Gates (Gleitpfad zuerst). Leer bei STABLE. */
 export function gateGruende(
-  t: (k: string, o?: Record<string, unknown>) => string,
+  t: Uebersetzer,
   gate: GatePunkt[] | null | undefined,
   lang: string,
 ): string[] {
@@ -57,6 +76,28 @@ export function gateGruende(
         grenze: p.gut_unter != null ? zahl(p.gut_unter, 0, lang) : "",
       });
     });
+}
+
+/** Beschriftung einer Prüfung (Kachel). */
+export function gateLabel(t: Uebersetzer, key: string): string {
+  return t(`landing.gate.label.${key}`);
+}
+
+/** Einheit einer Prüfung mit Zahl; `undefined` für ja/nein-Prüfungen. */
+export function gateEinheit(t: Uebersetzer, p: GatePunkt): string | undefined {
+  return p.wert != null ? t(`landing.gate.einheit.${p.key}`) : undefined;
+}
+
+/** Wert einer Prüfung für die Kachel: Zahl mit den Stellen der Prüfung
+ *  oder das Wort (ok / zu stark, komplett / nicht komplett). */
+export function gateWert(t: Uebersetzer, p: GatePunkt, lang: string): string {
+  if (p.wert != null) return zahl(p.wert, GATE_STELLEN[p.key] ?? 1, lang);
+  return t(`landing.gate.wert.${p.key}_${p.stufe === "gut" ? "ok" : "nein"}`);
+}
+
+/** Überschrift der Gründe-Liste. */
+export function gateGrundTitel(t: Uebersetzer): string {
+  return t("landing.gate.grund_titel");
 }
 
 /** Die Prüfliste der Stabilitätsachse eines Datensatzes (neu ab v19). */
