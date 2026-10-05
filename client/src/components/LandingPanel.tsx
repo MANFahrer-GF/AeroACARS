@@ -1629,6 +1629,7 @@ export function LandingDetail({
         samples={record.approach_samples}
         profile={record.touchdown_profile}
         glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
+        gleitpfadVerlauf={record.anflug_gleitpfad?.verlauf}
       />
 
       {/* v0.7.8: Sinkrate-Forensik — erklaert dem Piloten warum die

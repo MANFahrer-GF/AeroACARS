@@ -62,6 +62,24 @@ pub struct AnflugGleitpfad {
     /// 500 bis 200 ft ueber der Schwelle.
     #[serde(default)]
     pub tor_500_200: Option<GleitpfadTor>,
+    /// Abweichung je Probe von 1000 ft bis zur Schwelle, hoechstens eine
+    /// Probe je Sekunde (05.10.2026, Dot-Streifen der Anfluggrafik). Leer
+    /// bei aelteren Fluegen — dann zeigt die Grafik keinen Streifen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verlauf: Vec<GleitpfadPunkt>,
+}
+
+/// Ein Punkt der Gleitpfad-Kurve. Kurze Feldnamen, weil die Reihe im PIREP
+/// mitreist (~80 Punkte).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GleitpfadPunkt {
+    /// Sekunden relativ zum Aufsetzen (negativ = davor) — dieselbe Zeitbasis
+    /// wie die Anflugspur der Sinkraten-Grafik, damit beide zusammenlaufen.
+    pub t: f32,
+    /// Hoehe ueber der Schwelle in Fuss.
+    pub h: f32,
+    /// Abweichung in Dots, + = ueber dem Pfad.
+    pub d: f32,
 }
 
 /// Kennwerte der Gleitpfad-Abweichung in einem Hoehenband.

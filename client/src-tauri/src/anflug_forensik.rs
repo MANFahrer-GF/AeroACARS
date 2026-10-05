@@ -34,6 +34,7 @@
 //! Anflug durchgehend „zu hoch" oder „zu tief" (QS 29.09.2026, Befund 4).
 
 use chrono::{DateTime, Utc};
+use landing_scoring::anflug_forensik::GleitpfadPunkt;
 use storage::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor};
 
 use crate::ApproachBufferSample;
@@ -363,6 +364,9 @@ pub(crate) fn auswerten(
             gleitpfad.grund_ohne_werte = Some(GRUND_KEINE_PROBEN.to_string());
         }
     }
+    if let (Some(p), Some(t)) = (pfad.as_ref(), td) {
+        gleitpfad.verlauf = gleitpfad_verlauf(&proben, bezug_ft, p, t);
+    }
 
     let ruhe_1000_500 = ruhe_tor(&punkte, HOEHE_MITTE_FT, HOEHE_OBEN_FT);
     let ruhe_500_200 = ruhe_tor(&punkte, HOEHE_UNTEN_FT, HOEHE_MITTE_FT);
@@ -539,6 +543,41 @@ fn punkte_im_anflug(
             })
         })
         .collect()
+}
+
+/// Mindestabstand zweier Punkte der Gleitpfad-Kurve.
+const VERLAUF_TAKT_S: f64 = 1.0;
+
+/// Die Gleitpfad-Kurve fuer den Dot-Streifen der Anfluggrafik: von 1000 ft
+/// bis zur Schwelle (danach gibt es keinen Pfad mehr), hoechstens ein Punkt
+/// je Sekunde. Dieselbe Abweichung wie in den Toren, nur nicht gemittelt.
+fn gleitpfad_verlauf(
+    proben: &[&ApproachBufferSample],
+    bezug_ft: f64,
+    pfad: &Pfad,
+    td: DateTime<Utc>,
+) -> Vec<GleitpfadPunkt> {
+    let mut raus: Vec<GleitpfadPunkt> = Vec::new();
+    let mut letzte: Option<DateTime<Utc>> = None;
+    for s in proben {
+        let hoehe_ft = s.msl_ft as f64 - bezug_ft;
+        if !hoehe_ft.is_finite() || !(0.0..=HOEHE_OBEN_FT).contains(&hoehe_ft) {
+            continue;
+        }
+        if letzte.is_some_and(|l| sekunden(l, s.at) < VERLAUF_TAKT_S) {
+            continue;
+        }
+        let Some((dots, _)) = pfad.abweichung(s) else {
+            continue;
+        };
+        letzte = Some(s.at);
+        raus.push(GleitpfadPunkt {
+            t: runden(sekunden(td, s.at), 1),
+            h: runden(hoehe_ft, 0),
+            d: runden(dots, 2),
+        });
+    }
+    raus
 }
 
 /// Band `[unten, oben]`; das obere Tor schliesst die Mitte aus, damit
@@ -911,6 +950,40 @@ mod tests {
             .unwrap();
         assert!((ges.max_dots - 0.374).abs() < 0.01, "{}", ges.max_dots);
         assert!((ges.max_abw_ft - 30.0).abs() < 0.2, "{}", ges.max_abw_ft);
+    }
+
+    /// Dot-Streifen (05.10.2026): die Kurve je Probe — gleiche Dots wie die
+    /// Tore, Zeit relativ zum Aufsetzen, hoechstens eine Probe je Sekunde.
+    #[test]
+    fn verlauf_traegt_dots_je_probe_im_sekundentakt() {
+        let b = bahn(true, Some(50.0), 0.0);
+        let g = auswerten(&anflug(0.0, 50.0, 0.35), Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap();
+        assert_eq!(g.verlauf.len(), 81, "jede Sekundenprobe von 1000 bis 200 ft");
+        let erster = &g.verlauf[0];
+        assert_eq!((erster.t, erster.h), (-90.0, 1000.0));
+        let letzter = g.verlauf.last().unwrap();
+        assert_eq!((letzter.t, letzter.h), (-10.0, 200.0));
+        for p in &g.verlauf {
+            assert!((p.d - 1.0).abs() < 0.02, "0,35 deg darueber = +1 Dot: {p:?}");
+        }
+        // Doppelt so dichte Proben: der Takt duennt auf eine je Sekunde aus.
+        let dicht: VecDeque<_> = (0..=160)
+            .map(|i| {
+                let h = 1000.0 - 800.0 * i as f64 / 160.0;
+                let d = h / (3.35f64).to_radians().tan() - 50.0 / (3.0f64).to_radians().tan();
+                probe(90.0 - i as f64 * 0.5, 0.0, d, h)
+            })
+            .collect();
+        let v = auswerten(&dicht, Some(&b), Some(td()), None)
+            .gleitpfad
+            .unwrap()
+            .verlauf;
+        assert_eq!(v.len(), 81, "0,5-s-Proben auf 1 s ausgeduennt");
+        // Ohne Bahn gibt es keinen Pfad und keine Kurve.
+        let ohne = auswerten(&anflug(0.0, 50.0, 0.0), None, Some(td()), None);
+        assert!(ohne.gleitpfad.unwrap().verlauf.is_empty());
     }
 
     #[test]
@@ -1507,9 +1580,20 @@ mod tests {
             (tor.max_dots * 100.0).round() / 100.0,
             "auf 0,01 gerundet"
         );
-        let laenge =
-            serde_json::to_string(&g).unwrap().len() + serde_json::to_string(&r).unwrap().len();
+        // Die Kurve (Dot-Streifen, 05.10.2026) reist mit, ist aber eine
+        // eigene Groesse: hoechstens ein Punkt je Sekunde ab 1000 ft. Die
+        // Zusammenfassung bleibt unter 1 KB wie bisher.
+        let kurve = serde_json::to_string(&g.verlauf).unwrap().len();
+        let ohne_kurve = AnflugGleitpfad {
+            verlauf: Vec::new(),
+            ..g.clone()
+        };
+        let laenge = serde_json::to_string(&ohne_kurve).unwrap().len()
+            + serde_json::to_string(&r).unwrap().len();
         assert!(laenge < 1024, "{laenge} Bytes");
+        assert!(!g.verlauf.is_empty());
+        let je_punkt = kurve / g.verlauf.len();
+        assert!(je_punkt <= 32, "{je_punkt} Bytes je Punkt ({kurve} gesamt)");
     }
 
     #[test]

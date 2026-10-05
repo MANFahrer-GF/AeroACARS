@@ -182,7 +182,14 @@
       "limit": "Limite di stabilità {{fpm}} fpm",
       "limit_custom": "Limite di stabilità {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s prima del TD",
-      "after_td": "+{{s}} s dopo il TD"
+      "after_td": "+{{s}} s dopo il TD",
+      "gleitpfad_titel": "Sentiero di discesa in dot (scostamento dal sentiero della pista di atterraggio)",
+      "gleitpfad_achse": "Dot",
+      "gleitpfad_max": "scostamento massimo nel gate {{d}} a {{h}} ft",
+      "gleitpfad_ueber": "Sentiero {{d}} dot sopra il sentiero",
+      "gleitpfad_unter": "Sentiero {{d}} dot sotto il sentiero",
+      "gleitpfad_lesart": "+ = sopra il sentiero. Fino a 1 dot verde, 1–2 giallo, da 2 rosso (fondo scala sul PFD). A destra passando sopra o toccando: il rombo come in cabina.",
+      "gleitpfad_fehlt": "Sentiero in dot: non registrato per questo volo (dalla v1.9.26, solo con la pista nei dati di navigazione)."
     },
     "wind_from_front": "Vento di faccia",
     "wind_from_front_right": "Vento da prua destra",

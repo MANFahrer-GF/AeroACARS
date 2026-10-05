@@ -182,7 +182,14 @@
       "limit": "Stability limit {{fpm}} fpm",
       "limit_custom": "Stability limit {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s before TD",
-      "after_td": "+{{s}} s after TD"
+      "after_td": "+{{s}} s after TD",
+      "gleitpfad_titel": "Glide path in dots (deviation from the glide path of the landing runway)",
+      "gleitpfad_achse": "Dots",
+      "gleitpfad_max": "largest deviation in the gate {{d}} at {{h}} ft",
+      "gleitpfad_ueber": "Glide path {{d}} dots above the path",
+      "gleitpfad_unter": "Glide path {{d}} dots below the path",
+      "gleitpfad_lesart": "+ = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD). On the right when hovering or tapping: the diamond as in the cockpit.",
+      "gleitpfad_fehlt": "Glide path in dots: not recorded for this flight (since v1.9.26, only with the runway in the nav data)."
     },
     "wind_from_front": "Wind from front",
     "wind_from_front_right": "Wind from front-right",

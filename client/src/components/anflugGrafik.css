@@ -38,3 +38,10 @@
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
+
+/* 05.10.2026: Hinweis, wenn der Flug keine Gleitpfad-Kurve hat. */
+.landing-chart__hinweis {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted, #94a3b8);
+}

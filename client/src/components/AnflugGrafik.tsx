@@ -16,6 +16,7 @@ import {
   SOLLBAND_TOLERANZ_FPM,
 } from "../lib/anflugSollband";
 import type { ApproachSample, LandingProfilePoint } from "../lib/landungsDatensatz";
+import type { GleitpfadPunkt } from "./AnflugForensikInfo";
 import "./anflugGrafik.css";
 
 // v0.12.8: Touchdown-Nahaufnahme — 50-Hz-Window, exakt wie auf dem VPS.
@@ -199,14 +200,51 @@ export function approachTdLineIndex(
   return firstPos - 1 + frac;
 }
 
+/** Dot-Streifen: Grenze der Darstellung. Am PFD ist bei 2 Dots
+ *  Vollausschlag; die Achse reicht bis 3, damit echte Abweichungen darüber
+ *  (QAF434: 2,71) als Kurve sichtbar bleiben statt flach am Rand zu kleben.
+ *  Erst jenseits von 3 wird abgeschnitten. */
+const DOT_ACHSE = 3;
+
+/** Dots zu einer Zeit (ms relativ zum Aufsetzen), linear zwischen den
+ *  Punkten der Kurve; `null` außerhalb der Kurve. */
+export function dotsZurZeit(verlauf: GleitpfadPunkt[], tMs: number): number | null {
+  const ts = tMs / 1000;
+  for (let i = 1; i < verlauf.length; i++) {
+    const a = verlauf[i - 1]!;
+    const b = verlauf[i]!;
+    if (ts >= a.t && ts <= b.t) {
+      if (b.t === a.t) return b.d;
+      return a.d + ((b.d - a.d) * (ts - a.t)) / (b.t - a.t);
+    }
+  }
+  return null;
+}
+
+/** Bruch-Index der Anflugspur zu einer Zeit — die Spur ist im Index
+ *  gezeichnet, die Kurve in Sekunden. `null` außerhalb der Spur. */
+function indexZurZeit(samples: ApproachSample[], tMs: number): number | null {
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1]!.t_ms;
+    const b = samples[i]!.t_ms;
+    if (a == null || b == null) return null;
+    if (tMs >= a && tMs <= b) return b === a ? i : i - 1 + (tMs - a) / (b - a);
+  }
+  return null;
+}
+
 export function ApproachChart({
   samples,
   glideslopeAngleDeg,
+  gleitpfadVerlauf,
 }: {
   samples: ApproachSample[];
   /** v0.15.18: echter Gleitpfad-Winkel (Navdaten). Skaliert Soll-Band +
    *  Stabilitätsgrenze 1:1 wie das Backend. null/3° → unverändert. */
   glideslopeAngleDeg?: number | null;
+  /** 05.10.2026: Gleitpfad-Abweichung je Probe (Client-Messung). Mit ihr
+   *  bekommt die Grafik den Dot-Streifen auf derselben Zeitachse. */
+  gleitpfadVerlauf?: GleitpfadPunkt[] | null;
 }) {
   const { t } = useTranslation();
   const [hover, setHover] = useState<number | null>(null);
@@ -233,10 +271,31 @@ export function ApproachChart({
   const fmtFpm = (v: number) => `−${Math.abs(Math.round(v / 10) * 10)}`;
 
   const w = 1120;
-  const h = 320;
+  const hOben = 320;
   const pad = { top: 20, right: 20, bottom: 52, left: 64 };
   const innerW = w - pad.left - pad.right;
-  const innerH = h - pad.top - pad.bottom;
+  const innerH = hOben - pad.top - pad.bottom;
+
+  // Dot-Streifen (05.10.2026): unter der Sinkrate, gleiche Zeitachse. Nur
+  // die Kurvenpunkte, die in der Zeitspanne der Spur liegen.
+  const dotPunkte = (gleitpfadVerlauf ?? [])
+    .map((p) => ({ p, i: indexZurZeit(samples, p.t * 1000) }))
+    .filter((q): q is { p: GleitpfadPunkt; i: number } => q.i != null);
+  const mitStreifen = dotPunkte.length >= 2;
+  const streifen = { top: hOben + 26, h: 130 };
+  const h = mitStreifen ? streifen.top + streifen.h + 34 : hOben;
+  const yDot = (d: number) =>
+    streifen.top +
+    streifen.h / 2 -
+    (Math.max(-DOT_ACHSE, Math.min(DOT_ACHSE, d)) / DOT_ACHSE) * (streifen.h / 2);
+  // Markiert wird der größte Wert im Stable Gate (1000–200 ft) — dieselbe
+  // Zahl wie „größte Abweichung" in der Gleitpfad-Forensik. Darunter werden
+  // Dots nahe der Schwelle sehr empfindlich (THY39: +5 bei 100 ft).
+  const imGate = dotPunkte.filter((q) => q.p.h >= 200 && q.p.h <= 1000);
+  const groessteAbw =
+    imGate.length > 0
+      ? imGate.reduce((m, q) => (Math.abs(q.p.d) > Math.abs(m.p.d) ? q : m))
+      : null;
 
   // Auto-Zoom-Y auf den echten Wertebereich (+12 % Polster), auf 100er
   // gerundet. 0-Linie bleibt immer sichtbar.
@@ -310,14 +369,26 @@ export function ApproachChart({
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label={t("landing.approach_chart")}
-      onMouseMove={(e) => {
+      // Pointer statt Maus: Antippen auf dem iPhone zeigt den Wert genauso.
+      // Nach dem Antippen bleibt er stehen; nur die Maus nimmt ihn beim
+      // Verlassen wieder weg.
+      onPointerMove={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
         const sx = (e.clientX - rect.left) * (w / rect.width);
         let k = Math.round((sx - pad.left) / xStep);
         k = Math.max(0, Math.min(samples.length - 1, k));
         setHover(k);
       }}
-      onMouseLeave={() => setHover(null)}
+      onPointerDown={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const sx = (e.clientX - rect.left) * (w / rect.width);
+        let k = Math.round((sx - pad.left) / xStep);
+        k = Math.max(0, Math.min(samples.length - 1, k));
+        setHover(k);
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === "mouse") setHover(null);
+      }}
     >
       <rect x={pad.left} y={pad.top} width={innerW} height={innerH}
             fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.15)" />
@@ -378,10 +449,10 @@ export function ApproachChart({
 
       <path d={path} fill="none" stroke="#38bdf8" strokeWidth="2" />
 
-      <text x={pad.left} y={h - 28} fontSize="12" fill="#94a3b8">
+      <text x={pad.left} y={hOben - 28} fontSize="12" fill="#94a3b8">
         {t("landing.approach_start")}
       </text>
-      <text x={pad.left + innerW} y={h - 28} textAnchor="end" fontSize="12" fill="#94a3b8">
+      <text x={pad.left + innerW} y={hOben - 28} textAnchor="end" fontSize="12" fill="#94a3b8">
         {t("landing.touchdown")}
       </text>
       <text x={16} y={pad.top + innerH / 2} fontSize="11" fill="#64748b" textAnchor="middle"
@@ -391,14 +462,14 @@ export function ApproachChart({
 
       {hasZones && (
         <g fontSize="11" fill="currentColor">
-          <rect x={pad.left} y={h - 14} width={9} height={9} fill="rgba(120,120,120,0.4)" />
-          <text x={pad.left + 13} y={h - 6}>{t("landing.chart_zone.vorlauf")}</text>
-          <rect x={pad.left + 78} y={h - 14} width={9} height={9} fill="rgba(56,189,248,0.4)" />
-          <text x={pad.left + 91} y={h - 6}>{t("landing.chart_zone.gate")}</text>
-          <rect x={pad.left + 160} y={h - 14} width={9} height={9} fill="rgba(234,179,8,0.4)" />
-          <text x={pad.left + 173} y={h - 6}>{t("landing.chart_zone.flare")}</text>
-          <rect x={pad.left + 230} y={h - 14} width={9} height={9} fill="rgba(34,197,94,0.4)" />
-          <text x={pad.left + 243} y={h - 6}>
+          <rect x={pad.left} y={hOben - 14} width={9} height={9} fill="rgba(120,120,120,0.4)" />
+          <text x={pad.left + 13} y={hOben - 6}>{t("landing.chart_zone.vorlauf")}</text>
+          <rect x={pad.left + 78} y={hOben - 14} width={9} height={9} fill="rgba(56,189,248,0.4)" />
+          <text x={pad.left + 91} y={hOben - 6}>{t("landing.chart_zone.gate")}</text>
+          <rect x={pad.left + 160} y={hOben - 14} width={9} height={9} fill="rgba(234,179,8,0.4)" />
+          <text x={pad.left + 173} y={hOben - 6}>{t("landing.chart_zone.flare")}</text>
+          <rect x={pad.left + 230} y={hOben - 14} width={9} height={9} fill="rgba(34,197,94,0.4)" />
+          <text x={pad.left + 243} y={hOben - 6}>
             {hatSollband
               ? t("landing.vs_chart.band_gs", {
                   angle: String(isScaledGp ? glideslopeAngleDeg : 3),
@@ -408,6 +479,79 @@ export function ApproachChart({
                   hi: fmtFpm(bandHi),
                   lo: fmtFpm(bandLo),
                 })}
+          </text>
+        </g>
+      )}
+
+      {mitStreifen && (
+        <g>
+          <text x={pad.left} y={streifen.top - 8} fontSize="12" fill="#94a3b8">
+            {t("landing.vs_chart.gleitpfad_titel")}
+          </text>
+          {zones.map((z, idx) => {
+            if (z.kind !== "gate") return null;
+            const x0 = z.start > 0 ? (x(z.start - 1) + x(z.start)) / 2 : x(z.start) - 2;
+            const x1 = z.end < samples.length - 1 ? (x(z.end) + x(z.end + 1)) / 2 : x(z.end) + 2;
+            return (
+              <rect key={idx} x={x0} y={streifen.top} width={Math.max(0, x1 - x0)}
+                    height={streifen.h} fill={zoneFill(z.kind)} />
+            );
+          })}
+          {/* Bänder wie die Stufen des Gleitpfads im Anflug-Urteil: gut
+              unter 1 Dot, schlecht ab 2 Dots. */}
+          {(
+            [
+              [2, DOT_ACHSE, "rgba(248,113,113,0.13)"],
+              [1, 2, "rgba(234,179,8,0.13)"],
+              [-1, 1, "rgba(34,197,94,0.12)"],
+              [-2, -1, "rgba(234,179,8,0.13)"],
+              [-DOT_ACHSE, -2, "rgba(248,113,113,0.13)"],
+            ] as const
+          ).map(([u, o, f]) => (
+            <rect key={u} x={pad.left} y={yDot(o)} width={innerW}
+                  height={yDot(u) - yDot(o)} fill={f} />
+          ))}
+          <rect x={pad.left} y={streifen.top} width={innerW} height={streifen.h}
+                fill="none" stroke="rgba(255,255,255,0.15)" />
+          {[3, 2, 1, 0, -1, -2, -3].map((d) => (
+            <g key={d}>
+              <line x1={pad.left} y1={yDot(d)} x2={pad.left + innerW} y2={yDot(d)}
+                    stroke={d === 0 ? "#64748b" : "rgba(255,255,255,0.07)"}
+                    strokeDasharray={d === 0 ? "5 4" : undefined} />
+              <text x={pad.left - 8} y={yDot(d) + 4} textAnchor="end" fontSize="12"
+                    fill={d === 0 ? "#94a3b8" : "#64748b"}>
+                {d > 0 ? `+${d}` : d === 0 ? "0" : `−${Math.abs(d)}`}
+              </text>
+            </g>
+          ))}
+          <line x1={tdX} y1={streifen.top} x2={tdX} y2={streifen.top + streifen.h}
+                stroke="#f87171" strokeWidth="1.4" strokeDasharray="4 3" />
+          <path
+            d={dotPunkte
+              .map((q, k) => `${k === 0 ? "M" : "L"} ${x(q.i).toFixed(1)} ${yDot(q.p.d).toFixed(1)}`)
+              .join(" ")}
+            fill="none" stroke="#a78bfa" strokeWidth="2" />
+          {groessteAbw && (
+            <g>
+              <circle cx={x(groessteAbw.i)} cy={yDot(groessteAbw.p.d)} r="4" fill="#a78bfa" />
+              <text x={x(groessteAbw.i) + (x(groessteAbw.i) > pad.left + innerW - 300 ? -8 : 8)}
+                    textAnchor={x(groessteAbw.i) > pad.left + innerW - 300 ? "end" : "start"}
+                    y={yDot(groessteAbw.p.d) + (groessteAbw.p.d > 0 ? 16 : -8)}
+                    fontSize="11" fill="#c4b5fd">
+                {t("landing.vs_chart.gleitpfad_max", {
+                  d: `${groessteAbw.p.d > 0 ? "+" : "−"}${Math.abs(groessteAbw.p.d).toFixed(2)}`,
+                  h: Math.round(groessteAbw.p.h),
+                })}
+              </text>
+            </g>
+          )}
+          <text x={16} y={streifen.top + streifen.h / 2} fontSize="11" fill="#64748b"
+                textAnchor="middle"
+                transform={`rotate(-90 16 ${streifen.top + streifen.h / 2})`}>
+            {t("landing.vs_chart.gleitpfad_achse")}
+          </text>
+          <text x={pad.left} y={streifen.top + streifen.h + 18} fontSize="11" fill="#94a3b8">
+            {t("landing.vs_chart.gleitpfad_lesart")}
           </text>
         </g>
       )}
@@ -426,15 +570,38 @@ export function ApproachChart({
             ? t("landing.chart_zone.gate")
             : t("landing.chart_zone.vorlauf");
         const sollBeiHover = sollPunkte.find((p) => p.index === hover) ?? null;
+        const dotsBeiHover =
+          mitStreifen && s.t_ms != null ? dotsZurZeit(gleitpfadVerlauf!, s.t_ms) : null;
         const boxW = sollBeiHover != null ? 268 : 188;
         const boxX = Math.min(Math.max(hx + 12, pad.left), pad.left + innerW - boxW);
         const boxY = Math.max(hy - 46, pad.top + 2);
         return (
           <g pointerEvents="none">
-            <line x1={hx} y1={pad.top} x2={hx} y2={pad.top + innerH}
+            <line x1={hx} y1={pad.top} x2={hx}
+                  y2={mitStreifen ? streifen.top + streifen.h : pad.top + innerH}
                   stroke="#38bdf8" strokeWidth="1" strokeDasharray="3 3" />
+            {dotsBeiHover != null && (
+              <g>
+                <circle cx={hx} cy={yDot(dotsBeiHover)} r="4" fill="#a78bfa"
+                        stroke="#0e1420" strokeWidth="1.5" />
+                {/* Skala wie am PFD, rechts im Streifen: zwei Punkte je Seite.
+                    Die Raute zeigt, wo der PFAD liegt — Flugzeug zu hoch,
+                    Raute unter der Mitte. */}
+                <rect x={pad.left + innerW - 46} y={streifen.top + 6} width={40}
+                      height={streifen.h - 12} rx="4" fill="#0f172a" stroke="#334155" />
+                {[-2, -1, 1, 2].map((d) => (
+                  <circle key={d} cx={pad.left + innerW - 26} cy={yDot(d)} r="3.5"
+                          fill="none" stroke="#94a3b8" />
+                ))}
+                <line x1={pad.left + innerW - 38} y1={yDot(0)} x2={pad.left + innerW - 14}
+                      y2={yDot(0)} stroke="#e2e8f0" strokeWidth="1.5" />
+                <path
+                  d={`M ${pad.left + innerW - 26} ${yDot(-dotsBeiHover) - 7} l 7 7 l -7 7 l -7 -7 z`}
+                  fill="#e879f9" />
+              </g>
+            )}
             <circle cx={hx} cy={hy} r="4" fill="#38bdf8" stroke="#0e1420" strokeWidth="1.5" />
-            <rect x={boxX} y={boxY} width={boxW} height={40} rx="5"
+            <rect x={boxX} y={boxY} width={boxW} height={dotsBeiHover != null ? 55 : 40} rx="5"
                   fill="#1e293b" stroke="#334155" />
             <text x={boxX + 9} y={boxY + 17} fontSize="12.5" fill="#38bdf8" fontWeight="700">
               {Math.round(s.vs_fpm)} fpm
@@ -446,6 +613,16 @@ export function ApproachChart({
                 ? `  ·  ${t("landing.vs_chart.target", { fpm: Math.round(sollBeiHover.soll) })}`
                 : ""}
             </text>
+            {dotsBeiHover != null && (
+              <text x={boxX + 9} y={boxY + 47} fontSize="11" fill="#c4b5fd">
+                {t(
+                  dotsBeiHover >= 0
+                    ? "landing.vs_chart.gleitpfad_ueber"
+                    : "landing.vs_chart.gleitpfad_unter",
+                  { d: Math.abs(dotsBeiHover).toFixed(2) },
+                )}
+              </text>
+            )}
           </g>
         );
       })()}
@@ -460,10 +637,13 @@ export function AnflugGrafikAbschnitt({
   samples,
   profile,
   glideslopeAngleDeg,
+  gleitpfadVerlauf,
 }: {
   samples: ApproachSample[] | null | undefined;
   profile: LandingProfilePoint[] | null | undefined;
   glideslopeAngleDeg?: number | null;
+  /** 05.10.2026: Gleitpfad je Probe (`anflug_gleitpfad.verlauf`). */
+  gleitpfadVerlauf?: GleitpfadPunkt[] | null;
 }) {
   const { t } = useTranslation();
   const anflug = samples != null && samples.length >= 3;
@@ -475,8 +655,15 @@ export function AnflugGrafikAbschnitt({
         <>
           <h3>{t("landing.approach_stability")}</h3>
           <div className="landing-stability-chart">
-            <ApproachChart samples={samples} glideslopeAngleDeg={glideslopeAngleDeg} />
+            <ApproachChart
+              samples={samples}
+              glideslopeAngleDeg={glideslopeAngleDeg}
+              gleitpfadVerlauf={gleitpfadVerlauf}
+            />
           </div>
+          {!(gleitpfadVerlauf && gleitpfadVerlauf.length >= 2) && (
+            <p className="landing-chart__hinweis">{t("landing.vs_chart.gleitpfad_fehlt")}</p>
+          )}
         </>
       )}
       {nah && (

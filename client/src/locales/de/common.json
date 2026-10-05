@@ -182,7 +182,14 @@
       "limit": "Stabilitätsgrenze {{fpm}} fpm",
       "limit_custom": "Stabilitätsgrenze {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s vor TD",
-      "after_td": "+{{s}} s nach TD"
+      "after_td": "+{{s}} s nach TD",
+      "gleitpfad_titel": "Gleitpfad in Dots (Abweichung vom Gleitpfad der gelandeten Bahn)",
+      "gleitpfad_achse": "Dots",
+      "gleitpfad_max": "größte Abweichung im Gate {{d}} bei {{h}} ft",
+      "gleitpfad_ueber": "Gleitpfad {{d}} Dots über dem Pfad",
+      "gleitpfad_unter": "Gleitpfad {{d}} Dots unter dem Pfad",
+      "gleitpfad_lesart": "+ = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD). Rechts beim Darüberfahren oder Antippen: die Raute wie im Cockpit.",
+      "gleitpfad_fehlt": "Gleitpfad in Dots: für diesen Flug nicht aufgezeichnet (seit v1.9.26, nur mit der Bahn in den Navdaten)."
     },
     "wind_from_front": "Wind aus vorn",
     "wind_from_front_right": "Wind aus vorn rechts",

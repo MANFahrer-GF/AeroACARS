@@ -42,6 +42,17 @@ export interface AnflugGleitpfad {
   gesamt?: GleitpfadTor | null;
   tor_1000_500?: GleitpfadTor | null;
   tor_500_200?: GleitpfadTor | null;
+  /** 05.10.2026: Abweichung je Probe (Dot-Streifen der Anfluggrafik).
+   *  Fehlt bei älteren Flügen. */
+  verlauf?: GleitpfadPunkt[] | null;
+}
+
+/** Ein Punkt der Gleitpfad-Kurve: Sekunden zum Aufsetzen, Höhe über der
+ *  Schwelle (ft), Abweichung in Dots (+ = über dem Pfad). */
+export interface GleitpfadPunkt {
+  t: number;
+  h: number;
+  d: number;
 }
 
 export interface RuheTor {
