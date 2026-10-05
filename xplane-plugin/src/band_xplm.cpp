@@ -764,6 +764,7 @@ int auf_klick(XPLMWindowID, int x, int y, XPLMMouseStatus status, void*) noexcep
                     g.prefs.links = nl;
                     g.prefs.oben = no;
                     g.bewegt = true;
+                    g.platziert = true;  // vom Piloten gesetzt: Loslassen klemmt nur noch
                 }
             }
             break;
