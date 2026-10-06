@@ -1111,7 +1111,7 @@
         "ruck": "Sink rate jumpy: {{wert}} fpm jerk (good below {{grenze}})",
         "sinken": "Sink rate too high for more than 10 seconds",
         "konfiguration": "Gear or flaps not in landing position when entering the gate",
-        "spaet_stabil": "Stable from 500 ft: late stabilised, so only “partial” instead of “unstable”"
+        "spaet_stabil": "Stable from 500 ft: speed and configuration count as late stabilised, “medium” instead of “bad”"
       }
     },
     "groundspeed": "GS at TD",

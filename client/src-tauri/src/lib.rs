@@ -11568,11 +11568,16 @@ fn compute_approach_stability_v2(
 
     // 6b) Score-Version 20 (RYR73): dasselbe am 500-ft-Tor plus die Fahrt-
     //     Streuung darunter — fuer „spaet stabilisiert" (anflug_urteil).
-    let unter_500: Vec<&ApproachBufferSample> = gate_samples
+    //     Nur das LETZTE zusammenhaengende Stueck unter 500 ft (Codex-QS):
+    //     nach Durchstarten/Touch-and-Go liegen im Puffer noch Punkte des
+    //     vorigen Anflugs, getrennt durch den Steigflug ueber 500 ft.
+    let mut unter_500: Vec<&ApproachBufferSample> = gate_samples
         .iter()
+        .rev()
+        .take_while(|s| height_for(s) <= 500.0)
         .copied()
-        .filter(|s| height_for(s) <= 500.0)
         .collect();
+    unter_500.reverse();
     if unter_500.len() >= 3 {
         let n = unter_500.len() as f64;
         let mittel = unter_500.iter().map(|s| s.ias_kt as f64).sum::<f64>() / n;
@@ -64751,6 +64756,33 @@ mod sim_pause_tests {
         assert_eq!(
             landing_scoring::anflug_urteil::anflug_urteil(&werte),
             Some(landing_scoring::anflug_urteil::AnflugUrteil::Partial)
+        );
+    }
+
+    /// Durchstarten (Codex-QS): Die Punkte des ersten Anflugs unter 500 ft
+    /// (schnell, Klappen 15) duerfen die 500-ft-Messung des letzten Anflugs
+    /// nicht verderben.
+    #[test]
+    fn spaet_stabil_misst_nur_den_letzten_anflug() {
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            (450.0, 175.0, 0.625),
+            (350.0, 172.0, 0.625),
+            (700.0, 180.0, 0.625),
+            (1000.0, 178.0, 0.625),
+            (700.0, 160.0, 0.875),
+            (490.0, 145.0, 0.875),
+            (300.0, 144.0, 0.875),
+            (150.0, 146.0, 0.875),
+        ]
+        .into_iter()
+        .map(|(h, ias, flaps)| approach_sample(h, ias, ias, -700.0, 1.0, flaps))
+        .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        assert_eq!(out.stable_config_500, Some(true));
+        assert!(
+            out.ias_stddev_unter_500_kt.unwrap() < 5.0,
+            "{:?}",
+            out.ias_stddev_unter_500_kt
         );
     }
 

@@ -1111,7 +1111,7 @@
         "ruck": "Rateo di discesa a scatti: {{wert}} fpm di strappo (buono sotto {{grenze}})",
         "sinken": "Rateo di discesa troppo alto per oltre 10 secondi",
         "konfiguration": "Carrello o flap non in configurazione d’atterraggio all’ingresso nel gate",
-        "spaet_stabil": "Stabile da 500 ft: stabilizzato tardi, quindi solo “parziale” invece di “instabile”"
+        "spaet_stabil": "Stabile da 500 ft: velocità e configurazione contano come stabilizzate tardi, “medio” invece di “scarso”"
       }
     },
     "groundspeed": "GS al TD",

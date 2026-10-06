@@ -1111,7 +1111,7 @@
         "ruck": "Sinkrate sprunghaft: {{wert}} fpm Ruck (gut unter {{grenze}})",
         "sinken": "Sinkrate über 10 Sekunden am Stück zu hoch",
         "konfiguration": "Fahrwerk oder Klappen beim Eintritt ins Gate nicht in Landestellung",
-        "spaet_stabil": "Ab 500 ft stabil: spät stabilisiert, deshalb nur „teilweise“ statt „instabil“"
+        "spaet_stabil": "Ab 500 ft stabil: Fahrt und Konfiguration zählen als spät stabilisiert nur „mittel“ statt „schlecht“"
       }
     },
     "groundspeed": "GS bei TD",
