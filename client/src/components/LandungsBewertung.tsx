@@ -1023,7 +1023,11 @@ export function BewertungsAbschnitt({ record, subs }: { record: LandingRecord; s
     <section className="landing-section">
       <h3>
         {t("landing.score_breakdown")}
-        <InfoBadge explanation={t("landing.info.score_section")} />
+        <InfoBadge
+          explanation={t(
+            (record.score_algorithm_version ?? 0) >= 19 ? "landing.info.score_section" : "landing.info.score_section_alt",
+          )}
+        />
       </h3>
       <ScoreBreakdown subs={subs} record={record} />
       <CoachTip subs={subs} />

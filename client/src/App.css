@@ -10383,3 +10383,14 @@ input.datalink-block__input {
 .pruefstatus-kasten--freigegeben_hinweis { border-color: var(--sem-ok); background: var(--sem-ok-bg); }
 .pruefstatus-kasten--fehlalarm .pruefstatus-kasten__titel,
 .pruefstatus-kasten--freigegeben_hinweis .pruefstatus-kasten__titel { color: var(--sem-ok); }
+
+/* QS 06.10.2026 (Runde 6): Aufklapp-Zeilen erscheinen im Druck als
+   Überschrift — ohne das Dreieck, das auf Papier nichts bedeutet. */
+@media print {
+  summary {
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+}

@@ -109,6 +109,7 @@ pub struct Abfangen {
     #[serde(default)]
     pub max_vs_fpm: Option<f32>,
     /// Warum es keine Werte gibt: `kein_50ft_durchgang`, `zu_wenig_proben`,
+    /// `luecke_am_50ft_durchgang` (Durchgang nicht aufgezeichnet),
     /// `kein_bodenbezug` (kein Bodenkontakt im 50-Hz-Fenster, Client).
     #[serde(default)]
     pub grund_ohne_werte: Option<String>,
@@ -141,6 +142,22 @@ pub fn messen(punkte: &[AbfangPunkt], vs_aufsetzen_fpm: Option<f32>) -> Abfangen
         return ohne("kein_50ft_durchgang");
     };
     let (a, b) = (p[i - 1], p[i]);
+    // Fehlt über dem Durchgang ein flaches Stück (der Puffer nahm es nicht
+    // auf, siehe `LUECKE_MAX_MS`), wäre der Durchgang geraten — und mit ihm
+    // die bewertete Dauer (QS 06.10.2026, Runde 6: 62 ft bei −25 s, 45 ft bei
+    // −8 s ergab −13 s statt etwa −9 s, A320 80 statt 100 Punkte). Erkennbar
+    // daran, dass über die Lücke im Mittel viel weniger gesunken wurde als an
+    // beiden Rändern gemessen. Ein Ruckler mit gleichmäßigem Sinken bleibt
+    // messbar: Im Korpus haben 22 von 1473 Landungen dort eine Lücke über
+    // 2,5 s, nachgemessen fällt keine davon unter diese Regel.
+    let luecke_s = (b.t_ms - a.t_ms) as f32 / 1000.0;
+    if b.t_ms - a.t_ms > LUECKE_MAX_MS {
+        let mittel_fpm = (a.hoehe_ft - b.hoehe_ft) / luecke_s * 60.0;
+        let raender_fpm = (-a.vs_fpm).min(-b.vs_fpm);
+        if mittel_fpm < 0.5 * raender_fpm {
+            return ohne("luecke_am_50ft_durchgang");
+        }
+    }
     let anteil = (a.hoehe_ft - ABFANG_HOEHE_FT) / (a.hoehe_ft - b.hoehe_ft);
     let t50 = a.t_ms as f32 + (b.t_ms - a.t_ms) as f32 * anteil;
     let vs50 = a.vs_fpm + (b.vs_fpm - a.vs_fpm) * anteil;
@@ -426,6 +443,48 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(sub_abfangen(Some(&a), Some("A320")).unwrap().points, 25);
+    }
+
+    /// QS 06.10.2026 (Runde 6): Lücke genau über den 50-ft-Durchgang — die
+    /// Dauer wäre interpoliert und damit geraten: keine Werte, keine Achse.
+    #[test]
+    fn luecke_am_50ft_durchgang_erfindet_keine_dauer() {
+        let v = [
+            p(-27_000, 80.0, -500.0),
+            p(-25_000, 62.0, -400.0),
+            // flach bei ~60 ft, nicht aufgezeichnet
+            p(-8_000, 45.0, -400.0),
+            p(-7_500, 41.0, -400.0),
+            p(-7_000, 37.0, -400.0),
+            p(-500, 1.0, -150.0),
+        ];
+        let a = messen(&v, Some(-140.0));
+        assert_eq!(
+            a.grund_ohne_werte.as_deref(),
+            Some("luecke_am_50ft_durchgang")
+        );
+        assert_eq!(a.dauer_ab_50ft_s, None);
+        assert!(sub_abfangen(Some(&a), Some("A320")).is_none());
+        // Gegenprobe: ist der Durchgang aufgezeichnet, gibt es die Dauer.
+        let mut voll = v.to_vec();
+        voll.insert(2, p(-9_500, 51.0, -300.0));
+        voll.insert(2, p(-12_000, 60.0, -50.0));
+        let b = messen(&voll, Some(-140.0));
+        assert_eq!(b.grund_ohne_werte, None);
+        assert!(b.dauer_ab_50ft_s.is_some());
+        // Gegenprobe 2: Ruckler über den Durchgang bei gleichmäßigem Sinken
+        // (4 s, 600 fpm wie an beiden Rändern) — die Dauer bleibt messbar.
+        let ruckler = [
+            p(-14_000, 80.0, -600.0),
+            p(-12_000, 60.0, -600.0),
+            p(-8_000, 20.0, -600.0),
+            p(-7_500, 15.0, -600.0),
+            p(-7_000, 10.0, -500.0),
+            p(-500, 1.0, -150.0),
+        ];
+        let c = messen(&ruckler, Some(-140.0));
+        assert_eq!(c.grund_ohne_werte, None);
+        assert_eq!(c.dauer_ab_50ft_s, Some(11.0));
     }
 
     /// QS 06.10.2026 (Runde 5): Phase nicht Approach/Final → der Puffer

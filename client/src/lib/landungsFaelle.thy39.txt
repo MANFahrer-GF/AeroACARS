@@ -467,7 +467,7 @@ G
 1.05
 G
 ⭐ Was AeroACARS scort
-Sinkrate und G-Kraft zählen gleich stark (je 3 von 13 Anteilen).
+Sinkrate und G-Kraft zählen gleich stark: je dreifach, das höchste Gewicht in der Gesamtnote.
 Bewertete G-Kraft
 EMA-geglätteter Peak · FOQA-Methode
 1.04

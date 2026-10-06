@@ -223,6 +223,7 @@
       "fuel": "Treue zum SimBrief-OFP-Trip-Burn. Vergleicht den tatsächlichen Verbrauch (Block − Landing-Fuel) gegen den geplanten Trip-Burn. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend); Minderverbrauch wird NICHT bestraft. Bei >15 % unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
       "loadsheet": "Nur bei älteren Landungen: Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Zählt seit v1.7.12 nicht mehr zur Note.",
       "score_section": "Acht Teile à 0–100 Punkte: Sinkrate, G-Kraft, Hopser, Anflug-Stabilität, Bahndisziplin, Ausrichtung, Aufsetzpunkt, Abfangen. Die Gesamtnote ist ihr gewichteter Durchschnitt, aber nie besser, als der schwächste Teil erlaubt: ein mittlerer Teil höchstens 80, ein schlechter höchstens 60, ein gefährliches Ereignis (vor der Schwelle, Overrun, neben der Bahn, ab zwei Hopsern, ab 1,75 g) höchstens 40, ab 2,6 g höchstens 14. Dazu begrenzt der Anflug: PARTIAL höchstens 80, UNSTABLE höchstens 45, ohne Anflugmessung höchstens 97. Sprit und Loadsheet stehen zur Einordnung da und zählen nicht.",
+      "score_section_alt": "Die Teile à 0–100 Punkte, so wie die damalige Score-Version sie vergeben hat. Die Gesamtnote war ihr gewichteter Durchschnitt nach den damaligen Regeln. Diese Landung wurde vor Score-Version 19 bewertet und wird nicht neu gerechnet.",
       "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band die Ausrollstrecke. Werte unten zur Einordnung: Gesamtlänge, Abstand zur Mittellinie, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent. Bewertet werden Bahndisziplin, Ausrichtung und Aufsetzpunkt (siehe Teilnoten oben).",
       "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = am Startpunkt; LDG Fuel = bei Touchdown; TOW, LDW, ZFW = Gewichte. Plan-Werte stammen aus dem SimBrief-OFP. Die „Plan-Treue\" unten zeigt die Abweichungen zur Einordnung — sie zählt nicht zur Note.",
       "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse, die Kachel „Seitenwind“ daneben mit dem Wind bezogen auf die Flugzeugnase. Beide Zahlen stimmen — sie beziehen sich nur auf verschiedene Richtungen, und zwischen diesen liegt genau der Vorhaltewinkel.",
@@ -627,7 +628,7 @@
       "robust_section_title": "Robuste Statistiken (Spike-resistent)",
       "robust_section_subtitle": "Median und 95-Percentile filtern einzelne Sim-Frame-Spikes raus. Wenn diese deutlich kleiner sind als der Peak, war der Peak ein Spike — kein echter Impact.",
       "score_section_title": "Was AeroACARS scort",
-      "score_section_subtitle": "Sinkrate und G-Kraft zählen gleich stark (je 3 von 13 Anteilen).",
+      "score_section_subtitle": "Sinkrate und G-Kraft zählen gleich stark: je dreifach, das höchste Gewicht in der Gesamtnote.",
       "tile_edge": "Edge (Aufsetz-Frame)",
       "tile_250ms": "250 ms Mittel",
       "tile_500ms": "500 ms (Peak)",
@@ -1218,9 +1219,9 @@
     "abfangen": {
       "titel": "Abfangen (Flare)",
       "dauer": "Dauer ab 50 ft",
-      "dauer_hint": "Zeit vom Durchgang durch 50 ft über dem Aufsetzpunkt bis zum Aufsetzen. Wer im Abfangen wieder über 50 ft steigt, startet die Uhr nicht neu — erst ein Steigen über 100 ft (Durchstarten) tut das. Zählt zur Note (Teil „Abfangen“): Linienflugzeug bis 10 s voll, ab 12 s deutlicher Abzug; Kleinflugzeug oder Bizjet bis 16 s voll.",
+      "dauer_hint": "Zeit vom Durchgang durch 50 ft über dem Aufsetzpunkt bis zum Aufsetzen. Wer im Abfangen wieder über 50 ft steigt, startet die Uhr nicht neu — erst ein Steigen über 100 ft (Durchstarten) tut das. Zählt zur Note (Teil „Abfangen“): Linienflugzeug bis 10 s voll, über 12 s deutlicher Abzug; Kleinflugzeug oder Bizjet bis 16 s voll.",
       "vs": "Sinkrate 50 ft → Aufsetzen",
-      "vs_hint": "Sinkrate beim Durchgang durch 50 ft (Messwert des Simulators) und am ersten Bodenkontakt (aus der Höhenkurve, wie bewertet).",
+      "vs_hint": "Sinkrate beim Durchgang durch 50 ft (Messwert des Simulators) und am ersten Bodenkontakt (wie bewertet: aus der Höhenkurve, ist sie nicht auswertbar, vom Simulator).",
       "reduktion": "Abgebaute Sinkrate",
       "reduktion_hint": "Um so viel hat der Flare die Sinkrate zwischen 50 ft und Aufsetzen verringert (positiv = abgebaut) — Differenz der beiden Werte darüber, die aus verschiedenen Quellen stammen. Nur Einordnung.",
       "beginn": "Flare-Beginn",
@@ -1234,8 +1235,11 @@
     "erklaer": {
       "kopf_note": "Die Buchstaben-Note fasst die Gesamtnote zusammen: A+ ab 95, A ab 88, B+ ab 82, B ab 75, C ab 65, D ab 50, darunter F. Die Gesamtnote ist der gewichtete Durchschnitt der Teilnoten (Sinkrate und G-Kraft je 3, Hopser, Anflug-Stabilität und Abfangen je 2, die übrigen je 1) — aber nie besser, als der schwächste Teil erlaubt: ein mittlerer Teil (45–74 Punkte) begrenzt auf 80, ein schlechter (unter 45) auf 60, ein gefährliches Ereignis (vor der Schwelle, über das Bahnende, neben der Bahn, zwei oder mehr Hopser) auf 40. Dazu begrenzt der Anflug: PARTIAL auf 80, UNSTABLE auf 45, ohne Anflugmessung auf 97; und die G-Kraft: ab 1,75 G auf 40, ab 2,6 G auf 14.",
       "td": {
-        "sinkrate": "Sinkrate im Moment des ersten Bodenkontakts, aus der Höhenkurve. Zählt zur Note (Teil Sinkrate, Gewicht 3): 90–249 fpm 100 Punkte, unter 90 fpm 85 (Hinweis auf langes Abfangen), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, ab 1000 fpm 0.",
+        "sinkrate": "Sinkrate im Moment des ersten Bodenkontakts, aus der Höhenkurve (ist sie nicht auswertbar, der Messwert des Simulators). Zählt zur Note (Teil Sinkrate, Gewicht 3): 90–249 fpm 100 Punkte, unter 90 fpm 85 (Hinweis auf langes Abfangen), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, ab 1000 fpm 0.",
+        "sinkrate_alt": "Sinkrate im Moment des ersten Bodenkontakts, so wie die damalige Version sie gemessen hat. Die Punkte dafür stehen in der Teilnote — vergeben nach den Grenzen der damaligen Score-Version, nicht neu gerechnet.",
         "g": "Bewertete G-Kraft beim Aufsetzen: leicht geglätteter Spitzenwert (wie ein Flugdatenschreiber), ohne einzelne 50-Hz-Ausreißer. Zählt zur Note (Teil G-Kraft, Gewicht 3): unter 1,20 G 100 Punkte, unter 1,40 G 80, unter 1,70 G 45, unter 2,10 G 20, ab 2,10 G 0. Ab 1,75 G ist die Gesamtnote höchstens 40, ab 2,6 G höchstens 14.",
+        "g_alt": "Bewertete G-Kraft beim Aufsetzen, so wie die damalige Version sie gemessen hat. Die Punkte dafür stehen in der Teilnote — vergeben nach den Grenzen der damaligen Score-Version, nicht neu gerechnet.",
+        "g_xplane": "X-Plane: Die Grenzen gelten für den auf die MSFS-Messkette umgerechneten Wert — nur der Anteil über 1 G zählt, mit dem Faktor 0,43 (aus 1,90 G werden 1,39 G).",
         "g_frame": "G-Kraft genau im Bild des Bodenkontakts, ungeglättet. Nur zur Einordnung — bewertet wird die G-Kraft darüber.",
         "pitch": "Nicklage beim Aufsetzen, + = Nase oben. Bei Verkehrsflugzeugen meist etwa +2 bis +6°; deutlich mehr erhöht die Gefahr, mit dem Heck aufzusetzen. Zählt nicht zur Note.",
         "bank": "Querlage beim Aufsetzen. Gut ist nahe 0°; je größer, desto näher kommt die Tragfläche dem Boden (siehe Wing-Strike-Risiko). Zählt nicht zur Note.",
@@ -1243,6 +1247,7 @@
         "gs": "Geschwindigkeit über Grund beim Aufsetzen. Bei Gegenwind kleiner als die angezeigte Fahrt, bei Rückenwind größer — sie bestimmt Ausrollstrecke und Bremsbedarf. Zählt nicht zur Note.",
         "sideslip": "Winkel zwischen Flugrichtung und Rumpfachse beim Aufsetzen (Vorhaltewinkel bei Seitenwind). Gut ist nahe 0°: vor dem Aufsetzen ausgerichtet. Zählt nicht direkt zur Note; die Teilnote Ausrichtung bewertet Lage und Kurs zur Bahn.",
         "hopser": "Wie oft das Flugzeug nach dem ersten Bodenkontakt wieder abgehoben hat. Zählt zur Note (Teil Hopser, Gewicht 2): 0 = 100 Punkte, 1 = 70, 2 = 40, 3 und mehr = 15. Ab zwei Hopsern ist die Gesamtnote höchstens 40.",
+        "hopser_alt": "Wie oft das Flugzeug nach dem ersten Bodenkontakt wieder abgehoben hat. Die Punkte dafür stehen in der Teilnote — vergeben nach den Grenzen der damaligen Score-Version, nicht neu gerechnet.",
         "hdg_mag": "Kurs beim Aufsetzen, missweisend (magnetisch) — die Bezugsgröße der Bahnbezeichnung. Zählt nicht zur Note.",
         "hdg_true": "Kurs beim Aufsetzen, rechtweisend (geografisch Nord). Mit ihm vergleicht die Teilnote Ausrichtung den Kurs der Bahn.",
         "wind": "Wind beim Aufsetzen aus dem Simulator, zerlegt in Gegen- bzw. Rückenwind und Seitenwind zur Bahn. Zählt nicht zur Note; die Teilnote Ausrichtung berücksichtigt den Seitenwind."
@@ -1278,7 +1283,7 @@
       "grafik": {
         "anflug": "Sinkrate über die letzten rund zwei Minuten vor dem Aufsetzen. Grünes Band: Soll-Sinkrate aus Gleitwinkel und Geschwindigkeit über Grund, ±100 fpm. Rote Linie: Stabilitätsgrenze. Blau hinterlegt ist das Stable Gate, gelb die letzten 3 s vor dem Aufsetzen (im Gate nicht gewertet). Die Grafik ordnet ein — bewertet wird über die Anflug-Stabilität.",
         "gleitpfad": "Abweichung vom Gleitpfad der gelandeten Bahn je Messpunkt, in Dots auf derselben Zeitachse. + = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD). Der Mittelwert zwischen 1000 und 200 ft ist Prüfpunkt des Stable Gate. Antippen zeigt den Wert und die Raute wie im Cockpit.",
-        "nah": "50-Hz-Nahaufnahme von 4 s vor bis 10 s nach dem Aufsetzen: wie die Sinkrate im Flare abgebaut wurde und ob das Flugzeug wieder abhob. Die Kurve zeigt das Instrument des Simulators zur Einordnung; die bewertete Sinkrate beim Aufsetzen kommt aus dem Höhenverlauf."
+        "nah": "50-Hz-Nahaufnahme von 4 s vor bis 10 s nach dem Aufsetzen: wie die Sinkrate im Flare abgebaut wurde und ob das Flugzeug wieder abhob. Die Kurve zeigt das Instrument des Simulators zur Einordnung; die bewertete Sinkrate beim Aufsetzen kommt aus dem Höhenverlauf (ist er nicht auswertbar, vom Simulator)."
       },
       "forensik": {
         "gleitpfad": "Geometrische Abweichung vom Gleitpfad der tatsächlich gelandeten Bahn, aus Position und wahrer Höhe gerechnet. Der Mittelwert 1000–200 ft ist Prüfpunkt des Stable Gate (gut unter 1 Dot); die Tore 1000–500 und 500–200 ft sind zur Einordnung.",

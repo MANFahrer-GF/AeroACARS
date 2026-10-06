@@ -1357,6 +1357,11 @@ pub struct PirepPayload {
     /// - `landing_peak_vs_fpm`: Spitzen-Sinkrate des Aufsetzfensters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flight_ident: Option<String>,
+    /// QS 06.10.2026 (Runde 6): Kennzeichen wie im Client-Datensatz (aus der
+    /// Buchung). Der Server kannte es nur aus der letzten Position des
+    /// Piloten — bei älteren Landungen das des aktuellen Flugs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aircraft_registration: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_scored_g_force: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

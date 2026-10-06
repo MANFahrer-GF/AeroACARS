@@ -223,6 +223,7 @@
       "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (block − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
       "loadsheet": "Older landings only: whether loadsheet data was present (ZFW + TOW in the plan). No longer part of the score since v1.7.12.",
       "score_section": "Eight parts of 0–100 points: sink rate, g-force, bounces, approach stability, runway discipline, alignment, touchdown point, flare. The overall score is their weighted average, but never better than the weakest part allows: a fair part at most 80, a poor one at most 60, a dangerous event (before the threshold, overrun, off the runway, two or more bounces, from 1.75 g) at most 40, from 2.6 g at most 14. The approach also caps: PARTIAL at most 80, UNSTABLE at most 45, without approach measurement at most 97. Fuel and loadsheet are shown for reference and do not count.",
+      "score_section_alt": "The parts at 0–100 points, as awarded by the score version in use at the time. The overall score was their weighted average under the rules of that time. This landing was graded before score version 19 and is not recalculated.",
       "runway_section": "Visualisation of your touchdown on the runway. The blue marker is the touchdown point, the green band the rollout. Values below are for reference: total length, distance to the centreline, distance past the threshold, runway utilisation in percent. Scored are runway discipline, alignment and touchdown point (see the parts above).",
       "fuel_section": "Block = fuel at off-block; TO fuel = at the take-off point; LDG fuel = at touchdown; TOW, LDW, ZFW = weights. Planned values come from the SimBrief OFP. \"Plan adherence\" below shows the deviations for reference — it does not count towards the score.",
       "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis, while the “Crosswind” tile beside it uses the wind relative to the aircraft nose. Both figures are correct — they simply refer to different directions, and the crab angle is exactly what lies between them.",
@@ -627,7 +628,7 @@
       "robust_section_title": "Robust statistics (spike-resistant)",
       "robust_section_subtitle": "Median and 95th percentile filter out single sim-frame spikes. If they are noticeably lower than the peak, the peak was a spike — not a real impact.",
       "score_section_title": "What AeroACARS scores",
-      "score_section_subtitle": "Sink rate and g-force weigh the same (3 of 13 shares each).",
+      "score_section_subtitle": "Sink rate and g-force weigh the same: three times each, the highest weight in the overall score.",
       "tile_edge": "Edge (touchdown frame)",
       "tile_250ms": "250 ms mean",
       "tile_500ms": "500 ms (peak)",
@@ -1218,9 +1219,9 @@
     "abfangen": {
       "titel": "Flare",
       "dauer": "Time from 50 ft",
-      "dauer_hint": "Time from crossing 50 ft above the touchdown point to touchdown. Climbing back above 50 ft during the flare does not restart the clock — only climbing above 100 ft (go-around) does. Counts towards the grade (part “Flare”): airliner full points up to 10 s, clear deduction from 12 s; light aircraft or business jet full points up to 16 s.",
+      "dauer_hint": "Time from crossing 50 ft above the touchdown point to touchdown. Climbing back above 50 ft during the flare does not restart the clock — only climbing above 100 ft (go-around) does. Counts towards the grade (part “Flare”): airliner full points up to 10 s, clear deduction above 12 s; light aircraft or business jet full points up to 16 s.",
       "vs": "Sink rate 50 ft → touchdown",
-      "vs_hint": "Sink rate when crossing 50 ft (simulator reading) and at first ground contact (from the height curve, as graded).",
+      "vs_hint": "Sink rate when crossing 50 ft (simulator reading) and at first ground contact (as graded: from the height curve, if it cannot be evaluated, from the simulator).",
       "reduktion": "Sink rate reduced",
       "reduktion_hint": "How much the flare reduced the sink rate between 50 ft and touchdown (positive = reduced) — the difference of the two values above, which come from different sources. For context only.",
       "beginn": "Flare start",
@@ -1234,8 +1235,11 @@
     "erklaer": {
       "kopf_note": "The letter grade summarises the overall score: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score is the weighted average of the parts (sink rate and G-force 3 each, bounces, approach stability and flare 2 each, the rest 1 each) — but never better than the weakest part allows: a medium part (45–74 points) caps at 80, a poor one (below 45) at 60, a dangerous event (before the threshold, past the runway end, off the runway, two or more bounces) at 40. The approach also caps: PARTIAL at 80, UNSTABLE at 45, without approach measurement at 97; and the G-force: from 1.75 G at 40, from 2.6 G at 14.",
       "td": {
-        "sinkrate": "Sink rate at the moment of first ground contact, from the height curve. Counts towards the grade (part sink rate, weight 3): 90–249 fpm 100 points, below 90 fpm 85 (sign of a long flare), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, from 1000 fpm 0.",
+        "sinkrate": "Sink rate at the moment of first ground contact, from the height curve (if it cannot be evaluated, the simulator reading). Counts towards the grade (part sink rate, weight 3): 90–249 fpm 100 points, below 90 fpm 85 (sign of a long flare), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, from 1000 fpm 0.",
+        "sinkrate_alt": "Sink rate at the moment of first ground contact, as measured by the version in use at the time. Its points are shown in the part score — awarded under the limits of that score version, not recalculated.",
         "g": "Graded G-force at touchdown: lightly smoothed peak (like a flight data recorder), without single 50 Hz spikes. Counts towards the grade (part G-force, weight 3): below 1.20 G 100 points, below 1.40 G 80, below 1.70 G 45, below 2.10 G 20, from 2.10 G 0. From 1.75 G the overall score is at most 40, from 2.6 G at most 14.",
+        "g_alt": "Graded g-force at touchdown, as measured by the version in use at the time. Its points are shown in the part score — awarded under the limits of that score version, not recalculated.",
+        "g_xplane": "X-Plane: the limits apply to the value converted to the MSFS measuring chain — only the part above 1 G counts, with factor 0.43 (1.90 G becomes 1.39 G).",
         "g_frame": "G-force exactly in the frame of ground contact, unsmoothed. For context only — the G-force above is graded.",
         "pitch": "Pitch attitude at touchdown, + = nose up. For airliners usually about +2 to +6°; much more raises the risk of a tail strike. Does not count towards the grade.",
         "bank": "Bank angle at touchdown. Close to 0° is good; the larger, the closer the wing gets to the ground (see wing strike risk). Does not count towards the grade.",
@@ -1243,6 +1247,7 @@
         "gs": "Ground speed at touchdown. With a headwind lower than the indicated airspeed, with a tailwind higher — it drives rollout distance and braking. Does not count towards the grade.",
         "sideslip": "Angle between flight path and fuselage axis at touchdown (crab angle in a crosswind). Close to 0° is good: aligned before touchdown. Does not count directly; the part alignment grades position and heading relative to the runway.",
         "hopser": "How often the aircraft lifted off again after first ground contact. Counts towards the grade (part bounces, weight 2): 0 = 100 points, 1 = 70, 2 = 40, 3 or more = 15. From two bounces the overall score is at most 40.",
+        "hopser_alt": "How often the aircraft lifted off again after first ground contact. Its points are shown in the part score — awarded under the limits of that score version, not recalculated.",
         "hdg_mag": "Heading at touchdown, magnetic — the reference of the runway designator. Does not count towards the grade.",
         "hdg_true": "Heading at touchdown, true (geographic north). The part alignment compares it with the runway course.",
         "wind": "Wind at touchdown from the simulator, split into head/tailwind and crosswind relative to the runway. Does not count towards the grade; the part alignment takes the crosswind into account."
@@ -1278,7 +1283,7 @@
       "grafik": {
         "anflug": "Sink rate over roughly the last two minutes before touchdown. Green band: target sink rate from glide angle and ground speed, ±100 fpm. Red line: stability limit. Blue background is the stable gate, yellow the last 3 s before touchdown (not counted in the gate). The chart gives context — grading is done via approach stability.",
         "gleitpfad": "Deviation from the glide path of the landing runway per sample, in dots on the same time axis. + = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD). The average between 1000 and 200 ft is a check of the stable gate. Tap to see the value and the diamond as in the cockpit.",
-        "nah": "50 Hz close-up from 4 s before to 10 s after touchdown: how the sink rate was reduced in the flare and whether the aircraft lifted off again. The curve shows the simulator’s instrument for context; the graded touchdown sink rate comes from the height profile."
+        "nah": "50 Hz close-up from 4 s before to 10 s after touchdown: how the sink rate was reduced in the flare and whether the aircraft lifted off again. The curve shows the simulator’s instrument for context; the graded touchdown sink rate comes from the height profile (if it cannot be evaluated, from the simulator)."
       },
       "forensik": {
         "gleitpfad": "Geometric deviation from the glide path of the runway actually landed on, computed from position and true altitude. The average 1000–200 ft is a check of the stable gate (good below 1 dot); the gates 1000–500 and 500–200 ft are for context.",

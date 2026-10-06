@@ -5507,6 +5507,11 @@ struct PersistedFlightStats {
     /// rechnete die Note nach einem Neustart vor dem Einreichen ohne
     /// Gleitpfad, Ruck, IAS-Streuung, Sinkrate und Konfiguration (QAF434:
     /// „teilweise" am Aufsetzen, „stabil" im PIREP).
+    /// QS 06.10.2026 (Runde 6): Version, die die Landung gemessen hat. Ein
+    /// Update mit Neustart vor dem Einreichen trug sonst die neue Version in
+    /// den Datensatz, während der Touchdown (Webapp) die alte nannte.
+    #[serde(default)]
+    client_version_aufsetzen: Option<(String, DateTime<Utc>)>,
     #[serde(default)]
     anflug_gleitpfad: Option<storage::AnflugGleitpfad>,
     #[serde(default)]
@@ -5791,6 +5796,12 @@ impl PersistedFlightStats {
             landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
             landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
             arr_metar_raw: stats.arr_metar_raw.clone(),
+            // Nach dem Aufsetzen schreibt die Sicherung der Prozess, der die
+            // Landung gemessen hat — also dessen Version, solange keine
+            // ältere Sicherung sie für DIESES Aufsetzen schon trägt.
+            client_version_aufsetzen: stats
+                .landing_at
+                .map(|at| (aufzeichnende_client_version(stats), at)),
             anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
             anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
             approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
@@ -6073,6 +6084,7 @@ impl PersistedFlightStats {
         stats.landing_brake_energy_proxy = self.landing_brake_energy_proxy;
         stats.landing_wing_strike_severity_pct = self.landing_wing_strike_severity_pct;
         stats.arr_metar_raw = self.arr_metar_raw;
+        stats.client_version_aufsetzen = self.client_version_aufsetzen;
         stats.anflug_forensik.gleitpfad = self.anflug_gleitpfad;
         stats.anflug_forensik.ruhe = self.anflug_ruhe;
         stats.approach_vs_jerk_fpm = self.approach_vs_jerk_fpm;
@@ -8020,6 +8032,12 @@ struct FlightStats {
     /// und ohne sie fehlte nach einer Wiederaufnahme die Teilnote samt Deckel
     /// beim Einreichen. Zurückgesetzt wie `landing_analysis` (Touch-and-Go).
     abfangen_gesichert: Option<landing_scoring::abfangen::Abfangen>,
+    /// QS 06.10.2026 (Runde 6): Client-Version, die die Landung gemessen
+    /// hat — nur nach einem Neustart gesetzt (aus der Sicherung). Sonst
+    /// misst die laufende Version (`aufzeichnende_client_version`). Mit dem
+    /// Aufsetzzeitpunkt, für den sie gilt — eine spätere Landung (Touch-and-
+    /// Go nach dem Neustart) misst die laufende Version.
+    client_version_aufsetzen: Option<(String, DateTime<Utc>)>,
 
     /// True once the "Aircraft: {title}" banner has been emitted to
     /// the activity log for this flight. Persisted across resumes
@@ -24757,6 +24775,8 @@ fn build_pirep_payload(
             flight.bid_callsign.as_deref(),
         ))
         .filter(|s| !s.trim().is_empty()),
+        // Dieselbe Quelle wie `build_landing_record`.
+        aircraft_registration: Some(flight.planned_registration.clone()).filter(|s| !s.is_empty()),
         landing_scored_g_force: score_g_for_stats(&stats).map(|s| s.scored_g),
         landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
         landing_bank_deg: aufsetz_bank_deg(&stats),
@@ -27135,6 +27155,14 @@ impl LandingVerdict {
 ///
 /// Score-Version 19: Gleitpfad (Durchschnitt in Dots, 1000–200 ft) statt der
 /// beiden Sinkraten-Abweichungen gegen eine ideale 3°-Sinkrate (GSG1709).
+/// Die Client-Version, die die Landung gemessen hat (QS 06.10.2026, Runde 6).
+fn aufzeichnende_client_version(stats: &FlightStats) -> String {
+    match &stats.client_version_aufsetzen {
+        Some((v, at)) if Some(*at) == stats.landing_at => v.clone(),
+        _ => env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
 fn anflug_werte(stats: &FlightStats) -> landing_scoring::anflug_urteil::AnflugWerte {
     landing_scoring::anflug_urteil::AnflugWerte {
         vs_jerk_fpm: stats.approach_vs_jerk_fpm,
@@ -28886,7 +28914,7 @@ where
         landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
         landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
         arr_metar: stats.arr_metar_raw.clone().filter(|m| !m.is_empty()),
-        client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        client_version: Some(aufzeichnende_client_version(stats)),
         landing_lat: stats.landing_lat,
         landing_lon: stats.landing_lon,
         approach_runway_changed_late: Some(stats.approach_runway_changed_late),
@@ -60527,6 +60555,37 @@ mod touch_and_go_go_around_tests {
         assert_eq!(a.bank_stddev_deg, Some(1.0), "v2 gewinnt");
     }
 
+    /// QS 06.10.2026 (Runde 6): Update mit Neustart zwischen Aufsetzen und
+    /// Einreichen — der Datensatz nennt die Version, die gemessen hat (wie
+    /// der Touchdown in der Webapp), eine spätere Landung die laufende.
+    #[test]
+    fn client_version_der_messung_ueberlebt_neustart() {
+        let jetzt = env!("CARGO_PKG_VERSION");
+        let at = Utc::now();
+        let mut stats = FlightStats::default();
+        assert_eq!(aufzeichnende_client_version(&stats), jetzt);
+        // Vor dem Aufsetzen sichert nichts eine Version.
+        assert_eq!(
+            PersistedFlightStats::snapshot_from(&stats).client_version_aufsetzen,
+            None
+        );
+        // Die Landung hat eine ältere Version gemessen (Sicherung von vorher).
+        stats.landing_at = Some(at);
+        stats.client_version_aufsetzen = Some(("1.0.0".to_string(), at));
+        let mut neu = FlightStats::default();
+        PersistedFlightStats::snapshot_from(&stats).apply_to(&mut neu);
+        assert_eq!(aufzeichnende_client_version(&neu), "1.0.0");
+        // Gegenprobe: ohne ältere Sicherung zählt die laufende Version …
+        let mut frisch = FlightStats::default();
+        frisch.landing_at = Some(at);
+        let mut neu2 = FlightStats::default();
+        PersistedFlightStats::snapshot_from(&frisch).apply_to(&mut neu2);
+        assert_eq!(aufzeichnende_client_version(&neu2), jetzt);
+        // … und eine spätere Landung (Touch-and-Go) misst die laufende.
+        neu.landing_at = Some(at + chrono::Duration::seconds(300));
+        assert_eq!(aufzeichnende_client_version(&neu), jetzt);
+    }
+
     /// QS 06.10.2026 (Runde 5): Neustart zwischen Aufsetzen und Einreichen —
     /// das Anflug-Urteil (Note, Deckel, `approach_stable_at_gate`) bleibt
     /// dasselbe, und Gleitpfad/Anflugruhe stehen weiter im Datensatz.
@@ -66079,6 +66138,7 @@ mod touchdown_metadata_stamp_tests {
         flight.airline_icao = "CFG".into();
         flight.flight_number = "0".into();
         flight.bid_callsign = Some("7ME".into());
+        flight.planned_registration = "EC-MHA".into();
         {
             let mut st = flight.stats.lock().unwrap();
             st.landing_peak_vs_fpm = Some(-204.0);
@@ -66112,11 +66172,15 @@ mod touchdown_metadata_stamp_tests {
         // Ein fester Wert, nicht „dieselbe Funktion wie das Feld" (QS:
         // sonst prüfte der Test None == None).
         assert_eq!(p.landing_scored_g_force, Some(1.42));
+        // Runde 6: Kennzeichen wie im Datensatz (aus der Buchung).
+        assert_eq!(p.aircraft_registration.as_deref(), Some("EC-MHA"));
         // Ohne Werte: Felder fehlen im JSON (ältere Empfänger unverändert).
         let mut leer = flight_fixture("GCLP");
         leer.flight_number = String::new();
+        leer.planned_registration = String::new();
         let j = serde_json::to_value(build_pirep_payload(&leer, &body, "GCLP", "GCLP")).unwrap();
         assert!(j.get("flight_ident").is_none() && j.get("landing_peak_vs_fpm").is_none());
+        assert!(j.get("aircraft_registration").is_none());
     }
 
     #[test]
