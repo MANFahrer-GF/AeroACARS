@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Wird von Tauri beim Bau in die Info.plist des App-Pakets übernommen.
+
+  LSAppNapIsDisabled: macOS legt Programme, die hinter einem anderen Fenster
+  liegen, schlafen (App Nap) und bremst ihre Zeitgeber. AeroACARS läuft beim
+  Fliegen immer hinter dem Simulator und muss das Aufsetzen dicht
+  aufzeichnen. Anlass: AFR 421 (06.10.2026, X-Plane 12 auf dem Mac) — 11 der
+  12 Landungen im Bestand mit Lücken im Aufsetzfenster stammen von diesem
+  einen Mac-Piloten.
+-->
+<plist version="1.0">
+<dict>
+  <key>LSAppNapIsDisabled</key>
+  <true/>
+</dict>
+</plist>

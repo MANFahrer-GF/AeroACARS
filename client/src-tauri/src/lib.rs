@@ -35175,7 +35175,8 @@ fn compute_landing_analysis(
     // **Fensterbreite 310 ms** — am Korpus optimiert (kürzer wird es
     // verrauscht, länger mittelt es den späten flachen Teil des Abfangens
     // ein und liest zu nah an Null).
-    const AGL_FENSTER_MS: i64 = 310;
+    // Dieselbe Konstante begrenzt die Lückenprüfung der Bewertbarkeit.
+    const AGL_FENSTER_MS: i64 = touchdown_v2::LUECKEN_FENSTER_VOR_MS;
     /// Weniger Messpunkte im Fenster → keine belastbare Steigung.
     const AGL_MIN_SAMPLES: usize = 4;
     /// Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der

@@ -439,6 +439,22 @@ pub const MIN_BEWERTUNGS_PROBEN: usize = 12;
 pub const BEWERTUNGS_FENSTER_VOR_MS: i64 = 1000;
 pub const BEWERTUNGS_FENSTER_NACH_MS: i64 = 100;
 
+/// Der Teil vor dem Kontakt, in dem eine Lücke die Bewertung sperrt: genau
+/// der Bereich, aus dem die gewertete Sinkrate gemessen wird (Höhenkurve,
+/// `AGL_FENSTER_MS` in `lib.rs` nutzt diese Konstante). G-Werte und Hopser
+/// liegen NACH dem Kontakt.
+///
+/// Bis 2.0.1 galt die Lückengrenze für die ganze Sekunde davor. AFR 421
+/// (06.10.2026, X-Plane 12 auf dem Mac) verlor so die Bewertung durch eine
+/// einzige Lücke von 201,9 ms, 0,33–0,53 s vor dem Kontakt — außerhalb des
+/// Messbereichs; der Kontakt selbst war dicht gemessen (−401 fpm), und im
+/// PIREP fehlte die Sinkrate für die Wartung. Über alle 1431 Client-
+/// Protokolle mit Aufsetzfenster: 12 bisher gesperrt, 4 davon werden so
+/// bewertbar, keine bisher bewertbare wird gesperrt. Die 8 übrigen haben im
+/// Messbereich gar keine oder kaum Proben und bleiben zu Recht gesperrt,
+/// ebenso CFG 2090 (0,92 s Lücke direkt vor dem Kontakt).
+pub const LUECKEN_FENSTER_VOR_MS: i64 = 310;
+
 /// Warum eine Landung nicht bewertet werden kann.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FehlendeAbdeckung {
@@ -472,6 +488,7 @@ pub fn pruefe_bewertbarkeit(
 ) -> Result<(), FehlendeAbdeckung> {
     let start = contact_at - chrono::Duration::milliseconds(BEWERTUNGS_FENSTER_VOR_MS);
     let ende = contact_at + chrono::Duration::milliseconds(BEWERTUNGS_FENSTER_NACH_MS);
+    let luecken_start = contact_at - chrono::Duration::milliseconds(LUECKEN_FENSTER_VOR_MS);
 
     // Verwertbar heisst: im Fenster, mit endlichen Werten. Eine Probe mit
     // NaN-Sinkrate zählt nicht mit — sie trägt nichts zur Messung bei, und
@@ -486,21 +503,25 @@ pub fn pruefe_bewertbarkeit(
     zeitpunkte.dedup();
 
     let proben = zeitpunkte.len();
-    if proben == 0 {
-        return Err(FehlendeAbdeckung {
-            groesste_luecke_ms: (ende - start).num_milliseconds(),
-            proben: 0,
-        });
-    }
 
-    // Randlücken zählen mit: Liegt die erste Probe erst 600 ms nach
-    // Fensterbeginn, fehlt die halbe Flare — auch wenn die restlichen
-    // Proben dicht liegen.
-    let mut groesste = (zeitpunkte[0] - start).num_milliseconds();
-    for paar in zeitpunkte.windows(2) {
-        groesste = groesste.max((paar[1] - paar[0]).num_milliseconds());
-    }
-    groesste = groesste.max((ende - *zeitpunkte.last().expect("nicht leer")).num_milliseconds());
+    // Lücken zählen nur im Messbereich (`LUECKEN_FENSTER_VOR_MS`), dort aber
+    // mit den Rändern: Liegt die erste Probe erst 260 ms vor dem Kontakt,
+    // fehlt der Anfang der Messung — auch wenn der Rest dicht liegt.
+    let im_messbereich: Vec<DateTime<Utc>> = zeitpunkte
+        .iter()
+        .copied()
+        .filter(|t| *t >= luecken_start)
+        .collect();
+    let groesste = match (im_messbereich.first(), im_messbereich.last()) {
+        (Some(erste), Some(letzte)) => {
+            let mut g = (*erste - luecken_start).num_milliseconds();
+            for paar in im_messbereich.windows(2) {
+                g = g.max((paar[1] - paar[0]).num_milliseconds());
+            }
+            g.max((ende - *letzte).num_milliseconds())
+        }
+        _ => (ende - luecken_start).num_milliseconds(),
+    };
 
     if groesste > MAX_BEWERTUNGS_LUECKE_MS || proben < MIN_BEWERTUNGS_PROBEN {
         return Err(FehlendeAbdeckung {
@@ -2354,9 +2375,11 @@ mod tests {
             bp(113, 0.98, true, -10.4),
         ];
         let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
+        // Die 0,92-s-Lücke reicht über den ganzen Messbereich hinaus: vor
+        // dem Kontakt liegt dort keine einzige Probe.
         assert!(
-            fehlt.groesste_luecke_ms >= 900,
-            "die 0,92-s-Lücke muss gefunden werden, gemessen: {} ms",
+            fehlt.groesste_luecke_ms >= LUECKEN_FENSTER_VOR_MS,
+            "die Lücke vor dem Kontakt muss gefunden werden, gemessen: {} ms",
             fehlt.groesste_luecke_ms
         );
         assert!(fehlt.proben < MIN_BEWERTUNGS_PROBEN);
@@ -2369,13 +2392,13 @@ mod tests {
         // entschied in Wahrheit die Probenzahl. Hier steht jede Bedingung
         // für sich, mit der jeweils anderen sicher erfüllt.
 
-        // Dicht genug (20 Proben), eine einzelne Lücke von 201 ms.
-        let mut mit_luecke: Vec<TouchdownWindowSample> = (-1000..=-600)
+        // Dicht genug, eine einzelne Lücke von 201 ms im Messbereich.
+        let mut mit_luecke: Vec<TouchdownWindowSample> = (-1000..=-240)
             .step_by(20)
             .map(|ms| bp(ms, 5.0, false, -200.0))
             .collect();
         mit_luecke.extend(
-            (-399..=100)
+            (-39..=100)
                 .step_by(20)
                 .map(|ms| bp(ms, 2.0, ms >= 0, -140.0)),
         );
@@ -2446,19 +2469,51 @@ mod tests {
 
     #[test]
     fn eine_luecke_am_fensterrand_zaehlt_mit() {
-        // Alle Proben dicht — aber die erste kommt erst 600 ms nach
-        // Fensterbeginn. Dann fehlt die halbe Flare, und genau dort
-        // entscheidet sich die Sinkrate.
-        let proben: Vec<_> = (-400..=100)
-            .step_by(20)
+        // Alle Proben dicht — aber die erste im Messbereich kommt erst 50 ms
+        // vor dem Kontakt. Dann fehlt der Anfang der Sinkraten-Messung.
+        let proben: Vec<_> = (-50..=100)
+            .step_by(10)
             .map(|ms| bp(ms, 4.0, ms >= 0, -200.0))
             .collect();
+        assert!(proben.len() >= MIN_BEWERTUNGS_PROBEN, "Probenzahl ist erfüllt");
         let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
-        assert!(
-            fehlt.groesste_luecke_ms >= 600,
-            "die Randlücke muss zählen, gemessen: {} ms",
-            fehlt.groesste_luecke_ms
+        assert_eq!(
+            fehlt.groesste_luecke_ms,
+            LUECKEN_FENSTER_VOR_MS - 50,
+            "die Randlücke muss zählen"
         );
+    }
+
+    /// AFR 421 (Michel, X-Plane 12 auf dem Mac, 06.10.2026): die echte
+    /// Probenfolge um den Kontakt, aus dem Client-Protokoll. Eine Lücke von
+    /// 201,9 ms liegt 0,33–0,53 s vor dem Kontakt — vor dem Messbereich. Bis
+    /// 2.0.1 sperrte sie die ganze Bewertung, obwohl der Kontakt dicht
+    /// gemessen war.
+    #[test]
+    fn eine_luecke_vor_dem_messbereich_sperrt_nicht() {
+        let mut proben: Vec<_> = (-1000..=-531)
+            .step_by(27)
+            .map(|ms| bp(ms, 6.0, false, -420.0))
+            .collect();
+        proben.extend(
+            (-329..=100)
+                .step_by(27)
+                .map(|ms| bp(ms, if ms < 0 { 2.0 } else { 0.3 }, ms >= 0, -400.0)),
+        );
+        assert_eq!(pruefe_bewertbarkeit(&proben, kontakt()), Ok(()));
+
+        // Gegenprobe: dieselbe Lücke in den Messbereich verschoben sperrt.
+        let mut verschoben: Vec<_> = (-1000..=-231)
+            .step_by(27)
+            .map(|ms| bp(ms, 6.0, false, -420.0))
+            .collect();
+        verschoben.extend(
+            (-29..=100)
+                .step_by(27)
+                .map(|ms| bp(ms, if ms < 0 { 2.0 } else { 0.3 }, ms >= 0, -400.0)),
+        );
+        let fehlt = pruefe_bewertbarkeit(&verschoben, kontakt()).unwrap_err();
+        assert!(fehlt.groesste_luecke_ms > MAX_BEWERTUNGS_LUECKE_MS);
     }
 
     #[test]
@@ -2518,7 +2573,7 @@ mod tests {
         assert_eq!(fehlt.proben, 0);
         assert_eq!(
             fehlt.groesste_luecke_ms,
-            BEWERTUNGS_FENSTER_VOR_MS + BEWERTUNGS_FENSTER_NACH_MS
+            LUECKEN_FENSTER_VOR_MS + BEWERTUNGS_FENSTER_NACH_MS
         );
     }
 
