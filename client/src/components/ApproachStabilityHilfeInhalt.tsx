@@ -5,7 +5,8 @@
 // Dialog-Hülle (ApproachStabilityHelpModal.tsx) bleibt je App eigen — Client
 // und Webapp haben verschiedene Dialog-Bausteine —, der Text ist derselbe.
 
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
+import { AltbestandKontext } from "./InfoBadge";
 import { useTranslation } from "react-i18next";
 import "./approachStabilityHilfe.css";
 
@@ -22,8 +23,16 @@ const TILE_KEYS = [
 
 export function ApproachStabilityHilfeInhalt() {
   const { t } = useTranslation();
+  // Wie jedes Erklärfenster: an einer Landung vor Score-Version 19 der
+  // Hinweis, dass die Hilfe die heutigen Regeln beschreibt (QS Runde 10).
+  const altbestand = useContext(AltbestandKontext);
   return (
     <div className="helpmodal__body">
+      {altbestand && (
+        <p className="helpmodal__p" style={{ marginTop: 0 }}>
+          <strong>{t("landing.erklaer.alt_hinweis")}</strong>
+        </p>
+      )}
       <p style={{ margin: 0, fontSize: "0.92rem", lineHeight: 1.5 }}>
         {t("landing.approach_stability_help.intro")}
       </p>

@@ -219,11 +219,11 @@ function ComparisonTable({
                     ? "▲"
                     : "▼";
 
-          // SOLL als Sub-Zeile nur zeigen wenn IST ≠ SOLL (= Δ exists und
-          // != 0). Bei exaktem Match (oder fehlendem SOLL) keine Sub-Zeile,
-          // damit die Liste ruhig bleibt.
-          const showSollSubline =
-            r.soll != null && delta != null && delta !== 0;
+          // SOLL als Sub-Zeile, wenn IST ≠ SOLL — und auch, wenn der IST-Wert
+          // fehlt: dann ist der Plan der einzige Wert der Zeile (QS Runde 10,
+          // der alte Bericht zeigte „Trip · Plan" immer). Nur bei exaktem
+          // Match oder fehlendem SOLL keine Sub-Zeile.
+          const showSollSubline = r.soll != null && (delta == null || delta !== 0);
 
           return (
             <div
