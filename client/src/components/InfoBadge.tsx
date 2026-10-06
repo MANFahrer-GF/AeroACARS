@@ -83,10 +83,18 @@ interface Lage {
  */
 export const AltbestandKontext = createContext(false);
 
-export function InfoBadge({ explanation }: { explanation: string }) {
+export function InfoBadge({
+  explanation,
+  ohneAltHinweis = false,
+}: {
+  explanation: string;
+  /** Der Text beschreibt schon selbst die damaligen Regeln (`*_alt`) — dann
+   *  widerspräche der Hinweis „beschreibt die heutigen Regeln" (Runde 9). */
+  ohneAltHinweis?: boolean;
+}) {
   const { t } = useTranslation();
   const altbestand = useContext(AltbestandKontext);
-  const text = altbestand ? `${explanation} ${t("landing.erklaer.alt_hinweis")}` : explanation;
+  const text = altbestand && !ohneAltHinweis ? `${explanation} ${t("landing.erklaer.alt_hinweis")}` : explanation;
   const [open, setOpen] = useState(false);
   const id = useId();
   const [lage, setLage] = useState<Lage | null>(null);

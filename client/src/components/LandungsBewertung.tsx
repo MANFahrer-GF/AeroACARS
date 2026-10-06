@@ -952,6 +952,7 @@ export function LandungsKopf({
                     ? "landing.erklaer.kopf_note"
                     : "landing.erklaer.kopf_note_alt",
                 )}
+                ohneAltHinweis={(record.score_algorithm_version ?? 0) < 19}
               />
             </>
           ) : null}{" "}

@@ -28,7 +28,7 @@
 // sonst PARTIAL (so rechnet auch das Backend).
 // "bad" für Bools = excessive_sink=true / stable_config=false.
 
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApproachStabilityHelpModal } from "./ApproachStabilityHelpModal";
 import {
@@ -40,7 +40,7 @@ import {
   gateWert,
   type GatePunkt,
 } from "../lib/stableGate";
-import { InfoBadge } from "./InfoBadge";
+import { AltbestandKontext, InfoBadge } from "./InfoBadge";
 
 type Band = "good" | "ok" | "bad" | "missing";
 
@@ -117,6 +117,7 @@ export function ApproachStabilityCard(props: Props) {
   const { t, i18n } = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
   const gate = props.gate && props.gate.length > 0 ? props.gate : null;
+  const altbestand = useContext(AltbestandKontext);
 
   const bands: Band[] = [
     bandForRange(props.vsJerkFpm, 100, 200),
@@ -187,7 +188,15 @@ export function ApproachStabilityCard(props: Props) {
       >
         <h3 style={{ margin: 0, fontSize: "1rem" }}>
           {t("landing.approach_stability_card.title")}
-          {!isLegacy && <InfoBadge explanation={t(gate ? "landing.erklaer.gate.urteil" : "landing.erklaer.gate.urteil_alt")} />}
+          {/* Die Altfassung nach der Version (Kontext), nicht nach fehlender
+              Prüfliste — sie beschreibt selbst die damaligen Regeln, ohne
+              den gemeinsamen Hinweis (Runde 9). */}
+          {!isLegacy &&
+            (altbestand ? (
+              <InfoBadge explanation={t("landing.erklaer.gate.urteil_alt")} ohneAltHinweis />
+            ) : (
+              <InfoBadge explanation={t("landing.erklaer.gate.urteil")} />
+            ))}
         </h3>
         {!isLegacy && (
           <span

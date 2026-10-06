@@ -43,7 +43,7 @@ describe("Versionshinweis an allen Erklärungen", () => {
     const fenster = (version: number) => {
       const r = { ...(MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord), score_algorithm_version: version };
       const { container, unmount } = render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);
-      const knoepfe = Array.from(container.querySelectorAll(".landing-section .info-badge")) as HTMLElement[];
+      const knoepfe = Array.from(container.querySelectorAll(".info-badge")) as HTMLElement[];
       const texte = knoepfe.map((k) => {
         fireEvent.click(k);
         const f = document.querySelector(".info-badge__popover")?.textContent ?? "";
@@ -55,7 +55,19 @@ describe("Versionshinweis an allen Erklärungen", () => {
     };
     const alt = fenster(17);
     expect(alt.length).toBeGreaterThan(10);
-    for (const t of alt) expect(t).toContain("vor Score-Version 19 bewertet");
+    const HINWEIS = "Die Erklärung beschreibt die heutigen Regeln";
+    for (const t of alt) {
+      // Texte, die selbst die damaligen Regeln beschreiben (Runde 9), ohne
+      // den Hinweis — alle übrigen mit, und nie doppelt.
+      const eigeneAltfassung =
+        t.startsWith("Anflug-Urteil für Flüge vor Score-Version 19") ||
+        t.startsWith("Diese Landung wurde vor Score-Version 19 bewertet und behält");
+      if (eigeneAltfassung) expect(t).not.toContain(HINWEIS);
+      else expect(t).toContain(HINWEIS);
+      expect(t.split("vor Score-Version 19").length).toBeLessThanOrEqual(2);
+    }
+    expect(alt.some((t) => t.startsWith("Anflug-Urteil für Flüge vor Score-Version 19"))).toBe(true);
+    expect(alt.some((t) => t.startsWith("Diese Landung wurde vor Score-Version 19 bewertet und behält"))).toBe(true);
     const neu = fenster(19);
     expect(neu.length).toBeGreaterThan(10);
     for (const t of neu) expect(t).not.toContain("vor Score-Version 19 bewertet");
