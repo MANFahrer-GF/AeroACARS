@@ -25,19 +25,27 @@ export function fensterWerteGueltig(r: LandingRecord): boolean {
   return istBewertbar(r) && !r.fenster_unzureichend;
 }
 
+/** `toFixed` ohne „-0": kleine negative Werte, die auf 0 runden, zeigen „0"
+ *  (Abnahme 06.10.2026: „Δ -0 m"). */
+function ohneMinusNull(v: number, digits: number): string {
+  const s = v.toFixed(digits);
+  return Number(s) === 0 ? s.replace(/^-/, "") : s;
+}
+
 export function fmtNumber(
   v: number | null | undefined,
   digits = 0,
   unit = "",
 ): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toFixed(digits)}${unit ? ` ${unit}` : ""}`;
+  return `${ohneMinusNull(v, digits)}${unit ? ` ${unit}` : ""}`;
 }
 
 export function fmtSigned(v: number | null | undefined, digits = 0, unit = ""): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v >= 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)}${unit ? ` ${unit}` : ""}`;
+  const s = ohneMinusNull(v, digits);
+  const sign = Number(s) > 0 ? "+" : "";
+  return `${sign}${s}${unit ? ` ${unit}` : ""}`;
 }
 
 /** v0.12.3 (LE9): the G value the client scores / flags / colours on —

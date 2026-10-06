@@ -219,7 +219,7 @@
       "landing_rate": "Velocità verticale nell'istante del contatto, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo di 90–250 fpm è voluto — standard professionale, non «il più morbido possibile»: ben sotto i 90 fpm significa di solito una lunga richiamata che ritarda frenata e spoiler. Oltre 600 fpm di discesa sarebbe dovuta un'ispezione per atterraggio duro.\n\nDalla v1.6.3 la misura viene dall'andamento reale della quota nell'ultimo terzo di secondo prima del contatto, non più dal variometro del simulatore, lento come uno strumento di bordo reale. Se il simulatore blocca temporaneamente la lettura della quota, non si calcola nulla e si usa il valore dello strumento.",
       "g_force": "Carico G valutato al contatto. Sotto 1,20 g punteggio pieno, sotto 1,40 g 80, sotto 1,70 g 45, oltre 20 o 0. Da 1,75 g il punteggio totale è al massimo 40, da 2,6 g al massimo 14.",
       "bounces": "Quante volte l'aereo è risalito di oltre 5 ft dal suolo dopo il primo touchdown ed è tornato a toccare (atterraggi precedenti: da 15 ft). 0 = atterraggio pulito; ogni rimbalzo riduce il punteggio.",
-      "stability": "Due cose: i punti di questa parte vengono dalla regolarità dell'avvicinamento (dispersione di rateo e inclinazione). Lo stable gate controlla sei punti da 1000 ft: sentiero (in media sotto 1 dot), velocità regolare, inclinazione regolare, rateo uniforme, nessuna discesa eccessiva per oltre 10 secondi, configurazione d'atterraggio a 1000 ft. Solo in parte stabile limita questa parte e il punteggio totale a 80, instabile a 45. Dettagli e limiti nella scheda \"Stabilità dell'avvicinamento\".",
+      "stability": "Due cose: i punti di questa parte vengono dalla regolarità dell'avvicinamento (dispersione di rateo e inclinazione). Lo stable gate controlla sei punti da 1000 ft: sentiero (in media sotto 1 dot), velocità regolare, inclinazione regolare, rateo uniforme, nessuna discesa eccessiva per oltre 10 secondi, configurazione d'atterraggio all'ingresso nel gate. Solo in parte stabile limita questa parte e il punteggio totale a 80, instabile a 45. Dettagli e limiti nella scheda \"Stabilità dell'avvicinamento\".",
       "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua landata ha usato — misurata dalla soglia: prima la distanza fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Viene valutato quanta pista resta: sotto il 60 % è punteggio pieno, dal 90 % diventa stretto — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?“ per la spiegazione completa.",
       "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (takeoff fuel − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
       "loadsheet": "Solo atterraggi più vecchi: presenza dei dati loadsheet (ZFW + TOW nel piano). Non fa più parte del punteggio dalla v1.7.12.",
@@ -973,7 +973,7 @@
         "landing_config": {
           "label": "Landing config",
           "body": "Posizione gear e flaps al campione PIÙ VECCHIO del gate (= quello con altezza più alta, ~1000 ft). FAA richiede: configurazione completa allo stable gate.",
-          "thresholds": "GEAR/FLAPS ✓ = gear ≥ 99 %, flaps ≥ 70 % all'ingresso nel gate · INCOMPLETE = uno manca"
+          "thresholds": "GEAR/FLAPS ✓ = gear ≥ 99 %, flaps ≥ 70 % all’ingresso nel gate · INCOMPLETE = uno manca"
         },
         "vs_vs_ils": {
           "label": "V/S vs. 3° ILS",
@@ -1173,6 +1173,7 @@
         "BKN": "frammentate",
         "OVC": "coperto"
       },
+      "vorlage": {"FZ": "{{x}} congelante", "SH": "rovesci di {{x}}", "TS": "temporale con {{x}}", "VC": "{{x}} nelle vicinanze", "leicht": "{{x}} (debole)", "stark": "{{x}} (forte)"},
       "wx": {
         "DZ": "pioviggine",
         "RA": "pioggia",

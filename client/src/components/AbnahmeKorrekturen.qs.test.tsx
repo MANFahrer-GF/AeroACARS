@@ -9,7 +9,6 @@ import type { LandingRecord } from "../lib/landungsDatensatz";
 import { MOCK_LANDING_OPTIONS } from "../dev/mockLandingRecords";
 import { BahnUeberschrift, ScoreBreakdown } from "./LandungsBewertung";
 import { TouchdownAbschnitt } from "./TouchdownAbschnitt";
-import { metarAuswertung } from "./MetarAbschnitt";
 
 const basis = () => MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord;
 
@@ -47,17 +46,30 @@ describe("Abnahme-Korrekturen", () => {
     expect(t).not.toContain("Gesamtwind");
   });
 
-  it("METAR: Sicht in Meilen und Wettercodes getrennt", () => {
-    const tt = (k: string) => ({ "landing.metar.wx.SH": "Schauer", "landing.metar.wx.RA": "Regen", "landing.metar.leicht": "leicht", "landing.metar.sicht": "Sicht" })[k] ?? k;
-    const z = metarAuswertung(tt as never, "METAR KJFK 011951Z 18005KT 1 1/2SM -SHRA BKN010 14/12 A3001");
-    const text = z.map((x) => `${x.k}=${x.v}`).join(" | ");
-    expect(text).toContain("Sicht=1 1/2 SM");
-    expect(text).toContain("leicht Schauer Regen");
-  });
-
   it("Druck: Windlinien angehalten (feste Stelle), nicht abgeschaltet", () => {
     const css = readFileSync(resolve(__dirname, "touchdownAbschnitt.css"), "utf-8");
     const druck = css.slice(css.indexOf("@media print"));
     expect(druck).toMatch(/\.windflow__streak\s*\{\s*animation-play-state:\s*paused/);
+  });
+
+  it("kein „-0“ in Werten (gemeinsame Formatierung)", async () => {
+    const { fmtNumber, fmtSigned } = await import("../lib/landungsFormat");
+    expect(fmtSigned(-0.3, 0, "m")).toBe("0 m");
+    expect(fmtNumber(-0.04, 1)).toBe("0.0");
+    expect(fmtSigned(-0.6, 0)).toBe("-1");
+    expect(fmtSigned(2, 0)).toBe("+2");
+  });
+
+  it("Druck: Windlinien abgedunkelt und deckend (Farbe im stroke-Attribut)", () => {
+    const css = readFileSync(resolve(__dirname, "..", "App.css"), "utf-8");
+    const druck = css.slice(css.indexOf("@media print"));
+    expect(druck).toMatch(/\.landing-report \.windflow__streak\s*\{[^}]*filter:\s*brightness\(0\.55\)[^}]*opacity:\s*0\.85/);
+  });
+
+  it("kein Text prüft die Konfiguration „bei 1000 ft“ (de/en/it)", () => {
+    for (const l of ["de", "en", "it"]) {
+      const roh = readFileSync(resolve(__dirname, "..", "locales", l, "common.json"), "utf-8");
+      expect(roh).not.toMatch(/Landekonfiguration bei 1000 ft|landing configuration at 1000 ft|configurazione d.atterraggio a 1000 ft|Klappen bei 1000 ft|flaps not in landing position at 1000 ft/i);
+    }
   });
 });

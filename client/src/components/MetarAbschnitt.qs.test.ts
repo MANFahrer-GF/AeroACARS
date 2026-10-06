@@ -10,12 +10,29 @@ describe("METAR-Wetter", () => {
     const t = (k: string) => k; // wie eine fehlende Übersetzung
     const zeilen = metarAuswertung(t as never, "METAR EDLP 011920Z 18005KT 9999 -RA FEW046 14/12 Q1026");
     const wetter = zeilen.map((z) => z.v).join(" | ");
-    expect(wetter).toContain("landing.metar.wx.RA");
+    expect(wetter).toContain("landing.metar.vorlage.leicht");
     expect(wetter.length).toBeLessThan(500);
   });
-  it("übersetzt mehrere Codes nacheinander", () => {
-    const t = (k: string) => ({ "landing.metar.wx.SH": "Schauer", "landing.metar.wx.RA": "Regen", "landing.metar.leicht": "leicht" })[k] ?? k;
-    const zeilen = metarAuswertung(t as never, "METAR EDDF 011920Z 18005KT 9999 -SHRA FEW046 14/12 Q1026");
-    expect(zeilen.map((z) => z.v).join(" | ")).toContain("leicht Schauer Regen");
+  it("grammatisch in jeder Sprache (Vorlagen statt Code-Reihenfolge)", async () => {
+    const i18n = (await import("../i18n")).default;
+    const wetter = async (lng: string, metar: string) => {
+      await i18n.changeLanguage(lng);
+      return metarAuswertung(i18n.t.bind(i18n) as never, metar).find((z) => z.id === "wetter")?.v;
+    };
+    const M = (wx: string) => `METAR EDDF 011920Z 18005KT 9999 ${wx} FEW046 14/12 Q1026`;
+    expect(await wetter("de", M("-SHRA"))).toBe("Schauer mit Regen (leicht)");
+    expect(await wetter("en", M("-SHRA"))).toBe("light rain showers");
+    expect(await wetter("it", M("-SHRA"))).toBe("rovesci di pioggia (debole)");
+    expect(await wetter("en", M("VCSH"))).toBe("showers in the vicinity");
+    expect(await wetter("de", M("-FZDZ"))).toBe("gefrierender Niesel (leicht)");
+    expect(await wetter("en", M("+TSRA"))).toBe("heavy thunderstorm with rain");
+    await i18n.changeLanguage("de");
+  });
+  it("Sicht nur aus dem aktuellen Teil, auch weniger als eine Meile", () => {
+    const t = (k: string) => ({ "landing.metar.sicht": "Sicht" })[k] ?? k;
+    const sicht = (m: string) => metarAuswertung(t as never, m).find((z) => z.id === "sicht")?.v;
+    expect(sicht("METAR KJFK 011951Z 18005KT 10SM FEW250 14/12 A3001 RMK AO2 WSHFT 1715 SLP123")).toBe("10 SM");
+    expect(sicht("METAR KJFK 011951Z 18005KT M1/4SM FG VV002 14/12 A3001")).toBe("< 1/4 SM");
+    expect(sicht("METAR EDDF 011920Z 18005KT 9999 FEW046 14/12 Q1026 TEMPO 3000 BKN008")).toBe("≥ 10 km");
   });
 });

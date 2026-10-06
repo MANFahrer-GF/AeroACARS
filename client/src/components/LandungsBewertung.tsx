@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 import type { LandingCategory, LandingRecord } from "../lib/landungsDatensatz";
 import { gateAus, gateGruende, gateMarke, gateUrteil, type GatePunkt } from "../lib/stableGate";
 import { landungsMarkenV19 } from "../lib/landungsUrteil";
-import { fensterWerteGueltig, fmtNumber, scoreG } from "../lib/landungsFormat";
+import { fensterWerteGueltig, fmtNumber, fmtSigned, scoreG } from "../lib/landungsFormat";
 import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import { scoreBasisVs } from "./SinkrateForensik";
 import { istBewertbar } from "../lib/landungsFormat";
@@ -1114,7 +1114,7 @@ function bahnFakten(record: LandingRecord, t: (k: string, o?: Record<string, unk
   if (belag) teile.push(belag);
   if (record.td_in_tdz != null) teile.push(`${t("landing.tdz_label")} ${t(record.td_in_tdz ? "landing.tdz_in" : "landing.tdz_out")}`);
   if (record.aim_delta_m != null) {
-    teile.push(`${t("landing.aim_label")} Δ ${record.aim_delta_m >= 0 ? "+" : ""}${record.aim_delta_m.toFixed(0)} m`);
+    teile.push(`${t("landing.aim_label")} Δ ${fmtSigned(record.aim_delta_m, 0, "m")}`);
   }
   return `${teile.join(" · ")} (${t("landing.rohdaten.unsicher")})`;
 }

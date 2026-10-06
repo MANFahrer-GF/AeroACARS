@@ -219,7 +219,7 @@
       "landing_rate": "Vertical speed at the moment of touchdown, in feet per minute. Negative = descending. The target corridor of 90–250 fpm is deliberate — a professional standard, not “as soft as possible”: well below 90 fpm usually means a long float that delays braking and spoiler deployment. Beyond 600 fpm of sink a real hard-landing inspection would be due.\n\nSince v1.6.3 this is measured from the actual height trace over the final third of a second before touchdown, no longer from the simulator's vertical speed indicator, which is sluggish like a real cockpit instrument. If the simulator freezes the altitude readout, no calculation is done and the instrument value is used instead.",
       "g_force": "Scored g-load at touchdown. Below 1.20 g full points, below 1.40 g 80, below 1.70 g 45, above that 20 or 0. From 1.75 g the overall score is at most 40, from 2.6 g at most 14.",
       "bounces": "How many times the aircraft climbed back more than 5 ft above the ground after the first touchdown and touched down again (older landings: from 15 ft). 0 = clean set; each bounce drops the score.",
-      "stability": "Two things: this part's points come from how steady the approach was (scatter of sink rate and bank). The stable gate checks six points from 1000 ft: glide path (below 1 dot on average), steady speed, steady bank, even sink rate, no excessive sink for more than 10 seconds, landing configuration at 1000 ft. Only partly stable caps this part and the overall score at 80, unstable at 45. Details and limits in the \"Approach stability\" card.",
+      "stability": "Two things: this part's points come from how steady the approach was (scatter of sink rate and bank). The stable gate checks six points from 1000 ft: glide path (below 1 dot on average), steady speed, steady bank, even sink rate, no excessive sink for more than 10 seconds, landing configuration when entering the gate. Only partly stable caps this part and the overall score at 80, unstable at 45. Details and limits in the \"Approach stability\" card.",
       "rollout": "Share of the usable runway length (LDA) your landing used — measured from the threshold: first the distance to touchdown, then the rollout until you clear the runway (~40 kt). What is scored is how much runway is left afterwards: below 60 % is full marks, from 90 % it gets tight — risky on a wet runway. Click „🛬 How is this calculated?“ for the full explanation.",
       "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (take-off fuel − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
       "loadsheet": "Older landings only: whether loadsheet data was present (ZFW + TOW in the plan). No longer part of the score since v1.7.12.",
@@ -1173,6 +1173,7 @@
         "BKN": "broken",
         "OVC": "overcast"
       },
+      "vorlage": {"FZ": "freezing {{x}}", "SH": "{{x}} showers", "TS": "thunderstorm with {{x}}", "VC": "{{x}} in the vicinity", "leicht": "light {{x}}", "stark": "heavy {{x}}"},
       "wx": {
         "DZ": "drizzle",
         "RA": "rain",

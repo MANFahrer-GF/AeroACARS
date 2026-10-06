@@ -7169,10 +7169,20 @@ input:disabled {
      und jede Grafikbeschriftung — statt Stelle für Stelle `.farbwert` zu
      setzen (Sprit je Wegpunkt, Touchdown-Marke, Grenzwerte, „Gate" …).
      Was schon dunkel ist, bleibt lesbar. */
-  .landing-report [style^="color:"],
-  .landing-report [style*="; color:"],
+  /* Ausgenommen: helle Kästen mit dunkler Schrift (`.papierfest`) und die
+     Bahn-Warnung mit eigener Druckregel — ein Filter dunkelte sie mit ab
+     (Abnahme 06.10.2026). Halbdurchsichtige Pillen für den dunklen
+     Bildschirm werden mit ihrer Tönung abgedunkelt. */
+  .landing-report [style^="color:"]:not(.papierfest):not(.bahn-warnung),
+  .landing-report [style*="; color:"]:not(.papierfest):not(.bahn-warnung),
   .landing-report svg text {
     filter: brightness(0.55) saturate(1.4);
+  }
+  /* Windlinien: auf hellem Papier abgedunkelt und deckend genug, dass die
+     Anströmrichtung sichtbar bleibt (ihre Farbe steht im stroke-Attribut). */
+  .landing-report .windflow__streak {
+    filter: brightness(0.55) saturate(1.4);
+    opacity: 0.85;
   }
   /* Die Bahn-Warnung ist ein dunkelbrauner Kasten — auf Papier hell. */
   .landing-report .bahn-warnung {

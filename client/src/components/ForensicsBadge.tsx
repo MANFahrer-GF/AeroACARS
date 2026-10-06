@@ -49,6 +49,9 @@ export function ForensicsBadge({ forensicsVersion, uxVersion, confidence, source
 
   return (
     <div
+      // Heller Kasten mit dunkler Schrift — schon papiertauglich, im Druck
+      // nicht abdunkeln (App.css `.papierfest`, Abnahme 06.10.2026).
+      className="papierfest"
       style={{
         display: "flex",
         alignItems: "center",
@@ -65,6 +68,7 @@ export function ForensicsBadge({ forensicsVersion, uxVersion, confidence, source
         {t("landing.forensics.label")}
       </span>
       <span
+        className="papierfest"
         style={{
           padding: "0.15rem 0.5rem",
           borderRadius: "1rem",

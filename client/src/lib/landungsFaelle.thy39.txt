@@ -499,7 +499,7 @@ i
 -51 fpm
 Sinkraten-Reduktion
 i
-+0 fpm
+0 fpm
 dSinkrate/dt
 i
 -4 fpm/s

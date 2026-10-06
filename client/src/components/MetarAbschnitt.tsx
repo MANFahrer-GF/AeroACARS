@@ -13,24 +13,37 @@ type Uebersetzer = (k: string, o?: Record<string, unknown>) => string;
 
 const WETTER = ["DZ", "RA", "SN", "SG", "BR", "FG", "FU", "HZ", "TS", "SH", "FZ", "VC"] as const;
 
+const BESCHREIBER = ["FZ", "SH", "TS", "VC"] as const;
+
 function wetterText(t: Uebersetzer, code: string): string {
-  // Intensität vorweg, dann Zweiergruppen (z. B. „-SHRA" → leicht Schauer
-  // Regen) — jede Gruppe für sich übersetzt und mit Leerzeichen getrennt.
-  // Kein Weitersuchen im übersetzten Text (Endlosschleife, Abnahme 06.10.2026).
+  // Abnahme 06.10.2026: grammatisch je Sprache über Vorlagen statt Codes
+  // aneinanderzureihen („light showers rain") — und ohne im übersetzten Text
+  // weiterzusuchen (vorher Endlosschleife).
   let rest = code;
-  const teile: string[] = [];
-  if (rest.startsWith("+")) { teile.push(t("landing.metar.stark")); rest = rest.slice(1); }
-  else if (rest.startsWith("-")) { teile.push(t("landing.metar.leicht")); rest = rest.slice(1); }
-  for (let i = 0; i < rest.length; i += 2) {
-    const paar = rest.slice(i, i + 2);
-    teile.push((WETTER as readonly string[]).includes(paar) ? t(`landing.metar.wx.${paar}`) : paar);
-  }
-  return teile.join(" ");
+  let staerke: "leicht" | "stark" | null = null;
+  if (rest.startsWith("+")) { staerke = "stark"; rest = rest.slice(1); }
+  else if (rest.startsWith("-")) { staerke = "leicht"; rest = rest.slice(1); }
+  const gruppen: string[] = [];
+  for (let i = 0; i < rest.length; i += 2) gruppen.push(rest.slice(i, i + 2));
+  const hat = (g: string) => gruppen.includes(g);
+  const wx = (g: string) => ((WETTER as readonly string[]).includes(g) ? t(`landing.metar.wx.${g}`) : g);
+  const erscheinungen = gruppen.filter((g) => !(BESCHREIBER as readonly string[]).includes(g)).map(wx);
+  let text: string | null = erscheinungen.length ? erscheinungen.join(", ") : null;
+  if (hat("FZ")) text = text ? t("landing.metar.vorlage.FZ", { x: text }) : wx("FZ");
+  if (hat("SH")) text = text ? t("landing.metar.vorlage.SH", { x: text }) : wx("SH");
+  if (hat("TS")) text = text ? t("landing.metar.vorlage.TS", { x: text }) : wx("TS");
+  if (hat("VC")) text = text ? t("landing.metar.vorlage.VC", { x: text }) : wx("VC");
+  const ergebnis = text ?? code;
+  return staerke ? t(`landing.metar.vorlage.${staerke}`, { x: ergebnis }) : ergebnis;
 }
 
 /** Auswertung eines METAR (Wind, Sicht, Wetter, Wolken, Temperatur/Taupunkt, QNH). */
-export function metarAuswertung(t: Uebersetzer, raw: string): { k: string; v: string; id?: string }[] {
+export function metarAuswertung(t: Uebersetzer, metar: string): { k: string; v: string; id?: string }[] {
   const out: { k: string; v: string; id?: string }[] = [];
+  // Nur der aktuelle Teil: Bemerkungen (RMK) und Trend (TEMPO/BECMG/NOSIG)
+  // tragen Zahlen und Wolken, die nicht die Lage beim Aufsetzen beschreiben
+  // (Abnahme 06.10.2026: „WSHFT 1715" wurde als Sicht 1.7 km gelesen).
+  const raw = `${metar.split(/\s(?:RMK|TEMPO|BECMG|NOSIG)\b/)[0]} `;
   // Wind: 09020KT, 09015G25KT oder VRB03KT
   const wind = raw.match(/(VRB|\d{3})(\d{2,3})(?:G(\d{2,3}))?KT/);
   if (wind) {
@@ -41,7 +54,7 @@ export function metarAuswertung(t: Uebersetzer, raw: string): { k: string; v: st
   // Sicht: 3700 oder 9999
   const vis = raw.match(/\s(\d{4})\s/);
   // US-METAR: Sicht in Meilen („10SM", „1 1/2SM", „1/4SM", „P6SM").
-  const visSm = raw.match(/\s(P?\d+(?: \d\/\d)?|\d\/\d)SM\s/);
+  const visSm = raw.match(/\s([MP]?\d+(?: \d\/\d)?|M?\d\/\d)SM\s/);
   if (vis) {
     const m = parseInt(vis[1]!, 10);
     out.push({
@@ -51,7 +64,8 @@ export function metarAuswertung(t: Uebersetzer, raw: string): { k: string; v: st
     });
   } else if (visSm) {
     const roh = visSm[1]!;
-    out.push({ id: "sicht", k: t("landing.metar.sicht"), v: roh.startsWith("P") ? `> ${roh.slice(1)} SM` : `${roh} SM` });
+    const wert = roh.startsWith("P") ? `> ${roh.slice(1)}` : roh.startsWith("M") ? `< ${roh.slice(1)}` : roh;
+    out.push({ id: "sicht", k: t("landing.metar.sicht"), v: `${wert} SM` });
   }
   const wx = raw.match(/\s([+-]?(?:VC)?(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|TS|SH|FZ){1,3})\s/);
   if (wx) out.push({ id: "wetter", k: t("landing.metar.wetter"), v: wetterText(t, wx[1]!) });

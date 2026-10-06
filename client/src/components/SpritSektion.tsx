@@ -61,6 +61,9 @@ export function SpritBadge({ sprit }: { sprit: SpritAuswertung | null | undefine
     <div
       data-testid="sprit-badge"
       data-ton={sprit.badge}
+      // Heller Kasten mit dunkler Schrift — schon papiertauglich, im Druck
+      // nicht abdunkeln (App.css `.papierfest`, Abnahme 06.10.2026).
+      className="papierfest"
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -75,6 +78,7 @@ export function SpritBadge({ sprit }: { sprit: SpritAuswertung | null | undefine
     >
       {t("landing.sprit.badge_label")}
       <span
+        className="papierfest"
         style={{
           fontWeight: 600,
           fontSize: "0.76rem",

@@ -232,9 +232,11 @@
   }
 }
 
-/* Abnahme 06.10.2026: Im Druck angehalten — jede Linie steht an ihrem festen
-   Versatz (eigene negative Verzögerung), die Anströmrichtung ist auf Papier
-   sichtbar und bei jedem Druck gleich. */
+/* Abnahme 06.10.2026: Im Druck angehalten statt abgeschaltet — die Linien
+   bleiben sichtbar und zeigen die Anströmrichtung. Wird der Bericht eigens
+   für den Druck aufgebaut, steht jede Linie an ihrem festen Versatz (eigene
+   negative Verzögerung); läuft die Animation schon, steht sie dort, wo sie
+   gerade ist. */
 @media print {
   .windflow__streak {
     animation-play-state: paused;

@@ -219,7 +219,7 @@
       "landing_rate": "Vertikalgeschwindigkeit im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Der Zielkorridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich“: deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen und Spoiler-Ausfahren verzögert. Ab 600 fpm Sinken ist real eine Hard-Landing-Inspektion fällig.\n\nGemessen wird seit v1.6.3 aus dem tatsächlichen Höhenverlauf der letzten Drittelsekunde vor dem Aufsetzen, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators — der ist träge wie ein echtes Cockpit-Instrument. Steht die Höhe im Simulator zeitweise still, wird nicht gerechnet, sondern der Instrumentenwert genommen.",
       "g_force": "Gewertete G-Last beim Aufsetzen. Unter 1,20 G volle Punkte, unter 1,40 G 80, unter 1,70 G 45, darüber 20 oder 0. Ab 1,75 G ist die Gesamtnote höchstens 40, ab 2,6 G höchstens 14.",
       "bounces": "Wie oft das Flugzeug nach dem ersten Aufsetzen wieder mehr als 5 ft über den Boden gestiegen und erneut aufgesetzt ist (ältere Landungen: ab 15 ft). 0 = sauber gesetzt; jeder Bounce drückt den Score.",
-      "stability": "Zwei Dinge: Die Punkte dieser Achse kommen aus der Ruhe des Anflugs (Streuung von Sinkrate und Querneigung). Das Stable Gate prüft ab 1000 ft sechs Punkte: Gleitpfad (im Schnitt unter 1 Dot), ruhige Fahrt, ruhige Querneigung, gleichmäßige Sinkrate, kein zu starkes Sinken über 10 Sekunden, Landekonfiguration bei 1000 ft. Nur teilweise stabil begrenzt diese Achse und die Gesamtnote auf 80, instabil auf 45. Details und Grenzen in der Karte „Anflug-Stabilität\".",
+      "stability": "Zwei Dinge: Die Punkte dieser Achse kommen aus der Ruhe des Anflugs (Streuung von Sinkrate und Querneigung). Das Stable Gate prüft ab 1000 ft sechs Punkte: Gleitpfad (im Schnitt unter 1 Dot), ruhige Fahrt, ruhige Querneigung, gleichmäßige Sinkrate, kein zu starkes Sinken über 10 Sekunden, Landekonfiguration beim Eintritt ins Gate. Nur teilweise stabil begrenzt diese Achse und die Gesamtnote auf 80, instabil auf 45. Details und Grenzen in der Karte „Anflug-Stabilität\".",
       "rollout": "Anteil der nutzbaren Bahnlänge (LDA), den deine Landung gebraucht hat — gemessen ab der Schwelle: erst die Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Gewertet wird, wie viel Bahn danach noch übrig ist: unter 60 % gibt es die volle Punktzahl, ab 90 % wird es knapp — bei nasser Bahn riskant. Klick „🛬 Wie wird das berechnet?“ für die volle Erklärung.",
       "fuel": "Treue zum SimBrief-OFP-Trip-Burn. Vergleicht den tatsächlichen Verbrauch (Takeoff-Fuel − Landing-Fuel) gegen den geplanten Trip-Burn. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend); Minderverbrauch wird NICHT bestraft. Bei >15 % unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
       "loadsheet": "Nur bei älteren Landungen: Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Zählt seit v1.7.12 nicht mehr zur Note.",
@@ -1173,6 +1173,7 @@
         "BKN": "durchbrochen",
         "OVC": "bedeckt"
       },
+      "vorlage": {"FZ": "gefrierender {{x}}", "SH": "Schauer mit {{x}}", "TS": "Gewitter mit {{x}}", "VC": "{{x}} in Sichtweite", "leicht": "{{x}} (leicht)", "stark": "{{x}} (stark)"},
       "wx": {
         "DZ": "Niesel",
         "RA": "Regen",
