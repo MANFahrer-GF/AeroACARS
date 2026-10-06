@@ -13,20 +13,28 @@ import { distanzHinterSchwelle, fmtNumber, fmtSigned } from "../lib/landungsForm
 import "./landungForensik.css";
 import { InfoBadge } from "./InfoBadge";
 
-type Ton = "good" | "neutral" | "warn" | "err";
+type Ton = "good" | "neutral" | "warn" | "err" | "ohne";
 
 export const tonWingStrike = (p: number): Ton => (p < 40 ? "good" : p < 60 ? "neutral" : p < 80 ? "warn" : "err");
 export const tonDistanz = (m: number): Ton =>
   // Negativ = VOR der Schwelle aufgesetzt — keine kurze Landung, sondern
   // eine Landung vor der Bahn.
   m < 0 ? "err" : m < 300 ? "good" : m < 600 ? "neutral" : m < 1000 ? "warn" : "err";
-/** Bei der generischen ICAO-Vref ist die Quelle selbst ±5 kt ungenau — das
- *  Band ist deshalb um 5 kt breiter. */
-export const tonVref = (kt: number, quelle: string | null | undefined): Ton => {
-  const a = Math.abs(kt);
-  return quelle === "icao_default"
-    ? a < 10 ? "good" : a < 15 ? "neutral" : a < 20 ? "warn" : "err"
-    : a < 5 ? "good" : a < 10 ? "neutral" : a < 15 ? "warn" : "err";
+/** Vref-Quellen seit 2.0.6 (`landing_scoring::vref`). `icao_default` (der
+ *  frühere Pauschalwert je Muster) gehört nicht dazu — solche Werte zeigt die
+ *  Kachel nicht mehr. */
+const VREF_QUELLEN = ["pmdg", "fbw", "fmc", "kalibriert", "faa", "faa_ungeprueft"] as const;
+type VrefQuelle = (typeof VREF_QUELLEN)[number];
+const istVrefQuelle = (q: string | null | undefined): q is VrefQuelle =>
+  (VREF_QUELLEN as readonly (string | null | undefined)[]).includes(q);
+/** Um wie viele kt das Band breiter wird; `null` = kein Urteil. Gemessene
+ *  Quellen aus Fassungen vor 2.0.6 tragen kein Feld und zählen als 0. */
+export const vrefToleranz = (quelle: string | null | undefined, toleranz: number | null | undefined): number | null =>
+  toleranz ?? (quelle === "pmdg" || quelle === "fbw" || quelle === "fmc" ? 0 : null);
+export const tonVref = (kt: number, toleranz: number | null): Ton => {
+  if (toleranz == null) return "ohne";
+  const a = Math.abs(kt) - toleranz;
+  return a < 5 ? "good" : a < 10 ? "neutral" : a < 15 ? "warn" : "err";
 };
 export const tonGierrate = (g: number): Ton => (g < 2 ? "good" : g < 5 ? "neutral" : g < 8 ? "warn" : "err");
 // Mittlere Verzögerung beim Ausrollen (m/s²). Zum Vergleich: 737 Autobrake 2
@@ -67,8 +75,8 @@ export function LandingQualitaet({ record }: { record: LandingRecord }) {
   const wing = record.landing_wing_strike_severity_pct ?? null;
   const zone = record.landing_touchdown_zone ?? null;
   const distanz = distanzHinterSchwelle(record);
-  const vref = record.landing_vref_deviation_kt ?? null;
-  const vrefQuelle = record.landing_vref_source ?? null;
+  const vrefQuelle = istVrefQuelle(record.landing_vref_source) ? record.landing_vref_source : null;
+  const vref = vrefQuelle != null ? (record.landing_vref_deviation_kt ?? null) : null;
   const gier = record.landing_yaw_rate_deg_per_sec ?? null;
   const verz = record.landing_decel_mps2 ?? null;
 
@@ -100,14 +108,9 @@ export function LandingQualitaet({ record }: { record: LandingRecord }) {
           ? { text: `⚠ ${grundText}`, ton: "warn" }
           : null;
 
-  const vrefLabel =
-    vrefQuelle === "pmdg" || vrefQuelle === "fbw" || vrefQuelle === "icao_default"
-      ? t(`landing.quality.vref_label.${vrefQuelle}`)
-      : t("landing.quality.vref_label.unbekannt");
-  const vrefHinweis =
-    vrefQuelle === "pmdg" || vrefQuelle === "fbw" || vrefQuelle === "icao_default"
-      ? t(`landing.quality.vref_hint.${vrefQuelle}`)
-      : t("landing.quality.vref_hint.unbekannt");
+  const vrefLabel = vrefQuelle != null ? t(`landing.quality.vref_label.${vrefQuelle}`) : t("landing.quality.vref_label.unbekannt");
+  const vrefHinweis = vrefQuelle != null ? t(`landing.quality.vref_hint.${vrefQuelle}`) : t("landing.quality.vref_hint.unbekannt");
+  const vrefBand = vrefToleranz(vrefQuelle, record.landing_vref_toleranz_kt);
 
   return (
     <section className="landing-section landing-section--quality">
@@ -145,13 +148,15 @@ export function LandingQualitaet({ record }: { record: LandingRecord }) {
             }
           />
         )}
+        {vref != null && (
         <Kachel
           label={vrefLabel}
-          wert={vref != null ? fmtSigned(vref, 0) : null}
+          wert={fmtSigned(vref, 0)}
           einheit="kt"
-          ton={vref != null ? tonVref(vref, vrefQuelle) : undefined}
-          hinweis={vrefHinweis}
+          ton={tonVref(vref, vrefBand)}
+          hinweis={vrefBand == null ? `${vrefHinweis} ${t("landing.quality.vref_ohne_urteil")}` : vrefHinweis}
         />
+        )}
         <Kachel
           label={t("landing.quality.gierrate")}
           wert={gier != null ? gier.toFixed(1) : null}

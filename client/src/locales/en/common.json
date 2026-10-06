@@ -1168,19 +1168,26 @@
       "vref_label": {
         "pmdg": "Vref dev. (PMDG)",
         "fbw": "Vref dev. (FBW)",
-        "icao_default": "Vref dev. (~ICAO)",
+        "fmc": "Vref dev. (FMC)",
+        "kalibriert": "Vref dev. (calib.)",
+        "faa": "Vref dev. (FAA)",
+        "faa_ungeprueft": "Vref dev. (~FAA)",
         "unbekannt": "Vref deviation"
       },
       "vref_hint": {
-        "pmdg": "IAS at touchdown against the Vref from the PMDG FMC (precise). Negative = too slow, positive = too fast.",
-        "fbw": "IAS at touchdown against the Vref from the FBW connector (precise). Negative = too slow, positive = too fast.",
-        "icao_default": "IAS at touchdown against a generic ICAO Vref. ⚠ Approximation, may differ by ±5 kt from the real Vref — the tolerance band is wider for that reason.",
+        "pmdg": "IAS at touchdown against the Vref from the PMDG FMC (measured). Negative = too slow, positive = too fast.",
+        "fbw": "IAS at touchdown against the landing-configuration VLS from the FBW aircraft (measured; on Airbus it is the Vref in CONF FULL). Negative = too slow, positive = too fast.",
+        "fmc": "IAS at touchdown against the Vref reported by the aircraft itself (measured; on Airbus the VLS of the landing configuration). Negative = too slow, positive = too fast.",
+        "kalibriert": "IAS at touchdown against a Vref calculated from the landing weight. Reference taken from measured landings of this type; the band is wider by their spread.",
+        "faa": "IAS at touchdown against a Vref calculated from the landing weight (FAA approach speed, confirmed against measured landings of this type). The band is wider by the measured spread.",
+        "faa_ungeprueft": "IAS at touchdown against a Vref calculated from the landing weight (FAA approach speed). Not yet confirmed against measured landings of this type.",
         "unbekannt": "IAS at touchdown against Vref. Source of the Vref unknown."
       },
       "gierrate": "Yaw rate",
       "gierrate_hint": "Heading change per second at touchdown. High = not aligned at touchdown, risk of veering off in a crosswind.",
       "verzoegerung": "Deceleration",
-      "verzoegerung_hint": "Average deceleration from touchdown to the end of the rollout, based on ground speed. For comparison: autobrake LOW ≈ 1.5, MED ≈ 2–3, MAX ≈ 4 m/s². Does not count towards the score."
+      "verzoegerung_hint": "Average deceleration from touchdown to the end of the rollout, based on ground speed. For comparison: autobrake LOW ≈ 1.5, MED ≈ 2–3, MAX ≈ 4 m/s². Does not count towards the score.",
+      "vref_ohne_urteil": "Therefore not rated (grey) — likewise when the flaps were not in landing position at touchdown."
     },
     "metar": {
       "title": "METAR at destination",
@@ -1199,7 +1206,15 @@
         "BKN": "broken",
         "OVC": "overcast"
       },
-      "vorlage": {"FZ": "freezing {{x}}", "SH": "{{x}} showers", "TS": "thunderstorm with {{x}}", "VC": "{{x}} in the vicinity", "leicht": "light {{x}}", "stark": "heavy {{x}}", "und": "{{a}} and {{b}}"},
+      "vorlage": {
+        "FZ": "freezing {{x}}",
+        "SH": "{{x}} showers",
+        "TS": "thunderstorm with {{x}}",
+        "VC": "{{x}} in the vicinity",
+        "leicht": "light {{x}}",
+        "stark": "heavy {{x}}",
+        "und": "{{a}} and {{b}}"
+      },
       "wx": {
         "DZ": "drizzle",
         "RA": "rain",
@@ -1252,7 +1267,20 @@
       "centerline_offset_too_large": "Touchdown far from the runway centre — geometry hidden",
       "negative_float_distance": "Touchdown before the threshold — geometry hidden"
     },
-    "wert": {"td_vor_schwelle": "{{m}} m before the threshold", "td_hinter_schwelle": "{{m}} m past the threshold", "td_ziel": "{{td}} m · aim {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m beyond the runway end", "bahn_versatz": "{{versatz}} m offset · outer wheel {{aussen}} m from the centre · edge {{rand}} m", "sprit_mehrweg": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg)", "sprit_durchstart": "{{kern}} scored · raw {{roh}} · {{n}}× go-around (−{{kg_durchstart}} kg)", "sprit_mehrweg_durchstart": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · {{n}}× go-around (−{{kg_durchstart}} kg)", "sprit_mehrweg_begrenzt": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · capped at {{kg_begrenzt}} kg excess burn", "sprit_durchstart_begrenzt": "{{kern}} scored · raw {{roh}} · {{n}}× go-around (−{{kg_durchstart}} kg) · capped at {{kg_begrenzt}} kg excess burn", "sprit_mehrweg_durchstart_begrenzt": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · {{n}}× go-around (−{{kg_durchstart}} kg) · capped at {{kg_begrenzt}} kg excess burn", "ladeblatt_plan": "Planned · ZFW {{zfw}} / TOW {{tow}} kg"},
+    "wert": {
+      "td_vor_schwelle": "{{m}} m before the threshold",
+      "td_hinter_schwelle": "{{m}} m past the threshold",
+      "td_ziel": "{{td}} m · aim {{ziel}} m · Δ {{delta}} m",
+      "overrun": "{{m}} m beyond the runway end",
+      "bahn_versatz": "{{versatz}} m offset · outer wheel {{aussen}} m from the centre · edge {{rand}} m",
+      "sprit_mehrweg": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg)",
+      "sprit_durchstart": "{{kern}} scored · raw {{roh}} · {{n}}× go-around (−{{kg_durchstart}} kg)",
+      "sprit_mehrweg_durchstart": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · {{n}}× go-around (−{{kg_durchstart}} kg)",
+      "sprit_mehrweg_begrenzt": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · capped at {{kg_begrenzt}} kg excess burn",
+      "sprit_durchstart_begrenzt": "{{kern}} scored · raw {{roh}} · {{n}}× go-around (−{{kg_durchstart}} kg) · capped at {{kg_begrenzt}} kg excess burn",
+      "sprit_mehrweg_durchstart_begrenzt": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · {{n}}× go-around (−{{kg_durchstart}} kg) · capped at {{kg_begrenzt}} kg excess burn",
+      "ladeblatt_plan": "Planned · ZFW {{zfw}} / TOW {{tow}} kg"
+    },
     "abfangen": {
       "titel": "Flare",
       "dauer": "Time from 50 ft",

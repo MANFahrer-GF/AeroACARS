@@ -420,6 +420,12 @@ pub struct SimSnapshot {
     /// Landing reference speed VREF (kt, Boeing).
     #[serde(default)]
     pub vref_kt: Option<f64>,
+    /// Überziehgeschwindigkeit in Landekonfiguration aus dem Flugmodell
+    /// (MSFS `DESIGN SPEED VS0`, X-Plane `acf_Vso`), kt. Wird nur
+    /// mitgeschrieben, bis die Vref daraus je Add-on an Messungen bestätigt
+    /// ist (`landing_scoring::vref`).
+    #[serde(default)]
+    pub design_vs0_kt: Option<f64>,
     /// FLEX / assumed temperature (°C). `Some(>0)` ⇒ FLEX/derated takeoff.
     #[serde(default)]
     pub flex_temp_c: Option<f64>,
@@ -1022,6 +1028,7 @@ impl Default for SimSnapshot {
             vapp_kt: None,
             vls_kt: None,
             vref_kt: None,
+            design_vs0_kt: None,
             flex_temp_c: None,
             thrust_gate: None,
             master_caution: None,

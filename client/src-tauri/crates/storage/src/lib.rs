@@ -906,6 +906,10 @@ pub struct LandingRecord {
     pub landing_vref_deviation_kt: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_vref_source: Option<String>,
+    /// Verbreiterung des Vref-Toleranzbands in kt; fehlt = kein Urteil
+    /// (bei gemessener Quelle aus älteren Fassungen: 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_vref_toleranz_kt: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_yaw_rate_deg_per_sec: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

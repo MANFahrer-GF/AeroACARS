@@ -122,6 +122,9 @@
 
 .sinkrate-tile--neutral .sinkrate-tile__value { color: var(--sem-info, #7fa8c9); }
 
+/* Wert ohne Urteil (Vref aus ungeprüfter Formel): grau statt Ampelfarbe. */
+.sinkrate-tile--ohne .sinkrate-tile__value { color: var(--fg-dim); }
+
 .sinkrate-tile--warn .sinkrate-tile__value { color: var(--sem-warn, #f2b24c); }
 
 .sinkrate-tile--err .sinkrate-tile__value { color: var(--sem-danger, #ff5c4d); }

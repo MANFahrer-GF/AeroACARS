@@ -5496,6 +5496,12 @@ struct PersistedFlightStats {
     #[serde(default)]
     landing_vref_source: Option<String>,
     #[serde(default)]
+    landing_vref_toleranz_kt: Option<f32>,
+    #[serde(default)]
+    landing_vref_formel_kt: Option<f32>,
+    #[serde(default)]
+    landing_vref_landeklappen: Option<bool>,
+    #[serde(default)]
     landing_yaw_rate_deg_per_sec: Option<f32>,
     #[serde(default)]
     landing_brake_energy_proxy: Option<f32>,
@@ -5798,6 +5804,9 @@ impl PersistedFlightStats {
             approach_stable_at_da: stats.approach_stable_at_da,
             landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
             landing_vref_source: stats.landing_vref_source.map(str::to_string),
+            landing_vref_toleranz_kt: stats.landing_vref_toleranz_kt,
+            landing_vref_formel_kt: stats.landing_vref_formel_kt,
+            landing_vref_landeklappen: stats.landing_vref_landeklappen,
             landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
             landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
             landing_decel_mps2: stats.landing_decel_mps2,
@@ -6086,9 +6095,17 @@ impl PersistedFlightStats {
         // Feste Werte (siehe Vref-Zuordnung beim Aufsetzen).
         stats.landing_vref_source = self.landing_vref_source.as_deref().map(|s| match s {
             "pmdg" => "pmdg",
+            "fbw" => "fbw",
+            "fmc" => "fmc",
+            "kalibriert" => "kalibriert",
+            "faa" => "faa",
+            "faa_ungeprueft" => "faa_ungeprueft",
             "icao_default" => "icao_default",
             _ => "unknown",
         });
+        stats.landing_vref_toleranz_kt = self.landing_vref_toleranz_kt;
+        stats.landing_vref_formel_kt = self.landing_vref_formel_kt;
+        stats.landing_vref_landeklappen = self.landing_vref_landeklappen;
         stats.landing_yaw_rate_deg_per_sec = self.landing_yaw_rate_deg_per_sec;
         stats.landing_brake_energy_proxy = self.landing_brake_energy_proxy;
         stats.landing_decel_mps2 = self.landing_decel_mps2;
@@ -7058,8 +7075,8 @@ struct FlightStats {
     //     Limit, Severity 0-100% (= % Ausnutzung des Limits)
     //   * float_distance_m: Threshold-Crossing → TD, indiziert Float
     //   * touchdown_zone: 1/2/3 nach FAA (= 1.Drittel, 2.Drittel, 3.Drittel)
-    //   * vref_deviation_kt: IAS-am-TD − Vref. Vref-Source-Chain:
-    //     PMDG-FMC → ICAO-Kategorie-Default
+    //   * vref_deviation_kt: IAS-am-TD − Vref. Rangfolge siehe
+    //     `landing_scoring::vref` (gemessen → kalibriert → FAA)
     //   * stable_at_da: composite-stable-flag aber bei 200 ft AGL/HAT
     landing_wing_strike_severity_pct: Option<f32>,
     landing_float_distance_m: Option<f32>,
@@ -7068,8 +7085,14 @@ struct FlightStats {
     /// ueberschossen). None wenn runway_length unbekannt.
     landing_touchdown_zone: Option<u8>,
     landing_vref_deviation_kt: Option<f32>,
-    /// Vref-Source-Indikator: "pmdg" / "icao_default" / "unknown".
+    /// Vref-Quelle (`landing_scoring::vref::VrefErgebnis::quelle`).
     landing_vref_source: Option<&'static str>,
+    /// Verbreiterung des Vref-Toleranzbands in kt; `None` = kein Urteil.
+    landing_vref_toleranz_kt: Option<f32>,
+    /// Vref laut Formel (auch neben einer Messung) — fuer den Pruefbericht.
+    landing_vref_formel_kt: Option<f32>,
+    /// Klappen beim Aufsetzen in einer der beiden letzten Stufen?
+    landing_vref_landeklappen: Option<bool>,
     /// Approach-Stable bei 200 ft AGL/HAT (= ICAO-DA-Gate)
     approach_stable_at_da: Option<bool>,
     // Phase 2 — Visualisierung-Daten (nicht direkt im Score, fuer UI)
@@ -8314,6 +8337,9 @@ struct FlightStats {
     pmdg_v_speeds_takeoff: Option<(u8, u8, u8)>,
     /// VREF captured at the touchdown moment for the PIREP.
     pmdg_vref_at_landing: Option<u8>,
+    /// Vref aus dem Flugzeug (PMDG, iniBuilds, FSS, Zibo) oder die Airbus-VLS
+    /// in Landestellung — letzter Wert in der Luft, mit Quelle.
+    vref_gemessen: Option<(f32, &'static str)>,
     /// FMC TO-flaps degrees captured at takeoff roll start.
     pmdg_takeoff_flaps_planned: Option<u8>,
     /// FMC LDG-flaps degrees captured at landing entry.
@@ -9768,6 +9794,7 @@ fn check_go_around(
         let pending = stats.go_around_climb_pending_since.get_or_insert(now);
         if (now - *pending).num_seconds() >= GO_AROUND_DWELL_SECS {
             stats.go_around_count = stats.go_around_count.saturating_add(1);
+            stats.vref_gemessen = None;
             tracing::info!(
                 count = stats.go_around_count,
                 agl_ft = agl,
@@ -10707,6 +10734,10 @@ fn compute_approach_stddev(
 /// kann via DBasic-Override fuer spezifische Variante setzen.
 struct AircraftLimits {
     max_bank_landing_deg: f32,
+    /// Nur noch Anker fuer die Klappenraster-Korrektur (`KonfigKontext`).
+    /// Fuer die Vref-Abweichung der Landung gilt er seit 2.0.6 NICHT mehr —
+    /// ein Wert je Muster ohne Gewicht zeigte 94 % falsche Abweichungen
+    /// (siehe `landing_scoring::vref`).
     typical_vref_kt: Option<f32>,
     /// Kam dieser Satz aus dem Rueckfall statt aus der Tabelle?
     ///
@@ -12763,6 +12794,7 @@ fn activity_log_clear(state: tauri::State<'_, AppState>) {
 /// mit derselben Funktion wie beim Einreichen. Teilnoten und Version
 /// bleiben, wie sie sind; die Server-Sicherung bleibt unberuehrt.
 fn normalize_derived_scores(mut r: LandingRecord) -> LandingRecord {
+    vref_pauschal_neu_rechnen(&mut r);
     if matches!(r.score_algorithm_version, Some(18..=20)) && r.score_numeric.is_some() {
         if let Some(neu) = landing_scoring::aggregate_master_score(&r.sub_scores) {
             r.score_numeric = Some(neu as i32);
@@ -12780,6 +12812,25 @@ fn normalize_derived_scores(mut r: LandingRecord) -> LandingRecord {
     r.score_label = Some(aggregate_score_label(n as u8).to_string());
     r.grade_letter = Some(letter_grade(n).to_string());
     r
+}
+
+/// Bis 2.0.5 stand bei Mustern ohne gemessene Vref ein Pauschalwert je
+/// Muster in der Landung (`icao_default`). Beim Lesen rechnet die Regel von
+/// heute (`landing_scoring::vref`) sie aus Gewicht und Geschwindigkeit neu;
+/// ohne Bezugswert verschwindet die Abweichung. Die Klappenstellung kennt der
+/// alte Datensatz nicht — sie nimmt das Urteil deshalb nicht weg.
+fn vref_pauschal_neu_rechnen(r: &mut LandingRecord) {
+    if r.landing_vref_source.as_deref() != Some("icao_default") {
+        return;
+    }
+    let muster = sim_core::muster_aufloesen(r.aircraft_icao.as_deref(), "", r.aircraft_title.as_deref());
+    let vref = landing_scoring::vref::vref_bestimmen(muster.as_deref(), r.landing_weight_kg, None, None);
+    r.landing_vref_source = Some(vref.map_or("unknown", |e| e.quelle).to_string());
+    r.landing_vref_toleranz_kt = vref.and_then(|e| e.toleranz_kt);
+    r.landing_vref_deviation_kt = match (vref, r.landing_speed_kt) {
+        (Some(e), Some(ias)) => Some(ias - e.vref_kt),
+        _ => None,
+    };
 }
 
 /// List every persisted landing record, newest first. Used by the
@@ -29000,6 +29051,7 @@ where
         landing_float_distance_m: stats.landing_float_distance_m,
         landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
         landing_vref_source: stats.landing_vref_source.map(|s| s.to_string()),
+        landing_vref_toleranz_kt: stats.landing_vref_toleranz_kt,
         landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
         landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
         landing_decel_mps2: stats.landing_decel_mps2,
@@ -39900,6 +39952,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 landing_vref_source: stats
                                     .landing_vref_source
                                     .map(|s| s.to_string()),
+                                landing_vref_toleranz_kt: stats.landing_vref_toleranz_kt,
+                                landing_vref_formel_kt: stats.landing_vref_formel_kt,
+                                landing_vref_landeklappen: stats.landing_vref_landeklappen,
+                                landing_vref_muster: stats.aufgeloestes_muster.clone(),
                                 approach_stable_at_da: stats.approach_stable_at_da,
                                 approach_stall_warning_count: Some(
                                     stats.approach_stall_warning_count,
@@ -42977,15 +43033,37 @@ fn bahn_nachtrag_bauen(
 /// both → snapshot mapping converted it to None, so the field stays unset
 /// and the PIREP filter drops it.
 fn stamp_landing_weight(stats: &mut FlightStats, snap: &SimSnapshot) {
-    if let Some(tw) = snap.total_weight_kg {
-        stats.landing_weight_kg = Some(tw as f64);
-    } else {
-        let zfw = snap.zfw_kg.unwrap_or(0.0);
-        let weight = zfw as f64 + snap.fuel_total_kg as f64;
-        if weight > 0.0 {
-            stats.landing_weight_kg = Some(weight);
-        }
+    if let Some(w) = gewicht_aus_snapshot(snap) {
+        stats.landing_weight_kg = Some(w);
     }
+}
+
+/// Gesamtgewicht nach der Regel von `stamp_landing_weight`.
+fn gewicht_aus_snapshot(snap: &SimSnapshot) -> Option<f64> {
+    if let Some(tw) = snap.total_weight_kg {
+        return Some(tw as f64);
+    }
+    let weight = snap.zfw_kg.unwrap_or(0.0) as f64 + snap.fuel_total_kg as f64;
+    (weight > 0.0).then_some(weight)
+}
+
+/// Vref aus dem Flugzeug: PMDG-FMC, sonst was der Adapter als Vref liest
+/// (iniBuilds, FSS E-Jets, Zibo), sonst die Airbus-VLS, aber nur in
+/// Landestellung — dort ist sie per Definition die Bezugsgröße (VLS CONF
+/// FULL = Vref). Quelle `pmdg`, `fbw` für das FBW-Profil, sonst `fmc`.
+fn vref_aus_dem_flugzeug(snap: &SimSnapshot) -> Option<(f32, &'static str)> {
+    if let Some(v) = snap.pmdg.as_ref().and_then(|p| p.fmc_vref_kt) {
+        return Some((v as f32, "pmdg"));
+    }
+    let landestellung =
+        landing_scoring::vref::landeklappen(snap.flap_handle_index, snap.flap_num_positions) == Some(true);
+    let v = snap.vref_kt.or(snap.vls_kt.filter(|_| landestellung))?;
+    let quelle = if snap.aircraft_profile == sim_core::AircraftProfile::FbwA32nx {
+        "fbw"
+    } else {
+        "fmc"
+    };
+    Some((v as f32, quelle))
 }
 
 /// v0.16.6: per-tick rollout accumulate/finalise — extracted VERBATIM from
@@ -45211,6 +45289,17 @@ fn step_flight_at(
         return Some(FlightPhase::Climb);
     }
 
+    // Vref aus dem Flugzeug: jeder Takt in der Luft ueberschreibt, beim
+    // Aufsetzen gilt also der letzte Wert vor dem Boden. Durchstart und
+    // Aufsetzen setzen ihn zurueck. (QS Codex 06.10.2026: nur im Approach
+    // erfasst und PMDG nur der erste Wert — nach Durchstart, FMC-Aenderung im
+    // Final oder Neustart im Final galt ein veralteter oder gar kein Wert.)
+    if !snap.on_ground {
+        if let Some(v) = vref_aus_dem_flugzeug(snap) {
+            stats.vref_gemessen = Some(v);
+        }
+    }
+
     // v0.16.6: phase-independent approach sampling — see
     // `should_push_approach_sample`. For Approach/Final this is the exact
     // same per-tick push the two arms used to do as their first statement
@@ -46356,18 +46445,34 @@ fn step_flight_at(
                 // setzt beide aus derselben Rechnung. Siehe
                 // `drittel_nachfuehren`.
 
-                // Vref-Deviation: PMDG-FMC-Vref → ICAO-Default-Fallback
-                let vref_kt = stats.pmdg_vref_at_landing.map(|v| v as f32);
-                let (vref_used, vref_source) = match vref_kt {
-                    Some(v) => (Some(v), "pmdg"),
-                    None => match limits.typical_vref_kt {
-                        Some(v) => (Some(v), "icao_default"),
-                        None => (None, "unknown"),
-                    },
+                // Vref-Abweichung: gemessen, sonst aus dem Landegewicht
+                // (`landing_scoring::vref`). Den Pauschalwert je Muster
+                // (`typical_vref_kt`) nimmt sie seit 2.0.6 nicht mehr.
+                // Verbraucht: ein Touch-and-go misst im naechsten Anflug neu.
+                let gemessen = stats.vref_gemessen.take();
+                // Der PIREP-Eintrag „PMDG VREF (Landing)" nennt denselben Wert
+                // wie die Bewertung, nicht den aus dem ersten Anflug (QS Codex).
+                // Ohne PMDG-Messung beim Aufsetzen bleibt er leer.
+                stats.pmdg_vref_at_landing = match gemessen {
+                    Some((v, "pmdg")) => Some(v.round() as u8),
+                    _ => None,
                 };
-                stats.landing_vref_source = Some(vref_source);
-                if let (Some(vref), Some(ias)) = (vref_used, stats.landing_speed_kt) {
-                    stats.landing_vref_deviation_kt = Some(ias - vref);
+                let landeklappen =
+                    landing_scoring::vref::landeklappen(snap.flap_handle_index, snap.flap_num_positions);
+                let vref = landing_scoring::vref::vref_bestimmen(
+                    Some(muster),
+                    // Aus dem Snapshot: `landing_weight_kg` wird erst unten
+                    // gestempelt und traegt bei Touch-and-go noch das alte Gewicht.
+                    gewicht_aus_snapshot(snap).or(stats.landing_weight_kg),
+                    gemessen,
+                    landeklappen,
+                );
+                stats.landing_vref_formel_kt = vref.and_then(|e| e.formel_kt);
+                stats.landing_vref_landeklappen = landeklappen;
+                stats.landing_vref_source = Some(vref.map_or("unknown", |e| e.quelle));
+                stats.landing_vref_toleranz_kt = vref.and_then(|e| e.toleranz_kt);
+                if let (Some(e), Some(ias)) = (vref, stats.landing_speed_kt) {
+                    stats.landing_vref_deviation_kt = Some(ias - e.vref_kt);
                 }
 
                 // Yaw-Rate am TD: heading-Aenderung pro Sekunde im
@@ -46587,6 +46692,7 @@ fn step_flight_at(
                             // Score-Einfluss (`go_around_count` fliesst nicht in
                             // `landing_scoring`).
                             stats.go_around_count = stats.go_around_count.saturating_add(1);
+                            stats.vref_gemessen = None;
                             // Lernpaket AP4/AP5: Schnitt fuer die Forensik.
                             anflug_forensik_schneiden(&mut stats, Some(now));
                             let ga_count = stats.go_around_count;
@@ -59546,6 +59652,58 @@ mod canonical_landing_rate_fpm_tests {
             Some(88),
             "die Punktzahl selbst bleibt unangetastet"
         );
+    }
+
+    /// 2.0.6: Alt-Landungen mit Pauschal-Vref (`icao_default`) rechnen beim
+    /// Lesen aus dem Gewicht neu (AIB 427: −20 kt pauschal → rund −5 kt,
+    /// ohne Urteil); ohne Bezugswert faellt die Abweichung weg. Messungen
+    /// bleiben, wie sie sind.
+    #[test]
+    fn vref_pauschal_wird_beim_lesen_neu_gerechnet() {
+        let mut r = landing_record_fixture();
+        r.aircraft_icao = Some("A388".to_string());
+        r.landing_weight_kg = Some(348_525.0);
+        r.landing_speed_kt = Some(125.0);
+        r.landing_vref_source = Some("icao_default".to_string());
+        r.landing_vref_deviation_kt = Some(-20.0);
+        let n = normalize_derived_scores(r.clone());
+        assert_eq!(n.landing_vref_source.as_deref(), Some("faa_ungeprueft"));
+        assert_eq!(n.landing_vref_toleranz_kt, None);
+        let dev = n.landing_vref_deviation_kt.unwrap();
+        assert!((dev + 4.8).abs() < 0.3, "{dev}");
+
+        r.aircraft_icao = Some("B738".to_string()); // FAA-Eintrag durchgefallen
+        r.aircraft_title = None;
+        let n = normalize_derived_scores(r.clone());
+        assert_eq!(n.landing_vref_source.as_deref(), Some("unknown"));
+        assert_eq!(n.landing_vref_deviation_kt, None);
+
+        r.landing_vref_source = Some("pmdg".to_string());
+        r.landing_vref_deviation_kt = Some(-3.0);
+        let n = normalize_derived_scores(r);
+        assert_eq!(n.landing_vref_deviation_kt, Some(-3.0));
+    }
+
+    /// Airbus-VLS zaehlt nur in Landestellung als Vref; eine gelesene Vref
+    /// (iniBuilds, FSS, Zibo) immer. Quelle `fbw` nur fuer das FBW-Profil.
+    #[test]
+    fn vref_aus_dem_flugzeug_nimmt_vls_nur_in_landestellung() {
+        let mut snap = SimSnapshot {
+            vls_kt: Some(131.0),
+            flap_handle_index: Some(4),
+            flap_num_positions: Some(4),
+            aircraft_profile: sim_core::AircraftProfile::FbwA32nx,
+            ..SimSnapshot::default()
+        };
+        assert_eq!(vref_aus_dem_flugzeug(&snap), Some((131.0, "fbw")));
+        snap.flap_handle_index = Some(2);
+        assert_eq!(vref_aus_dem_flugzeug(&snap), None);
+        snap.vref_kt = Some(133.0);
+        snap.aircraft_profile = sim_core::AircraftProfile::IniA380;
+        assert_eq!(vref_aus_dem_flugzeug(&snap), Some((133.0, "fmc")));
+        // PMDG-FMC geht vor und heisst so.
+        snap.pmdg = Some(sim_core::PmdgState { fmc_vref_kt: Some(141), ..Default::default() });
+        assert_eq!(vref_aus_dem_flugzeug(&snap), Some((141.0, "pmdg")));
     }
 
     /// Gegenprobe: ein bereits korrekter Datensatz darf sich nicht aendern,

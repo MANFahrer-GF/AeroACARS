@@ -189,6 +189,14 @@ pub enum FieldId {
     /// `laminar/B738/flt_ctrls/flap_lever` (nur Zibo) — Hebel 0..1 ueber
     /// die Rasten UP/1/2/5/10/15/25/30/40.
     B738FlapLever,
+    /// `laminar/B738/FMS/vref` (Zibo) — VREF aus dem FMC, kt; 0 bis der
+    /// Pilot sie waehlt. Belegt in X-RAAS2 (`xraas2.c`) und StableApproach
+    /// (`B738_by_Alex .sacfg`, Bedingung `vref > 50`).
+    B738FmsVref,
+    /// `sim/aircraft/view/acf_Vso` — Ueberziehgeschwindigkeit in
+    /// Landekonfiguration laut Flugmodell, kt (siehe
+    /// `SimSnapshot::design_vs0_kt`).
+    AcfVso,
     /// `AirbusFBW/OHPLightSwitches[0]` — ToLiss-Beacon-Schalter, 0/1.
     /// Community-Beleg (xpcockpit, a319-copilot, buttonboss), keine
     /// offizielle ToLiss-Liste verfuegbar.
@@ -790,6 +798,14 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::B738FlapLever,
     },
     DatarefEntry {
+        name: "laminar/B738/FMS/vref",
+        field: FieldId::B738FmsVref,
+    },
+    DatarefEntry {
+        name: "sim/aircraft/view/acf_Vso",
+        field: FieldId::AcfVso,
+    },
+    DatarefEntry {
         name: "AirbusFBW/OHPLightSwitches[0]",
         field: FieldId::TolissBeacon,
     },
@@ -1141,6 +1157,8 @@ pub struct XPlaneState {
     pub b738_speedbrake_armed: Option<bool>,
     pub b738_autobrake_pos: Option<f32>,
     pub b738_flap_lever: Option<f32>,
+    pub b738_fms_vref: Option<f32>,
+    pub acf_vso: Option<f32>,
     pub toliss_beacon: Option<bool>,
     pub toliss_seatbelt_signs: Option<bool>,
     pub toliss_apu_master: Option<bool>,
@@ -1401,6 +1419,7 @@ pub fn addon_quelle(field: FieldId) -> bool {
             | FieldId::B738SpeedbrakeArmed
             | FieldId::B738AutobrakePos
             | FieldId::B738FlapLever
+            | FieldId::B738FmsVref
             | FieldId::TolissBeacon
             | FieldId::TolissSeatBeltSigns
             | FieldId::TolissApuMaster
@@ -1467,6 +1486,7 @@ impl XPlaneState {
             FieldId::B738SpeedbrakeArmed => self.b738_speedbrake_armed = None,
             FieldId::B738AutobrakePos => self.b738_autobrake_pos = None,
             FieldId::B738FlapLever => self.b738_flap_lever = None,
+            FieldId::B738FmsVref => self.b738_fms_vref = None,
             FieldId::TolissBeacon => self.toliss_beacon = None,
             FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = None,
             FieldId::TolissApuMaster => self.toliss_apu_master = None,
@@ -1617,6 +1637,8 @@ impl XPlaneState {
             FieldId::B738SpeedbrakeArmed => self.b738_speedbrake_armed = Some(value > 0.5),
             FieldId::B738AutobrakePos => self.b738_autobrake_pos = Some(value),
             FieldId::B738FlapLever => self.b738_flap_lever = Some(value),
+            FieldId::B738FmsVref => self.b738_fms_vref = Some(value),
+            FieldId::AcfVso => self.acf_vso = Some(value),
             FieldId::TolissBeacon => self.toliss_beacon = Some(value > 0.5),
             FieldId::TolissSeatBeltSigns => self.toliss_seatbelt_signs = Some(value > 0.5),
             FieldId::TolissApuMaster => self.toliss_apu_master = Some(value > 0.5),
@@ -2107,7 +2129,8 @@ impl XPlaneState {
             // v0.16.10 (#Premium): Cockpit-Tiefendaten — auf dem
             // X-Plane-Pfad noch nicht verdrahtet (spaetere Phase;
             // braucht Addon-Datarefs wie AirbusFBW/ToLiss + In-Sim-
-            // Verifikation). Alle None = "Quelle liefert es nicht".
+            // Verifikation). None = "Quelle liefert es nicht"; Ausnahme
+            // seit 2.0.6: `vref_kt` aus dem Zibo-FMC (siehe B738FmsVref).
             fma_lateral_mode: None,
             fma_vertical_mode: None,
             fma_thrust_mode: None,
@@ -2117,7 +2140,8 @@ impl XPlaneState {
             v2_kt: None,
             vapp_kt: None,
             vls_kt: None,
-            vref_kt: None,
+            vref_kt: self.b738_fms_vref.filter(|v| *v > 0.0).map(f64::from),
+            design_vs0_kt: self.acf_vso.filter(|v| *v > 0.0).map(f64::from),
             flex_temp_c: None,
             thrust_gate: None,
             master_caution: self.b738_master_caution,
