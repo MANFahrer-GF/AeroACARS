@@ -5500,6 +5500,8 @@ struct PersistedFlightStats {
     #[serde(default)]
     landing_brake_energy_proxy: Option<f32>,
     #[serde(default)]
+    landing_decel_mps2: Option<f32>,
+    #[serde(default)]
     landing_wing_strike_severity_pct: Option<f32>,
     #[serde(default)]
     arr_metar_raw: Option<String>,
@@ -5794,6 +5796,7 @@ impl PersistedFlightStats {
             landing_vref_source: stats.landing_vref_source.map(str::to_string),
             landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
             landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
+            landing_decel_mps2: stats.landing_decel_mps2,
             landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
             arr_metar_raw: stats.arr_metar_raw.clone(),
             // Nach dem Aufsetzen schreibt die Sicherung der Prozess, der die
@@ -6082,6 +6085,7 @@ impl PersistedFlightStats {
         });
         stats.landing_yaw_rate_deg_per_sec = self.landing_yaw_rate_deg_per_sec;
         stats.landing_brake_energy_proxy = self.landing_brake_energy_proxy;
+        stats.landing_decel_mps2 = self.landing_decel_mps2;
         stats.landing_wing_strike_severity_pct = self.landing_wing_strike_severity_pct;
         stats.arr_metar_raw = self.arr_metar_raw;
         stats.client_version_aufsetzen = self.client_version_aufsetzen;
@@ -7084,8 +7088,12 @@ struct FlightStats {
     /// Hoch = Ground-Loop-Risk.
     landing_yaw_rate_deg_per_sec: Option<f32>,
     /// Brake-Energy-Proxy = (TD-IAS² × landing_weight) / rollout_distance.
-    /// Indiziert Brake-Pack-Belastung.
+    /// Indiziert Brake-Pack-Belastung. Seit 2.0.1 nicht mehr gesetzt.
     landing_brake_energy_proxy: Option<f32>,
+    /// Mittlere Verzögerung beim Ausrollen in m/s², über die Bodengeschwindigkeit
+    /// vom Aufsetzen bis zum Ende des Ausrollens. Ersetzt seit 2.0.1 die
+    /// Bremsenergie (kJ/m), die nur das Gewicht abbildete.
+    landing_decel_mps2: Option<f32>,
     // ─── v0.5.24 Takeoff-Edge-Capture (50Hz Sampler) ───────────────────
     //
     // Frueher: stats.takeoff_pitch_deg / takeoff_bank_deg wurden im
@@ -28913,6 +28921,7 @@ where
         landing_vref_source: stats.landing_vref_source.map(|s| s.to_string()),
         landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
         landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
+        landing_decel_mps2: stats.landing_decel_mps2,
         arr_metar: stats.arr_metar_raw.clone().filter(|m| !m.is_empty()),
         client_version: Some(aufzeichnende_client_version(stats)),
         landing_lat: stats.landing_lat,
@@ -39812,6 +39821,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 ),
                                 landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
                                 landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
+                                landing_decel_mps2: stats.landing_decel_mps2,
                                 // v0.12.4 (Spec docs/spec/v0.12.4-score-
                                 // consistency.md, LE5): prozentuale Abweichung
                                 // des **tatsächlichen Trip-Burn** (takeoff_fuel −
@@ -43487,26 +43497,36 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     spur_fortschreiben(stats, snap.groundspeed_kt, laengs_m, quer_m, halbe_breite_m);
 }
 
-/// Bremsenergie-Näherung in kJ je Meter Ausrollstrecke:
-/// (½ × Masse × IAS²) / Ausrollstrecke, ohne Landegewicht mit 50 t.
+/// Mittlere Verzögerung beim Ausrollen in m/s²: (v_Aufsetzen² − v_Ende²) /
+/// (2 × Ausrollstrecke), beide über die Bodengeschwindigkeit — die IAS
+/// enthielte den Wind. v_Ende ist die Geschwindigkeit am Ende des
+/// Ausrollens (40 kt, Stand oder Abbiegen), nicht pauschal 0.
 ///
-/// ⚠ Erst am Ende des Ausrollens rechnen. Bis 06.10.2026 stand die Rechnung
-/// im Aufsetz-Zweig — dort ist die Ausrollstrecke noch 0 (sie wird direkt
-/// danach erst angelegt), die Bedingung „> 50 m" griff fast nie: von 410
-/// Landungen in 30 Tagen hatten 406 eine Ausrollstrecke, 5 eine Bremsenergie.
-fn bremsenergie_proxy(
-    landing_speed_kt: Option<f32>,
+/// Ersetzt seit 2.0.1 die Bremsenergie (kJ/m): Die war Masse × Verzögerung
+/// und bildete das Gewicht ab — 30 Tage live: ab 150 t 41 % gelb/rot bei
+/// derselben Verzögerung wie leichte Muster (Median 1,93 gegen 1,91 m/s²).
+/// Sie stand zudem im Aufsetz-Zweig, wo die Ausrollstrecke noch 0 ist, und
+/// blieb fast immer leer (406 Landungen mit Strecke, 5 mit Wert).
+///
+/// Über 6 m/s² (0,6 g) bremst kein Verkehrsflugzeug — volle Autobrake mit
+/// Umkehrschub liegt um 4–5 m/s². Ein größerer Wert ist eine Messlücke
+/// (fehlende Strecke), keine Bremsung; dann bleibt das Feld leer.
+fn verzoegerung_mps2(
+    gs_aufsetzen_kt: Option<f32>,
+    gs_ende_kt: f32,
     rollout_distance_m: Option<f32>,
-    landing_weight_kg: Option<f64>,
 ) -> Option<f32> {
-    let (ias, rollout) = (landing_speed_kt?, rollout_distance_m?);
-    if rollout <= 50.0 || ias <= 0.0 {
+    let (gs0, strecke) = (gs_aufsetzen_kt?, rollout_distance_m?);
+    if strecke <= 50.0 {
         return None;
     }
-    let ias_ms = f64::from(ias) * 0.5144; // kt → m/s
-    let mass = landing_weight_kg.unwrap_or(50_000.0);
-    let kinetic = 0.5 * mass * ias_ms.powi(2);
-    Some((kinetic / f64::from(rollout) / 1_000.0) as f32)
+    let v0 = f64::from(gs0) * 0.5144; // kt → m/s
+    let v1 = f64::from(gs_ende_kt.max(0.0)) * 0.5144;
+    if v0 <= v1 {
+        return None;
+    }
+    let a = (v0 * v0 - v1 * v1) / (2.0 * f64::from(strecke));
+    (a <= 6.0).then_some(a as f32)
 }
 
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
@@ -43565,10 +43585,10 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 "exit_speed"
             };
             stats.rollout_finalize_reason = Some(reason.to_string());
-            stats.landing_brake_energy_proxy = bremsenergie_proxy(
-                stats.landing_speed_kt,
+            stats.landing_decel_mps2 = verzoegerung_mps2(
+                stats.landing_groundspeed_kt,
+                snap.groundspeed_kt,
                 stats.rollout_distance_m,
-                stats.landing_weight_kg,
             );
             tracing::info!(
                 meters = stats.rollout_distance_m.unwrap_or(0.0),
@@ -46275,8 +46295,8 @@ fn step_flight_at(
                     }
                 }
 
-                // Bremsenergie: erst am Ende des Ausrollens (`rollout_tick`),
-                // siehe `bremsenergie_proxy`.
+                // Verzögerung: erst am Ende des Ausrollens (`rollout_tick`),
+                // siehe `verzoegerung_mps2`.
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
                     vs_dev_fpm = ?stab_v2.vs_deviation_fpm,
@@ -70983,34 +71003,37 @@ mod v0_16_6_bush_completeness_tests {
         assert_eq!(stats.rollout_finalize_reason.as_deref(), Some("exit_speed"));
     }
 
-    /// 06.10.2026: Die Bremsenergie entsteht erst am Ende des Ausrollens —
-    /// beim Aufsetzen ist die Strecke 0, dort blieb sie fast immer leer.
+    /// 06.10.2026: Die Verzögerung entsteht erst am Ende des Ausrollens —
+    /// beim Aufsetzen ist die Strecke 0, dort blieb die Bremsenergie leer.
     #[test]
-    fn bremsenergie_entsteht_am_ende_des_ausrollens() {
+    fn verzoegerung_entsteht_am_ende_des_ausrollens() {
         let mut stats = rollout_stats(50.0, 8.0);
-        stats.landing_speed_kt = Some(135.0);
-        stats.landing_weight_kg = Some(60_000.0);
+        stats.landing_groundspeed_kt = Some(135.0);
         stats.rollout_distance_m = Some(1_200.0);
-        // Noch im Ausrollen (80 kt): keine Bremsenergie.
+        // Noch im Ausrollen (80 kt): kein Wert.
         rollout_tick(&mut stats, &rollout_snap(50.0, 8.0001, 80.0, 90.0, true));
-        assert_eq!(stats.landing_brake_energy_proxy, None);
-        // Abschluss: ½ × 60 t × (135 kt)² ≈ 145 MJ auf ~1,2 km ≈ 117 kJ/m.
+        assert_eq!(stats.landing_decel_mps2, None);
+        // Abschluss bei 35 kt: (69,4² − 18,0²) / (2 × ~1236 m) ≈ 1,82 m/s².
         rollout_tick(&mut stats, &rollout_snap(50.0, 8.0005, 35.0, 90.0, true));
         assert!(stats.rollout_finalized);
-        let e = stats
-            .landing_brake_energy_proxy
-            .expect("Bremsenergie gesetzt");
-        assert!((110.0..125.0).contains(&e), "Bremsenergie {e}");
+        let a = stats.landing_decel_mps2.expect("Verzögerung gesetzt");
+        assert!((1.75..1.90).contains(&a), "Verzögerung {a}");
+        // Die alte Bremsenergie wird nicht mehr gesetzt.
+        assert_eq!(stats.landing_brake_energy_proxy, None);
     }
 
     #[test]
-    fn bremsenergie_ohne_strecke_oder_fahrt_leer() {
-        assert_eq!(bremsenergie_proxy(Some(135.0), Some(40.0), None), None);
-        assert_eq!(bremsenergie_proxy(None, Some(1_200.0), None), None);
-        assert_eq!(bremsenergie_proxy(Some(135.0), None, None), None);
-        // Ohne Landegewicht mit 50 t gerechnet.
-        let e = bremsenergie_proxy(Some(135.0), Some(1_200.0), None).unwrap();
-        assert!((95.0..105.0).contains(&e), "Bremsenergie {e}");
+    fn verzoegerung_unabhaengig_vom_gewicht_und_plausibel() {
+        // Bis zum Stand: 135 kt auf 1200 m ≈ 2,0 m/s² — Gewicht spielt keine Rolle.
+        let a = verzoegerung_mps2(Some(135.0), 0.0, Some(1_200.0)).unwrap();
+        assert!((1.95..2.05).contains(&a), "Verzögerung {a}");
+        // Zu kurze Strecke, fehlende Werte, keine Abnahme: leer.
+        assert_eq!(verzoegerung_mps2(Some(135.0), 0.0, Some(40.0)), None);
+        assert_eq!(verzoegerung_mps2(None, 0.0, Some(1_200.0)), None);
+        assert_eq!(verzoegerung_mps2(Some(135.0), 0.0, None), None);
+        assert_eq!(verzoegerung_mps2(Some(30.0), 35.0, Some(400.0)), None);
+        // Messlücke (135 kt auf 150 m ≈ 16 m/s²): kein Wert statt Unsinn.
+        assert_eq!(verzoegerung_mps2(Some(135.0), 0.0, Some(150.0)), None);
     }
 
     #[test]

@@ -109,6 +109,18 @@ describe("Abnahme-Korrekturen", () => {
     expect(text).not.toContain("0.00 m (links");
   });
 
+  it("Verzögerung statt Bremsenergie (2.0.1): Wert in m/s², Farbe gewichtsunabhängig", async () => {
+    const { LandingQualitaet, tonVerzoegerung } = await import("./LandingQualitaet");
+    const r = { ...basis(), landing_decel_mps2: 1.62, landing_brake_energy_proxy: 450 } as unknown as LandingRecord;
+    const text = render(<LandingQualitaet record={r} />).container.textContent ?? "";
+    expect(text).toContain("Verzögerung");
+    expect(text).toContain("1.6");
+    expect(text).toContain("m/s²");
+    expect(text).not.toMatch(/Bremsenergie|kJ\/m/);
+    expect([1.6, 2.4].map(tonVerzoegerung)).toEqual(["good", "good"]);
+    expect([3.0, 4.0, 5.0].map(tonVerzoegerung)).toEqual(["neutral", "warn", "err"]);
+  });
+
   it("kein „-0“ in Werten (gemeinsame Formatierung)", async () => {
     const { fmtNumber, fmtSigned } = await import("../lib/landungsFormat");
     expect(fmtSigned(-0.3, 0, "m")).toBe("0 m");

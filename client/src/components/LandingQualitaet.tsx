@@ -1,5 +1,5 @@
 // Aufsetz-Qualität: Wing-Strike-Risiko, Aufsetz-Drittel, Distanz hinter der
-// Schwelle, Vref-Abweichung, Gierrate, Bremsenergie — zur Einordnung, KEINE
+// Schwelle, Vref-Abweichung, Gierrate, Verzögerung — zur Einordnung, KEINE
 // Note.
 //
 // GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Bis
@@ -9,7 +9,7 @@
 
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
-import { distanzHinterSchwelle, fmtSigned } from "../lib/landungsFormat";
+import { distanzHinterSchwelle, fmtNumber, fmtSigned } from "../lib/landungsFormat";
 import "./landungForensik.css";
 import { InfoBadge } from "./InfoBadge";
 
@@ -29,7 +29,11 @@ export const tonVref = (kt: number, quelle: string | null | undefined): Ton => {
     : a < 5 ? "good" : a < 10 ? "neutral" : a < 15 ? "warn" : "err";
 };
 export const tonGierrate = (g: number): Ton => (g < 2 ? "good" : g < 5 ? "neutral" : g < 8 ? "warn" : "err");
-export const tonBremsenergie = (e: number): Ton => (e < 200 ? "good" : e < 500 ? "neutral" : e < 1000 ? "warn" : "err");
+// Mittlere Verzögerung beim Ausrollen (m/s²). Zum Vergleich: 737 Autobrake 2
+// ≈ 1,5, 3 ≈ 2,2, MAX ≈ 4,3; A320 LO ≈ 1,7, MED ≈ 3. Live 30 Tage (408
+// Landungen): Median 1,6, p95 2,6. Gewichtsunabhängig — die frühere
+// Bremsenergie (kJ/m) färbte ab 150 t fast jede zweite Landung gelb/rot.
+export const tonVerzoegerung = (a: number): Ton => (a < 2.5 ? "good" : a < 3.5 ? "neutral" : a < 4.5 ? "warn" : "err");
 
 function Kachel({
   label,
@@ -66,7 +70,7 @@ export function LandingQualitaet({ record }: { record: LandingRecord }) {
   const vref = record.landing_vref_deviation_kt ?? null;
   const vrefQuelle = record.landing_vref_source ?? null;
   const gier = record.landing_yaw_rate_deg_per_sec ?? null;
-  const bremse = record.landing_brake_energy_proxy ?? null;
+  const verz = record.landing_decel_mps2 ?? null;
 
   // Bahnbezug nicht vertrauenswürdig → Drittel und Distanz weglassen statt
   // Werte auf falscher Geometrie zu zeigen. Ohne Feld (alte Flüge) gilt er
@@ -83,7 +87,7 @@ export function LandingQualitaet({ record }: { record: LandingRecord }) {
     (bahnOk && (distanz != null || zone != null)) ||
     vref != null ||
     gier != null ||
-    bremse != null ||
+    verz != null ||
     grundText != null;
   if (!hatDaten) return null;
 
@@ -156,11 +160,11 @@ export function LandingQualitaet({ record }: { record: LandingRecord }) {
           hinweis={t("landing.quality.gierrate_hint")}
         />
         <Kachel
-          label={t("landing.quality.bremsenergie")}
-          wert={bremse != null ? String(Math.round(bremse)) : null}
-          einheit="kJ/m"
-          ton={bremse != null ? tonBremsenergie(bremse) : undefined}
-          hinweis={t("landing.quality.bremsenergie_hint")}
+          label={t("landing.quality.verzoegerung")}
+          wert={verz != null ? fmtNumber(verz, 1) : null}
+          einheit="m/s²"
+          ton={verz != null ? tonVerzoegerung(verz) : undefined}
+          hinweis={t("landing.quality.verzoegerung_hint")}
         />
       </div>
     </section>

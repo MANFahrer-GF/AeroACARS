@@ -1152,8 +1152,8 @@
       },
       "gierrate": "Gierrate",
       "gierrate_hint": "Kursänderung pro Sekunde beim Aufsetzen. Hoch = nicht ausgerichtet aufgesetzt, Gefahr des Ausbrechens bei Seitenwind.",
-      "bremsenergie": "Bremsenergie",
-      "bremsenergie_hint": "Näherung: (½ × Masse × IAS²) / Ausrollstrecke. Hoch = starke thermische Last der Bremsen."
+      "verzoegerung": "Verzögerung",
+      "verzoegerung_hint": "Mittlere Verzögerung vom Aufsetzen bis zum Ende des Ausrollens, über die Bodengeschwindigkeit. Zum Vergleich: Autobrake LOW ≈ 1,5, MED ≈ 2–3, MAX ≈ 4 m/s². Zählt nicht zur Note."
     },
     "metar": {
       "title": "METAR am Zielflughafen",

@@ -402,6 +402,8 @@ export interface LandingRecord {
   landing_vref_source?: string | null;
   landing_yaw_rate_deg_per_sec?: number | null;
   landing_brake_energy_proxy?: number | null;
+  /** Mittlere Verzögerung beim Ausrollen in m/s² (seit 2.0.1, ersetzt die Bremsenergie). */
+  landing_decel_mps2?: number | null;
   /** METAR am Zielflughafen (roh). */
   arr_metar?: string | null;
   client_version?: string | null;

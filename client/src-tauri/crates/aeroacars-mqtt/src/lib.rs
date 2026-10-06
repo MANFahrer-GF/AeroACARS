@@ -914,6 +914,11 @@ pub struct TouchdownPayload {
     /// Brake-Energy-Proxy in kJ/m. Hoch = brake-pack-thermal-stress.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing_brake_energy_proxy: Option<f32>,
+    /// Mittlere Verzögerung beim Ausrollen in m/s², über die Bodengeschwindigkeit
+    /// vom Aufsetzen bis zum Ende des Ausrollens. Ersetzt seit 2.0.1 die
+    /// Bremsenergie (kJ/m), die nur das Gewicht abbildete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing_decel_mps2: Option<f32>,
 
     // ─── v0.5.39 50-Hz-Forensik aus TouchdownWindow-Buffer ────────────
     //

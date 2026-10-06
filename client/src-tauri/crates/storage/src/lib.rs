@@ -910,6 +910,11 @@ pub struct LandingRecord {
     pub landing_yaw_rate_deg_per_sec: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_brake_energy_proxy: Option<f32>,
+    /// Mittlere Verzögerung beim Ausrollen in m/s², über die Bodengeschwindigkeit
+    /// vom Aufsetzen bis zum Ende des Ausrollens. Ersetzt seit 2.0.1 die
+    /// Bremsenergie (kJ/m), die nur das Gewicht abbildete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_decel_mps2: Option<f32>,
     /// METAR am Zielflughafen (roh).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arr_metar: Option<String>,

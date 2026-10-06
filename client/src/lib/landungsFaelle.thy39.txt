@@ -308,7 +308,7 @@ Gierrate
 i
 0.0
 °/s
-Bremsenergie
+Verzögerung
 i
 —
 Gleitpfad und Anflugruhe
