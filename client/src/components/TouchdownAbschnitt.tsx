@@ -127,7 +127,8 @@ export function WindCompass({
             <div className="windflow__hero-meta">
               <span className="windflow__hero-unit">kt</span>
               <span className="windflow__hero-sub">
-                {t("landing.wind_crosswind")} · {sideLabel}
+                {/* Ohne gemessenen Seitenwind keine Seite (QS 06.10.2026). */}
+                {crosswindKt != null ? `${t("landing.wind_crosswind")} · ${sideLabel}` : t("landing.wind_crosswind")}
               </span>
             </div>
           </div>
@@ -144,8 +145,15 @@ export function WindCompass({
         )}
         {/* Auch bei „Windstill" die gemessenen Zahlen — der frühere Bericht
             zeigte sie immer (QS 06.10.2026); nur was gemessen ist. */}
-        {headwindKt != null && (
+        {(headwindKt != null || (calm && crosswindKt != null)) && (
           <div className="windflow__chips">
+            {/* Bei „Windstill" fehlt die Hero-Zahl — der Seitenwind steht dann
+                hier, wie im früheren Bericht (QS 06.10.2026). */}
+            {calm && crosswindKt != null && (
+              <span className="windflow__chip">
+                {t("landing.wind_crosswind")} · {sideLabel} {xwAbs.toFixed(0)} kt
+              </span>
+            )}
             {headwindKt != null && (
               <span className="windflow__chip">
                 {headLabel} {twAbs.toFixed(0)} kt

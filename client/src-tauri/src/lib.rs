@@ -24696,6 +24696,7 @@ fn build_pirep_payload(
         landing_scored_g_force: score_g_for_stats(&stats).map(|s| s.scored_g),
         landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
         landing_bank_deg: aufsetz_bank_deg(&stats),
+        fenster_unzureichend: stats.landung_abdeckung_fehlt.is_some().then_some(true),
         peak_altitude_ft: stats.peak_altitude_ft.map(|v| v.round() as i32),
         landing_vs_fpm: body.landing_rate.map(|r| r as i32),
         // v0.7.1 P1.3-Fix: gewichteter Aggregate-Score
@@ -43650,7 +43651,8 @@ fn abfangen_in_analyse(
 /// über Grund, ebenfalls gegen den Wert am ersten Bodenkontakt.
 ///
 /// Proben nur aus dem laufenden Anflug: ab dem Schnitt eines Durchstartens
-/// (`anflug_forensik_ab`), höchstens 60 s vor dem Aufsetzen.
+/// (`anflug_forensik_ab`), höchstens `ABFANG_FENSTER_S` geflogene Sekunden
+/// (ohne Sim-Pausen) vor dem Aufsetzen.
 fn abfangen_messen(
     stats: &FlightStats,
     fenster: &[TouchdownWindowSample],
@@ -43677,9 +43679,7 @@ fn abfangen_messen(
         .anflug_forensik_puffer
         .iter()
         .filter(|s| ab.is_none_or(|ab| s.at > ab))
-        // 180 s (QS 06.10.2026, vorher 60): wer länger als 60 s unter 50 ft
-        // blieb, bekam gar keine Teilnote statt der schlechtesten.
-        .filter(|s| s.at <= edge_at && (edge_at - s.at).num_seconds() <= ABFANG_FENSTER_S)
+        .filter(|s| s.at <= edge_at)
         .map(|s| landing_scoring::abfangen::AbfangPunkt {
             // Pausen im Sim zählen nicht als Abfangzeit (QS 06.10.2026).
             t_ms: (s.at - edge_at).num_milliseconds()
@@ -43688,6 +43688,11 @@ fn abfangen_messen(
             vs_fpm: s.vs_fpm,
             gs_kt: s.gs_kt,
         })
+        // 180 s geflogene Zeit (QS 06.10.2026, vorher 60 s Wanduhr): wer
+        // länger als 60 s unter 50 ft blieb, bekam gar keine Teilnote statt
+        // der schlechtesten. Nach dem Pausen-Abzug gefiltert — sonst ließ eine
+        // lange Pause im Abfangen die Teilnote ganz verschwinden.
+        .filter(|p| -p.t_ms <= ABFANG_FENSTER_S * 1000)
         .collect();
     landing_scoring::abfangen::messen(&punkte, vs_aufsetzen_fpm)
 }
@@ -66000,6 +66005,8 @@ mod touchdown_metadata_stamp_tests {
         assert_eq!(p.landing_peak_vs_fpm, Some(-204.0));
         // Querneigung: der Profilpunkt am nächsten an t = 0, wie im Datensatz.
         assert_eq!(p.landing_bank_deg, Some(-1.5));
+        // Fenster ausreichend → Feld fehlt (nur `true` geht hinaus).
+        assert_eq!(p.fenster_unzureichend, None);
         // Ein fester Wert, nicht „dieselbe Funktion wie das Feld" (QS:
         // sonst prüfte der Test None == None).
         assert_eq!(p.landing_scored_g_force, Some(1.42));
@@ -80635,6 +80642,34 @@ mod abfangen_verdrahtung_tests {
         stats.pause_segments.clear();
         let b = abfangen_messen(&stats, &[boden()], td(), Some(-60.0));
         assert_eq!(b.dauer_ab_50ft_s, Some(28.0));
+    }
+
+    /// QS 06.10.2026 (Runde 3): Das Fenster gilt für geflogene Zeit. Eine
+    /// lange Pause im Abfangen ließ vorher alle Proben vor ihr herausfallen —
+    /// die Teilnote verschwand. 50 ft bei −200 s Wanduhr, 190 s Pause → 10 s.
+    #[test]
+    fn lange_pause_laesst_die_teilnote_nicht_verschwinden() {
+        let mut stats = FlightStats::default();
+        for (t, h) in [
+            (-202_000, 60.0),
+            (-200_000, 50.0),
+            (-196_000, 30.0),
+            (-4_000, 25.0),
+            (-500, 2.0),
+        ] {
+            stats.anflug_forensik_puffer.push_back(probe(t, h, -300.0));
+        }
+        stats.pause_segments.push(PauseSegment {
+            started_at: td() - chrono::Duration::seconds(195),
+            ended_at: td() - chrono::Duration::seconds(5),
+            duration_secs: 190,
+            reason: PauseReason::SimPause,
+            drift_nm: None,
+            altitude_delta_ft: None,
+            fuel_delta_kg: None,
+        });
+        let a = abfangen_messen(&stats, &[boden()], td(), Some(-60.0));
+        assert_eq!(a.dauer_ab_50ft_s, Some(10.0), "{a:?}");
     }
 
     /// QS 06.10.2026: länger als 60 s unter 50 ft war „keine Messung" (keine

@@ -1287,7 +1287,7 @@
       "sinkrate_forensik": "The same landing, averaged differently: different windows give different sink rates. Graded is the sink rate at the moment of ground contact (top of the report); the other values show how it came about.",
       "gkraft_forensik": "The same landing, measured differently: raw 50 Hz values, means and percentiles. Graded is the lightly smoothed peak (G-force at the top of the report); the other values are for context.",
       "bordbuch": "What the client recognised on this flight — lights, transponder, APU, taxi speed and more — and when. Completed items are counted, nothing is criticised. Does not count towards the grade.",
-      "kopf_note_alt": "This landing was graded before score version 19 and keeps its grade from then — it is not recalculated. The letter summarises it: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score at the time was the weighted average of the parts below; the \"weakest part caps\" rules and the flare part only exist since version 19."
+      "kopf_note_alt": "This landing was graded before score version 19 and keeps its grade from then — it is not recalculated. The letter summarises it: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score at the time was the weighted average of the parts below; depending on the version, the approach (PARTIAL at most 80, UNSTABLE at most 45) and the g-force (from 1.75 g at most 40, from 2.6 g at most 14) could already cap it — the reason is then shown below the score. The \"weakest part caps\" rule and the flare part only exist since version 19."
     },
     "info_badge": {
       "oeffnen": "Explanation",

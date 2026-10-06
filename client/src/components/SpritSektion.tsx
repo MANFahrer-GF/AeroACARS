@@ -10,6 +10,7 @@
 import i18n from "i18next";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useDruck } from "../lib/druck";
 import type { SpritAuswertung, SpritPhase } from "../lib/sprit";
 import { balken, hauptzahl, hauptzahlText, kg, pct, phaseTon, reserveAbstand, contingencyGenutzt, minuten } from "../lib/sprit";
 import { SpritWegpunkte } from "./SpritWegpunkte";
@@ -724,6 +725,7 @@ function Kennzahl({
   ton?: "ok" | "warn" | "neutral";
 }) {
   const leer = wert == null || wert === "";
+  const druck = useDruck();
   return (
     // Die Erklaerung erscheint sofort und auch beim Tippen — siehe
     // `Erklaerung`. Fehlt der Wert, steht dort der GRUND.
@@ -752,7 +754,7 @@ function Kennzahl({
         {label}
         {/* Das Fragezeichen erscheint NUR bei fehlendem Wert — so sieht man,
             dass es einen Grund gibt, statt einen stummen Strich zu lesen. */}
-        {leer && <span aria-hidden="true">ⓘ</span>}
+        {leer && !druck && <span aria-hidden="true">ⓘ</span>}
       </div>
       <div
         style={{
@@ -769,6 +771,13 @@ function Kennzahl({
         }}
       >
         {leer ? "—" : wert}
+        {/* Auf Papier lässt sich nichts antippen: der Grund steht darunter
+            (QS 06.10.2026). */}
+        {leer && druck && (
+          <div style={{ fontSize: "0.7rem", fontWeight: 400, color: "var(--text-muted, #9aa4b2)" }}>
+            {grundWennLeer}
+          </div>
+        )}
         {!leer && einheit && (
           <span style={{ fontSize: "0.72rem", fontWeight: 400, marginLeft: 3, color: "var(--text-muted, #9aa4b2)" }}>
             {einheit}
@@ -782,6 +791,7 @@ function Kennzahl({
 /** Die Sektion „Sprit" im Landungs-Tab — Phasen, Leiter, Reserve, Extra. */
 export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswertung | null | undefined; ohneTitel?: boolean }) {
   const { t } = useTranslation();
+  const druck = useDruck();
   if (!sprit) return null;
   const r = sprit.reserve;
   // v1.7.37: Abstand zur Final Reserve in kg statt der Quote — „Reserve
@@ -830,9 +840,12 @@ export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswert
         >
           {t("landing.sprit.keine_note")}
         </span>
-        <Erklaerung text={t("landing.sprit.info")} style={{ color: "var(--text-muted, #9aa4b2)", fontSize: "0.8rem" }}>
-          ⓘ
-        </Erklaerung>
+        {/* Bedienung — nicht aufs Papier (QS 06.10.2026). */}
+        {!druck && (
+          <Erklaerung text={t("landing.sprit.info")} style={{ color: "var(--text-muted, #9aa4b2)", fontSize: "0.8rem" }}>
+            ⓘ
+          </Erklaerung>
+        )}
       </div>
       {/* Die Kennzahlenreihe — vier Zahlen auf einen Blick, jede mit
           Erklaerung. Sie kam aus der Live-Uebersicht; der Client hatte sie

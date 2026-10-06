@@ -1365,6 +1365,11 @@ pub struct PirepPayload {
     /// nicht `bank_deg` des Touchdowns (QS 06.10.2026).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_bank_deg: Option<f32>,
+    /// Aufsetzfenster nicht ausreichend aufgezeichnet — wie im Datensatz
+    /// (`landung_abdeckung_fehlt`); nur `Some(true)`, sonst weggelassen
+    /// (QS 06.10.2026, die Webapp kannte den Zustand nicht).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fenster_unzureichend: Option<bool>,
     pub peak_altitude_ft: Option<i32>,
     pub landing_vs_fpm: Option<i32>,
     pub landing_score: Option<i32>,

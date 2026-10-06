@@ -99,7 +99,8 @@ pub struct Abfangen {
     /// Größte Vertikalgeschwindigkeit ab 50 ft; > 0 = wieder gestiegen.
     #[serde(default)]
     pub max_vs_fpm: Option<f32>,
-    /// Warum es keine Werte gibt: `kein_50ft_durchgang`, `zu_wenig_proben`.
+    /// Warum es keine Werte gibt: `kein_50ft_durchgang`, `zu_wenig_proben`,
+    /// `kein_bodenbezug` (kein Bodenkontakt im 50-Hz-Fenster, Client).
     #[serde(default)]
     pub grund_ohne_werte: Option<String>,
 }

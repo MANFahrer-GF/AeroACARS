@@ -100,7 +100,9 @@ const BAND_COLORS: Record<Band, string> = {
   good: "#22c55e",
   ok: "#eab308",
   bad: "#ef4444",
-  missing: "rgba(255,255,255,0.35)",
+  // Theme-Farbe statt festem Weiß — auf Papier war der Strich unsichtbar
+  // (QS 06.10.2026).
+  missing: "var(--text-muted, #94a3b8)",
 };
 
 function formatSimKind(simKind: string | null | undefined): string | null {
@@ -505,7 +507,9 @@ function Tile({
     <div
       style={{
         background: "rgba(255,255,255,0.04)",
-        border: `1px solid ${color}40`,
+        // color-mix statt angehängtem Alpha: gilt auch für die Theme-Farbe
+        // (fehlender Wert), `rgba(..)40` war ungültig und ohne Rand.
+        border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
         borderRadius: 6,
         padding: "8px 10px",
         display: "flex",
