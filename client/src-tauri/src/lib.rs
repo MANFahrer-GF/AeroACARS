@@ -43514,7 +43514,7 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
 fn verzoegerung_mps2(
     gs_aufsetzen_kt: Option<f32>,
     gs_ende_kt: f32,
-    rollout_distance_m: Option<f32>,
+    rollout_distance_m: Option<f64>,
 ) -> Option<f32> {
     let (gs0, strecke) = (gs_aufsetzen_kt?, rollout_distance_m?);
     if strecke <= 50.0 {
@@ -43525,7 +43525,7 @@ fn verzoegerung_mps2(
     if v0 <= v1 {
         return None;
     }
-    let a = (v0 * v0 - v1 * v1) / (2.0 * f64::from(strecke));
+    let a = (v0 * v0 - v1 * v1) / (2.0 * strecke);
     (a <= 6.0).then_some(a as f32)
 }
 
