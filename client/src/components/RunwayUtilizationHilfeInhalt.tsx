@@ -54,7 +54,7 @@ export function RunwayUtilizationHilfeInhalt() {
   // Versionshinweis wie an jedem Erklärfenster (QS Runde 11).
   return (
     <div className="helpmodal__body">
-      <AltbestandHinweisAbsatz />
+      <AltbestandHinweisAbsatz altAchse />
       <p style={{ margin: 0, fontSize: "0.92rem", lineHeight: 1.5 }}>
         {t("landing.runway_utilization_help.intro")}
       </p>

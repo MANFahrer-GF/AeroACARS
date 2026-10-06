@@ -44,8 +44,37 @@ describe("Hilfe-Dialog der Bahn-Auslastung (Runde 11)", () => {
         <RunwayUtilizationHilfeInhalt />
       </AltbestandKontext.Provider>,
     ).container.textContent ?? "";
-    expect(alt).toContain("vor Score-Version 19 bewertet");
+    // Runde 12: die Achse gibt es nur im Altbestand — eigener Hinweis, nicht
+    // „beschreibt die heutigen Regeln".
+    expect(alt).toContain("gibt es nur bei Landungen vor Score-Version 19");
+    expect(alt).not.toContain("beschreibt die heutigen Regeln");
     const neu = render(<RunwayUtilizationHilfeInhalt />).container.textContent ?? "";
-    expect(neu).not.toContain("vor Score-Version 19 bewertet");
+    expect(neu).not.toContain("Score-Version 19");
+  });
+});
+
+describe("Runde 12", () => {
+  it("Rohdaten: Abstand hinter der Schwelle wie Aufsetz-Qualität (Rückfall vor v1.7.15)", async () => {
+    const { RohdatenAbschnitt } = await import("./RohdatenAbschnitt");
+    const basis = MOCK_LANDING_OPTIONS[0]!.build() as unknown as Record<string, unknown>;
+    const { td_distance_from_threshold_m: _weg, ...ohneFeld } = basis;
+    const r = { ...ohneFeld, landing_float_distance_m: 420 } as unknown as LandingRecord;
+    const text = render(<RohdatenAbschnitt record={r} />).container.textContent ?? "";
+    expect(text).toContain("+420.00 m");
+  });
+  it("Sprit-Teilnote im Altbestand: Hinweis zur alten Achse", async () => {
+    const { ScoreBreakdown } = await import("./LandungsBewertung");
+    const { fireEvent } = await import("@testing-library/react");
+    const r = { ...(MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord), score_algorithm_version: 12 };
+    const teil = { key: "fuel", points: 90, value: "+3 %", band: "good", rationale: "" };
+    const { container } = render(
+      <AltbestandKontext.Provider value={true}>
+        <ScoreBreakdown subs={[teil as never]} record={r} />
+      </AltbestandKontext.Provider>,
+    );
+    fireEvent.click(container.querySelector(".info-badge") as HTMLElement);
+    const f = document.querySelector(".info-badge__popover")?.textContent ?? "";
+    expect(f).toContain("gibt es nur bei Landungen vor Score-Version 19");
+    expect(f).not.toContain("beschreibt die heutigen Regeln");
   });
 });

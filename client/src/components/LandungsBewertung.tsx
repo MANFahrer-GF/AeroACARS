@@ -277,6 +277,10 @@ export function buildRolloutExtraLines(
   return lines;
 }
 
+/** Teilnoten, die es seit Score-Version 19 nicht mehr gibt — ihre
+ *  Erklärung beschreibt den letzten Stand der alten Achse (QS Runde 12). */
+const ALT_ACHSEN: readonly string[] = ["fuel", "loadsheet"];
+
 export function ScoreBreakdown({
   subs,
   record,
@@ -320,7 +324,7 @@ export function ScoreBreakdown({
                       bereits das ausführliche Modal. Zwei Erklärungen
                       auf der gleichen Card wären redundant. */}
                   {s.key !== "rollout" && (
-                    <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                    <InfoBadge explanation={t(`landing.info.${s.key}`)} altAchse={ALT_ACHSEN.includes(s.key)} />
                   )}
                 </span>
                 <span
@@ -375,7 +379,7 @@ export function ScoreBreakdown({
                     Bahndisziplin hat ihren eigenen i-Text statt des
                     Auslastungs-Modals. */}
                 {s.key !== "rollout" ? (
-                  <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                  <InfoBadge explanation={t(`landing.info.${s.key}`)} altAchse={ALT_ACHSEN.includes(s.key)} />
                 ) : bahndisziplin ? (
                   <InfoBadge explanation={t("landing.info.runway_discipline")} />
                 ) : null}

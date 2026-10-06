@@ -62,8 +62,11 @@ describe("Versionshinweis an allen Erklärungen", () => {
       const eigeneAltfassung =
         t.startsWith("Anflug-Urteil für Flüge vor Score-Version 19") ||
         t.startsWith("Diese Landung wurde vor Score-Version 19 bewertet und behält");
+      // Runde 12: Teilnoten, die es nur noch im Altbestand gibt (Sprit,
+      // Loadsheet), tragen ihren eigenen Hinweis statt „heutige Regeln".
+      const ALT_ACHSE = "gibt es nur bei Landungen vor Score-Version 19";
       if (eigeneAltfassung) expect(t).not.toContain(HINWEIS);
-      else expect(t).toContain(HINWEIS);
+      else expect(t.includes(HINWEIS) !== t.includes(ALT_ACHSE), t).toBe(true);
       expect(t.split("vor Score-Version 19").length).toBeLessThanOrEqual(2);
     }
     expect(alt.some((t) => t.startsWith("Anflug-Urteil für Flüge vor Score-Version 19"))).toBe(true);

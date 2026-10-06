@@ -85,12 +85,12 @@ export const AltbestandKontext = createContext(false);
 
 /** Derselbe Hinweis als Absatz für Hilfedialoge (Anflug, Bahn-Auslastung) —
  *  eine Stelle, damit kein Dialog ihn vergisst (QS Runde 11). */
-export function AltbestandHinweisAbsatz() {
+export function AltbestandHinweisAbsatz({ altAchse = false }: { altAchse?: boolean }) {
   const { t } = useTranslation();
   if (!useContext(AltbestandKontext)) return null;
   return (
     <p className="helpmodal__p" style={{ marginTop: 0 }}>
-      <strong>{t("landing.erklaer.alt_hinweis")}</strong>
+      <strong>{t(altAchse ? "landing.erklaer.alt_achse_hinweis" : "landing.erklaer.alt_hinweis")}</strong>
     </p>
   );
 }
@@ -98,15 +98,21 @@ export function AltbestandHinweisAbsatz() {
 export function InfoBadge({
   explanation,
   ohneAltHinweis = false,
+  altAchse = false,
 }: {
   explanation: string;
+  /** Die Teilnote gibt es nur noch im Altbestand (Sprit, Loadsheet,
+   *  Bahn-Auslastung) — „beschreibt die heutigen Regeln" wäre falsch; dann
+   *  der Hinweis `alt_achse_hinweis` (QS Runde 12). */
+  altAchse?: boolean;
   /** Der Text beschreibt schon selbst die damaligen Regeln (`*_alt`) — dann
    *  widerspräche der Hinweis „beschreibt die heutigen Regeln" (Runde 9). */
   ohneAltHinweis?: boolean;
 }) {
   const { t } = useTranslation();
   const altbestand = useContext(AltbestandKontext);
-  const text = altbestand && !ohneAltHinweis ? `${explanation} ${t("landing.erklaer.alt_hinweis")}` : explanation;
+  const hinweis = altAchse ? "landing.erklaer.alt_achse_hinweis" : "landing.erklaer.alt_hinweis";
+  const text = altbestand && !ohneAltHinweis ? `${explanation} ${t(hinweis)}` : explanation;
   const [open, setOpen] = useState(false);
   const id = useId();
   const [lage, setLage] = useState<Lage | null>(null);

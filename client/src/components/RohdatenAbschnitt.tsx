@@ -6,6 +6,7 @@
 // die Koordinaten nicht in seiner Aufzeichnung.
 
 import type { ReactNode } from "react";
+import { distanzHinterSchwelle } from "../lib/landungsFormat";
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import "./rohdatenAbschnitt.css";
@@ -29,7 +30,9 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
       ? `https://www.google.com/maps/place/${lat.toFixed(7)},${lon.toFixed(7)}/@${lat.toFixed(7)},${lon.toFixed(7)},19z`
       : null;
   const versatz = record.runway_match?.centerline_distance_m ?? null;
-  const schwelle = record.td_distance_from_threshold_m ?? null;
+  // Derselbe Wert wie Aufsetz-Qualität und Bahn-Grafik (vor v1.7.15 fehlt
+  // das Feld, dann der Rohwert) — QS Runde 12.
+  const schwelle = distanzHinterSchwelle(record);
   // Rohdaten sind zum Nachprüfen da und bleiben stehen — bei unsicherer
   // Bahngeometrie aber mit Vermerk, denn die übrigen Abschnitte lassen diese
   // Werte dann weg (QS 06.10.2026).
