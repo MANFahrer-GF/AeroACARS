@@ -158,6 +158,45 @@ pub fn vorzeichen_text(v: impl Into<f64>, stellen: usize) -> String {
     }
 }
 
+/// QS 06.10.2026: Jeder Werttext, den ein Test erzeugt, muss in allen drei
+/// Sprachen existieren und genau die mitgegebenen Zahlen als Platzhalter
+/// tragen. Ohne diese Prüfung bliebe ein umbenannter Schlüssel oder
+/// Parameter überall grün — die Anzeige zeigte dann den rohen Schlüssel
+/// oder `{{m}}`.
+#[cfg(test)]
+fn wert_text_pruefen(schluessel: &str, werte: &std::collections::BTreeMap<String, String>) {
+    use std::collections::BTreeSet;
+    use std::sync::OnceLock;
+    static SPRACHEN: OnceLock<Vec<(&'static str, serde_json::Value)>> = OnceLock::new();
+    let sprachen = SPRACHEN.get_or_init(|| {
+        [
+            ("de", include_str!("../../../../src/locales/de/common.json")),
+            ("en", include_str!("../../../../src/locales/en/common.json")),
+            ("it", include_str!("../../../../src/locales/it/common.json")),
+        ]
+        .into_iter()
+        .map(|(l, roh)| (l, serde_json::from_str(roh).expect("Sprachdatei lesbar")))
+        .collect()
+    });
+    let erwartet: BTreeSet<&str> = werte.keys().map(String::as_str).collect();
+    for (sprache, daten) in sprachen {
+        let text = schluessel
+            .split('.')
+            .try_fold(daten, |k, teil| k.get(teil))
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| panic!("{sprache}: Werttext {schluessel} fehlt"));
+        let platzhalter: BTreeSet<&str> = text
+            .split("{{")
+            .skip(1)
+            .filter_map(|r| r.split_once("}}").map(|(name, _)| name.trim()))
+            .collect();
+        assert_eq!(
+            platzhalter, erwartet,
+            "{sprache}: Platzhalter von {schluessel} passen nicht zu den Zahlen"
+        );
+    }
+}
+
 impl SubScoreEntry {
     /// Hilfs-Konstruktor fuer skipped Sub-Scores.
     pub fn skipped(key: &str, label_key: &str, reason: &str) -> Self {
@@ -236,6 +275,8 @@ impl SubScoreEntry {
             .iter()
             .map(|(k, v)| (k.to_string(), v.clone()))
             .collect();
+        #[cfg(test)]
+        wert_text_pruefen(schluessel, &self.value_params);
         self
     }
 

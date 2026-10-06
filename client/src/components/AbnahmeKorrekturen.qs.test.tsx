@@ -80,6 +80,35 @@ describe("Abnahme-Korrekturen", () => {
     expect(druck).toMatch(/\.windflow__streak\s*\{\s*animation-play-state:\s*paused/);
   });
 
+  it("Werttext: unbekannter Schlüssel zeigt den gespeicherten Text, nie den Schlüssel; Sprit übersetzt", async () => {
+    const { subScoresAusDatensatz } = await import("./LandungsBewertung");
+    const r = {
+      ...basis(),
+      sub_scores: [
+        { key: "fuel", points: 100, band: "good", value: "+2.0% bewertet · roh +13.5% · 72 NM Mehrweg (−110 kg)",
+          value_key: "landing.wert.sprit_mehrweg", value_params: { kern: "+2.0%", roh: "+13.5%", nm: "72", kg_mehrweg: "110" },
+          label_key: "landing.sub.fuel" },
+        { key: "loadsheet", points: 100, band: "good", value: "Plan · ZFW 61234 / TOW 70747 kg",
+          value_key: "landing.wert.gibt_es_nicht", value_params: {}, label_key: "landing.sub.loadsheet" },
+      ],
+    } as unknown as LandingRecord;
+    await i18n.changeLanguage("en");
+    const en = render(<ScoreBreakdown subs={subScoresAusDatensatz(r)} record={r} />).container.textContent ?? "";
+    await i18n.changeLanguage("de");
+    expect(en).toContain("+2.0% scored · raw +13.5% · 72 NM extra distance (−110 kg)");
+    expect(en).toContain("Plan · ZFW 61234 / TOW 70747 kg");
+    expect(en).not.toContain("landing.wert.");
+  });
+
+  it("Rohdaten: Richtungswort passt zur angezeigten (gerundeten) Zahl", async () => {
+    const { RohdatenAbschnitt } = await import("./RohdatenAbschnitt");
+    const b = basis();
+    const r = { ...b, runway_match: { ...(b.runway_match ?? {}), centerline_distance_m: -0.004 } } as unknown as LandingRecord;
+    const text = render(<RohdatenAbschnitt record={r} />).container.textContent ?? "";
+    expect(text).toContain("0.00 m (Mitte");
+    expect(text).not.toContain("0.00 m (links");
+  });
+
   it("kein „-0“ in Werten (gemeinsame Formatierung)", async () => {
     const { fmtNumber, fmtSigned } = await import("../lib/landungsFormat");
     expect(fmtSigned(-0.3, 0, "m")).toBe("0 m");

@@ -236,7 +236,7 @@ fn grenzen(icao: Option<&str>) -> [f32; 3] {
     // Ohne Muster gelten die Linienbänder: `category_for_icao` fällt bei
     // `None` auf Light — fürs Ausrollen die strenge Seite, hier wären es die
     // großzügigsten Bänder (QS 06.10.2026).
-    if icao.map_or(true, |s| s.trim().is_empty()) {
+    if icao.is_none_or(|s| s.trim().is_empty()) {
         return LINIE;
     }
     match category_for_icao(icao) {

@@ -116,7 +116,6 @@
     "navdata_source": "Navdata source",
     "navdata_source_navigraph": "Navigraph (AIRAC {{cycle}})",
     "navdata_source_fallback": "OurAirports (fallback — ±10 m possible)",
-    "tdz_label": "Touchdown zone",
     "tdz_in": "inside TDZ marker ✓",
     "tdz_out": "outside TDZ",
     "runway_third": "third {{n}}",
@@ -1226,7 +1225,7 @@
       "centerline_offset_too_large": "Touchdown far from the runway centre — geometry hidden",
       "negative_float_distance": "Touchdown before the threshold — geometry hidden"
     },
-    "wert": {"td_vor_schwelle": "{{m}} m before the threshold", "td_hinter_schwelle": "{{m}} m past the threshold", "td_ziel": "{{td}} m · aim {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m beyond the runway end", "bahn_versatz": "{{versatz}} m offset · outer wheel {{aussen}} m from the centre · edge {{rand}} m"},
+    "wert": {"td_vor_schwelle": "{{m}} m before the threshold", "td_hinter_schwelle": "{{m}} m past the threshold", "td_ziel": "{{td}} m · aim {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m beyond the runway end", "bahn_versatz": "{{versatz}} m offset · outer wheel {{aussen}} m from the centre · edge {{rand}} m", "sprit_mehrweg": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg)", "sprit_durchstart": "{{kern}} scored · raw {{roh}} · {{n}}× go-around (−{{kg_durchstart}} kg)", "sprit_mehrweg_durchstart": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · {{n}}× go-around (−{{kg_durchstart}} kg)", "sprit_mehrweg_begrenzt": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · capped at {{kg_begrenzt}} kg excess burn", "sprit_durchstart_begrenzt": "{{kern}} scored · raw {{roh}} · {{n}}× go-around (−{{kg_durchstart}} kg) · capped at {{kg_begrenzt}} kg excess burn", "sprit_mehrweg_durchstart_begrenzt": "{{kern}} scored · raw {{roh}} · {{nm}} NM extra distance (−{{kg_mehrweg}} kg) · {{n}}× go-around (−{{kg_durchstart}} kg) · capped at {{kg_begrenzt}} kg excess burn", "ladeblatt_plan": "Planned · ZFW {{zfw}} / TOW {{tow}} kg"},
     "abfangen": {
       "titel": "Flare",
       "dauer": "Time from 50 ft",

@@ -51,11 +51,27 @@ pub fn sub_loadsheet(planned_zfw_kg: Option<f32>, planned_tow_kg: Option<f32>) -
         "loadsheet_present",
         Band::Good,
     )
+    .mit_wert_text(
+        "landing.wert.ladeblatt_plan",
+        &[
+            ("zfw", crate::zahl_text(zfw, 0)),
+            ("tow", crate::zahl_text(tow, 0)),
+        ],
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QS 06.10.2026: „Plan · ZFW … / TOW …" als Schlüssel samt Zahlen.
+    #[test]
+    fn ladeblatt_werttext_als_schluessel() {
+        let e = sub_loadsheet(Some(61234.4), Some(70747.0));
+        assert_eq!(e.value_key.as_deref(), Some("landing.wert.ladeblatt_plan"));
+        assert_eq!(e.value_params.get("zfw").map(String::as_str), Some("61234"));
+        assert_eq!(e.value_params.get("tow").map(String::as_str), Some("70747"));
+    }
 
     #[test]
     fn skipped_when_no_zfw() {

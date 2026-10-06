@@ -26,6 +26,10 @@ describe("METAR-Wetter", () => {
     expect(await wetter("en", M("VCSH"))).toBe("showers in the vicinity");
     expect(await wetter("de", M("-FZDZ"))).toBe("gefrierender Niesel (leicht)");
     expect(await wetter("en", M("+TSRA"))).toBe("heavy thunderstorm with rain");
+    // Mehrere Wettergruppen: jede erscheint, nicht nur die erste.
+    expect(await wetter("de", M("-RA BR"))).toBe("Regen (leicht), leichter Nebel");
+    // Eine Platzkennung aus Wettercodes ist kein Wetter.
+    expect(await wetter("de", "METAR SARA 011920Z 18005KT 9999 FEW046 14/12 Q1026")).toBeUndefined();
     await i18n.changeLanguage("de");
   });
   it("Sicht nur aus dem aktuellen Teil, auch weniger als eine Meile", () => {

@@ -75,7 +75,12 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
           t("landing.rohdaten.versatz"),
           versatz != null
             ? `${fmtSigned(versatz, 2)} m (${t(
-                versatz > 0 ? "landing.rohdaten.rechts" : versatz < 0 ? "landing.rohdaten.links" : "landing.rohdaten.mitte",
+                // Richtung aus dem angezeigten (gerundeten) Wert — sonst „0.00 m (links)".
+                Number(versatz.toFixed(2)) > 0
+                  ? "landing.rohdaten.rechts"
+                  : Number(versatz.toFixed(2)) < 0
+                    ? "landing.rohdaten.links"
+                    : "landing.rohdaten.mitte",
               )}${unsicher})`
             : "—",
         )}
@@ -85,7 +90,7 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
           // knapp am Threshold / past Threshold"), QS 06.10.2026.
           schwelle != null
             ? `${fmtSigned(schwelle, 2)} m (${t(
-                schwelle < 0
+                Number(schwelle.toFixed(2)) < 0
                   ? "landing.rohdaten.vor_schwelle"
                   : schwelle < 50
                     ? "landing.rohdaten.knapp_hinter_schwelle"

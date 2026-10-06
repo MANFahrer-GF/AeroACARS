@@ -184,6 +184,12 @@ pub fn sub_fuel_v1_7_32(
     let roh = ((actual - planned) / planned) * 100.0;
     let mut erklaerung: Vec<String> = Vec::new();
     let mut gutschrift_kg = 0.0_f32;
+    // Dieselben Teile als Schlüssel-Bausteine, damit jede Oberfläche den
+    // Text in ihrer Sprache baut (QS 06.10.2026: die Erklärung kam deutsch
+    // auch in der englischen und italienischen Anzeige an).
+    let mut mehrweg: Option<(f32, f32)> = None;
+    let mut durchstart: Option<(u32, f32)> = None;
+    let mut begrenzt: Option<f32> = None;
     // Ohne Plandistanz gibt es keine Mehrweg-Gutschrift — dann gelten die
     // ALTEN, milderen Bänder. Sonst träfen die gestrafften Grenzen genau
     // die Flüge, denen der Ausgleich fehlt: Ein Neustart mitten im Flug
@@ -221,6 +227,7 @@ pub fn sub_fuel_v1_7_32(
             let kg = zusatz_nm * (planned / plan_strecke) * ZUSATZMEILE_ANTEIL;
             gutschrift_kg += kg;
             erklaerung.push(format!("{zusatz_nm:.0} NM Mehrweg (−{kg:.0} kg)"));
+            mehrweg = Some((zusatz_nm, kg));
         }
     }
     // ⚠ Ohne bekanntes Abfluggewicht gibt es KEINE Durchstart-Gutschrift.
@@ -236,6 +243,7 @@ pub fn sub_fuel_v1_7_32(
                 "{}× Durchstarten (−{kg:.0} kg)",
                 zusatz.durchstarts
             ));
+            durchstart = Some((zusatz.durchstarts, kg));
         }
     }
 
@@ -252,6 +260,8 @@ pub fn sub_fuel_v1_7_32(
     // braucht keine Gutschrift und soll auch keine angezeigt bekommen.
     if angerechnet_kg <= 0.0 {
         erklaerung.clear();
+        mehrweg = None;
+        durchstart = None;
     } else if angerechnet_kg < gutschrift_kg {
         // JEDE Teilanrechnung wird benannt — ohne Schwelle. `angerechnet`
         // ist das Minimum aus Gutschrift und Mehrverbrauch, bei voller
@@ -259,28 +269,29 @@ pub fn sub_fuel_v1_7_32(
         // hier also nicht, und sie hat nur Faelle verschluckt (externe
         // QS, Codex 16.09.2026).
         erklaerung.push(format!("auf {angerechnet_kg:.0} kg Mehrverbrauch begrenzt"));
+        begrenzt = Some(angerechnet_kg);
     }
     let actual = actual - angerechnet_kg;
     // ⚠ Gerundet wird EINMAL, vor der Bandentscheidung — sonst stehen
     // +2,96 % und +3,04 % beide als „+3.0%" da und bekommen 100 bzw. 80
     // Punkte (externe QS, Codex 16.09.2026).
     let efficiency = (((actual - planned) / planned) * 1000.0).round() / 10.0;
-    let kern = if efficiency > 0.0 {
-        format!("+{:.1}%", efficiency)
-    } else {
-        format!("{:.1}%", efficiency)
-    };
+    let kern = format!("{}%", crate::vorzeichen_text(efficiency, 1));
     // Die Anzeige erklärt sich selbst: roher Wert, was gutgeschrieben
     // wurde und wofür, und was am Ende bewertet wird.
     let value = if erklaerung.is_empty() {
-        kern
+        kern.clone()
     } else {
         format!(
-            "{kern} bewertet · roh {}{:.1}% · {}",
-            if roh > 0.0 { "+" } else { "" },
-            roh,
+            "{kern} bewertet · roh {}% · {}",
+            crate::vorzeichen_text(roh, 1),
             erklaerung.join(" · ")
         )
+    };
+    let wert_text = sprit_wert_text(&kern, roh, mehrweg, durchstart, begrenzt);
+    let fertig = |e: SubScoreEntry| match &wert_text {
+        Some((schluessel, werte)) => e.mit_wert_text(schluessel, werte),
+        None => e,
     };
 
     // ⚠ Der Toleranzboden gilt VOR den Prozentbaendern.
@@ -289,17 +300,17 @@ pub fn sub_fuel_v1_7_32(
         .map(|t| t * TOLERANZ_ANTEIL_VOM_TOW)
         .unwrap_or(0.0);
     if efficiency > 0.0 && (actual - planned) <= toleranz_kg {
-        return SubScoreEntry::scored(
+        return fertig(SubScoreEntry::scored(
             "fuel",
             "landing.sub.fuel",
             100,
             value,
             "on_plan",
             Band::Good,
-        );
+        ));
     }
 
-    if efficiency > 0.0 {
+    fertig(if efficiency > 0.0 {
         // Mehrverbrauch — score-relevant wie Legacy
         // ⚠ Band auf +5 % geweitet (vorher +2 %).
         //
@@ -398,17 +409,49 @@ pub fn sub_fuel_v1_7_32(
             entry.warning = Some("planned_burn_may_be_off".to_string());
             entry
         }
+    })
+}
+
+/// Der Werttext der OFP-Treue als Schlüssel samt Zahlen — nur wenn eine
+/// Gutschrift angerechnet wurde; sonst ist `kern` („+3.2%") sprachneutral.
+/// Je vorhandenem Baustein (Mehrweg, Durchstarten, Begrenzung) ein eigener
+/// Schlüssel `landing.wert.sprit_…`, damit jede Sprache ihren Satz baut.
+fn sprit_wert_text(
+    kern: &str,
+    roh: f32,
+    mehrweg: Option<(f32, f32)>,
+    durchstart: Option<(u32, f32)>,
+    begrenzt: Option<f32>,
+) -> Option<(String, Vec<(&'static str, String)>)> {
+    if mehrweg.is_none() && durchstart.is_none() {
+        return None;
     }
+    let mut schluessel = String::from("landing.wert.sprit");
+    let mut werte = vec![
+        ("kern", kern.to_string()),
+        ("roh", format!("{}%", crate::vorzeichen_text(roh, 1))),
+    ];
+    if let Some((nm, kg)) = mehrweg {
+        schluessel.push_str("_mehrweg");
+        werte.push(("nm", crate::zahl_text(nm, 0)));
+        werte.push(("kg_mehrweg", crate::zahl_text(kg, 0)));
+    }
+    if let Some((n, kg)) = durchstart {
+        schluessel.push_str("_durchstart");
+        werte.push(("n", n.to_string()));
+        werte.push(("kg_durchstart", crate::zahl_text(kg, 0)));
+    }
+    if let Some(kg) = begrenzt {
+        schluessel.push_str("_begrenzt");
+        werte.push(("kg_begrenzt", crate::zahl_text(kg, 0)));
+    }
+    Some((schluessel, werte))
 }
 
 pub fn sub_fuel_legacy(efficiency_pct: Option<f32>) -> Option<SubScoreEntry> {
     let pct = efficiency_pct?;
     let dev = pct.abs();
-    let value = if pct > 0.0 {
-        format!("+{:.1}%", pct)
-    } else {
-        format!("{:.1}%", pct)
-    };
+    let value = format!("{}%", crate::vorzeichen_text(pct, 1));
 
     let entry = if dev < 2.0 {
         SubScoreEntry::scored(
@@ -748,6 +791,78 @@ mod tests {
         // Die Anzeige erklärt sich selbst — Wert, Rohwert, Grund.
         assert!(text.contains("roh +13.5%"), "{text}");
         assert!(text.contains("NM Mehrweg"), "{text}");
+    }
+
+    /// Jede Kombination der Bausteine hat ihren Text in allen Sprachen —
+    /// `mit_wert_text` prüft Schlüssel und Platzhalter im Testlauf.
+    #[test]
+    fn sprit_jede_kombination_hat_einen_text() {
+        for (m, d, b) in [
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+            (true, false, true),
+            (false, true, true),
+            (true, true, true),
+        ] {
+            let (schluessel, werte) = sprit_wert_text(
+                "+1.0%",
+                5.0,
+                m.then_some((10.0, 50.0)),
+                d.then_some((1, 80.0)),
+                b.then_some(40.0),
+            )
+            .expect("mit Gutschrift gibt es einen Schlüssel");
+            let _ = SubScoreEntry::scored(
+                "fuel",
+                "landing.sub.fuel",
+                100,
+                String::new(),
+                "on_plan",
+                Band::Good,
+            )
+            .mit_wert_text(&schluessel, &werte);
+        }
+    }
+
+    /// QS 06.10.2026: die Erklärung kommt als Schlüssel samt Zahlen, damit
+    /// Englisch und Italienisch sie nicht deutsch zeigen; nie „-0.0%".
+    #[test]
+    fn sprit_werttext_als_schluessel() {
+        let e = sub_fuel_v1_7_32(
+            Some(1929.0),
+            Some(2189.1),
+            Some(59122.0),
+            None,
+            mit(277.3, 186.5, 0),
+        );
+        assert_eq!(
+            e.value_key.as_deref(),
+            Some("landing.wert.sprit_mehrweg_begrenzt")
+        );
+        assert_eq!(
+            e.value_params.get("roh").map(String::as_str),
+            Some("+13.5%")
+        );
+        assert_eq!(e.value_params.get("nm").map(String::as_str), Some("72"));
+        assert!(e.value_params.contains_key("kern"));
+        assert!(e.value_params.contains_key("kg_mehrweg"));
+        // THY 1068: 597 kg Gutschrift gegen 260 kg Mehrverbrauch — begrenzt.
+        assert!(e.value_params.contains_key("kg_begrenzt"));
+        // Ohne Gutschrift bleibt der Wert sprachneutral, ohne Schlüssel.
+        let ohne = sub_fuel_v1_7_32(
+            Some(1000.0),
+            Some(999.9996),
+            None,
+            None,
+            ZusatzArbeit::default(),
+        );
+        assert_eq!(ohne.value_key, None);
+        assert_eq!(ohne.value.as_deref(), Some("0.0%"));
+        assert_eq!(
+            sub_fuel_legacy(Some(-0.01)).unwrap().value.as_deref(),
+            Some("0.0%")
+        );
     }
 
     /// Ohne Mehrweg bleibt derselbe Mehrverbrauch ein Abzug — sonst

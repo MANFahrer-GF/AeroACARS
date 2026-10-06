@@ -377,7 +377,9 @@ export function ScoreBreakdown({
             // Abnahme 06.10.2026: Rust liefert den Werttext deutsch und dazu
             // Schlüssel + Zahlen — die Anzeige baut ihn in der Sprache der
             // Oberfläche (Aufsetzpunkt, Bahndisziplin, Abfangen).
-            ? t(s.valueKey, s.valueParams ?? {})
+            // Kennt diese Anzeige den Schlüssel nicht (neuerer Client als
+            // die Webapp), bleibt der deutsche Text — nie der rohe Schlüssel.
+            ? t(s.valueKey, { ...(s.valueParams ?? {}), defaultValue: s.value })
             : s.value;
         return (
           <div

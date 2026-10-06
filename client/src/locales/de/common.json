@@ -116,7 +116,6 @@
     "navdata_source": "Navdata-Quelle",
     "navdata_source_navigraph": "Navigraph (AIRAC {{cycle}})",
     "navdata_source_fallback": "OurAirports (Fallback — ±10 m möglich)",
-    "tdz_label": "Touchdown-Zone",
     "tdz_in": "im TDZ-Marker ✓",
     "tdz_out": "außerhalb TDZ",
     "runway_third": "Drittel {{n}}",
@@ -1226,7 +1225,7 @@
       "centerline_offset_too_large": "Touchdown weit von Runway-Mitte — Geometrie ausgeblendet",
       "negative_float_distance": "Touchdown vor Threshold — Geometrie ausgeblendet"
     },
-    "wert": {"td_vor_schwelle": "{{m}} m vor der Schwelle", "td_hinter_schwelle": "{{m}} m hinter der Schwelle", "td_ziel": "{{td}} m · Ziel {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m über das Bahnende hinaus", "bahn_versatz": "{{versatz}} m Versatz · äußeres Rad {{aussen}} m von der Mitte · Rand {{rand}} m"},
+    "wert": {"td_vor_schwelle": "{{m}} m vor der Schwelle", "td_hinter_schwelle": "{{m}} m hinter der Schwelle", "td_ziel": "{{td}} m · Ziel {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m über das Bahnende hinaus", "bahn_versatz": "{{versatz}} m Versatz · äußeres Rad {{aussen}} m von der Mitte · Rand {{rand}} m", "sprit_mehrweg": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg)", "sprit_durchstart": "{{kern}} bewertet · roh {{roh}} · {{n}}× Durchstarten (−{{kg_durchstart}} kg)", "sprit_mehrweg_durchstart": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · {{n}}× Durchstarten (−{{kg_durchstart}} kg)", "sprit_mehrweg_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt", "sprit_durchstart_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{n}}× Durchstarten (−{{kg_durchstart}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt", "sprit_mehrweg_durchstart_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · {{n}}× Durchstarten (−{{kg_durchstart}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt", "ladeblatt_plan": "Plan · ZFW {{zfw}} / TOW {{tow}} kg"},
     "abfangen": {
       "titel": "Abfangen (Flare)",
       "dauer": "Dauer ab 50 ft",

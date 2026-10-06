@@ -116,7 +116,6 @@
     "navdata_source": "Fonte Navdata",
     "navdata_source_navigraph": "Navigraph (AIRAC {{cycle}})",
     "navdata_source_fallback": "OurAirports (fallback — ±10 m possibili)",
-    "tdz_label": "Zona di contatto",
     "tdz_in": "dentro marcatore TDZ ✓",
     "tdz_out": "fuori TDZ",
     "runway_third": "terzo {{n}}",
@@ -1226,7 +1225,7 @@
       "centerline_offset_too_large": "Contatto lontano dal centro pista — geometria nascosta",
       "negative_float_distance": "Contatto prima della soglia — geometria nascosta"
     },
-    "wert": {"td_vor_schwelle": "{{m}} m prima della soglia", "td_hinter_schwelle": "{{m}} m oltre la soglia", "td_ziel": "{{td}} m · obiettivo {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m oltre la fine pista", "bahn_versatz": "{{versatz}} m di scostamento · ruota esterna a {{aussen}} m dal centro · bordo {{rand}} m"},
+    "wert": {"td_vor_schwelle": "{{m}} m prima della soglia", "td_hinter_schwelle": "{{m}} m oltre la soglia", "td_ziel": "{{td}} m · obiettivo {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m oltre la fine pista", "bahn_versatz": "{{versatz}} m di scostamento · ruota esterna a {{aussen}} m dal centro · bordo {{rand}} m", "sprit_mehrweg": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg)", "sprit_durchstart": "{{kern}} valutato · grezzo {{roh}} · {{n}}× riattaccata (−{{kg_durchstart}} kg)", "sprit_mehrweg_durchstart": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · {{n}}× riattaccata (−{{kg_durchstart}} kg)", "sprit_mehrweg_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso", "sprit_durchstart_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{n}}× riattaccata (−{{kg_durchstart}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso", "sprit_mehrweg_durchstart_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · {{n}}× riattaccata (−{{kg_durchstart}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso", "ladeblatt_plan": "Pianificato · ZFW {{zfw}} / TOW {{tow}} kg"},
     "abfangen": {
       "titel": "Richiamata (flare)",
       "dauer": "Durata da 50 ft",

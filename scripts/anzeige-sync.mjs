@@ -265,6 +265,13 @@ function hatSchluessel(baum, punktpfad) {
   return typeof k === "string";
 }
 
+/** Alle Textpfade einer Sprachdatei, z. B. `landing.wert.td_ziel`. */
+function alleSchluessel(baum, pfad = "") {
+  if (typeof baum === "string") return [pfad];
+  if (baum == null || typeof baum !== "object") return [];
+  return Object.entries(baum).flatMap(([k, v]) => alleSchluessel(v, pfad ? `${pfad}.${k}` : k));
+}
+
 /** Welche Schlüssel die Grafik braucht — aus dem kanonischen Quelltext. */
 export function benoetigteSchluessel() {
   const alle = new Set();
@@ -289,9 +296,20 @@ export function benoetigteSchluessel() {
     if (existsSync(rust)) {
       for (const datei of readdirSync(rust, { recursive: true })) {
         if (!String(datei).endsWith(".rs")) continue;
-        const text = readFileSync(resolve(rust, String(datei)), "utf-8");
+        // Kommentare nennen Schlüssel nur als Beispiel — nicht mitzählen.
+        const text = readFileSync(resolve(rust, String(datei)), "utf-8")
+          .split("\n")
+          .filter((z) => !z.trim().startsWith("//"))
+          .join("\n");
         for (const m of text.matchAll(/"(landing\.[\w.]+)"/g)) {
-          if (hatSchluessel(de, m[1])) alle.add(m[1]);
+          // Auch zusammengesetzt: `landing.wert.sprit` + `_mehrweg…` — jeder
+          // Text, dessen Schlüssel so beginnt. Findet sich gar keiner, fehlt
+          // er schon im Client: abbrechen statt still weglassen.
+          const treffer = alleSchluessel(de).filter((k) => k === m[1] || k.startsWith(m[1]));
+          if (treffer.length === 0) {
+            throw new Error(`Rust benutzt ${m[1]} (${datei}), die deutsche Sprachdatei kennt ihn nicht`);
+          }
+          for (const k of treffer) alle.add(k);
         }
       }
     }

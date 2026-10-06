@@ -71,8 +71,9 @@ export function metarAuswertung(t: Uebersetzer, metar: string): { k: string; v: 
     const wert = roh.startsWith("P") ? `> ${roh.slice(1)}` : roh.startsWith("M") ? `< ${roh.slice(1)}` : roh;
     out.push({ id: "sicht", k: t("landing.metar.sicht"), v: `${wert} SM` });
   }
-  const wx = raw.match(/\s([+-]?(?:VC)?(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|TS|SH|FZ){1,3})\s/);
-  if (wx) out.push({ id: "wetter", k: t("landing.metar.wetter"), v: wetterText(t, wx[1]!) });
+  // Jede Wettergruppe, nicht nur die erste — „-RA BR" ist Regen UND Dunst.
+  const wx = [...raw.replace(/^.*?\s\d{6}Z(?=\s)/, "").matchAll(/(?<=\s)([+-]?(?:VC)?(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|TS|SH|FZ){1,3})(?=\s)/g)];
+  if (wx.length) out.push({ id: "wetter", k: t("landing.metar.wetter"), v: wx.map((m) => wetterText(t, m[1]!)).join(", ") });
   // Wolken: FEW015, SCT030, BKN030, OVC017 (mehrere)
   const wolken: string[] = [];
   raw.replace(/(FEW|SCT|BKN|OVC)(\d{3})/g, (_, deckung: string, h: string) => {
