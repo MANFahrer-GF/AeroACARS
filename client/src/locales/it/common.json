@@ -219,7 +219,7 @@
       "landing_rate": "Velocità verticale nell'istante del contatto, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo di 90–250 fpm è voluto — standard professionale, non «il più morbido possibile»: ben sotto i 90 fpm significa di solito una lunga richiamata che ritarda frenata e spoiler. Oltre 600 fpm di discesa sarebbe dovuta un'ispezione per atterraggio duro.\n\nDalla v1.6.3 la misura viene dall'andamento reale della quota nell'ultimo terzo di secondo prima del contatto, non più dal variometro del simulatore, lento come uno strumento di bordo reale. Se il simulatore blocca temporaneamente la lettura della quota, non si calcola nulla e si usa il valore dello strumento.",
       "g_force": "Carico G valutato al contatto. Sotto 1,20 g punteggio pieno, sotto 1,40 g 80, sotto 1,70 g 45, oltre 20 o 0. Da 1,75 g il punteggio totale è al massimo 40, da 2,6 g al massimo 14.",
       "bounces": "Quante volte l'aereo è risalito di oltre 5 ft dal suolo dopo il primo touchdown ed è tornato a toccare (atterraggi precedenti: da 15 ft). 0 = atterraggio pulito; ogni rimbalzo riduce il punteggio.",
-      "stability": "Due cose: i punti di questa parte vengono dalla regolarità dell'avvicinamento (dispersione di rateo e inclinazione). Lo stable gate controlla sei punti da 1000 ft: sentiero (in media sotto 1 dot), velocità regolare, inclinazione regolare, rateo uniforme, nessuna discesa eccessiva per oltre 10 secondi, configurazione d'atterraggio all'ingresso nel gate. Solo in parte stabile limita questa parte e il punteggio totale a 80, instabile a 45. Dettagli e limiti nella scheda \"Stabilità dell'avvicinamento\".",
+      "stability": "Due cose: i punti di questa parte vengono dalla regolarità dell'avvicinamento (dispersione di rateo e inclinazione). Lo stable gate controlla sei punti da 1000 ft: sentiero (in media sotto 1 dot), velocità regolare, inclinazione regolare, rateo uniforme, nessuna discesa eccessiva per oltre 10 secondi, configurazione d'atterraggio all’ingresso nel gate. Solo in parte stabile limita questa parte e il punteggio totale a 80, instabile a 45. Dettagli e limiti nella scheda \"Stabilità dell'avvicinamento\".",
       "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua landata ha usato — misurata dalla soglia: prima la distanza fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Viene valutato quanta pista resta: sotto il 60 % è punteggio pieno, dal 90 % diventa stretto — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?“ per la spiegazione completa.",
       "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (takeoff fuel − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
       "loadsheet": "Solo atterraggi più vecchi: presenza dei dati loadsheet (ZFW + TOW nel piano). Non fa più parte del punteggio dalla v1.7.12.",
@@ -1173,7 +1173,7 @@
         "BKN": "frammentate",
         "OVC": "coperto"
       },
-      "vorlage": {"FZ": "{{x}} congelante", "SH": "rovesci di {{x}}", "TS": "temporale con {{x}}", "VC": "{{x}} nelle vicinanze", "leicht": "{{x}} (debole)", "stark": "{{x}} (forte)"},
+      "vorlage": {"FZ": "{{x}} congelante", "SH": "rovesci di {{x}}", "TS": "temporale con {{x}}", "VC": "{{x}} nelle vicinanze", "leicht": "{{x}} (debole)", "stark": "{{x}} (forte)", "und": "{{a}} e {{b}}"},
       "wx": {
         "DZ": "pioviggine",
         "RA": "pioggia",
@@ -1186,7 +1186,16 @@
         "TS": "temporale",
         "SH": "rovesci",
         "FZ": "congelante",
-        "VC": "nelle vicinanze"
+        "VC": "nelle vicinanze",
+        "IC": "cristalli di ghiaccio",
+        "PL": "granuli di ghiaccio",
+        "GR": "grandine",
+        "GS": "neve tonda",
+        "UP": "precipitazione sconosciuta",
+        "VA": "cenere vulcanica",
+        "DU": "polvere",
+        "SA": "sabbia",
+        "PY": "spruzzi"
       }
     },
     "rohdaten": {
@@ -1217,6 +1226,7 @@
       "centerline_offset_too_large": "Contatto lontano dal centro pista — geometria nascosta",
       "negative_float_distance": "Contatto prima della soglia — geometria nascosta"
     },
+    "wert": {"td_vor_schwelle": "{{m}} m prima della soglia", "td_hinter_schwelle": "{{m}} m oltre la soglia", "td_ziel": "{{td}} m · obiettivo {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m oltre la fine pista", "bahn_versatz": "{{versatz}} m di scostamento · ruota esterna a {{aussen}} m dal centro · bordo {{rand}} m"},
     "abfangen": {
       "titel": "Richiamata (flare)",
       "dauer": "Durata da 50 ft",
@@ -1266,7 +1276,7 @@
         "querneigung": "Quanto ha oscillato l'inclinazione laterale nello stable gate (deviazione standard). Buono sotto 3°, scarso da 6°. Controllo dello stable gate.",
         "ruck": "Quanto bruscamente è cambiato il rateo di discesa da un punto di misura all'altro. Buono sotto 100 fpm, scarso da 200 fpm. Controllo dello stable gate.",
         "sinken": "Se il rateo di discesa nello stable gate ha superato il limite per almeno 10 s di fila (−1000 fpm con sentiero di 3°, di più per avvicinamenti più ripidi). Controllo dello stable gate.",
-        "konfiguration": "Se l'aereo era in configurazione di atterraggio all'ingresso dello stable gate (primo campione fino a 1000 ft — più in basso se la registrazione inizia più in basso): carrello giù, flap di atterraggio. Controllo dello stable gate.",
+        "konfiguration": "Se l'aereo era in configurazione di atterraggio all’ingresso nel gate (primo campione fino a 1000 ft — più in basso se la registrazione inizia più in basso): carrello giù, flap di atterraggio. Controllo dello stable gate.",
         "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, voto complessivo al massimo 45. Altrimenti PARTIAL, voto complessivo al massimo 80. Senza misura al massimo 97.",
         "urteil_alt": "Giudizio sull’avvicinamento per i voli prima della versione 19, dalle sette caselle: tutte buone = STABLE, due scarse o tre non buone = UNSTABLE, altrimenti PARTIAL. Dalla versione 18 PARTIAL limita il voto complessivo a 80 e UNSTABLE a 45; nella versione 17 solo la parte stabilità dell’avvicinamento, prima non limitava nulla."
       },

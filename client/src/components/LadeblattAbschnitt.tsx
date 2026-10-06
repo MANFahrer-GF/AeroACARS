@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import { SpritSektion } from "./SpritSektion";
 import { InfoBadge } from "./InfoBadge";
-import { fmtNumber } from "../lib/landungsFormat";
+import { fmtNumber, fmtSigned } from "../lib/landungsFormat";
 import "./ladeblattAbschnitt.css";
 
 // ---- Fuel comparison bar ------------------------------------------------
@@ -25,7 +25,6 @@ function FuelComparisonBar({
   const planPct = (plan / max) * 100;
   const actualPct = (actual / max) * 100;
   const diff = actual - plan;
-  const sign = diff >= 0 ? "+" : "";
   const pct = (diff / Math.max(1, plan)) * 100;
 
   return (
@@ -89,14 +88,8 @@ function FuelComparisonBar({
               }}
             >
               <span>{deltaIcon}</span>
-              <span>
-                {sign}
-                {diff.toFixed(0)} kg
-              </span>
-              <span style={{ opacity: 0.75 }}>
-                ({sign}
-                {pct.toFixed(1)}%)
-              </span>
+              <span>{fmtSigned(diff, 0, "kg")}</span>
+              <span style={{ opacity: 0.75 }}>({fmtSigned(pct, 1)}%)</span>
             </span>
           </div>
         );
@@ -286,10 +279,7 @@ function ComparisonTable({
                     }}
                   >
                     <span style={{ fontSize: "0.7rem" }}>{deltaIcon}</span>
-                    <span>
-                      {delta >= 0 ? "+" : ""}
-                      {delta.toFixed(0)} kg
-                    </span>
+                    <span>{fmtSigned(delta, 0, "kg")}</span>
                   </span>
                 ) : (
                   <span style={{ opacity: 0.3, fontSize: "0.86rem" }}>—</span>

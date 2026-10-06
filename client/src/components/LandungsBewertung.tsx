@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 import type { LandingCategory, LandingRecord } from "../lib/landungsDatensatz";
 import { gateAus, gateGruende, gateMarke, gateUrteil, type GatePunkt } from "../lib/stableGate";
 import { landungsMarkenV19 } from "../lib/landungsUrteil";
-import { fensterWerteGueltig, fmtNumber, fmtSigned, scoreG } from "../lib/landungsFormat";
+import { fensterWerteGueltig, fmtSigned, scoreG } from "../lib/landungsFormat";
 import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import { scoreBasisVs } from "./SinkrateForensik";
 import { istBewertbar } from "../lib/landungsFormat";
@@ -57,6 +57,9 @@ export interface SubScore {
   label_key?: string | null;
   /** Roher Messwert (Abfangen: Sekunden ab 50 ft), siehe SubScoreEntry. */
   messwert?: number | null;
+  /** Werttext als Übersetzungsschlüssel + Zahlen (siehe SubScoreEntry). */
+  valueKey?: string | null;
+  valueParams?: Record<string, string> | null;
 }
 
 /**
@@ -370,10 +373,11 @@ export function ScoreBreakdown({
           : (s.extra ?? []);
         const valueText = isV3Rollout
           ? (buildRolloutValueLabel(record, t) ?? s.value)
-          : s.key === "abfangen" && s.messwert != null
-            // Abnahme 06.10.2026: Rust liefert „14.0 s ab 50 ft" fest
-            // deutsch — die Anzeige bildet den Wert in der Sprache der Oberfläche.
-            ? t("landing.abfangen.teil_wert", { s: fmtNumber(s.messwert, 1) })
+          : s.valueKey
+            // Abnahme 06.10.2026: Rust liefert den Werttext deutsch und dazu
+            // Schlüssel + Zahlen — die Anzeige baut ihn in der Sprache der
+            // Oberfläche (Aufsetzpunkt, Bahndisziplin, Abfangen).
+            ? t(s.valueKey, s.valueParams ?? {})
             : s.value;
         return (
           <div
@@ -847,6 +851,8 @@ export function subScoresAusDatensatz(r: LandingRecord): SubScore[] {
       // Ohne den Schlüssel hieß die Bahndisziplin-Achse „Bahn-Auslastung".
       label_key: s.label_key ?? null,
       messwert: typeof s.messwert === "number" ? s.messwert : null,
+      valueKey: typeof s.value_key === "string" ? s.value_key : null,
+      valueParams: s.value_params ?? null,
     };
   });
 }
@@ -1112,7 +1118,8 @@ function bahnFakten(record: LandingRecord, t: (k: string, o?: Record<string, unk
   }
   const belag = rm.surface ? t(surfaceLabelKey(rm.surface)) || rm.surface : null;
   if (belag) teile.push(belag);
-  if (record.td_in_tdz != null) teile.push(`${t("landing.tdz_label")} ${t(record.td_in_tdz ? "landing.tdz_in" : "landing.tdz_out")}`);
+  // Nur der Wert — „Touchdown-Zone im TDZ-Marker" doppelte den Begriff.
+  if (record.td_in_tdz != null) teile.push(t(record.td_in_tdz ? "landing.tdz_in" : "landing.tdz_out"));
   if (record.aim_delta_m != null) {
     teile.push(`${t("landing.aim_label")} Δ ${fmtSigned(record.aim_delta_m, 0, "m")}`);
   }

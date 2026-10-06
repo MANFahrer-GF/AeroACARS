@@ -33,6 +33,10 @@ describe("METAR-Wetter", () => {
     const sicht = (m: string) => metarAuswertung(t as never, m).find((z) => z.id === "sicht")?.v;
     expect(sicht("METAR KJFK 011951Z 18005KT 10SM FEW250 14/12 A3001 RMK AO2 WSHFT 1715 SLP123")).toBe("10 SM");
     expect(sicht("METAR KJFK 011951Z 18005KT M1/4SM FG VV002 14/12 A3001")).toBe("< 1/4 SM");
-    expect(sicht("METAR EDDF 011920Z 18005KT 9999 FEW046 14/12 Q1026 TEMPO 3000 BKN008")).toBe("≥ 10 km");
+    // Trend darf weder Sicht noch Wolken liefern — hier steht im aktuellen
+    // Teil keine Sicht, also darf auch keine erscheinen (vorher 3.0 km).
+    const tempo = metarAuswertung(t as never, "METAR EDDF 011920Z 18005KT CAVOK 14/12 Q1026 TEMPO 3000 BKN008");
+    expect(tempo.find((z) => z.id === "sicht")).toBeUndefined();
+    expect(tempo.map((z) => z.v).join(" ")).not.toContain("800 ft");
   });
 });

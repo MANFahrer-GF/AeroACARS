@@ -376,10 +376,11 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
             KEY,
             LABEL,
             0,
-            format!("{over:.0} m über das Bahnende hinaus"),
+            format!("{} m über das Bahnende hinaus", crate::zahl_text(over, 0)),
             "overrun",
             Band::Bad,
-        );
+        )
+        .mit_wert_text("landing.wert.overrun", &[("m", crate::zahl_text(over, 0))]);
     }
 
     // ── Seitliche Bewertung: nur auf befestigten Bahnen ──────────────
@@ -478,11 +479,14 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
     let anteil = aussenkante_m / halbe;
     let rand_abstand_m = halbe - aussenkante_m;
 
+    let wert_zahlen = [
+        ("versatz", crate::zahl_text(versatz.abs(), 1)),
+        ("aussen", crate::zahl_text(aussenkante_m, 1)),
+        ("rand", crate::vorzeichen_text(rand_abstand_m, 1)),
+    ];
     let wert = format!(
-        "{:.1} m Versatz · äußeres Rad {:.1} m von der Mitte · Rand {:+.1} m",
-        versatz.abs(),
-        aussenkante_m,
-        rand_abstand_m
+        "{} m Versatz · äußeres Rad {} m von der Mitte · Rand {} m",
+        wert_zahlen[0].1, wert_zahlen[1].1, wert_zahlen[2].1
     );
 
     let (punkte, band, grund) = if anteil <= ANTEIL_MITTIG {
@@ -497,7 +501,8 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
         (20, Band::Bad, "off_pavement")
     };
 
-    let mut eintrag = SubScoreEntry::scored(KEY, LABEL, punkte, wert, grund, band);
+    let mut eintrag = SubScoreEntry::scored(KEY, LABEL, punkte, wert, grund, band)
+        .mit_wert_text("landing.wert.bahn_versatz", &wert_zahlen);
     // Der Zweifel als HINWEIS, nicht als Verzicht. Siehe die Begruendung
     // weiter oben: Die Note gilt dem Flugverhalten; ob die Bahndaten
     // stimmen, ist eine getrennte Aussage — und sie ist beantwortbar,

@@ -586,7 +586,7 @@ Plan
 ZFW
 181308 kg
 ✓
--0 kg
+0 kg
 Plan
 181308 kg
 Rohdaten zur Nachprüfung

@@ -11,7 +11,9 @@ import { InfoBadge } from "./InfoBadge";
 
 type Uebersetzer = (k: string, o?: Record<string, unknown>) => string;
 
-const WETTER = ["DZ", "RA", "SN", "SG", "BR", "FG", "FU", "HZ", "TS", "SH", "FZ", "VC"] as const;
+// Alle Codes, die die Wetter-Erkennung unten annimmt — sonst stand ein Code
+// roh in der übersetzten Vorlage („Schauer mit GR", Abnahme 06.10.2026).
+const WETTER = ["DZ", "RA", "SN", "SG", "IC", "PL", "GR", "GS", "UP", "BR", "FG", "FU", "VA", "DU", "SA", "HZ", "PY", "TS", "SH", "FZ", "VC"] as const;
 
 const BESCHREIBER = ["FZ", "SH", "TS", "VC"] as const;
 
@@ -28,7 +30,9 @@ function wetterText(t: Uebersetzer, code: string): string {
   const hat = (g: string) => gruppen.includes(g);
   const wx = (g: string) => ((WETTER as readonly string[]).includes(g) ? t(`landing.metar.wx.${g}`) : g);
   const erscheinungen = gruppen.filter((g) => !(BESCHREIBER as readonly string[]).includes(g)).map(wx);
-  let text: string | null = erscheinungen.length ? erscheinungen.join(", ") : null;
+  let text: string | null = erscheinungen.length
+    ? erscheinungen.reduce((a, b) => t("landing.metar.vorlage.und", { a, b }))
+    : null;
   if (hat("FZ")) text = text ? t("landing.metar.vorlage.FZ", { x: text }) : wx("FZ");
   if (hat("SH")) text = text ? t("landing.metar.vorlage.SH", { x: text }) : wx("SH");
   if (hat("TS")) text = text ? t("landing.metar.vorlage.TS", { x: text }) : wx("TS");

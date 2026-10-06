@@ -25,18 +25,46 @@ describe("Abnahme-Korrekturen", () => {
     const text = render(<BahnUeberschrift record={r} />).container.textContent ?? "";
     expect(text).toContain("EDDF 25C");
     expect(text).toContain("4000 m");
-    expect(text).toContain("Touchdown-Zone im TDZ-Marker");
+    expect(text).toContain("im TDZ-Marker ✓");
+    expect(text).not.toContain("Touchdown-Zone im TDZ-Marker");
     expect(text).toContain("Aim-Point Δ -42 m");
     expect(text).toContain("Geometrie unsicher");
   });
 
-  it("Abfangen-Wert in der Sprache der Oberfläche", async () => {
-    const teil = { key: "abfangen", points: 100, value: "14.0 s ab 50 ft", band: "good", rationale: "", messwert: 14 };
+  it("Werttexte der Teilnoten in der Sprache der Oberfläche — echte Kette ab Datensatz", async () => {
+    const { subScoresAusDatensatz } = await import("./LandungsBewertung");
+    const r = {
+      ...basis(),
+      sub_scores: [
+        { key: "abfangen", points: 100, band: "good", value: "14.0 s ab 50 ft", messwert: 14,
+          value_key: "landing.abfangen.teil_wert", value_params: { s: "14.0" }, label_key: "landing.sub.abfangen" },
+        { key: "touchdown_point", points: 0, band: "bad", value: "12 m vor der Schwelle",
+          value_key: "landing.wert.td_vor_schwelle", value_params: { m: "12" }, label_key: "landing.sub.touchdown_point" },
+      ],
+    } as unknown as LandingRecord;
     await i18n.changeLanguage("en");
-    const en = render(<ScoreBreakdown subs={[teil as never]} record={basis()} />).container.textContent ?? "";
+    const en = render(<ScoreBreakdown subs={subScoresAusDatensatz(r)} record={r} />).container.textContent ?? "";
     await i18n.changeLanguage("de");
     expect(en).toContain("14.0 s from 50 ft");
-    expect(en).not.toContain("ab 50 ft");
+    expect(en).toContain("12 m before the threshold");
+    expect(en).not.toMatch(/ab 50 ft|vor der Schwelle/);
+  });
+
+  it("Bahn-Warnung im Druck: eigene helle Regel, nicht unter dem Abdunkel-Filter", () => {
+    const r = {
+      ...basis(),
+      runway_geometry_trusted: false,
+      runway_geometry_reason: "icao_mismatch",
+      runway_match: { airport_ident: "EDDF", runway_ident: "25C", length_ft: 13123 },
+    } as unknown as LandingRecord;
+    const w = render(<BahnUeberschrift record={r} />).container.querySelector<HTMLElement>(".bahn-warnung");
+    expect(w).not.toBeNull();
+    const css = readFileSync(resolve(__dirname, "..", "App.css"), "utf-8");
+    const druck = css.slice(css.indexOf("@media print")).replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(druck).toMatch(/\.landing-report \.bahn-warnung\s*\{[^}]*background:\s*#fff7e6 !important/);
+    const filterSel = [...druck.matchAll(/([^{}]+)\{[^{}]*filter:\s*brightness\(0\.55\)/g)]
+      .flatMap((m) => m[1]!.split(",").map((x) => x.trim()).filter(Boolean));
+    expect(filterSel.some((x) => w!.matches(x))).toBe(false);
   });
 
   it("nur Seitenwind gemessen: Gegenwind ausdrücklich unbekannt", () => {

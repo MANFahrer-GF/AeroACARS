@@ -446,6 +446,11 @@ export interface SubScoreEntry {
   /** Roher Messwert der Achse (Rust `messwert`) — die Anzeige formatiert
    *  ihn sprachabhängig, wo `value` feste Wörter trägt (Abfangen). */
   messwert?: number | null;
+  /** Abnahme 06.10.2026: Übersetzungsschlüssel des Werttextes samt
+   *  formatierten Zahlen (Rust `value_key`/`value_params`); `value` ist der
+   *  deutsche Rückfall für ältere Datensätze. */
+  value_key?: string | null;
+  value_params?: Record<string, string> | null;
 }
 
 /** Abfangen (Flare) ab dem letzten 50-ft-Durchgang — gleiche Felder wie

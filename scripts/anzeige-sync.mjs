@@ -41,7 +41,7 @@
 //
 // Der Prüfmodus läuft in `client/src/components/AnzeigeSync.test.tsx` mit.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -282,6 +282,19 @@ export function benoetigteSchluessel() {
   const de = sprachdatei(CLIENT, "de");
   if (de != null) {
     for (const v of vorspaenne) for (const b of blaetter(de, v)) alle.add(b);
+    // Schlüssel, die die Bewertung in Rust setzt (`value_key`, `rationale_key`,
+    // `label_key`) und die Anzeige nur weiterreicht. QS 06.10.2026: die fünf
+    // Werttexte `landing.wert.*` fehlten der Webapp, sie zeigte rohe Schlüssel.
+    const rust = resolve(CLIENT, "..", "src-tauri", "crates", "landing-scoring", "src");
+    if (existsSync(rust)) {
+      for (const datei of readdirSync(rust, { recursive: true })) {
+        if (!String(datei).endsWith(".rs")) continue;
+        const text = readFileSync(resolve(rust, String(datei)), "utf-8");
+        for (const m of text.matchAll(/"(landing\.[\w.]+)"/g)) {
+          if (hatSchluessel(de, m[1])) alle.add(m[1]);
+        }
+      }
+    }
     // Schlüssel als Zeichenkette ausserhalb eines direkten t("…")-Aufrufs —
     // etwa `t(bedingung ? "landing.a" : "landing.b")`. Am 05.10.2026 fehlten
     // der Webapp so drei Texte (u. a. „Bei 200 ft stabil"); sie zeigte den

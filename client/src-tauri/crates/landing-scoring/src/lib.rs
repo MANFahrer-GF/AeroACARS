@@ -124,6 +124,38 @@ pub struct SubScoreEntry {
     /// nennt („Gleitpfad 1,7 Dots, gut unter 1"). Alte Payloads: leer.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub gate: Vec<anflug_urteil::Pruefpunkt>,
+    /// Abnahme 06.10.2026: Übersetzungsschlüssel des Werttextes samt Zahlen
+    /// (schon formatiert, ohne „-0"). `value` bleibt der deutsche Text für
+    /// ältere Empfänger; die Anzeige baut daraus den Text in ihrer Sprache —
+    /// sonst stand „m hinter der Schwelle" auch in der englischen Oberfläche.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub value_key: Option<String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty", default)]
+    pub value_params: std::collections::BTreeMap<String, String>,
+}
+
+/// Zahl mit `stellen` Nachkommastellen, ohne „-0" (Abnahme 06.10.2026).
+pub fn zahl_text(v: impl Into<f64>, stellen: usize) -> String {
+    let v: f64 = v.into();
+    let s = format!("{v:.stellen$}");
+    if s.trim_start_matches('-')
+        .chars()
+        .all(|c| c == '0' || c == '.')
+    {
+        s.trim_start_matches('-').to_string()
+    } else {
+        s
+    }
+}
+
+/// Wie `zahl_text`, positive Werte mit „+".
+pub fn vorzeichen_text(v: impl Into<f64>, stellen: usize) -> String {
+    let s = zahl_text(v, stellen);
+    if !s.starts_with('-') && s.chars().any(|c| c.is_ascii_digit() && c != '0') {
+        format!("+{s}")
+    } else {
+        s
+    }
 }
 
 impl SubScoreEntry {
@@ -144,6 +176,8 @@ impl SubScoreEntry {
             extra: Vec::new(),
             messwert: None,
             gate: Vec::new(),
+            value_key: None,
+            value_params: std::collections::BTreeMap::new(),
         }
     }
 
@@ -173,6 +207,8 @@ impl SubScoreEntry {
             extra: Vec::new(),
             messwert: None,
             gate: Vec::new(),
+            value_key: None,
+            value_params: std::collections::BTreeMap::new(),
         }
     }
 
@@ -190,6 +226,16 @@ impl SubScoreEntry {
     /// gesetzte Warning.
     pub fn with_warning(mut self, warning: Option<String>) -> Self {
         self.warning = warning;
+        self
+    }
+
+    /// Abnahme 06.10.2026: Werttext als Schlüssel + Zahlen (siehe `value_key`).
+    pub fn mit_wert_text(mut self, schluessel: &str, werte: &[(&str, String)]) -> Self {
+        self.value_key = Some(schluessel.to_string());
+        self.value_params = werte
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         self
     }
 

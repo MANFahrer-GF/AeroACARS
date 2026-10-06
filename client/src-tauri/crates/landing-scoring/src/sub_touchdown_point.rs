@@ -114,9 +114,13 @@ pub fn sub_touchdown_point(input: &TouchdownPointInput) -> SubScoreEntry {
             KEY,
             LABEL,
             0,
-            format!("{:.0} m vor der Schwelle", td.abs()),
+            format!("{} m vor der Schwelle", crate::zahl_text(td.abs(), 0)),
             "pre_threshold",
             Band::Bad,
+        )
+        .mit_wert_text(
+            "landing.wert.td_vor_schwelle",
+            &[("m", crate::zahl_text(td.abs(), 0))],
         );
     }
 
@@ -124,9 +128,26 @@ pub fn sub_touchdown_point(input: &TouchdownPointInput) -> SubScoreEntry {
     let tdz = input.tdz_end_m.filter(|t| t.is_finite() && *t > 0.0);
 
     // Anzeige: Aufsetzpunkt und, wenn bekannt, der Abstand zur Markierung.
-    let wert = match aim {
-        Some(a) => format!("{td:.0} m · Ziel {a:.0} m · Δ {:+.0} m", td - a),
-        None => format!("{td:.0} m hinter der Schwelle"),
+    let (wert, wert_schluessel, wert_zahlen) = match aim {
+        Some(a) => (
+            format!(
+                "{} m · Ziel {} m · Δ {} m",
+                crate::zahl_text(td, 0),
+                crate::zahl_text(a, 0),
+                crate::vorzeichen_text(td - a, 0)
+            ),
+            "landing.wert.td_ziel",
+            vec![
+                ("td", crate::zahl_text(td, 0)),
+                ("ziel", crate::zahl_text(a, 0)),
+                ("delta", crate::vorzeichen_text(td - a, 0)),
+            ],
+        ),
+        None => (
+            format!("{} m hinter der Schwelle", crate::zahl_text(td, 0)),
+            "landing.wert.td_hinter_schwelle",
+            vec![("m", crate::zahl_text(td, 0))],
+        ),
     };
 
     // ── Bänder ───────────────────────────────────────────────────────
@@ -141,11 +162,31 @@ pub fn sub_touchdown_point(input: &TouchdownPointInput) -> SubScoreEntry {
     };
 
     SubScoreEntry::scored(KEY, LABEL, punkte, wert, grund, band)
+        .mit_wert_text(wert_schluessel, &wert_zahlen)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Abnahme 06.10.2026: Werttext als Schlüssel + Zahlen (für jede Sprache),
+    /// ohne „-0".
+    #[test]
+    fn werttext_als_schluessel_ohne_minus_null() {
+        assert_eq!(crate::zahl_text(-0.04f32, 1), "0.0");
+        assert_eq!(crate::vorzeichen_text(-0.04f64, 1), "0.0");
+        assert_eq!(crate::vorzeichen_text(0.3f32, 1), "+0.3");
+        assert_eq!(crate::vorzeichen_text(-2.0f64, 0), "-2");
+        let e = sub_touchdown_point(&TouchdownPointInput {
+            td_distance_from_threshold_m: Some(-12.0),
+            lda_m: Some(3000.0),
+            airport_source: Some("runway_match"),
+            runway_geometry_trusted: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(e.value_key.as_deref(), Some("landing.wert.td_vor_schwelle"));
+        assert_eq!(e.value_params.get("m").map(String::as_str), Some("12"));
+    }
 
     /// EHAM 06 wie bei MPH 9: 3189 m nutzbar, Aim bei 400 m, Zone bis 900 m.
     fn eham06(td_m: f64) -> TouchdownPointInput {

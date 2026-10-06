@@ -6,7 +6,7 @@
 // die Koordinaten nicht in seiner Aufzeichnung.
 
 import type { ReactNode } from "react";
-import { distanzHinterSchwelle } from "../lib/landungsFormat";
+import { distanzHinterSchwelle, fmtSigned } from "../lib/landungsFormat";
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import "./rohdatenAbschnitt.css";
@@ -74,7 +74,7 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
         {zeile(
           t("landing.rohdaten.versatz"),
           versatz != null
-            ? `${versatz > 0 ? "+" : ""}${versatz.toFixed(2)} m (${t(
+            ? `${fmtSigned(versatz, 2)} m (${t(
                 versatz > 0 ? "landing.rohdaten.rechts" : versatz < 0 ? "landing.rohdaten.links" : "landing.rohdaten.mitte",
               )}${unsicher})`
             : "—",
@@ -84,7 +84,7 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
           // Einordnung wie in der früheren Webapp-Ansicht („UNDERSHOOT /
           // knapp am Threshold / past Threshold"), QS 06.10.2026.
           schwelle != null
-            ? `${schwelle >= 0 ? "+" : ""}${schwelle.toFixed(2)} m (${t(
+            ? `${fmtSigned(schwelle, 2)} m (${t(
                 schwelle < 0
                   ? "landing.rohdaten.vor_schwelle"
                   : schwelle < 50

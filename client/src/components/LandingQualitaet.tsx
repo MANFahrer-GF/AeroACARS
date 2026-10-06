@@ -9,7 +9,7 @@
 
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
-import { distanzHinterSchwelle } from "../lib/landungsFormat";
+import { distanzHinterSchwelle, fmtSigned } from "../lib/landungsFormat";
 import "./landungForensik.css";
 import { InfoBadge } from "./InfoBadge";
 
@@ -143,7 +143,7 @@ export function LandingQualitaet({ record }: { record: LandingRecord }) {
         )}
         <Kachel
           label={vrefLabel}
-          wert={vref != null ? `${vref > 0 ? "+" : ""}${vref.toFixed(0)}` : null}
+          wert={vref != null ? fmtSigned(vref, 0) : null}
           einheit="kt"
           ton={vref != null ? tonVref(vref, vrefQuelle) : undefined}
           hinweis={vrefHinweis}

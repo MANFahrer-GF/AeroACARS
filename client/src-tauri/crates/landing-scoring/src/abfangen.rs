@@ -268,8 +268,15 @@ pub fn sub_abfangen(abfangen: Option<&Abfangen>, icao: Option<&str>) -> Option<S
     if a.max_vs_fpm.is_some_and(|v| v > BALLOONING_VS_FPM) && punkte > 50 {
         (punkte, band, grund) = (50, Band::Ok, "ballooning");
     }
-    let wert = format!("{dauer:.1} s ab 50 ft");
-    Some(SubScoreEntry::scored(KEY, LABEL, punkte, wert, grund, band).mit_messwert(dauer))
+    let wert = format!("{} s ab 50 ft", crate::zahl_text(dauer, 1));
+    Some(
+        SubScoreEntry::scored(KEY, LABEL, punkte, wert, grund, band)
+            .mit_messwert(dauer)
+            .mit_wert_text(
+                "landing.abfangen.teil_wert",
+                &[("s", crate::zahl_text(dauer, 1))],
+            ),
+    )
 }
 
 #[cfg(test)]

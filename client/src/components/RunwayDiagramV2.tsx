@@ -15,6 +15,7 @@
 //   4. 4 Detail-Karten (Aufsetz-Bewertung / Position / Anflug-Profil / Datenquelle)
 
 import { useMemo, useState } from "react";
+import { fmtSigned } from "../lib/landungsFormat";
 import { erzeugeProjektion } from "../lib/runwayProjection";
 import { useBahnZoom } from "../lib/useBahnZoom";
 import { RunwayDisciplinePanel } from "./RunwayDisciplinePanel";
@@ -1513,7 +1514,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         {props.aim_class && props.aim_delta_m != null && props.aim_point_m != null && (
           <Pill
             label={t("runway_v2.pill_aim_point")}
-            value={`${props.aim_point_m.toFixed(0)} m · Δ ${props.aim_delta_m >= 0 ? "+" : ""}${props.aim_delta_m.toFixed(0)} m · ${t(aimClassLabelKey(props.aim_class))}`}
+            value={`${props.aim_point_m.toFixed(0)} m · Δ ${fmtSigned(props.aim_delta_m, 0, "m")} · ${t(aimClassLabelKey(props.aim_class))}`}
             tone={aimTone(props.aim_class)}
           />
         )}
@@ -1523,8 +1524,8 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             value={
               props.tch_rad_ft != null
                 ? // v1.8.1: Einstufung nach Raederhoehe (FAA Order 8260.58D).
-                  `${props.tch_actual_ft.toFixed(0)} ft${props.tch_delta_ft != null ? ` (Δ ${props.tch_delta_ft >= 0 ? "+" : ""}${props.tch_delta_ft.toFixed(0)})` : ""} · ${t("runway_v2.tch_raeder", { ft: props.tch_rad_ft.toFixed(0) })} · ${t(tchRadLabelKey(props.tch_class))}`
-                : `${props.tch_actual_ft.toFixed(0)} ft${props.tch_delta_ft != null ? ` · Δ ${props.tch_delta_ft >= 0 ? "+" : ""}${props.tch_delta_ft.toFixed(0)} ft` : ""} · ${t(tchClassLabelKey(props.tch_class))}`
+                  `${props.tch_actual_ft.toFixed(0)} ft${props.tch_delta_ft != null ? ` (Δ ${fmtSigned(props.tch_delta_ft, 0)})` : ""} · ${t("runway_v2.tch_raeder", { ft: props.tch_rad_ft.toFixed(0) })} · ${t(tchRadLabelKey(props.tch_class))}`
+                : `${props.tch_actual_ft.toFixed(0)} ft${props.tch_delta_ft != null ? ` · Δ ${fmtSigned(props.tch_delta_ft, 0, "ft")}` : ""} · ${t(tchClassLabelKey(props.tch_class))}`
             }
             tone={tchTone(props.tch_class)}
           />
@@ -1616,10 +1617,9 @@ function FlugzeugBar({ props }: { props: RunwayDiagramV2Props }) {
     const realT = (props.landing_weight_kg / 1000).toFixed(1);
     if (props.planned_ldw_kg != null) {
       const deltaT = (props.landing_weight_kg - props.planned_ldw_kg) / 1000;
-      const sign = deltaT >= 0 ? "+" : "";
       items.push({
         label: t("runway_v2.flugzeug_weight"),
-        value: `${realT} t (Δ ${sign}${deltaT.toFixed(1)} t)`,
+        value: `${realT} t (Δ ${fmtSigned(deltaT, 1, "t")})`,
       });
     } else {
       items.push({ label: t("runway_v2.flugzeug_weight"), value: `${realT} t` });

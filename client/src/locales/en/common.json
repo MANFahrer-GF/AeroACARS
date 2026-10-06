@@ -1173,7 +1173,7 @@
         "BKN": "broken",
         "OVC": "overcast"
       },
-      "vorlage": {"FZ": "freezing {{x}}", "SH": "{{x}} showers", "TS": "thunderstorm with {{x}}", "VC": "{{x}} in the vicinity", "leicht": "light {{x}}", "stark": "heavy {{x}}"},
+      "vorlage": {"FZ": "freezing {{x}}", "SH": "{{x}} showers", "TS": "thunderstorm with {{x}}", "VC": "{{x}} in the vicinity", "leicht": "light {{x}}", "stark": "heavy {{x}}", "und": "{{a}} and {{b}}"},
       "wx": {
         "DZ": "drizzle",
         "RA": "rain",
@@ -1186,7 +1186,16 @@
         "TS": "thunderstorm",
         "SH": "showers",
         "FZ": "freezing",
-        "VC": "in the vicinity"
+        "VC": "in the vicinity",
+        "IC": "ice crystals",
+        "PL": "ice pellets",
+        "GR": "hail",
+        "GS": "small hail",
+        "UP": "unknown precipitation",
+        "VA": "volcanic ash",
+        "DU": "dust",
+        "SA": "sand",
+        "PY": "spray"
       }
     },
     "rohdaten": {
@@ -1217,6 +1226,7 @@
       "centerline_offset_too_large": "Touchdown far from the runway centre — geometry hidden",
       "negative_float_distance": "Touchdown before the threshold — geometry hidden"
     },
+    "wert": {"td_vor_schwelle": "{{m}} m before the threshold", "td_hinter_schwelle": "{{m}} m past the threshold", "td_ziel": "{{td}} m · aim {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m beyond the runway end", "bahn_versatz": "{{versatz}} m offset · outer wheel {{aussen}} m from the centre · edge {{rand}} m"},
     "abfangen": {
       "titel": "Flare",
       "dauer": "Time from 50 ft",
