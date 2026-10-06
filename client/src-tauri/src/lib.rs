@@ -5503,15 +5503,15 @@ struct PersistedFlightStats {
     landing_wing_strike_severity_pct: Option<f32>,
     #[serde(default)]
     arr_metar_raw: Option<String>,
-    /// QS 06.10.2026 (Runde 5): die Eingaben des Anflug-Urteils — sonst
-    /// rechnete die Note nach einem Neustart vor dem Einreichen ohne
-    /// Gleitpfad, Ruck, IAS-Streuung, Sinkrate und Konfiguration (QAF434:
-    /// „teilweise" am Aufsetzen, „stabil" im PIREP).
     /// QS 06.10.2026 (Runde 6): Version, die die Landung gemessen hat. Ein
     /// Update mit Neustart vor dem Einreichen trug sonst die neue Version in
     /// den Datensatz, während der Touchdown (Webapp) die alte nannte.
     #[serde(default)]
     client_version_aufsetzen: Option<(String, DateTime<Utc>)>,
+    /// QS 06.10.2026 (Runde 5): die Eingaben des Anflug-Urteils — sonst
+    /// rechnete die Note nach einem Neustart vor dem Einreichen ohne
+    /// Gleitpfad, Ruck, IAS-Streuung, Sinkrate und Konfiguration (QAF434:
+    /// „teilweise" am Aufsetzen, „stabil" im PIREP).
     #[serde(default)]
     anflug_gleitpfad: Option<storage::AnflugGleitpfad>,
     #[serde(default)]

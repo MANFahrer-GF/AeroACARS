@@ -166,10 +166,14 @@ pub fn messen(punkte: &[AbfangPunkt], vs_aufsetzen_fpm: Option<f32>) -> Abfangen
         return ohne("zu_wenig_proben");
     }
 
+    // Auch das Stück vom (interpolierten) Durchgang bis zum ersten Punkt
+    // danach zählt — eine Lücke am Durchgang, die die Regel oben passieren
+    // ließ, verdeckte sonst ein Wieder-Steigen (QS Runde 7).
     let luecke_ms = danach
         .windows(2)
         .map(|w| w[1].t_ms - w[0].t_ms)
         .chain(danach.last().map(|q| -q.t_ms))
+        .chain(std::iter::once(b.t_ms - t50 as i64))
         .max()
         .unwrap_or(0);
     if luecke_ms > LUECKE_MAX_MS {
@@ -485,6 +489,32 @@ mod tests {
         let c = messen(&ruckler, Some(-140.0));
         assert_eq!(c.grund_ohne_werte, None);
         assert_eq!(c.dauer_ab_50ft_s, Some(11.0));
+        // Lücke am Durchgang, die die Regel oben passieren lässt (mittleres
+        // Sinken 384 fpm ≥ halbe Randsinkrate), danach dichte Punkte: was in
+        // den 3,1 s nach dem Durchgang geschah, ist nicht aufgezeichnet —
+        // kein Schweben, Beginn oder höchste V/S (Runde 7).
+        let mut nach_luecke = vec![
+            p(-15_000, 80.0, -600.0),
+            p(-13_000, 62.0, -600.0),
+            p(-8_000, 30.0, -600.0),
+        ];
+        for k in 1..=15 {
+            nach_luecke.push(p(-8_000 + k * 500, 30.0 - k as f32 * 1.9, -60.0));
+        }
+        let e = messen(&nach_luecke, Some(-60.0));
+        assert_eq!(e.grund_ohne_werte, None);
+        assert!(e.dauer_ab_50ft_s.is_some());
+        assert_eq!(
+            (e.schweben_s, e.beginn_hoehe_ft, e.max_vs_fpm),
+            (None, None, None)
+        );
+        // Gegenprobe: derselbe Anflug ohne Lücke am Durchgang hat die Werte.
+        let mut dicht: Vec<AbfangPunkt> = (0..=14)
+            .map(|k| p(-15_000 + k * 500, 80.0 - k as f32 * 3.5, -600.0))
+            .collect();
+        dicht.extend(nach_luecke[3..].iter().copied());
+        let d = messen(&dicht, Some(-60.0));
+        assert!(d.schweben_s.is_some() && d.max_vs_fpm.is_some(), "{d:?}");
     }
 
     /// QS 06.10.2026 (Runde 5): Phase nicht Approach/Final → der Puffer

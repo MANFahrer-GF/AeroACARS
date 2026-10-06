@@ -285,7 +285,11 @@ export function ScoreBreakdown({
   record: LandingRecord;
 }) {
   const { t, i18n } = useTranslation();
-  // v0.11.0-dev: Pilot-Hilfe-Modal für den "Bahn-Auslastung"-Sub-Score.
+  // Die Teil-Erklärungen beschreiben die Regeln seit Score-Version 19
+  // (Punkte, Obergrenzen). Altbestand wird nie neu gerechnet — dort sagt ein
+  // Zusatz, dass damals andere galten (QS 06.10.2026, Runde 7).
+  const altHinweis =
+    (record.score_algorithm_version ?? 0) < 19 ? ` ${t("landing.info.teil_alt")}` : "";
   // Wird über den "🛬 Wie wird das berechnet?"-Button am Boden der
   // rollout-Card geöffnet. Andere Sub-Scores behalten ihren bestehenden
   // InfoBadge-Tooltip — nur Bahn-Auslastung bekommt das tiefe Erklärungs-
@@ -321,7 +325,7 @@ export function ScoreBreakdown({
                       bereits das ausführliche Modal. Zwei Erklärungen
                       auf der gleichen Card wären redundant. */}
                   {s.key !== "rollout" && (
-                    <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                    <InfoBadge explanation={t(`landing.info.${s.key}`) + altHinweis} />
                   )}
                 </span>
                 <span
@@ -376,9 +380,9 @@ export function ScoreBreakdown({
                     Bahndisziplin hat ihren eigenen i-Text statt des
                     Auslastungs-Modals. */}
                 {s.key !== "rollout" ? (
-                  <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                  <InfoBadge explanation={t(`landing.info.${s.key}`) + altHinweis} />
                 ) : bahndisziplin ? (
-                  <InfoBadge explanation={t("landing.info.runway_discipline")} />
+                  <InfoBadge explanation={t("landing.info.runway_discipline") + altHinweis} />
                 ) : null}
               </span>
               <span className="landing-subscore__points">{s.points} PTS</span>

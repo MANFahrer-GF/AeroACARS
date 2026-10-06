@@ -32,3 +32,23 @@ describe("Erklärungen der Touchdown-Kacheln", () => {
     expect(alt).not.toContain("X-Plane:");
   });
 });
+
+// Runde 7: auch die Erklärungen der Teilnoten — Altbestand bekommt den
+// Hinweis, dass damals andere Punkte und Obergrenzen galten.
+describe("Erklärungen der Teilnoten", () => {
+  const teil = { key: "touchdown_point", points: 0, value: "–120 m", band: "bad", rationale: "" };
+  const texte = async (version: number) => {
+    const { ScoreBreakdown } = await import("./LandungsBewertung");
+    const r = { ...(MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord), score_algorithm_version: version };
+    const { container } = render(<ScoreBreakdown subs={[teil as never]} record={r} />);
+    return Array.from(container.querySelectorAll("[data-erklaerung]")).map((e) => e.textContent ?? "").join(" | ");
+  };
+  it("Altbestand: Hinweis auf die damalige Version", async () => {
+    expect(await texte(18)).toContain("vor Score-Version 19 bewertet");
+  });
+  it("Gegenprobe: Version 19 ohne Hinweis", async () => {
+    const v19 = await texte(19);
+    expect(v19).toContain("höchstens 40");
+    expect(v19).not.toContain("vor Score-Version 19 bewertet");
+  });
+});
