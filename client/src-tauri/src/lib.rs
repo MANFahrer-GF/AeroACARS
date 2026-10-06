@@ -5486,6 +5486,23 @@ struct PersistedFlightStats {
     approach_runway_changed_late: bool,
     #[serde(default)]
     approach_stall_warning_count: u32,
+    /// QS 06.10.2026 (Runde 4): die übrigen nur am Aufsetzen gesetzten
+    /// Anflug-/Aufsetzwerte des Datensatzes — sonst fehlten sie nach einem
+    /// Neustart im Client, während die Webapp sie aus dem Touchdown zeigt.
+    #[serde(default)]
+    approach_stable_at_da: Option<bool>,
+    #[serde(default)]
+    landing_vref_deviation_kt: Option<f32>,
+    #[serde(default)]
+    landing_vref_source: Option<String>,
+    #[serde(default)]
+    landing_yaw_rate_deg_per_sec: Option<f32>,
+    #[serde(default)]
+    landing_brake_energy_proxy: Option<f32>,
+    #[serde(default)]
+    landing_wing_strike_severity_pct: Option<f32>,
+    #[serde(default)]
+    arr_metar_raw: Option<String>,
     /// Spec v0.7.15 F5/F6: aktuelle Pause-Reason fuer App-Restart-
     /// Persistenz. `#[serde(default)]` → None bei pre-v0.7.15 Files.
     #[serde(default)]
@@ -5751,6 +5768,13 @@ impl PersistedFlightStats {
             abfangen_gesichert: stats.abfangen_gesichert.clone(),
             approach_runway_changed_late: stats.approach_runway_changed_late,
             approach_stall_warning_count: stats.approach_stall_warning_count,
+            approach_stable_at_da: stats.approach_stable_at_da,
+            landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
+            landing_vref_source: stats.landing_vref_source.map(str::to_string),
+            landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
+            landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
+            landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
+            arr_metar_raw: stats.arr_metar_raw.clone(),
             current_pause_reason: stats.current_pause_reason,
             disconnect_sim_liveness: stats.disconnect_sim_liveness,
             last_persisted_snapshot: stats.last_persisted_snapshot.clone(),
@@ -6015,6 +6039,18 @@ impl PersistedFlightStats {
         stats.abfangen_gesichert = self.abfangen_gesichert;
         stats.approach_runway_changed_late = self.approach_runway_changed_late;
         stats.approach_stall_warning_count = self.approach_stall_warning_count;
+        stats.approach_stable_at_da = self.approach_stable_at_da;
+        stats.landing_vref_deviation_kt = self.landing_vref_deviation_kt;
+        // Feste Werte (siehe Vref-Zuordnung beim Aufsetzen).
+        stats.landing_vref_source = self.landing_vref_source.as_deref().map(|s| match s {
+            "pmdg" => "pmdg",
+            "icao_default" => "icao_default",
+            _ => "unknown",
+        });
+        stats.landing_yaw_rate_deg_per_sec = self.landing_yaw_rate_deg_per_sec;
+        stats.landing_brake_energy_proxy = self.landing_brake_energy_proxy;
+        stats.landing_wing_strike_severity_pct = self.landing_wing_strike_severity_pct;
+        stats.arr_metar_raw = self.arr_metar_raw;
         stats.current_pause_reason = self.current_pause_reason;
         stats.disconnect_sim_liveness = self.disconnect_sim_liveness;
         stats.last_persisted_snapshot = self.last_persisted_snapshot;
@@ -43629,10 +43665,11 @@ fn abfangen_in_analyse(
             .get("vs_at_edge_fpm")
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
-            // Eine positive Rate am Aufsetzen ist unplausibel; die kanonische
-            // Landerate verwirft sie auch (Flug 804). Dann keine Zahl statt
-            // einer, die der Kopf nicht zeigt (QS 06.10.2026).
-            .filter(|v| *v < 0.0),
+            // Dieselben Riegel wie der Datensatz für `vs_at_edge_fpm`:
+            // unplausibel (positiv oder unter −3000 fpm, Flug 804) oder
+            // Aufsetzfenster unzureichend → keine Zahl statt einer, die der
+            // Kopf nicht zeigt (QS 06.10.2026, Runde 4).
+            .filter(|v| landing_rate_is_plausible(*v) && stats.landung_abdeckung_fehlt.is_none()),
     );
     if let (Some(obj), Ok(v)) = (analysis.as_object_mut(), serde_json::to_value(&abfangen)) {
         obj.insert("abfangen".to_string(), v);
@@ -80705,12 +80742,31 @@ mod abfangen_verdrahtung_tests {
         let a = abfangen_in_analyse(&stats, &[boden()], td(), &mut analysis);
         assert_eq!(a.vs_aufsetzen_fpm, None, "positive Rate ist kein Messwert");
         assert_eq!(a.reduktion_fpm, None);
+        // Unter −3000 fpm ebenso (wie der Datensatz, QS Runde 4) …
+        let mut glitch = serde_json::json!({ "vs_at_edge_fpm": -3500.0 });
+        assert_eq!(
+            abfangen_in_analyse(&stats, &[boden()], td(), &mut glitch).vs_aufsetzen_fpm,
+            None
+        );
+        // … Gegenprobe: eine plausible Rate bleibt.
+        let mut gut = serde_json::json!({ "vs_at_edge_fpm": -120.0 });
+        assert_eq!(
+            abfangen_in_analyse(&stats, &[boden()], td(), &mut gut).vs_aufsetzen_fpm,
+            Some(-120.0)
+        );
         stats.abfangen_gesichert = Some(a);
+        stats.approach_stable_at_da = Some(true);
+        stats.landing_vref_source = Some("pmdg");
+        stats.arr_metar_raw = Some("LTFM 052020Z 06009KT".to_string());
         // Rundreise über die Sicherung, `landing_analysis` fehlt danach.
         let gesichert = PersistedFlightStats::snapshot_from(&stats);
         let mut neu = FlightStats::default();
         gesichert.apply_to(&mut neu);
         assert!(neu.landing_analysis.is_none());
+        // QS Runde 4: auch die übrigen Aufsetzwerte des Datensatzes.
+        assert_eq!(neu.approach_stable_at_da, Some(true));
+        assert_eq!(neu.landing_vref_source, Some("pmdg"));
+        assert_eq!(neu.arr_metar_raw.as_deref(), Some("LTFM 052020Z 06009KT"));
         assert_eq!(
             abfangen_aus_analyse(&neu).and_then(|a| a.dauer_ab_50ft_s),
             Some(14.0)

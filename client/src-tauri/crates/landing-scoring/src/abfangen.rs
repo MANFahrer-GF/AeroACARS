@@ -144,8 +144,16 @@ pub fn messen(punkte: &[AbfangPunkt], vs_aufsetzen_fpm: Option<f32>) -> Abfangen
         .iter()
         .find(|q| q.vs_fpm >= vs50 + BEGINN_REDUKTION_FPM)
         .map(|q| runden(q.hoehe_ft, 0));
-    let (schweben_s, schweben_m) = match danach.iter().position(|q| q.vs_fpm >= SCHWEBEN_AB_VS_FPM)
-    {
+    // Schweben = die zusammenhängende fast waagerechte Strecke VOR dem
+    // Aufsetzen — nicht alles ab dem ersten flachen Punkt (QS 06.10.2026,
+    // Runde 4: ein Ballooning früh im Abfangen zählte sonst die ganze
+    // restliche Zeit als Schweben).
+    let ab_schweben = match danach.iter().rposition(|q| q.vs_fpm < SCHWEBEN_AB_VS_FPM) {
+        Some(k) if k + 1 < danach.len() => Some(k + 1),
+        Some(_) => None,
+        None => Some(0),
+    };
+    let (schweben_s, schweben_m) = match ab_schweben {
         Some(k) => {
             let s = -(danach[k].t_ms as f32) / 1000.0;
             let gs: Vec<f32> = danach[k..]
@@ -425,6 +433,9 @@ mod tests {
         let a = messen(&v, Some(-90.0));
         assert_eq!(a.dauer_ab_50ft_s, Some(20.0));
         assert_eq!(a.max_vs_fpm, Some(300.0));
+        // Schweben = nur die flache Strecke direkt vor dem Aufsetzen (−1 s),
+        // nicht alles ab dem Steigen bei −17 s (QS Runde 4).
+        assert_eq!(a.schweben_s, Some(1.0));
         let s = sub_abfangen(Some(&a), Some("A320")).unwrap();
         assert_eq!(s.points, 25);
         // Gegenprobe: dieselbe Dauer ohne das Steigen wäre auch 25 — und
