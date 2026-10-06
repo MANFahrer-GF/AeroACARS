@@ -228,7 +228,7 @@
       "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse, die Kachel „Seitenwind“ daneben mit dem Wind bezogen auf die Flugzeugnase. Beide Zahlen stimmen — sie beziehen sich nur auf verschiedene Richtungen, und zwischen diesen liegt genau der Vorhaltewinkel.",
       "runway_discipline": "Bahndisziplin: wie weit dein äußeres Rad beim Ausrollen vom Bahnrand entfernt blieb. Mittig (bis 75 % der halben Bahnbreite) volle Punkte, weiter außen 85, am Rand 55, mit Rädern daneben 20, über das Bahnende hinaus (Overrun) 0. Neben der Bahn oder Overrun kostet 30 Punkte der Gesamtnote.",
       "touchdown_point": "Wo du aufgesetzt hast, gemessen ab der Schwelle. Bis 150 m um die Zielmarkierung (Aim-Point) volle Punkte, sonst in der Aufsetzzone 85, bis zur Hälfte der landbaren Bahn 55, dahinter 25. Vor der Schwelle aufgesetzt: 0 Punkte und 30 Punkte Abzug von der Gesamtnote.",
-      "abfangen": "Wie lange es vom Durchgang durch 50 ft bis zum Aufsetzen gedauert hat. Linienflugzeuge: bis 10 s volle Punkte, bis 12 s 80, bis 15 s 50, darüber 25. Kleinflugzeuge, Bizjets und andere nicht als Linienflugzeug geführte Muster: 16 / 20 / 24 s; ist kein Muster bekannt, gelten die Linienwerte. Steigt das Flugzeug dabei mit mehr als 50 fpm wieder (Ballooning), höchstens 50. Ein Teil unter 75 Punkten begrenzt die Gesamtnote auf 80, unter 45 auf 60."
+      "abfangen": "Wie lange es vom Durchgang durch 50 ft bis zum Aufsetzen gedauert hat. Linienflugzeuge: bis 10 s volle Punkte, bis 12 s 80, bis 15 s 50, darüber 25. Kleinflugzeuge, Bizjets und andere nicht als Linienflugzeug geführte Muster: 16 / 20 / 24 s; ist kein Muster bekannt, gelten die Linienwerte. Steigt das Flugzeug dabei mit mehr als 50 fpm wieder (Ballooning), höchstens 50. Ist dieser Teil der schwächste, kostet er unter 75 Punkten 5 und unter 45 Punkten 10 Punkte der Gesamtnote."
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
@@ -370,7 +370,7 @@
     },
     "skipped_label": "nicht bewertet",
     "skipped_reason": {
-      "anflug_nicht_gemessen": "Anflug im 1000-ft-Gate nicht gemessen (zu wenige Messpunkte) — keine Bewertung, aber auch keine Bestnote: Gesamtnote höchstens 97.",
+      "anflug_nicht_gemessen": "Anflug im 1000-ft-Gate nicht gemessen (zu wenige Messpunkte) — keine Bewertung, aber auch keine Bestnote: 3 Punkte Abzug von der Gesamtnote.",
       "anflug_partial": "Anflug nur teilweise stabil (Stable Gate nicht erreicht) — die Streuung war nicht messbar, das Urteil gilt trotzdem: 5 Punkte Abzug von der Gesamtnote.",
       "anflug_unstable": "Anflug instabil (Stable Gate verfehlt) — die Streuung war nicht messbar, das Urteil gilt trotzdem: 15 Punkte Abzug von der Gesamtnote.",
       "no_planned_burn": "Kein OFP-Trip-Burn geplant — wird nicht bewertet (kein Penalty).",
@@ -408,7 +408,7 @@
     "warn": {
       "anflug_partial": "⚠ Anflug nur teilweise stabil (Stable Gate nicht erreicht)",
       "anflug_unstable": "⚠ Anflug instabil (Stable Gate verfehlt)",
-      "anflug_nicht_gemessen": "⚠ Anflug im Gate nicht gemessen — Gesamtnote höchstens 97",
+      "anflug_nicht_gemessen": "⚠ Anflug im Gate nicht gemessen — 3 Punkte Abzug",
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",
       "planned_burn_may_be_off": "⚠ Verdacht: geplanter Trip-Burn könnte zu hoch sein — OFP-Burn prüfen",
       "runway_axis_unverified": "⚠ Bahnachse nicht durch die Szenerie bestätigt — der seitliche Versatz ist bewertet, die Bahndaten sind es nicht"
@@ -946,7 +946,7 @@
       },
       "pill": {
         "heading": "Die STABLE-GATE-Pill",
-        "body": "✓ STABLE = alle sechs Prüfungen gut. ⚠ PARTIAL = 1–2 Prüfungen außerhalb, davon höchstens eine schlecht. ✗ UNSTABLE = zwei Prüfungen schlecht oder drei und mehr außerhalb. Folge für die Note: bei PARTIAL höchstens 80, bei UNSTABLE höchstens 45 Punkte gesamt — ein guter Touchdown gleicht das nicht aus. In der Realität wäre ein UNSTABLE-Approach ein Go-Around-Kandidat."
+        "body": "✓ STABLE = alle sechs Prüfungen gut. ⚠ PARTIAL = 1–2 Prüfungen außerhalb, davon höchstens eine schlecht. ✗ UNSTABLE = zwei Prüfungen schlecht oder drei und mehr außerhalb. Folge für die Note: PARTIAL kostet 5, UNSTABLE 15 Punkte der Gesamtnote — die Landung selbst zählt weiter mit. In der Realität wäre ein UNSTABLE-Approach ein Go-Around-Kandidat."
       },
       "tiles": {
         "vs_jerk": {

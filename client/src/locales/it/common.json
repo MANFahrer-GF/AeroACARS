@@ -228,7 +228,7 @@
       "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva.",
       "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun costano 30 punti del punteggio totale.",
       "touchdown_point": "Dove hai toccato, misurato dalla soglia. Entro 150 m dal segnale di mira (aiming point) punteggio pieno, altrimenti nella zona di contatto 85, fino a metà della distanza di atterraggio disponibile 55, oltre 25. Contatto prima della soglia: 0 punti e 30 punti in meno sul voto complessivo.",
-      "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri, business jet e altri tipi non classificati come aerei di linea: 16 / 20 / 24 s; se il tipo non è noto valgono i valori degli aerei di linea. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Una parte sotto 75 punti limita il voto complessivo a 80, sotto 45 a 60."
+      "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri, business jet e altri tipi non classificati come aerei di linea: 16 / 20 / 24 s; se il tipo non è noto valgono i valori degli aerei di linea. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Se è la parte più debole, sotto 75 punti costa 5 e sotto 45 punti 10 punti del voto complessivo."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -370,7 +370,7 @@
     },
     "skipped_label": "non valutato",
     "skipped_reason": {
-      "anflug_nicht_gemessen": "Avvicinamento non misurato nel gate dei 1000 ft (troppi pochi campioni) — non valutato, ma nemmeno punteggio massimo: totale al massimo 97.",
+      "anflug_nicht_gemessen": "Avvicinamento non misurato nel gate dei 1000 ft (troppi pochi campioni) — non valutato, ma nemmeno punteggio massimo: 3 punti in meno sul totale.",
       "anflug_partial": "Avvicinamento solo in parte stabile (stable gate non raggiunto) — la dispersione non era misurabile, il giudizio vale comunque: 5 punti in meno sul punteggio totale.",
       "anflug_unstable": "Avvicinamento instabile (stable gate mancato) — la dispersione non era misurabile, il giudizio vale comunque: 15 punti in meno sul punteggio totale.",
       "no_planned_burn": "Nessun trip-burn OFP pianificato — non valutato (nessuna penalità).",
@@ -408,7 +408,7 @@
     "warn": {
       "anflug_partial": "⚠ Avvicinamento solo in parte stabile (stable gate non raggiunto)",
       "anflug_unstable": "⚠ Avvicinamento instabile (stable gate mancato)",
-      "anflug_nicht_gemessen": "⚠ Avvicinamento non misurato nel gate — punteggio totale al massimo 97",
+      "anflug_nicht_gemessen": "⚠ Avvicinamento non misurato nel gate — 3 punti in meno",
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",
       "planned_burn_may_be_off": "⚠ Sospetto: trip-burn pianificato potrebbe essere troppo alto — verificare OFP burn",
       "runway_axis_unverified": "⚠ Asse pista non confermato dallo scenario — lo scostamento laterale è valutato, i dati della pista no"
@@ -946,7 +946,7 @@
       },
       "pill": {
         "heading": "La pill STABLE GATE",
-        "body": "✓ STABLE = tutti e sei i controlli buoni. ⚠ PARTIAL = 1–2 controlli fuori, al massimo uno scarso. ✗ UNSTABLE = due controlli scarsi, oppure tre o più fuori. Effetto sul punteggio: PARTIAL al massimo 80, UNSTABLE al massimo 45 punti in totale — un buon contatto non lo compensa. Nella realtà un avvicinamento UNSTABLE sarebbe un candidato alla riattaccata."
+        "body": "✓ STABLE = tutti e sei i controlli buoni. ⚠ PARTIAL = 1–2 controlli fuori, al massimo uno scarso. ✗ UNSTABLE = due controlli scarsi, oppure tre o più fuori. Effetto sul punteggio: PARTIAL costa 5, UNSTABLE 15 punti del totale — l’atterraggio stesso continua a contare. Nella realtà un avvicinamento UNSTABLE sarebbe un candidato alla riattaccata."
       },
       "tiles": {
         "vs_jerk": {
