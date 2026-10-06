@@ -899,9 +899,22 @@ pub struct TouchdownPayload {
     /// IAS-am-TD − Vref (positiv = zu schnell, negativ = zu langsam).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing_vref_deviation_kt: Option<f32>,
-    /// Vref-Quelle: "pmdg" / "icao_default" / "unknown".
+    /// Vref-Quelle, siehe `landing_scoring::vref` (vor 2.0.6 auch
+    /// "icao_default" = Pauschalwert).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing_vref_source: Option<String>,
+    /// Verbreiterung des Vref-Toleranzbands in kt; fehlt = kein Urteil.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing_vref_toleranz_kt: Option<f32>,
+    /// Vref laut Formel, auch neben einer Messung (Pruefbericht auf live).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing_vref_formel_kt: Option<f32>,
+    /// Klappen beim Aufsetzen in einer der beiden letzten Stufen?
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing_vref_landeklappen: Option<bool>,
+    /// Aufgeloestes Muster (ICAO), nach dem die Vref-Tabelle gefragt wurde.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing_vref_muster: Option<String>,
     /// Stable-Approach bei DA (= 200 ft AGL/HAT). Strenger als 1000-ft-Gate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approach_stable_at_da: Option<bool>,

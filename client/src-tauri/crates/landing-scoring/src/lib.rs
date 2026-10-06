@@ -34,6 +34,7 @@ pub mod sub_loadsheet;
 pub mod sub_rollout;
 pub mod sub_stability;
 pub mod sub_touchdown_point;
+pub mod vref;
 
 /// Score-Band — 1:1 aus TS `Band`. NICHT umbenennen, bestehende UI
 /// erwartet exakt diese Werte (siehe Spec §5.4 K1).

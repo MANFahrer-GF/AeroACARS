@@ -1168,19 +1168,26 @@
       "vref_label": {
         "pmdg": "Scost. Vref (PMDG)",
         "fbw": "Scost. Vref (FBW)",
-        "icao_default": "Scost. Vref (~ICAO)",
+        "fmc": "Scost. Vref (FMC)",
+        "kalibriert": "Scost. Vref (calcolata)",
+        "faa": "Scost. Vref (calcolata)",
+        "faa_ungeprueft": "Scost. Vref (non verificata)",
         "unbekannt": "Scostamento Vref"
       },
       "vref_hint": {
-        "pmdg": "IAS al contatto rispetto alla Vref dell'FMC PMDG (precisa). Negativo = troppo lento, positivo = troppo veloce.",
-        "fbw": "IAS al contatto rispetto alla Vref del connettore FBW (precisa). Negativo = troppo lento, positivo = troppo veloce.",
-        "icao_default": "IAS al contatto rispetto a una Vref ICAO generica. ⚠ Approssimazione, può differire di ±5 kt dalla Vref reale — per questo la banda di tolleranza è più ampia.",
+        "pmdg": "IAS al contatto rispetto alla Vref dell'FMC PMDG (misurata). Negativo = troppo lento, positivo = troppo veloce.",
+        "fbw": "IAS al contatto rispetto alla VLS della configurazione di atterraggio dell'aereo FBW (misurata; sugli Airbus in CONF FULL è la Vref). Negativo = troppo lento, positivo = troppo veloce.",
+        "fmc": "IAS al contatto rispetto alla Vref fornita dall'aereo stesso (misurata; sugli Airbus la VLS della configurazione di atterraggio). Negativo = troppo lento, positivo = troppo veloce.",
+        "kalibriert": "IAS al contatto rispetto a una Vref calcolata dal peso all'atterraggio. Riferimento ricavato da atterraggi misurati di questo tipo; la banda è più ampia della loro dispersione.",
+        "faa": "IAS al contatto rispetto a una Vref calcolata dal peso all'atterraggio (velocità di avvicinamento FAA, confermata su atterraggi misurati di questo tipo). La banda è più ampia della dispersione misurata.",
+        "faa_ungeprueft": "IAS al contatto rispetto a una Vref calcolata dal peso all'atterraggio (velocità di avvicinamento FAA). Per questo tipo non ancora confermata su atterraggi misurati.",
         "unbekannt": "IAS al contatto rispetto alla Vref. Fonte della Vref sconosciuta."
       },
       "gierrate": "Velocità di imbardata",
       "gierrate_hint": "Variazione di prua al secondo al contatto. Alta = non allineato al contatto, rischio di uscita laterale con vento al traverso.",
       "verzoegerung": "Decelerazione",
-      "verzoegerung_hint": "Decelerazione media dal contatto alla fine della corsa, in base alla velocità al suolo. Per confronto: autobrake LOW ≈ 1,5, MED ≈ 2–3, MAX ≈ 4 m/s². Non conta per il punteggio."
+      "verzoegerung_hint": "Decelerazione media dal contatto alla fine della corsa, in base alla velocità al suolo. Per confronto: autobrake LOW ≈ 1,5, MED ≈ 2–3, MAX ≈ 4 m/s². Non conta per il punteggio.",
+      "vref_ohne_urteil": "Quindi senza valutazione (grigio) — lo stesso se i flap al contatto non erano in configurazione di atterraggio."
     },
     "metar": {
       "title": "METAR a destinazione",
@@ -1199,7 +1206,15 @@
         "BKN": "frammentate",
         "OVC": "coperto"
       },
-      "vorlage": {"FZ": "{{x}} congelante", "SH": "rovesci di {{x}}", "TS": "temporale con {{x}}", "VC": "{{x}} nelle vicinanze", "leicht": "{{x}} (debole)", "stark": "{{x}} (forte)", "und": "{{a}} e {{b}}"},
+      "vorlage": {
+        "FZ": "{{x}} congelante",
+        "SH": "rovesci di {{x}}",
+        "TS": "temporale con {{x}}",
+        "VC": "{{x}} nelle vicinanze",
+        "leicht": "{{x}} (debole)",
+        "stark": "{{x}} (forte)",
+        "und": "{{a}} e {{b}}"
+      },
       "wx": {
         "DZ": "pioviggine",
         "RA": "pioggia",
@@ -1252,7 +1267,20 @@
       "centerline_offset_too_large": "Contatto lontano dal centro pista — geometria nascosta",
       "negative_float_distance": "Contatto prima della soglia — geometria nascosta"
     },
-    "wert": {"td_vor_schwelle": "{{m}} m prima della soglia", "td_hinter_schwelle": "{{m}} m oltre la soglia", "td_ziel": "{{td}} m · obiettivo {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m oltre la fine pista", "bahn_versatz": "{{versatz}} m di scostamento · ruota esterna a {{aussen}} m dal centro · bordo {{rand}} m", "sprit_mehrweg": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg)", "sprit_durchstart": "{{kern}} valutato · grezzo {{roh}} · {{n}}× riattaccata (−{{kg_durchstart}} kg)", "sprit_mehrweg_durchstart": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · {{n}}× riattaccata (−{{kg_durchstart}} kg)", "sprit_mehrweg_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso", "sprit_durchstart_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{n}}× riattaccata (−{{kg_durchstart}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso", "sprit_mehrweg_durchstart_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · {{n}}× riattaccata (−{{kg_durchstart}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso", "ladeblatt_plan": "Pianificato · ZFW {{zfw}} / TOW {{tow}} kg"},
+    "wert": {
+      "td_vor_schwelle": "{{m}} m prima della soglia",
+      "td_hinter_schwelle": "{{m}} m oltre la soglia",
+      "td_ziel": "{{td}} m · obiettivo {{ziel}} m · Δ {{delta}} m",
+      "overrun": "{{m}} m oltre la fine pista",
+      "bahn_versatz": "{{versatz}} m di scostamento · ruota esterna a {{aussen}} m dal centro · bordo {{rand}} m",
+      "sprit_mehrweg": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg)",
+      "sprit_durchstart": "{{kern}} valutato · grezzo {{roh}} · {{n}}× riattaccata (−{{kg_durchstart}} kg)",
+      "sprit_mehrweg_durchstart": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · {{n}}× riattaccata (−{{kg_durchstart}} kg)",
+      "sprit_mehrweg_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso",
+      "sprit_durchstart_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{n}}× riattaccata (−{{kg_durchstart}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso",
+      "sprit_mehrweg_durchstart_begrenzt": "{{kern}} valutato · grezzo {{roh}} · {{nm}} NM di percorso extra (−{{kg_mehrweg}} kg) · {{n}}× riattaccata (−{{kg_durchstart}} kg) · limitato a {{kg_begrenzt}} kg di consumo in eccesso",
+      "ladeblatt_plan": "Pianificato · ZFW {{zfw}} / TOW {{tow}} kg"
+    },
     "abfangen": {
       "titel": "Richiamata (flare)",
       "dauer": "Durata da 50 ft",

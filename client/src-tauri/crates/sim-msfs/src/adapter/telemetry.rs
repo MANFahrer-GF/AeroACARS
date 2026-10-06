@@ -472,8 +472,13 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // ---- Gruppe B: FBW-A32NX-Familie (FBW-Doku) ----
     // Quelle: open-source FBW-Doku (fbw-a32nx/docs/a320-simvars.md).
     // Deckt FBW A32NX + FBW A380X + Headwind A339 ab (gleiche
-    // A32NX_-LVar-Familie, ein Profil FbwA32nx). Inventar-Befund:
-    // die V-Speeds heissen VSPEEDS_* (nicht SPEEDS_*).
+    // A32NX_-LVar-Familie, ein Profil FbwA32nx). V-Speeds (06.10.2026
+    // gegen das FBW-Repo geprueft): `A32NX_SPEEDS_VLS`/`_VAPP`
+    // (docs/a320-simvars.md, geschrieben in A32NX_Speeds.ts bzw.
+    // A32NX_FMCMainDisplay.ts), V2 als `AIRLINER_V2_SPEED`
+    // (A32NX_FMCMainDisplay.ts). Die frueher gelesenen `A32NX_VSPEEDS_*`
+    // gibt es nicht — „A32NX_VSPEEDS" ist dort nur ein Log-Text; in den
+    // Flugprotokollen kam nie ein Wert an.
     F::f64("L:A32NX_AUTOPILOT_1_ACTIVE", "Number"),
     F::f64("L:A32NX_AUTOPILOT_2_ACTIVE", "Number"),
     // AUTOTHRUST_STATUS: 0=off, 1=armed, 2=active.
@@ -483,9 +488,9 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A32NX_FMA_VERTICAL_MODE", "Number"),
     // FWC-Flugphase (1..10, siehe fbw_fwc_phase_label).
     F::f64("L:A32NX_FWC_FLIGHT_PHASE", "Number"),
-    F::f64("L:A32NX_VSPEEDS_V2", "Number"),
-    F::f64("L:A32NX_VSPEEDS_VLS", "Number"),
-    F::f64("L:A32NX_VSPEEDS_VAPP", "Number"),
+    F::f64("L:AIRLINER_V2_SPEED", "Number"),
+    F::f64("L:A32NX_SPEEDS_VLS", "Number"),
+    F::f64("L:A32NX_SPEEDS_VAPP", "Number"),
     // 0=DIS, 1=LO, 2=MED, 3=MAX.
     F::f64("L:A32NX_AUTOBRAKES_ARMED_MODE", "Number"),
     // Flaps-Lever-Detent: subscribed als Cross-Check; das generische
@@ -1005,6 +1010,10 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:I_FCU_ATHR", "Number"),
     F::f64("L:I_FCU_APPR", "Number"),
     F::f64("L:B_FCU_HEADING_DASHED", "Number"),
+    // FSS E-Jets: VREF-Marke des PFD (Kapitaen). Name belegt in der
+    // YourControls-Definition „FlightSim Studio - Embraer E-Jet Series";
+    // die Bedeutung (kt) prueft `landing_scoring::vref` an der Formel.
+    F::f64("L:FSS_EXX_PFD_GV_AIRSPD_VREF_1", "Number"),
     // Lernpaket vmsACARS (29.09.2026), AP1a: zweiter G-Kanal. vmsACARS 3
     // benotet die Landung unter MSFS aus `SEMIBODY LOADFACTOR Y` statt aus
     // `G FORCE`; unser `G FORCE` laeuft rund 614 ms hinter der Sinkrate
@@ -1032,6 +1041,9 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // bleiben sie None.
     F::f64("LIGHT LANDING ON:1", "Bool"),
     F::f64("LIGHT LANDING ON:2", "Bool"),
+    // Ueberziehgeschwindigkeit in Landekonfiguration aus dem Flugmodell —
+    // nur mitgeschrieben, siehe `SimSnapshot::design_vs0_kt`.
+    F::f64("DESIGN SPEED VS0", "knots"),
     // QS 26.09.2026: TRANSPONDER STATE bleibt das LETZTE Feld. Lehnt MSFS
     // 2020 es ab, wird der Block ein Feld kuerzer und alles DAHINTER
     // verrutscht — stuende noch etwas dahinter, laese der Parser einen
@@ -1568,6 +1580,7 @@ pub struct Telemetry {
     /// Fenix `L:B_FCU_HEADING_DASHED` 1 = HDG-Fenster gestrichelt (NAV),
     /// 0 = HDG gewaehlt (gemessen 29.09.2026).
     pub fnx_fcu_hdg_dashed: f64,
+    pub fss_vref: f64,
     /// `SEMIBODY LOADFACTOR Y` (g). Zweiter G-Kanal zum Vergleich mit
     /// `G FORCE`. `None`, wenn der Block vor diesem Feld endet — eine
     /// erfundene 0 waere als G-Wert falsch.
@@ -1583,6 +1596,8 @@ pub struct Telemetry {
     /// vor dem Feld endet — dann zaehlt nur `LIGHT LANDING`.
     pub std_light_landing_on_1: Option<f64>,
     pub std_light_landing_on_2: Option<f64>,
+    /// `DESIGN SPEED VS0`; `None` wie oben.
+    pub design_vs0: Option<f64>,
     /// MSFS-2024-Input-Events (B:-Variablen, 26.09.2026) — Name ohne
     /// `B:`-Praefix → Wert. Kommen NICHT aus dem Datenblock, sondern aus
     /// den Abos des Adapters (`crate::eingabe_events`); leer bei MSFS 2020
@@ -2331,6 +2346,7 @@ impl Telemetry {
         pull_f64!(t.fnx_fcu_athr_lampe);
         pull_f64!(t.fnx_fcu_appr_lampe);
         pull_f64!(t.fnx_fcu_hdg_dashed);
+        pull_f64!(t.fss_vref);
         // Option: ein abgeschnittener Block bleibt None, nie 0 g.
         t.semibody_loadfactor_y = read_f64(bytes, off);
         off += 8;
@@ -2341,6 +2357,8 @@ impl Telemetry {
         t.std_light_landing_on_1 = read_f64(bytes, off);
         off += 8;
         t.std_light_landing_on_2 = read_f64(bytes, off);
+        off += 8;
+        t.design_vs0 = read_f64(bytes, off);
         off += 8;
         t.std_transponder_state = read_f64(bytes, off);
         off += 8;
@@ -4344,9 +4362,14 @@ fn telemetry_to_snapshot_mit_pfad(
     } else {
         None
     };
-    // VREF liefert nur die INI-Familie (PMDG via pmdg-Merge).
-    let vref_kt = if is_ini {
+    // VREF: INI-Familie (beim A350 gemessen gleich der VLS der aktuellen
+    // Klappen — Airbus-Bezug) inkl. A380, dessen `INI_`-LVars dieselbe
+    // Familie sind (06.10.2026: 16 Fluege ohne Wert, weil `is_ini` ihn
+    // ausschloss); FSS E-Jets ueber die PFD-Marke. PMDG via pmdg-Merge.
+    let vref_kt = if is_ini || is_a380 {
         positive_f64_or_none(t.ini_vref)
+    } else if is_fss {
+        positive_f64_or_none(t.fss_vref)
     } else {
         None
     };
@@ -5176,6 +5199,7 @@ fn telemetry_to_snapshot_mit_pfad(
         vapp_kt,
         vls_kt,
         vref_kt,
+        design_vs0_kt: t.design_vs0.filter(|v| *v > 0.0),
         flex_temp_c,
         thrust_gate,
         master_caution,
@@ -6166,13 +6190,15 @@ mod tests {
         assert_eq!(t.fnx_fcu_athr_lampe, 1376.0); // idx 376
         assert_eq!(t.fnx_fcu_appr_lampe, 1377.0); // idx 377
         assert_eq!(t.fnx_fcu_hdg_dashed, 1378.0); // idx 378
-        assert_eq!(t.semibody_loadfactor_y, Some(1379.0)); // idx 379, Lernpaket
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1380.0); // idx 380
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1381.0)); // idx 381
-        assert_eq!(t.std_light_landing_on_1, Some(1382.0)); // idx 382
-        assert_eq!(t.std_light_landing_on_2, Some(1383.0)); // idx 383
-        assert_eq!(t.std_transponder_state, Some(1384.0)); // idx 384, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 385, "letzter Index 384");
+        assert_eq!(t.fss_vref, 1379.0); // idx 379, Vref (06.10.2026)
+        assert_eq!(t.semibody_loadfactor_y, Some(1380.0)); // idx 380, Lernpaket
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1381.0); // idx 381
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1382.0)); // idx 382
+        assert_eq!(t.std_light_landing_on_1, Some(1383.0)); // idx 383
+        assert_eq!(t.std_light_landing_on_2, Some(1384.0)); // idx 384
+        assert_eq!(t.design_vs0, Some(1385.0)); // idx 385
+        assert_eq!(t.std_transponder_state, Some(1386.0)); // idx 386, zuletzt
+        assert_eq!(TELEMETRY_FIELDS.len(), 387, "letzter Index 386");
     }
 
     #[test]

@@ -300,9 +300,9 @@ Hinter der Schwelle
 i
 820
 m
-Vref-Abw. (~ICAO)
+Vref-Abw. (ungeprüft)
 i
--10
+-5
 kt
 Gierrate
 i

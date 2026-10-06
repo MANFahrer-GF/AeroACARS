@@ -400,6 +400,7 @@ export interface LandingRecord {
   landing_float_distance_m?: number | null;
   landing_vref_deviation_kt?: number | null;
   landing_vref_source?: string | null;
+  landing_vref_toleranz_kt?: number | null;
   landing_yaw_rate_deg_per_sec?: number | null;
   landing_brake_energy_proxy?: number | null;
   /** Mittlere Verzögerung beim Ausrollen in m/s² (seit 2.0.1, ersetzt die Bremsenergie). */

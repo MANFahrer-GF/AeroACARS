@@ -1168,19 +1168,26 @@
       "vref_label": {
         "pmdg": "Vref-Abw. (PMDG)",
         "fbw": "Vref-Abw. (FBW)",
-        "icao_default": "Vref-Abw. (~ICAO)",
+        "fmc": "Vref-Abw. (FMC)",
+        "kalibriert": "Vref-Abw. (berechnet)",
+        "faa": "Vref-Abw. (berechnet)",
+        "faa_ungeprueft": "Vref-Abw. (ungeprüft)",
         "unbekannt": "Vref-Abweichung"
       },
       "vref_hint": {
-        "pmdg": "IAS beim Aufsetzen gegen die Vref aus dem PMDG-FMC (genau). Negativ = zu langsam, positiv = zu schnell.",
-        "fbw": "IAS beim Aufsetzen gegen die Vref aus dem FBW-Connector (genau). Negativ = zu langsam, positiv = zu schnell.",
-        "icao_default": "IAS beim Aufsetzen gegen eine allgemeine ICAO-Vref. ⚠ Näherung, kann ±5 kt von der echten Vref abweichen — das Toleranzband ist deshalb breiter.",
+        "pmdg": "IAS beim Aufsetzen gegen die Vref aus dem PMDG-FMC (gemessen). Negativ = zu langsam, positiv = zu schnell.",
+        "fbw": "IAS beim Aufsetzen gegen die VLS der Landestellung aus dem FBW-Flugzeug (gemessen; bei Airbus ist sie in CONF FULL die Vref). Negativ = zu langsam, positiv = zu schnell.",
+        "fmc": "IAS beim Aufsetzen gegen die Vref, die das Flugzeug selbst meldet (gemessen; bei Airbus die VLS der Landestellung). Negativ = zu langsam, positiv = zu schnell.",
+        "kalibriert": "IAS beim Aufsetzen gegen eine aus dem Landegewicht gerechnete Vref. Bezugswert aus gemessenen Landungen dieses Musters; das Band ist um deren Streuung breiter.",
+        "faa": "IAS beim Aufsetzen gegen eine aus dem Landegewicht gerechnete Vref (FAA-Anfluggeschwindigkeit, an gemessenen Landungen dieses Musters bestätigt). Das Band ist um die gemessene Streuung breiter.",
+        "faa_ungeprueft": "IAS beim Aufsetzen gegen eine aus dem Landegewicht gerechnete Vref (FAA-Anfluggeschwindigkeit). Für dieses Muster noch nicht an gemessenen Landungen bestätigt.",
         "unbekannt": "IAS beim Aufsetzen gegen Vref. Quelle der Vref unbekannt."
       },
       "gierrate": "Gierrate",
       "gierrate_hint": "Kursänderung pro Sekunde beim Aufsetzen. Hoch = nicht ausgerichtet aufgesetzt, Gefahr des Ausbrechens bei Seitenwind.",
       "verzoegerung": "Verzögerung",
-      "verzoegerung_hint": "Mittlere Verzögerung vom Aufsetzen bis zum Ende des Ausrollens, über die Bodengeschwindigkeit. Zum Vergleich: Autobrake LOW ≈ 1,5, MED ≈ 2–3, MAX ≈ 4 m/s². Zählt nicht zur Note."
+      "verzoegerung_hint": "Mittlere Verzögerung vom Aufsetzen bis zum Ende des Ausrollens, über die Bodengeschwindigkeit. Zum Vergleich: Autobrake LOW ≈ 1,5, MED ≈ 2–3, MAX ≈ 4 m/s². Zählt nicht zur Note.",
+      "vref_ohne_urteil": "Deshalb ohne Bewertung (grau) — ebenso, wenn die Klappen beim Aufsetzen nicht in Landestellung waren."
     },
     "metar": {
       "title": "METAR am Zielflughafen",
@@ -1199,7 +1206,15 @@
         "BKN": "durchbrochen",
         "OVC": "bedeckt"
       },
-      "vorlage": {"FZ": "gefrierender {{x}}", "SH": "Schauer mit {{x}}", "TS": "Gewitter mit {{x}}", "VC": "{{x}} in Sichtweite", "leicht": "{{x}} (leicht)", "stark": "{{x}} (stark)", "und": "{{a}} und {{b}}"},
+      "vorlage": {
+        "FZ": "gefrierender {{x}}",
+        "SH": "Schauer mit {{x}}",
+        "TS": "Gewitter mit {{x}}",
+        "VC": "{{x}} in Sichtweite",
+        "leicht": "{{x}} (leicht)",
+        "stark": "{{x}} (stark)",
+        "und": "{{a}} und {{b}}"
+      },
       "wx": {
         "DZ": "Niesel",
         "RA": "Regen",
@@ -1252,7 +1267,20 @@
       "centerline_offset_too_large": "Touchdown weit von Runway-Mitte — Geometrie ausgeblendet",
       "negative_float_distance": "Touchdown vor Threshold — Geometrie ausgeblendet"
     },
-    "wert": {"td_vor_schwelle": "{{m}} m vor der Schwelle", "td_hinter_schwelle": "{{m}} m hinter der Schwelle", "td_ziel": "{{td}} m · Ziel {{ziel}} m · Δ {{delta}} m", "overrun": "{{m}} m über das Bahnende hinaus", "bahn_versatz": "{{versatz}} m Versatz · äußeres Rad {{aussen}} m von der Mitte · Rand {{rand}} m", "sprit_mehrweg": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg)", "sprit_durchstart": "{{kern}} bewertet · roh {{roh}} · {{n}}× Durchstarten (−{{kg_durchstart}} kg)", "sprit_mehrweg_durchstart": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · {{n}}× Durchstarten (−{{kg_durchstart}} kg)", "sprit_mehrweg_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt", "sprit_durchstart_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{n}}× Durchstarten (−{{kg_durchstart}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt", "sprit_mehrweg_durchstart_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · {{n}}× Durchstarten (−{{kg_durchstart}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt", "ladeblatt_plan": "Plan · ZFW {{zfw}} / TOW {{tow}} kg"},
+    "wert": {
+      "td_vor_schwelle": "{{m}} m vor der Schwelle",
+      "td_hinter_schwelle": "{{m}} m hinter der Schwelle",
+      "td_ziel": "{{td}} m · Ziel {{ziel}} m · Δ {{delta}} m",
+      "overrun": "{{m}} m über das Bahnende hinaus",
+      "bahn_versatz": "{{versatz}} m Versatz · äußeres Rad {{aussen}} m von der Mitte · Rand {{rand}} m",
+      "sprit_mehrweg": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg)",
+      "sprit_durchstart": "{{kern}} bewertet · roh {{roh}} · {{n}}× Durchstarten (−{{kg_durchstart}} kg)",
+      "sprit_mehrweg_durchstart": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · {{n}}× Durchstarten (−{{kg_durchstart}} kg)",
+      "sprit_mehrweg_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt",
+      "sprit_durchstart_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{n}}× Durchstarten (−{{kg_durchstart}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt",
+      "sprit_mehrweg_durchstart_begrenzt": "{{kern}} bewertet · roh {{roh}} · {{nm}} NM Mehrweg (−{{kg_mehrweg}} kg) · {{n}}× Durchstarten (−{{kg_durchstart}} kg) · auf {{kg_begrenzt}} kg Mehrverbrauch begrenzt",
+      "ladeblatt_plan": "Plan · ZFW {{zfw}} / TOW {{tow}} kg"
+    },
     "abfangen": {
       "titel": "Abfangen (Flare)",
       "dauer": "Dauer ab 50 ft",
