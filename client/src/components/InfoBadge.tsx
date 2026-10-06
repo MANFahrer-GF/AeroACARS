@@ -4,7 +4,7 @@
 // gespiegelten Abschnitte der Landungsanzeige erklären ihre Werte auf beiden
 // Seiten gleich. Bis 05.10.2026 in LandingPanel.tsx.
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import "./infoBadge.css";
@@ -74,8 +74,19 @@ interface Lage {
   breite: number;
 }
 
+/**
+ * QS 06.10.2026 (Runde 8): Die Erklärungen beschreiben die heutigen Regeln
+ * (Score-Version 19). Altbestand wird nie neu gerechnet — an einer Landung
+ * vor Version 19 hängt jedes Fenster deshalb denselben Hinweis an, statt dass
+ * jeder Text eine eigene Altfassung braucht. Gesetzt an der Wurzel der
+ * Landungsanzeige (Client `LandungsAbschnitte`, Webapp `LandingAnalysis`).
+ */
+export const AltbestandKontext = createContext(false);
+
 export function InfoBadge({ explanation }: { explanation: string }) {
   const { t } = useTranslation();
+  const altbestand = useContext(AltbestandKontext);
+  const text = altbestand ? `${explanation} ${t("landing.erklaer.alt_hinweis")}` : explanation;
   const [open, setOpen] = useState(false);
   const id = useId();
   const [lage, setLage] = useState<Lage | null>(null);
@@ -196,7 +207,7 @@ export function InfoBadge({ explanation }: { explanation: string }) {
             ["--pfeil" as string]: `${lage?.pfeil ?? 12}px`,
           }}
         >
-          {explanation}
+          {text}
           <button
             type="button"
             className="info-badge__close"

@@ -27149,12 +27149,6 @@ impl LandingVerdict {
     }
 }
 
-/// Die Messwerte hinter dem Anflug-Urteil (STABLE/PARTIAL/UNSTABLE) — EINE
-/// Quelle fuer Note, Deckel und `approach_stable_at_gate` im Payload.
-/// Gerechnet wird NUR in `landing_scoring::anflug_urteil`.
-///
-/// Score-Version 19: Gleitpfad (Durchschnitt in Dots, 1000–200 ft) statt der
-/// beiden Sinkraten-Abweichungen gegen eine ideale 3°-Sinkrate (GSG1709).
 /// Die Client-Version, die die Landung gemessen hat (QS 06.10.2026, Runde 6).
 fn aufzeichnende_client_version(stats: &FlightStats) -> String {
     match &stats.client_version_aufsetzen {
@@ -27163,6 +27157,12 @@ fn aufzeichnende_client_version(stats: &FlightStats) -> String {
     }
 }
 
+/// Die Messwerte hinter dem Anflug-Urteil (STABLE/PARTIAL/UNSTABLE) — EINE
+/// Quelle fuer Note, Deckel und `approach_stable_at_gate` im Payload.
+/// Gerechnet wird NUR in `landing_scoring::anflug_urteil`.
+///
+/// Score-Version 19: Gleitpfad (Durchschnitt in Dots, 1000–200 ft) statt der
+/// beiden Sinkraten-Abweichungen gegen eine ideale 3°-Sinkrate (GSG1709).
 fn anflug_werte(stats: &FlightStats) -> landing_scoring::anflug_urteil::AnflugWerte {
     landing_scoring::anflug_urteil::AnflugWerte {
         vs_jerk_fpm: stats.approach_vs_jerk_fpm,

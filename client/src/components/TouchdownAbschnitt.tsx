@@ -175,17 +175,14 @@ export function WindCompass({
 
 export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
-  // Die Erklärung passt zur Version, mit der bewertet wurde — Altbestand
-  // wird nie neu gerechnet (wie `kopf_note_alt`, QS 06.10.2026 Runde 6).
-  const alt = (record.score_algorithm_version ?? 0) < 19;
-  const sinkErklaerung = t(alt ? "landing.erklaer.td.sinkrate_alt" : "landing.erklaer.td.sinkrate");
-  const hopserErklaerung = t(alt ? "landing.erklaer.td.hopser_alt" : "landing.erklaer.td.hopser");
   // X-Plane: die G-Grenzen gelten für den umgerechneten Wert
-  // (`g_auf_referenzkette`), nicht für die angezeigte Zahl.
-  const gErklaerung = alt
-    ? t("landing.erklaer.td.g_alt")
-    : t("landing.erklaer.td.g") +
-      (/x-?plane/i.test(record.sim_kind ?? "") ? ` ${t("landing.erklaer.td.g_xplane")}` : "");
+  // (`g_auf_referenzkette`), nicht für die angezeigte Zahl. Altbestand: der
+  // Hinweis auf die damalige Version kommt vom `AltbestandKontext`.
+  const gErklaerung =
+    t("landing.erklaer.td.g") +
+    ((record.score_algorithm_version ?? 0) >= 19 && /x-?plane/i.test(record.sim_kind ?? "")
+      ? ` ${t("landing.erklaer.td.g_xplane")}`
+      : "");
   return (
     <section className="landing-section">
       <h3>{t("landing.touchdown")}</h3>
@@ -199,7 +196,7 @@ export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
               (= Score-Basis nach v0.7.11 = vs_at_edge_fpm) + die
               Aufprall-Werte. Kein Werte-Dschungel mehr. */}
           <div>
-            <dt>{t("landing.landing_rate")}{" "}<InfoBadge explanation={sinkErklaerung} /></dt>
+            <dt>{t("landing.landing_rate")}{" "}<InfoBadge explanation={t("landing.erklaer.td.sinkrate")} /></dt>
             {/* v0.7.17 (B-015): Edge-Wert bevorzugen — Touchdown-Card
                 zeigte bisher `landing_rate_fpm` (Streamer-Tick), was
                 meist 30-50 fpm vom echten Aufsetz-Moment abwich. */}
@@ -241,7 +238,7 @@ export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
             <dd>{fmtSigned(record.touchdown_sideslip_deg, 1, "°")}</dd>
           </div>
           <div>
-            <dt>{t("landing.bounces")}{" "}<InfoBadge explanation={hopserErklaerung} /></dt>
+            <dt>{t("landing.bounces")}{" "}<InfoBadge explanation={t("landing.erklaer.td.hopser")} /></dt>
             <dd>
               {fensterWerteGueltig(record) && record.bounce_count != null
                 ? record.bounce_count

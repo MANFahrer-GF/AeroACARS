@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AltbestandKontext } from "./InfoBadge";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
@@ -657,7 +658,7 @@ function LandungsAbschnitte({
 }) {
   const { t } = useTranslation();
   return (
-    <>
+    <AltbestandKontext.Provider value={(record.score_algorithm_version ?? 0) < 19}>
       {/* Kasten „nicht bewertbar", Kopf, Banner, Hinweise und Teilnoten:
           gespiegelt (LandungsBewertung.tsx) — dieselbe Darstellung in der
           Webapp. */}
@@ -812,7 +813,7 @@ function LandungsAbschnitte({
 
       {/* Rohdaten zur Nachprüfung: gespiegelt (RohdatenAbschnitt.tsx). */}
       <RohdatenAbschnitt record={record} />
-    </>
+    </AltbestandKontext.Provider>
   );
 }
 

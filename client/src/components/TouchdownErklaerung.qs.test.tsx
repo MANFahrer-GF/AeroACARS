@@ -25,30 +25,39 @@ describe("Erklärungen der Touchdown-Kacheln", () => {
     const xp = erklaerungen({ score_algorithm_version: 19, sim_kind: "xplane" }).join(" | ");
     expect(xp).toContain("aus 1,90 G werden 1,39 G");
   });
-  it("Altbestand: keine v19-Grenzen, Hinweis auf die damalige Version", () => {
+  it("Altbestand: kein X-Plane-Zusatz (der Versionshinweis kommt vom Kontext)", () => {
     const alt = erklaerungen({ score_algorithm_version: 17, sim_kind: "xplane" }).join(" | ");
-    expect(alt).not.toMatch(/unter 1,20 G 100 Punkte|90–249 fpm 100 Punkte|Ab zwei Hopsern/);
-    expect(alt).toContain("damaligen Score-Version");
     expect(alt).not.toContain("X-Plane:");
   });
 });
 
-// Runde 7: auch die Erklärungen der Teilnoten — Altbestand bekommt den
-// Hinweis, dass damals andere Punkte und Obergrenzen galten.
-describe("Erklärungen der Teilnoten", () => {
-  const teil = { key: "touchdown_point", points: 0, value: "–120 m", band: "bad", rationale: "" };
-  const texte = async (version: number) => {
-    const { ScoreBreakdown } = await import("./LandungsBewertung");
-    const r = { ...(MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord), score_algorithm_version: version };
-    const { container } = render(<ScoreBreakdown subs={[teil as never]} record={r} />);
-    return Array.from(container.querySelectorAll("[data-erklaerung]")).map((e) => e.textContent ?? "").join(" | ");
-  };
-  it("Altbestand: Hinweis auf die damalige Version", async () => {
-    expect(await texte(18)).toContain("vor Score-Version 19 bewertet");
-  });
-  it("Gegenprobe: Version 19 ohne Hinweis", async () => {
-    const v19 = await texte(19);
-    expect(v19).toContain("höchstens 40");
-    expect(v19).not.toContain("vor Score-Version 19 bewertet");
+// Runde 8: Der Versionshinweis hängt an JEDER Erklärung einer Landung vor
+// Version 19 — gesetzt an der Wurzel (`LandungsAbschnitte`), gelesen im echten
+// InfoBadge (hier ohne Attrappe).
+describe("Versionshinweis an allen Erklärungen", () => {
+  it("Altbestand: jedes geöffnete Fenster trägt den Hinweis, Version 19 keines", async () => {
+    vi.doUnmock("./InfoBadge");
+    vi.resetModules();
+    const { fireEvent } = await import("@testing-library/react");
+    const { LandingDetail } = await import("./LandingPanel");
+    const fenster = (version: number) => {
+      const r = { ...(MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord), score_algorithm_version: version };
+      const { container, unmount } = render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);
+      const knoepfe = Array.from(container.querySelectorAll(".landing-section .info-badge")) as HTMLElement[];
+      const texte = knoepfe.map((k) => {
+        fireEvent.click(k);
+        const f = document.querySelector(".info-badge__popover")?.textContent ?? "";
+        fireEvent.click(k);
+        return f;
+      });
+      unmount();
+      return texte;
+    };
+    const alt = fenster(17);
+    expect(alt.length).toBeGreaterThan(10);
+    for (const t of alt) expect(t).toContain("vor Score-Version 19 bewertet");
+    const neu = fenster(19);
+    expect(neu.length).toBeGreaterThan(10);
+    for (const t of neu) expect(t).not.toContain("vor Score-Version 19 bewertet");
   });
 });

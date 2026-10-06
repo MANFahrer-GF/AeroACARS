@@ -285,11 +285,6 @@ export function ScoreBreakdown({
   record: LandingRecord;
 }) {
   const { t, i18n } = useTranslation();
-  // Die Teil-Erklärungen beschreiben die Regeln seit Score-Version 19
-  // (Punkte, Obergrenzen). Altbestand wird nie neu gerechnet — dort sagt ein
-  // Zusatz, dass damals andere galten (QS 06.10.2026, Runde 7).
-  const altHinweis =
-    (record.score_algorithm_version ?? 0) < 19 ? ` ${t("landing.info.teil_alt")}` : "";
   // Wird über den "🛬 Wie wird das berechnet?"-Button am Boden der
   // rollout-Card geöffnet. Andere Sub-Scores behalten ihren bestehenden
   // InfoBadge-Tooltip — nur Bahn-Auslastung bekommt das tiefe Erklärungs-
@@ -325,7 +320,7 @@ export function ScoreBreakdown({
                       bereits das ausführliche Modal. Zwei Erklärungen
                       auf der gleichen Card wären redundant. */}
                   {s.key !== "rollout" && (
-                    <InfoBadge explanation={t(`landing.info.${s.key}`) + altHinweis} />
+                    <InfoBadge explanation={t(`landing.info.${s.key}`)} />
                   )}
                 </span>
                 <span
@@ -380,9 +375,9 @@ export function ScoreBreakdown({
                     Bahndisziplin hat ihren eigenen i-Text statt des
                     Auslastungs-Modals. */}
                 {s.key !== "rollout" ? (
-                  <InfoBadge explanation={t(`landing.info.${s.key}`) + altHinweis} />
+                  <InfoBadge explanation={t(`landing.info.${s.key}`)} />
                 ) : bahndisziplin ? (
-                  <InfoBadge explanation={t("landing.info.runway_discipline") + altHinweis} />
+                  <InfoBadge explanation={t("landing.info.runway_discipline")} />
                 ) : null}
               </span>
               <span className="landing-subscore__points">{s.points} PTS</span>
@@ -1027,11 +1022,7 @@ export function BewertungsAbschnitt({ record, subs }: { record: LandingRecord; s
     <section className="landing-section">
       <h3>
         {t("landing.score_breakdown")}
-        <InfoBadge
-          explanation={t(
-            (record.score_algorithm_version ?? 0) >= 19 ? "landing.info.score_section" : "landing.info.score_section_alt",
-          )}
-        />
+        <InfoBadge explanation={t("landing.info.score_section")} />
       </h3>
       <ScoreBreakdown subs={subs} record={record} />
       <CoachTip subs={subs} />
