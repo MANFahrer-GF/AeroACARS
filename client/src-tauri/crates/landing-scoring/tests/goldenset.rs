@@ -78,7 +78,8 @@ fn pto105_msfs_smooth_55fpm_with_loadsheet() {
     // ⚠ v1.7.35: 91 → 90. Die Sprit-Achse ist raus — sie gab hier
     // 100 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
     // schlecht stand, gewinnt umgekehrt (97 → 100).
-    assert_eq!(aggregate_master_score(&subs), Some(90));
+    // ⚠ Score-Version 21: Abzug statt Deckel. Ohne Gate-Messung −3.
+    assert_eq!(aggregate_master_score(&subs), Some(87));
 }
 
 #[test]
@@ -135,7 +136,8 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     // ⚠ v1.7.35: 74 → 72. Die Sprit-Achse ist raus — sie gab hier
     // 100 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
     // schlecht stand, gewinnt umgekehrt (97 → 100).
-    assert_eq!(aggregate_master_score(&subs), Some(72));
+    // ⚠ Score-Version 21: Abzug statt Deckel. Ohne Gate-Messung −3 und schwaechster Teil „mittel" −5.
+    assert_eq!(aggregate_master_score(&subs), Some(64));
 }
 
 #[test]
@@ -173,7 +175,8 @@ fn cfg785_msfs_smooth_with_overburn_unchanged() {
     // ⚠ v1.7.35: 97 → 96. Die Sprit-Achse ist raus — sie gab hier
     // 100 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
     // schlecht stand, gewinnt umgekehrt (97 → 100).
-    assert_eq!(aggregate_master_score(&subs), Some(96));
+    // ⚠ Score-Version 21: Abzug statt Deckel. Ohne Gate-Messung −3.
+    assert_eq!(aggregate_master_score(&subs), Some(93));
 }
 
 #[test]
@@ -237,7 +240,8 @@ fn dah3181_xplane_firm_with_overburn() {
     // ⚠ v1.7.35: 64 → 62. Die Sprit-Achse ist raus — sie gab hier
     // 80 Punkte und hob damit den Schnitt. Wer wie DLH370 dort
     // schlecht stand, gewinnt umgekehrt (97 → 100).
-    assert_eq!(aggregate_master_score(&subs), Some(62));
+    // ⚠ Score-Version 21: Abzug statt Deckel. Ohne Gate-Messung −3 und schwaechster Teil „mittel" −5.
+    assert_eq!(aggregate_master_score(&subs), Some(54));
 }
 
 // ─── F1/F2 Edge-Cases (VFR/Manual ohne Plan) ───────────────────────
@@ -284,7 +288,8 @@ fn vfr_no_zfw_no_burn_hat_keine_sprit_achse() {
     // Master = (100*3+85*3+100*2+80*2+80*1) / (3+3+2+2+1) = (300+255+200+160+80) / 11
     //        = 995/11 = 90.45 → 90
     // ⚠ v1.7.12: 89 statt 90 — Folge der angeglichenen G-Punktleiter.
-    assert_eq!(aggregate_master_score(&subs), Some(89));
+    // ⚠ Score-Version 21: Abzug statt Deckel. Ohne Gate-Messung −3.
+    assert_eq!(aggregate_master_score(&subs), Some(86));
 }
 
 #[test]

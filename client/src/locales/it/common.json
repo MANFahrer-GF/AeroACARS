@@ -216,18 +216,18 @@
     },
     "info": {
       "landing_rate": "Velocità verticale nell'istante del contatto, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo di 90–250 fpm è voluto — standard professionale, non «il più morbido possibile»: ben sotto i 90 fpm significa di solito una lunga richiamata che ritarda frenata e spoiler. Oltre 600 fpm di discesa sarebbe dovuta un'ispezione per atterraggio duro.\n\nDalla v1.6.3 la misura viene dall'andamento reale della quota nell'ultimo terzo di secondo prima del contatto, non più dal variometro del simulatore, lento come uno strumento di bordo reale. Se il simulatore blocca temporaneamente la lettura della quota, non si calcola nulla e si usa il valore dello strumento.",
-      "g_force": "Carico G valutato al contatto. Sotto 1,20 g punteggio pieno, sotto 1,40 g 80, sotto 1,70 g 45, oltre 20 o 0. Da 1,75 g il punteggio totale è al massimo 40, da 2,6 g al massimo 14.",
+      "g_force": "Carico G valutato al contatto. Sotto 1,20 g punteggio pieno, sotto 1,40 g 80, sotto 1,70 g 45, oltre 20 o 0. Da 1,75 g costa 25 punti del punteggio totale, da 2,6 g 50.",
       "bounces": "Quante volte l'aereo è risalito di oltre 5 ft dal suolo dopo il primo touchdown ed è tornato a toccare (atterraggi precedenti: da 15 ft). 0 = atterraggio pulito; ogni rimbalzo riduce il punteggio.",
       "stability": "Due cose: i punti di questa parte vengono dalla regolarità dell'avvicinamento (dispersione di rateo e inclinazione). Lo stable gate controlla sei punti da 1000 ft: sentiero (in media sotto 1 dot), velocità regolare, inclinazione regolare, rateo uniforme, nessuna discesa eccessiva per oltre 10 secondi, configurazione d'atterraggio all’ingresso nel gate. Solo in parte stabile limita questa parte a 80 e costa 5 punti del punteggio totale; instabile la limita a 45 e costa 15 punti. Dettagli e limiti nella scheda \"Stabilità dell'avvicinamento\".",
       "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua landata ha usato — misurata dalla soglia: prima la distanza fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Viene valutato quanta pista resta: sotto il 60 % è punteggio pieno, dal 90 % diventa stretto — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?“ per la spiegazione completa.",
       "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (takeoff fuel − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
       "loadsheet": "Solo atterraggi più vecchi: presenza dei dati loadsheet (ZFW + TOW nel piano). Non fa più parte del punteggio dalla v1.7.12.",
-      "score_section": "Otto parti da 0–100 punti: rateo di discesa, forza G, rimbalzi, stabilità dell’avvicinamento, disciplina di pista, allineamento, punto di contatto, richiamata. Il punteggio totale è la loro media ponderata, ma mai migliore di quanto consenta la parte più debole: una parte discreta al massimo 80, una scarsa al massimo 60, un evento pericoloso (prima della soglia, overrun, fuori pista, due o più rimbalzi, da 1,75 g) al massimo 40, da 2,6 g al massimo 14. Inoltre l’avvicinamento: PARTIAL costa 5 punti, UNSTABLE 15 punti, senza misura dell’avvicinamento al massimo 97. Carburante e loadsheet sono solo indicativi e non contano.",
+      "score_section": "Otto parti da 0–100 punti: rateo di discesa, forza G, rimbalzi, stabilità dell’avvicinamento, disciplina di pista, allineamento, punto di contatto, richiamata. Il punteggio totale è la loro media ponderata meno le detrazioni. Dall’atterraggio conta solo la maggiore: una parte discreta −5, una scarsa −10, atterraggio duro da 1,75 g −25, un evento pericoloso (prima della soglia, overrun, fuori pista, due o più rimbalzi) −30, da 2,6 g −50. Inoltre l’avvicinamento: PARTIAL −5, UNSTABLE −15, senza misura dell’avvicinamento −3. Carburante e loadsheet sono solo indicativi e non contano.",
       "runway_section": "Visualizzazione del contatto sulla pista. Il segno è il punto di contatto, la banda il rullaggio. Valori sotto a titolo indicativo: lunghezza utilizzabile (la lunghezza fisica è nell'intestazione), distanza dalla linea centrale, distanza oltre la soglia, utilizzo pista in percentuale. Valutati sono disciplina di pista, allineamento e punto di contatto (vedi le parti sopra).",
       "fuel_section": "Block = carburante allo sblocco; TO fuel = al punto di decollo; LDG fuel = al contatto; TOW, LDW, ZFW = pesi. I valori pianificati vengono dall'OFP SimBrief. Lo scostamento dal piano è indicato a titolo informativo — non conta per il punteggio.",
       "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva.",
-      "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun limitano il punteggio totale a 40.",
-      "touchdown_point": "Dove hai toccato, misurato dalla soglia. Entro 150 m dal segnale di mira (aiming point) punteggio pieno, altrimenti nella zona di contatto 85, fino a metà della distanza di atterraggio disponibile 55, oltre 25. Contatto prima della soglia: 0 punti e il voto complessivo è al massimo 40.",
+      "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun costano 30 punti del punteggio totale.",
+      "touchdown_point": "Dove hai toccato, misurato dalla soglia. Entro 150 m dal segnale di mira (aiming point) punteggio pieno, altrimenti nella zona di contatto 85, fino a metà della distanza di atterraggio disponibile 55, oltre 25. Contatto prima della soglia: 0 punti e 30 punti in meno sul voto complessivo.",
       "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri, business jet e altri tipi non classificati come aerei di linea: 16 / 20 / 24 s; se il tipo non è noto valgono i valori degli aerei di linea. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Una parte sotto 75 punti limita il voto complessivo a 80, sotto 45 a 60."
     },
     "rat": {
@@ -1049,8 +1049,6 @@
       "anflug_unstable": "Stabilità limitata a 45 punti: avvicinamento instabile (stable gate mancato).",
       "anflug_partial_gesamt": "Limitato a massimo 80 punti: avvicinamento solo in parte stabile (stable gate non raggiunto). Un buon contatto non lo compensa.",
       "anflug_unstable_gesamt": "Limitato a massimo 45 punti: avvicinamento instabile (stable gate mancato). Un buon contatto non lo compensa.",
-      "anflug_partial_abzug": "5 punti in meno: avvicinamento solo in parte stabile (stable gate non raggiunto).",
-      "anflug_unstable_abzug": "15 punti in meno: avvicinamento instabile (stable gate mancato). L’atterraggio stesso continua a contare.",
       "anflug_nicht_gemessen": "Limitato a 97 punti: avvicinamento non misurato nel gate — senza misura niente punteggio massimo.",
       "harte_landung": "Limitato a massimo 40 punti: atterraggio duro da 1,75 g. Buoni valori di rullaggio o punto di contatto non lo compensano.",
       "ueberlast": "Limitato a massimo 14 punti: sovraccarico da 2,6 g.",
@@ -1069,8 +1067,6 @@
       "anflug_unstable": "Avvicinamento instabile",
       "anflug_partial_gesamt": "Limitato: max. 80 (avvicinamento parzialmente stabile)",
       "anflug_unstable_gesamt": "Limitato: max. 45 (avvicinamento instabile)",
-      "anflug_partial_abzug": "−5 (avvicinamento parzialmente stabile)",
-      "anflug_unstable_abzug": "−15 (avvicinamento instabile)",
       "anflug_nicht_gemessen": "Limitato: max. 97 (avvicinamento non misurato)",
       "vor_der_schwelle": "Limitato: max. 40 (prima della soglia)",
       "overrun": "Limitato: max. 40 (overrun)",
@@ -1078,6 +1074,32 @@
       "mehrfach_hopser": "Limitato: max. 40 (più rimbalzi)",
       "teil_mittel": "Limitato: max. 80 ({{teil}})",
       "teil_schlecht": "Limitato: max. 60 ({{teil}})"
+    },
+    "abzug": {
+      "ueberlast": "50 punti in meno: sovraccarico da 2,6 g.",
+      "harte_landung": "25 punti in meno: atterraggio duro da 1,75 g.",
+      "vor_der_schwelle": "30 punti in meno: contatto prima della soglia.",
+      "overrun": "30 punti in meno: oltre la fine pista (overrun).",
+      "neben_der_bahn": "30 punti in meno: ruote fuori pista.",
+      "mehrfach_hopser": "30 punti in meno: due o più rimbalzi. Dopo un rimbalzo alto la procedura Airbus prevede una riattaccata.",
+      "teil_schlecht": "10 punti in meno: {{teil}} era scarso.",
+      "teil_mittel": "5 punti in meno: {{teil}} era solo discreto.",
+      "anflug_partial": "5 punti in meno: avvicinamento solo in parte stabile (stable gate non raggiunto).",
+      "anflug_unstable": "15 punti in meno: avvicinamento instabile (stable gate mancato).",
+      "anflug_nicht_gemessen": "3 punti in meno: avvicinamento non misurato nel gate — senza misura nessun punteggio massimo."
+    },
+    "abzug_kurz": {
+      "ueberlast": "−50 (da 2,6 g)",
+      "harte_landung": "−25 (da 1,75 g)",
+      "vor_der_schwelle": "−30 (prima della soglia)",
+      "overrun": "−30 (overrun)",
+      "neben_der_bahn": "−30 (fuori pista)",
+      "mehrfach_hopser": "−30 (più rimbalzi)",
+      "teil_schlecht": "−10 ({{teil}})",
+      "teil_mittel": "−5 ({{teil}})",
+      "anflug_partial": "−5 (avvicinamento parzialmente stabile)",
+      "anflug_unstable": "−15 (avvicinamento instabile)",
+      "anflug_nicht_gemessen": "−3 (avvicinamento non misurato)"
     },
     "gesamt": {
       "smooth": "eccellente",
@@ -1249,10 +1271,10 @@
       "letzte_2s": "Rateo di discesa negli ultimi 2 s prima del contatto (misura precedente, senza voto)"
     },
     "erklaer": {
-      "kopf_note": "La lettera riassume il voto complessivo: A+ da 95, A da 88, B+ da 82, B da 75, C da 65, D da 50, sotto F. Il voto complessivo è la media ponderata delle parti (rateo di discesa e forza G 3 ciascuna, rimbalzi, stabilità dell’avvicinamento e richiamata 2 ciascuna, le altre 1) — ma mai migliore di quanto consenta la parte più debole: una parte media (45–74 punti) limita a 80, una scarsa (sotto 45) a 60, un evento pericoloso (prima della soglia, oltre fine pista, fuori pista, due o più rimbalzi) a 40. Inoltre l’avvicinamento: PARTIAL costa 5 punti, UNSTABLE 15 punti, senza misura dell’avvicinamento al massimo 97; e la forza G: da 1,75 G a 40, da 2,6 G a 14.",
+      "kopf_note": "La lettera riassume il voto complessivo: A+ da 95, A da 88, B+ da 82, B da 75, C da 65, D da 50, sotto F. Il voto complessivo è la media ponderata delle parti (rateo di discesa e forza G 3 ciascuna, rimbalzi, stabilità dell’avvicinamento e richiamata 2 ciascuna, le altre 1) — meno le detrazioni. Dall’atterraggio conta solo la maggiore: una parte media (45–74 punti) −5, una scarsa (sotto 45) −10, da 1,75 G −25, un evento pericoloso (prima della soglia, oltre fine pista, fuori pista, due o più rimbalzi) −30, da 2,6 G −50. Inoltre l’avvicinamento: PARTIAL −5, UNSTABLE −15, senza misura dell’avvicinamento −3.",
       "td": {
         "sinkrate": "Rateo di discesa al primo contatto col suolo, dalla curva di quota (se non è valutabile, il valore del simulatore). Conta per il voto (parte rateo, peso 3): 90–249 fpm 100 punti, sotto 90 fpm 85 (indizio di richiamata lunga), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, da 1000 fpm 0.",
-        "g": "Forza G valutata al contatto: picco leggermente smussato (come un registratore di volo), senza singoli picchi a 50 Hz. Conta per il voto (parte forza G, peso 3): sotto 1,20 G 100 punti, sotto 1,40 G 80, sotto 1,70 G 45, sotto 2,10 G 20, da 2,10 G 0. Da 1,75 G il voto complessivo è al massimo 40, da 2,6 G al massimo 14.",
+        "g": "Forza G valutata al contatto: picco leggermente smussato (come un registratore di volo), senza singoli picchi a 50 Hz. Conta per il voto (parte forza G, peso 3): sotto 1,20 G 100 punti, sotto 1,40 G 80, sotto 1,70 G 45, sotto 2,10 G 20, da 2,10 G 0. Da 1,75 G costa 25 punti del voto complessivo, da 2,6 G 50.",
         "g_xplane": "X-Plane: i limiti valgono per il valore convertito sulla catena di misura MSFS — conta solo la parte sopra 1 G, con fattore 0,43 (1,90 G diventano 1,39 G).",
         "g_frame": "Forza G esattamente nel fotogramma del contatto, non smussata. Solo per contesto — si valuta la forza G sopra.",
         "pitch": "Assetto longitudinale al contatto, + = muso su. Per gli aerei di linea di solito circa +2 a +6°; molto di più aumenta il rischio di toccare con la coda. Non conta per il voto.",
@@ -1260,7 +1282,7 @@
         "ias": "Velocità indicata al contatto. Lo scostamento dalla velocità di riferimento (Vref) è indicato nella qualità del contatto. Non conta per il voto.",
         "gs": "Velocità al suolo al contatto. Con vento contrario minore della velocità indicata, con vento in coda maggiore — determina corsa e frenata. Non conta per il voto.",
         "sideslip": "Angolo tra direzione di volo e asse della fusoliera al contatto (angolo di deriva con vento al traverso). Vicino a 0° è bene: allineato prima del contatto. Non conta direttamente; la parte allineamento valuta posizione e prua rispetto alla pista.",
-        "hopser": "Quante volte l’aereo si è risollevato dopo il primo contatto. Conta per il voto (parte rimbalzi, peso 2): 0 = 100 punti, 1 = 70, 2 = 40, 3 o più = 15. Da due rimbalzi il voto complessivo è al massimo 40.",
+        "hopser": "Quante volte l’aereo si è risollevato dopo il primo contatto. Conta per il voto (parte rimbalzi, peso 2): 0 = 100 punti, 1 = 70, 2 = 40, 3 o più = 15. Da due rimbalzi costa 30 punti del voto complessivo.",
         "hdg_mag": "Prua al contatto, magnetica — il riferimento della designazione della pista. Non conta per il voto.",
         "hdg_true": "Prua al contatto, vera (nord geografico). La parte allineamento la confronta con la rotta della pista.",
         "wind": "Vento al contatto dal simulatore, scomposto in vento contrario/in coda e al traverso rispetto alla pista. Non conta per il voto; la parte allineamento tiene conto del vento al traverso."
@@ -1281,7 +1303,7 @@
         "ruck": "Quanto bruscamente è cambiato il rateo di discesa da un punto di misura all'altro. Buono sotto 100 fpm, scarso da 200 fpm. Controllo dello stable gate.",
         "sinken": "Se il rateo di discesa nello stable gate ha superato il limite per almeno 10 s di fila (−1000 fpm con sentiero di 3°, di più per avvicinamenti più ripidi). Controllo dello stable gate.",
         "konfiguration": "Se l'aereo era in configurazione di atterraggio all’ingresso nel gate (primo campione fino a 1000 ft — più in basso se la registrazione inizia più in basso): carrello giù, flap di atterraggio. Controllo dello stable gate.",
-        "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, 15 punti in meno. Altrimenti PARTIAL, 5 punti in meno. Senza misura al massimo 97. Stabilizzato tardi: se velocità o configurazione sono scarse a 1000 ft ma da 500 ft i flap d’atterraggio sono estesi e la velocità è stabile, contano solo come “medio”.",
+        "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, 15 punti in meno. Altrimenti PARTIAL, 5 punti in meno. Senza misura 3 punti in meno. Stabilizzato tardi: se velocità o configurazione sono scarse a 1000 ft ma da 500 ft i flap d’atterraggio sono estesi e la velocità è stabile, contano solo come “medio”.",
         "urteil_alt": "Giudizio sull’avvicinamento per i voli prima della versione 19, dalle sette caselle: tutte buone = STABLE, due scarse o tre non buone = UNSTABLE, altrimenti PARTIAL. Dalla versione 18 PARTIAL limita il voto complessivo a 80 e UNSTABLE a 45; nella versione 17 solo la parte stabilità dell’avvicinamento, prima non limitava nulla."
       },
       "tile": {

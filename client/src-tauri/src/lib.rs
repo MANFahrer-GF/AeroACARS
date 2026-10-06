@@ -24862,8 +24862,7 @@ fn build_pirep_payload(
         // Nur wenn es eine Gesamtnote gibt (seit Score-Version 19 ohne
         // Touchdown-Rückfall) und der Deckel sie wirklich gesenkt hat.
         landing_score_deckel: aggregate_master
-            .and_then(|_| landing_scoring::master_deckel_wirksam(&payload_sub_scores))
-            .map(str::to_string),
+            .and_then(|_| landing_scoring::master_deckel_wirksam(&payload_sub_scores)),
         go_around_count: Some(stats.go_around_count),
         touchdown_count: Some(touchdown_count),
         dep_gate: stats.dep_gate.clone(),
@@ -27746,10 +27745,13 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Konfiguration nur „mittel" statt „schlecht" (Anlass RYR73, 06.10.2026:
 /// UNSTABLE, Gesamtnote 45 bei sauberer Landung). `anflug_urteil.rs`.
 ///
-/// **21 seit v2.0.5**: Abzug statt Deckel — PARTIAL kostet 5, UNSTABLE 15
-/// Punkte vom Mittel, statt die Gesamtnote auf 80 bzw. 45 festzunageln
-/// (`landing-scoring` `anflug_abzug`). Anlass: Korpus 60 Tage, 58 gute
-/// Landungen nach UNSTABLE alle exakt 45.
+/// **21 seit v2.0.5**: Abzug statt Deckel — keine Gesamtnote wird mehr auf
+/// eine feste Zahl gesetzt. Vom gewichteten Mittel gehen ab: der groesste
+/// Landungs-Abzug (Ueberlast −50, Gefahr −30, hart −25, schwaechster Teil
+/// schlecht −10 / mittel −5) plus der Anflug (PARTIAL −5, UNSTABLE −15,
+/// nicht gemessen −3). `landing-scoring` `landungs_abzug`/`anflug_abzug`.
+/// Anlass: Korpus 60 Tage, 58 gute Landungen nach UNSTABLE alle exakt 45,
+/// 14 gefaehrliche Ereignisse alle exakt 40.
 ///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
@@ -28528,8 +28530,7 @@ where
     // Lernpaket AP2: nur wenn die Gesamtnote tatsaechlich gedeckelt ist,
     // traegt der Datensatz den Grund — die Anzeige erklaert damit die Note.
     let score_deckel = aggregate_master
-        .and(landing_scoring::master_deckel_wirksam(&computed_sub_scores))
-        .map(|grund| grund.to_string());
+        .and(landing_scoring::master_deckel_wirksam(&computed_sub_scores));
     // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
     // keinen Deckel (Vorlage Punktesystem, Punkt 7). Ohne Rate liefert
     // `aggregate_master_score` `None` ("lieber gar keine Note als eine

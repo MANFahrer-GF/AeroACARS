@@ -216,18 +216,18 @@
     },
     "info": {
       "landing_rate": "Vertikalgeschwindigkeit im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Der Zielkorridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich“: deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen und Spoiler-Ausfahren verzögert. Ab 600 fpm Sinken ist real eine Hard-Landing-Inspektion fällig.\n\nGemessen wird seit v1.6.3 aus dem tatsächlichen Höhenverlauf der letzten Drittelsekunde vor dem Aufsetzen, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators — der ist träge wie ein echtes Cockpit-Instrument. Steht die Höhe im Simulator zeitweise still, wird nicht gerechnet, sondern der Instrumentenwert genommen.",
-      "g_force": "Gewertete G-Last beim Aufsetzen. Unter 1,20 G volle Punkte, unter 1,40 G 80, unter 1,70 G 45, darüber 20 oder 0. Ab 1,75 G ist die Gesamtnote höchstens 40, ab 2,6 G höchstens 14.",
+      "g_force": "Gewertete G-Last beim Aufsetzen. Unter 1,20 G volle Punkte, unter 1,40 G 80, unter 1,70 G 45, darüber 20 oder 0. Ab 1,75 G kostet das 25 Punkte der Gesamtnote, ab 2,6 G 50.",
       "bounces": "Wie oft das Flugzeug nach dem ersten Aufsetzen wieder mehr als 5 ft über den Boden gestiegen und erneut aufgesetzt ist (ältere Landungen: ab 15 ft). 0 = sauber gesetzt; jeder Bounce drückt den Score.",
       "stability": "Zwei Dinge: Die Punkte dieser Achse kommen aus der Ruhe des Anflugs (Streuung von Sinkrate und Querneigung). Das Stable Gate prüft ab 1000 ft sechs Punkte: Gleitpfad (im Schnitt unter 1 Dot), ruhige Fahrt, ruhige Querneigung, gleichmäßige Sinkrate, kein zu starkes Sinken über 10 Sekunden, Landekonfiguration beim Eintritt ins Gate. Nur teilweise stabil begrenzt diese Achse auf 80 und kostet 5 Punkte der Gesamtnote, instabil begrenzt sie auf 45 und kostet 15 Punkte. Details und Grenzen in der Karte „Anflug-Stabilität\".",
       "rollout": "Anteil der nutzbaren Bahnlänge (LDA), den deine Landung gebraucht hat — gemessen ab der Schwelle: erst die Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Gewertet wird, wie viel Bahn danach noch übrig ist: unter 60 % gibt es die volle Punktzahl, ab 90 % wird es knapp — bei nasser Bahn riskant. Klick „🛬 Wie wird das berechnet?“ für die volle Erklärung.",
       "fuel": "Treue zum SimBrief-OFP-Trip-Burn. Vergleicht den tatsächlichen Verbrauch (Takeoff-Fuel − Landing-Fuel) gegen den geplanten Trip-Burn. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend); Minderverbrauch wird NICHT bestraft. Bei >15 % unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
       "loadsheet": "Nur bei älteren Landungen: Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Zählt seit v1.7.12 nicht mehr zur Note.",
-      "score_section": "Acht Teile à 0–100 Punkte: Sinkrate, G-Kraft, Hopser, Anflug-Stabilität, Bahndisziplin, Ausrichtung, Aufsetzpunkt, Abfangen. Die Gesamtnote ist ihr gewichteter Durchschnitt, aber nie besser, als der schwächste Teil erlaubt: ein mittlerer Teil höchstens 80, ein schlechter höchstens 60, ein gefährliches Ereignis (vor der Schwelle, Overrun, neben der Bahn, ab zwei Hopsern, ab 1,75 g) höchstens 40, ab 2,6 g höchstens 14. Dazu der Anflug: PARTIAL kostet 5 Punkte, UNSTABLE 15 Punkte, ohne Anflugmessung höchstens 97. Sprit und Loadsheet stehen zur Einordnung da und zählen nicht.",
+      "score_section": "Acht Teile à 0–100 Punkte: Sinkrate, G-Kraft, Hopser, Anflug-Stabilität, Bahndisziplin, Ausrichtung, Aufsetzpunkt, Abfangen. Die Gesamtnote ist ihr gewichteter Durchschnitt minus Abzüge. Aus der Landung zählt nur der größte: ein mittlerer Teil −5, ein schlechter −10, harte Landung ab 1,75 g −25, ein gefährliches Ereignis (vor der Schwelle, Overrun, neben der Bahn, ab zwei Hopsern) −30, ab 2,6 g −50. Dazu der Anflug: PARTIAL −5, UNSTABLE −15, ohne Anflugmessung −3. Sprit und Loadsheet stehen zur Einordnung da und zählen nicht.",
       "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das Symbol markiert den Aufsetzpunkt, das Band die Ausrollstrecke. Werte unten zur Einordnung: landbare Länge (die bauliche Länge steht in der Kopfzeile), Abstand zur Mittellinie, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent. Bewertet werden Bahndisziplin, Ausrichtung und Aufsetzpunkt (siehe Teilnoten oben).",
       "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = am Startpunkt; LDG Fuel = bei Touchdown; TOW, LDW, ZFW = Gewichte. Plan-Werte stammen aus dem SimBrief-OFP. Die Abweichung vom Plan steht zur Einordnung dabei — sie zählt nicht zur Note.",
       "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse, die Kachel „Seitenwind“ daneben mit dem Wind bezogen auf die Flugzeugnase. Beide Zahlen stimmen — sie beziehen sich nur auf verschiedene Richtungen, und zwischen diesen liegt genau der Vorhaltewinkel.",
-      "runway_discipline": "Bahndisziplin: wie weit dein äußeres Rad beim Ausrollen vom Bahnrand entfernt blieb. Mittig (bis 75 % der halben Bahnbreite) volle Punkte, weiter außen 85, am Rand 55, mit Rädern daneben 20, über das Bahnende hinaus (Overrun) 0. Neben der Bahn oder Overrun begrenzt die Gesamtnote auf höchstens 40.",
-      "touchdown_point": "Wo du aufgesetzt hast, gemessen ab der Schwelle. Bis 150 m um die Zielmarkierung (Aim-Point) volle Punkte, sonst in der Aufsetzzone 85, bis zur Hälfte der landbaren Bahn 55, dahinter 25. Vor der Schwelle aufgesetzt: 0 Punkte, und die Gesamtnote ist höchstens 40.",
+      "runway_discipline": "Bahndisziplin: wie weit dein äußeres Rad beim Ausrollen vom Bahnrand entfernt blieb. Mittig (bis 75 % der halben Bahnbreite) volle Punkte, weiter außen 85, am Rand 55, mit Rädern daneben 20, über das Bahnende hinaus (Overrun) 0. Neben der Bahn oder Overrun kostet 30 Punkte der Gesamtnote.",
+      "touchdown_point": "Wo du aufgesetzt hast, gemessen ab der Schwelle. Bis 150 m um die Zielmarkierung (Aim-Point) volle Punkte, sonst in der Aufsetzzone 85, bis zur Hälfte der landbaren Bahn 55, dahinter 25. Vor der Schwelle aufgesetzt: 0 Punkte und 30 Punkte Abzug von der Gesamtnote.",
       "abfangen": "Wie lange es vom Durchgang durch 50 ft bis zum Aufsetzen gedauert hat. Linienflugzeuge: bis 10 s volle Punkte, bis 12 s 80, bis 15 s 50, darüber 25. Kleinflugzeuge, Bizjets und andere nicht als Linienflugzeug geführte Muster: 16 / 20 / 24 s; ist kein Muster bekannt, gelten die Linienwerte. Steigt das Flugzeug dabei mit mehr als 50 fpm wieder (Ballooning), höchstens 50. Ein Teil unter 75 Punkten begrenzt die Gesamtnote auf 80, unter 45 auf 60."
     },
     "rat": {
@@ -1049,8 +1049,6 @@
       "anflug_unstable": "Stabilität auf höchstens 45 Punkte begrenzt: Anflug instabil (STABLE-GATE verfehlt).",
       "anflug_partial_gesamt": "Gedeckelt auf höchstens 80 Punkte: Anflug nur teilweise stabil (Stable Gate nicht erreicht). Ein guter Touchdown gleicht das nicht aus.",
       "anflug_unstable_gesamt": "Gedeckelt auf höchstens 45 Punkte: Anflug instabil (Stable Gate verfehlt). Ein guter Touchdown gleicht das nicht aus.",
-      "anflug_partial_abzug": "5 Punkte Abzug: Anflug nur teilweise stabil (Stable Gate nicht erreicht).",
-      "anflug_unstable_abzug": "15 Punkte Abzug: Anflug instabil (Stable Gate verfehlt). Die Landung selbst zählt weiter mit.",
       "anflug_nicht_gemessen": "Gedeckelt auf höchstens 97 Punkte: Anflug im Gate nicht gemessen — ohne Messung keine Bestnote.",
       "harte_landung": "Gedeckelt auf höchstens 40 Punkte: harte Landung ab 1,75 g. Gute Werte bei Ausrollen oder Aufsetzpunkt gleichen das nicht aus.",
       "ueberlast": "Gedeckelt auf höchstens 14 Punkte: Überlast ab 2,6 g.",
@@ -1069,8 +1067,6 @@
       "anflug_unstable": "Anflug instabil",
       "anflug_partial_gesamt": "Gedeckelt: max. 80 (Anflug teilweise stabil)",
       "anflug_unstable_gesamt": "Gedeckelt: max. 45 (Anflug instabil)",
-      "anflug_partial_abzug": "−5 (Anflug teilweise stabil)",
-      "anflug_unstable_abzug": "−15 (Anflug instabil)",
       "anflug_nicht_gemessen": "Gedeckelt: max. 97 (Anflug nicht gemessen)",
       "vor_der_schwelle": "Gedeckelt: max. 40 (vor der Schwelle)",
       "overrun": "Gedeckelt: max. 40 (Overrun)",
@@ -1078,6 +1074,32 @@
       "mehrfach_hopser": "Gedeckelt: max. 40 (mehrere Hopser)",
       "teil_mittel": "Gedeckelt: max. 80 ({{teil}})",
       "teil_schlecht": "Gedeckelt: max. 60 ({{teil}})"
+    },
+    "abzug": {
+      "ueberlast": "50 Punkte Abzug: Überlast ab 2,6 g.",
+      "harte_landung": "25 Punkte Abzug: harte Landung ab 1,75 g.",
+      "vor_der_schwelle": "30 Punkte Abzug: vor der Schwelle aufgesetzt.",
+      "overrun": "30 Punkte Abzug: über das Bahnende hinaus gerollt (Overrun).",
+      "neben_der_bahn": "30 Punkte Abzug: Räder neben der Bahn.",
+      "mehrfach_hopser": "30 Punkte Abzug: zwei oder mehr Hopser. Bei einem hohen Hopser sieht das Airbus-Verfahren ein Durchstarten vor.",
+      "teil_schlecht": "10 Punkte Abzug: {{teil}} war schlecht.",
+      "teil_mittel": "5 Punkte Abzug: {{teil}} war nur mittel.",
+      "anflug_partial": "5 Punkte Abzug: Anflug nur teilweise stabil (Stable Gate nicht erreicht).",
+      "anflug_unstable": "15 Punkte Abzug: Anflug instabil (Stable Gate verfehlt).",
+      "anflug_nicht_gemessen": "3 Punkte Abzug: Anflug im Gate nicht gemessen — ohne Messung keine Bestnote."
+    },
+    "abzug_kurz": {
+      "ueberlast": "−50 (ab 2,6 g)",
+      "harte_landung": "−25 (ab 1,75 g)",
+      "vor_der_schwelle": "−30 (vor der Schwelle)",
+      "overrun": "−30 (Overrun)",
+      "neben_der_bahn": "−30 (neben der Bahn)",
+      "mehrfach_hopser": "−30 (mehrere Hopser)",
+      "teil_schlecht": "−10 ({{teil}})",
+      "teil_mittel": "−5 ({{teil}})",
+      "anflug_partial": "−5 (Anflug teilweise stabil)",
+      "anflug_unstable": "−15 (Anflug instabil)",
+      "anflug_nicht_gemessen": "−3 (Anflug nicht gemessen)"
     },
     "gesamt": {
       "smooth": "hervorragend",
@@ -1249,10 +1271,10 @@
       "letzte_2s": "Sinkrate in den letzten 2 s vor dem Aufsetzen (frühere Messung, keine Note)"
     },
     "erklaer": {
-      "kopf_note": "Die Buchstaben-Note fasst die Gesamtnote zusammen: A+ ab 95, A ab 88, B+ ab 82, B ab 75, C ab 65, D ab 50, darunter F. Die Gesamtnote ist der gewichtete Durchschnitt der Teilnoten (Sinkrate und G-Kraft je 3, Hopser, Anflug-Stabilität und Abfangen je 2, die übrigen je 1) — aber nie besser, als der schwächste Teil erlaubt: ein mittlerer Teil (45–74 Punkte) begrenzt auf 80, ein schlechter (unter 45) auf 60, ein gefährliches Ereignis (vor der Schwelle, über das Bahnende, neben der Bahn, zwei oder mehr Hopser) auf 40. Dazu der Anflug: PARTIAL kostet 5 Punkte, UNSTABLE 15 Punkte, ohne Anflugmessung höchstens 97; und die G-Kraft: ab 1,75 G auf 40, ab 2,6 G auf 14.",
+      "kopf_note": "Die Buchstaben-Note fasst die Gesamtnote zusammen: A+ ab 95, A ab 88, B+ ab 82, B ab 75, C ab 65, D ab 50, darunter F. Die Gesamtnote ist der gewichtete Durchschnitt der Teilnoten (Sinkrate und G-Kraft je 3, Hopser, Anflug-Stabilität und Abfangen je 2, die übrigen je 1) — minus Abzüge. Aus der Landung zählt nur der größte: ein mittlerer Teil (45–74 Punkte) −5, ein schlechter (unter 45) −10, ab 1,75 G −25, ein gefährliches Ereignis (vor der Schwelle, über das Bahnende, neben der Bahn, zwei oder mehr Hopser) −30, ab 2,6 G −50. Dazu der Anflug: PARTIAL −5, UNSTABLE −15, ohne Anflugmessung −3.",
       "td": {
         "sinkrate": "Sinkrate im Moment des ersten Bodenkontakts, aus der Höhenkurve (ist sie nicht auswertbar, der Messwert des Simulators). Zählt zur Note (Teil Sinkrate, Gewicht 3): 90–249 fpm 100 Punkte, unter 90 fpm 85 (Hinweis auf langes Abfangen), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, ab 1000 fpm 0.",
-        "g": "Bewertete G-Kraft beim Aufsetzen: leicht geglätteter Spitzenwert (wie ein Flugdatenschreiber), ohne einzelne 50-Hz-Ausreißer. Zählt zur Note (Teil G-Kraft, Gewicht 3): unter 1,20 G 100 Punkte, unter 1,40 G 80, unter 1,70 G 45, unter 2,10 G 20, ab 2,10 G 0. Ab 1,75 G ist die Gesamtnote höchstens 40, ab 2,6 G höchstens 14.",
+        "g": "Bewertete G-Kraft beim Aufsetzen: leicht geglätteter Spitzenwert (wie ein Flugdatenschreiber), ohne einzelne 50-Hz-Ausreißer. Zählt zur Note (Teil G-Kraft, Gewicht 3): unter 1,20 G 100 Punkte, unter 1,40 G 80, unter 1,70 G 45, unter 2,10 G 20, ab 2,10 G 0. Ab 1,75 G kostet das 25 Punkte der Gesamtnote, ab 2,6 G 50.",
         "g_xplane": "X-Plane: Die Grenzen gelten für den auf die MSFS-Messkette umgerechneten Wert — nur der Anteil über 1 G zählt, mit dem Faktor 0,43 (aus 1,90 G werden 1,39 G).",
         "g_frame": "G-Kraft genau im Bild des Bodenkontakts, ungeglättet. Nur zur Einordnung — bewertet wird die G-Kraft darüber.",
         "pitch": "Nicklage beim Aufsetzen, + = Nase oben. Bei Verkehrsflugzeugen meist etwa +2 bis +6°; deutlich mehr erhöht die Gefahr, mit dem Heck aufzusetzen. Zählt nicht zur Note.",
@@ -1260,7 +1282,7 @@
         "ias": "Angezeigte Fahrt beim Aufsetzen. Wie weit sie von der Landegeschwindigkeit (Vref) abweicht, steht bei der Aufsetz-Qualität. Zählt nicht zur Note.",
         "gs": "Geschwindigkeit über Grund beim Aufsetzen. Bei Gegenwind kleiner als die angezeigte Fahrt, bei Rückenwind größer — sie bestimmt Ausrollstrecke und Bremsbedarf. Zählt nicht zur Note.",
         "sideslip": "Winkel zwischen Flugrichtung und Rumpfachse beim Aufsetzen (Vorhaltewinkel bei Seitenwind). Gut ist nahe 0°: vor dem Aufsetzen ausgerichtet. Zählt nicht direkt zur Note; die Teilnote Ausrichtung bewertet Lage und Kurs zur Bahn.",
-        "hopser": "Wie oft das Flugzeug nach dem ersten Bodenkontakt wieder abgehoben hat. Zählt zur Note (Teil Hopser, Gewicht 2): 0 = 100 Punkte, 1 = 70, 2 = 40, 3 und mehr = 15. Ab zwei Hopsern ist die Gesamtnote höchstens 40.",
+        "hopser": "Wie oft das Flugzeug nach dem ersten Bodenkontakt wieder abgehoben hat. Zählt zur Note (Teil Hopser, Gewicht 2): 0 = 100 Punkte, 1 = 70, 2 = 40, 3 und mehr = 15. Ab zwei Hopsern kostet das 30 Punkte der Gesamtnote.",
         "hdg_mag": "Kurs beim Aufsetzen, missweisend (magnetisch) — die Bezugsgröße der Bahnbezeichnung. Zählt nicht zur Note.",
         "hdg_true": "Kurs beim Aufsetzen, rechtweisend (geografisch Nord). Mit ihm vergleicht die Teilnote Ausrichtung den Kurs der Bahn.",
         "wind": "Wind beim Aufsetzen aus dem Simulator, zerlegt in Gegen- bzw. Rückenwind und Seitenwind zur Bahn. Zählt nicht zur Note; die Teilnote Ausrichtung berücksichtigt den Seitenwind."
@@ -1281,7 +1303,7 @@
         "ruck": "Wie ruckartig sich die Sinkrate von Messpunkt zu Messpunkt änderte. Gut unter 100 fpm, schlecht ab 200 fpm. Prüfpunkt des Stable Gate.",
         "sinken": "Ob die Sinkrate im Stable Gate mindestens 10 s am Stück über der Grenze lag (bei 3° Gleitwinkel −1000 fpm, bei steileren Anflügen entsprechend mehr). Prüfpunkt des Stable Gate.",
         "konfiguration": "Ob das Flugzeug beim Eintritt ins Stable Gate in Landekonfiguration war (erster Messpunkt bis 1000 ft — beginnt die Aufzeichnung tiefer, dort): Fahrwerk unten, Landeklappen gesetzt. Prüfpunkt des Stable Gate.",
-        "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, 15 Punkte Abzug. Sonst PARTIAL, 5 Punkte Abzug. Ohne Messung höchstens 97. Spät stabilisiert: Sind Fahrt oder Konfiguration bei 1000 ft schlecht, ab 500 ft aber Landeklappen gesetzt und die Fahrt ruhig, zählen beide nur als „mittel“.",
+        "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, 15 Punkte Abzug. Sonst PARTIAL, 5 Punkte Abzug. Ohne Messung 3 Punkte Abzug. Spät stabilisiert: Sind Fahrt oder Konfiguration bei 1000 ft schlecht, ab 500 ft aber Landeklappen gesetzt und die Fahrt ruhig, zählen beide nur als „mittel“.",
         "urteil_alt": "Anflug-Urteil für Flüge vor Score-Version 19, aus den sieben Kacheln: alle gut = STABLE, zwei schlecht oder drei nicht gut = UNSTABLE, sonst PARTIAL. Ab Score-Version 18 begrenzt PARTIAL die Gesamtnote auf 80 und UNSTABLE auf 45, in Version 17 nur die Teilnote Anflug-Stabilität, davor begrenzte es nichts."
       },
       "tile": {

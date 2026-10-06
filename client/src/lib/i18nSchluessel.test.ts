@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { DECKEL_MIT_TEXT, deckelText } from "./landungsUrteil";
+import { ABZUG_MIT_TEXT, DECKEL_MIT_TEXT, deckelText } from "./landungsUrteil";
 
 /**
  * Jeder Schlüssel, den die Bewertung erzeugt, braucht in ALLEN drei
@@ -72,6 +72,15 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
       (m) => m[1]!,
     ),
   ];
+  // Score-Version 21: Abzug statt Deckel — Literale vor einer ABZUG_-Zahl,
+  // die Gefahr-Kennungen und „Anflug nicht gemessen".
+  const abzug = [
+    ...[...quelle.matchAll(/Some\(\(\s*"([a-z0-9_]+)",\s*ABZUG_/g)].map((m) => m[1]!),
+    ...[...quelle.matchAll(/pub const GEFAHR_[A-Z_]+: &str = "([a-z0-9_]+)"/g)].map((m) => m[1]!),
+    ...[...quelle.matchAll(/pub const (ANFLUG_NICHT_GEMESSEN): &str = "([a-z0-9_]+)"/g)].map(
+      (m) => m[2]!,
+    ),
+  ];
   // Score-Version 19: „schwächster Teil begrenzt" — `teil_mittel_<achse>`.
   const teilDeckel = [...quelle.matchAll(/=> "(teil_(?:mittel|schlecht)[a-z_]*)"/g)].map(
     (m) => m[1]!,
@@ -81,17 +90,30 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
     expect(skipGruende).toContain("no_planned_burn");
     expect(warnungen).toContain("planned_burn_may_be_off");
     expect(deckel).toEqual(
-      expect.arrayContaining([
-        "harte_landung",
-        "ueberlast",
-        "anflug_partial_gesamt",
-        "vor_der_schwelle",
-        "mehrfach_hopser",
-      ]),
+      // Seit Score-Version 21 vergibt Rust keine Deckel mehr; die alten
+      // Kennungen bleiben fuer Altbestand (DECKEL_MIT_TEXT).
+      expect.arrayContaining(["anflug_partial_gesamt", "vor_der_schwelle", "mehrfach_hopser"]),
     );
     expect(teilDeckel).toEqual(
       expect.arrayContaining(["teil_mittel_touchdown_point", "teil_schlecht_rollout", "teil_mittel"]),
     );
+  });
+
+  it("kennt die Abzugs-Gründe", () => {
+    expect(abzug).toEqual(
+      expect.arrayContaining([
+        "ueberlast",
+        "harte_landung",
+        "anflug_partial",
+        "anflug_unstable",
+        "anflug_nicht_gemessen",
+        "vor_der_schwelle",
+        "mehrfach_hopser",
+      ]),
+    );
+    // Teil-Gründe (`teil_mittel_<achse>`) setzt deckelText zusammen.
+    const ohneText = [...new Set(abzug)].filter((k) => !ABZUG_MIT_TEXT.has(k) && !k.startsWith("teil_"));
+    expect(ohneText, "Grund fehlt in ABZUG_MIT_TEXT (lib/landungsUrteil.ts)").toEqual([]);
   });
 
   it("jeder Deckel-Grund erscheint im Landungsbericht", () => {
@@ -120,6 +142,28 @@ describe("Beschriftungen für erzeugte Bewertungs-Schlüssel", () => {
         (k) => !hatText(daten, "deckel", k),
       );
       expect(fehlend, `ohne Eintrag zeigt der Bericht landing.deckel.<name>`).toEqual([]);
+    });
+
+    it(`${code}: jeder Abzug hat einen Text, lang und kurz`, () => {
+      for (const gruppe of ["abzug", "abzug_kurz"]) {
+        const fehlend = [...ABZUG_MIT_TEXT, "teil_mittel", "teil_schlecht"].filter(
+          (k) => !hatText(daten, gruppe, k),
+        );
+        expect(fehlend, `landing.${gruppe}.<name>`).toEqual([]);
+      }
+    });
+
+    it(`${code}: Teil-Abzüge nennen den Teil, mehrere Abzüge stehen zusammen`, () => {
+      const t = (k: string, o?: Record<string, unknown>) => {
+        const [gruppe, name] = k.split(".").slice(1);
+        const w = (daten as any)?.landing?.[gruppe!]?.[name!];
+        return typeof w === "string" ? w.replace("{{teil}}", String(o?.teil ?? "")) : `FEHLT:${k}`;
+      };
+      const fehlend = [...new Set(teilDeckel)]
+        .map((k) => [k, deckelText(t, `${k}_abzug+anflug_unstable_abzug`)] as const)
+        .filter(([, text]) => text == null || text.includes("FEHLT:"))
+        .map(([k]) => k);
+      expect(fehlend).toEqual([]);
     });
 
     it(`${code}: jeder Teil-Deckel nennt einen Teil mit Namen`, () => {

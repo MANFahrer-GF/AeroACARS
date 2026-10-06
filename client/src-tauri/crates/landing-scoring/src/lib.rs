@@ -708,11 +708,9 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
 /// (Gewicht 1) und "flare" (Gewicht 1) — siehe Spec §5.5 Tabelle.
 pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
     let mittel = gewichtetes_mittel(subs)?;
-    let mittel = mittel.saturating_sub(anflug_abzug(subs).map_or(0, |(_, p)| p));
-    Some(match master_deckel(subs) {
-        Some((_, obergrenze)) => mittel.min(obergrenze),
-        None => mittel,
-    })
+    let abzug =
+        landungs_abzug(subs).map_or(0, |(_, p)| p) + anflug_abzug(subs).map_or(0, |(_, p)| p);
+    Some(mittel.saturating_sub(abzug))
 }
 
 /// Gewichteter Mittelwert aller bewerteten Teile, OHNE Deckel. `None` ohne
@@ -790,99 +788,89 @@ fn gewichtetes_mittel(subs: &[SubScoreEntry]) -> Option<u8> {
     }
 }
 
-/// Wie [`master_deckel`], aber nur wenn der Deckel die Gesamtnote
-/// tatsaechlich SENKT. Liegt der Mittelwert schon darunter, aendert der
-/// Deckel nichts — dann darf auch keine Anzeige „gedeckelt" behaupten
-/// (Codex-QS 29.09.2026).
-pub fn master_deckel_wirksam(subs: &[SubScoreEntry]) -> Option<&'static str> {
-    // Auch PARTIAL/UNSTABLE nur, wenn der Deckel die Note wirklich senkt
-    // (Cloud-QS 05.10.2026): „Gedeckelt auf hoechstens 80 … ein guter
-    // Touchdown gleicht das nicht aus" unter einer 62 waere irrefuehrend.
-    // Den Anflug nennt dann der Hinweis an der Stabilitaetsachse.
-    //
-    // Score-Version 21: Der Anflug-Abzug zaehlt mit. Gemeldet wird, was die
-    // Note am Ende bestimmt hat — ein Deckel, der darunter liegt, sonst der
-    // Abzug.
-    let abzug = anflug_abzug(subs);
-    let mittel = gewichtetes_mittel(subs)?.saturating_sub(abzug.map_or(0, |(_, p)| p));
-    match master_deckel(subs) {
-        Some((grund, obergrenze)) if mittel > obergrenze => Some(grund),
-        _ => abzug.map(|(grund, _)| grund),
-    }
+/// Die Abzuege, die die Gesamtnote bestimmt haben, als Kennungen mit
+/// Endung `_abzug`, verbunden mit `+` (Landung zuerst, dann Anflug) — z. B.
+/// `vor_der_schwelle_abzug+anflug_unstable_abzug`. `None` ohne Abzug oder
+/// ohne Gesamtnote. Feld `landing_score_deckel` im Datensatz.
+///
+/// Name aus der Zeit der Deckel (Score-Version 18–20) — alte Datensaetze
+/// tragen dort noch Deckel-Kennungen ohne `_abzug`.
+pub fn master_deckel_wirksam(subs: &[SubScoreEntry]) -> Option<String> {
+    gewichtetes_mittel(subs)?;
+    let teile: Vec<String> = [landungs_abzug(subs), anflug_abzug(subs)]
+        .into_iter()
+        .flatten()
+        .map(|(grund, _)| format!("{grund}_abzug"))
+        .collect();
+    (!teile.is_empty()).then(|| teile.join("+"))
 }
 
-/// Lernpaket AP2 (29.09.2026): ab dieser G-Last ist die Gesamtnote
-/// hoechstens [`DECKEL_HART_PUNKTE`] — eine harte Landung laesst sich
-/// nicht mit sauberem Ausrollen und gutem Aufsetzpunkt ausgleichen.
-/// Uebernommen aus vmsACARS 3 (`LandingScorer`, 1,75 g → 40, 2,6 g → 15).
+/// Ab dieser G-Last gilt die Landung als hart ([`ABZUG_HART_PUNKTE`]).
+/// Schwelle uebernommen aus vmsACARS 3 (`LandingScorer`, 1,75 g / 2,6 g).
 pub const DECKEL_HART_G: f32 = 1.75;
-pub const DECKEL_HART_PUNKTE: u8 = 40;
-/// Ab dieser G-Last Ueberlast: Gesamtnote hoechstens
-/// [`DECKEL_UEBERLAST_PUNKTE`].
+/// Ab dieser G-Last Ueberlast ([`ABZUG_UEBERLAST_PUNKTE`]).
 pub const DECKEL_UEBERLAST_G: f32 = 2.6;
-/// 14 statt der 15 von vmsACARS: Die Klassenleiter (`aggregate_score_label`)
-/// nennt erst Werte UNTER 15 „severe". Mit 15 hiesse ein Ueberlast-Deckel
-/// „hard" — waehrend die G-Kette dieselbe Landung schon ab 2,10 g als
-/// Severe fuehrt (Codex-QS 29.09.2026).
-pub const DECKEL_UEBERLAST_PUNKTE: u8 = 14;
 
-/// Greift ein Deckel auf die Gesamtnote? Liefert Kennung und Obergrenze.
+/// Score-Version 21 (06.10.2026, Thomas: „die Deckel sind zu hart, eher
+/// Abzug von den Punkten"): Statt die Gesamtnote auf eine feste Zahl zu
+/// setzen, zieht jeder Grund Punkte vom gewichteten Mittel ab. Der feste
+/// Deckel machte jede Landung mit demselben Fehler gleich (Korpus 60 Tage:
+/// 14 gefaehrliche Ereignisse alle exakt 40, 58 gute Landungen nach
+/// instabilem Anflug alle exakt 45); mit dem Abzug zaehlt der Rest der
+/// Landung weiter.
 ///
-/// Massgeblich ist der Messwert der G-Teilnote — G auf der Referenzkette,
-/// also dieselbe Zahl, aus der `g_force` bewertet wird (X-Plane ist dort
-/// schon auf MSFS umgerechnet). Ohne bewertete G-Teilnote kein Deckel:
-/// Ein fehlender Messwert darf nie eine Strafe ausloesen.
-pub fn master_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
-    let g_deckel = subs
-        .iter()
-        .find(|s| s.key == "g_force" && !s.skipped)
-        .and_then(|s| s.messwert)
-        .filter(|g| g.is_finite())
-        .and_then(|g| {
-            if g >= DECKEL_UEBERLAST_G {
-                Some(("ueberlast", DECKEL_UEBERLAST_PUNKTE))
-            } else if g >= DECKEL_HART_G {
-                Some(("harte_landung", DECKEL_HART_PUNKTE))
-            } else {
-                None
-            }
-        });
-    // Der niedrigste Deckel gewinnt. Bei Gleichstand die Reihenfolge hier:
-    // G-Last, gefaehrliches Ereignis, Anflug, schwaechster Teil.
-    [
-        g_deckel,
-        gefahr_deckel(subs),
-        anflug_deckel(subs),
-        teil_deckel(subs),
-    ]
-    .into_iter()
-    .flatten()
-    .reduce(|best, d| if d.1 < best.1 { d } else { best })
-}
-
-/// Score-Version 19 (05.10.2026, Entscheidung Thomas nach der Vorlage
-/// „Punktesystem der Landebewertung"): Die Gesamtnote ist der Durchschnitt
-/// aller Teile, aber nie besser, als der schwaechste Teil erlaubt. Anlass:
-/// QAF419 setzte vor der Schwelle auf und bekam 92, AIB424 rollte mit den
-/// Raedern neben der Bahn und bekam 91 — ein Teil mit Gewicht 1 von 13 ging
-/// im Mittel unter.
-///
-/// Gefaehrliche Ereignisse: Gesamtnote hoechstens 40 (wie die harte Landung).
-pub const DECKEL_GEFAHR_PUNKTE: u8 = 40;
-/// Ein Teil „schlecht" (unter 45 Punkten, Band bad): hoechstens 60.
-pub const DECKEL_TEIL_SCHLECHT_PUNKTE: u8 = 60;
-/// Ein Teil „mittel" (45–74 Punkte, Band ok): hoechstens 80.
-pub const DECKEL_TEIL_MITTEL_PUNKTE: u8 = 80;
+/// Von den Gruenden der LANDUNG zaehlt nur der groesste — eine harte
+/// Landung vor der Schwelle ist ein Ereignis, nicht drei (gestapelt kam
+/// LNK861 auf 0). Der Anflug-Abzug kommt dazu.
+pub const ABZUG_UEBERLAST_PUNKTE: u8 = 50;
+pub const ABZUG_HART_PUNKTE: u8 = 25;
+/// Vor der Schwelle, Overrun, Raeder neben der Bahn, zwei oder mehr Hopser.
+pub const ABZUG_GEFAHR_PUNKTE: u8 = 30;
+/// Schwaechster Teil „schlecht" (unter 45 Punkten).
+pub const ABZUG_TEIL_SCHLECHT_PUNKTE: u8 = 10;
+/// Schwaechster Teil „mittel" (45–74 Punkte).
+pub const ABZUG_TEIL_MITTEL_PUNKTE: u8 = 5;
 
 pub const GEFAHR_VOR_DER_SCHWELLE: &str = "vor_der_schwelle";
 pub const GEFAHR_OVERRUN: &str = "overrun";
 pub const GEFAHR_NEBEN_DER_BAHN: &str = "neben_der_bahn";
 pub const GEFAHR_MEHRFACH_HOPSER: &str = "mehrfach_hopser";
 
+/// Der groesste Abzug aus der Landung selbst: G-Last, gefaehrliches
+/// Ereignis, schwaechster Teil. Bei Gleichstand diese Reihenfolge.
+///
+/// Massgeblich fuer die G-Last ist der Messwert der G-Teilnote (X-Plane dort
+/// schon auf MSFS umgerechnet). Ohne bewertete G-Teilnote kein G-Abzug: Ein
+/// fehlender Messwert darf nie eine Strafe ausloesen.
+pub fn landungs_abzug(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
+    let g_abzug = subs
+        .iter()
+        .find(|s| s.key == "g_force" && !s.skipped)
+        .and_then(|s| s.messwert)
+        .filter(|g| g.is_finite())
+        .and_then(|g| {
+            if g >= DECKEL_UEBERLAST_G {
+                Some(("ueberlast", ABZUG_UEBERLAST_PUNKTE))
+            } else if g >= DECKEL_HART_G {
+                Some(("harte_landung", ABZUG_HART_PUNKTE))
+            } else {
+                None
+            }
+        });
+    [
+        g_abzug,
+        gefahr_grund(subs).map(|g| (g, ABZUG_GEFAHR_PUNKTE)),
+        teil_abzug(subs),
+    ]
+    .into_iter()
+    .flatten()
+    .reduce(|best, d| if d.1 > best.1 { d } else { best })
+}
+
 /// Vor der Schwelle aufgesetzt, Overrun, Raeder neben der Bahn, zwei oder
 /// mehr Hopser. Erkannt an der Begruendung der Teilnote bzw. (Achsenablage)
 /// am Messwert, nie an der Punktzahl allein.
-fn gefahr_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
+fn gefahr_grund(subs: &[SubScoreEntry]) -> Option<&'static str> {
     let rat = |s: &SubScoreEntry| {
         s.rationale_key
             .as_deref()
@@ -899,17 +887,24 @@ fn gefahr_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
             ("bounces", "two_bounces" | "many_bounces") => GEFAHR_MEHRFACH_HOPSER,
             _ => return None,
         };
-        Some((grund, DECKEL_GEFAHR_PUNKTE))
+        Some(grund)
     })
 }
 
-/// Der schwaechste Teil: unter 45 Punkten hoechstens 60, unter 75
-/// hoechstens 80. Die Kennung nennt den Teil (`teil_mittel_touchdown_point`),
-/// damit der Bericht sagen kann, WAS die Note begrenzt hat.
-fn teil_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
+/// Der schwaechste Teil: unter 45 Punkten [`ABZUG_TEIL_SCHLECHT_PUNKTE`],
+/// unter 75 [`ABZUG_TEIL_MITTEL_PUNKTE`] (die Stabilitaetsachse nur ohne
+/// Anflug-Abzug). Die Kennung nennt den Teil
+/// (`teil_mittel_touchdown_point`), damit der Bericht sagen kann, WAS
+/// Punkte gekostet hat.
+fn teil_abzug(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
+    // Traegt der Anflug schon einen Abzug, zaehlt die Stabilitaetsachse hier
+    // nicht mit — sonst kostete derselbe Anflug zweimal (RYR73: Achse 45 als
+    // schwaechster Teil −5 plus UNSTABLE −15).
+    let anflug_schon = anflug_abzug(subs).is_some();
     let schwaechster = subs
         .iter()
         .filter(|s| !s.skipped && s.score < 75)
+        .filter(|s| !(anflug_schon && s.key == "stability"))
         .min_by_key(|s| s.score)?;
     let schlecht = schwaechster.score < 45;
     let grund = match (schlecht, schwaechster.key.as_str()) {
@@ -935,39 +930,27 @@ fn teil_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
     Some((
         grund,
         if schlecht {
-            DECKEL_TEIL_SCHLECHT_PUNKTE
+            ABZUG_TEIL_SCHLECHT_PUNKTE
         } else {
-            DECKEL_TEIL_MITTEL_PUNKTE
+            ABZUG_TEIL_MITTEL_PUNKTE
         },
     ))
 }
 
 /// Marke der Stabilitaetsachse: Anflug im Gate nicht gemessen.
 pub const ANFLUG_NICHT_GEMESSEN: &str = "anflug_nicht_gemessen";
-/// Hoechstnote ohne Anflugmessung — „nicht stabil bestaetigt", aber auch
-/// nicht nachweislich schlecht.
-pub const DECKEL_ANFLUG_OFFEN_PUNKTE: u8 = 97;
-/// Deckel-Kennungen der Gesamtnote in Score-Version 18–20 (PARTIAL ≤ 80,
+/// Kennungen der Gesamtnoten-Deckel in Score-Version 18–20 (PARTIAL ≤ 80,
 /// UNSTABLE ≤ 45). Werden nicht mehr vergeben; alte Datensaetze tragen sie
 /// noch, ihr Text muss stimmen bleiben.
 pub const ANFLUG_PARTIAL_GESAMT: &str = "anflug_partial_gesamt";
 pub const ANFLUG_UNSTABLE_GESAMT: &str = "anflug_unstable_gesamt";
 
-/// Score-Version 21 (06.10.2026, Entscheidung Thomas): Abzug statt Deckel.
-/// Der feste Deckel machte jede Landung nach einem nicht stabilen Anflug
-/// gleich — im Korpus (746 Landungen, 60 Tage) bekamen 58 gute Landungen
-/// nach UNSTABLE alle exakt 45 (weniger als eine schlechte Landung nach
-/// stabilem Anflug, Median 73,5), 266 gute nach PARTIAL alle exakt 80. Mit
-/// dem Abzug bleibt die Landung sichtbar: gute Landung nach UNSTABLE im
-/// Median 72 (59–77), nach PARTIAL 83 (bis 92). Die Stabilitaetsachse
-/// bleibt zusaetzlich begrenzt (≤ 45 bzw. ≤ 80), und „schwaechster Teil"
-/// deckelt UNSTABLE weiter auf 80.
+/// Anflug nicht STABLE: PARTIAL −5, UNSTABLE −15; ohne Gate-Messung −3
+/// (ohne Messung keine Bestnote, aber auch nicht nachweislich schlecht).
+/// Die Stabilitaetsachse selbst bleibt zusaetzlich begrenzt (≤ 80 / ≤ 45).
 pub const ABZUG_ANFLUG_PARTIAL_PUNKTE: u8 = 5;
 pub const ABZUG_ANFLUG_UNSTABIL_PUNKTE: u8 = 15;
-/// Kennungen des Abzugs (Feld `landing_score_deckel`, wenn er die Note
-/// bestimmt).
-pub const ANFLUG_PARTIAL_ABZUG: &str = "anflug_partial_abzug";
-pub const ANFLUG_UNSTABLE_ABZUG: &str = "anflug_unstable_abzug";
+pub const ABZUG_ANFLUG_OFFEN_PUNKTE: u8 = 3;
 
 /// Marke der Stabilitaetsachse (bei uebersprungener Achse der Grund).
 fn anflug_marke(subs: &[SubScoreEntry]) -> Option<&str> {
@@ -979,20 +962,12 @@ fn anflug_marke(subs: &[SubScoreEntry]) -> Option<&str> {
     }
 }
 
-/// Abzug vom Mittel fuer einen nicht stabilen Anflug (Score-Version 21).
-fn anflug_abzug(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
+/// Abzug fuer den Anflug (Score-Version 21).
+pub fn anflug_abzug(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
     match anflug_marke(subs)? {
-        "anflug_partial" => Some((ANFLUG_PARTIAL_ABZUG, ABZUG_ANFLUG_PARTIAL_PUNKTE)),
-        "anflug_unstable" => Some((ANFLUG_UNSTABLE_ABZUG, ABZUG_ANFLUG_UNSTABIL_PUNKTE)),
-        _ => None,
-    }
-}
-
-fn anflug_deckel(subs: &[SubScoreEntry]) -> Option<(&'static str, u8)> {
-    // Seit Score-Version 21 deckelt nur noch die fehlende Messung; PARTIAL/
-    // UNSTABLE kosten einen Abzug (`anflug_abzug`).
-    match anflug_marke(subs)? {
-        "anflug_nicht_gemessen" => Some((ANFLUG_NICHT_GEMESSEN, DECKEL_ANFLUG_OFFEN_PUNKTE)),
+        "anflug_partial" => Some(("anflug_partial", ABZUG_ANFLUG_PARTIAL_PUNKTE)),
+        "anflug_unstable" => Some(("anflug_unstable", ABZUG_ANFLUG_UNSTABIL_PUNKTE)),
+        "anflug_nicht_gemessen" => Some((ANFLUG_NICHT_GEMESSEN, ABZUG_ANFLUG_OFFEN_PUNKTE)),
         _ => None,
     }
 }
@@ -1183,75 +1158,75 @@ mod tests {
     }
 
     #[test]
-    fn deckel_greift_ab_175_g() {
-        // 1,74 g ist keine harte Landung — seit Score-Version 19 begrenzt
-        // aber der schwache G-Teil (20 Punkte, „schlecht") auf 60.
+    fn abzug_ab_175_g() {
+        // 1,74 g ist keine harte Landung — der schwache G-Teil (20 Punkte,
+        // „schlecht") kostet aber 10.
         let unter = harte_landung_mit_guten_nebenachsen(1.74);
         assert_eq!(
-            master_deckel(&unter),
-            Some(("teil_schlecht_g_force", DECKEL_TEIL_SCHLECHT_PUNKTE)),
-            "1,74 g = kein G-Deckel"
+            landungs_abzug(&unter),
+            Some(("teil_schlecht_g_force", ABZUG_TEIL_SCHLECHT_PUNKTE)),
+            "1,74 g = kein G-Abzug"
         );
-        assert!(aggregate_master_score(&unter).unwrap() > DECKEL_HART_PUNKTE);
+        let mittel = gewichtetes_mittel(&unter).unwrap();
+        assert_eq!(aggregate_master_score(&unter), Some(mittel - 10));
 
         let hart = harte_landung_mit_guten_nebenachsen(DECKEL_HART_G);
         assert_eq!(
-            master_deckel(&hart),
-            Some(("harte_landung", DECKEL_HART_PUNKTE))
+            landungs_abzug(&hart),
+            Some(("harte_landung", ABZUG_HART_PUNKTE))
         );
-        assert_eq!(aggregate_master_score(&hart), Some(DECKEL_HART_PUNKTE));
+        let mittel = gewichtetes_mittel(&hart).unwrap();
+        assert_eq!(aggregate_master_score(&hart), Some(mittel - 25));
     }
 
     #[test]
-    fn deckel_ueberlast_ab_26_g() {
+    fn abzug_ueberlast_ab_26_g() {
         let subs = harte_landung_mit_guten_nebenachsen(DECKEL_UEBERLAST_G);
         assert_eq!(
-            master_deckel(&subs),
-            Some(("ueberlast", DECKEL_UEBERLAST_PUNKTE))
+            landungs_abzug(&subs),
+            Some(("ueberlast", ABZUG_UEBERLAST_PUNKTE))
         );
-        assert_eq!(aggregate_master_score(&subs), Some(DECKEL_UEBERLAST_PUNKTE));
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert_eq!(
+            aggregate_master_score(&subs),
+            Some(mittel.saturating_sub(50))
+        );
     }
 
     #[test]
-    fn deckel_hebt_nie_an_und_braucht_einen_messwert() {
-        // Ein Deckel ist eine Obergrenze, keine Untergrenze: liegt der
-        // Mittelwert schon darunter, bleibt er stehen.
-        let mut schlecht = harte_landung_mit_guten_nebenachsen(1.9);
-        for s in schlecht.iter_mut().skip(2) {
+    fn abzug_nie_unter_null_und_nur_mit_messwert() {
+        let mut schlecht = harte_landung_mit_guten_nebenachsen(2.0);
+        for s in schlecht.iter_mut() {
             s.score = 0;
         }
-        assert!(aggregate_master_score(&schlecht).unwrap() < DECKEL_HART_PUNKTE);
+        assert_eq!(aggregate_master_score(&schlecht), Some(0));
 
-        // Ohne Messwert (alte Payloads, formatiertes `value` allein)
-        // kein Deckel — ein fehlender Wert darf nie strafen.
-        // (Seit Score-Version 19 begrenzt dann der schwache G-Teil selbst.)
+        // Ohne Messwert (alte Payloads) kein G-Abzug — ein fehlender Wert
+        // darf nie strafen; es bleibt der schwache G-Teil.
         let mut ohne = harte_landung_mit_guten_nebenachsen(2.0);
         ohne[1].messwert = None;
         assert_eq!(
-            master_deckel(&ohne),
-            Some(("teil_schlecht_g_force", DECKEL_TEIL_SCHLECHT_PUNKTE))
+            landungs_abzug(&ohne),
+            Some(("teil_schlecht_g_force", ABZUG_TEIL_SCHLECHT_PUNKTE))
         );
 
-        // Uebersprungene G-Teilnote → kein Deckel.
+        // Uebersprungene G-Teilnote → kein Abzug.
         let mut skip = harte_landung_mit_guten_nebenachsen(2.0);
         skip[1] = SubScoreEntry::skipped("g_force", "l", "insufficient_samples");
-        assert_eq!(master_deckel(&skip), None);
+        assert_eq!(landungs_abzug(&skip), None);
     }
 
     #[test]
-    fn deckel_grund_nur_wenn_er_die_note_senkt() {
-        // Greift: guter Mittelwert, harte Landung → gesenkt, Grund gesetzt.
+    fn grund_nennt_den_abzug() {
         let hart = harte_landung_mit_guten_nebenachsen(1.9);
-        assert_eq!(master_deckel_wirksam(&hart), Some("harte_landung"));
-
-        // Mittelwert liegt schon unter 40 → Deckel aendert nichts, also
-        // auch kein Grund (sonst behauptet die Anzeige etwas Falsches).
-        let mut schlecht = harte_landung_mit_guten_nebenachsen(1.9);
-        for s in schlecht.iter_mut().skip(2) {
-            s.score = 0;
-        }
-        assert!(master_deckel(&schlecht).is_some());
-        assert_eq!(master_deckel_wirksam(&schlecht), None);
+        assert_eq!(
+            master_deckel_wirksam(&hart).as_deref(),
+            Some("harte_landung_abzug")
+        );
+        let mut sauber = harte_landung_mit_guten_nebenachsen(1.2);
+        sauber[0].score = 100;
+        sauber[1].score = 100;
+        assert_eq!(master_deckel_wirksam(&sauber), None);
     }
 
     fn alles_hundert_mit_stabilitaet(stab: SubScoreEntry) -> Vec<SubScoreEntry> {
@@ -1294,7 +1269,10 @@ mod tests {
         ohne[3].warning = None;
         assert_eq!(aggregate_master_score(&ohne), Some(96));
         assert_eq!(aggregate_master_score(&subs), Some(91));
-        assert_eq!(master_deckel_wirksam(&subs), Some(ANFLUG_PARTIAL_ABZUG));
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("anflug_partial_abzug")
+        );
     }
 
     /// Lag die Stabilitaetsachse schon unter dem Urteilsdeckel (hier 50 aus
@@ -1309,14 +1287,12 @@ mod tests {
         assert!(stab.score < 80, "Achse {}", stab.score);
         assert_eq!(stab.warning.as_deref(), Some("anflug_partial"));
         let subs = alles_hundert_mit_stabilitaet(stab);
-        assert_eq!(anflug_abzug(&subs), Some((ANFLUG_PARTIAL_ABZUG, 5)));
-        // Der Abzug geht vom Mittel ab; die schwache Achse (50) haelt die
-        // Note zusaetzlich beim Teil-Deckel 80.
-        let mittel = gewichtetes_mittel(&subs).unwrap() - ABZUG_ANFLUG_PARTIAL_PUNKTE;
-        assert_eq!(
-            aggregate_master_score(&subs),
-            Some(mittel.min(DECKEL_TEIL_MITTEL_PUNKTE))
-        );
+        assert_eq!(anflug_abzug(&subs), Some(("anflug_partial", 5)));
+        // Der Abzug geht vom Mittel ab; die schwache Achse (50) kostet nicht
+        // noch einmal als „schwaechster Teil".
+        assert_eq!(landungs_abzug(&subs), None);
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert_eq!(aggregate_master_score(&subs), Some(mittel - 5));
     }
 
     /// Score-Version 21: Der Abzug wirkt auch bei mittelmaessiger Landung
@@ -1337,8 +1313,11 @@ mod tests {
         let mittel = gewichtetes_mittel(&subs).unwrap();
         assert!(mittel < 80);
         assert_eq!(aggregate_master_score(&subs), Some(mittel - 5));
-        assert_eq!(master_deckel(&subs), None);
-        assert_eq!(master_deckel_wirksam(&subs), Some(ANFLUG_PARTIAL_ABZUG));
+        assert_eq!(landungs_abzug(&subs), None);
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("anflug_partial_abzug")
+        );
     }
 
     /// Cloud-QS 05.10.2026: Urteil vorhanden, Streuung fehlt (eigene
@@ -1359,7 +1338,7 @@ mod tests {
         let stab = subs.iter().find(|s| s.key == "stability").unwrap();
         assert!(stab.skipped);
         assert_eq!(stab.reason.as_deref(), Some("anflug_partial"));
-        assert_eq!(anflug_abzug(&subs), Some((ANFLUG_PARTIAL_ABZUG, 5)));
+        assert_eq!(anflug_abzug(&subs), Some(("anflug_partial", 5)));
         // Gegenprobe: ganz ohne Urteil bleibt es „nicht gemessen".
         let ohne = LandingScoringInput {
             anflug: Default::default(),
@@ -1372,18 +1351,18 @@ mod tests {
 
     /// Anflug nicht STABLE: Abzug (Score-Version 21), die Anzeige nennt den
     /// Grund. Alles andere perfekt: PARTIAL 96 − 5 = 91, UNSTABLE 90 − 15
-    /// = 75 (Achse 45; „schwaechster Teil" deckelt erst bei 80).
+    /// = 75 (Achse 45, zaehlt nicht nochmal als schwaechster Teil).
     #[test]
     fn nicht_stabiler_anflug_gibt_keine_hundert() {
         use crate::anflug_urteil::AnflugUrteil;
         for (u, note, grund) in [
-            (AnflugUrteil::Partial, 91, ANFLUG_PARTIAL_ABZUG),
-            (AnflugUrteil::Unstable, 75, ANFLUG_UNSTABLE_ABZUG),
+            (AnflugUrteil::Partial, 91, "anflug_partial_abzug"),
+            (AnflugUrteil::Unstable, 75, "anflug_unstable_abzug"),
         ] {
             let stab = sub_stability::sub_stability_legacy(Some(50.0), Some(0.5), Some(u)).unwrap();
             let subs = alles_hundert_mit_stabilitaet(stab);
             assert_eq!(aggregate_master_score(&subs), Some(note), "{grund}");
-            assert_eq!(master_deckel_wirksam(&subs), Some(grund));
+            assert_eq!(master_deckel_wirksam(&subs).as_deref(), Some(grund));
         }
         // STABLE: voll, kein Hinweis.
         let stab = sub_stability::sub_stability_legacy(
@@ -1421,16 +1400,18 @@ mod tests {
             mk("alignment", 85),
             mk("touchdown_point", 85),
         ];
-        // Mittel 80 − 15 = 65; der Teil-Deckel (Stabilitaet 45 = mittel → 80)
-        // liegt darueber, also bestimmt der Abzug.
+        // Mittel 80 − 15 = 65; die Achse (45) kostet nicht noch einmal.
         assert_eq!(gewichtetes_mittel(&subs), Some(80));
         assert_eq!(aggregate_master_score(&subs), Some(65));
-        assert_eq!(master_deckel_wirksam(&subs), Some(ANFLUG_UNSTABLE_ABZUG));
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("anflug_unstable_abzug")
+        );
     }
 
-    /// Ein harter Deckel unter dem Abzug bleibt der gemeldete Grund.
+    /// Landungs- und Anflug-Abzug addieren sich; beide werden genannt.
     #[test]
-    fn harte_landung_schlaegt_den_abzug() {
+    fn harte_landung_und_anflug_addieren_sich() {
         use crate::anflug_urteil::AnflugUrteil;
         let stab = sub_stability::sub_stability_legacy(
             Some(50.0),
@@ -1441,8 +1422,12 @@ mod tests {
         let mut subs = alles_hundert_mit_stabilitaet(stab);
         let g = subs.iter_mut().find(|s| s.key == "g_force").unwrap();
         g.messwert = Some(1.9);
-        assert_eq!(aggregate_master_score(&subs), Some(DECKEL_HART_PUNKTE));
-        assert_eq!(master_deckel_wirksam(&subs), Some("harte_landung"));
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert_eq!(aggregate_master_score(&subs), Some(mittel - 25 - 15));
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("harte_landung_abzug+anflug_unstable_abzug")
+        );
     }
 
     /// Ohne Gate-Messung keine Bestnote — mit und ohne Streuungswerte.
@@ -1451,13 +1436,16 @@ mod tests {
         let skip = SubScoreEntry::skipped("stability", "l", ANFLUG_NICHT_GEMESSEN);
         let subs = alles_hundert_mit_stabilitaet(skip);
         assert_eq!(aggregate_master_score(&subs), Some(97));
-        assert_eq!(master_deckel_wirksam(&subs), Some(ANFLUG_NICHT_GEMESSEN));
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("anflug_nicht_gemessen_abzug")
+        );
 
         let stab = sub_stability::sub_stability_legacy(Some(50.0), Some(0.5), None).unwrap();
         let subs = alles_hundert_mit_stabilitaet(stab);
         assert_eq!(aggregate_master_score(&subs), Some(97));
 
-        // Liegt der Mittelwert schon darunter, behauptet die Anzeige nichts.
+        // Auch bei schwaecherer Landung kostet die fehlende Messung 3.
         let mut schlecht = alles_hundert_mit_stabilitaet(SubScoreEntry::skipped(
             "stability",
             "l",
@@ -1467,7 +1455,7 @@ mod tests {
         for s in schlecht.iter_mut().filter(|s| !s.skipped) {
             s.score = 90;
         }
-        assert_eq!(master_deckel_wirksam(&schlecht), None);
+        assert_eq!(aggregate_master_score(&schlecht), Some(87));
     }
 
     // ── Score-Version 19: „schwaechster Teil begrenzt" ─────────────────
@@ -1500,23 +1488,37 @@ mod tests {
         )
     }
 
-    /// QAF419 (24.09.2026): vor der Schwelle aufgesetzt, sonst sauber — 92.
+    /// QAF419 (24.09.2026): vor der Schwelle aufgesetzt, sonst sauber — war
+    /// 92, Score-Version 19–20 Deckel 40, seit 21 −30.
     #[test]
-    fn qaf419_vor_der_schwelle_hoechstens_40() {
+    fn qaf419_vor_der_schwelle_kostet_dreissig() {
         let subs = gute_landung_mit(teil("touchdown_point", 0, "pre_threshold"));
-        assert!(gewichtetes_mittel(&subs).unwrap() >= 90, "ohne Deckel ~92");
-        assert_eq!(aggregate_master_score(&subs), Some(40));
-        assert_eq!(master_deckel_wirksam(&subs), Some(GEFAHR_VOR_DER_SCHWELLE));
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert!(mittel >= 90, "ohne Abzug ~92");
+        assert_eq!(aggregate_master_score(&subs), Some(mittel - 30));
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("vor_der_schwelle_abzug")
+        );
     }
 
     /// AIB424 (21.09.2026): Raeder neben der Bahn beim Ausrollen — 91.
     #[test]
-    fn aib424_neben_der_bahn_hoechstens_40() {
+    fn aib424_neben_der_bahn_kostet_dreissig() {
+        // Der Ausroll-Teil (20) ist auch „schlecht" (−10) — es zaehlt nur der
+        // groessere Abzug.
         let subs = gute_landung_mit(teil("rollout", 20, "off_pavement"));
-        assert_eq!(aggregate_master_score(&subs), Some(40));
-        assert_eq!(master_deckel_wirksam(&subs), Some(GEFAHR_NEBEN_DER_BAHN));
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert_eq!(aggregate_master_score(&subs), Some(mittel - 30));
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("neben_der_bahn_abzug")
+        );
         let subs = gute_landung_mit(teil("rollout", 0, "overrun"));
-        assert_eq!(master_deckel_wirksam(&subs), Some(GEFAHR_OVERRUN));
+        assert_eq!(
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("overrun_abzug")
+        );
     }
 
     /// Achsenablage: neben der Bahn erkannt am Messwert (Anteil > 1), auch
@@ -1525,32 +1527,34 @@ mod tests {
     fn achsenablage_neben_der_bahn_am_messwert() {
         let schraeg = teil("alignment", 15, "crooked_touchdown").mit_messwert(1.3);
         let subs = gute_landung_mit(schraeg);
-        assert_eq!(master_deckel(&subs), Some((GEFAHR_NEBEN_DER_BAHN, 40)));
-        // Gegenprobe: am Rand, aber auf der Bahn (Anteil 0,9) → „schlecht" 60.
+        assert_eq!(landungs_abzug(&subs), Some((GEFAHR_NEBEN_DER_BAHN, 30)));
+        // Gegenprobe: am Rand, aber auf der Bahn (Anteil 0,9) → „schlecht" −10.
         let rand = teil("alignment", 40, "off_centerline").mit_messwert(0.9);
         let subs = gute_landung_mit(rand);
-        assert_eq!(master_deckel(&subs), Some(("teil_schlecht_alignment", 60)));
+        assert_eq!(landungs_abzug(&subs), Some(("teil_schlecht_alignment", 10)));
     }
 
     /// Ab zwei Hopsern gefaehrlich, ein Hopser ist „mittel".
     #[test]
     fn hopser_ab_zwei_gefaehrlich() {
         let zwei = gute_landung_mit(teil("bounces", 40, "two_bounces"));
-        assert_eq!(master_deckel(&zwei), Some((GEFAHR_MEHRFACH_HOPSER, 40)));
+        assert_eq!(landungs_abzug(&zwei), Some((GEFAHR_MEHRFACH_HOPSER, 30)));
         let viele = gute_landung_mit(teil("bounces", 15, "many_bounces"));
-        assert_eq!(master_deckel(&viele), Some((GEFAHR_MEHRFACH_HOPSER, 40)));
+        assert_eq!(landungs_abzug(&viele), Some((GEFAHR_MEHRFACH_HOPSER, 30)));
         let einer = gute_landung_mit(teil("bounces", 70, "one_bounce"));
-        assert_eq!(master_deckel(&einer), Some(("teil_mittel_bounces", 80)));
+        assert_eq!(landungs_abzug(&einer), Some(("teil_mittel_bounces", 5)));
     }
 
-    /// GSG219 (21.09.2026): lang hinter der Aufsetzzone (55) — 97, jetzt 80.
+    /// GSG219 (21.09.2026): lang hinter der Aufsetzzone (55) — war 97,
+    /// Score-Version 19–20 Deckel 80, seit 21 −5.
     #[test]
-    fn gsg219_langer_aufsetzpunkt_hoechstens_80() {
+    fn gsg219_langer_aufsetzpunkt_kostet_fuenf() {
         let subs = gute_landung_mit(teil("touchdown_point", 55, "long_touchdown"));
-        assert_eq!(aggregate_master_score(&subs), Some(80));
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert_eq!(aggregate_master_score(&subs), Some(mittel - 5));
         assert_eq!(
-            master_deckel_wirksam(&subs),
-            Some("teil_mittel_touchdown_point")
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("teil_mittel_touchdown_point_abzug")
         );
     }
 
@@ -1559,18 +1563,17 @@ mod tests {
     fn schwaechster_teil_wird_genannt_gute_teile_begrenzen_nicht() {
         let mut subs = gute_landung_mit(teil("alignment", 65, "off_centerline"));
         subs[0] = teil("landing_rate", 45, "hard_landing");
-        assert_eq!(master_deckel(&subs), Some(("teil_mittel_landing_rate", 80)));
+        assert_eq!(landungs_abzug(&subs), Some(("teil_mittel_landing_rate", 5)));
         let alle_gut = gute_landung_mit(teil("touchdown_point", 85, "in_tdz"));
-        assert_eq!(master_deckel(&alle_gut), None);
+        assert_eq!(landungs_abzug(&alle_gut), None);
         let grenze = gute_landung_mit(teil("alignment", 75, "off_centerline"));
-        assert_eq!(master_deckel(&grenze), None, "75 ist noch gut");
+        assert_eq!(landungs_abzug(&grenze), None, "75 ist noch gut");
     }
 
-    /// Score-Version 21: Schwache Stabilitaetsachse bei PARTIAL — der
-    /// Teil-Deckel (80) bleibt, der Abzug kommt dazu; gemeldet wird, was die
-    /// Note bestimmt.
+    /// Score-Version 21: Schwache Stabilitaetsachse bei PARTIAL — der Anflug
+    /// kostet einmal (−5), die Achse nicht noch als schwaechster Teil.
     #[test]
-    fn schwache_achse_teil_deckel_und_abzug() {
+    fn schwache_achse_zaehlt_nicht_doppelt() {
         let stab = sub_stability::sub_stability_legacy(
             Some(50.0),
             Some(7.0),
@@ -1579,34 +1582,36 @@ mod tests {
         .unwrap();
         assert!(stab.score < 75);
         let subs = gute_landung_mit(stab);
+        assert_eq!(landungs_abzug(&subs), None);
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert_eq!(aggregate_master_score(&subs), Some(mittel - 5));
         assert_eq!(
-            master_deckel(&subs),
-            Some(("teil_mittel_stability", DECKEL_TEIL_MITTEL_PUNKTE))
+            master_deckel_wirksam(&subs).as_deref(),
+            Some("anflug_partial_abzug")
         );
-        let note = aggregate_master_score(&subs).unwrap();
-        let mittel = gewichtetes_mittel(&subs).unwrap() - ABZUG_ANFLUG_PARTIAL_PUNKTE;
-        assert_eq!(note, mittel.min(DECKEL_TEIL_MITTEL_PUNKTE));
-        let erwartet = if mittel > DECKEL_TEIL_MITTEL_PUNKTE {
-            "teil_mittel_stability"
-        } else {
-            ANFLUG_PARTIAL_ABZUG
-        };
-        assert_eq!(master_deckel_wirksam(&subs), Some(erwartet));
+        // Gegenprobe: STABLE mit schwacher Streuungsachse — dann zaehlt sie.
+        let mut stabil = subs.clone();
+        let st = stabil.iter_mut().find(|s| s.key == "stability").unwrap();
+        st.warning = None;
+        assert_eq!(landungs_abzug(&stabil), Some(("teil_mittel_stability", 5)));
     }
 
-    /// Der niedrigere Deckel gewinnt: harte Landung schlaegt Anflug.
+    /// Landungs-Abzug (hart) und fehlende Anflugmessung addieren sich.
     #[test]
-    fn g_deckel_gewinnt_gegen_anflug_deckel() {
+    fn g_abzug_und_fehlende_messung() {
         let mut subs = harte_landung_mit_guten_nebenachsen(1.9);
+        subs.retain(|s| s.key != "stability");
         subs.push(SubScoreEntry::skipped(
             "stability",
             "l",
             ANFLUG_NICHT_GEMESSEN,
         ));
         assert_eq!(
-            master_deckel(&subs),
-            Some(("harte_landung", DECKEL_HART_PUNKTE))
+            landungs_abzug(&subs),
+            Some(("harte_landung", ABZUG_HART_PUNKTE))
         );
+        let mittel = gewichtetes_mittel(&subs).unwrap();
+        assert_eq!(aggregate_master_score(&subs), Some(mittel - 25 - 3));
     }
 
     /// Drehfluegler/Wasserflugzeug haben keine Stabilitaetsachse — dort darf
@@ -1679,11 +1684,18 @@ mod tests {
         assert_eq!(gewichtetes_mittel(&subs), Some(92));
     }
 
+    /// Die Rangfolge der Landungs-Abzuege: Ueberlast > Gefahr > hart >
+    /// schwaechster Teil — sonst gewinnt bei Gleichzeitigkeit der falsche.
     #[test]
-    fn ueberlast_deckel_liegt_unter_der_severe_grenze() {
-        // `aggregate_score_label` nennt erst Werte < 15 „severe" (lib.rs
-        // des Clients); der Ueberlast-Deckel muss darunter liegen.
-        assert!(DECKEL_UEBERLAST_PUNKTE < 15);
+    fn abzuege_in_der_richtigen_rangfolge() {
+        let reihe = [
+            ABZUG_UEBERLAST_PUNKTE,
+            ABZUG_GEFAHR_PUNKTE,
+            ABZUG_HART_PUNKTE,
+            ABZUG_TEIL_SCHLECHT_PUNKTE,
+            ABZUG_TEIL_MITTEL_PUNKTE,
+        ];
+        assert!(reihe.windows(2).all(|w| w[0] > w[1]), "{reihe:?}");
     }
 
     #[test]
@@ -1726,7 +1738,9 @@ mod tests {
                 Band::Ok,
             ),
         ];
-        assert_eq!(aggregate_master_score(&subs), Some(78));
+        assert_eq!(gewichtetes_mittel(&subs), Some(78));
+        // Schwaechster Teil „mittel" (50, Hopser 70): −5.
+        assert_eq!(aggregate_master_score(&subs), Some(73));
     }
 
     #[test]
@@ -1977,7 +1991,7 @@ mod tests {
             teil("alignment", 100),
             teil("touchdown_point", 85),
         ];
-        assert_eq!(master_deckel(&subs), None);
+        assert_eq!(landungs_abzug(&subs), None);
         assert_eq!(aggregate_master_score(&subs), Some(99));
     }
 
@@ -1995,7 +2009,7 @@ mod tests {
         };
         let sauber = compute_sub_scores(&auf_der_bahn());
         assert_eq!(
-            gefahr_deckel(&sauber),
+            gefahr_grund(&sauber),
             None,
             "der volle Eingang ist ungefaehrlich"
         );
@@ -2026,13 +2040,16 @@ mod tests {
         for (eingang, grund) in faelle {
             let subs = compute_sub_scores(&eingang);
             assert_eq!(
-                master_deckel(&subs),
-                Some((grund, DECKEL_GEFAHR_PUNKTE)),
+                landungs_abzug(&subs),
+                Some((grund, ABZUG_GEFAHR_PUNKTE)),
                 "{grund}"
             );
-            assert!(
-                aggregate_master_score(&subs).unwrap() <= DECKEL_GEFAHR_PUNKTE,
-                "{grund}: Gesamtnote ueber dem Deckel"
+            let mittel = gewichtetes_mittel(&subs).unwrap();
+            let anflug = anflug_abzug(&subs).map_or(0, |(_, p)| p);
+            assert_eq!(
+                aggregate_master_score(&subs),
+                Some(mittel.saturating_sub(30 + anflug)),
+                "{grund}"
             );
         }
     }
