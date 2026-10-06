@@ -1497,8 +1497,26 @@ pub fn merge_landings(
                     *existing = vereint;
                 }
             }
-            Some(existing) if existing.recorded_at > rec.recorded_at => {}
-            _ => {
+            // Neuere Fassung gewinnt — aber die Kurven, die die Sicherung auf
+            // dem Server nie traegt (`strip_curves`), bleiben aus der anderen
+            // Kopie erhalten. Sonst loeschte eine serverseitig korrigierte
+            // Note (06.10.2026: Score-Version 21 fuer vier Fluege) die
+            // Aufsetz- und Anflugkurven des Piloten.
+            Some(existing) => {
+                let (mut neuer, mut aelter) = if existing.recorded_at > rec.recorded_at {
+                    (std::mem::replace(existing, rec.clone()), rec)
+                } else {
+                    (rec, existing.clone())
+                };
+                if neuer.touchdown_profile.is_empty() {
+                    neuer.touchdown_profile = std::mem::take(&mut aelter.touchdown_profile);
+                }
+                if neuer.approach_samples.is_empty() {
+                    neuer.approach_samples = std::mem::take(&mut aelter.approach_samples);
+                }
+                *existing = neuer;
+            }
+            None => {
                 by_id.insert(rec.pirep_id.clone(), rec);
             }
         }
@@ -1559,6 +1577,42 @@ mod merge_tests {
 
     fn wegpunkte(r: &LandingRecord) -> usize {
         r.sprit.as_ref().map_or(0, |s| s.wegpunkte.len())
+    }
+
+    /// 06.10.2026: Die Server-Sicherung traegt keine Kurven. Gewinnt dort
+    /// eine neuere Fassung (korrigierte Note), bleiben die lokalen Kurven.
+    #[test]
+    fn neuere_fassung_ohne_kurven_behaelt_die_lokalen_kurven() {
+        let lokal = mit(
+            rec("RYR73", "2026-10-06T13:32:37Z", "2026-10-06T13:40:50Z"),
+            serde_json::json!({
+                "score_numeric": 45,
+                "touchdown_profile": [{"t_ms": 0, "vs_fpm": -268.0, "g_force": 1.2, "agl_ft": 0.0, "on_ground": true, "heading_true_deg": 0.0, "groundspeed_kt": 130.0, "indicated_airspeed_kt": 130.0, "pitch_deg": 2.0, "bank_deg": 0.0}],
+            }),
+        );
+        let server = mit(
+            rec("RYR73", "2026-10-06T13:32:37Z", "2026-10-06T18:00:00Z"),
+            serde_json::json!({"score_numeric": 80}),
+        );
+        for (a, b) in [
+            (lokal.clone(), server.clone()),
+            (server.clone(), lokal.clone()),
+        ] {
+            let out = merge_landings(vec![a], vec![b]);
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].score_numeric, Some(80), "neuere Fassung gewinnt");
+            assert_eq!(out[0].touchdown_profile.len(), 1, "Kurve bleibt");
+        }
+        // Gegenprobe: bringt die neuere Fassung eigene Kurven mit, gelten diese.
+        let neu_mit_kurve = mit(
+            server.clone(),
+            serde_json::json!({"touchdown_profile": [
+                {"t_ms": 0, "vs_fpm": -1.0, "g_force": 1.0, "agl_ft": 0.0, "on_ground": true, "heading_true_deg": 0.0, "groundspeed_kt": 130.0, "indicated_airspeed_kt": 130.0, "pitch_deg": 2.0, "bank_deg": 0.0},
+                {"t_ms": 20, "vs_fpm": -1.0, "g_force": 1.0, "agl_ft": 0.0, "on_ground": true, "heading_true_deg": 0.0, "groundspeed_kt": 130.0, "indicated_airspeed_kt": 130.0, "pitch_deg": 2.0, "bank_deg": 0.0}
+            ]}),
+        );
+        let out = merge_landings(vec![lokal], vec![neu_mit_kurve]);
+        assert_eq!(out[0].touchdown_profile.len(), 2);
     }
 
     /// Der Befund vom 21.09.2026: Der Mac holte die Landung mit einer
