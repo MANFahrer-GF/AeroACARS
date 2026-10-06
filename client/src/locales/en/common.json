@@ -218,11 +218,11 @@
       "landing_rate": "Vertical speed at the moment of touchdown, in feet per minute. Negative = descending. The target corridor of 90–250 fpm is deliberate — a professional standard, not “as soft as possible”: well below 90 fpm usually means a long float that delays braking and spoiler deployment. Beyond 600 fpm of sink a real hard-landing inspection would be due.\n\nSince v1.6.3 this is measured from the actual height trace over the final third of a second before touchdown, no longer from the simulator's vertical speed indicator, which is sluggish like a real cockpit instrument. If the simulator freezes the altitude readout, no calculation is done and the instrument value is used instead.",
       "g_force": "Scored g-load at touchdown. Below 1.20 g full points, below 1.40 g 80, below 1.70 g 45, above that 20 or 0. From 1.75 g the overall score is at most 40, from 2.6 g at most 14.",
       "bounces": "How many times the aircraft climbed back more than 5 ft above the ground after the first touchdown and touched down again (older landings: from 15 ft). 0 = clean set; each bounce drops the score.",
-      "stability": "Two things: this part's points come from how steady the approach was (scatter of sink rate and bank). The stable gate checks six points from 1000 ft: glide path (below 1 dot on average), steady speed, steady bank, even sink rate, no excessive sink for more than 10 seconds, landing configuration when entering the gate. Only partly stable caps this part and the overall score at 80, unstable at 45. Details and limits in the \"Approach stability\" card.",
+      "stability": "Two things: this part's points come from how steady the approach was (scatter of sink rate and bank). The stable gate checks six points from 1000 ft: glide path (below 1 dot on average), steady speed, steady bank, even sink rate, no excessive sink for more than 10 seconds, landing configuration when entering the gate. Only partly stable caps this part at 80 and costs 5 points of the overall score; unstable caps it at 45 and costs 15 points. Details and limits in the \"Approach stability\" card.",
       "rollout": "Share of the usable runway length (LDA) your landing used — measured from the threshold: first the distance to touchdown, then the rollout until you clear the runway (~40 kt). What is scored is how much runway is left afterwards: below 60 % is full marks, from 90 % it gets tight — risky on a wet runway. Click „🛬 How is this calculated?“ for the full explanation.",
       "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (take-off fuel − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
       "loadsheet": "Older landings only: whether loadsheet data was present (ZFW + TOW in the plan). No longer part of the score since v1.7.12.",
-      "score_section": "Eight parts of 0–100 points: sink rate, g-force, bounces, approach stability, runway discipline, alignment, touchdown point, flare. The overall score is their weighted average, but never better than the weakest part allows: a fair part at most 80, a poor one at most 60, a dangerous event (before the threshold, overrun, off the runway, two or more bounces, from 1.75 g) at most 40, from 2.6 g at most 14. The approach also caps: PARTIAL at most 80, UNSTABLE at most 45, without approach measurement at most 97. Fuel and loadsheet are shown for reference and do not count.",
+      "score_section": "Eight parts of 0–100 points: sink rate, g-force, bounces, approach stability, runway discipline, alignment, touchdown point, flare. The overall score is their weighted average, but never better than the weakest part allows: a fair part at most 80, a poor one at most 60, a dangerous event (before the threshold, overrun, off the runway, two or more bounces, from 1.75 g) at most 40, from 2.6 g at most 14. Plus the approach: PARTIAL costs 5 points, UNSTABLE 15 points, without approach measurement at most 97. Fuel and loadsheet are shown for reference and do not count.",
       "runway_section": "Visualisation of your touchdown on the runway. The marker is the touchdown point, the band the rollout. Values below are for reference: landing distance available (the physical length is in the header), distance to the centreline, distance past the threshold, runway utilisation in percent. Scored are runway discipline, alignment and touchdown point (see the parts above).",
       "fuel_section": "Block = fuel at off-block; TO fuel = at the take-off point; LDG fuel = at touchdown; TOW, LDW, ZFW = weights. Planned values come from the SimBrief OFP. The deviation from plan is shown for reference — it does not count towards the score.",
       "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis, while the “Crosswind” tile beside it uses the wind relative to the aircraft nose. Both figures are correct — they simply refer to different directions, and the crab angle is exactly what lies between them.",
@@ -371,8 +371,8 @@
     "skipped_label": "not scored",
     "skipped_reason": {
       "anflug_nicht_gemessen": "Approach not measured in the 1000 ft gate (too few samples) — not scored, but no top score either: overall score at most 97.",
-      "anflug_partial": "Approach only partly stable (stable gate not met) — the scatter could not be measured, the verdict still applies: overall score at most 80.",
-      "anflug_unstable": "Unstable approach (stable gate missed) — the scatter could not be measured, the verdict still applies: overall score at most 45.",
+      "anflug_partial": "Approach only partly stable (stable gate not met) — the scatter could not be measured, the verdict still applies: 5 points off the overall score.",
+      "anflug_unstable": "Unstable approach (stable gate missed) — the scatter could not be measured, the verdict still applies: 15 points off the overall score.",
       "no_planned_burn": "No OFP trip burn planned — not scored (no penalty).",
       "no_actual_burn": "Takeoff data not captured (takeoff phase skipped) — actual trip burn cannot be derived (no penalty).",
       "no_planned_zfw": "No ZFW entered — VFR/manual without loadsheet scoring (no penalty).",
@@ -1049,6 +1049,8 @@
       "anflug_unstable": "Stability capped at 45 points: unstable approach (stable gate missed).",
       "anflug_partial_gesamt": "Capped at 80 points: approach only partly stable (stable gate not met). A good touchdown does not offset it.",
       "anflug_unstable_gesamt": "Capped at 45 points: unstable approach (stable gate missed). A good touchdown does not offset it.",
+      "anflug_partial_abzug": "5 points off: approach only partly stable (stable gate not met).",
+      "anflug_unstable_abzug": "15 points off: unstable approach (stable gate missed). The landing itself still counts.",
       "anflug_nicht_gemessen": "Capped at 97 points: approach not measured in the gate — no top score without a measurement.",
       "harte_landung": "Capped at 40 points: hard landing from 1.75 g. Good rollout or touchdown point values do not offset it.",
       "ueberlast": "Capped at 14 points: overload from 2.6 g.",
@@ -1067,6 +1069,8 @@
       "anflug_unstable": "Approach unstable",
       "anflug_partial_gesamt": "Capped: max. 80 (approach partly stable)",
       "anflug_unstable_gesamt": "Capped: max. 45 (approach unstable)",
+      "anflug_partial_abzug": "−5 (approach partly stable)",
+      "anflug_unstable_abzug": "−15 (approach unstable)",
       "anflug_nicht_gemessen": "Capped: max. 97 (approach not measured)",
       "vor_der_schwelle": "Capped: max. 40 (before the threshold)",
       "overrun": "Capped: max. 40 (overrun)",
@@ -1245,7 +1249,7 @@
       "letzte_2s": "Sink rate in the last 2 s before touchdown (earlier measurement, not scored)"
     },
     "erklaer": {
-      "kopf_note": "The letter grade summarises the overall score: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score is the weighted average of the parts (sink rate and G-force 3 each, bounces, approach stability and flare 2 each, the rest 1 each) — but never better than the weakest part allows: a medium part (45–74 points) caps at 80, a poor one (below 45) at 60, a dangerous event (before the threshold, past the runway end, off the runway, two or more bounces) at 40. The approach also caps: PARTIAL at 80, UNSTABLE at 45, without approach measurement at 97; and the G-force: from 1.75 G at 40, from 2.6 G at 14.",
+      "kopf_note": "The letter grade summarises the overall score: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score is the weighted average of the parts (sink rate and G-force 3 each, bounces, approach stability and flare 2 each, the rest 1 each) — but never better than the weakest part allows: a medium part (45–74 points) caps at 80, a poor one (below 45) at 60, a dangerous event (before the threshold, past the runway end, off the runway, two or more bounces) at 40. Plus the approach: PARTIAL costs 5 points, UNSTABLE 15 points, without approach measurement at most 97; and the G-force: from 1.75 G at 40, from 2.6 G at 14.",
       "td": {
         "sinkrate": "Sink rate at the moment of first ground contact, from the height curve (if it cannot be evaluated, the simulator reading). Counts towards the grade (part sink rate, weight 3): 90–249 fpm 100 points, below 90 fpm 85 (sign of a long flare), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, from 1000 fpm 0.",
         "g": "Graded G-force at touchdown: lightly smoothed peak (like a flight data recorder), without single 50 Hz spikes. Counts towards the grade (part G-force, weight 3): below 1.20 G 100 points, below 1.40 G 80, below 1.70 G 45, below 2.10 G 20, from 2.10 G 0. From 1.75 G the overall score is at most 40, from 2.6 G at most 14.",
@@ -1277,7 +1281,7 @@
         "ruck": "How abruptly the sink rate changed from sample to sample. Good below 100 fpm, poor from 200 fpm. Check of the stable gate.",
         "sinken": "Whether the sink rate in the stable gate exceeded the limit for at least 10 s in a row (−1000 fpm at a 3° glide path, correspondingly more on steeper approaches). Check of the stable gate.",
         "konfiguration": "Whether the aircraft was in landing configuration when entering the stable gate (first sample up to 1000 ft — lower if the recording starts lower): gear down, landing flaps set. Check of the stable gate.",
-        "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, overall score at most 45. Otherwise PARTIAL, overall score at most 80. Without measurement at most 97. Late stabilised: if speed or configuration is bad at 1000 ft but landing flaps are set and speed is steady from 500 ft, both only count as “medium”.",
+        "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, 15 points off. Otherwise PARTIAL, 5 points off. Without measurement at most 97. Late stabilised: if speed or configuration is bad at 1000 ft but landing flaps are set and speed is steady from 500 ft, both only count as “medium”.",
         "urteil_alt": "Approach verdict for flights before score version 19, from the seven tiles: all good = STABLE, two poor or three not good = UNSTABLE, otherwise PARTIAL. From score version 18 PARTIAL caps the overall score at 80 and UNSTABLE at 45; in version 17 only the approach stability part, before that it capped nothing."
       },
       "tile": {

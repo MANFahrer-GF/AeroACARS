@@ -22,6 +22,9 @@ export const DECKEL_MIT_TEXT: ReadonlySet<string> = new Set([
   "anflug_unstable",
   "anflug_partial_gesamt",
   "anflug_unstable_gesamt",
+  // Score-Version 21: Abzug statt Deckel.
+  "anflug_partial_abzug",
+  "anflug_unstable_abzug",
   "anflug_nicht_gemessen",
   // Score-Version 19: gefährliche Ereignisse (höchstens 40).
   "vor_der_schwelle",

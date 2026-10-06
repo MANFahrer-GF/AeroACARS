@@ -27746,9 +27746,14 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Konfiguration nur „mittel" statt „schlecht" (Anlass RYR73, 06.10.2026:
 /// UNSTABLE, Gesamtnote 45 bei sauberer Landung). `anflug_urteil.rs`.
 ///
+/// **21 seit v2.0.5**: Abzug statt Deckel — PARTIAL kostet 5, UNSTABLE 15
+/// Punkte vom Mittel, statt die Gesamtnote auf 80 bzw. 45 festzunageln
+/// (`landing-scoring` `anflug_abzug`). Anlass: Korpus 60 Tage, 58 gute
+/// Landungen nach UNSTABLE alle exakt 45.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 20;
+const SCORE_ALGORITHMUS_VERSION: u8 = 21;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
