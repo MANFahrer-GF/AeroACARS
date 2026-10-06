@@ -519,8 +519,53 @@ async fn debrief_handler(
     }
     let state = ctx.app.state::<crate::AppState>();
     let record = crate::landing_get_current(ctx.app.clone(), state);
-    let value = serde_json::to_value(record).unwrap_or(Value::Null);
+    let value = debrief_fuer_anzeige(serde_json::to_value(record).unwrap_or(Value::Null));
     cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
+/// Die Landung, wie HUD-Band, MSFS-Panel und Flow-Widget sie bekommen.
+///
+/// Bei „nicht bewertbar" steht dort statt eines leeren Etiketts „nicht
+/// bewertbar" — die Anzeigen schreiben das Etikett unverändert (groß) hin
+/// und brauchen dafür kein eigenes Update. Nur hier, nicht im gespeicherten
+/// Datensatz: `score_label` ist dort eine feste Kategorie (`smooth` …), an
+/// der Übersetzung und Historie hängen.
+pub(crate) fn debrief_fuer_anzeige(mut v: Value) -> Value {
+    let nicht_bewertbar = v
+        .get("landung_nicht_bewertbar")
+        .is_some_and(|n| !n.is_null());
+    let ohne_etikett = v.get("score_label").is_none_or(Value::is_null);
+    if nicht_bewertbar && ohne_etikett {
+        if let Some(o) = v.as_object_mut() {
+            o.insert(
+                "score_label".into(),
+                Value::String("nicht bewertbar".into()),
+            );
+        }
+    }
+    v
+}
+
+#[cfg(test)]
+mod debrief_tests {
+    use super::debrief_fuer_anzeige;
+    use serde_json::json;
+
+    #[test]
+    fn nicht_bewertbar_bekommt_ein_etikett_fuer_die_anzeigen() {
+        let v = debrief_fuer_anzeige(json!({
+            "score_label": null,
+            "landung_nicht_bewertbar": {"groesste_luecke_ms": 300, "proben": 5}
+        }));
+        assert_eq!(v["score_label"], "nicht bewertbar");
+        // Eine echte Note bleibt unangetastet, eine bewertete Landung auch.
+        let v =
+            debrief_fuer_anzeige(json!({"score_label": "hard", "landung_nicht_bewertbar": null}));
+        assert_eq!(v["score_label"], "hard");
+        let v = debrief_fuer_anzeige(json!({"score_label": null}));
+        assert!(v["score_label"].is_null());
+        assert!(debrief_fuer_anzeige(json!(null)).is_null());
+    }
 }
 
 #[derive(Deserialize)]

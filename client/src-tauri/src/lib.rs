@@ -44656,12 +44656,23 @@ fn finalize_landing_score_if_due(
         // zu warten (sonst wartete es effektiv zweimal hintereinander).
         stats.landing_score_finalized = true;
         stats.landing_score_announced = false;
-    } else if !stats.landung_unmessbar_gemeldet {
-        stats.landung_unmessbar_gemeldet = true;
-        tracing::warn!(
-            pirep_id = %pirep_id,
-            "landing_peak_vs_fpm = None at score-finalise — keeping landing_score=None (B-005). Sampler likely missed the touchdown edge."
-        );
+    } else {
+        // „Nicht bewertbar" (Aufzeichnung im Aufsetzfenster zu dünn) ist ein
+        // Endzustand: Es kommt keine Note mehr. Als abgeschlossen melden,
+        // sonst warten HUD-Band, MSFS-Panel und Flow-Widget bis zum Ende des
+        // Flugs auf „Landung wird ausgewertet" (AFR 421, 06.10.2026). Nur
+        // dieser Fall — ohne Abdeckungsbefund kann die Kanonik später noch
+        // eine Sinkrate liefern.
+        if stats.landung_abdeckung_fehlt.is_some() {
+            stats.landing_score_finalized = true;
+        }
+        if !stats.landung_unmessbar_gemeldet {
+            stats.landung_unmessbar_gemeldet = true;
+            tracing::warn!(
+                pirep_id = %pirep_id,
+                "landing_peak_vs_fpm = None at score-finalise — keeping landing_score=None (B-005). Sampler likely missed the touchdown edge."
+            );
+        }
     }
 }
 
@@ -58916,6 +58927,31 @@ mod finalize_landing_score_if_due_tests {
         // Bewusst KEIN landing_peak_vs_fpm/landing_analysis/landing_rate_fpm.
         finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
         assert!(stats.landing_score.is_none());
+    }
+
+    /// AFR 421 (06.10.2026): „nicht bewertbar" gilt als abgeschlossen, damit
+    /// die Anzeigen nicht ewig „Landung wird ausgewertet" zeigen. Ohne
+    /// Abdeckungsbefund bleibt die Auswertung offen.
+    #[test]
+    fn nicht_bewertbar_gilt_als_abgeschlossen() {
+        // Fenster ausgewertet und dicht, nur keine Sinkrate: kein Befund.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.touchdown_window_score_data_ready_at = Some(t(1));
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(stats.landing_score.is_none());
+        assert!(stats.landung_abdeckung_fehlt.is_none());
+        assert!(!stats.landing_score_finalized, "ohne Befund bleibt sie offen");
+
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landung_abdeckung_fehlt = Some(touchdown_v2::FehlendeAbdeckung {
+            groesste_luecke_ms: 300,
+            proben: 5,
+        });
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(stats.landing_score.is_none(), "keine Note");
+        assert!(stats.landing_score_finalized, "aber abgeschlossen");
     }
 
     #[test]
