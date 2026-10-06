@@ -60,6 +60,15 @@ pub const DURCHSTART_HOEHE_FT: f32 = 100.0;
 /// Mindestens so viele Messpunkte zwischen 50 ft und Aufsetzen.
 const MIN_PROBEN: usize = 3;
 
+/// Größte Lücke zwischen zwei Messpunkten (und vom letzten bis zum
+/// Aufsetzen), bis zu der Schweben, Beginn und höchste V/S noch belastbar
+/// sind. Normal liegt im Abfangen alle 0,5 s ein Punkt (Korpus p90 0,56 s).
+/// Steht die Phase beim Aufsetzen nicht auf Approach/Final (1,3 % der
+/// Landungen), nimmt der Puffer nur sinkende Punkte auf — flache und
+/// steigende fehlen, und Schweben 0,0 s oder ein übersehenes Ballooning
+/// wären erfunden (QS 06.10.2026, Runde 5). Die Dauer bleibt messbar.
+const LUECKE_MAX_MS: i64 = 2_500;
+
 /// Ein Messpunkt des Anflugs vor dem Aufsetzen.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AbfangPunkt {
@@ -138,6 +147,22 @@ pub fn messen(punkte: &[AbfangPunkt], vs_aufsetzen_fpm: Option<f32>) -> Abfangen
     let danach = &p[i..];
     if danach.len() < MIN_PROBEN {
         return ohne("zu_wenig_proben");
+    }
+
+    let luecke_ms = danach
+        .windows(2)
+        .map(|w| w[1].t_ms - w[0].t_ms)
+        .chain(danach.last().map(|q| -q.t_ms))
+        .max()
+        .unwrap_or(0);
+    if luecke_ms > LUECKE_MAX_MS {
+        return Abfangen {
+            dauer_ab_50ft_s: Some(runden(-t50 / 1000.0, 1)),
+            vs_50ft_fpm: Some(runden(vs50, 0)),
+            vs_aufsetzen_fpm,
+            reduktion_fpm: vs_aufsetzen_fpm.map(|v| runden(v - vs50, 0)),
+            ..Default::default()
+        };
     }
 
     let beginn_hoehe_ft = danach
@@ -403,6 +428,39 @@ mod tests {
         assert_eq!(sub_abfangen(Some(&a), Some("A320")).unwrap().points, 25);
     }
 
+    /// QS 06.10.2026 (Runde 5): Phase nicht Approach/Final → der Puffer
+    /// nahm die flachen Punkte vor dem Aufsetzen nicht auf. Die Dauer bleibt,
+    /// Schweben/Beginn/höchste V/S werden nicht erfunden.
+    #[test]
+    fn luecke_vor_dem_aufsetzen_erfindet_kein_schweben() {
+        let mit_luecke = [
+            p(-12_000, 60.0, -700.0),
+            p(-11_000, 48.0, -650.0),
+            p(-10_500, 42.0, -600.0),
+            p(-10_000, 36.0, -500.0),
+            // 5 s flach, nicht aufgezeichnet
+            p(-4_500, 8.0, -150.0),
+        ];
+        let a = messen(&mit_luecke, Some(-120.0));
+        assert_eq!(a.dauer_ab_50ft_s, Some(11.2));
+        assert_eq!(a.reduktion_fpm, Some(538.0));
+        assert_eq!(a.schweben_s, None);
+        assert_eq!(a.schweben_m, None);
+        assert_eq!(a.beginn_hoehe_ft, None);
+        assert_eq!(a.max_vs_fpm, None);
+        assert_eq!(a.grund_ohne_werte, None);
+        // Gegenprobe: lückenlos aufgezeichnet gibt es die Werte.
+        let mut voll = mit_luecke[..4].to_vec();
+        for k in 1..=19 {
+            let t = -10_000 + k * 500;
+            let vs = if t > -4_500 { -60.0 } else { -400.0 };
+            voll.push(p(t, 36.0 - k as f32 * 1.8, vs));
+        }
+        let b = messen(&voll, Some(-120.0));
+        assert_eq!(b.schweben_s, Some(4.0));
+        assert!(b.max_vs_fpm.is_some() && b.beginn_hoehe_ft.is_some());
+    }
+
     #[test]
     fn ohne_messung_keine_achse() {
         assert!(sub_abfangen(None, Some("A320")).is_none());
@@ -424,10 +482,14 @@ mod tests {
             p(-20000, 50.0, -600.0),
             p(-19000, 45.0, -200.0),
             p(-17000, 52.0, 300.0),
+            p(-15500, 56.0, 200.0),
             p(-14000, 60.0, 100.0),
+            p(-12000, 58.0, -50.0),
             p(-10000, 55.0, -200.0),
             p(-9000, 50.0, -300.0),
+            p(-7000, 35.0, -300.0),
             p(-5000, 20.0, -300.0),
+            p(-3000, 11.0, -300.0),
             p(-1000, 2.0, -100.0),
         ];
         let a = messen(&v, Some(-90.0));
@@ -446,6 +508,7 @@ mod tests {
                 p(-7000, 48.0, -300.0),
                 p(-6000, 53.0, 200.0),
                 p(-4000, 49.0, -200.0),
+                p(-2500, 25.0, -200.0),
                 p(-1000, 2.0, -100.0),
             ],
             Some(-90.0),

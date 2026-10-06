@@ -228,7 +228,7 @@
       "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis, while the “Crosswind” tile beside it uses the wind relative to the aircraft nose. Both figures are correct — they simply refer to different directions, and the crab angle is exactly what lies between them.",
       "runway_discipline": "Runway discipline: how far your outer wheel stayed from the runway edge during the rollout. Centred (up to 75% of the half-width) full points, further out 85, at the edge 55, wheels off the runway 20, past the runway end (overrun) 0. Off the runway or an overrun caps the overall score at 40.",
       "touchdown_point": "Where you touched down, measured from the threshold. Within 150 m of the aiming point marking full points, otherwise inside the touchdown zone 85, up to half of the landing distance available 55, beyond that 25. Touched down before the threshold: 0 points, and the overall score is capped at 40.",
-      "abfangen": "How long it took from passing 50 ft to touchdown. Airliners: up to 10 s full points, up to 12 s 80, up to 15 s 50, beyond that 25. Light aircraft, business jets and other types not listed as airliners: 16 / 20 / 24 s. If the aircraft climbs again at more than 50 fpm (ballooning), at most 50. A part below 75 points caps the overall score at 80, below 45 at 60."
+      "abfangen": "How long it took from passing 50 ft to touchdown. Airliners: up to 10 s full points, up to 12 s 80, up to 15 s 50, beyond that 25. Light aircraft, business jets and other types not listed as airliners: 16 / 20 / 24 s; if the type is unknown, the airliner values apply. If the aircraft climbs again at more than 50 fpm (ballooning), at most 50. A part below 75 points caps the overall score at 80, below 45 at 60."
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
@@ -1218,7 +1218,7 @@
     "abfangen": {
       "titel": "Flare",
       "dauer": "Time from 50 ft",
-      "dauer_hint": "Time from crossing 50 ft above the touchdown point to touchdown. Climbing back above 50 ft during the flare does not restart the clock. Counts towards the grade (part “Flare”): airliner full points up to 10 s, clear deduction from 12 s; light aircraft or business jet full points up to 16 s.",
+      "dauer_hint": "Time from crossing 50 ft above the touchdown point to touchdown. Climbing back above 50 ft during the flare does not restart the clock — only climbing above 100 ft (go-around) does. Counts towards the grade (part “Flare”): airliner full points up to 10 s, clear deduction from 12 s; light aircraft or business jet full points up to 16 s.",
       "vs": "Sink rate 50 ft → touchdown",
       "vs_hint": "Sink rate when crossing 50 ft (simulator reading) and at first ground contact (from the height curve, as graded).",
       "reduktion": "Sink rate reduced",

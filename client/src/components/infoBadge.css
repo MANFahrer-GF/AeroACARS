@@ -117,3 +117,11 @@
   background: var(--surface-2);
   color: var(--text);
 }
+
+/* Das Fenster hängt im Client direkt an <body> (außerhalb von #root) —
+   ein per Tastatur offenes Fenster käme sonst mit aufs Papier. */
+@media print {
+  .info-badge__popover {
+    display: none !important;
+  }
+}

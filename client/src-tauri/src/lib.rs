@@ -5503,6 +5503,22 @@ struct PersistedFlightStats {
     landing_wing_strike_severity_pct: Option<f32>,
     #[serde(default)]
     arr_metar_raw: Option<String>,
+    /// QS 06.10.2026 (Runde 5): die Eingaben des Anflug-Urteils — sonst
+    /// rechnete die Note nach einem Neustart vor dem Einreichen ohne
+    /// Gleitpfad, Ruck, IAS-Streuung, Sinkrate und Konfiguration (QAF434:
+    /// „teilweise" am Aufsetzen, „stabil" im PIREP).
+    #[serde(default)]
+    anflug_gleitpfad: Option<storage::AnflugGleitpfad>,
+    #[serde(default)]
+    anflug_ruhe: Option<storage::AnflugRuhe>,
+    #[serde(default)]
+    approach_vs_jerk_fpm: Option<f32>,
+    #[serde(default)]
+    approach_ias_stddev_kt: Option<f32>,
+    #[serde(default)]
+    approach_excessive_sink: Option<bool>,
+    #[serde(default)]
+    approach_stable_config: Option<bool>,
     /// Spec v0.7.15 F5/F6: aktuelle Pause-Reason fuer App-Restart-
     /// Persistenz. `#[serde(default)]` → None bei pre-v0.7.15 Files.
     #[serde(default)]
@@ -5775,6 +5791,12 @@ impl PersistedFlightStats {
             landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
             landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
             arr_metar_raw: stats.arr_metar_raw.clone(),
+            anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
+            anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
+            approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
+            approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
+            approach_excessive_sink: stats.approach_excessive_sink,
+            approach_stable_config: stats.approach_stable_config,
             current_pause_reason: stats.current_pause_reason,
             disconnect_sim_liveness: stats.disconnect_sim_liveness,
             last_persisted_snapshot: stats.last_persisted_snapshot.clone(),
@@ -6051,6 +6073,12 @@ impl PersistedFlightStats {
         stats.landing_brake_energy_proxy = self.landing_brake_energy_proxy;
         stats.landing_wing_strike_severity_pct = self.landing_wing_strike_severity_pct;
         stats.arr_metar_raw = self.arr_metar_raw;
+        stats.anflug_forensik.gleitpfad = self.anflug_gleitpfad;
+        stats.anflug_forensik.ruhe = self.anflug_ruhe;
+        stats.approach_vs_jerk_fpm = self.approach_vs_jerk_fpm;
+        stats.approach_ias_stddev_kt = self.approach_ias_stddev_kt;
+        stats.approach_excessive_sink = self.approach_excessive_sink;
+        stats.approach_stable_config = self.approach_stable_config;
         stats.current_pause_reason = self.current_pause_reason;
         stats.disconnect_sim_liveness = self.disconnect_sim_liveness;
         stats.last_persisted_snapshot = self.last_persisted_snapshot;
@@ -60497,6 +60525,43 @@ mod touch_and_go_go_around_tests {
         stats.approach_bank_stddev_filtered_deg = Some(1.0);
         let a = scoring_eingang(&stats, None, None, None).anflug;
         assert_eq!(a.bank_stddev_deg, Some(1.0), "v2 gewinnt");
+    }
+
+    /// QS 06.10.2026 (Runde 5): Neustart zwischen Aufsetzen und Einreichen —
+    /// das Anflug-Urteil (Note, Deckel, `approach_stable_at_gate`) bleibt
+    /// dasselbe, und Gleitpfad/Anflugruhe stehen weiter im Datensatz.
+    #[test]
+    fn anflug_urteil_ueberlebt_neustart() {
+        let mut stats = FlightStats::default();
+        stats.approach_vs_jerk_fpm = Some(20.0);
+        stats.approach_bank_stddev_deg = Some(1.0);
+        stats.approach_ias_stddev_kt = Some(1.0);
+        stats.approach_excessive_sink = Some(false);
+        stats.approach_stable_config = Some(true);
+        stats.anflug_forensik.gleitpfad = Some(landing_scoring::anflug_forensik::AnflugGleitpfad {
+            gesamt: Some(landing_scoring::anflug_forensik::GleitpfadTor {
+                mittel_abs_dots: 1.69,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        stats.anflug_forensik.ruhe = Some(landing_scoring::anflug_forensik::AnflugRuhe {
+            hoehenbezug: "schwelle".to_string(),
+            ..Default::default()
+        });
+        let vorher = anflug_werte(&stats);
+        // Gegenprobe: ohne Gleitpfad fiele das Urteil anders aus.
+        let mut ohne = vorher;
+        ohne.gleitpfad_dots = None;
+        assert_ne!(
+            landing_scoring::anflug_urteil::anflug_urteil(&vorher),
+            landing_scoring::anflug_urteil::anflug_urteil(&ohne)
+        );
+        let mut neu = FlightStats::default();
+        PersistedFlightStats::snapshot_from(&stats).apply_to(&mut neu);
+        assert_eq!(anflug_werte(&neu), vorher);
+        assert_eq!(anflug_stabil_am_gate(&neu), anflug_stabil_am_gate(&stats));
+        assert_eq!(neu.anflug_forensik, stats.anflug_forensik);
     }
 
     /// Score-Version 19 (QS 05.10.2026): `approach_stable_at_gate` im

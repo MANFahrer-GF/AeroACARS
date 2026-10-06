@@ -228,7 +228,7 @@
       "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva.",
       "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun limitano il punteggio totale a 40.",
       "touchdown_point": "Dove hai toccato, misurato dalla soglia. Entro 150 m dal segnale di mira (aiming point) punteggio pieno, altrimenti nella zona di contatto 85, fino a metà della distanza di atterraggio disponibile 55, oltre 25. Contatto prima della soglia: 0 punti e il voto complessivo è al massimo 40.",
-      "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri, business jet e altri tipi non classificati come aerei di linea: 16 / 20 / 24 s. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Una parte sotto 75 punti limita il voto complessivo a 80, sotto 45 a 60."
+      "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri, business jet e altri tipi non classificati come aerei di linea: 16 / 20 / 24 s; se il tipo non è noto valgono i valori degli aerei di linea. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Una parte sotto 75 punti limita il voto complessivo a 80, sotto 45 a 60."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -1218,7 +1218,7 @@
     "abfangen": {
       "titel": "Richiamata (flare)",
       "dauer": "Durata da 50 ft",
-      "dauer_hint": "Tempo dal passaggio a 50 ft sopra il punto di contatto al contatto. Risalire sopra 50 ft durante la richiamata non fa ripartire il tempo. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta da 12 s; aereo leggero o business jet punteggio pieno fino a 16 s.",
+      "dauer_hint": "Tempo dal passaggio a 50 ft sopra il punto di contatto al contatto. Risalire sopra 50 ft durante la richiamata non fa ripartire il tempo — solo una risalita sopra 100 ft (riattaccata) lo fa. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta da 12 s; aereo leggero o business jet punteggio pieno fino a 16 s.",
       "vs": "Rateo di discesa 50 ft → contatto",
       "vs_hint": "Rateo di discesa al passaggio a 50 ft (valore del simulatore) e al primo contatto col suolo (dalla curva di quota, come valutato).",
       "reduktion": "Rateo ridotto",

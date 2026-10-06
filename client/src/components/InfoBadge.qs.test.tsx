@@ -111,3 +111,31 @@ describe("(i) — Fenster hängt nicht in der Kachel", () => {
     expect(document.querySelector(".info-badge__popover")).toBeNull();
   });
 });
+
+// QS 06.10.2026 (Runde 5): Im Client hängt das Fenster direkt an <body>,
+// außerhalb von #root — der Druck blendet nur #root-Fremdes nicht aus. Ein
+// per Tastatur offenes Fenster (Tab zum PDF-Knopf schließt es nicht) kam so
+// mit Erklärtext und ×-Knopf aufs Papier.
+describe("(i)-Fenster im Druck", () => {
+  it("die Druckregel trifft das offene Fenster", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "infoBadge.css"), "utf-8");
+    document.head.appendChild(style);
+    const { container } = render(<InfoBadge explanation="Erklärung" />);
+    fireEvent.keyDown(container.querySelector(".info-badge") as HTMLElement, { key: "Enter" });
+    fireEvent.click(container.querySelector(".info-badge") as HTMLElement);
+    const fenster = document.querySelector(".info-badge__popover") as HTMLElement;
+    expect(fenster).not.toBeNull();
+    expect(fenster.parentElement).toBe(document.body);
+    const druckRegeln = Array.from(style.sheet!.cssRules)
+      .filter((r): r is CSSMediaRule => r instanceof CSSMediaRule && /print/.test(r.media.mediaText))
+      .flatMap((m) => Array.from(m.cssRules) as CSSStyleRule[]);
+    const verbirgt = druckRegeln.some(
+      (r) => fenster.matches(r.selectorText) && r.style.getPropertyValue("display") === "none",
+    );
+    expect(verbirgt).toBe(true);
+    style.remove();
+  });
+});

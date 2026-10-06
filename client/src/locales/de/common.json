@@ -228,7 +228,7 @@
       "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse, die Kachel „Seitenwind“ daneben mit dem Wind bezogen auf die Flugzeugnase. Beide Zahlen stimmen — sie beziehen sich nur auf verschiedene Richtungen, und zwischen diesen liegt genau der Vorhaltewinkel.",
       "runway_discipline": "Bahndisziplin: wie weit dein äußeres Rad beim Ausrollen vom Bahnrand entfernt blieb. Mittig (bis 75 % der halben Bahnbreite) volle Punkte, weiter außen 85, am Rand 55, mit Rädern daneben 20, über das Bahnende hinaus (Overrun) 0. Neben der Bahn oder Overrun begrenzt die Gesamtnote auf höchstens 40.",
       "touchdown_point": "Wo du aufgesetzt hast, gemessen ab der Schwelle. Bis 150 m um die Zielmarkierung (Aim-Point) volle Punkte, sonst in der Aufsetzzone 85, bis zur Hälfte der landbaren Bahn 55, dahinter 25. Vor der Schwelle aufgesetzt: 0 Punkte, und die Gesamtnote ist höchstens 40.",
-      "abfangen": "Wie lange es vom Durchgang durch 50 ft bis zum Aufsetzen gedauert hat. Linienflugzeuge: bis 10 s volle Punkte, bis 12 s 80, bis 15 s 50, darüber 25. Kleinflugzeuge, Bizjets und andere nicht als Linienflugzeug geführte Muster: 16 / 20 / 24 s. Steigt das Flugzeug dabei mit mehr als 50 fpm wieder (Ballooning), höchstens 50. Ein Teil unter 75 Punkten begrenzt die Gesamtnote auf 80, unter 45 auf 60."
+      "abfangen": "Wie lange es vom Durchgang durch 50 ft bis zum Aufsetzen gedauert hat. Linienflugzeuge: bis 10 s volle Punkte, bis 12 s 80, bis 15 s 50, darüber 25. Kleinflugzeuge, Bizjets und andere nicht als Linienflugzeug geführte Muster: 16 / 20 / 24 s; ist kein Muster bekannt, gelten die Linienwerte. Steigt das Flugzeug dabei mit mehr als 50 fpm wieder (Ballooning), höchstens 50. Ein Teil unter 75 Punkten begrenzt die Gesamtnote auf 80, unter 45 auf 60."
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
@@ -1218,7 +1218,7 @@
     "abfangen": {
       "titel": "Abfangen (Flare)",
       "dauer": "Dauer ab 50 ft",
-      "dauer_hint": "Zeit vom Durchgang durch 50 ft über dem Aufsetzpunkt bis zum Aufsetzen. Wer im Abfangen wieder über 50 ft steigt, startet die Uhr nicht neu. Zählt zur Note (Teil „Abfangen“): Linienflugzeug bis 10 s voll, ab 12 s deutlicher Abzug; Kleinflugzeug oder Bizjet bis 16 s voll.",
+      "dauer_hint": "Zeit vom Durchgang durch 50 ft über dem Aufsetzpunkt bis zum Aufsetzen. Wer im Abfangen wieder über 50 ft steigt, startet die Uhr nicht neu — erst ein Steigen über 100 ft (Durchstarten) tut das. Zählt zur Note (Teil „Abfangen“): Linienflugzeug bis 10 s voll, ab 12 s deutlicher Abzug; Kleinflugzeug oder Bizjet bis 16 s voll.",
       "vs": "Sinkrate 50 ft → Aufsetzen",
       "vs_hint": "Sinkrate beim Durchgang durch 50 ft (Messwert des Simulators) und am ersten Bodenkontakt (aus der Höhenkurve, wie bewertet).",
       "reduktion": "Abgebaute Sinkrate",
