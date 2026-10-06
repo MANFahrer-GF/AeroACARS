@@ -16,6 +16,6 @@ describe("METAR-Wetter", () => {
   it("übersetzt mehrere Codes nacheinander", () => {
     const t = (k: string) => ({ "landing.metar.wx.SH": "Schauer", "landing.metar.wx.RA": "Regen", "landing.metar.leicht": "leicht" })[k] ?? k;
     const zeilen = metarAuswertung(t as never, "METAR EDDF 011920Z 18005KT 9999 -SHRA FEW046 14/12 Q1026");
-    expect(zeilen.map((z) => z.v).join(" | ")).toContain("leicht SchauerRegen");
+    expect(zeilen.map((z) => z.v).join(" | ")).toContain("leicht Schauer Regen");
   });
 });

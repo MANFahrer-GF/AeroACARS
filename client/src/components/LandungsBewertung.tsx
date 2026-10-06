@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 import type { LandingCategory, LandingRecord } from "../lib/landungsDatensatz";
 import { gateAus, gateGruende, gateMarke, gateUrteil, type GatePunkt } from "../lib/stableGate";
 import { landungsMarkenV19 } from "../lib/landungsUrteil";
-import { fensterWerteGueltig, scoreG } from "../lib/landungsFormat";
+import { fensterWerteGueltig, fmtNumber, scoreG } from "../lib/landungsFormat";
 import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import { scoreBasisVs } from "./SinkrateForensik";
 import { istBewertbar } from "../lib/landungsFormat";
@@ -55,6 +55,8 @@ export interface SubScore {
   /** i18n-Schlüssel des Achsennamens aus dem Datensatz (z. B.
    *  „landing.sub.runway_discipline" für die Bahn-Achse ab v2). */
   label_key?: string | null;
+  /** Roher Messwert (Abfangen: Sekunden ab 50 ft), siehe SubScoreEntry. */
+  messwert?: number | null;
 }
 
 /**
@@ -368,7 +370,11 @@ export function ScoreBreakdown({
           : (s.extra ?? []);
         const valueText = isV3Rollout
           ? (buildRolloutValueLabel(record, t) ?? s.value)
-          : s.value;
+          : s.key === "abfangen" && s.messwert != null
+            // Abnahme 06.10.2026: Rust liefert „14.0 s ab 50 ft" fest
+            // deutsch — die Anzeige bildet den Wert in der Sprache der Oberfläche.
+            ? t("landing.abfangen.teil_wert", { s: fmtNumber(s.messwert, 1) })
+            : s.value;
         return (
           <div
             key={s.key}
@@ -840,6 +846,7 @@ export function subScoresAusDatensatz(r: LandingRecord): SubScore[] {
       gate: s.gate ?? null,
       // Ohne den Schlüssel hieß die Bahndisziplin-Achse „Bahn-Auslastung".
       label_key: s.label_key ?? null,
+      messwert: typeof s.messwert === "number" ? s.messwert : null,
     };
   });
 }
@@ -1078,11 +1085,11 @@ export function BahnUeberschrift({ record }: { record: LandingRecord }) {
           ⚠ {warnung}
         </div>
       )}
-      {/* Unsichere Geometrie, aber die richtige Bahn (Versatz/Aufsetzpunkt
-          unplausibel): Bahn, Länge, landbarer Teil und Belag sind keine
-          Ableitungen aus der Geometrie — der frühere Bericht zeigte sie, die
-          Grafik entfällt hier (QS 06.10.2026). Bei falschem Platz nicht. */}
-      {!vertraut && record.runway_match && grund !== "icao_mismatch" && (
+      {/* Unsichere Geometrie: die Grafik entfällt, die Werte des früheren
+          Berichts (Bahn, Länge, landbarer Teil, Belag, TDZ, Aim-Abweichung)
+          bleiben — mit Vermerk „unsicher" wie in den Rohdaten, auch bei
+          falschem Platz (QS 06.10.2026, Abnahme). */}
+      {!vertraut && record.runway_match && (
         <p className="bahn-fakten" data-testid="bahn-fakten">
           {bahnFakten(record, t)}
         </p>
@@ -1105,7 +1112,11 @@ function bahnFakten(record: LandingRecord, t: (k: string, o?: Record<string, unk
   }
   const belag = rm.surface ? t(surfaceLabelKey(rm.surface)) || rm.surface : null;
   if (belag) teile.push(belag);
-  return teile.join(" · ");
+  if (record.td_in_tdz != null) teile.push(`${t("landing.tdz_label")} ${t(record.td_in_tdz ? "landing.tdz_in" : "landing.tdz_out")}`);
+  if (record.aim_delta_m != null) {
+    teile.push(`${t("landing.aim_label")} Δ ${record.aim_delta_m >= 0 ? "+" : ""}${record.aim_delta_m.toFixed(0)} m`);
+  }
+  return `${teile.join(" · ")} (${t("landing.rohdaten.unsicher")})`;
 }
 
 /** Simulator wie im Client: „MSFS" / „X-Plane" — der Client-Datensatz

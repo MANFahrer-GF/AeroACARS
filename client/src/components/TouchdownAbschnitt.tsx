@@ -147,7 +147,7 @@ export function WindCompass({
         )}
         {/* Auch bei „Windstill" die gemessenen Zahlen — der frühere Bericht
             zeigte sie immer (QS 06.10.2026); nur was gemessen ist. */}
-        {(headwindKt != null || (calm && crosswindKt != null)) && (
+        {(headwindKt != null || crosswindKt != null) && (
           <div className="windflow__chips">
             {/* Bei „Windstill" fehlt die Hero-Zahl — der Seitenwind steht dann
                 hier, wie im früheren Bericht (QS 06.10.2026). */}
@@ -156,10 +156,14 @@ export function WindCompass({
                 {t("landing.wind_crosswind")} · {sideLabel} {xwAbs.toFixed(0)} kt
               </span>
             )}
-            {headwindKt != null && (
+            {headwindKt != null ? (
               <span className="windflow__chip">
                 {headLabel} {twAbs.toFixed(0)} kt
               </span>
+            ) : (
+              // Nur Seitenwind gemessen: Gegenwind ausdrücklich unbekannt statt
+              // nichts (früher eine erfundene 0) — Abnahme 06.10.2026.
+              <span className="windflow__chip">{t("landing.wind_headwind")} —</span>
             )}
             {headwindKt != null && crosswindKt != null && (
               <span className="windflow__chip">

@@ -443,6 +443,9 @@ export interface SubScoreEntry {
   extra?: string[];
   /** Score-Version 19: Prüfliste des Stable Gate (nur `stability`). */
   gate?: GatePunkt[] | null;
+  /** Roher Messwert der Achse (Rust `messwert`) — die Anzeige formatiert
+   *  ihn sprachabhängig, wo `value` feste Wörter trägt (Abfangen). */
+  messwert?: number | null;
 }
 
 /** Abfangen (Flare) ab dem letzten 50-ft-Durchgang — gleiche Felder wie

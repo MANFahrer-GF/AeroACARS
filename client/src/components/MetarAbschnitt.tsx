@@ -14,22 +14,18 @@ type Uebersetzer = (k: string, o?: Record<string, unknown>) => string;
 const WETTER = ["DZ", "RA", "SN", "SG", "BR", "FG", "FU", "HZ", "TS", "SH", "FZ", "VC"] as const;
 
 function wetterText(t: Uebersetzer, code: string): string {
-  let out = code;
-  if (out.startsWith("+")) out = `${t("landing.metar.stark")} ${out.slice(1)}`;
-  else if (out.startsWith("-")) out = `${t("landing.metar.leicht")} ${out.slice(1)}`;
-  for (let i = 0; i < out.length - 1; i++) {
-    const paar = out.slice(i, i + 2);
-    if ((WETTER as readonly string[]).includes(paar)) {
-      const ersatz = t(`landing.metar.wx.${paar}`);
-      out = out.slice(0, i) + ersatz + out.slice(i + 2);
-      // Hinter dem eingesetzten Text weitersuchen — enthielt er selbst einen
-      // Code (z. B. eine fehlende Übersetzung: der Schlüssel
-      // „landing.metar.wx.RA"), wuchs der Text endlos und die Seite hing
-      // (QS-Abnahme 06.10.2026, echte Landung EDLP mit „-RA").
-      i += ersatz.length - 1;
-    }
+  // Intensität vorweg, dann Zweiergruppen (z. B. „-SHRA" → leicht Schauer
+  // Regen) — jede Gruppe für sich übersetzt und mit Leerzeichen getrennt.
+  // Kein Weitersuchen im übersetzten Text (Endlosschleife, Abnahme 06.10.2026).
+  let rest = code;
+  const teile: string[] = [];
+  if (rest.startsWith("+")) { teile.push(t("landing.metar.stark")); rest = rest.slice(1); }
+  else if (rest.startsWith("-")) { teile.push(t("landing.metar.leicht")); rest = rest.slice(1); }
+  for (let i = 0; i < rest.length; i += 2) {
+    const paar = rest.slice(i, i + 2);
+    teile.push((WETTER as readonly string[]).includes(paar) ? t(`landing.metar.wx.${paar}`) : paar);
   }
-  return out;
+  return teile.join(" ");
 }
 
 /** Auswertung eines METAR (Wind, Sicht, Wetter, Wolken, Temperatur/Taupunkt, QNH). */
@@ -44,6 +40,8 @@ export function metarAuswertung(t: Uebersetzer, raw: string): { k: string; v: st
   }
   // Sicht: 3700 oder 9999
   const vis = raw.match(/\s(\d{4})\s/);
+  // US-METAR: Sicht in Meilen („10SM", „1 1/2SM", „1/4SM", „P6SM").
+  const visSm = raw.match(/\s(P?\d+(?: \d\/\d)?|\d\/\d)SM\s/);
   if (vis) {
     const m = parseInt(vis[1]!, 10);
     out.push({
@@ -51,6 +49,9 @@ export function metarAuswertung(t: Uebersetzer, raw: string): { k: string; v: st
       k: t("landing.metar.sicht"),
       v: m >= 9999 ? "≥ 10 km" : m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`,
     });
+  } else if (visSm) {
+    const roh = visSm[1]!;
+    out.push({ id: "sicht", k: t("landing.metar.sicht"), v: roh.startsWith("P") ? `> ${roh.slice(1)} SM` : `${roh} SM` });
   }
   const wx = raw.match(/\s([+-]?(?:VC)?(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|TS|SH|FZ){1,3})\s/);
   if (wx) out.push({ id: "wetter", k: t("landing.metar.wetter"), v: wetterText(t, wx[1]!) });

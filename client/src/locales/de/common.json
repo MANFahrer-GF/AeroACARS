@@ -973,7 +973,7 @@
         "landing_config": {
           "label": "Landing-Config",
           "body": "Gear- und Flaps-Position am ÄLTESTEN Sample im Gate (= dem mit der höchsten Höhe ~1000 ft). FAA verlangt: Konfiguration bei Stable-Gate komplett.",
-          "thresholds": "GEAR/FLAPS ✓ = Gear ≥ 99 %, Flaps ≥ 70 % bei 1000 ft · INCOMPLETE = einer fehlt"
+          "thresholds": "GEAR/FLAPS ✓ = Gear ≥ 99 %, Flaps ≥ 70 % beim Eintritt ins Gate · INCOMPLETE = einer fehlt"
         },
         "vs_vs_ils": {
           "label": "V/S vs. 3°-ILS",
@@ -1111,7 +1111,7 @@
         "querneigung": "Querneigung unruhig: Streuung {{wert}}° (gut unter {{grenze}})",
         "ruck": "Sinkrate sprunghaft: {{wert}} fpm Ruck (gut unter {{grenze}})",
         "sinken": "Sinkrate über 10 Sekunden am Stück zu hoch",
-        "konfiguration": "Fahrwerk oder Klappen bei 1000 ft nicht in Landestellung"
+        "konfiguration": "Fahrwerk oder Klappen beim Eintritt ins Gate nicht in Landestellung"
       }
     },
     "groundspeed": "GS bei TD",
@@ -1220,6 +1220,7 @@
       "titel": "Abfangen (Flare)",
       "dauer": "Dauer ab 50 ft",
       "dauer_hint": "Zeit vom Durchgang durch 50 ft über dem Aufsetzpunkt bis zum Aufsetzen. Wer im Abfangen wieder über 50 ft steigt, startet die Uhr nicht neu — erst ein Steigen über 100 ft (Durchstarten) tut das. Zählt zur Note (Teil „Abfangen“): Linienflugzeug bis 10 s voll, über 12 s deutlicher Abzug; Kleinflugzeug oder Bizjet bis 16 s voll.",
+      "teil_wert": "{{s}} s ab 50 ft",
       "vs": "Sinkrate 50 ft → Aufsetzen",
       "vs_hint": "Sinkrate beim Durchgang durch 50 ft (Messwert des Simulators) und am ersten Bodenkontakt (wie bewertet: aus der Höhenkurve, ist sie nicht auswertbar, vom Simulator).",
       "reduktion": "Abgebaute Sinkrate",
@@ -1264,7 +1265,7 @@
         "querneigung": "Wie stark die Querlage im Stable Gate schwankte (Standardabweichung). Gut unter 3°, schlecht ab 6°. Prüfpunkt des Stable Gate.",
         "ruck": "Wie ruckartig sich die Sinkrate von Messpunkt zu Messpunkt änderte. Gut unter 100 fpm, schlecht ab 200 fpm. Prüfpunkt des Stable Gate.",
         "sinken": "Ob die Sinkrate im Stable Gate mindestens 10 s am Stück über der Grenze lag (bei 3° Gleitwinkel −1000 fpm, bei steileren Anflügen entsprechend mehr). Prüfpunkt des Stable Gate.",
-        "konfiguration": "Ob das Flugzeug beim Eintritt ins Stable Gate (1000 ft) in Landekonfiguration war: Fahrwerk unten, Landeklappen gesetzt. Prüfpunkt des Stable Gate.",
+        "konfiguration": "Ob das Flugzeug beim Eintritt ins Stable Gate in Landekonfiguration war (erster Messpunkt bis 1000 ft — beginnt die Aufzeichnung tiefer, dort): Fahrwerk unten, Landeklappen gesetzt. Prüfpunkt des Stable Gate.",
         "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, Gesamtnote höchstens 45. Sonst PARTIAL, Gesamtnote höchstens 80. Ohne Messung höchstens 97.",
         "urteil_alt": "Anflug-Urteil für Flüge vor Score-Version 19, aus den sieben Kacheln: alle gut = STABLE, zwei schlecht oder drei nicht gut = UNSTABLE, sonst PARTIAL. Ab Score-Version 18 begrenzt PARTIAL die Gesamtnote auf 80 und UNSTABLE auf 45, in Version 17 nur die Teilnote Anflug-Stabilität, davor begrenzte es nichts."
       },

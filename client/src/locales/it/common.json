@@ -973,7 +973,7 @@
         "landing_config": {
           "label": "Landing config",
           "body": "Posizione gear e flaps al campione PIÙ VECCHIO del gate (= quello con altezza più alta, ~1000 ft). FAA richiede: configurazione completa allo stable gate.",
-          "thresholds": "GEAR/FLAPS ✓ = gear ≥ 99 %, flaps ≥ 70 % a 1000 ft · INCOMPLETE = uno manca"
+          "thresholds": "GEAR/FLAPS ✓ = gear ≥ 99 %, flaps ≥ 70 % all'ingresso nel gate · INCOMPLETE = uno manca"
         },
         "vs_vs_ils": {
           "label": "V/S vs. 3° ILS",
@@ -1111,7 +1111,7 @@
         "querneigung": "Inclinazione irregolare: dispersione {{wert}}° (buono sotto {{grenze}})",
         "ruck": "Rateo di discesa a scatti: {{wert}} fpm di strappo (buono sotto {{grenze}})",
         "sinken": "Rateo di discesa troppo alto per oltre 10 secondi",
-        "konfiguration": "Carrello o flap non in configurazione d’atterraggio a 1000 ft"
+        "konfiguration": "Carrello o flap non in configurazione d’atterraggio all’ingresso nel gate"
       }
     },
     "groundspeed": "GS al TD",
@@ -1220,6 +1220,7 @@
       "titel": "Richiamata (flare)",
       "dauer": "Durata da 50 ft",
       "dauer_hint": "Tempo dal passaggio a 50 ft sopra il punto di contatto al contatto. Risalire sopra 50 ft durante la richiamata non fa ripartire il tempo — solo una risalita sopra 100 ft (riattaccata) lo fa. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta oltre 12 s; aereo leggero o business jet punteggio pieno fino a 16 s.",
+      "teil_wert": "{{s}} s da 50 ft",
       "vs": "Rateo di discesa 50 ft → contatto",
       "vs_hint": "Rateo di discesa al passaggio a 50 ft (valore del simulatore) e al primo contatto col suolo (come valutato: dalla curva di quota, se non è valutabile, dal simulatore).",
       "reduktion": "Rateo ridotto",
@@ -1264,7 +1265,7 @@
         "querneigung": "Quanto ha oscillato l'inclinazione laterale nello stable gate (deviazione standard). Buono sotto 3°, scarso da 6°. Controllo dello stable gate.",
         "ruck": "Quanto bruscamente è cambiato il rateo di discesa da un punto di misura all'altro. Buono sotto 100 fpm, scarso da 200 fpm. Controllo dello stable gate.",
         "sinken": "Se il rateo di discesa nello stable gate ha superato il limite per almeno 10 s di fila (−1000 fpm con sentiero di 3°, di più per avvicinamenti più ripidi). Controllo dello stable gate.",
-        "konfiguration": "Se l'aereo era in configurazione di atterraggio all'ingresso dello stable gate (1000 ft): carrello giù, flap di atterraggio. Controllo dello stable gate.",
+        "konfiguration": "Se l'aereo era in configurazione di atterraggio all'ingresso dello stable gate (primo campione fino a 1000 ft — più in basso se la registrazione inizia più in basso): carrello giù, flap di atterraggio. Controllo dello stable gate.",
         "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, voto complessivo al massimo 45. Altrimenti PARTIAL, voto complessivo al massimo 80. Senza misura al massimo 97.",
         "urteil_alt": "Giudizio sull’avvicinamento per i voli prima della versione 19, dalle sette caselle: tutte buone = STABLE, due scarse o tre non buone = UNSTABLE, altrimenti PARTIAL. Dalla versione 18 PARTIAL limita il voto complessivo a 80 e UNSTABLE a 45; nella versione 17 solo la parte stabilità dell’avvicinamento, prima non limitava nulla."
       },
