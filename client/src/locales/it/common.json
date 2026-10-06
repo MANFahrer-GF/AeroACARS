@@ -1110,7 +1110,8 @@
         "querneigung": "Inclinazione irregolare: dispersione {{wert}}° (buono sotto {{grenze}})",
         "ruck": "Rateo di discesa a scatti: {{wert}} fpm di strappo (buono sotto {{grenze}})",
         "sinken": "Rateo di discesa troppo alto per oltre 10 secondi",
-        "konfiguration": "Carrello o flap non in configurazione d’atterraggio all’ingresso nel gate"
+        "konfiguration": "Carrello o flap non in configurazione d’atterraggio all’ingresso nel gate",
+        "spaet_stabil": "Stabile da 500 ft: stabilizzato tardi, quindi solo “parziale” invece di “instabile”"
       }
     },
     "groundspeed": "GS al TD",
@@ -1276,7 +1277,7 @@
         "ruck": "Quanto bruscamente è cambiato il rateo di discesa da un punto di misura all'altro. Buono sotto 100 fpm, scarso da 200 fpm. Controllo dello stable gate.",
         "sinken": "Se il rateo di discesa nello stable gate ha superato il limite per almeno 10 s di fila (−1000 fpm con sentiero di 3°, di più per avvicinamenti più ripidi). Controllo dello stable gate.",
         "konfiguration": "Se l'aereo era in configurazione di atterraggio all’ingresso nel gate (primo campione fino a 1000 ft — più in basso se la registrazione inizia più in basso): carrello giù, flap di atterraggio. Controllo dello stable gate.",
-        "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, voto complessivo al massimo 45. Altrimenti PARTIAL, voto complessivo al massimo 80. Senza misura al massimo 97.",
+        "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, voto complessivo al massimo 45. Altrimenti PARTIAL, voto complessivo al massimo 80. Senza misura al massimo 97. Stabilizzato tardi: se velocità o configurazione sono scarse a 1000 ft ma da 500 ft i flap d’atterraggio sono estesi e la velocità è stabile, contano solo come “medio”.",
         "urteil_alt": "Giudizio sull’avvicinamento per i voli prima della versione 19, dalle sette caselle: tutte buone = STABLE, due scarse o tre non buone = UNSTABLE, altrimenti PARTIAL. Dalla versione 18 PARTIAL limita il voto complessivo a 80 e UNSTABLE a 45; nella versione 17 solo la parte stabilità dell’avvicinamento, prima non limitava nulla."
       },
       "tile": {

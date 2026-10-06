@@ -1110,7 +1110,8 @@
         "querneigung": "Querneigung unruhig: Streuung {{wert}}° (gut unter {{grenze}})",
         "ruck": "Sinkrate sprunghaft: {{wert}} fpm Ruck (gut unter {{grenze}})",
         "sinken": "Sinkrate über 10 Sekunden am Stück zu hoch",
-        "konfiguration": "Fahrwerk oder Klappen beim Eintritt ins Gate nicht in Landestellung"
+        "konfiguration": "Fahrwerk oder Klappen beim Eintritt ins Gate nicht in Landestellung",
+        "spaet_stabil": "Ab 500 ft stabil: spät stabilisiert, deshalb nur „teilweise“ statt „instabil“"
       }
     },
     "groundspeed": "GS bei TD",
@@ -1276,7 +1277,7 @@
         "ruck": "Wie ruckartig sich die Sinkrate von Messpunkt zu Messpunkt änderte. Gut unter 100 fpm, schlecht ab 200 fpm. Prüfpunkt des Stable Gate.",
         "sinken": "Ob die Sinkrate im Stable Gate mindestens 10 s am Stück über der Grenze lag (bei 3° Gleitwinkel −1000 fpm, bei steileren Anflügen entsprechend mehr). Prüfpunkt des Stable Gate.",
         "konfiguration": "Ob das Flugzeug beim Eintritt ins Stable Gate in Landekonfiguration war (erster Messpunkt bis 1000 ft — beginnt die Aufzeichnung tiefer, dort): Fahrwerk unten, Landeklappen gesetzt. Prüfpunkt des Stable Gate.",
-        "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, Gesamtnote höchstens 45. Sonst PARTIAL, Gesamtnote höchstens 80. Ohne Messung höchstens 97.",
+        "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, Gesamtnote höchstens 45. Sonst PARTIAL, Gesamtnote höchstens 80. Ohne Messung höchstens 97. Spät stabilisiert: Sind Fahrt oder Konfiguration bei 1000 ft schlecht, ab 500 ft aber Landeklappen gesetzt und die Fahrt ruhig, zählen beide nur als „mittel“.",
         "urteil_alt": "Anflug-Urteil für Flüge vor Score-Version 19, aus den sieben Kacheln: alle gut = STABLE, zwei schlecht oder drei nicht gut = UNSTABLE, sonst PARTIAL. Ab Score-Version 18 begrenzt PARTIAL die Gesamtnote auf 80 und UNSTABLE auf 45, in Version 17 nur die Teilnote Anflug-Stabilität, davor begrenzte es nichts."
       },
       "tile": {

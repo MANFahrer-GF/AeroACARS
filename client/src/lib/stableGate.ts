@@ -17,6 +17,8 @@ export interface GatePunkt {
   stufe: "gut" | "mittel" | "schlecht";
   wert?: number | null;
   gut_unter?: number | null;
+  /** Score-Version 20: bei 1000 ft „schlecht", ab 500 ft stabil → „mittel". */
+  spaet_stabil?: boolean;
 }
 
 export type GateUrteil = "stable" | "partial" | "unstable";
@@ -67,7 +69,7 @@ export function gateGruende(
   lang: string,
 ): string[] {
   if (!gate) return [];
-  return gate
+  const gruende = gate
     .filter((p) => p.stufe !== "gut")
     .map((p) => {
       const stellen = GATE_STELLEN[p.key] ?? 1;
@@ -76,6 +78,10 @@ export function gateGruende(
         grenze: p.gut_unter != null ? zahl(p.gut_unter, 0, lang) : "",
       });
     });
+  // Score-Version 20 (RYR73): einmal sagen, warum Fahrt/Konfiguration nur
+  // „mittel" zählen, obwohl ihr Wert über der Grenze liegt.
+  if (gate.some((p) => p.spaet_stabil)) gruende.push(t("landing.gate.grund.spaet_stabil"));
+  return gruende;
 }
 
 /** Beschriftung einer Prüfung (Kachel). */

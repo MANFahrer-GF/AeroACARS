@@ -46,7 +46,17 @@ pub struct AnflugWerte {
     /// (`anflug_gleitpfad.gesamt.mittel_abs_dots`). `None` ohne Gleitpfad-
     /// bezug (Sichtanflug ohne Navdaten) — die Pruefung entfaellt dann.
     pub gleitpfad_dots: Option<f32>,
+    /// Fahrt-Streuung (σ, kt) von 500 ft bis zum Flare — fuer die Regel
+    /// „spaet stabilisiert" (siehe [`anflug_pruefung`]). `None` = nicht gemessen.
+    pub ias_stddev_unter_500_kt: Option<f32>,
+    /// Fahrwerk + Landeklappen am 500-ft-Tor (gleiche Pruefung wie
+    /// `stable_config` bei 1000 ft). `None` = nicht messbar.
+    pub stable_config_500: Option<bool>,
 }
+
+/// Grenze „gut" der Fahrt-Pruefung (σ in kt) — auch Riegel fuer
+/// „spaet stabilisiert" unter 500 ft.
+pub const FAHRT_GUT_UNTER_KT: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -79,6 +89,11 @@ pub struct Pruefpunkt {
     /// Grenze fuer „gut" (Messwert darunter) — bei Ja/Nein `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gut_unter: Option<f32>,
+    /// Bei 1000 ft „schlecht", aber bei 500 ft stabil — deshalb nur
+    /// „mittel". Die Oberflaechen nennen den Grund (`landing.gate.grund.
+    /// spaet_stabil`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spaet_stabil: bool,
 }
 
 fn bereich(key: &str, v: Option<f32>, gut_unter: f32, mittel_unter: f32) -> Option<Pruefpunkt> {
@@ -95,6 +110,7 @@ fn bereich(key: &str, v: Option<f32>, gut_unter: f32, mittel_unter: f32) -> Opti
         stufe,
         wert: Some(x),
         gut_unter: Some(gut_unter),
+        spaet_stabil: false,
     })
 }
 
@@ -109,19 +125,42 @@ fn wahrheit(key: &str, v: Option<bool>, gut_wert: bool) -> Option<Pruefpunkt> {
         },
         wert: None,
         gut_unter: None,
+        spaet_stabil: false,
     })
 }
 
 /// Alle gemessenen Pruefungen, in fester Reihenfolge (Gleitpfad zuerst —
 /// er ist das, was „stabil" im Kern meint). Nicht gemessene fehlen.
+///
+/// Score-Version 20 (06.10.2026, RYR73): „Spaet stabilisiert". Fahrt und
+/// Konfiguration werden bei 1000 ft geprueft. Wer dort noch abbremst und
+/// Klappen setzt, aber ab 500 ft mit Landeklappen und ruhiger Fahrt fliegt,
+/// hat die Sichtanflug-Grenze der Flight Safety Foundation (500 ft)
+/// erreicht. Beide Punkte haben dann EINE Ursache und galten doppelt als
+/// „schlecht" — zwei schlechte = UNSTABLE, Gesamtnote 45 (RYR73: 178 kt und
+/// Klappen 15 bei 1000 ft, ab 490 ft 145 kt mit Klappen 30, Landung sauber).
+/// Jetzt zaehlen sie in diesem Fall nur als „mittel".
 pub fn anflug_pruefung(w: &AnflugWerte) -> Vec<Pruefpunkt> {
+    let stabil_bei_500 = w
+        .ias_stddev_unter_500_kt
+        .is_some_and(|x| x.is_finite() && x < FAHRT_GUT_UNTER_KT)
+        && w.stable_config_500 != Some(false);
+    let spaet = |p: Option<Pruefpunkt>| {
+        p.map(|mut p| {
+            if stabil_bei_500 && p.stufe == Stufe::Schlecht {
+                p.stufe = Stufe::Mittel;
+                p.spaet_stabil = true;
+            }
+            p
+        })
+    };
     [
         bereich("gleitpfad", w.gleitpfad_dots, 1.0, 2.0),
-        bereich("fahrt", w.ias_stddev_kt, 5.0, 8.0),
+        spaet(bereich("fahrt", w.ias_stddev_kt, FAHRT_GUT_UNTER_KT, 8.0)),
         bereich("querneigung", w.bank_stddev_deg, 3.0, 6.0),
         bereich("ruck", w.vs_jerk_fpm, 100.0, 200.0),
         wahrheit("sinken", w.excessive_sink, false),
-        wahrheit("konfiguration", w.stable_config, true),
+        spaet(wahrheit("konfiguration", w.stable_config, true)),
     ]
     .into_iter()
     .flatten()
@@ -175,6 +214,7 @@ mod tests {
             excessive_sink: Some(false),
             stable_config: Some(true),
             gleitpfad_dots: Some(0.3),
+            ..Default::default()
         }
     }
 
@@ -195,6 +235,7 @@ mod tests {
             excessive_sink: Some(false),
             stable_config: Some(true),
             gleitpfad_dots: Some(0.24),
+            ..Default::default()
         };
         assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Stable));
     }
@@ -210,6 +251,7 @@ mod tests {
             excessive_sink: Some(false),
             stable_config: Some(true),
             gleitpfad_dots: Some(1.69),
+            ..Default::default()
         };
         assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Partial));
         let auffaellig: Vec<_> = anflug_pruefung(&w)
@@ -271,5 +313,73 @@ mod tests {
         w.gleitpfad_dots = None;
         assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Stable));
         assert!(anflug_pruefung(&w).iter().all(|p| p.key != "gleitpfad"));
+    }
+
+    /// RYR73 (06.10.2026): 178 kt und Klappen 15 bei 1000 ft, ab 500 ft
+    /// Landeklappen und 145 kt. Vorher UNSTABLE (Gesamtnote 45), jetzt
+    /// „spaet stabilisiert" = PARTIAL.
+    #[test]
+    fn ryr73_spaet_stabilisiert_ist_partial() {
+        let mut w = AnflugWerte {
+            vs_jerk_fpm: Some(49.0),
+            bank_stddev_deg: Some(0.79),
+            ias_stddev_kt: Some(9.02),
+            excessive_sink: Some(false),
+            stable_config: Some(false),
+            gleitpfad_dots: Some(0.34),
+            ias_stddev_unter_500_kt: None,
+            stable_config_500: None,
+        };
+        assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Unstable));
+        w.ias_stddev_unter_500_kt = Some(0.9);
+        w.stable_config_500 = Some(true);
+        assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Partial));
+        let p = anflug_pruefung(&w);
+        let spaet: Vec<_> = p
+            .iter()
+            .filter(|p| p.spaet_stabil)
+            .map(|p| p.key.as_str())
+            .collect();
+        assert_eq!(spaet, ["fahrt", "konfiguration"]);
+        assert!(p.iter().all(|p| p.stufe != Stufe::Schlecht));
+    }
+
+    /// Unter 500 ft nicht stabil → die 1000-ft-Strenge bleibt.
+    #[test]
+    fn ohne_stabilitaet_bei_500_bleibt_es_schlecht() {
+        let mut w = stabil();
+        w.ias_stddev_kt = Some(9.0);
+        w.stable_config = Some(false);
+        for (ias500, konf500) in [
+            (Some(6.0), Some(true)),
+            (Some(1.0), Some(false)),
+            (None, Some(true)),
+        ] {
+            w.ias_stddev_unter_500_kt = ias500;
+            w.stable_config_500 = konf500;
+            assert_eq!(
+                anflug_urteil(&w),
+                Some(AnflugUrteil::Unstable),
+                "{ias500:?} {konf500:?}"
+            );
+        }
+    }
+
+    /// Die Regel mildert nur Fahrt und Konfiguration — Sinken, Gleitpfad &
+    /// Co. bleiben streng, und „mittel" wird nicht zu „gut".
+    #[test]
+    fn spaet_stabil_mildert_nur_fahrt_und_konfiguration() {
+        let mut w = stabil();
+        w.excessive_sink = Some(true);
+        w.gleitpfad_dots = Some(2.5);
+        w.ias_stddev_kt = Some(6.0);
+        w.ias_stddev_unter_500_kt = Some(1.0);
+        w.stable_config_500 = Some(true);
+        let p = anflug_pruefung(&w);
+        let stufe = |k: &str| p.iter().find(|p| p.key == k).unwrap().stufe;
+        assert_eq!(stufe("sinken"), Stufe::Schlecht);
+        assert_eq!(stufe("gleitpfad"), Stufe::Schlecht);
+        assert_eq!(stufe("fahrt"), Stufe::Mittel);
+        assert!(p.iter().all(|p| !p.spaet_stabil));
     }
 }

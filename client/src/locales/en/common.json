@@ -1110,7 +1110,8 @@
         "querneigung": "Bank unsteady: scatter {{wert}}° (good below {{grenze}})",
         "ruck": "Sink rate jumpy: {{wert}} fpm jerk (good below {{grenze}})",
         "sinken": "Sink rate too high for more than 10 seconds",
-        "konfiguration": "Gear or flaps not in landing position when entering the gate"
+        "konfiguration": "Gear or flaps not in landing position when entering the gate",
+        "spaet_stabil": "Stable from 500 ft: late stabilised, so only “partial” instead of “unstable”"
       }
     },
     "groundspeed": "GS at TD",
@@ -1276,7 +1277,7 @@
         "ruck": "How abruptly the sink rate changed from sample to sample. Good below 100 fpm, poor from 200 fpm. Check of the stable gate.",
         "sinken": "Whether the sink rate in the stable gate exceeded the limit for at least 10 s in a row (−1000 fpm at a 3° glide path, correspondingly more on steeper approaches). Check of the stable gate.",
         "konfiguration": "Whether the aircraft was in landing configuration when entering the stable gate (first sample up to 1000 ft — lower if the recording starts lower): gear down, landing flaps set. Check of the stable gate.",
-        "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, overall score at most 45. Otherwise PARTIAL, overall score at most 80. Without measurement at most 97.",
+        "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, overall score at most 45. Otherwise PARTIAL, overall score at most 80. Without measurement at most 97. Late stabilised: if speed or configuration is bad at 1000 ft but landing flaps are set and speed is steady from 500 ft, both only count as “medium”.",
         "urteil_alt": "Approach verdict for flights before score version 19, from the seven tiles: all good = STABLE, two poor or three not good = UNSTABLE, otherwise PARTIAL. From score version 18 PARTIAL caps the overall score at 80 and UNSTABLE at 45; in version 17 only the approach stability part, before that it capped nothing."
       },
       "tile": {

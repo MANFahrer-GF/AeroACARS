@@ -5526,6 +5526,10 @@ struct PersistedFlightStats {
     approach_excessive_sink: Option<bool>,
     #[serde(default)]
     approach_stable_config: Option<bool>,
+    #[serde(default)]
+    approach_ias_stddev_unter_500_kt: Option<f32>,
+    #[serde(default)]
+    approach_stable_config_500: Option<bool>,
     /// Spec v0.7.15 F5/F6: aktuelle Pause-Reason fuer App-Restart-
     /// Persistenz. `#[serde(default)]` → None bei pre-v0.7.15 Files.
     #[serde(default)]
@@ -5811,6 +5815,8 @@ impl PersistedFlightStats {
             approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
             approach_excessive_sink: stats.approach_excessive_sink,
             approach_stable_config: stats.approach_stable_config,
+            approach_ias_stddev_unter_500_kt: stats.approach_ias_stddev_unter_500_kt,
+            approach_stable_config_500: stats.approach_stable_config_500,
             current_pause_reason: stats.current_pause_reason,
             disconnect_sim_liveness: stats.disconnect_sim_liveness,
             last_persisted_snapshot: stats.last_persisted_snapshot.clone(),
@@ -6095,6 +6101,8 @@ impl PersistedFlightStats {
         stats.approach_ias_stddev_kt = self.approach_ias_stddev_kt;
         stats.approach_excessive_sink = self.approach_excessive_sink;
         stats.approach_stable_config = self.approach_stable_config;
+        stats.approach_ias_stddev_unter_500_kt = self.approach_ias_stddev_unter_500_kt;
+        stats.approach_stable_config_500 = self.approach_stable_config_500;
         stats.current_pause_reason = self.current_pause_reason;
         stats.disconnect_sim_liveness = self.disconnect_sim_liveness;
         stats.last_persisted_snapshot = self.last_persisted_snapshot;
@@ -7017,6 +7025,10 @@ struct FlightStats {
     /// Stable-Configuration-Flag: Gear voll runter (≥99%) AND Flaps
     /// in Landing-Position (≥70%) am Gate. None bei Konfig-Sample fehlt.
     approach_stable_config: Option<bool>,
+    /// Score-Version 20: Fahrt-σ ab 500 ft und Konfiguration am 500-ft-Tor
+    /// („spaet stabilisiert", siehe `anflug_urteil::anflug_pruefung`).
+    approach_ias_stddev_unter_500_kt: Option<f32>,
+    approach_stable_config_500: Option<bool>,
     /// "Nutzte HAT statt AGL?" — fuer UI-Confidence-Indikator.
     approach_used_hat: bool,
     /// v0.5.27: Quelle des Flugplans. None = pre-v0.5.27 (Annahme:
@@ -11248,6 +11260,10 @@ pub struct ApproachStabilityV2 {
     pub excessive_sink: Option<bool>,
     /// Gear+Flaps am 1000-ft-Sample in Landing-Konfig?
     pub stable_config: Option<bool>,
+    /// Score-Version 20: Fahrt-Streuung von 500 ft bis zum Flare.
+    pub ias_stddev_unter_500_kt: Option<f32>,
+    /// Score-Version 20: Gear+Flaps am 500-ft-Sample.
+    pub stable_config_500: Option<bool>,
     /// HAT (statt AGL) als Window-Filter genutzt?
     pub used_hat: bool,
     /// v0.5.26: Stable bei DA (200 ft AGL/HAT) erreicht?
@@ -11290,6 +11306,94 @@ fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], grenze_fpm: f64) -
 
 /// Groesster Abstand zweier Samples innerhalb eines Laufs (Kadenz ~1 s).
 const SINK_MAX_LUECKE_MS: i64 = 4000;
+
+/// Landekonfiguration (Fahrwerk + Klappen) an einem Tor-Sample. `alle` =
+/// alle Samples im 1000-ft-Gate (fuer die Pruefung, ob der Klappenkanal
+/// ueberhaupt lesbar ist). `None` = nicht bewertbar.
+fn landekonfiguration(
+    gate_entry: &ApproachBufferSample,
+    alle: &[&ApproachBufferSample],
+    konfig: &KonfigKontext,
+) -> Option<bool> {
+    let gear_ok = gate_entry.gear_position >= 0.99;
+    // v0.12.1 (Stream C LE11): detect an unreadable flaps dataref.
+    // Study-level X-Plane add-ons (Hot-Start CL650 etc.) don't drive
+    // the standard flap dataref → flaps_position stays 0 the whole
+    // approach. If gear is down and the gate-entry speed is in the
+    // landing range, flaps-0 is a broken reading, not "pilot forgot
+    // flaps" — report the config as not-assessable (None) rather than
+    // a false "INCOMPLETE" fail. A genuine flapless approach would be
+    // far faster than FLAPS_UNREADABLE_MAX_IAS_KT.
+    //
+    // v1.6.1 (Befund ITY 4TK, Synaptic A220): die Grenze lag bei
+    // < 0.01 und fing damit nur TOTE Datarefs. Ein falsch SKALIERTER
+    // Wert (A220-Klappenhebel doppelt normalisiert → 0.2 statt 1.0)
+    // rutschte durch und wurde als „Pilot hat die Klappen vergessen"
+    // bewertet. Physik-Argument wie oben: Fahrwerk unten und
+    // Landegeschwindigkeit mit ≤ 25 % Klappen ist keine plausible
+    // Konfiguration, sondern ein kaputter oder fehlskalierter
+    // Messwert → nicht bewertbar statt falsch-INCOMPLETE. Fängt
+    // die ganze Fehlerklasse für alle künftigen Profile.
+    let flaps_all_implausible = alle
+        .iter()
+        .all(|s| s.flaps_position < FLAPS_IMPLAUSIBLE_BELOW);
+    let flaps_unreadable =
+        flaps_all_implausible && gear_ok && gate_entry.ias_kt < FLAPS_UNREADABLE_MAX_IAS_KT;
+
+    // v1.6.6: der allgemeine Fall des Obigen. Wenn sich der Klappenwert im
+    // GANZEN Flug kein einziges Mal bewegt hat, traegt der Kanal keine
+    // Information — egal welchen Wert er anzeigt und egal wie schnell das
+    // Flugzeug am Tor war. Der Check darueber faengt dasselbe nur unter
+    // 160 kt; im Korpus (827 Fluege) rutschten damit genau die schweren
+    // Muster durch, die am Tor legitim schneller sind: B77W, A339, MD11,
+    // A346, A20N, DH8D — 15 Fluege, alle mit einem toten Dataref als
+    // „Klappen vergessen" gewertet.
+    let flaps_tot = konfig.flaps_bewegt == Some(false);
+
+    if !gear_ok {
+        // Das Fahrwerk ist eindeutig: oben ist oben. Ob die Klappen
+        // messbar sind, aendert daran nichts — dieser Zweig haelt die
+        // Bewertung dort streng, wo sie es immer war (bisher implizit,
+        // weil der Riegel darunter `gear_ok` verlangte).
+        Some(false)
+    } else if flaps_tot || flaps_unreadable {
+        None
+    } else {
+        let mut flaps_ok = gate_entry.flaps_position >= FLAPS_LANDING_MIN;
+        if !flaps_ok {
+            // v1.6.6: fremdes Rastermass. Nicht jedes Muster skaliert seine
+            // Klappen auf 1,0 — die Fokker 28 im Sim endet bei 0,667, die
+            // Falcon 50 ebenso. Steht der Hebel am Tor schon auf dem
+            // Maximum DIESES Fluges und passt die Geschwindigkeit ins
+            // stabilisierte Fenster (Vref…Vref+20), dann misst die absolute
+            // 0,70-Schwelle das Raster des Sims, nicht den Piloten.
+            //
+            // Die Geschwindigkeit ist hier der Riegel, nicht Beiwerk: ohne
+            // sie wuerde jede Landung mit Anflugklappen als „Landeklappen"
+            // durchgehen, weil ein einzelner Flug nie zeigt, welche Stufen
+            // es noch gaebe. Genau daran scheitern im Korpus die echten
+            // Faelle — DA40 mit T/O-Klappen bei Vref+43, Phenom 300 bei
+            // Vref+59, A320 mit CONF 2 bei 215 kt — und sie bleiben
+            // korrekt bewertet.
+            //
+            // Kein Vref (Muster nicht in der Tabelle) → Regel bleibt aus.
+            // Der Health-Report meldet solche Muster separat, damit die
+            // Tabelle waechst statt die Schwelle aufzuweichen.
+            if let (Some(max_im_flug), Some(vref)) =
+                (konfig.flaps_max_im_flug, konfig.typical_vref_kt)
+            {
+                let am_eigenen_maximum = gate_entry.flaps_position >= max_im_flug - 0.01
+                    && gate_entry.flaps_position >= FLAPS_IMPLAUSIBLE_BELOW;
+                if am_eigenen_maximum && gate_entry.ias_kt <= vref + STABILISIERT_UEBER_VREF_KT {
+                    flaps_ok = true;
+                }
+            }
+        }
+        // `gear_ok` ist hier beweisbar true — der Zweig oben hat den
+        // Fall abgefangen.
+        Some(flaps_ok)
+    }
+}
 
 /// v0.5.25: Stable-Approach-Gate-konformes Stability-Maß.
 ///
@@ -11459,84 +11563,31 @@ fn compute_approach_stability_v2(
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
     {
-        let gear_ok = gate_entry.gear_position >= 0.99;
-        // v0.12.1 (Stream C LE11): detect an unreadable flaps dataref.
-        // Study-level X-Plane add-ons (Hot-Start CL650 etc.) don't drive
-        // the standard flap dataref → flaps_position stays 0 the whole
-        // approach. If gear is down and the gate-entry speed is in the
-        // landing range, flaps-0 is a broken reading, not "pilot forgot
-        // flaps" — report the config as not-assessable (None) rather than
-        // a false "INCOMPLETE" fail. A genuine flapless approach would be
-        // far faster than FLAPS_UNREADABLE_MAX_IAS_KT.
-        //
-        // v1.6.1 (Befund ITY 4TK, Synaptic A220): die Grenze lag bei
-        // < 0.01 und fing damit nur TOTE Datarefs. Ein falsch SKALIERTER
-        // Wert (A220-Klappenhebel doppelt normalisiert → 0.2 statt 1.0)
-        // rutschte durch und wurde als „Pilot hat die Klappen vergessen"
-        // bewertet. Physik-Argument wie oben: Fahrwerk unten und
-        // Landegeschwindigkeit mit ≤ 25 % Klappen ist keine plausible
-        // Konfiguration, sondern ein kaputter oder fehlskalierter
-        // Messwert → nicht bewertbar statt falsch-INCOMPLETE. Fängt
-        // die ganze Fehlerklasse für alle künftigen Profile.
-        let flaps_all_implausible = gate_samples
+        out.stable_config = landekonfiguration(gate_entry, &gate_samples, &konfig);
+    }
+
+    // 6b) Score-Version 20 (RYR73): dasselbe am 500-ft-Tor plus die Fahrt-
+    //     Streuung darunter — fuer „spaet stabilisiert" (anflug_urteil).
+    let unter_500: Vec<&ApproachBufferSample> = gate_samples
+        .iter()
+        .copied()
+        .filter(|s| height_for(s) <= 500.0)
+        .collect();
+    if unter_500.len() >= 3 {
+        let n = unter_500.len() as f64;
+        let mittel = unter_500.iter().map(|s| s.ias_kt as f64).sum::<f64>() / n;
+        let var = unter_500
             .iter()
-            .all(|s| s.flaps_position < FLAPS_IMPLAUSIBLE_BELOW);
-        let flaps_unreadable =
-            flaps_all_implausible && gear_ok && gate_entry.ias_kt < FLAPS_UNREADABLE_MAX_IAS_KT;
-
-        // v1.6.6: der allgemeine Fall des Obigen. Wenn sich der Klappenwert im
-        // GANZEN Flug kein einziges Mal bewegt hat, traegt der Kanal keine
-        // Information — egal welchen Wert er anzeigt und egal wie schnell das
-        // Flugzeug am Tor war. Der Check darueber faengt dasselbe nur unter
-        // 160 kt; im Korpus (827 Fluege) rutschten damit genau die schweren
-        // Muster durch, die am Tor legitim schneller sind: B77W, A339, MD11,
-        // A346, A20N, DH8D — 15 Fluege, alle mit einem toten Dataref als
-        // „Klappen vergessen" gewertet.
-        let flaps_tot = konfig.flaps_bewegt == Some(false);
-
-        if !gear_ok {
-            // Das Fahrwerk ist eindeutig: oben ist oben. Ob die Klappen
-            // messbar sind, aendert daran nichts — dieser Zweig haelt die
-            // Bewertung dort streng, wo sie es immer war (bisher implizit,
-            // weil der Riegel darunter `gear_ok` verlangte).
-            out.stable_config = Some(false);
-        } else if flaps_tot || flaps_unreadable {
-            out.stable_config = None;
-        } else {
-            let mut flaps_ok = gate_entry.flaps_position >= FLAPS_LANDING_MIN;
-            if !flaps_ok {
-                // v1.6.6: fremdes Rastermass. Nicht jedes Muster skaliert seine
-                // Klappen auf 1,0 — die Fokker 28 im Sim endet bei 0,667, die
-                // Falcon 50 ebenso. Steht der Hebel am Tor schon auf dem
-                // Maximum DIESES Fluges und passt die Geschwindigkeit ins
-                // stabilisierte Fenster (Vref…Vref+20), dann misst die absolute
-                // 0,70-Schwelle das Raster des Sims, nicht den Piloten.
-                //
-                // Die Geschwindigkeit ist hier der Riegel, nicht Beiwerk: ohne
-                // sie wuerde jede Landung mit Anflugklappen als „Landeklappen"
-                // durchgehen, weil ein einzelner Flug nie zeigt, welche Stufen
-                // es noch gaebe. Genau daran scheitern im Korpus die echten
-                // Faelle — DA40 mit T/O-Klappen bei Vref+43, Phenom 300 bei
-                // Vref+59, A320 mit CONF 2 bei 215 kt — und sie bleiben
-                // korrekt bewertet.
-                //
-                // Kein Vref (Muster nicht in der Tabelle) → Regel bleibt aus.
-                // Der Health-Report meldet solche Muster separat, damit die
-                // Tabelle waechst statt die Schwelle aufzuweichen.
-                if let (Some(max_im_flug), Some(vref)) =
-                    (konfig.flaps_max_im_flug, konfig.typical_vref_kt)
-                {
-                    let am_eigenen_maximum = gate_entry.flaps_position >= max_im_flug - 0.01
-                        && gate_entry.flaps_position >= FLAPS_IMPLAUSIBLE_BELOW;
-                    if am_eigenen_maximum && gate_entry.ias_kt <= vref + STABILISIERT_UEBER_VREF_KT
-                    {
-                        flaps_ok = true;
-                    }
-                }
-            }
-            // `gear_ok` ist hier beweisbar true — der Zweig oben hat den
-            // Fall abgefangen.
-            out.stable_config = Some(flaps_ok);
+            .map(|s| (s.ias_kt as f64 - mittel).powi(2))
+            .sum::<f64>()
+            / n;
+        out.ias_stddev_unter_500_kt = Some(var.sqrt() as f32);
+        if let Some(tor) = unter_500.iter().max_by(|a, b| {
+            height_for(a)
+                .partial_cmp(&height_for(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            out.stable_config_500 = landekonfiguration(tor, &gate_samples, &konfig);
         }
     }
 
@@ -27185,6 +27236,8 @@ fn anflug_werte(stats: &FlightStats) -> landing_scoring::anflug_urteil::AnflugWe
             .as_ref()
             .and_then(|g| g.gesamt.as_ref())
             .map(|t| t.mittel_abs_dots),
+        ias_stddev_unter_500_kt: stats.approach_ias_stddev_unter_500_kt,
+        stable_config_500: stats.approach_stable_config_500,
     }
 }
 
@@ -27683,9 +27736,14 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Dazu die Teilnote „Abfangen" (Gewicht 2, ab 50 ft bis zum Aufsetzen,
 /// `landing-scoring/src/abfangen.rs`) und das Stable Gate nach Gleitpfad.
 ///
+/// **20 seit v2.0.4**: „Spaet stabilisiert" — bei 1000 ft noch zu schnell
+/// oder nicht in Landekonfiguration, ab 500 ft aber stabil: Fahrt und
+/// Konfiguration nur „mittel" statt „schlecht" (Anlass RYR73, 06.10.2026:
+/// UNSTABLE, Gesamtnote 45 bei sauberer Landung). `anflug_urteil.rs`.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 19;
+const SCORE_ALGORITHMUS_VERSION: u8 = 20;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -36864,6 +36922,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     stats.approach_ias_stddev_kt = stab_v2.ias_stddev_kt;
                                     stats.approach_excessive_sink = stab_v2.excessive_sink;
                                     stats.approach_stable_config = stab_v2.stable_config;
+                                    stats.approach_ias_stddev_unter_500_kt =
+                                        stab_v2.ias_stddev_unter_500_kt;
+                                    stats.approach_stable_config_500 = stab_v2.stable_config_500;
                                     stats.approach_used_hat = stab_v2.used_hat;
                                     stats.approach_window_sample_count =
                                         Some(stab_v2.window_sample_count);
@@ -43978,6 +44039,8 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_ias_stddev_kt = None;
     stats.approach_excessive_sink = None;
     stats.approach_stable_config = None;
+    stats.approach_ias_stddev_unter_500_kt = None;
+    stats.approach_stable_config_500 = None;
     stats.approach_used_hat = false;
     stats.approach_window_sample_count = None;
     stats.approach_stable_at_da = None;
@@ -46208,6 +46271,8 @@ fn step_flight_at(
                 stats.approach_ias_stddev_kt = stab_v2.ias_stddev_kt;
                 stats.approach_excessive_sink = stab_v2.excessive_sink;
                 stats.approach_stable_config = stab_v2.stable_config;
+                stats.approach_ias_stddev_unter_500_kt = stab_v2.ias_stddev_unter_500_kt;
+                stats.approach_stable_config_500 = stab_v2.stable_config_500;
                 stats.approach_used_hat = stab_v2.used_hat;
                 stats.approach_window_sample_count = Some(stab_v2.window_sample_count);
                 stats.approach_stable_at_da = stab_v2.stable_at_da;
@@ -64646,6 +64711,73 @@ mod sim_pause_tests {
             out.stable_config, None,
             "toter Klappenkanal → nicht bewertbar, egal wie schnell"
         );
+    }
+
+    /// RYR73 (06.10.2026, B738, EGSS 22): 178 kt mit Klappen 15 bei 1000 ft,
+    /// Klappen 30 ab ~830 ft, 145 kt ab ~490 ft. Bei 1000 ft nicht stabil,
+    /// ab 500 ft schon — Score-Version 20 macht daraus PARTIAL statt UNSTABLE.
+    #[test]
+    fn ryr73_ab_500_ft_stabil() {
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            (1000.0, 178.0, 0.625),
+            (870.0, 170.0, 0.75),
+            (830.0, 166.0, 0.875),
+            (700.0, 157.0, 0.875),
+            (600.0, 150.0, 0.875),
+            (490.0, 145.0, 0.875),
+            (400.0, 146.0, 0.875),
+            (300.0, 144.0, 0.875),
+            (200.0, 147.0, 0.875),
+            (100.0, 144.0, 0.875),
+        ]
+        .into_iter()
+        .map(|(h, ias, flaps)| approach_sample(h, ias, ias, -750.0, 1.0, flaps))
+        .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        assert_eq!(out.stable_config, Some(false), "Klappen 15 bei 1000 ft");
+        assert!(out.ias_stddev_kt.unwrap() >= 8.0, "{:?}", out.ias_stddev_kt);
+        assert_eq!(out.stable_config_500, Some(true), "Klappen 30 bei 490 ft");
+        assert!(out.ias_stddev_unter_500_kt.unwrap() < 5.0);
+        let werte = landing_scoring::anflug_urteil::AnflugWerte {
+            vs_jerk_fpm: Some(49.0),
+            bank_stddev_deg: Some(0.79),
+            ias_stddev_kt: out.ias_stddev_kt,
+            excessive_sink: out.excessive_sink,
+            stable_config: out.stable_config,
+            gleitpfad_dots: Some(0.34),
+            ias_stddev_unter_500_kt: out.ias_stddev_unter_500_kt,
+            stable_config_500: out.stable_config_500,
+        };
+        assert_eq!(
+            landing_scoring::anflug_urteil::anflug_urteil(&werte),
+            Some(landing_scoring::anflug_urteil::AnflugUrteil::Partial)
+        );
+    }
+
+    /// Fahrwerk erst unter 500 ft unten → auch am 500-ft-Tor nicht stabil.
+    #[test]
+    fn fahrwerk_oben_bei_500_ft_ist_nicht_spaet_stabil() {
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            (1000.0, 150.0, 0.0),
+            (480.0, 145.0, 0.875),
+            (300.0, 145.0, 0.875),
+            (150.0, 145.0, 0.875),
+        ]
+        .into_iter()
+        .map(|(h, ias, flaps)| {
+            approach_sample(
+                h,
+                ias,
+                ias,
+                -700.0,
+                if h < 400.0 { 1.0 } else { 0.0 },
+                flaps,
+            )
+        })
+        .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        assert_eq!(out.stable_config, Some(false));
+        assert_eq!(out.stable_config_500, Some(false));
     }
 
     #[test]
