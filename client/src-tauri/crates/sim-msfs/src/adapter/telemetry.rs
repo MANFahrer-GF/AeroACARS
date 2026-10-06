@@ -5870,8 +5870,9 @@ mod tests {
         // (Strobe + ATC-Wahlschalter); FBW A32NX (28.09.2026): +32 (vier
         // gemessene LVars); A380 (28.09.2026): +8 (INI_FCU_HDG_DASHED);
         // Lernpaket (29.09.2026): +8 (SEMIBODY LOADFACTOR Y); Fenix-FCU-
-        // Lampen (29.09.2026): +40 (AP1, AP2, A/THR, APPR, HDG gestrichelt).
-        assert_eq!(buf.len(), 3672, "total block size");
+        // Lampen (29.09.2026): +40 (AP1, AP2, A/THR, APPR, HDG gestrichelt);
+        // Vref (06.10.2026): +16 (FSS-PFD-VREF, DESIGN SPEED VS0).
+        assert_eq!(buf.len(), 3688, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6269,7 +6270,8 @@ mod tests {
         // A380 (28.09.2026): INI_FCU_HDG_DASHED dazu → 58 * 8 = 464.
         // Lernpaket (29.09.2026): SEMIBODY LOADFACTOR Y dazu → 59 * 8 = 472.
         // Fenix-FCU-Lampen (29.09.2026): fuenf LVars dazu → 64 * 8 = 512.
-        buf.truncate(buf.len() - 512);
+        // Vref (06.10.2026): FSS-VREF und DESIGN SPEED VS0 dazu → 66 * 8 = 528.
+        buf.truncate(buf.len() - 528);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -9705,8 +9707,9 @@ mod tests {
     #[test]
     fn runde2_abgeschnittener_block_erfindet_kein_off() {
         let mut buf = runde2_puffer(ASOBO.0, ASOBO.1, &[]);
-        // Schwanz: CABIN SEATBELTS, LIGHT LANDING ON:1/:2, TRANSPONDER STATE.
-        buf.truncate(buf.len() - 32);
+        // Schwanz: CABIN SEATBELTS, LIGHT LANDING ON:1/:2, DESIGN SPEED VS0,
+        // TRANSPONDER STATE.
+        buf.truncate(buf.len() - 40);
         let snap = parse(&buf, Simulator::Msfs2024, None);
         assert_eq!(snap.aircraft_profile, AircraftProfile::Default);
         assert_eq!(snap.seatbelts_sign, None);
@@ -9810,17 +9813,17 @@ mod tests {
     #[test]
     fn runde3_landelichter_ohne_index_im_block_erfinden_nichts() {
         // Block endet vor den indizierten Werten (abgelehnt; dahinter nur
-        // noch TRANSPONDER STATE): nur `LIGHT LANDING` zaehlt, keine
-        // Rohwerte dafuer.
+        // noch DESIGN SPEED VS0 und TRANSPONDER STATE): nur `LIGHT LANDING`
+        // zaehlt, keine Rohwerte dafuer.
         let mut buf = runde2_puffer(BARON.0, BARON.1, &[("LIGHT LANDING", 1.0)]);
-        buf.truncate(buf.len() - 24);
+        buf.truncate(buf.len() - 32);
         let snap = parse(&buf, Simulator::Msfs2024, None);
         assert_eq!(snap.light_landing, Some(true));
         assert!(!runde2_schluessel(&snap)
             .iter()
             .any(|k| k.starts_with("LIGHT LANDING")));
         let mut buf = runde2_puffer(BARON.0, BARON.1, &[]);
-        buf.truncate(buf.len() - 24);
+        buf.truncate(buf.len() - 32);
         let snap = parse(&buf, Simulator::Msfs2024, None);
         assert_eq!(snap.light_landing, Some(false));
     }
