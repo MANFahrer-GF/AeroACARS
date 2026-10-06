@@ -45,9 +45,9 @@
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* QS 06.10.2026: umbrechen statt „…" — gekürzt verschwand mit dem Ende
+     der Beschriftung auch ihr (i)-Knopf („Heading (missweisend)"). */
+  overflow-wrap: anywhere;
 }
 
 :where(.landing-keyvals) dd {

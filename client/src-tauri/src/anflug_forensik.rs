@@ -960,13 +960,20 @@ mod tests {
         let g = auswerten(&anflug(0.0, 50.0, 0.35), Some(&b), Some(td()), None)
             .gleitpfad
             .unwrap();
-        assert_eq!(g.verlauf.len(), 81, "jede Sekundenprobe von 1000 bis 200 ft");
+        assert_eq!(
+            g.verlauf.len(),
+            81,
+            "jede Sekundenprobe von 1000 bis 200 ft"
+        );
         let erster = &g.verlauf[0];
         assert_eq!((erster.t, erster.h), (-90.0, 1000.0));
         let letzter = g.verlauf.last().unwrap();
         assert_eq!((letzter.t, letzter.h), (-10.0, 200.0));
         for p in &g.verlauf {
-            assert!((p.d - 1.0).abs() < 0.02, "0,35 deg darueber = +1 Dot: {p:?}");
+            assert!(
+                (p.d - 1.0).abs() < 0.02,
+                "0,35 deg darueber = +1 Dot: {p:?}"
+            );
         }
         // Doppelt so dichte Proben: der Takt duennt auf eine je Sekunde aus.
         let dicht: VecDeque<_> = (0..=160)

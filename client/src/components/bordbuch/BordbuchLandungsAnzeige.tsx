@@ -11,6 +11,7 @@ import { bilanz, type Eintrag, type Regel } from "../../lib/bordbuch";
 import { BordbuchCheckliste } from "./BordbuchCheckliste";
 import "./bordbuchLandung.css";
 import { InfoBadge } from "../InfoBadge";
+import { useDruck } from "../../lib/druck";
 
 /** Kopfzeile „11 von 13 Punkten erledigt" bzw. der Aus-Hinweis. */
 export function Kopf({ e, druck = false }: { e: Eintrag; druck?: boolean }) {
@@ -29,7 +30,9 @@ export function Kopf({ e, druck = false }: { e: Eintrag; druck?: boolean }) {
   );
 }
 
-/** Abschnitt in der Landungs-Detailansicht (mit ATC-Markierung). */
+/** Abschnitt in der Landungs-Detailansicht (mit ATC-Markierung) und im
+ *  PDF-Bericht. Im Druck (DruckKontext) ohne Bedienung: Satz ohne
+ *  „Tippe den Punkt an", keine ATC-Knöpfe, Papierfarben (`.bb-bericht`). */
 export function BordbuchLandungsAbschnitt({
   eintrag,
   onMarkieren,
@@ -38,37 +41,21 @@ export function BordbuchLandungsAbschnitt({
   onMarkieren?: (regel: Regel, nachAtc: boolean) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const druck = useDruck();
   if (!eintrag) return null;
   return (
-    <section className="landing-section bb-landung">
+    <section className={druck ? "landing-section bb-landung bb-bericht" : "landing-section bb-landung"}>
       <h3>{t("bordbuch.titel")}{" "}<InfoBadge explanation={t("landing.erklaer.bordbuch")} /></h3>
-      <Kopf e={eintrag} />
+      <Kopf e={eintrag} druck={druck} />
       {!eintrag.aus_grund && (
         <BordbuchCheckliste
           punkte={eintrag.punkte}
           eingeschaltet={eintrag.eingeschaltet}
           flugzeug={eintrag.flug.titel ?? eintrag.flug.muster ?? null}
-          onMarkieren={onMarkieren}
+          onMarkieren={druck ? undefined : onMarkieren}
           rolltempoGrenzeKt={eintrag.rolltempo_grenze_kt}
         />
       )}
     </section>
-  );
-}
-
-/** Fassung für den PDF-Bericht — ohne Bedienung. */
-export function BordbuchBericht({ eintrag }: { eintrag: Eintrag }) {
-  return (
-    <div className="bb-bericht">
-      <Kopf e={eintrag} druck />
-      {!eintrag.aus_grund && (
-        <BordbuchCheckliste
-          punkte={eintrag.punkte}
-          eingeschaltet={eintrag.eingeschaltet}
-          flugzeug={eintrag.flug.titel ?? eintrag.flug.muster ?? null}
-          rolltempoGrenzeKt={eintrag.rolltempo_grenze_kt}
-        />
-      )}
-    </div>
   );
 }

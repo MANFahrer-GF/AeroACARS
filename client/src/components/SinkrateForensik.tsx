@@ -654,7 +654,7 @@ function PositionTrace({ samples }: { samples: TraceSample[] }) {
                 vs = {Math.round(s.vs_fpm)} fpm
               </td>
               <td className="sinkrate-trace__agl">
-                AGL {Math.round(s.agl_ft)} ft
+                AGL {Number.isFinite(s.agl_ft) ? Math.round(s.agl_ft) : "—"} ft
               </td>
             </tr>
           ))}

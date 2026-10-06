@@ -58,7 +58,18 @@ vi.mock("../../lib/ipc", () => ({
   },
 }));
 
-import { BordbuchBericht, BordbuchLandungsAbschnitt, useBordbuchEintrag } from "./BordbuchLandung";
+import { BordbuchLandungsAbschnitt, useBordbuchEintrag } from "./BordbuchLandung";
+import { DruckKontext } from "../../lib/druck";
+import type { Eintrag } from "../../lib/bordbuch";
+
+/** Der Abschnitt so, wie der PDF-Bericht ihn druckt (DruckKontext). */
+function BordbuchBericht({ eintrag }: { eintrag: Eintrag }) {
+  return (
+    <DruckKontext.Provider value={true}>
+      <BordbuchLandungsAbschnitt eintrag={eintrag} onMarkieren={async () => {}} />
+    </DruckKontext.Provider>
+  );
+}
 
 function Seite({ pirep }: { pirep: string }) {
   const b = useBordbuchEintrag(pirep);
@@ -167,6 +178,22 @@ describe("Bordbuch im Landungs-Tab", () => {
     render(<BordbuchBericht eintrag={eintrag("A", 21.7)} />);
     expect(screen.queryByText(/Tippe den Punkt an/)).toBeNull();
     expect(screen.getByText(/Grau heißt: nicht gesehen/)).toBeTruthy();
+  });
+
+  // QS 06.10.2026: Seit der Bericht die Bildschirm-Abschnitte druckt, stand
+  // dort „Tippe den Punkt an" samt ATC-Knöpfen. Gegenprobe zum Test oben:
+  // auf dem Bildschirm bleibt beides.
+  it("auf Papier keine ATC-Knöpfe, auf dem Bildschirm schon", () => {
+    const e = eintrag("A", 21.7);
+    const { container, unmount } = render(<BordbuchBericht eintrag={e} />);
+    expect(container.querySelector(".bb-bericht")).not.toBeNull();
+    const tippbar = (c: HTMLElement) => c.querySelectorAll(".bb-checkliste button:not([disabled])").length;
+    expect(tippbar(container)).toBe(0);
+    unmount();
+    const bildschirm = render(<BordbuchLandungsAbschnitt eintrag={e} onMarkieren={async () => {}} />);
+    expect(bildschirm.container.querySelector(".bb-bericht")).toBeNull();
+    expect(tippbar(bildschirm.container)).toBeGreaterThan(0);
+    expect(screen.getByText(/Tippe den Punkt an/)).toBeTruthy();
   });
 });
 

@@ -93,7 +93,7 @@ export function VsCurveChart({ profile }: { profile: LandingProfilePoint[] }) {
       onMouseLeave={() => setHover(null)}
     >
       <rect x={pad.left} y={pad.top} width={innerW} height={innerH}
-            fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.15)" />
+            fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.15)" className="ag-rahmen" />
 
       {/* Zonen: vor Flare / Flare / nach TD */}
       {[
@@ -113,10 +113,10 @@ export function VsCurveChart({ profile }: { profile: LandingProfilePoint[] }) {
         return (
           <g key={v}>
             <line x1={pad.left} y1={gy} x2={pad.left + innerW} y2={gy}
-                  stroke={zero ? "#475569" : "rgba(255,255,255,0.07)"}
+                  stroke={zero ? "#475569" : "rgba(255,255,255,0.07)"} className={zero ? undefined : "ag-gitter"}
                   strokeWidth={zero ? 1.6 : 1} />
             <text x={pad.left - 8} y={gy + 4} textAnchor="end" fontSize="12"
-                  fill={zero ? "#94a3b8" : "#64748b"}>{v}</text>
+                  fill={zero ? "#94a3b8" : "#64748b"} className="ag-achse">{v}</text>
           </g>
         );
       })}
@@ -130,13 +130,13 @@ export function VsCurveChart({ profile }: { profile: LandingProfilePoint[] }) {
 
       <path d={path} fill="none" stroke="#38bdf8" strokeWidth="2" />
 
-      <text x={pad.left} y={h - 28} fontSize="12" fill="#94a3b8">
+      <text x={pad.left} y={h - 28} fontSize="12" fill="#94a3b8" className="ag-achse">
         {(t0 / 1000).toFixed(1)} s
       </text>
-      <text x={pad.left + innerW} y={h - 28} textAnchor="end" fontSize="12" fill="#94a3b8">
+      <text x={pad.left + innerW} y={h - 28} textAnchor="end" fontSize="12" fill="#94a3b8" className="ag-achse">
         +{(t1 / 1000).toFixed(1)} s
       </text>
-      <text x={16} y={pad.top + innerH / 2} fontSize="11" fill="#64748b" textAnchor="middle"
+      <text x={16} y={pad.top + innerH / 2} fontSize="11" fill="#64748b" className="ag-achse" textAnchor="middle"
             transform={`rotate(-90 16 ${pad.top + innerH / 2})`}>
         {t("landing.vs_chart.axis")}
       </text>
@@ -163,8 +163,8 @@ export function VsCurveChart({ profile }: { profile: LandingProfilePoint[] }) {
               {Math.round(p.vs_fpm)} fpm
               <tspan fill="#cbd5e1" fontWeight="400">{`  ·  ${tLabel}`}</tspan>
             </text>
-            <text x={boxX + 9} y={boxY + 32} fontSize="11" fill="#94a3b8">
-              AGL {Math.round(p.agl_ft)} ft  ·  {p.on_ground ? t("landing.on_ground") : t("landing.airborne")}
+            <text x={boxX + 9} y={boxY + 32} fontSize="11" fill="#94a3b8" className="ag-achse">
+              AGL {Number.isFinite(p.agl_ft) ? Math.round(p.agl_ft) : "—"} ft  ·  {p.on_ground ? t("landing.on_ground") : t("landing.airborne")}
             </text>
           </g>
         );
@@ -238,6 +238,19 @@ function indexZurZeit(samples: ApproachSample[], tMs: number): number | null {
   return null;
 }
 
+/** Die Kurvenpunkte, die der Dot-Streifen zeichnen kann — in der Zeitspanne
+ *  der Spur, und nur, wenn die Spur Zeiten trägt. Eine Quelle für Streifen,
+ *  (i) und den Hinweis „fehlt" (QS 06.10.2026: ohne `t_ms` in der Spur fehlte
+ *  der Streifen, das (i) dazu stand trotzdem da). */
+export function dotStreifenPunkte(
+  samples: ApproachSample[],
+  verlauf: GleitpfadPunkt[] | null | undefined,
+): { p: GleitpfadPunkt; i: number }[] {
+  return (verlauf ?? [])
+    .map((p) => ({ p, i: indexZurZeit(samples, p.t * 1000) }))
+    .filter((q): q is { p: GleitpfadPunkt; i: number } => q.i != null);
+}
+
 export function ApproachChart({
   samples,
   glideslopeAngleDeg,
@@ -283,9 +296,7 @@ export function ApproachChart({
 
   // Dot-Streifen (05.10.2026): unter der Sinkrate, gleiche Zeitachse. Nur
   // die Kurvenpunkte, die in der Zeitspanne der Spur liegen.
-  const dotPunkte = (gleitpfadVerlauf ?? [])
-    .map((p) => ({ p, i: indexZurZeit(samples, p.t * 1000) }))
-    .filter((q): q is { p: GleitpfadPunkt; i: number } => q.i != null);
+  const dotPunkte = dotStreifenPunkte(samples, gleitpfadVerlauf);
   const mitStreifen = dotPunkte.length >= 2;
   const streifen = { top: hOben + 26, h: 200 };
   const h = mitStreifen ? streifen.top + streifen.h + 34 : hOben;
@@ -404,7 +415,7 @@ export function ApproachChart({
       }}
     >
       <rect x={pad.left} y={pad.top} width={innerW} height={innerH}
-            fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.15)" />
+            fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.15)" className="ag-rahmen" />
 
       {zones.map((z, idx) => {
         const x0 = z.start > 0 ? (x(z.start - 1) + x(z.start)) / 2 : x(z.start) - 2;
@@ -429,10 +440,10 @@ export function ApproachChart({
         return (
           <g key={v}>
             <line x1={pad.left} y1={gy} x2={pad.left + innerW} y2={gy}
-                  stroke={zero ? "#475569" : "rgba(255,255,255,0.07)"}
+                  stroke={zero ? "#475569" : "rgba(255,255,255,0.07)"} className={zero ? undefined : "ag-gitter"}
                   strokeWidth={zero ? 1.6 : 1} />
             <text x={pad.left - 8} y={gy + 4} textAnchor="end" fontSize="12"
-                  fill={zero ? "#94a3b8" : "#64748b"}>{v}</text>
+                  fill={zero ? "#94a3b8" : "#64748b"} className="ag-achse">{v}</text>
           </g>
         );
       })}
@@ -462,13 +473,13 @@ export function ApproachChart({
 
       <path d={path} fill="none" stroke="#38bdf8" strokeWidth="2" />
 
-      <text x={pad.left} y={hOben - 28} fontSize="12" fill="#94a3b8">
+      <text x={pad.left} y={hOben - 28} fontSize="12" fill="#94a3b8" className="ag-achse">
         {t("landing.approach_start")}
       </text>
-      <text x={pad.left + innerW} y={hOben - 28} textAnchor="end" fontSize="12" fill="#94a3b8">
+      <text x={pad.left + innerW} y={hOben - 28} textAnchor="end" fontSize="12" fill="#94a3b8" className="ag-achse">
         {t("landing.touchdown")}
       </text>
-      <text x={16} y={pad.top + innerH / 2} fontSize="11" fill="#64748b" textAnchor="middle"
+      <text x={16} y={pad.top + innerH / 2} fontSize="11" fill="#64748b" className="ag-achse" textAnchor="middle"
             transform={`rotate(-90 16 ${pad.top + innerH / 2})`}>
         {t("landing.vs_chart.axis")}
       </text>
@@ -498,7 +509,7 @@ export function ApproachChart({
 
       {mitStreifen && (
         <g>
-          <text x={pad.left} y={streifen.top - 8} fontSize="13" fontWeight="600" fill="#94a3b8">
+          <text x={pad.left} y={streifen.top - 8} fontSize="13" fontWeight="600" fill="#94a3b8" className="ag-achse">
             {t("landing.vs_chart.gleitpfad_titel")}
           </text>
           {/* Bänder wie die Stufen des Gleitpfads im Anflug-Urteil: gut
@@ -536,10 +547,10 @@ export function ApproachChart({
           {dotTicks.map((d) => (
             <g key={d}>
               <line x1={pad.left} y1={yDot(d)} x2={pad.left + innerW} y2={yDot(d)}
-                    stroke={d === 0 ? "#64748b" : "rgba(148,163,184,0.18)"}
+                    stroke={d === 0 ? "#64748b" : "rgba(148,163,184,0.18)"} className={d === 0 ? undefined : "ag-gitter"}
                     strokeDasharray={d === 0 ? "5 4" : undefined} />
               <text x={pad.left - 8} y={yDot(d) + 4} textAnchor="end" fontSize="12"
-                    fill={d === 0 ? "#94a3b8" : "#64748b"}>
+                    fill={d === 0 ? "#94a3b8" : "#64748b"} className="ag-achse">
                 {d > 0 ? `+${d}` : d === 0 ? "0" : `−${Math.abs(d)}`}
               </text>
             </g>
@@ -565,12 +576,12 @@ export function ApproachChart({
               </text>
             </g>
           )}
-          <text x={16} y={streifen.top + streifen.h / 2} fontSize="11" fill="#64748b"
+          <text x={16} y={streifen.top + streifen.h / 2} fontSize="11" fill="#64748b" className="ag-achse"
                 textAnchor="middle"
                 transform={`rotate(-90 16 ${streifen.top + streifen.h / 2})`}>
             {t("landing.vs_chart.gleitpfad_achse")}
           </text>
-          <text x={pad.left} y={streifen.top + streifen.h + 18} fontSize="11" fill="#94a3b8">
+          <text x={pad.left} y={streifen.top + streifen.h + 18} fontSize="11" fill="#94a3b8" className="ag-achse">
             {t("landing.vs_chart.gleitpfad_lesart")}
           </text>
         </g>
@@ -627,7 +638,7 @@ export function ApproachChart({
               {Math.round(s.vs_fpm)} fpm
               <tspan fill="#cbd5e1" fontWeight="400">{`  ·  ${tLabel}`}</tspan>
             </text>
-            <text x={boxX + 9} y={boxY + 32} fontSize="11" fill="#94a3b8">
+            <text x={boxX + 9} y={boxY + 32} fontSize="11" fill="#94a3b8" className="ag-achse">
               {s.agl_ft != null ? `AGL ${Math.round(s.agl_ft)} ft  ·  ` : ""}{zoneLabel}
               {sollBeiHover != null
                 ? `  ·  ${t("landing.vs_chart.target", { fpm: Math.round(sollBeiHover.soll) })}`
@@ -667,6 +678,7 @@ export function AnflugGrafikAbschnitt({
 }) {
   const { t } = useTranslation();
   const anflug = samples != null && samples.length >= 3;
+  const streifenDa = anflug && dotStreifenPunkte(samples!, gleitpfadVerlauf).length >= 2;
   const nah = profile != null && profile.length >= 5;
   if (!anflug && !nah) return null;
   return (
@@ -684,7 +696,7 @@ export function AnflugGrafikAbschnitt({
               gleitpfadVerlauf={gleitpfadVerlauf}
             />
           </div>
-          {gleitpfadVerlauf && gleitpfadVerlauf.length >= 2 && (
+          {streifenDa && (
             // Nur der (i)-Knopf zum Streifen — auf Papier überflüssig.
             <p className="landing-chart__hinweis nur-bildschirm">
               {t("landing.vs_chart.gleitpfad_titel")}{" "}

@@ -424,9 +424,8 @@ function LandingRateChart({ records }: { records: LandingRecord[] }) {
 //   3. Ein Effect ruft `window.print()` (nach dem ersten Render-Frame) und
 //      registriert einen One-Shot `afterprint`-Listener, der `printing`
 //      zurücksetzt — der Report verschwindet wieder aus dem DOM.
-// Der Report nutzt ALLE lokalen Helper (gradeColor, fmtNumber, computeSub-
-// Scores, ApproachChart, VsCurveChart, RunwayDiagramV2 …), darum lebt er
-// hier in-file statt in einer eigenen Datei.
+// Der Report druckt seit 05.10.2026 denselben Baustein wie die Ansicht
+// (`LandungsAbschnitte` in dieser Datei) — darum lebt er hier.
 
 /**
  * Mindest-Schriftgrösse der Bahn-Grafik im Bericht, in SVG-Einheiten.
@@ -542,8 +541,8 @@ function ReportChartCard({
  * v0.12.8-dev: Der A4-Landungs-Report. Hell, luftig, EIN Akzent
  * (#2563eb). KEIN fixes A4-Box-Paradigma mehr — der Report ist EIN
  * fließendes Dokument; der Browser paginiert selbst (kein Leerseiten-
- * Bug). Ausgewählte Section-Gruppen starten via `.report-break-before`
- * auf einer frischen Seite. Nur sichtbar im `@media print`.
+ * Bug). Seitenwechsel steuert `break-inside: avoid` auf den Abschnitten
+ * (App.css, @media print). Nur sichtbar im `@media print`.
  */
 /** Exportiert für die Prüfung — der Bericht ist sonst nur über
  *  `window.print()` erreichbar, und das lässt sich nicht lesen. */
@@ -571,9 +570,8 @@ export function LandingReport({
 
   return (
     // v0.12.8-dev: EIN fließendes Dokument — kein <ReportPage>-A4-Box-
-    // Stapel mehr. EIN <ReportHeader> oben, dann fließende Sections,
-    // EINE <ReportFooter> ganz unten. Saubere Seitenanfänge entstehen
-    // durch `.report-break-before` auf den Section-Gruppen.
+    // Stapel mehr. EIN <ReportHeader> oben, dann die Bildschirm-
+    // Abschnitte, EINE <ReportFooter> ganz unten.
     <div className="landing-report report-page">
       <ReportHeader />
 
@@ -1063,7 +1061,7 @@ function useOverviewStats(records: LandingRecord[]) {
     // nicht belastbar (ein Hopser zwischen zwei fehlenden Proben fehlt).
     const totalBounces = records
       .filter(fensterWerteGueltig)
-      .reduce((s, r) => s + r.bounce_count, 0);
+      .reduce((s, r) => s + (r.bounce_count ?? 0), 0);
     return { total, avgRate, avgScore, byCategory, softest, hardest, totalBounces };
   }, [records]);
 }

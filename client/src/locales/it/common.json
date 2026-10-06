@@ -150,7 +150,8 @@
       "vor_der_schwelle": "PRIMA DELLA SOGLIA",
       "overrun": "OVERRUN",
       "neben_der_bahn": "FUORI PISTA",
-      "go_around": "RIATTACCATA × {{count}}"
+      "go_around": "RIATTACCATA × {{count}}",
+      "accident": "INCIDENTE"
     },
     "fuel": "Carburante",
     "plan_burn": "Piano",
@@ -224,7 +225,9 @@
       "runway_section": "Visualizzazione del contatto sulla pista. Il segno blu è il punto di contatto, la banda verde il rullaggio. Valori sotto a titolo indicativo: lunghezza totale, distanza dalla linea centrale, distanza oltre la soglia, utilizzo pista in percentuale. Valutati sono disciplina di pista, allineamento e punto di contatto (vedi le parti sopra).",
       "fuel_section": "Block = carburante allo sblocco; TO fuel = al punto di decollo; LDG fuel = al contatto; TOW, LDW, ZFW = pesi. I valori pianificati vengono dall'OFP SimBrief. L'\"aderenza al piano\" sotto mostra gli scostamenti a titolo indicativo — non conta per il punteggio.",
       "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva.",
-      "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun limitano il punteggio totale a 40."
+      "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun limitano il punteggio totale a 40.",
+      "touchdown_point": "Dove hai toccato, misurato dalla soglia. Entro 150 m dal segnale di mira (aiming point) punteggio pieno, altrimenti nella zona di contatto 85, fino a metà della distanza di atterraggio disponibile 55, oltre 25. Contatto prima della soglia: 0 punti e il voto complessivo è al massimo 40.",
+      "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri e business jet: 16 / 20 / 24 s. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Una parte sotto 75 punti limita il voto complessivo a 80, sotto 45 a 60."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -347,10 +350,10 @@
       "edge_reached": "La ruota esterna ha raggiunto il bordo della superficie pavimentata. Su piste strette il margine è ridotto: esaurisci la correzione di vento in finale e mantieni l'asse durante la corsa.",
       "off_pavement": "La ruota esterna ha lasciato la superficie pavimentata. Mantieni attivamente l'asse durante la corsa; dopo il contatto prima la direzione, poi i freni.",
       "overrun": "Corsa oltre il fine pista. Qui la catena punto di contatto, velocità di avvicinamento e frenata non torna — verifica la lunghezza pista rispetto al peso di atterraggio prima dell'avvicinamento e, nel dubbio, riattacca.",
-      "flare_normal": "Dal passaggio a 50 ft al contatto nella norma (aereo di linea fino a 10 s, aereo leggero fino a 16 s).",
-      "flare_lang": "Richiamata piuttosto lunga (aereo di linea 10–12 s, aereo leggero 16–20 s da 50 ft). Non prolungare la richiamata: Airbus e Boeing portano l’aereo sulla pista nella zona di contatto — un atterraggio morbido non è l’obiettivo.",
-      "flare_sehr_lang": "Richiamata molto lunga (aereo di linea 12–15 s, aereo leggero 20–24 s da 50 ft). Più della metà di questi voli tocca oltre la zona di contatto. Iniziare la richiamata più tardi (Airbus: 30–40 ft) e portare la spinta al minimo in tempo.",
-      "flare_zu_lang": "Galleggiamento sopra la pista (aereo di linea oltre 15 s, aereo leggero oltre 24 s da 50 ft). In questo caso Airbus richiede una riattaccata invece di cercare di salvare l’atterraggio.",
+      "flare_normal": "Dal passaggio a 50 ft al contatto nella norma (aereo di linea fino a 10 s, aereo leggero o business jet fino a 16 s).",
+      "flare_lang": "Richiamata piuttosto lunga (aereo di linea 10–12 s, aereo leggero o business jet 16–20 s da 50 ft). Non prolungare la richiamata: Airbus e Boeing portano l’aereo sulla pista nella zona di contatto — un atterraggio morbido non è l’obiettivo.",
+      "flare_sehr_lang": "Richiamata molto lunga (aereo di linea 12–15 s, aereo leggero o business jet 20–24 s da 50 ft). Più della metà di questi voli tocca oltre la zona di contatto. Iniziare la richiamata più tardi (Airbus: 30–40 ft) e portare la spinta al minimo in tempo.",
+      "flare_zu_lang": "Galleggiamento sopra la pista (aereo di linea oltre 15 s, aereo leggero o business jet oltre 24 s da 50 ft). In questo caso Airbus raccomanda una riattaccata invece di cercare di salvare l’atterraggio.",
       "ballooning": "Durante la richiamata l’aereo è risalito di oltre 50 fpm (ballooning) — di solito troppa pressione a cabrare o spinta non al minimo. Allentare invece di tirare di più; se necessario riattaccare."
     },
     "forensics": {
@@ -469,14 +472,8 @@
       "reserve_zeile_darunter": "⚠ atterrato sotto la riserva finale — {{ldg}} kg = {{res}} kg riserva finale − {{ab}} kg",
       "extra_label": "Carburante extra",
       "extra_zeile": "{{getankt}} kg imbarcati · {{genutzt}} kg usati · {{ungenutzt}} kg non usati",
-      "report_bis_sinkflug": "Fino al TOD · vs piano",
-      "report_anflug": "Avvicinamento · vs piano",
-      "report_zeit": "Sotto soglia",
-      "report_reserve": "Riserva finale",
-      "report_extra": "Carburante extra",
       "abgehoben_mit": "decollato con {{kg}} kg",
       "eingestiegen_mit": "registrazione da {{kg}} kg (in volo)",
-      "extra_detail": "{{genutzt}} kg usati · {{ungenutzt}} kg non usati",
       "leiter_uebertankung": "Extra rifornito",
       "reserve_grund": {
         "kein_ofp": "non verificabile — nessun OFP",
@@ -941,7 +938,7 @@
       "title": "Stabilità avvicinamento — cosa significano i valori?",
       "close_label": "Chiudi ✕",
       "close_aria": "Chiudi aiuto stabilità avvicinamento",
-      "intro": "Concetto di avvicinamento stabilizzato secondo FAA AC 120-71B e Flight Safety Foundation: da 1000 ft sopra il punto di contatto l'avvicinamento deve essere stabile — sul sentiero, regolare in velocità e inclinazione, senza discesa eccessiva prolungata, in configurazione d'atterraggio. AeroACARS controlla sei punti. Ogni controllo usa una media o una durata, mai un singolo valore anomalo.",
+      "intro": "Concetto di avvicinamento stabilizzato secondo FAA AC 120-71B e Flight Safety Foundation: da 1000 ft sopra il punto di contatto l'avvicinamento deve essere stabile — sul sentiero, regolare in velocità e inclinazione, senza discesa eccessiva prolungata, in configurazione d'atterraggio. AeroACARS controlla sei punti. I controlli usano una media o una durata, non un singolo valore anomalo — solo la configurazione d’atterraggio viene letta in un istante (all’inizio del gate).",
       "gate": {
         "heading": "Il gate di stabilità",
         "body": "La finestra del gate comprende i campioni fino a 1000 ft sopra il punto di contatto (HAT); la richiamata appena prima del contatto non conta. Il sentiero viene misurato tra 1000 e 200 ft. Se l'elevazione dell'aeroporto è sconosciuta si usa l'altezza dal suolo (AGL) — la scheda lo indica."
@@ -988,7 +985,7 @@
         },
         "gleitpfad": {
           "label": "Sentiero Ø",
-          "body": "Scostamento medio dal sentiero tra 1000 e 200 ft, in dot come sul PFD (1 dot ≈ 0,35° su un ILS). Misurato rispetto al sentiero reale dei dati di navigazione. Senza dati (es. avvicinamento a vista) il controllo viene saltato.",
+          "body": "Scostamento medio dal sentiero tra 1000 e 200 ft, in dot come sul PFD (1 dot ≈ 0,35° su un ILS). Misurato rispetto al sentiero dei dati di navigazione; se la pista non ha ILS, rispetto all’angolo standard della pista. Se la pista non è nei dati di navigazione, il controllo viene saltato.",
           "thresholds": "< 1 dot buono · 1–2 dot discreto · da 2 dot scarso"
         }
       }
@@ -1006,38 +1003,7 @@
       "title": "AeroACARS",
       "subtitle": "Analisi dell'atterraggio",
       "generated": "Generato il {{date}} · AeroACARS v{{version}}",
-      "page": "Pagina {{n}} / {{total}}",
-      "identity": "Volo e punteggio",
-      "route": "Rotta",
-      "aircraft": "Aeromobile",
-      "simulator": "Simulatore",
-      "touchdown_time": "Orario di contatto",
-      "hero_of": "su 100",
-      "accident_label": "INCIDENTE RILEVATO",
-      "breakdown": "Dettaglio del punteggio",
-      "coach": "Suggerimento del coach",
-      "touchdown_section": "Parametri del contatto",
-      "stability_section": "Stabilità in avvicinamento",
-      "wind_section": "Situazione del vento",
-      "runway_section": "Analisi della pista",
-      "fuel_section": "Carburante e peso",
-      "fuel_diff": "Scostamento consumo tratta",
-      "fuel_efficiency": "Efficienza carburante",
-      "charts_section": "Profili e tracciati",
-      "approach_chart": "Profilo V/S di avvicinamento",
-      "vs_curve": "Dettaglio del contatto (50 Hz)",
       "runway_diagram": "Diagramma della pista",
-      "no_data": "Nessun dato disponibile",
-      "td_distance": "Punto di contatto dalla soglia",
-      "in_tdz": "Nella zona di contatto",
-      "aim_delta": "Scostamento dall'aim point",
-      "centerline": "Scostamento dall'asse pista",
-      "rollout_dist": "Distanza di rullaggio",
-      "rwy_surface": "Superficie",
-      "rwy_length": "Lunghezza pista",
-      "rwy_lda": "Porzione atterrabile",
-      "yes": "sì",
-      "no": "no",
       "bahn_im_anhang": "Il diagramma della pista con punto di contatto, traccia di rullaggio e valori chiave si trova nelle pagine orizzontali alla fine del rapporto."
     },
     "ov_mixed_versions": "Il grafico qui sotto mostra affiancati atterraggi precedenti e successivi al cambio di misura della velocità di discesa (v1.6.3): un salto è previsto e non è un errore.",
@@ -1088,7 +1054,7 @@
       "vor_der_schwelle": "Limitato a massimo 40 punti: contatto prima della soglia. Buoni valori altrove non lo compensano.",
       "overrun": "Limitato a massimo 40 punti: uscita oltre la fine della pista (overrun).",
       "neben_der_bahn": "Limitato a massimo 40 punti: ruote fuori pista. Buoni valori altrove non lo compensano.",
-      "mehrfach_hopser": "Limitato a massimo 40 punti: due o più rimbalzi. Secondo la procedura Airbus sarebbe stata dovuta una riattaccata.",
+      "mehrfach_hopser": "Limitato a massimo 40 punti: due o più rimbalzi. In caso di rimbalzo alto la procedura Airbus prevede una riattaccata.",
       "teil_schlecht": "Limitato a massimo 60 punti: {{teil}} era scarso. Il punteggio totale non è mai migliore di quanto consenta la parte più debole.",
       "teil_mittel": "Limitato a massimo 80 punti: {{teil}} era solo discreto. Il punteggio totale non è mai migliore di quanto consenta la parte più debole.",
       "ein_teil": "una parte dell’atterraggio"
@@ -1169,7 +1135,7 @@
       },
       "zone_hint": "Terzi FAA: zona 1 = primo terzo della pista (corretto), zona 2 = terzo centrale (lungo), zona 3 = ultimo terzo (rischio di overrun).",
       "distanz": "Oltre la soglia",
-      "distanz_hint": "Distanza dalla soglia di atterraggio al punto di contatto. Tipica 300–400 m; oltre 1000 m è molto lunga (rischio di overrun su piste corte).",
+      "distanz_hint": "Distanza dalla soglia di atterraggio al punto di contatto. Colore: verde fino a 300 m, neutro fino a 600 m, giallo fino a 1000 m, oltre rosso (rischio di overrun su piste corte); rosso prima della soglia. Il segnale di mira è a 300 m (piste sotto 2400 m) o 400 m.",
       "distanz_hint_vor": "Contatto PRIMA della soglia di atterraggio — un valore negativo sono metri prima della soglia.",
       "vref_label": {
         "pmdg": "Scost. Vref (PMDG)",
@@ -1233,7 +1199,11 @@
       "rechts": "destra",
       "links": "sinistra",
       "mitte": "centro",
-      "hinweis": "Scostamento e distanza dalla soglia sono calcolati dal punto di contatto rispetto alla geometria della pista. Se sembrano poco plausibili, apri le coordinate in Google Maps e confrontale con la pista reale."
+      "hinweis": "Scostamento e distanza dalla soglia sono calcolati dal punto di contatto rispetto alla geometria della pista. Se sembrano poco plausibili, apri le coordinate in Google Maps e confrontale con la pista reale.",
+      "unsicher": "geometria incerta",
+      "vor_schwelle": "prima della soglia",
+      "knapp_hinter_schwelle": "appena oltre la soglia",
+      "hinter_schwelle": "oltre la soglia"
     },
     "kopf": {
       "ohne_pirep": "Rapporto di volo in attesa — la valutazione arriva con il PIREP",
@@ -1247,30 +1217,31 @@
     "abfangen": {
       "titel": "Richiamata (flare)",
       "dauer": "Durata da 50 ft",
-      "dauer_hint": "Tempo dall’ultimo passaggio a 50 ft sopra la pista al contatto. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta da 12 s; aereo leggero punteggio pieno fino a 16 s.",
+      "dauer_hint": "Tempo dal passaggio a 50 ft sopra la pista al contatto. Risalire sopra 50 ft durante la richiamata non fa ripartire il tempo. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta da 12 s; aereo leggero o business jet punteggio pieno fino a 16 s.",
       "vs": "Rateo di discesa 50 ft → contatto",
-      "vs_hint": "Rateo di discesa al passaggio a 50 ft e al primo contatto col suolo (dalla curva di quota).",
+      "vs_hint": "Rateo di discesa al passaggio a 50 ft (valore del simulatore) e al primo contatto col suolo (dalla curva di quota, come valutato).",
       "reduktion": "Rateo ridotto",
-      "reduktion_hint": "Di quanto la richiamata ha ridotto il rateo di discesa tra 50 ft e il contatto (positivo = ridotto). Solo per contesto.",
+      "reduktion_hint": "Di quanto la richiamata ha ridotto il rateo di discesa tra 50 ft e il contatto (positivo = ridotto) — differenza dei due valori sopra, che provengono da fonti diverse. Solo per contesto.",
       "beginn": "Inizio richiamata",
       "beginn_hint": "Quota alla quale il rateo era sceso di almeno 50 fpm sotto il valore a 50 ft. Airbus raccomanda circa 30 ft (famiglia A320) o 40 ft (A321, widebody). Solo per contesto.",
       "schweben": "Galleggiamento",
       "schweben_hint": "Tempo e distanza quasi in volo livellato (rateo sopra −100 fpm) prima del contatto. Solo per contesto — il valore valutato è la durata da 50 ft.",
       "steigen": "Risalito",
-      "steigen_hint": "Massimo rateo di salita tra 50 ft e il contatto. Oltre +50 fpm conta come ballooning: parte “Richiamata” al massimo 50 punti."
+      "steigen_hint": "Massimo rateo di salita tra 50 ft e il contatto. Oltre +50 fpm conta come ballooning: parte “Richiamata” al massimo 50 punti.",
+      "letzte_2s": "Rateo di discesa negli ultimi 2 s prima del contatto (misura precedente, senza voto)"
     },
     "erklaer": {
-      "kopf_note": "La lettera riassume il voto complessivo: A+ da 95, A da 88, B+ da 82, B da 75, C da 65, D da 50, sotto F. Il voto complessivo è la media ponderata delle parti (rateo di discesa e forza G 3 ciascuna, rimbalzi, stabilità dell'avvicinamento e richiamata 2 ciascuna, le altre 1) — ma mai migliore di quanto consenta la parte più debole: una parte media (45–74 punti) limita a 80, una scarsa (sotto 45) a 60, un evento pericoloso (prima della soglia, oltre fine pista, fuori pista, due rimbalzi) a 40.",
+      "kopf_note": "La lettera riassume il voto complessivo: A+ da 95, A da 88, B+ da 82, B da 75, C da 65, D da 50, sotto F. Il voto complessivo è la media ponderata delle parti (rateo di discesa e forza G 3 ciascuna, rimbalzi, stabilità dell’avvicinamento e richiamata 2 ciascuna, le altre 1) — ma mai migliore di quanto consenta la parte più debole: una parte media (45–74 punti) limita a 80, una scarsa (sotto 45) a 60, un evento pericoloso (prima della soglia, oltre fine pista, fuori pista, due o più rimbalzi) a 40. Limita inoltre l’avvicinamento: PARTIAL a 80, UNSTABLE a 45, senza misura dell’avvicinamento a 97; e la forza G: da 1,75 G a 40, da 2,6 G a 14.",
       "td": {
         "sinkrate": "Rateo di discesa al primo contatto col suolo, dalla curva di quota. Conta per il voto (parte rateo, peso 3): 90–249 fpm 100 punti, sotto 90 fpm 85 (indizio di richiamata lunga), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, da 1000 fpm 0.",
-        "g": "Forza G valutata al contatto: picco leggermente smussato (come un registratore di volo), senza singoli picchi a 50 Hz. Conta per il voto (parte forza G, peso 3): sotto 1,20 G 100 punti, sotto 1,40 G 80, sotto 1,70 G 45, sotto 2,10 G 20. Da 1,75 G il voto complessivo è al massimo 40, da 2,6 G al massimo 14.",
+        "g": "Forza G valutata al contatto: picco leggermente smussato (come un registratore di volo), senza singoli picchi a 50 Hz. Conta per il voto (parte forza G, peso 3): sotto 1,20 G 100 punti, sotto 1,40 G 80, sotto 1,70 G 45, sotto 2,10 G 20, da 2,10 G 0. Da 1,75 G il voto complessivo è al massimo 40, da 2,6 G al massimo 14.",
         "g_frame": "Forza G esattamente nel fotogramma del contatto, non smussata. Solo per contesto — si valuta la forza G sopra.",
         "pitch": "Assetto longitudinale al contatto, + = muso su. Per gli aerei di linea di solito circa +2 a +6°; molto di più aumenta il rischio di toccare con la coda. Non conta per il voto.",
         "bank": "Inclinazione laterale al contatto. Vicino a 0° è bene; più è grande, più l'ala si avvicina al suolo (vedi rischio wing strike). Non conta per il voto.",
         "ias": "Velocità indicata al contatto. Lo scostamento dalla velocità di riferimento (Vref) è indicato nella qualità del contatto. Non conta per il voto.",
         "gs": "Velocità al suolo al contatto. Con vento contrario minore della velocità indicata, con vento in coda maggiore — determina corsa e frenata. Non conta per il voto.",
         "sideslip": "Angolo tra direzione di volo e asse della fusoliera al contatto (angolo di deriva con vento al traverso). Vicino a 0° è bene: allineato prima del contatto. Non conta direttamente; la parte allineamento valuta posizione e prua rispetto alla pista.",
-        "hopser": "Quante volte l'aereo si è risollevato dopo il primo contatto. Conta per il voto (parte rimbalzi, peso 2): 0 = 100 punti, 1 = 70, 2 = 40 (e il voto complessivo al massimo 40), 3 o più = 15.",
+        "hopser": "Quante volte l’aereo si è risollevato dopo il primo contatto. Conta per il voto (parte rimbalzi, peso 2): 0 = 100 punti, 1 = 70, 2 = 40, 3 o più = 15. Da due rimbalzi il voto complessivo è al massimo 40.",
         "hdg_mag": "Prua al contatto, magnetica — il riferimento della designazione della pista. Non conta per il voto.",
         "hdg_true": "Prua al contatto, vera (nord geografico). La parte allineamento la confronta con la rotta della pista.",
         "wind": "Vento al contatto dal simulatore, scomposto in vento contrario/in coda e al traverso rispetto alla pista. Non conta per il voto; la parte allineamento tiene conto del vento al traverso."
@@ -1282,7 +1253,7 @@
         "wetter": "Tempo presente (es. pioggia, nebbia, temporale), con intensità. Solo per contesto.",
         "wolken": "Nuvolosità con quota della base sopra l'aeroporto. Solo per contesto.",
         "temp_tau": "Temperatura e punto di rugiada. Se sono vicini, aspettarsi nebbia o nubi basse. Solo per contesto.",
-        "qnh": "Pressione al livello del mare — la regolazione altimetrica per l'avvicinamento. Solo per contesto."
+        "qnh": "Regolazione altimetrica per l’avvicinamento: la pressione ridotta al livello del mare con cui l’altimetro al suolo indica l’elevazione dell’aeroporto. Solo per contesto."
       },
       "gate": {
         "gleitpfad": "Scostamento medio dal sentiero di discesa della pista di atterraggio tra 1000 e 200 ft, in dot (1 dot = 0,35° a 3°). Buono sotto 1, scarso da 2. Controllo dello stable gate — il gate limita il voto complessivo.",
@@ -1291,11 +1262,12 @@
         "ruck": "Quanto bruscamente è cambiato il rateo di discesa da un punto di misura all'altro. Buono sotto 100 fpm, scarso da 200 fpm. Controllo dello stable gate.",
         "sinken": "Se il rateo di discesa nello stable gate ha superato il limite per almeno 10 s di fila (−1000 fpm con sentiero di 3°, di più per avvicinamenti più ripidi). Controllo dello stable gate.",
         "konfiguration": "Se l'aereo era in configurazione di atterraggio all'ingresso dello stable gate (1000 ft): carrello giù, flap di atterraggio. Controllo dello stable gate.",
-        "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, voto complessivo al massimo 45. Altrimenti PARTIAL, voto complessivo al massimo 80. Senza misura al massimo 97."
+        "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, voto complessivo al massimo 45. Altrimenti PARTIAL, voto complessivo al massimo 80. Senza misura al massimo 97.",
+        "urteil_alt": "Giudizio sull’avvicinamento per i voli prima della versione 19, dalle sette caselle: tutte buone = STABLE, due scarse o tre non buone = UNSTABLE, altrimenti PARTIAL. Dalla versione 18 PARTIAL limita il voto complessivo a 80 e UNSTABLE a 45; prima solo la parte stabilità dell’avvicinamento."
       },
       "tile": {
         "vs_jerk": "Quanto bruscamente è cambiato il rateo di discesa durante l'avvicinamento, mediato da punto a punto. Più basso è più calmo.",
-        "bank_sigma": "Quanto ha oscillato l'inclinazione laterale durante l'avvicinamento (deviazione standard, smussata). Più basso è più calmo.",
+        "bank_sigma": "Quanto ha oscillato l’inclinazione laterale durante l’avvicinamento (deviazione standard, filtrata: senza i secondi attorno a un cambio pista). Più basso è più calmo.",
         "ias_sigma": "Quanto ha oscillato la velocità durante l'avvicinamento (deviazione standard). Più basso è più calmo.",
         "sink_rate": "Se il rateo di discesa durante l'avvicinamento ha superato il limite di stabilità per almeno 10 s di fila.",
         "landing_config": "Se carrello e flap di atterraggio sono stati impostati in tempo.",
@@ -1303,9 +1275,9 @@
         "max_vs_dev": "Massimo scostamento dal rateo previsto sotto i 500 ft. Solo per contesto."
       },
       "grafik": {
-        "anflug": "Rateo di discesa negli ultimi due minuti circa prima del contatto. Banda verde: rateo previsto da angolo di discesa e velocità al suolo, ±100 fpm. Linea rossa: limite di stabilità. Lo sfondo blu è lo stable gate, quello giallo la richiamata. Il grafico dà contesto — la valutazione avviene tramite la stabilità dell'avvicinamento.",
+        "anflug": "Rateo di discesa negli ultimi due minuti circa prima del contatto. Banda verde: rateo previsto da angolo di discesa e velocità al suolo, ±100 fpm. Linea rossa: limite di stabilità. Lo sfondo blu è lo stable gate, quello giallo gli ultimi 3 s prima del contatto (non valutati nel gate). Il grafico dà contesto — la valutazione avviene tramite la stabilità dell’avvicinamento.",
         "gleitpfad": "Scostamento dal sentiero di discesa della pista per ogni punto di misura, in dot sullo stesso asse dei tempi. + = sopra il sentiero. Fino a 1 dot verde, 1–2 giallo, da 2 rosso (fondo scala sul PFD). La media tra 1000 e 200 ft è un controllo dello stable gate. Toccare mostra il valore e il rombo come in cabina.",
-        "nah": "Primo piano a 50 Hz da 4 s prima a 10 s dopo il contatto: come è stato ridotto il rateo nella richiamata e se l'aereo si è risollevato. Il rateo al contatto proviene da questa curva."
+        "nah": "Primo piano a 50 Hz da 4 s prima a 10 s dopo il contatto: come è stato ridotto il rateo nella richiamata e se l’aereo si è risollevato. La curva mostra lo strumento del simulatore come contesto; il rateo al contatto valutato proviene dal profilo di quota."
       },
       "forensik": {
         "gleitpfad": "Scostamento geometrico dal sentiero di discesa della pista effettivamente usata, calcolato da posizione e quota vera. La media 1000–200 ft è un controllo dello stable gate (buono sotto 1 dot); le fasce 1000–500 e 500–200 ft sono per contesto.",
@@ -1314,6 +1286,10 @@
       "sinkrate_forensik": "Lo stesso atterraggio, mediato in modi diversi: finestre diverse danno ratei diversi. Si valuta il rateo al momento del contatto (in cima al rapporto); gli altri valori mostrano come si è arrivati lì.",
       "gkraft_forensik": "Lo stesso atterraggio, misurato in modi diversi: valori grezzi a 50 Hz, medie e percentili. Si valuta il picco leggermente smussato (forza G in cima al rapporto); gli altri valori sono per contesto.",
       "bordbuch": "Ciò che il client ha riconosciuto in questo volo — luci, transponder, APU, velocità di rullaggio e altro — e quando. Si contano le voci completate, nulla viene criticato. Non conta per il voto."
+    },
+    "info_badge": {
+      "oeffnen": "Spiegazione",
+      "schliessen": "Chiudi spiegazione"
     }
   },
   "about": {
@@ -2579,6 +2555,7 @@
     "cleared_via": "uscita {{name}} {{seite}}",
     "at_position": "a {{m}} m",
     "width_label": "larga {{m}} m",
+    "davon_landbar": "di cui {{m}} m utilizzabili per l’atterraggio",
     "legend_track": "Traccia — {{n}} punti misurati",
     "legend_exit_arc": "dopo aver liberato — misurato, non più valutato",
     "legend_exits": "Uscite (OSM) · evidenziata quella usata",

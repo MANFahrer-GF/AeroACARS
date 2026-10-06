@@ -167,6 +167,17 @@ export const AUSNAHMEN = {
 /** Die drei Sprachen, die beide Seiten führen. */
 export const SPRACHEN = ["de", "en", "it"];
 
+/**
+ * Dateien, die jede Seite SELBST führt (die Hüllen der Hilfe-Dialoge), deren
+ * Beschriftungen aber dieselben sein müssen. Sie werden nicht kopiert, nur
+ * auf Schlüssel gelesen — QS 06.10.2026: Titel und Schließen-Knopf beider
+ * Dialoge fehlten der Webapp.
+ */
+export const NUR_SCHLUESSEL = [
+  "components/ApproachStabilityHelpModal.tsx",
+  "components/RunwayUtilizationHelpModal.tsx",
+];
+
 const summe = (t) => createHash("sha256").update(t).digest("hex").slice(0, 16);
 
 /**
@@ -220,7 +231,14 @@ function vorspaenneAusQuelltext(text) {
   return raus;
 }
 
-/** Alle Blattpfade unterhalb eines Vorspanns. */
+/**
+ * Alle Blattpfade unterhalb eines Vorspanns — in jeder Tiefe.
+ *
+ * QS 06.10.2026: `tiles.${k}.label` hat unter dem Vorspann Objekte, keine
+ * Texte. Mit nur der ersten Ebene fand der Abgleich dort nichts, und der
+ * Webapp fehlten sämtliche Texte beider Hilfe-Dialoge (Anflug-Stabilität,
+ * Bahn-Auslastung) — sie zeigte rohe Schlüssel. Der Wächter war grün.
+ */
 function blaetter(baum, pfad) {
   let k = baum;
   for (const teil of pfad.split(".")) {
@@ -228,9 +246,9 @@ function blaetter(baum, pfad) {
     k = k[teil];
   }
   if (k == null || typeof k !== "object") return [];
-  return Object.keys(k)
-    .filter((n) => typeof k[n] === "string")
-    .map((n) => `${pfad}.${n}`);
+  return Object.keys(k).flatMap((n) =>
+    typeof k[n] === "string" ? [`${pfad}.${n}`] : blaetter(k, n).map((b) => `${pfad}.${b}`),
+  );
 }
 
 function sprachdatei(wurzel, sprache) {
@@ -251,7 +269,7 @@ function hatSchluessel(baum, punktpfad) {
 export function benoetigteSchluessel() {
   const alle = new Set();
   const vorspaenne = new Set();
-  for (const rel of DATEIEN) {
+  for (const rel of [...DATEIEN, ...NUR_SCHLUESSEL]) {
     const p = resolve(CLIENT, rel);
     if (!existsSync(p)) continue;
     const text = readFileSync(p, "utf-8");
@@ -269,7 +287,7 @@ export function benoetigteSchluessel() {
     // der Webapp so drei Texte (u. a. „Bei 200 ft stabil"); sie zeigte den
     // rohen Schlüssel. Gezählt wird jede Zeichenkette, die in der deutschen
     // Datei ein Text ist.
-    for (const rel of DATEIEN) {
+    for (const rel of [...DATEIEN, ...NUR_SCHLUESSEL]) {
       const p = resolve(CLIENT, rel);
       if (!existsSync(p)) continue;
       const text = readFileSync(p, "utf-8");

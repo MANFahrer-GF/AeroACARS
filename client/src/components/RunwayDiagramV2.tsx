@@ -496,7 +496,18 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             <span style={{ opacity: 0.5 }}>·</span>
             <strong style={{ fontSize: "1.05rem" }}>{t("runway_v2.rwy_label_prefix")} {props.runway_ident}</strong>
             <span style={{ opacity: 0.5 }}>·</span>
-            <span>{props.length_m.toFixed(0)} m</span>
+            {/* Versetzte Schwelle: bauliche Länge UND landbarer Teil, wie im
+                früheren PDF-Bericht („Bahnlänge" / „Davon landbar") — sonst
+                stand nur die landbare Länge da, ohne zu sagen, welche es ist
+                (QS 06.10.2026). `length_m` ist die LDA (Mapper). */}
+            {(props.displaced_threshold_m ?? 0) >= 1 ? (
+              <span>
+                {(props.length_m + (props.displaced_threshold_m ?? 0)).toFixed(0)} m ·{" "}
+                {t("runway_v2.davon_landbar", { m: props.length_m.toFixed(0) })}
+              </span>
+            ) : (
+              <span>{props.length_m.toFixed(0)} m</span>
+            )}
             {/* Die Breite gehoert in den Kopf: Sie ist der Massstab der
                 Queransicht und die Groesse, an der „Rad neben der Bahn"
                 haengt. Wer die Note nachvollziehen will, braucht sie. */}

@@ -238,21 +238,20 @@ describe("PDF-Bericht der Landeanalyse", () => {
     ).toBe(true);
   });
 
-  it("stellt zwei Bahnlängen nicht unbeschriftet nebeneinander", () => {
+  it("nennt bauliche und landbare Bahnlänge, beschriftet", () => {
     // Befund 24.08.2026: 3250 m (baulich) und 2952 m (landbar) ohne
-    // Angabe, welche welche ist. Seit 05.10.2026 druckt der Bericht die
-    // Bildschirm-Abschnitte; die Bahn-Grafik nennt nur die landbare Länge.
-    // Steht die bauliche trotzdem irgendwo, muss sie beschriftet sein.
+    // Angabe, welche welche ist. QS 06.10.2026: Seit der Bericht die
+    // Bildschirm-Abschnitte druckt, fehlte die bauliche Länge ganz (der alte
+    // Bericht hatte „Bahnlänge" und „Davon landbar"). Jetzt nennt der Kopf
+    // der Bahn-Grafik beide — „3250 m · davon landbar 2952 m".
     const o = MOCK_LANDING_OPTIONS.find((x) => x.key === "d_kante")!;
     const r = o.build() as unknown as LandingRecord;
     const baulich = Math.round((r.runway_match?.length_ft ?? 0) * 0.3048);
     const zeilen = texte(bericht("d_kante"));
-    if (zeilen.some((z) => z.includes(`${baulich} m`))) {
-      expect(
-        zeilen.some((z) => /Davon landbar|Landable|atterrabile/.test(z)),
-        `Die bauliche Länge ${baulich} m steht ohne Angabe neben der landbaren.`,
-      ).toBe(true);
-    }
+    expect(
+      zeilen.some((z) => z.includes(`${baulich} m · davon landbar`)),
+      `Die bauliche Länge ${baulich} m fehlt oder steht ohne Angabe neben der landbaren.`,
+    ).toBe(true);
     // Und die Lage, die den Befund auslöste, gibt es im Beispiel wirklich.
     expect(baulich).toBeGreaterThan(500);
   });

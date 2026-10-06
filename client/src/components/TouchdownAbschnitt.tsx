@@ -215,7 +215,7 @@ export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
           <div>
             <dt>{t("landing.bounces")}{" "}<InfoBadge explanation={t("landing.erklaer.td.hopser")} /></dt>
             <dd>
-              {fensterWerteGueltig(record)
+              {fensterWerteGueltig(record) && record.bounce_count != null
                 ? record.bounce_count
                 : t("landing.nicht_bewertbar.kein_wert")}
             </dd>

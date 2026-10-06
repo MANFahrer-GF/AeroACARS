@@ -24176,6 +24176,9 @@ fn bahn_herkunft(stats: &FlightStats) -> aeroacars_mqtt::BahnHerkunftWire {
         // Auslastung"-sub-score so it matches the
         // in-app PIREP value 1:1.
         runway_length_m: rwy_match.map(|m| m.length_ft * 0.3048),
+        runway_surface: rwy_match
+            .map(|m| m.surface.trim().to_string())
+            .filter(|s| !s.is_empty()),
         // v0.8.0: Pure-Function-Assessment in den
         // Live-MQTT-Payload. Identische Werte wie
         // im LandingRecord (record_landing_for_filed_
@@ -24662,6 +24665,15 @@ fn build_pirep_payload(
         planned_tow_kg: stats.planned_tow_kg,
         planned_ldw_kg: stats.planned_ldw_kg,
         planned_block_fuel_kg: stats.planned_block_fuel_kg,
+        // QS 06.10.2026: wie `build_landing_record` — damit die Webapp
+        // dieselben Zahlen zeigt (siehe Feld-Doku in aeroacars-mqtt).
+        flight_ident: Some(resolve_flight_ident(
+            &flight.flight_number,
+            flight.bid_callsign.as_deref(),
+        ))
+        .filter(|s| !s.trim().is_empty()),
+        landing_scored_g_force: score_g_for_stats(&stats).map(|s| s.scored_g),
+        landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
         peak_altitude_ft: stats.peak_altitude_ft.map(|v| v.round() as i32),
         landing_vs_fpm: body.landing_rate.map(|r| r as i32),
         // v0.7.1 P1.3-Fix: gewichteter Aggregate-Score
@@ -27545,6 +27557,8 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// hoechstens 40, ein Teil unter 45 Punkten hoechstens 60, unter 75
 /// hoechstens 80. Kein Rueckfall mehr auf die Touchdown-Klasse. Anlass
 /// QAF419 (vor der Schwelle, 92) und AIB424 (neben der Bahn, 91).
+/// Dazu die Teilnote „Abfangen" (Gewicht 2, ab 50 ft bis zum Aufsetzen,
+/// `landing-scoring/src/abfangen.rs`) und das Stable Gate nach Gleitpfad.
 ///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
@@ -37084,20 +37098,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 stats.anflug_forensik.in_analyse_json(&mut analysis);
                 // 05.10.2026: Abfangen über die Höhe — Messung für die
                 // Teilnote `abfangen` (landing-scoring/src/abfangen.rs).
-                let abfangen = abfangen_messen(
-                    &stats,
-                    &samples,
-                    edge_at,
-                    analysis
-                        .get("vs_at_edge_fpm")
-                        .and_then(|v| v.as_f64())
-                        .map(|v| v as f32),
-                );
-                if let (Some(obj), Ok(v)) =
-                    (analysis.as_object_mut(), serde_json::to_value(&abfangen))
-                {
-                    obj.insert("abfangen".to_string(), v);
-                }
+                abfangen_in_analyse(&stats, &samples, edge_at, &mut analysis);
                 stats.landing_analysis = Some(analysis.clone());
                 // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde):
                 // `peak_g_post_500ms` steht in `analysis` HIER schon fertig
@@ -43587,8 +43588,32 @@ fn abfangen_aus_analyse(stats: &FlightStats) -> Option<landing_scoring::abfangen
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
-/// Wie lange vom letzten 50-ft-Durchgang bis zum Aufsetzen abgefangen
-/// wurde (05.10.2026, Teilnote `abfangen`).
+/// Misst das Abfangen und legt es unter `abfangen` ins Analyse-JSON —
+/// von dort lesen Bewertung, Datensatz und PIREP (`abfangen_aus_analyse`).
+/// Eigene Funktion, damit der Test die Kette prüft und nicht nur die Messung
+/// (QS 06.10.2026: fiel das Einfügen weg, fehlte die Achse still).
+fn abfangen_in_analyse(
+    stats: &FlightStats,
+    fenster: &[TouchdownWindowSample],
+    edge_at: DateTime<Utc>,
+    analysis: &mut serde_json::Value,
+) {
+    let abfangen = abfangen_messen(
+        stats,
+        fenster,
+        edge_at,
+        analysis
+            .get("vs_at_edge_fpm")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32),
+    );
+    if let (Some(obj), Ok(v)) = (analysis.as_object_mut(), serde_json::to_value(&abfangen)) {
+        obj.insert("abfangen".to_string(), v);
+    }
+}
+
+/// Wie lange vom ersten 50-ft-Durchgang (im letzten Anflug) bis zum
+/// Aufsetzen abgefangen wurde (05.10.2026, Teilnote `abfangen`).
 ///
 /// Höhe = wahre Höhe der Anflugprobe minus wahre Höhe beim ersten
 /// Bodenkontakt im 50-Hz-Fenster — dieselbe Rechnung wie im Korpus, aus dem
@@ -65879,6 +65904,31 @@ mod touchdown_metadata_stamp_tests {
         assert_eq!(resolve_flight_ident("0", Some("7ME")), "7ME");
     }
 
+    /// QS 06.10.2026: Der PIREP trägt die drei Werte, die der Client-
+    /// Datensatz zeigt und die Webapp sonst nicht hatte — aus denselben
+    /// Quellen wie `build_landing_record`.
+    #[test]
+    fn pirep_traegt_flugkennung_spitzen_vs_und_gemessene_g() {
+        let mut flight = flight_fixture("GCLP");
+        flight.airline_icao = "CFG".into();
+        flight.flight_number = "0".into();
+        flight.bid_callsign = Some("7ME".into());
+        flight.stats.lock().unwrap().landing_peak_vs_fpm = Some(-204.0);
+        let body = api_client::FileBody::default();
+        let p = build_pirep_payload(&flight, &body, "GCLP", "GCLP");
+        assert_eq!(p.flight_ident.as_deref(), Some("7ME"));
+        // `flight_number` bleibt wie bisher („CFG 0") — additiv.
+        assert_eq!(p.flight_number, format_callsign("CFG", "0"));
+        assert_eq!(p.landing_peak_vs_fpm, Some(-204.0));
+        let g = score_g_for_stats(&flight.stats.lock().unwrap()).map(|s| s.scored_g);
+        assert_eq!(p.landing_scored_g_force, g);
+        // Ohne Werte: Felder fehlen im JSON (ältere Empfänger unverändert).
+        let mut leer = flight_fixture("GCLP");
+        leer.flight_number = String::new();
+        let j = serde_json::to_value(build_pirep_payload(&leer, &body, "GCLP", "GCLP")).unwrap();
+        assert!(j.get("flight_ident").is_none() && j.get("landing_peak_vs_fpm").is_none());
+    }
+
     #[test]
     fn resolve_flight_ident_falls_back_when_callsign_none() {
         assert_eq!(resolve_flight_ident("1434", None), "1434");
@@ -80437,13 +80487,16 @@ mod abfangen_verdrahtung_tests {
             let h = 60.0 * (-(t as f32)) / 16_800.0;
             stats.anflug_forensik_puffer.push_back(probe(t, h, -210.0));
         }
-        let a = abfangen_messen(&stats, &[boden()], td(), Some(-40.0));
+        // Die Kette des Samplers: messen und ins Analyse-JSON legen, von dort
+        // lesen Bewertung, Datensatz und PIREP.
+        let mut analysis = serde_json::json!({ "vs_at_edge_fpm": -40.0 });
+        abfangen_in_analyse(&stats, &[boden()], td(), &mut analysis);
+        stats.landing_analysis = Some(analysis);
+        let a = abfangen_aus_analyse(&stats).expect("abfangen im Analyse-JSON");
         assert_eq!(a.grund_ohne_werte, None, "{a:?}");
         assert_eq!(a.dauer_ab_50ft_s, Some(14.0));
+        assert_eq!(a.vs_aufsetzen_fpm, Some(-40.0));
 
-        stats.landing_analysis = Some(serde_json::json!({
-            "abfangen": serde_json::to_value(&a).unwrap()
-        }));
         let eingang = scoring_eingang(&stats, Some("A320"), None, None);
         let subs = landing_scoring::compute_sub_scores(&eingang);
         let s = subs

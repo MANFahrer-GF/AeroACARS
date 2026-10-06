@@ -3,6 +3,7 @@ THY39 · FAOR → LTFM
 GUT · 87/100
 i
 · 5.10.2026, 22:31:34
+MSFS
 Forensik v2
 Confidence: Hoch
 Sprit
@@ -489,6 +490,19 @@ i
 Schweben
 i
 2.3 s · 150 m
+Sinkrate in den letzten 2 s vor dem Aufsetzen (frühere Messung, keine Note)
+Sinkrate vor Flare
+i
+-51 fpm
+Sinkrate kurz vor TD
+i
+-51 fpm
+Sinkraten-Reduktion
+i
++0 fpm
+dSinkrate/dt
+i
+-4 fpm/s
 Loadsheet
 i
 Sprit
@@ -588,7 +602,7 @@ LTFM / 35R
 Versatz zur Mittellinie (m, mit Vorzeichen)
 +3.08 m (rechts)
 Hinter der Schwelle (m, mit Vorzeichen)
-+819.97 m
++819.97 m (hinter der Schwelle)
 Ausrollstrecke
 1078 m
 AeroACARS-Version

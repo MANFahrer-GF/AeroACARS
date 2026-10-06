@@ -6,7 +6,9 @@
 
 :where(.bb-checkliste) {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  /* min(…, 100%): auf schmalen iPhones (Webapp-Modal) lief die Liste sonst
+     waagerecht über (QS 06.10.2026). */
+  grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr));
   gap: 14px 22px;
   padding: 16px 18px;
   border: 1px solid var(--border);

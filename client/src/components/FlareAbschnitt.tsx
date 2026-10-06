@@ -6,7 +6,7 @@
 // gerechneten Reduktion.
 //
 // Seit 05.10.2026 misst der Client das Abfangen über die Höhe (ab dem
-// letzten 50-ft-Durchgang) und bewertet die Dauer als Teilnote `abfangen`.
+// 50-ft-Durchgang) und bewertet die Dauer als Teilnote `abfangen`.
 // Flüge mit dieser Messung zeigen sie; ältere zeigen unverändert die alten
 // Werte aus den 2 s vor dem Aufsetzen — die waren nie eine Note, und bei
 // langem Schweben meldeten sie fälschlich „Kein Flare" (QAF434, THY39).
@@ -90,6 +90,16 @@ function AbfangenNeu({ record }: { record: LandingRecord }) {
             </div>
           )}
         </dl>
+        {/* QS 06.10.2026 (Thomas: nichts weglassen, was Werte zeigt): die
+            bisherigen Messwerte aus den 2 s vor dem Aufsetzen bleiben
+            stehen — beschriftet als das, was sie sind. Nur die Marke
+            „Kein Flare" entfällt; bei langem Schweben war sie falsch. */}
+        {hatAlteWerte(record) && (
+          <>
+            <p className="landing-flare__zwischen">{t("landing.abfangen.letzte_2s")}</p>
+            <AlteWerte record={record} />
+          </>
+        )}
       </div>
     </section>
   );
@@ -97,14 +107,7 @@ function AbfangenNeu({ record }: { record: LandingRecord }) {
 
 function AbfangenAlt({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
-  if (
-    record.peak_vs_pre_flare_fpm == null &&
-    record.vs_at_flare_end_fpm == null &&
-    record.flare_reduction_fpm == null &&
-    record.flare_dvs_dt_fpm_per_sec == null
-  ) {
-    return null;
-  }
+  if (!hatAlteWerte(record)) return null;
   return (
     <section className="landing-section landing-section--flare">
       <h3>
@@ -124,45 +127,62 @@ function AbfangenAlt({ record }: { record: LandingRecord }) {
         {/* Score-Version 19: kein Teil der Note — die frühere
             Flare-Zahl 0–100 ist entfallen (sah aus wie eine Note,
             die Webapp zeigt sie nicht). Nur die Messwerte. */}
-        <dl className="landing-keyvals landing-flare__metrics">
-          {record.peak_vs_pre_flare_fpm != null && (
-            <div>
-              <dt>
-                {t("landing.flare_pre_vs")}{" "}
-                <InfoBadge explanation={t("landing.flare_pre_vs_hint")} />
-              </dt>
-              <dd>{fmtNumber(record.peak_vs_pre_flare_fpm, 0, "fpm")}</dd>
-            </div>
-          )}
-          {record.vs_at_flare_end_fpm != null && (
-            <div>
-              <dt>
-                {t("landing.flare_end_vs")}{" "}
-                <InfoBadge explanation={t("landing.flare_end_vs_hint")} />
-              </dt>
-              <dd>{fmtNumber(record.vs_at_flare_end_fpm, 0, "fpm")}</dd>
-            </div>
-          )}
-          {record.flare_reduction_fpm != null && (
-            <div>
-              <dt>
-                {t("landing.flare_reduction")}{" "}
-                <InfoBadge explanation={t("landing.flare_reduction_hint")} />
-              </dt>
-              <dd>{fmtSigned(record.flare_reduction_fpm, 0, "fpm")}</dd>
-            </div>
-          )}
-          {record.flare_dvs_dt_fpm_per_sec != null && (
-            <div>
-              <dt>
-                {t("landing.flare_dvs_dt")}{" "}
-                <InfoBadge explanation={t("landing.flare_dvs_dt_hint")} />
-              </dt>
-              <dd>{fmtSigned(record.flare_dvs_dt_fpm_per_sec, 0, "fpm/s")}</dd>
-            </div>
-          )}
-        </dl>
+        <AlteWerte record={record} />
       </div>
     </section>
+  );
+}
+
+function hatAlteWerte(record: LandingRecord): boolean {
+  return (
+    record.peak_vs_pre_flare_fpm != null ||
+    record.vs_at_flare_end_fpm != null ||
+    record.flare_reduction_fpm != null ||
+    record.flare_dvs_dt_fpm_per_sec != null
+  );
+}
+
+/** Messwerte der früheren Flare-Erkennung (2 s vor dem Aufsetzen). */
+function AlteWerte({ record }: { record: LandingRecord }) {
+  const { t } = useTranslation();
+  return (
+    <dl className="landing-keyvals landing-flare__metrics">
+      {record.peak_vs_pre_flare_fpm != null && (
+        <div>
+          <dt>
+            {t("landing.flare_pre_vs")}{" "}
+            <InfoBadge explanation={t("landing.flare_pre_vs_hint")} />
+          </dt>
+          <dd>{fmtNumber(record.peak_vs_pre_flare_fpm, 0, "fpm")}</dd>
+        </div>
+      )}
+      {record.vs_at_flare_end_fpm != null && (
+        <div>
+          <dt>
+            {t("landing.flare_end_vs")}{" "}
+            <InfoBadge explanation={t("landing.flare_end_vs_hint")} />
+          </dt>
+          <dd>{fmtNumber(record.vs_at_flare_end_fpm, 0, "fpm")}</dd>
+        </div>
+      )}
+      {record.flare_reduction_fpm != null && (
+        <div>
+          <dt>
+            {t("landing.flare_reduction")}{" "}
+            <InfoBadge explanation={t("landing.flare_reduction_hint")} />
+          </dt>
+          <dd>{fmtSigned(record.flare_reduction_fpm, 0, "fpm")}</dd>
+        </div>
+      )}
+      {record.flare_dvs_dt_fpm_per_sec != null && (
+        <div>
+          <dt>
+            {t("landing.flare_dvs_dt")}{" "}
+            <InfoBadge explanation={t("landing.flare_dvs_dt_hint")} />
+          </dt>
+          <dd>{fmtSigned(record.flare_dvs_dt_fpm_per_sec, 0, "fpm/s")}</dd>
+        </div>
+      )}
+    </dl>
   );
 }

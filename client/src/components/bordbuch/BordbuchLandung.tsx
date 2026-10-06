@@ -80,4 +80,4 @@ export function useBordbuchEintrag(pirepId: string | null | undefined) {
 
 // Anzeige (Kopf, Abschnitt, PDF-Fassung): BordbuchLandungsAnzeige.tsx
 // (gespiegelt in die Webapp).
-export { BordbuchBericht, BordbuchLandungsAbschnitt } from "./BordbuchLandungsAnzeige";
+export { BordbuchLandungsAbschnitt } from "./BordbuchLandungsAnzeige";

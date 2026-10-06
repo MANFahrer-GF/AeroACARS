@@ -45,3 +45,12 @@
   font-size: 0.78rem;
   color: var(--text-muted, #94a3b8);
 }
+
+/* Papier (QS 06.10.2026): Gitter, Rahmen und Achsen sind für den dunklen
+   Grund gezeichnet — weiß auf weißem Papier waren sie unsichtbar, die
+   Achsentexte blass. Der frühere Bericht legte die Grafik dafür auf eine
+   dunkle Karte; jetzt druckt sie im hellen Abschnitt, also dunkle Linien.
+   CSS schlägt das SVG-Attribut; auf dem Bildschirm greift nichts davon. */
+.landing-report .ag-gitter { stroke: rgba(15, 23, 42, 0.14); }
+.landing-report .ag-rahmen { fill: none; stroke: rgba(15, 23, 42, 0.35); }
+.landing-report .ag-achse { fill: #334155; }

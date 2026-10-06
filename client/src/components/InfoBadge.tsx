@@ -5,6 +5,7 @@
 // Seiten gleich. Bis 05.10.2026 in LandingPanel.tsx.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import "./infoBadge.css";
 
 // ---- (i) info badge — small click-to-toggle popover --------------------
@@ -27,6 +28,32 @@ import "./infoBadge.css";
 const RAND = 8;
 const BREITE = 280;
 
+/**
+ * Der Bezugsrahmen eines `position: fixed`-Elements: normalerweise das
+ * Fenster — aber ein Vorfahr mit transform, filter, backdrop-filter,
+ * perspective oder contain übernimmt die Rolle (QS 06.10.2026: das Modal der
+ * Webapp hat `backdrop-filter: blur()` und `overflow: hidden`; das Fenster
+ * saß um dessen Rand versetzt und wurde dort abgeschnitten).
+ */
+function bezugsrahmen(el: Element | null): Element | null {
+  for (let e = el?.parentElement ?? null; e; e = e.parentElement) {
+    const cs = getComputedStyle(e) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
+    const gesetzt = (v: string | undefined) => v != null && v !== "" && v !== "none";
+    if (
+      gesetzt(cs.transform) ||
+      gesetzt(cs.filter) ||
+      gesetzt(cs.backdropFilter) ||
+      gesetzt(cs.webkitBackdropFilter) ||
+      gesetzt(cs.perspective) ||
+      /paint|layout|strict|content/.test(cs.contain ?? "") ||
+      /transform|filter|perspective/.test(cs.willChange ?? "")
+    ) {
+      return e;
+    }
+  }
+  return null;
+}
+
 interface Lage {
   top: number;
   left: number;
@@ -34,9 +61,12 @@ interface Lage {
   pfeil: number;
   /** Fenster über dem Knopf (unten war kein Platz). */
   oben: boolean;
+  /** Breite in px (schmaler, wenn der sichtbare Bereich schmal ist). */
+  breite: number;
 }
 
 export function InfoBadge({ explanation }: { explanation: string }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [lage, setLage] = useState<Lage | null>(null);
   const wrap = useRef<HTMLSpanElement>(null);
@@ -48,16 +78,29 @@ export function InfoBadge({ explanation }: { explanation: string }) {
   const ausrichten = () => {
     if (!knopf.current) return;
     const r = knopf.current.getBoundingClientRect();
-    const breite = Math.min(BREITE, window.innerWidth - 2 * RAND);
+    // Sichtbarer Bereich: Fenster, geschnitten mit dem Bezugsrahmen (siehe
+    // `bezugsrahmen`) — in dessen Koordinaten wird `top/left` gesetzt.
+    const rahmen = bezugsrahmen(knopf.current);
+    const b = rahmen?.getBoundingClientRect();
+    const x0 = Math.max(0, b ? b.left + (rahmen as HTMLElement).clientLeft : 0);
+    const y0 = Math.max(0, b ? b.top + (rahmen as HTMLElement).clientTop : 0);
+    const x1 = Math.min(window.innerWidth, b ? b.right : window.innerWidth);
+    const y1 = Math.min(window.innerHeight, b ? b.bottom : window.innerHeight);
+    const breite = Math.min(BREITE, x1 - x0 - 2 * RAND);
     let left = r.left - RAND;
-    if (left + breite > window.innerWidth - RAND) left = window.innerWidth - RAND - breite;
-    if (left < RAND) left = RAND;
+    if (left + breite > x1 - RAND) left = x1 - RAND - breite;
+    if (left < x0 + RAND) left = x0 + RAND;
     const hoehe = fenster.current?.getBoundingClientRect().height ?? 0;
     const unten = r.bottom + RAND;
-    const oben = unten + hoehe > window.innerHeight - RAND && r.top - RAND - hoehe >= RAND;
+    const oben = unten + hoehe > y1 - RAND && r.top - RAND - hoehe >= y0 + RAND;
+    const top = oben ? r.top - RAND - hoehe : unten;
+    // Bezugsrahmen: Koordinaten relativ zu seiner Innenkante.
+    const dx = b ? b.left + (rahmen as HTMLElement).clientLeft : 0;
+    const dy = b ? b.top + (rahmen as HTMLElement).clientTop : 0;
     setLage({
-      top: oben ? r.top - RAND - hoehe : unten,
-      left,
+      top: top - dy,
+      left: left - dx,
+      breite,
       pfeil: r.left + r.width / 2 - left - 6,
       oben,
     });
@@ -102,7 +145,7 @@ export function InfoBadge({ explanation }: { explanation: string }) {
           setLage(null);
           setOpen((v) => !v);
         }}
-        aria-label="info"
+        aria-label={t("landing.info_badge.oeffnen")}
         aria-expanded={open}
       >
         i
@@ -115,6 +158,7 @@ export function InfoBadge({ explanation }: { explanation: string }) {
           style={{
             top: lage?.top ?? 0,
             left: lage?.left ?? 0,
+            ...(lage ? { width: lage.breite } : {}),
             // Erst messen, dann zeigen — sonst blitzt es kurz oben links.
             visibility: lage ? "visible" : "hidden",
             ["--pfeil" as string]: `${lage?.pfeil ?? 12}px`,
@@ -128,7 +172,7 @@ export function InfoBadge({ explanation }: { explanation: string }) {
               e.stopPropagation();
               setOpen(false);
             }}
-            aria-label="close"
+            aria-label={t("landing.info_badge.schliessen")}
           >
             ×
           </button>

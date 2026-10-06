@@ -3,8 +3,9 @@
 //! Nur die Structs, keine Rechnung (die steht im Client,
 //! `src-tauri/src/anflug_forensik.rs`). Sie liegen in diesem Crate, weil
 //! `storage` (LandingRecord) und `aeroacars-mqtt` (PirepPayload) beide
-//! darauf zugreifen — eine Definition, eine JSON-Form. Keine Unternote,
-//! kein Gate und kein Deckel liest diese Werte.
+//! darauf zugreifen — eine Definition, eine JSON-Form. Keine Unternote liest
+//! diese Werte; seit Score-Version 19 zählt aber der Gleitpfad-Durchschnitt
+//! (`gesamt.mittel_abs_dots`) zum Stable Gate.
 
 use serde::{Deserialize, Serialize};
 

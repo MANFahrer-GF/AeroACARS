@@ -6,7 +6,10 @@
 //! Sinkrate in den festen 2 s vor dem Aufsetzen. Wer früh abfängt und dann
 //! schwebt, hat in diesen 2 s längst keine Sinkrate mehr — QAF434 und THY39
 //! meldeten „Kein Flare", obwohl sauber abgefangen wurde. Hier wird über die
-//! HÖHE gemessen: vom letzten Durchgang durch 50 ft bis zum Aufsetzen.
+//! HÖHE gemessen: vom ersten Durchgang durch 50 ft im letzten Anflug bis zum
+//! Aufsetzen. Steigt das Flugzeug im Abfangen wieder über 50 ft
+//! (Ballooning), läuft die Uhr weiter — erst über 100 ft gilt es als neuer
+//! Anflug (Durchstarten).
 //!
 //! # Warum es Punkte gibt
 //!
@@ -17,6 +20,12 @@
 //! ~12 s; ab 12 s setzt über die Hälfte hinter der Aufsetzzone auf, und die
 //! Sinkrate wird nach 8 s kaum noch weicher. Bänder und Gewicht 2:
 //! Entscheidung Thomas, 05.10.2026.
+//!
+//! Nachgemessen 06.10.2026 an 1452 Client-Flugprotokollen (genauer als die
+//! Server-Spur): Linie n=1107 Median 8,2 s, p90 11,9 s; hinter der
+//! Aufsetzzone ≤10 s 3 %, 10–12 s 19 %, 12–15 s 47 %, >15 s 92 %. Klein
+//! n=344 Median 11,9 s, p90 18,6 s (ein Pilot stellt 190 davon). Die
+//! Bänder bleiben.
 //!
 //! # Höhe
 //!
@@ -40,8 +49,14 @@ pub const SCHWEBEN_AB_VS_FPM: f32 = -100.0;
 /// Erkennung (`MSFS_FLARE_DETECT_FLOOR_FPM`). Nur Anzeige.
 pub const BEGINN_REDUKTION_FPM: f32 = 50.0;
 /// Wieder steigen im Abfangen (Ballooning): darüber höchstens 50 Punkte.
-/// Korpus: > 0 fpm bei 9 %, > 50 fpm bei 3 % der Landungen.
+/// Korpus: > 0 fpm bei 9 %, > 50 fpm bei 3 % der Landungen (Server-Spur);
+/// Client-Protokolle 06.10.2026: Linie 8,9 % / 4,7 %, Klein 19 % / 4,9 %.
 pub const BALLOONING_VS_FPM: f32 = 50.0;
+/// Wieder über diese Höhe = neuer Anflug (Durchstarten). Darunter ist ein
+/// Steigen über 50 ft Teil des Abfangens (Ballooning) und startet die Uhr
+/// NICHT neu (QS 06.10.2026: mit „letzter Durchgang" belohnte genau das
+/// Wieder-Steigen eine kurze Dauer, und die Ballooning-Kappung sah es nie).
+pub const DURCHSTART_HOEHE_FT: f32 = 100.0;
 /// Mindestens so viele Messpunkte zwischen 50 ft und Aufsetzen.
 const MIN_PROBEN: usize = 3;
 
@@ -59,7 +74,8 @@ pub struct AbfangPunkt {
 /// Messwerte des Abfangens — reine Messung, die Teilnote steht daneben.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Abfangen {
-    /// Sekunden vom letzten Durchgang durch 50 ft bis zum Aufsetzen.
+    /// Sekunden vom ersten Durchgang durch 50 ft (im letzten Anflug) bis zum
+    /// Aufsetzen.
     #[serde(default)]
     pub dauer_ab_50ft_s: Option<f32>,
     /// Sinkrate beim Durchgang durch 50 ft.
@@ -102,9 +118,14 @@ pub fn messen(punkte: &[AbfangPunkt], vs_aufsetzen_fpm: Option<f32>) -> Abfangen
         ..Default::default()
     };
     let p: Vec<&AbfangPunkt> = punkte.iter().filter(|p| p.t_ms <= 0).collect();
-    // Letzter Abwärts-Durchgang durch 50 ft (ein Durchstarten davor zählt nicht).
-    let Some(i) = (1..p.len())
-        .rev()
+    // Erster Abwärts-Durchgang durch 50 ft nach dem letzten Punkt über
+    // 100 ft — ein Durchstarten davor zählt nicht, ein Wieder-Steigen im
+    // Abfangen schon (siehe `DURCHSTART_HOEHE_FT`).
+    let anflug_ab = p
+        .iter()
+        .rposition(|q| q.hoehe_ft > DURCHSTART_HOEHE_FT)
+        .map_or(1, |k| k + 1);
+    let Some(i) = (anflug_ab.max(1)..p.len())
         .find(|&i| p[i - 1].hoehe_ft > ABFANG_HOEHE_FT && p[i].hoehe_ft <= ABFANG_HOEHE_FT)
     else {
         return ohne("kein_50ft_durchgang");
@@ -157,12 +178,20 @@ pub fn messen(punkte: &[AbfangPunkt], vs_aufsetzen_fpm: Option<f32>) -> Abfangen
 
 /// Bandgrenzen (obere Grenzen in Sekunden für 100 / 80 / 50 Punkte).
 fn grenzen(icao: Option<&str>) -> [f32; 3] {
+    // Ohne Muster gelten die Linienbänder: `category_for_icao` fällt bei
+    // `None` auf Light — fürs Ausrollen die strenge Seite, hier wären es die
+    // großzügigsten Bänder (QS 06.10.2026).
+    if icao.map_or(true, |s| s.trim().is_empty()) {
+        return LINIE;
+    }
     match category_for_icao(icao) {
-        // GA, Bizjet, unbekannt — Korpus Median 12,5 s, p90 19,5 s.
+        // GA, Bizjet, nicht gelistete Muster — Korpus Median 12,5 s, p90 19,5 s.
         Category::Light => [16.0, 20.0, 24.0],
-        Category::Medium | Category::Heavy => [10.0, 12.0, 15.0],
+        Category::Medium | Category::Heavy => LINIE,
     }
 }
+
+const LINIE: [f32; 3] = [10.0, 12.0, 15.0];
 
 /// Teilnote „Abfangen". `None` ohne Messung — dann erscheint die Achse gar
 /// nicht (Altbestand, fehlende Daten), statt als Strafe.
@@ -310,6 +339,11 @@ mod tests {
             (16.1, "C172", 80),
             (20.1, "E55P", 50),
             (24.1, "PC12", 25),
+            // QS 06.10.2026: Linienmuster, die vorher als „unbekannt" auf
+            // die Kleinflugzeug-Bänder fielen.
+            (14.0, "A306", 50),
+            (14.0, "E75L", 50),
+            (14.0, "RJ85", 50),
         ] {
             assert_eq!(
                 sub_abfangen(Some(&mit(d)), Some(icao)).unwrap().points,
@@ -317,6 +351,20 @@ mod tests {
                 "{d} s {icao}"
             );
         }
+    }
+
+    /// Ohne Muster die Linienbänder (nicht die großzügigen kleinen).
+    #[test]
+    fn ohne_muster_linienbaender() {
+        let a = Abfangen {
+            dauer_ab_50ft_s: Some(14.0),
+            max_vs_fpm: Some(-50.0),
+            ..Default::default()
+        };
+        assert_eq!(sub_abfangen(Some(&a), None).unwrap().points, 50);
+        assert_eq!(sub_abfangen(Some(&a), Some(" ")).unwrap().points, 50);
+        // Gegenprobe: ein gelistetes Kleinflugzeug behält seine Bänder.
+        assert_eq!(sub_abfangen(Some(&a), Some("C172")).unwrap().points, 100);
     }
 
     #[test]
@@ -355,6 +403,43 @@ mod tests {
         );
         assert_eq!(a.grund_ohne_werte.as_deref(), Some("kein_50ft_durchgang"));
         assert!(sub_abfangen(Some(&a), Some("A320")).is_none());
+    }
+
+    /// QS 06.10.2026: A320 fängt zu hoch ab, steigt mit +300 fpm wieder
+    /// über 50 ft und geht erst 9 s vor dem Aufsetzen erneut hindurch. Die
+    /// Uhr läuft ab dem ERSTEN Durchgang (20 s), und das Steigen zählt.
+    #[test]
+    fn ballooning_ueber_50ft_startet_die_uhr_nicht_neu() {
+        let v = vec![
+            p(-22000, 70.0, -700.0),
+            p(-20000, 50.0, -600.0),
+            p(-19000, 45.0, -200.0),
+            p(-17000, 52.0, 300.0),
+            p(-14000, 60.0, 100.0),
+            p(-10000, 55.0, -200.0),
+            p(-9000, 50.0, -300.0),
+            p(-5000, 20.0, -300.0),
+            p(-1000, 2.0, -100.0),
+        ];
+        let a = messen(&v, Some(-90.0));
+        assert_eq!(a.dauer_ab_50ft_s, Some(20.0));
+        assert_eq!(a.max_vs_fpm, Some(300.0));
+        let s = sub_abfangen(Some(&a), Some("A320")).unwrap();
+        assert_eq!(s.points, 25);
+        // Gegenprobe: dieselbe Dauer ohne das Steigen wäre auch 25 — und
+        // ein kurzes Abfangen mit Steigen landet bei höchstens 50.
+        let kurz = messen(
+            &[
+                p(-8000, 60.0, -600.0),
+                p(-7000, 48.0, -300.0),
+                p(-6000, 53.0, 200.0),
+                p(-4000, 49.0, -200.0),
+                p(-1000, 2.0, -100.0),
+            ],
+            Some(-90.0),
+        );
+        assert_eq!(kurz.dauer_ab_50ft_s, Some(7.2));
+        assert_eq!(sub_abfangen(Some(&kurz), Some("A320")).unwrap().points, 50);
     }
 
     #[test]

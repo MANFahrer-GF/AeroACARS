@@ -185,7 +185,7 @@ export function ApproachStabilityCard(props: Props) {
       >
         <h3 style={{ margin: 0, fontSize: "1rem" }}>
           {t("landing.approach_stability_card.title")}
-          {!isLegacy && <InfoBadge explanation={t("landing.erklaer.gate.urteil")} />}
+          {!isLegacy && <InfoBadge explanation={t(gate ? "landing.erklaer.gate.urteil" : "landing.erklaer.gate.urteil_alt")} />}
         </h3>
         {!isLegacy && (
           <span
@@ -284,9 +284,23 @@ export function ApproachStabilityCard(props: Props) {
               </ul>
             </div>
           )}
-          {/* Score-Version 19: kein allgemeiner Coach-Satz mehr („Anflug
-              grundsätzlich ok …") — die Gründe oben nennen genau, was nicht
-              stabil war (QS 05.10.2026, Vergleich Client/Webapp). */}
+          {/* Coach-Satz wie vor dem Umbau (QS 06.10.2026: bei stabilem Anflug
+              stand sonst gar nichts, „Go-Around-Kandidat" fehlte). Die
+              Gründe oben nennen zusätzlich genau, was nicht stabil war. */}
+          <div
+            data-testid="gate-coach"
+            style={{
+              padding: "10px 12px",
+              borderRadius: 6,
+              background: coachBg,
+              border: `1px solid ${coachBorder}55`,
+              fontSize: "0.86rem",
+              lineHeight: 1.45,
+              color: coachBorder,
+            }}
+          >
+            {t(`landing.approach_stability_card.coach.${coachKey}`)}
+          </div>
         </>
       )}
 

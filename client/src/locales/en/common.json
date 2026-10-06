@@ -150,7 +150,8 @@
       "vor_der_schwelle": "BEFORE THRESHOLD",
       "overrun": "OVERRUN",
       "neben_der_bahn": "OFF THE RUNWAY",
-      "go_around": "GO-AROUND × {{count}}"
+      "go_around": "GO-AROUND × {{count}}",
+      "accident": "ACCIDENT"
     },
     "fuel": "Fuel",
     "plan_burn": "Plan",
@@ -224,7 +225,9 @@
       "runway_section": "Visualisation of your touchdown on the runway. The blue marker is the touchdown point, the green band the rollout. Values below are for reference: total length, distance to the centreline, distance past the threshold, runway utilisation in percent. Scored are runway discipline, alignment and touchdown point (see the parts above).",
       "fuel_section": "Block = fuel at off-block; TO fuel = at the take-off point; LDG fuel = at touchdown; TOW, LDW, ZFW = weights. Planned values come from the SimBrief OFP. \"Plan adherence\" below shows the deviations for reference — it does not count towards the score.",
       "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis, while the “Crosswind” tile beside it uses the wind relative to the aircraft nose. Both figures are correct — they simply refer to different directions, and the crab angle is exactly what lies between them.",
-      "runway_discipline": "Runway discipline: how far your outer wheel stayed from the runway edge during the rollout. Centred (up to 75% of the half-width) full points, further out 85, at the edge 55, wheels off the runway 20, past the runway end (overrun) 0. Off the runway or an overrun caps the overall score at 40."
+      "runway_discipline": "Runway discipline: how far your outer wheel stayed from the runway edge during the rollout. Centred (up to 75% of the half-width) full points, further out 85, at the edge 55, wheels off the runway 20, past the runway end (overrun) 0. Off the runway or an overrun caps the overall score at 40.",
+      "touchdown_point": "Where you touched down, measured from the threshold. Within 150 m of the aiming point marking full points, otherwise inside the touchdown zone 85, up to half of the landing distance available 55, beyond that 25. Touched down before the threshold: 0 points, and the overall score is capped at 40.",
+      "abfangen": "How long it took from passing 50 ft to touchdown. Airliners: up to 10 s full points, up to 12 s 80, up to 15 s 50, beyond that 25. Light aircraft and business jets: 16 / 20 / 24 s. If the aircraft climbs again at more than 50 fpm (ballooning), at most 50. A part below 75 points caps the overall score at 80, below 45 at 60."
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
@@ -347,10 +350,10 @@
       "edge_reached": "The outboard wheel reached the edge of the paved surface. On narrow runways the margin is small — fly out the crosswind correction on final and hold the centreline through the rollout.",
       "off_pavement": "The outboard wheel left the paved surface. Actively hold the centreline through the rollout; after touchdown, direction first, brakes second.",
       "overrun": "Rolled out past the end of the runway. The chain of touchdown point, approach speed and braking does not add up here — check runway length against landing weight before the approach, and go around if in doubt.",
-      "flare_normal": "From crossing 50 ft to touchdown within the usual range (airliner up to 10 s, light aircraft up to 16 s).",
-      "flare_lang": "A rather long flare (airliner 10–12 s, light aircraft 16–20 s from 50 ft). Do not prolong the flare: Airbus and Boeing fly the aircraft onto the runway in the touchdown zone — a smooth touchdown is not the goal.",
-      "flare_sehr_lang": "A very long flare (airliner 12–15 s, light aircraft 20–24 s from 50 ft). More than half of such flights touch down beyond the touchdown zone. Start the flare later (Airbus: 30–40 ft) and bring thrust to idle in time.",
-      "flare_zu_lang": "Floated above the runway (airliner over 15 s, light aircraft over 24 s from 50 ft). Airbus requires a go-around in this case instead of trying to save the landing.",
+      "flare_normal": "From crossing 50 ft to touchdown within the usual range (airliner up to 10 s, light aircraft or business jet up to 16 s).",
+      "flare_lang": "A rather long flare (airliner 10–12 s, light aircraft or business jet 16–20 s from 50 ft). Do not prolong the flare: Airbus and Boeing fly the aircraft onto the runway in the touchdown zone — a smooth touchdown is not the goal.",
+      "flare_sehr_lang": "A very long flare (airliner 12–15 s, light aircraft or business jet 20–24 s from 50 ft). More than half of such flights touch down beyond the touchdown zone. Start the flare later (Airbus: 30–40 ft) and bring thrust to idle in time.",
+      "flare_zu_lang": "Floated above the runway (airliner over 15 s, light aircraft or business jet over 24 s from 50 ft). Airbus recommends a go-around in this case instead of trying to save the landing.",
       "ballooning": "The aircraft climbed again by more than 50 fpm during the flare (ballooning) — usually too much back pressure or thrust not at idle. Relax the pull instead of pulling more; go around if needed."
     },
     "forensics": {
@@ -469,14 +472,8 @@
       "reserve_zeile_darunter": "⚠ landed below final reserve — {{ldg}} kg = {{res}} kg final reserve − {{ab}} kg",
       "extra_label": "Extra fuel",
       "extra_zeile": "{{getankt}} kg loaded · {{genutzt}} kg used · {{ungenutzt}} kg unused",
-      "report_bis_sinkflug": "To TOD · vs plan",
-      "report_anflug": "Approach · vs plan",
-      "report_zeit": "Below threshold",
-      "report_reserve": "Final reserve",
-      "report_extra": "Extra fuel",
       "abgehoben_mit": "took off with {{kg}} kg",
       "eingestiegen_mit": "recording from {{kg}} kg (airborne)",
-      "extra_detail": "{{genutzt}} kg used · {{ungenutzt}} kg unused",
       "leiter_uebertankung": "Over-fuel",
       "reserve_grund": {
         "kein_ofp": "not verifiable — no OFP",
@@ -941,7 +938,7 @@
       "title": "Approach stability — what do the values mean?",
       "close_label": "Close ✕",
       "close_aria": "Close approach-stability help",
-      "intro": "Stable-approach concept per FAA AC 120-71B and the Flight Safety Foundation: from 1000 ft above the touchdown point the approach should be stable — on the glide path, steady in speed and bank, without sustained excessive sink, in landing configuration. AeroACARS checks six points for this. Each check uses an average or a duration, never a single outlier.",
+      "intro": "Stable-approach concept per FAA AC 120-71B and the Flight Safety Foundation: from 1000 ft above the touchdown point the approach should be stable — on the glide path, steady in speed and bank, without sustained excessive sink, in landing configuration. AeroACARS checks six points for this. The checks use an average or a duration, not a single outlier — only the landing configuration is read at one moment (at the start of the gate).",
       "gate": {
         "heading": "The stability gate",
         "body": "The gate window covers the approach samples up to 1000 ft above the touchdown point (HAT); the flare just before touchdown does not count. The glide path is measured between 1000 and 200 ft. If the field elevation is unknown, height above ground (AGL) is used — the card shows it."
@@ -988,7 +985,7 @@
         },
         "gleitpfad": {
           "label": "Glide path Ø",
-          "body": "Average deviation from the glide path between 1000 and 200 ft, in dots as on the PFD (1 dot ≈ 0.35° on an ILS). Measured against the real glide path from the nav data. Without nav data (e.g. a visual approach) the check is skipped.",
+          "body": "Average deviation from the glide path between 1000 and 200 ft, in dots as on the PFD (1 dot ≈ 0.35° on an ILS). Measured against the glide path from the nav data; if the runway has no ILS, against the runway’s standard angle. If the runway is not in the nav data, the check is skipped.",
           "thresholds": "< 1 dot good · 1–2 dots fair · from 2 dots poor"
         }
       }
@@ -1006,38 +1003,7 @@
       "title": "AeroACARS",
       "subtitle": "Landing Analysis",
       "generated": "Generated on {{date}} · AeroACARS v{{version}}",
-      "page": "Page {{n}} / {{total}}",
-      "identity": "Flight & Score",
-      "route": "Route",
-      "aircraft": "Aircraft",
-      "simulator": "Simulator",
-      "touchdown_time": "Touchdown time",
-      "hero_of": "of 100",
-      "accident_label": "ACCIDENT DETECTED",
-      "breakdown": "Score Breakdown",
-      "coach": "Coach Tip",
-      "touchdown_section": "Touchdown Metrics",
-      "stability_section": "Approach Stability",
-      "wind_section": "Wind Situation",
-      "runway_section": "Runway Analysis",
-      "fuel_section": "Fuel & Weight",
-      "fuel_diff": "Trip Burn Deviation",
-      "fuel_efficiency": "Fuel Efficiency",
-      "charts_section": "Profiles & Traces",
-      "approach_chart": "Approach V/S Profile",
-      "vs_curve": "Touchdown Close-up (50 Hz)",
       "runway_diagram": "Runway Diagram",
-      "no_data": "No data available",
-      "td_distance": "Touchdown point from threshold",
-      "in_tdz": "Inside touchdown zone",
-      "aim_delta": "Aim point deviation",
-      "centerline": "Centerline offset",
-      "rollout_dist": "Rollout distance",
-      "rwy_surface": "Surface",
-      "rwy_length": "Runway length",
-      "rwy_lda": "Landable portion",
-      "yes": "yes",
-      "no": "no",
       "bahn_im_anhang": "The runway diagram with touchdown point, rollout track and key figures is on the landscape pages at the end of the report."
     },
     "ov_mixed_versions": "The chart below shows landings from before and after the sink-rate measurement changed (v1.6.3) side by side — a step in it is expected and not an error.",
@@ -1088,7 +1054,7 @@
       "vor_der_schwelle": "Capped at 40 points: touched down before the threshold. Good values elsewhere do not offset it.",
       "overrun": "Capped at 40 points: rolled past the end of the runway (overrun).",
       "neben_der_bahn": "Capped at 40 points: wheels off the runway. Good values elsewhere do not offset it.",
-      "mehrfach_hopser": "Capped at 40 points: two or more bounces. Airbus procedure would have called for a go-around.",
+      "mehrfach_hopser": "Capped at 40 points: two or more bounces. For a high bounce the Airbus procedure calls for a go-around.",
       "teil_schlecht": "Capped at 60 points: {{teil}} was poor. The overall score is never better than the weakest part allows.",
       "teil_mittel": "Capped at 80 points: {{teil}} was only fair. The overall score is never better than the weakest part allows.",
       "ein_teil": "one part of the landing"
@@ -1169,7 +1135,7 @@
       },
       "zone_hint": "FAA thirds: zone 1 = first third of the runway (correct), zone 2 = middle third (long), zone 3 = last third (overrun risk).",
       "distanz": "Past the threshold",
-      "distanz_hint": "Distance from the landing threshold to the touchdown point. Typical 300–400 m; above 1000 m is very long (overrun risk on short runways).",
+      "distanz_hint": "Distance from the landing threshold to the touchdown point. Colour: green up to 300 m, neutral up to 600 m, yellow up to 1000 m, red beyond (overrun risk on short runways); red before the threshold. The aiming point marking is at 300 m (runways under 2400 m) or 400 m.",
       "distanz_hint_vor": "Touched down BEFORE the landing threshold — a negative value is metres before the threshold.",
       "vref_label": {
         "pmdg": "Vref dev. (PMDG)",
@@ -1233,7 +1199,11 @@
       "rechts": "right",
       "links": "left",
       "mitte": "centre",
-      "hinweis": "Offset and threshold distance are computed from the touchdown point against the runway geometry. If they look implausible, open the coordinates in Google Maps and compare with the real runway."
+      "hinweis": "Offset and threshold distance are computed from the touchdown point against the runway geometry. If they look implausible, open the coordinates in Google Maps and compare with the real runway.",
+      "unsicher": "geometry uncertain",
+      "vor_schwelle": "before the threshold",
+      "knapp_hinter_schwelle": "just past the threshold",
+      "hinter_schwelle": "past the threshold"
     },
     "kopf": {
       "ohne_pirep": "Flight report still pending — the score comes with the PIREP",
@@ -1247,30 +1217,31 @@
     "abfangen": {
       "titel": "Flare",
       "dauer": "Time from 50 ft",
-      "dauer_hint": "Time from the last crossing of 50 ft above the runway to touchdown. Counts towards the grade (part “Flare”): airliner full points up to 10 s, clear deduction from 12 s; light aircraft full points up to 16 s.",
+      "dauer_hint": "Time from crossing 50 ft above the runway to touchdown. Climbing back above 50 ft during the flare does not restart the clock. Counts towards the grade (part “Flare”): airliner full points up to 10 s, clear deduction from 12 s; light aircraft or business jet full points up to 16 s.",
       "vs": "Sink rate 50 ft → touchdown",
-      "vs_hint": "Sink rate when crossing 50 ft and at first ground contact (from the height curve).",
+      "vs_hint": "Sink rate when crossing 50 ft (simulator reading) and at first ground contact (from the height curve, as graded).",
       "reduktion": "Sink rate reduced",
-      "reduktion_hint": "How much the flare reduced the sink rate between 50 ft and touchdown (positive = reduced). For context only.",
+      "reduktion_hint": "How much the flare reduced the sink rate between 50 ft and touchdown (positive = reduced) — the difference of the two values above, which come from different sources. For context only.",
       "beginn": "Flare start",
       "beginn_hint": "Height at which the sink rate had dropped at least 50 fpm below the 50 ft value. Airbus recommends about 30 ft (A320 family) or 40 ft (A321, widebodies). For context only.",
       "schweben": "Floating",
       "schweben_hint": "Time and distance almost level (sink rate above −100 fpm) before touchdown. For context only — the time from 50 ft is the graded value.",
       "steigen": "Climbed again",
-      "steigen_hint": "Highest climb rate between 50 ft and touchdown. Above +50 fpm this counts as ballooning: part “Flare” at most 50 points."
+      "steigen_hint": "Highest climb rate between 50 ft and touchdown. Above +50 fpm this counts as ballooning: part “Flare” at most 50 points.",
+      "letzte_2s": "Sink rate in the last 2 s before touchdown (earlier measurement, not scored)"
     },
     "erklaer": {
-      "kopf_note": "The letter grade summarises the overall score: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score is the weighted average of the parts (sink rate and G-force 3 each, bounces, approach stability and flare 2 each, the rest 1 each) — but never better than the weakest part allows: a medium part (45–74 points) caps at 80, a poor one (below 45) at 60, a dangerous event (before the threshold, past the runway end, off the runway, two bounces) at 40.",
+      "kopf_note": "The letter grade summarises the overall score: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score is the weighted average of the parts (sink rate and G-force 3 each, bounces, approach stability and flare 2 each, the rest 1 each) — but never better than the weakest part allows: a medium part (45–74 points) caps at 80, a poor one (below 45) at 60, a dangerous event (before the threshold, past the runway end, off the runway, two or more bounces) at 40. The approach also caps: PARTIAL at 80, UNSTABLE at 45, without approach measurement at 97; and the G-force: from 1.75 G at 40, from 2.6 G at 14.",
       "td": {
         "sinkrate": "Sink rate at the moment of first ground contact, from the height curve. Counts towards the grade (part sink rate, weight 3): 90–249 fpm 100 points, below 90 fpm 85 (sign of a long flare), 250–399 fpm 80, 400–599 fpm 45, 600–999 fpm 20, from 1000 fpm 0.",
-        "g": "Graded G-force at touchdown: lightly smoothed peak (like a flight data recorder), without single 50 Hz spikes. Counts towards the grade (part G-force, weight 3): below 1.20 G 100 points, below 1.40 G 80, below 1.70 G 45, below 2.10 G 20. From 1.75 G the overall score is at most 40, from 2.6 G at most 14.",
+        "g": "Graded G-force at touchdown: lightly smoothed peak (like a flight data recorder), without single 50 Hz spikes. Counts towards the grade (part G-force, weight 3): below 1.20 G 100 points, below 1.40 G 80, below 1.70 G 45, below 2.10 G 20, from 2.10 G 0. From 1.75 G the overall score is at most 40, from 2.6 G at most 14.",
         "g_frame": "G-force exactly in the frame of ground contact, unsmoothed. For context only — the G-force above is graded.",
         "pitch": "Pitch attitude at touchdown, + = nose up. For airliners usually about +2 to +6°; much more raises the risk of a tail strike. Does not count towards the grade.",
         "bank": "Bank angle at touchdown. Close to 0° is good; the larger, the closer the wing gets to the ground (see wing strike risk). Does not count towards the grade.",
         "ias": "Indicated airspeed at touchdown. How far it is from the reference speed (Vref) is shown under touchdown quality. Does not count towards the grade.",
         "gs": "Ground speed at touchdown. With a headwind lower than the indicated airspeed, with a tailwind higher — it drives rollout distance and braking. Does not count towards the grade.",
         "sideslip": "Angle between flight path and fuselage axis at touchdown (crab angle in a crosswind). Close to 0° is good: aligned before touchdown. Does not count directly; the part alignment grades position and heading relative to the runway.",
-        "hopser": "How often the aircraft lifted off again after first ground contact. Counts towards the grade (part bounces, weight 2): 0 = 100 points, 1 = 70, 2 = 40 (and the overall score at most 40), 3 or more = 15.",
+        "hopser": "How often the aircraft lifted off again after first ground contact. Counts towards the grade (part bounces, weight 2): 0 = 100 points, 1 = 70, 2 = 40, 3 or more = 15. From two bounces the overall score is at most 40.",
         "hdg_mag": "Heading at touchdown, magnetic — the reference of the runway designator. Does not count towards the grade.",
         "hdg_true": "Heading at touchdown, true (geographic north). The part alignment compares it with the runway course.",
         "wind": "Wind at touchdown from the simulator, split into head/tailwind and crosswind relative to the runway. Does not count towards the grade; the part alignment takes the crosswind into account."
@@ -1282,7 +1253,7 @@
         "wetter": "Present weather (e.g. rain, fog, thunderstorm), with intensity. For context only.",
         "wolken": "Clouds with base height above the airfield. For context only.",
         "temp_tau": "Temperature and dew point. When they are close together, expect fog or low clouds. For context only.",
-        "qnh": "Sea-level pressure — the altimeter setting for the approach. For context only."
+        "qnh": "Altimeter setting for the approach: the pressure reduced to sea level with which the altimeter shows the airfield elevation on the ground. For context only."
       },
       "gate": {
         "gleitpfad": "Average deviation from the glide path of the landing runway between 1000 and 200 ft, in dots (1 dot = 0.35° at 3°). Good below 1, poor from 2. Check of the stable gate — the gate caps the overall score.",
@@ -1291,11 +1262,12 @@
         "ruck": "How abruptly the sink rate changed from sample to sample. Good below 100 fpm, poor from 200 fpm. Check of the stable gate.",
         "sinken": "Whether the sink rate in the stable gate exceeded the limit for at least 10 s in a row (−1000 fpm at a 3° glide path, correspondingly more on steeper approaches). Check of the stable gate.",
         "konfiguration": "Whether the aircraft was in landing configuration when entering the stable gate (1000 ft): gear down, landing flaps set. Check of the stable gate.",
-        "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, overall score at most 45. Otherwise PARTIAL, overall score at most 80. Without measurement at most 97."
+        "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, overall score at most 45. Otherwise PARTIAL, overall score at most 80. Without measurement at most 97.",
+        "urteil_alt": "Approach verdict for flights before score version 19, from the seven tiles: all good = STABLE, two poor or three not good = UNSTABLE, otherwise PARTIAL. From score version 18 PARTIAL caps the overall score at 80 and UNSTABLE at 45; before that only the approach stability part."
       },
       "tile": {
         "vs_jerk": "How abruptly the sink rate changed during the approach, averaged from sample to sample. Lower is calmer.",
-        "bank_sigma": "How much the bank angle varied during the approach (standard deviation, smoothed). Lower is calmer.",
+        "bank_sigma": "How much the bank angle varied during the approach (standard deviation, filtered: without the seconds around a runway change). Lower is calmer.",
         "ias_sigma": "How much the speed varied during the approach (standard deviation). Lower is calmer.",
         "sink_rate": "Whether the sink rate during the approach exceeded the stability limit for at least 10 s in a row.",
         "landing_config": "Whether gear and landing flaps were set in time.",
@@ -1303,9 +1275,9 @@
         "max_vs_dev": "Largest deviation from the target sink rate below 500 ft. For context only."
       },
       "grafik": {
-        "anflug": "Sink rate over roughly the last two minutes before touchdown. Green band: target sink rate from glide angle and ground speed, ±100 fpm. Red line: stability limit. Blue background is the stable gate, yellow the flare. The chart gives context — grading is done via approach stability.",
+        "anflug": "Sink rate over roughly the last two minutes before touchdown. Green band: target sink rate from glide angle and ground speed, ±100 fpm. Red line: stability limit. Blue background is the stable gate, yellow the last 3 s before touchdown (not counted in the gate). The chart gives context — grading is done via approach stability.",
         "gleitpfad": "Deviation from the glide path of the landing runway per sample, in dots on the same time axis. + = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD). The average between 1000 and 200 ft is a check of the stable gate. Tap to see the value and the diamond as in the cockpit.",
-        "nah": "50 Hz close-up from 4 s before to 10 s after touchdown: how the sink rate was reduced in the flare and whether the aircraft lifted off again. The touchdown sink rate comes from this curve."
+        "nah": "50 Hz close-up from 4 s before to 10 s after touchdown: how the sink rate was reduced in the flare and whether the aircraft lifted off again. The curve shows the simulator’s instrument for context; the graded touchdown sink rate comes from the height profile."
       },
       "forensik": {
         "gleitpfad": "Geometric deviation from the glide path of the runway actually landed on, computed from position and true altitude. The average 1000–200 ft is a check of the stable gate (good below 1 dot); the gates 1000–500 and 500–200 ft are for context.",
@@ -1314,6 +1286,10 @@
       "sinkrate_forensik": "The same landing, averaged differently: different windows give different sink rates. Graded is the sink rate at the moment of ground contact (top of the report); the other values show how it came about.",
       "gkraft_forensik": "The same landing, measured differently: raw 50 Hz values, means and percentiles. Graded is the lightly smoothed peak (G-force at the top of the report); the other values are for context.",
       "bordbuch": "What the client recognised on this flight — lights, transponder, APU, taxi speed and more — and when. Completed items are counted, nothing is criticised. Does not count towards the grade."
+    },
+    "info_badge": {
+      "oeffnen": "Explanation",
+      "schliessen": "Close explanation"
     }
   },
   "about": {
@@ -2593,6 +2569,7 @@
     "cleared_via": "exit {{name}} {{seite}}",
     "at_position": "at {{m}} m",
     "width_label": "{{m}} m wide",
+    "davon_landbar": "{{m}} m available for landing",
     "legend_track": "Track — {{n}} measured samples",
     "legend_exit_arc": "after vacating — measured, no longer scored",
     "legend_exits": "Exits (OSM) · the one used is highlighted",

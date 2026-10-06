@@ -30,6 +30,10 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
       : null;
   const versatz = record.runway_match?.centerline_distance_m ?? null;
   const schwelle = record.td_distance_from_threshold_m ?? null;
+  // Rohdaten sind zum Nachprüfen da und bleiben stehen — bei unsicherer
+  // Bahngeometrie aber mit Vermerk, denn die übrigen Abschnitte lassen diese
+  // Werte dann weg (QS 06.10.2026).
+  const unsicher = record.runway_geometry_trusted === false ? ` · ${t("landing.rohdaten.unsicher")}` : "";
   const zeile = (k: string, v: string, extra?: ReactNode) => (
     <div className="rohdaten__zeile">
       <span className="rohdaten__k">{k}</span>
@@ -66,12 +70,22 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
           versatz != null
             ? `${versatz > 0 ? "+" : ""}${versatz.toFixed(2)} m (${t(
                 versatz > 0 ? "landing.rohdaten.rechts" : versatz < 0 ? "landing.rohdaten.links" : "landing.rohdaten.mitte",
-              )})`
+              )}${unsicher})`
             : "—",
         )}
         {zeile(
           t("landing.rohdaten.schwelle"),
-          schwelle != null ? `${schwelle >= 0 ? "+" : ""}${schwelle.toFixed(2)} m` : "—",
+          // Einordnung wie in der früheren Webapp-Ansicht („UNDERSHOOT /
+          // knapp am Threshold / past Threshold"), QS 06.10.2026.
+          schwelle != null
+            ? `${schwelle >= 0 ? "+" : ""}${schwelle.toFixed(2)} m (${t(
+                schwelle < 0
+                  ? "landing.rohdaten.vor_schwelle"
+                  : schwelle < 50
+                    ? "landing.rohdaten.knapp_hinter_schwelle"
+                    : "landing.rohdaten.hinter_schwelle",
+              )}${unsicher})`
+            : "—",
         )}
         {zeile(
           t("landing.rohdaten.ausrollen"),

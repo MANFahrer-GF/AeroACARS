@@ -522,6 +522,10 @@ pub struct BahnHerkunftWire {
     /// sub-score (rollout / length × 100) so the live monitor can show
     /// the same breakdown the AeroACARS app shows pilots in-flight.
     pub runway_length_m: Option<f32>,
+    /// QS 06.10.2026: Belag der Bahn, wie ihn der Client im Kopf der
+    /// Bahn-Grafik zeigt („Asphalt"). Bis dahin nicht auf der Leitung — die
+    /// Webapp zeigte ihn nie. `None` ohne Bahn oder ohne Angabe.
+    pub runway_surface: Option<String>,
 
     // ─── v1.7.8 Bahngeometrie aus der Simulator-Szenerie ─────────────
     //
@@ -1343,6 +1347,20 @@ pub struct PirepPayload {
     /// die Webapp dieselbe Soll/Ist-Tabelle zeigt wie der Client.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub planned_block_fuel_kg: Option<f32>,
+    /// QS 06.10.2026: drei Werte, die der Client-Datensatz anzeigt, die der
+    /// Server aber nicht hatte — die Webapp konnte sie nur raten. Dieselben
+    /// Quellen wie `build_landing_record`:
+    /// - `flight_ident`: aufgelöste Flugnummer (`resolve_flight_ident`; bei
+    ///   Frei-/Personal-Flügen das Bid-Rufzeichen statt „0"),
+    /// - `landing_scored_g_force`: gemessene bewertete G (`score_g_for_stats`),
+    ///   nicht die auf MSFS umgerechnete `scored_g_load` des Touchdowns,
+    /// - `landing_peak_vs_fpm`: Spitzen-Sinkrate des Aufsetzfensters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flight_ident: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_scored_g_force: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_peak_vs_fpm: Option<f32>,
     pub peak_altitude_ft: Option<i32>,
     pub landing_vs_fpm: Option<i32>,
     pub landing_score: Option<i32>,
@@ -3335,7 +3353,7 @@ mod herkunft_auf_der_leitung {
     fn ein_leeres_feld_der_gruppe_geht_als_null_hinaus() {
         let json = serde_json::to_value(BahnHerkunftWire::default()).expect("serialisiert");
         let obj = json.as_object().expect("Objekt");
-        const NAMEN: [&str; 32] = [
+        const NAMEN: [&str; 33] = [
             "bahn_revision",
             "bahn_spur_veraltet",
             "runway_match_icao",
@@ -3343,6 +3361,7 @@ mod herkunft_auf_der_leitung {
             "runway_match_distance_m",
             "runway_match_centerline_offset_m",
             "runway_length_m",
+            "runway_surface",
             "bahn_geometrie_quelle",
             "bahn_szenerie_status",
             "sim_kennung",

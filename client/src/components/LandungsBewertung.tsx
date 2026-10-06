@@ -442,6 +442,8 @@ export function ScoreBreakdown({
                 Heavy-Bonus, Pre-Displaced-Cap und Skip-Reasons. */}
             {s.key === "rollout" && !bahndisziplin && (
               <button
+                // Bedienung, kein Inhalt — nicht aufs Papier (QS 06.10.2026).
+                className="nur-bildschirm"
                 type="button"
                 onClick={() => setRunwayUtilHelpOpen(true)}
                 style={{
@@ -598,8 +600,10 @@ export function OffAirportBanner({ record }: { record: LandingRecord }) {
   const distToDest = record.touchdown_distance_to_destination_nm;
   const nearestDist = record.touchdown_nearest_distance_nm;
 
-  // Normaler Fall: gleiche ICAO → kein Banner.
-  if (!td || td === planned) {
+  // Normaler Fall: gleiche ICAO → kein Banner. Ohne geplanten Platz
+  // (Stratos, Payloads vor v0.7.18) gibt es nichts zu vergleichen — kein
+  // „Geplant: (leer)" (QS 06.10.2026, wie die frühere Webapp).
+  if (!td || !planned || td === planned) {
     // Selbst bei runway_match==arr_airport kann ein > 5nm-Distanz
     // auftreten (Multi-Field-Airports), aber das ist kein Off-airport-Fall.
     return null;
@@ -707,7 +711,7 @@ export function QuickFlags({ record }: { record: LandingRecord }) {
           subs: record.sub_scores ?? [],
           deckel: record.score_deckel,
           urteil: gateUrteil(gate, gateMarke(record.sub_scores)),
-          bounceCount: hopserGemessen ? record.bounce_count : 0,
+          bounceCount: hopserGemessen ? (record.bounce_count ?? 0) : 0,
           forensicBounceCount: hopserGemessen ? record.forensic_bounce_count : 0,
           bounceMaxAglFt: record.bounce_max_agl_ft,
         },
@@ -739,7 +743,7 @@ export function QuickFlags({ record }: { record: LandingRecord }) {
     //   bounce_count > 0                            → voller Flag
     //   bounce_count = 0, forensic_bounce_count > 0 → Light-bounce-Hinweis
     //   alle 0                                       → kein Flag
-    if (hopserGemessen && record.bounce_count > 0) {
+    if (hopserGemessen && record.bounce_count != null && record.bounce_count > 0) {
       flags.push({
         label: `${t("landing.flag.bounce")} × ${record.bounce_count}`,
         tone: record.bounce_count >= 2 ? "err" : "warn",
@@ -780,6 +784,16 @@ export function QuickFlags({ record }: { record: LandingRecord }) {
       label: t("landing.flag.go_around", { count: record.go_around_count ?? 0 }),
       tone: "warn",
     });
+  }
+
+  // Bestätigter Unfall: die Marke UNFALL statt „harte/schwere Landung" —
+  // sonst stünde neben dem Unfall-Banner eine widersprüchliche Marke
+  // (frühere Webapp, QS-R1 Finding 4; QS 06.10.2026 wieder hergestellt).
+  if (record.accident === true) {
+    const hart = new Set([t("landing.flag.hard"), t("landing.flag.severe")]);
+    const rest = flags.filter((f) => !hart.has(f.label));
+    flags.length = 0;
+    flags.push({ label: t("landing.flag.accident"), tone: "err" }, ...rest);
   }
 
   if (flags.length === 0) return null;
@@ -946,13 +960,11 @@ export function LandungsKopf({
               {deckelText(t, record.score_deckel)}
             </div>
           )}
-        {record.aircraft_title && (
-          <div className="landing-headline__aircraft">
-            {record.aircraft_title}
-            {record.aircraft_registration ? ` · ${record.aircraft_registration}` : ""}
-            {record.aircraft_icao ? ` · ${record.aircraft_icao}` : ""}
-            {record.sim_kind ? ` · ${record.sim_kind}` : ""}
-          </div>
+        {/* QS 06.10.2026: die Zeile hing ganz am Titel — ohne ihn fehlten
+            auch Kennzeichen, Muster und Simulator (der frühere PDF-Kopf
+            zeigte den Simulator immer). */}
+        {flugzeugZeile(record) && (
+          <div className="landing-headline__aircraft">{flugzeugZeile(record)}</div>
         )}
         {personalBest && !isNewBest && istBewertbar(record) && (
           <div className="landing-headline__pb">
@@ -1044,4 +1056,25 @@ export function BahnUeberschrift({ record }: { record: LandingRecord }) {
       )}
     </>
   );
+}
+
+/** Simulator wie im Client: „MSFS" / „X-Plane" — der Client-Datensatz
+ *  führt „MSFS"/„X-PLANE", der Recorder „msfs"/„xplane" (QS 06.10.2026). */
+export function simName(kind: string | null | undefined): string | null {
+  if (!kind) return null;
+  const k = kind.toLowerCase();
+  if (k.includes("msfs")) return "MSFS";
+  if (k.includes("xplane") || k.includes("x-plane")) return "X-Plane";
+  return kind;
+}
+
+/** Kopfzeile „Titel · Kennzeichen · Muster · Simulator" — was da ist. */
+function flugzeugZeile(record: LandingRecord): string | null {
+  const teile = [
+    record.aircraft_title,
+    record.aircraft_registration,
+    record.aircraft_icao,
+    simName(record.sim_kind),
+  ].filter((x): x is string => typeof x === "string" && x.trim() !== "");
+  return teile.length > 0 ? teile.join(" · ") : null;
 }

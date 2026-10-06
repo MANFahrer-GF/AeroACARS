@@ -66,4 +66,19 @@ describe("Dot-Streifen", () => {
     expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 1120 320");
     expect(container.textContent).toContain("für diesen Flug nicht aufgezeichnet");
   });
+
+  // QS 06.10.2026: Spur ohne Zeiten — der Streifen lässt sich nicht
+  // ausrichten. Dann auch kein (i) zum Streifen und nicht „nicht
+  // aufgezeichnet" (die Kurve gibt es ja).
+  it("Spur ohne Zeiten: weder Streifen noch (i) dazu noch falscher Hinweis", () => {
+    const ohneZeit = proben.map((p) => ({ ...p, t_ms: undefined as unknown as number }));
+    const { container } = render(
+      <AnflugGrafikAbschnitt samples={ohneZeit} profile={null} gleitpfadVerlauf={verlauf} />,
+    );
+    expect(container.textContent).not.toContain("Gleitpfad in Dots");
+    expect(container.textContent).not.toContain("nicht aufgezeichnet");
+    // Gegenprobe: mit Zeiten erscheint das (i) zum Streifen.
+    const mit = render(<AnflugGrafikAbschnitt samples={proben} profile={null} gleitpfadVerlauf={verlauf} />);
+    expect(mit.container.textContent).toContain("Gleitpfad in Dots");
+  });
 });

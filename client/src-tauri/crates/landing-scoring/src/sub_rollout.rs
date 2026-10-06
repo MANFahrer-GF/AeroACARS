@@ -390,6 +390,11 @@ pub(crate) fn category_for_icao(icao: Option<&str>) -> Category {
         "MD11", "MD1F", // Antonov
         "A124", "A225", // IL-96
         "IL96",
+        // QS 06.10.2026: schwere Muster, die bisher als „unbekannt" auf
+        // Light fielen — u. a. in der GSG-Flotte geflogen (A306, A400,
+        // L101, CONC).
+        "A306", "A30B", "A310", "A3ST", "A400", "B703", "B778", "B779", "DC10", "L101", "CONC",
+        "IL62", "IL76",
     ];
     if HEAVY.contains(&icao.as_str()) {
         return Category::Heavy;
@@ -413,6 +418,11 @@ pub(crate) fn category_for_icao(icao: Option<&str>) -> Category {
         "DH8A", "DH8B", "DH8C", "DH8D", // Fokker
         "F70", "F100", "F50", // MD-80/90
         "MD81", "MD82", "MD83", "MD87", "MD88", "MD90",
+        // QS 06.10.2026: Linienmuster, die bisher als „unbekannt" auf Light
+        // fielen — u. a. in der GSG-Flotte geflogen (F28, RJ85, E75L,
+        // B462/B463). E75L/E75S sind die echten ICAO-Kennungen der E175.
+        "E75L", "E75S", "F28", "B461", "B462", "B463", "RJ70", "RJ85", "RJ1H", "B712", "B721",
+        "B722", "DC93", "DC95", "SU95",
     ];
     if MEDIUM.contains(&icao.as_str()) {
         return Category::Medium;

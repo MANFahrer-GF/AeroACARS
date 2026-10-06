@@ -6975,15 +6975,6 @@ input:disabled {
   background: #ffffff;
 }
 
-/* v0.12.8-dev: KEINE erzwungenen Seitenumbrüche mehr. Die harten
-   break-before-Umbrüche pro Kapitel rissen den Inhalt auseinander und
-   ließen halbe Seiten leer (Coach-Hinweis allein auf Seite 2 usw.).
-   Der Report fließt jetzt dicht — `break-inside:avoid` hält einzelne
-   Sections/Kacheln zusammen, der Browser füllt die Seiten. */
-.report-break-before {
-  /* no-op Wrapper — Umbruch absichtlich entfernt */
-}
-
 /* Branding-Kopf. */
 .report-head {
   margin-bottom: 12mm;
@@ -7014,263 +7005,9 @@ input:disabled {
   border-radius: 2px;
 }
 
-/* Section + Akzent-Strich unter der Überschrift. */
-/* v0.12.8-dev: break-inside:avoid hält eine Section zusammen, statt sie
-   über eine Seitengrenze zu zerreißen. */
-.report-section {
-  margin-bottom: 9mm;
-  break-inside: avoid;
-  page-break-inside: avoid;
-}
-/* v0.12.8-dev: Section-Titel + Strich tragen jetzt die Section-
-   Akzentfarbe (--report-accent), gesetzt von <ReportSection accent>. */
-.report-section__title {
-  font-size: 12pt;
-  font-weight: 700;
-  color: var(--report-accent, #2563eb);
-  margin: 0 0 5mm 0;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.report-section__rule {
-  display: inline-block;
-  height: 2px;
-  flex: 1 1 auto;
-  background: linear-gradient(
-    90deg,
-    var(--report-accent, #2563eb),
-    transparent
-  );
-  border-radius: 2px;
-}
-
-/* Flug-Identität. */
-.report-identity {
-  margin-bottom: 8mm;
-}
-.report-identity__callsign {
-  font-size: 30pt;
-  font-weight: 800;
-  letter-spacing: -1px;
-  color: #0f172a;
-  line-height: 1.05;
-}
-.report-identity__route {
-  font-size: 15pt;
-  font-weight: 600;
-  color: #334155;
-  margin-top: 3mm;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.report-identity__arrow {
-  color: #2563eb;
-  font-weight: 700;
-}
-.report-identity__meta {
-  margin-top: 6mm;
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 4mm;
-}
-.report-identity__meta > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.report-identity__k {
-  font-size: 8pt;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #94a3b8;
-}
-.report-identity__v {
-  font-size: 10pt;
-  font-weight: 500;
-  color: #334155;
-}
-
-/* Hero-Score. */
-.report-hero {
-  display: flex;
-  align-items: center;
-  gap: 8mm;
-  padding: 7mm;
-  margin-bottom: 9mm;
-  background: #f7f8fa;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  /* v0.12.8-dev: Hero-Block nicht über die Seitengrenze splitten. */
-  break-inside: avoid;
-  page-break-inside: avoid;
-}
-.report-hero__badge {
-  width: 34mm;
-  height: 34mm;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 40pt;
-  font-weight: 800;
-  color: #ffffff;
-}
-.report-hero__score {
-  font-size: 38pt;
-  font-weight: 800;
-  color: #0f172a;
-  line-height: 1;
-}
-.report-hero__of {
-  font-size: 13pt;
-  font-weight: 500;
-  color: #94a3b8;
-}
-.report-hero__label {
-  margin-top: 3mm;
-  font-size: 13pt;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: #2563eb;
-  text-transform: uppercase;
-}
-
-/* Lernpaket AP2: Hinweis, dass die Gesamtnote gedeckelt ist. */
-.report-hero__deckel {
-  margin-top: 2mm;
-  font-size: 10pt;
-  font-weight: 600;
-  color: #b91c1c;
-}
-
-/* Score-Version 19: Gründe des Stable Gate im Bericht. */
-.report-gate-gruende {
-  margin: 2mm 0 0;
-  padding-left: 5mm;
-  font-size: 9pt;
-}
-
-/* Score-Aufschlüsselung — Balken. */
-.report-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 4mm;
-}
-.report-bar__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 1.5mm;
-}
-.report-bar__label {
-  font-size: 10pt;
-  font-weight: 600;
-  color: #334155;
-}
-.report-bar__pts {
-  font-size: 9pt;
-  font-weight: 700;
-  color: #64748b;
-}
-.report-bar__track {
-  height: 8px;
-  border-radius: 4px;
-  background: #e2e8f0;
-  overflow: hidden;
-}
-.report-bar__fill {
-  height: 100%;
-  border-radius: 4px;
-}
-
-/* Coach-Hinweis. */
-.report-coach {
-  padding: 5mm 6mm;
-  background: #f7f8fa;
-  border-left: 3px solid #2563eb;
-  border-radius: 6px;
-  /* v0.12.8-dev: Coach-Box nicht splitten. */
-  break-inside: avoid;
-  page-break-inside: avoid;
-}
-.report-coach__focus {
-  font-size: 9pt;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: #2563eb;
-  margin-bottom: 2mm;
-}
-.report-coach__body {
-  margin: 0;
-  font-size: 10pt;
-  line-height: 1.5;
-  color: #334155;
-}
-
-/* Kennwert-Kacheln. */
-/* v0.12.8-dev: Kachelraster + einzelne Kacheln nicht über die
-   Seitengrenze zerreißen. */
-.report-tiles {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4mm;
-  break-inside: avoid;
-  page-break-inside: avoid;
-}
-/* v0.12.8-dev: Kacheln tragen oben einen 3px-Akzentstreifen und einen
-   sehr zarten Farbschleier in der Section-Akzentfarbe — bringt Farbe
-   rein, ohne den hellen, edlen Look zu kippen. */
-.report-tile {
-  padding: 3.4mm 4mm;
-  background: color-mix(in srgb, var(--report-accent, #2563eb) 5%, #ffffff);
-  border: 1px solid #e2e8f0;
-  border-top: 3px solid var(--report-accent, #2563eb);
-  border-radius: 8px;
-  break-inside: avoid;
-  page-break-inside: avoid;
-}
-.report-tile__label {
-  font-size: 8pt;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  color: var(--report-accent, #2563eb);
-  margin-bottom: 2mm;
-}
-.report-tile__value {
-  font-size: 16pt;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-/* v1.7.35: Detailzeile der Report-Kachel — zweite Zeile unter dem Wert. */
-.report-tile__detail {
-  font-size: 8.5pt;
-  font-weight: 600;
-  color: #64748b;
-  margin-top: 1mm;
-  line-height: 1.3;
-}
-
-/* Leer-Hinweis. */
-.report-empty {
-  font-size: 10pt;
-  color: #94a3b8;
-  font-style: italic;
-}
-
-/* Charts — dunkle Karte um die hell gezeichneten SVGs. */
-.report-charts {
-  display: flex;
-  flex-direction: column;
-  gap: 6mm;
-}
+/* Bahn-Grafik im Querformat-Anhang — dunkle Karte um das hell gezeichnete
+   SVG. (Die Kacheln, Balken und Abschnitte des früheren Bericht-Nachbaus
+   sind mit ihm am 05./06.10.2026 entfallen.) */
 .report-chart-card {
   break-inside: avoid;
   page-break-inside: avoid;
@@ -7411,6 +7148,16 @@ input:disabled {
   .landing-report .landing-section h3 {
     break-after: avoid;
     page-break-after: avoid;
+  }
+  /* Papier kürzt nichts (QS 06.10.2026): In den schmaleren Druckspalten
+     schnitten die Wertkacheln ihre Beschriftung ab — „HEADING
+     (MISSWEISE…". Auf dem Bildschirm ist das Kürzen gewollt (die Kachel
+     bleibt eine Zeile); im Bericht bricht der Text stattdessen um. */
+  .landing-report .landing-keyvals dt,
+  .landing-report .landing-keyvals dd {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 }
 

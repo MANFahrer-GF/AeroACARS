@@ -101,7 +101,10 @@ export interface LandingRecord {
   landing_heading_deg: number | null;
   landing_weight_kg: number | null;
   touchdown_sideslip_deg: number | null;
-  bounce_count: number;
+  /** `null` = nicht gemessen (Stratos, sehr alte Webapp-Datensätze) — dann
+   *  „kein Wert" statt einer erfundenen 0 (QS 06.10.2026). Der Client misst
+   *  immer. */
+  bounce_count: number | null;
 
   headwind_kt: number | null;
   crosswind_kt: number | null;

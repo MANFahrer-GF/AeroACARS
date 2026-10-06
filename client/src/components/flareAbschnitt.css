@@ -39,9 +39,9 @@
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* QS 06.10.2026: umbrechen statt „…" — gekürzt verschwand mit dem Ende
+     der Beschriftung auch ihr (i)-Knopf („Heading (missweisend)"). */
+  overflow-wrap: anywhere;
 }
 
 :where(.landing-keyvals) dd {
@@ -89,4 +89,11 @@
 .landing-flare__metrics {
   /* erbt landing-keyvals — keine override-Regeln, nur leichte Anpassung */
   align-self: start;
+}
+
+/* Zwischenzeile vor den früheren 2-s-Messwerten (QS 06.10.2026). */
+.landing-flare__zwischen {
+  margin: 0.9rem 0 0.4rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }
