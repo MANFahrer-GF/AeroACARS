@@ -899,7 +899,14 @@ export function SpritSektion({ sprit, ohneTitel = false }: { sprit: SpritAuswert
           einheit={abstand != null ? "kg" : "%"}
           ton={r.status === "intakt" ? "ok" : r.status === "unterschritten" ? "warn" : "neutral"}
           erklaerung={t("landing.sprit.hint_reserve")}
-          grundWennLeer={t("landing.sprit.na_reserve")}
+          // Der tatsächliche Grund, wenn der Bewerter ihn nennt — sonst stand
+          // auf Papier „kein OFP …" neben „kein Landesprit erfasst"
+          // (QS 06.10.2026).
+          grundWennLeer={
+            r.status !== "intakt" && r.status !== "unterschritten" && r.grund
+              ? t(`landing.sprit.reserve_grund.${r.grund}`)
+              : t("landing.sprit.na_reserve")
+          }
         />
       </div>
       <div

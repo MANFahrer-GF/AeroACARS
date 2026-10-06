@@ -27,4 +27,10 @@ describe("Wind-Block", () => {
     // Gegenprobe: mit Seitenwind steht die Seite da.
     expect(mit(5, 8)).toContain("von rechts");
   });
+
+  it("nur eine Komponente gemessen: kein „Windstill“ (Gesamtwind unbekannt)", () => {
+    expect(mit(1, null)).not.toContain("Windstill");
+    // Gegenprobe: beide gemessen und schwach → Windstill.
+    expect(mit(1, 0.5)).toContain("Windstill");
+  });
 });

@@ -37,7 +37,9 @@ export function WindCompass({
   const xwAbs = Math.abs(xw);
   const twAbs = Math.abs(hw);
   const xwFromRight = xw >= 0;
-  const calm = totalKt < 1.5;
+  // „Windstill" nur, wenn beide Komponenten gemessen sind — sonst ist der
+  // Gesamtwind unbekannt (QS 06.10.2026).
+  const calm = headwindKt != null && crosswindKt != null && totalKt < 1.5;
 
   // Kritikalität nach Seitenwind-/Rückenwind-Limit — färbt Streaks + Zahl.
   const critColor =
