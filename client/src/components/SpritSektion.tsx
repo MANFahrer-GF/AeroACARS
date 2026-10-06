@@ -352,6 +352,8 @@ function Phase({
         />
       </div>
       <span
+        // Bandfarbe für dunklen Grund — im Druck abgedunkelt (QS Runde 13).
+        className="farbwert"
         style={{
           fontWeight: 600,
           fontVariantNumeric: "tabular-nums",
@@ -692,7 +694,7 @@ function Zeile({ label, children, ton }: { label: string; children: React.ReactN
       }}
     >
       <span style={{ color: "var(--text-muted, #9aa4b2)" }}>{label}</span>
-      <b style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: ton ? TON[ton] : "var(--text, #e8ecf3)" }}>{children}</b>
+      <b className="farbwert" style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: ton ? TON[ton] : "var(--text, #e8ecf3)" }}>{children}</b>
     </div>
   );
 }
@@ -757,6 +759,7 @@ function Kennzahl({
         {leer && !druck && <span aria-hidden="true">ⓘ</span>}
       </div>
       <div
+        className="farbwert"
         style={{
           fontSize: "1.05rem",
           fontWeight: 600,

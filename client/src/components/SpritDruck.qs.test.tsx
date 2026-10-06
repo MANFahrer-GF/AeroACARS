@@ -31,3 +31,22 @@ describe("Sprit im Druck", () => {
     expect(container.textContent).toContain("ⓘ");
   });
 });
+
+// Runde 13: Bandfarben der Sprit-Zahlen (Grün/Gelb/Rot, für dunklen Grund)
+// werden im Druck über `.farbwert` abgedunkelt — vorher Gelb auf Weiß.
+describe("Sprit-Zahlen im Druck lesbar", () => {
+  it("jeder Text in Bandfarbe trägt .farbwert", () => {
+    const original = MOCK_LANDING_OPTIONS.map((o) => (o.build() as { sprit?: SpritAuswertung }).sprit).find(Boolean)!;
+    const { container } = render(
+      <DruckKontext.Provider value={true}>
+        <SpritSektion sprit={original} />
+      </DruckKontext.Provider>,
+    );
+    const BAND = ["rgb(34, 197, 94)", "rgb(242, 178, 76)", "rgb(255, 92, 77)"];
+    const farbig = Array.from(container.querySelectorAll<HTMLElement>("*")).filter(
+      (e) => BAND.includes(e.style.color) && (e.textContent ?? "").trim() !== "",
+    );
+    expect(farbig.length).toBeGreaterThan(0);
+    for (const e of farbig) expect(e.closest(".farbwert"), e.textContent ?? "").not.toBeNull();
+  });
+});

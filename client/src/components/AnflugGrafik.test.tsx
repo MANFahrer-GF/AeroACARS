@@ -48,7 +48,8 @@ describe("Dot-Streifen", () => {
     const kurve = container.querySelector('path[stroke="#8b5cf6"]');
     expect(kurve?.getAttribute("d")?.match(/[ML]/g)?.length).toBe(5);
     // Markiert wird 2,22 bei 209 ft, nicht 4,98 kurz vor der Schwelle.
-    expect(text).toContain("größte Abweichung im Gate +2,22 bei 209 ft");
+    // Runde 13: „im Verlauf" — der Streifen ist ausgedünnt (1 Punkt/s).
+    expect(text).toContain("größte Abweichung im Verlauf +2,22 bei 209 ft");
     expect(text).not.toContain("4,98");
     // Achse wächst bis ±5 mit (größter Wert 4,98) — nichts klebt am Rand.
     // Kreis der Marke bei +2,22 Dots: yDot = 346 + 100 − 2,22/5 · 100 = 401,6.
@@ -70,12 +71,14 @@ describe("Dot-Streifen", () => {
   // QS 06.10.2026: Spur ohne Zeiten — der Streifen lässt sich nicht
   // ausrichten. Dann auch kein (i) zum Streifen und nicht „nicht
   // aufgezeichnet" (die Kurve gibt es ja).
-  it("Spur ohne Zeiten: weder Streifen noch (i) dazu noch falscher Hinweis", () => {
+  it("Spur ohne Zeiten: kein Streifen, aber der Hinweis „ohne Zeitbezug“", () => {
     const ohneZeit = proben.map((p) => ({ ...p, t_ms: undefined as unknown as number }));
     const { container } = render(
       <AnflugGrafikAbschnitt samples={ohneZeit} profile={null} gleitpfadVerlauf={verlauf} />,
     );
-    expect(container.textContent).not.toContain("Gleitpfad in Dots");
+    // Runde 13: kein Streifen, aber ein Hinweis, dass der Verlauf da ist
+    // und nur nicht zur Spur passt — nicht „nicht aufgezeichnet".
+    expect(container.querySelector(".landing-chart__hinweis")?.textContent).toContain("ohne gemeinsame Zeitachse");
     expect(container.textContent).not.toContain("nicht aufgezeichnet");
     // Gegenprobe: mit Zeiten erscheint das (i) zum Streifen.
     const mit = render(<AnflugGrafikAbschnitt samples={proben} profile={null} gleitpfadVerlauf={verlauf} />);

@@ -323,9 +323,13 @@ export function ScoreBreakdown({
                       "🛬 Wie wird das berechnet?"-Button am Boden öffnet
                       bereits das ausführliche Modal. Zwei Erklärungen
                       auf der gleichen Card wären redundant. */}
-                  {s.key !== "rollout" && (
+                  {s.key !== "rollout" ? (
                     <InfoBadge explanation={t(`landing.info.${s.key}`)} altAchse={ALT_ACHSEN.includes(s.key)} />
-                  )}
+                  ) : s.label_key === "landing.sub.runway_discipline" ? (
+                    // Runde 13: auch eine nicht bewertete Bahndisziplin
+                    // erklärt sich — wie im bewerteten Zweig.
+                    <InfoBadge explanation={t("landing.info.runway_discipline")} />
+                  ) : null}
                 </span>
                 <span
                   className="landing-subscore__points"

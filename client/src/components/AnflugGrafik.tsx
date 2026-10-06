@@ -314,9 +314,11 @@ export function ApproachChart({
     streifen.top +
     streifen.h / 2 -
     (Math.max(-DOT_ACHSE, Math.min(DOT_ACHSE, d)) / DOT_ACHSE) * (streifen.h / 2);
-  // Markiert wird der größte Wert im Stable Gate (1000–200 ft) — dieselbe
-  // Zahl wie „größte Abweichung" in der Gleitpfad-Forensik. Darunter werden
-  // Dots nahe der Schwelle sehr empfindlich (THY39: +5 bei 100 ft).
+  // Markiert wird der größte Wert im Stable Gate (1000–200 ft) unter den
+  // gezeichneten Punkten. Der Verlauf ist auf einen Punkt je Sekunde
+  // ausgedünnt — die Beschriftung sagt deshalb „im Verlauf"; die
+  // Gleitpfad-Forensik rechnet über alle Proben (QS Runde 13). Unter 200 ft
+  // werden Dots nahe der Schwelle sehr empfindlich (THY39: +5 bei 100 ft).
   const imGate = dotPunkte.filter((q) => q.p.h >= 200 && q.p.h <= 1000);
   const groessteAbw =
     imGate.length > 0
@@ -712,6 +714,11 @@ export function AnflugGrafikAbschnitt({
           )}
           {!(gleitpfadVerlauf && gleitpfadVerlauf.length >= 2) && (
             <p className="landing-chart__hinweis">{t("landing.vs_chart.gleitpfad_fehlt")}</p>
+          )}
+          {/* Runde 13: Verlauf da, aber ohne gemeinsame Zeit mit der
+              Anflugspur — sonst stand gar nichts da. */}
+          {gleitpfadVerlauf && gleitpfadVerlauf.length >= 2 && !streifenDa && (
+            <p className="landing-chart__hinweis">{t("landing.vs_chart.gleitpfad_ohne_zeitbezug")}</p>
           )}
         </>
       )}

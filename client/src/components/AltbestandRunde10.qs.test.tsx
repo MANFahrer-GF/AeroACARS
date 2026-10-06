@@ -78,3 +78,24 @@ describe("Runde 12", () => {
     expect(f).not.toContain("beschreibt die heutigen Regeln");
   });
 });
+
+describe("Runde 13", () => {
+  it("Gleitpfad aufgezeichnet, aber ohne Zeitbezug zur Spur: Hinweis statt nichts", async () => {
+    const { AnflugGrafikAbschnitt } = await import("./AnflugGrafik");
+    // Spur ohne t_ms → der Streifen kann nicht platziert werden.
+    const samples = Array.from({ length: 10 }, (_, k) => ({ vs_fpm: -700, bank_deg: 0, agl_ft: 1000 - k * 90 }));
+    const verlauf = [{ t: -60, h: 900, d: 0.2 }, { t: -30, h: 500, d: -0.4 }];
+    const text = render(
+      <AnflugGrafikAbschnitt samples={samples as never} profile={null} gleitpfadVerlauf={verlauf as never} />,
+    ).container.textContent ?? "";
+    expect(text).toContain("ohne gemeinsame Zeitachse");
+    expect(text).not.toContain("nicht aufgezeichnet");
+  });
+  it("Nicht bewertete Bahndisziplin hat ihre Erklärung", async () => {
+    const { ScoreBreakdown } = await import("./LandungsBewertung");
+    const r = { ...(MOCK_LANDING_OPTIONS[0]!.build() as unknown as LandingRecord), score_algorithm_version: 19 };
+    const teil = { key: "rollout", label_key: "landing.sub.runway_discipline", points: 0, value: "—", band: "skipped", rationale: "", skipped: true };
+    const { container } = render(<ScoreBreakdown subs={[teil as never]} record={r} />);
+    expect(container.querySelector(".info-badge")).not.toBeNull();
+  });
+});
