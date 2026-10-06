@@ -305,9 +305,16 @@ export function benoetigteSchluessel() {
           // Auch zusammengesetzt: `landing.wert.sprit` + `_mehrweg…` — jeder
           // Text, dessen Schlüssel so beginnt. Findet sich gar keiner, fehlt
           // er schon im Client: abbrechen statt still weglassen.
-          const treffer = alleSchluessel(de).filter((k) => k === m[1] || k.startsWith(m[1]));
+          // Ein eigener Schlüssel zählt allein; sonst nur Fortsetzungen nach
+          // „." oder „_" (nicht `overrun` → `overrun_risk`).
+          const lit = m[1];
+          const treffer = hatSchluessel(de, lit)
+            ? [lit]
+            : alleSchluessel(de).filter(
+                (k) => k.startsWith(lit) && (/[._]$/.test(lit) || /[._]/.test(k[lit.length] ?? "")),
+              );
           if (treffer.length === 0) {
-            throw new Error(`Rust benutzt ${m[1]} (${datei}), die deutsche Sprachdatei kennt ihn nicht`);
+            throw new Error(`Rust benutzt ${lit} (${datei}), die deutsche Sprachdatei kennt ihn nicht`);
           }
           for (const k of treffer) alle.add(k);
         }

@@ -30,6 +30,8 @@ describe("METAR-Wetter", () => {
     expect(await wetter("de", M("-RA BR"))).toBe("Regen (leicht), leichter Nebel");
     // Eine Platzkennung aus Wettercodes ist kein Wetter.
     expect(await wetter("de", "METAR SARA 011920Z 18005KT 9999 FEW046 14/12 Q1026")).toBeUndefined();
+    expect(await wetter("de", "METAR SARA 18005KT 9999 FEW046 14/12 Q1026")).toBeUndefined();
+    expect(await wetter("de", "SARA 011920Z 18005KT 9999 -RA FEW046 14/12 Q1026")).toBe("Regen (leicht)");
     await i18n.changeLanguage("de");
   });
   it("Sicht nur aus dem aktuellen Teil, auch weniger als eine Meile", () => {
