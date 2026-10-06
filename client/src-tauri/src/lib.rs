@@ -93,11 +93,11 @@ mod panel_server;
 mod hoppie;
 /// Telemetrie-Monitor (v1.8): Kanalkatalog, Verlauf, Strom.
 mod telemetrie;
-/// „Flugzeug vermessen": geführte Schaltermessung (28.09.2026).
-mod vermessung;
 /// v1.7.44: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
 /// A-CDM-Werkzeug von VATSIM Spain. Nur lesend.
 mod vdgs;
+/// „Flugzeug vermessen": geführte Schaltermessung (28.09.2026).
+mod vermessung;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -43487,6 +43487,28 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     spur_fortschreiben(stats, snap.groundspeed_kt, laengs_m, quer_m, halbe_breite_m);
 }
 
+/// Bremsenergie-Näherung in kJ je Meter Ausrollstrecke:
+/// (½ × Masse × IAS²) / Ausrollstrecke, ohne Landegewicht mit 50 t.
+///
+/// ⚠ Erst am Ende des Ausrollens rechnen. Bis 06.10.2026 stand die Rechnung
+/// im Aufsetz-Zweig — dort ist die Ausrollstrecke noch 0 (sie wird direkt
+/// danach erst angelegt), die Bedingung „> 50 m" griff fast nie: von 410
+/// Landungen in 30 Tagen hatten 406 eine Ausrollstrecke, 5 eine Bremsenergie.
+fn bremsenergie_proxy(
+    landing_speed_kt: Option<f32>,
+    rollout_distance_m: Option<f32>,
+    landing_weight_kg: Option<f64>,
+) -> Option<f32> {
+    let (ias, rollout) = (landing_speed_kt?, rollout_distance_m?);
+    if rollout <= 50.0 || ias <= 0.0 {
+        return None;
+    }
+    let ias_ms = f64::from(ias) * 0.5144; // kt → m/s
+    let mass = landing_weight_kg.unwrap_or(50_000.0);
+    let kinetic = 0.5 * mass * ias_ms.powi(2);
+    Some((kinetic / f64::from(rollout) / 1_000.0) as f32)
+}
+
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     if !stats.rollout_finalized {
         if let (Some(prev_lat), Some(prev_lon)) = (stats.rollout_last_lat, stats.rollout_last_lon) {
@@ -43543,6 +43565,11 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 "exit_speed"
             };
             stats.rollout_finalize_reason = Some(reason.to_string());
+            stats.landing_brake_energy_proxy = bremsenergie_proxy(
+                stats.landing_speed_kt,
+                stats.rollout_distance_m,
+                stats.landing_weight_kg,
+            );
             tracing::info!(
                 meters = stats.rollout_distance_m.unwrap_or(0.0),
                 gs_kt = snap.groundspeed_kt,
@@ -46248,23 +46275,8 @@ fn step_flight_at(
                     }
                 }
 
-                // Brake-Energy-Proxy = (mass × ias²) / rollout_distance.
-                // Vereinfacht: ohne mass = (ias²) / rollout — damit
-                // auch ohne LDW-SimVar berechenbar. Skaliert wenn mass
-                // verfuegbar.
-                if let (Some(ias), Some(rollout)) =
-                    (stats.landing_speed_kt, stats.rollout_distance_m)
-                {
-                    if rollout > 50.0 && ias > 0.0 {
-                        let ias_ms = ias * 0.5144; // kt → m/s
-                        let mass = stats.landing_weight_kg.unwrap_or(50_000.0);
-                        let kinetic = 0.5 * mass * (ias_ms as f64).powi(2);
-                        // Normalisiert auf 100 = 100kJ pro Meter Rollout
-                        // = brake-typical 1MN-Aircraft mit 100m-Stop
-                        let energy_per_m = kinetic / rollout as f64;
-                        stats.landing_brake_energy_proxy = Some((energy_per_m / 1_000.0) as f32);
-                    }
-                }
+                // Bremsenergie: erst am Ende des Ausrollens (`rollout_tick`),
+                // siehe `bremsenergie_proxy`.
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
                     vs_dev_fpm = ?stab_v2.vs_deviation_fpm,
@@ -70969,6 +70981,36 @@ mod v0_16_6_bush_completeness_tests {
         rollout_tick(&mut stats, &snap);
         assert!(stats.rollout_finalized);
         assert_eq!(stats.rollout_finalize_reason.as_deref(), Some("exit_speed"));
+    }
+
+    /// 06.10.2026: Die Bremsenergie entsteht erst am Ende des Ausrollens —
+    /// beim Aufsetzen ist die Strecke 0, dort blieb sie fast immer leer.
+    #[test]
+    fn bremsenergie_entsteht_am_ende_des_ausrollens() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        stats.landing_speed_kt = Some(135.0);
+        stats.landing_weight_kg = Some(60_000.0);
+        stats.rollout_distance_m = Some(1_200.0);
+        // Noch im Ausrollen (80 kt): keine Bremsenergie.
+        rollout_tick(&mut stats, &rollout_snap(50.0, 8.0001, 80.0, 90.0, true));
+        assert_eq!(stats.landing_brake_energy_proxy, None);
+        // Abschluss: ½ × 60 t × (135 kt)² ≈ 145 MJ auf ~1,2 km ≈ 117 kJ/m.
+        rollout_tick(&mut stats, &rollout_snap(50.0, 8.0005, 35.0, 90.0, true));
+        assert!(stats.rollout_finalized);
+        let e = stats
+            .landing_brake_energy_proxy
+            .expect("Bremsenergie gesetzt");
+        assert!((110.0..125.0).contains(&e), "Bremsenergie {e}");
+    }
+
+    #[test]
+    fn bremsenergie_ohne_strecke_oder_fahrt_leer() {
+        assert_eq!(bremsenergie_proxy(Some(135.0), Some(40.0), None), None);
+        assert_eq!(bremsenergie_proxy(None, Some(1_200.0), None), None);
+        assert_eq!(bremsenergie_proxy(Some(135.0), None, None), None);
+        // Ohne Landegewicht mit 50 t gerechnet.
+        let e = bremsenergie_proxy(Some(135.0), Some(1_200.0), None).unwrap();
+        assert!((95.0..105.0).contains(&e), "Bremsenergie {e}");
     }
 
     #[test]
