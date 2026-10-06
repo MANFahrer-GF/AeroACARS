@@ -189,6 +189,7 @@ export function ApproachStabilityCard(props: Props) {
         </h3>
         {!isLegacy && (
           <span
+            className="farbwert"
             style={{
               padding: "3px 10px",
               borderRadius: 4,
@@ -289,6 +290,7 @@ export function ApproachStabilityCard(props: Props) {
               Gründe oben nennen zusätzlich genau, was nicht stabil war. */}
           <div
             data-testid="gate-coach"
+            className="farbwert"
             style={{
               padding: "10px 12px",
               borderRadius: 6,
@@ -417,6 +419,7 @@ export function ApproachStabilityCard(props: Props) {
 
           {/* Coaching */}
           <div
+            className="farbwert"
             style={{
               padding: "10px 12px",
               borderRadius: 6,
@@ -434,7 +437,10 @@ export function ApproachStabilityCard(props: Props) {
 
       {/* Messwerte zur Einordnung — bis 05.10.2026 nur in der Webapp und dort
           nur als Teil eigener Coaching-Sätze. Hier ohne Urteil. */}
-      {(props.runwayChangedLate != null ||
+      {/* Nur wenn ein Eintrag erscheint: `runwayChangedLate === false`
+          zeigt nichts — sonst stand eine leere, umrandete Liste da
+          (QS 06.10.2026). */}
+      {(props.runwayChangedLate === true ||
         props.stableAtDa != null ||
         (props.stallWarningCount ?? 0) > 0) && (
         <ul
@@ -521,6 +527,7 @@ function Tile({
         {info && <> <InfoBadge explanation={info} /></>}
       </div>
       <div
+        className="farbwert"
         style={{
           fontSize: "1.05rem",
           fontWeight: 700,

@@ -5476,6 +5476,16 @@ struct PersistedFlightStats {
     /// Resume-Files weiter laden — defaulten auf leeren Vec.
     #[serde(default)]
     pause_segments: Vec<PauseSegment>,
+    /// QS 06.10.2026: überleben einen Neustart zwischen Aufsetzen und
+    /// Einreichen — sonst rechnete die Note beim Einreichen ohne Abfangen
+    /// neu, und der Datensatz meldete „kein später Bahnwechsel / 0 Stall-
+    /// Warnungen", obwohl der Touchdown die echten Werte trug.
+    #[serde(default)]
+    abfangen_gesichert: Option<landing_scoring::abfangen::Abfangen>,
+    #[serde(default)]
+    approach_runway_changed_late: bool,
+    #[serde(default)]
+    approach_stall_warning_count: u32,
     /// Spec v0.7.15 F5/F6: aktuelle Pause-Reason fuer App-Restart-
     /// Persistenz. `#[serde(default)]` → None bei pre-v0.7.15 Files.
     #[serde(default)]
@@ -5738,6 +5748,9 @@ impl PersistedFlightStats {
             // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator)
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
+            abfangen_gesichert: stats.abfangen_gesichert.clone(),
+            approach_runway_changed_late: stats.approach_runway_changed_late,
+            approach_stall_warning_count: stats.approach_stall_warning_count,
             current_pause_reason: stats.current_pause_reason,
             disconnect_sim_liveness: stats.disconnect_sim_liveness,
             last_persisted_snapshot: stats.last_persisted_snapshot.clone(),
@@ -5999,6 +6012,9 @@ impl PersistedFlightStats {
         // lierte Zeit nicht verlieren (Spec-Szenario 3.4.2).
         stats.pause_total_duration_secs = self.pause_total_duration_secs;
         stats.pause_segments = self.pause_segments;
+        stats.abfangen_gesichert = self.abfangen_gesichert;
+        stats.approach_runway_changed_late = self.approach_runway_changed_late;
+        stats.approach_stall_warning_count = self.approach_stall_warning_count;
         stats.current_pause_reason = self.current_pause_reason;
         stats.disconnect_sim_liveness = self.disconnect_sim_liveness;
         stats.last_persisted_snapshot = self.last_persisted_snapshot;
@@ -7935,6 +7951,11 @@ struct FlightStats {
     /// equivalenten VS-Werte und den Flare-Score sieht. None bis Sampler
     /// fertig (typisch 10s post-TD).
     landing_analysis: Option<serde_json::Value>,
+    /// QS 06.10.2026: die Abfang-Messung zusätzlich gesichert — `landing_
+    /// analysis` überlebt keinen Neustart (nicht in `PersistedFlightStats`),
+    /// und ohne sie fehlte nach einer Wiederaufnahme die Teilnote samt Deckel
+    /// beim Einreichen. Zurückgesetzt wie `landing_analysis` (Touch-and-Go).
+    abfangen_gesichert: Option<landing_scoring::abfangen::Abfangen>,
 
     /// True once the "Aircraft: {title}" banner has been emitted to
     /// the activity log for this flight. Persisted across resumes
@@ -24674,6 +24695,7 @@ fn build_pirep_payload(
         .filter(|s| !s.trim().is_empty()),
         landing_scored_g_force: score_g_for_stats(&stats).map(|s| s.scored_g),
         landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
+        landing_bank_deg: aufsetz_bank_deg(&stats),
         peak_altitude_ft: stats.peak_altitude_ft.map(|v| v.round() as i32),
         landing_vs_fpm: body.landing_rate.map(|r| r as i32),
         // v0.7.1 P1.3-Fix: gewichteter Aggregate-Score
@@ -28530,11 +28552,7 @@ where
         landing_pitch_deg: stats.landing_pitch_deg,
         // Bank at touchdown isn't a top-level FlightStats field; pull
         // the sample closest to t=0 from the touchdown profile.
-        landing_bank_deg: stats
-            .touchdown_profile
-            .iter()
-            .min_by_key(|p| p.t_ms.abs())
-            .map(|p| p.bank_deg),
+        landing_bank_deg: aufsetz_bank_deg(stats),
         landing_speed_kt: stats.landing_speed_kt,
         landing_heading_deg: stats.landing_heading_deg,
         landing_weight_kg: stats.landing_weight_kg,
@@ -37098,7 +37116,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 stats.anflug_forensik.in_analyse_json(&mut analysis);
                 // 05.10.2026: Abfangen über die Höhe — Messung für die
                 // Teilnote `abfangen` (landing-scoring/src/abfangen.rs).
-                abfangen_in_analyse(&stats, &samples, edge_at, &mut analysis);
+                let abfangen = abfangen_in_analyse(&stats, &samples, edge_at, &mut analysis);
+                stats.abfangen_gesichert = Some(abfangen);
                 stats.landing_analysis = Some(analysis.clone());
                 // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde):
                 // `peak_g_post_500ms` steht in `analysis` HIER schon fertig
@@ -43586,6 +43605,9 @@ fn abfangen_aus_analyse(stats: &FlightStats) -> Option<landing_scoring::abfangen
         .as_ref()
         .and_then(|v| v.get("abfangen"))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
+        // Nach einer Wiederaufnahme fehlt `landing_analysis` — die
+        // gesicherte Messung trägt (QS 06.10.2026).
+        .or_else(|| stats.abfangen_gesichert.clone())
 }
 
 /// Misst das Abfangen und legt es unter `abfangen` ins Analyse-JSON —
@@ -43597,7 +43619,7 @@ fn abfangen_in_analyse(
     fenster: &[TouchdownWindowSample],
     edge_at: DateTime<Utc>,
     analysis: &mut serde_json::Value,
-) {
+) -> landing_scoring::abfangen::Abfangen {
     let abfangen = abfangen_messen(
         stats,
         fenster,
@@ -43605,11 +43627,16 @@ fn abfangen_in_analyse(
         analysis
             .get("vs_at_edge_fpm")
             .and_then(|v| v.as_f64())
-            .map(|v| v as f32),
+            .map(|v| v as f32)
+            // Eine positive Rate am Aufsetzen ist unplausibel; die kanonische
+            // Landerate verwirft sie auch (Flug 804). Dann keine Zahl statt
+            // einer, die der Kopf nicht zeigt (QS 06.10.2026).
+            .filter(|v| *v < 0.0),
     );
     if let (Some(obj), Ok(v)) = (analysis.as_object_mut(), serde_json::to_value(&abfangen)) {
         obj.insert("abfangen".to_string(), v);
     }
+    abfangen
 }
 
 /// Wie lange vom ersten 50-ft-Durchgang (im letzten Anflug) bis zum
@@ -43650,15 +43677,46 @@ fn abfangen_messen(
         .anflug_forensik_puffer
         .iter()
         .filter(|s| ab.is_none_or(|ab| s.at > ab))
-        .filter(|s| s.at <= edge_at && (edge_at - s.at).num_seconds() <= 60)
+        // 180 s (QS 06.10.2026, vorher 60): wer länger als 60 s unter 50 ft
+        // blieb, bekam gar keine Teilnote statt der schlechtesten.
+        .filter(|s| s.at <= edge_at && (edge_at - s.at).num_seconds() <= ABFANG_FENSTER_S)
         .map(|s| landing_scoring::abfangen::AbfangPunkt {
-            t_ms: (s.at - edge_at).num_milliseconds(),
+            // Pausen im Sim zählen nicht als Abfangzeit (QS 06.10.2026).
+            t_ms: (s.at - edge_at).num_milliseconds()
+                + pausen_ms_zwischen(&stats.pause_segments, s.at, edge_at),
             hoehe_ft: if mit_msl { s.msl_ft } else { s.agl_ft } - bezug_ft,
             vs_fpm: s.vs_fpm,
             gs_kt: s.gs_kt,
         })
         .collect();
     landing_scoring::abfangen::messen(&punkte, vs_aufsetzen_fpm)
+}
+
+/// Querneigung beim Aufsetzen, wie der Datensatz sie zeigt: der Profilpunkt
+/// am nächsten an t = 0. Eine Quelle für Datensatz und PIREP (QS 06.10.2026:
+/// die Webapp nahm `bank_deg` des Touchdowns, eine andere Messung).
+fn aufsetz_bank_deg(stats: &FlightStats) -> Option<f32> {
+    stats
+        .touchdown_profile
+        .iter()
+        .min_by_key(|p| p.t_ms.abs())
+        .map(|p| p.bank_deg)
+}
+
+/// Wie weit vor dem Aufsetzen Proben fürs Abfangen gelesen werden (s).
+const ABFANG_FENSTER_S: i64 = 180;
+
+/// Millisekunden Sim-Pause zwischen `von` und `bis` (Überlappung mit den
+/// aufgezeichneten Pause-Blöcken).
+fn pausen_ms_zwischen(pausen: &[PauseSegment], von: DateTime<Utc>, bis: DateTime<Utc>) -> i64 {
+    pausen
+        .iter()
+        .map(|p| {
+            let a = p.started_at.max(von);
+            let b = p.ended_at.min(bis);
+            (b - a).num_milliseconds().max(0)
+        })
+        .sum()
 }
 
 /// Die Bahn der Forensik: Navdaten-Geometrie plus versetzte Schwelle.
@@ -46345,6 +46403,7 @@ fn step_flight_at(
                             // zero-Gate), wenn hier auch wirklich genullt wird.
                             stats.landing_rate_fpm = None;
                             stats.landing_analysis = None;
+                            stats.abfangen_gesichert = None;
                             stats.landing_source = None;
                             // v1.6.3: derselbe Gedanke fuer den Landewind.
                             // Nach einem Touch-and-Go am Platz A und einer
@@ -65913,15 +65972,37 @@ mod touchdown_metadata_stamp_tests {
         flight.airline_icao = "CFG".into();
         flight.flight_number = "0".into();
         flight.bid_callsign = Some("7ME".into());
-        flight.stats.lock().unwrap().landing_peak_vs_fpm = Some(-204.0);
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.landing_peak_vs_fpm = Some(-204.0);
+            // Gemessene bewertete G (Analyse) — die Zahl, die der Datensatz zeigt.
+            st.landing_analysis = Some(serde_json::json!({ "scored_g": 1.42 }));
+            for (t_ms, bank_deg) in [(-400, 3.0), (-60, -1.5), (300, 4.0)] {
+                st.touchdown_profile.push(TouchdownProfilePoint {
+                    t_ms,
+                    vs_fpm: -150.0,
+                    g_force: 1.1,
+                    agl_ft: 0.0,
+                    on_ground: t_ms >= 0,
+                    heading_true_deg: 90.0,
+                    groundspeed_kt: 130.0,
+                    indicated_airspeed_kt: 132.0,
+                    pitch_deg: 4.0,
+                    bank_deg,
+                });
+            }
+        }
         let body = api_client::FileBody::default();
         let p = build_pirep_payload(&flight, &body, "GCLP", "GCLP");
         assert_eq!(p.flight_ident.as_deref(), Some("7ME"));
         // `flight_number` bleibt wie bisher („CFG 0") — additiv.
         assert_eq!(p.flight_number, format_callsign("CFG", "0"));
         assert_eq!(p.landing_peak_vs_fpm, Some(-204.0));
-        let g = score_g_for_stats(&flight.stats.lock().unwrap()).map(|s| s.scored_g);
-        assert_eq!(p.landing_scored_g_force, g);
+        // Querneigung: der Profilpunkt am nächsten an t = 0, wie im Datensatz.
+        assert_eq!(p.landing_bank_deg, Some(-1.5));
+        // Ein fester Wert, nicht „dieselbe Funktion wie das Feld" (QS:
+        // sonst prüfte der Test None == None).
+        assert_eq!(p.landing_scored_g_force, Some(1.42));
         // Ohne Werte: Felder fehlen im JSON (ältere Empfänger unverändert).
         let mut leer = flight_fixture("GCLP");
         leer.flight_number = String::new();
@@ -80519,5 +80600,85 @@ mod abfangen_verdrahtung_tests {
         let a = abfangen_messen(&stats, &[], td(), Some(-100.0));
         assert_eq!(a.grund_ohne_werte.as_deref(), Some("kein_bodenbezug"));
         assert_eq!(a.dauer_ab_50ft_s, None);
+    }
+
+    /// QS 06.10.2026: eine Sim-Pause zwischen 50 ft und Aufsetzen ist keine
+    /// Abfangzeit. 8 s geflogen, dazwischen 20 s Pause → 8 s, nicht 28 s.
+    #[test]
+    fn pause_zaehlt_nicht_als_abfangzeit() {
+        let mut stats = FlightStats::default();
+        // 60 ft bei −30 s, 50 ft bei −28 s (Wanduhr), Pause −24…−4 s auf
+        // 30 ft, danach weiter bis zum Aufsetzen.
+        for (t, h) in [
+            (-30_000, 60.0),
+            (-28_000, 50.0),
+            (-26_000, 40.0),
+            (-24_000, 30.0),
+            (-4_000, 28.0),
+            (-2_000, 12.0),
+            (-500, 2.0),
+        ] {
+            stats.anflug_forensik_puffer.push_back(probe(t, h, -300.0));
+        }
+        stats.pause_segments.push(PauseSegment {
+            started_at: td() - chrono::Duration::seconds(24),
+            ended_at: td() - chrono::Duration::seconds(4),
+            duration_secs: 20,
+            reason: PauseReason::SimPause,
+            drift_nm: None,
+            altitude_delta_ft: None,
+            fuel_delta_kg: None,
+        });
+        let a = abfangen_messen(&stats, &[boden()], td(), Some(-60.0));
+        assert_eq!(a.dauer_ab_50ft_s, Some(8.0), "{a:?}");
+        // Gegenprobe: ohne Pause-Block zählt die Wanduhr 28 s.
+        stats.pause_segments.clear();
+        let b = abfangen_messen(&stats, &[boden()], td(), Some(-60.0));
+        assert_eq!(b.dauer_ab_50ft_s, Some(28.0));
+    }
+
+    /// QS 06.10.2026: länger als 60 s unter 50 ft war „keine Messung" (keine
+    /// Teilnote) statt der schlechtesten Stufe.
+    #[test]
+    fn langes_schweben_ueber_60_s_wird_gemessen() {
+        let mut stats = FlightStats::default();
+        for (t, h) in [
+            (-95_000, 70.0),
+            (-90_000, 50.0),
+            (-60_000, 20.0),
+            (-30_000, 10.0),
+            (-1_000, 1.0),
+        ] {
+            stats.anflug_forensik_puffer.push_back(probe(t, h, -40.0));
+        }
+        let a = abfangen_messen(&stats, &[boden()], td(), Some(-40.0));
+        assert_eq!(a.dauer_ab_50ft_s, Some(90.0), "{a:?}");
+    }
+
+    /// QS 06.10.2026: Neustart zwischen Aufsetzen und Einreichen — die
+    /// gesicherte Messung trägt, wenn `landing_analysis` fehlt; eine positive
+    /// Aufsetzrate (unplausibel) wird nicht als Messwert gezeigt.
+    #[test]
+    fn abfangen_ueberlebt_neustart_und_positive_rate_faellt_weg() {
+        let mut stats = FlightStats::default();
+        for i in 0..=34 {
+            let t = -16_800 + i * 500;
+            let h = 60.0 * (-(t as f32)) / 16_800.0;
+            stats.anflug_forensik_puffer.push_back(probe(t, h, -210.0));
+        }
+        let mut analysis = serde_json::json!({ "vs_at_edge_fpm": 24.47 });
+        let a = abfangen_in_analyse(&stats, &[boden()], td(), &mut analysis);
+        assert_eq!(a.vs_aufsetzen_fpm, None, "positive Rate ist kein Messwert");
+        assert_eq!(a.reduktion_fpm, None);
+        stats.abfangen_gesichert = Some(a);
+        // Rundreise über die Sicherung, `landing_analysis` fehlt danach.
+        let gesichert = PersistedFlightStats::snapshot_from(&stats);
+        let mut neu = FlightStats::default();
+        gesichert.apply_to(&mut neu);
+        assert!(neu.landing_analysis.is_none());
+        assert_eq!(
+            abfangen_aus_analyse(&neu).and_then(|a| a.dauer_ab_50ft_s),
+            Some(14.0)
+        );
     }
 }

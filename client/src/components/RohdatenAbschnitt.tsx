@@ -49,7 +49,8 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
           t("landing.rohdaten.koordinaten"),
           koord,
           karte && (
-            <a className="rohdaten__link" href={karte} target="_blank" rel="noreferrer">
+            // Bedienung, nicht aufs Papier (QS 06.10.2026).
+            <a className="rohdaten__link nur-bildschirm" href={karte} target="_blank" rel="noreferrer">
               Google Maps ↗
             </a>
           ),
@@ -63,7 +64,9 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
         )}
         {zeile(
           t("landing.rohdaten.bahn"),
-          `${record.runway_match?.airport_ident ?? "—"} / ${record.runway_match?.runway_ident ?? "—"}`,
+          `${record.runway_match?.airport_ident ?? "—"} / ${record.runway_match?.runway_ident ?? "—"}${
+            record.runway_match ? unsicher : ""
+          }`,
         )}
         {zeile(
           t("landing.rohdaten.versatz"),
@@ -93,7 +96,7 @@ export function RohdatenAbschnitt({ record }: { record: LandingRecord }) {
         )}
         {zeile(t("landing.rohdaten.version"), record.client_version ?? "—")}
       </div>
-      <p className="rohdaten__hinweis">{t("landing.rohdaten.hinweis")}</p>
+      <p className="rohdaten__hinweis nur-bildschirm">{t("landing.rohdaten.hinweis")}</p>
     </details>
   );
 }

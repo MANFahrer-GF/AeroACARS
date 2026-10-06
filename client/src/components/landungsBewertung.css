@@ -384,3 +384,10 @@
   border-radius: 999px;
   padding: 1px 8px;
 }
+
+/* Bahn-Fakten bei unsicherer Geometrie (QS 06.10.2026). */
+.bahn-fakten {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+  color: var(--text);
+}

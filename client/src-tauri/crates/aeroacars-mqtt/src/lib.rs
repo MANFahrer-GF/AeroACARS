@@ -1361,6 +1361,10 @@ pub struct PirepPayload {
     pub landing_scored_g_force: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_peak_vs_fpm: Option<f32>,
+    /// Querneigung beim Aufsetzen wie im Datensatz (Profilpunkt bei t = 0),
+    /// nicht `bank_deg` des Touchdowns (QS 06.10.2026).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_bank_deg: Option<f32>,
     pub peak_altitude_ft: Option<i32>,
     pub landing_vs_fpm: Option<i32>,
     pub landing_score: Option<i32>,

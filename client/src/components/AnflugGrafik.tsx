@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useDruck } from "../lib/druck";
 import {
   gleitwinkelFaktor,
   sollband,
@@ -264,7 +265,11 @@ export function ApproachChart({
    *  bekommt die Grafik den Dot-Streifen auf derselben Zeitachse. */
   gleitpfadVerlauf?: GleitpfadPunkt[] | null;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // Dots in der Sprache der App („+2,22"), wie alle anderen Werte.
+  const dotZahl = (v: number) =>
+    v.toLocaleString(i18n.language, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const druck = useDruck();
   const [hover, setHover] = useState<number | null>(null);
   if (samples.length < 3) return null;
 
@@ -570,7 +575,7 @@ export function ApproachChart({
                     y={yDot(groessteAbw.p.d) + (groessteAbw.p.d > 0 ? 16 : -8)}
                     fontSize="13" fontWeight="600" fill={DOT_FARBE}>
                 {t("landing.vs_chart.gleitpfad_max", {
-                  d: `${groessteAbw.p.d > 0 ? "+" : "−"}${Math.abs(groessteAbw.p.d).toFixed(2)}`,
+                  d: `${groessteAbw.p.d > 0 ? "+" : "−"}${dotZahl(Math.abs(groessteAbw.p.d))}`,
                   h: Math.round(groessteAbw.p.h),
                 })}
               </text>
@@ -582,7 +587,9 @@ export function ApproachChart({
             {t("landing.vs_chart.gleitpfad_achse")}
           </text>
           <text x={pad.left} y={streifen.top + streifen.h + 18} fontSize="11" fill="#94a3b8" className="ag-achse">
-            {t("landing.vs_chart.gleitpfad_lesart")}
+            {/* „Rechts beim Darüberfahren …" ist Bedienung — im Druck nur die
+                Lesart (QS 06.10.2026). */}
+            {druck ? t("landing.vs_chart.gleitpfad_lesart_druck") : t("landing.vs_chart.gleitpfad_lesart")}
           </text>
         </g>
       )}
@@ -650,7 +657,7 @@ export function ApproachChart({
                   dotsBeiHover >= 0
                     ? "landing.vs_chart.gleitpfad_ueber"
                     : "landing.vs_chart.gleitpfad_unter",
-                  { d: Math.abs(dotsBeiHover).toFixed(2) },
+                  { d: dotZahl(Math.abs(dotsBeiHover)) },
                 )}
               </text>
             )}

@@ -48,8 +48,8 @@ describe("Dot-Streifen", () => {
     const kurve = container.querySelector('path[stroke="#8b5cf6"]');
     expect(kurve?.getAttribute("d")?.match(/[ML]/g)?.length).toBe(5);
     // Markiert wird 2,22 bei 209 ft, nicht 4,98 kurz vor der Schwelle.
-    expect(text).toContain("größte Abweichung im Gate +2.22 bei 209 ft");
-    expect(text).not.toContain("4.98");
+    expect(text).toContain("größte Abweichung im Gate +2,22 bei 209 ft");
+    expect(text).not.toContain("4,98");
     // Achse wächst bis ±5 mit (größter Wert 4,98) — nichts klebt am Rand.
     // Kreis der Marke bei +2,22 Dots: yDot = 346 + 100 − 2,22/5 · 100 = 401,6.
     const kreis = container.querySelector('circle[r="5"][fill="#8b5cf6"]');

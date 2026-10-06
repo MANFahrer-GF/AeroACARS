@@ -21,6 +21,7 @@ import { ForensicsBadge } from "./ForensicsBadge";
 import { SpritBadge } from "./SpritSektion";
 import { InfoBadge } from "./InfoBadge";
 import { RunwayUtilizationHelpModal } from "./RunwayUtilizationHelpModal";
+import { surfaceLabelKey } from "./RunwayDiagramV2";
 import "./landungsBewertung.css";
 
 export interface SubScore {
@@ -398,7 +399,7 @@ export function ScoreBreakdown({
             </div>
             {hasWarning && (
               <div
-                className="landing-subscore__warning"
+                className="landing-subscore__warning farbwert"
                 style={{
                   marginTop: 4,
                   fontSize: "0.75rem",
@@ -935,11 +936,24 @@ export function LandungsKopf({
             ? t("landing.kopf.ohne_pirep")
             : record.score_numeric == null
             ? t("landing.nicht_bewertbar.kurz", { defaultValue: "nicht bewertbar" })
-            : rateCategoryWord(recordCategory(record) ?? "firm", t)}
+            : recordCategory(record) != null
+            ? rateCategoryWord(recordCategory(record)!, t)
+            : null}
           {record.score_numeric != null ? (
             <>
-              {" "}· {record.score_numeric}/100{" "}
-              <InfoBadge explanation={t("landing.erklaer.kopf_note")} />
+              {/* Ohne gespeichertes Wort nur die Zahl — kein erfundenes
+                  „FEST" (QS 06.10.2026). */}
+              {recordCategory(record) != null || record.accident === true ? " · " : ""}
+              {record.score_numeric}/100{" "}
+              {/* Die Erklärung passt zur Version, mit der bewertet wurde —
+                  Altbestand wird nie neu gerechnet (QS 06.10.2026). */}
+              <InfoBadge
+                explanation={t(
+                  (record.score_algorithm_version ?? 0) >= 19
+                    ? "landing.erklaer.kopf_note"
+                    : "landing.erklaer.kopf_note_alt",
+                )}
+              />
             </>
           ) : null}{" "}
           ·{" "}
@@ -953,8 +967,9 @@ export function LandungsKopf({
         </div>
         {/* Score-Version 19: warum die Note gedeckelt ist — auf dem
             Bildschirm, nicht nur im PDF (vorher nur dort). */}
-        {record.accident !== true &&
-          record.score_deckel &&
+        {/* Auch bei Unfall: der frühere Bericht nannte den Deckel immer
+            (z. B. Überlast → 14), QS 06.10.2026. */}
+        {record.score_deckel &&
           deckelText(t, record.score_deckel) && (
             <div className="landing-headline__deckel" data-testid="kopf-deckel">
               {deckelText(t, record.score_deckel)}
@@ -1041,6 +1056,7 @@ export function BahnUeberschrift({ record }: { record: LandingRecord }) {
       </h3>
       {warnung && (
         <div
+          className="bahn-warnung"
           style={{
             padding: "6px 10px",
             marginBottom: 10,
@@ -1054,8 +1070,34 @@ export function BahnUeberschrift({ record }: { record: LandingRecord }) {
           ⚠ {warnung}
         </div>
       )}
+      {/* Unsichere Geometrie, aber die richtige Bahn (Versatz/Aufsetzpunkt
+          unplausibel): Bahn, Länge, landbarer Teil und Belag sind keine
+          Ableitungen aus der Geometrie — der frühere Bericht zeigte sie, die
+          Grafik entfällt hier (QS 06.10.2026). Bei falschem Platz nicht. */}
+      {!vertraut && record.runway_match && grund !== "icao_mismatch" && (
+        <p className="bahn-fakten" data-testid="bahn-fakten">
+          {bahnFakten(record, t)}
+        </p>
+      )}
     </>
   );
+}
+
+function bahnFakten(record: LandingRecord, t: (k: string, o?: Record<string, unknown>) => string): string {
+  const rm = record.runway_match!;
+  const voll = rm.length_ft * 0.3048;
+  const lda = rolloutLdaMeters(rm);
+  const teile = [`${rm.airport_ident} ${rm.runway_ident}`];
+  if (voll > 0) {
+    teile.push(
+      lda != null && Math.abs(voll - lda) >= 1
+        ? `${voll.toFixed(0)} m · ${t("runway_v2.davon_landbar", { m: lda.toFixed(0) })}`
+        : `${voll.toFixed(0)} m`,
+    );
+  }
+  const belag = rm.surface ? t(surfaceLabelKey(rm.surface)) || rm.surface : null;
+  if (belag) teile.push(belag);
+  return teile.join(" · ");
 }
 
 /** Simulator wie im Client: „MSFS" / „X-Plane" — der Client-Datensatz

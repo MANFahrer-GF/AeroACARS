@@ -58,4 +58,16 @@ describe("Kopf der Landungsseite", () => {
     expect(getByTestId("gate-kacheln")).toBeTruthy();
     expect(getByTestId("gate-coach").textContent!.length).toBeGreaterThan(20);
   });
+
+  it("Note ohne gespeichertes Wort: nur die Zahl, kein erfundenes Wort", () => {
+    const r = { ...basis(), score_numeric: 95, score_label: null, score_algorithm_version: 17 } as unknown as LandingRecord;
+    const { container } = render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);
+    const kopf = container.querySelector(".landing-headline")!.textContent ?? "";
+    expect(kopf).toContain("95/100");
+    expect(kopf).not.toMatch(/FEST|GUT|HERVORRAGEND|AUSREICHEND/i);
+    // Gegenprobe: mit gespeichertem Wort steht es da.
+    const mit = { ...r, score_label: "smooth" } as unknown as LandingRecord;
+    const m = render(<LandingDetail record={mit} allRecords={[mit]} onBack={() => {}} />);
+    expect(m.container.querySelectorAll(".landing-headline")[0]!.textContent).not.toBe(kopf);
+  });
 });

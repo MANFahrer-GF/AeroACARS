@@ -4,7 +4,8 @@
 // gespiegelten Abschnitte der Landungsanzeige erklären ihre Werte auf beiden
 // Seiten gleich. Bis 05.10.2026 in LandingPanel.tsx.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import "./infoBadge.css";
 
@@ -24,6 +25,11 @@ import "./infoBadge.css";
 // Wertzeilen abgeschnitten — die schneiden Überstand für „…" ab
 // (overflow: hidden), im Client wie in der Webapp.
 
+/** Öffnet sich ein (i), schließen alle anderen — sonst blieben per Tastatur
+ *  beliebig viele offen (geschlossen wird sonst nur durch Tippen daneben).
+ *  QS 06.10.2026. */
+const EREIGNIS_AUF = "info-badge-auf";
+
 /** Abstand zum Fensterrand und zum Knopf, in px. */
 const RAND = 8;
 const BREITE = 280;
@@ -36,7 +42,7 @@ const BREITE = 280;
  * saß um dessen Rand versetzt und wurde dort abgeschnitten).
  */
 function bezugsrahmen(el: Element | null): Element | null {
-  for (let e = el?.parentElement ?? null; e; e = e.parentElement) {
+  for (let e: Element | null = el; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
     const cs = getComputedStyle(e) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
     const gesetzt = (v: string | undefined) => v != null && v !== "" && v !== "none";
     if (
@@ -45,6 +51,9 @@ function bezugsrahmen(el: Element | null): Element | null {
       gesetzt(cs.backdropFilter) ||
       gesetzt(cs.webkitBackdropFilter) ||
       gesetzt(cs.perspective) ||
+      gesetzt(cs.translate) ||
+      gesetzt(cs.scale) ||
+      gesetzt(cs.rotate) ||
       /paint|layout|strict|content/.test(cs.contain ?? "") ||
       /transform|filter|perspective/.test(cs.willChange ?? "")
     ) {
@@ -68,10 +77,16 @@ interface Lage {
 export function InfoBadge({ explanation }: { explanation: string }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const id = useId();
   const [lage, setLage] = useState<Lage | null>(null);
   const wrap = useRef<HTMLSpanElement>(null);
   const knopf = useRef<HTMLButtonElement>(null);
   const fenster = useRef<HTMLSpanElement>(null);
+  // Das Fenster hängt NICHT am Knopf (QS 06.10.2026): in einer Kachel mit
+  // `opacity` (Anflugkarte, nicht bewertete Teilnote) war es durchsichtig,
+  // und Nachbarkacheln malten darüber. Ziel ist die Hülle der Webapp-
+  // Landungsansicht (dort hängen die Farbvariablen), sonst `body`.
+  const ziel = useRef<Element | null>(null);
 
   // Unter dem Knopf, links bündig; am Fensterrand eingerückt. Passt es
   // unten nicht hin, über den Knopf.
@@ -80,7 +95,7 @@ export function InfoBadge({ explanation }: { explanation: string }) {
     const r = knopf.current.getBoundingClientRect();
     // Sichtbarer Bereich: Fenster, geschnitten mit dem Bezugsrahmen (siehe
     // `bezugsrahmen`) — in dessen Koordinaten wird `top/left` gesetzt.
-    const rahmen = bezugsrahmen(knopf.current);
+    const rahmen = bezugsrahmen(ziel.current);
     const b = rahmen?.getBoundingClientRect();
     const x0 = Math.max(0, b ? b.left + (rahmen as HTMLElement).clientLeft : 0);
     const y0 = Math.max(0, b ? b.top + (rahmen as HTMLElement).clientTop : 0);
@@ -113,21 +128,31 @@ export function InfoBadge({ explanation }: { explanation: string }) {
   useEffect(() => {
     if (!open) return;
     const daneben = (e: PointerEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+      const n = e.target as Node;
+      if (wrap.current?.contains(n) || fenster.current?.contains(n)) return;
+      setOpen(false);
     };
     const taste = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        knopf.current?.focus();
+      }
+    };
+    const anderesAuf = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== id) setOpen(false);
     };
     // Festes Fenster: beim Rollen und bei Größenänderung folgt es dem
     // Knopf. Schließen wäre auf dem iPhone falsch — dort rollt schon das
     // Ein- und Ausblenden der Adressleiste.
     document.addEventListener("pointerdown", daneben);
     document.addEventListener("keydown", taste);
+    window.addEventListener(EREIGNIS_AUF, anderesAuf);
     window.addEventListener("scroll", ausrichten, true);
     window.addEventListener("resize", ausrichten);
     return () => {
       document.removeEventListener("pointerdown", daneben);
       document.removeEventListener("keydown", taste);
+      window.removeEventListener(EREIGNIS_AUF, anderesAuf);
       window.removeEventListener("scroll", ausrichten, true);
       window.removeEventListener("resize", ausrichten);
     };
@@ -143,18 +168,25 @@ export function InfoBadge({ explanation }: { explanation: string }) {
         onClick={(e) => {
           e.stopPropagation();
           setLage(null);
-          setOpen((v) => !v);
+          ziel.current = knopf.current?.closest(".la-shell") ?? document.body;
+          if (!open) window.dispatchEvent(new CustomEvent(EREIGNIS_AUF, { detail: id }));
+          setOpen(!open);
         }}
         aria-label={t("landing.info_badge.oeffnen")}
         aria-expanded={open}
+        aria-controls={open ? id : undefined}
       >
         i
       </button>
-      {open && (
+      {open && ziel.current && createPortal(
         <span
           ref={fenster}
           className={`info-badge__popover${lage?.oben ? " info-badge__popover--oben" : ""}`}
-          role="tooltip"
+          id={id}
+          // Ein Fenster mit Schließen-Knopf ist kein Tooltip (der darf nichts
+          // Bedienbares enthalten).
+          role="dialog"
+          aria-label={t("landing.info_badge.oeffnen")}
           style={{
             top: lage?.top ?? 0,
             left: lage?.left ?? 0,
@@ -176,7 +208,8 @@ export function InfoBadge({ explanation }: { explanation: string }) {
           >
             ×
           </button>
-        </span>
+        </span>,
+        ziel.current,
       )}
     </span>
   );

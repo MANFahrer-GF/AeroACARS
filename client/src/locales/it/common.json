@@ -190,7 +190,8 @@
       "gleitpfad_ueber": "Sentiero {{d}} dot sopra il sentiero",
       "gleitpfad_unter": "Sentiero {{d}} dot sotto il sentiero",
       "gleitpfad_lesart": "+ = sopra il sentiero. Fino a 1 dot verde, 1–2 giallo, da 2 rosso (fondo scala sul PFD). A destra passando sopra o toccando: il rombo come in cabina.",
-      "gleitpfad_fehlt": "Sentiero in dot: non registrato per questo volo (dalla v1.9.26, solo con la pista nei dati di navigazione)."
+      "gleitpfad_fehlt": "Sentiero in dot: non registrato per questo volo (dalla v1.9.26, solo con la pista nei dati di navigazione).",
+      "gleitpfad_lesart_druck": "+ = sopra il sentiero. Fino a 1 dot verde, 1–2 giallo, da 2 rosso (fondo scala sul PFD)."
     },
     "wind_from_front": "Vento di faccia",
     "wind_from_front_right": "Vento da prua destra",
@@ -221,13 +222,13 @@
       "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua landata ha usato — misurata dalla soglia: prima la distanza fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Viene valutato quanta pista resta: sotto il 60 % è punteggio pieno, dal 90 % diventa stretto — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?“ per la spiegazione completa.",
       "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (block − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
       "loadsheet": "Solo atterraggi più vecchi: presenza dei dati loadsheet (ZFW + TOW nel piano). Non fa più parte del punteggio dalla v1.7.12.",
-      "score_section": "Sette parti da 0–100 punti: rateo di discesa, forza G, rimbalzi, stabilità dell'avvicinamento, disciplina di pista, allineamento, punto di contatto. Il punteggio totale è la loro media ponderata, ma mai migliore di quanto consenta la parte più debole: una parte discreta al massimo 80, una scarsa al massimo 60, un evento pericoloso (prima della soglia, overrun, fuori pista, due o più rimbalzi, da 1,75 g) al massimo 40. Carburante e loadsheet sono solo indicativi e non contano.",
+      "score_section": "Otto parti da 0–100 punti: rateo di discesa, forza G, rimbalzi, stabilità dell’avvicinamento, disciplina di pista, allineamento, punto di contatto, richiamata. Il punteggio totale è la loro media ponderata, ma mai migliore di quanto consenta la parte più debole: una parte discreta al massimo 80, una scarsa al massimo 60, un evento pericoloso (prima della soglia, overrun, fuori pista, due o più rimbalzi, da 1,75 g) al massimo 40, da 2,6 g al massimo 14. Limita inoltre l’avvicinamento: PARTIAL al massimo 80, UNSTABLE al massimo 45, senza misura dell’avvicinamento al massimo 97. Carburante e loadsheet sono solo indicativi e non contano.",
       "runway_section": "Visualizzazione del contatto sulla pista. Il segno blu è il punto di contatto, la banda verde il rullaggio. Valori sotto a titolo indicativo: lunghezza totale, distanza dalla linea centrale, distanza oltre la soglia, utilizzo pista in percentuale. Valutati sono disciplina di pista, allineamento e punto di contatto (vedi le parti sopra).",
       "fuel_section": "Block = carburante allo sblocco; TO fuel = al punto di decollo; LDG fuel = al contatto; TOW, LDW, ZFW = pesi. I valori pianificati vengono dall'OFP SimBrief. L'\"aderenza al piano\" sotto mostra gli scostamenti a titolo indicativo — non conta per il punteggio.",
       "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva.",
       "runway_discipline": "Disciplina di pista: quanto la ruota esterna è rimasta lontana dal bordo pista durante il rullaggio. Al centro (fino al 75% della semilarghezza) punteggio pieno, più all'esterno 85, al bordo 55, ruote fuori pista 20, oltre la fine pista (overrun) 0. Fuori pista o overrun limitano il punteggio totale a 40.",
       "touchdown_point": "Dove hai toccato, misurato dalla soglia. Entro 150 m dal segnale di mira (aiming point) punteggio pieno, altrimenti nella zona di contatto 85, fino a metà della distanza di atterraggio disponibile 55, oltre 25. Contatto prima della soglia: 0 punti e il voto complessivo è al massimo 40.",
-      "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri e business jet: 16 / 20 / 24 s. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Una parte sotto 75 punti limita il voto complessivo a 80, sotto 45 a 60."
+      "abfangen": "Quanto tempo è passato dal passaggio a 50 ft al contatto. Aerei di linea: fino a 10 s punteggio pieno, fino a 12 s 80, fino a 15 s 50, oltre 25. Aerei leggeri, business jet e altri tipi non classificati come aerei di linea: 16 / 20 / 24 s. Se l’aereo risale a più di 50 fpm (ballooning), al massimo 50. Una parte sotto 75 punti limita il voto complessivo a 80, sotto 45 a 60."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -1217,7 +1218,7 @@
     "abfangen": {
       "titel": "Richiamata (flare)",
       "dauer": "Durata da 50 ft",
-      "dauer_hint": "Tempo dal passaggio a 50 ft sopra la pista al contatto. Risalire sopra 50 ft durante la richiamata non fa ripartire il tempo. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta da 12 s; aereo leggero o business jet punteggio pieno fino a 16 s.",
+      "dauer_hint": "Tempo dal passaggio a 50 ft sopra il punto di contatto al contatto. Risalire sopra 50 ft durante la richiamata non fa ripartire il tempo. Conta per il voto (parte “Richiamata”): aereo di linea punteggio pieno fino a 10 s, detrazione netta da 12 s; aereo leggero o business jet punteggio pieno fino a 16 s.",
       "vs": "Rateo di discesa 50 ft → contatto",
       "vs_hint": "Rateo di discesa al passaggio a 50 ft (valore del simulatore) e al primo contatto col suolo (dalla curva di quota, come valutato).",
       "reduktion": "Rateo ridotto",
@@ -1285,7 +1286,8 @@
       },
       "sinkrate_forensik": "Lo stesso atterraggio, mediato in modi diversi: finestre diverse danno ratei diversi. Si valuta il rateo al momento del contatto (in cima al rapporto); gli altri valori mostrano come si è arrivati lì.",
       "gkraft_forensik": "Lo stesso atterraggio, misurato in modi diversi: valori grezzi a 50 Hz, medie e percentili. Si valuta il picco leggermente smussato (forza G in cima al rapporto); gli altri valori sono per contesto.",
-      "bordbuch": "Ciò che il client ha riconosciuto in questo volo — luci, transponder, APU, velocità di rullaggio e altro — e quando. Si contano le voci completate, nulla viene criticato. Non conta per il voto."
+      "bordbuch": "Ciò che il client ha riconosciuto in questo volo — luci, transponder, APU, velocità di rullaggio e altro — e quando. Si contano le voci completate, nulla viene criticato. Non conta per il voto.",
+      "kopf_note_alt": "Questo atterraggio è stato valutato prima della versione 19 e mantiene il voto di allora — non viene ricalcolato. La lettera lo riassume: A+ da 95, A da 88, B+ da 82, B da 75, C da 65, D da 50, sotto F. Il voto complessivo di allora era la media ponderata delle parti sotto; le regole “la parte più debole limita” e la parte richiamata esistono solo dalla versione 19."
     },
     "info_badge": {
       "oeffnen": "Spiegazione",

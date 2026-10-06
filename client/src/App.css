@@ -7159,6 +7159,52 @@ input:disabled {
     overflow: visible;
     text-overflow: clip;
   }
+  /* Farbige Werte (Bandfarben, Δ-Pillen, Warnungen) sind für dunklen Grund
+     gewählt — Gelb auf Papier hatte Kontrast 1,5:1. Im Druck abgedunkelt,
+     der Farbton bleibt (QS 06.10.2026). */
+  .landing-report .farbwert {
+    filter: brightness(0.55) saturate(1.4);
+  }
+  /* Die Bahn-Warnung ist ein dunkelbrauner Kasten — auf Papier hell. */
+  .landing-report .bahn-warnung {
+    background: #fff7e6 !important;
+    color: #7a4b00 !important;
+    border-color: #d9a441 !important;
+  }
+  /* Wind-Block auf Papier (QS 06.10.2026): auf dem Bildschirm ein dunkler
+     Himmel mit weißer Schrift — gedruckt ein schwarzer Kasten. Hell, mit
+     dunkler Schrift; die farbigen Werte und Windlinien bleiben. */
+  .landing-report .windflow {
+    background: #eef2f7;
+    border: 1px solid #cbd5e1;
+  }
+  .landing-report .windflow__cap,
+  .landing-report .windflow__hero-unit,
+  .landing-report .windflow__hero-sub {
+    color: #475569;
+  }
+  .landing-report .windflow__hero-label,
+  .landing-report .windflow__rwy-id,
+  .landing-report .windflow__chip {
+    color: #1e293b;
+  }
+  .landing-report .windflow__hero-num {
+    text-shadow: none;
+  }
+  .landing-report .windflow__runway {
+    background: #ffffff;
+    border-color: #94a3b8;
+  }
+  .landing-report .windflow__rwy-keys {
+    background: repeating-linear-gradient(180deg, #64748b 0 3px, transparent 3px 7px);
+  }
+  .landing-report .windflow__rwy-line {
+    border-top-color: #94a3b8;
+  }
+  .landing-report .windflow__chip {
+    background: #ffffff;
+    border-color: #cbd5e1;
+  }
 }
 
 /* ===== v0.12.12-dev: News-Tab (VA-Nachrichten) ===== */

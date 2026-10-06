@@ -60,7 +60,12 @@ describe("PDF-Bericht der Landeanalyse", () => {
   });
 
   it("formatiert Datum und Uhrzeit in der Sprache der App", () => {
-    const quelle = readFileSync(resolve(__dirname, "LandingPanel.tsx"), "utf-8");
+    // Seit dem Umbau formatiert der Kopf in LandungsBewertung.tsx (QS
+    // 06.10.2026: der Wächter las nur noch LandingPanel.tsx).
+    const quelle = ["LandingPanel.tsx", "LandungsBewertung.tsx"]
+      .map((d) => readFileSync(resolve(__dirname, d), "utf-8"))
+      .join("\n");
+    expect(quelle).toContain("fmtDateTime");
     const nackt = [
       ...quelle.matchAll(/\.toLocale(?:Date|Time)?String\(\s*\)/g),
     ].map((m) => m[0]);
@@ -103,6 +108,8 @@ describe("PDF-Bericht der Landeanalyse", () => {
     // Seit der Bericht die Bildschirm-Abschnitte druckt (05.10.2026): auch
     // deren Knöpfe tragen die Druck-Ausblendung.
     const hilfe = [...markup.matchAll(/<button[^>]*>([^<]*Was bedeuten die Werte[^<]*)</g)];
+    // Gegenprobe: der Knopf steht im Bericht (sonst prüfte die Schleife nichts).
+    expect(hilfe.length).toBeGreaterThan(0);
     for (const h of hilfe) expect(h[0]).toContain("nur-bildschirm");
     expect(druckblock.includes(".nur-bildschirm")).toBe(true);
 

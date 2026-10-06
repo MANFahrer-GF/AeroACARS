@@ -215,7 +215,7 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
         flexWrap: "wrap",
       }}
     >
-      <span style={{ color: LEISE, fontSize: 12, width: 12 }}>{offen ? "▼" : "▶"}</span>
+      <span className="nur-bildschirm" style={{ color: LEISE, fontSize: 12, width: 12 }}>{offen ? "▼" : "▶"}</span>
       <Punkt ampel={letzte?.ampel} />
       <span
         style={{
@@ -224,7 +224,6 @@ export function SpritWegpunkte(p: SpritWegpunkteProps) {
           textTransform: "uppercase",
           letterSpacing: "0.06em",
           color: "var(--accent, #4cc2ff)",
-          whiteSpace: "nowrap",
         }}
       >
         {t("landing.sprit.wp_titel")}

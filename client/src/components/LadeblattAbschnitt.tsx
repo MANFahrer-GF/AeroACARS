@@ -73,6 +73,7 @@ function FuelComparisonBar({
             }}
           >
             <span
+              className="farbwert"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -271,6 +272,7 @@ function ComparisonTable({
               <span style={{ textAlign: "right", gridRow: "1 / 2" }}>
                 {delta != null ? (
                   <span
+                    className="farbwert"
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -379,7 +381,8 @@ export function LadeblattAbschnitt({ record }: { record: LandingRecord }) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
+          // min(): schmaler als 340 px (iPhone) eine Spalte statt Überlauf.
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(340px, 100%), 1fr))",
           gap: 14,
           marginTop: "1rem",
         }}

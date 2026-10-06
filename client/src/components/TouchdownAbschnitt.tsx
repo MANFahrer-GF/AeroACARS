@@ -118,10 +118,11 @@ export function WindCompass({
         ) : (
           <div className="windflow__hero">
             <span
-              className="windflow__hero-num"
+              className="windflow__hero-num farbwert"
               style={{ color: critColor }}
             >
-              {xwAbs.toFixed(0)}
+              {/* Ohne gemessenen Seitenwind keine erfundene 0 (QS 06.10.2026). */}
+              {crosswindKt != null ? xwAbs.toFixed(0) : "—"}
             </span>
             <div className="windflow__hero-meta">
               <span className="windflow__hero-unit">kt</span>
@@ -141,14 +142,20 @@ export function WindCompass({
             <span className="windflow__rwy-id">{runwayIdent}</span>
           </div>
         )}
-        {!calm && (
+        {/* Auch bei „Windstill" die gemessenen Zahlen — der frühere Bericht
+            zeigte sie immer (QS 06.10.2026); nur was gemessen ist. */}
+        {headwindKt != null && (
           <div className="windflow__chips">
-            <span className="windflow__chip">
-              {headLabel} {twAbs.toFixed(0)} kt
-            </span>
-            <span className="windflow__chip">
-              {t("landing.wind_total")} {totalKt.toFixed(0)} kt
-            </span>
+            {headwindKt != null && (
+              <span className="windflow__chip">
+                {headLabel} {twAbs.toFixed(0)} kt
+              </span>
+            )}
+            {headwindKt != null && crosswindKt != null && (
+              <span className="windflow__chip">
+                {t("landing.wind_total")} {totalKt.toFixed(0)} kt
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -232,7 +239,9 @@ export function TouchdownAbschnitt({ record }: { record: LandingRecord }) {
         <WindCompass
           headwindKt={record.headwind_kt}
           crosswindKt={record.crosswind_kt}
-          runwayIdent={record.runway_match?.runway_ident ?? null}
+          // Unsichere Bahngeometrie (z. B. falscher Platz erkannt): keine
+          // Bahnkennung, wie die übrigen Abschnitte (QS 06.10.2026).
+          runwayIdent={record.runway_geometry_trusted === false ? null : (record.runway_match?.runway_ident ?? null)}
         />
       </div>
     </section>

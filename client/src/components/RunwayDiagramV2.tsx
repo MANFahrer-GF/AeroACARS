@@ -1703,7 +1703,9 @@ function FlugzeugBar({ props }: { props: RunwayDiagramV2Props }) {
         // bei flex-basis auto am Content-Ende zu stoppen). Damit
         // alignment mit den Pills der Zeile darüber.
         flex: "999 1 0",
-        minWidth: 320,
+        // min(): auf iPhone-Breite (Webapp) lief die Zeile sonst über
+        // (QS 06.10.2026).
+        minWidth: "min(320px, 100%)",
       }}
     >
       <div
@@ -1846,7 +1848,7 @@ function oppositeRunway(ident: string): string {
 }
 
 // Helper liefern i18n-Keys (nicht direkt Strings) — Caller löst via t() auf.
-function surfaceLabelKey(s: string): string {
+export function surfaceLabelKey(s: string): string {
   const map: Record<string, string> = {
     ASP: "runway_v2.surface_asp",
     CON: "runway_v2.surface_con",

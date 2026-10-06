@@ -11,9 +11,13 @@ function rechteck(left: number, top: number, w: number, h: number): DOMRect {
 }
 
 function oeffnen(rahmenStil: string) {
+  // Wie in der Webapp: Hülle `.la-shell` (Ziel des Fensters) in einem
+  // Rahmen, der den Bezugsrahmen für `position: fixed` stellt.
   const { container } = render(
     <div data-rahmen style={{ cssText: rahmenStil } as unknown as React.CSSProperties}>
-      <InfoBadge explanation="Erklärung" />
+      <div className="la-shell">
+        <InfoBadge explanation="Erklärung" />
+      </div>
     </div>,
   );
   const rahmen = container.querySelector("[data-rahmen]") as HTMLElement;
@@ -22,7 +26,7 @@ function oeffnen(rahmenStil: string) {
   const knopf = container.querySelector(".info-badge") as HTMLElement;
   vi.spyOn(knopf, "getBoundingClientRect").mockReturnValue(rechteck(300, 200, 16, 16));
   fireEvent.click(knopf);
-  return container.querySelector(".info-badge__popover") as HTMLElement;
+  return document.querySelector(".info-badge__popover") as HTMLElement;
 }
 
 describe("(i)-Fenster im Bezugsrahmen", () => {
@@ -41,7 +45,9 @@ describe("(i)-Fenster im Bezugsrahmen", () => {
   it("bleibt innerhalb des Rahmens (rechter Rand)", () => {
     const { container } = render(
       <div data-rahmen style={{ transform: "translateX(0)" }}>
-        <InfoBadge explanation="Erklärung" />
+        <div className="la-shell">
+          <InfoBadge explanation="Erklärung" />
+        </div>
       </div>,
     );
     const rahmen = container.querySelector("[data-rahmen]") as HTMLElement;
@@ -49,8 +55,59 @@ describe("(i)-Fenster im Bezugsrahmen", () => {
     const knopf = container.querySelector(".info-badge") as HTMLElement;
     vi.spyOn(knopf, "getBoundingClientRect").mockReturnValue(rechteck(480, 200, 16, 16));
     fireEvent.click(knopf);
-    const f = container.querySelector(".info-badge__popover") as HTMLElement;
+    const f = document.querySelector(".info-badge__popover") as HTMLElement;
     // Rahmen rechts bei 500: Fenster endet 8 px davor → left = 500-8-280 = 212, relativ 112.
     expect(f.style.left).toBe("112px");
+  });
+});
+
+// QS 06.10.2026: per Tastatur ließen sich beliebig viele (i) öffnen; die
+// Rolle „tooltip" passte nicht zu einem Fenster mit Schließen-Knopf.
+describe("(i) — eines offen, Tastatur, Rollen", () => {
+  it("öffnet sich ein zweites, schließt das erste", () => {
+    const { container } = render(
+      <div>
+        <InfoBadge explanation="Eins" />
+        <InfoBadge explanation="Zwei" />
+      </div>,
+    );
+    const [a, b] = [...container.querySelectorAll(".info-badge")] as HTMLElement[];
+    fireEvent.click(a!);
+    expect(document.body.textContent).toContain("Eins");
+    fireEvent.click(b!);
+    expect(document.body.textContent).toContain("Zwei");
+    expect(document.body.textContent).not.toContain("Eins");
+  });
+
+  it("Escape schließt und gibt den Fokus an den Knopf zurück; Rolle dialog", () => {
+    const { container } = render(<InfoBadge explanation="Text" />);
+    const k = container.querySelector(".info-badge") as HTMLElement;
+    fireEvent.click(k);
+    const f = document.querySelector(".info-badge__popover") as HTMLElement;
+    expect(f.getAttribute("role")).toBe("dialog");
+    expect(k.getAttribute("aria-controls")).toBe(f.id);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.querySelector(".info-badge__popover")).toBeNull();
+    expect(document.activeElement).toBe(k);
+  });
+});
+
+// QS 06.10.2026: In einer Kachel mit `opacity` war das Fenster durchsichtig
+// und wurde von Nachbarkacheln überdeckt — es hängt jetzt außerhalb.
+describe("(i) — Fenster hängt nicht in der Kachel", () => {
+  it("Fenster liegt nicht im halbtransparenten Vorfahren; Klick hinein schließt nicht", () => {
+    const { container } = render(
+      <div className="kachel" style={{ opacity: 0.75 }}>
+        <InfoBadge explanation="Erklärtext" />
+      </div>,
+    );
+    fireEvent.click(container.querySelector(".info-badge") as HTMLElement);
+    const f = document.querySelector(".info-badge__popover") as HTMLElement;
+    expect(f).not.toBeNull();
+    expect(container.querySelector(".kachel")!.contains(f)).toBe(false);
+    fireEvent.pointerDown(f);
+    expect(document.querySelector(".info-badge__popover")).not.toBeNull();
+    fireEvent.pointerDown(document.body);
+    expect(document.querySelector(".info-badge__popover")).toBeNull();
   });
 });

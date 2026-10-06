@@ -540,11 +540,17 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         ));
     }
 
-    // 05.10.2026: Abfangen — wie lange vom letzten 50-ft-Durchgang bis zum
-    // Aufsetzen. Ohne Messung keine Achse (siehe `abfangen.rs`).
-    if let Some(s) = abfangen::sub_abfangen(input.abfangen.as_ref(), input.aircraft_icao.as_deref())
-    {
-        out.push(s);
+    // 05.10.2026: Abfangen — wie lange vom ersten 50-ft-Durchgang (im
+    // letzten Anflug) bis zum Aufsetzen. Ohne Messung keine Achse (siehe
+    // `abfangen.rs`). Nicht für Hubschrauber/Wasserflugzeuge (QS 06.10.2026):
+    // Schwebeflug ist dort das Verfahren, kein zu langes Abfangen — wie die
+    // Anflug- und Ausrichtungsbewertung.
+    if !input.nicht_konventionell {
+        if let Some(s) =
+            abfangen::sub_abfangen(input.abfangen.as_ref(), input.aircraft_icao.as_deref())
+        {
+            out.push(s);
+        }
     }
 
     // ⚠ `sub_fuel` wird NICHT MEHR bewertet (v1.7.35).
@@ -1445,6 +1451,56 @@ mod tests {
         };
         let subs = compute_sub_scores(&normal);
         assert!(subs.iter().any(|s| s.key == "stability" && s.skipped));
+    }
+
+    /// QS 06.10.2026: Hubschrauber/Wasserflugzeug — Schwebeflug ist dort
+    /// Verfahren, keine Abfang-Teilnote (und damit kein Deckel).
+    #[test]
+    fn nicht_konventionell_bekommt_keine_abfang_teilnote() {
+        let abfangen = abfangen::Abfangen {
+            dauer_ab_50ft_s: Some(40.0),
+            max_vs_fpm: Some(-20.0),
+            ..Default::default()
+        };
+        let heli = LandingScoringInput {
+            vs_fpm: Some(-150.0),
+            nicht_konventionell: true,
+            abfangen: Some(abfangen),
+            ..Default::default()
+        };
+        assert!(!compute_sub_scores(&heli)
+            .iter()
+            .any(|s| s.key == "abfangen"));
+        // Gegenprobe: konventionell gibt es sie (40 s → 25 Punkte).
+        let normal = LandingScoringInput {
+            nicht_konventionell: false,
+            ..heli
+        };
+        let s = compute_sub_scores(&normal);
+        assert_eq!(
+            s.iter().find(|s| s.key == "abfangen").map(|s| s.points),
+            Some(25)
+        );
+    }
+
+    /// QS 06.10.2026: Abfangen zählt mit Gewicht 2 (Entscheidung Thomas) —
+    /// fiele die Zeile weg, griffe still der Standard 1.
+    #[test]
+    fn abfangen_zaehlt_mit_gewicht_zwei() {
+        // Echte Schlüssel: der Text-Wächter des Frontends liest auch Rust-Tests.
+        let teil = |key: &str, p: u8| {
+            SubScoreEntry::scored(
+                key,
+                "landing.sub.abfangen",
+                p,
+                String::new(),
+                "flare_normal",
+                Band::Good,
+            )
+        };
+        // 100×3 (Sinkrate) + 80×2 (Abfangen) = 460 / 5 = 92; mit Gewicht 1: 380/4 = 95.
+        let subs = vec![teil("landing_rate", 100), teil("abfangen", 80)];
+        assert_eq!(gewichtetes_mittel(&subs), Some(92));
     }
 
     #[test]

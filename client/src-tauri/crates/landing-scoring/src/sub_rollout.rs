@@ -394,7 +394,7 @@ pub(crate) fn category_for_icao(icao: Option<&str>) -> Category {
         // Light fielen — u. a. in der GSG-Flotte geflogen (A306, A400,
         // L101, CONC).
         "A306", "A30B", "A310", "A3ST", "A400", "B703", "B778", "B779", "DC10", "L101", "CONC",
-        "IL62", "IL76",
+        "IL62", "IL76", "A337", "B74S", "C17",
     ];
     if HEAVY.contains(&icao.as_str()) {
         return Category::Heavy;
@@ -422,7 +422,7 @@ pub(crate) fn category_for_icao(icao: Option<&str>) -> Category {
         // fielen — u. a. in der GSG-Flotte geflogen (F28, RJ85, E75L,
         // B462/B463). E75L/E75S sind die echten ICAO-Kennungen der E175.
         "E75L", "E75S", "F28", "B461", "B462", "B463", "RJ70", "RJ85", "RJ1H", "B712", "B721",
-        "B722", "DC93", "DC95", "SU95",
+        "B722", "DC93", "DC95", "SU95", "T154", "SF34", "SB20", "D328", "J328", "C130",
     ];
     if MEDIUM.contains(&icao.as_str()) {
         return Category::Medium;
@@ -500,6 +500,26 @@ pub fn sub_rollout(rollout_m: Option<f32>, aircraft_icao: Option<&str>) -> Optio
 
 #[cfg(test)]
 mod tests {
+    /// QS 06.10.2026: die nachgetragenen Muster in der richtigen Klasse — an
+    /// Heavy hängt der Zuschlag der Ausroll-Bewertung, an der Klasse die
+    /// Abfang-Bänder.
+    #[test]
+    fn nachgetragene_muster_in_der_richtigen_klasse() {
+        for icao in [
+            "A306", "A310", "A400", "L101", "CONC", "DC10", "B779", "IL76", "A337", "B74S", "C17",
+        ] {
+            assert_eq!(category_for_icao(Some(icao)), Category::Heavy, "{icao}");
+        }
+        for icao in [
+            "E75L", "F28", "RJ85", "B462", "B463", "B712", "SU95", "T154", "SF34", "SB20", "D328",
+            "J328", "C130",
+        ] {
+            assert_eq!(category_for_icao(Some(icao)), Category::Medium, "{icao}");
+        }
+        // Gegenprobe: Kleinflugzeuge bleiben Light.
+        assert_eq!(category_for_icao(Some("C172")), Category::Light);
+    }
+
     use super::*;
 
     fn run(m: f32, icao: Option<&str>) -> (u8, String) {
