@@ -46452,9 +46452,11 @@ fn step_flight_at(
                 let gemessen = stats.vref_gemessen.take();
                 // Der PIREP-Eintrag „PMDG VREF (Landing)" nennt denselben Wert
                 // wie die Bewertung, nicht den aus dem ersten Anflug (QS Codex).
-                if let Some((v, "pmdg")) = gemessen {
-                    stats.pmdg_vref_at_landing = Some(v.round() as u8);
-                }
+                // Ohne PMDG-Messung beim Aufsetzen bleibt er leer.
+                stats.pmdg_vref_at_landing = match gemessen {
+                    Some((v, "pmdg")) => Some(v.round() as u8),
+                    _ => None,
+                };
                 let landeklappen =
                     landing_scoring::vref::landeklappen(snap.flap_handle_index, snap.flap_num_positions);
                 let vref = landing_scoring::vref::vref_bestimmen(
