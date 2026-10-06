@@ -7165,6 +7165,15 @@ input:disabled {
   .landing-report .farbwert {
     filter: brightness(0.55) saturate(1.4);
   }
+  /* QS Runde 14: dieselbe Regel für JEDEN Text mit eigener Farbe (inline)
+     und jede Grafikbeschriftung — statt Stelle für Stelle `.farbwert` zu
+     setzen (Sprit je Wegpunkt, Touchdown-Marke, Grenzwerte, „Gate" …).
+     Was schon dunkel ist, bleibt lesbar. */
+  .landing-report [style^="color:"],
+  .landing-report [style*="; color:"],
+  .landing-report svg text {
+    filter: brightness(0.55) saturate(1.4);
+  }
   /* Die Bahn-Warnung ist ein dunkelbrauner Kasten — auf Papier hell. */
   .landing-report .bahn-warnung {
     background: #fff7e6 !important;

@@ -350,7 +350,7 @@ Bewertet
 −3
 −4
 −5
-größte Abweichung im Verlauf +2,22 bei 209 ft
+größte Abweichung im Gate (1-s-Takt) +2,22 bei 209 ft
 Dots
 + = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD). Rechts beim Darüberfahren oder Antippen: die Raute wie im Cockpit.
 Gleitpfad in Dots (Abweichung vom Gleitpfad der gelandeten Bahn)

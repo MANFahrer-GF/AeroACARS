@@ -48,8 +48,9 @@ describe("Dot-Streifen", () => {
     const kurve = container.querySelector('path[stroke="#8b5cf6"]');
     expect(kurve?.getAttribute("d")?.match(/[ML]/g)?.length).toBe(5);
     // Markiert wird 2,22 bei 209 ft, nicht 4,98 kurz vor der Schwelle.
-    // Runde 13: „im Verlauf" — der Streifen ist ausgedünnt (1 Punkt/s).
-    expect(text).toContain("größte Abweichung im Verlauf +2,22 bei 209 ft");
+    // Runde 14: „im Gate" (gesucht wird 1000–200 ft), mit dem Takt des
+    // ausgedünnten Verlaufs — „im Verlauf" (Runde 13) widersprach dem Bild.
+    expect(text).toContain("größte Abweichung im Gate (1-s-Takt) +2,22 bei 209 ft");
     expect(text).not.toContain("4,98");
     // Achse wächst bis ±5 mit (größter Wert 4,98) — nichts klebt am Rand.
     // Kreis der Marke bei +2,22 Dots: yDot = 346 + 100 − 2,22/5 · 100 = 401,6.

@@ -315,10 +315,11 @@ export function ApproachChart({
     streifen.h / 2 -
     (Math.max(-DOT_ACHSE, Math.min(DOT_ACHSE, d)) / DOT_ACHSE) * (streifen.h / 2);
   // Markiert wird der größte Wert im Stable Gate (1000–200 ft) unter den
-  // gezeichneten Punkten. Der Verlauf ist auf einen Punkt je Sekunde
-  // ausgedünnt — die Beschriftung sagt deshalb „im Verlauf"; die
-  // Gleitpfad-Forensik rechnet über alle Proben (QS Runde 13). Unter 200 ft
-  // werden Dots nahe der Schwelle sehr empfindlich (THY39: +5 bei 100 ft).
+  // gezeichneten Punkten (Beschriftung „im Gate"; Runde 13 hatte „im
+  // Verlauf" — falsch, die Kurve geht darunter weiter, Runde 14). Der
+  // Verlauf ist auf einen Punkt je Sekunde ausgedünnt; die
+  // Gleitpfad-Forensik rechnet über alle Proben. Unter 200 ft werden Dots
+  // nahe der Schwelle sehr empfindlich (THY39: +5 bei 100 ft).
   const imGate = dotPunkte.filter((q) => q.p.h >= 200 && q.p.h <= 1000);
   const groessteAbw =
     imGate.length > 0

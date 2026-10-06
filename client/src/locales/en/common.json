@@ -186,7 +186,7 @@
       "after_td": "+{{s}} s after TD",
       "gleitpfad_titel": "Glide path in dots (deviation from the glide path of the landing runway)",
       "gleitpfad_achse": "Dots",
-      "gleitpfad_max": "largest deviation in the trace {{d}} at {{h}} ft",
+      "gleitpfad_max": "largest deviation in the gate (1 s steps) {{d}} at {{h}} ft",
       "gleitpfad_ueber": "Glide path {{d}} dots above the path",
       "gleitpfad_unter": "Glide path {{d}} dots below the path",
       "gleitpfad_lesart": "+ = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD). On the right when hovering or tapping: the diamond as in the cockpit.",

@@ -186,7 +186,7 @@
       "after_td": "+{{s}} s dopo il TD",
       "gleitpfad_titel": "Sentiero di discesa in dot (scostamento dal sentiero della pista di atterraggio)",
       "gleitpfad_achse": "Dot",
-      "gleitpfad_max": "scostamento massimo nel tracciato {{d}} a {{h}} ft",
+      "gleitpfad_max": "scostamento massimo nel gate (passo 1 s) {{d}} a {{h}} ft",
       "gleitpfad_ueber": "Sentiero {{d}} dot sopra il sentiero",
       "gleitpfad_unter": "Sentiero {{d}} dot sotto il sentiero",
       "gleitpfad_lesart": "+ = sopra il sentiero. Fino a 1 dot verde, 1–2 giallo, da 2 rosso (fondo scala sul PFD). A destra passando sopra o toccando: il rombo come in cabina.",
