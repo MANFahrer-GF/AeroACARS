@@ -46450,6 +46450,11 @@ fn step_flight_at(
                 // (`typical_vref_kt`) nimmt sie seit 2.0.6 nicht mehr.
                 // Verbraucht: ein Touch-and-go misst im naechsten Anflug neu.
                 let gemessen = stats.vref_gemessen.take();
+                // Der PIREP-Eintrag „PMDG VREF (Landing)" nennt denselben Wert
+                // wie die Bewertung, nicht den aus dem ersten Anflug (QS Codex).
+                if let Some((v, "pmdg")) = gemessen {
+                    stats.pmdg_vref_at_landing = Some(v.round() as u8);
+                }
                 let landeklappen =
                     landing_scoring::vref::landeklappen(snap.flap_handle_index, snap.flap_num_positions);
                 let vref = landing_scoring::vref::vref_bestimmen(
