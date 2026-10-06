@@ -1169,9 +1169,9 @@
         "pmdg": "Scost. Vref (PMDG)",
         "fbw": "Scost. Vref (FBW)",
         "fmc": "Scost. Vref (FMC)",
-        "kalibriert": "Scost. Vref (calcolata)",
-        "faa": "Scost. Vref (calcolata)",
-        "faa_ungeprueft": "Scost. Vref (non verificata)",
+        "kalibriert": "Scost. Vref (cal.)",
+        "faa": "Scost. Vref (FAA)",
+        "faa_ungeprueft": "Scost. Vref (~FAA)",
         "unbekannt": "Scostamento Vref"
       },
       "vref_hint": {

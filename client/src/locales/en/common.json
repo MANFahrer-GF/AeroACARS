@@ -1169,9 +1169,9 @@
         "pmdg": "Vref dev. (PMDG)",
         "fbw": "Vref dev. (FBW)",
         "fmc": "Vref dev. (FMC)",
-        "kalibriert": "Vref dev. (calculated)",
-        "faa": "Vref dev. (calculated)",
-        "faa_ungeprueft": "Vref dev. (unverified)",
+        "kalibriert": "Vref dev. (calib.)",
+        "faa": "Vref dev. (FAA)",
+        "faa_ungeprueft": "Vref dev. (~FAA)",
         "unbekannt": "Vref deviation"
       },
       "vref_hint": {

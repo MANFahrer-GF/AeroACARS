@@ -1169,9 +1169,9 @@
         "pmdg": "Vref-Abw. (PMDG)",
         "fbw": "Vref-Abw. (FBW)",
         "fmc": "Vref-Abw. (FMC)",
-        "kalibriert": "Vref-Abw. (berechnet)",
-        "faa": "Vref-Abw. (berechnet)",
-        "faa_ungeprueft": "Vref-Abw. (ungeprüft)",
+        "kalibriert": "Vref-Abw. (kalib.)",
+        "faa": "Vref-Abw. (FAA)",
+        "faa_ungeprueft": "Vref-Abw. (~FAA)",
         "unbekannt": "Vref-Abweichung"
       },
       "vref_hint": {

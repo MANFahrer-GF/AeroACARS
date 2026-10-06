@@ -300,7 +300,7 @@ Hinter der Schwelle
 i
 820
 m
-Vref-Abw. (ungeprüft)
+Vref-Abw. (~FAA)
 i
 -5
 kt

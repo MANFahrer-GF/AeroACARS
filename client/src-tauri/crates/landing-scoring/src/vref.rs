@@ -16,7 +16,9 @@
 //! 1. **Gemessen**: Vref (oder Airbus-VLS der Landestellung) aus dem
 //!    Flugzeug — PMDG-FMC, iniBuilds, FBW, FSS E-Jets, Zibo. Zählt nur, wenn
 //!    sie über 50 kt liegt und höchstens 25 kt von der Formel abweicht (ein
-//!    kaputter Wert soll nicht als Messung durchgehen).
+//!    kaputter Wert soll nicht als Messung durchgehen). Hat das Muster keine
+//!    Formel (unbekannt oder ausgeschlossen, z. B. die 737-800), gilt nur die
+//!    Untergrenze — sonst verlöre gerade die PMDG-737 ihre echte FMC-Vref.
 //! 2. **Kalibriert**: eigener Bezugswert aus euren Messungen, für Muster, bei
 //!    denen der FAA-Eintrag durchfällt.
 //! 3. **FAA bestätigt**: Formel unten, an echten Messungen geprüft.

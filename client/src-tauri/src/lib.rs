@@ -8337,8 +8337,8 @@ struct FlightStats {
     pmdg_v_speeds_takeoff: Option<(u8, u8, u8)>,
     /// VREF captured at the touchdown moment for the PIREP.
     pmdg_vref_at_landing: Option<u8>,
-    /// Vref aus dem Flugzeug ohne PMDG-SDK (iniBuilds, FSS, Zibo) oder die
-    /// Airbus-VLS in Landestellung — letzter Wert in der Luft, mit Quelle.
+    /// Vref aus dem Flugzeug (PMDG, iniBuilds, FSS, Zibo) oder die Airbus-VLS
+    /// in Landestellung — letzter Wert in der Luft, mit Quelle.
     vref_gemessen: Option<(f32, &'static str)>,
     /// FMC TO-flaps degrees captured at takeoff roll start.
     pmdg_takeoff_flaps_planned: Option<u8>,
@@ -9794,6 +9794,7 @@ fn check_go_around(
         let pending = stats.go_around_climb_pending_since.get_or_insert(now);
         if (now - *pending).num_seconds() >= GO_AROUND_DWELL_SECS {
             stats.go_around_count = stats.go_around_count.saturating_add(1);
+            stats.vref_gemessen = None;
             tracing::info!(
                 count = stats.go_around_count,
                 agl_ft = agl,
@@ -43046,11 +43047,14 @@ fn gewicht_aus_snapshot(snap: &SimSnapshot) -> Option<f64> {
     (weight > 0.0).then_some(weight)
 }
 
-/// Vref aus dem Flugzeug ohne PMDG-SDK: was der Adapter als Vref liest
+/// Vref aus dem Flugzeug: PMDG-FMC, sonst was der Adapter als Vref liest
 /// (iniBuilds, FSS E-Jets, Zibo), sonst die Airbus-VLS, aber nur in
 /// Landestellung — dort ist sie per Definition die Bezugsgröße (VLS CONF
-/// FULL = Vref). Quelle `fbw` für das FBW-Profil, sonst `fmc`.
+/// FULL = Vref). Quelle `pmdg`, `fbw` für das FBW-Profil, sonst `fmc`.
 fn vref_aus_dem_flugzeug(snap: &SimSnapshot) -> Option<(f32, &'static str)> {
+    if let Some(v) = snap.pmdg.as_ref().and_then(|p| p.fmc_vref_kt) {
+        return Some((v as f32, "pmdg"));
+    }
     let landestellung =
         landing_scoring::vref::landeklappen(snap.flap_handle_index, snap.flap_num_positions) == Some(true);
     let v = snap.vref_kt.or(snap.vls_kt.filter(|_| landestellung))?;
@@ -45285,6 +45289,17 @@ fn step_flight_at(
         return Some(FlightPhase::Climb);
     }
 
+    // Vref aus dem Flugzeug: jeder Takt in der Luft ueberschreibt, beim
+    // Aufsetzen gilt also der letzte Wert vor dem Boden. Durchstart und
+    // Aufsetzen setzen ihn zurueck. (QS Codex 06.10.2026: nur im Approach
+    // erfasst und PMDG nur der erste Wert — nach Durchstart, FMC-Aenderung im
+    // Final oder Neustart im Final galt ein veralteter oder gar kein Wert.)
+    if !snap.on_ground {
+        if let Some(v) = vref_aus_dem_flugzeug(snap) {
+            stats.vref_gemessen = Some(v);
+        }
+    }
+
     // v0.16.6: phase-independent approach sampling — see
     // `should_push_approach_sample`. For Approach/Final this is the exact
     // same per-tick push the two arms used to do as their first statement
@@ -45879,11 +45894,6 @@ fn step_flight_at(
                     stats.pmdg_autobrake_at_landing = Some(p.autobrake_label.clone());
                 }
             }
-            if !snap.on_ground {
-                if let Some(v) = vref_aus_dem_flugzeug(snap) {
-                    stats.vref_gemessen = Some(v);
-                }
-            }
 
             // Helicopters arrest a descent into a hover before set-down
             // (collective cushion), which the fixed-wing detector reads as a
@@ -46438,10 +46448,8 @@ fn step_flight_at(
                 // Vref-Abweichung: gemessen, sonst aus dem Landegewicht
                 // (`landing_scoring::vref`). Den Pauschalwert je Muster
                 // (`typical_vref_kt`) nimmt sie seit 2.0.6 nicht mehr.
-                let gemessen = stats
-                    .pmdg_vref_at_landing
-                    .map(|v| (v as f32, "pmdg"))
-                    .or(stats.vref_gemessen);
+                // Verbraucht: ein Touch-and-go misst im naechsten Anflug neu.
+                let gemessen = stats.vref_gemessen.take();
                 let landeklappen =
                     landing_scoring::vref::landeklappen(snap.flap_handle_index, snap.flap_num_positions);
                 let vref = landing_scoring::vref::vref_bestimmen(
@@ -46677,6 +46685,7 @@ fn step_flight_at(
                             // Score-Einfluss (`go_around_count` fliesst nicht in
                             // `landing_scoring`).
                             stats.go_around_count = stats.go_around_count.saturating_add(1);
+                            stats.vref_gemessen = None;
                             // Lernpaket AP4/AP5: Schnitt fuer die Forensik.
                             anflug_forensik_schneiden(&mut stats, Some(now));
                             let ga_count = stats.go_around_count;
@@ -59685,6 +59694,9 @@ mod canonical_landing_rate_fpm_tests {
         snap.vref_kt = Some(133.0);
         snap.aircraft_profile = sim_core::AircraftProfile::IniA380;
         assert_eq!(vref_aus_dem_flugzeug(&snap), Some((133.0, "fmc")));
+        // PMDG-FMC geht vor und heisst so.
+        snap.pmdg = Some(sim_core::PmdgState { fmc_vref_kt: Some(141), ..Default::default() });
+        assert_eq!(vref_aus_dem_flugzeug(&snap), Some((141.0, "pmdg")));
     }
 
     /// Gegenprobe: ein bereits korrekter Datensatz darf sich nicht aendern,
