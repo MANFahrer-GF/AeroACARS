@@ -20,7 +20,13 @@ function wetterText(t: Uebersetzer, code: string): string {
   for (let i = 0; i < out.length - 1; i++) {
     const paar = out.slice(i, i + 2);
     if ((WETTER as readonly string[]).includes(paar)) {
-      out = out.slice(0, i) + t(`landing.metar.wx.${paar}`) + out.slice(i + 2);
+      const ersatz = t(`landing.metar.wx.${paar}`);
+      out = out.slice(0, i) + ersatz + out.slice(i + 2);
+      // Hinter dem eingesetzten Text weitersuchen — enthielt er selbst einen
+      // Code (z. B. eine fehlende Übersetzung: der Schlüssel
+      // „landing.metar.wx.RA"), wuchs der Text endlos und die Seite hing
+      // (QS-Abnahme 06.10.2026, echte Landung EDLP mit „-RA").
+      i += ersatz.length - 1;
     }
   }
   return out;
