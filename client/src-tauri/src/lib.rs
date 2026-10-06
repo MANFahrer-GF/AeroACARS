@@ -12756,7 +12756,19 @@ fn activity_log_clear(state: tauri::State<'_, AppState>) {
 /// eine kuenftige Regelaenderung wirkt rueckwirkend auf die ganze Historie
 /// — und der Nachbau im Frontend kann entfallen. Der Speicher bleibt
 /// unangetastet (keine Migration, keine Schreibzugriffe).
+///
+/// Score-Version 21 (v2.0.5, Thomas: „die Landungen im Client neu
+/// berechnen"): Fluege, die noch mit Deckel bewertet wurden (Version
+/// 18–20), bekommen Note und Grund aus ihren eingefrorenen Teilnoten neu —
+/// mit derselben Funktion wie beim Einreichen. Teilnoten und Version
+/// bleiben, wie sie sind; die Server-Sicherung bleibt unberuehrt.
 fn normalize_derived_scores(mut r: LandingRecord) -> LandingRecord {
+    if matches!(r.score_algorithm_version, Some(18..=20)) && r.score_numeric.is_some() {
+        if let Some(neu) = landing_scoring::aggregate_master_score(&r.sub_scores) {
+            r.score_numeric = Some(neu as i32);
+            r.score_deckel = landing_scoring::master_deckel_wirksam(&r.sub_scores);
+        }
+    }
     // Ohne Note gibt es auch nichts abzuleiten. Ein Datensatz ohne
     // Bewertung (zu dünne Aufzeichnung, siehe `landung_nicht_bewertbar`)
     // behält leere Felder statt eines aus `None` gerechneten "F".
@@ -28529,8 +28541,8 @@ where
     let aggregate_master = landing_scoring::aggregate_master_score(&computed_sub_scores);
     // Lernpaket AP2: nur wenn die Gesamtnote tatsaechlich gedeckelt ist,
     // traegt der Datensatz den Grund — die Anzeige erklaert damit die Note.
-    let score_deckel = aggregate_master
-        .and(landing_scoring::master_deckel_wirksam(&computed_sub_scores));
+    let score_deckel =
+        aggregate_master.and(landing_scoring::master_deckel_wirksam(&computed_sub_scores));
     // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
     // keinen Deckel (Vorlage Punktesystem, Punkt 7). Ohne Rate liefert
     // `aggregate_master_score` `None` ("lieber gar keine Note als eine
@@ -59466,6 +59478,45 @@ mod canonical_landing_rate_fpm_tests {
             "accident_reasons": [],
         }))
         .expect("test record")
+    }
+
+    /// Score-Version 21: RYR73 wurde mit Version 18 und Deckel 45 bewertet
+    /// (Teilnoten wie im PIREP). Beim Lesen gilt der Abzug: 80 − 15 = 65.
+    /// Version 17 und 21 bleiben unberuehrt, ebenso Landungen ohne Note.
+    #[test]
+    fn normalize_rechnet_deckel_fluege_mit_abzug_neu() {
+        let teile = json!([
+            {"key":"landing_rate","label_key":"l","points":80,"score":80,"value":"-268 fpm","rationale_key":"landing.rat.above_target","band":"good","skipped":false},
+            {"key":"g_force","label_key":"l","points":80,"score":80,"value":"1.21 G","messwert":1.21,"rationale_key":"landing.rat.comfortable_g","band":"good","skipped":false},
+            {"key":"bounces","label_key":"l","points":100,"score":100,"value":"0","rationale_key":"landing.rat.clean_set","band":"good","skipped":false},
+            {"key":"stability","label_key":"l","points":45,"score":45,"value":"σ","warning":"anflug_unstable","rationale_key":"landing.rat.unstable_approach","band":"ok","skipped":false},
+            {"key":"rollout","label_key":"l","points":100,"score":100,"value":"-","rationale_key":"landing.rat.centered","band":"good","skipped":false},
+            {"key":"alignment","label_key":"l","points":85,"score":85,"value":"-","rationale_key":"landing.rat.off_centerline","band":"good","skipped":false},
+            {"key":"touchdown_point","label_key":"l","points":85,"score":85,"value":"-","rationale_key":"landing.rat.in_tdz","band":"good","skipped":false}
+        ]);
+        let mit = |version: Option<u8>, note: Option<i32>| {
+            let mut r = landing_record_fixture();
+            r.sub_scores = serde_json::from_value(teile.clone()).expect("teilnoten");
+            r.score_algorithm_version = version;
+            r.score_numeric = note;
+            r.score_deckel = Some("anflug_unstable_gesamt".into());
+            r
+        };
+        let n = normalize_derived_scores(mit(Some(18), Some(45)));
+        assert_eq!(n.score_numeric, Some(65));
+        assert_eq!(n.score_deckel.as_deref(), Some("anflug_unstable_abzug"));
+        assert_eq!(n.grade_letter.as_deref(), Some("C"));
+        assert_eq!(n.score_algorithm_version, Some(18), "Version bleibt");
+
+        for (v, note) in [(Some(17), Some(45)), (Some(21), Some(45)), (Some(18), None)] {
+            let n = normalize_derived_scores(mit(v, note));
+            assert_eq!(n.score_numeric, note, "{v:?}");
+            assert_eq!(
+                n.score_deckel.as_deref(),
+                Some("anflug_unstable_gesamt"),
+                "{v:?}"
+            );
+        }
     }
 
     /// QS 2026-08-04: `score_label`/`grade_letter` sind abgeleitete Werte,
