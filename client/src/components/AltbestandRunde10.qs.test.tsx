@@ -8,6 +8,7 @@ import type { LandingRecord } from "../lib/landungsDatensatz";
 import { MOCK_LANDING_OPTIONS } from "../dev/mockLandingRecords";
 import { LadeblattAbschnitt } from "./LadeblattAbschnitt";
 import { ApproachStabilityHilfeInhalt } from "./ApproachStabilityHilfeInhalt";
+import { RunwayUtilizationHilfeInhalt } from "./RunwayUtilizationHilfeInhalt";
 import { AltbestandKontext } from "./InfoBadge";
 
 describe("Trip · Plan ohne Ist-Verbrauch", () => {
@@ -32,6 +33,19 @@ describe("Hilfe-Dialog der Anflugkarte", () => {
     ).container.textContent ?? "";
     expect(alt).toContain("vor Score-Version 19 bewertet");
     const neu = render(<ApproachStabilityHilfeInhalt />).container.textContent ?? "";
+    expect(neu).not.toContain("vor Score-Version 19 bewertet");
+  });
+});
+
+describe("Hilfe-Dialog der Bahn-Auslastung (Runde 11)", () => {
+  it("Altbestand mit Hinweis, sonst ohne", () => {
+    const alt = render(
+      <AltbestandKontext.Provider value={true}>
+        <RunwayUtilizationHilfeInhalt />
+      </AltbestandKontext.Provider>,
+    ).container.textContent ?? "";
+    expect(alt).toContain("vor Score-Version 19 bewertet");
+    const neu = render(<RunwayUtilizationHilfeInhalt />).container.textContent ?? "";
     expect(neu).not.toContain("vor Score-Version 19 bewertet");
   });
 });

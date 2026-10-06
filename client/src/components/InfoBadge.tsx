@@ -83,6 +83,18 @@ interface Lage {
  */
 export const AltbestandKontext = createContext(false);
 
+/** Derselbe Hinweis als Absatz für Hilfedialoge (Anflug, Bahn-Auslastung) —
+ *  eine Stelle, damit kein Dialog ihn vergisst (QS Runde 11). */
+export function AltbestandHinweisAbsatz() {
+  const { t } = useTranslation();
+  if (!useContext(AltbestandKontext)) return null;
+  return (
+    <p className="helpmodal__p" style={{ marginTop: 0 }}>
+      <strong>{t("landing.erklaer.alt_hinweis")}</strong>
+    </p>
+  );
+}
+
 export function InfoBadge({
   explanation,
   ohneAltHinweis = false,

@@ -5,6 +5,7 @@
 // Dialog-Hülle (RunwayUtilizationHelpModal.tsx) bleibt je App eigen.
 
 import type { ReactNode } from "react";
+import { AltbestandHinweisAbsatz } from "./InfoBadge";
 import { useTranslation } from "react-i18next";
 import "./approachStabilityHilfe.css";
 
@@ -49,8 +50,11 @@ const SKIP_KEYS = [
 
 export function RunwayUtilizationHilfeInhalt() {
   const { t } = useTranslation();
+  // Der Dialog erscheint nur an der alten Bahn-Achse (Altbestand) — der
+  // Versionshinweis wie an jedem Erklärfenster (QS Runde 11).
   return (
     <div className="helpmodal__body">
+      <AltbestandHinweisAbsatz />
       <p style={{ margin: 0, fontSize: "0.92rem", lineHeight: 1.5 }}>
         {t("landing.runway_utilization_help.intro")}
       </p>
