@@ -1849,6 +1849,16 @@ pub struct TouchdownRolloutFinalizedPayload {
     // Ereignisse.
     #[serde(flatten)]
     pub herkunft: BahnHerkunftWire,
+
+    /// Mittlere Verzoegerung beim Ausrollen, m/s² (seit 2.0.1 im Client).
+    ///
+    /// Entsteht erst beim Ausrollende — im `touchdown_complete` neun
+    /// Sekunden nach dem Aufsetzen fehlt sie deshalb fast immer. Bis 2.0.6
+    /// kam sie nur im Client-Datensatz an, nie beim Recorder: die Webapp
+    /// zeigte bei jeder Landung „—" (Thomas, AIB 427, 07.10.2026). Fehlt
+    /// sie, bleibt beim Recorder der vorige Wert stehen (kein `null`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing_decel_mps2: Option<f32>,
 }
 
 /// Was der Client sendet, wenn jemand etwas zuruft.
@@ -3331,6 +3341,7 @@ mod herkunft_auf_der_leitung {
             runway_geometry_trusted: None,
             runway_geometry_reason: None,
             herkunft,
+            landing_decel_mps2: None,
         };
         let json = serde_json::to_value(&nachtrag).expect("serialisiert");
         let obj = json.as_object().expect("Objekt");
@@ -3484,6 +3495,7 @@ mod herkunft_auf_der_leitung {
                 aim_class: Some("on_aim".to_string()),
                 ..Default::default()
             },
+            landing_decel_mps2: None,
         };
         let json = serde_json::to_value(&hin).expect("hin");
         let zurueck = TouchdownRolloutFinalizedPayload::aus_json(json.clone())
@@ -3502,6 +3514,34 @@ mod herkunft_auf_der_leitung {
                 .map(|v| v.len()),
             Some(1)
         );
+    }
+
+    /// Die Verzoegerung geht im Nachtrag mit — sie entsteht erst beim
+    /// Ausrollende und kam bis 2.0.6 nie beim Recorder an (AIB 427,
+    /// 07.10.2026). Fehlt sie, steht kein `null` auf der Leitung, das den
+    /// vorigen Wert loeschen wuerde.
+    #[test]
+    fn verzoegerung_geht_im_nachtrag_mit() {
+        let mut n = TouchdownRolloutFinalizedPayload {
+            ts: 1,
+            pirep_id: "p1".to_string(),
+            touchdown_at: 2,
+            rollout_distance_m: 1453.3,
+            finalize_reason: None,
+            bahn: None,
+            landing_touchdown_zone: None,
+            runway_geometry_trusted: None,
+            runway_geometry_reason: None,
+            herkunft: BahnHerkunftWire::default(),
+            landing_decel_mps2: Some(1.2),
+        };
+        let json = serde_json::to_value(&n).expect("json");
+        assert!((json["landing_decel_mps2"].as_f64().unwrap() - 1.2).abs() < 1e-6);
+        let zurueck = TouchdownRolloutFinalizedPayload::aus_json(json).expect("lesen");
+        assert_eq!(zurueck.landing_decel_mps2, Some(1.2));
+        n.landing_decel_mps2 = None;
+        let json = serde_json::to_value(&n).expect("json");
+        assert!(!json.as_object().unwrap().contains_key("landing_decel_mps2"));
     }
 
     /// ⚠ Ohne Spur-Block stehen KEINE Spur-Felder auf der Leitung.
@@ -3525,6 +3565,7 @@ mod herkunft_auf_der_leitung {
                 bahn_revision: Some(2),
                 ..Default::default()
             },
+            landing_decel_mps2: None,
         };
         let json = serde_json::to_value(&n).expect("json");
         let obj = json.as_object().expect("Objekt");

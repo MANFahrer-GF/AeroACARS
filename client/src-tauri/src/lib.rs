@@ -39495,6 +39495,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // am Touchdown und muss am Nachtrag mitkommen,
                                 // sonst bleibt er stehen, wenn die Bahn wechselt.
                                 bahnvertrauen(&flight, &stats),
+                                // Die Verzoegerung entsteht erst beim
+                                // Ausrollende, siehe Feld-Doku.
+                                stats.landing_decel_mps2,
                             )
                         })
                     } else {
@@ -39510,6 +39513,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     herkunft,
                     zone,
                     vertrauen,
+                    verzoegerung,
                 )) = finalized
                 {
                     // ⚠ Erneut senden, wenn die Bahnwerte sich SEITHER
@@ -39562,6 +39566,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                                 .1
                                                 .map(|r| r.to_string()),
                                             herkunft,
+                                            landing_decel_mps2: verzoegerung,
                                         },
                                     );
                                     // Sperre und Fahne fallen NUR, wenn der
@@ -43024,6 +43029,7 @@ fn bahn_nachtrag_bauen(
         runway_geometry_trusted: Some(bahnvertrauen(flight, stats).0),
         runway_geometry_reason: bahnvertrauen(flight, stats).1.map(|r| r.to_string()),
         herkunft: bahn_herkunft(stats),
+        landing_decel_mps2: stats.landing_decel_mps2,
     })
 }
 
