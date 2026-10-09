@@ -43752,7 +43752,12 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         // Zurueck auf Kurs (oder kein Aufsetzkurs): keine Ausfahrt.
         _ => stats.bahn_ausfahrt_kandidat = None,
     }
-    let bestaetigt = quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M
+    // Nur solange die Spur laeuft: Ist sie fertig (etwa unter fuenf Knoten
+    // in der Abrollbahn stehengeblieben), ist der Nachtrag an den Recorder
+    // schon unterwegs. Eine spaetere Bestaetigung aenderte die Note, aber
+    // nicht mehr die Bahnwerte, die dort stehen.
+    let bestaetigt = stats.bahn_spur_laeuft
+        && quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M
         && stats
             .bahn_ausfahrt_kandidat
             .as_ref()
@@ -81907,6 +81912,21 @@ mod schnelle_ausfahrt_tests {
         let max = stats.bahn_max_querversatz_m.unwrap();
         assert!(max < -35.0, "Versatz {max:.1} m — das Ausbrechen ging verloren");
         assert!(stats.bahn_raeum_laengs_m.is_none());
+    }
+
+    #[test]
+    fn nach_dem_ende_der_spur_wird_nichts_mehr_bestaetigt() {
+        let mut stats = aequator_bahn(90.0);
+        ausrollen(&mut stats, 1800.0, 70.0);
+        // Kurve bei 68 kt, ueber die Kante, dann Stillstand in der Abrollbahn.
+        for (l, q, gs, k) in [(1820.0, 0.0, 68.0, 84.0), (1840.0, -8.0, 65.0, 70.0), (1860.0, -40.0, 50.0, 60.0), (1870.0, -60.0, 3.0, 60.0)] {
+            tick(&mut stats, l, q, gs, k);
+        }
+        assert!(!stats.bahn_spur_laeuft, "Spur laeuft noch");
+        let vorher = stats.bahn_max_querversatz_m;
+        // Spaeter weiter bis weit neben die Bahn.
+        tick(&mut stats, 1880.0, -130.0, 15.0, 60.0);
+        assert_eq!(stats.bahn_max_querversatz_m, vorher, "nach dem Nachtrag umbewertet");
     }
 
     #[test]
