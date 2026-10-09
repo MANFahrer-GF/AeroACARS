@@ -43503,18 +43503,7 @@ fn spur_fortschreiben(
     // hier — sonst laege die Marke bis zu zehn Meter daneben, und zwar
     // immer ausserhalb, weil die Aufzeichnung erst nach dem Uebertritt
     // misst.
-    let interpoliert = || match stats.bahn_spur.last() {
-        Some((lg, qr)) if (*qr as f64).abs() <= halbe_breite_m => {
-            let spanne = quer_m.abs() - (*qr as f64).abs();
-            if spanne > 1e-6 {
-                let t = (halbe_breite_m - (*qr as f64).abs()) / spanne;
-                *lg as f64 + t * (laengs_m - *lg as f64)
-            } else {
-                laengs_m
-            }
-        }
-        _ => laengs_m,
-    };
+    let interpoliert = || kante_zwischen(stats.bahn_spur.last(), laengs_m, quer_m, halbe_breite_m);
     // Waehrend einer schnellen Ausfahrt (`AusfahrtKandidat`) ist das
     // Fenster beim Kantenuebertritt noch offen. Die Stelle wird am
     // Kandidaten vorgemerkt und erst mit seiner Bestaetigung zur Kante —
@@ -43578,6 +43567,24 @@ fn spur_fortschreiben(
     });
     if weit_genug {
         stats.bahn_spur.push((laengs_m as f32, quer_m as f32));
+    }
+}
+
+/// Wo die Bahnkante zwischen dem letzten Spurpunkt und dieser Position
+/// gequert wurde. Liegt der letzte Punkt schon draussen (oder fehlt), gilt
+/// die Position selbst.
+fn kante_zwischen(letzter: Option<&(f32, f32)>, laengs_m: f64, quer_m: f64, halbe_breite_m: f64) -> f64 {
+    match letzter {
+        Some((lg, qr)) if (*qr as f64).abs() <= halbe_breite_m => {
+            let spanne = quer_m.abs() - (*qr as f64).abs();
+            if spanne > 1e-6 {
+                let t = (halbe_breite_m - (*qr as f64).abs()) / spanne;
+                *lg as f64 + t * (laengs_m - *lg as f64)
+            } else {
+                laengs_m
+            }
+        }
+        _ => laengs_m,
     }
 }
 
@@ -43772,10 +43779,19 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
             stats.bahn_raeum_gs_kt = Some(k.gs_kt);
             stats.bahn_raeum_kurs_diff = Some(k.kurs_diff);
             stats.bahn_raeum_seite = bahn_raeum_seite(k.kurs_diff, &stats.bahn_spur, k.laengs_m);
-            if let Some(kante) = k.kante_laengs_m {
-                stats.bahn_kante_laengs_m = Some(kante.max(k.laengs_m));
-                stats.bahn_kante_gs_kt = k.kante_gs_kt;
-            }
+            // Nicht vorgemerkt heisst: Die Kante wurde zwischen dem letzten
+            // Spurpunkt und diesem Tick gequert — ein Sprung, etwa nach einem
+            // Haenger des Simulators. `spur_fortschreiben` sieht ihn nicht
+            // mehr, weil es bei dieser Position gleich abbricht.
+            let (kante, kante_gs) = match k.kante_laengs_m {
+                Some(kante) => (kante, k.kante_gs_kt),
+                None => (
+                    kante_zwischen(stats.bahn_spur.last(), laengs_m, quer_m, halbe_breite_m),
+                    Some(snap.groundspeed_kt as f64),
+                ),
+            };
+            stats.bahn_kante_laengs_m = Some(kante.max(k.laengs_m));
+            stats.bahn_kante_gs_kt = kante_gs;
             tracing::info!(
                 laengs_m = k.laengs_m,
                 gs_kt = k.gs_kt,
@@ -81927,6 +81943,37 @@ mod schnelle_ausfahrt_tests {
         // Spaeter weiter bis weit neben die Bahn.
         tick(&mut stats, 1880.0, -130.0, 15.0, 60.0);
         assert_eq!(stats.bahn_max_querversatz_m, vorher, "nach dem Nachtrag umbewertet");
+    }
+
+    #[test]
+    fn ein_sprung_ueber_die_kante_setzt_trotzdem_den_uebertritt() {
+        let mut stats = aequator_bahn(90.0);
+        ausrollen(&mut stats, 1800.0, 72.0);
+        tick(&mut stats, 1810.0, 0.0, 70.0, 84.0);
+        tick(&mut stats, 1820.0, -10.0, 68.0, 70.0);
+        // Haenger: naechste Position schon 150 m neben der Achse.
+        tick(&mut stats, 1900.0, -150.0, 62.0, 60.0);
+        let raeum = stats.bahn_raeum_laengs_m.expect("bestaetigt");
+        let kante = stats.bahn_kante_laengs_m.expect("Kante fehlt nach dem Sprung");
+        assert!(kante > 1820.0 && kante < 1900.0, "Kante bei {kante:.0} m");
+        assert!(kante >= raeum);
+        assert_eq!(stats.bahn_kante_gs_kt, Some(62.0));
+    }
+
+    #[test]
+    fn ein_offener_kandidat_ueberlebt_den_neustart() {
+        let mut stats = aequator_bahn(90.0);
+        ausrollen(&mut stats, 1800.0, 72.0);
+        tick(&mut stats, 1810.0, 0.0, 70.0, 84.0);
+        tick(&mut stats, 1820.0, -10.0, 68.0, 75.0);
+        let k = stats.bahn_ausfahrt_kandidat.clone().expect("Kandidat");
+        let json = serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).unwrap();
+        let mut n = FlightStats::default();
+        serde_json::from_str::<PersistedFlightStats>(&json).unwrap().apply_to(&mut n);
+        let w = n.bahn_ausfahrt_kandidat.expect("Kandidat nach dem Neustart weg");
+        assert_eq!((w.laengs_m, w.kurs_diff, w.proben), (k.laengs_m, k.kurs_diff, k.proben));
+        assert_eq!(w.max_querversatz_m, k.max_querversatz_m);
+        assert_eq!(w.kante_laengs_m, k.kante_laengs_m);
     }
 
     #[test]
