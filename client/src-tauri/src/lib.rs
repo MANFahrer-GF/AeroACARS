@@ -17361,11 +17361,19 @@ fn clear_activity_log_for_new_flight(app: &AppHandle) {
 /// überholt.
 fn save_activity_log(log: &VecDeque<ActivityEntry>) {
     let kopie: Vec<ActivityEntry> = log.iter().cloned().collect();
-    let _ = activity_log_schreiber().send(AktivitaetAuftrag::Stand(kopie));
+    // Nur der neueste Stand wird gehalten — hängt die Platte, stapeln sich
+    // keine Kopien (unabhängige Gesamtabnahme 12.10.2026).
+    if let Ok(mut neuester) = AKTIVITAET_NEUESTER.lock() {
+        *neuester = Some(kopie);
+    }
+    let _ = activity_log_schreiber().send(AktivitaetAuftrag::Wecken);
 }
 
+static AKTIVITAET_NEUESTER: std::sync::Mutex<Option<Vec<ActivityEntry>>> =
+    std::sync::Mutex::new(None);
+
 enum AktivitaetAuftrag {
-    Stand(Vec<ActivityEntry>),
+    Wecken,
     Abwarten(std::sync::mpsc::SyncSender<()>),
 }
 
@@ -17376,18 +17384,15 @@ fn activity_log_schreiber() -> std::sync::mpsc::Sender<AktivitaetAuftrag> {
         .get_or_init(|| {
             let (tx, rx) = std::sync::mpsc::channel::<AktivitaetAuftrag>();
             std::thread::spawn(move || {
-                let mut offen: Option<Vec<ActivityEntry>> = None;
                 while let Ok(erster) = rx.recv() {
                     let mut warten = Vec::new();
-                    // Alles, was schon ansteht, zusammenfassen: nur der
-                    // neueste Stand wird geschrieben.
                     for auftrag in std::iter::once(erster).chain(rx.try_iter()) {
-                        match auftrag {
-                            AktivitaetAuftrag::Stand(stand) => offen = Some(stand),
-                            AktivitaetAuftrag::Abwarten(fertig) => warten.push(fertig),
+                        if let AktivitaetAuftrag::Abwarten(fertig) = auftrag {
+                            warten.push(fertig);
                         }
                     }
-                    if let Some(stand) = offen.take() {
+                    let stand = AKTIVITAET_NEUESTER.lock().ok().and_then(|mut n| n.take());
+                    if let Some(stand) = stand {
                         activity_log_schreiben(&stand);
                     }
                     for fertig in warten {
@@ -18870,8 +18875,8 @@ struct FlightLogStatsDto {
 /// before they hit "alle löschen".
 #[tauri::command(async)]
 fn flight_logs_stats(app: AppHandle) -> Result<FlightLogStatsDto, UiError> {
-    // Läuft im Befehls-Faden, nicht im Hauptfaden — Warten ist hier unkritisch.
-    flugprotokoll_abwarten();
+    // Läuft im Befehls-Faden, nicht im Hauptfaden; kurz halten.
+    flugprotokoll_abwarten_hoechstens(Duration::from_secs(2));
     let dir = app
         .path()
         .app_data_dir()
@@ -31604,6 +31609,7 @@ async fn flight_end(
     bordbuch_abschliessen(&app, &flight);
     nachtrag_vor_dem_einreichen_sichern(&app, &flight);
     landung_vor_dem_einreichen_nachschicken(&app, &flight).await;
+    acars_abwarten(Duration::from_secs(15)).await;
     match file_pirep_with_retry(&client, &flight.pirep_id, &body).await {
         Ok(()) => {
             // Snapshot the landing into the local history file BEFORE
@@ -32723,6 +32729,7 @@ async fn flight_end_manual(
     bordbuch_abschliessen(&app, &flight);
     nachtrag_vor_dem_einreichen_sichern(&app, &flight);
     landung_vor_dem_einreichen_nachschicken(&app, &flight).await;
+    acars_abwarten(Duration::from_secs(15)).await;
     let ergebnis = {
         let _live = PHPVMS_LIVE_MELDUNG.lock().await;
         client.file_pirep(&flight.pirep_id, &body).await
@@ -33239,7 +33246,10 @@ async fn flight_cancel(
         .clear();
     flight.stop.store(true, Ordering::Relaxed);
     let client = current_client(&state)?;
-    let result = client.cancel_pirep(&flight.pirep_id).await;
+    let result = {
+        let _live = PHPVMS_LIVE_MELDUNG.lock().await;
+        client.cancel_pirep(&flight.pirep_id).await
+    };
     // Clear local persistence — but only THIS flight's: the await above is
     // exactly the gap where a newly started flight could already own the
     // (single, fixed) persistence path. See `sollte_persistierten_flug_loeschen`.
@@ -33467,6 +33477,10 @@ fn spawn_resume_sim_gate(
                         let flight_hb = Arc::clone(&flight);
                         let client_hb = client.clone();
                         tauri::async_runtime::spawn(async move {
+                            let _live = PHPVMS_LIVE_MELDUNG.lock().await;
+                            if flight_hb.stop.load(Ordering::Relaxed) {
+                                return;
+                            }
                             match client_hb.update_pirep(&flight_hb.pirep_id, &body).await {
                                 Ok(()) => {
                                     flight_hb
@@ -38230,6 +38244,22 @@ fn fuel_used_effective_kg(
 /// was danach die Sperre bekommt, sendet nichts mehr.
 static PHPVMS_LIVE_MELDUNG: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// ACARS-Logpakete, die gemeldet, aber noch nicht an phpVMS gegangen sind.
+/// Das Einreichen wartet darauf (`acars_abwarten`), sonst fehlten im
+/// Fluglogbuch die letzten Zeilen („Arrived", „On Block") — unabhängige
+/// Gesamtabnahme 12.10.2026.
+static ACARS_OFFEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Warten, bis alle gemeldeten ACARS-Logzeilen bei phpVMS sind — höchstens
+/// `grenze`. Danach gehen Reste trotzdem noch raus, nur nicht mehr vor dem
+/// Einreichen.
+async fn acars_abwarten(grenze: Duration) {
+    let beginn = std::time::Instant::now();
+    while ACARS_OFFEN.load(Ordering::SeqCst) > 0 && beginn.elapsed() < grenze {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// Ein Lebenszeichen für phpVMS (`POST /pireps/{id}/update`).
 #[derive(Clone)]
 struct Lebenszeichen {
@@ -38257,7 +38287,10 @@ impl PhpvmsMeldungen {
     }
 
     fn acars(&self, eintraege: Vec<api_client::LogEntry>) {
-        let _ = self.acars.send(eintraege);
+        ACARS_OFFEN.fetch_add(1, Ordering::SeqCst);
+        if self.acars.send(eintraege).is_err() {
+            ACARS_OFFEN.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -38340,12 +38373,16 @@ fn spawn_phpvms_meldungen(
         });
     }
     tauri::async_runtime::spawn(async move {
+        // Kein Abbruch bei `stop`: Das Einreichen wartet auf diese Zeilen
+        // (`acars_abwarten`); sie zu verwerfen hiesse, das Ende des
+        // Fluglogbuchs zu verlieren. Der Arbeiter endet, wenn der Streamer
+        // seinen Sender fallen lässt und die Warteschlange leer ist.
         while let Some(eintraege) = acars_rx.recv().await {
             let _live = PHPVMS_LIVE_MELDUNG.lock().await;
-            if flight.stop.load(Ordering::Relaxed) {
-                break;
-            }
-            match client.post_acars_logs(&flight.pirep_id, &eintraege).await {
+            let ergebnis = client.post_acars_logs(&flight.pirep_id, &eintraege).await;
+            drop(_live);
+            ACARS_OFFEN.fetch_sub(1, Ordering::SeqCst);
+            match ergebnis {
                 Ok(()) => {
                     tracing::debug!(
                         pirep_id = %flight.pirep_id,
@@ -38353,10 +38390,8 @@ fn spawn_phpvms_meldungen(
                         "ACARS log lines pushed"
                     );
                 }
-                Err(ApiError::NotFound) => {
-                    drop(_live);
+                Err(ApiError::NotFound) if !flight.stop.load(Ordering::Relaxed) => {
                     handle_remote_cancellation(&app, &flight, "POST acars/logs");
-                    break;
                 }
                 Err(e) => {
                     tracing::warn!(
