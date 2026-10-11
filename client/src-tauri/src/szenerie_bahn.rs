@@ -1034,7 +1034,9 @@ fn gemerkt() -> &'static Mutex<Merker> {
 pub(crate) fn vorladen(icao: &str) {
     static UNTERWEGS: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
     let schluessel = icao.trim().to_ascii_uppercase();
-    if schluessel.len() != 4 {
+    // Nicht nur vierstellig: Ausweichplätze heißen auch `48FA` oder `US-4991`
+    // (`correlate_airport_icao`, Codex-Nachprüfung 11.10.2026).
+    if schluessel.is_empty() {
         return;
     }
     if gemerkter_eintrag(&schluessel).is_some_and(|(alter, _)| alter < MERKER_AUFFRISCHEN) {
