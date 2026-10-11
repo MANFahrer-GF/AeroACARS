@@ -38961,6 +38961,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             dep_szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
             if szenerie_bahn::quelle_fuer(snap.simulator) == szenerie_bahn::Quelle::XPlaneDatei {
                 szenerie_bahn::vorladen(&flight.arr_airport);
+                landeplatz_szenerie_vorladen(&flight.arr_airport, &snap);
             }
 
             // ⚠ Und die Bahnaufloesung NACHHOLEN, wenn die Szenerie erst
@@ -41751,6 +41752,30 @@ const CORRELATE_AIRPORT_SEARCH_RADIUS_NM: f64 = 6.0;
 /// (mid-ocean / off-grid strip) — identical to the old behaviour, where the
 /// cache lookup on `arr_airport` would simply miss and fall through to
 /// OurAirports.
+/// Den Platz vorladen, auf den die Landung zuläuft — bei einem Divert ist
+/// das nicht `arr_airport`.
+///
+/// Codex-Abnahme 11.10.2026: Vorgeladen wurde nur das geplante Ziel. Die
+/// Bahnkorrelation fragt aber `correlate_airport_icao` am Aufsetzpunkt und
+/// las einen Ausweichplatz weiter unter der Flugdaten-Sperre aus der apt.dat
+/// — genau das Hängen, das `szenerie_bahn::vorladen` beseitigen soll.
+/// Dieselbe Funktion hier, unter 5000 ft AGL, höchstens alle 20 s (sie
+/// durchsucht die Flughafenliste).
+fn landeplatz_szenerie_vorladen(arr_airport: &str, snap: &SimSnapshot) {
+    static ZULETZT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    if snap.on_ground || snap.altitude_agl_ft > 5000.0 {
+        return;
+    }
+    {
+        let Ok(mut zuletzt) = ZULETZT.lock() else { return };
+        if zuletzt.is_some_and(|t| t.elapsed() < Duration::from_secs(20)) {
+            return;
+        }
+        *zuletzt = Some(std::time::Instant::now());
+    }
+    szenerie_bahn::vorladen(&correlate_airport_icao(arr_airport, snap.lat, snap.lon));
+}
+
 fn correlate_airport_icao(arr_airport: &str, td_lat: f64, td_lon: f64) -> String {
     let planned = arr_airport.trim().to_uppercase();
     // Pull a small candidate set (not just the nearest) so the planned

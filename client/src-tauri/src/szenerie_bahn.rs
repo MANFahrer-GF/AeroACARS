@@ -968,21 +968,42 @@ pub fn szenerie_vorbereiten() {
 /// voraussetzt und nur fuer die Bahnkorrektur gedacht ist.
 pub(crate) fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
     let schluessel = icao.trim().to_ascii_uppercase();
-    if let Some(treffer) = gemerkt()
-        .lock()
-        .ok()
-        .and_then(|m| m.get(&schluessel).cloned())
+    if let Some((_, treffer)) =
+        gemerkter_eintrag(&schluessel).filter(|(alter, _)| *alter < MERKER_GUELTIG)
     {
         return treffer;
     }
     let ergebnis = szenerie_flughafen_lesen(&schluessel);
     if let Ok(mut merk) = gemerkt().lock() {
-        merk.insert(schluessel, ergebnis.clone());
+        merk.insert(schluessel, (std::time::Instant::now(), ergebnis.clone()));
     }
     ergebnis
 }
 
-/// Schon gelesene Flughäfen, auch die nicht gefundenen.
+/// Wie lange ein gemerkter Flughafen ohne neues Lesen gilt.
+///
+/// Erst das Lesen prüft, ob sich die Szenerie geändert hat (`gueltig()` in
+/// `verzeichnis_bereitstellen`). Ein Merker ohne Ablauf hätte eine
+/// nachinstallierte oder geänderte Szenerie bis zum Neustart verschluckt
+/// (Codex-Abnahme 11.10.2026). `vorladen` frischt ab `MERKER_AUFFRISCHEN` im
+/// Hintergrund auf — so ist der Eintrag beim Aufsetzen nie abgelaufen und
+/// unter der Flugdaten-Sperre wird nicht gelesen.
+const MERKER_GUELTIG: std::time::Duration = std::time::Duration::from_secs(600);
+const MERKER_AUFFRISCHEN: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Alter und Inhalt eines gemerkten Flughafens.
+fn gemerkter_eintrag(
+    schluessel: &str,
+) -> Option<(
+    std::time::Duration,
+    Option<sim_xplane::szenerie::SzenerieFlughafen>,
+)> {
+    let merk = gemerkt().lock().ok()?;
+    let (zeit, wert) = merk.get(schluessel)?;
+    Some((zeit.elapsed(), wert.clone()))
+}
+
+/// Schon gelesene Flughäfen, auch die nicht gefundenen, mit Lesezeitpunkt.
 ///
 /// # Warum (AZU 8710, 11.10.2026)
 ///
@@ -990,33 +1011,33 @@ pub(crate) fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::Sze
 /// Ohne Merker prüfte jeder Aufruf Größe und Zeitstempel aller apt.dat und
 /// las dann den Flughafen aus der Datei — bei Nimbus-KMCO gut eine Sekunde,
 /// in der Aufsetz-Sampler und Positionsstrom standen. Mit `vorladen` liegt
-/// der Zielflughafen beim Aufsetzen schon hier, und der Nachschlag kostet
+/// der Landeplatz beim Aufsetzen schon hier, und der Nachschlag kostet
 /// nichts. Geleert wird der Merker, wenn das Verzeichnis neu gebaut wird.
-fn gemerkt() -> &'static Mutex<
-    std::collections::HashMap<String, Option<sim_xplane::szenerie::SzenerieFlughafen>>,
-> {
-    static MERKER: OnceLock<
-        Mutex<std::collections::HashMap<String, Option<sim_xplane::szenerie::SzenerieFlughafen>>>,
-    > = OnceLock::new();
-    MERKER.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+type Merker = std::collections::HashMap<
+    String,
+    (
+        std::time::Instant,
+        Option<sim_xplane::szenerie::SzenerieFlughafen>,
+    ),
+>;
+
+fn gemerkt() -> &'static Mutex<Merker> {
+    static MERKER: OnceLock<Mutex<Merker>> = OnceLock::new();
+    MERKER.get_or_init(|| Mutex::new(Merker::new()))
 }
 
 /// Einen Flughafen im Hintergrund lesen, damit der spätere Nachschlag
 /// (beim Aufsetzen unter der Flugdaten-Sperre) aus dem Merker kommt.
 ///
-/// Billig genug für jeden Streamer-Takt: Ist der Flughafen gemerkt oder
-/// schon unterwegs, passiert nichts.
+/// Billig genug für jeden Streamer-Takt: Ist der Flughafen frisch gemerkt
+/// oder schon unterwegs, passiert nichts.
 pub(crate) fn vorladen(icao: &str) {
     static UNTERWEGS: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
     let schluessel = icao.trim().to_ascii_uppercase();
     if schluessel.len() != 4 {
         return;
     }
-    if gemerkt()
-        .lock()
-        .map(|m| m.contains_key(&schluessel))
-        .unwrap_or(true)
-    {
+    if gemerkter_eintrag(&schluessel).is_some_and(|(alter, _)| alter < MERKER_AUFFRISCHEN) {
         return;
     }
     let unterwegs = UNTERWEGS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
@@ -1028,7 +1049,10 @@ pub(crate) fn vorladen(icao: &str) {
         return;
     }
     std::thread::spawn(move || {
-        szenerie_flughafen(&schluessel);
+        let ergebnis = szenerie_flughafen_lesen(&schluessel);
+        if let Ok(mut merk) = gemerkt().lock() {
+            merk.insert(schluessel.clone(), (std::time::Instant::now(), ergebnis));
+        }
         if let Ok(mut u) = unterwegs.lock() {
             u.remove(&schluessel);
         }
