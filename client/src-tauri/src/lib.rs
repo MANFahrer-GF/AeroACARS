@@ -36528,7 +36528,20 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     {
         return;
     }
-    tauri::async_runtime::spawn(async move {
+    // Eigener Faden statt Aufgabe im gemeinsamen Pool (AZU 8710, 11.10.2026):
+    // Die Aufsetzmessung hat Vorfahrt. Als Pool-Aufgabe kam sie nur dran,
+    // wenn ein Arbeits-Faden frei war — blockierte irgendetwas anderes im
+    // Client einen davon, fiel der 20-ms-Takt aus (bei AZU 8710 in der Flare
+    // 4 statt 50 Proben je Sekunde). Jetzt läuft sie mit eigenem Takt und
+    // meldet sich beim Betriebssystem als dringlich an
+    // (`flug_aktivitaet::messfaden_vorrang`).
+    let gestartet = std::thread::Builder::new()
+        .name("aufsetz-messung".into())
+        .spawn(move || {
+        // Hilfsfunktionen in der Schleife dürfen weiter Aufgaben starten.
+        let laufzeit = tauri::async_runtime::handle();
+        let _laufzeit_kontext = laufzeit.inner().enter();
+        flug_aktivitaet::messfaden_vorrang();
         // Lebt so lange wie der Sampler — siehe `flug_aktivitaet`.
         let _flug_aktivitaet = flug_aktivitaet::FlugAktivitaet::beginnen();
         tracing::info!(pirep_id = %flight.pirep_id, "touchdown sampler started");
@@ -36587,7 +36600,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // fast `current_snapshot` returns fresh data; on a
             // typical PC the SimConnect adapter ticks at the rendered
             // frame rate (60-120 fps) so we never under-sample here.
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            std::thread::sleep(Duration::from_millis(20));
             if flight.stop.load(Ordering::Relaxed) {
                 break;
             }
@@ -38076,6 +38089,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         }
         tracing::info!(pirep_id = %flight.pirep_id, "touchdown sampler stopped");
     });
+    if let Err(e) = gestartet {
+        tracing::error!(error = %e, "Aufsetz-Messfaden konnte nicht gestartet werden");
+    }
 }
 
 /// v0.13.18: reine FOB-Ableitung des Fuel-Flow (testbar). Genutzt vom

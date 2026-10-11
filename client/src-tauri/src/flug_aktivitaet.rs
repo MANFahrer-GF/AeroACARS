@@ -62,3 +62,22 @@ impl Drop for FlugAktivitaet {
         tracing::info!("macOS-Aktivität für die Flugaufzeichnung beendet");
     }
 }
+
+/// Den aufrufenden Faden als dringlich anmelden — für die Aufsetzmessung.
+///
+/// macOS: Dienstgüte `USER_INTERACTIVE`, dieselbe Stufe wie die Bedienung
+/// selbst; das System plant den Faden auch dann zuerst ein, wenn AeroACARS
+/// hinter dem Simulator liegt. Andere Systeme: unverändert (der eigene Faden
+/// allein löst schon die Abhängigkeit vom gemeinsamen Pool).
+pub fn messfaden_vorrang() {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: Setzt nur die Dienstgüte des aufrufenden Fadens.
+        let rc = unsafe {
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+        };
+        if rc != 0 {
+            tracing::warn!(rc, "Dienstgüte für den Messfaden nicht gesetzt");
+        }
+    }
+}
