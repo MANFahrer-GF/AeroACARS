@@ -38292,9 +38292,9 @@ fn spawn_phpvms_meldungen(
         let (app, flight, client) = (app.clone(), flight.clone(), client.clone());
         tauri::async_runtime::spawn(async move {
             while lz_rx.changed().await.is_ok() {
-                loop {
+                {
                     let Some(lz) = lz_rx.borrow_and_update().clone() else {
-                        break;
+                        continue;
                     };
                     let _live = PHPVMS_LIVE_MELDUNG.lock().await;
                     if flight.stop.load(Ordering::Relaxed) {
@@ -38313,7 +38313,6 @@ fn spawn_phpvms_meldungen(
                                 distance_nm = lz.body.distance.unwrap_or(0.0),
                                 "PIREP heartbeat sent"
                             );
-                            break;
                         }
                         Err(ApiError::NotFound) => {
                             drop(_live);
@@ -38334,7 +38333,6 @@ fn spawn_phpvms_meldungen(
                             }
                             // Neuer Versuch mit dem dann neuesten Stand.
                             lz_rx.mark_changed();
-                            break;
                         }
                     }
                 }
