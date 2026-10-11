@@ -36,6 +36,8 @@ dependencies = [
  "if-addrs",
  "landing-scoring",
  "metar",
+ "objc2",
+ "objc2-foundation",
  "qrcode",
  "recorder",
  "regex",

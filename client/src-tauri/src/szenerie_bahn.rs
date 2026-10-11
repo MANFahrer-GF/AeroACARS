@@ -918,6 +918,10 @@ fn verzeichnis_bereitstellen() -> bool {
     };
     let t = std::time::Instant::now();
     let idx = sim_xplane::szenerie::SzenerieIndex::bauen(&wurzel);
+    // Neues Verzeichnis, neue Auskünfte — gemerkte Flughäfen sind veraltet.
+    if let Ok(mut merk) = gemerkt().lock() {
+        merk.clear();
+    }
     tracing::info!(
         flughaefen = idx.anzahl(),
         dauer_ms = t.elapsed().as_millis(),
@@ -963,6 +967,75 @@ pub fn szenerie_vorbereiten() {
 /// `lib.rs`) — unabhaengig von `ergaenze_aus_szenerie`, das Navdaten
 /// voraussetzt und nur fuer die Bahnkorrektur gedacht ist.
 pub(crate) fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
+    let schluessel = icao.trim().to_ascii_uppercase();
+    if let Some(treffer) = gemerkt()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&schluessel).cloned())
+    {
+        return treffer;
+    }
+    let ergebnis = szenerie_flughafen_lesen(&schluessel);
+    if let Ok(mut merk) = gemerkt().lock() {
+        merk.insert(schluessel, ergebnis.clone());
+    }
+    ergebnis
+}
+
+/// Schon gelesene Flughäfen, auch die nicht gefundenen.
+///
+/// # Warum (AZU 8710, 11.10.2026)
+///
+/// Die Bahnkorrelation beim Aufsetzen läuft unter der Sperre der Flugdaten.
+/// Ohne Merker prüfte jeder Aufruf Größe und Zeitstempel aller apt.dat und
+/// las dann den Flughafen aus der Datei — bei Nimbus-KMCO gut eine Sekunde,
+/// in der Aufsetz-Sampler und Positionsstrom standen. Mit `vorladen` liegt
+/// der Zielflughafen beim Aufsetzen schon hier, und der Nachschlag kostet
+/// nichts. Geleert wird der Merker, wenn das Verzeichnis neu gebaut wird.
+fn gemerkt() -> &'static Mutex<
+    std::collections::HashMap<String, Option<sim_xplane::szenerie::SzenerieFlughafen>>,
+> {
+    static MERKER: OnceLock<
+        Mutex<std::collections::HashMap<String, Option<sim_xplane::szenerie::SzenerieFlughafen>>>,
+    > = OnceLock::new();
+    MERKER.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Einen Flughafen im Hintergrund lesen, damit der spätere Nachschlag
+/// (beim Aufsetzen unter der Flugdaten-Sperre) aus dem Merker kommt.
+///
+/// Billig genug für jeden Streamer-Takt: Ist der Flughafen gemerkt oder
+/// schon unterwegs, passiert nichts.
+pub(crate) fn vorladen(icao: &str) {
+    static UNTERWEGS: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    let schluessel = icao.trim().to_ascii_uppercase();
+    if schluessel.len() != 4 {
+        return;
+    }
+    if gemerkt()
+        .lock()
+        .map(|m| m.contains_key(&schluessel))
+        .unwrap_or(true)
+    {
+        return;
+    }
+    let unterwegs = UNTERWEGS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
+    if !unterwegs
+        .lock()
+        .map(|mut u| u.insert(schluessel.clone()))
+        .unwrap_or(false)
+    {
+        return;
+    }
+    std::thread::spawn(move || {
+        szenerie_flughafen(&schluessel);
+        if let Ok(mut u) = unterwegs.lock() {
+            u.remove(&schluessel);
+        }
+    });
+}
+
+fn szenerie_flughafen_lesen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
     // ⚠ Baut das Verzeichnis notfalls hier — der Vorabbau beim
     // Flugbeginn ist die Regel, nicht die Garantie: Ein Flug, der aus
     // einer Wiederaufnahme kommt, oder ein Simulatorwechsel mitten im

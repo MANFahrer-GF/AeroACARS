@@ -679,6 +679,8 @@ pub fn vermessung_schritt_abschliessen(
             };
             kandidaten(&staende, &stellungen, &s.rauschen, &texte)
         };
+        // Ausserhalb von Windows hat `Quelle` nur die X-Plane-Variante.
+        #[cfg_attr(not(target_os = "windows"), allow(irrefutable_let_patterns))]
         if let Quelle::XPlane(sp) = &s.quelle {
             for kd in &mut k {
                 let t: Vec<Option<String>> = kd
@@ -739,6 +741,8 @@ fn bericht(s: &Sitzung) -> serde_json::Value {
     });
     // X-Plane: Lücken der Anmeldung sichtbar machen (28.09.2026). Bei MSFS
     // fehlt das Feld ganz — ältere Server nehmen kein `null` an.
+    // Ausserhalb von Windows hat `Quelle` nur die X-Plane-Variante.
+    #[cfg_attr(not(target_os = "windows"), allow(irrefutable_let_patterns))]
     if let Quelle::XPlane(sp) = &s.quelle {
         if let Ok(v) = serde_json::to_value(sp.abo_stand()) {
             b["abo"] = v;
