@@ -17339,7 +17339,45 @@ fn clear_activity_log_for_new_flight(app: &AppHandle) {
 /// Failures are logged at warn level but never propagated — the
 /// activity log is informational, not safety-critical, and we'd
 /// rather drop a write than crash the streamer.
+/// Den aktuellen Stand des Aktivitätsprotokolls auf die Platte bringen —
+/// im Hintergrund.
+///
+/// # Warum nicht mehr synchron (AZU 8710, 11.10.2026)
+///
+/// Bis 2.0.9 schrieb jeder einzelne Eintrag (Fahrwerk, Klappen, Lichter,
+/// Autopilot …) das GANZE Protokoll — bis zu 1000 Einträge als formatiertes
+/// JSON — neu auf die Platte, und zwar aus `detect_telemetry_changes`, das
+/// dabei die Sperre `flight.stats` hält. Auf genau diese Sperre wartet der
+/// Aufsetz-Sampler in jedem 20-ms-Takt. Im Endanflug ändert sich viel auf
+/// einmal; jede Zeile kostete Platten-Zeit unter der Sperre.
+///
+/// Jetzt geht nur eine Kopie der Einträge an einen eigenen Schreib-Faden.
+/// Liegen beim Schreiben schon neuere Stände an, schreibt er nur den
+/// neuesten. Reihenfolge bleibt erhalten (ein Kanal, ein Faden) — auch ein
+/// Leeren (`activity_log_clear`) wird nicht von einem älteren Stand
+/// überholt.
 fn save_activity_log(log: &VecDeque<ActivityEntry>) {
+    static SCHREIBER: OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<Vec<ActivityEntry>>>> =
+        OnceLock::new();
+    let schreiber = SCHREIBER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<ActivityEntry>>();
+        std::thread::spawn(move || {
+            while let Ok(mut stand) = rx.recv() {
+                while let Ok(neuer) = rx.try_recv() {
+                    stand = neuer;
+                }
+                activity_log_schreiben(&stand);
+            }
+        });
+        std::sync::Mutex::new(tx)
+    });
+    let kopie: Vec<ActivityEntry> = log.iter().cloned().collect();
+    if let Ok(tx) = schreiber.lock() {
+        let _ = tx.send(kopie);
+    }
+}
+
+fn activity_log_schreiben(entries: &[ActivityEntry]) {
     let Some(Some(path)) = ACTIVITY_LOG_PATH.get() else {
         return;
     };
@@ -17349,8 +17387,7 @@ fn save_activity_log(log: &VecDeque<ActivityEntry>) {
             return;
         }
     }
-    let entries: Vec<&ActivityEntry> = log.iter().collect();
-    match serde_json::to_vec_pretty(&entries) {
+    match serde_json::to_vec_pretty(entries) {
         Ok(bytes) => {
             if let Err(e) = std::fs::write(path, bytes) {
                 tracing::warn!(error = %e, "could not write activity log");
@@ -36912,13 +36949,25 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         // Category-aware validation (loop-level `category`): a
                         // rotorcraft / seaplane soft set-down has no force/G/vs
                         // spike, so the fixed-wing anchors would drop it.
-                        let validation = touchdown_v2::validate_candidate(
-                            &candidate,
-                            &v2_samples,
+                        // Hat MSFS den Aufsetzwert für DIESE Landung neu gesetzt?
+                        // Vergleich mit dem Stand in der Luft (v1.6.10) — siehe
+                        // `touchdown_v2::msfs_bestaetigt_aufsetzen`.
+                        let latch_neu = negative_only(snap.touchdown_vs_fpm).is_some_and(|neu| {
+                            stats
+                                .sim_referenz_vor_aufsetzen
+                                .is_some_and(|vorher| (neu - vorher).abs() > 0.5)
+                        });
+                        let validation = touchdown_v2::msfs_bestaetigt_aufsetzen(
+                            touchdown_v2::validate_candidate(
+                                &candidate,
+                                &v2_samples,
+                                sim,
+                                impact_vs,
+                                category,
+                                stats.bodenhoehe.bodenhoehe_ft(),
+                            ),
                             sim,
-                            impact_vs,
-                            category,
-                            stats.bodenhoehe.bodenhoehe_ft(),
+                            latch_neu,
                         );
                         match validation {
                             touchdown_v2::ValidationResult::Validated { result } => {
@@ -37498,29 +37547,40 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // aus dem PTO-705-Log (zwei TouchdownWindow-Events,
                 // 18:48:25 und 18:51:16 nach Resume). Ein expliziter
                 // Save direkt nach dem Setzen verhindert das.
-                save_active_flight(&app, &flight);
+                //
+                // Sicherung und Flugprotokoll im Hintergrund: Sie schreiben
+                // mehrere hundert KB synchron auf die Platte, und der Sampler
+                // misst gleich weiter — ein Hopser kurz danach fiele sonst in
+                // eine Lücke (AZU 8710, 11.10.2026). Ein Faden, feste
+                // Reihenfolge: Sicherung, Fenster, Analyse.
                 let count = samples.len();
                 // v0.7.0 — clone fuer touchdown_v2 weiter unten
                 // (samples wird gleich in record_event gemoved)
                 let samples_for_v2 = samples.clone();
-                record_event(
-                    &app,
-                    &flight.pirep_id,
-                    &FlightLogEvent::TouchdownWindow {
-                        timestamp: now,
-                        edge_at,
-                        samples,
-                    },
-                );
-                record_event(
-                    &app,
-                    &flight.pirep_id,
-                    &FlightLogEvent::LandingAnalysis {
-                        timestamp: now,
-                        edge_at,
-                        analysis: analysis.clone(),
-                    },
-                );
+                {
+                    let (app, flight, analysis) = (app.clone(), flight.clone(), analysis.clone());
+                    std::thread::spawn(move || {
+                        save_active_flight(&app, &flight);
+                        record_event(
+                            &app,
+                            &flight.pirep_id,
+                            &FlightLogEvent::TouchdownWindow {
+                                timestamp: now,
+                                edge_at,
+                                samples,
+                            },
+                        );
+                        record_event(
+                            &app,
+                            &flight.pirep_id,
+                            &FlightLogEvent::LandingAnalysis {
+                                timestamp: now,
+                                edge_at,
+                                analysis,
+                            },
+                        );
+                    });
+                }
 
                 // v0.7.0 — Touchdown-Forensik v2 (Spec docs/spec/touchdown-forensics-v2.md).
                 // Ersetzt den fruheren vs_at_edge-unconditional-override (= war
@@ -38033,6 +38093,117 @@ fn fuel_used_effective_kg(
     }
 }
 
+/// Was der Streamer an phpVMS meldet, ohne auf die Antwort zu warten.
+enum PhpvmsMeldung {
+    Lebenszeichen {
+        body: UpdateBody,
+        phase: FlightPhase,
+        phase_changed: bool,
+    },
+    AcarsLog(Vec<api_client::LogEntry>),
+}
+
+/// Lebenszeichen (`POST /pireps/{id}/update`) und ACARS-Log
+/// (`POST /pireps/{id}/acars/logs`) in einem eigenen Arbeiter senden, in der
+/// Reihenfolge, in der der Streamer sie meldet.
+///
+/// # Warum (AZU 8710, 11.10.2026)
+///
+/// Bis 2.0.9 wartete der Streamer im Takt auf beide Antworten. phpVMS braucht
+/// dafür 1,5 bis 3,5 s je Anfrage — bei jedem Phasenwechsel, alle 30 s für
+/// das Lebenszeichen und bei jeder neuen ACARS-Zeile (Fahrwerk, Klappen …).
+/// In dieser Zeit stand der Streamer. Gemessen an 119 Flügen: nach JEDEM
+/// Aufsetzen eine Lücke von 2 bis 8,6 s statt 0,2 bis 0,5 s. Aus den
+/// Streamer-Takten entstehen Anflugstabilität, Gleitpfad und die Rollspur
+/// der Bahndisziplin; genau in Anflug und Ausrollen fehlten so Sekunden.
+/// Die Positionsmeldungen sind seit v0.6.0 auf dieselbe Weise entkoppelt.
+///
+/// Der zweite Rückgabewert ist wahr, solange ein Lebenszeichen unterwegs ist.
+/// Ein 404 beendet den Flug wie bisher (`handle_remote_cancellation` setzt
+/// `flight.stop`, der Streamer endet im nächsten Takt). Nach dem Stopp wird
+/// nichts mehr gesendet — auch nicht, was noch in der Warteschlange liegt.
+fn spawn_phpvms_meldungen(
+    app: AppHandle,
+    flight: Arc<ActiveFlight>,
+    client: Client,
+) -> (
+    tokio::sync::mpsc::UnboundedSender<PhpvmsMeldung>,
+    Arc<std::sync::atomic::AtomicBool>,
+) {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PhpvmsMeldung>();
+    let unterwegs = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let unterwegs_arbeiter = unterwegs.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(meldung) = rx.recv().await {
+            if flight.stop.load(Ordering::Relaxed) {
+                break;
+            }
+            match meldung {
+                PhpvmsMeldung::Lebenszeichen {
+                    body,
+                    phase,
+                    phase_changed,
+                } => {
+                    let ergebnis = client.update_pirep(&flight.pirep_id, &body).await;
+                    unterwegs_arbeiter.store(false, Ordering::SeqCst);
+                    match ergebnis {
+                        Ok(()) => {
+                            if let Ok(mut stats) = flight.stats.lock() {
+                                stats.last_heartbeat_at = Some(Utc::now());
+                            }
+                            tracing::debug!(
+                                pirep_id = %flight.pirep_id,
+                                phase = ?phase,
+                                phase_changed,
+                                flight_time_min = body.flight_time.unwrap_or(0),
+                                distance_nm = body.distance.unwrap_or(0.0),
+                                "PIREP heartbeat sent"
+                            );
+                        }
+                        Err(ApiError::NotFound) => {
+                            handle_remote_cancellation(&app, &flight, "POST update");
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                pirep_id = %flight.pirep_id,
+                                phase = ?phase,
+                                error = %e,
+                                "PIREP heartbeat failed"
+                            );
+                        }
+                    }
+                }
+                PhpvmsMeldung::AcarsLog(eintraege) => {
+                    match client.post_acars_logs(&flight.pirep_id, &eintraege).await {
+                        Ok(()) => {
+                            tracing::debug!(
+                                pirep_id = %flight.pirep_id,
+                                count = eintraege.len(),
+                                "ACARS log lines pushed"
+                            );
+                        }
+                        Err(ApiError::NotFound) => {
+                            handle_remote_cancellation(&app, &flight, "POST acars/logs");
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                pirep_id = %flight.pirep_id,
+                                count = eintraege.len(),
+                                error = %e,
+                                "ACARS log push failed"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        unterwegs_arbeiter.store(false, Ordering::SeqCst);
+    });
+    (tx, unterwegs)
+}
+
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
     if flight
         .streamer_spawned
@@ -38054,6 +38225,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // whole flight, which is exactly the bug this fallback exists to fix.
         // Bounded so a phpVMS outage cannot become a per-tick request storm.
         let mut arr_ref_pos_attempts: u8 = 0;
+        // Die Abfrage selbst läuft als eigener Auftrag (der Streamer wartete
+        // sonst bis zu 10 s auf phpVMS). `unterwegs`: höchstens eine zugleich;
+        // `aufgeben`: phpVMS kennt den Platz, aber ohne Koordinaten.
+        let arr_ref_unterwegs = Arc::new(AtomicBool::new(false));
+        let arr_ref_aufgeben = Arc::new(AtomicBool::new(false));
         // Streamer ticks since the flight started. Only used to space the
         // arrival-reference-position retries out over the flight instead of
         // burning them all in the first seconds.
@@ -38086,6 +38262,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // cron never reaches the inactivity threshold. Initialised one
         // interval in the past so the first eligible tick triggers it.
         let mut last_heartbeat: std::time::Instant = std::time::Instant::now() - HEARTBEAT_INTERVAL;
+        // Lebenszeichen und ACARS-Log gehen über einen eigenen Arbeiter an
+        // phpVMS — siehe `spawn_phpvms_meldungen`. Der Streamer wartet nicht
+        // mehr auf die Antwort.
+        let (phpvms_meldungen, heartbeat_unterwegs) =
+            spawn_phpvms_meldungen(app.clone(), flight.clone(), client.clone());
         // Phase-adaptive cadence: re-read the current phase on every tick so
         // the sleep matches what the aircraft is actually doing right now
         // (5 s during takeoff/landing, 8 s on approach/final, 10 s on the
@@ -38134,11 +38315,31 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         let mut ff_last_fob_kg: Option<f32> = None;
         let mut ff_last_fob_at: Option<std::time::Instant> = None;
         let mut ff_derived_kg_per_h: Option<f32> = None;
+        // Selbstmessung (AZU 8710, 11.10.2026): Bis 2.0.9 stand der Streamer
+        // bei jedem Phasenwechsel und alle 30 s für 1,5–3,5 s, weil er auf
+        // phpVMS wartete — gefunden erst nachträglich über Lücken im
+        // Flugprotokoll. Jetzt meldet er selbst, wenn ein Takt (Arbeit ohne
+        // das geplante Warten) länger als 250 ms braucht. Gedeckelt, damit
+        // ein Dauerproblem das Protokoll nicht flutet.
+        let mut takt_beginn: Option<std::time::Instant> = None;
+        let mut lange_takte_gemeldet: u32 = 0;
         loop {
             let current_phase = {
                 let stats = flight.stats.lock().expect("flight stats");
                 stats.phase
             };
+            if let Some(beginn) = takt_beginn.take() {
+                let arbeit_ms = beginn.elapsed().as_millis();
+                if arbeit_ms > 250 && lange_takte_gemeldet < 40 {
+                    lange_takte_gemeldet += 1;
+                    tracing::warn!(
+                        pirep_id = %flight.pirep_id,
+                        phase = ?current_phase,
+                        arbeit_ms = arbeit_ms as u64,
+                        "Streamer-Takt zu lang"
+                    );
+                }
+            }
             // v0.5.35: loop runs at adaptive cadence — 3s in Cruise/Climb/etc,
             // schneller (1s, 500ms) wenn der Pilot nah am Boden ist
             // (Approach/Final/Landing/Takeoff unter 1000ft AGL).
@@ -38157,6 +38358,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 adaptive_tick_interval_v2(phase, agl, og, gs, spur_laeuft)
             };
             tokio::time::sleep(tick_interval).await;
+            takt_beginn = Some(std::time::Instant::now());
             if flight.stop.load(Ordering::Relaxed) {
                 break;
             }
@@ -38183,32 +38385,15 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             let p = stats.phase;
                             (p, build_heartbeat_body(hb, &stats, p))
                         };
-                        match client.update_pirep(&flight.pirep_id, &body).await {
-                            Ok(()) => {
-                                last_heartbeat = std::time::Instant::now();
-                                {
-                                    let mut stats = flight.stats.lock().expect("flight stats");
-                                    stats.last_heartbeat_at = Some(Utc::now());
-                                }
-                                tracing::debug!(
-                                    pirep_id = %flight.pirep_id,
-                                    phase = ?phase,
-                                    "PIREP heartbeat sent during sim-crash-recovery banner"
-                                );
-                            }
-                            Err(ApiError::NotFound) => {
-                                // phpVMS hat den PIREP serverseitig
-                                // entfernt — sauberer Recovery-Pfad
-                                // (gleiches Verhalten wie SimPause).
-                                handle_remote_cancellation(
-                                    &app,
-                                    &flight,
-                                    "POST update (sim-crash-recovery)",
-                                );
-                            }
-                            Err(_) => {
-                                // Transient — retry naechster Tick.
-                            }
+                        // Über den Arbeiter — der Streamer wartet nicht
+                        // auf phpVMS (siehe `spawn_phpvms_meldungen`).
+                        if !heartbeat_unterwegs.swap(true, Ordering::SeqCst) {
+                            last_heartbeat = std::time::Instant::now();
+                            let _ = phpvms_meldungen.send(PhpvmsMeldung::Lebenszeichen {
+                                body,
+                                phase,
+                                phase_changed: false,
+                            });
                         }
                     }
                 }
@@ -38553,42 +38738,20 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 let p = stats.phase;
                                 (p, build_heartbeat_body(hb, &stats, p))
                             };
-                            match client.update_pirep(&flight.pirep_id, &body).await {
-                                Ok(()) => {
-                                    last_heartbeat = std::time::Instant::now();
-                                    {
-                                        let mut stats = flight.stats.lock().expect("flight stats");
-                                        stats.last_heartbeat_at = Some(Utc::now());
-                                    }
-                                    tracing::debug!(
-                                        pirep_id = %flight.pirep_id,
-                                        phase = ?phase,
-                                        sim_paused = snap_says_paused,
-                                        "PIREP heartbeat sent during pause"
-                                    );
-                                }
-                                Err(ApiError::NotFound) => {
-                                    // phpVMS hat den PIREP soft-deleted —
-                                    // gleiches Verhalten wie im Standard-
-                                    // Heartbeat-Pfad weiter unten.
-                                    handle_remote_cancellation(
-                                        &app,
-                                        &flight,
-                                        "POST update (paused)",
-                                    );
-                                    break;
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        pirep_id = %flight.pirep_id,
-                                        phase = ?phase,
-                                        error = %e,
-                                        "PIREP heartbeat failed during pause"
-                                    );
-                                }
+                            // Über den Arbeiter — der Streamer wartet nicht
+                            // auf phpVMS (siehe `spawn_phpvms_meldungen`).
+                            if !heartbeat_unterwegs.swap(true, Ordering::SeqCst) {
+                                last_heartbeat = std::time::Instant::now();
+                                let _ = phpvms_meldungen.send(PhpvmsMeldung::Lebenszeichen {
+                                    body,
+                                    phase,
+                                    phase_changed: false,
+                                });
                             }
                         }
                     }
+                    // Gewolltes Warten in der Pause ist kein langer Takt.
+                    takt_beginn = None;
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     continue;
                 }
@@ -38887,50 +39050,60 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 };
                 let due = arr_ref_pos_attempts == 0
                     || tick_count.is_multiple_of(ARR_REF_POS_RETRY_EVERY_TICKS);
-                if missing && due && arr_ref_pos_attempts < ARR_REF_POS_MAX_ATTEMPTS {
+                if missing
+                    && due
+                    && arr_ref_pos_attempts < ARR_REF_POS_MAX_ATTEMPTS
+                    && !arr_ref_aufgeben.load(Ordering::SeqCst)
+                    && !arr_ref_unterwegs.swap(true, Ordering::SeqCst)
+                {
                     arr_ref_pos_attempts += 1;
+                    let versuch = arr_ref_pos_attempts;
                     let key = flight.arr_airport.to_uppercase();
                     // The streamer's OWN client — reading it back out of AppState
                     // introduced a hole where a `None` there burned the attempt
                     // without a request ever being made.
-                    match client.get_airport(&key).await {
-                        Ok(airport) => {
-                            {
-                                let app_state = app.state::<AppState>();
-                                let mut guard = app_state.airports.lock().expect("airports lock");
-                                guard.insert(key.clone(), airport.clone());
+                    let (app, flight, client) = (app.clone(), flight.clone(), client.clone());
+                    let (unterwegs, aufgeben) = (arr_ref_unterwegs.clone(), arr_ref_aufgeben.clone());
+                    tauri::async_runtime::spawn(async move {
+                        match client.get_airport(&key).await {
+                            Ok(airport) => {
+                                {
+                                    let app_state = app.state::<AppState>();
+                                    let mut guard = app_state.airports.lock().expect("airports lock");
+                                    guard.insert(key.clone(), airport.clone());
+                                }
+                                if let Some(pos) = airport.lat.zip(airport.lon).filter(|(la, lo)| {
+                                    !(*la == 0.0 && *lo == 0.0) && la.is_finite() && lo.is_finite()
+                                }) {
+                                    let mut stats_g = flight.stats.lock().expect("flight stats");
+                                    stats_g.planned_arr_ref_pos = Some(pos);
+                                    // v0.19.3: record WHICH source this is. Without it
+                                    // the position kept `ARR_REF_SOURCE_NONE`, and the
+                                    // next tick's cascade — seeing OurAirports (rank 1)
+                                    // beat rank 0 — would overwrite this phpVMS position
+                                    // with a weaker one.
+                                    stats_g.planned_arr_ref_source = ARR_REF_SOURCE_PHPVMS;
+                                    tracing::info!(
+                                        arr = %key,
+                                        "arr airport reference position fetched (divert-geometry fallback)"
+                                    );
+                                } else {
+                                    // phpVMS has the airport but no coordinates —
+                                    // retrying cannot change that.
+                                    aufgeben.store(true, Ordering::SeqCst);
+                                }
                             }
-                            if let Some(pos) = airport.lat.zip(airport.lon).filter(|(la, lo)| {
-                                !(*la == 0.0 && *lo == 0.0) && la.is_finite() && lo.is_finite()
-                            }) {
-                                let mut stats_g = flight.stats.lock().expect("flight stats");
-                                stats_g.planned_arr_ref_pos = Some(pos);
-                                // v0.19.3: record WHICH source this is. Without it
-                                // the position kept `ARR_REF_SOURCE_NONE`, and the
-                                // next tick's cascade — seeing OurAirports (rank 1)
-                                // beat rank 0 — would overwrite this phpVMS position
-                                // with a weaker one. Exactly the inversion the
-                                // ranking exists to prevent.
-                                stats_g.planned_arr_ref_source = ARR_REF_SOURCE_PHPVMS;
-                                tracing::info!(
+                            Err(e) => {
+                                tracing::warn!(
                                     arr = %key,
-                                    "arr airport reference position fetched (divert-geometry fallback)"
+                                    attempt = versuch,
+                                    error = %e,
+                                    "could not fetch arr airport reference position — will retry"
                                 );
-                            } else {
-                                // phpVMS has the airport but no coordinates —
-                                // retrying cannot change that.
-                                arr_ref_pos_attempts = ARR_REF_POS_MAX_ATTEMPTS;
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                arr = %key,
-                                attempt = arr_ref_pos_attempts,
-                                error = %e,
-                                "could not fetch arr airport reference position — will retry"
-                            );
-                        }
-                    }
+                        unterwegs.store(false, Ordering::SeqCst);
+                    });
                 }
             }
             // v1.7.8 — die Szenerie-Auskunft von MSFS abholen, sobald sie
@@ -40791,72 +40964,30 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             let phase_for_heartbeat =
                 effective_display_phase(phase_change.unwrap_or(current_phase), tick_shadow_phase);
             let due_for_heartbeat = last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL;
-            if phase_change.is_some() || due_for_heartbeat {
+            // Läuft noch ein Lebenszeichen, wartet das nächste: Es trägt
+            // ohnehin den dann aktuellen Stand (Phase, Zeit, Strecke), und so
+            // stauen sich bei einem langsamen phpVMS keine Aufträge.
+            if (phase_change.is_some() || due_for_heartbeat)
+                && !heartbeat_unterwegs.swap(true, Ordering::SeqCst)
+            {
                 let body = {
                     let stats = flight.stats.lock().expect("flight stats");
                     build_heartbeat_body(&snap, &stats, phase_for_heartbeat)
                 };
-                match client.update_pirep(&flight.pirep_id, &body).await {
-                    Ok(()) => {
-                        last_heartbeat = std::time::Instant::now();
-                        {
-                            let mut stats = flight.stats.lock().expect("flight stats");
-                            stats.last_heartbeat_at = Some(Utc::now());
-                        }
-                        tracing::debug!(
-                            pirep_id = %flight.pirep_id,
-                            phase = ?phase_for_heartbeat,
-                            phase_changed = phase_change.is_some(),
-                            flight_time_min = body.flight_time.unwrap_or(0),
-                            distance_nm = body.distance.unwrap_or(0.0),
-                            "PIREP heartbeat sent"
-                        );
-                    }
-                    Err(ApiError::NotFound) => {
-                        handle_remote_cancellation(&app, &flight, "POST update");
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            pirep_id = %flight.pirep_id,
-                            phase = ?phase_for_heartbeat,
-                            error = %e,
-                            "PIREP heartbeat failed"
-                        );
-                    }
-                }
+                last_heartbeat = std::time::Instant::now();
+                let _ = phpvms_meldungen.send(PhpvmsMeldung::Lebenszeichen {
+                    body,
+                    phase: phase_for_heartbeat,
+                    phase_changed: phase_change.is_some(),
+                });
             }
 
             // Mirror collected text events into phpVMS's `/acars/logs` for
             // the PIREP detail page. Best-effort: a transient network
             // error here doesn't matter — the activity log + recorder
-            // already have the durable copy. 404 still means the PIREP
-            // is gone, so handle that the same way as the heartbeat.
+            // already have the durable copy.
             if !acars_log_entries.is_empty() {
-                match client
-                    .post_acars_logs(&flight.pirep_id, &acars_log_entries)
-                    .await
-                {
-                    Ok(()) => {
-                        tracing::debug!(
-                            pirep_id = %flight.pirep_id,
-                            count = acars_log_entries.len(),
-                            "ACARS log lines pushed"
-                        );
-                    }
-                    Err(ApiError::NotFound) => {
-                        handle_remote_cancellation(&app, &flight, "POST acars/logs");
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            pirep_id = %flight.pirep_id,
-                            count = acars_log_entries.len(),
-                            error = %e,
-                            "ACARS log push failed"
-                        );
-                    }
-                }
+                let _ = phpvms_meldungen.send(PhpvmsMeldung::AcarsLog(acars_log_entries));
             }
         }
         tracing::info!(pirep_id = %flight.pirep_id, "position streamer stopped");
