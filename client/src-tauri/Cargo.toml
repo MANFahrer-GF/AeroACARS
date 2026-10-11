@@ -21,7 +21,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.0.8"
+version = "2.0.9"
 edition = "2021"
 # Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
 license = "LicenseRef-AeroACARS-Proprietary"
@@ -250,6 +250,11 @@ hoppie-protocol.workspace = true
 # v0.9.0 (#Discord-RPC): Pilot-Flugstatus im Discord-Profil
 discord-presence = { path = "crates/discord-presence" }
 tauri-plugin-window-state = "2"
+
+# Flugaufzeichnung vor macOS-Drosselung schützen (src/flug_aktivitaet.rs)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSString"] }
 
 # MSFS adapter is Windows-only
 [target.'cfg(target_os = "windows")'.dependencies]

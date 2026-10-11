@@ -38,6 +38,7 @@ pub mod szenerie_bahn;
 mod ui_state;
 mod xplane_band;
 mod xplane_plugin_install;
+mod flug_aktivitaet;
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
 // Spec: docs/spec/v0.9.0-glitchtip-self-hosted.md
 mod sentry_init;
@@ -6931,6 +6932,10 @@ struct FlightStats {
     sampler_touchdown_rejected_reason: Option<touchdown_v2::FalseEdgeReason>,
     sampler_touchdown_vs_fpm: Option<f32>,
     sampler_touchdown_g_force: Option<f32>,
+    /// Stammt `sampler_touchdown_vs_fpm` aus der Aufsetzmeldung des
+    /// X-Plane-Plugins? Nur dann darf der Wert die Abdeckungssperre
+    /// überstehen (`plugin_sinkrate_uebernehmen`).
+    sampler_touchdown_vs_vom_plugin: bool,
     /// v0.7.0 (Forensik v2 P0 fix): wenn der Sampler ein TD-Edge detected,
     /// wird er hier zwischengespeichert (nicht direkt sampler_touchdown_at).
     /// Ein subsequent Sampler-Tick (mind. 1.1 sec spaeter) ruft
@@ -27459,7 +27464,41 @@ fn build_mqtt_gate_window_from_stats(stats: &FlightStats) -> Option<aeroacars_mq
 /// `pre_flare_peak`, `vs_at_edge_50hz`, `buffer_min`, `agl_estimate_msfs`,
 /// `sampler_gear_force`) hängen an unserem 50-Hz-Fenster und fallen mit ihm.
 fn quelle_misst_der_simulator_selbst(source: Option<&str>) -> bool {
-    matches!(source, Some("msfs_simvar_latched"))
+    matches!(source, Some("msfs_simvar_latched") | Some(PLUGIN_SINKRATE_QUELLE))
+}
+
+/// Quellenkennung der Sinkrate, die das X-Plane-Plugin beim Aufsetzen
+/// selbst gemessen hat.
+const PLUGIN_SINKRATE_QUELLE: &str = "xplane_plugin_touchdown";
+
+/// Reicht unsere Aufzeichnung nicht, gilt die Sinkrate des X-Plane-Plugins.
+///
+/// # Der Anlass (AZU 8710, SBRF→KMCO, 11.10.2026)
+///
+/// X-Plane 12 auf dem Mac, AeroACARS im Hintergrund: In der Flare kamen
+/// statt ~50 nur 4 Proben je Sekunde an — der ganze Client stand, X-Plane
+/// lief flüssig. Das Plugin misst im Flugschleifen-Callback von X-Plane,
+/// also unabhängig von unserem Takt, und hatte −140 fpm sauber erfasst.
+/// Verworfen wurde die Landung trotzdem.
+///
+/// Gegenprobe über 37 X-Plane-Landungen mit Plugin und dichtem Fenster
+/// (Diagnoselogs auf live): Abweichung zum gewerteten Wert im Median
+/// 17,6 fpm, 90 % unter 62 fpm.
+///
+/// Wie bei MSFS gilt die Ausnahme nur der Sinkrate. G und Hopser kommen aus
+/// unserem Fenster und fallen weiter weg (`canonical_peak_g_force`).
+fn plugin_sinkrate_uebernehmen(stats: &mut FlightStats) -> bool {
+    if stats.landung_abdeckung_fehlt.is_none() || !stats.sampler_touchdown_vs_vom_plugin {
+        return false;
+    }
+    let Some(vs) = stats
+        .sampler_touchdown_vs_fpm
+        .filter(|v| v.is_finite() && *v < 0.0)
+    else {
+        return false;
+    };
+    finalize_landing_rate(stats, vs, Some("High"), Some(PLUGIN_SINKRATE_QUELLE));
+    true
 }
 
 fn finalize_landing_rate(
@@ -36294,6 +36333,9 @@ struct SamplerDiagnose {
     takte_ueber_soll: u64,
     /// Längste Dauer eines einzelnen `current_snapshot`-Aufrufs.
     eingang_max_ms: f64,
+    /// Wie viele lange Takte im Endanflug schon ins Protokoll gingen
+    /// (gedeckelt, damit ein Dauerproblem das Protokoll nicht flutet).
+    lange_takte_gemeldet: u32,
 }
 
 impl SamplerDiagnose {
@@ -36344,6 +36386,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         return;
     }
     tauri::async_runtime::spawn(async move {
+        // Lebt so lange wie der Sampler — siehe `flug_aktivitaet`.
+        let _flug_aktivitaet = flug_aktivitaet::FlugAktivitaet::beginnen();
         tracing::info!(pirep_id = %flight.pirep_id, "touchdown sampler started");
         // v0.4.4: lokale Edge-Tracking-State.
         //
@@ -36408,8 +36452,10 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Durchläufe, die weiter unten abbrechen, und die Diagnose
             // beschönigt sich selbst.
             let takt_jetzt = std::time::Instant::now();
+            let mut takt_abstand_ms = 0.0;
             if let Some(vorher) = letzter_takt {
                 let abstand_ms = takt_jetzt.duration_since(vorher).as_secs_f64() * 1000.0;
+                takt_abstand_ms = abstand_ms;
                 diagnose.takt_summe_ms += abstand_ms;
                 if abstand_ms > diagnose.takt_max_ms {
                     diagnose.takt_max_ms = abstand_ms;
@@ -36494,7 +36540,28 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // prev_state mit dem aktuellen Sample neu setzen.
             prev_sample_for_reset_check = Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
 
+            let sperre_start = std::time::Instant::now();
             let mut stats = flight.stats.lock().expect("flight stats");
+            let sperre_ms = sperre_start.elapsed().as_secs_f64() * 1000.0;
+            // AZU 8710 (11.10.2026): Im Endanflug stand der Sampler mehrfach
+            // 0,4–0,8 s, ohne dass klar war, worauf er wartete. Jeder lange
+            // Takt unter 1000 ft sagt jetzt, wo die Zeit blieb: vor dem Takt
+            // (Faden nicht dran), beim Simulator oder an der Flugdaten-Sperre.
+            if !snap.on_ground
+                && snap.altitude_agl_ft < 1000.0
+                && (takt_abstand_ms > 200.0 || eingang_ms > 100.0 || sperre_ms > 100.0)
+                && diagnose.lange_takte_gemeldet < 40
+            {
+                diagnose.lange_takte_gemeldet += 1;
+                tracing::warn!(
+                    pirep_id = %flight.pirep_id,
+                    agl_ft = snap.altitude_agl_ft,
+                    takt_abstand_ms,
+                    eingang_ms,
+                    sperre_ms,
+                    "Sampler-Takt im Endanflug zu lang"
+                );
+            }
             // v1.8.1: das Muster frueh festhalten, mit derselben Kette wie im
             // Anflugblock (`sim_core::muster_aufloesen`). Die TCH-Einstufung
             // nach Raederhoehe liest es nach dem Aufsetzen; ohne diesen Schritt
@@ -36874,6 +36941,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     impact_vs,
                                     result.g_force_peak_in_window,
                                 );
+                                stats.sampler_touchdown_vs_vom_plugin =
+                                    stats.pending_td_premium_vs.is_some_and(f32::is_finite);
                                 stats.sampler_touchdown_vs_fpm = Some(vs);
                                 stats.sampler_touchdown_g_force = Some(g);
                                 open_touchdown_capture_window(&mut stats, pending_at);
@@ -37338,6 +37407,13 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             Some(fehlt)
                         }
                     };
+                if plugin_sinkrate_uebernehmen(&mut stats) {
+                    tracing::info!(
+                        pirep_id = %flight.pirep_id,
+                        vs_fpm = ?stats.landing_rate_fpm,
+                        "Aufsetzfenster zu dünn — Sinkrate des X-Plane-Plugins übernommen"
+                    );
+                }
                 stats.sampler_diagnose = Some(diagnose.als_json());
 
                 let analysis = compute_landing_analysis(
@@ -37768,6 +37844,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // Reset alle TD-state-fields.
                     s.sampler_touchdown_at = None;
                     s.sampler_touchdown_vs_fpm = None;
+                    s.sampler_touchdown_vs_vom_plugin = false;
                     s.sampler_touchdown_g_force = None;
                     s.touchdown_window_dumped_at = None;
                     // GAF-707-Race: siehe Feldkommentar — neue Episode,
@@ -38882,6 +38959,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // v1.7.17 — dasselbe fuer den ABFLUGplatz, eigenstaendig und
             // unabhaengig (siehe `dep_szenerie_auskunft_uebernehmen`).
             dep_szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
+            if szenerie_bahn::quelle_fuer(snap.simulator) == szenerie_bahn::Quelle::XPlaneDatei {
+                szenerie_bahn::vorladen(&flight.arr_airport);
+                landeplatz_szenerie_vorladen(&flight.arr_airport, &snap);
+            }
 
             // ⚠ Und die Bahnaufloesung NACHHOLEN, wenn die Szenerie erst
             // nach dem Aufsetzen eintraf — siehe
@@ -41671,6 +41752,30 @@ const CORRELATE_AIRPORT_SEARCH_RADIUS_NM: f64 = 6.0;
 /// (mid-ocean / off-grid strip) — identical to the old behaviour, where the
 /// cache lookup on `arr_airport` would simply miss and fall through to
 /// OurAirports.
+/// Den Platz vorladen, auf den die Landung zuläuft — bei einem Divert ist
+/// das nicht `arr_airport`.
+///
+/// Codex-Abnahme 11.10.2026: Vorgeladen wurde nur das geplante Ziel. Die
+/// Bahnkorrelation fragt aber `correlate_airport_icao` am Aufsetzpunkt und
+/// las einen Ausweichplatz weiter unter der Flugdaten-Sperre aus der apt.dat
+/// — genau das Hängen, das `szenerie_bahn::vorladen` beseitigen soll.
+/// Dieselbe Funktion hier, unter 5000 ft AGL, höchstens alle 20 s (sie
+/// durchsucht die Flughafenliste).
+fn landeplatz_szenerie_vorladen(arr_airport: &str, snap: &SimSnapshot) {
+    static ZULETZT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    if snap.on_ground || snap.altitude_agl_ft > 5000.0 {
+        return;
+    }
+    {
+        let Ok(mut zuletzt) = ZULETZT.lock() else { return };
+        if zuletzt.is_some_and(|t| t.elapsed() < Duration::from_secs(20)) {
+            return;
+        }
+        *zuletzt = Some(std::time::Instant::now());
+    }
+    szenerie_bahn::vorladen(&correlate_airport_icao(arr_airport, snap.lat, snap.lon));
+}
+
 fn correlate_airport_icao(arr_airport: &str, td_lat: f64, td_lon: f64) -> String {
     let planned = arr_airport.trim().to_uppercase();
     // Pull a small candidate set (not just the nearest) so the planned
@@ -45004,6 +45109,7 @@ fn finalize_landing_score_if_due(
                 + touchdown_v2::BEWERTUNGS_FENSTER_NACH_MS,
             proben: 0,
         });
+        plugin_sinkrate_uebernehmen(stats);
     }
 
     // v0.7.17 (B-005): Wenn `landing_peak_vs_fpm` None ist (= Sampler hat
@@ -60024,6 +60130,45 @@ mod canonical_landing_rate_fpm_tests {
         stats.landing_source = Some("msfs_simvar_latched".to_string());
         stats.landung_abdeckung_fehlt = Some(fehlende_abdeckung());
         assert_eq!(stats.canonical_landing_rate_fpm(), Some(-168.0));
+    }
+
+    /// AZU 8710 (11.10.2026), nachgestellt in der Reihenfolge des Flugs:
+    /// Streamer-Kaskade (−110), dann das dünne Fenster, dann der Edge-Wert
+    /// −14 aus genau diesem Fenster. Gelten muss die Plugin-Messung −140.
+    #[test]
+    fn duennes_fenster_auf_x_plane_nimmt_die_plugin_sinkrate() {
+        let mut stats = FlightStats::default();
+        stats.sampler_touchdown_vs_fpm = Some(-140.48);
+        stats.sampler_touchdown_vs_vom_plugin = true;
+        stats.landing_peak_g_force = Some(1.14);
+        finalize_landing_rate(&mut stats, -110.5, Some("Medium"), Some("last_low_agl_vs"));
+
+        stats.landung_abdeckung_fehlt = Some(touchdown_v2::FehlendeAbdeckung {
+            groesste_luecke_ms: 310,
+            proben: 3,
+        });
+        assert!(plugin_sinkrate_uebernehmen(&mut stats));
+        finalize_landing_rate(&mut stats, -14.35, Some("High"), Some("vs_at_edge_50hz"));
+
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-140.48));
+        assert_eq!(stats.landing_source.as_deref(), Some(PLUGIN_SINKRATE_QUELLE));
+        assert_eq!(
+            stats.canonical_peak_g_force(),
+            None,
+            "G stammt aus unserem Fenster und bleibt gesperrt"
+        );
+    }
+
+    /// Gegenprobe: Ohne Plugin-Meldung ist `sampler_touchdown_vs_fpm` unser
+    /// eigener Fensterwert — der darf die Sperre nicht umgehen.
+    #[test]
+    fn ohne_plugin_meldung_bleibt_das_duenne_fenster_gesperrt() {
+        let mut stats = FlightStats::default();
+        stats.sampler_touchdown_vs_fpm = Some(-14.35);
+        stats.sampler_touchdown_vs_vom_plugin = false;
+        stats.landung_abdeckung_fehlt = Some(fehlende_abdeckung());
+        assert!(!plugin_sinkrate_uebernehmen(&mut stats));
+        assert_eq!(stats.canonical_landing_rate_fpm(), None);
     }
 
     #[test]
