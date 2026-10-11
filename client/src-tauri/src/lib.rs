@@ -36535,6 +36535,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     // 4 statt 50 Proben je Sekunde). Jetzt läuft sie mit eigenem Takt und
     // meldet sich beim Betriebssystem als dringlich an
     // (`flug_aktivitaet::messfaden_vorrang`).
+    let flight_fuer_fehler = flight.clone();
     let gestartet = std::thread::Builder::new()
         .name("aufsetz-messung".into())
         .spawn(move || {
@@ -38090,6 +38091,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         tracing::info!(pirep_id = %flight.pirep_id, "touchdown sampler stopped");
     });
     if let Err(e) = gestartet {
+        // Merker zurücksetzen, sonst unterdrückt er jeden weiteren Startversuch
+        // (Codex-Abnahme 11.10.2026).
+        flight_fuer_fehler
+            .touchdown_sampler_spawned
+            .store(false, Ordering::SeqCst);
         tracing::error!(error = %e, "Aufsetz-Messfaden konnte nicht gestartet werden");
     }
 }
