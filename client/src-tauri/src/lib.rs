@@ -17403,11 +17403,11 @@ fn activity_log_schreiber() -> std::sync::mpsc::Sender<AktivitaetAuftrag> {
 }
 
 /// Warten, bis der zuletzt gemeldete Stand auf der Platte steht (höchstens
-/// 3 s) — beim Beenden der App.
+/// 2 s) — beim Beenden der App.
 fn activity_log_abwarten() {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     if activity_log_schreiber().send(AktivitaetAuftrag::Abwarten(tx)).is_ok() {
-        let _ = rx.recv_timeout(Duration::from_secs(3));
+        let _ = rx.recv_timeout(Duration::from_secs(2));
     }
 }
 
@@ -18870,6 +18870,8 @@ struct FlightLogStatsDto {
 /// before they hit "alle löschen".
 #[tauri::command(async)]
 fn flight_logs_stats(app: AppHandle) -> Result<FlightLogStatsDto, UiError> {
+    // Läuft im Befehls-Faden, nicht im Hauptfaden — Warten ist hier unkritisch.
+    flugprotokoll_abwarten();
     let dir = app
         .path()
         .app_data_dir()
@@ -29934,9 +29936,13 @@ fn flugprotokoll_schreiber() -> std::sync::mpsc::Sender<ProtokollAuftrag> {
 /// Warten, bis alle bisher gemeldeten Einträge in der Datei stehen
 /// (höchstens 10 s). Blockiert — aus asynchronem Code über `spawn_blocking`.
 fn flugprotokoll_abwarten() {
+    flugprotokoll_abwarten_hoechstens(Duration::from_secs(10));
+}
+
+fn flugprotokoll_abwarten_hoechstens(grenze: Duration) {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     if flugprotokoll_schreiber().send(ProtokollAuftrag::Abwarten(tx)).is_ok() {
-        let _ = rx.recv_timeout(Duration::from_secs(10));
+        let _ = rx.recv_timeout(grenze);
     }
 }
 
@@ -59316,12 +59322,13 @@ pub fn run() {
                 clear_run_sentinel(app_handle);
             }
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                // Was die Schreib-Fäden noch halten, auf die Platte bringen.
-                activity_log_abwarten();
-                flugprotokoll_abwarten();
                 // Das Herunterfahren unten blockiert den Hauptfaden gewollt
                 // (Hoppie-Logoff bis 15 s) — kein Fall für den Wächter.
                 hauptfaden_waechter::beenden_beginnt();
+                // Was die Schreib-Fäden noch halten, auf die Platte bringen
+                // (zusammen höchstens 4 s; normal wenige Millisekunden).
+                activity_log_abwarten();
+                flugprotokoll_abwarten_hoechstens(Duration::from_secs(2));
                 let app_for_mqtt = app_handle.clone();
                 tauri::async_runtime::block_on(async move {
                     let state = app_for_mqtt.state::<AppState>();
