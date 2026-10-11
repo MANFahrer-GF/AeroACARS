@@ -1545,7 +1545,14 @@ mod tests {
         let edge = Utc::now();
         let (samples, cand) = a380_weiche_landung(edge);
         let pruefen = |sim| {
-            validate_candidate(&cand, &samples, sim, -128.0, AircraftCategory::FixedWing, Some(0.2))
+            validate_candidate(
+                &cand,
+                &samples,
+                sim,
+                -128.0,
+                AircraftCategory::FixedWing,
+                Some(0.2),
+            )
         };
         // Ohne Simulator-Meldung: verworfen — wie im Flug.
         let ohne = pruefen(SimKind::Msfs2024);
@@ -2606,7 +2613,10 @@ mod tests {
             .step_by(10)
             .map(|ms| bp(ms, 4.0, ms >= 0, -200.0))
             .collect();
-        assert!(proben.len() >= MIN_BEWERTUNGS_PROBEN, "Probenzahl ist erfüllt");
+        assert!(
+            proben.len() >= MIN_BEWERTUNGS_PROBEN,
+            "Probenzahl ist erfüllt"
+        );
         let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
         assert_eq!(
             fehlt.groesste_luecke_ms,
