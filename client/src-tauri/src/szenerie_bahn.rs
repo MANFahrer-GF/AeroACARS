@@ -1180,16 +1180,16 @@ mod anschluss_tests {
     /// Das Alter kommt ohne den Flughafen — und nur fuer gemerkte Plaetze.
     #[test]
     fn das_alter_eines_gemerkten_flughafens() {
-        let alt = std::time::Instant::now() - std::time::Duration::from_secs(400);
+        // Ohne Zeitrechnung in die Vergangenheit: `Instant - Duration`
+        // bricht ab, wenn der Rechner kuerzer laeuft als die Spanne.
         gemerkt()
             .lock()
             .expect("Merker")
-            .insert("ZZALT1".to_string(), (alt, None));
+            .insert("ZZALT1".to_string(), (std::time::Instant::now(), None));
         let alter = gemerktes_alter("ZZALT1").expect("gemerkt");
-        assert!(alter >= std::time::Duration::from_secs(400));
         assert!(
-            alter >= MERKER_AUFFRISCHEN,
-            "Vorrichtung: der Eintrag ist zum Auffrischen faellig"
+            alter < MERKER_AUFFRISCHEN,
+            "ein frisch gemerkter Platz gilt schon als faellig"
         );
         assert!(
             gemerktes_alter("ZZALT2").is_none(),
