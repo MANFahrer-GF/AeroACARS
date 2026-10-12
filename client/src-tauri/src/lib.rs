@@ -30042,9 +30042,6 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
         // Failure prazise zaehlt.
         const TICK: Duration = Duration::from_secs(1);
         const MAX_BATCH: usize = 50;
-        // Hoechstens so lange sendet der Worker nach dem Flugende offene
-        // Positionen nach — ein toter Server haelt ihn nicht laenger.
-        const NACHSENDEN_FRIST: Duration = Duration::from_secs(60);
         // Exponentiel-Backoff bei consecutive failures: 3s, 6s, 12s,
         // 24s, 48s, gecapped bei 60s. Reset bei erstem Erfolg.
         let mut consecutive_failures: u32 = 0;
@@ -30147,35 +30144,14 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                 //   nach dem Stop noch persistieren.
                 //
                 // Ausnahme seit 2.0.12: Beim normalen Flugende gehen offene
-                // Positionen VORHER noch an phpVMS (s. `flight_end`). Die
-                // Positions-`id` macht Wiederholungen folgenlos.
-                if flight.positionen_nachsenden.load(Ordering::Relaxed) {
-                    let (nachgesendet, offen) = offene_positionen_nachsenden(
-                        &flight,
-                        NACHSENDEN_FRIST,
-                        BATCH_TIMEOUT,
-                        MAX_BATCH,
-                        Duration::from_secs(2),
-                        |batch| {
-                            let (client, pirep_id) = (client.clone(), flight.pirep_id.clone());
-                            async move { client.post_positions(&pirep_id, &batch).await }
-                        },
-                    )
-                    .await;
-                    if offen > 0 {
-                        tracing::warn!(
-                            pirep_id = %flight.pirep_id,
-                            nachgesendet,
-                            offen,
-                            "phpvms-worker: nicht alle Positionen nach Flugende zugestellt — \
-                             sie stehen im Flugprotokoll"
-                        );
-                    } else {
-                        tracing::info!(
-                            pirep_id = %flight.pirep_id,
-                            nachgesendet,
-                            "phpvms-worker: offene Positionen nach Flugende nachgesendet"
-                        );
+                // Positionen vorher an den Nachsender (s. `positionen_uebergeben`)
+                // — der Worker endet trotzdem sofort wie bisher.
+                {
+                    let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
+                    let rest = outbox_zum_nachsenden(&flight, &mut outbox);
+                    drop(outbox);
+                    if let Some(rest) = rest {
+                        positionen_uebergeben(&flight, &client, rest);
                     }
                 }
                 persist_outbox_clearing(&app, &flight);
@@ -30276,15 +30252,15 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                 _ = stop_watch => None,
             };
             let Some(post_result) = post_result else {
-                // Beim normalen Flugende zurueck in die Outbox: Der
-                // Stopp-Zweig sendet ihn nach (s. `positionen_nachsenden`).
+                // Beim normalen Flugende an den Nachsender (die Positions-`id`
+                // macht es folgenlos, falls die abgebrochene Anfrage doch ankam).
                 if flight.positionen_nachsenden.load(Ordering::Relaxed) {
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
                         batch_size = batch.len(),
                         "phpvms-worker: Stop waehrend laufendem POST — Batch wird nachgesendet"
                     );
-                    requeue_batch(&flight, batch);
+                    positionen_uebergeben(&flight, &client, batch);
                 } else {
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
@@ -30520,13 +30496,76 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
 /// **Wichtig:** `batch.into_iter().rev() + push_front` ergibt die
 /// originale Reihenfolge: batch=[a,b,c] -> push_front c, b, a ->
 /// outbox = [a, b, c, ...].
-/// Offene Positionen nach dem normalen Flugende nachsenden — bis die Outbox
-/// leer ist, phpVMS endgueltig ablehnt (PIREP weg/abgebrochen, Konto
-/// gesperrt, 4xx) oder `frist` um ist. Voruebergehende Fehler werden nach
-/// `pause` wiederholt. Was nicht rausging, steht danach wieder vorn in der
-/// Outbox. Liefert (nachgesendet, offen).
-async fn offene_positionen_nachsenden<F, Fut>(
+/// Hoechstens so lange sendet der Nachsender offene Positionen eines
+/// beendeten Flugs — ein toter Server haelt ihn nicht laenger.
+const NACHSENDEN_FRIST: Duration = Duration::from_secs(60);
+
+/// Nach dem Flugende-Stopp, unter der Outbox-Sperre: alles zum Nachsenden
+/// herausnehmen. Worker (Stopp-Zweig) und Streamer (verspaeteter Punkt)
+/// rufen das unter DERSELBEN Sperre auf — ein Punkt landet entweder noch in
+/// der Outbox, bevor der Worker sie leert, oder der Streamer sieht den Stopp
+/// und gibt ihn selbst ab. Ohne Flag (Abbruch, Verwerfen, …) `None`.
+fn outbox_zum_nachsenden(
     flight: &ActiveFlight,
+    outbox: &mut std::collections::VecDeque<api_client::PositionEntry>,
+) -> Option<Vec<api_client::PositionEntry>> {
+    if !(flight.stop.load(Ordering::SeqCst) && flight.positionen_nachsenden.load(Ordering::SeqCst))
+    {
+        return None;
+    }
+    Some(outbox.drain(..).collect())
+}
+
+/// Positionen eines normal beendeten Flugs an phpVMS nachsenden.
+///
+/// In einer EIGENEN Aufgabe, die sie allein besitzt — keine gemeinsame
+/// Outbox, keine `position_queue.json`, kein Bezug zu einem fortgesetzten
+/// oder neuen Flug. Der Worker endet dadurch so schnell wie bisher (Codex-
+/// Abnahme ac6a225c: ein bis zu 60 s nachsendender Worker teilte sich die
+/// Outbox mit dem nach gescheitertem Einreichen neu gestarteten und die
+/// Datei mit dem naechsten Flug). Endet die App vorher, fehlen die Punkte
+/// nur in der phpVMS-Spur; im Flugprotokoll stehen sie.
+fn positionen_uebergeben(
+    flight: &ActiveFlight,
+    client: &Client,
+    positionen: Vec<api_client::PositionEntry>,
+) {
+    if positionen.is_empty() {
+        return;
+    }
+    let (client, pirep_id) = (client.clone(), flight.pirep_id.clone());
+    tauri::async_runtime::spawn(async move {
+        let (nachgesendet, offen) = positionen_nachsenden(
+            positionen.into(),
+            NACHSENDEN_FRIST,
+            Duration::from_secs(30),
+            50,
+            Duration::from_secs(2),
+            |batch| {
+                let (client, pirep_id) = (client.clone(), pirep_id.clone());
+                async move { client.post_positions(&pirep_id, &batch).await }
+            },
+        )
+        .await;
+        if offen > 0 {
+            tracing::warn!(
+                pirep_id = %pirep_id,
+                nachgesendet,
+                offen,
+                "phpVMS-Positionen nach Flugende nicht alle zugestellt — sie stehen im Flugprotokoll"
+            );
+        } else {
+            tracing::info!(pirep_id = %pirep_id, nachgesendet, "phpVMS-Positionen nach Flugende nachgesendet");
+        }
+    });
+}
+
+/// Positionen senden — bis keine mehr offen sind, phpVMS endgueltig ablehnt
+/// (PIREP weg/abgebrochen, Konto gesperrt, 4xx) oder `frist` um ist.
+/// Voruebergehende Fehler werden nach `pause` wiederholt. Liefert
+/// (nachgesendet, offen).
+async fn positionen_nachsenden<F, Fut>(
+    mut offen: std::collections::VecDeque<api_client::PositionEntry>,
     frist: Duration,
     batch_timeout: Duration,
     max_batch: usize,
@@ -30541,17 +30580,17 @@ where
     let mut nachgesendet = 0usize;
     loop {
         let rest = ende.saturating_duration_since(std::time::Instant::now());
-        if rest.is_zero() {
+        if rest.is_zero() || offen.is_empty() {
             break;
         }
-        let batch: Vec<api_client::PositionEntry> = {
-            let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
-            let n = outbox.len().min(max_batch);
-            outbox.drain(..n).collect()
+        let n = offen.len().min(max_batch);
+        let batch: Vec<api_client::PositionEntry> = offen.drain(..n).collect();
+        let zurueck = |offen: &mut std::collections::VecDeque<api_client::PositionEntry>,
+                       batch: Vec<api_client::PositionEntry>| {
+            for p in batch.into_iter().rev() {
+                offen.push_front(p);
+            }
         };
-        if batch.is_empty() {
-            break;
-        }
         match tokio::time::timeout(rest.min(batch_timeout), senden(batch.clone())).await {
             Ok(Ok(())) => nachgesendet += batch.len(),
             Ok(Err(
@@ -30563,23 +30602,18 @@ where
                     ..
                 }),
             )) => {
-                tracing::warn!(
-                    pirep_id = %flight.pirep_id,
-                    error = %e,
-                    "phpvms-worker: Nachsenden nach Flugende abgelehnt"
-                );
-                requeue_batch(flight, batch);
+                tracing::warn!(error = %e, "phpVMS lehnt nachgesendete Positionen ab");
+                zurueck(&mut offen, batch);
                 break;
             }
             Ok(Err(_)) | Err(_) => {
-                requeue_batch(flight, batch);
+                zurueck(&mut offen, batch);
                 tokio::time::sleep(pause.min(ende.saturating_duration_since(std::time::Instant::now())))
                     .await;
             }
         }
     }
-    let offen = flight.position_outbox.lock().expect("position_outbox lock").len();
-    (nachgesendet, offen)
+    (nachgesendet, offen.len())
 }
 
 fn requeue_batch(flight: &ActiveFlight, batch: Vec<api_client::PositionEntry>) {
@@ -30879,6 +30913,8 @@ fn restore_flight_for_retry(
     client: &Client,
     flight: Arc<ActiveFlight>,
 ) {
+    // Kein Flugende mehr: ein spaeterer Abbruch verwirft wieder.
+    flight.positionen_nachsenden.store(false, Ordering::SeqCst);
     flight.stop.store(false, Ordering::Relaxed);
     rearm_background_task_guards(&flight);
     spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
@@ -31010,7 +31046,7 @@ mod positions_idempotenz_tests {
     }
 
     fn nachsenden_mit(
-        flight: &ActiveFlight,
+        punkte: Vec<api_client::PositionEntry>,
         frist: Duration,
         antworten: Vec<Result<(), ApiError>>,
     ) -> ((usize, usize), Vec<Vec<String>>) {
@@ -31020,8 +31056,8 @@ mod positions_idempotenz_tests {
             .enable_time()
             .build()
             .unwrap();
-        let ergebnis = rt.block_on(offene_positionen_nachsenden(
-            flight,
+        let ergebnis = rt.block_on(positionen_nachsenden(
+            punkte.into(),
             frist,
             Duration::from_secs(5),
             50,
@@ -31045,12 +31081,10 @@ mod positions_idempotenz_tests {
     fn nach_flugende_gehen_alle_offenen_positionen_raus() {
         // SIA 436 (12.10.2026): Bis 2.0.11 leerte `flight_end` die Outbox —
         // die letzten Sekunden fehlten in der phpVMS-Spur.
-        let flight = flug();
         let punkte: Vec<_> = (0..120).map(|i| punkt(i as f64)).collect();
         let ids: Vec<String> = punkte.iter().map(|p| p.id.clone()).collect();
-        flight.position_outbox.lock().unwrap().extend(punkte);
         let ((nachgesendet, offen), gesendet) =
-            nachsenden_mit(&flight, Duration::from_secs(5), vec![]);
+            nachsenden_mit(punkte, Duration::from_secs(5), vec![]);
         assert_eq!((nachgesendet, offen), (120, 0));
         assert!(gesendet.iter().all(|b| b.len() <= 50), "hoechstens 50 je Anfrage");
         assert_eq!(gesendet.concat(), ids, "alle, in Reihenfolge, keine doppelt");
@@ -31058,12 +31092,10 @@ mod positions_idempotenz_tests {
 
     #[test]
     fn voruebergehender_fehler_wird_wiederholt() {
-        let flight = flug();
         let p = punkt(1.0);
         let id = p.id.clone();
-        flight.position_outbox.lock().unwrap().push_back(p);
         let ((nachgesendet, offen), gesendet) = nachsenden_mit(
-            &flight,
+            vec![p],
             Duration::from_secs(5),
             vec![Err(ApiError::Network("weg".into())), Ok(())],
         );
@@ -31072,11 +31104,9 @@ mod positions_idempotenz_tests {
     }
 
     #[test]
-    fn endgueltige_ablehnung_bricht_ab_ohne_zu_verwerfen() {
-        let flight = flug();
-        flight.position_outbox.lock().unwrap().extend([punkt(1.0), punkt(2.0)]);
+    fn endgueltige_ablehnung_bricht_ab() {
         let ((nachgesendet, offen), gesendet) = nachsenden_mit(
-            &flight,
+            vec![punkt(1.0), punkt(2.0)],
             Duration::from_secs(5),
             vec![Err(ApiError::Server {
                 status: 400,
@@ -31089,14 +31119,28 @@ mod positions_idempotenz_tests {
 
     #[test]
     fn nachsenden_endet_spaetestens_mit_der_frist() {
-        let flight = flug();
-        flight.position_outbox.lock().unwrap().push_back(punkt(1.0));
         let antworten = (0..10_000).map(|_| Err(ApiError::Network("weg".into()))).collect();
         let t0 = std::time::Instant::now();
         let ((nachgesendet, offen), _) =
-            nachsenden_mit(&flight, Duration::from_millis(100), antworten);
+            nachsenden_mit(vec![punkt(1.0)], Duration::from_millis(100), antworten);
         assert!(t0.elapsed() < Duration::from_secs(2), "toter Server haelt nicht auf");
         assert_eq!((nachgesendet, offen), (0, 1));
+    }
+
+    #[test]
+    fn nur_das_normale_flugende_gibt_die_outbox_ab() {
+        let flight = flug();
+        let mut outbox: std::collections::VecDeque<_> = [punkt(1.0), punkt(2.0)].into();
+        // Laufender Flug: nichts abgeben.
+        assert!(outbox_zum_nachsenden(&flight, &mut outbox).is_none());
+        // Abbruch/Verwerfen: Stopp ohne Flag — ebenfalls nichts.
+        flight.stop.store(true, Ordering::SeqCst);
+        assert!(outbox_zum_nachsenden(&flight, &mut outbox).is_none());
+        assert_eq!(outbox.len(), 2);
+        // Normales Flugende: alles heraus, die Outbox ist danach leer.
+        flight.positionen_nachsenden.store(true, Ordering::SeqCst);
+        assert_eq!(outbox_zum_nachsenden(&flight, &mut outbox).map(|v| v.len()), Some(2));
+        assert!(outbox.is_empty());
     }
 
     #[test]
@@ -31550,8 +31594,8 @@ async fn flight_end(
     // nimmt Positionen aber auch danach an (`AcarsController::acars_store`
     // lehnt nur abgebrochene PIREPs ab), und so fehlten die letzten
     // 4–30 s jedes Flugs in der phpVMS-Spur (SIA 436, 12.10.2026).
-    flight.positionen_nachsenden.store(true, Ordering::Relaxed);
-    flight.stop.store(true, Ordering::Relaxed);
+    flight.positionen_nachsenden.store(true, Ordering::SeqCst);
+    flight.stop.store(true, Ordering::SeqCst);
 
     // Snapshot all stats inside a single short-lived guard to avoid holding
     // the Mutex across an `await`.
@@ -32624,8 +32668,8 @@ async fn flight_end_manual(
             .ok_or_else(|| UiError::new("no_active_flight", "no flight is active"))?
     };
     // Offene Positionen nachsenden — siehe `flight_end`.
-    flight.positionen_nachsenden.store(true, Ordering::Relaxed);
-    flight.stop.store(true, Ordering::Relaxed);
+    flight.positionen_nachsenden.store(true, Ordering::SeqCst);
+    flight.stop.store(true, Ordering::SeqCst);
 
     // Same normalization as `flight_end`: a "divert" to the planned
     // destination is an arrival, not a divert. Here the ICAO can be typed by
@@ -42071,7 +42115,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     outbox.pop_front();
                     dropped_this_tick += 1;
                 }
+                // Nach dem Flugende-Stopp ist der Worker womoeglich schon
+                // fort — dann gibt der Streamer den Punkt selbst ab, statt
+                // ihn in einer Outbox liegen zu lassen, die niemand mehr leert.
+                let nachsenden = outbox_zum_nachsenden(&flight, &mut outbox);
                 drop(outbox);
+                if let Some(rest) = nachsenden {
+                    positionen_uebergeben(&flight, &client, rest);
+                }
                 if dropped_this_tick > 0 {
                     // Warn pro Tick — auf einem dauerhaft toten Netz koennte
                     // das jede Sekunde feuern, aber das ist genau das Signal
