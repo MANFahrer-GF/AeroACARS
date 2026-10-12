@@ -232,8 +232,10 @@ impl From<reqwest::Error> for ApiError {
 /// Ergebnis von [`Client::post_acars_logs_zustellung`].
 #[derive(Debug)]
 pub enum Zustellung {
-    /// phpVMS hat die Zeilen angenommen.
-    Angekommen,
+    /// phpVMS hat die Anfrage angenommen. `gespeichert`: die Zahl, die
+    /// phpVMS als angelegt meldet (`count`) — kann kleiner sein als gesendet,
+    /// weil phpVMS Datenbankfehler je Zeile abfängt.
+    Angekommen { gespeichert: Option<u64> },
     /// Sicher nicht verarbeitet (keine Verbindung, 429, 502–504) — Neuversuch
     /// erzeugt keine Doppelten.
     NichtAngekommen(ApiError),
@@ -2208,7 +2210,14 @@ impl Client {
             Err(e) => return Zustellung::Unklar(ApiError::from(e)),
         };
         match check_status(response, &path).await {
-            Ok(_) => Zustellung::Angekommen,
+            Ok(r) => {
+                let gespeichert = r
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("count").and_then(|c| c.as_u64()));
+                Zustellung::Angekommen { gespeichert }
+            }
             Err(e) => match &e {
                 // 429 und Gateway-Fehler: Die Anfrage hat phpVMS nicht verarbeitet.
                 ApiError::RateLimited { .. } => Zustellung::NichtAngekommen(e),
@@ -3652,13 +3661,17 @@ mod zustellung_tests {
 
     /// Ein Ein-Anfrage-Server, der mit `antwort` (Statuszeile) antwortet.
     fn server(antwort: &'static str) -> String {
+        server_mit(antwort, "{}")
+    }
+
+    /// Wie [`server`], mit eigenem Antworttext.
+    fn server_mit(antwort: &'static str, body: &'static str) -> String {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let adresse = format!("http://{}", l.local_addr().unwrap());
         std::thread::spawn(move || {
             if let Ok((mut s, _)) = l.accept() {
                 let mut puffer = [0u8; 8192];
                 let _ = s.read(&mut puffer);
-                let body = "{}";
                 let _ = write!(
                     s,
                     "HTTP/1.1 {antwort}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -3688,7 +3701,20 @@ mod zustellung_tests {
     fn angenommen() {
         assert!(matches!(
             zustellen(&server("200 OK")),
-            Zustellung::Angekommen
+            Zustellung::Angekommen { gespeichert: None }
+        ));
+    }
+
+    #[test]
+    fn meldet_gespeicherte_zahl() {
+        assert!(matches!(
+            zustellen(&server_mit(
+                "200 OK",
+                r#"{"message":"0 logs added","attrs":[],"count":0}"#
+            )),
+            Zustellung::Angekommen {
+                gespeichert: Some(0)
+            }
         ));
     }
 
@@ -3713,7 +3739,7 @@ mod zustellung_tests {
     }
 
     #[test]
-    fn vielleicht_gespeichert_wird_nicht_wiederholt() {
+    fn vielleicht_gespeichert_ist_unklar() {
         assert!(matches!(
             zustellen(&server("500 Internal Server Error")),
             Zustellung::Unklar(_)
