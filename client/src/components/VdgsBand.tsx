@@ -146,6 +146,17 @@ export function sperre(cdmSts: string): Sperre | null {
   return null;
 }
 
+/** Hält die gemeldete Anlassbereitschaft (ASRT) den Flug in der Folge?
+ *  Laut rpuig2001/CDM (README) verfallen TSAT (ab +6) und TOBT (ab +5)
+ *  nicht, solange eine ASRT steht — der Flug wartet dann auf ATC, nicht
+ *  auf eine neue TOBT. Für ein Fenster aus CTOT minus Rollzeit gilt das
+ *  nicht: Der Slot verfällt trotzdem (Codex-Abnahme 447b60eb). */
+export function asrtHaelt(stand: VdgsStand): boolean {
+  if (!stand.asrt) return false;
+  const art = referenz(stand)?.art;
+  return art === "TSAT" || art === "TOBT";
+}
+
 /** Farbe wie am echten Gerät: grün heißt „anlassen", bernstein
  *  „vorbereiten", rot „raus aus der Folge". */
 export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
@@ -160,10 +171,8 @@ export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
   const rest = ref ? minutenBis(ref.zeit, jetzt) : null;
   if (rest === null) return "warten";
   // Ab der sechsten Minute nach der Referenzzeit: Fenster verpasst —
-  // außer die Anlassbereitschaft ist gemeldet (ASRT). Dann nimmt das CDM
-  // den Flug nicht aus der Folge (rpuig2001/CDM: "will not invalidate at
-  // TSAT+6 if ASRT is set"); er wartet auf ATC, nicht auf eine neue TOBT.
-  if (rest < -FENSTER_NACH_MIN) return stand.asrt ? "frei" : "achtung";
+  // außer die Anlassbereitschaft ist gemeldet (s. `asrtHaelt`).
+  if (rest < -FENSTER_NACH_MIN) return asrtHaelt(stand) ? "frei" : "achtung";
   if (rest <= FENSTER_VOR_MIN) return "frei";
   return "warten";
 }
@@ -322,7 +331,7 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
     !!stand.tobt &&
     !stand.aobt &&
     !gesperrt &&
-    !stand.asrt &&
+    !asrtHaelt(stand) &&
     rest !== null &&
     rest < -FENSTER_NACH_MIN;
 

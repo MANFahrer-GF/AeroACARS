@@ -577,6 +577,15 @@ describe("Wunsch-TOBT, ASRT, Grund, Platz ohne CDM (2.0.11)", () => {
     expect(ampel({ ...EDDC, asrt: "20:44" }, um("20:52"))).toBe("frei");
   });
 
+  it("hält mit ASRT auch bei TSAT, aber nicht beim Fenster aus CTOT minus Rollzeit", () => {
+    // STAND: TSAT 15:46 → ab 15:52 verpasst, mit ASRT nicht.
+    expect(ampel({ ...STAND, asrt: "15:40" }, um("15:52"))).toBe("frei");
+    // Regulierung ohne TSAT: Fenster um CTOT minus Rollzeit (16:00 − 9 = 15:51).
+    const reg = { ...STAND, tsat: "", ctot: "16:00", asrt: "15:40" };
+    expect(referenz(reg)?.art).toBe("CTOT");
+    expect(ampel(reg, um("15:58"))).toBe("achtung");
+  });
+
   it("meldet mit ASRT kein verpasstes Fenster, zeigt aber die ASRT", () => {
     vi.useFakeTimers();
     vi.setSystemTime(um("20:52"));

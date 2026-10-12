@@ -73,9 +73,11 @@ pub struct VdgsStand {
     /// vorliegt.
     pub tobt_wunsch: String,
     /// Anlassbereitschaft gemeldet (Actual Start-up Request Time). Solange
-    /// sie steht, nimmt das CDM den Flug nach dem Fenster nicht aus der
-    /// Folge (rpuig2001/CDM, README: "will not invalidate at TSAT+6 if
-    /// ASRT is set") — das Band darf dann nicht „verpasst" melden.
+    /// sie steht, nimmt das CDM den Flug nach dem TSAT- bzw. TOBT-Fenster
+    /// nicht aus der Folge (rpuig2001/CDM, README) — das Band darf dann
+    /// nicht „verpasst" melden. Eine ASRT aus einem abgebrochenen Versuch
+    /// unter demselben Rufzeichen am selben Platz wird hingenommen wie in
+    /// `passt_zum_flug` beschrieben: Das CDM fuehrt sie dann selbst noch.
     pub asrt: String,
     /// Grund, den das CDM zum Flug fuehrt (etwa eine Verzoegerung).
     pub grund: String,
@@ -352,26 +354,30 @@ struct ApiPlatz {
     is_cdm: bool,
 }
 
-/// Die Plaetze mit CDM aus `/etfms/getCadAirports`. Eine leere Liste ist
-/// ein Fehler: Sonst hiesse es ueberall „kein CDM", nur weil drueben
-/// gerade nichts kam.
-fn liste_lesen(rumpf: &[u8]) -> Result<std::collections::HashSet<String>, String> {
+/// Platz → hat CDM, aus `/etfms/getCadAirports`. Eine leere Liste ist ein
+/// Fehler: Sonst hiesse es ueberall „kein CDM", nur weil drueben gerade
+/// nichts kam.
+///
+/// Ein Platz, der FEHLT, ist unbekannt — nicht „ohne CDM": Die Liste ist
+/// nicht vollstaendig (EHAM fehlte am 12.10.2026, obwohl dort 19 Fluege
+/// gefuehrt wurden; Codex-Abnahme 447b60eb). Nur ein ausdrueckliches
+/// `isCdm: false` zaehlt als „ohne CDM".
+fn liste_lesen(rumpf: &[u8]) -> Result<std::collections::HashMap<String, bool>, String> {
     let plaetze: Vec<ApiPlatz> = serde_json::from_slice(rumpf).map_err(|e| e.to_string())?;
     if plaetze.is_empty() {
         return Err("leere Platzliste".into());
     }
     Ok(plaetze
         .into_iter()
-        .filter(|p| p.is_cdm)
-        .map(|p| p.icao.trim().to_uppercase())
-        .filter(|i| !i.is_empty())
+        .map(|p| (p.icao.trim().to_uppercase(), p.is_cdm))
+        .filter(|(i, _)| !i.is_empty())
         .collect())
 }
 
 #[derive(Default)]
 struct CdmListe {
     /// Letzte gute Liste und wann sie kam.
-    cdm: Option<(Instant, std::collections::HashSet<String>)>,
+    cdm: Option<(Instant, std::collections::HashMap<String, bool>)>,
     letzter_versuch: Option<Instant>,
 }
 
@@ -403,7 +409,7 @@ async fn ist_cdm_platz(abflug: &str) -> Option<bool> {
             .letzter_versuch
             .is_none_or(|t| t.elapsed() >= CDM_LISTE_NEUVERSUCH);
         (
-            g.cdm.as_ref().map(|(_, s)| s.contains(&abflug)),
+            g.cdm.as_ref().and_then(|(_, l)| l.get(&abflug).copied()),
             !frisch && darf,
         )
     };
@@ -419,11 +425,11 @@ async fn ist_cdm_platz(abflug: &str) -> Option<bool> {
         .and_then(|r| liste_lesen(&r));
     match geholt {
         Ok(liste) => {
-            let ja = liste.contains(&abflug);
+            let ja = liste.get(&abflug).copied();
             if let Ok(mut g) = cdm_liste().lock() {
                 g.cdm = Some((Instant::now(), liste));
             }
-            Some(ja)
+            ja
         }
         Err(e) => {
             tracing::debug!(target: "vdgs", "CDM-Platzliste nicht abrufbar: {e}");
@@ -863,14 +869,16 @@ mod tests {
     }
 
     #[test]
-    fn platzliste_nimmt_nur_plaetze_mit_cdm() {
+    fn platzliste_unterscheidet_ohne_cdm_von_unbekannt() {
         let roh = br#"[{"icao":"eddf","isCdm":true,"rate":40},{"icao":"GCRR","isCdm":false},
             {"icao":"LEBL","isCdm":true},{"isCdm":true}]"#;
         let l = liste_lesen(roh).unwrap();
-        assert!(l.contains("EDDF"));
-        assert!(l.contains("LEBL"));
-        assert!(!l.contains("GCRR"));
-        assert_eq!(l.len(), 2);
+        assert_eq!(l.get("EDDF"), Some(&true));
+        assert_eq!(l.get("LEBL"), Some(&true));
+        assert_eq!(l.get("GCRR"), Some(&false));
+        // Fehlt ein Platz, ist das unbekannt — nicht „ohne CDM".
+        assert_eq!(l.get("EHAM"), None);
+        assert_eq!(l.len(), 3);
     }
 
     #[test]
