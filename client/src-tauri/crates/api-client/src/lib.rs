@@ -229,6 +229,21 @@ impl From<reqwest::Error> for ApiError {
     }
 }
 
+/// Ergebnis von [`Client::post_acars_logs_zustellung`].
+#[derive(Debug)]
+pub enum Zustellung {
+    /// phpVMS hat die Zeilen angenommen.
+    Angekommen,
+    /// Sicher nicht verarbeitet (keine Verbindung, 429, 502–504) — Neuversuch
+    /// erzeugt keine Doppelten.
+    NichtAngekommen(ApiError),
+    /// Vielleicht gespeichert (Zeitüberschreitung, sonstiger 5xx) — ein
+    /// Neuversuch könnte Doppelte erzeugen.
+    Unklar(ApiError),
+    /// Abgelehnt (401, 403, 404, sonstige 4xx, ungültige Adresse).
+    Abgelehnt(ApiError),
+}
+
 /// Connection details for a phpVMS site.
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -1068,7 +1083,7 @@ pub mod pirep_source {
 /// V1 / VR / V2, touchdown vertical speed, engine start/stop, etc.) — vmsACARS
 /// uses this same endpoint to write the chronological "story" pilots see
 /// in the PIREP detail page.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LogEntry {
     pub log: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2153,6 +2168,54 @@ impl Client {
     /// text log lines that show up in the PIREP detail. Used for sub-events
     /// without a PirepStatus equivalent (TOC, TOD, V1/VR/V2, touchdown VS,
     /// engine start/stop, etc.).
+    /// Wie [`Self::post_acars_logs`], unterscheidet aber, ob die Zeilen
+    /// sicher NICHT bei phpVMS angekommen sind. Nur dann ist ein Neuversuch
+    /// ohne Doppelte möglich — phpVMS hat keine Abfrage vorhandener
+    /// Logzeilen und keine Doppelten-Erkennung (AeroACARS 2.0.10).
+    pub async fn post_acars_logs_zustellung(
+        &self,
+        pirep_id: &str,
+        logs: &[LogEntry],
+    ) -> Zustellung {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            logs: &'a [LogEntry],
+        }
+        let path = format!("/api/pireps/{pirep_id}/acars/logs");
+        let url = match self.endpoint(&path) {
+            Ok(u) => u,
+            Err(e) => return Zustellung::Abgelehnt(e),
+        };
+        let gesendet = self
+            .http
+            .post(url)
+            .header("X-API-Key", &self.conn.api_key)
+            .header(header::ACCEPT, "application/json")
+            .json(&Body { logs })
+            .send()
+            .await;
+        let response = match gesendet {
+            Ok(r) => r,
+            // Keine Verbindung zustande gekommen: sicher nicht angekommen.
+            Err(e) if e.is_connect() => return Zustellung::NichtAngekommen(ApiError::from(e)),
+            // Zeitüberschreitung o. ä.: phpVMS kann die Zeilen gespeichert haben.
+            Err(e) => return Zustellung::Unklar(ApiError::from(e)),
+        };
+        match check_status(response, &path).await {
+            Ok(_) => Zustellung::Angekommen,
+            Err(e) => match &e {
+                // 429 und Gateway-Fehler: Die Anfrage hat phpVMS nicht verarbeitet.
+                ApiError::RateLimited { .. } => Zustellung::NichtAngekommen(e),
+                ApiError::Server { status, .. } if matches!(*status, 502..=504) => {
+                    Zustellung::NichtAngekommen(e)
+                }
+                ApiError::Server { status, .. } if *status >= 500 => Zustellung::Unklar(e),
+                ApiError::Network(_) => Zustellung::Unklar(e),
+                _ => Zustellung::Abgelehnt(e),
+            },
+        }
+    }
+
     pub async fn post_acars_logs(&self, pirep_id: &str, logs: &[LogEntry]) -> Result<(), ApiError> {
         #[derive(Serialize)]
         struct Body<'a> {
@@ -3572,5 +3635,94 @@ mod navlog_sprit_tests {
         let fixes = extract_navlog_fixes(xml, true);
         assert_eq!(fixes.len(), 1);
         assert_eq!(fixes[0].sprit_bis_hier_kg, None);
+    }
+}
+
+#[cfg(test)]
+mod zustellung_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Ein Ein-Anfrage-Server, der mit `antwort` (Statuszeile) antwortet.
+    fn server(antwort: &'static str) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let adresse = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = l.accept() {
+                let mut puffer = [0u8; 8192];
+                let _ = s.read(&mut puffer);
+                let body = "{}";
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {antwort}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        adresse
+    }
+
+    fn zustellen(basis: &str) -> Zustellung {
+        let client = Client::new(Connection::new(basis, "test").unwrap()).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(client.post_acars_logs_zustellung(
+            "P1",
+            &[LogEntry {
+                log: "Gear DOWN".into(),
+                ..Default::default()
+            }],
+        ))
+    }
+
+    #[test]
+    fn angenommen() {
+        assert!(matches!(
+            zustellen(&server("200 OK")),
+            Zustellung::Angekommen
+        ));
+    }
+
+    #[test]
+    fn nicht_verarbeitet_darf_wiederholt_werden() {
+        assert!(matches!(
+            zustellen(&server("429 Too Many Requests")),
+            Zustellung::NichtAngekommen(_)
+        ));
+        assert!(matches!(
+            zustellen(&server("503 Service Unavailable")),
+            Zustellung::NichtAngekommen(_)
+        ));
+        // Kein Server auf dem Port: Verbindung kommt nicht zustande.
+        let frei = TcpListener::bind("127.0.0.1:0").unwrap();
+        let adresse = format!("http://{}", frei.local_addr().unwrap());
+        drop(frei);
+        assert!(matches!(
+            zustellen(&adresse),
+            Zustellung::NichtAngekommen(_)
+        ));
+    }
+
+    #[test]
+    fn vielleicht_gespeichert_wird_nicht_wiederholt() {
+        assert!(matches!(
+            zustellen(&server("500 Internal Server Error")),
+            Zustellung::Unklar(_)
+        ));
+    }
+
+    #[test]
+    fn abgelehnt() {
+        assert!(matches!(
+            zustellen(&server("404 Not Found")),
+            Zustellung::Abgelehnt(ApiError::NotFound)
+        ));
+        assert!(matches!(
+            zustellen(&server("401 Unauthorized")),
+            Zustellung::Abgelehnt(ApiError::Unauthenticated)
+        ));
     }
 }

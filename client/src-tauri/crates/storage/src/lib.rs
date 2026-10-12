@@ -89,6 +89,16 @@ impl PositionQueue {
         })
     }
 
+    /// Dieselbe Ablage unter eigenem Dateinamen — z. B. `acars_queue.json`
+    /// für den ACARS-Postausgang (AeroACARS 2.0.10).
+    pub fn open_named(app_data_dir: impl AsRef<Path>, datei: &str) -> Result<Self, StorageError> {
+        let dir = app_data_dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self {
+            path: dir.join(datei),
+        })
+    }
+
     /// Append a position to the queue. Drops the oldest entry when the
     /// queue is at capacity so a long outage can't unbounded-grow the
     /// file. Returns the new queue length on success.
