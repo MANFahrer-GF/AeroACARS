@@ -30176,18 +30176,15 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                 // — der Worker endet trotzdem sofort wie bisher.
                 // Erst das Flag (in `outbox_zum_nachsenden`), dann die
                 // Generation lesen — s. `restore_flight_for_retry`.
-                let (rest, abgeloest) = {
+                let ende = {
                     let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
-                    let rest = outbox_zum_nachsenden(&flight, &mut outbox);
-                    let abgeloest = rest.is_none()
-                        && flight.generation.load(Ordering::SeqCst) != meine_generation;
-                    (rest, abgeloest)
+                    stopp_entscheidung(&flight, &mut outbox, meine_generation)
                 };
-                let abgegeben = rest.is_some();
-                if let Some(rest) = rest {
+                let abgegeben = matches!(ende, StoppEnde::Abgeben(_));
+                if let StoppEnde::Abgeben(rest) = ende.clone() {
                     positionen_uebergeben(&flight, &client, rest);
                 }
-                if abgeloest {
+                if ende == StoppEnde::Abgeloest {
                     // Flug nach gescheitertem Einreichen fortgesetzt: Die
                     // Outbox gehoert dem neuen Worker — nichts leeren.
                     tracing::info!(
@@ -30292,7 +30289,9 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
             let stop_watch = async {
                 loop {
                     tokio::time::sleep(Duration::from_millis(250)).await;
-                    if flight.stop.load(Ordering::Relaxed)
+                    // SeqCst: Wer hier `stop` sieht, muss danach auch das vor
+                    // `stop` gesetzte Flag sehen (s. Arm unten).
+                    if flight.stop.load(Ordering::SeqCst)
                         || flight.generation.load(Ordering::SeqCst) != meine_generation
                     {
                         return;
@@ -30353,6 +30352,14 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     flight
                         .connection_state
                         .store(CONN_STATE_LIVE, Ordering::Relaxed);
+                }
+                // Ueberholt (Flug inzwischen fortgesetzt): keine Wirkung auf
+                // den neuen Worker — Block zurueck, er erfaehrt 404/401 selbst.
+                Ok(Err(ApiError::NotFound | ApiError::Unauthenticated | ApiError::Forbidden))
+                    if flight.generation.load(Ordering::SeqCst) != meine_generation =>
+                {
+                    requeue_batch(&flight, batch);
+                    return;
                 }
                 Ok(Err(ApiError::NotFound)) => {
                     // PIREP serverseitig geloescht — terminiert sauber.
@@ -30545,13 +30552,6 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
     });
 }
 
-/// v0.6.0 — Helper: failed batch zurueck in die Outbox VORN, mit
-/// erhaltener chronologischer Reihenfolge. Wird vom phpVMS-Worker
-/// aufgerufen wenn ein Batch-POST scheitert.
-///
-/// **Wichtig:** `batch.into_iter().rev() + push_front` ergibt die
-/// originale Reihenfolge: batch=[a,b,c] -> push_front c, b, a ->
-/// outbox = [a, b, c, ...].
 /// Hoechstens so lange sendet der Nachsender offene Positionen eines
 /// beendeten Flugs — ein toter Server haelt ihn nicht laenger.
 const NACHSENDEN_FRIST: Duration = Duration::from_secs(60);
@@ -30570,6 +30570,34 @@ fn outbox_zum_nachsenden(
         return None;
     }
     Some(outbox.drain(..).collect())
+}
+
+/// Was der Positions-Worker beim Stopp mit der Outbox tut.
+#[derive(Debug, Clone, PartialEq)]
+enum StoppEnde {
+    /// Normales Flugende: diese Punkte an den Nachsender.
+    Abgeben(Vec<api_client::PositionEntry>),
+    /// Flug fortgesetzt, ein neuer Worker besitzt die Outbox: nichts anfassen.
+    Abgeloest,
+    /// Abbruch, Verwerfen, PIREP weg: wie immer verwerfen.
+    Verwerfen,
+}
+
+/// Die Stopp-Entscheidung des Workers, unter der Outbox-Sperre. Erst das Flag
+/// lesen (in `outbox_zum_nachsenden`), dann die Generation — s.
+/// `fortsetzen_vorbereiten`.
+fn stopp_entscheidung(
+    flight: &ActiveFlight,
+    outbox: &mut std::collections::VecDeque<api_client::PositionEntry>,
+    meine_generation: u64,
+) -> StoppEnde {
+    if let Some(rest) = outbox_zum_nachsenden(flight, outbox) {
+        return StoppEnde::Abgeben(rest);
+    }
+    if flight.generation.load(Ordering::SeqCst) != meine_generation {
+        return StoppEnde::Abgeloest;
+    }
+    StoppEnde::Verwerfen
 }
 
 /// Positionen eines normal beendeten Flugs an phpVMS nachsenden.
@@ -30672,6 +30700,13 @@ where
     (nachgesendet, offen.len())
 }
 
+/// v0.6.0 — Helper: failed batch zurueck in die Outbox VORN, mit
+/// erhaltener chronologischer Reihenfolge. Wird vom phpVMS-Worker
+/// aufgerufen wenn ein Batch-POST scheitert.
+///
+/// **Wichtig:** `batch.into_iter().rev() + push_front` ergibt die
+/// originale Reihenfolge: batch=[a,b,c] -> push_front c, b, a ->
+/// outbox = [a, b, c, ...].
 fn requeue_batch(flight: &ActiveFlight, batch: Vec<api_client::PositionEntry>) {
     let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
     for position in batch.into_iter().rev() {
@@ -30929,6 +30964,23 @@ async fn compute_distance_to_airport(
     }
 }
 
+/// Startsperre einer Hintergrundaufgabe nehmen und die Generation liefern,
+/// mit der sie laufen soll — `None`, wenn schon eine laeuft.
+///
+/// Unter `start_sperre`, wie das Fortsetzen in `restore_flight_for_retry`:
+/// Ein zweiter Starter (`spawn_resume_sim_gate`) nimmt die Sperre deshalb
+/// entweder ganz vor dem Fortsetzen (seine Aufgabe ist dann ueberholt und
+/// endet, restore startet neu) oder ganz danach (dann mit der neuen
+/// Generation, und restore sieht die Sperre belegt). Weder faellt die
+/// Aufgabe aus noch laeuft sie doppelt (Codex-Abnahmen 233eedb4, cd149ec1).
+fn startsperre_nehmen(flight: &ActiveFlight, sperre: &AtomicBool) -> Option<u64> {
+    let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+    if sperre.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    Some(flight.generation.load(Ordering::SeqCst))
+}
+
 /// v0.19.x FIX (finding 2): restore a flight that failed to file back into
 /// `active_flight` for retry, undoing everything `flight_end` did to it
 /// before the attempt. `flight.stop` was set true and — because filing can
@@ -30955,23 +31007,6 @@ async fn compute_distance_to_airport(
 /// restored flight looks active in `active_flight` with zero background
 /// tasks actually running, exactly the bug this function's doc comment
 /// claims to fix.
-/// Startsperre einer Hintergrundaufgabe nehmen und die Generation liefern,
-/// mit der sie laufen soll — `None`, wenn schon eine laeuft.
-///
-/// Unter `start_sperre`, wie das Fortsetzen in `restore_flight_for_retry`:
-/// Ein zweiter Starter (`spawn_resume_sim_gate`) nimmt die Sperre deshalb
-/// entweder ganz vor dem Fortsetzen (seine Aufgabe ist dann ueberholt und
-/// endet, restore startet neu) oder ganz danach (dann mit der neuen
-/// Generation, und restore sieht die Sperre belegt). Weder faellt die
-/// Aufgabe aus noch laeuft sie doppelt (Codex-Abnahmen 233eedb4, cd149ec1).
-fn startsperre_nehmen(flight: &ActiveFlight, sperre: &AtomicBool) -> Option<u64> {
-    let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
-    if sperre.swap(true, Ordering::SeqCst) {
-        return None;
-    }
-    Some(flight.generation.load(Ordering::SeqCst))
-}
-
 fn rearm_background_task_guards(flight: &ActiveFlight) {
     flight.streamer_spawned.store(false, Ordering::SeqCst);
     flight.phpvms_worker_spawned.store(false, Ordering::SeqCst);
@@ -30980,23 +31015,26 @@ fn rearm_background_task_guards(flight: &ActiveFlight) {
         .store(false, Ordering::SeqCst);
 }
 
+/// Den kritischen Teil des Fortsetzens unter `start_sperre`. Reihenfolge
+/// zaehlt: erst die Generation (alte Worker/Streamer/Sampler gelten ab jetzt
+/// als ueberholt), dann das Flag (kein Flugende mehr — ein spaeterer Abbruch
+/// verwirft wieder), dann `stop`, zuletzt die Startsperren frei. Wer das Flag
+/// als geloescht sieht, sieht deshalb auch die neue Generation.
+fn fortsetzen_vorbereiten(flight: &ActiveFlight) {
+    let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+    flight.generation.fetch_add(1, Ordering::SeqCst);
+    flight.positionen_nachsenden.store(false, Ordering::SeqCst);
+    flight.stop.store(false, Ordering::SeqCst);
+    rearm_background_task_guards(flight);
+}
+
 fn restore_flight_for_retry(
     app: &AppHandle,
     state: &AppState,
     client: &Client,
     flight: Arc<ActiveFlight>,
 ) {
-    // Reihenfolge zaehlt: erst die Generation (alte Worker/Streamer gelten
-    // ab jetzt als ueberholt), dann das Flag (kein Flugende mehr — ein
-    // spaeterer Abbruch verwirft wieder), zuletzt `stop`. Wer das Flag als
-    // geloescht sieht, sieht deshalb auch die neue Generation.
-    {
-        let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
-        flight.generation.fetch_add(1, Ordering::SeqCst);
-        flight.positionen_nachsenden.store(false, Ordering::SeqCst);
-        flight.stop.store(false, Ordering::SeqCst);
-        rearm_background_task_guards(&flight);
-    }
+    fortsetzen_vorbereiten(&flight);
     spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
     spawn_position_streamer(app.clone(), Arc::clone(&flight), client.clone());
     spawn_touchdown_sampler(app.clone(), Arc::clone(&flight));
@@ -31216,10 +31254,64 @@ mod positions_idempotenz_tests {
         let flight = flug();
         assert_eq!(startsperre_nehmen(&flight, &flight.streamer_spawned), Some(0));
         assert_eq!(startsperre_nehmen(&flight, &flight.streamer_spawned), None, "laeuft schon");
-        // Fortsetzen: neue Generation, Sperren frei — der Neustart bekommt sie.
-        flight.generation.fetch_add(1, Ordering::SeqCst);
-        rearm_background_task_guards(&flight);
+        // Fortsetzen ueber den echten Weg: neue Generation, Sperren frei.
+        fortsetzen_vorbereiten(&flight);
         assert_eq!(startsperre_nehmen(&flight, &flight.streamer_spawned), Some(1));
+    }
+
+    #[test]
+    fn stopp_entscheidung_unterscheidet_ende_fortsetzen_und_abbruch() {
+        // Normales Flugende (wie `flight_end`): Flag vor stop.
+        let flight = flug();
+        let mut outbox: std::collections::VecDeque<_> = [punkt(1.0)].into();
+        flight.positionen_nachsenden.store(true, Ordering::SeqCst);
+        flight.stop.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            stopp_entscheidung(&flight, &mut outbox, 0),
+            StoppEnde::Abgeben(v) if v.len() == 1
+        ));
+
+        // Einreichen gescheitert, Flug fortgesetzt: Der alte Worker (Generation 0)
+        // ist abgeloest und darf die Outbox des neuen nicht anfassen.
+        fortsetzen_vorbereiten(&flight);
+        let mut outbox: std::collections::VecDeque<_> = [punkt(2.0)].into();
+        flight.stop.store(true, Ordering::SeqCst);
+        assert_eq!(stopp_entscheidung(&flight, &mut outbox, 0), StoppEnde::Abgeloest);
+        assert_eq!(outbox.len(), 1, "nichts entnommen");
+
+        // Abbruch des fortgesetzten Flugs: Generation 1, Flag aus — verwerfen.
+        assert_eq!(stopp_entscheidung(&flight, &mut outbox, 1), StoppEnde::Verwerfen);
+    }
+
+    /// Bis 2.0.11 leerten `flight_end` und `flight_end_manual` die Outbox vor
+    /// dem Einreichen — die letzten Sekunden fehlten in der phpVMS-Spur. Ein
+    /// Ablauftest braeuchte die laufende App; der Waechter faengt das
+    /// Wiedereinfuehren.
+    #[test]
+    fn flugende_leert_die_outbox_nicht_mehr() {
+        let quelle: String = include_str!("lib.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        // Suchtexte zur Laufzeit zusammengesetzt: Als Literal stuenden sie in
+        // diesem Test selbst, und der Waechter faende sich selbst.
+        let flag_setzen = ["positionen_nachsenden", ".store(true"].concat();
+        // Ohne Leerraum — auch der im Text "position_outbox lock" faellt weg.
+        let leeren = [".position_outbox", ".lock()", ".expect(\"position_outboxlock\")", ".clear()"]
+            .concat();
+        for name in ["flight_end", "flight_end_manual"] {
+            // Mit den Parametern, damit nur die Definition trifft — andere
+            // Tests fuehren den Funktionskopf als Text.
+            let kopf = ["async", "fn", name, "(app:AppHandle,state:tauri::State<'_,AppState>"].concat();
+            let start = quelle
+                .find(&kopf)
+                .unwrap_or_else(|| panic!("{name} nicht gefunden — Waechter anpassen"));
+            let rumpf = &quelle[start..];
+            let ende = rumpf[1..].find("asyncfn").map_or(rumpf.len(), |i| i + 1);
+            let rumpf = &rumpf[..ende];
+            assert!(rumpf.contains(&flag_setzen), "{name}: setzt das Nachsende-Flag nicht");
+            assert!(!rumpf.contains(&leeren), "{name}: leert die Outbox wieder");
+        }
     }
 
     #[test]
