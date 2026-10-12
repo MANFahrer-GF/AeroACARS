@@ -1745,6 +1745,10 @@ pub struct InspectorState {
     /// Set when the watchlist has changed and the worker needs to
     /// re-register data definition #3.
     pub dirty: bool,
+    /// Zaehlt jede Aenderung der Liste. Ist eine Anmeldung gescheitert,
+    /// wartet der Worker 5 s — aber nur fuer DIESEN Stand: Aendert der
+    /// Pilot die Liste, geht die neue sofort raus.
+    pub fassung: u64,
 }
 
 impl InspectorState {
@@ -1760,6 +1764,7 @@ impl InspectorState {
             value: None,
         });
         self.dirty = true;
+        self.fassung += 1;
         id
     }
 
@@ -1768,6 +1773,7 @@ impl InspectorState {
         self.watches.retain(|w| w.id != id);
         if self.watches.len() != before {
             self.dirty = true;
+            self.fassung += 1;
         }
     }
 

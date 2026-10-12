@@ -140,6 +140,9 @@ pub struct MessState {
     angelegt: usize,
     /// Definition muss (neu) angelegt oder abgebaut werden.
     pub dirty: bool,
+    /// Zaehlt jede Aenderung der anzumeldenden Liste — neue Messliste oder
+    /// abgelehnter Name (s. `InspectorState::fassung`).
+    pub fassung: u64,
 }
 
 impl MessState {
@@ -150,6 +153,7 @@ impl MessState {
         self.abgelehnt.clear();
         self.gueltig_ab = None;
         self.dirty = true;
+        self.fassung += 1;
     }
 
     pub fn aktiv(&self) -> bool {
@@ -185,13 +189,27 @@ impl MessState {
     }
 
     /// Ergebnis einer Registrierung: Blockbelegung und Paketkennungen.
+    /// `fassung` ist der Stand, der angemeldet wurde.
     pub fn registriert(
         &mut self,
         bloecke: Vec<Vec<usize>>,
         kennungen: Vec<(u32, usize, usize)>,
         jetzt: Instant,
+        fassung: u64,
     ) {
         self.angelegt = bloecke.len();
+        // Hat sich die Liste waehrend der Anmeldung geaendert, gilt die
+        // Belegung nicht fuer die neue: Ihre Indizes zeigten auf andere
+        // Felder, und `dirty` muss stehen bleiben, sonst wuerde die neue
+        // Liste nie angemeldet. Die angelegten Bloecke werden beim
+        // naechsten Durchlauf abgebaut (Codex-Abnahme 38088b29).
+        if fassung != self.fassung {
+            self.bloecke.clear();
+            self.kennungen.clear();
+            self.werte.clear();
+            self.gueltig_ab = None;
+            return;
+        }
         self.bloecke = bloecke;
         self.kennungen = kennungen.into_iter().map(|(k, b, p)| (k, (b, p))).collect();
         self.werte.clear();
@@ -209,6 +227,7 @@ impl MessState {
         self.werte.clear();
         self.gueltig_ab = None;
         self.dirty = true;
+        self.fassung += 1;
         Some(simvar)
     }
 
@@ -294,7 +313,7 @@ mod tests {
             .map(|b| b.iter().map(|(i, _)| *i).collect())
             .collect();
         let t0 = Instant::now();
-        s.registriert(belegung, vec![(77, 1, 3)], t0);
+        s.registriert(belegung, vec![(77, 1, 3)], t0, s.fassung);
         assert!(!s.dirty);
         // Während der Anlaufzeit nichts übernehmen.
         s.einlesen(ID_BASIS + 2, &werte_block(&[1.0; 50]), t0);
@@ -321,6 +340,7 @@ mod tests {
             belegung,
             vec![(10, 0, 0), (11, 0, 1), (12, 0, 2)],
             Instant::now(),
+            s.fassung,
         );
         assert_eq!(s.ausnahme(11).as_deref(), Some("L:B"));
         assert!(s.dirty);
@@ -332,6 +352,44 @@ mod tests {
     }
 
     #[test]
+    fn aenderung_waehrend_der_anmeldung_geht_nicht_verloren() {
+        let mut s = MessState::default();
+        s.setzen(l_felder(&["A".into(), "B".into()]));
+        let versucht = s.fassung;
+        let (b, _) = s.zu_registrieren();
+        // Waehrend die Anmeldung laeuft, setzt die Oberflaeche eine neue Liste.
+        s.setzen(l_felder(&["C".into()]));
+        s.registriert(
+            vec![b[0].iter().map(|(i, _)| *i).collect()],
+            vec![(10, 0, 0)],
+            Instant::now(),
+            versucht,
+        );
+        assert!(s.dirty, "die neue Liste muss noch angemeldet werden");
+        assert_eq!(s.ausnahme(10), None, "Kennungen des alten Versuchs gelten nicht");
+        let (b2, alt) = s.zu_registrieren();
+        assert_eq!(alt, 1, "der gerade angelegte alte Block wird abgebaut");
+        let namen: Vec<&str> = b2[0].iter().map(|(_, f)| f.simvar.as_str()).collect();
+        assert_eq!(namen, ["L:C"]);
+    }
+
+    #[test]
+    fn abgelehnter_name_zaehlt_als_neuer_stand() {
+        let mut s = MessState::default();
+        s.setzen(l_felder(&["A".into(), "B".into()]));
+        let (b, _) = s.zu_registrieren();
+        s.registriert(
+            vec![b[0].iter().map(|(i, _)| *i).collect()],
+            vec![(10, 0, 0)],
+            Instant::now(),
+            s.fassung,
+        );
+        let vorher = s.fassung;
+        s.ausnahme(10);
+        assert_ne!(s.fassung, vorher, "sonst bliebe die bereinigte Liste hinter einer Sperre");
+    }
+
+    #[test]
     fn stoppen_baut_alles_ab() {
         let mut s = MessState::default();
         s.setzen(standard_felder());
@@ -340,6 +398,7 @@ mod tests {
             vec![b[0].iter().map(|(i, _)| *i).collect()],
             vec![],
             Instant::now(),
+            s.fassung,
         );
         s.setzen(Vec::new());
         assert!(s.dirty && !s.aktiv());

@@ -1402,6 +1402,15 @@ fn run_dispatch(
     // Bremse kam bei jedem Tick eine Warnung (Log-Flut im Health-Report).
     let mut zusatz_naechster_versuch = Instant::now();
     let mut zusatz_fehler_gemeldet = false;
+    // Dieselbe Bremse fuer Inspector, Messung und PMDG: Die Schleife laeuft
+    // seit dem ereignisgesteuerten Warten im Frametakt, ein dauerhaft
+    // scheiternder Versuch kaeme sonst bei jedem Frame (Codex-Abnahme
+    // 1b3711c7). Gesperrt wird nur der gescheiterte Stand (`fassung`):
+    // Aendert der Pilot die Liste, geht die neue sofort raus (Codex-
+    // Abnahme 6acd2824).
+    let mut inspector_sperre: Option<(Instant, u64)> = None;
+    let mut messung_sperre: Option<(Instant, u64)> = None;
+    let mut pmdg_sperre: Option<(Instant, crate::pmdg::PmdgVariant)> = None;
 
     // v1.7.14 — die offenen Facility-Lieferungen, nach Anfragekennung
     // getrennt.
@@ -1423,19 +1432,21 @@ fn run_dispatch(
         // Re-register the inspector watchlist whenever the UI has
         // mutated it. The dirty flag avoids hot-looping the
         // SimConnect call in the steady state.
-        let needs_inspector_register = {
+        let (needs_inspector_register, inspector_fassung) = {
             let g = shared.inspector.lock();
-            g.dirty
+            (g.dirty, g.fassung)
         };
-        if needs_inspector_register {
-            let watches = {
+        let inspector_frei = inspector_sperre
+            .is_none_or(|(bis, f)| Instant::now() >= bis || f != inspector_fassung);
+        if needs_inspector_register && inspector_frei {
+            let (watches, versucht) = {
                 // Fresh registration attempt — clear stale errors so a
                 // name the pilot just corrected (or a transient
                 // SimConnect hiccup) gets a clean slate instead of
                 // showing yesterday's exception forever.
                 let mut g = shared.inspector.lock();
                 g.clear_errors();
-                g.watches.clone()
+                (g.watches.clone(), g.fassung)
             };
             match conn.register_inspector(&watches) {
                 Ok(()) => {
@@ -1444,9 +1455,16 @@ fn run_dispatch(
                             tracing::warn!(error = %e, "request_inspector failed");
                         }
                     }
-                    shared.inspector.lock().dirty = false;
+                    // Nur erledigt, wenn die Liste waehrend der Anmeldung
+                    // gleich blieb — sonst ginge eine Aenderung verloren.
+                    let mut g = shared.inspector.lock();
+                    if g.fassung == versucht {
+                        g.dirty = false;
+                    }
+                    inspector_sperre = None;
                 }
                 Err(e) => {
+                    inspector_sperre = Some((Instant::now() + Duration::from_secs(5), versucht));
                     tracing::warn!(error = %e, "register_inspector failed; will retry");
                 }
             }
@@ -1479,9 +1497,18 @@ fn run_dispatch(
 
         // „Flugzeug vermessen": Messbloecke anlegen/abbauen, und nach dem
         // Ende des Messmodus die zusaetzlichen Input-Event-Abos abmelden.
-        let mess_offen = shared.messung.lock().dirty;
-        if mess_offen {
-            let (bloecke, alt) = shared.messung.lock().zu_registrieren();
+        let (mess_offen, mess_fassung) = {
+            let g = shared.messung.lock();
+            (g.dirty, g.fassung)
+        };
+        let messung_frei =
+            messung_sperre.is_none_or(|(bis, f)| Instant::now() >= bis || f != mess_fassung);
+        if mess_offen && messung_frei {
+            let (bloecke, alt, versucht) = {
+                let g = shared.messung.lock();
+                let (bloecke, alt) = g.zu_registrieren();
+                (bloecke, alt, g.fassung)
+            };
             match conn.register_messung(&bloecke, alt) {
                 Ok(kennungen) => {
                     let belegung = bloecke
@@ -1491,9 +1518,11 @@ fn run_dispatch(
                     shared
                         .messung
                         .lock()
-                        .registriert(belegung, kennungen, Instant::now());
+                        .registriert(belegung, kennungen, Instant::now(), versucht);
+                    messung_sperre = None;
                 }
                 Err(e) => {
+                    messung_sperre = Some((Instant::now() + Duration::from_secs(5), versucht));
                     tracing::warn!(error = %e, "Messbloecke fuer „Flugzeug vermessen\" nicht angelegt");
                 }
             }
@@ -2400,10 +2429,16 @@ fn run_dispatch(
                 None
             }
         };
+        let pmdg_action = pmdg_action.filter(|v| {
+            pmdg_sperre.is_none_or(|(bis, gesperrt)| Instant::now() >= bis || gesperrt != *v)
+        });
         if let Some(variant) = pmdg_action {
+            // Scheitert die Anmeldung (SDK aus), erst nach 5 s erneut —
+            // nicht in jedem Frame mit einer Warnung.
             match variant {
                 crate::pmdg::PmdgVariant::Ng3 => {
                     if let Err(e) = conn.register_pmdg_ng3() {
+                        pmdg_sperre = Some((Instant::now() + Duration::from_secs(5), variant));
                         tracing::warn!(
                             error = %e,
                             "PMDG NG3 ClientData subscription failed (SDK probably not enabled in 737NG3_Options.ini)"
@@ -2415,6 +2450,7 @@ fn run_dispatch(
                 }
                 crate::pmdg::PmdgVariant::X777 => {
                     if let Err(e) = conn.register_pmdg_x777() {
+                        pmdg_sperre = Some((Instant::now() + Duration::from_secs(5), variant));
                         tracing::warn!(
                             error = %e,
                             "PMDG 777X ClientData subscription failed (SDK probably not enabled in 777X_Options.ini)"
@@ -2450,7 +2486,17 @@ fn run_dispatch(
             return;
         }
 
-        thread::sleep(Duration::from_millis(50));
+        // Bis zum naechsten Frame warten, nicht fest 50 ms.
+        //
+        // Die Daten sind je Frame abonniert (`VISUAL_FRAME`), hier stand
+        // aber seit dem 01.05.2026 eine feste Pause von 50 ms — aus der
+        // Zeit, als sie nur einmal pro Sekunde kamen. Jeder Durchlauf
+        // uebernimmt nur den letzten Stand; die Frames dazwischen
+        // ueberschrieben sich. Der Aufsetz-Sampler fragte zwar alle 20 ms,
+        // sah aber nur alle 40–60 ms neue Werte, effektiv ~20 Hz
+        // (gemessen an SIA 436 und fuenf weiteren MSFS-Fluegen, 12.10.2026).
+        // X-Plane hatte das nie: Dort wartet der Adapter auf jedes Paket.
+        conn.auf_nachrichten_warten(Duration::from_millis(50));
     }
 }
 
@@ -2487,6 +2533,10 @@ fn sleep_or_stop(stop: &Arc<AtomicBool>, dur: Duration) {
 /// the worker loop drives. `Drop` calls `SimConnect_Close`.
 struct Connection {
     handle: sys::HANDLE,
+    /// Win32-Ereignis, das SimConnect bei jeder neuen Nachricht setzt
+    /// (s. `auf_nachrichten_warten`). Null, wenn es sich nicht anlegen
+    /// liess — dann wird wie frueher fest gewartet.
+    ereignis: sys::HANDLE,
     /// Wie viele Nachrichten dieser Handle bisher geliefert hat — auch
     /// unbekannte, die `get_next_dispatch` als `None` zurueckgibt. Nur fuer
     /// die Lebenszeichen-Uhr in `run_dispatch`.
@@ -2531,22 +2581,32 @@ impl Connection {
     fn open(name: &str) -> Result<Self, String> {
         let cname = std::ffi::CString::new(name).expect("connection name must be plain ASCII");
         let mut handle: sys::HANDLE = std::ptr::null_mut();
+        // Selbst zuruecksetzend: Ein Warten verbraucht das Signal.
+        let ereignis =
+            unsafe { sys::CreateEventW(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
+        if ereignis.is_null() {
+            tracing::warn!("SimConnect: Ereignis nicht anlegbar — Daten nur alle 50 ms");
+        }
         let hr = unsafe {
             sys::SimConnect_Open(
                 &mut handle,
                 cname.as_ptr(),
                 std::ptr::null_mut(),
                 0,
-                std::ptr::null_mut(),
+                ereignis,
                 0,
             )
         };
         if hr != 0 {
+            if !ereignis.is_null() {
+                unsafe { sys::CloseHandle(ereignis) };
+            }
             return Err(format!("HRESULT 0x{hr:08X}"));
         }
         Ok(Self {
             empfangen: 0,
             handle,
+            ereignis,
             facility_feld_send_ids: Vec::new(),
             inspector_send_ids: Vec::new(),
             abmelde_pakete: Default::default(),
@@ -2554,6 +2614,17 @@ impl Connection {
             inspektor_angelegt: false,
             mess_bloecke_beruehrt: 0,
         })
+    }
+
+    /// Warten, bis SimConnect eine neue Nachricht meldet — hoechstens
+    /// `frist`, damit Wachhund, Szenerie- und Abo-Pflege weiterlaufen.
+    fn auf_nachrichten_warten(&self, frist: Duration) {
+        if self.ereignis.is_null() {
+            thread::sleep(frist);
+            return;
+        }
+        let ms = u32::try_from(frist.as_millis()).unwrap_or(u32::MAX);
+        unsafe { sys::WaitForSingleObject(self.ereignis, ms) };
     }
 
     /// Register every entry in `TELEMETRY_FIELDS` in order.
@@ -3611,6 +3682,11 @@ impl Drop for Connection {
         if !self.handle.is_null() {
             unsafe { sys::SimConnect_Close(self.handle) };
             self.handle = std::ptr::null_mut();
+        }
+        // Erst nach dem Schliessen: SimConnect setzt das Ereignis bis dahin.
+        if !self.ereignis.is_null() {
+            unsafe { sys::CloseHandle(self.ereignis) };
+            self.ereignis = std::ptr::null_mut();
         }
     }
 }
