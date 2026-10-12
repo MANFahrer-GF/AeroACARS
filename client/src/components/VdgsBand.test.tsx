@@ -569,3 +569,77 @@ describe("Codex-Abnahme 21.09.2026", () => {
     }
   });
 });
+
+describe("Wunsch-TOBT, ASRT, Grund, Platz ohne CDM (2.0.11)", () => {
+  it("bleibt nach dem Fenster grün, wenn die Anlassbereitschaft gemeldet ist", () => {
+    // rpuig2001/CDM: "will not invalidate at TSAT+6 if ASRT is set".
+    expect(ampel(EDDC, um("20:52"))).toBe("achtung");
+    expect(ampel({ ...EDDC, asrt: "20:44" }, um("20:52"))).toBe("frei");
+  });
+
+  it("hält mit ASRT auch bei TSAT, aber nicht beim Fenster aus CTOT minus Rollzeit", () => {
+    // STAND: TSAT 15:46 → ab 15:52 verpasst, mit ASRT nicht.
+    expect(ampel({ ...STAND, asrt: "15:40" }, um("15:52"))).toBe("frei");
+    // Regulierung ohne TSAT: Fenster um CTOT minus Rollzeit (16:00 − 9 = 15:51).
+    const reg = { ...STAND, tsat: "", ctot: "16:00", asrt: "15:40" };
+    expect(referenz(reg)?.art).toBe("CTOT");
+    expect(ampel(reg, um("15:58"))).toBe("achtung");
+  });
+
+  it("meldet mit ASRT kein verpasstes Fenster, zeigt aber die ASRT", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(um("20:52"));
+    render(<VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: { ...EDDC, asrt: "20:44" } }} />);
+    expect(screen.queryByTestId("vdgs-verpasst")).toBeNull();
+    expect(screen.getByTestId("vdgs-asrt").textContent).toBe("Anlassbereit 20:44");
+  });
+
+  it("zeigt eine angefragte TOBT statt erneut zum Setzen aufzufordern", () => {
+    render(
+      <VdgsPlatte
+        antwort={{ gefragt_als: "AIB4TK", stand: { ...EDDC, tobt: "", tobt_wunsch: "20:55" } }}
+      />,
+    );
+    expect(screen.getByTestId("vdgs-tobt-angefragt").textContent).toBe("TOBT 20:55 ANGEFRAGT");
+    expect(screen.queryByText("TOBT SETZEN")).toBeNull();
+  });
+
+  it("nennt eine neue Wunsch-TOBT neben der geltenden", () => {
+    render(
+      <VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: { ...EDDC, tobt_wunsch: "21:05" } }} />,
+    );
+    expect(screen.getByTestId("vdgs-tobt-wunsch").textContent).toBe("Neue TOBT 21:05 angefragt");
+  });
+
+  it("zeigt den Grund des CDM", () => {
+    render(
+      <VdgsPlatte antwort={{ gefragt_als: "AIB4TK", stand: { ...EDDC, grund: "Ground delay" } }} />,
+    );
+    expect(screen.getByTestId("vdgs-grund").textContent).toBe("Ground delay");
+  });
+
+  it("schickt an einem Platz ohne CDM nicht auf die Suche nach dem Rufzeichen", () => {
+    render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null, cdm_platz: false }} />);
+    const zeile = screen.getByTestId("vdgs-band-leer");
+    expect(zeile.textContent).toMatch(/ohne CDM/);
+    expect(zeile.textContent).not.toMatch(/PDC\/CPDLC/);
+  });
+
+  it("behält den Rufzeichen-Hinweis an CDM-Plätzen und wenn es unbekannt ist", () => {
+    for (const cdm_platz of [true, null, undefined]) {
+      render(<VdgsPlatte antwort={{ gefragt_als: "GSG421", stand: null, cdm_platz }} />);
+      expect(screen.getByTestId("vdgs-band-leer").textContent).toMatch(/PDC\/CPDLC/);
+      cleanup();
+    }
+  });
+
+  it("hat die neuen Texte in allen Sprachen", async () => {
+    const en = (await import("../locales/en/common.json")).default;
+    const itL = (await import("../locales/it/common.json")).default;
+    for (const k of ["kein_cdm_platz", "tobt_angefragt", "tobt_angefragt_grund", "asrt", "tobt_wunsch"]) {
+      for (const l of [deCommon, en, itL]) {
+        expect((l.cdm.band as Record<string, string>)[k], k).toBeTruthy();
+      }
+    }
+  });
+});

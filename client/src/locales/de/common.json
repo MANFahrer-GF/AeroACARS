@@ -2991,7 +2991,12 @@
       "stoerung": "Dienst nicht erreichbar",
       "rufzeichen_woher": "Rufzeichen aus Flugplan bzw. Einstellungen — ändern im CPDLC-Fenster",
       "stand_alt": "Dienst nicht erreichbar — Zahlen bis zu 10 Minuten alt",
-      "kein_eintrag_wo_aendern": "kein CDM-Eintrag — Rufzeichen im Tab PDC/CPDLC"
+      "kein_eintrag_wo_aendern": "kein CDM-Eintrag — Rufzeichen im Tab PDC/CPDLC",
+      "kein_cdm_platz": "Abflughafen ohne CDM — kein Anlassfenster",
+      "tobt_angefragt": "TOBT {{zeit}} ANGEFRAGT",
+      "tobt_angefragt_grund": "Noch nicht vom CDM übernommen — Stand im VDGS-Fenster",
+      "asrt": "Anlassbereit {{zeit}}",
+      "tobt_wunsch": "Neue TOBT {{zeit}} angefragt"
     }
   },
   "sprung": {
