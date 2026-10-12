@@ -38427,7 +38427,9 @@ fn acars_einreihen(pirep_id: &str, mut zeilen: Vec<api_client::LogEntry>) {
     }
     match ACARS_EINGANG.get() {
         Some(tx) => {
-            let _ = tx.send(AcarsAuftrag::Zeilen(pirep_id.to_string(), zeilen));
+            if tx.send(AcarsAuftrag::Zeilen(pirep_id.to_string(), zeilen)).is_err() {
+                tracing::error!(pirep_id, "ACARS-Postausgang läuft nicht mehr — Zeilen nicht eingereiht");
+            }
         }
         None => tracing::warn!(
             pirep_id,
@@ -38749,8 +38751,15 @@ async fn acars_sichern_fuer_ende(
     verdraengt: &mut AcarsVerdraengt,
 ) -> bool {
     let gelesen = acars_nachladen(app, offen, geladen, verdraengt).await;
-    let quarantaene = acars_verdraengte_sichern(app, verdraengt).await;
-    gelesen && quarantaene && acars_sichern(app, offen).await
+    if !acars_verdraengte_sichern(app, verdraengt).await {
+        // Quarantäne nicht beschreibbar: die Zeilen lieber über die
+        // Obergrenze hinaus in den Postausgang zurück, als sie beim Beenden
+        // zu verlieren.
+        for (p, z) in verdraengt.drain(..) {
+            offen.entry(p).or_default().push_back(z);
+        }
+    }
+    gelesen && acars_sichern(app, offen).await
 }
 
 /// Verdrängte Zeilen in die Quarantäne schreiben (je PIREP eine Datei).
