@@ -39956,6 +39956,69 @@ mod acars_postausgang_tests {
     }
 }
 
+/// Die Zeitanteile eines Streamer-Takts.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// „Streamer-Takt zu lang" nannte nur die Gesamtzeit. Welcher Teil die
+/// 460–600 ms kostete, liess sich erst aus dem Quelltext erschliessen.
+/// Jetzt traegt die Warnung die Anteile: `abschnitt(name)` schreibt die
+/// Zeit seit der vorigen Marke unter `name`, `bericht` haengt den Rest
+/// bis jetzt an. Eine Sperre, auf die gewartet wird, steckt im Anteil
+/// des Abschnitts, der sie nimmt.
+#[derive(Default)]
+struct Taktuhr {
+    letzte: Option<std::time::Instant>,
+    anteile: Vec<(&'static str, u128)>,
+}
+
+impl Taktuhr {
+    fn start(&mut self) {
+        self.letzte = Some(std::time::Instant::now());
+        self.anteile.clear();
+    }
+
+    fn abschnitt(&mut self, name: &'static str) {
+        if let Some(davor) = self.letzte {
+            let jetzt = std::time::Instant::now();
+            self.anteile
+                .push((name, jetzt.duration_since(davor).as_millis()));
+            self.letzte = Some(jetzt);
+        }
+    }
+
+    /// `name=ms` je Abschnitt ab 5 ms, in Ablaufreihenfolge, plus `rest`.
+    fn bericht(&self) -> String {
+        let rest = self.letzte.map_or(0, |t| t.elapsed().as_millis());
+        self.anteile
+            .iter()
+            .copied()
+            .chain(std::iter::once(("rest", rest)))
+            .filter(|(_, ms)| *ms >= 5)
+            .map(|(name, ms)| format!("{name}={ms}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+#[cfg(test)]
+mod taktuhr_tests {
+    use super::*;
+
+    #[test]
+    fn der_bericht_nennt_die_teuren_abschnitte_in_reihenfolge() {
+        let mut uhr = Taktuhr::default();
+        uhr.abschnitt("vor_dem_start");
+        assert!(uhr.anteile.is_empty(), "ohne Start wird nichts gezaehlt");
+        uhr.start();
+        uhr.anteile = vec![("billig", 2), ("szenerie_ziel", 420), ("step_flight", 12)];
+        // Rest < 5 ms faellt heraus wie jeder billige Abschnitt.
+        assert_eq!(uhr.bericht(), "szenerie_ziel=420 step_flight=12");
+        uhr.start();
+        assert!(uhr.anteile.is_empty(), "der neue Takt beginnt leer");
+    }
+}
+
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
     let Some(meine_generation) = startsperre_nehmen(&flight, &flight.streamer_spawned) else {
         tracing::debug!(
@@ -40072,6 +40135,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // das geplante Warten) länger als 250 ms braucht. Gedeckelt, damit
         // ein Dauerproblem das Protokoll nicht flutet.
         let mut takt_beginn: Option<std::time::Instant> = None;
+        let mut takt_uhr = Taktuhr::default();
         let mut lange_takte_gemeldet: u32 = 0;
         loop {
             let current_phase = {
@@ -40086,6 +40150,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         pirep_id = %flight.pirep_id,
                         phase = ?current_phase,
                         arbeit_ms = arbeit_ms as u64,
+                        anteile = %takt_uhr.bericht(),
                         "Streamer-Takt zu lang"
                     );
                 }
@@ -40109,6 +40174,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             };
             tokio::time::sleep(tick_interval).await;
             takt_beginn = Some(std::time::Instant::now());
+            takt_uhr.start();
             // Ueberholte Generation (Flug fortgesetzt): der neue Streamer
             // uebernimmt — s. `ActiveFlight::generation`.
             if flight.stop.load(Ordering::Relaxed)
@@ -40859,7 +40925,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             //
             // Billig: ein Mutex und ein Vergleich je Tick, und nur
             // solange noch nichts abgelegt ist.
+            takt_uhr.abschnitt("vorlauf");
             szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
+            takt_uhr.abschnitt("szenerie_ziel");
             // v1.7.17 Runde 6 (externe Gegenpruefung, Codex, adversarial,
             // 04.09.2026): die Phase VOR `step_flight` festhalten — damit
             // der Boarding-Ende-Riegel weiter unten den ECHTEN Uebergang
@@ -40878,6 +40946,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 szenerie_bahn::vorladen(&flight.arr_airport);
                 landeplatz_szenerie_vorladen(&flight.arr_airport, &snap);
             }
+            takt_uhr.abschnitt("szenerie_abflug");
 
             // ⚠ Und die Bahnaufloesung NACHHOLEN, wenn die Szenerie erst
             // nach dem Aufsetzen eintraf — siehe
@@ -40924,13 +40993,16 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 revision_vor_versand_sichern(&app, &flight);
             }
 
+            takt_uhr.abschnitt("bahn_nachholen");
             let phase_change = step_flight(&flight, &snap);
+            takt_uhr.abschnitt("step_flight");
 
             // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
             // Flugdaten FREI ist — siehe `ausfahrten_vorwaermen`. Danach
             // finden Aufsetz-Ereignis, Rollout-Nachtrag und
             // `landing_get_current` sie im Merker.
             ausfahrten_vorwaermen(&flight, &mut ausfahrten_ausloeser);
+            takt_uhr.abschnitt("ausfahrten_vorwaermen");
 
             // v1.5.1 (F2): METAR-Trigger einmal pro Tick mit der AKTUELLEN
             // Phase — nicht nur bei Übergängen. Boarding ist die Startphase
@@ -41422,6 +41494,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // distinktem `landing_at` — bei Touch-and-Go bekommt also jeder
             // Touchdown sein eigenes Event statt nur der erste.
             {
+                takt_uhr.abschnitt("bis_nachtrag");
                 // ⚠ Erst der Schluessel, dann der Bau — siehe
                 // `rollout_nachtrag_faellig`. Ist der Nachtrag schon
                 // gesendet, wird in diesem Takt nichts gebaut. Erneut
@@ -41503,6 +41576,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
 
+            takt_uhr.abschnitt("rollout_nachtrag");
             // v0.7.14: Pilot-Client-Discord-Posts fuer Takeoff + Landing
             // entfernt — Recorder postet das jetzt zentral via MQTT-Trigger
             // (`takeoff` + `touchdown` Events publishen sowieso, Recorder
@@ -42529,9 +42603,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // `clear_persisted_flight`, and we'd otherwise resurrect the
             // disk file. Without this, the resume banner pops on the next
             // launch for a flight the user already filed.
+            takt_uhr.abschnitt("ereignisse");
             if should_persist && !flight.stop.load(Ordering::Relaxed) {
                 save_active_flight(&app, &flight);
             }
+            takt_uhr.abschnitt("persistieren");
 
             // On phase change, push the new status to phpVMS so the
             // live-map and PIREP detail page reflect the current phase.
@@ -60231,10 +60307,125 @@ fn init_tracing() {
         version = env!("CARGO_PKG_VERSION"),
         pid = std::process::id(),
         log_dir = ?log_dir(),
+        rechner = %rechner_beschreibung(),
         "AeroACARS starting"
     );
 
     install_panic_logging();
+}
+
+/// Wie oft eine Anzeige dieselbe Landung abgefragt hat.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// MSFS-Panel, Flow-Widget und X-Plane-HUD-Band fragen die Landung
+/// einmal. Nur wenn keine gueltige Antwort kommt, fragen sie im naechsten
+/// Takt erneut — das HUD-Band alle 500 ms, und jede Abfrage baut die
+/// Landung unter der Sperre der Flugdaten. Ob das im Feld vorkam, stand
+/// nirgends. Gemeldet wird ab der zweiten Abfrage, danach bei jeder
+/// Zweierpotenz, damit eine Dauerschleife das Protokoll nicht flutet.
+pub(crate) fn landungsabfrage_protokollieren(
+    quelle: &'static str,
+    record: Option<&storage::LandingRecord>,
+    dauer: std::time::Duration,
+) {
+    let landung = record.map_or_else(
+        || "keine".to_string(),
+        |r| format!("{}@{}", r.pirep_id, r.touchdown_at.timestamp_millis()),
+    );
+    let anzahl = landungsabfrage_zaehlen(quelle, &landung);
+    if abfrage_melden(anzahl) {
+        tracing::info!(
+            quelle,
+            landung = %landung,
+            anzahl,
+            dauer_ms = dauer.as_millis() as u64,
+            "Landung mehrfach abgefragt"
+        );
+    }
+}
+
+/// Zaehlt je Anzeige und Landung; gibt die neue Anzahl zurueck.
+fn landungsabfrage_zaehlen(quelle: &'static str, landung: &str) -> u32 {
+    static ZAEHLER: std::sync::OnceLock<Mutex<HashMap<(&'static str, String), u32>>> =
+        std::sync::OnceLock::new();
+    let Ok(mut z) = ZAEHLER.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+        return 0;
+    };
+    // Beschraenkt: Jede Landung bringt hoechstens wenige neue Schluessel.
+    if z.len() > 64 {
+        z.clear();
+    }
+    let n = z.entry((quelle, landung.to_string())).or_insert(0);
+    *n = n.saturating_add(1);
+    *n
+}
+
+fn abfrage_melden(anzahl: u32) -> bool {
+    anzahl >= 2 && anzahl.is_power_of_two()
+}
+
+#[cfg(test)]
+mod landungsabfrage_tests {
+    use super::*;
+
+    #[test]
+    fn gemeldet_wird_ab_der_zweiten_abfrage_bei_zweierpotenzen() {
+        let gemeldet: Vec<u32> = (1..=20).filter(|&n| abfrage_melden(n)).collect();
+        assert_eq!(gemeldet, vec![2, 4, 8, 16]);
+    }
+
+    #[test]
+    fn gezaehlt_wird_je_anzeige_und_landung() {
+        assert_eq!(landungsabfrage_zaehlen("test_band", "P1@1"), 1);
+        assert_eq!(landungsabfrage_zaehlen("test_band", "P1@1"), 2);
+        assert_eq!(
+            landungsabfrage_zaehlen("test_panel", "P1@1"),
+            1,
+            "andere Anzeige"
+        );
+        assert_eq!(
+            landungsabfrage_zaehlen("test_band", "P1@2"),
+            1,
+            "andere Landung"
+        );
+    }
+}
+
+/// Betriebssystem, CPU-Modell, Kerne und Arbeitsspeicher — fuer die
+/// Startzeile des Logs.
+///
+/// # Warum (AIB 429 / EZY 1539, 12.10.2026)
+///
+/// Derselbe Fehler kostete bei einem Piloten 460–600 ms je Takt, beim
+/// anderen blieb er unter der Meldeschwelle. Ob das am Rechner lag, liess
+/// sich nicht pruefen: Weder Diagnoselog noch Fehlerberichte nannten die
+/// Hardware. Das Betriebssystem kam nur ueber die Fehlerberichte, und
+/// die tragen keine Pilotenkennung.
+fn rechner_beschreibung() -> String {
+    let unbekannt = || "?".to_string();
+    // z. B. "Windows 11 Pro (Build 26200, x86_64)".
+    let system_name = format!(
+        "{} (Build {}, {})",
+        sysinfo::System::long_os_version().unwrap_or_else(unbekannt),
+        sysinfo::System::kernel_version().unwrap_or_else(unbekannt),
+        sysinfo::System::cpu_arch().unwrap_or_else(unbekannt),
+    );
+    let mut system = sysinfo::System::new();
+    system.refresh_cpu_list(sysinfo::CpuRefreshKind::new());
+    system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::new().with_ram());
+    let modell = system
+        .cpus()
+        .first()
+        .map(|c| c.brand().trim().to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| "unbekannt".to_string());
+    let logisch = std::thread::available_parallelism().map_or(0, |n| n.get());
+    let physisch = system
+        .physical_core_count()
+        .map_or_else(|| "?".to_string(), |n| n.to_string());
+    let ram_gb = system.total_memory() as f64 / 1_073_741_824.0;
+    format!("{system_name}; {modell}, {physisch} Kerne/{logisch} Threads, {ram_gb:.0} GB RAM")
 }
 
 /// Leitet Rust-Panics zusätzlich in die Protokollierung um.
