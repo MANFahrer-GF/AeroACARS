@@ -140,6 +140,8 @@ pub struct MessState {
     angelegt: usize,
     /// Definition muss (neu) angelegt oder abgebaut werden.
     pub dirty: bool,
+    /// Zaehlt jede neue Messliste (s. `InspectorState::fassung`).
+    pub fassung: u64,
 }
 
 impl MessState {
@@ -150,6 +152,7 @@ impl MessState {
         self.abgelehnt.clear();
         self.gueltig_ab = None;
         self.dirty = true;
+        self.fassung += 1;
     }
 
     pub fn aktiv(&self) -> bool {

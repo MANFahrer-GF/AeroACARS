@@ -1402,12 +1402,15 @@ fn run_dispatch(
     // Bremse kam bei jedem Tick eine Warnung (Log-Flut im Health-Report).
     let mut zusatz_naechster_versuch = Instant::now();
     let mut zusatz_fehler_gemeldet = false;
-    // Dieselbe Bremse fuer Inspector und Messung: Die Schleife laeuft seit
-    // dem ereignisgesteuerten Warten im Frametakt, ein dauerhaft
+    // Dieselbe Bremse fuer Inspector, Messung und PMDG: Die Schleife laeuft
+    // seit dem ereignisgesteuerten Warten im Frametakt, ein dauerhaft
     // scheiternder Versuch kaeme sonst bei jedem Frame (Codex-Abnahme
-    // 1b3711c7).
-    let mut inspector_naechster_versuch = Instant::now();
-    let mut messung_naechster_versuch = Instant::now();
+    // 1b3711c7). Gesperrt wird nur der gescheiterte Stand (`fassung`):
+    // Aendert der Pilot die Liste, geht die neue sofort raus (Codex-
+    // Abnahme 6acd2824).
+    let mut inspector_sperre: Option<(Instant, u64)> = None;
+    let mut messung_sperre: Option<(Instant, u64)> = None;
+    let mut pmdg_sperre: Option<(Instant, crate::pmdg::PmdgVariant)> = None;
 
     // v1.7.14 — die offenen Facility-Lieferungen, nach Anfragekennung
     // getrennt.
@@ -1429,11 +1432,13 @@ fn run_dispatch(
         // Re-register the inspector watchlist whenever the UI has
         // mutated it. The dirty flag avoids hot-looping the
         // SimConnect call in the steady state.
-        let needs_inspector_register = {
+        let (needs_inspector_register, inspector_fassung) = {
             let g = shared.inspector.lock();
-            g.dirty
+            (g.dirty, g.fassung)
         };
-        if needs_inspector_register && Instant::now() >= inspector_naechster_versuch {
+        let inspector_frei = inspector_sperre
+            .is_none_or(|(bis, f)| Instant::now() >= bis || f != inspector_fassung);
+        if needs_inspector_register && inspector_frei {
             let watches = {
                 // Fresh registration attempt — clear stale errors so a
                 // name the pilot just corrected (or a transient
@@ -1451,9 +1456,11 @@ fn run_dispatch(
                         }
                     }
                     shared.inspector.lock().dirty = false;
+                    inspector_sperre = None;
                 }
                 Err(e) => {
-                    inspector_naechster_versuch = Instant::now() + Duration::from_secs(5);
+                    inspector_sperre =
+                        Some((Instant::now() + Duration::from_secs(5), inspector_fassung));
                     tracing::warn!(error = %e, "register_inspector failed; will retry");
                 }
             }
@@ -1486,8 +1493,13 @@ fn run_dispatch(
 
         // „Flugzeug vermessen": Messbloecke anlegen/abbauen, und nach dem
         // Ende des Messmodus die zusaetzlichen Input-Event-Abos abmelden.
-        let mess_offen = shared.messung.lock().dirty;
-        if mess_offen && Instant::now() >= messung_naechster_versuch {
+        let (mess_offen, mess_fassung) = {
+            let g = shared.messung.lock();
+            (g.dirty, g.fassung)
+        };
+        let messung_frei =
+            messung_sperre.is_none_or(|(bis, f)| Instant::now() >= bis || f != mess_fassung);
+        if mess_offen && messung_frei {
             let (bloecke, alt) = shared.messung.lock().zu_registrieren();
             match conn.register_messung(&bloecke, alt) {
                 Ok(kennungen) => {
@@ -1499,9 +1511,10 @@ fn run_dispatch(
                         .messung
                         .lock()
                         .registriert(belegung, kennungen, Instant::now());
+                    messung_sperre = None;
                 }
                 Err(e) => {
-                    messung_naechster_versuch = Instant::now() + Duration::from_secs(5);
+                    messung_sperre = Some((Instant::now() + Duration::from_secs(5), mess_fassung));
                     tracing::warn!(error = %e, "Messbloecke fuer „Flugzeug vermessen\" nicht angelegt");
                 }
             }
@@ -2408,10 +2421,16 @@ fn run_dispatch(
                 None
             }
         };
+        let pmdg_action = pmdg_action.filter(|v| {
+            pmdg_sperre.is_none_or(|(bis, gesperrt)| Instant::now() >= bis || gesperrt != *v)
+        });
         if let Some(variant) = pmdg_action {
+            // Scheitert die Anmeldung (SDK aus), erst nach 5 s erneut —
+            // nicht in jedem Frame mit einer Warnung.
             match variant {
                 crate::pmdg::PmdgVariant::Ng3 => {
                     if let Err(e) = conn.register_pmdg_ng3() {
+                        pmdg_sperre = Some((Instant::now() + Duration::from_secs(5), variant));
                         tracing::warn!(
                             error = %e,
                             "PMDG NG3 ClientData subscription failed (SDK probably not enabled in 737NG3_Options.ini)"
@@ -2423,6 +2442,7 @@ fn run_dispatch(
                 }
                 crate::pmdg::PmdgVariant::X777 => {
                     if let Err(e) = conn.register_pmdg_x777() {
+                        pmdg_sperre = Some((Instant::now() + Duration::from_secs(5), variant));
                         tracing::warn!(
                             error = %e,
                             "PMDG 777X ClientData subscription failed (SDK probably not enabled in 777X_Options.ini)"
