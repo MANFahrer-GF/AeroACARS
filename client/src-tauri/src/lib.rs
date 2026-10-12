@@ -36900,9 +36900,13 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             fn drop(&mut self) {
                 // Nur fuer die eigene Generation: Ein ueberholter Faden darf
                 // den Merker des neuen nicht freigeben.
-                if std::thread::panicking()
-                    && self.0.generation.load(Ordering::SeqCst) == self.1
-                {
+                if !std::thread::panicking() {
+                    return;
+                }
+                // Unter `start_sperre`, damit kein Fortsetzen zwischen
+                // Pruefung und Freigabe faellt (Codex-Abnahme 9fd6d834).
+                let _start = self.0.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+                if self.0.generation.load(Ordering::SeqCst) == self.1 {
                     self.0.touchdown_sampler_spawned.store(false, Ordering::SeqCst);
                     tracing::error!(pirep_id = %self.0.pirep_id, "Aufsetz-Messfaden abgestürzt — Merker zurückgesetzt");
                 }
@@ -38669,22 +38673,38 @@ fn spawn_phpvms_meldungen(
     app: AppHandle,
     flight: Arc<ActiveFlight>,
     client: Client,
+    meine_generation: u64,
 ) -> PhpvmsMeldungen {
     const LEBENSZEICHEN_NEUVERSUCH: Duration = Duration::from_secs(3);
     let (lz_tx, mut lz_rx) = tokio::sync::watch::channel::<Option<Lebenszeichen>>(None);
     {
         let (app, flight, client) = (app.clone(), flight.clone(), client.clone());
         tauri::async_runtime::spawn(async move {
+            // Wie Worker und Streamer: Nach dem Fortsetzen (neue Generation)
+            // meldet ein ueberholter Arbeiter nichts mehr — sonst ginge ein
+            // veralteter Stand an phpVMS, oder ein 404 braeche den
+            // fortgesetzten Flug ab (Codex-Abnahme 9fd6d834).
+            let ueberholt = {
+                let flight = flight.clone();
+                move || {
+                    flight.stop.load(Ordering::Relaxed)
+                        || flight.generation.load(Ordering::SeqCst) != meine_generation
+                }
+            };
             while lz_rx.changed().await.is_ok() {
                 {
                     let Some(lz) = lz_rx.borrow_and_update().clone() else {
                         continue;
                     };
                     let _live = PHPVMS_LIVE_MELDUNG.lock().await;
-                    if flight.stop.load(Ordering::Relaxed) {
+                    if ueberholt() {
                         return;
                     }
-                    match client.update_pirep(&flight.pirep_id, &lz.body).await {
+                    let antwort = client.update_pirep(&flight.pirep_id, &lz.body).await;
+                    if ueberholt() {
+                        return;
+                    }
+                    match antwort {
                         Ok(()) => {
                             if let Ok(mut stats) = flight.stats.lock() {
                                 stats.last_heartbeat_at = Some(Utc::now());
@@ -38712,7 +38732,7 @@ fn spawn_phpvms_meldungen(
                             );
                             drop(_live);
                             tokio::time::sleep(LEBENSZEICHEN_NEUVERSUCH).await;
-                            if flight.stop.load(Ordering::Relaxed) {
+                            if ueberholt() {
                                 return;
                             }
                             // Neuer Versuch mit dem dann neuesten Stand.
@@ -39676,7 +39696,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // Lebenszeichen und ACARS-Log gehen über einen eigenen Arbeiter an
         // phpVMS — siehe `spawn_phpvms_meldungen`. Der Streamer wartet nicht
         // mehr auf die Antwort.
-        let phpvms_meldungen = spawn_phpvms_meldungen(app.clone(), flight.clone(), client.clone());
+        let phpvms_meldungen = spawn_phpvms_meldungen(app.clone(), flight.clone(), client.clone(), meine_generation);
         // Phase-adaptive cadence: re-read the current phase on every tick so
         // the sleep matches what the aircraft is actually doing right now
         // (5 s during takeoff/landing, 8 s on approach/final, 10 s on the
