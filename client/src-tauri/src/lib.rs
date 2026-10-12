@@ -7383,6 +7383,10 @@ struct FlightStats {
     /// Der Stand der am Flug abgelegten Szenerie-Auskunft.
     /// Siehe `auskunft_ersetzen`.
     szenerie_auskunft_stand: u32,
+    /// Die zuletzt gerechneten Ausfahrten mit dem Fingerabdruck von
+    /// Bodenkarte und Bahn — siehe `ausfahrten_gemerkt`. Nur
+    /// Zwischenspeicher: wird weder gespeichert noch gesendet.
+    ausfahrten_merker: Mutex<Option<(u64, Vec<ausfahrten::Ausfahrt>)>>,
     /// Der Stand der Auskunft, mit der zuletzt ZUGEORDNET wurde.
     ///
     /// ⚠ Ein `bool` reichte nicht. Die Ernte nimmt ausdruecklich eine
@@ -28125,6 +28129,166 @@ thread_local! {
     /// Wie oft `bahn_felder` in diesem Test-Faden lief — fuer Tests, die
     /// belegen, dass die teure Rechnung unterbleibt (AIB 429, 12.10.2026).
     static BAHN_FELDER_AUFRUFE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Wie oft die Ausfahrten in diesem Test-Faden wirklich GERECHNET
+    /// wurden, also nicht aus `ausfahrten_merker` kamen.
+    static AUSFAHRTEN_GERECHNET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Woraus die Ausfahrten kommen: Szenerie-Rollwege oder die Serverkarte.
+#[derive(Clone, Copy)]
+enum Bodenquelle<'a> {
+    Szenerie(&'a [sim_core::szenerie::SzenerieRollweg]),
+    Karte(&'a str),
+}
+
+/// Die Bodenkarte zur gematchten Bahn — EINE Auswahl fuer `bahn_felder`
+/// und das Vorwaermen (`ausfahrten_vorwaermen`).
+///
+/// Ohne Landeplatz der Bahn gibt es keine (FAIL CLOSED, siehe
+/// `bahn_felder`).
+fn bodenquelle<'a>(
+    stats: &'a FlightStats,
+    landeplatz_der_bahn: Option<&str>,
+) -> Option<Bodenquelle<'a>> {
+    // ZWEI Quellen: die Auskunft des aktuellen Ernteziels und die des
+    // geplanten Ziels.
+    //
+    // Die erste kann von einem Ueberflugplatz stammen — bei DLH 373 am
+    // 20.09.2026 korrelierte die Bahn im Sinkflug kurz mit EDML
+    // (Landshut, liegt auf der Anflugstrecke nach EDDM), das Ernteziel
+    // wechselte dorthin, und die gute EDDM-Auskunft mit 682 Rollwegen
+    // wurde verworfen. EDML lieferte 0. Beim Aufsetzen in Muenchen war
+    // deshalb keine Bodenkarte da: keine Ausfahrten, keine Bemassung.
+    //
+    // Die ICAO-Pruefung bleibt an BEIDEN Quellen — sie ist die
+    // Sicherung, die verhindert, dass Rollwege eines fremden Platzes in
+    // die Ausfahrten geraten. Bei einem Ausweichflug passt das geplante
+    // Ziel nicht und faellt heraus.
+    let passt = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz_der_bahn {
+        Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
+        None => false,
+    };
+    let szenerie = stats
+        .szenerie_auskunft
+        .as_ref()
+        .filter(passt)
+        .filter(|a| !a.rollwege.is_empty())
+        .or_else(|| {
+            stats
+                .ziel_szenerie_auskunft
+                .as_ref()
+                .filter(passt)
+                .filter(|a| !a.rollwege.is_empty())
+        })
+        .map(|a| Bodenquelle::Szenerie(&a.rollwege));
+    let arr_karte = match (&stats.arr_ground_geojson, landeplatz_der_bahn) {
+        (Some(karte), Some(landeplatz)) => stats
+            .arr_ground_geojson_icao
+            .as_deref()
+            .filter(|gi| gi.eq_ignore_ascii_case(landeplatz))
+            .map(|_| Bodenquelle::Karte(karte.as_str())),
+        _ => None,
+    };
+    szenerie.or(arr_karte)
+}
+
+/// Fingerabdruck von Bodenkarte und Bahn — der Schluessel des Merkers.
+///
+/// ⚠ Ueber den INHALT, nicht ueber Staende oder Fahnen: Ein Stand, der
+/// nicht mitgezaehlt wurde, oder ein Wechsel zwischen
+/// `szenerie_auskunft` und `ziel_szenerie_auskunft` kann so nie
+/// Ausfahrten einer anderen Karte liefern — schlimmstenfalls wird
+/// einmal zu viel gerechnet.
+fn ausfahrten_fingerabdruck(quelle: Bodenquelle<'_>, m: &runway::RunwayMatch) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    match quelle {
+        Bodenquelle::Szenerie(rollwege) => {
+            0u8.hash(&mut h);
+            rollwege.len().hash(&mut h);
+            for r in rollwege {
+                r.name.hash(&mut h);
+                r.punkte.len().hash(&mut h);
+                for (lat, lon) in &r.punkte {
+                    lat.to_bits().hash(&mut h);
+                    lon.to_bits().hash(&mut h);
+                }
+            }
+        }
+        Bodenquelle::Karte(karte) => {
+            1u8.hash(&mut h);
+            karte.hash(&mut h);
+        }
+    }
+    for v in [m.threshold_lat, m.threshold_lon, m.end_lat, m.end_lon] {
+        v.to_bits().hash(&mut h);
+    }
+    m.width_ft.to_bits().hash(&mut h);
+    h.finish()
+}
+
+/// Die Ausfahrten zu Bodenkarte und Bahn, frisch gerechnet.
+///
+/// Das Teure: Szenerie-Rollwege als GeoJSON formatieren, wieder parsen,
+/// jeden Stuetzpunkt auf die Bahn projizieren — bei HECA 1480 Rollwege.
+fn ausfahrten_rechnen(
+    quelle: Bodenquelle<'_>,
+    m: &runway::RunwayMatch,
+) -> Vec<ausfahrten::Ausfahrt> {
+    #[cfg(test)]
+    AUSFAHRTEN_GERECHNET.with(|z| z.set(z.get() + 1));
+    let szenerie_karte;
+    let karte = match quelle {
+        Bodenquelle::Szenerie(rollwege) => {
+            szenerie_karte = szenerie_bahn::rollwege_als_bodenkarte(rollwege);
+            szenerie_karte.as_str()
+        }
+        Bodenquelle::Karte(karte) => karte,
+    };
+    ausfahrten::ausfahrten_fuer_bahn(
+        karte,
+        m.threshold_lat,
+        m.threshold_lon,
+        m.end_lat,
+        m.end_lon,
+        m.width_ft as f64 * 0.3048,
+    )
+}
+
+static AUSFAHRTEN_GEGENPROBE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Die Ausfahrten zu Bodenkarte und Bahn — einmal gerechnet, danach
+/// aus `ausfahrten_merker`.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// `bahn_felder` laeuft je Landung viele Male: Aufsetz-Ereignis,
+/// Rollout-Nachtrag, Landungen-Reiter alle 5 s, X-Plane-HUD-Band, Panel.
+/// Jedes Mal entstanden die Ausfahrten neu, obwohl Karte und Bahn
+/// dieselben waren. Sie sind eine reine Funktion beider; der Merker
+/// gibt eine KOPIE heraus, das Einkuerzen der Verlaeufe in
+/// `bahn_felder` aendert ihn nicht.
+fn ausfahrten_gemerkt(
+    stats: &FlightStats,
+    quelle: Bodenquelle<'_>,
+    m: &runway::RunwayMatch,
+) -> Vec<ausfahrten::Ausfahrt> {
+    let schluessel = ausfahrten_fingerabdruck(quelle, m);
+    // GEGENPROBE (wird im naechsten Commit entfernt): Merker nie treffen,
+    // wie bis 2.0.12.
+    let schluessel = schluessel.wrapping_add(AUSFAHRTEN_GEGENPROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    if let Ok(merker) = stats.ausfahrten_merker.lock() {
+        if let Some((k, gemerkt)) = merker.as_ref() {
+            if *k == schluessel {
+                return gemerkt.clone();
+            }
+        }
+    }
+    let gerechnet = ausfahrten_rechnen(quelle, m);
+    if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
+        *merker = Some((schluessel, gerechnet.clone()));
+    }
+    gerechnet
 }
 
 fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<String>) -> BahnFelder {
@@ -28285,79 +28449,33 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // per `#[serde(default)]` auf `None` steht, obwohl `runway_match`
     // durchaus vorliegt.
     let landeplatz_der_bahn = rm.map(|m| m.airport_ident.as_str());
-    // ZWEI Quellen: die Auskunft des aktuellen Ernteziels und die des
-    // geplanten Ziels.
-    //
-    // Die erste kann von einem Ueberflugplatz stammen — bei DLH 373 am
-    // 20.09.2026 korrelierte die Bahn im Sinkflug kurz mit EDML
-    // (Landshut, liegt auf der Anflugstrecke nach EDDM), das Ernteziel
-    // wechselte dorthin, und die gute EDDM-Auskunft mit 682 Rollwegen
-    // wurde verworfen. EDML lieferte 0. Beim Aufsetzen in Muenchen war
-    // deshalb keine Bodenkarte da: keine Ausfahrten, keine Bemassung.
-    //
-    // Die ICAO-Pruefung bleibt an BEIDEN Quellen — sie ist die
-    // Sicherung, die verhindert, dass Rollwege eines fremden Platzes in
-    // die Ausfahrten geraten. Bei einem Ausweichflug passt das geplante
-    // Ziel nicht und faellt heraus.
-    let passt = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz_der_bahn {
-        Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
-        None => false,
-    };
-    let szenerie_karte = stats
-        .szenerie_auskunft
-        .as_ref()
-        .filter(passt)
-        .filter(|a| !a.rollwege.is_empty())
-        .or_else(|| {
-            stats
-                .ziel_szenerie_auskunft
-                .as_ref()
-                .filter(passt)
-                .filter(|a| !a.rollwege.is_empty())
-        })
-        .map(|a| szenerie_bahn::rollwege_als_bodenkarte(&a.rollwege));
-    let arr_karte = match (&stats.arr_ground_geojson, landeplatz_der_bahn) {
-        (Some(karte), Some(landeplatz)) => stats
-            .arr_ground_geojson_icao
-            .as_deref()
-            .filter(|gi| gi.eq_ignore_ascii_case(landeplatz))
-            .map(|_| karte.as_str()),
-        _ => None,
-    };
-    let boden_karte = szenerie_karte.as_deref().or(arr_karte);
 
-    let ausfahrten: Vec<storage::RunwayExit> = match (rm, boden_karte) {
-        (Some(m), Some(karte)) if m.width_ft > 0.0 => ausfahrten::ausfahrten_fuer_bahn(
-            karte,
-            m.threshold_lat,
-            m.threshold_lon,
-            m.end_lat,
-            m.end_lon,
-            m.width_ft as f64 * 0.3048,
-        )
-        .into_iter()
-        .map(|a| storage::RunwayExit {
-            name: a.name,
-            laengs_m: a.laengs_m,
-            seite: a.seite,
-            // Der Verlauf gehoert dazu — aus ihm zeichnet die
-            // Queransicht den Korridor des genommenen Rollwegs.
-            //
-            // Er fehlte hier bis zur QS-Runde 8 am 26.08.2026: berechnet,
-            // mit zwoelf Tests abgedeckt, und beim Umkopieren in einer
-            // Feldliste vergessen. Der Korridor erschien deshalb NUR in
-            // der Vorschau, wo ich ihn von Hand gesetzt hatte, und bei
-            // keinem einzigen echten Flug.
-            verlauf: a
-                .verlauf
-                .into_iter()
-                .map(|v| storage::Verlaufspunkt {
-                    laengs_m: v.laengs_m,
-                    quer_m: v.quer_m,
-                })
-                .collect(),
-        })
-        .collect(),
+    // ⚠ Gemerkt je Bodenkarte und Bahn — siehe `ausfahrten_gemerkt`.
+    let ausfahrten: Vec<storage::RunwayExit> = match (rm, bodenquelle(stats, landeplatz_der_bahn)) {
+        (Some(m), Some(quelle)) if m.width_ft > 0.0 => ausfahrten_gemerkt(stats, quelle, m)
+            .into_iter()
+            .map(|a| storage::RunwayExit {
+                name: a.name,
+                laengs_m: a.laengs_m,
+                seite: a.seite,
+                // Der Verlauf gehoert dazu — aus ihm zeichnet die
+                // Queransicht den Korridor des genommenen Rollwegs.
+                //
+                // Er fehlte hier bis zur QS-Runde 8 am 26.08.2026: berechnet,
+                // mit zwoelf Tests abgedeckt, und beim Umkopieren in einer
+                // Feldliste vergessen. Der Korridor erschien deshalb NUR in
+                // der Vorschau, wo ich ihn von Hand gesetzt hatte, und bei
+                // keinem einzigen echten Flug.
+                verlauf: a
+                    .verlauf
+                    .into_iter()
+                    .map(|v| storage::Verlaufspunkt {
+                        laengs_m: v.laengs_m,
+                        quer_m: v.quer_m,
+                    })
+                    .collect(),
+            })
+            .collect(),
         _ => Vec::new(),
     };
 
@@ -68184,6 +68302,96 @@ mod touchdown_metadata_stamp_tests {
             !felder.runway_exits.is_empty(),
             "die Auskunft des Ziels wird nicht als Quelle benutzt — \
              genau der Fehler aus DLH 373",
+        );
+    }
+
+    /// ⚠ Die Ausfahrten entstehen je Bodenkarte und Bahn EINMAL.
+    ///
+    /// AIB 429 (HECA, 1480 Rollwege, 12.10.2026): `bahn_felder` laeuft je
+    /// Landung viele Male, und jedes Mal wurde die ganze Rollwegkarte als
+    /// GeoJSON formatiert, wieder geparst und projiziert. Gegenproben:
+    /// Eine andere Bahn oder eine andere Karte rechnet neu, und das
+    /// Ergebnis folgt ihr.
+    #[test]
+    fn ausfahrten_werden_je_karte_und_bahn_nur_einmal_gerechnet() {
+        let flight = flight_fixture("EDDM");
+        let rollweg = |name: &str, lat: f64, lon: f64| sim_core::szenerie::SzenerieRollweg {
+            name: name.to_string(),
+            punkte: vec![(lat, lon), (lat + 0.004, lon + 0.004)],
+        };
+        let bahn = runway::RunwayMatch {
+            airport_ident: "EDDM".to_string(),
+            runway_ident: "26R".to_string(),
+            heading_true_deg: 263.4,
+            length_ft: 13123.0,
+            width_ft: 197.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 48.3694,
+            threshold_lon: 11.8306,
+            end_lat: 48.3617,
+            end_lon: 11.7766,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 1656.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+            geometry_implied_displaced_threshold_ft: 0,
+        };
+        let mut stats = flight.stats.lock().expect("stats");
+        stats.runway_match = Some(bahn.clone());
+        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDM".to_string(),
+            rollwege: vec![
+                rollweg("A8", 48.3660, 11.8050),
+                rollweg("A10", 48.3640, 11.7930),
+            ],
+            ..Default::default()
+        });
+        let laengs = |f: &BahnFelder| -> Vec<(String, i64)> {
+            f.runway_exits
+                .iter()
+                .map(|a| (a.name.clone(), a.laengs_m.round() as i64))
+                .collect()
+        };
+        let gerechnet = || AUSFAHRTEN_GERECHNET.with(|z| z.get());
+
+        AUSFAHRTEN_GERECHNET.with(|z| z.set(0));
+        let erst = bahn_felder(&stats, Some("A388"), None);
+        let dann = bahn_felder(&stats, Some("A388"), None);
+        assert!(
+            erst.runway_exits.iter().any(|a| a.name == "A8"),
+            "Vorrichtung: A8 ist eine Ausfahrt"
+        );
+        assert_eq!(laengs(&erst), laengs(&dann), "gemerkt heisst gleich");
+        assert_eq!(
+            gerechnet(),
+            1,
+            "dieselbe Karte und Bahn, trotzdem wurden die Ausfahrten erneut gerechnet"
+        );
+
+        // Gegenprobe 1: andere Bahn (Schwelle rund 300 m weiter) → neu.
+        let mut verschoben = bahn.clone();
+        verschoben.threshold_lat += (bahn.end_lat - bahn.threshold_lat) * 0.075;
+        verschoben.threshold_lon += (bahn.end_lon - bahn.threshold_lon) * 0.075;
+        stats.runway_match = Some(verschoben);
+        let neu_bahn = bahn_felder(&stats, Some("A388"), None);
+        assert_eq!(gerechnet(), 2, "eine andere Bahn kam aus dem Merker");
+        assert_ne!(
+            laengs(&neu_bahn),
+            laengs(&erst),
+            "die Ausfahrten folgen der neuen Schwelle nicht"
+        );
+
+        // Gegenprobe 2: dieselbe Bahn, aber die Karte ohne A8 → neu.
+        stats.runway_match = Some(bahn);
+        if let Some(a) = stats.szenerie_auskunft.as_mut() {
+            a.rollwege.remove(0);
+        }
+        let neu_karte = bahn_felder(&stats, Some("A388"), None);
+        assert_eq!(gerechnet(), 3, "eine andere Karte kam aus dem Merker");
+        assert!(
+            neu_karte.runway_exits.iter().all(|a| a.name != "A8"),
+            "der entfernte Rollweg ist noch da"
         );
     }
 
