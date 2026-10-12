@@ -38375,9 +38375,9 @@ static ACARS_EINGANG: OnceLock<tokio::sync::mpsc::UnboundedSender<AcarsAuftrag>>
 
 enum AcarsAuftrag {
     Zeilen(String, Vec<api_client::LogEntry>),
-    /// Alles bisher Eingereihte aufnehmen und sichern, dann bestätigen
-    /// (App-Ende).
-    Sichern(std::sync::mpsc::SyncSender<()>),
+    /// Alles bisher Eingereihte aufnehmen und sichern, dann melden, ob das
+    /// gelungen ist (App-Ende). Kein Erfolg wird gemeldet, der keiner ist.
+    Sichern(std::sync::mpsc::SyncSender<bool>),
 }
 
 /// Beim Beenden: warten, bis alle eingereihten ACARS-Zeilen in der Datei
@@ -38388,7 +38388,11 @@ fn acars_abwarten_beim_beenden() {
     };
     let (fertig_tx, fertig_rx) = std::sync::mpsc::sync_channel(1);
     if tx.send(AcarsAuftrag::Sichern(fertig_tx)).is_ok() {
-        let _ = fertig_rx.recv_timeout(Duration::from_secs(2));
+        match fertig_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(true) => {}
+            Ok(false) => tracing::error!("ACARS-Postausgang beim Beenden nicht gesichert"),
+            Err(_) => tracing::error!("ACARS-Postausgang: Sichern beim Beenden dauerte zu lange"),
+        }
     }
 }
 
@@ -38549,6 +38553,11 @@ async fn acars_sichern(app: &AppHandle, offen: &AcarsOffen) -> bool {
 
 fn acars_aufnehmen(offen: &mut AcarsOffen, pirep_id: String, zeilen: Vec<api_client::LogEntry>) {
     offen.entry(pirep_id).or_default().extend(zeilen);
+    acars_begrenzen(offen);
+}
+
+/// Obergrenze aller offenen Zeilen durchsetzen — älteste zuerst.
+fn acars_begrenzen(offen: &mut AcarsOffen) {
     let mut gesamt: usize = offen.values().map(|q| q.len()).sum();
     while gesamt > ACARS_POSTAUSGANG_MAX {
         // Älteste Zeile über alle PIREPs (nach created_at) verwerfen.
@@ -38567,6 +38576,16 @@ fn acars_aufnehmen(offen: &mut AcarsOffen, pirep_id: String, zeilen: Vec<api_cli
         tracing::warn!(pirep_id = %pirep, "ACARS-Postausgang voll — älteste Zeile verworfen");
     }
     offen.retain(|_, q| !q.is_empty());
+}
+
+/// Ist die phpVMS-Fehlerantwort (RFC 7807) ein `PirepCancelled`? Geprüft
+/// wird nur das Feld `type` (`<error_root>/pirep-cancelled`), nicht irgendein
+/// Textvorkommen.
+fn ist_pirep_abgebrochen(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_string))
+        .is_some_and(|t| t == "pirep-cancelled" || t.ends_with("/pirep-cancelled"))
 }
 
 /// Alle Zeilen eines PIREPs verwerfen — phpVMS nimmt für ihn nichts mehr an.
@@ -38598,6 +38617,34 @@ fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str
 /// abgefangen und trotzdem mit 200 beantwortet).
 const ACARS_TEILWEISE_MAX: u32 = 3;
 
+/// Ablage nachladen, falls noch nicht geschehen; gelesene (ältere) Zeilen
+/// kommen vor die schon eingereihten. `true`, wenn die Ablage gelesen ist.
+async fn acars_nachladen(app: &AppHandle, offen: &mut AcarsOffen, geladen: &mut bool) -> bool {
+    if *geladen {
+        return true;
+    }
+    let app2 = app.clone();
+    if let AcarsLaden::Ok(alt) = tokio::task::spawn_blocking(move || acars_postausgang_laden(&app2))
+        .await
+        .unwrap_or(AcarsLaden::Spaeter)
+    {
+        for (p, mut q) in alt {
+            if let Some(neu) = offen.remove(&p) {
+                q.extend(neu);
+            }
+            offen.insert(p, q);
+        }
+        acars_begrenzen(offen);
+        *geladen = true;
+    }
+    *geladen
+}
+
+/// Für das Beenden: nachladen (falls nötig), sichern und das Ergebnis melden.
+async fn acars_sichern_fuer_ende(app: &AppHandle, offen: &mut AcarsOffen, geladen: &mut bool) -> bool {
+    acars_nachladen(app, offen, geladen).await && acars_sichern(app, offen).await
+}
+
 async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<AcarsAuftrag>) {
     // Bis die Ablage gelesen ist, wird sie nicht überschrieben.
     let mut offen = AcarsOffen::new();
@@ -38609,25 +38656,8 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
     // Je PIREP: wie oft das aktuelle Paket nur teilweise gespeichert wurde.
     let mut teilweise: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     loop {
-        if !geladen {
-            let app2 = app.clone();
-            match tokio::task::spawn_blocking(move || acars_postausgang_laden(&app2))
-                .await
-                .unwrap_or(AcarsLaden::Spaeter)
-            {
-                AcarsLaden::Ok(alt) => {
-                    // Gelesene (ältere) Zeilen vor die schon eingereihten.
-                    for (p, mut q) in alt {
-                        if let Some(neu) = offen.remove(&p) {
-                            q.extend(neu);
-                        }
-                        offen.insert(p, q);
-                    }
-                    geladen = true;
-                    ungesichert = true;
-                }
-                AcarsLaden::Spaeter => {}
-            }
+        if !geladen && acars_nachladen(&app, &mut offen, &mut geladen).await {
+            ungesichert = true;
         }
         let mut neu = false;
         let mut bestaetigen = Vec::new();
@@ -38644,7 +38674,9 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
             ungesichert = !acars_sichern(&app, &offen).await;
         }
         for fertig in bestaetigen {
-            let _ = fertig.send(());
+            let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen).await;
+            ungesichert = !ok;
+            let _ = fertig.send(ok);
         }
         // Wartezeiten nur für PIREPs, die noch Zeilen haben — sonst weckte
         // eine abgelaufene Wartezeit die Schleife ohne Pause immer wieder.
@@ -38673,10 +38705,9 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                         }
                     }
                     Some(AcarsAuftrag::Sichern(fertig)) => {
-                        if geladen {
-                            ungesichert = !acars_sichern(&app, &offen).await;
-                        }
-                        let _ = fertig.send(());
+                        let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen).await;
+                        ungesichert = !ok;
+                        let _ = fertig.send(ok);
                     }
                     None => break,
                 },
@@ -38708,9 +38739,45 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
             .take(ACARS_PAKET_MAX)
             .cloned()
             .collect();
-        let zustellung = {
-            let _live = PHPVMS_LIVE_MELDUNG.lock().await;
-            client.post_acars_logs_zustellung(&pirep_id, &paket).await
+        // Die Anfrage läuft als eigene Aufgabe; währenddessen nimmt der
+        // Besitzer weiter Zeilen an, sichert sie und beantwortet das
+        // Beenden — sonst stünden Zeilen, die während einer bis zu 10 s
+        // langen Anfrage kommen, beim sofortigen Schließen nach dem
+        // Einreichen nicht in der Datei (Gesamtabnahme 12.10.2026).
+        let mut anfrage = {
+            let (client, pirep_id, paket) = (client.clone(), pirep_id.clone(), paket.clone());
+            tokio::spawn(async move {
+                let _live = PHPVMS_LIVE_MELDUNG.lock().await;
+                client.post_acars_logs_zustellung(&pirep_id, &paket).await
+            })
+        };
+        let zustellung = loop {
+            tokio::select! {
+                ergebnis = &mut anfrage => {
+                    break ergebnis.unwrap_or_else(|e| {
+                        api_client::Zustellung::Unklar(ApiError::Network(format!("ACARS-Anfrage abgebrochen: {e}")))
+                    });
+                }
+                eingang = rx.recv() => match eingang {
+                    Some(AcarsAuftrag::Zeilen(p, z)) => {
+                        acars_aufnehmen(&mut offen, p, z);
+                        if geladen {
+                            ungesichert = !acars_sichern(&app, &offen).await;
+                        }
+                    }
+                    Some(AcarsAuftrag::Sichern(fertig)) => {
+                        let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen).await;
+                        ungesichert = !ok;
+                        let _ = fertig.send(ok);
+                    }
+                    // Eingang zu (Programmende): Antwort noch abwarten.
+                    None => {
+                        break anfrage.await.unwrap_or_else(|e| {
+                            api_client::Zustellung::Unklar(ApiError::Network(format!("ACARS-Anfrage abgebrochen: {e}")))
+                        });
+                    }
+                },
+            }
         };
         // Wartezeiten ab der Antwort rechnen, nicht ab dem Start der Anfrage.
         let jetzt = tokio::time::Instant::now();
@@ -38723,7 +38790,9 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
         use api_client::Zustellung;
         match zustellung {
             Zustellung::Angekommen { gespeichert } => {
-                let fehlt = gespeichert.is_some_and(|n| (n as usize) < paket.len());
+                // Fehlt die Zahl, ist nicht belegt, dass alles gespeichert
+                // wurde — wie „teilweise“ behandeln (begrenzt, idempotent).
+                let fehlt = gespeichert.is_none_or(|n| (n as usize) < paket.len());
                 let versuche = teilweise.get(&pirep_id).copied().unwrap_or(0);
                 if fehlt && versuche < ACARS_TEILWEISE_MAX {
                     // Dank fester Kennung legt ein Neuversuch nur an, was fehlt.
@@ -38775,7 +38844,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                 // `PirepCancelled`: 400 mit Fehlerkennung `pirep-cancelled`):
                 // Für diesen PIREP nimmt phpVMS nichts mehr an.
                 ApiError::NotFound => acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e),
-                ApiError::Server { status: 400, body } if body.contains("pirep-cancelled") => {
+                ApiError::Server { status: 400, body } if ist_pirep_abgebrochen(body) => {
                     acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e)
                 }
                 // Anmeldung/Adresse ungültig — behalten, später erneut.
@@ -38802,6 +38871,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                         q.drain(..paket.len().min(q.len()));
                     }
                     offen.retain(|_, q| !q.is_empty());
+                    teilweise.remove(&pirep_id);
                 }
             },
         }
@@ -38841,6 +38911,30 @@ mod acars_postausgang_tests {
         assert_eq!(gesamt, ACARS_POSTAUSGANG_MAX);
         assert_eq!(offen["ALT"].len(), ACARS_POSTAUSGANG_MAX / 2 - 1, "die älteste Zeile fiel weg");
         assert_eq!(offen["NEU"].len(), ACARS_POSTAUSGANG_MAX / 2 + 1);
+    }
+
+    #[test]
+    fn abgebrochen_nur_am_feld_type() {
+        assert!(ist_pirep_abgebrochen(
+            r#"{"type":"https://phpvms.net/errors/pirep-cancelled","title":"PIREP has been cancelled"}"#
+        ));
+        assert!(!ist_pirep_abgebrochen(
+            r#"{"type":"https://phpvms.net/errors/validation","details":"pirep-cancelled"}"#
+        ));
+        assert!(!ist_pirep_abgebrochen("pirep-cancelled"));
+    }
+
+    #[test]
+    fn obergrenze_gilt_auch_nach_dem_zusammenfuehren() {
+        let mut offen = AcarsOffen::new();
+        offen.insert(
+            "A".into(),
+            (0..ACARS_POSTAUSGANG_MAX + 5)
+                .map(|i| zeile(&format!("2026-10-11T{i:08}")))
+                .collect(),
+        );
+        acars_begrenzen(&mut offen);
+        assert_eq!(offen["A"].len(), ACARS_POSTAUSGANG_MAX);
     }
 
     #[test]

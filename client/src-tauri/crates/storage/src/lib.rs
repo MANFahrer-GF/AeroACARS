@@ -150,8 +150,10 @@ impl PositionQueue {
         if items.is_empty() {
             // No need to keep an empty file around — remove it so the
             // next read returns an empty Vec without I/O.
+            // Ein gescheitertes Löschen ist ein Fehler — sonst läse der
+            // nächste Start den alten Stand und stellte ihn erneut zu.
             if self.path.exists() {
-                let _ = std::fs::remove_file(&self.path);
+                std::fs::remove_file(&self.path)?;
             }
             return Ok(());
         }
