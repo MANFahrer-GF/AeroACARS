@@ -13810,7 +13810,6 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         .expect("mqtt_owner_epoch lock") = Some(epoche_bei_start);
     tracing::info!("live-tracking publisher running");
     spawn_flug_logs_nachreichen(&app);
-    spawn_acars_nachreichen(&app);
 }
 
 /// Wie weit das Nachreichen zurueckschaut. Aeltere Fluege sind entweder
@@ -20369,25 +20368,17 @@ async fn flight_start_mit(
     // state — there's no transition INTO it, so without this kick
     // the Fluglogbuch tab starts at "Phase: Pushback" with no record
     // of the boarding period. Best-effort, never blocks flight start.
-    {
-        let pirep_id = flight.pirep_id.clone();
-        let log_client = client.clone();
-        tauri::async_runtime::spawn(async move {
-            let entry = api_client::LogEntry {
-                log: "Phase: Boarding".to_string(),
-                lat: None,
-                lon: None,
-                created_at: Some(Utc::now().to_rfc3339()),
-            };
-            if let Err(e) = log_client.post_acars_logs(&pirep_id, &[entry]).await {
-                tracing::warn!(
-                    pirep_id = %pirep_id,
-                    error = %e,
-                    "could not push initial Boarding ACARS log line"
-                );
-            }
-        });
-    }
+    // Über den ACARS-Postausgang — bleibt gesichert bis bestätigt.
+    acars_einreihen(
+        &flight.pirep_id,
+        vec![api_client::LogEntry {
+            id: None,
+            log: "Phase: Boarding".to_string(),
+            lat: None,
+            lon: None,
+            created_at: Some(Utc::now().to_rfc3339()),
+        }],
+    );
 
     // New flight = fresh activity log. Pilots were getting confused
     // when the previous flight's events (or yesterday's) lingered at
@@ -38267,7 +38258,9 @@ struct PhpvmsMeldungen {
     /// Lebenszeichens geht nicht verloren, er wird danach mit dem dann
     /// aktuellen Stand gesendet; liegt nichts Neues vor, passiert nichts.
     lebenszeichen: tokio::sync::watch::Sender<Option<Lebenszeichen>>,
-    acars: tokio::sync::mpsc::UnboundedSender<Vec<api_client::LogEntry>>,
+    /// ACARS-Zeilen gehen in den gemeinsamen Postausgang
+    /// (`acars_einreihen`).
+    pirep_id: String,
 }
 
 impl PhpvmsMeldungen {
@@ -38280,7 +38273,7 @@ impl PhpvmsMeldungen {
     }
 
     fn acars(&self, eintraege: Vec<api_client::LogEntry>) {
-        let _ = self.acars.send(eintraege);
+        acars_einreihen(&self.pirep_id, eintraege);
     }
 }
 
@@ -38309,7 +38302,6 @@ fn spawn_phpvms_meldungen(
 ) -> PhpvmsMeldungen {
     const LEBENSZEICHEN_NEUVERSUCH: Duration = Duration::from_secs(3);
     let (lz_tx, mut lz_rx) = tokio::sync::watch::channel::<Option<Lebenszeichen>>(None);
-    let (acars_tx, acars_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<api_client::LogEntry>>();
     {
         let (app, flight, client) = (app.clone(), flight.clone(), client.clone());
         tauri::async_runtime::spawn(async move {
@@ -38361,12 +38353,9 @@ fn spawn_phpvms_meldungen(
             }
         });
     }
-    tauri::async_runtime::spawn(async move {
-        acars_postausgang_zustellen(app, flight, client, acars_rx).await;
-    });
     PhpvmsMeldungen {
         lebenszeichen: lz_tx,
-        acars: acars_tx,
+        pirep_id: flight.pirep_id.clone(),
     }
 }
 
@@ -38376,228 +38365,350 @@ const ACARS_POSTAUSGANG: &str = "acars_queue.json";
 /// Höchstens so viele Zeilen je Anfrage.
 const ACARS_PAKET_MAX: usize = 50;
 
-fn acars_ablage(app: &AppHandle) -> Option<storage::PositionQueue> {
-    let dir = app.path().app_data_dir().ok()?;
-    storage::PositionQueue::open_named(dir, ACARS_POSTAUSGANG).ok()
+/// Obergrenze aller offenen Zeilen (alle PIREPs). Darüber fallen die ältesten
+/// weg — mit Warnung. Zum Vergleich: ein Langstreckenflug erzeugt einige
+/// hundert Zeilen.
+const ACARS_POSTAUSGANG_MAX: usize = 20_000;
+
+/// Eingang des ACARS-Postausgangs — gesetzt von `spawn_acars_postausgang`.
+static ACARS_EINGANG: OnceLock<
+    tokio::sync::mpsc::UnboundedSender<(String, Vec<api_client::LogEntry>)>,
+> = OnceLock::new();
+
+/// ACARS-Zeilen für das phpVMS-Fluglogbuch einreihen. Kehrt sofort zurück.
+///
+/// Jede Zeile bekommt hier ihre feste Kennung (UUID). phpVMS legt Zeilen mit
+/// `id` per `updateOrInsert` an — Neuversuche erzeugen deshalb keine
+/// Doppelten, auch wenn eine frühere Anfrage doch angekommen war.
+fn acars_einreihen(pirep_id: &str, mut zeilen: Vec<api_client::LogEntry>) {
+    for z in &mut zeilen {
+        if z.id.is_none() {
+            z.id = Some(uuid::Uuid::new_v4().to_string());
+        }
+    }
+    match ACARS_EINGANG.get() {
+        Some(tx) => {
+            let _ = tx.send((pirep_id.to_string(), zeilen));
+        }
+        None => tracing::warn!(
+            pirep_id,
+            "ACARS-Postausgang nicht gestartet — Zeilen nicht eingereiht"
+        ),
+    }
 }
 
-/// Offene ACARS-Zeilen eines PIREPs aus der Ablage lesen.
-fn acars_postausgang_lesen(app: &AppHandle, pirep_id: &str) -> Vec<api_client::LogEntry> {
-    let Some(ablage) = acars_ablage(app) else {
-        return Vec::new();
+/// Den ACARS-Postausgang starten — einmal je Programmlauf.
+///
+/// # Warum ein einziger Besitzer (AeroACARS 2.0.10)
+///
+/// Bis 2.0.9 ging eine ACARS-Zeile beim ersten Fehler verloren, und das
+/// Senden hielt den Streamer an. Jetzt besitzt genau eine Aufgabe alle offenen
+/// Zeilen aller PIREPs und die Datei `acars_queue.json`: kein konkurrierendes
+/// Schreiben, keine zwei Zusteller für denselben PIREP, und was beim Beenden
+/// oder Absturz offen war, geht beim nächsten Start raus. phpVMS nimmt Zeilen
+/// auch nach dem Einreichen an (nur abgebrochene PIREPs nicht) und sortiert
+/// sie über `created_at` ein — das Einreichen wartet deshalb nicht.
+///
+/// Grenze: Eine Zeile, die in den Millisekunden zwischen Einreihen und
+/// Sichern durch einen Absturz verloren geht, fehlt im phpVMS-Logbuch; im
+/// Flugprotokoll (JSONL) und im Aktivitätsprotokoll steht sie trotzdem.
+fn spawn_acars_postausgang(app: &AppHandle) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    if ACARS_EINGANG.set(tx).is_err() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(acars_postausgang_besitzer(app, rx));
+}
+
+type AcarsOffen =
+    std::collections::BTreeMap<String, std::collections::VecDeque<api_client::LogEntry>>;
+
+/// Datei lesen. Ist sie beschädigt, wird sie beiseitegelegt
+/// (`acars_queue.defekt-<zeit>.json`) statt überschrieben.
+fn acars_postausgang_laden(app: &AppHandle) -> AcarsOffen {
+    let mut offen = AcarsOffen::new();
+    let Ok(dir) = app.path().app_data_dir() else {
+        return offen;
     };
-    ablage
-        .read_all()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|e| e.pirep_id == pirep_id)
-        .filter_map(|e| serde_json::from_value(e.position).ok())
-        .collect()
+    let Ok(ablage) = storage::PositionQueue::open_named(&dir, ACARS_POSTAUSGANG) else {
+        return offen;
+    };
+    match ablage.read_all() {
+        Ok(eintraege) => {
+            for e in eintraege {
+                match serde_json::from_value::<api_client::LogEntry>(e.position) {
+                    Ok(z) => offen.entry(e.pirep_id).or_default().push_back(z),
+                    Err(err) => tracing::warn!(
+                        error = %err,
+                        "ACARS-Zeile in der Ablage unlesbar — übersprungen"
+                    ),
+                }
+            }
+        }
+        Err(err) => {
+            let ziel = dir.join(format!(
+                "acars_queue.defekt-{}.json",
+                Utc::now().timestamp()
+            ));
+            let _ = std::fs::rename(dir.join(ACARS_POSTAUSGANG), &ziel);
+            tracing::error!(
+                error = %err,
+                ziel = ?ziel,
+                "ACARS-Postausgang beschädigt — beiseitegelegt"
+            );
+        }
+    }
+    offen
 }
 
-/// Die offenen Zeilen eines PIREPs in der Ablage ersetzen (Zeilen anderer
-/// PIREPs bleiben). Leer → Einträge des PIREPs entfernt.
-fn acars_postausgang_sichern(app: &AppHandle, pirep_id: &str, offen: &[api_client::LogEntry]) {
-    let Some(ablage) = acars_ablage(app) else {
+fn acars_postausgang_schreiben(app: &AppHandle, offen: &AcarsOffen) {
+    let Ok(dir) = app.path().app_data_dir() else {
         return;
     };
-    let mut alle: Vec<storage::QueuedPosition> = ablage
-        .read_all()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|e| e.pirep_id != pirep_id)
-        .collect();
-    alle.extend(offen.iter().filter_map(|z| {
-        serde_json::to_value(z).ok().map(|v| storage::QueuedPosition {
-            pirep_id: pirep_id.to_string(),
-            position: v,
+    let Ok(ablage) = storage::PositionQueue::open_named(&dir, ACARS_POSTAUSGANG) else {
+        return;
+    };
+    let alle: Vec<storage::QueuedPosition> = offen
+        .iter()
+        .flat_map(|(pirep_id, zeilen)| {
+            zeilen.iter().filter_map(move |z| {
+                serde_json::to_value(z)
+                    .ok()
+                    .map(|v| storage::QueuedPosition {
+                        pirep_id: pirep_id.clone(),
+                        position: v,
+                    })
+            })
         })
-    }));
+        .collect();
     if let Err(e) = ablage.replace(&alle) {
         tracing::warn!(error = ?e, "ACARS-Postausgang nicht gesichert");
     }
 }
 
-/// Wie es nach einer Zustellung weitergeht.
-enum AcarsNaechster {
-    /// Paket erledigt (angekommen, oder unklar und deshalb nicht wiederholt).
-    Erledigt,
-    /// Sicher nicht angekommen — später erneut senden.
-    SpaeterErneut,
-    /// Ziel weg (PIREP gelöscht/abgebrochen, sonstige Ablehnung) — verwerfen.
-    Verwerfen,
-    /// Anmeldung/Adresse ungültig — in der Ablage lassen, in dieser Sitzung
-    /// nicht weiter versuchen (nächster Start versucht es erneut).
-    Aufhoeren,
+async fn acars_sichern(app: &AppHandle, offen: &AcarsOffen) {
+    let (app, kopie) = (app.clone(), offen.clone());
+    let _ = tokio::task::spawn_blocking(move || acars_postausgang_schreiben(&app, &kopie)).await;
 }
 
-fn acars_bewerten(pirep_id: &str, z: api_client::Zustellung) -> AcarsNaechster {
-    use api_client::Zustellung;
-    match z {
-        Zustellung::Angekommen => AcarsNaechster::Erledigt,
-        Zustellung::Unklar(e) => {
-            // Wahrscheinlich gespeichert, nur die Antwort fehlt. Nicht
-            // wiederholen — sonst stünde die Zeile doppelt im Logbuch.
-            tracing::warn!(pirep_id, error = %e, "ACARS-Zustellung unklar — nicht wiederholt (Doppelte vermeiden)");
-            AcarsNaechster::Erledigt
+fn acars_aufnehmen(offen: &mut AcarsOffen, pirep_id: String, zeilen: Vec<api_client::LogEntry>) {
+    offen.entry(pirep_id).or_default().extend(zeilen);
+    let mut gesamt: usize = offen.values().map(|q| q.len()).sum();
+    while gesamt > ACARS_POSTAUSGANG_MAX {
+        // Älteste Zeile über alle PIREPs (nach created_at) verwerfen.
+        let Some(pirep) = offen
+            .iter()
+            .filter_map(|(p, q)| q.front().map(|z| (p.clone(), z.created_at.clone())))
+            .min_by(|a, b| a.1.cmp(&b.1))
+            .map(|(p, _)| p)
+        else {
+            break;
+        };
+        if let Some(q) = offen.get_mut(&pirep) {
+            q.pop_front();
         }
-        Zustellung::NichtAngekommen(e) => {
-            tracing::warn!(pirep_id, error = %e, "ACARS-Zeilen nicht angekommen — Neuversuch folgt");
-            AcarsNaechster::SpaeterErneut
+        gesamt -= 1;
+        tracing::warn!(pirep_id = %pirep, "ACARS-Postausgang voll — älteste Zeile verworfen");
+    }
+    offen.retain(|_, q| !q.is_empty());
+}
+
+#[cfg(test)]
+mod acars_postausgang_tests {
+    use super::*;
+
+    fn zeile(t: &str) -> api_client::LogEntry {
+        api_client::LogEntry {
+            id: Some(uuid::Uuid::new_v4().to_string()),
+            log: t.to_string(),
+            lat: None,
+            lon: None,
+            created_at: Some(t.to_string()),
         }
-        Zustellung::Abgelehnt(e) => match e {
-            ApiError::Unauthenticated | ApiError::Forbidden | ApiError::InvalidUrl(_) => {
-                tracing::warn!(pirep_id, error = %e, "ACARS-Zustellung abgelehnt (Anmeldung) — bleibt im Postausgang");
-                AcarsNaechster::Aufhoeren
-            }
-            other => {
-                tracing::warn!(pirep_id, error = %other, "ACARS-Zeilen abgelehnt — verworfen");
-                AcarsNaechster::Verwerfen
-            }
-        },
+    }
+
+    #[test]
+    fn obergrenze_verwirft_die_aelteste_zeile_ueber_alle_pireps() {
+        let mut offen = AcarsOffen::new();
+        let alt: Vec<_> = (0..ACARS_POSTAUSGANG_MAX / 2)
+            .map(|i| zeile(&format!("2026-10-11T{i:08}")))
+            .collect();
+        let neu: Vec<_> = (0..ACARS_POSTAUSGANG_MAX / 2)
+            .map(|i| zeile(&format!("2026-10-12T{i:08}")))
+            .collect();
+        acars_aufnehmen(&mut offen, "ALT".into(), alt);
+        acars_aufnehmen(&mut offen, "NEU".into(), neu);
+        acars_aufnehmen(&mut offen, "NEU".into(), vec![zeile("2026-10-12T99999999")]);
+        let gesamt: usize = offen.values().map(|q| q.len()).sum();
+        assert_eq!(gesamt, ACARS_POSTAUSGANG_MAX);
+        assert_eq!(offen["ALT"].len(), ACARS_POSTAUSGANG_MAX / 2 - 1, "die älteste Zeile fiel weg");
+        assert_eq!(offen["NEU"].len(), ACARS_POSTAUSGANG_MAX / 2 + 1);
+    }
+
+    #[test]
+    fn kennung_geht_mit_an_phpvms() {
+        let z = zeile("2026-10-12T00000001");
+        let json = serde_json::to_value(&z).unwrap();
+        assert_eq!(json["id"], serde_json::json!(z.id.clone().unwrap()));
+        // Und überlebt die Ablage (Neustart).
+        let zurueck: api_client::LogEntry = serde_json::from_value(json).unwrap();
+        assert_eq!(zurueck.id, z.id);
     }
 }
 
-/// ACARS-Postausgang eines Flugs zustellen.
-///
-/// # Warum ein Postausgang (AeroACARS 2.0.10)
-///
-/// Bis 2.0.9 ging eine ACARS-Zeile beim ersten Fehler verloren, und das
-/// Senden hielt den Streamer an. Jetzt gilt wie für die Positionen: Jede
-/// Zeile liegt in `acars_queue.json`, bis phpVMS sie bestätigt hat — über
-/// Netzausfall, Beenden und Absturz hinweg (beim nächsten Start
-/// `spawn_acars_nachreichen`). phpVMS nimmt Zeilen auch nach dem Einreichen
-/// an (nur abgebrochene PIREPs nicht) und sortiert sie über `created_at` ein;
-/// das Einreichen wartet deshalb nicht auf sie.
-///
-/// Doppelte: Erneut gesendet wird nur, was sicher nicht angekommen ist
-/// (`api_client::Zustellung::NichtAngekommen`).
-async fn acars_postausgang_zustellen(
+async fn acars_postausgang_besitzer(
     app: AppHandle,
-    flight: Arc<ActiveFlight>,
-    client: Client,
-    mut acars_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<api_client::LogEntry>>,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<(String, Vec<api_client::LogEntry>)>,
 ) {
-    let pirep_id = flight.pirep_id.clone();
     let mut offen = {
-        let (app, pirep_id) = (app.clone(), pirep_id.clone());
-        tokio::task::spawn_blocking(move || acars_postausgang_lesen(&app, &pirep_id))
+        let app = app.clone();
+        tokio::task::spawn_blocking(move || acars_postausgang_laden(&app))
             .await
             .unwrap_or_default()
     };
-    let mut wartezeit = Duration::from_secs(2);
+    // Je PIREP: nicht vor diesem Zeitpunkt erneut senden, und die letzte Wartezeit.
+    let mut pause: std::collections::HashMap<String, (tokio::time::Instant, Duration)> =
+        std::collections::HashMap::new();
     loop {
-        if offen.is_empty() {
-            match acars_rx.recv().await {
-                Some(neu) => offen.extend(neu),
-                None => break,
+        let mut neu = false;
+        while let Ok((p, z)) = rx.try_recv() {
+            acars_aufnehmen(&mut offen, p, z);
+            neu = true;
+        }
+        if neu {
+            acars_sichern(&app, &offen).await;
+        }
+        let jetzt = tokio::time::Instant::now();
+        let faellig = offen
+            .keys()
+            .find(|p| pause.get(*p).is_none_or(|(bis, _)| *bis <= jetzt))
+            .cloned();
+        let Some(pirep_id) = faellig else {
+            let naechste = pause.values().map(|(bis, _)| *bis).min();
+            tokio::select! {
+                eingang = rx.recv() => match eingang {
+                    Some((p, z)) => {
+                        acars_aufnehmen(&mut offen, p, z);
+                        acars_sichern(&app, &offen).await;
+                    }
+                    None => break,
+                },
+                _ = async {
+                    match naechste {
+                        Some(bis) => tokio::time::sleep_until(bis).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {}
             }
-        }
-        while let Ok(neu) = acars_rx.try_recv() {
-            offen.extend(neu);
-        }
-        sichern_im_hintergrund(&app, &pirep_id, &offen).await;
-        let paket: Vec<api_client::LogEntry> = offen.iter().take(ACARS_PAKET_MAX).cloned().collect();
+            continue;
+        };
+        let client = app
+            .state::<AppState>()
+            .client
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().cloned());
+        let Some(client) = client else {
+            // Noch nicht angemeldet — später erneut.
+            pause.insert(
+                pirep_id,
+                (jetzt + Duration::from_secs(30), Duration::from_secs(30)),
+            );
+            continue;
+        };
+        let paket: Vec<api_client::LogEntry> = offen[&pirep_id]
+            .iter()
+            .take(ACARS_PAKET_MAX)
+            .cloned()
+            .collect();
         let zustellung = {
             let _live = PHPVMS_LIVE_MELDUNG.lock().await;
             client.post_acars_logs_zustellung(&pirep_id, &paket).await
         };
-        if let api_client::Zustellung::Abgelehnt(ApiError::NotFound) = &zustellung {
-            if !flight.stop.load(Ordering::Relaxed) {
-                handle_remote_cancellation(&app, &flight, "POST acars/logs");
-            }
-        }
-        match acars_bewerten(&pirep_id, zustellung) {
-            AcarsNaechster::Erledigt => {
-                offen.drain(..paket.len());
-                wartezeit = Duration::from_secs(2);
+        use api_client::Zustellung;
+        match zustellung {
+            Zustellung::Angekommen => {
+                if let Some(q) = offen.get_mut(&pirep_id) {
+                    q.drain(..paket.len().min(q.len()));
+                }
+                offen.retain(|_, q| !q.is_empty());
+                pause.remove(&pirep_id);
                 tracing::debug!(pirep_id = %pirep_id, count = paket.len(), "ACARS log lines pushed");
             }
-            AcarsNaechster::Verwerfen => offen.clear(),
-            AcarsNaechster::SpaeterErneut => {
-                tokio::time::sleep(wartezeit).await;
-                wartezeit = (wartezeit * 2).min(Duration::from_secs(60));
-            }
-            AcarsNaechster::Aufhoeren => break,
-        }
-        sichern_im_hintergrund(&app, &pirep_id, &offen).await;
-    }
-    // Was jetzt noch offen ist (Anmeldung abgelehnt, Kanal mit Rest zu),
-    // bleibt gesichert und geht beim nächsten Start raus.
-    while let Ok(neu) = acars_rx.try_recv() {
-        offen.extend(neu);
-    }
-    sichern_im_hintergrund(&app, &pirep_id, &offen).await;
-}
-
-async fn sichern_im_hintergrund(app: &AppHandle, pirep_id: &str, offen: &[api_client::LogEntry]) {
-    let (app, pirep_id, offen) = (app.clone(), pirep_id.to_string(), offen.to_vec());
-    let _ = tokio::task::spawn_blocking(move || acars_postausgang_sichern(&app, &pirep_id, &offen)).await;
-}
-
-/// Beim Start: ACARS-Zeilen früherer Flüge zustellen, die vor dem Beenden
-/// nicht mehr rausgingen. Der aktive Flug stellt seine selbst zu.
-fn spawn_acars_nachreichen(app: &AppHandle) {
-    static GELAUFEN: AtomicBool = AtomicBool::new(false);
-    if GELAUFEN.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        let state = app.state::<AppState>();
-        let Ok(client) = current_client(&state) else {
-            GELAUFEN.store(false, Ordering::SeqCst);
-            return;
-        };
-        let aktiv = state
-            .active_flight
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().map(|f| f.pirep_id.clone()));
-        let eintraege = {
-            let app = app.clone();
-            tokio::task::spawn_blocking(move || {
-                acars_ablage(&app)
-                    .and_then(|a| a.read_all().ok())
-                    .unwrap_or_default()
-            })
-            .await
-            .unwrap_or_default()
-        };
-        let mut pireps: Vec<String> = eintraege.iter().map(|e| e.pirep_id.clone()).collect();
-        pireps.sort();
-        pireps.dedup();
-        for pirep_id in pireps.into_iter().filter(|p| Some(p) != aktiv.as_ref()) {
-            let mut offen: Vec<api_client::LogEntry> = eintraege
-                .iter()
-                .filter(|e| e.pirep_id == pirep_id)
-                .filter_map(|e| serde_json::from_value(e.position.clone()).ok())
-                .collect();
-            let mut versuche = 0;
-            while !offen.is_empty() && versuche < 5 {
-                let paket: Vec<api_client::LogEntry> =
-                    offen.iter().take(ACARS_PAKET_MAX).cloned().collect();
-                let zustellung = {
-                    let _live = PHPVMS_LIVE_MELDUNG.lock().await;
-                    client.post_acars_logs_zustellung(&pirep_id, &paket).await
+            // Dank fester Kennung ist jeder Neuversuch ohne Doppelte möglich.
+            Zustellung::NichtAngekommen(e) | Zustellung::Unklar(e) => {
+                let warten = match &e {
+                    ApiError::RateLimited { retry_after_seconds } => {
+                        Duration::from_secs((*retry_after_seconds).clamp(1, 300))
+                    }
+                    _ => pause
+                        .get(&pirep_id)
+                        .map(|(_, w)| (*w * 2).min(Duration::from_secs(60)))
+                        .unwrap_or(Duration::from_secs(2)),
                 };
-                match acars_bewerten(&pirep_id, zustellung) {
-                    AcarsNaechster::Erledigt => {
-                        offen.drain(..paket.len());
-                    }
-                    AcarsNaechster::Verwerfen => offen.clear(),
-                    AcarsNaechster::SpaeterErneut => {
-                        versuche += 1;
-                        tokio::time::sleep(Duration::from_secs(10)).await;
-                    }
-                    AcarsNaechster::Aufhoeren => break,
-                }
+                tracing::warn!(
+                    pirep_id = %pirep_id,
+                    error = %e,
+                    warten_s = warten.as_secs(),
+                    "ACARS-Zustellung gescheitert — Neuversuch folgt"
+                );
+                pause.insert(pirep_id, (jetzt + warten, warten));
             }
-            tracing::info!(pirep_id = %pirep_id, offen = offen.len(), "ACARS-Postausgang nachgereicht");
-            sichern_im_hintergrund(&app, &pirep_id, &offen).await;
+            Zustellung::Abgelehnt(e) => match e {
+                // PIREP gelöscht (404) oder abgebrochen (400 PirepCancelled):
+                // Für diesen PIREP nimmt phpVMS nichts mehr an.
+                ApiError::NotFound | ApiError::Server { status: 400, .. } => {
+                    tracing::warn!(
+                        pirep_id = %pirep_id,
+                        error = %e,
+                        "PIREP nimmt keine ACARS-Zeilen mehr an — verworfen"
+                    );
+                    if matches!(e, ApiError::NotFound) {
+                        let aktiv = app
+                            .state::<AppState>()
+                            .active_flight
+                            .lock()
+                            .ok()
+                            .and_then(|g| g.as_ref().cloned());
+                        if let Some(flight) = aktiv
+                            .filter(|f| f.pirep_id == pirep_id && !f.stop.load(Ordering::Relaxed))
+                        {
+                            handle_remote_cancellation(&app, &flight, "POST acars/logs");
+                        }
+                    }
+                    offen.remove(&pirep_id);
+                    pause.remove(&pirep_id);
+                }
+                // Anmeldung/Adresse ungültig — behalten, später erneut.
+                ApiError::Unauthenticated | ApiError::Forbidden | ApiError::InvalidUrl(_) => {
+                    tracing::warn!(
+                        pirep_id = %pirep_id,
+                        error = %e,
+                        "ACARS-Zustellung abgelehnt (Anmeldung) — bleibt im Postausgang"
+                    );
+                    pause.insert(
+                        pirep_id,
+                        (jetzt + Duration::from_secs(300), Duration::from_secs(300)),
+                    );
+                }
+                // Sonst (z. B. 422): nur dieses Paket ist betroffen.
+                other => {
+                    tracing::warn!(
+                        pirep_id = %pirep_id,
+                        error = %other,
+                        count = paket.len(),
+                        "ACARS-Paket abgelehnt — verworfen"
+                    );
+                    if let Some(q) = offen.get_mut(&pirep_id) {
+                        q.drain(..paket.len().min(q.len()));
+                    }
+                    offen.retain(|_, q| !q.is_empty());
+                }
+            },
         }
-    });
+        acars_sichern(&app, &offen).await;
+    }
 }
 
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
@@ -40976,6 +41087,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     )),
                 );
                 acars_log_entries.push(api_client::LogEntry {
+                    id: None,
                     log: format!("Phase: {}", phase_human_label(effective_phase_this_tick)),
                     lat: Some(snap.lat),
                     lon: Some(snap.lon),
@@ -40994,6 +41106,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             }
             if let Some(msg) = landing_log_message {
                 acars_log_entries.push(api_client::LogEntry {
+                    id: None,
                     log: msg,
                     lat: Some(snap.lat),
                     lon: Some(snap.lon),
@@ -41023,6 +41136,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // back to Approach in between).
                         log_activity_handle(&app, ActivityLevel::Info, line.clone(), None);
                         acars_log_entries.push(api_client::LogEntry {
+                            id: None,
                             log: line,
                             lat: Some(snap.lat),
                             lon: Some(snap.lon),
@@ -59205,6 +59319,8 @@ pub fn run() {
             panel_server::spawn(app.handle().clone());
             // ADR-0005: Takt fuer das X-Plane-HUD-Band (baut nur bei Bedarf).
             xplane_band::spawn(app.handle().clone());
+            // ACARS-Postausgang: stellt auch Reste früherer Läufe zu.
+            spawn_acars_postausgang(app.handle());
             // Persist the boot-time state (restored log + banner)
             // immediately so a crash before any activity event still
             // keeps the banner visible on next launch.

@@ -1085,6 +1085,12 @@ pub mod pirep_source {
 /// in the PIREP detail page.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LogEntry {
+    /// Feste Kennung der Zeile (UUID). phpVMS legt Zeilen mit `id` per
+    /// `updateOrInsert` an — dieselbe Zeile zweimal zu senden erzeugt also
+    /// keine Doppelte. Damit darf der ACARS-Postausgang bei jedem Fehler
+    /// erneut senden (AeroACARS 2.0.10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub log: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lat: Option<f64>,
