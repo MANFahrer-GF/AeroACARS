@@ -38612,6 +38612,17 @@ fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str
     offen.remove(pirep_id);
 }
 
+/// Die Zeilen eines gesendeten Pakets entfernen — über ihre Kennung, nicht
+/// über die Position: Während der Anfrage kann sich der Anfang der
+/// Warteschlange verschoben haben (Nachladen beim Beenden, Obergrenze).
+fn acars_paket_entfernen(offen: &mut AcarsOffen, pirep_id: &str, paket: &[api_client::LogEntry]) {
+    let ids: std::collections::HashSet<&str> = paket.iter().filter_map(|z| z.id.as_deref()).collect();
+    if let Some(q) = offen.get_mut(pirep_id) {
+        q.retain(|z| !z.id.as_deref().is_some_and(|i| ids.contains(i)));
+    }
+    offen.retain(|_, q| !q.is_empty());
+}
+
 /// Wie oft ein Paket erneut gesendet wird, wenn phpVMS weniger Zeilen
 /// gespeichert meldet als gesendet (Datenbankfehler je Zeile werden dort
 /// abgefangen und trotzdem mit 200 beantwortet).
@@ -38790,9 +38801,12 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
         use api_client::Zustellung;
         match zustellung {
             Zustellung::Angekommen { gespeichert } => {
-                // Fehlt die Zahl, ist nicht belegt, dass alles gespeichert
-                // wurde — wie „teilweise“ behandeln (begrenzt, idempotent).
-                let fehlt = gespeichert.is_none_or(|n| (n as usize) < paket.len());
+                // Weniger gespeichert als gesendet → begrenzt und idempotent
+                // erneut senden. Fehlt die Zahl ganz, ist das ein phpVMS ohne
+                // `count` — das kennt vermutlich auch die feste Kennung nicht,
+                // ein Neuversuch erzeugte dort Doppelte. Dann gilt das Paket
+                // als angekommen (wie bis 2.0.9).
+                let fehlt = gespeichert.is_some_and(|n| (n as usize) < paket.len());
                 let versuche = teilweise.get(&pirep_id).copied().unwrap_or(0);
                 if fehlt && versuche < ACARS_TEILWEISE_MAX {
                     // Dank fester Kennung legt ein Neuversuch nur an, was fehlt.
@@ -38814,9 +38828,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                             "phpVMS speichert einen Teil der ACARS-Zeilen dauerhaft nicht — Paket abgeschlossen"
                         );
                     }
-                    if let Some(q) = offen.get_mut(&pirep_id) {
-                        q.drain(..paket.len().min(q.len()));
-                    }
+                    acars_paket_entfernen(&mut offen, &pirep_id, &paket);
                     offen.retain(|_, q| !q.is_empty());
                     pause.remove(&pirep_id);
                     teilweise.remove(&pirep_id);
@@ -38867,9 +38879,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                         count = paket.len(),
                         "ACARS-Paket abgelehnt — verworfen"
                     );
-                    if let Some(q) = offen.get_mut(&pirep_id) {
-                        q.drain(..paket.len().min(q.len()));
-                    }
+                    acars_paket_entfernen(&mut offen, &pirep_id, &paket);
                     offen.retain(|_, q| !q.is_empty());
                     teilweise.remove(&pirep_id);
                 }
@@ -38935,6 +38945,19 @@ mod acars_postausgang_tests {
         );
         acars_begrenzen(&mut offen);
         assert_eq!(offen["A"].len(), ACARS_POSTAUSGANG_MAX);
+    }
+
+    #[test]
+    fn entfernt_nach_kennung_nicht_nach_position() {
+        let mut offen = AcarsOffen::new();
+        let gesendet = vec![zeile("2026-10-12T00000002"), zeile("2026-10-12T00000003")];
+        offen.insert("P".into(), gesendet.iter().cloned().collect());
+        // Während der Anfrage rücken ältere Zeilen nach vorn (Nachladen).
+        let alt = zeile("2026-10-12T00000001");
+        offen.get_mut("P").unwrap().push_front(alt.clone());
+        acars_paket_entfernen(&mut offen, "P", &gesendet);
+        assert_eq!(offen["P"].len(), 1);
+        assert_eq!(offen["P"][0].id, alt.id, "die nie gesendete Zeile bleibt");
     }
 
     #[test]
