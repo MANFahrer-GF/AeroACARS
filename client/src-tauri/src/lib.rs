@@ -29897,12 +29897,21 @@ async fn landing_backup_restore(app: AppHandle) -> Result<usize, UiError> {
 /// `flugprotokoll_abwarten`, bis alles geschrieben ist (Upload, Nachreichen,
 /// App-Ende).
 fn record_event(app: &AppHandle, pirep_id: &str, event: &FlightLogEvent) {
+    // Stau melden (Platte hängt?) — einmal je 20.000 wartende Einträge.
+    // Verworfen wird nichts (Codex-Gesamtabnahme 12.10.2026).
+    let offen = PROTOKOLL_OFFEN.fetch_add(1, Ordering::SeqCst) + 1;
+    if offen % 20_000 == 0 {
+        tracing::warn!(offen, "Flugprotokoll: Schreib-Faden staut sich");
+    }
     let _ = flugprotokoll_schreiber().send(ProtokollAuftrag::Eintrag(
         app.clone(),
         pirep_id.to_string(),
         Box::new(event.clone()),
     ));
 }
+
+/// Gemeldete, noch nicht geschriebene Flugprotokoll-Einträge.
+static PROTOKOLL_OFFEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 enum ProtokollAuftrag {
     Eintrag(AppHandle, String, Box<FlightLogEvent>),
@@ -29924,6 +29933,7 @@ fn flugprotokoll_schreiber() -> std::sync::mpsc::Sender<ProtokollAuftrag> {
                                     tracing::warn!(error = ?e, "could not append to flight log");
                                 }
                             }
+                            PROTOKOLL_OFFEN.fetch_sub(1, Ordering::SeqCst);
                         }
                         ProtokollAuftrag::Abwarten(fertig) => {
                             let _ = fertig.send(());
@@ -38250,8 +38260,8 @@ static PHPVMS_LIVE_MELDUNG: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_n
 /// Gesamtabnahme 12.10.2026.
 static ACARS_OFFEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Warten, bis alle gemeldeten ACARS-Logzeilen bei phpVMS sind — höchstens
-/// `grenze`. Danach gehen Reste trotzdem noch raus, nur nicht mehr vor dem
+/// Warten, bis alle gemeldeten ACARS-Logzeilen versandt sind (oder nach drei
+/// Neuversuchen aufgegeben wurden) — höchstens `grenze`. Danach gehen Reste trotzdem noch raus, nur nicht mehr vor dem
 /// Einreichen.
 async fn acars_abwarten(grenze: Duration) {
     let beginn = std::time::Instant::now();
@@ -38378,9 +38388,29 @@ fn spawn_phpvms_meldungen(
         // Fluglogbuchs zu verlieren. Der Arbeiter endet, wenn der Streamer
         // seinen Sender fallen lässt und die Warteschlange leer ist.
         while let Some(eintraege) = acars_rx.recv().await {
-            let _live = PHPVMS_LIVE_MELDUNG.lock().await;
-            let ergebnis = client.post_acars_logs(&flight.pirep_id, &eintraege).await;
-            drop(_live);
+            // Vorübergehende Fehler (Zeitüberschreitung, 5xx, Netz) bis zu
+            // dreimal wiederholen, mit 2/4/6 s Abstand — erst dann gilt das
+            // Paket als verloren (Codex-Gesamtabnahme 12.10.2026; bis 2.0.9
+            // ging es beim ersten Fehler verloren). 404 nicht wiederholen.
+            let mut versuch = 0_u64;
+            let ergebnis = loop {
+                let _live = PHPVMS_LIVE_MELDUNG.lock().await;
+                let r = client.post_acars_logs(&flight.pirep_id, &eintraege).await;
+                drop(_live);
+                match &r {
+                    Err(e) if !matches!(e, ApiError::NotFound) && versuch < 3 => {
+                        versuch += 1;
+                        tracing::warn!(
+                            pirep_id = %flight.pirep_id,
+                            versuch,
+                            error = %e,
+                            "ACARS log push failed — retry"
+                        );
+                        tokio::time::sleep(Duration::from_secs(2 * versuch)).await;
+                    }
+                    _ => break r,
+                }
+            };
             ACARS_OFFEN.fetch_sub(1, Ordering::SeqCst);
             match ergebnis {
                 Ok(()) => {
