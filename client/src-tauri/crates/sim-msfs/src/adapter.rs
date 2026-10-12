@@ -1439,14 +1439,14 @@ fn run_dispatch(
         let inspector_frei = inspector_sperre
             .is_none_or(|(bis, f)| Instant::now() >= bis || f != inspector_fassung);
         if needs_inspector_register && inspector_frei {
-            let watches = {
+            let (watches, versucht) = {
                 // Fresh registration attempt — clear stale errors so a
                 // name the pilot just corrected (or a transient
                 // SimConnect hiccup) gets a clean slate instead of
                 // showing yesterday's exception forever.
                 let mut g = shared.inspector.lock();
                 g.clear_errors();
-                g.watches.clone()
+                (g.watches.clone(), g.fassung)
             };
             match conn.register_inspector(&watches) {
                 Ok(()) => {
@@ -1455,12 +1455,16 @@ fn run_dispatch(
                             tracing::warn!(error = %e, "request_inspector failed");
                         }
                     }
-                    shared.inspector.lock().dirty = false;
+                    // Nur erledigt, wenn die Liste waehrend der Anmeldung
+                    // gleich blieb — sonst ginge eine Aenderung verloren.
+                    let mut g = shared.inspector.lock();
+                    if g.fassung == versucht {
+                        g.dirty = false;
+                    }
                     inspector_sperre = None;
                 }
                 Err(e) => {
-                    inspector_sperre =
-                        Some((Instant::now() + Duration::from_secs(5), inspector_fassung));
+                    inspector_sperre = Some((Instant::now() + Duration::from_secs(5), versucht));
                     tracing::warn!(error = %e, "register_inspector failed; will retry");
                 }
             }
@@ -1500,7 +1504,11 @@ fn run_dispatch(
         let messung_frei =
             messung_sperre.is_none_or(|(bis, f)| Instant::now() >= bis || f != mess_fassung);
         if mess_offen && messung_frei {
-            let (bloecke, alt) = shared.messung.lock().zu_registrieren();
+            let (bloecke, alt, versucht) = {
+                let g = shared.messung.lock();
+                let (bloecke, alt) = g.zu_registrieren();
+                (bloecke, alt, g.fassung)
+            };
             match conn.register_messung(&bloecke, alt) {
                 Ok(kennungen) => {
                     let belegung = bloecke
@@ -1510,11 +1518,11 @@ fn run_dispatch(
                     shared
                         .messung
                         .lock()
-                        .registriert(belegung, kennungen, Instant::now());
+                        .registriert(belegung, kennungen, Instant::now(), versucht);
                     messung_sperre = None;
                 }
                 Err(e) => {
-                    messung_sperre = Some((Instant::now() + Duration::from_secs(5), mess_fassung));
+                    messung_sperre = Some((Instant::now() + Duration::from_secs(5), versucht));
                     tracing::warn!(error = %e, "Messbloecke fuer „Flugzeug vermessen\" nicht angelegt");
                 }
             }
