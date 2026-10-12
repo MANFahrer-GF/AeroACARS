@@ -36824,6 +36824,7 @@ impl SamplerDiagnose {
 }
 
 fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
+    let meine_generation = flight.generation.load(Ordering::SeqCst);
     // Guard gegen Doppel-Spawn (mehrere flight_resume etc.) — analog zu
     // streamer_spawned/phpvms_worker_spawned. Ohne dies koennen zwei
     // unabhaengige Aufrufer von flight_resume_confirm (z. B. das
@@ -36849,16 +36850,20 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         // Stürzt der Faden ab (Panik), den Merker zurücksetzen — sonst ließe
         // sich die Aufsetzmessung für diesen Flug nie wieder starten
         // (Codex-Gesamtabnahme 12.10.2026).
-        struct MerkerBeiPanik(Arc<ActiveFlight>);
+        struct MerkerBeiPanik(Arc<ActiveFlight>, u64);
         impl Drop for MerkerBeiPanik {
             fn drop(&mut self) {
-                if std::thread::panicking() {
+                // Nur fuer die eigene Generation: Ein ueberholter Faden darf
+                // den Merker des neuen nicht freigeben.
+                if std::thread::panicking()
+                    && self.0.generation.load(Ordering::SeqCst) == self.1
+                {
                     self.0.touchdown_sampler_spawned.store(false, Ordering::SeqCst);
                     tracing::error!(pirep_id = %self.0.pirep_id, "Aufsetz-Messfaden abgestürzt — Merker zurückgesetzt");
                 }
             }
         }
-        let _merker = MerkerBeiPanik(flight.clone());
+        let _merker = MerkerBeiPanik(flight.clone(), meine_generation);
         // Hilfsfunktionen in der Schleife dürfen weiter Aufgaben starten.
         let laufzeit = tauri::async_runtime::handle();
         let _laufzeit_kontext = laufzeit.inner().enter();
@@ -36922,7 +36927,13 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // typical PC the SimConnect adapter ticks at the rendered
             // frame rate (60-120 fps) so we never under-sample here.
             std::thread::sleep(Duration::from_millis(20));
-            if flight.stop.load(Ordering::Relaxed) {
+            // Ueberholte Generation (Flug nach gescheitertem Einreichen
+            // fortgesetzt): Der neu gestartete Sampler uebernimmt — sonst
+            // liefen zwei parallel, wenn dieser den kurzen Stopp verpasst
+            // hat (s. `ActiveFlight::generation`).
+            if flight.stop.load(Ordering::Relaxed)
+                || flight.generation.load(Ordering::SeqCst) != meine_generation
+            {
                 break;
             }
             // ⚠ Die Zählung steht VOR jedem Zugriff — sonst fehlen genau die
