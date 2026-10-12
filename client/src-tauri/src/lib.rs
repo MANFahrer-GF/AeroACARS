@@ -3555,6 +3555,12 @@ struct ActiveFlight {
     /// ohne das liefen nach schnellem Fortsetzen zwei Worker und zwei
     /// Streamer auf demselben Flug).
     generation: std::sync::atomic::AtomicU64,
+    /// Haelt Starten (`startsperre_nehmen`) und Fortsetzen
+    /// (`restore_flight_for_retry`) auseinander: Beides sieht so entweder den
+    /// Stand vor oder nach dem anderen, nie eine Mischung (Codex-Abnahme
+    /// cd149ec1 — sonst konnte ein spaeter zweiter Starter eine Aufgabe der
+    /// neuen Generation doppelt starten).
+    start_sperre: Mutex<()>,
     /// v0.6.0: Guard fuer `spawn_phpvms_position_worker` (analog zu
     /// streamer_spawned). Wird im worker-loop selbst gesetzt damit
     /// nicht mehrere parallele Worker laufen.
@@ -19301,6 +19307,7 @@ async fn flight_adopt(
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
         positionen_nachsenden: AtomicBool::new(false),
         generation: std::sync::atomic::AtomicU64::new(0),
+        start_sperre: Mutex::new(()),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -20130,6 +20137,7 @@ async fn flight_start_mit(
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
         positionen_nachsenden: AtomicBool::new(false),
         generation: std::sync::atomic::AtomicU64::new(0),
+        start_sperre: Mutex::new(()),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -20937,6 +20945,7 @@ async fn flight_start_manual(
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
         positionen_nachsenden: AtomicBool::new(false),
         generation: std::sync::atomic::AtomicU64::new(0),
+        start_sperre: Mutex::new(()),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -30942,25 +30951,18 @@ async fn compute_distance_to_airport(
 /// Startsperre einer Hintergrundaufgabe nehmen und die Generation liefern,
 /// mit der sie laufen soll — `None`, wenn schon eine laeuft.
 ///
-/// Die Generation wird VOR und NACH dem Nehmen gelesen. Hat
-/// `restore_flight_for_retry` sie dazwischen erhoeht und die Sperren
-/// freigegeben, haette dieser Aufrufer sonst mit der alten Generation die
-/// frisch freigegebene Sperre belegt: Der Neustart von restore saehe sie
-/// belegt und kaeme nicht zum Zug, die alte Aufgabe endete sofort — der
-/// fortgesetzte Flug liefe ohne Worker, Streamer oder Sampler (Codex-
-/// Abnahme 233eedb4; zweiter Aufrufer ist `spawn_resume_sim_gate`). Dann
-/// gibt er die Sperre frei und versucht es mit der neuen Generation.
+/// Unter `start_sperre`, wie das Fortsetzen in `restore_flight_for_retry`:
+/// Ein zweiter Starter (`spawn_resume_sim_gate`) nimmt die Sperre deshalb
+/// entweder ganz vor dem Fortsetzen (seine Aufgabe ist dann ueberholt und
+/// endet, restore startet neu) oder ganz danach (dann mit der neuen
+/// Generation, und restore sieht die Sperre belegt). Weder faellt die
+/// Aufgabe aus noch laeuft sie doppelt (Codex-Abnahmen 233eedb4, cd149ec1).
 fn startsperre_nehmen(flight: &ActiveFlight, sperre: &AtomicBool) -> Option<u64> {
-    loop {
-        let generation = flight.generation.load(Ordering::SeqCst);
-        if sperre.swap(true, Ordering::SeqCst) {
-            return None;
-        }
-        if flight.generation.load(Ordering::SeqCst) == generation {
-            return Some(generation);
-        }
-        sperre.store(false, Ordering::SeqCst);
+    let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+    if sperre.swap(true, Ordering::SeqCst) {
+        return None;
     }
+    Some(flight.generation.load(Ordering::SeqCst))
 }
 
 fn rearm_background_task_guards(flight: &ActiveFlight) {
@@ -30981,10 +30983,13 @@ fn restore_flight_for_retry(
     // ab jetzt als ueberholt), dann das Flag (kein Flugende mehr — ein
     // spaeterer Abbruch verwirft wieder), zuletzt `stop`. Wer das Flag als
     // geloescht sieht, sieht deshalb auch die neue Generation.
-    flight.generation.fetch_add(1, Ordering::SeqCst);
-    flight.positionen_nachsenden.store(false, Ordering::SeqCst);
-    flight.stop.store(false, Ordering::SeqCst);
-    rearm_background_task_guards(&flight);
+    {
+        let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+        flight.generation.fetch_add(1, Ordering::SeqCst);
+        flight.positionen_nachsenden.store(false, Ordering::SeqCst);
+        flight.stop.store(false, Ordering::SeqCst);
+        rearm_background_task_guards(&flight);
+    }
     spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
     spawn_position_streamer(app.clone(), Arc::clone(&flight), client.clone());
     spawn_touchdown_sampler(app.clone(), Arc::clone(&flight));
@@ -31023,6 +31028,7 @@ mod rearm_background_task_guards_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(latched),
             touchdown_sampler_spawned: AtomicBool::new(latched),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -31093,6 +31099,7 @@ mod positions_idempotenz_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -49252,6 +49259,7 @@ mod arrived_fallback_dwell_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -49859,6 +49867,7 @@ mod takeoff_roll_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -49934,6 +49943,7 @@ mod arrived_fallback_geometry_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -50247,6 +50257,7 @@ mod enroute_reconcile_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -51317,6 +51328,7 @@ mod enroute_reconcile_replay_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -57535,6 +57547,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
         positionen_nachsenden: AtomicBool::new(false),
         generation: std::sync::atomic::AtomicU64::new(0),
+        start_sperre: Mutex::new(()),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -68434,6 +68447,7 @@ mod touchdown_metadata_stamp_tests {
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
             positionen_nachsenden: AtomicBool::new(false),
             generation: std::sync::atomic::AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
