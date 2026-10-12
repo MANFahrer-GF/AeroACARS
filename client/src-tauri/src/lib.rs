@@ -38614,43 +38614,38 @@ fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str
     offen.remove(pirep_id);
 }
 
-/// Datei für Pakete, deren vollständige Speicherung phpVMS nach mehreren
-/// Versuchen nicht bestätigt hat.
-const ACARS_QUARANTAENE: &str = "acars_quarantaene.json";
-
-/// Ein Paket in die Quarantäne-Datei hängen (nichts wird überschrieben).
-fn acars_quarantaene(app: &AppHandle, pirep_id: &str, paket: &[api_client::LogEntry]) {
+/// Ein Paket in eine eigene Quarantäne-Datei schreiben
+/// (`acars_quarantaene-<pirep>-<zeit>.json`) — nichts wird überschrieben oder
+/// neu geschrieben, keine Datei wächst. `true`, wenn sicher geschrieben.
+fn acars_quarantaene(app: &AppHandle, pirep_id: &str, paket: &[api_client::LogEntry]) -> bool {
     let Ok(dir) = app.path().app_data_dir() else {
-        return;
+        tracing::error!(pirep_id, "ACARS-Quarantäne: kein Datenordner");
+        return false;
     };
-    let Ok(mut ablage) = storage::PositionQueue::open_named(&dir, ACARS_QUARANTAENE) else {
+    let datei = format!(
+        "acars_quarantaene-{}-{}.json",
+        pirep_id.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>(),
+        Utc::now().timestamp_millis()
+    );
+    let Ok(ablage) = storage::PositionQueue::open_named(&dir, &datei) else {
         tracing::error!(pirep_id, "ACARS-Quarantäne nicht zu öffnen");
-        return;
+        return false;
     };
-    // Ist die bestehende Quarantäne nicht lesbar, nicht überschreiben —
-    // in eine eigene Datei ausweichen.
-    let mut alle = match ablage.read_all() {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(pirep_id, error = ?e, "ACARS-Quarantäne nicht lesbar — eigene Datei");
-            let Ok(neu) = storage::PositionQueue::open_named(
-                &dir,
-                &format!("acars_quarantaene-{}.json", Utc::now().timestamp_millis()),
-            ) else {
-                return;
-            };
-            ablage = neu;
-            Vec::new()
-        }
-    };
-    alle.extend(paket.iter().filter_map(|z| {
-        serde_json::to_value(z).ok().map(|v| storage::QueuedPosition {
-            pirep_id: pirep_id.to_string(),
-            position: v,
+    let zeilen: Vec<storage::QueuedPosition> = paket
+        .iter()
+        .filter_map(|z| {
+            serde_json::to_value(z).ok().map(|v| storage::QueuedPosition {
+                pirep_id: pirep_id.to_string(),
+                position: v,
+            })
         })
-    }));
-    if let Err(e) = ablage.replace(&alle) {
-        tracing::error!(pirep_id, error = ?e, "ACARS-Quarantäne nicht gesichert");
+        .collect();
+    match ablage.replace(&zeilen) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!(pirep_id, error = ?e, "ACARS-Quarantäne nicht geschrieben");
+            false
+        }
     }
 }
 
@@ -38848,7 +38843,13 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                 // `count` — das kennt vermutlich auch die feste Kennung nicht,
                 // ein Neuversuch erzeugte dort Doppelte. Dann gilt das Paket
                 // als angekommen (wie bis 2.0.9).
-                let fehlt = gespeichert.is_some_and(|n| (n as usize) < paket.len());
+                let fehlt = match gespeichert {
+                    api_client::Gespeichert::Zahl(n) => (n as usize) < paket.len(),
+                    // Gültige Antwort ohne `count` (älteres phpVMS).
+                    api_client::Gespeichert::KeineAngabe => false,
+                    // Kaputte Antwort: nicht belegt — begrenzt, idempotent erneut.
+                    api_client::Gespeichert::Ungueltig => true,
+                };
                 let versuche = teilweise.get(&pirep_id).copied().unwrap_or(0);
                 if fehlt && versuche < ACARS_TEILWEISE_MAX {
                     // Dank fester Kennung legt ein Neuversuch nur an, was fehlt.
@@ -38874,7 +38875,21 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                             "phpVMS speichert einen Teil der ACARS-Zeilen dauerhaft nicht — Paket in Quarantäne"
                         );
                         let (app2, pid, pk) = (app.clone(), pirep_id.clone(), paket.clone());
-                        let _ = tokio::task::spawn_blocking(move || acars_quarantaene(&app2, &pid, &pk)).await;
+                        let gesichert = tokio::task::spawn_blocking(move || acars_quarantaene(&app2, &pid, &pk))
+                            .await
+                            .unwrap_or(false);
+                        if !gesichert {
+                            // Quarantäne nicht geschrieben: im Postausgang
+                            // lassen und später erneut versuchen.
+                            pause.insert(
+                                pirep_id,
+                                (jetzt + Duration::from_secs(60), Duration::from_secs(60)),
+                            );
+                            if geladen {
+                                ungesichert = !acars_sichern(&app, &offen).await;
+                            }
+                            continue;
+                        }
                     }
                     acars_paket_entfernen(&mut offen, &pirep_id, &paket);
                     offen.retain(|_, q| !q.is_empty());

@@ -229,13 +229,25 @@ impl From<reqwest::Error> for ApiError {
     }
 }
 
+/// Was phpVMS in einer Erfolgsantwort über die gespeicherten Zeilen sagt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gespeichert {
+    /// Gültiges `count`.
+    Zahl(u64),
+    /// Gültige Antwort ohne `count` (älteres phpVMS).
+    KeineAngabe,
+    /// Kein JSON-Objekt oder `count` vom falschen Typ — nicht belegt, was
+    /// gespeichert wurde.
+    Ungueltig,
+}
+
 /// Ergebnis von [`Client::post_acars_logs_zustellung`].
 #[derive(Debug)]
 pub enum Zustellung {
     /// phpVMS hat die Anfrage angenommen. `gespeichert`: die Zahl, die
     /// phpVMS als angelegt meldet (`count`) — kann kleiner sein als gesendet,
     /// weil phpVMS Datenbankfehler je Zeile abfängt.
-    Angekommen { gespeichert: Option<u64> },
+    Angekommen { gespeichert: Gespeichert },
     /// Sicher nicht verarbeitet (keine Verbindung, 429, 502–504) — Neuversuch
     /// erzeugt keine Doppelten.
     NichtAngekommen(ApiError),
@@ -2211,11 +2223,13 @@ impl Client {
         };
         match check_status(response, &path).await {
             Ok(r) => {
-                let gespeichert = r
-                    .json::<serde_json::Value>()
-                    .await
-                    .ok()
-                    .and_then(|v| v.get("count").and_then(|c| c.as_u64()));
+                let gespeichert = match r.json::<serde_json::Value>().await {
+                    Ok(serde_json::Value::Object(o)) => match o.get("count") {
+                        None => Gespeichert::KeineAngabe,
+                        Some(c) => c.as_u64().map_or(Gespeichert::Ungueltig, Gespeichert::Zahl),
+                    },
+                    _ => Gespeichert::Ungueltig,
+                };
                 Zustellung::Angekommen { gespeichert }
             }
             Err(e) => match &e {
@@ -3701,7 +3715,9 @@ mod zustellung_tests {
     fn angenommen() {
         assert!(matches!(
             zustellen(&server("200 OK")),
-            Zustellung::Angekommen { gespeichert: None }
+            Zustellung::Angekommen {
+                gespeichert: Gespeichert::KeineAngabe
+            }
         ));
     }
 
@@ -3713,7 +3729,34 @@ mod zustellung_tests {
                 r#"{"message":"0 logs added","attrs":[],"count":0}"#
             )),
             Zustellung::Angekommen {
-                gespeichert: Some(0)
+                gespeichert: Gespeichert::Zahl(0)
+            }
+        ));
+    }
+
+    #[test]
+    fn ungueltige_erfolgsantwort_ist_ungueltig() {
+        for body in [
+            r#"{"count":"50"}"#,
+            r#"{"count":null}"#,
+            r#"{"count":-1}"#,
+            "kein json",
+            "[]",
+        ] {
+            assert!(
+                matches!(
+                    zustellen(&server_mit("200 OK", body)),
+                    Zustellung::Angekommen {
+                        gespeichert: Gespeichert::Ungueltig
+                    }
+                ),
+                "{body}"
+            );
+        }
+        assert!(matches!(
+            zustellen(&server_mit("200 OK", r#"{"message":"ok"}"#)),
+            Zustellung::Angekommen {
+                gespeichert: Gespeichert::KeineAngabe
             }
         ));
     }
