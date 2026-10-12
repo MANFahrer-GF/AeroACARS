@@ -38388,17 +38388,20 @@ fn spawn_phpvms_meldungen(
         // Fluglogbuchs zu verlieren. Der Arbeiter endet, wenn der Streamer
         // seinen Sender fallen lässt und die Warteschlange leer ist.
         while let Some(eintraege) = acars_rx.recv().await {
-            // Vorübergehende Fehler (Zeitüberschreitung, 5xx, Netz) bis zu
-            // dreimal wiederholen, mit 2/4/6 s Abstand — erst dann gilt das
-            // Paket als verloren (Codex-Gesamtabnahme 12.10.2026; bis 2.0.9
-            // ging es beim ersten Fehler verloren). 404 nicht wiederholen.
+            // Vorübergehende Fehler (`is_transient_pirep_error`: Netz, 5xx,
+            // 408, 429) bis zu dreimal wiederholen, mit 2/4/6 s Abstand —
+            // erst dann gilt das Paket als verloren (Codex-Gesamtabnahme
+            // 12.10.2026; bis 2.0.9 ging es beim ersten Fehler verloren).
+            // Grenze: Eine Zeitüberschreitung ist von einem Netzfehler nicht zu
+            // unterscheiden — kam die erste Anfrage doch an, steht die Zeile
+            // doppelt im Fluglogbuch. Doppelt ist hier besser als fehlend.
             let mut versuch = 0_u64;
             let ergebnis = loop {
                 let _live = PHPVMS_LIVE_MELDUNG.lock().await;
                 let r = client.post_acars_logs(&flight.pirep_id, &eintraege).await;
                 drop(_live);
                 match &r {
-                    Err(e) if !matches!(e, ApiError::NotFound) && versuch < 3 => {
+                    Err(e) if is_transient_pirep_error(e) && versuch < 3 => {
                         versuch += 1;
                         tracing::warn!(
                             pirep_id = %flight.pirep_id,
