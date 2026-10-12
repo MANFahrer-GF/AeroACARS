@@ -44749,13 +44749,13 @@ fn rollout_nachtrag_faellig(
     // erste Runde v1.7.15). Das Ereignis ist ohnehin idempotent: Es
     // adressiert ueber `pirep_id` + `touchdown_at`.
     let schluessel = (aufsetzzeit(stats)?.timestamp_millis(), stats.bahn_revision);
-    // GEGENPROBE (wird im naechsten Commit zurueckgedreht): alte
-    // Reihenfolge bis 2.0.12 — erst bauen, dann vergleichen.
-    let gebaut = bahn_nachtrag_bauen(flight, stats)?;
     if zuletzt == Some(schluessel) {
         return None;
     }
-    Some((schluessel, gebaut))
+    // Die Bahnwerte in ihrem FINALEN Stand, mit derselben Ableitung wie
+    // der Einreich-Nachtrag (`spur_block`, `bahn_herkunft`,
+    // `zone_fuer_leitung`, `bahnvertrauen`).
+    Some((schluessel, bahn_nachtrag_bauen(flight, stats)?))
 }
 
 /// v0.15.24: Landing-weight stamp — extracted verbatim from the tail of the
