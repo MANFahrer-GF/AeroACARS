@@ -4259,11 +4259,13 @@ fn schnappschuss_uebernehmen(
                 .as_ref()
                 .map(|a| (a.icao.as_str(), stats.ziel_szenerie_auskunft_stand));
             if auskunft_ersetzen(alt_ziel, &neu.icao, stand) {
-                stats.ziel_szenerie_auskunft = Some(neu.clone());
+                stats.ziel_szenerie_auskunft = Some((*neu).clone());
                 stats.ziel_szenerie_auskunft_stand = stand;
             }
         }
-        stats.szenerie_auskunft = Some(neu);
+        // ⚠ Erst HIER kopiert — der Schnappschuss teilt die Auskunft mit
+        // dem Buch (siehe `Schnappschuss::auskunft`).
+        stats.szenerie_auskunft = Some(Arc::unwrap_or_clone(neu));
         stats.szenerie_auskunft_stand = stand;
     }
 }
@@ -4770,7 +4772,7 @@ fn dep_szenerie_auskunft_uebernehmen(
                 if !auskunft.icao.eq_ignore_ascii_case(&icao) {
                     return;
                 }
-                stats.dep_szenerie_auskunft = Some(auskunft);
+                stats.dep_szenerie_auskunft = Some(Arc::unwrap_or_clone(auskunft));
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -66220,7 +66222,7 @@ mod sim_pause_tests {
         let liefere = |a: sim_core::szenerie::SzenerieFlughafen, stand: u32| {
             sim_core::szenerie::Schnappschuss {
                 generation: 0,
-                auskunft: Some((a, stand)),
+                auskunft: Some((Arc::new(a), stand)),
                 diagnose: "geliefert".to_string(),
                 kennung: None,
             }

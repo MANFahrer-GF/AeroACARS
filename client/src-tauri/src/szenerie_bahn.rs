@@ -1021,6 +1021,17 @@ type Merker = std::collections::HashMap<
     ),
 >;
 
+/// Nur das Alter eines gemerkten Flughafens — OHNE ihn zu kopieren.
+///
+/// ⚠ `vorladen` laeuft in jedem Streamer-Takt. Bis 2.0.12 las es das Alter
+/// ueber `gemerkter_eintrag`, und das kopierte dafuer jedes Mal den
+/// ganzen Flughafen samt Rollwegen und Staenden unter der Merker-Sperre
+/// (12.10.2026).
+fn gemerktes_alter(schluessel: &str) -> Option<std::time::Duration> {
+    let merk = gemerkt().lock().ok()?;
+    merk.get(schluessel).map(|(zeit, _)| zeit.elapsed())
+}
+
 fn gemerkt() -> &'static Mutex<Merker> {
     static MERKER: OnceLock<Mutex<Merker>> = OnceLock::new();
     MERKER.get_or_init(|| Mutex::new(Merker::new()))
@@ -1039,7 +1050,7 @@ pub(crate) fn vorladen(icao: &str) {
     if schluessel.is_empty() {
         return;
     }
-    if gemerkter_eintrag(&schluessel).is_some_and(|(alter, _)| alter < MERKER_AUFFRISCHEN) {
+    if gemerktes_alter(&schluessel).is_some_and(|alter| alter < MERKER_AUFFRISCHEN) {
         return;
     }
     let unterwegs = UNTERWEGS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
@@ -1165,6 +1176,26 @@ pub fn ergaenze_aus_szenerie(
 mod anschluss_tests {
     use super::*;
     use sim_core::Simulator;
+
+    /// Das Alter kommt ohne den Flughafen — und nur fuer gemerkte Plaetze.
+    #[test]
+    fn das_alter_eines_gemerkten_flughafens() {
+        let alt = std::time::Instant::now() - std::time::Duration::from_secs(400);
+        gemerkt()
+            .lock()
+            .expect("Merker")
+            .insert("ZZALT1".to_string(), (alt, None));
+        let alter = gemerktes_alter("ZZALT1").expect("gemerkt");
+        assert!(alter >= std::time::Duration::from_secs(400));
+        assert!(
+            alter >= MERKER_AUFFRISCHEN,
+            "Vorrichtung: der Eintrag ist zum Auffrischen faellig"
+        );
+        assert!(
+            gemerktes_alter("ZZALT2").is_none(),
+            "ungemerkter Platz hat ein Alter"
+        );
+    }
 
     fn nav_edhe() -> NavAirport {
         super::tests::edhe_nav()

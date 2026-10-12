@@ -17,6 +17,8 @@
 //! als „liegt woanders". Ein vertauschtes Paar sieht wie eine gültige
 //! Koordinate aus — nur die Reihenfolge festzuschreiben hilft.
 
+use std::sync::Arc;
+
 /// Ein Bahnende, so wie die Szenerie es beschreibt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SzenerieBahn {
@@ -195,7 +197,12 @@ pub enum Auftragszustand {
 struct Auftrag {
     zustand: Auftragszustand,
     versuche: u8,
-    auskunft: Option<SzenerieFlughafen>,
+    /// ⚠ Geteilt (`Arc`): Der Streamer holt den Schnappschuss in JEDEM
+    /// Takt, und bis 2.0.12 kopierte das jedes Mal den ganzen Flughafen —
+    /// alle Rollwege, Staende, Bahnen —, um ihn danach meist zu verwerfen
+    /// (AIB 429, 12.10.2026). Kopiert wird jetzt erst, wenn der Flug die
+    /// Auskunft wirklich uebernimmt.
+    auskunft: Option<Arc<SzenerieFlughafen>>,
     grund: Option<String>,
     /// Rangfolge: kleiner heisst frueher dran. Das Ausweichziel steht
     /// vor dem geplanten, weil dort gelandet wird.
@@ -286,8 +293,9 @@ pub const HOECHSTVERSUCHE: u8 = 10;
 #[derive(Debug, Clone)]
 pub struct Schnappschuss {
     pub generation: u32,
-    /// Auskunft und ihr Stand — oder nichts.
-    pub auskunft: Option<(SzenerieFlughafen, u32)>,
+    /// Auskunft und ihr Stand — oder nichts. Geteilt mit dem Buch, siehe
+    /// `Auftrag::auskunft`.
+    pub auskunft: Option<(Arc<SzenerieFlughafen>, u32)>,
     pub diagnose: String,
     /// Womit sich der Simulator gemeldet hat.
     ///
@@ -986,7 +994,7 @@ impl Auftragsbuch {
             fehler_id: 0,
         });
         eintrag.zustand = Auftragszustand::Geliefert;
-        eintrag.auskunft = Some(auskunft);
+        eintrag.auskunft = Some(Arc::new(auskunft));
     }
 
     /// Eine Zurueckweisung festhalten.
@@ -1023,7 +1031,7 @@ impl Auftragsbuch {
         }
         self.auftraege
             .get(&icao.trim().to_ascii_uppercase())
-            .and_then(|a| a.auskunft.as_ref())
+            .and_then(|a| a.auskunft.as_deref())
     }
 
     /// Generation, Auskunft, Stand und Diagnose — EIN Zugriff.
@@ -1056,13 +1064,13 @@ impl Auftragsbuch {
     ///
     /// Der Flug behaelt die alte Auskunft dauerhaft, und niemand sieht
     /// es (QS-Befund 1, achte Runde).
-    pub fn auskunft_mit_stand(&self, icao: &str) -> Option<(SzenerieFlughafen, u32)> {
+    pub fn auskunft_mit_stand(&self, icao: &str) -> Option<(Arc<SzenerieFlughafen>, u32)> {
         let icao = icao.trim().to_ascii_uppercase();
         if self.definition_fehler.is_some() {
             return None;
         }
         let a = self.auftraege.get(&icao)?;
-        a.auskunft.as_ref().map(|x| (x.clone(), a.ergebnis_id))
+        a.auskunft.as_ref().map(|x| (Arc::clone(x), a.ergebnis_id))
     }
 
     /// Der Stand der gespeicherten Lieferung — die Kennung des Versuchs,
@@ -1724,6 +1732,33 @@ mod auftragsbuch_tests {
             "die alte Auskunft haengt an der neuen Generation"
         );
         assert!(s2.diagnose.starts_with("nie_gefragt("));
+    }
+
+    /// ⚠ Der Schnappschuss kopiert die Auskunft NICHT.
+    ///
+    /// Der Streamer holt ihn in jedem Takt (Ziel und Abflug). Bis 2.0.12
+    /// entstand dabei jedes Mal eine volle Kopie des Flughafens — bei
+    /// HECA 1480 Rollwege —, die der Flug danach meist verwarf
+    /// (AIB 429, 12.10.2026). Zwei Schnappschuesse teilen sich jetzt die
+    /// eine Auskunft im Buch.
+    #[test]
+    fn der_schnappschuss_teilt_die_auskunft_mit_dem_buch() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let (_, id) = b.naechsten_stellen(0).expect("Versuch");
+        b.geliefert_zu_kennung(id, auskunft("LEZL", 2))
+            .expect("Lieferung");
+
+        let (erst, _) = b.schnappschuss("LEZL").auskunft.expect("Auskunft 1");
+        let (dann, _) = b.schnappschuss("LEZL").auskunft.expect("Auskunft 2");
+        assert!(
+            Arc::ptr_eq(&erst, &dann),
+            "jeder Schnappschuss kopiert den ganzen Flughafen"
+        );
+        assert!(
+            std::ptr::eq(b.auskunft("LEZL").expect("im Buch"), Arc::as_ptr(&erst)),
+            "der Schnappschuss haelt eine eigene Kopie statt der des Buchs"
+        );
     }
 
     /// ⚠ QS-Befund 1, achte Runde: Auskunft und Stand aus EINEM Zugriff.
