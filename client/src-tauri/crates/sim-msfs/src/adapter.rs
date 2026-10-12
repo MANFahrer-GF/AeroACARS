@@ -1402,6 +1402,12 @@ fn run_dispatch(
     // Bremse kam bei jedem Tick eine Warnung (Log-Flut im Health-Report).
     let mut zusatz_naechster_versuch = Instant::now();
     let mut zusatz_fehler_gemeldet = false;
+    // Dieselbe Bremse fuer Inspector und Messung: Die Schleife laeuft seit
+    // dem ereignisgesteuerten Warten im Frametakt, ein dauerhaft
+    // scheiternder Versuch kaeme sonst bei jedem Frame (Codex-Abnahme
+    // 1b3711c7).
+    let mut inspector_naechster_versuch = Instant::now();
+    let mut messung_naechster_versuch = Instant::now();
 
     // v1.7.14 — die offenen Facility-Lieferungen, nach Anfragekennung
     // getrennt.
@@ -1427,7 +1433,7 @@ fn run_dispatch(
             let g = shared.inspector.lock();
             g.dirty
         };
-        if needs_inspector_register {
+        if needs_inspector_register && Instant::now() >= inspector_naechster_versuch {
             let watches = {
                 // Fresh registration attempt — clear stale errors so a
                 // name the pilot just corrected (or a transient
@@ -1447,6 +1453,7 @@ fn run_dispatch(
                     shared.inspector.lock().dirty = false;
                 }
                 Err(e) => {
+                    inspector_naechster_versuch = Instant::now() + Duration::from_secs(5);
                     tracing::warn!(error = %e, "register_inspector failed; will retry");
                 }
             }
@@ -1480,7 +1487,7 @@ fn run_dispatch(
         // „Flugzeug vermessen": Messbloecke anlegen/abbauen, und nach dem
         // Ende des Messmodus die zusaetzlichen Input-Event-Abos abmelden.
         let mess_offen = shared.messung.lock().dirty;
-        if mess_offen {
+        if mess_offen && Instant::now() >= messung_naechster_versuch {
             let (bloecke, alt) = shared.messung.lock().zu_registrieren();
             match conn.register_messung(&bloecke, alt) {
                 Ok(kennungen) => {
@@ -1494,6 +1501,7 @@ fn run_dispatch(
                         .registriert(belegung, kennungen, Instant::now());
                 }
                 Err(e) => {
+                    messung_naechster_versuch = Instant::now() + Duration::from_secs(5);
                     tracing::warn!(error = %e, "Messbloecke fuer „Flugzeug vermessen\" nicht angelegt");
                 }
             }
