@@ -331,10 +331,15 @@ fn der_zwischenstand_gibt_sich_nicht_als_endgueltig_aus() {
     // selbst: Er ruft `spur_block`, und DORT steht das `wire(true)` — eine
     // Entscheidung fuer beide Sender. Die Zusicherung bleibt dieselbe:
     // Der Zweig sendet den Block, der als endgueltig markiert ist.
-    let final_zweig = rumpf(&quelle, "if stats.rollout_finalized && spur_fertig {");
+    // Seit 2.0.13 entscheidet `rollout_nachtrag_faellig` und baut ueber
+    // `bahn_nachtrag_bauen` — denselben Weg wie der Einreich-Nachtrag.
+    let final_zweig = rumpf(&quelle, "fn rollout_nachtrag_faellig(");
+    let nachtrag_bauer = rumpf(&quelle, "fn bahn_nachtrag_bauen(");
     let block_bauer = rumpf(&quelle, "fn spur_block(");
     assert!(
-        final_zweig.contains("spur_block(&flight, &stats)") && block_bauer.contains(".wire(true)"),
+        final_zweig.contains("bahn_nachtrag_bauen(flight, stats)")
+            && nachtrag_bauer.contains("spur_block(flight, stats)")
+            && block_bauer.contains(".wire(true)"),
         "Der Finalisierungs-Zweig sendet nicht `wire(true)` — dann gilt das \
          Endergebnis als Zwischenstand."
     );
@@ -476,12 +481,20 @@ fn die_bahn_herkunft_entsteht_nur_einmal() {
         "der Einreich-Nachtrag ruft `bahn_herkunft` nicht mehr — dann traegt \
          er die Herkunft nicht"
     );
+    // Seit 2.0.13 baut der Streamer den Nachtrag ueber
+    // `bahn_nachtrag_bauen` (oben bewacht); direkt ruft nur noch
+    // `touchdown_complete`.
     assert_eq!(
         produktion.matches("bahn_herkunft(&stats)").count(),
-        2,
-        "Eines der beiden Touchdown-Ereignisse ruft `bahn_herkunft` nicht \
-         — dann traegt es die Korrektur einer spaet eingetroffenen \
-         Szenerie nicht mit."
+        1,
+        "`touchdown_complete` ruft `bahn_herkunft` nicht — dann traegt es \
+         die Korrektur einer spaet eingetroffenen Szenerie nicht mit."
+    );
+    assert!(
+        rumpf(&produktion, "fn rollout_nachtrag_faellig(")
+            .contains("bahn_nachtrag_bauen(flight, stats)"),
+        "der Rollout-Nachtrag des Streamers baut nicht ueber \
+         `bahn_nachtrag_bauen` — dann traegt er die Herkunft nicht"
     );
 }
 
@@ -557,8 +570,8 @@ fn die_revision_liegt_vor_dem_versand_auf_der_platte() {
     // ueberspringen. Eine Zeilenzahl waere hier das Mittel, nicht die
     // Zusicherung — sie brach, als der MQTT-Riegel dazwischenkam.
     let sperre = format!(
-        "if {} != Some((touchdown_at, revision))",
-        "last_published_rollout"
+        "if let Some(((touchdown_at, revision), mut payload)) = {}",
+        "faellig"
     );
     let letzte_sperre = davor
         .rfind(&sperre)
@@ -655,8 +668,9 @@ fn die_sperre_des_streamers_vergleicht_die_revision() {
     let feld = format!("stats.{}", "bahn_revision");
     let alt = format!("stats.{}", "korrelierter_szenerie_stand");
 
-    // Der Wert, der in die Sperre wandert.
-    let tupel = format!("{feld},stats.rollout_distance_m.unwrap_or(0.0),");
+    // Der Wert, der in die Sperre wandert (seit 2.0.13 in
+    // `rollout_nachtrag_faellig`, dort auch im Test gefahren).
+    let tupel = format!("letschluessel=(aufsetzzeit(stats)?.timestamp_millis(),{feld});");
     assert!(
         quelle.contains(&tupel),
         "der Nachtrag traegt nicht die Revision in die Sperre — dann \
@@ -664,13 +678,16 @@ fn die_sperre_des_streamers_vergleicht_die_revision() {
          neue Szenerie loest keinen Nachtrag aus"
     );
     assert!(
-        !quelle.contains(&format!("{alt},stats.rollout_distance_m.unwrap_or(0.0),")),
+        !quelle.contains(&format!(
+            "letschluessel=(aufsetzzeit(stats)?.timestamp_millis(),{alt});"
+        )),
         "die Sperre haengt wieder am Szenerie-Stand"
     );
 
     // Und die Sperre selbst vergleicht genau diesen Wert.
     assert!(
-        quelle.contains("last_published_rollout!=Some((touchdown_at,revision))"),
+        quelle.contains("ifzuletzt==Some(schluessel){returnNone;}")
+            && quelle.contains("rollout_nachtrag_faellig(&flight,&stats,last_published_rollout)"),
         "die Sperre vergleicht etwas anderes als den mitgefuehrten Wert"
     );
 }
@@ -773,7 +790,7 @@ fn die_sperre_faellt_erst_nach_dem_versand() {
 
     // Und kein `continue` zwischen der Sperr-Pruefung und dem Arm-Ende.
     let pruefung = quelle[..stelle]
-        .rfind("if last_published_rollout != Some((touchdown_at, revision))")
+        .rfind("if let Some(((touchdown_at, revision), mut payload)) = faellig")
         .expect("Sperr-Pruefung");
     assert!(
         !quelle[pruefung..zu].contains("continue"),
@@ -868,11 +885,22 @@ fn der_spur_block_entsteht_nur_einmal() {
          Bauplatz neben `spur_block` entscheidet dann wieder selbst, ob eine \
          veraltete Spur mitgeht"
     );
+    // Seit 2.0.13 bauen Streamer und Einreich-Nachtrag beide ueber
+    // `bahn_nachtrag_bauen` — dort steht der eine Aufruf.
     assert_eq!(
         produktion.matches("spur_block(&flight, &stats)").count()
             + produktion.matches("spur_block(flight, stats)").count(),
-        2,
-        "Streamer und Einreich-Nachtrag rufen `spur_block` nicht beide"
+        1,
+        "`spur_block` wird an mehr als einer Stelle gerufen"
+    );
+    assert!(
+        rumpf(&produktion, "fn bahn_nachtrag_bauen(").contains("spur_block(flight, stats)")
+            && rumpf(&produktion, "fn rollout_nachtrag_faellig(")
+                .contains("bahn_nachtrag_bauen(flight, stats)")
+            && rumpf(&produktion, "fn finalize_filed_pirep(")
+                .contains("bahn_nachtrag_bauen(flight, &stats)"),
+        "Streamer und Einreich-Nachtrag bauen den Spur-Block nicht beide \
+         ueber `bahn_nachtrag_bauen`"
     );
 }
 
