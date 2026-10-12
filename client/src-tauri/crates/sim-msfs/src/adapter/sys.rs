@@ -11,6 +11,22 @@
 
 include!(concat!(env!("OUT_DIR"), "/simconnect_bindings.rs"));
 
+// Win32-Ereignis fuer `SimConnect_Open(hEventHandle)`: SimConnect setzt es,
+// sobald eine Nachricht wartet — der Adapter wacht dann genau zum neuen
+// Frame auf statt nach einer festen Pause. kernel32 ist unter Windows immer
+// gelinkt; die Funktionen stehen nicht in der Bindgen-Freigabeliste.
+#[link(name = "kernel32")]
+extern "system" {
+    pub fn CreateEventW(
+        lpEventAttributes: *mut std::ffi::c_void,
+        bManualReset: i32,
+        bInitialState: i32,
+        lpName: *const u16,
+    ) -> HANDLE;
+    pub fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: u32) -> u32;
+    pub fn CloseHandle(hObject: HANDLE) -> i32;
+}
+
 // HRESULT used by SimConnect_GetNextDispatch when the queue is empty.
 pub const E_FAIL: i32 = 0x8000_4005u32 as i32;
 

@@ -2450,7 +2450,17 @@ fn run_dispatch(
             return;
         }
 
-        thread::sleep(Duration::from_millis(50));
+        // Bis zum naechsten Frame warten, nicht fest 50 ms.
+        //
+        // Die Daten sind je Frame abonniert (`VISUAL_FRAME`), hier stand
+        // aber seit dem 01.05.2026 eine feste Pause von 50 ms — aus der
+        // Zeit, als sie nur einmal pro Sekunde kamen. Jeder Durchlauf
+        // uebernimmt nur den letzten Stand; die Frames dazwischen
+        // ueberschrieben sich. Der Aufsetz-Sampler fragte zwar alle 20 ms,
+        // sah aber nur alle 40–60 ms neue Werte, effektiv ~20 Hz
+        // (gemessen an SIA 436 und fuenf weiteren MSFS-Fluegen, 12.10.2026).
+        // X-Plane hatte das nie: Dort wartet der Adapter auf jedes Paket.
+        conn.auf_nachrichten_warten(Duration::from_millis(50));
     }
 }
 
@@ -2487,6 +2497,10 @@ fn sleep_or_stop(stop: &Arc<AtomicBool>, dur: Duration) {
 /// the worker loop drives. `Drop` calls `SimConnect_Close`.
 struct Connection {
     handle: sys::HANDLE,
+    /// Win32-Ereignis, das SimConnect bei jeder neuen Nachricht setzt
+    /// (s. `auf_nachrichten_warten`). Null, wenn es sich nicht anlegen
+    /// liess — dann wird wie frueher fest gewartet.
+    ereignis: sys::HANDLE,
     /// Wie viele Nachrichten dieser Handle bisher geliefert hat — auch
     /// unbekannte, die `get_next_dispatch` als `None` zurueckgibt. Nur fuer
     /// die Lebenszeichen-Uhr in `run_dispatch`.
@@ -2531,22 +2545,32 @@ impl Connection {
     fn open(name: &str) -> Result<Self, String> {
         let cname = std::ffi::CString::new(name).expect("connection name must be plain ASCII");
         let mut handle: sys::HANDLE = std::ptr::null_mut();
+        // Selbst zuruecksetzend: Ein Warten verbraucht das Signal.
+        let ereignis =
+            unsafe { sys::CreateEventW(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
+        if ereignis.is_null() {
+            tracing::warn!("SimConnect: Ereignis nicht anlegbar — Daten nur alle 50 ms");
+        }
         let hr = unsafe {
             sys::SimConnect_Open(
                 &mut handle,
                 cname.as_ptr(),
                 std::ptr::null_mut(),
                 0,
-                std::ptr::null_mut(),
+                ereignis,
                 0,
             )
         };
         if hr != 0 {
+            if !ereignis.is_null() {
+                unsafe { sys::CloseHandle(ereignis) };
+            }
             return Err(format!("HRESULT 0x{hr:08X}"));
         }
         Ok(Self {
             empfangen: 0,
             handle,
+            ereignis,
             facility_feld_send_ids: Vec::new(),
             inspector_send_ids: Vec::new(),
             abmelde_pakete: Default::default(),
@@ -2554,6 +2578,17 @@ impl Connection {
             inspektor_angelegt: false,
             mess_bloecke_beruehrt: 0,
         })
+    }
+
+    /// Warten, bis SimConnect eine neue Nachricht meldet — hoechstens
+    /// `frist`, damit Wachhund, Szenerie- und Abo-Pflege weiterlaufen.
+    fn auf_nachrichten_warten(&self, frist: Duration) {
+        if self.ereignis.is_null() {
+            thread::sleep(frist);
+            return;
+        }
+        let ms = u32::try_from(frist.as_millis()).unwrap_or(u32::MAX);
+        unsafe { sys::WaitForSingleObject(self.ereignis, ms) };
     }
 
     /// Register every entry in `TELEMETRY_FIELDS` in order.
@@ -3611,6 +3646,11 @@ impl Drop for Connection {
         if !self.handle.is_null() {
             unsafe { sys::SimConnect_Close(self.handle) };
             self.handle = std::ptr::null_mut();
+        }
+        // Erst nach dem Schliessen: SimConnect setzt das Ereignis bis dahin.
+        if !self.ereignis.is_null() {
+            unsafe { sys::CloseHandle(self.ereignis) };
+            self.ereignis = std::ptr::null_mut();
         }
     }
 }
