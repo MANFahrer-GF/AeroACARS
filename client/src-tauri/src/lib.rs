@@ -38387,12 +38387,14 @@ fn acars_abwarten_beim_beenden() {
         return;
     };
     let (fertig_tx, fertig_rx) = std::sync::mpsc::sync_channel(1);
-    if tx.send(AcarsAuftrag::Sichern(fertig_tx)).is_ok() {
-        match fertig_rx.recv_timeout(Duration::from_secs(2)) {
-            Ok(true) => {}
-            Ok(false) => tracing::error!("ACARS-Postausgang beim Beenden nicht gesichert"),
-            Err(_) => tracing::error!("ACARS-Postausgang: Sichern beim Beenden dauerte zu lange"),
-        }
+    if tx.send(AcarsAuftrag::Sichern(fertig_tx)).is_err() {
+        tracing::error!("ACARS-Postausgang läuft nicht mehr — beim Beenden nicht gesichert");
+        return;
+    }
+    match fertig_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(true) => {}
+        Ok(false) => tracing::error!("ACARS-Postausgang beim Beenden nicht gesichert"),
+        Err(_) => tracing::error!("ACARS-Postausgang: Sichern beim Beenden dauerte zu lange"),
     }
 }
 
@@ -38612,6 +38614,46 @@ fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str
     offen.remove(pirep_id);
 }
 
+/// Datei für Pakete, deren vollständige Speicherung phpVMS nach mehreren
+/// Versuchen nicht bestätigt hat.
+const ACARS_QUARANTAENE: &str = "acars_quarantaene.json";
+
+/// Ein Paket in die Quarantäne-Datei hängen (nichts wird überschrieben).
+fn acars_quarantaene(app: &AppHandle, pirep_id: &str, paket: &[api_client::LogEntry]) {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let Ok(mut ablage) = storage::PositionQueue::open_named(&dir, ACARS_QUARANTAENE) else {
+        tracing::error!(pirep_id, "ACARS-Quarantäne nicht zu öffnen");
+        return;
+    };
+    // Ist die bestehende Quarantäne nicht lesbar, nicht überschreiben —
+    // in eine eigene Datei ausweichen.
+    let mut alle = match ablage.read_all() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(pirep_id, error = ?e, "ACARS-Quarantäne nicht lesbar — eigene Datei");
+            let Ok(neu) = storage::PositionQueue::open_named(
+                &dir,
+                &format!("acars_quarantaene-{}.json", Utc::now().timestamp_millis()),
+            ) else {
+                return;
+            };
+            ablage = neu;
+            Vec::new()
+        }
+    };
+    alle.extend(paket.iter().filter_map(|z| {
+        serde_json::to_value(z).ok().map(|v| storage::QueuedPosition {
+            pirep_id: pirep_id.to_string(),
+            position: v,
+        })
+    }));
+    if let Err(e) = ablage.replace(&alle) {
+        tracing::error!(pirep_id, error = ?e, "ACARS-Quarantäne nicht gesichert");
+    }
+}
+
 /// Die Zeilen eines gesendeten Pakets entfernen — über ihre Kennung, nicht
 /// über die Position: Während der Anfrage kann sich der Anfang der
 /// Warteschlange verschoben haben (Nachladen beim Beenden, Obergrenze).
@@ -38821,12 +38863,18 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                     pause.insert(pirep_id, (jetzt + warten, warten));
                 } else {
                     if fehlt {
+                        // Nicht verwerfen: Unbelegte Zeilen kommen in die
+                        // Quarantäne — sie gehen nicht verloren und halten
+                        // die folgenden Zeilen nicht auf. Dank fester
+                        // Kennung lassen sie sich später gefahrlos nachsenden.
                         tracing::error!(
                             pirep_id = %pirep_id,
                             gesendet = paket.len(),
                             gespeichert = ?gespeichert,
-                            "phpVMS speichert einen Teil der ACARS-Zeilen dauerhaft nicht — Paket abgeschlossen"
+                            "phpVMS speichert einen Teil der ACARS-Zeilen dauerhaft nicht — Paket in Quarantäne"
                         );
+                        let (app2, pid, pk) = (app.clone(), pirep_id.clone(), paket.clone());
+                        let _ = tokio::task::spawn_blocking(move || acars_quarantaene(&app2, &pid, &pk)).await;
                     }
                     acars_paket_entfernen(&mut offen, &pirep_id, &paket);
                     offen.retain(|_, q| !q.is_empty());
