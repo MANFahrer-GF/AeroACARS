@@ -36553,6 +36553,19 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     let gestartet = std::thread::Builder::new()
         .name("aufsetz-messung".into())
         .spawn(move || {
+        // Stürzt der Faden ab (Panik), den Merker zurücksetzen — sonst ließe
+        // sich die Aufsetzmessung für diesen Flug nie wieder starten
+        // (Codex-Gesamtabnahme 12.10.2026).
+        struct MerkerBeiPanik(Arc<ActiveFlight>);
+        impl Drop for MerkerBeiPanik {
+            fn drop(&mut self) {
+                if std::thread::panicking() {
+                    self.0.touchdown_sampler_spawned.store(false, Ordering::SeqCst);
+                    tracing::error!(pirep_id = %self.0.pirep_id, "Aufsetz-Messfaden abgestürzt — Merker zurückgesetzt");
+                }
+            }
+        }
+        let _merker = MerkerBeiPanik(flight.clone());
         // Hilfsfunktionen in der Schleife dürfen weiter Aufgaben starten.
         let laufzeit = tauri::async_runtime::handle();
         let _laufzeit_kontext = laufzeit.inner().enter();
@@ -38590,6 +38603,32 @@ fn ist_pirep_abgebrochen(body: &str) -> bool {
         .is_some_and(|t| t == "pirep-cancelled" || t.ends_with("/pirep-cancelled"))
 }
 
+/// Nach so vielen Tagen werden Zeilen eines nicht (mehr) gefundenen PIREPs
+/// verworfen, der nicht der aktive Flug ist.
+const ACARS_ABLAUF_TAGE: i64 = 7;
+
+fn acars_ist_aktiver_flug(app: &AppHandle, pirep_id: &str) -> bool {
+    app.state::<AppState>()
+        .active_flight
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|f| f.pirep_id == pirep_id))
+        .unwrap_or(false)
+}
+
+/// Ist die jüngste offene Zeile des PIREPs älter als `tage`?
+fn acars_aelter_als(offen: &AcarsOffen, pirep_id: &str, tage: i64) -> bool {
+    let grenze = Utc::now() - chrono::Duration::days(tage);
+    offen.get(pirep_id).is_some_and(|q| {
+        q.iter().all(|z| {
+            z.created_at
+                .as_deref()
+                .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+                .is_some_and(|t| t.with_timezone(&Utc) < grenze)
+        })
+    })
+}
+
 /// Alle Zeilen eines PIREPs verwerfen — phpVMS nimmt für ihn nichts mehr an.
 fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str, grund: &ApiError) {
     tracing::warn!(
@@ -38625,7 +38664,7 @@ fn acars_quarantaene(app: &AppHandle, pirep_id: &str, paket: &[api_client::LogEn
     let datei = format!(
         "acars_quarantaene-{}-{}.json",
         pirep_id.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>(),
-        Utc::now().timestamp_millis()
+        uuid::Uuid::new_v4().simple()
     );
     let Ok(ablage) = storage::PositionQueue::open_named(&dir, &datei) else {
         tracing::error!(pirep_id, "ACARS-Quarantäne nicht zu öffnen");
@@ -38918,7 +38957,26 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                 // PIREP gelöscht (404) oder abgebrochen (phpVMS
                 // `PirepCancelled`: 400 mit Fehlerkennung `pirep-cancelled`):
                 // Für diesen PIREP nimmt phpVMS nichts mehr an.
-                ApiError::NotFound => acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e),
+                // 404 heißt bei phpVMS „PIREP existiert nicht“ (ein fremder
+                // PIREP liefert 403, `LogRequest::authorize`). Sofort
+                // verworfen wird nur beim gerade aktiven Flug; sonst bleiben
+                // die Zeilen mit langer Pause erhalten und laufen erst nach
+                // `ACARS_ABLAUF_TAGE` ab — ein Irrtum kostet so nichts.
+                ApiError::NotFound if acars_ist_aktiver_flug(&app, &pirep_id) => {
+                    acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e)
+                }
+                ApiError::NotFound => {
+                    let abgelaufen = acars_aelter_als(&offen, &pirep_id, ACARS_ABLAUF_TAGE);
+                    if abgelaufen {
+                        acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e);
+                    } else {
+                        tracing::warn!(pirep_id = %pirep_id, "ACARS: PIREP nicht gefunden — Zeilen bleiben, Neuversuch in 1 h");
+                        pause.insert(
+                            pirep_id,
+                            (jetzt + Duration::from_secs(3600), Duration::from_secs(3600)),
+                        );
+                    }
+                }
                 ApiError::Server { status: 400, body } if ist_pirep_abgebrochen(body) => {
                     acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e)
                 }
@@ -39021,6 +39079,18 @@ mod acars_postausgang_tests {
         acars_paket_entfernen(&mut offen, "P", &gesendet);
         assert_eq!(offen["P"].len(), 1);
         assert_eq!(offen["P"][0].id, alt.id, "die nie gesendete Zeile bleibt");
+    }
+
+    #[test]
+    fn ablauf_nur_wenn_alle_zeilen_alt_sind() {
+        let mut offen = AcarsOffen::new();
+        let alt = (Utc::now() - chrono::Duration::days(8)).to_rfc3339();
+        let neu = Utc::now().to_rfc3339();
+        offen.insert("ALT".into(), [zeile(&alt)].into_iter().collect());
+        offen.insert("GEMISCHT".into(), [zeile(&alt), zeile(&neu)].into_iter().collect());
+        assert!(acars_aelter_als(&offen, "ALT", ACARS_ABLAUF_TAGE));
+        assert!(!acars_aelter_als(&offen, "GEMISCHT", ACARS_ABLAUF_TAGE));
+        assert!(!acars_aelter_als(&offen, "FEHLT", ACARS_ABLAUF_TAGE));
     }
 
     #[test]
@@ -60010,9 +60080,11 @@ pub fn run() {
                 // (Hoppie-Logoff bis 15 s) — kein Fall für den Wächter.
                 hauptfaden_waechter::beenden_beginnt();
                 // Was die Schreib-Fäden noch halten, auf die Platte bringen
-                // (zusammen höchstens 4 s; normal wenige Millisekunden).
+                // (zusammen höchstens 14 s; normal wenige Millisekunden).
                 activity_log_abwarten();
-                flugprotokoll_abwarten_hoechstens(Duration::from_secs(2));
+                // Das Flugprotokoll ist die maßgebliche Aufzeichnung — hier
+                // lieber länger warten (Codex-Gesamtabnahme 12.10.2026).
+                flugprotokoll_abwarten_hoechstens(Duration::from_secs(10));
                 acars_abwarten_beim_beenden();
                 let app_for_mqtt = app_handle.clone();
                 tauri::async_runtime::block_on(async move {
