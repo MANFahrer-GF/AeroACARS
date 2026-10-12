@@ -28255,8 +28255,6 @@ fn ausfahrten_rechnen(
     )
 }
 
-static AUSFAHRTEN_GEGENPROBE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
 /// Die Ausfahrten zu Bodenkarte und Bahn — einmal gerechnet, danach
 /// aus `ausfahrten_merker`.
 ///
@@ -28274,9 +28272,6 @@ fn ausfahrten_gemerkt(
     m: &runway::RunwayMatch,
 ) -> Vec<ausfahrten::Ausfahrt> {
     let schluessel = ausfahrten_fingerabdruck(quelle, m);
-    // GEGENPROBE (wird im naechsten Commit entfernt): Merker nie treffen,
-    // wie bis 2.0.12.
-    let schluessel = schluessel.wrapping_add(AUSFAHRTEN_GEGENPROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     if let Ok(merker) = stats.ausfahrten_merker.lock() {
         if let Some((k, gemerkt)) = merker.as_ref() {
             if *k == schluessel {
@@ -28289,6 +28284,103 @@ fn ausfahrten_gemerkt(
         *merker = Some((schluessel, gerechnet.clone()));
     }
     gerechnet
+}
+
+/// Was sich aendern muss, damit eine andere Bodenkarte oder Bahn
+/// vorliegen kann — der billige Ausloeser von `ausfahrten_vorwaermen`.
+type VorwaermAusloeser = (u32, u32, u32, Option<String>, usize, Option<[u64; 5]>);
+
+fn vorwaerm_ausloeser(stats: &FlightStats) -> VorwaermAusloeser {
+    (
+        stats.bahn_revision,
+        stats.szenerie_auskunft_stand,
+        stats.ziel_szenerie_auskunft_stand,
+        stats.arr_ground_geojson_icao.clone(),
+        stats.arr_ground_geojson.as_ref().map_or(0, String::len),
+        stats.runway_match.as_ref().map(|m| {
+            [
+                m.threshold_lat.to_bits(),
+                m.threshold_lon.to_bits(),
+                m.end_lat.to_bits(),
+                m.end_lon.to_bits(),
+                m.width_ft.to_bits(),
+            ]
+        }),
+    )
+}
+
+/// Eine eigene Kopie der Bodenkarte — zum Rechnen ohne Sperre.
+enum BodenquelleKopie {
+    Szenerie(Vec<sim_core::szenerie::SzenerieRollweg>),
+    Karte(String),
+}
+
+impl BodenquelleKopie {
+    fn von(quelle: Bodenquelle<'_>) -> Self {
+        match quelle {
+            Bodenquelle::Szenerie(r) => Self::Szenerie(r.to_vec()),
+            Bodenquelle::Karte(k) => Self::Karte(k.to_string()),
+        }
+    }
+
+    fn quelle(&self) -> Bodenquelle<'_> {
+        match self {
+            Self::Szenerie(r) => Bodenquelle::Szenerie(r),
+            Self::Karte(k) => Bodenquelle::Karte(k),
+        }
+    }
+}
+
+/// Die Ausfahrten vorwaermen — AUSSERHALB der Sperre der Flugdaten.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// Das erste Rechnen je Karte und Bahn ist teuer (siehe
+/// `ausfahrten_rechnen`) und lief bisher in `bahn_felder`, also unter
+/// `flight.stats` — waehrenddessen wartet der Aufsetz-Abtaster. Hier wird
+/// unter kurzer Sperre nur geprueft, ob der Merker schon passt; wenn
+/// nicht, werden Karte und Bahn KOPIERT, ohne Sperre gerechnet und das
+/// Ergebnis kurz gesperrt abgelegt. `bahn_felder` findet es danach im
+/// Merker — dieselbe Auswahl (`bodenquelle`), derselbe Schluessel.
+///
+/// `zuletzt` ist der Ausloeser des vorigen Takts: Solange er gleich
+/// bleibt, wird nicht einmal der Fingerabdruck gebildet. Verpasst er eine
+/// Aenderung, rechnet `bahn_felder` wie bisher selbst — langsamer, nie
+/// falsch.
+fn ausfahrten_vorwaermen(flight: &ActiveFlight, zuletzt: &mut Option<VorwaermAusloeser>) {
+    let arbeit = {
+        let Ok(stats) = flight.stats.lock() else {
+            return;
+        };
+        let ausloeser = vorwaerm_ausloeser(&stats);
+        if zuletzt.as_ref() == Some(&ausloeser) {
+            return;
+        }
+        *zuletzt = Some(ausloeser);
+        let Some(m) = stats.runway_match.as_ref().filter(|m| m.width_ft > 0.0) else {
+            return;
+        };
+        let Some(quelle) = bodenquelle(&stats, Some(m.airport_ident.as_str())) else {
+            return;
+        };
+        let schluessel = ausfahrten_fingerabdruck(quelle, m);
+        let schon_da = stats
+            .ausfahrten_merker
+            .lock()
+            .map(|g| g.as_ref().is_some_and(|(k, _)| *k == schluessel))
+            .unwrap_or(false);
+        if schon_da {
+            return;
+        }
+        (schluessel, BodenquelleKopie::von(quelle), m.clone())
+    };
+    let (schluessel, kopie, m) = arbeit;
+    let gerechnet = ausfahrten_rechnen(kopie.quelle(), &m);
+    if let Ok(stats) = flight.stats.lock() {
+        if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
+            *merker = Some((schluessel, gerechnet));
+        }
+    }
 }
 
 fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<String>) -> BahnFelder {
@@ -39952,6 +40044,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // Speicher stand (externe QS, Runde 3, P1).
         let mut last_published_rollout: Option<(i64, u32)> =
             flight.stats.lock().ok().and_then(|s| s.letzter_nachtrag);
+        // Ausloeser des Ausfahrten-Vorwaermens — siehe
+        // `ausfahrten_vorwaermen`.
+        let mut ausfahrten_ausloeser: Option<VorwaermAusloeser> = None;
         // Damit die Warnung „keine MQTT-Verbindung" nicht bei jedem Tick
         // kommt, solange die Sperre nicht faellt.
         let mut mqtt_fehlt_gemeldet = false;
@@ -40828,6 +40923,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             }
 
             let phase_change = step_flight(&flight, &snap);
+
+            // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
+            // Flugdaten FREI ist — siehe `ausfahrten_vorwaermen`. Danach
+            // finden Aufsetz-Ereignis, Rollout-Nachtrag und
+            // `landing_get_current` sie im Merker.
+            ausfahrten_vorwaermen(&flight, &mut ausfahrten_ausloeser);
 
             // v1.5.1 (F2): METAR-Trigger einmal pro Tick mit der AKTUELLEN
             // Phase — nicht nur bei Übergängen. Boarding ist die Startphase
@@ -68305,16 +68406,8 @@ mod touchdown_metadata_stamp_tests {
         );
     }
 
-    /// ⚠ Die Ausfahrten entstehen je Bodenkarte und Bahn EINMAL.
-    ///
-    /// AIB 429 (HECA, 1480 Rollwege, 12.10.2026): `bahn_felder` laeuft je
-    /// Landung viele Male, und jedes Mal wurde die ganze Rollwegkarte als
-    /// GeoJSON formatiert, wieder geparst und projiziert. Gegenproben:
-    /// Eine andere Bahn oder eine andere Karte rechnet neu, und das
-    /// Ergebnis folgt ihr.
-    #[test]
-    fn ausfahrten_werden_je_karte_und_bahn_nur_einmal_gerechnet() {
-        let flight = flight_fixture("EDDM");
+    /// EDDM 26R mit zwei Szenerie-Rollwegen; A8 trifft die Bahnkante.
+    fn eddm_26r_mit_rollwegen(flight: &ActiveFlight) -> runway::RunwayMatch {
         let rollweg = |name: &str, lat: f64, lon: f64| sim_core::szenerie::SzenerieRollweg {
             name: name.to_string(),
             punkte: vec![(lat, lon), (lat + 0.004, lon + 0.004)],
@@ -68347,6 +68440,21 @@ mod touchdown_metadata_stamp_tests {
             ],
             ..Default::default()
         });
+        bahn
+    }
+
+    /// ⚠ Die Ausfahrten entstehen je Bodenkarte und Bahn EINMAL.
+    ///
+    /// AIB 429 (HECA, 1480 Rollwege, 12.10.2026): `bahn_felder` laeuft je
+    /// Landung viele Male, und jedes Mal wurde die ganze Rollwegkarte als
+    /// GeoJSON formatiert, wieder geparst und projiziert. Gegenproben:
+    /// Eine andere Bahn oder eine andere Karte rechnet neu, und das
+    /// Ergebnis folgt ihr.
+    #[test]
+    fn ausfahrten_werden_je_karte_und_bahn_nur_einmal_gerechnet() {
+        let flight = flight_fixture("EDDM");
+        let bahn = eddm_26r_mit_rollwegen(&flight);
+        let mut stats = flight.stats.lock().expect("stats");
         let laengs = |f: &BahnFelder| -> Vec<(String, i64)> {
             f.runway_exits
                 .iter()
@@ -68393,6 +68501,53 @@ mod touchdown_metadata_stamp_tests {
             neu_karte.runway_exits.iter().all(|a| a.name != "A8"),
             "der entfernte Rollweg ist noch da"
         );
+    }
+
+    /// ⚠ Das Vorwaermen rechnet genau die Ausfahrten, die `bahn_felder`
+    /// danach braucht.
+    ///
+    /// Es laeuft im Streamer-Takt ohne gehaltene Sperre der Flugdaten
+    /// (AIB 429, 12.10.2026). Benutzte es eine andere Auswahl oder einen
+    /// anderen Schluessel als `bahn_felder`, fuellte es einen Merker, den
+    /// niemand liest — und `bahn_felder` rechnete wieder unter der Sperre.
+    #[test]
+    fn das_vorwaermen_fuellt_den_merker_fuer_bahn_felder() {
+        let flight = flight_fixture("EDDM");
+        let bahn = eddm_26r_mit_rollwegen(&flight);
+        let gerechnet = || AUSFAHRTEN_GERECHNET.with(|z| z.get());
+        AUSFAHRTEN_GERECHNET.with(|z| z.set(0));
+
+        let mut ausloeser = None;
+        ausfahrten_vorwaermen(&flight, &mut ausloeser);
+        assert_eq!(gerechnet(), 1, "das Vorwaermen hat nichts gerechnet");
+        ausfahrten_vorwaermen(&flight, &mut ausloeser);
+        assert_eq!(gerechnet(), 1, "gleicher Ausloeser, trotzdem neu gerechnet");
+        {
+            let stats = flight.stats.lock().expect("stats");
+            let felder = bahn_felder(&stats, Some("A388"), None);
+            assert!(
+                felder.runway_exits.iter().any(|a| a.name == "A8"),
+                "die vorgewaermten Ausfahrten kommen nicht an"
+            );
+            assert_eq!(
+                gerechnet(),
+                1,
+                "`bahn_felder` rechnet selbst — Vorwaermen und `bahn_felder` \
+                 benutzen nicht denselben Schluessel"
+            );
+        }
+
+        // Gegenprobe: eine neue Bahn → das Vorwaermen rechnet neu.
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            let mut neu = bahn;
+            neu.threshold_lat += (neu.end_lat - neu.threshold_lat) * 0.075;
+            neu.threshold_lon += (neu.end_lon - neu.threshold_lon) * 0.075;
+            stats.runway_match = Some(neu);
+            stats.bahn_revision += 1;
+        }
+        ausfahrten_vorwaermen(&flight, &mut ausloeser);
+        assert_eq!(gerechnet(), 2, "die neue Bahn wurde nicht vorgewaermt");
     }
 
     /// Und die Zweitquelle darf KEINEN fremden Platz durchlassen.
