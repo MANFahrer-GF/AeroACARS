@@ -194,6 +194,49 @@ pub fn tiefflug_grenze_ft(bodenhoehe_ft: Option<f32>) -> f32 {
     boden + TIEFFLUG_SPIELRAUM_FT
 }
 
+/// MSFS bestätigt den Radkontakt selbst — dann zählt das als Aufsetzen,
+/// auch wenn die Abstimmung knapp verfehlt wurde.
+///
+/// # Der Anlass (#1732, A380 in MSFS 2024, WSSS, 10.10.2026)
+///
+/// Eine sehr weiche Landung eines großen Flugzeugs: G-Spitze 1,04 (Grenze
+/// 1,05), und der Höhen-Bezugspunkt stand beim Kontakt noch 6,6 ft über dem
+/// Boden (Grenze 5,1 ft) — mit angehobener Nase und noch nicht eingefedertem
+/// Fahrwerk sinkt er beim A380 erst über Sekunden. Zwei von vier Stimmen,
+/// der Kandidat wurde verworfen; die Landung hatte danach kein
+/// Aufsetzfenster, keine G-Last und keinen Aufsetz-Datensatz auf live.
+///
+/// Die beiden gescheiterten Prüfungen schließen aus Stoß und Höhe, ob Räder
+/// Kontakt haben. MSFS weiß es: Es setzt `PLANE TOUCHDOWN NORMAL VELOCITY`
+/// im Moment des Radkontakts neu (`latch_neu`, gegen den Stand in der Luft
+/// verglichen — `sim_referenz_vor_aufsetzen`). Zusammen mit anhaltendem
+/// Bodenkontakt, den ebenfalls der Simulator meldet, ist das eine
+/// Bestätigung aus dem Simulator selbst. Die Grenzen 1,05 g und 5 ft
+/// bleiben unverändert.
+///
+/// Gegenprobe über alle Diagnoselogs (11.10.2026): Von zwei verworfenen
+/// MSFS-Kandidaten setzte MSFS den Wert nur bei #1732 neu; beim anderen
+/// nicht — er bliebe verworfen. Bei 247 von 278 bestätigten Aufsetzern stand
+/// der neue Wert im Positionsstrom (1/s).
+///
+/// Nur `InsufficientVoteScore` wird umgestimmt; jeder andere Grund (zu wenig
+/// Telemetrie, X-Plane-Kraftanker …) bleibt bestehen.
+pub fn msfs_bestaetigt_aufsetzen(
+    ergebnis: ValidationResult,
+    sim: SimKind,
+    latch_neu: bool,
+) -> ValidationResult {
+    match ergebnis {
+        ValidationResult::FalseEdge {
+            reason: FalseEdgeReason::InsufficientVoteScore,
+            result,
+        } if sim.is_msfs() && latch_neu && result.sustained_ground_pass == Some(true) => {
+            ValidationResult::Validated { result }
+        }
+        anderes => anderes,
+    }
+}
+
 // ─── Layer 1: TD-Candidate Detection ──────────────────────────────────────
 
 /// Ein Sample-Pair fuer Edge-Detection (prev → current).
@@ -1472,6 +1515,101 @@ mod tests {
         (samples, cand)
     }
 
+    /// #1732 (A380, MSFS 2024, WSSS, 10.10.2026), nachgestellt: weiche
+    /// Landung, G-Spitze 1,04, Bezugspunkt sinkt nach dem Kontakt nur langsam
+    /// von 6,6 ft — die Abstimmung verwirft, MSFS meldet den Radkontakt.
+    fn a380_weiche_landung(edge: DateTime<Utc>) -> (Vec<TouchdownWindowSample>, TdCandidate) {
+        let mut samples = Vec::new();
+        let mut t = edge;
+        let mut i = 0.0_f32;
+        while t <= edge + Duration::milliseconds(1500) {
+            let g = if i == 5.0 { 1.04 } else { 1.0 };
+            samples.push(cat_sample(t, 6.6 - i * 0.012, true, -128.0 + i * 0.5, g));
+            t = t + Duration::milliseconds(20);
+            i += 1.0;
+        }
+        let cand = TdCandidate {
+            edge_sample_index: 0,
+            edge_at: edge,
+            edge_agl_ft: 6.6,
+            edge_vs_fpm: -128.0,
+            edge_gear_force_n: None,
+            edge_g_force: 1.0,
+            edge_total_weight_kg: Some(381_000.0),
+        };
+        (samples, cand)
+    }
+
+    #[test]
+    fn msfs_bestaetigung_rettet_die_weiche_a380_landung() {
+        let edge = Utc::now();
+        let (samples, cand) = a380_weiche_landung(edge);
+        let pruefen = |sim| {
+            validate_candidate(
+                &cand,
+                &samples,
+                sim,
+                -128.0,
+                AircraftCategory::FixedWing,
+                Some(0.2),
+            )
+        };
+        // Ohne Simulator-Meldung: verworfen — wie im Flug.
+        let ohne = pruefen(SimKind::Msfs2024);
+        assert!(matches!(
+            ohne,
+            ValidationResult::FalseEdge {
+                reason: FalseEdgeReason::InsufficientVoteScore,
+                ..
+            }
+        ));
+        // MSFS setzt den Aufsetzwert neu → gilt.
+        assert!(matches!(
+            msfs_bestaetigt_aufsetzen(pruefen(SimKind::Msfs2024), SimKind::Msfs2024, true),
+            ValidationResult::Validated { .. }
+        ));
+        // Kein neuer Wert → bleibt verworfen.
+        assert!(matches!(
+            msfs_bestaetigt_aufsetzen(pruefen(SimKind::Msfs2024), SimKind::Msfs2024, false),
+            ValidationResult::FalseEdge { .. }
+        ));
+    }
+
+    #[test]
+    fn msfs_bestaetigung_gilt_nur_fuer_msfs_und_nur_fuer_die_abstimmung() {
+        let edge = Utc::now();
+        let (samples, cand) = a380_weiche_landung(edge);
+        let xp = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::XPlane12,
+            -128.0,
+            AircraftCategory::FixedWing,
+            Some(0.2),
+        );
+        assert!(matches!(xp, ValidationResult::FalseEdge { .. }));
+        assert!(matches!(
+            msfs_bestaetigt_aufsetzen(xp, SimKind::XPlane12, true),
+            ValidationResult::FalseEdge { .. }
+        ));
+        // Zu wenig Telemetrie ist kein knapp verfehltes Votum — bleibt.
+        let leer = validate_candidate(
+            &cand,
+            &[],
+            SimKind::Msfs2024,
+            -128.0,
+            AircraftCategory::FixedWing,
+            Some(0.2),
+        );
+        assert!(matches!(
+            msfs_bestaetigt_aufsetzen(leer, SimKind::Msfs2024, true),
+            ValidationResult::FalseEdge {
+                reason: FalseEdgeReason::InsufficientTelemetry,
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn heli_soft_setdown_rejected_as_fixed_wing_but_validated_as_heli() {
         // Diese Fixture ist bewusst extremer als GSG1249: g_force bleibt
@@ -2475,7 +2613,10 @@ mod tests {
             .step_by(10)
             .map(|ms| bp(ms, 4.0, ms >= 0, -200.0))
             .collect();
-        assert!(proben.len() >= MIN_BEWERTUNGS_PROBEN, "Probenzahl ist erfüllt");
+        assert!(
+            proben.len() >= MIN_BEWERTUNGS_PROBEN,
+            "Probenzahl ist erfüllt"
+        );
         let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
         assert_eq!(
             fehlt.groesste_luecke_ms,
