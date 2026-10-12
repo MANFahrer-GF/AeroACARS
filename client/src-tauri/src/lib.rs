@@ -30028,10 +30028,9 @@ fn flugprotokoll_abwarten_hoechstens(grenze: Duration) {
 /// und der Forensik-Upload nach PIREP-Filing bringt sie zurueck.
 fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
     // Guard gegen Doppel-Spawn (mehrere flight_resume etc.)
-    let meine_generation = flight.generation.load(Ordering::SeqCst);
-    if flight.phpvms_worker_spawned.swap(true, Ordering::SeqCst) {
+    let Some(meine_generation) = startsperre_nehmen(&flight, &flight.phpvms_worker_spawned) else {
         return;
-    }
+    };
     tauri::async_runtime::spawn(async move {
         // Per-Batch-Timeout: 50 Items + retries vom HTTP-Client koennen
         // schon mal 10s dauern. 15s ist grosszuegig genug, ohne den Tick
@@ -30940,6 +30939,30 @@ async fn compute_distance_to_airport(
 /// restored flight looks active in `active_flight` with zero background
 /// tasks actually running, exactly the bug this function's doc comment
 /// claims to fix.
+/// Startsperre einer Hintergrundaufgabe nehmen und die Generation liefern,
+/// mit der sie laufen soll — `None`, wenn schon eine laeuft.
+///
+/// Die Generation wird VOR und NACH dem Nehmen gelesen. Hat
+/// `restore_flight_for_retry` sie dazwischen erhoeht und die Sperren
+/// freigegeben, haette dieser Aufrufer sonst mit der alten Generation die
+/// frisch freigegebene Sperre belegt: Der Neustart von restore saehe sie
+/// belegt und kaeme nicht zum Zug, die alte Aufgabe endete sofort — der
+/// fortgesetzte Flug liefe ohne Worker, Streamer oder Sampler (Codex-
+/// Abnahme 233eedb4; zweiter Aufrufer ist `spawn_resume_sim_gate`). Dann
+/// gibt er die Sperre frei und versucht es mit der neuen Generation.
+fn startsperre_nehmen(flight: &ActiveFlight, sperre: &AtomicBool) -> Option<u64> {
+    loop {
+        let generation = flight.generation.load(Ordering::SeqCst);
+        if sperre.swap(true, Ordering::SeqCst) {
+            return None;
+        }
+        if flight.generation.load(Ordering::SeqCst) == generation {
+            return Some(generation);
+        }
+        sperre.store(false, Ordering::SeqCst);
+    }
+}
+
 fn rearm_background_task_guards(flight: &ActiveFlight) {
     flight.streamer_spawned.store(false, Ordering::SeqCst);
     flight.phpvms_worker_spawned.store(false, Ordering::SeqCst);
@@ -31172,6 +31195,17 @@ mod positions_idempotenz_tests {
             nachsenden_mit(vec![punkt(1.0)], Duration::from_millis(100), antworten);
         assert!(t0.elapsed() < Duration::from_secs(2), "toter Server haelt nicht auf");
         assert_eq!((nachgesendet, offen), (0, 1));
+    }
+
+    #[test]
+    fn startsperre_liefert_die_aktuelle_generation_genau_einmal() {
+        let flight = flug();
+        assert_eq!(startsperre_nehmen(&flight, &flight.streamer_spawned), Some(0));
+        assert_eq!(startsperre_nehmen(&flight, &flight.streamer_spawned), None, "laeuft schon");
+        // Fortsetzen: neue Generation, Sperren frei — der Neustart bekommt sie.
+        flight.generation.fetch_add(1, Ordering::SeqCst);
+        rearm_background_task_guards(&flight);
+        assert_eq!(startsperre_nehmen(&flight, &flight.streamer_spawned), Some(1));
     }
 
     #[test]
@@ -36824,18 +36858,15 @@ impl SamplerDiagnose {
 }
 
 fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
-    let meine_generation = flight.generation.load(Ordering::SeqCst);
     // Guard gegen Doppel-Spawn (mehrere flight_resume etc.) — analog zu
     // streamer_spawned/phpvms_worker_spawned. Ohne dies koennen zwei
     // unabhaengige Aufrufer von flight_resume_confirm (z. B. das
     // Hauptfenster UND ein via LAN-Fernbedienung verbundenes Tablet, siehe
     // remote/bridge.rs) zwei parallele Sampler fuer denselben Flug starten.
-    if flight
-        .touchdown_sampler_spawned
-        .swap(true, Ordering::SeqCst)
-    {
+    let Some(meine_generation) = startsperre_nehmen(&flight, &flight.touchdown_sampler_spawned)
+    else {
         return;
-    }
+    };
     // Eigener Faden statt Aufgabe im gemeinsamen Pool (AZU 8710, 11.10.2026):
     // Die Aufsetzmessung hat Vorfahrt. Als Pool-Aufgabe kam sie nur dran,
     // wenn ein Arbeits-Faden frei war — blockierte irgendetwas anderes im
@@ -39567,18 +39598,13 @@ mod acars_postausgang_tests {
 }
 
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
-    let meine_generation = flight.generation.load(Ordering::SeqCst);
-    if flight
-        .streamer_spawned
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
+    let Some(meine_generation) = startsperre_nehmen(&flight, &flight.streamer_spawned) else {
         tracing::debug!(
             pirep_id = %flight.pirep_id,
             "position streamer already running, skipping spawn"
         );
         return;
-    }
+    };
     tauri::async_runtime::spawn(async move {
         tracing::info!(pirep_id = %flight.pirep_id, "position streamer started");
         // v0.19.3: attempts made to fetch the arrival airport's reference
