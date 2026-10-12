@@ -38561,8 +38561,12 @@ fn acars_postausgang_schreiben(app: &AppHandle, offen: &AcarsOffen) -> bool {
 /// Sichern; `false`, wenn es nicht geklappt hat (dann versucht der Besitzer
 /// es bei jedem Durchlauf erneut — zugestellt wird trotzdem weiter, denn
 /// streikt die Platte, ist Zustellen der beste Weg, die Zeilen zu retten).
-async fn acars_sichern(app: &AppHandle, offen: &AcarsOffen) -> bool {
-    let (app, kopie) = (app.clone(), offen.clone());
+///
+/// Verdrängte Zeilen, die noch nicht in der Quarantäne stehen, kommen mit in
+/// die Datei — sonst stünden sie bis zum nächsten Durchlauf nur im Speicher,
+/// und ein Absturz dazwischen verlöre sie (Codex-Abnahme 481aef6b).
+async fn acars_sichern(app: &AppHandle, offen: &AcarsOffen, verdraengt: &AcarsVerdraengt) -> bool {
+    let (app, kopie) = (app.clone(), acars_fuer_datei(offen, verdraengt));
     tokio::task::spawn_blocking(move || acars_postausgang_schreiben(&app, &kopie))
         .await
         .unwrap_or(false)
@@ -38570,6 +38574,16 @@ async fn acars_sichern(app: &AppHandle, offen: &AcarsOffen) -> bool {
 
 /// Verdrängte Zeilen (PIREP, Zeile) — gehen in die Quarantäne, nie verloren.
 type AcarsVerdraengt = Vec<(String, api_client::LogEntry)>;
+
+/// Was in die Datei gehört: alle offenen Zeilen und davor (sie sind älter)
+/// die verdrängten, die noch nicht in der Quarantäne stehen.
+fn acars_fuer_datei(offen: &AcarsOffen, verdraengt: &AcarsVerdraengt) -> AcarsOffen {
+    let mut alle = offen.clone();
+    for (p, z) in verdraengt.iter().rev() {
+        alle.entry(p.clone()).or_default().push_front(z.clone());
+    }
+    alle
+}
 
 fn acars_aufnehmen(
     offen: &mut AcarsOffen,
@@ -38658,7 +38672,16 @@ fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str
         if let Some(flight) =
             aktiv.filter(|f| f.pirep_id == pirep_id && !f.stop.load(Ordering::Relaxed))
         {
-            handle_remote_cancellation(app, &flight, "POST acars/logs");
+            // Eine Panik im fremden Code (z. B. vergiftete Sperre im
+            // Aktivitätsprotokoll) darf den einzigen Besitzer des
+            // Postausgangs nicht beenden (Codex-Abnahme 481aef6b).
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handle_remote_cancellation(app, &flight, "POST acars/logs")
+            }))
+            .is_err()
+            {
+                tracing::error!(pirep_id, "Abbruch-Behandlung aus dem ACARS-Postausgang ist abgestürzt");
+            }
         }
     }
     offen.remove(pirep_id);
@@ -38710,6 +38733,26 @@ fn acars_paket_entfernen(offen: &mut AcarsOffen, pirep_id: &str, paket: &[api_cl
     offen.retain(|_, q| !q.is_empty());
 }
 
+/// Die Zeilen des Pakets, die noch im Postausgang stehen. Während der Anfrage
+/// kann die Obergrenze Zeilen des Pakets schon verdrängt haben — sie stehen
+/// in `verdraengt` (und bis zur Quarantäne mit in der Datei, siehe
+/// `acars_fuer_datei`) und sollen nicht ein zweites Mal in die Quarantäne.
+fn acars_paket_noch_offen(
+    offen: &AcarsOffen,
+    pirep_id: &str,
+    paket: &[api_client::LogEntry],
+) -> Vec<api_client::LogEntry> {
+    let Some(q) = offen.get(pirep_id) else {
+        return Vec::new();
+    };
+    let ids: std::collections::HashSet<&str> = q.iter().filter_map(|z| z.id.as_deref()).collect();
+    paket
+        .iter()
+        .filter(|z| z.id.as_deref().is_some_and(|i| ids.contains(i)))
+        .cloned()
+        .collect()
+}
+
 /// Wie oft ein Paket erneut gesendet wird, wenn phpVMS weniger Zeilen
 /// gespeichert meldet als gesendet (Datenbankfehler je Zeile werden dort
 /// abgefangen und trotzdem mit 200 beantwortet).
@@ -38759,7 +38802,7 @@ async fn acars_sichern_fuer_ende(
             offen.entry(p).or_default().push_back(z);
         }
     }
-    gelesen && acars_sichern(app, offen).await
+    gelesen && acars_sichern(app, offen, verdraengt).await
 }
 
 /// Verdrängte Zeilen in die Quarantäne schreiben (je PIREP eine Datei).
@@ -38816,9 +38859,11 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                 AcarsAuftrag::Sichern(fertig) => bestaetigen.push(fertig),
             }
         }
+        // Stehen Verdrängte jetzt in der Quarantäne, müssen sie auch aus der Datei.
+        let quarantaene_neu = !verdraengt.is_empty();
         acars_verdraengte_sichern(&app, &mut verdraengt).await;
-        if geladen && (neu || ungesichert) {
-            ungesichert = !acars_sichern(&app, &offen).await;
+        if geladen && (neu || ungesichert || quarantaene_neu) {
+            ungesichert = !acars_sichern(&app, &offen, &verdraengt).await;
         }
         for fertig in bestaetigen {
             let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen, &mut verdraengt).await;
@@ -38848,7 +38893,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                     Some(AcarsAuftrag::Zeilen(p, z)) => {
                         verdraengt.extend(acars_aufnehmen(&mut offen, p, z));
                         if geladen {
-                            ungesichert = !acars_sichern(&app, &offen).await;
+                            ungesichert = !acars_sichern(&app, &offen, &verdraengt).await;
                         }
                     }
                     Some(AcarsAuftrag::Sichern(fertig)) => {
@@ -38909,7 +38954,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                     Some(AcarsAuftrag::Zeilen(p, z)) => {
                         verdraengt.extend(acars_aufnehmen(&mut offen, p, z));
                         if geladen {
-                            ungesichert = !acars_sichern(&app, &offen).await;
+                            ungesichert = !acars_sichern(&app, &offen, &verdraengt).await;
                         }
                     }
                     Some(AcarsAuftrag::Sichern(fertig)) => {
@@ -38973,11 +39018,8 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                             gespeichert = ?gespeichert,
                             "phpVMS speichert einen Teil der ACARS-Zeilen dauerhaft nicht — Paket in Quarantäne"
                         );
-                        let (app2, pid, pk) = (app.clone(), pirep_id.clone(), paket.clone());
-                        let gesichert = tokio::task::spawn_blocking(move || acars_quarantaene(&app2, &pid, &pk))
-                            .await
-                            .unwrap_or(false);
-                        if !gesichert {
+                        let rest = acars_paket_noch_offen(&offen, &pirep_id, &paket);
+                        if !rest.is_empty() && !acars_in_quarantaene(&app, &pirep_id, &rest).await {
                             // Quarantäne nicht geschrieben: im Postausgang
                             // lassen und später erneut versuchen.
                             pause.insert(
@@ -38985,7 +39027,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                                 (jetzt + Duration::from_secs(60), Duration::from_secs(60)),
                             );
                             if geladen {
-                                ungesichert = !acars_sichern(&app, &offen).await;
+                                ungesichert = !acars_sichern(&app, &offen, &verdraengt).await;
                             }
                             continue;
                         }
@@ -39078,7 +39120,8 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                             count = paket.len(),
                             "ACARS-Paket abgelehnt — in die Quarantäne"
                         );
-                        if acars_in_quarantaene(&app, &pirep_id, &paket).await {
+                        let rest = acars_paket_noch_offen(&offen, &pirep_id, &paket);
+                        if rest.is_empty() || acars_in_quarantaene(&app, &pirep_id, &rest).await {
                             acars_paket_entfernen(&mut offen, &pirep_id, &paket);
                             teilweise.remove(&pirep_id);
                         } else {
@@ -39092,7 +39135,7 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
             }
         }
         if geladen {
-            ungesichert = !acars_sichern(&app, &offen).await;
+            ungesichert = !acars_sichern(&app, &offen, &verdraengt).await;
         }
     }
 }
@@ -39168,6 +39211,32 @@ mod acars_postausgang_tests {
         acars_paket_entfernen(&mut offen, "P", &gesendet);
         assert_eq!(offen["P"].len(), 1);
         assert_eq!(offen["P"][0].id, alt.id, "die nie gesendete Zeile bleibt");
+    }
+
+    #[test]
+    fn verdraengte_paketzeilen_nicht_zweimal_in_die_quarantaene() {
+        let mut offen = AcarsOffen::new();
+        let paket = vec![zeile("2026-10-12T00000001"), zeile("2026-10-12T00000002")];
+        offen.insert("P".into(), paket.iter().cloned().collect());
+        // Während der Anfrage füllt ein anderer PIREP den Postausgang; die
+        // Obergrenze verdrängt die älteste Zeile — die erste des Pakets.
+        let neu: Vec<_> = (0..ACARS_POSTAUSGANG_MAX - 1)
+            .map(|i| zeile(&format!("2026-10-12T1{i:08}")))
+            .collect();
+        let verdraengt = acars_aufnehmen(&mut offen, "Q".into(), neu);
+        assert_eq!(verdraengt.len(), 1);
+        assert_eq!(verdraengt[0].1.id, paket[0].id);
+        let rest = acars_paket_noch_offen(&offen, "P", &paket);
+        assert_eq!(rest.len(), 1, "nur die noch offene Zeile geht in die Quarantäne");
+        assert_eq!(rest[0].id, paket[1].id);
+        // Bis die Quarantäne geschrieben ist, steht die verdrängte Zeile in
+        // der Datei — ein Absturz in diesem Fenster verliert sie nicht.
+        let datei = acars_fuer_datei(&offen, &verdraengt);
+        assert_eq!(datei["P"].len(), 2);
+        assert_eq!(datei["P"][0].id, paket[0].id, "die verdrängte, ältere Zeile steht vorn");
+        acars_paket_entfernen(&mut offen, "P", &paket);
+        assert!(acars_paket_noch_offen(&offen, "P", &paket).is_empty());
+        assert_eq!(acars_fuer_datei(&offen, &verdraengt)["P"][0].id, paket[0].id);
     }
 
     #[test]
@@ -51601,10 +51670,12 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
     // v0.6.0: Outbox leeren — PIREP existiert serverseitig nicht mehr,
     // weiteres POSTen würde 404 liefern. Verhindert orphan-persist im
     // worker-stop-branch.
+    // Vergiftete Sperre nicht weiterwerfen: Der Aufruf kommt auch aus dem
+    // ACARS-Postausgang, und eine Panik dort beendete dessen einzigen Besitzer.
     flight
         .position_outbox
         .lock()
-        .expect("position_outbox lock")
+        .unwrap_or_else(|e| e.into_inner())
         .clear();
     flight.stop.store(true, Ordering::Relaxed);
     log_activity_handle(
