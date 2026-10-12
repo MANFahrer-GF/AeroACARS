@@ -28305,7 +28305,7 @@ fn vorwaerm_ausloeser(stats: &FlightStats) -> VorwaermAusloeser {
                 m.threshold_lon.to_bits(),
                 m.end_lat.to_bits(),
                 m.end_lon.to_bits(),
-                m.width_ft.to_bits(),
+                u64::from(m.width_ft.to_bits()),
             ]
         }),
     )
