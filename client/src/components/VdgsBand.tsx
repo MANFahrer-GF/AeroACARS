@@ -35,6 +35,8 @@ export interface VdgsAntwort {
   stand: VdgsStand | null;
   /** Der Abruf ist gescheitert — NICHT dasselbe wie „kein Eintrag". */
   stoerung?: boolean;
+  /** Nur ohne Eintrag: Hat der Abflughafen CDM? `null` = unbekannt. */
+  cdm_platz?: boolean | null;
 }
 
 export interface VdgsStand {
@@ -50,6 +52,12 @@ export interface VdgsStand {
   rwy_sid: string;
   /** Off-Block laut Gegenseite („Detected in movement"), sonst leer. */
   aobt: string;
+  /** Auf vats.im/vdgs gewünschte TOBT, noch nicht übernommen; sonst leer. */
+  tobt_wunsch?: string;
+  /** Anlassbereitschaft gemeldet (ASRT); sonst leer. */
+  asrt?: string;
+  /** Grund, den das CDM zum Flug führt; sonst leer. */
+  grund?: string;
 }
 
 export type Ampel = "frei" | "warten" | "achtung";
@@ -151,8 +159,11 @@ export function ampel(stand: VdgsStand, jetzt: Date = new Date()): Ampel {
   const ref = referenz(stand);
   const rest = ref ? minutenBis(ref.zeit, jetzt) : null;
   if (rest === null) return "warten";
-  // Ab der sechsten Minute nach der Referenzzeit: Fenster verpasst.
-  if (rest < -FENSTER_NACH_MIN) return "achtung";
+  // Ab der sechsten Minute nach der Referenzzeit: Fenster verpasst —
+  // außer die Anlassbereitschaft ist gemeldet (ASRT). Dann nimmt das CDM
+  // den Flug nicht aus der Folge (rpuig2001/CDM: "will not invalidate at
+  // TSAT+6 if ASRT is set"); er wartet auf ATC, nicht auf eine neue TOBT.
+  if (rest < -FENSTER_NACH_MIN) return stand.asrt ? "frei" : "achtung";
   if (rest <= FENSTER_VOR_MIN) return "frei";
   return "warten";
 }
@@ -272,12 +283,16 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
               das irgendwo erklaert sein"). Bei einer Stoerung bleibt
               der Hinweis WEG — dort ist das Rufzeichen nicht das
               Problem, und ein Wegweiser waere eine falsche Faehrte. */}
+          {/* Platz ohne CDM: Dann ist am Rufzeichen nichts falsch, und
+              der Hinweis darauf wäre eine falsche Fährte. */}
           {antwort.stoerung
             ? t("cdm.band.stoerung", "Dienst nicht erreichbar")
-            : t(
-                "cdm.band.kein_eintrag_wo_aendern",
-                "kein CDM-Eintrag — Rufzeichen im Tab PDC/CPDLC",
-              )}
+            : antwort.cdm_platz === false
+              ? t("cdm.band.kein_cdm_platz", "Abflughafen ohne CDM — kein Anlassfenster")
+              : t(
+                  "cdm.band.kein_eintrag_wo_aendern",
+                  "kein CDM-Eintrag — Rufzeichen im Tab PDC/CPDLC",
+                )}
         </span>
       </div>
     );
@@ -307,6 +322,7 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
     !!stand.tobt &&
     !stand.aobt &&
     !gesperrt &&
+    !stand.asrt &&
     rest !== null &&
     rest < -FENSTER_NACH_MIN;
 
@@ -363,15 +379,36 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
             className="vdgs__auftrag"
             onClick={vdgsOeffnen}
           >
-            <span className="vdgs__auftrag-wort">
-              {t("cdm.band.tobt_setzen", "TOBT SETZEN")}
-            </span>
-            <span className="vdgs__auftrag-grund">
-              {t(
-                "cdm.band.tobt_setzen_grund",
-                "Ohne TOBT keine TSAT — im VDGS-Fenster setzen",
-              )}
-            </span>
+            {/* Schon angefragt, nur noch nicht übernommen: Dann ist die
+                Aufgabe erledigt, und „TOBT SETZEN" schickte den Piloten
+                ein zweites Mal hin. */}
+            {stand.tobt_wunsch ? (
+              <>
+                <span className="vdgs__auftrag-wort" data-testid="vdgs-tobt-angefragt">
+                  {t("cdm.band.tobt_angefragt", "TOBT {{zeit}} ANGEFRAGT", {
+                    zeit: stand.tobt_wunsch,
+                  })}
+                </span>
+                <span className="vdgs__auftrag-grund">
+                  {t(
+                    "cdm.band.tobt_angefragt_grund",
+                    "Noch nicht vom CDM übernommen — Stand im VDGS-Fenster",
+                  )}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="vdgs__auftrag-wort">
+                  {t("cdm.band.tobt_setzen", "TOBT SETZEN")}
+                </span>
+                <span className="vdgs__auftrag-grund">
+                  {t(
+                    "cdm.band.tobt_setzen_grund",
+                    "Ohne TOBT keine TSAT — im VDGS-Fenster setzen",
+                  )}
+                </span>
+              </>
+            )}
           </button>
         ) : (
           <div className="vdgs__gross">
@@ -454,15 +491,37 @@ export function VdgsPlatte({ antwort }: { antwort: VdgsAntwort | null }) {
         />
       </div>
 
-      {(stand.cdm_sts || stand.regulierung) && (
+      {(stand.cdm_sts ||
+        stand.regulierung ||
+        stand.asrt ||
+        stand.grund ||
+        (stand.tobt && stand.tobt_wunsch)) && (
         <div className="vdgs__fuss">
           {stand.cdm_sts && (
             <span className={`vdgs__status vdgs__status--${zustand}`}>
               {stand.cdm_sts}
             </span>
           )}
+          {stand.asrt && (
+            <span className="vdgs__reg" data-testid="vdgs-asrt">
+              {t("cdm.band.asrt", "Anlassbereit {{zeit}}", { zeit: stand.asrt })}
+            </span>
+          )}
+          {/* Neue TOBT angefragt, die alte gilt noch. */}
+          {stand.tobt && stand.tobt_wunsch && (
+            <span className="vdgs__reg" data-testid="vdgs-tobt-wunsch">
+              {t("cdm.band.tobt_wunsch", "Neue TOBT {{zeit}} angefragt", {
+                zeit: stand.tobt_wunsch,
+              })}
+            </span>
+          )}
           {stand.regulierung && (
             <span className="vdgs__reg">{stand.regulierung}</span>
+          )}
+          {stand.grund && (
+            <span className="vdgs__reg" data-testid="vdgs-grund">
+              {stand.grund}
+            </span>
           )}
         </div>
       )}

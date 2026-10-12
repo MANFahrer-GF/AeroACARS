@@ -2991,7 +2991,12 @@
       "stoerung": "service unavailable",
       "rufzeichen_woher": "Callsign from flight plan or settings — change it in the CPDLC window",
       "stand_alt": "Service unavailable — figures up to 10 minutes old",
-      "kein_eintrag_wo_aendern": "no CDM entry — callsign in the PDC/CPDLC tab"
+      "kein_eintrag_wo_aendern": "no CDM entry — callsign in the PDC/CPDLC tab",
+      "kein_cdm_platz": "Departure airport without CDM — no start-up window",
+      "tobt_angefragt": "TOBT {{zeit}} REQUESTED",
+      "tobt_angefragt_grund": "Not yet accepted by CDM — status in the VDGS window",
+      "asrt": "Start-up ready {{zeit}}",
+      "tobt_wunsch": "New TOBT {{zeit}} requested"
     }
   },
   "sprung": {

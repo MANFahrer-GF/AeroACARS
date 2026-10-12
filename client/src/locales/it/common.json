@@ -2977,7 +2977,12 @@
       "stoerung": "servizio non raggiungibile",
       "rufzeichen_woher": "Indicativo da piano di volo o impostazioni — modificalo nella finestra CPDLC",
       "stand_alt": "Servizio non raggiungibile — dati fino a 10 minuti fa",
-      "kein_eintrag_wo_aendern": "nessuna voce CDM — callsign nella scheda PDC/CPDLC"
+      "kein_eintrag_wo_aendern": "nessuna voce CDM — callsign nella scheda PDC/CPDLC",
+      "kein_cdm_platz": "Aeroporto di partenza senza CDM — nessuna finestra di avviamento",
+      "tobt_angefragt": "TOBT {{zeit}} RICHIESTO",
+      "tobt_angefragt_grund": "Non ancora accettato dal CDM — stato nella finestra VDGS",
+      "asrt": "Pronto all'avviamento {{zeit}}",
+      "tobt_wunsch": "Nuovo TOBT {{zeit}} richiesto"
     }
   },
   "xplane_band": {

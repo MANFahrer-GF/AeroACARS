@@ -68,6 +68,17 @@ pub struct VdgsStand {
     /// Tatsaechliche Startzeit laut Gegenseite. Nur zur Pruefung, ob der
     /// Eintrag ueberhaupt zu diesem Flug gehoert (s. `passt_zum_flug`).
     pub atot: String,
+    /// Vom Piloten auf vats.im/vdgs gewuenschte TOBT, die das CDM noch
+    /// nicht uebernommen hat. Leer, sobald sie angenommen ist oder keine
+    /// vorliegt.
+    pub tobt_wunsch: String,
+    /// Anlassbereitschaft gemeldet (Actual Start-up Request Time). Solange
+    /// sie steht, nimmt das CDM den Flug nach dem Fenster nicht aus der
+    /// Folge (rpuig2001/CDM, README: "will not invalidate at TSAT+6 if
+    /// ASRT is set") — das Band darf dann nicht „verpasst" melden.
+    pub asrt: String,
+    /// Grund, den das CDM zum Flug fuehrt (etwa eine Verzoegerung).
+    pub grund: String,
 }
 
 /// Rohantwort. Nur die Felder, die das Band braucht; alles andere bleibt
@@ -93,6 +104,8 @@ struct ApiFlug {
     taxi: Option<u32>,
     #[serde(default, rename = "cdmSts")]
     cdm_sts: String,
+    #[serde(default, rename = "reqTobt")]
+    req_tobt: String,
     #[serde(default, rename = "cdmData")]
     cdm_data: ApiCdm,
     #[serde(default, rename = "atfcmData")]
@@ -110,6 +123,12 @@ struct ApiCdm {
     /// "24L/OLOXO3Q" — Bahn und Abflugstrecke.
     #[serde(default, rename = "depInfo")]
     dep_info: String,
+    #[serde(default, rename = "reqTobt")]
+    req_tobt: String,
+    #[serde(default)]
+    asrt: String,
+    #[serde(default)]
+    reason: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -158,6 +177,16 @@ fn aufbereiten(f: &ApiFlug) -> VdgsStand {
             cdm
         }
     };
+    // Der Wunsch zaehlt nur, solange er nicht schon die geltende TOBT ist.
+    let tobt_wunsch = {
+        let cdm = zeit(&f.cdm_data.req_tobt);
+        let w = if cdm.is_empty() { zeit(&f.req_tobt) } else { cdm };
+        if w == tobt {
+            String::new()
+        } else {
+            w
+        }
+    };
     VdgsStand {
         callsign: f.callsign.trim().to_uppercase(),
         departure: f.departure.trim().to_uppercase(),
@@ -171,6 +200,9 @@ fn aufbereiten(f: &ApiFlug) -> VdgsStand {
         rwy_sid: f.cdm_data.dep_info.trim().to_uppercase(),
         aobt: zeit(&f.aobt),
         atot: zeit(&f.atot),
+        tobt_wunsch,
+        asrt: zeit(&f.cdm_data.asrt),
+        grund: f.cdm_data.reason.trim().to_string(),
     }
 }
 
@@ -262,12 +294,20 @@ fn sauberes_rufzeichen(roh: &str) -> String {
 /// Einen Abruf gegen die Gegenseite. `Ok(None)` = Flug dort nicht gefuehrt.
 async fn abrufen(callsign: &str) -> Result<Option<VdgsStand>, String> {
     let url = format!("https://api.viffsys.com/ifps/callsign?callsign={callsign}&profile=false");
+    match rumpf_holen(&url, MAX_RUMPF_BYTES).await? {
+        Some(rumpf) => aus_rumpf(&rumpf),
+        None => Ok(None),
+    }
+}
+
+/// GET mit Zeit- und Groessenriegel. `Ok(None)` bei 404.
+async fn rumpf_holen(url: &str, max_bytes: usize) -> Result<Option<Vec<u8>>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| e.to_string())?;
-    let antwort = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let antwort = client.get(url).send().await.map_err(|e| e.to_string())?;
     let status = antwort.status();
     // 404 heisst dort schlicht „kein Eintrag" — kein Fehler, den der Pilot
     // sehen muesste.
@@ -287,12 +327,110 @@ async fn abrufen(callsign: &str) -> Result<Option<VdgsStand>, String> {
     let mut rumpf: Vec<u8> = Vec::new();
     let mut antwort = antwort;
     while let Some(stueck) = antwort.chunk().await.map_err(|e| e.to_string())? {
-        if rumpf.len() + stueck.len() > MAX_RUMPF_BYTES {
-            return Err(format!("Antwort groesser als {MAX_RUMPF_BYTES} Bytes"));
+        if rumpf.len() + stueck.len() > max_bytes {
+            return Err(format!("Antwort groesser als {max_bytes} Bytes"));
         }
         rumpf.extend_from_slice(&stueck);
     }
-    aus_rumpf(&rumpf)
+    Ok(Some(rumpf))
+}
+
+/// Wie lange die Liste der CDM-Plaetze gilt. Sie aendert sich selten.
+const CDM_LISTE_GUELTIG: Duration = Duration::from_secs(6 * 3600);
+
+/// Nach einem gescheiterten Abruf der Liste fruehestens so spaet erneut.
+const CDM_LISTE_NEUVERSUCH: Duration = Duration::from_secs(600);
+
+/// Die Liste wog am 12.10.2026 rund 130 kB (419 Plaetze, 127 mit CDM).
+const MAX_LISTE_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Deserialize)]
+struct ApiPlatz {
+    #[serde(default)]
+    icao: String,
+    #[serde(default, rename = "isCdm")]
+    is_cdm: bool,
+}
+
+/// Die Plaetze mit CDM aus `/etfms/getCadAirports`. Eine leere Liste ist
+/// ein Fehler: Sonst hiesse es ueberall „kein CDM", nur weil drueben
+/// gerade nichts kam.
+fn liste_lesen(rumpf: &[u8]) -> Result<std::collections::HashSet<String>, String> {
+    let plaetze: Vec<ApiPlatz> = serde_json::from_slice(rumpf).map_err(|e| e.to_string())?;
+    if plaetze.is_empty() {
+        return Err("leere Platzliste".into());
+    }
+    Ok(plaetze
+        .into_iter()
+        .filter(|p| p.is_cdm)
+        .map(|p| p.icao.trim().to_uppercase())
+        .filter(|i| !i.is_empty())
+        .collect())
+}
+
+#[derive(Default)]
+struct CdmListe {
+    /// Letzte gute Liste und wann sie kam.
+    cdm: Option<(Instant, std::collections::HashSet<String>)>,
+    letzter_versuch: Option<Instant>,
+}
+
+fn cdm_liste() -> &'static Mutex<CdmListe> {
+    static S: OnceLock<Mutex<CdmListe>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(CdmListe::default()))
+}
+
+/// Hat der Abflugplatz CDM? `None`, wenn das nicht bekannt ist.
+///
+/// Gebraucht nur, wenn es zum Flug keinen Eintrag gibt: Dann ist „Platz
+/// ohne CDM" etwas anderes als „CDM-Platz, Flug noch nicht erfasst".
+/// Vorher hiess beides „kein CDM-Eintrag — Rufzeichen pruefen", und an
+/// einem Platz ohne CDM suchte der Pilot einen Fehler beim Rufzeichen,
+/// den es nicht gab. Gefragt wird nur die allgemeine Platzliste — sie
+/// enthaelt nichts ueber den Flug.
+async fn ist_cdm_platz(abflug: &str) -> Option<bool> {
+    let abflug = abflug.trim().to_uppercase();
+    if abflug.is_empty() {
+        return None;
+    }
+    let (bekannt, holen) = {
+        let g = cdm_liste().lock().ok()?;
+        let frisch = g
+            .cdm
+            .as_ref()
+            .is_some_and(|(t, _)| t.elapsed() < CDM_LISTE_GUELTIG);
+        let darf = g
+            .letzter_versuch
+            .is_none_or(|t| t.elapsed() >= CDM_LISTE_NEUVERSUCH);
+        (
+            g.cdm.as_ref().map(|(_, s)| s.contains(&abflug)),
+            !frisch && darf,
+        )
+    };
+    if !holen {
+        return bekannt;
+    }
+    if let Ok(mut g) = cdm_liste().lock() {
+        g.letzter_versuch = Some(Instant::now());
+    }
+    let geholt = rumpf_holen("https://api.viffsys.com/etfms/getCadAirports", MAX_LISTE_BYTES)
+        .await
+        .and_then(|r| r.ok_or_else(|| "HTTP 404".to_string()))
+        .and_then(|r| liste_lesen(&r));
+    match geholt {
+        Ok(liste) => {
+            let ja = liste.contains(&abflug);
+            if let Ok(mut g) = cdm_liste().lock() {
+                g.cdm = Some((Instant::now(), liste));
+            }
+            Some(ja)
+        }
+        Err(e) => {
+            tracing::debug!(target: "vdgs", "CDM-Platzliste nicht abrufbar: {e}");
+            // Eine aeltere Liste ist besser als keine.
+            bekannt
+        }
+    }
 }
 
 /// Antwortrumpf → Stand. Eigene Funktion, weil hier der Fall sitzt, den
@@ -356,6 +494,9 @@ pub struct VdgsAntwort {
     /// einen stimmt vielleicht sein Rufzeichen nicht, beim anderen ist
     /// die Gegenseite gerade nicht erreichbar.
     pub stoerung: bool,
+    /// Nur ohne Eintrag gesetzt: Hat der Abflugplatz CDM? `None` =
+    /// unbekannt (s. `ist_cdm_platz`).
+    pub cdm_platz: Option<bool>,
 }
 
 /// Stand der eigenen Abflugfolge, oder `None`, wenn es nichts zu zeigen
@@ -399,11 +540,12 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
     }
     let schl = schluessel(&flug_id, &callsign);
 
-    let antwort = |stand: Option<VdgsStand>| {
+    let antwort = |stand: Option<VdgsStand>, cdm_platz: Option<bool>| {
         Some(VdgsAntwort {
             gefragt_als: callsign.clone(),
             stand,
             stoerung: false,
+            cdm_platz,
         })
     };
     let stoerung = |stand: Option<VdgsStand>| {
@@ -411,18 +553,27 @@ pub async fn vdgs_stand(app: AppHandle) -> Option<VdgsAntwort> {
             gefragt_als: callsign.clone(),
             stand,
             stoerung: true,
+            cdm_platz: None,
         })
     };
 
     if let Some(gemerkt) = aus_speicher(&schl, MIN_ABSTAND) {
-        return antwort(gemerkt);
+        let cdm_platz = match gemerkt {
+            None => ist_cdm_platz(&abflug).await,
+            Some(_) => None,
+        };
+        return antwort(gemerkt, cdm_platz);
     }
 
     match abrufen(&callsign).await {
         Ok(stand) => {
             let stand = passt_zum_flug(stand, &abflug);
             in_speicher(&schl, stand.clone());
-            antwort(stand)
+            let cdm_platz = match stand {
+                None => ist_cdm_platz(&abflug).await,
+                Some(_) => None,
+            };
+            antwort(stand, cdm_platz)
         }
         Err(e) => {
             tracing::debug!(target: "vdgs", "VDGS-Abruf fehlgeschlagen: {e}");
@@ -474,6 +625,9 @@ mod tests {
             rwy_sid: String::new(),
             aobt: String::new(),
             atot: String::new(),
+            tobt_wunsch: String::new(),
+            asrt: String::new(),
+            grund: String::new(),
         }
     }
 
@@ -685,6 +839,46 @@ mod tests {
     ///
     /// Ein Verhaltenstest brauchte einen laufenden Flug samt
     /// Einstellungen; deshalb hier am Quelltext.
+    #[test]
+    fn wunsch_tobt_asrt_und_grund_werden_gelesen() {
+        // Form wie live am 12.10.2026 (JAL408/EDDF), Werte angepasst.
+        let roh = br#"{"callsign":"GSG7","departure":"EDDF","eobt":"1920","tobt":"","reqTobt":"",
+            "cdmData":{"tobt":"192000","tsat":"192000","ctot":"","reason":" Ground delay ",
+            "asrt":"1915","depInfo":"18/CINDY8S","reqAsrt":"","reqTobt":"1930"}}"#;
+        let s = aus_rumpf(roh).unwrap().unwrap();
+        assert_eq!(s.tobt_wunsch, "19:30", "gewuenschte, noch nicht uebernommene TOBT");
+        assert_eq!(s.asrt, "19:15");
+        assert_eq!(s.grund, "Ground delay");
+    }
+
+    #[test]
+    fn angenommener_wunsch_ist_kein_offener_wunsch() {
+        let roh = br#"{"callsign":"GSG7","cdmData":{"tobt":"193000","reqTobt":"1930"}}"#;
+        let s = aus_rumpf(roh).unwrap().unwrap();
+        assert_eq!(s.tobt, "19:30");
+        assert_eq!(s.tobt_wunsch, "", "schon geltende TOBT ist kein offener Wunsch mehr");
+        // Wunsch nur auf Flugebene: wird ebenso gelesen.
+        let roh = br#"{"callsign":"GSG7","reqTobt":"2045","cdmData":{}}"#;
+        assert_eq!(aus_rumpf(roh).unwrap().unwrap().tobt_wunsch, "20:45");
+    }
+
+    #[test]
+    fn platzliste_nimmt_nur_plaetze_mit_cdm() {
+        let roh = br#"[{"icao":"eddf","isCdm":true,"rate":40},{"icao":"GCRR","isCdm":false},
+            {"icao":"LEBL","isCdm":true},{"isCdm":true}]"#;
+        let l = liste_lesen(roh).unwrap();
+        assert!(l.contains("EDDF"));
+        assert!(l.contains("LEBL"));
+        assert!(!l.contains("GCRR"));
+        assert_eq!(l.len(), 2);
+    }
+
+    #[test]
+    fn leere_oder_kaputte_platzliste_ist_ein_fehler() {
+        assert!(liste_lesen(b"[]").is_err(), "sonst hiesse es ueberall: kein CDM");
+        assert!(liste_lesen(b"{\"fehler\":1}").is_err());
+    }
+
     #[test]
     fn der_abruf_nimmt_dasselbe_rufzeichen_wie_der_funk() {
         let quelle = include_str!("vdgs.rs");
