@@ -28120,7 +28120,16 @@ fn scoring_eingang(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Wie oft `bahn_felder` in diesem Test-Faden lief — fuer Tests, die
+    /// belegen, dass die teure Rechnung unterbleibt (AIB 429, 12.10.2026).
+    static BAHN_FELDER_AUFRUFE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<String>) -> BahnFelder {
+    #[cfg(test)]
+    BAHN_FELDER_AUFRUFE.with(|z| z.set(z.get() + 1));
     let rm = stats.runway_match.as_ref();
     // Reihenfolge nach Spec §5.3: Die Flugzeugdatei ist die Verfeinerung,
     // die Typtabelle die Basis. Liegt ein aus der Datei gelesener Wert vor,
@@ -41192,195 +41201,80 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // distinktem `landing_at` — bei Touch-and-Go bekommt also jeder
             // Touchdown sein eigenes Event statt nur der erste.
             {
-                let finalized = {
+                // ⚠ Erst der Schluessel, dann der Bau — siehe
+                // `rollout_nachtrag_faellig`. Ist der Nachtrag schon
+                // gesendet, wird in diesem Takt nichts gebaut. Erneut
+                // gesendet wird, wenn die Bahnwerte sich SEITHER geaendert
+                // haben — nicht nur einmal je Aufsetzen.
+                let faellig = {
                     let stats = flight.stats.lock().expect("flight stats");
-                    // Erst senden, wenn BEIDES fertig ist.
-                    //
-                    // `rollout_finalized` faellt bei vierzig Knoten — die
-                    // Ausrollstrecke steht dann fest. Die Rollspur laeuft
-                    // weiter (bis fuenf Knoten, zur Ausfahrt oder ueber den
-                    // Rand), und mit ihr Raeumpunkt und Kantenuebertritt.
-                    //
-                    // Wird hier zu frueh gesendet, traegt das Ereignis
-                    // dieselbe abgebrochene Spur wie `touchdown_complete`,
-                    // nur mit dem Anspruch, final zu sein.
-                    //
-                    // `bahn_spur_laeuft` wird von `spur_fortschreiben`
-                    // gepflegt: true, solange aufgezeichnet wird, false,
-                    // sobald ein Abbruchkriterium greift. Vor dem ersten
-                    // Aufruf ist es ebenfalls false — deshalb zusaetzlich
-                    // die Bedingung, dass ueberhaupt eine Spur vorliegt.
-                    let spur_fertig = !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
-                    if stats.rollout_finalized && spur_fertig {
-                        // `landing_at` None (z.B. direkt nach einem T&G) →
-                        // kein Publish; der nächste Touchdown setzt es neu.
-                        aufsetzzeit(&stats).map(|td| {
-                            (
-                                td.timestamp_millis(),
-                                // ⚠ Die REVISION der Zuordnung — dieselbe
-                                // Zahl, die auf die Leitung geht.
-                                //
-                                // Frueher stand hier
-                                // `korrelierter_szenerie_stand`. Der aendert
-                                // sich nur, wenn eine neue SZENERIE-Lieferung
-                                // eintrifft. Eine Zuordnung, die aus einem
-                                // anderen Grund neue Bahnwerte ergibt — das
-                                // Navdaten-Upgrade beim Einreichen —, haette
-                                // damit keinen Nachtrag ausgeloest: neue
-                                // Revision auf der Leitung, aber die Sperre
-                                // sah keine Kante.
-                                //
-                                // Trifft die Szenerie NACH der
-                                // Finalisierung ein (YSBK, 01.09.2026),
-                                // korrigiert das Nachholen zwar den
-                                // Flugzustand — der Recorder hatte den
-                                // Nachtrag aber laengst bekommen und
-                                // uebernimmt vom spaeteren PIREP nur
-                                // Punktzahl und Noten, nicht die
-                                // Bahnwerte. Ohne diesen Stand in der
-                                // Sperre blieben dort die alten Achsen-
-                                // und Ausfahrtsdaten stehen (QS-Befund 1,
-                                // erste Runde v1.7.15).
-                                //
-                                // Das Ereignis ist ohnehin idempotent:
-                                // Es adressiert ueber `pirep_id` +
-                                // `touchdown_at`.
-                                stats.bahn_revision,
-                                stats.rollout_distance_m.unwrap_or(0.0),
-                                stats.rollout_finalize_reason.clone(),
-                                // Die Bahnwerte in ihrem FINALEN Stand.
-                                //
-                                // Beim `touchdown_complete` neun Sekunden
-                                // nach dem Aufsetzen waechst die Spur noch,
-                                // der Raeumpunkt ist nicht erreicht und der
-                                // Kantenuebertritt erst recht nicht. Ohne
-                                // diesen Nachtrag blieben Recorder und
-                                // Webapp beim vorlaeufigen Stand: eine Spur,
-                                // die mitten im Ausrollen abbricht.
-                                //
-                                // Kein Skip-Grund: Die Bewertung laeuft erst
-                                // beim Einreichen des PIREP. Die Webapp
-                                // liest ihn aus den `sub_scores`.
-                                // EINE Entscheidung mit dem Einreich-Nachtrag
-                                // — siehe `spur_block`. Hier ist die Spur
-                                // fertig (Riegel), aber sie kann VERALTET
-                                // sein.
-                                spur_block(&flight, &stats),
-                                // Die Bahn-Herkunft im FINALEN Stand.
-                                //
-                                // Genau derselbe Aufruf wie am
-                                // `touchdown_complete` — kam die Szenerie
-                                // erst danach, steht hier die
-                                // nachgeholte Zuordnung.
-                                bahn_herkunft(&stats),
-                                // Das Drittel als Spalte — siehe
-                                // `zone_fuer_leitung`.
-                                zone_fuer_leitung(&flight, &stats),
-                                // Und der Vertrauens-Riegel selbst — er steht
-                                // am Touchdown und muss am Nachtrag mitkommen,
-                                // sonst bleibt er stehen, wenn die Bahn wechselt.
-                                bahnvertrauen(&flight, &stats),
-                                // Die Verzoegerung entsteht erst beim
-                                // Ausrollende, siehe Feld-Doku.
-                                stats.landing_decel_mps2,
-                            )
-                        })
-                    } else {
-                        None
-                    }
+                    rollout_nachtrag_faellig(&flight, &stats, last_published_rollout)
                 };
-                if let Some((
-                    touchdown_at,
-                    revision,
-                    rollout_m,
-                    reason,
-                    bahn,
-                    herkunft,
-                    zone,
-                    vertrauen,
-                    verzoegerung,
-                )) = finalized
-                {
-                    // ⚠ Erneut senden, wenn die Bahnwerte sich SEITHER
-                    // geaendert haben — nicht nur einmal je Aufsetzen.
-                    if last_published_rollout != Some((touchdown_at, revision)) {
-                        let app_state = app.state::<AppState>();
-                        // ⚠ Erst PRUEFEN, ob es einen Handle gibt — und die
-                        // Sperre sofort wieder freigeben. Die Flugdatei
-                        // wird danach OHNE gehaltene MQTT-Sperre geschrieben
-                        // (blockierende E/A unter einer geteilten async-
-                        // Sperre, externe QS Runde 3). Ohne Handle wird
-                        // weder geschrieben noch gesendet; Sperre und Fahne
-                        // bleiben stehen, der naechste Tick versucht es
-                        // erneut. Der restliche Tick laeuft in JEDEM Fall
-                        // weiter — kein `continue` (N1, P0).
-                        let mqtt_vorhanden = app_state.mqtt.lock().await.is_some();
-                        if !mqtt_vorhanden {
-                            if !mqtt_fehlt_gemeldet {
-                                tracing::warn!(
-                                    revision,
-                                    "touchdown_rollout_finalized: keine MQTT-Verbindung — \
-                                     der Nachtrag wartet"
+                if let Some(((touchdown_at, revision), mut payload)) = faellig {
+                    let rollout_m = payload.rollout_distance_m;
+                    let app_state = app.state::<AppState>();
+                    // ⚠ Erst PRUEFEN, ob es einen Handle gibt — und die
+                    // Sperre sofort wieder freigeben. Die Flugdatei
+                    // wird danach OHNE gehaltene MQTT-Sperre geschrieben
+                    // (blockierende E/A unter einer geteilten async-
+                    // Sperre, externe QS Runde 3). Ohne Handle wird
+                    // weder geschrieben noch gesendet; Sperre und Fahne
+                    // bleiben stehen, der naechste Tick versucht es
+                    // erneut. Der restliche Tick laeuft in JEDEM Fall
+                    // weiter — kein `continue` (N1, P0).
+                    let mqtt_vorhanden = app_state.mqtt.lock().await.is_some();
+                    if !mqtt_vorhanden {
+                        if !mqtt_fehlt_gemeldet {
+                            tracing::warn!(
+                                revision,
+                                "touchdown_rollout_finalized: keine MQTT-Verbindung — \
+                                 der Nachtrag wartet"
+                            );
+                            mqtt_fehlt_gemeldet = true;
+                        }
+                    } else {
+                        mqtt_fehlt_gemeldet = false;
+                        // ⚠ ZUERST auf die Platte, DANN auf die Leitung.
+                        // Siehe `revision_vor_versand_sichern`.
+                        revision_vor_versand_sichern(&app, &flight);
+                        let mqtt = app_state.mqtt.lock().await;
+                        match mqtt.as_ref() {
+                            // Zwischen Pruefung und Sperre verschwunden —
+                            // naechster Tick.
+                            None => {}
+                            Some(handle) => {
+                                // Zeitstempel des Versands, wie bisher.
+                                payload.ts = Utc::now().timestamp_millis();
+                                let gesendet = nachtrag_queue::senden(
+                                    &app,
+                                    &handle.nachtrag_sender(),
+                                    payload,
                                 );
-                                mqtt_fehlt_gemeldet = true;
-                            }
-                        } else {
-                            mqtt_fehlt_gemeldet = false;
-                            // ⚠ ZUERST auf die Platte, DANN auf die Leitung.
-                            // Siehe `revision_vor_versand_sichern`.
-                            revision_vor_versand_sichern(&app, &flight);
-                            let mqtt = app_state.mqtt.lock().await;
-                            match mqtt.as_ref() {
-                                // Zwischen Pruefung und Sperre verschwunden —
-                                // naechster Tick.
-                                None => {}
-                                Some(handle) => {
-                                    let gesendet = nachtrag_queue::senden(
-                                        &app,
-                                        &handle.nachtrag_sender(),
-                                        aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
-                                            ts: Utc::now().timestamp_millis(),
-                                            pirep_id: flight.pirep_id.clone(),
-                                            touchdown_at,
-                                            rollout_distance_m: rollout_m,
-                                            finalize_reason: reason,
-                                            bahn,
-                                            landing_touchdown_zone: zone,
-                                            runway_geometry_trusted: Some(vertrauen.0),
-                                            runway_geometry_reason: vertrauen
-                                                .1
-                                                .map(|r| r.to_string()),
-                                            herkunft,
-                                            landing_decel_mps2: verzoegerung,
-                                        },
-                                    );
-                                    // Sperre und Fahne fallen NUR, wenn der
-                                    // Nachtrag auf der Platte liegt (Runde 13,
-                                    // High 2). Sonst naechster Tick.
-                                    match gesendet {
-                                        Ok(()) => {
-                                            let nachtrag = last_published_rollout.is_some();
-                                            last_published_rollout = Some((touchdown_at, revision));
-                                            if let Ok(mut st) = flight.stats.lock() {
-                                                st.bahn_nachtrag_offen = false;
-                                                st.letzter_nachtrag =
-                                                    Some((touchdown_at, revision));
-                                            }
-                                            tracing::info!(
-                                                pirep_id = %flight.pirep_id,
-                                                touchdown_at,
-                                                rollout_m,
-                                                revision,
-                                                nachtrag,
-                                                "touchdown_rollout_finalized published"
-                                            );
+                                // Sperre und Fahne fallen NUR, wenn der
+                                // Nachtrag auf der Platte liegt (Runde 13,
+                                // High 2). Sonst naechster Tick.
+                                match gesendet {
+                                    Ok(()) => {
+                                        let nachtrag = last_published_rollout.is_some();
+                                        last_published_rollout = Some((touchdown_at, revision));
+                                        if let Ok(mut st) = flight.stats.lock() {
+                                            st.bahn_nachtrag_offen = false;
+                                            st.letzter_nachtrag = Some((touchdown_at, revision));
                                         }
-                                        Err(e) => tracing::error!(
+                                        tracing::info!(
                                             pirep_id = %flight.pirep_id,
-                                            error = %e,
-                                            "Bahn-Nachtrag nicht abgelegt — Sperre bleibt, naechster Tick"
-                                        ),
+                                            touchdown_at,
+                                            rollout_m,
+                                            revision,
+                                            nachtrag,
+                                            "touchdown_rollout_finalized published"
+                                        );
                                     }
+                                    Err(e) => tracing::error!(
+                                        pirep_id = %flight.pirep_id,
+                                        error = %e,
+                                        "Bahn-Nachtrag nicht abgelegt — Sperre bleibt, naechster Tick"
+                                    ),
                                 }
                             }
                         }
@@ -44806,6 +44700,62 @@ fn bahn_nachtrag_bauen(
         herkunft: bahn_herkunft(stats),
         landing_decel_mps2: stats.landing_decel_mps2,
     })
+}
+
+/// Der Rollout-Nachtrag des Streamers — nur, wenn er noch nicht gesendet ist.
+///
+/// Liefert Sperrschluessel `(touchdown_at, bahn_revision)` und Ereignis,
+/// sobald Ausrollen UND Rollspur fertig sind und dieser Schluessel noch
+/// nicht `zuletzt` gesendet wurde.
+///
+/// ⚠ ERST der Schluessel, DANN der Bau. Bis 2.0.12 baute der Streamer
+/// Spur-Block, Rollwegkarte und Ausfahrten in JEDEM Takt und verwarf sie
+/// danach, weil der Nachtrag laengst gesendet war — bei AIB 429 (HECA,
+/// 1480 Rollwege, 12.10.2026) 460–600 ms je Takt, das ganze Rollen lang.
+/// Schluessel und Ereignis stammen aus EINEM Blick auf `stats`; der
+/// Aufrufer haelt dafuer die Sperre.
+fn rollout_nachtrag_faellig(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    zuletzt: Option<(i64, u32)>,
+) -> Option<((i64, u32), aeroacars_mqtt::TouchdownRolloutFinalizedPayload)> {
+    // Erst senden, wenn BEIDES fertig ist.
+    //
+    // `rollout_finalized` faellt bei vierzig Knoten — die Ausrollstrecke
+    // steht dann fest. Die Rollspur laeuft weiter (bis fuenf Knoten, zur
+    // Ausfahrt oder ueber den Rand), und mit ihr Raeumpunkt und
+    // Kantenuebertritt. Wird zu frueh gesendet, traegt das Ereignis
+    // dieselbe abgebrochene Spur wie `touchdown_complete`, nur mit dem
+    // Anspruch, final zu sein.
+    //
+    // `bahn_spur_laeuft` wird von `spur_fortschreiben` gepflegt: true,
+    // solange aufgezeichnet wird, false, sobald ein Abbruchkriterium
+    // greift. Vor dem ersten Aufruf ist es ebenfalls false — deshalb
+    // zusaetzlich die Bedingung, dass ueberhaupt eine Spur vorliegt.
+    let spur_fertig = !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
+    if !stats.rollout_finalized || !spur_fertig {
+        return None;
+    }
+    // `aufsetzzeit` None (z.B. direkt nach einem T&G) → kein Nachtrag;
+    // der naechste Touchdown setzt sie neu.
+    //
+    // ⚠ Die REVISION der Zuordnung — dieselbe Zahl, die auf die Leitung
+    // geht. Frueher stand hier `korrelierter_szenerie_stand`; der aendert
+    // sich nur mit einer neuen SZENERIE-Lieferung, eine Zuordnung aus
+    // anderem Grund (Navdaten-Upgrade beim Einreichen) haette keinen
+    // Nachtrag ausgeloest. Trifft die Szenerie NACH der Finalisierung ein
+    // (YSBK, 01.09.2026), muss erneut gesendet werden, sonst bleiben beim
+    // Recorder die alten Achsen- und Ausfahrtsdaten stehen (QS-Befund 1,
+    // erste Runde v1.7.15). Das Ereignis ist ohnehin idempotent: Es
+    // adressiert ueber `pirep_id` + `touchdown_at`.
+    let schluessel = (aufsetzzeit(stats)?.timestamp_millis(), stats.bahn_revision);
+    // GEGENPROBE (wird im naechsten Commit zurueckgedreht): alte
+    // Reihenfolge bis 2.0.12 — erst bauen, dann vergleichen.
+    let gebaut = bahn_nachtrag_bauen(flight, stats)?;
+    if zuletzt == Some(schluessel) {
+        return None;
+    }
+    Some((schluessel, gebaut))
 }
 
 /// v0.15.24: Landing-weight stamp — extracted verbatim from the tail of the
@@ -70233,6 +70183,50 @@ mod touchdown_metadata_stamp_tests {
             spur_block(&flight, &stats).is_none(),
             "eine Spur im alten Bezug geht auf die Leitung — neben Marken aus der neuen Bahn"
         );
+    }
+
+    /// ⚠ Ist der Nachtrag gesendet, baut der Streamer beim Rollen NICHTS mehr.
+    ///
+    /// AIB 429 (HECA, 12.10.2026): Bis 2.0.12 entstanden Spur-Block,
+    /// Rollwegkarte und Ausfahrten in jedem Takt und wurden erst danach
+    /// verworfen — 460–600 ms je Takt, das ganze Rollen lang. Gezaehlt wird
+    /// an `bahn_felder`, der teuren Stelle selbst. Die Gegenproben (noch nie
+    /// gesendet, neue Revision) bauen und senden weiterhin.
+    #[test]
+    fn nach_dem_nachtrag_baut_der_streamer_nichts_mehr() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = stats_mit_spur(eddp_26r_match_with_raw_td(0.0));
+        stats.rollout_finalized = true;
+        stats.bahn_spur_laeuft = false;
+        stats.sampler_touchdown_at = Some(td_at());
+        stats.bahn_revision = 3;
+        let td_ms = td_at().timestamp_millis();
+        let aufrufe = || BAHN_FELDER_AUFRUFE.with(|z| z.get());
+
+        BAHN_FELDER_AUFRUFE.with(|z| z.set(0));
+        assert!(
+            rollout_nachtrag_faellig(&flight, &stats, Some((td_ms, 3))).is_none(),
+            "ein schon gesendeter Nachtrag geht erneut raus"
+        );
+        assert_eq!(
+            aufrufe(),
+            0,
+            "der Nachtrag ist gesendet, trotzdem wurde die Rollwegkarte gebaut"
+        );
+
+        BAHN_FELDER_AUFRUFE.with(|z| z.set(0));
+        let (schluessel, nachtrag) =
+            rollout_nachtrag_faellig(&flight, &stats, None).expect("noch nie gesendet");
+        assert_eq!(schluessel, (td_ms, 3));
+        assert_eq!(nachtrag.touchdown_at, td_ms);
+        assert!(nachtrag.bahn.is_some(), "der Spur-Block fehlt im Nachtrag");
+        assert_eq!(aufrufe(), 1, "Gegenprobe: der erste Nachtrag wird gebaut");
+
+        BAHN_FELDER_AUFRUFE.with(|z| z.set(0));
+        let (schluessel, _) = rollout_nachtrag_faellig(&flight, &stats, Some((td_ms, 2)))
+            .expect("eine neue Revision wird erneut gesendet");
+        assert_eq!(schluessel, (td_ms, 3));
+        assert_eq!(aufrufe(), 1, "Gegenprobe: die neue Revision wird gebaut");
     }
 
     /// ⚠ Eine FERTIGE Spur wird nie verworfen — auch nicht bei Achswechsel.
