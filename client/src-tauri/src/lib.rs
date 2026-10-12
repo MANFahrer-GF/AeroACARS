@@ -38566,13 +38566,21 @@ async fn acars_sichern(app: &AppHandle, offen: &AcarsOffen) -> bool {
         .unwrap_or(false)
 }
 
-fn acars_aufnehmen(offen: &mut AcarsOffen, pirep_id: String, zeilen: Vec<api_client::LogEntry>) {
+/// Verdrängte Zeilen (PIREP, Zeile) — gehen in die Quarantäne, nie verloren.
+type AcarsVerdraengt = Vec<(String, api_client::LogEntry)>;
+
+fn acars_aufnehmen(
+    offen: &mut AcarsOffen,
+    pirep_id: String,
+    zeilen: Vec<api_client::LogEntry>,
+) -> AcarsVerdraengt {
     offen.entry(pirep_id).or_default().extend(zeilen);
-    acars_begrenzen(offen);
+    acars_begrenzen(offen)
 }
 
 /// Obergrenze aller offenen Zeilen durchsetzen — älteste zuerst.
-fn acars_begrenzen(offen: &mut AcarsOffen) {
+fn acars_begrenzen(offen: &mut AcarsOffen) -> AcarsVerdraengt {
+    let mut verdraengt = AcarsVerdraengt::new();
     let mut gesamt: usize = offen.values().map(|q| q.len()).sum();
     while gesamt > ACARS_POSTAUSGANG_MAX {
         // Älteste Zeile über alle PIREPs (nach created_at) verwerfen.
@@ -38584,13 +38592,14 @@ fn acars_begrenzen(offen: &mut AcarsOffen) {
         else {
             break;
         };
-        if let Some(q) = offen.get_mut(&pirep) {
-            q.pop_front();
+        if let Some(z) = offen.get_mut(&pirep).and_then(|q| q.pop_front()) {
+            verdraengt.push((pirep.clone(), z));
         }
         gesamt -= 1;
-        tracing::warn!(pirep_id = %pirep, "ACARS-Postausgang voll — älteste Zeile verworfen");
+        tracing::warn!(pirep_id = %pirep, "ACARS-Postausgang voll — älteste Zeile in die Quarantäne");
     }
     offen.retain(|_, q| !q.is_empty());
+    verdraengt
 }
 
 /// Ist die phpVMS-Fehlerantwort (RFC 7807) ein `PirepCancelled`? Geprüft
@@ -38635,7 +38644,7 @@ fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str
         pirep_id,
         error = %grund,
         verworfen = offen.get(pirep_id).map_or(0, |q| q.len()),
-        "PIREP nimmt keine ACARS-Zeilen mehr an — verworfen"
+        "PIREP nimmt keine ACARS-Zeilen mehr an — Zeilen liegen in der Quarantäne"
     );
     if matches!(grund, ApiError::NotFound) {
         let aktiv = app
@@ -38706,7 +38715,12 @@ const ACARS_TEILWEISE_MAX: u32 = 3;
 
 /// Ablage nachladen, falls noch nicht geschehen; gelesene (ältere) Zeilen
 /// kommen vor die schon eingereihten. `true`, wenn die Ablage gelesen ist.
-async fn acars_nachladen(app: &AppHandle, offen: &mut AcarsOffen, geladen: &mut bool) -> bool {
+async fn acars_nachladen(
+    app: &AppHandle,
+    offen: &mut AcarsOffen,
+    geladen: &mut bool,
+    verdraengt: &mut AcarsVerdraengt,
+) -> bool {
     if *geladen {
         return true;
     }
@@ -38721,15 +38735,49 @@ async fn acars_nachladen(app: &AppHandle, offen: &mut AcarsOffen, geladen: &mut 
             }
             offen.insert(p, q);
         }
-        acars_begrenzen(offen);
+        verdraengt.extend(acars_begrenzen(offen));
         *geladen = true;
     }
     *geladen
 }
 
 /// Für das Beenden: nachladen (falls nötig), sichern und das Ergebnis melden.
-async fn acars_sichern_fuer_ende(app: &AppHandle, offen: &mut AcarsOffen, geladen: &mut bool) -> bool {
-    acars_nachladen(app, offen, geladen).await && acars_sichern(app, offen).await
+async fn acars_sichern_fuer_ende(
+    app: &AppHandle,
+    offen: &mut AcarsOffen,
+    geladen: &mut bool,
+    verdraengt: &mut AcarsVerdraengt,
+) -> bool {
+    let gelesen = acars_nachladen(app, offen, geladen, verdraengt).await;
+    let quarantaene = acars_verdraengte_sichern(app, verdraengt).await;
+    gelesen && quarantaene && acars_sichern(app, offen).await
+}
+
+/// Verdrängte Zeilen in die Quarantäne schreiben (je PIREP eine Datei).
+/// Was nicht geschrieben werden konnte, bleibt in `verdraengt` und wird beim
+/// nächsten Durchlauf erneut versucht. `true`, wenn nichts mehr offen ist.
+async fn acars_verdraengte_sichern(app: &AppHandle, verdraengt: &mut AcarsVerdraengt) -> bool {
+    if verdraengt.is_empty() {
+        return true;
+    }
+    let mut je_pirep: std::collections::BTreeMap<String, Vec<api_client::LogEntry>> =
+        std::collections::BTreeMap::new();
+    for (p, z) in verdraengt.drain(..) {
+        je_pirep.entry(p).or_default().push(z);
+    }
+    for (p, zeilen) in je_pirep {
+        if !acars_in_quarantaene(app, &p, &zeilen).await {
+            verdraengt.extend(zeilen.into_iter().map(|z| (p.clone(), z)));
+        }
+    }
+    verdraengt.is_empty()
+}
+
+async fn acars_in_quarantaene(app: &AppHandle, pirep_id: &str, zeilen: &[api_client::LogEntry]) -> bool {
+    let (app, pid, pk) = (app.clone(), pirep_id.to_string(), zeilen.to_vec());
+    tokio::task::spawn_blocking(move || acars_quarantaene(&app, &pid, &pk))
+        .await
+        .unwrap_or(false)
 }
 
 async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<AcarsAuftrag>) {
@@ -38740,10 +38788,12 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
     // Je PIREP: nicht vor diesem Zeitpunkt erneut senden, und die letzte Wartezeit.
     let mut pause: std::collections::HashMap<String, (tokio::time::Instant, Duration)> =
         std::collections::HashMap::new();
+    // Verdrängte Zeilen, die noch in die Quarantäne müssen.
+    let mut verdraengt = AcarsVerdraengt::new();
     // Je PIREP: wie oft das aktuelle Paket nur teilweise gespeichert wurde.
     let mut teilweise: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     loop {
-        if !geladen && acars_nachladen(&app, &mut offen, &mut geladen).await {
+        if !geladen && acars_nachladen(&app, &mut offen, &mut geladen, &mut verdraengt).await {
             ungesichert = true;
         }
         let mut neu = false;
@@ -38751,17 +38801,18 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
         while let Ok(auftrag) = rx.try_recv() {
             match auftrag {
                 AcarsAuftrag::Zeilen(p, z) => {
-                    acars_aufnehmen(&mut offen, p, z);
+                    verdraengt.extend(acars_aufnehmen(&mut offen, p, z));
                     neu = true;
                 }
                 AcarsAuftrag::Sichern(fertig) => bestaetigen.push(fertig),
             }
         }
+        acars_verdraengte_sichern(&app, &mut verdraengt).await;
         if geladen && (neu || ungesichert) {
             ungesichert = !acars_sichern(&app, &offen).await;
         }
         for fertig in bestaetigen {
-            let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen).await;
+            let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen, &mut verdraengt).await;
             ungesichert = !ok;
             let _ = fertig.send(ok);
         }
@@ -38786,13 +38837,13 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
             tokio::select! {
                 eingang = rx.recv() => match eingang {
                     Some(AcarsAuftrag::Zeilen(p, z)) => {
-                        acars_aufnehmen(&mut offen, p, z);
+                        verdraengt.extend(acars_aufnehmen(&mut offen, p, z));
                         if geladen {
                             ungesichert = !acars_sichern(&app, &offen).await;
                         }
                     }
                     Some(AcarsAuftrag::Sichern(fertig)) => {
-                        let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen).await;
+                        let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen, &mut verdraengt).await;
                         ungesichert = !ok;
                         let _ = fertig.send(ok);
                     }
@@ -38847,13 +38898,13 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                 }
                 eingang = rx.recv() => match eingang {
                     Some(AcarsAuftrag::Zeilen(p, z)) => {
-                        acars_aufnehmen(&mut offen, p, z);
+                        verdraengt.extend(acars_aufnehmen(&mut offen, p, z));
                         if geladen {
                             ungesichert = !acars_sichern(&app, &offen).await;
                         }
                     }
                     Some(AcarsAuftrag::Sichern(fertig)) => {
-                        let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen).await;
+                        let ok = acars_sichern_fuer_ende(&app, &mut offen, &mut geladen, &mut verdraengt).await;
                         ungesichert = !ok;
                         let _ = fertig.send(ok);
                     }
@@ -38953,58 +39004,83 @@ async fn acars_postausgang_besitzer(app: AppHandle, mut rx: tokio::sync::mpsc::U
                 );
                 pause.insert(pirep_id, (jetzt + warten, warten));
             }
-            Zustellung::Abgelehnt(e) => match &e {
-                // PIREP gelöscht (404) oder abgebrochen (phpVMS
-                // `PirepCancelled`: 400 mit Fehlerkennung `pirep-cancelled`):
-                // Für diesen PIREP nimmt phpVMS nichts mehr an.
-                // 404 heißt bei phpVMS „PIREP existiert nicht“ (ein fremder
-                // PIREP liefert 403, `LogRequest::authorize`). Sofort
-                // verworfen wird nur beim gerade aktiven Flug; sonst bleiben
-                // die Zeilen mit langer Pause erhalten und laufen erst nach
-                // `ACARS_ABLAUF_TAGE` ab — ein Irrtum kostet so nichts.
-                ApiError::NotFound if acars_ist_aktiver_flug(&app, &pirep_id) => {
-                    acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e)
+            Zustellung::Abgelehnt(e) => {
+                // Was mit den Zeilen geschieht. Gelöscht wird nie: Was nicht
+                // zugestellt werden kann, geht vorher in die Quarantäne;
+                // scheitert das, bleibt es im Postausgang.
+                enum Folge {
+                    /// PIREP nimmt nichts mehr an — alle seine Zeilen.
+                    PirepRaus,
+                    /// Nur dieses Paket ist betroffen (z. B. Validierung).
+                    PaketRaus,
+                    /// Behalten, nach dieser Pause erneut.
+                    Behalten(Duration),
                 }
-                ApiError::NotFound => {
-                    let abgelaufen = acars_aelter_als(&offen, &pirep_id, ACARS_ABLAUF_TAGE);
-                    if abgelaufen {
-                        acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e);
-                    } else {
-                        tracing::warn!(pirep_id = %pirep_id, "ACARS: PIREP nicht gefunden — Zeilen bleiben, Neuversuch in 1 h");
-                        pause.insert(
-                            pirep_id,
-                            (jetzt + Duration::from_secs(3600), Duration::from_secs(3600)),
+                let folge = match &e {
+                    // 404 heißt bei phpVMS „PIREP existiert nicht“ (ein
+                    // fremder PIREP liefert 403, `LogRequest::authorize`).
+                    // Beim aktiven Flug sofort, sonst erst nach
+                    // `ACARS_ABLAUF_TAGE` — bis dahin behalten.
+                    ApiError::NotFound
+                        if acars_ist_aktiver_flug(&app, &pirep_id)
+                            || acars_aelter_als(&offen, &pirep_id, ACARS_ABLAUF_TAGE) =>
+                    {
+                        Folge::PirepRaus
+                    }
+                    ApiError::NotFound => Folge::Behalten(Duration::from_secs(3600)),
+                    // Abgebrochen (phpVMS `PirepCancelled`, RFC-7807-`type`).
+                    ApiError::Server { status: 400, body } if ist_pirep_abgebrochen(body) => {
+                        Folge::PirepRaus
+                    }
+                    // Anmeldung/Adresse ungültig — später erneut.
+                    ApiError::Unauthenticated | ApiError::Forbidden | ApiError::InvalidUrl(_) => {
+                        Folge::Behalten(Duration::from_secs(300))
+                    }
+                    _ => Folge::PaketRaus,
+                };
+                match folge {
+                    Folge::Behalten(warten) => {
+                        tracing::warn!(
+                            pirep_id = %pirep_id,
+                            error = %e,
+                            warten_s = warten.as_secs(),
+                            "ACARS-Zustellung abgelehnt — Zeilen bleiben im Postausgang"
                         );
+                        pause.insert(pirep_id, (jetzt + warten, warten));
+                    }
+                    Folge::PirepRaus => {
+                        let zeilen: Vec<api_client::LogEntry> = offen
+                            .get(&pirep_id)
+                            .map(|q| q.iter().cloned().collect())
+                            .unwrap_or_default();
+                        if acars_in_quarantaene(&app, &pirep_id, &zeilen).await {
+                            acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e);
+                        } else {
+                            pause.insert(
+                                pirep_id,
+                                (jetzt + Duration::from_secs(60), Duration::from_secs(60)),
+                            );
+                        }
+                    }
+                    Folge::PaketRaus => {
+                        tracing::warn!(
+                            pirep_id = %pirep_id,
+                            error = %e,
+                            count = paket.len(),
+                            "ACARS-Paket abgelehnt — in die Quarantäne"
+                        );
+                        if acars_in_quarantaene(&app, &pirep_id, &paket).await {
+                            acars_paket_entfernen(&mut offen, &pirep_id, &paket);
+                            teilweise.remove(&pirep_id);
+                        } else {
+                            pause.insert(
+                                pirep_id,
+                                (jetzt + Duration::from_secs(60), Duration::from_secs(60)),
+                            );
+                        }
                     }
                 }
-                ApiError::Server { status: 400, body } if ist_pirep_abgebrochen(body) => {
-                    acars_pirep_verwerfen(&app, &mut offen, &pirep_id, &e)
-                }
-                // Anmeldung/Adresse ungültig — behalten, später erneut.
-                ApiError::Unauthenticated | ApiError::Forbidden | ApiError::InvalidUrl(_) => {
-                    tracing::warn!(
-                        pirep_id = %pirep_id,
-                        error = %e,
-                        "ACARS-Zustellung abgelehnt (Anmeldung) — bleibt im Postausgang"
-                    );
-                    pause.insert(
-                        pirep_id,
-                        (jetzt + Duration::from_secs(300), Duration::from_secs(300)),
-                    );
-                }
-                // Sonst (z. B. Validierungsfehler): nur dieses Paket ist betroffen.
-                _ => {
-                    tracing::warn!(
-                        pirep_id = %pirep_id,
-                        error = %e,
-                        count = paket.len(),
-                        "ACARS-Paket abgelehnt — verworfen"
-                    );
-                    acars_paket_entfernen(&mut offen, &pirep_id, &paket);
-                    offen.retain(|_, q| !q.is_empty());
-                    teilweise.remove(&pirep_id);
-                }
-            },
+            }
         }
         if geladen {
             ungesichert = !acars_sichern(&app, &offen).await;
@@ -39037,7 +39113,10 @@ mod acars_postausgang_tests {
             .collect();
         acars_aufnehmen(&mut offen, "ALT".into(), alt);
         acars_aufnehmen(&mut offen, "NEU".into(), neu);
-        acars_aufnehmen(&mut offen, "NEU".into(), vec![zeile("2026-10-12T99999999")]);
+        let verdraengt =
+            acars_aufnehmen(&mut offen, "NEU".into(), vec![zeile("2026-10-12T99999999")]);
+        assert_eq!(verdraengt.len(), 1, "die verdrängte Zeile geht in die Quarantäne, nicht verloren");
+        assert_eq!(verdraengt[0].0, "ALT");
         let gesamt: usize = offen.values().map(|q| q.len()).sum();
         assert_eq!(gesamt, ACARS_POSTAUSGANG_MAX);
         assert_eq!(offen["ALT"].len(), ACARS_POSTAUSGANG_MAX / 2 - 1, "die älteste Zeile fiel weg");
@@ -39064,8 +39143,9 @@ mod acars_postausgang_tests {
                 .map(|i| zeile(&format!("2026-10-11T{i:08}")))
                 .collect(),
         );
-        acars_begrenzen(&mut offen);
+        let verdraengt = acars_begrenzen(&mut offen);
         assert_eq!(offen["A"].len(), ACARS_POSTAUSGANG_MAX);
+        assert_eq!(verdraengt.len(), 5);
     }
 
     #[test]
