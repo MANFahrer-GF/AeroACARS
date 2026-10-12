@@ -30093,10 +30093,17 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
                     let mut recovered = 0usize;
                     let mut deserialize_failed = 0usize;
+                    // Laden ist idempotent: Was schon in der Outbox steht (gleiche
+                    // id), kommt nicht ein zweites Mal hinein — etwa wenn nach
+                    // dem Fortsetzen ein ueberholter und der neue Worker beide
+                    // laden, bevor der alte endet (Codex-Abnahme 057d5a9c).
+                    let mut vorhanden: std::collections::HashSet<String> =
+                        outbox.iter().map(|p| p.id.clone()).collect();
                     for item in items {
                         if item.pirep_id == flight.pirep_id {
                             match serde_json::from_value::<api_client::PositionEntry>(item.position)
                             {
+                                Ok(p) if !vorhanden.insert(p.id.clone()) => {}
                                 Ok(p) => {
                                     outbox.push_back(p);
                                     recovered += 1;
@@ -38461,10 +38468,18 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     });
     if let Err(e) = gestartet {
         // Merker zurücksetzen, sonst unterdrückt er jeden weiteren Startversuch
-        // (Codex-Abnahme 11.10.2026).
-        flight_fuer_fehler
-            .touchdown_sampler_spawned
-            .store(false, Ordering::SeqCst);
+        // (Codex-Abnahme 11.10.2026) — aber nur für die eigene Generation,
+        // sonst gäbe ein überholter Start den Merker des neuen Samplers frei
+        // (Codex-Abnahme 057d5a9c).
+        let _start = flight_fuer_fehler
+            .start_sperre
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if flight_fuer_fehler.generation.load(Ordering::SeqCst) == meine_generation {
+            flight_fuer_fehler
+                .touchdown_sampler_spawned
+                .store(false, Ordering::SeqCst);
+        }
         tracing::error!(error = %e, "Aufsetz-Messfaden konnte nicht gestartet werden");
     }
 }
