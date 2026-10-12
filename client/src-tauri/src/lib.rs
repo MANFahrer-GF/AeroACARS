@@ -3544,6 +3544,10 @@ struct ActiveFlight {
     /// persistiert damit ein Restart die ungesendeten Punkte nachholt.
     /// **Ersetzt das alte Critical-Window + Drain-Pattern komplett.**
     position_outbox: Mutex<std::collections::VecDeque<api_client::PositionEntry>>,
+    /// Beim Stopp offene Positionen noch an phpVMS senden — nur beim
+    /// normalen Flugende (`flight_end`, `flight_end_manual`). Bei Abbruch,
+    /// Verwerfen oder serverseitig geloeschtem PIREP bleibt es aus.
+    positionen_nachsenden: AtomicBool,
     /// v0.6.0: Guard fuer `spawn_phpvms_position_worker` (analog zu
     /// streamer_spawned). Wird im worker-loop selbst gesetzt damit
     /// nicht mehrere parallele Worker laufen.
@@ -19288,6 +19292,7 @@ async fn flight_adopt(
         streamer_spawned: AtomicBool::new(false),
         cancelled_remotely: AtomicBool::new(false),
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
+        positionen_nachsenden: AtomicBool::new(false),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -20115,6 +20120,7 @@ async fn flight_start_mit(
         streamer_spawned: AtomicBool::new(false),
         cancelled_remotely: AtomicBool::new(false),
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
+        positionen_nachsenden: AtomicBool::new(false),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -20920,6 +20926,7 @@ async fn flight_start_manual(
         streamer_spawned: AtomicBool::new(false),
         cancelled_remotely: AtomicBool::new(false),
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
+        positionen_nachsenden: AtomicBool::new(false),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -30035,6 +30042,9 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
         // Failure prazise zaehlt.
         const TICK: Duration = Duration::from_secs(1);
         const MAX_BATCH: usize = 50;
+        // Hoechstens so lange sendet der Worker nach dem Flugende offene
+        // Positionen nach — ein toter Server haelt ihn nicht laenger.
+        const NACHSENDEN_FRIST: Duration = Duration::from_secs(60);
         // Exponentiel-Backoff bei consecutive failures: 3s, 6s, 12s,
         // 24s, 48s, gecapped bei 60s. Reset bei erstem Erfolg.
         let mut consecutive_failures: u32 = 0;
@@ -30135,6 +30145,39 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                 //     wuerde eh 404 zurueckgeben
                 // → in keinem Fall wollen wir Items aus dem aktuellen Pirep
                 //   nach dem Stop noch persistieren.
+                //
+                // Ausnahme seit 2.0.12: Beim normalen Flugende gehen offene
+                // Positionen VORHER noch an phpVMS (s. `flight_end`). Die
+                // Positions-`id` macht Wiederholungen folgenlos.
+                if flight.positionen_nachsenden.load(Ordering::Relaxed) {
+                    let (nachgesendet, offen) = offene_positionen_nachsenden(
+                        &flight,
+                        NACHSENDEN_FRIST,
+                        BATCH_TIMEOUT,
+                        MAX_BATCH,
+                        Duration::from_secs(2),
+                        |batch| {
+                            let (client, pirep_id) = (client.clone(), flight.pirep_id.clone());
+                            async move { client.post_positions(&pirep_id, &batch).await }
+                        },
+                    )
+                    .await;
+                    if offen > 0 {
+                        tracing::warn!(
+                            pirep_id = %flight.pirep_id,
+                            nachgesendet,
+                            offen,
+                            "phpvms-worker: nicht alle Positionen nach Flugende zugestellt — \
+                             sie stehen im Flugprotokoll"
+                        );
+                    } else {
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            nachgesendet,
+                            "phpvms-worker: offene Positionen nach Flugende nachgesendet"
+                        );
+                    }
+                }
                 persist_outbox_clearing(&app, &flight);
                 if requeue_events > 0 {
                     // Bilanz ins Aktivitaetslog: ohne sie bleibt unsichtbar,
@@ -30229,15 +30272,27 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                 }
             };
             let post_result = tokio::select! {
-                r = tokio::time::timeout(BATCH_TIMEOUT, post_fut) => r,
-                _ = stop_watch => {
+                r = tokio::time::timeout(BATCH_TIMEOUT, post_fut) => Some(r),
+                _ = stop_watch => None,
+            };
+            let Some(post_result) = post_result else {
+                // Beim normalen Flugende zurueck in die Outbox: Der
+                // Stopp-Zweig sendet ihn nach (s. `positionen_nachsenden`).
+                if flight.positionen_nachsenden.load(Ordering::Relaxed) {
+                    tracing::info!(
+                        pirep_id = %flight.pirep_id,
+                        batch_size = batch.len(),
+                        "phpvms-worker: Stop waehrend laufendem POST — Batch wird nachgesendet"
+                    );
+                    requeue_batch(&flight, batch);
+                } else {
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
                         batch_size = batch.len(),
                         "phpvms-worker: Stop waehrend laufendem POST — Batch verworfen"
                     );
-                    continue;
                 }
+                continue;
             };
             match post_result {
                 Ok(Ok(())) => {
@@ -30465,6 +30520,68 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
 /// **Wichtig:** `batch.into_iter().rev() + push_front` ergibt die
 /// originale Reihenfolge: batch=[a,b,c] -> push_front c, b, a ->
 /// outbox = [a, b, c, ...].
+/// Offene Positionen nach dem normalen Flugende nachsenden — bis die Outbox
+/// leer ist, phpVMS endgueltig ablehnt (PIREP weg/abgebrochen, Konto
+/// gesperrt, 4xx) oder `frist` um ist. Voruebergehende Fehler werden nach
+/// `pause` wiederholt. Was nicht rausging, steht danach wieder vorn in der
+/// Outbox. Liefert (nachgesendet, offen).
+async fn offene_positionen_nachsenden<F, Fut>(
+    flight: &ActiveFlight,
+    frist: Duration,
+    batch_timeout: Duration,
+    max_batch: usize,
+    pause: Duration,
+    mut senden: F,
+) -> (usize, usize)
+where
+    F: FnMut(Vec<api_client::PositionEntry>) -> Fut,
+    Fut: std::future::Future<Output = Result<(), ApiError>>,
+{
+    let ende = std::time::Instant::now() + frist;
+    let mut nachgesendet = 0usize;
+    loop {
+        let rest = ende.saturating_duration_since(std::time::Instant::now());
+        if rest.is_zero() {
+            break;
+        }
+        let batch: Vec<api_client::PositionEntry> = {
+            let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
+            let n = outbox.len().min(max_batch);
+            outbox.drain(..n).collect()
+        };
+        if batch.is_empty() {
+            break;
+        }
+        match tokio::time::timeout(rest.min(batch_timeout), senden(batch.clone())).await {
+            Ok(Ok(())) => nachgesendet += batch.len(),
+            Ok(Err(
+                e @ (ApiError::NotFound
+                | ApiError::Unauthenticated
+                | ApiError::Forbidden
+                | ApiError::Server {
+                    status: 400..=499,
+                    ..
+                }),
+            )) => {
+                tracing::warn!(
+                    pirep_id = %flight.pirep_id,
+                    error = %e,
+                    "phpvms-worker: Nachsenden nach Flugende abgelehnt"
+                );
+                requeue_batch(flight, batch);
+                break;
+            }
+            Ok(Err(_)) | Err(_) => {
+                requeue_batch(flight, batch);
+                tokio::time::sleep(pause.min(ende.saturating_duration_since(std::time::Instant::now())))
+                    .await;
+            }
+        }
+    }
+    let offen = flight.position_outbox.lock().expect("position_outbox lock").len();
+    (nachgesendet, offen)
+}
+
 fn requeue_batch(flight: &ActiveFlight, batch: Vec<api_client::PositionEntry>) {
     let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
     for position in batch.into_iter().rev() {
@@ -30800,6 +30917,7 @@ mod rearm_background_task_guards_tests {
             streamer_spawned: AtomicBool::new(latched),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(latched),
             touchdown_sampler_spawned: AtomicBool::new(latched),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -30868,6 +30986,7 @@ mod positions_idempotenz_tests {
             streamer_spawned: AtomicBool::new(false),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -30888,6 +31007,96 @@ mod positions_idempotenz_tests {
         assert_ne!(a.id, b.id, "zwei Punkte duerfen nie dieselbe id tragen");
         // phpVMS' `acars`.`id` ist varchar(36) — eine UUID passt exakt.
         assert_eq!(a.id.len(), 36, "id muss in varchar(36) passen: {}", a.id);
+    }
+
+    fn nachsenden_mit(
+        flight: &ActiveFlight,
+        frist: Duration,
+        antworten: Vec<Result<(), ApiError>>,
+    ) -> ((usize, usize), Vec<Vec<String>>) {
+        let gesendet = std::sync::Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+        let antworten = std::sync::Arc::new(Mutex::new(std::collections::VecDeque::from(antworten)));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let ergebnis = rt.block_on(offene_positionen_nachsenden(
+            flight,
+            frist,
+            Duration::from_secs(5),
+            50,
+            Duration::from_millis(5),
+            |batch| {
+                let (gesendet, antworten) = (gesendet.clone(), antworten.clone());
+                async move {
+                    gesendet
+                        .lock()
+                        .unwrap()
+                        .push(batch.iter().map(|p| p.id.clone()).collect());
+                    antworten.lock().unwrap().pop_front().unwrap_or(Ok(()))
+                }
+            },
+        ));
+        let gesendet = gesendet.lock().unwrap().clone();
+        (ergebnis, gesendet)
+    }
+
+    #[test]
+    fn nach_flugende_gehen_alle_offenen_positionen_raus() {
+        // SIA 436 (12.10.2026): Bis 2.0.11 leerte `flight_end` die Outbox —
+        // die letzten Sekunden fehlten in der phpVMS-Spur.
+        let flight = flug();
+        let punkte: Vec<_> = (0..120).map(|i| punkt(i as f64)).collect();
+        let ids: Vec<String> = punkte.iter().map(|p| p.id.clone()).collect();
+        flight.position_outbox.lock().unwrap().extend(punkte);
+        let ((nachgesendet, offen), gesendet) =
+            nachsenden_mit(&flight, Duration::from_secs(5), vec![]);
+        assert_eq!((nachgesendet, offen), (120, 0));
+        assert!(gesendet.iter().all(|b| b.len() <= 50), "hoechstens 50 je Anfrage");
+        assert_eq!(gesendet.concat(), ids, "alle, in Reihenfolge, keine doppelt");
+    }
+
+    #[test]
+    fn voruebergehender_fehler_wird_wiederholt() {
+        let flight = flug();
+        let p = punkt(1.0);
+        let id = p.id.clone();
+        flight.position_outbox.lock().unwrap().push_back(p);
+        let ((nachgesendet, offen), gesendet) = nachsenden_mit(
+            &flight,
+            Duration::from_secs(5),
+            vec![Err(ApiError::Network("weg".into())), Ok(())],
+        );
+        assert_eq!((nachgesendet, offen), (1, 0));
+        assert_eq!(gesendet, vec![vec![id.clone()], vec![id]], "dieselbe id erneut");
+    }
+
+    #[test]
+    fn endgueltige_ablehnung_bricht_ab_ohne_zu_verwerfen() {
+        let flight = flug();
+        flight.position_outbox.lock().unwrap().extend([punkt(1.0), punkt(2.0)]);
+        let ((nachgesendet, offen), gesendet) = nachsenden_mit(
+            &flight,
+            Duration::from_secs(5),
+            vec![Err(ApiError::Server {
+                status: 400,
+                body: "{\"type\":\"pirep-cancelled\"}".into(),
+            })],
+        );
+        assert_eq!((nachgesendet, offen), (0, 2));
+        assert_eq!(gesendet.len(), 1, "kein zweiter Versuch nach endgueltiger Ablehnung");
+    }
+
+    #[test]
+    fn nachsenden_endet_spaetestens_mit_der_frist() {
+        let flight = flug();
+        flight.position_outbox.lock().unwrap().push_back(punkt(1.0));
+        let antworten = (0..10_000).map(|_| Err(ApiError::Network("weg".into()))).collect();
+        let t0 = std::time::Instant::now();
+        let ((nachgesendet, offen), _) =
+            nachsenden_mit(&flight, Duration::from_millis(100), antworten);
+        assert!(t0.elapsed() < Duration::from_secs(2), "toter Server haelt nicht auf");
+        assert_eq!((nachgesendet, offen), (0, 1));
     }
 
     #[test]
@@ -31335,16 +31544,13 @@ async fn flight_end(
             .take()
             .ok_or_else(|| UiError::new("no_active_flight", "no flight is active"))?
     };
-    // v0.6.0: Outbox VOR stop=true leeren — bei Filing ist die PIREP
-    // im Server abgeschlossen, weiteres POSTen ist sinnlos. Forensik-
-    // Upload (file_pirep-Anhang) enthält die JSONL mit allen Position-
-    // Events, kein Datenverlust. Verhindert dass der Worker beim
-    // letzten Tick orphan items in position_queue.json persistiert.
-    flight
-        .position_outbox
-        .lock()
-        .expect("position_outbox lock")
-        .clear();
+    // Offene Positionen NICHT verwerfen: Der Worker sendet sie beim Stopp
+    // noch an phpVMS. Bis 2.0.11 wurde die Outbox hier geleert, mit der
+    // Annahme, nach dem Einreichen sei weiteres Senden sinnlos — phpVMS
+    // nimmt Positionen aber auch danach an (`AcarsController::acars_store`
+    // lehnt nur abgebrochene PIREPs ab), und so fehlten die letzten
+    // 4–30 s jedes Flugs in der phpVMS-Spur (SIA 436, 12.10.2026).
+    flight.positionen_nachsenden.store(true, Ordering::Relaxed);
     flight.stop.store(true, Ordering::Relaxed);
 
     // Snapshot all stats inside a single short-lived guard to avoid holding
@@ -32417,12 +32623,8 @@ async fn flight_end_manual(
             .take()
             .ok_or_else(|| UiError::new("no_active_flight", "no flight is active"))?
     };
-    // v0.6.0: Outbox VOR stop=true leeren — siehe flight_end Begründung.
-    flight
-        .position_outbox
-        .lock()
-        .expect("position_outbox lock")
-        .clear();
+    // Offene Positionen nachsenden — siehe `flight_end`.
+    flight.positionen_nachsenden.store(true, Ordering::Relaxed);
     flight.stop.store(true, Ordering::Relaxed);
 
     // Same normalization as `flight_end`: a "divert" to the planned
@@ -48908,6 +49110,7 @@ mod arrived_fallback_dwell_tests {
             streamer_spawned: AtomicBool::new(false),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -49513,6 +49716,7 @@ mod takeoff_roll_tests {
             streamer_spawned: AtomicBool::new(false),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -49586,6 +49790,7 @@ mod arrived_fallback_geometry_tests {
             streamer_spawned: AtomicBool::new(false),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -49897,6 +50102,7 @@ mod enroute_reconcile_tests {
             streamer_spawned: AtomicBool::new(false),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -50965,6 +51171,7 @@ mod enroute_reconcile_replay_tests {
             streamer_spawned: AtomicBool::new(false),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -57181,6 +57388,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
         streamer_spawned: AtomicBool::new(false),
         cancelled_remotely: AtomicBool::new(false),
         position_outbox: Mutex::new(std::collections::VecDeque::new()),
+        positionen_nachsenden: AtomicBool::new(false),
         phpvms_worker_spawned: AtomicBool::new(false),
         touchdown_sampler_spawned: AtomicBool::new(false),
         connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
@@ -68078,6 +68286,7 @@ mod touchdown_metadata_stamp_tests {
             streamer_spawned: AtomicBool::new(false),
             cancelled_remotely: AtomicBool::new(false),
             position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
             phpvms_worker_spawned: AtomicBool::new(false),
             touchdown_sampler_spawned: AtomicBool::new(false),
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
