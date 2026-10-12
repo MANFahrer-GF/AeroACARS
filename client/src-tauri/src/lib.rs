@@ -30180,27 +30180,25 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
                     stopp_entscheidung(&flight, &mut outbox, meine_generation)
                 };
-                let abgegeben = matches!(ende, StoppEnde::Abgeben(_));
-                if let StoppEnde::Abgeben(rest) = ende.clone() {
-                    positionen_uebergeben(&flight, &client, rest);
-                }
-                if ende == StoppEnde::Abgeloest {
-                    // Flug nach gescheitertem Einreichen fortgesetzt: Die
-                    // Outbox gehoert dem neuen Worker — nichts leeren.
-                    tracing::info!(
-                        pirep_id = %flight.pirep_id,
-                        "phpvms-position-worker abgeloest (Flug fortgesetzt)"
-                    );
-                    break;
-                }
-                if abgegeben {
-                    // Nach der Abgabe kann in der Outbox nur noch stehen, was
-                    // ein nach Fortsetzen neuer Streamer schon gebracht hat
-                    // (alte Punkte gibt der Streamer selbst ab) — sichern,
-                    // nicht leeren.
-                    persist_outbox(&app, &flight);
-                } else {
-                    persist_outbox_clearing(&app, &flight);
+                match ende {
+                    StoppEnde::Abgeben(rest) => {
+                        positionen_uebergeben(&flight, &client, rest);
+                        // Nach der Abgabe kann in der Outbox nur noch stehen,
+                        // was ein nach Fortsetzen neuer Streamer schon gebracht
+                        // hat (alte Punkte gibt der Streamer selbst ab) —
+                        // sichern, nicht leeren.
+                        persist_outbox(&app, &flight);
+                    }
+                    StoppEnde::Abgeloest => {
+                        // Flug nach gescheitertem Einreichen fortgesetzt: Die
+                        // Outbox gehoert dem neuen Worker — nichts leeren.
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            "phpvms-position-worker abgeloest (Flug fortgesetzt)"
+                        );
+                        break;
+                    }
+                    StoppEnde::Verwerfen => persist_outbox_clearing(&app, &flight),
                 }
                 if requeue_events > 0 {
                     // Bilanz ins Aktivitaetslog: ohne sie bleibt unsichtbar,
@@ -30573,7 +30571,7 @@ fn outbox_zum_nachsenden(
 }
 
 /// Was der Positions-Worker beim Stopp mit der Outbox tut.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 enum StoppEnde {
     /// Normales Flugende: diese Punkte an den Nachsender.
     Abgeben(Vec<api_client::PositionEntry>),
@@ -31276,11 +31274,17 @@ mod positions_idempotenz_tests {
         fortsetzen_vorbereiten(&flight);
         let mut outbox: std::collections::VecDeque<_> = [punkt(2.0)].into();
         flight.stop.store(true, Ordering::SeqCst);
-        assert_eq!(stopp_entscheidung(&flight, &mut outbox, 0), StoppEnde::Abgeloest);
+        assert!(matches!(
+            stopp_entscheidung(&flight, &mut outbox, 0),
+            StoppEnde::Abgeloest
+        ));
         assert_eq!(outbox.len(), 1, "nichts entnommen");
 
         // Abbruch des fortgesetzten Flugs: Generation 1, Flag aus — verwerfen.
-        assert_eq!(stopp_entscheidung(&flight, &mut outbox, 1), StoppEnde::Verwerfen);
+        assert!(matches!(
+            stopp_entscheidung(&flight, &mut outbox, 1),
+            StoppEnde::Verwerfen
+        ));
     }
 
     /// Bis 2.0.11 leerten `flight_end` und `flight_end_manual` die Outbox vor
