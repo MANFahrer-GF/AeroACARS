@@ -119,6 +119,11 @@ describe("Zeiten gegen Flugplan", () => {
       expect(a.noch_min).toBe(0);
     });
 
+    it("kurz vor dem Plan nie vorzeitig „vorbei\"", () => {
+      expect(abflugSchaetzung(amGate, hm(14, 30) - 29)!.noch_min).toBe(1);
+      expect(abflugSchaetzung(amGate, hm(14, 30))!.noch_min).toBe(0);
+    });
+
     it("nach dem Abrollen keine Abflug-Schätzung mehr", () => {
       expect(abflugSchaetzung(BEISPIEL, hm(14, 50))).toBeNull();
       expect(abflugSchaetzung({ plan_on_block: hm(15, 40) }, hm(14, 10))).toBeNull();

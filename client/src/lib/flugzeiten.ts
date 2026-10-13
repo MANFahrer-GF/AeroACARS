@@ -267,7 +267,9 @@ export function abflugSchaetzung(
     plan: pOff,
     erwartet,
     gegen_plan_min: abweichungMin(pOff, erwartet) ?? 0,
-    noch_min: Math.max(0, Math.round((pOff - j) / 60)),
+    // Aufrunden: Bis zum geplanten Off-Block bleibt es „noch 1 min", nie
+    // vorzeitig „vorbei" (Codex PR #139).
+    noch_min: Math.max(0, Math.ceil((pOff - j) / 60)),
   };
 }
 
