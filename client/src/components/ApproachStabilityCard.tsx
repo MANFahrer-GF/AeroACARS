@@ -78,6 +78,11 @@ interface Props {
   runwayChangedLate?: boolean | null;
   stableAtDa?: boolean | null;
   stallWarningCount?: number | null;
+  /** Score-Version 23: spätes Final / Kurvenanflug erkannt — Höhe beim
+   *  Ausrichten (ft über Platz) und Kurve davor (Grad). Fehlt = gerader
+   *  Anflug, dann kein Hinweis. */
+  spaetesFinalAbFt?: number | null;
+  spaetesFinalKurveDeg?: number | null;
 }
 
 function bandForRange(
@@ -243,6 +248,27 @@ export function ApproachStabilityCard(props: Props) {
           ? t("landing.approach_stability_card.data_source", { sim })
           : t("landing.approach_stability_card.data_source_unknown")}
       </div>
+
+      {/* Score-Version 23: spätes Final / Kurvenanflug — sagen, ab wo
+          Querneigung, V/S und Gleitpfad zählen. Ob es rechtzeitig war,
+          steht in der Kachel „Final". */}
+      {props.spaetesFinalAbFt != null && (
+        <div
+          data-testid="spaetes-final"
+          style={{ fontSize: "0.84rem", lineHeight: 1.45, marginBottom: 12 }}
+        >
+          {/* Versatzanflug (Tivat, Madeira): kaum Kurve — dann ohne Gradzahl,
+              „davor 0° Kurve" läse sich wie ein Fehler. */}
+          {(props.spaetesFinalKurveDeg ?? 0) >= 30
+            ? t("landing.approach_stability_card.spaetes_final", {
+                hoehe: Math.round(props.spaetesFinalAbFt),
+                kurve: Math.round(props.spaetesFinalKurveDeg ?? 0),
+              })
+            : t("landing.approach_stability_card.spaetes_final_versatz", {
+                hoehe: Math.round(props.spaetesFinalAbFt),
+              })}
+        </div>
+      )}
 
       {/* Legacy-Hinweis, wenn das PIREP keine Stability-Felder hat */}
       {isLegacy && (

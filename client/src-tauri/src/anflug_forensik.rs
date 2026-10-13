@@ -283,11 +283,28 @@ pub(crate) fn quelle(bahn: Option<&Bahnbezug>) -> &'static str {
 /// * `platzhoehe_ft`: Rueckfall fuer die Hoehenbaender der Anflugruhe,
 ///   wenn es keinen Schwellenbezug gibt (dieselbe Bezugshoehe wie das
 ///   Stabilitaets-Gate).
+// Seit Score-Version 23 rufen nur noch Tests die Fassung ohne spaetes Final.
+#[cfg(test)]
 pub(crate) fn auswerten(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
     bahn: Option<&Bahnbezug>,
     td: Option<DateTime<Utc>>,
     platzhoehe_ft: Option<f64>,
+) -> AnflugForensik {
+    auswerten_ab_final(buf, bahn, td, platzhoehe_ft, None)
+}
+
+/// Wie `auswerten`; mit `final_ab` (Score-Version 23, spaetes Final /
+/// Kurvenanflug) zaehlen fuer die Gleitpfad-TORE nur Proben ab dem
+/// Ausrichten auf die Bahn — vorher liegt das Flugzeug verfahrensbedingt
+/// neben und ueber dem Pfad. Der Verlauf (Dot-Streifen) und die Anflugruhe
+/// bleiben vollstaendig.
+pub(crate) fn auswerten_ab_final(
+    buf: &std::collections::VecDeque<ApproachBufferSample>,
+    bahn: Option<&Bahnbezug>,
+    td: Option<DateTime<Utc>>,
+    platzhoehe_ft: Option<f64>,
+    final_ab: Option<DateTime<Utc>>,
 ) -> AnflugForensik {
     let mut gleitpfad = AnflugGleitpfad {
         quelle: quelle(bahn).to_string(),
@@ -357,9 +374,13 @@ pub(crate) fn auswerten(
     let punkte = punkte_im_anflug(&proben, bezug_ft, pfad.as_ref());
 
     if pfad.is_some() {
-        gleitpfad.gesamt = gleitpfad_tor(&punkte, HOEHE_UNTEN_FT, HOEHE_OBEN_FT);
-        gleitpfad.tor_1000_500 = gleitpfad_tor(&punkte, HOEHE_MITTE_FT, HOEHE_OBEN_FT);
-        gleitpfad.tor_500_200 = gleitpfad_tor(&punkte, HOEHE_UNTEN_FT, HOEHE_MITTE_FT);
+        let tor_punkte: Vec<Punkt> = match final_ab {
+            Some(ab) => punkte.iter().filter(|p| p.at >= ab).cloned().collect(),
+            None => punkte.clone(),
+        };
+        gleitpfad.gesamt = gleitpfad_tor(&tor_punkte, HOEHE_UNTEN_FT, HOEHE_OBEN_FT);
+        gleitpfad.tor_1000_500 = gleitpfad_tor(&tor_punkte, HOEHE_MITTE_FT, HOEHE_OBEN_FT);
+        gleitpfad.tor_500_200 = gleitpfad_tor(&tor_punkte, HOEHE_UNTEN_FT, HOEHE_MITTE_FT);
         if gleitpfad.gesamt.is_none() {
             gleitpfad.grund_ohne_werte = Some(GRUND_KEINE_PROBEN.to_string());
         }

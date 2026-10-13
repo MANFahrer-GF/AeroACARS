@@ -20,6 +20,8 @@ mod accident;
 /// reine Forensik ohne Wirkung auf die Note.
 mod anflug_forensik;
 mod arrival;
+/// Score-Version 23 (13.10.2026) — spaetes Final / Kurvenanflug erkennen.
+mod spaetes_final;
 /// v1.7.0 — Ausfahrten aus der OSM-Bodenkarte (Spec §8.6).
 mod ausfahrten;
 /// Bordbuch (26.09.2026) — bestätigt erledigte Cockpit-Routinen, ohne Einfluss auf Score/PIREP.
@@ -5487,6 +5489,9 @@ struct PersistedFlightStats {
     /// v0.7.7: raw SimBrief `<params><time_generated>` — siehe FlightStats.
     #[serde(default)]
     simbrief_ofp_generated_at: Option<String>,
+    /// „Zeiten gegen Flugplan": Planzeiten des OFP — siehe FlightStats.
+    #[serde(default)]
+    ofp_planzeiten: landing_scoring::flugzeiten::FlugZeiten,
     /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
     /// Summe aller Pause-Sekunden seit Flugstart. `#[serde(default)]`
     /// damit pre-Spec `active_flight.json` weiter ladbar bleibt — alte
@@ -5513,6 +5518,9 @@ struct PersistedFlightStats {
     /// Neustart im Client, während die Webapp sie aus dem Touchdown zeigt.
     #[serde(default)]
     approach_stable_at_da: Option<bool>,
+    /// Score-Version 23: spaetes Final / Kurvenanflug dieser Landung.
+    #[serde(default)]
+    approach_spaetes_final: Option<spaetes_final::SpaetesFinal>,
     #[serde(default)]
     landing_vref_deviation_kt: Option<f32>,
     #[serde(default)]
@@ -5818,6 +5826,7 @@ impl PersistedFlightStats {
             // v0.7.7 OFP-Refresh-Foundation
             simbrief_ofp_id: stats.simbrief_ofp_id.clone(),
             simbrief_ofp_generated_at: stats.simbrief_ofp_generated_at.clone(),
+            ofp_planzeiten: stats.ofp_planzeiten,
             // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator)
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
@@ -5825,6 +5834,7 @@ impl PersistedFlightStats {
             approach_runway_changed_late: stats.approach_runway_changed_late,
             approach_stall_warning_count: stats.approach_stall_warning_count,
             approach_stable_at_da: stats.approach_stable_at_da,
+            approach_spaetes_final: stats.approach_spaetes_final,
             landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
             landing_vref_source: stats.landing_vref_source.map(str::to_string),
             landing_vref_toleranz_kt: stats.landing_vref_toleranz_kt,
@@ -6105,6 +6115,7 @@ impl PersistedFlightStats {
         // v0.7.7 OFP-Refresh-Foundation
         stats.simbrief_ofp_id = self.simbrief_ofp_id;
         stats.simbrief_ofp_generated_at = self.simbrief_ofp_generated_at;
+        stats.ofp_planzeiten = self.ofp_planzeiten;
         // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
         // ueber `save_active_flight`/Resume hinweg erhalten. Damit
         // wird ein App-Restart waehrend laufender Pause die akkumu-
@@ -6115,6 +6126,7 @@ impl PersistedFlightStats {
         stats.approach_runway_changed_late = self.approach_runway_changed_late;
         stats.approach_stall_warning_count = self.approach_stall_warning_count;
         stats.approach_stable_at_da = self.approach_stable_at_da;
+        stats.approach_spaetes_final = self.approach_spaetes_final;
         stats.landing_vref_deviation_kt = self.landing_vref_deviation_kt;
         // Feste Werte (siehe Vref-Zuordnung beim Aufsetzen).
         stats.landing_vref_source = self.landing_vref_source.as_deref().map(|s| match s {
@@ -7194,6 +7206,14 @@ struct FlightStats {
     /// String, aber wir machen keine Annahmen). Audit-Trail-Datum.
     /// Spec docs/spec/ofp-refresh-during-boarding.md §6.1.
     simbrief_ofp_generated_at: Option<String>,
+    /// „Zeiten gegen Flugplan" (13.10.2026): die vier Planzeiten des
+    /// geladenen OFP (`plan_*`, die Ist-Felder bleiben hier leer — sie
+    /// kommen erst in [`flugzeiten`] aus `block_off_at` & Co. dazu).
+    ofp_planzeiten: landing_scoring::flugzeiten::FlugZeiten,
+    /// Cockpit: erwartete Landung (Unix-s) aus der Planzeit am aktuellen Ort
+    /// der Route (`landung_erwartet`). Nur in der Luft, nicht gespeichert —
+    /// der naechste Takt rechnet sie neu.
+    landung_erwartet: Option<i64>,
     // ─── v0.5.26 Erweiterte Landung-Metriken ───────────────────────────
     //
     // Phase 1 — Sicherheits-Indikatoren:
@@ -7221,6 +7241,10 @@ struct FlightStats {
     landing_vref_landeklappen: Option<bool>,
     /// Approach-Stable bei 200 ft AGL/HAT (= ICAO-DA-Gate)
     approach_stable_at_da: Option<bool>,
+    /// Score-Version 23: erkanntes spaetes Final / Kurvenanflug. Ab `ab`
+    /// zaehlen Querneigung, V/S-Streuung und Gleitpfad; dafuer gilt die
+    /// 300-ft-Grenze (`rechtzeitig`). `None` = gerader Anflug.
+    approach_spaetes_final: Option<spaetes_final::SpaetesFinal>,
     // Phase 2 — Visualisierung-Daten (nicht direkt im Score, fuer UI)
     // (= verwendet vorhandenen approach_buffer, kein extra Feld noetig)
     // Phase 3 — Aggregate
@@ -9130,6 +9154,11 @@ pub struct ActiveFlightInfo {
     takeoff_at: Option<String>,
     landing_at: Option<String>,
     block_on_at: Option<String>,
+    /// „Zeiten gegen Flugplan": Plan (SimBrief) und Ist als Unix-s — dieselbe
+    /// Form wie im Landungsdatensatz, damit dieselbe Anzeige-Logik rechnet.
+    flugzeiten: landing_scoring::flugzeiten::FlugZeiten,
+    /// Erwartete Landung (Unix-s) aus der Planzeit am aktuellen Ort.
+    landung_erwartet: Option<i64>,
     landing_rate_fpm: Option<f32>,
     landing_g_force: Option<f32>,
     /// Set to `true` exactly ONCE — the first time the UI reads the flight
@@ -11585,7 +11614,34 @@ fn landekonfiguration(
 /// Sekundaer (informativ, NICHT score-relevant):
 ///   6. V/S-Deviation vs 3°-ILS-Profil (target_vs = -gs_kt × 5.31)
 ///      — falsch fuer GA-Visual-Approach, deshalb nur informativ
+// Seit Score-Version 23 rufen nur noch Tests die Fassung ohne spaetes Final.
+#[cfg(test)]
 fn compute_approach_stability_v2(
+    buf: &std::collections::VecDeque<ApproachBufferSample>,
+    arr_elevation_ft: Option<f32>,
+    td_ts: Option<DateTime<Utc>>,
+    glideslope_angle_deg: Option<f64>,
+    window: Option<(DateTime<Utc>, chrono::Duration)>,
+    konfig: KonfigKontext,
+) -> ApproachStabilityV2 {
+    compute_approach_stability_v2_mit_final(
+        buf,
+        arr_elevation_ft,
+        td_ts,
+        glideslope_angle_deg,
+        window,
+        konfig,
+        None,
+    )
+}
+
+/// Wie `compute_approach_stability_v2`, dazu Score-Version 23: bei einem
+/// erkannten spaeten Final (`spaetes`) zaehlen Querneigungs- und V/S-Streuung
+/// erst ab dem Ausrichten auf die Bahn — die Kurven davor sind das
+/// Verfahren, keine Unruhe. Dafuer muss das Final rechtzeitig erreicht sein
+/// (`SpaetesFinal::rechtzeitig`, 300 ft + Fluegel waagerecht), sonst ist das
+/// Gate nicht stabil. `None` = exakt das bisherige Verhalten.
+fn compute_approach_stability_v2_mit_final(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
     arr_elevation_ft: Option<f32>,
     td_ts: Option<DateTime<Utc>>,
@@ -11607,18 +11663,20 @@ fn compute_approach_stability_v2(
     // v1.6.6: Musterwissen fuer die Landekonfiguration (Vref + Klappen-Raster
     // dieses Fluges). `Default::default()` = alles None = bisheriges Verhalten.
     konfig: KonfigKontext,
+    spaetes: Option<&spaetes_final::SpaetesFinal>,
 ) -> ApproachStabilityV2 {
     // Fenster-Filter zuerst, dann identische Auswertung via Rekursion mit
     // `None` — so existiert die eigentliche Mess-Logik nur einmal.
     if let Some((td, dur)) = window {
         let filtered = approach_buffer_window(buf, td, dur);
-        return compute_approach_stability_v2(
+        return compute_approach_stability_v2_mit_final(
             &filtered,
             arr_elevation_ft,
             td_ts,
             glideslope_angle_deg,
             None,
             konfig,
+            spaetes,
         );
     }
 
@@ -11798,9 +11856,11 @@ fn compute_approach_stability_v2(
     // null Samples im v2-Fenster und trotzdem eine Legacy-V/S-Streuung.
     //
     // Beide Achsen teilen sich jetzt Fenster, Filter und Mindest-Stichprobe.
+    // Score-Version 23: beim spaeten Final erst ab dem Ausrichten.
     let vector_filtered: Vec<&ApproachBufferSample> = gate_samples
         .iter()
         .filter(|s| !in_vector_window(s.at))
+        .filter(|s| spaetes.is_none_or(|sf| s.at >= sf.ab))
         .copied()
         .collect();
     out.bank_stddev_filtered_deg = stability_stddev(vector_filtered.iter().map(|s| s.bank_deg));
@@ -11819,7 +11879,13 @@ fn compute_approach_stability_v2(
                                                        // At this point in the function we are always past the `gate_samples.len()
                                                        // < 3` early return, so `out.excessive_sink` is always `Some` (set just
                                                        // above) — `unwrap_or(false)` is a defensive fallback, never actually hit.
-    let stable = jerk_ok && bank_ok && ias_ok && !out.excessive_sink.unwrap_or(false) && config_ok;
+    let final_ok = spaetes.is_none_or(|sf| sf.rechtzeitig);
+    let stable = jerk_ok
+        && bank_ok
+        && ias_ok
+        && !out.excessive_sink.unwrap_or(false)
+        && config_ok
+        && final_ok;
     out.stable_at_gate = Some(stable);
 
     // 10) v0.5.26: Stable-At-DA (200 ft) — gleicher Composite-Check
@@ -16495,6 +16561,7 @@ async fn flight_refresh_simbrief(
         if stats.abflug_icao.is_none() {
             stats.abflug_icao = Some(flight.dpt_airport.trim().to_ascii_uppercase());
         }
+        stats.ofp_planzeiten = ofp_planzeiten(&ofp);
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -18197,6 +18264,8 @@ fn flight_info(
         takeoff_at: stats.takeoff_at.map(|t| t.to_rfc3339()),
         landing_at: stats.landing_at.map(|t| t.to_rfc3339()),
         block_on_at: stats.block_on_at.map(|t| t.to_rfc3339()),
+        flugzeiten: flugzeiten(&stats),
+        landung_erwartet: stats.landung_erwartet,
         // v0.7.21 (MS713-QS): canonical_landing_rate_fpm() statt
         // direkt — sonst zeigt das Active-Flight-Panel (vor + waehrend
         // Filing) den Streamer-Tick-Snapshot, der Tab "Landung" aber
@@ -20387,6 +20456,7 @@ async fn flight_start_mit(
         // Wegpunkten. Anker und Projektion muessen aus derselben Route kommen
         // (QS-Befund V4, 18.09.2026).
         sprit_plan_neu_lesen(&mut stats);
+        stats.ofp_planzeiten = ofp_planzeiten(&ofp);
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -24474,6 +24544,12 @@ impl FlightStats {
     ///
     /// v2 gewinnt, legacy bleibt Fallback fuer Alt-Datensaetze ohne v2-Feld.
     pub fn canonical_bank_stddev_deg(&self) -> Option<f32> {
+        // Score-Version 23: beim spaeten Final zaehlt nur die Messung ab dem
+        // Ausrichten. Die alte Streuung enthaelt die Kurven davor — als
+        // Rueckfall wuerde sie genau das werten, was ausgenommen ist.
+        if self.approach_spaetes_final.is_some() {
+            return self.approach_bank_stddev_filtered_deg;
+        }
         self.approach_bank_stddev_filtered_deg
             .or(self.approach_bank_stddev_deg)
     }
@@ -24492,6 +24568,12 @@ impl FlightStats {
     /// Bewertung war schon richtig. Es beseitigt, dass eine einzige Formel aus
     /// zwei Wirklichkeiten rechnet.
     pub fn canonical_vs_stddev_fpm(&self) -> Option<f32> {
+        // Score-Version 23: beim spaeten Final zaehlt nur die Messung ab dem
+        // Ausrichten. Die alte Streuung enthaelt die Kurven davor — als
+        // Rueckfall wuerde sie genau das werten, was ausgenommen ist.
+        if self.approach_spaetes_final.is_some() {
+            return self.approach_vs_stddev_filtered_fpm;
+        }
         self.approach_vs_stddev_filtered_fpm
             .or(self.approach_vs_stddev_fpm)
     }
@@ -25101,6 +25183,7 @@ fn build_pirep_payload(
         dep: flight.dpt_airport.clone(),
         arr: effective_arr_icao.to_string(),
         block_time_min: body.flight_time,
+        flugzeiten: Some(flugzeiten(&stats)),
         flight_time_min: body.flight_time,
         distance_nm: body.distance.map(|d| d as f32),
         // v0.12.5 (LE4, QS-R2-P2): `body.fuel_used` ist die phpVMS-Site-
@@ -26028,8 +26111,14 @@ fn sprit_plan_am_ort_suche(
             }
             None => f64::MAX,
         };
+        // „Zeiten gegen Flugplan": Planzeit am Lotfusspunkt, interpoliert.
+        let plan_bis_s = match (a.zeit_bis_hier_s, b.zeit_bis_hier_s) {
+            (Some(za), Some(zb)) => Some(za as f64 + (zb - za) as f64 * t),
+            _ => None,
+        };
         let kandidat = SpritPlanOrt {
             plan_bis_kg,
+            plan_bis_s,
             plan_rest_nm,
             abstand_nm,
             segment: i,
@@ -26064,6 +26153,8 @@ fn sprit_plan_am_ort_suche(
 struct SpritPlanOrt {
     /// Geplanter Verbrauch bis hierher.
     plan_bis_kg: f32,
+    /// Geplante Flugzeit bis hierher (s ab Start, aus `<time_total>`).
+    plan_bis_s: Option<f64>,
     /// Geplante Reststrecke ab hier, Strecke ueber Grund.
     plan_rest_nm: f64,
     /// Wie weit die gemessene Position neben der Route lag.
@@ -26396,8 +26487,12 @@ fn sprit_wegpunkt_tick(
     }
     let geflogen = Some(stats.distance_nm).filter(|d| d.is_finite() && *d > 0.0);
     let Some(ort) = sprit_plan_am_ort(&stats.planned_waypoints, lat, lon, geflogen) else {
+        // Neben der Route: keine Planzeit — lieber keine Schaetzung als eine
+        // veraltete.
+        stats.landung_erwartet = None;
         return;
     };
+    stats.landung_erwartet = landung_erwartet(&stats.planned_waypoints, &ort, jetzt_ms);
     let neu = ort.segment;
     match stats.sprit_wp_segment {
         // Erster Tick in der Luft: Was davor lag, wurde nicht gemessen — es
@@ -27529,6 +27624,7 @@ fn anflug_werte(stats: &FlightStats) -> landing_scoring::anflug_urteil::AnflugWe
             .map(|t| t.mittel_abs_dots),
         ias_stddev_unter_500_kt: stats.approach_ias_stddev_unter_500_kt,
         stable_config_500: stats.approach_stable_config_500,
+        spaetes_final_rechtzeitig: stats.approach_spaetes_final.map(|sf| sf.rechtzeitig),
     }
 }
 
@@ -28080,9 +28176,17 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// (`AusfahrtKandidat`). Anlass TUA651 (VVTS 25R, 09.10.2026): Kurve in
 /// die Schnellabrollbahn bei 64 kt als „Rad neben der Bahn" gewertet.
 ///
+/// **23 seit v2.0.15**: Spaetes Final / Kurvenanflug (`spaetes_final.rs`).
+/// Wer erst unter 1000 ft dauerhaft auf der Bahnachse liegt und davor
+/// mindestens 20 s daneben war (Circling, Platzrunde, Versatzanflug),
+/// bekommt Querneigungs-/V/S-Streuung und Gleitpfad erst ab dem Ausrichten
+/// gewertet — dafuer neuer Pruefpunkt `final`: spaetestens 300 ft auf dem
+/// Final, darunter hoechstens 10° Querneigung (FSF ALAR 7.1). Anlass:
+/// Thomas 13.10.2026, Korpus 1437 Landungen.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 22;
+const SCORE_ALGORITHMUS_VERSION: u8 = 23;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -29629,6 +29733,13 @@ where
         approach_runway_changed_late: Some(stats.approach_runway_changed_late),
         approach_stable_at_da: stats.approach_stable_at_da,
         approach_stall_warning_count: Some(stats.approach_stall_warning_count),
+        approach_spaetes_final_ab_ft: stats.approach_spaetes_final.map(|sf| sf.ab_hoehe_ft),
+        approach_spaetes_final_kurve_deg: stats.approach_spaetes_final.map(|sf| sf.kurve_deg),
+        approach_spaetes_final_querneigung_unter_300_deg: stats
+            .approach_spaetes_final
+            .map(|sf| sf.querneigung_max_unter_300_deg),
+        approach_spaetes_final_rechtzeitig: stats.approach_spaetes_final.map(|sf| sf.rechtzeitig),
+        flugzeiten: Some(flugzeiten(stats)),
     })
 }
 
@@ -38117,13 +38228,22 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                         .unwrap_or(flight.aircraft_icao.trim());
                                     let konfig =
                                         konfig_kontext(&stats, &aircraft_limits_for(muster));
-                                    let stab_v2 = compute_approach_stability_v2(
+                                    let bezug_ft = anflug_bezugshoehe_ft(
+                                        &stats,
+                                        &flight.arr_airport,
+                                        ist_platzhoehe_navdaten_ft(&flight, &stats),
+                                    );
+                                    // Score-Version 23: im selben Fenster wie das Gate.
+                                    let spaetes = spaetes_final_erkennen(
+                                        &stats,
+                                        bezug_ft,
+                                        pending_at,
+                                        Some(stab_window),
+                                    );
+                                    stats.approach_spaetes_final = spaetes;
+                                    let stab_v2 = compute_approach_stability_v2_mit_final(
                                         &stats.approach_buffer,
-                                        anflug_bezugshoehe_ft(
-                                            &stats,
-                                            &flight.arr_airport,
-                                            ist_platzhoehe_navdaten_ft(&flight, &stats),
-                                        ),
+                                        bezug_ft,
                                         td_ts,
                                         stats
                                             .runway_nav_geometry
@@ -38131,6 +38251,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                             .map(|g| g.glideslope_angle),
                                         Some((pending_at, stab_window)),
                                         konfig,
+                                        spaetes.as_ref(),
                                     );
                                     stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
                                     stats.approach_max_vs_deviation_below_500_fpm =
@@ -42151,6 +42272,18 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 landing_vref_landeklappen: stats.landing_vref_landeklappen,
                                 landing_vref_muster: stats.aufgeloestes_muster.clone(),
                                 approach_stable_at_da: stats.approach_stable_at_da,
+                                approach_spaetes_final_ab_ft: stats
+                                    .approach_spaetes_final
+                                    .map(|sf| sf.ab_hoehe_ft),
+                                approach_spaetes_final_kurve_deg: stats
+                                    .approach_spaetes_final
+                                    .map(|sf| sf.kurve_deg),
+                                approach_spaetes_final_querneigung_unter_300_deg: stats
+                                    .approach_spaetes_final
+                                    .map(|sf| sf.querneigung_max_unter_300_deg),
+                                approach_spaetes_final_rechtzeitig: stats
+                                    .approach_spaetes_final
+                                    .map(|sf| sf.rechtzeitig),
                                 approach_stall_warning_count: Some(
                                     stats.approach_stall_warning_count,
                                 ),
@@ -46291,7 +46424,13 @@ fn anflug_forensik_rechnen(
             (Some(dauer), Some(t)) => approach_buffer_window(&proben, t, dauer),
             _ => proben,
         };
-        anflug_forensik::auswerten(&proben, bahn.as_ref(), td, platzhoehe_ft.map(f64::from))
+        anflug_forensik::auswerten_ab_final(
+            &proben,
+            bahn.as_ref(),
+            td,
+            platzhoehe_ft.map(f64::from),
+            stats.approach_spaetes_final.map(|sf| sf.ab),
+        )
     };
     // Laeuft die Dump-Auswertung des Samplers schon VOR diesem Stempel,
     // steht das Analyse-JSON bereits — dann hier nachtragen, damit
@@ -46457,6 +46596,92 @@ fn pausen_ms_zwischen(pausen: &[PauseSegment], von: DateTime<Utc>, bis: DateTime
         .sum()
 }
 
+/// „Zeiten gegen Flugplan", Cockpit: erwartete Landung (Unix-s) = jetzt plus
+/// die geplante Restzeit ab dem Lotfusspunkt auf der Route. Die Planzeiten
+/// der Wegpunkte kennen Steig- und Sinkflug — genauer als Luftlinie durch
+/// Groundspeed. `None` ohne Zeiten im Navlog.
+fn landung_erwartet(
+    fixes: &[api_client::RouteFix],
+    ort: &SpritPlanOrt,
+    jetzt_ms: i64,
+) -> Option<i64> {
+    let bis = ort.plan_bis_s?;
+    let ende = fixes.last()?.zeit_bis_hier_s? as f64;
+    let rest = (ende - bis).max(0.0);
+    Some(jetzt_ms.div_euclid(1000) + rest.round() as i64)
+}
+
+/// „Zeiten gegen Flugplan": die vier Planzeiten eines OFP. Null oder
+/// negativ (leeres Feld) gilt als fehlend.
+fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten::FlugZeiten {
+    let echt = |v: Option<i64>| v.filter(|&t| t > 0);
+    landing_scoring::flugzeiten::FlugZeiten {
+        plan_off_block: echt(ofp.sched_out_epoch),
+        plan_abheben: echt(ofp.sched_off_epoch),
+        plan_aufsetzen: echt(ofp.sched_on_epoch),
+        plan_on_block: echt(ofp.sched_in_epoch),
+        ..Default::default()
+    }
+}
+
+/// „Zeiten gegen Flugplan": Plan des OFP plus die Ist-Zeiten dieses Fluges.
+/// Immer `Some` — ohne Plan sagt die Anzeige „kein SimBrief-OFP" (Altbestand
+/// ohne das Feld blendet den Abschnitt dagegen ganz aus).
+fn flugzeiten(stats: &FlightStats) -> landing_scoring::flugzeiten::FlugZeiten {
+    landing_scoring::flugzeiten::FlugZeiten {
+        off_block: stats.block_off_at.map(|t| t.timestamp()),
+        abheben: stats.takeoff_at.map(|t| t.timestamp()),
+        aufsetzen: stats.landing_at.map(|t| t.timestamp()),
+        on_block: stats.block_on_at.map(|t| t.timestamp()),
+        ..stats.ofp_planzeiten
+    }
+}
+
+/// Score-Version 23: spaetes Final / Kurvenanflug erkennen. Aus dem
+/// Forensik-Puffer (~5 min) ab dem Durchstart-Schnitt — der Gate-Puffer reicht
+/// mit 120 Proben (~2 min) nicht bis vor das Final. Ohne Navdaten-Bahn keine
+/// Erkennung (dann gilt das bisherige Gate).
+///
+/// Wie das uebrige Gate (auch der Gleitwinkel-Faktor) wird das Ergebnis am
+/// Aufsetzen eingefroren: Ein spaeterer Bahnwechsel (Szenerie nachgereicht,
+/// Navigraph-Upgrade beim Einreichen) rechnet es nicht neu, und
+/// `anflug_forensik_nachziehen` filtert die Gleitpfad-Tore weiter ab dem
+/// eingefrorenen `ab` — passend zur eingefrorenen Streuung. Eine
+/// Szenerie-Korrektur verschiebt die Achse um Meter und Hundertstel Grad,
+/// weit unter den Toleranzen (300 m, 20°). Kam die Navdaten-Bahn erst nach
+/// dem Aufsetzen, bleibt es beim geraden Anflug (bisheriges Verhalten).
+/// Codex-QS 13.10.2026, bewusst so belassen.
+fn spaetes_final_erkennen(
+    stats: &FlightStats,
+    bezug_ft: Option<f32>,
+    td: DateTime<Utc>,
+    fenster: Option<chrono::Duration>,
+) -> Option<spaetes_final::SpaetesFinal> {
+    let nav = stats.runway_nav_geometry.as_ref()?;
+    let bahn = spaetes_final::Bahnachse {
+        schwelle_lat: nav.threshold.lat,
+        schwelle_lon: nav.threshold.lon,
+        kurs_wahr_deg: nav.true_course,
+    };
+    let schnitt = stats.anflug_forensik_ab;
+    let proben: Vec<&ApproachBufferSample> = stats
+        .anflug_forensik_puffer
+        .iter()
+        .filter(|s| schnitt.is_none_or(|ab| s.at > ab))
+        .filter(|s| fenster.is_none_or(|d| s.at >= td - d))
+        .collect();
+    spaetes_final::erkennen(
+        &proben,
+        |s| match bezug_ft {
+            Some(e) => s.msl_ft - e,
+            None => s.agl_ft,
+        },
+        td,
+        &bahn,
+        APPROACH_FLARE_CUTOFF_MS,
+    )
+}
+
 /// Die Bahn der Forensik: Navdaten-Geometrie plus versetzte Schwelle.
 fn anflug_forensik_bahn(stats: &FlightStats) -> Option<anflug_forensik::Bahnbezug> {
     stats.runway_nav_geometry.as_ref().map(|nav| {
@@ -46575,6 +46800,7 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_used_hat = false;
     stats.approach_window_sample_count = None;
     stats.approach_stable_at_da = None;
+    stats.approach_spaetes_final = None;
     stats.approach_stall_warning_count = 0;
     stats.anflug_forensik = Default::default();
     stats.anflug_forensik_td = None;
@@ -48782,13 +49008,18 @@ fn step_flight_at(
                     stats.unbekanntes_muster = Some(muster.to_string());
                 }
                 let konfig = konfig_kontext(&stats, &limits);
-                let stab_v2 = compute_approach_stability_v2(
+                let bezug_ft = anflug_bezugshoehe_ft(
+                    &stats,
+                    &flight.arr_airport,
+                    ist_platzhoehe_navdaten_ft(&flight, &stats),
+                );
+                // Score-Version 23: spaetes Final / Kurvenanflug.
+                let spaetes =
+                    td_ts.and_then(|td| spaetes_final_erkennen(&stats, bezug_ft, td, None));
+                stats.approach_spaetes_final = spaetes;
+                let stab_v2 = compute_approach_stability_v2_mit_final(
                     &stats.approach_buffer,
-                    anflug_bezugshoehe_ft(
-                        &stats,
-                        &flight.arr_airport,
-                        ist_platzhoehe_navdaten_ft(&flight, &stats),
-                    ),
+                    bezug_ft,
                     td_ts,
                     // v0.15.17: echter Gleitwinkel der aufgelösten Bahn (oben bei
                     // 18597 gesetzt, also vor diesem Aufruf). None bei OurAirports-
@@ -48802,6 +49033,7 @@ fn step_flight_at(
                     // Sampler-Pfad, dessen Buffer Low-Level-Cruise enthalten kann).
                     None,
                     konfig,
+                    spaetes.as_ref(),
                 );
                 stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
                 stats.approach_max_vs_deviation_below_500_fpm =
@@ -67131,6 +67363,69 @@ mod sim_pause_tests {
 
     // ---- v0.12.1 Stream C — approach-stability fixes (LE11 + LE12) ----
 
+    /// Score-Version 23: beim spaeten Final zaehlt die Querneigung erst ab
+    /// dem Ausrichten — und ein nicht rechtzeitiges Final ist nicht stabil.
+    #[test]
+    fn spaetes_final_misst_querneigung_ab_dem_ausrichten() {
+        // 20 Proben Kurve (±25°) von 900 auf 520 ft, dann 20 ruhige Proben.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = (0..40)
+            .map(|i| {
+                let agl = 900.0 - i as f32 * 20.0;
+                let mut a = approach_sample(agl, 120.0, 120.0, -600.0, 1.0, 1.0);
+                a.bank_deg = if i >= 20 {
+                    0.5
+                } else if i % 2 == 0 {
+                    25.0
+                } else {
+                    -25.0
+                };
+                a
+            })
+            .collect();
+        let ohne =
+            compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        assert!(ohne.bank_stddev_filtered_deg.unwrap() > 5.0, "Gegenprobe: Kurve zaehlt bisher");
+        assert_eq!(ohne.stable_at_gate, Some(false));
+
+        let sf = spaetes_final::SpaetesFinal {
+            ab: buf[20].at,
+            ab_hoehe_ft: 500.0,
+            kurve_deg: 180.0,
+            querneigung_max_unter_300_deg: 0.5,
+            rechtzeitig: true,
+        };
+        let mit = compute_approach_stability_v2_mit_final(
+            &buf,
+            None,
+            None,
+            None,
+            None,
+            Default::default(),
+            Some(&sf),
+        );
+        assert!(
+            mit.bank_stddev_filtered_deg.unwrap() < 1.0,
+            "ab dem Final ruhig: {:?}",
+            mit.bank_stddev_filtered_deg
+        );
+        assert_eq!(mit.stable_at_gate, Some(true));
+
+        let zu_spaet = spaetes_final::SpaetesFinal {
+            rechtzeitig: false,
+            ..sf
+        };
+        let r = compute_approach_stability_v2_mit_final(
+            &buf,
+            None,
+            None,
+            None,
+            None,
+            Default::default(),
+            Some(&zu_spaet),
+        );
+        assert_eq!(r.stable_at_gate, Some(false), "Final nicht rechtzeitig");
+    }
+
     fn approach_sample(
         agl: f32,
         gs: f32,
@@ -67600,6 +67895,7 @@ mod sim_pause_tests {
             gleitpfad_dots: Some(0.34),
             ias_stddev_unter_500_kt: out.ias_stddev_unter_500_kt,
             stable_config_500: out.stable_config_500,
+            spaetes_final_rechtzeitig: None,
         };
         assert_eq!(
             landing_scoring::anflug_urteil::anflug_urteil(&werte),

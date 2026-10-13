@@ -5561,6 +5561,13 @@ input:disabled {
   letter-spacing: 0.04em;
   color: var(--text);
 }
+/* Zeiten gegen Flugplan in der Liste: Chips in Normalschrift neben der Route. */
+.landing-ov-route__l1 .flugzeiten-kurz {
+  margin-left: 8px;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  letter-spacing: 0;
+}
 .landing-ov-route__l2 {
   display: block;
   margin-top: 2px;

@@ -58,6 +58,7 @@ export type { SubScore };
 import { FlareAbschnitt } from "./FlareAbschnitt";
 import { LandingQualitaet } from "./LandingQualitaet";
 import { LadeblattAbschnitt } from "./LadeblattAbschnitt";
+import { FlugzeitenAbschnitt, FlugzeitenKurz } from "./FlugzeitenAbschnitt";
 import { MetarAbschnitt } from "./MetarAbschnitt";
 import { RohdatenAbschnitt } from "./RohdatenAbschnitt";
 export { scoreG };
@@ -768,6 +769,8 @@ function LandungsAbschnitte({
         runwayChangedLate={record.approach_runway_changed_late}
         stableAtDa={record.approach_stable_at_da}
         stallWarningCount={record.approach_stall_warning_count}
+        spaetesFinalAbFt={record.approach_spaetes_final_ab_ft}
+        spaetesFinalKurveDeg={record.approach_spaetes_final_kurve_deg}
       />
       {/* Aufsetz-Qualität (keine Note): gespiegelt (LandingQualitaet.tsx). */}
       <LandingQualitaet record={record} />
@@ -806,6 +809,10 @@ function LandungsAbschnitte({
 
       {/* Bordbuch dieses Flugs — was der Pilot an SOPs abgehakt hat. */}
       <BordbuchLandungsAbschnitt eintrag={bordbuchEintrag ?? null} onMarkieren={onBordbuchMarkieren} />
+
+      {/* Zeiten gegen Flugplan (SimBrief, keine Note): gespiegelt
+          (FlugzeitenAbschnitt.tsx). */}
+      <FlugzeitenAbschnitt record={record} />
 
       {/* Treibstoff + Gewicht (Sprit-Auswertung, Soll/Ist): gespiegelt
           (LadeblattAbschnitt.tsx). */}
@@ -1408,6 +1415,7 @@ export function LandingPanel() {
                       <span className="landing-ov-route__l1">
                         {dep} → {arr}
                         <PruefstatusMarke status={pruefstatus[r.pirep_id]} />
+                        <FlugzeitenKurz z={r.flugzeiten} />
                       </span>
                       <span className="landing-ov-route__l2">
                         {callsign} · {airportNames[dep] ?? dep} → {airportNames[arr] ?? arr}

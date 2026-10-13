@@ -918,6 +918,18 @@ pub struct TouchdownPayload {
     /// Stable-Approach bei DA (= 200 ft AGL/HAT). Strenger als 1000-ft-Gate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approach_stable_at_da: Option<bool>,
+    /// Score-Version 23: spaetes Final / Kurvenanflug erkannt — Hoehe beim
+    /// Ausrichten auf die Bahn (ft ueber Platz), Kurve davor (Grad, unter
+    /// 2000 ft), groesste Querneigung unter 300 ft, und ob das Final
+    /// rechtzeitig stand (300 ft, Fluegel waagerecht). Fehlt = gerader Anflug.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_ab_ft: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_kurve_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_querneigung_unter_300_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_rechtzeitig: Option<bool>,
     /// Anzahl Stall-Warning-Samples im Approach-Buffer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approach_stall_warning_count: Option<u32>,
@@ -1334,6 +1346,11 @@ pub struct PirepPayload {
     pub client_version: Option<&'static str>,
     pub block_time_min: Option<i32>,
     pub flight_time_min: Option<i32>,
+    /// „Zeiten gegen Flugplan" (13.10.2026): Plan (SimBrief) und Ist, nur
+    /// Anzeige. Der Recorder reicht das Feld in den Touchdown weiter
+    /// (`PIREP_FELDER_QUELLE`), dort liest es der Landungsbericht.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flugzeiten: Option<landing_scoring::flugzeiten::FlugZeiten>,
     pub distance_nm: Option<f32>,
     /// **Raw** Sim-Cumulative-Counter aus dem Sim-Telemetry-Feed.
     ///
