@@ -6401,6 +6401,30 @@ mod bildrate_tests {
         assert_eq!((min, median, max, n), (24.0, 41.0, 60.0, 4));
     }
 
+    /// Die Bildrate steht im Flugprotokoll, aber nicht im Sim-Status, den
+    /// Oberflaeche und LAN-Fernbedienung bekommen (Codex-QS P2, 2.0.14).
+    #[test]
+    fn bildrate_nur_im_flugprotokoll_nicht_im_sim_status() {
+        let mut snap = SimSnapshot::default();
+        snap.sim_bildrate_hz = Some(42.0);
+        let protokoll = serde_json::to_value(&snap).expect("Snapshot");
+        assert_eq!(
+            protokoll["sim_bildrate_hz"],
+            serde_json::json!(42.0),
+            "Gegenprobe: das Flugprotokoll traegt die Bildrate"
+        );
+        let status = SimStatus {
+            snapshot: Some(snap),
+            ..Default::default()
+        };
+        let status = serde_json::to_value(&status).expect("Status");
+        assert!(
+            status["snapshot"].get("sim_bildrate_hz").is_none(),
+            "der Sim-Status gibt die Bildrate an Oberflaeche und LAN-Bruecke weiter"
+        );
+        assert!(status["snapshot"].is_object(), "der Snapshot selbst fehlt");
+    }
+
     /// Der Puffer muss das ganze Aufsetzfenster abdecken, sonst fehlen
     /// die ersten Sekunden vor dem Aufsetzen in der Zeile.
     #[test]
@@ -56840,10 +56864,29 @@ pub struct SimStatus {
     state: String,
     /// User-selected sim ("off" | "msfs2020" | "msfs2024" | "xplane11" | "xplane12").
     kind: String,
+    /// ⚠ Ohne Diagnosefelder — siehe `snapshot_ohne_diagnose`.
+    #[serde(serialize_with = "snapshot_ohne_diagnose")]
     snapshot: Option<SimSnapshot>,
     last_error: Option<String>,
     /// Whether the selected kind is actually implemented in this build.
     available: bool,
+}
+
+/// Der Sim-Status ohne die reinen Diagnosewerte.
+///
+/// Die Bildrate (2.0.14) gehoert ins Flugprotokoll und ins Diagnoselog,
+/// nicht in die Oberflaeche und nicht ueber die LAN-Bruecke an die
+/// Fernbedienung (Thomas, 13.10.2026; Codex-QS P2). Hier, an der
+/// Serialisierung, gilt das fuer jeden, der einen `SimStatus` baut.
+fn snapshot_ohne_diagnose<S: serde::Serializer>(
+    snapshot: &Option<SimSnapshot>,
+    ser: S,
+) -> Result<S::Ok, S::Error> {
+    let mut ohne = snapshot.clone();
+    if let Some(s) = ohne.as_mut() {
+        s.sim_bildrate_hz = None;
+    }
+    serde::Serialize::serialize(&ohne, ser)
 }
 
 fn kind_str(kind: SimKind) -> &'static str {
