@@ -7,6 +7,7 @@
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import {
+  A15_URTEIL_BIS_MIN,
   PUENKTLICH_BIS_MIN,
   datumUhrzeit,
   dauern,
@@ -95,9 +96,10 @@ function Kopfsatz({ z }: { z: FlugZeiten }) {
         : d < 0
           ? t("flugzeiten.kopf.block_kuerzer", { min: -d })
           : t("flugzeiten.kopf.block_gleich");
-  // Wie Airlines zählen (A15) — nur für On-Block, nur als Text.
+  // Wie Airlines zählen (A15) — nur für On-Block, nur als Text, und nur
+  // bis ±A15_URTEIL_BIS_MIN (darüber lag meist der Plan daneben).
   const a15 =
-    k.schritt === "on_block"
+    k.schritt === "on_block" && Math.abs(k.abw_min) <= A15_URTEIL_BIS_MIN
       ? k.abw_min <= PUENKTLICH_BIS_MIN
         ? t("flugzeiten.a15_puenktlich", { min: PUENKTLICH_BIS_MIN })
         : t("flugzeiten.a15_verspaetet", { min: PUENKTLICH_BIS_MIN })

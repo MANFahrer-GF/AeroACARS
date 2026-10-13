@@ -31,6 +31,11 @@ export const SCHRITTE: ZeitSchritt[] = ["off_block", "abheben", "aufsetzen", "on
  *  Nur ein Text neben der Zahl, keine Farbe und keine Wertung. */
 export const PUENKTLICH_BIS_MIN = 15;
 
+/** Das Airline-Urteil nur, solange die Abweichung nach einem echten
+ *  Umlauf aussieht (Thomas 13.10.2026, Variante c): Bei mehr als einer
+ *  Stunde lag meist der Plan daneben — die Minuten stehen trotzdem da. */
+export const A15_URTEIL_BIS_MIN = 60;
+
 function zahl(v: number | null | undefined): number | null {
   return v != null && Number.isFinite(v) && v > 0 ? v : null;
 }

@@ -149,6 +149,26 @@ describe("Zeiten gegen Flugplan — am Gate und Plausibilität (14.10.2026)", ()
     expect(text).toContain("Plan aus dem OFP vom 13.10. 13:48z.");
   });
 
+  it("A: über 60 min Abweichung kein Airline-Urteil, die Minuten bleiben (Variante c)", () => {
+    // OFP um 10:00 erstellt, um 15:00 geflogen: Der Plan lag daneben.
+    const fuenf = 5 * 3600;
+    const z: FlugZeiten = {
+      ...BEISPIEL,
+      plan_off_block: BEISPIEL.plan_off_block! - fuenf,
+      plan_abheben: BEISPIEL.plan_abheben! - fuenf,
+      plan_aufsetzen: BEISPIEL.plan_aufsetzen! - fuenf,
+      plan_on_block: BEISPIEL.plan_on_block! - fuenf,
+    };
+    const text = render(<FlugzeitenAbschnitt record={mit(z)} />).container.textContent ?? "";
+    expect(text).toContain("On-Block 307 min nach Plan");
+    expect(text).not.toContain("verspätet");
+    expect(text).not.toContain("pünktlich");
+    // Bis 60 min bleibt das Urteil.
+    const spaet = render(<FlugzeitenAbschnitt record={mit({ ...BEISPIEL, on_block: hm(16, 40) })} />).container
+      .textContent;
+    expect(spaet).toContain("verspätet nach Airline-Maßstab");
+  });
+
   it("B mit einem OFP von gestern: keine Kurzform", () => {
     expect(render(<FlugzeitenKurz z={gestern(BEISPIEL)} />).container.innerHTML).toBe("");
   });
