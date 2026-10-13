@@ -37556,6 +37556,32 @@ struct AufsetzMessung {
     premium: Option<sim_xplane::PremiumTouchdown>,
 }
 
+/// Ein abgeholter Plugin-Aufsetzer, den keine Auswertung mehr annahm (je
+/// Flug). Der Adapter gibt ihn nur einmal heraus (`take`); stürzt die
+/// Auswertung genau zwischen Prüfung und Abholen ab, bliebe er sonst
+/// verloren. Der nächste Messfaden desselben Flugs reicht ihn zuerst weiter
+/// — wie früher, als er bis zum nächsten Takt im Adapter liegen blieb
+/// (Codex-Nachprüfung 2.0.17).
+static ZURUECKGELEGTER_AUFSETZER: Mutex<Option<(String, sim_xplane::PremiumTouchdown)>> =
+    Mutex::new(None);
+
+fn aufsetzer_zuruecklegen(pirep_id: &str, td: sim_xplane::PremiumTouchdown) {
+    *ZURUECKGELEGTER_AUFSETZER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some((pirep_id.to_string(), td));
+}
+
+fn zurueckgelegten_aufsetzer_nehmen(pirep_id: &str) -> Option<sim_xplane::PremiumTouchdown> {
+    let mut platz = ZURUECKGELEGTER_AUFSETZER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if platz.as_ref().is_some_and(|(p, _)| p == pirep_id) {
+        platz.take().map(|(_, td)| td)
+    } else {
+        None
+    }
+}
+
 /// Die Diagnose lesen, auch nach einem Absturz eines der beiden Fäden.
 fn diagnose_lesen(diagnose: &Mutex<SamplerDiagnose>) -> SamplerDiagnose {
     diagnose.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -37775,13 +37801,17 @@ fn aufsetz_messen(
         if !auswertung_lebt.load(Ordering::SeqCst) {
             break;
         }
-        let premium = plugin_aufsetzer_abholen();
+        let premium = zurueckgelegten_aufsetzer_nehmen(&flight.pirep_id)
+            .or_else(&mut plugin_aufsetzer_abholen);
         // Die Auswertung ist weg (beendet oder abgestürzt) — dann gibt es
-        // niemanden mehr, für den gemessen wird.
-        if an_auswertung
-            .send(AufsetzMessung { snap, now, premium })
-            .is_err()
+        // niemanden mehr, für den gemessen wird. Ein schon abgeholter
+        // Plugin-Aufsetzer wird zurückgelegt, nicht verworfen.
+        if let Err(std::sync::mpsc::SendError(messung)) =
+            an_auswertung.send(AufsetzMessung { snap, now, premium })
         {
+            if let Some(td) = messung.premium {
+                aufsetzer_zuruecklegen(&flight.pirep_id, td);
+            }
             break;
         }
     }
@@ -70064,6 +70094,57 @@ mod touchdown_metadata_stamp_tests {
             "Haltezeit waechst mit dem Platz: {klein:?} bei 10 Rollwegen, \
              {riesig:?} bei 32.000 — unter der Flugdaten-Sperre wird in \
              Flughafengroesse gearbeitet"
+        );
+    }
+
+    /// ⚠ Ein schon abgeholter Plugin-Aufsetzer geht nicht verloren, wenn
+    /// keine Auswertung mehr annimmt (Codex-Nachpruefung 2.0.17).
+    ///
+    /// Der Adapter gibt ihn nur einmal heraus. Hier ist die Auswertung schon
+    /// weg (Empfaenger verworfen), als der Messfaden ihn abholt: Er muss fuer
+    /// denselben Flug zurueckgelegt werden und beim naechsten Messfaden als
+    /// Erstes wieder herauskommen — und nur fuer DIESEN Flug.
+    #[test]
+    fn ein_abgeholter_plugin_aufsetzer_wird_ohne_auswertung_zurueckgelegt() {
+        let mut flight = flight_fixture("OMDB");
+        flight.pirep_id = "zuruecklegen-test".into();
+        let flight = Arc::new(flight);
+        let diagnose = Mutex::new(SamplerDiagnose::default());
+        let (an_auswertung, messungen) = std::sync::mpsc::channel::<AufsetzMessung>();
+        drop(messungen);
+        let lebt = AtomicBool::new(true);
+        let mut abgeholt = Some(
+            serde_json::from_str::<sim_xplane::PremiumTouchdown>(
+                r#"{"captured_vs_fpm":-212.0,"captured_g_normal":1.31}"#,
+            )
+            .expect("Aufsetzpaket"),
+        );
+        aufsetz_messen(
+            &flight,
+            0,
+            &diagnose,
+            &an_auswertung,
+            &lebt,
+            || {
+                Some(SimSnapshot {
+                    lat: 25.2528,
+                    lon: 55.3644,
+                    ..Default::default()
+                })
+            },
+            || abgeholt.take(),
+        );
+        assert!(abgeholt.is_none(), "Vorrichtung: der Aufsetzer wurde nie abgeholt");
+        assert!(
+            zurueckgelegten_aufsetzer_nehmen("anderer-flug").is_none(),
+            "ein zurueckgelegter Aufsetzer kommt bei einem anderen Flug heraus"
+        );
+        let zurueck = zurueckgelegten_aufsetzer_nehmen("zuruecklegen-test")
+            .expect("der abgeholte Plugin-Aufsetzer ist verloren");
+        assert_eq!(zurueck.captured_vs_fpm, -212.0);
+        assert!(
+            zurueckgelegten_aufsetzer_nehmen("zuruecklegen-test").is_none(),
+            "zurueckgelegt heisst einmal, nicht dauerhaft"
         );
     }
 
