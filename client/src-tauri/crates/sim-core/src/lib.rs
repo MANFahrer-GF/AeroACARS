@@ -133,6 +133,18 @@ pub struct SimSnapshot {
     pub paused: bool,
     pub slew_mode: bool,
     pub simulation_rate: f32,
+    /// Bilder pro Sekunde, wie der Simulator sie selbst meldet (2.0.14).
+    ///
+    /// X-Plane: `sim/time/framerate_period` (geglaettete Zeichenzeit je
+    /// Bild, Kehrwert). MSFS: SimConnect-Systemereignis `Frame`
+    /// (`fFrameRate`). `None`, solange der Simulator nichts geliefert hat.
+    ///
+    /// ⚠ Nur Diagnose: Sie erklaert, warum bei einer Landung wenige neue
+    /// Messwerte ankommen (der Simulator rechnet nicht oefter). Sie geht
+    /// in keine Bewertung, nicht in den PIREP und nicht an Recorder oder
+    /// Webseite (Thomas, 13.10.2026).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sim_bildrate_hz: Option<f32>,
 
     // Configuration
     pub gear_position: f32, // 0.0 = up, 1.0 = down
@@ -934,6 +946,7 @@ impl Default for SimSnapshot {
             paused: false,
             slew_mode: false,
             simulation_rate: 1.0,
+            sim_bildrate_hz: None,
             gear_position: 1.0,
             flaps_position: 0.0,
             flap_handle_index: None,

@@ -6338,6 +6338,104 @@ fn record_track_point(stats: &mut FlightStats, lon: f64, lat: f64, on_ground: bo
     }
 }
 
+/// Wie lange die Bildrate je Abtastung aufbewahrt wird, in Sekunden.
+///
+/// Muss das ganze Aufsetzfenster abdecken: den Vorlauf aus
+/// `snapshot_buffer` plus `TOUCHDOWN_POST_WINDOW_MS` danach, mit Reserve.
+const BILDRATE_PUFFER_SECS: i64 = 30;
+
+/// Mindestens, Median und Hoechstwert der Bildrate, mit Anzahl — oder
+/// nichts, wenn der Simulator keine einzige geliefert hat.
+fn bildrate_zusammenfassung(werte: impl Iterator<Item = f32>) -> Option<(f32, f32, f32, usize)> {
+    let mut v: Vec<f32> = werte.filter(|hz| hz.is_finite() && *hz > 0.0).collect();
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(f32::total_cmp);
+    Some((v[0], v[v.len() / 2], v[v.len() - 1], v.len()))
+}
+
+/// Die eine Zeile „Bildrate beim Aufsetzen" im Diagnoselog (2.0.14).
+///
+/// Sie erklaert, warum bei einer Landung wenige neue Messwerte ankommen:
+/// Rechnet der Simulator nur 25 Bilder je Sekunde, kann er nicht oefter
+/// liefern. Fehlt die Bildrate ganz, steht auch das da — sonst faellt eine
+/// stille Verdrahtungsluecke erst Wochen spaeter auf.
+fn bildrate_protokollieren(
+    pirep_id: &str,
+    edge_at: DateTime<Utc>,
+    bildrate: Option<(f32, f32, f32, usize)>,
+) {
+    match bildrate {
+        Some((min, median, max, n)) => tracing::info!(
+            pirep_id,
+            %edge_at,
+            n,
+            min_hz = format!("{min:.1}"),
+            median_hz = format!("{median:.1}"),
+            max_hz = format!("{max:.1}"),
+            "Bildrate beim Aufsetzen"
+        ),
+        None => tracing::info!(
+            pirep_id,
+            %edge_at,
+            "Bildrate beim Aufsetzen: Simulator liefert keine"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod bildrate_tests {
+    use super::*;
+
+    #[test]
+    fn zusammenfassung_der_bildrate() {
+        assert_eq!(bildrate_zusammenfassung(std::iter::empty()), None);
+        assert_eq!(
+            bildrate_zusammenfassung([0.0, f32::NAN, -1.0].into_iter()),
+            None,
+            "Unsinn ist keine Bildrate"
+        );
+        let (min, median, max, n) =
+            bildrate_zusammenfassung([41.0, 24.0, 0.0, 60.0, 38.0].into_iter()).expect("Werte da");
+        assert_eq!((min, median, max, n), (24.0, 41.0, 60.0, 4));
+    }
+
+    /// Die Bildrate steht im Flugprotokoll, aber nicht im Sim-Status, den
+    /// Oberflaeche und LAN-Fernbedienung bekommen (Codex-QS P2, 2.0.14).
+    #[test]
+    fn bildrate_nur_im_flugprotokoll_nicht_im_sim_status() {
+        let mut snap = SimSnapshot::default();
+        snap.sim_bildrate_hz = Some(42.0);
+        let protokoll = serde_json::to_value(&snap).expect("Snapshot");
+        assert_eq!(
+            protokoll["sim_bildrate_hz"],
+            serde_json::json!(42.0),
+            "Gegenprobe: das Flugprotokoll traegt die Bildrate"
+        );
+        let status = SimStatus {
+            snapshot: Some(snap),
+            ..Default::default()
+        };
+        let status = serde_json::to_value(&status).expect("Status");
+        assert!(
+            status["snapshot"].get("sim_bildrate_hz").is_none(),
+            "der Sim-Status gibt die Bildrate an Oberflaeche und LAN-Bruecke weiter"
+        );
+        assert!(status["snapshot"].is_object(), "der Snapshot selbst fehlt");
+    }
+
+    /// Der Puffer muss das ganze Aufsetzfenster abdecken, sonst fehlen
+    /// die ersten Sekunden vor dem Aufsetzen in der Zeile.
+    #[test]
+    fn der_puffer_deckt_das_aufsetzfenster() {
+        assert!(
+            BILDRATE_PUFFER_SECS * 1000 > TOUCHDOWN_BUFFER_SECS * 1000 + TOUCHDOWN_POST_WINDOW_MS,
+            "Bildraten-Puffer kuerzer als Vorlauf plus Nachlauf"
+        );
+    }
+}
+
 impl From<TelemetrySample> for TouchdownWindowSample {
     fn from(s: TelemetrySample) -> Self {
         Self {
@@ -8016,6 +8114,10 @@ struct FlightStats {
     /// V/S / G that the aircraft actually saw — independent of the
     /// snapshot rate or SimConnect's PLANE TOUCHDOWN * latching.
     snapshot_buffer: std::collections::VecDeque<TelemetrySample>,
+    /// 2.0.14 — die Bildrate des Simulators je Abtastung, die letzten
+    /// `BILDRATE_PUFFER_SECS` Sekunden. Nur fuer die Zeile „Bildrate beim
+    /// Aufsetzen" im Diagnoselog; geht in keine Bewertung.
+    bildrate_puffer: std::collections::VecDeque<(DateTime<Utc>, f32)>,
 
     /// Inventur 02.10.2026 (B1): Langsame Spur fuer die Ueberflughoehe an der
     /// Schwelle (TCH). Der 5-s-`snapshot_buffer` reicht dafuer nicht: Bei
@@ -37441,6 +37543,17 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 }
             }
             diagnose.proben += 1;
+            if let Some(hz) = snap.sim_bildrate_hz {
+                stats.bildrate_puffer.push_back((now, hz));
+            }
+            let bildrate_grenze = now - chrono::Duration::seconds(BILDRATE_PUFFER_SECS);
+            while stats
+                .bildrate_puffer
+                .front()
+                .is_some_and(|(at, _)| *at < bildrate_grenze)
+            {
+                stats.bildrate_puffer.pop_front();
+            }
             stats.snapshot_buffer.push_back(TelemetrySample {
                 at: now,
                 // The snapshot_buffer is the touchdown-window source (feeds the
@@ -38339,7 +38452,19 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // 50-Hz-Loop. Worst-Case-Aggregation fuer Multi-TD
                 // (Touch-and-Go) ist im Helper.
                 apply_accident_heuristic(&mut stats, &analysis);
-                Some((edge_at, samples, analysis, climbed_out_early))
+                // 2.0.14 — Bildrate ueber genau das Fenster, das gleich
+                // ins Flugprotokoll geht.
+                let bildrate = match (samples.first(), samples.last()) {
+                    (Some(a), Some(b)) => bildrate_zusammenfassung(
+                        stats
+                            .bildrate_puffer
+                            .iter()
+                            .filter(|(at, _)| *at >= a.at && *at <= b.at)
+                            .map(|(_, hz)| *hz),
+                    ),
+                    _ => None,
+                };
+                Some((edge_at, samples, analysis, climbed_out_early, bildrate))
             } else {
                 None
             };
@@ -38353,7 +38478,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // on-demand navdata fetch for the actual landing airport — same
             // finalize-with-best wiring as the FSM path. Idempotent.
             maybe_fetch_actual_landing_navdata(&app, &flight);
-            if let Some((edge_at, samples, analysis, climbed_out_early)) = prepared_dump {
+            if let Some((edge_at, samples, analysis, climbed_out_early, bildrate)) = prepared_dump {
+                bildrate_protokollieren(&flight.pirep_id, edge_at, bildrate);
                 // v0.5.49 — IMMEDIATE persist nach dem Setzen von
                 // touchdown_window_dumped_at. Vorher wurde der Flag in
                 // stats gesetzt, aber save_active_flight wartete auf den
@@ -56738,10 +56864,29 @@ pub struct SimStatus {
     state: String,
     /// User-selected sim ("off" | "msfs2020" | "msfs2024" | "xplane11" | "xplane12").
     kind: String,
+    /// ⚠ Ohne Diagnosefelder — siehe `snapshot_ohne_diagnose`.
+    #[serde(serialize_with = "snapshot_ohne_diagnose")]
     snapshot: Option<SimSnapshot>,
     last_error: Option<String>,
     /// Whether the selected kind is actually implemented in this build.
     available: bool,
+}
+
+/// Der Sim-Status ohne die reinen Diagnosewerte.
+///
+/// Die Bildrate (2.0.14) gehoert ins Flugprotokoll und ins Diagnoselog,
+/// nicht in die Oberflaeche und nicht ueber die LAN-Bruecke an die
+/// Fernbedienung (Thomas, 13.10.2026; Codex-QS P2). Hier, an der
+/// Serialisierung, gilt das fuer jeden, der einen `SimStatus` baut.
+fn snapshot_ohne_diagnose<S: serde::Serializer>(
+    snapshot: &Option<SimSnapshot>,
+    ser: S,
+) -> Result<S::Ok, S::Error> {
+    let mut ohne = snapshot.clone();
+    if let Some(s) = ohne.as_mut() {
+        s.sim_bildrate_hz = None;
+    }
+    serde::Serialize::serialize(&ohne, ser)
 }
 
 fn kind_str(kind: SimKind) -> &'static str {

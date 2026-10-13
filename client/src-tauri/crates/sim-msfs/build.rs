@@ -146,6 +146,7 @@ fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
         // System state events for PMDG aircraft change detection.
         .allowlist_type("SIMCONNECT_RECV_SYSTEM_STATE")
         .allowlist_type("SIMCONNECT_RECV_EVENT")
+        .allowlist_type("SIMCONNECT_RECV_EVENT_FRAME")
         // Flow-Ereignis-Empfaenger und sein Enum. `SIMCONNECT_RECV_ID` steht
         // schon oben, deshalb kam ausgerechnet die RECV_ID-Variante durch und
         // alles andere nicht — ein irrefuehrend halbes Bild.
