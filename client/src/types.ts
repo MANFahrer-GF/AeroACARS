@@ -1,3 +1,4 @@
+import type { FlugZeiten } from "./lib/flugzeiten";
 // Mirrors the Rust types in `client/src-tauri/crates/api-client/src/lib.rs`
 // and the command return types in `client/src-tauri/src/lib.rs`.
 //
@@ -397,6 +398,10 @@ export interface ActiveFlightInfo {
   takeoff_at: string | null;
   landing_at: string | null;
   block_on_at: string | null;
+  /** „Zeiten gegen Flugplan": Plan (SimBrief) und Ist in Unix-Sekunden. */
+  flugzeiten?: FlugZeiten | null;
+  /** Erwartete Landung (Unix-s) aus der Planzeit am Ort auf der Route. */
+  landung_erwartet?: number | null;
   landing_rate_fpm: number | null;
   landing_g_force: number | null;
   /** v1.3.5 (#Hard-Landing-Banner): true once the post-touchdown V/S

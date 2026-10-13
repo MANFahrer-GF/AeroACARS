@@ -122,6 +122,10 @@ export const DATEIEN = [
   "components/infoBadge.css",
   "components/LadeblattAbschnitt.tsx",
   "components/ladeblattAbschnitt.css",
+  // „Zeiten gegen Flugplan" (13.10.2026): Rechnung + Abschnitt + Kurzform.
+  "lib/flugzeiten.ts",
+  "components/FlugzeitenAbschnitt.tsx",
+  "components/flugzeitenAbschnitt.css",
   "components/MetarAbschnitt.tsx",
   "components/metarAbschnitt.css",
   "components/RohdatenAbschnitt.tsx",

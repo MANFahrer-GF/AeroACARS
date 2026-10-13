@@ -900,7 +900,8 @@
         "da_stabil": "Stable at 200 ft (decision altitude).",
         "da_nicht_stabil": "No longer stable at 200 ft (decision altitude).",
         "stall": "Stall warnings during the approach: {{count}}"
-      }
+      },
+      "spaetes_final": "Late final detected: on the runway centreline from {{hoehe}} ft, {{kurve}}° of turn before that. Bank, sink rate and glidepath count only from there."
     },
     "anflug_forensik": {
       "titel": "Glide path and approach steadiness",
@@ -1116,7 +1117,8 @@
         "querneigung": "Bank σ",
         "ruck": "Sink-rate jerk",
         "sinken": "Sink rate",
-        "konfiguration": "Landing config"
+        "konfiguration": "Landing config",
+        "final": "Final"
       },
       "einheit": {
         "gleitpfad": "dots",
@@ -1128,7 +1130,9 @@
         "sinken_ok": "ok",
         "sinken_nein": "too high",
         "konfiguration_ok": "complete",
-        "konfiguration_nein": "incomplete"
+        "konfiguration_nein": "incomplete",
+        "final_ok": "in time",
+        "final_nein": "too late"
       },
       "grund": {
         "gleitpfad": "Glide path: off by {{wert}} dots on average (good below {{grenze}})",
@@ -1137,7 +1141,8 @@
         "ruck": "Sink rate jumpy: {{wert}} fpm jerk (good below {{grenze}})",
         "sinken": "Sink rate too high for more than 10 seconds",
         "konfiguration": "Gear or flaps not in landing position when entering the gate",
-        "spaet_stabil": "Stable from 500 ft: speed and configuration count as late stabilised, “medium” instead of “bad”"
+        "spaet_stabil": "Stable from 500 ft: speed and configuration count as late stabilised, “medium” instead of “bad”",
+        "final": "Late final not in time: established on the runway centreline by 300 ft above the airport at the latest, wings level below (10° bank at most)"
       }
     },
     "groundspeed": "GS at TD",
@@ -1332,7 +1337,8 @@
         "sinken": "Whether the sink rate in the stable gate exceeded the limit for at least 10 s in a row (−1000 fpm at a 3° glide path, correspondingly more on steeper approaches). Check of the stable gate.",
         "konfiguration": "Whether the aircraft was in landing configuration when entering the stable gate (first sample up to 1000 ft — lower if the recording starts lower): gear down, landing flaps set. Check of the stable gate.",
         "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, 15 points off. Otherwise PARTIAL, 5 points off. Without measurement 3 points off. Late stabilised: if speed or configuration is bad at 1000 ft but landing flaps are set and speed is steady from 500 ft, both only count as “medium”.",
-        "urteil_alt": "Approach verdict for flights before score version 19, from the seven tiles: all good = STABLE, two poor or three not good = UNSTABLE, otherwise PARTIAL. From score version 18 PARTIAL caps the overall score at 80 and UNSTABLE at 45; in version 17 only the approach stability part, before that it capped nothing."
+        "urteil_alt": "Approach verdict for flights before score version 19, from the seven tiles: all good = STABLE, two poor or three not good = UNSTABLE, otherwise PARTIAL. From score version 18 PARTIAL caps the overall score at 80 and UNSTABLE at 45; in version 17 only the approach stability part, before that it capped nothing.",
+        "final": "Only for a late final (circling, traffic pattern, offset approach): whoever reaches the runway centreline below 1000 ft must be aligned by 300 ft above the airport and fly no more than 10° of bank below that (Flight Safety Foundation, ALAR 7.1). Stable gate check."
       },
       "tile": {
         "vs_jerk": "How abruptly the sink rate changed during the approach, averaged from sample to sample. Lower is calmer.",
@@ -4083,5 +4089,51 @@
     "profil_eigen_hilfe": "AeroACARS has its own profile for this aircraft ({{name}}) – not yet verified by a measurement. A measurement shows whether everything is right.",
     "profil_standard": "standard only",
     "profil_standard_hilfe": "No own profile – AeroACARS only reads the simulator's standard values. Many add-ons don't drive them; a measurement helps build a profile."
+  },
+  "flugzeiten": {
+    "titel": "Times vs. flight plan",
+    "plan": "Plan",
+    "ist": "Actual",
+    "abweichung": "Deviation",
+    "abweichung_kurz": "Dev.",
+    "legende_plan": "Plan (SimBrief)",
+    "legende_rollen": "Taxi",
+    "schritt": {
+      "off_block": "Off-block",
+      "abheben": "Takeoff",
+      "aufsetzen": "Touchdown",
+      "on_block": "On-block"
+    },
+    "blockzeit": "Block time",
+    "flugzeit": "Flight time",
+    "block_kurz": "Block",
+    "kopf": {
+      "nach_plan": "{{schritt}} {{min}} min behind plan",
+      "vor_plan": "{{schritt}} {{min}} min ahead of plan",
+      "genau": "{{schritt}} exactly on plan",
+      "block_laenger": "block time {{min}} min longer than planned",
+      "block_kuerzer": "block time {{min}} min shorter than planned",
+      "block_gleich": "block time as planned"
+    },
+    "a15_puenktlich": "on time by airline standard (up to {{min}} min)",
+    "a15_verspaetet": "late by airline standard (over {{min}} min)",
+    "fuss": "Times in UTC. “+” means later or longer than planned. Plan from the SimBrief OFP — display only, no effect on the score.",
+    "kein_plan": "No SimBrief OFP was loaded for this flight, so the times are not compared.",
+    "cockpit": {
+      "on_block_plan": "On-block plan",
+      "on_block_erwartet": "On-block expected",
+      "gegen_plan": "Vs. plan",
+      "quelle": {
+        "on_block": "actual",
+        "aufsetzen": "landing + planned taxi time",
+        "route": "planned time from here + taxi",
+        "abheben": "takeoff + planned flight time",
+        "off_block": "off-block + planned block time",
+        "plan": "not pushed back yet"
+      },
+      "aufgeholt": "{{min}} min made up since takeoff",
+      "verloren": "{{min}} min lost since takeoff",
+      "gehalten": "held since takeoff"
+    }
   }
 }

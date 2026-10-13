@@ -900,7 +900,8 @@
         "da_stabil": "Stabile a 200 ft (altitudine di decisione).",
         "da_nicht_stabil": "Non più stabile a 200 ft (altitudine di decisione).",
         "stall": "Avvisi di stallo in avvicinamento: {{count}}"
-      }
+      },
+      "spaetes_final": "Finale tardivo rilevato: sull’asse pista da {{hoehe}} ft, prima {{kurve}}° di virata. Inclinazione, rateo di discesa e sentiero di planata contano solo da lì."
     },
     "anflug_forensik": {
       "titel": "Sentiero di discesa e stabilità dell'avvicinamento",
@@ -1116,7 +1117,8 @@
         "querneigung": "Inclinazione σ",
         "ruck": "Strappo rateo",
         "sinken": "Rateo di discesa",
-        "konfiguration": "Configurazione"
+        "konfiguration": "Configurazione",
+        "final": "Finale"
       },
       "einheit": {
         "gleitpfad": "dot",
@@ -1128,7 +1130,9 @@
         "sinken_ok": "ok",
         "sinken_nein": "troppo alto",
         "konfiguration_ok": "completa",
-        "konfiguration_nein": "incompleta"
+        "konfiguration_nein": "incompleta",
+        "final_ok": "in tempo",
+        "final_nein": "troppo tardi"
       },
       "grund": {
         "gleitpfad": "Sentiero: in media {{wert}} dot fuori (buono sotto {{grenze}})",
@@ -1137,7 +1141,8 @@
         "ruck": "Rateo di discesa a scatti: {{wert}} fpm di strappo (buono sotto {{grenze}})",
         "sinken": "Rateo di discesa troppo alto per oltre 10 secondi",
         "konfiguration": "Carrello o flap non in configurazione d’atterraggio all’ingresso nel gate",
-        "spaet_stabil": "Stabile da 500 ft: velocità e configurazione contano come stabilizzate tardi, “medio” invece di “scarso”"
+        "spaet_stabil": "Stabile da 500 ft: velocità e configurazione contano come stabilizzate tardi, “medio” invece di “scarso”",
+        "final": "Finale tardivo non in tempo: allineati sull’asse pista al più tardi a 300 ft sopra l’aeroporto, ali livellate al di sotto (al massimo 10° di inclinazione)"
       }
     },
     "groundspeed": "GS al TD",
@@ -1332,7 +1337,8 @@
         "sinken": "Se il rateo di discesa nello stable gate ha superato il limite per almeno 10 s di fila (−1000 fpm con sentiero di 3°, di più per avvicinamenti più ripidi). Controllo dello stable gate.",
         "konfiguration": "Se l'aereo era in configurazione di atterraggio all’ingresso nel gate (primo campione fino a 1000 ft — più in basso se la registrazione inizia più in basso): carrello giù, flap di atterraggio. Controllo dello stable gate.",
         "urteil": "Stable gate da 1000 ft: tutti i controlli buoni = STABLE. Due scarsi o tre non buoni = UNSTABLE, 15 punti in meno. Altrimenti PARTIAL, 5 punti in meno. Senza misura 3 punti in meno. Stabilizzato tardi: se velocità o configurazione sono scarse a 1000 ft ma da 500 ft i flap d’atterraggio sono estesi e la velocità è stabile, contano solo come “medio”.",
-        "urteil_alt": "Giudizio sull’avvicinamento per i voli prima della versione 19, dalle sette caselle: tutte buone = STABLE, due scarse o tre non buone = UNSTABLE, altrimenti PARTIAL. Dalla versione 18 PARTIAL limita il voto complessivo a 80 e UNSTABLE a 45; nella versione 17 solo la parte stabilità dell’avvicinamento, prima non limitava nulla."
+        "urteil_alt": "Giudizio sull’avvicinamento per i voli prima della versione 19, dalle sette caselle: tutte buone = STABLE, due scarse o tre non buone = UNSTABLE, altrimenti PARTIAL. Dalla versione 18 PARTIAL limita il voto complessivo a 80 e UNSTABLE a 45; nella versione 17 solo la parte stabilità dell’avvicinamento, prima non limitava nulla.",
+        "final": "Solo in caso di finale tardivo (circling, circuito di traffico, avvicinamento disassato): chi raggiunge l’asse pista sotto i 1000 ft deve essere allineato entro 300 ft sopra l’aeroporto e al di sotto non superare 10° di inclinazione (Flight Safety Foundation, ALAR 7.1). Controllo dello stable gate."
       },
       "tile": {
         "vs_jerk": "Quanto bruscamente è cambiato il rateo di discesa durante l'avvicinamento, mediato da punto a punto. Più basso è più calmo.",
@@ -4083,5 +4089,51 @@
     "profil_eigen_hilfe": "AeroACARS ha un profilo proprio per questo aereo ({{name}}) – non ancora verificato con una misurazione.",
     "profil_standard": "solo standard",
     "profil_standard_hilfe": "Nessun profilo proprio – AeroACARS legge solo i valori standard del simulatore; una misurazione aiuta a costruirne uno."
+  },
+  "flugzeiten": {
+    "titel": "Orari rispetto al piano di volo",
+    "plan": "Piano",
+    "ist": "Effettivo",
+    "abweichung": "Scostamento",
+    "abweichung_kurz": "Scost.",
+    "legende_plan": "Piano (SimBrief)",
+    "legende_rollen": "Rullaggio",
+    "schritt": {
+      "off_block": "Off-block",
+      "abheben": "Decollo",
+      "aufsetzen": "Atterraggio",
+      "on_block": "On-block"
+    },
+    "blockzeit": "Tempo di blocco",
+    "flugzeit": "Tempo di volo",
+    "block_kurz": "Blocco",
+    "kopf": {
+      "nach_plan": "{{schritt}} {{min}} min dopo il piano",
+      "vor_plan": "{{schritt}} {{min}} min prima del piano",
+      "genau": "{{schritt}} esattamente secondo il piano",
+      "block_laenger": "tempo di blocco {{min}} min più lungo del previsto",
+      "block_kuerzer": "tempo di blocco {{min}} min più breve del previsto",
+      "block_gleich": "tempo di blocco come previsto"
+    },
+    "a15_puenktlich": "puntuale secondo lo standard delle compagnie (fino a {{min}} min)",
+    "a15_verspaetet": "in ritardo secondo lo standard delle compagnie (oltre {{min}} min)",
+    "fuss": "Orari in UTC. “+” significa più tardi o più lungo del previsto. Piano dall’OFP SimBrief — solo visualizzazione, nessun effetto sul punteggio.",
+    "kein_plan": "Per questo volo non è stato caricato alcun OFP SimBrief, quindi gli orari non vengono confrontati.",
+    "cockpit": {
+      "on_block_plan": "On-block previsto",
+      "on_block_erwartet": "On-block stimato",
+      "gegen_plan": "Rispetto al piano",
+      "quelle": {
+        "on_block": "effettivo",
+        "aufsetzen": "atterraggio + rullaggio previsto",
+        "route": "tempo previsto da qui + rullaggio",
+        "abheben": "decollo + tempo di volo previsto",
+        "off_block": "off-block + tempo di blocco previsto",
+        "plan": "non ancora partito"
+      },
+      "aufgeholt": "{{min}} min recuperati dal decollo",
+      "verloren": "{{min}} min persi dal decollo",
+      "gehalten": "mantenuto dal decollo"
+    }
   }
 }

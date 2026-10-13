@@ -1,0 +1,250 @@
+/* Zeiten gegen Flugplan (FlugzeitenAbschnitt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Neutral:
+ * keine Ampelfarben — Plan grau, Ist in der Akzentfarbe. */
+
+:where(.landing-section) {
+  background: var(--surface, #141a21);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 1rem 1.25rem;
+}
+
+:where(.landing-section) h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.flugzeiten__zahl {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.flugzeiten__kopf {
+  margin: 0 0 0.9rem;
+  font-size: 1rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.flugzeiten__a15 {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  vertical-align: 0.1em;
+}
+
+.flugzeiten__strahl {
+  margin: 0 0 1rem;
+}
+
+.flugzeiten__zeile,
+.flugzeiten__achse {
+  display: grid;
+  grid-template-columns: 2.75rem 1fr;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.flugzeiten__zeile {
+  height: 1.6rem;
+}
+
+.flugzeiten__zeilenname {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.flugzeiten__spur {
+  position: relative;
+  height: 0.85rem;
+}
+
+.flugzeiten__balken {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.flugzeiten__zeile--plan .flugzeiten__balken,
+.flugzeiten__farbe--plan {
+  background: var(--text-muted);
+  opacity: 0.55;
+}
+
+.flugzeiten__zeile--ist .flugzeiten__balken,
+.flugzeiten__farbe--ist {
+  background: var(--accent);
+}
+
+.flugzeiten__balken--rollen,
+.flugzeiten__farbe--rollen {
+  opacity: 0.4;
+}
+
+.flugzeiten__zeile--plan .flugzeiten__balken--rollen {
+  opacity: 0.25;
+}
+
+.flugzeiten__farbe--rollen {
+  background: var(--accent);
+}
+
+.flugzeiten__striche {
+  position: relative;
+  height: 1.2rem;
+  border-top: 1px solid var(--border);
+}
+
+.flugzeiten__striche span {
+  position: absolute;
+  top: 0.2rem;
+  transform: translateX(-50%);
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.flugzeiten__striche span:first-child {
+  transform: none;
+}
+
+.flugzeiten__striche span:last-child {
+  transform: translateX(-100%);
+}
+
+.flugzeiten__legende {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.flugzeiten__legende i {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+  vertical-align: -0.05em;
+}
+
+.flugzeiten__tabelle-rahmen {
+  overflow-x: auto;
+}
+
+.flugzeiten__tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.flugzeiten__tabelle th,
+.flugzeiten__tabelle td {
+  text-align: right;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.flugzeiten__tabelle th:first-child,
+.flugzeiten__tabelle td:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+
+.flugzeiten__tabelle th:last-child,
+.flugzeiten__tabelle td:last-child {
+  padding-right: 0;
+}
+
+.flugzeiten__tabelle th {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.flugzeiten__tabelle tr:last-child td {
+  border-bottom: 0;
+}
+
+.flugzeiten__summe td {
+  border-top: 2px solid var(--border);
+}
+
+.flugzeiten__abw {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.flugzeiten__kurz {
+  display: none;
+}
+
+.flugzeiten__fuss,
+.flugzeiten__leer {
+  margin: 0.75rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.flugzeiten__leer {
+  margin: 0;
+  font-style: italic;
+}
+
+@media (max-width: 560px) {
+  .flugzeiten__tabelle th,
+  .flugzeiten__tabelle td {
+    padding: 0.4rem 0.25rem;
+    font-size: 0.8rem;
+  }
+  .flugzeiten__lang {
+    display: none;
+  }
+  .flugzeiten__kurz {
+    display: inline;
+  }
+  .flugzeiten__strich--ungerade {
+    display: none;
+  }
+}
+
+/* Kurzform für Listen */
+.flugzeiten-kurz {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  vertical-align: middle;
+}
+
+.flugzeiten-kurz__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.74rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.flugzeiten-kurz__k {
+  color: var(--text-muted);
+}

@@ -52,6 +52,10 @@ pub struct AnflugWerte {
     /// Fahrwerk + Landeklappen am 500-ft-Tor (gleiche Pruefung wie
     /// `stable_config` bei 1000 ft). `None` = nicht messbar.
     pub stable_config_500: Option<bool>,
+    /// Score-Version 23: spaetes Final / Kurvenanflug erkannt — war das
+    /// Final spaetestens bei 300 ft erreicht und die Fluegel darunter
+    /// waagerecht? `None` = gerader Anflug, die Pruefung entfaellt.
+    pub spaetes_final_rechtzeitig: Option<bool>,
 }
 
 /// Grenze „gut" der Fahrt-Pruefung (σ in kt) — auch Riegel fuer
@@ -80,7 +84,8 @@ pub enum Stufe {
 /// den Oberflaechen (`landing.gate.<key>`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pruefpunkt {
-    /// `gleitpfad`, `fahrt`, `querneigung`, `ruck`, `sinken`, `konfiguration`
+    /// `gleitpfad`, `fahrt`, `querneigung`, `ruck`, `sinken`, `konfiguration`,
+    /// `final` (nur beim spaeten Final, Score-Version 23)
     pub key: String,
     pub stufe: Stufe,
     /// Messwert (Zahl) — bei Ja/Nein-Pruefungen `None`.
@@ -161,6 +166,10 @@ pub fn anflug_pruefung(w: &AnflugWerte) -> Vec<Pruefpunkt> {
         bereich("ruck", w.vs_jerk_fpm, 100.0, 200.0),
         wahrheit("sinken", w.excessive_sink, false),
         spaet(wahrheit("konfiguration", w.stable_config, true)),
+        // Score-Version 23: beim spaeten Final / Kurvenanflug zaehlen
+        // Querneigung und Gleitpfad erst ab dem Ausrichten — dafuer muss das
+        // Final rechtzeitig stehen (FSF ALAR 7.1: Circling, 300 ft).
+        wahrheit("final", w.spaetes_final_rechtzeitig, true),
     ]
     .into_iter()
     .flatten()
@@ -216,6 +225,21 @@ mod tests {
             gleitpfad_dots: Some(0.3),
             ..Default::default()
         }
+    }
+
+    /// Score-Version 23: Der Pruefpunkt „final" gibt es nur beim spaeten
+    /// Final; nicht rechtzeitig zaehlt als „schlecht".
+    #[test]
+    fn spaetes_final_ist_ein_eigener_pruefpunkt() {
+        assert!(anflug_pruefung(&stabil()).iter().all(|p| p.key != "final"));
+        let mut w = stabil();
+        w.spaetes_final_rechtzeitig = Some(true);
+        assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Stable));
+        w.spaetes_final_rechtzeitig = Some(false);
+        let p = anflug_pruefung(&w);
+        let f = p.iter().find(|p| p.key == "final").expect("Pruefpunkt");
+        assert_eq!(f.stufe, Stufe::Schlecht);
+        assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Partial));
     }
 
     #[test]
@@ -329,6 +353,7 @@ mod tests {
             gleitpfad_dots: Some(0.34),
             ias_stddev_unter_500_kt: None,
             stable_config_500: None,
+            spaetes_final_rechtzeitig: None,
         };
         assert_eq!(anflug_urteil(&w), Some(AnflugUrteil::Unstable));
         w.ias_stddev_unter_500_kt = Some(0.9);
