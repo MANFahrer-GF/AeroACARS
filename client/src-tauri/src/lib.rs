@@ -28451,39 +28451,112 @@ impl BodenquelleKopie {
 /// bleibt, wird nicht einmal der Fingerabdruck gebildet. Verpasst er eine
 /// Aenderung, rechnet `bahn_felder` wie bisher selbst — langsamer, nie
 /// falsch.
+#[cfg(test)]
 fn ausfahrten_vorwaermen(flight: &ActiveFlight, zuletzt: &mut Option<VorwaermAusloeser>) {
-    let arbeit = {
-        let Ok(stats) = flight.stats.lock() else {
-            return;
-        };
-        let ausloeser = vorwaerm_ausloeser(&stats);
-        if zuletzt.as_ref() == Some(&ausloeser) {
-            return;
-        }
-        *zuletzt = Some(ausloeser);
-        let Some(m) = stats.runway_match.as_ref().filter(|m| m.width_ft > 0.0) else {
-            return;
-        };
-        let Some(quelle) = bodenquelle(&stats, Some(m.airport_ident.as_str())) else {
-            return;
-        };
-        let schluessel = ausfahrten_fingerabdruck(quelle, m);
-        let schon_da = stats
-            .ausfahrten_merker
-            .lock()
-            .map(|g| g.as_ref().is_some_and(|(k, _)| *k == schluessel))
-            .unwrap_or(false);
-        if schon_da {
-            return;
-        }
-        (schluessel, BodenquelleKopie::von(quelle), m.clone())
+    if let Some(auftrag) = vorwaerm_auftrag(flight, zuletzt) {
+        vorwaerm_ausfuehren(flight, auftrag);
+    }
+}
+
+/// Was das Vorwaermen rechnen soll — Schluessel, Kopie der Karte, Bahn.
+struct VorwaermAuftrag {
+    schluessel: u64,
+    kopie: BodenquelleKopie,
+    bahn: runway::RunwayMatch,
+}
+
+/// Der billige Teil des Vorwaermens, unter kurzer Sperre: Ausloeser
+/// pruefen, Merker pruefen, Karte und Bahn kopieren.
+fn vorwaerm_auftrag(
+    flight: &ActiveFlight,
+    zuletzt: &mut Option<VorwaermAusloeser>,
+) -> Option<VorwaermAuftrag> {
+    let stats = flight.stats.lock().ok()?;
+    let ausloeser = vorwaerm_ausloeser(&stats);
+    if zuletzt.as_ref() == Some(&ausloeser) {
+        return None;
+    }
+    *zuletzt = Some(ausloeser);
+    let m = stats.runway_match.as_ref().filter(|m| m.width_ft > 0.0)?;
+    let quelle = bodenquelle(&stats, Some(m.airport_ident.as_str()))?;
+    let schluessel = ausfahrten_fingerabdruck(quelle, m);
+    let schon_da = stats
+        .ausfahrten_merker
+        .lock()
+        .map(|g| g.as_ref().is_some_and(|(k, _)| *k == schluessel))
+        .unwrap_or(false);
+    if schon_da {
+        return None;
+    }
+    Some(VorwaermAuftrag {
+        schluessel,
+        kopie: BodenquelleKopie::von(quelle),
+        bahn: m.clone(),
+    })
+}
+
+/// Der teure Teil: ohne Sperre rechnen, kurz gesperrt ablegen.
+fn vorwaerm_ausfuehren(flight: &ActiveFlight, auftrag: VorwaermAuftrag) {
+    let beginn = std::time::Instant::now();
+    let rollwege = match &auftrag.kopie {
+        BodenquelleKopie::Szenerie(r) => Some(r.len()),
+        BodenquelleKopie::Karte(_) => None,
     };
-    let (schluessel, kopie, m) = arbeit;
-    let gerechnet = ausfahrten_rechnen(kopie.quelle(), &m);
+    let gerechnet = ausfahrten_rechnen(auftrag.kopie.quelle(), &auftrag.bahn);
+    tracing::info!(
+        pirep_id = %flight.pirep_id,
+        platz = %auftrag.bahn.airport_ident,
+        bahn = %auftrag.bahn.runway_ident,
+        szenerie_rollwege = ?rollwege,
+        ausfahrten = gerechnet.len(),
+        dauer_ms = beginn.elapsed().as_millis() as u64,
+        "Ausfahrten vorgewaermt"
+    );
     if let Ok(stats) = flight.stats.lock() {
         if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
-            *merker = Some((schluessel, gerechnet));
+            *merker = Some((auftrag.schluessel, gerechnet));
         }
+    }
+}
+
+/// Das Vorwaermen im EIGENEN Faden — der Streamer-Takt wartet nicht.
+///
+/// # Warum (AIB 430, 13.10.2026)
+///
+/// Seit 2.0.13 lief das Rechnen zwar ohne Sperre, aber noch im
+/// Streamer-Takt: in Mumbai 299 ms von 341 ms des Takts direkt nach dem
+/// Aufsetzen. Jetzt nimmt der Takt nur den Auftrag (kurz gesperrt) und
+/// uebergibt ihn einem Faden.
+///
+/// Immer nur EIN Faden: Laeuft noch einer, bleibt `zuletzt` unberuehrt,
+/// und der naechste Takt fragt erneut — eine Aenderung waehrend des
+/// Rechnens (neue Bahn, spaete Szenerie) geht so nicht verloren.
+///
+/// Fragt `bahn_felder` in den ~300 ms, bevor das Ergebnis liegt, rechnet
+/// es wie bisher selbst — langsamer, nie falsch.
+fn ausfahrten_im_hintergrund(
+    flight: &Arc<ActiveFlight>,
+    zuletzt: &mut Option<VorwaermAusloeser>,
+    laeufer: &mut Option<std::thread::JoinHandle<()>>,
+) {
+    if laeufer.as_ref().is_some_and(|h| !h.is_finished()) {
+        return;
+    }
+    *laeufer = None;
+    let Some(auftrag) = vorwaerm_auftrag(flight, zuletzt) else {
+        return;
+    };
+    let f = Arc::clone(flight);
+    match std::thread::Builder::new()
+        .name("ausfahrten-vorwaermen".into())
+        .spawn(move || vorwaerm_ausfuehren(&f, auftrag))
+    {
+        Ok(h) => *laeufer = Some(h),
+        Err(e) => tracing::warn!(
+            pirep_id = %flight.pirep_id,
+            error = %e,
+            "Ausfahrten-Faden nicht startbar — bahn_felder rechnet selbst"
+        ),
     }
 }
 
@@ -40236,8 +40309,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         let mut last_published_rollout: Option<(i64, u32)> =
             flight.stats.lock().ok().and_then(|s| s.letzter_nachtrag);
         // Ausloeser des Ausfahrten-Vorwaermens — siehe
-        // `ausfahrten_vorwaermen`.
+        // `ausfahrten_im_hintergrund`.
         let mut ausfahrten_ausloeser: Option<VorwaermAusloeser> = None;
+        let mut ausfahrten_laeufer: Option<std::thread::JoinHandle<()>> = None;
         // Damit die Warnung „keine MQTT-Verbindung" nicht bei jedem Tick
         // kommt, solange die Sperre nicht faellt.
         let mut mqtt_fehlt_gemeldet = false;
@@ -41124,10 +41198,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             takt_uhr.abschnitt("step_flight");
 
             // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
-            // Flugdaten FREI ist — siehe `ausfahrten_vorwaermen`. Danach
-            // finden Aufsetz-Ereignis, Rollout-Nachtrag und
-            // `landing_get_current` sie im Merker.
-            ausfahrten_vorwaermen(&flight, &mut ausfahrten_ausloeser);
+            // Flugdaten FREI ist, in einem eigenen Faden — siehe
+            // `ausfahrten_im_hintergrund`. Danach finden Aufsetz-Ereignis,
+            // Rollout-Nachtrag und `landing_get_current` sie im Merker.
+            ausfahrten_im_hintergrund(&flight, &mut ausfahrten_ausloeser, &mut ausfahrten_laeufer);
             takt_uhr.abschnitt("ausfahrten_vorwaermen");
 
             // v1.5.1 (F2): METAR-Trigger einmal pro Tick mit der AKTUELLEN
@@ -68886,6 +68960,79 @@ mod touchdown_metadata_stamp_tests {
         }
         ausfahrten_vorwaermen(&flight, &mut ausloeser);
         assert_eq!(gerechnet(), 2, "die neue Bahn wurde nicht vorgewaermt");
+    }
+
+    /// ⚠ Der Streamer-Takt rechnet die Ausfahrten NICHT selbst — ein
+    /// eigener Faden tut es, und `bahn_felder` findet das Ergebnis danach
+    /// im Merker (AIB 430, 13.10.2026: 299 ms im Takt nach dem Aufsetzen).
+    ///
+    /// `AUSFAHRTEN_GERECHNET` zaehlt je Faden: Im aufrufenden Faden muss
+    /// es bei 0 bleiben. Mit dem Aufruf von 2.0.13/2.0.14 im Takt
+    /// (`ausfahrten_vorwaermen`) stuende es hier auf 1.
+    #[test]
+    fn der_streamer_takt_rechnet_die_ausfahrten_nicht_selbst() {
+        let flight = Arc::new(flight_fixture("EDDM"));
+        let bahn = eddm_26r_mit_rollwegen(&flight);
+        let gerechnet = || AUSFAHRTEN_GERECHNET.with(|z| z.get());
+        AUSFAHRTEN_GERECHNET.with(|z| z.set(0));
+
+        let mut ausloeser = None;
+        let mut laeufer = None;
+        ausfahrten_im_hintergrund(&flight, &mut ausloeser, &mut laeufer);
+        assert_eq!(gerechnet(), 0, "der Streamer-Takt hat selbst gerechnet");
+        laeufer
+            .take()
+            .expect("kein Faden gestartet")
+            .join()
+            .expect("Faden");
+        {
+            let stats = flight.stats.lock().expect("stats");
+            let felder = bahn_felder(&stats, Some("A388"), None);
+            assert!(
+                felder.runway_exits.iter().any(|a| a.name == "A8"),
+                "die Ausfahrten aus dem Faden kommen nicht an"
+            );
+            assert_eq!(
+                gerechnet(),
+                0,
+                "`bahn_felder` musste selbst rechnen — der Faden hat den \
+                 Merker nicht gefuellt"
+            );
+        }
+
+        // Laeuft noch ein Faden, darf der Takt den Ausloeser nicht
+        // verbrauchen — sonst ginge eine Aenderung waehrend des Rechnens
+        // verloren, und `bahn_felder` rechnete wieder unter der Sperre.
+        let (los, warten) = std::sync::mpsc::channel::<()>();
+        laeufer = Some(std::thread::spawn(move || {
+            let _ = warten.recv();
+        }));
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            let mut neu = bahn;
+            neu.threshold_lat += (neu.end_lat - neu.threshold_lat) * 0.075;
+            neu.threshold_lon += (neu.end_lon - neu.threshold_lon) * 0.075;
+            stats.runway_match = Some(neu);
+            stats.bahn_revision += 1;
+        }
+        let vorher = ausloeser.clone();
+        ausfahrten_im_hintergrund(&flight, &mut ausloeser, &mut laeufer);
+        assert_eq!(
+            ausloeser, vorher,
+            "Ausloeser verbraucht, obwohl ein Faden lief"
+        );
+        los.send(()).expect("Faden freigeben");
+        laeufer.take().expect("Faden").join().expect("Faden");
+
+        ausfahrten_im_hintergrund(&flight, &mut ausloeser, &mut laeufer);
+        laeufer
+            .take()
+            .expect("die neue Bahn startete keinen Faden")
+            .join()
+            .expect("Faden");
+        let stats = flight.stats.lock().expect("stats");
+        let _ = bahn_felder(&stats, Some("A388"), None);
+        assert_eq!(gerechnet(), 0, "die neue Bahn lag nicht im Merker");
     }
 
     /// Und die Zweitquelle darf KEINEN fremden Platz durchlassen.
