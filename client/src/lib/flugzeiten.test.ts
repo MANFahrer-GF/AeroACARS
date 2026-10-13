@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  abflugSchaetzung,
   cockpitSchaetzung,
+  datumUhrzeit,
+  planPasst,
   dauern,
   hatPlan,
   kopf,
@@ -97,6 +100,54 @@ describe("Zeiten gegen Flugplan", () => {
 
     it("ohne geplantes On-Block keine Schätzung", () => {
       expect(cockpitSchaetzung({ off_block: hm(14, 41) }, null)).toBeNull();
+    });
+  });
+  describe("Am Gate und Plausibilität (14.10.2026)", () => {
+    const amGate: FlugZeiten = { ...BEISPIEL, off_block: null, abheben: null, aufsetzen: null, on_block: null };
+
+    it("vor dem geplanten Off-Block: Plan, noch x min, ±0", () => {
+      const a = abflugSchaetzung(amGate, hm(14, 10))!;
+      expect(uhrzeit(a.erwartet)).toBe("14:30z");
+      expect(a.gegen_plan_min).toBe(0);
+      expect(a.noch_min).toBe(20);
+    });
+
+    it("nach dem geplanten Off-Block noch am Gate: die Verspätung steht schon da", () => {
+      const a = abflugSchaetzung(amGate, hm(14, 42))!;
+      expect(uhrzeit(a.erwartet)).toBe("14:42z");
+      expect(a.gegen_plan_min).toBe(12);
+      expect(a.noch_min).toBe(0);
+    });
+
+    it("kurz vor dem Plan nie vorzeitig „vorbei\"", () => {
+      expect(abflugSchaetzung(amGate, hm(14, 30) - 29)!.noch_min).toBe(1);
+      expect(abflugSchaetzung(amGate, hm(14, 30))!.noch_min).toBe(0);
+    });
+
+    it("nach dem Abrollen keine Abflug-Schätzung mehr", () => {
+      expect(abflugSchaetzung(BEISPIEL, hm(14, 50))).toBeNull();
+      expect(abflugSchaetzung({ plan_on_block: hm(15, 40) }, hm(14, 10))).toBeNull();
+    });
+
+    it("ein Plan von gestern passt nicht zum Flug", () => {
+      const gestern = (v: number | null | undefined) => (v == null ? v : v - 86400);
+      const z: FlugZeiten = {
+        ...BEISPIEL,
+        plan_off_block: gestern(BEISPIEL.plan_off_block),
+        plan_abheben: gestern(BEISPIEL.plan_abheben),
+        plan_aufsetzen: gestern(BEISPIEL.plan_aufsetzen),
+        plan_on_block: gestern(BEISPIEL.plan_on_block),
+      };
+      expect(planPasst(z)).toBe(false);
+      expect(planPasst(BEISPIEL)).toBe(true);
+      // Am Gate: der geplante Off-Block mit der Uhr verglichen.
+      expect(planPasst(amGate, hm(14, 30) + 6 * 3600)).toBe(true);
+      expect(planPasst(amGate, hm(14, 30) + 6 * 3600 + 60)).toBe(false);
+      expect(planPasst(amGate)).toBe(true);
+    });
+
+    it("schreibt das OFP-Datum wie im Entwurf", () => {
+      expect(datumUhrzeit(hm(13, 48))).toBe("13.10. 13:48z");
     });
   });
 });

@@ -33,6 +33,10 @@ pub struct FlugZeiten {
     pub aufsetzen: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_block: Option<i64>,
+    /// Wann das OFP erstellt wurde — „Plan aus dem OFP vom …" und die
+    /// Pruefung, ob der Plan zum Flug passt (14.10.2026).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ofp_erstellt: Option<i64>,
 }
 
 impl FlugZeiten {

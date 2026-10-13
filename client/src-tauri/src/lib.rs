@@ -16736,6 +16736,50 @@ fn apply_route_only_to_stats(stats: &mut FlightStats, ofp: &api_client::SimBrief
     if let Some(alt) = ofp.alternate.as_ref().filter(|a| !a.trim().is_empty()) {
         stats.planned_alternate = Some(alt.clone());
     }
+    // „Zeiten gegen Flugplan" nur NACHTRAGEN, nie ersetzen: Ein Flug, der
+    // vor 2.0.15 begann und nach dem Update fortgesetzt wird, hat keinen
+    // Plan (AIB 431, 13.10.2026). Reine Anzeige, kein Score-Feld.
+    // Bewusst als ganzer Satz, nicht feldweise: Feldweise koennten Zeiten
+    // aus zwei verschiedenen OFPs gemischt werden (Codex PR #139, P2 —
+    // abgewogen und so belassen).
+    if stats.ofp_planzeiten == landing_scoring::flugzeiten::FlugZeiten::default() {
+        let mut neu = ofp_planzeiten(ofp);
+        // Erledigt-Marker fuer `ofp_nachladen_noetig`: Fehlt dem
+        // nachgeladenen OFP die Erstellzeit, gilt die vom Flugstart
+        // (Codex PR #139, P2) — sonst luede jeder Neustart erneut.
+        if neu.ofp_erstellt.is_none() {
+            neu.ofp_erstellt = stats
+                .simbrief_ofp_generated_at
+                .as_deref()
+                .and_then(|t| t.trim().parse::<i64>().ok())
+                .filter(|&t| t > 0);
+        }
+        stats.ofp_planzeiten = neu;
+    }
+}
+
+/// Muss der wiederhergestellte Flug den OFP einmal nachladen?
+///
+/// - Sprit-Planwerte je Wegpunkt fehlen (Flug vor v1.7.40 begonnen).
+/// - „Zeiten gegen Flugplan" fehlen bei einem SimBrief-Flug (Flug vor
+///   2.0.15 begonnen, mitten im Flug aktualisiert — AIB 431, 13.10.2026).
+fn ofp_nachladen_noetig(st: &FlightStats) -> bool {
+    let sprit_plan_fehlt = st.planned_waypoints.len() >= 2
+        && st
+            .planned_waypoints
+            .iter()
+            .all(|f| f.sprit_an_bord_kg.is_none());
+    // ⚠ Woran ein OFP-Flug nach dem Fortsetzen erkennbar ist: an der
+    // gespeicherten Erstellzeit des OFP. `flight_plan_source` wird nicht
+    // gespeichert, `simbrief_ofp_id` fehlt beim Direct-Start ohne
+    // Bid-Kennung (Codex PR #139, zweimal P1).
+    //
+    // Erledigt-Marker: Nach dem Nachladen traegt `ofp_planzeiten` die
+    // Erstellzeit (`ofp_erstellt`) — auch wenn der OFP keine einzige
+    // Planzeit hat. Sonst luede jeder Neustart erneut (Codex P2).
+    let planzeiten_fehlen = st.simbrief_ofp_generated_at.is_some()
+        && st.ofp_planzeiten == landing_scoring::flugzeiten::FlugZeiten::default();
+    sprit_plan_fehlt || planzeiten_fehlen
 }
 
 /// v0.16.23: **Route-Only-Refresh** — holt den AKTUELLEN SimBrief-OFP und
@@ -22699,8 +22743,9 @@ mod konten_isolierung_runde_neun_wiring_tests {
         // diesen Test statt der Funktion.
         let nadel = format!("async fn try{}resume_flight(", "_");
         let koerper = funktionskoerper(SRC, &nadel);
+        // Was geprueft wird, testet `ofp_nachladen_noetig` (2.0.16).
         let pruefung = koerper
-            .find("sprit_plan_fehlt")
+            .find("ofp_nachladen_noetig(")
             .expect("die Wiederaufnahme prueft die Sprit-Planwerte nicht");
         let nachladen = koerper
             .find("flight_refresh_route_only(")
@@ -22713,10 +22758,6 @@ mod konten_isolierung_runde_neun_wiring_tests {
         assert!(
             pruefung < nachladen,
             "erst pruefen, dann nachladen — sonst holt jeder Neustart den OFP"
-        );
-        assert!(
-            koerper.contains("f.sprit_an_bord_kg.is_none()"),
-            "geprueft wird das Feld, das seit v1.7.40 fehlen kann"
         );
     }
 
@@ -46611,8 +46652,8 @@ fn landung_erwartet(
     Some(jetzt_ms.div_euclid(1000) + rest.round() as i64)
 }
 
-/// „Zeiten gegen Flugplan": die vier Planzeiten eines OFP. Null oder
-/// negativ (leeres Feld) gilt als fehlend.
+/// „Zeiten gegen Flugplan": die vier Planzeiten eines OFP und seine
+/// Erstellzeit. Null oder negativ (leeres Feld) gilt als fehlend.
 fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten::FlugZeiten {
     let echt = |v: Option<i64>| v.filter(|&t| t > 0);
     landing_scoring::flugzeiten::FlugZeiten {
@@ -46620,6 +46661,8 @@ fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten:
         plan_abheben: echt(ofp.sched_off_epoch),
         plan_aufsetzen: echt(ofp.sched_on_epoch),
         plan_on_block: echt(ofp.sched_in_epoch),
+        // `time_generated` kommt als Text (Unix-Sekunden).
+        ofp_erstellt: echt(ofp.ofp_generated_at.trim().parse().ok()),
         ..Default::default()
     }
 }
@@ -58436,19 +58479,18 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
     //
     // Best effort: Ohne Netz oder ohne OFP bleibt es, wie es war — der
     // naechste Flug bringt die Werte ohnehin mit.
-    let sprit_plan_fehlt = {
+    //
+    // 2.0.16: Dasselbe fuer „Zeiten gegen Flugplan" — siehe
+    // `ofp_nachladen_noetig`.
+    let ofp_nachladen = {
         let st = flight.stats.lock().expect("flight stats lock");
-        st.planned_waypoints.len() >= 2
-            && st
-                .planned_waypoints
-                .iter()
-                .all(|f| f.sprit_an_bord_kg.is_none())
+        ofp_nachladen_noetig(&st)
     };
     {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(flight);
     }
-    if sprit_plan_fehlt {
+    if ofp_nachladen {
         let app_fuer_ofp = app.clone();
         tauri::async_runtime::spawn(async move {
             let state = app_fuer_ofp.state::<AppState>();
@@ -58463,11 +58505,13 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
             // Wegpunkte — genau das, was hier fehlt.
             match flight_refresh_route_only(app_fuer_ofp.clone(), state).await {
                 Ok(_) => {
-                    tracing::info!("Sprit-Planwerte fehlten nach dem Neustart — Route nachgeladen")
+                    tracing::info!(
+                        "Sprit-Planwerte oder Planzeiten fehlten nach dem Neustart — OFP nachgeladen"
+                    )
                 }
                 Err(e) => tracing::warn!(
                     error = ?e,
-                    "Sprit-Planwerte fehlen und die Route liess sich nicht nachladen"
+                    "Sprit-Planwerte oder Planzeiten fehlen und der OFP liess sich nicht nachladen"
                 ),
             }
         });
@@ -85045,5 +85089,108 @@ mod schnelle_ausfahrt_tests {
         assert!(raeum > 1700.0, "Raeumpunkt bei {raeum:.0} m — an die Stelle des Ausrichtens verlegt");
         let max = stats.bahn_max_querversatz_m.unwrap();
         assert!(max < -30.0, "Versatz {max:.1} m — das Ausbrechen ging verloren");
+    }
+}
+
+#[cfg(test)]
+mod ofp_planzeiten_tests {
+    use super::*;
+
+    /// Die Erstellzeit des OFP kommt mit — sonst fehlt „Plan aus dem OFP
+    /// vom …", und die Pruefung, ob der Plan zum Flug passt, hat im
+    /// Bericht keinen Hinweis, woher der Plan stammt (14.10.2026).
+    #[test]
+    fn die_erstellzeit_des_ofp_kommt_mit() {
+        let ofp = api_client::SimBriefOfp {
+            ofp_generated_at: " 1791900000 ".into(),
+            sched_out_epoch: Some(1_791_902_400),
+            ..Default::default()
+        };
+        let z = ofp_planzeiten(&ofp);
+        assert_eq!(z.ofp_erstellt, Some(1_791_900_000));
+        assert_eq!(z.plan_off_block, Some(1_791_902_400));
+        assert_eq!(
+            ofp_planzeiten(&api_client::SimBriefOfp::default()).ofp_erstellt,
+            None
+        );
+    }
+
+    /// Wann der wiederhergestellte Flug den OFP nachlaedt (2.0.16).
+    ///
+    /// AIB 431 (13.10.2026): mit 2.0.14 gestartet, mitten im Flug auf
+    /// 2.0.15 aktualisiert — der fortgesetzte Flug hatte keine Planzeiten,
+    /// das Cockpit zeigte nichts. Gebaut wie der echte Weg: ueber den
+    /// Speicherstand (`PersistedFlightStats`), Direct-Start ohne
+    /// Bid-Kennung (`simbrief_ofp_id` leer).
+    #[test]
+    fn ein_fortgesetzter_flug_ohne_planzeiten_laedt_den_ofp_nach() {
+        let fortgesetzt = |vorher: FlightStats| {
+            let gespeichert = PersistedFlightStats::snapshot_from(&vorher);
+            let mut st = FlightStats::new();
+            gespeichert.apply_to(&mut st);
+            st
+        };
+        let mut vor_dem_update = FlightStats::new();
+        vor_dem_update.flight_plan_source = Some("simbrief");
+        vor_dem_update.simbrief_ofp_generated_at = Some("1791906600".into());
+        let mut st = fortgesetzt(vor_dem_update);
+        assert!(
+            ofp_nachladen_noetig(&st),
+            "SimBrief-Flug ohne Planzeiten nach dem Fortsetzen"
+        );
+
+        // Nachgeladen — auch ein OFP ganz ohne Planzeiten gilt dann als
+        // erledigt, sonst luede jeder Neustart erneut (Codex P2).
+        let ohne_zeiten = api_client::SimBriefOfp {
+            ofp_generated_at: "1791906600".into(),
+            ..Default::default()
+        };
+        apply_route_only_to_stats(&mut st, &ohne_zeiten);
+        let st = fortgesetzt(st);
+        assert!(
+            !ofp_nachladen_noetig(&st),
+            "schon nachgeladen — nicht bei jedem Neustart erneut"
+        );
+
+        // Auch wenn der nachgeladene OFP nicht einmal eine Erstellzeit
+        // traegt (Codex P2): die vom Flugstart gilt als Merker.
+        let mut ganz_leer = FlightStats::new();
+        ganz_leer.simbrief_ofp_generated_at = Some("1791906600".into());
+        apply_route_only_to_stats(&mut ganz_leer, &api_client::SimBriefOfp::default());
+        assert!(!ofp_nachladen_noetig(&fortgesetzt(ganz_leer)));
+
+        // Ohne OFP (manueller Plan) gibt es nichts zu holen.
+        let mut manuell = FlightStats::new();
+        manuell.flight_plan_source = Some("manual");
+        assert!(!ofp_nachladen_noetig(&fortgesetzt(manuell)));
+
+        // Der bisherige Fall bleibt: Wegpunkte ohne Sprit-Planwerte.
+        let mut alt = FlightStats::new();
+        alt.planned_waypoints = vec![
+            api_client::RouteFix::default(),
+            api_client::RouteFix::default(),
+        ];
+        assert!(ofp_nachladen_noetig(&alt), "Sprit-Planwerte fehlen");
+    }
+
+    /// Das Nachladen traegt die Planzeiten nach — ersetzt einen
+    /// vorhandenen Plan aber nicht.
+    #[test]
+    fn das_routen_nachladen_traegt_planzeiten_nach_ersetzt_sie_aber_nicht() {
+        let ofp = api_client::SimBriefOfp {
+            sched_out_epoch: Some(1_791_909_000),
+            sched_in_epoch: Some(1_791_920_000),
+            ofp_generated_at: "1791906600".into(),
+            ..Default::default()
+        };
+        let mut st = FlightStats::new();
+        apply_route_only_to_stats(&mut st, &ofp);
+        assert_eq!(st.ofp_planzeiten.plan_off_block, Some(1_791_909_000));
+        assert_eq!(st.ofp_planzeiten.ofp_erstellt, Some(1_791_906_600));
+
+        let mut mit_plan = FlightStats::new();
+        mit_plan.ofp_planzeiten.plan_off_block = Some(1);
+        apply_route_only_to_stats(&mut mit_plan, &ofp);
+        assert_eq!(mit_plan.ofp_planzeiten.plan_off_block, Some(1));
     }
 }

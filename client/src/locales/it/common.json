@@ -4134,7 +4134,14 @@
       },
       "aufgeholt": "{{min}} min recuperati dal decollo",
       "verloren": "{{min}} min persi dal decollo",
-      "gehalten": "mantenuto dal decollo"
-    }
+      "gehalten": "mantenuto dal decollo",
+      "off_block_plan": "Off-block previsto",
+      "off_block_erwartet": "Off-block atteso",
+      "noch_bis_off_block": "ancora {{min}} min all’off-block previsto",
+      "off_block_vorbei": "off-block previsto superato"
+    },
+    "plan_passt_nicht": "Il piano SimBrief non corrisponde a questo volo come orario (oltre 6 ore di scarto). Gli orari quindi non vengono confrontati.",
+    "plan_passt_nicht_vom": "Il piano SimBrief dell’OFP del {{wann}} non corrisponde a questo volo come orario (oltre 6 ore di scarto). Gli orari quindi non vengono confrontati.",
+    "fuss_ofp_vom": "Piano dall’OFP del {{wann}}."
   }
 }

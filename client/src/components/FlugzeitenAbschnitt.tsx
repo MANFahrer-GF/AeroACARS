@@ -7,12 +7,15 @@
 import { useTranslation } from "react-i18next";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import {
+  A15_URTEIL_BIS_MIN,
   PUENKTLICH_BIS_MIN,
+  datumUhrzeit,
   dauern,
   dauerText,
   hatPlan,
   kopf,
   minutenText,
+  planPasst,
   uhrzeit,
   zeitachse,
   zeitZeilen,
@@ -93,9 +96,10 @@ function Kopfsatz({ z }: { z: FlugZeiten }) {
         : d < 0
           ? t("flugzeiten.kopf.block_kuerzer", { min: -d })
           : t("flugzeiten.kopf.block_gleich");
-  // Wie Airlines zählen (A15) — nur für On-Block, nur als Text.
+  // Wie Airlines zählen (A15) — nur für On-Block, nur als Text, und nur
+  // bis ±A15_URTEIL_BIS_MIN (darüber lag meist der Plan daneben).
   const a15 =
-    k.schritt === "on_block"
+    k.schritt === "on_block" && Math.abs(k.abw_min) <= A15_URTEIL_BIS_MIN
       ? k.abw_min <= PUENKTLICH_BIS_MIN
         ? t("flugzeiten.a15_puenktlich", { min: PUENKTLICH_BIS_MIN })
         : t("flugzeiten.a15_verspaetet", { min: PUENKTLICH_BIS_MIN })
@@ -119,6 +123,19 @@ export function FlugzeitenAbschnitt({ record }: { record: LandingRecord }) {
       <section className="landing-section flugzeiten" data-testid="flugzeiten">
         <h3>{t("flugzeiten.titel")}</h3>
         <p className="flugzeiten__leer">{t("flugzeiten.kein_plan")}</p>
+      </section>
+    );
+  }
+  // OFP von gestern o. ä. — dann gibt es nichts Sinnvolles zu vergleichen.
+  if (!planPasst(z)) {
+    return (
+      <section className="landing-section flugzeiten" data-testid="flugzeiten">
+        <h3>{t("flugzeiten.titel")}</h3>
+        <p className="flugzeiten__leer">
+          {z.ofp_erstellt
+            ? t("flugzeiten.plan_passt_nicht_vom", { wann: datumUhrzeit(z.ofp_erstellt) })
+            : t("flugzeiten.plan_passt_nicht")}
+        </p>
       </section>
     );
   }
@@ -168,7 +185,12 @@ export function FlugzeitenAbschnitt({ record }: { record: LandingRecord }) {
           </tbody>
         </table>
       </div>
-      <p className="flugzeiten__fuss">{t("flugzeiten.fuss")}</p>
+      <p className="flugzeiten__fuss">
+        {t("flugzeiten.fuss")}
+        {z.ofp_erstellt != null && z.ofp_erstellt > 0 && (
+          <> {t("flugzeiten.fuss_ofp_vom", { wann: datumUhrzeit(z.ofp_erstellt) })}</>
+        )}
+      </p>
     </section>
   );
 }
@@ -177,7 +199,7 @@ export function FlugzeitenAbschnitt({ record }: { record: LandingRecord }) {
  *  `null`, wenn es nichts zu vergleichen gibt. */
 export function FlugzeitenKurz({ z }: { z: FlugZeiten | null | undefined }) {
   const { t } = useTranslation();
-  if (!z || !hatPlan(z)) return null;
+  if (!z || !hatPlan(z) || !planPasst(z)) return null;
   const k = kopf(z);
   const d = dauern(z);
   if (!k && (d.block_plan == null || d.block_ist == null)) return null;
