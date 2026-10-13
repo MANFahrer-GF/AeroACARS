@@ -16739,6 +16739,9 @@ fn apply_route_only_to_stats(stats: &mut FlightStats, ofp: &api_client::SimBrief
     // „Zeiten gegen Flugplan" nur NACHTRAGEN, nie ersetzen: Ein Flug, der
     // vor 2.0.15 begann und nach dem Update fortgesetzt wird, hat keinen
     // Plan (AIB 431, 13.10.2026). Reine Anzeige, kein Score-Feld.
+    // Bewusst als ganzer Satz, nicht feldweise: Feldweise koennten Zeiten
+    // aus zwei verschiedenen OFPs gemischt werden (Codex PR #139, P2 —
+    // abgewogen und so belassen).
     if !stats.ofp_planzeiten.hat_plan() {
         stats.ofp_planzeiten = ofp_planzeiten(ofp);
     }
@@ -16755,8 +16758,9 @@ fn ofp_nachladen_noetig(st: &FlightStats) -> bool {
             .planned_waypoints
             .iter()
             .all(|f| f.sprit_an_bord_kg.is_none());
-    let planzeiten_fehlen =
-        st.flight_plan_source == Some("simbrief") && !st.ofp_planzeiten.hat_plan();
+    // ⚠ Die OFP-Kennung, nicht `flight_plan_source`: Die Quelle wird nicht
+    // gespeichert und ist nach dem Fortsetzen leer (Codex PR #139, P1).
+    let planzeiten_fehlen = st.simbrief_ofp_id.is_some() && !st.ofp_planzeiten.hat_plan();
     sprit_plan_fehlt || planzeiten_fehlen
 }
 
@@ -22747,9 +22751,20 @@ mod konten_isolierung_runde_neun_wiring_tests {
     /// (manueller Plan) laedt nichts, ein Flug mit Plan auch nicht.
     #[test]
     fn ein_fortgesetzter_flug_ohne_planzeiten_laedt_den_ofp_nach() {
+        // So, wie der Flug nach dem Fortsetzen aussieht: OFP-Kennung
+        // gespeichert, `flight_plan_source` NICHT (wird nicht persistiert).
+        let gespeichert = PersistedFlightStats::snapshot_from(&{
+            let mut s = FlightStats::new();
+            s.flight_plan_source = Some("simbrief");
+            s.simbrief_ofp_id = Some("1791906600_ABC".into());
+            s
+        });
         let mut st = FlightStats::new();
-        st.flight_plan_source = Some("simbrief");
-        assert!(ofp_nachladen_noetig(&st), "SimBrief-Flug ohne Planzeiten");
+        gespeichert.apply_to(&mut st);
+        assert!(
+            ofp_nachladen_noetig(&st),
+            "SimBrief-Flug ohne Planzeiten nach dem Fortsetzen"
+        );
 
         st.ofp_planzeiten.plan_on_block = Some(1_791_910_000);
         assert!(!ofp_nachladen_noetig(&st), "Plan da — nichts nachladen");
