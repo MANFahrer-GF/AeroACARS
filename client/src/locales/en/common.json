@@ -4134,7 +4134,14 @@
       },
       "aufgeholt": "{{min}} min made up since takeoff",
       "verloren": "{{min}} min lost since takeoff",
-      "gehalten": "held since takeoff"
-    }
+      "gehalten": "held since takeoff",
+      "off_block_plan": "Off-block planned",
+      "off_block_erwartet": "Off-block expected",
+      "noch_bis_off_block": "{{min}} min to planned off-block",
+      "off_block_vorbei": "planned off-block has passed"
+    },
+    "plan_passt_nicht": "The SimBrief plan does not fit this flight in time (more than 6 hours off). The times are therefore not compared.",
+    "plan_passt_nicht_vom": "The SimBrief plan from the OFP of {{wann}} does not fit this flight in time (more than 6 hours off). The times are therefore not compared.",
+    "fuss_ofp_vom": "Plan from the OFP of {{wann}}."
   }
 }

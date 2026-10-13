@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
-import { cockpitSchaetzung, minutenText, uhrzeit } from "../lib/flugzeiten";
+import {
+  abflugSchaetzung,
+  cockpitSchaetzung,
+  datumUhrzeit,
+  hatPlan,
+  minutenText,
+  planPasst,
+  uhrzeit,
+} from "../lib/flugzeiten";
 
 interface Props {
   info: ActiveFlightInfo;
@@ -148,12 +156,52 @@ function TripCard({
 }
 
 /** „Zeiten gegen Flugplan" live (13.10.2026): geplantes und erwartetes
- *  On-Block, keine Wertung. Nur mit SimBrief-Plan. */
+ *  On-Block, keine Wertung. Nur mit SimBrief-Plan.
+ *
+ *  Vor dem Abrollen (14.10.2026) dieselben drei Zeilen für den Off-Block —
+ *  wer nach Plan fliegt, braucht am Gate die Abrollzeit. Passt der Plan
+ *  nicht zum Flug (OFP von gestern), wird nicht verglichen. */
 function PlanZeitenZeilen({ info }: { info: ActiveFlightInfo }) {
   const { t } = useTranslation();
+  const [jetzt, setJetzt] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const id = setInterval(() => setJetzt(Date.now() / 1000), 15_000);
+    return () => clearInterval(id);
+  }, []);
   const z = info.flugzeiten;
-  const s = z ? cockpitSchaetzung(z, info.landung_erwartet) : null;
-  if (!z || !s) return null;
+  if (!z || !hatPlan(z)) return null;
+  if (!planPasst(z, jetzt)) {
+    return (
+      <div data-testid="planzeiten-cockpit">
+        <div className="row">
+          <span className="row__label">
+            {z.ofp_erstellt
+              ? t("flugzeiten.plan_passt_nicht_vom", { wann: datumUhrzeit(z.ofp_erstellt) })
+              : t("flugzeiten.plan_passt_nicht")}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  const abflug = abflugSchaetzung(z, jetzt);
+  if (abflug) {
+    return (
+      <div data-testid="planzeiten-cockpit">
+        <Row label={t("flugzeiten.cockpit.off_block_plan")} value={uhrzeit(abflug.plan)} />
+        <Row label={t("flugzeiten.cockpit.off_block_erwartet")} value={uhrzeit(abflug.erwartet)} />
+        <Row label={t("flugzeiten.cockpit.gegen_plan")} value={minutenText(abflug.gegen_plan_min)} sum />
+        <div className="row">
+          <span className="row__label">
+            {abflug.noch_min > 0
+              ? t("flugzeiten.cockpit.noch_bis_off_block", { min: abflug.noch_min })
+              : t("flugzeiten.cockpit.off_block_vorbei")}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  const s = cockpitSchaetzung(z, info.landung_erwartet);
+  if (!s) return null;
   const a = s.aufgeholt_min;
   const seitAbheben =
     a == null

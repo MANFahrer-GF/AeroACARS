@@ -46611,8 +46611,8 @@ fn landung_erwartet(
     Some(jetzt_ms.div_euclid(1000) + rest.round() as i64)
 }
 
-/// „Zeiten gegen Flugplan": die vier Planzeiten eines OFP. Null oder
-/// negativ (leeres Feld) gilt als fehlend.
+/// „Zeiten gegen Flugplan": die vier Planzeiten eines OFP und seine
+/// Erstellzeit. Null oder negativ (leeres Feld) gilt als fehlend.
 fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten::FlugZeiten {
     let echt = |v: Option<i64>| v.filter(|&t| t > 0);
     landing_scoring::flugzeiten::FlugZeiten {
@@ -46620,6 +46620,8 @@ fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten:
         plan_abheben: echt(ofp.sched_off_epoch),
         plan_aufsetzen: echt(ofp.sched_on_epoch),
         plan_on_block: echt(ofp.sched_in_epoch),
+        // `time_generated` kommt als Text (Unix-Sekunden).
+        ofp_erstellt: echt(ofp.ofp_generated_at.trim().parse().ok()),
         ..Default::default()
     }
 }
@@ -85045,5 +85047,29 @@ mod schnelle_ausfahrt_tests {
         assert!(raeum > 1700.0, "Raeumpunkt bei {raeum:.0} m — an die Stelle des Ausrichtens verlegt");
         let max = stats.bahn_max_querversatz_m.unwrap();
         assert!(max < -30.0, "Versatz {max:.1} m — das Ausbrechen ging verloren");
+    }
+}
+
+#[cfg(test)]
+mod ofp_planzeiten_tests {
+    use super::*;
+
+    /// Die Erstellzeit des OFP kommt mit — sonst fehlt „Plan aus dem OFP
+    /// vom …", und die Pruefung, ob der Plan zum Flug passt, hat im
+    /// Bericht keinen Hinweis, woher der Plan stammt (14.10.2026).
+    #[test]
+    fn die_erstellzeit_des_ofp_kommt_mit() {
+        let ofp = api_client::SimBriefOfp {
+            ofp_generated_at: " 1791900000 ".into(),
+            sched_out_epoch: Some(1_791_902_400),
+            ..Default::default()
+        };
+        let z = ofp_planzeiten(&ofp);
+        assert_eq!(z.ofp_erstellt, Some(1_791_900_000));
+        assert_eq!(z.plan_off_block, Some(1_791_902_400));
+        assert_eq!(
+            ofp_planzeiten(&api_client::SimBriefOfp::default()).ofp_erstellt,
+            None
+        );
     }
 }

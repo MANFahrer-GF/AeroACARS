@@ -19,6 +19,8 @@ export interface FlugZeiten {
   abheben?: number | null;
   aufsetzen?: number | null;
   on_block?: number | null;
+  /** Wann das OFP erstellt wurde (Unix-s) — „Plan aus dem OFP vom …". */
+  ofp_erstellt?: number | null;
 }
 
 export type ZeitSchritt = "off_block" | "abheben" | "aufsetzen" | "on_block";
@@ -43,6 +45,31 @@ export function ist(z: FlugZeiten, s: ZeitSchritt): number | null {
 
 export function hatPlan(z: FlugZeiten | null | undefined): boolean {
   return !!z && SCHRITTE.some((s) => plan(z, s) != null);
+}
+
+/** Liegt der Plan weiter als das neben dem Flug, gehört er nicht zu ihm. */
+export const PLAN_PASST_BIS_STUNDEN = 6;
+
+/**
+ * Gehört der Plan zu diesem Flug? (14.10.2026)
+ *
+ * Bei GSG entsteht der SimBrief-Plan beim Erstellen des OFP: `sched_out`
+ * liegt fast immer rund 40 min danach. Wer mit einem OFP von gestern
+ * fliegt, wäre sonst „1440 min verspätet". Verglichen wird der erste
+ * Schritt, der Plan UND Ist hat; vor dem Abrollen der geplante Off-Block
+ * mit `jetzt` (nur im Cockpit). Ohne beides gibt es nichts zu prüfen.
+ */
+export function planPasst(z: FlugZeiten, jetzt?: number | null): boolean {
+  const grenze = PLAN_PASST_BIS_STUNDEN * 3600;
+  for (const s of SCHRITTE) {
+    const p = plan(z, s);
+    const i = ist(z, s);
+    if (p != null && i != null) return Math.abs(i - p) <= grenze;
+  }
+  const pOff = plan(z, "off_block");
+  const j = zahl(jetzt);
+  if (pOff != null && j != null) return Math.abs(j - pOff) <= grenze;
+  return true;
 }
 
 /** Abweichung in ganzen Minuten; + = später als geplant. */
@@ -117,6 +144,13 @@ export function kopf(z: FlugZeiten): Kopf | null {
 export function uhrzeit(sek: number | null | undefined): string {
   if (sek == null || !Number.isFinite(sek)) return "—";
   return `${new Date(sek * 1000).toISOString().slice(11, 16)}z`;
+}
+
+/** „13.10. 13:48z" */
+export function datumUhrzeit(sek: number | null | undefined): string {
+  if (sek == null || !Number.isFinite(sek)) return "—";
+  const iso = new Date(sek * 1000).toISOString();
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)}. ${iso.slice(11, 16)}z`;
 }
 
 /** „1:10" (Stunden:Minuten) */
@@ -200,6 +234,40 @@ export function cockpitSchaetzung(
     gegen_plan_min: gegen,
     aufgeholt_min: beimAbheben != null && quelle !== "abheben" ? beimAbheben - gegen : null,
     quelle,
+  };
+}
+
+export interface AbflugSchaetzung {
+  /** Geplantes Off-Block (Unix-s). */
+  plan: number;
+  /** Erwartetes Off-Block: der Plan oder — wenn er vorbei ist — jetzt. */
+  erwartet: number;
+  /** Erwartet minus Plan (min), 0 bis zum geplanten Off-Block. */
+  gegen_plan_min: number;
+  /** Minuten bis zum geplanten Off-Block, 0 wenn er vorbei ist. */
+  noch_min: number;
+}
+
+/**
+ * Das Cockpit VOR dem Abrollen (14.10.2026, Thomas: „Zeiten sind wichtig
+ * für wen, der danach fliegen möchte"): Am Gate zählt der geplante
+ * Off-Block. Ist er vorbei, rollt man frühestens jetzt ab — die
+ * Verspätung steht dann schon am Gate da, nicht erst nach dem Abrollen.
+ * `null` nach dem Abrollen oder ohne geplanten Off-Block.
+ */
+export function abflugSchaetzung(
+  z: FlugZeiten,
+  jetzt: number | null | undefined,
+): AbflugSchaetzung | null {
+  const pOff = plan(z, "off_block");
+  const j = zahl(jetzt);
+  if (pOff == null || j == null || ist(z, "off_block") != null) return null;
+  const erwartet = Math.max(j, pOff);
+  return {
+    plan: pOff,
+    erwartet,
+    gegen_plan_min: abweichungMin(pOff, erwartet) ?? 0,
+    noch_min: Math.max(0, Math.round((pOff - j) / 60)),
   };
 }
 
