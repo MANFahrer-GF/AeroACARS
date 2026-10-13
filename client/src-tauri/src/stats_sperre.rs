@@ -33,6 +33,11 @@ pub(crate) const SCHWELLE: Duration = Duration::from_millis(20);
 /// problem soll sichtbar sein, das Protokoll aber nicht fluten.
 const MELDEABSTAND: Duration = Duration::from_secs(1);
 
+/// Und insgesamt höchstens so viele je Programmlauf. Hält eine Stelle auf
+/// einem langsamen Rechner die Sperre in jedem Takt 22 ms, wären es sonst
+/// tausende Zeilen je Flugstunde.
+const MELDUNGEN_HOECHSTENS: u32 = 200;
+
 /// `Mutex` mit Messung. Gleiche Schnittstelle wie `Mutex::lock`, damit jede
 /// bestehende Aufrufstelle (`expect`, `unwrap_or_else(into_inner)`, …)
 /// unverändert bleibt.
@@ -119,8 +124,15 @@ fn melden(stelle: &'static Location<'static>, gehalten: Duration, gewartet: Dura
         }
         karte.insert(schluessel, jetzt);
     }
+    static GEMELDET: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let nummer = GEMELDET.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if nummer > MELDUNGEN_HOECHSTENS {
+        return;
+    }
     tracing::warn!(
         stelle = %format_args!("{}:{}", stelle.file(), stelle.line()),
+        meldung = nummer,
+        letzte = nummer == MELDUNGEN_HOECHSTENS,
         gehalten_ms = gehalten.as_secs_f64() * 1000.0,
         gewartet_ms = gewartet.as_secs_f64() * 1000.0,
         "Flugdaten-Sperre lange gehalten oder gewartet"

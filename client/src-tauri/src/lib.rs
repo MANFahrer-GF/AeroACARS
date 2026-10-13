@@ -37798,7 +37798,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     // (`flug_aktivitaet::messfaden_vorrang`).
     let flight_fuer_fehler = flight.clone();
     let gestartet = std::thread::Builder::new()
-        .name("aufsetz-messung".into())
+        // Seit 2.0.17 die AUSWERTUNG; gemessen wird in `aufsetz-messfaden`.
+        .name("aufsetz-auswertung".into())
         .spawn(move || {
         // Stürzt der Faden ab (Panik), den Merker zurücksetzen — sonst ließe
         // sich die Aufsetzmessung für diesen Flug nie wieder starten
@@ -37869,10 +37870,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             let messfaden = std::thread::Builder::new()
                 .name("aufsetz-messfaden".into())
                 .spawn(move || {
-                    // Stürzt der MESSFADEN ab, endet die Auswertung mit dem
-                    // Kanal — ohne Panik dort. Der Merker muss deshalb auch
-                    // hier zurückgesetzt werden.
-                    let _merker = MerkerBeiPanik(flight_m.clone(), meine_generation);
+                    // Kein eigener Merker-Rücksetzer: Stürzt dieser Faden
+                    // ab, endet die Auswertung mit dem Kanal und setzt den
+                    // Merker NACH dem Abarbeiten zurück (Schleifenende
+                    // unten). Hier zurückgesetzt, könnte ein Fortsetzen eine
+                    // zweite Auswertung starten, während die erste noch
+                    // gestaute Messwerte in denselben Puffer schreibt.
                     flug_aktivitaet::messfaden_vorrang();
                     aufsetz_messen(
                         &flight_m,
@@ -39332,6 +39335,16 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         "v0.7.0 Multi-TD reset — climb-out > 100ft AGL detected after dump, ready for next TD"
                     );
                 }
+            }
+        }
+        // Ende ohne Stopp und ohne neue Generation: Der Messfaden ist
+        // abgestürzt. Erst jetzt, nach dem Abarbeiten, den Merker freigeben
+        // — sonst ließe sich die Messung für diesen Flug nie wieder starten.
+        if !flight.stop.load(Ordering::Relaxed) {
+            let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+            if flight.generation.load(Ordering::SeqCst) == meine_generation {
+                flight.touchdown_sampler_spawned.store(false, Ordering::SeqCst);
+                tracing::error!(pirep_id = %flight.pirep_id, "Aufsetz-Messfaden unerwartet beendet — Merker zurückgesetzt");
             }
         }
         tracing::info!(pirep_id = %flight.pirep_id, "touchdown sampler stopped");
