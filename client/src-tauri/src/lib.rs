@@ -16743,7 +16743,18 @@ fn apply_route_only_to_stats(stats: &mut FlightStats, ofp: &api_client::SimBrief
     // aus zwei verschiedenen OFPs gemischt werden (Codex PR #139, P2 —
     // abgewogen und so belassen).
     if stats.ofp_planzeiten == landing_scoring::flugzeiten::FlugZeiten::default() {
-        stats.ofp_planzeiten = ofp_planzeiten(ofp);
+        let mut neu = ofp_planzeiten(ofp);
+        // Erledigt-Marker fuer `ofp_nachladen_noetig`: Fehlt dem
+        // nachgeladenen OFP die Erstellzeit, gilt die vom Flugstart
+        // (Codex PR #139, P2) — sonst luede jeder Neustart erneut.
+        if neu.ofp_erstellt.is_none() {
+            neu.ofp_erstellt = stats
+                .simbrief_ofp_generated_at
+                .as_deref()
+                .and_then(|t| t.trim().parse::<i64>().ok())
+                .filter(|&t| t > 0);
+        }
+        stats.ofp_planzeiten = neu;
     }
 }
 
@@ -85140,6 +85151,13 @@ mod ofp_planzeiten_tests {
             !ofp_nachladen_noetig(&st),
             "schon nachgeladen — nicht bei jedem Neustart erneut"
         );
+
+        // Auch wenn der nachgeladene OFP nicht einmal eine Erstellzeit
+        // traegt (Codex P2): die vom Flugstart gilt als Merker.
+        let mut ganz_leer = FlightStats::new();
+        ganz_leer.simbrief_ofp_generated_at = Some("1791906600".into());
+        apply_route_only_to_stats(&mut ganz_leer, &api_client::SimBriefOfp::default());
+        assert!(!ofp_nachladen_noetig(&fortgesetzt(ganz_leer)));
 
         // Ohne OFP (manueller Plan) gibt es nichts zu holen.
         let mut manuell = FlightStats::new();
