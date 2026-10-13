@@ -966,7 +966,9 @@ pub fn szenerie_vorbereiten() {
 /// Abflugplatz auf (Stand-Ernte, siehe `dep_szenerie_auskunft` in
 /// `lib.rs`) — unabhaengig von `ergaenze_aus_szenerie`, das Navdaten
 /// voraussetzt und nur fuer die Bahnkorrektur gedacht ist.
-pub(crate) fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
+pub(crate) fn szenerie_flughafen(
+    icao: &str,
+) -> Option<std::sync::Arc<sim_xplane::szenerie::SzenerieFlughafen>> {
     let schluessel = icao.trim().to_ascii_uppercase();
     if let Some((_, treffer)) =
         gemerkter_eintrag(&schluessel).filter(|(alter, _)| *alter < MERKER_GUELTIG)
@@ -996,7 +998,7 @@ fn gemerkter_eintrag(
     schluessel: &str,
 ) -> Option<(
     std::time::Duration,
-    Option<sim_xplane::szenerie::SzenerieFlughafen>,
+    Option<std::sync::Arc<sim_xplane::szenerie::SzenerieFlughafen>>,
 )> {
     let merk = gemerkt().lock().ok()?;
     let (zeit, wert) = merk.get(schluessel)?;
@@ -1017,7 +1019,9 @@ type Merker = std::collections::HashMap<
     String,
     (
         std::time::Instant,
-        Option<sim_xplane::szenerie::SzenerieFlughafen>,
+        // Geteilt (`Arc`): Ein Nachschlag unter der Flugdaten-Sperre
+        // kopiert nur einen Zeiger, nie den Flughafen (v2.0.17).
+        Option<std::sync::Arc<sim_xplane::szenerie::SzenerieFlughafen>>,
     ),
 >;
 
@@ -1072,7 +1076,9 @@ pub(crate) fn vorladen(icao: &str) {
     });
 }
 
-fn szenerie_flughafen_lesen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
+fn szenerie_flughafen_lesen(
+    icao: &str,
+) -> Option<std::sync::Arc<sim_xplane::szenerie::SzenerieFlughafen>> {
     // ⚠ Baut das Verzeichnis notfalls hier — der Vorabbau beim
     // Flugbeginn ist die Regel, nicht die Garantie: Ein Flug, der aus
     // einer Wiederaufnahme kommt, oder ein Simulatorwechsel mitten im
@@ -1080,7 +1086,7 @@ fn szenerie_flughafen_lesen(icao: &str) -> Option<sim_xplane::szenerie::Szenerie
     verzeichnis_bereitstellen();
     let zelle = VERZEICHNIS.get_or_init(|| Mutex::new(None));
     let halter = zelle.lock().ok()?;
-    halter.as_ref()?.flughafen(icao)
+    halter.as_ref()?.flughafen(icao).map(std::sync::Arc::new)
 }
 
 /// Woher die Szenerie fuer diesen Simulator kommt.
@@ -1121,11 +1127,11 @@ pub fn ergaenze_aus_szenerie(
     simulator: sim_core::Simulator,
     icao: &str,
     nav: Option<NavAirport>,
-    msfs_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    msfs_auskunft: Option<std::sync::Arc<sim_core::szenerie::SzenerieFlughafen>>,
 ) -> (
     Option<NavAirport>,
     Option<UebernahmeBericht>,
-    Option<sim_core::szenerie::SzenerieFlughafen>,
+    Option<std::sync::Arc<sim_core::szenerie::SzenerieFlughafen>>,
 ) {
     let quelle = quelle_fuer(simulator);
     if quelle == Quelle::Keine {
@@ -1275,7 +1281,7 @@ mod anschluss_tests {
             Simulator::Msfs2024,
             "EDHE",
             Some(vorher),
-            Some(msfs_auskunft("EDHE", 93.72)),
+            crate::arc_some(msfs_auskunft("EDHE", 93.72)),
         );
         let b = bericht.expect("Bericht");
         assert_eq!(b.uebernommen, vec!["09"]);
@@ -1307,7 +1313,7 @@ mod anschluss_tests {
             Simulator::Msfs2024,
             "EDHE",
             Some(vorher.clone()),
-            Some(msfs_auskunft("EDDH", 233.0)),
+            crate::arc_some(msfs_auskunft("EDDH", 233.0)),
         );
         assert!(bericht.is_none(), "fremde Auskunft wurde benutzt");
         assert_eq!(
@@ -1352,7 +1358,7 @@ mod anschluss_tests {
             Simulator::Msfs2024,
             "EDHE",
             Some(nav),
-            Some(sim_core::szenerie::SzenerieFlughafen {
+            crate::arc_some(sim_core::szenerie::SzenerieFlughafen {
                 staende: Vec::new(),
                 icao: "EDHE".into(),
                 quelle: "msfs".into(),
@@ -1391,7 +1397,7 @@ mod anschluss_tests {
             Simulator::XPlane12,
             "EDHE",
             Some(nav_edhe()),
-            Some(msfs_auskunft("EDHE", 200.0)),
+            crate::arc_some(msfs_auskunft("EDHE", 200.0)),
         );
         // 200 Grad waere die MSFS-Auskunft; die Datei sagt rund 93,7.
         let k = nachher.unwrap().runways[0].true_course;

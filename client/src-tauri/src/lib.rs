@@ -41,6 +41,14 @@ mod ui_state;
 mod xplane_band;
 mod xplane_plugin_install;
 mod flug_aktivitaet;
+mod stats_sperre;
+
+/// Für Tests: eine Szenerie-Auskunft so ablegen, wie der Flug sie hält
+/// (geteilt, siehe `FlightStats::szenerie_auskunft`).
+#[cfg(test)]
+fn arc_some<T>(wert: T) -> Option<Arc<T>> {
+    Some(Arc::new(wert))
+}
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
 // Spec: docs/spec/v0.9.0-glitchtip-self-hosted.md
 mod sentry_init;
@@ -3523,7 +3531,7 @@ struct ActiveFlight {
     /// include them in the filed PIREP — even if the bid is gone by then.
     fares: Vec<(i64, i32)>,
     /// Mutable running stats updated by the streamer task.
-    stats: Mutex<FlightStats>,
+    stats: stats_sperre::GemesseneSperre<FlightStats>,
     stop: AtomicBool,
     /// True until the resume banner is dismissed (confirmed or cancelled).
     /// Drives the resume modal on the dashboard.
@@ -4261,13 +4269,14 @@ fn schnappschuss_uebernehmen(
                 .as_ref()
                 .map(|a| (a.icao.as_str(), stats.ziel_szenerie_auskunft_stand));
             if auskunft_ersetzen(alt_ziel, &neu.icao, stand) {
-                stats.ziel_szenerie_auskunft = Some((*neu).clone());
+                stats.ziel_szenerie_auskunft = Some(Arc::clone(&neu));
                 stats.ziel_szenerie_auskunft_stand = stand;
             }
         }
-        // ⚠ Erst HIER kopiert — der Schnappschuss teilt die Auskunft mit
-        // dem Buch (siehe `Schnappschuss::auskunft`).
-        stats.szenerie_auskunft = Some(Arc::unwrap_or_clone(neu));
+        // Geteilt mit dem Buch (siehe `Schnappschuss::auskunft`), nicht
+        // kopiert: Bis 2.0.16 stand hier eine Vollkopie aller Rollwege
+        // unter der Flugdaten-Sperre (v2.0.17, AIB 431).
+        stats.szenerie_auskunft = Some(neu);
         stats.szenerie_auskunft_stand = stand;
     }
 }
@@ -4774,7 +4783,7 @@ fn dep_szenerie_auskunft_uebernehmen(
                 if !auskunft.icao.eq_ignore_ascii_case(&icao) {
                     return;
                 }
-                stats.dep_szenerie_auskunft = Some(Arc::unwrap_or_clone(auskunft));
+                stats.dep_szenerie_auskunft = Some(auskunft);
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -7348,7 +7357,7 @@ struct FlightStats {
     /// ein; hier legt der Streamer sie ab, damit die Bahnauflösung sie
     /// beim Aufsetzen vorfindet. Bei X-Plane bleibt sie leer — dort
     /// liest der Client die Datei direkt.
-    szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    szenerie_auskunft: Option<Arc<sim_core::szenerie::SzenerieFlughafen>>,
     /// v1.7.44: Die Auskunft für den GEPLANTEN Zielplatz — ein eigener
     /// Platz, den ein Überflug nicht wegräumen kann.
     ///
@@ -7367,7 +7376,7 @@ struct FlightStats {
     /// des geplanten Ziels, und beim Aufsetzen entscheidet weiterhin die
     /// ICAO der gematchten Bahn, welche verwendet wird: Bei einem
     /// Ausweichflug passt dieses Feld nicht und wird ignoriert.
-    ziel_szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    ziel_szenerie_auskunft: Option<Arc<sim_core::szenerie::SzenerieFlughafen>>,
     /// Stand der Auskunft in `ziel_szenerie_auskunft` — dieselbe
     /// Buchführung wie bei `szenerie_auskunft_stand`.
     ///
@@ -7403,7 +7412,7 @@ struct FlightStats {
     /// kurz gegriffen — externe Gegenprüfung, Codex, adversarial,
     /// 04.09.2026.) `standliste_fuer` prüft dieses Feld als zusätzliche
     /// Quelle, zusätzlich zu `szenerie_auskunft` — siehe dort.
-    dep_szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    dep_szenerie_auskunft: Option<Arc<sim_core::szenerie::SzenerieFlughafen>>,
     /// Die Buch-Generation, unter der `dep_szenerie_auskunft` abgelegt
     /// wurde — vergleichbar mit `szenerie_auskunft_generation`, aber aus
     /// einem ANDEREN Grund noetig: der Abflugplatz selbst wechselt nie,
@@ -7510,7 +7519,7 @@ struct FlightStats {
     /// Die zuletzt gerechneten Ausfahrten mit dem Fingerabdruck von
     /// Bodenkarte und Bahn — siehe `ausfahrten_gemerkt`. Nur
     /// Zwischenspeicher: wird weder gespeichert noch gesendet.
-    ausfahrten_merker: Mutex<Option<(u64, Vec<ausfahrten::Ausfahrt>)>>,
+    ausfahrten_merker: Mutex<Option<(AusfahrtenSchluessel, Vec<ausfahrten::Ausfahrt>)>>,
     /// Der Stand der Auskunft, mit der zuletzt ZUGEORDNET wurde.
     ///
     /// ⚠ Ein `bool` reichte nicht. Die Ernte nimmt ausdruecklich eine
@@ -7767,7 +7776,7 @@ struct FlightStats {
     /// Grösse: im Mittel 91 KB, im schlimmsten gemessenen Fall 577 KB
     /// (ZSPD). Für die Dauer eines Fluges vertretbar; sie wird beim
     /// Zurücksetzen mit allem anderen frei.
-    arr_ground_geojson: Option<String>,
+    arr_ground_geojson: Option<Arc<str>>,
     /// v1.7.16 R5: fuer WELCHEN Flughafen `arr_ground_geojson` gilt — ohne
     /// dieses Feld hatte die Karte KEINE Zugehoerigkeit, anders als
     /// `arr_stands`/`arr_stands_icao` direkt daneben. Der Schreib-Riegel
@@ -18559,7 +18568,7 @@ fn szenerie_status(stats: &FlightStats) -> String {
         .runway_match
         .as_ref()
         .map(|m| m.airport_ident.as_str());
-    let passend = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz {
+    let passend = |a: &&Arc<sim_core::szenerie::SzenerieFlughafen>| match landeplatz {
         Some(icao) => a.icao.eq_ignore_ascii_case(icao),
         // Ohne gematchte Bahn gibt es nichts zu vergleichen — dann zaehlt
         // wie bisher die Primaerquelle, die Zweitquelle bleibt draussen.
@@ -19519,7 +19528,7 @@ async fn flight_adopt(
         // dann kommt die Plandistanz von dort (externe QS, Codex).
         plan_strecke_nm: matching_bid.and_then(|b| b.flight.distance.as_ref()?.nm()),
         fares,
-        stats: Mutex::new(FlightStats::new()),
+        stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
         stop: AtomicBool::new(false),
         // Surfaced via flight_status to trigger the resume banner.
         was_just_resumed: AtomicBool::new(true),
@@ -20349,7 +20358,7 @@ async fn flight_start_mit(
         planned_flight_time_min: bid.flight.flight_time,
         plan_strecke_nm: bid.flight.distance.as_ref().and_then(|d| d.nm()),
         fares,
-        stats: Mutex::new(FlightStats::new()),
+        stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
         stop: AtomicBool::new(false),
         // Fresh start triggered by user — no banner needed.
         was_just_resumed: AtomicBool::new(false),
@@ -21159,7 +21168,7 @@ async fn flight_start_manual(
         planned_flight_time_min: bid.flight.flight_time,
         plan_strecke_nm: bid.flight.distance.as_ref().and_then(|d| d.nm()),
         fares,
-        stats: Mutex::new(FlightStats::new()),
+        stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
         stop: AtomicBool::new(false),
         was_just_resumed: AtomicBool::new(false),
         streamer_spawned: AtomicBool::new(false),
@@ -28384,10 +28393,33 @@ thread_local! {
 }
 
 /// Woraus die Ausfahrten kommen: Szenerie-Rollwege oder die Serverkarte.
-#[derive(Clone, Copy)]
-enum Bodenquelle<'a> {
-    Szenerie(&'a [sim_core::szenerie::SzenerieRollweg]),
-    Karte(&'a str),
+///
+/// Beide GETEILT (`Arc`), nicht geliehen: Wer die Quelle aus den Flugdaten
+/// holt, haelt danach einen eigenen Zeiger und rechnet ohne Sperre. Bis
+/// 2.0.16 wurden dafuer unter der Sperre alle Rollwege kopiert und gehasht
+/// (v2.0.17, AIB 431).
+#[derive(Clone)]
+enum Bodenquelle {
+    Szenerie(Arc<sim_core::szenerie::SzenerieFlughafen>),
+    Karte(Arc<str>),
+}
+
+impl Bodenquelle {
+    /// Dieselbe Karte — am Zeiger erkannt, ohne den Inhalt anzusehen.
+    ///
+    /// ⚠ Das ist nur richtig, weil der Vergleich IMMER gegen einen Wert
+    /// laeuft, der seinen eigenen `Arc` haelt (`AusfahrtenSchluessel` im
+    /// Merker): Solange er lebt, kann dieselbe Adresse keinen anderen
+    /// Inhalt tragen, und hinter einem geteilten `Arc` aendert niemand die
+    /// Daten. Eine neu gelieferte Karte mit gleichem Inhalt gilt als
+    /// andere — dann wird einmal zu viel gerechnet, nie falsch.
+    fn dieselbe(&self, andere: &Self) -> bool {
+        match (self, andere) {
+            (Self::Szenerie(a), Self::Szenerie(b)) => Arc::ptr_eq(a, b),
+            (Self::Karte(a), Self::Karte(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 /// Die Bodenkarte zur gematchten Bahn — EINE Auswahl fuer `bahn_felder`
@@ -28395,10 +28427,7 @@ enum Bodenquelle<'a> {
 ///
 /// Ohne Landeplatz der Bahn gibt es keine (FAIL CLOSED, siehe
 /// `bahn_felder`).
-fn bodenquelle<'a>(
-    stats: &'a FlightStats,
-    landeplatz_der_bahn: Option<&str>,
-) -> Option<Bodenquelle<'a>> {
+fn bodenquelle(stats: &FlightStats, landeplatz_der_bahn: Option<&str>) -> Option<Bodenquelle> {
     // ZWEI Quellen: die Auskunft des aktuellen Ernteziels und die des
     // geplanten Ziels.
     //
@@ -28413,7 +28442,7 @@ fn bodenquelle<'a>(
     // Sicherung, die verhindert, dass Rollwege eines fremden Platzes in
     // die Ausfahrten geraten. Bei einem Ausweichflug passt das geplante
     // Ziel nicht und faellt heraus.
-    let passt = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz_der_bahn {
+    let passt = |a: &&Arc<sim_core::szenerie::SzenerieFlughafen>| match landeplatz_der_bahn {
         Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
         None => false,
     };
@@ -28429,67 +28458,66 @@ fn bodenquelle<'a>(
                 .filter(passt)
                 .filter(|a| !a.rollwege.is_empty())
         })
-        .map(|a| Bodenquelle::Szenerie(&a.rollwege));
+        .map(|a| Bodenquelle::Szenerie(Arc::clone(a)));
     let arr_karte = match (&stats.arr_ground_geojson, landeplatz_der_bahn) {
         (Some(karte), Some(landeplatz)) => stats
             .arr_ground_geojson_icao
             .as_deref()
             .filter(|gi| gi.eq_ignore_ascii_case(landeplatz))
-            .map(|_| Bodenquelle::Karte(karte.as_str())),
+            .map(|_| Bodenquelle::Karte(Arc::clone(karte))),
         _ => None,
     };
     szenerie.or(arr_karte)
 }
 
-/// Fingerabdruck von Bodenkarte und Bahn — der Schluessel des Merkers.
+/// Der Schluessel des Merkers: Bodenkarte und Bahn.
 ///
-/// ⚠ Ueber den INHALT, nicht ueber Staende oder Fahnen: Ein Stand, der
-/// nicht mitgezaehlt wurde, oder ein Wechsel zwischen
-/// `szenerie_auskunft` und `ziel_szenerie_auskunft` kann so nie
-/// Ausfahrten einer anderen Karte liefern — schlimmstenfalls wird
-/// einmal zu viel gerechnet.
-fn ausfahrten_fingerabdruck(quelle: Bodenquelle<'_>, m: &runway::RunwayMatch) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    match quelle {
-        Bodenquelle::Szenerie(rollwege) => {
-            0u8.hash(&mut h);
-            rollwege.len().hash(&mut h);
-            for r in rollwege {
-                r.name.hash(&mut h);
-                r.punkte.len().hash(&mut h);
-                for (lat, lon) in &r.punkte {
-                    lat.to_bits().hash(&mut h);
-                    lon.to_bits().hash(&mut h);
-                }
-            }
-        }
-        Bodenquelle::Karte(karte) => {
-            1u8.hash(&mut h);
-            karte.hash(&mut h);
+/// ⚠ Die Karte steckt SELBST im Schluessel (siehe `Bodenquelle::dieselbe`):
+/// Ein Stand, der nicht mitgezaehlt wurde, oder ein Wechsel zwischen
+/// `szenerie_auskunft` und `ziel_szenerie_auskunft` kann so nie Ausfahrten
+/// einer anderen Karte liefern — schlimmstenfalls wird einmal zu viel
+/// gerechnet.
+///
+/// Bis 2.0.16 war der Schluessel ein Hash ueber den INHALT, also ueber jeden
+/// Stuetzpunkt jedes Rollwegs — unter der Flugdaten-Sperre, bei jedem
+/// `bahn_felder` und zweimal je Vorwaermen (v2.0.17, AIB 431, Dubai mit
+/// 3137 Rollwegen).
+#[derive(Clone)]
+struct AusfahrtenSchluessel {
+    quelle: Bodenquelle,
+    bahn: [u64; 5],
+}
+
+impl AusfahrtenSchluessel {
+    fn neu(quelle: Bodenquelle, m: &runway::RunwayMatch) -> Self {
+        Self {
+            quelle,
+            bahn: [
+                m.threshold_lat.to_bits(),
+                m.threshold_lon.to_bits(),
+                m.end_lat.to_bits(),
+                m.end_lon.to_bits(),
+                u64::from(m.width_ft.to_bits()),
+            ],
         }
     }
-    for v in [m.threshold_lat, m.threshold_lon, m.end_lat, m.end_lon] {
-        v.to_bits().hash(&mut h);
+
+    fn gleich(&self, anderer: &Self) -> bool {
+        self.bahn == anderer.bahn && self.quelle.dieselbe(&anderer.quelle)
     }
-    m.width_ft.to_bits().hash(&mut h);
-    h.finish()
 }
 
 /// Die Ausfahrten zu Bodenkarte und Bahn, frisch gerechnet.
 ///
 /// Das Teure: Szenerie-Rollwege als GeoJSON formatieren, wieder parsen,
 /// jeden Stuetzpunkt auf die Bahn projizieren — bei HECA 1480 Rollwege.
-fn ausfahrten_rechnen(
-    quelle: Bodenquelle<'_>,
-    m: &runway::RunwayMatch,
-) -> Vec<ausfahrten::Ausfahrt> {
+fn ausfahrten_rechnen(quelle: &Bodenquelle, m: &runway::RunwayMatch) -> Vec<ausfahrten::Ausfahrt> {
     #[cfg(test)]
     AUSFAHRTEN_GERECHNET.with(|z| z.set(z.get() + 1));
     let szenerie_karte;
     let karte = match quelle {
-        Bodenquelle::Szenerie(rollwege) => {
-            szenerie_karte = szenerie_bahn::rollwege_als_bodenkarte(rollwege);
+        Bodenquelle::Szenerie(sz) => {
+            szenerie_karte = szenerie_bahn::rollwege_als_bodenkarte(&sz.rollwege);
             szenerie_karte.as_str()
         }
         Bodenquelle::Karte(karte) => karte,
@@ -28517,18 +28545,18 @@ fn ausfahrten_rechnen(
 /// `bahn_felder` aendert ihn nicht.
 fn ausfahrten_gemerkt(
     stats: &FlightStats,
-    quelle: Bodenquelle<'_>,
+    quelle: Bodenquelle,
     m: &runway::RunwayMatch,
 ) -> Vec<ausfahrten::Ausfahrt> {
-    let schluessel = ausfahrten_fingerabdruck(quelle, m);
+    let schluessel = AusfahrtenSchluessel::neu(quelle, m);
     if let Ok(merker) = stats.ausfahrten_merker.lock() {
         if let Some((k, gemerkt)) = merker.as_ref() {
-            if *k == schluessel {
+            if k.gleich(&schluessel) {
                 return gemerkt.clone();
             }
         }
     }
-    let gerechnet = ausfahrten_rechnen(quelle, m);
+    let gerechnet = ausfahrten_rechnen(&schluessel.quelle, m);
     if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
         *merker = Some((schluessel, gerechnet.clone()));
     }
@@ -28545,7 +28573,7 @@ fn vorwaerm_ausloeser(stats: &FlightStats) -> VorwaermAusloeser {
         stats.szenerie_auskunft_stand,
         stats.ziel_szenerie_auskunft_stand,
         stats.arr_ground_geojson_icao.clone(),
-        stats.arr_ground_geojson.as_ref().map_or(0, String::len),
+        stats.arr_ground_geojson.as_ref().map_or(0, |k| k.len()),
         stats.runway_match.as_ref().map(|m| {
             [
                 m.threshold_lat.to_bits(),
@@ -28556,28 +28584,6 @@ fn vorwaerm_ausloeser(stats: &FlightStats) -> VorwaermAusloeser {
             ]
         }),
     )
-}
-
-/// Eine eigene Kopie der Bodenkarte — zum Rechnen ohne Sperre.
-enum BodenquelleKopie {
-    Szenerie(Vec<sim_core::szenerie::SzenerieRollweg>),
-    Karte(String),
-}
-
-impl BodenquelleKopie {
-    fn von(quelle: Bodenquelle<'_>) -> Self {
-        match quelle {
-            Bodenquelle::Szenerie(r) => Self::Szenerie(r.to_vec()),
-            Bodenquelle::Karte(k) => Self::Karte(k.to_string()),
-        }
-    }
-
-    fn quelle(&self) -> Bodenquelle<'_> {
-        match self {
-            Self::Szenerie(r) => Bodenquelle::Szenerie(r),
-            Self::Karte(k) => Bodenquelle::Karte(k),
-        }
-    }
 }
 
 /// Die Ausfahrten vorwaermen — AUSSERHALB der Sperre der Flugdaten.
@@ -28603,15 +28609,15 @@ fn ausfahrten_vorwaermen(flight: &ActiveFlight, zuletzt: &mut Option<VorwaermAus
     }
 }
 
-/// Was das Vorwaermen rechnen soll — Schluessel, Kopie der Karte, Bahn.
+/// Was das Vorwaermen rechnen soll — Schluessel (mit geteilter Karte) und
+/// Bahn.
 struct VorwaermAuftrag {
-    schluessel: u64,
-    kopie: BodenquelleKopie,
+    schluessel: AusfahrtenSchluessel,
     bahn: runway::RunwayMatch,
 }
 
 /// Der billige Teil des Vorwaermens, unter kurzer Sperre: Ausloeser
-/// pruefen, Merker pruefen, Karte und Bahn kopieren.
+/// pruefen, Merker pruefen, Karte (geteilt, ohne Kopie) und Bahn nehmen.
 fn vorwaerm_auftrag(
     flight: &ActiveFlight,
     zuletzt: &mut Option<VorwaermAusloeser>,
@@ -28624,18 +28630,17 @@ fn vorwaerm_auftrag(
     *zuletzt = Some(ausloeser);
     let m = stats.runway_match.as_ref().filter(|m| m.width_ft > 0.0)?;
     let quelle = bodenquelle(&stats, Some(m.airport_ident.as_str()))?;
-    let schluessel = ausfahrten_fingerabdruck(quelle, m);
+    let schluessel = AusfahrtenSchluessel::neu(quelle, m);
     let schon_da = stats
         .ausfahrten_merker
         .lock()
-        .map(|g| g.as_ref().is_some_and(|(k, _)| *k == schluessel))
+        .map(|g| g.as_ref().is_some_and(|(k, _)| k.gleich(&schluessel)))
         .unwrap_or(false);
     if schon_da {
         return None;
     }
     Some(VorwaermAuftrag {
         schluessel,
-        kopie: BodenquelleKopie::von(quelle),
         bahn: m.clone(),
     })
 }
@@ -28643,11 +28648,11 @@ fn vorwaerm_auftrag(
 /// Der teure Teil: ohne Sperre rechnen, kurz gesperrt ablegen.
 fn vorwaerm_ausfuehren(flight: &ActiveFlight, auftrag: VorwaermAuftrag) {
     let beginn = std::time::Instant::now();
-    let rollwege = match &auftrag.kopie {
-        BodenquelleKopie::Szenerie(r) => Some(r.len()),
-        BodenquelleKopie::Karte(_) => None,
+    let rollwege = match &auftrag.schluessel.quelle {
+        Bodenquelle::Szenerie(sz) => Some(sz.rollwege.len()),
+        Bodenquelle::Karte(_) => None,
     };
-    let gerechnet = ausfahrten_rechnen(auftrag.kopie.quelle(), &auftrag.bahn);
+    let gerechnet = ausfahrten_rechnen(&auftrag.schluessel.quelle, &auftrag.bahn);
     tracing::info!(
         pirep_id = %flight.pirep_id,
         platz = %auftrag.bahn.airport_ident,
@@ -28669,9 +28674,9 @@ fn vorwaerm_ausfuehren(flight: &ActiveFlight, auftrag: VorwaermAuftrag) {
             .filter(|m| m.width_ft > 0.0)
             .and_then(|m| {
                 bodenquelle(&stats, Some(m.airport_ident.as_str()))
-                    .map(|q| ausfahrten_fingerabdruck(q, m))
+                    .map(|q| AusfahrtenSchluessel::neu(q, m))
             });
-        if aktuell == Some(auftrag.schluessel) {
+        if aktuell.is_some_and(|k| k.gleich(&auftrag.schluessel)) {
             if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
                 *merker = Some((auftrag.schluessel, gerechnet));
             }
@@ -31626,7 +31631,7 @@ mod rearm_background_task_guards_tests {
             plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(true),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(latched),
@@ -31697,7 +31702,7 @@ mod positions_idempotenz_tests {
             plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(false),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(false),
@@ -37493,6 +37498,13 @@ struct SamplerDiagnose {
     /// Wie viele lange Takte im Endanflug schon ins Protokoll gingen
     /// (gedeckelt, damit ein Dauerproblem das Protokoll nicht flutet).
     lange_takte_gemeldet: u32,
+    /// v2.0.17: Größter Abstand zwischen Messen und Auswerten eines
+    /// Messwerts. Wartet die Auswertung auf die Flugdaten-Sperre, stauen
+    /// sich die Messwerte im Kanal — sie gehen nicht verloren, kommen aber
+    /// später an. Diese Zahl zeigt, wie viel später.
+    rueckstand_max_ms: f64,
+    /// Wie viele große Rückstände schon ins Protokoll gingen (gedeckelt).
+    rueckstaende_gemeldet: u32,
 }
 
 impl SamplerDiagnose {
@@ -37526,7 +37538,282 @@ impl SamplerDiagnose {
             "takte_ueber_soll": self.takte_ueber_soll,
             "eingang_max_ms": (self.eingang_max_ms * 10.0).round() / 10.0,
             "proben_je_sekunde": (self.proben_je_sekunde() * 10.0).round() / 10.0,
+            "rueckstand_max_ms": (self.rueckstand_max_ms * 10.0).round() / 10.0,
         })
+    }
+}
+
+/// Ein Messwert des Aufsetz-Abtasters: alles, was die Auswertung vom
+/// Simulator braucht, mit dem Zeitpunkt der Messung.
+struct AufsetzMessung {
+    snap: SimSnapshot,
+    /// Zeitpunkt der Messung. Die Auswertung rechnet NUR mit ihm — nie mit
+    /// der Uhr beim Verarbeiten, die nach einem Stau später geht.
+    now: DateTime<Utc>,
+    /// Der frame-genaue Aufsetzer des X-Plane-Plugins, beim Messen
+    /// abgeholt. `current_premium_touchdown` leert ihn (`take`) — er gehört
+    /// deshalb zu genau einem Messwert und darf nur hier abgeholt werden.
+    premium: Option<sim_xplane::PremiumTouchdown>,
+}
+
+/// Ein abgeholter Plugin-Aufsetzer, den keine Auswertung mehr annahm (je
+/// Flug). Der Adapter gibt ihn nur einmal heraus (`take`); stürzt die
+/// Auswertung genau zwischen Prüfung und Abholen ab, bliebe er sonst
+/// verloren. Der nächste Messfaden desselben Flugs reicht ihn zuerst weiter
+/// — wie früher, als er bis zum nächsten Takt im Adapter liegen blieb
+/// (Codex-Nachprüfung 2.0.17).
+static ZURUECKGELEGTER_AUFSETZER: Mutex<Option<(String, sim_xplane::PremiumTouchdown)>> =
+    Mutex::new(None);
+
+fn aufsetzer_zuruecklegen(pirep_id: &str, td: sim_xplane::PremiumTouchdown) {
+    *ZURUECKGELEGTER_AUFSETZER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some((pirep_id.to_string(), td));
+}
+
+fn zurueckgelegten_aufsetzer_nehmen(pirep_id: &str) -> Option<sim_xplane::PremiumTouchdown> {
+    let mut platz = ZURUECKGELEGTER_AUFSETZER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if platz.as_ref().is_some_and(|(p, _)| p == pirep_id) {
+        platz.take().map(|(_, td)| td)
+    } else {
+        None
+    }
+}
+
+/// Die Diagnose lesen, auch nach einem Absturz eines der beiden Fäden.
+fn diagnose_lesen(diagnose: &Mutex<SamplerDiagnose>) -> SamplerDiagnose {
+    diagnose.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Der Messfaden des Aufsetz-Abtasters (v2.0.17).
+///
+/// ⚠ Fasst `flight.stats` NIE an — das ist sein ganzer Zweck. Bis 2.0.16
+/// nahm der Abtaster für jeden Messwert die Flugdaten-Sperre; hielt
+/// `step_flight` sie beim Aufsetzen (AIB 431, OMDB: 129 ms), fiel die
+/// Messung aus. Jetzt wartet höchstens die Auswertung, und die Messwerte
+/// stauen sich im Kanal, statt zu fehlen.
+///
+/// Eigene Sperre nur `diagnose` (kurz, je Takt). Die Auswertung nimmt sie
+/// auch unter `flight.stats` — Reihenfolge also immer `stats` → `diagnose`,
+/// und dieser Faden nimmt `stats` gar nicht: kein Verklemmen möglich.
+///
+/// Simulator und Plugin kommen als Lesefunktionen herein (im Betrieb
+/// `current_snapshot` / `current_premium_touchdown`) — so lässt sich im Test
+/// belegen, dass dieser Faden weitermisst, während die Sperre gehalten wird.
+fn aufsetz_messen(
+    flight: &ActiveFlight,
+    meine_generation: u64,
+    diagnose: &Mutex<SamplerDiagnose>,
+    an_auswertung: &std::sync::mpsc::Sender<AufsetzMessung>,
+    auswertung_lebt: &AtomicBool,
+    mut simulator_lesen: impl FnMut() -> Option<SimSnapshot>,
+    mut plugin_aufsetzer_abholen: impl FnMut() -> Option<sim_xplane::PremiumTouchdown>,
+) {
+    // v0.7.18 (B-013): Sim-Position-Reset-Detection.
+    //
+    // Spec docs/spec/v0.7.18-orphan-flight-cleanup.md §B-013.
+    //
+    // Quelle: GAF 152 Crash 2026-05-12 — MSFS produzierte einen
+    // Sample mit lat/lon ≈ 0/0 / alt=53820 ft mid-flight. Sampler
+    // hat das uebernommen und einen 14-G-Crash daraus geloggt.
+    //
+    // Detection-Kriterien (ein Match reicht zum Verwerfen):
+    //   1. lat/lon ≈ 0/0 (innerhalb 0.1°)         — Null-Island-Reset
+    //   2. Altitude-Sprung > 10.000 ft seit prev  — physikal unmoeglich
+    //   3. Position-Sprung > 10 nmi seit prev     — teleport
+    //
+    // dt-Guard: Jump-Checks nur bei consecutive samples mit
+    // dt <= RESET_CHECK_MAX_DT_SECS. Bei groesserer Luecke
+    // (Pause, Disconnect, App-Hintergrund) sind grosse legitime
+    // Spruenge erwartbar — wir setzen prev_state dann einfach
+    // mit dem neuen Sample neu, kein Reset-Detect.
+    let mut prev_sample_for_reset_check: Option<(f64, f64, f64, DateTime<Utc>)> = None;
+    let mut reset_warning_logged_this_session = false;
+    const RESET_NULL_ISLAND_DEG: f64 = 0.1;
+    const RESET_MAX_ALT_JUMP_FT: f64 = 10_000.0;
+    // Strecke und Abstand stehen jetzt in `RESET_LIMITS` bei
+    // `classify_segment` — hier bleiben nur die Werte, die diese
+    // Schleife selbst auswertet.
+    let mut letzter_takt: Option<std::time::Instant> = None;
+
+    loop {
+        // 20 ms = 50 Hz target — matches GEES (`SAMPLE_RATE = 20`),
+        // the only open-source reference impl that publishes its
+        // sample cadence. The actual upper bound comes from how
+        // fast `current_snapshot` returns fresh data; on a
+        // typical PC the SimConnect adapter ticks at the rendered
+        // frame rate (60-120 fps) so we never under-sample here.
+        std::thread::sleep(Duration::from_millis(20));
+        // Ueberholte Generation (Flug nach gescheitertem Einreichen
+        // fortgesetzt): Der neu gestartete Sampler uebernimmt — sonst
+        // liefen zwei parallel, wenn dieser den kurzen Stopp verpasst
+        // hat (s. `ActiveFlight::generation`).
+        if flight.stop.load(Ordering::Relaxed)
+            || flight.generation.load(Ordering::SeqCst) != meine_generation
+            || !auswertung_lebt.load(Ordering::SeqCst)
+        {
+            break;
+        }
+        // ⚠ Die Zählung steht VOR jedem Zugriff — sonst fehlen genau die
+        // Durchläufe, die weiter unten abbrechen, und die Diagnose
+        // beschönigt sich selbst.
+        let takt_jetzt = std::time::Instant::now();
+        let mut takt_abstand_ms = 0.0;
+        {
+            let mut d = diagnose.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(vorher) = letzter_takt {
+                let abstand_ms = takt_jetzt.duration_since(vorher).as_secs_f64() * 1000.0;
+                takt_abstand_ms = abstand_ms;
+                d.takt_summe_ms += abstand_ms;
+                if abstand_ms > d.takt_max_ms {
+                    d.takt_max_ms = abstand_ms;
+                }
+                if abstand_ms > 40.0 {
+                    d.takte_ueber_soll += 1;
+                }
+            }
+            d.laeufe += 1;
+        }
+        letzter_takt = Some(takt_jetzt);
+
+        let eingang_start = std::time::Instant::now();
+        let snapshot = simulator_lesen();
+        let eingang_ms = eingang_start.elapsed().as_secs_f64() * 1000.0;
+        {
+            let mut d = diagnose.lock().unwrap_or_else(|e| e.into_inner());
+            if eingang_ms > d.eingang_max_ms {
+                d.eingang_max_ms = eingang_ms;
+            }
+            if snapshot.is_none() {
+                d.ohne_snapshot += 1;
+            }
+        }
+        let Some(snap) = snapshot else {
+            continue;
+        };
+        let now = Utc::now();
+
+        // v0.7.18 (B-013) Reset-Detection — vor Buffer-Push + Edge-Detect.
+        // Dieselbe Regel wie die Streckenzaehlung und das Ausrollen —
+        // `classify_segment` mit der hier erprobten Toleranz
+        // (`RESET_LIMITS`: 10 NM flach, 10.000 ft, bis 2 s Abstand).
+        // Vorher stand die Pruefung dreimal im Code, in drei Fassungen;
+        // eine davon zaehlte einen Sprung von 4900 NM als geflogen.
+        let is_null_island =
+            snap.lat.abs() < RESET_NULL_ISLAND_DEG && snap.lon.abs() < RESET_NULL_ISLAND_DEG;
+        let (alt_jump, dist_jump_nm, urteil) = match prev_sample_for_reset_check {
+            Some((p_lat, p_lon, p_alt, p_at)) => {
+                let dt = (now - p_at).num_milliseconds() as f64 / 1000.0;
+                let alt_diff = (snap.altitude_msl_ft - p_alt).abs();
+                let dist_nm = ::geo::distance_m(p_lat, p_lon, snap.lat, snap.lon) / 1852.0;
+                let u = classify_segment(
+                    (p_lat, p_lon),
+                    (snap.lat, snap.lon),
+                    Some(alt_diff),
+                    Some(dt),
+                    RESET_LIMITS,
+                );
+                (alt_diff, dist_nm, u)
+            }
+            None => (0.0, 0.0, SegmentVerdict::Flown),
+        };
+        let ist_sprung = matches!(urteil, SegmentVerdict::Jump(_));
+        let is_alt_jump = ist_sprung && alt_jump > RESET_MAX_ALT_JUMP_FT;
+
+        if is_null_island || ist_sprung {
+            if !reset_warning_logged_this_session {
+                let reason = if is_null_island {
+                    "lat/lon ≈ 0/0 (Null-Island)"
+                } else if is_alt_jump {
+                    "Altitude-Sprung > 10.000 ft"
+                } else {
+                    "Position-Sprung > 10 nmi"
+                };
+                tracing::warn!(
+                    pirep_id = %flight.pirep_id,
+                    lat = snap.lat,
+                    lon = snap.lon,
+                    alt_ft = snap.altitude_msl_ft,
+                    alt_jump_ft = alt_jump,
+                    dist_jump_nm = dist_jump_nm,
+                    reason = reason,
+                    "Sim-Position-Reset detektiert — Sample verworfen"
+                );
+                reset_warning_logged_this_session = true;
+            }
+            // Sample komplett verwerfen — kein Buffer-Push, kein
+            // Edge-Update. prev_sample_for_reset_check absichtlich
+            // NICHT updaten, sonst gewoehnt sich der Detector an
+            // den Reset und der naechste echte Sample springt
+            // wieder >10 nmi von 0/0 weg.
+            diagnose
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .verworfen_sprung += 1;
+            continue;
+        }
+
+        // Sample ist OK ODER dt war zu gross (Resume-Fall) →
+        // prev_state mit dem aktuellen Sample neu setzen.
+        prev_sample_for_reset_check = Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
+
+        // AZU 8710 (11.10.2026): Im Endanflug stand der Sampler mehrfach
+        // 0,4–0,8 s, ohne dass klar war, worauf er wartete. Jeder lange
+        // Takt sagt jetzt, wo die Zeit blieb: vor dem Takt (Faden nicht
+        // dran) oder beim Simulator. Auf die Flugdaten-Sperre wartet dieser
+        // Faden seit 2.0.17 nicht mehr; wer sie lange hält, meldet
+        // `stats_sperre`.
+        //
+        // v2.0.17: auch nach dem Aufsetzen, solange das Flugzeug noch
+        // schnell rollt — dort lag die Lücke von AIB 431, und vorher galt
+        // die Meldung nur in der Luft.
+        let im_wichtigen_abschnitt = if snap.on_ground {
+            snap.groundspeed_kt > 30.0
+        } else {
+            snap.altitude_agl_ft < 1000.0
+        };
+        if im_wichtigen_abschnitt && (takt_abstand_ms > 200.0 || eingang_ms > 100.0) {
+            let melden = {
+                let mut d = diagnose.lock().unwrap_or_else(|e| e.into_inner());
+                let melden = d.lange_takte_gemeldet < 40;
+                if melden {
+                    d.lange_takte_gemeldet += 1;
+                }
+                melden
+            };
+            if melden {
+                tracing::warn!(
+                    pirep_id = %flight.pirep_id,
+                    agl_ft = snap.altitude_agl_ft,
+                    am_boden = snap.on_ground,
+                    takt_abstand_ms,
+                    eingang_ms,
+                    "Sampler-Takt im Endanflug zu lang"
+                );
+            }
+        }
+
+        // Nur abholen, wenn jemand auswertet — sonst ginge der einmalige
+        // Aufsetzer mit dem Messwert verloren, statt für die nächste
+        // Auswertung im Adapter zu bleiben.
+        if !auswertung_lebt.load(Ordering::SeqCst) {
+            break;
+        }
+        let premium = zurueckgelegten_aufsetzer_nehmen(&flight.pirep_id)
+            .or_else(&mut plugin_aufsetzer_abholen);
+        // Die Auswertung ist weg (beendet oder abgestürzt) — dann gibt es
+        // niemanden mehr, für den gemessen wird. Ein schon abgeholter
+        // Plugin-Aufsetzer wird zurückgelegt, nicht verworfen.
+        if let Err(std::sync::mpsc::SendError(messung)) =
+            an_auswertung.send(AufsetzMessung { snap, now, premium })
+        {
+            if let Some(td) = messung.premium {
+                aufsetzer_zuruecklegen(&flight.pirep_id, td);
+            }
+            break;
+        }
     }
 }
 
@@ -37549,7 +37836,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     // (`flug_aktivitaet::messfaden_vorrang`).
     let flight_fuer_fehler = flight.clone();
     let gestartet = std::thread::Builder::new()
-        .name("aufsetz-messung".into())
+        // Seit 2.0.17 die AUSWERTUNG; gemessen wird in `aufsetz-messfaden`.
+        .name("aufsetz-auswertung".into())
         .spawn(move || {
         // Stürzt der Faden ab (Panik), den Merker zurücksetzen — sonst ließe
         // sich die Aufsetzmessung für diesen Flug nie wieder starten
@@ -37596,168 +37884,126 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         // `on_ground`-Edge wie vorher (MSFS hat eh den separaten
         // `PLANE TOUCHDOWN NORMAL VELOCITY`-SimVar als Primary).
         let mut prev_in_air: Option<bool> = None;
-        // v0.7.18 (B-013): Sim-Position-Reset-Detection.
+        // ── Messen und Auswerten in ZWEI Fäden (v2.0.17) ─────────────────
         //
-        // Spec docs/spec/v0.7.18-orphan-flight-cleanup.md §B-013.
+        // Anlass AIB 431 (OMDB, 13.10.2026): Seit 2.0.14 hatte jeder Flug
+        // genau eine Lücke kurz nach dem Aufsetzen, 58 bis 129 ms, wachsend
+        // mit der Größe des Platzes. Der Abtaster nahm für JEDEN Messwert
+        // `flight.stats` — und genau dann hielt die Landungsauswertung von
+        // `step_flight` diese Sperre. Solange er wartete, maß er nicht.
         //
-        // Quelle: GAF 152 Crash 2026-05-12 — MSFS produzierte einen
-        // Sample mit lat/lon ≈ 0/0 / alt=53820 ft mid-flight. Sampler
-        // hat das uebernommen und einen 14-G-Crash daraus geloggt.
+        // Jetzt misst ein eigener Faden (`aufsetz_messen`), der
+        // `flight.stats` nie anfasst, und reicht jeden Messwert mit seinem
+        // Zeitstempel durch einen Kanal. Dieser Faden hier wertet aus. Muss
+        // er auf die Sperre warten, stauen sich die Messwerte und werden
+        // danach der Reihe nach verarbeitet — keiner geht verloren, und jede
+        // Auswertung rechnet mit dem Zeitpunkt ihres Messwerts (`now`).
         //
-        // Detection-Kriterien (ein Match reicht zum Verwerfen):
-        //   1. lat/lon ≈ 0/0 (innerhalb 0.1°)         — Null-Island-Reset
-        //   2. Altitude-Sprung > 10.000 ft seit prev  — physikal unmoeglich
-        //   3. Position-Sprung > 10 nmi seit prev     — teleport
-        //
-        // dt-Guard: Jump-Checks nur bei consecutive samples mit
-        // dt <= RESET_CHECK_MAX_DT_SECS. Bei groesserer Luecke
-        // (Pause, Disconnect, App-Hintergrund) sind grosse legitime
-        // Spruenge erwartbar — wir setzen prev_state dann einfach
-        // mit dem neuen Sample neu, kein Reset-Detect.
-        let mut prev_sample_for_reset_check: Option<(f64, f64, f64, DateTime<Utc>)> = None;
-        let mut reset_warning_logged_this_session = false;
-        const RESET_NULL_ISLAND_DEG: f64 = 0.1;
-        const RESET_MAX_ALT_JUMP_FT: f64 = 10_000.0;
-        // Strecke und Abstand stehen jetzt in `RESET_LIMITS` bei
-        // `classify_segment` — hier bleiben nur die Werte, die diese
-        // Schleife selbst auswertet.
-        // Selbstmessung der Schleife — siehe `SamplerDiagnose`. Sie läuft
-        // ausserhalb von `FlightStats`, damit sie nicht selbst auf den Lock
-        // wartet, den sie vermessen soll.
-        let mut diagnose = SamplerDiagnose::default();
-        let mut letzter_takt: Option<std::time::Instant> = None;
+        // Selbstmessung siehe `SamplerDiagnose`; sie liegt hinter einer
+        // eigenen kleinen Sperre, nicht in `FlightStats`.
+        let diagnose = Arc::new(Mutex::new(SamplerDiagnose::default()));
+        let (an_auswertung, messungen) = std::sync::mpsc::channel::<AufsetzMessung>();
+        // Lebt die Auswertung noch? Der Messfaden fragt das, bevor er den
+        // einmaligen Plugin-Aufsetzer abholt (`take`).
+        let auswertung_lebt = Arc::new(AtomicBool::new(true));
+        // ⚠ Nach `_merker` angelegt, also VOR ihm aufgeräumt: Endet dieser
+        // Faden (auch durch Panik), meldet er sich ab und wartet auf das
+        // Ende des Messfadens — erst danach gibt `_merker` den Start frei.
+        // Sonst könnte ein sofortiges Fortsetzen einen zweiten Messfaden
+        // starten, während der alte noch läuft; nähme der alte den
+        // Plugin-Aufsetzer, ginge er mit dem toten Kanal verloren
+        // (Codex-Abnahme 2.0.17, P2).
+        struct MessfadenBeenden {
+            lebt: Arc<AtomicBool>,
+            faden: Option<std::thread::JoinHandle<()>>,
+        }
+        impl Drop for MessfadenBeenden {
+            fn drop(&mut self) {
+                self.lebt.store(false, Ordering::SeqCst);
+                if let Some(faden) = self.faden.take() {
+                    let _ = faden.join();
+                }
+            }
+        }
+        let mut _messfaden_beenden = MessfadenBeenden {
+            lebt: Arc::clone(&auswertung_lebt),
+            faden: None,
+        };
+        {
+            let (app_m, flight_m, diagnose_m) = (app.clone(), flight.clone(), diagnose.clone());
+            let lebt_m = Arc::clone(&auswertung_lebt);
+            let messfaden = std::thread::Builder::new()
+                .name("aufsetz-messfaden".into())
+                .spawn(move || {
+                    // Kein eigener Merker-Rücksetzer: Stürzt dieser Faden
+                    // ab, endet die Auswertung mit dem Kanal und setzt den
+                    // Merker NACH dem Abarbeiten zurück (Schleifenende
+                    // unten). Hier zurückgesetzt, könnte ein Fortsetzen eine
+                    // zweite Auswertung starten, während die erste noch
+                    // gestaute Messwerte in denselben Puffer schreibt.
+                    flug_aktivitaet::messfaden_vorrang();
+                    aufsetz_messen(
+                        &flight_m,
+                        meine_generation,
+                        &diagnose_m,
+                        &an_auswertung,
+                        &lebt_m,
+                        || current_snapshot(&app_m),
+                        || current_premium_touchdown(&app_m),
+                    );
+                });
+            let messfaden = match messfaden {
+                Ok(h) => {
+                    _messfaden_beenden.faden = Some(h);
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            };
+            if let Err(e) = messfaden {
+                // Wie beim Start des Abtasters selbst: Merker der eigenen
+                // Generation freigeben, sonst ließe sich die Messung für
+                // diesen Flug nie wieder starten.
+                let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+                if flight.generation.load(Ordering::SeqCst) == meine_generation {
+                    flight.touchdown_sampler_spawned.store(false, Ordering::SeqCst);
+                }
+                tracing::error!(pirep_id = %flight.pirep_id, error = %e, "Aufsetz-Messfaden konnte nicht gestartet werden");
+                return;
+            }
+        }
 
-        loop {
-            // 20 ms = 50 Hz target — matches GEES (`SAMPLE_RATE = 20`),
-            // the only open-source reference impl that publishes its
-            // sample cadence. The actual upper bound comes from how
-            // fast `current_snapshot` returns fresh data; on a
-            // typical PC the SimConnect adapter ticks at the rendered
-            // frame rate (60-120 fps) so we never under-sample here.
-            std::thread::sleep(Duration::from_millis(20));
-            // Ueberholte Generation (Flug nach gescheitertem Einreichen
-            // fortgesetzt): Der neu gestartete Sampler uebernimmt — sonst
-            // liefen zwei parallel, wenn dieser den kurzen Stopp verpasst
-            // hat (s. `ActiveFlight::generation`).
+        for messung in messungen {
             if flight.stop.load(Ordering::Relaxed)
                 || flight.generation.load(Ordering::SeqCst) != meine_generation
             {
                 break;
             }
-            // ⚠ Die Zählung steht VOR jedem Zugriff — sonst fehlen genau die
-            // Durchläufe, die weiter unten abbrechen, und die Diagnose
-            // beschönigt sich selbst.
-            let takt_jetzt = std::time::Instant::now();
-            let mut takt_abstand_ms = 0.0;
-            if let Some(vorher) = letzter_takt {
-                let abstand_ms = takt_jetzt.duration_since(vorher).as_secs_f64() * 1000.0;
-                takt_abstand_ms = abstand_ms;
-                diagnose.takt_summe_ms += abstand_ms;
-                if abstand_ms > diagnose.takt_max_ms {
-                    diagnose.takt_max_ms = abstand_ms;
+            let AufsetzMessung { snap, now, premium } = messung;
+            // Wie weit die Auswertung hinter der Messung liegt — VOR der
+            // Sperre gemessen und gemeldet (keine Logzeile unter `stats`).
+            let rueckstand_ms = (Utc::now() - now).num_milliseconds().max(0) as f64;
+            let rueckstand_melden = {
+                let mut d = diagnose.lock().unwrap_or_else(|e| e.into_inner());
+                if rueckstand_ms > d.rueckstand_max_ms {
+                    d.rueckstand_max_ms = rueckstand_ms;
                 }
-                if abstand_ms > 40.0 {
-                    diagnose.takte_ueber_soll += 1;
+                let melden = rueckstand_ms > 100.0 && d.rueckstaende_gemeldet < 40;
+                if melden {
+                    d.rueckstaende_gemeldet += 1;
                 }
-            }
-            letzter_takt = Some(takt_jetzt);
-            diagnose.laeufe += 1;
-
-            let eingang_start = std::time::Instant::now();
-            let snapshot = current_snapshot(&app);
-            let eingang_ms = eingang_start.elapsed().as_secs_f64() * 1000.0;
-            if eingang_ms > diagnose.eingang_max_ms {
-                diagnose.eingang_max_ms = eingang_ms;
-            }
-            let Some(snap) = snapshot else {
-                diagnose.ohne_snapshot += 1;
-                continue;
+                melden
             };
-            let now = Utc::now();
-
-            // v0.7.18 (B-013) Reset-Detection — vor Buffer-Push + Edge-Detect.
-            // Dieselbe Regel wie die Streckenzaehlung und das Ausrollen —
-            // `classify_segment` mit der hier erprobten Toleranz
-            // (`RESET_LIMITS`: 10 NM flach, 10.000 ft, bis 2 s Abstand).
-            // Vorher stand die Pruefung dreimal im Code, in drei Fassungen;
-            // eine davon zaehlte einen Sprung von 4900 NM als geflogen.
-            let is_null_island =
-                snap.lat.abs() < RESET_NULL_ISLAND_DEG && snap.lon.abs() < RESET_NULL_ISLAND_DEG;
-            let (alt_jump, dist_jump_nm, urteil) = match prev_sample_for_reset_check {
-                Some((p_lat, p_lon, p_alt, p_at)) => {
-                    let dt = (now - p_at).num_milliseconds() as f64 / 1000.0;
-                    let alt_diff = (snap.altitude_msl_ft - p_alt).abs();
-                    let dist_nm = ::geo::distance_m(p_lat, p_lon, snap.lat, snap.lon) / 1852.0;
-                    let u = classify_segment(
-                        (p_lat, p_lon),
-                        (snap.lat, snap.lon),
-                        Some(alt_diff),
-                        Some(dt),
-                        RESET_LIMITS,
-                    );
-                    (alt_diff, dist_nm, u)
-                }
-                None => (0.0, 0.0, SegmentVerdict::Flown),
-            };
-            let ist_sprung = matches!(urteil, SegmentVerdict::Jump(_));
-            let is_alt_jump = ist_sprung && alt_jump > RESET_MAX_ALT_JUMP_FT;
-
-            if is_null_island || ist_sprung {
-                if !reset_warning_logged_this_session {
-                    let reason = if is_null_island {
-                        "lat/lon ≈ 0/0 (Null-Island)"
-                    } else if is_alt_jump {
-                        "Altitude-Sprung > 10.000 ft"
-                    } else {
-                        "Position-Sprung > 10 nmi"
-                    };
-                    tracing::warn!(
-                        pirep_id = %flight.pirep_id,
-                        lat = snap.lat,
-                        lon = snap.lon,
-                        alt_ft = snap.altitude_msl_ft,
-                        alt_jump_ft = alt_jump,
-                        dist_jump_nm = dist_jump_nm,
-                        reason = reason,
-                        "Sim-Position-Reset detektiert — Sample verworfen"
-                    );
-                    reset_warning_logged_this_session = true;
-                }
-                // Sample komplett verwerfen — kein Buffer-Push, kein
-                // Edge-Update. prev_sample_for_reset_check absichtlich
-                // NICHT updaten, sonst gewoehnt sich der Detector an
-                // den Reset und der naechste echte Sample springt
-                // wieder >10 nmi von 0/0 weg.
-                diagnose.verworfen_sprung += 1;
-                continue;
-            }
-
-            // Sample ist OK ODER dt war zu gross (Resume-Fall) →
-            // prev_state mit dem aktuellen Sample neu setzen.
-            prev_sample_for_reset_check = Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
-
-            let sperre_start = std::time::Instant::now();
-            let mut stats = flight.stats.lock().expect("flight stats");
-            let sperre_ms = sperre_start.elapsed().as_secs_f64() * 1000.0;
-            // AZU 8710 (11.10.2026): Im Endanflug stand der Sampler mehrfach
-            // 0,4–0,8 s, ohne dass klar war, worauf er wartete. Jeder lange
-            // Takt unter 1000 ft sagt jetzt, wo die Zeit blieb: vor dem Takt
-            // (Faden nicht dran), beim Simulator oder an der Flugdaten-Sperre.
-            if !snap.on_ground
-                && snap.altitude_agl_ft < 1000.0
-                && (takt_abstand_ms > 200.0 || eingang_ms > 100.0 || sperre_ms > 100.0)
-                && diagnose.lange_takte_gemeldet < 40
-            {
-                diagnose.lange_takte_gemeldet += 1;
+            if rueckstand_melden {
                 tracing::warn!(
                     pirep_id = %flight.pirep_id,
+                    rueckstand_ms,
+                    am_boden = snap.on_ground,
                     agl_ft = snap.altitude_agl_ft,
-                    takt_abstand_ms,
-                    eingang_ms,
-                    sperre_ms,
-                    "Sampler-Takt im Endanflug zu lang"
+                    "Aufsetz-Auswertung liegt hinter der Messung (Messwerte gestaut, nicht verloren)"
                 );
             }
+
+            let mut stats = flight.stats.lock().expect("flight stats");
             // v1.8.1: das Muster frueh festhalten, mit derselben Kette wie im
             // Anflugblock (`sim_core::muster_aufloesen`). Die TCH-Einstufung
             // nach Raederhoehe liest es nach dem Aufsetzen; ohne diesen Schritt
@@ -37782,7 +38028,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     }
                 }
             }
-            diagnose.proben += 1;
+            diagnose.lock().unwrap_or_else(|e| e.into_inner()).proben += 1;
             if let Some(hz) = snap.sim_bildrate_hz {
                 stats.bildrate_puffer.push_back((now, hz));
             }
@@ -37874,7 +38120,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // wegen sparse Sampling versagt. AGL-Window 500ft
                 // (gross genug fuer GA mit langsamen DataRefs).
                 if snap.altitude_agl_ft <= 500.0 && vs_corrected < -20.0 {
-                    stats.last_low_agl_vs_fpm = Some((vs_corrected, Utc::now()));
+                    // Zeitpunkt der MESSUNG, nicht der Auswertung — nach
+                    // einem Stau im Kanal liegen beide auseinander (2.0.17).
+                    stats.last_low_agl_vs_fpm = Some((vs_corrected, now));
                 }
             }
 
@@ -37945,8 +38193,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             //
             // Effekt: alle Pfade (RREF-edge + Premium-plugin) durchlaufen
             // identische Validation. False-edges werden konsistent gefiltert.
-            if let Some(td) = current_premium_touchdown(&app) {
-                // ACHTUNG: current_premium_touchdown() ist drain via take().
+            if let Some(td) = premium {
+                // ACHTUNG: current_premium_touchdown() ist drain via take()
+                // — seit 2.0.17 im Messfaden abgeholt (`AufsetzMessung`).
                 // Das Event ist hier bereits konsumiert — wir muessen es jetzt
                 // *immer* speichern (oder bewusst verwerfen), sonst geht es
                 // still verloren.
@@ -38615,8 +38864,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 pirep_id = %flight.pirep_id,
                                 groesste_luecke_ms = fehlt.groesste_luecke_ms,
                                 proben = fehlt.proben,
-                                takt_mittel_ms = diagnose.takt_mittel_ms(),
-                                proben_je_sekunde = diagnose.proben_je_sekunde(),
+                                takt_mittel_ms = diagnose_lesen(&diagnose).takt_mittel_ms(),
+                                proben_je_sekunde = diagnose_lesen(&diagnose).proben_je_sekunde(),
                                 vorher_gesetzte_note = ?stats.landing_score,
                                 "Aufzeichnung im Aufsetzfenster unzureichend — keine Landebewertung"
                             );
@@ -38643,7 +38892,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         "Aufsetzfenster zu dünn — Sinkrate des X-Plane-Plugins übernommen"
                     );
                 }
-                stats.sampler_diagnose = Some(diagnose.als_json());
+                stats.sampler_diagnose = Some(diagnose_lesen(&diagnose).als_json());
 
                 let analysis = compute_landing_analysis(
                     &samples,
@@ -39159,6 +39408,16 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         "v0.7.0 Multi-TD reset — climb-out > 100ft AGL detected after dump, ready for next TD"
                     );
                 }
+            }
+        }
+        // Ende ohne Stopp und ohne neue Generation: Der Messfaden ist
+        // abgestürzt. Erst jetzt, nach dem Abarbeiten, den Merker freigeben
+        // — sonst ließe sich die Messung für diesen Flug nie wieder starten.
+        if !flight.stop.load(Ordering::Relaxed) {
+            let _start = flight.start_sperre.lock().unwrap_or_else(|e| e.into_inner());
+            if flight.generation.load(Ordering::SeqCst) == meine_generation {
+                flight.touchdown_sampler_spawned.store(false, Ordering::SeqCst);
+                tracing::error!(pirep_id = %flight.pirep_id, "Aufsetz-Messfaden unerwartet beendet — Merker zurückgesetzt");
             }
         }
         tracing::info!(pirep_id = %flight.pirep_id, "touchdown sampler stopped");
@@ -40511,6 +40770,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // Flugprotokoll. Jetzt meldet er selbst, wenn ein Takt (Arbeit ohne
         // das geplante Warten) länger als 250 ms braucht. Gedeckelt, damit
         // ein Dauerproblem das Protokoll nicht flutet.
+        //
+        // v2.0.17: Schwelle 30 ms statt 250 ms. Die Aufsetz-Lücke von AIB 431
+        // (129 ms) lag weit darunter und blieb deshalb unsichtbar. Wer die
+        // Flugdaten-Sperre hält, meldet zusätzlich `stats_sperre` selbst.
         let mut takt_beginn: Option<std::time::Instant> = None;
         let mut takt_uhr = Taktuhr::default();
         let mut lange_takte_gemeldet: u32 = 0;
@@ -40521,7 +40784,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             };
             if let Some(beginn) = takt_beginn.take() {
                 let arbeit_ms = beginn.elapsed().as_millis();
-                if arbeit_ms > 250 && lange_takte_gemeldet < 40 {
+                if arbeit_ms > 30 && lange_takte_gemeldet < 40 {
                     lange_takte_gemeldet += 1;
                     tracing::warn!(
                         pirep_id = %flight.pirep_id,
@@ -50119,7 +50382,7 @@ mod arrived_fallback_dwell_tests {
             plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(false),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(false),
@@ -50727,7 +50990,7 @@ mod takeoff_roll_tests {
             plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(false),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(false),
@@ -50803,7 +51066,7 @@ mod arrived_fallback_geometry_tests {
             plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(false),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(false),
@@ -51117,7 +51380,7 @@ mod enroute_reconcile_tests {
             plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(false),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(false),
@@ -52188,7 +52451,7 @@ mod enroute_reconcile_replay_tests {
             plan_strecke_nm: None,
             airline_logo_url: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(false),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(false),
@@ -54085,7 +54348,7 @@ fn standliste_fuer(
     position: Option<(f64, f64)>,
 ) -> Option<Vec<stands::ParkingStand>> {
     let icao_norm = icao.trim().to_uppercase();
-    let treffer = |a: &&sim_core::szenerie::SzenerieFlughafen| {
+    let treffer = |a: &&Arc<sim_core::szenerie::SzenerieFlughafen>| {
         a.icao.trim().eq_ignore_ascii_case(&icao_norm) && !a.staende.is_empty()
     };
     let szenerie = stats
@@ -54238,7 +54501,7 @@ mod standliste_fuer_tests {
     #[test]
     fn szenerie_gewinnt_gegen_osm_bei_gleichem_flughafen() {
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(szenerie_stand("EDDF", "V168", 50.0, 8.0));
+        stats.szenerie_auskunft = arc_some(szenerie_stand("EDDF", "V168", 50.0, 8.0));
         let osm = vec![osm_stand("OSM-STAND")];
         let liste = standliste_fuer(&stats, "EDDF", Some(&osm), None).expect("Liste da");
         assert_eq!(liste.len(), 1);
@@ -54258,7 +54521,7 @@ mod standliste_fuer_tests {
     #[test]
     fn szenerie_weit_weg_faellt_mit_position_auf_naeheres_osm_zurueck() {
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(szenerie_stand("LLBG", "WEIT-WEG", 0.01, 0.0));
+        stats.szenerie_auskunft = arc_some(szenerie_stand("LLBG", "WEIT-WEG", 0.01, 0.0));
         let osm = vec![stands::ParkingStand {
             name: Some("C6".to_string()),
             lat: 0.0,
@@ -54281,7 +54544,7 @@ mod standliste_fuer_tests {
     #[test]
     fn szenerie_in_der_naehe_gewinnt_weiterhin_mit_position() {
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(szenerie_stand("LLBG", "C6-SIM", 0.0, 0.0));
+        stats.szenerie_auskunft = arc_some(szenerie_stand("LLBG", "C6-SIM", 0.0, 0.0));
         let osm = vec![stands::ParkingStand {
             name: Some("C6-OSM".to_string()),
             lat: 0.0,
@@ -54319,7 +54582,7 @@ mod standliste_fuer_tests {
     #[test]
     fn veraltete_szenerie_auskunft_eines_anderen_flughafens_wird_ignoriert() {
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(szenerie_stand("EDNY", "203", 47.0, 9.0));
+        stats.szenerie_auskunft = arc_some(szenerie_stand("EDNY", "203", 47.0, 9.0));
         let osm = vec![osm_stand("OSM-EDDF-STAND")];
         let liste = standliste_fuer(&stats, "EDDF", Some(&osm), None).expect("OSM als Rueckfall");
         assert_eq!(
@@ -54332,7 +54595,7 @@ mod standliste_fuer_tests {
     #[test]
     fn icao_vergleich_ignoriert_gross_klein_und_leerzeichen() {
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(szenerie_stand(" eddf ", "V168", 50.0, 8.0));
+        stats.szenerie_auskunft = arc_some(szenerie_stand(" eddf ", "V168", 50.0, 8.0));
         let liste = standliste_fuer(&stats, "eddf", None, None).expect("Liste da");
         assert_eq!(liste[0].name.as_deref(), Some("V168"));
     }
@@ -54343,7 +54606,7 @@ mod standliste_fuer_tests {
         // ueberhaupt Staende kennt (z. B. eine sehr alte apt.dat ohne
         // 1300-Zeilen) — dann zaehlt OSM, nicht eine leere Liste.
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+        stats.szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
             icao: "EDDF".to_string(),
             bahnen: Vec::new(),
             rollwege: Vec::new(),
@@ -54361,7 +54624,7 @@ mod standliste_fuer_tests {
     #[test]
     fn dep_szenerie_auskunft_wird_als_quelle_erkannt() {
         let mut stats = FlightStats::default();
-        stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
+        stats.dep_szenerie_auskunft = arc_some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
         let liste = standliste_fuer(&stats, "EDDS", None, None).expect("Abflug-Szenerie greift");
         assert_eq!(liste[0].name.as_deref(), Some("V42"));
     }
@@ -54371,8 +54634,8 @@ mod standliste_fuer_tests {
     #[test]
     fn dep_und_ziel_szenerie_bleiben_getrennt() {
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(szenerie_stand("LEPA", "42", 39.5, 2.7));
-        stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
+        stats.szenerie_auskunft = arc_some(szenerie_stand("LEPA", "42", 39.5, 2.7));
+        stats.dep_szenerie_auskunft = arc_some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
 
         let abflug = standliste_fuer(&stats, "EDDS", None, None).expect("Abflug-Treffer");
         assert_eq!(abflug[0].name.as_deref(), Some("V42"));
@@ -54389,7 +54652,7 @@ mod standliste_fuer_tests {
     #[test]
     fn dep_szenerie_auskunft_eines_anderen_flughafens_wird_ignoriert() {
         let mut stats = FlightStats::default();
-        stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
+        stats.dep_szenerie_auskunft = arc_some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
         let osm = vec![osm_stand("OSM-EDDM-STAND")];
         let liste = standliste_fuer(&stats, "EDDM", Some(&osm), None).expect("OSM als Rueckfall");
         assert_eq!(
@@ -54404,7 +54667,7 @@ mod standliste_fuer_tests {
     #[test]
     fn leere_dep_szenerie_staendeliste_faellt_auf_osm_zurueck() {
         let mut stats = FlightStats::default();
-        stats.dep_szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+        stats.dep_szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
             icao: "EDDS".to_string(),
             bahnen: Vec::new(),
             rollwege: Vec::new(),
@@ -54973,13 +55236,17 @@ fn maybe_spawn_stand_fetch(
         // erzeugt, ohne dass irgendwo ein Fehler sichtbar wuerde (externe
         // Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 4).
         if matches!(dir, Dir::Arrival) {
+            // Vor der Sperre geteilt angelegt — die Karte kann mehrere
+            // Megabyte gross sein (v2.0.17: keine Arbeit in Flughafengroesse
+            // unter der Flugdaten-Sperre).
+            let karte: Arc<str> = Arc::from(ground.geojson.as_str());
             let mut stats = flight.stats.lock().expect("flight stats");
             if passt_zum_angefragten_ankunftsziel(&stats, &icao) {
                 // ⚠ Karte UND ihre Zugehoerigkeit in DERSELBEN
                 // Lock-Haltung setzen — sonst koennte ein Zielwechsel
                 // zwischen beiden Zeilen eine Karte ohne (oder mit
                 // falscher) Kennzeichnung hinterlassen.
-                stats.arr_ground_geojson = Some(ground.geojson.clone());
+                stats.arr_ground_geojson = Some(karte);
                 stats.arr_ground_geojson_icao = Some(icao.clone());
             } else {
                 tracing::info!(%icao, "stale ground map dropped (target changed mid-fetch)");
@@ -58422,7 +58689,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
         arr_airport: persisted.arr_airport.clone(),
         planned_flight_time_min: None, /* Resume: Planzeit nicht persistiert */
         fares: persisted.fares.clone(),
-        stats: Mutex::new(restored_stats),
+        stats: stats_sperre::GemesseneSperre::new(restored_stats),
         stop: AtomicBool::new(false),
         // Flag the UI to surface a 10-second confirmation banner before any
         // position posts go out. The streamer is intentionally NOT spawned
@@ -66878,7 +67145,7 @@ mod sim_pause_tests {
             kurs_bestaetigt_grad: None,
             kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
         };
-        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+        stats.szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
             icao: "EDDP".to_string(),
             bahnen: vec![bahn.clone(), bahn],
             ..Default::default()
@@ -66977,7 +67244,7 @@ mod sim_pause_tests {
     #[test]
     fn der_feste_status_faellt_mit_der_auskunft_nicht_mit_dem_neustart() {
         let mut stats = FlightStats::default();
-        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+        stats.szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
             icao: "EDDP".to_string(),
             ..Default::default()
         });
@@ -69151,11 +69418,11 @@ mod touchdown_metadata_stamp_tests {
             });
             // Genau die Lage aus dem Flug: Das Ernteziel steht auf dem
             // Ueberflugplatz, das Ziel liegt nur noch in der Zweitquelle.
-            stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            stats.szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
                 icao: "EDML".to_string(),
                 ..Default::default()
             });
-            stats.ziel_szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            stats.ziel_szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
                 icao: "EDDM".to_string(),
                 rollwege: vec![
                     rollweg("A8", 48.3660, 11.8050),
@@ -69199,7 +69466,7 @@ mod touchdown_metadata_stamp_tests {
         };
         let mut stats = flight.stats.lock().expect("stats");
         stats.runway_match = Some(bahn.clone());
-        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+        stats.szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
             icao: "EDDM".to_string(),
             rollwege: vec![
                 rollweg("A8", 48.3660, 11.8050),
@@ -69259,7 +69526,7 @@ mod touchdown_metadata_stamp_tests {
 
         // Gegenprobe 2: dieselbe Bahn, aber die Karte ohne A8 → neu.
         stats.runway_match = Some(bahn);
-        if let Some(a) = stats.szenerie_auskunft.as_mut() {
+        if let Some(a) = stats.szenerie_auskunft.as_mut().map(Arc::make_mut) {
             a.rollwege.remove(0);
         }
         let neu_karte = bahn_felder(&stats, Some("A388"), None);
@@ -69456,7 +69723,7 @@ mod touchdown_metadata_stamp_tests {
             });
             // Ausweichflug: gelandet wird in EDDM, das geplante Ziel war
             // ein anderer Platz — dessen Rollwege gehoeren hier nicht hin.
-            stats.ziel_szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            stats.ziel_szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
                 icao: "EDDF".to_string(),
                 rollwege: vec![sim_core::szenerie::SzenerieRollweg {
                     name: "N1".to_string(),
@@ -69740,6 +70007,214 @@ mod touchdown_metadata_stamp_tests {
 
     /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
     /// `navdata` + `arr_airport` are read by it).
+    /// Eine Szenerie mit `rollwege` Rollwegen zu je 24 Stuetzpunkten.
+    /// OMDB hat in der MSFS-Szenerie 3137 (AIB 431, 13.10.2026).
+    fn szenerie_mit_rollwegen(icao: &str, rollwege: usize) -> sim_core::szenerie::SzenerieFlughafen {
+        sim_core::szenerie::SzenerieFlughafen {
+            icao: icao.to_string(),
+            rollwege: (0..rollwege)
+                .map(|i| sim_core::szenerie::SzenerieRollweg {
+                    name: format!("T{i}"),
+                    punkte: (0..24)
+                        .map(|k| (25.24 + i as f64 * 1e-6, 55.34 + k as f64 * 1e-4))
+                        .collect(),
+                })
+                .collect(),
+            quelle: "msfs".into(),
+            ..Default::default()
+        }
+    }
+
+    /// Der Aufsetz-Takt von `step_flight_at` an einem Platz mit `rollwege`
+    /// Rollwegen: die laengste Haltezeit der Flugdaten-Sperre (bestes von
+    /// drei Laeufen, gegen Ausreisser der Maschine).
+    fn aufsetz_takt_haltezeit(rollwege: usize) -> std::time::Duration {
+        let mut beste = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let flight = flight_fixture("OMDB");
+            let sz = Arc::new(szenerie_mit_rollwegen("OMDB", rollwege));
+            {
+                let mut st = flight.stats.lock().expect("stats");
+                st.phase = FlightPhase::Final;
+                st.was_on_ground = Some(false);
+                st.szenerie_auskunft = Some(Arc::clone(&sz));
+                st.ziel_szenerie_auskunft = Some(Arc::clone(&sz));
+            }
+            let snap = SimSnapshot {
+                lat: 25.2528,
+                lon: 55.3644,
+                heading_deg_true: 300.0,
+                groundspeed_kt: 140.0,
+                on_ground: true,
+                simulator: sim_core::Simulator::Msfs2024,
+                ..Default::default()
+            };
+            stats_sperre::test_messung::beginnen();
+            let neue_phase = step_flight_at(&flight, &snap, Utc::now());
+            let gemessen = stats_sperre::test_messung::beenden();
+            assert_eq!(
+                neue_phase,
+                Some(FlightPhase::Landing),
+                "Vorrichtung: das war nicht der Aufsetz-Takt"
+            );
+            let st = flight.stats.lock().expect("stats");
+            assert!(
+                st.szenerie_auskunft.as_ref().is_some_and(|a| Arc::ptr_eq(a, &sz)),
+                "die Szenerie wurde beim Aufsetzen ersetzt oder kopiert statt geteilt"
+            );
+            let laengste = gemessen
+                .iter()
+                .map(|(_, d)| *d)
+                .max()
+                .expect("Vorrichtung: keine Haltezeit gemessen");
+            beste = beste.min(laengste);
+        }
+        beste
+    }
+
+    /// ⚠ Der Aufsetz-Takt haelt die Flugdaten-Sperre nicht in
+    /// Flughafengroesse.
+    ///
+    /// AIB 431 (OMDB, 13.10.2026): Seit 2.0.14 hatte jeder Flug genau eine
+    /// Luecke im Aufsetz-Abtaster kurz nach dem Aufsetzen, und sie wuchs mit
+    /// dem Platz — Mumbai 58 ms, Dubai 129 ms. Unter der Sperre wurde unter
+    /// anderem die ganze Szenerie kopiert. Verglichen wird ein kleiner Platz
+    /// mit einem zehnmal Dubai grossen: Waechst die Haltezeit mit, arbeitet
+    /// jemand in Flughafengroesse unter der Sperre. Der Vergleich statt
+    /// einer festen Grenze haelt den Test unabhaengig von der Maschine.
+    #[test]
+    fn der_aufsetz_takt_haelt_die_flugdaten_sperre_nicht_in_flughafengroesse() {
+        let klein = aufsetz_takt_haltezeit(10);
+        let riesig = aufsetz_takt_haltezeit(32_000);
+        eprintln!("Haltezeit Aufsetz-Takt: {klein:?} bei 10 Rollwegen, {riesig:?} bei 32.000");
+        // Gegenprobe am Stand 2.0.16 (Debug-Bau): 0,3 ms → 4,8 ms. Erlaubt
+        // ist hier das Doppelte plus 1 ms Rauschen.
+        assert!(
+            riesig < klein * 2 + std::time::Duration::from_millis(1),
+            "Haltezeit waechst mit dem Platz: {klein:?} bei 10 Rollwegen, \
+             {riesig:?} bei 32.000 — unter der Flugdaten-Sperre wird in \
+             Flughafengroesse gearbeitet"
+        );
+    }
+
+    /// ⚠ Ein schon abgeholter Plugin-Aufsetzer geht nicht verloren, wenn
+    /// keine Auswertung mehr annimmt (Codex-Nachpruefung 2.0.17).
+    ///
+    /// Der Adapter gibt ihn nur einmal heraus. Hier ist die Auswertung schon
+    /// weg (Empfaenger verworfen), als der Messfaden ihn abholt: Er muss fuer
+    /// denselben Flug zurueckgelegt werden und beim naechsten Messfaden als
+    /// Erstes wieder herauskommen — und nur fuer DIESEN Flug.
+    #[test]
+    fn ein_abgeholter_plugin_aufsetzer_wird_ohne_auswertung_zurueckgelegt() {
+        let mut flight = flight_fixture("OMDB");
+        flight.pirep_id = "zuruecklegen-test".into();
+        let flight = Arc::new(flight);
+        let diagnose = Mutex::new(SamplerDiagnose::default());
+        let (an_auswertung, messungen) = std::sync::mpsc::channel::<AufsetzMessung>();
+        drop(messungen);
+        let lebt = AtomicBool::new(true);
+        let mut abgeholt = Some(
+            serde_json::from_str::<sim_xplane::PremiumTouchdown>(
+                r#"{"captured_vs_fpm":-212.0,"captured_g_normal":1.31}"#,
+            )
+            .expect("Aufsetzpaket"),
+        );
+        aufsetz_messen(
+            &flight,
+            0,
+            &diagnose,
+            &an_auswertung,
+            &lebt,
+            || {
+                Some(SimSnapshot {
+                    lat: 25.2528,
+                    lon: 55.3644,
+                    ..Default::default()
+                })
+            },
+            || abgeholt.take(),
+        );
+        assert!(abgeholt.is_none(), "Vorrichtung: der Aufsetzer wurde nie abgeholt");
+        assert!(
+            zurueckgelegten_aufsetzer_nehmen("anderer-flug").is_none(),
+            "ein zurueckgelegter Aufsetzer kommt bei einem anderen Flug heraus"
+        );
+        let zurueck = zurueckgelegten_aufsetzer_nehmen("zuruecklegen-test")
+            .expect("der abgeholte Plugin-Aufsetzer ist verloren");
+        assert_eq!(zurueck.captured_vs_fpm, -212.0);
+        assert!(
+            zurueckgelegten_aufsetzer_nehmen("zuruecklegen-test").is_none(),
+            "zurueckgelegt heisst einmal, nicht dauerhaft"
+        );
+    }
+
+    /// ⚠ Der Messfaden misst weiter, waehrend die Flugdaten-Sperre gehalten
+    /// wird (v2.0.17).
+    ///
+    /// Bis 2.0.16 nahm der Abtaster fuer jeden Messwert `flight.stats` — wer
+    /// sie hielt, hielt die Messung an. Hier haelt der Test die Sperre
+    /// 400 ms lang; in der Zeit muessen Messwerte entstehen (Soll: 20).
+    #[test]
+    fn der_messfaden_misst_weiter_waehrend_die_flugdaten_sperre_gehalten_wird() {
+        let flight = Arc::new(flight_fixture("OMDB"));
+        let diagnose = Arc::new(Mutex::new(SamplerDiagnose::default()));
+        let (an_auswertung, messungen) = std::sync::mpsc::channel();
+        let gehalten = flight.stats.lock().expect("stats");
+        let (f, d) = (Arc::clone(&flight), Arc::clone(&diagnose));
+        let lebt = Arc::new(AtomicBool::new(true));
+        let l = Arc::clone(&lebt);
+        let faden = std::thread::spawn(move || {
+            aufsetz_messen(
+                &f,
+                0,
+                &d,
+                &an_auswertung,
+                &l,
+                || {
+                    Some(SimSnapshot {
+                        lat: 25.2528,
+                        lon: 55.3644,
+                        altitude_agl_ft: 40.0,
+                        ..Default::default()
+                    })
+                },
+                || None,
+            )
+        });
+        // Startschranke: Die Uhr laeuft erst, wenn der Faden misst — ein
+        // spaet eingeplanter Faden auf einer langsamen CI ist kein Befund
+        // (Codex-Abnahme 2.0.17, P3).
+        let erster = messungen
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("der Messfaden liefert gar nichts, waehrend die Sperre gehalten wird");
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let waehrenddessen: Vec<AufsetzMessung> =
+            std::iter::once(erster).chain(messungen.try_iter()).collect();
+        drop(gehalten);
+        // Ende durch Abmelden der Auswertung, NICHT durch `stop`: Ist die
+        // Auswertung weg, muss der Messfaden enden, statt weiter Plugin-
+        // Aufsetzer abzuholen (Codex-Abnahme 2.0.17, P2).
+        lebt.store(false, Ordering::SeqCst);
+        let abgemeldet = std::time::Instant::now();
+        while !faden.is_finished() && abgemeldet.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let beendet = faden.is_finished();
+        flight.stop.store(true, Ordering::Relaxed);
+        faden.join().expect("Messfaden abgestuerzt");
+        assert!(beendet, "der Messfaden laeuft weiter, obwohl die Auswertung abgemeldet ist");
+        assert!(
+            waehrenddessen.len() >= 10,
+            "nur {} Messwerte in 400 ms gehaltener Sperre — der Messfaden \
+             wartet auf die Flugdaten",
+            waehrenddessen.len()
+        );
+        assert!(
+            waehrenddessen.windows(2).all(|w| w[0].now < w[1].now),
+            "die Messwerte tragen ihren eigenen Zeitpunkt nicht in der Reihenfolge der Messung"
+        );
+    }
+
     fn flight_fixture(arr: &str) -> ActiveFlight {
         ActiveFlight {
             pirep_id: "test-pirep".into(),
@@ -69759,7 +70234,7 @@ mod touchdown_metadata_stamp_tests {
             planned_flight_time_min: None,
             plan_strecke_nm: None,
             fares: Vec::new(),
-            stats: Mutex::new(FlightStats::new()),
+            stats: stats_sperre::GemesseneSperre::new(FlightStats::new()),
             stop: AtomicBool::new(false),
             was_just_resumed: AtomicBool::new(false),
             streamer_spawned: AtomicBool::new(false),
@@ -70334,7 +70809,7 @@ mod touchdown_metadata_stamp_tests {
         // uebernommen, der Bericht ist leer, und `is_some()` war trotzdem
         // gruen: Der Test bewies nur, dass verglichen wurde, nicht dass
         // die Szenerie zaehlt (externe QS, 02.09.2026, P2-J).
-        stats.szenerie_auskunft = Some(eddp_szenerie(350.0));
+        stats.szenerie_auskunft = arc_some(eddp_szenerie(350.0));
         stats.szenerie_auskunft_stand = 5;
 
         // ⚠ MSFS — sonst greift der X-Plane-Zweig und liest von der
@@ -71589,7 +72064,7 @@ mod touchdown_metadata_stamp_tests {
         );
         stats.bahn_nachtrag_offen = false;
 
-        stats.szenerie_auskunft = Some(eddp_szenerie(0.0));
+        stats.szenerie_auskunft = arc_some(eddp_szenerie(0.0));
         stats.szenerie_auskunft_stand = 5;
         assert!(bahn_am_aufsetzpunkt_nachholen(&mut stats, &flight));
         assert_eq!(
@@ -71703,7 +72178,7 @@ mod touchdown_metadata_stamp_tests {
             .insert("EDDP".to_string(), eddp_nav_fixture());
 
         let (mut stats, _snap) = eddp_26r_touchdown_stats();
-        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+        stats.szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
             staende: Vec::new(),
             icao: "EDDP".to_string(),
             bahnen: Vec::new(),
@@ -75727,7 +76202,7 @@ mod v0_16_6_bush_completeness_tests {
                    "geometry":{"type":"LineString",
                      "coordinates":[[9.982400,53.627218],[9.983079,53.626734]]}}
                 ]}"#
-                .to_string(),
+                .into(),
             );
             assert!(
                 bahn_felder(&stats, Some("A320"), None)
@@ -75868,7 +76343,7 @@ mod v0_16_6_bush_completeness_tests {
                        [9.977733,53.624771],[9.97781,53.62474],
                        [9.977883,53.624694],[9.978041,53.62458]]}}
                 ]}"#
-                .to_string(),
+                .into(),
             );
             let felder = bahn_felder(&stats, Some("A320"), None);
             assert!(
@@ -76231,7 +76706,7 @@ mod v0_16_6_bush_completeness_tests {
                    [9.977733,53.624771],[9.97781,53.62474],
                    [9.977883,53.624694],[9.978041,53.62458]]}}
             ]}"#
-            .to_string(),
+            .into(),
         );
         let felder = bahn_felder(&stats, Some("A320"), None);
         assert!(
@@ -76255,7 +76730,7 @@ mod v0_16_6_bush_completeness_tests {
         stats.runway_correlation_icao = Some("EDDH".to_string());
         // Szenerie-Auskunft eines ANDEREN, frueheren Ziels — nicht leer,
         // haette also ohne ICAO-Pruefung Vorrang gehabt.
-        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+        stats.szenerie_auskunft = arc_some(sim_core::szenerie::SzenerieFlughafen {
             icao: "EDDY".to_string(),
             bahnen: Vec::new(),
             rollwege: vec![sim_core::szenerie::SzenerieRollweg {
@@ -76296,7 +76771,7 @@ mod v0_16_6_bush_completeness_tests {
                    [9.977733,53.624771],[9.97781,53.62474],
                    [9.977883,53.624694],[9.978041,53.62458]]}}
             ]}"#
-            .to_string(),
+            .into(),
         );
         let felder = bahn_felder(&stats, Some("A320"), None);
         assert!(
@@ -76334,7 +76809,7 @@ mod v0_16_6_bush_completeness_tests {
                    [9.977733,53.624771],[9.97781,53.62474],
                    [9.977883,53.624694],[9.978041,53.62458]]}}
             ]}"#
-            .to_string(),
+            .into(),
         );
         stats.runway_match = Some(runway::RunwayMatch {
             airport_ident: "EDDH".to_string(),
@@ -80880,7 +81355,7 @@ mod szenerie_status_tests {
         // funktioniert, aber die Lagen passen nicht zusammen. Frueher
         // stand fuer beides "navdaten".
         let mut s = FlightStats::new();
-        s.szenerie_auskunft = Some(auskunft(2));
+        s.szenerie_auskunft = arc_some(auskunft(2));
         s.szenerie_uebernahme = Some(bericht(&[]));
         s.szenerie_diagnose = Some("geliefert".to_string());
         assert_eq!(
@@ -81386,7 +81861,7 @@ mod szenerie_status_tests {
     #[test]
     fn eine_auskunft_ohne_vergleich_erfindet_keine_nullmessung() {
         let mut s = FlightStats::new();
-        s.szenerie_auskunft = Some(auskunft(40));
+        s.szenerie_auskunft = arc_some(auskunft(40));
         // kein Uebernahmebericht
         assert_eq!(
             szenerie_status(&s),
@@ -81405,7 +81880,7 @@ mod szenerie_status_tests {
         let mut s = FlightStats::new();
         let mut a = auskunft(4);
         a.icao = "EDDF".to_string();
-        s.szenerie_auskunft = Some(a);
+        s.szenerie_auskunft = arc_some(a);
         s.szenerie_diagnose = Some("geliefert(EDDF, bahnen=4, rollwege=61)".to_string());
         // kein Uebernahmebericht — in Sevilla gelandet, Frankfurt im Fach
         assert_eq!(
@@ -81426,7 +81901,7 @@ mod szenerie_status_tests {
     fn kein_treffer_nennt_die_ursache() {
         // Bezeichner passte nirgends: die Kennungen stimmen nicht.
         let mut s = FlightStats::new();
-        s.szenerie_auskunft = Some(auskunft(40));
+        s.szenerie_auskunft = arc_some(auskunft(40));
         let mut b = bericht(&[]);
         b.ohne_treffer = vec!["25L".into(), "07R".into()];
         s.szenerie_uebernahme = Some(b);
@@ -81437,7 +81912,7 @@ mod szenerie_status_tests {
 
         // Bezeichner passte, Lage nicht: die Koordinaten stimmen nicht.
         let mut s = FlightStats::new();
-        s.szenerie_auskunft = Some(auskunft(40));
+        s.szenerie_auskunft = arc_some(auskunft(40));
         let mut b = bericht(&[]);
         b.verworfen = vec!["25L".into()];
         s.szenerie_uebernahme = Some(b);
@@ -81572,7 +82047,7 @@ mod szenerie_status_tests {
     #[test]
     fn ohne_ernteziel_bleibt_keine_kopie_liegen() {
         let mut s = FlightStats::new();
-        s.szenerie_auskunft = Some(auskunft(2));
+        s.szenerie_auskunft = arc_some(auskunft(2));
         s.szenerie_auskunft_stand = 7;
         let buch = sim_core::szenerie::Auftragsbuch::neu();
         schnappschuss_uebernehmen(&mut s, None, "LEZL", buch.schnappschuss("LEZL"));
@@ -81591,7 +82066,7 @@ mod szenerie_status_tests {
     #[test]
     fn ein_generationswechsel_ohne_lieferung_leert_die_kopie() {
         let mut s = FlightStats::new();
-        s.szenerie_auskunft = Some(auskunft(2));
+        s.szenerie_auskunft = arc_some(auskunft(2));
         s.szenerie_auskunft_stand = 7;
         // Die Zweitquelle gehoert MIT auf den Pruefstand.
         //
@@ -81603,7 +82078,7 @@ mod szenerie_status_tests {
         // Feld, das nie gesetzt wurde — sie war trivial gruen, und wer
         // die Entwertung ausbaute, bekam 1413 gruene Tests (externe
         // Nachpruefung, 21.09.2026).
-        s.ziel_szenerie_auskunft = Some(auskunft(2));
+        s.ziel_szenerie_auskunft = arc_some(auskunft(2));
         s.ziel_szenerie_auskunft_stand = 7;
         // ⚠ Die Flugkopie stammt aus Generation 0 — die des Buches ist
         // nach dem Wechsel groesser. Mein erster Entwurf setzte hier 1
