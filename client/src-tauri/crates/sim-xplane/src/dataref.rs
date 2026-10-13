@@ -273,6 +273,11 @@ pub enum FieldId {
     /// Strecke („faster travel via double-distance"), unabhaengig vom
     /// Zeitraffer. Geht mit in `simulation_rate`.
     GroundSpeedFactor,
+    /// `sim/time/framerate_period` — geglaettete Zeit je gezeichnetem
+    /// Bild in Sekunden („1.0 / FPS"). Fuellt `sim_bildrate_hz` (2.0.14,
+    /// nur Diagnose). Bewusst nicht `sim/operation/misc/frame_rate_period`:
+    /// das ist der Zeitschritt der Simulation und per Plugin ueberschreibbar.
+    FrameRatePeriod,
     /// `sim/flightmodel2/misc/has_crashed` — int boolean, „True if the
     /// aircraft is in a crashed state". Fuellt `crashed` (nur Flanke).
     HasCrashed,
@@ -897,6 +902,10 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::GroundSpeedFactor,
     },
     DatarefEntry {
+        name: "sim/time/framerate_period",
+        field: FieldId::FrameRatePeriod,
+    },
+    DatarefEntry {
         name: "sim/flightmodel2/misc/has_crashed",
         field: FieldId::HasCrashed,
     },
@@ -1184,6 +1193,8 @@ pub struct XPlaneState {
     pub sim_speed: Option<f32>,
     /// `sim/time/ground_speed_flt` (1 = normale Strecke).
     pub ground_speed_faktor: Option<f32>,
+    /// `sim/time/framerate_period` (Sekunden je Bild).
+    pub framerate_period: Option<f32>,
     /// Letzter Rohwert von `has_crashed`.
     pub has_crashed_roh: Option<bool>,
     /// `has_crashed` war seit dem letzten Verbindungsaufbau schon einmal 0.
@@ -1286,6 +1297,17 @@ fn schalter_0_1_2(roh: f32) -> Option<u8> {
 /// Fehlt ein Wert oder steht er auf 0 (`sim_speed` 0 = „paused" laut
 /// DataRefs.txt, die Pause meldet `sim/time/paused`; unter X-Plane 11 kann
 /// `ground_speed_flt` fehlen), zaehlt er als 1.
+/// Bilder pro Sekunde aus `sim/time/framerate_period` — oder nichts.
+///
+/// Ein Zeitraum von 0, ein negativer oder ein nicht endlicher Wert heisst
+/// „nicht geliefert" (RREF schickt fuer unbekannte Datarefs 0), nicht
+/// „unendlich viele Bilder".
+fn bildrate_aus_periode(periode: Option<f32>) -> Option<f32> {
+    periode
+        .filter(|p| p.is_finite() && *p > 0.0)
+        .map(|p| 1.0 / p)
+}
+
 fn sim_rate_aus(sim_speed: Option<f32>, ground_speed: Option<f32>) -> f32 {
     let faktor = |v: Option<f32>| v.filter(|x| x.is_finite() && *x > 0.0).unwrap_or(1.0);
     faktor(sim_speed) * faktor(ground_speed)
@@ -1661,6 +1683,7 @@ impl XPlaneState {
             FieldId::LocalDateDays => self.local_date_days = Some(value),
             FieldId::SimSpeed => self.sim_speed = Some(value),
             FieldId::GroundSpeedFactor => self.ground_speed_faktor = Some(value),
+            FieldId::FrameRatePeriod => self.framerate_period = Some(value),
             FieldId::HasCrashed => {
                 let roh = value > 0.5;
                 if !roh {
@@ -1863,6 +1886,7 @@ impl XPlaneState {
             slew_mode: false,
             // Zeitraffer × Strecken-Multiplikator, Semantik wie MSFS.
             simulation_rate: sim_rate_aus(self.sim_speed, self.ground_speed_faktor),
+            sim_bildrate_hz: bildrate_aus_periode(self.framerate_period),
             gear_position: self.gear_deploy,
             // Zibo: eigener Klappenhebel, sobald er ankommt; sonst der
             // Standard-Hebel (`flap_handle_request_ratio`, 0..1).
@@ -3121,6 +3145,7 @@ mod xplane_luecken_tests {
         ("sim/flightmodel/controls/parkbrake", "float", "[0..1]"), // 1053
         ("sim/time/sim_speed", "int", "ratio"),                    // 3556
         ("sim/time/ground_speed_flt", "float", "ratio"),           // 3560
+        ("sim/time/framerate_period", "float", "seconds"),         // 3563
         ("sim/flightmodel2/misc/has_crashed", "int", "boolean"),   // 5560
         (
             "sim/cockpit2/radios/actuators/transponder_code",
@@ -3139,6 +3164,7 @@ mod xplane_luecken_tests {
             FieldId::ParkingBrake,
             FieldId::SimSpeed,
             FieldId::GroundSpeedFactor,
+            FieldId::FrameRatePeriod,
             FieldId::HasCrashed,
             FieldId::TransponderCode,
             FieldId::FlapDetents,
@@ -3180,6 +3206,36 @@ mod xplane_luecken_tests {
         assert!(!CATALOG
             .iter()
             .any(|e| e.name == "sim/cockpit2/controls/parking_brake_ratio"));
+    }
+
+    /// 2.0.14: Die Bildrate kommt vom Simulator, als Kehrwert der
+    /// Zeichenzeit je Bild. 0 (RREF fuer unbekannte Namen, XP11 ohne den
+    /// Wert) und Unsinn heissen „nicht geliefert".
+    #[test]
+    fn bildrate_aus_der_zeichenzeit() {
+        let mut s = XPlaneState::default();
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).sim_bildrate_hz,
+            None,
+            "ohne Wert keine Bildrate"
+        );
+        s.apply_field(FieldId::FrameRatePeriod, 0.025);
+        let hz = s
+            .to_snapshot(Simulator::XPlane12)
+            .sim_bildrate_hz
+            .expect("Bildrate");
+        assert!(
+            (hz - 40.0).abs() < 0.01,
+            "0,025 s je Bild sind 40/s, nicht {hz}"
+        );
+        for unsinn in [0.0, -0.02, f32::NAN, f32::INFINITY] {
+            s.apply_field(FieldId::FrameRatePeriod, unsinn);
+            assert_eq!(
+                s.to_snapshot(Simulator::XPlane12).sim_bildrate_hz,
+                None,
+                "{unsinn} ist keine Bildrate"
+            );
+        }
     }
 
     #[test]

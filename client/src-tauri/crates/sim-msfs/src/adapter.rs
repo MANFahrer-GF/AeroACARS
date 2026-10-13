@@ -7,7 +7,7 @@
 //! of the application doesn't need to change.
 
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -100,6 +100,10 @@ const PAUSE_EX1_EVENT_ID: u32 = 301;
 /// SDK-Doku siehe oben SubscribeToSystemEvent Link.
 const CRASHED_EVENT_ID: u32 = 302;
 const CRASH_RESET_EVENT_ID: u32 = 303;
+/// 2.0.14: SimConnect-Systemereignis `Frame` — kommt mit jedem Bild und
+/// traegt die Bildrate, die der Simulator selbst misst (`fFrameRate`).
+/// Nur fuer die Diagnose, siehe `SimSnapshot::sim_bildrate_hz`.
+const FRAME_EVENT_ID: u32 = 304;
 /// Flow-Ereignisse, bei denen die Telemetrie nicht den geflogenen Zustand
 /// beschreibt. Werte aus `SimConnect.h`, Enum `SIMCONNECT_FLOW_EVENT`.
 ///
@@ -189,6 +193,9 @@ struct Shared {
     /// Teleport waehrend eines Replays). Ein einzelnes `..._DONE` wuerde sonst
     /// den noch laufenden anderen Vorgang mit abraeumen.
     sim_unecht_tiefe: AtomicI32,
+    /// 2.0.14 — die zuletzt gemeldete Bildrate (Ereignis `Frame`) als
+    /// `f32`-Bits; 0 heisst „noch keine". Nur Diagnose.
+    sim_bildrate_bits: AtomicU32,
     /// v0.7.19 GAF-707 Accident-Detection: SimConnect-`Crashed`-
     /// System-Event setzt das Atomic. Wird beim Snapshot-Build in
     /// `snap.crashed` gelesen. `CrashReset` (= MSFS-UI Cut-Scene
@@ -235,6 +242,7 @@ impl Shared {
             szenerie_offen: AtomicBool::new(false),
             sim_paused: AtomicBool::new(false),
             sim_unecht_tiefe: AtomicI32::new(0),
+            sim_bildrate_bits: AtomicU32::new(0),
             sim_crashed: AtomicBool::new(false),
             touchdown: Mutex::new(None),
             inspector: Mutex::new(InspectorState::default()),
@@ -1338,6 +1346,8 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // run_dispatch ist hier zurückgekehrt.
                 shared.sim_paused.store(false, Ordering::Relaxed);
                 shared.sim_unecht_tiefe.store(0, Ordering::Relaxed);
+                // Die Bildrate gehoert zur alten Verbindung.
+                shared.sim_bildrate_bits.store(0, Ordering::Relaxed);
                 *shared.state.lock() = ConnectionState::Connecting;
             }
             Err(e) => {
@@ -2088,6 +2098,9 @@ fn run_dispatch(
                             // FlightStats-Latch zu beruehren (Spec §Leit-
                             // entscheidung 6).
                             snap.crashed = shared.sim_crashed.load(Ordering::Relaxed);
+                            // 2.0.14: Bildrate aus dem `Frame`-Ereignis.
+                            snap.sim_bildrate_hz =
+                                bildrate_aus_bits(shared.sim_bildrate_bits.load(Ordering::Relaxed));
                             let jetzt = std::time::Instant::now();
                             snap.master_warning = halter_warning.update(snap.master_warning, jetzt);
                             snap.master_caution = halter_caution.update(snap.master_caution, jetzt);
@@ -2310,6 +2323,11 @@ fn run_dispatch(
                 Ok(Some(DispatchMsg::EingabeAbo(roh))) => {
                     shared.eingaben.lock().abo_aufnehmen(&roh);
                 }
+                Ok(Some(DispatchMsg::Bildrate(hz))) => {
+                    shared
+                        .sim_bildrate_bits
+                        .store(hz.to_bits(), Ordering::Relaxed);
+                }
                 Ok(Some(DispatchMsg::FlowEvent { event })) => {
                     // Der Simulator sagt uns selbst, dass die Telemetrie
                     // gerade nicht den geflogenen Zustand beschreibt. Behandelt
@@ -2508,6 +2526,15 @@ fn log_first_snapshot_diagnostics(snap: &SimSnapshot) {
         aircraft_profile = ?snap.aircraft_profile,
         "raw SimConnect first-snapshot fuel/weight diagnostic"
     );
+}
+
+/// Bildrate aus den gespeicherten Bits — oder nichts.
+///
+/// 0 heisst „noch nichts gemeldet"; ein nicht endlicher oder nicht
+/// positiver Wert ist keine Bildrate.
+fn bildrate_aus_bits(bits: u32) -> Option<f32> {
+    let hz = f32::from_bits(bits);
+    (hz.is_finite() && hz > 0.0).then_some(hz)
 }
 
 fn set_error(shared: &Arc<Shared>, msg: String) {
@@ -3462,6 +3489,18 @@ impl Connection {
         // `return Err` haette dort die ganze Verbindung gerissen — fuer einen
         // Zugewinn, den es auf 2020 ohnehin nicht gibt. Schlaegt es fehl,
         // bleibt der kinematische Rueckfall (`replay_erkennung`) zustaendig.
+        // 2.0.14 — die Bildrate, wie MSFS sie selbst misst. Ebenfalls NICHT
+        // fatal: Sie dient nur der Diagnose und darf keine Verbindung kosten.
+        let cevent = std::ffi::CString::new("Frame").expect("ASCII");
+        let hr = unsafe {
+            sys::SimConnect_SubscribeToSystemEvent(self.handle, FRAME_EVENT_ID, cevent.as_ptr())
+        };
+        if hr != 0 {
+            tracing::info!(
+                hr = format!("0x{hr:08X}"),
+                "SubscribeToSystemEvent(Frame) nicht verfuegbar — keine Bildrate im Diagnoselog"
+            );
+        }
         let hr = unsafe { sys::SimConnect_SubscribeToFlowEvent(self.handle) };
         if hr != 0 {
             tracing::info!(
@@ -3605,6 +3644,12 @@ impl Connection {
                     data: evt.dwData,
                 })
             }
+            // 2.0.14 — `Frame` kommt NICHT als `RECV_ID_EVENT`, sondern mit
+            // eigener Kennung und eigener Struktur.
+            id if id == SIMCONNECT_RECV_ID_EVENT_FRAME => {
+                let evt = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_EVENT_FRAME) };
+                Some(DispatchMsg::Bildrate(evt.fFrameRate))
+            }
             id if id == SIMCONNECT_RECV_ID_FLOW_EVENT => {
                 let evt = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_FLOW_EVENT) };
                 Some(DispatchMsg::FlowEvent {
@@ -3676,6 +3721,8 @@ const SIMCONNECT_RECV_ID_EVENT: sys::DWORD =
     sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_EVENT as sys::DWORD;
 const SIMCONNECT_RECV_ID_FLOW_EVENT: sys::DWORD =
     sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_FLOW_EVENT as sys::DWORD;
+const SIMCONNECT_RECV_ID_EVENT_FRAME: sys::DWORD =
+    sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_EVENT_FRAME as sys::DWORD;
 
 impl Drop for Connection {
     fn drop(&mut self) {
@@ -3720,6 +3767,8 @@ enum DispatchMsg {
     FlowEvent {
         event: u32,
     },
+    /// 2.0.14 — Bildrate aus dem Systemereignis `Frame`.
+    Bildrate(f32),
     /// v1.7.8 — ein Element aus einer Facility-Lieferung. `typ` ist eine
     /// `SIMCONNECT_FACILITY_DATA_TYPE`; `bytes` folgt der Definition,
     /// die wir vorher zusammengesetzt haben.
@@ -3773,6 +3822,31 @@ fn _link_assertions() {
     let _ = Utc::now();
     let _ = Simulator::Msfs2024;
     let _ = AircraftProfile::Default;
+}
+
+#[cfg(test)]
+mod bildrate_tests {
+    use super::*;
+
+    #[test]
+    fn bildrate_aus_den_gespeicherten_bits() {
+        assert_eq!(bildrate_aus_bits(0), None, "0 = noch nichts gemeldet");
+        assert_eq!(bildrate_aus_bits(42.5f32.to_bits()), Some(42.5));
+        for unsinn in [-3.0f32, f32::NAN, f32::INFINITY] {
+            assert_eq!(bildrate_aus_bits(unsinn.to_bits()), None, "{unsinn}");
+        }
+    }
+
+    /// Die Struktur aus `SimConnect.h`: das Ereignis plus zwei `float`
+    /// (`fFrameRate`, `fSimSpeed`). Stimmt die Bindung nicht, liest der
+    /// Dispatch an der falschen Stelle.
+    #[test]
+    fn frame_ereignis_hat_die_groesse_aus_dem_header() {
+        assert_eq!(
+            std::mem::size_of::<sys::SIMCONNECT_RECV_EVENT_FRAME>(),
+            std::mem::size_of::<sys::SIMCONNECT_RECV_EVENT>() + 8
+        );
+    }
 }
 
 #[cfg(test)]

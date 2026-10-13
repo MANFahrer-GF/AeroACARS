@@ -5035,6 +5035,9 @@ fn telemetry_to_snapshot_mit_pfad(
         } else {
             1.0
         },
+        // Kommt aus dem `Frame`-Ereignis, nicht aus den SimVars — der
+        // Adapter setzt sie nach dem Lesen (`bildrate_aus_bits`).
+        sim_bildrate_hz: None,
         gear_position,
         flaps_position,
         engines_running,
