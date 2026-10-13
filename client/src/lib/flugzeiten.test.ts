@@ -39,6 +39,13 @@ describe("Zeiten gegen Flugplan", () => {
     expect(minutenText(0)).toBe("±0 min");
   });
 
+  it("rundet ±30 s gleich", () => {
+    const z = (d: number): FlugZeiten => ({ plan_on_block: hm(15, 40), on_block: hm(15, 40) + d });
+    expect(zeitZeilen(z(30))[0].abw_min).toBe(1);
+    expect(zeitZeilen(z(-30))[0].abw_min).toBe(-1);
+    expect(zeitZeilen(z(-29))[0].abw_min).toBe(0);
+  });
+
   it("ohne Plan gibt es keinen Kopfsatz", () => {
     const ohne: FlugZeiten = { off_block: hm(14, 41), on_block: hm(15, 47) };
     expect(hatPlan(ohne)).toBe(false);

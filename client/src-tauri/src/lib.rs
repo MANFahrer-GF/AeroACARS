@@ -24544,6 +24544,12 @@ impl FlightStats {
     ///
     /// v2 gewinnt, legacy bleibt Fallback fuer Alt-Datensaetze ohne v2-Feld.
     pub fn canonical_bank_stddev_deg(&self) -> Option<f32> {
+        // Score-Version 23: beim spaeten Final zaehlt nur die Messung ab dem
+        // Ausrichten. Die alte Streuung enthaelt die Kurven davor — als
+        // Rueckfall wuerde sie genau das werten, was ausgenommen ist.
+        if self.approach_spaetes_final.is_some() {
+            return self.approach_bank_stddev_filtered_deg;
+        }
         self.approach_bank_stddev_filtered_deg
             .or(self.approach_bank_stddev_deg)
     }
@@ -24562,6 +24568,12 @@ impl FlightStats {
     /// Bewertung war schon richtig. Es beseitigt, dass eine einzige Formel aus
     /// zwei Wirklichkeiten rechnet.
     pub fn canonical_vs_stddev_fpm(&self) -> Option<f32> {
+        // Score-Version 23: beim spaeten Final zaehlt nur die Messung ab dem
+        // Ausrichten. Die alte Streuung enthaelt die Kurven davor — als
+        // Rueckfall wuerde sie genau das werten, was ausgenommen ist.
+        if self.approach_spaetes_final.is_some() {
+            return self.approach_vs_stddev_filtered_fpm;
+        }
         self.approach_vs_stddev_filtered_fpm
             .or(self.approach_vs_stddev_fpm)
     }
@@ -46540,6 +46552,16 @@ fn flugzeiten(stats: &FlightStats) -> landing_scoring::flugzeiten::FlugZeiten {
 /// Forensik-Puffer (~5 min) ab dem Durchstart-Schnitt — der Gate-Puffer reicht
 /// mit 120 Proben (~2 min) nicht bis vor das Final. Ohne Navdaten-Bahn keine
 /// Erkennung (dann gilt das bisherige Gate).
+///
+/// Wie das uebrige Gate (auch der Gleitwinkel-Faktor) wird das Ergebnis am
+/// Aufsetzen eingefroren: Ein spaeterer Bahnwechsel (Szenerie nachgereicht,
+/// Navigraph-Upgrade beim Einreichen) rechnet es nicht neu, und
+/// `anflug_forensik_nachziehen` filtert die Gleitpfad-Tore weiter ab dem
+/// eingefrorenen `ab` — passend zur eingefrorenen Streuung. Eine
+/// Szenerie-Korrektur verschiebt die Achse um Meter und Hundertstel Grad,
+/// weit unter den Toleranzen (300 m, 20°). Kam die Navdaten-Bahn erst nach
+/// dem Aufsetzen, bleibt es beim geraden Anflug (bisheriges Verhalten).
+/// Codex-QS 13.10.2026, bewusst so belassen.
 fn spaetes_final_erkennen(
     stats: &FlightStats,
     bezug_ft: Option<f32>,

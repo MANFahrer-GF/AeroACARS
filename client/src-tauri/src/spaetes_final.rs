@@ -43,6 +43,10 @@ const QUER_GRUND_M: f64 = 300.0;
 const QUER_ANTEIL: f64 = 0.05;
 /// Kuerzere Unterbrechungen zaehlen nicht (Boe, eine verrauschte Probe).
 const LUECKE_S: f64 = 3.0;
+/// Laengere Luecke zwischen zwei Proben: Fuer die Zeit dazwischen gibt es
+/// keine Beobachtung — sie darf nicht als „am Stueck daneben" zaehlen
+/// (Codex-QS 13.10.2026). Unter 1500 ft tastet der Puffer etwa sekuendlich ab.
+const MAX_PROBENABSTAND_S: f64 = 5.0;
 /// Die Spur ergibt sich aus der Strecke der letzten Sekunden …
 const SPUR_ZEITRAUM_S: f64 = 4.0;
 /// … aber erst ab dieser Strecke (sonst ist sie Rauschen).
@@ -201,10 +205,14 @@ pub fn erkennen(
         return None;
     }
 
-    // Fehlausrichtung am Stueck direkt vor dem Final.
+    // Fehlausrichtung am Stueck direkt vor dem Final. Eine Luecke im Puffer
+    // beendet das Stueck — dort wurde nichts beobachtet.
     let mut fehl_s = 0.0;
     let mut ok_seit: Option<DateTime<Utc>> = None;
     for k in (0..idx).rev() {
+        if sekunden(reihe[k].at, reihe[k + 1].at) > MAX_PROBENABSTAND_S {
+            break;
+        }
         if reihe[k].ausgerichtet {
             let seit = *ok_seit.get_or_insert(reihe[k].at);
             if sekunden(reihe[k].at, seit) > LUECKE_S {
@@ -386,6 +394,29 @@ mod tests {
             let (lat, lon) = punkt(&b, -2000.0, 400.0);
             s.lat = Some(lat);
             s.lon = Some(lon);
+        }
+        assert_eq!(lauf(&v), None);
+    }
+
+    /// Codex-QS: Zwei fehlausgerichtete Proben mit 30 s Luecke dazwischen
+    /// sind keine 20 s Fehlausrichtung am Stueck.
+    #[test]
+    fn luecke_im_puffer_ist_keine_fehlausrichtung() {
+        let b = bahn();
+        let mut v = gerade(&b);
+        let n = v.len();
+        // Auf ~600 ft: 4 s daneben, dann 30 s ohne Position, dann wieder 4 s
+        // daneben — beobachtet sind nur 8 s.
+        for (i, s) in v.iter_mut().enumerate().skip(n - 110).take(38) {
+            let rel = i - (n - 110);
+            if (4..34).contains(&rel) {
+                s.lat = None;
+            } else {
+                // Parallel zur Achse, 900 m daneben — Spur passt, Ablage nicht.
+                let (lat, lon) = punkt(&b, -5500.0 + rel as f64 * 50.0, 900.0);
+                s.lat = Some(lat);
+                s.lon = Some(lon);
+            }
         }
         assert_eq!(lauf(&v), None);
     }

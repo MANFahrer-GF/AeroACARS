@@ -48,7 +48,10 @@ export function hatPlan(z: FlugZeiten | null | undefined): boolean {
 /** Abweichung in ganzen Minuten; + = später als geplant. */
 export function abweichungMin(p: number | null, i: number | null): number | null {
   if (p == null || i == null) return null;
-  const m = Math.round((i - p) / 60);
+  // Betrag runden, dann Vorzeichen: ±30 s ergeben beide 1 min (Math.round
+  // allein rundet −30 s auf −0, +30 s auf +1 — Codex-QS 13.10.2026).
+  const d = i - p;
+  const m = Math.sign(d) * Math.round(Math.abs(d) / 60);
   return m === 0 ? 0 : m;
 }
 
