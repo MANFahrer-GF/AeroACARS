@@ -62,6 +62,8 @@ impl<T> GemesseneSperre<T> {
         let gewartet = ab.duration_since(warte_start);
         let verpacken = |guard| Gehalten {
             guard: Some(guard),
+            #[cfg(test)]
+            sperre: &self.inner,
             stelle,
             ab,
             gewartet,
@@ -78,6 +80,9 @@ pub(crate) struct Gehalten<'a, T> {
     // `Option` nur, damit `drop` die echte Sperre VOR dem Melden freigeben
     // kann. Außerhalb von `drop` immer `Some`.
     guard: Option<MutexGuard<'a, T>>,
+    // Nur für den Test der Reihenfolge „erst freigeben, dann melden“.
+    #[cfg(test)]
+    sperre: &'a Mutex<T>,
     stelle: &'static Location<'static>,
     ab: Instant,
     gewartet: Duration,
@@ -101,11 +106,13 @@ impl<T> Drop for Gehalten<'_, T> {
         let gehalten = self.ab.elapsed();
         // Erst freigeben, dann melden.
         drop(self.guard.take());
-        #[cfg(test)]
-        test_messung::aufzeichnen(self.stelle, gehalten);
         if gehalten >= SCHWELLE || self.gewartet >= SCHWELLE {
+            #[cfg(test)]
+            test_messung::beim_melden_frei(self.sperre.try_lock().is_ok());
             melden(self.stelle, gehalten, self.gewartet);
         }
+        #[cfg(test)]
+        test_messung::aufzeichnen(self.stelle, gehalten);
     }
 }
 
@@ -152,6 +159,14 @@ pub(crate) mod test_messung {
             const { RefCell::new(None) };
     }
 
+    thread_local! {
+        static BEIM_MELDEN_FREI: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    }
+
+    pub(super) fn beim_melden_frei(frei: bool) {
+        BEIM_MELDEN_FREI.with(|z| z.set(Some(frei)));
+    }
+
     pub(crate) fn beginnen() {
         HALTEZEITEN.with(|h| *h.borrow_mut() = Some(Vec::new()));
     }
@@ -178,6 +193,11 @@ pub(crate) mod test_messung {
             std::thread::sleep(Duration::from_millis(25));
         }
         let gemessen = beenden();
+        assert_eq!(
+            BEIM_MELDEN_FREI.with(|z| z.get()),
+            Some(true),
+            "beim Melden war die Sperre noch gehalten (oder es wurde nicht gemeldet)"
+        );
         assert_eq!(gemessen.len(), 1);
         assert_eq!(gemessen[0].0.file(), file!());
         assert!(gemessen[0].1 >= Duration::from_millis(25));

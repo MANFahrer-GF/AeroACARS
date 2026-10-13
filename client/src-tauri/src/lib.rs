@@ -37581,6 +37581,7 @@ fn aufsetz_messen(
     meine_generation: u64,
     diagnose: &Mutex<SamplerDiagnose>,
     an_auswertung: &std::sync::mpsc::Sender<AufsetzMessung>,
+    auswertung_lebt: &AtomicBool,
     mut simulator_lesen: impl FnMut() -> Option<SimSnapshot>,
     mut plugin_aufsetzer_abholen: impl FnMut() -> Option<sim_xplane::PremiumTouchdown>,
 ) {
@@ -37625,6 +37626,7 @@ fn aufsetz_messen(
         // hat (s. `ActiveFlight::generation`).
         if flight.stop.load(Ordering::Relaxed)
             || flight.generation.load(Ordering::SeqCst) != meine_generation
+            || !auswertung_lebt.load(Ordering::SeqCst)
         {
             break;
         }
@@ -37767,6 +37769,12 @@ fn aufsetz_messen(
             }
         }
 
+        // Nur abholen, wenn jemand auswertet — sonst ginge der einmalige
+        // Aufsetzer mit dem Messwert verloren, statt für die nächste
+        // Auswertung im Adapter zu bleiben.
+        if !auswertung_lebt.load(Ordering::SeqCst) {
+            break;
+        }
         let premium = plugin_aufsetzer_abholen();
         // Die Auswertung ist weg (beendet oder abgestürzt) — dann gibt es
         // niemanden mehr, für den gemessen wird.
@@ -37865,8 +37873,35 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         // eigenen kleinen Sperre, nicht in `FlightStats`.
         let diagnose = Arc::new(Mutex::new(SamplerDiagnose::default()));
         let (an_auswertung, messungen) = std::sync::mpsc::channel::<AufsetzMessung>();
+        // Lebt die Auswertung noch? Der Messfaden fragt das, bevor er den
+        // einmaligen Plugin-Aufsetzer abholt (`take`).
+        let auswertung_lebt = Arc::new(AtomicBool::new(true));
+        // ⚠ Nach `_merker` angelegt, also VOR ihm aufgeräumt: Endet dieser
+        // Faden (auch durch Panik), meldet er sich ab und wartet auf das
+        // Ende des Messfadens — erst danach gibt `_merker` den Start frei.
+        // Sonst könnte ein sofortiges Fortsetzen einen zweiten Messfaden
+        // starten, während der alte noch läuft; nähme der alte den
+        // Plugin-Aufsetzer, ginge er mit dem toten Kanal verloren
+        // (Codex-Abnahme 2.0.17, P2).
+        struct MessfadenBeenden {
+            lebt: Arc<AtomicBool>,
+            faden: Option<std::thread::JoinHandle<()>>,
+        }
+        impl Drop for MessfadenBeenden {
+            fn drop(&mut self) {
+                self.lebt.store(false, Ordering::SeqCst);
+                if let Some(faden) = self.faden.take() {
+                    let _ = faden.join();
+                }
+            }
+        }
+        let mut _messfaden_beenden = MessfadenBeenden {
+            lebt: Arc::clone(&auswertung_lebt),
+            faden: None,
+        };
         {
             let (app_m, flight_m, diagnose_m) = (app.clone(), flight.clone(), diagnose.clone());
+            let lebt_m = Arc::clone(&auswertung_lebt);
             let messfaden = std::thread::Builder::new()
                 .name("aufsetz-messfaden".into())
                 .spawn(move || {
@@ -37882,10 +37917,18 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         meine_generation,
                         &diagnose_m,
                         &an_auswertung,
+                        &lebt_m,
                         || current_snapshot(&app_m),
                         || current_premium_touchdown(&app_m),
                     );
                 });
+            let messfaden = match messfaden {
+                Ok(h) => {
+                    _messfaden_beenden.faden = Some(h);
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            };
             if let Err(e) = messfaden {
                 // Wie beim Start des Abtasters selbst: Merker der eigenen
                 // Generation freigeben, sonst ließe sich die Messung für
@@ -70037,12 +70080,15 @@ mod touchdown_metadata_stamp_tests {
         let (an_auswertung, messungen) = std::sync::mpsc::channel();
         let gehalten = flight.stats.lock().expect("stats");
         let (f, d) = (Arc::clone(&flight), Arc::clone(&diagnose));
+        let lebt = Arc::new(AtomicBool::new(true));
+        let l = Arc::clone(&lebt);
         let faden = std::thread::spawn(move || {
             aufsetz_messen(
                 &f,
                 0,
                 &d,
                 &an_auswertung,
+                &l,
                 || {
                     Some(SimSnapshot {
                         lat: 25.2528,
@@ -70054,11 +70100,28 @@ mod touchdown_metadata_stamp_tests {
                 || None,
             )
         });
+        // Startschranke: Die Uhr laeuft erst, wenn der Faden misst — ein
+        // spaet eingeplanter Faden auf einer langsamen CI ist kein Befund
+        // (Codex-Abnahme 2.0.17, P3).
+        let erster = messungen
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("der Messfaden liefert gar nichts, waehrend die Sperre gehalten wird");
         std::thread::sleep(std::time::Duration::from_millis(400));
-        let waehrenddessen: Vec<AufsetzMessung> = messungen.try_iter().collect();
+        let waehrenddessen: Vec<AufsetzMessung> =
+            std::iter::once(erster).chain(messungen.try_iter()).collect();
         drop(gehalten);
+        // Ende durch Abmelden der Auswertung, NICHT durch `stop`: Ist die
+        // Auswertung weg, muss der Messfaden enden, statt weiter Plugin-
+        // Aufsetzer abzuholen (Codex-Abnahme 2.0.17, P2).
+        lebt.store(false, Ordering::SeqCst);
+        let abgemeldet = std::time::Instant::now();
+        while !faden.is_finished() && abgemeldet.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let beendet = faden.is_finished();
         flight.stop.store(true, Ordering::Relaxed);
         faden.join().expect("Messfaden abgestuerzt");
+        assert!(beendet, "der Messfaden laeuft weiter, obwohl die Auswertung abgemeldet ist");
         assert!(
             waehrenddessen.len() >= 10,
             "nur {} Messwerte in 400 ms gehaltener Sperre — der Messfaden \
