@@ -518,7 +518,9 @@ async fn debrief_handler(
         return r;
     }
     let state = ctx.app.state::<crate::AppState>();
+    let beginn = std::time::Instant::now();
     let record = crate::landing_get_current(ctx.app.clone(), state);
+    crate::landungsabfrage_protokollieren("panel_debrief", record.as_ref(), beginn.elapsed());
     let value = debrief_fuer_anzeige(serde_json::to_value(record).unwrap_or(Value::Null));
     cors_open((StatusCode::OK, Json(value)).into_response())
 }

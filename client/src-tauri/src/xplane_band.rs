@@ -114,7 +114,9 @@ fn baue(app: &AppHandle, debrief: &mut Option<(String, Value)>) -> sim_xplane::h
         && debrief.as_ref().map(|(p, _)| p) != Some(&pirep)
     {
         let state = app.state::<crate::AppState>();
+        let beginn = std::time::Instant::now();
         let rec = crate::landing_get_current(app.clone(), state);
+        crate::landungsabfrage_protokollieren("xplane_band", rec.as_ref(), beginn.elapsed());
         if let Ok(v) = serde_json::to_value(rec) {
             if !v.is_null() {
                 *debrief = Some((pirep, crate::panel_server::debrief_fuer_anzeige(v)));

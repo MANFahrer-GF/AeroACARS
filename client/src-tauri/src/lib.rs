@@ -4259,11 +4259,13 @@ fn schnappschuss_uebernehmen(
                 .as_ref()
                 .map(|a| (a.icao.as_str(), stats.ziel_szenerie_auskunft_stand));
             if auskunft_ersetzen(alt_ziel, &neu.icao, stand) {
-                stats.ziel_szenerie_auskunft = Some(neu.clone());
+                stats.ziel_szenerie_auskunft = Some((*neu).clone());
                 stats.ziel_szenerie_auskunft_stand = stand;
             }
         }
-        stats.szenerie_auskunft = Some(neu);
+        // ⚠ Erst HIER kopiert — der Schnappschuss teilt die Auskunft mit
+        // dem Buch (siehe `Schnappschuss::auskunft`).
+        stats.szenerie_auskunft = Some(Arc::unwrap_or_clone(neu));
         stats.szenerie_auskunft_stand = stand;
     }
 }
@@ -4770,7 +4772,7 @@ fn dep_szenerie_auskunft_uebernehmen(
                 if !auskunft.icao.eq_ignore_ascii_case(&icao) {
                     return;
                 }
-                stats.dep_szenerie_auskunft = Some(auskunft);
+                stats.dep_szenerie_auskunft = Some(Arc::unwrap_or_clone(auskunft));
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -7383,6 +7385,10 @@ struct FlightStats {
     /// Der Stand der am Flug abgelegten Szenerie-Auskunft.
     /// Siehe `auskunft_ersetzen`.
     szenerie_auskunft_stand: u32,
+    /// Die zuletzt gerechneten Ausfahrten mit dem Fingerabdruck von
+    /// Bodenkarte und Bahn — siehe `ausfahrten_gemerkt`. Nur
+    /// Zwischenspeicher: wird weder gespeichert noch gesendet.
+    ausfahrten_merker: Mutex<Option<(u64, Vec<ausfahrten::Ausfahrt>)>>,
     /// Der Stand der Auskunft, mit der zuletzt ZUGEORDNET wurde.
     ///
     /// ⚠ Ein `bool` reichte nicht. Die Ernte nimmt ausdruecklich eine
@@ -28120,7 +28126,268 @@ fn scoring_eingang(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Wie oft `bahn_felder` in diesem Test-Faden lief — fuer Tests, die
+    /// belegen, dass die teure Rechnung unterbleibt (AIB 429, 12.10.2026).
+    static BAHN_FELDER_AUFRUFE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Wie oft die Ausfahrten in diesem Test-Faden wirklich GERECHNET
+    /// wurden, also nicht aus `ausfahrten_merker` kamen.
+    static AUSFAHRTEN_GERECHNET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Woraus die Ausfahrten kommen: Szenerie-Rollwege oder die Serverkarte.
+#[derive(Clone, Copy)]
+enum Bodenquelle<'a> {
+    Szenerie(&'a [sim_core::szenerie::SzenerieRollweg]),
+    Karte(&'a str),
+}
+
+/// Die Bodenkarte zur gematchten Bahn — EINE Auswahl fuer `bahn_felder`
+/// und das Vorwaermen (`ausfahrten_vorwaermen`).
+///
+/// Ohne Landeplatz der Bahn gibt es keine (FAIL CLOSED, siehe
+/// `bahn_felder`).
+fn bodenquelle<'a>(
+    stats: &'a FlightStats,
+    landeplatz_der_bahn: Option<&str>,
+) -> Option<Bodenquelle<'a>> {
+    // ZWEI Quellen: die Auskunft des aktuellen Ernteziels und die des
+    // geplanten Ziels.
+    //
+    // Die erste kann von einem Ueberflugplatz stammen — bei DLH 373 am
+    // 20.09.2026 korrelierte die Bahn im Sinkflug kurz mit EDML
+    // (Landshut, liegt auf der Anflugstrecke nach EDDM), das Ernteziel
+    // wechselte dorthin, und die gute EDDM-Auskunft mit 682 Rollwegen
+    // wurde verworfen. EDML lieferte 0. Beim Aufsetzen in Muenchen war
+    // deshalb keine Bodenkarte da: keine Ausfahrten, keine Bemassung.
+    //
+    // Die ICAO-Pruefung bleibt an BEIDEN Quellen — sie ist die
+    // Sicherung, die verhindert, dass Rollwege eines fremden Platzes in
+    // die Ausfahrten geraten. Bei einem Ausweichflug passt das geplante
+    // Ziel nicht und faellt heraus.
+    let passt = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz_der_bahn {
+        Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
+        None => false,
+    };
+    let szenerie = stats
+        .szenerie_auskunft
+        .as_ref()
+        .filter(passt)
+        .filter(|a| !a.rollwege.is_empty())
+        .or_else(|| {
+            stats
+                .ziel_szenerie_auskunft
+                .as_ref()
+                .filter(passt)
+                .filter(|a| !a.rollwege.is_empty())
+        })
+        .map(|a| Bodenquelle::Szenerie(&a.rollwege));
+    let arr_karte = match (&stats.arr_ground_geojson, landeplatz_der_bahn) {
+        (Some(karte), Some(landeplatz)) => stats
+            .arr_ground_geojson_icao
+            .as_deref()
+            .filter(|gi| gi.eq_ignore_ascii_case(landeplatz))
+            .map(|_| Bodenquelle::Karte(karte.as_str())),
+        _ => None,
+    };
+    szenerie.or(arr_karte)
+}
+
+/// Fingerabdruck von Bodenkarte und Bahn — der Schluessel des Merkers.
+///
+/// ⚠ Ueber den INHALT, nicht ueber Staende oder Fahnen: Ein Stand, der
+/// nicht mitgezaehlt wurde, oder ein Wechsel zwischen
+/// `szenerie_auskunft` und `ziel_szenerie_auskunft` kann so nie
+/// Ausfahrten einer anderen Karte liefern — schlimmstenfalls wird
+/// einmal zu viel gerechnet.
+fn ausfahrten_fingerabdruck(quelle: Bodenquelle<'_>, m: &runway::RunwayMatch) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    match quelle {
+        Bodenquelle::Szenerie(rollwege) => {
+            0u8.hash(&mut h);
+            rollwege.len().hash(&mut h);
+            for r in rollwege {
+                r.name.hash(&mut h);
+                r.punkte.len().hash(&mut h);
+                for (lat, lon) in &r.punkte {
+                    lat.to_bits().hash(&mut h);
+                    lon.to_bits().hash(&mut h);
+                }
+            }
+        }
+        Bodenquelle::Karte(karte) => {
+            1u8.hash(&mut h);
+            karte.hash(&mut h);
+        }
+    }
+    for v in [m.threshold_lat, m.threshold_lon, m.end_lat, m.end_lon] {
+        v.to_bits().hash(&mut h);
+    }
+    m.width_ft.to_bits().hash(&mut h);
+    h.finish()
+}
+
+/// Die Ausfahrten zu Bodenkarte und Bahn, frisch gerechnet.
+///
+/// Das Teure: Szenerie-Rollwege als GeoJSON formatieren, wieder parsen,
+/// jeden Stuetzpunkt auf die Bahn projizieren — bei HECA 1480 Rollwege.
+fn ausfahrten_rechnen(
+    quelle: Bodenquelle<'_>,
+    m: &runway::RunwayMatch,
+) -> Vec<ausfahrten::Ausfahrt> {
+    #[cfg(test)]
+    AUSFAHRTEN_GERECHNET.with(|z| z.set(z.get() + 1));
+    let szenerie_karte;
+    let karte = match quelle {
+        Bodenquelle::Szenerie(rollwege) => {
+            szenerie_karte = szenerie_bahn::rollwege_als_bodenkarte(rollwege);
+            szenerie_karte.as_str()
+        }
+        Bodenquelle::Karte(karte) => karte,
+    };
+    ausfahrten::ausfahrten_fuer_bahn(
+        karte,
+        m.threshold_lat,
+        m.threshold_lon,
+        m.end_lat,
+        m.end_lon,
+        m.width_ft as f64 * 0.3048,
+    )
+}
+
+/// Die Ausfahrten zu Bodenkarte und Bahn — einmal gerechnet, danach
+/// aus `ausfahrten_merker`.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// `bahn_felder` laeuft je Landung viele Male: Aufsetz-Ereignis,
+/// Rollout-Nachtrag, Landungen-Reiter alle 5 s, X-Plane-HUD-Band, Panel.
+/// Jedes Mal entstanden die Ausfahrten neu, obwohl Karte und Bahn
+/// dieselben waren. Sie sind eine reine Funktion beider; der Merker
+/// gibt eine KOPIE heraus, das Einkuerzen der Verlaeufe in
+/// `bahn_felder` aendert ihn nicht.
+fn ausfahrten_gemerkt(
+    stats: &FlightStats,
+    quelle: Bodenquelle<'_>,
+    m: &runway::RunwayMatch,
+) -> Vec<ausfahrten::Ausfahrt> {
+    let schluessel = ausfahrten_fingerabdruck(quelle, m);
+    if let Ok(merker) = stats.ausfahrten_merker.lock() {
+        if let Some((k, gemerkt)) = merker.as_ref() {
+            if *k == schluessel {
+                return gemerkt.clone();
+            }
+        }
+    }
+    let gerechnet = ausfahrten_rechnen(quelle, m);
+    if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
+        *merker = Some((schluessel, gerechnet.clone()));
+    }
+    gerechnet
+}
+
+/// Was sich aendern muss, damit eine andere Bodenkarte oder Bahn
+/// vorliegen kann — der billige Ausloeser von `ausfahrten_vorwaermen`.
+type VorwaermAusloeser = (u32, u32, u32, Option<String>, usize, Option<[u64; 5]>);
+
+fn vorwaerm_ausloeser(stats: &FlightStats) -> VorwaermAusloeser {
+    (
+        stats.bahn_revision,
+        stats.szenerie_auskunft_stand,
+        stats.ziel_szenerie_auskunft_stand,
+        stats.arr_ground_geojson_icao.clone(),
+        stats.arr_ground_geojson.as_ref().map_or(0, String::len),
+        stats.runway_match.as_ref().map(|m| {
+            [
+                m.threshold_lat.to_bits(),
+                m.threshold_lon.to_bits(),
+                m.end_lat.to_bits(),
+                m.end_lon.to_bits(),
+                u64::from(m.width_ft.to_bits()),
+            ]
+        }),
+    )
+}
+
+/// Eine eigene Kopie der Bodenkarte — zum Rechnen ohne Sperre.
+enum BodenquelleKopie {
+    Szenerie(Vec<sim_core::szenerie::SzenerieRollweg>),
+    Karte(String),
+}
+
+impl BodenquelleKopie {
+    fn von(quelle: Bodenquelle<'_>) -> Self {
+        match quelle {
+            Bodenquelle::Szenerie(r) => Self::Szenerie(r.to_vec()),
+            Bodenquelle::Karte(k) => Self::Karte(k.to_string()),
+        }
+    }
+
+    fn quelle(&self) -> Bodenquelle<'_> {
+        match self {
+            Self::Szenerie(r) => Bodenquelle::Szenerie(r),
+            Self::Karte(k) => Bodenquelle::Karte(k),
+        }
+    }
+}
+
+/// Die Ausfahrten vorwaermen — AUSSERHALB der Sperre der Flugdaten.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// Das erste Rechnen je Karte und Bahn ist teuer (siehe
+/// `ausfahrten_rechnen`) und lief bisher in `bahn_felder`, also unter
+/// `flight.stats` — waehrenddessen wartet der Aufsetz-Abtaster. Hier wird
+/// unter kurzer Sperre nur geprueft, ob der Merker schon passt; wenn
+/// nicht, werden Karte und Bahn KOPIERT, ohne Sperre gerechnet und das
+/// Ergebnis kurz gesperrt abgelegt. `bahn_felder` findet es danach im
+/// Merker — dieselbe Auswahl (`bodenquelle`), derselbe Schluessel.
+///
+/// `zuletzt` ist der Ausloeser des vorigen Takts: Solange er gleich
+/// bleibt, wird nicht einmal der Fingerabdruck gebildet. Verpasst er eine
+/// Aenderung, rechnet `bahn_felder` wie bisher selbst — langsamer, nie
+/// falsch.
+fn ausfahrten_vorwaermen(flight: &ActiveFlight, zuletzt: &mut Option<VorwaermAusloeser>) {
+    let arbeit = {
+        let Ok(stats) = flight.stats.lock() else {
+            return;
+        };
+        let ausloeser = vorwaerm_ausloeser(&stats);
+        if zuletzt.as_ref() == Some(&ausloeser) {
+            return;
+        }
+        *zuletzt = Some(ausloeser);
+        let Some(m) = stats.runway_match.as_ref().filter(|m| m.width_ft > 0.0) else {
+            return;
+        };
+        let Some(quelle) = bodenquelle(&stats, Some(m.airport_ident.as_str())) else {
+            return;
+        };
+        let schluessel = ausfahrten_fingerabdruck(quelle, m);
+        let schon_da = stats
+            .ausfahrten_merker
+            .lock()
+            .map(|g| g.as_ref().is_some_and(|(k, _)| *k == schluessel))
+            .unwrap_or(false);
+        if schon_da {
+            return;
+        }
+        (schluessel, BodenquelleKopie::von(quelle), m.clone())
+    };
+    let (schluessel, kopie, m) = arbeit;
+    let gerechnet = ausfahrten_rechnen(kopie.quelle(), &m);
+    if let Ok(stats) = flight.stats.lock() {
+        if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
+            *merker = Some((schluessel, gerechnet));
+        }
+    }
+}
+
 fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<String>) -> BahnFelder {
+    #[cfg(test)]
+    BAHN_FELDER_AUFRUFE.with(|z| z.set(z.get() + 1));
     let rm = stats.runway_match.as_ref();
     // Reihenfolge nach Spec §5.3: Die Flugzeugdatei ist die Verfeinerung,
     // die Typtabelle die Basis. Liegt ein aus der Datei gelesener Wert vor,
@@ -28276,79 +28543,33 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // per `#[serde(default)]` auf `None` steht, obwohl `runway_match`
     // durchaus vorliegt.
     let landeplatz_der_bahn = rm.map(|m| m.airport_ident.as_str());
-    // ZWEI Quellen: die Auskunft des aktuellen Ernteziels und die des
-    // geplanten Ziels.
-    //
-    // Die erste kann von einem Ueberflugplatz stammen — bei DLH 373 am
-    // 20.09.2026 korrelierte die Bahn im Sinkflug kurz mit EDML
-    // (Landshut, liegt auf der Anflugstrecke nach EDDM), das Ernteziel
-    // wechselte dorthin, und die gute EDDM-Auskunft mit 682 Rollwegen
-    // wurde verworfen. EDML lieferte 0. Beim Aufsetzen in Muenchen war
-    // deshalb keine Bodenkarte da: keine Ausfahrten, keine Bemassung.
-    //
-    // Die ICAO-Pruefung bleibt an BEIDEN Quellen — sie ist die
-    // Sicherung, die verhindert, dass Rollwege eines fremden Platzes in
-    // die Ausfahrten geraten. Bei einem Ausweichflug passt das geplante
-    // Ziel nicht und faellt heraus.
-    let passt = |a: &&sim_core::szenerie::SzenerieFlughafen| match landeplatz_der_bahn {
-        Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
-        None => false,
-    };
-    let szenerie_karte = stats
-        .szenerie_auskunft
-        .as_ref()
-        .filter(passt)
-        .filter(|a| !a.rollwege.is_empty())
-        .or_else(|| {
-            stats
-                .ziel_szenerie_auskunft
-                .as_ref()
-                .filter(passt)
-                .filter(|a| !a.rollwege.is_empty())
-        })
-        .map(|a| szenerie_bahn::rollwege_als_bodenkarte(&a.rollwege));
-    let arr_karte = match (&stats.arr_ground_geojson, landeplatz_der_bahn) {
-        (Some(karte), Some(landeplatz)) => stats
-            .arr_ground_geojson_icao
-            .as_deref()
-            .filter(|gi| gi.eq_ignore_ascii_case(landeplatz))
-            .map(|_| karte.as_str()),
-        _ => None,
-    };
-    let boden_karte = szenerie_karte.as_deref().or(arr_karte);
 
-    let ausfahrten: Vec<storage::RunwayExit> = match (rm, boden_karte) {
-        (Some(m), Some(karte)) if m.width_ft > 0.0 => ausfahrten::ausfahrten_fuer_bahn(
-            karte,
-            m.threshold_lat,
-            m.threshold_lon,
-            m.end_lat,
-            m.end_lon,
-            m.width_ft as f64 * 0.3048,
-        )
-        .into_iter()
-        .map(|a| storage::RunwayExit {
-            name: a.name,
-            laengs_m: a.laengs_m,
-            seite: a.seite,
-            // Der Verlauf gehoert dazu — aus ihm zeichnet die
-            // Queransicht den Korridor des genommenen Rollwegs.
-            //
-            // Er fehlte hier bis zur QS-Runde 8 am 26.08.2026: berechnet,
-            // mit zwoelf Tests abgedeckt, und beim Umkopieren in einer
-            // Feldliste vergessen. Der Korridor erschien deshalb NUR in
-            // der Vorschau, wo ich ihn von Hand gesetzt hatte, und bei
-            // keinem einzigen echten Flug.
-            verlauf: a
-                .verlauf
-                .into_iter()
-                .map(|v| storage::Verlaufspunkt {
-                    laengs_m: v.laengs_m,
-                    quer_m: v.quer_m,
-                })
-                .collect(),
-        })
-        .collect(),
+    // ⚠ Gemerkt je Bodenkarte und Bahn — siehe `ausfahrten_gemerkt`.
+    let ausfahrten: Vec<storage::RunwayExit> = match (rm, bodenquelle(stats, landeplatz_der_bahn)) {
+        (Some(m), Some(quelle)) if m.width_ft > 0.0 => ausfahrten_gemerkt(stats, quelle, m)
+            .into_iter()
+            .map(|a| storage::RunwayExit {
+                name: a.name,
+                laengs_m: a.laengs_m,
+                seite: a.seite,
+                // Der Verlauf gehoert dazu — aus ihm zeichnet die
+                // Queransicht den Korridor des genommenen Rollwegs.
+                //
+                // Er fehlte hier bis zur QS-Runde 8 am 26.08.2026: berechnet,
+                // mit zwoelf Tests abgedeckt, und beim Umkopieren in einer
+                // Feldliste vergessen. Der Korridor erschien deshalb NUR in
+                // der Vorschau, wo ich ihn von Hand gesetzt hatte, und bei
+                // keinem einzigen echten Flug.
+                verlauf: a
+                    .verlauf
+                    .into_iter()
+                    .map(|v| storage::Verlaufspunkt {
+                        laengs_m: v.laengs_m,
+                        quer_m: v.quer_m,
+                    })
+                    .collect(),
+            })
+            .collect(),
         _ => Vec::new(),
     };
 
@@ -39735,6 +39956,69 @@ mod acars_postausgang_tests {
     }
 }
 
+/// Die Zeitanteile eines Streamer-Takts.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// „Streamer-Takt zu lang" nannte nur die Gesamtzeit. Welcher Teil die
+/// 460–600 ms kostete, liess sich erst aus dem Quelltext erschliessen.
+/// Jetzt traegt die Warnung die Anteile: `abschnitt(name)` schreibt die
+/// Zeit seit der vorigen Marke unter `name`, `bericht` haengt den Rest
+/// bis jetzt an. Eine Sperre, auf die gewartet wird, steckt im Anteil
+/// des Abschnitts, der sie nimmt.
+#[derive(Default)]
+struct Taktuhr {
+    letzte: Option<std::time::Instant>,
+    anteile: Vec<(&'static str, u128)>,
+}
+
+impl Taktuhr {
+    fn start(&mut self) {
+        self.letzte = Some(std::time::Instant::now());
+        self.anteile.clear();
+    }
+
+    fn abschnitt(&mut self, name: &'static str) {
+        if let Some(davor) = self.letzte {
+            let jetzt = std::time::Instant::now();
+            self.anteile
+                .push((name, jetzt.duration_since(davor).as_millis()));
+            self.letzte = Some(jetzt);
+        }
+    }
+
+    /// `name=ms` je Abschnitt ab 5 ms, in Ablaufreihenfolge, plus `rest`.
+    fn bericht(&self) -> String {
+        let rest = self.letzte.map_or(0, |t| t.elapsed().as_millis());
+        self.anteile
+            .iter()
+            .copied()
+            .chain(std::iter::once(("rest", rest)))
+            .filter(|(_, ms)| *ms >= 5)
+            .map(|(name, ms)| format!("{name}={ms}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+#[cfg(test)]
+mod taktuhr_tests {
+    use super::*;
+
+    #[test]
+    fn der_bericht_nennt_die_teuren_abschnitte_in_reihenfolge() {
+        let mut uhr = Taktuhr::default();
+        uhr.abschnitt("vor_dem_start");
+        assert!(uhr.anteile.is_empty(), "ohne Start wird nichts gezaehlt");
+        uhr.start();
+        uhr.anteile = vec![("billig", 2), ("szenerie_ziel", 420), ("step_flight", 12)];
+        // Rest < 5 ms faellt heraus wie jeder billige Abschnitt.
+        assert_eq!(uhr.bericht(), "szenerie_ziel=420 step_flight=12");
+        uhr.start();
+        assert!(uhr.anteile.is_empty(), "der neue Takt beginnt leer");
+    }
+}
+
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
     let Some(meine_generation) = startsperre_nehmen(&flight, &flight.streamer_spawned) else {
         tracing::debug!(
@@ -39825,6 +40109,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // Speicher stand (externe QS, Runde 3, P1).
         let mut last_published_rollout: Option<(i64, u32)> =
             flight.stats.lock().ok().and_then(|s| s.letzter_nachtrag);
+        // Ausloeser des Ausfahrten-Vorwaermens — siehe
+        // `ausfahrten_vorwaermen`.
+        let mut ausfahrten_ausloeser: Option<VorwaermAusloeser> = None;
         // Damit die Warnung „keine MQTT-Verbindung" nicht bei jedem Tick
         // kommt, solange die Sperre nicht faellt.
         let mut mqtt_fehlt_gemeldet = false;
@@ -39848,6 +40135,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // das geplante Warten) länger als 250 ms braucht. Gedeckelt, damit
         // ein Dauerproblem das Protokoll nicht flutet.
         let mut takt_beginn: Option<std::time::Instant> = None;
+        let mut takt_uhr = Taktuhr::default();
         let mut lange_takte_gemeldet: u32 = 0;
         loop {
             let current_phase = {
@@ -39862,6 +40150,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         pirep_id = %flight.pirep_id,
                         phase = ?current_phase,
                         arbeit_ms = arbeit_ms as u64,
+                        anteile = %takt_uhr.bericht(),
                         "Streamer-Takt zu lang"
                     );
                 }
@@ -39885,6 +40174,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             };
             tokio::time::sleep(tick_interval).await;
             takt_beginn = Some(std::time::Instant::now());
+            takt_uhr.start();
             // Ueberholte Generation (Flug fortgesetzt): der neue Streamer
             // uebernimmt — s. `ActiveFlight::generation`.
             if flight.stop.load(Ordering::Relaxed)
@@ -40635,7 +40925,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             //
             // Billig: ein Mutex und ein Vergleich je Tick, und nur
             // solange noch nichts abgelegt ist.
+            takt_uhr.abschnitt("vorlauf");
             szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
+            takt_uhr.abschnitt("szenerie_ziel");
             // v1.7.17 Runde 6 (externe Gegenpruefung, Codex, adversarial,
             // 04.09.2026): die Phase VOR `step_flight` festhalten — damit
             // der Boarding-Ende-Riegel weiter unten den ECHTEN Uebergang
@@ -40654,6 +40946,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 szenerie_bahn::vorladen(&flight.arr_airport);
                 landeplatz_szenerie_vorladen(&flight.arr_airport, &snap);
             }
+            takt_uhr.abschnitt("szenerie_abflug");
 
             // ⚠ Und die Bahnaufloesung NACHHOLEN, wenn die Szenerie erst
             // nach dem Aufsetzen eintraf — siehe
@@ -40700,7 +40993,16 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 revision_vor_versand_sichern(&app, &flight);
             }
 
+            takt_uhr.abschnitt("bahn_nachholen");
             let phase_change = step_flight(&flight, &snap);
+            takt_uhr.abschnitt("step_flight");
+
+            // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
+            // Flugdaten FREI ist — siehe `ausfahrten_vorwaermen`. Danach
+            // finden Aufsetz-Ereignis, Rollout-Nachtrag und
+            // `landing_get_current` sie im Merker.
+            ausfahrten_vorwaermen(&flight, &mut ausfahrten_ausloeser);
+            takt_uhr.abschnitt("ausfahrten_vorwaermen");
 
             // v1.5.1 (F2): METAR-Trigger einmal pro Tick mit der AKTUELLEN
             // Phase — nicht nur bei Übergängen. Boarding ist die Startphase
@@ -41192,195 +41494,81 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // distinktem `landing_at` — bei Touch-and-Go bekommt also jeder
             // Touchdown sein eigenes Event statt nur der erste.
             {
-                let finalized = {
+                takt_uhr.abschnitt("bis_nachtrag");
+                // ⚠ Erst der Schluessel, dann der Bau — siehe
+                // `rollout_nachtrag_faellig`. Ist der Nachtrag schon
+                // gesendet, wird in diesem Takt nichts gebaut. Erneut
+                // gesendet wird, wenn die Bahnwerte sich SEITHER geaendert
+                // haben — nicht nur einmal je Aufsetzen.
+                let faellig = {
                     let stats = flight.stats.lock().expect("flight stats");
-                    // Erst senden, wenn BEIDES fertig ist.
-                    //
-                    // `rollout_finalized` faellt bei vierzig Knoten — die
-                    // Ausrollstrecke steht dann fest. Die Rollspur laeuft
-                    // weiter (bis fuenf Knoten, zur Ausfahrt oder ueber den
-                    // Rand), und mit ihr Raeumpunkt und Kantenuebertritt.
-                    //
-                    // Wird hier zu frueh gesendet, traegt das Ereignis
-                    // dieselbe abgebrochene Spur wie `touchdown_complete`,
-                    // nur mit dem Anspruch, final zu sein.
-                    //
-                    // `bahn_spur_laeuft` wird von `spur_fortschreiben`
-                    // gepflegt: true, solange aufgezeichnet wird, false,
-                    // sobald ein Abbruchkriterium greift. Vor dem ersten
-                    // Aufruf ist es ebenfalls false — deshalb zusaetzlich
-                    // die Bedingung, dass ueberhaupt eine Spur vorliegt.
-                    let spur_fertig = !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
-                    if stats.rollout_finalized && spur_fertig {
-                        // `landing_at` None (z.B. direkt nach einem T&G) →
-                        // kein Publish; der nächste Touchdown setzt es neu.
-                        aufsetzzeit(&stats).map(|td| {
-                            (
-                                td.timestamp_millis(),
-                                // ⚠ Die REVISION der Zuordnung — dieselbe
-                                // Zahl, die auf die Leitung geht.
-                                //
-                                // Frueher stand hier
-                                // `korrelierter_szenerie_stand`. Der aendert
-                                // sich nur, wenn eine neue SZENERIE-Lieferung
-                                // eintrifft. Eine Zuordnung, die aus einem
-                                // anderen Grund neue Bahnwerte ergibt — das
-                                // Navdaten-Upgrade beim Einreichen —, haette
-                                // damit keinen Nachtrag ausgeloest: neue
-                                // Revision auf der Leitung, aber die Sperre
-                                // sah keine Kante.
-                                //
-                                // Trifft die Szenerie NACH der
-                                // Finalisierung ein (YSBK, 01.09.2026),
-                                // korrigiert das Nachholen zwar den
-                                // Flugzustand — der Recorder hatte den
-                                // Nachtrag aber laengst bekommen und
-                                // uebernimmt vom spaeteren PIREP nur
-                                // Punktzahl und Noten, nicht die
-                                // Bahnwerte. Ohne diesen Stand in der
-                                // Sperre blieben dort die alten Achsen-
-                                // und Ausfahrtsdaten stehen (QS-Befund 1,
-                                // erste Runde v1.7.15).
-                                //
-                                // Das Ereignis ist ohnehin idempotent:
-                                // Es adressiert ueber `pirep_id` +
-                                // `touchdown_at`.
-                                stats.bahn_revision,
-                                stats.rollout_distance_m.unwrap_or(0.0),
-                                stats.rollout_finalize_reason.clone(),
-                                // Die Bahnwerte in ihrem FINALEN Stand.
-                                //
-                                // Beim `touchdown_complete` neun Sekunden
-                                // nach dem Aufsetzen waechst die Spur noch,
-                                // der Raeumpunkt ist nicht erreicht und der
-                                // Kantenuebertritt erst recht nicht. Ohne
-                                // diesen Nachtrag blieben Recorder und
-                                // Webapp beim vorlaeufigen Stand: eine Spur,
-                                // die mitten im Ausrollen abbricht.
-                                //
-                                // Kein Skip-Grund: Die Bewertung laeuft erst
-                                // beim Einreichen des PIREP. Die Webapp
-                                // liest ihn aus den `sub_scores`.
-                                // EINE Entscheidung mit dem Einreich-Nachtrag
-                                // — siehe `spur_block`. Hier ist die Spur
-                                // fertig (Riegel), aber sie kann VERALTET
-                                // sein.
-                                spur_block(&flight, &stats),
-                                // Die Bahn-Herkunft im FINALEN Stand.
-                                //
-                                // Genau derselbe Aufruf wie am
-                                // `touchdown_complete` — kam die Szenerie
-                                // erst danach, steht hier die
-                                // nachgeholte Zuordnung.
-                                bahn_herkunft(&stats),
-                                // Das Drittel als Spalte — siehe
-                                // `zone_fuer_leitung`.
-                                zone_fuer_leitung(&flight, &stats),
-                                // Und der Vertrauens-Riegel selbst — er steht
-                                // am Touchdown und muss am Nachtrag mitkommen,
-                                // sonst bleibt er stehen, wenn die Bahn wechselt.
-                                bahnvertrauen(&flight, &stats),
-                                // Die Verzoegerung entsteht erst beim
-                                // Ausrollende, siehe Feld-Doku.
-                                stats.landing_decel_mps2,
-                            )
-                        })
-                    } else {
-                        None
-                    }
+                    rollout_nachtrag_faellig(&flight, &stats, last_published_rollout)
                 };
-                if let Some((
-                    touchdown_at,
-                    revision,
-                    rollout_m,
-                    reason,
-                    bahn,
-                    herkunft,
-                    zone,
-                    vertrauen,
-                    verzoegerung,
-                )) = finalized
-                {
-                    // ⚠ Erneut senden, wenn die Bahnwerte sich SEITHER
-                    // geaendert haben — nicht nur einmal je Aufsetzen.
-                    if last_published_rollout != Some((touchdown_at, revision)) {
-                        let app_state = app.state::<AppState>();
-                        // ⚠ Erst PRUEFEN, ob es einen Handle gibt — und die
-                        // Sperre sofort wieder freigeben. Die Flugdatei
-                        // wird danach OHNE gehaltene MQTT-Sperre geschrieben
-                        // (blockierende E/A unter einer geteilten async-
-                        // Sperre, externe QS Runde 3). Ohne Handle wird
-                        // weder geschrieben noch gesendet; Sperre und Fahne
-                        // bleiben stehen, der naechste Tick versucht es
-                        // erneut. Der restliche Tick laeuft in JEDEM Fall
-                        // weiter — kein `continue` (N1, P0).
-                        let mqtt_vorhanden = app_state.mqtt.lock().await.is_some();
-                        if !mqtt_vorhanden {
-                            if !mqtt_fehlt_gemeldet {
-                                tracing::warn!(
-                                    revision,
-                                    "touchdown_rollout_finalized: keine MQTT-Verbindung — \
-                                     der Nachtrag wartet"
+                if let Some(((touchdown_at, revision), mut payload)) = faellig {
+                    let rollout_m = payload.rollout_distance_m;
+                    let app_state = app.state::<AppState>();
+                    // ⚠ Erst PRUEFEN, ob es einen Handle gibt — und die
+                    // Sperre sofort wieder freigeben. Die Flugdatei
+                    // wird danach OHNE gehaltene MQTT-Sperre geschrieben
+                    // (blockierende E/A unter einer geteilten async-
+                    // Sperre, externe QS Runde 3). Ohne Handle wird
+                    // weder geschrieben noch gesendet; Sperre und Fahne
+                    // bleiben stehen, der naechste Tick versucht es
+                    // erneut. Der restliche Tick laeuft in JEDEM Fall
+                    // weiter — kein `continue` (N1, P0).
+                    let mqtt_vorhanden = app_state.mqtt.lock().await.is_some();
+                    if !mqtt_vorhanden {
+                        if !mqtt_fehlt_gemeldet {
+                            tracing::warn!(
+                                revision,
+                                "touchdown_rollout_finalized: keine MQTT-Verbindung — \
+                                 der Nachtrag wartet"
+                            );
+                            mqtt_fehlt_gemeldet = true;
+                        }
+                    } else {
+                        mqtt_fehlt_gemeldet = false;
+                        // ⚠ ZUERST auf die Platte, DANN auf die Leitung.
+                        // Siehe `revision_vor_versand_sichern`.
+                        revision_vor_versand_sichern(&app, &flight);
+                        let mqtt = app_state.mqtt.lock().await;
+                        match mqtt.as_ref() {
+                            // Zwischen Pruefung und Sperre verschwunden —
+                            // naechster Tick.
+                            None => {}
+                            Some(handle) => {
+                                // Zeitstempel des Versands, wie bisher.
+                                payload.ts = Utc::now().timestamp_millis();
+                                let gesendet = nachtrag_queue::senden(
+                                    &app,
+                                    &handle.nachtrag_sender(),
+                                    payload,
                                 );
-                                mqtt_fehlt_gemeldet = true;
-                            }
-                        } else {
-                            mqtt_fehlt_gemeldet = false;
-                            // ⚠ ZUERST auf die Platte, DANN auf die Leitung.
-                            // Siehe `revision_vor_versand_sichern`.
-                            revision_vor_versand_sichern(&app, &flight);
-                            let mqtt = app_state.mqtt.lock().await;
-                            match mqtt.as_ref() {
-                                // Zwischen Pruefung und Sperre verschwunden —
-                                // naechster Tick.
-                                None => {}
-                                Some(handle) => {
-                                    let gesendet = nachtrag_queue::senden(
-                                        &app,
-                                        &handle.nachtrag_sender(),
-                                        aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
-                                            ts: Utc::now().timestamp_millis(),
-                                            pirep_id: flight.pirep_id.clone(),
-                                            touchdown_at,
-                                            rollout_distance_m: rollout_m,
-                                            finalize_reason: reason,
-                                            bahn,
-                                            landing_touchdown_zone: zone,
-                                            runway_geometry_trusted: Some(vertrauen.0),
-                                            runway_geometry_reason: vertrauen
-                                                .1
-                                                .map(|r| r.to_string()),
-                                            herkunft,
-                                            landing_decel_mps2: verzoegerung,
-                                        },
-                                    );
-                                    // Sperre und Fahne fallen NUR, wenn der
-                                    // Nachtrag auf der Platte liegt (Runde 13,
-                                    // High 2). Sonst naechster Tick.
-                                    match gesendet {
-                                        Ok(()) => {
-                                            let nachtrag = last_published_rollout.is_some();
-                                            last_published_rollout = Some((touchdown_at, revision));
-                                            if let Ok(mut st) = flight.stats.lock() {
-                                                st.bahn_nachtrag_offen = false;
-                                                st.letzter_nachtrag =
-                                                    Some((touchdown_at, revision));
-                                            }
-                                            tracing::info!(
-                                                pirep_id = %flight.pirep_id,
-                                                touchdown_at,
-                                                rollout_m,
-                                                revision,
-                                                nachtrag,
-                                                "touchdown_rollout_finalized published"
-                                            );
+                                // Sperre und Fahne fallen NUR, wenn der
+                                // Nachtrag auf der Platte liegt (Runde 13,
+                                // High 2). Sonst naechster Tick.
+                                match gesendet {
+                                    Ok(()) => {
+                                        let nachtrag = last_published_rollout.is_some();
+                                        last_published_rollout = Some((touchdown_at, revision));
+                                        if let Ok(mut st) = flight.stats.lock() {
+                                            st.bahn_nachtrag_offen = false;
+                                            st.letzter_nachtrag = Some((touchdown_at, revision));
                                         }
-                                        Err(e) => tracing::error!(
+                                        tracing::info!(
                                             pirep_id = %flight.pirep_id,
-                                            error = %e,
-                                            "Bahn-Nachtrag nicht abgelegt — Sperre bleibt, naechster Tick"
-                                        ),
+                                            touchdown_at,
+                                            rollout_m,
+                                            revision,
+                                            nachtrag,
+                                            "touchdown_rollout_finalized published"
+                                        );
                                     }
+                                    Err(e) => tracing::error!(
+                                        pirep_id = %flight.pirep_id,
+                                        error = %e,
+                                        "Bahn-Nachtrag nicht abgelegt — Sperre bleibt, naechster Tick"
+                                    ),
                                 }
                             }
                         }
@@ -41388,6 +41576,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
 
+            takt_uhr.abschnitt("rollout_nachtrag");
             // v0.7.14: Pilot-Client-Discord-Posts fuer Takeoff + Landing
             // entfernt — Recorder postet das jetzt zentral via MQTT-Trigger
             // (`takeoff` + `touchdown` Events publishen sowieso, Recorder
@@ -42414,9 +42603,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // `clear_persisted_flight`, and we'd otherwise resurrect the
             // disk file. Without this, the resume banner pops on the next
             // launch for a flight the user already filed.
+            takt_uhr.abschnitt("ereignisse");
             if should_persist && !flight.stop.load(Ordering::Relaxed) {
                 save_active_flight(&app, &flight);
             }
+            takt_uhr.abschnitt("persistieren");
 
             // On phase change, push the new status to phpVMS so the
             // live-map and PIREP detail page reflect the current phase.
@@ -44806,6 +44997,62 @@ fn bahn_nachtrag_bauen(
         herkunft: bahn_herkunft(stats),
         landing_decel_mps2: stats.landing_decel_mps2,
     })
+}
+
+/// Der Rollout-Nachtrag des Streamers — nur, wenn er noch nicht gesendet ist.
+///
+/// Liefert Sperrschluessel `(touchdown_at, bahn_revision)` und Ereignis,
+/// sobald Ausrollen UND Rollspur fertig sind und dieser Schluessel noch
+/// nicht `zuletzt` gesendet wurde.
+///
+/// ⚠ ERST der Schluessel, DANN der Bau. Bis 2.0.12 baute der Streamer
+/// Spur-Block, Rollwegkarte und Ausfahrten in JEDEM Takt und verwarf sie
+/// danach, weil der Nachtrag laengst gesendet war — bei AIB 429 (HECA,
+/// 1480 Rollwege, 12.10.2026) 460–600 ms je Takt, das ganze Rollen lang.
+/// Schluessel und Ereignis stammen aus EINEM Blick auf `stats`; der
+/// Aufrufer haelt dafuer die Sperre.
+fn rollout_nachtrag_faellig(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    zuletzt: Option<(i64, u32)>,
+) -> Option<((i64, u32), aeroacars_mqtt::TouchdownRolloutFinalizedPayload)> {
+    // Erst senden, wenn BEIDES fertig ist.
+    //
+    // `rollout_finalized` faellt bei vierzig Knoten — die Ausrollstrecke
+    // steht dann fest. Die Rollspur laeuft weiter (bis fuenf Knoten, zur
+    // Ausfahrt oder ueber den Rand), und mit ihr Raeumpunkt und
+    // Kantenuebertritt. Wird zu frueh gesendet, traegt das Ereignis
+    // dieselbe abgebrochene Spur wie `touchdown_complete`, nur mit dem
+    // Anspruch, final zu sein.
+    //
+    // `bahn_spur_laeuft` wird von `spur_fortschreiben` gepflegt: true,
+    // solange aufgezeichnet wird, false, sobald ein Abbruchkriterium
+    // greift. Vor dem ersten Aufruf ist es ebenfalls false — deshalb
+    // zusaetzlich die Bedingung, dass ueberhaupt eine Spur vorliegt.
+    let spur_fertig = !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
+    if !stats.rollout_finalized || !spur_fertig {
+        return None;
+    }
+    // `aufsetzzeit` None (z.B. direkt nach einem T&G) → kein Nachtrag;
+    // der naechste Touchdown setzt sie neu.
+    //
+    // ⚠ Die REVISION der Zuordnung — dieselbe Zahl, die auf die Leitung
+    // geht. Frueher stand hier `korrelierter_szenerie_stand`; der aendert
+    // sich nur mit einer neuen SZENERIE-Lieferung, eine Zuordnung aus
+    // anderem Grund (Navdaten-Upgrade beim Einreichen) haette keinen
+    // Nachtrag ausgeloest. Trifft die Szenerie NACH der Finalisierung ein
+    // (YSBK, 01.09.2026), muss erneut gesendet werden, sonst bleiben beim
+    // Recorder die alten Achsen- und Ausfahrtsdaten stehen (QS-Befund 1,
+    // erste Runde v1.7.15). Das Ereignis ist ohnehin idempotent: Es
+    // adressiert ueber `pirep_id` + `touchdown_at`.
+    let schluessel = (aufsetzzeit(stats)?.timestamp_millis(), stats.bahn_revision);
+    if zuletzt == Some(schluessel) {
+        return None;
+    }
+    // Die Bahnwerte in ihrem FINALEN Stand, mit derselben Ableitung wie
+    // der Einreich-Nachtrag (`spur_block`, `bahn_herkunft`,
+    // `zone_fuer_leitung`, `bahnvertrauen`).
+    Some((schluessel, bahn_nachtrag_bauen(flight, stats)?))
 }
 
 /// v0.15.24: Landing-weight stamp — extracted verbatim from the tail of the
@@ -60060,10 +60307,125 @@ fn init_tracing() {
         version = env!("CARGO_PKG_VERSION"),
         pid = std::process::id(),
         log_dir = ?log_dir(),
+        rechner = %rechner_beschreibung(),
         "AeroACARS starting"
     );
 
     install_panic_logging();
+}
+
+/// Wie oft eine Anzeige dieselbe Landung abgefragt hat.
+///
+/// # Warum (AIB 429, 12.10.2026)
+///
+/// MSFS-Panel, Flow-Widget und X-Plane-HUD-Band fragen die Landung
+/// einmal. Nur wenn keine gueltige Antwort kommt, fragen sie im naechsten
+/// Takt erneut — das HUD-Band alle 500 ms, und jede Abfrage baut die
+/// Landung unter der Sperre der Flugdaten. Ob das im Feld vorkam, stand
+/// nirgends. Gemeldet wird ab der zweiten Abfrage, danach bei jeder
+/// Zweierpotenz, damit eine Dauerschleife das Protokoll nicht flutet.
+pub(crate) fn landungsabfrage_protokollieren(
+    quelle: &'static str,
+    record: Option<&storage::LandingRecord>,
+    dauer: std::time::Duration,
+) {
+    let landung = record.map_or_else(
+        || "keine".to_string(),
+        |r| format!("{}@{}", r.pirep_id, r.touchdown_at.timestamp_millis()),
+    );
+    let anzahl = landungsabfrage_zaehlen(quelle, &landung);
+    if abfrage_melden(anzahl) {
+        tracing::info!(
+            quelle,
+            landung = %landung,
+            anzahl,
+            dauer_ms = dauer.as_millis() as u64,
+            "Landung mehrfach abgefragt"
+        );
+    }
+}
+
+/// Zaehlt je Anzeige und Landung; gibt die neue Anzahl zurueck.
+fn landungsabfrage_zaehlen(quelle: &'static str, landung: &str) -> u32 {
+    static ZAEHLER: std::sync::OnceLock<Mutex<HashMap<(&'static str, String), u32>>> =
+        std::sync::OnceLock::new();
+    let Ok(mut z) = ZAEHLER.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+        return 0;
+    };
+    // Beschraenkt: Jede Landung bringt hoechstens wenige neue Schluessel.
+    if z.len() > 64 {
+        z.clear();
+    }
+    let n = z.entry((quelle, landung.to_string())).or_insert(0);
+    *n = n.saturating_add(1);
+    *n
+}
+
+fn abfrage_melden(anzahl: u32) -> bool {
+    anzahl >= 2 && anzahl.is_power_of_two()
+}
+
+#[cfg(test)]
+mod landungsabfrage_tests {
+    use super::*;
+
+    #[test]
+    fn gemeldet_wird_ab_der_zweiten_abfrage_bei_zweierpotenzen() {
+        let gemeldet: Vec<u32> = (1..=20).filter(|&n| abfrage_melden(n)).collect();
+        assert_eq!(gemeldet, vec![2, 4, 8, 16]);
+    }
+
+    #[test]
+    fn gezaehlt_wird_je_anzeige_und_landung() {
+        assert_eq!(landungsabfrage_zaehlen("test_band", "P1@1"), 1);
+        assert_eq!(landungsabfrage_zaehlen("test_band", "P1@1"), 2);
+        assert_eq!(
+            landungsabfrage_zaehlen("test_panel", "P1@1"),
+            1,
+            "andere Anzeige"
+        );
+        assert_eq!(
+            landungsabfrage_zaehlen("test_band", "P1@2"),
+            1,
+            "andere Landung"
+        );
+    }
+}
+
+/// Betriebssystem, CPU-Modell, Kerne und Arbeitsspeicher — fuer die
+/// Startzeile des Logs.
+///
+/// # Warum (AIB 429 / EZY 1539, 12.10.2026)
+///
+/// Derselbe Fehler kostete bei einem Piloten 460–600 ms je Takt, beim
+/// anderen blieb er unter der Meldeschwelle. Ob das am Rechner lag, liess
+/// sich nicht pruefen: Weder Diagnoselog noch Fehlerberichte nannten die
+/// Hardware. Das Betriebssystem kam nur ueber die Fehlerberichte, und
+/// die tragen keine Pilotenkennung.
+fn rechner_beschreibung() -> String {
+    let unbekannt = || "?".to_string();
+    // z. B. "Windows 11 Pro (Build 26200, x86_64)".
+    let system_name = format!(
+        "{} (Build {}, {})",
+        sysinfo::System::long_os_version().unwrap_or_else(unbekannt),
+        sysinfo::System::kernel_version().unwrap_or_else(unbekannt),
+        sysinfo::System::cpu_arch().unwrap_or_else(unbekannt),
+    );
+    let mut system = sysinfo::System::new();
+    system.refresh_cpu_list(sysinfo::CpuRefreshKind::new());
+    system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::new().with_ram());
+    let modell = system
+        .cpus()
+        .first()
+        .map(|c| c.brand().trim().to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| "unbekannt".to_string());
+    let logisch = std::thread::available_parallelism().map_or(0, |n| n.get());
+    let physisch = system
+        .physical_core_count()
+        .map_or_else(|| "?".to_string(), |n| n.to_string());
+    let ram_gb = system.total_memory() as f64 / 1_073_741_824.0;
+    format!("{system_name}; {modell}, {physisch} Kerne/{logisch} Threads, {ram_gb:.0} GB RAM")
 }
 
 /// Leitet Rust-Panics zusätzlich in die Protokollierung um.
@@ -66051,7 +66413,7 @@ mod sim_pause_tests {
         let liefere = |a: sim_core::szenerie::SzenerieFlughafen, stand: u32| {
             sim_core::szenerie::Schnappschuss {
                 generation: 0,
-                auskunft: Some((a, stand)),
+                auskunft: Some((Arc::new(a), stand)),
                 diagnose: "geliefert".to_string(),
                 kennung: None,
             }
@@ -68237,6 +68599,150 @@ mod touchdown_metadata_stamp_tests {
         );
     }
 
+    /// EDDM 26R mit zwei Szenerie-Rollwegen; A8 trifft die Bahnkante.
+    fn eddm_26r_mit_rollwegen(flight: &ActiveFlight) -> runway::RunwayMatch {
+        let rollweg = |name: &str, lat: f64, lon: f64| sim_core::szenerie::SzenerieRollweg {
+            name: name.to_string(),
+            punkte: vec![(lat, lon), (lat + 0.004, lon + 0.004)],
+        };
+        let bahn = runway::RunwayMatch {
+            airport_ident: "EDDM".to_string(),
+            runway_ident: "26R".to_string(),
+            heading_true_deg: 263.4,
+            length_ft: 13123.0,
+            width_ft: 197.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 48.3694,
+            threshold_lon: 11.8306,
+            end_lat: 48.3617,
+            end_lon: 11.7766,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 1656.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+            geometry_implied_displaced_threshold_ft: 0,
+        };
+        let mut stats = flight.stats.lock().expect("stats");
+        stats.runway_match = Some(bahn.clone());
+        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDM".to_string(),
+            rollwege: vec![
+                rollweg("A8", 48.3660, 11.8050),
+                rollweg("A10", 48.3640, 11.7930),
+            ],
+            ..Default::default()
+        });
+        bahn
+    }
+
+    /// ⚠ Die Ausfahrten entstehen je Bodenkarte und Bahn EINMAL.
+    ///
+    /// AIB 429 (HECA, 1480 Rollwege, 12.10.2026): `bahn_felder` laeuft je
+    /// Landung viele Male, und jedes Mal wurde die ganze Rollwegkarte als
+    /// GeoJSON formatiert, wieder geparst und projiziert. Gegenproben:
+    /// Eine andere Bahn oder eine andere Karte rechnet neu, und das
+    /// Ergebnis folgt ihr.
+    #[test]
+    fn ausfahrten_werden_je_karte_und_bahn_nur_einmal_gerechnet() {
+        let flight = flight_fixture("EDDM");
+        let bahn = eddm_26r_mit_rollwegen(&flight);
+        let mut stats = flight.stats.lock().expect("stats");
+        let laengs = |f: &BahnFelder| -> Vec<(String, i64)> {
+            f.runway_exits
+                .iter()
+                .map(|a| (a.name.clone(), a.laengs_m.round() as i64))
+                .collect()
+        };
+        let gerechnet = || AUSFAHRTEN_GERECHNET.with(|z| z.get());
+
+        AUSFAHRTEN_GERECHNET.with(|z| z.set(0));
+        let erst = bahn_felder(&stats, Some("A388"), None);
+        let dann = bahn_felder(&stats, Some("A388"), None);
+        assert!(
+            erst.runway_exits.iter().any(|a| a.name == "A8"),
+            "Vorrichtung: A8 ist eine Ausfahrt"
+        );
+        assert_eq!(laengs(&erst), laengs(&dann), "gemerkt heisst gleich");
+        assert_eq!(
+            gerechnet(),
+            1,
+            "dieselbe Karte und Bahn, trotzdem wurden die Ausfahrten erneut gerechnet"
+        );
+
+        // Gegenprobe 1: andere Bahn (Schwelle rund 300 m weiter) → neu.
+        let mut verschoben = bahn.clone();
+        verschoben.threshold_lat += (bahn.end_lat - bahn.threshold_lat) * 0.075;
+        verschoben.threshold_lon += (bahn.end_lon - bahn.threshold_lon) * 0.075;
+        stats.runway_match = Some(verschoben);
+        let neu_bahn = bahn_felder(&stats, Some("A388"), None);
+        assert_eq!(gerechnet(), 2, "eine andere Bahn kam aus dem Merker");
+        assert_ne!(
+            laengs(&neu_bahn),
+            laengs(&erst),
+            "die Ausfahrten folgen der neuen Schwelle nicht"
+        );
+
+        // Gegenprobe 2: dieselbe Bahn, aber die Karte ohne A8 → neu.
+        stats.runway_match = Some(bahn);
+        if let Some(a) = stats.szenerie_auskunft.as_mut() {
+            a.rollwege.remove(0);
+        }
+        let neu_karte = bahn_felder(&stats, Some("A388"), None);
+        assert_eq!(gerechnet(), 3, "eine andere Karte kam aus dem Merker");
+        assert!(
+            neu_karte.runway_exits.iter().all(|a| a.name != "A8"),
+            "der entfernte Rollweg ist noch da"
+        );
+    }
+
+    /// ⚠ Das Vorwaermen rechnet genau die Ausfahrten, die `bahn_felder`
+    /// danach braucht.
+    ///
+    /// Es laeuft im Streamer-Takt ohne gehaltene Sperre der Flugdaten
+    /// (AIB 429, 12.10.2026). Benutzte es eine andere Auswahl oder einen
+    /// anderen Schluessel als `bahn_felder`, fuellte es einen Merker, den
+    /// niemand liest — und `bahn_felder` rechnete wieder unter der Sperre.
+    #[test]
+    fn das_vorwaermen_fuellt_den_merker_fuer_bahn_felder() {
+        let flight = flight_fixture("EDDM");
+        let bahn = eddm_26r_mit_rollwegen(&flight);
+        let gerechnet = || AUSFAHRTEN_GERECHNET.with(|z| z.get());
+        AUSFAHRTEN_GERECHNET.with(|z| z.set(0));
+
+        let mut ausloeser = None;
+        ausfahrten_vorwaermen(&flight, &mut ausloeser);
+        assert_eq!(gerechnet(), 1, "das Vorwaermen hat nichts gerechnet");
+        ausfahrten_vorwaermen(&flight, &mut ausloeser);
+        assert_eq!(gerechnet(), 1, "gleicher Ausloeser, trotzdem neu gerechnet");
+        {
+            let stats = flight.stats.lock().expect("stats");
+            let felder = bahn_felder(&stats, Some("A388"), None);
+            assert!(
+                felder.runway_exits.iter().any(|a| a.name == "A8"),
+                "die vorgewaermten Ausfahrten kommen nicht an"
+            );
+            assert_eq!(
+                gerechnet(),
+                1,
+                "`bahn_felder` rechnet selbst — Vorwaermen und `bahn_felder` \
+                 benutzen nicht denselben Schluessel"
+            );
+        }
+
+        // Gegenprobe: eine neue Bahn → das Vorwaermen rechnet neu.
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            let mut neu = bahn;
+            neu.threshold_lat += (neu.end_lat - neu.threshold_lat) * 0.075;
+            neu.threshold_lon += (neu.end_lon - neu.threshold_lon) * 0.075;
+            stats.runway_match = Some(neu);
+            stats.bahn_revision += 1;
+        }
+        ausfahrten_vorwaermen(&flight, &mut ausloeser);
+        assert_eq!(gerechnet(), 2, "die neue Bahn wurde nicht vorgewaermt");
+    }
+
     /// Und die Zweitquelle darf KEINEN fremden Platz durchlassen.
     ///
     /// Gegenprobe zum Test darueber: Passt die ICAO nicht zur gematchten
@@ -70233,6 +70739,50 @@ mod touchdown_metadata_stamp_tests {
             spur_block(&flight, &stats).is_none(),
             "eine Spur im alten Bezug geht auf die Leitung — neben Marken aus der neuen Bahn"
         );
+    }
+
+    /// ⚠ Ist der Nachtrag gesendet, baut der Streamer beim Rollen NICHTS mehr.
+    ///
+    /// AIB 429 (HECA, 12.10.2026): Bis 2.0.12 entstanden Spur-Block,
+    /// Rollwegkarte und Ausfahrten in jedem Takt und wurden erst danach
+    /// verworfen — 460–600 ms je Takt, das ganze Rollen lang. Gezaehlt wird
+    /// an `bahn_felder`, der teuren Stelle selbst. Die Gegenproben (noch nie
+    /// gesendet, neue Revision) bauen und senden weiterhin.
+    #[test]
+    fn nach_dem_nachtrag_baut_der_streamer_nichts_mehr() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = stats_mit_spur(eddp_26r_match_with_raw_td(0.0));
+        stats.rollout_finalized = true;
+        stats.bahn_spur_laeuft = false;
+        stats.sampler_touchdown_at = Some(td_at());
+        stats.bahn_revision = 3;
+        let td_ms = td_at().timestamp_millis();
+        let aufrufe = || BAHN_FELDER_AUFRUFE.with(|z| z.get());
+
+        BAHN_FELDER_AUFRUFE.with(|z| z.set(0));
+        assert!(
+            rollout_nachtrag_faellig(&flight, &stats, Some((td_ms, 3))).is_none(),
+            "ein schon gesendeter Nachtrag geht erneut raus"
+        );
+        assert_eq!(
+            aufrufe(),
+            0,
+            "der Nachtrag ist gesendet, trotzdem wurde die Rollwegkarte gebaut"
+        );
+
+        BAHN_FELDER_AUFRUFE.with(|z| z.set(0));
+        let (schluessel, nachtrag) =
+            rollout_nachtrag_faellig(&flight, &stats, None).expect("noch nie gesendet");
+        assert_eq!(schluessel, (td_ms, 3));
+        assert_eq!(nachtrag.touchdown_at, td_ms);
+        assert!(nachtrag.bahn.is_some(), "der Spur-Block fehlt im Nachtrag");
+        assert_eq!(aufrufe(), 1, "Gegenprobe: der erste Nachtrag wird gebaut");
+
+        BAHN_FELDER_AUFRUFE.with(|z| z.set(0));
+        let (schluessel, _) = rollout_nachtrag_faellig(&flight, &stats, Some((td_ms, 2)))
+            .expect("eine neue Revision wird erneut gesendet");
+        assert_eq!(schluessel, (td_ms, 3));
+        assert_eq!(aufrufe(), 1, "Gegenprobe: die neue Revision wird gebaut");
     }
 
     /// ⚠ Eine FERTIGE Spur wird nie verworfen — auch nicht bei Achswechsel.
