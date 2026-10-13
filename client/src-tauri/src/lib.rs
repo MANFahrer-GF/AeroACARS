@@ -28512,9 +28512,24 @@ fn vorwaerm_ausfuehren(flight: &ActiveFlight, auftrag: VorwaermAuftrag) {
         dauer_ms = beginn.elapsed().as_millis() as u64,
         "Ausfahrten vorgewaermt"
     );
+    // ⚠ Nur ablegen, wenn Karte und Bahn noch dieselben sind. Hat sich
+    // waehrend des Rechnens etwas geaendert, kann `bahn_felder` den Merker
+    // schon mit dem NEUEN Schluessel gefuellt haben — ein veraltetes
+    // Ergebnis darueber zwaenge es, erneut unter der Sperre zu rechnen
+    // (Codex, PR #138).
     if let Ok(stats) = flight.stats.lock() {
-        if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
-            *merker = Some((auftrag.schluessel, gerechnet));
+        let aktuell = stats
+            .runway_match
+            .as_ref()
+            .filter(|m| m.width_ft > 0.0)
+            .and_then(|m| {
+                bodenquelle(&stats, Some(m.airport_ident.as_str()))
+                    .map(|q| ausfahrten_fingerabdruck(q, m))
+            });
+        if aktuell == Some(auftrag.schluessel) {
+            if let Ok(mut merker) = stats.ausfahrten_merker.lock() {
+                *merker = Some((auftrag.schluessel, gerechnet));
+            }
         }
     }
 }
@@ -69033,6 +69048,42 @@ mod touchdown_metadata_stamp_tests {
         let stats = flight.stats.lock().expect("stats");
         let _ = bahn_felder(&stats, Some("A388"), None);
         assert_eq!(gerechnet(), 0, "die neue Bahn lag nicht im Merker");
+    }
+
+    /// ⚠ Ein veraltetes Ergebnis ueberschreibt den Merker NICHT (Codex,
+    /// PR #138).
+    ///
+    /// Ablauf: Der Faden nimmt den Auftrag fuer Bahn A. Waehrend er rechnet,
+    /// wechselt die Bahn auf B, und `bahn_felder` legt B in den Merker.
+    /// Legte der Faden danach A ab, muesste `bahn_felder` B erneut unter
+    /// der Sperre rechnen.
+    #[test]
+    fn ein_veraltetes_vorwaermen_ueberschreibt_den_merker_nicht() {
+        let flight = flight_fixture("EDDM");
+        let bahn = eddm_26r_mit_rollwegen(&flight);
+        let gerechnet = || AUSFAHRTEN_GERECHNET.with(|z| z.get());
+
+        let mut ausloeser = None;
+        let auftrag_a = vorwaerm_auftrag(&flight, &mut ausloeser).expect("Auftrag A");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            let mut neu = bahn;
+            neu.threshold_lat += (neu.end_lat - neu.threshold_lat) * 0.075;
+            neu.threshold_lon += (neu.end_lon - neu.threshold_lon) * 0.075;
+            stats.runway_match = Some(neu);
+            stats.bahn_revision += 1;
+            let _ = bahn_felder(&stats, Some("A388"), None);
+        }
+        vorwaerm_ausfuehren(&flight, auftrag_a);
+
+        AUSFAHRTEN_GERECHNET.with(|z| z.set(0));
+        let stats = flight.stats.lock().expect("stats");
+        let _ = bahn_felder(&stats, Some("A388"), None);
+        assert_eq!(
+            gerechnet(),
+            0,
+            "das veraltete Ergebnis fuer Bahn A hat Bahn B im Merker ersetzt"
+        );
     }
 
     /// Und die Zweitquelle darf KEINEN fremden Platz durchlassen.
