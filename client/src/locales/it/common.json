@@ -901,7 +901,8 @@
         "da_nicht_stabil": "Non più stabile a 200 ft (altitudine di decisione).",
         "stall": "Avvisi di stallo in avvicinamento: {{count}}"
       },
-      "spaetes_final": "Finale tardivo rilevato: sull’asse pista da {{hoehe}} ft, prima {{kurve}}° di virata. Inclinazione, rateo di discesa e sentiero di planata contano solo da lì."
+      "spaetes_final": "Finale tardivo rilevato: sull’asse pista da {{hoehe}} ft, prima {{kurve}}° di virata. Inclinazione, rateo di discesa e sentiero di planata contano solo da lì.",
+      "spaetes_final_versatz": "Finale tardivo rilevato: sull’asse pista solo da {{hoehe}} ft, prima spostati lateralmente. Inclinazione, rateo di discesa e sentiero di planata contano solo da lì."
     },
     "anflug_forensik": {
       "titel": "Sentiero di discesa e stabilità dell'avvicinamento",

@@ -901,7 +901,8 @@
         "da_nicht_stabil": "Bei 200 ft (Entscheidungshöhe) nicht mehr stabil.",
         "stall": "Stall-Warnungen im Anflug: {{count}}"
       },
-      "spaetes_final": "Spätes Final erkannt: auf der Bahnachse ab {{hoehe}} ft, davor {{kurve}}° Kurve. Querneigung, Sinkrate und Gleitpfad zählen erst ab dort."
+      "spaetes_final": "Spätes Final erkannt: auf der Bahnachse ab {{hoehe}} ft, davor {{kurve}}° Kurve. Querneigung, Sinkrate und Gleitpfad zählen erst ab dort.",
+      "spaetes_final_versatz": "Spätes Final erkannt: erst ab {{hoehe}} ft auf der Bahnachse, davor seitlich versetzt. Querneigung, Sinkrate und Gleitpfad zählen erst ab dort."
     },
     "anflug_forensik": {
       "titel": "Gleitpfad und Anflugruhe",

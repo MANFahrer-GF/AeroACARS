@@ -901,7 +901,8 @@
         "da_nicht_stabil": "No longer stable at 200 ft (decision altitude).",
         "stall": "Stall warnings during the approach: {{count}}"
       },
-      "spaetes_final": "Late final detected: on the runway centreline from {{hoehe}} ft, {{kurve}}° of turn before that. Bank, sink rate and glidepath count only from there."
+      "spaetes_final": "Late final detected: on the runway centreline from {{hoehe}} ft, {{kurve}}° of turn before that. Bank, sink rate and glidepath count only from there.",
+      "spaetes_final_versatz": "Late final detected: on the runway centreline only from {{hoehe}} ft, offset to the side before that. Bank, sink rate and glidepath count only from there."
     },
     "anflug_forensik": {
       "titel": "Glide path and approach steadiness",

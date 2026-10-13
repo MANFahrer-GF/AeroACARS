@@ -257,10 +257,16 @@ export function ApproachStabilityCard(props: Props) {
           data-testid="spaetes-final"
           style={{ fontSize: "0.84rem", lineHeight: 1.45, marginBottom: 12 }}
         >
-          {t("landing.approach_stability_card.spaetes_final", {
-            hoehe: Math.round(props.spaetesFinalAbFt),
-            kurve: Math.round(props.spaetesFinalKurveDeg ?? 0),
-          })}
+          {/* Versatzanflug (Tivat, Madeira): kaum Kurve — dann ohne Gradzahl,
+              „davor 0° Kurve" läse sich wie ein Fehler. */}
+          {(props.spaetesFinalKurveDeg ?? 0) >= 30
+            ? t("landing.approach_stability_card.spaetes_final", {
+                hoehe: Math.round(props.spaetesFinalAbFt),
+                kurve: Math.round(props.spaetesFinalKurveDeg ?? 0),
+              })
+            : t("landing.approach_stability_card.spaetes_final_versatz", {
+                hoehe: Math.round(props.spaetesFinalAbFt),
+              })}
         </div>
       )}
 
