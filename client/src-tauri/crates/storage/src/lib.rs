@@ -950,6 +950,22 @@ pub struct LandingRecord {
     pub approach_stable_at_da: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approach_stall_warning_count: Option<u32>,
+    /// Score-Version 23: spaetes Final / Kurvenanflug erkannt — Hoehe beim
+    /// Ausrichten auf die Bahn (ft ueber Platz), Kurve davor (Grad, unter
+    /// 2000 ft), groesste Querneigung unter 300 ft, und ob das Final
+    /// rechtzeitig stand (300 ft, Fluegel waagerecht). Fehlt = gerader Anflug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_ab_ft: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_kurve_deg: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_querneigung_unter_300_deg: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_rechtzeitig: Option<bool>,
+    /// „Zeiten gegen Flugplan" (13.10.2026): Plan (SimBrief) und Ist, nur
+    /// Anzeige. Fehlt bei Datensaetzen von vorher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flugzeiten: Option<landing_scoring::flugzeiten::FlugZeiten>,
 }
 
 // Lernpaket AP4/AP5: die Forensik-Structs liegen in `landing-scoring`,

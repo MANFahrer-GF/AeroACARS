@@ -918,6 +918,18 @@ pub struct TouchdownPayload {
     /// Stable-Approach bei DA (= 200 ft AGL/HAT). Strenger als 1000-ft-Gate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approach_stable_at_da: Option<bool>,
+    /// Score-Version 23: spaetes Final / Kurvenanflug erkannt — Hoehe beim
+    /// Ausrichten auf die Bahn (ft ueber Platz), Kurve davor (Grad, unter
+    /// 2000 ft), groesste Querneigung unter 300 ft, und ob das Final
+    /// rechtzeitig stand (300 ft, Fluegel waagerecht). Fehlt = gerader Anflug.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_ab_ft: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_kurve_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_querneigung_unter_300_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach_spaetes_final_rechtzeitig: Option<bool>,
     /// Anzahl Stall-Warning-Samples im Approach-Buffer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approach_stall_warning_count: Option<u32>,
@@ -1334,6 +1346,11 @@ pub struct PirepPayload {
     pub client_version: Option<&'static str>,
     pub block_time_min: Option<i32>,
     pub flight_time_min: Option<i32>,
+    /// „Zeiten gegen Flugplan" (13.10.2026): Plan (SimBrief) und Ist, nur
+    /// Anzeige. Der Recorder reicht das Feld in den Touchdown weiter
+    /// (`PIREP_FELDER_QUELLE`), dort liest es der Landungsbericht.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flugzeiten: Option<landing_scoring::flugzeiten::FlugZeiten>,
     pub distance_nm: Option<f32>,
     /// **Raw** Sim-Cumulative-Counter aus dem Sim-Telemetry-Feed.
     ///
@@ -2196,6 +2213,42 @@ async fn publish_registriert_wartend(
     }
 }
 
+/// Beim Abbau „offline" melden — aber nur, solange der Drive-Loop lebt.
+///
+/// # Warum (13.10.2026)
+///
+/// `shutdown()` stoppt den Drive-Loop sofort mit. Ist er weg, ist der
+/// Auftragskanal von rumqttc zu, und `publish_registriert_wartend` lief
+/// bis zur Frist gegen ihn — 20 s und die Warnung „Leitung blockiert",
+/// z. B. bei jedem App-Start mit Sitzungs-Wiederherstellung. Senden kann
+/// dann ohnehin niemand mehr; „offline" setzt der Last Will.
+///
+/// `drive_lebt` meldet `Err`, sobald der Drive-Loop seinen Sender fallen
+/// laesst (Ende oder Panik) — dann wird sofort und ohne Warnung
+/// aufgegeben.
+async fn offline_melden(
+    client: &AsyncClient,
+    buch: &Buch,
+    topic: &str,
+    drive_lebt: &mut watch::Receiver<()>,
+) -> bool {
+    tokio::select! {
+        gesendet = publish_registriert_wartend(
+            client,
+            buch,
+            topic,
+            QoS::AtLeastOnce,
+            true,
+            STATUS_OFFLINE.as_bytes().to_vec(),
+            None,
+        ) => gesendet,
+        _ = async { while drive_lebt.changed().await.is_ok() {} } => {
+            debug!("MQTT-Abbau: Leitung schon weg — offline setzt der Last Will");
+            false
+        }
+    }
+}
+
 /// Der Sendeweg fuer Bahn-Nachtraege — klonbar, damit ihn niemand unter
 /// gehaltenem `state.mqtt`-Schloss benutzen muss.
 ///
@@ -2639,8 +2692,11 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     let subscribe_chat_topic = chat_topic.clone();
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    // Lebenszeichen des Drive-Loops — siehe `offline_melden`.
+    let (drive_lebt_tx, mut drive_lebt) = watch::channel(());
 
     let _drive = tokio::spawn(async move {
+        let _drive_lebt = drive_lebt_tx;
         let mut subscribed = false;
         let mut chat_subscribed = false;
         loop {
@@ -3029,14 +3085,11 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                     }
                 }
                 Cmd::Shutdown => {
-                    let _ = publish_registriert_wartend(
+                    let _ = offline_melden(
                         &pub_client,
                         &buch_pub,
                         &cfg_for_pub.topic("status"),
-                        QoS::AtLeastOnce,
-                        true,
-                        STATUS_OFFLINE.as_bytes().to_vec(),
-                        None,
+                        &mut drive_lebt,
                     )
                     .await;
                     let _ = pub_client.disconnect().await;
@@ -3855,6 +3908,77 @@ mod zustellbuch_tests {
         b.ausgegangen(5);
         b.bestaetigt(5);
         assert_eq!(b.offen(), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod offline_melden_tests {
+    use super::*;
+
+    fn client_ohne_eventloop() -> AsyncClient {
+        let (client, eventloop) = AsyncClient::new(MqttOptions::new("t", "localhost", 1883), 10);
+        drop(eventloop);
+        client
+    }
+
+    /// ⚠ Ist der Drive-Loop schon weg, gibt der Abbau SOFORT auf.
+    ///
+    /// Vorher lief das „offline" 20 s gegen den geschlossenen Kanal und
+    /// warnte „Leitung blockiert" (App-Start mit Sitzungs-Wiederherstellung,
+    /// 13.10.2026). Mit dem alten Weg (`publish_registriert_wartend`
+    /// allein) laeuft dieser Test in die 2-s-Grenze.
+    #[tokio::test]
+    async fn ohne_drive_loop_gibt_der_abbau_sofort_auf() {
+        let buch: Buch = Arc::new(Mutex::new(Zustellbuch::default()));
+        let client = client_ohne_eventloop();
+        let (tx, mut drive_lebt) = watch::channel(());
+        drop(tx);
+        let gesendet = tokio::time::timeout(
+            Duration::from_secs(2),
+            offline_melden(&client, &buch, "t/status", &mut drive_lebt),
+        )
+        .await
+        .expect("der Abbau wartete auf den geschlossenen Kanal");
+        assert!(!gesendet);
+    }
+
+    /// Endet der Drive-Loop WAEHREND des Wartens, wird ebenfalls sofort
+    /// aufgegeben — das ist die Reihenfolge in `shutdown()`.
+    #[tokio::test]
+    async fn endet_der_drive_loop_waehrend_des_wartens_gibt_der_abbau_auf() {
+        let buch: Buch = Arc::new(Mutex::new(Zustellbuch::default()));
+        let client = client_ohne_eventloop();
+        let (tx, mut drive_lebt) = watch::channel(());
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            drop(tx);
+        });
+        let gesendet = tokio::time::timeout(
+            Duration::from_secs(2),
+            offline_melden(&client, &buch, "t/status", &mut drive_lebt),
+        )
+        .await
+        .expect("der Abbau bemerkte das Ende des Drive-Loops nicht");
+        assert!(!gesendet);
+    }
+
+    /// Gegenprobe: Lebt der Drive-Loop und ist der Kanal offen, geht
+    /// „offline" wie bisher in den Auftragskanal.
+    #[tokio::test]
+    async fn mit_drive_loop_wird_offline_gemeldet() {
+        let buch: Buch = Arc::new(Mutex::new(Zustellbuch::default()));
+        let (client, _eventloop) = AsyncClient::new(MqttOptions::new("t", "localhost", 1883), 10);
+        let (_tx, mut drive_lebt) = watch::channel(());
+        let gesendet = tokio::time::timeout(
+            Duration::from_secs(2),
+            offline_melden(&client, &buch, "t/status", &mut drive_lebt),
+        )
+        .await
+        .expect("offline_melden haengt");
+        assert!(
+            gesendet,
+            "offline wurde trotz offener Leitung nicht gemeldet"
+        );
     }
 }
 

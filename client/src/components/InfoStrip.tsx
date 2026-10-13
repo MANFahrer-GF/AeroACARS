@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
+import { cockpitSchaetzung, minutenText, uhrzeit } from "../lib/flugzeiten";
 
 interface Props {
   info: ActiveFlightInfo;
@@ -140,6 +141,38 @@ function TripCard({
         {info.go_around_count > 0 && (
           <Row label={t("active_flight.go_around")} value={String(info.go_around_count)} />
         )}
+        <PlanZeitenZeilen info={info} />
+      </div>
+    </div>
+  );
+}
+
+/** „Zeiten gegen Flugplan" live (13.10.2026): geplantes und erwartetes
+ *  On-Block, keine Wertung. Nur mit SimBrief-Plan. */
+function PlanZeitenZeilen({ info }: { info: ActiveFlightInfo }) {
+  const { t } = useTranslation();
+  const z = info.flugzeiten;
+  const s = z ? cockpitSchaetzung(z, info.landung_erwartet) : null;
+  if (!z || !s) return null;
+  const a = s.aufgeholt_min;
+  const seitAbheben =
+    a == null
+      ? null
+      : a > 0
+        ? t("flugzeiten.cockpit.aufgeholt", { min: a })
+        : a < 0
+          ? t("flugzeiten.cockpit.verloren", { min: -a })
+          : t("flugzeiten.cockpit.gehalten");
+  return (
+    <div data-testid="planzeiten-cockpit">
+      <Row label={t("flugzeiten.cockpit.on_block_plan")} value={uhrzeit(z.plan_on_block)} />
+      <Row label={t("flugzeiten.cockpit.on_block_erwartet")} value={uhrzeit(s.erwartet)} />
+      <Row label={t("flugzeiten.cockpit.gegen_plan")} value={minutenText(s.gegen_plan_min)} sum />
+      <div className="row">
+        <span className="row__label">
+          {t(`flugzeiten.cockpit.quelle.${s.quelle}`)}
+          {seitAbheben && <> · {seitAbheben}</>}
+        </span>
       </div>
     </div>
   );

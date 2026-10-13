@@ -7,6 +7,7 @@
 // Felder, keine Rechnung) — so zeigen Client und Webapp dieselben Werte aus
 // demselben Code (QS 05.10.2026).
 
+import type { FlugZeiten } from "./flugzeiten";
 import type { SpritAuswertung } from "./sprit";
 import type { AnflugGleitpfad, AnflugRuhe } from "../components/AnflugForensikInfo";
 import type { GatePunkt } from "./stableGate";
@@ -416,6 +417,16 @@ export interface LandingRecord {
   approach_runway_changed_late?: boolean | null;
   approach_stable_at_da?: boolean | null;
   approach_stall_warning_count?: number | null;
+  /** Score-Version 23: spätes Final / Kurvenanflug erkannt — Höhe beim
+   *  Ausrichten auf die Bahn (ft über Platz), Kurve davor (Grad), größte
+   *  Querneigung unter 300 ft, Final rechtzeitig? Fehlt = gerader Anflug. */
+  approach_spaetes_final_ab_ft?: number | null;
+  approach_spaetes_final_kurve_deg?: number | null;
+  approach_spaetes_final_querneigung_unter_300_deg?: number | null;
+  approach_spaetes_final_rechtzeitig?: boolean | null;
+  /** „Zeiten gegen Flugplan" (13.10.2026): Plan (SimBrief) und Ist in
+   *  Unix-Sekunden. Fehlt bei Datensätzen von vorher. */
+  flugzeiten?: FlugZeiten | null;
 }
 
 /// v0.7.1: Stability-Gate-Window-Metadaten (Spec §5.4).

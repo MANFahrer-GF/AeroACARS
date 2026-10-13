@@ -654,6 +654,12 @@ pub struct SimBriefOfp {
     /// Geplante Blockzeit an (Unix-Epoch-Sekunden, UTC) aus `<times><sched_in>`.
     #[serde(default)]
     pub sched_in_epoch: Option<i64>,
+    /// Geplantes Abheben / Aufsetzen (Unix-Epoch-Sekunden, UTC) aus
+    /// `<times><sched_off>` / `<sched_on>` — fuer „Zeiten gegen Flugplan".
+    #[serde(default)]
+    pub sched_off_epoch: Option<i64>,
+    #[serde(default)]
+    pub sched_on_epoch: Option<i64>,
     /// Briefing-2a Fuel-Transparenz (Pilot-Feedback 2026-08-02: Trip+Reserve
     /// allein ergaben keine plausible Summe zu Block — verifiziert per Live-
     /// XML-Dump: `<fuel>` hat taxi/contingency/alternate_burn/reserve/extra,
@@ -2753,6 +2759,12 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
     let sched_in_epoch = extract_tag(xml, "times")
         .and_then(|inner| extract_tag(inner, "sched_in"))
         .and_then(|s| s.trim().parse::<i64>().ok());
+    let sched_off_epoch = extract_tag(xml, "times")
+        .and_then(|inner| extract_tag(inner, "sched_off"))
+        .and_then(|s| s.trim().parse::<i64>().ok());
+    let sched_on_epoch = extract_tag(xml, "times")
+        .and_then(|inner| extract_tag(inner, "sched_on"))
+        .and_then(|s| s.trim().parse::<i64>().ok());
 
     Some(SimBriefOfp {
         planned_block_fuel_kg: plan_ramp,
@@ -2784,6 +2796,8 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         max_passengers,
         sched_out_epoch,
         sched_in_epoch,
+        sched_off_epoch,
+        sched_on_epoch,
         planned_taxi_kg: taxi_fuel,
         planned_contingency_kg: contingency_fuel,
         planned_alternate_burn_kg: alternate_burn_fuel,
@@ -3154,6 +3168,30 @@ mod tests {
         "#;
         let ofp = parse_simbrief_ofp(xml).expect("parses");
         assert_eq!(ofp.alternate.as_deref(), Some("LFBO"));
+    }
+
+    /// „Zeiten gegen Flugplan" (13.10.2026): alle vier Planzeiten aus
+    /// `<times>`, jede fuer sich — `sched_off` darf nicht in `sched_out`
+    /// hineingelesen werden.
+    #[test]
+    fn simbrief_liest_alle_vier_planzeiten() {
+        let xml = r#"
+            <ofp>
+                <fuel><plan_ramp>9733</plan_ramp><est_burn>5800</est_burn><reserve>1300</reserve></fuel>
+                <weights><est_zfw>71242</est_zfw><est_tow>80700</est_tow><est_ldw>75380</est_ldw></weights>
+                <times>
+                    <sched_out>1791693000</sched_out>
+                    <sched_off>1791693900</sched_off>
+                    <sched_on>1791707940</sched_on>
+                    <sched_in>1791708480</sched_in>
+                </times>
+            </ofp>
+        "#;
+        let ofp = parse_simbrief_ofp(xml).expect("parses");
+        assert_eq!(ofp.sched_out_epoch, Some(1791693000));
+        assert_eq!(ofp.sched_off_epoch, Some(1791693900));
+        assert_eq!(ofp.sched_on_epoch, Some(1791707940));
+        assert_eq!(ofp.sched_in_epoch, Some(1791708480));
     }
 
     /// Reproduces the live bug from a GSG pilot 2026-05-03: the

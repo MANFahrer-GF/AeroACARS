@@ -20,6 +20,8 @@ pub mod abfangen;
 pub mod anflug_forensik;
 pub mod anflug_urteil;
 pub mod belag;
+/// „Zeiten gegen Flugplan" — Plan (SimBrief) und Ist, nur Anzeige.
+pub mod flugzeiten;
 pub mod gate;
 /// v1.7.35: Sprit-Auswertung ohne Note — siehe `sprit.rs`.
 pub mod sprit;

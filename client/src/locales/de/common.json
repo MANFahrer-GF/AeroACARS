@@ -900,7 +900,9 @@
         "da_stabil": "Bei 200 ft (Entscheidungshöhe) stabil.",
         "da_nicht_stabil": "Bei 200 ft (Entscheidungshöhe) nicht mehr stabil.",
         "stall": "Stall-Warnungen im Anflug: {{count}}"
-      }
+      },
+      "spaetes_final": "Spätes Final erkannt: auf der Bahnachse ab {{hoehe}} ft, davor {{kurve}}° Kurve. Querneigung, Sinkrate und Gleitpfad zählen erst ab dort.",
+      "spaetes_final_versatz": "Spätes Final erkannt: erst ab {{hoehe}} ft auf der Bahnachse, davor seitlich versetzt. Querneigung, Sinkrate und Gleitpfad zählen erst ab dort."
     },
     "anflug_forensik": {
       "titel": "Gleitpfad und Anflugruhe",
@@ -1116,7 +1118,8 @@
         "querneigung": "Querneigung σ",
         "ruck": "Sinkraten-Ruck",
         "sinken": "Sinkrate",
-        "konfiguration": "Landekonfiguration"
+        "konfiguration": "Landekonfiguration",
+        "final": "Final"
       },
       "einheit": {
         "gleitpfad": "Dots",
@@ -1128,7 +1131,9 @@
         "sinken_ok": "ok",
         "sinken_nein": "zu stark",
         "konfiguration_ok": "komplett",
-        "konfiguration_nein": "nicht komplett"
+        "konfiguration_nein": "nicht komplett",
+        "final_ok": "rechtzeitig",
+        "final_nein": "zu spät"
       },
       "grund": {
         "gleitpfad": "Gleitpfad: im Schnitt {{wert}} Dots daneben (gut unter {{grenze}})",
@@ -1137,7 +1142,8 @@
         "ruck": "Sinkrate sprunghaft: {{wert}} fpm Ruck (gut unter {{grenze}})",
         "sinken": "Sinkrate über 10 Sekunden am Stück zu hoch",
         "konfiguration": "Fahrwerk oder Klappen beim Eintritt ins Gate nicht in Landestellung",
-        "spaet_stabil": "Ab 500 ft stabil: Fahrt und Konfiguration zählen als spät stabilisiert nur „mittel“ statt „schlecht“"
+        "spaet_stabil": "Ab 500 ft stabil: Fahrt und Konfiguration zählen als spät stabilisiert nur „mittel“ statt „schlecht“",
+        "final": "Spätes Final nicht rechtzeitig: spätestens 300 ft über dem Platz auf der Bahnachse und darunter Flügel waagerecht (höchstens 10°)"
       }
     },
     "groundspeed": "GS bei TD",
@@ -1332,7 +1338,8 @@
         "sinken": "Ob die Sinkrate im Stable Gate mindestens 10 s am Stück über der Grenze lag (bei 3° Gleitwinkel −1000 fpm, bei steileren Anflügen entsprechend mehr). Prüfpunkt des Stable Gate.",
         "konfiguration": "Ob das Flugzeug beim Eintritt ins Stable Gate in Landekonfiguration war (erster Messpunkt bis 1000 ft — beginnt die Aufzeichnung tiefer, dort): Fahrwerk unten, Landeklappen gesetzt. Prüfpunkt des Stable Gate.",
         "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, 15 Punkte Abzug. Sonst PARTIAL, 5 Punkte Abzug. Ohne Messung 3 Punkte Abzug. Spät stabilisiert: Sind Fahrt oder Konfiguration bei 1000 ft schlecht, ab 500 ft aber Landeklappen gesetzt und die Fahrt ruhig, zählen beide nur als „mittel“.",
-        "urteil_alt": "Anflug-Urteil für Flüge vor Score-Version 19, aus den sieben Kacheln: alle gut = STABLE, zwei schlecht oder drei nicht gut = UNSTABLE, sonst PARTIAL. Ab Score-Version 18 begrenzt PARTIAL die Gesamtnote auf 80 und UNSTABLE auf 45, in Version 17 nur die Teilnote Anflug-Stabilität, davor begrenzte es nichts."
+        "urteil_alt": "Anflug-Urteil für Flüge vor Score-Version 19, aus den sieben Kacheln: alle gut = STABLE, zwei schlecht oder drei nicht gut = UNSTABLE, sonst PARTIAL. Ab Score-Version 18 begrenzt PARTIAL die Gesamtnote auf 80 und UNSTABLE auf 45, in Version 17 nur die Teilnote Anflug-Stabilität, davor begrenzte es nichts.",
+        "final": "Nur bei spätem Final (Circling, Platzrunde, Versatzanflug): Wer erst unter 1000 ft auf die Bahnachse kommt, muss spätestens 300 ft über dem Platz ausgerichtet sein und darunter höchstens 10° Querneigung fliegen (Flight Safety Foundation, ALAR 7.1). Prüfpunkt des Stable Gate."
       },
       "tile": {
         "vs_jerk": "Wie ruckartig sich die Sinkrate im Anflug änderte, gemittelt von Messpunkt zu Messpunkt. Kleiner ist ruhiger.",
@@ -4083,5 +4090,51 @@
     "profil_eigen_hilfe": "AeroACARS hat ein eigenes Profil für dieses Flugzeug ({{name}}) – noch nicht per Messung geprüft. Eine Messung zeigt, ob alles stimmt.",
     "profil_standard": "nur Standard",
     "profil_standard_hilfe": "Kein eigenes Profil – AeroACARS liest nur die Standardwerte des Simulators. Viele Add-ons bedienen die nicht; eine Messung hilft beim Profil."
+  },
+  "flugzeiten": {
+    "titel": "Zeiten gegen Flugplan",
+    "plan": "Plan",
+    "ist": "Ist",
+    "abweichung": "Abweichung",
+    "abweichung_kurz": "Abw.",
+    "legende_plan": "Plan (SimBrief)",
+    "legende_rollen": "Rollen",
+    "schritt": {
+      "off_block": "Off-Block",
+      "abheben": "Abheben",
+      "aufsetzen": "Aufsetzen",
+      "on_block": "On-Block"
+    },
+    "blockzeit": "Blockzeit",
+    "flugzeit": "Flugzeit",
+    "block_kurz": "Block",
+    "kopf": {
+      "nach_plan": "{{schritt}} {{min}} min nach Plan",
+      "vor_plan": "{{schritt}} {{min}} min vor Plan",
+      "genau": "{{schritt}} genau nach Plan",
+      "block_laenger": "Blockzeit {{min}} min länger als geplant",
+      "block_kuerzer": "Blockzeit {{min}} min kürzer als geplant",
+      "block_gleich": "Blockzeit wie geplant"
+    },
+    "a15_puenktlich": "pünktlich nach Airline-Maßstab (bis {{min}} min)",
+    "a15_verspaetet": "verspätet nach Airline-Maßstab (über {{min}} min)",
+    "fuss": "Zeiten in UTC. „+“ heißt später bzw. länger als geplant. Plan aus dem SimBrief-OFP — reine Anzeige, ohne Einfluss auf die Bewertung.",
+    "kein_plan": "Kein SimBrief-OFP zu diesem Flug geladen. Die Zeiten werden deshalb nicht verglichen.",
+    "cockpit": {
+      "on_block_plan": "On-Block Plan",
+      "on_block_erwartet": "On-Block erwartet",
+      "gegen_plan": "Gegen Plan",
+      "quelle": {
+        "on_block": "tatsächlich",
+        "aufsetzen": "Landung + Rollzeit laut Plan",
+        "route": "Planzeit ab hier + Rollzeit",
+        "abheben": "Abheben + Flugzeit laut Plan",
+        "off_block": "Off-Block + Blockzeit laut Plan",
+        "plan": "noch nicht abgerollt"
+      },
+      "aufgeholt": "seit Abheben {{min}} min aufgeholt",
+      "verloren": "seit Abheben {{min}} min verloren",
+      "gehalten": "seit Abheben gehalten"
+    }
   }
 }
