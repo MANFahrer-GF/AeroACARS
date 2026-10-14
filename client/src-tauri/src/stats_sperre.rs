@@ -320,8 +320,15 @@ pub(crate) mod test_messung {
                 .parse()
                 .unwrap()
         };
-        assert!(ms("schnell") < 10.0, "{teile}");
+        // Ohne Obergrenzen fuer die kurzen Abschnitte: Eine Unterbrechung
+        // durch den Scheduler darf den Test nicht rot machen (Codex 2.0.18,
+        // P3). Geprueft wird die Zuordnung — die 30 ms gehoeren zu
+        // `langsam`, und die Abschnitte stehen in Ablaufreihenfolge.
         assert!(ms("langsam") >= 29.0, "{teile}");
-        assert!(ms("rest") < 10.0, "{teile}");
+        let reihenfolge: Vec<&str> = teile
+            .split(' ')
+            .map(|t| t.split(':').next().unwrap())
+            .collect();
+        assert_eq!(reihenfolge, ["schnell", "langsam", "rest"], "{teile}");
     }
 }
