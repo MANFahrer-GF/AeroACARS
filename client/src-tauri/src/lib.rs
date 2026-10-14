@@ -29792,32 +29792,25 @@ where
 /// Persist a landing record from a flight that just filed its PIREP.
 /// Best-effort — failure is logged and ignored so the file path
 /// doesn't fail because the history disk write blew up.
+///
+/// ⚠ Nimmt `flight.stats` SELBST, und nur zum Bauen des Datensatzes
+/// (v2.0.18). Bis 2.0.17 hielten die Aufrufer die Sperre über alles:
+/// Simulator abfragen, Flughafen-Liste kopieren, Datensatz bauen, die ganze
+/// Landungs-Historie (bis 500 Landungen) lesen und neu schreiben, loggen.
+/// Der Wächter meldete das bei jedem Flug mit 140 bis 157 ms (DLH 440/441,
+/// 14.10.2026). Jetzt: Simulator und Flughafen-Liste vorher, Datensatz unter
+/// der Sperre, Schreiben und Log danach.
+///
+/// ⚠ Aufrufer dürfen `flight.stats` dabei NICHT halten — die Sperre ist nicht
+/// wiedereintrittsfähig, der Aufruf bliebe für immer stehen.
 fn record_landing_for_filed_flight(
     app: &AppHandle,
     flight: &ActiveFlight,
-    stats: &mut FlightStats,
     // v0.15.x: tatsächlicher Landeflughafen (Divert-aware) — siehe
     // build_landing_record. Für Nicht-Diverts == flight.arr_airport.
     effective_arr_icao: &str,
 ) {
-    // v0.16.24: finalize-with-best — re-correlate the runway against the
-    // (now-hopefully-warm) navdata cache and write the upgraded fields back
-    // BEFORE building the record, so build_landing_record + all downstream
-    // consumers (assess_touchdown, the TouchdownPayload, the score inputs)
-    // see one consistent set. NON-RACY: this is a synchronous read of the
-    // current cache contents — no async re-correlation races the filing.
-    // ON-PLAN INVARIANT: when the touchdown match was already Navigraph
-    // (non-divert), `finalize_runway_correlation` returns the stamped values
-    // verbatim, so this write-back is a byte-identical no-op.
-    //
-    // v0.16.24 (QS-6): the PIREP score/body callers (`flight_end`,
-    // `flight_end_manual`) now run `apply_finalized_runway_correlation` BEFORE
-    // building the body, so by the time we get here the upgrade has usually
-    // already happened — this second call is then the idempotent no-op
-    // described above. Kept so `record_landing_for_filed_flight` stays correct
-    // standalone (the LandingRecord is finalized regardless of caller).
-    apply_finalized_runway_correlation(flight, stats);
-
+    // ── Vor der Sperre: alles, was nicht aus den Flugdaten kommt ─────────
     let snapshot = current_snapshot(app);
     let sim_kind_label = read_sim_config(app).kind;
     let sim_label = match sim_kind_label {
@@ -29834,18 +29827,6 @@ fn record_landing_for_filed_flight(
     // phpVMS-Bid persistiert wurde und über die gesamte Flight-Dauer
     // stabil bleibt. Webapp benutzt denselben Wert → konsistent.
     let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
-    // Sim → Buchung → Flugzeugtitel, an EINER Stelle (siehe
-    // `sim_core::muster_aufloesen`). Diese Kette stand hier und an einer
-    // zweiten Stelle wortgleich, waehrend drei weitere Stellen kuerzere
-    // Ketten benutzten — daran ist EWG248 gescheitert.
-    let aufgeloest = stats.aufgeloestes_muster.clone().or_else(|| {
-        sim_core::muster_aufloesen(
-            snapshot.as_ref().and_then(|s| s.aircraft_icao.as_deref()),
-            &flight.aircraft_icao,
-            aircraft_title,
-        )
-    });
-    let aircraft_icao = aufgeloest.as_deref();
 
     // v0.7.18 (B-012): airport_lookup-Closure aus dem AppState.airports-Cache.
     let airport_lookup_data: std::collections::HashMap<String, (f64, f64)> = {
@@ -29861,15 +29842,54 @@ fn record_landing_for_filed_flight(
     };
     let airport_lookup = |icao: &str| airport_lookup_data.get(&icao.to_uppercase()).copied();
 
-    let Some(record) = build_landing_record(
-        flight,
-        stats,
-        sim_label,
-        aircraft_icao,
-        aircraft_title,
-        effective_arr_icao,
-        airport_lookup,
-    ) else {
+    // ── Unter der Sperre: nur Flugdaten lesen und den Datensatz bauen ────
+    let record = {
+        let mut gehalten = flight.stats.lock().expect("flight stats");
+        let stats: &mut FlightStats = &mut gehalten;
+        // v0.16.24: finalize-with-best — re-correlate the runway against the
+        // (now-hopefully-warm) navdata cache and write the upgraded fields back
+        // BEFORE building the record, so build_landing_record + all downstream
+        // consumers (assess_touchdown, the TouchdownPayload, the score inputs)
+        // see one consistent set. NON-RACY: this is a synchronous read of the
+        // current cache contents — no async re-correlation races the filing.
+        // ON-PLAN INVARIANT: when the touchdown match was already Navigraph
+        // (non-divert), `finalize_runway_correlation` returns the stamped values
+        // verbatim, so this write-back is a byte-identical no-op.
+        //
+        // v0.16.24 (QS-6): the PIREP score/body callers (`flight_end`,
+        // `flight_end_manual`) now run `apply_finalized_runway_correlation` BEFORE
+        // building the body, so by the time we get here the upgrade has usually
+        // already happened — this second call is then the idempotent no-op
+        // described above. Kept so `record_landing_for_filed_flight` stays correct
+        // standalone (the LandingRecord is finalized regardless of caller).
+        apply_finalized_runway_correlation(flight, stats);
+
+        // Sim → Buchung → Flugzeugtitel, an EINER Stelle (siehe
+        // `sim_core::muster_aufloesen`). Diese Kette stand hier und an einer
+        // zweiten Stelle wortgleich, waehrend drei weitere Stellen kuerzere
+        // Ketten benutzten — daran ist EWG248 gescheitert.
+        let aufgeloest = stats.aufgeloestes_muster.clone().or_else(|| {
+            sim_core::muster_aufloesen(
+                snapshot.as_ref().and_then(|s| s.aircraft_icao.as_deref()),
+                &flight.aircraft_icao,
+                aircraft_title,
+            )
+        });
+        let aircraft_icao = aufgeloest.as_deref();
+
+        build_landing_record(
+            flight,
+            stats,
+            sim_label,
+            aircraft_icao,
+            aircraft_title,
+            effective_arr_icao,
+            airport_lookup,
+        )
+    };
+
+    // ── Nach der Sperre: Historie schreiben und loggen ───────────────────
+    let Some(record) = record else {
         tracing::debug!(
             pirep_id = %flight.pirep_id,
             "no touchdown captured — skipping landing-history record"
@@ -32627,10 +32647,9 @@ async fn flight_end(
             // tab something to render even after the PIREP is filed
             // and the in-memory FlightStats goes out of scope.
             {
-                let mut stats = flight.stats.lock().expect("flight stats");
                 // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
                 // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
-                record_landing_for_filed_flight(&app, &flight, &mut stats, &effective_arr_icao);
+                record_landing_for_filed_flight(&app, &flight, &effective_arr_icao);
             }
             clear_persisted_flight(&app, Some(&flight.pirep_id));
             log_activity(
@@ -32871,10 +32890,9 @@ async fn flight_end(
                 }
                 // Erfolgreich gequeued → Landing-Snapshot, clear, Activity-Log
                 {
-                    let mut stats = flight.stats.lock().expect("flight stats");
                     // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
                     // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
-                    record_landing_for_filed_flight(&app, &flight, &mut stats, &effective_arr_icao);
+                    record_landing_for_filed_flight(&app, &flight, &effective_arr_icao);
                 }
                 // Lernpaket AP4/AP5 (Nachpruefung, Befund C): auch im
                 // Warteschlangen-Zweig den Forensik-Nachtrag vor `FlightEnded`.
@@ -33743,12 +33761,11 @@ async fn flight_end_manual(
         Ok(()) => {
             // Same landing-history snapshot as the regular file path.
             {
-                let mut stats = flight.stats.lock().expect("flight stats");
                 // v0.15.x: manueller Divert → effektiver Landeflughafen für Trust.
+                // Die Sperre nimmt die Funktion selbst (v2.0.18).
                 record_landing_for_filed_flight(
                     &app,
                     &flight,
-                    &mut stats,
                     divert_to.as_deref().unwrap_or(&flight.arr_airport),
                 );
             }
@@ -37637,6 +37654,10 @@ fn aufsetz_messen(
     // `classify_segment` — hier bleiben nur die Werte, die diese
     // Schleife selbst auswertet.
     let mut letzter_takt: Option<std::time::Instant> = None;
+    // Höchstens eine Meldung „Takt zu lang“ je Sekunde (v2.0.18): Bei 60 statt
+    // 200 ms Schwelle wäre die Obergrenze sonst in einem holprigen Anflug
+    // verbraucht, und im Ausrollen bliebe es stumm.
+    let mut letzte_takt_meldung: Option<std::time::Instant> = None;
 
     loop {
         // 20 ms = 50 Hz target — matches GEES (`SAMPLE_RATE = 20`),
@@ -37774,12 +37795,19 @@ fn aufsetz_messen(
         } else {
             snap.altitude_agl_ft < 1000.0
         };
-        if im_wichtigen_abschnitt && (takt_abstand_ms > 200.0 || eingang_ms > 100.0) {
+        // v2.0.18: ab 60 ms statt 200 ms (Takt) und 50 statt 100 ms
+        // (Simulator). Die Lücke von AIB 431 war 129 ms lang und wäre unter
+        // der alten Schwelle stumm geblieben. 60 ms = drei Soll-Takte; ein
+        // grober Windows-Zeitgeber (bis ~16 ms) bleibt darunter.
+        if im_wichtigen_abschnitt && (takt_abstand_ms > 60.0 || eingang_ms > 50.0) {
             let melden = {
                 let mut d = diagnose.lock().unwrap_or_else(|e| e.into_inner());
-                let melden = d.lange_takte_gemeldet < 40;
+                let melden = d.lange_takte_gemeldet < 200
+                    && letzte_takt_meldung
+                        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
                 if melden {
                     d.lange_takte_gemeldet += 1;
+                    letzte_takt_meldung = Some(std::time::Instant::now());
                 }
                 melden
             };
@@ -48290,7 +48318,12 @@ fn step_flight_at(
     // genommen — dieselbe Richtung wie in `correlate_touchdown_runway`, das
     // ebenfalls aus diesem Aufruf heraus läuft. `flight_info` nimmt die beiden
     // dagegen nacheinander und nie gleichzeitig; keine Inversion.
+    // v2.0.18: Zwischenstände für den Sperren-Wächter. Hält dieser Takt die
+    // Flugdaten länger als 20 ms, nennt die Meldung, welcher Abschnitt die
+    // Zeit gekostet hat (`stats_sperre::Gehalten::zwischenstand`).
+    stats.zwischenstand("vorlauf");
     update_predicted_runway(flight, &mut stats, snap);
+    stats.zwischenstand("bahn_vorhersage");
 
     // Match on a local Copy so the rest of the body is free to mutate `stats`.
     match prev_phase {
@@ -49213,6 +49246,7 @@ fn step_flight_at(
                 // ist OK, weil der Streamer-Tick die "endgueltige" Quelle
                 // gegenueber dem Edge-Wert ist (Smoothed-Fallback).
                 finalize_landing_rate(&mut stats, touchdown_vs, None, Some(vs_source));
+                stats.zwischenstand("aufsetzen_sinkrate");
 
                 // G capture: prefer sampler-side (v0.4.4) wenn verfügbar.
                 // Sonst peak G from full buffer (5 s of pre-touchdown
@@ -49241,6 +49275,7 @@ fn step_flight_at(
                 // with the FSM-tick values, exactly as before.
                 stamp_touchdown_metadata(&mut stats, snap, actual_td_at, td_buf_sample.as_ref());
                 correlate_touchdown_runway(&mut stats, snap, flight, td_buf_sample.as_ref());
+                stats.zwischenstand("aufsetzen_bahn");
 
                 // Reset bounce state for the new analyzer window.
                 stats.bounce_armed_above_threshold = false;
@@ -49496,6 +49531,7 @@ fn step_flight_at(
                 // code (after the brake-energy proxy above, which must keep
                 // seeing the PREVIOUS landing_weight_kg on touch-and-go).
                 stamp_landing_weight(&mut stats, snap);
+                stats.zwischenstand("aufsetzen_anflug_note");
             }
         }
         FlightPhase::Landing => {
@@ -50003,6 +50039,7 @@ fn step_flight_at(
     // of prior phase. Block_on_at gets back-filled here so the PIREP
     // file logic (which reads it for flight-time / chocks-on) still
     // works.
+    stats.zwischenstand("phasen");
     let already_done = matches!(
         next_phase,
         FlightPhase::Arrived | FlightPhase::PirepSubmitted
@@ -50304,6 +50341,7 @@ fn step_flight_at(
         snap.altitude_agl_ft as f32,
         snap.on_ground,
     );
+    stats.zwischenstand("note");
 
     if next_phase != prev_phase {
         // v0.7.5 Phase-Safety Hotfix (Spec §13.9): siehe should_reset_holding_pending.
@@ -70051,7 +70089,19 @@ mod touchdown_metadata_stamp_tests {
             };
             stats_sperre::test_messung::beginnen();
             let neue_phase = step_flight_at(&flight, &snap, Utc::now());
+            let abschnitte = stats_sperre::test_messung::abschnitte();
             let gemessen = stats_sperre::test_messung::beenden();
+            // v2.0.18: Der Aufsetz-Takt meldet seine Abschnitte — sonst
+            // nennt der Waechter bei einer langen Haltezeit nur
+            // `step_flight_at`, eine Funktion ueber 2500 Zeilen.
+            assert!(
+                abschnitte.iter().any(|a| {
+                    ["aufsetzen_sinkrate", "aufsetzen_bahn", "note"]
+                        .iter()
+                        .all(|name| a.contains(name))
+                }),
+                "der Aufsetz-Takt meldet seine Zwischenstaende nicht: {abschnitte:?}"
+            );
             assert_eq!(
                 neue_phase,
                 Some(FlightPhase::Landing),
@@ -85667,5 +85717,43 @@ mod ofp_planzeiten_tests {
         mit_plan.ofp_planzeiten.plan_off_block = Some(1);
         apply_route_only_to_stats(&mut mit_plan, &ofp);
         assert_eq!(mit_plan.ofp_planzeiten.plan_off_block, Some(1));
+    }
+}
+
+#[cfg(test)]
+mod landung_speichern_sperre_tests {
+    /// ⚠ Die Landungs-Historie wird NACH dem Freigeben der Flugdaten
+    /// geschrieben (v2.0.18).
+    ///
+    /// Bis 2.0.17 lief das Lesen und Neuschreiben der ganzen Historie (bis
+    /// 500 Landungen) unter `flight.stats` — der Wächter meldete es bei
+    /// jedem Flug mit 140 bis 157 ms (DLH 440/441, 14.10.2026). Ein
+    /// Ablauf-Test braucht eine laufende App; deshalb prüft dieser Wächter
+    /// die Reihenfolge im Quelltext: Sperre nehmen, Block schliessen, erst
+    /// dann schreiben. Der Feldbeleg ist die verschwundene Wächter-Meldung.
+    #[test]
+    fn die_landungs_historie_wird_ohne_flugdaten_sperre_geschrieben() {
+        let src = include_str!("lib.rs");
+        let kopf = "\nfn record_landing_for_filed_flight(";
+        let start = src.find(kopf).expect("Funktion nicht gefunden — Test anpassen, nicht löschen");
+        let rumpf = &src[start..];
+        let rumpf = &rumpf[..rumpf[1..].find("\nfn ").map_or(rumpf.len(), |i| i + 1)];
+        let sperre = rumpf
+            .find("flight.stats.lock()")
+            .expect("die Funktion nimmt die Flugdaten-Sperre nicht mehr selbst");
+        let schreiben = rumpf.find("store.upsert(").expect("store.upsert fehlt");
+        let simulator = rumpf.find("current_snapshot(app)").expect("current_snapshot fehlt");
+        assert!(
+            simulator < sperre,
+            "der Simulator wird unter der Flugdaten-Sperre abgefragt"
+        );
+        assert!(
+            rumpf[sperre..schreiben].contains("\n    };\n"),
+            "die Landungs-Historie wird geschrieben, solange die Flugdaten-Sperre gehalten wird"
+        );
+        assert!(
+            !rumpf[..sperre].contains("store.upsert("),
+            "Vorrichtung: Schreiben vor dem Bauen ergibt keinen Sinn"
+        );
     }
 }

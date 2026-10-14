@@ -38,6 +38,9 @@ const MELDEABSTAND: Duration = Duration::from_secs(1);
 /// tausende Zeilen je Flugstunde.
 const MELDUNGEN_HOECHSTENS: u32 = 200;
 
+/// So viele Zwischenstände merkt sich ein gehaltener Zugriff höchstens.
+const ZWISCHENSTAENDE: usize = 16;
+
 /// `Mutex` mit Messung. Gleiche Schnittstelle wie `Mutex::lock`, damit jede
 /// bestehende Aufrufstelle (`expect`, `unwrap_or_else(into_inner)`, …)
 /// unverändert bleibt.
@@ -67,6 +70,7 @@ impl<T> GemesseneSperre<T> {
             stelle,
             ab,
             gewartet,
+            zwischenstaende: [None; ZWISCHENSTAENDE],
         };
         match ergebnis {
             Ok(g) => Ok(verpacken(g)),
@@ -86,6 +90,44 @@ pub(crate) struct Gehalten<'a, T> {
     stelle: &'static Location<'static>,
     ab: Instant,
     gewartet: Duration,
+    zwischenstaende: [Option<(&'static str, Instant)>; ZWISCHENSTAENDE],
+}
+
+impl<T> Gehalten<'_, T> {
+    /// Ein Abschnitt innerhalb des gehaltenen Zugriffs ist fertig.
+    ///
+    /// v2.0.18: Der Wächter nannte bisher nur die Stelle, an der die Sperre
+    /// genommen wurde — bei `step_flight_at` ist das eine Funktion über
+    /// 2500 Zeilen. Mit Zwischenständen sagt eine lange Haltezeit auch,
+    /// welcher Teil sie gekostet hat (`teile=sprit:0.4 aufsetzen_bahn:118.2
+    /// …`). Kostet je Aufruf eine Uhrzeit; ausgewertet wird nur, wenn
+    /// gemeldet wird. Mehr als `ZWISCHENSTAENDE` werden verworfen.
+    pub(crate) fn zwischenstand(&mut self, name: &'static str) {
+        if let Some(frei) = self.zwischenstaende.iter_mut().find(|z| z.is_none()) {
+            *frei = Some((name, Instant::now()));
+        }
+    }
+
+    /// `name:ms` je Abschnitt (Zeit seit dem vorigen), dazu `rest`.
+    fn teile(&self, ende: Instant) -> String {
+        let mut davor = self.ab;
+        let mut teile = Vec::new();
+        for (name, t) in self.zwischenstaende.iter().flatten() {
+            teile.push(format!(
+                "{name}:{:.1}",
+                t.duration_since(davor).as_secs_f64() * 1000.0
+            ));
+            davor = *t;
+        }
+        if teile.is_empty() {
+            return String::new();
+        }
+        teile.push(format!(
+            "rest:{:.1}",
+            ende.duration_since(davor).as_secs_f64() * 1000.0
+        ));
+        teile.join(" ")
+    }
 }
 
 impl<T> Deref for Gehalten<'_, T> {
@@ -103,20 +145,32 @@ impl<T> DerefMut for Gehalten<'_, T> {
 
 impl<T> Drop for Gehalten<'_, T> {
     fn drop(&mut self) {
-        let gehalten = self.ab.elapsed();
+        let ende = Instant::now();
+        let gehalten = ende.duration_since(self.ab);
         // Erst freigeben, dann melden.
         drop(self.guard.take());
         if gehalten >= SCHWELLE || self.gewartet >= SCHWELLE {
             #[cfg(test)]
             test_messung::beim_melden_frei(self.sperre.try_lock().is_ok());
-            melden(self.stelle, gehalten, self.gewartet);
+            let teile = self.teile(ende);
+            #[cfg(test)]
+            test_messung::teile_merken(&teile);
+            melden(self.stelle, gehalten, self.gewartet, &teile);
         }
         #[cfg(test)]
-        test_messung::aufzeichnen(self.stelle, gehalten);
+        test_messung::aufzeichnen(
+            self.stelle,
+            gehalten,
+            self.zwischenstaende
+                .iter()
+                .flatten()
+                .map(|(n, _)| *n)
+                .collect(),
+        );
     }
 }
 
-fn melden(stelle: &'static Location<'static>, gehalten: Duration, gewartet: Duration) {
+fn melden(stelle: &'static Location<'static>, gehalten: Duration, gewartet: Duration, teile: &str) {
     static ZULETZT: Mutex<Option<HashMap<(&'static str, u32), Instant>>> = Mutex::new(None);
     {
         let mut zuletzt = ZULETZT.lock().unwrap_or_else(|e| e.into_inner());
@@ -142,6 +196,7 @@ fn melden(stelle: &'static Location<'static>, gehalten: Duration, gewartet: Dura
         letzte = nummer == MELDUNGEN_HOECHSTENS,
         gehalten_ms = gehalten.as_secs_f64() * 1000.0,
         gewartet_ms = gewartet.as_secs_f64() * 1000.0,
+        teile = %teile,
         "Flugdaten-Sperre lange gehalten oder gewartet"
     );
 }
@@ -163,11 +218,20 @@ pub(crate) mod test_messung {
         static BEIM_MELDEN_FREI: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     }
 
+    thread_local! {
+        static GEMELDETE_TEILE: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn teile_merken(teile: &str) {
+        GEMELDETE_TEILE.with(|z| *z.borrow_mut() = Some(teile.to_string()));
+    }
+
     pub(super) fn beim_melden_frei(frei: bool) {
         BEIM_MELDEN_FREI.with(|z| z.set(Some(frei)));
     }
 
     pub(crate) fn beginnen() {
+        ABSCHNITTE.with(|a| a.borrow_mut().clear());
         HALTEZEITEN.with(|h| *h.borrow_mut() = Some(Vec::new()));
     }
 
@@ -175,7 +239,23 @@ pub(crate) mod test_messung {
         HALTEZEITEN.with(|h| h.borrow_mut().take().unwrap_or_default())
     }
 
-    pub(super) fn aufzeichnen(stelle: &'static Location<'static>, gehalten: Duration) {
+    thread_local! {
+        static ABSCHNITTE: RefCell<Vec<Vec<&'static str>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Die Zwischenstände aller seit `beginnen` gehaltenen Zugriffe.
+    pub(crate) fn abschnitte() -> Vec<Vec<&'static str>> {
+        ABSCHNITTE.with(|a| a.borrow().clone())
+    }
+
+    pub(super) fn aufzeichnen(
+        stelle: &'static Location<'static>,
+        gehalten: Duration,
+        abschnitte: Vec<&'static str>,
+    ) {
+        if HALTEZEITEN.with(|h| h.borrow().is_some()) {
+            ABSCHNITTE.with(|a| a.borrow_mut().push(abschnitte));
+        }
         HALTEZEITEN.with(|h| {
             if let Some(v) = h.borrow_mut().as_mut() {
                 v.push((stelle, gehalten));
@@ -216,5 +296,39 @@ pub(crate) mod test_messung {
         .join();
         let g = sperre.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(*g, 5);
+    }
+
+    /// v2.0.18: Eine lange Haltezeit nennt ihre Abschnitte — und der lange
+    /// Abschnitt traegt die Zeit, nicht ein anderer.
+    #[test]
+    fn eine_lange_haltezeit_nennt_ihre_abschnitte() {
+        let sperre = GemesseneSperre::new(0u32);
+        {
+            let mut g = sperre.lock().unwrap();
+            g.zwischenstand("schnell");
+            std::thread::sleep(Duration::from_millis(30));
+            g.zwischenstand("langsam");
+        }
+        let teile = GEMELDETE_TEILE
+            .with(|z| z.borrow_mut().take())
+            .expect("30 ms gehalten, aber nicht gemeldet");
+        let ms = |name: &str| -> f64 {
+            teile
+                .split(' ')
+                .find_map(|t| t.strip_prefix(&format!("{name}:")))
+                .unwrap_or_else(|| panic!("{name} fehlt in {teile:?}"))
+                .parse()
+                .unwrap()
+        };
+        // Ohne Obergrenzen fuer die kurzen Abschnitte: Eine Unterbrechung
+        // durch den Scheduler darf den Test nicht rot machen (Codex 2.0.18,
+        // P3). Geprueft wird die Zuordnung — die 30 ms gehoeren zu
+        // `langsam`, und die Abschnitte stehen in Ablaufreihenfolge.
+        assert!(ms("langsam") >= 29.0, "{teile}");
+        let reihenfolge: Vec<&str> = teile
+            .split(' ')
+            .map(|t| t.split(':').next().unwrap())
+            .collect();
+        assert_eq!(reihenfolge, ["schnell", "langsam", "rest"], "{teile}");
     }
 }
