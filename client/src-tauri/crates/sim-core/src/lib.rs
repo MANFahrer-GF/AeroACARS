@@ -1632,9 +1632,13 @@ impl AircraftProfile {
         // „iFly" nicht im Titel („Norwegian 737-MAX8 SE-RTR (189Seat)") und
         // liefen als `Default` — ohne iFly-Signale und mit B738 statt B38M.
         // Der Ordner heisst immer `iFly 737-MAX8…` (Paket
-        // `ifly-aircraft-737max8`). Titel oder ICAO muss nach 737 aussehen.
-        if p.contains("ifly")
-            && (p.contains("737-max8") || p.contains("737max8"))
+        // `ifly-aircraft-737max8`). Beide Merkmale im selben Ordnernamen —
+        // sonst machte `iFly Addons/…/Bredok3d_737MAX8` einen fremden MAX
+        // zum iFly (Codex 15.10.2026). Titel oder ICAO muss nach 737 aussehen.
+        let ifly_ordner = p.split('/').any(|teil| {
+            teil.contains("ifly") && (teil.contains("737-max8") || teil.contains("737max8"))
+        });
+        if ifly_ordner
             && (t.contains("737")
                 || t.contains("max")
                 || modell.starts_with("B73")
@@ -3922,6 +3926,15 @@ mod msfs2024_cockpit_tests {
                 "Bredok3d 737 MAX 8 Norwegian",
                 "B38M",
                 Some("SimObjects\\Airplanes\\Bredok3d_737MAX8\\aircraft.cfg"),
+            ),
+            AircraftProfile::Default
+        );
+        // „iFly" und „737MAX8" in verschiedenen Ordnern machen kein iFly.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "Bredok3d 737 MAX 8 Norwegian",
+                "B38M",
+                Some("Community\\iFly Addons\\SimObjects\\Airplanes\\Bredok3d_737MAX8\\aircraft.cfg"),
             ),
             AircraftProfile::Default
         );
