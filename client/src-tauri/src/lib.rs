@@ -6956,8 +6956,11 @@ struct FlightStats {
     /// Vorwärts-Schlepp mit laufenden Triebwerken für Rollen (Codex
     /// 15.10.2026). Nicht persistiert: Nach einem Neustart zählt der erste
     /// Wert danach; mitten im Pushback greift wie bisher die Luftrettung.
+    /// Bewusst offenes Restrisiko: Neustart am Gate bei schon angekoppeltem
+    /// Schlepper, danach Vorwärts-Schlepp > 8 kt mit laufenden Triebwerken
+    /// 15 s lang — dann wird TaxiOut etwas früher erkannt, sonst nichts.
     pushback_status_klemmt: bool,
-    /// Ob schon ein Pushback-Status gesehen wurde (für `pushback_status_klemmt`).
+    /// Ob der erste Snapshot schon da war (für `pushback_status_klemmt`).
     pushback_status_gesehen: bool,
 
     /// Wann die Groundspeed in der TakeoffRoll-Phase erstmals unter
@@ -47928,12 +47931,15 @@ fn step_flight_at(
     if snap.engines_running > 0 {
         stats.last_engines_running_above_zero_at = Some(now);
     }
+    // Der Merker rastet beim ersten Snapshot ein, auch ohne Pushback-Wert:
+    // Käme erst `None` und dann 0 (Schlepper), gälte sonst die 0 als erster
+    // Wert (Codex 15.10.2026).
+    if !stats.pushback_status_gesehen {
+        stats.pushback_status_gesehen = true;
+        stats.pushback_status_klemmt = snap.pushback_state.is_some_and(|pb| pb != 3)
+            && matches!(stats.phase, FlightPhase::Preflight | FlightPhase::Boarding);
+    }
     if let Some(pb) = snap.pushback_state {
-        if !stats.pushback_status_gesehen {
-            stats.pushback_status_gesehen = true;
-            stats.pushback_status_klemmt = pb != 3
-                && matches!(stats.phase, FlightPhase::Preflight | FlightPhase::Boarding);
-        }
         if pb != 3 {
             stats.saw_pushback_state_active = true;
         }
@@ -70517,6 +70523,10 @@ mod touchdown_metadata_stamp_tests {
             "funktionierender Simulator: erst 3, dann koppelt der Schlepper an"
         );
         assert!(!am_gate(&[None, None]), "ohne Pushback-Status (X-Plane)");
+        assert!(
+            !am_gate(&[None, Some(0), Some(0)]),
+            "erst kein Wert, dann koppelt der Schlepper an"
+        );
     }
 
     fn flight_fixture(arr: &str) -> ActiveFlight {
