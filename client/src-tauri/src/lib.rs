@@ -6946,6 +6946,20 @@ struct FlightStats {
     /// persistiert (wie `pushback_stopped_at`).
     pushback_vorwaerts_seit: Option<DateTime<Utc>>,
 
+    /// Der Pushback-Status stand schon beim ERSTEN Wert des Fluges (am Gate,
+    /// Preflight/Boarding) auf „läuft" (≠ 3). Ein funktionierender Simulator
+    /// beginnt mit 3 und wechselt erst, wenn der Schlepper ankoppelt — das
+    /// geschieht zwar noch in der Boarding-Phase (die endet erst mit der
+    /// Bewegung), aber nie beim ersten Wert. Nur ein klemmender Status (Joel,
+    /// MSFS 2020: dauerhaft 0) ist von Anfang an aktiv. Erst dann darf
+    /// `pushback_haengt_aber_rollt` greifen — sonst hielte er einen echten
+    /// Vorwärts-Schlepp mit laufenden Triebwerken für Rollen (Codex
+    /// 15.10.2026). Nicht persistiert: Nach einem Neustart zählt der erste
+    /// Wert danach; mitten im Pushback greift wie bisher die Luftrettung.
+    pushback_status_klemmt: bool,
+    /// Ob schon ein Pushback-Status gesehen wurde (für `pushback_status_klemmt`).
+    pushback_status_gesehen: bool,
+
     /// Wann die Groundspeed in der TakeoffRoll-Phase erstmals unter
     /// `TAKEOFF_ROLL_ABORT_KT` fiel (Dwell-Start der Rückkante nach
     /// TaxiOut — behebt TAKEOFF_ROLL_STUCK, z.B. EGLC-Backtrack-Fall).
@@ -47915,6 +47929,11 @@ fn step_flight_at(
         stats.last_engines_running_above_zero_at = Some(now);
     }
     if let Some(pb) = snap.pushback_state {
+        if !stats.pushback_status_gesehen {
+            stats.pushback_status_gesehen = true;
+            stats.pushback_status_klemmt = pb != 3
+                && matches!(stats.phase, FlightPhase::Preflight | FlightPhase::Boarding);
+        }
         if pb != 3 {
             stats.saw_pushback_state_active = true;
         }
@@ -48576,12 +48595,14 @@ fn step_flight_at(
                 // der State war nie != 3 (GSX-Pushback / manuell).
                 // Alte Fallback-Logik: bewegt sich + Triebwerke an = TaxiOut.
                 next_phase = FlightPhase::TaxiOut;
-            } else if pushback_haengt_aber_rollt(
-                snap.pushback_state,
-                powered_taxi,
-                snap.groundspeed_kt,
-                snap.velocity_body_z_fps,
-            ) {
+            } else if stats.pushback_status_klemmt
+                && pushback_haengt_aber_rollt(
+                    snap.pushback_state,
+                    powered_taxi,
+                    snap.groundspeed_kt,
+                    snap.velocity_body_z_fps,
+                )
+            {
                 // Der dritte Fall (15.10.2026, Joel, MSFS 2020): Der Status
                 // bleibt dauerhaft „Pushback läuft" (0) und erreicht nie 3 —
                 // weder `tug_done` noch `no_tug_ever` greifen. Bis hier hing
@@ -48596,6 +48617,7 @@ fn step_flight_at(
                 }
             }
             if next_phase != FlightPhase::Pushback
+                || !stats.pushback_status_klemmt
                 || !pushback_haengt_aber_rollt(
                     snap.pushback_state,
                     powered_taxi,
@@ -70385,7 +70407,11 @@ mod touchdown_metadata_stamp_tests {
     /// Pushback-Phase durch die ECHTE Tickfunktion, Takt alle 5 s (wie im
     /// Feld; kürzere Abstände sähen nach Neuladen aus). `ticks`: (gs, vz,
     /// Triebwerke, Pushback-Status). Liefert die Phase nach jedem Takt.
-    fn pushback_ablauf(ticks: &[(f32, Option<f32>, u8, Option<u8>)], saw_active: bool) -> Vec<FlightPhase> {
+    fn pushback_ablauf(
+        ticks: &[(f32, Option<f32>, u8, Option<u8>)],
+        saw_active: bool,
+        klemmt: bool,
+    ) -> Vec<FlightPhase> {
         let flight = flight_fixture("DAAJ");
         let t0 = Utc::now() - chrono::Duration::hours(1);
         {
@@ -70393,6 +70419,8 @@ mod touchdown_metadata_stamp_tests {
             st.phase = FlightPhase::Pushback;
             st.block_off_at = Some(t0);
             st.saw_pushback_state_active = saw_active;
+            st.pushback_status_klemmt = klemmt;
+            st.pushback_status_gesehen = true;
             st.was_on_ground = Some(true);
         }
         ticks
@@ -70431,7 +70459,7 @@ mod touchdown_metadata_stamp_tests {
             (3.5, Some(5.9), 4, Some(0)),
         ];
         ticks.extend(std::iter::repeat((19.3, Some(32.5), 4, Some(0))).take(6));
-        let phasen = pushback_ablauf(&ticks, true);
+        let phasen = pushback_ablauf(&ticks, true, true);
         // Zurückschieben und langsames Anrollen bleiben Pushback.
         assert!(phasen[..4].iter().all(|p| *p == FlightPhase::Pushback), "{phasen:?}");
         // Ab 15 s eigenem Vorwärtsrollen über 8 kt: Rollen.
@@ -70445,14 +70473,50 @@ mod touchdown_metadata_stamp_tests {
     /// und Wartezeit) greift der neue Weg NICHT.
     #[test]
     fn haengender_pushback_status_gegenproben() {
-        let ohne_richtung = pushback_ablauf(&[(19.3, None, 4, Some(0)); 12], true);
+        let ohne_richtung = pushback_ablauf(&[(19.3, None, 4, Some(0)); 12], true, true);
         assert!(ohne_richtung.iter().all(|p| *p == FlightPhase::Pushback), "{ohne_richtung:?}");
-        let rueckwaerts = pushback_ablauf(&[(10.0, Some(-17.0), 4, Some(0)); 12], true);
+        let rueckwaerts = pushback_ablauf(&[(10.0, Some(-17.0), 4, Some(0)); 12], true, true);
         assert!(rueckwaerts.iter().all(|p| *p == FlightPhase::Pushback), "{rueckwaerts:?}");
         // MSFS 2024: Status 3 nach aktivem Pushback, aber noch kein
         // Stillstand — der bisherige Weg wartet, der neue mischt sich nicht ein.
-        let status_drei = pushback_ablauf(&[(19.3, Some(32.5), 4, Some(3)); 12], true);
+        let status_drei = pushback_ablauf(&[(19.3, Some(32.5), 4, Some(3)); 12], true, true);
         assert!(status_drei.iter().all(|p| *p == FlightPhase::Pushback), "{status_drei:?}");
+        // Echter Vorwärts-Schlepp auf einem funktionierenden Simulator: Der
+        // Status war am Gate 3 (klemmt nicht), der Schlepper zieht mit
+        // laufenden Triebwerken vorwärts — bleibt Pushback (Codex 15.10.2026).
+        let schlepp = pushback_ablauf(&[(10.0, Some(17.0), 2, Some(0)); 12], true, false);
+        assert!(schlepp.iter().all(|p| *p == FlightPhase::Pushback), "{schlepp:?}");
+    }
+
+    /// Klemmt der Status? Nur wenn schon der ERSTE Wert am Gate aktiv war —
+    /// nicht, wenn der Schlepper später (noch in Boarding) ankoppelt.
+    #[test]
+    fn pushback_status_klemmt_nur_wenn_schon_der_erste_wert_aktiv_ist() {
+        let am_gate = |folge: &[Option<u8>]| {
+            let flight = flight_fixture("DAAJ");
+            flight.stats.lock().expect("stats").phase = FlightPhase::Boarding;
+            let t0 = Utc::now() - chrono::Duration::minutes(10);
+            for (i, status) in folge.iter().enumerate() {
+                let snap = SimSnapshot {
+                    lat: 49.4987,
+                    lon: 11.0669,
+                    on_ground: true,
+                    pushback_state: *status,
+                    parking_brake: true,
+                    fuel_total_kg: 14_900.0,
+                    ..SimSnapshot::default()
+                };
+                step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i as i64));
+            }
+            let klemmt = flight.stats.lock().expect("stats").pushback_status_klemmt;
+            klemmt
+        };
+        assert!(am_gate(&[Some(0), Some(0)]), "MSFS 2020 bei Joel: von Anfang an 0");
+        assert!(
+            !am_gate(&[Some(3), Some(3), Some(0)]),
+            "funktionierender Simulator: erst 3, dann koppelt der Schlepper an"
+        );
+        assert!(!am_gate(&[None, None]), "ohne Pushback-Status (X-Plane)");
     }
 
     fn flight_fixture(arr: &str) -> ActiveFlight {
