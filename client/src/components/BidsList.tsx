@@ -186,9 +186,10 @@ function formatEpochHm(epochSec: number): string {
 
 /** Countdown direkt aus einem Unix-Epoch — exakter als `stdCountdown`s
  *  HH:MM-Naeherung (kein 24h-Nachbar-Raten noetig). */
-/** Gehört das OFP-Preview zu dieser Buchung? Start und Ziel müssen passen
- *  (leere Angaben zählen nicht als Widerspruch) — dieselben Felder wie die
- *  `ofpMismatch`-Prüfung der Hauptkarte. */
+/** Gehört das OFP-Preview zu dieser Buchung? Start UND Ziel müssen im OFP
+ *  stehen und passen — dieselben Felder wie die `ofpMismatch`-Prüfung der
+ *  Hauptkarte. Fehlt eine Angabe, wird das OFP hier nicht benutzt (dann
+ *  bleiben die phpVMS-Zeiten; Codex 2.0.20). */
 export function previewGehoertZurBuchung(
   flight: { dpt_airport_id: string; arr_airport_id: string },
   preview: { ofp_origin_icao?: string | null; ofp_destination_icao?: string | null } | null,
@@ -196,7 +197,7 @@ export function previewGehoertZurBuchung(
   if (!preview) return false;
   const gleich = (a: string | null | undefined, b: string) => {
     const x = a?.toUpperCase().trim() ?? "";
-    return !x || x === b.toUpperCase().trim();
+    return x !== "" && x === b.toUpperCase().trim();
   };
   return gleich(preview.ofp_origin_icao, flight.dpt_airport_id) && gleich(preview.ofp_destination_icao, flight.arr_airport_id);
 }

@@ -43,6 +43,9 @@ describe("previewGehoertZurBuchung (Codex 2.0.20)", () => {
     expect(previewGehoertZurBuchung(f, { ofp_origin_icao: "EDDF", ofp_destination_icao: "OMDB" })).toBe(false);
     expect(previewGehoertZurBuchung(f, { ofp_origin_icao: "VABB", ofp_destination_icao: "VIDP" })).toBe(false);
     expect(previewGehoertZurBuchung(f, null)).toBe(false);
+    // Ohne Start/Ziel im OFP lässt sich die Zugehörigkeit nicht belegen.
+    expect(previewGehoertZurBuchung(f, { ofp_origin_icao: "", ofp_destination_icao: "" })).toBe(false);
+    expect(previewGehoertZurBuchung(f, { ofp_origin_icao: "VABB", ofp_destination_icao: null })).toBe(false);
   });
 });
 

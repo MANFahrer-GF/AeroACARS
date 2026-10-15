@@ -158,6 +158,8 @@ describe("planPasst mit Teilplan (Codex 2.0.20)", () => {
     const nurOn: FlugZeiten = { plan_on_block: hm(15, 40) - 86400 };
     expect(planPasst(nurOn, hm(14, 0))).toBe(false);
     expect(planPasst({ plan_on_block: hm(15, 40) }, hm(14, 0))).toBe(true);
+    // Langstrecke: nur On-Block bekannt, 10 h voraus — bleibt gültig.
+    expect(planPasst({ plan_on_block: hm(14, 0) + 10 * 3600 }, hm(14, 0))).toBe(true);
   });
 });
 
