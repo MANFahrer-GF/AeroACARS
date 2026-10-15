@@ -2520,7 +2520,9 @@
     "countdown_days_one": "in {{count}} Tag",
     "countdown_days_other": "in {{count}} Tagen",
     "overdue_days_one": "überfällig seit {{count}} Tag",
-    "overdue_days_other": "überfällig seit {{count}} Tagen"
+    "overdue_days_other": "überfällig seit {{count}} Tagen",
+    "ofp_off_block_vorbei_titel": "Dein geplanter Off-Block ({{zeit}}) ist schon vorbei",
+    "ofp_off_block_vorbei_hinweis": "Laut deinem SimBrief-OFP. Erstelle das OFP neu, dann stimmen die Zeiten im Cockpit — sonst bist du dort vom ersten Moment an verspätet."
   },
   "runway_v2": {
     "aufsetzzone_prefix": "AUFSETZZONE (TDZ)",
@@ -4123,7 +4125,6 @@
     "cockpit": {
       "on_block_plan": "On-Block Plan",
       "on_block_erwartet": "On-Block erwartet",
-      "gegen_plan": "Gegen Plan",
       "quelle": {
         "on_block": "tatsächlich",
         "aufsetzen": "Landung + Rollzeit laut Plan",
@@ -4136,12 +4137,19 @@
       "verloren": "seit Abheben {{min}} min verloren",
       "gehalten": "seit Abheben gehalten",
       "off_block_plan": "Off-Block Plan",
-      "off_block_erwartet": "Off-Block erwartet",
-      "noch_bis_off_block": "noch {{min}} min bis Off-Block laut Plan",
-      "off_block_vorbei": "Off-Block laut Plan vorbei"
+      "off_block_in": "Off-Block in",
+      "off_block_ueberfaellig": "Off-Block überfällig",
+      "min": "{{min}} min",
+      "on_block_ist": "On-Block",
+      "plan_vom": "Plan aus dem OFP vom {{wann}}"
     },
     "plan_passt_nicht": "Der SimBrief-Plan passt zeitlich nicht zu diesem Flug (mehr als 6 Stunden daneben). Die Zeiten werden deshalb nicht verglichen.",
     "plan_passt_nicht_vom": "Der SimBrief-Plan aus dem OFP vom {{wann}} passt zeitlich nicht zu diesem Flug (mehr als 6 Stunden daneben). Die Zeiten werden deshalb nicht verglichen.",
-    "fuss_ofp_vom": "Plan aus dem OFP vom {{wann}}."
+    "fuss_ofp_vom": "Plan aus dem OFP vom {{wann}}.",
+    "band": {
+      "erwartet_kurz": "erw.",
+      "lokal": "Lokal",
+      "jetzt": "Jetzt"
+    }
   }
 }

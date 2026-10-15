@@ -1,6 +1,11 @@
 // „Zeiten gegen Flugplan" (13.10.2026): Plan aus dem SimBrief-OFP gegen die
-// Ist-Zeiten von AeroACARS. Reine Anzeige — keine Note, kein Abzug, keine
-// Ampelfarben (Thomas: „kein Punktabzug, einfach nur darstellen").
+// Ist-Zeiten von AeroACARS. Reine Anzeige — keine Note, kein Abzug
+// (Thomas: „kein Punktabzug, einfach nur darstellen").
+//
+// Farbe JA, Note NEIN (Thomas 15.10.2026: „ein bisschen mit Farben spielen,
+// Delay und zu früh darstellen, aber nicht in die Bewertung"): Abweichungen
+// bekommen eine Hinweisfarbe nach `abweichungTon` — für Cockpit,
+// Landungen-Reiter und Webseite aus dieser einen Regel.
 //
 // Rust liefert nur die acht Zeitpunkte (landing_scoring::flugzeiten,
 // Unix-Sekunden UTC). Alles, was daraus folgt — Abweichungen, Dauern, der
@@ -73,7 +78,16 @@ export function planPasst(z: FlugZeiten, jetzt?: number | null): boolean {
   }
   const pOff = plan(z, "off_block");
   const j = zahl(jetzt);
-  if (pOff != null && j != null) return Math.abs(j - pOff) <= grenze;
+  if (j == null) return true;
+  if (pOff != null) return Math.abs(j - pOff) <= grenze;
+  // Teilplan ohne Off-Block (Codex 2.0.20): Ein OFP von gestern liegt
+  // vollständig in der Vergangenheit — passt also nicht, wenn auch seine
+  // SPÄTESTE Planzeit mehr als die Grenze zurückliegt. Eine ferne Planzeit
+  // in der Zukunft (Langstrecke, nur On-Block bekannt) bleibt gültig.
+  const letzte = SCHRITTE.map((s) => plan(z, s))
+    .filter((p): p is number => p != null)
+    .pop();
+  if (letzte != null) return letzte >= j - grenze;
   return true;
 }
 
@@ -85,6 +99,24 @@ export function abweichungMin(p: number | null, i: number | null): number | null
   const d = i - p;
   const m = Math.sign(d) * Math.round(Math.abs(d) / 60);
   return m === 0 ? 0 : m;
+}
+
+/** Wie eine Abweichung eingefärbt wird. `null` = ohne Farbe.
+ *
+ *  - bis ±PUENKTLICH_BIS_MIN: wie Airlines zählen pünktlich → keine Farbe
+ *  - später: "spaet" (Hinweisfarbe), früher: "frueh" (Infofarbe — zu früh
+ *    heißt auch: das Gate ist vielleicht noch nicht frei)
+ *  - über A15_URTEIL_BIS_MIN: meist lag der Plan daneben, nicht der Pilot →
+ *    keine Farbe (dieselbe Grenze wie beim Airline-Urteil)
+ *
+ *  ⚠ Nie Rot: Rot steht für harte Landungen und Warnungen. Eine Uhrzeit darf
+ *  nicht nach Gefahr oder Abzug aussehen. */
+export type AbweichungTon = "spaet" | "frueh";
+export function abweichungTon(min: number | null | undefined): AbweichungTon | null {
+  if (min == null || !Number.isFinite(min)) return null;
+  const a = Math.abs(min);
+  if (a <= PUENKTLICH_BIS_MIN || a > A15_URTEIL_BIS_MIN) return null;
+  return min > 0 ? "spaet" : "frueh";
 }
 
 export interface ZeitZeile {

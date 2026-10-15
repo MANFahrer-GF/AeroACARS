@@ -35,11 +35,23 @@ describe("Zeiten gegen Flugplan — Anzeige", () => {
     }
   });
 
-  it("A: über 15 min heißt es verspätet — weiterhin ohne Farbe", () => {
+  it("A: über 15 min heißt es verspätet — und die Abweichung bekommt die Hinweisfarbe (15.10.2026)", () => {
     const spaet = { ...BEISPIEL, on_block: hm(16, 5) };
     const { container } = render(<FlugzeitenAbschnitt record={mit(spaet)} />);
     expect(container.textContent).toContain("verspätet nach Airline-Maßstab (über 15 min)");
-    expect(container.querySelector(".farbwert")).toBeNull();
+    const gefaerbt = [...container.querySelectorAll(".flugzeiten__abw--spaet")].map((e) => e.textContent);
+    expect(gefaerbt).toContain("+25 min");
+    // Off-Block +11 und Abheben +13 bleiben ohne Farbe (bis 15 min pünktlich).
+    expect(gefaerbt).not.toContain("+11 min");
+    expect(container.querySelector(".flugzeiten__abw--frueh")).toBeNull();
+  });
+
+  it("A: deutlich zu früh bekommt die Infofarbe, nie Rot", () => {
+    const frueh = { ...BEISPIEL, aufsetzen: hm(15, 10), on_block: hm(15, 18) };
+    const { container } = render(<FlugzeitenAbschnitt record={mit(frueh)} />);
+    const gefaerbt = [...container.querySelectorAll(".flugzeiten__abw--frueh")].map((e) => e.textContent);
+    expect(gefaerbt).toEqual(expect.arrayContaining(["−22 min", "−22 min"]));
+    expect(container.innerHTML).not.toMatch(/danger|rot/);
   });
 
   it("D: ohne SimBrief-Plan steht das ausdrücklich da", () => {
@@ -68,12 +80,32 @@ describe("Zeiten gegen Flugplan — Anzeige", () => {
       flugzeiten: { ...BEISPIEL, aufsetzen: null, on_block: null },
       landung_erwartet: hm(15, 41),
     } as unknown as ActiveFlightInfo;
-    const { getByTestId } = render(<InfoStrip info={info} snapshot={null} elapsedMinutes={30} />);
+    const { getByTestId, container } = render(<InfoStrip info={info} snapshot={null} elapsedMinutes={30} />);
     const text = getByTestId("planzeiten-cockpit").textContent ?? "";
     expect(text).toContain("On-Block Plan15:40z");
-    expect(text).toContain("On-Block erwartet15:49z");
-    expect(text).toContain("Gegen Plan+9 min");
+    // Trip-Uhr (15.10.2026): die fette Zeile ist das erwartete On-Block mit
+    // der Abweichung; bis 15 min ohne Farbe.
+    expect(text).toContain("On-Block erwartet15:49z +9");
     expect(text).toContain("seit Abheben 4 min aufgeholt");
+    const tripKarte = [...container.querySelectorAll(".card")].at(-1)!;
+    const fett = tripKarte.querySelector(".row--sum")?.textContent ?? "";
+    expect(fett).toContain("On-Block erwartet");
+    expect(container.querySelector(".trip-uhr__delta--spaet, .trip-uhr__delta--frueh")).toBeNull();
+    // Die Positionsmeldungen stehen nicht mehr in der Karte (Thomas).
+    expect(container.textContent).not.toContain("Positionen");
+  });
+
+  it("C: über 15 min hinter Plan bekommt die Abweichung die Hinweisfarbe", () => {
+    const info = {
+      distance_nm: 120,
+      position_count: 10,
+      touch_and_go_count: 0,
+      go_around_count: 0,
+      flugzeiten: { ...BEISPIEL, aufsetzen: null, on_block: null },
+      landung_erwartet: hm(16, 0),
+    } as unknown as ActiveFlightInfo;
+    const { container } = render(<InfoStrip info={info} snapshot={null} elapsedMinutes={30} />);
+    expect(container.querySelector(".trip-uhr__delta--spaet")?.textContent).toBe("+28");
   });
 
   it("C: ohne Plan keine Zeilen im Cockpit", () => {
@@ -84,8 +116,11 @@ describe("Zeiten gegen Flugplan — Anzeige", () => {
       go_around_count: 0,
       flugzeiten: { off_block: hm(14, 41) },
     } as unknown as ActiveFlightInfo;
-    const { queryByTestId } = render(<InfoStrip info={info} snapshot={null} elapsedMinutes={0} />);
+    const { queryByTestId, container } = render(<InfoStrip info={info} snapshot={null} elapsedMinutes={0} />);
     expect(queryByTestId("planzeiten-cockpit")).toBeNull();
+    // Ohne Plan bleibt die verstrichene Zeit die Hauptzahl der Karte.
+    const tripKarte = [...container.querySelectorAll(".card")].at(-1)!;
+    expect(tripKarte.querySelector(".row--sum")?.textContent).toContain("Dauer");
   });
 });
 
@@ -116,24 +151,44 @@ describe("Zeiten gegen Flugplan — am Gate und Plausibilität (14.10.2026)", ()
   it("C am Gate vor dem Plan: Abrollzeit und Restzeit", () => {
     const text = cockpit(amGate, hm(14, 10));
     expect(text).toContain("Off-Block Plan14:30z");
-    expect(text).toContain("Off-Block erwartet14:30z");
-    expect(text).toContain("Gegen Plan±0 min");
-    expect(text).toContain("noch 20 min bis Off-Block laut Plan");
-    expect(text).not.toContain("On-Block");
+    expect(text).toContain("On-Block Plan15:40z");
+    expect(text).toContain("Off-Block in20 min");
+    expect(text).not.toContain("erwartet");
   });
 
   it("C noch am Gate nach dem geplanten Off-Block: die Verspätung steht schon da", () => {
     // 2.0.15 zeigte hier „On-Block … ±0 · noch nicht abgerollt".
     const text = cockpit(amGate, hm(14, 42));
-    expect(text).toContain("Off-Block erwartet14:42z");
-    expect(text).toContain("Gegen Plan+12 min");
-    expect(text).toContain("Off-Block laut Plan vorbei");
+    expect(text).toContain("Off-Block überfällig+12");
+    expect(text).not.toContain("Off-Block in");
+  });
+
+  it("C genau zur Off-Block-Zeit: noch kein „überfällig ±0\" (Codex 2.0.20)", () => {
+    const text = cockpit(amGate, hm(14, 30));
+    expect(text).toContain("Off-Block in0 min");
+    expect(text).not.toContain("überfällig");
+  });
+
+  it("C Teilplan ohne On-Block nach dem Abrollen: die Dauer bleibt fett (Codex 2.0.20)", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(hm(14, 50) * 1000);
+    const info = {
+      distance_nm: 0,
+      position_count: 0,
+      touch_and_go_count: 0,
+      go_around_count: 0,
+      flugzeiten: { plan_off_block: hm(14, 30), plan_abheben: hm(14, 45), off_block: hm(14, 41) },
+    } as unknown as ActiveFlightInfo;
+    const { container } = render(<InfoStrip info={info} snapshot={null} elapsedMinutes={9} />);
+    const tripKarte = [...container.querySelectorAll(".card")].at(-1)!;
+    expect(tripKarte.querySelector(".row--sum")?.textContent).toContain("Dauer");
   });
 
   it("C mit einem OFP von gestern: kein Vergleich", () => {
     const text = cockpit({ ...gestern(amGate), ofp_erstellt: hm(13, 48) - 86400 }, hm(14, 10));
     expect(text).toContain("aus dem OFP vom 12.10. 13:48z passt zeitlich nicht");
-    expect(text).not.toContain("Gegen Plan");
+    expect(text).not.toContain("erwartet");
+    expect(text).not.toContain("Off-Block in");
   });
 
   it("A mit einem OFP von gestern: kein „verspätet\", nur der Hinweis", () => {

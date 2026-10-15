@@ -2506,7 +2506,9 @@
     "countdown_days_one": "tra {{count}} giorno",
     "countdown_days_other": "tra {{count}} giorni",
     "overdue_days_one": "in ritardo di {{count}} giorno",
-    "overdue_days_other": "in ritardo di {{count}} giorni"
+    "overdue_days_other": "in ritardo di {{count}} giorni",
+    "ofp_off_block_vorbei_titel": "Il tuo off-block previsto ({{zeit}}) è già passato",
+    "ofp_off_block_vorbei_hinweis": "Secondo il tuo OFP SimBrief. Genera un nuovo OFP e gli orari nel cockpit saranno corretti — altrimenti risulti in ritardo fin dal primo minuto."
   },
   "runway_v2": {
     "aufsetzzone_prefix": "ZONA DI ATTERRAGGIO (TDZ)",
@@ -4123,7 +4125,6 @@
     "cockpit": {
       "on_block_plan": "On-block previsto",
       "on_block_erwartet": "On-block stimato",
-      "gegen_plan": "Rispetto al piano",
       "quelle": {
         "on_block": "effettivo",
         "aufsetzen": "atterraggio + rullaggio previsto",
@@ -4136,12 +4137,19 @@
       "verloren": "{{min}} min persi dal decollo",
       "gehalten": "mantenuto dal decollo",
       "off_block_plan": "Off-block previsto",
-      "off_block_erwartet": "Off-block atteso",
-      "noch_bis_off_block": "ancora {{min}} min all’off-block previsto",
-      "off_block_vorbei": "off-block previsto superato"
+      "off_block_in": "Off-block tra",
+      "off_block_ueberfaellig": "Off-block in ritardo",
+      "min": "{{min}} min",
+      "on_block_ist": "On-block",
+      "plan_vom": "Piano dall’OFP del {{wann}}"
     },
     "plan_passt_nicht": "Il piano SimBrief non corrisponde a questo volo come orario (oltre 6 ore di scarto). Gli orari quindi non vengono confrontati.",
     "plan_passt_nicht_vom": "Il piano SimBrief dell’OFP del {{wann}} non corrisponde a questo volo come orario (oltre 6 ore di scarto). Gli orari quindi non vengono confrontati.",
-    "fuss_ofp_vom": "Piano dall’OFP del {{wann}}."
+    "fuss_ofp_vom": "Piano dall’OFP del {{wann}}.",
+    "band": {
+      "erwartet_kurz": "stim.",
+      "lokal": "Locale",
+      "jetzt": "Ora"
+    }
   }
 }

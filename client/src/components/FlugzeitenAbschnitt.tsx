@@ -1,6 +1,7 @@
 // „Zeiten gegen Flugplan" (13.10.2026): Plan aus dem SimBrief-OFP gegen die
 // Ist-Zeiten — Kopfsatz, Zeitstrahl, Tabelle. Dazu die Kurzform für Listen.
-// Keine Note, keine Ampelfarben; gerechnet wird nur in lib/flugzeiten.ts.
+// Keine Note. Abweichungen der Zeitpunkte bekommen seit 15.10.2026 eine
+// Hinweisfarbe (`abweichungTon`); gerechnet wird nur in lib/flugzeiten.ts.
 //
 // GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN).
 
@@ -9,6 +10,7 @@ import type { LandingRecord } from "../lib/landungsDatensatz";
 import {
   A15_URTEIL_BIS_MIN,
   PUENKTLICH_BIS_MIN,
+  abweichungTon,
   datumUhrzeit,
   dauern,
   dauerText,
@@ -23,6 +25,12 @@ import {
   type ZeitachsenBalken,
 } from "../lib/flugzeiten";
 import "./flugzeitenAbschnitt.css";
+
+/** Klasse der Abweichung eines Zeitpunkts — Farbe nach `abweichungTon`. */
+function abwKlasse(min: number | null | undefined): string {
+  const ton = abweichungTon(min);
+  return ton ? `flugzeiten__abw flugzeiten__abw--${ton}` : "flugzeiten__abw";
+}
 
 function Balken({ b }: { b: ZeitachsenBalken }) {
   return (
@@ -169,7 +177,7 @@ export function FlugzeitenAbschnitt({ record }: { record: LandingRecord }) {
                 <td>{t(`flugzeiten.schritt.${r.schritt}`)}</td>
                 <td className="flugzeiten__zahl">{uhrzeit(r.plan)}</td>
                 <td className="flugzeiten__zahl">{uhrzeit(r.ist)}</td>
-                <td className="flugzeiten__zahl flugzeiten__abw">{minutenText(r.abw_min)}</td>
+                <td className={`flugzeiten__zahl ${abwKlasse(r.abw_min)}`}>{minutenText(r.abw_min)}</td>
               </tr>
             ))}
             {dauerZeilen.map((r, i) => (
@@ -208,7 +216,11 @@ export function FlugzeitenKurz({ z }: { z: FlugZeiten | null | undefined }) {
       {k && (
         <span className="flugzeiten-kurz__chip">
           <span className="flugzeiten-kurz__k">{t(`flugzeiten.schritt.${k.schritt}`)}</span>
-          <span className="flugzeiten__zahl">{minutenText(k.abw_min)}</span>
+          <span
+            className={`flugzeiten__zahl ${abweichungTon(k.abw_min) ? `flugzeiten__abw--${abweichungTon(k.abw_min)}` : ""}`}
+          >
+            {minutenText(k.abw_min)}
+          </span>
         </span>
       )}
       {d.block_plan != null && d.block_ist != null && (

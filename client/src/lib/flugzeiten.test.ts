@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   abflugSchaetzung,
+  abweichungTon,
   cockpitSchaetzung,
   datumUhrzeit,
   planPasst,
@@ -149,5 +150,36 @@ describe("Zeiten gegen Flugplan", () => {
     it("schreibt das OFP-Datum wie im Entwurf", () => {
       expect(datumUhrzeit(hm(13, 48))).toBe("13.10. 13:48z");
     });
+  });
+});
+
+describe("planPasst mit Teilplan (Codex 2.0.20)", () => {
+  it("ohne Off-Block zählt die früheste vorhandene Planzeit", () => {
+    const nurOn: FlugZeiten = { plan_on_block: hm(15, 40) - 86400 };
+    expect(planPasst(nurOn, hm(14, 0))).toBe(false);
+    expect(planPasst({ plan_on_block: hm(15, 40) }, hm(14, 0))).toBe(true);
+    // Langstrecke: nur On-Block bekannt, 10 h voraus — bleibt gültig.
+    expect(planPasst({ plan_on_block: hm(14, 0) + 10 * 3600 }, hm(14, 0))).toBe(true);
+  });
+});
+
+describe("abweichungTon — Farbe ja, Note nein (15.10.2026)", () => {
+  it("bis 15 min ohne Farbe — wie Airlines pünktlich zählen", () => {
+    for (const m of [0, 1, -1, 15, -15]) expect(abweichungTon(m)).toBeNull();
+  });
+  it("später als 15 min: Hinweisfarbe, früher: Infofarbe", () => {
+    expect(abweichungTon(16)).toBe("spaet");
+    expect(abweichungTon(60)).toBe("spaet");
+    expect(abweichungTon(-16)).toBe("frueh");
+    expect(abweichungTon(-60)).toBe("frueh");
+  });
+  it("über 60 min ohne Farbe — dann lag meist der Plan daneben", () => {
+    expect(abweichungTon(61)).toBeNull();
+    expect(abweichungTon(-240)).toBeNull();
+  });
+  it("ohne Wert keine Farbe", () => {
+    expect(abweichungTon(null)).toBeNull();
+    expect(abweichungTon(undefined)).toBeNull();
+    expect(abweichungTon(Number.NaN)).toBeNull();
   });
 });
