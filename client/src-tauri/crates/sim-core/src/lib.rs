@@ -1558,7 +1558,8 @@ impl AircraftProfile {
     /// Runde 3: dazu der FBW A380X (`flybywire-aircraft-a380…`, siehe
     /// [`ist_fbw_a380_pfad`]) → `FbwA32nx`, und die FSS E-Jets
     /// (`fss-aircraft-e1…`) → `FssEjet` — beide ebenfalls nur hinter einem
-    /// Titel-/ICAO-Abgleich.
+    /// Titel-/ICAO-Abgleich. Dazu das iFly 737 MAX 8 nach Ordner
+    /// (`iFly 737-MAX8…`) für Fremd-Lackierungen ohne „iFly" im Titel.
     pub fn detect_mit_pfad(title: &str, icao: &str, cfg_pfad: Option<&str>) -> Self {
         let nach_titel = Self::detect(title, icao);
         if nach_titel != Self::Default {
@@ -1626,6 +1627,20 @@ impl AircraftProfile {
                 || ["E17", "E19", "E75"].iter().any(|m| modell.starts_with(m)))
         {
             return Self::FssEjet;
+        }
+        // iFly 737 MAX 8 (15.10.2026, Hamadoun): Fremd-Lackierungen tragen
+        // „iFly" nicht im Titel („Norwegian 737-MAX8 SE-RTR (189Seat)") und
+        // liefen als `Default` — ohne iFly-Signale und mit B738 statt B38M.
+        // Der Ordner heisst immer `iFly 737-MAX8…` (Paket
+        // `ifly-aircraft-737max8`). Titel oder ICAO muss nach 737 aussehen.
+        if p.contains("ifly")
+            && (p.contains("737-max8") || p.contains("737max8"))
+            && (t.contains("737")
+                || t.contains("max")
+                || modell.starts_with("B73")
+                || modell.starts_with("B38"))
+        {
+            return Self::IflyMax8;
         }
         Self::Default
     }
@@ -3872,6 +3887,43 @@ mod msfs2024_cockpit_tests {
         assert_eq!(
             AircraftProfile::detect_mit_pfad("A380-800 RR Basic", "A388", Some(PFAD_FBW_A380X)),
             AircraftProfile::IniA380
+        );
+    }
+
+    /// Fremd-Lackierung des iFly ohne „iFly" im Titel (Hamadoun, 15.10.2026:
+    /// zwei Flüge als `Default` und B738 statt B38M).
+    #[test]
+    fn ifly_max8_fremdlackierung_nach_ordner() {
+        const PFAD: &str = "SimObjects\\Airplanes\\iFly 737-MAX8-189Seats\\aircraft.CFG";
+        let p = AircraftProfile::detect_mit_pfad(
+            "Norwegian 737-MAX8 SE-RTR (189Seat)",
+            "ATCCOM.AC_MODEL B738.0.text",
+            Some(PFAD),
+        );
+        assert_eq!(p, AircraftProfile::IflyMax8);
+        assert_eq!(p.icao_vorrang(), Some("B38M"));
+        // Paketname statt SimObject-Ordner.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "TUI D-AMAX",
+                "B738",
+                Some("Community/ifly-aircraft-737max8/SimObjects/Airplanes/x/aircraft.cfg"),
+            ),
+            AircraftProfile::IflyMax8
+        );
+        // Rest-Pfad: ein fremder Titel wird nicht zum iFly.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Cessna Skyhawk", "C172", Some(PFAD)),
+            AircraftProfile::Default
+        );
+        // Ohne iFly-Ordner bleibt ein anderer MAX (Bredok3d) beim Standard.
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad(
+                "Bredok3d 737 MAX 8 Norwegian",
+                "B38M",
+                Some("SimObjects\\Airplanes\\Bredok3d_737MAX8\\aircraft.cfg"),
+            ),
+            AircraftProfile::Default
         );
     }
 
