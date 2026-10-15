@@ -55575,6 +55575,12 @@ impl<'a> AufgeschobeneMeldungen<'a> {
 
 impl Drop for AufgeschobeneMeldungen<'_> {
     fn drop(&mut self) {
+        // Beim Abbau nach einer Panik nichts mehr schreiben: Eine zweite
+        // Panik im `drop` beendete das ganze Programm. Die Zeilen gehen
+        // dann verloren — die Panik selbst steht ohnehin im Log.
+        if std::thread::panicking() {
+            return;
+        }
         for (level, message, detail, an_glitchtip) in self.meldungen.drain(..) {
             log_activity_mit_meldung(self.app, level, message, detail, an_glitchtip);
         }

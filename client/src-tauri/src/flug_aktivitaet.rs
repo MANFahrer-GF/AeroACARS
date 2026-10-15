@@ -90,10 +90,22 @@ pub fn messfaden_vorrang() {
 /// 2.0.18, Hamadoun CYUL→CYHZ und VHHH→FAOR, 14.10.2026, 3 bis 28 fps). Der
 /// Mac hatte den Vorrang seit 2.0.10, Windows nicht.
 ///
-/// `TIME_CRITICAL` ist hier vertretbar, weil der Faden je Takt rund 1 ms
-/// arbeitet und dazwischen 20 ms schläft — der Schlaf ist die Bremse, MSFS
-/// verliert praktisch nichts. ⚠ Deshalb NUR für `aufsetz_messen`, nie für
-/// den Auswertefaden: der rechnet nach dem Aufsetzen auch Schweres.
+/// Die Felddaten zeigen Vergabe, nicht Zeitgeber: Der Takt liegt im Mittel
+/// bei 20,4 bis 21,6 ms, die Ausreisser unregelmaessig bei 26 bis 66 ms —
+/// nicht auf dem 15,6-ms-Raster (31/47/62). Ein feinerer Zeitgeber
+/// (`timeBeginPeriod`) haette deshalb nichts geaendert.
+///
+/// Warum `TIME_CRITICAL` und nicht `HIGHEST`: Ziel ist, auch gegen einen
+/// voll ausgelasteten Simulator pünktlich dranzukommen, dessen eigene Fäden
+/// selbst erhöht laufen können. Vertretbar ist das nur, weil der Faden
+/// - je Takt rund 1 ms arbeitet und dazwischen 20 ms schläft (der Schlaf
+///   ist die Bremse; MSFS verliert höchstens ~5 % eines Kerns),
+/// - nie aktiv wartet: Er blockiert nur an der Adapter-Sperre
+///   (`current_snapshot`, Sperre + Kopie) und an `diagnose`, das die
+///   Auswertung nur kurz hält; `flight.stats` nimmt er nie.
+///
+/// ⚠ Deshalb NUR für `aufsetz_messen`, nie für den Auswertefaden: der
+/// rechnet nach dem Aufsetzen auch Schweres.
 /// Andere Systeme: nichts (macOS siehe [`messfaden_vorrang`]).
 pub fn messfaden_vorrang_windows() {
     #[cfg(target_os = "windows")]
