@@ -56266,31 +56266,31 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
 
     // ---- Electrical / pneumatic systems.
     log_bool_change(
-        app,
+        &mut aufgeschoben,
         snap.battery_master,
         &mut stats.last_logged_battery_master,
         "Battery master",
     );
     log_bool_change(
-        app,
+        &mut aufgeschoben,
         snap.avionics_master,
         &mut stats.last_logged_avionics_master,
         "Avionics master",
     );
     log_bool_change(
-        app,
+        &mut aufgeschoben,
         snap.pitot_heat,
         &mut stats.last_logged_pitot_heat,
         "Pitot heat",
     );
     log_bool_change(
-        app,
+        &mut aufgeschoben,
         snap.engine_anti_ice,
         &mut stats.last_logged_engine_anti_ice,
         "Engine anti-ice",
     );
     log_bool_change(
-        app,
+        &mut aufgeschoben,
         snap.wing_anti_ice,
         &mut stats.last_logged_wing_anti_ice,
         "Wing anti-ice",
@@ -56319,7 +56319,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         }
     }
     log_three_state_change(
-        app,
+        &mut aufgeschoben,
         snap.no_smoking_sign,
         &mut stats.last_logged_no_smoking_sign,
         "No smoking",
@@ -57122,7 +57122,8 @@ fn below_gs_should_log(
 
 /// Activity-log helper for 3-state cabin signs (OFF / AUTO / ON).
 fn log_three_state_change(
-    app: &AppHandle,
+    // Gepuffert (v2.0.19): wird unter `flight.stats` aufgerufen.
+    aufgeschoben: &mut AufgeschobeneMeldungen<'_>,
     snap_value: Option<u8>,
     last_logged: &mut Option<u8>,
     label: &str,
@@ -57136,7 +57137,8 @@ fn log_three_state_change(
                 2 => "ON",
                 _ => return,
             };
-            log_activity_handle(app, ActivityLevel::Info, format!("{label} {state}"), None);
+            let app = aufgeschoben.app;
+            aufgeschoben.handle(app, ActivityLevel::Info, format!("{label} {state}"), None);
         }
         *last_logged = Some(v);
     }
@@ -57151,7 +57153,8 @@ fn log_three_state_change(
 /// initialises silently on first read, and emits an activity-log line
 /// on every subsequent transition.
 fn log_bool_change(
-    app: &AppHandle,
+    // Gepuffert (v2.0.19): wird unter `flight.stats` aufgerufen.
+    aufgeschoben: &mut AufgeschobeneMeldungen<'_>,
     snap_value: Option<bool>,
     last_logged: &mut Option<bool>,
     label: &str,
@@ -57160,7 +57163,8 @@ fn log_bool_change(
     if *last_logged != Some(v) {
         if let Some(prev) = *last_logged {
             if prev != v {
-                log_activity_handle(
+                let app = aufgeschoben.app;
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("{label} {}", if v { "ON" } else { "OFF" }),
@@ -85807,6 +85811,17 @@ mod landung_speichern_sperre_tests {
             );
         }
         assert!(code.matches("aufgeschoben.handle(").count() >= 40, "Vorrichtung: Aufrufe nicht gefunden");
+        // Auch die Helfer, die unter der Sperre aufgerufen werden, schreiben
+        // nur in den Puffer (Codex-Abnahme 2.0.19, P2: sie schrieben noch
+        // direkt — unter der Sperre und in falscher Reihenfolge).
+        for helfer in ["\nfn log_bool_change(", "\nfn log_three_state_change("] {
+            let h = &src[src.find(helfer).expect("Helfer fehlt")..];
+            let h = &h[..h[1..].find("\n}\n").map_or(h.len(), |i| i + 1)];
+            assert!(h.contains("aufgeschoben.handle("), "{helfer} schreibt nicht in den Puffer");
+            for direkt in ["log_activity_handle(", "log_activity_mit_meldung(", "log_activity("] {
+                assert!(!h.contains(direkt), "{helfer} schreibt direkt: {direkt}");
+            }
+        }
     }
 
     /// ⚠ Die Landungs-Historie wird NACH dem Freigeben der Flugdaten
