@@ -168,6 +168,12 @@ const BACKEND = {
     // und gleichlautend als ACARS-Log an phpVMS gehen. Vorher ungeprueft
     // (externe Abnahme, 21.09.2026, Mutation M7).
     "pending_acars_logs.push",
+    // Der fuenfte: Meldungen, die erst nach dem Freigeben der Flugdaten
+    // geschrieben werden (lib.rs, `AufgeschobeneMeldungen`, v2.0.19).
+    // Ohne diese Eintraege waeren mit der Umstellung von
+    // `detect_telemetry_changes` 52 Meldungen still ungeprueft geblieben.
+    "aufgeschoben.handle",
+    "aufgeschoben.ohne_meldung",
   ],
 };
 

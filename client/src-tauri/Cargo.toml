@@ -21,7 +21,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.0.18"
+version = "2.0.19"
 edition = "2021"
 # Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
 license = "LicenseRef-AeroACARS-Proprietary"
@@ -260,6 +260,8 @@ libc = "0.2"
 # MSFS adapter is Windows-only
 [target.'cfg(target_os = "windows")'.dependencies]
 sim-msfs.workspace = true
+# v2.0.19: Vorrang für den Aufsetz-Messfaden (src/flug_aktivitaet.rs)
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 # X-Plane adapter is cross-platform (UDP listener); included on all targets
 [dependencies.sim-xplane]
