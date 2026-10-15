@@ -163,6 +163,27 @@ describe("Zeiten gegen Flugplan — am Gate und Plausibilität (14.10.2026)", ()
     expect(text).not.toContain("Off-Block in");
   });
 
+  it("C genau zur Off-Block-Zeit: noch kein „überfällig ±0\" (Codex 2.0.20)", () => {
+    const text = cockpit(amGate, hm(14, 30));
+    expect(text).toContain("Off-Block in0 min");
+    expect(text).not.toContain("überfällig");
+  });
+
+  it("C Teilplan ohne On-Block nach dem Abrollen: die Dauer bleibt fett (Codex 2.0.20)", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(hm(14, 50) * 1000);
+    const info = {
+      distance_nm: 0,
+      position_count: 0,
+      touch_and_go_count: 0,
+      go_around_count: 0,
+      flugzeiten: { plan_off_block: hm(14, 30), plan_abheben: hm(14, 45), off_block: hm(14, 41) },
+    } as unknown as ActiveFlightInfo;
+    const { container } = render(<InfoStrip info={info} snapshot={null} elapsedMinutes={9} />);
+    const tripKarte = [...container.querySelectorAll(".card")].at(-1)!;
+    expect(tripKarte.querySelector(".row--sum")?.textContent).toContain("Dauer");
+  });
+
   it("C mit einem OFP von gestern: kein Vergleich", () => {
     const text = cockpit({ ...gestern(amGate), ofp_erstellt: hm(13, 48) - 86400 }, hm(14, 10));
     expect(text).toContain("aus dem OFP vom 12.10. 13:48z passt zeitlich nicht");

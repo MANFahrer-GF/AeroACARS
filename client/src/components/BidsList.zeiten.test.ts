@@ -1,7 +1,7 @@
 // Briefing-Zeiten (v2.0.20): SimBrief ist die Planung des Piloten und hat
 // Vorrang vor phpVMS (Thomas 15.10.2026).
 import { describe, expect, it } from "vitest";
-import { briefingZeiten } from "./BidsList";
+import { briefingZeiten, previewGehoertZurBuchung } from "./BidsList";
 
 const T = Date.UTC(2026, 9, 15) / 1000;
 const hm = (h: number, m: number) => T + h * 3600 + m * 60;
@@ -33,3 +33,16 @@ describe("briefingZeiten", () => {
     expect(briefingZeiten({ dpt_time: "14:00" }, null, ms(17, 0)).ofpOffBlockVorbei).toBe(false);
   });
 });
+
+describe("previewGehoertZurBuchung (Codex 2.0.20)", () => {
+  const f = { dpt_airport_id: "VABB", arr_airport_id: "OMDB" };
+  it("passt bei gleichem Start und Ziel, auch in anderer Schreibweise", () => {
+    expect(previewGehoertZurBuchung(f, { ofp_origin_icao: "vabb ", ofp_destination_icao: "OMDB" })).toBe(true);
+  });
+  it("ein OFP für einen anderen Flug wird nicht benutzt", () => {
+    expect(previewGehoertZurBuchung(f, { ofp_origin_icao: "EDDF", ofp_destination_icao: "OMDB" })).toBe(false);
+    expect(previewGehoertZurBuchung(f, { ofp_origin_icao: "VABB", ofp_destination_icao: "VIDP" })).toBe(false);
+    expect(previewGehoertZurBuchung(f, null)).toBe(false);
+  });
+});
+

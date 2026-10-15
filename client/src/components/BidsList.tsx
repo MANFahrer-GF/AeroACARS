@@ -186,6 +186,21 @@ function formatEpochHm(epochSec: number): string {
 
 /** Countdown direkt aus einem Unix-Epoch — exakter als `stdCountdown`s
  *  HH:MM-Naeherung (kein 24h-Nachbar-Raten noetig). */
+/** Gehört das OFP-Preview zu dieser Buchung? Start und Ziel müssen passen
+ *  (leere Angaben zählen nicht als Widerspruch) — dieselben Felder wie die
+ *  `ofpMismatch`-Prüfung der Hauptkarte. */
+export function previewGehoertZurBuchung(
+  flight: { dpt_airport_id: string; arr_airport_id: string },
+  preview: { ofp_origin_icao?: string | null; ofp_destination_icao?: string | null } | null,
+): boolean {
+  if (!preview) return false;
+  const gleich = (a: string | null | undefined, b: string) => {
+    const x = a?.toUpperCase().trim() ?? "";
+    return !x || x === b.toUpperCase().trim();
+  };
+  return gleich(preview.ofp_origin_icao, flight.dpt_airport_id) && gleich(preview.ofp_destination_icao, flight.arr_airport_id);
+}
+
 /**
  * Abflug- und Ankunftszeit fürs Briefing samt Countdown (v2.0.20).
  *
@@ -1189,8 +1204,15 @@ export function BidsList({
                   const airlineLogo = f.airline?.logo?.trim() || null;
                   const monogram = airlineMonogram(f);
                   const aircraftType = f.simbrief?.subfleet?.type_ ?? preview?.aircraft_icao ?? undefined;
-                  // SimBrief zuerst, wie auf der Hauptkarte (`briefingZeiten`).
-                  const { dptTimeDisplay, arrTimeDisplay } = briefingZeiten(f, preview, Date.now());
+                  // SimBrief zuerst, wie auf der Hauptkarte (`briefingZeiten`) —
+                  // aber nur, wenn das OFP zu DIESER Buchung gehört (Start und
+                  // Ziel; die Hauptkarte prüft zusätzlich das Flugzeug, für das
+                  // hier keine Angabe vorliegt). Codex 2.0.20.
+                  const { dptTimeDisplay, arrTimeDisplay } = briefingZeiten(
+                    f,
+                    previewGehoertZurBuchung(f, preview) ? preview : null,
+                    Date.now(),
+                  );
 
                   return (
                     <li key={bid.id}>

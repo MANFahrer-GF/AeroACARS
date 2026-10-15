@@ -136,7 +136,13 @@ function TripCard({
   // Zahl der Positionsmeldungen steht nicht mehr hier — sie interessiert den
   // Piloten nicht (Thomas), geht aber weiter mit dem Flug an den Server und
   // steht im Diagnose-Log.
-  const mitPlan = !!z && hatPlan(z) && planPasst(z, jetzt);
+  // Nur wenn die Plan-Zeilen auch wirklich eine fette Zeile liefern — ein
+  // Teilplan ohne On-Block hätte sonst gar keine Hauptzahl (Codex 2.0.20).
+  const mitPlan =
+    !!z &&
+    hatPlan(z) &&
+    planPasst(z, jetzt) &&
+    (abflugSchaetzung(z, jetzt) != null || cockpitSchaetzung(z, info.landung_erwartet) != null);
   return (
     <div className="card">
       <div className="card__head">
@@ -217,7 +223,7 @@ function PlanZeitenZeilen({ info, jetzt }: { info: ActiveFlightInfo; jetzt: numb
       <div data-testid="planzeiten-cockpit">
         <Row label={t("flugzeiten.cockpit.off_block_plan")} value={uhrzeit(abflug.plan)} />
         <Row label={t("flugzeiten.cockpit.on_block_plan")} value={uhrzeit(z.plan_on_block)} />
-        {abflug.noch_min > 0 ? (
+        {abflug.gegen_plan_min <= 0 ? (
           <Row
             label={t("flugzeiten.cockpit.off_block_in")}
             value={t("flugzeiten.cockpit.min", { min: abflug.noch_min })}

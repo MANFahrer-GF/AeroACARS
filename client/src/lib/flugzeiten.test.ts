@@ -153,6 +153,14 @@ describe("Zeiten gegen Flugplan", () => {
   });
 });
 
+describe("planPasst mit Teilplan (Codex 2.0.20)", () => {
+  it("ohne Off-Block zählt die früheste vorhandene Planzeit", () => {
+    const nurOn: FlugZeiten = { plan_on_block: hm(15, 40) - 86400 };
+    expect(planPasst(nurOn, hm(14, 0))).toBe(false);
+    expect(planPasst({ plan_on_block: hm(15, 40) }, hm(14, 0))).toBe(true);
+  });
+});
+
 describe("abweichungTon — Farbe ja, Note nein (15.10.2026)", () => {
   it("bis 15 min ohne Farbe — wie Airlines pünktlich zählen", () => {
     for (const m of [0, 1, -1, 15, -15]) expect(abweichungTon(m)).toBeNull();

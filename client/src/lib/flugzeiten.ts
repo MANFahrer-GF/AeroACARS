@@ -76,9 +76,12 @@ export function planPasst(z: FlugZeiten, jetzt?: number | null): boolean {
     const i = ist(z, s);
     if (p != null && i != null) return Math.abs(i - p) <= grenze;
   }
-  const pOff = plan(z, "off_block");
+  // Noch keine Ist-Zeit: die früheste vorhandene Planzeit gegen jetzt —
+  // nicht nur der Off-Block. Ein Teilplan ohne Off-Block (nur On-Block aus
+  // einem OFP von gestern) galt sonst immer als passend (Codex 2.0.20).
+  const erste = SCHRITTE.map((s) => plan(z, s)).find((p) => p != null) ?? null;
   const j = zahl(jetzt);
-  if (pOff != null && j != null) return Math.abs(j - pOff) <= grenze;
+  if (erste != null && j != null) return Math.abs(j - erste) <= grenze;
   return true;
 }
 
