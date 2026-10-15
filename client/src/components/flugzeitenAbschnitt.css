@@ -191,6 +191,16 @@
   color: var(--text);
 }
 
+/* Farbe ja, Note nein (15.10.2026) — Regel in lib/flugzeiten.ts
+   (`abweichungTon`). Nie Rot. Die Rückfallwerte gelten in der Webapp
+   ausserhalb von .la-shell, wo die Farbnamen nicht gesetzt sind. */
+.flugzeiten__abw--spaet {
+  color: var(--sem-warn, #b7791f);
+}
+.flugzeiten__abw--frueh {
+  color: var(--sem-info, #2a5f8a);
+}
+
 .flugzeiten__kurz {
   display: none;
 }

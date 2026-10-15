@@ -2520,7 +2520,9 @@
     "countdown_days_one": "in {{count}} day",
     "countdown_days_other": "in {{count}} days",
     "overdue_days_one": "overdue by {{count}} day",
-    "overdue_days_other": "overdue by {{count}} days"
+    "overdue_days_other": "overdue by {{count}} days",
+    "ofp_off_block_vorbei_titel": "Your planned off-block ({{zeit}}) has already passed",
+    "ofp_off_block_vorbei_hinweis": "According to your SimBrief OFP. Generate a new OFP and the cockpit times will match — otherwise you are late from the very first minute."
   },
   "runway_v2": {
     "aufsetzzone_prefix": "TOUCHDOWN ZONE (TDZ)",
@@ -4123,7 +4125,6 @@
     "cockpit": {
       "on_block_plan": "On-block plan",
       "on_block_erwartet": "On-block expected",
-      "gegen_plan": "Vs. plan",
       "quelle": {
         "on_block": "actual",
         "aufsetzen": "landing + planned taxi time",
@@ -4136,12 +4137,17 @@
       "verloren": "{{min}} min lost since takeoff",
       "gehalten": "held since takeoff",
       "off_block_plan": "Off-block planned",
-      "off_block_erwartet": "Off-block expected",
-      "noch_bis_off_block": "{{min}} min to planned off-block",
-      "off_block_vorbei": "planned off-block has passed"
+      "off_block_in": "Off-block in",
+      "off_block_ueberfaellig": "Off-block overdue",
+      "min": "{{min}} min",
+      "on_block_ist": "On-block",
+      "plan_vom": "Plan from the OFP of {{wann}}"
     },
     "plan_passt_nicht": "The SimBrief plan does not fit this flight in time (more than 6 hours off). The times are therefore not compared.",
     "plan_passt_nicht_vom": "The SimBrief plan from the OFP of {{wann}} does not fit this flight in time (more than 6 hours off). The times are therefore not compared.",
-    "fuss_ofp_vom": "Plan from the OFP of {{wann}}."
+    "fuss_ofp_vom": "Plan from the OFP of {{wann}}.",
+    "band": {
+      "erwartet_kurz": "exp."
+    }
   }
 }

@@ -1,0 +1,137 @@
+/* Fahrplan-Band im Cockpit (15.10.2026) — siehe FahrplanBand.tsx. */
+
+.fahrplan-band {
+  --fb-rand: 80px;
+  margin-bottom: 9px;
+}
+
+.fahrplan-band__bahn {
+  position: relative;
+  height: 78px;
+  margin: 10px 0 8px;
+}
+
+/* Die Linie liegt bei 35–39 px; ihre Mitte (37 px) ist die Achse, auf der
+   Punkte und Flugzeug sitzen. Die festen Höhen darüber (13 + 14 + 4 px)
+   bringen den Punkt genau dorthin — unabhängig von Schrift und Zeilenhöhe
+   (Thomas 15.10.: „die Punkte passen nicht auf die Linie"). */
+.fahrplan-band__linie {
+  position: absolute;
+  left: var(--fb-rand);
+  right: var(--fb-rand);
+  top: 35px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.fahrplan-band__linie--geflogen {
+  right: auto;
+  background: var(--acc);
+}
+
+.fahrplan-band__station {
+  position: absolute;
+  top: 0;
+  width: 140px;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.fahrplan-band__name {
+  height: 13px;
+  font-size: 11px;
+  line-height: 13px;
+  color: var(--text-dim);
+}
+.fahrplan-band__plan {
+  height: 14px;
+  margin-bottom: 4px;
+  font-family: var(--font-acars);
+  font-size: 12px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-mono);
+  color: var(--text-dim);
+}
+.fahrplan-band__punkt {
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  margin: 0 auto;
+  border: 2px solid var(--acc);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.fahrplan-band__punkt--erreicht {
+  background: var(--acc);
+}
+.fahrplan-band__zeit {
+  margin-top: 5px;
+  font-family: var(--font-acars);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+.fahrplan-band__erw {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Farbe ja, Note nein — Regel `abweichungTon` in lib/flugzeiten.ts. Nie Rot. */
+.fahrplan-band__delta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.fahrplan-band__delta--spaet,
+.fahrplan-band__delta--frueh {
+  font-weight: var(--fw-bold);
+}
+.fahrplan-band__delta--spaet {
+  color: var(--sem-warn);
+}
+.fahrplan-band__delta--frueh {
+  color: var(--sem-info);
+}
+
+.fahrplan-band__flugzeug {
+  position: absolute;
+  top: 37px;
+  display: flex;
+  color: var(--acc);
+  transform: translate(-50%, -50%);
+}
+
+/* Schmale Fenster: weniger Rand, damit die Stationen nicht anstossen. */
+@media (max-width: 900px) {
+  .fahrplan-band {
+    --fb-rand: 62px;
+  }
+  .fahrplan-band__station {
+    width: 120px;
+  }
+}
+
+/* Trip-Uhr (InfoStrip.tsx, TripCard): Abweichung neben der fetten Uhrzeit
+   und die Fusszeile. Dieselbe Farbregel wie im Band. */
+.trip-uhr__delta {
+  font-size: 14px;
+  font-weight: var(--fw-regular, 400);
+  color: var(--text-dim);
+}
+.trip-uhr__delta--spaet,
+.trip-uhr__delta--frueh {
+  font-weight: var(--fw-bold);
+}
+.trip-uhr__delta--spaet {
+  color: var(--sem-warn);
+}
+.trip-uhr__delta--frueh {
+  color: var(--sem-info);
+}
+.trip-uhr__fuss {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}

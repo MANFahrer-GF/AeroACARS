@@ -20,6 +20,7 @@ import type {
   UiError,
 } from "../types";
 import { ManualFlightModal } from "./ManualFlightModal";
+import { PUENKTLICH_BIS_MIN } from "../lib/flugzeiten";
 
 /**
  * Maximum distance (in nautical miles) between the aircraft and the bid's
@@ -185,6 +186,38 @@ function formatEpochHm(epochSec: number): string {
 
 /** Countdown direkt aus einem Unix-Epoch — exakter als `stdCountdown`s
  *  HH:MM-Naeherung (kein 24h-Nachbar-Raten noetig). */
+/**
+ * Abflug- und Ankunftszeit fürs Briefing samt Countdown (v2.0.20).
+ *
+ * SimBrief zuerst (`preview`, `null` bei einem OFP für einen anderen Flug),
+ * phpVMS' `dpt_time`/`arr_time` nur ohne OFP. `ofpOffBlockVorbei`: Der
+ * Off-Block des eigenen OFP ist mehr als PUENKTLICH_BIS_MIN vorbei — schon
+ * beim Planen darauf achten, sonst ist man im Cockpit vom ersten Moment an
+ * „verspätet".
+ */
+export function briefingZeiten(
+  flight: { dpt_time?: string | null; arr_time?: string | null },
+  preview: { sched_out_epoch: number | null; sched_in_epoch: number | null } | null,
+  nowMs: number,
+) {
+  const sbOut = preview?.sched_out_epoch ?? null;
+  const sbIn = preview?.sched_in_epoch ?? null;
+  const dptTimeDisplay = sbOut != null ? formatEpochHm(sbOut) : (flight.dpt_time ?? null);
+  const arrTimeDisplay = sbIn != null ? formatEpochHm(sbIn) : (flight.arr_time ?? null);
+  const dptCountdown =
+    sbOut != null
+      ? epochCountdown(sbOut, nowMs)
+      : flight.dpt_time
+        ? stdCountdown(flight.dpt_time, nowMs)
+        : null;
+  const ofpOffBlockVorbei =
+    sbOut != null &&
+    dptCountdown != null &&
+    dptCountdown.overdue &&
+    (dptCountdown.crossesDay || dptCountdown.minutes > PUENKTLICH_BIS_MIN);
+  return { dptTimeDisplay, arrTimeDisplay, dptCountdown, ofpOffBlockVorbei };
+}
+
 function epochCountdown(
   epochSec: number,
   nowMs: number,
@@ -1156,8 +1189,8 @@ export function BidsList({
                   const airlineLogo = f.airline?.logo?.trim() || null;
                   const monogram = airlineMonogram(f);
                   const aircraftType = f.simbrief?.subfleet?.type_ ?? preview?.aircraft_icao ?? undefined;
-                  const dptTimeDisplay = f.dpt_time ?? (preview?.sched_out_epoch != null ? formatEpochHm(preview.sched_out_epoch) : null);
-                  const arrTimeDisplay = f.arr_time ?? (preview?.sched_in_epoch != null ? formatEpochHm(preview.sched_in_epoch) : null);
+                  // SimBrief zuerst, wie auf der Hauptkarte (`briefingZeiten`).
+                  const { dptTimeDisplay, arrTimeDisplay } = briefingZeiten(f, preview, Date.now());
 
                   return (
                     <li key={bid.id}>
@@ -1609,18 +1642,19 @@ function MainBidCard({
   const airlineName = flight.airline?.name ?? null;
   const airlineLogo = flight.airline?.logo?.trim() || null;
   const cruiseLevel = formatLevel(flight.level);
-  // Briefing-2a §8: STD/STA sind Pflichtfeld der Anzeige. phpVMS'
-  // flight.dpt_time/arr_time hat Prioritaet; fehlt es (viele Test-/manuell
-  // erstellte Buchungen haben kein Schedule-Feld gesetzt), faellt es auf
-  // SimBrief's <times><sched_out>/<sched_in> zurueck (verifiziert per
-  // Live-XML-Dump 2026-08-02) — erst wenn beides fehlt, "--:--".
-  const dptTimeDisplay = flight.dpt_time ?? (preview?.sched_out_epoch != null ? formatEpochHm(preview.sched_out_epoch) : null);
-  const arrTimeDisplay = flight.arr_time ?? (preview?.sched_in_epoch != null ? formatEpochHm(preview.sched_in_epoch) : null);
-  const dptCountdown = flight.dpt_time
-    ? stdCountdown(flight.dpt_time, nowMs)
-    : preview?.sched_out_epoch != null
-      ? epochCountdown(preview.sched_out_epoch, nowMs)
-      : null;
+  // Briefing-2a §8: STD/STA sind Pflichtfeld der Anzeige.
+  //
+  // v2.0.20 (Thomas 15.10.2026: „deutlichst die SimBrief-Zeit, weil das ist
+  // die Planung, die der Pilot macht"): SimBrief's <times><sched_out>/
+  // <sched_in> haben Vorrang — dieselben Zeiten, gegen die das Cockpit später
+  // vergleicht. phpVMS' flight.dpt_time/arr_time nur ohne OFP, und nicht bei
+  // einem OFP für einen anderen Flug (`ofpMismatch`). Erst wenn beides fehlt,
+  // "--:--".
+  const { dptTimeDisplay, arrTimeDisplay, dptCountdown, ofpOffBlockVorbei } = briefingZeiten(
+    flight,
+    ofpMismatch ? null : preview,
+    nowMs,
+  );
 
   return (
     <article className="bid-card bid-card--main">
@@ -1721,6 +1755,15 @@ function MainBidCard({
           <div className="bid-card__route-line2">{arrName}</div>
         </div>
       </div>
+
+      {ofpOffBlockVorbei && (
+        <div className="bid-card__ofp-mismatch" data-testid="ofp-off-block-vorbei">
+          <div className="bid-card__ofp-mismatch-text">
+            <strong>{t("bid_card.ofp_off_block_vorbei_titel", { zeit: `${dptTimeDisplay}z` })}</strong>
+            <span className="bid-card__ofp-mismatch-hint">{t("bid_card.ofp_off_block_vorbei_hinweis")}</span>
+          </div>
+        </div>
+      )}
 
       {/* Briefing-2a-Haertung: solange der (einzige) OFP-Preview-Fetch noch
           laeuft, einen echten Ladezustand zeigen statt der Rubriken mit

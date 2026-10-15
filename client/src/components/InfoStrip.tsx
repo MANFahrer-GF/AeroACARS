@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
 import {
   abflugSchaetzung,
+  abweichungTon,
   cockpitSchaetzung,
   datumUhrzeit,
   hatPlan,
-  minutenText,
   planPasst,
   uhrzeit,
 } from "../lib/flugzeiten";
+import { kurzMinuten, useJetztSek } from "./FahrplanBand";
+import "./fahrplanBand.css";
 
 interface Props {
   info: ActiveFlightInfo;
@@ -28,9 +30,9 @@ interface Props {
  *
  * Design notes:
  *   * Mono-numerics with tabular-nums so columns line up.
- *   * Gross weight / the Air-Data reference speed / (Trip has no single
- *     headline — see TripCard) get the bold "row--sum" treatment,
- *     matching the Weights/Air-Data cards' one dispatch-relevant figure.
+ *   * Gross weight / the Air-Data reference speed / the Trip card's time
+ *     against plan (elapsed time without a plan) get the bold "row--sum"
+ *     treatment, matching each card's one dispatch-relevant figure.
  */
 export function InfoStrip({ info, snapshot, elapsedMinutes }: Props) {
   return (
@@ -121,6 +123,14 @@ function TripCard({
   elapsedMinutes: number;
 }) {
   const { t, i18n } = useTranslation();
+  const jetzt = useJetztSek();
+  const z = info.flugzeiten;
+  // Mit passendem Plan trägt die fette Zeile die Zeit gegen Plan (Trip-Uhr,
+  // 15.10.2026); ohne Plan bleibt die verstrichene Zeit die Hauptzahl. Die
+  // Zahl der Positionsmeldungen steht nicht mehr hier — sie interessiert den
+  // Piloten nicht (Thomas), geht aber weiter mit dem Flug an den Server und
+  // steht im Diagnose-Log.
+  const mitPlan = !!z && hatPlan(z) && planPasst(z, jetzt);
   return (
     <div className="card">
       <div className="card__head">
@@ -130,16 +140,16 @@ function TripCard({
         <Row
           label={t("active_flight.elapsed")}
           value={fmtDuration(elapsedMinutes, i18n.language)}
+          sum={!mitPlan}
         />
         <Row
           label={t("active_flight.distance")}
           value={fmtDistance(info.distance_nm, i18n.language)}
         />
-        <Row label={t("active_flight.positions")} value={String(info.position_count)} sum />
         {/* Touch-and-go + go-around counters: hidden until they fire, so
-            a routine A→B keeps the Trip card at three rows. The moment
-            a T&G or GA happens the row appears and stays for the rest
-            of the flight as a quiet running tally. */}
+            a routine A→B keeps the Trip card short. The moment a T&G or GA
+            happens the row appears and stays for the rest of the flight as
+            a quiet running tally. */}
         {info.touch_and_go_count > 0 && (
           <Row
             label={t("active_flight.touch_and_go")}
@@ -149,54 +159,62 @@ function TripCard({
         {info.go_around_count > 0 && (
           <Row label={t("active_flight.go_around")} value={String(info.go_around_count)} />
         )}
-        <PlanZeitenZeilen info={info} />
+        <PlanZeitenZeilen info={info} jetzt={jetzt} />
       </div>
     </div>
   );
 }
 
-/** „Zeiten gegen Flugplan" live (13.10.2026): geplantes und erwartetes
- *  On-Block, keine Wertung. Nur mit SimBrief-Plan.
+/** Abweichung neben einer Uhrzeit — Farbe nach `abweichungTon`, nie Rot. */
+function Delta({ min }: { min: number }) {
+  const ton = abweichungTon(min);
+  return <span className={`trip-uhr__delta${ton ? ` trip-uhr__delta--${ton}` : ""}`}>{kurzMinuten(min)}</span>;
+}
+
+/** „Zeiten gegen Flugplan" live — die Trip-Uhr (15.10.2026).
  *
- *  Vor dem Abrollen (14.10.2026) dieselben drei Zeilen für den Off-Block —
- *  wer nach Plan fliegt, braucht am Gate die Abrollzeit. Passt der Plan
- *  nicht zum Flug (OFP von gestern), wird nicht verglichen. */
-function PlanZeitenZeilen({ info }: { info: ActiveFlightInfo }) {
+ *  Die fette Zeile ist die eine Zahl, die zählt: am Gate der Countdown bis
+ *  zum geplanten Off-Block (oder wie lange er überfällig ist), danach das
+ *  erwartete On-Block mit der Abweichung. Den Ablauf als Bild zeigt das
+ *  Fahrplan-Band darüber. Passt der Plan nicht zum Flug (OFP von gestern),
+ *  wird nicht verglichen. Keine Note. */
+function PlanZeitenZeilen({ info, jetzt }: { info: ActiveFlightInfo; jetzt: number }) {
   const { t } = useTranslation();
-  const [jetzt, setJetzt] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    const id = setInterval(() => setJetzt(Date.now() / 1000), 15_000);
-    return () => clearInterval(id);
-  }, []);
   const z = info.flugzeiten;
   if (!z || !hatPlan(z)) return null;
+  const fuss = (inhalt: ReactNode) => <div className="trip-uhr__fuss">{inhalt}</div>;
   if (!planPasst(z, jetzt)) {
     return (
       <div data-testid="planzeiten-cockpit">
-        <div className="row">
-          <span className="row__label">
-            {z.ofp_erstellt
-              ? t("flugzeiten.plan_passt_nicht_vom", { wann: datumUhrzeit(z.ofp_erstellt) })
-              : t("flugzeiten.plan_passt_nicht")}
-          </span>
-        </div>
+        {fuss(
+          z.ofp_erstellt
+            ? t("flugzeiten.plan_passt_nicht_vom", { wann: datumUhrzeit(z.ofp_erstellt) })
+            : t("flugzeiten.plan_passt_nicht"),
+        )}
       </div>
     );
   }
+  const planVom = z.ofp_erstellt ? t("flugzeiten.cockpit.plan_vom", { wann: datumUhrzeit(z.ofp_erstellt) }) : null;
   const abflug = abflugSchaetzung(z, jetzt);
   if (abflug) {
     return (
       <div data-testid="planzeiten-cockpit">
         <Row label={t("flugzeiten.cockpit.off_block_plan")} value={uhrzeit(abflug.plan)} />
-        <Row label={t("flugzeiten.cockpit.off_block_erwartet")} value={uhrzeit(abflug.erwartet)} />
-        <Row label={t("flugzeiten.cockpit.gegen_plan")} value={minutenText(abflug.gegen_plan_min)} sum />
-        <div className="row">
-          <span className="row__label">
-            {abflug.noch_min > 0
-              ? t("flugzeiten.cockpit.noch_bis_off_block", { min: abflug.noch_min })
-              : t("flugzeiten.cockpit.off_block_vorbei")}
-          </span>
-        </div>
+        <Row label={t("flugzeiten.cockpit.on_block_plan")} value={uhrzeit(z.plan_on_block)} />
+        {abflug.noch_min > 0 ? (
+          <Row
+            label={t("flugzeiten.cockpit.off_block_in")}
+            value={t("flugzeiten.cockpit.min", { min: abflug.noch_min })}
+            sum
+          />
+        ) : (
+          <Row
+            label={t("flugzeiten.cockpit.off_block_ueberfaellig")}
+            value={<Delta min={abflug.gegen_plan_min} />}
+            sum
+          />
+        )}
+        {planVom && fuss(planVom)}
       </div>
     );
   }
@@ -214,19 +232,26 @@ function PlanZeitenZeilen({ info }: { info: ActiveFlightInfo }) {
   return (
     <div data-testid="planzeiten-cockpit">
       <Row label={t("flugzeiten.cockpit.on_block_plan")} value={uhrzeit(z.plan_on_block)} />
-      <Row label={t("flugzeiten.cockpit.on_block_erwartet")} value={uhrzeit(s.erwartet)} />
-      <Row label={t("flugzeiten.cockpit.gegen_plan")} value={minutenText(s.gegen_plan_min)} sum />
-      <div className="row">
-        <span className="row__label">
+      <Row
+        label={s.quelle === "on_block" ? t("flugzeiten.cockpit.on_block_ist") : t("flugzeiten.cockpit.on_block_erwartet")}
+        value={
+          <>
+            {uhrzeit(s.erwartet)} <Delta min={s.gegen_plan_min} />
+          </>
+        }
+        sum
+      />
+      {fuss(
+        <>
+          {seitAbheben && <>{seitAbheben} · </>}
           {t(`flugzeiten.cockpit.quelle.${s.quelle}`)}
-          {seitAbheben && <> · {seitAbheben}</>}
-        </span>
-      </div>
+        </>,
+      )}
     </div>
   );
 }
 
-function Row({ label, value, sum }: { label: string; value: string; sum?: boolean }) {
+function Row({ label, value, sum }: { label: string; value: ReactNode; sum?: boolean }) {
   return (
     <div className={`row ${sum ? "row--sum" : ""}`}>
       <span className="row__label">{label}</span>

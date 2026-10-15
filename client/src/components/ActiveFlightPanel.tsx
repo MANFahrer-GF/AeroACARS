@@ -10,6 +10,7 @@ import { useConfirm } from "./ConfirmDialog";
 // TripCard, direkt darunter auf demselben Bildschirm) "nm" schreibt. Zwei
 // Schreibweisen derselben Einheit nebeneinander. Jetzt eine gemeinsame Quelle.
 import { InfoStrip, fmtDistance } from "./InfoStrip";
+import { FahrplanBand } from "./FahrplanBand";
 import { LiveTapes } from "./LiveTapes";
 import { LoadsheetMonitor } from "./LoadsheetMonitor";
 import { ManualFileDialog } from "./ManualFileDialog";
@@ -656,6 +657,11 @@ export function ActiveFlightPanel({
           elapsedMinutes={elapsedMinutes}
         />
       </div>
+
+      {/* Fahrplan-Band (15.10.2026): der Ablauf gegen den SimBrief-Plan als
+          Bild. Die Zahl, die zählt, steht fett in der Trip-Karte darunter.
+          Ohne passenden Plan erscheint das Band nicht. */}
+      <FahrplanBand info={info} />
 
       <div
         className="grid4"
