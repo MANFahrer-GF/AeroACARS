@@ -4147,7 +4147,9 @@
     "plan_passt_nicht_vom": "Der SimBrief-Plan aus dem OFP vom {{wann}} passt zeitlich nicht zu diesem Flug (mehr als 6 Stunden daneben). Die Zeiten werden deshalb nicht verglichen.",
     "fuss_ofp_vom": "Plan aus dem OFP vom {{wann}}.",
     "band": {
-      "erwartet_kurz": "erw."
+      "erwartet_kurz": "erw.",
+      "lokal": "Lokal",
+      "jetzt": "Jetzt"
     }
   }
 }

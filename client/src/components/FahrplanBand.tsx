@@ -39,6 +39,19 @@ export function useJetztSek(): number {
   return jetzt;
 }
 
+/** Ortszeit des Piloten (Zeitzone seines Rechners), „20:40" — Thomas
+ *  15.10.2026: „dann muss man nicht immer umrechnen". `zeitzone` nur für
+ *  Tests; im Betrieb gilt die des Rechners. */
+export function lokalzeit(sek: number | null | undefined, zeitzone?: string): string {
+  if (sek == null || !Number.isFinite(sek)) return "—";
+  return new Intl.DateTimeFormat("de-DE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: zeitzone,
+  }).format(new Date(sek * 1000));
+}
+
 /** „+16", „−4", „±0" — kurz, damit es unter den Stationen Platz hat. */
 export function kurzMinuten(min: number): string {
   if (min === 0) return "±0";
@@ -106,6 +119,9 @@ export function bandFortschritt(st: BandStation[], jetzt: number): number | null
     const b = st[i + 1]!;
     if (b.ist != null) continue;
     const von = a.ist ?? a.erwartet ?? a.plan;
+    // Ende des Abschnitts ist die Erwartung. Dauert etwa das Rollen länger
+    // als geplant, bleibt das Flugzeug am nächsten Punkt stehen, bis er
+    // tatsächlich erreicht ist — es läuft nie über einen offenen Punkt.
     const bis = b.erwartet ?? b.plan;
     if (von == null || bis == null || bis <= von) return i / n;
     const anteil = Math.min(1, Math.max(0, (jetzt - von) / (bis - von)));
@@ -127,9 +143,13 @@ function Flugzeug() {
   );
 }
 
-export function FahrplanBand({ info }: { info: ActiveFlightInfo }) {
+/** `jetzt`: dieselbe Uhrzeit wie die Trip-Karte (aus dem Panel) — sonst
+ *  könnten Band und Karte am geplanten Off-Block bis zu 15 s lang
+ *  Verschiedenes sagen. Ohne Angabe die eigene Uhr (Vorschau, Tests). */
+export function FahrplanBand({ info, jetzt: jetztVonAussen }: { info: ActiveFlightInfo; jetzt?: number }) {
   const { t } = useTranslation();
-  const jetzt = useJetztSek();
+  const eigeneUhr = useJetztSek();
+  const jetzt = jetztVonAussen ?? eigeneUhr;
   const z = info.flugzeiten;
   if (!z || !hatPlan(z) || !planPasst(z, jetzt)) return null;
   const stationen = bandStationen(z, info.landung_erwartet, jetzt);
@@ -138,6 +158,11 @@ export function FahrplanBand({ info }: { info: ActiveFlightInfo }) {
   const links = (p: number) => `calc(var(--fb-rand) + (100% - 2 * var(--fb-rand)) * ${p.toFixed(4)})`;
   return (
     <div className="card fahrplan-band" data-testid="fahrplan-band">
+      {/* Jetzt in UTC und in der Ortszeit des Piloten — der Versatz auf einen
+          Blick, ohne Umrechnen. */}
+      <div className="fahrplan-band__uhr" data-testid="band-uhr">
+        {t("flugzeiten.band.jetzt")} {uhrzeit(jetzt)} / {t("flugzeiten.band.lokal")} {lokalzeit(jetzt)}
+      </div>
       <div className="fahrplan-band__bahn">
         <div className="fahrplan-band__linie" />
         {fortschritt != null && fortschritt > 0 && (

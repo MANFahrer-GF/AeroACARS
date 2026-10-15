@@ -4147,7 +4147,9 @@
     "plan_passt_nicht_vom": "The SimBrief plan from the OFP of {{wann}} does not fit this flight in time (more than 6 hours off). The times are therefore not compared.",
     "fuss_ofp_vom": "Plan from the OFP of {{wann}}.",
     "band": {
-      "erwartet_kurz": "exp."
+      "erwartet_kurz": "exp.",
+      "lokal": "Local",
+      "jetzt": "Now"
     }
   }
 }

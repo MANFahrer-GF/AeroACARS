@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 import type { FlugZeiten } from "../lib/flugzeiten";
 import type { ActiveFlightInfo } from "../types";
-import { FahrplanBand, bandFortschritt, bandStationen, kurzMinuten } from "./FahrplanBand";
+import { FahrplanBand, bandFortschritt, bandStationen, kurzMinuten, lokalzeit } from "./FahrplanBand";
+import { InfoStrip } from "./InfoStrip";
 
 const T = Date.UTC(2026, 9, 15) / 1000;
 const hm = (h: number, m: number) => T + h * 3600 + m * 60;
@@ -91,5 +92,31 @@ describe("Fahrplan-Band — Rechnung", () => {
     expect(kurzMinuten(16)).toBe("+16");
     expect(kurzMinuten(-4)).toBe("−4");
     expect(kurzMinuten(0)).toBe("±0");
+  });
+});
+
+describe("Ortszeit des Piloten (15.10.2026)", () => {
+  it("lokalzeit rechnet in die Zeitzone des Rechners um", () => {
+    expect(lokalzeit(hm(18, 40), "Europe/Berlin")).toBe("20:40");
+    expect(lokalzeit(hm(18, 40), "America/New_York")).toBe("14:40");
+    expect(lokalzeit(null)).toBe("—");
+  });
+
+  it("das Band zeigt jetzt in UTC und Ortszeit", () => {
+    const { getByTestId } = band({ ...PLAN, off_block: hm(17, 12) }, hm(18, 40));
+    const text = getByTestId("band-uhr").textContent ?? "";
+    expect(text).toContain("Jetzt 18:40z");
+    expect(text).toContain(`Lokal ${lokalzeit(hm(18, 40))}`);
+  });
+
+  it("die Trip-Uhr nennt die Hauptzeit auch in Ortszeit — mit Plan, nicht ohne", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(hm(18, 40) * 1000);
+    const mit = { flugzeiten: { ...PLAN, off_block: hm(17, 12), abheben: hm(17, 31) }, landung_erwartet: hm(19, 53), touch_and_go_count: 0, go_around_count: 0, distance_nm: 0 } as unknown as ActiveFlightInfo;
+    const a = render(<InfoStrip info={mit} snapshot={null} elapsedMinutes={0} />);
+    expect(a.getByTestId("trip-uhr-lokal").textContent).toBe(`Lokal ${lokalzeit(hm(20, 1))}`);
+    a.unmount();
+    const ohne = { flugzeiten: null, touch_and_go_count: 0, go_around_count: 0, distance_nm: 0 } as unknown as ActiveFlightInfo;
+    expect(render(<InfoStrip info={ohne} snapshot={null} elapsedMinutes={0} />).queryByTestId("trip-uhr-lokal")).toBeNull();
   });
 });

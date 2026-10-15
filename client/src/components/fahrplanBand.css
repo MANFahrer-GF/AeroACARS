@@ -8,7 +8,7 @@
 .fahrplan-band__bahn {
   position: relative;
   height: 78px;
-  margin: 10px 0 8px;
+  margin: 2px 0 8px;
 }
 
 /* Die Linie liegt bei 35–39 px; ihre Mitte (37 px) ist die Achse, auf der
@@ -102,15 +102,10 @@
   transform: translate(-50%, -50%);
 }
 
-/* Schmale Fenster: weniger Rand, damit die Stationen nicht anstossen. */
-@media (max-width: 900px) {
-  .fahrplan-band {
-    --fb-rand: 62px;
-  }
-  .fahrplan-band__station {
-    width: 120px;
-  }
-}
+/* Kein schmalerer Rand für kleine Fenster: Die äusseren Stationen brauchen
+   die halbe Breite ihres längsten Texts („erw. 10:59z +22", ~130 px) als
+   Rand, sonst stösst die Abweichung an die Karte. Bis Tablet-Breite (768 px)
+   bleibt zwischen den Stationen genug Platz. */
 
 /* Trip-Uhr (InfoStrip.tsx, TripCard): Abweichung neben der fetten Uhrzeit
    und die Fusszeile. Dieselbe Farbregel wie im Band. */
@@ -133,5 +128,25 @@
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.45;
+  color: var(--text-dim);
+}
+
+/* UTC und Ortszeit des Piloten (15.10.2026) */
+.fahrplan-band__uhr {
+  padding: 6px 10px 0;
+  text-align: right;
+  font-family: var(--font-acars);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-mono);
+  color: var(--text-dim);
+}
+.trip-uhr__lokal {
+  margin-top: 2px;
+  text-align: right;
+  font-family: var(--font-acars);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-mono);
   color: var(--text-dim);
 }

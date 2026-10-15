@@ -10,11 +10,14 @@ import {
   planPasst,
   uhrzeit,
 } from "../lib/flugzeiten";
-import { kurzMinuten, useJetztSek } from "./FahrplanBand";
+import { kurzMinuten, lokalzeit, useJetztSek } from "./FahrplanBand";
 import "./fahrplanBand.css";
 
 interface Props {
   info: ActiveFlightInfo;
+  /** Uhrzeit (Unix-s) für die Zeiten gegen Plan — dieselbe wie im
+   *  Fahrplan-Band. Ohne Angabe die eigene Uhr. */
+  jetzt?: number;
   snapshot: SimSnapshot | null;
   /** Elapsed minutes since flight start — passed in so the parent
    *  ticking already drives this without a duplicate timer here. */
@@ -34,12 +37,12 @@ interface Props {
  *     against plan (elapsed time without a plan) get the bold "row--sum"
  *     treatment, matching each card's one dispatch-relevant figure.
  */
-export function InfoStrip({ info, snapshot, elapsedMinutes }: Props) {
+export function InfoStrip({ info, snapshot, elapsedMinutes, jetzt }: Props) {
   return (
     <>
       <WeightsCard snapshot={snapshot} />
       <AirDataCard snapshot={snapshot} />
-      <TripCard info={info} elapsedMinutes={elapsedMinutes} />
+      <TripCard info={info} elapsedMinutes={elapsedMinutes} jetzt={jetzt} />
     </>
   );
 }
@@ -118,12 +121,15 @@ function AirDataCard({ snapshot }: { snapshot: SimSnapshot | null }) {
 function TripCard({
   info,
   elapsedMinutes,
+  jetzt: jetztVonAussen,
 }: {
   info: ActiveFlightInfo;
   elapsedMinutes: number;
+  jetzt?: number;
 }) {
   const { t, i18n } = useTranslation();
-  const jetzt = useJetztSek();
+  const eigeneUhr = useJetztSek();
+  const jetzt = jetztVonAussen ?? eigeneUhr;
   const z = info.flugzeiten;
   // Mit passendem Plan trägt die fette Zeile die Zeit gegen Plan (Trip-Uhr,
   // 15.10.2026); ohne Plan bleibt die verstrichene Zeit die Hauptzahl. Die
@@ -161,6 +167,16 @@ function TripCard({
         )}
         <PlanZeitenZeilen info={info} jetzt={jetzt} />
       </div>
+    </div>
+  );
+}
+
+/** Eine Uhrzeit zusätzlich in der Ortszeit des Piloten (15.10.2026). */
+function Lokal({ sek }: { sek: number }) {
+  const { t } = useTranslation();
+  return (
+    <div className="trip-uhr__lokal" data-testid="trip-uhr-lokal">
+      {t("flugzeiten.band.lokal")} {lokalzeit(sek)}
     </div>
   );
 }
@@ -214,6 +230,7 @@ function PlanZeitenZeilen({ info, jetzt }: { info: ActiveFlightInfo; jetzt: numb
             sum
           />
         )}
+        <Lokal sek={abflug.plan} />
         {planVom && fuss(planVom)}
       </div>
     );
@@ -241,6 +258,7 @@ function PlanZeitenZeilen({ info, jetzt }: { info: ActiveFlightInfo; jetzt: numb
         }
         sum
       />
+      <Lokal sek={s.erwartet} />
       {fuss(
         <>
           {seitAbheben && <>{seitAbheben} · </>}

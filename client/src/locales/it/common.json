@@ -4147,7 +4147,9 @@
     "plan_passt_nicht_vom": "Il piano SimBrief dell’OFP del {{wann}} non corrisponde a questo volo come orario (oltre 6 ore di scarto). Gli orari quindi non vengono confrontati.",
     "fuss_ofp_vom": "Piano dall’OFP del {{wann}}.",
     "band": {
-      "erwartet_kurz": "stim."
+      "erwartet_kurz": "stim.",
+      "lokal": "Locale",
+      "jetzt": "Ora"
     }
   }
 }

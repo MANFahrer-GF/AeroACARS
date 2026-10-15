@@ -10,7 +10,7 @@ import { useConfirm } from "./ConfirmDialog";
 // TripCard, direkt darunter auf demselben Bildschirm) "nm" schreibt. Zwei
 // Schreibweisen derselben Einheit nebeneinander. Jetzt eine gemeinsame Quelle.
 import { InfoStrip, fmtDistance } from "./InfoStrip";
-import { FahrplanBand } from "./FahrplanBand";
+import { FahrplanBand, useJetztSek } from "./FahrplanBand";
 import { LiveTapes } from "./LiveTapes";
 import { LoadsheetMonitor } from "./LoadsheetMonitor";
 import { ManualFileDialog } from "./ManualFileDialog";
@@ -185,6 +185,9 @@ export function ActiveFlightPanel({
     };
   }, [info?.dpt_airport, info?.arr_airport]);
 
+  // Eine Uhr für Fahrplan-Band und Trip-Karte (Zeiten gegen Plan) — vor dem
+  // frühen Rücksprung, weil Hooks immer in derselben Reihenfolge laufen.
+  const planUhr = useJetztSek();
   if (!info) return null;
 
   /**
@@ -661,7 +664,7 @@ export function ActiveFlightPanel({
       {/* Fahrplan-Band (15.10.2026): der Ablauf gegen den SimBrief-Plan als
           Bild. Die Zahl, die zählt, steht fett in der Trip-Karte darunter.
           Ohne passenden Plan erscheint das Band nicht. */}
-      <FahrplanBand info={info} />
+      <FahrplanBand info={info} jetzt={planUhr} />
 
       <div
         className="grid4"
@@ -671,6 +674,7 @@ export function ActiveFlightPanel({
           info={info}
           snapshot={simSnapshot ?? null}
           elapsedMinutes={elapsedMinutes}
+          jetzt={planUhr}
         />
         {/* v0.3.0: Loadsheet als 4. Karte in derselben grid4-Reihe —
             gehört zum aktiven Flug, deshalb im selben Container.
