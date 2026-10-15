@@ -12703,18 +12703,6 @@ pub(crate) fn log_activity_handle(
     log_activity_mit_meldung(app, level, message.into(), detail, true);
 }
 
-/// Wie `log_activity_handle`, aber ohne GlitchTip-Meldung — fuer Ereignisse
-/// im Flugzeug (Cockpit-Lampen), die der Pilot sehen soll, die aber kein
-/// Fehler der Software sind. Log-Durchsicht 26.09.2026: eine blinkende
-/// Fenix-MASTER-WARNING erzeugte ~530 Error-Ereignisse in GlitchTip.
-pub(crate) fn log_activity_ohne_meldung(
-    app: &AppHandle,
-    level: ActivityLevel,
-    message: impl Into<String>,
-    detail: Option<String>,
-) {
-    log_activity_mit_meldung(app, level, message.into(), detail, false);
-}
 
 fn log_activity_mit_meldung(
     app: &AppHandle,
@@ -37970,6 +37958,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // zweite Auswertung starten, während die erste noch
                     // gestaute Messwerte in denselben Puffer schreibt.
                     flug_aktivitaet::messfaden_vorrang();
+                    flug_aktivitaet::messfaden_vorrang_windows();
                     aufsetz_messen(
                         &flight_m,
                         meine_generation,
@@ -55541,12 +55530,70 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     ))
 }
 
+/// Protokollzeilen, die erst geschrieben werden, wenn der Wert aufgeräumt
+/// wird — gedacht für Funktionen, die `flight.stats` halten (siehe
+/// `detect_telemetry_changes`). Reihenfolge bleibt erhalten.
+struct AufgeschobeneMeldungen<'a> {
+    app: &'a AppHandle,
+    meldungen: Vec<(ActivityLevel, String, Option<String>, bool)>,
+}
+
+impl<'a> AufgeschobeneMeldungen<'a> {
+    fn neu(app: &'a AppHandle) -> Self {
+        Self {
+            app,
+            meldungen: Vec::new(),
+        }
+    }
+
+    /// Wie `log_activity_handle`, nur später.
+    fn handle(
+        &mut self,
+        _app: &AppHandle,
+        level: ActivityLevel,
+        message: impl Into<String>,
+        detail: Option<String>,
+    ) {
+        self.meldungen.push((level, message.into(), detail, true));
+    }
+
+    /// Ohne GlitchTip-Meldung — fuer Ereignisse im Flugzeug (Cockpit-Lampen),
+    /// die der Pilot sehen soll, die aber kein Fehler der Software sind.
+    /// Log-Durchsicht 26.09.2026: eine blinkende Fenix-MASTER-WARNING
+    /// erzeugte ~530 Error-Ereignisse in GlitchTip. (Bis 2.0.18 die freie
+    /// Funktion `log_activity_ohne_meldung`; sie hatte nur diese Nutzer.)
+    fn ohne_meldung(
+        &mut self,
+        _app: &AppHandle,
+        level: ActivityLevel,
+        message: impl Into<String>,
+        detail: Option<String>,
+    ) {
+        self.meldungen.push((level, message.into(), detail, false));
+    }
+}
+
+impl Drop for AufgeschobeneMeldungen<'_> {
+    fn drop(&mut self) {
+        for (level, message, detail, an_glitchtip) in self.meldungen.drain(..) {
+            log_activity_mit_meldung(self.app, level, message, detail, an_glitchtip);
+        }
+    }
+}
+
 /// Diff cockpit knob state against the last-logged values and emit one
 /// activity-feed entry per real change. Called from the streamer loop on
 /// every tick. The first call (after a fresh `flight_start` / `flight_adopt`)
 /// also logs the aircraft + simulator identity, so the log opens with a
 /// "Aircraft: …" line like smartcars does.
 fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
+    // v2.0.18 → 2.0.19: Protokollzeilen erst NACH dem Freigeben der
+    // Flugdaten schreiben. Jede Zeile kopierte unter der Sperre das ganze
+    // Aktivitätsprotokoll (bis 1000 Einträge); der Wächter meldete 24 ms
+    // bei Michel, als im Steigflug eine Abriss-Warnung geschrieben wurde
+    // (14.10.2026). `aufgeschoben` ist VOR `stats` angelegt und wird deshalb
+    // NACH ihm aufgeräumt — auch bei jedem vorzeitigen `return`.
+    let mut aufgeschoben = AufgeschobeneMeldungen::neu(app);
     let mut stats = flight.stats.lock().expect("flight stats");
 
     // ---- Aircraft + sim banner — first tick only.
@@ -55615,7 +55662,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         } else {
             snap.aircraft_profile.label().to_string()
         };
-        log_activity_handle(
+        aufgeschoben.handle(
             app,
             ActivityLevel::Info,
             format!("Aircraft: {title}"),
@@ -55638,7 +55685,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             } else {
                 snap.aircraft_profile.label().to_string()
             };
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Info,
                 format!("Aircraft profile changed: {}", label),
@@ -55661,7 +55708,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if is_plausible && stats.last_logged_squawk != Some(sq) {
             // Don't spam on the first tick if the value is the boring 1200/7000.
             if !first_tick || (sq != 1200 && sq != 7000) {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("Squawk set to {:04}", sq),
@@ -55685,7 +55732,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             // Skip first tick on a "boring" STBY/OFF value to avoid noise
             // when the pilot loads cold-and-dark.
             if !first_tick || !matches!(mode.as_str(), "STBY" | "OFF" | "ALT-OFF" | "GND") {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("XPDR mode: {}", mode),
@@ -55736,7 +55783,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     2 => "ON",
                     _ => return,
                 };
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("Strobe lights {label}"),
@@ -55798,13 +55845,13 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             for (name, old, new) in changes {
                 if old != new {
                     match flicker_verdict(&mut stats.light_flicker, name, Utc::now()) {
-                        FlickerVerdict::Log => log_activity_handle(
+                        FlickerVerdict::Log => aufgeschoben.handle(
                             app,
                             ActivityLevel::Info,
                             format!("{name} lights {}", if new { "ON" } else { "OFF" }),
                             None,
                         ),
-                        FlickerVerdict::AnnounceFlashing => log_activity_handle(
+                        FlickerVerdict::AnnounceFlashing => aufgeschoben.handle(
                             app,
                             ActivityLevel::Info,
                             format!("{name} lights: Blinkmodus"),
@@ -55838,7 +55885,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 } else if let Some(since) = stats.pending_ap_master_since {
                     // Same state held for AP_DEBOUNCE_SECS → publish.
                     if (now - since).num_seconds() >= AP_DEBOUNCE_SECS {
-                        log_activity_handle(
+                        aufgeschoben.handle(
                             app,
                             ActivityLevel::Info,
                             format!("Autopilot {}", if ap.master { "ENGAGED" } else { "OFF" }),
@@ -55865,7 +55912,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             ];
             for (name, old, new) in modes {
                 if old != new {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("AP {name} {}", if new { "ARMED" } else { "OFF" }),
@@ -55905,7 +55952,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     // First observation latches silently (no entry on
                     // the initial state, only on transitions).
                     if stats.last_logged_autothrottle.is_some() {
-                        log_activity_handle(
+                        aufgeschoben.handle(
                             app,
                             ActivityLevel::Info,
                             format!(
@@ -55941,7 +55988,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     // ---- Parking brake
     if stats.last_logged_parking_brake != Some(snap.parking_brake) {
         if stats.last_logged_parking_brake.is_some() {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Info,
                 format!(
@@ -55972,14 +56019,14 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             if (now - since).num_seconds() >= 5 {
                 if let Some(prev) = stats.last_logged_engines_running {
                     if prev < snap.engines_running {
-                        log_activity_handle(
+                        aufgeschoben.handle(
                             app,
                             ActivityLevel::Info,
                             format!("Engine started — {} running", snap.engines_running),
                             None,
                         );
                     } else if prev > snap.engines_running {
-                        log_activity_handle(
+                        aufgeschoben.handle(
                             app,
                             ActivityLevel::Info,
                             format!("Engine shutdown — {} running", snap.engines_running),
@@ -56026,7 +56073,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 } else {
                     "↑"
                 };
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("Flaps {dir} {}", label),
@@ -56082,7 +56129,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                         Some(_) => "↑",
                         None => "↓",
                     };
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("Flaps {dir} {}", label),
@@ -56104,7 +56151,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     // ---- Stall / overspeed warnings (always loud)
     if stats.last_logged_stall != Some(snap.stall_warning) {
         if snap.stall_warning {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Warn,
                 "Stall warning".to_string(),
@@ -56118,7 +56165,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     }
     if stats.last_logged_overspeed != Some(snap.overspeed_warning) {
         if snap.overspeed_warning {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Warn,
                 "Overspeed warning".to_string(),
@@ -56134,7 +56181,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if stats.last_logged_gear_down != Some(gear_down) {
         if let Some(prev) = stats.last_logged_gear_down {
             if prev != gear_down {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("Gear {}", if gear_down { "DOWN" } else { "UP" }),
@@ -56156,7 +56203,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if stats.last_logged_spoilers_armed != Some(armed) {
             if let Some(prev) = stats.last_logged_spoilers_armed {
                 if prev != armed {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("Speed brake {}", if armed { "ARMED" } else { "DISARMED" }),
@@ -56172,7 +56219,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if stats.last_logged_spoilers_deployed != Some(deployed) {
             if let Some(prev) = stats.last_logged_spoilers_deployed {
                 if prev != deployed {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!(
@@ -56199,7 +56246,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if stats.last_logged_apu_running != Some(running) {
             if let Some(prev) = stats.last_logged_apu_running {
                 if prev != running {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("APU {}", if running { "started" } else { "shutdown" }),
@@ -56255,7 +56302,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     1 => "AUTO",
                     _ => "ON",
                 };
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("Seat belts {label}"),
@@ -56277,7 +56324,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if stats.last_logged_autobrake.as_ref() != Some(ab) {
             if let Some(prev) = stats.last_logged_autobrake.as_ref() {
                 if prev != ab {
-                    log_activity_handle(app, ActivityLevel::Info, format!("Autobrake {ab}"), None);
+                    aufgeschoben.handle(app, ActivityLevel::Info, format!("Autobrake {ab}"), None);
                 }
             }
             stats.last_logged_autobrake = Some(ab.clone());
@@ -56307,7 +56354,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // Once-per-flight: aircraft identification banner.
         if !stats.pmdg_detected_logged {
             stats.pmdg_detected_logged = true;
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Info,
                 format!("{} — PMDG SDK aktiv", p.variant_label),
@@ -56323,7 +56370,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 (p.fmc_v1_kt, p.fmc_vr_kt, p.fmc_v2_kt, p.fmc_vref_kt)
             {
                 stats.pmdg_v_speeds_logged = true;
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("V-Speeds gesetzt: V1 {v1} · VR {vr} · V2 {v2} · VREF {vref}"),
@@ -56339,7 +56386,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if stats.last_logged_pmdg_fma.as_deref() != Some(fma_combined.as_str()) {
             if let Some(prev) = stats.last_logged_pmdg_fma.as_deref() {
                 if prev != fma_combined {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("FMA: {fma_combined}"),
@@ -56366,7 +56413,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     } else {
                         format!("M {spd:.2}")
                     };
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("MCP IAS: {display}"),
@@ -56381,7 +56428,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if let Some(hdg) = p.mcp_heading_deg {
             if stats.last_logged_pmdg_mcp_heading != Some(hdg) {
                 if stats.last_logged_pmdg_mcp_heading.is_some() {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("MCP HDG: {hdg:03}°"),
@@ -56402,7 +56449,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             };
             if significant && last != Some(alt) {
                 if last.is_some() {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("MCP ALT: {alt} ft"),
@@ -56422,7 +56469,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             };
             if significant && last != Some(vs) {
                 if last.is_some() {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("MCP V/S: {vs:+} fpm"),
@@ -56436,7 +56483,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // A/T armed.
         if stats.last_logged_pmdg_at_armed != Some(p.at_armed) {
             if stats.last_logged_pmdg_at_armed.is_some() {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("A/T {}", if p.at_armed { "armed" } else { "disarmed" }),
@@ -56449,7 +56496,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // A/P engaged (CMD A or B).
         if stats.last_logged_pmdg_ap_engaged != Some(p.ap_engaged) {
             if stats.last_logged_pmdg_ap_engaged.is_some() {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!(
@@ -56480,7 +56527,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             && stats.last_logged_pmdg_thrust_mode.as_deref() != Some(p.thrust_limit_mode.as_str())
         {
             if stats.last_logged_pmdg_thrust_mode.is_some() {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     format!("Thrust mode: {}", p.thrust_limit_mode),
@@ -56517,7 +56564,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                         9 => "Secure",
                         _ => continue,
                     };
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("ECL: {label} complete"),
@@ -56534,7 +56581,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if let Some(apu) = p.apu_running {
             if stats.last_logged_pmdg_apu != Some(apu) {
                 if stats.last_logged_pmdg_apu.is_some() {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("APU {} (PMDG)", if apu { "started" } else { "shutdown" }),
@@ -56549,7 +56596,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if let Some(chocks) = p.wheel_chocks_set {
             if stats.last_logged_pmdg_chocks != Some(chocks) {
                 if stats.last_logged_pmdg_chocks.is_some() {
-                    log_activity_handle(
+                    aufgeschoben.handle(
                         app,
                         ActivityLevel::Info,
                         format!("Chocks {}", if chocks { "ON" } else { "OFF" }),
@@ -56570,7 +56617,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(to_warn) = snap.takeoff_config_warning {
         if stats.last_logged_pmdg_to_warning != Some(to_warn) {
             if to_warn {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Warn,
                     "TAKEOFF CONFIG warning".to_string(),
@@ -56619,7 +56666,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 .premium_fma
                 .update(line.clone(), now, PREMIUM_FMA_DEBOUNCE_SECS)
             {
-                log_activity_handle(app, ActivityLevel::Info, format!("FMA: {line}"), None);
+                aufgeschoben.handle(app, ActivityLevel::Info, format!("FMA: {line}"), None);
             }
         }
     }
@@ -56643,7 +56690,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             );
             if stats.last_logged_vspeeds != Some(key) {
                 stats.last_logged_vspeeds = Some(key);
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     fmt_vspeeds_line(v1, vr, v2, snap.flex_temp_c, snap.thrust_gate.as_deref()),
@@ -56679,7 +56726,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 now,
                 APPROACH_SPEEDS_DEBOUNCE_SECS,
             ) {
-                log_activity_handle(app, ActivityLevel::Info, line, None);
+                aufgeschoben.handle(app, ActivityLevel::Info, line, None);
             }
         }
     }
@@ -56698,9 +56745,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .update(mc, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
         {
             if mc {
-                log_activity_ohne_meldung(app, ActivityLevel::Warn, "MASTER CAUTION", None);
+                aufgeschoben.ohne_meldung(app, ActivityLevel::Warn, "MASTER CAUTION", None);
             } else {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     "MASTER CAUTION aus".to_string(),
@@ -56715,9 +56762,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .update(mw, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
         {
             if mw {
-                log_activity_ohne_meldung(app, ActivityLevel::Error, "🔴 MASTER WARNING", None);
+                aufgeschoben.ohne_meldung(app, ActivityLevel::Error, "🔴 MASTER WARNING", None);
             } else {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     "MASTER WARNING aus".to_string(),
@@ -56752,7 +56799,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             last_seen_reverser,
             reverser_logged_this_landing,
         ) {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Info,
                 "Umkehrschub aktiviert".to_string(),
@@ -56766,7 +56813,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             last_seen_ground_spoilers,
             ground_spoilers_logged_this_landing,
         ) {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Info,
                 "Ground Spoiler ausgefahren".to_string(),
@@ -56780,7 +56827,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(std_set) = snap.baro_std {
         if stats.last_logged_baro_std != Some(std_set) {
             if stats.last_logged_baro_std.is_some() {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Info,
                     if std_set {
@@ -56812,7 +56859,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             now,
             AIRCRAFT_PHASE_DEBOUNCE_SECS,
         ) {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Info,
                 format!("FWC: {phase_label}"),
@@ -56846,7 +56893,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             below_gs_logged_this_approach,
             below_gs_clear_since,
         ) {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Warn,
                 "Below Glideslope".to_string(),
@@ -56860,7 +56907,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(cab) = snap.cabin_altitude_warning {
         if stats.last_logged_cabin_alt_warning != Some(cab) {
             if stats.last_logged_cabin_alt_warning.is_some() && cab {
-                log_activity_handle(
+                aufgeschoben.handle(
                     app,
                     ActivityLevel::Error,
                     "🔴 Kabinenhöhe-Warnung".to_string(),
@@ -56879,7 +56926,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .update(oot, now, STAB_TRIM_DEBOUNCE_SECS)
             && oot
         {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Warn,
                 "Stabilizer out of trim".to_string(),
@@ -56896,7 +56943,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .premium_thrust_gate
             .update(gate.clone(), now, THRUST_GATE_DEBOUNCE_SECS)
         {
-            log_activity_handle(
+            aufgeschoben.handle(
                 app,
                 ActivityLevel::Info,
                 format!("Schubhebel: {gate}"),
@@ -85722,6 +85769,40 @@ mod ofp_planzeiten_tests {
 
 #[cfg(test)]
 mod landung_speichern_sperre_tests {
+    /// ⚠ Die Schalter-Auswertung schreibt ihr Protokoll erst nach dem
+    /// Freigeben der Flugdaten (v2.0.19).
+    ///
+    /// Rust raeumt lokale Werte in umgekehrter Reihenfolge auf: Nur wenn
+    /// `aufgeschoben` VOR `stats` angelegt ist, wird die Sperre zuerst frei
+    /// und danach geschrieben — auch bei jedem vorzeitigen `return`. Und kein
+    /// Protokollaufruf darf an `aufgeschoben` vorbei direkt schreiben.
+    #[test]
+    fn die_schalter_auswertung_schreibt_nach_dem_freigeben() {
+        let src = include_str!("lib.rs");
+        let start = src
+            .find("\nfn detect_telemetry_changes(")
+            .expect("Funktion nicht gefunden — Test anpassen, nicht löschen");
+        let rumpf = &src[start..];
+        let rumpf = &rumpf[..rumpf[1..].find("\n}\n").map_or(rumpf.len(), |i| i + 1)];
+        let puffer = rumpf
+            .find("let mut aufgeschoben = AufgeschobeneMeldungen::neu(app);")
+            .expect("kein Puffer mehr");
+        let sperre = rumpf.find("flight.stats.lock()").expect("keine Sperre");
+        assert!(puffer < sperre, "der Puffer wird nach der Sperre angelegt und vor ihr aufgeraeumt");
+        let code: String = rumpf
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for direkt in ["log_activity_handle(", "log_activity_mit_meldung(", "log_activity("] {
+            assert!(
+                !code.contains(direkt),
+                "{direkt} schreibt unter der Flugdaten-Sperre — über `aufgeschoben` gehen"
+            );
+        }
+        assert!(code.matches("aufgeschoben.handle(").count() >= 40, "Vorrichtung: Aufrufe nicht gefunden");
+    }
+
     /// ⚠ Die Landungs-Historie wird NACH dem Freigeben der Flugdaten
     /// geschrieben (v2.0.18).
     ///

@@ -67,8 +67,9 @@ impl Drop for FlugAktivitaet {
 ///
 /// macOS: Dienstgüte `USER_INTERACTIVE`, dieselbe Stufe wie die Bedienung
 /// selbst; das System plant den Faden auch dann zuerst ein, wenn AeroACARS
-/// hinter dem Simulator liegt. Andere Systeme: unverändert (der eigene Faden
-/// allein löst schon die Abhängigkeit vom gemeinsamen Pool).
+/// hinter dem Simulator liegt. Gilt für Mess- und Auswertefaden.
+///
+/// Windows: siehe [`messfaden_vorrang_windows`] — nur für den Messfaden.
 pub fn messfaden_vorrang() {
     #[cfg(target_os = "macos")]
     {
@@ -78,6 +79,36 @@ pub fn messfaden_vorrang() {
         };
         if rc != 0 {
             tracing::warn!(rc, "Dienstgüte für den Messfaden nicht gesetzt");
+        }
+    }
+}
+
+/// Windows: den MESSFADEN mit höchster Priorität einplanen (v2.0.19).
+///
+/// Anlass: Auf Rechnern am Limit kam der Messfaden im Ausrollen 40 bis 66 ms
+/// zu spät dran, ohne dass AeroACARS etwas festhielt (Joel MDPC→MUVR mit
+/// 2.0.18, Hamadoun CYUL→CYHZ und VHHH→FAOR, 14.10.2026, 3 bis 28 fps). Der
+/// Mac hatte den Vorrang seit 2.0.10, Windows nicht.
+///
+/// `TIME_CRITICAL` ist hier vertretbar, weil der Faden je Takt rund 1 ms
+/// arbeitet und dazwischen 20 ms schläft — der Schlaf ist die Bremse, MSFS
+/// verliert praktisch nichts. ⚠ Deshalb NUR für `aufsetz_messen`, nie für
+/// den Auswertefaden: der rechnet nach dem Aufsetzen auch Schweres.
+/// Andere Systeme: nichts (macOS siehe [`messfaden_vorrang`]).
+pub fn messfaden_vorrang_windows() {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+        };
+        // SAFETY: Ändert nur die Priorität des aufrufenden Fadens;
+        // `GetCurrentThread` liefert einen Pseudo-Handle, der nicht
+        // geschlossen werden muss.
+        let ok = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) };
+        if ok == 0 {
+            tracing::warn!("Vorrang für den Messfaden nicht gesetzt (Windows)");
+        } else {
+            tracing::info!("Messfaden mit Vorrang eingeplant (Windows, TIME_CRITICAL)");
         }
     }
 }
