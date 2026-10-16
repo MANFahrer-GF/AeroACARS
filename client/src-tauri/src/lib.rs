@@ -5220,6 +5220,8 @@ struct PersistedFlightStats {
     #[serde(default)]
     runway_nav_geometry: Option<aeroacars_mqtt::navdata::NavRunway>,
     #[serde(default)]
+    runway_ils_navigraph: Option<IlsNavigraph>,
+    #[serde(default)]
     runway_correlation_icao: Option<String>,
     #[serde(default)]
     runway_fallback_at_touchdown: bool,
@@ -5761,6 +5763,7 @@ impl PersistedFlightStats {
             runway_source: stats.runway_source,
             runway_nav_cycle: stats.runway_nav_cycle.clone(),
             runway_nav_geometry: stats.runway_nav_geometry.clone(),
+            runway_ils_navigraph: stats.runway_ils_navigraph.clone(),
             runway_correlation_icao: stats.runway_correlation_icao.clone(),
             runway_fallback_at_touchdown: stats.runway_fallback_at_touchdown,
             landing_lat: stats.landing_lat,
@@ -6050,6 +6053,7 @@ impl PersistedFlightStats {
         stats.runway_source = self.runway_source;
         stats.runway_nav_cycle = self.runway_nav_cycle;
         stats.runway_nav_geometry = self.runway_nav_geometry;
+        stats.runway_ils_navigraph = self.runway_ils_navigraph;
         stats.runway_correlation_icao = self.runway_correlation_icao;
         stats.runway_fallback_at_touchdown = self.runway_fallback_at_touchdown;
         stats.landing_lat = self.landing_lat;
@@ -7526,6 +7530,10 @@ struct FlightStats {
     /// fließen. None bei OurAirports-Fallback (= die OurAirports-CSV
     /// hat diese Felder nicht).
     runway_nav_geometry: Option<aeroacars_mqtt::navdata::NavRunway>,
+    /// Score-Version 25: dieselbe Bahn aus Navigraph VOR der Szenerie-
+    /// Uebernahme, mit eigenem Versatz — Bezug des ILS-Gleitpfads
+    /// (`anflug_forensik_bahn`). None ohne Navigraph-Zuordnung.
+    runway_ils_navigraph: Option<IlsNavigraph>,
     /// v0.8.0 F5: AGL (ft) am Threshold-Crossing — beim Touchdown-Edge
     /// im Streamer-Tick aus dem snapshot_buffer extrahiert (= erster
     /// Sample mit `along_track_m_signed >= 0`). None wenn:
@@ -28164,6 +28172,15 @@ fn effective_displaced_threshold_ft(m: &runway::RunwayMatch) -> i32 {
 /// zufaellig klein genug, obwohl die Geometrie ueberhaupt nichts gemessen
 /// hat. Gefangen in einer externen QS-Runde.
 fn displacement_not_in_geometry_ft(m: &runway::RunwayMatch) -> i32 {
+    versatz_nicht_in_geometrie_ft(
+        m.displaced_threshold_ft,
+        m.geometry_implied_displaced_threshold_ft,
+    )
+}
+
+/// Kern von `displacement_not_in_geometry_ft` auf zwei Zahlen — auch fuer
+/// den ILS-Bezug aus der unveraenderten Navigraph-Bahn (Score-Version 25).
+fn versatz_nicht_in_geometrie_ft(gemeldet_ft: i32, geometrie_ft: i32) -> i32 {
     /// Dieselbe Toleranz wie `runway::geometry_implied_displacement_ft`
     /// (dort begruendet: 40-Bahnen-Stichprobe trennt sauber bei
     /// hoechstens 13,7 m Rauschen gegen mindestens 30,8 m bei echtem,
@@ -28171,15 +28188,14 @@ fn displacement_not_in_geometry_ft(m: &runway::RunwayMatch) -> i32 {
     const BESTAETIGUNGS_TOLERANZ_M: f64 = 20.0;
     const FT_TO_M: f64 = 0.3048;
 
-    if m.displaced_threshold_ft <= 0 || m.geometry_implied_displaced_threshold_ft <= 0 {
-        return m.displaced_threshold_ft.max(0);
+    if gemeldet_ft <= 0 || geometrie_ft <= 0 {
+        return gemeldet_ft.max(0);
     }
-    let diff_m =
-        (m.geometry_implied_displaced_threshold_ft - m.displaced_threshold_ft) as f64 * FT_TO_M;
+    let diff_m = (geometrie_ft - gemeldet_ft) as f64 * FT_TO_M;
     if diff_m.abs() <= BESTAETIGUNGS_TOLERANZ_M {
         0
     } else {
-        m.displaced_threshold_ft
+        gemeldet_ft
     }
 }
 
@@ -28386,9 +28402,18 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// vorsichtiger sein als das Urteil danach. Die Anfluggrafik zeichnet die
 /// angewandte Grenze aus `approach_wind.sinkgrenze_fpm`.
 ///
+/// **25 (16.10.2026)**: ILS-Gleitpfad gegen die unveraenderte Navigraph-Bahn
+/// (`anflug_forensik_bahn`, `IlsNavigraph`). Der Schwellenversatz der Sim-
+/// Szenerie verschob vorher das Navigraph-ILS mit: Sven, RJAA 34L (MSFS-
+/// Default 751,6 m gemalt, Navigraph 0, Gleitwegsender 329 m hinter dem
+/// Bahnanfang) flog das ILS auf 0,13 Dots und galt als 1,8 Dots zu tief
+/// (Gate „mittel“, PARTIAL, −5). Korpus: 8 von 223 ILS-Landungen verschoben
+/// gerechnet, nur diese im Urteil. Ohne ILS bleibt die Szenerie-Schwelle;
+/// Aufsetzzone und Bahndisziplin rechnen weiter gegen die Szenerie.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 24;
+const SCORE_ALGORITHMUS_VERSION: u8 = 25;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -45233,6 +45258,8 @@ fn korreliere_bahn(
                 .clone()
                 .filter(|a| a.icao.eq_ignore_ascii_case(&actual_icao))
         });
+    // Score-Version 25: der Navigraph-Stand VOR der Szenerie — ILS-Bezug.
+    let nav_vor_szenerie = nav_opt.clone();
     let (nav_opt, szenerie_bericht, benutzte_szenerie) = szenerie_bahn::ergaenze_aus_szenerie(
         simulator,
         &actual_icao,
@@ -45328,6 +45355,7 @@ fn korreliere_bahn(
             cycle = ?nav_cycle,
             "touchdown correlated to runway"
         );
+        let rw_bezeichner = rw.runway_ident.clone();
         stats.runway_match = Some(rw);
         stats.runway_source = Some(source);
         // ⚠ VOR dem Nachtragen: Die vorhandene Spur in das Bezugssystem
@@ -45348,6 +45376,13 @@ fn korreliere_bahn(
         } else {
             None
         };
+        stats.runway_ils_navigraph = if matches!(source, runway::RunwaySource::Navigraph) {
+            nav_vor_szenerie
+                .as_ref()
+                .and_then(|apt| IlsNavigraph::aus(apt, &rw_bezeichner))
+        } else {
+            None
+        };
         stats.runway_nav_geometry = nav_geometry;
     } else {
         // No runway within range at all — not a navdata fallback, just no
@@ -45357,6 +45392,7 @@ fn korreliere_bahn(
         stats.runway_source = None;
         stats.runway_nav_cycle = None;
         stats.runway_nav_geometry = None;
+        stats.runway_ils_navigraph = None;
         // Eine Spur ohne Bahn ist gegen nichts projiziert.
         spur_auf_neue_achse(stats, alte_achse.as_ref());
     }
@@ -45550,6 +45586,7 @@ struct FinalizedRunwayCorrelation {
     runway_source: Option<runway::RunwaySource>,
     runway_nav_cycle: Option<String>,
     runway_nav_geometry: Option<aeroacars_mqtt::navdata::NavRunway>,
+    runway_ils_navigraph: Option<IlsNavigraph>,
     runway_tch_actual_ft: Option<f32>,
 }
 
@@ -45583,11 +45620,24 @@ fn finalize_runway_correlation(
 ) -> FinalizedRunwayCorrelation {
     // The provisional (stamped) set — the default we keep unless we can
     // strictly improve it.
+    // Score-Version 25: Ein Flug, der aus einem Zustand von VOR Version 25
+    // fortgesetzt wurde, hat keinen ILS-Bezug gemerkt (serde-Standard None).
+    // Der Navdaten-Cache haelt Navigraph unveraendert — dort nachbauen, sonst
+    // faellt die Forensik auf den Szenerie-Versatz zurueck (Codex, 16.10.2026).
+    let ils_navigraph = stats.runway_ils_navigraph.clone().or_else(|| {
+        if !matches!(stats.runway_source, Some(runway::RunwaySource::Navigraph)) {
+            return None;
+        }
+        let rm = stats.runway_match.as_ref()?;
+        let cache = flight.navdata.lock().expect("navdata lock");
+        IlsNavigraph::aus(cache.get(&rm.airport_ident)?, &rm.runway_ident)
+    });
     let provisional = FinalizedRunwayCorrelation {
         runway_match: stats.runway_match.clone(),
         runway_source: stats.runway_source,
         runway_nav_cycle: stats.runway_nav_cycle.clone(),
         runway_nav_geometry: stats.runway_nav_geometry.clone(),
+        runway_ils_navigraph: ils_navigraph,
         runway_tch_actual_ft: stats.runway_tch_actual_ft,
     };
 
@@ -45649,6 +45699,8 @@ fn finalize_runway_correlation(
     // never-worse result for the upgrade. TCH-actual is forensic/coaching
     // only and not a scored field, so the upgrade still delivers the
     // LDA/rollout geometry that matters.
+    // Hier ohne Szenerie-Uebernahme: die Navigraph-Bahn ist schon der ILS-Bezug.
+    let runway_ils_navigraph = IlsNavigraph::aus(&apt, &rw.runway_ident);
     let runway_tch_actual_ft = None;
 
     tracing::info!(
@@ -45663,6 +45715,7 @@ fn finalize_runway_correlation(
         runway_source: Some(runway::RunwaySource::Navigraph),
         runway_nav_cycle: nav_cycle,
         runway_nav_geometry: nav_geometry,
+        runway_ils_navigraph,
         runway_tch_actual_ft,
     }
 }
@@ -45745,6 +45798,7 @@ fn bahn_upgrade_anwenden(flight: &ActiveFlight, stats: &mut FlightStats) -> bool
     stats.runway_source = finalized.runway_source;
     stats.runway_nav_cycle = finalized.runway_nav_cycle;
     stats.runway_nav_geometry = finalized.runway_nav_geometry;
+    stats.runway_ils_navigraph = finalized.runway_ils_navigraph;
     stats.runway_tch_actual_ft = finalized.runway_tch_actual_ft;
     // Die Spur folgt der Bahn — hier genauso wie beim Nachholen.
     spur_auf_neue_achse(stats, alte_achse.as_ref());
@@ -47175,8 +47229,55 @@ fn spaetes_final_erkennen(
     )
 }
 
+/// Score-Version 25: Die gelandete Bahn, wie Navigraph sie liefert — VOR der
+/// Uebernahme aus der Sim-Szenerie — und deren eigener Versatz, soweit er
+/// nicht schon im Schwellenpunkt steckt. Bezug des ILS-Gleitpfads.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct IlsNavigraph {
+    bahn: aeroacars_mqtt::navdata::NavRunway,
+    versatz_ft: i32,
+}
+
+impl IlsNavigraph {
+    fn aus(apt: &aeroacars_mqtt::navdata::NavAirport, bezeichner: &str) -> Option<Self> {
+        let bahn = apt.runways.iter().find(|r| r.designator == bezeichner)?.clone();
+        let (gemeldet, geometrie) = runway::navigraph_versatz_ft(apt, &bahn);
+        Some(Self {
+            versatz_ft: versatz_nicht_in_geometrie_ft(gemeldet, geometrie),
+            bahn,
+        })
+    }
+}
+
 /// Die Bahn der Forensik: Navdaten-Geometrie plus versetzte Schwelle.
+///
+/// Score-Version 25 (Sven, RJAA 34L, 16.10.2026): Hat die Bahn ein ILS, gilt
+/// die UNVERAENDERTE Navigraph-Bahn mit ihrem eigenen Versatz. Der ILS-
+/// Gleitpfad (TCH, Gleitwegsender) ist dort definiert; die Szenerie kennt ihn
+/// nicht (siehe `szenerie_bahn::uebernimm_szenerie`: „ILS bleibt, wo es
+/// ist"). Vorher wanderte die Landeschwelle des ILS ueber den Szenerie-
+/// Versatz mit — MSFS-Default RJAA 34L malt 751,6 m Versatz, Navigraph hat 0
+/// und den Gleitwegsender 329 m hinter dem Bahnanfang: ein exakt geflogenes
+/// ILS galt als 1,8 Dots zu tief. Ohne ILS (Sichtanflug, PAPI an der
+/// gemalten Schwelle) bleibt die Szenerie massgeblich. Aufsetzzone und
+/// Bahndisziplin rechnen weiter gegen die Szenerie — die sieht der Pilot.
+///
+/// Nur der VERSATZ kommt aus Navigraph, die Geometrie bleibt die der
+/// Zuordnung: Unter MSFS ist sie ohnehin Navigraph (die Szenerie liefert
+/// dort keine Achse), unter X-Plane bleibt die Forensik so auf derselben
+/// Achse wie Spur, Aufsetzpunkt und `spaetes_final` (Codex, 16.10.2026).
 fn anflug_forensik_bahn(stats: &FlightStats) -> Option<anflug_forensik::Bahnbezug> {
+    if let Some(ils) = stats
+        .runway_ils_navigraph
+        .as_ref()
+        .filter(|i| i.bahn.ils.is_some())
+    {
+        let bahn = stats.runway_nav_geometry.as_ref().unwrap_or(&ils.bahn);
+        return Some(anflug_forensik::Bahnbezug::aus_navdaten(
+            bahn,
+            ils.versatz_ft as f64,
+        ));
+    }
     stats.runway_nav_geometry.as_ref().map(|nav| {
         let versatz_ft = stats
             .runway_match
@@ -71324,6 +71425,47 @@ mod touchdown_metadata_stamp_tests {
     /// v1.7.15).
     ///
     /// Jetzt faehrt er die Funktion, die auch die Produktion ruft:
+    /// Score-Version 25, Ende zu Ende ueber den echten Zuordnungsweg:
+    /// Navigraph-Bahn MIT ILS und ohne Versatz, MSFS-Szenerie malt 751,6 m
+    /// Versatz (wie RJAA 34L). Die Bahn der Zuordnung traegt den Szenerie-
+    /// Versatz (Aufsetzzone), der ILS-Gleitpfad nicht.
+    #[test]
+    fn ils_gleitpfad_bleibt_beim_szenerie_versatz_auf_navigraph() {
+        let flight = flight_fixture("EDDP");
+        let mut nav = eddp_nav_fixture();
+        for r in nav.runways.iter_mut() {
+            r.ils = Some(aeroacars_mqtt::navdata::NavIls {
+                freq_mhz: 111.9,
+                course: 265.0,
+                category: 1,
+            });
+        }
+        flight.navdata.lock().unwrap().airports.insert("EDDP".to_string(), nav);
+        flight.navdata.lock().unwrap().cycle = Some("2610".to_string());
+
+        let (mut stats, mut snap) = eddp_26r_touchdown_stats();
+        snap.simulator = sim_core::Simulator::Msfs2024;
+        stats.szenerie_auskunft = arc_some(eddp_szenerie(751.6));
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        let geo = stats.runway_nav_geometry.as_ref().expect("Navigraph-Bahn");
+        assert_eq!(geo.displaced_threshold_ft, 2466, "Szenerie uebernommen (Vorrichtung)");
+        let ils = stats.runway_ils_navigraph.as_ref().expect("ILS-Bezug gemerkt");
+        assert_eq!(ils.bahn.displaced_threshold_ft, 0, "VOR der Szenerie gemerkt");
+        assert_eq!(
+            anflug_forensik_bahn(&stats).expect("Bahnbezug").versatz_ft,
+            0.0,
+            "der ILS-Gleitpfad wandert mit dem Szenerie-Versatz"
+        );
+        assert_eq!(
+            stats.runway_match.as_ref().map(effective_displaced_threshold_ft),
+            Some(2466),
+            "die Aufsetzzone rechnet weiter gegen die gemalte Schwelle"
+        );
+    }
+
     /// Aufsetzen ohne Szenerie → Auskunft trifft ein → nachholen →
     /// Bericht.
     #[test]
@@ -71756,6 +71898,93 @@ mod touchdown_metadata_stamp_tests {
         bestaetigt.geometry_implied_displaced_threshold_ft = 1000;
         stats.runway_match = Some(bestaetigt);
         assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 0.0);
+    }
+
+    /// Score-Version 25 (Sven, RJAA 34L, 16.10.2026): Hat die Bahn ein ILS,
+    /// zaehlt fuer den Gleitpfad die UNVERAENDERTE Navigraph-Bahn — der
+    /// Versatz aus der Sim-Szenerie verschiebt das ILS nicht mehr.
+    #[test]
+    fn ils_gleitpfad_folgt_navigraph_nicht_dem_szenerie_versatz() {
+        let ils = aeroacars_mqtt::navdata::NavIls {
+            freq_mhz: 111.9,
+            course: 337.0,
+            category: 1,
+        };
+        // Navigraph: ILS, kein Versatz (wie RJAA 34L in AIRAC 2610).
+        let mut roh = eddp_nav_fixture();
+        for r in roh.runways.iter_mut() {
+            r.ils = Some(ils.clone());
+        }
+        // Szenerie: dieselbe Bahn mit 2466 ft gemaltem Versatz.
+        let mut szenerie = roh.runways[0].clone();
+        szenerie.displaced_threshold_ft = 2466;
+
+        let mut stats = FlightStats::default();
+        stats.runway_nav_geometry = Some(szenerie);
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(500.0, 2466));
+        // Vor Version 25: der Szenerie-Versatz verschob das ILS.
+        assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 2466.0);
+
+        let bezeichner = roh.runways[0].designator.clone();
+        stats.runway_ils_navigraph = IlsNavigraph::aus(&roh, &bezeichner);
+        let bahn = anflug_forensik_bahn(&stats).unwrap();
+        assert_eq!(bahn.versatz_ft, 0.0, "ILS-Bezug ohne Szenerie-Versatz");
+        assert_eq!(bahn.schwelle_lat, roh.runways[0].threshold.lat);
+
+        // Navigraph mit eigenem Versatz (wie VIDP 11L): der bleibt.
+        let mut mit_versatz = roh.clone();
+        mit_versatz.runways[0].displaced_threshold_ft = 1444;
+        stats.runway_ils_navigraph = IlsNavigraph::aus(&mit_versatz, &bezeichner);
+        assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 1444.0);
+    }
+
+    /// Score-Version 25 (Codex): Ein aus einem Zustand von vor Version 25
+    /// fortgesetzter Flug hat keinen ILS-Bezug gemerkt — das Einreichen baut
+    /// ihn aus dem (unveraenderten) Navdaten-Cache nach.
+    #[test]
+    fn einreichen_baut_den_ils_bezug_fuer_alte_zustaende_nach() {
+        let flight = flight_fixture("EDDP");
+        let mut nav = eddp_nav_fixture();
+        for r in nav.runways.iter_mut() {
+            r.ils = Some(aeroacars_mqtt::navdata::NavIls {
+                freq_mhz: 111.9,
+                course: 265.0,
+                category: 1,
+            });
+        }
+        let bezeichner = nav.runways[0].designator.clone();
+        flight.navdata.lock().unwrap().airports.insert("EDDP".to_string(), nav.clone());
+        let mut szenerie = nav.runways[0].clone();
+        szenerie.displaced_threshold_ft = 2466;
+        let mut stats = FlightStats::default();
+        stats.runway_source = Some(runway::RunwaySource::Navigraph);
+        stats.runway_nav_geometry = Some(szenerie);
+        let mut rm = eddp_26r_match_with_raw_td_and_displacement(500.0, 2466);
+        rm.runway_ident = bezeichner;
+        stats.runway_match = Some(rm);
+        assert!(stats.runway_ils_navigraph.is_none(), "Altzustand");
+        assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 2466.0);
+
+        let f = finalize_runway_correlation(&flight, &stats);
+        let ils = f.runway_ils_navigraph.expect("nachgebaut");
+        assert_eq!(ils.versatz_ft, 0);
+        stats.runway_ils_navigraph = Some(ils);
+        assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 0.0);
+    }
+
+    /// Ohne ILS bleibt die Szenerie massgeblich — der Sichtanflug zielt auf
+    /// die gemalte Schwelle und die PAPI dort.
+    #[test]
+    fn ohne_ils_bleibt_der_szenerie_versatz() {
+        let roh = eddp_nav_fixture();
+        assert!(roh.runways[0].ils.is_none(), "Fixture ohne ILS");
+        let mut szenerie = roh.runways[0].clone();
+        szenerie.displaced_threshold_ft = 2466;
+        let mut stats = FlightStats::default();
+        stats.runway_nav_geometry = Some(szenerie);
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(500.0, 2466));
+        stats.runway_ils_navigraph = IlsNavigraph::aus(&roh, &roh.runways[0].designator);
+        assert_eq!(anflug_forensik_bahn(&stats).unwrap().versatz_ft, 2466.0);
     }
 
     /// Ein Anflug auf die EDDP 26R (Navigraph-Schwelle), 1000 → 200 ft,
@@ -74584,6 +74813,9 @@ mod touchdown_metadata_stamp_tests {
         stats.runway_correlation_icao = Some("EDDP".to_string());
         stats.runway_fallback_at_touchdown = true;
 
+        // Score-Version 25: der ILS-Bezug ueberlebt den Neustart ebenso.
+        stats.runway_ils_navigraph = IlsNavigraph::aus(&eddp_nav_fixture_displaced(), "26R");
+        assert!(stats.runway_ils_navigraph.is_some(), "Vorrichtung");
         let persisted = PersistedFlightStats::snapshot_from(&stats);
         // Round-trip through JSON too, to prove (de)serialisation preserves them.
         let json = serde_json::to_string(&persisted).expect("PersistedFlightStats must serialise");
@@ -74598,6 +74830,11 @@ mod touchdown_metadata_stamp_tests {
         );
         assert_eq!(restored.runway_nav_cycle.as_deref(), Some("2604"));
         assert_eq!(restored.runway_nav_geometry, stats.runway_nav_geometry);
+        assert_eq!(
+            restored.runway_ils_navigraph.as_ref().map(|i| (i.bahn.clone(), i.versatz_ft)),
+            stats.runway_ils_navigraph.as_ref().map(|i| (i.bahn.clone(), i.versatz_ft)),
+            "der ILS-Bezug geht beim Fortsetzen verloren"
+        );
         assert_eq!(restored.runway_correlation_icao.as_deref(), Some("EDDP"));
         assert!(restored.runway_fallback_at_touchdown);
         assert_eq!(
