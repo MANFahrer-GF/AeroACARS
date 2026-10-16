@@ -2441,6 +2441,101 @@ pub fn erwartete_blocklaenge(abgelehnt: &[usize]) -> usize {
         .sum()
 }
 
+/// Felder, die ein Simulator bekanntermassen nicht kennt. MSFS 2020 hat
+/// `FUEL TOTAL QUANTITY WEIGHT EX1` nicht (Pilot 15, Oktober 2026). Sie
+/// dienen nur als Rueckfall, wenn eine Ablehnung keiner Paketkennung
+/// zugeordnet werden kann.
+pub const BEKANNT_ABGELEHNTE_FELDER: &[&str] = &["FUEL TOTAL QUANTITY WEIGHT EX1"];
+
+/// So lange nach dem Registrieren wird ein unerklaerbar kurzer Block
+/// verworfen — die Ausnahme des Simulators kommt asynchron, praktisch
+/// aber in derselben Millisekunde wie der Handshake.
+pub const ZUORDNUNGS_FRIST: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Was mit einem Telemetrie-Block geschieht.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Blockentscheid {
+    /// Laenge passt zu den zugeordneten Ablehnungen — mit dieser Liste lesen.
+    Lesen(Vec<usize>),
+    /// Der Fehlbetrag entspricht genau den bekannt abgelehnten Feldern, die
+    /// noch nicht zugeordnet sind (z. B. weil `GetLastSentPacketID`
+    /// scheiterte) — mit dieser angenommenen Liste lesen.
+    Angenommen(Vec<usize>),
+    /// Unerklaerbar kurz, aber noch in der Frist: verwerfen, die Ausnahme
+    /// kann noch kommen.
+    Verwerfen,
+    /// Unerklaerbar kurz und Frist vorbei: trotzdem lesen. Ab der Luecke
+    /// koennen Werte verschoben sein — aber die Telemetrie faellt nie
+    /// dauerhaft aus.
+    Unaufgeloest(Vec<usize>),
+}
+
+/// Vom Simulator abgelehnte Telemetriefelder einer Verbindung.
+///
+/// ⚠ SimConnect laesst ein abgelehntes Datum aus dem Block WEG, alles
+/// dahinter rueckt nach vorn. Zugeordnet wird ueber die Paketkennung des
+/// `AddToDataDefinition`-Aufrufs — der `dwIndex` der Ausnahme ist die
+/// Nummer des PARAMETERS, nicht die des Felds.
+#[derive(Debug, Default)]
+pub struct Ablehnungen {
+    send_ids: Vec<(u32, usize)>,
+    abgelehnt: Vec<usize>,
+}
+
+impl Ablehnungen {
+    /// `AddToDataDefinition` fuer Feld `idx` lief als Paket `send_id`.
+    pub fn paket(&mut self, send_id: u32, idx: usize) {
+        self.send_ids.push((send_id, idx));
+    }
+
+    /// Ausnahme mit Paketkennung `send_id`: gehoert sie zu einem
+    /// Telemetriefeld, wird es ab jetzt uebersprungen.
+    pub fn ausnahme(&mut self, send_id: u32) -> Option<usize> {
+        let idx = self
+            .send_ids
+            .iter()
+            .find(|(id, _)| *id == send_id)
+            .map(|(_, idx)| *idx)?;
+        if !self.abgelehnt.contains(&idx) {
+            self.abgelehnt.push(idx);
+        }
+        Some(idx)
+    }
+
+    pub fn abgelehnt(&self) -> &[usize] {
+        &self.abgelehnt
+    }
+
+    /// Entscheidet ueber einen Block der Laenge `laenge`, `seit` dem
+    /// Registrieren der Felder.
+    pub fn pruefen(&self, laenge: usize, seit: std::time::Duration) -> Blockentscheid {
+        let erwartet = erwartete_blocklaenge(&self.abgelehnt);
+        if laenge >= erwartet {
+            return Blockentscheid::Lesen(self.abgelehnt.clone());
+        }
+        let fehlt = erwartet - laenge;
+        let kandidaten: Vec<usize> = BEKANNT_ABGELEHNTE_FELDER
+            .iter()
+            .filter_map(|name| TELEMETRY_FIELDS.iter().position(|f| f.name == *name))
+            .filter(|idx| !self.abgelehnt.contains(idx))
+            .collect();
+        let groesse: usize = kandidaten
+            .iter()
+            .map(|i| TELEMETRY_FIELDS[*i].kind.size())
+            .sum();
+        if !kandidaten.is_empty() && groesse == fehlt {
+            let mut liste = self.abgelehnt.clone();
+            liste.extend(kandidaten);
+            return Blockentscheid::Angenommen(liste);
+        }
+        if seit < ZUORDNUNGS_FRIST {
+            Blockentscheid::Verwerfen
+        } else {
+            Blockentscheid::Unaufgeloest(self.abgelehnt.clone())
+        }
+    }
+}
+
 /// Wie [`parse`], zusaetzlich mit den Werten der abonnierten MSFS-2024-
 /// Input-Events (Name ohne `B:` → Wert, siehe `crate::eingabe_events`)
 /// und den vom Simulator abgelehnten Feldern (siehe
@@ -9490,16 +9585,148 @@ mod tests {
         assert_eq!(alt.wind_speed_kt, Some(1013.0));
     }
 
+    fn feld(name: &str) -> usize {
+        TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == name)
+            .unwrap_or_else(|| panic!("{name} steht nicht in der Feldliste"))
+    }
+
+    /// Entfernt die Felder `idxs` aus einem vollstaendigen Block — so, wie
+    /// SimConnect abgelehnte Daten weglaesst.
+    fn ohne_felder(mut buf: Vec<u8>, idxs: &[usize]) -> Vec<u8> {
+        let mut sortiert = idxs.to_vec();
+        sortiert.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in sortiert {
+            let start: usize = TELEMETRY_FIELDS[..idx].iter().map(|f| f.kind.size()).sum();
+            buf.drain(start..start + TELEMETRY_FIELDS[idx].kind.size());
+        }
+        buf
+    }
+
+    /// Ablehnungen, wie `register_telemetry` sie aufbaut: SimConnect_Open
+    /// ist Paket 1, Feld 0 also Paket 2 (Diagnose-Log Pilot 15:
+    /// EX1 = Feld 36 = `send_id=38`).
+    fn registriert() -> Ablehnungen {
+        let mut a = Ablehnungen::default();
+        for idx in 0..TELEMETRY_FIELDS.len() {
+            a.paket(idx as u32 + 2, idx);
+        }
+        a
+    }
+
+    fn lesen(entscheid: Blockentscheid) -> Vec<usize> {
+        match entscheid {
+            Blockentscheid::Lesen(l)
+            | Blockentscheid::Angenommen(l)
+            | Blockentscheid::Unaufgeloest(l) => l,
+            Blockentscheid::Verwerfen => panic!("Block wurde verworfen"),
+        }
+    }
+
     #[test]
-    fn msfs2020_block_ohne_zuordnung_gilt_als_zu_kurz() {
-        // Solange die Ablehnung nicht zugeordnet ist, verwirft der Adapter
-        // den Block (`bytes.len() < erwartete_blocklaenge`).
+    fn ausnahme_mit_paketkennung_ordnet_das_feld_zu() {
         let (buf, ex1) = msfs2020_ohne_ex1();
-        assert!(buf.len() < erwartete_blocklaenge(&[]));
-        assert_eq!(buf.len(), erwartete_blocklaenge(&[ex1]));
-        // Ein vollstaendiger MSFS-2024-Block besteht die Pruefung.
+        let mut a = registriert();
+        // Unbekannte Kennung (z. B. ein Facility-Aufruf) betrifft kein Feld.
+        assert_eq!(a.ausnahme(9_999), None);
+        assert_eq!(a.ausnahme(38), Some(ex1));
+        assert_eq!(a.abgelehnt(), &[ex1]);
+        // Doppelte Ausnahme traegt das Feld nicht zweimal ein.
+        a.ausnahme(38);
+        assert_eq!(a.abgelehnt(), &[ex1]);
+        let entscheid = a.pruefen(buf.len(), std::time::Duration::ZERO);
+        assert_eq!(entscheid, Blockentscheid::Lesen(vec![ex1]));
+        let snap = msfs2020(&buf, &lesen(entscheid));
+        assert_eq!(snap.wind_direction_deg, Some(20.0));
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+    }
+
+    #[test]
+    fn vor_der_ausnahme_wird_ein_unerklaerter_block_verworfen() {
+        // Kurz um ein Bool — kein bekannter Kandidat passt.
+        let voll = runde2_puffer("Asobo A320 Neo", "A20N", &[]);
+        let buf = ohne_felder(voll, &[feld("LIGHT BEACON")]);
+        let a = registriert();
+        assert_eq!(
+            a.pruefen(buf.len(), std::time::Duration::ZERO),
+            Blockentscheid::Verwerfen
+        );
+        // Nach der Frist faellt die Telemetrie nicht aus, sie wird gelesen.
+        assert_eq!(
+            a.pruefen(buf.len(), ZUORDNUNGS_FRIST),
+            Blockentscheid::Unaufgeloest(vec![])
+        );
+    }
+
+    #[test]
+    fn ohne_paketkennung_wird_das_bekannte_feld_angenommen() {
+        // GetLastSentPacketID scheiterte: keine Kennung, die Ausnahme ist
+        // keinem Feld zuordenbar. Der Fehlbetrag (8 Byte) passt genau zu
+        // EX1 — die Telemetrie laeuft sofort richtig weiter, auch nach
+        // der Frist.
+        let (buf, ex1) = msfs2020_ohne_ex1();
+        let mut a = Ablehnungen::default();
+        assert_eq!(a.ausnahme(38), None);
+        for seit in [std::time::Duration::ZERO, ZUORDNUNGS_FRIST * 10] {
+            let entscheid = a.pruefen(buf.len(), seit);
+            assert_eq!(entscheid, Blockentscheid::Angenommen(vec![ex1]));
+            let snap = msfs2020(&buf, &lesen(entscheid));
+            assert_eq!(snap.wind_direction_deg, Some(20.0));
+            assert_eq!(snap.wind_speed_kt, Some(15.0));
+            assert_eq!(snap.qnh_hpa, Some(1013.0));
+        }
+    }
+
+    #[test]
+    fn mehrere_ablehnungen_verschiedener_groesse() {
+        // Text (256), Bool (4) und Zahl (8) abgelehnt, ueber die Kette
+        // Paketkennung → Feld → Laengenpruefung → Parser.
+        let atc_id = feld("ATC ID");
+        let beacon = feld("LIGHT BEACON");
+        let ex1 = feld("FUEL TOTAL QUANTITY WEIGHT EX1");
+        let voll = runde2_puffer(
+            "Asobo A320 Neo",
+            "A20N",
+            &[
+                ("AMBIENT WIND DIRECTION", 250.0),
+                ("AMBIENT WIND VELOCITY", 12.0),
+                ("LIGHT LANDING", 1.0),
+                ("LIGHT STROBE", 1.0),
+            ],
+        );
+        let buf = ohne_felder(voll, &[atc_id, beacon, ex1]);
+        let mut a = registriert();
+        for idx in [beacon, atc_id, ex1] {
+            assert_eq!(a.ausnahme(idx as u32 + 2), Some(idx));
+        }
+        let entscheid = a.pruefen(buf.len(), std::time::Duration::ZERO);
+        assert!(matches!(entscheid, Blockentscheid::Lesen(_)));
+        let snap = msfs2020(&buf, &lesen(entscheid));
+        assert_eq!(snap.aircraft_icao.as_deref(), Some("A20N"));
+        assert_eq!(snap.wind_direction_deg, Some(250.0));
+        assert_eq!(snap.wind_speed_kt, Some(12.0));
+        assert_eq!(snap.light_landing, Some(true));
+        assert_eq!(snap.light_strobe, Some(true));
+        // Gegenprobe: nur zwei der drei zugeordnet — dann ist der Block zu
+        // kurz und kein bekannter Kandidat erklaert den Rest (4 Byte).
+        let mut teilweise = registriert();
+        teilweise.ausnahme(atc_id as u32 + 2);
+        teilweise.ausnahme(ex1 as u32 + 2);
+        assert_eq!(
+            teilweise.pruefen(buf.len(), std::time::Duration::ZERO),
+            Blockentscheid::Verwerfen
+        );
+    }
+
+    #[test]
+    fn vollstaendiger_block_wird_gelesen() {
         let voll = runde2_puffer("A350-900", "A359", &[]);
         assert_eq!(voll.len(), erwartete_blocklaenge(&[]));
+        assert_eq!(
+            registriert().pruefen(voll.len(), std::time::Duration::ZERO),
+            Blockentscheid::Lesen(vec![])
+        );
     }
 
     fn runde2_schluessel(snap: &SimSnapshot) -> Vec<String> {
