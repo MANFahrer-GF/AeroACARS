@@ -1375,6 +1375,7 @@
     "anflug_wind": {
       "titel": "Wind im Anflug (Stable Gate, 1000 ft bis zum Abfangen) – nur zur Einordnung, zählt nicht in die Note",
       "spanne": "{{von}} – {{bis}} kt",
+      "spanne_wechsel": "{{rueck}} kt Rückenwind bis {{gegen}} kt Gegenwind",
       "gegenwind": "Gegenwind im Mittel",
       "rueckenwind": "Rückenwind im Mittel",
       "seitenwind_max": "Seitenwind höchstens",
