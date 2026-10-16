@@ -1552,6 +1552,32 @@ fn ourairports_has_runway_designator_for(icao: &str, designator: &str) -> bool {
 ///   * Returnt `None` wenn keine Bahn innerhalb von `3 km + length`
 ///     der Schwelle liegt (= Pilot ist nicht auf diesem Airport
 ///     gelandet — Caller soll auf OurAirports zurückfallen).
+/// Score-Version 25: gemeldeter und geometrisch erkennbarer Schwellenversatz
+/// einer Bahn aus den UNVERAENDERTEN Navigraph-Daten — dieselbe Rechnung wie
+/// in `lookup_runway_in_nav` (Gegenschwelle per Koordinatenvergleich).
+/// Gebraucht fuer den ILS-Bezug der Gleitpfad-Forensik, der nie um einen
+/// Szenerie-Versatz wandern darf (RJAA 34L, 16.10.2026).
+pub fn navigraph_versatz_ft(
+    airport: &aeroacars_mqtt::navdata::NavAirport,
+    bahn: &aeroacars_mqtt::navdata::NavRunway,
+) -> (i32, i32) {
+    let gegenschwelle_versatz_ft = airport
+        .runways
+        .iter()
+        .find(|o| o.threshold.lat == bahn.far_end.lat && o.threshold.lon == bahn.far_end.lon)
+        .map(|o| o.displaced_threshold_ft)
+        .unwrap_or(0);
+    let geometrie = geometry_implied_displacement_ft(
+        bahn.threshold.lat,
+        bahn.threshold.lon,
+        bahn.far_end.lat,
+        bahn.far_end.lon,
+        bahn.length_ft as f32,
+        gegenschwelle_versatz_ft,
+    );
+    (bahn.displaced_threshold_ft, geometrie)
+}
+
 pub fn lookup_runway_in_nav(
     lat: f64,
     lon: f64,
