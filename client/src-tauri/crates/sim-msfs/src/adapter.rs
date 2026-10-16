@@ -1214,9 +1214,10 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
     // Outer reconnect loop. SimConnect_Open returns E_FAIL while MSFS
     // isn't running; we simply retry every 2s until it's up.
     let mut letzter_open_fehler: Option<String> = None;
-    // Hauptfelder, die der Simulator abgelehnt hat — bleiben ueber alle
-    // Neuverbindungen dieses Workers ausgelassen (None), damit eine
-    // Ablehnung nie zum Dauerausfall aus Verwerfen und Neuverbinden wird.
+    // Hauptfelder, die der Simulator asynchron abgelehnt hat — bleiben
+    // fuer die dadurch ausgeloeste Neuverbindung ausgelassen (None), damit
+    // eine Ablehnung nie zum Dauerausfall aus Verwerfen und Neuverbinden
+    // wird. Synchron abgelehnte laesst `register_telemetry` selbst aus.
     let mut haupt_ausgelassen: Vec<usize> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         match Connection::open("AeroACARS") {
@@ -1322,9 +1323,18 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                     );
                 }
                 run_dispatch(&shared, &stop, &mut conn, kind);
-                for idx in conn.haupt_abgelehnt.drain(..) {
-                    if !haupt_ausgelassen.contains(&idx) {
-                        haupt_ausgelassen.push(idx);
+                // Nur eine Neuverbindung, die WIR wegen einer Ablehnung
+                // ausgeloest haben, behaelt die Auslassliste. Jede andere
+                // (Sim beendet/neu gestartet, 2020 ↔ 2024, Watchdog) beginnt
+                // eine neue Sitzung mit der vollen Definition — sonst
+                // blieben Felder unter MSFS 2024 dauerhaft None.
+                if conn.haupt_abgelehnt.is_empty() {
+                    haupt_ausgelassen.clear();
+                } else {
+                    for idx in conn.haupt_abgelehnt.drain(..) {
+                        if !haupt_ausgelassen.contains(&idx) {
+                            haupt_ausgelassen.push(idx);
+                        }
                     }
                 }
                 // run_dispatch only returns when stop is signalled or
@@ -1375,6 +1385,9 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 *shared.state.lock() = ConnectionState::Connecting;
             }
             Err(e) => {
+                // Kein Simulator erreichbar: die naechste Verbindung ist
+                // eine neue Sitzung, ohne alte Auslassungen.
+                haupt_ausgelassen.clear();
                 let msg = format!("SimConnect_Open failed: {e}");
                 // Bisher stumm: ein Dauer-Gelb liess sich im Log nicht
                 // von „MSFS laeuft nicht“ unterscheiden. Nur bei neuem
@@ -2762,21 +2775,15 @@ impl Connection {
 
     /// Register every entry in `TELEMETRY_FIELDS` in order.
     fn register_telemetry(&mut self, ausgelassen: &[usize]) -> Result<(), String> {
-        self.haupt_ausgelassen = ausgelassen.to_vec();
-        if !ausgelassen.is_empty() {
-            tracing::warn!(
-                felder = ?ausgelassen.iter().map(|i| TELEMETRY_FIELDS[*i].name).collect::<Vec<_>>(),
-                "Hauptfelder nach Ablehnung ausgelassen — bleiben None"
-            );
-        }
-        for (idx, field) in TELEMETRY_FIELDS.iter().enumerate() {
-            if ausgelassen.contains(&idx) {
-                continue;
-            }
-            let cname = std::ffi::CString::new(field.name)
-                .map_err(|_| "SimVar name contained NUL".to_string())?;
-            let cunit = std::ffi::CString::new(field.unit)
-                .map_err(|_| "Unit string contained NUL".to_string())?;
+        let handle = self.handle;
+        let mut send_ids: Vec<(u32, &'static str)> = Vec::new();
+        let r = telemetry::hauptdefinition_registrieren(ausgelassen, |field| {
+            let (Ok(cname), Ok(cunit)) = (
+                std::ffi::CString::new(field.name),
+                std::ffi::CString::new(field.unit),
+            ) else {
+                return Err(-1);
+            };
             let datatype = match field.kind {
                 telemetry::FieldKind::Float64 => sys::SIMCONNECT_DATATYPE_FLOAT64,
                 telemetry::FieldKind::Int32 => sys::SIMCONNECT_DATATYPE_INT32,
@@ -2784,7 +2791,7 @@ impl Connection {
             };
             let hr = unsafe {
                 sys::SimConnect_AddToDataDefinition(
-                    self.handle,
+                    handle,
                     DEFINITION_ID,
                     cname.as_ptr(),
                     cunit.as_ptr(),
@@ -2794,14 +2801,30 @@ impl Connection {
                 )
             };
             if hr != 0 {
-                return Err(format!(
-                    "AddToDataDefinition for SimVar #{idx} \"{}\" returned 0x{hr:08X}",
-                    field.name
-                ));
+                tracing::error!(
+                    feld = field.name,
+                    "AddToDataDefinition returned 0x{hr:08X} — Hauptfeld ausgelassen (None)"
+                );
+                return Err(hr);
             }
-            let send_id = self.paket_merken(field.name);
-            self.haupt_pakete.registriert(idx, send_id);
+            let mut send_id: sys::DWORD = 0;
+            if unsafe { sys::SimConnect_GetLastSentPacketID(handle, &mut send_id) } == 0 {
+                send_ids.push((send_id, field.name));
+                Ok(Some(send_id))
+            } else {
+                tracing::warn!(feld = field.name, "GetLastSentPacketID fehlgeschlagen");
+                Ok(None)
+            }
+        });
+        self.telemetrie_send_ids.extend(send_ids);
+        if !r.ausgelassen.is_empty() {
+            tracing::warn!(
+                felder = ?r.ausgelassen.iter().map(|i| TELEMETRY_FIELDS[*i].name).collect::<Vec<_>>(),
+                "Hauptfelder nach Ablehnung ausgelassen — bleiben None"
+            );
         }
+        self.haupt_ausgelassen = r.ausgelassen;
+        self.haupt_pakete = r.pakete;
         Ok(())
     }
 

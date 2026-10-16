@@ -1043,11 +1043,9 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // Ueberziehgeschwindigkeit in Landekonfiguration aus dem Flugmodell —
     // nur mitgeschrieben, siehe `SimSnapshot::design_vs0_kt`.
     F::f64("DESIGN SPEED VS0", "knots"),
-    // QS 26.09.2026: TRANSPONDER STATE bleibt das LETZTE Feld. Lehnt MSFS
-    // 2020 es ab, wird der Block ein Feld kuerzer und alles DAHINTER
-    // verrutscht — stuende noch etwas dahinter, laese der Parser einen
-    // Landelicht-Wert als Transponder. Neue Felder deshalb DAVOR einfuegen.
-    F::f64("TRANSPONDER STATE:1", "Number"),
+    // 16.10.2026: TRANSPONDER STATE:1 (erst spaet im SDK, MSFS 2020 kann es
+    // ablehnen) steht in `OPTIONALE_FELDER` — eine Ablehnung trifft dort
+    // nur diesen Wert.
 ];
 
 /// SimVars, die nicht jeder Simulator kennt — jede in einer EIGENEN
@@ -1060,10 +1058,14 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
 /// dort jeder Wert auf dem Platz seines Nachfolgers — Windrichtung =
 /// Windstaerke, Windstaerke = QNH, TOTAL WEIGHT = Leergewicht. Hier
 /// bleibt eine Ablehnung auf ihr eigenes Feld beschraenkt (None).
-pub const OPTIONALE_FELDER: &[TelemetryField] =
-    &[F::f64("FUEL TOTAL QUANTITY WEIGHT EX1", "pounds")];
+pub const OPTIONALE_FELDER: &[TelemetryField] = &[
+    F::f64("FUEL TOTAL QUANTITY WEIGHT EX1", "pounds"),
+    F::f64("TRANSPONDER STATE:1", "Number"),
+];
 /// Index von `FUEL TOTAL QUANTITY WEIGHT EX1` in `OPTIONALE_FELDER`.
 pub const OPT_FUEL_EX1: usize = 0;
+/// Index von `TRANSPONDER STATE:1` in `OPTIONALE_FELDER`.
+pub const OPT_TRANSPONDER_STATE: usize = 1;
 
 /// Werte der optionalen Definitionen, je Feld `None`, solange (oder weil)
 /// der Simulator nichts liefert.
@@ -1127,6 +1129,46 @@ impl Paketbuch {
         // Hat das Ziel eine eigene, andere Kennung, passt die Ableitung nicht.
         eigene.is_none().then_some(*feld)
     }
+}
+
+/// Ergebnis von [`hauptdefinition_registrieren`].
+#[derive(Debug, Default)]
+pub struct Registrierung {
+    /// Nicht registrierte Felder: vorab ausgelassen oder synchron abgelehnt.
+    pub ausgelassen: Vec<usize>,
+    /// Davon bei DIESER Registrierung synchron abgelehnt (fuers Log).
+    pub sofort_abgelehnt: Vec<usize>,
+    pub pakete: Paketbuch,
+}
+
+/// Registriert die Hauptdefinition ueber `hinzufuegen` (je Feld ein
+/// `AddToDataDefinition`: `Ok(Paketkennung)` oder `Err(HRESULT)`).
+///
+/// ⚠ Ein synchron abgelehntes Feld wird NICHT zum Abbruch: es kommt in
+/// `ausgelassen`, Parser und Laengenwaechter rechnen ohne es. Frueher
+/// brach die Registrierung ab, und jede Neuverbindung scheiterte an
+/// derselben SimVar — Dauerausfall.
+pub fn hauptdefinition_registrieren(
+    ausgelassen: &[usize],
+    mut hinzufuegen: impl FnMut(&TelemetryField) -> Result<Option<u32>, i32>,
+) -> Registrierung {
+    let mut r = Registrierung {
+        ausgelassen: ausgelassen.to_vec(),
+        ..Default::default()
+    };
+    for (idx, feld) in TELEMETRY_FIELDS.iter().enumerate() {
+        if ausgelassen.contains(&idx) {
+            continue;
+        }
+        match hinzufuegen(feld) {
+            Ok(send_id) => r.pakete.registriert(idx, send_id),
+            Err(_) => {
+                r.ausgelassen.push(idx);
+                r.sofort_abgelehnt.push(idx);
+            }
+        }
+    }
+    r
 }
 
 /// Nach so vielen verworfenen Hauptbloecken in Folge (~10 s bei
@@ -2512,7 +2554,6 @@ impl Telemetry {
         pull_opt_f64!(t.std_light_landing_on_1);
         pull_opt_f64!(t.std_light_landing_on_2);
         pull_opt_f64!(t.design_vs0);
-        pull_opt_f64!(t.std_transponder_state);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`/`feld`, but the very
@@ -2561,6 +2602,7 @@ pub fn parse_mit_eingaben(
     t.eingaben = eingaben.clone();
     // Fehlt EX1 (MSFS 2020), bleibt 0 → Kraftstoff aus der Legacy-SimVar.
     t.fuel_total_lb_ex1 = optionale.0[OPT_FUEL_EX1].unwrap_or(0.0);
+    t.std_transponder_state = optionale.0[OPT_TRANSPONDER_STATE];
     telemetry_to_snapshot_mit_pfad(t, simulator, cfg_pfad)
 }
 
@@ -6034,8 +6076,9 @@ mod tests {
         // Lernpaket (29.09.2026): +8 (SEMIBODY LOADFACTOR Y); Fenix-FCU-
         // Lampen (29.09.2026): +40 (AP1, AP2, A/THR, APPR, HDG gestrichelt);
         // Vref (06.10.2026): +16 (FSS-PFD-VREF, DESIGN SPEED VS0).
-        // 16.10.2026: −8 (EX1 in eigene Definition, `OPTIONALE_FELDER`).
-        assert_eq!(buf.len(), 3680, "total block size");
+        // 16.10.2026: −16 (EX1 und TRANSPONDER STATE:1 in eigene
+        // Definitionen, `OPTIONALE_FELDER`).
+        assert_eq!(buf.len(), 3672, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6360,9 +6403,9 @@ mod tests {
         assert_eq!(t.std_cabin_seatbelts_alert, Some(1381.0)); // idx 381
         assert_eq!(t.std_light_landing_on_1, Some(1382.0)); // idx 382
         assert_eq!(t.std_light_landing_on_2, Some(1383.0)); // idx 383
-        assert_eq!(t.design_vs0, Some(1384.0)); // idx 384
-        assert_eq!(t.std_transponder_state, Some(1385.0)); // idx 385, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 386, "letzter Index 385");
+        assert_eq!(t.design_vs0, Some(1384.0)); // idx 384, zuletzt
+        assert_eq!(t.std_transponder_state, None); // → OPTIONALE_FELDER
+        assert_eq!(TELEMETRY_FIELDS.len(), 385, "letzter Index 384");
     }
 
     #[test]
@@ -6434,7 +6477,8 @@ mod tests {
         // Lernpaket (29.09.2026): SEMIBODY LOADFACTOR Y dazu → 59 * 8 = 472.
         // Fenix-FCU-Lampen (29.09.2026): fuenf LVars dazu → 64 * 8 = 512.
         // Vref (06.10.2026): FSS-VREF und DESIGN SPEED VS0 dazu → 66 * 8 = 528.
-        buf.truncate(buf.len() - 528);
+        // 16.10.2026: TRANSPONDER STATE:1 → OPTIONALE_FELDER → 65 * 8 = 520.
+        buf.truncate(buf.len() - 520);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -9525,15 +9569,27 @@ mod tests {
         }
         for (i, (n, _)) in werte.iter().enumerate() {
             assert!(
-                getroffen[i],
+                getroffen[i] || OPTIONALE_FELDER.iter().any(|f| f.name == *n),
                 "{n} ist nicht in TELEMETRY_FIELDS registriert"
             );
         }
         buf
     }
 
+    /// Werte fuer `OPTIONALE_FELDER` aus derselben Liste wie der Puffer —
+    /// sie kommen im Adapter aus eigenen Definitionen.
+    fn optionale_aus(werte: &[(&str, f64)]) -> OptionaleWerte {
+        let mut o = OptionaleWerte::default();
+        for (i, f) in OPTIONALE_FELDER.iter().enumerate() {
+            if let Some((_, v)) = werte.iter().find(|(n, _)| *n == f.name) {
+                o.einlesen(i, &v.to_le_bytes());
+            }
+        }
+        o
+    }
+
     fn runde2(titel: &str, atc: &str, werte: &[(&str, f64)]) -> SimSnapshot {
-        parse(&runde2_puffer(titel, atc, werte), Simulator::Msfs2024, None)
+        runde3(titel, atc, None, werte)
     }
 
     // ---- Optionale SimVars + Laengenwaechter (Pilot 15, MSFS 2020) ----
@@ -9573,6 +9629,7 @@ mod tests {
                 ("KOHLSMAN SETTING MB", 1013.0),
                 ("AMBIENT TEMPERATURE", 26.0),
                 ("LIGHT LANDING", 1.0),
+                ("DESIGN SPEED VS0", 110.0),
             ],
         )
     }
@@ -9656,11 +9713,11 @@ mod tests {
 
     #[test]
     fn abgelehntes_hauptfeld_fuehrt_nicht_zum_dauerausfall() {
-        // Ein Sim lehnt TRANSPONDER STATE:1 und TOTAL WEIGHT ab. Erste
+        // Ein Sim lehnt DESIGN SPEED VS0 und TOTAL WEIGHT ab. Erste
         // Verbindung: jeder Block zu kurz → verworfen.
         let tx = TELEMETRY_FIELDS
             .iter()
-            .position(|f| f.name == "TRANSPONDER STATE:1")
+            .position(|f| f.name == "DESIGN SPEED VS0")
             .unwrap();
         let tw = TELEMETRY_FIELDS
             .iter()
@@ -9668,7 +9725,7 @@ mod tests {
             .unwrap();
         let mut voll = jbu1500_block();
         let ende = voll.len();
-        voll.truncate(ende - 8); // TRANSPONDER STATE:1 (letztes Feld)
+        voll.truncate(ende - 8); // DESIGN SPEED VS0 (letztes Feld)
         let start: usize = TELEMETRY_FIELDS[..tw].iter().map(|f| f.kind.size()).sum();
         voll.drain(start..start + 8);
         let kurz = voll;
@@ -9711,8 +9768,78 @@ mod tests {
         assert_eq!(snap.light_landing, Some(true));
         // Die ausgelassenen Felder bleiben leer statt falsch.
         assert_eq!(snap.total_weight_kg, None);
+        assert_eq!(snap.design_vs0_kt, None);
+    }
+
+    #[test]
+    fn synchron_abgelehntes_hauptfeld_wird_ausgelassen() {
+        // AddToDataDefinition meldet fuer TOTAL WEIGHT sofort einen Fehler.
+        // Frueher brach die Registrierung ab und jede Neuverbindung
+        // scheiterte an derselben SimVar.
+        let tw = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TOTAL WEIGHT")
+            .unwrap();
+        let mut paket = 1u32;
+        let r = hauptdefinition_registrieren(&[], |f| {
+            if f.name == "TOTAL WEIGHT" {
+                return Err(0x8000_4005u32 as i32);
+            }
+            paket += 1;
+            Ok(Some(paket))
+        });
+        assert_eq!(r.ausgelassen, vec![tw]);
+        assert_eq!(r.sofort_abgelehnt, vec![tw]);
+        // Das Feld danach hat die naechste Kennung — ohne Luecke.
+        assert_eq!(r.pakete.feld(tw as u32 + 2), Some(tw + 1));
+
+        // Der Block, den der Sim dann liefert, wird gelesen, nicht verworfen.
+        let start: usize = TELEMETRY_FIELDS[..tw].iter().map(|f| f.kind.size()).sum();
+        let mut block = jbu1500_block();
+        block.drain(start..start + 8);
+        let mut w = Blockwaechter::default();
+        assert_eq!(
+            w.pruefen(block.len(), blocklaenge(&r.ausgelassen)),
+            Blockpruefung::Lesen
+        );
+        let snap = parse_mit_eingaben(
+            &block,
+            Simulator::Msfs2020,
+            None,
+            &std::collections::BTreeMap::new(),
+            &OptionaleWerte::default(),
+            &r.ausgelassen,
+        );
+        assert_eq!(snap.wind_direction_deg, Some(20.0));
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+        assert_eq!(snap.total_weight_kg, None);
+
+        // Vorab ausgelassene Felder werden gar nicht erst angefragt.
+        let mut angefragt = Vec::new();
+        let r = hauptdefinition_registrieren(&[tw], |f| {
+            angefragt.push(f.name);
+            Ok(None)
+        });
+        assert!(!angefragt.contains(&"TOTAL WEIGHT"));
+        assert_eq!(r.ausgelassen, vec![tw]);
+        assert!(r.sofort_abgelehnt.is_empty());
+    }
+
+    #[test]
+    fn transponder_kommt_aus_der_optionalen_definition() {
+        assert!(TELEMETRY_FIELDS
+            .iter()
+            .all(|f| f.name != "TRANSPONDER STATE:1"));
+        let mut o = OptionaleWerte::default();
+        o.einlesen(OPT_TRANSPONDER_STATE, &4.0f64.to_le_bytes());
+        let snap = mit_optionalen(&jbu1500_block(), &o);
+        let roh = snap.cockpit_rohwerte.expect("MSFS liefert Rohwerte");
+        assert_eq!(roh.werte.get("TRANSPONDER STATE:1"), Some(&4.0));
+        // MSFS 2020 lehnt ihn ab: nur er fehlt, der Rest stimmt.
+        let snap = mit_optionalen(&jbu1500_block(), &OptionaleWerte::default());
         let roh = snap.cockpit_rohwerte.expect("MSFS liefert Rohwerte");
         assert_eq!(roh.werte.get("TRANSPONDER STATE:1"), None);
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
     }
 
     #[test]
@@ -10138,12 +10265,13 @@ mod tests {
     /// kein Landelicht-Wert, der als Transponder gelesen wird.
     #[test]
     fn nur_transponder_abgelehnt_laesst_landelichter_stehen() {
-        let mut buf = runde2_puffer(
+        let buf = runde2_puffer(
             ASOBO.0,
             ASOBO.1,
             &[("LIGHT LANDING ON:1", 1.0), ("LIGHT LANDING ON:2", 0.0)],
         );
-        buf.truncate(buf.len() - 8);
+        // Seit 16.10.2026 steht der Transponder gar nicht mehr im
+        // Hauptblock (`OPTIONALE_FELDER`) — fehlt er, bleibt er None.
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.std_light_landing_on_1, Some(1.0));
         assert_eq!(t.std_light_landing_on_2, Some(0.0));
@@ -10157,7 +10285,14 @@ mod tests {
     // ================================================================
 
     fn runde3(titel: &str, atc: &str, pfad: Option<&str>, werte: &[(&str, f64)]) -> SimSnapshot {
-        parse(&runde2_puffer(titel, atc, werte), Simulator::Msfs2024, pfad)
+        parse_mit_eingaben(
+            &runde2_puffer(titel, atc, werte),
+            Simulator::Msfs2024,
+            pfad,
+            &std::collections::BTreeMap::new(),
+            &optionale_aus(werte),
+            &[],
+        )
     }
 
     const BARON: (&str, &str) = ("Black Square Baron BE58 D-GBSQ", "BE58");
@@ -10430,7 +10565,7 @@ mod tests {
             Simulator::Msfs2024,
             None,
             &eingaben,
-            &OptionaleWerte::default(),
+            &optionale_aus(werte),
             &[],
         )
     }
