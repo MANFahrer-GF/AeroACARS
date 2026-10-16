@@ -1375,6 +1375,7 @@
     "anflug_wind": {
       "titel": "Vento in avvicinamento (stable gate, da 1000 ft alla richiamata) – solo contesto, non conta nel voto",
       "spanne": "{{von}} – {{bis}} kt",
+      "spanne_wechsel": "da {{rueck}} kt in coda a {{gegen}} kt contrario",
       "gegenwind": "Vento contrario medio",
       "rueckenwind": "Vento in coda medio",
       "seitenwind_max": "Vento al traverso massimo",

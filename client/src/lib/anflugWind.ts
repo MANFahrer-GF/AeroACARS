@@ -43,6 +43,19 @@ export interface WindKachel {
 }
 
 const kt = (v: number) => `${Math.round(Math.abs(v))} kt`;
+
+/** Spanne des Gegenwinds in Worten, ohne Vorzeichen: Die Kachel sagt
+ *  schon „Gegenwind“ oder „Rückenwind“ (AIB 432 VIDP, 16.10.2026: bei
+ *  Rückenwind stand „-3 – -2 kt“). Wechselt der Wind im Gate die Richtung,
+ *  sagt die Spanne das. Gleiche gerundete Grenzen → keine Spanne. */
+function gegenwindSpanne(t: Uebersetzer, min: number, max: number): string | undefined {
+  const lo = Math.round(min);
+  const hi = Math.round(max);
+  if (lo === hi) return undefined;
+  if (lo >= 0) return t("landing.anflug_wind.spanne", { von: lo, bis: hi });
+  if (hi <= 0) return t("landing.anflug_wind.spanne", { von: -hi, bis: -lo });
+  return t("landing.anflug_wind.spanne_wechsel", { rueck: -lo, gegen: hi });
+}
 const fpm = (v: number) => `${Math.round(Math.abs(v) / 10) * 10} fpm`;
 
 /** Die Kacheln des Windstreifens. Fehlt ein Wert, fehlt seine Kachel —
@@ -53,15 +66,24 @@ export function windKacheln(t: Uebersetzer, w: AnflugWind): WindKachel[] {
   if (h != null) {
     const spanne =
       w.gegenwind_min_kt != null && w.gegenwind_max_kt != null
-        ? t("landing.anflug_wind.spanne", {
-            von: Math.round(w.gegenwind_min_kt),
-            bis: Math.round(w.gegenwind_max_kt),
-          })
+        ? gegenwindSpanne(t, w.gegenwind_min_kt, w.gegenwind_max_kt)
         : undefined;
+    // Beschriftung passend zur Spanne: Liegt die ganze (gerundete) Spanne
+    // auf einer Seite, entscheidet sie — sonst stuende z. B. „Rückenwind im
+    // Mittel 0 kt“ über „0 – 3 kt“ (Codex, 16.10.2026). Nur bei echtem
+    // Richtungswechsel entscheidet das Mittel.
+    const lo = w.gegenwind_min_kt != null ? Math.round(w.gegenwind_min_kt) : null;
+    const hi = w.gegenwind_max_kt != null ? Math.round(w.gegenwind_max_kt) : null;
+    const rueckenwind =
+      lo != null && hi != null && lo >= 0
+        ? false
+        : lo != null && hi != null && hi <= 0
+          ? true
+          : Math.round(h) < 0;
     k.push({
       key: "gegenwind",
       wert: kt(h),
-      label: h >= 0 ? t("landing.anflug_wind.gegenwind") : t("landing.anflug_wind.rueckenwind"),
+      label: rueckenwind ? t("landing.anflug_wind.rueckenwind") : t("landing.anflug_wind.gegenwind"),
       zusatz: spanne,
     });
   }

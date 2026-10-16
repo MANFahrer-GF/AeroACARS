@@ -160,3 +160,72 @@ describe("ApproachStabilityCard: Wind im Anflug (Score-Version 24)", () => {
     expect(w).toContain("780 fpm");
   });
 });
+
+/** Spanne ohne Vorzeichen (AIB 432 OMDB→VIDP, 16.10.2026, Thomas: leichter
+ *  Rückenwind, die Kachel zeigte „-3 – -2 kt“). */
+describe("ApproachStabilityCard: Spanne des Gegenwinds", () => {
+  const gate: GatePunkt[] = [
+    gut("gleitpfad", 0.12, 1),
+    gut("fahrt", 1.85, 5),
+    gut("querneigung", 0.04, 3),
+    gut("ruck", 7, 100),
+    { key: "sinken", stufe: "gut" },
+    { key: "konfiguration", stufe: "gut" },
+  ];
+  const basis = {
+    wind_proben: 102,
+    seitenwind_mittel_kt: -0.49,
+    seitenwind_max_kt: 0.76,
+    schwankung_kt: 0.35,
+    gs_mittel_kt: 143.5,
+    soll_sinkrate_fpm: -762,
+    sinkgrenze_fpm: -1003,
+  };
+  const text = () => screen.getByTestId("anflug-wind").textContent ?? "";
+
+  it("AIB 432: Rückenwind-Spanne ohne Minuszeichen", () => {
+    render(
+      <ApproachStabilityCard
+        sampleCount={102}
+        gate={gate}
+        wind={{ ...basis, gegenwind_mittel_kt: -2.75, gegenwind_min_kt: -3.24, gegenwind_max_kt: -1.92 }}
+      />,
+    );
+    expect(text()).toContain("Rückenwind im Mittel3 kt2 – 3 kt");
+    expect(text()).not.toMatch(/-\d/);
+  });
+
+  it("Richtungswechsel im Gate wird benannt", () => {
+    render(
+      <ApproachStabilityCard
+        sampleCount={102}
+        gate={gate}
+        wind={{ ...basis, gegenwind_mittel_kt: 1.2, gegenwind_min_kt: -2.4, gegenwind_max_kt: 4.6 }}
+      />,
+    );
+    expect(text()).toContain("2 kt Rückenwind bis 5 kt Gegenwind");
+  });
+
+  it("Beschriftung widerspricht der Spanne nie (Codex-Randfall −0,4 … 3 kt)", () => {
+    render(
+      <ApproachStabilityCard
+        sampleCount={102}
+        gate={gate}
+        wind={{ ...basis, gegenwind_mittel_kt: -0.2, gegenwind_min_kt: -0.4, gegenwind_max_kt: 3 }}
+      />,
+    );
+    expect(text()).toContain("Gegenwind im Mittel0 kt0 – 3 kt");
+    expect(text()).not.toContain("Rückenwind");
+  });
+
+  it("gleiche gerundete Grenzen: keine Spanne", () => {
+    render(
+      <ApproachStabilityCard
+        sampleCount={102}
+        gate={gate}
+        wind={{ ...basis, gegenwind_mittel_kt: -0.3, gegenwind_min_kt: -0.4, gegenwind_max_kt: -0.2 }}
+      />,
+    );
+    expect(text()).not.toMatch(/\d – \d/);
+  });
+});
