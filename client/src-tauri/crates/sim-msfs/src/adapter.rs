@@ -1936,8 +1936,11 @@ fn run_dispatch(
                     // index=1 als „ATC MODEL" (Feld 1) ausgegeben; die 212
                     // Meldungen in den Diagnose-Logs waren in Wahrheit
                     // `EVENT_ID_DUPLICATE` aus doppelten Event-Abos
-                    // (Befund 21.09.2026). Ein Feld wird deshalb nur noch
-                    // bei `NAME_UNRECOGNIZED` und nur als Vermutung genannt.
+                    // (Befund 21.09.2026). Das Telemetriefeld kommt deshalb
+                    // aus der Paketkennung (`telemetrie_send_ids`); auch die
+                    // fruehere „Vermutung“ ueber `index` war falsch — sie
+                    // nannte bei MSFS 2020 „ATC ID“ statt `FUEL TOTAL
+                    // QUANTITY WEIGHT EX1` (Befund 16.10.2026).
                     let name = facility::ausnahme_name(exception);
                     if conn.abmelde_pakete.erwartet_abgelehnt(name, send_id) {
                         tracing::debug!(
@@ -1946,17 +1949,27 @@ fn run_dispatch(
                         );
                         continue;
                     }
-                    let feld_vermutet = if name == "NAME_UNRECOGNIZED" {
-                        TELEMETRY_FIELDS.get(index as usize).map(|f| f.name)
-                    } else {
-                        None
-                    };
+                    let telemetrie_feld = conn
+                        .telemetrie_send_ids
+                        .iter()
+                        .find(|(id, _)| *id == send_id)
+                        .map(|(_, idx)| *idx);
+                    if let Some(idx) = telemetrie_feld {
+                        // Ab jetzt beim Lesen ueberspringen — sonst rueckt
+                        // jedes spaetere Feld eine Stelle nach vorn.
+                        if !conn.telemetrie_abgelehnt.contains(&idx) {
+                            conn.telemetrie_abgelehnt.push(idx);
+                        }
+                    }
+                    let feld = telemetrie_feld
+                        .and_then(|idx| TELEMETRY_FIELDS.get(idx))
+                        .map(|f| f.name);
                     tracing::warn!(
                         exception,
                         ausnahme = name,
                         send_id,
                         index,
-                        ?feld_vermutet,
+                        ?feld,
                         "SIMCONNECT_RECV_EXCEPTION — Aufruf vom Simulator abgelehnt"
                     );
                     // ⚠ Gehoert sie zu einer Szenerie-Anfrage, ist der
@@ -2072,11 +2085,33 @@ fn run_dispatch(
                             // 26.09.2026: Werte der abonnierten MSFS-2024-
                             // Input-Events (leer bei MSFS 2020).
                             let eingaben = shared.eingaben.lock().werte().clone();
+                            // ⚠ Zu kurz heisst: ein Feld fehlt, dessen
+                            // Ablehnung nicht (noch nicht) zugeordnet ist.
+                            // Dann stuende ab dort jedes Feld auf dem Platz
+                            // seines Nachfolgers — lieber diesen Block
+                            // auslassen, als verschobene Werte (Wind 1013 kt)
+                            // in Bewertung und Protokoll zu geben.
+                            let erwartet =
+                                telemetry::erwartete_blocklaenge(&conn.telemetrie_abgelehnt);
+                            if bytes.len() < erwartet {
+                                if !conn.kurzer_block_gemeldet {
+                                    conn.kurzer_block_gemeldet = true;
+                                    tracing::warn!(
+                                        erhalten = bytes.len(),
+                                        erwartet,
+                                        abgelehnt = ?conn.telemetrie_abgelehnt,
+                                        "Telemetrie-Block kuerzer als die Feldliste — \
+                                         nicht zugeordnete Ablehnung, Block verworfen"
+                                    );
+                                }
+                                continue;
+                            }
                             let mut snap = telemetry::parse_mit_eingaben(
                                 &bytes,
                                 simulator,
                                 air_path.as_deref(),
                                 &eingaben,
+                                &conn.telemetrie_abgelehnt,
                             );
                             // Spec v0.7.15 F5: Pause-State aus dem Atomic
                             // in den Snapshot kopieren — wird vom Streamer-
@@ -2579,6 +2614,18 @@ struct Connection {
     /// Zurueckweisungen von `AddToFacilityDefinition`.
     facility_feld_send_ids: Vec<(u32, String)>,
     inspector_send_ids: Vec<(u32, u32)>,
+    /// Paketkennung → Index in `TELEMETRY_FIELDS`, je
+    /// `AddToDataDefinition` aus `register_telemetry`. Nur so laesst sich
+    /// ein spaeteres `NAME_UNRECOGNIZED` dem richtigen Feld zuordnen —
+    /// der `index` der Ausnahme ist die Nummer des PARAMETERS.
+    telemetrie_send_ids: Vec<(u32, usize)>,
+    /// Vom Simulator zurueckgewiesene Telemetriefelder (Indizes). Der
+    /// Parser ueberspringt sie, weil SimConnect sie aus dem Block
+    /// weglaesst und der Rest nach vorn rueckt.
+    telemetrie_abgelehnt: Vec<usize>,
+    /// Ein zu kurzer Telemetrie-Block wird nur einmal je Verbindung
+    /// gemeldet, nicht mit jedem Tick.
+    kurzer_block_gemeldet: bool,
     /// Paketkennungen der letzten `UnsubscribeInputEvent`-Aufrufe.
     ///
     /// Beim Flugzeugwechsel werden die Abos des VORIGEN Flugzeugs
@@ -2636,6 +2683,9 @@ impl Connection {
             ereignis,
             facility_feld_send_ids: Vec::new(),
             inspector_send_ids: Vec::new(),
+            telemetrie_send_ids: Vec::new(),
+            telemetrie_abgelehnt: Vec::new(),
+            kurzer_block_gemeldet: false,
             abmelde_pakete: Default::default(),
             zusatz_angelegt: false,
             inspektor_angelegt: false,
@@ -2656,6 +2706,9 @@ impl Connection {
 
     /// Register every entry in `TELEMETRY_FIELDS` in order.
     fn register_telemetry(&mut self) -> Result<(), String> {
+        self.telemetrie_send_ids.clear();
+        self.telemetrie_abgelehnt.clear();
+        self.kurzer_block_gemeldet = false;
         for (idx, field) in TELEMETRY_FIELDS.iter().enumerate() {
             let cname = std::ffi::CString::new(field.name)
                 .map_err(|_| "SimVar name contained NUL".to_string())?;
@@ -2682,6 +2735,13 @@ impl Connection {
                     "AddToDataDefinition for SimVar #{idx} \"{}\" returned 0x{hr:08X}",
                     field.name
                 ));
+            }
+            // Ein unbekannter Name kommt erst spaeter asynchron als
+            // Ausnahme mit DIESER Paketkennung zurueck (MSFS 2020 kennt
+            // z. B. `FUEL TOTAL QUANTITY WEIGHT EX1` nicht).
+            let mut send_id: sys::DWORD = 0;
+            if unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) } == 0 {
+                self.telemetrie_send_ids.push((send_id, idx));
             }
         }
         Ok(())

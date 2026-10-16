@@ -1880,37 +1880,71 @@ impl Touchdown {
 }
 
 impl Telemetry {
+    #[cfg(test)]
     fn from_block(bytes: &[u8]) -> Self {
-        // Walk the buffer in TELEMETRY_FIELDS order. If the buffer is
-        // shorter than expected (some SimVar got rejected and the
-        // tail is missing), every later field stays at its default.
+        Self::from_block_ohne(bytes, &[])
+    }
+
+    /// Walk the buffer in TELEMETRY_FIELDS order.
+    ///
+    /// ⚠ `abgelehnt`: Indizes in `TELEMETRY_FIELDS`, die der Simulator
+    /// per `NAME_UNRECOGNIZED` zurueckgewiesen hat. SimConnect laesst ein
+    /// abgelehntes Datum NICHT als Luecke stehen, sondern laesst es weg —
+    /// alles dahinter rueckt nach vorn. Ohne diese Liste las MSFS 2020
+    /// (kennt `FUEL TOTAL QUANTITY WEIGHT EX1` nicht) ab Feld 36 jedes
+    /// Feld aus dem Platz seines Nachfolgers: Windrichtung = Windstaerke,
+    /// Windstaerke = QNH, TOTAL WEIGHT = Leergewicht, Lichter, AP usw.
+    /// (Pilot 15, 27 Fluege ab 02.10.2026). Ein abgelehntes Feld bleibt
+    /// jetzt auf seinem Default und verbraucht keine Bytes.
+    fn from_block_ohne(bytes: &[u8], abgelehnt: &[usize]) -> Self {
         let mut t = Telemetry::default();
         let mut off = 0usize;
+        let mut feld = 0usize;
 
         // Macro-equivalent: pull next field into `dst` if the buffer
         // is long enough. Strings copy the NUL-terminated content.
         macro_rules! pull_f64 {
             ($dst:expr) => {
-                if let Some(v) = read_f64(bytes, off) {
-                    $dst = v;
+                if !abgelehnt.contains(&feld) {
+                    if let Some(v) = read_f64(bytes, off) {
+                        $dst = v;
+                    }
+                    off += 8;
                 }
-                off += 8;
+                feld += 1;
+            };
+        }
+        // Wie `pull_f64`, aber fuer `Option`-Felder: abgeschnitten oder
+        // abgelehnt bleibt None, nie 0.
+        macro_rules! pull_opt_f64 {
+            ($dst:expr) => {
+                if !abgelehnt.contains(&feld) {
+                    $dst = read_f64(bytes, off);
+                    off += 8;
+                }
+                feld += 1;
             };
         }
         macro_rules! pull_i32 {
             ($dst:expr) => {
-                if let Some(v) = read_i32(bytes, off) {
-                    $dst = v != 0;
+                if !abgelehnt.contains(&feld) {
+                    if let Some(v) = read_i32(bytes, off) {
+                        $dst = v != 0;
+                    }
+                    off += 4;
                 }
-                off += 4;
+                feld += 1;
             };
         }
         macro_rules! pull_str {
             ($dst:expr) => {
-                if let Some(v) = read_str256(bytes, off) {
-                    $dst = v;
+                if !abgelehnt.contains(&feld) {
+                    if let Some(v) = read_str256(bytes, off) {
+                        $dst = v;
+                    }
+                    off += 256;
                 }
-                off += 256;
+                feld += 1;
             };
         }
 
@@ -2354,25 +2388,19 @@ impl Telemetry {
         pull_f64!(t.fnx_fcu_hdg_dashed);
         pull_f64!(t.fss_vref);
         // Option: ein abgeschnittener Block bleibt None, nie 0 g.
-        t.semibody_loadfactor_y = read_f64(bytes, off);
-        off += 8;
+        pull_opt_f64!(t.semibody_loadfactor_y);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
-        t.std_cabin_seatbelts_alert = read_f64(bytes, off);
-        off += 8;
-        t.std_light_landing_on_1 = read_f64(bytes, off);
-        off += 8;
-        t.std_light_landing_on_2 = read_f64(bytes, off);
-        off += 8;
-        t.design_vs0 = read_f64(bytes, off);
-        off += 8;
-        t.std_transponder_state = read_f64(bytes, off);
-        off += 8;
+        pull_opt_f64!(t.std_cabin_seatbelts_alert);
+        pull_opt_f64!(t.std_light_landing_on_1);
+        pull_opt_f64!(t.std_light_landing_on_2);
+        pull_opt_f64!(t.design_vs0);
+        pull_opt_f64!(t.std_transponder_state);
 
         // Silence the unused-assignment warning the last `pull_*!`
-        // emits (the macro always advances `off`, but the very last
-        // call doesn't read it again).
-        let _ = off;
+        // emits (the macro always advances `off`/`feld`, but the very
+        // last call doesn't read them again).
+        let _ = (off, feld);
 
         t
     }
@@ -2395,18 +2423,36 @@ pub fn parse(bytes: &[u8], simulator: Simulator, cfg_pfad: Option<&str>) -> SimS
         simulator,
         cfg_pfad,
         &std::collections::BTreeMap::new(),
+        &[],
     )
 }
 
+/// Wie viele Bytes ein Telemetrie-Block mindestens hat, wenn der
+/// Simulator die Felder `abgelehnt` (Indizes in `TELEMETRY_FIELDS`)
+/// zurueckgewiesen hat. Ist ein Block kuerzer, fehlt ein Feld, dessen
+/// Ablehnung (noch) nicht zugeordnet ist — dann waere alles dahinter
+/// verschoben, und der Block darf nicht ausgewertet werden.
+pub fn erwartete_blocklaenge(abgelehnt: &[usize]) -> usize {
+    TELEMETRY_FIELDS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !abgelehnt.contains(i))
+        .map(|(_, f)| f.kind.size())
+        .sum()
+}
+
 /// Wie [`parse`], zusaetzlich mit den Werten der abonnierten MSFS-2024-
-/// Input-Events (Name ohne `B:` → Wert, siehe `crate::eingabe_events`).
+/// Input-Events (Name ohne `B:` → Wert, siehe `crate::eingabe_events`)
+/// und den vom Simulator abgelehnten Feldern (siehe
+/// [`Telemetry::from_block_ohne`]).
 pub fn parse_mit_eingaben(
     bytes: &[u8],
     simulator: Simulator,
     cfg_pfad: Option<&str>,
     eingaben: &std::collections::BTreeMap<String, f64>,
+    abgelehnt: &[usize],
 ) -> SimSnapshot {
-    let mut t = Telemetry::from_block(bytes);
+    let mut t = Telemetry::from_block_ohne(bytes, abgelehnt);
     t.eingaben = eingaben.clone();
     telemetry_to_snapshot_mit_pfad(t, simulator, cfg_pfad)
 }
@@ -9382,6 +9428,80 @@ mod tests {
         parse(&runde2_puffer(titel, atc, werte), Simulator::Msfs2024, None)
     }
 
+    /// Block, wie MSFS 2020 ihn schickt: `FUEL TOTAL QUANTITY WEIGHT EX1`
+    /// ist dort unbekannt, SimConnect laesst das Datum WEG (keine Luecke).
+    /// Werte angelehnt an Pilot 15, JBU1500 MDPC→MUVR, 14.10.2026.
+    fn msfs2020_ohne_ex1() -> (Vec<u8>, usize) {
+        let idx = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "FUEL TOTAL QUANTITY WEIGHT EX1")
+            .expect("EX1 steht in der Feldliste");
+        let start: usize = TELEMETRY_FIELDS[..idx].iter().map(|f| f.kind.size()).sum();
+        let mut buf = runde2_puffer(
+            "Asobo A320 Neo",
+            "A20N",
+            &[
+                ("FUEL TOTAL QUANTITY WEIGHT EX1", 6_600.0),
+                ("FUEL TOTAL QUANTITY WEIGHT", 6_600.0),
+                ("TOTAL WEIGHT", 140_000.0),
+                ("EMPTY WEIGHT", 106_757.0),
+                ("AMBIENT WIND DIRECTION", 20.0),
+                ("AMBIENT WIND VELOCITY", 15.0),
+                ("KOHLSMAN SETTING MB", 1013.0),
+                ("AMBIENT TEMPERATURE", 26.0),
+                ("LIGHT LANDING", 1.0),
+            ],
+        );
+        buf.drain(start..start + 8);
+        (buf, idx)
+    }
+
+    fn msfs2020(buf: &[u8], abgelehnt: &[usize]) -> SimSnapshot {
+        parse_mit_eingaben(
+            buf,
+            Simulator::Msfs2020,
+            None,
+            &std::collections::BTreeMap::new(),
+            abgelehnt,
+        )
+    }
+
+    #[test]
+    fn msfs2020_abgelehntes_feld_verschiebt_den_wind_nicht() {
+        let (buf, ex1) = msfs2020_ohne_ex1();
+        let snap = msfs2020(&buf, &[ex1]);
+        assert_eq!(snap.wind_direction_deg, Some(20.0));
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+        assert_eq!(snap.qnh_hpa, Some(1013.0));
+        assert_eq!(snap.outside_air_temp_c, Some(26.0));
+        // TOTAL WEIGHT war vorher konstant das Leergewicht.
+        let kg = |lb: f32| lb * 0.453_592_37;
+        assert!((snap.total_weight_kg.unwrap() - kg(140_000.0)).abs() < 1.0);
+        assert!((snap.empty_weight_kg.unwrap() - kg(106_757.0)).abs() < 1.0);
+        // Kraftstoff kommt ohne EX1 aus der Legacy-SimVar.
+        assert!((snap.fuel_total_kg - kg(6_600.0)).abs() < 1.0);
+        // Ein Bool weit dahinter liegt auch wieder auf seinem Platz.
+        assert_eq!(snap.light_landing, Some(true));
+
+        // Gegenprobe: ohne die Ablehnung entsteht genau der Live-Befund —
+        // Windrichtung = Windstaerke, Windstaerke = QNH.
+        let alt = msfs2020(&buf, &[]);
+        assert_eq!(alt.wind_direction_deg, Some(15.0));
+        assert_eq!(alt.wind_speed_kt, Some(1013.0));
+    }
+
+    #[test]
+    fn msfs2020_block_ohne_zuordnung_gilt_als_zu_kurz() {
+        // Solange die Ablehnung nicht zugeordnet ist, verwirft der Adapter
+        // den Block (`bytes.len() < erwartete_blocklaenge`).
+        let (buf, ex1) = msfs2020_ohne_ex1();
+        assert!(buf.len() < erwartete_blocklaenge(&[]));
+        assert_eq!(buf.len(), erwartete_blocklaenge(&[ex1]));
+        // Ein vollstaendiger MSFS-2024-Block besteht die Pruefung.
+        let voll = runde2_puffer("A350-900", "A359", &[]);
+        assert_eq!(voll.len(), erwartete_blocklaenge(&[]));
+    }
+
     fn runde2_schluessel(snap: &SimSnapshot) -> Vec<String> {
         snap.cockpit_rohwerte
             .as_ref()
@@ -10049,6 +10169,7 @@ mod tests {
             Simulator::Msfs2024,
             None,
             &eingaben,
+            &[],
         )
     }
 
@@ -10620,6 +10741,7 @@ mod tests {
             Simulator::Msfs2024,
             None,
             &std::collections::BTreeMap::new(),
+            &[],
         );
         assert_eq!(a.seatbelts_sign, b.seatbelts_sign);
         assert_eq!(a.cockpit_rohwerte, b.cockpit_rohwerte);
