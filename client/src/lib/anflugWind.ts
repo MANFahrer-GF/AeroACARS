@@ -100,15 +100,16 @@ export function windKacheln(t: Uebersetzer, w: AnflugWind): WindKachel[] {
   return k;
 }
 
-/** Satz zum längsten Lauf unter der Sinkgrenze — nur, wenn er die 10 s
- *  erreicht hat (sonst war die Sinkrate ok und der Satz verwirrte). */
+/** Satz zum längsten Lauf unter der Sinkgrenze. Die Karte zeigt ihn nur
+ *  als Grund der Prüfung „Sinken“, wenn die nicht „gut“ war — die 10-s-
+ *  Schwelle steht allein in Rust (`SINK_TOLERANZ_MS`), nicht hier. */
 export function sinklaufSatz(
   t: Uebersetzer,
   w: AnflugWind | null | undefined,
   lang: string,
 ): string | null {
   const l = w?.sinklauf;
-  if (!l || l.dauer_s < 10 || w?.sinkgrenze_fpm == null) return null;
+  if (!l || w?.sinkgrenze_fpm == null) return null;
   return t("landing.anflug_wind.sinklauf", {
     s: l.dauer_s.toLocaleString(lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
     grenze: fpm(w.sinkgrenze_fpm),
