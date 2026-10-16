@@ -9577,13 +9577,16 @@ mod tests {
     }
 
     /// Werte fuer `OPTIONALE_FELDER` aus derselben Liste wie der Puffer —
-    /// sie kommen im Adapter aus eigenen Definitionen.
+    /// sie kommen im Adapter aus eigenen Definitionen. Wie im Puffer liefert
+    /// der Sim jedes Feld (Default 0), sofern nicht anders angegeben.
     fn optionale_aus(werte: &[(&str, f64)]) -> OptionaleWerte {
         let mut o = OptionaleWerte::default();
         for (i, f) in OPTIONALE_FELDER.iter().enumerate() {
-            if let Some((_, v)) = werte.iter().find(|(n, _)| *n == f.name) {
-                o.einlesen(i, &v.to_le_bytes());
-            }
+            let v = werte
+                .iter()
+                .find(|(n, _)| *n == f.name)
+                .map_or(0.0, |(_, v)| *v);
+            o.einlesen(i, &v.to_le_bytes());
         }
         o
     }
