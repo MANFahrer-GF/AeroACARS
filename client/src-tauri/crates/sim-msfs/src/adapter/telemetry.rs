@@ -1079,9 +1079,54 @@ impl OptionaleWerte {
     }
 }
 
-/// Bytes eines vollstaendigen Hauptblocks.
-pub fn blocklaenge() -> usize {
-    TELEMETRY_FIELDS.iter().map(|f| f.kind.size()).sum()
+/// Bytes eines vollstaendigen Hauptblocks ohne die `ausgelassen`en Felder.
+pub fn blocklaenge(ausgelassen: &[usize]) -> usize {
+    TELEMETRY_FIELDS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !ausgelassen.contains(i))
+        .map(|(_, f)| f.kind.size())
+        .sum()
+}
+
+/// Paketkennungen der `AddToDataDefinition`-Aufrufe der Hauptdefinition,
+/// in Registrierungsreihenfolge.
+///
+/// Entscheidet NICHT ueber das Lesen eines Blocks, sondern nur, welches
+/// Feld beim naechsten Registrieren ausgelassen wird: Lehnt der Simulator
+/// ein Hauptfeld ab, rueckt alles dahinter nach vorn — jeder Block waere
+/// zu kurz und wuerde verworfen. Ohne Auslassen hiesse das Neuverbinden
+/// mit derselben Definition, also Dauerausfall.
+#[derive(Debug, Default)]
+pub struct Paketbuch {
+    /// (Index in `TELEMETRY_FIELDS`, Paketkennung falls ermittelbar).
+    eintraege: Vec<(usize, Option<u32>)>,
+}
+
+impl Paketbuch {
+    pub fn registriert(&mut self, feld: usize, send_id: Option<u32>) {
+        self.eintraege.push((feld, send_id));
+    }
+
+    /// Feld zur Paketkennung einer Ausnahme. Scheiterte
+    /// `GetLastSentPacketID` fuer dieses Feld, wird die Kennung aus dem
+    /// naechsten bekannten Nachbarn abgeleitet: Die Aufrufe laufen ohne
+    /// anderes Paket dazwischen, die Kennungen sind fortlaufend.
+    pub fn feld(&self, send_id: u32) -> Option<usize> {
+        if let Some((feld, _)) = self.eintraege.iter().find(|(_, id)| *id == Some(send_id)) {
+            return Some(*feld);
+        }
+        let (pos, id) = self
+            .eintraege
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, (_, id))| id.map(|id| (pos as i64, id as i64)))
+            .min_by_key(|(_, id)| (send_id as i64 - id).abs())?;
+        let ziel = pos + (send_id as i64 - id);
+        let (feld, eigene) = self.eintraege.get(usize::try_from(ziel).ok()?)?;
+        // Hat das Ziel eine eigene, andere Kennung, passt die Ableitung nicht.
+        eigene.is_none().then_some(*feld)
+    }
 }
 
 /// Nach so vielen verworfenen Hauptbloecken in Folge (~10 s bei
@@ -1113,8 +1158,8 @@ pub struct Blockwaechter {
 }
 
 impl Blockwaechter {
-    pub fn pruefen(&mut self, laenge: usize) -> Blockpruefung {
-        if laenge >= blocklaenge() {
+    pub fn pruefen(&mut self, laenge: usize, erwartet: usize) -> Blockpruefung {
+        if laenge >= erwartet {
             self.verworfen_in_folge = 0;
             return Blockpruefung::Lesen;
         }
@@ -1959,37 +2004,65 @@ impl Touchdown {
 }
 
 impl Telemetry {
+    #[cfg(test)]
     fn from_block(bytes: &[u8]) -> Self {
-        // Walk the buffer in TELEMETRY_FIELDS order. If the buffer is
-        // shorter than expected (some SimVar got rejected and the
-        // tail is missing), every later field stays at its default.
+        Self::from_block_ohne(bytes, &[])
+    }
+
+    /// Walk the buffer in TELEMETRY_FIELDS order.
+    ///
+    /// `ausgelassen`: Indizes in `TELEMETRY_FIELDS`, die bei dieser
+    /// Verbindung gar nicht registriert wurden (vom Simulator zuvor
+    /// abgelehnt, siehe `Paketbuch`). Sie verbrauchen keine Bytes und
+    /// bleiben auf ihrem Default (Option-Felder: None).
+    fn from_block_ohne(bytes: &[u8], ausgelassen: &[usize]) -> Self {
         let mut t = Telemetry::default();
         let mut off = 0usize;
+        let mut feld = 0usize;
 
         // Macro-equivalent: pull next field into `dst` if the buffer
         // is long enough. Strings copy the NUL-terminated content.
         macro_rules! pull_f64 {
             ($dst:expr) => {
-                if let Some(v) = read_f64(bytes, off) {
-                    $dst = v;
+                if !ausgelassen.contains(&feld) {
+                    if let Some(v) = read_f64(bytes, off) {
+                        $dst = v;
+                    }
+                    off += 8;
                 }
-                off += 8;
+                feld += 1;
+            };
+        }
+        // Option-Feld: abgeschnitten oder ausgelassen bleibt None, nie 0.
+        macro_rules! pull_opt_f64 {
+            ($dst:expr) => {
+                if !ausgelassen.contains(&feld) {
+                    $dst = read_f64(bytes, off);
+                    off += 8;
+                }
+                feld += 1;
             };
         }
         macro_rules! pull_i32 {
             ($dst:expr) => {
-                if let Some(v) = read_i32(bytes, off) {
-                    $dst = v != 0;
+                if !ausgelassen.contains(&feld) {
+                    if let Some(v) = read_i32(bytes, off) {
+                        $dst = v != 0;
+                    }
+                    off += 4;
                 }
-                off += 4;
+                feld += 1;
             };
         }
         macro_rules! pull_str {
             ($dst:expr) => {
-                if let Some(v) = read_str256(bytes, off) {
-                    $dst = v;
+                if !ausgelassen.contains(&feld) {
+                    if let Some(v) = read_str256(bytes, off) {
+                        $dst = v;
+                    }
+                    off += 256;
                 }
-                off += 256;
+                feld += 1;
             };
         }
 
@@ -2432,25 +2505,19 @@ impl Telemetry {
         pull_f64!(t.fnx_fcu_hdg_dashed);
         pull_f64!(t.fss_vref);
         // Option: ein abgeschnittener Block bleibt None, nie 0 g.
-        t.semibody_loadfactor_y = read_f64(bytes, off);
-        off += 8;
+        pull_opt_f64!(t.semibody_loadfactor_y);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
-        t.std_cabin_seatbelts_alert = read_f64(bytes, off);
-        off += 8;
-        t.std_light_landing_on_1 = read_f64(bytes, off);
-        off += 8;
-        t.std_light_landing_on_2 = read_f64(bytes, off);
-        off += 8;
-        t.design_vs0 = read_f64(bytes, off);
-        off += 8;
-        t.std_transponder_state = read_f64(bytes, off);
-        off += 8;
+        pull_opt_f64!(t.std_cabin_seatbelts_alert);
+        pull_opt_f64!(t.std_light_landing_on_1);
+        pull_opt_f64!(t.std_light_landing_on_2);
+        pull_opt_f64!(t.design_vs0);
+        pull_opt_f64!(t.std_transponder_state);
 
         // Silence the unused-assignment warning the last `pull_*!`
-        // emits (the macro always advances `off`, but the very last
-        // call doesn't read it again).
-        let _ = off;
+        // emits (the macro always advances `off`/`feld`, but the very
+        // last call doesn't read them again).
+        let _ = (off, feld);
 
         t
     }
@@ -2474,20 +2541,23 @@ pub fn parse(bytes: &[u8], simulator: Simulator, cfg_pfad: Option<&str>) -> SimS
         cfg_pfad,
         &std::collections::BTreeMap::new(),
         &OptionaleWerte::default(),
+        &[],
     )
 }
 
 /// Wie [`parse`], zusaetzlich mit den Werten der abonnierten MSFS-2024-
 /// Input-Events (Name ohne `B:` → Wert, siehe `crate::eingabe_events`)
-/// und denen der optionalen Definitionen (`OPTIONALE_FELDER`).
+/// und denen der optionalen Definitionen (`OPTIONALE_FELDER`); ohne die
+/// bei dieser Verbindung nicht registrierten Hauptfelder (`ausgelassen`).
 pub fn parse_mit_eingaben(
     bytes: &[u8],
     simulator: Simulator,
     cfg_pfad: Option<&str>,
     eingaben: &std::collections::BTreeMap<String, f64>,
     optionale: &OptionaleWerte,
+    ausgelassen: &[usize],
 ) -> SimSnapshot {
-    let mut t = Telemetry::from_block(bytes);
+    let mut t = Telemetry::from_block_ohne(bytes, ausgelassen);
     t.eingaben = eingaben.clone();
     // Fehlt EX1 (MSFS 2020), bleibt 0 → Kraftstoff aus der Legacy-SimVar.
     t.fuel_total_lb_ex1 = optionale.0[OPT_FUEL_EX1].unwrap_or(0.0);
@@ -9514,6 +9584,7 @@ mod tests {
             None,
             &std::collections::BTreeMap::new(),
             o,
+            &[],
         )
     }
 
@@ -9524,7 +9595,7 @@ mod tests {
         o.einlesen(OPT_FUEL_EX1, &[]);
         assert_eq!(o.0[OPT_FUEL_EX1], None);
         let buf = jbu1500_block();
-        assert_eq!(buf.len(), blocklaenge());
+        assert_eq!(buf.len(), blocklaenge(&[]));
         let snap = mit_optionalen(&buf, &o);
         assert_eq!(snap.wind_direction_deg, Some(20.0));
         assert_eq!(snap.wind_speed_kt, Some(15.0));
@@ -9548,6 +9619,102 @@ mod tests {
         assert!((snap.fuel_total_kg - 7_000.0 * 0.453_592_37).abs() < 1.0);
     }
 
+    /// Paketbuch wie `register_telemetry` es fuellt: Open ist Paket 1,
+    /// das erste registrierte Feld Paket 2 usw. `ohne_kennung`: Felder,
+    /// bei denen `GetLastSentPacketID` scheiterte.
+    fn paketbuch(ausgelassen: &[usize], ohne_kennung: &[usize]) -> Paketbuch {
+        let mut b = Paketbuch::default();
+        let mut paket = 2u32;
+        for idx in (0..TELEMETRY_FIELDS.len()).filter(|i| !ausgelassen.contains(i)) {
+            b.registriert(idx, (!ohne_kennung.contains(&idx)).then_some(paket));
+            paket += 1;
+        }
+        b
+    }
+
+    #[test]
+    fn paketbuch_ordnet_zu_und_leitet_fehlende_kennungen_ab() {
+        let tw = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TOTAL WEIGHT")
+            .unwrap();
+        let b = paketbuch(&[], &[]);
+        assert_eq!(b.feld(tw as u32 + 2), Some(tw));
+        // Paket einer spaeteren Registrierung (Joels send_id 479) ist kein
+        // Hauptfeld.
+        assert_eq!(b.feld(9_999), None);
+        // GetLastSentPacketID scheiterte fuer TOTAL WEIGHT: abgeleitet.
+        let ohne = paketbuch(&[], &[tw]);
+        assert_eq!(ohne.feld(tw as u32 + 2), Some(tw));
+        // Mit ausgelassenem Feld davor verschieben sich die Kennungen.
+        let mit_luecke = paketbuch(&[3], &[tw]);
+        assert_eq!(mit_luecke.feld(tw as u32 + 1), Some(tw));
+        // Ganz ohne Kennungen ist keine Zuordnung moeglich.
+        let leer = paketbuch(&[], &(0..TELEMETRY_FIELDS.len()).collect::<Vec<_>>());
+        assert_eq!(leer.feld(tw as u32 + 2), None);
+    }
+
+    #[test]
+    fn abgelehntes_hauptfeld_fuehrt_nicht_zum_dauerausfall() {
+        // Ein Sim lehnt TRANSPONDER STATE:1 und TOTAL WEIGHT ab. Erste
+        // Verbindung: jeder Block zu kurz → verworfen.
+        let tx = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TRANSPONDER STATE:1")
+            .unwrap();
+        let tw = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TOTAL WEIGHT")
+            .unwrap();
+        let mut voll = jbu1500_block();
+        let ende = voll.len();
+        voll.truncate(ende - 8); // TRANSPONDER STATE:1 (letztes Feld)
+        let start: usize = TELEMETRY_FIELDS[..tw].iter().map(|f| f.kind.size()).sum();
+        voll.drain(start..start + 8);
+        let kurz = voll;
+        let mut w = Blockwaechter::default();
+        assert!(matches!(
+            w.pruefen(kurz.len(), blocklaenge(&[])),
+            Blockpruefung::Verwerfen { .. }
+        ));
+
+        // Die Ausnahmen werden ueber das Paketbuch zugeordnet; die naechste
+        // Verbindung registriert beide Felder nicht mehr.
+        let b = paketbuch(&[], &[]);
+        let mut ausgelassen: Vec<usize> = [tx, tw]
+            .iter()
+            .filter_map(|i| b.feld(*i as u32 + 2))
+            .collect();
+        ausgelassen.sort_unstable();
+        assert_eq!(ausgelassen, {
+            let mut v = vec![tx, tw];
+            v.sort_unstable();
+            v
+        });
+
+        // Zweite Verbindung: derselbe (kuerzere) Block wird gelesen.
+        let mut w = Blockwaechter::default();
+        assert_eq!(
+            w.pruefen(kurz.len(), blocklaenge(&ausgelassen)),
+            Blockpruefung::Lesen
+        );
+        let snap = parse_mit_eingaben(
+            &kurz,
+            Simulator::Msfs2020,
+            None,
+            &std::collections::BTreeMap::new(),
+            &OptionaleWerte::default(),
+            &ausgelassen,
+        );
+        assert_eq!(snap.wind_direction_deg, Some(20.0));
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+        assert_eq!(snap.light_landing, Some(true));
+        // Die ausgelassenen Felder bleiben leer statt falsch.
+        assert_eq!(snap.total_weight_kg, None);
+        let roh = snap.cockpit_rohwerte.expect("MSFS liefert Rohwerte");
+        assert_eq!(roh.werte.get("TRANSPONDER STATE:1"), None);
+    }
+
     #[test]
     fn zu_kurzer_block_wird_verworfen_und_gezaehlt() {
         // Ein abgelehntes Datum der Hauptdefinition (hier TOTAL WEIGHT):
@@ -9562,24 +9729,30 @@ mod tests {
 
         let mut w = Blockwaechter::default();
         assert_eq!(
-            w.pruefen(kurz.len()),
+            w.pruefen(kurz.len(), blocklaenge(&[])),
             Blockpruefung::Verwerfen { erstmals: true }
         );
         assert_eq!(
-            w.pruefen(kurz.len()),
+            w.pruefen(kurz.len(), blocklaenge(&[])),
             Blockpruefung::Verwerfen { erstmals: false }
         );
         assert_eq!((w.verworfen_in_folge, w.verworfen_gesamt), (2, 2));
         // Ein vollstaendiger Block wird gelesen und beendet die Folge,
         // die Gesamtzahl bleibt.
-        assert_eq!(w.pruefen(blocklaenge()), Blockpruefung::Lesen);
+        assert_eq!(
+            w.pruefen(blocklaenge(&[]), blocklaenge(&[])),
+            Blockpruefung::Lesen
+        );
         assert_eq!((w.verworfen_in_folge, w.verworfen_gesamt), (0, 2));
         // Laenger ist unbedenklich (gelesen wird ab Byte 0).
-        assert_eq!(w.pruefen(blocklaenge() + 4), Blockpruefung::Lesen);
+        assert_eq!(
+            w.pruefen(blocklaenge(&[]) + 4, blocklaenge(&[])),
+            Blockpruefung::Lesen
+        );
         // Anhaltend zu kurz: neu verbinden, nie parsen.
         let mut letzte = Blockpruefung::Lesen;
         for _ in 0..NEU_VERBINDEN_NACH_VERWORFENEN {
-            letzte = w.pruefen(kurz.len());
+            letzte = w.pruefen(kurz.len(), blocklaenge(&[]));
             assert_ne!(letzte, Blockpruefung::Lesen);
         }
         assert_eq!(letzte, Blockpruefung::NeuVerbinden);
@@ -10258,6 +10431,7 @@ mod tests {
             None,
             &eingaben,
             &OptionaleWerte::default(),
+            &[],
         )
     }
 
@@ -10830,6 +11004,7 @@ mod tests {
             None,
             &std::collections::BTreeMap::new(),
             &OptionaleWerte::default(),
+            &[],
         );
         assert_eq!(a.seatbelts_sign, b.seatbelts_sign);
         assert_eq!(a.cockpit_rohwerte, b.cockpit_rohwerte);
