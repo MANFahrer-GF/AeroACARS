@@ -108,7 +108,11 @@ pub fn wind_zusammenfassen(proben: &[(Option<f32>, Option<f32>)]) -> AnflugWind 
         .map(|p| p.1.abs())
         .reduce(f64::max)
         .map(|v| v as f32);
-    w.schwankung_kt = Some(h_var.sqrt() as f32);
+    // Streuung erst ab drei Proben — aus einer einzelnen kaeme „± 0 kt",
+    // als waere es windstill (wie `stability_stddev`).
+    if gueltig.len() >= 3 {
+        w.schwankung_kt = Some(h_var.sqrt() as f32);
+    }
     w
 }
 
@@ -123,14 +127,22 @@ mod tests {
             (None, Some(3.0)),
             (Some(20.0), Some(-8.0)),
             (Some(f32::NAN), Some(1.0)),
+            (Some(15.0), Some(-6.0)),
         ]);
-        assert_eq!(w.wind_proben, 2);
+        assert_eq!(w.wind_proben, 3);
         assert_eq!(w.gegenwind_mittel_kt, Some(15.0));
         assert_eq!(w.gegenwind_min_kt, Some(10.0));
         assert_eq!(w.gegenwind_max_kt, Some(20.0));
         assert_eq!(w.seitenwind_mittel_kt, Some(-6.0));
         assert_eq!(w.seitenwind_max_kt, Some(8.0));
-        assert_eq!(w.schwankung_kt, Some(5.0));
+        assert!((w.schwankung_kt.unwrap() - 4.082).abs() < 0.001);
+    }
+
+    #[test]
+    fn schwankung_erst_ab_drei_proben() {
+        let w = wind_zusammenfassen(&[(Some(12.0), Some(1.0)), (Some(14.0), Some(1.0))]);
+        assert_eq!(w.gegenwind_mittel_kt, Some(13.0));
+        assert_eq!(w.schwankung_kt, None, "zwei Proben sind keine Boeigkeit");
     }
 
     #[test]

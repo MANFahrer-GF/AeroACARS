@@ -3685,6 +3685,25 @@ mod herkunft_auf_der_leitung {
         );
         assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
     }
+
+    /// Score-Version 24: `approach_wind` liegt als Teilobjekt im Touchdown —
+    /// der Recorder speichert den Payload ganz, die Webapp liest es dort.
+    #[test]
+    fn anflug_wind_liegt_als_objekt_im_touchdown() {
+        let leer = serde_json::to_value(TouchdownPayload::default()).unwrap();
+        assert!(leer.get("approach_wind").is_none(), "ohne Messung kein Feld");
+        let td = TouchdownPayload {
+            approach_wind: Some(landing_scoring::anflug_wind::AnflugWind {
+                wind_proben: 3,
+                sinkgrenze_fpm: Some(-1013.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&td).unwrap();
+        assert_eq!(json["approach_wind"]["sinkgrenze_fpm"].as_f64(), Some(-1013.0));
+        assert!(json["approach_wind"].get("gegenwind_mittel_kt").is_none());
+    }
 }
 
 #[cfg(test)]
