@@ -18,6 +18,7 @@ import {
 } from "../lib/anflugSollband";
 import type { ApproachSample, LandingProfilePoint } from "../lib/landungsDatensatz";
 import type { GleitpfadPunkt } from "./AnflugForensikInfo";
+import type { AnflugWind } from "../lib/anflugWind";
 import "./anflugGrafik.css";
 import { InfoBadge } from "./InfoBadge";
 
@@ -256,6 +257,7 @@ export function ApproachChart({
   samples,
   glideslopeAngleDeg,
   gleitpfadVerlauf,
+  wind,
 }: {
   samples: ApproachSample[];
   /** v0.15.18: echter Gleitpfad-Winkel (Navdaten). Skaliert Soll-Band +
@@ -264,6 +266,10 @@ export function ApproachChart({
   /** 05.10.2026: Gleitpfad-Abweichung je Probe (Client-Messung). Mit ihr
    *  bekommt die Grafik den Dot-Streifen auf derselben Zeitachse. */
   gleitpfadVerlauf?: GleitpfadPunkt[] | null;
+  /** Score-Version 24: angewandte Sinkgrenze (wächst ab 145 kt über Grund
+   *  mit). Vorhanden → die Linie zeigt sie; fehlt (ältere Landung) → die
+   *  bisherige feste Grenze. */
+  wind?: AnflugWind | null;
 }) {
   const { t, i18n } = useTranslation();
   // Dots in der Sprache der App („+2,22"), wie alle anderen Werte.
@@ -289,7 +295,9 @@ export function ApproachChart({
   const hatSollband = sollPunkte.length > 0;
   const bandHi = -600 * gsFactor;
   const bandLo = -900 * gsFactor;
-  const limitFpm = -1000 * gsFactor;
+  const limitFpm = wind?.sinkgrenze_fpm ?? -1000 * gsFactor;
+  // Nur beschriften, wenn die Grundgeschwindigkeit die Grenze verschoben hat.
+  const limitNachGs = wind?.sinkgrenze_fpm != null && wind.sinkgrenze_fpm < -1000 * gsFactor - 5;
   const isScaledGp = gsFactor !== 1;
   const fmtFpm = (v: number) => `−${Math.abs(Math.round(v / 10) * 10)}`;
 
@@ -462,7 +470,12 @@ export function ApproachChart({
                 stroke="#f87171" strokeWidth="1.2" strokeDasharray="6 4" opacity="0.7" />
           <text x={pad.left + innerW - 6} y={y(limitFpm) - 5} textAnchor="end"
                 fontSize="10" fill="#f87171" opacity="0.85">
-            {isScaledGp
+            {limitNachGs
+              ? t("landing.vs_chart.limit_gs", {
+                  fpm: fmtFpm(limitFpm),
+                  gs: Math.round(wind?.gs_mittel_kt ?? 0),
+                })
+              : isScaledGp
               ? t("landing.vs_chart.limit_custom", {
                   fpm: fmtFpm(limitFpm),
                   angle: String(glideslopeAngleDeg),
@@ -679,12 +692,15 @@ export function AnflugGrafikAbschnitt({
   profile,
   glideslopeAngleDeg,
   gleitpfadVerlauf,
+  wind,
 }: {
   samples: ApproachSample[] | null | undefined;
   profile: LandingProfilePoint[] | null | undefined;
   glideslopeAngleDeg?: number | null;
   /** 05.10.2026: Gleitpfad je Probe (`anflug_gleitpfad.verlauf`). */
   gleitpfadVerlauf?: GleitpfadPunkt[] | null;
+  /** Score-Version 24: `approach_wind` — für die angewandte Sinkgrenze. */
+  wind?: AnflugWind | null;
 }) {
   const { t } = useTranslation();
   const anflug = samples != null && samples.length >= 3;
@@ -704,6 +720,7 @@ export function AnflugGrafikAbschnitt({
               samples={samples}
               glideslopeAngleDeg={glideslopeAngleDeg}
               gleitpfadVerlauf={gleitpfadVerlauf}
+              wind={wind}
             />
           </div>
           {streifenDa && (

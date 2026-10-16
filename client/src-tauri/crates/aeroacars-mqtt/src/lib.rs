@@ -933,6 +933,10 @@ pub struct TouchdownPayload {
     /// Anzahl Stall-Warning-Samples im Approach-Buffer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approach_stall_warning_count: Option<u32>,
+    /// Score-Version 24: Wind im Anflug, Soll-Sinkrate, Sinkgrenze und
+    /// laengster Sinklauf im Stable Gate — Kontext, keine Note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_wind: Option<landing_scoring::anflug_wind::AnflugWind>,
     /// Yaw-Rate am Touchdown (deg/sec). Hoch = Ground-Loop-Risk.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing_yaw_rate_deg_per_sec: Option<f32>,
@@ -3680,6 +3684,25 @@ mod herkunft_auf_der_leitung {
             Some(3666.0)
         );
         assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
+    }
+
+    /// Score-Version 24: `approach_wind` liegt als Teilobjekt im Touchdown —
+    /// der Recorder speichert den Payload ganz, die Webapp liest es dort.
+    #[test]
+    fn anflug_wind_liegt_als_objekt_im_touchdown() {
+        let leer = serde_json::to_value(TouchdownPayload::default()).unwrap();
+        assert!(leer.get("approach_wind").is_none(), "ohne Messung kein Feld");
+        let td = TouchdownPayload {
+            approach_wind: Some(landing_scoring::anflug_wind::AnflugWind {
+                wind_proben: 3,
+                sinkgrenze_fpm: Some(-1013.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&td).unwrap();
+        assert_eq!(json["approach_wind"]["sinkgrenze_fpm"].as_f64(), Some(-1013.0));
+        assert!(json["approach_wind"].get("gegenwind_mittel_kt").is_none());
     }
 }
 

@@ -867,6 +867,8 @@ mod tests {
             lon: Some(lon),
             pitch_deg: Some(2.5),
             n1_mittel_pct: Some(60.0),
+            headwind_kt: None,
+            crosswind_kt: None,
         }
     }
 

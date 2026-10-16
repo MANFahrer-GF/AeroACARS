@@ -5547,6 +5547,8 @@ struct PersistedFlightStats {
     approach_runway_changed_late: bool,
     #[serde(default)]
     approach_stall_warning_count: u32,
+    #[serde(default)]
+    approach_wind: Option<landing_scoring::anflug_wind::AnflugWind>,
     /// QS 06.10.2026 (Runde 4): die übrigen nur am Aufsetzen gesetzten
     /// Anflug-/Aufsetzwerte des Datensatzes — sonst fehlten sie nach einem
     /// Neustart im Client, während die Webapp sie aus dem Touchdown zeigt.
@@ -5867,6 +5869,7 @@ impl PersistedFlightStats {
             abfangen_gesichert: stats.abfangen_gesichert.clone(),
             approach_runway_changed_late: stats.approach_runway_changed_late,
             approach_stall_warning_count: stats.approach_stall_warning_count,
+            approach_wind: stats.approach_wind.clone(),
             approach_stable_at_da: stats.approach_stable_at_da,
             approach_spaetes_final: stats.approach_spaetes_final,
             landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
@@ -6159,6 +6162,7 @@ impl PersistedFlightStats {
         stats.abfangen_gesichert = self.abfangen_gesichert;
         stats.approach_runway_changed_late = self.approach_runway_changed_late;
         stats.approach_stall_warning_count = self.approach_stall_warning_count;
+        stats.approach_wind = self.approach_wind;
         stats.approach_stable_at_da = self.approach_stable_at_da;
         stats.approach_spaetes_final = self.approach_spaetes_final;
         stats.landing_vref_deviation_kt = self.landing_vref_deviation_kt;
@@ -7308,6 +7312,9 @@ struct FlightStats {
     // Phase 3 — Aggregate
     /// Anzahl Stall-Warnings im Final + Approach.
     approach_stall_warning_count: u32,
+    /// Score-Version 24: Wind im Anflug, Soll-Sinkrate, Sinkgrenze und
+    /// laengster Sinklauf im Gate (`ApproachStabilityV2::wind`). Anzeige.
+    approach_wind: Option<landing_scoring::anflug_wind::AnflugWind>,
     /// Lernpaket AP4/AP5 (29.09.2026): Gleitpfad-Abweichung und Anflugruhe
     /// dieser Landung — reine Forensik, keine Note liest das. Gesetzt neben
     /// der Stabilitaets-Auswertung, siehe `anflug_forensik_stempeln`.
@@ -9684,6 +9691,10 @@ pub struct ApproachBufferSample {
     /// v1.9.12); Kolben- und Elektromotoren liefern `None` — dann gibt es
     /// keinen Schubwert, statt einen zu erfinden.
     pub n1_mittel_pct: Option<f32>,
+    /// Score-Version 24: koerperfester Wind (Gegenwind positiv, Seitenwind
+    /// positiv = von rechts) — Kontext „Wind im Anflug", keine Note.
+    pub headwind_kt: Option<f32>,
+    pub crosswind_kt: Option<f32>,
 }
 
 /// Obergrenze fuer eine physikalisch moegliche Sinkrate im Anflug.
@@ -9827,6 +9838,9 @@ fn push_approach_sample(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTi
         lon: Some(snap.lon).filter(|v| v.is_finite()),
         pitch_deg: Some(snap.pitch_deg).filter(|v| v.is_finite()),
         n1_mittel_pct: n1_mittel_laufend(snap.eng_n1_pct.as_deref()),
+        // Gleiche Ableitung wie `landing_headwind_kt`: Z positiv = Rueckenwind.
+        headwind_kt: snap.aircraft_wind_z_kt.map(|z| -z).filter(|v| v.is_finite()),
+        crosswind_kt: snap.aircraft_wind_x_kt.filter(|v| v.is_finite()),
     });
     while stats.approach_buffer.len() > APPROACH_BUFFER_MAX {
         stats.approach_buffer.pop_front();
@@ -11525,6 +11539,9 @@ pub struct ApproachStabilityV2 {
     pub stable_at_da: Option<bool>,
     /// v0.5.26: Anzahl Stall-Warning-Samples im gesamten Approach-Buffer.
     pub stall_warning_count: u32,
+    /// Score-Version 24: Wind, Soll-Sinkrate, Sinkgrenze und laengster
+    /// Sinklauf im Gate — Kontext fuer die Anzeige, keine Note.
+    pub wind: Option<landing_scoring::anflug_wind::AnflugWind>,
 }
 
 /// Mindestdauer unter der Sinkgrenze, ab der „excessive sink" gilt.
@@ -11536,27 +11553,81 @@ pub struct ApproachStabilityV2 {
 /// bleibt hart; nur kurzes Ueberschiessen kostet nichts.
 const SINK_TOLERANZ_MS: i64 = 10_000;
 
-fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], grenze_fpm: f64) -> bool {
-    let mut lauf_start: Option<DateTime<Utc>> = None;
+/// Score-Version 24: Bezugs-Grundgeschwindigkeit der Sinkgrenze (kt).
+///
+/// Die Grenze −1000 fpm (bei 3°) entspricht bei 145 kt ueber Grund etwa
+/// dem 1,3-fachen der Soll-Sinkrate des Gleitpfads. Wer schneller ueber
+/// Grund fliegt — Rueckenwind, schnelle Anflugmuster —, muss physikalisch
+/// staerker sinken; seine Grenze waechst deshalb mit der Grundgeschwindig-
+/// keit mit. Darunter bleibt sie bei −1000 fpm: Die Regel wird nur
+/// LOCKERER, nie strenger (Thomas 16.10.2026 nach JBU1500 MUVR, Korpus
+/// 1068 Anfluege: 0 Fluege neu mit Abzug, 23 ohne). Die 145 kt sind eine
+/// Wahl, keine Herleitung: der Median-Jet-Anflug, an dem die alte feste
+/// Grenze offenbar geeicht war.
+const SINK_GS_BEZUG_KT: f64 = 145.0;
+
+/// Sinkgrenze eines Messpunkts in fpm (negativ): −1000 × Gleitwinkel-
+/// Faktor, ab 145 kt ueber Grund im Verhaeltnis der Grundgeschwindigkeit
+/// tiefer. Unlesbare Grundgeschwindigkeit → die feste Grenze.
+fn sinkgrenze_fpm(gs_kt: f32, gs_factor: f64) -> f64 {
+    let gs = f64::from(gs_kt);
+    let faktor = if gs.is_finite() {
+        (gs / SINK_GS_BEZUG_KT).max(1.0)
+    } else {
+        1.0
+    };
+    -1000.0 * gs_factor * faktor
+}
+
+/// Laengster zusammenhaengender Lauf unter der Sinkgrenze.
+#[derive(Clone, Copy)]
+struct SinkLauf<'a> {
+    start: &'a ApproachBufferSample,
+    ende: &'a ApproachBufferSample,
+    spitze_fpm: f32,
+}
+
+impl SinkLauf<'_> {
+    fn dauer_ms(&self) -> i64 {
+        (self.ende.at - self.start.at).num_milliseconds()
+    }
+}
+
+fn laengster_sinklauf<'a>(
+    samples: &[&'a ApproachBufferSample],
+    gs_factor: f64,
+) -> Option<SinkLauf<'a>> {
+    let mut bester: Option<SinkLauf<'a>> = None;
+    let mut lauf: Option<SinkLauf<'a>> = None;
     let mut vorher: Option<DateTime<Utc>> = None;
-    for s in samples {
+    for &s in samples {
         // Eine Luecke im Buffer (Sim-Pause: der Zaehler friert ein) darf
         // keinen Lauf ueberbruecken — zwei Samples vor und nach der Pause
         // sind keine 10 s Sinkflug.
         if vorher.is_some_and(|v| (s.at - v).num_milliseconds() > SINK_MAX_LUECKE_MS) {
-            lauf_start = None;
+            lauf = None;
         }
         vorher = Some(s.at);
-        if f64::from(s.vs_fpm) < grenze_fpm {
-            let start = *lauf_start.get_or_insert(s.at);
-            if (s.at - start).num_milliseconds() >= SINK_TOLERANZ_MS {
-                return true;
+        if f64::from(s.vs_fpm) < sinkgrenze_fpm(s.gs_kt, gs_factor) {
+            let l = lauf.get_or_insert(SinkLauf {
+                start: s,
+                ende: s,
+                spitze_fpm: s.vs_fpm,
+            });
+            l.ende = s;
+            l.spitze_fpm = l.spitze_fpm.min(s.vs_fpm);
+            if bester.as_ref().is_none_or(|b| l.dauer_ms() > b.dauer_ms()) {
+                bester = Some(*l);
             }
         } else {
-            lauf_start = None;
+            lauf = None;
         }
     }
-    false
+    bester
+}
+
+fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], gs_factor: f64) -> bool {
+    laengster_sinklauf(samples, gs_factor).is_some_and(|l| l.dauer_ms() >= SINK_TOLERANZ_MS)
 }
 
 /// Groesster Abstand zweier Samples innerhalb eines Laufs (Kadenz ~1 s).
@@ -11828,11 +11899,41 @@ fn compute_approach_stability_v2_mit_final(
     // 5) Excessive-Sink-Flag. v0.15.17: Schwelle mit dem Gleitwinkel skaliert —
     // bei 3° bleibt's −1000 fpm, bei 5,5° (z.B. EGLC) ~−1834 fpm, sodass ein
     // korrekt geflogener Steilanflug nicht fälschlich „excessive" ist.
-    let excessive_sink_threshold = -1000.0 * gs_factor;
-    out.excessive_sink = Some(sinkrate_zu_lange_unter(
-        &gate_samples,
-        excessive_sink_threshold,
-    ));
+    // Score-Version 24: die Grenze waechst ab 145 kt ueber Grund mit
+    // (`sinkgrenze_fpm`) — nur lockerer, nie strenger.
+    let sinklauf = laengster_sinklauf(&gate_samples, gs_factor);
+    out.excessive_sink = Some(sinklauf.is_some_and(|l| l.dauer_ms() >= SINK_TOLERANZ_MS));
+    {
+        let mut wind = landing_scoring::anflug_wind::wind_zusammenfassen(
+            &gate_samples
+                .iter()
+                .map(|s| (s.headwind_kt, s.crosswind_kt))
+                .collect::<Vec<_>>(),
+        );
+        let gs: Vec<f64> = gate_samples
+            .iter()
+            .map(|s| f64::from(s.gs_kt))
+            .filter(|v| v.is_finite())
+            .collect();
+        if !gs.is_empty() {
+            let gs_mittel = gs.iter().sum::<f64>() / gs.len() as f64;
+            wind.gs_mittel_kt = Some(gs_mittel as f32);
+            // Dieselbe Rechnung wie `target_vs` (V/S-Deviation weiter unten).
+            wind.soll_sinkrate_fpm = Some((-gs_mittel * 5.31 * gs_factor) as f32);
+        }
+        let grenzen: Vec<f64> = gate_samples
+            .iter()
+            .map(|s| sinkgrenze_fpm(s.gs_kt, gs_factor))
+            .collect();
+        wind.sinkgrenze_fpm = Some((grenzen.iter().sum::<f64>() / grenzen.len() as f64) as f32);
+        wind.sinklauf = sinklauf.map(|l| landing_scoring::anflug_wind::SinkLaufInfo {
+            dauer_s: l.dauer_ms() as f32 / 1000.0,
+            von_ft: height_for(l.start),
+            bis_ft: height_for(l.ende),
+            spitze_fpm: l.spitze_fpm,
+        });
+        out.wind = Some(wind);
+    }
 
     // 6) Stable-Config: Gear+Flaps am 1000-ft-Sample (= aeltester
     //    Sample im Gate, = der mit hoechster Hoehe).
@@ -11988,13 +12089,14 @@ fn compute_approach_stability_v2_mit_final(
             / n_da;
         let da_ias_sd = da_ias_var.sqrt() as f32;
         // v0.15.18: dieselbe Gleitwinkel-Skalierung wie das 1000-ft-Gate
-        // (excessive_sink_threshold oben). Der v0.15.17-London-Fix skalierte
+        // (Sinkgrenze oben). Der v0.15.17-London-Fix skalierte
         // NUR das 1000-ft-Gate — das 200-ft-DA-Gate blieb fix bei −1000 fpm.
         // Auf einem korrekt geflogenen Steilanflug (z.B. ENTC/4°, EGLC/5,5°)
         // liegt die Soll-Sinkrate am DA-Gate physikalisch schon über −1000 fpm
         // (4° @143 kt ≈ −1013 fpm), sodass `stable_at_da` dort mathematisch NIE
         // erreichbar war. Jetzt winkel-korrekt → identisch zum 1000-ft-Gate.
-        let da_excess_sink = sinkrate_zu_lange_unter(&da_samples, excessive_sink_threshold);
+        // Score-Version 24: dieselbe GS-abhaengige Grenze wie das Gate.
+        let da_excess_sink = sinkrate_zu_lange_unter(&da_samples, gs_factor);
         // Strenger Cutoff bei DA: jerk < 80, bank < 3°, ias < 8 kt
         let da_stable = da_jerk < 80.0 && da_bank_sd < 3.0 && da_ias_sd < 8.0 && !da_excess_sink;
         out.stable_at_da = Some(da_stable);
@@ -28271,9 +28373,22 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Final, darunter hoechstens 10° Querneigung (FSF ALAR 7.1). Anlass:
 /// Thomas 13.10.2026, Korpus 1437 Landungen.
 ///
+/// **24 (16.10.2026)**: Sinkgrenze nach Grundgeschwindigkeit, nur lockerer
+/// (`sinkgrenze_fpm`, `SINK_GS_BEZUG_KT`): ab 145 kt ueber Grund waechst
+/// die Grenze −1000 fpm (× Gleitwinkel-Faktor) im Verhaeltnis mit — wer mit
+/// Rueckenwind schneller ueber Grund fliegt, muss staerker sinken. Gilt fuer
+/// das 1000-ft-Gate und das DA-Gate. Dazu `approach_wind` (Wind im Gate,
+/// Soll-Sinkrate, angewandte Grenze, laengster Sinklauf) als Anzeige.
+/// Anlass: JBU1500 MDPC→MUVR (Joel), Korpus 1068 Anfluege: 0 neu mit
+/// Abzug, 23 ohne. Nur neue Fluege — Altbuchungen bleiben stehen.
+/// Bewusst NICHT nachgezogen: das Live-Band (`StableApproachBanner.tsx`)
+/// warnt weiter ab −1000 fpm × Faktor — eine Warnung im Flug darf
+/// vorsichtiger sein als das Urteil danach. Die Anfluggrafik zeichnet die
+/// angewandte Grenze aus `approach_wind.sinkgrenze_fpm`.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 23;
+const SCORE_ALGORITHMUS_VERSION: u8 = 24;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -29816,6 +29931,7 @@ where
         approach_runway_changed_late: Some(stats.approach_runway_changed_late),
         approach_stable_at_da: stats.approach_stable_at_da,
         approach_stall_warning_count: Some(stats.approach_stall_warning_count),
+        approach_wind: stats.approach_wind.clone(),
         approach_spaetes_final_ab_ft: stats.approach_spaetes_final.map(|sf| sf.ab_hoehe_ft),
         approach_spaetes_final_kurve_deg: stats.approach_spaetes_final.map(|sf| sf.kurve_deg),
         approach_spaetes_final_querneigung_unter_300_deg: stats
@@ -38632,6 +38748,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     stats.approach_stable_at_da = stab_v2.stable_at_da;
                                     stats.approach_stall_warning_count =
                                         stab_v2.stall_warning_count;
+                                    stats.approach_wind = stab_v2.wind.clone();
                                     // Lernpaket AP4/AP5: wie im FSM-Pfad,
                                     // aber auf das Sampler-Fenster begrenzt.
                                     let platzhoehe = anflug_bezugshoehe_ft(
@@ -42657,6 +42774,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 approach_stall_warning_count: Some(
                                     stats.approach_stall_warning_count,
                                 ),
+                                approach_wind: stats.approach_wind.clone(),
                                 landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
                                 landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
                                 landing_decel_mps2: stats.landing_decel_mps2,
@@ -47174,6 +47292,7 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_stable_at_da = None;
     stats.approach_spaetes_final = None;
     stats.approach_stall_warning_count = 0;
+    stats.approach_wind = None;
     stats.anflug_forensik = Default::default();
     stats.anflug_forensik_td = None;
     stats.anflug_forensik_fenster = None;
@@ -49470,6 +49589,7 @@ fn step_flight_at(
                 stats.approach_window_sample_count = Some(stab_v2.window_sample_count);
                 stats.approach_stable_at_da = stab_v2.stable_at_da;
                 stats.approach_stall_warning_count = stab_v2.stall_warning_count;
+                stats.approach_wind = stab_v2.wind.clone();
                 // Lernpaket AP4/AP5: Forensik neben dem Gate, gegen dieselbe
                 // Bahn und denselben Puffer — ohne Rueckwirkung auf das Gate.
                 let platzhoehe = anflug_bezugshoehe_ft(
@@ -63526,6 +63646,8 @@ mod canonical_landing_rate_fpm_tests {
                     lon: None,
                     pitch_deg: None,
                     n1_mittel_pct: None,
+                    headwind_kt: None,
+                    crosswind_kt: None,
                 });
             }
             compute_approach_stddev(&buf, None)
@@ -67956,6 +68078,8 @@ mod sim_pause_tests {
             lon: None,
             pitch_deg: None,
             n1_mittel_pct: None,
+            headwind_kt: None,
+            crosswind_kt: None,
         }
     }
 
@@ -68729,6 +68853,120 @@ mod sim_pause_tests {
         .collect();
         let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(out.excessive_sink, Some(false));
+    }
+
+    /// Score-Version 24: Die Sinkgrenze waechst ab 145 kt ueber Grund mit —
+    /// nur lockerer, nie strenger.
+    #[test]
+    fn sinkgrenze_waechst_mit_der_grundgeschwindigkeit() {
+        let reihe = |gs: f32, vs: f32| -> std::collections::VecDeque<ApproachBufferSample> {
+            (0..8)
+                .map(|i| approach_sample(900.0 - 50.0 * i as f32, gs, 140.0, vs, 1.0, 1.0))
+                .collect()
+        };
+        // 180 kt ueber Grund → Grenze −1241 fpm: 14 s bei −1100 sind erlaubt
+        // (vor Version 24: excessive).
+        let schnell = reihe(180.0, -1100.0);
+        let out =
+            compute_approach_stability_v2(&schnell, None, None, None, None, Default::default());
+        assert_eq!(
+            out.excessive_sink,
+            Some(false),
+            "Rueckenwind: −1100 bei 180 kt GS"
+        );
+        let w = out.wind.expect("Gate gemessen");
+        assert!(
+            (w.sinkgrenze_fpm.unwrap() + 1241.4).abs() < 1.0,
+            "{:?}",
+            w.sinkgrenze_fpm
+        );
+        assert!(w.sinklauf.is_none(), "kein Punkt unter der Grenze");
+        // Dasselbe unter der Grenze bleibt excessive.
+        let out = compute_approach_stability_v2(
+            &reihe(180.0, -1300.0),
+            None,
+            None,
+            None,
+            None,
+            Default::default(),
+        );
+        assert_eq!(out.excessive_sink, Some(true));
+        // 120 kt ueber Grund: die Grenze bleibt −1000, nicht −828.
+        let out = compute_approach_stability_v2(
+            &reihe(120.0, -900.0),
+            None,
+            None,
+            None,
+            None,
+            Default::default(),
+        );
+        assert_eq!(out.excessive_sink, Some(false), "nie strenger als −1000");
+        let out = compute_approach_stability_v2(
+            &reihe(120.0, -1100.0),
+            None,
+            None,
+            None,
+            None,
+            Default::default(),
+        );
+        assert_eq!(
+            out.excessive_sink,
+            Some(true),
+            "−1100 bei 120 kt bleibt zu stark"
+        );
+        // Steiler Gleitpfad: Faktor und Grundgeschwindigkeit multiplizieren sich.
+        assert!((sinkgrenze_fpm(180.0, 2.0) + 2482.8).abs() < 1.0);
+        assert_eq!(
+            sinkgrenze_fpm(f32::NAN, 1.0),
+            -1000.0,
+            "unlesbare GS → feste Grenze"
+        );
+    }
+
+    /// Score-Version 24: Wind, Soll-Sinkrate und laengster Sinklauf aus dem
+    /// Gate-Fenster; Messpunkte ohne Wind fehlen, statt als 0 zu zaehlen.
+    #[test]
+    fn wind_im_anflug_und_sinklauf_aus_dem_gate() {
+        let mut buf: std::collections::VecDeque<ApproachBufferSample> = [
+            (900.0, -700.0, Some(10.0), Some(-4.0)),
+            (850.0, -1200.0, Some(14.0), Some(-6.0)),
+            (800.0, -1300.0, None, None),
+            (750.0, -1100.0, Some(18.0), Some(-8.0)),
+            (700.0, -700.0, Some(14.0), Some(2.0)),
+        ]
+        .into_iter()
+        .map(|(h, vs, hw, xw)| {
+            let mut s = approach_sample(h, 140.0, 145.0, vs, 1.0, 1.0);
+            s.headwind_kt = hw;
+            s.crosswind_kt = xw;
+            s
+        })
+        .collect();
+        let w = compute_approach_stability_v2(&buf, None, None, None, None, Default::default())
+            .wind
+            .expect("Gate gemessen");
+        assert_eq!(w.wind_proben, 4);
+        assert_eq!(w.gegenwind_mittel_kt, Some(14.0));
+        assert_eq!(w.seitenwind_max_kt, Some(8.0));
+        assert_eq!(w.seitenwind_mittel_kt, Some(-4.0), "meist von links");
+        assert_eq!(w.gs_mittel_kt, Some(140.0));
+        assert!((w.soll_sinkrate_fpm.unwrap() + 743.4).abs() < 0.5);
+        assert_eq!(w.sinkgrenze_fpm, Some(-1000.0));
+        let lauf = w.sinklauf.expect("drei Punkte unter −1000");
+        assert_eq!(lauf.dauer_s, 4.0, "Helfer: 2 s je Punkt");
+        assert_eq!((lauf.von_ft, lauf.bis_ft), (850.0, 750.0));
+        assert_eq!(lauf.spitze_fpm, -1300.0);
+        // Ganz ohne Windwerte: kein Wind, aber Soll und Grenze bleiben.
+        for s in buf.iter_mut() {
+            s.headwind_kt = None;
+            s.crosswind_kt = None;
+        }
+        let w = compute_approach_stability_v2(&buf, None, None, None, None, Default::default())
+            .wind
+            .unwrap();
+        assert_eq!(w.wind_proben, 0);
+        assert_eq!(w.gegenwind_mittel_kt, None);
+        assert!(w.soll_sinkrate_fpm.is_some());
     }
 
     #[test]
@@ -71548,6 +71786,8 @@ mod touchdown_metadata_stamp_tests {
                 lon: None,
                 pitch_deg: Some(2.5),
                 n1_mittel_pct: None,
+                headwind_kt: None,
+                crosswind_kt: None,
             };
             s.lat = Some(tl + dy / n * d_m / m_je_grad);
             s.lon = Some(tn + dx / n * d_m / (m_je_grad * cos_lat));
@@ -74963,6 +75203,8 @@ mod v0_16_6_bush_completeness_tests {
             lon: None,
             pitch_deg: None,
             n1_mittel_pct: None,
+            headwind_kt: None,
+            crosswind_kt: None,
         }
     }
 
@@ -85248,6 +85490,8 @@ mod abfangen_verdrahtung_tests {
             lon: None,
             pitch_deg: None,
             n1_mittel_pct: None,
+            headwind_kt: None,
+            crosswind_kt: None,
         }
     }
 

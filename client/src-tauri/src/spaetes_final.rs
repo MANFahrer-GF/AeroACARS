@@ -311,6 +311,8 @@ mod tests {
             lon: Some(lon),
             pitch_deg: None,
             n1_mittel_pct: None,
+            headwind_kt: None,
+            crosswind_kt: None,
         }
     }
 

@@ -950,6 +950,10 @@ pub struct LandingRecord {
     pub approach_stable_at_da: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approach_stall_warning_count: Option<u32>,
+    /// Score-Version 24: Wind im Anflug, Soll-Sinkrate, Sinkgrenze und
+    /// laengster Sinklauf im Stable Gate — Kontext, keine Note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_wind: Option<landing_scoring::anflug_wind::AnflugWind>,
     /// Score-Version 23: spaetes Final / Kurvenanflug erkannt — Hoehe beim
     /// Ausrichten auf die Bahn (ft ueber Platz), Kurve davor (Grad, unter
     /// 2000 ft), groesste Querneigung unter 300 ft, und ob das Final
@@ -1858,6 +1862,38 @@ mod merge_tests {
             serde_json::from_value(serde_json::to_value(&neu).unwrap()).unwrap();
         assert_eq!(zurueck.anflug_gleitpfad, neu.anflug_gleitpfad);
         assert_eq!(zurueck.anflug_ruhe, neu.anflug_ruhe);
+    }
+
+    /// Score-Version 24: Ein Datensatz von vor `approach_wind` bleibt ohne
+    /// das Feld (die Anzeige sagt „nicht aufgezeichnet" statt Nullen); ein
+    /// neuer traegt es verlustfrei ueber die Platte.
+    #[test]
+    fn anflug_wind_alt_ohne_feld_neu_verlustfrei() {
+        let alt = rec("P1", "2026-06-07T10:00:00Z", "2026-06-07T10:05:00Z");
+        assert_eq!(alt.approach_wind, None);
+        let v = serde_json::to_value(&alt).unwrap();
+        assert!(v.get("approach_wind").is_none());
+
+        let neu = mit(
+            alt,
+            serde_json::json!({
+                "approach_wind": {
+                    "wind_proben": 80, "gegenwind_mittel_kt": 14.1,
+                    "seitenwind_mittel_kt": -1.8, "seitenwind_max_kt": 10.0,
+                    "gs_mittel_kt": 147.0, "soll_sinkrate_fpm": -780.0,
+                    "sinkgrenze_fpm": -1013.0,
+                    "sinklauf": {"dauer_s": 10.6, "von_ft": 549.0,
+                                 "bis_ft": 340.0, "spitze_fpm": -1442.0}
+                }
+            }),
+        );
+        let w = neu.approach_wind.as_ref().unwrap();
+        assert_eq!(w.sinkgrenze_fpm, Some(-1013.0));
+        assert_eq!(w.schwankung_kt, None, "fehlend bleibt fehlend");
+        assert_eq!(w.sinklauf.unwrap().dauer_s, 10.6);
+        let zurueck: LandingRecord =
+            serde_json::from_value(serde_json::to_value(&neu).unwrap()).unwrap();
+        assert_eq!(zurueck.approach_wind, neu.approach_wind);
     }
 }
 

@@ -41,6 +41,7 @@ import {
   type GatePunkt,
 } from "../lib/stableGate";
 import { AltbestandKontext, InfoBadge } from "./InfoBadge";
+import { sinklaufSatz, windKacheln, type AnflugWind } from "../lib/anflugWind";
 
 type Band = "good" | "ok" | "bad" | "missing";
 
@@ -83,6 +84,10 @@ interface Props {
    *  Anflug, dann kein Hinweis. */
   spaetesFinalAbFt?: number | null;
   spaetesFinalKurveDeg?: number | null;
+  /** Score-Version 24: Wind im Anflug, Soll-Sinkrate, angewandte Sinkgrenze
+   *  und längster Sinklauf (`approach_wind`). Fehlt bei älteren Landungen —
+   *  dann ein Hinweis statt Ersatzwerten. Kontext, keine Note. */
+  wind?: AnflugWind | null;
 }
 
 function bandForRange(
@@ -149,7 +154,10 @@ export function ApproachStabilityCard(props: Props) {
   else pillKey = "partial";
   // Neue Landungen: das Urteil aus dem Datensatz, nicht nachgerechnet.
   if (gate) pillKey = gateUrteil(gate, props.marke) ?? pillKey;
-  const gruende = gate ? gateGruende(t, gate, i18n.language) : [];
+  const gruende = gate
+    ? gateGruende(t, gate, i18n.language, { sinken: sinklaufSatz(t, props.wind, i18n.language) })
+    : [];
+  const windTeile = props.wind ? windKacheln(t, props.wind) : [];
 
   const pillColor =
     pillKey === "stable" ? "#22c55e" :
@@ -322,6 +330,38 @@ export function ApproachStabilityCard(props: Props) {
               </ul>
             </div>
           )}
+          {/* Score-Version 24: Wind im Anflug — Kontext, zählt nicht in die
+              Note. Ältere Landungen: Hinweis, keine Nullen. */}
+          <div data-testid="anflug-wind" style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: "0.78rem", opacity: 0.78, marginBottom: 6 }}>
+              {t("landing.anflug_wind.titel")}{" "}
+              <InfoBadge explanation={t("landing.erklaer.anflug_wind")} />
+            </div>
+            {windTeile.length > 0 && (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                  gap: 8,
+                }}
+              >
+                {windTeile.map((k) => (
+                  <WindKachelAnzeige key={k.key} wert={k.wert} label={k.label} zusatz={k.zusatz} />
+                ))}
+              </div>
+            )}
+            {props.wind == null ? (
+              <div style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                {t("landing.anflug_wind.nicht_aufgezeichnet")}
+              </div>
+            ) : (
+              props.wind.wind_proben === 0 && (
+                <div style={{ fontSize: "0.8rem", opacity: 0.7, marginTop: 6 }}>
+                  {t("landing.anflug_wind.wind_nicht_gemessen")}
+                </div>
+              )
+            )}
+          </div>
           {/* Coach-Satz wie vor dem Umbau (QS 06.10.2026: bei stabilem Anflug
               stand sonst gar nichts, „Go-Around-Kandidat" fehlte). Die
               Gründe oben nennen zusätzlich genau, was nicht stabil war. */}
@@ -520,6 +560,38 @@ export function ApproachStabilityCard(props: Props) {
         {t("landing.approach_stability_card.help_button")}
       </button>
     </section>
+  );
+}
+
+/** Kachel des Windstreifens: neutral (keine Note, keine Ampel). */
+function WindKachelAnzeige({ wert, label, zusatz }: { wert: string; label: string; zusatz?: string }) {
+  return (
+    <div
+      style={{
+        background: "rgba(255,255,255,0.04)",
+        border: `1px solid color-mix(in srgb, ${BAND_COLORS.missing} 25%, transparent)`,
+        borderRadius: 6,
+        padding: "8px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        minHeight: 64,
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.68rem",
+          letterSpacing: 0.4,
+          opacity: 0.75,
+          textTransform: "uppercase",
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: "1.05rem", fontWeight: 700 }}>{wert}</div>
+      {zusatz && <div style={{ fontSize: "0.74rem", opacity: 0.7 }}>{zusatz}</div>}
+    </div>
   );
 }
 

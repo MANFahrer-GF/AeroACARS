@@ -191,7 +191,8 @@
       "gleitpfad_lesart": "+ = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD). On the right when hovering or tapping: the diamond as in the cockpit.",
       "gleitpfad_fehlt": "Glide path in dots: not recorded for this flight (since v1.9.26, only with the runway in the nav data).",
       "gleitpfad_ohne_zeitbezug": "Glide path in dots: recorded, but without a common time base with the approach trace — the values are shown in the glide path section.",
-      "gleitpfad_lesart_druck": "+ = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD)."
+      "gleitpfad_lesart_druck": "+ = above the path. Up to 1 dot green, 1–2 yellow, from 2 red (full deflection on the PFD).",
+      "limit_gs": "Stability limit {{fpm}} fpm (at {{gs}} kt groundspeed)"
     },
     "wind_from_front": "Wind from front",
     "wind_from_front_right": "Wind from front-right",
@@ -968,8 +969,8 @@
         },
         "sink_rate": {
           "label": "Sink rate",
-          "body": "EXCESSIVE when the sink rate in the gate stayed faster than the stable-approach limit for at least 10 seconds in a row (a brief spike does not count). The limit is −1000 fpm on a 3° glidepath and scales with the real published glidepath (≈ −1334 fpm on a 4° approach like Tromsø, ≈ −1834 fpm on London City's 5.5°) — a correctly-flown steep approach is therefore NOT falsely flagged. FSF ALAR / FAA AC 120-71B sink-rate criterion.",
-          "thresholds": "OK = never below the limit · EXCESSIVE = at least 10 s in a row below it (−1000 fpm at 3°, scaled by the real glidepath)"
+          "body": "EXCESSIVE when the sink rate in the gate stayed faster than the stable-approach limit for at least 10 seconds in a row (a brief spike does not count). The limit is −1000 fpm on a 3° glidepath and scales with the real published glidepath (≈ −1334 fpm on a 4° approach like Tromsø, ≈ −1834 fpm on London City's 5.5°) — a correctly-flown steep approach is therefore NOT falsely flagged. FSF ALAR / FAA AC 120-71B sink-rate criterion. Since score version 24 the limit grows from 145 kt groundspeed (tailwind, fast approaches) – only more lenient, never stricter.",
+          "thresholds": "OK = never below the limit · EXCESSIVE = at least 10 s in a row below it (−1000 fpm at 3°, scaled by the real glidepath) Since score version 24 the limit grows from 145 kt groundspeed (tailwind, fast approaches) – only more lenient, never stricter."
         },
         "landing_config": {
           "label": "Landing config",
@@ -1335,7 +1336,7 @@
         "fahrt": "How much the speed varied in the stable gate (standard deviation of indicated airspeed). Good below 5 kt, poor from 8 kt. Check of the stable gate.",
         "querneigung": "How much the bank angle varied in the stable gate (standard deviation). Good below 3°, poor from 6°. Check of the stable gate.",
         "ruck": "How abruptly the sink rate changed from sample to sample. Good below 100 fpm, poor from 200 fpm. Check of the stable gate.",
-        "sinken": "Whether the sink rate in the stable gate exceeded the limit for at least 10 s in a row (−1000 fpm at a 3° glide path, correspondingly more on steeper approaches). Check of the stable gate.",
+        "sinken": "Whether the sink rate in the stable gate exceeded the limit for at least 10 s in a row (−1000 fpm at a 3° glide path, correspondingly more on steeper approaches). Check of the stable gate. Since score version 24 the limit grows from 145 kt groundspeed (tailwind, fast approaches) – only more lenient, never stricter.",
         "konfiguration": "Whether the aircraft was in landing configuration when entering the stable gate (first sample up to 1000 ft — lower if the recording starts lower): gear down, landing flaps set. Check of the stable gate.",
         "urteil": "Stable gate from 1000 ft: all checks good = STABLE. Two poor or three not good = UNSTABLE, 15 points off. Otherwise PARTIAL, 5 points off. Without measurement 3 points off. Late stabilised: if speed or configuration is bad at 1000 ft but landing flaps are set and speed is steady from 500 ft, both only count as “medium”.",
         "urteil_alt": "Approach verdict for flights before score version 19, from the seven tiles: all good = STABLE, two poor or three not good = UNSTABLE, otherwise PARTIAL. From score version 18 PARTIAL caps the overall score at 80 and UNSTABLE at 45; in version 17 only the approach stability part, before that it capped nothing.",
@@ -1364,11 +1365,27 @@
       "bordbuch": "What the client recognised on this flight — lights, transponder, APU, taxi speed and more — and when. Completed items are counted, nothing is criticised. Does not count towards the grade.",
       "kopf_note_alt": "This landing was graded before score version 19 and keeps its grade from then — it is not recalculated. The letter summarises it: A+ from 95, A from 88, B+ from 82, B from 75, C from 65, D from 50, below that F. The overall score at the time was the weighted average of the parts at the time; depending on the version, the approach and the g-force could already cap it, with the limits valid at the time — the reason is then shown below the score. The \"weakest part caps\" rule and the flare part only exist since version 19.",
       "alt_hinweis": "Note: this landing was graded before score version 19. The explanation describes today’s rules — partly different points, limits and measurements applied to it. Its overall score is not recalculated.",
-      "alt_achse_hinweis": "Note: this part score only exists for landings before score version 19. Its last state is described — earlier versions partly used other limits. The overall score is not recalculated."
+      "alt_achse_hinweis": "Note: this part score only exists for landings before score version 19. Its last state is described — earlier versions partly used other limits. The overall score is not recalculated.",
+      "anflug_wind": "Wind along the aircraft axes in the stable gate (1000 ft above the threshold to 3 s before touchdown): mean headwind with range, strongest crosswind, variation of the headwind as a measure of gusts. The target sink rate is the glidepath sink rate at the actual groundspeed: a headwind needs less, a tailwind more. The sink limit is −1000 fpm (3°) and grows in proportion from 145 kt groundspeed – it only gets more lenient, never stricter. The wind itself does not change any points."
     },
     "info_badge": {
       "oeffnen": "Explanation",
       "schliessen": "Close explanation"
+    },
+    "anflug_wind": {
+      "titel": "Wind on approach (stable gate, 1000 ft to the flare) – context only, not part of the grade",
+      "spanne": "{{von}} – {{bis}} kt",
+      "gegenwind": "Mean headwind",
+      "rueckenwind": "Mean tailwind",
+      "seitenwind_max": "Strongest crosswind",
+      "meist_von_rechts": "mostly from the right",
+      "meist_von_links": "mostly from the left",
+      "schwankung": "Variation (gustiness)",
+      "soll": "Target sink rate at {{gs}} kt groundspeed",
+      "grenze": "Limit {{fpm}}",
+      "sinklauf": "Sink rate stronger than {{grenze}} for {{s}} s in a row ({{von}} → {{bis}} ft above the threshold, up to {{spitze}})",
+      "nicht_aufgezeichnet": "Wind on approach was not yet recorded for this flight (only from score version 24).",
+      "wind_nicht_gemessen": "The simulator did not provide wind on this approach."
     }
   },
   "about": {

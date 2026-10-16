@@ -771,6 +771,7 @@ function LandungsAbschnitte({
         stallWarningCount={record.approach_stall_warning_count}
         spaetesFinalAbFt={record.approach_spaetes_final_ab_ft}
         spaetesFinalKurveDeg={record.approach_spaetes_final_kurve_deg}
+        wind={record.approach_wind}
       />
       {/* Aufsetz-Qualität (keine Note): gespiegelt (LandingQualitaet.tsx). */}
       <LandingQualitaet record={record} />
@@ -786,6 +787,7 @@ function LandungsAbschnitte({
         profile={record.touchdown_profile}
         glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
         gleitpfadVerlauf={record.anflug_gleitpfad?.verlauf}
+        wind={record.approach_wind}
       />
 
       {/* v0.7.8: Sinkrate-Forensik — erklaert dem Piloten warum die

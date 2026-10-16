@@ -191,7 +191,8 @@
       "gleitpfad_lesart": "+ = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD). Rechts beim Darüberfahren oder Antippen: die Raute wie im Cockpit.",
       "gleitpfad_fehlt": "Gleitpfad in Dots: für diesen Flug nicht aufgezeichnet (seit v1.9.26, nur mit der Bahn in den Navdaten).",
       "gleitpfad_ohne_zeitbezug": "Gleitpfad in Dots: aufgezeichnet, aber ohne gemeinsame Zeitachse mit der Anflugspur — die Werte stehen im Abschnitt zum Gleitpfad.",
-      "gleitpfad_lesart_druck": "+ = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD)."
+      "gleitpfad_lesart_druck": "+ = über dem Pfad. Bis 1 Dot grün, 1–2 gelb, ab 2 rot (Vollausschlag am PFD).",
+      "limit_gs": "Stabilitätsgrenze {{fpm}} fpm (bei {{gs}} kt über Grund)"
     },
     "wind_from_front": "Wind aus vorn",
     "wind_from_front_right": "Wind aus vorn rechts",
@@ -968,8 +969,8 @@
         },
         "sink_rate": {
           "label": "Sink Rate",
-          "body": "EXCESSIVE wenn die Sinkrate im Gate mindestens 10 Sekunden am Stück steiler war als die Stable-Approach-Grenze (ein kurzer Ausreißer zählt nicht). Die Grenze ist −1000 fpm auf 3° und skaliert mit dem ECHTEN publizierten Gleitweg (≈ −1334 fpm auf 4° wie Tromsø, ≈ −1834 fpm auf London Citys 5,5°) — ein korrekt geflogener Steilanflug wird also NICHT fälschlich geflaggt. FSF-ALAR / FAA-AC-120-71B Sink-Rate-Kriterium.",
-          "thresholds": "OK = nie unter der Grenze · EXCESSIVE = mindestens 10 s am Stück darunter (−1000 fpm bei 3°, mit dem echten Gleitweg skaliert)"
+          "body": "EXCESSIVE wenn die Sinkrate im Gate mindestens 10 Sekunden am Stück steiler war als die Stable-Approach-Grenze (ein kurzer Ausreißer zählt nicht). Die Grenze ist −1000 fpm auf 3° und skaliert mit dem ECHTEN publizierten Gleitweg (≈ −1334 fpm auf 4° wie Tromsø, ≈ −1834 fpm auf London Citys 5,5°) — ein korrekt geflogener Steilanflug wird also NICHT fälschlich geflaggt. FSF-ALAR / FAA-AC-120-71B Sink-Rate-Kriterium. Seit Score-Version 24 wächst die Grenze ab 145 kt über Grund mit (Rückenwind, schnelle Anflüge) – nur lockerer, nie strenger.",
+          "thresholds": "OK = nie unter der Grenze · EXCESSIVE = mindestens 10 s am Stück darunter (−1000 fpm bei 3°, mit dem echten Gleitweg skaliert) Seit Score-Version 24 wächst die Grenze ab 145 kt über Grund mit (Rückenwind, schnelle Anflüge) – nur lockerer, nie strenger."
         },
         "landing_config": {
           "label": "Landing-Config",
@@ -1335,7 +1336,7 @@
         "fahrt": "Wie stark die Fahrt im Stable Gate schwankte (Standardabweichung der angezeigten Fahrt). Gut unter 5 kt, schlecht ab 8 kt. Prüfpunkt des Stable Gate.",
         "querneigung": "Wie stark die Querlage im Stable Gate schwankte (Standardabweichung). Gut unter 3°, schlecht ab 6°. Prüfpunkt des Stable Gate.",
         "ruck": "Wie ruckartig sich die Sinkrate von Messpunkt zu Messpunkt änderte. Gut unter 100 fpm, schlecht ab 200 fpm. Prüfpunkt des Stable Gate.",
-        "sinken": "Ob die Sinkrate im Stable Gate mindestens 10 s am Stück über der Grenze lag (bei 3° Gleitwinkel −1000 fpm, bei steileren Anflügen entsprechend mehr). Prüfpunkt des Stable Gate.",
+        "sinken": "Ob die Sinkrate im Stable Gate mindestens 10 s am Stück über der Grenze lag (bei 3° Gleitwinkel −1000 fpm, bei steileren Anflügen entsprechend mehr). Prüfpunkt des Stable Gate. Seit Score-Version 24 wächst die Grenze ab 145 kt über Grund mit (Rückenwind, schnelle Anflüge) – nur lockerer, nie strenger.",
         "konfiguration": "Ob das Flugzeug beim Eintritt ins Stable Gate in Landekonfiguration war (erster Messpunkt bis 1000 ft — beginnt die Aufzeichnung tiefer, dort): Fahrwerk unten, Landeklappen gesetzt. Prüfpunkt des Stable Gate.",
         "urteil": "Stable Gate ab 1000 ft: Alle Prüfpunkte gut = STABLE. Zwei schlecht oder drei nicht gut = UNSTABLE, 15 Punkte Abzug. Sonst PARTIAL, 5 Punkte Abzug. Ohne Messung 3 Punkte Abzug. Spät stabilisiert: Sind Fahrt oder Konfiguration bei 1000 ft schlecht, ab 500 ft aber Landeklappen gesetzt und die Fahrt ruhig, zählen beide nur als „mittel“.",
         "urteil_alt": "Anflug-Urteil für Flüge vor Score-Version 19, aus den sieben Kacheln: alle gut = STABLE, zwei schlecht oder drei nicht gut = UNSTABLE, sonst PARTIAL. Ab Score-Version 18 begrenzt PARTIAL die Gesamtnote auf 80 und UNSTABLE auf 45, in Version 17 nur die Teilnote Anflug-Stabilität, davor begrenzte es nichts.",
@@ -1364,11 +1365,27 @@
       "bordbuch": "Was der Client auf diesem Flug an Abläufen erkannt hat — Lichter, Transponder, APU, Rolltempo und mehr — und wann. Erledigtes wird gezählt, nichts wird getadelt. Zählt nicht zur Note.",
       "kopf_note_alt": "Diese Landung wurde vor Score-Version 19 bewertet und behält ihre damalige Note — sie wird nicht neu gerechnet. Die Buchstaben-Note fasst sie zusammen: A+ ab 95, A ab 88, B+ ab 82, B ab 75, C ab 65, D ab 50, darunter F. Die damalige Gesamtnote war der gewichtete Durchschnitt der damaligen Teilnoten; je nach damaliger Version konnten der Anflug und die G-Kraft sie schon begrenzen, mit den damals geltenden Grenzen — dann steht der Grund unter der Note. Die Regel „schwächster Teil begrenzt\" und die Teilnote „Abfangen\" gibt es erst seit Version 19.",
       "alt_hinweis": "Hinweis: Diese Landung wurde vor Score-Version 19 bewertet. Die Erklärung beschreibt die heutigen Regeln — für sie galten teils andere Punkte, Grenzen und Messwege. Ihre Gesamtnote wird nicht neu gerechnet.",
-      "alt_achse_hinweis": "Hinweis: Diese Teilnote gibt es nur bei Landungen vor Score-Version 19. Beschrieben ist ihr letzter Stand — in früheren Versionen galten teils andere Grenzen. Die Gesamtnote wird nicht neu gerechnet."
+      "alt_achse_hinweis": "Hinweis: Diese Teilnote gibt es nur bei Landungen vor Score-Version 19. Beschrieben ist ihr letzter Stand — in früheren Versionen galten teils andere Grenzen. Die Gesamtnote wird nicht neu gerechnet.",
+      "anflug_wind": "Wind entlang der Flugzeugachsen im Stable Gate (1000 ft über der Schwelle bis 3 s vor dem Aufsetzen): Gegenwind im Mittel mit Spanne, stärkster Seitenwind, Schwankung des Gegenwinds als Maß für Böen. Die Soll-Sinkrate ist die Sinkrate des Gleitpfads bei der tatsächlichen Geschwindigkeit über Grund: Gegenwind verlangt weniger, Rückenwind mehr. Die Sinkgrenze liegt bei −1000 fpm (3°) und wächst ab 145 kt über Grund im selben Verhältnis mit – sie wird nur lockerer, nie strenger. Der Wind selbst ändert keine Punkte."
     },
     "info_badge": {
       "oeffnen": "Erklärung",
       "schliessen": "Erklärung schließen"
+    },
+    "anflug_wind": {
+      "titel": "Wind im Anflug (Stable Gate, 1000 ft bis zum Abfangen) – nur zur Einordnung, zählt nicht in die Note",
+      "spanne": "{{von}} – {{bis}} kt",
+      "gegenwind": "Gegenwind im Mittel",
+      "rueckenwind": "Rückenwind im Mittel",
+      "seitenwind_max": "Seitenwind höchstens",
+      "meist_von_rechts": "meist von rechts",
+      "meist_von_links": "meist von links",
+      "schwankung": "Schwankung (Böigkeit)",
+      "soll": "Soll-Sinkrate bei {{gs}} kt über Grund",
+      "grenze": "Grenze {{fpm}}",
+      "sinklauf": "Sinkrate {{s}} s am Stück stärker als {{grenze}} ({{von}} → {{bis}} ft über der Schwelle, bis {{spitze}})",
+      "nicht_aufgezeichnet": "Wind im Anflug wurde bei diesem Flug noch nicht aufgezeichnet (erst ab Score-Version 24).",
+      "wind_nicht_gemessen": "Der Simulator hat in diesem Anflug keinen Wind geliefert."
     }
   },
   "about": {
