@@ -93,6 +93,8 @@ export const DATEIEN = [
   // Score-Version 19 (QS 05.10.2026): Stable-Gate-Urteil, Deckel-Texte und
   // Hinweis-Marken — eine Quelle für Client und Webapp.
   "lib/stableGate.ts",
+  // Score-Version 24: Wind im Anflug (Texte zum eingefrorenen approach_wind).
+  "lib/anflugWind.ts",
   "lib/landungsUrteil.ts",
   // Gleichheitstest: dieselben Fälle und Erwartungen auf beiden Seiten.
   "lib/landungsFaelle.ts",

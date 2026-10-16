@@ -11,6 +11,7 @@ import type { FlugZeiten } from "./flugzeiten";
 import type { SpritAuswertung } from "./sprit";
 import type { AnflugGleitpfad, AnflugRuhe } from "../components/AnflugForensikInfo";
 import type { GatePunkt } from "./stableGate";
+import type { AnflugWind } from "./anflugWind";
 
 /** Kategorie der Gesamtnote (Rust `aggregate_score_label`). */
 export type LandingCategory = "smooth" | "acceptable" | "firm" | "hard" | "severe";
@@ -424,6 +425,9 @@ export interface LandingRecord {
   approach_spaetes_final_kurve_deg?: number | null;
   approach_spaetes_final_querneigung_unter_300_deg?: number | null;
   approach_spaetes_final_rechtzeitig?: boolean | null;
+  /** Score-Version 24: Wind im Anflug, Soll-Sinkrate, angewandte Sinkgrenze
+   *  und längster Sinklauf im Gate. Fehlt bei Datensätzen von vorher. */
+  approach_wind?: AnflugWind | null;
   /** „Zeiten gegen Flugplan" (13.10.2026): Plan (SimBrief) und Ist in
    *  Unix-Sekunden. Fehlt bei Datensätzen von vorher. */
   flugzeiten?: FlugZeiten | null;

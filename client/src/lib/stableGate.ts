@@ -62,16 +62,21 @@ function zahl(v: number, stellen: number, lang: string): string {
 }
 
 /** Begründungen für alles, was nicht „gut" war — in der Reihenfolge des
- *  Gates (Gleitpfad zuerst). Leer bei STABLE. */
+ *  Gates (Gleitpfad zuerst). Leer bei STABLE. `genauer` ersetzt den
+ *  allgemeinen Satz einer Prüfung durch einen mit Messwerten (Score-Version
+ *  24: Sinken mit Dauer, Höhen und Spitze aus `approach_wind`). */
 export function gateGruende(
   t: Uebersetzer,
   gate: GatePunkt[] | null | undefined,
   lang: string,
+  genauer?: Partial<Record<string, string | null>>,
 ): string[] {
   if (!gate) return [];
   const gruende = gate
     .filter((p) => p.stufe !== "gut")
     .map((p) => {
+      const satz = genauer?.[p.key];
+      if (satz) return satz;
       const stellen = GATE_STELLEN[p.key] ?? 1;
       return t(`landing.gate.grund.${p.key}`, {
         wert: p.wert != null ? zahl(p.wert, stellen, lang) : "",
