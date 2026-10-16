@@ -950,6 +950,10 @@ pub struct LandingRecord {
     pub approach_stable_at_da: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approach_stall_warning_count: Option<u32>,
+    /// Score-Version 24: Wind im Anflug, Soll-Sinkrate, Sinkgrenze und
+    /// laengster Sinklauf im Stable Gate — Kontext, keine Note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_wind: Option<landing_scoring::anflug_wind::AnflugWind>,
     /// Score-Version 23: spaetes Final / Kurvenanflug erkannt — Hoehe beim
     /// Ausrichten auf die Bahn (ft ueber Platz), Kurve davor (Grad, unter
     /// 2000 ft), groesste Querneigung unter 300 ft, und ob das Final

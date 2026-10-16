@@ -933,6 +933,10 @@ pub struct TouchdownPayload {
     /// Anzahl Stall-Warning-Samples im Approach-Buffer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approach_stall_warning_count: Option<u32>,
+    /// Score-Version 24: Wind im Anflug, Soll-Sinkrate, Sinkgrenze und
+    /// laengster Sinklauf im Stable Gate — Kontext, keine Note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_wind: Option<landing_scoring::anflug_wind::AnflugWind>,
     /// Yaw-Rate am Touchdown (deg/sec). Hoch = Ground-Loop-Risk.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing_yaw_rate_deg_per_sec: Option<f32>,

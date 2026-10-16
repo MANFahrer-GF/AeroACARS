@@ -19,6 +19,7 @@ pub mod abfangen;
 /// Lernpaket AP4/AP5 (29.09.2026): Datenform der Anflug-Forensik (keine Note).
 pub mod anflug_forensik;
 pub mod anflug_urteil;
+pub mod anflug_wind;
 pub mod belag;
 /// „Zeiten gegen Flugplan" — Plan (SimBrief) und Ist, nur Anzeige.
 pub mod flugzeiten;
