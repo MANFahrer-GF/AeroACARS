@@ -6459,7 +6459,7 @@ mod tests {
 
         buf.truncate(buf.len() - 16);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.syn_aural_glideslope, 1316.0, "Gruppe J intakt");
+        assert_eq!(t.syn_aural_glideslope, 1315.0, "Gruppe J intakt");
         assert!(
             !t.eng1_combustion_state,
             "ENG COMBUSTION = sicherer Default"
@@ -6471,14 +6471,14 @@ mod tests {
 
         buf.truncate(buf.len() - 128);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.simulation_rate, 1299.0, "Echtheits-Feld intakt");
+        assert_eq!(t.simulation_rate, 1298.0, "Echtheits-Feld intakt");
         assert!(t.slew_active, "Echtheits-Feld intakt");
         assert_eq!(t.syn_vapp, 0.0, "Gruppe J = sicherer Default");
         assert_eq!(t.syn_aural_glideslope, 0.0, "Gruppe J = sicherer Default");
 
         buf.truncate(buf.len() - 12);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.flap_num_positions, 1298.0, "letztes Klappenfeld intakt");
+        assert_eq!(t.flap_num_positions, 1297.0, "letztes Klappenfeld intakt");
         assert_eq!(
             t.simulation_rate, 0.0,
             "fehlender Schwanz = sicherer Default"
@@ -6488,21 +6488,21 @@ mod tests {
         // v1.5.3: dann die drei Schwanzfelder davor weg (3*8) ...
         buf.truncate(buf.len() - 24);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.syn_no_smoking_sign, 1295.0); // letztes A220-Feld intakt
+        assert_eq!(t.syn_no_smoking_sign, 1294.0); // letztes A220-Feld intakt
         assert_eq!(t.ifly_park_brake_sw, 0.0); // fehlender Schwanz = sicherer Default
         assert_eq!(t.flap_handle_index, 0.0);
         assert_eq!(t.flap_num_positions, 0.0); // 0 Rasten -> Mapping liefert None
                                                // v1.3.5: drop the 5 Synaptic A220 extension tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.syn_flight_stage, 1290.0); // last original A220 field intact
+        assert_eq!(t.syn_flight_stage, 1289.0); // last original A220 field intact
         assert_eq!(t.syn_flap_lever, 0.0); // extension tail = safe defaults
         assert_eq!(t.syn_no_smoking_sign, 0.0);
 
         // Synaptic A220: drop the 12 new tail fields (12*8).
         buf.truncate(buf.len() - 96);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.contrail_fire_eng3, 1278.0); // last Contrail field intact
+        assert_eq!(t.contrail_fire_eng3, 1277.0); // last Contrail field intact
         assert_eq!(t.syn_fg_lnav, 0.0); // A220 tail = safe defaults
         assert_eq!(t.syn_flight_stage, 0.0);
 
@@ -6513,8 +6513,8 @@ mod tests {
         // to safe defaults.
         buf.truncate(buf.len() - 176);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.fsl_autobrake_max_light, 1256.0); // last v0.16.14 field intact
-        assert_eq!(t.ifly_autobrake_sw, 1239.0); // v0.16.11 layer intact
+        assert_eq!(t.fsl_autobrake_max_light, 1255.0); // last v0.16.14 field intact
+        assert_eq!(t.ifly_autobrake_sw, 1238.0); // v0.16.11 layer intact
         assert_eq!(t.fsl_park_brake_switch, 0.0); // premium tail = safe defaults
         assert_eq!(t.fsl_eng1_mstr_switch, 0.0);
         assert_eq!(t.fsl_xpdr_mode_switch, 0.0);
@@ -6527,8 +6527,8 @@ mod tests {
         // v0.16.14: drop the 17 FSLabs tail fields (17*8).
         buf.truncate(buf.len() - 136);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.ifly_autobrake_sw, 1239.0); // last v0.16.11 field intact
-        assert_eq!(t.md11_autobrake_sw, 1229.0); // v0.16.10 layer intact
+        assert_eq!(t.ifly_autobrake_sw, 1238.0); // last v0.16.11 field intact
+        assert_eq!(t.md11_autobrake_sw, 1228.0); // v0.16.10 layer intact
         assert_eq!(t.fsl_ap1_light, 0.0); // FSL tail = safe defaults
         assert_eq!(t.fsl_fcu_vs, 0.0);
         assert_eq!(t.fsl_autobrake_max_light, 0.0);
@@ -6536,8 +6536,8 @@ mod tests {
         // v0.16.11: drop the 10 iFly tail fields (10*8).
         buf.truncate(buf.len() - 80);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.md11_autobrake_sw, 1229.0); // last v0.16.10 field intact
-        assert_eq!(t.fnx_perf_v1, 1151.0); // first premium field intact
+        assert_eq!(t.md11_autobrake_sw, 1228.0); // last v0.16.10 field intact
+        assert_eq!(t.fnx_perf_v1, 1150.0); // first premium field intact
         assert_eq!(t.ifly_cmd_a_light, 0.0); // iFly tail = safe defaults
         assert_eq!(t.ifly_cabin_alt_warning_light, 0.0);
         assert_eq!(t.ifly_autobrake_sw, 0.0);
@@ -6545,8 +6545,8 @@ mod tests {
         // v0.16.10 (#Premium): drop the 79 premium tail fields (79*8).
         buf.truncate(buf.len() - 632);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.a350_loc_light, 1150.0); // last v0.16.8 field intact
-        assert_eq!(t.a346_gear_lever, 1145.0); // v0.16.4 layer intact
+        assert_eq!(t.a350_loc_light, 1149.0); // last v0.16.8 field intact
+        assert_eq!(t.a346_gear_lever, 1144.0); // v0.16.4 layer intact
                                                // Premium tail = safe defaults (first + last of each group).
         assert_eq!(t.fnx_perf_v1, 0.0);
         assert_eq!(t.fnx_eng2_fire, 0.0);
@@ -6562,15 +6562,15 @@ mod tests {
         // v0.16.8: drop the 5 new A350 tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.a346_gear_lever, 1145.0); // last v0.16.4 field intact
+        assert_eq!(t.a346_gear_lever, 1144.0); // last v0.16.4 field intact
         assert_eq!(t.a350_ap1_on, 0.0); // A350 tail = safe defaults
         assert_eq!(t.a350_loc_light, 0.0);
 
         // v0.16.4: drop the 12 A346 full-profile tail fields (12*8).
         buf.truncate(buf.len() - 96);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // pre-v0.16.3 field intact
-        assert_eq!(t.a346_loc_light, 1133.0); // last pre-existing field intact
+        assert_eq!(t.fsr_phenom_eng2_knob, 1119.0); // pre-v0.16.3 field intact
+        assert_eq!(t.a346_loc_light, 1132.0); // last pre-existing field intact
         assert_eq!(t.a346_seatbelt_sw, 0.0); // new tail = safe defaults
         assert_eq!(t.a346_bat1_off_light, 0.0);
         assert_eq!(t.a346_gear_lever, 0.0);
@@ -6579,7 +6579,7 @@ mod tests {
         // block): the v0.13.x layout still parses intact.
         buf.truncate(buf.len() - 88); // also drop the v0.16.3 tail (4*4 + 9*8)
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0);
+        assert_eq!(t.fsr_phenom_eng2_knob, 1119.0);
         assert!(!t.eng1_combustion_ex1); // v0.16.3 tail = safe defaults
         assert_eq!(t.eng1_ff_corrected_pph, 0.0);
         assert_eq!(t.a346_loc_light, 0.0);
