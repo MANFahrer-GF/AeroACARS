@@ -394,9 +394,10 @@ struct AirportRef {
     landable: bool,
 }
 
+static AIRPORTS_BY_IDENT: OnceLock<std::collections::HashMap<String, AirportRef>> = OnceLock::new();
+
 fn airports_by_ident() -> &'static std::collections::HashMap<String, AirportRef> {
-    static CELL: OnceLock<std::collections::HashMap<String, AirportRef>> = OnceLock::new();
-    CELL.get_or_init(|| {
+    AIRPORTS_BY_IDENT.get_or_init(|| {
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
             .from_reader(AIRPORTS_CSV.as_bytes());
@@ -434,9 +435,10 @@ fn airports_by_ident() -> &'static std::collections::HashMap<String, AirportRef>
 /// This is what makes a per-tick `distance_to_airport_m` affordable, and it
 /// is why the callers that used to memoize an airport's position to dodge the
 /// scan (`divert_prefetch_decision`) no longer need to: the scan is gone.
+static RUNWAYS_BY_IDENT: OnceLock<std::collections::HashMap<String, Vec<u32>>> = OnceLock::new();
+
 fn runways_by_ident() -> &'static std::collections::HashMap<String, Vec<u32>> {
-    static CELL: OnceLock<std::collections::HashMap<String, Vec<u32>>> = OnceLock::new();
-    CELL.get_or_init(|| {
+    RUNWAYS_BY_IDENT.get_or_init(|| {
         let mut map: std::collections::HashMap<String, Vec<u32>> =
             std::collections::HashMap::with_capacity(24_000);
         for (i, row) in runways().iter().enumerate() {
@@ -512,9 +514,10 @@ fn belag_aus_tabelle(icao: &str, bahn: &str) -> Option<String> {
 ///
 /// Der Schlüssel enthält beide Bahnenden, weil eine Zeile beide führt
 /// (`09` und `27`) und der Belag für die ganze Bahn gilt.
+static BELAEGE: OnceLock<std::collections::HashMap<(String, String), String>> = OnceLock::new();
+
 fn belaege() -> &'static std::collections::HashMap<(String, String), String> {
-    static CELL: OnceLock<std::collections::HashMap<(String, String), String>> = OnceLock::new();
-    CELL.get_or_init(|| {
+    BELAEGE.get_or_init(|| {
         let mut map = std::collections::HashMap::with_capacity(64_000);
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
@@ -619,9 +622,10 @@ pub fn geometry_implied_displacement_ft(
 /// callers from a thread pool don't race on parsing — first one through
 /// the door does the work, everyone else waits on the lock and reads
 /// the cached `Vec`.
+static RUNWAYS: OnceLock<Vec<RunwayRow>> = OnceLock::new();
+
 fn runways() -> &'static Vec<RunwayRow> {
-    static CELL: OnceLock<Vec<RunwayRow>> = OnceLock::new();
-    CELL.get_or_init(|| {
+    RUNWAYS.get_or_init(|| {
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
             .from_reader(RUNWAYS_CSV.as_bytes());
@@ -1027,6 +1031,61 @@ fn lon_delta_deg(a: f64, b: f64) -> f64 {
     } else {
         d
     }
+}
+
+/// Laedt die eingebetteten OurAirports-Tabellen (Bahnen, Bahn-Index,
+/// Flughaefen, Belaege) in einem eigenen Faden, bevor ein Flug sie braucht.
+///
+/// AIB 432 OMDB→VIDP (16.10.2026): Der erste Aufruf von `runways()` parst
+/// 4 MB Text und kostet 58–66 ms (gemessen, Release). Er fiel in
+/// `divert_prefetch_decision`, also unter die `flight.stats`-Sperre, beim
+/// ersten Takt unter 5000 ft — der Waechter meldete 48 ms gehalten, Streamer
+/// und Landungen-Reiter warteten. Die `OnceLock`s lassen einen gleichzeitigen
+/// Aufrufer auf das laufende Einlesen warten statt doppelt zu parsen, der
+/// Faden kann also nie etwas falsch machen, nur Arbeit vorziehen.
+///
+/// `belaege()` liest dieselbe Tabelle ein zweites Mal ganz ein und wird in
+/// `lookup_runway_in_nav` gebraucht (Navigraph liefert keinen Belag) — also
+/// bei der Bahnzuordnung im Anflug und beim Aufsetzen. Sie gehoert deshalb
+/// erst recht hierher.
+pub fn tabellen_vorwaermen_im_hintergrund() -> Option<std::thread::JoinHandle<()>> {
+    // Einmal je Prozess starten — zwei Flugstarts waehrend des Ladens sollen
+    // keinen zweiten Faden erzeugen (Codex, 16.10.2026). Scheitert der Start,
+    // laden die Tabellen wie bisher beim ersten Gebrauch.
+    static GESTARTET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if tabellen_geladen() || GESTARTET.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return None;
+    }
+    match std::thread::Builder::new()
+        .name("bahntabelle-vorwaermen".into())
+        .spawn(|| {
+            let t = std::time::Instant::now();
+            let bahnen = runways().len();
+            let _ = runways_by_ident().len();
+            let plaetze = airports_by_ident().len();
+            let _ = belaege().len();
+            tracing::debug!(
+                bahnen,
+                plaetze,
+                ms = t.elapsed().as_millis() as u64,
+                "OurAirports-Tabellen vorgewaermt"
+            );
+        }) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            // Kein Faden → die Tabellen laden wie bisher beim ersten Gebrauch.
+            tracing::warn!(error = %e, "Bahntabelle nicht vorwaermbar");
+            None
+        }
+    }
+}
+
+/// Sind alle vorwaermbaren Tabellen schon eingelesen?
+fn tabellen_geladen() -> bool {
+    RUNWAYS.get().is_some()
+        && RUNWAYS_BY_IDENT.get().is_some()
+        && AIRPORTS_BY_IDENT.get().is_some()
+        && BELAEGE.get().is_some()
 }
 
 /// Distance in meters from a point to the *nearest runway threshold* of
@@ -3347,3 +3406,30 @@ mod belag_ohne_koordinaten {
         );
     }
 }
+
+/// AIB 432 OMDB→VIDP (16.10.2026): Die Tabellen werden beim Flugstart im
+/// Hintergrund geladen, nicht beim ersten Gebrauch unter der Flugdaten-Sperre.
+#[cfg(test)]
+mod vorwaermen_tests {
+    use super::*;
+
+    /// ⚠ Die Tabellen sind prozessweit: Laufen andere Tests vorher, sind sie
+    /// schon geladen und dieser Test bleibt auch ohne Vorwaermen gruen.
+    /// Aussagekraeftig ist er einzeln (`cargo test -- runway::vorwaermen_tests`)
+    /// — so wurde die Gegenprobe gemacht (ohne `belaege()` → rot).
+    #[test]
+    fn vorwaermen_laedt_alle_tabellen_und_startet_danach_keinen_faden_mehr() {
+        if let Some(h) = tabellen_vorwaermen_im_hintergrund() {
+            h.join().expect("Vorwaerm-Faden");
+        }
+        assert!(RUNWAYS.get().is_some(), "Bahnen");
+        assert!(RUNWAYS_BY_IDENT.get().is_some(), "Bahn-Index");
+        assert!(AIRPORTS_BY_IDENT.get().is_some(), "Flughaefen");
+        assert!(BELAEGE.get().is_some(), "Belaege");
+        assert!(
+            tabellen_vorwaermen_im_hintergrund().is_none(),
+            "alles geladen → kein zweiter Faden"
+        );
+    }
+}
+

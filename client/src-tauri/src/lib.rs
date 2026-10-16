@@ -40845,6 +40845,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         );
         return;
     };
+    // Die OurAirports-Tabellen jetzt laden, nicht beim ersten Gebrauch unter
+    // der Flugdaten-Sperre (`runway::tabellen_vorwaermen_im_hintergrund`).
+    let _ = runway::tabellen_vorwaermen_im_hintergrund();
     tauri::async_runtime::spawn(async move {
         tracing::info!(pirep_id = %flight.pirep_id, "position streamer started");
         // v0.19.3: attempts made to fetch the arrival airport's reference
