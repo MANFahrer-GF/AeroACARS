@@ -20,7 +20,7 @@ use sim_core::{AircraftProfile, SimKind, SimSnapshot, Simulator};
 mod sys;
 mod telemetry;
 
-use telemetry::{InspectorState, Touchdown, TELEMETRY_FIELDS, TOUCHDOWN_FIELDS};
+use telemetry::{InspectorState, Touchdown, OPTIONALE_FELDER, TELEMETRY_FIELDS, TOUCHDOWN_FIELDS};
 pub use telemetry::{InspectorWatch, WatchKind, WatchValue};
 
 // IDs used in our SimConnect calls — chosen freely as long as they're
@@ -44,6 +44,11 @@ const INSPECTOR_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 3;
 /// Inspector — eine abgelehnte SimVar trifft nur diese Definition.
 const ZUSATZ_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 4;
 const ZUSATZ_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 4;
+/// Definitionen #20..: je EINE SimVar aus `telemetry::OPTIONALE_FELDER`
+/// (z. B. EX1, das MSFS 2020 nicht kennt). Eine Ablehnung laesst nur
+/// diesen Wert None — die Hauptdefinition kann nicht verrutschen.
+const OPTIONAL_DEFINITION_BASE: sys::SIMCONNECT_DATA_DEFINITION_ID = 20;
+const OPTIONAL_REQUEST_BASE: sys::SIMCONNECT_DATA_REQUEST_ID = 20;
 /// Definition #10: Bahnen und Rollwege aus der geladenen Szenerie
 /// (v1.7.8). Eigener Platz, damit ein abgelehnter Feldname weder die
 /// Telemetrie noch die Aufsetzprobe verschiebt — dieselbe Ueberlegung
@@ -207,6 +212,9 @@ struct Shared {
     /// asynchronously by SimConnect — we merge it into each emitted
     /// `SimSnapshot` so downstream consumers see a unified view.
     touchdown: Mutex<Option<Touchdown>>,
+    /// Werte der optionalen Definitionen (#20..), siehe
+    /// `telemetry::OPTIONALE_FELDER`.
+    optionale: Mutex<telemetry::OptionaleWerte>,
     /// User-driven SimVar/LVar inspector watchlist. UI mutates the
     /// vec via add_watch / remove_watch (which sets `dirty=true`),
     /// the worker re-registers definition #3 on the next tick.
@@ -245,6 +253,7 @@ impl Shared {
             sim_bildrate_bits: AtomicU32::new(0),
             sim_crashed: AtomicBool::new(false),
             touchdown: Mutex::new(None),
+            optionale: Mutex::new(telemetry::OptionaleWerte::default()),
             inspector: Mutex::new(InspectorState::default()),
             zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
             pmdg: Mutex::new(PmdgSharedState::default()),
@@ -1205,6 +1214,11 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
     // Outer reconnect loop. SimConnect_Open returns E_FAIL while MSFS
     // isn't running; we simply retry every 2s until it's up.
     let mut letzter_open_fehler: Option<String> = None;
+    // Hauptfelder, die der Simulator asynchron abgelehnt hat — bleiben
+    // fuer die dadurch ausgeloeste Neuverbindung ausgelassen (None), damit
+    // eine Ablehnung nie zum Dauerausfall aus Verwerfen und Neuverbinden
+    // wird. Synchron abgelehnte laesst `register_telemetry` selbst aus.
+    let mut haupt_ausgelassen: Vec<usize> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         match Connection::open("AeroACARS") {
             Ok(mut conn) => {
@@ -1234,7 +1248,7 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // UND Kennung, weil die Kennung im Buch liegt — es gibt
                 // keine Reihenfolge mehr, die schiefgehen koennte.
                 shared.szenerie.lock().verbindung_zuruecksetzen();
-                if let Err(e) = conn.register_telemetry() {
+                if let Err(e) = conn.register_telemetry(&haupt_ausgelassen) {
                     set_error(&shared, format!("RegisterDataDefinition failed: {e}"));
                     tracing::error!(error = %e, "register_telemetry failed");
                     drop(conn);
@@ -1246,6 +1260,11 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // proceed.
                 if let Err(e) = conn.register_touchdown() {
                     tracing::warn!(error = %e, "register_touchdown failed — touchdown values will stay None");
+                }
+                // Best-effort wie der Touchdown: fehlt ein optionaler
+                // Wert, greift sein Rueckfall (EX1 → Legacy-Kraftstoff).
+                if let Err(e) = conn.register_optionale() {
+                    tracing::warn!(error = %e, "register_optionale failed — optionale Werte bleiben None");
                 }
                 // v1.7.8 — die Facility-Definition einmal je Verbindung
                 // registrieren. Ohne diesen Aufruf gaebe es die
@@ -1304,6 +1323,20 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                     );
                 }
                 run_dispatch(&shared, &stop, &mut conn, kind);
+                // Nur eine Neuverbindung, die WIR wegen einer Ablehnung
+                // ausgeloest haben, behaelt die Auslassliste. Jede andere
+                // (Sim beendet/neu gestartet, 2020 ↔ 2024, Watchdog) beginnt
+                // eine neue Sitzung mit der vollen Definition — sonst
+                // blieben Felder unter MSFS 2024 dauerhaft None.
+                if conn.haupt_abgelehnt.is_empty() {
+                    haupt_ausgelassen.clear();
+                } else {
+                    for idx in conn.haupt_abgelehnt.drain(..) {
+                        if !haupt_ausgelassen.contains(&idx) {
+                            haupt_ausgelassen.push(idx);
+                        }
+                    }
+                }
                 // run_dispatch only returns when stop is signalled or
                 // the connection has gone stale. Either way, drop and
                 // try again at the top of the loop.
@@ -1320,6 +1353,7 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // the next snapshot lands.
                 *shared.snapshot.lock() = None;
                 *shared.touchdown.lock() = None;
+                *shared.optionale.lock() = telemetry::OptionaleWerte::default();
                 // PMDG state too — variant + raw + subscribed flag
                 // all reset so the next dispatch session re-detects
                 // and re-subscribes from scratch.
@@ -1351,6 +1385,9 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 *shared.state.lock() = ConnectionState::Connecting;
             }
             Err(e) => {
+                // Kein Simulator erreichbar: die naechste Verbindung ist
+                // eine neue Sitzung, ohne alte Auslassungen.
+                haupt_ausgelassen.clear();
                 let msg = format!("SimConnect_Open failed: {e}");
                 // Bisher stumm: ein Dauer-Gelb liess sich im Log nicht
                 // von „MSFS laeuft nicht“ unterscheiden. Nur bei neuem
@@ -1936,8 +1973,7 @@ fn run_dispatch(
                     // index=1 als „ATC MODEL" (Feld 1) ausgegeben; die 212
                     // Meldungen in den Diagnose-Logs waren in Wahrheit
                     // `EVENT_ID_DUPLICATE` aus doppelten Event-Abos
-                    // (Befund 21.09.2026). Ein Feld wird deshalb nur noch
-                    // bei `NAME_UNRECOGNIZED` und nur als Vermutung genannt.
+                    // (Befund 21.09.2026).
                     let name = facility::ausnahme_name(exception);
                     if conn.abmelde_pakete.erwartet_abgelehnt(name, send_id) {
                         tracing::debug!(
@@ -1946,17 +1982,43 @@ fn run_dispatch(
                         );
                         continue;
                     }
-                    let feld_vermutet = if name == "NAME_UNRECOGNIZED" {
-                        TELEMETRY_FIELDS.get(index as usize).map(|f| f.name)
-                    } else {
-                        None
-                    };
+                    // Feld aus der Paketkennung — nur fuers Log. Die fruehere
+                    // Deutung ueber `index` nannte bei MSFS 2020 „ATC ID“
+                    // statt EX1 (Befund 16.10.2026).
+                    let feld = conn
+                        .telemetrie_send_ids
+                        .iter()
+                        .find(|(id, _)| *id == send_id)
+                        .map(|(_, n)| *n);
+                    // Ein Feld der HAUPTdefinition: ab ihm waere jeder Block
+                    // zu kurz. Sofort neu verbinden und es dabei auslassen
+                    // (None) — statt Verwerfen bis zum Dauerausfall.
+                    if let Some(idx) = conn.haupt_pakete.feld(send_id) {
+                        tracing::error!(
+                            send_id,
+                            feld = TELEMETRY_FIELDS[idx].name,
+                            "Hauptfeld vom Simulator abgelehnt — neu verbinden, \
+                             Feld bleibt kuenftig ausgelassen (None)"
+                        );
+                        conn.haupt_abgelehnt.push(idx);
+                        return;
+                    }
+                    if feld.is_some_and(|n| OPTIONALE_FELDER.iter().any(|f| f.name == n)) {
+                        // Erwartet (z. B. EX1 unter MSFS 2020) und folgenlos:
+                        // nur dieser Wert bleibt None.
+                        tracing::info!(
+                            send_id,
+                            ?feld,
+                            "Optionale SimVar vom Simulator nicht unterstuetzt"
+                        );
+                        continue;
+                    }
                     tracing::warn!(
                         exception,
                         ausnahme = name,
                         send_id,
                         index,
-                        ?feld_vermutet,
+                        ?feld,
                         "SIMCONNECT_RECV_EXCEPTION — Aufruf vom Simulator abgelehnt"
                     );
                     // ⚠ Gehoert sie zu einer Szenerie-Anfrage, ist der
@@ -2072,11 +2134,40 @@ fn run_dispatch(
                             // 26.09.2026: Werte der abonnierten MSFS-2024-
                             // Input-Events (leer bei MSFS 2020).
                             let eingaben = shared.eingaben.lock().werte().clone();
+                            // ⚠ Zu kurz = ein Datum der Hauptdefinition fehlt,
+                            // ab dort stuende jedes Feld auf dem Platz seines
+                            // Nachfolgers (Wind 1013 kt). NIE parsen; haelt es
+                            // an, neu verbinden und neu registrieren.
+                            let erwartet = telemetry::blocklaenge(&conn.haupt_ausgelassen);
+                            match conn.blockwaechter.pruefen(bytes.len(), erwartet) {
+                                telemetry::Blockpruefung::Lesen => {}
+                                telemetry::Blockpruefung::Verwerfen { erstmals } => {
+                                    if erstmals {
+                                        tracing::warn!(
+                                            erhalten = bytes.len(),
+                                            erwartet,
+                                            "Telemetrie-Block zu kurz — verworfen \
+                                             (Datum der Hauptdefinition abgelehnt?)"
+                                        );
+                                    }
+                                    continue;
+                                }
+                                telemetry::Blockpruefung::NeuVerbinden => {
+                                    tracing::error!(
+                                        verworfen = conn.blockwaechter.verworfen_gesamt,
+                                        "Telemetrie-Bloecke anhaltend zu kurz — neu verbinden"
+                                    );
+                                    return;
+                                }
+                            }
+                            let optionale = *shared.optionale.lock();
                             let mut snap = telemetry::parse_mit_eingaben(
                                 &bytes,
                                 simulator,
                                 air_path.as_deref(),
                                 &eingaben,
+                                &optionale,
+                                &conn.haupt_ausgelassen,
                             );
                             // Spec v0.7.15 F5: Pause-State aus dem Atomic
                             // in den Snapshot kopieren — wird vom Streamer-
@@ -2180,6 +2271,15 @@ fn run_dispatch(
                         }
                         INSPECTOR_REQUEST_ID => {
                             shared.inspector.lock().ingest(&bytes);
+                        }
+                        id if (OPTIONAL_REQUEST_BASE
+                            ..OPTIONAL_REQUEST_BASE + OPTIONALE_FELDER.len() as u32)
+                            .contains(&id) =>
+                        {
+                            shared
+                                .optionale
+                                .lock()
+                                .einlesen((id - OPTIONAL_REQUEST_BASE) as usize, &bytes);
                         }
                         ZUSATZ_REQUEST_ID => {
                             shared.zusatz.lock().einlesen(&bytes, Instant::now());
@@ -2602,6 +2702,20 @@ struct Connection {
     /// wurden — auch in einem abgebrochenen Aufbau. So werden beim naechsten
     /// Versuch auch halb angelegte Bloecke gestoppt und geleert (QS 01.10.).
     mess_bloecke_beruehrt: usize,
+    /// Laengenwaechter des Hauptblocks — je Verbindung neu.
+    blockwaechter: telemetry::Blockwaechter,
+    /// Paketkennung → SimVar je `AddToDataDefinition` der Telemetrie- und
+    /// optionalen Definitionen. NUR fuers Log: der `index` einer Ausnahme
+    /// ist die Nummer des PARAMETERS, nicht die eines Felds.
+    telemetrie_send_ids: Vec<(u32, &'static str)>,
+    /// Paketkennungen der Hauptdefinition — entscheidet, welches Feld
+    /// nach einer Ablehnung beim Neuregistrieren ausgelassen wird.
+    haupt_pakete: telemetry::Paketbuch,
+    /// Bei DIESER Verbindung nicht registrierte Hauptfelder.
+    haupt_ausgelassen: Vec<usize>,
+    /// Waehrend dieser Verbindung abgelehnte Hauptfelder; `worker_loop`
+    /// uebernimmt sie fuer die naechste Registrierung.
+    haupt_abgelehnt: Vec<usize>,
 }
 
 impl Connection {
@@ -2640,6 +2754,11 @@ impl Connection {
             zusatz_angelegt: false,
             inspektor_angelegt: false,
             mess_bloecke_beruehrt: 0,
+            blockwaechter: telemetry::Blockwaechter::default(),
+            telemetrie_send_ids: Vec::new(),
+            haupt_pakete: telemetry::Paketbuch::default(),
+            haupt_ausgelassen: Vec::new(),
+            haupt_abgelehnt: Vec::new(),
         })
     }
 
@@ -2655,12 +2774,16 @@ impl Connection {
     }
 
     /// Register every entry in `TELEMETRY_FIELDS` in order.
-    fn register_telemetry(&mut self) -> Result<(), String> {
-        for (idx, field) in TELEMETRY_FIELDS.iter().enumerate() {
-            let cname = std::ffi::CString::new(field.name)
-                .map_err(|_| "SimVar name contained NUL".to_string())?;
-            let cunit = std::ffi::CString::new(field.unit)
-                .map_err(|_| "Unit string contained NUL".to_string())?;
+    fn register_telemetry(&mut self, ausgelassen: &[usize]) -> Result<(), String> {
+        let handle = self.handle;
+        let mut send_ids: Vec<(u32, &'static str)> = Vec::new();
+        let r = telemetry::hauptdefinition_registrieren(ausgelassen, |field| {
+            let (Ok(cname), Ok(cunit)) = (
+                std::ffi::CString::new(field.name),
+                std::ffi::CString::new(field.unit),
+            ) else {
+                return Err(-1);
+            };
             let datatype = match field.kind {
                 telemetry::FieldKind::Float64 => sys::SIMCONNECT_DATATYPE_FLOAT64,
                 telemetry::FieldKind::Int32 => sys::SIMCONNECT_DATATYPE_INT32,
@@ -2668,7 +2791,7 @@ impl Connection {
             };
             let hr = unsafe {
                 sys::SimConnect_AddToDataDefinition(
-                    self.handle,
+                    handle,
                     DEFINITION_ID,
                     cname.as_ptr(),
                     cunit.as_ptr(),
@@ -2678,8 +2801,93 @@ impl Connection {
                 )
             };
             if hr != 0 {
+                tracing::error!(
+                    feld = field.name,
+                    "AddToDataDefinition returned 0x{hr:08X} — Hauptfeld ausgelassen (None)"
+                );
+                return Err(hr);
+            }
+            let mut send_id: sys::DWORD = 0;
+            if unsafe { sys::SimConnect_GetLastSentPacketID(handle, &mut send_id) } == 0 {
+                send_ids.push((send_id, field.name));
+                Ok(Some(send_id))
+            } else {
+                tracing::warn!(feld = field.name, "GetLastSentPacketID fehlgeschlagen");
+                Ok(None)
+            }
+        });
+        self.telemetrie_send_ids.extend(send_ids);
+        if !r.ausgelassen.is_empty() {
+            tracing::warn!(
+                felder = ?r.ausgelassen.iter().map(|i| TELEMETRY_FIELDS[*i].name).collect::<Vec<_>>(),
+                "Hauptfelder nach Ablehnung ausgelassen — bleiben None"
+            );
+        }
+        self.haupt_ausgelassen = r.ausgelassen;
+        self.haupt_pakete = r.pakete;
+        Ok(())
+    }
+
+    /// Paketkennung des letzten Aufrufs fuer `name` merken (Log) und
+    /// zurueckgeben.
+    fn paket_merken(&mut self, name: &'static str) -> Option<u32> {
+        let mut send_id: sys::DWORD = 0;
+        if unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) } == 0 {
+            self.telemetrie_send_ids.push((send_id, name));
+            Some(send_id)
+        } else {
+            tracing::warn!(feld = name, "GetLastSentPacketID fehlgeschlagen");
+            None
+        }
+    }
+
+    /// Je optionale SimVar eine eigene Definition und Anfrage (1 Hz).
+    fn register_optionale(&mut self) -> Result<(), String> {
+        for (i, field) in OPTIONALE_FELDER.iter().enumerate() {
+            let cname = std::ffi::CString::new(field.name)
+                .map_err(|_| "SimVar name contained NUL".to_string())?;
+            let cunit = std::ffi::CString::new(field.unit)
+                .map_err(|_| "Unit string contained NUL".to_string())?;
+            let datatype = match field.kind {
+                telemetry::FieldKind::Float64 => sys::SIMCONNECT_DATATYPE_FLOAT64,
+                telemetry::FieldKind::Int32 => sys::SIMCONNECT_DATATYPE_INT32,
+                telemetry::FieldKind::String256 => sys::SIMCONNECT_DATATYPE_STRING256,
+            };
+            let definition = OPTIONAL_DEFINITION_BASE + i as u32;
+            let hr = unsafe {
+                sys::SimConnect_AddToDataDefinition(
+                    self.handle,
+                    definition,
+                    cname.as_ptr(),
+                    cunit.as_ptr(),
+                    datatype,
+                    0.0,
+                    u32::MAX,
+                )
+            };
+            if hr != 0 {
                 return Err(format!(
-                    "AddToDataDefinition for SimVar #{idx} \"{}\" returned 0x{hr:08X}",
+                    "AddToDataDefinition for optional SimVar \"{}\" returned 0x{hr:08X}",
+                    field.name
+                ));
+            }
+            self.paket_merken(field.name);
+            let hr = unsafe {
+                sys::SimConnect_RequestDataOnSimObject(
+                    self.handle,
+                    OPTIONAL_REQUEST_BASE + i as u32,
+                    definition,
+                    sys::SIMCONNECT_OBJECT_ID_USER,
+                    sys::SIMCONNECT_PERIOD_SECOND,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            if hr != 0 {
+                return Err(format!(
+                    "RequestDataOnSimObject for optional SimVar \"{}\" returned 0x{hr:08X}",
                     field.name
                 ));
             }

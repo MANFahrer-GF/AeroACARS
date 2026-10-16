@@ -142,8 +142,7 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("TURB ENG N1:2", "Percent"),
     F::f64("TURB ENG N1:3", "Percent"),
     F::f64("TURB ENG N1:4", "Percent"),
-    // ---- Fuel & weight (SU2 EX1 + legacy fallback) ----
-    F::f64("FUEL TOTAL QUANTITY WEIGHT EX1", "pounds"),
+    // ---- Fuel & weight (legacy; EX1 steht in `OPTIONALE_FELDER`) ----
     F::f64("FUEL TOTAL QUANTITY WEIGHT", "pounds"),
     F::f64("TOTAL WEIGHT", "pounds"),
     F::f64("EMPTY WEIGHT", "pounds"),
@@ -1044,12 +1043,179 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // Ueberziehgeschwindigkeit in Landekonfiguration aus dem Flugmodell —
     // nur mitgeschrieben, siehe `SimSnapshot::design_vs0_kt`.
     F::f64("DESIGN SPEED VS0", "knots"),
-    // QS 26.09.2026: TRANSPONDER STATE bleibt das LETZTE Feld. Lehnt MSFS
-    // 2020 es ab, wird der Block ein Feld kuerzer und alles DAHINTER
-    // verrutscht — stuende noch etwas dahinter, laese der Parser einen
-    // Landelicht-Wert als Transponder. Neue Felder deshalb DAVOR einfuegen.
+    // 16.10.2026: TRANSPONDER STATE:1 (erst spaet im SDK, MSFS 2020 kann es
+    // ablehnen) steht in `OPTIONALE_FELDER` — eine Ablehnung trifft dort
+    // nur diesen Wert.
+];
+
+/// SimVars, die nicht jeder Simulator kennt — jede in einer EIGENEN
+/// Data-Definition mit eigener Anfrage (`OPTIONAL_DEFINITION_BASE + i`).
+///
+/// ⚠ Nie in `TELEMETRY_FIELDS`: SimConnect laesst ein abgelehntes Datum
+/// aus dem Block WEG, alles dahinter rueckt nach vorn. MSFS 2020 kennt
+/// `FUEL TOTAL QUANTITY WEIGHT EX1` nicht; solange es Feld 36 der
+/// Hauptdefinition war, stand bei Pilot 15 (27 Fluege ab 02.10.2026) ab
+/// dort jeder Wert auf dem Platz seines Nachfolgers — Windrichtung =
+/// Windstaerke, Windstaerke = QNH, TOTAL WEIGHT = Leergewicht. Hier
+/// bleibt eine Ablehnung auf ihr eigenes Feld beschraenkt (None).
+pub const OPTIONALE_FELDER: &[TelemetryField] = &[
+    F::f64("FUEL TOTAL QUANTITY WEIGHT EX1", "pounds"),
     F::f64("TRANSPONDER STATE:1", "Number"),
 ];
+/// Index von `FUEL TOTAL QUANTITY WEIGHT EX1` in `OPTIONALE_FELDER`.
+pub const OPT_FUEL_EX1: usize = 0;
+/// Index von `TRANSPONDER STATE:1` in `OPTIONALE_FELDER`.
+pub const OPT_TRANSPONDER_STATE: usize = 1;
+
+/// Werte der optionalen Definitionen, je Feld `None`, solange (oder weil)
+/// der Simulator nichts liefert.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct OptionaleWerte(pub [Option<f64>; OPTIONALE_FELDER.len()]);
+
+impl OptionaleWerte {
+    /// Block der optionalen Definition `idx` einlesen (genau ein f64).
+    pub fn einlesen(&mut self, idx: usize, bytes: &[u8]) {
+        if let Some(platz) = self.0.get_mut(idx) {
+            *platz = read_f64(bytes, 0).filter(|v| v.is_finite());
+        }
+    }
+}
+
+/// Bytes eines vollstaendigen Hauptblocks ohne die `ausgelassen`en Felder.
+pub fn blocklaenge(ausgelassen: &[usize]) -> usize {
+    TELEMETRY_FIELDS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !ausgelassen.contains(i))
+        .map(|(_, f)| f.kind.size())
+        .sum()
+}
+
+/// Paketkennungen der `AddToDataDefinition`-Aufrufe der Hauptdefinition,
+/// in Registrierungsreihenfolge.
+///
+/// Entscheidet NICHT ueber das Lesen eines Blocks, sondern nur, welches
+/// Feld beim naechsten Registrieren ausgelassen wird: Lehnt der Simulator
+/// ein Hauptfeld ab, rueckt alles dahinter nach vorn — jeder Block waere
+/// zu kurz und wuerde verworfen. Ohne Auslassen hiesse das Neuverbinden
+/// mit derselben Definition, also Dauerausfall.
+#[derive(Debug, Default)]
+pub struct Paketbuch {
+    /// (Index in `TELEMETRY_FIELDS`, Paketkennung falls ermittelbar).
+    eintraege: Vec<(usize, Option<u32>)>,
+}
+
+impl Paketbuch {
+    pub fn registriert(&mut self, feld: usize, send_id: Option<u32>) {
+        self.eintraege.push((feld, send_id));
+    }
+
+    /// Feld zur Paketkennung einer Ausnahme. Scheiterte
+    /// `GetLastSentPacketID` fuer dieses Feld, wird die Kennung aus dem
+    /// naechsten bekannten Nachbarn abgeleitet: Die Aufrufe laufen ohne
+    /// anderes Paket dazwischen, die Kennungen sind fortlaufend.
+    pub fn feld(&self, send_id: u32) -> Option<usize> {
+        if let Some((feld, _)) = self.eintraege.iter().find(|(_, id)| *id == Some(send_id)) {
+            return Some(*feld);
+        }
+        let (pos, id) = self
+            .eintraege
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, (_, id))| id.map(|id| (pos as i64, id as i64)))
+            .min_by_key(|(_, id)| (send_id as i64 - id).abs())?;
+        let ziel = pos + (send_id as i64 - id);
+        let (feld, eigene) = self.eintraege.get(usize::try_from(ziel).ok()?)?;
+        // Hat das Ziel eine eigene, andere Kennung, passt die Ableitung nicht.
+        eigene.is_none().then_some(*feld)
+    }
+}
+
+/// Ergebnis von [`hauptdefinition_registrieren`].
+#[derive(Debug, Default)]
+pub struct Registrierung {
+    /// Nicht registrierte Felder: vorab ausgelassen oder synchron abgelehnt.
+    pub ausgelassen: Vec<usize>,
+    /// Davon bei DIESER Registrierung synchron abgelehnt (fuers Log).
+    pub sofort_abgelehnt: Vec<usize>,
+    pub pakete: Paketbuch,
+}
+
+/// Registriert die Hauptdefinition ueber `hinzufuegen` (je Feld ein
+/// `AddToDataDefinition`: `Ok(Paketkennung)` oder `Err(HRESULT)`).
+///
+/// ⚠ Ein synchron abgelehntes Feld wird NICHT zum Abbruch: es kommt in
+/// `ausgelassen`, Parser und Laengenwaechter rechnen ohne es. Frueher
+/// brach die Registrierung ab, und jede Neuverbindung scheiterte an
+/// derselben SimVar — Dauerausfall.
+pub fn hauptdefinition_registrieren(
+    ausgelassen: &[usize],
+    mut hinzufuegen: impl FnMut(&TelemetryField) -> Result<Option<u32>, i32>,
+) -> Registrierung {
+    let mut r = Registrierung {
+        ausgelassen: ausgelassen.to_vec(),
+        ..Default::default()
+    };
+    for (idx, feld) in TELEMETRY_FIELDS.iter().enumerate() {
+        if ausgelassen.contains(&idx) {
+            continue;
+        }
+        match hinzufuegen(feld) {
+            Ok(send_id) => r.pakete.registriert(idx, send_id),
+            Err(_) => {
+                r.ausgelassen.push(idx);
+                r.sofort_abgelehnt.push(idx);
+            }
+        }
+    }
+    r
+}
+
+/// Nach so vielen verworfenen Hauptbloecken in Folge (~10 s bei
+/// VISUAL_FRAME) wird neu verbunden und neu registriert.
+pub const NEU_VERBINDEN_NACH_VERWORFENEN: u32 = 300;
+
+/// Was mit einem Hauptblock geschieht.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blockpruefung {
+    Lesen,
+    /// Zu kurz — NIE parsen. `erstmals`: einmal je Verbindung loggen.
+    Verwerfen {
+        erstmals: bool,
+    },
+    /// Anhaltend zu kurz: neu verbinden statt verschoben lesen.
+    NeuVerbinden,
+}
+
+/// Laengenwaechter fuer den Hauptblock einer Verbindung.
+///
+/// ⚠ Zu kurz heisst: ein Datum der Hauptdefinition wurde abgelehnt, ab
+/// dort stuende jedes Feld auf dem Platz seines Nachfolgers. Laenger ist
+/// unbedenklich — gelesen wird ab Byte 0, eine Verschiebung entsteht nur
+/// durch ein FEHLENDES Datum.
+#[derive(Debug, Default)]
+pub struct Blockwaechter {
+    pub verworfen_in_folge: u32,
+    pub verworfen_gesamt: u64,
+}
+
+impl Blockwaechter {
+    pub fn pruefen(&mut self, laenge: usize, erwartet: usize) -> Blockpruefung {
+        if laenge >= erwartet {
+            self.verworfen_in_folge = 0;
+            return Blockpruefung::Lesen;
+        }
+        self.verworfen_in_folge += 1;
+        self.verworfen_gesamt += 1;
+        if self.verworfen_in_folge >= NEU_VERBINDEN_NACH_VERWORFENEN {
+            Blockpruefung::NeuVerbinden
+        } else {
+            Blockpruefung::Verwerfen {
+                erstmals: self.verworfen_gesamt == 1,
+            }
+        }
+    }
+}
 
 // Helper builders so the table above stays compact.
 struct F;
@@ -1880,37 +2046,65 @@ impl Touchdown {
 }
 
 impl Telemetry {
+    #[cfg(test)]
     fn from_block(bytes: &[u8]) -> Self {
-        // Walk the buffer in TELEMETRY_FIELDS order. If the buffer is
-        // shorter than expected (some SimVar got rejected and the
-        // tail is missing), every later field stays at its default.
+        Self::from_block_ohne(bytes, &[])
+    }
+
+    /// Walk the buffer in TELEMETRY_FIELDS order.
+    ///
+    /// `ausgelassen`: Indizes in `TELEMETRY_FIELDS`, die bei dieser
+    /// Verbindung gar nicht registriert wurden (vom Simulator zuvor
+    /// abgelehnt, siehe `Paketbuch`). Sie verbrauchen keine Bytes und
+    /// bleiben auf ihrem Default (Option-Felder: None).
+    fn from_block_ohne(bytes: &[u8], ausgelassen: &[usize]) -> Self {
         let mut t = Telemetry::default();
         let mut off = 0usize;
+        let mut feld = 0usize;
 
         // Macro-equivalent: pull next field into `dst` if the buffer
         // is long enough. Strings copy the NUL-terminated content.
         macro_rules! pull_f64 {
             ($dst:expr) => {
-                if let Some(v) = read_f64(bytes, off) {
-                    $dst = v;
+                if !ausgelassen.contains(&feld) {
+                    if let Some(v) = read_f64(bytes, off) {
+                        $dst = v;
+                    }
+                    off += 8;
                 }
-                off += 8;
+                feld += 1;
+            };
+        }
+        // Option-Feld: abgeschnitten oder ausgelassen bleibt None, nie 0.
+        macro_rules! pull_opt_f64 {
+            ($dst:expr) => {
+                if !ausgelassen.contains(&feld) {
+                    $dst = read_f64(bytes, off);
+                    off += 8;
+                }
+                feld += 1;
             };
         }
         macro_rules! pull_i32 {
             ($dst:expr) => {
-                if let Some(v) = read_i32(bytes, off) {
-                    $dst = v != 0;
+                if !ausgelassen.contains(&feld) {
+                    if let Some(v) = read_i32(bytes, off) {
+                        $dst = v != 0;
+                    }
+                    off += 4;
                 }
-                off += 4;
+                feld += 1;
             };
         }
         macro_rules! pull_str {
             ($dst:expr) => {
-                if let Some(v) = read_str256(bytes, off) {
-                    $dst = v;
+                if !ausgelassen.contains(&feld) {
+                    if let Some(v) = read_str256(bytes, off) {
+                        $dst = v;
+                    }
+                    off += 256;
                 }
-                off += 256;
+                feld += 1;
             };
         }
 
@@ -1958,7 +2152,6 @@ impl Telemetry {
         pull_f64!(t.n1_pct_3);
         pull_f64!(t.n1_pct_4);
 
-        pull_f64!(t.fuel_total_lb_ex1);
         pull_f64!(t.fuel_total_lb_legacy);
         pull_f64!(t.total_weight_lb);
         pull_f64!(t.empty_weight_lb);
@@ -2354,25 +2547,18 @@ impl Telemetry {
         pull_f64!(t.fnx_fcu_hdg_dashed);
         pull_f64!(t.fss_vref);
         // Option: ein abgeschnittener Block bleibt None, nie 0 g.
-        t.semibody_loadfactor_y = read_f64(bytes, off);
-        off += 8;
+        pull_opt_f64!(t.semibody_loadfactor_y);
         pull_f64!(t.roh_std_autobrake_switch_cb);
         // Option: ein abgeschnittener Block (SimVar abgelehnt) bleibt None.
-        t.std_cabin_seatbelts_alert = read_f64(bytes, off);
-        off += 8;
-        t.std_light_landing_on_1 = read_f64(bytes, off);
-        off += 8;
-        t.std_light_landing_on_2 = read_f64(bytes, off);
-        off += 8;
-        t.design_vs0 = read_f64(bytes, off);
-        off += 8;
-        t.std_transponder_state = read_f64(bytes, off);
-        off += 8;
+        pull_opt_f64!(t.std_cabin_seatbelts_alert);
+        pull_opt_f64!(t.std_light_landing_on_1);
+        pull_opt_f64!(t.std_light_landing_on_2);
+        pull_opt_f64!(t.design_vs0);
 
         // Silence the unused-assignment warning the last `pull_*!`
-        // emits (the macro always advances `off`, but the very last
-        // call doesn't read it again).
-        let _ = off;
+        // emits (the macro always advances `off`/`feld`, but the very
+        // last call doesn't read them again).
+        let _ = (off, feld);
 
         t
     }
@@ -2395,19 +2581,28 @@ pub fn parse(bytes: &[u8], simulator: Simulator, cfg_pfad: Option<&str>) -> SimS
         simulator,
         cfg_pfad,
         &std::collections::BTreeMap::new(),
+        &OptionaleWerte::default(),
+        &[],
     )
 }
 
 /// Wie [`parse`], zusaetzlich mit den Werten der abonnierten MSFS-2024-
-/// Input-Events (Name ohne `B:` → Wert, siehe `crate::eingabe_events`).
+/// Input-Events (Name ohne `B:` → Wert, siehe `crate::eingabe_events`)
+/// und denen der optionalen Definitionen (`OPTIONALE_FELDER`); ohne die
+/// bei dieser Verbindung nicht registrierten Hauptfelder (`ausgelassen`).
 pub fn parse_mit_eingaben(
     bytes: &[u8],
     simulator: Simulator,
     cfg_pfad: Option<&str>,
     eingaben: &std::collections::BTreeMap<String, f64>,
+    optionale: &OptionaleWerte,
+    ausgelassen: &[usize],
 ) -> SimSnapshot {
-    let mut t = Telemetry::from_block(bytes);
+    let mut t = Telemetry::from_block_ohne(bytes, ausgelassen);
     t.eingaben = eingaben.clone();
+    // Fehlt EX1 (MSFS 2020), bleibt 0 → Kraftstoff aus der Legacy-SimVar.
+    t.fuel_total_lb_ex1 = optionale.0[OPT_FUEL_EX1].unwrap_or(0.0);
+    t.std_transponder_state = optionale.0[OPT_TRANSPONDER_STATE];
     telemetry_to_snapshot_mit_pfad(t, simulator, cfg_pfad)
 }
 
@@ -5881,7 +6076,9 @@ mod tests {
         // Lernpaket (29.09.2026): +8 (SEMIBODY LOADFACTOR Y); Fenix-FCU-
         // Lampen (29.09.2026): +40 (AP1, AP2, A/THR, APPR, HDG gestrichelt);
         // Vref (06.10.2026): +16 (FSS-PFD-VREF, DESIGN SPEED VS0).
-        assert_eq!(buf.len(), 3688, "total block size");
+        // 16.10.2026: −16 (EX1 und TRANSPONDER STATE:1 in eigene
+        // Definitionen, `OPTIONALE_FELDER`).
+        assert_eq!(buf.len(), 3672, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -5894,321 +6091,321 @@ mod tests {
         // Mid-table sentinels around the bool clusters.
         assert_eq!(t.gear_position, 1026.0); // idx 26
         assert_eq!(t.n1_pct_1, 1032.0); // idx 32
-        assert_eq!(t.fuel_total_lb_ex1, 1036.0); // idx 36 (EX1 precedent)
-        assert_eq!(t.eng1_ff_pph, 1062.0); // idx 62
-        assert_eq!(t.pushback_state, 1068.0); // idx 68
-        assert_eq!(t.fbw_xpdr, 1079.0); // idx 79
-        assert_eq!(t.fnx_autobrake_max, 1111.0); // idx 111
-        assert_eq!(t.fnx_fc_flaps_lever, 1118.0); // idx 118
-        assert_eq!(t.fsr_phenom_eng1_knob, 1119.0); // idx 119
-        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // idx 120
+        assert_eq!(t.fuel_total_lb_legacy, 1036.0); // idx 36 (EX1 → OPTIONALE_FELDER)
+        assert_eq!(t.eng1_ff_pph, 1061.0); // idx 61
+        assert_eq!(t.pushback_state, 1067.0); // idx 67
+        assert_eq!(t.fbw_xpdr, 1078.0); // idx 78
+        assert_eq!(t.fnx_autobrake_max, 1110.0); // idx 110
+        assert_eq!(t.fnx_fc_flaps_lever, 1117.0); // idx 117
+        assert_eq!(t.fsr_phenom_eng1_knob, 1118.0); // idx 118
+        assert_eq!(t.fsr_phenom_eng2_knob, 1119.0); // idx 119
 
         // ---- the 13 new A346 tail fields (idx 121..133) ----
-        assert!(t.eng1_combustion_ex1); // idx 121 (121 != 0)
-        assert!(t.eng2_combustion_ex1); // idx 122
-        assert!(t.eng3_combustion_ex1); // idx 123
-        assert!(t.eng4_combustion_ex1); // idx 124
-        assert_eq!(t.eng1_ff_corrected_pph, 1125.0); // idx 125
-        assert_eq!(t.eng2_ff_corrected_pph, 1126.0); // idx 126
-        assert_eq!(t.eng3_ff_corrected_pph, 1127.0); // idx 127
-        assert_eq!(t.eng4_ff_corrected_pph, 1128.0); // idx 128
-        assert_eq!(t.a346_ap1_light, 1129.0); // idx 129
-        assert_eq!(t.a346_ap2_light, 1130.0); // idx 130
-        assert_eq!(t.a346_athr_light, 1131.0); // idx 131
-        assert_eq!(t.a346_appr_light, 1132.0); // idx 132
-        assert_eq!(t.a346_loc_light, 1133.0); // idx 133
+        assert!(t.eng1_combustion_ex1); // idx 120 (120 != 0)
+        assert!(t.eng2_combustion_ex1); // idx 121
+        assert!(t.eng3_combustion_ex1); // idx 122
+        assert!(t.eng4_combustion_ex1); // idx 123
+        assert_eq!(t.eng1_ff_corrected_pph, 1124.0); // idx 124
+        assert_eq!(t.eng2_ff_corrected_pph, 1125.0); // idx 125
+        assert_eq!(t.eng3_ff_corrected_pph, 1126.0); // idx 126
+        assert_eq!(t.eng4_ff_corrected_pph, 1127.0); // idx 127
+        assert_eq!(t.a346_ap1_light, 1128.0); // idx 128
+        assert_eq!(t.a346_ap2_light, 1129.0); // idx 129
+        assert_eq!(t.a346_athr_light, 1130.0); // idx 130
+        assert_eq!(t.a346_appr_light, 1131.0); // idx 131
+        assert_eq!(t.a346_loc_light, 1132.0); // idx 132
 
         // ---- v0.16.4: the 12 A346 full-profile tail fields
         //      (idx 134..145, all f64) ----
-        assert_eq!(t.a346_seatbelt_sw, 1134.0); // idx 134
-        assert_eq!(t.a346_no_smoking_sw, 1135.0); // idx 135
-        assert_eq!(t.a346_antiice_engl1, 1136.0); // idx 136
-        assert_eq!(t.a346_antiice_engl2, 1137.0); // idx 137
-        assert_eq!(t.a346_antiice_engr1, 1138.0); // idx 138
-        assert_eq!(t.a346_antiice_engr2, 1139.0); // idx 139
-        assert_eq!(t.a346_antiice_wing, 1140.0); // idx 140
-        assert_eq!(t.a346_antiice_probewindow, 1141.0); // idx 141
-        assert_eq!(t.a346_bat1_off_light, 1142.0); // idx 142
-        assert_eq!(t.a346_bat2_off_light, 1143.0); // idx 143
-        assert_eq!(t.a346_autobrake_mode, 1144.0); // idx 144
-        assert_eq!(t.a346_gear_lever, 1145.0); // idx 145
+        assert_eq!(t.a346_seatbelt_sw, 1133.0); // idx 133
+        assert_eq!(t.a346_no_smoking_sw, 1134.0); // idx 134
+        assert_eq!(t.a346_antiice_engl1, 1135.0); // idx 135
+        assert_eq!(t.a346_antiice_engl2, 1136.0); // idx 136
+        assert_eq!(t.a346_antiice_engr1, 1137.0); // idx 137
+        assert_eq!(t.a346_antiice_engr2, 1138.0); // idx 138
+        assert_eq!(t.a346_antiice_wing, 1139.0); // idx 139
+        assert_eq!(t.a346_antiice_probewindow, 1140.0); // idx 140
+        assert_eq!(t.a346_bat1_off_light, 1141.0); // idx 141
+        assert_eq!(t.a346_bat2_off_light, 1142.0); // idx 142
+        assert_eq!(t.a346_autobrake_mode, 1143.0); // idx 143
+        assert_eq!(t.a346_gear_lever, 1144.0); // idx 144
 
         // ---- the 5 new A350 tail fields (idx 146..150, v0.16.8) ----
-        assert_eq!(t.a350_ap1_on, 1146.0); // idx 146
-        assert_eq!(t.a350_ap2_on, 1147.0); // idx 147
-        assert_eq!(t.a350_athr_light, 1148.0); // idx 148
-        assert_eq!(t.a350_appr_light, 1149.0); // idx 149
-        assert_eq!(t.a350_loc_light, 1150.0); // idx 150
+        assert_eq!(t.a350_ap1_on, 1145.0); // idx 145
+        assert_eq!(t.a350_ap2_on, 1146.0); // idx 146
+        assert_eq!(t.a350_athr_light, 1147.0); // idx 147
+        assert_eq!(t.a350_appr_light, 1148.0); // idx 148
+        assert_eq!(t.a350_loc_light, 1149.0); // idx 149
 
         // ---- v0.16.10 (#Premium): 79 tail fields (idx 151..229) ----
         // Gruppe A: Fenix Premium (idx 151..163).
-        assert_eq!(t.fnx_perf_v1, 1151.0); // idx 151
-        assert_eq!(t.fnx_perf_vr, 1152.0); // idx 152
-        assert_eq!(t.fnx_perf_v2, 1153.0); // idx 153
-        assert_eq!(t.fnx_perf_flex, 1154.0); // idx 154
-        assert_eq!(t.fnx_master_caution, 1155.0); // idx 155
-        assert_eq!(t.fnx_master_warning, 1156.0); // idx 156
-        assert_eq!(t.fnx_speedbrake_handle, 1157.0); // idx 157
-        assert_eq!(t.fnx_fcu_spd_managed, 1158.0); // idx 158
-        assert_eq!(t.fnx_fcu_hdg_managed, 1159.0); // idx 159
-        assert_eq!(t.fnx_fcu_alt_managed, 1160.0); // idx 160
-        assert_eq!(t.fnx_baro_std, 1161.0); // idx 161
-        assert_eq!(t.fnx_eng1_fire, 1162.0); // idx 162
-        assert_eq!(t.fnx_eng2_fire, 1163.0); // idx 163
+        assert_eq!(t.fnx_perf_v1, 1150.0); // idx 150
+        assert_eq!(t.fnx_perf_vr, 1151.0); // idx 151
+        assert_eq!(t.fnx_perf_v2, 1152.0); // idx 152
+        assert_eq!(t.fnx_perf_flex, 1153.0); // idx 153
+        assert_eq!(t.fnx_master_caution, 1154.0); // idx 154
+        assert_eq!(t.fnx_master_warning, 1155.0); // idx 155
+        assert_eq!(t.fnx_speedbrake_handle, 1156.0); // idx 156
+        assert_eq!(t.fnx_fcu_spd_managed, 1157.0); // idx 157
+        assert_eq!(t.fnx_fcu_hdg_managed, 1158.0); // idx 158
+        assert_eq!(t.fnx_fcu_alt_managed, 1159.0); // idx 159
+        assert_eq!(t.fnx_baro_std, 1160.0); // idx 160
+        assert_eq!(t.fnx_eng1_fire, 1161.0); // idx 161
+        assert_eq!(t.fnx_eng2_fire, 1162.0); // idx 162
 
         // Gruppe B: FBW-Familie (idx 164..180).
-        assert_eq!(t.fbw_ap1_active, 1164.0); // idx 164
-        assert_eq!(t.fbw_ap2_active, 1165.0); // idx 165
-        assert_eq!(t.fbw_athr_status, 1166.0); // idx 166
-        assert_eq!(t.fbw_athr_mode, 1167.0); // idx 167
-        assert_eq!(t.fbw_fma_lateral, 1168.0); // idx 168
-        assert_eq!(t.fbw_fma_vertical, 1169.0); // idx 169
-        assert_eq!(t.fbw_fwc_phase, 1170.0); // idx 170
-        assert_eq!(t.fbw_vspeeds_v2, 1171.0); // idx 171
-        assert_eq!(t.fbw_vspeeds_vls, 1172.0); // idx 172
-        assert_eq!(t.fbw_vspeeds_vapp, 1173.0); // idx 173
-        assert_eq!(t.fbw_autobrake_armed_mode, 1174.0); // idx 174
-        assert_eq!(t.fbw_flaps_handle_index, 1175.0); // idx 175
-        assert_eq!(t.fbw_spoilers_armed, 1176.0); // idx 176
-        assert_eq!(t.fbw_ground_spoilers_active, 1177.0); // idx 177
-        assert_eq!(t.fbw_fcu_spd_dot, 1178.0); // idx 178
-        assert_eq!(t.fbw_fcu_hdg_dot, 1179.0); // idx 179
-        assert_eq!(t.fbw_fcu_alt_managed, 1180.0); // idx 180
+        assert_eq!(t.fbw_ap1_active, 1163.0); // idx 163
+        assert_eq!(t.fbw_ap2_active, 1164.0); // idx 164
+        assert_eq!(t.fbw_athr_status, 1165.0); // idx 165
+        assert_eq!(t.fbw_athr_mode, 1166.0); // idx 166
+        assert_eq!(t.fbw_fma_lateral, 1167.0); // idx 167
+        assert_eq!(t.fbw_fma_vertical, 1168.0); // idx 168
+        assert_eq!(t.fbw_fwc_phase, 1169.0); // idx 169
+        assert_eq!(t.fbw_vspeeds_v2, 1170.0); // idx 170
+        assert_eq!(t.fbw_vspeeds_vls, 1171.0); // idx 171
+        assert_eq!(t.fbw_vspeeds_vapp, 1172.0); // idx 172
+        assert_eq!(t.fbw_autobrake_armed_mode, 1173.0); // idx 173
+        assert_eq!(t.fbw_flaps_handle_index, 1174.0); // idx 174
+        assert_eq!(t.fbw_spoilers_armed, 1175.0); // idx 175
+        assert_eq!(t.fbw_ground_spoilers_active, 1176.0); // idx 176
+        assert_eq!(t.fbw_fcu_spd_dot, 1177.0); // idx 177
+        assert_eq!(t.fbw_fcu_hdg_dot, 1178.0); // idx 178
+        assert_eq!(t.fbw_fcu_alt_managed, 1179.0); // idx 179
 
         // Gruppe C: INI A350/A340 (idx 181..203).
-        assert_eq!(t.ini_roll_mode, 1181.0); // idx 181
-        assert_eq!(t.ini_pitch_mode, 1182.0); // idx 182
-        assert_eq!(t.ini_throttle_mode, 1183.0); // idx 183
-        assert_eq!(t.ini_v1, 1184.0); // idx 184
-        assert_eq!(t.ini_vr, 1185.0); // idx 185
-        assert_eq!(t.ini_v2, 1186.0); // idx 186
-        assert_eq!(t.ini_vls, 1187.0); // idx 187
-        assert_eq!(t.ini_vapp, 1188.0); // idx 188
-        assert_eq!(t.ini_vref, 1189.0); // idx 189
-        assert_eq!(t.ini_flex_temp, 1190.0); // idx 190
-        assert_eq!(t.ini_lever_toga, 1191.0); // idx 191
-        assert_eq!(t.ini_lever_flex_mct, 1192.0); // idx 192
-        assert_eq!(t.ini_lever_cl, 1193.0); // idx 193
-        assert_eq!(t.ini_flaps_handle_index, 1194.0); // idx 194
-        assert_eq!(t.ini_ground_spoilers, 1195.0); // idx 195
-        assert_eq!(t.ini_autobrake_engaged, 1196.0); // idx 196
-        assert_eq!(t.ini_master_caution, 1197.0); // idx 197
-        assert_eq!(t.ini_master_warning, 1198.0); // idx 198
-        assert_eq!(t.ini_fuel_flow1_kg, 1199.0); // idx 199
-        assert_eq!(t.ini_fuel_flow2_kg, 1200.0); // idx 200
-        assert_eq!(t.ini_fuel_flow3_kg, 1201.0); // idx 201
-        assert_eq!(t.ini_fuel_flow4_kg, 1202.0); // idx 202
-        assert_eq!(t.ini_autobrake_level, 1203.0); // idx 203
+        assert_eq!(t.ini_roll_mode, 1180.0); // idx 180
+        assert_eq!(t.ini_pitch_mode, 1181.0); // idx 181
+        assert_eq!(t.ini_throttle_mode, 1182.0); // idx 182
+        assert_eq!(t.ini_v1, 1183.0); // idx 183
+        assert_eq!(t.ini_vr, 1184.0); // idx 184
+        assert_eq!(t.ini_v2, 1185.0); // idx 185
+        assert_eq!(t.ini_vls, 1186.0); // idx 186
+        assert_eq!(t.ini_vapp, 1187.0); // idx 187
+        assert_eq!(t.ini_vref, 1188.0); // idx 188
+        assert_eq!(t.ini_flex_temp, 1189.0); // idx 189
+        assert_eq!(t.ini_lever_toga, 1190.0); // idx 190
+        assert_eq!(t.ini_lever_flex_mct, 1191.0); // idx 191
+        assert_eq!(t.ini_lever_cl, 1192.0); // idx 192
+        assert_eq!(t.ini_flaps_handle_index, 1193.0); // idx 193
+        assert_eq!(t.ini_ground_spoilers, 1194.0); // idx 194
+        assert_eq!(t.ini_autobrake_engaged, 1195.0); // idx 195
+        assert_eq!(t.ini_master_caution, 1196.0); // idx 196
+        assert_eq!(t.ini_master_warning, 1197.0); // idx 197
+        assert_eq!(t.ini_fuel_flow1_kg, 1198.0); // idx 198
+        assert_eq!(t.ini_fuel_flow2_kg, 1199.0); // idx 199
+        assert_eq!(t.ini_fuel_flow3_kg, 1200.0); // idx 200
+        assert_eq!(t.ini_fuel_flow4_kg, 1201.0); // idx 201
+        assert_eq!(t.ini_autobrake_level, 1202.0); // idx 202
 
         // Gruppe D: A346 Premium-Extras (idx 204..215).
-        assert_eq!(t.a346_flight_phase, 1204.0); // idx 204
-        assert_eq!(t.a346_fcu_spd_managed, 1205.0); // idx 205
-        assert_eq!(t.a346_fcu_hdg_managed, 1206.0); // idx 206
-        assert_eq!(t.a346_fcu_vs_managed, 1207.0); // idx 207
-        assert_eq!(t.a346_master_warning_light, 1208.0); // idx 208
-        assert_eq!(t.a346_master_caution_light, 1209.0); // idx 209
-        assert_eq!(t.a346_spd_brk_lever_pos, 1210.0); // idx 210
-        assert_eq!(t.a346_spoiler_lever_armed, 1211.0); // idx 211
-        assert_eq!(t.a346_eng1_rev_ratio, 1212.0); // idx 212
-        assert_eq!(t.a346_eng2_rev_ratio, 1213.0); // idx 213
-        assert_eq!(t.a346_eng3_rev_ratio, 1214.0); // idx 214
-        assert_eq!(t.a346_eng4_rev_ratio, 1215.0); // idx 215
+        assert_eq!(t.a346_flight_phase, 1203.0); // idx 203
+        assert_eq!(t.a346_fcu_spd_managed, 1204.0); // idx 204
+        assert_eq!(t.a346_fcu_hdg_managed, 1205.0); // idx 205
+        assert_eq!(t.a346_fcu_vs_managed, 1206.0); // idx 206
+        assert_eq!(t.a346_master_warning_light, 1207.0); // idx 207
+        assert_eq!(t.a346_master_caution_light, 1208.0); // idx 208
+        assert_eq!(t.a346_spd_brk_lever_pos, 1209.0); // idx 209
+        assert_eq!(t.a346_spoiler_lever_armed, 1210.0); // idx 210
+        assert_eq!(t.a346_eng1_rev_ratio, 1211.0); // idx 211
+        assert_eq!(t.a346_eng2_rev_ratio, 1212.0); // idx 212
+        assert_eq!(t.a346_eng3_rev_ratio, 1213.0); // idx 213
+        assert_eq!(t.a346_eng4_rev_ratio, 1214.0); // idx 214
 
         // Gruppe E: TFDi MD-11 (idx 216..229).
-        assert_eq!(t.md11_ap_state, 1216.0); // idx 216
-        assert_eq!(t.md11_ats_state, 1217.0); // idx 217
-        assert_eq!(t.md11_ats_clamp, 1218.0); // idx 218
-        assert_eq!(t.md11_afs_spd, 1219.0); // idx 219
-        assert_eq!(t.md11_afs_hdg, 1220.0); // idx 220
-        assert_eq!(t.md11_afs_alt, 1221.0); // idx 221
-        assert_eq!(t.md11_afs_vs, 1222.0); // idx 222
-        assert_eq!(t.md11_v1, 1223.0); // idx 223
-        assert_eq!(t.md11_vr, 1224.0); // idx 224
-        assert_eq!(t.md11_v2, 1225.0); // idx 225
-        assert_eq!(t.md11_eng1_n1, 1226.0); // idx 226
-        assert_eq!(t.md11_eng2_n1, 1227.0); // idx 227
-        assert_eq!(t.md11_eng3_n1, 1228.0); // idx 228
-        assert_eq!(t.md11_autobrake_sw, 1229.0); // idx 229
+        assert_eq!(t.md11_ap_state, 1215.0); // idx 215
+        assert_eq!(t.md11_ats_state, 1216.0); // idx 216
+        assert_eq!(t.md11_ats_clamp, 1217.0); // idx 217
+        assert_eq!(t.md11_afs_spd, 1218.0); // idx 218
+        assert_eq!(t.md11_afs_hdg, 1219.0); // idx 219
+        assert_eq!(t.md11_afs_alt, 1220.0); // idx 220
+        assert_eq!(t.md11_afs_vs, 1221.0); // idx 221
+        assert_eq!(t.md11_v1, 1222.0); // idx 222
+        assert_eq!(t.md11_vr, 1223.0); // idx 223
+        assert_eq!(t.md11_v2, 1224.0); // idx 224
+        assert_eq!(t.md11_eng1_n1, 1225.0); // idx 225
+        assert_eq!(t.md11_eng2_n1, 1226.0); // idx 226
+        assert_eq!(t.md11_eng3_n1, 1227.0); // idx 227
+        assert_eq!(t.md11_autobrake_sw, 1228.0); // idx 228
 
         // Gruppe F: iFly 737 MAX 8 (idx 230..239, v0.16.11).
-        assert_eq!(t.ifly_cmd_a_light, 1230.0); // idx 230
-        assert_eq!(t.ifly_cmd_b_light, 1231.0); // idx 231
-        assert_eq!(t.ifly_at_arm_light, 1232.0); // idx 232
-        assert_eq!(t.ifly_master_caution_light, 1233.0); // idx 233
-        assert_eq!(t.ifly_fire_warning_light, 1234.0); // idx 234
-        assert_eq!(t.ifly_cabin_alt_warning_light, 1235.0); // idx 235
-        assert_eq!(t.ifly_eng1_reverser, 1236.0); // idx 236
-        assert_eq!(t.ifly_eng2_reverser, 1237.0); // idx 237
-        assert_eq!(t.ifly_speedbrakes_extended_light, 1238.0); // idx 238
-        assert_eq!(t.ifly_autobrake_sw, 1239.0); // idx 239
+        assert_eq!(t.ifly_cmd_a_light, 1229.0); // idx 229
+        assert_eq!(t.ifly_cmd_b_light, 1230.0); // idx 230
+        assert_eq!(t.ifly_at_arm_light, 1231.0); // idx 231
+        assert_eq!(t.ifly_master_caution_light, 1232.0); // idx 232
+        assert_eq!(t.ifly_fire_warning_light, 1233.0); // idx 233
+        assert_eq!(t.ifly_cabin_alt_warning_light, 1234.0); // idx 234
+        assert_eq!(t.ifly_eng1_reverser, 1235.0); // idx 235
+        assert_eq!(t.ifly_eng2_reverser, 1236.0); // idx 236
+        assert_eq!(t.ifly_speedbrakes_extended_light, 1237.0); // idx 237
+        assert_eq!(t.ifly_autobrake_sw, 1238.0); // idx 238
 
         // Gruppe G: FSLabs A321 (idx 240..256, v0.16.14).
-        assert_eq!(t.fsl_ap1_light, 1240.0); // idx 240
-        assert_eq!(t.fsl_ap2_light, 1241.0); // idx 241
-        assert_eq!(t.fsl_athr_light, 1242.0); // idx 242
-        assert_eq!(t.fsl_appr_light, 1243.0); // idx 243
-        assert_eq!(t.fsl_loc_light, 1244.0); // idx 244
-        assert_eq!(t.fsl_fcu_spd, 1245.0); // idx 245
-        assert_eq!(t.fsl_fcu_hdg, 1246.0); // idx 246
-        assert_eq!(t.fsl_fcu_alt, 1247.0); // idx 247
-        assert_eq!(t.fsl_fcu_vs, 1248.0); // idx 248
-        assert_eq!(t.fsl_fcu_spd_managed, 1249.0); // idx 249
-        assert_eq!(t.fsl_fcu_hdg_managed, 1250.0); // idx 250
-        assert_eq!(t.fsl_fcu_alt_managed, 1251.0); // idx 251
-        assert_eq!(t.fsl_fcu_spd_dashed, 1252.0); // idx 252
-        assert_eq!(t.fsl_fcu_hdg_dashed, 1253.0); // idx 253
-        assert_eq!(t.fsl_autobrake_lo_light, 1254.0); // idx 254
-        assert_eq!(t.fsl_autobrake_med_light, 1255.0); // idx 255
-        assert_eq!(t.fsl_autobrake_max_light, 1256.0); // idx 256
+        assert_eq!(t.fsl_ap1_light, 1239.0); // idx 239
+        assert_eq!(t.fsl_ap2_light, 1240.0); // idx 240
+        assert_eq!(t.fsl_athr_light, 1241.0); // idx 241
+        assert_eq!(t.fsl_appr_light, 1242.0); // idx 242
+        assert_eq!(t.fsl_loc_light, 1243.0); // idx 243
+        assert_eq!(t.fsl_fcu_spd, 1244.0); // idx 244
+        assert_eq!(t.fsl_fcu_hdg, 1245.0); // idx 245
+        assert_eq!(t.fsl_fcu_alt, 1246.0); // idx 246
+        assert_eq!(t.fsl_fcu_vs, 1247.0); // idx 247
+        assert_eq!(t.fsl_fcu_spd_managed, 1248.0); // idx 248
+        assert_eq!(t.fsl_fcu_hdg_managed, 1249.0); // idx 249
+        assert_eq!(t.fsl_fcu_alt_managed, 1250.0); // idx 250
+        assert_eq!(t.fsl_fcu_spd_dashed, 1251.0); // idx 251
+        assert_eq!(t.fsl_fcu_hdg_dashed, 1252.0); // idx 252
+        assert_eq!(t.fsl_autobrake_lo_light, 1253.0); // idx 253
+        assert_eq!(t.fsl_autobrake_med_light, 1254.0); // idx 254
+        assert_eq!(t.fsl_autobrake_max_light, 1255.0); // idx 255
 
         // ---- v0.16.20: FSLabs A321 PREMIUM tail (idx 257..269) ----
-        assert_eq!(t.fsl_park_brake_switch, 1257.0); // idx 257
-        assert_eq!(t.fsl_eng1_mstr_switch, 1258.0); // idx 258
-        assert_eq!(t.fsl_eng2_mstr_switch, 1259.0); // idx 259
-        assert_eq!(t.fsl_wheel_chocks, 1260.0); // idx 260
-        assert_eq!(t.fsl_baro_std, 1261.0); // idx 261
-        assert_eq!(t.fsl_master_caution, 1262.0); // idx 262
-        assert_eq!(t.fsl_master_warning, 1263.0); // idx 263
-        assert_eq!(t.fsl_spd_brk_lever, 1264.0); // idx 264
-        assert_eq!(t.fsl_engfire1_lt, 1265.0); // idx 265
-        assert_eq!(t.fsl_engfire2_lt, 1266.0); // idx 266
-        assert_eq!(t.fsl_eng1_anti_ice, 1267.0); // idx 267
-        assert_eq!(t.fsl_eng2_anti_ice, 1268.0); // idx 268
-        assert_eq!(t.fsl_xpdr_mode_switch, 1269.0); // idx 269
-        assert_eq!(t.fsl_xpdr_on_off_switch, 1270.0); // idx 270 (Review-Fund)
+        assert_eq!(t.fsl_park_brake_switch, 1256.0); // idx 256
+        assert_eq!(t.fsl_eng1_mstr_switch, 1257.0); // idx 257
+        assert_eq!(t.fsl_eng2_mstr_switch, 1258.0); // idx 258
+        assert_eq!(t.fsl_wheel_chocks, 1259.0); // idx 259
+        assert_eq!(t.fsl_baro_std, 1260.0); // idx 260
+        assert_eq!(t.fsl_master_caution, 1261.0); // idx 261
+        assert_eq!(t.fsl_master_warning, 1262.0); // idx 262
+        assert_eq!(t.fsl_spd_brk_lever, 1263.0); // idx 263
+        assert_eq!(t.fsl_engfire1_lt, 1264.0); // idx 264
+        assert_eq!(t.fsl_engfire2_lt, 1265.0); // idx 265
+        assert_eq!(t.fsl_eng1_anti_ice, 1266.0); // idx 266
+        assert_eq!(t.fsl_eng2_anti_ice, 1267.0); // idx 267
+        assert_eq!(t.fsl_xpdr_mode_switch, 1268.0); // idx 268
+        assert_eq!(t.fsl_xpdr_on_off_switch, 1269.0); // idx 269 (Review-Fund)
 
         // ---- Contrail Falcon 50 PREMIUM (idx 271..274, v0.17.x) ----
-        assert_eq!(t.contrail_fma_lat_active, 1271.0); // idx 271
-        assert_eq!(t.contrail_fma_lat_armed, 1272.0); // idx 272
-        assert_eq!(t.contrail_fma_vert_active, 1273.0); // idx 273
-        assert_eq!(t.contrail_fma_vert_armed1, 1274.0); // idx 274
+        assert_eq!(t.contrail_fma_lat_active, 1270.0); // idx 270
+        assert_eq!(t.contrail_fma_lat_armed, 1271.0); // idx 271
+        assert_eq!(t.contrail_fma_vert_active, 1272.0); // idx 272
+        assert_eq!(t.contrail_fma_vert_armed1, 1273.0); // idx 273
                                                         // Phase 2b: Autothrottle + Feuerlampen (idx 275..278).
-        assert_eq!(t.contrail_autothrottle_active, 1275.0); // idx 275
-        assert_eq!(t.contrail_fire_eng1, 1276.0); // idx 276
-        assert_eq!(t.contrail_fire_eng2, 1277.0); // idx 277
-        assert_eq!(t.contrail_fire_eng3, 1278.0); // idx 278
+        assert_eq!(t.contrail_autothrottle_active, 1274.0); // idx 274
+        assert_eq!(t.contrail_fire_eng1, 1275.0); // idx 275
+        assert_eq!(t.contrail_fire_eng2, 1276.0); // idx 276
+        assert_eq!(t.contrail_fire_eng3, 1277.0); // idx 277
 
         // ---- Synaptic A220 (idx 279..290, aus Doku gebaut) ----
-        assert_eq!(t.syn_fg_lnav, 1279.0); // idx 279
-        assert_eq!(t.syn_fg_heading, 1280.0); // idx 280
-        assert_eq!(t.syn_fg_approach, 1281.0); // idx 281
-        assert_eq!(t.syn_fg_altitude, 1282.0); // idx 282
-        assert_eq!(t.syn_fg_vnav, 1283.0); // idx 283
-        assert_eq!(t.syn_fg_vs, 1284.0); // idx 284
-        assert_eq!(t.syn_fg_fpa, 1285.0); // idx 285
-        assert_eq!(t.syn_fg_flight_level, 1286.0); // idx 286
-        assert_eq!(t.syn_caution_pba, 1287.0); // idx 287
-        assert_eq!(t.syn_warning_pba, 1288.0); // idx 288
-        assert_eq!(t.syn_autobrake, 1289.0); // idx 289
-        assert_eq!(t.syn_flight_stage, 1290.0); // idx 290
+        assert_eq!(t.syn_fg_lnav, 1278.0); // idx 278
+        assert_eq!(t.syn_fg_heading, 1279.0); // idx 279
+        assert_eq!(t.syn_fg_approach, 1280.0); // idx 280
+        assert_eq!(t.syn_fg_altitude, 1281.0); // idx 281
+        assert_eq!(t.syn_fg_vnav, 1282.0); // idx 282
+        assert_eq!(t.syn_fg_vs, 1283.0); // idx 283
+        assert_eq!(t.syn_fg_fpa, 1284.0); // idx 284
+        assert_eq!(t.syn_fg_flight_level, 1285.0); // idx 285
+        assert_eq!(t.syn_caution_pba, 1286.0); // idx 286
+        assert_eq!(t.syn_warning_pba, 1287.0); // idx 287
+        assert_eq!(t.syn_autobrake, 1288.0); // idx 288
+        assert_eq!(t.syn_flight_stage, 1289.0); // idx 289
 
         // ---- Synaptic A220 Erweiterung (idx 291..295, v1.3.5,
         //      Feldbefund 31.07.2026) ----
-        assert_eq!(t.syn_flap_lever, 1291.0); // idx 291
-        assert_eq!(t.syn_ap_master, 1292.0); // idx 292
-        assert_eq!(t.syn_at_master, 1293.0); // idx 293
-        assert_eq!(t.syn_seatbelt_sign, 1294.0); // idx 294
-        assert_eq!(t.syn_no_smoking_sign, 1295.0); // idx 295
-        assert_eq!(t.ifly_park_brake_sw, 1296.0); // idx 296
-        assert_eq!(t.flap_handle_index, 1297.0); // idx 297
-        assert_eq!(t.flap_num_positions, 1298.0); // idx 298
+        assert_eq!(t.syn_flap_lever, 1290.0); // idx 290
+        assert_eq!(t.syn_ap_master, 1291.0); // idx 291
+        assert_eq!(t.syn_at_master, 1292.0); // idx 292
+        assert_eq!(t.syn_seatbelt_sign, 1293.0); // idx 293
+        assert_eq!(t.syn_no_smoking_sign, 1294.0); // idx 294
+        assert_eq!(t.ifly_park_brake_sw, 1295.0); // idx 295
+        assert_eq!(t.flap_handle_index, 1296.0); // idx 296
+        assert_eq!(t.flap_num_positions, 1297.0); // idx 297
 
         // ---- Schwanz vor Gruppe J (idx 299..300) ----
-        assert_eq!(t.simulation_rate, 1299.0); // idx 299
-        assert!(t.slew_active); // idx 300 (Int32, 300 != 0)
+        assert_eq!(t.simulation_rate, 1298.0); // idx 298
+        assert!(t.slew_active); // idx 299 (Int32, 300 != 0)
 
         // ---- Synaptic A220 Vollausbau (idx 301..316, v1.7.x) ----
         // Steht HINTER dem Int32 — beweist zugleich, dass die 4-Byte-
         // Luecke die nachfolgenden f64-Offsets korrekt verschiebt.
-        assert_eq!(t.syn_vapp, 1301.0); // idx 301
-        assert_eq!(t.syn_vr, 1302.0); // idx 302
-        assert_eq!(t.syn_flex_temp, 1303.0); // idx 303
-        assert_eq!(t.syn_eng1_reverser, 1304.0); // idx 304
-        assert_eq!(t.syn_eng2_reverser, 1305.0); // idx 305
-        assert_eq!(t.syn_apu_switch, 1306.0); // idx 306
-        assert_eq!(t.syn_wing_anti_ice, 1307.0); // idx 307
-        assert_eq!(t.syn_aural_cfg_flaps, 1308.0); // idx 308
-        assert_eq!(t.syn_aural_cfg_spoilers, 1309.0); // idx 309
-        assert_eq!(t.syn_aural_cfg_trim, 1310.0); // idx 310
-        assert_eq!(t.syn_aural_cfg_brakes, 1311.0); // idx 311
-        assert_eq!(t.syn_aural_cfg_thrust_lever, 1312.0); // idx 312
-        assert_eq!(t.syn_aural_cfg_sidestick, 1313.0); // idx 313
-        assert_eq!(t.syn_aural_cfg_autopilot, 1314.0); // idx 314
-        assert_eq!(t.syn_aural_cfg_autothrottle, 1315.0); // idx 315
-        assert_eq!(t.syn_aural_glideslope, 1316.0); // idx 316
-        assert!(t.eng1_combustion_state); // idx 317 (i32 = 317 → true)
-        assert!(t.eng4_combustion_state); // idx 320
+        assert_eq!(t.syn_vapp, 1300.0); // idx 300
+        assert_eq!(t.syn_vr, 1301.0); // idx 301
+        assert_eq!(t.syn_flex_temp, 1302.0); // idx 302
+        assert_eq!(t.syn_eng1_reverser, 1303.0); // idx 303
+        assert_eq!(t.syn_eng2_reverser, 1304.0); // idx 304
+        assert_eq!(t.syn_apu_switch, 1305.0); // idx 305
+        assert_eq!(t.syn_wing_anti_ice, 1306.0); // idx 306
+        assert_eq!(t.syn_aural_cfg_flaps, 1307.0); // idx 307
+        assert_eq!(t.syn_aural_cfg_spoilers, 1308.0); // idx 308
+        assert_eq!(t.syn_aural_cfg_trim, 1309.0); // idx 309
+        assert_eq!(t.syn_aural_cfg_brakes, 1310.0); // idx 310
+        assert_eq!(t.syn_aural_cfg_thrust_lever, 1311.0); // idx 311
+        assert_eq!(t.syn_aural_cfg_sidestick, 1312.0); // idx 312
+        assert_eq!(t.syn_aural_cfg_autopilot, 1313.0); // idx 313
+        assert_eq!(t.syn_aural_cfg_autothrottle, 1314.0); // idx 314
+        assert_eq!(t.syn_aural_glideslope, 1315.0); // idx 315
+        assert!(t.eng1_combustion_state); // idx 316 (i32 = 316 → true)
+        assert!(t.eng4_combustion_state); // idx 319
 
         // ---- Gruppe K (idx 321..354, Audit 26.09.2026 + Runde 2) ----
         // Steht hinter vier Int32 — beweist wieder die Offset-Rechnung.
-        assert_eq!(t.fnx_xpdr_operation, 1321.0); // idx 321
-        assert_eq!(t.fnx_xpdr_mode, 1322.0); // idx 322
-        assert_eq!(t.ini_spoilers_armed, 1323.0); // idx 323
-        assert_eq!(t.ini_apu_master_switch, 1324.0); // idx 324
-        assert_eq!(t.ini_tcas_mode, 1325.0); // idx 325
-        assert_eq!(t.ini_seatbelts_switch, 1326.0); // idx 326
-        assert_eq!(t.a346_xpdr_stby_auto_on, 1327.0); // idx 327
-        assert_eq!(t.a346_xpdr_tcas_mode, 1328.0); // idx 328
-        assert_eq!(t.a346_apu_master_on, 1329.0); // idx 329
-        assert_eq!(t.md11_xpdr_mode_kb, 1330.0); // idx 330
-        assert_eq!(t.fsr_pax_switch, 1331.0); // idx 331
-        assert_eq!(t.pmdg737_speedbrake_arm_sw, 1332.0); // idx 332
-        assert_eq!(t.pmdg737_xpdr_mode_sw, 1333.0); // idx 333
-        assert_eq!(t.pmdg737_autobrake_sw, 1334.0); // idx 334
-        assert_eq!(t.pmdg737_fasten_belts_sw, 1335.0); // idx 335
-        assert_eq!(t.pmdg777_speedbrake_lever_sw, 1336.0); // idx 336
-        assert_eq!(t.pmdg777_xpdr_mode_sw, 1337.0); // idx 337
-        assert_eq!(t.pmdg777_seat_belts_sw, 1338.0); // idx 338
-        assert_eq!(t.fsl_strobe_sw, 1339.0); // idx 339
-        assert_eq!(t.fsl_seatbelts_sw, 1340.0); // idx 340
-        assert_eq!(t.fsl_apu_master_bot, 1341.0); // idx 341
-        assert_eq!(t.ini_lights_strobe, 1342.0); // idx 342
-        assert_eq!(t.ifly_xpdr_mode_sw, 1343.0); // idx 343
-        assert_eq!(t.ifly_fasten_belts_sw, 1344.0); // idx 344
-        assert_eq!(t.ifly_spoiler_lever, 1345.0); // idx 345
-        assert_eq!(t.md11_seat_belts_sw, 1346.0); // idx 346
-        assert_eq!(t.md11_spdbrk_handle, 1347.0); // idx 347
-        assert_eq!(t.md11_spdbrk_rng, 1348.0); // idx 348
-        assert_eq!(t.ini_autobrake_armed, 1349.0); // idx 349
-        assert_eq!(t.ini_autobrake_disconnected, 1350.0); // idx 350
-        assert_eq!(t.ini_btv_exit_selected, 1351.0); // idx 351
+        assert_eq!(t.fnx_xpdr_operation, 1320.0); // idx 320
+        assert_eq!(t.fnx_xpdr_mode, 1321.0); // idx 321
+        assert_eq!(t.ini_spoilers_armed, 1322.0); // idx 322
+        assert_eq!(t.ini_apu_master_switch, 1323.0); // idx 323
+        assert_eq!(t.ini_tcas_mode, 1324.0); // idx 324
+        assert_eq!(t.ini_seatbelts_switch, 1325.0); // idx 325
+        assert_eq!(t.a346_xpdr_stby_auto_on, 1326.0); // idx 326
+        assert_eq!(t.a346_xpdr_tcas_mode, 1327.0); // idx 327
+        assert_eq!(t.a346_apu_master_on, 1328.0); // idx 328
+        assert_eq!(t.md11_xpdr_mode_kb, 1329.0); // idx 329
+        assert_eq!(t.fsr_pax_switch, 1330.0); // idx 330
+        assert_eq!(t.pmdg737_speedbrake_arm_sw, 1331.0); // idx 331
+        assert_eq!(t.pmdg737_xpdr_mode_sw, 1332.0); // idx 332
+        assert_eq!(t.pmdg737_autobrake_sw, 1333.0); // idx 333
+        assert_eq!(t.pmdg737_fasten_belts_sw, 1334.0); // idx 334
+        assert_eq!(t.pmdg777_speedbrake_lever_sw, 1335.0); // idx 335
+        assert_eq!(t.pmdg777_xpdr_mode_sw, 1336.0); // idx 336
+        assert_eq!(t.pmdg777_seat_belts_sw, 1337.0); // idx 337
+        assert_eq!(t.fsl_strobe_sw, 1338.0); // idx 338
+        assert_eq!(t.fsl_seatbelts_sw, 1339.0); // idx 339
+        assert_eq!(t.fsl_apu_master_bot, 1340.0); // idx 340
+        assert_eq!(t.ini_lights_strobe, 1341.0); // idx 341
+        assert_eq!(t.ifly_xpdr_mode_sw, 1342.0); // idx 342
+        assert_eq!(t.ifly_fasten_belts_sw, 1343.0); // idx 343
+        assert_eq!(t.ifly_spoiler_lever, 1344.0); // idx 344
+        assert_eq!(t.md11_seat_belts_sw, 1345.0); // idx 345
+        assert_eq!(t.md11_spdbrk_handle, 1346.0); // idx 346
+        assert_eq!(t.md11_spdbrk_rng, 1347.0); // idx 347
+        assert_eq!(t.ini_autobrake_armed, 1348.0); // idx 348
+        assert_eq!(t.ini_autobrake_disconnected, 1349.0); // idx 349
+        assert_eq!(t.ini_btv_exit_selected, 1350.0); // idx 350
                                                      // Runde 3: FSS E-Jets (idx 352..363) vor den Standard-SimVars.
-        assert_eq!(t.fss_beacon_sw, 1352.0); // idx 352
-        assert_eq!(t.fss_strobe_sw, 1353.0); // idx 353
-        assert_eq!(t.fss_nav_sw, 1354.0); // idx 354
-        assert_eq!(t.fss_landing_l_sw, 1355.0); // idx 355
-        assert_eq!(t.fss_landing_r_sw, 1356.0); // idx 356
-        assert_eq!(t.fss_landing_nose_sw, 1357.0); // idx 357
-        assert_eq!(t.fss_taxi_nose_sw, 1358.0); // idx 358
-        assert_eq!(t.fss_taxi_side_sw, 1359.0); // idx 359
-        assert_eq!(t.fss_fasten_belt_sw, 1360.0); // idx 360
-        assert_eq!(t.fss_apu_master, 1361.0); // idx 361
-        assert_eq!(t.fss_autobrake, 1362.0); // idx 362
-        assert_eq!(t.fss_parkbrake_lever, 1363.0); // idx 363
-        assert_eq!(t.ini_strobe_light_switch, 1364.0); // idx 364, A330 (26.09.2026)
-        assert_eq!(t.ini_tcas_stby_state, 1365.0); // idx 365
-        assert_eq!(t.zulu_time_s, 1366.0); // idx 366, Bordbuch (26.09.2026)
-        assert_eq!(t.zulu_tag_im_jahr, 1367.0); // idx 367
-        assert_eq!(t.zulu_jahr, 1368.0); // idx 368
-        assert_eq!(t.fbw_park_brake_lever, 1369.0); // idx 369, FBW (28.09.2026)
-        assert_eq!(t.fbw_apu_master, 1370.0); // idx 370
-        assert_eq!(t.fbw_tcas_position, 1371.0); // idx 371
-        assert_eq!(t.fbw_strobe, 1372.0); // idx 372
-        assert_eq!(t.ini_fcu_hdg_dashed, 1373.0); // idx 373, A380 (28.09.2026)
-        assert_eq!(t.fnx_fcu_ap1_lampe, 1374.0); // idx 374, Fenix (29.09.2026)
-        assert_eq!(t.fnx_fcu_ap2_lampe, 1375.0); // idx 375
-        assert_eq!(t.fnx_fcu_athr_lampe, 1376.0); // idx 376
-        assert_eq!(t.fnx_fcu_appr_lampe, 1377.0); // idx 377
-        assert_eq!(t.fnx_fcu_hdg_dashed, 1378.0); // idx 378
-        assert_eq!(t.fss_vref, 1379.0); // idx 379, Vref (06.10.2026)
-        assert_eq!(t.semibody_loadfactor_y, Some(1380.0)); // idx 380, Lernpaket
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1381.0); // idx 381
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1382.0)); // idx 382
-        assert_eq!(t.std_light_landing_on_1, Some(1383.0)); // idx 383
-        assert_eq!(t.std_light_landing_on_2, Some(1384.0)); // idx 384
-        assert_eq!(t.design_vs0, Some(1385.0)); // idx 385
-        assert_eq!(t.std_transponder_state, Some(1386.0)); // idx 386, zuletzt
-        assert_eq!(TELEMETRY_FIELDS.len(), 387, "letzter Index 386");
+        assert_eq!(t.fss_beacon_sw, 1351.0); // idx 351
+        assert_eq!(t.fss_strobe_sw, 1352.0); // idx 352
+        assert_eq!(t.fss_nav_sw, 1353.0); // idx 353
+        assert_eq!(t.fss_landing_l_sw, 1354.0); // idx 354
+        assert_eq!(t.fss_landing_r_sw, 1355.0); // idx 355
+        assert_eq!(t.fss_landing_nose_sw, 1356.0); // idx 356
+        assert_eq!(t.fss_taxi_nose_sw, 1357.0); // idx 357
+        assert_eq!(t.fss_taxi_side_sw, 1358.0); // idx 358
+        assert_eq!(t.fss_fasten_belt_sw, 1359.0); // idx 359
+        assert_eq!(t.fss_apu_master, 1360.0); // idx 360
+        assert_eq!(t.fss_autobrake, 1361.0); // idx 361
+        assert_eq!(t.fss_parkbrake_lever, 1362.0); // idx 362
+        assert_eq!(t.ini_strobe_light_switch, 1363.0); // idx 363, A330 (26.09.2026)
+        assert_eq!(t.ini_tcas_stby_state, 1364.0); // idx 364
+        assert_eq!(t.zulu_time_s, 1365.0); // idx 365, Bordbuch (26.09.2026)
+        assert_eq!(t.zulu_tag_im_jahr, 1366.0); // idx 366
+        assert_eq!(t.zulu_jahr, 1367.0); // idx 367
+        assert_eq!(t.fbw_park_brake_lever, 1368.0); // idx 368, FBW (28.09.2026)
+        assert_eq!(t.fbw_apu_master, 1369.0); // idx 369
+        assert_eq!(t.fbw_tcas_position, 1370.0); // idx 370
+        assert_eq!(t.fbw_strobe, 1371.0); // idx 371
+        assert_eq!(t.ini_fcu_hdg_dashed, 1372.0); // idx 372, A380 (28.09.2026)
+        assert_eq!(t.fnx_fcu_ap1_lampe, 1373.0); // idx 373, Fenix (29.09.2026)
+        assert_eq!(t.fnx_fcu_ap2_lampe, 1374.0); // idx 374
+        assert_eq!(t.fnx_fcu_athr_lampe, 1375.0); // idx 375
+        assert_eq!(t.fnx_fcu_appr_lampe, 1376.0); // idx 376
+        assert_eq!(t.fnx_fcu_hdg_dashed, 1377.0); // idx 377
+        assert_eq!(t.fss_vref, 1378.0); // idx 378, Vref (06.10.2026)
+        assert_eq!(t.semibody_loadfactor_y, Some(1379.0)); // idx 379, Lernpaket
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1380.0); // idx 380
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1381.0)); // idx 381
+        assert_eq!(t.std_light_landing_on_1, Some(1382.0)); // idx 382
+        assert_eq!(t.std_light_landing_on_2, Some(1383.0)); // idx 383
+        assert_eq!(t.design_vs0, Some(1384.0)); // idx 384, zuletzt
+        assert_eq!(t.std_transponder_state, None); // → OPTIONALE_FELDER
+        assert_eq!(TELEMETRY_FIELDS.len(), 385, "letzter Index 384");
     }
 
     #[test]
@@ -6280,7 +6477,8 @@ mod tests {
         // Lernpaket (29.09.2026): SEMIBODY LOADFACTOR Y dazu → 59 * 8 = 472.
         // Fenix-FCU-Lampen (29.09.2026): fuenf LVars dazu → 64 * 8 = 512.
         // Vref (06.10.2026): FSS-VREF und DESIGN SPEED VS0 dazu → 66 * 8 = 528.
-        buf.truncate(buf.len() - 528);
+        // 16.10.2026: TRANSPONDER STATE:1 → OPTIONALE_FELDER → 65 * 8 = 520.
+        buf.truncate(buf.len() - 520);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -6305,7 +6503,7 @@ mod tests {
 
         buf.truncate(buf.len() - 16);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.syn_aural_glideslope, 1316.0, "Gruppe J intakt");
+        assert_eq!(t.syn_aural_glideslope, 1315.0, "Gruppe J intakt");
         assert!(
             !t.eng1_combustion_state,
             "ENG COMBUSTION = sicherer Default"
@@ -6317,14 +6515,14 @@ mod tests {
 
         buf.truncate(buf.len() - 128);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.simulation_rate, 1299.0, "Echtheits-Feld intakt");
+        assert_eq!(t.simulation_rate, 1298.0, "Echtheits-Feld intakt");
         assert!(t.slew_active, "Echtheits-Feld intakt");
         assert_eq!(t.syn_vapp, 0.0, "Gruppe J = sicherer Default");
         assert_eq!(t.syn_aural_glideslope, 0.0, "Gruppe J = sicherer Default");
 
         buf.truncate(buf.len() - 12);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.flap_num_positions, 1298.0, "letztes Klappenfeld intakt");
+        assert_eq!(t.flap_num_positions, 1297.0, "letztes Klappenfeld intakt");
         assert_eq!(
             t.simulation_rate, 0.0,
             "fehlender Schwanz = sicherer Default"
@@ -6334,21 +6532,21 @@ mod tests {
         // v1.5.3: dann die drei Schwanzfelder davor weg (3*8) ...
         buf.truncate(buf.len() - 24);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.syn_no_smoking_sign, 1295.0); // letztes A220-Feld intakt
+        assert_eq!(t.syn_no_smoking_sign, 1294.0); // letztes A220-Feld intakt
         assert_eq!(t.ifly_park_brake_sw, 0.0); // fehlender Schwanz = sicherer Default
         assert_eq!(t.flap_handle_index, 0.0);
         assert_eq!(t.flap_num_positions, 0.0); // 0 Rasten -> Mapping liefert None
                                                // v1.3.5: drop the 5 Synaptic A220 extension tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.syn_flight_stage, 1290.0); // last original A220 field intact
+        assert_eq!(t.syn_flight_stage, 1289.0); // last original A220 field intact
         assert_eq!(t.syn_flap_lever, 0.0); // extension tail = safe defaults
         assert_eq!(t.syn_no_smoking_sign, 0.0);
 
         // Synaptic A220: drop the 12 new tail fields (12*8).
         buf.truncate(buf.len() - 96);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.contrail_fire_eng3, 1278.0); // last Contrail field intact
+        assert_eq!(t.contrail_fire_eng3, 1277.0); // last Contrail field intact
         assert_eq!(t.syn_fg_lnav, 0.0); // A220 tail = safe defaults
         assert_eq!(t.syn_flight_stage, 0.0);
 
@@ -6359,8 +6557,8 @@ mod tests {
         // to safe defaults.
         buf.truncate(buf.len() - 176);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.fsl_autobrake_max_light, 1256.0); // last v0.16.14 field intact
-        assert_eq!(t.ifly_autobrake_sw, 1239.0); // v0.16.11 layer intact
+        assert_eq!(t.fsl_autobrake_max_light, 1255.0); // last v0.16.14 field intact
+        assert_eq!(t.ifly_autobrake_sw, 1238.0); // v0.16.11 layer intact
         assert_eq!(t.fsl_park_brake_switch, 0.0); // premium tail = safe defaults
         assert_eq!(t.fsl_eng1_mstr_switch, 0.0);
         assert_eq!(t.fsl_xpdr_mode_switch, 0.0);
@@ -6373,8 +6571,8 @@ mod tests {
         // v0.16.14: drop the 17 FSLabs tail fields (17*8).
         buf.truncate(buf.len() - 136);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.ifly_autobrake_sw, 1239.0); // last v0.16.11 field intact
-        assert_eq!(t.md11_autobrake_sw, 1229.0); // v0.16.10 layer intact
+        assert_eq!(t.ifly_autobrake_sw, 1238.0); // last v0.16.11 field intact
+        assert_eq!(t.md11_autobrake_sw, 1228.0); // v0.16.10 layer intact
         assert_eq!(t.fsl_ap1_light, 0.0); // FSL tail = safe defaults
         assert_eq!(t.fsl_fcu_vs, 0.0);
         assert_eq!(t.fsl_autobrake_max_light, 0.0);
@@ -6382,8 +6580,8 @@ mod tests {
         // v0.16.11: drop the 10 iFly tail fields (10*8).
         buf.truncate(buf.len() - 80);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.md11_autobrake_sw, 1229.0); // last v0.16.10 field intact
-        assert_eq!(t.fnx_perf_v1, 1151.0); // first premium field intact
+        assert_eq!(t.md11_autobrake_sw, 1228.0); // last v0.16.10 field intact
+        assert_eq!(t.fnx_perf_v1, 1150.0); // first premium field intact
         assert_eq!(t.ifly_cmd_a_light, 0.0); // iFly tail = safe defaults
         assert_eq!(t.ifly_cabin_alt_warning_light, 0.0);
         assert_eq!(t.ifly_autobrake_sw, 0.0);
@@ -6391,8 +6589,8 @@ mod tests {
         // v0.16.10 (#Premium): drop the 79 premium tail fields (79*8).
         buf.truncate(buf.len() - 632);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.a350_loc_light, 1150.0); // last v0.16.8 field intact
-        assert_eq!(t.a346_gear_lever, 1145.0); // v0.16.4 layer intact
+        assert_eq!(t.a350_loc_light, 1149.0); // last v0.16.8 field intact
+        assert_eq!(t.a346_gear_lever, 1144.0); // v0.16.4 layer intact
                                                // Premium tail = safe defaults (first + last of each group).
         assert_eq!(t.fnx_perf_v1, 0.0);
         assert_eq!(t.fnx_eng2_fire, 0.0);
@@ -6408,15 +6606,15 @@ mod tests {
         // v0.16.8: drop the 5 new A350 tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.a346_gear_lever, 1145.0); // last v0.16.4 field intact
+        assert_eq!(t.a346_gear_lever, 1144.0); // last v0.16.4 field intact
         assert_eq!(t.a350_ap1_on, 0.0); // A350 tail = safe defaults
         assert_eq!(t.a350_loc_light, 0.0);
 
         // v0.16.4: drop the 12 A346 full-profile tail fields (12*8).
         buf.truncate(buf.len() - 96);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // pre-v0.16.3 field intact
-        assert_eq!(t.a346_loc_light, 1133.0); // last pre-existing field intact
+        assert_eq!(t.fsr_phenom_eng2_knob, 1119.0); // pre-v0.16.3 field intact
+        assert_eq!(t.a346_loc_light, 1132.0); // last pre-existing field intact
         assert_eq!(t.a346_seatbelt_sw, 0.0); // new tail = safe defaults
         assert_eq!(t.a346_bat1_off_light, 0.0);
         assert_eq!(t.a346_gear_lever, 0.0);
@@ -6425,7 +6623,7 @@ mod tests {
         // block): the v0.13.x layout still parses intact.
         buf.truncate(buf.len() - 88); // also drop the v0.16.3 tail (4*4 + 9*8)
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0);
+        assert_eq!(t.fsr_phenom_eng2_knob, 1119.0);
         assert!(!t.eng1_combustion_ex1); // v0.16.3 tail = safe defaults
         assert_eq!(t.eng1_ff_corrected_pph, 0.0);
         assert_eq!(t.a346_loc_light, 0.0);
@@ -9371,15 +9569,328 @@ mod tests {
         }
         for (i, (n, _)) in werte.iter().enumerate() {
             assert!(
-                getroffen[i],
+                getroffen[i] || OPTIONALE_FELDER.iter().any(|f| f.name == *n),
                 "{n} ist nicht in TELEMETRY_FIELDS registriert"
             );
         }
         buf
     }
 
+    /// Werte fuer `OPTIONALE_FELDER` aus derselben Liste wie der Puffer —
+    /// sie kommen im Adapter aus eigenen Definitionen. Wie im Puffer liefert
+    /// der Sim jedes Feld (Default 0), sofern nicht anders angegeben.
+    fn optionale_aus(werte: &[(&str, f64)]) -> OptionaleWerte {
+        let mut o = OptionaleWerte::default();
+        for (i, f) in OPTIONALE_FELDER.iter().enumerate() {
+            let v = werte
+                .iter()
+                .find(|(n, _)| *n == f.name)
+                .map_or(0.0, |(_, v)| *v);
+            o.einlesen(i, &v.to_le_bytes());
+        }
+        o
+    }
+
     fn runde2(titel: &str, atc: &str, werte: &[(&str, f64)]) -> SimSnapshot {
-        parse(&runde2_puffer(titel, atc, werte), Simulator::Msfs2024, None)
+        runde3(titel, atc, None, werte)
+    }
+
+    // ---- Optionale SimVars + Laengenwaechter (Pilot 15, MSFS 2020) ----
+
+    #[test]
+    fn hauptdefinition_enthaelt_keine_optionale_simvar() {
+        // Eine optionale SimVar in der Hauptdefinition verschiebt bei
+        // Ablehnung jedes spaetere Feld (Befund Pilot 15, 16.10.2026).
+        for opt in OPTIONALE_FELDER {
+            assert!(
+                TELEMETRY_FIELDS.iter().all(|f| f.name != opt.name),
+                "{} gehoert nicht in TELEMETRY_FIELDS",
+                opt.name
+            );
+        }
+        assert_eq!(
+            OPTIONALE_FELDER[OPT_FUEL_EX1].name,
+            "FUEL TOTAL QUANTITY WEIGHT EX1"
+        );
+        // Eine optionale Definition traegt genau ein f64 (`einlesen`).
+        assert!(OPTIONALE_FELDER
+            .iter()
+            .all(|f| matches!(f.kind, FieldKind::Float64)));
+    }
+
+    /// Hauptblock mit Werten angelehnt an Pilot 15, JBU1500, 14.10.2026.
+    fn jbu1500_block() -> Vec<u8> {
+        runde2_puffer(
+            "Asobo A320 Neo",
+            "A20N",
+            &[
+                ("FUEL TOTAL QUANTITY WEIGHT", 6_600.0),
+                ("TOTAL WEIGHT", 140_000.0),
+                ("EMPTY WEIGHT", 106_757.0),
+                ("AMBIENT WIND DIRECTION", 20.0),
+                ("AMBIENT WIND VELOCITY", 15.0),
+                ("KOHLSMAN SETTING MB", 1013.0),
+                ("AMBIENT TEMPERATURE", 26.0),
+                ("LIGHT LANDING", 1.0),
+                ("DESIGN SPEED VS0", 110.0),
+            ],
+        )
+    }
+
+    fn mit_optionalen(buf: &[u8], o: &OptionaleWerte) -> SimSnapshot {
+        parse_mit_eingaben(
+            buf,
+            Simulator::Msfs2020,
+            None,
+            &std::collections::BTreeMap::new(),
+            o,
+            &[],
+        )
+    }
+
+    #[test]
+    fn msfs2020_ohne_ex1_bleibt_der_hauptblock_unverschoben() {
+        // MSFS 2020 lehnt EX1 ab: die optionale Definition liefert nichts.
+        let mut o = OptionaleWerte::default();
+        o.einlesen(OPT_FUEL_EX1, &[]);
+        assert_eq!(o.0[OPT_FUEL_EX1], None);
+        let buf = jbu1500_block();
+        assert_eq!(buf.len(), blocklaenge(&[]));
+        let snap = mit_optionalen(&buf, &o);
+        assert_eq!(snap.wind_direction_deg, Some(20.0));
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+        assert_eq!(snap.qnh_hpa, Some(1013.0));
+        assert_eq!(snap.outside_air_temp_c, Some(26.0));
+        let kg = |lb: f32| lb * 0.453_592_37;
+        // TOTAL WEIGHT war vorher konstant das Leergewicht.
+        assert!((snap.total_weight_kg.unwrap() - kg(140_000.0)).abs() < 1.0);
+        assert!((snap.empty_weight_kg.unwrap() - kg(106_757.0)).abs() < 1.0);
+        // Kraftstoff ohne EX1 aus der Legacy-SimVar.
+        assert!((snap.fuel_total_kg - kg(6_600.0)).abs() < 1.0);
+        assert_eq!(snap.light_landing, Some(true));
+    }
+
+    #[test]
+    fn ex1_aus_der_eigenen_definition_hat_vorrang() {
+        let mut o = OptionaleWerte::default();
+        o.einlesen(OPT_FUEL_EX1, &7_000.0f64.to_le_bytes());
+        assert_eq!(o.0[OPT_FUEL_EX1], Some(7_000.0));
+        let snap = mit_optionalen(&jbu1500_block(), &o);
+        assert!((snap.fuel_total_kg - 7_000.0 * 0.453_592_37).abs() < 1.0);
+    }
+
+    /// Paketbuch wie `register_telemetry` es fuellt: Open ist Paket 1,
+    /// das erste registrierte Feld Paket 2 usw. `ohne_kennung`: Felder,
+    /// bei denen `GetLastSentPacketID` scheiterte.
+    fn paketbuch(ausgelassen: &[usize], ohne_kennung: &[usize]) -> Paketbuch {
+        let mut b = Paketbuch::default();
+        let mut paket = 2u32;
+        for idx in (0..TELEMETRY_FIELDS.len()).filter(|i| !ausgelassen.contains(i)) {
+            b.registriert(idx, (!ohne_kennung.contains(&idx)).then_some(paket));
+            paket += 1;
+        }
+        b
+    }
+
+    #[test]
+    fn paketbuch_ordnet_zu_und_leitet_fehlende_kennungen_ab() {
+        let tw = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TOTAL WEIGHT")
+            .unwrap();
+        let b = paketbuch(&[], &[]);
+        assert_eq!(b.feld(tw as u32 + 2), Some(tw));
+        // Paket einer spaeteren Registrierung (Joels send_id 479) ist kein
+        // Hauptfeld.
+        assert_eq!(b.feld(9_999), None);
+        // GetLastSentPacketID scheiterte fuer TOTAL WEIGHT: abgeleitet.
+        let ohne = paketbuch(&[], &[tw]);
+        assert_eq!(ohne.feld(tw as u32 + 2), Some(tw));
+        // Mit ausgelassenem Feld davor verschieben sich die Kennungen.
+        let mit_luecke = paketbuch(&[3], &[tw]);
+        assert_eq!(mit_luecke.feld(tw as u32 + 1), Some(tw));
+        // Ganz ohne Kennungen ist keine Zuordnung moeglich.
+        let leer = paketbuch(&[], &(0..TELEMETRY_FIELDS.len()).collect::<Vec<_>>());
+        assert_eq!(leer.feld(tw as u32 + 2), None);
+    }
+
+    #[test]
+    fn abgelehntes_hauptfeld_fuehrt_nicht_zum_dauerausfall() {
+        // Ein Sim lehnt DESIGN SPEED VS0 und TOTAL WEIGHT ab. Erste
+        // Verbindung: jeder Block zu kurz → verworfen.
+        let tx = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "DESIGN SPEED VS0")
+            .unwrap();
+        let tw = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TOTAL WEIGHT")
+            .unwrap();
+        let mut voll = jbu1500_block();
+        let ende = voll.len();
+        voll.truncate(ende - 8); // DESIGN SPEED VS0 (letztes Feld)
+        let start: usize = TELEMETRY_FIELDS[..tw].iter().map(|f| f.kind.size()).sum();
+        voll.drain(start..start + 8);
+        let kurz = voll;
+        let mut w = Blockwaechter::default();
+        assert!(matches!(
+            w.pruefen(kurz.len(), blocklaenge(&[])),
+            Blockpruefung::Verwerfen { .. }
+        ));
+
+        // Die Ausnahmen werden ueber das Paketbuch zugeordnet; die naechste
+        // Verbindung registriert beide Felder nicht mehr.
+        let b = paketbuch(&[], &[]);
+        let mut ausgelassen: Vec<usize> = [tx, tw]
+            .iter()
+            .filter_map(|i| b.feld(*i as u32 + 2))
+            .collect();
+        ausgelassen.sort_unstable();
+        assert_eq!(ausgelassen, {
+            let mut v = vec![tx, tw];
+            v.sort_unstable();
+            v
+        });
+
+        // Zweite Verbindung: derselbe (kuerzere) Block wird gelesen.
+        let mut w = Blockwaechter::default();
+        assert_eq!(
+            w.pruefen(kurz.len(), blocklaenge(&ausgelassen)),
+            Blockpruefung::Lesen
+        );
+        let snap = parse_mit_eingaben(
+            &kurz,
+            Simulator::Msfs2020,
+            None,
+            &std::collections::BTreeMap::new(),
+            &OptionaleWerte::default(),
+            &ausgelassen,
+        );
+        assert_eq!(snap.wind_direction_deg, Some(20.0));
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+        assert_eq!(snap.light_landing, Some(true));
+        // Die ausgelassenen Felder bleiben leer statt falsch.
+        assert_eq!(snap.total_weight_kg, None);
+        assert_eq!(snap.design_vs0_kt, None);
+    }
+
+    #[test]
+    fn synchron_abgelehntes_hauptfeld_wird_ausgelassen() {
+        // AddToDataDefinition meldet fuer TOTAL WEIGHT sofort einen Fehler.
+        // Frueher brach die Registrierung ab und jede Neuverbindung
+        // scheiterte an derselben SimVar.
+        let tw = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TOTAL WEIGHT")
+            .unwrap();
+        let mut paket = 1u32;
+        let r = hauptdefinition_registrieren(&[], |f| {
+            if f.name == "TOTAL WEIGHT" {
+                return Err(0x8000_4005u32 as i32);
+            }
+            paket += 1;
+            Ok(Some(paket))
+        });
+        assert_eq!(r.ausgelassen, vec![tw]);
+        assert_eq!(r.sofort_abgelehnt, vec![tw]);
+        // Das Feld danach hat die naechste Kennung — ohne Luecke.
+        assert_eq!(r.pakete.feld(tw as u32 + 2), Some(tw + 1));
+
+        // Der Block, den der Sim dann liefert, wird gelesen, nicht verworfen.
+        let start: usize = TELEMETRY_FIELDS[..tw].iter().map(|f| f.kind.size()).sum();
+        let mut block = jbu1500_block();
+        block.drain(start..start + 8);
+        let mut w = Blockwaechter::default();
+        assert_eq!(
+            w.pruefen(block.len(), blocklaenge(&r.ausgelassen)),
+            Blockpruefung::Lesen
+        );
+        let snap = parse_mit_eingaben(
+            &block,
+            Simulator::Msfs2020,
+            None,
+            &std::collections::BTreeMap::new(),
+            &OptionaleWerte::default(),
+            &r.ausgelassen,
+        );
+        assert_eq!(snap.wind_direction_deg, Some(20.0));
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+        assert_eq!(snap.total_weight_kg, None);
+
+        // Vorab ausgelassene Felder werden gar nicht erst angefragt.
+        let mut angefragt = Vec::new();
+        let r = hauptdefinition_registrieren(&[tw], |f| {
+            angefragt.push(f.name);
+            Ok(None)
+        });
+        assert!(!angefragt.contains(&"TOTAL WEIGHT"));
+        assert_eq!(r.ausgelassen, vec![tw]);
+        assert!(r.sofort_abgelehnt.is_empty());
+    }
+
+    #[test]
+    fn transponder_kommt_aus_der_optionalen_definition() {
+        assert!(TELEMETRY_FIELDS
+            .iter()
+            .all(|f| f.name != "TRANSPONDER STATE:1"));
+        let mut o = OptionaleWerte::default();
+        o.einlesen(OPT_TRANSPONDER_STATE, &4.0f64.to_le_bytes());
+        let snap = mit_optionalen(&jbu1500_block(), &o);
+        let roh = snap.cockpit_rohwerte.expect("MSFS liefert Rohwerte");
+        assert_eq!(roh.werte.get("TRANSPONDER STATE:1"), Some(&4.0));
+        // MSFS 2020 lehnt ihn ab: nur er fehlt, der Rest stimmt.
+        let snap = mit_optionalen(&jbu1500_block(), &OptionaleWerte::default());
+        let roh = snap.cockpit_rohwerte.expect("MSFS liefert Rohwerte");
+        assert_eq!(roh.werte.get("TRANSPONDER STATE:1"), None);
+        assert_eq!(snap.wind_speed_kt, Some(15.0));
+    }
+
+    #[test]
+    fn zu_kurzer_block_wird_verworfen_und_gezaehlt() {
+        // Ein abgelehntes Datum der Hauptdefinition (hier TOTAL WEIGHT):
+        // SimConnect laesst es weg, der Block ist 8 Byte zu kurz.
+        let idx = TELEMETRY_FIELDS
+            .iter()
+            .position(|f| f.name == "TOTAL WEIGHT")
+            .unwrap();
+        let start: usize = TELEMETRY_FIELDS[..idx].iter().map(|f| f.kind.size()).sum();
+        let mut kurz = jbu1500_block();
+        kurz.drain(start..start + 8);
+
+        let mut w = Blockwaechter::default();
+        assert_eq!(
+            w.pruefen(kurz.len(), blocklaenge(&[])),
+            Blockpruefung::Verwerfen { erstmals: true }
+        );
+        assert_eq!(
+            w.pruefen(kurz.len(), blocklaenge(&[])),
+            Blockpruefung::Verwerfen { erstmals: false }
+        );
+        assert_eq!((w.verworfen_in_folge, w.verworfen_gesamt), (2, 2));
+        // Ein vollstaendiger Block wird gelesen und beendet die Folge,
+        // die Gesamtzahl bleibt.
+        assert_eq!(
+            w.pruefen(blocklaenge(&[]), blocklaenge(&[])),
+            Blockpruefung::Lesen
+        );
+        assert_eq!((w.verworfen_in_folge, w.verworfen_gesamt), (0, 2));
+        // Laenger ist unbedenklich (gelesen wird ab Byte 0).
+        assert_eq!(
+            w.pruefen(blocklaenge(&[]) + 4, blocklaenge(&[])),
+            Blockpruefung::Lesen
+        );
+        // Anhaltend zu kurz: neu verbinden, nie parsen.
+        let mut letzte = Blockpruefung::Lesen;
+        for _ in 0..NEU_VERBINDEN_NACH_VERWORFENEN {
+            letzte = w.pruefen(kurz.len(), blocklaenge(&[]));
+            assert_ne!(letzte, Blockpruefung::Lesen);
+        }
+        assert_eq!(letzte, Blockpruefung::NeuVerbinden);
+        // Gegenprobe: genau dieser Block haette geparst den Live-Befund
+        // ergeben — Windrichtung = Windstaerke, Windstaerke = QNH.
+        let verschoben = mit_optionalen(&kurz, &OptionaleWerte::default());
+        assert_eq!(verschoben.wind_direction_deg, Some(15.0));
+        assert_eq!(verschoben.wind_speed_kt, Some(1013.0));
     }
 
     fn runde2_schluessel(snap: &SimSnapshot) -> Vec<String> {
@@ -9757,12 +10268,13 @@ mod tests {
     /// kein Landelicht-Wert, der als Transponder gelesen wird.
     #[test]
     fn nur_transponder_abgelehnt_laesst_landelichter_stehen() {
-        let mut buf = runde2_puffer(
+        let buf = runde2_puffer(
             ASOBO.0,
             ASOBO.1,
             &[("LIGHT LANDING ON:1", 1.0), ("LIGHT LANDING ON:2", 0.0)],
         );
-        buf.truncate(buf.len() - 8);
+        // Seit 16.10.2026 steht der Transponder gar nicht mehr im
+        // Hauptblock (`OPTIONALE_FELDER`) — fehlt er, bleibt er None.
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.std_light_landing_on_1, Some(1.0));
         assert_eq!(t.std_light_landing_on_2, Some(0.0));
@@ -9776,7 +10288,14 @@ mod tests {
     // ================================================================
 
     fn runde3(titel: &str, atc: &str, pfad: Option<&str>, werte: &[(&str, f64)]) -> SimSnapshot {
-        parse(&runde2_puffer(titel, atc, werte), Simulator::Msfs2024, pfad)
+        parse_mit_eingaben(
+            &runde2_puffer(titel, atc, werte),
+            Simulator::Msfs2024,
+            pfad,
+            &std::collections::BTreeMap::new(),
+            &optionale_aus(werte),
+            &[],
+        )
     }
 
     const BARON: (&str, &str) = ("Black Square Baron BE58 D-GBSQ", "BE58");
@@ -10049,6 +10568,8 @@ mod tests {
             Simulator::Msfs2024,
             None,
             &eingaben,
+            &optionale_aus(werte),
+            &[],
         )
     }
 
@@ -10620,6 +11141,8 @@ mod tests {
             Simulator::Msfs2024,
             None,
             &std::collections::BTreeMap::new(),
+            &OptionaleWerte::default(),
+            &[],
         );
         assert_eq!(a.seatbelts_sign, b.seatbelts_sign);
         assert_eq!(a.cockpit_rohwerte, b.cockpit_rohwerte);

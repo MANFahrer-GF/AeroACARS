@@ -3790,7 +3790,7 @@ mod anschluss_verdrahtung_tests {
         // vor der ersten Registrierung stehen, sonst laeuft die neue
         // Verbindung schon mit dem Zustand der alten.
         let registrieren = danach
-            .find("conn.register_telemetry()")
+            .find("conn.register_telemetry(")
             .expect("die Registrierung fehlt im Verbindungszweig");
         let leeren = danach
             .find("shared.szenerie.lock().verbindung_zuruecksetzen()")
