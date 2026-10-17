@@ -3171,7 +3171,9 @@ fn telemetry_to_snapshot_mit_pfad(
     // auf `FbwA32nx` (siehe `AircraftProfile::detect`).
     let is_headwind_a339 = is_fbw
         && (t.title.to_lowercase().contains("headwind")
-            || sim_core::clean_atc_model(&t.atc_model).as_deref() == Some("A339"));
+            || sim_core::clean_atc_model(&t.atc_model).as_deref() == Some("A339")
+            // 17.10.2026: Liveries ohne Marker, ICAO A330 — am Ordner.
+            || cfg_pfad.is_some_and(|p| p.to_lowercase().contains("headwind")));
     // Genau der am 28.09.2026 vermessene FBW A320neo (A32NX) — NICHT der
     // A380X und NICHT die Headwind-A339 (gleiches Profil, andere Codebasis,
     // nicht gemessen: kein Beleg, kein Override).
@@ -3754,11 +3756,18 @@ fn telemetry_to_snapshot_mit_pfad(
         // FSS E-Jets `L:FSS_EXX_PARKBRAKE_BV_LEVER` 0 = Off (Paket
         // Pedestal/Pedestal.xml:68-76) — der Hebel entscheidet.
         t.fss_parkbrake_lever != 0.0
-    } else if fbw_a32nx_gemessen {
+    } else if is_fbw {
         // FBW A32NX, gemessen 28.09.2026 („Flugzeug vermessen“, Thorben):
         // gesetzt/geloest/gesetzt → Hebel-LVar 1/0/1, die Standard-SimVars
         // `BRAKE PARKING POSITION/INDICATOR` bewegten sich NICHT. Der Hebel
         // entscheidet.
+        //
+        // 17.10.2026: für die ganze Familie. Der FBW A380X führt dieselbe
+        // Variable (Flugzeug-Scan `flybywire-aircraft-a380-842` auf live),
+        // der Headwind A330neo ist ein FBW-Fork. Mit der Standard-SimVar
+        // meldeten A380X und Headwind in 30 Tagen nie eine gesetzte Bremse
+        // (BlocksOn übersprungen). Fehlte die Variable doch, läse sie 0 =
+        // gelöst — genau das bisherige Verhalten.
         t.fbw_park_brake_lever >= 0.5
     } else {
         // A220: bewusst KEIN Override — siehe Begruendung an
@@ -10855,6 +10864,39 @@ mod tests {
     /// Thorben2406, „Airbus A320neo FlyByWire"): Parkbremse und APU nur ueber
     /// die Hebel-/Schalter-LVars, TCAS ueber den eigenen Schalter, Strobe
     /// OFF/AUTO/ON gespiegelt. Werte 1:1 aus der Messung.
+    /// 17.10.2026: Parkbremse für die ganze FBW-Familie aus dem Hebel —
+    /// A380X (Variable im Paket-Scan belegt) und Headwind A330neo, auch eine
+    /// Lackierung ohne Marker mit ICAO A330, die nur am Ordner erkannt wird.
+    /// Mit der Standard-SimVar meldeten beide in 30 Tagen nie „gesetzt".
+    #[test]
+    fn fbw_familie_parkbremse_aus_dem_hebel() {
+        let faelle: [(&str, &str, Option<&str>); 3] = [
+            ("FlyByWire A380X (A380-842) No Cabin", "A388", None),
+            (HEADWIND.0, HEADWIND.1, None),
+            (
+                "Airbus A330-900neo Condor",
+                "A330",
+                Some("SimObjects\\Airplanes\\Headwind_A330neo\\aircraft.CFG"),
+            ),
+        ];
+        for (titel, atc, pfad) in faelle {
+            let gesetzt = runde3(
+                titel,
+                atc,
+                pfad,
+                &[("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0), ("BRAKE PARKING POSITION", 0.0)],
+            );
+            assert!(gesetzt.parking_brake, "{titel}: Hebel gesetzt");
+            let geloest = runde3(
+                titel,
+                atc,
+                pfad,
+                &[("L:A32NX_PARK_BRAKE_LEVER_POS", 0.0), ("BRAKE PARKING POSITION", 1.0)],
+            );
+            assert!(!geloest.parking_brake, "{titel}: Hebel gelöst");
+        }
+    }
+
     #[test]
     fn fbw_a32nx_gemessen_parkbremse_apu_transponder_strobe() {
         // Parkbremse gesetzt/geloest — die Standard-SimVar sagt das Gegenteil
