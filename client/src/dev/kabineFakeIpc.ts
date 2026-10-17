@@ -37,28 +37,84 @@ function wav(sekunden: number): ArrayBuffer {
   return buf;
 }
 
+const jetzt = Math.floor(Date.now() / 1000);
+const q = new URLSearchParams(window.location.search);
+/** `?fall=` reiseflug (Standard, Flug AIB 436 wie bei Thomas), fehler, boden. */
+const fall = q.get("fall") ?? "reiseflug";
+const sprachen = ["fr-FR", "de-DE"];
+const teile = (fr: string | null, de: string | null, ton = true) => [
+  { sprache: "fr-FR", text: fr, ton: ton && fr !== null, keine_stimme: false },
+  { sprache: "de-DE", text: de, ton: ton && de !== null, keine_stimme: false },
+];
+const gespielt = (id: number, slot: string, rolle: string, vor: number, de: string, ergebnis: string | null = "gespielt") => ({
+  id, slot, rolle, zeit: jetzt - vor, lautstaerke: 0.8, vorschau: false, ergebnis,
+  teile: [
+    { sprache: "fr-FR", text: "Bonsoir à tous. " + de, datei: "f/lang-a.wav", dauer_s: 6 },
+    { sprache: "de-DE", text: de, datei: "f/b.wav", dauer_s: 3.5 },
+  ],
+});
+
+const plan: Record<string, unknown[]> = {
+  reiseflug: [
+    { slot: "reiseflug50", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 32 * 60, stand: { art: "bereit" },
+      teile: teile("Ici le commandant. Nous avons passé la moitié du vol.", "Hier der Kapitän. Wir haben die Hälfte geschafft, alles läuft wie geplant.") },
+    { slot: "reiseflug80", rolle: "kabine", faellig: false, wartet: null, wann: jetzt + 95 * 60, stand: { art: "bereit" },
+      teile: teile("Nous servons maintenant le petit-déjeuner.", "Wir servieren jetzt das Frühstück.") },
+    { slot: "kapitaen_sinkflug", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 140 * 60, stand: { art: "text_ab", um: jetzt + 120 * 60 }, teile: teile(null, null) },
+    { slot: "kabine_sinkflug", rolle: "kabine", faellig: false, wartet: null, wann: jetzt + 140 * 60, stand: { art: "text_ab", um: jetzt + 120 * 60 }, teile: teile(null, null) },
+    { slot: "chime10000_sinkflug", rolle: "chime", faellig: false, wartet: null, wann: null, stand: { art: "bereit" }, teile: [] },
+    { slot: "kommando_landung_vorbereiten", rolle: "kommando", faellig: false, wartet: null, wann: null, stand: { art: "bereit" },
+      teile: [{ sprache: "en-GB", text: "Cabin crew, prepare the cabin for landing.", ton: true, keine_stimme: false }] },
+    { slot: "kommando_plaetze_landung", rolle: "kommando", faellig: false, wartet: null, wann: null, stand: { art: "ton_wartet", um: jetzt + 25, meldung: "Piper-Server antwortet 503 Service Unavailable" },
+      teile: [{ sprache: "en-GB", text: "Cabin crew, take your seats for landing.", ton: false, keine_stimme: false }] },
+    { slot: "nach_der_landung", rolle: "kabine", faellig: false, wartet: null, wann: null, stand: { art: "text_ab", um: jetzt + 120 * 60 }, teile: teile(null, null) },
+    { slot: "kommando_tueren_entschaerfen", rolle: "kommando", faellig: false, wartet: null, wann: null, stand: { art: "ton_wird_erzeugt", fertig: 0, von: 1 },
+      teile: [{ sprache: "en-GB", text: "Cabin crew, disarm doors and cross-check.", ton: false, keine_stimme: false }] },
+    { slot: "aussteigen", rolle: "kabine", faellig: false, wartet: null, wann: null, stand: { art: "text_ab", um: jetzt + 120 * 60 }, teile: teile(null, null) },
+  ],
+  fehler: [
+    { slot: "reiseflug25", rolle: "kabine", faellig: true, wartet: "ton", wann: null, stand: { art: "ton_wartet", um: jetzt + 30, meldung: "Piper-Server antwortet 429 Too Many Requests" },
+      teile: teile("Le service commence.", "Der Service beginnt.") },
+    { slot: "reiseflug50", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 20 * 60, stand: { art: "ton_aufgegeben", meldung: "Piper-Server antwortet 400 Bad Request" },
+      teile: teile("Ici le commandant.", "Hier der Kapitän.") },
+    { slot: "kapitaen_sinkflug", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 70 * 60, stand: { art: "text_aufgegeben", meldung: "api 402: budget" }, teile: teile(null, null) },
+  ],
+  boden: [
+    { slot: "boarding", rolle: "kabine", faellig: true, wartet: "andere_ansage", wann: null, stand: { art: "bereit" }, teile: teile("Bienvenue à bord.", "Willkommen an Bord.") },
+    { slot: "begruessung_tueren_zu", rolle: "kabine", faellig: false, wartet: null, wann: null, stand: { art: "ton_wird_erzeugt", fertig: 1, von: 2 }, teile: teile("Bienvenue.", "Willkommen.") },
+    { slot: "sicherheit", rolle: "kabine", faellig: false, wartet: null, wann: null, stand: { art: "text_wird_geschrieben" }, teile: teile(null, null) },
+    { slot: "chime10000_steigflug", rolle: "chime", faellig: false, wartet: null, wann: null, stand: { art: "bereit" }, teile: [] },
+  ],
+};
+
 export const demoUeberblick = {
-  verlauf: [
-    { slot: "boarding", rolle: "kabine", zeit: Date.now() / 1000 - 2400, lautstaerke: 0.8,
-      teile: [{ sprache: "de-DE", text: "Liebe Gäste, herzlich willkommen an Bord. Bitte verstauen Sie Ihr Handgepäck in den Fächern über Ihnen und nehmen Sie zügig Platz.", datei: "a.wav", dauer_s: 6 }] },
-    { slot: "kapitaen_begruessung", rolle: "kapitaen", zeit: Date.now() / 1000 - 1500, lautstaerke: 0.8,
-      teile: [{ sprache: "de-DE", text: "Guten Abend, liebe Gäste, hier spricht Ihr Kapitän Markus Brandt. Wir werden etwa eine Stunde und fünfundfünfzig Minuten unterwegs sein.", datei: "b.wav", dauer_s: 8 }] },
-  ],
-  wartend: ["reiseflug50"],
-  geplant: [
-    { slot: "reiseflug80", bereit: true },
-    { slot: "kapitaen_sinkflug", bereit: true },
-    { slot: "kabine_sinkflug", bereit: false },
-    { slot: "nach_der_landung", bereit: false },
-    { slot: "aussteigen", bereit: false },
-  ],
-  sprachen: ["de-DE", "en-GB"],
+  verlauf:
+    fall === "boden"
+      ? []
+      : [
+          gespielt(1, "kapitaen_begruessung", "kapitaen", 5400, "Willkommen an Bord, hier spricht Ihr Kapitän Thomas Kant. Wir fliegen fünf Stunden und vier Minuten nach Perth."),
+          gespielt(2, "anschnallzeichen_aus", "kabine", 4200, "Das Anschnallzeichen ist aus. Gleich kommen wir mit Getränken zu Ihnen.", "abgebrochen"),
+          gespielt(3, "reiseflug25", "kabine", 600, "Der Service beginnt. Wir reichen Ihnen ein Menü und Getränke."),
+        ],
+  geplant: plan[fall] ?? plan.reiseflug,
+  sprachen,
   beta: true,
-  // `?grund=keine_pax` zeigt den Hinweis, warum nichts kommt.
   grund: (() => {
-    const g = new URLSearchParams(window.location.search).get("grund");
-    return g ? (g === "texte_fehlen" || g === "ton_fehlt" ? { grund: g, detail: "api 503: ausgelastet" } : { grund: g }) : null;
+    const g = q.get("grund");
+    return g ? (g === "beta_nicht_erreichbar" ? { grund: g, detail: jetzt + 240 } : { grund: g }) : null;
   })(),
+  ablauf: {
+    freigabe: fall === "fehler" ? { art: "kontingent" } : { art: "ja" },
+    abflug: fall === "boden" ? { art: "laeuft" } : { art: "fertig" },
+    ankunft: fall === "fehler" ? { art: "aufgegeben", meldung: "api 402: budget" } : { art: "offen", um: jetzt + 120 * 60 },
+    ton_fertig: fall === "reiseflug" ? 5 : 1,
+    ton_gesamt: fall === "reiseflug" ? 10 : 3,
+  },
+  profil: {
+    flugart: "linie", muster: "A388", flugzeit_min: 304, kurzstrecke: false, flugzeit_bekannt: true,
+    sprachen_ohne_stimme: q.get("ohne_stimme") ? ["lv-LV"] : [],
+  },
+  belegt: false,
 };
 
 /** Silbenhüllkurve wie `wav()`, 30 Werte je Sekunde (Rust `huellkurve`). */
@@ -83,7 +139,18 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
         chimes: true, kommandos: true, lautstaerke: 0.8,
       }) as T;
     case "kabinen_zustand":
-      return { beta: true } as T;
+      return { beta: true, kontingent_erschoepft: false } as T;
+    case "kabinen_speicher":
+      return { bytes: 7_400_000, ordner: "~/Library/Caches/aeroacars/kabinenansagen/ton" } as T;
+    case "kabinen_anhoeren": {
+      const id = args?.id as number | null;
+      const g = id ? demoUeberblick.verlauf.find((v) => v.id === id) : null;
+      const p = (demoUeberblick.geplant as { slot: string; rolle: string; teile: { sprache: string; text: string | null }[] }[]).find((x) => x.slot === args?.slot);
+      return (g
+        ? { ...g, id: 900, vorschau: true, ergebnis: null }
+        : { id: 901, slot: args?.slot, rolle: p?.rolle ?? "kabine", zeit: jetzt, lautstaerke: 0.8, vorschau: true, ergebnis: null,
+            teile: (p?.teile ?? []).map((t, i) => ({ sprache: t.sprache, text: t.text ?? "", datei: i ? "f/b.wav" : "f/lang-a.wav", dauer_s: i ? 3.5 : 6 })) }) as T;
+    }
     case "kabinen_ausgabegeraete":
       return [
         { id: "coreaudio:BuiltInSpeakerDevice", name: "MacBook-Lautsprecher" },

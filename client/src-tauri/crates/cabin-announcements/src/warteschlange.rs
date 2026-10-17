@@ -49,6 +49,16 @@ impl Warteschlange {
         self.belegt_bis = Some(bis);
     }
 
+    /// Läuft gerade etwas (Ansage oder Vorhören)?
+    pub fn belegt(&self, jetzt: i64) -> bool {
+        self.belegt_bis.is_some_and(|b| jetzt < b)
+    }
+
+    /// Die Wiedergabe ist früher zu Ende als geschätzt (Stopp, Vorhören vorbei).
+    pub fn frei(&mut self) {
+        self.belegt_bis = None;
+    }
+
     fn abgelaufen(e: &Eintrag, jetzt: i64, phase: FlightPhase) -> bool {
         match e.verfall {
             Verfall::AbPhase(p) => rang(phase) >= rang(p),

@@ -162,7 +162,11 @@ pub(crate) fn kabinen_einstellungen_setzen(
 /// Für die Einstellungsseite: was steht zur Verfügung?
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Zustand {
+    /// Freigeschaltet und Monatsdeckel nicht erreicht.
     beta: Option<bool>,
+    /// Freigeschaltet, aber Monatsdeckel erreicht: vorhandene Texte gehen,
+    /// neue nicht (getrennt angezeigt, Punkt 10).
+    kontingent_erschoepft: Option<bool>,
 }
 
 #[tauri::command]
@@ -170,11 +174,14 @@ pub(crate) async fn kabinen_zustand(
     state: tauri::State<'_, AppState>,
 ) -> Result<Zustand, UiError> {
     let client = state.client.lock().expect("client lock").clone();
-    let beta = match client {
-        Some(c) => c.kabinen_status().await.ok().map(|s| s.beta && s.bereit),
+    let status = match client {
+        Some(c) => c.kabinen_status().await.ok(),
         None => None,
     };
-    Ok(Zustand { beta })
+    Ok(Zustand {
+        beta: status.as_ref().map(|s| s.beta),
+        kontingent_erschoepft: status.as_ref().map(|s| s.beta && !s.bereit),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -192,12 +199,13 @@ enum Beta {
 
 #[derive(Debug, Clone)]
 struct Ton {
+    /// `<flugordner>/<name>.wav` im Ton-Ordner.
     datei: String,
     dauer_s: f64,
 }
 
 /// Ein Teil einer gespielten Ansage (eine Sprache).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Teil {
     sprache: String,
     text: String,
@@ -205,23 +213,47 @@ pub(crate) struct Teil {
     dauer_s: f64,
 }
 
-/// Eine gespielte Ansage — geht so an die Oberfläche.
-#[derive(Debug, Clone, Serialize)]
+/// Eine gespielte (oder vorgehörte) Ansage — geht so an die Oberfläche.
+/// Die Oberfläche meldet das Ende mit `kabinen_wiedergabe_ende` zurück;
+/// erst dann steht in `ergebnis`, ob sie wirklich lief.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Gespielt {
+    #[serde(default)]
+    id: u64,
     slot: Slot,
     rolle: Rolle,
     zeit: i64,
     teile: Vec<Teil>,
     lautstaerke: f32,
+    /// Nur angehört (Vorhören/Nochmal): zählt nicht als gespielt.
+    #[serde(default)]
+    vorschau: bool,
+    /// `None` = läuft bzw. ohne Rückmeldung; sonst `gespielt`,
+    /// `abgebrochen` oder `fehler`.
+    #[serde(default)]
+    ergebnis: Option<String>,
 }
 
-/// Kabinenansagen eines Fluges. Nicht gespeichert: Nach einem Neustart
-/// holt der Client die Texte beim Server ab (dort zwischengespeichert,
-/// kostenlos) und erzeugt den Ton aus dem Zwischenspeicher auf der Platte.
+/// Ton-Auftrag, der gerade nicht ging (Server ausgelastet, Netz): Zahl der
+/// Versuche, frühester nächster Versuch, letzte Meldung.
+#[derive(Debug, Clone)]
+struct TonFehler {
+    versuche: u32,
+    ab: i64,
+    meldung: String,
+}
+
+/// Kabinenansagen eines Fluges. Texte und Ton holt der Client nach einem
+/// Neustart neu (Server-Zwischenspeicher, kostenlos; Ton aus dem Ordner
+/// des Fluges), der Verlauf liegt als `verlauf.json` daneben.
 #[derive(Debug, Default)]
 pub(crate) struct Lauf {
     beta: Beta,
     beta_naechste_pruefung: i64,
+    /// Status nicht erreichbar: dann steht hier, wann wieder gefragt wird.
+    beta_netzfehler: bool,
+    /// Freigeschaltet, aber Monatsdeckel erreicht (`bereit` falsch).
+    kontingent_erschoepft: bool,
     sprachen: Vec<String>,
     texte: HashMap<(Slot, String), String>,
     angefragt: HashSet<String>,
@@ -230,19 +262,35 @@ pub(crate) struct Lauf {
     /// `None` = für diese Sprache gibt es keine Stimme, sie entfällt.
     ton: HashMap<(Slot, String), Option<Ton>>,
     in_arbeit: HashSet<(Slot, String)>,
-    /// Ton gerade nicht erzeugbar (Server ausgelastet, Netz): Versuche und
-    /// frühester nächster Versuch. Anders als `ton = None` (keine Stimme für
-    /// die Sprache) ist das vorübergehend.
-    ton_fehler: HashMap<(Slot, String), (u8, i64)>,
-    /// Fehler je noch fehlendem Text-Auftrag / Ton, fuer die Begruendung
-    /// auf der Seite „Kabine“ (Thomas: „sagen warum, nicht leere Seite“).
-    /// Je Slot, nicht je Auftrag: Ein Ereignis oder eine Nachholung bekommt
-    /// einen neuen Auftragsnamen, der Slot bleibt derselbe (Codex-QS beta.2).
+    /// Laufende Ton-Anfragen (höchstens [`TON_GLEICHZEITIG`]).
+    ton_laufend: usize,
+    /// Vorübergehend nicht erzeugbar: wird wiederholt, bis die Ansage
+    /// verfällt (keine feste Versuchszahl mehr, beta.5).
+    ton_fehler: HashMap<(Slot, String), TonFehler>,
+    /// Endgültig abgelehnt (400): kommt in diesem Flug nicht mehr.
+    ton_endgueltig: HashMap<(Slot, String), String>,
+    /// Fehler je Slot, dessen Text fehlt (Meldung des Servers).
     texte_fehler: std::collections::BTreeMap<Slot, String>,
-    ton_fehler_text: std::collections::BTreeMap<(Slot, String), String>,
     warteschlange: cabin_announcements::Warteschlange,
     verlauf: Vec<Gespielt>,
+    verlauf_geladen: bool,
+    naechste_id: u64,
+    /// Läuft gerade ein Vorhören (ID)?
+    vorschau: Option<u64>,
+    /// Zuletzt gemeldete Ruhephase und Sim-Pause — für den Grund auf der Seite.
+    ruhephase: bool,
+    sim_angehalten: bool,
+    /// Passagierzahl nachholen (Wiedereinstieg ohne Netz): Versuche, nächster.
+    pax_versuche: u8,
+    pax_naechster: i64,
 }
+
+/// Gleichzeitige Ton-Anfragen je Flug. Zwei reichen: Der Server arbeitet
+/// ohnehin nach Dringlichkeit ab; mehr hielte nur Verbindungen offen.
+const TON_GLEICHZEITIG: usize = 2;
+/// Ankunftstexte werden erst so kurz vor der Landung geschrieben, damit
+/// Wetter, Verspätung und Ankunftszeit stimmen.
+const ANKUNFT_TEXT_VOR_LANDUNG_MIN: i64 = 45;
 
 const ABFLUG: [Slot; 8] = [
     Slot::Boarding,
@@ -262,6 +310,8 @@ const KOMMANDOS: [Slot; 5] = [
     Slot::KommandoPlaetzeLandung,
     Slot::KommandoTuerenEntschaerfen,
 ];
+const GONGS: [Slot; 2] = [Slot::Chime10000Steigflug, Slot::Chime10000Sinkflug];
+
 /// Diese Slots schreibt der Server erst, wenn sie fällig werden — mit den
 /// Daten dieses Augenblicks.
 fn ist_ereignis(s: Slot) -> bool {
@@ -276,6 +326,28 @@ fn ist_ereignis(s: Slot) -> bool {
     )
 }
 
+/// Zu welchem Text-Auftrag gehört ein Slot?
+fn teil_von(s: Slot) -> Option<&'static str> {
+    if ABFLUG.contains(&s) {
+        Some("abflug")
+    } else if ANKUNFT.contains(&s) {
+        Some("ankunft")
+    } else {
+        None
+    }
+}
+
+/// Teil für den Ton-Server (Vorrat: Abflug vor Ankunft). Kommandos
+/// gehören zu ihrem Flugabschnitt — ohne `teil` und ohne Zeit hielte der
+/// Server sie für „bald“ und zöge sie vor den Abflug-Vorrat.
+fn ton_teil(s: Slot) -> Option<&'static str> {
+    match s {
+        Slot::KommandoTuerenScharf | Slot::KommandoStart => Some("abflug"),
+        Slot::KommandoLandungVorbereiten | Slot::KommandoPlaetzeLandung | Slot::KommandoTuerenEntschaerfen => Some("ankunft"),
+        _ => teil_von(s),
+    }
+}
+
 fn slot_name(s: Slot) -> String {
     serde_json::to_value(s).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
@@ -285,18 +357,28 @@ fn slot_aus_name(n: &str) -> Option<Slot> {
 }
 
 /// Darf ein Teil (wieder) angefragt werden? Nach einem Fehler höchstens
-/// dreimal, mit zwei Minuten Abstand.
+/// dreimal, mit zwei Minuten Abstand — danach nur über „Erneut versuchen“.
 fn darf_anfragen(lauf: &Lauf, schluessel: &str, jetzt: i64) -> bool {
     !lauf.angefragt.contains(schluessel)
         && lauf.fehlversuche.get(schluessel).is_none_or(|(n, ab)| *n < 3 && jetzt >= *ab)
 }
 
-/// Braucht dieser Text (noch) Ton? Nicht schon da, nicht in Arbeit, und
-/// nach einem Fehler höchstens fünfmal mit einer Minute Abstand.
+/// Braucht dieser Text (noch) Ton? Nicht schon da, nicht in Arbeit, nicht
+/// endgültig abgelehnt, und nach einem vorübergehenden Fehler erst nach der
+/// Wartezeit des Servers. Aufgegeben wird nicht: Was nicht mehr kommt,
+/// fällt beim Auswählen weg ([`ton_pumpe`]).
 fn ton_noetig(lauf: &Lauf, k: &(Slot, String), jetzt: i64) -> bool {
     !lauf.ton.contains_key(k)
         && !lauf.in_arbeit.contains(k)
-        && lauf.ton_fehler.get(k).is_none_or(|(n, ab)| *n < 5 && jetzt >= *ab)
+        && !lauf.ton_endgueltig.contains_key(k)
+        && lauf.ton_fehler.get(k).is_none_or(|f| jetzt >= f.ab)
+}
+
+/// Kommt dieser Slot auf diesem Flug noch (oder wartet er schon)?
+fn kommt_noch(stats: &FlightStats, wartend: &[Slot], slot: Slot) -> bool {
+    wartend.contains(&slot)
+        || ist_ereignis(slot)
+        || stats.kabinen_planer.as_ref().is_some_and(|p| p.kommt_noch(slot, stats.phase))
 }
 
 /// Ein Takt der Kabinenansagen. Wird vom Positions-Streamer gerufen, nach
@@ -309,16 +391,20 @@ pub(crate) fn takt(
     now: DateTime<Utc>,
 ) {
     let einst = einstellungen(app);
-    if !einst.an || snap.paused || snap.slew_mode {
+    if !einst.an {
         return;
     }
     let jetzt = now.timestamp();
     let mut stats = flight.stats.lock().expect("flight stats");
-    if stats.replay_verdacht || stats.pax_count.is_none() {
+    verlauf_laden(app, flight, &mut stats.kabinen_lauf);
+    // Sim angehalten oder im Slew: Der Takt steht, die Seite sagt es.
+    stats.kabinen_lauf.sim_angehalten = snap.paused || snap.slew_mode;
+    if stats.kabinen_lauf.sim_angehalten || stats.replay_verdacht {
         return;
     }
 
-    // ---- Freischaltung durch den Server ----
+    // ---- Freischaltung durch den Server (vor der Passagierzahl: die Seite
+    // soll früh wissen, ob das Konto freigeschaltet ist) ----
     match stats.kabinen_lauf.beta {
         Beta::Ja => {}
         Beta::Angefragt | Beta::Nein => return,
@@ -337,18 +423,43 @@ pub(crate) fn takt(
                     // Nur `beta` zählt: Ist der Monatsdeckel erreicht
                     // (`bereit` falsch), liefert der Server bezahlte Texte
                     // weiter aus dem Zwischenspeicher; neue lehnt er ab.
-                    Ok(s) if s.beta => lauf.beta = Beta::Ja,
-                    Ok(_) => lauf.beta = Beta::Nein,
+                    Ok(s) if s.beta => {
+                        lauf.beta = Beta::Ja;
+                        lauf.beta_netzfehler = false;
+                        lauf.kontingent_erschoepft = !s.bereit;
+                    }
+                    Ok(_) => {
+                        lauf.beta = Beta::Nein;
+                        lauf.beta_netzfehler = false;
+                    }
                     Err(e) => {
                         // Netz weg: später noch einmal fragen, bis dahin aus.
                         tracing::info!(error = %e, "kabinenansagen: status nicht erreichbar");
                         lauf.beta = Beta::Unbekannt;
+                        lauf.beta_netzfehler = true;
                         lauf.beta_naechste_pruefung = Utc::now().timestamp() + 300;
                     }
                 }
             });
             return;
         }
+    }
+
+    // ---- Passagierzahl: beim Wiedereinstieg ohne Netz später nachholen ----
+    if stats.pax_count.is_none() {
+        let lauf = &mut stats.kabinen_lauf;
+        if lauf.pax_versuche < 10 && jetzt >= lauf.pax_naechster {
+            lauf.pax_versuche += 1;
+            lauf.pax_naechster = jetzt + 120;
+            let (flight, client) = (Arc::clone(flight), client.clone());
+            tauri::async_runtime::spawn(async move {
+                if let Some((bids, ofp)) = crate::kabinen_eckdaten_holen(&client, flight.bid_id).await {
+                    let mut stats = flight.stats.lock().expect("flight stats");
+                    crate::kabinen_eckdaten_nachholen_aus(&mut stats, &bids, flight.bid_id, ofp.as_ref());
+                }
+            });
+        }
+        return;
     }
 
     // ---- Planer ----
@@ -358,6 +469,7 @@ pub(crate) fn takt(
         return;
     }
     let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao);
+    stats.kabinen_lauf.ruhephase = schritt.ruhephase;
     let faellig: Vec<Faellig> = schritt
         .faellig
         .into_iter()
@@ -368,26 +480,30 @@ pub(crate) fn takt(
         })
         .collect();
 
-    // ---- Texte holen ----
+    // ---- Texte holen: nur, was auf diesem Flug noch kommt ----
     let mut auftraege: Vec<(String, Vec<Slot>, u32)> = Vec::new();
     {
-        let lauf = &mut stats.kabinen_lauf;
-        if darf_anfragen(lauf, "abflug", jetzt) {
-            let slots: Vec<Slot> = ABFLUG.into_iter().filter(|s| flugart.erlaubt(*s)).collect();
-            if !slots.is_empty() {
-                lauf.angefragt.insert("abflug".into());
-                auftraege.push(("abflug".into(), slots, 0));
-            }
-        }
+        stats.kabinen_lauf.warteschlange.aufnehmen(faellig.clone());
+        let wartend = stats.kabinen_lauf.warteschlange.wartend();
+        let kommt = |s: &Slot| flugart.erlaubt(*s) && kommt_noch(&stats, &wartend, *s);
+        let abflug: Vec<Slot> = ABFLUG.into_iter().filter(kommt).collect();
+        let ankunft: Vec<Slot> = ANKUNFT.into_iter().filter(kommt).collect();
         let r = cabin_announcements::planer::rang(schritt.phase);
-        let bald_sinkflug = schritt.rest_min.is_some_and(|m| m <= 45.0)
-            || r >= cabin_announcements::planer::rang(FlightPhase::Descent);
-        if r >= cabin_announcements::planer::rang(FlightPhase::Cruise) && bald_sinkflug && darf_anfragen(lauf, "ankunft", jetzt) {
-            let slots: Vec<Slot> = ANKUNFT.into_iter().filter(|s| flugart.erlaubt(*s)).collect();
-            if !slots.is_empty() {
-                lauf.angefragt.insert("ankunft".into());
-                auftraege.push(("ankunft".into(), slots, 0));
-            }
+        let kurz = stats.kabinen_planer.as_ref().is_some_and(|p| p.ist_kurzstrecke());
+        // Ankunft: in der Luft und kurz vor der Landung (bzw. im Sinkflug).
+        // Kurzstrecke: gleich nach dem Abheben, sonst bliebe zu wenig Zeit.
+        let ankunft_jetzt = r >= cabin_announcements::planer::rang(FlightPhase::Takeoff)
+            && (kurz
+                || schritt.rest_min.is_some_and(|m| m <= ANKUNFT_TEXT_VOR_LANDUNG_MIN as f64)
+                || r >= cabin_announcements::planer::rang(FlightPhase::Descent));
+        let lauf = &mut stats.kabinen_lauf;
+        if !abflug.is_empty() && darf_anfragen(lauf, "abflug", jetzt) {
+            lauf.angefragt.insert("abflug".into());
+            auftraege.push(("abflug".into(), abflug, 0));
+        }
+        if ankunft_jetzt && !ankunft.is_empty() && darf_anfragen(lauf, "ankunft", jetzt) {
+            lauf.angefragt.insert("ankunft".into());
+            auftraege.push(("ankunft".into(), ankunft, 0));
         }
         for f in faellig.iter().filter(|f| ist_ereignis(f.slot)) {
             lauf.anlass += 1;
@@ -395,67 +511,83 @@ pub(crate) fn takt(
             lauf.angefragt.insert(schluessel.clone());
             auftraege.push((schluessel, vec![f.slot], lauf.anlass));
         }
-        lauf.warteschlange.aufnehmen(faellig.clone());
     }
     for (schluessel, slots, anlass) in auftraege {
         let anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
-        holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false);
+        holen(Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false);
     }
 
-    // ---- Kommandos vorbereiten (fester Wortlaut, Englisch) ----
-    if einst.kommandos {
-        let offen: Vec<(Slot, String, String)> = KOMMANDOS
-            .into_iter()
-            .filter(|s| flugart.erlaubt(*s))
-            .filter_map(|s| s.kommando_text().map(|t| (s, "en-GB".to_string(), t.to_string())))
-            .filter(|(s, sp, _)| ton_noetig(&stats.kabinen_lauf, &(*s, sp.clone()), jetzt))
-            .collect();
-        if !offen.is_empty() {
-            for (s, sp, _) in &offen {
-                stats.kabinen_lauf.in_arbeit.insert((*s, sp.clone()));
-            }
-            sprechen_lassen(app.clone(), Arc::clone(flight), offen);
-        }
-    }
-
-    // ---- Ton nachholen, der vorübergehend nicht ging ----
-    {
-        let lauf = &mut stats.kabinen_lauf;
-        let nachholen: Vec<(Slot, String, String)> = lauf
-            .texte
-            .iter()
-            .filter(|(k, _)| lauf.ton_fehler.contains_key(*k) && ton_noetig(lauf, k, jetzt))
-            .map(|((s, sp), t)| (*s, sp.clone(), t.clone()))
-            .collect();
-        if !nachholen.is_empty() {
-            for (s, sp, _) in &nachholen {
-                lauf.in_arbeit.insert((*s, sp.clone()));
-            }
-            sprechen_lassen(app.clone(), Arc::clone(flight), nachholen);
-        }
-    }
+    // ---- Ton: das Dringendste zuerst, höchstens zwei zugleich ----
+    ton_pumpe(app, flight, &mut stats, &einst, flugart, jetzt);
 
     // ---- Abspielen ----
     let lauf = &mut stats.kabinen_lauf;
     let sprachen = lauf.sprachen.clone();
-    let bereit = |slot: Slot| -> bool {
-        match slot.rolle() {
-            Rolle::Chime => true,
-            Rolle::Kommando => lauf.ton.contains_key(&(slot, "en-GB".to_string())),
-            _ => {
-                let mit_text: Vec<&String> = sprachen.iter().filter(|sp| lauf.texte.contains_key(&(slot, (*sp).clone()))).collect();
-                !mit_text.is_empty() && mit_text.iter().all(|sp| lauf.ton.contains_key(&(slot, (*sp).clone())))
-            }
-        }
-    };
+    let (texte, toene, fehlt) = (&lauf.texte, &lauf.ton, &lauf.texte_fehler);
+    let bereit = |slot: Slot| ansage_bereit(texte, toene, fehlt, &sprachen, slot);
     let Some(slot) = lauf.warteschlange.naechstes_bereit(jetzt, schritt.phase, schritt.ruhephase, bereit) else {
         for weg in lauf.warteschlange.verfallene_abholen() {
             tracing::info!(slot = ?weg, "kabinenansage verfallen");
+            verfallen_aufraeumen(lauf, weg);
         }
         return;
     };
-    let sprachen_des_slots: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { sprachen };
-    let teile: Vec<Teil> = sprachen_des_slots
+    let Some(teile) = teile_von(lauf, slot) else {
+        tracing::info!(slot = ?slot, "kabinenansage ohne Stimme entfällt");
+        return;
+    };
+    // Zwischen den Sprachen eine kurze Pause; ein Chime dauert gut zwei Sekunden.
+    let dauer = dauer_s(slot, &teile);
+    lauf.warteschlange.spielt_bis(jetzt + dauer.ceil() as i64 + 1);
+    lauf.naechste_id += 1;
+    let gespielt = Gespielt {
+        id: lauf.naechste_id,
+        slot,
+        rolle: slot.rolle(),
+        zeit: jetzt,
+        teile,
+        lautstaerke: einst.lautstaerke,
+        vorschau: false,
+        ergebnis: None,
+    };
+    lauf.verlauf.push(gespielt.clone());
+    verlauf_speichern(app, flight, lauf);
+    drop(stats);
+    tracing::info!(slot = ?slot, "kabinenansage spielt");
+    let _ = app.emit(EREIGNIS_ANSAGE, gespielt);
+}
+
+/// Ton für alle Sprachen mit Text da (Kommando: Englisch, Gong: immer)?
+type Texte = HashMap<(Slot, String), String>;
+type Toene = HashMap<(Slot, String), Option<Ton>>;
+
+/// Bereit heißt: Jede Sprache des Fluges hat Ton (oder keine Stimme). Eine
+/// Sprache ohne Text zählt nur dann nicht mit, wenn ihr Text endgültig
+/// fehlt (`texte_fehler`) — sonst spielte eine fällige Ansage einsprachig,
+/// während die zweite Sprache noch nachgeholt wird (Codex-QS beta.5).
+fn ansage_bereit(texte: &Texte, ton: &Toene, texte_fehler: &std::collections::BTreeMap<Slot, String>, sprachen: &[String], slot: Slot) -> bool {
+    match slot.rolle() {
+        Rolle::Chime => true,
+        Rolle::Kommando => ton.contains_key(&(slot, "en-GB".to_string())),
+        _ => {
+            let mit_text = sprachen.iter().filter(|sp| texte.contains_key(&(slot, (*sp).clone()))).count();
+            mit_text > 0
+                && sprachen.iter().all(|sp| {
+                    let k = (slot, sp.clone());
+                    if texte.contains_key(&k) { ton.contains_key(&k) } else { texte_fehler.contains_key(&slot) }
+                })
+        }
+    }
+}
+
+/// Die Teile einer Ansage mit Ton; `None`, wenn keine Sprache eine Stimme
+/// hat (dann entfällt sie). Ein Gong hat keine Teile.
+fn teile_von(lauf: &Lauf, slot: Slot) -> Option<Vec<Teil>> {
+    if slot.rolle() == Rolle::Chime {
+        return Some(Vec::new());
+    }
+    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { lauf.sprachen.clone() };
+    let teile: Vec<Teil> = sprachen
         .iter()
         .filter_map(|sp| {
             let ton = lauf.ton.get(&(slot, sp.clone()))?.as_ref()?;
@@ -467,22 +599,114 @@ pub(crate) fn takt(
             Some(Teil { sprache: sp.clone(), text, datei: ton.datei.clone(), dauer_s: ton.dauer_s })
         })
         .collect();
-    if teile.is_empty() && slot.rolle() != Rolle::Chime {
-        tracing::info!(slot = ?slot, "kabinenansage ohne Stimme entfällt");
-        return;
-    }
-    // Zwischen den Sprachen eine kurze Pause; ein Chime dauert gut zwei Sekunden.
-    let dauer: f64 = if slot.rolle() == Rolle::Chime {
+    (!teile.is_empty()).then_some(teile)
+}
+
+fn dauer_s(slot: Slot, teile: &[Teil]) -> f64 {
+    if slot.rolle() == Rolle::Chime {
         2.5
     } else {
         teile.iter().map(|t| t.dauer_s + 0.8).sum()
-    };
-    lauf.warteschlange.spielt_bis(jetzt + dauer.ceil() as i64 + 1);
-    let gespielt = Gespielt { slot, rolle: slot.rolle(), zeit: jetzt, teile, lautstaerke: einst.lautstaerke };
-    lauf.verlauf.push(gespielt.clone());
-    drop(stats);
-    tracing::info!(slot = ?slot, "kabinenansage spielt");
-    let _ = app.emit(EREIGNIS_ANSAGE, gespielt);
+    }
+}
+
+/// Eine verfallene Ansage hinterlässt keine Fehler, die später noch die
+/// Seite bestimmen (Codex-QS beta.4, Punkt 19).
+fn verfallen_aufraeumen(lauf: &mut Lauf, slot: Slot) {
+    lauf.texte_fehler.remove(&slot);
+    lauf.ton_fehler.retain(|(s, _), _| *s != slot);
+}
+
+/// Wählt die nächsten Ton-Aufträge: fällige vor Vorrat, sonst in
+/// Flugreihenfolge; nur, was noch kommt. Höchstens [`TON_GLEICHZEITIG`].
+fn ton_pumpe(app: &AppHandle, flight: &Arc<ActiveFlight>, stats: &mut FlightStats, einst: &Einstellungen, flugart: Flugart, jetzt: i64) {
+    if stats.kabinen_lauf.ton_laufend >= TON_GLEICHZEITIG {
+        return;
+    }
+    let wartend = stats.kabinen_lauf.warteschlange.wartend();
+    let kandidaten = ton_kandidaten(stats, einst.kommandos, flugart, jetzt);
+    let landung = stats.landung_erwartet;
+    let frei = TON_GLEICHZEITIG - stats.kabinen_lauf.ton_laufend;
+    for (slot, sprache, text) in kandidaten.into_iter().take(frei) {
+        let gebraucht_in_s = if wartend.contains(&slot) {
+            Some(0)
+        } else {
+            stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(slot, landung)).map(|t| t - jetzt)
+        };
+        ton_auftrag(app, flight, stats, slot, sprache, text, gebraucht_in_s);
+    }
+}
+
+/// Was als Nächstes Ton braucht, in Reihenfolge: fällige vor Vorrat, sonst
+/// Flugreihenfolge, je Ansage die Sprachen in Sprechreihenfolge. Nur, was
+/// auf diesem Flug noch kommt (Wiedereinstieg: nichts Vergangenes).
+fn ton_kandidaten(stats: &FlightStats, kommandos: bool, flugart: Flugart, jetzt: i64) -> Vec<(Slot, String, String)> {
+    let wartend = stats.kabinen_lauf.warteschlange.wartend();
+    let lauf = &stats.kabinen_lauf;
+    let mut kandidaten: Vec<(Slot, String, String)> = lauf
+        .texte
+        .iter()
+        .map(|((s, sp), t)| (*s, sp.clone(), t.clone()))
+        .collect();
+    if kommandos {
+        kandidaten.extend(
+            KOMMANDOS
+                .into_iter()
+                .filter(|s| flugart.erlaubt(*s))
+                .filter_map(|s| s.kommando_text().map(|t| (s, "en-GB".to_string(), t.to_string()))),
+        );
+    }
+    let sprach_rang = |sp: &str| lauf.sprachen.iter().position(|x| x == sp).unwrap_or(usize::MAX);
+    kandidaten.retain(|(s, sp, _)| ton_noetig(lauf, &(*s, sp.clone()), jetzt) && kommt_noch(stats, &wartend, *s));
+    kandidaten.sort_by_key(|(s, sp, _)| (!wartend.contains(s), *s, sprach_rang(sp)));
+    kandidaten
+}
+
+/// Startet eine Ton-Anfrage und trägt das Ergebnis in den Lauf ein.
+fn ton_auftrag(
+    app: &AppHandle,
+    flight: &Arc<ActiveFlight>,
+    stats: &mut FlightStats,
+    slot: Slot,
+    sprache: String,
+    text: String,
+    gebraucht_in_s: Option<i64>,
+) {
+    let lauf = &mut stats.kabinen_lauf;
+    lauf.in_arbeit.insert((slot, sprache.clone()));
+    lauf.ton_laufend += 1;
+    let ordner = flug_ordner(flight);
+    let (app, flight) = (app.clone(), Arc::clone(flight));
+    tauri::async_runtime::spawn(async move {
+        let wunsch = Wunsch { slot: Some(slot), gebraucht_in_s, ordner: &ordner };
+        let ergebnis = sprechen(&app, slot.rolle(), &sprache, &text, wunsch).await;
+        let mut stats = flight.stats.lock().expect("flight stats");
+        let lauf = &mut stats.kabinen_lauf;
+        let k = (slot, sprache);
+        lauf.in_arbeit.remove(&k);
+        lauf.ton_laufend = lauf.ton_laufend.saturating_sub(1);
+        // Kam inzwischen ein neuer Text (zweite Turbulenz o. ä.), gehört
+        // dieser Ton zum alten: verwerfen, der neue wird angefragt.
+        if lauf.texte.get(&k).is_some_and(|t| *t != text) {
+            return;
+        }
+        match ergebnis {
+            Ok(ton) => {
+                lauf.ton_fehler.remove(&k);
+                lauf.ton.insert(k, ton);
+            }
+            Err(f) if f.endgueltig => {
+                tracing::warn!(slot = ?k.0, sprache = %k.1, error = %f.meldung, "kabinenansage: Ton abgelehnt");
+                lauf.ton_endgueltig.insert(k, f.meldung);
+            }
+            Err(f) => {
+                tracing::info!(slot = ?k.0, sprache = %k.1, error = %f.meldung, "kabinenansage: Ton gerade nicht erzeugbar");
+                let versuche = lauf.ton_fehler.get(&k).map_or(0, |x| x.versuche) + 1;
+                let ab = Utc::now().timestamp() + f.warte_s.clamp(5, 300) as i64;
+                lauf.ton_fehler.insert(k, TonFehler { versuche, ab, meldung: f.meldung });
+            }
+        }
+    });
 }
 
 /// Die Anfrage an den GSG-Server. Der Server kennt Airline, Flugnummer,
@@ -562,7 +786,6 @@ fn wetterlage(m: &metar::MetarSnapshot) -> Option<&'static str> {
 }
 
 fn holen(
-    app: AppHandle,
     flight: Arc<ActiveFlight>,
     client: Client,
     schluessel: String,
@@ -573,7 +796,7 @@ fn holen(
     tauri::async_runtime::spawn(async move {
         let ergebnis = client.kabinen_drehbuch(&anfrage).await;
         let mut fehlend: Vec<Slot> = Vec::new();
-        let neu: Vec<(Slot, String, String)> = {
+        {
             let mut stats = flight.stats.lock().expect("flight stats");
             let lauf = &mut stats.kabinen_lauf;
             match ergebnis {
@@ -581,7 +804,6 @@ fn holen(
                     if !d.sprachen.is_empty() {
                         lauf.sprachen = d.sprachen.clone();
                     }
-                    let mut neu = Vec::new();
                     for e in d.eintraege {
                         let Some(slot) = slot_aus_name(&e.slot) else { continue };
                         lauf.texte_fehler.remove(&slot);
@@ -589,20 +811,24 @@ fn holen(
                         // Ein Ereignis (z. B. die zweite Turbulenz) bekommt neuen Ton.
                         if ist_ereignis(slot) {
                             lauf.ton.remove(&k);
+                            lauf.ton_endgueltig.remove(&k);
                         }
-                        lauf.texte.insert(k.clone(), e.text.clone());
-                        if !lauf.ton.contains_key(&k) && lauf.in_arbeit.insert(k) {
-                            neu.push((slot, e.sprache, e.text));
-                        }
+                        lauf.texte.insert(k, e.text);
                     }
-                    // Hat der Server nach seinem zweiten Versuch einen Text
-                    // nicht geliefert, einmal gezielt nur diese Slots holen.
+                    // Den Ton erzeugt `ton_pumpe` im nächsten Takt, in der
+                    // Reihenfolge der Dringlichkeit.
                     fehlend = slots
                         .iter()
                         .copied()
                         .filter(|s| lauf.sprachen.iter().any(|sp| !lauf.texte.contains_key(&(*s, sp.clone()))))
                         .collect();
-                    neu
+                    if nachholung {
+                        // Auch der gezielte zweite Abruf brachte nichts: auf
+                        // der Seite sagen, statt ewig „wird geschrieben“.
+                        for s in &fehlend {
+                            lauf.texte_fehler.insert(*s, "Der Server hat keinen Text geliefert.".into());
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
@@ -618,55 +844,20 @@ fn holen(
                     lauf.angefragt.remove(&basis);
                     let n = lauf.fehlversuche.get(&basis).map_or(0, |(n, _)| *n) + 1;
                     lauf.fehlversuche.insert(basis, (n, Utc::now().timestamp() + 120));
-                    Vec::new()
                 }
             }
-        };
-        if !neu.is_empty() {
-            sprechen_lassen(app.clone(), Arc::clone(&flight), neu);
         }
         if !nachholung && !fehlend.is_empty() {
             let mut erneut = anfrage.clone();
             erneut["slots"] = serde_json::json!(fehlend.iter().map(|s| slot_name(*s)).collect::<Vec<_>>());
             tracing::info!(teil = %schluessel, fehlend = ?fehlend, "kabinenansagen: fehlende Texte nachholen");
-            holen(app, flight, client, format!("{schluessel}+"), erneut, fehlend, true);
-        }
-    });
-}
-
-/// Erzeugt den Ton nacheinander (nicht parallel: Piper braucht die CPU, die
-/// der Simulator auch will) und trägt ihn in den Lauf ein.
-fn sprechen_lassen(app: AppHandle, flight: Arc<ActiveFlight>, mut auftraege: Vec<(Slot, String, String)>) {
-    // Was im Flug zuerst dran ist, zuerst: Boarding nicht hinter Reiseflug80
-    // warten lassen (der Server-Piper arbeitet eins nach dem anderen).
-    auftraege.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-    tauri::async_runtime::spawn(async move {
-        for (slot, sprache, text) in auftraege {
-            let ergebnis = sprechen(&app, slot.rolle(), &sprache, &text).await;
-            let mut stats = flight.stats.lock().expect("flight stats");
-            let lauf = &mut stats.kabinen_lauf;
-            let k = (slot, sprache);
-            lauf.in_arbeit.remove(&k);
-            match ergebnis {
-                Ok(ton) => {
-                    lauf.ton_fehler.remove(&k);
-                    lauf.ton_fehler_text.remove(&k);
-                    lauf.ton.insert(k, ton);
-                }
-                Err(e) => {
-                    // Vorübergehend: in einer Minute noch einmal (takt).
-                    tracing::warn!(slot = ?k.0, sprache = %k.1, error = %e, "kabinenansage: Ton gerade nicht erzeugbar");
-                    lauf.ton_fehler_text.insert(k.clone(), kurz(&e));
-                    let n = lauf.ton_fehler.get(&k).map_or(0, |(n, _)| *n) + 1;
-                    lauf.ton_fehler.insert(k, (n, Utc::now().timestamp() + 60));
-                }
-            }
+            holen(flight, client, format!("{schluessel}+"), erneut, fehlend, true);
         }
     });
 }
 
 // ---------------------------------------------------------------------------
-// Sprachausgabe
+// Sprachausgabe und Ton-Ordner
 // ---------------------------------------------------------------------------
 
 /// Kapitän und Kommandos männlich, Kabine weiblich.
@@ -674,7 +865,16 @@ fn maennlich(rolle: Rolle) -> bool {
     !matches!(rolle, Rolle::Kabine)
 }
 
-fn ton_ordner(app: &AppHandle) -> Result<PathBuf, String> {
+/// Unterordner für Hörproben (Einstellungen).
+const PROBE_ORDNER: &str = "probe";
+
+/// Ordnername eines Fluges: die PIREP-Kennung, nur sichere Zeichen.
+fn flug_ordner(flight: &ActiveFlight) -> String {
+    let n: String = flight.pirep_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(64).collect();
+    if n.is_empty() { "flug".into() } else { n }
+}
+
+fn ton_wurzel(app: &AppHandle) -> Result<PathBuf, String> {
     let d = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("kabinenansagen").join("ton");
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     static AUFGERAEUMT: OnceLock<()> = OnceLock::new();
@@ -682,29 +882,117 @@ fn ton_ordner(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(d)
 }
 
-/// Einmal je Start: Dateien der frueheren Namen (bis beta.3: piper-,
-/// kokoro-, azure-) und Ersatz-Toene aelter als ein Tag weg.
-fn altes_aufraeumen(ordner: &Path) {
-    let Ok(eintraege) = std::fs::read_dir(ordner) else { return };
+/// Ordner eines Fluges (oder der Hörproben). Der erste Ton eines neuen
+/// Fluges räumt die Ordner aller anderen Flüge weg: Töne gibt es nur für
+/// den laufenden Flug (Thomas 17.10.2026: „werden die gelöscht nach dem
+/// Flug?“). Ein Punkt für alle vier Wege, einen Flug zu beenden.
+fn ton_ordner(app: &AppHandle, unter: &str) -> Result<PathBuf, String> {
+    let wurzel = ton_wurzel(app)?;
+    let d = wurzel.join(unter);
+    std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    if unter != PROBE_ORDNER {
+        static AKTUELL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+        let mut aktuell = AKTUELL.lock().expect("ton ordner");
+        if aktuell.as_deref() != Some(unter) {
+            andere_fluege_weg(&wurzel, unter);
+            *aktuell = Some(unter.to_string());
+        }
+    }
+    Ok(d)
+}
+
+/// Löscht die Ordner aller Flüge außer `bleibt` (Hörproben bleiben).
+fn andere_fluege_weg(wurzel: &Path, bleibt: &str) {
+    let Ok(eintraege) = std::fs::read_dir(wurzel) else { return };
     for e in eintraege.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        let alt = ["piper-", "kokoro-", "azure-"].iter().any(|p| name.starts_with(p));
-        let ersatz_alt = name.starts_with("ersatz-")
-            && e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|d| d.as_secs() > 86_400);
-        if alt || ersatz_alt {
-            let _ = std::fs::remove_file(e.path());
+        if e.path().is_dir() && name != bleibt && name != PROBE_ORDNER {
+            let _ = std::fs::remove_dir_all(e.path());
         }
+    }
+}
+
+/// Einmal je Start: lose Dateien der früheren Ablage (bis beta.4 lag alles
+/// in einem Ordner, ohne je gelöscht zu werden) und Hörproben älter als ein
+/// Tag. Flug-Ordner nicht nach Alter: Der Start weiß noch nicht, welcher
+/// Flug gleich fortgesetzt wird (Codex-QS beta.5); sie räumt der erste Ton
+/// des nächsten Fluges weg ([`ton_ordner`]).
+fn altes_aufraeumen(wurzel: &Path) {
+    let alter = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs());
+    let Ok(eintraege) = std::fs::read_dir(wurzel) else { return };
+    for e in eintraege.flatten() {
+        let p = e.path();
+        if p.is_file() {
+            let _ = std::fs::remove_file(&p);
+        } else if e.file_name() == PROBE_ORDNER {
+            for f in std::fs::read_dir(&p).into_iter().flatten().flatten() {
+                if alter(&f.path()).is_some_and(|s| s > 86_400) {
+                    let _ = std::fs::remove_file(f.path());
+                }
+            }
+        }
+    }
+}
+
+/// Belegter Platz des Ton-Ordners (Bytes) — für die Einstellungen.
+fn ordner_groesse(p: &Path) -> u64 {
+    std::fs::read_dir(p)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| {
+            let p = e.path();
+            if p.is_dir() { ordner_groesse(&p) } else { e.metadata().map(|m| m.len()).unwrap_or(0) }
+        })
+        .sum()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Speicher {
+    bytes: u64,
+    ordner: String,
+}
+
+#[tauri::command]
+pub(crate) fn kabinen_speicher(app: AppHandle) -> Result<Speicher, UiError> {
+    let wurzel = ton_wurzel(&app).map_err(|e| UiError::new("ordner", e))?;
+    Ok(Speicher { bytes: ordner_groesse(&wurzel), ordner: wurzel.to_string_lossy().to_string() })
+}
+
+/// Wofür ein Ton gebraucht wird — geht an den Server (Abarbeiten nach
+/// Dringlichkeit, S2) und bestimmt den Ordner.
+struct Wunsch<'a> {
+    slot: Option<Slot>,
+    /// Sekunden bis zur Wiedergabe; 0 = fällig; `None` = unbekannt.
+    gebraucht_in_s: Option<i64>,
+    ordner: &'a str,
+}
+
+/// Fehler einer Ton-Anfrage.
+#[derive(Debug, Clone)]
+pub(crate) struct TonFehlerAntwort {
+    meldung: String,
+    /// Wartezeit bis zum nächsten Versuch (`Retry-After`, sonst 30 s).
+    warte_s: u64,
+    /// 400: Diese Anfrage wird nie gehen.
+    endgueltig: bool,
+}
+
+impl TonFehlerAntwort {
+    fn spaeter(meldung: impl Into<String>, warte_s: Option<u64>) -> Self {
+        TonFehlerAntwort { meldung: meldung.into(), warte_s: warte_s.unwrap_or(30), endgueltig: false }
     }
 }
 
 /// Text zu Ton ueber den GSG-Server. Gibt es für die Sprache keine Stimme,
 /// entfällt sie (`Ok(None)`) — nie eine Stimme einer anderen Sprache.
-async fn sprechen(app: &AppHandle, rolle: Rolle, sprache: &str, text: &str) -> Result<Option<Ton>, String> {
+async fn sprechen(app: &AppHandle, rolle: Rolle, sprache: &str, text: &str, wunsch: Wunsch<'_>) -> Result<Option<Ton>, TonFehlerAntwort> {
     // Der Server waehlt die Stimme zur Sprache (Englisch: Kokoro, sonst
     // Piper). Hat er keine, entfaellt die Sprache; ein Fehler (Netz,
     // ausgelastet) kommt zurueck und der Takt versucht es spaeter wieder.
     let Some(anfrage) = piper::stimme_fuer(sprache, maennlich(rolle)) else { return Ok(None) };
-    let ordner = ton_ordner(app)?;
+    let ordner = ton_ordner(app, wunsch.ordner).map_err(|e| TonFehlerAntwort::spaeter(e, None))?;
+    let relativ = |name: &str| format!("{}/{name}", wunsch.ordner);
     // Gespeichert wird unter der Stimme, die der Server gewaehlt hat — so
     // verdeckt der Zwischenspeicher keinen Stimmwechsel auf dem Server
     // (Codex-QS beta.4). Je Sitzung fragt der Client einmal nach.
@@ -712,10 +1000,13 @@ async fn sprechen(app: &AppHandle, rolle: Rolle, sprache: &str, text: &str) -> R
     if let Some(stimme) = &bekannt {
         let name = cache::dateiname("server", stimme, sprache, text, "wav");
         if ordner.join(&name).exists() {
-            return ton_aus_datei(&ordner.join(&name), name).map(Some);
+            return ton_aus_datei(&ordner.join(&name), relativ(&name)).map(Some).map_err(|e| TonFehlerAntwort::spaeter(e, None));
         }
     }
-    let Some(ton) = piper::sprechen(&anfrage, text).await? else { return Ok(None) };
+    let teil = wunsch.slot.and_then(ton_teil);
+    let Some(ton) = piper::sprechen(&anfrage, text, wunsch.gebraucht_in_s, teil, wunsch.slot.map(slot_name)).await? else {
+        return Ok(None);
+    };
     let name = if ton.ersatz {
         // Ersatzstimme (Kokoro gerade aus): nicht als diese Stimme merken.
         cache::dateiname("ersatz", &format!("{anfrage}|{}", Utc::now().timestamp_millis()), sprache, text, "wav")
@@ -725,8 +1016,8 @@ async fn sprechen(app: &AppHandle, rolle: Rolle, sprache: &str, text: &str) -> R
         cache::dateiname("server", &stimme, sprache, text, "wav")
     };
     let pfad = ordner.join(&name);
-    std::fs::write(&pfad, &ton.wav).map_err(|e| e.to_string())?;
-    ton_aus_datei(&pfad, name).map(Some)
+    std::fs::write(&pfad, &ton.wav).map_err(|e| TonFehlerAntwort::spaeter(e.to_string(), None))?;
+    ton_aus_datei(&pfad, relativ(&name)).map(Some).map_err(|e| TonFehlerAntwort::spaeter(e, None))
 }
 
 /// `auto:<sprache>:<m|w>` → vom Server gewaehlte Stimme, je Sitzung.
@@ -767,22 +1058,25 @@ pub(crate) fn wav_dauer_s(d: &[u8]) -> Option<f64> {
     None
 }
 
-/// Liefert eine erzeugte Tondatei an die Oberfläche. Nur Dateinamen aus dem
-/// eigenen Ton-Ordner, keine Pfade.
+/// Ist das ein Dateiname aus dem eigenen Ton-Ordner (`<ordner>/<name>.wav`)?
+/// Keine Pfade, kein `..`.
+fn datei_sauber(datei: &str) -> bool {
+    let teile: Vec<&str> = datei.split('/').collect();
+    let teil_ok = |t: &str| !t.is_empty() && t != "." && t != ".." && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    teile.len() == 2 && teile.iter().all(|t| teil_ok(t)) && datei.ends_with(".wav") && !datei.contains("..")
+}
+
+/// Liefert eine erzeugte Tondatei an die Oberfläche.
 #[tauri::command]
 pub(crate) fn kabinen_audio(app: AppHandle, datei: String) -> Result<tauri::ipc::Response, UiError> {
     Ok(tauri::ipc::Response::new(ton_datei_lesen(&app, &datei)?))
 }
 
 fn ton_datei_lesen(app: &AppHandle, datei: &str) -> Result<Vec<u8>, UiError> {
-    let sauber = !datei.is_empty()
-        && datei.ends_with(".wav")
-        && datei.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
-        && !datei.contains("..");
-    if !sauber {
+    if !datei_sauber(datei) {
         return Err(UiError::new("ungueltig", "invalid file name"));
     }
-    let pfad = ton_ordner(app).map_err(|e| UiError::new("ordner", e))?.join(datei);
+    let pfad = ton_wurzel(app).map_err(|e| UiError::new("ordner", e))?.join(datei);
     std::fs::read(pfad).map_err(|e| UiError::new("lesen", e.to_string()))
 }
 
@@ -827,6 +1121,139 @@ pub(crate) fn kabinen_ton_huellkurve(app: AppHandle, datei: String) -> Result<Ve
     Ok(ausgabe::huellkurve(rate, &proben))
 }
 
+// ---------------------------------------------------------------------------
+// Verlauf: bleibt über einen Neustart der App erhalten
+// ---------------------------------------------------------------------------
+
+fn verlauf_pfad(app: &AppHandle, flight: &ActiveFlight) -> Option<PathBuf> {
+    ton_ordner(app, &flug_ordner(flight)).ok().map(|d| d.join("verlauf.json"))
+}
+
+fn verlauf_laden(app: &AppHandle, flight: &ActiveFlight, lauf: &mut Lauf) {
+    if lauf.verlauf_geladen {
+        return;
+    }
+    lauf.verlauf_geladen = true;
+    let Some(text) = verlauf_pfad(app, flight).and_then(|p| std::fs::read_to_string(p).ok()) else { return };
+    if let Ok(mut alt) = serde_json::from_str::<Vec<Gespielt>>(&text) {
+        for g in &mut alt {
+            // Lief beim Beenden der App noch: Ausgang unbekannt.
+            if g.ergebnis.is_none() {
+                g.ergebnis = Some("unbekannt".into());
+            }
+        }
+        lauf.naechste_id = alt.iter().map(|g| g.id).max().unwrap_or(0);
+        alt.append(&mut lauf.verlauf);
+        lauf.verlauf = alt;
+    }
+}
+
+fn verlauf_speichern(app: &AppHandle, flight: &ActiveFlight, lauf: &Lauf) {
+    if let Some(p) = verlauf_pfad(app, flight) {
+        if let Ok(text) = serde_json::to_string(&lauf.verlauf) {
+            let _ = std::fs::write(p, text);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wiedergabe: Ende melden, Vorhören, Erneut versuchen
+// ---------------------------------------------------------------------------
+
+fn aktiver_flug(state: &AppState) -> Option<Arc<ActiveFlight>> {
+    state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone)
+}
+
+/// Die Oberfläche meldet, wie eine Wiedergabe endete. Erst danach steht
+/// eine Ansage in „Bisher“ als gespielt (Punkt 17), und die nächste darf
+/// sofort beginnen.
+#[tauri::command]
+pub(crate) fn kabinen_wiedergabe_ende(app: AppHandle, state: tauri::State<'_, AppState>, id: u64, ergebnis: String) {
+    let Some(flight) = aktiver_flug(&state) else { return };
+    let mut stats = flight.stats.lock().expect("flight stats");
+    if wiedergabe_ende(&mut stats.kabinen_lauf, id, &ergebnis) {
+        verlauf_speichern(&app, &flight, &stats.kabinen_lauf);
+    }
+}
+
+/// `true` = der Verlauf hat sich geändert (speichern).
+fn wiedergabe_ende(lauf: &mut Lauf, id: u64, ergebnis: &str) -> bool {
+    let ergebnis = match ergebnis {
+        "gespielt" | "abgebrochen" | "fehler" => ergebnis,
+        _ => "fehler",
+    };
+    if lauf.vorschau == Some(id) {
+        lauf.vorschau = None;
+        lauf.warteschlange.frei();
+        return false;
+    }
+    match lauf.verlauf.iter_mut().find(|g| g.id == id && g.ergebnis.is_none()) {
+        Some(g) => {
+            g.ergebnis = Some(ergebnis.to_string());
+            lauf.warteschlange.frei();
+            true
+        }
+        None => false,
+    }
+}
+
+/// Eine Ansage anhören, ohne sie zu verbrauchen: eine kommende, deren Ton
+/// fertig ist, oder eine aus „Bisher“. Gesperrt, solange etwas spielt; was
+/// in der Zeit fällig wird, wartet, bis das Anhören vorbei ist.
+#[tauri::command]
+pub(crate) fn kabinen_anhoeren(app: AppHandle, state: tauri::State<'_, AppState>, slot: Slot, id: Option<u64>) -> Result<Gespielt, UiError> {
+    let flight = aktiver_flug(&state).ok_or_else(|| UiError::new("kein_flug", "no active flight"))?;
+    let mut stats = flight.stats.lock().expect("flight stats");
+    anhoeren(&mut stats.kabinen_lauf, slot, id, Utc::now().timestamp(), einstellungen(&app).lautstaerke)
+}
+
+fn anhoeren(lauf: &mut Lauf, slot: Slot, id: Option<u64>, jetzt: i64, lautstaerke: f32) -> Result<Gespielt, UiError> {
+    if lauf.warteschlange.belegt(jetzt) {
+        return Err(UiError::new("laeuft", "an announcement is playing"));
+    }
+    let teile = match id {
+        Some(id) => lauf.verlauf.iter().find(|g| g.id == id && !g.vorschau).map(|g| g.teile.clone()),
+        None => teile_von(lauf, slot).filter(|_| ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.sprachen, slot)),
+    }
+    .ok_or_else(|| UiError::new("nicht_bereit", "no audio for this announcement yet"))?;
+    lauf.naechste_id += 1;
+    let g = Gespielt {
+        id: lauf.naechste_id,
+        slot,
+        rolle: slot.rolle(),
+        zeit: jetzt,
+        teile,
+        lautstaerke,
+        vorschau: true,
+        ergebnis: None,
+    };
+    lauf.vorschau = Some(g.id);
+    lauf.warteschlange.spielt_bis(jetzt + dauer_s(slot, &g.teile).ceil() as i64 + 1);
+    Ok(g)
+}
+
+/// „Erneut versuchen“: aufgegebene Texte und abgelehnten Ton freigeben.
+#[tauri::command]
+pub(crate) fn kabinen_erneut(state: tauri::State<'_, AppState>) {
+    let Some(flight) = aktiver_flug(&state) else { return };
+    let mut stats = flight.stats.lock().expect("flight stats");
+    let lauf = &mut stats.kabinen_lauf;
+    lauf.fehlversuche.clear();
+    lauf.texte_fehler.clear();
+    lauf.ton_endgueltig.clear();
+    lauf.ton_fehler.clear();
+    // Ein Teil, dessen Abruf gelang, dem aber Slots fehlen, wird neu gefragt.
+    let fehlt = |teil: &str| {
+        let slots: &[Slot] = if teil == "abflug" { &ABFLUG } else { &ANKUNFT };
+        slots.iter().any(|s| lauf.sprachen.iter().any(|sp| !lauf.texte.contains_key(&(*s, sp.clone()))))
+    };
+    let neu: Vec<String> = ["abflug", "ankunft"].into_iter().filter(|t| fehlt(t)).map(str::to_string).collect();
+    for t in neu {
+        lauf.angefragt.remove(&t);
+    }
+    lauf.beta_naechste_pruefung = 0;
+}
+
 /// Hörprobe für die Einstellungen: eine Rolle in einer Sprache.
 #[tauri::command]
 pub(crate) async fn kabinen_probe(app: AppHandle, rolle: Rolle, sprache: String) -> Result<Gespielt, UiError> {
@@ -840,70 +1267,274 @@ pub(crate) async fn kabinen_probe(app: AppHandle, rolle: Rolle, sprache: String)
         _ => "Welcome on board. This is a voice sample from your cabin crew.",
     };
     let einst = einstellungen(&app);
-    let ton = sprechen(&app, rolle, &sprache, text)
+    let wunsch = Wunsch { slot: None, gebraucht_in_s: Some(0), ordner: PROBE_ORDNER };
+    let ton = sprechen(&app, rolle, &sprache, text, wunsch)
         .await
-        .map_err(|e| UiError::new("sprachausgabe", e))?
+        .map_err(|e| UiError::new("sprachausgabe", e.meldung))?
         .ok_or_else(|| UiError::new("keine_stimme", "no voice for this language and provider"))?;
     Ok(Gespielt {
+        id: 0,
         slot: Slot::Boarding,
         rolle,
         zeit: Utc::now().timestamp(),
         teile: vec![Teil { sprache, text: text.to_string(), datei: ton.datei, dauer_s: ton.dauer_s }],
         lautstaerke: einst.lautstaerke,
+        vorschau: true,
+        ergebnis: None,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Überblick für die Seite „Kabine“
+// ---------------------------------------------------------------------------
+
+/// Wo eine Ansage gerade steht — eine Zeile je Ansage, ehrlich statt
+/// „wird vorbereitet“ (Thomas 17.10.2026).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "art", rename_all = "snake_case")]
+pub(crate) enum Stand {
+    /// Ankunftstext wird erst kurz vor der Landung geschrieben; `um` =
+    /// voraussichtlich ab dann (unbekannt ohne erwartete Landung).
+    TextAb { um: Option<i64> },
+    TextWirdGeschrieben,
+    TextFehler { um: i64, meldung: String },
+    TextAufgegeben { meldung: String },
+    TonWirdErzeugt { fertig: usize, von: usize },
+    TonWartet { um: i64, meldung: String },
+    TonAufgegeben { meldung: String },
+    Bereit,
+}
+
+/// Warum eine fällige Ansage noch nicht spielt.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Wartet {
+    /// Eine andere Ansage (oder ein Vorhören) läuft.
+    AndereAnsage,
+    /// Start, Landung, unter 10.000 ft: nur Kommandos und Gong.
+    Ruhephase,
+    /// Der Ton ist noch nicht fertig (Stand nennt den Grund).
+    Ton,
+    /// Simulator angehalten.
+    SimAngehalten,
+}
+
+/// Text einer Sprache für die aufklappbare Zeile.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct TeilAnsicht {
+    sprache: String,
+    text: Option<String>,
+    ton: bool,
+    keine_stimme: bool,
+}
+
+/// Eine noch kommende oder fällige Ansage.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Geplant {
+    slot: Slot,
+    rolle: Rolle,
+    /// Schon fällig (steht in der Warteschlange).
+    faellig: bool,
+    wartet: Option<Wartet>,
+    /// Voraussichtliche Uhrzeit (UTC-Epoch), nur wo es eine Quelle gibt.
+    wann: Option<i64>,
+    stand: Stand,
+    teile: Vec<TeilAnsicht>,
+}
+
+/// Stand eines Text-Auftrags (Abflug, Ankunft) für die Ablaufzeile.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "art", rename_all = "snake_case")]
+pub(crate) enum TeilStand {
+    /// Nichts mehr davon kommt (z. B. Abflug nach dem Wiedereinstieg im Reiseflug).
+    Entfaellt,
+    Offen { um: Option<i64> },
+    Laeuft,
+    Fertig,
+    Fehler { um: i64, meldung: String },
+    Aufgegeben { meldung: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "art", rename_all = "snake_case")]
+pub(crate) enum Freigabe {
+    Ja,
+    Nein,
+    Pruefung,
+    NichtErreichbar { um: i64 },
+    Kontingent,
+}
+
+/// Die Ablaufzeile oben: Freigabe → Texte → Ton → nächste Ansage.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Ablauf {
+    freigabe: Freigabe,
+    abflug: TeilStand,
+    ankunft: TeilStand,
+    ton_fertig: usize,
+    ton_gesamt: usize,
+}
+
+/// „Warum diese Ansagen“: Flugart, Muster, Flugzeit, Sprachen.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Profil {
+    /// linie | bizjet
+    flugart: Option<Flugart>,
+    muster: String,
+    flugzeit_min: Option<u32>,
+    kurzstrecke: bool,
+    flugzeit_bekannt: bool,
+    sprachen_ohne_stimme: Vec<String>,
 }
 
 /// Für die Ansage-Seite: was lief und was wartet im aktuellen Flug.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Ueberblick {
     verlauf: Vec<Gespielt>,
-    wartend: Vec<Slot>,
-    /// Was auf diesem Flug noch kommt (Abflug und Ankunft, in Flugreihenfolge),
-    /// ohne die schon fälligen. Leer, solange der Planer noch nicht lief.
     geplant: Vec<Geplant>,
     sprachen: Vec<String>,
     beta: Option<bool>,
-    /// Warum gerade keine Ansagen kommen; `None` = alles bereit.
+    /// Warum gerade gar keine Ansagen kommen; `None` = es läuft.
     grund: Option<Grund>,
+    ablauf: Ablauf,
+    profil: Profil,
+    /// Läuft gerade eine Ansage oder ein Vorhören (Knöpfe sperren)?
+    belegt: bool,
 }
 
-/// Eine noch kommende Ansage; `bereit` = Ton liegt für alle Sprachen vor.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Geplant {
-    slot: Slot,
-    bereit: bool,
+/// `slots`: die Slots dieses Teils, die auf diesem Flug noch kommen.
+fn teil_stand(lauf: &Lauf, teil: &str, slots: &[Slot], landung: Option<i64>) -> TeilStand {
+    if slots.is_empty() {
+        return TeilStand::Entfaellt;
+    }
+    let fertig = !lauf.sprachen.is_empty()
+        && slots.iter().all(|s| lauf.sprachen.iter().all(|sp| lauf.texte.contains_key(&(*s, sp.clone()))));
+    if fertig {
+        return TeilStand::Fertig;
+    }
+    if let Some(m) = slots.iter().find_map(|s| lauf.texte_fehler.get(s)).cloned() {
+        match lauf.fehlversuche.get(teil) {
+            Some((n, _)) if *n >= 3 => return TeilStand::Aufgegeben { meldung: m },
+            Some((_, ab)) if !lauf.angefragt.contains(teil) => return TeilStand::Fehler { um: *ab, meldung: m },
+            Some(_) => {} // läuft gerade wieder
+            // Abruf gelang, einzelne Slots fehlten auch nach dem zweiten Abruf.
+            None => return TeilStand::Aufgegeben { meldung: m },
+        }
+    }
+    if lauf.angefragt.contains(teil) {
+        return TeilStand::Laeuft;
+    }
+    if teil == "ankunft" {
+        return TeilStand::Offen { um: landung.map(|l| l - ANKUNFT_TEXT_VOR_LANDUNG_MIN * 60) };
+    }
+    TeilStand::Offen { um: None }
 }
 
-/// Noch kommende Ansagen fuer „Als Nächstes“ (Thomas 17.10.2026: Die
-/// vorbereitete Begrüßung stand nirgends, die Seite sah leer aus).
-fn geplant(stats: &FlightStats, wartend: &[Slot]) -> Vec<Geplant> {
-    let Some(planer) = stats.kabinen_planer.as_ref() else { return Vec::new() };
+fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>) -> (Stand, Vec<TeilAnsicht>) {
+    if slot.rolle() == Rolle::Chime {
+        return (Stand::Bereit, Vec::new());
+    }
+    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { lauf.sprachen.clone() };
+    let text_von = |sp: &String| lauf.texte.get(&(slot, sp.clone())).cloned().or_else(|| slot.kommando_text().map(str::to_string));
+    let teile: Vec<TeilAnsicht> = sprachen
+        .iter()
+        .map(|sp| {
+            let k = (slot, sp.clone());
+            TeilAnsicht {
+                sprache: sp.clone(),
+                text: text_von(sp),
+                ton: matches!(lauf.ton.get(&k), Some(Some(_))),
+                keine_stimme: matches!(lauf.ton.get(&k), Some(None)),
+            }
+        })
+        .collect();
+    let hat_text = teile.iter().any(|t| t.text.is_some());
+    if !hat_text {
+        let teil = teil_von(slot).unwrap_or("ereignis");
+        if let Some(m) = lauf.texte_fehler.get(&slot) {
+            return match lauf.fehlversuche.get(teil) {
+                Some((n, _)) if *n >= 3 => (Stand::TextAufgegeben { meldung: m.clone() }, teile),
+                Some((_, ab)) => (Stand::TextFehler { um: *ab, meldung: m.clone() }, teile),
+                // Abruf gelang, nur dieser Slot fehlte (auch nach dem gezielten zweiten Abruf).
+                None => (Stand::TextAufgegeben { meldung: m.clone() }, teile),
+            };
+        }
+        if teil == "ankunft" && !lauf.angefragt.contains("ankunft") {
+            return (Stand::TextAb { um: landung.map(|l| l - ANKUNFT_TEXT_VOR_LANDUNG_MIN * 60) }, teile);
+        }
+        return (Stand::TextWirdGeschrieben, teile);
+    }
+    let keys: Vec<(Slot, String)> = sprachen.iter().filter(|sp| text_von(sp).is_some()).map(|sp| (slot, sp.clone())).collect();
+    if let Some(m) = keys.iter().find_map(|k| lauf.ton_endgueltig.get(k)) {
+        return (Stand::TonAufgegeben { meldung: m.clone() }, teile);
+    }
+    let fertig = keys.iter().filter(|k| lauf.ton.contains_key(*k)).count();
+    if fertig == keys.len() {
+        return (Stand::Bereit, teile);
+    }
+    let fehler = keys
+        .iter()
+        .filter(|k| !lauf.in_arbeit.contains(*k) && !lauf.ton.contains_key(*k))
+        .filter_map(|k| lauf.ton_fehler.get(k))
+        .min_by_key(|f| f.ab);
+    if let Some(f) = fehler {
+        return (Stand::TonWartet { um: f.ab, meldung: f.meldung.clone() }, teile);
+    }
+    (Stand::TonWirdErzeugt { fertig, von: keys.len() }, teile)
+}
+
+/// Fällige und noch kommende Ansagen in Flugreihenfolge: Abflug, Ankunft,
+/// Kommandos und Gong (nur, wenn eingeschaltet).
+fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplant> {
     let lauf = &stats.kabinen_lauf;
-    ABFLUG
+    let wartend = lauf.warteschlange.wartend();
+    let landung = stats.landung_erwartet;
+    let Some(planer) = stats.kabinen_planer.as_ref() else {
+        return Vec::new();
+    };
+    let mut slots: Vec<Slot> = ABFLUG.into_iter().chain(ANKUNFT).collect();
+    if einst.kommandos {
+        slots.extend(KOMMANDOS);
+    }
+    if einst.chimes {
+        slots.extend(GONGS);
+    }
+    let mut liste: Vec<Geplant> = slots
         .into_iter()
-        .chain(ANKUNFT)
-        .filter(|s| planer.kommt_noch(*s, stats.phase) && !wartend.contains(s))
+        .chain(wartend.iter().copied().filter(|s| ist_ereignis(*s)))
+        .filter(|s| wartend.contains(s) || planer.kommt_noch(*s, stats.phase))
         .filter_map(|slot| {
-            // Jede Sprache erledigt; `None` = keine Stimme fuer sie, dieser
-            // Teil entfaellt. Ganz ohne Stimme kommt die Ansage nie
-            // (Codex-QS), sie steht dann nicht in der Liste.
-            let teile: Vec<_> = lauf.sprachen.iter().map(|sp| lauf.ton.get(&(slot, sp.clone()))).collect();
-            let erledigt = !teile.is_empty() && teile.iter().all(Option::is_some);
-            let mit_ton = teile.iter().any(|t| matches!(t, Some(Some(_))));
-            if erledigt && !mit_ton {
+            let (stand, teile) = slot_stand(lauf, slot, landung);
+            // Für keine Sprache eine Stimme: kommt nie, steht nicht in der Liste.
+            if !teile.is_empty() && teile.iter().all(|t| t.keine_stimme) {
                 return None;
             }
-            Some(Geplant { slot, bereit: erledigt })
+            let faellig = wartend.contains(&slot);
+            let wartet = if !faellig {
+                None
+            } else if lauf.sim_angehalten {
+                Some(Wartet::SimAngehalten)
+            } else if lauf.warteschlange.belegt(jetzt) {
+                Some(Wartet::AndereAnsage)
+            } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() {
+                Some(Wartet::Ruhephase)
+            } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.sprachen, slot) {
+                Some(Wartet::Ton)
+            } else {
+                None // spielt im nächsten Takt
+            };
+            Some(Geplant { slot, rolle: slot.rolle(), faellig, wartet, wann: planer.zeitpunkt(slot, landung), stand, teile })
         })
-        .collect()
+        .collect();
+    // Fällige zuerst, dann in Flugreihenfolge.
+    liste.sort_by_key(|g| (!g.faellig, g.slot));
+    liste.dedup_by_key(|g| g.slot);
+    liste
 }
 
 /// Warum keine Ansagen kommen — die Seite zeigt es oben statt einer leeren
-/// Seite (Thomas 17.10.2026). Bewusst nicht ganz die Reihenfolge von
-/// [`takt`]: Ein Frachtflug wird vor der Beta-Pruefung genannt, weil er
-/// endgueltig ist (auch nach der Freischaltung kaeme nichts). Pause/Slew
-/// fehlen absichtlich — dass im angehaltenen Sim nichts spricht, sieht der
-/// Pilot selbst.
+/// Seite (Thomas 17.10.2026). Nur, was ALLE Ansagen sperrt; was eine
+/// einzelne Ansage aufhält, steht in ihrer Zeile ([`Stand`]).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "grund", content = "detail", rename_all = "snake_case")]
 pub(crate) enum Grund {
@@ -913,9 +1544,12 @@ pub(crate) enum Grund {
     KeinePax,
     KeinePassagiere,
     BetaPruefung,
+    /// Status nicht erreichbar; nächster Versuch um (UTC-Epoch).
+    BetaNichtErreichbar(i64),
     NichtFreigeschaltet,
-    TexteFehlen(String),
-    TonFehlt(String),
+    /// Freigeschaltet, Monatsdeckel erreicht: Vorhandenes geht, Neues nicht.
+    Kontingent,
+    SimAngehalten,
 }
 
 pub(crate) fn grund(an: bool, stats: &FlightStats) -> Option<Grund> {
@@ -929,21 +1563,22 @@ pub(crate) fn grund(an: bool, stats: &FlightStats) -> Option<Grund> {
     if cabin_announcements::flugart::einordnen(stats.flight_type.as_deref(), Some(1), "") == Flugart::Aus {
         return Some(Grund::Fracht);
     }
+    let lauf = &stats.kabinen_lauf;
+    match lauf.beta {
+        Beta::Nein => return Some(Grund::NichtFreigeschaltet),
+        Beta::Unbekannt if lauf.beta_netzfehler => return Some(Grund::BetaNichtErreichbar(lauf.beta_naechste_pruefung)),
+        Beta::Unbekannt | Beta::Angefragt => return Some(Grund::BetaPruefung),
+        Beta::Ja => {}
+    }
     match stats.pax_count {
         None => return Some(Grund::KeinePax),
         Some(n) if n <= 0 => return Some(Grund::KeinePassagiere),
         Some(_) => {}
     }
-    let lauf = &stats.kabinen_lauf;
-    match lauf.beta {
-        Beta::Nein => return Some(Grund::NichtFreigeschaltet),
-        Beta::Unbekannt | Beta::Angefragt => return Some(Grund::BetaPruefung),
-        Beta::Ja => {}
+    if lauf.sim_angehalten {
+        return Some(Grund::SimAngehalten);
     }
-    if let Some(f) = lauf.texte_fehler.values().next() {
-        return Some(Grund::TexteFehlen(f.clone()));
-    }
-    lauf.ton_fehler_text.values().next().cloned().map(Grund::TonFehlt)
+    lauf.kontingent_erschoepft.then_some(Grund::Kontingent)
 }
 
 /// Fehlertext fuer die Anzeige: eine Zeile, hoechstens 160 Zeichen.
@@ -952,24 +1587,72 @@ fn kurz(text: &str) -> String {
     zeile.chars().take(160).collect()
 }
 
-#[tauri::command]
-pub(crate) fn kabinen_ueberblick(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ueberblick> {
-    let flight = state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone)?;
-    let stats = flight.stats.lock().expect("flight stats");
+fn ueberblick_bauen(stats: &FlightStats, einst: &Einstellungen, flug: &cabin_announcements::Flugdaten, muster: &str, jetzt: i64) -> Ueberblick {
     let lauf = &stats.kabinen_lauf;
+    let geplant = geplant(stats, einst, jetzt);
+    let landung = stats.landung_erwartet;
+    let planer = stats.kabinen_planer.as_ref();
     let wartend = lauf.warteschlange.wartend();
-    Some(Ueberblick {
-        grund: grund(einstellungen(&app).an, &stats),
-        verlauf: lauf.verlauf.clone(),
-        geplant: geplant(&stats, &wartend),
-        wartend,
+    let kommend = |slots: &[Slot]| -> Vec<Slot> {
+        slots
+            .iter()
+            .copied()
+            .filter(|s| wartend.contains(s) || planer.is_some_and(|p| p.kommt_noch(*s, stats.phase)))
+            .collect()
+    };
+    let freigabe = match lauf.beta {
+        Beta::Ja if lauf.kontingent_erschoepft => Freigabe::Kontingent,
+        Beta::Ja => Freigabe::Ja,
+        Beta::Nein => Freigabe::Nein,
+        Beta::Unbekannt if lauf.beta_netzfehler => Freigabe::NichtErreichbar { um: lauf.beta_naechste_pruefung },
+        _ => Freigabe::Pruefung,
+    };
+    let mit_ton: Vec<&Geplant> = geplant.iter().filter(|g| g.rolle != Rolle::Chime).collect();
+    let ablauf = Ablauf {
+        freigabe,
+        abflug: teil_stand(lauf, "abflug", &kommend(&ABFLUG), landung),
+        ankunft: teil_stand(lauf, "ankunft", &kommend(&ANKUNFT), landung),
+        ton_fertig: mit_ton.iter().filter(|g| g.stand == Stand::Bereit).count(),
+        ton_gesamt: mit_ton.len(),
+    };
+    let ohne_stimme: Vec<String> = lauf
+        .sprachen
+        .iter()
+        .filter(|sp| lauf.ton.iter().any(|((_, s), t)| s == *sp && t.is_none()))
+        .cloned()
+        .collect();
+    let flugdaten = stats.kabinen_planer.as_ref();
+    Ueberblick {
+        grund: grund(einst.an, stats),
+        verlauf: lauf.verlauf.iter().filter(|g| !g.vorschau).cloned().collect(),
+        geplant,
         sprachen: lauf.sprachen.clone(),
         beta: match lauf.beta {
             Beta::Ja => Some(true),
             Beta::Nein => Some(false),
             _ => None,
         },
-    })
+        ablauf,
+        profil: Profil {
+            flugart: flug.flugart,
+            muster: muster.to_string(),
+            flugzeit_min: flug.geplante_flugzeit_min,
+            kurzstrecke: flugdaten.is_some_and(|p| p.ist_kurzstrecke()),
+            flugzeit_bekannt: flugdaten.is_some_and(|p| p.flugzeit_bekannt()),
+            sprachen_ohne_stimme: ohne_stimme,
+        },
+        belegt: lauf.warteschlange.belegt(jetzt),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn kabinen_ueberblick(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ueberblick> {
+    let flight = aktiver_flug(&state)?;
+    let einst = einstellungen(&app);
+    let mut stats = flight.stats.lock().expect("flight stats");
+    verlauf_laden(&app, &flight, &mut stats.kabinen_lauf);
+    let flug = crate::kabinen_flugdaten(&stats, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao);
+    Some(ueberblick_bauen(&stats, &einst, &flug, &flight.aircraft_icao, Utc::now().timestamp()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1278,39 +1961,67 @@ pub(crate) mod piper {
         pub ersatz: bool,
     }
 
-    pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Option<ServerTon>, String> {
-        let token = crate::live_zugang::pilot_token().ok_or("noch kein Live-Zugang (nicht provisioniert)")?;
+    pub(crate) async fn sprechen(
+        stimme: &str,
+        text: &str,
+        gebraucht_in_s: Option<i64>,
+        teil: Option<&str>,
+        slot: Option<String>,
+    ) -> Result<Option<ServerTon>, super::TonFehlerAntwort> {
+        use super::TonFehlerAntwort as F;
+        let token = crate::live_zugang::pilot_token().ok_or_else(|| F::spaeter("noch kein Live-Zugang (nicht provisioniert)", Some(120)))?;
+        // Wofuer der Ton gebraucht wird: Der Server arbeitet danach ab
+        // (faellig vor Vorrat, Abflug vor Ankunft, reihum je Pilot).
+        let mut koerper = serde_json::json!({ "stimme": stimme, "text": text });
+        if let Some(s) = gebraucht_in_s {
+            koerper["gebraucht_in_s"] = serde_json::json!(s);
+        }
+        if let Some(t) = teil {
+            koerper["teil"] = serde_json::json!(t);
+        }
+        if let Some(s) = slot {
+            koerper["slot"] = serde_json::json!(s);
+        }
         let antwort = reqwest::Client::builder()
             // Lange Ansagen mit Kokoro rechnen bis ~2 min, dazu die
             // Warteschlange des Servers.
             .timeout(std::time::Duration::from_secs(300))
             .build()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| F::spaeter(e.to_string(), None))?
             .post(format!("{}/api/kabine/ton", crate::live_zugang::LIVE_BASIS))
             .bearer_auth(token)
             .header("User-Agent", format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")))
-            .json(&serde_json::json!({ "stimme": stimme, "text": text }))
+            .json(&koerper)
             .send()
             .await
-            .map_err(|e| format!("live.kant.ovh nicht erreichbar: {e}"))?;
+            .map_err(|e| F::spaeter(format!("live.kant.ovh nicht erreichbar: {e}"), None))?;
+        let status = antwort.status();
         // Nur die ausdrueckliche Antwort „keine Stimme fuer diese Sprache“ ist
         // endgueltig; jeder andere 404 (Route fehlt, Proxy) ist vorlaeufig.
-        if antwort.status() == reqwest::StatusCode::NOT_FOUND {
+        if status == reqwest::StatusCode::NOT_FOUND {
             let koerper = antwort.text().await.unwrap_or_default();
-            return if keine_stimme(&koerper) {
-                Ok(None)
-            } else {
-                Err("Piper-Server antwortet 404".into())
-            };
+            return if keine_stimme(&koerper) { Ok(None) } else { Err(F::spaeter("Piper-Server antwortet 404", Some(120))) };
         }
-        if !antwort.status().is_success() {
-            return Err(format!("Piper-Server antwortet {}", antwort.status()));
+        if !status.is_success() {
+            let warte = warte_s(antwort.headers().get("retry-after").and_then(|v| v.to_str().ok()));
+            let meldung = format!("Piper-Server antwortet {status}");
+            // 400: Diese Anfrage geht nie (Text zu lang, Stimme unbekannt).
+            return Err(if status == reqwest::StatusCode::BAD_REQUEST {
+                F { meldung, warte_s: 0, endgueltig: true }
+            } else {
+                F::spaeter(meldung, warte)
+            });
         }
         let kopf = |n: &str| antwort.headers().get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
         let gewaehlt = kopf("x-stimme");
         let ersatz = kopf("x-ersatz").is_some();
-        let wav = antwort.bytes().await.map_err(|e| e.to_string())?.to_vec();
+        let wav = antwort.bytes().await.map_err(|e| F::spaeter(e.to_string(), None))?.to_vec();
         Ok(Some(ServerTon { wav, stimme: gewaehlt, ersatz }))
+    }
+
+    /// `Retry-After` in Sekunden (die Datumsform schickt der Server nicht).
+    pub(crate) fn warte_s(kopf: Option<&str>) -> Option<u64> {
+        kopf.and_then(|k| k.trim().parse::<u64>().ok())
     }
 }
 
@@ -1415,22 +2126,30 @@ mod tests {
 
 
     #[test]
-    fn fehlgeschlagener_ton_wird_spaeter_neu_versucht() {
+    fn ton_wird_wiederholt_bis_er_kommt_nur_400_ist_endgueltig() {
         let mut l = Lauf::default();
         let k = (Slot::Boarding, "de-DE".to_string());
         assert!(ton_noetig(&l, &k, 0));
         l.in_arbeit.insert(k.clone());
         assert!(!ton_noetig(&l, &k, 0), "läuft schon");
         l.in_arbeit.remove(&k);
-        l.ton_fehler.insert(k.clone(), (1, 60));
-        assert!(!ton_noetig(&l, &k, 30), "noch nicht wieder");
-        assert!(ton_noetig(&l, &k, 60), "nach einer Minute erneut");
-        l.ton_fehler.insert(k.clone(), (5, 0));
-        assert!(!ton_noetig(&l, &k, 999), "nach fünf Fehlern Schluss");
+        let fehler = |versuche, ab| TonFehler { versuche, ab, meldung: "503".into() };
+        l.ton_fehler.insert(k.clone(), fehler(1, 60));
+        assert!(!ton_noetig(&l, &k, 30), "Retry-After abwarten");
+        assert!(ton_noetig(&l, &k, 60));
+        // Früher war nach fünf Fehlern Schluss — die Ansage kam dann nie.
+        l.ton_fehler.insert(k.clone(), fehler(25, 0));
+        assert!(ton_noetig(&l, &k, 999), "keine feste Versuchszahl mehr");
+        l.ton_endgueltig.insert(k.clone(), "400".into());
+        assert!(!ton_noetig(&l, &k, 999), "400 ist endgültig");
         // Keine Stimme für die Sprache ist endgültig, kein Fehler.
-        l.ton_fehler.clear();
-        l.ton.insert(k.clone(), None);
-        assert!(!ton_noetig(&l, &k, 999));
+        let k2 = (Slot::Sicherheit, "lv-LV".to_string());
+        l.ton.insert(k2.clone(), None);
+        assert!(!ton_noetig(&l, &k2, 999));
+        // Retry-After des Servers.
+        assert_eq!(piper::warte_s(Some("20")), Some(20));
+        assert_eq!(piper::warte_s(Some("Wed, 21 Oct 2026 07:28:00 GMT")), None);
+        assert_eq!(piper::warte_s(None), None);
     }
 
     /// PCM-16-WAV mit echten Proben (Kanaele verschachtelt).
@@ -1524,82 +2243,261 @@ mod tests {
         )
     }
 
+    fn ton() -> Option<Ton> {
+        Some(Ton { datei: "f/x.wav".into(), dauer_s: 1.0 })
+    }
+
+    fn einst() -> Einstellungen {
+        Einstellungen { an: true, ..Einstellungen::default() }
+    }
+
+    fn zeile(st: &FlightStats, slot: Slot) -> Option<Geplant> {
+        geplant(st, &einst(), 0).into_iter().find(|g| g.slot == slot)
+    }
+
+    /// Thomas 17.10.2026: „die anderen stehen immer noch auf wird
+    /// vorbereitet“ — jede Zeile sagt, was wirklich los ist.
     #[test]
-    fn geplant_zeigt_was_noch_kommt() {
+    fn jede_ansage_sagt_ehrlich_wo_sie_steht() {
         let mut st = FlightStats::new();
-        assert!(geplant(&st, &[]).is_empty(), "vor dem ersten Takt nichts");
-
-        st.kabinen_planer = Some(planer_mit(Flugart::Linie, crate::FlightPhase::Boarding));
+        assert!(geplant(&st, &einst(), 0).is_empty(), "vor dem ersten Takt nichts");
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten {
+                flugart: Some(Flugart::Linie),
+                geplante_flugzeit_min: Some(120),
+                abheben_epoch: Some(0),
+                ..Default::default()
+            },
+            crate::FlightPhase::Cruise,
+        ));
+        st.phase = crate::FlightPhase::Cruise;
+        st.landung_erwartet = Some(10_000);
         st.kabinen_lauf.sprachen = vec!["fr-FR".into(), "de-DE".into()];
-        let alle = geplant(&st, &[]);
-        assert_eq!(alle.len(), 12, "Abflug und Ankunft der Linie");
-        assert_eq!(alle[0].slot, Slot::Boarding, "Flugreihenfolge");
-        assert!(alle.iter().all(|g| !g.bereit));
 
-        // Ton fuer beide Sprachen der Begruessung: nur sie ist bereit.
-        let ton = || Some(Ton { datei: "x.wav".into(), dauer_s: 1.0 });
-        st.kabinen_lauf.ton.insert((Slot::KapitaenBegruessung, "fr-FR".into()), ton());
-        assert!(!geplant(&st, &[]).iter().any(|g| g.bereit), "eine Sprache fehlt noch");
-        st.kabinen_lauf.ton.insert((Slot::KapitaenBegruessung, "de-DE".into()), None);
-        let bereit: Vec<_> = geplant(&st, &[]).into_iter().filter(|g| g.bereit).map(|g| g.slot).collect();
-        assert_eq!(bereit, vec![Slot::KapitaenBegruessung], "keine Stimme fuer eine Sprache zaehlt als erledigt");
-        // Fuer keine Sprache eine Stimme: kommt nie, steht nicht in der Liste.
-        st.kabinen_lauf.ton.insert((Slot::Sicherheit, "fr-FR".into()), None);
-        st.kabinen_lauf.ton.insert((Slot::Sicherheit, "de-DE".into()), None);
-        assert!(!geplant(&st, &[]).iter().any(|g| g.slot == Slot::Sicherheit));
-        // Im Sinkflug ist der Abflug vorbei, auch ohne Meldung des Planers.
-        st.phase = crate::FlightPhase::Descent;
-        let slots: Vec<_> = geplant(&st, &[]).into_iter().map(|g| g.slot).collect();
-        assert_eq!(slots.first(), Some(&Slot::KapitaenSinkflug));
-        st.phase = crate::FlightPhase::Boarding;
+        // Ankunft noch nicht angefragt: „Text ab ca. …“ (Landung − 45 min), nicht „wird vorbereitet“.
+        assert_eq!(zeile(&st, Slot::KapitaenSinkflug).unwrap().stand, Stand::TextAb { um: Some(10_000 - 45 * 60) });
+        st.kabinen_lauf.angefragt.insert("ankunft".into());
+        assert_eq!(zeile(&st, Slot::KapitaenSinkflug).unwrap().stand, Stand::TextWirdGeschrieben);
 
-        // Faellige stehen in der Warteschlange, nicht doppelt.
-        assert!(!geplant(&st, &[Slot::Boarding]).iter().any(|g| g.slot == Slot::Boarding));
+        // Text da, Ton für eine von zwei Sprachen.
+        let r50 = Slot::Reiseflug50;
+        for sp in ["fr-FR", "de-DE"] {
+            st.kabinen_lauf.texte.insert((r50, sp.into()), format!("Text {sp}"));
+        }
+        st.kabinen_lauf.ton.insert((r50, "fr-FR".into()), ton());
+        let z = zeile(&st, r50).unwrap();
+        assert_eq!(z.stand, Stand::TonWirdErzeugt { fertig: 1, von: 2 });
+        assert_eq!(z.teile.len(), 2, "beide Sprachen aufklappbar");
+        assert_eq!(z.teile[1].text.as_deref(), Some("Text de-DE"));
+        assert!(z.wann.is_some(), "Reiseflug hat eine Uhrzeit");
+        // Server ausgelastet: neuer Versuch um …
+        st.kabinen_lauf.ton_fehler.insert((r50, "de-DE".into()), TonFehler { versuche: 2, ab: 777, meldung: "503".into() });
+        assert_eq!(zeile(&st, r50).unwrap().stand, Stand::TonWartet { um: 777, meldung: "503".into() });
+        // Fertig.
+        st.kabinen_lauf.ton.insert((r50, "de-DE".into()), ton());
+        assert_eq!(zeile(&st, r50).unwrap().stand, Stand::Bereit);
+        // Keine Stimme für eine Sprache: trotzdem bereit, und so markiert.
+        let r80 = Slot::Reiseflug80;
+        for sp in ["fr-FR", "de-DE"] {
+            st.kabinen_lauf.texte.insert((r80, sp.into()), "x".into());
+        }
+        st.kabinen_lauf.ton.insert((r80, "fr-FR".into()), None);
+        st.kabinen_lauf.ton.insert((r80, "de-DE".into()), ton());
+        let z = zeile(&st, r80).unwrap();
+        assert_eq!(z.stand, Stand::Bereit);
+        assert!(z.teile[0].keine_stimme);
+        // Für keine Sprache eine Stimme: kommt nie, steht nicht in der Liste.
+        st.kabinen_lauf.ton.insert((r80, "de-DE".into()), None);
+        assert!(zeile(&st, r80).is_none());
+        // 400 vom Server: aufgegeben, Grund steht da.
+        st.kabinen_lauf.texte.insert((Slot::Reiseflug25, "fr-FR".into()), "x".into());
+        st.kabinen_lauf.ton_endgueltig.insert((Slot::Reiseflug25, "fr-FR".into()), "400".into());
+        assert_eq!(zeile(&st, Slot::Reiseflug25).unwrap().stand, Stand::TonAufgegeben { meldung: "400".into() });
 
+        // Gong und Kommandos stehen da, wenn eingeschaltet; Gong ist immer „bereit“.
+        assert_eq!(zeile(&st, Slot::Chime10000Sinkflug).unwrap().stand, Stand::Bereit);
+        assert!(zeile(&st, Slot::KommandoPlaetzeLandung).is_some());
+        let ohne = Einstellungen { chimes: false, kommandos: false, ..einst() };
+        assert!(!geplant(&st, &ohne, 0).iter().any(|g| matches!(g.rolle, Rolle::Chime | Rolle::Kommando)));
+
+        // Im Reiseflug ist der Abflug am Boden vorbei.
+        assert!(zeile(&st, Slot::Boarding).is_none());
+        assert!(zeile(&st, Slot::Chime10000Steigflug).is_none());
+    }
+
+    #[test]
+    fn faellige_ansage_nennt_den_grund_des_wartens() {
+        let mut st = FlightStats::new();
+        st.kabinen_planer = Some(planer_mit(Flugart::Linie, crate::FlightPhase::Cruise));
+        st.phase = crate::FlightPhase::Cruise;
+        st.kabinen_lauf.sprachen = vec!["de-DE".into()];
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        let z = zeile(&st, Slot::Reiseflug50).unwrap();
+        assert!(z.faellig);
+        assert_eq!(z.wartet, Some(Wartet::Ton), "noch kein Text/Ton");
+        st.kabinen_lauf.texte.insert((Slot::Reiseflug50, "de-DE".into()), "x".into());
+        st.kabinen_lauf.ton.insert((Slot::Reiseflug50, "de-DE".into()), ton());
+        assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, None, "spielt im nächsten Takt");
+        st.kabinen_lauf.ruhephase = true;
+        assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::Ruhephase));
+        st.kabinen_lauf.warteschlange.spielt_bis(100);
+        assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::AndereAnsage));
+        st.kabinen_lauf.sim_angehalten = true;
+        assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::SimAngehalten));
+        // Fällige stehen oben.
+        assert_eq!(geplant(&st, &einst(), 0)[0].slot, Slot::Reiseflug50);
+    }
+
+    /// Codex-QS beta.5: Fehlt der Text einer Sprache noch (Nachholung
+    /// läuft), spielt die Ansage nicht einsprachig; fehlt er endgültig, mit
+    /// den übrigen Sprachen.
+    #[test]
+    fn ansage_erst_bereit_wenn_jede_sprache_da_oder_endgueltig_fehlt() {
+        let mut l = Lauf::default();
+        let sp = vec!["fr-FR".to_string(), "de-DE".to_string()];
+        let s = Slot::Reiseflug50;
+        l.texte.insert((s, "fr-FR".into()), "x".into());
+        l.ton.insert((s, "fr-FR".into()), ton());
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &sp, s), "Deutsch wird noch nachgeholt");
+        l.texte_fehler.insert(s, "kein Text".into());
+        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &sp, s), "Deutsch fehlt endgültig");
+        l.texte_fehler.clear();
+        l.texte.insert((s, "de-DE".into()), "y".into());
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &sp, s), "Ton fehlt noch");
+        l.ton.insert((s, "de-DE".into()), None);
+        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &sp, s), "keine Stimme zählt als erledigt");
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &sp, Slot::Reiseflug80), "ohne Text nie");
+    }
+
+    #[test]
+    fn bizjet_nur_kapitaen_und_kein_gong() {
+        let mut st = FlightStats::new();
         st.kabinen_planer = Some(planer_mit(Flugart::Bizjet, crate::FlightPhase::Boarding));
-        let slots: Vec<_> = geplant(&st, &[]).into_iter().map(|g| g.slot).collect();
-        assert_eq!(slots, vec![Slot::KapitaenBegruessung, Slot::KapitaenSinkflug], "nur der Kapitaen");
+        st.kabinen_lauf.sprachen = vec!["de-DE".into()];
+        let slots: Vec<_> = geplant(&st, &einst(), 0).into_iter().map(|g| g.slot).collect();
+        assert_eq!(slots, vec![Slot::KapitaenBegruessung, Slot::KapitaenSinkflug], "nur der Kapitän");
+    }
+
+    #[test]
+    fn text_fehler_aufgegeben_und_verfall() {
+        let mut st = FlightStats::new();
+        st.kabinen_planer = Some(planer_mit(Flugart::Linie, crate::FlightPhase::Boarding));
+        st.kabinen_lauf.sprachen = vec!["de-DE".into()];
+        let l = &mut st.kabinen_lauf;
+        l.texte_fehler.insert(Slot::Boarding, "api 503".into());
+        l.fehlversuche.insert("abflug".into(), (1, 500));
+        assert_eq!(zeile(&st, Slot::Boarding).unwrap().stand, Stand::TextFehler { um: 500, meldung: "api 503".into() });
+        st.kabinen_lauf.fehlversuche.insert("abflug".into(), (3, 500));
+        assert_eq!(zeile(&st, Slot::Boarding).unwrap().stand, Stand::TextAufgegeben { meldung: "api 503".into() });
+        assert_eq!(
+            teil_stand(&st.kabinen_lauf, "abflug", &[Slot::Boarding], None),
+            TeilStand::Aufgegeben { meldung: "api 503".into() }
+        );
+        // „Erneut versuchen“ (ohne Flug: Logik direkt) gibt frei.
+        // Verfallen: Fehler weg, sie bestimmen nichts mehr.
+        st.kabinen_lauf.ton_fehler.insert((Slot::Boarding, "de-DE".into()), TonFehler { versuche: 1, ab: 0, meldung: "x".into() });
+        verfallen_aufraeumen(&mut st.kabinen_lauf, Slot::Boarding);
+        assert!(st.kabinen_lauf.texte_fehler.is_empty() && st.kabinen_lauf.ton_fehler.is_empty());
+        // Ankunft noch nicht angefragt: offen ab Landung − 45 min; kommt nichts mehr: entfällt.
+        assert_eq!(teil_stand(&st.kabinen_lauf, "ankunft", &ANKUNFT, Some(9_000)), TeilStand::Offen { um: Some(9_000 - 2_700) });
+        assert_eq!(teil_stand(&st.kabinen_lauf, "abflug", &[], None), TeilStand::Entfaellt);
+    }
+
+    #[test]
+    fn bisher_erst_nach_rueckmeldung_und_vorhoeren_zaehlt_nicht() {
+        let mut l = Lauf::default();
+        l.sprachen = vec!["de-DE".into()];
+        let k = (Slot::Reiseflug50, "de-DE".to_string());
+        // Noch kein Ton: nichts zum Anhören.
+        assert!(anhoeren(&mut l, Slot::Reiseflug50, None, 0, 0.8).is_err());
+        l.texte.insert(k.clone(), "Halbzeit".into());
+        l.ton.insert(k.clone(), Some(Ton { datei: "f/a.wav".into(), dauer_s: 4.0 }));
+        let v = anhoeren(&mut l, Slot::Reiseflug50, None, 0, 0.8).unwrap();
+        assert!(v.vorschau && v.teile[0].text == "Halbzeit");
+        assert!(l.warteschlange.belegt(3), "während des Anhörens spielt nichts anderes");
+        assert!(anhoeren(&mut l, Slot::Reiseflug50, None, 1, 0.8).is_err(), "gesperrt, solange etwas läuft");
+        assert!(!wiedergabe_ende(&mut l, v.id, "gespielt"), "Vorhören kommt nicht in den Verlauf");
+        assert!(!l.warteschlange.belegt(1) && l.verlauf.is_empty());
+        // Echte Ansage: erst nach der Rückmeldung „gespielt“.
+        l.verlauf.push(Gespielt { id: 7, slot: Slot::Reiseflug50, rolle: Rolle::Kapitaen, zeit: 0, teile: v.teile.clone(), lautstaerke: 0.8, vorschau: false, ergebnis: None });
+        l.warteschlange.spielt_bis(50);
+        assert!(wiedergabe_ende(&mut l, 7, "abgebrochen"));
+        assert_eq!(l.verlauf[0].ergebnis.as_deref(), Some("abgebrochen"));
+        assert!(!l.warteschlange.belegt(1), "die nächste darf sofort");
+        assert!(!wiedergabe_ende(&mut l, 7, "gespielt"), "nur einmal");
+        // Nochmal aus „Bisher“, auch wenn der Ton nicht mehr im Lauf steht.
+        l.ton.clear();
+        let n = anhoeren(&mut l, Slot::Reiseflug50, Some(7), 100, 0.8).unwrap();
+        assert_eq!(n.teile[0].datei, "f/a.wav");
+    }
+
+    #[test]
+    fn ton_reihenfolge_faellig_zuerst_dann_flugreihenfolge_nur_was_noch_kommt() {
+        let mut st = FlightStats::new();
+        st.kabinen_planer = Some(planer_mit(Flugart::Linie, crate::FlightPhase::Cruise));
+        st.phase = crate::FlightPhase::Cruise;
+        st.kabinen_lauf.sprachen = vec!["fr-FR".into(), "de-DE".into()];
+        for s in [Slot::Boarding, Slot::Reiseflug25, Slot::Reiseflug80, Slot::KapitaenSinkflug] {
+            for sp in ["de-DE", "fr-FR"] {
+                st.kabinen_lauf.texte.insert((s, sp.into()), "x".into());
+            }
+        }
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        let reihe: Vec<(Slot, String)> = ton_kandidaten(&st, false, Flugart::Linie, 0).into_iter().map(|(s, sp, _)| (s, sp)).collect();
+        assert_eq!(
+            reihe,
+            vec![
+                (Slot::Reiseflug80, "fr-FR".into()),
+                (Slot::Reiseflug80, "de-DE".into()),
+                (Slot::Reiseflug25, "fr-FR".into()),
+                (Slot::Reiseflug25, "de-DE".into()),
+                (Slot::KapitaenSinkflug, "fr-FR".into()),
+                (Slot::KapitaenSinkflug, "de-DE".into()),
+            ],
+            "Boarding ist vorbei (Wiedereinstieg im Reiseflug): kein Ton mehr dafür"
+        );
+        // Kommandos reihen sich in Flugreihenfolge ein, Englisch.
+        let mit: Vec<Slot> = ton_kandidaten(&st, true, Flugart::Linie, 0).into_iter().map(|(s, _, _)| s).collect();
+        assert!(mit.contains(&Slot::KommandoLandungVorbereiten) && !mit.contains(&Slot::KommandoStart));
     }
 
     #[test]
     fn grund_nennt_die_erste_sperre() {
         let mut st = FlightStats::new();
         assert_eq!(grund(false, &st), Some(Grund::Aus));
-        assert_eq!(grund(true, &st), Some(Grund::KeinePax), "Fall Thomas: Wechsel mitten im Flug");
         st.flight_type = Some("F".into());
         assert_eq!(grund(true, &st), Some(Grund::Fracht));
         st.flight_type = Some("J".into());
-        st.pax_count = Some(0);
-        assert_eq!(grund(true, &st), Some(Grund::KeinePassagiere));
-        st.pax_count = Some(150);
+        // Die Freischaltung kommt jetzt vor der Passagierzahl (früh wissen).
         assert_eq!(grund(true, &st), Some(Grund::BetaPruefung));
+        st.kabinen_lauf.beta_netzfehler = true;
+        st.kabinen_lauf.beta_naechste_pruefung = 1234;
+        assert_eq!(grund(true, &st), Some(Grund::BetaNichtErreichbar(1234)));
         st.kabinen_lauf.beta = Beta::Nein;
         assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet));
         st.kabinen_lauf.beta = Beta::Ja;
+        assert_eq!(grund(true, &st), Some(Grund::KeinePax), "Fall Thomas: Wechsel mitten im Flug");
+        st.pax_count = Some(0);
+        assert_eq!(grund(true, &st), Some(Grund::KeinePassagiere));
+        st.pax_count = Some(150);
         assert_eq!(grund(true, &st), None, "alles bereit");
-        st.kabinen_lauf.texte_fehler.insert(Slot::KapitaenSinkflug, kurz("api 402: budget\nzweite Zeile"));
-        assert_eq!(grund(true, &st), Some(Grund::TexteFehlen("api 402: budget".into())));
-        // Ein anderer Slot gelingt: Der fehlende bleibt genannt (Codex-QS).
-        st.kabinen_lauf.texte_fehler.remove(&Slot::Boarding);
-        st.kabinen_lauf.texte.insert((Slot::Boarding, "de-DE".into()), "Hallo".into());
-        assert_eq!(grund(true, &st), Some(Grund::TexteFehlen("api 402: budget".into())));
-        st.kabinen_lauf.texte_fehler.remove(&Slot::KapitaenSinkflug);
-        assert_eq!(grund(true, &st), None);
-        let k = (Slot::Sicherheit, "en-GB".to_string());
-        st.kabinen_lauf.ton_fehler_text.insert(k.clone(), "ausgelastet".into());
-        st.kabinen_lauf.ton_fehler_text.remove(&(Slot::Boarding, "de-DE".to_string()));
-        assert_eq!(grund(true, &st), Some(Grund::TonFehlt("ausgelastet".into())));
-        st.kabinen_lauf.ton_fehler_text.remove(&k);
-        assert_eq!(grund(true, &st), None);
-        st.kabinen_lauf.ton_fehler_text.insert(k, "ausgelastet".into());
+        st.kabinen_lauf.sim_angehalten = true;
+        assert_eq!(grund(true, &st), Some(Grund::SimAngehalten));
+        st.kabinen_lauf.sim_angehalten = false;
+        st.kabinen_lauf.kontingent_erschoepft = true;
+        assert_eq!(grund(true, &st), Some(Grund::Kontingent));
         st.replay_verdacht = true;
         assert_eq!(grund(true, &st), Some(Grund::Replay));
         // So kommt es in der Oberflaeche an.
         assert_eq!(
-            serde_json::to_value(Grund::TonFehlt("x".into())).unwrap(),
-            serde_json::json!({ "grund": "ton_fehlt", "detail": "x" })
+            serde_json::to_value(Grund::BetaNichtErreichbar(5)).unwrap(),
+            serde_json::json!({ "grund": "beta_nicht_erreichbar", "detail": 5 })
         );
         assert_eq!(serde_json::to_value(Grund::KeinePax).unwrap(), serde_json::json!({ "grund": "keine_pax" }));
+        assert_eq!(
+            serde_json::to_value(Stand::TonWartet { um: 1, meldung: "m".into() }).unwrap(),
+            serde_json::json!({ "art": "ton_wartet", "um": 1, "meldung": "m" })
+        );
     }
 
     #[test]
@@ -1614,19 +2512,59 @@ mod tests {
     }
 
 
+    /// Thomas 17.10.2026: „Bleiben die auf dem Rechner? Werden die
+    /// gelöscht nach dem Flug?“ — Töne nur für den laufenden Flug.
     #[test]
-    fn alte_tondateien_werden_aufgeraeumt() {
+    fn toene_bleiben_nur_fuer_den_laufenden_flug() {
         let d = std::env::temp_dir().join(format!("kabine-aufraeumen-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        for n in ["piper-1.wav", "kokoro-2.wav", "azure-3.wav", "server-4.wav", "ersatz-5.wav"] {
-            std::fs::write(d.join(n), b"x").unwrap();
-        }
-        altes_aufraeumen(&d);
-        let mut rest: Vec<String> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
-        rest.sort();
-        // Frischer Ersatz bleibt (aelter als ein Tag waere weg), server- bleibt.
-        assert_eq!(rest, ["ersatz-5.wav", "server-4.wav"]);
         let _ = std::fs::remove_dir_all(&d);
+        for (ordner, datei) in [("ALT1", "a.wav"), ("ALT2", "b.wav"), ("NEU", "c.wav"), (PROBE_ORDNER, "p.wav")] {
+            std::fs::create_dir_all(d.join(ordner)).unwrap();
+            std::fs::write(d.join(ordner).join(datei), b"x").unwrap();
+        }
+        // Lose Dateien der früheren Ablage (bis beta.4).
+        std::fs::write(d.join("server-1.wav"), b"x").unwrap();
+        std::fs::write(d.join("piper-2.wav"), b"x").unwrap();
+        let namen = |p: &Path| {
+            let mut v: Vec<String> = std::fs::read_dir(p).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+            v.sort();
+            v
+        };
+        // App-Start: lose Dateien weg; Flug-Ordner bleiben (einer davon
+        // kann der gleich fortgesetzte Flug sein), frische Proben auch.
+        altes_aufraeumen(&d);
+        assert_eq!(namen(&d), ["ALT1", "ALT2", "NEU", "probe"]);
+        // Erster Ton eines neuen Fluges: andere Flüge weg, Proben bleiben.
+        andere_fluege_weg(&d, "NEU");
+        assert_eq!(namen(&d), ["NEU", "probe"]);
+        std::fs::remove_file(d.join("NEU").join("c.wav")).unwrap();
+        assert_eq!(ordner_groesse(&d), 1, "nur noch die Probe");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn nur_eigene_tondateien() {
+        assert!(datei_sauber("ARO6rb14EmQw6OVx/server-833a5f35159f503b.wav"));
+        assert!(datei_sauber("probe/server-1.wav"));
+        assert!(!datei_sauber("server-1.wav"), "ohne Ordner (alte Ablage) nicht mehr");
+        assert!(!datei_sauber("../x/server-1.wav"));
+        assert!(!datei_sauber("a/../b.wav"));
+        assert!(!datei_sauber("a/b/c.wav"));
+        assert!(!datei_sauber("/etc/passwd.wav"));
+        assert!(!datei_sauber("a/b.mp3"));
+        assert!(!datei_sauber("a/b c.wav"));
+    }
+
+    #[test]
+    fn verlauf_uebersteht_den_neustart() {
+        let g = Gespielt { id: 3, slot: Slot::Boarding, rolle: Rolle::Kabine, zeit: 5, teile: vec![], lautstaerke: 0.8, vorschau: false, ergebnis: Some("gespielt".into()) };
+        let text = serde_json::to_string(&vec![g]).unwrap();
+        let zurueck: Vec<Gespielt> = serde_json::from_str(&text).unwrap();
+        assert_eq!(zurueck[0].id, 3);
+        assert_eq!(zurueck[0].ergebnis.as_deref(), Some("gespielt"));
+        // Verlauf aus beta.4 (ohne id/ergebnis) lädt auch.
+        let alt: Vec<Gespielt> = serde_json::from_str(r#"[{"slot":"boarding","rolle":"kabine","zeit":1,"teile":[],"lautstaerke":0.8}]"#).unwrap();
+        assert_eq!(alt[0].ergebnis, None);
     }
 
     /// Echtes Geraet: listet die Ausgaben und spielt den Chime auf dem

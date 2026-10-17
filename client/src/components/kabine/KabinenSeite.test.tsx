@@ -1,0 +1,117 @@
+// Seite „Kabine“ (beta.5): Thomas im Flug AIB 436 — „die anderen stehen
+// immer noch auf wird vorbereitet. Man kann sich die auch nicht mehr
+// anklicken oder ansehen oder nochmal abspielen.“ Festgehalten am
+// gerenderten Bild: jede Zeile nennt Zeitpunkt und echten Stand, klappt mit
+// allen Sprachen auf und lässt sich anhören.
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
+import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
+import deCommon from "../../locales/de/common.json";
+
+const jetzt = 1_800_000_000;
+const ueberblick = {
+  verlauf: [
+    { id: 4, slot: "anschnallzeichen_aus", rolle: "kabine", zeit: jetzt - 3600, lautstaerke: 0.8, vorschau: false, ergebnis: "abgebrochen",
+      teile: [
+        { sprache: "fr-FR", text: "Le signal est éteint.", datei: "f/a.wav", dauer_s: 3 },
+        { sprache: "de-DE", text: "Das Anschnallzeichen ist aus.", datei: "f/b.wav", dauer_s: 3 },
+      ] },
+  ],
+  geplant: [
+    { slot: "reiseflug50", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 600, stand: { art: "bereit" },
+      teile: [
+        { sprache: "fr-FR", text: "Nous avons passé la moitié du vol.", ton: true, keine_stimme: false },
+        { sprache: "de-DE", text: "Wir haben die Hälfte geschafft.", ton: true, keine_stimme: false },
+      ] },
+    { slot: "kapitaen_sinkflug", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 5000, stand: { art: "text_ab", um: jetzt + 4000 },
+      teile: [
+        { sprache: "fr-FR", text: null, ton: false, keine_stimme: false },
+        { sprache: "de-DE", text: null, ton: false, keine_stimme: false },
+      ] },
+    { slot: "kommando_plaetze_landung", rolle: "kommando", faellig: false, wartet: null, wann: null,
+      stand: { art: "ton_wartet", um: jetzt + 30, meldung: "Piper-Server antwortet 503" },
+      teile: [{ sprache: "en-GB", text: "Cabin crew, take your seats for landing.", ton: false, keine_stimme: false }] },
+  ],
+  sprachen: ["fr-FR", "de-DE"],
+  beta: true,
+  grund: null,
+  ablauf: { freigabe: { art: "ja" }, abflug: { art: "fertig" }, ankunft: { art: "offen", um: jetzt + 4000 }, ton_fertig: 1, ton_gesamt: 3 },
+  profil: { flugart: "linie", muster: "A388", flugzeit_min: 304, kurzstrecke: false, flugzeit_bekannt: true, sprachen_ohne_stimme: [] },
+  belegt: false,
+};
+
+const aufrufe: { cmd: string; args?: Record<string, unknown> }[] = [];
+vi.mock("../../lib/ipc", () => ({
+  isTauri: true,
+  formatIpcError: (e: unknown) => String(e),
+  listen: vi.fn(async () => () => undefined),
+  invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+    aufrufe.push({ cmd, args });
+    if (cmd === "kabinen_ueberblick") return ueberblick;
+    if (cmd === "kabinen_anhoeren")
+      return { id: 99, slot: args?.slot, rolle: "kapitaen", zeit: jetzt, lautstaerke: 0.8, vorschau: true, ergebnis: null,
+        teile: [{ sprache: "de-DE", text: "Wir haben die Hälfte geschafft.", datei: "f/b.wav", dauer_s: 1 }] };
+    if (cmd === "kabinen_ton_huellkurve") return [];
+    return null;
+  }),
+}));
+vi.stubGlobal("requestAnimationFrame", (f: () => void) => setTimeout(f, 5));
+
+import { KabinenSeite } from "./KabinenSeite";
+
+beforeAll(async () => {
+  await i18next.use(initReactI18next).init({
+    lng: "de",
+    resources: { de: { common: deCommon } },
+    ns: ["common"],
+    defaultNS: "common",
+    interpolation: { escapeValue: false },
+  });
+});
+afterEach(() => {
+  cleanup();
+  aufrufe.length = 0;
+});
+
+const uhr = (e: number) => new Date(e * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+describe("Seite Kabine", () => {
+  it("nennt je Ansage Zeitpunkt und echten Stand statt „wird vorbereitet“", async () => {
+    render(<KabinenSeite onOpenSettings={() => undefined} />);
+    const liste = await screen.findByTestId("kabine-naechste");
+    expect(liste.textContent).not.toMatch(/wird vorbereitet/);
+    expect(within(liste).getByText(`Text ab ca. ${uhr(jetzt + 4000)}`)).toBeTruthy();
+    expect(within(liste).getByText(`ca. ${uhr(jetzt + 600)}`)).toBeTruthy();
+    expect(within(liste).getByText(/Ton wartet \(Server ausgelastet\), neuer Versuch/)).toBeTruthy();
+    // Ablauf oben und „Warum diese Ansagen“.
+    expect(screen.getByTestId("kabine-ablauf").textContent).toContain("1 von 3 fertig");
+    expect(screen.getByTestId("kabine-profil").textContent).toContain("A388");
+  });
+
+  it("klappt mit allen Sprachen auf und spielt zum Anhören, ohne es als gespielt zu zählen", async () => {
+    render(<KabinenSeite onOpenSettings={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Halbzeit/ }));
+    expect(screen.getByText("Nous avons passé la moitié du vol.")).toBeTruthy();
+    expect(screen.getByText("Wir haben die Hälfte geschafft.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Anhören" }));
+    await vi.waitFor(() => expect(aufrufe.some((a) => a.cmd === "kabinen_ton_spielen")).toBe(true));
+    expect(aufrufe.find((a) => a.cmd === "kabinen_anhoeren")?.args).toEqual({ slot: "reiseflug50", id: null });
+    // Ende des Vorhörens geht an Rust (gibt die Warteschlange frei).
+    await vi.waitFor(() => expect(aufrufe.find((a) => a.cmd === "kabinen_wiedergabe_ende")?.args).toEqual({ id: 99, ergebnis: "gespielt" }));
+  });
+
+  it("„Bisher“ zeigt den Ausgang, alle Sprachen und „Nochmal anhören“", async () => {
+    render(<KabinenSeite onOpenSettings={() => undefined} />);
+    const bisher = await screen.findByTestId("kabine-bisher");
+    expect(within(bisher).getByText("abgebrochen")).toBeTruthy();
+    fireEvent.click(within(bisher).getByRole("button", { name: /Anschnallzeichen aus/ }));
+    expect(within(bisher).getByText("Le signal est éteint.")).toBeTruthy();
+    expect(within(bisher).getByText("Das Anschnallzeichen ist aus.")).toBeTruthy();
+    // Läuft noch etwas (Vorhören aus dem Test davor), ist der Knopf gesperrt.
+    const nochmal = within(bisher).getByRole("button", { name: "Nochmal anhören" }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(nochmal.disabled).toBe(false));
+    fireEvent.click(nochmal);
+    await vi.waitFor(() => expect(aufrufe.find((a) => a.cmd === "kabinen_anhoeren")?.args).toEqual({ slot: "anschnallzeichen_aus", id: 4 }));
+  });
+});

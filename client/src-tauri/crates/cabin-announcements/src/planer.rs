@@ -269,7 +269,68 @@ impl Planer {
         self.flugart().erlaubt(slot)
             && !self.schon(slot)
             && !(reiseflug && self.kurzstrecke())
+            // Reiseflug unter 10.000 ft: Der Gong kommt nie.
+            && !(matches!(slot, Slot::Chime10000Steigflug | Slot::Chime10000Sinkflug)
+                && self.flug.reiseflughoehe_ft.is_some_and(|h| h < 10_000))
             && spaetestens_vor(slot).is_none_or(|grenze| rang(phase) < rang(grenze))
+    }
+
+    /// Ohne bekannte Flugzeit zählt der Flug als Kurzstrecke (keine
+    /// Reiseflug-Ansagen); die Seite nennt das getrennt.
+    pub fn flugzeit_bekannt(&self) -> bool {
+        self.flug.geplante_flugzeit_min.is_some()
+    }
+
+    pub fn ist_kurzstrecke(&self) -> bool {
+        self.kurzstrecke()
+    }
+
+    /// Voraussichtliche Uhrzeit (UTC-Epoch-Sekunden) einer noch kommenden
+    /// Ansage — nur, wo es eine Quelle gibt: Reiseflug 25/50/80 aus Abheben
+    /// und Zeit bis zum Sinkflug (wie [`Self::tick`], mit Mindestabstand),
+    /// Sinkflug aus TOD bzw. erwarteter Landung. Boden, Landung und Ereignisse
+    /// hängen an Phasen: `None`, keine erfundene Uhrzeit.
+    pub fn zeitpunkt(&self, slot: Slot, landung_erwartet: Option<i64>) -> Option<i64> {
+        if self.schon(slot) {
+            return None;
+        }
+        match slot {
+            Slot::Reiseflug25 | Slot::Reiseflug50 | Slot::Reiseflug80 => {
+                if self.kurzstrecke() {
+                    return None;
+                }
+                let ab = self.abheben_epoch?;
+                let plan = self.flug.geplante_flugzeit_min?;
+                let bis_sinkflug_s = match self.flug.tod_nach_abheben_s {
+                    Some(tod) if tod > 0 => tod as f64,
+                    _ => (f64::from(plan) - SINKFLUG_MIN).max(1.0) * 60.0,
+                };
+                let mut vorige = self.letzte_reiseflug_ansage;
+                for (anteil, s) in [(0.25, Slot::Reiseflug25), (0.50, Slot::Reiseflug50), (0.80, Slot::Reiseflug80)] {
+                    if self.schon(s) {
+                        continue;
+                    }
+                    let mut t = ab + (anteil * bis_sinkflug_s).round() as i64;
+                    if let Some(v) = vorige {
+                        t = t.max(v + REISEFLUG_ABSTAND_S);
+                    }
+                    if s == slot {
+                        return Some(t);
+                    }
+                    vorige = Some(t);
+                }
+                None
+            }
+            Slot::KapitaenSinkflug | Slot::KabineSinkflug => {
+                let aus_tod = self.tod_epoch().map(|t| t - 300);
+                let aus_landung = landung_erwartet.map(|l| l - 25 * 60);
+                match (aus_tod, aus_landung) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Verarbeitet einen Tick und liefert die neu fälligen Ansagen in
@@ -533,6 +594,50 @@ mod tests {
             rest_min: None,
             ..Default::default()
         }
+    }
+
+    /// Die angezeigte Uhrzeit muss die sein, zu der `tick` die Ansage
+    /// wirklich auslöst (nicht eine zweite, eigene Rechnung).
+    #[test]
+    fn zeitpunkt_trifft_das_ausloesen() {
+        for (min, tod) in [(120u32, None), (300, Some(260 * 60i64)), (75, None)] {
+            let mut f = flug(min);
+            f.tod_nach_abheben_s = tod;
+            f.abheben_epoch = Some(1_000);
+            let mut p = Planer::fortsetzen(f, Cruise);
+            let vorher: Vec<(Slot, Option<i64>)> = [Slot::Reiseflug25, Slot::Reiseflug50, Slot::Reiseflug80]
+                .into_iter()
+                .map(|s| (s, p.zeitpunkt(s, None)))
+                .collect();
+            let mut ausgeloest: Vec<(Slot, i64)> = Vec::new();
+            let mut t = 1_000;
+            while t < 1_000 + i64::from(min) * 60 {
+                t += 10;
+                for f in p.tick(&tick(t, Cruise, 37_000.0, 0.0)) {
+                    if matches!(f.slot, Slot::Reiseflug25 | Slot::Reiseflug50 | Slot::Reiseflug80) {
+                        ausgeloest.push((f.slot, t));
+                    }
+                }
+            }
+            for (s, um) in &ausgeloest {
+                let erwartet = vorher.iter().find(|(x, _)| x == s).and_then(|(_, z)| *z).expect("Uhrzeit angezeigt");
+                assert!((um - erwartet).abs() <= 10, "{min} min {s:?}: angezeigt {erwartet}, ausgelöst {um}");
+            }
+            assert!(!ausgeloest.is_empty(), "{min} min: nichts ausgelöst");
+            // Was gelaufen ist, hat keine Uhrzeit mehr.
+            assert_eq!(p.zeitpunkt(ausgeloest[0].0, None), None);
+        }
+        // Sinkflug: frühere von TOD − 5 min und Landung − 25 min.
+        let mut f = flug(120);
+        f.tod_nach_abheben_s = Some(90 * 60);
+        f.abheben_epoch = Some(0);
+        let p = Planer::fortsetzen(f, Cruise);
+        assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, None), Some(85 * 60));
+        assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, Some(100 * 60)), Some(75 * 60));
+        // Boden und Landung: keine erfundene Uhrzeit.
+        assert_eq!(p.zeitpunkt(Slot::NachDerLandung, Some(100 * 60)), None);
+        // Vor dem Abheben keine Reiseflug-Uhrzeit.
+        assert_eq!(Planer::neu(flug(120)).zeitpunkt(Slot::Reiseflug25, None), None);
     }
 
     /// Spielt einen ganzen Flug in 10-s-Schritten durch und sammelt alles.

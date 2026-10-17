@@ -20,11 +20,14 @@
       "lautstaerke": "Volume",
       "probe": "Ascolta una prova",
       "lizenzen": "Licenze",
-      "lizenz_text": "Piper (GPL-3.0) gira sul server GSG e non viene scaricato sul tuo computer. Voci: Thorsten e Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, modificata). Azure è un servizio di Microsoft. Kokoro-82M (Apache-2.0) gira anch'esso solo sul server GSG, voci George ed Emma.",
+      "lizenz_text": "Le voci sono generate dal server GSG con Piper (GPL-3.0) e Kokoro-82M (Apache-2.0). Entrambi girano solo lì e non vengono scaricati sul tuo computer. Le voci provengono da dataset liberi (tra cui CC0, CC BY e CC BY-SA); l'elenco completo è tenuto dal team GSG.",
       "ausgabe": "Dispositivo di uscita",
       "ausgabe_standard": "Predefinito di sistema",
       "ausgabe_fehlt": "Dispositivo scelto non collegato (suona sul predefinito di sistema)",
-      "ausgabe_hint": "Ad esempio ATC nelle cuffie e la cabina sugli altoparlanti. Se il dispositivo è scollegato, suona il predefinito di sistema."
+      "ausgabe_hint": "Ad esempio ATC nelle cuffie e la cabina sugli altoparlanti. Se il dispositivo è scollegato, suona il predefinito di sistema.",
+      "beta_kontingent": "Abilitato, ma la quota mensile è esaurita: gli annunci già scritti continuano, quelli nuovi no.",
+      "speicher": "File audio",
+      "speicher_text": "{{mb}} MB su questo computer. L'audio resta solo per il volo in corso e viene cancellato all'inizio del volo successivo."
     },
     "rolle": {
       "kapitaen": "Comandante",
@@ -73,7 +76,6 @@
       "ausschalten": "Disattiva gli annunci",
       "einstellungen": "Apri le impostazioni",
       "ruhig": "Nessun annuncio in questo momento",
-      "naechste": "Prossimo: {{slot}}",
       "ruhe_hinweis": "Il prossimo annuncio arriva con la fase di volo adatta.",
       "als_naechstes": "Prossimi",
       "nichts_wartet": "Nulla in coda.",
@@ -81,9 +83,14 @@
       "noch_nichts": "Ancora nessun annuncio su questo volo.",
       "keine_ansagen": "Nessun annuncio al momento, il motivo è indicato sotto.",
       "naechste_wann": "Prossimo: {{slot}}, {{wann}}.",
-      "status_jetzt": "ora",
-      "status_bereit": "pronto",
-      "status_vorbereitet": "in preparazione"
+      "vorhoeren": "Ascolto",
+      "anhoeren_stoppen": "Ferma l'ascolto",
+      "gong_text": "Doppio gong (senza testo).",
+      "noch_kein_text": "Ancora nessun testo.",
+      "keine_stimme": "nessuna voce, omesso",
+      "anhoeren": "Ascolta",
+      "erneut": "Riprova",
+      "nochmal": "Riascolta"
     },
     "grund": {
       "aus": {
@@ -108,23 +115,27 @@
       },
       "beta_pruefung": {
         "titel": "Verifica dell'accesso",
-        "text": "AeroACARS chiede al server GSG se il tuo account è abilitato alla beta. Se il server non è raggiungibile, AeroACARS riprova ogni 5 minuti."
+        "text": "AeroACARS chiede al server GSG se il tuo account è abilitato alla beta."
       },
       "nicht_freigeschaltet": {
         "titel": "Non abilitato",
         "text": "Il tuo account non è abilitato alla beta degli annunci di cabina. L'abilitazione la fa il team GSG."
       },
-      "texte_fehlen": {
-        "titel": "Testi non ricevuti",
-        "text": "Il server GSG non ha fornito i testi degli annunci. AeroACARS riprova tra 2 minuti. Messaggio del server:"
-      },
-      "ton_fehlt": {
-        "titel": "Audio non disponibile al momento",
-        "text": "Il servizio vocale non ha fornito l'audio (server occupato, rete o chiave Azure). AeroACARS riprova ogni minuto. Messaggio:"
-      },
       "wiedergabe": {
         "titel": "Audio non riproducibile",
         "text": "L'annuncio era pronto ma non è stato possibile riprodurlo. Il dispositivo di uscita scelto è occupato o scollegato? Nelle impostazioni puoi scegliere un altro dispositivo o il predefinito di sistema. Messaggio:"
+      },
+      "beta_nicht_erreichbar": {
+        "titel": "Server non raggiungibile",
+        "text": "Il server GSG non risponde, quindi l'accesso è ancora da verificare. Nuovo tentativo alle {{zeit}}."
+      },
+      "kontingent": {
+        "titel": "Quota mensile esaurita",
+        "text": "Il tuo account è abilitato, ma la quota mensile per nuovi testi è esaurita. Gli annunci già scritti continuano, quelli nuovi no."
+      },
+      "sim_angehalten": {
+        "titel": "Simulatore in pausa",
+        "text": "Il simulatore è in pausa o in modalità slew. Fino ad allora non partono annunci."
       }
     },
     "wann": {
@@ -139,7 +150,89 @@
       "kapitaen_sinkflug": "poco prima della discesa",
       "kabine_sinkflug": "poco prima della discesa",
       "nach_der_landung": "durante il rullaggio dopo l'atterraggio",
-      "aussteigen": "al parcheggio"
+      "aussteigen": "al parcheggio",
+      "kommando_tueren_scharf": "al pushback",
+      "kommando_start": "alla corsa di decollo",
+      "chime10000_steigflug": "salendo a 10.000 piedi",
+      "chime10000_sinkflug": "scendendo a 10.000 piedi",
+      "kommando_landung_vorbereiten": "in avvicinamento",
+      "kommando_plaetze_landung": "in finale",
+      "kommando_tueren_entschaerfen": "al parcheggio",
+      "verspaetung_gate": "quando succede",
+      "turbulenz": "quando succede",
+      "turbulenz_vorbei": "quando succede",
+      "warteschleife": "quando succede",
+      "durchstarten": "quando succede",
+      "umleitung": "quando succede"
+    },
+    "stand": {
+      "text_ab": "Testo dalle {{zeit}} circa",
+      "text_ab_ohne": "Testo poco prima dell'atterraggio",
+      "text_wird_geschrieben": "Testo in scrittura",
+      "text_fehler": "Testo mancante ({{grund}}), nuovo tentativo {{zeit}}",
+      "text_aufgegeben": "Testo non ricevuto ({{grund}})",
+      "ton_wird_erzeugt": "Audio in preparazione ({{fertig}} di {{von}})",
+      "ton_wartet": "Audio in attesa ({{grund}}), nuovo tentativo {{zeit}}",
+      "ton_aufgegeben": "Audio rifiutato ({{grund}})",
+      "bereit": "pronto"
+    },
+    "fehler": {
+      "ausgelastet": "server occupato",
+      "kontingent": "quota esaurita",
+      "zugang": "nessun accesso",
+      "zeit": "tempo scaduto",
+      "offline": "nessuna connessione",
+      "sonst": "errore del server"
+    },
+    "ablauf": {
+      "texte": "Testi",
+      "ton": "Audio",
+      "naechste": "Prossimo annuncio",
+      "abflug": "Partenza",
+      "ankunft": "Arrivo",
+      "ton_stand": "{{fertig}} di {{gesamt}} pronti",
+      "keine": "nessuno",
+      "freigabe": {
+        "titel": "Accesso",
+        "ja": "abilitato",
+        "nein": "non abilitato",
+        "pruefung": "in verifica",
+        "kontingent": "abilitato, quota mensile esaurita",
+        "nicht_erreichbar": "server non raggiungibile, nuovo tentativo {{zeit}}"
+      },
+      "teil": {
+        "entfaellt": "non previsto",
+        "offen": "in seguito",
+        "offen_um": "dalle {{zeit}} circa",
+        "laeuft": "in scrittura",
+        "fertig": "pronti",
+        "fehler": "errore, nuovo tentativo {{zeit}}",
+        "aufgegeben": "non ricevuti"
+      }
+    },
+    "profil": {
+      "linie": "Volo di linea con equipaggio di cabina",
+      "bizjet": "Jet d'affari, parla solo il comandante",
+      "flugzeit": "{{h}} h {{m}} min",
+      "flugzeit_unbekannt": "durata del volo sconosciuta, quindi niente annunci in crociera",
+      "kurzstrecke": "volo breve, niente annunci in crociera",
+      "und": " e ",
+      "ohne_stimme": "{{sprache}} omesso (nessuna voce)"
+    },
+    "zeit": {
+      "jetzt": "ora",
+      "ca": "verso le {{zeit}}"
+    },
+    "wartet": {
+      "andere_ansage": "previsto, attende l'annuncio in corso",
+      "ruhephase": "previsto, attende la fine della fase sterile",
+      "ton": "previsto, attende l'audio",
+      "sim_angehalten": "previsto, simulatore in pausa"
+    },
+    "ergebnis": {
+      "abgebrochen": "interrotto",
+      "fehler": "non riproducibile",
+      "unbekannt": "esito sconosciuto"
     }
   },
   "app": {

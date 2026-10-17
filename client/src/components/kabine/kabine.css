@@ -72,13 +72,34 @@
 .kabine-liste { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .kabine-liste li { padding: 9px 12px; font-size: var(--fs-400, 13px); background: var(--surface); }
 .kabine-liste li + li { border-top: 1px solid var(--border); }
-/* „Als Nächstes“: Ansage und Zeitpunkt links, Stand rechts. */
-.kabine-plan { display: flex; align-items: center; gap: 12px; }
+/* Jede Zeile klappt auf: Kopf (Ansage, Zeitpunkt, Stand) als Knopf. */
+.kabine-liste li { padding: 0; }
+.kabine-plan-kopf {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+.kabine-plan-kopf:hover { background: color-mix(in srgb, var(--acc) 5%, var(--surface)); }
+.kabine-plan-kopf:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+.kabine-liste--verlauf .kabine-verlauf-kopf { flex: 1; }
+.kabine-verlauf-text--kurz { padding: 0 12px 9px; margin-top: -4px; }
+.kabine-plan-inhalt { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.kabine-plan-inhalt .kabine-verlauf-text { display: block; -webkit-line-clamp: unset; overflow: visible; color: var(--text); font-size: var(--fs-400, 13px); line-height: var(--lh-normal, 1.55); }
+.kabine-teil { display: flex; flex-direction: column; gap: 2px; }
+.kabine-plan-knoepfe { display: flex; gap: 8px; flex-wrap: wrap; }
+.kabine-knopf { padding: 4px 12px; font-size: var(--fs-300, 12px); }
+.kabine-plan-inhalt .kabine-grund-detail { margin: 0; color: var(--text-dim); font-size: var(--fs-300, 12px); }
 .kabine-plan-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .kabine-plan-wann { color: var(--text-dim); font-size: var(--fs-300, 12px); }
-.kabine-plan-status { margin-left: auto; flex-shrink: 0; font-size: var(--fs-300, 12px); color: var(--text-dim); }
+.kabine-plan-status { margin-left: auto; flex-shrink: 0; max-width: 50%; text-align: right; font-size: var(--fs-300, 12px); color: var(--text-dim); }
 .kabine-plan-status.ist-bereit { color: var(--acc); }
-.kabine-plan-status.ist-jetzt { color: var(--acc); font-weight: var(--fw-bold, 700); }
+.kabine-plan-status.ist-warnung { color: var(--sem-warn, #b7791f); }
+.kabine-plan-status.ist-fehler { color: var(--sem-err, #c53030); }
 .kabine-verlauf-kopf { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .kabine-zeit { font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: var(--fs-300, 12px); }
 .kabine-rolle { color: var(--text-dim); font-size: var(--fs-300, 12px); margin-left: auto; }
@@ -110,3 +131,27 @@
 .kabine-grund strong { font-size: var(--fs-500, 15px); color: var(--text); }
 .kabine-grund p { margin: 0; color: var(--text); font-size: var(--fs-400, 13px); line-height: var(--lh-normal, 1.55); max-width: 70ch; }
 .kabine-grund .kabine-grund-detail { color: var(--text-dim); font-size: var(--fs-300, 12px); }
+
+/* Ablauf oben: Freigabe → Texte → Ton → nächste Ansage */
+.kabine-ablauf {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: var(--fs-300, 12px);
+  background: var(--surface);
+}
+.kabine-ablauf th {
+  text-align: left;
+  font-weight: var(--fw-bold, 700);
+  color: var(--text-dim);
+  padding: 8px 12px 4px;
+}
+.kabine-ablauf td { padding: 0 12px 10px; color: var(--text); vertical-align: top; line-height: var(--lh-snug, 1.35); }
+.kabine-profil { margin: -6px 0 0; color: var(--text-dim); font-size: var(--fs-300, 12px); }
+@media (max-width: 640px) {
+  .kabine-ablauf thead { display: none; }
+  .kabine-ablauf tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 0; padding-top: 8px; }
+}

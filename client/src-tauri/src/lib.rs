@@ -47261,6 +47261,29 @@ fn kabinen_eckdaten_nachholen_aus(
     }
 }
 
+/// Bids und OFP fuer [`kabinen_eckdaten_nachholen_aus`] ohne Sperre holen —
+/// fuer den Takt, der es bei fehlender Passagierzahl alle 2 min erneut
+/// versucht (Wiedereinstieg ohne Netz blieb sonst bis zum Neustart stumm).
+async fn kabinen_eckdaten_holen(client: &Client, bid_id: i64) -> Option<(Vec<api_client::Bid>, Option<api_client::SimBriefOfp>)> {
+    let bids = match client.get_bids().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::info!(error = %e, "kabinenansagen: Bids fuer Nachholen nicht erreichbar");
+            return None;
+        }
+    };
+    let sb_id = bids
+        .iter()
+        .find(|b| b.id == bid_id)
+        .and_then(|b| b.flight.simbrief.as_ref())
+        .map(|s| s.id.clone());
+    let ofp = match sb_id {
+        Some(id) => client.fetch_simbrief_ofp(&id).await.ok().flatten(),
+        None => None,
+    };
+    Some((bids, ofp))
+}
+
 /// Netzteil zu [`kabinen_eckdaten_nachholen_aus`]: einmal beim Wiedereinstieg.
 /// Ohne Netz bleibt der Flug stumm wie bisher — kein Wiederholen im Takt.
 async fn kabinen_eckdaten_nachholen(client: &Client, bid_id: i64, stats: &mut FlightStats) {
@@ -47353,7 +47376,18 @@ fn kabinen_schritt(
         // loest kein Slot aus, also wird dort nichts uebersprungen.
         let flug = kabinen_flugdaten(stats, ziel, planzeit_min, muster);
         stats.kabinen_durchstarts = stats.go_around_count;
-        stats.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug, stats.phase));
+        // Untergrenze aus den Ist-Zeiten: Ist schon abgehoben (bzw. vom
+        // Gate weg), gelten die Boden-Ansagen als vorbei — auch wenn die
+        // Phase nach dem Neustart noch unsicher ist (Codex-QS beta.4, 13).
+        let r = cabin_announcements::planer::rang;
+        let phase = if stats.takeoff_at.is_some() && r(stats.phase) < r(FlightPhase::Climb) {
+            FlightPhase::Climb
+        } else if stats.block_off_at.is_some() && r(stats.phase) < r(FlightPhase::Pushback) {
+            FlightPhase::Pushback
+        } else {
+            stats.phase
+        };
+        stats.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug, phase));
     }
     let durchgestartet = stats.go_around_count > stats.kabinen_durchstarts;
     stats.kabinen_durchstarts = stats.go_around_count;
@@ -62781,6 +62815,10 @@ pub fn run() {
             kabinenansagen::kabinen_ton_huellkurve,
             kabinenansagen::kabinen_probe,
             kabinenansagen::kabinen_ueberblick,
+            kabinenansagen::kabinen_wiedergabe_ende,
+            kabinenansagen::kabinen_anhoeren,
+            kabinenansagen::kabinen_erneut,
+            kabinenansagen::kabinen_speicher,
             bid_simbrief_preview,
             ofp_callsign_warning_get,
             flight_resume_after_disconnect,

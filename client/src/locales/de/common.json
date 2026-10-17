@@ -20,11 +20,14 @@
       "lautstaerke": "Lautstärke",
       "probe": "Hörprobe",
       "lizenzen": "Lizenzen",
-      "lizenz_text": "Piper (GPL-3.0) läuft auf dem GSG-Server und wird nicht auf deinen Rechner geladen. Stimmen: Thorsten und Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, verändert). Azure ist ein Dienst von Microsoft. Kokoro-82M (Apache-2.0) läuft ebenfalls nur auf dem GSG-Server, Stimmen George und Emma.",
+      "lizenz_text": "Die Stimmen erzeugt der GSG-Server mit Piper (GPL-3.0) und Kokoro-82M (Apache-2.0). Beides läuft nur dort und wird nicht auf deinen Rechner geladen. Die Stimmen stammen aus freien Datensätzen (unter anderem CC0, CC BY und CC BY-SA); die vollständige Liste führt das GSG-Team.",
       "ausgabe": "Ausgabegerät",
       "ausgabe_standard": "Systemstandard",
       "ausgabe_fehlt": "Gewähltes Gerät nicht angeschlossen (spielt auf dem Systemstandard)",
-      "ausgabe_hint": "Zum Beispiel ATC im Headset und die Kabine über die Lautsprecher. Ist das Gerät abgezogen, spielt der Systemstandard."
+      "ausgabe_hint": "Zum Beispiel ATC im Headset und die Kabine über die Lautsprecher. Ist das Gerät abgezogen, spielt der Systemstandard.",
+      "beta_kontingent": "Freigeschaltet, aber das Monatskontingent ist erschöpft: Schon geschriebene Ansagen kommen weiter, neue nicht.",
+      "speicher": "Tondateien",
+      "speicher_text": "{{mb}} MB auf diesem Rechner. Die Töne liegen nur für den laufenden Flug vor und werden beim nächsten Flug gelöscht."
     },
     "rolle": {
       "kapitaen": "Kapitän",
@@ -73,7 +76,6 @@
       "ausschalten": "Ansagen ausschalten",
       "einstellungen": "Einstellungen öffnen",
       "ruhig": "Gerade keine Ansage",
-      "naechste": "Als Nächstes: {{slot}}",
       "ruhe_hinweis": "Die nächste Ansage kommt zur passenden Flugphase.",
       "als_naechstes": "Als Nächstes",
       "nichts_wartet": "Nichts in der Warteschlange.",
@@ -81,9 +83,14 @@
       "noch_nichts": "Noch keine Ansage auf diesem Flug.",
       "keine_ansagen": "Gerade keine Ansagen, der Grund steht unten.",
       "naechste_wann": "Als Nächstes: {{slot}}, {{wann}}.",
-      "status_jetzt": "jetzt",
-      "status_bereit": "bereit",
-      "status_vorbereitet": "wird vorbereitet"
+      "vorhoeren": "Anhören",
+      "anhoeren_stoppen": "Anhören beenden",
+      "gong_text": "Doppelgong (kein Text).",
+      "noch_kein_text": "Noch kein Text.",
+      "keine_stimme": "keine Stimme, entfällt",
+      "anhoeren": "Anhören",
+      "erneut": "Erneut versuchen",
+      "nochmal": "Nochmal anhören"
     },
     "grund": {
       "aus": {
@@ -108,23 +115,27 @@
       },
       "beta_pruefung": {
         "titel": "Freischaltung wird geprüft",
-        "text": "AeroACARS fragt den GSG-Server, ob dein Konto für die Beta freigeschaltet ist. Ist der Server nicht erreichbar, versucht es AeroACARS alle 5 Minuten erneut."
+        "text": "AeroACARS fragt den GSG-Server, ob dein Konto für die Beta freigeschaltet ist."
       },
       "nicht_freigeschaltet": {
         "titel": "Nicht freigeschaltet",
         "text": "Dein Konto ist für die Kabinenansagen-Beta nicht freigeschaltet. Die Freischaltung macht das GSG-Team."
       },
-      "texte_fehlen": {
-        "titel": "Texte nicht erhalten",
-        "text": "Der GSG-Server hat die Ansagetexte nicht geliefert. AeroACARS versucht es in 2 Minuten erneut. Meldung des Servers:"
-      },
-      "ton_fehlt": {
-        "titel": "Ton gerade nicht erzeugbar",
-        "text": "Die Sprachausgabe hat den Ton nicht geliefert (Server ausgelastet, Netz oder Azure-Schlüssel). AeroACARS versucht es jede Minute erneut. Meldung:"
-      },
       "wiedergabe": {
         "titel": "Ton nicht abspielbar",
         "text": "Die Ansage war fertig, ließ sich aber nicht abspielen. Ist das gewählte Ausgabegerät belegt oder abgezogen? In den Einstellungen lässt sich ein anderes Gerät oder der Systemstandard wählen. Meldung:"
+      },
+      "beta_nicht_erreichbar": {
+        "titel": "Server nicht erreichbar",
+        "text": "Der GSG-Server antwortet nicht, deshalb ist die Freischaltung noch offen. Nächster Versuch um {{zeit}}."
+      },
+      "kontingent": {
+        "titel": "Monatskontingent erschöpft",
+        "text": "Dein Konto ist freigeschaltet, das Monatskontingent für neue Texte ist aber aufgebraucht. Schon geschriebene Ansagen kommen weiter, neue nicht."
+      },
+      "sim_angehalten": {
+        "titel": "Simulator angehalten",
+        "text": "Der Simulator ist pausiert oder im Slew-Modus. Solange laufen keine Ansagen, sie kommen danach."
       }
     },
     "wann": {
@@ -139,7 +150,89 @@
       "kapitaen_sinkflug": "kurz vor dem Sinkflug",
       "kabine_sinkflug": "kurz vor dem Sinkflug",
       "nach_der_landung": "beim Rollen nach der Landung",
-      "aussteigen": "an der Parkposition"
+      "aussteigen": "an der Parkposition",
+      "kommando_tueren_scharf": "beim Pushback",
+      "kommando_start": "beim Startlauf",
+      "chime10000_steigflug": "beim Steigen durch 10.000 Fuß",
+      "chime10000_sinkflug": "beim Sinken durch 10.000 Fuß",
+      "kommando_landung_vorbereiten": "im Anflug",
+      "kommando_plaetze_landung": "im Endanflug",
+      "kommando_tueren_entschaerfen": "an der Parkposition",
+      "verspaetung_gate": "sobald es passiert",
+      "turbulenz": "sobald es passiert",
+      "turbulenz_vorbei": "sobald es passiert",
+      "warteschleife": "sobald es passiert",
+      "durchstarten": "sobald es passiert",
+      "umleitung": "sobald es passiert"
+    },
+    "stand": {
+      "text_ab": "Text ab ca. {{zeit}}",
+      "text_ab_ohne": "Text kurz vor der Landung",
+      "text_wird_geschrieben": "Text wird geschrieben",
+      "text_fehler": "Text fehlt ({{grund}}), neuer Versuch {{zeit}}",
+      "text_aufgegeben": "Text nicht erhalten ({{grund}})",
+      "ton_wird_erzeugt": "Ton wird erzeugt ({{fertig}} von {{von}})",
+      "ton_wartet": "Ton wartet ({{grund}}), neuer Versuch {{zeit}}",
+      "ton_aufgegeben": "Ton abgelehnt ({{grund}})",
+      "bereit": "bereit"
+    },
+    "fehler": {
+      "ausgelastet": "Server ausgelastet",
+      "kontingent": "Kontingent erschöpft",
+      "zugang": "kein Zugang",
+      "zeit": "Zeitüberschreitung",
+      "offline": "keine Verbindung",
+      "sonst": "Serverfehler"
+    },
+    "ablauf": {
+      "texte": "Texte",
+      "ton": "Ton",
+      "naechste": "Nächste Ansage",
+      "abflug": "Abflug",
+      "ankunft": "Ankunft",
+      "ton_stand": "{{fertig}} von {{gesamt}} fertig",
+      "keine": "keine mehr",
+      "freigabe": {
+        "titel": "Freigabe",
+        "ja": "freigeschaltet",
+        "nein": "nicht freigeschaltet",
+        "pruefung": "wird geprüft",
+        "kontingent": "freigeschaltet, Monatskontingent erschöpft",
+        "nicht_erreichbar": "Server nicht erreichbar, nächster Versuch {{zeit}}"
+      },
+      "teil": {
+        "entfaellt": "entfällt",
+        "offen": "folgt",
+        "offen_um": "ab ca. {{zeit}}",
+        "laeuft": "werden geschrieben",
+        "fertig": "fertig",
+        "fehler": "Fehler, neuer Versuch {{zeit}}",
+        "aufgegeben": "nicht erhalten"
+      }
+    },
+    "profil": {
+      "linie": "Linienflug mit Kabinenbesatzung",
+      "bizjet": "Geschäftsreise, nur der Kapitän spricht",
+      "flugzeit": "{{h}} h {{m}} min",
+      "flugzeit_unbekannt": "Flugzeit unbekannt, deshalb keine Reiseflug-Ansagen",
+      "kurzstrecke": "Kurzstrecke, keine Reiseflug-Ansagen",
+      "und": " und ",
+      "ohne_stimme": "{{sprache}} entfällt (keine Stimme)"
+    },
+    "zeit": {
+      "jetzt": "jetzt",
+      "ca": "ca. {{zeit}}"
+    },
+    "wartet": {
+      "andere_ansage": "fällig, wartet auf die laufende Ansage",
+      "ruhephase": "fällig, wartet auf das Ende der Ruhephase",
+      "ton": "fällig, wartet auf den Ton",
+      "sim_angehalten": "fällig, Simulator angehalten"
+    },
+    "ergebnis": {
+      "abgebrochen": "abgebrochen",
+      "fehler": "nicht abspielbar",
+      "unbekannt": "Ausgang unbekannt"
     }
   },
   "app": {

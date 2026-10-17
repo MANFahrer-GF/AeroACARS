@@ -20,11 +20,17 @@ export interface Teil {
 }
 
 export interface Gespielt {
+  /** Kennung für die Rückmeldung (`kabinen_wiedergabe_ende`); 0 = Hörprobe. */
+  id: number;
   slot: string;
   rolle: Rolle;
   zeit: number;
   teile: Teil[];
   lautstaerke: number;
+  /** Nur angehört (Vorhören, Nochmal, Hörprobe): zählt nicht als gespielt. */
+  vorschau: boolean;
+  /** Ausgang laut Rückmeldung: gespielt | abgebrochen | fehler | unbekannt; null = läuft. */
+  ergebnis: string | null;
 }
 
 export interface Einstellungen {
@@ -45,28 +51,101 @@ export interface Geraet {
   name: string;
 }
 
-/** Warum gerade keine Ansagen kommen (aus Rust, `Grund`). */
+/** Warum gerade gar keine Ansagen kommen (aus Rust, `Grund`). */
 export type Grund =
-  | { grund: "aus" | "replay" | "fracht" | "keine_pax" | "keine_passagiere" | "beta_pruefung" | "nicht_freigeschaltet" }
-  | { grund: "texte_fehlen" | "ton_fehlt"; detail: string };
+  | {
+      grund:
+        | "aus"
+        | "replay"
+        | "fracht"
+        | "keine_pax"
+        | "keine_passagiere"
+        | "beta_pruefung"
+        | "nicht_freigeschaltet"
+        | "kontingent"
+        | "sim_angehalten";
+    }
+  | { grund: "beta_nicht_erreichbar"; detail: number };
 
 export interface Zustand {
   beta: boolean | null;
+  kontingent_erschoepft: boolean | null;
 }
 
-/** Eine noch kommende Ansage; `bereit` = Ton liegt vor. */
+export interface Speicher {
+  bytes: number;
+  ordner: string;
+}
+
+/** Wo eine Ansage steht (Rust `Stand`); `um` = UTC-Epoch-Sekunden. */
+export type Stand =
+  | { art: "text_ab"; um: number | null }
+  | { art: "text_wird_geschrieben" }
+  | { art: "text_fehler"; um: number; meldung: string }
+  | { art: "text_aufgegeben"; meldung: string }
+  | { art: "ton_wird_erzeugt"; fertig: number; von: number }
+  | { art: "ton_wartet"; um: number; meldung: string }
+  | { art: "ton_aufgegeben"; meldung: string }
+  | { art: "bereit" };
+
+export type Wartet = "andere_ansage" | "ruhephase" | "ton" | "sim_angehalten";
+
+export interface TeilAnsicht {
+  sprache: string;
+  text: string | null;
+  ton: boolean;
+  keine_stimme: boolean;
+}
+
+/** Eine fällige oder noch kommende Ansage. */
 export interface Geplant {
   slot: string;
-  bereit: boolean;
+  rolle: Rolle;
+  faellig: boolean;
+  wartet: Wartet | null;
+  /** Voraussichtliche Uhrzeit (UTC-Epoch), nur wo es eine Quelle gibt. */
+  wann: number | null;
+  stand: Stand;
+  teile: TeilAnsicht[];
+}
+
+export type TeilStand =
+  | { art: "entfaellt" | "laeuft" | "fertig" }
+  | { art: "offen"; um: number | null }
+  | { art: "fehler"; um: number; meldung: string }
+  | { art: "aufgegeben"; meldung: string };
+
+export type Freigabe =
+  | { art: "ja" | "nein" | "pruefung" | "kontingent" }
+  | { art: "nicht_erreichbar"; um: number };
+
+export interface Ablauf {
+  freigabe: Freigabe;
+  abflug: TeilStand;
+  ankunft: TeilStand;
+  ton_fertig: number;
+  ton_gesamt: number;
+}
+
+export interface Profil {
+  flugart: "linie" | "bizjet" | "aus" | null;
+  muster: string;
+  flugzeit_min: number | null;
+  kurzstrecke: boolean;
+  flugzeit_bekannt: boolean;
+  sprachen_ohne_stimme: string[];
 }
 
 export interface Ueberblick {
   verlauf: Gespielt[];
-  wartend: string[];
   geplant: Geplant[];
   sprachen: string[];
   beta: boolean | null;
   grund: Grund | null;
+  ablauf: Ablauf;
+  profil: Profil;
+  /** Eine Ansage oder ein Vorhören läuft: Anhören-Knöpfe sperren. */
+  belegt: boolean;
 }
 
 /** Was die Seite live anzeigt. */
@@ -149,6 +228,18 @@ async function chime(lautstaerke: number): Promise<void> {
   await invoke("kabinen_ton_spielen", { datei: null, lautstaerke });
 }
 
+/** Meldet Rust, wie eine Wiedergabe endete: Erst dann steht die Ansage
+ *  in „Bisher“ als gespielt, und die nächste darf sofort beginnen. */
+function melden(a: Gespielt, ergebnis: "gespielt" | "abgebrochen" | "fehler", versuch = 0): void {
+  if (!isTauri || a.id === 0) return;
+  // Geht die Rückmeldung verloren, bliebe die Ansage ohne Ausgang und ein
+  // Vorhören sperrte bis zur geschätzten Dauer: kurz wiederholen (Rust
+  // nimmt Doppelte nicht zweimal, Codex-QS beta.5).
+  void invoke("kabinen_wiedergabe_ende", { id: a.id, ergebnis }).catch(() => {
+    if (versuch < 3) setTimeout(() => melden(a, ergebnis, versuch + 1), 1000);
+  });
+}
+
 async function abarbeiten(): Promise<void> {
   if (laeuft) return;
   laeuft = true;
@@ -157,6 +248,7 @@ async function abarbeiten(): Promise<void> {
     while (schlange.length > 0 && meiner === durchgang) {
       const a = schlange.shift()!;
       setzen({ ansage: a, teil: 0, verlauf: [] });
+      let fehlgeschlagen = false;
       if (a.rolle === "chime") {
         try {
           await chime(a.lautstaerke);
@@ -164,6 +256,7 @@ async function abarbeiten(): Promise<void> {
         } catch (e) {
           console.warn("[kabine] Chime nicht abspielbar", e);
           setzen({ fehler: formatIpcError(e) });
+          fehlgeschlagen = true;
         }
       } else {
         for (let i = 0; i < a.teile.length && meiner === durchgang; i++) {
@@ -174,10 +267,12 @@ async function abarbeiten(): Promise<void> {
           } catch (e) {
             console.warn("[kabine] Ton nicht abspielbar", a.slot, e);
             setzen({ fehler: formatIpcError(e) });
+            fehlgeschlagen = true;
           }
           if (i < a.teile.length - 1) await pause(700);
         }
       }
+      melden(a, meiner !== durchgang ? "abgebrochen" : fehlgeschlagen ? "fehler" : "gespielt");
       await pause(400);
     }
   } finally {
@@ -193,10 +288,29 @@ async function abarbeiten(): Promise<void> {
  *  „Ansagen ausschalten“ — wer das nicht möchte, hört ab dem Klick nichts. */
 export function stoppen(): void {
   gesperrt = true;
+  abbrechen();
+}
+
+/** Laufendes abbrechen, Wartendes verwerfen — und Rust melden, dass es
+ *  nicht (zu Ende) lief. */
+function abbrechen(): void {
   durchgang += 1;
+  for (const a of schlange) melden(a, "abgebrochen");
   schlange.length = 0;
   if (isTauri) void invoke("kabinen_ton_stoppen").catch(() => undefined);
   setzen({ ansage: null, pegel: 0, verlauf: [] });
+}
+
+/** Vorhören oder Nochmal: eine fertige kommende Ansage (`id` leer) oder
+ *  eine aus „Bisher“ (`id`). Zählt nicht als gespielt; Rust hält derweil
+ *  fällige Ansagen zurück. */
+export async function anhoeren(slot: string, id?: number): Promise<void> {
+  abspielen(await invoke<Gespielt>("kabinen_anhoeren", { slot, id: id ?? null }));
+}
+
+/** Anhören beenden — ohne die Ansagen auszuschalten. */
+export function anhoerenStoppen(): void {
+  abbrechen();
 }
 
 /** Nach dem Einschalten: Ansagen aus Rust wieder annehmen. */
@@ -217,7 +331,9 @@ export function wiedergabeStarten(): void {
   if (gestartet || !isTauri) return;
   gestartet = true;
   listen<Gespielt>("kabine-ansage", (e) => {
-    if (!gesperrt) abspielen(e.payload);
+    // Kam sie nach „Ausschalten“ noch an: nicht spielen, aber melden.
+    if (gesperrt) melden(e.payload, "abgebrochen");
+    else abspielen(e.payload);
   }).catch((e) => {
     // Sonst bliebe die Wiedergabe bis zum Neustart stumm: nach kurzer
     // Pause erneut anmelden.
@@ -233,4 +349,6 @@ export const einstellungenSetzen = (einstellungen: Einstellungen) =>
 export const zustandLesen = () => invoke<Zustand>("kabinen_zustand");
 export const probe = (rolle: Rolle, sprache: string) => invoke<Gespielt>("kabinen_probe", { rolle, sprache });
 export const ueberblick = () => invoke<Ueberblick | null>("kabinen_ueberblick");
+export const erneut = () => invoke<void>("kabinen_erneut");
+export const speicherLesen = () => invoke<Speicher>("kabinen_speicher");
 export const ausgabegeraete = () => invoke<Geraet[]>("kabinen_ausgabegeraete");

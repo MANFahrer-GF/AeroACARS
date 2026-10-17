@@ -10,11 +10,13 @@ import {
   einstellungenSetzen,
   freigeben,
   probe,
+  speicherLesen,
   stoppen,
   zustandLesen,
   type Einstellungen,
   type Geraet,
   type Rolle,
+  type Speicher,
   type Zustand,
 } from "../lib/kabinenansagen";
 
@@ -26,10 +28,12 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
   const [geraete, setGeraete] = useState<Geraet[] | null>(null);
+  const [speicher, setSpeicher] = useState<Speicher | null>(null);
 
   useEffect(() => {
     void einstellungenLesen().then(setE);
     void zustandLesen().then(setZ).catch(() => setZ(null));
+    void speicherLesen().then(setSpeicher).catch(() => setSpeicher(null));
   }, []);
 
   // Geräteliste beim Öffnen und beim Aufklappen der Auswahl neu lesen —
@@ -79,7 +83,9 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
     });
 
   const betaText =
-    z?.beta === true
+    z?.beta === true && z.kontingent_erschoepft
+      ? t("kabine.einstellungen.beta_kontingent")
+      : z?.beta === true
       ? t("kabine.einstellungen.beta_ja")
       : z?.beta === false
         ? t("kabine.einstellungen.beta_nein")
@@ -185,6 +191,15 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="settings__field" data-testid="kabine-speicher">
+            <span className="settings__field-label">{t("kabine.einstellungen.speicher")}</span>
+            <p className="settings__row-hint">
+              {t("kabine.einstellungen.speicher_text", {
+                mb: speicher ? (speicher.bytes / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 }) : "–",
+              })}
+            </p>
           </div>
 
           <div className="settings__field">

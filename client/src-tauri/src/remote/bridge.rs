@@ -1469,6 +1469,10 @@ mod tests {
             "kabinen_ton_huellkurve",
             "kabinen_probe",
             "kabinen_ueberblick",
+            "kabinen_wiedergabe_ende",
+            "kabinen_anhoeren",
+            "kabinen_erneut",
+            "kabinen_speicher",
             // VATSIM-CDM (v1.6.0): oeffnet ein NATIVES Fenster auf dem
             // Sim-PC. Vom Tablet aus ergibt das keinen Sinn — das Fenster
             // ginge auf dem PC auf, nicht auf dem Tablet. Der Browser-Pfad

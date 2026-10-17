@@ -20,11 +20,14 @@
       "lautstaerke": "Volume",
       "probe": "Voice sample",
       "lizenzen": "Licences",
-      "lizenz_text": "Piper (GPL-3.0) runs on the GSG server and is not downloaded to your computer. Voices: Thorsten and Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, modified). Azure is a Microsoft service. Kokoro-82M (Apache-2.0) also runs only on the GSG server, voices George and Emma.",
+      "lizenz_text": "The GSG server makes the voices with Piper (GPL-3.0) and Kokoro-82M (Apache-2.0). Both run only there and are not downloaded to your computer. The voices come from open datasets (including CC0, CC BY and CC BY-SA); the GSG team keeps the full list.",
       "ausgabe": "Output device",
       "ausgabe_standard": "System default",
       "ausgabe_fehlt": "Selected device not connected (plays on the system default)",
-      "ausgabe_hint": "For example ATC in the headset and the cabin on the speakers. If the device is unplugged, the system default plays."
+      "ausgabe_hint": "For example ATC in the headset and the cabin on the speakers. If the device is unplugged, the system default plays.",
+      "beta_kontingent": "Enabled, but the monthly quota is used up: announcements already written still play, new ones do not.",
+      "speicher": "Audio files",
+      "speicher_text": "{{mb}} MB on this computer. Audio is kept only for the current flight and deleted when the next flight starts."
     },
     "rolle": {
       "kapitaen": "Captain",
@@ -73,7 +76,6 @@
       "ausschalten": "Turn off announcements",
       "einstellungen": "Open settings",
       "ruhig": "No announcement right now",
-      "naechste": "Up next: {{slot}}",
       "ruhe_hinweis": "The next announcement comes with the matching flight phase.",
       "als_naechstes": "Up next",
       "nichts_wartet": "Nothing queued.",
@@ -81,9 +83,14 @@
       "noch_nichts": "No announcement on this flight yet.",
       "keine_ansagen": "No announcements right now, the reason is shown below.",
       "naechste_wann": "Up next: {{slot}}, {{wann}}.",
-      "status_jetzt": "now",
-      "status_bereit": "ready",
-      "status_vorbereitet": "being prepared"
+      "vorhoeren": "Listening",
+      "anhoeren_stoppen": "Stop listening",
+      "gong_text": "Double chime (no text).",
+      "noch_kein_text": "No text yet.",
+      "keine_stimme": "no voice, skipped",
+      "anhoeren": "Listen",
+      "erneut": "Try again",
+      "nochmal": "Play again"
     },
     "grund": {
       "aus": {
@@ -108,23 +115,27 @@
       },
       "beta_pruefung": {
         "titel": "Checking access",
-        "text": "AeroACARS is asking the GSG server whether your account is enabled for the beta. If the server cannot be reached, AeroACARS tries again every 5 minutes."
+        "text": "AeroACARS is asking the GSG server whether your account is enabled for the beta."
       },
       "nicht_freigeschaltet": {
         "titel": "Not enabled",
         "text": "Your account is not enabled for the cabin announcements beta. The GSG team enables accounts."
       },
-      "texte_fehlen": {
-        "titel": "Texts not received",
-        "text": "The GSG server did not deliver the announcement texts. AeroACARS tries again in 2 minutes. Server message:"
-      },
-      "ton_fehlt": {
-        "titel": "Audio not available right now",
-        "text": "The speech service did not deliver the audio (server busy, network or Azure key). AeroACARS tries again every minute. Message:"
-      },
       "wiedergabe": {
         "titel": "Audio could not be played",
         "text": "The announcement was ready but could not be played. Is the selected output device busy or unplugged? You can pick another device or the system default in the settings. Message:"
+      },
+      "beta_nicht_erreichbar": {
+        "titel": "Server unreachable",
+        "text": "The GSG server is not answering, so your access is still open. Next try at {{zeit}}."
+      },
+      "kontingent": {
+        "titel": "Monthly quota used up",
+        "text": "Your account is enabled, but the monthly quota for new texts is used up. Announcements already written still play, new ones do not."
+      },
+      "sim_angehalten": {
+        "titel": "Simulator paused",
+        "text": "The simulator is paused or in slew mode. No announcements play until it runs again."
       }
     },
     "wann": {
@@ -139,7 +150,89 @@
       "kapitaen_sinkflug": "shortly before the descent",
       "kabine_sinkflug": "shortly before the descent",
       "nach_der_landung": "while taxiing in after landing",
-      "aussteigen": "at the parking position"
+      "aussteigen": "at the parking position",
+      "kommando_tueren_scharf": "at pushback",
+      "kommando_start": "at the take-off roll",
+      "chime10000_steigflug": "climbing through 10,000 ft",
+      "chime10000_sinkflug": "descending through 10,000 ft",
+      "kommando_landung_vorbereiten": "on approach",
+      "kommando_plaetze_landung": "on final",
+      "kommando_tueren_entschaerfen": "at the gate",
+      "verspaetung_gate": "when it happens",
+      "turbulenz": "when it happens",
+      "turbulenz_vorbei": "when it happens",
+      "warteschleife": "when it happens",
+      "durchstarten": "when it happens",
+      "umleitung": "when it happens"
+    },
+    "stand": {
+      "text_ab": "Text from about {{zeit}}",
+      "text_ab_ohne": "Text shortly before landing",
+      "text_wird_geschrieben": "Text being written",
+      "text_fehler": "Text missing ({{grund}}), next try {{zeit}}",
+      "text_aufgegeben": "Text not received ({{grund}})",
+      "ton_wird_erzeugt": "Audio being made ({{fertig}} of {{von}})",
+      "ton_wartet": "Audio waiting ({{grund}}), next try {{zeit}}",
+      "ton_aufgegeben": "Audio refused ({{grund}})",
+      "bereit": "ready"
+    },
+    "fehler": {
+      "ausgelastet": "server busy",
+      "kontingent": "quota used up",
+      "zugang": "no access",
+      "zeit": "timeout",
+      "offline": "no connection",
+      "sonst": "server error"
+    },
+    "ablauf": {
+      "texte": "Texts",
+      "ton": "Audio",
+      "naechste": "Next announcement",
+      "abflug": "Departure",
+      "ankunft": "Arrival",
+      "ton_stand": "{{fertig}} of {{gesamt}} ready",
+      "keine": "none left",
+      "freigabe": {
+        "titel": "Access",
+        "ja": "enabled",
+        "nein": "not enabled",
+        "pruefung": "being checked",
+        "kontingent": "enabled, monthly quota used up",
+        "nicht_erreichbar": "server unreachable, next try {{zeit}}"
+      },
+      "teil": {
+        "entfaellt": "not needed",
+        "offen": "to follow",
+        "offen_um": "from about {{zeit}}",
+        "laeuft": "being written",
+        "fertig": "ready",
+        "fehler": "error, next try {{zeit}}",
+        "aufgegeben": "not received"
+      }
+    },
+    "profil": {
+      "linie": "Airline flight with cabin crew",
+      "bizjet": "Business jet, only the captain speaks",
+      "flugzeit": "{{h}} h {{m}} min",
+      "flugzeit_unbekannt": "flight time unknown, so no cruise announcements",
+      "kurzstrecke": "short flight, no cruise announcements",
+      "und": " and ",
+      "ohne_stimme": "{{sprache}} skipped (no voice)"
+    },
+    "zeit": {
+      "jetzt": "now",
+      "ca": "about {{zeit}}"
+    },
+    "wartet": {
+      "andere_ansage": "due, waiting for the current announcement",
+      "ruhephase": "due, waiting for the sterile phase to end",
+      "ton": "due, waiting for the audio",
+      "sim_angehalten": "due, simulator paused"
+    },
+    "ergebnis": {
+      "abgebrochen": "stopped",
+      "fehler": "could not play",
+      "unbekannt": "outcome unknown"
     }
   },
   "app": {
