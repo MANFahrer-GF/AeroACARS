@@ -11,7 +11,10 @@ vi.mock("./ipc", () => ({
   listen: vi.fn(),
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     aufrufe.push({ cmd, args });
-    if (cmd === "kabinen_ton_huellkurve") return [0.2, 0.4];
+    if (cmd === "kabinen_ton_huellkurve") {
+      if (args?.datei === "langsam.wav") await new Promise((r) => setTimeout(r, 40));
+      return [0.2, 0.4];
+    }
     if (cmd === "kabinen_ton_stoppen") {
       stoppZaehler += 1;
       return undefined;
@@ -60,6 +63,15 @@ describe("Kabinen-Wiedergabe", () => {
     expect(aufrufe.some((a) => a.cmd === "kabinen_ton_stoppen")).toBe(true);
     freigeben();
     await warten(1500);
+  });
+
+  it("startet nach Stopp während der Hüllkurve nicht mehr", async () => {
+    abspielen(ansage("langsam.wav"));
+    await warten(10); // Hüllkurve lädt noch
+    stoppen();
+    await warten(200);
+    expect(gespielt()).not.toContain("langsam.wav");
+    freigeben();
   });
 
   it("nennt einen Wiedergabefehler, bis eine Ansage wieder klappt", async () => {

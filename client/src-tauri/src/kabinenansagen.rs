@@ -292,10 +292,11 @@ pub(crate) struct Lauf {
     /// frühester nächster Versuch. Anders als `ton = None` (keine Stimme für
     /// die Sprache) ist das vorübergehend.
     ton_fehler: HashMap<(Slot, String), (u8, i64)>,
-    /// Letzter Fehler beim Holen der Texte / beim Ton, fuer die Begruendung
+    /// Fehler je noch fehlendem Text-Auftrag / Ton, fuer die Begruendung
     /// auf der Seite „Kabine“ (Thomas: „sagen warum, nicht leere Seite“).
-    texte_fehler: Option<String>,
-    ton_fehler_text: Option<String>,
+    /// Ein Erfolg loescht nur seinen eigenen Eintrag (Codex-QS beta.2).
+    texte_fehler: std::collections::BTreeMap<String, String>,
+    ton_fehler_text: std::collections::BTreeMap<(Slot, String), String>,
     warteschlange: cabin_announcements::Warteschlange,
     verlauf: Vec<Gespielt>,
 }
@@ -637,7 +638,7 @@ fn holen(
             let lauf = &mut stats.kabinen_lauf;
             match ergebnis {
                 Ok(d) => {
-                    lauf.texte_fehler = None;
+                    lauf.texte_fehler.remove(&schluessel);
                     if !d.sprachen.is_empty() {
                         lauf.sprachen = d.sprachen.clone();
                     }
@@ -665,7 +666,7 @@ fn holen(
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
-                    lauf.texte_fehler = Some(kurz(&e.to_string()));
+                    lauf.texte_fehler.insert(schluessel.clone(), kurz(&e.to_string()));
                     lauf.angefragt.remove(&schluessel);
                     let n = lauf.fehlversuche.get(&schluessel).map_or(0, |(n, _)| *n) + 1;
                     lauf.fehlversuche.insert(schluessel.clone(), (n, Utc::now().timestamp() + 120));
@@ -702,13 +703,13 @@ fn sprechen_lassen(app: AppHandle, flight: Arc<ActiveFlight>, mut auftraege: Vec
             match ergebnis {
                 Ok(ton) => {
                     lauf.ton_fehler.remove(&k);
-                    lauf.ton_fehler_text = None;
+                    lauf.ton_fehler_text.remove(&k);
                     lauf.ton.insert(k, ton);
                 }
                 Err(e) => {
                     // Vorübergehend: in einer Minute noch einmal (takt).
                     tracing::warn!(slot = ?k.0, sprache = %k.1, error = %e, "kabinenansage: Ton gerade nicht erzeugbar");
-                    lauf.ton_fehler_text = Some(kurz(&e));
+                    lauf.ton_fehler_text.insert(k.clone(), kurz(&e));
                     let n = lauf.ton_fehler.get(&k).map_or(0, |(n, _)| *n) + 1;
                     lauf.ton_fehler.insert(k, (n, Utc::now().timestamp() + 60));
                 }
@@ -954,7 +955,11 @@ pub(crate) struct Ueberblick {
 }
 
 /// Warum keine Ansagen kommen — die Seite zeigt es oben statt einer leeren
-/// Seite (Thomas 17.10.2026). Reihenfolge wie die Sperren in [`takt`].
+/// Seite (Thomas 17.10.2026). Bewusst nicht ganz die Reihenfolge von
+/// [`takt`]: Ein Frachtflug wird vor der Beta-Pruefung genannt, weil er
+/// endgueltig ist (auch nach der Freischaltung kaeme nichts). Pause/Slew
+/// fehlen absichtlich — dass im angehaltenen Sim nichts spricht, sieht der
+/// Pilot selbst.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "grund", content = "detail", rename_all = "snake_case")]
 pub(crate) enum Grund {
@@ -991,12 +996,10 @@ pub(crate) fn grund(an: bool, stats: &FlightStats) -> Option<Grund> {
         Beta::Unbekannt | Beta::Angefragt => return Some(Grund::BetaPruefung),
         Beta::Ja => {}
     }
-    if lauf.texte.is_empty() {
-        if let Some(f) = &lauf.texte_fehler {
-            return Some(Grund::TexteFehlen(f.clone()));
-        }
+    if let Some(f) = lauf.texte_fehler.values().next() {
+        return Some(Grund::TexteFehlen(f.clone()));
     }
-    lauf.ton_fehler_text.clone().map(Grund::TonFehlt)
+    lauf.ton_fehler_text.values().next().cloned().map(Grund::TonFehlt)
 }
 
 /// Fehlertext fuer die Anzeige: eine Zeile, hoechstens 160 Zeichen.
@@ -1208,7 +1211,11 @@ pub(crate) mod ausgabe {
         let daten = Arc::new(daten);
         let pos = Arc::new(AtomicUsize::new(0));
         let fehler = Arc::new(AtomicBool::new(false));
+        // Was noch im Geraet steckt, wenn die letzte Probe uebergeben ist:
+        // Abstand Rueckruf → Wiedergabe plus Puffer, groesster Wert (µs).
+        let latenz = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
+        #[allow(clippy::too_many_arguments)]
         fn bauen<T: cpal::SizedSample + cpal::FromSample<f32>>(
             dev: &cpal::Device,
             cfg: cpal::StreamConfig,
@@ -1216,10 +1223,16 @@ pub(crate) mod ausgabe {
             daten: Arc<Vec<f32>>,
             pos: Arc<AtomicUsize>,
             fehler: Arc<AtomicBool>,
+            latenz: Arc<std::sync::atomic::AtomicU64>,
         ) -> Result<cpal::Stream, String> {
+            let rate = f64::from(cfg.sample_rate.max(1));
             dev.build_output_stream(
                 cfg,
-                move |puffer: &mut [T], _: &cpal::OutputCallbackInfo| {
+                move |puffer: &mut [T], info: &cpal::OutputCallbackInfo| {
+                    let ts = info.timestamp();
+                    let puffer_s = (puffer.len() / kanaele) as f64 / rate;
+                    let us = ts.playback.duration_since(ts.callback).as_micros() as u64 + (puffer_s * 1e6) as u64;
+                    latenz.fetch_max(us, Ordering::Relaxed);
                     let mut i = pos.load(Ordering::Relaxed);
                     for rahmen in puffer.chunks_mut(kanaele) {
                         let x = daten.get(i).copied().unwrap_or(0.0);
@@ -1239,12 +1252,12 @@ pub(crate) mod ausgabe {
             .map_err(|e| e.to_string())
         }
 
-        let (d, p, f, c) = (Arc::clone(&daten), Arc::clone(&pos), Arc::clone(&fehler), cfg.config());
+        let (d, p, f, l, c) = (Arc::clone(&daten), Arc::clone(&pos), Arc::clone(&fehler), Arc::clone(&latenz), cfg.config());
         let stream = match cfg.sample_format() {
-            cpal::SampleFormat::F32 => bauen::<f32>(&dev, c, kanaele, d, p, f),
-            cpal::SampleFormat::I16 => bauen::<i16>(&dev, c, kanaele, d, p, f),
-            cpal::SampleFormat::U16 => bauen::<u16>(&dev, c, kanaele, d, p, f),
-            cpal::SampleFormat::I32 => bauen::<i32>(&dev, c, kanaele, d, p, f),
+            cpal::SampleFormat::F32 => bauen::<f32>(&dev, c, kanaele, d, p, f, l),
+            cpal::SampleFormat::I16 => bauen::<i16>(&dev, c, kanaele, d, p, f, l),
+            cpal::SampleFormat::U16 => bauen::<u16>(&dev, c, kanaele, d, p, f, l),
+            cpal::SampleFormat::I32 => bauen::<i32>(&dev, c, kanaele, d, p, f, l),
             andere => return Err(format!("Tonformat {andere:?} nicht unterstuetzt")),
         }?;
         stream.play().map_err(|e| e.to_string())?;
@@ -1257,6 +1270,14 @@ pub(crate) mod ausgabe {
                 return Err("Ausgabegeraet meldet einen Fehler".into());
             }
             if pos.load(Ordering::Relaxed) >= gesamt {
+                // Alles uebergeben; was noch im Geraet steckt (Bluetooth
+                // kann deutlich ueber 200 ms liegen), ausspielen lassen —
+                // hoechstens 2 s, ein Stopp beendet sofort.
+                let rest = std::time::Duration::from_micros(latenz.load(Ordering::Relaxed).min(2_000_000));
+                let bis = std::time::Instant::now() + rest;
+                while std::time::Instant::now() < bis && STOPP.load(Ordering::SeqCst) == stand {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
                 break;
             }
         }
@@ -1588,13 +1609,21 @@ mod tests {
         assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet));
         st.kabinen_lauf.beta = Beta::Ja;
         assert_eq!(grund(true, &st), None, "alles bereit");
-        st.kabinen_lauf.texte_fehler = Some(kurz("api 402: budget\nzweite Zeile"));
+        st.kabinen_lauf.texte_fehler.insert("ankunft".into(), kurz("api 402: budget\nzweite Zeile"));
         assert_eq!(grund(true, &st), Some(Grund::TexteFehlen("api 402: budget".into())));
-        // Sind Texte da, zaehlt ein alter Textfehler nicht mehr.
+        // Ein anderer Auftrag gelingt: Der fehlende bleibt genannt (Codex-QS).
+        st.kabinen_lauf.texte_fehler.remove("abflug");
         st.kabinen_lauf.texte.insert((Slot::Boarding, "de-DE".into()), "Hallo".into());
+        assert_eq!(grund(true, &st), Some(Grund::TexteFehlen("api 402: budget".into())));
+        st.kabinen_lauf.texte_fehler.remove("ankunft");
         assert_eq!(grund(true, &st), None);
-        st.kabinen_lauf.ton_fehler_text = Some("ausgelastet".into());
+        let k = (Slot::Sicherheit, "en-GB".to_string());
+        st.kabinen_lauf.ton_fehler_text.insert(k.clone(), "ausgelastet".into());
+        st.kabinen_lauf.ton_fehler_text.remove(&(Slot::Boarding, "de-DE".to_string()));
         assert_eq!(grund(true, &st), Some(Grund::TonFehlt("ausgelastet".into())));
+        st.kabinen_lauf.ton_fehler_text.remove(&k);
+        assert_eq!(grund(true, &st), None);
+        st.kabinen_lauf.ton_fehler_text.insert(k, "ausgelastet".into());
         st.replay_verdacht = true;
         assert_eq!(grund(true, &st), Some(Grund::Replay));
         // So kommt es in der Oberflaeche an.

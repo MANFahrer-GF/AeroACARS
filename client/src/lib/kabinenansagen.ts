@@ -120,8 +120,11 @@ function pause(ms: number): Promise<void> {
 
 /** Spielt eine Tondatei auf dem Ausgabegerät; der Pegel für die Anzeige
  *  läuft aus der vorab gelesenen Hüllkurve mit der Uhr mit. */
-async function spielen(datei: string, lautstaerke: number): Promise<void> {
+async function spielen(datei: string, lautstaerke: number, meiner: number): Promise<void> {
   const huelle = await invoke<number[]>("kabinen_ton_huellkurve", { datei }).catch(() => [] as number[]);
+  // Kam „Ausschalten“, während die Hüllkurve lud, nicht mehr starten: Rust
+  // sähe den Stopp nicht mehr, er war vor diesem Aufruf (Codex-QS beta.2).
+  if (meiner !== durchgang) return;
   const start = performance.now();
   let fertig = false;
   const messen = () => {
@@ -165,7 +168,7 @@ async function abarbeiten(): Promise<void> {
         for (let i = 0; i < a.teile.length && meiner === durchgang; i++) {
           setzen({ teil: i });
           try {
-            await spielen(a.teile[i].datei, a.lautstaerke);
+            await spielen(a.teile[i].datei, a.lautstaerke, meiner);
             setzen({ fehler: null });
           } catch (e) {
             console.warn("[kabine] Ton nicht abspielbar", a.slot, e);
