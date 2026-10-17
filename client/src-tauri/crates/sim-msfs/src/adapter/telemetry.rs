@@ -10887,14 +10887,20 @@ mod tests {
                 titel,
                 atc,
                 pfad,
-                &[("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0), ("BRAKE PARKING POSITION", 0.0)],
+                &[
+                    ("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0),
+                    ("BRAKE PARKING POSITION", 0.0),
+                ],
             );
             assert!(gesetzt.parking_brake, "{titel}: Hebel gesetzt");
             let geloest = runde3(
                 titel,
                 atc,
                 pfad,
-                &[("L:A32NX_PARK_BRAKE_LEVER_POS", 0.0), ("BRAKE PARKING POSITION", 1.0)],
+                &[
+                    ("L:A32NX_PARK_BRAKE_LEVER_POS", 0.0),
+                    ("BRAKE PARKING POSITION", 1.0),
+                ],
             );
             assert!(!geloest.parking_brake, "{titel}: Hebel gelöst");
         }
