@@ -29,7 +29,7 @@ export interface Gespielt {
 
 export interface Einstellungen {
   an: boolean;
-  zweite_sprache: "keine" | "airline" | "ziel" | "eigene";
+  zweite_sprache: "keine" | "airline" | "airline_de" | "ziel" | "eigene";
   eigene_sprache: string | null;
   anbieter_kapitaen: "piper" | "kokoro" | "azure";
   anbieter_kabine: "piper" | "kokoro" | "azure";

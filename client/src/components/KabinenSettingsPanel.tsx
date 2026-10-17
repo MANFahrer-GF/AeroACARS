@@ -129,6 +129,7 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
               onChange={(ev) => void aendern({ zweite_sprache: ev.target.value as Einstellungen["zweite_sprache"] })}
             >
               <option value="airline">{t("kabine.einstellungen.sprache_airline")}</option>
+              <option value="airline_de">{t("kabine.einstellungen.sprache_airline_de")}</option>
               <option value="ziel">{t("kabine.einstellungen.sprache_ziel")}</option>
               <option value="eigene">{t("kabine.einstellungen.sprache_eigene")}</option>
               <option value="keine">{t("kabine.einstellungen.sprache_keine")}</option>

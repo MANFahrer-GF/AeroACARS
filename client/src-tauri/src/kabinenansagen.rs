@@ -41,7 +41,8 @@ pub(crate) const EREIGNIS_ANSAGE: &str = "kabine-ansage";
 pub struct Einstellungen {
     /// Hauptschalter. Standard AUS.
     pub an: bool,
-    /// Zweite Sprache neben Englisch: keine | airline | ziel | eigene.
+    /// Sprachen: keine (nur Englisch) | airline (Airline + Englisch) |
+    /// airline_de (Airline + Deutsch, Thomas 17.10.2026) | ziel | eigene.
     pub zweite_sprache: String,
     /// Für „eigene“: BCP-47, z. B. "de-DE".
     pub eigene_sprache: Option<String>,
@@ -96,7 +97,7 @@ impl Einstellungen {
     /// Unbekannte Werte auf den Standard, Zahlen in ihren Bereich.
     pub(crate) fn normalisiert(mut self) -> Self {
         let std = Einstellungen::default();
-        if !["keine", "airline", "ziel", "eigene"].contains(&self.zweite_sprache.as_str()) {
+        if !["keine", "airline", "airline_de", "ziel", "eigene"].contains(&self.zweite_sprache.as_str()) {
             self.zweite_sprache = std.zweite_sprache.clone();
         }
         self.eigene_sprache = self.eigene_sprache.filter(|s| ist_locale(s));
@@ -1481,6 +1482,8 @@ mod tests {
         }
         .normalisiert();
         assert_eq!(kaputt.zweite_sprache, "airline");
+        let de = Einstellungen { zweite_sprache: "airline_de".into(), ..Einstellungen::default() }.normalisiert();
+        assert_eq!(de.zweite_sprache, "airline_de", "Airline + Deutsch bleibt erhalten");
         assert_eq!(kaputt.eigene_sprache, None);
         assert_eq!(kaputt.anbieter_kabine, "piper");
         assert_eq!(kaputt.azure_region, "westeurope");
