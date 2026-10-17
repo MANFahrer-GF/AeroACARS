@@ -10012,10 +10012,22 @@ const HAT_AGL_VERTRAUT_FT: f32 = 600.0;
 /// eigene Kanten (Anflug-Kante im selben Takt, Durchstart-Detektor mit
 /// Zählung und Forensik-Schnitt, Bodenberührung für den Aufsetz-Zeitpunkt).
 fn reiseband_phase(stats: &FlightStats) -> Option<FlightPhase> {
-    stats.shadow_phase.filter(|p| {
-        *p != stats.phase
-            && matches!(p, FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent)
-    })
+    let ziel = match stats.shadow_phase? {
+        p @ (FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent) => p,
+        // v2 schon im Anflug, v1 noch im Reiseflug: v1 geht in den
+        // Sinkflug, und seine eigene Anflug-Kante entscheidet im nächsten
+        // Takt. Sonst bliebe v1 bei einem flachen Anflug (> −500 fpm, der
+        // Cruise-Schnellweg greift nicht) bis zum Boden im Reiseflug —
+        // ohne Anflug-Puffer, Durchstart-Detektor und Landungskante
+        // (Codex-QS 17.10.2026). Nur aus Cruise: im Climb (z. B. nach
+        // einem Durchstarter) wäre „Sinkflug" falsch; dort bleibt es beim
+        // Versöhner.
+        FlightPhase::Approach | FlightPhase::Final if stats.phase == FlightPhase::Cruise => {
+            FlightPhase::Descent
+        }
+        _ => return None,
+    };
+    (ziel != stats.phase).then_some(ziel)
 }
 
 /// Anflug-Kante aus dem Reiseband: tief und sinkend (alte FSM und v2 1:1).
@@ -48928,7 +48940,18 @@ fn step_flight_at(
                     let prev = stats
                         .previous_phase_before_holding
                         .unwrap_or(FlightPhase::Cruise);
-                    next_phase = prev;
+                    // Zurück in die Phase vor der Warteschleife — im
+                    // Reiseband aber in die AKTUELLE v2-Phase: Hat v2 während
+                    // der Warteschleife z. B. vom Sinkflug auf Cruise
+                    // gewechselt, gäbe es sonst einen Takt Descent und dann
+                    // die Übernahme (Codex-QS 17.10.2026).
+                    next_phase = match (prev, stats.shadow_phase) {
+                        (
+                            FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent,
+                            Some(v2 @ (FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent)),
+                        ) => v2,
+                        _ => prev,
+                    };
                     stats.holding_pending_since = None;
                     stats.holding_exit_pending_since = None;
                     stats.previous_phase_before_holding = None;
@@ -52094,6 +52117,62 @@ mod enroute_reconcile_tests {
             flight.stats.lock().unwrap().previous_phase_before_holding,
             Some(FlightPhase::Descent)
         );
+    }
+
+    /// Codex-QS 17.10.2026: v2 springt bei anhaltendem tiefem Sinkflug
+    /// direkt vom Reiseflug in den Anflug. v1 im Cruise muss folgen (über
+    /// Descent und seine eigene Anflug-Kante), auch bei einem flachen
+    /// Anflug, bei dem der Cruise-Schnellweg (< −500 fpm) nie greift.
+    #[test]
+    fn shallow_approach_from_cruise_follows_v2_into_the_approach() {
+        let flight = fixture();
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Cruise;
+            stats.shadow_phase = Some(FlightPhase::Approach);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 4800.0;
+        snap.altitude_agl_ft = 4500.0;
+        snap.vertical_speed_fpm = -400.0;
+        snap.groundspeed_kt = 160.0;
+        snap.engines_running = 2;
+        assert_eq!(step_flight(&flight, &snap), Some(FlightPhase::Descent));
+        assert_eq!(step_flight(&flight, &snap), Some(FlightPhase::Approach));
+    }
+
+    /// Codex-QS 17.10.2026: Ende einer Warteschleife aus dem Sinkflug,
+    /// während v2 inzwischen Cruise sagt → direkt Cruise, kein Takt Descent.
+    #[test]
+    fn holding_exit_goes_straight_to_the_current_v2_phase() {
+        let flight = fixture();
+        let t0 = Utc::now() - chrono::Duration::seconds(100);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Holding;
+            stats.previous_phase_before_holding = Some(FlightPhase::Descent);
+            stats.shadow_phase = Some(FlightPhase::Cruise);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 15000.0;
+        snap.altitude_agl_ft = 14000.0;
+        snap.vertical_speed_fpm = 0.0;
+        snap.groundspeed_kt = 230.0;
+        snap.engines_running = 2;
+        snap.bank_deg = 0.0;
+        let mut wechsel = Vec::new();
+        for i in 0..10 {
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                wechsel.push(p);
+            }
+        }
+        assert_eq!(wechsel, vec![FlightPhase::Cruise], "one clean Holding→Cruise, no Descent tick");
     }
 
     #[test]
