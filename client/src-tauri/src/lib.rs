@@ -5519,6 +5519,16 @@ struct PersistedFlightStats {
     /// „Zeiten gegen Flugplan": Planzeiten des OFP — siehe FlightStats.
     #[serde(default)]
     ofp_planzeiten: landing_scoring::flugzeiten::FlugZeiten,
+    /// Kabinenansagen (Beta) — siehe FlightStats. `#[serde(default)]`, damit
+    /// aeltere `active_flight.json` weiter laden (alle vier `None`).
+    #[serde(default)]
+    pax_count: Option<i32>,
+    #[serde(default)]
+    max_passengers: Option<i32>,
+    #[serde(default)]
+    flight_type: Option<String>,
+    #[serde(default)]
+    airline_name: Option<String>,
     /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
     /// Summe aller Pause-Sekunden seit Flugstart. `#[serde(default)]`
     /// damit pre-Spec `active_flight.json` weiter ladbar bleibt — alte
@@ -5858,6 +5868,11 @@ impl PersistedFlightStats {
             simbrief_ofp_id: stats.simbrief_ofp_id.clone(),
             simbrief_ofp_generated_at: stats.simbrief_ofp_generated_at.clone(),
             ofp_planzeiten: stats.ofp_planzeiten,
+            // Kabinenansagen (Beta)
+            pax_count: stats.pax_count,
+            max_passengers: stats.max_passengers,
+            flight_type: stats.flight_type.clone(),
+            airline_name: stats.airline_name.clone(),
             // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator)
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
@@ -6148,6 +6163,11 @@ impl PersistedFlightStats {
         stats.simbrief_ofp_id = self.simbrief_ofp_id;
         stats.simbrief_ofp_generated_at = self.simbrief_ofp_generated_at;
         stats.ofp_planzeiten = self.ofp_planzeiten;
+        // Kabinenansagen (Beta): Wiedereinstieg braucht dieselben Eingaben.
+        stats.pax_count = self.pax_count;
+        stats.max_passengers = self.max_passengers;
+        stats.flight_type = self.flight_type;
+        stats.airline_name = self.airline_name;
         // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
         // ueber `save_active_flight`/Resume hinweg erhalten. Damit
         // wird ein App-Restart waehrend laufender Pause die akkumu-
@@ -7288,6 +7308,18 @@ struct FlightStats {
     /// geladenen OFP (`plan_*`, die Ist-Felder bleiben hier leer — sie
     /// kommen erst in [`flugzeiten`] aus `block_off_at` & Co. dazu).
     ofp_planzeiten: landing_scoring::flugzeiten::FlugZeiten,
+    /// Kabinenansagen (Beta): gebuchte Passagiere aus dem OFP. `Some(0)` ist
+    /// ein Frachtflug und schaltet die Ansagen ab, `None` heisst „kein OFP".
+    /// Deshalb hier NICHT wie bei den Gewichten `0 → None` filtern.
+    pax_count: Option<i32>,
+    /// Kabinenansagen (Beta): Sitzplaetze der geplanten Config (OFP) —
+    /// entscheidet Bizjet oder Linie.
+    max_passengers: Option<i32>,
+    /// Kabinenansagen (Beta): phpVMS-Flugart aus dem Bid (J, F, P …).
+    flight_type: Option<String>,
+    /// Kabinenansagen (Beta): Name der Airline aus dem Bid, fuer den Text.
+    /// Die Kennung steht schon in `ActiveFlight::airline_icao`.
+    airline_name: Option<String>,
     /// Cockpit: erwartete Landung (Unix-s) aus der Planzeit am aktuellen Ort
     /// der Route (`landung_erwartet`). Nur in der Luft, nicht gespeichert —
     /// der naechste Takt rechnet sie neu.
@@ -16774,6 +16806,7 @@ async fn flight_refresh_simbrief(
             stats.abflug_icao = Some(flight.dpt_airport.trim().to_ascii_uppercase());
         }
         stats.ofp_planzeiten = ofp_planzeiten(&ofp);
+        kabinen_eckdaten_aus_ofp(&mut stats, &ofp);
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -19720,6 +19753,10 @@ async fn flight_adopt(
         .lock()
         .expect("authenticated_pilot_id lock")
         .map(|id| id.to_string());
+    // Kabinenansagen (Beta): ohne passenden Bid bleiben beide Felder leer.
+    if let Some(b) = matching_bid {
+        kabinen_eckdaten_aus_bid(&mut flight.stats.lock().expect("flight stats lock"), &b.flight);
+    }
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -20550,6 +20587,8 @@ async fn flight_start_mit(
         .lock()
         .expect("authenticated_pilot_id lock")
         .map(|id| id.to_string());
+    // Kabinenansagen (Beta): Flugart und Airline-Name, auch ohne OFP.
+    kabinen_eckdaten_aus_bid(&mut flight.stats.lock().expect("flight stats lock"), &bid.flight);
     save_active_flight(&app, &flight);
 
     // v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
@@ -20664,6 +20703,7 @@ async fn flight_start_mit(
         // (QS-Befund V4, 18.09.2026).
         sprit_plan_neu_lesen(&mut stats);
         stats.ofp_planzeiten = ofp_planzeiten(&ofp);
+        kabinen_eckdaten_aus_ofp(&mut stats, &ofp);
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -21359,6 +21399,8 @@ async fn flight_start_manual(
         .lock()
         .expect("authenticated_pilot_id lock")
         .map(|id| id.to_string());
+    // Kabinenansagen (Beta): Flugart und Airline-Name, auch ohne OFP.
+    kabinen_eckdaten_aus_bid(&mut flight.stats.lock().expect("flight stats lock"), &bid.flight);
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -47089,6 +47131,21 @@ fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten:
     }
 }
 
+/// Kabinenansagen (Beta): Flugart und Airline-Name aus dem Bid. Leere Texte
+/// gelten als fehlend — phpVMS liefert den Namen notfalls als "".
+fn kabinen_eckdaten_aus_bid(stats: &mut FlightStats, flight: &api_client::Flight) {
+    let text = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+    stats.flight_type = flight.flight_type.as_deref().and_then(text);
+    stats.airline_name = flight.airline.as_ref().and_then(|a| text(&a.name));
+}
+
+/// Kabinenansagen (Beta): Passagiere und Sitzplaetze aus dem OFP. Eine 0 bei
+/// den Passagieren bleibt stehen: Das ist der Frachtflug ohne Ansagen.
+fn kabinen_eckdaten_aus_ofp(stats: &mut FlightStats, ofp: &api_client::SimBriefOfp) {
+    stats.pax_count = Some(ofp.pax_count.max(0));
+    stats.max_passengers = ofp.max_passengers.filter(|&n| n > 0);
+}
+
 /// „Zeiten gegen Flugplan": Plan des OFP plus die Ist-Zeiten dieses Fluges.
 /// Immer `Some` — ohne Plan sagt die Anzeige „kein SimBrief-OFP" (Altbestand
 /// ohne das Feld blendet den Abschnitt dagegen ganz aus).
@@ -51456,6 +51513,65 @@ mod arrived_fallback_geometry_tests {
             "ein anhaengiger Rueckzug muss einen Resume ueberleben, sonst bleibt \
              ein bekanntlich veralteter Wert in der finalen Einreichung unkorrigiert"
         );
+    }
+
+    /// Kabinenansagen (Beta): Die Eckdaten kommen aus Bid und OFP, ein
+    /// Frachtflug (0 Passagiere) bleibt `Some(0)` und alles ueberlebt einen
+    /// Resume. Ein altes `active_flight.json` ohne die Felder laedt mit `None`.
+    #[test]
+    fn kabinen_eckdaten_aus_bid_und_ofp_ueberleben_einen_resume() {
+        let bid_flight: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "4711",
+            "flight_number": "8402",
+            "dpt_airport_id": "EDDF",
+            "arr_airport_id": "EDDH",
+            "flight_type": " F ",
+            "airline": { "id": 3, "icao": "BOX", "name": "AeroLogic" }
+        }))
+        .expect("bid parses");
+        let ofp = api_client::SimBriefOfp {
+            pax_count: 0,
+            max_passengers: Some(0),
+            ..Default::default()
+        };
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &bid_flight);
+        kabinen_eckdaten_aus_ofp(&mut stats, &ofp);
+        assert_eq!(stats.flight_type.as_deref(), Some("F"));
+        assert_eq!(stats.airline_name.as_deref(), Some("AeroLogic"));
+        assert_eq!(stats.pax_count, Some(0), "0 Pax ist der Frachtflug, nicht „unbekannt“");
+        assert_eq!(stats.max_passengers, None);
+
+        let snapshot = PersistedFlightStats::snapshot_from(&stats);
+        let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+        let restored: PersistedFlightStats = serde_json::from_str(&json).expect("snapshot parses");
+        let mut fresh = FlightStats::new();
+        restored.apply_to(&mut fresh);
+        assert_eq!(fresh.pax_count, Some(0));
+        assert_eq!(fresh.flight_type.as_deref(), Some("F"));
+        assert_eq!(fresh.airline_name.as_deref(), Some("AeroLogic"));
+
+        let mut alt: serde_json::Value = serde_json::from_str(&json).expect("json");
+        for k in ["pax_count", "max_passengers", "flight_type", "airline_name"] {
+            assert!(alt.as_object_mut().unwrap().remove(k).is_some(), "{k} fehlt im Snapshot");
+        }
+        let alt: PersistedFlightStats = serde_json::from_value(alt).expect("alter Stand laedt");
+        let mut fresh = FlightStats::new();
+        alt.apply_to(&mut fresh);
+        assert_eq!(
+            (fresh.pax_count, fresh.max_passengers, fresh.flight_type, fresh.airline_name),
+            (None, None, None, None)
+        );
+
+        // Leerer Airline-Name und fehlende Flugart gelten als fehlend.
+        let leer: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "1", "flight_number": "1", "dpt_airport_id": "EDDF", "arr_airport_id": "EDDM",
+            "airline": { "id": 1, "name": "  " }
+        }))
+        .expect("bid parses");
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &leer);
+        assert_eq!((stats.flight_type, stats.airline_name), (None, None));
     }
 
     /// v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,
