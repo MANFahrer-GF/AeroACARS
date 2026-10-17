@@ -801,7 +801,15 @@ async fn sprechen(
                 let name = cache::dateiname("kokoro", stimme, sprache, text, "wav");
                 let pfad = ordner.join(&name);
                 if !pfad.exists() {
-                    let wav = piper::sprechen(stimme, text).await?;
+                    // Kokoro ist ein Zusatz: Klappt es gerade nicht, spricht
+                    // Piper, statt dass die Ansage ausfaellt (Codex-QS).
+                    let wav = match piper::sprechen(stimme, text).await {
+                        Ok(w) => w,
+                        Err(e) => {
+                            tracing::info!(error = %e, "kabinenansagen: Kokoro gerade nicht, Piper spricht");
+                            continue;
+                        }
+                    };
                     std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
                 }
                 return ton_aus_datei(&pfad, name).map(Some);
