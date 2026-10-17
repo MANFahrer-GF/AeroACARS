@@ -59,6 +59,20 @@ impl Warteschlange {
     /// Nächste spielbare Ansage, oder `None`, wenn gerade etwas läuft, die
     /// Ruhephase alles Verfügbare sperrt oder nichts ansteht.
     pub fn naechstes(&mut self, jetzt: i64, phase: FlightPhase, ruhephase: bool) -> Option<Slot> {
+        self.naechstes_bereit(jetzt, phase, ruhephase, |_| true)
+    }
+
+    /// Wie [`Self::naechstes`], aber nur Slots, für die `bereit` gilt (Ton
+    /// fertig erzeugt). Die anderen bleiben liegen, bis sie bereit sind oder
+    /// verfallen — sonst ginge eine Ansage verloren, deren Text noch
+    /// unterwegs ist.
+    pub fn naechstes_bereit(
+        &mut self,
+        jetzt: i64,
+        phase: FlightPhase,
+        ruhephase: bool,
+        bereit: impl Fn(Slot) -> bool,
+    ) -> Option<Slot> {
         let (behalten, weg): (Vec<_>, Vec<_>) = std::mem::take(&mut self.eintraege)
             .into_iter()
             .partition(|e| !Self::abgelaufen(e, jetzt, phase));
@@ -73,6 +87,7 @@ impl Warteschlange {
             .iter()
             .enumerate()
             .filter(|(_, e)| !ruhephase || e.slot.in_ruhephase_erlaubt())
+            .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
             .map(|(i, _)| i)?;
         Some(self.eintraege.remove(idx).slot)
@@ -143,4 +158,19 @@ mod tests {
         assert_eq!(weg, vec![Slot::Sicherheit, Slot::KommandoTuerenEntschaerfen]);
         assert!(w.ist_leer());
     }
+
+    #[test]
+    fn nicht_bereites_bleibt_liegen_bis_es_bereit_ist() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([
+            f(Slot::KapitaenBegruessung, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::Boarding, Verfall::AbPhase(Pushback)),
+        ]);
+        // Kapitän geht vor, ist aber noch nicht fertig: die Kabine spielt.
+        assert_eq!(w.naechstes_bereit(0, Boarding, false, |s| s != Slot::KapitaenBegruessung), Some(Slot::Boarding));
+        assert_eq!(w.naechstes_bereit(1, Boarding, false, |s| s != Slot::KapitaenBegruessung), None);
+        assert_eq!(w.wartend(), vec![Slot::KapitaenBegruessung]);
+        assert_eq!(w.naechstes_bereit(2, TaxiOut, false, |_| true), Some(Slot::KapitaenBegruessung));
+    }
+
 }

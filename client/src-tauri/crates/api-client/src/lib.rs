@@ -769,6 +769,33 @@ pub struct PaxFare {
     pub count: i32,
 }
 
+/// Kabinenansagen (Beta): Antwort von `/api/kabinenansagen/status`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KabinenStatus {
+    #[serde(default)]
+    pub beta: bool,
+    #[serde(default)]
+    pub bereit: bool,
+}
+
+/// Kabinenansagen (Beta): ein Text des Drehbuchs. `slot` ist der serde-Name
+/// aus `cabin_announcements::Slot` (der api-client kennt den Baustein nicht).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KabinenEintrag {
+    pub slot: String,
+    pub sprache: String,
+    pub text: String,
+}
+
+/// Kabinenansagen (Beta): Antwort von `/api/kabinenansagen/drehbuch`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KabinenDrehbuch {
+    #[serde(default)]
+    pub sprachen: Vec<String>,
+    #[serde(default)]
+    pub eintraege: Vec<KabinenEintrag>,
+}
+
 /// Response payload of the PaxStudio fares/claim endpoints (inside the `{data:…}`
 /// envelope). `value_source` is `"booked"` when the pilot's exact per-class split
 /// was returned, `"none"` when the OFP has no PaxStudio booking (empty `fares`).
@@ -1625,6 +1652,22 @@ impl Client {
             &Body { pirep_id },
         )
         .await
+    }
+
+    /// Kabinenansagen (Beta): Darf dieser Pilot die Ansagen nutzen?
+    /// `GET /api/kabinenansagen/status` am GSG-Modul. Nur `beta && bereit`
+    /// schaltet frei; jeder Fehler heisst „aus“ (Aufrufer entscheidet).
+    pub async fn kabinen_status(&self) -> Result<KabinenStatus, ApiError> {
+        self.get_data("/api/kabinenansagen/status").await
+    }
+
+    /// Kabinenansagen (Beta): die Texte eines Flugteils.
+    /// `POST /api/kabinenansagen/drehbuch` am GSG-Modul.
+    pub async fn kabinen_drehbuch(
+        &self,
+        anfrage: &serde_json::Value,
+    ) -> Result<KabinenDrehbuch, ApiError> {
+        self.post_data("/api/kabinenansagen/drehbuch", anfrage).await
     }
 
     /// `GET /api/airports/{icao}` — single airport lookup with coordinates.

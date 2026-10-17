@@ -40,6 +40,7 @@ pub mod szenerie_bahn;
 mod ui_state;
 mod xplane_band;
 mod xplane_plugin_install;
+mod kabinenansagen;
 mod flug_aktivitaet;
 mod stats_sperre;
 
@@ -5532,6 +5533,10 @@ struct PersistedFlightStats {
     /// Umleitung (Beta) — siehe FlightStats.
     #[serde(default)]
     umleitung_ziel: Option<String>,
+    #[serde(default)]
+    utc_versatz_abflug_min: Option<i32>,
+    #[serde(default)]
+    utc_versatz_ziel_min: Option<i32>,
     /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
     /// Summe aller Pause-Sekunden seit Flugstart. `#[serde(default)]`
     /// damit pre-Spec `active_flight.json` weiter ladbar bleibt — alte
@@ -5877,6 +5882,8 @@ impl PersistedFlightStats {
             flight_type: stats.flight_type.clone(),
             airline_name: stats.airline_name.clone(),
             umleitung_ziel: stats.umleitung_ziel.clone(),
+            utc_versatz_abflug_min: stats.utc_versatz_abflug_min,
+            utc_versatz_ziel_min: stats.utc_versatz_ziel_min,
             // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator)
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
@@ -6173,6 +6180,8 @@ impl PersistedFlightStats {
         stats.flight_type = self.flight_type;
         stats.airline_name = self.airline_name;
         stats.umleitung_ziel = self.umleitung_ziel;
+        stats.utc_versatz_abflug_min = self.utc_versatz_abflug_min;
+        stats.utc_versatz_ziel_min = self.utc_versatz_ziel_min;
         // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
         // ueber `save_active_flight`/Resume hinweg erhalten. Damit
         // wird ein App-Restart waehrend laufender Pause die akkumu-
@@ -7331,6 +7340,13 @@ struct FlightStats {
     /// Zuletzt gesehener `go_around_count`: Der Planer will eine Flanke,
     /// keinen Zaehler.
     kabinen_durchstarts: u32,
+    /// Kabinenansagen (Beta): Texte, Ton und Warteschlange dieses Fluges.
+    /// Nicht gespeichert — siehe `kabinenansagen::Lauf`.
+    kabinen_lauf: kabinenansagen::Lauf,
+    /// Kabinenansagen (Beta): Zeitzonen von Abflug und Ziel aus dem OFP
+    /// (Minuten gegen UTC). Rueckfall, wenn phpVMS keine Zeitzone kennt.
+    utc_versatz_abflug_min: Option<i32>,
+    utc_versatz_ziel_min: Option<i32>,
     /// Umleitung (Beta): vom Piloten im Flug gemeldetes neues Ziel (ICAO).
     /// Loest die Umleitungs-Ansage aus. Der PIREP-Divert laeuft weiter ueber
     /// den Banner nach der Landung.
@@ -41952,7 +41968,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             takt_uhr.abschnitt("step_flight");
             // Kabinenansagen (Beta): hier und nicht in `phasen_takt`, das
             // laeuft auch im Korpus-Replay.
-            kabinen_takt(&flight, &snap, Utc::now());
+            kabinenansagen::takt(&app, &flight, &client, &snap, Utc::now());
             takt_uhr.abschnitt("kabinenansagen");
 
             // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
@@ -47218,6 +47234,8 @@ fn kabinen_eckdaten_aus_ofp(stats: &mut FlightStats, ofp: &api_client::SimBriefO
     if let Some(n) = ofp.max_passengers.filter(|&n| n > 0) {
         stats.max_passengers = Some(n);
     }
+    stats.utc_versatz_abflug_min = ofp.orig_utc_offset_min;
+    stats.utc_versatz_ziel_min = ofp.dest_utc_offset_min;
 }
 
 /// Kabinenansagen (Beta): was der Planer einmal zu Beginn vom Flug wissen
@@ -47264,36 +47282,26 @@ fn kabinen_flugdaten(
     }
 }
 
-/// Kabinenansagen (Beta): ein Takt des Planers mit der effektiven Phase
-/// (`stats.phase`). Pause, Slew und Replay-Verdacht gehen nicht hinein —
-/// wie bei der v2-Engine in [`phasen_takt`]. Ohne Passagierzahl entsteht
-/// kein Planer: Der Flug waere ohnehin „Aus“, und Pax und Sitze koennen beim
-/// Start noch nachkommen (OFP-Uebernahme nach dem Eintragen des Fluges).
-///
-/// Noch spielt nichts ab: Faellige Ansagen gehen nur ins Log.
-fn kabinen_takt(flight: &ActiveFlight, snap: &SimSnapshot, now: DateTime<Utc>) {
-    if snap.paused || snap.slew_mode {
-        return;
-    }
-    let mut stats = flight.stats.lock().expect("flight stats");
-    if stats.replay_verdacht || stats.pax_count.is_none() {
-        return;
-    }
-    let faellig = kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min);
-    drop(stats);
-    for f in faellig {
-        tracing::info!(slot = ?f.slot, verfall = ?f.verfall, "kabinenansage faellig");
-    }
+/// Kabinenansagen (Beta): Ergebnis eines Planer-Takts.
+struct KabinenSchritt {
+    faellig: Vec<cabin_announcements::Faellig>,
+    /// Ruhephase (Sterile Cockpit): nur Kommandos und Chimes.
+    ruhephase: bool,
+    phase: FlightPhase,
+    rest_min: Option<f64>,
 }
 
-/// Der Kern von [`kabinen_takt`], ohne Sperre — damit testbar.
+/// Kabinenansagen (Beta): ein Takt des Planers mit der effektiven Phase
+/// (`stats.phase`). Der Aufrufer (`kabinenansagen::takt`) haelt die Sperre,
+/// prueft Einstellung, Freischaltung, Pause/Slew/Replay und dass eine
+/// Passagierzahl bekannt ist; hier ohne Sperre, damit testbar.
 fn kabinen_schritt(
     stats: &mut FlightStats,
     snap: &SimSnapshot,
     now: DateTime<Utc>,
     ziel: &str,
     planzeit_min: Option<i32>,
-) -> Vec<cabin_announcements::Faellig> {
+) -> KabinenSchritt {
     let jetzt = now.timestamp();
     if stats.kabinen_planer.is_none() {
         // `fortsetzen` gilt auch fuer den normalen Start: Vor dem Boarding
@@ -47330,11 +47338,15 @@ fn kabinen_schritt(
         },
         durchgestartet,
     };
-    stats
+    let (faellig, ruhephase) = stats
         .kabinen_planer
         .as_mut()
-        .map(|p| p.tick(&tick))
-        .unwrap_or_default()
+        .map(|p| {
+            let f = p.tick(&tick);
+            (f, p.ruhephase(&tick))
+        })
+        .unwrap_or_default();
+    KabinenSchritt { faellig, ruhephase, phase: tick.phase, rest_min: tick.rest_min }
 }
 
 /// „Zeiten gegen Flugplan": Plan des OFP plus die Ist-Zeiten dieses Fluges.
@@ -51820,14 +51832,14 @@ mod arrived_fallback_geometry_tests {
         let mut fracht = FlightStats::new();
         fracht.phase = FlightPhase::Boarding;
         fracht.pax_count = Some(0);
-        assert!(kabinen_schritt(&mut fracht, &snap, jetzt, "EDDH", Some(60)).is_empty());
+        assert!(kabinen_schritt(&mut fracht, &snap, jetzt, "EDDH", Some(60)).faellig.is_empty());
 
         let mut linie = FlightStats::new();
         linie.phase = FlightPhase::Boarding;
         linie.pax_count = Some(150);
         linie.max_passengers = Some(180);
         linie.flight_type = Some("J".into());
-        assert!(slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60))).contains(&Slot::Boarding));
+        assert!(slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60)).faellig).contains(&Slot::Boarding));
 
         let mut resume = FlightStats::new();
         resume.phase = FlightPhase::Cruise;
@@ -51835,7 +51847,7 @@ mod arrived_fallback_geometry_tests {
         resume.max_passengers = Some(180);
         resume.takeoff_at = Some(jetzt - chrono::Duration::minutes(20));
         resume.go_around_count = 1;
-        let erste = slots(kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120)));
+        let erste = slots(kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120)).faellig);
         assert!(!erste.contains(&Slot::Boarding), "{erste:?}");
         assert_eq!(resume.kabinen_durchstarts, 1, "ein alter Durchstart ist keine neue Flanke");
         resume.go_around_count = 2;
@@ -51906,6 +51918,7 @@ mod arrived_fallback_geometry_tests {
         assert_eq!(nach_neustart.umleitung_ziel.as_deref(), Some("LFBD"));
 
         let slots: Vec<_> = kabinen_schritt(&mut nach_neustart, &snap, jetzt, "LFBO", Some(120))
+            .faellig
             .into_iter()
             .map(|f| f.slot)
             .collect();
@@ -51916,6 +51929,7 @@ mod arrived_fallback_geometry_tests {
         ohne.phase = FlightPhase::Approach;
         ohne.pax_count = Some(150);
         let slots: Vec<_> = kabinen_schritt(&mut ohne, &snap, jetzt, "LFBO", Some(120))
+            .faellig
             .into_iter()
             .map(|f| f.slot)
             .collect();
@@ -62661,6 +62675,14 @@ pub fn run() {
             flight_refresh_simbrief,
             flight_refresh_route_only,
             flight_umleitung_setzen,
+            kabinenansagen::kabinen_einstellungen_lesen,
+            kabinenansagen::kabinen_einstellungen_setzen,
+            kabinenansagen::kabinen_azure_schluessel_setzen,
+            kabinenansagen::kabinen_zustand,
+            kabinenansagen::kabinen_audio,
+            kabinenansagen::kabinen_probe,
+            kabinenansagen::kabinen_ueberblick,
+            kabinenansagen::piper::kabinen_piper_installieren,
             bid_simbrief_preview,
             ofp_callsign_warning_get,
             flight_resume_after_disconnect,

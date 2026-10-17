@@ -216,4 +216,26 @@ mod tests {
         assert!(!Slot::KapitaenSinkflug.in_ruhephase_erlaubt());
         assert!(!Slot::Sicherheit.in_ruhephase_erlaubt());
     }
+
+    /// Dieselbe Reihe steht im GSG-Modul (`Support/Slots::ALLE_IM_CLIENT`).
+    /// Ändert sich ein Name hier, kennt der Server den Slot nicht mehr.
+    #[test]
+    fn serde_namen_wie_auf_dem_server() {
+        let namen: Vec<String> = Slot::ALLE
+            .iter()
+            .map(|s| serde_json::to_value(s).unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            namen,
+            [
+                "boarding", "begruessung_tueren_zu", "kommando_tueren_scharf", "sicherheit",
+                "kapitaen_begruessung", "kommando_start", "chime10000_steigflug", "anschnallzeichen_aus",
+                "reiseflug25", "reiseflug50", "reiseflug80", "kapitaen_sinkflug", "kabine_sinkflug",
+                "chime10000_sinkflug", "kommando_landung_vorbereiten", "kommando_plaetze_landung",
+                "nach_der_landung", "kommando_tueren_entschaerfen", "aussteigen", "verspaetung_gate",
+                "turbulenz", "turbulenz_vorbei", "warteschleife", "durchstarten", "umleitung",
+            ]
+        );
+    }
+
 }

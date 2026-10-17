@@ -1457,6 +1457,17 @@ mod tests {
         // aussperrt, traegt ihn hier MIT Begruendung ein, statt ihn im
         // Dispatch stillschweigend fehlen zu lassen.
         const DENY_SET: &[&str] = &[
+            // Kabinenansagen (Beta): Der Ton spielt auf dem Sim-PC, der
+            // Azure-Schluessel und der Piper-Download gehoeren dorthin. Vom
+            // Tablet aus gibt es nichts zu bedienen.
+            "kabinen_einstellungen_lesen",
+            "kabinen_einstellungen_setzen",
+            "kabinen_azure_schluessel_setzen",
+            "kabinen_zustand",
+            "kabinen_audio",
+            "kabinen_probe",
+            "kabinen_ueberblick",
+            "kabinen_piper_installieren",
             // VATSIM-CDM (v1.6.0): oeffnet ein NATIVES Fenster auf dem
             // Sim-PC. Vom Tablet aus ergibt das keinen Sinn — das Fenster
             // ginge auf dem PC auf, nicht auf dem Tablet. Der Browser-Pfad
