@@ -520,6 +520,21 @@ impl ShadowPhaseEngine {
             && old_is_enroute(old_phase)
             && self.last_old_phase != old_phase
             && !on_ground;
+        // 17.10.2026 („Stück 2"): Erkennt die alte FSM einen Durchstarter
+        // (Approach/Final → Climb, mit Zählung und Forensik-Schnitt), folgt
+        // v2 sofort. Seit die alte FSM im Reiseband v2s Phase übernimmt,
+        // darf v2 nicht im Anflug stehen bleiben, bis es selbst +700 ft
+        // gesehen hat — bei einem flachen Durchstarter blieben sonst
+        // beide im Steigflug bzw. Anflug hängen.
+        let frischer_durchstart = matches!(
+            self.last_old_phase,
+            FlightPhase::Approach | FlightPhase::Final
+        ) && old_phase == FlightPhase::Climb
+            && self.phase != FlightPhase::Climb
+            // Wie der Durchstart-Detektor der alten FSM: nur in der Luft.
+            // Eine alte Phase, die am Boden auf Climb hängt (GSG22), ist
+            // kein Durchstarter.
+            && !on_ground;
         self.last_old_phase = old_phase;
 
         if !old_is_enroute(old_phase) || fresh_enroute_transition_from_landing {
@@ -539,7 +554,7 @@ impl ShadowPhaseEngine {
                 self.segment_since = Some(t);
             }
             self.ga_entry_agl_ft = None;
-        } else if !shadow_is_enroute(self.phase) {
+        } else if !shadow_is_enroute(self.phase) || frischer_durchstart {
             // Baseline-Sync: die alte FSM ist im En-Route-Band, v2 noch
             // nicht (Engine-Start mid-flight / Resume / Takeoff→Climb-
             // Kante / T&G-Reset). Einmalig übernehmen, danach frei
@@ -1608,25 +1623,46 @@ mod tests {
         sim.alt = 600.0;
         let (p, _) = sim.fly(20, -300.0, FlightPhase::Final);
         assert_eq!(p, FlightPhase::Final);
-        // Schwacher, anhaltender Steig-Blip (+400 fpm): erzeugt irgendwann
-        // ein Climbing-Segment, aber solange < 700 ft ab Anker gewonnen sind,
-        // bleibt es Final (Balloon-Guard). +400 fpm × 60 s = 400 ft < 700.
-        let (p, _) = sim.fly(60, 400.0, FlightPhase::Climb);
+        // Schwacher, anhaltender Steig-Blip (+400 fpm), die alte FSM bleibt
+        // im Final: erzeugt irgendwann ein Climbing-Segment, aber solange
+        // < 700 ft ab Anker gewonnen sind, bleibt es Final (Balloon-Guard).
+        // +400 fpm × 60 s = 400 ft < 700.
+        let (p, _) = sim.fly(60, 400.0, FlightPhase::Final);
         assert_eq!(
             p,
             FlightPhase::Final,
             "Balloon <700 ft AGL darf nicht Climb latchen"
         );
-        // Echter Go-Around-Steigflug (+2500 fpm) → > 700 ft Gewinn → Climb.
+        // Echter Go-Around-Steigflug (+2500 fpm) → > 700 ft Gewinn → Climb,
+        // auch wenn die alte FSM ihn (noch) nicht erkannt hat.
         let mut reached = false;
         for _ in 0..12 {
-            let (p, _) = sim.fly(15, 2500.0, FlightPhase::Climb);
+            let (p, _) = sim.fly(15, 2500.0, FlightPhase::Final);
             if p == FlightPhase::Climb {
                 reached = true;
                 break;
             }
         }
         assert!(reached, "bestätigter Go-Around muss Climb erreichen");
+    }
+
+    /// 17.10.2026 („Stück 2"): Erkennt die alte FSM einen Durchstarter
+    /// (Final → Climb in der Luft), folgt v2 im selben Takt — nicht erst
+    /// nach eigenen +700 ft. Sonst stünde v2 im Anflug, während die alte
+    /// FSM im Reiseband auf v2s Phase wartet.
+    #[test]
+    fn follows_old_fsm_go_around_immediately() {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.alt = 4000.0;
+        sim.fly(200, -1000.0, FlightPhase::Approach);
+        sim.alt = 600.0;
+        let (p, _) = sim.fly(20, -300.0, FlightPhase::Final);
+        assert_eq!(p, FlightPhase::Final);
+        // Flacher Durchstarter, den nur die alte FSM erkennt (+400 fpm):
+        let (p, s) = sim.fly(5, 400.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Climb, "v2 muss dem Durchstarter sofort folgen");
+        assert_eq!(s, Segment::Insufficient, "frisches Fenster nach dem Regimewechsel");
     }
 
     #[test]
