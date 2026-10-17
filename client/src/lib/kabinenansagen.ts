@@ -94,6 +94,10 @@ const schlange: Gespielt[] = [];
 let laeuft = false;
 /** Steigt bei jedem Stopp: eine laufende Abarbeitung bricht dann ab. */
 let durchgang = 0;
+/** Nach „Ausschalten“: keine Ansage aus Rust mehr annehmen, auch keine,
+ *  die ein schon laufender Takt noch schickt (Codex-QS 2). Erst
+ *  `freigeben()` beim Einschalten hebt das auf. */
+let gesperrt = false;
 let aktuelleQuelle: AudioBufferSourceNode | null = null;
 
 async function tonLaden(datei: string): Promise<AudioBuffer> {
@@ -197,6 +201,7 @@ async function abarbeiten(): Promise<void> {
 /** Sofort still: laufende Ansage abbrechen, Wartendes verwerfen. Für
  *  „Ansagen ausschalten“ — wer das nicht möchte, hört ab dem Klick nichts. */
 export function stoppen(): void {
+  gesperrt = true;
   durchgang += 1;
   schlange.length = 0;
   try {
@@ -206,6 +211,11 @@ export function stoppen(): void {
   }
   aktuelleQuelle = null;
   setzen({ ansage: null, pegel: 0, verlauf: [] });
+}
+
+/** Nach dem Einschalten: Ansagen aus Rust wieder annehmen. */
+export function freigeben(): void {
+  gesperrt = false;
 }
 
 /** Eine Ansage einreihen (Ereignis oder Hörprobe). */
@@ -220,7 +230,9 @@ let gestartet = false;
 export function wiedergabeStarten(): void {
   if (gestartet || !isTauri) return;
   gestartet = true;
-  listen<Gespielt>("kabine-ansage", (e) => abspielen(e.payload)).catch((e) => {
+  listen<Gespielt>("kabine-ansage", (e) => {
+    if (!gesperrt) abspielen(e.payload);
+  }).catch((e) => {
     // Sonst bliebe die Wiedergabe bis zum Neustart stumm: nach kurzer
     // Pause erneut anmelden.
     console.warn("[kabine] Anmelden fehlgeschlagen, neuer Versuch", e);

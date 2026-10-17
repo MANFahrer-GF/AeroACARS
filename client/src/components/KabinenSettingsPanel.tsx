@@ -8,6 +8,7 @@ import {
   azureSchluesselSetzen,
   einstellungenLesen,
   einstellungenSetzen,
+  freigeben,
   probe,
   stoppen,
   zustandLesen,
@@ -46,6 +47,7 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
     setE(neu);
     try {
       if (patch.an === false) stoppen();
+      if (patch.an === true) freigeben();
       const gespeichert = await einstellungenSetzen(neu);
       setE(gespeichert);
       if (patch.an !== undefined) onAnChange?.(gespeichert.an);
