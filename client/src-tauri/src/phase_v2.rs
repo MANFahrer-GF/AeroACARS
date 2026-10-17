@@ -587,6 +587,20 @@ impl ShadowPhaseEngine {
         (self.phase, segment)
     }
 
+    /// Höchste im En-Route-Band beobachtete Höhe (`obsref_ft`) — zum
+    /// Speichern über einen App-Neustart (17.10.2026).
+    pub fn beobachtete_reiseflughoehe_ft(&self) -> Option<f64> {
+        self.obsref_ft
+    }
+
+    /// Gespeicherte `obsref_ft` nach einem Neustart übernehmen. Nur per
+    /// `.max()` — wie im Betrieb kann der Wert nie sinken.
+    pub fn reiseflughoehe_uebernehmen(&mut self, ft: Option<f64>) {
+        if let Some(ft) = ft {
+            self.obsref_ft = Some(self.obsref_ft.map_or(ft, |r| r.max(ft)));
+        }
+    }
+
     /// Aktuelle Schatten-Phase (zuletzt von [`Self::step`] geliefert).
     pub fn phase(&self) -> FlightPhase {
         self.phase

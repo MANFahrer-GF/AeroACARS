@@ -2084,24 +2084,6 @@ mod resume_discontinuity_tests {
         assert!(frage < gate);
     }
 
-    /// Holding steht fuer die ganze Warteschleife im Protokoll, nicht nur
-    /// im Tick des Eintritts; danach gilt wieder die gueltige Phase
-    /// (Codex-QS 25.09.2026).
-    #[test]
-    fn protokoll_haelt_holding_bis_zum_ende() {
-        let mut st = FlightStats::default();
-        st.phase = FlightPhase::Holding;
-        st.shadow_phase = Some(FlightPhase::Cruise);
-        assert_eq!(protokoll_phase(&st), FlightPhase::Holding);
-        st.phase = FlightPhase::Approach;
-        st.shadow_phase = Some(FlightPhase::Descent);
-        assert_eq!(protokoll_phase(&st), FlightPhase::Descent);
-
-        // Und der Tick fragt genau diese Funktion.
-        const SRC: &str = include_str!("lib.rs");
-        assert!(SRC.contains(concat!("let effective = protokoll_", "phase(&stats);")));
-    }
-
     /// Jeder Ausgang des Resume-Gates raeumt den Wartegrund weg — sonst
     /// bleibt im Cockpit ein eingefrorener Hinweis stehen
     /// (Cloud-QS 24.09.2026, dritte Runde).
@@ -5639,6 +5621,12 @@ struct PersistedFlightStats {
     /// behält. `#[serde(default)]` → None bei pre-v0.16.12-Files.
     #[serde(default)]
     planned_cruise_alt_ft: Option<f64>,
+    /// 17.10.2026 („Stück 2"): höchste beobachtete Reiseflughöhe der
+    /// v2-Engine (`obsref`). Seit v2 das Reiseband entscheidet, hängt die
+    /// Level-off-Regel im Sinkflug an ihr — ohne sie fiele die Engine nach
+    /// einem Neustart im Reiseflug auf den 240-s-Ersatz zurück.
+    #[serde(default)]
+    v2_reiseflughoehe_ft: Option<f64>,
     /// v0.16.12 (#phase-v2): akkumulierte Schatten-Divergenz-Sekunden —
     /// persistiert, damit das Flug-Aggregat einen App-Restart überlebt.
     #[serde(default)]
@@ -5891,6 +5879,7 @@ impl PersistedFlightStats {
             resume_luecke_max_secs: stats.resume_luecke_max_secs,
             // v0.16.12 (#phase-v2)
             planned_cruise_alt_ft: stats.planned_cruise_alt_ft,
+            v2_reiseflughoehe_ft: stats.shadow_engine.beobachtete_reiseflughoehe_ft(),
             shadow_divergence_secs: stats.shadow_divergence_secs,
         }
     }
@@ -6192,6 +6181,9 @@ impl PersistedFlightStats {
         // Die Engine selbst wird NICHT persistiert (wärmt sich nach dem
         // Resume in ≤ 2 Fenstern wieder auf — dokumentiert).
         stats.planned_cruise_alt_ft = self.planned_cruise_alt_ft;
+        stats
+            .shadow_engine
+            .reiseflughoehe_uebernehmen(self.v2_reiseflughoehe_ft);
         stats.shadow_divergence_secs = self.shadow_divergence_secs;
     }
 }
@@ -6214,6 +6206,32 @@ mod arr_actual_icao_resume_tests {
         let mut restored = FlightStats::default();
         snapshot.apply_to(&mut restored);
         assert_eq!(restored.arr_actual_icao.as_deref(), Some("LEMG"));
+    }
+
+    /// 17.10.2026 („Stück 2"): die von v2 beobachtete Reiseflughöhe
+    /// überlebt einen Neustart — sonst hinge die Level-off-Regel im
+    /// Sinkflug danach am 240-s-Ersatz.
+    #[test]
+    fn v2_reiseflughoehe_ueberlebt_snapshot_rundlauf() {
+        let mut stats = FlightStats::default();
+        let t0 = Utc::now();
+        for i in 0..5 {
+            stats.shadow_engine.step(
+                t0 + chrono::Duration::seconds(3 * i),
+                37000.0,
+                36000.0,
+                0.0,
+                false,
+                FlightPhase::Cruise,
+                None,
+            );
+        }
+        assert_eq!(stats.shadow_engine.beobachtete_reiseflughoehe_ft(), Some(37000.0));
+        let json = serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).expect("ser");
+        let snapshot: PersistedFlightStats = serde_json::from_str(&json).expect("de");
+        let mut restored = FlightStats::default();
+        snapshot.apply_to(&mut restored);
+        assert_eq!(restored.shadow_engine.beobachtete_reiseflughoehe_ft(), Some(37000.0));
     }
 }
 
@@ -18402,13 +18420,13 @@ fn flight_info(
         arr_airport: flight.arr_airport.clone(),
         distance_nm: stats.distance_nm,
         position_count: stats.position_count,
-        // #phase-v2 Cutover: angezeigte Phase = v2 (effective_phase); die
-        // v1-FSM bleibt mechanisch autoritativ. `shadow_segment` unten trägt
-        // das „Level"-Label für Restriktionen ans Frontend.
-        phase: phase_to_snake(effective_phase(&stats)).to_string(),
-        // v0.16.12 (#phase-v2): Schatten-Sicht (= dieselbe v2-Phase). Nach dem
-        // Cutover == `phase`; die frühere dezente „v2:"-UI-Zeile deaktiviert
-        // sich dadurch selbst und wird im Frontend entfernt.
+        // Seit 17.10.2026 („Stück 2") gibt es EINE Phase: im Reiseband
+        // entscheidet v2, v1 übernimmt sie; Anflug/Final/Landung und der
+        // Boden entscheidet v1. `shadow_segment` unten trägt das
+        // „Level"-Label für Restriktionen ans Frontend.
+        phase: phase_to_snake(stats.phase).to_string(),
+        // v0.16.12 (#phase-v2): v2s Rohsicht — nur noch für Auswertungen;
+        // die Oberfläche zeigt sie nicht.
         shadow_phase: stats.shadow_phase.map(|p| phase_to_snake(p).to_string()),
         shadow_segment: stats.shadow_segment.map(|s| s.as_snake_str().to_string()),
         block_off_at: stats.block_off_at.map(|t| t.to_rfc3339()),
@@ -18579,55 +18597,6 @@ fn flight_info(
             planned_arr_icao: flight.arr_airport.clone(),
             requires_reason: stats.divert_hint.is_some(),
         },
-    }
-}
-
-/// v0.19 (#phase-v2 cutover): wenn `true`, kommt die ANGEZEIGTE/PUBLIZIERTE
-/// Flugphase aus der v2-Engine (`shadow_phase`); die v1-FSM bleibt mechanisch
-/// autoritativ (Touchdown, PIREP, Timing, Resume lesen `stats.phase` direkt).
-/// Rollback = diese eine Konstante auf `false` → alle Anzeige/Publish-Pfade
-/// fallen sofort auf v1 zurück. Als `const` (nicht Runtime-Flag): der Compiler
-/// prunt den toten Zweig, und es gibt keinen Grund, das live umzuschalten.
-const PHASE_V2_CUTOVER: bool = true;
-
-/// Die Phase, die dem Piloten GEZEIGT und nach außen PUBLIZIERT wird
-/// (Frontend-UI, MQTT-Live-Map, phpVMS-Status, Tray). Nur hierfür verwenden —
-/// mechanische FSM-Konsumenten (Touchdown-Gating, PIREP-Finalisierung, Timing,
-/// Resume-Restore) lesen weiterhin `stats.phase` DIREKT. v2 spiegelt v1 im
-/// Boden-/Terminal-Band 1:1 (synct jeden Tick auf die alte FSM), sodass der
-/// Cutover nur die En-Route-Anzeige verändert.
-fn effective_phase(stats: &FlightStats) -> FlightPhase {
-    if PHASE_V2_CUTOVER {
-        if let Some(sp) = stats.shadow_phase {
-            return sp;
-        }
-    }
-    stats.phase
-}
-
-/// Die Phase fuer Protokoll und Phasen-Meldung: die gueltige Phase — nur
-/// Holding kommt aus v1, weil v2 es nicht kennt, und zwar fuer die GANZE
-/// Dauer der Warteschleife. Bis 25.09.2026 galt Holding nur im Tick des
-/// Eintritts; im naechsten stand schon wieder v2s „Cruise" im Protokoll,
-/// obwohl das Flugzeug noch kreiste (Codex-QS).
-fn protokoll_phase(stats: &FlightStats) -> FlightPhase {
-    if stats.phase == FlightPhase::Holding {
-        FlightPhase::Holding
-    } else {
-        effective_phase(stats)
-    }
-}
-
-/// Wie [`effective_phase`], aber für Publish-Pfade, die `stats` nicht gelockt
-/// halten (MQTT-Position, phpVMS-Heartbeat): der Aufrufer reicht die v1-Phase
-/// dieses Ticks und die zuvor gecachte v2-Sicht (`tick_shadow_phase`) herein.
-/// Fällt bei fehlender v2-Sicht (Pause/Slew: Schatten-Engine tickt nicht) auf
-/// v1 zurück.
-fn effective_display_phase(v1_phase: FlightPhase, shadow: Option<FlightPhase>) -> FlightPhase {
-    if PHASE_V2_CUTOVER {
-        shadow.unwrap_or(v1_phase)
-    } else {
-        v1_phase
     }
 }
 
@@ -30236,7 +30205,7 @@ fn bordbuch_tick(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
     }
     // `protokoll_phase` statt `effective_phase`: hält eine Warteschleife
     // über den Eintrittstakt hinaus (Befund 25.09.2026, siehe dort).
-    let phase = protokoll_phase(&stats);
+    let phase = stats.phase;
     if stats.bordbuch.vfr.is_none() {
         if let Some(quelle) = stats.flight_plan_source {
             stats.bordbuch.vfr = Some(quelle == "manual");
@@ -34618,7 +34587,7 @@ fn spawn_resume_sim_gate(
                                 ..SimSnapshot::default()
                             };
                             // Dieselbe Phase wie der Streamer meldet.
-                            build_heartbeat_body(&hb, &st, effective_phase(&st))
+                            build_heartbeat_body(&hb, &st, st.phase)
                         };
                         // In einem EIGENEN Task: Ein haengendes phpVMS (bis zu
                         // 10 s) haette sonst jeden Gate-Takt von 2 auf 12 s
@@ -42220,11 +42189,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 sampler_path_rollout_tick(&mut stats, &snap);
             }
 
-            // #phase-v2 Cutover: v2-Phase dieses Ticks für die Publish-Pfade
-            // (MQTT-Position, phpVMS-Heartbeat) cachen. `None` bei Pause/Slew
-            // (Schatten-Engine tickt dann nicht) → Publish fällt auf v1 zurück.
-            // Gerechnet wird sie in `phasen_takt` direkt nach dem v1-Schritt.
-            let tick_shadow_phase: Option<FlightPhase> = takt.v2.map(|(p, _)| p);
+            // v2s Sicht dieses Takts (gerechnet in `phasen_takt` direkt nach
+            // dem v1-Schritt) für die Flug-Logs; `None` bei Pause/Slew.
             if let Some((shadow_phase, shadow_segment)) = takt.v2 {
                 // Additive Telemetrie-Felder: landen via `snap.clone()` im
                 // JSONL-Position-Event (lokaler Recorder → VPS-Upload).
@@ -43001,46 +42967,16 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // summary. Posted in a single batch at the end of the tick to
             // minimise HTTP round-trips.
             let mut acars_log_entries: Vec<api_client::LogEntry> = Vec::new();
-            // v0.19.1: trigger is "the DISPLAYED (v2-preferred) phase
-            // changed", not "v1 transitioned" — computed every tick
-            // (unconditionally), independent of `phase_change`. Previously
-            // both the log line and the retained MQTT phase topic below
-            // only fired on a v1 transition; if v1 gets stuck on an
-            // en-route phase (field report GSG22 EDLN→EDDL — legacy FSM
-            // never left Climb) while v2 correctly progresses on its own
-            // kinematic evidence, neither ever fired even though every
-            // OTHER v2-fed path (position payload, phpVMS heartbeat, tray,
-            // cockpit UI) already showed the real phase. Comparing against
-            // `last_logged_effective_phase` (not `phase_change`) also
-            // naturally de-dupes the common case where v1 and v2 change
-            // together in the same tick — only one line, not two.
-            //
-            // Uses `effective_phase(&stats)` — the same PERSISTED
-            // `stats.shadow_phase` every other display surface
-            // (`flight_info`, tray) reads — NOT `effective_display_phase`
-            // with this tick's `tick_shadow_phase`. `tick_shadow_phase` is
-            // `None` on a paused/slew tick (the shadow engine skips
-            // stepping then), and `effective_display_phase` falls back to
-            // the raw v1 phase in that case — caught in code review: on
-            // sim-pause this would have republished/relogged a stale v1
-            // value (e.g. a still-stuck `Climb`) even though every other
-            // surface kept correctly showing the last real v2 phase
-            // (`stats.shadow_phase` is simply left untouched on a paused
-            // tick, not cleared) — exactly the "Live-Karte flackert kurz
-            // auf v1" failure the old, now-removed comment warned about,
-            // just reachable via ordinary pausing instead of a v1-race.
-            //
-            // Exception: v2 deliberately never models `Holding` (documented
-            // diff, see phase_v2.rs) — without a special case, a real ATC
-            // hold would silently vanish from this log (previously the one
-            // surface still showing it, since it read raw v1). Treat a v1
-            // transition INTO Holding as an unconditional, Holding-labelled
-            // log-worthy change, and record it so leaving the hold (v2
-            // resuming e.g. Cruise) is itself detected as a change too —
-            // a clean start/end pair, matching the old pure-v1 log.
+            // Auslöser ist „die gültige Phase hat sich geändert", jeden Takt
+            // gegen `last_logged_effective_phase` geprüft (nicht
+            // `phase_change`) — fängt auch Wechsel ab, die den normalen
+            // Commit-Pfad umgehen (Airborne-Rescue, Resume), und meldet
+            // jeden Wechsel genau einmal. Seit 17.10.2026 („Stück 2") ist
+            // die gültige Phase schlicht `stats.phase` (vorher v2s
+            // Anzeige-Phase mit Holding-Sonderfall aus v1).
             let (effective_phase_changed, effective_phase_this_tick) = {
                 let mut stats = flight.stats.lock().expect("flight stats");
-                let effective = protokoll_phase(&stats);
+                let effective = stats.phase;
                 let changed = stats.last_logged_effective_phase != Some(effective);
                 if changed {
                     stats.last_logged_effective_phase = Some(effective);
@@ -43219,11 +43155,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     // v0.5.14: pass current phase so it's inlined into
                     // the position payload — Monitor doesn't have to
                     // wait for a separate phase-topic delivery.
-                    // #phase-v2 Cutover: Live-Map bekommt die v2-Phase.
-                    let live_phase = effective_display_phase(
-                        phase_change.unwrap_or(prev_phase),
-                        tick_shadow_phase,
-                    );
+                    let live_phase = phase_change.unwrap_or(prev_phase);
                     handle.position(&snap, &meta, live_phase);
                 }
             }
@@ -43444,9 +43376,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // mid-flight). Both purposes use the same payload — sending
             // monotonic flight_time / distance also guarantees the row is
             // dirty so Eloquent always writes UPDATE and bumps updated_at.
-            // #phase-v2 Cutover: phpVMS-Live-Status = v2-Phase.
-            let phase_for_heartbeat =
-                effective_display_phase(phase_change.unwrap_or(current_phase), tick_shadow_phase);
+            let phase_for_heartbeat = phase_change.unwrap_or(current_phase);
             let due_for_heartbeat = last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL;
             // Der Arbeiter sendet immer den neuesten Stand; läuft gerade
             // ein Lebenszeichen, geht dieser hier danach raus.
@@ -60941,7 +60871,7 @@ fn compute_tray_display(app: &AppHandle) -> TrayDisplay {
         .unwrap_or(i64::MAX);
     let queue = stats.queued_position_count;
     // #phase-v2 Cutover: Tray-Tooltip zeigt die v2-Phase.
-    let phase_label = phase_human_label(effective_phase(&stats));
+    let phase_label = phase_human_label(stats.phase);
     let callsign = format_callsign(&flight.airline_icao, &flight.flight_number);
     let route = format!("{} → {}", flight.dpt_airport, flight.arr_airport);
 
