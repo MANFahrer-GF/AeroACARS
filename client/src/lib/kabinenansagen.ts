@@ -195,6 +195,9 @@ async function abarbeiten(): Promise<void> {
   } finally {
     laeuft = false;
     setzen({ ansage: null, pegel: 0 });
+    // Kam während eines Stopps schon eine neue Ansage (aus- und gleich
+    // wieder eingeschaltet), bliebe sie sonst liegen (Codex-QS 3).
+    if (schlange.length > 0) void abarbeiten();
   }
 }
 
