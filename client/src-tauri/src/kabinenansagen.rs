@@ -294,8 +294,9 @@ pub(crate) struct Lauf {
     ton_fehler: HashMap<(Slot, String), (u8, i64)>,
     /// Fehler je noch fehlendem Text-Auftrag / Ton, fuer die Begruendung
     /// auf der Seite „Kabine“ (Thomas: „sagen warum, nicht leere Seite“).
-    /// Ein Erfolg loescht nur seinen eigenen Eintrag (Codex-QS beta.2).
-    texte_fehler: std::collections::BTreeMap<String, String>,
+    /// Je Slot, nicht je Auftrag: Ein Ereignis oder eine Nachholung bekommt
+    /// einen neuen Auftragsnamen, der Slot bleibt derselbe (Codex-QS beta.2).
+    texte_fehler: std::collections::BTreeMap<Slot, String>,
     ton_fehler_text: std::collections::BTreeMap<(Slot, String), String>,
     warteschlange: cabin_announcements::Warteschlange,
     verlauf: Vec<Gespielt>,
@@ -638,13 +639,13 @@ fn holen(
             let lauf = &mut stats.kabinen_lauf;
             match ergebnis {
                 Ok(d) => {
-                    lauf.texte_fehler.remove(&schluessel);
                     if !d.sprachen.is_empty() {
                         lauf.sprachen = d.sprachen.clone();
                     }
                     let mut neu = Vec::new();
                     for e in d.eintraege {
                         let Some(slot) = slot_aus_name(&e.slot) else { continue };
+                        lauf.texte_fehler.remove(&slot);
                         let k = (slot, e.sprache.clone());
                         // Ein Ereignis (z. B. die zweite Turbulenz) bekommt neuen Ton.
                         if ist_ereignis(slot) {
@@ -666,7 +667,10 @@ fn holen(
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
-                    lauf.texte_fehler.insert(schluessel.clone(), kurz(&e.to_string()));
+                    let meldung = kurz(&e.to_string());
+                    for s in &slots {
+                        lauf.texte_fehler.insert(*s, meldung.clone());
+                    }
                     lauf.angefragt.remove(&schluessel);
                     let n = lauf.fehlversuche.get(&schluessel).map_or(0, |(n, _)| *n) + 1;
                     lauf.fehlversuche.insert(schluessel.clone(), (n, Utc::now().timestamp() + 120));
@@ -1609,13 +1613,13 @@ mod tests {
         assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet));
         st.kabinen_lauf.beta = Beta::Ja;
         assert_eq!(grund(true, &st), None, "alles bereit");
-        st.kabinen_lauf.texte_fehler.insert("ankunft".into(), kurz("api 402: budget\nzweite Zeile"));
+        st.kabinen_lauf.texte_fehler.insert(Slot::KapitaenSinkflug, kurz("api 402: budget\nzweite Zeile"));
         assert_eq!(grund(true, &st), Some(Grund::TexteFehlen("api 402: budget".into())));
-        // Ein anderer Auftrag gelingt: Der fehlende bleibt genannt (Codex-QS).
-        st.kabinen_lauf.texte_fehler.remove("abflug");
+        // Ein anderer Slot gelingt: Der fehlende bleibt genannt (Codex-QS).
+        st.kabinen_lauf.texte_fehler.remove(&Slot::Boarding);
         st.kabinen_lauf.texte.insert((Slot::Boarding, "de-DE".into()), "Hallo".into());
         assert_eq!(grund(true, &st), Some(Grund::TexteFehlen("api 402: budget".into())));
-        st.kabinen_lauf.texte_fehler.remove("ankunft");
+        st.kabinen_lauf.texte_fehler.remove(&Slot::KapitaenSinkflug);
         assert_eq!(grund(true, &st), None);
         let k = (Slot::Sicherheit, "en-GB".to_string());
         st.kabinen_lauf.ton_fehler_text.insert(k.clone(), "ausgelastet".into());
