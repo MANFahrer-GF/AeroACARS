@@ -792,9 +792,15 @@ impl ShadowPhaseEngine {
                 }
                 let niveau = *self.reiseflug_niveau_ft.get_or_insert(alt_msl_ft);
                 match segment {
-                    // Level im Reiseflug: die aktuelle Reiseflughöhe folgt.
+                    // Level im Reiseflug: die aktuelle Reiseflughöhe folgt —
+                    // einer höheren Stufe sofort, einer tieferen erst nach
+                    // `SINKFLUG_LEVEL_ZU_CRUISE_SECS`. Sonst ritte ein
+                    // Stufen-Sinkflug (FL350 → 2 min → FL330 → …) als
+                    // Cruise bis unter 5000 ft, der Sinkflug fiele weg.
                     Segment::Level => {
-                        self.reiseflug_niveau_ft = Some(alt_msl_ft);
+                        if alt_msl_ft > niveau || seg_held_secs >= SINKFLUG_LEVEL_ZU_CRUISE_SECS {
+                            self.reiseflug_niveau_ft = Some(alt_msl_ft);
+                        }
                         FlightPhase::Cruise
                     }
                     // Cruise + Descending sustained → Descent. KEIN
@@ -1826,6 +1832,26 @@ mod tests {
                 assert_eq!(p, FlightPhase::Cruise, "dip of 1500 ft is not a descent");
             }
         }
+    }
+
+    /// Stufen-Sinkflug in 2000-ft-Stufen mit 2 min Level dazwischen: Die
+    /// Reiseflughöhe folgt tieferen Stufen nicht sofort, deshalb wird es
+    /// spätestens unter Reiseflughöhe − 2000 ft Sinkflug.
+    #[test]
+    fn staircase_descent_becomes_descent() {
+        let mut sim = sim_im_reiseflug();
+        let mut phase = FlightPhase::Cruise;
+        for _ in 0..4 {
+            phase = sim.fly(60, -2000.0, FlightPhase::Cruise).0; // 2000 ft runter
+            if phase == FlightPhase::Descent {
+                break;
+            }
+            phase = sim.fly(120, 0.0, FlightPhase::Cruise).0; // 2 min Level
+            if phase == FlightPhase::Descent {
+                break;
+            }
+        }
+        assert_eq!(phase, FlightPhase::Descent, "a staircase descent must not ride Cruise down");
     }
 
     /// Echter Sinkflug: unter die Reiseflughöhe − 2000 ft → Descent.
