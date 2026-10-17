@@ -47137,13 +47137,30 @@ fn kabinen_eckdaten_aus_bid(stats: &mut FlightStats, flight: &api_client::Flight
     let text = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
     stats.flight_type = flight.flight_type.as_deref().and_then(text);
     stats.airline_name = flight.airline.as_ref().and_then(|a| text(&a.name));
+    // Rueckfall fuer Fluege ohne OFP (Entscheidung Thomas, 17.10.2026): die
+    // Passagier-Fares (phpVMS `type` 0) des Bids. Ohne solche Fares bleibt
+    // es `None`, und der Ansage-Baustein schaltet ab. Der OFP ueberschreibt.
+    let pax_fares: Vec<_> = flight
+        .simbrief
+        .as_ref()
+        .and_then(|sb| sb.subfleet.as_ref())
+        .map(|sf| sf.fares.iter().filter(|f| f.fare_type == Some(0)).collect())
+        .unwrap_or_default();
+    if !pax_fares.is_empty() {
+        stats.pax_count = Some(pax_fares.iter().filter_map(|f| f.count).map(|c| c.max(0)).sum());
+        let sitze: i32 = pax_fares.iter().filter_map(|f| f.capacity).map(|c| c.max(0)).sum();
+        stats.max_passengers = Some(sitze).filter(|&n| n > 0);
+    }
 }
 
 /// Kabinenansagen (Beta): Passagiere und Sitzplaetze aus dem OFP. Eine 0 bei
 /// den Passagieren bleibt stehen: Das ist der Frachtflug ohne Ansagen.
 fn kabinen_eckdaten_aus_ofp(stats: &mut FlightStats, ofp: &api_client::SimBriefOfp) {
     stats.pax_count = Some(ofp.pax_count.max(0));
-    stats.max_passengers = ofp.max_passengers.filter(|&n| n > 0);
+    // Fehlt die Sitzzahl im OFP, bleibt die aus den Fares stehen.
+    if let Some(n) = ofp.max_passengers.filter(|&n| n > 0) {
+        stats.max_passengers = Some(n);
+    }
 }
 
 /// „Zeiten gegen Flugplan": Plan des OFP plus die Ist-Zeiten dieses Fluges.
@@ -51572,6 +51589,46 @@ mod arrived_fallback_geometry_tests {
         let mut stats = FlightStats::new();
         kabinen_eckdaten_aus_bid(&mut stats, &leer);
         assert_eq!((stats.flight_type, stats.airline_name), (None, None));
+        assert_eq!(stats.pax_count, None, "ohne Fares keine Passagierzahl → keine Ansagen");
+    }
+
+    /// Kabinenansagen (Beta): Ohne OFP zaehlen nur die Passagier-Fares
+    /// (phpVMS `type` 0) des Bids; Fracht-Fares nicht. Der OFP ueberschreibt
+    /// die Pax, laesst aber die Sitzzahl stehen, wenn er selbst keine hat.
+    #[test]
+    fn kabinen_pax_ohne_ofp_aus_den_passagier_fares() {
+        let bid_flight: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "1", "flight_number": "400", "dpt_airport_id": "EDDF", "arr_airport_id": "KJFK",
+            "simbrief": { "id": "sb1", "subfleet": { "fares": [
+                { "id": 1, "type": 0, "count": 20, "capacity": 30 },
+                { "id": 2, "type": 0, "count": 250, "capacity": 260 },
+                { "id": 3, "type": 1, "count": 9000, "capacity": 20000 },
+                { "id": 4, "count": 7, "capacity": 7 }
+            ] } }
+        }))
+        .expect("bid parses");
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &bid_flight);
+        assert_eq!(stats.pax_count, Some(270));
+        assert_eq!(stats.max_passengers, Some(290));
+
+        kabinen_eckdaten_aus_ofp(
+            &mut stats,
+            &api_client::SimBriefOfp { pax_count: 265, max_passengers: None, ..Default::default() },
+        );
+        assert_eq!((stats.pax_count, stats.max_passengers), (Some(265), Some(290)));
+
+        // Nur Fracht-Fares: keine Passagierzahl.
+        let fracht: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "2", "flight_number": "8400", "dpt_airport_id": "EDDP", "arr_airport_id": "LEJ",
+            "simbrief": { "id": "sb2", "subfleet": { "fares": [
+                { "id": 3, "type": 1, "count": 9000, "capacity": 20000 }
+            ] } }
+        }))
+        .expect("bid parses");
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &fracht);
+        assert_eq!((stats.pax_count, stats.max_passengers), (None, None));
     }
 
     /// v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,

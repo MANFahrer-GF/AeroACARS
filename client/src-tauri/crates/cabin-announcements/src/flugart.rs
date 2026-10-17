@@ -37,7 +37,9 @@ pub fn einordnen(
             return Flugart::Aus;
         }
     }
-    if pax == Some(0) {
+    // Ohne Passagierzahl (weder OFP noch Passagier-Fares) keine Ansagen —
+    // Entscheidung Thomas, 17.10.2026. Das trifft z. B. den manuellen VFR-Flug.
+    if matches!(pax, None | Some(0)) {
         return Flugart::Aus;
     }
     match sitze {
@@ -89,9 +91,11 @@ mod tests {
     }
 
     #[test]
-    fn ohne_angaben_gilt_linie() {
-        // Lieber eine Ansage zu viel als ein stummer Linienflug.
-        assert_eq!(einordnen(None, None, None, 19), Flugart::Linie);
+    fn ohne_passagierzahl_aus() {
+        assert_eq!(einordnen(None, None, None, 19), Flugart::Aus);
+        assert_eq!(einordnen(Some("J"), None, Some(180), 19), Flugart::Aus);
+        // Gegenprobe: mit Passagieren, aber ohne Sitzangabe bleibt es Linie.
+        assert_eq!(einordnen(Some("J"), Some(150), None, 19), Flugart::Linie);
     }
 
     #[test]
