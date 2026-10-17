@@ -7,7 +7,6 @@
 //! - [`planer`]: wann welche Ansage fällig wird
 //! - [`warteschlange`]: nichts überlappt, Ruhephase, Verfall
 //! - [`drehbuch`]: KI-Texte prüfen, bevor sie gesprochen werden
-//! - [`ssml`]: Azure-SSML mit dem richtigen Locale
 //! - [`cache`]: Dateinamen für den Audio-Cache
 //!
 //! Grundlage: LEITFADEN_Ansage-Drehbuch.md (Nextcloud,
@@ -18,7 +17,6 @@ pub mod drehbuch;
 pub mod flugart;
 pub mod planer;
 pub mod slot;
-pub mod ssml;
 pub mod warteschlange;
 pub mod zeit;
 

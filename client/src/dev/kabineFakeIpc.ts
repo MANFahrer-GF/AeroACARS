@@ -72,12 +72,11 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
     case "kabinen_einstellungen_lesen":
     case "kabinen_einstellungen_setzen":
       return (args?.einstellungen ?? {
-        an: true, zweite_sprache: "airline", eigene_sprache: null, anbieter_kapitaen: "azure",
-        anbieter_kabine: "piper", anbieter_kommando: "piper", azure_region: "westeurope", echter_name: false,
-        tagesform_kapitaen: "zufall", tagesform_kabine: "herzlich", chimes: true, kommandos: true, lautstaerke: 0.8,
+        an: true, zweite_sprache: "airline", echter_name: false,
+        chimes: true, kommandos: true, lautstaerke: 0.8,
       }) as T;
     case "kabinen_zustand":
-      return { beta: true, azure_schluessel: true } as T;
+      return { beta: true } as T;
     case "kabinen_ausgabegeraete":
       return [
         { id: "coreaudio:BuiltInSpeakerDevice", name: "MacBook-Lautsprecher" },

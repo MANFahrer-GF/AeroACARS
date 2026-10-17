@@ -1,6 +1,7 @@
 //! Kabinenansagen (Beta): Einstellungen, Freischaltung, Drehbuch vom
-//! GSG-Server, Sprachausgabe (Azure mit eigenem Schlüssel oder Piper
-//! kostenlos) und das Wiedergabe-Ereignis an die Oberfläche.
+//! GSG-Server, Sprachausgabe (kostenlos auf dem GSG-Server: Piper fuer alle
+//! Sprachen, fuer Englisch wahlweise Kokoro) und das Wiedergabe-Ereignis an
+//! die Oberfläche. Azure ist seit beta.4 entfernt (Thomas 17.10.2026).
 //!
 //! WANN eine Ansage dran ist, entscheidet der Baustein `cabin-announcements`
 //! (Planer, Warteschlange); lib.rs füttert ihn im Positions-Streamer
@@ -17,7 +18,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use api_client::Client;
 use cabin_announcements::flugart::Flugart;
-use cabin_announcements::{cache, ssml, Faellig, Rolle, Slot};
+use cabin_announcements::{cache, Faellig, Rolle, Slot};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sim_core::{FlightPhase, SimSnapshot};
@@ -25,8 +26,10 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{ActiveFlight, AppState, FlightStats, UiError};
 
-/// Schlüsselbund-Konto für den Azure-Schlüssel des Piloten.
-const AZURE_KONTO: &str = "kabinenansagen_azure";
+/// Schlüsselbund-Konto des frueheren Azure-Schlüssels (bis beta.3). Wird
+/// beim ersten Laden der Einstellungen einmal geloescht, damit kein
+/// Schlüssel liegen bleibt.
+const ALTES_AZURE_KONTO: &str = "kabinenansagen_azure";
 /// Ereignis an die Oberfläche: eine Ansage spielt jetzt.
 pub(crate) const EREIGNIS_ANSAGE: &str = "kabine-ansage";
 
@@ -41,23 +44,14 @@ pub(crate) const EREIGNIS_ANSAGE: &str = "kabine-ansage";
 pub struct Einstellungen {
     /// Hauptschalter. Standard AUS.
     pub an: bool,
-    /// Sprachen: keine (nur Englisch) | airline (Airline + Englisch) |
-    /// airline_de (Airline + Deutsch, Thomas 17.10.2026) | ziel | eigene.
+    /// Sprachen: airline (Airline + Englisch) | airline_de (Airline +
+    /// Deutsch). Alles andere — Stimme je Sprache, Tagesform — bestimmt der
+    /// GSG-Server (Thomas 17.10.2026: „der Server bestimmt das jetzt alles“).
+    /// Fruehere Felder (Anbieter je Rolle, Azure, Tagesform, eigene Sprache)
+    /// werden beim Laden ignoriert.
     pub zweite_sprache: String,
-    /// Für „eigene“: BCP-47, z. B. "de-DE".
-    pub eigene_sprache: Option<String>,
-    /// Anbieter je Rolle: "piper" (kostenlos), "kokoro" (kostenlos, nur
-    /// Englisch, sonst Piper) oder "azure" (eigener Schlüssel).
-    pub anbieter_kapitaen: String,
-    pub anbieter_kabine: String,
-    pub anbieter_kommando: String,
-    /// Azure-Region des Schlüssels, z. B. "westeurope".
-    pub azure_region: String,
     /// Echten Namen als Kapitän verwenden (geht an den GSG-Server und das Modell).
     pub echter_name: bool,
-    /// zufall | sachlich | herzlich | charmant | witzig | rustikal
-    pub tagesform_kapitaen: String,
-    pub tagesform_kabine: String,
     /// Doppel-Chime bei 10.000 ft. Aus, wenn das Flugzeug eigene Chimes hat.
     pub chimes: bool,
     /// Crew-Kommandos („Cabin crew, seats for take-off“). Aus bei FBW &
@@ -75,14 +69,7 @@ impl Default for Einstellungen {
         Einstellungen {
             an: false,
             zweite_sprache: "airline".into(),
-            eigene_sprache: None,
-            anbieter_kapitaen: "piper".into(),
-            anbieter_kabine: "piper".into(),
-            anbieter_kommando: "piper".into(),
-            azure_region: "westeurope".into(),
             echter_name: false,
-            tagesform_kapitaen: "zufall".into(),
-            tagesform_kabine: "zufall".into(),
             chimes: true,
             kommandos: true,
             lautstaerke: 0.8,
@@ -91,31 +78,14 @@ impl Default for Einstellungen {
     }
 }
 
-const TAGESFORMEN: [&str; 6] = ["zufall", "sachlich", "herzlich", "charmant", "witzig", "rustikal"];
 
 impl Einstellungen {
     /// Unbekannte Werte auf den Standard, Zahlen in ihren Bereich.
     pub(crate) fn normalisiert(mut self) -> Self {
         let std = Einstellungen::default();
-        if !["keine", "airline", "airline_de", "ziel", "eigene"].contains(&self.zweite_sprache.as_str()) {
+        // Fruehere Modi (keine, ziel, eigene) gibt es nicht mehr: Airline + Englisch.
+        if !["airline", "airline_de"].contains(&self.zweite_sprache.as_str()) {
             self.zweite_sprache = std.zweite_sprache.clone();
-        }
-        self.eigene_sprache = self.eigene_sprache.filter(|s| ist_locale(s));
-        for a in [&mut self.anbieter_kapitaen, &mut self.anbieter_kabine, &mut self.anbieter_kommando] {
-            if a != "piper" && a != "kokoro" && a != "azure" {
-                *a = "piper".into();
-            }
-        }
-        let region: String = self.azure_region.trim().to_ascii_lowercase();
-        self.azure_region = if !region.is_empty() && region.chars().all(|c| c.is_ascii_alphanumeric()) {
-            region
-        } else {
-            std.azure_region
-        };
-        for t in [&mut self.tagesform_kapitaen, &mut self.tagesform_kabine] {
-            if !TAGESFORMEN.contains(&t.as_str()) {
-                *t = "zufall".into();
-            }
         }
         self.lautstaerke = if self.lautstaerke.is_finite() { self.lautstaerke.clamp(0.0, 1.0) } else { 0.8 };
         self.ausgabe = self
@@ -123,14 +93,6 @@ impl Einstellungen {
             .map(|a| a.trim().to_string())
             .filter(|a| !a.is_empty() && a.len() <= 512);
         self
-    }
-
-    fn anbieter(&self, rolle: Rolle) -> &str {
-        match rolle {
-            Rolle::Kapitaen => &self.anbieter_kapitaen,
-            Rolle::Kabine => &self.anbieter_kabine,
-            Rolle::Kommando | Rolle::Chime => &self.anbieter_kommando,
-        }
     }
 }
 
@@ -160,6 +122,8 @@ pub(crate) fn einstellungen(app: &AppHandle) -> Einstellungen {
         .and_then(|t| serde_json::from_str::<Einstellungen>(&t).ok())
         .unwrap_or_default()
         .normalisiert();
+    // Azure gibt es nicht mehr: einen alten Schlüssel nicht liegen lassen.
+    let _ = secrets::delete_api_key(ALTES_AZURE_KONTO);
     *zelle.write().expect("kabinen einstellungen") = Some(geladen.clone());
     geladen
 }
@@ -195,31 +159,10 @@ pub(crate) fn kabinen_einstellungen_setzen(
     Ok(neu)
 }
 
-/// Azure-Schlüssel speichern (`Some`) oder löschen (`None`/leer). Liefert,
-/// ob danach einer hinterlegt ist. Der Schlüssel verlässt den Rechner nur
-/// zu Microsoft, nie zur GSG.
-#[tauri::command]
-pub(crate) fn kabinen_azure_schluessel_setzen(schluessel: Option<String>) -> Result<bool, UiError> {
-    match schluessel.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
-        Some(s) => secrets::store_api_key(AZURE_KONTO, &s)
-            .map(|_| true)
-            .map_err(|e| UiError::new("schluessel", e.to_string())),
-        None => {
-            let _ = secrets::delete_api_key(AZURE_KONTO);
-            Ok(false)
-        }
-    }
-}
-
-fn azure_schluessel() -> Option<String> {
-    secrets::load_api_key(AZURE_KONTO).ok().flatten().filter(|s| !s.trim().is_empty())
-}
-
 /// Für die Einstellungsseite: was steht zur Verfügung?
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Zustand {
     beta: Option<bool>,
-    azure_schluessel: bool,
 }
 
 #[tauri::command]
@@ -231,10 +174,7 @@ pub(crate) async fn kabinen_zustand(
         Some(c) => c.kabinen_status().await.ok().map(|s| s.beta && s.bereit),
         None => None,
     };
-    Ok(Zustand {
-        beta,
-        azure_schluessel: azure_schluessel().is_some(),
-    })
+    Ok(Zustand { beta })
 }
 
 // ---------------------------------------------------------------------------
@@ -576,10 +516,7 @@ fn anfrage_bauen(
         "slots": slots.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(),
         "anlass": anlass,
         "zweite_sprache": einst.zweite_sprache,
-        "eigene_sprache": einst.eigene_sprache,
         "echter_name": einst.echter_name,
-        "tagesform_kapitaen": einst.tagesform_kapitaen,
-        "tagesform_kabine": einst.tagesform_kabine,
         "flug": {
             "pax": stats.pax_count,
             "sitze": stats.max_passengers,
@@ -699,9 +636,8 @@ fn sprechen_lassen(app: AppHandle, flight: Arc<ActiveFlight>, mut auftraege: Vec
     // warten lassen (der Server-Piper arbeitet eins nach dem anderen).
     auftraege.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
     tauri::async_runtime::spawn(async move {
-        let einst = einstellungen(&app);
         for (slot, sprache, text) in auftraege {
-            let ergebnis = sprechen(&app, &einst, slot.rolle(), &sprache, &text).await;
+            let ergebnis = sprechen(&app, slot.rolle(), &sprache, &text).await;
             let mut stats = flight.stats.lock().expect("flight stats");
             let lauf = &mut stats.kabinen_lauf;
             let k = (slot, sprache);
@@ -733,32 +669,6 @@ fn maennlich(rolle: Rolle) -> bool {
     !matches!(rolle, Rolle::Kabine)
 }
 
-/// Azure-Stimmen je Locale (männlich, weiblich). Nur gesicherte Neural-Stimmen.
-fn azure_stimme(sprache: &str, m: bool) -> Option<&'static str> {
-    let (mann, frau) = match sprache {
-        "de-DE" => ("de-DE-ConradNeural", "de-DE-KatjaNeural"),
-        "de-CH" => ("de-CH-JanNeural", "de-CH-LeniNeural"),
-        "de-AT" => ("de-AT-JonasNeural", "de-AT-IngridNeural"),
-        "en-GB" => ("en-GB-RyanNeural", "en-GB-SoniaNeural"),
-        "en-US" => ("en-US-GuyNeural", "en-US-JennyNeural"),
-        "fr-FR" => ("fr-FR-HenriNeural", "fr-FR-DeniseNeural"),
-        "it-IT" => ("it-IT-DiegoNeural", "it-IT-ElsaNeural"),
-        "nl-NL" => ("nl-NL-MaartenNeural", "nl-NL-ColetteNeural"),
-        "es-ES" => ("es-ES-AlvaroNeural", "es-ES-ElviraNeural"),
-        "pt-PT" => ("pt-PT-DuarteNeural", "pt-PT-RaquelNeural"),
-        "pt-BR" => ("pt-BR-AntonioNeural", "pt-BR-FranciscaNeural"),
-        "lv-LV" => ("lv-LV-NilsNeural", "lv-LV-EveritaNeural"),
-        "ar-AE" => ("ar-AE-HamdanNeural", "ar-AE-FatimaNeural"),
-        "pl-PL" => ("pl-PL-MarekNeural", "pl-PL-ZofiaNeural"),
-        "tr-TR" => ("tr-TR-AhmetNeural", "tr-TR-EmelNeural"),
-        "da-DK" => ("da-DK-JeppeNeural", "da-DK-ChristelNeural"),
-        "sv-SE" => ("sv-SE-MattiasNeural", "sv-SE-SofieNeural"),
-        "nb-NO" => ("nb-NO-FinnNeural", "nb-NO-PernilleNeural"),
-        _ => return None,
-    };
-    Some(if m { mann } else { frau })
-}
-
 fn ton_ordner(app: &AppHandle) -> Result<PathBuf, String> {
     let d = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("kabinenansagen").join("ton");
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
@@ -768,89 +678,19 @@ fn ton_ordner(app: &AppHandle) -> Result<PathBuf, String> {
 /// Text zu Ton. Reihenfolge: der gewählte Anbieter der Rolle; fehlt dessen
 /// Schlüssel oder Stimme, der andere. Gibt es für die Sprache keine Stimme,
 /// entfällt sie (`Ok(None)`) — nie eine Stimme einer anderen Sprache.
-async fn sprechen(
-    app: &AppHandle,
-    einst: &Einstellungen,
-    rolle: Rolle,
-    sprache: &str,
-    text: &str,
-) -> Result<Option<Ton>, String> {
+async fn sprechen(app: &AppHandle, rolle: Rolle, sprache: &str, text: &str) -> Result<Option<Ton>, String> {
+    // Der Server waehlt die Stimme zur Sprache (Englisch: Kokoro, sonst
+    // Piper). Hat er keine, entfaellt die Sprache; ein Fehler (Netz,
+    // ausgelastet) kommt zurueck und der Takt versucht es spaeter wieder.
+    let Some(stimme) = piper::stimme_fuer(sprache, maennlich(rolle)) else { return Ok(None) };
     let ordner = ton_ordner(app)?;
-    let schluessel = azure_schluessel();
-    // Kokoro kann nur Englisch: Deutsch u. a. faellt auf Piper zurueck.
-    let reihe: &[&str] = match einst.anbieter(rolle) {
-        "azure" => &["azure", "piper"],
-        "kokoro" => &["kokoro", "piper", "azure"],
-        _ => &["piper", "azure"],
-    };
-    // Ein Fehler eines Anbieters (Netz, Server) beendet die Reihe nicht: der
-    // naechste darf es versuchen (Codex-QS beta.3). Klappt keiner, kommt der
-    // letzte Fehler zurueck — dann versucht es der Takt spaeter wieder.
-    let mut letzter_fehler: Option<String> = None;
-    for anbieter in reihe {
-        match *anbieter {
-            "azure" => {
-                let (Some(key), Some(stimme)) = (schluessel.as_deref(), azure_stimme(sprache, maennlich(rolle))) else {
-                    continue;
-                };
-                let name = cache::dateiname("azure", stimme, sprache, text, "wav");
-                let pfad = ordner.join(&name);
-                if !pfad.exists() {
-                    let wav = match azure_sprechen(key, &einst.azure_region, stimme, text).await {
-                        Ok(w) => w,
-                        Err(e) => {
-                            letzter_fehler = Some(e);
-                            continue;
-                        }
-                    };
-                    std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
-                }
-                return ton_aus_datei(&pfad, name).map(Some);
-            }
-            "kokoro" => {
-                let Some(stimme) = piper::kokoro_fuer(sprache, maennlich(rolle)) else { continue };
-                let name = cache::dateiname("kokoro", stimme, sprache, text, "wav");
-                let pfad = ordner.join(&name);
-                if !pfad.exists() {
-                    // Kokoro ist ein Zusatz: Klappt es gerade nicht, spricht
-                    // Piper, statt dass die Ansage ausfaellt (Codex-QS).
-                    let wav = match piper::sprechen(stimme, text).await {
-                        Ok(Some(w)) => w,
-                        Ok(None) => continue,
-                        Err(e) => {
-                            tracing::info!(error = %e, "kabinenansagen: Kokoro gerade nicht, Piper spricht");
-                            continue;
-                        }
-                    };
-                    std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
-                }
-                return ton_aus_datei(&pfad, name).map(Some);
-            }
-            _ => {
-                let Some(stimme) = piper::stimme_fuer(sprache, maennlich(rolle)) else { continue };
-                let name = cache::dateiname("piper", &stimme, sprache, text, "wav");
-                let pfad = ordner.join(&name);
-                if !pfad.exists() {
-                    // Keine Stimme fuer die Sprache auf dem Server: weiter
-                    // zum naechsten Anbieter (Azure), sonst entfaellt sie.
-                    let wav = match piper::sprechen(&stimme, text).await {
-                        Ok(Some(w)) => w,
-                        Ok(None) => continue,
-                        Err(e) => {
-                            letzter_fehler = Some(e);
-                            continue;
-                        }
-                    };
-                    std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
-                }
-                return ton_aus_datei(&pfad, name).map(Some);
-            }
-        }
+    let name = cache::dateiname("server", &stimme, sprache, text, "wav");
+    let pfad = ordner.join(&name);
+    if !pfad.exists() {
+        let Some(wav) = piper::sprechen(&stimme, text).await? else { return Ok(None) };
+        std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
     }
-    match letzter_fehler {
-        Some(e) => Err(e),
-        None => Ok(None),
-    }
+    ton_aus_datei(&pfad, name).map(Some)
 }
 
 fn ton_aus_datei(pfad: &Path, name: String) -> Result<Ton, String> {
@@ -885,28 +725,6 @@ pub(crate) fn wav_dauer_s(d: &[u8]) -> Option<f64> {
         i = inhalt + groesse + (groesse & 1);
     }
     None
-}
-
-async fn azure_sprechen(key: &str, region: &str, stimme: &str, text: &str) -> Result<Vec<u8>, String> {
-    let ssml = ssml::azure(text, stimme, "").ok_or("ungültige Stimme")?;
-    let url = format!("https://{region}.tts.speech.microsoft.com/cognitiveservices/v1");
-    let antwort = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?
-        .post(url)
-        .header("Ocp-Apim-Subscription-Key", key)
-        .header("Content-Type", "application/ssml+xml")
-        .header("X-Microsoft-OutputFormat", "riff-24khz-16bit-mono-pcm")
-        .header("User-Agent", format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")))
-        .body(ssml)
-        .send()
-        .await
-        .map_err(|e| format!("Azure nicht erreichbar: {e}"))?;
-    if !antwort.status().is_success() {
-        return Err(format!("Azure antwortet {}", antwort.status()));
-    }
-    antwort.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
 }
 
 /// Liefert eine erzeugte Tondatei an die Oberfläche. Nur Dateinamen aus dem
@@ -982,7 +800,7 @@ pub(crate) async fn kabinen_probe(app: AppHandle, rolle: Rolle, sprache: String)
         _ => "Welcome on board. This is a voice sample from your cabin crew.",
     };
     let einst = einstellungen(&app);
-    let ton = sprechen(&app, &einst, rolle, &sprache, text)
+    let ton = sprechen(&app, rolle, &sprache, text)
         .await
         .map_err(|e| UiError::new("sprachausgabe", e))?
         .ok_or_else(|| UiError::new("keine_stimme", "no voice for this language and provider"))?;
@@ -1114,7 +932,7 @@ pub(crate) mod ausgabe {
     }
 
     /// Mono-Proben (−1 … 1) und Abtastrate aus einer PCM-16-WAV (Piper und
-    /// Azure liefern beide genau das). Mehrkanalig wird gemittelt.
+    /// Kokoro auf dem Server liefern genau das). Mehrkanalig wird gemittelt.
     pub(crate) fn wav_lesen(d: &[u8]) -> Option<(u32, Vec<f32>)> {
         if d.len() < 12 || &d[0..4] != b"RIFF" || &d[8..12] != b"WAVE" {
             return None;
@@ -1357,29 +1175,12 @@ pub(crate) mod ausgabe {
 /// für Windows und Mac, und der Pilot lädt nichts herunter. Piper (GPL)
 /// wird so nicht weitergegeben.
 pub(crate) mod piper {
-    /// Die vier Stimmen der Beta — dieselben Namen wie auf dem Server
-    /// (`recorder/src/kabinenTon.ts`, STIMMEN).
-    pub(crate) const STIMMEN: [&str; 4] = [
-        "de_DE-thorsten-high",
-        "de_DE-kerstin-low",
-        "en_GB-northern_english_male-medium",
-        "en_GB-jenny_dioco-medium",
-    ];
-
-    /// Deutsch (auch de-CH/de-AT, Hochdeutsch) und Englisch mit festem Namen
-    /// wie bisher. Jede andere Sprache fragt `auto:<sprache>:<m|w>` an: Der
-    /// Server waehlt die Stimme (`SPRACH_STIMMEN`), so kommen neue Sprachen
-    /// ohne neue Client-Beta dazu (Thomas 17.10.2026). Hat er keine, liefert
-    /// [`sprechen`] `Ok(None)` und die Sprache entfaellt.
+    /// Jede Sprache fragt `auto:<sprache>:<m|w>` an; der Server waehlt die
+    /// Stimme (`SPRACH_STIMMEN`, Englisch Kokoro). So kommen Sprachen und
+    /// Stimmwechsel ohne neue Client-Beta (Thomas 17.10.2026). Hat er keine,
+    /// liefert [`sprechen`] `Ok(None)` und die Sprache entfaellt.
     pub(crate) fn stimme_fuer(sprache: &str, m: bool) -> Option<String> {
-        Some(match (sprache.split('-').next()?, m) {
-            ("de", true) => STIMMEN[0].to_string(),
-            ("de", false) => STIMMEN[1].to_string(),
-            ("en", true) => STIMMEN[2].to_string(),
-            ("en", false) => STIMMEN[3].to_string(),
-            _ if super::ist_locale(sprache) => format!("auto:{sprache}:{}", if m { "m" } else { "w" }),
-            _ => return None,
-        })
+        super::ist_locale(sprache).then(|| format!("auto:{sprache}:{}", if m { "m" } else { "w" }))
     }
 
     /// `{"error":"keine_stimme"}` vom Server (recorder/src/kabinenTon.ts).
@@ -1390,14 +1191,7 @@ pub(crate) mod piper {
             .unwrap_or(false)
     }
 
-    /// Kokoro-82M auf demselben Server (Thomas 17.10.2026: zusaetzliche Wahl
-    /// neben Piper). Nur Englisch, britische Stimmen; Namen wie im Recorder
-    /// (`KOKORO_STIMMEN`).
-    pub(crate) fn kokoro_fuer(sprache: &str, m: bool) -> Option<&'static str> {
-        (sprache.split('-').next()? == "en").then_some(if m { "kokoro-bm_george" } else { "kokoro-bf_emma" })
-    }
-
-    /// Ton vom Server (Piper oder Kokoro, je nach Stimmenname). `Ok(None)`:
+    /// Ton vom Server. `Ok(None)`:
     /// Der Server hat fuer diese Sprache keine Stimme (404). `Err` heißt „gerade nicht“ (kein Token, Netz,
     /// ausgelastet) — der Aufrufer versucht es später wieder.
     pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Option<Vec<u8>>, String> {
@@ -1471,58 +1265,41 @@ mod tests {
         let e = Einstellungen::default();
         assert!(!e.an, "Standard aus — sonst zahlt jeder Pilot");
         assert_eq!(e.zweite_sprache, "airline");
-        let kaputt = Einstellungen {
-            zweite_sprache: "klingonisch".into(),
-            eigene_sprache: Some("deutsch".into()),
-            anbieter_kabine: "elevenlabs".into(),
-            azure_region: "west europe/../".into(),
-            tagesform_kapitaen: "albern".into(),
-            lautstaerke: 7.0,
-            ..Einstellungen::default()
-        }
-        .normalisiert();
+        let kaputt = Einstellungen { zweite_sprache: "klingonisch".into(), lautstaerke: 7.0, ..Einstellungen::default() }.normalisiert();
         assert_eq!(kaputt.zweite_sprache, "airline");
+        assert_eq!(kaputt.lautstaerke, 1.0);
         let de = Einstellungen { zweite_sprache: "airline_de".into(), ..Einstellungen::default() }.normalisiert();
         assert_eq!(de.zweite_sprache, "airline_de", "Airline + Deutsch bleibt erhalten");
-        assert_eq!(kaputt.eigene_sprache, None);
-        assert_eq!(kaputt.anbieter_kabine, "piper");
-        assert_eq!(kaputt.azure_region, "westeurope");
-        assert_eq!(kaputt.tagesform_kapitaen, "zufall");
-        assert_eq!(kaputt.lautstaerke, 1.0);
-        // Alte Datei ohne neue Felder lädt mit Standardwerten.
-        let alt: Einstellungen = serde_json::from_str(r#"{"an": true}"#).unwrap();
+        // Fruehere Modi (keine/ziel/eigene) gibt es nicht mehr: Airline + Englisch.
+        for alt in ["keine", "ziel", "eigene"] {
+            let e = Einstellungen { zweite_sprache: alt.into(), ..Einstellungen::default() }.normalisiert();
+            assert_eq!(e.zweite_sprache, "airline", "{alt}");
+        }
+        // Alte Datei mit entfernten Feldern (Azure, Anbieter, Tagesform) laedt.
+        let alt: Einstellungen = serde_json::from_str(
+            r#"{"an": true, "anbieter_kapitaen": "azure", "azure_region": "westeurope", "tagesform_kabine": "witzig", "eigene_sprache": "fr-FR", "zweite_sprache": "eigene"}"#,
+        )
+        .unwrap();
         assert!(alt.an && alt.kommandos && alt.chimes);
+        assert_eq!(alt.normalisiert().zweite_sprache, "airline");
+        // Nichts davon wird wieder geschrieben.
+        let json = serde_json::to_string(&Einstellungen::default()).unwrap();
+        for weg in ["azure", "anbieter", "tagesform", "eigene_sprache", "englisch"] {
+            assert!(!json.contains(weg), "{weg} steckt noch in {json}");
+        }
     }
 
     #[test]
-    fn stimmen_nur_in_ihrer_sprache() {
-        // Feste Regel (Thomas 17.10.): eine Sprache spricht nur eine Stimme
-        // dieser Sprache — keine deutsche Stimme liest Englisch.
-        assert_eq!(piper::stimme_fuer("de-CH", true).as_deref(), Some("de_DE-thorsten-high"));
-        assert_eq!(piper::stimme_fuer("en-US", false).as_deref(), Some("en_GB-jenny_dioco-medium"));
-        // Andere Sprachen: Der Server waehlt die Stimme dieser Sprache.
-        assert_eq!(piper::stimme_fuer("fr-FR", true).as_deref(), Some("auto:fr-FR:m"));
+    fn server_waehlt_die_stimme_jeder_sprache() {
+        // Jede Sprache, auch Deutsch und Englisch, fragt nur Sprache + Rolle an.
+        assert_eq!(piper::stimme_fuer("de-DE", true).as_deref(), Some("auto:de-DE:m"));
+        assert_eq!(piper::stimme_fuer("en-GB", false).as_deref(), Some("auto:en-GB:w"));
         assert_eq!(piper::stimme_fuer("lv-LV", false).as_deref(), Some("auto:lv-LV:w"));
         assert_eq!(piper::stimme_fuer("frFR", true), None, "nur gueltige Sprachkennung");
         // Nur die ausdrueckliche Server-Antwort ist „keine Stimme“.
         assert!(piper::keine_stimme(r#"{"error":"keine_stimme"}"#));
         assert!(!piper::keine_stimme("<html>Not Found</html>"));
         assert!(!piper::keine_stimme(r#"{"error":"stimme_unbekannt"}"#));
-        assert_eq!(azure_stimme("de-AT", false), Some("de-AT-IngridNeural"));
-        assert_eq!(azure_stimme("de-CH", true), Some("de-CH-JanNeural"));
-        assert_eq!(azure_stimme("xx-XX", true), None);
-        for sp in ["de-DE", "de-CH", "de-AT", "en-GB", "fr-FR", "ar-AE", "lv-LV", "nl-NL", "it-IT"] {
-            for m in [true, false] {
-                let s = azure_stimme(sp, m).unwrap();
-                assert_eq!(ssml::locale_aus_stimme(s), Some(sp), "{s}");
-            }
-        }
-        // Dieselben vier Namen wie auf dem Server (kabinenTon.ts STIMMEN);
-        // ein anderer Name gäbe dort 400.
-        assert_eq!(
-            piper::STIMMEN,
-            ["de_DE-thorsten-high", "de_DE-kerstin-low", "en_GB-northern_english_male-medium", "en_GB-jenny_dioco-medium"]
-        );
     }
 
     #[test]
@@ -1547,46 +1324,6 @@ mod tests {
         assert!(!darf_anfragen(&l, "abflug", 999), "nach drei Fehlern Schluss");
     }
 
-    /// Echter Azure-Aufruf über denselben Weg wie im Flug (SSML, WAV-Format,
-    /// Dauer aus dem Kopf). Braucht einen Schlüssel, deshalb zuschaltbar:
-    ///
-    ///     KABINEN_AZURE_DATEI=… KABINEN_AZURE_REGION=germanywestcentral \
-    ///     KABINEN_PROBEN_ORDNER=… cargo test --lib azure_hoerproben -- --ignored
-    ///
-    /// Die Datei: Zeile nach „SCHLÜSSEL 1“ ist der Schlüssel. Er wird nie
-    /// ausgegeben.
-    #[tokio::test]
-    #[ignore = "braucht einen Azure-Schlüssel"]
-    async fn azure_hoerproben() {
-        let datei = std::env::var("KABINEN_AZURE_DATEI").expect("KABINEN_AZURE_DATEI");
-        let region = std::env::var("KABINEN_AZURE_REGION").expect("KABINEN_AZURE_REGION");
-        let ordner = std::path::PathBuf::from(std::env::var("KABINEN_PROBEN_ORDNER").expect("KABINEN_PROBEN_ORDNER"));
-        std::fs::create_dir_all(&ordner).unwrap();
-        let text = std::fs::read_to_string(datei).unwrap();
-        let zeilen: Vec<&str> = text.lines().map(str::trim).filter(|z| !z.is_empty()).collect();
-        let pos = zeilen.iter().position(|z| z.to_uppercase().starts_with("SCHL")).expect("Schlüsselzeile");
-        let key = zeilen[pos + 1];
-        let proben = [
-            ("de-DE", true, "Guten Abend, liebe Gäste, hier spricht Ihr Kapitän Markus Brandt. Wir werden etwa eine Stunde und fünfundfünfzig Minuten unterwegs sein. In Toulouse erwartet uns leichter Regen bei zwölf Grad."),
-            ("de-DE", false, "Liebe Gäste, willkommen in Toulouse. Es ist zwanzig Uhr einunddreißig Ortszeit. Bitte bleiben Sie angeschnallt, bis wir unsere Parkposition erreicht haben."),
-            ("de-CH", false, "Grüezi und herzlich willkommen an Bord von Swiss. Wir fliegen heute nach Toulouse, die Flugzeit beträgt eine Stunde und zehn Minuten. Merci vielmal."),
-            ("de-CH", true, "Liebe Gäste, hier spricht Ihr Kapitän. Wir beginnen in wenigen Minuten mit dem Sinkflug nach Zürich."),
-            ("de-AT", false, "Servus und herzlich willkommen an Bord. Bitte verstauen Sie Ihr Handgepäck und nehmen Sie Platz."),
-            ("de-AT", true, "Liebe Gäste, hier spricht Ihr Kapitän. In Wien erwarten uns sonnige achtzehn Grad."),
-            ("en-GB", true, "Good evening, ladies and gentlemen, this is your captain speaking. Flight time to Toulouse is one hour and fifty-five minutes."),
-            ("en-GB", false, "Ladies and gentlemen, welcome to Toulouse, where the local time is eight thirty-one in the evening."),
-        ];
-        for (sprache, m, satz) in proben {
-            let stimme = azure_stimme(sprache, m).unwrap();
-            let wav = azure_sprechen(key, &region, stimme, satz).await.unwrap_or_else(|e| panic!("{stimme}: {e}"));
-            let dauer = wav_dauer_s(&wav).unwrap_or_else(|| panic!("{stimme}: kein WAV"));
-            assert!(dauer > 2.0, "{stimme}: nur {dauer} s");
-            std::fs::write(ordner.join(format!("{stimme}.wav")), &wav).unwrap();
-            println!("{stimme}: {dauer:.1} s");
-        }
-        // Gegenprobe: falscher Schlüssel → Fehler, nicht stilles WAV.
-        assert!(azure_sprechen("falsch", &region, "de-DE-KatjaNeural", "Test").await.is_err());
-    }
 
 
     #[test]
@@ -1737,20 +1474,6 @@ mod tests {
         assert_eq!(alt.ausgabe, None);
     }
 
-    #[test]
-    fn kokoro_nur_englisch_und_als_anbieter_erlaubt() {
-        assert_eq!(piper::kokoro_fuer("en-GB", true), Some("kokoro-bm_george"));
-        assert_eq!(piper::kokoro_fuer("en-US", false), Some("kokoro-bf_emma"));
-        // Deutsch: keine Kokoro-Stimme, also spricht Piper (Reihe kokoro → piper).
-        assert_eq!(piper::kokoro_fuer("de-DE", true), None);
-        assert_eq!(piper::stimme_fuer("de-DE", true).as_deref(), Some("de_DE-thorsten-high"));
-        let e = Einstellungen { anbieter_kapitaen: "kokoro".into(), anbieter_kabine: "elevenlabs".into(), ..Einstellungen::default() }
-            .normalisiert();
-        assert_eq!(e.anbieter_kapitaen, "kokoro");
-        assert_eq!(e.anbieter_kabine, "piper", "Unbekanntes faellt auf Piper");
-        // Piper-Stimmen bleiben unveraendert (Kokoro ist Zusatz, kein Ersatz).
-        assert_eq!(piper::stimme_fuer("en-GB", true).as_deref(), Some("en_GB-northern_english_male-medium"));
-    }
 
     /// Echtes Geraet: listet die Ausgaben und spielt den Chime auf dem
     /// Systemstandard. Nur von Hand: `cargo test -p aeroacars-app --lib

@@ -62776,7 +62776,6 @@ pub fn run() {
             flight_umleitung_setzen,
             kabinenansagen::kabinen_einstellungen_lesen,
             kabinenansagen::kabinen_einstellungen_setzen,
-            kabinenansagen::kabinen_azure_schluessel_setzen,
             kabinenansagen::kabinen_zustand,
             kabinenansagen::kabinen_audio,
             kabinenansagen::kabinen_ausgabegeraete,

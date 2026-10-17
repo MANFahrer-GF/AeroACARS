@@ -29,15 +29,10 @@ export interface Gespielt {
 
 export interface Einstellungen {
   an: boolean;
-  zweite_sprache: "keine" | "airline" | "airline_de" | "ziel" | "eigene";
-  eigene_sprache: string | null;
-  anbieter_kapitaen: "piper" | "kokoro" | "azure";
-  anbieter_kabine: "piper" | "kokoro" | "azure";
-  anbieter_kommando: "piper" | "kokoro" | "azure";
-  azure_region: string;
+  /** Airline + Englisch oder Airline + Deutsch; Stimmen und Tagesform
+   *  bestimmt der GSG-Server. */
+  zweite_sprache: "airline" | "airline_de";
   echter_name: boolean;
-  tagesform_kapitaen: string;
-  tagesform_kabine: string;
   chimes: boolean;
   kommandos: boolean;
   lautstaerke: number;
@@ -57,7 +52,6 @@ export type Grund =
 
 export interface Zustand {
   beta: boolean | null;
-  azure_schluessel: boolean;
 }
 
 export interface Ueberblick {
@@ -230,8 +224,6 @@ export const einstellungenLesen = () => invoke<Einstellungen>("kabinen_einstellu
 export const einstellungenSetzen = (einstellungen: Einstellungen) =>
   invoke<Einstellungen>("kabinen_einstellungen_setzen", { einstellungen });
 export const zustandLesen = () => invoke<Zustand>("kabinen_zustand");
-export const azureSchluesselSetzen = (schluessel: string | null) =>
-  invoke<boolean>("kabinen_azure_schluessel_setzen", { schluessel });
 export const probe = (rolle: Rolle, sprache: string) => invoke<Gespielt>("kabinen_probe", { rolle, sprache });
 export const ueberblick = () => invoke<Ueberblick | null>("kabinen_ueberblick");
 export const ausgabegeraete = () => invoke<Geraet[]>("kabinen_ausgabegeraete");

@@ -1457,12 +1457,10 @@ mod tests {
         // aussperrt, traegt ihn hier MIT Begruendung ein, statt ihn im
         // Dispatch stillschweigend fehlen zu lassen.
         const DENY_SET: &[&str] = &[
-            // Kabinenansagen (Beta): Der Ton spielt auf dem Sim-PC, der
-            // Azure-Schluessel und der Piper-Download gehoeren dorthin. Vom
+            // Kabinenansagen (Beta): Der Ton spielt auf dem Sim-PC. Vom
             // Tablet aus gibt es nichts zu bedienen.
             "kabinen_einstellungen_lesen",
             "kabinen_einstellungen_setzen",
-            "kabinen_azure_schluessel_setzen",
             "kabinen_zustand",
             "kabinen_audio",
             "kabinen_ausgabegeraete",
