@@ -804,7 +804,8 @@ async fn sprechen(
                     // Kokoro ist ein Zusatz: Klappt es gerade nicht, spricht
                     // Piper, statt dass die Ansage ausfaellt (Codex-QS).
                     let wav = match piper::sprechen(stimme, text).await {
-                        Ok(w) => w,
+                        Ok(Some(w)) => w,
+                        Ok(None) => continue,
                         Err(e) => {
                             tracing::info!(error = %e, "kabinenansagen: Kokoro gerade nicht, Piper spricht");
                             continue;
@@ -816,10 +817,12 @@ async fn sprechen(
             }
             _ => {
                 let Some(stimme) = piper::stimme_fuer(sprache, maennlich(rolle)) else { continue };
-                let name = cache::dateiname("piper", stimme, sprache, text, "wav");
+                let name = cache::dateiname("piper", &stimme, sprache, text, "wav");
                 let pfad = ordner.join(&name);
                 if !pfad.exists() {
-                    let wav = piper::sprechen(stimme, text).await?;
+                    // Keine Stimme fuer die Sprache auf dem Server: weiter
+                    // zum naechsten Anbieter (Azure), sonst entfaellt sie.
+                    let Some(wav) = piper::sprechen(&stimme, text).await? else { continue };
                     std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
                 }
                 return ton_aus_datei(&pfad, name).map(Some);
@@ -1342,14 +1345,18 @@ pub(crate) mod piper {
         "en_GB-jenny_dioco-medium",
     ];
 
-    /// Deutsch (auch de-CH/de-AT, Hochdeutsch) und Englisch; alles andere
-    /// nur mit Azure.
-    pub(crate) fn stimme_fuer(sprache: &str, m: bool) -> Option<&'static str> {
+    /// Deutsch (auch de-CH/de-AT, Hochdeutsch) und Englisch mit festem Namen
+    /// wie bisher. Jede andere Sprache fragt `auto:<sprache>:<m|w>` an: Der
+    /// Server waehlt die Stimme (`SPRACH_STIMMEN`), so kommen neue Sprachen
+    /// ohne neue Client-Beta dazu (Thomas 17.10.2026). Hat er keine, liefert
+    /// [`sprechen`] `Ok(None)` und die Sprache entfaellt.
+    pub(crate) fn stimme_fuer(sprache: &str, m: bool) -> Option<String> {
         Some(match (sprache.split('-').next()?, m) {
-            ("de", true) => STIMMEN[0],
-            ("de", false) => STIMMEN[1],
-            ("en", true) => STIMMEN[2],
-            ("en", false) => STIMMEN[3],
+            ("de", true) => STIMMEN[0].to_string(),
+            ("de", false) => STIMMEN[1].to_string(),
+            ("en", true) => STIMMEN[2].to_string(),
+            ("en", false) => STIMMEN[3].to_string(),
+            _ if super::ist_locale(sprache) => format!("auto:{sprache}:{}", if m { "m" } else { "w" }),
             _ => return None,
         })
     }
@@ -1361,9 +1368,10 @@ pub(crate) mod piper {
         (sprache.split('-').next()? == "en").then_some(if m { "kokoro-bm_george" } else { "kokoro-bf_emma" })
     }
 
-    /// Ton vom Server (Piper oder Kokoro, je nach Stimmenname). `Err` heißt „gerade nicht“ (kein Token, Netz,
+    /// Ton vom Server (Piper oder Kokoro, je nach Stimmenname). `Ok(None)`:
+    /// Der Server hat fuer diese Sprache keine Stimme (404). `Err` heißt „gerade nicht“ (kein Token, Netz,
     /// ausgelastet) — der Aufrufer versucht es später wieder.
-    pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Vec<u8>, String> {
+    pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Option<Vec<u8>>, String> {
         let token = crate::live_zugang::pilot_token().ok_or("noch kein Live-Zugang (nicht provisioniert)")?;
         let antwort = reqwest::Client::builder()
             // Lange Ansagen mit Kokoro rechnen bis ~2 min, dazu die
@@ -1378,10 +1386,13 @@ pub(crate) mod piper {
             .send()
             .await
             .map_err(|e| format!("live.kant.ovh nicht erreichbar: {e}"))?;
+        if antwort.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !antwort.status().is_success() {
             return Err(format!("Piper-Server antwortet {}", antwort.status()));
         }
-        antwort.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
+        antwort.bytes().await.map(|b| Some(b.to_vec())).map_err(|e| e.to_string())
     }
 }
 
@@ -1449,10 +1460,12 @@ mod tests {
     fn stimmen_nur_in_ihrer_sprache() {
         // Feste Regel (Thomas 17.10.): eine Sprache spricht nur eine Stimme
         // dieser Sprache — keine deutsche Stimme liest Englisch.
-        assert_eq!(piper::stimme_fuer("de-CH", true), Some("de_DE-thorsten-high"));
-        assert_eq!(piper::stimme_fuer("en-US", false), Some("en_GB-jenny_dioco-medium"));
-        assert!(piper::stimme_fuer("fr-FR", true).is_none());
-        assert!(piper::stimme_fuer("lv-LV", false).is_none());
+        assert_eq!(piper::stimme_fuer("de-CH", true).as_deref(), Some("de_DE-thorsten-high"));
+        assert_eq!(piper::stimme_fuer("en-US", false).as_deref(), Some("en_GB-jenny_dioco-medium"));
+        // Andere Sprachen: Der Server waehlt die Stimme dieser Sprache.
+        assert_eq!(piper::stimme_fuer("fr-FR", true).as_deref(), Some("auto:fr-FR:m"));
+        assert_eq!(piper::stimme_fuer("lv-LV", false).as_deref(), Some("auto:lv-LV:w"));
+        assert_eq!(piper::stimme_fuer("frFR", true), None, "nur gueltige Sprachkennung");
         assert_eq!(azure_stimme("de-AT", false), Some("de-AT-IngridNeural"));
         assert_eq!(azure_stimme("de-CH", true), Some("de-CH-JanNeural"));
         assert_eq!(azure_stimme("xx-XX", true), None);
@@ -1688,13 +1701,13 @@ mod tests {
         assert_eq!(piper::kokoro_fuer("en-US", false), Some("kokoro-bf_emma"));
         // Deutsch: keine Kokoro-Stimme, also spricht Piper (Reihe kokoro → piper).
         assert_eq!(piper::kokoro_fuer("de-DE", true), None);
-        assert_eq!(piper::stimme_fuer("de-DE", true), Some("de_DE-thorsten-high"));
+        assert_eq!(piper::stimme_fuer("de-DE", true).as_deref(), Some("de_DE-thorsten-high"));
         let e = Einstellungen { anbieter_kapitaen: "kokoro".into(), anbieter_kabine: "elevenlabs".into(), ..Einstellungen::default() }
             .normalisiert();
         assert_eq!(e.anbieter_kapitaen, "kokoro");
         assert_eq!(e.anbieter_kabine, "piper", "Unbekanntes faellt auf Piper");
         // Piper-Stimmen bleiben unveraendert (Kokoro ist Zusatz, kein Ersatz).
-        assert_eq!(piper::stimme_fuer("en-GB", true), Some("en_GB-northern_english_male-medium"));
+        assert_eq!(piper::stimme_fuer("en-GB", true).as_deref(), Some("en_GB-northern_english_male-medium"));
     }
 
     /// Echtes Geraet: listet die Ausgaben und spielt den Chime auf dem
