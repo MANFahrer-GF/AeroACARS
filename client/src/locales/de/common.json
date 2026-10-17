@@ -95,6 +95,7 @@
       "kein_flug": "Kein laufender Flug.",
       "nicht_freigeschaltet": "Für dein Konto noch nicht freigeschaltet.",
       "warte_auf_texte": "Die Texte für diesen Flug werden geschrieben.",
+      "ausschalten": "Ansagen ausschalten",
       "einstellungen": "Einstellungen öffnen",
       "ruhig": "Gerade keine Ansage",
       "naechste": "Als Nächstes: {{slot}}",

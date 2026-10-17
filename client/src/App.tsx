@@ -1061,7 +1061,13 @@ function App() {
 
       {status.kind === "loggedIn" && tab === "telemetrie" && <TelemetrieView />}
       {status.kind === "loggedIn" && tab === "notizblock" && <Notizblock />}
-      {status.kind === "loggedIn" && tab === "kabine" && <KabinenSeite onOpenSettings={() => setTab("settings")} />}
+      {status.kind === "loggedIn" && tab === "kabine" && <KabinenSeite
+          onOpenSettings={() => setTab("settings")}
+          onAus={() => {
+            setKabineAn(false);
+            setTab("cockpit");
+          }}
+        />}
 
       {status.kind === "loggedIn" && tab === "cockpit" && (
         <CockpitView

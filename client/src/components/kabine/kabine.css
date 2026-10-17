@@ -17,6 +17,7 @@
   flex-wrap: wrap;
 }
 .kabine-kopf h2 { margin: 0; font-size: var(--fs-600, 18px); }
+.kabine-kopf-knoepfe { display: flex; gap: 8px; flex-wrap: wrap; }
 .kabine-unter { color: var(--text-dim); font-size: var(--fs-300, 12px); margin-top: 4px; }
 
 /* Live-Bereich */

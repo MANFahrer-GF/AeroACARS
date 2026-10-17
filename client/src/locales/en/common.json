@@ -95,6 +95,7 @@
       "kein_flug": "No flight in progress.",
       "nicht_freigeschaltet": "Not enabled for your account yet.",
       "warte_auf_texte": "The texts for this flight are being written.",
+      "ausschalten": "Turn off announcements",
       "einstellungen": "Open settings",
       "ruhig": "No announcement right now",
       "naechste": "Up next: {{slot}}",

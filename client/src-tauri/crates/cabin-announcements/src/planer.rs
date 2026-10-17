@@ -162,6 +162,9 @@ pub struct Planer {
     /// Endanflug abgeschlossen (verhindert Doppelmeldung mit dem Host-Signal).
     durchstart_laeuft: bool,
     war_im_reiseflug: bool,
+    /// Zuletzt angesagtes Umleitungsziel: Ein neues Ziel (der Pilot ändert
+    /// die Umleitung) wird noch einmal angesagt, dasselbe nicht.
+    angesagte_umleitung: Option<String>,
 }
 
 impl Planer {
@@ -420,8 +423,17 @@ impl Planer {
 
         // ---- Umleitung ----
         if let (Some(plan), Some(jetzt)) = (&self.flug.ziel_plan_icao, &t.ziel_icao) {
-            if in_luft && !jetzt.is_empty() && !jetzt.eq_ignore_ascii_case(plan) {
+            let neu = self
+                .angesagte_umleitung
+                .as_deref()
+                .is_none_or(|alt| !alt.eq_ignore_ascii_case(jetzt));
+            if in_luft && !jetzt.is_empty() && !jetzt.eq_ignore_ascii_case(plan) && neu {
+                self.gemeldet.remove(&Slot::Umleitung);
+                let vorher = aus.len();
                 self.melde(&mut aus, Slot::Umleitung, Verfall::AbPhase(Final));
+                if aus.len() > vorher {
+                    self.angesagte_umleitung = Some(jetzt.clone());
+                }
             }
         }
 
@@ -836,4 +848,21 @@ mod tests {
         tk.ziel_icao = Some("LFBD".into());
         assert!(p.tick(&tk).iter().any(|f| f.slot == Slot::Umleitung));
     }
+
+    #[test]
+    fn neues_umleitungsziel_wird_noch_einmal_angesagt() {
+        let mut p = Planer::neu(flug(120));
+        let mut tk = tick(1, Cruise, 30_000.0, 0.0);
+        tk.ziel_icao = Some("LFBD".into());
+        assert!(p.tick(&tk).iter().any(|f| f.slot == Slot::Umleitung));
+        tk.jetzt = 2;
+        assert!(!p.tick(&tk).iter().any(|f| f.slot == Slot::Umleitung), "dasselbe Ziel nicht zweimal");
+        tk.jetzt = 3;
+        tk.ziel_icao = Some("LFBO".into());
+        assert!(!p.tick(&tk).iter().any(|f| f.slot == Slot::Umleitung), "zurück zum Plan: keine Umleitung");
+        tk.jetzt = 4;
+        tk.ziel_icao = Some("LFMT".into());
+        assert!(p.tick(&tk).iter().any(|f| f.slot == Slot::Umleitung), "neues Ziel: neue Ansage");
+    }
+
 }

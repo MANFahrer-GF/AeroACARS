@@ -3,7 +3,16 @@
 // was schon lief. Gleiche Seitenform wie das Bordbuch.
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { abonnieren, aktuell, ueberblick, type Gespielt, type Ueberblick } from "../../lib/kabinenansagen";
+import {
+  abonnieren,
+  aktuell,
+  einstellungenLesen,
+  einstellungenSetzen,
+  stoppen,
+  ueberblick,
+  type Gespielt,
+  type Ueberblick,
+} from "../../lib/kabinenansagen";
 import "./kabine.css";
 
 const BALKEN = 48;
@@ -36,7 +45,14 @@ function sprachName(sprache: string, sprachen: Intl.DisplayNames | null): string
   }
 }
 
-export function KabinenSeite({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function KabinenSeite({
+  onOpenSettings,
+  onAus,
+}: {
+  onOpenSettings: () => void;
+  /** Nach „Ansagen ausschalten“: Reiter ausblenden. */
+  onAus?: () => void;
+}) {
   const { t, i18n } = useTranslation();
   const live = useSyncExternalStore(abonnieren, aktuell);
   const [daten, setDaten] = useState<Ueberblick | null | undefined>(undefined);
@@ -81,9 +97,25 @@ export function KabinenSeite({ onOpenSettings }: { onOpenSettings: () => void })
                   : t("kabine.seite.warte_auf_texte")}
           </div>
         </div>
-        <button type="button" className="button button--ghost" onClick={onOpenSettings}>
-          {t("kabine.seite.einstellungen")}
-        </button>
+        <div className="kabine-kopf-knoepfe">
+          <button type="button" className="button button--ghost" onClick={onOpenSettings}>
+            {t("kabine.seite.einstellungen")}
+          </button>
+          <button
+            type="button"
+            className="button button--ghost"
+            onClick={() => {
+              // Sofort still, dann dauerhaft aus (bis zum Wiedereinschalten
+              // in den Einstellungen).
+              stoppen();
+              void einstellungenLesen()
+                .then((e) => einstellungenSetzen({ ...e, an: false }))
+                .then(() => onAus?.());
+            }}
+          >
+            {t("kabine.seite.ausschalten")}
+          </button>
+        </div>
       </header>
 
       <div className={`kabine-live${a ? " ist-aktiv" : ""}`} aria-live="polite">

@@ -10,6 +10,7 @@ import {
   einstellungenSetzen,
   piperInstallieren,
   probe,
+  stoppen,
   zustandLesen,
   type Einstellungen,
   type Rolle,
@@ -56,6 +57,7 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
     const neu = { ...e, ...patch };
     setE(neu);
     try {
+      if (patch.an === false) stoppen();
       const gespeichert = await einstellungenSetzen(neu);
       setE(gespeichert);
       if (patch.an !== undefined) onAnChange?.(gespeichert.an);

@@ -166,9 +166,18 @@ pub(crate) fn kabinen_einstellungen_lesen(app: AppHandle) -> Einstellungen {
 #[tauri::command]
 pub(crate) fn kabinen_einstellungen_setzen(
     app: AppHandle,
+    state: tauri::State<'_, AppState>,
     einstellungen: Einstellungen,
 ) -> Result<Einstellungen, UiError> {
     let neu = einstellungen.normalisiert();
+    if !neu.an {
+        // Ausgeschaltet heißt aus: Was im laufenden Flug noch wartet, wird
+        // verworfen und kommt auch nach einem Wiedereinschalten nicht nach.
+        let flug = state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone);
+        if let Some(f) = flug {
+            f.stats.lock().expect("flight stats").kabinen_lauf.warteschlange = Default::default();
+        }
+    }
     let pfad = einstellungen_pfad(&app)
         .ok_or_else(|| UiError::new("kein_konfig_ordner", "no config dir"))?;
     if let Some(ordner) = pfad.parent() {
@@ -369,7 +378,10 @@ pub(crate) fn takt(
                 let mut stats = flight.stats.lock().expect("flight stats");
                 let lauf = &mut stats.kabinen_lauf;
                 match ergebnis {
-                    Ok(s) if s.beta && s.bereit => lauf.beta = Beta::Ja,
+                    // Nur `beta` zählt: Ist der Monatsdeckel erreicht
+                    // (`bereit` falsch), liefert der Server bezahlte Texte
+                    // weiter aus dem Zwischenspeicher; neue lehnt er ab.
+                    Ok(s) if s.beta => lauf.beta = Beta::Ja,
                     Ok(_) => lauf.beta = Beta::Nein,
                     Err(e) => {
                         // Netz weg: später noch einmal fragen, bis dahin aus.
@@ -431,7 +443,7 @@ pub(crate) fn takt(
     }
     for (schluessel, slots, anlass) in auftraege {
         let anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
-        holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage);
+        holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false);
     }
 
     // ---- Kommandos vorbereiten (fester Wortlaut, Englisch) ----
@@ -582,9 +594,18 @@ fn wetterlage(m: &metar::MetarSnapshot) -> Option<&'static str> {
     Some("klar")
 }
 
-fn holen(app: AppHandle, flight: Arc<ActiveFlight>, client: Client, schluessel: String, anfrage: serde_json::Value) {
+fn holen(
+    app: AppHandle,
+    flight: Arc<ActiveFlight>,
+    client: Client,
+    schluessel: String,
+    anfrage: serde_json::Value,
+    slots: Vec<Slot>,
+    nachholung: bool,
+) {
     tauri::async_runtime::spawn(async move {
         let ergebnis = client.kabinen_drehbuch(&anfrage).await;
+        let mut fehlend: Vec<Slot> = Vec::new();
         let neu: Vec<(Slot, String, String)> = {
             let mut stats = flight.stats.lock().expect("flight stats");
             let lauf = &mut stats.kabinen_lauf;
@@ -606,19 +627,32 @@ fn holen(app: AppHandle, flight: Arc<ActiveFlight>, client: Client, schluessel: 
                             neu.push((slot, e.sprache, e.text));
                         }
                     }
+                    // Hat der Server nach seinem zweiten Versuch einen Text
+                    // nicht geliefert, einmal gezielt nur diese Slots holen.
+                    fehlend = slots
+                        .iter()
+                        .copied()
+                        .filter(|s| lauf.sprachen.iter().any(|sp| !lauf.texte.contains_key(&(*s, sp.clone()))))
+                        .collect();
                     neu
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
                     lauf.angefragt.remove(&schluessel);
                     let n = lauf.fehlversuche.get(&schluessel).map_or(0, |(n, _)| *n) + 1;
-                    lauf.fehlversuche.insert(schluessel, (n, Utc::now().timestamp() + 120));
+                    lauf.fehlversuche.insert(schluessel.clone(), (n, Utc::now().timestamp() + 120));
                     Vec::new()
                 }
             }
         };
         if !neu.is_empty() {
-            sprechen_lassen(app, flight, neu);
+            sprechen_lassen(app.clone(), Arc::clone(&flight), neu);
+        }
+        if !nachholung && !fehlend.is_empty() {
+            let mut erneut = anfrage.clone();
+            erneut["slots"] = serde_json::json!(fehlend.iter().map(|s| slot_name(*s)).collect::<Vec<_>>());
+            tracing::info!(teil = %schluessel, fehlend = ?fehlend, "kabinenansagen: fehlende Texte nachholen");
+            holen(app, flight, client, format!("{schluessel}+"), erneut, fehlend, true);
         }
     });
 }

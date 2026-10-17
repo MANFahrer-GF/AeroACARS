@@ -95,6 +95,9 @@ function audio(): AudioContext {
 
 const schlange: Gespielt[] = [];
 let laeuft = false;
+/** Steigt bei jedem Stopp: eine laufende Abarbeitung bricht dann ab. */
+let durchgang = 0;
+let aktuelleQuelle: AudioBufferSourceNode | null = null;
 
 async function tonLaden(datei: string): Promise<AudioBuffer> {
   const daten = await invoke<ArrayBuffer>("kabinen_audio", { datei });
@@ -133,9 +136,11 @@ function spielen(puffer: AudioBuffer, lautstaerke: number): Promise<void> {
   return new Promise((r) => {
     quelle.onended = () => {
       fertig = true;
+      if (aktuelleQuelle === quelle) aktuelleQuelle = null;
       setzen({ pegel: 0 });
       r();
     };
+    aktuelleQuelle = quelle;
     quelle.start();
     requestAnimationFrame(messen);
   });
@@ -165,15 +170,16 @@ async function chime(lautstaerke: number): Promise<void> {
 async function abarbeiten(): Promise<void> {
   if (laeuft) return;
   laeuft = true;
+  const meiner = durchgang;
   try {
-    while (schlange.length > 0) {
+    while (schlange.length > 0 && meiner === durchgang) {
       const a = schlange.shift()!;
       setzen({ ansage: a, teil: 0, verlauf: [] });
       if (audio().state === "suspended") await audio().resume();
       if (a.rolle === "chime") {
         await chime(a.lautstaerke);
       } else {
-        for (let i = 0; i < a.teile.length; i++) {
+        for (let i = 0; i < a.teile.length && meiner === durchgang; i++) {
           setzen({ teil: i });
           try {
             await spielen(await tonLaden(a.teile[i].datei), a.lautstaerke);
@@ -191,6 +197,20 @@ async function abarbeiten(): Promise<void> {
   }
 }
 
+/** Sofort still: laufende Ansage abbrechen, Wartendes verwerfen. Für
+ *  „Ansagen ausschalten“ — wer das nicht möchte, hört ab dem Klick nichts. */
+export function stoppen(): void {
+  durchgang += 1;
+  schlange.length = 0;
+  try {
+    aktuelleQuelle?.stop();
+  } catch {
+    /* schon zu Ende */
+  }
+  aktuelleQuelle = null;
+  setzen({ ansage: null, pegel: 0, verlauf: [] });
+}
+
 /** Eine Ansage einreihen (Ereignis oder Hörprobe). */
 export function abspielen(a: Gespielt): void {
   schlange.push(a);
@@ -203,7 +223,13 @@ let gestartet = false;
 export function wiedergabeStarten(): void {
   if (gestartet || !isTauri) return;
   gestartet = true;
-  void listen<Gespielt>("kabine-ansage", (e) => abspielen(e.payload));
+  listen<Gespielt>("kabine-ansage", (e) => abspielen(e.payload)).catch((e) => {
+    // Sonst bliebe die Wiedergabe bis zum Neustart stumm: nach kurzer
+    // Pause erneut anmelden.
+    console.warn("[kabine] Anmelden fehlgeschlagen, neuer Versuch", e);
+    gestartet = false;
+    setTimeout(wiedergabeStarten, 5000);
+  });
 }
 
 export const einstellungenLesen = () => invoke<Einstellungen>("kabinen_einstellungen_lesen");
