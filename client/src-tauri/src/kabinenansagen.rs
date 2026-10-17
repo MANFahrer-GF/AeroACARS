@@ -1237,4 +1237,46 @@ mod tests {
         l.fehlversuche.insert("abflug".into(), (3, 0));
         assert!(!darf_anfragen(&l, "abflug", 999), "nach drei Fehlern Schluss");
     }
+
+    /// Echter Azure-Aufruf über denselben Weg wie im Flug (SSML, WAV-Format,
+    /// Dauer aus dem Kopf). Braucht einen Schlüssel, deshalb zuschaltbar:
+    ///
+    ///     KABINEN_AZURE_DATEI=… KABINEN_AZURE_REGION=germanywestcentral \
+    ///     KABINEN_PROBEN_ORDNER=… cargo test --lib azure_hoerproben -- --ignored
+    ///
+    /// Die Datei: Zeile nach „SCHLÜSSEL 1“ ist der Schlüssel. Er wird nie
+    /// ausgegeben.
+    #[tokio::test]
+    #[ignore = "braucht einen Azure-Schlüssel"]
+    async fn azure_hoerproben() {
+        let datei = std::env::var("KABINEN_AZURE_DATEI").expect("KABINEN_AZURE_DATEI");
+        let region = std::env::var("KABINEN_AZURE_REGION").expect("KABINEN_AZURE_REGION");
+        let ordner = std::path::PathBuf::from(std::env::var("KABINEN_PROBEN_ORDNER").expect("KABINEN_PROBEN_ORDNER"));
+        std::fs::create_dir_all(&ordner).unwrap();
+        let text = std::fs::read_to_string(datei).unwrap();
+        let zeilen: Vec<&str> = text.lines().map(str::trim).filter(|z| !z.is_empty()).collect();
+        let pos = zeilen.iter().position(|z| z.to_uppercase().starts_with("SCHL")).expect("Schlüsselzeile");
+        let key = zeilen[pos + 1];
+        let proben = [
+            ("de-DE", true, "Guten Abend, liebe Gäste, hier spricht Ihr Kapitän Markus Brandt. Wir werden etwa eine Stunde und fünfundfünfzig Minuten unterwegs sein. In Toulouse erwartet uns leichter Regen bei zwölf Grad."),
+            ("de-DE", false, "Liebe Gäste, willkommen in Toulouse. Es ist zwanzig Uhr einunddreißig Ortszeit. Bitte bleiben Sie angeschnallt, bis wir unsere Parkposition erreicht haben."),
+            ("de-CH", false, "Grüezi und herzlich willkommen an Bord von Swiss. Wir fliegen heute nach Toulouse, die Flugzeit beträgt eine Stunde und zehn Minuten. Merci vielmal."),
+            ("de-CH", true, "Liebe Gäste, hier spricht Ihr Kapitän. Wir beginnen in wenigen Minuten mit dem Sinkflug nach Zürich."),
+            ("de-AT", false, "Servus und herzlich willkommen an Bord. Bitte verstauen Sie Ihr Handgepäck und nehmen Sie Platz."),
+            ("de-AT", true, "Liebe Gäste, hier spricht Ihr Kapitän. In Wien erwarten uns sonnige achtzehn Grad."),
+            ("en-GB", true, "Good evening, ladies and gentlemen, this is your captain speaking. Flight time to Toulouse is one hour and fifty-five minutes."),
+            ("en-GB", false, "Ladies and gentlemen, welcome to Toulouse, where the local time is eight thirty-one in the evening."),
+        ];
+        for (sprache, m, satz) in proben {
+            let stimme = azure_stimme(sprache, m).unwrap();
+            let wav = azure_sprechen(key, &region, stimme, satz).await.unwrap_or_else(|e| panic!("{stimme}: {e}"));
+            let dauer = wav_dauer_s(&wav).unwrap_or_else(|| panic!("{stimme}: kein WAV"));
+            assert!(dauer > 2.0, "{stimme}: nur {dauer} s");
+            std::fs::write(ordner.join(format!("{stimme}.wav")), &wav).unwrap();
+            println!("{stimme}: {dauer:.1} s");
+        }
+        // Gegenprobe: falscher Schlüssel → Fehler, nicht stilles WAV.
+        assert!(azure_sprechen("falsch", &region, "de-DE-KatjaNeural", "Test").await.is_err());
+    }
+
 }
