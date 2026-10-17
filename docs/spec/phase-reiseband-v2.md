@@ -103,14 +103,35 @@ Stückwerk"). Grundlinie = 2.0.24 im selben Korpus-Replay.
 
 | Punkt | Befund | Lösung |
 |---|---|---|
-| Durchstarter | 8 von 18 gezählten lagen quer zur Bahn oder 5,3–25 NM von jeder Schwelle; sie zählten im PIREP und gaben in der Treibstoff-Teilnote eine Mehrweg-Gutschrift | Zählung nur mit Landeschwelle ≤ 5 NM voraus und ≤ 45° Kursabweichung am Tiefpunkt (`runway::schwelle_voraus`); sonst Climb ohne Zählung |
+| Durchstarter | 8 von 18 gezählten lagen quer zur Bahn oder 5,3–25 NM von jeder Schwelle; sie zählten im PIREP und gaben in der Treibstoff-Teilnote eine Mehrweg-Gutschrift | Zählung nur mit Landeschwelle ≤ 5 NM voraus und ≤ 45° Kursabweichung am Tiefpunkt (`runway::schwelle_voraus`); der Tiefpunkt darf über der Bahn liegen, nicht hinter dem Bahnende; sonst Climb ohne Zählung |
 | Warteschleife | Ende nach 30 s geradeaus — kürzer als ein Schenkel; jede echte Warteschleife zerfiel in Bruchstücke, lange Kurven auf FL388 zählten | Eintritt ≥ 300° gleichsinnige Drehung in 6 min im Höhenflug > 1500 ft AGL; Ende nach 3 min geradeaus |
 | Schwingung / Korrekturen | Climb↔Descent folgte jeder Halbschwingung (±2000 ft) und 40–60-s-Korrekturen | Umkehr-Sperre: über 3000 ft AGL erst nach 120 s anhaltender neuer Richtung |
-| Dellen / Stufen im Reiseflug | Cruise↔Descent bei 600–2300 ft, Cruise↔Climb bei Stufen | Band 2000 ft um die AKTUELLE Reiseflughöhe; 10 min Level im Sinkflug = neuer Reiseflug |
-| Kurze tiefe Sinkflüge | v2 erkannte sie bis 76 s zu spät | Climb-Schnellweg (< 3000 ft AGL, < −500 fpm, 10 s) |
+| Dellen / Stufen im Reiseflug | Cruise↔Descent bei 600–2300 ft, Cruise↔Climb bei Stufen | Band 2000 ft um die AKTUELLE Reiseflughöhe (tieferen Stufen folgt sie erst nach 10 min, sonst würde ein Treppen-Sinkflug Cruise); 10 min Level im Sinkflug = neuer Reiseflug; Rückkehr aus Descent mit 1000 ft Hysterese |
+| Kurze tiefe Sinkflüge | v2 erkannte sie bis 76 s zu spät | Climb-Schnellweg (< 3000 ft AGL, < −500 fpm, 10 s), frühestens 2 min nach Climb-Beginn (sonst zweiter falscher Durchstarter nach Joels Fehlanflug) |
 | Parkbremse FBW-Familie | Headwind A330neo ohne Marker (ICAO A330) als Default erkannt; A380X/Headwind lasen die Standard-SimVar, die sich nie bewegt | Headwind am Ordner; Hebel-Variable für die ganze Familie |
 | Anflug über Gebirge (Joel) | kein Erkennungsfehler: Er sank zu früh auf ~8000 ft und stieg wieder; falsch war nur der gezählte Durchstarter | durch die Durchstart-Regel erledigt; eine Höhen-Regel für den Anflugbeginn hätte 199 von 472 Anflügen verschoben |
 
 Standard-A320neo MSFS 2024 (iniBuilds): bleibt auf der Standard-SimVar; ein
 einziger Flug ohne gesetzte Bremse reicht nicht als Beleg — beim nächsten Flug
 prüfen.
+
+Ergebnis (447 Flüge, gegen 2.0.24):
+
+| Größe | ohne Höhenvorgabe | mit Vorgabe (`REF=max`) |
+|---|---|---|
+| Wechsel < 3 min im Reiseband | 59 → 11 | 73 → 28 (24 davon echte Stufensteigflüge, 1–2,6 kft in ~1,5 min) |
+| Warteschleifen | 9 Bruchstücke → 4 echte | gleich |
+| Anflug-Stabilität gleich | 446/447 (yNOgAr: neu richtig) | gleich |
+| Landung erreicht | alle | alle |
+| gezählte Durchstarter | 8 Flüge verlieren einen falschen | gleich |
+| Sinkflug-Beginn | p50 +54 s, p90 +120 s | p50 +51 s, p90 +117 s |
+
+Mit Vorgabe steigt „früher Reiseflug" 0,9 → 1,2 h, fast ganz aus einem Flug
+(4/PQZk, A380X): 2.0.24 zeigte dort 8,6 h Sinkflug auf FL331 im Level, neu
+Reiseflug nach 10 min; die Messgröße zählt ihn, weil später eine Stufe folgt.
+
+Bewusst belassen (Codex-QS): Durchstarter ohne Bahn in der Datenbank oder im
+Kreisanflug > 45° zählen nicht (von den falschen Fällen nicht zu trennen, die
+Phase geht trotzdem in Climb); Holding prüft keinen Durchstarter (wie vor dem
+Paket); nach Neustart im Holding bis 3 min Holding-Anzeige (Kursverlauf nicht
+gespeichert).
