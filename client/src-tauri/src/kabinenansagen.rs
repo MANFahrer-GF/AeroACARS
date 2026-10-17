@@ -672,26 +672,61 @@ fn maennlich(rolle: Rolle) -> bool {
 fn ton_ordner(app: &AppHandle) -> Result<PathBuf, String> {
     let d = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("kabinenansagen").join("ton");
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    static AUFGERAEUMT: OnceLock<()> = OnceLock::new();
+    AUFGERAEUMT.get_or_init(|| altes_aufraeumen(&d));
     Ok(d)
 }
 
-/// Text zu Ton. Reihenfolge: der gewählte Anbieter der Rolle; fehlt dessen
-/// Schlüssel oder Stimme, der andere. Gibt es für die Sprache keine Stimme,
+/// Einmal je Start: Dateien der frueheren Namen (bis beta.3: piper-,
+/// kokoro-, azure-) und Ersatz-Toene aelter als ein Tag weg.
+fn altes_aufraeumen(ordner: &Path) {
+    let Ok(eintraege) = std::fs::read_dir(ordner) else { return };
+    for e in eintraege.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let alt = ["piper-", "kokoro-", "azure-"].iter().any(|p| name.starts_with(p));
+        let ersatz_alt = name.starts_with("ersatz-")
+            && e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|d| d.as_secs() > 86_400);
+        if alt || ersatz_alt {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// Text zu Ton ueber den GSG-Server. Gibt es für die Sprache keine Stimme,
 /// entfällt sie (`Ok(None)`) — nie eine Stimme einer anderen Sprache.
 async fn sprechen(app: &AppHandle, rolle: Rolle, sprache: &str, text: &str) -> Result<Option<Ton>, String> {
     // Der Server waehlt die Stimme zur Sprache (Englisch: Kokoro, sonst
     // Piper). Hat er keine, entfaellt die Sprache; ein Fehler (Netz,
     // ausgelastet) kommt zurueck und der Takt versucht es spaeter wieder.
-    let Some(stimme) = piper::stimme_fuer(sprache, maennlich(rolle)) else { return Ok(None) };
+    let Some(anfrage) = piper::stimme_fuer(sprache, maennlich(rolle)) else { return Ok(None) };
     let ordner = ton_ordner(app)?;
-    let name = cache::dateiname("server", &stimme, sprache, text, "wav");
-    let pfad = ordner.join(&name);
-    if !pfad.exists() {
-        let Some(wav) = piper::sprechen(&stimme, text).await? else { return Ok(None) };
-        std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
+    // Gespeichert wird unter der Stimme, die der Server gewaehlt hat — so
+    // verdeckt der Zwischenspeicher keinen Stimmwechsel auf dem Server
+    // (Codex-QS beta.4). Je Sitzung fragt der Client einmal nach.
+    let bekannt = GEWAEHLT.lock().expect("gewaehlt").get(&anfrage).cloned();
+    if let Some(stimme) = &bekannt {
+        let name = cache::dateiname("server", stimme, sprache, text, "wav");
+        if ordner.join(&name).exists() {
+            return ton_aus_datei(&ordner.join(&name), name).map(Some);
+        }
     }
+    let Some(ton) = piper::sprechen(&anfrage, text).await? else { return Ok(None) };
+    let name = if ton.ersatz {
+        // Ersatzstimme (Kokoro gerade aus): nicht als diese Stimme merken.
+        cache::dateiname("ersatz", &format!("{anfrage}|{}", Utc::now().timestamp_millis()), sprache, text, "wav")
+    } else {
+        let stimme = ton.stimme.unwrap_or(anfrage.clone());
+        GEWAEHLT.lock().expect("gewaehlt").insert(anfrage, stimme.clone());
+        cache::dateiname("server", &stimme, sprache, text, "wav")
+    };
+    let pfad = ordner.join(&name);
+    std::fs::write(&pfad, &ton.wav).map_err(|e| e.to_string())?;
     ton_aus_datei(&pfad, name).map(Some)
 }
+
+/// `auto:<sprache>:<m|w>` → vom Server gewaehlte Stimme, je Sitzung.
+static GEWAEHLT: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
+    std::sync::LazyLock::new(Default::default);
 
 fn ton_aus_datei(pfad: &Path, name: String) -> Result<Ton, String> {
     let daten = std::fs::read(pfad).map_err(|e| e.to_string())?;
@@ -1194,7 +1229,15 @@ pub(crate) mod piper {
     /// Ton vom Server. `Ok(None)`:
     /// Der Server hat fuer diese Sprache keine Stimme (404). `Err` heißt „gerade nicht“ (kein Token, Netz,
     /// ausgelastet) — der Aufrufer versucht es später wieder.
-    pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Option<Vec<u8>>, String> {
+    /// Antwort des Servers: Ton, die tatsaechlich gewaehlte Stimme
+    /// (`X-Stimme`) und ob ein Ersatz sprach (`X-Ersatz`).
+    pub(crate) struct ServerTon {
+        pub wav: Vec<u8>,
+        pub stimme: Option<String>,
+        pub ersatz: bool,
+    }
+
+    pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Option<ServerTon>, String> {
         let token = crate::live_zugang::pilot_token().ok_or("noch kein Live-Zugang (nicht provisioniert)")?;
         let antwort = reqwest::Client::builder()
             // Lange Ansagen mit Kokoro rechnen bis ~2 min, dazu die
@@ -1222,7 +1265,11 @@ pub(crate) mod piper {
         if !antwort.status().is_success() {
             return Err(format!("Piper-Server antwortet {}", antwort.status()));
         }
-        antwort.bytes().await.map(|b| Some(b.to_vec())).map_err(|e| e.to_string())
+        let kopf = |n: &str| antwort.headers().get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
+        let gewaehlt = kopf("x-stimme");
+        let ersatz = kopf("x-ersatz").is_some();
+        let wav = antwort.bytes().await.map_err(|e| e.to_string())?.to_vec();
+        Ok(Some(ServerTon { wav, stimme: gewaehlt, ersatz }))
     }
 }
 
@@ -1474,6 +1521,21 @@ mod tests {
         assert_eq!(alt.ausgabe, None);
     }
 
+
+    #[test]
+    fn alte_tondateien_werden_aufgeraeumt() {
+        let d = std::env::temp_dir().join(format!("kabine-aufraeumen-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        for n in ["piper-1.wav", "kokoro-2.wav", "azure-3.wav", "server-4.wav", "ersatz-5.wav"] {
+            std::fs::write(d.join(n), b"x").unwrap();
+        }
+        altes_aufraeumen(&d);
+        let mut rest: Vec<String> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        rest.sort();
+        // Frischer Ersatz bleibt (aelter als ein Tag waere weg), server- bleibt.
+        assert_eq!(rest, ["ersatz-5.wav", "server-4.wav"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     /// Echtes Geraet: listet die Ausgaben und spielt den Chime auf dem
     /// Systemstandard. Nur von Hand: `cargo test -p aeroacars-app --lib
