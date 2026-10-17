@@ -129,7 +129,12 @@ pub const LEVEL_BELOW_REF_TO_CRUISE_FALLBACK_SECS: i64 = 600;
 /// Sinkflug: im Steig ist `obsref == aktuelle Höhe` → eine Level-Restriction
 /// würde sofort fälschlich Cruise (Premature-Cruise-Falle) — dort bleibt der
 /// Dauer-Fallback oben maßgeblich.
-pub const OBSREF_BAND_FT: f64 = 2000.0;
+///
+/// 17.10.2026: 2000 → 1000 ft. Der Reiseflug endet erst UNTER der aktuellen
+/// Reiseflughöhe − `REISEFLUG_STUFE_FT` (2000 ft); lag die Rückkehr-Grenze
+/// ebenfalls bei 2000 ft, pendelte ein Abfangen genau dort zwischen Descent
+/// und Cruise (Korpus: 4 Flüge). 1000 ft gibt die Hysterese.
+pub const OBSREF_BAND_FT: f64 = 1000.0;
 /// Go-Around-Bestätigung (2026-07-06): aus Approach/Final wird erst dann
 /// Climb, wenn seit dem ERSTEN Climbing-Segment-Tick netto mindestens so
 /// viel AGL gewonnen wurde. Trennt echte Go-Arounds von Glideslope-/
@@ -1852,6 +1857,20 @@ mod tests {
             }
         }
         assert_eq!(phase, FlightPhase::Descent, "a staircase descent must not ride Cruise down");
+    }
+
+    /// Hysterese: Abfangen knapp unter der Grenze (2500 ft unter der
+    /// Reiseflughöhe) bleibt Descent — zurück in Cruise erst innerhalb
+    /// `OBSREF_BAND_FT` (Korpus: 4 Flüge pendelten dort).
+    #[test]
+    fn level_off_just_below_the_band_stays_descent() {
+        let mut sim = sim_im_reiseflug();
+        let (p, _) = sim.fly(75, -2000.0, FlightPhase::Cruise); // 2500 ft runter
+        assert_eq!(p, FlightPhase::Descent);
+        for _ in 0..(300 / 5) {
+            let (p, _) = sim.fly(5, 0.0, FlightPhase::Descent);
+            assert_eq!(p, FlightPhase::Descent, "no flip back to Cruise 2500 ft below the cruise level");
+        }
     }
 
     /// Echter Sinkflug: unter die Reiseflughöhe − 2000 ft → Descent.
