@@ -304,6 +304,7 @@ export function SettingsPanel({
       {/* Tab-Bar — Pills, aktive in Akzent-Farbe. v0.13.15: theme-aware
           CSS-Klassen statt hart verdrahteter Dark-Mode-Inline-Farben (waren
           im Light-Mode weiß-auf-weiß = unlesbar, Pilot-Befund). */}
+      <div className="settings__tabs-huelle">
       <div
         className="settings__tabs"
         role="tablist"
@@ -311,6 +312,12 @@ export function SettingsPanel({
       >
         {(["simulator", "required", "extras", "cockpit", "bordbuch", "plugins", "vermessen", "tech"] as SettingsTab[]).map((tab) => {
           const isActive = activeTab === tab;
+          // „🎧 Cockpit“ → Symbol und Text getrennt, damit der Abstand fest
+          // ist und ein zu langer Text gekürzt wird, nicht das Symbol.
+          const label = t(`settings.tabs.${tab}`);
+          const teile = /^(\S+)\s+(.+)$/u.exec(label);
+          const symbol = teile && !/\p{L}/u.test(teile[1]) ? teile[1] : null;
+          const text = symbol && teile ? teile[2] : label;
           return (
             <button
               key={tab}
@@ -319,11 +326,14 @@ export function SettingsPanel({
               aria-selected={isActive}
               onClick={() => switchTab(tab)}
               className={`settings__tab${isActive ? " settings__tab--active" : ""}`}
+              title={label}
             >
-              {t(`settings.tabs.${tab}`)}
+              {symbol && <span className="settings__tab-symbol" aria-hidden="true">{symbol}</span>}
+              <span className="settings__tab-text">{text}</span>
             </button>
           );
         })}
+      </div>
       </div>
       <p
         className="settings__hint"

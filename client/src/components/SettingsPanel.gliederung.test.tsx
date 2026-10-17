@@ -93,6 +93,6 @@ describe("Einstellungen — Gliederung", () => {
 
   it("der Reiter Cockpit steht in der Leiste", () => {
     baueEinstellungen("simulator");
-    expect(screen.getByRole("tab", { name: t("settings.tabs.cockpit") })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Cockpit" })).toBeTruthy();
   });
 });
