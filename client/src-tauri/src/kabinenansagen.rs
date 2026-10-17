@@ -352,12 +352,12 @@ pub(crate) fn takt(
     }
 
     // ---- Planer ----
-    let flugdaten = crate::kabinen_flugdaten(&stats, &flight.arr_airport, flight.planned_flight_time_min);
+    let flugdaten = crate::kabinen_flugdaten(&stats, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao);
     let flugart = flugdaten.flugart.unwrap_or(Flugart::Aus);
     if flugart == Flugart::Aus {
         return;
     }
-    let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min);
+    let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao);
     let faellig: Vec<Faellig> = schritt
         .faellig
         .into_iter()
@@ -503,7 +503,7 @@ fn anfrage_bauen(
         let ab = stats.block_off_at.map(|t| t.timestamp()).unwrap_or(jetzt);
         (ab - p).div_euclid(60)
     });
-    let flugdaten = crate::kabinen_flugdaten(stats, &flight.arr_airport, flight.planned_flight_time_min);
+    let flugdaten = crate::kabinen_flugdaten(stats, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao);
     let ankunft = stats
         .landung_erwartet
         .or_else(|| plan.plan_on_block.map(|p| p + abweichung.unwrap_or(0).max(0) * 60));
@@ -853,10 +853,41 @@ pub(crate) async fn kabinen_probe(app: AppHandle, rolle: Rolle, sprache: String)
 pub(crate) struct Ueberblick {
     verlauf: Vec<Gespielt>,
     wartend: Vec<Slot>,
+    /// Was auf diesem Flug noch kommt (Abflug und Ankunft, in Flugreihenfolge),
+    /// ohne die schon fälligen. Leer, solange der Planer noch nicht lief.
+    geplant: Vec<Geplant>,
     sprachen: Vec<String>,
     beta: Option<bool>,
     /// Warum gerade keine Ansagen kommen; `None` = alles bereit.
     grund: Option<Grund>,
+}
+
+/// Eine noch kommende Ansage; `bereit` = Ton liegt für alle Sprachen vor.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Geplant {
+    slot: Slot,
+    bereit: bool,
+}
+
+/// Noch kommende Ansagen fuer „Als Nächstes“ (Thomas 17.10.2026: Die
+/// vorbereitete Begrüßung stand nirgends, die Seite sah leer aus).
+fn geplant(stats: &FlightStats, wartend: &[Slot]) -> Vec<Geplant> {
+    let Some(planer) = stats.kabinen_planer.as_ref() else { return Vec::new() };
+    let lauf = &stats.kabinen_lauf;
+    ABFLUG
+        .into_iter()
+        .chain(ANKUNFT)
+        .filter(|s| planer.kommt_noch(*s) && !wartend.contains(s))
+        .map(|slot| {
+            // Jede Sprache erledigt; `None` = keine Stimme fuer sie, dieser
+            // Teil entfaellt. Bereit ist es, wenn mindestens ein Ton da ist.
+            let teile: Vec<_> = lauf.sprachen.iter().map(|sp| lauf.ton.get(&(slot, sp.clone()))).collect();
+            let bereit = !teile.is_empty()
+                && teile.iter().all(Option::is_some)
+                && teile.iter().any(|t| matches!(t, Some(Some(_))));
+            Geplant { slot, bereit }
+        })
+        .collect()
 }
 
 /// Warum keine Ansagen kommen — die Seite zeigt es oben statt einer leeren
@@ -887,7 +918,7 @@ pub(crate) fn grund(an: bool, stats: &FlightStats) -> Option<Grund> {
         return Some(Grund::Replay);
     }
     // Flugart allein (Fracht, Positionierung …), unabhaengig von den Pax.
-    if cabin_announcements::flugart::einordnen(stats.flight_type.as_deref(), Some(1), None, 0) == Flugart::Aus {
+    if cabin_announcements::flugart::einordnen(stats.flight_type.as_deref(), Some(1), "") == Flugart::Aus {
         return Some(Grund::Fracht);
     }
     match stats.pax_count {
@@ -918,10 +949,12 @@ pub(crate) fn kabinen_ueberblick(app: AppHandle, state: tauri::State<'_, AppStat
     let flight = state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone)?;
     let stats = flight.stats.lock().expect("flight stats");
     let lauf = &stats.kabinen_lauf;
+    let wartend = lauf.warteschlange.wartend();
     Some(Ueberblick {
         grund: grund(einstellungen(&app).an, &stats),
         verlauf: lauf.verlauf.clone(),
-        wartend: lauf.warteschlange.wartend(),
+        geplant: geplant(&stats, &wartend),
+        wartend,
         sprachen: lauf.sprachen.clone(),
         beta: match lauf.beta {
             Beta::Ja => Some(true),
@@ -1467,6 +1500,48 @@ mod tests {
         // RMS 0,1/√2 ≈ 0,071, gestreckt ×4 ≈ 0,28.
         assert!(h[..30].iter().all(|w| (w - 0.283).abs() < 0.02), "{h:?}");
         assert!(ausgabe::huellkurve(rate, &vec![0.0; 2205]).iter().all(|w| *w == 0.0));
+    }
+
+    fn planer_mit(flugart: Flugart, phase: crate::FlightPhase) -> cabin_announcements::Planer {
+        cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten {
+                flugart: Some(flugart),
+                geplante_flugzeit_min: Some(120),
+                tod_nach_abheben_s: None,
+                ziel_plan_icao: None,
+                reiseflughoehe_ft: None,
+                abheben_epoch: None,
+            },
+            phase,
+        )
+    }
+
+    #[test]
+    fn geplant_zeigt_was_noch_kommt() {
+        let mut st = FlightStats::new();
+        assert!(geplant(&st, &[]).is_empty(), "vor dem ersten Takt nichts");
+
+        st.kabinen_planer = Some(planer_mit(Flugart::Linie, crate::FlightPhase::Boarding));
+        st.kabinen_lauf.sprachen = vec!["fr-FR".into(), "de-DE".into()];
+        let alle = geplant(&st, &[]);
+        assert_eq!(alle.len(), 12, "Abflug und Ankunft der Linie");
+        assert_eq!(alle[0].slot, Slot::Boarding, "Flugreihenfolge");
+        assert!(alle.iter().all(|g| !g.bereit));
+
+        // Ton fuer beide Sprachen der Begruessung: nur sie ist bereit.
+        let ton = || Some(Ton { datei: "x.wav".into(), dauer_s: 1.0 });
+        st.kabinen_lauf.ton.insert((Slot::KapitaenBegruessung, "fr-FR".into()), ton());
+        assert!(!geplant(&st, &[]).iter().any(|g| g.bereit), "eine Sprache fehlt noch");
+        st.kabinen_lauf.ton.insert((Slot::KapitaenBegruessung, "de-DE".into()), None);
+        let bereit: Vec<_> = geplant(&st, &[]).into_iter().filter(|g| g.bereit).map(|g| g.slot).collect();
+        assert_eq!(bereit, vec![Slot::KapitaenBegruessung], "keine Stimme fuer eine Sprache zaehlt als erledigt");
+
+        // Faellige stehen in der Warteschlange, nicht doppelt.
+        assert!(!geplant(&st, &[Slot::Boarding]).iter().any(|g| g.slot == Slot::Boarding));
+
+        st.kabinen_planer = Some(planer_mit(Flugart::Bizjet, crate::FlightPhase::Boarding));
+        let slots: Vec<_> = geplant(&st, &[]).into_iter().map(|g| g.slot).collect();
+        assert_eq!(slots, vec![Slot::KapitaenBegruessung, Slot::KapitaenSinkflug], "nur der Kapitaen");
     }
 
     #[test]

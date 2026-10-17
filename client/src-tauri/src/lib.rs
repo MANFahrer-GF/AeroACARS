@@ -47293,6 +47293,7 @@ fn kabinen_flugdaten(
     stats: &FlightStats,
     ziel: &str,
     planzeit_min: Option<i32>,
+    muster: &str,
 ) -> cabin_announcements::Flugdaten {
     use cabin_announcements::flugart;
     let u = |v: Option<i32>| v.and_then(|n| u32::try_from(n).ok());
@@ -47302,12 +47303,7 @@ fn kabinen_flugdaten(
         _ => None,
     };
     cabin_announcements::Flugdaten {
-        flugart: Some(flugart::einordnen(
-            stats.flight_type.as_deref(),
-            u(stats.pax_count),
-            u(stats.max_passengers),
-            flugart::BIZJET_SITZE_STANDARD,
-        )),
+        flugart: Some(flugart::einordnen(stats.flight_type.as_deref(), u(stats.pax_count), muster)),
         geplante_flugzeit_min: ofp_min
             .and_then(|m| u32::try_from(m).ok())
             .or(u(planzeit_min))
@@ -47349,12 +47345,13 @@ fn kabinen_schritt(
     now: DateTime<Utc>,
     ziel: &str,
     planzeit_min: Option<i32>,
+    muster: &str,
 ) -> KabinenSchritt {
     let jetzt = now.timestamp();
     if stats.kabinen_planer.is_none() {
         // `fortsetzen` gilt auch fuer den normalen Start: Vor dem Boarding
         // loest kein Slot aus, also wird dort nichts uebersprungen.
-        let flug = kabinen_flugdaten(stats, ziel, planzeit_min);
+        let flug = kabinen_flugdaten(stats, ziel, planzeit_min, muster);
         stats.kabinen_durchstarts = stats.go_around_count;
         stats.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug, stats.phase));
     }
@@ -51780,7 +51777,7 @@ mod arrived_fallback_geometry_tests {
         let alt: PersistedFlightStats = serde_json::from_value(alt).expect("Stand von 2.0.25 laedt");
         let mut stats = FlightStats::new();
         alt.apply_to(&mut stats);
-        let flugart = |s: &FlightStats| kabinen_flugdaten(s, "LEPA", Some(140)).flugart;
+        let flugart = |s: &FlightStats| kabinen_flugdaten(s, "LEPA", Some(140), "A320").flugart;
         assert_eq!(flugart(&stats), Some(cabin_announcements::Flugart::Aus), "ohne Nachholen stumm");
 
         let bids: Vec<api_client::Bid> = serde_json::from_value(serde_json::json!([
@@ -51927,14 +51924,14 @@ mod arrived_fallback_geometry_tests {
         let mut fracht = FlightStats::new();
         fracht.phase = FlightPhase::Boarding;
         fracht.pax_count = Some(0);
-        assert!(kabinen_schritt(&mut fracht, &snap, jetzt, "EDDH", Some(60)).faellig.is_empty());
+        assert!(kabinen_schritt(&mut fracht, &snap, jetzt, "EDDH", Some(60), "A320").faellig.is_empty());
 
         let mut linie = FlightStats::new();
         linie.phase = FlightPhase::Boarding;
         linie.pax_count = Some(150);
         linie.max_passengers = Some(180);
         linie.flight_type = Some("J".into());
-        assert!(slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60)).faellig).contains(&Slot::Boarding));
+        assert!(slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60), "A320").faellig).contains(&Slot::Boarding));
 
         let mut resume = FlightStats::new();
         resume.phase = FlightPhase::Cruise;
@@ -51942,11 +51939,11 @@ mod arrived_fallback_geometry_tests {
         resume.max_passengers = Some(180);
         resume.takeoff_at = Some(jetzt - chrono::Duration::minutes(20));
         resume.go_around_count = 1;
-        let erste = slots(kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120)).faellig);
+        let erste = slots(kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120), "A320").faellig);
         assert!(!erste.contains(&Slot::Boarding), "{erste:?}");
         assert_eq!(resume.kabinen_durchstarts, 1, "ein alter Durchstart ist keine neue Flanke");
         resume.go_around_count = 2;
-        kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120));
+        kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120), "A320");
         assert_eq!(resume.kabinen_durchstarts, 2);
     }
 
@@ -51964,7 +51961,7 @@ mod arrived_fallback_geometry_tests {
             api_client::RouteFix { ident: "TOD".into(), zeit_bis_hier_s: Some(4_500.4), ..Default::default() },
         ];
         stats.planned_cruise_alt_ft = Some(41_000.0);
-        let f = kabinen_flugdaten(&stats, " eddm ", Some(70));
+        let f = kabinen_flugdaten(&stats, " eddm ", Some(70), "C25A");
         assert_eq!(f.flugart, Some(cabin_announcements::Flugart::Bizjet));
         assert_eq!(f.geplante_flugzeit_min, Some(95), "OFP vor phpVMS");
         assert_eq!(f.tod_nach_abheben_s, Some(4_500));
@@ -51973,7 +51970,7 @@ mod arrived_fallback_geometry_tests {
         assert_eq!(f.abheben_epoch, None);
 
         let ohne_ofp = FlightStats::new();
-        let f = kabinen_flugdaten(&ohne_ofp, "EDDM", Some(70));
+        let f = kabinen_flugdaten(&ohne_ofp, "EDDM", Some(70), "C25A");
         assert_eq!(f.geplante_flugzeit_min, Some(70), "Rueckfall auf phpVMS");
         assert_eq!(f.flugart, Some(cabin_announcements::Flugart::Aus), "ohne Pax keine Ansagen");
         assert_eq!(f.tod_nach_abheben_s, None);
@@ -52012,7 +52009,7 @@ mod arrived_fallback_geometry_tests {
         serde_json::from_str::<PersistedFlightStats>(&json).expect("parses").apply_to(&mut nach_neustart);
         assert_eq!(nach_neustart.umleitung_ziel.as_deref(), Some("LFBD"));
 
-        let slots: Vec<_> = kabinen_schritt(&mut nach_neustart, &snap, jetzt, "LFBO", Some(120))
+        let slots: Vec<_> = kabinen_schritt(&mut nach_neustart, &snap, jetzt, "LFBO", Some(120), "A320")
             .faellig
             .into_iter()
             .map(|f| f.slot)
@@ -52023,7 +52020,7 @@ mod arrived_fallback_geometry_tests {
         let mut ohne = FlightStats::new();
         ohne.phase = FlightPhase::Approach;
         ohne.pax_count = Some(150);
-        let slots: Vec<_> = kabinen_schritt(&mut ohne, &snap, jetzt, "LFBO", Some(120))
+        let slots: Vec<_> = kabinen_schritt(&mut ohne, &snap, jetzt, "LFBO", Some(120), "A320")
             .faellig
             .into_iter()
             .map(|f| f.slot)

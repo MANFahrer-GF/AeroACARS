@@ -79,7 +79,11 @@
       "nichts_wartet": "Nichts in der Warteschlange.",
       "bisher": "Bisher",
       "noch_nichts": "Noch keine Ansage auf diesem Flug.",
-      "keine_ansagen": "Gerade keine Ansagen, der Grund steht unten."
+      "keine_ansagen": "Gerade keine Ansagen, der Grund steht unten.",
+      "naechste_wann": "Als Nächstes: {{slot}}, {{wann}}.",
+      "status_jetzt": "jetzt",
+      "status_bereit": "bereit",
+      "status_vorbereitet": "wird vorbereitet"
     },
     "grund": {
       "aus": {
@@ -122,6 +126,20 @@
         "titel": "Ton nicht abspielbar",
         "text": "Die Ansage war fertig, ließ sich aber nicht abspielen. Ist das gewählte Ausgabegerät belegt oder abgezogen? In den Einstellungen lässt sich ein anderes Gerät oder der Systemstandard wählen. Meldung:"
       }
+    },
+    "wann": {
+      "boarding": "beim Boarding",
+      "begruessung_tueren_zu": "beim Pushback",
+      "sicherheit": "beim Pushback",
+      "kapitaen_begruessung": "beim Rollen zur Bahn",
+      "anschnallzeichen_aus": "im Steigflug, wenn das Anschnallzeichen erlischt",
+      "reiseflug25": "nach einem Viertel des Reiseflugs",
+      "reiseflug50": "zur Halbzeit des Reiseflugs",
+      "reiseflug80": "gegen Ende des Reiseflugs",
+      "kapitaen_sinkflug": "kurz vor dem Sinkflug",
+      "kabine_sinkflug": "kurz vor dem Sinkflug",
+      "nach_der_landung": "beim Rollen nach der Landung",
+      "aussteigen": "an der Parkposition"
     }
   },
   "app": {

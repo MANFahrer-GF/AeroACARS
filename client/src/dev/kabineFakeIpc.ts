@@ -44,7 +44,14 @@ export const demoUeberblick = {
     { slot: "kapitaen_begruessung", rolle: "kapitaen", zeit: Date.now() / 1000 - 1500, lautstaerke: 0.8,
       teile: [{ sprache: "de-DE", text: "Guten Abend, liebe Gäste, hier spricht Ihr Kapitän Markus Brandt. Wir werden etwa eine Stunde und fünfundfünfzig Minuten unterwegs sein.", datei: "b.wav", dauer_s: 8 }] },
   ],
-  wartend: ["reiseflug50", "kapitaen_sinkflug"],
+  wartend: ["reiseflug50"],
+  geplant: [
+    { slot: "reiseflug80", bereit: true },
+    { slot: "kapitaen_sinkflug", bereit: true },
+    { slot: "kabine_sinkflug", bereit: false },
+    { slot: "nach_der_landung", bereit: false },
+    { slot: "aussteigen", bereit: false },
+  ],
   sprachen: ["de-DE", "en-GB"],
   beta: true,
   // `?grund=keine_pax` zeigt den Hinweis, warum nichts kommt.

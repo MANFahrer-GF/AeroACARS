@@ -79,7 +79,11 @@
       "nichts_wartet": "Nothing queued.",
       "bisher": "So far",
       "noch_nichts": "No announcement on this flight yet.",
-      "keine_ansagen": "No announcements right now, the reason is shown below."
+      "keine_ansagen": "No announcements right now, the reason is shown below.",
+      "naechste_wann": "Up next: {{slot}}, {{wann}}.",
+      "status_jetzt": "now",
+      "status_bereit": "ready",
+      "status_vorbereitet": "being prepared"
     },
     "grund": {
       "aus": {
@@ -122,6 +126,20 @@
         "titel": "Audio could not be played",
         "text": "The announcement was ready but could not be played. Is the selected output device busy or unplugged? You can pick another device or the system default in the settings. Message:"
       }
+    },
+    "wann": {
+      "boarding": "during boarding",
+      "begruessung_tueren_zu": "at pushback",
+      "sicherheit": "at pushback",
+      "kapitaen_begruessung": "while taxiing to the runway",
+      "anschnallzeichen_aus": "in the climb, when the seatbelt sign goes off",
+      "reiseflug25": "a quarter into the cruise",
+      "reiseflug50": "halfway through the cruise",
+      "reiseflug80": "towards the end of the cruise",
+      "kapitaen_sinkflug": "shortly before the descent",
+      "kabine_sinkflug": "shortly before the descent",
+      "nach_der_landung": "while taxiing in after landing",
+      "aussteigen": "at the parking position"
     }
   },
   "app": {

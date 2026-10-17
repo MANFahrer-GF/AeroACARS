@@ -243,6 +243,13 @@ impl Planer {
         self.gemeldet.contains(&slot)
     }
 
+    /// Für die Anzeige „Als Nächstes“: kommt dieser Slot auf diesem Flug
+    /// noch (erlaubt und noch nicht ausgelöst oder übersprungen)?
+    pub fn kommt_noch(&self, slot: Slot) -> bool {
+        let reiseflug = matches!(slot, Slot::Reiseflug25 | Slot::Reiseflug50 | Slot::Reiseflug80);
+        self.flugart().erlaubt(slot) && !self.schon(slot) && !(reiseflug && self.kurzstrecke())
+    }
+
     /// Verarbeitet einen Tick und liefert die neu fälligen Ansagen in
     /// Flugreihenfolge.
     pub fn tick(&mut self, t: &Tick) -> Vec<Faellig> {
@@ -589,6 +596,17 @@ mod tests {
             Slot::Aussteigen,
         ];
         assert_eq!(alle, erwartet);
+    }
+
+    #[test]
+    fn kommt_noch_nach_wiedereinstieg_und_kurzstrecke() {
+        let p = Planer::fortsetzen(flug(120), Cruise);
+        assert!(!p.kommt_noch(Slot::Boarding), "vor dem Wiedereinstieg erledigt");
+        assert!(p.kommt_noch(Slot::KapitaenSinkflug));
+        assert!(p.kommt_noch(Slot::Reiseflug80));
+        let kurz = Planer::neu(flug(55));
+        assert!(kurz.kommt_noch(Slot::Boarding));
+        assert!(!kurz.kommt_noch(Slot::Reiseflug50), "Kurzstrecke ohne Reiseflug-Ansagen");
     }
 
     #[test]

@@ -79,7 +79,11 @@
       "nichts_wartet": "Nulla in coda.",
       "bisher": "Finora",
       "noch_nichts": "Ancora nessun annuncio su questo volo.",
-      "keine_ansagen": "Nessun annuncio al momento, il motivo è indicato sotto."
+      "keine_ansagen": "Nessun annuncio al momento, il motivo è indicato sotto.",
+      "naechste_wann": "Prossimo: {{slot}}, {{wann}}.",
+      "status_jetzt": "ora",
+      "status_bereit": "pronto",
+      "status_vorbereitet": "in preparazione"
     },
     "grund": {
       "aus": {
@@ -122,6 +126,20 @@
         "titel": "Audio non riproducibile",
         "text": "L'annuncio era pronto ma non è stato possibile riprodurlo. Il dispositivo di uscita scelto è occupato o scollegato? Nelle impostazioni puoi scegliere un altro dispositivo o il predefinito di sistema. Messaggio:"
       }
+    },
+    "wann": {
+      "boarding": "durante l'imbarco",
+      "begruessung_tueren_zu": "al pushback",
+      "sicherheit": "al pushback",
+      "kapitaen_begruessung": "durante il rullaggio verso la pista",
+      "anschnallzeichen_aus": "in salita, quando si spegne il segnale cinture",
+      "reiseflug25": "a un quarto della crociera",
+      "reiseflug50": "a metà della crociera",
+      "reiseflug80": "verso la fine della crociera",
+      "kapitaen_sinkflug": "poco prima della discesa",
+      "kabine_sinkflug": "poco prima della discesa",
+      "nach_der_landung": "durante il rullaggio dopo l'atterraggio",
+      "aussteigen": "al parcheggio"
     }
   },
   "app": {

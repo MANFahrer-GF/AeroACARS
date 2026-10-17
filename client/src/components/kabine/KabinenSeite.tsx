@@ -10,6 +10,7 @@ import {
   einstellungenSetzen,
   stoppen,
   ueberblick,
+  type Geplant,
   type Gespielt,
   type Ueberblick,
 } from "../../lib/kabinenansagen";
@@ -81,6 +82,12 @@ export function KabinenSeite({
   const a: Gespielt | null = live.ansage;
   const verlauf = [...(daten?.verlauf ?? [])].reverse();
   const wartend = daten?.wartend ?? [];
+  const geplant: Geplant[] = daten?.geplant ?? [];
+  // Fällige zuerst (sie kommen sofort), dann der Rest des Flugs.
+  const naechste = [
+    ...wartend.map((slot) => ({ slot, status: "jetzt" as const })),
+    ...geplant.map((g) => ({ slot: g.slot, status: g.bereit ? ("bereit" as const) : ("vorbereitet" as const) })),
+  ];
 
   return (
     <section className="kabine-seite">
@@ -143,7 +150,8 @@ export function KabinenSeite({
           </span>
           {a && <span className="kabine-slot">{t(`kabine.slot.${a.slot}`)}</span>}
         </div>
-        <Pegel werte={live.verlauf} aktiv={a !== null} />
+        {/* Ohne Ansage eine ruhige Linie statt der letzten Messwerte. */}
+        <Pegel werte={a ? live.verlauf : []} aktiv={a !== null} />
         {a && a.rolle !== "chime" && (
           <ol className="kabine-teile">
             {a.teile.map((teil, i) => (
@@ -156,9 +164,14 @@ export function KabinenSeite({
         )}
         {!a && (
           <p className="kabine-ruhe-text">
-            {wartend.length > 0
-              ? t("kabine.seite.naechste", { slot: t(`kabine.slot.${wartend[0]}`) })
-              : t("kabine.seite.ruhe_hinweis")}
+            {naechste.length === 0
+              ? t("kabine.seite.ruhe_hinweis")
+              : naechste[0].status === "jetzt"
+                ? t("kabine.seite.naechste", { slot: t(`kabine.slot.${naechste[0].slot}`) })
+                : t("kabine.seite.naechste_wann", {
+                    slot: t(`kabine.slot.${naechste[0].slot}`),
+                    wann: t(`kabine.wann.${naechste[0].slot}`),
+                  })}
           </p>
         )}
       </div>
@@ -166,12 +179,18 @@ export function KabinenSeite({
       <div className="kabine-spalten">
         <div>
           <h3 className="kabine-h3">{t("kabine.seite.als_naechstes")}</h3>
-          {wartend.length === 0 ? (
+          {naechste.length === 0 ? (
             <div className="kabine-leer">{t("kabine.seite.nichts_wartet")}</div>
           ) : (
-            <ul className="kabine-liste">
-              {wartend.map((s, i) => (
-                <li key={s + i}>{t(`kabine.slot.${s}`)}</li>
+            <ul className="kabine-liste" data-testid="kabine-naechste">
+              {naechste.map(({ slot, status }, i) => (
+                <li key={slot + i} className="kabine-plan">
+                  <div className="kabine-plan-text">
+                    <span className="kabine-plan-slot">{t(`kabine.slot.${slot}`)}</span>
+                    {status !== "jetzt" && <span className="kabine-plan-wann">{t(`kabine.wann.${slot}`)}</span>}
+                  </div>
+                  <span className={`kabine-plan-status ist-${status}`}>{t(`kabine.seite.status_${status}`)}</span>
+                </li>
               ))}
             </ul>
           )}

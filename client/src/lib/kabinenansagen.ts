@@ -54,9 +54,16 @@ export interface Zustand {
   beta: boolean | null;
 }
 
+/** Eine noch kommende Ansage; `bereit` = Ton liegt vor. */
+export interface Geplant {
+  slot: string;
+  bereit: boolean;
+}
+
 export interface Ueberblick {
   verlauf: Gespielt[];
   wartend: string[];
+  geplant: Geplant[];
   sprachen: string[];
   beta: boolean | null;
   grund: Grund | null;

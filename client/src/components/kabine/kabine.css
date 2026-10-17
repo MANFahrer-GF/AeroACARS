@@ -72,6 +72,13 @@
 .kabine-liste { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .kabine-liste li { padding: 9px 12px; font-size: var(--fs-400, 13px); background: var(--surface); }
 .kabine-liste li + li { border-top: 1px solid var(--border); }
+/* „Als Nächstes“: Ansage und Zeitpunkt links, Stand rechts. */
+.kabine-plan { display: flex; align-items: center; gap: 12px; }
+.kabine-plan-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kabine-plan-wann { color: var(--text-dim); font-size: var(--fs-300, 12px); }
+.kabine-plan-status { margin-left: auto; flex-shrink: 0; font-size: var(--fs-300, 12px); color: var(--text-dim); }
+.kabine-plan-status.ist-bereit { color: var(--acc); }
+.kabine-plan-status.ist-jetzt { color: var(--acc); font-weight: var(--fw-bold, 700); }
 .kabine-verlauf-kopf { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .kabine-zeit { font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: var(--fs-300, 12px); }
 .kabine-rolle { color: var(--text-dim); font-size: var(--fs-300, 12px); margin-left: auto; }
