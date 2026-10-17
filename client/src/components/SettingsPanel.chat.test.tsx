@@ -20,6 +20,9 @@ vi.mock("../lib/ipc", () => ({
   invoke: vi.fn(async () => null),
   isTauri: () => false,
   formatIpcError: (e: unknown) => String(e),
+  // Kabinenansagen-Abschnitt hoert auf den Piper-Fortschritt.
+  listen: vi.fn(async () => () => undefined),
+  openExternal: vi.fn(async () => undefined),
 }));
 
 import { SettingsPanel } from "./SettingsPanel";

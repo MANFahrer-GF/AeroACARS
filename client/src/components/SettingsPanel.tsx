@@ -17,6 +17,7 @@ import { RemoteServerPanel } from "./RemoteServerPanel";
 import { MsfsHudPanel } from "./MsfsHudPanel";
 import { XplaneBandPanel } from "./XplaneBandPanel";
 import { HoppieSettingsPanel } from "./HoppieSettingsPanel";
+import { KabinenSettingsPanel } from "./KabinenSettingsPanel";
 import { BordbuchEinstellungen } from "./bordbuch/BordbuchEinstellungen";
 import { FlugzeugVermessen } from "./vermessen/FlugzeugVermessen";
 
@@ -51,6 +52,8 @@ interface Props {
   minimizeToTray: boolean;
   chatAn: boolean;
   onChatAnChange: (next: boolean) => void;
+  /** Kabinenansagen (Beta) ein/aus — für den Reiter „Kabine“. */
+  onKabineAnChange?: (next: boolean) => void;
   chatTon: boolean;
   onChatTonChange: (next: boolean) => void;
   onMinimizeToTrayChange: (next: boolean) => void;
@@ -80,6 +83,7 @@ export function SettingsPanel({
   onMinimizeToTrayChange,
   chatAn,
   onChatAnChange,
+  onKabineAnChange,
   chatTon,
   onChatTonChange,
   approachAdvisoriesEnabled,
@@ -618,6 +622,7 @@ export function SettingsPanel({
           {/* v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC-Client ueber das
               Hoppie-ACARS-Netzwerk. Opt-In, Default = aus. */}
           <HoppieSettingsPanel />
+          {isTauri && <KabinenSettingsPanel onAnChange={onKabineAnChange} />}
         </>
       )}
 
