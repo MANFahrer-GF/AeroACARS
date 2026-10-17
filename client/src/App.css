@@ -7574,6 +7574,9 @@ input:disabled {
    funktioniert in beiden Designs. */
 .settings__tabs {
   display: flex;
+  /* Acht Reiter (seit „Cockpit“, 17.10.2026): bei schmalem Fenster in
+     eine zweite Zeile statt rechts aus der Leiste. */
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
   padding: 4px;
@@ -7582,7 +7585,8 @@ input:disabled {
   border-radius: var(--r-md);
 }
 .settings__tab {
-  flex: 1;
+  flex: 1 0 auto;
+  white-space: nowrap;
   padding: 8px 14px;
   background: transparent;
   border: 1px solid transparent;

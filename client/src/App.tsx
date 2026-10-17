@@ -181,6 +181,18 @@ function saveMinimizeToTray(value: boolean): void {
   localStorage.setItem(MINIMIZE_TO_TRAY_KEY, value ? "1" : "0");
 }
 
+/** „Einstellungen öffnen“ aus Kabine und PDC/CPDLC: gleich im Reiter
+ *  „Cockpit“ landen, wo ihre Einstellungen seit 17.10.2026 stehen. Der
+ *  Einstellungs-Reiter liest seine Auswahl beim Öffnen aus dem Speicher. */
+function einstellungenImCockpit(setTab: (t: Tab) => void): void {
+  try {
+    localStorage.setItem("aeroacars.settings.activeTab", "cockpit");
+  } catch {
+    /* noop */
+  }
+  setTab("settings");
+}
+
 function loadLastSeenReleaseNotesVersion(): string | null {
   return localStorage.getItem(RELEASE_NOTES_LAST_SEEN_KEY);
 }
@@ -1062,7 +1074,7 @@ function App() {
       {status.kind === "loggedIn" && tab === "telemetrie" && <TelemetrieView />}
       {status.kind === "loggedIn" && tab === "notizblock" && <Notizblock />}
       {status.kind === "loggedIn" && tab === "kabine" && <KabinenSeite
-          onOpenSettings={() => setTab("settings")}
+          onOpenSettings={() => einstellungenImCockpit(setTab)}
           onAus={() => {
             setKabineAn(false);
             setTab("cockpit");
@@ -1164,7 +1176,7 @@ function App() {
       {status.kind === "loggedIn" && tab === "cpdlc" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
           <CpdlcPanel
-            onOpenSettings={() => setTab("settings")}
+            onOpenSettings={() => einstellungenImCockpit(setTab)}
             mode={cpdlcMode}
             onModeChange={setCpdlcMode}
           />
