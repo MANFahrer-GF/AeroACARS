@@ -47238,6 +47238,54 @@ fn kabinen_eckdaten_aus_ofp(stats: &mut FlightStats, ofp: &api_client::SimBriefO
     stats.utc_versatz_ziel_min = ofp.dest_utc_offset_min;
 }
 
+/// Kabinenansagen (Beta): Eckdaten fuer einen Flug nachholen, der sie beim
+/// Start nicht erfasst hat — typisch: mit 2.0.25 gestartet, mitten im Flug
+/// auf die Beta gewechselt (Thomas 17.10.2026: „das Schweigen ist bloed“).
+/// Nur wenn die Passagierzahl fehlt; Bid zuerst, der OFP ueberschreibt wie
+/// beim Start. Ohne passendes Bid bleibt alles, wie es ist.
+fn kabinen_eckdaten_nachholen_aus(
+    stats: &mut FlightStats,
+    bids: &[api_client::Bid],
+    bid_id: i64,
+    ofp: Option<&api_client::SimBriefOfp>,
+) {
+    if stats.pax_count.is_some() {
+        return;
+    }
+    let Some(bid) = bids.iter().find(|b| b.id == bid_id) else {
+        return;
+    };
+    kabinen_eckdaten_aus_bid(stats, &bid.flight);
+    if let Some(ofp) = ofp {
+        kabinen_eckdaten_aus_ofp(stats, ofp);
+    }
+}
+
+/// Netzteil zu [`kabinen_eckdaten_nachholen_aus`]: einmal beim Wiedereinstieg.
+/// Ohne Netz bleibt der Flug stumm wie bisher — kein Wiederholen im Takt.
+async fn kabinen_eckdaten_nachholen(client: &Client, bid_id: i64, stats: &mut FlightStats) {
+    if stats.pax_count.is_some() {
+        return;
+    }
+    let bids = match client.get_bids().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::info!(error = %e, "kabinenansagen: Bids fuer Nachholen nicht erreichbar");
+            return;
+        }
+    };
+    let sb_id = bids
+        .iter()
+        .find(|b| b.id == bid_id)
+        .and_then(|b| b.flight.simbrief.as_ref())
+        .map(|s| s.id.clone());
+    let ofp = match sb_id {
+        Some(id) => client.fetch_simbrief_ofp(&id).await.ok().flatten(),
+        None => None,
+    };
+    kabinen_eckdaten_nachholen_aus(stats, &bids, bid_id, ofp.as_ref());
+}
+
 /// Kabinenansagen (Beta): was der Planer einmal zu Beginn vom Flug wissen
 /// muss. `ziel` ist das geplante Ziel, `planzeit_min` die Flugzeit aus
 /// phpVMS als Rueckfall, wenn der OFP keine Planzeiten traegt.
@@ -51716,6 +51764,53 @@ mod arrived_fallback_geometry_tests {
             "ein anhaengiger Rueckzug muss einen Resume ueberleben, sonst bleibt \
              ein bekanntlich veralteter Wert in der finalen Einreichung unkorrigiert"
         );
+    }
+
+    /// Kabinenansagen (Beta): Flug mit 2.0.25 gestartet, mitten im Flug auf
+    /// die Beta gewechselt. Der gespeicherte Stand kennt keine Passagiere →
+    /// ohne Nachholen stumm (Gegenprobe); nach dem Nachholen aus dem Bid
+    /// laufen die Ansagen, der OFP geht vor, ein fremdes Bid aendert nichts.
+    #[test]
+    fn kabinen_eckdaten_nach_wechsel_mitten_im_flug_nachgeholt() {
+        let mut alt: serde_json::Value =
+            serde_json::to_value(PersistedFlightStats::snapshot_from(&FlightStats::new())).expect("json");
+        for k in ["pax_count", "max_passengers", "flight_type", "airline_name"] {
+            alt.as_object_mut().unwrap().remove(k);
+        }
+        let alt: PersistedFlightStats = serde_json::from_value(alt).expect("Stand von 2.0.25 laedt");
+        let mut stats = FlightStats::new();
+        alt.apply_to(&mut stats);
+        let flugart = |s: &FlightStats| kabinen_flugdaten(s, "LEPA", Some(140)).flugart;
+        assert_eq!(flugart(&stats), Some(cabin_announcements::Flugart::Aus), "ohne Nachholen stumm");
+
+        let bids: Vec<api_client::Bid> = serde_json::from_value(serde_json::json!([
+            { "id": 7, "user_id": 1, "flight_id": "a", "flight": {
+                "id": "a", "flight_number": "100", "dpt_airport_id": "EDDF", "arr_airport_id": "LEPA",
+                "flight_type": "J", "airline": { "id": 1, "icao": "CFG", "name": "Condor" },
+                "simbrief": { "id": "sb7", "subfleet": { "fares": [
+                    { "id": 1, "type": 0, "count": 180, "capacity": 220 }
+                ] } } } }
+        ]))
+        .expect("bids parsen");
+
+        // Fremdes Bid: nichts passiert.
+        kabinen_eckdaten_nachholen_aus(&mut stats, &bids, 99, None);
+        assert_eq!(stats.pax_count, None);
+
+        kabinen_eckdaten_nachholen_aus(&mut stats, &bids, 7, None);
+        assert_eq!(stats.pax_count, Some(180));
+        assert_eq!(stats.airline_name.as_deref(), Some("Condor"));
+        assert_eq!(flugart(&stats), Some(cabin_announcements::Flugart::Linie));
+
+        // Mit OFP gehen dessen Passagiere vor, wie beim Start.
+        let mut mit_ofp = FlightStats::new();
+        let ofp = api_client::SimBriefOfp { pax_count: 164, ..Default::default() };
+        kabinen_eckdaten_nachholen_aus(&mut mit_ofp, &bids, 7, Some(&ofp));
+        assert_eq!(mit_ofp.pax_count, Some(164));
+
+        // Schon bekannte Passagiere bleiben stehen.
+        kabinen_eckdaten_nachholen_aus(&mut mit_ofp, &bids, 7, None);
+        assert_eq!(mit_ofp.pax_count, Some(164));
     }
 
     /// Kabinenansagen (Beta): Die Eckdaten kommen aus Bid und OFP, ein
@@ -59546,6 +59641,10 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
                 persisted.pirep_id,
             )),
         );
+    }
+    // Kabinenansagen (Beta): Flug aus einer Version ohne Passagierzahl.
+    if crate::kabinenansagen::einstellungen(app).an {
+        kabinen_eckdaten_nachholen(&client, persisted.bid_id, &mut restored_stats).await;
     }
     // v0.20 (Process-Integrity): overwrite with THIS resume's freshly-
     // determined value — `apply_to` just restored whatever an OLDER resume
