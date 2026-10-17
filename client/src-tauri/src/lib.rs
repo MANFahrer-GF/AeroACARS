@@ -867,15 +867,11 @@ const HOLDING_BANK_THRESHOLD_DEG: f32 = 15.0;
 const HOLDING_VS_THRESHOLD_FPM: f32 = 200.0;
 /// Sustained climb time required before we classify a Go-Around.
 const GO_AROUND_DWELL_SECS: i64 = 8;
-/// v0.7.17 (B-010): Sustained sink-rate dwell before Climb → Descent.
+/// Seit 17.10.2026 („Stück 2“, docs/spec/phase-reiseband-v2.md) nur noch für
+/// v1 im Anflug/Final und für v1 im Reiseband bei v2 im Anflug/Final/Landung;
+/// innerhalb des Reisebands übernimmt v1 v2s Phase direkt (`reiseband_phase`).
+/// Die folgende Beschreibung ist die ursprüngliche Mechanik.
 ///
-/// Quelle: GSG 105 Cessna LDDU→LDSP zeigte 6 sec Descent-Phase weil
-/// ein Trim-/Turbulenz-Spike single-tick die FSM kippte. 15 s ist
-/// laenger als jede plausible Trim-Korrektur oder Turbulenz-Pause,
-/// aber kurz genug damit ein echter Top-of-Descent nicht spuerbar
-/// verzoegert wird (-500 fpm × 15 s = 125 ft Verlust, vernachlaessigbar
-/// gegen typische 25.000-ft-TOD-Strecken).
-const DESCENT_DWELL_SECS: i64 = 15;
 /// En-Route-Versöhner (Korpus-Audit 2026-07, 632 Flüge): Sicherheitsnetz
 /// für die GANZE Fehlerklasse "alte FSM hängt auf einer Luft-Phase fest",
 /// nicht für einen einzelnen Übergangs-Arm. Historie derselben Klasse,
@@ -931,15 +927,6 @@ const ENROUTE_RECONCILE_DWELL_SECS: i64 = 90;
 /// Vorwärts-Dwell des En-Route-Versöhners — siehe
 /// [`ENROUTE_RECONCILE_DWELL_SECS`].
 const ENROUTE_RECONCILE_FORWARD_DWELL_SECS: i64 = 45;
-/// v0.7.17 (B-010): Gewichts-Schwelle Light-GA vs. Medium/Heavy.
-///
-/// 5700 kg = MTOM-Grenze EASA CS-23/CS-25 (Single/Twin-Prop GA vs.
-/// Regional/Airline). Light-GA-Flugzeuge fliegen Patterns / Local
-/// Sightseeing oft komplett unter 3000 ft AGL — die Standard-
-/// Schwellen `lost_from_peak > 500/800` triggern Spurious-Descent
-/// bei jedem Pattern-Leg. Light-GA bekommt deshalb groesszuegigere
-/// Werte.
-const LIGHT_GA_MTOM_KG: f32 = 5700.0;
 /// Minimum positive V/S at which the GA detector accepts a sample
 /// as "actually climbing" (filters out flare round-out / level-off).
 ///
@@ -2100,24 +2087,6 @@ mod resume_discontinuity_tests {
             .find(concat!("spawn_resume_", "sim_gate("))
             .expect("Gate-Start fehlt");
         assert!(frage < gate);
-    }
-
-    /// Holding steht fuer die ganze Warteschleife im Protokoll, nicht nur
-    /// im Tick des Eintritts; danach gilt wieder die gueltige Phase
-    /// (Codex-QS 25.09.2026).
-    #[test]
-    fn protokoll_haelt_holding_bis_zum_ende() {
-        let mut st = FlightStats::default();
-        st.phase = FlightPhase::Holding;
-        st.shadow_phase = Some(FlightPhase::Cruise);
-        assert_eq!(protokoll_phase(&st), FlightPhase::Holding);
-        st.phase = FlightPhase::Approach;
-        st.shadow_phase = Some(FlightPhase::Descent);
-        assert_eq!(protokoll_phase(&st), FlightPhase::Descent);
-
-        // Und der Tick fragt genau diese Funktion.
-        const SRC: &str = include_str!("lib.rs");
-        assert!(SRC.contains(concat!("let effective = protokoll_", "phase(&stats);")));
     }
 
     /// Jeder Ausgang des Resume-Gates raeumt den Wartegrund weg — sonst
@@ -5657,10 +5626,12 @@ struct PersistedFlightStats {
     /// behält. `#[serde(default)]` → None bei pre-v0.16.12-Files.
     #[serde(default)]
     planned_cruise_alt_ft: Option<f64>,
-    /// v0.16.12 (#phase-v2): akkumulierte Schatten-Divergenz-Sekunden —
-    /// persistiert, damit das Flug-Aggregat einen App-Restart überlebt.
+    /// 17.10.2026 („Stück 2"): höchste beobachtete Reiseflughöhe der
+    /// v2-Engine (`obsref`). Seit v2 das Reiseband entscheidet, hängt die
+    /// Level-off-Regel im Sinkflug an ihr — ohne sie fiele die Engine nach
+    /// einem Neustart im Reiseflug auf den 240-s-Ersatz zurück.
     #[serde(default)]
-    shadow_divergence_secs: f64,
+    v2_reiseflughoehe_ft: Option<f64>,
 }
 
 impl PersistedFlightStats {
@@ -5909,7 +5880,7 @@ impl PersistedFlightStats {
             resume_luecke_max_secs: stats.resume_luecke_max_secs,
             // v0.16.12 (#phase-v2)
             planned_cruise_alt_ft: stats.planned_cruise_alt_ft,
-            shadow_divergence_secs: stats.shadow_divergence_secs,
+            v2_reiseflughoehe_ft: stats.shadow_engine.beobachtete_reiseflughoehe_ft(),
         }
     }
 
@@ -6210,7 +6181,9 @@ impl PersistedFlightStats {
         // Die Engine selbst wird NICHT persistiert (wärmt sich nach dem
         // Resume in ≤ 2 Fenstern wieder auf — dokumentiert).
         stats.planned_cruise_alt_ft = self.planned_cruise_alt_ft;
-        stats.shadow_divergence_secs = self.shadow_divergence_secs;
+        stats
+            .shadow_engine
+            .reiseflughoehe_uebernehmen(self.v2_reiseflughoehe_ft);
     }
 }
 
@@ -6232,6 +6205,32 @@ mod arr_actual_icao_resume_tests {
         let mut restored = FlightStats::default();
         snapshot.apply_to(&mut restored);
         assert_eq!(restored.arr_actual_icao.as_deref(), Some("LEMG"));
+    }
+
+    /// 17.10.2026 („Stück 2"): die von v2 beobachtete Reiseflughöhe
+    /// überlebt einen Neustart — sonst hinge die Level-off-Regel im
+    /// Sinkflug danach am 240-s-Ersatz.
+    #[test]
+    fn v2_reiseflughoehe_ueberlebt_snapshot_rundlauf() {
+        let mut stats = FlightStats::default();
+        let t0 = Utc::now();
+        for i in 0..5 {
+            stats.shadow_engine.step(
+                t0 + chrono::Duration::seconds(3 * i),
+                37000.0,
+                36000.0,
+                0.0,
+                false,
+                FlightPhase::Cruise,
+                None,
+            );
+        }
+        assert_eq!(stats.shadow_engine.beobachtete_reiseflughoehe_ft(), Some(37000.0));
+        let json = serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).expect("ser");
+        let snapshot: PersistedFlightStats = serde_json::from_str(&json).expect("de");
+        let mut restored = FlightStats::default();
+        snapshot.apply_to(&mut restored);
+        assert_eq!(restored.shadow_engine.beobachtete_reiseflughoehe_ft(), Some(37000.0));
     }
 }
 
@@ -6689,13 +6688,6 @@ struct FlightStats {
     /// Letztes Schatten-Segment (z. B. Level während einer Restriction).
     /// Runtime-only.
     shadow_segment: Option<phase_v2::Segment>,
-    /// Akkumulierte Sekunden, in denen Schatten-Phase ≠ alte FSM-Phase
-    /// war (old==Holding ausgenommen — dokumentierter Diff, v2 modelliert
-    /// Holding in Runde 1 nicht). Billiges Aggregat fürs Reporting.
-    shadow_divergence_secs: f64,
-    /// Wall-Clock des letzten Schatten-Engine-Ticks (dt-Quelle für den
-    /// Divergenz-Zähler). Runtime-only.
-    shadow_last_tick_at: Option<DateTime<Utc>>,
     /// v0.19.1: letzte EFFEKTIVE (v2-bevorzugte) Phase, für die eine ACARS-
     /// "Phase: …"-Textlog-Zeile + der retained MQTT-Phase-Publish bereits
     /// abgesetzt wurden. Vorher waren beide rein an v1-Transitions
@@ -7930,6 +7922,8 @@ struct FlightStats {
     /// Spike loeste single-tick Phase-Wechsel aus, AGL stieg sogar
     /// zwischen den Phasen. Fix: Descent-Bedingungen muessen
     /// `DESCENT_DWELL_SECS` durchgehend halten bevor wir umschalten.
+    /// Seit 17.10.2026 ungenutzt (Reiseband entscheidet v2); bleibt nur
+    /// wegen der gespeicherten Flugdaten älterer Versionen.
     /// Cleared sobald die Bedingungen wieder brechen.
     descent_pending_since: Option<DateTime<Utc>>,
 
@@ -10015,6 +10009,45 @@ const HAT_AGL_VERTRAUT_FT: f32 = 600.0;
 /// pushes a human-readable line into `stats.pending_acars_logs`,
 /// clears the lowest-AGL tracker (next descent starts a fresh
 /// window), and clears the dwell timer.
+/// v2-Entscheidung des Vortakts für das Reiseband (17.10.2026, „Stück 2"):
+/// `Some(p)`, wenn v2 eine ANDERE Reiseband-Phase meldet als die aktuelle.
+/// Bestätigt v2 nur die aktuelle Phase, kommt `None` — damit die übrigen
+/// Prüfungen des Arms (Warteschleife im Cruise) weiterlaufen. Anflug,
+/// Final und Landung übernimmt v1 NICHT von v2 — dort entscheiden v1s
+/// eigene Kanten (Anflug-Kante im selben Takt, Durchstart-Detektor mit
+/// Zählung und Forensik-Schnitt, Bodenberührung für den Aufsetz-Zeitpunkt).
+fn reiseband_phase(stats: &FlightStats) -> Option<FlightPhase> {
+    let ziel = match stats.shadow_phase? {
+        p @ (FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent) => p,
+        // v2 schon im Anflug, v1 noch im Reiseflug: v1 geht in den
+        // Sinkflug, und seine eigene Anflug-Kante entscheidet im nächsten
+        // Takt. Sonst bliebe v1 bei einem flachen Anflug (> −500 fpm, der
+        // Cruise-Schnellweg greift nicht) bis zum Boden im Reiseflug —
+        // ohne Anflug-Puffer, Durchstart-Detektor und Landungskante
+        // (Codex-QS 17.10.2026). Nur aus Cruise: im Climb (z. B. nach
+        // einem Durchstarter) wäre „Sinkflug" falsch; dort bleibt es beim
+        // Versöhner.
+        FlightPhase::Approach | FlightPhase::Final if stats.phase == FlightPhase::Cruise => {
+            FlightPhase::Descent
+        }
+        _ => return None,
+    };
+    (ziel != stats.phase).then_some(ziel)
+}
+
+/// Anflug-Kante aus dem Reiseband: tief und sinkend (alte FSM und v2 1:1).
+fn anflug_kante(snap: &SimSnapshot) -> bool {
+    snap.altitude_agl_ft < 5000.0 && snap.vertical_speed_fpm < 0.0
+}
+
+/// Frisches Per-Anflug-Bild beim Eintritt in den Anflug (v0.5.5): Werte
+/// eines FRÜHEREN Anflugs dürfen nicht in den Touchdown-V/S-Fallback
+/// sickern. Eine Stelle für alle Wege in den Anflug.
+fn anflug_beginnt(stats: &mut FlightStats) {
+    stats.low_agl_vs_min_fpm = None;
+    stats.last_low_agl_vs_fpm = None;
+}
+
 fn check_go_around(
     stats: &mut FlightStats,
     snap: &SimSnapshot,
@@ -10076,101 +10109,46 @@ fn check_go_around(
     None
 }
 
-/// v0.7.17 (B-010): Climb → Descent Transition Decision.
-///
-/// Bug-Symptom (GSG 105 Cessna LDDU→LDSP, X-Plane 12):
-/// ```text
-/// 17:49:35  Climb→Descent    AGL 3575 ft
-/// 17:49:41  Descent→Approach AGL 3540 ft   (nur 6 s Descent!)
-/// ```
-/// Ein einzelner Turbulenz-/Trim-Spike kippte single-tick die FSM.
-/// AGL stieg sogar zwischen zwei Phasen-Wechseln — physikalisch
-/// unmoeglich fuer einen echten Descent.
-///
-/// **Fix:** zwei orthogonale Anpassungen:
-///
-/// 1. **Dwell-Timer:** Descent-Bedingung muss `DESCENT_DWELL_SECS`
-///    durchgehend halten bevor wir die FSM umschalten. Bricht die
-///    Bedingung zwischendrin → Timer reset.
-///
-/// 2. **Light-GA-Schwellen:** Wenn `total_weight_kg < LIGHT_GA_MTOM_KG`
-///    (= unter 5700 kg, CS-23-Klasse) → groesszuegigere
-///    `lost_from_peak`-Schwellen (1000/1200 statt 500/800 ft). Cessna
-///    im 1500-ft-Pattern verliert leicht 300-500 ft auf einem Sightseeing-
-///    Leg — das ist kein Descent.
-///
-/// Returns `Some(FlightPhase::Descent)` wenn beide Bedingungen erfuellt
-/// sind (Triggerung + Dwell durchgehalten). Side-effect: setzt /
-/// loescht `stats.descent_pending_since`.
-fn check_descent_transition(
-    stats: &mut FlightStats,
-    snap: &SimSnapshot,
-    now: DateTime<Utc>,
-    lost_from_peak: f32,
-) -> Option<FlightPhase> {
-    let is_light_ga = snap
-        .total_weight_kg
-        .map(|w| w < LIGHT_GA_MTOM_KG)
-        .unwrap_or(false);
-    let low_alt_thresh = if is_light_ga { 1000.0 } else { 500.0 };
-    let near_ground_thresh = if is_light_ga { 1200.0 } else { 800.0 };
-    let standard_tod = snap.vertical_speed_fpm < -500.0 && lost_from_peak > 200.0;
-    let low_altitude_descent = snap.vertical_speed_fpm < -100.0
-        && snap.altitude_agl_ft < 3000.0
-        && lost_from_peak > low_alt_thresh;
-    let near_ground_descent = snap.altitude_agl_ft < 2000.0
-        && lost_from_peak > near_ground_thresh
-        && snap.vertical_speed_fpm < 0.0;
-    let descent_conds = standard_tod || low_altitude_descent || near_ground_descent;
-    if descent_conds {
-        let pending = stats.descent_pending_since.get_or_insert(now);
-        if (now - *pending).num_seconds() >= DESCENT_DWELL_SECS {
-            stats.descent_pending_since = None;
-            return Some(FlightPhase::Descent);
-        }
-        None
-    } else {
-        // Bedingung gebrochen — Timer reset damit der naechste sustained
-        // Sink-Run einen frischen 15-s-Countdown bekommt.
-        stats.descent_pending_since = None;
-        None
-    }
-}
-
 /// En-Route-Versöhner: Eignungs-Prüfung (rein, testbar) — dürfen dieses
 /// v1/v2-Phasen-Paar überhaupt versöhnt werden? Siehe Doc an
 /// `ENROUTE_RECONCILE_DWELL_SECS` für die Gesamt-Mechanik.
 ///
-/// * v1 muss in einer Luft-Phase stehen — `Holding` ausgenommen: v2
-///   modelliert es bewusst nicht (dokumentierter Diff), dort DARF v1
-///   abweichen. Boden-/Terminal-Phasen ebenfalls nicht: dort ist v1
-///   autoritativ (v2 synct sich 1:1 von ihr).
-/// * v2 muss selbst im Luft-Band oder auf `Landing` stehen — `Landing`
-///   ist v2s Ground-Evidenz-Selbstbeförderung (v0.19.1) und genau der
-///   Endzustand, in den eine durchgehend festgehangene v1 gezogen werden
-///   muss, damit ihre eigene Landing→TaxiIn→BlocksOn→Arrived-Kette
-///   normal weiterlaufen kann. Alles andere (Preflight etc.) wäre bei
-///   einer luft-phasigen v1 ein Rückwärts-Sync und ist tabu.
-/// * Gleichstand ist keine Divergenz.
+/// Seit 17.10.2026 („Stück 2") nur noch zwei Fälle:
+/// * v1 im Anflug/Final, v2 woanders im Luft-Band oder auf `Landing` —
+///   verpasster Durchstarter (tote Triebwerks-SimVars), verpasste
+///   Bodenberührung, Steigen aus dem Anflug ohne Durchstarter.
+/// * v1 im Reiseband (Climb/Cruise/Descent), v2 schon im Anflug/Final/
+///   auf `Landing` — die GSG22-Klasse. `Landing` ist v2s Ground-Evidenz-
+///   Selbstbeförderung (v0.19.1), in die eine festgehangene v1 gezogen
+///   werden muss, damit ihre Landing→TaxiIn→BlocksOn→Arrived-Kette läuft.
+///
+/// Paare innerhalb des Reisebands gibt es nicht mehr zu versöhnen: dort
+/// übernimmt v1 v2s Phase direkt (`reiseband_phase`). `Holding` als v1
+/// bleibt ausgenommen (v2 modelliert es nicht), Boden-/Terminal-Phasen
+/// ebenfalls (dort ist v1 autoritativ). Gleichstand ist keine Divergenz.
 fn enroute_reconcile_eligible(v1: FlightPhase, v2: FlightPhase) -> bool {
-    let v1_air = matches!(
+    // Seit 17.10.2026 („Stück 2") übernimmt v1 im Reiseband (Climb/
+    // Cruise/Descent) v2s Phase direkt (`reiseband_phase`) — Paare
+    // INNERHALB des Reisebands gibt es nichts mehr zu versöhnen. Übrig
+    // bleiben die Sicherheitsnetze: v1 im Anflug/Final (verpasster
+    // Durchstarter bei toten Triebwerks-SimVars, verpasste Bodenberührung,
+    // Steigen aus dem Anflug ohne Durchstart) und v1 im Reiseband, während
+    // v2 schon im Anflug/Final/gelandet ist (GSG22-Klasse).
+    let v1_reiseband = matches!(
         v1,
-        FlightPhase::Climb
-            | FlightPhase::Cruise
-            | FlightPhase::Descent
-            | FlightPhase::Approach
-            | FlightPhase::Final
+        FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent
     );
-    let v2_target = matches!(
+    let v1_anflug = matches!(v1, FlightPhase::Approach | FlightPhase::Final);
+    let v2_anflug = matches!(
         v2,
-        FlightPhase::Climb
-            | FlightPhase::Cruise
-            | FlightPhase::Descent
-            | FlightPhase::Approach
-            | FlightPhase::Final
-            | FlightPhase::Landing
+        FlightPhase::Approach | FlightPhase::Final | FlightPhase::Landing
     );
-    v1_air && v2_target && v1 != v2
+    let v2_target = v2_anflug
+        || matches!(
+            v2,
+            FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent
+        );
+    v1 != v2 && ((v1_anflug && v2_target) || (v1_reiseband && v2_anflug))
 }
 
 /// Position im natürlichen Flugbogen für die Zug-Richtungs-Frage des
@@ -18451,13 +18429,13 @@ fn flight_info(
         arr_airport: flight.arr_airport.clone(),
         distance_nm: stats.distance_nm,
         position_count: stats.position_count,
-        // #phase-v2 Cutover: angezeigte Phase = v2 (effective_phase); die
-        // v1-FSM bleibt mechanisch autoritativ. `shadow_segment` unten trägt
-        // das „Level"-Label für Restriktionen ans Frontend.
-        phase: phase_to_snake(effective_phase(&stats)).to_string(),
-        // v0.16.12 (#phase-v2): Schatten-Sicht (= dieselbe v2-Phase). Nach dem
-        // Cutover == `phase`; die frühere dezente „v2:"-UI-Zeile deaktiviert
-        // sich dadurch selbst und wird im Frontend entfernt.
+        // Seit 17.10.2026 („Stück 2") gibt es EINE Phase: im Reiseband
+        // entscheidet v2, v1 übernimmt sie; Anflug/Final/Landung und der
+        // Boden entscheidet v1. `shadow_segment` unten trägt das
+        // „Level"-Label für Restriktionen ans Frontend.
+        phase: phase_to_snake(stats.phase).to_string(),
+        // v0.16.12 (#phase-v2): v2s Rohsicht — nur noch für Auswertungen;
+        // die Oberfläche zeigt sie nicht.
         shadow_phase: stats.shadow_phase.map(|p| phase_to_snake(p).to_string()),
         shadow_segment: stats.shadow_segment.map(|s| s.as_snake_str().to_string()),
         block_off_at: stats.block_off_at.map(|t| t.to_rfc3339()),
@@ -18628,55 +18606,6 @@ fn flight_info(
             planned_arr_icao: flight.arr_airport.clone(),
             requires_reason: stats.divert_hint.is_some(),
         },
-    }
-}
-
-/// v0.19 (#phase-v2 cutover): wenn `true`, kommt die ANGEZEIGTE/PUBLIZIERTE
-/// Flugphase aus der v2-Engine (`shadow_phase`); die v1-FSM bleibt mechanisch
-/// autoritativ (Touchdown, PIREP, Timing, Resume lesen `stats.phase` direkt).
-/// Rollback = diese eine Konstante auf `false` → alle Anzeige/Publish-Pfade
-/// fallen sofort auf v1 zurück. Als `const` (nicht Runtime-Flag): der Compiler
-/// prunt den toten Zweig, und es gibt keinen Grund, das live umzuschalten.
-const PHASE_V2_CUTOVER: bool = true;
-
-/// Die Phase, die dem Piloten GEZEIGT und nach außen PUBLIZIERT wird
-/// (Frontend-UI, MQTT-Live-Map, phpVMS-Status, Tray). Nur hierfür verwenden —
-/// mechanische FSM-Konsumenten (Touchdown-Gating, PIREP-Finalisierung, Timing,
-/// Resume-Restore) lesen weiterhin `stats.phase` DIREKT. v2 spiegelt v1 im
-/// Boden-/Terminal-Band 1:1 (synct jeden Tick auf die alte FSM), sodass der
-/// Cutover nur die En-Route-Anzeige verändert.
-fn effective_phase(stats: &FlightStats) -> FlightPhase {
-    if PHASE_V2_CUTOVER {
-        if let Some(sp) = stats.shadow_phase {
-            return sp;
-        }
-    }
-    stats.phase
-}
-
-/// Die Phase fuer Protokoll und Phasen-Meldung: die gueltige Phase — nur
-/// Holding kommt aus v1, weil v2 es nicht kennt, und zwar fuer die GANZE
-/// Dauer der Warteschleife. Bis 25.09.2026 galt Holding nur im Tick des
-/// Eintritts; im naechsten stand schon wieder v2s „Cruise" im Protokoll,
-/// obwohl das Flugzeug noch kreiste (Codex-QS).
-fn protokoll_phase(stats: &FlightStats) -> FlightPhase {
-    if stats.phase == FlightPhase::Holding {
-        FlightPhase::Holding
-    } else {
-        effective_phase(stats)
-    }
-}
-
-/// Wie [`effective_phase`], aber für Publish-Pfade, die `stats` nicht gelockt
-/// halten (MQTT-Position, phpVMS-Heartbeat): der Aufrufer reicht die v1-Phase
-/// dieses Ticks und die zuvor gecachte v2-Sicht (`tick_shadow_phase`) herein.
-/// Fällt bei fehlender v2-Sicht (Pause/Slew: Schatten-Engine tickt nicht) auf
-/// v1 zurück.
-fn effective_display_phase(v1_phase: FlightPhase, shadow: Option<FlightPhase>) -> FlightPhase {
-    if PHASE_V2_CUTOVER {
-        shadow.unwrap_or(v1_phase)
-    } else {
-        v1_phase
     }
 }
 
@@ -30285,7 +30214,7 @@ fn bordbuch_tick(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
     }
     // `protokoll_phase` statt `effective_phase`: hält eine Warteschleife
     // über den Eintrittstakt hinaus (Befund 25.09.2026, siehe dort).
-    let phase = protokoll_phase(&stats);
+    let phase = stats.phase;
     if stats.bordbuch.vfr.is_none() {
         if let Some(quelle) = stats.flight_plan_source {
             stats.bordbuch.vfr = Some(quelle == "manual");
@@ -34667,7 +34596,7 @@ fn spawn_resume_sim_gate(
                                 ..SimSnapshot::default()
                             };
                             // Dieselbe Phase wie der Streamer meldet.
-                            build_heartbeat_body(&hb, &st, effective_phase(&st))
+                            build_heartbeat_body(&hb, &st, st.phase)
                         };
                         // In einem EIGENEN Task: Ein haengendes phpVMS (bis zu
                         // 10 s) haette sonst jeden Gate-Takt von 2 auf 12 s
@@ -41845,7 +41774,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             }
 
             takt_uhr.abschnitt("bahn_nachholen");
-            let phase_change = step_flight(&flight, &snap);
+            let takt = phasen_takt(&flight, &snap, Utc::now());
+            let phase_change = takt.wechsel;
             takt_uhr.abschnitt("step_flight");
 
             // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
@@ -42268,63 +42198,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 sampler_path_rollout_tick(&mut stats, &snap);
             }
 
-            // #phase-v2 Cutover: v2-Phase dieses Ticks für die Publish-Pfade
-            // (MQTT-Position, phpVMS-Heartbeat) cachen. `None` bei Pause/Slew
-            // (Schatten-Engine tickt dann nicht) → Publish fällt auf v1 zurück.
-            let mut tick_shadow_phase: Option<FlightPhase> = None;
-
-            // v0.16.12 (#phase-v2): Schatten-Phasen-Engine ticken — NACH
-            // step_flight (braucht die autoritative Post-Step-Phase als
-            // Sync-Quelle außerhalb des En-Route-Bands), VOR dem JSONL-
-            // Position-Append unten (die Schatten-Felder sollen im selben
-            // Snapshot landen). Beobachtet nur: kein Pfad liest die
-            // Schatten-Phase für Entscheidungen. Pause/Slew friert die
-            // Engine ein wie die alte FSM (step_flight returnt dort früh);
-            // die >5-min-Gap-Erkennung im Segmenter fängt den Resume ab.
-            if !snap.paused && !snap.slew_mode {
-                let shadow_now = Utc::now();
-                let mut stats = flight.stats.lock().expect("flight stats");
-                let old_phase_post_step = stats.phase;
-                // cruise_ref: FMC-Cruise-Alt (PMDG, vom Piloten gepflegt,
-                // step-climb-aktuell) vor dem geplanten Bid-/Manual-Level.
-                let cruise_ref_ft = snap
-                    .pmdg
-                    .as_ref()
-                    .and_then(|p| p.fmc_cruise_alt_ft)
-                    .filter(|&ft| ft > 0)
-                    .map(f64::from)
-                    .or(stats.planned_cruise_alt_ft);
-                // Divergenz-dt: Abstand zum letzten Schatten-Tick, auf 10 s
-                // gekappt (Streamer tickt ≤ 3 s; Resume-Lücken zählen so
-                // höchstens einen gedeckelten Tick).
-                let dt_secs = stats
-                    .shadow_last_tick_at
-                    .map(|prev| {
-                        ((shadow_now - prev).num_milliseconds() as f64 / 1000.0).clamp(0.0, 10.0)
-                    })
-                    .unwrap_or(0.0);
-                stats.shadow_last_tick_at = Some(shadow_now);
-                let (shadow_phase, shadow_segment) = stats.shadow_engine.step(
-                    shadow_now,
-                    snap.altitude_msl_ft,
-                    snap.altitude_agl_ft,
-                    snap.vertical_speed_fpm,
-                    snap.on_ground,
-                    old_phase_post_step,
-                    cruise_ref_ft,
-                );
-                stats.shadow_phase = Some(shadow_phase);
-                stats.shadow_segment = Some(shadow_segment);
-                tick_shadow_phase = Some(shadow_phase);
-                // Holding ist in v2 (Runde 1) bewusst unmodelliert —
-                // diese Ticks zählen nicht als Divergenz (Report klammert
-                // sie ebenfalls aus).
-                if shadow_phase != old_phase_post_step
-                    && old_phase_post_step != FlightPhase::Holding
-                {
-                    stats.shadow_divergence_secs += dt_secs;
-                }
-                drop(stats);
+            // v2s Sicht dieses Takts (gerechnet in `phasen_takt` direkt nach
+            // dem v1-Schritt) für die Flug-Logs; `None` bei Pause/Slew.
+            if let Some((shadow_phase, shadow_segment)) = takt.v2 {
                 // Additive Telemetrie-Felder: landen via `snap.clone()` im
                 // JSONL-Position-Event (lokaler Recorder → VPS-Upload).
                 // Der alte VPS-Recorder speichert sie verbatim mit — NULL
@@ -43100,46 +42976,16 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // summary. Posted in a single batch at the end of the tick to
             // minimise HTTP round-trips.
             let mut acars_log_entries: Vec<api_client::LogEntry> = Vec::new();
-            // v0.19.1: trigger is "the DISPLAYED (v2-preferred) phase
-            // changed", not "v1 transitioned" — computed every tick
-            // (unconditionally), independent of `phase_change`. Previously
-            // both the log line and the retained MQTT phase topic below
-            // only fired on a v1 transition; if v1 gets stuck on an
-            // en-route phase (field report GSG22 EDLN→EDDL — legacy FSM
-            // never left Climb) while v2 correctly progresses on its own
-            // kinematic evidence, neither ever fired even though every
-            // OTHER v2-fed path (position payload, phpVMS heartbeat, tray,
-            // cockpit UI) already showed the real phase. Comparing against
-            // `last_logged_effective_phase` (not `phase_change`) also
-            // naturally de-dupes the common case where v1 and v2 change
-            // together in the same tick — only one line, not two.
-            //
-            // Uses `effective_phase(&stats)` — the same PERSISTED
-            // `stats.shadow_phase` every other display surface
-            // (`flight_info`, tray) reads — NOT `effective_display_phase`
-            // with this tick's `tick_shadow_phase`. `tick_shadow_phase` is
-            // `None` on a paused/slew tick (the shadow engine skips
-            // stepping then), and `effective_display_phase` falls back to
-            // the raw v1 phase in that case — caught in code review: on
-            // sim-pause this would have republished/relogged a stale v1
-            // value (e.g. a still-stuck `Climb`) even though every other
-            // surface kept correctly showing the last real v2 phase
-            // (`stats.shadow_phase` is simply left untouched on a paused
-            // tick, not cleared) — exactly the "Live-Karte flackert kurz
-            // auf v1" failure the old, now-removed comment warned about,
-            // just reachable via ordinary pausing instead of a v1-race.
-            //
-            // Exception: v2 deliberately never models `Holding` (documented
-            // diff, see phase_v2.rs) — without a special case, a real ATC
-            // hold would silently vanish from this log (previously the one
-            // surface still showing it, since it read raw v1). Treat a v1
-            // transition INTO Holding as an unconditional, Holding-labelled
-            // log-worthy change, and record it so leaving the hold (v2
-            // resuming e.g. Cruise) is itself detected as a change too —
-            // a clean start/end pair, matching the old pure-v1 log.
+            // Auslöser ist „die gültige Phase hat sich geändert", jeden Takt
+            // gegen `last_logged_effective_phase` geprüft (nicht
+            // `phase_change`) — fängt auch Wechsel ab, die den normalen
+            // Commit-Pfad umgehen (Airborne-Rescue, Resume), und meldet
+            // jeden Wechsel genau einmal. Seit 17.10.2026 („Stück 2") ist
+            // die gültige Phase schlicht `stats.phase` (vorher v2s
+            // Anzeige-Phase mit Holding-Sonderfall aus v1).
             let (effective_phase_changed, effective_phase_this_tick) = {
                 let mut stats = flight.stats.lock().expect("flight stats");
-                let effective = protokoll_phase(&stats);
+                let effective = stats.phase;
                 let changed = stats.last_logged_effective_phase != Some(effective);
                 if changed {
                     stats.last_logged_effective_phase = Some(effective);
@@ -43318,11 +43164,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     // v0.5.14: pass current phase so it's inlined into
                     // the position payload — Monitor doesn't have to
                     // wait for a separate phase-topic delivery.
-                    // #phase-v2 Cutover: Live-Map bekommt die v2-Phase.
-                    let live_phase = effective_display_phase(
-                        phase_change.unwrap_or(prev_phase),
-                        tick_shadow_phase,
-                    );
+                    let live_phase = phase_change.unwrap_or(prev_phase);
                     handle.position(&snap, &meta, live_phase);
                 }
             }
@@ -43543,9 +43385,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // mid-flight). Both purposes use the same payload — sending
             // monotonic flight_time / distance also guarantees the row is
             // dirty so Eloquent always writes UPDATE and bumps updated_at.
-            // #phase-v2 Cutover: phpVMS-Live-Status = v2-Phase.
-            let phase_for_heartbeat =
-                effective_display_phase(phase_change.unwrap_or(current_phase), tick_shadow_phase);
+            let phase_for_heartbeat = phase_change.unwrap_or(current_phase);
             let due_for_heartbeat = last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL;
             // Der Arbeiter sendet immer den neuesten Stand; läuft gerade
             // ein Lebenszeichen, geht dieser hier danach raus.
@@ -47556,8 +47396,57 @@ fn takeoff_roll_stall_check(
     }
 }
 
+/// Echte-Uhr-Variante für Tests; der Streamer taktet über [`phasen_takt`].
+#[cfg(test)]
 fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase> {
     step_flight_at(flight, snap, Utc::now())
+}
+
+/// Ergebnis eines [`phasen_takt`].
+struct PhasenTakt {
+    /// Phasenwechsel dieses Takts (wie [`step_flight_at`]).
+    wechsel: Option<FlightPhase>,
+    /// v2-Sicht dieses Takts; `None` bei Pause/Slew (v2 tickt dann nicht).
+    v2: Option<(FlightPhase, phase_v2::Segment)>,
+}
+
+/// Ein Phasen-Takt des Positions-Streamers: v1-Schritt, danach die v2-Engine
+/// mit der Post-Step-Phase als Sync-Quelle. EINE Stelle für Streamer und
+/// Korpus-Replay (`phasen_korpus_replay`), damit das Replay genau das prüft,
+/// was im Betrieb läuft (17.10.2026).
+fn phasen_takt(flight: &ActiveFlight, snap: &SimSnapshot, now: DateTime<Utc>) -> PhasenTakt {
+    let wechsel = step_flight_at(flight, snap, now);
+    // v0.16.12 (#phase-v2): Schatten-Phasen-Engine ticken — NACH
+    // step_flight (braucht die autoritative Post-Step-Phase als
+    // Sync-Quelle außerhalb des En-Route-Bands). Pause/Slew friert die
+    // Engine ein wie die alte FSM (step_flight returnt dort früh); die
+    // >5-min-Gap-Erkennung im Segmenter fängt den Resume ab.
+    if snap.paused || snap.slew_mode {
+        return PhasenTakt { wechsel, v2: None };
+    }
+    let mut stats = flight.stats.lock().expect("flight stats");
+    let old_phase_post_step = stats.phase;
+    // cruise_ref: FMC-Cruise-Alt (PMDG, vom Piloten gepflegt,
+    // step-climb-aktuell) vor dem geplanten Bid-/Manual-Level.
+    let cruise_ref_ft = snap
+        .pmdg
+        .as_ref()
+        .and_then(|p| p.fmc_cruise_alt_ft)
+        .filter(|&ft| ft > 0)
+        .map(f64::from)
+        .or(stats.planned_cruise_alt_ft);
+    let (shadow_phase, shadow_segment) = stats.shadow_engine.step(
+        now,
+        snap.altitude_msl_ft,
+        snap.altitude_agl_ft,
+        snap.vertical_speed_fpm,
+        snap.on_ground,
+        old_phase_post_step,
+        cruise_ref_ft,
+    );
+    stats.shadow_phase = Some(shadow_phase);
+    stats.shadow_segment = Some(shadow_segment);
+    PhasenTakt { wechsel, v2: Some((shadow_phase, shadow_segment)) }
 }
 
 /// Uhr-injizierbare Variante von [`step_flight`] — `now` ist DER Zeitpunkt
@@ -49000,100 +48889,31 @@ fn step_flight_at(
                 stats.climb_peak_msl = None;
             }
         }
+        // Reiseband (17.10.2026, „Stück 2"): Steig-, Reise- und Sinkflug
+        // entscheidet die v2-Engine (phase_v2.rs) — fenster-basiert statt
+        // aus Einzelwerten. v1 übernimmt ihre Entscheidung des Vortakts
+        // (`reiseband_phase`, höchstens ein Takt ≈ 3 s später). Die alten
+        // Einzelwert-Regeln (Climb→Cruise bei |V/S| < 200, Cruise→Descent
+        // nach 5000 ft Verlust, B-003 Descent→Cruise, v0.7.17-Dwell) sind
+        // entfallen: Sie ließen die Phase in 40 % der Flüge zwischen Cruise
+        // und Descent flattern und den Reiseflug im Steigflug zu früh
+        // beginnen (Korpus 447 Flüge, 30 Tage). v2 lief seit v0.19.0 als
+        // Anzeige im Feld und entscheidet dieselben Fälle richtig.
         FlightPhase::Climb => {
-            // Track the highest altitude we've seen while climbing —
-            // used as the reference point for "did we really start
-            // descending, or is this just a single VS spike?".
-            let climb_peak = stats.climb_peak_msl.unwrap_or(0.0);
-            if (snap.altitude_msl_ft as f32) > climb_peak {
-                stats.climb_peak_msl = Some(snap.altitude_msl_ft as f32);
-            }
-
-            // v0.5.9: Climb → Descent now requires BOTH:
-            //   * Sustained sink rate (< −500 fpm)
-            //   * Altitude actually lost from climb peak (> 200 ft)
-            //
-            // Pilot Michael 2026-05-07 EGPH→HEGN: a single -742 fpm
-            // sample (level-off blip during climb to FL340) flipped
-            // the FSM to Descent at FL050. Aircraft kept climbing to
-            // FL340 and cruised, but FSM was stuck in Descent for the
-            // next 50+ minutes because there's no Descent → Climb
-            // transition. Without the altitude-lost guard a single
-            // turbulence spike or autopilot trim correction wrecks
-            // the rest of the timeline.
-            //
-            // 200 ft threshold filters typical level-off oscillation
-            // (pitch-corrections + turbulence rarely exceed this) but
-            // is well below any real top-of-descent (which loses
-            // thousands of feet quickly).
-            let lost_from_peak = stats.climb_peak_msl.unwrap_or(0.0) - snap.altitude_msl_ft as f32;
-
-            // Climb → Descent triggers in any of three scenarios:
-            //   (a) Standard TOD: sustained sink (-500 fpm) AND
-            //       altitude actually lost (>200 ft) — Airliners.
-            //   (b) v0.5.10: GA / Heli low-altitude approach —
-            //       gentle descent (-100 fpm) AND we're below
-            //       3000 ft AGL AND lost >500 ft from climb peak.
-            //       Catches GA flights that cruise at 2-3000 ft and
-            //       descend gently at 300-500 fpm to a pattern
-            //       altitude landing.
-            //   (c) v0.5.10: anything significantly below climb peak
-            //       AND below 2000 ft AGL — robust catchall for
-            //       low-altitude operations where neither (a) nor
-            //       (b) clearly fires (helicopter ops, bush flying).
-            // v0.7.17 (B-010): Descent-Transition mit Dwell + Light-GA-
-            // Schwellen. Siehe check_descent_transition() Doc.
-            if let Some(p) = check_descent_transition(&mut stats, snap, now, lost_from_peak) {
+            if let Some(p) = reiseband_phase(&stats) {
                 next_phase = p;
-            } else if snap.vertical_speed_fpm.abs() < 200.0 && snap.altitude_agl_ft > 5000.0 {
-                next_phase = FlightPhase::Cruise;
             }
-            // v0.5.11: removed low-altitude Cruise alternative path.
-            // The pre-release v0.5.10 attempt to detect Pattern /
-            // GA cruise via "vs.abs() < 100 + lost_from_peak < 100"
-            // was unsafe — during ACTIVE climb, lost_from_peak is
-            // always ~0 (peak updates each tick). A single tick with
-            // vs ≈ 50 fpm (autopilot mode switch, trim, turbulence)
-            // would falsely trigger Cruise. GA aircraft just stay in
-            // Climb until they descend; our enhanced Climb → Descent
-            // triggers above handle the transition robustly. Cruise
-            // is reserved for high-altitude flights that genuinely
-            // need the 30 s streamer cadence.
         }
         FlightPhase::Cruise => {
-            // Track the highest altitude we've seen at this cruise
-            // — used as the reference point for "did we really
-            // descend, or is this just an ATC step-down?".
-            let peak = stats.cruise_peak_msl.unwrap_or(0.0);
-            if (snap.altitude_msl_ft as f32) > peak {
-                stats.cruise_peak_msl = Some(snap.altitude_msl_ft as f32);
-            }
-
-            // Cruise → Descent triggers when sustained sink (-500 fpm,
-            // filters trim/turbulence noise) is observed AND one of:
-            //
-            //   (a) Lost > 5000 ft from the cruise peak — typical
-            //       airline TOD. ATC step-downs (FL380 → FL360 = 2000 ft)
-            //       stay in Cruise and don't ping-pong the timeline.
-            //
-            //   (b) AGL < 3000 ft — low-altitude pattern / GA flight.
-            //       v0.5.4 hotfix: pilot reported a short MWCR → MWCR
-            //       test at 5000-ft pattern altitude that never left
-            //       Cruise. The FSM expected a 5000-ft drop from the
-            //       cruise peak, but the cruise peak was barely above
-            //       5000 ft AGL, so the drop maxed out at 4973 ft —
-            //       just below threshold. Universal Arrived fallback
-            //       then jumped straight Cruise → Arrived, skipping
-            //       Final → Landing entirely (= no touchdown captured).
-            //       AGL < 3000 ft + sinking is unambiguous approach
-            //       territory regardless of cruise altitude; allow
-            //       the transition.
-            let lost_alt = stats.cruise_peak_msl.unwrap_or(0.0) - snap.altitude_msl_ft as f32;
-            let sinking = snap.vertical_speed_fpm < -500.0;
-            let big_drop = lost_alt > 5000.0;
-            let close_to_ground = snap.altitude_agl_ft < 3000.0;
-            if sinking && (big_drop || close_to_ground) {
+            // Schnellweg in den Sinkflug wie bisher (v0.5.4): tief und
+            // deutlich sinkend. BEWUSST nicht die 5000-ft-Anflug-Kante —
+            // Flüge, die knapp über 5000 ft über Gelände reisen, stünden
+            // sonst bei jedem leichten Sinken eine Stunde im Anflug
+            // (Korpus 17.10.2026: vier Flüge 12–53 min zu früh).
+            if snap.vertical_speed_fpm < -500.0 && snap.altitude_agl_ft < 3000.0 {
                 next_phase = FlightPhase::Descent;
+            } else if let Some(p) = reiseband_phase(&stats) {
+                next_phase = p;
             } else if check_holding_entry(&mut stats, snap, now) {
                 stats.previous_phase_before_holding = Some(FlightPhase::Cruise);
                 next_phase = FlightPhase::Holding;
@@ -49118,15 +48938,25 @@ fn step_flight_at(
                 stats.previous_phase_before_holding = None;
                 // Reset approach VS-min tracker (v0.5.5) for fresh
                 // approach measurement post-hold.
-                stats.low_agl_vs_min_fpm = None;
-                stats.last_low_agl_vs_fpm = None;
+                anflug_beginnt(&mut stats);
             } else if snap.bank_deg.abs() < 5.0 {
                 let exit = stats.holding_exit_pending_since.get_or_insert(now);
                 if (now - *exit).num_seconds() >= HOLDING_EXIT_DWELL_SECS {
                     let prev = stats
                         .previous_phase_before_holding
                         .unwrap_or(FlightPhase::Cruise);
-                    next_phase = prev;
+                    // Zurück in die Phase vor der Warteschleife — im
+                    // Reiseband aber in die AKTUELLE v2-Phase: Hat v2 während
+                    // der Warteschleife z. B. vom Sinkflug auf Cruise
+                    // gewechselt, gäbe es sonst einen Takt Descent und dann
+                    // die Übernahme (Codex-QS 17.10.2026).
+                    next_phase = match (prev, stats.shadow_phase) {
+                        (
+                            FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent,
+                            Some(v2 @ (FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent)),
+                        ) => v2,
+                        _ => prev,
+                    };
                     stats.holding_pending_since = None;
                     stats.holding_exit_pending_since = None;
                     stats.previous_phase_before_holding = None;
@@ -49142,27 +48972,21 @@ fn step_flight_at(
             // triggered Approach mid-cruise. The aircraft is on
             // approach when it's actually heading down toward the
             // destination, not when it happened to skim a peak.
-            if snap.altitude_agl_ft < 5000.0 && snap.vertical_speed_fpm < 0.0 {
+            // Bleibt v1s eigene Kante IM SELBEN TAKT (nicht per Übernahme
+            // einen Takt später): an ihr beginnt der Anflug-Puffer der
+            // Stabilitätsnote.
+            if anflug_kante(snap) {
+                anflug_beginnt(&mut stats);
                 next_phase = FlightPhase::Approach;
-                // v0.5.5: reset running peak-descent tracker on Approach
-                // entry. Stays alive across Approach → Final transitions
-                // (we keep tracking through final). Only resets here so a
-                // go-around (which routes Final → Climb → Approach again)
-                // gets a clean per-attempt picture.
-                stats.low_agl_vs_min_fpm = None;
-                stats.last_low_agl_vs_fpm = None;
-            } else if snap.vertical_speed_fpm.abs() < 200.0 && snap.altitude_agl_ft > 5000.0 {
-                // v0.7.17 (B-003): Descent → Cruise Recovery. Wenn der
-                // Sink stoppt UND wir wieder hoch genug sind, war das
-                // wahrscheinlich ein ATC-Step-Down oder ein V/S-Spike
-                // (Pause/Resume-Race) der die FSM faelschlich nach
-                // Descent gekippt hat. Vorher gab es nur Descent →
-                // Approach — Aircraft blieb fuer immer als „Descent"
-                // gemeldet, auch wenn Pilot wieder cruiste. Tester-
-                // Report ICE 529 EDDB→EVRA: FL330 Cruise, FMA ALT CRZ,
-                // Live-Map zeigte „Descent" + V/S -11 fpm. Selber
-                // Schwellwert wie Climb → Cruise (200 fpm + AGL > 5000).
-                next_phase = FlightPhase::Cruise;
+            } else if let Some(p) = reiseband_phase(&stats) {
+                next_phase = p;
+            } else if check_holding_entry(&mut stats, snap, now) {
+                // Warteschleifen liegen oft im Sinkflug (ATC hält auf
+                // FL150). Bis 17.10.2026 wurden sie nur erkannt, weil das
+                // Level-off fälschlich auf Cruise sprang; seit v2 dort
+                // Descent hält, prüft der Descent-Arm selbst.
+                stats.previous_phase_before_holding = Some(FlightPhase::Descent);
+                next_phase = FlightPhase::Holding;
             }
         }
         FlightPhase::Approach => {
@@ -51822,21 +51646,25 @@ mod enroute_reconcile_tests {
             // Baseline-Sync beim ersten Sample). AGL bleibt über dem
             // 5000-ft-Approach-Gate, damit v2 nicht schon zu Approach
             // weiterbefördert — die Tests wollen das Paar (Climb, Descent).
+            // Seit 17.10.2026 übernimmt v1 Reiseband-Phasen von v2
+            // direkt; der Versöhner zieht nur noch aus dem Reiseband in
+            // den Anflug. Die Evidenz liegt deshalb unter dem 5000-ft-
+            // Approach-Gate: v2 steht schon im Anflug, v1 hängt im Climb.
             let v2 = feed_v2_evidence(
                 &mut stats,
                 FlightPhase::Descent,
                 40,
-                9000.0,
+                4500.0,
                 -30.0,
-                8000.0,
+                4000.0,
                 -30.0,
                 -600.0,
                 false,
             );
             assert_eq!(
                 v2,
-                FlightPhase::Descent,
-                "test setup: v2 must resolve a sustained descent as Descent"
+                FlightPhase::Approach,
+                "test setup: v2 must resolve the sustained low descent as Approach"
             );
             if let Some(secs) = divergence_seeded_secs_ago {
                 stats.enroute_divergence_since = Some((
@@ -51853,14 +51681,25 @@ mod enroute_reconcile_tests {
     #[test]
     fn eligible_pairs_within_the_air_band() {
         for (v1, v2) in [
-            (FlightPhase::Climb, FlightPhase::Descent),
+            (FlightPhase::Climb, FlightPhase::Approach),
             (FlightPhase::Climb, FlightPhase::Landing),
-            (FlightPhase::Cruise, FlightPhase::Descent),
-            (FlightPhase::Descent, FlightPhase::Cruise),
+            (FlightPhase::Cruise, FlightPhase::Final),
+            (FlightPhase::Descent, FlightPhase::Approach),
+            (FlightPhase::Approach, FlightPhase::Climb),
             (FlightPhase::Approach, FlightPhase::Final),
             (FlightPhase::Final, FlightPhase::Landing),
         ] {
             assert!(enroute_reconcile_eligible(v1, v2), "{v1:?} → {v2:?}");
+        }
+        // Innerhalb des Reisebands übernimmt v1 v2s Phase direkt
+        // (`reiseband_phase`) — dort gibt es nichts zu versöhnen.
+        for (v1, v2) in [
+            (FlightPhase::Climb, FlightPhase::Descent),
+            (FlightPhase::Cruise, FlightPhase::Descent),
+            (FlightPhase::Descent, FlightPhase::Cruise),
+            (FlightPhase::Cruise, FlightPhase::Climb),
+        ] {
+            assert!(!enroute_reconcile_eligible(v1, v2), "{v1:?} → {v2:?}");
         }
     }
 
@@ -52000,7 +51839,7 @@ mod enroute_reconcile_tests {
     }
 
     #[test]
-    fn cruise_with_sustained_descending_evidence_is_never_pulled() {
+    fn cruise_follows_v2_into_the_descent() {
         // Absurditäts-Guard, integrationsscharf: selbst eine lange (weit
         // über jedem Dwell liegende), durchgehend bestätigte Descending-
         // Evidenz darf ein Cruise NIE über den Versöhner nach Descent
@@ -52047,12 +51886,13 @@ mod enroute_reconcile_tests {
                 Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 500),
             ));
         }
+        // Seit 17.10.2026: kein Zug durch den Versöhner, sondern die
+        // direkte Übernahme — v2s Fenster beweist den Sinkflug, v1 folgt
+        // im nächsten Takt (vorher wartete v1 auf −500 fpm und 5000 ft
+        // Verlust und begann den Sinkflug im Median 2 min zu spät).
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result, None,
-            "Cruise must never be pulled to Descent by the reconciler"
-        );
-        assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Cruise);
+        assert_eq!(result, Some(FlightPhase::Descent));
+        assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Descent);
     }
 
     #[test]
@@ -52097,7 +51937,7 @@ mod enroute_reconcile_tests {
     // ---- Integration über step_flight ----
 
     #[test]
-    fn stuck_climb_with_sustained_v2_descent_reconciles_after_dwell() {
+    fn stuck_climb_with_v2_in_the_approach_reconciles_after_dwell() {
         // Climb→Descent ist VORWÄRTS im Bogen → der kurze Dwell gilt.
         let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_FORWARD_DWELL_SECS + 1));
         {
@@ -52111,16 +51951,12 @@ mod enroute_reconcile_tests {
             stats.touch_and_go_pending_since = Some(Utc::now() - chrono::Duration::seconds(3));
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(result, Some(FlightPhase::Descent));
+        assert_eq!(result, Some(FlightPhase::Approach));
         let stats = flight.stats.lock().unwrap();
-        assert_eq!(stats.phase, FlightPhase::Descent);
+        assert_eq!(stats.phase, FlightPhase::Approach);
         assert!(
             stats.enroute_divergence_since.is_none(),
             "fired — clock cleared"
-        );
-        assert!(
-            stats.descent_pending_since.is_none(),
-            "primary-path dwell must not carry stale arming into Descent"
         );
         assert!(
             stats.go_around_climb_pending_since.is_none(),
@@ -52158,14 +51994,17 @@ mod enroute_reconcile_tests {
             snap.on_ground = false;
             snap.altitude_msl_ft = 9000.0;
             snap.altitude_agl_ft = 8000.0;
-            // +800 fpm: hält BEIDE Descent-Arm-Pfade still (Approach
-            // braucht vs<0, die B-003-Cruise-Recovery |vs|<200).
+            // Seit 17.10.2026 übernimmt v1 im Reiseband v2 direkt; das
+            // Rückwärts-Paar lebt deshalb nur noch im Anflug: v1 hängt im
+            // Approach (Steigen aus dem Anflug OHNE Durchstarter — der
+            // Detektor greift oberhalb des Stabilitäts-Gates nicht), der
+            // Flieger steigt real (+800 fpm).
             snap.vertical_speed_fpm = 800.0;
             snap.groundspeed_kt = 250.0;
             snap.engines_running = 2;
             {
                 let mut stats = flight.stats.lock().unwrap();
-                stats.phase = FlightPhase::Descent;
+                stats.phase = FlightPhase::Approach;
                 stats.was_airborne = true;
                 stats.was_on_ground = Some(false);
                 // Steigende Fenster-Evidenz (+800 fpm) → Segment Climbing;
@@ -52193,7 +52032,7 @@ mod enroute_reconcile_tests {
                     "test setup: sustained climb evidence"
                 );
                 stats.enroute_divergence_since = Some((
-                    FlightPhase::Descent,
+                    FlightPhase::Approach,
                     Utc::now() - chrono::Duration::seconds(seed_secs),
                 ));
             }
@@ -52207,7 +52046,7 @@ mod enroute_reconcile_tests {
             result, None,
             "backward pull must not borrow the short forward dwell"
         );
-        assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Descent);
+        assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Approach);
 
         // Rückwärts-Dwell voll → jetzt zieht v2 die festgefahrene v1.
         let (flight, snap) = descent_stuck_flight(ENROUTE_RECONCILE_DWELL_SECS + 1);
@@ -52217,13 +52056,136 @@ mod enroute_reconcile_tests {
 
     // ---- QS-Runde 1: Anti-Oszillations-Gate (segment_contradicts_v1) ----
 
+    /// 17.10.2026 („Stück 2"): Bestätigt v2 nur den Reiseflug, muss die
+    /// Warteschleifen-Erkennung des Cruise-Arms weiterlaufen. Im ersten
+    /// Korpus-Lauf fiel sie still weg (9 → 1 Holding-Eintritte), weil die
+    /// Übernahme auch die eigene Phase „übernahm".
     #[test]
-    fn atc_step_down_level_off_is_never_pulled() {
-        // QS-Befund F1a (empirisch bewiesen): ATC-Step-Down, dann Level —
-        // v1 bleibt by design Cruise, v2 hält unterhalb obsref−2000 ft
-        // BEWUSST Descent. Ohne Kinematik-Gate zog der Versöhner v1 alle
-        // ~55 s in einen Pull/Recovery-Zyklus. Level widerspricht Cruise
-        // NICHT → kein Zug, Uhr wird verworfen.
+    fn holding_entry_from_cruise_still_works() {
+        let flight = fixture();
+        let t0 = Utc::now() - chrono::Duration::seconds(200);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Cruise;
+            stats.shadow_phase = Some(FlightPhase::Cruise);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 12000.0;
+        snap.altitude_agl_ft = 11000.0;
+        snap.vertical_speed_fpm = 0.0;
+        snap.groundspeed_kt = 220.0;
+        snap.engines_running = 2;
+        snap.bank_deg = 25.0;
+        let mut phase = FlightPhase::Cruise;
+        for i in 0..40 {
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                phase = p;
+            }
+            flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
+        }
+        assert_eq!(phase, FlightPhase::Holding, "sustained bank in cruise must enter Holding");
+    }
+
+    /// Warteschleife während des Sinkflugs (Level-off, anhaltende
+    /// Querneigung) — seit 17.10.2026 im Descent-Arm erkannt.
+    #[test]
+    fn holding_entry_from_descent_level_off() {
+        let flight = fixture();
+        let t0 = Utc::now() - chrono::Duration::seconds(200);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Descent;
+            stats.shadow_phase = Some(FlightPhase::Descent);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 15000.0;
+        snap.altitude_agl_ft = 14000.0;
+        snap.vertical_speed_fpm = 0.0;
+        snap.groundspeed_kt = 230.0;
+        snap.engines_running = 2;
+        snap.bank_deg = 25.0;
+        let mut phase = FlightPhase::Descent;
+        for i in 0..40 {
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                phase = p;
+            }
+            flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Descent);
+        }
+        assert_eq!(phase, FlightPhase::Holding, "sustained bank on a descent level-off must enter Holding");
+        assert_eq!(
+            flight.stats.lock().unwrap().previous_phase_before_holding,
+            Some(FlightPhase::Descent)
+        );
+    }
+
+    /// Codex-QS 17.10.2026: v2 springt bei anhaltendem tiefem Sinkflug
+    /// direkt vom Reiseflug in den Anflug. v1 im Cruise muss folgen (über
+    /// Descent und seine eigene Anflug-Kante), auch bei einem flachen
+    /// Anflug, bei dem der Cruise-Schnellweg (< −500 fpm) nie greift.
+    #[test]
+    fn shallow_approach_from_cruise_follows_v2_into_the_approach() {
+        let flight = fixture();
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Cruise;
+            stats.shadow_phase = Some(FlightPhase::Approach);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 4800.0;
+        snap.altitude_agl_ft = 4500.0;
+        snap.vertical_speed_fpm = -400.0;
+        snap.groundspeed_kt = 160.0;
+        snap.engines_running = 2;
+        assert_eq!(step_flight(&flight, &snap), Some(FlightPhase::Descent));
+        assert_eq!(step_flight(&flight, &snap), Some(FlightPhase::Approach));
+    }
+
+    /// Codex-QS 17.10.2026: Ende einer Warteschleife aus dem Sinkflug,
+    /// während v2 inzwischen Cruise sagt → direkt Cruise, kein Takt Descent.
+    #[test]
+    fn holding_exit_goes_straight_to_the_current_v2_phase() {
+        let flight = fixture();
+        let t0 = Utc::now() - chrono::Duration::seconds(100);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Holding;
+            stats.previous_phase_before_holding = Some(FlightPhase::Descent);
+            stats.shadow_phase = Some(FlightPhase::Cruise);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 15000.0;
+        snap.altitude_agl_ft = 14000.0;
+        snap.vertical_speed_fpm = 0.0;
+        snap.groundspeed_kt = 230.0;
+        snap.engines_running = 2;
+        snap.bank_deg = 0.0;
+        let mut wechsel = Vec::new();
+        for i in 0..10 {
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                wechsel.push(p);
+            }
+        }
+        assert_eq!(wechsel, vec![FlightPhase::Cruise], "one clean Holding→Cruise, no Descent tick");
+    }
+
+    #[test]
+    fn atc_step_down_level_off_stays_descent() {
+        // Kern von „Stück 2" (17.10.2026): Bis hier sprang v1 bei einem
+        // Level-off im Sinkflug (|V/S| < 200, AGL > 5000) sofort auf Cruise
+        // und beim nächsten Sinken zurück — in 40 % der Flüge. Jetzt
+        // bleibt es, wie v2 (Descent + Segment Level), beim Sinkflug.
         let flight = fixture();
         let mut snap = SimSnapshot::default();
         snap.on_ground = false;
@@ -52234,12 +52196,10 @@ mod enroute_reconcile_tests {
         snap.engines_running = 2;
         {
             let mut stats = flight.stats.lock().unwrap();
-            stats.phase = FlightPhase::Cruise;
+            stats.phase = FlightPhase::Descent;
             stats.was_airborne = true;
             stats.was_on_ground = Some(false);
-            // Sinkflug 10000→7500 (endet vor 90 s), dann Level-Hold bei
-            // 7500 (< obsref −2000) → v2 bleibt Descent, Segment kippt
-            // auf Level.
+            // Erst Sinkflug (FL100 → 7500 ft), dann Level-off auf 7500 ft.
             feed_v2_evidence_ending(
                 &mut stats,
                 FlightPhase::Descent,
@@ -52263,38 +52223,24 @@ mod enroute_reconcile_tests {
                 0.0,
                 false,
             );
-            assert_eq!(
-                v2,
-                FlightPhase::Descent,
-                "test setup: v2 holds Descent on level-off"
-            );
+            assert_eq!(v2, FlightPhase::Descent, "test setup: v2 holds Descent on level-off");
             assert_eq!(
                 stats.shadow_engine.current_segment(),
                 phase_v2::Segment::Level,
                 "test setup: level evidence"
             );
-            stats.enroute_divergence_since = Some((
-                FlightPhase::Cruise,
-                Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 100),
-            ));
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(result, None, "a healthy level Cruise must never be pulled");
-        let stats = flight.stats.lock().unwrap();
-        assert_eq!(stats.phase, FlightPhase::Cruise);
-        assert!(
-            stats.enroute_divergence_since.is_none(),
-            "no contradiction — clock discarded"
-        );
+        assert_eq!(result, None, "a level-off in the descent must stay Descent");
+        assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Descent);
     }
 
     #[test]
-    fn toc_healthy_cruise_without_ref_is_never_pulled_back() {
-        // QS-Befund F1c (empirisch bewiesen): Top-of-Climb ohne cruise_ref
-        // — v1 latcht Cruise single-tick, v2 braucht 240 s Level-Dauer-
-        // Heuristik → bis zu ~285 s gewollte Divergenz (Cruise, Climb).
-        // Ohne Kinematik-Gate: deterministischer Rückzug + Oszillation an
-        // JEDEM normalen TOC. Level widerspricht Cruise nicht → kein Zug.
+    fn toc_level_off_follows_v2_until_it_confirms_cruise() {
+        // Seit 17.10.2026 gibt es im Reiseband nur noch eine Phase: v1
+        // folgt v2, auch zurück zum Climb, bis v2 den Reiseflug bestätigt
+        // (ohne Referenz nach 240 s Level). Im Betrieb entsteht das Paar
+        // (Cruise, Climb) nur nach einem Neustart oder einer Warteschleife.
         let flight = fixture();
         let mut snap = SimSnapshot::default();
         snap.on_ground = false;
@@ -52308,7 +52254,6 @@ mod enroute_reconcile_tests {
             stats.phase = FlightPhase::Cruise;
             stats.was_airborne = true;
             stats.was_on_ground = Some(false);
-            // 2 min Level-Evidenz (< 240 s) mit old=Climb → v2 hält Climb.
             let v2 = feed_v2_evidence(
                 &mut stats,
                 FlightPhase::Climb,
@@ -52320,22 +52265,10 @@ mod enroute_reconcile_tests {
                 0.0,
                 false,
             );
-            assert_eq!(
-                v2,
-                FlightPhase::Climb,
-                "test setup: v2 still on Climb before 240s"
-            );
-            stats.enroute_divergence_since = Some((
-                FlightPhase::Cruise,
-                Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 100),
-            ));
+            assert_eq!(v2, FlightPhase::Climb, "test setup: v2 still on Climb before 240s");
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result, None,
-            "healthy TOC cruise must never be pulled back to Climb"
-        );
-        assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Cruise);
+        assert_eq!(result, Some(FlightPhase::Climb));
     }
 
     #[test]
@@ -52421,7 +52354,7 @@ mod enroute_reconcile_tests {
         // überlebte die Suite; dieser Test tötet sie).
         let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_FORWARD_DWELL_SECS));
         let result = step_flight(&flight, &snap);
-        assert_eq!(result, Some(FlightPhase::Descent));
+        assert_eq!(result, Some(FlightPhase::Approach));
     }
 
     #[test]
@@ -52447,7 +52380,7 @@ mod enroute_reconcile_tests {
         {
             let mut stats = flight.stats.lock().unwrap();
             stats.shadow_engine = phase_v2::ShadowPhaseEngine::default();
-            stats.shadow_phase = Some(FlightPhase::Descent);
+            stats.shadow_phase = Some(FlightPhase::Approach);
         }
         let result = step_flight(&flight, &snap);
         assert_eq!(result, None);
@@ -52466,13 +52399,13 @@ mod enroute_reconcile_tests {
         // kurzen, flachen Anflügen) neu und feuerte erst NACH dem
         // Touchdown. Die Uhr hängt deshalb an v1s STILLSTAND: hier wurde
         // sie (irgendwann, mit damals anderem v2-Wert) für das
-        // festgefahrene Climb gestartet — v2 zeigt inzwischen Descent.
+        // festgefahrene Climb gestartet — v2 zeigt inzwischen Approach.
         // Der abgelaufene Dwell muss auf v2s AKTUELLE Phase ziehen.
         let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_DWELL_SECS + 1));
         let result = step_flight(&flight, &snap);
         assert_eq!(
             result,
-            Some(FlightPhase::Descent),
+            Some(FlightPhase::Approach),
             "v1's standstill is what counts — v2 wandering must not reset the dwell"
         );
     }
@@ -52504,19 +52437,15 @@ mod enroute_reconcile_tests {
 
     #[test]
     fn fresh_v1_transition_wins_and_resets_the_clock() {
-        // v1 lebt: ihr eigener Climb→Cruise-Übergang feuert diesen Tick
-        // (V/S ±0, AGL > 5000). Der Versöhner — obwohl sein Dwell längst
-        // um wäre — darf den Normalpfad weder übersteuern noch seine Uhr
-        // behalten.
+        // v1 lebt: ihr Climb→Cruise-Übergang (seit 17.10.2026 die Übernahme
+        // von v2s Reiseband-Phase) feuert diesen Tick. Der Versöhner —
+        // obwohl sein Dwell längst um wäre — darf den Normalpfad weder
+        // übersteuern noch seine Uhr behalten.
         let (flight, mut snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_DWELL_SECS + 100));
         snap.vertical_speed_fpm = -50.0;
         snap.altitude_agl_ft = 6000.0;
         snap.altitude_msl_ft = 7000.0;
-        {
-            // Peak nachziehen, damit der Descent-Primärpfad still bleibt.
-            let mut stats = flight.stats.lock().unwrap();
-            stats.climb_peak_msl = Some(snap.altitude_msl_ft as f32);
-        }
+        flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
         let result = step_flight(&flight, &snap);
         assert_eq!(
             result,
@@ -61082,7 +61011,7 @@ fn compute_tray_display(app: &AppHandle) -> TrayDisplay {
         .unwrap_or(i64::MAX);
     let queue = stats.queued_position_count;
     // #phase-v2 Cutover: Tray-Tooltip zeigt die v2-Phase.
-    let phase_label = phase_human_label(effective_phase(&stats));
+    let phase_label = phase_human_label(stats.phase);
     let callsign = format_callsign(&flight.airline_icao, &flight.flight_number);
     let route = format!("{} → {}", flight.dpt_airport, flight.arr_airport);
 
@@ -64805,129 +64734,6 @@ mod touch_and_go_go_around_tests {
         );
         assert!(out.is_none());
         assert_eq!(stats.go_around_count, 0);
-    }
-
-    // ---- v0.7.17 (B-010): check_descent_transition ----
-
-    fn descent_snap(agl_ft: f64, vs_fpm: f32, total_weight_kg: Option<f32>) -> SimSnapshot {
-        let mut s = snap_at(agl_ft, vs_fpm, false);
-        s.altitude_msl_ft = agl_ft + 1000.0; // dummy MSL above AGL
-        s.total_weight_kg = total_weight_kg;
-        s
-    }
-
-    #[test]
-    fn descent_single_tick_spike_does_not_transition() {
-        // GSG-105-Symptom: ein einzelner Trim-Spike (-800 fpm) bei vs<-500
-        // erfuellt standard_tod-Bedingung sofort. Wichtig: erste Tick darf
-        // NICHT direkt umschalten — nur den Dwell-Timer arm-en.
-        let mut stats = FlightStats::default();
-        let snap = descent_snap(8000.0, -800.0, Some(60000.0));
-        let lost_from_peak = 300.0; // > 200 → standard_tod TRUE
-        let out = check_descent_transition(&mut stats, &snap, t0(), lost_from_peak);
-        assert!(
-            out.is_none(),
-            "single tick must not transition (dwell not elapsed)"
-        );
-        // Timer ist armed
-        assert!(stats.descent_pending_since.is_some());
-    }
-
-    #[test]
-    fn descent_brief_spike_armed_then_breaks_clears_dwell() {
-        // Airliner: kurzer -600 fpm Spike der Bedingung erfuellt, aber
-        // nach 5 s ist V/S wieder +200 fpm (Cruise-Korrektur).
-        let mut stats = FlightStats::default();
-        let now = t0();
-        let trigger = descent_snap(8000.0, -600.0, Some(60000.0)); // Heavy
-        let lost = 300.0; // > 200 fuer standard_tod
-                          // Tick 1: Bedingung erfuellt → Timer started
-        let out1 = check_descent_transition(&mut stats, &trigger, now, lost);
-        assert!(out1.is_none());
-        assert!(stats.descent_pending_since.is_some());
-        // Tick 2 (5 s spaeter): Bedingung gebrochen
-        let recover = descent_snap(8050.0, 200.0, Some(60000.0));
-        let out2 = check_descent_transition(
-            &mut stats,
-            &recover,
-            now + chrono::Duration::seconds(5),
-            300.0,
-        );
-        assert!(out2.is_none());
-        // Timer reset
-        assert!(stats.descent_pending_since.is_none());
-    }
-
-    #[test]
-    fn descent_sustained_sink_after_dwell_transitions() {
-        let mut stats = FlightStats::default();
-        let now = t0();
-        let trigger = descent_snap(8000.0, -600.0, Some(60000.0));
-        let lost = 300.0;
-        // Tick 1: arm
-        check_descent_transition(&mut stats, &trigger, now, lost);
-        assert!(stats.descent_pending_since.is_some());
-        // Tick 2 (DWELL_SECS+1 s spaeter, immer noch sustained sink):
-        let out = check_descent_transition(
-            &mut stats,
-            &trigger,
-            now + chrono::Duration::seconds(DESCENT_DWELL_SECS + 1),
-            lost,
-        );
-        assert_eq!(out, Some(FlightPhase::Descent));
-        // Timer wieder None nach Trigger
-        assert!(stats.descent_pending_since.is_none());
-    }
-
-    #[test]
-    fn descent_light_ga_uses_higher_threshold() {
-        // Cessna (800 kg), AGL 2000 ft, V/S -200 fpm.
-        // lost_from_peak = 600 ft → unter Light-GA-Schwelle (1000) → KEIN Trigger.
-        // Bei Heavy waere 600 > 500 → Trigger gewesen.
-        let mut stats = FlightStats::default();
-        let snap = descent_snap(2000.0, -200.0, Some(800.0));
-        let out = check_descent_transition(
-            &mut stats,
-            &snap,
-            t0() + chrono::Duration::seconds(DESCENT_DWELL_SECS + 10),
-            600.0,
-        );
-        assert!(
-            out.is_none(),
-            "Light-GA bei 600 ft lost darf nicht triggern"
-        );
-
-        // Gleicher Snap aber Heavy (60.000 kg) → MUSS arm dann triggern.
-        let mut stats2 = FlightStats::default();
-        let mut heavy = snap;
-        heavy.total_weight_kg = Some(60000.0);
-        let now = t0();
-        check_descent_transition(&mut stats2, &heavy, now, 600.0);
-        let out_heavy = check_descent_transition(
-            &mut stats2,
-            &heavy,
-            now + chrono::Duration::seconds(DESCENT_DWELL_SECS + 1),
-            600.0,
-        );
-        assert_eq!(out_heavy, Some(FlightPhase::Descent));
-    }
-
-    #[test]
-    fn descent_no_weight_info_uses_heavy_thresholds() {
-        // Wenn snap.total_weight_kg=None (z.B. Fenix in fruehen Versionen),
-        // fallback auf Heavy-Schwellen — sonst wuerden alle Airliner
-        // im Light-GA-Modus laufen.
-        let mut stats = FlightStats::default();
-        let snap = descent_snap(2000.0, -200.0, None);
-        let now = t0();
-        check_descent_transition(&mut stats, &snap, now, 600.0);
-        let out = check_descent_transition(
-            &mut stats,
-            &snap,
-            now + chrono::Duration::seconds(DESCENT_DWELL_SECS + 1),
-            600.0,
-        );
-        assert_eq!(out, Some(FlightPhase::Descent));
     }
 
     // ---- v0.7.17 (B-015a QS-Fix): score_basis_vs_fpm ----
@@ -86548,5 +86354,202 @@ mod landung_speichern_sperre_tests {
             !rumpf[..sperre].contains("store.upsert("),
             "Vorrichtung: Schreiben vor dem Bauen ergibt keinen Sinn"
         );
+    }
+}
+
+/// Korpus-Replay der Phasenerkennung (17.10.2026, „Stück 2"): spielt beliebige
+/// echte Flug-Logs (`*.jsonl.gz` des Recorders) durch denselben Phasen-Takt,
+/// den der Positions-Streamer benutzt ([`phasen_takt`]), und schreibt je Flug
+/// eine JSON-Zeile mit dem neuen Phasenbogen, den aufgezeichneten Bögen
+/// (v1 aus `phase_changed`, v2 aus `shadow_phase`), Durchstartern und einem
+/// Fingerabdruck des Anflug-Puffers (Eingang der Stabilitätsnote).
+///
+/// Läuft nur auf Anforderung — die Logs enthalten Pilotendaten und gehören
+/// nicht ins Repository:
+/// `AEROACARS_REPLAY_DIR=<ordner> AEROACARS_REPLAY_OUT=<datei.jsonl>
+///  cargo test -p aeroacars-app --lib phasen_korpus -- --ignored`
+/// `AEROACARS_REPLAY_REF=max` setzt die höchste erreichte Höhe als
+/// Reiseflug-Referenz (die echte SimBrief-Höhe steht nicht im Log).
+#[cfg(test)]
+mod phasen_korpus_replay {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use std::io::{BufRead, BufReader, Write};
+
+    struct Aufnahme {
+        positionen: Vec<(DateTime<Utc>, SimSnapshot)>,
+        v1: Vec<(DateTime<Utc>, String)>,
+        v2: Vec<(DateTime<Utc>, String)>,
+        version: String,
+        go_arounds_pirep: Option<u64>,
+    }
+
+    fn zeit(v: &serde_json::Value) -> Option<DateTime<Utc>> {
+        v.as_str()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&Utc))
+    }
+
+    /// Volle Deserialisierung, wo der Snapshot sie trägt; sonst die Felder,
+    /// die die Phasen-Arme lesen (ältere Logs kennen neuere Pflichtfelder
+    /// nicht — gleiche Rückfallebene wie `enroute_reconcile_replay_tests`).
+    fn snapshot(s: &serde_json::Value) -> SimSnapshot {
+        if let Ok(snap) = serde_json::from_value::<SimSnapshot>(s.clone()) {
+            return snap;
+        }
+        let mut snap = SimSnapshot::default();
+        let f = |k: &str| s[k].as_f64();
+        if let Some(x) = f("lat") { snap.lat = x; }
+        if let Some(x) = f("lon") { snap.lon = x; }
+        if let Some(x) = f("altitude_msl_ft") { snap.altitude_msl_ft = x; }
+        if let Some(x) = f("altitude_agl_ft") { snap.altitude_agl_ft = x; }
+        if let Some(x) = f("vertical_speed_fpm") { snap.vertical_speed_fpm = x as f32; }
+        if let Some(x) = f("groundspeed_kt") { snap.groundspeed_kt = x as f32; }
+        if let Some(x) = f("indicated_airspeed_kt") { snap.indicated_airspeed_kt = x as f32; }
+        if let Some(x) = f("fuel_total_kg") { snap.fuel_total_kg = x as f32; }
+        if let Some(x) = f("pitch_deg") { snap.pitch_deg = x as f32; }
+        if let Some(x) = f("bank_deg") { snap.bank_deg = x as f32; }
+        if let Some(x) = f("heading_deg_true") { snap.heading_deg_true = x as f32; }
+        if let Some(x) = f("gear_position") { snap.gear_position = x as f32; }
+        if let Some(x) = f("flaps_position") { snap.flaps_position = x as f32; }
+        if let Some(x) = s["on_ground"].as_bool() { snap.on_ground = x; }
+        if let Some(x) = s["paused"].as_bool() { snap.paused = x; }
+        if let Some(x) = s["slew_mode"].as_bool() { snap.slew_mode = x; }
+        if let Some(x) = s["parking_brake"].as_bool() { snap.parking_brake = x; }
+        if let Some(x) = s["engines_running"].as_u64() { snap.engines_running = x as u8; }
+        snap.pushback_state = s["pushback_state"].as_u64().map(|x| x as u8);
+        snap.velocity_body_z_fps = f("velocity_body_z_fps").map(|x| x as f32);
+        snap.total_weight_kg = f("total_weight_kg").map(|x| x as f32);
+        snap.zfw_kg = f("zfw_kg").map(|x| x as f32);
+        snap.aircraft_icao = s["aircraft_icao"].as_str().map(str::to_owned);
+        snap
+    }
+
+    fn lesen(pfad: &std::path::Path) -> Option<Aufnahme> {
+        let f = std::fs::File::open(pfad).ok()?;
+        let mut a = Aufnahme {
+            positionen: Vec::new(),
+            v1: Vec::new(),
+            v2: Vec::new(),
+            version: String::new(),
+            go_arounds_pirep: None,
+        };
+        for zeile in BufReader::new(GzDecoder::new(f)).lines() {
+            let Ok(zeile) = zeile else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&zeile) else { continue };
+            if a.version.is_empty() {
+                if let Some(ver) = v["client_version"].as_str() {
+                    a.version = ver.to_owned();
+                }
+            }
+            match v["type"].as_str() {
+                Some("position") => {
+                    let Some(t) = zeit(&v["timestamp"]) else { continue };
+                    let s = &v["snapshot"];
+                    if let Some(sp) = s["shadow_phase"].as_str() {
+                        if a.v2.last().map(|(_, p)| p.as_str()) != Some(sp) {
+                            a.v2.push((t, sp.to_owned()));
+                        }
+                    }
+                    a.positionen.push((t, snapshot(s)));
+                }
+                Some("phase_changed") => {
+                    if let (Some(t), Some(to)) = (zeit(&v["timestamp"]), v["to"].as_str()) {
+                        a.v1.push((t, to.to_owned()));
+                    }
+                }
+                Some("pirep_filed") => {
+                    a.go_arounds_pirep = v["payload"]["go_around_count"].as_u64();
+                }
+                _ => {}
+            }
+        }
+        (a.positionen.len() >= 100).then_some(a)
+    }
+
+    fn fingerabdruck(buf: &std::collections::VecDeque<ApproachBufferSample>) -> serde_json::Value {
+        let summe: f64 = buf
+            .iter()
+            .map(|s| f64::from(s.agl_ft) + f64::from(s.vs_fpm) + f64::from(s.bank_deg))
+            .sum();
+        serde_json::json!({
+            "n": buf.len(),
+            "summe": (summe * 10.0).round() / 10.0,
+            "von": buf.front().map(|s| s.at.to_rfc3339()),
+            "bis": buf.back().map(|s| s.at.to_rfc3339()),
+        })
+    }
+
+    #[test]
+    #[ignore = "Korpus-Replay: nur mit AEROACARS_REPLAY_DIR/AEROACARS_REPLAY_OUT"]
+    fn phasen_korpus() {
+        let dir = std::env::var("AEROACARS_REPLAY_DIR").expect("AEROACARS_REPLAY_DIR");
+        let out = std::env::var("AEROACARS_REPLAY_OUT").expect("AEROACARS_REPLAY_OUT");
+        let mit_ref = std::env::var("AEROACARS_REPLAY_REF").as_deref() == Ok("max");
+        let mut dateien: Vec<std::path::PathBuf> = Vec::new();
+        let mut stapel = vec![std::path::PathBuf::from(&dir)];
+        while let Some(d) = stapel.pop() {
+            for e in std::fs::read_dir(&d).expect("Korpus-Ordner").flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stapel.push(p);
+                } else if p.to_string_lossy().ends_with(".jsonl.gz") {
+                    dateien.push(p);
+                }
+            }
+        }
+        dateien.sort();
+        let mut w = std::io::BufWriter::new(std::fs::File::create(&out).expect("Ausgabe"));
+        let mut gelesen = 0;
+        for pfad in &dateien {
+            let Some(a) = lesen(pfad) else { continue };
+            gelesen += 1;
+            let flight = enroute_reconcile_replay_tests::replay_fixture();
+            if mit_ref {
+                let max = a.positionen.iter().map(|(_, s)| s.altitude_msl_ft).fold(0.0, f64::max);
+                flight.stats.lock().unwrap().planned_cruise_alt_ft = Some((max / 1000.0).floor() * 1000.0);
+            }
+            let mut bogen: Vec<(String, String)> = Vec::new();
+            let mut anflug_puffer: Vec<serde_json::Value> = Vec::new();
+            for (t, snap) in &a.positionen {
+                let vorher = flight.stats.lock().unwrap().phase;
+                let _ = phasen_takt(&flight, snap, *t);
+                let stats = flight.stats.lock().unwrap();
+                if stats.phase != vorher || bogen.is_empty() {
+                    if stats.phase == FlightPhase::Landing && vorher != FlightPhase::Landing {
+                        let mut f = fingerabdruck(&stats.approach_buffer);
+                        // Dieselbe Berechnung, die in die Landebewertung geht
+                        // (ohne Platzhöhe/Gleitpfad — die kennt das Replay nicht).
+                        f["stabilitaet"] = serde_json::Value::String(format!(
+                            "{:?}",
+                            compute_approach_stability_v2(
+                                &stats.approach_buffer,
+                                None,
+                                stats.landing_at,
+                                None,
+                                None,
+                                Default::default(),
+                            )
+                        ));
+                        anflug_puffer.push(f);
+                    }
+                    bogen.push((t.to_rfc3339(), format!("{:?}", stats.phase)));
+                }
+            }
+            let stats = flight.stats.lock().unwrap();
+            let zeile = serde_json::json!({
+                "datei": pfad.strip_prefix(&dir).unwrap_or(pfad).to_string_lossy(),
+                "version": a.version,
+                "positionen": a.positionen.len(),
+                "neu": bogen,
+                "v1": a.v1,
+                "v2": a.v2,
+                "go_arounds_neu": stats.go_around_count,
+                "go_arounds_pirep": a.go_arounds_pirep,
+                "anflug_puffer": anflug_puffer,
+            });
+            writeln!(w, "{zeile}").expect("schreiben");
+        }
+        eprintln!("phasen_korpus: {gelesen} von {} Logs gespielt → {out}", dateien.len());
     }
 }

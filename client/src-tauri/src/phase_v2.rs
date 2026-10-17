@@ -13,11 +13,13 @@
 //! evidenz-getriebene Engine mit VOLLSTÄNDIGEM symmetrischem
 //! Übergangs-Graph für das En-Route-Band.
 //!
-//! **Schatten-Modus:** die alte FSM bleibt zu 100 % autoritativ. Diese
-//! Engine beobachtet nur, loggt ihre Sicht in die Position-JSONL
-//! (`shadow_phase`/`shadow_segment` im SimSnapshot) und zählt
-//! Divergenz-Sekunden. Umstellung erfolgt erst nach Wochen Datensammlung
-//! per Owner-Entscheidung.
+//! **Rolle seit 17.10.2026 („Stück 2"):** Im Reiseband (Climb/Cruise/
+//! Descent) entscheidet diese Engine — die alte FSM übernimmt ihre Phase
+//! des Vortakts (`reiseband_phase` in lib.rs). Anflug, Final, Landung,
+//! Warteschleife und Boden entscheidet weiter die alte FSM; dort läuft
+//! die Engine mit bzw. spiegelt sie. Bis dahin (v0.16.12–v2.0.23) lief sie
+//! im Schatten, ab v0.19.0 als angezeigte Phase. Ihre Rohsicht steht
+//! weiter als `shadow_phase`/`shadow_segment` in der Position-JSONL.
 //!
 //! Architektur (2 Layer, beide pur + uhrlos — Caller liefert Timestamps):
 //!
@@ -520,6 +522,21 @@ impl ShadowPhaseEngine {
             && old_is_enroute(old_phase)
             && self.last_old_phase != old_phase
             && !on_ground;
+        // 17.10.2026 („Stück 2"): Erkennt die alte FSM einen Durchstarter
+        // (Approach/Final → Climb, mit Zählung und Forensik-Schnitt), folgt
+        // v2 sofort. Seit die alte FSM im Reiseband v2s Phase übernimmt,
+        // darf v2 nicht im Anflug stehen bleiben, bis es selbst +700 ft
+        // gesehen hat — bei einem flachen Durchstarter blieben sonst
+        // beide im Steigflug bzw. Anflug hängen.
+        let frischer_durchstart = matches!(
+            self.last_old_phase,
+            FlightPhase::Approach | FlightPhase::Final
+        ) && old_phase == FlightPhase::Climb
+            && self.phase != FlightPhase::Climb
+            // Wie der Durchstart-Detektor der alten FSM: nur in der Luft.
+            // Eine alte Phase, die am Boden auf Climb hängt (GSG22), ist
+            // kein Durchstarter.
+            && !on_ground;
         self.last_old_phase = old_phase;
 
         if !old_is_enroute(old_phase) || fresh_enroute_transition_from_landing {
@@ -539,7 +556,7 @@ impl ShadowPhaseEngine {
                 self.segment_since = Some(t);
             }
             self.ga_entry_agl_ft = None;
-        } else if !shadow_is_enroute(self.phase) {
+        } else if !shadow_is_enroute(self.phase) || frischer_durchstart {
             // Baseline-Sync: die alte FSM ist im En-Route-Band, v2 noch
             // nicht (Engine-Start mid-flight / Resume / Takeoff→Climb-
             // Kante / T&G-Reset). Einmalig übernehmen, danach frei
@@ -570,6 +587,20 @@ impl ShadowPhaseEngine {
             );
         }
         (self.phase, segment)
+    }
+
+    /// Höchste im En-Route-Band beobachtete Höhe (`obsref_ft`) — zum
+    /// Speichern über einen App-Neustart (17.10.2026).
+    pub fn beobachtete_reiseflughoehe_ft(&self) -> Option<f64> {
+        self.obsref_ft
+    }
+
+    /// Gespeicherte `obsref_ft` nach einem Neustart übernehmen. Nur per
+    /// `.max()` — wie im Betrieb kann der Wert nie sinken.
+    pub fn reiseflughoehe_uebernehmen(&mut self, ft: Option<f64>) {
+        if let Some(ft) = ft {
+            self.obsref_ft = Some(self.obsref_ft.map_or(ft, |r| r.max(ft)));
+        }
     }
 
     /// Aktuelle Schatten-Phase (zuletzt von [`Self::step`] geliefert).
@@ -673,7 +704,15 @@ impl ShadowPhaseEngine {
                 // Cruise unter 5000 AGL entsteht nur durch Hineinsinken
                 // (CRUISE_MIN_AGL_FT-Gate), nie im Steig — 0 Gegenbeispiele
                 // im 189-Flug-Korpus.
-                if agl_ft < APPROACH_AGL_FT && vs_fpm < 0.0 {
+                //
+                // 17.10.2026: nur mit Fenster-Evidenz (`Descending`), nicht
+                // aus einem einzelnen negativen V/S-Wert. Flüge, die knapp
+                // über 5000 ft über Gelände reisen, sprangen sonst beim
+                // ersten leichten Sinken in den Anflug und blieben dort bis
+                // zu 53 min (Korpus 447 Flüge: vier Flüge, alle sichtbar
+                // im Cockpit). Seit v2 das Reiseband entscheidet, hinge
+                // daran auch die Phase der alten FSM.
+                if agl_ft < APPROACH_AGL_FT && vs_fpm < 0.0 && segment == Segment::Descending {
                     return FlightPhase::Approach;
                 }
                 match segment {
@@ -1585,14 +1624,35 @@ mod tests {
         sim.alt = 6000.0;
         let (p, _) = sim.fly(300, 0.0, FlightPhase::Cruise);
         assert_eq!(p, FlightPhase::Cruise);
-        // Moderater Sinkflug unter 5000 AGL (NICHT Fast-Path: agl > 3000).
-        sim.alt = 4500.0;
-        let (p, _) = sim.fly(10, -300.0, FlightPhase::Descent);
+        // Moderater, ANHALTENDER Sinkflug unter 5000 AGL (NICHT Fast-Path:
+        // agl > 3000). Seit 17.10.2026 braucht die Kante Fenster-Evidenz.
+        sim.alt = 4900.0;
+        let (p, _) = sim.fly(90, -600.0, FlightPhase::Cruise);
         assert_eq!(
             p,
             FlightPhase::Approach,
-            "Cruise <5000 AGL + sinkend → Approach"
+            "Cruise <5000 AGL + anhaltend sinkend → Approach"
         );
+    }
+
+    /// 17.10.2026: Reiseflug knapp unter 5000 ft über Gelände mit leichtem
+    /// Schwanken (Korpus: vier Flüge, bis zu 53 min zu früh im Anflug)
+    /// bleibt Reiseflug — ein einzelner negativer V/S-Wert ist kein Anflug.
+    #[test]
+    fn low_cruise_wobble_is_not_an_approach() {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.alt = 6000.0;
+        let (p, _) = sim.fly(300, 0.0, FlightPhase::Cruise);
+        assert_eq!(p, FlightPhase::Cruise);
+        // Gelände steigt unter dem Flugzeug: AGL unter 5000, Höhe hält.
+        sim.terrain_elev += 1500.0;
+        for _ in 0..20 {
+            let (p, _) = sim.fly(5, -80.0, FlightPhase::Cruise);
+            assert_eq!(p, FlightPhase::Cruise, "leichtes Sinken im tiefen Reiseflug ≠ Anflug");
+            let (p, _) = sim.fly(5, 80.0, FlightPhase::Cruise);
+            assert_eq!(p, FlightPhase::Cruise);
+        }
     }
 
     /// E2 (Balloon-Guard): ein kurzer, schwacher Steig-Blip im Final
@@ -1608,25 +1668,46 @@ mod tests {
         sim.alt = 600.0;
         let (p, _) = sim.fly(20, -300.0, FlightPhase::Final);
         assert_eq!(p, FlightPhase::Final);
-        // Schwacher, anhaltender Steig-Blip (+400 fpm): erzeugt irgendwann
-        // ein Climbing-Segment, aber solange < 700 ft ab Anker gewonnen sind,
-        // bleibt es Final (Balloon-Guard). +400 fpm × 60 s = 400 ft < 700.
-        let (p, _) = sim.fly(60, 400.0, FlightPhase::Climb);
+        // Schwacher, anhaltender Steig-Blip (+400 fpm), die alte FSM bleibt
+        // im Final: erzeugt irgendwann ein Climbing-Segment, aber solange
+        // < 700 ft ab Anker gewonnen sind, bleibt es Final (Balloon-Guard).
+        // +400 fpm × 60 s = 400 ft < 700.
+        let (p, _) = sim.fly(60, 400.0, FlightPhase::Final);
         assert_eq!(
             p,
             FlightPhase::Final,
             "Balloon <700 ft AGL darf nicht Climb latchen"
         );
-        // Echter Go-Around-Steigflug (+2500 fpm) → > 700 ft Gewinn → Climb.
+        // Echter Go-Around-Steigflug (+2500 fpm) → > 700 ft Gewinn → Climb,
+        // auch wenn die alte FSM ihn (noch) nicht erkannt hat.
         let mut reached = false;
         for _ in 0..12 {
-            let (p, _) = sim.fly(15, 2500.0, FlightPhase::Climb);
+            let (p, _) = sim.fly(15, 2500.0, FlightPhase::Final);
             if p == FlightPhase::Climb {
                 reached = true;
                 break;
             }
         }
         assert!(reached, "bestätigter Go-Around muss Climb erreichen");
+    }
+
+    /// 17.10.2026 („Stück 2"): Erkennt die alte FSM einen Durchstarter
+    /// (Final → Climb in der Luft), folgt v2 im selben Takt — nicht erst
+    /// nach eigenen +700 ft. Sonst stünde v2 im Anflug, während die alte
+    /// FSM im Reiseband auf v2s Phase wartet.
+    #[test]
+    fn follows_old_fsm_go_around_immediately() {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.alt = 4000.0;
+        sim.fly(200, -1000.0, FlightPhase::Approach);
+        sim.alt = 600.0;
+        let (p, _) = sim.fly(20, -300.0, FlightPhase::Final);
+        assert_eq!(p, FlightPhase::Final);
+        // Flacher Durchstarter, den nur die alte FSM erkennt (+400 fpm):
+        let (p, s) = sim.fly(5, 400.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Climb, "v2 muss dem Durchstarter sofort folgen");
+        assert_eq!(s, Segment::Insufficient, "frisches Fenster nach dem Regimewechsel");
     }
 
     #[test]
