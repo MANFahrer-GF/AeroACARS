@@ -1635,6 +1635,17 @@ impl AircraftProfile {
         // `ifly-aircraft-737max8`). Beide Merkmale im selben Ordnernamen —
         // sonst machte `iFly Addons/…/Bredok3d_737MAX8` einen fremden MAX
         // zum iFly (Codex 15.10.2026). Titel oder ICAO muss nach 737 aussehen.
+        // Headwind A330-900neo (17.10.2026, Joel MSFS 2020): Liveries ohne
+        // „Headwind" im Titel und mit ICAO A330 statt A339 („Airbus
+        // A330-900neo Condor") liefen als `Default` — ohne die A32NX-
+        // Variablen, auch ohne Parkbremse. Der Ordner heißt
+        // `Headwind_A330neo`. Titel oder ICAO muss nach A330 aussehen.
+        let headwind_ordner = p
+            .split('/')
+            .any(|teil| teil.contains("headwind") && teil.contains("a330"));
+        if headwind_ordner && (t.contains("a330") || modell.starts_with("A33")) {
+            return Self::FbwA32nx;
+        }
         let ifly_ordner = p.split('/').any(|teil| {
             teil.contains("ifly") && (teil.contains("737-max8") || teil.contains("737max8"))
         });
@@ -3896,6 +3907,27 @@ mod msfs2024_cockpit_tests {
 
     /// Fremd-Lackierung des iFly ohne „iFly" im Titel (Hamadoun, 15.10.2026:
     /// zwei Flüge als `Default` und B738 statt B38M).
+    /// Headwind A330-900neo ohne Marker im Titel und mit ICAO A330 (Joel,
+    /// MSFS 2020, 17.10.2026) — am Ordner erkannt; ein fremder A330 im
+    /// selben Restpfad nicht.
+    #[test]
+    fn headwind_a330neo_nach_ordner() {
+        const PFAD: &str = "SimObjects\\Airplanes\\Headwind_A330neo\\aircraft.CFG";
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Airbus A330-900neo Condor", "A330", Some(PFAD)),
+            AircraftProfile::FbwA32nx
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Cessna Skyhawk", "C172", Some(PFAD)),
+            AircraftProfile::Default
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Airbus A330-900neo Condor", "A330", None),
+            AircraftProfile::Default,
+            "ohne Ordner bleibt es beim Standard"
+        );
+    }
+
     #[test]
     fn ifly_max8_fremdlackierung_nach_ordner() {
         const PFAD: &str = "SimObjects\\Airplanes\\iFly 737-MAX8-189Seats\\aircraft.CFG";

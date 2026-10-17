@@ -129,7 +129,12 @@ pub const LEVEL_BELOW_REF_TO_CRUISE_FALLBACK_SECS: i64 = 600;
 /// Sinkflug: im Steig ist `obsref == aktuelle Höhe` → eine Level-Restriction
 /// würde sofort fälschlich Cruise (Premature-Cruise-Falle) — dort bleibt der
 /// Dauer-Fallback oben maßgeblich.
-pub const OBSREF_BAND_FT: f64 = 2000.0;
+///
+/// 17.10.2026: 2000 → 1000 ft. Der Reiseflug endet erst UNTER der aktuellen
+/// Reiseflughöhe − `REISEFLUG_STUFE_FT` (2000 ft); lag die Rückkehr-Grenze
+/// ebenfalls bei 2000 ft, pendelte ein Abfangen genau dort zwischen Descent
+/// und Cruise (Korpus: 4 Flüge). 1000 ft gibt die Hysterese.
+pub const OBSREF_BAND_FT: f64 = 1000.0;
 /// Go-Around-Bestätigung (2026-07-06): aus Approach/Final wird erst dann
 /// Climb, wenn seit dem ERSTEN Climbing-Segment-Tick netto mindestens so
 /// viel AGL gewonnen wurde. Trennt echte Go-Arounds von Glideslope-/
@@ -161,6 +166,35 @@ pub const FINAL_AGL_FT: f64 = 700.0;
 pub const CRUISE_FASTPATH_AGL_FT: f64 = 3000.0;
 /// V/S-Schwelle des Fast-Paths.
 pub const CRUISE_FASTPATH_VS_FPM: f32 = -500.0;
+
+// ─── 17.10.2026: Restpunkte (Korpus 447 Flüge) ──────────────────────────
+
+/// Umkehr-Sperre: Über dieser Höhe kehrt sich Steig- in Sinkflug (und
+/// umgekehrt) erst um, wenn die neue Richtung `UMKEHR_HALTE_SECS` anhält.
+/// Darunter (Platzrunden, Kleinflugzeuge) gilt das Fenster allein.
+pub const UMKEHR_MIN_AGL_FT: f64 = 3000.0;
+/// Hamadouns Schwingung (±2000 ft, Halbperiode ~100 s) und Joels
+/// Korrekturen auf FL280 (40–60 s Steigen) bleiben darunter; echte
+/// Umkehren (Durchstarter in der Höhe, Ausweichen) steigen länger.
+pub const UMKEHR_HALTE_SECS: i64 = 120;
+/// Band um die AKTUELLE Reiseflughöhe (die Höhe, auf der der Reiseflug
+/// zuletzt im Level lag): Dellen und Stufen innerhalb bleiben Cruise.
+/// Kosten: der Sinkflug beginnt im Median 28 s, p90 77 s später.
+pub const REISEFLUG_STUFE_FT: f64 = 2000.0;
+/// Ein so langer Level-Abschnitt im Sinkflug ist ein neuer Reiseflug
+/// (lange Zwischenhöhe, Drift-Down), keine Restriktion mehr.
+pub const SINKFLUG_LEVEL_ZU_CRUISE_SECS: i64 = 600;
+/// Schnellweg aus dem Steigflug in den Sinkflug (wie der Cruise-Fast-Path):
+/// tief, deutlich sinkend, kurz bestätigt. Kurze Sinkflüge tiefer
+/// Kleinflugzeug-Flüge erkannte das 60-s-Fenster bis zu 76 s zu spät.
+pub const CLIMB_SCHNELLSINK_AGL_FT: f64 = 3000.0;
+pub const CLIMB_SCHNELLSINK_VS_FPM: f32 = -500.0;
+pub const CLIMB_SCHNELLSINK_SECS: i64 = 10;
+/// Der Schnellweg greift erst, wenn der Steigflug so lange besteht: Direkt
+/// nach Start, Durchstarter oder Touch-and-go ist ein kurzes Sinken beim
+/// Nachtrimmen kein Sinkflug (Joel W4B0: abgebrochene Landung, 59 s später
+/// −500 fpm → Schein-Anflug und zweiter gezählter Durchstarter).
+pub const CLIMB_SCHNELLSINK_FRUEHESTENS_SECS: i64 = 120;
 
 // ─── Layer 1: KinematicSegmenter ────────────────────────────────────────
 
@@ -435,6 +469,14 @@ pub struct ShadowPhaseEngine {
     /// prüft zusätzlich `self.phase == Landing`, was zu Flugbeginn nie
     /// zutrifft.
     last_old_phase: FlightPhase,
+    /// 17.10.2026: aktuelle Reiseflughöhe — gesetzt beim Eintritt in
+    /// Cruise, nachgeführt bei jedem Level im Cruise. Basis von
+    /// `REISEFLUG_STUFE_FT`.
+    reiseflug_niveau_ft: Option<f64>,
+    /// Seit wann der Climb-Schnellweg (`CLIMB_SCHNELLSINK_*`) erfüllt ist.
+    schnellsink_seit: Option<DateTime<Utc>>,
+    /// Seit wann die Phase Climb ist (für `CLIMB_SCHNELLSINK_FRUEHESTENS_SECS`).
+    climb_seit: Option<DateTime<Utc>>,
 }
 
 impl ShadowPhaseEngine {
@@ -577,7 +619,9 @@ impl ShadowPhaseEngine {
             self.segment_since = Some(t);
             self.ga_entry_agl_ft = None;
         } else {
+            let vorher = self.phase;
             self.phase = self.resolve(
+                t,
                 segment,
                 seg_held_secs,
                 alt_msl_ft,
@@ -585,6 +629,14 @@ impl ShadowPhaseEngine {
                 vs_fpm,
                 cruise_ref_ft,
             );
+            if self.phase == FlightPhase::Cruise && vorher != FlightPhase::Cruise {
+                self.reiseflug_niveau_ft = Some(alt_msl_ft);
+            }
+        }
+        if self.phase == FlightPhase::Climb {
+            self.climb_seit.get_or_insert(t);
+        } else {
+            self.climb_seit = None;
         }
         (self.phase, segment)
     }
@@ -615,8 +667,10 @@ impl ShadowPhaseEngine {
     ///
     /// `&mut self`, weil die Go-Around-Bestätigung (`GA_CONFIRM_FT`) den
     /// AGL-Anker über mehrere Ticks hält (`ga_entry_agl_ft`).
+    #[allow(clippy::too_many_arguments)]
     fn resolve(
         &mut self,
+        t: DateTime<Utc>,
         segment: Segment,
         seg_held_secs: i64,
         alt_msl_ft: f64,
@@ -657,13 +711,38 @@ impl ShadowPhaseEngine {
         {
             self.ga_entry_agl_ft = None;
         }
+        if self.phase != FlightPhase::Climb {
+            self.schnellsink_seit = None;
+        }
+        // Umkehr-Sperre (siehe `UMKEHR_HALTE_SECS`): über 3000 ft AGL muss
+        // die neue Richtung erst anhalten.
+        let umkehr_gesperrt = agl_ft > UMKEHR_MIN_AGL_FT && seg_held_secs < UMKEHR_HALTE_SECS;
 
         match self.phase {
-            FlightPhase::Climb => match segment {
+            FlightPhase::Climb => {
+                // Schnellweg: tief, deutlich sinkend, kurz bestätigt.
+                let steigflug_alt_genug = self
+                    .climb_seit
+                    .is_some_and(|s| (t - s).num_seconds() >= CLIMB_SCHNELLSINK_FRUEHESTENS_SECS);
+                if steigflug_alt_genug
+                    && vs_fpm < CLIMB_SCHNELLSINK_VS_FPM
+                    && agl_ft < CLIMB_SCHNELLSINK_AGL_FT
+                {
+                    let seit = *self.schnellsink_seit.get_or_insert(t);
+                    if (t - seit).num_seconds() >= CLIMB_SCHNELLSINK_SECS {
+                        self.schnellsink_seit = None;
+                        return FlightPhase::Descent;
+                    }
+                } else {
+                    self.schnellsink_seit = None;
+                }
+                match segment {
                 // Climb + Descending sustained → Descent. Das Fenster
                 // ersetzt die alten Peak-Loss-Guards (v0.5.9) auf
                 // natürliche Weise — ein einzelner −800-fpm-Tick erzeugt
-                // nie ein Descending-Segment.
+                // nie ein Descending-Segment. Über 3000 ft erst nach der
+                // Umkehr-Sperre.
+                Segment::Descending if umkehr_gesperrt => FlightPhase::Climb,
                 Segment::Descending => FlightPhase::Descent,
                 Segment::Level => {
                     let cruise = match near_or_above_ref(alt_msl_ft) {
@@ -691,7 +770,8 @@ impl ShadowPhaseEngine {
                     }
                 }
                 _ => FlightPhase::Climb,
-            },
+                }
+            }
             FlightPhase::Cruise => {
                 // Fast-Path (alte FSM 1:1): tief + deutlich sinkend —
                 // sofort Descent, nicht auf Fenster-Evidenz warten.
@@ -715,10 +795,25 @@ impl ShadowPhaseEngine {
                 if agl_ft < APPROACH_AGL_FT && vs_fpm < 0.0 && segment == Segment::Descending {
                     return FlightPhase::Approach;
                 }
+                let niveau = *self.reiseflug_niveau_ft.get_or_insert(alt_msl_ft);
                 match segment {
+                    // Level im Reiseflug: die aktuelle Reiseflughöhe folgt —
+                    // einer höheren Stufe sofort, einer tieferen erst nach
+                    // `SINKFLUG_LEVEL_ZU_CRUISE_SECS`. Sonst ritte ein
+                    // Stufen-Sinkflug (FL350 → 2 min → FL330 → …) als
+                    // Cruise bis unter 5000 ft, der Sinkflug fiele weg.
+                    Segment::Level => {
+                        if alt_msl_ft > niveau || seg_held_secs >= SINKFLUG_LEVEL_ZU_CRUISE_SECS {
+                            self.reiseflug_niveau_ft = Some(alt_msl_ft);
+                        }
+                        FlightPhase::Cruise
+                    }
                     // Cruise + Descending sustained → Descent. KEIN
                     // 5000-ft-Verlust nötig — das Fenster beweist die
-                    // Absicht bereits.
+                    // Absicht bereits. 17.10.2026: innerhalb von
+                    // `REISEFLUG_STUFE_FT` unter der aktuellen Reiseflughöhe
+                    // ist es eine Delle oder Stufe — bleibt Cruise.
+                    Segment::Descending if alt_msl_ft >= niveau - REISEFLUG_STUFE_FT => FlightPhase::Cruise,
                     Segment::Descending => FlightPhase::Descent,
                     // Die bisher FEHLENDE Kante (Premature-Cruise-
                     // Lock-in): Cruise + Climbing sustained → Climb,
@@ -733,7 +828,12 @@ impl ShadowPhaseEngine {
                             }
                         }
                         None => {
-                            if seg_held_secs >= CLIMBING_TO_CLIMB_FALLBACK_SECS {
+                            // 17.10.2026: ohne Referenz zählt ein Stufen-
+                            // steigflug bis `REISEFLUG_STUFE_FT` über der
+                            // aktuellen Reiseflughöhe als Cruise.
+                            if seg_held_secs >= CLIMBING_TO_CLIMB_FALLBACK_SECS
+                                && alt_msl_ft > niveau + REISEFLUG_STUFE_FT
+                            {
                                 FlightPhase::Climb
                             } else {
                                 FlightPhase::Cruise
@@ -750,7 +850,9 @@ impl ShadowPhaseEngine {
                     return FlightPhase::Approach;
                 }
                 match segment {
-                    // Go-Around in der Höhe / Diversion-Climb.
+                    // Go-Around in der Höhe / Diversion-Climb — über 3000 ft
+                    // erst nach der Umkehr-Sperre.
+                    Segment::Climbing if umkehr_gesperrt => FlightPhase::Descent,
                     Segment::Climbing => FlightPhase::Climb,
                     Segment::Level => {
                         // ATC-Level-Off im Sinkflug: bleibt Descent +
@@ -759,7 +861,10 @@ impl ShadowPhaseEngine {
                         // Observed-Cruise-Ref) ist es wieder Cruise — der
                         // Restriktions-Level tief im Sinkflug bleibt Descent
                         // (descent→cruise 158 → 3 im Korpus).
-                        let cruise = cruise_from_level_descending(alt_msl_ft);
+                        // 17.10.2026: ein langer Level-Abschnitt ist ein neuer
+                        // Reiseflug (lange Zwischenhöhe, Drift-Down).
+                        let cruise = cruise_from_level_descending(alt_msl_ft)
+                            || seg_held_secs >= SINKFLUG_LEVEL_ZU_CRUISE_SECS;
                         if cruise && agl_ft > CRUISE_MIN_AGL_FT {
                             FlightPhase::Cruise
                         } else {
@@ -1708,6 +1813,139 @@ mod tests {
         let (p, s) = sim.fly(5, 400.0, FlightPhase::Climb);
         assert_eq!(p, FlightPhase::Climb, "v2 muss dem Durchstarter sofort folgen");
         assert_eq!(s, Segment::Insufficient, "frisches Fenster nach dem Regimewechsel");
+    }
+
+    // ── 17.10.2026: Restpunkte ───────────────────────────────────────
+
+    /// Steigen auf FL300, Reiseflug etablieren (ohne Referenz: 240 s Level).
+    fn sim_im_reiseflug() -> Sim {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.fly(1200, 1500.0, FlightPhase::Climb); // auf ~30.500 ft
+        let (p, _) = sim.fly(300, 0.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Cruise, "setup: cruise established");
+        sim
+    }
+
+    /// Delle auf Reiseflughöhe (1500 ft runter, dann Level) bleibt Cruise.
+    #[test]
+    fn cruise_dip_within_band_stays_cruise() {
+        let mut sim = sim_im_reiseflug();
+        for (secs, vs) in [(90, -1000.0), (300, 0.0)] {
+            for _ in 0..(secs / 5) {
+                let (p, _) = sim.fly(5, vs, FlightPhase::Cruise);
+                assert_eq!(p, FlightPhase::Cruise, "dip of 1500 ft is not a descent");
+            }
+        }
+    }
+
+    /// Stufen-Sinkflug in 2000-ft-Stufen mit 2 min Level dazwischen: Die
+    /// Reiseflughöhe folgt tieferen Stufen nicht sofort, deshalb wird es
+    /// spätestens unter Reiseflughöhe − 2000 ft Sinkflug.
+    #[test]
+    fn staircase_descent_becomes_descent() {
+        let mut sim = sim_im_reiseflug();
+        let mut phase = FlightPhase::Cruise;
+        for _ in 0..4 {
+            phase = sim.fly(60, -2000.0, FlightPhase::Cruise).0; // 2000 ft runter
+            if phase == FlightPhase::Descent {
+                break;
+            }
+            phase = sim.fly(120, 0.0, FlightPhase::Cruise).0; // 2 min Level
+            if phase == FlightPhase::Descent {
+                break;
+            }
+        }
+        assert_eq!(phase, FlightPhase::Descent, "a staircase descent must not ride Cruise down");
+    }
+
+    /// Hysterese: Abfangen knapp unter der Grenze (2500 ft unter der
+    /// Reiseflughöhe) bleibt Descent — zurück in Cruise erst innerhalb
+    /// `OBSREF_BAND_FT` (Korpus: 4 Flüge pendelten dort).
+    #[test]
+    fn level_off_just_below_the_band_stays_descent() {
+        let mut sim = sim_im_reiseflug();
+        let (p, _) = sim.fly(75, -2000.0, FlightPhase::Cruise); // 2500 ft runter
+        assert_eq!(p, FlightPhase::Descent);
+        for _ in 0..(300 / 5) {
+            let (p, _) = sim.fly(5, 0.0, FlightPhase::Descent);
+            assert_eq!(p, FlightPhase::Descent, "no flip back to Cruise 2500 ft below the cruise level");
+        }
+    }
+
+    /// Echter Sinkflug: unter die Reiseflughöhe − 2000 ft → Descent.
+    #[test]
+    fn real_top_of_descent_becomes_descent() {
+        let mut sim = sim_im_reiseflug();
+        let (p, _) = sim.fly(150, -2000.0, FlightPhase::Cruise);
+        assert_eq!(p, FlightPhase::Descent);
+    }
+
+    /// Hamadouns Schwingung im Sinkflug (±3000 fpm, je 50 s) bleibt Sinkflug.
+    #[test]
+    fn oscillation_in_the_descent_stays_descent() {
+        let mut sim = sim_im_reiseflug();
+        sim.fly(150, -2000.0, FlightPhase::Cruise);
+        for _ in 0..8 {
+            for vs in [3000.0, -3000.0] {
+                for _ in 0..10 {
+                    let (p, _) = sim.fly(5, vs, FlightPhase::Descent);
+                    assert_eq!(p, FlightPhase::Descent, "oscillation must not flip to Climb");
+                }
+            }
+        }
+    }
+
+    /// Echte Umkehr in der Höhe (anhaltend +1500 fpm, 3 min) → Climb.
+    #[test]
+    fn sustained_climb_in_the_descent_becomes_climb() {
+        let mut sim = sim_im_reiseflug();
+        sim.fly(150, -2000.0, FlightPhase::Cruise);
+        let (p, _) = sim.fly(180, 1500.0, FlightPhase::Descent);
+        assert_eq!(p, FlightPhase::Climb);
+    }
+
+    /// Langer Level-Abschnitt tief unter der Reiseflughöhe (11 min) wird
+    /// ein neuer Reiseflug; kürzere bleiben Restriktion (Descent).
+    #[test]
+    fn long_level_in_the_descent_becomes_cruise() {
+        let mut sim = sim_im_reiseflug();
+        sim.fly(450, -2000.0, FlightPhase::Cruise); // ~15.500 ft
+        let (p, _) = sim.fly(300, 0.0, FlightPhase::Descent);
+        assert_eq!(p, FlightPhase::Descent, "5 min level is still a restriction");
+        let (p, _) = sim.fly(360, 0.0, FlightPhase::Descent);
+        assert_eq!(p, FlightPhase::Cruise, "11 min level is a new cruise");
+    }
+
+    /// Tiefer Schnellweg aus dem Steigflug: −700 fpm unter 3000 ft AGL für
+    /// 10 s → Descent; 5 s reichen nicht.
+    #[test]
+    fn low_level_sink_from_climb_takes_the_fast_path() {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.fly(180, 500.0, FlightPhase::Climb); // ~2000 ft, 3 min im Steigflug
+        let (p, _) = sim.fly(5, -700.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Climb, "one tick is not enough");
+        let (p, _) = sim.fly(5, 300.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Climb);
+        let (p, _) = sim.fly(15, -700.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Descent, "sustained low sink → Descent");
+    }
+
+    /// Kurzes Sinken 60 s nach einem Durchstarter ist kein Sinkflug — der
+    /// Schnellweg greift erst nach 2 min Steigflug (Joel W4B0).
+    #[test]
+    fn brief_sink_right_after_go_around_stays_climb() {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.alt = 2500.0;
+        sim.fly(200, -800.0, FlightPhase::Approach);
+        sim.alt = 400.0;
+        sim.fly(20, -500.0, FlightPhase::Final);
+        // Durchstarter der alten FSM, dann 60 s Steigen, dann 15 s −700 fpm.
+        sim.fly(60, 1500.0, FlightPhase::Climb);
+        let (p, _) = sim.fly(15, -700.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Climb, "brief sink in the go-around climb-out is no descent");
     }
 
     #[test]

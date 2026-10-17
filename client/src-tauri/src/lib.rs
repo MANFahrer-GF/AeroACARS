@@ -861,10 +861,23 @@ const GO_AROUND_AGL_RECOVERY_FT: f32 = 150.0;
 // Exit threshold: 30 s of sustained bank < 5° (level flight). Or
 // active descent (< -300 fpm + AGL < 5000) which means ATC cleared
 // us out of the hold for the approach.
-const HOLDING_ENTRY_DWELL_SECS: i64 = 90;
-const HOLDING_EXIT_DWELL_SECS: i64 = 30;
-const HOLDING_BANK_THRESHOLD_DEG: f32 = 15.0;
-const HOLDING_VS_THRESHOLD_FPM: f32 = 200.0;
+//
+// 17.10.2026 — ersetzt durch die DREHUNG statt der Querneigungs-Dauer:
+// Die 30-s-Ausgangsschwelle war kürzer als ein Schenkel (60–90 s), jede
+// echte Warteschleife endete am ersten Schenkel und begann in der nächsten
+// Kurve neu (P16, FL205: drei 45-s-Bruchstücke). Und 90 s Querneigung
+// fingen lange Kurven auf FL388. Korpus 447 Flüge: echte Warteschleifen
+// drehen in 6 min ≥ 300° gleichsinnig, Flüge ohne Warteschleife im Level
+// zu 99 % ≤ 244°.
+const HOLDING_KURS_FENSTER_SECS: i64 = 360;
+const HOLDING_EINTRITT_DREHUNG_DEG: f32 = 300.0;
+/// Ende: so lange (fast) geradeaus — länger als jeder Schenkel.
+const HOLDING_AUSTRITT_FENSTER_SECS: i64 = 180;
+const HOLDING_AUSTRITT_DREHUNG_DEG: f32 = 45.0;
+/// Gezählt wird nur im Geradeaus-Höhenflug über dieser Höhe — keine
+/// Platzrunden, keine Steig-/Sinkkurven.
+const HOLDING_MIN_AGL_FT: f64 = 1500.0;
+const HOLDING_LEVEL_VS_FPM: f32 = 300.0;
 /// Sustained climb time required before we classify a Go-Around.
 const GO_AROUND_DWELL_SECS: i64 = 8;
 /// Seit 17.10.2026 („Stück 2“, docs/spec/phase-reiseband-v2.md) nur noch für
@@ -934,6 +947,14 @@ const ENROUTE_RECONCILE_FORWARD_DWELL_SECS: i64 = 45;
 /// taildraggers) klettern bei einem GA selten >500 fpm — der frühere
 /// Threshold übersah ihre Go-Arounds komplett.
 const GO_AROUND_MIN_VS_FPM: f32 = 300.0;
+/// Durchstarter zählen nur mit einer Landeschwelle höchstens so weit voraus
+/// vom tiefsten Anflugpunkt (17.10.2026, siehe `runway::schwelle_voraus`).
+/// 5 NM: Ein Durchstarter am Stabilitäts-Gate (1000 ft) liegt auf einem
+/// 3°-Gleitpfad 3,1 NM vor der Schwelle, bei 1500 ft 4,7 NM. Im Korpus
+/// lagen die falschen quer zur Bahn oder 5,3–25 NM entfernt.
+const GO_AROUND_SCHWELLE_NM: f64 = 5.0;
+/// … und höchstens so viel Abweichung zwischen Flugzeug- und Bahnkurs.
+const GO_AROUND_SCHWELLE_KURS_DEG: f32 = 45.0;
 /// AGL threshold above which we mark the flight as having actually
 /// flown. Powers the `was_airborne` gate that prevents both the
 /// Arrived-fallback and the divert-detection from firing pre-flight
@@ -5441,17 +5462,18 @@ struct PersistedFlightStats {
     go_around_count: u32,
     #[serde(default)]
     lowest_agl_during_approach_ft: Option<f32>,
+    /// 17.10.2026: Position und Kurs am tiefsten Anflugpunkt (Durchstart
+    /// nur nahe einer Bahn zählen).
+    #[serde(default)]
+    tiefster_anflugpunkt: Option<(f64, f64, f32)>,
     #[serde(default)]
     go_around_climb_pending_since: Option<DateTime<Utc>>,
     // v0.7.17 (B-010): Descent-Dwell-Timer persistieren damit Resume
     // mitten in einem Climb-Trim-Spike nicht den Timer verliert.
     #[serde(default)]
     descent_pending_since: Option<DateTime<Utc>>,
-    // v0.5.11 holding-pattern tracking
-    #[serde(default)]
-    holding_pending_since: Option<DateTime<Utc>>,
-    #[serde(default)]
-    holding_exit_pending_since: Option<DateTime<Utc>>,
+    // v0.5.11 holding-pattern tracking (Uhren seit 17.10.2026 ersetzt
+    // durch den Kursverlauf, der nach einem Neustart neu beginnt)
     #[serde(default)]
     previous_phase_before_holding: Option<FlightPhase>,
 
@@ -5821,10 +5843,9 @@ impl PersistedFlightStats {
             touch_and_go_pending_since: stats.touch_and_go_pending_since,
             go_around_count: stats.go_around_count,
             lowest_agl_during_approach_ft: stats.lowest_agl_during_approach_ft,
+            tiefster_anflugpunkt: stats.tiefster_anflugpunkt,
             go_around_climb_pending_since: stats.go_around_climb_pending_since,
             descent_pending_since: stats.descent_pending_since,
-            holding_pending_since: stats.holding_pending_since,
-            holding_exit_pending_since: stats.holding_exit_pending_since,
             previous_phase_before_holding: stats.previous_phase_before_holding,
             // v0.5.45: Sampler-State persistieren gegen Resume-Re-Capture
             sampler_touchdown_at: stats.sampler_touchdown_at,
@@ -6111,10 +6132,9 @@ impl PersistedFlightStats {
         stats.touch_and_go_pending_since = self.touch_and_go_pending_since;
         stats.go_around_count = self.go_around_count;
         stats.lowest_agl_during_approach_ft = self.lowest_agl_during_approach_ft;
+        stats.tiefster_anflugpunkt = self.tiefster_anflugpunkt;
         stats.go_around_climb_pending_since = self.go_around_climb_pending_since;
         stats.descent_pending_since = self.descent_pending_since;
-        stats.holding_pending_since = self.holding_pending_since;
-        stats.holding_exit_pending_since = self.holding_exit_pending_since;
         stats.previous_phase_before_holding = self.previous_phase_before_holding;
         // v0.5.45: Sampler-State restoren — verhindert Re-Capture nach Resume
         // wenn der Touchdown vor dem Quit/Restart bereits gefeuert hat.
@@ -7908,6 +7928,11 @@ struct FlightStats {
     /// we classify it as a GA. Reset whenever Phase enters Climb
     /// (so each new approach gets a fresh minimum to compare against).
     lowest_agl_during_approach_ft: Option<f32>,
+    /// Breite, Länge und wahrer Kurs am `lowest_agl_during_approach_ft`.
+    /// Gezählt wird ein Durchstarter nur, wenn dort eine Landeschwelle
+    /// voraus lag (`runway::schwelle_voraus`, 17.10.2026). `None` (z. B.
+    /// nach einem Neustart aus alten Flugdaten) = wie bisher zählen.
+    tiefster_anflugpunkt: Option<(f64, f64, f32)>,
     /// First tick where the GA detector saw AGL climbing back past
     /// the recovery threshold. We need this sustained for
     /// `GO_AROUND_DWELL_SECS` before firing — otherwise every brief
@@ -7945,16 +7970,13 @@ struct FlightStats {
     enroute_divergence_since: Option<(FlightPhase, DateTime<Utc>)>,
 
     // ---- v0.5.11 holding-pattern tracking ----
-    /// Timestamp of the first tick where the aircraft satisfied
-    /// holding-pattern conditions (banked turn at constant altitude).
-    /// Cleared whenever conditions break — only when sustained for
-    /// `HOLDING_ENTRY_DWELL_SECS` does the FSM transition to Holding.
-    holding_pending_since: Option<DateTime<Utc>>,
-    /// Timestamp of the first tick where the aircraft has level wings
-    /// while in Holding. Cleared if bank rises again. Sustained for
-    /// `HOLDING_EXIT_DWELL_SECS` triggers the exit back to the
-    /// previous phase.
-    holding_exit_pending_since: Option<DateTime<Utc>>,
+    /// 17.10.2026: Kursverlauf der letzten `HOLDING_KURS_FENSTER_SECS` in der
+    /// Luft — (Zeit, wahrer Kurs, Höhenflug über `HOLDING_MIN_AGL_FT`).
+    /// Ein- und Austritt der Warteschleife urteilen über die Drehung darin.
+    /// Gelöscht bei jedem Phasenwechsel außer in die Warteschleife
+    /// (`should_reset_holding_pending`), damit Drehungen einer anderen Phase
+    /// keine auslösen. Runtime-only.
+    kurs_verlauf: std::collections::VecDeque<(DateTime<Utc>, f32, bool)>,
     /// What phase we entered Holding from (Cruise or Approach).
     /// Restored on Holding exit unless an active descent has begun
     /// (then we go directly to Approach).
@@ -9942,11 +9964,10 @@ fn update_lowest_approach_agl(stats: &mut FlightStats, snap: &SimSnapshot) {
     if agl < 0.0 {
         return;
     }
-    stats.lowest_agl_during_approach_ft = Some(
-        stats
-            .lowest_agl_during_approach_ft
-            .map_or(agl, |prev| prev.min(agl)),
-    );
+    if stats.lowest_agl_during_approach_ft.is_none_or(|prev| agl < prev) {
+        stats.lowest_agl_during_approach_ft = Some(agl);
+        stats.tiefster_anflugpunkt = Some((snap.lat, snap.lon, snap.heading_deg_true));
+    }
 }
 
 /// Hoehe, an der der Durchstart-Detektor misst.
@@ -10072,20 +10093,42 @@ fn check_go_around(
     if conds {
         let pending = stats.go_around_climb_pending_since.get_or_insert(now);
         if (now - *pending).num_seconds() >= GO_AROUND_DWELL_SECS {
-            stats.go_around_count = stats.go_around_count.saturating_add(1);
+            // 17.10.2026: Durchstarter nur, wenn am tiefsten Punkt eine
+            // Landeschwelle voraus lag. Sonst war es ein Steigen aus dem
+            // Anflug (tiefer Überlandflug, Gelände, Höhenänderung) — die
+            // Phase geht trotzdem in den Steigflug, aber ohne Zählung
+            // (die im PIREP steht und in der Treibstoff-Teilnote eine
+            // Mehrweg-Gutschrift gibt). Korpus: 8 von 18 gezählten
+            // Durchstartern lagen quer zur Bahn oder 5,3–25 NM entfernt.
+            let an_der_bahn = stats.tiefster_anflugpunkt.is_none_or(|(lat, lon, kurs)| {
+                runway::schwelle_voraus(lat, lon, kurs, GO_AROUND_SCHWELLE_NM, GO_AROUND_SCHWELLE_KURS_DEG)
+            });
+            if an_der_bahn {
+                stats.go_around_count = stats.go_around_count.saturating_add(1);
+                tracing::info!(
+                    count = stats.go_around_count,
+                    agl_ft = agl,
+                    lowest_ft = lowest,
+                    vs_fpm = snap.vertical_speed_fpm,
+                    "go-around classified — phase reverting to Climb"
+                );
+                stats.pending_acars_logs.push(format!(
+                    "Go-around #{} at {:.0} ft AGL (V/S {:.0} fpm)",
+                    stats.go_around_count, agl, snap.vertical_speed_fpm
+                ));
+            } else {
+                tracing::info!(
+                    agl_ft = agl,
+                    lowest_ft = lowest,
+                    vs_fpm = snap.vertical_speed_fpm,
+                    "climb-away from the approach without a runway ahead — Climb, no go-around"
+                );
+            }
+            // Der abgebrochene Anflug gilt in beiden Fällen nicht mehr:
+            // gemessene Vref und Anflug-Forensik beginnen neu.
             stats.vref_gemessen = None;
-            tracing::info!(
-                count = stats.go_around_count,
-                agl_ft = agl,
-                lowest_ft = lowest,
-                vs_fpm = snap.vertical_speed_fpm,
-                "go-around classified — phase reverting to Climb"
-            );
-            stats.pending_acars_logs.push(format!(
-                "Go-around #{} at {:.0} ft AGL (V/S {:.0} fpm)",
-                stats.go_around_count, agl, snap.vertical_speed_fpm
-            ));
             stats.lowest_agl_during_approach_ft = None;
+            stats.tiefster_anflugpunkt = None;
             stats.go_around_climb_pending_since = None;
             // Lernpaket AP4/AP5: der abgebrochene Anflug zaehlt nicht fuer
             // die Forensik der naechsten Landung.
@@ -10492,24 +10535,59 @@ fn rescue_landing_at_from_sampler(stats: &mut FlightStats, now: DateTime<Utc>) {
 /// don't accidentally fire (banked → level → banked is normal at
 /// hold turn entry/exit).
 fn check_holding_entry(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) -> bool {
-    let in_hold_pattern = snap.bank_deg.abs() > HOLDING_BANK_THRESHOLD_DEG
-        && snap.vertical_speed_fpm.abs() < HOLDING_VS_THRESHOLD_FPM;
-    if in_hold_pattern {
-        let pending = stats.holding_pending_since.get_or_insert(now);
-        if (now - *pending).num_seconds() >= HOLDING_ENTRY_DWELL_SECS {
-            tracing::info!(
-                bank_deg = snap.bank_deg,
-                vs_fpm = snap.vertical_speed_fpm,
-                agl_ft = snap.altitude_agl_ft,
-                "holding pattern detected — entering Holding phase"
-            );
-            stats.holding_pending_since = None;
-            return true;
-        }
-    } else {
-        stats.holding_pending_since = None;
+    let drehung = kurs_drehung_deg(stats, now, HOLDING_KURS_FENSTER_SECS, true);
+    if snap.altitude_agl_ft > HOLDING_MIN_AGL_FT && drehung.abs() >= HOLDING_EINTRITT_DREHUNG_DEG {
+        tracing::info!(
+            drehung_deg = drehung,
+            agl_ft = snap.altitude_agl_ft,
+            "holding pattern detected — entering Holding phase"
+        );
+        return true;
     }
     false
+}
+
+/// Kursverlauf der Warteschleifen-Erkennung pflegen (jeden Takt in der Luft).
+fn kurs_merken(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
+    if snap.on_ground {
+        stats.kurs_verlauf.clear();
+        return;
+    }
+    let level = snap.vertical_speed_fpm.abs() < HOLDING_LEVEL_VS_FPM
+        && snap.altitude_agl_ft > HOLDING_MIN_AGL_FT;
+    stats.kurs_verlauf.push_back((now, snap.heading_deg_true, level));
+    while stats
+        .kurs_verlauf
+        .front()
+        .is_some_and(|(t, _, _)| (now - *t).num_seconds() > HOLDING_KURS_FENSTER_SECS)
+    {
+        stats.kurs_verlauf.pop_front();
+    }
+}
+
+/// Gleichsinnig aufsummierte Kursänderung der letzten `fenster_secs` (Grad,
+/// rechts positiv). `nur_level`: nur Schritte, deren beide Enden im
+/// Höhenflug lagen.
+fn kurs_drehung_deg(stats: &FlightStats, now: DateTime<Utc>, fenster_secs: i64, nur_level: bool) -> f32 {
+    let v = &stats.kurs_verlauf;
+    v.iter()
+        .zip(v.iter().skip(1))
+        .filter(|((t0, _, l0), (_, _, l1))| {
+            (now - *t0).num_seconds() <= fenster_secs && (!nur_level || (*l0 && *l1))
+        })
+        .map(|((_, k0, _), (_, k1, _))| (k1 - k0 + 540.0) % 360.0 - 180.0)
+        .sum()
+}
+
+/// Seit mindestens `HOLDING_AUSTRITT_FENSTER_SECS` (fast) geradeaus?
+fn kurs_ruhig(stats: &FlightStats, now: DateTime<Utc>) -> bool {
+    let abgedeckt = stats
+        .kurs_verlauf
+        .front()
+        .is_some_and(|(t, _, _)| (now - *t).num_seconds() >= HOLDING_AUSTRITT_FENSTER_SECS);
+    abgedeckt
+        && kurs_drehung_deg(stats, now, HOLDING_AUSTRITT_FENSTER_SECS, false).abs()
+            < HOLDING_AUSTRITT_DREHUNG_DEG
 }
 
 // ---- v0.5.11: AGL-derivative touchdown VS estimator -------------------
@@ -48429,7 +48507,7 @@ fn step_flight_at(
         latch_takeoff_stats_if_missing(&mut stats, snap, now);
         // Commit identisch zum normalen Ende von step_flight (siehe unten).
         if should_reset_holding_pending(prev_phase, FlightPhase::Climb) {
-            stats.holding_pending_since = None;
+            stats.kurs_verlauf.clear();
         }
         stats.phase = FlightPhase::Climb;
         stats.transitions.push((now, FlightPhase::Climb));
@@ -48455,6 +48533,7 @@ fn step_flight_at(
     // (nothing executes between here and the old call sites); for mis-phased
     // bush flights it keeps the buffer fed on any descending segment below
     // 2000 ft AGL so the sampler-path stability evaluation has data.
+    kurs_merken(&mut stats, snap, now);
     if should_push_approach_sample(
         prev_phase,
         stats.was_airborne,
@@ -48933,15 +49012,14 @@ fn step_flight_at(
             let descent_resumed = snap.vertical_speed_fpm < -300.0 && snap.altitude_agl_ft < 5000.0;
             if descent_resumed {
                 next_phase = FlightPhase::Approach;
-                stats.holding_pending_since = None;
-                stats.holding_exit_pending_since = None;
                 stats.previous_phase_before_holding = None;
                 // Reset approach VS-min tracker (v0.5.5) for fresh
                 // approach measurement post-hold.
                 anflug_beginnt(&mut stats);
-            } else if snap.bank_deg.abs() < 5.0 {
-                let exit = stats.holding_exit_pending_since.get_or_insert(now);
-                if (now - *exit).num_seconds() >= HOLDING_EXIT_DWELL_SECS {
+            } else if kurs_ruhig(&stats, now) {
+                // 17.10.2026: Ende erst nach 3 min (fast) geradeaus — länger
+                // als jeder Schenkel. Vorher genügten 30 s Flügel waagerecht.
+                {
                     let prev = stats
                         .previous_phase_before_holding
                         .unwrap_or(FlightPhase::Cruise);
@@ -48957,12 +49035,8 @@ fn step_flight_at(
                         ) => v2,
                         _ => prev,
                     };
-                    stats.holding_pending_since = None;
-                    stats.holding_exit_pending_since = None;
                     stats.previous_phase_before_holding = None;
                 }
-            } else {
-                stats.holding_exit_pending_since = None;
             }
         }
         FlightPhase::Descent => {
@@ -49897,6 +49971,7 @@ fn step_flight_at(
                             // missed-approach behind an immediate
                             // false-positive trigger.
                             stats.lowest_agl_during_approach_ft = None;
+                            stats.tiefster_anflugpunkt = None;
                             stats.go_around_climb_pending_since = None;
                             // v0.5.11: also reset climb_peak_msl so
                             // the new Climb segment after T&G starts
@@ -50471,7 +50546,7 @@ fn step_flight_at(
     if next_phase != prev_phase {
         // v0.7.5 Phase-Safety Hotfix (Spec §13.9): siehe should_reset_holding_pending.
         if should_reset_holding_pending(prev_phase, next_phase) {
-            stats.holding_pending_since = None;
+            stats.kurs_verlauf.clear();
         }
         stats.phase = next_phase;
         stats.transitions.push((now, next_phase));
@@ -52010,15 +52085,17 @@ mod enroute_reconcile_tests {
                 // Steigende Fenster-Evidenz (+800 fpm) → Segment Climbing;
                 // v2 promotet aus Cruise heraus auf Climb → Ziel = Climb,
                 // Rang 0 < 2 = rückwärts.
+                // 3200 ft Gewinn: mehr als `REISEFLUG_STUFE_FT` über der
+                // Reiseflughöhe, sonst bliebe es eine Stufe im Cruise.
                 let v2 = feed_v2_evidence(
                     &mut stats,
                     FlightPhase::Cruise,
                     40,
                     7000.0,
-                    40.0,
+                    80.0,
                     6000.0,
-                    40.0,
-                    800.0,
+                    80.0,
+                    1600.0,
                     false,
                 );
                 assert_eq!(
@@ -52081,12 +52158,14 @@ mod enroute_reconcile_tests {
         snap.bank_deg = 25.0;
         let mut phase = FlightPhase::Cruise;
         for i in 0..40 {
+            // Standardkurve 3°/s → 15° je 5-s-Takt.
+            snap.heading_deg_true = (15.0 * i as f32) % 360.0;
             if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
                 phase = p;
             }
             flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
         }
-        assert_eq!(phase, FlightPhase::Holding, "sustained bank in cruise must enter Holding");
+        assert_eq!(phase, FlightPhase::Holding, "circling in cruise must enter Holding");
     }
 
     /// Warteschleife während des Sinkflugs (Level-off, anhaltende
@@ -52112,12 +52191,13 @@ mod enroute_reconcile_tests {
         snap.bank_deg = 25.0;
         let mut phase = FlightPhase::Descent;
         for i in 0..40 {
+            snap.heading_deg_true = (360.0 - 15.0 * i as f32).rem_euclid(360.0);
             if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
                 phase = p;
             }
             flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Descent);
         }
-        assert_eq!(phase, FlightPhase::Holding, "sustained bank on a descent level-off must enter Holding");
+        assert_eq!(phase, FlightPhase::Holding, "circling on a descent level-off must enter Holding");
         assert_eq!(
             flight.stats.lock().unwrap().previous_phase_before_holding,
             Some(FlightPhase::Descent)
@@ -52171,13 +52251,86 @@ mod enroute_reconcile_tests {
         snap.groundspeed_kt = 230.0;
         snap.engines_running = 2;
         snap.bank_deg = 0.0;
+        snap.heading_deg_true = 90.0;
         let mut wechsel = Vec::new();
-        for i in 0..10 {
+        for i in 0..45 {
             if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
                 wechsel.push(p);
             }
         }
         assert_eq!(wechsel, vec![FlightPhase::Cruise], "one clean Holding→Cruise, no Descent tick");
+    }
+
+    /// Fliegt eine Rennbahn-Warteschleife (Schenkel 60 s, Kurven 180° in
+    /// 60 s) über 12 min ab und beginnt in der ersten Kurve, ergibt sich EINE
+    /// Warteschleife bis zum Geradeausflug danach — nicht ein Bruchstück je
+    /// Schenkel (P16 FL205 vor dem 17.10.2026: drei 45-s-Stücke).
+    fn racetrack_flight() -> (ActiveFlight, SimSnapshot, DateTime<Utc>) {
+        let flight = fixture();
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Cruise;
+            stats.shadow_phase = Some(FlightPhase::Cruise);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 20500.0;
+        snap.altitude_agl_ft = 19500.0;
+        snap.groundspeed_kt = 240.0;
+        snap.engines_running = 2;
+        (flight, snap, Utc::now() - chrono::Duration::seconds(1500))
+    }
+
+    #[test]
+    fn racetrack_hold_is_one_holding_not_fragments() {
+        let (flight, mut snap, t0) = racetrack_flight();
+        let mut wechsel = Vec::new();
+        let mut kurs = 90.0_f32;
+        for i in 0..(12 * 60 / 5) {
+            // Zyklus 4 min: 60 s Kurve rechts, 60 s gerade, 60 s Kurve, 60 s gerade.
+            let im_zyklus = (i * 5) % 240;
+            let kurve = im_zyklus < 60 || (120..180).contains(&im_zyklus);
+            if kurve {
+                kurs = (kurs + 15.0) % 360.0;
+            }
+            snap.bank_deg = if kurve { 25.0 } else { 0.0 };
+            snap.heading_deg_true = kurs;
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                wechsel.push(p);
+            }
+            flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
+        }
+        assert_eq!(wechsel, vec![FlightPhase::Holding], "one hold for the whole racetrack");
+        // Danach 4 min geradeaus → Ende der Warteschleife, genau einmal.
+        for i in (12 * 60 / 5)..(16 * 60 / 5) {
+            snap.bank_deg = 0.0;
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                wechsel.push(p);
+            }
+            flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
+        }
+        assert_eq!(wechsel, vec![FlightPhase::Holding, FlightPhase::Cruise]);
+    }
+
+    /// Eine lange Kurve (200° in 3 min, 25° Querneigung) ist keine
+    /// Warteschleife (FL388 vor dem 17.10.2026: zwei Schein-Warteschleifen).
+    #[test]
+    fn long_course_change_is_no_holding() {
+        let (flight, mut snap, t0) = racetrack_flight();
+        snap.bank_deg = 25.0;
+        let mut kurs = 0.0_f32;
+        for i in 0..72 {
+            if i < 36 {
+                kurs = (kurs + 200.0 / 36.0) % 360.0;
+            } else {
+                snap.bank_deg = 0.0;
+            }
+            snap.heading_deg_true = kurs;
+            assert_eq!(step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)), None);
+            flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
+        }
     }
 
     #[test]
@@ -64310,6 +64463,60 @@ mod touch_and_go_go_around_tests {
         Utc.with_ymd_and_hms(2026, 5, 3, 12, 0, 0).unwrap()
     }
 
+    /// 1 NM vor der Schwelle EDDF 25C (50.0451 N, 8.5870 E, Bahnkurs 249,6°
+    /// laut OurAirports-Tabelle), Kurs auf die Bahn.
+    fn endanflug_eddf_25c(agl_ft: f64, vs_fpm: f32) -> SimSnapshot {
+        let mut s = snap_at(agl_ft, vs_fpm, false);
+        s.lat = 50.0509;
+        s.lon = 8.6113;
+        s.heading_deg_true = 249.6;
+        s
+    }
+
+    /// 17.10.2026: Dasselbe Steigen aus dem Anflug fern jeder Bahn ist kein
+    /// Durchstarter — die Phase geht in den Steigflug, gezählt wird nichts.
+    #[test]
+    fn climb_away_without_runway_is_climb_but_no_go_around() {
+        let mut stats = FlightStats::default();
+        let mut tief = snap_at(400.0, -600.0, false);
+        // Mitten über der Lüneburger Heide, kein Platz in 3 NM.
+        tief.lat = 53.10;
+        tief.lon = 10.10;
+        tief.heading_deg_true = 90.0;
+        update_lowest_approach_agl(&mut stats, &tief);
+        let now = t0();
+        let climb = snap_at(700.0, 1200.0, false);
+        assert!(check_go_around(&mut stats, &climb, now).is_none());
+        let out = check_go_around(
+            &mut stats,
+            &climb,
+            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+        );
+        assert!(matches!(out, Some(FlightPhase::Climb)), "phase still leaves the approach");
+        assert_eq!(stats.go_around_count, 0, "no runway ahead — not a go-around");
+        assert!(stats.pending_acars_logs.is_empty());
+        assert_eq!(stats.lowest_agl_during_approach_ft, None);
+        assert_eq!(stats.tiefster_anflugpunkt, None);
+    }
+
+    /// Kurs quer zu allen Bahnen (Überflug des Platzes) zählt nicht.
+    /// EDDW: Bahnen 09/27 und 05/23 (88/268°, 52/232°), Kurs 160°.
+    #[test]
+    fn crossing_the_field_is_no_go_around() {
+        let mut stats = FlightStats::default();
+        let mut tief = snap_at(400.0, -600.0, false);
+        tief.lat = 53.0465;
+        tief.lon = 8.742;
+        tief.heading_deg_true = 160.0;
+        update_lowest_approach_agl(&mut stats, &tief);
+        let now = t0();
+        let climb = snap_at(700.0, 1200.0, false);
+        check_go_around(&mut stats, &climb, now);
+        let out = check_go_around(&mut stats, &climb, now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1));
+        assert!(matches!(out, Some(FlightPhase::Climb)));
+        assert_eq!(stats.go_around_count, 0);
+    }
+
     fn snap_at(agl_ft: f64, vs_fpm: f32, on_ground: bool) -> SimSnapshot {
         let mut s = SimSnapshot::default();
         s.altitude_agl_ft = agl_ft;
@@ -64365,8 +64572,10 @@ mod touch_and_go_go_around_tests {
     #[test]
     fn go_around_fires_after_dwell_seconds() {
         let mut stats = FlightStats::default();
-        // Establish approach minimum at 400 ft AGL.
-        update_lowest_approach_agl(&mut stats, &snap_at(400.0, -600.0, false));
+        // Establish approach minimum at 400 ft AGL — 1 NM vor der Schwelle
+        // EDDF 25C, auf Bahnkurs (seit 17.10.2026 zählt ein Durchstarter
+        // nur mit einer Landeschwelle voraus).
+        update_lowest_approach_agl(&mut stats, &endanflug_eddf_25c(400.0, -600.0));
         let now = t0();
         // Climb-back: 700 ft AGL with V/S +1200 fpm — meets all
         // conditions (700 > 400+200, 1200 > 500, airborne, engines on).

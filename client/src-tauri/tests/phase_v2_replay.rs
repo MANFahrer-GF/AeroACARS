@@ -222,9 +222,14 @@ fn golden_arc_dah3181() {
     // ehrlich als Climb (Cruise>Climb>Cruise). Mit Plan-Level bleibt
     // ein Step-Climb am/über ref durchgehend Cruise (Unit-Test
     // `step_climb_at_ref_stays_cruise`).
+    //
+    // 17.10.2026: Stufen bis `REISEFLUG_STUFE_FT` (2000 ft) über der
+    // aktuellen Reiseflughöhe bleiben Cruise — ein Cruise>Climb>Cruise-Paar
+    // weniger. Übrig bleibt der Wechsel um die 3,5-min-Datenlücke
+    // (18:20–18:24, danach 3800 ft tiefer und steigend — Neuladen im Sim).
     let arc = assert_golden(
         "dah3181.jsonl.gz",
-        "Boarding>Pushback>TaxiOut>TakeoffRoll>Takeoff>Climb>Cruise>Climb>Cruise>Climb>Cruise>Descent>Approach>Final>Landing>TaxiIn>BlocksOn>Arrived",
+        "Boarding>Pushback>TaxiOut>TakeoffRoll>Takeoff>Climb>Cruise>Climb>Cruise>Descent>Approach>Final>Landing>TaxiIn>BlocksOn>Arrived",
     );
     assert_terminal_arc("dah3181", &arc);
 }
@@ -244,9 +249,13 @@ fn golden_arc_dlh742_holding_flight() {
     // v2 modelliert Holding nicht (dokumentierter Diff) und bleibt
     // währenddessen Cruise. Die Cruise>Climb-Episoden sind ref-lose
     // Step-Climbs (siehe dah3181).
+    //
+    // 17.10.2026: Die Reiseflughöhe wandert hier in 100-ft-Stufen
+    // (FL326 → FL327 → FL328) — innerhalb von `REISEFLUG_STUFE_FT` bleibt
+    // das Cruise, statt jedes Mal Climb zu melden.
     let arc = assert_golden(
         "dlh742.jsonl.gz",
-        "Boarding>Pushback>TaxiOut>TakeoffRoll>Takeoff>Climb>Cruise>Climb>Cruise>Climb>Cruise>Climb>Cruise>Descent>Approach>Final>Landing>TaxiIn>BlocksOn",
+        "Boarding>Pushback>TaxiOut>TakeoffRoll>Takeoff>Climb>Cruise>Descent>Approach>Final>Landing>TaxiIn>BlocksOn",
     );
     assert_terminal_arc("dlh742", &arc);
     assert!(
