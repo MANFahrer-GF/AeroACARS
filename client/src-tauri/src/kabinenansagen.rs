@@ -262,7 +262,8 @@ pub(crate) struct Lauf {
     /// `None` = für diese Sprache gibt es keine Stimme, sie entfällt.
     ton: HashMap<(Slot, String), Option<Ton>>,
     in_arbeit: HashSet<(Slot, String)>,
-    /// Laufende Ton-Anfragen (höchstens [`TON_GLEICHZEITIG`]).
+    /// Laufende Vorrats-Anfragen (höchstens [`TON_GLEICHZEITIG`]; fällige
+    /// zählen nicht mit, siehe [`ton_auswahl`]).
     ton_laufend: usize,
     /// Vorübergehend nicht erzeugbar: wird wiederholt, bis die Ansage
     /// verfällt (keine feste Versuchszahl mehr, beta.5).
@@ -620,21 +621,43 @@ fn verfallen_aufraeumen(lauf: &mut Lauf, slot: Slot) {
 /// Wählt die nächsten Ton-Aufträge: fällige vor Vorrat, sonst in
 /// Flugreihenfolge; nur, was noch kommt. Höchstens [`TON_GLEICHZEITIG`].
 fn ton_pumpe(app: &AppHandle, flight: &Arc<ActiveFlight>, stats: &mut FlightStats, einst: &Einstellungen, flugart: Flugart, jetzt: i64) {
-    if stats.kabinen_lauf.ton_laufend >= TON_GLEICHZEITIG {
-        return;
-    }
     let wartend = stats.kabinen_lauf.warteschlange.wartend();
     let kandidaten = ton_kandidaten(stats, einst.kommandos, flugart, jetzt);
     let landung = stats.landung_erwartet;
-    let frei = TON_GLEICHZEITIG - stats.kabinen_lauf.ton_laufend;
-    for (slot, sprache, text) in kandidaten.into_iter().take(frei) {
-        let gebraucht_in_s = if wartend.contains(&slot) {
+    for (slot, sprache, text, faellig) in ton_auswahl(kandidaten, &wartend, stats.kabinen_lauf.ton_laufend) {
+        let gebraucht_in_s = if faellig {
             Some(0)
         } else {
             stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(slot, landung)).map(|t| t - jetzt)
         };
-        ton_auftrag(app, flight, stats, slot, sprache, text, gebraucht_in_s);
+        ton_auftrag(app, flight, stats, slot, sprache, text, gebraucht_in_s, faellig);
     }
+}
+
+/// Fällige Ansagen gehen immer sofort raus; nur der Vorrat teilt sich
+/// [`TON_GLEICHZEITIG`] Plätze. Der Server hält eine Vorrats-Anfrage offen,
+/// bis ihr Ton dran ist — sonst verfiele eine Turbulenz-Ansage hinter zwei
+/// wartenden Reiseflug-Tönen (Advisor beta.5). `laufend` = offener Vorrat.
+fn ton_auswahl(
+    kandidaten: Vec<(Slot, String, String)>,
+    wartend: &[Slot],
+    laufend: usize,
+) -> Vec<(Slot, String, String, bool)> {
+    let mut frei = TON_GLEICHZEITIG.saturating_sub(laufend);
+    kandidaten
+        .into_iter()
+        .filter_map(|(s, sp, t)| {
+            let faellig = wartend.contains(&s);
+            if faellig {
+                return Some((s, sp, t, true));
+            }
+            if frei == 0 {
+                return None;
+            }
+            frei -= 1;
+            Some((s, sp, t, false))
+        })
+        .collect()
 }
 
 /// Was als Nächstes Ton braucht, in Reihenfolge: fällige vor Vorrat, sonst
@@ -671,10 +694,13 @@ fn ton_auftrag(
     sprache: String,
     text: String,
     gebraucht_in_s: Option<i64>,
+    faellig: bool,
 ) {
     let lauf = &mut stats.kabinen_lauf;
     lauf.in_arbeit.insert((slot, sprache.clone()));
-    lauf.ton_laufend += 1;
+    if !faellig {
+        lauf.ton_laufend += 1;
+    }
     let ordner = flug_ordner(flight);
     let (app, flight) = (app.clone(), Arc::clone(flight));
     tauri::async_runtime::spawn(async move {
@@ -684,7 +710,9 @@ fn ton_auftrag(
         let lauf = &mut stats.kabinen_lauf;
         let k = (slot, sprache);
         lauf.in_arbeit.remove(&k);
-        lauf.ton_laufend = lauf.ton_laufend.saturating_sub(1);
+        if !faellig {
+            lauf.ton_laufend = lauf.ton_laufend.saturating_sub(1);
+        }
         // Kam inzwischen ein neuer Text (zweite Turbulenz o. ä.), gehört
         // dieser Ton zum alten: verwerfen, der neue wird angefragt.
         if lauf.texte.get(&k).is_some_and(|t| *t != text) {
@@ -1295,7 +1323,7 @@ pub(crate) async fn kabinen_probe(app: AppHandle, rolle: Rolle, sprache: String)
 pub(crate) enum Stand {
     /// Ankunftstext wird erst kurz vor der Landung geschrieben; `um` =
     /// voraussichtlich ab dann (unbekannt ohne erwartete Landung).
-    TextAb { um: Option<i64> },
+    TextAb { um: Option<i64>, nach_abheben: bool },
     TextWirdGeschrieben,
     TextFehler { um: i64, meldung: String },
     TextAufgegeben { meldung: String },
@@ -1403,7 +1431,7 @@ pub(crate) struct Ueberblick {
 }
 
 /// `slots`: die Slots dieses Teils, die auf diesem Flug noch kommen.
-fn teil_stand(lauf: &Lauf, teil: &str, slots: &[Slot], landung: Option<i64>) -> TeilStand {
+fn teil_stand(lauf: &Lauf, teil: &str, slots: &[Slot], landung: Option<i64>, kurz: bool) -> TeilStand {
     if slots.is_empty() {
         return TeilStand::Entfaellt;
     }
@@ -1424,13 +1452,13 @@ fn teil_stand(lauf: &Lauf, teil: &str, slots: &[Slot], landung: Option<i64>) -> 
     if lauf.angefragt.contains(teil) {
         return TeilStand::Laeuft;
     }
-    if teil == "ankunft" {
+    if teil == "ankunft" && !kurz {
         return TeilStand::Offen { um: landung.map(|l| l - ANKUNFT_TEXT_VOR_LANDUNG_MIN * 60) };
     }
     TeilStand::Offen { um: None }
 }
 
-fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>) -> (Stand, Vec<TeilAnsicht>) {
+fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool) -> (Stand, Vec<TeilAnsicht>) {
     if slot.rolle() == Rolle::Chime {
         return (Stand::Bereit, Vec::new());
     }
@@ -1460,7 +1488,9 @@ fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>) -> (Stand, Vec<Teil
             };
         }
         if teil == "ankunft" && !lauf.angefragt.contains("ankunft") {
-            return (Stand::TextAb { um: landung.map(|l| l - ANKUNFT_TEXT_VOR_LANDUNG_MIN * 60) }, teile);
+            // Kurzstrecke: Der Ankunftstext kommt gleich nach dem Abheben.
+            let um = if kurz { None } else { landung.map(|l| l - ANKUNFT_TEXT_VOR_LANDUNG_MIN * 60) };
+            return (Stand::TextAb { um, nach_abheben: kurz }, teile);
         }
         return (Stand::TextWirdGeschrieben, teile);
     }
@@ -1504,7 +1534,7 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
         .chain(wartend.iter().copied().filter(|s| ist_ereignis(*s)))
         .filter(|s| wartend.contains(s) || planer.kommt_noch(*s, stats.phase))
         .filter_map(|slot| {
-            let (stand, teile) = slot_stand(lauf, slot, landung);
+            let (stand, teile) = slot_stand(lauf, slot, landung, planer.ist_kurzstrecke());
             // Für keine Sprache eine Stimme: kommt nie, steht nicht in der Liste.
             if !teile.is_empty() && teile.iter().all(|t| t.keine_stimme) {
                 return None;
@@ -1610,8 +1640,8 @@ fn ueberblick_bauen(stats: &FlightStats, einst: &Einstellungen, flug: &cabin_ann
     let mit_ton: Vec<&Geplant> = geplant.iter().filter(|g| g.rolle != Rolle::Chime).collect();
     let ablauf = Ablauf {
         freigabe,
-        abflug: teil_stand(lauf, "abflug", &kommend(&ABFLUG), landung),
-        ankunft: teil_stand(lauf, "ankunft", &kommend(&ANKUNFT), landung),
+        abflug: teil_stand(lauf, "abflug", &kommend(&ABFLUG), landung, false),
+        ankunft: teil_stand(lauf, "ankunft", &kommend(&ANKUNFT), landung, planer.is_some_and(|p| p.ist_kurzstrecke())),
         ton_fertig: mit_ton.iter().filter(|g| g.stand == Stand::Bereit).count(),
         ton_gesamt: mit_ton.len(),
     };
@@ -2275,7 +2305,7 @@ mod tests {
         st.kabinen_lauf.sprachen = vec!["fr-FR".into(), "de-DE".into()];
 
         // Ankunft noch nicht angefragt: „Text ab ca. …“ (Landung − 45 min), nicht „wird vorbereitet“.
-        assert_eq!(zeile(&st, Slot::KapitaenSinkflug).unwrap().stand, Stand::TextAb { um: Some(10_000 - 45 * 60) });
+        assert_eq!(zeile(&st, Slot::KapitaenSinkflug).unwrap().stand, Stand::TextAb { um: Some(10_000 - 45 * 60), nach_abheben: false });
         st.kabinen_lauf.angefragt.insert("ankunft".into());
         assert_eq!(zeile(&st, Slot::KapitaenSinkflug).unwrap().stand, Stand::TextWirdGeschrieben);
 
@@ -2390,7 +2420,7 @@ mod tests {
         st.kabinen_lauf.fehlversuche.insert("abflug".into(), (3, 500));
         assert_eq!(zeile(&st, Slot::Boarding).unwrap().stand, Stand::TextAufgegeben { meldung: "api 503".into() });
         assert_eq!(
-            teil_stand(&st.kabinen_lauf, "abflug", &[Slot::Boarding], None),
+            teil_stand(&st.kabinen_lauf, "abflug", &[Slot::Boarding], None, false),
             TeilStand::Aufgegeben { meldung: "api 503".into() }
         );
         // „Erneut versuchen“ (ohne Flug: Logik direkt) gibt frei.
@@ -2399,8 +2429,9 @@ mod tests {
         verfallen_aufraeumen(&mut st.kabinen_lauf, Slot::Boarding);
         assert!(st.kabinen_lauf.texte_fehler.is_empty() && st.kabinen_lauf.ton_fehler.is_empty());
         // Ankunft noch nicht angefragt: offen ab Landung − 45 min; kommt nichts mehr: entfällt.
-        assert_eq!(teil_stand(&st.kabinen_lauf, "ankunft", &ANKUNFT, Some(9_000)), TeilStand::Offen { um: Some(9_000 - 2_700) });
-        assert_eq!(teil_stand(&st.kabinen_lauf, "abflug", &[], None), TeilStand::Entfaellt);
+        assert_eq!(teil_stand(&st.kabinen_lauf, "ankunft", &ANKUNFT, Some(9_000), false), TeilStand::Offen { um: Some(9_000 - 2_700) });
+        assert_eq!(teil_stand(&st.kabinen_lauf, "ankunft", &ANKUNFT, Some(9_000), true), TeilStand::Offen { um: None }, "Kurzstrecke: nach dem Abheben");
+        assert_eq!(teil_stand(&st.kabinen_lauf, "abflug", &[], None, false), TeilStand::Entfaellt);
     }
 
     #[test]
@@ -2459,6 +2490,18 @@ mod tests {
         // Kommandos reihen sich in Flugreihenfolge ein, Englisch.
         let mit: Vec<Slot> = ton_kandidaten(&st, true, Flugart::Linie, 0).into_iter().map(|(s, _, _)| s).collect();
         assert!(mit.contains(&Slot::KommandoLandungVorbereiten) && !mit.contains(&Slot::KommandoStart));
+    }
+
+    /// Advisor beta.5: Zwei wartende Vorrats-Töne dürfen eine fällige
+    /// Ansage (Turbulenz, Kommando) nicht aufhalten.
+    #[test]
+    fn faellige_ansage_geht_auch_bei_vollem_vorrat_raus() {
+        let k = |s: Slot| (s, "de-DE".to_string(), "x".to_string());
+        let kandidaten = vec![k(Slot::Turbulenz), k(Slot::Reiseflug80), k(Slot::KapitaenSinkflug)];
+        let gewaehlt: Vec<(Slot, bool)> = ton_auswahl(kandidaten.clone(), &[Slot::Turbulenz], 2).into_iter().map(|(s, _, _, f)| (s, f)).collect();
+        assert_eq!(gewaehlt, vec![(Slot::Turbulenz, true)], "Vorrat voll, die fällige geht trotzdem");
+        let gewaehlt: Vec<Slot> = ton_auswahl(kandidaten, &[], 1).into_iter().map(|(s, _, _, _)| s).collect();
+        assert_eq!(gewaehlt, vec![Slot::Turbulenz], "ohne Fälliges höchstens die freien Plätze");
     }
 
     #[test]

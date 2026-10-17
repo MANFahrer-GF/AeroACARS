@@ -168,6 +168,7 @@
     "stand": {
       "text_ab": "Testo dalle {{zeit}} circa",
       "text_ab_ohne": "Testo poco prima dell'atterraggio",
+      "text_ab_abheben": "Testo dopo il decollo",
       "text_wird_geschrieben": "Testo in scrittura",
       "text_fehler": "Testo mancante ({{grund}}), nuovo tentativo {{zeit}}",
       "text_aufgegeben": "Testo non ricevuto ({{grund}})",

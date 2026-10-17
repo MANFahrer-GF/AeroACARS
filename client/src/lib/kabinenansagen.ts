@@ -79,7 +79,7 @@ export interface Speicher {
 
 /** Wo eine Ansage steht (Rust `Stand`); `um` = UTC-Epoch-Sekunden. */
 export type Stand =
-  | { art: "text_ab"; um: number | null }
+  | { art: "text_ab"; um: number | null; nach_abheben?: boolean }
   | { art: "text_wird_geschrieben" }
   | { art: "text_fehler"; um: number; meldung: string }
   | { art: "text_aufgegeben"; meldung: string }

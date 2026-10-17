@@ -72,6 +72,7 @@ type T = ReturnType<typeof useTranslation>["t"];
 function standText(t: T, s: Stand): string {
   switch (s.art) {
     case "text_ab":
+      if (s.nach_abheben) return t("kabine.stand.text_ab_abheben");
       return s.um !== null ? t("kabine.stand.text_ab", { zeit: uhrzeit(s.um) }) : t("kabine.stand.text_ab_ohne");
     case "text_fehler":
     case "ton_wartet":

@@ -168,6 +168,7 @@
     "stand": {
       "text_ab": "Text ab ca. {{zeit}}",
       "text_ab_ohne": "Text kurz vor der Landung",
+      "text_ab_abheben": "Text nach dem Abheben",
       "text_wird_geschrieben": "Text wird geschrieben",
       "text_fehler": "Text fehlt ({{grund}}), neuer Versuch {{zeit}}",
       "text_aufgegeben": "Text nicht erhalten ({{grund}})",

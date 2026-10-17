@@ -168,6 +168,7 @@
     "stand": {
       "text_ab": "Text from about {{zeit}}",
       "text_ab_ohne": "Text shortly before landing",
+      "text_ab_abheben": "Text after take-off",
       "text_wird_geschrieben": "Text being written",
       "text_fehler": "Text missing ({{grund}}), next try {{zeit}}",
       "text_aufgegeben": "Text not received ({{grund}})",
