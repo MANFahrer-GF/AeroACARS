@@ -62,10 +62,10 @@ Grundlinie = derselbe Werkzeug-Stand auf `main`.
 
 | Prüfgröße | Grundlinie | Neu |
 |---|---|---|
-| Flattern im Reiseband | 389 | 52 |
+| Flattern im Reiseband | 389 | 52 (+7 an Warteschleifen) |
 | Früher Reiseflug (in 15 min noch > 4000 ft Steigen) | 22,8 h / 111 Flüge | 1,6 h / 17 Flüge |
 | Anflug-Stabilität identisch | — | 445/447 |
-| Warteschleifen | 9 (davon 2 Schein-Holds im flatternden Sinkflug) | 7, dazu Warteschleifen-Prüfung neu im Sinkflug |
+| Warteschleifen | 9 (davon 2 Schein-Holds im flatternden Sinkflug) | 9 (Prüfung jetzt auch im Sinkflug) |
 
 Erklärte Abweichungen:
 
@@ -75,7 +75,7 @@ Erklärte Abweichungen:
 - **Durchstarter** (4 Flüge): einer weniger (falsch, kurz nach dem Start), drei
   mehr bei tiefen Kleinflugzeug-Flügen. Der Detektor ist schon in der
   Grundlinie ungenau: 7 Durchstarter mit Tiefpunkt > 3 NM von jeder Bahn.
-- **Anflugbeginn** (31 Flüge > 10 s verschoben): meist früher und richtig (die
+- **Anflugbeginn** (32 Flüge > 10 s verschoben): meist früher und richtig (die
   alte Phase blieb im Reiseflug, bis 5000 ft verloren waren); 10 Flüge bis 76 s
   später (v2-Verzögerung bei kurzen tiefen Sinkflügen).
 
@@ -87,3 +87,11 @@ Erklärte Abweichungen:
 - Server: `POSITION_DELTA_EXCESSIVE`-Rauschgrenze im Steigflug (500 kt). Mit dem
   Wegfall des frühen Reiseflugs bleiben lange Steigflüge länger in CLIMB — die
   Fehlalarme dort steigen, bis die Grenze angehoben ist (Vorschlag 700 kt).
+
+## QS
+
+Advisor in jedem Schritt; Codex (gpt-5.6-sol) Runde 1: P2 flacher Anflug aus
+dem Reiseflug, P3 Ende der Warteschleife — behoben, Runde 2 ohne Befunde.
+Gegenproben: vier Verhaltens-Tests rot auf `main`, Warteschleifen- und
+Codex-Tests rot ohne den jeweiligen Fix. Abschluss-Lauf: jede Landung der
+Grundlinie wird erkannt.
