@@ -94,6 +94,7 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
       <span className="settings__field-label">{label}</span>
       <select value={e[feld]} onChange={(ev) => void aendern({ [feld]: ev.target.value } as Partial<Einstellungen>)}>
         <option value="piper">{t("kabine.einstellungen.anbieter_piper")}</option>
+        <option value="kokoro">{t("kabine.einstellungen.anbieter_kokoro")}</option>
         <option value="azure">{t("kabine.einstellungen.anbieter_azure")}</option>
       </select>
     </label>

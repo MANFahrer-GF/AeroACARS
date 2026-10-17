@@ -45,7 +45,8 @@ pub struct Einstellungen {
     pub zweite_sprache: String,
     /// Für „eigene“: BCP-47, z. B. "de-DE".
     pub eigene_sprache: Option<String>,
-    /// Anbieter je Rolle: "piper" (kostenlos) oder "azure" (eigener Schlüssel).
+    /// Anbieter je Rolle: "piper" (kostenlos), "kokoro" (kostenlos, nur
+    /// Englisch, sonst Piper) oder "azure" (eigener Schlüssel).
     pub anbieter_kapitaen: String,
     pub anbieter_kabine: String,
     pub anbieter_kommando: String,
@@ -100,7 +101,7 @@ impl Einstellungen {
         }
         self.eigene_sprache = self.eigene_sprache.filter(|s| ist_locale(s));
         for a in [&mut self.anbieter_kapitaen, &mut self.anbieter_kabine, &mut self.anbieter_kommando] {
-            if a != "piper" && a != "azure" {
+            if a != "piper" && a != "kokoro" && a != "azure" {
                 *a = "piper".into();
             }
         }
@@ -775,9 +776,14 @@ async fn sprechen(
 ) -> Result<Option<Ton>, String> {
     let ordner = ton_ordner(app)?;
     let schluessel = azure_schluessel();
-    let reihe: [&str; 2] = if einst.anbieter(rolle) == "azure" { ["azure", "piper"] } else { ["piper", "azure"] };
+    // Kokoro kann nur Englisch: Deutsch u. a. faellt auf Piper zurueck.
+    let reihe: &[&str] = match einst.anbieter(rolle) {
+        "azure" => &["azure", "piper"],
+        "kokoro" => &["kokoro", "piper", "azure"],
+        _ => &["piper", "azure"],
+    };
     for anbieter in reihe {
-        match anbieter {
+        match *anbieter {
             "azure" => {
                 let (Some(key), Some(stimme)) = (schluessel.as_deref(), azure_stimme(sprache, maennlich(rolle))) else {
                     continue;
@@ -786,6 +792,16 @@ async fn sprechen(
                 let pfad = ordner.join(&name);
                 if !pfad.exists() {
                     let wav = azure_sprechen(key, &einst.azure_region, stimme, text).await?;
+                    std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
+                }
+                return ton_aus_datei(&pfad, name).map(Some);
+            }
+            "kokoro" => {
+                let Some(stimme) = piper::kokoro_fuer(sprache, maennlich(rolle)) else { continue };
+                let name = cache::dateiname("kokoro", stimme, sprache, text, "wav");
+                let pfad = ordner.join(&name);
+                if !pfad.exists() {
+                    let wav = piper::sprechen(stimme, text).await?;
                     std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
                 }
                 return ton_aus_datei(&pfad, name).map(Some);
@@ -1330,12 +1346,21 @@ pub(crate) mod piper {
         })
     }
 
-    /// Ton vom Server. `Err` heißt „gerade nicht“ (kein Token, Netz,
+    /// Kokoro-82M auf demselben Server (Thomas 17.10.2026: zusaetzliche Wahl
+    /// neben Piper). Nur Englisch, britische Stimmen; Namen wie im Recorder
+    /// (`KOKORO_STIMMEN`).
+    pub(crate) fn kokoro_fuer(sprache: &str, m: bool) -> Option<&'static str> {
+        (sprache.split('-').next()? == "en").then_some(if m { "kokoro-bm_george" } else { "kokoro-bf_emma" })
+    }
+
+    /// Ton vom Server (Piper oder Kokoro, je nach Stimmenname). `Err` heißt „gerade nicht“ (kein Token, Netz,
     /// ausgelastet) — der Aufrufer versucht es später wieder.
     pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Vec<u8>, String> {
         let token = crate::live_zugang::pilot_token().ok_or("noch kein Live-Zugang (nicht provisioniert)")?;
         let antwort = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            // Lange Ansagen mit Kokoro rechnen bis ~2 min, dazu die
+            // Warteschlange des Servers.
+            .timeout(std::time::Duration::from_secs(300))
             .build()
             .map_err(|e| e.to_string())?
             .post(format!("{}/api/kabine/ton", crate::live_zugang::LIVE_BASIS))
@@ -1647,6 +1672,21 @@ mod tests {
         // Alte Einstellungsdatei ohne das Feld: Systemstandard.
         let alt: Einstellungen = serde_json::from_str(r#"{"an":true}"#).unwrap();
         assert_eq!(alt.ausgabe, None);
+    }
+
+    #[test]
+    fn kokoro_nur_englisch_und_als_anbieter_erlaubt() {
+        assert_eq!(piper::kokoro_fuer("en-GB", true), Some("kokoro-bm_george"));
+        assert_eq!(piper::kokoro_fuer("en-US", false), Some("kokoro-bf_emma"));
+        // Deutsch: keine Kokoro-Stimme, also spricht Piper (Reihe kokoro → piper).
+        assert_eq!(piper::kokoro_fuer("de-DE", true), None);
+        assert_eq!(piper::stimme_fuer("de-DE", true), Some("de_DE-thorsten-high"));
+        let e = Einstellungen { anbieter_kapitaen: "kokoro".into(), anbieter_kabine: "elevenlabs".into(), ..Einstellungen::default() }
+            .normalisiert();
+        assert_eq!(e.anbieter_kapitaen, "kokoro");
+        assert_eq!(e.anbieter_kabine, "piper", "Unbekanntes faellt auf Piper");
+        // Piper-Stimmen bleiben unveraendert (Kokoro ist Zusatz, kein Ersatz).
+        assert_eq!(piper::stimme_fuer("en-GB", true), Some("en_GB-northern_english_male-medium"));
     }
 
     /// Echtes Geraet: listet die Ausgaben und spielt den Chime auf dem

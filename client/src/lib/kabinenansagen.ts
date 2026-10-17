@@ -31,9 +31,9 @@ export interface Einstellungen {
   an: boolean;
   zweite_sprache: "keine" | "airline" | "ziel" | "eigene";
   eigene_sprache: string | null;
-  anbieter_kapitaen: "piper" | "azure";
-  anbieter_kabine: "piper" | "azure";
-  anbieter_kommando: "piper" | "azure";
+  anbieter_kapitaen: "piper" | "kokoro" | "azure";
+  anbieter_kabine: "piper" | "kokoro" | "azure";
+  anbieter_kommando: "piper" | "kokoro" | "azure";
   azure_region: string;
   echter_name: boolean;
   tagesform_kapitaen: string;
