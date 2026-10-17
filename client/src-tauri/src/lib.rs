@@ -10106,17 +10106,19 @@ fn check_go_around(
 /// v1/v2-Phasen-Paar überhaupt versöhnt werden? Siehe Doc an
 /// `ENROUTE_RECONCILE_DWELL_SECS` für die Gesamt-Mechanik.
 ///
-/// * v1 muss in einer Luft-Phase stehen — `Holding` ausgenommen: v2
-///   modelliert es bewusst nicht (dokumentierter Diff), dort DARF v1
-///   abweichen. Boden-/Terminal-Phasen ebenfalls nicht: dort ist v1
-///   autoritativ (v2 synct sich 1:1 von ihr).
-/// * v2 muss selbst im Luft-Band oder auf `Landing` stehen — `Landing`
-///   ist v2s Ground-Evidenz-Selbstbeförderung (v0.19.1) und genau der
-///   Endzustand, in den eine durchgehend festgehangene v1 gezogen werden
-///   muss, damit ihre eigene Landing→TaxiIn→BlocksOn→Arrived-Kette
-///   normal weiterlaufen kann. Alles andere (Preflight etc.) wäre bei
-///   einer luft-phasigen v1 ein Rückwärts-Sync und ist tabu.
-/// * Gleichstand ist keine Divergenz.
+/// Seit 17.10.2026 („Stück 2") nur noch zwei Fälle:
+/// * v1 im Anflug/Final, v2 woanders im Luft-Band oder auf `Landing` —
+///   verpasster Durchstarter (tote Triebwerks-SimVars), verpasste
+///   Bodenberührung, Steigen aus dem Anflug ohne Durchstarter.
+/// * v1 im Reiseband (Climb/Cruise/Descent), v2 schon im Anflug/Final/
+///   auf `Landing` — die GSG22-Klasse. `Landing` ist v2s Ground-Evidenz-
+///   Selbstbeförderung (v0.19.1), in die eine festgehangene v1 gezogen
+///   werden muss, damit ihre Landing→TaxiIn→BlocksOn→Arrived-Kette läuft.
+///
+/// Paare innerhalb des Reisebands gibt es nicht mehr zu versöhnen: dort
+/// übernimmt v1 v2s Phase direkt (`reiseband_phase`). `Holding` als v1
+/// bleibt ausgenommen (v2 modelliert es nicht), Boden-/Terminal-Phasen
+/// ebenfalls (dort ist v1 autoritativ). Gleichstand ist keine Divergenz.
 fn enroute_reconcile_eligible(v1: FlightPhase, v2: FlightPhase) -> bool {
     // Seit 17.10.2026 („Stück 2") übernimmt v1 im Reiseband (Climb/
     // Cruise/Descent) v2s Phase direkt (`reiseband_phase`) — Paare
@@ -48909,11 +48911,13 @@ fn step_flight_at(
             }
         }
         FlightPhase::Cruise => {
-            if anflug_kante(snap) {
-                // Gleiche Kante wie im Descent-Arm (und in v2s Cruise-Arm):
-                // tief und sinkend ist Anflug, auch ohne Umweg über Descent.
-                anflug_beginnt(&mut stats);
-                next_phase = FlightPhase::Approach;
+            // Schnellweg in den Sinkflug wie bisher (v0.5.4): tief und
+            // deutlich sinkend. BEWUSST nicht die 5000-ft-Anflug-Kante —
+            // Flüge, die knapp über 5000 ft über Gelände reisen, stünden
+            // sonst bei jedem leichten Sinken eine Stunde im Anflug
+            // (Korpus 17.10.2026: vier Flüge 12–53 min zu früh).
+            if snap.vertical_speed_fpm < -500.0 && snap.altitude_agl_ft < 3000.0 {
+                next_phase = FlightPhase::Descent;
             } else if let Some(p) = reiseband_phase(&stats) {
                 next_phase = p;
             } else if check_holding_entry(&mut stats, snap, now) {
@@ -86377,7 +86381,21 @@ mod phasen_korpus_replay {
                 let stats = flight.stats.lock().unwrap();
                 if stats.phase != vorher || bogen.is_empty() {
                     if stats.phase == FlightPhase::Landing && vorher != FlightPhase::Landing {
-                        anflug_puffer.push(fingerabdruck(&stats.approach_buffer));
+                        let mut f = fingerabdruck(&stats.approach_buffer);
+                        // Dieselbe Berechnung, die in die Landebewertung geht
+                        // (ohne Platzhöhe/Gleitpfad — die kennt das Replay nicht).
+                        f["stabilitaet"] = serde_json::Value::String(format!(
+                            "{:?}",
+                            compute_approach_stability_v2(
+                                &stats.approach_buffer,
+                                None,
+                                stats.landing_at,
+                                None,
+                                None,
+                                Default::default(),
+                            )
+                        ));
+                        anflug_puffer.push(f);
                     }
                     bogen.push((t.to_rfc3339(), format!("{:?}", stats.phase)));
                 }

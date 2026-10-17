@@ -13,11 +13,13 @@
 //! evidenz-getriebene Engine mit VOLLSTÄNDIGEM symmetrischem
 //! Übergangs-Graph für das En-Route-Band.
 //!
-//! **Schatten-Modus:** die alte FSM bleibt zu 100 % autoritativ. Diese
-//! Engine beobachtet nur, loggt ihre Sicht in die Position-JSONL
-//! (`shadow_phase`/`shadow_segment` im SimSnapshot) und zählt
-//! Divergenz-Sekunden. Umstellung erfolgt erst nach Wochen Datensammlung
-//! per Owner-Entscheidung.
+//! **Rolle seit 17.10.2026 („Stück 2"):** Im Reiseband (Climb/Cruise/
+//! Descent) entscheidet diese Engine — die alte FSM übernimmt ihre Phase
+//! des Vortakts (`reiseband_phase` in lib.rs). Anflug, Final, Landung,
+//! Warteschleife und Boden entscheidet weiter die alte FSM; dort läuft
+//! die Engine mit bzw. spiegelt sie. Bis dahin (v0.16.12–v2.0.23) lief sie
+//! im Schatten, ab v0.19.0 als angezeigte Phase. Ihre Rohsicht steht
+//! weiter als `shadow_phase`/`shadow_segment` in der Position-JSONL.
 //!
 //! Architektur (2 Layer, beide pur + uhrlos — Caller liefert Timestamps):
 //!
@@ -702,7 +704,15 @@ impl ShadowPhaseEngine {
                 // Cruise unter 5000 AGL entsteht nur durch Hineinsinken
                 // (CRUISE_MIN_AGL_FT-Gate), nie im Steig — 0 Gegenbeispiele
                 // im 189-Flug-Korpus.
-                if agl_ft < APPROACH_AGL_FT && vs_fpm < 0.0 {
+                //
+                // 17.10.2026: nur mit Fenster-Evidenz (`Descending`), nicht
+                // aus einem einzelnen negativen V/S-Wert. Flüge, die knapp
+                // über 5000 ft über Gelände reisen, sprangen sonst beim
+                // ersten leichten Sinken in den Anflug und blieben dort bis
+                // zu 53 min (Korpus 447 Flüge: vier Flüge, alle sichtbar
+                // im Cockpit). Seit v2 das Reiseband entscheidet, hinge
+                // daran auch die Phase der alten FSM.
+                if agl_ft < APPROACH_AGL_FT && vs_fpm < 0.0 && segment == Segment::Descending {
                     return FlightPhase::Approach;
                 }
                 match segment {
@@ -1614,14 +1624,35 @@ mod tests {
         sim.alt = 6000.0;
         let (p, _) = sim.fly(300, 0.0, FlightPhase::Cruise);
         assert_eq!(p, FlightPhase::Cruise);
-        // Moderater Sinkflug unter 5000 AGL (NICHT Fast-Path: agl > 3000).
-        sim.alt = 4500.0;
-        let (p, _) = sim.fly(10, -300.0, FlightPhase::Descent);
+        // Moderater, ANHALTENDER Sinkflug unter 5000 AGL (NICHT Fast-Path:
+        // agl > 3000). Seit 17.10.2026 braucht die Kante Fenster-Evidenz.
+        sim.alt = 4900.0;
+        let (p, _) = sim.fly(90, -600.0, FlightPhase::Cruise);
         assert_eq!(
             p,
             FlightPhase::Approach,
-            "Cruise <5000 AGL + sinkend → Approach"
+            "Cruise <5000 AGL + anhaltend sinkend → Approach"
         );
+    }
+
+    /// 17.10.2026: Reiseflug knapp unter 5000 ft über Gelände mit leichtem
+    /// Schwanken (Korpus: vier Flüge, bis zu 53 min zu früh im Anflug)
+    /// bleibt Reiseflug — ein einzelner negativer V/S-Wert ist kein Anflug.
+    #[test]
+    fn low_cruise_wobble_is_not_an_approach() {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.alt = 6000.0;
+        let (p, _) = sim.fly(300, 0.0, FlightPhase::Cruise);
+        assert_eq!(p, FlightPhase::Cruise);
+        // Gelände steigt unter dem Flugzeug: AGL unter 5000, Höhe hält.
+        sim.terrain_elev += 1500.0;
+        for _ in 0..20 {
+            let (p, _) = sim.fly(5, -80.0, FlightPhase::Cruise);
+            assert_eq!(p, FlightPhase::Cruise, "leichtes Sinken im tiefen Reiseflug ≠ Anflug");
+            let (p, _) = sim.fly(5, 80.0, FlightPhase::Cruise);
+            assert_eq!(p, FlightPhase::Cruise);
+        }
     }
 
     /// E2 (Balloon-Guard): ein kurzer, schwacher Steig-Blip im Final
