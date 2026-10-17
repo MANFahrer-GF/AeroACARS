@@ -1751,6 +1751,9 @@
     "about_all_releases": "Tutte le release su GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Segnala dirottamento",
+    "umleitung_modal_hint": "Scegli uno degli aeroporti più vicini o inserisci il codice ICAO della nuova destinazione.",
+    "umleitung_modal_submit": "Segnala dirottamento",
     "title_alternate": "Divert all'alternato pianificato rilevato",
     "title_nearest": "Atterraggio diverso rilevato",
     "title_unknown": "Aeroporto di atterraggio non riconosciuto",
@@ -2144,6 +2147,13 @@
     "langsamer": "Da oltre 2 minuti la simulazione gira più lenta del tempo reale. Può falsare tempo di volo, consumo e valutazione — torna a 1×."
   },
   "active_flight": {
+    "umleitung": "Dirottamento",
+    "umleitung_busy": "Invio…",
+    "umleitung_hint": "Segnala la nuova destinazione quando dirotti. La cabina annuncia il dirottamento. Il PIREP si invia come sempre dopo l'atterraggio.",
+    "umleitung_gemeldet": "Dirottamento verso {{icao}} segnalato.",
+    "umleitung_zurueckgenommen": "Dirottamento annullato.",
+    "umleitung_zuruecknehmen": "Annulla dirottamento",
+    "umleitung_anzeige": "Dirottamento: {{geplant}} → {{ziel}}",
     "title": "Volo attivo",
     "phase": {
       "preflight": "Preflight",

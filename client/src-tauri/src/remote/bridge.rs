@@ -665,6 +665,16 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "flight_refresh_route_only" => {
             from_uierr(crate::flight_refresh_route_only(app.clone(), st!()).await)
         }
+        // Umleitung (Beta): neues Ziel im Flug melden oder zuruecknehmen.
+        "flight_umleitung_setzen" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(default)]
+                icao: Option<String>,
+            }
+            let icao = parse_args::<A>(body).map(|a| a.icao).unwrap_or(None);
+            from_uierr(crate::flight_umleitung_setzen(app.clone(), st!(), icao).await)
+        }
         "flight_adopt" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]

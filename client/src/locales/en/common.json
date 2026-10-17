@@ -1765,6 +1765,9 @@
     "about_all_releases": "All releases on GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Report diversion",
+    "umleitung_modal_hint": "Pick one of the nearest airports or enter the ICAO code of the new destination.",
+    "umleitung_modal_submit": "Report diversion",
     "title_alternate": "Divert to planned alternate detected",
     "title_nearest": "Different landing field detected",
     "title_unknown": "Landing field not recognised",
@@ -2158,6 +2161,13 @@
     "langsamer": "The simulation has been running slower than real time for over 2 minutes. That can distort flight time, fuel use and scoring — please return to 1×."
   },
   "active_flight": {
+    "umleitung": "Divert",
+    "umleitung_busy": "Reporting…",
+    "umleitung_hint": "Report the new destination when you divert. The cabin announces the diversion. File the PIREP after landing as usual.",
+    "umleitung_gemeldet": "Diversion to {{icao}} reported.",
+    "umleitung_zurueckgenommen": "Diversion withdrawn.",
+    "umleitung_zuruecknehmen": "Withdraw diversion",
+    "umleitung_anzeige": "Diverting: {{geplant}} → {{ziel}}",
     "title": "Active flight",
     "phase": {
       "preflight": "Preflight",

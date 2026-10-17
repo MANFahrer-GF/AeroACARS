@@ -178,7 +178,11 @@ impl Planer {
         let mut p = Planer::neu(flug);
         let r = rang(phase);
         for s in Slot::ALLE {
-            if s.einmalig() && ausloese_rang(s) < r {
+            // Umleitung und Durchstarten sind Ereignisse, kein Ablauf: Sie
+            // koennen nach dem Wiedereinstieg noch kommen (typisch im
+            // Sinkflug oder Anflug).
+            let ereignis = matches!(s, Slot::Umleitung | Slot::Durchstarten);
+            if s.einmalig() && !ereignis && ausloese_rang(s) < r {
                 p.gemeldet.insert(s);
             }
         }
@@ -823,5 +827,13 @@ mod tests {
                 assert_eq!(normalflug_mit(Planer::fortsetzen(flug(min), phase), min), neu, "{min} min, {phase:?}");
             }
         }
+    }
+
+    #[test]
+    fn wiedereinstieg_im_anflug_laesst_umleitung_zu() {
+        let mut p = Planer::fortsetzen(flug(120), Approach);
+        let mut tk = tick(1_000, Approach, 4_000.0, -800.0);
+        tk.ziel_icao = Some("LFBD".into());
+        assert!(p.tick(&tk).iter().any(|f| f.slot == Slot::Umleitung));
     }
 }

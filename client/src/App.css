@@ -4163,6 +4163,19 @@ input:disabled {
 
 /* v1.5.5 Stand-Erkennung: gedämpfte Standzeile unter der Route,
    gleiche Mono-Familie wie die ICAO-Zeile darüber. */
+/* Umleitung (Beta): gemeldetes neues Ziel offen unter der Route, nicht nur
+   in der Knopfbeschriftung — gleiche Zeilenform wie die Stände, aber in
+   der Akzentfarbe, damit sie auffällt. */
+.active-flight__umleitung {
+  margin-top: 2px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    monospace;
+  color: var(--accent);
+}
+
 .active-flight__stands {
   margin-top: 2px;
   text-align: center;
@@ -6275,7 +6288,8 @@ input:disabled {
 /* v0.16.23: Route-Sync-Button — gleiche Optik wie der OFP-Refresh,
    damit die Aktions-Zeile konsistent bleibt. Anders als der OFP-Refresh
    ist er in jeder Flugphase sichtbar. */
-.active-flight__sync-route {
+.active-flight__sync-route,
+.active-flight__umleitung-knopf {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text);
@@ -6286,12 +6300,14 @@ input:disabled {
   transition: border-color 100ms, background 100ms;
 }
 
-.active-flight__sync-route:hover:not(:disabled) {
+.active-flight__sync-route:hover:not(:disabled),
+.active-flight__umleitung-knopf:hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.active-flight__sync-route:disabled {
+.active-flight__sync-route:disabled,
+.active-flight__umleitung-knopf:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

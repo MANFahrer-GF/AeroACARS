@@ -5529,6 +5529,9 @@ struct PersistedFlightStats {
     flight_type: Option<String>,
     #[serde(default)]
     airline_name: Option<String>,
+    /// Umleitung (Beta) — siehe FlightStats.
+    #[serde(default)]
+    umleitung_ziel: Option<String>,
     /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
     /// Summe aller Pause-Sekunden seit Flugstart. `#[serde(default)]`
     /// damit pre-Spec `active_flight.json` weiter ladbar bleibt — alte
@@ -5873,6 +5876,7 @@ impl PersistedFlightStats {
             max_passengers: stats.max_passengers,
             flight_type: stats.flight_type.clone(),
             airline_name: stats.airline_name.clone(),
+            umleitung_ziel: stats.umleitung_ziel.clone(),
             // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator)
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
@@ -6168,6 +6172,7 @@ impl PersistedFlightStats {
         stats.max_passengers = self.max_passengers;
         stats.flight_type = self.flight_type;
         stats.airline_name = self.airline_name;
+        stats.umleitung_ziel = self.umleitung_ziel;
         // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
         // ueber `save_active_flight`/Resume hinweg erhalten. Damit
         // wird ein App-Restart waehrend laufender Pause die akkumu-
@@ -7326,6 +7331,10 @@ struct FlightStats {
     /// Zuletzt gesehener `go_around_count`: Der Planer will eine Flanke,
     /// keinen Zaehler.
     kabinen_durchstarts: u32,
+    /// Umleitung (Beta): vom Piloten im Flug gemeldetes neues Ziel (ICAO).
+    /// Loest die Umleitungs-Ansage aus. Der PIREP-Divert laeuft weiter ueber
+    /// den Banner nach der Landung.
+    umleitung_ziel: Option<String>,
     /// Cockpit: erwartete Landung (Unix-s) aus der Planzeit am aktuellen Ort
     /// der Route (`landung_erwartet`). Nur in der Luft, nicht gespeichert —
     /// der naechste Takt rechnet sie neu.
@@ -9415,6 +9424,8 @@ pub struct ActiveFlightInfo {
     /// banner ("you landed at LFBO, planned was LEBL — file as divert
     /// to LFBO?") with action buttons. None for normal arrivals.
     divert_hint: Option<DivertHint>,
+    /// Umleitung (Beta): vom Piloten im Flug gemeldetes neues Ziel.
+    umleitung_ziel: Option<String>,
     /// Beim Wiederaufnehmen wurde ein physikalisch unmoeglicher Sprung
     /// erkannt (Sprit/Hoehe/Drift, s. `is_impossible_discontinuity`): Der
     /// Sim wurde neu geladen, der Flug ging so nicht weiter. Dann gibt die
@@ -17033,6 +17044,41 @@ fn ofp_nachladen_noetig(st: &FlightStats) -> bool {
     sprit_plan_fehlt || planzeiten_fehlen
 }
 
+/// Umleitung (Beta): normalisiert die Eingabe des Piloten. Leer heisst
+/// „zuruecknehmen“; das geplante Ziel ebenso (keine Umleitung).
+fn umleitung_ziel_normalisieren(eingabe: Option<&str>, geplant: &str) -> Result<Option<String>, UiError> {
+    let icao = eingabe.unwrap_or("").trim().to_ascii_uppercase();
+    if icao.is_empty() || icao == geplant.trim().to_ascii_uppercase() {
+        return Ok(None);
+    }
+    if icao.len() != 4 || !icao.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(UiError::new("invalid_icao", "ICAO-Code mit 4 Zeichen erwartet"));
+    }
+    Ok(Some(icao))
+}
+
+/// Umleitung (Beta): Der Pilot meldet im Flug ein neues Ziel. Daraus kommt
+/// die Umleitungs-Ansage; am PIREP aendert das nichts.
+#[tauri::command]
+async fn flight_umleitung_setzen(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    icao: Option<String>,
+) -> Result<Option<String>, UiError> {
+    let flight = state
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .as_ref()
+        .map(Arc::clone)
+        .ok_or_else(|| UiError::new("no_active_flight", "no active flight"))?;
+    let ziel = umleitung_ziel_normalisieren(icao.as_deref(), &flight.arr_airport)?;
+    flight.stats.lock().expect("flight stats lock").umleitung_ziel = ziel.clone();
+    save_active_flight(&app, &flight);
+    tracing::info!(ziel = ?ziel, "umleitung vom piloten gemeldet");
+    Ok(ziel)
+}
+
 /// v0.16.23: **Route-Only-Refresh** — holt den AKTUELLEN SimBrief-OFP und
 /// uebernimmt NUR die Strecke (planned_route + planned_waypoints +
 /// Alternate) in den laufenden Flug, postet sie an phpVMS und beruehrt
@@ -18656,6 +18702,7 @@ fn flight_info(
         paused_since: stats.paused_since.map(|t| t.to_rfc3339()),
         paused_last_known: stats.paused_last_known.clone(),
         divert_hint: stats.divert_hint.clone(),
+        umleitung_ziel: stats.umleitung_ziel.clone(),
         unmoeglicher_sprung: stats.resume_discontinuity.is_some(),
         abgabe_sperre: abgabe_sperre(&stats).map(|g| g.code().to_string()),
         resume_wartet_grund: stats.resume_wartet.as_ref().map(|(g, _)| g.clone()),
@@ -47270,10 +47317,9 @@ fn kabinen_schritt(
             .landung_erwartet
             .map(|t| (t - jetzt) as f64 / 60.0)
             .filter(|m| *m >= 0.0),
-        // Ein neues Ziel kennt der Client erst nach der Landung
-        // (`divert_hint`) — fuer die Umleitungs-Ansage gibt es noch keine
-        // Quelle.
-        ziel_icao: None,
+        // Das neue Ziel meldet der Pilot im Flug (`flight_umleitung_setzen`);
+        // `divert_hint` kommt erst nach der Landung.
+        ziel_icao: stats.umleitung_ziel.clone(),
         abweichung_off_block_min: if stats.block_off_at.is_none() {
             stats
                 .ofp_planzeiten
@@ -51824,6 +51870,56 @@ mod arrived_fallback_geometry_tests {
         assert_eq!(f.geplante_flugzeit_min, Some(70), "Rueckfall auf phpVMS");
         assert_eq!(f.flugart, Some(cabin_announcements::Flugart::Aus), "ohne Pax keine Ansagen");
         assert_eq!(f.tod_nach_abheben_s, None);
+    }
+
+    /// Umleitung (Beta): Eingabe wird normalisiert, Unsinn abgelehnt, leer
+    /// oder das geplante Ziel nimmt die Umleitung zurueck.
+    #[test]
+    fn umleitung_eingabe_normalisieren() {
+        assert_eq!(umleitung_ziel_normalisieren(Some(" lfbd "), "LFBO").unwrap().as_deref(), Some("LFBD"));
+        assert_eq!(umleitung_ziel_normalisieren(Some("lfbo"), "LFBO").unwrap(), None);
+        assert_eq!(umleitung_ziel_normalisieren(Some(""), "LFBO").unwrap(), None);
+        assert_eq!(umleitung_ziel_normalisieren(None, "LFBO").unwrap(), None);
+        assert!(umleitung_ziel_normalisieren(Some("LFB"), "LFBO").is_err());
+        assert!(umleitung_ziel_normalisieren(Some("LF-D"), "LFBO").is_err());
+    }
+
+    /// Umleitung (Beta), die Kette: gemeldetes Ziel → Planer → Ansage, auch
+    /// nach einem Neustart (gespeichert) und im Anflug.
+    #[test]
+    fn umleitung_kommt_als_ansage_und_ueberlebt_einen_resume() {
+        use cabin_announcements::Slot;
+        let jetzt = Utc::now();
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        let mut stats = FlightStats::new();
+        stats.phase = FlightPhase::Approach;
+        stats.pax_count = Some(150);
+        stats.max_passengers = Some(180);
+        stats.takeoff_at = Some(jetzt - chrono::Duration::minutes(90));
+        stats.umleitung_ziel = Some("LFBD".into());
+
+        let snapshot = PersistedFlightStats::snapshot_from(&stats);
+        let json = serde_json::to_string(&snapshot).expect("serializes");
+        let mut nach_neustart = FlightStats::new();
+        serde_json::from_str::<PersistedFlightStats>(&json).expect("parses").apply_to(&mut nach_neustart);
+        assert_eq!(nach_neustart.umleitung_ziel.as_deref(), Some("LFBD"));
+
+        let slots: Vec<_> = kabinen_schritt(&mut nach_neustart, &snap, jetzt, "LFBO", Some(120))
+            .into_iter()
+            .map(|f| f.slot)
+            .collect();
+        assert!(slots.contains(&Slot::Umleitung), "{slots:?}");
+
+        // Ohne gemeldetes Ziel keine Umleitungs-Ansage.
+        let mut ohne = FlightStats::new();
+        ohne.phase = FlightPhase::Approach;
+        ohne.pax_count = Some(150);
+        let slots: Vec<_> = kabinen_schritt(&mut ohne, &snap, jetzt, "LFBO", Some(120))
+            .into_iter()
+            .map(|f| f.slot)
+            .collect();
+        assert!(!slots.contains(&Slot::Umleitung), "{slots:?}");
     }
 
     /// v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,
@@ -62564,6 +62660,7 @@ pub fn run() {
             fetch_simbrief_preview,
             flight_refresh_simbrief,
             flight_refresh_route_only,
+            flight_umleitung_setzen,
             bid_simbrief_preview,
             ofp_callsign_warning_get,
             flight_resume_after_disconnect,

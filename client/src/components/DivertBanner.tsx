@@ -292,6 +292,8 @@ interface NearestAirport {
 interface ManualProps {
   activeFlight: ActiveFlightInfo;
   onClose: () => void;
+  /** Umleitung (Beta): derselbe Dialog im Flug, mit eigenen Texten. */
+  texte?: "landung" | "umleitung";
   /** Called with the chosen ICAO — parent opens the divert-confirm modal. */
   onPicked: (icao: string) => void;
 }
@@ -310,8 +312,9 @@ interface ManualProps {
  * hands the ICAO back to `DivertBanner`, which then opens the
  * mandatory-reason confirmation modal.
  */
-function ManualDivertModal({ activeFlight, onClose, onPicked }: ManualProps) {
+export function ManualDivertModal({ activeFlight, onClose, onPicked, texte = "landung" }: ManualProps) {
   const { t } = useTranslation();
+  const k = texte === "umleitung" ? "umleitung_modal" : "manual_modal";
   const [nearby, setNearby] = useState<NearestAirport[] | null>(null);
   const [custom, setCustom] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -347,8 +350,8 @@ function ManualDivertModal({ activeFlight, onClose, onPicked }: ManualProps) {
       onClick={onClose}
     >
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal__title">{t("divert.manual_modal_title")}</h2>
-        <p className="modal__hint">{t("divert.manual_modal_hint")}</p>
+        <h2 className="modal__title">{t(`divert.${k}_title`)}</h2>
+        <p className="modal__hint">{t(`divert.${k}_hint`)}</p>
 
         {nearby === null ? (
           <p className="modal__loading">…</p>
@@ -395,7 +398,7 @@ function ManualDivertModal({ activeFlight, onClose, onPicked }: ManualProps) {
             disabled={custom.trim().length < 3}
             onClick={() => pick(custom)}
           >
-            {t("divert.manual_modal_submit")}
+            {t(`divert.${k}_submit`)}
           </button>
         </div>
 

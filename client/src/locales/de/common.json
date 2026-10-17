@@ -1765,6 +1765,9 @@
     "about_all_releases": "Alle Releases auf GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Umleitung melden",
+    "umleitung_modal_hint": "Wähle einen der nächstgelegenen Flughäfen oder gib den ICAO-Code des neuen Ziels ein.",
+    "umleitung_modal_submit": "Umleitung melden",
     "title_alternate": "Divert zum geplanten Alternate erkannt",
     "title_nearest": "Anderer Landeplatz erkannt",
     "title_unknown": "Landeplatz nicht erkannt",
@@ -2158,6 +2161,13 @@
     "langsamer": "Die Simulation läuft seit über 2 Minuten langsamer als in Echtzeit. Das kann Flugzeit, Verbrauch und Auswertung verfälschen — bitte zurück auf 1×."
   },
   "active_flight": {
+    "umleitung": "Umleitung",
+    "umleitung_busy": "Melde…",
+    "umleitung_hint": "Neues Ziel melden, wenn du umleitest. Die Kabine sagt die Umleitung an. Den Flugbericht gibst du wie gewohnt nach der Landung ab.",
+    "umleitung_gemeldet": "Umleitung nach {{icao}} gemeldet.",
+    "umleitung_zurueckgenommen": "Umleitung zurückgenommen.",
+    "umleitung_zuruecknehmen": "Umleitung zurücknehmen",
+    "umleitung_anzeige": "Umleitung: {{geplant}} → {{ziel}}",
     "title": "Aktiver Flug",
     "phase": {
       "preflight": "Preflight",
