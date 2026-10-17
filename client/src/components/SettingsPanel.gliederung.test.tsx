@@ -14,7 +14,9 @@ import deCommon from "../locales/de/common.json";
 // laufen und den Lauf mit unbehandelten Fehlern zu faerben.
 vi.mock("../lib/ipc", () => ({
   invoke: vi.fn(async () => null),
-  isTauri: () => false,
+  // Wie im Programm (Boolean, nicht Funktion): Die Tauri-Abschnitte
+  // (Kabine, HUDs, LAN-Fernbedienung) muessen hier sichtbar sein.
+  isTauri: true,
   formatIpcError: (e: unknown) => String(e),
 }));
 
@@ -69,6 +71,7 @@ describe("Einstellungen — Gliederung", () => {
       t("kabine.einstellungen.titel"),
       t("msfs_hud.section_title"),
       t("xplane_band.section_title"),
+      t("remote.server.section_title"),
     ],
     tech: [t("settings.storage_section"), t("error_reporting.section_title"), t("settings.developer_section")],
   };
