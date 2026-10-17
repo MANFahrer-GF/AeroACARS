@@ -48952,6 +48952,13 @@ fn step_flight_at(
                 next_phase = FlightPhase::Approach;
             } else if let Some(p) = reiseband_phase(&stats) {
                 next_phase = p;
+            } else if check_holding_entry(&mut stats, snap, now) {
+                // Warteschleifen liegen oft im Sinkflug (ATC hält auf
+                // FL150). Bis 17.10.2026 wurden sie nur erkannt, weil das
+                // Level-off fälschlich auf Cruise sprang; seit v2 dort
+                // Descent hält, prüft der Descent-Arm selbst.
+                stats.previous_phase_before_holding = Some(FlightPhase::Descent);
+                next_phase = FlightPhase::Holding;
             }
         }
         FlightPhase::Approach => {
@@ -52052,6 +52059,41 @@ mod enroute_reconcile_tests {
             flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
         }
         assert_eq!(phase, FlightPhase::Holding, "sustained bank in cruise must enter Holding");
+    }
+
+    /// Warteschleife während des Sinkflugs (Level-off, anhaltende
+    /// Querneigung) — seit 17.10.2026 im Descent-Arm erkannt.
+    #[test]
+    fn holding_entry_from_descent_level_off() {
+        let flight = fixture();
+        let t0 = Utc::now() - chrono::Duration::seconds(200);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Descent;
+            stats.shadow_phase = Some(FlightPhase::Descent);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 15000.0;
+        snap.altitude_agl_ft = 14000.0;
+        snap.vertical_speed_fpm = 0.0;
+        snap.groundspeed_kt = 230.0;
+        snap.engines_running = 2;
+        snap.bank_deg = 25.0;
+        let mut phase = FlightPhase::Descent;
+        for i in 0..40 {
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                phase = p;
+            }
+            flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Descent);
+        }
+        assert_eq!(phase, FlightPhase::Holding, "sustained bank on a descent level-off must enter Holding");
+        assert_eq!(
+            flight.stats.lock().unwrap().previous_phase_before_holding,
+            Some(FlightPhase::Descent)
+        );
     }
 
     #[test]
