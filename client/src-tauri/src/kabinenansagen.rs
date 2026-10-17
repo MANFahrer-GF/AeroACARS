@@ -782,6 +782,10 @@ async fn sprechen(
         "kokoro" => &["kokoro", "piper", "azure"],
         _ => &["piper", "azure"],
     };
+    // Ein Fehler eines Anbieters (Netz, Server) beendet die Reihe nicht: der
+    // naechste darf es versuchen (Codex-QS beta.3). Klappt keiner, kommt der
+    // letzte Fehler zurueck — dann versucht es der Takt spaeter wieder.
+    let mut letzter_fehler: Option<String> = None;
     for anbieter in reihe {
         match *anbieter {
             "azure" => {
@@ -791,7 +795,13 @@ async fn sprechen(
                 let name = cache::dateiname("azure", stimme, sprache, text, "wav");
                 let pfad = ordner.join(&name);
                 if !pfad.exists() {
-                    let wav = azure_sprechen(key, &einst.azure_region, stimme, text).await?;
+                    let wav = match azure_sprechen(key, &einst.azure_region, stimme, text).await {
+                        Ok(w) => w,
+                        Err(e) => {
+                            letzter_fehler = Some(e);
+                            continue;
+                        }
+                    };
                     std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
                 }
                 return ton_aus_datei(&pfad, name).map(Some);
@@ -822,14 +832,24 @@ async fn sprechen(
                 if !pfad.exists() {
                     // Keine Stimme fuer die Sprache auf dem Server: weiter
                     // zum naechsten Anbieter (Azure), sonst entfaellt sie.
-                    let Some(wav) = piper::sprechen(&stimme, text).await? else { continue };
+                    let wav = match piper::sprechen(&stimme, text).await {
+                        Ok(Some(w)) => w,
+                        Ok(None) => continue,
+                        Err(e) => {
+                            letzter_fehler = Some(e);
+                            continue;
+                        }
+                    };
                     std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
                 }
                 return ton_aus_datei(&pfad, name).map(Some);
             }
         }
     }
-    Ok(None)
+    match letzter_fehler {
+        Some(e) => Err(e),
+        None => Ok(None),
+    }
 }
 
 fn ton_aus_datei(pfad: &Path, name: String) -> Result<Ton, String> {
@@ -1361,6 +1381,14 @@ pub(crate) mod piper {
         })
     }
 
+    /// `{"error":"keine_stimme"}` vom Server (recorder/src/kabinenTon.ts).
+    pub(crate) fn keine_stimme(koerper: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(koerper)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|e| e == "keine_stimme"))
+            .unwrap_or(false)
+    }
+
     /// Kokoro-82M auf demselben Server (Thomas 17.10.2026: zusaetzliche Wahl
     /// neben Piper). Nur Englisch, britische Stimmen; Namen wie im Recorder
     /// (`KOKORO_STIMMEN`).
@@ -1386,8 +1414,15 @@ pub(crate) mod piper {
             .send()
             .await
             .map_err(|e| format!("live.kant.ovh nicht erreichbar: {e}"))?;
+        // Nur die ausdrueckliche Antwort „keine Stimme fuer diese Sprache“ ist
+        // endgueltig; jeder andere 404 (Route fehlt, Proxy) ist vorlaeufig.
         if antwort.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
+            let koerper = antwort.text().await.unwrap_or_default();
+            return if keine_stimme(&koerper) {
+                Ok(None)
+            } else {
+                Err("Piper-Server antwortet 404".into())
+            };
         }
         if !antwort.status().is_success() {
             return Err(format!("Piper-Server antwortet {}", antwort.status()));
@@ -1466,6 +1501,10 @@ mod tests {
         assert_eq!(piper::stimme_fuer("fr-FR", true).as_deref(), Some("auto:fr-FR:m"));
         assert_eq!(piper::stimme_fuer("lv-LV", false).as_deref(), Some("auto:lv-LV:w"));
         assert_eq!(piper::stimme_fuer("frFR", true), None, "nur gueltige Sprachkennung");
+        // Nur die ausdrueckliche Server-Antwort ist „keine Stimme“.
+        assert!(piper::keine_stimme(r#"{"error":"keine_stimme"}"#));
+        assert!(!piper::keine_stimme("<html>Not Found</html>"));
+        assert!(!piper::keine_stimme(r#"{"error":"stimme_unbekannt"}"#));
         assert_eq!(azure_stimme("de-AT", false), Some("de-AT-IngridNeural"));
         assert_eq!(azure_stimme("de-CH", true), Some("de-CH-JanNeural"));
         assert_eq!(azure_stimme("xx-XX", true), None);
