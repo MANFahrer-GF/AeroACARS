@@ -1293,6 +1293,30 @@ fn find_nearest(
     out
 }
 
+/// Liegt vom Punkt aus eine Landeschwelle höchstens `max_nm` voraus, deren
+/// Landerichtung höchstens `max_kurs_deg` vom Kurs des Flugzeugs abweicht?
+/// Für den Durchstart-Detektor (17.10.2026): Ein Durchstarter hat seinen
+/// Tiefpunkt im Endanflug einer Bahn. Korpus 447 Flüge: echte Durchstarter
+/// 0,1–1,3 NM vor der Schwelle mit ≤ 36° Abweichung; Steigen aus dem
+/// Anflug ohne Bahn 3–25 NM entfernt oder quer zur Bahn (63–158°).
+pub fn schwelle_voraus(lat: f64, lon: f64, kurs_true_deg: f32, max_nm: f64, max_kurs_deg: f32) -> bool {
+    let rand = max_nm / 60.0 + 0.02;
+    let rand_lon = rand / lat.to_radians().cos().abs().max(0.05);
+    runways().iter().any(|row| {
+        [
+            (row.le_lat, row.le_lon, row.le_heading_true),
+            (row.he_lat, row.he_lon, row.he_heading_true),
+        ]
+        .into_iter()
+        .any(|(s_lat, s_lon, bahn_kurs)| {
+            (s_lat - lat).abs() <= rand
+                && (s_lon - lon).abs() <= rand_lon
+                && distance_nm(lat, lon, s_lat, s_lon) <= max_nm
+                && ((kurs_true_deg - bahn_kurs + 540.0) % 360.0 - 180.0).abs() <= max_kurs_deg
+        })
+    })
+}
+
 /// Look up the runway for a touchdown coordinate.
 ///
 /// `aircraft_heading_true_deg` is used to disambiguate between the two

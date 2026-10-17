@@ -934,6 +934,11 @@ const ENROUTE_RECONCILE_FORWARD_DWELL_SECS: i64 = 45;
 /// taildraggers) klettern bei einem GA selten >500 fpm — der frühere
 /// Threshold übersah ihre Go-Arounds komplett.
 const GO_AROUND_MIN_VS_FPM: f32 = 300.0;
+/// Durchstarter zählen nur mit einer Landeschwelle höchstens so weit voraus
+/// vom tiefsten Anflugpunkt (17.10.2026, siehe `runway::schwelle_voraus`).
+const GO_AROUND_SCHWELLE_NM: f64 = 3.0;
+/// … und höchstens so viel Abweichung zwischen Flugzeug- und Bahnkurs.
+const GO_AROUND_SCHWELLE_KURS_DEG: f32 = 45.0;
 /// AGL threshold above which we mark the flight as having actually
 /// flown. Powers the `was_airborne` gate that prevents both the
 /// Arrived-fallback and the divert-detection from firing pre-flight
@@ -5441,6 +5446,10 @@ struct PersistedFlightStats {
     go_around_count: u32,
     #[serde(default)]
     lowest_agl_during_approach_ft: Option<f32>,
+    /// 17.10.2026: Position und Kurs am tiefsten Anflugpunkt (Durchstart
+    /// nur nahe einer Bahn zählen).
+    #[serde(default)]
+    tiefster_anflugpunkt: Option<(f64, f64, f32)>,
     #[serde(default)]
     go_around_climb_pending_since: Option<DateTime<Utc>>,
     // v0.7.17 (B-010): Descent-Dwell-Timer persistieren damit Resume
@@ -5821,6 +5830,7 @@ impl PersistedFlightStats {
             touch_and_go_pending_since: stats.touch_and_go_pending_since,
             go_around_count: stats.go_around_count,
             lowest_agl_during_approach_ft: stats.lowest_agl_during_approach_ft,
+            tiefster_anflugpunkt: stats.tiefster_anflugpunkt,
             go_around_climb_pending_since: stats.go_around_climb_pending_since,
             descent_pending_since: stats.descent_pending_since,
             holding_pending_since: stats.holding_pending_since,
@@ -6111,6 +6121,7 @@ impl PersistedFlightStats {
         stats.touch_and_go_pending_since = self.touch_and_go_pending_since;
         stats.go_around_count = self.go_around_count;
         stats.lowest_agl_during_approach_ft = self.lowest_agl_during_approach_ft;
+        stats.tiefster_anflugpunkt = self.tiefster_anflugpunkt;
         stats.go_around_climb_pending_since = self.go_around_climb_pending_since;
         stats.descent_pending_since = self.descent_pending_since;
         stats.holding_pending_since = self.holding_pending_since;
@@ -7908,6 +7919,11 @@ struct FlightStats {
     /// we classify it as a GA. Reset whenever Phase enters Climb
     /// (so each new approach gets a fresh minimum to compare against).
     lowest_agl_during_approach_ft: Option<f32>,
+    /// Breite, Länge und wahrer Kurs am `lowest_agl_during_approach_ft`.
+    /// Gezählt wird ein Durchstarter nur, wenn dort eine Landeschwelle
+    /// voraus lag (`runway::schwelle_voraus`, 17.10.2026). `None` (z. B.
+    /// nach einem Neustart aus alten Flugdaten) = wie bisher zählen.
+    tiefster_anflugpunkt: Option<(f64, f64, f32)>,
     /// First tick where the GA detector saw AGL climbing back past
     /// the recovery threshold. We need this sustained for
     /// `GO_AROUND_DWELL_SECS` before firing — otherwise every brief
@@ -9942,11 +9958,10 @@ fn update_lowest_approach_agl(stats: &mut FlightStats, snap: &SimSnapshot) {
     if agl < 0.0 {
         return;
     }
-    stats.lowest_agl_during_approach_ft = Some(
-        stats
-            .lowest_agl_during_approach_ft
-            .map_or(agl, |prev| prev.min(agl)),
-    );
+    if stats.lowest_agl_during_approach_ft.is_none_or(|prev| agl < prev) {
+        stats.lowest_agl_during_approach_ft = Some(agl);
+        stats.tiefster_anflugpunkt = Some((snap.lat, snap.lon, snap.heading_deg_true));
+    }
 }
 
 /// Hoehe, an der der Durchstart-Detektor misst.
@@ -10072,20 +10087,42 @@ fn check_go_around(
     if conds {
         let pending = stats.go_around_climb_pending_since.get_or_insert(now);
         if (now - *pending).num_seconds() >= GO_AROUND_DWELL_SECS {
-            stats.go_around_count = stats.go_around_count.saturating_add(1);
+            // 17.10.2026: Durchstarter nur, wenn am tiefsten Punkt eine
+            // Landeschwelle voraus lag. Sonst war es ein Steigen aus dem
+            // Anflug (tiefer Überlandflug, Gelände, Höhenänderung) — die
+            // Phase geht trotzdem in den Steigflug, aber ohne Zählung
+            // (die im PIREP steht und in der Treibstoff-Teilnote eine
+            // Mehrweg-Gutschrift gibt). Korpus: 7 von 18 gezählten
+            // Durchstartern lagen 3–25 NM von jeder Schwelle entfernt.
+            let an_der_bahn = stats.tiefster_anflugpunkt.is_none_or(|(lat, lon, kurs)| {
+                runway::schwelle_voraus(lat, lon, kurs, GO_AROUND_SCHWELLE_NM, GO_AROUND_SCHWELLE_KURS_DEG)
+            });
+            if an_der_bahn {
+                stats.go_around_count = stats.go_around_count.saturating_add(1);
+                tracing::info!(
+                    count = stats.go_around_count,
+                    agl_ft = agl,
+                    lowest_ft = lowest,
+                    vs_fpm = snap.vertical_speed_fpm,
+                    "go-around classified — phase reverting to Climb"
+                );
+                stats.pending_acars_logs.push(format!(
+                    "Go-around #{} at {:.0} ft AGL (V/S {:.0} fpm)",
+                    stats.go_around_count, agl, snap.vertical_speed_fpm
+                ));
+            } else {
+                tracing::info!(
+                    agl_ft = agl,
+                    lowest_ft = lowest,
+                    vs_fpm = snap.vertical_speed_fpm,
+                    "climb-away from the approach without a runway ahead — Climb, no go-around"
+                );
+            }
+            // Der abgebrochene Anflug gilt in beiden Fällen nicht mehr:
+            // gemessene Vref und Anflug-Forensik beginnen neu.
             stats.vref_gemessen = None;
-            tracing::info!(
-                count = stats.go_around_count,
-                agl_ft = agl,
-                lowest_ft = lowest,
-                vs_fpm = snap.vertical_speed_fpm,
-                "go-around classified — phase reverting to Climb"
-            );
-            stats.pending_acars_logs.push(format!(
-                "Go-around #{} at {:.0} ft AGL (V/S {:.0} fpm)",
-                stats.go_around_count, agl, snap.vertical_speed_fpm
-            ));
             stats.lowest_agl_during_approach_ft = None;
+            stats.tiefster_anflugpunkt = None;
             stats.go_around_climb_pending_since = None;
             // Lernpaket AP4/AP5: der abgebrochene Anflug zaehlt nicht fuer
             // die Forensik der naechsten Landung.
@@ -49897,6 +49934,7 @@ fn step_flight_at(
                             // missed-approach behind an immediate
                             // false-positive trigger.
                             stats.lowest_agl_during_approach_ft = None;
+                            stats.tiefster_anflugpunkt = None;
                             stats.go_around_climb_pending_since = None;
                             // v0.5.11: also reset climb_peak_msl so
                             // the new Climb segment after T&G starts
@@ -64310,6 +64348,57 @@ mod touch_and_go_go_around_tests {
         Utc.with_ymd_and_hms(2026, 5, 3, 12, 0, 0).unwrap()
     }
 
+    /// 1 NM vor der Schwelle EDDF 25C (50.0451 N, 8.5870 E, Bahnkurs 249,6°
+    /// laut OurAirports-Tabelle), Kurs auf die Bahn.
+    fn endanflug_eddf_25c(agl_ft: f64, vs_fpm: f32) -> SimSnapshot {
+        let mut s = snap_at(agl_ft, vs_fpm, false);
+        s.lat = 50.0509;
+        s.lon = 8.6113;
+        s.heading_deg_true = 249.6;
+        s
+    }
+
+    /// 17.10.2026: Dasselbe Steigen aus dem Anflug fern jeder Bahn ist kein
+    /// Durchstarter — die Phase geht in den Steigflug, gezählt wird nichts.
+    #[test]
+    fn climb_away_without_runway_is_climb_but_no_go_around() {
+        let mut stats = FlightStats::default();
+        let mut tief = snap_at(400.0, -600.0, false);
+        // Mitten über der Lüneburger Heide, kein Platz in 3 NM.
+        tief.lat = 53.10;
+        tief.lon = 10.10;
+        tief.heading_deg_true = 90.0;
+        update_lowest_approach_agl(&mut stats, &tief);
+        let now = t0();
+        let climb = snap_at(700.0, 1200.0, false);
+        assert!(check_go_around(&mut stats, &climb, now).is_none());
+        let out = check_go_around(
+            &mut stats,
+            &climb,
+            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+        );
+        assert!(matches!(out, Some(FlightPhase::Climb)), "phase still leaves the approach");
+        assert_eq!(stats.go_around_count, 0, "no runway ahead — not a go-around");
+        assert!(stats.pending_acars_logs.is_empty());
+        assert_eq!(stats.lowest_agl_during_approach_ft, None);
+        assert_eq!(stats.tiefster_anflugpunkt, None);
+    }
+
+    /// Kurs quer zur Bahn (Überflug des Platzes) zählt nicht.
+    #[test]
+    fn crossing_the_field_is_no_go_around() {
+        let mut stats = FlightStats::default();
+        let mut tief = endanflug_eddf_25c(400.0, -600.0);
+        tief.heading_deg_true = 340.0;
+        update_lowest_approach_agl(&mut stats, &tief);
+        let now = t0();
+        let climb = snap_at(700.0, 1200.0, false);
+        check_go_around(&mut stats, &climb, now);
+        let out = check_go_around(&mut stats, &climb, now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1));
+        assert!(matches!(out, Some(FlightPhase::Climb)));
+        assert_eq!(stats.go_around_count, 0);
+    }
+
     fn snap_at(agl_ft: f64, vs_fpm: f32, on_ground: bool) -> SimSnapshot {
         let mut s = SimSnapshot::default();
         s.altitude_agl_ft = agl_ft;
@@ -64365,8 +64454,10 @@ mod touch_and_go_go_around_tests {
     #[test]
     fn go_around_fires_after_dwell_seconds() {
         let mut stats = FlightStats::default();
-        // Establish approach minimum at 400 ft AGL.
-        update_lowest_approach_agl(&mut stats, &snap_at(400.0, -600.0, false));
+        // Establish approach minimum at 400 ft AGL — 1 NM vor der Schwelle
+        // EDDF 25C, auf Bahnkurs (seit 17.10.2026 zählt ein Durchstarter
+        // nur mit einer Landeschwelle voraus).
+        update_lowest_approach_agl(&mut stats, &endanflug_eddf_25c(400.0, -600.0));
         let now = t0();
         // Climb-back: 700 ft AGL with V/S +1200 fpm — meets all
         // conditions (700 > 400+200, 1200 > 500, airborne, engines on).
