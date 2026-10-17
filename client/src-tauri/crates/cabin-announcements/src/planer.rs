@@ -69,8 +69,11 @@ pub struct Tick {
 pub struct Flugdaten {
     pub flugart: Option<Flugart>,
     pub geplante_flugzeit_min: Option<u32>,
-    /// Erwarteter Top of Descent (UTC-Epoch-Sekunden) aus dem OFP.
-    pub tod_epoch: Option<i64>,
+    /// Top of Descent laut OFP als Abstand vom Abheben (s, Navlog
+    /// `time_total` am TOD-Fix). Als Abstand, nicht als Uhrzeit: Ein
+    /// verspäteter Start verschiebt den TOD mit, sonst käme die
+    /// Sinkflug-Ansage direkt nach dem Abheben.
+    pub tod_nach_abheben_s: Option<i64>,
     pub ziel_plan_icao: Option<String>,
     pub reiseflughoehe_ft: Option<u32>,
     /// Abheben (UTC-Epoch-Sekunden), falls schon bekannt — beim
@@ -223,6 +226,12 @@ impl Planer {
         aus.push(Faellig { slot, verfall });
     }
 
+    /// TOD als Uhrzeit — erst bekannt, wenn das Flugzeug abgehoben hat.
+    fn tod_epoch(&self) -> Option<i64> {
+        let ab = self.abheben_epoch?;
+        self.flug.tod_nach_abheben_s.filter(|&s| s > 0).map(|s| ab + s)
+    }
+
     fn schon(&self, slot: Slot) -> bool {
         self.gemeldet.contains(&slot)
     }
@@ -307,8 +316,8 @@ impl Planer {
                     // Bezugsgröße ist die Zeit bis zum Sinkflug, nicht die ganze
                     // Flugzeit — sonst läge 80 % bei 2 h schon im Sinkflug.
                     // TOD aus dem OFP, sonst Planzeit minus 30 min Sinkflug.
-                    let bis_sinkflug_s = match self.flug.tod_epoch {
-                        Some(tod) if tod > ab => (tod - ab) as f64,
+                    let bis_sinkflug_s = match self.flug.tod_nach_abheben_s {
+                        Some(tod) if tod > 0 => tod as f64,
                         _ => (f64::from(plan) - SINKFLUG_MIN).max(1.0) * 60.0,
                     };
                     let anteil = (t.jetzt - ab) as f64 / bis_sinkflug_s;
@@ -366,7 +375,7 @@ impl Planer {
         // ---- Sinkflug und Landung ----
         if in_luft && self.war_im_reiseflug && r < rang(Final) {
             let nach_rest = t.rest_min.is_some_and(|m| m <= 25.0);
-            let nach_tod = self.flug.tod_epoch.is_some_and(|tod| t.jetzt >= tod - 300);
+            let nach_tod = self.tod_epoch().is_some_and(|tod| t.jetzt >= tod - 300);
             let nach_phase = r >= rang(Descent);
             if nach_rest || nach_tod || nach_phase {
                 self.melde(&mut aus, Slot::KapitaenSinkflug, Verfall::AbPhase(Final));
@@ -461,7 +470,7 @@ mod tests {
         Flugdaten {
             flugart: Some(Flugart::Linie),
             geplante_flugzeit_min: Some(min),
-            tod_epoch: None,
+            tod_nach_abheben_s: None,
             ziel_plan_icao: Some("LFBO".into()),
             reiseflughoehe_ft: Some(37_000),
             abheben_epoch: None,
@@ -783,5 +792,21 @@ mod tests {
         let hoch = Planer::neu(flug(120));
         tk.phase = Climb;
         assert!(hoch.ruhephase(&tk));
+    }
+
+    #[test]
+    fn verspaeteter_start_verschiebt_den_tod_mit() {
+        // TOD laut OFP 80 min nach dem Abheben; abgehoben wird 2 h nach Plan.
+        let mut f = flug(120);
+        f.tod_nach_abheben_s = Some(80 * 60);
+        let mut p = Planer::neu(f);
+        let ab = 7_200;
+        let sinkflug = |p: &mut Planer, jetzt: i64, phase| {
+            p.tick(&tick(jetzt, phase, 36_000.0, 0.0)).iter().any(|f| f.slot == Slot::KapitaenSinkflug)
+        };
+        assert!(!sinkflug(&mut p, ab, Takeoff));
+        assert!(!sinkflug(&mut p, ab + 20 * 60, Cruise), "kurz nach dem Abheben noch kein Sinkflug");
+        assert!(!sinkflug(&mut p, ab + 70 * 60, Cruise));
+        assert!(sinkflug(&mut p, ab + 76 * 60, Cruise), "5 min vor dem TOD");
     }
 }

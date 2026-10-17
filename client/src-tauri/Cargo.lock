@@ -25,6 +25,7 @@ dependencies = [
  "anyhow",
  "api-client",
  "axum",
+ "cabin-announcements",
  "chrono",
  "csv",
  "dirs",

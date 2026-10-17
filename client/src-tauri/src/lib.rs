@@ -7320,6 +7320,12 @@ struct FlightStats {
     /// Kabinenansagen (Beta): Name der Airline aus dem Bid, fuer den Text.
     /// Die Kennung steht schon in `ActiveFlight::airline_icao`.
     airline_name: Option<String>,
+    /// Kabinenansagen (Beta): der Planer dieses Fluges. Nicht gespeichert —
+    /// nach einem Neustart entsteht er mit `Planer::fortsetzen` neu.
+    kabinen_planer: Option<cabin_announcements::Planer>,
+    /// Zuletzt gesehener `go_around_count`: Der Planer will eine Flanke,
+    /// keinen Zaehler.
+    kabinen_durchstarts: u32,
     /// Cockpit: erwartete Landung (Unix-s) aus der Planzeit am aktuellen Ort
     /// der Route (`landung_erwartet`). Nur in der Luft, nicht gespeichert —
     /// der naechste Takt rechnet sie neu.
@@ -41897,6 +41903,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             let takt = phasen_takt(&flight, &snap, Utc::now());
             let phase_change = takt.wechsel;
             takt_uhr.abschnitt("step_flight");
+            // Kabinenansagen (Beta): hier und nicht in `phasen_takt`, das
+            // laeuft auch im Korpus-Replay.
+            kabinen_takt(&flight, &snap, Utc::now());
+            takt_uhr.abschnitt("kabinenansagen");
 
             // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
             // Flugdaten FREI ist, in einem eigenen Faden — siehe
@@ -47163,6 +47173,124 @@ fn kabinen_eckdaten_aus_ofp(stats: &mut FlightStats, ofp: &api_client::SimBriefO
     }
 }
 
+/// Kabinenansagen (Beta): was der Planer einmal zu Beginn vom Flug wissen
+/// muss. `ziel` ist das geplante Ziel, `planzeit_min` die Flugzeit aus
+/// phpVMS als Rueckfall, wenn der OFP keine Planzeiten traegt.
+fn kabinen_flugdaten(
+    stats: &FlightStats,
+    ziel: &str,
+    planzeit_min: Option<i32>,
+) -> cabin_announcements::Flugdaten {
+    use cabin_announcements::flugart;
+    let u = |v: Option<i32>| v.and_then(|n| u32::try_from(n).ok());
+    let plan = &stats.ofp_planzeiten;
+    let ofp_min = match (plan.plan_abheben, plan.plan_aufsetzen) {
+        (Some(ab), Some(auf)) if auf > ab => Some((auf - ab) / 60),
+        _ => None,
+    };
+    cabin_announcements::Flugdaten {
+        flugart: Some(flugart::einordnen(
+            stats.flight_type.as_deref(),
+            u(stats.pax_count),
+            u(stats.max_passengers),
+            flugart::BIZJET_SITZE_STANDARD,
+        )),
+        geplante_flugzeit_min: ofp_min
+            .and_then(|m| u32::try_from(m).ok())
+            .or(u(planzeit_min))
+            .filter(|&m| m > 0),
+        // Navlog `time_total` zaehlt ab dem Abheben (Steigflug-Fixe der
+        // Testdaten: 23.600 ft nach 513 s).
+        tod_nach_abheben_s: stats
+            .planned_waypoints
+            .iter()
+            .find(|f| f.ident.eq_ignore_ascii_case("TOD"))
+            .and_then(|f| f.zeit_bis_hier_s)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .map(|s| s.round() as i64),
+        ziel_plan_icao: Some(ziel.trim().to_ascii_uppercase()).filter(|s| !s.is_empty()),
+        reiseflughoehe_ft: stats
+            .planned_cruise_alt_ft
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .map(|f| f.round() as u32),
+        abheben_epoch: stats.takeoff_at.map(|t| t.timestamp()),
+    }
+}
+
+/// Kabinenansagen (Beta): ein Takt des Planers mit der effektiven Phase
+/// (`stats.phase`). Pause, Slew und Replay-Verdacht gehen nicht hinein —
+/// wie bei der v2-Engine in [`phasen_takt`]. Ohne Passagierzahl entsteht
+/// kein Planer: Der Flug waere ohnehin „Aus“, und Pax und Sitze koennen beim
+/// Start noch nachkommen (OFP-Uebernahme nach dem Eintragen des Fluges).
+///
+/// Noch spielt nichts ab: Faellige Ansagen gehen nur ins Log.
+fn kabinen_takt(flight: &ActiveFlight, snap: &SimSnapshot, now: DateTime<Utc>) {
+    if snap.paused || snap.slew_mode {
+        return;
+    }
+    let mut stats = flight.stats.lock().expect("flight stats");
+    if stats.replay_verdacht || stats.pax_count.is_none() {
+        return;
+    }
+    let faellig = kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min);
+    drop(stats);
+    for f in faellig {
+        tracing::info!(slot = ?f.slot, verfall = ?f.verfall, "kabinenansage faellig");
+    }
+}
+
+/// Der Kern von [`kabinen_takt`], ohne Sperre — damit testbar.
+fn kabinen_schritt(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+    ziel: &str,
+    planzeit_min: Option<i32>,
+) -> Vec<cabin_announcements::Faellig> {
+    let jetzt = now.timestamp();
+    if stats.kabinen_planer.is_none() {
+        // `fortsetzen` gilt auch fuer den normalen Start: Vor dem Boarding
+        // loest kein Slot aus, also wird dort nichts uebersprungen.
+        let flug = kabinen_flugdaten(stats, ziel, planzeit_min);
+        stats.kabinen_durchstarts = stats.go_around_count;
+        stats.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug, stats.phase));
+    }
+    let durchgestartet = stats.go_around_count > stats.kabinen_durchstarts;
+    stats.kabinen_durchstarts = stats.go_around_count;
+    let tick = cabin_announcements::Tick {
+        jetzt,
+        phase: stats.phase,
+        hoehe_ft: snap.altitude_msl_ft,
+        vs_fpm: f64::from(snap.vertical_speed_fpm),
+        am_boden: snap.on_ground,
+        anschnallzeichen: snap.seatbelts_sign,
+        // 0/1/2 = schiebt, 3 = kein Pushback.
+        pushback_aktiv: matches!(snap.pushback_state, Some(0..=2)),
+        rest_min: stats
+            .landung_erwartet
+            .map(|t| (t - jetzt) as f64 / 60.0)
+            .filter(|m| *m >= 0.0),
+        // Ein neues Ziel kennt der Client erst nach der Landung
+        // (`divert_hint`) — fuer die Umleitungs-Ansage gibt es noch keine
+        // Quelle.
+        ziel_icao: None,
+        abweichung_off_block_min: if stats.block_off_at.is_none() {
+            stats
+                .ofp_planzeiten
+                .plan_off_block
+                .and_then(|p| i32::try_from((jetzt - p).div_euclid(60)).ok())
+        } else {
+            None
+        },
+        durchgestartet,
+    };
+    stats
+        .kabinen_planer
+        .as_mut()
+        .map(|p| p.tick(&tick))
+        .unwrap_or_default()
+}
+
 /// „Zeiten gegen Flugplan": Plan des OFP plus die Ist-Zeiten dieses Fluges.
 /// Immer `Some` — ohne Plan sagt die Anzeige „kein SimBrief-OFP" (Altbestand
 /// ohne das Feld blendet den Abschnitt dagegen ganz aus).
@@ -51629,6 +51757,73 @@ mod arrived_fallback_geometry_tests {
         let mut stats = FlightStats::new();
         kabinen_eckdaten_aus_bid(&mut stats, &fracht);
         assert_eq!((stats.pax_count, stats.max_passengers), (None, None));
+    }
+
+    /// Kabinenansagen (Beta), die Kette: Eckdaten in `FlightStats` →
+    /// Flugdaten → Planer → faellige Ansage. Fracht bleibt stumm, ein
+    /// Linienflug bekommt im Boarding seine Ansage, ein Wiedereinstieg im
+    /// Reiseflug holt das Boarding nicht nach, und ein Durchstarten zaehlt
+    /// als Flanke, nicht bei jedem Takt neu.
+    #[test]
+    fn kabinen_takt_kette_von_den_stats_zur_ansage() {
+        use cabin_announcements::Slot;
+        let jetzt = Utc::now();
+        let snap = SimSnapshot::default();
+        let slots = |f: Vec<cabin_announcements::Faellig>| f.into_iter().map(|f| f.slot).collect::<Vec<_>>();
+
+        let mut fracht = FlightStats::new();
+        fracht.phase = FlightPhase::Boarding;
+        fracht.pax_count = Some(0);
+        assert!(kabinen_schritt(&mut fracht, &snap, jetzt, "EDDH", Some(60)).is_empty());
+
+        let mut linie = FlightStats::new();
+        linie.phase = FlightPhase::Boarding;
+        linie.pax_count = Some(150);
+        linie.max_passengers = Some(180);
+        linie.flight_type = Some("J".into());
+        assert!(slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60))).contains(&Slot::Boarding));
+
+        let mut resume = FlightStats::new();
+        resume.phase = FlightPhase::Cruise;
+        resume.pax_count = Some(150);
+        resume.max_passengers = Some(180);
+        resume.takeoff_at = Some(jetzt - chrono::Duration::minutes(20));
+        resume.go_around_count = 1;
+        let erste = slots(kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120)));
+        assert!(!erste.contains(&Slot::Boarding), "{erste:?}");
+        assert_eq!(resume.kabinen_durchstarts, 1, "ein alter Durchstart ist keine neue Flanke");
+        resume.go_around_count = 2;
+        kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120));
+        assert_eq!(resume.kabinen_durchstarts, 2);
+    }
+
+    /// Kabinenansagen (Beta): Flugzeit aus dem OFP vor phpVMS, TOD als
+    /// Abstand vom Abheben aus dem Navlog, Abheben aus `takeoff_at`.
+    #[test]
+    fn kabinen_flugdaten_aus_den_stats() {
+        let mut stats = FlightStats::new();
+        stats.pax_count = Some(6);
+        stats.max_passengers = Some(12);
+        stats.ofp_planzeiten.plan_abheben = Some(10_000);
+        stats.ofp_planzeiten.plan_aufsetzen = Some(10_000 + 95 * 60);
+        stats.planned_waypoints = vec![
+            api_client::RouteFix { ident: "TOC".into(), zeit_bis_hier_s: Some(1_200.0), ..Default::default() },
+            api_client::RouteFix { ident: "TOD".into(), zeit_bis_hier_s: Some(4_500.4), ..Default::default() },
+        ];
+        stats.planned_cruise_alt_ft = Some(41_000.0);
+        let f = kabinen_flugdaten(&stats, " eddm ", Some(70));
+        assert_eq!(f.flugart, Some(cabin_announcements::Flugart::Bizjet));
+        assert_eq!(f.geplante_flugzeit_min, Some(95), "OFP vor phpVMS");
+        assert_eq!(f.tod_nach_abheben_s, Some(4_500));
+        assert_eq!(f.ziel_plan_icao.as_deref(), Some("EDDM"));
+        assert_eq!(f.reiseflughoehe_ft, Some(41_000));
+        assert_eq!(f.abheben_epoch, None);
+
+        let ohne_ofp = FlightStats::new();
+        let f = kabinen_flugdaten(&ohne_ofp, "EDDM", Some(70));
+        assert_eq!(f.geplante_flugzeit_min, Some(70), "Rueckfall auf phpVMS");
+        assert_eq!(f.flugart, Some(cabin_announcements::Flugart::Aus), "ohne Pax keine Ansagen");
+        assert_eq!(f.tod_nach_abheben_s, None);
     }
 
     /// v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,
