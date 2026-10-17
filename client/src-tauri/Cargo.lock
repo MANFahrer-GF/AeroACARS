@@ -19,7 +19,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aeroacars-app"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "aeroacars-mqtt",
  "anyhow",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "aeroacars-mqtt"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -150,7 +150,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api-client"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",
@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "cabin-announcements"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "discord-presence"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "geo"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2020,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "hoppie-protocol"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "landing-scoring"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "metar"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",
@@ -3784,7 +3784,7 @@ dependencies = [
 
 [[package]]
 name = "recorder"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "chrono",
  "geo",
@@ -4269,7 +4269,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secrets"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4654,7 +4654,7 @@ dependencies = [
 
 [[package]]
 name = "sim-core"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "chrono",
  "serde",
@@ -4666,7 +4666,7 @@ dependencies = [
 
 [[package]]
 name = "sim-msfs"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "bindgen",
  "chrono",
@@ -4681,7 +4681,7 @@ dependencies = [
 
 [[package]]
 name = "sim-xplane"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4811,7 +4811,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "storage"
-version = "2.0.25"
+version = "2.0.26-beta.1"
 dependencies = [
  "chrono",
  "landing-scoring",
