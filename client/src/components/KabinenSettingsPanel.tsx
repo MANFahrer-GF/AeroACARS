@@ -6,6 +6,7 @@ import { formatIpcError } from "../lib/ipc";
 import {
   abspielen,
   azureSchluesselSetzen,
+  ausgabegeraete,
   einstellungenLesen,
   einstellungenSetzen,
   freigeben,
@@ -13,6 +14,7 @@ import {
   stoppen,
   zustandLesen,
   type Einstellungen,
+  type Geraet,
   type Rolle,
   type Zustand,
 } from "../lib/kabinenansagen";
@@ -27,11 +29,17 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
   const [schluessel, setSchluessel] = useState("");
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
+  const [geraete, setGeraete] = useState<Geraet[] | null>(null);
 
   useEffect(() => {
     void einstellungenLesen().then(setE);
     void zustandLesen().then(setZ).catch(() => setZ(null));
   }, []);
+
+  // Geräteliste beim Öffnen und beim Aufklappen der Auswahl neu lesen —
+  // ein Headset wird oft erst nach dem Start eingesteckt.
+  const geraeteLesen = () => void ausgabegeraete().then(setGeraete).catch(() => setGeraete([]));
+  useEffect(geraeteLesen, []);
 
   if (!e) {
     return (
@@ -234,6 +242,26 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
             <span>
               <strong>{t("kabine.einstellungen.chimes")}</strong>
             </span>
+          </label>
+
+          <label className="settings__field">
+            <span className="settings__field-label">{t("kabine.einstellungen.ausgabe")}</span>
+            <select
+              value={e.ausgabe ?? ""}
+              onFocus={geraeteLesen}
+              onChange={(ev) => void aendern({ ausgabe: ev.target.value || null })}
+            >
+              <option value="">{t("kabine.einstellungen.ausgabe_standard")}</option>
+              {(geraete ?? []).map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+              {e.ausgabe && geraete && !geraete.some((g) => g.id === e.ausgabe) && (
+                <option value={e.ausgabe}>{t("kabine.einstellungen.ausgabe_fehlt")}</option>
+              )}
+            </select>
+            <span className="settings__row-hint">{t("kabine.einstellungen.ausgabe_hint")}</span>
           </label>
 
           <label className="settings__field">

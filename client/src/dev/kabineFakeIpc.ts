@@ -1,6 +1,6 @@
 // Attrappe der IPC-Schicht für die Kabinen-Demo (nur vite.kabine.config.mjs).
-// Liefert einen laufenden Flug mit Verlauf und erzeugt sprachähnlichen Ton,
-// damit die echte Wiedergabe samt Pegelmessung läuft.
+// Liefert einen laufenden Flug mit Verlauf und eine sprachähnliche
+// Pegelkurve; „Wiedergabe“ wartet nur die Dauer ab (Ton spielt Rust).
 export const isTauri = true;
 export const formatIpcError = (e: unknown) => String(e);
 export async function openExternal(url: string) {
@@ -47,7 +47,21 @@ export const demoUeberblick = {
   wartend: ["reiseflug50", "kapitaen_sinkflug"],
   sprachen: ["de-DE", "en-GB"],
   beta: true,
+  // `?grund=keine_pax` zeigt den Hinweis, warum nichts kommt.
+  grund: (() => {
+    const g = new URLSearchParams(window.location.search).get("grund");
+    return g ? (g === "texte_fehlen" || g === "ton_fehlt" ? { grund: g, detail: "api 503: ausgelastet" } : { grund: g }) : null;
+  })(),
 };
+
+/** Silbenhüllkurve wie `wav()`, 30 Werte je Sekunde (Rust `huellkurve`). */
+function huelle(sekunden: number): number[] {
+  return Array.from({ length: Math.floor(sekunden * 30) }, (_, i) => {
+    const t = i / 30;
+    return Math.min(1, Math.max(0, Math.sin(t * Math.PI * 4.2)) * (0.6 + 0.4 * Math.sin(t * 1.3)) * 0.9);
+  });
+}
+let gestoppt = 0;
 
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   switch (cmd) {
@@ -64,6 +78,23 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       }) as T;
     case "kabinen_zustand":
       return { beta: true, azure_schluessel: true } as T;
+    case "kabinen_ausgabegeraete":
+      return [
+        { id: "coreaudio:BuiltInSpeakerDevice", name: "MacBook-Lautsprecher" },
+        { id: "coreaudio:Headset", name: "Jabra Evolve2 65" },
+      ] as T;
+    case "kabinen_ton_huellkurve":
+      return huelle(String(args?.datei).startsWith("lang") ? 6 : 3.5) as T;
+    case "kabinen_ton_stoppen":
+      gestoppt += 1;
+      return null as T;
+    case "kabinen_ton_spielen": {
+      const stand = gestoppt;
+      const ms = args?.datei == null ? 2100 : String(args.datei).startsWith("lang") ? 6000 : 3500;
+      const ende = Date.now() + ms;
+      while (Date.now() < ende && gestoppt === stand) await new Promise((r) => setTimeout(r, 50));
+      return null as T;
+    }
     default:
       return null as T;
   }

@@ -35,7 +35,11 @@
       "lautstaerke": "Volume",
       "probe": "Voice sample",
       "lizenzen": "Licences",
-      "lizenz_text": "Piper (GPL-3.0) runs on the GSG server and is not downloaded to your computer. Voices: Thorsten and Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, modified). Azure is a Microsoft service."
+      "lizenz_text": "Piper (GPL-3.0) runs on the GSG server and is not downloaded to your computer. Voices: Thorsten and Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, modified). Azure is a Microsoft service.",
+      "ausgabe": "Output device",
+      "ausgabe_standard": "System default",
+      "ausgabe_fehlt": "Selected device not connected (plays on the system default)",
+      "ausgabe_hint": "For example ATC in the headset and the cabin on the speakers. If the device is unplugged, the system default plays."
     },
     "rolle": {
       "kapitaen": "Captain",
@@ -97,7 +101,46 @@
       "als_naechstes": "Up next",
       "nichts_wartet": "Nothing queued.",
       "bisher": "So far",
-      "noch_nichts": "No announcement on this flight yet."
+      "noch_nichts": "No announcement on this flight yet.",
+      "keine_ansagen": "No announcements right now, the reason is shown below."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Announcements switched off",
+        "text": "Cabin announcements are switched off in the settings."
+      },
+      "replay": {
+        "titel": "Not a real flight",
+        "text": "AeroACARS considers this flight a replay. Announcements only play on a real flight."
+      },
+      "fracht": {
+        "titel": "Cargo flight",
+        "text": "According to the flight plan this flight carries no passengers (cargo, ferry or similar). There are no cabin announcements for it."
+      },
+      "keine_pax": {
+        "titel": "No passenger count",
+        "text": "AeroACARS has no passenger count for this flight: there is no SimBrief OFP and no passenger fares in the bid. On the ground, \"Refresh OFP\" in the active flight helps. If the flight was started with an older version, AeroACARS fetches the count at the next restart."
+      },
+      "keine_passagiere": {
+        "titel": "No passengers on board",
+        "text": "The flight plan lists 0 passengers. Without passengers there are no cabin announcements."
+      },
+      "beta_pruefung": {
+        "titel": "Checking access",
+        "text": "AeroACARS is asking the GSG server whether your account is enabled for the beta. If the server cannot be reached, AeroACARS tries again every 5 minutes."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Not enabled",
+        "text": "Your account is not enabled for the cabin announcements beta. The GSG team enables accounts."
+      },
+      "texte_fehlen": {
+        "titel": "Texts not received",
+        "text": "The GSG server did not deliver the announcement texts. AeroACARS tries again in 2 minutes. Server message:"
+      },
+      "ton_fehlt": {
+        "titel": "Audio not available right now",
+        "text": "The speech service did not deliver the audio (server busy, network or Azure key). AeroACARS tries again every minute. Message:"
+      }
     }
   },
   "app": {

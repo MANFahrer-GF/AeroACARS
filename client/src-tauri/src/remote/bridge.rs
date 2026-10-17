@@ -1465,6 +1465,10 @@ mod tests {
             "kabinen_azure_schluessel_setzen",
             "kabinen_zustand",
             "kabinen_audio",
+            "kabinen_ausgabegeraete",
+            "kabinen_ton_spielen",
+            "kabinen_ton_stoppen",
+            "kabinen_ton_huellkurve",
             "kabinen_probe",
             "kabinen_ueberblick",
             // VATSIM-CDM (v1.6.0): oeffnet ein NATIVES Fenster auf dem

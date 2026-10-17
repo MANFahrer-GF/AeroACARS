@@ -1,10 +1,12 @@
-// Kabinenansagen (Beta): Wiedergabe im Fenster der App.
+// Kabinenansagen (Beta): Ablauf der Wiedergabe.
 //
 // Rust entscheidet, WANN eine Ansage spielt (Planer + Warteschlange), und
 // schickt das Ereignis `kabine-ansage` mit den fertigen Tondateien. Hier
-// wird nur abgespielt: Sprache für Sprache nacheinander, mit Pegelmessung
-// für die Live-Anzeige der Ansage-Seite. Der 10.000-ft-Chime wird aus zwei
-// Sinustönen erzeugt — keine fremde Tondatei, keine Lizenzfrage.
+// wird die Reihenfolge gesteuert: Sprache für Sprache nacheinander, mit
+// Pegel für die Live-Anzeige der Ansage-Seite. Den Ton selbst spielt Rust
+// (`kabinen_ton_spielen`) auf dem gewählten Ausgabegerät — Lautsprecher,
+// Headset …; das Fenster könnte das Gerät nicht wählen. Auch der
+// 10.000-ft-Chime entsteht dort aus zwei Sinustönen.
 
 import { invoke, isTauri, listen } from "./ipc";
 
@@ -39,7 +41,19 @@ export interface Einstellungen {
   chimes: boolean;
   kommandos: boolean;
   lautstaerke: number;
+  /** Ausgabegerät (Kennung aus `kabinen_ausgabegeraete`), `null` = Systemstandard. */
+  ausgabe: string | null;
 }
+
+export interface Geraet {
+  id: string;
+  name: string;
+}
+
+/** Warum gerade keine Ansagen kommen (aus Rust, `Grund`). */
+export type Grund =
+  | { grund: "aus" | "replay" | "fracht" | "keine_pax" | "keine_passagiere" | "beta_pruefung" | "nicht_freigeschaltet" }
+  | { grund: "texte_fehlen" | "ton_fehlt"; detail: string };
 
 export interface Zustand {
   beta: boolean | null;
@@ -51,6 +65,7 @@ export interface Ueberblick {
   wartend: string[];
   sprachen: string[];
   beta: boolean | null;
+  grund: Grund | null;
 }
 
 /** Was die Seite live anzeigt. */
@@ -84,11 +99,8 @@ export function aktuell(): Wiedergabe {
   return zustand;
 }
 
-let kontext: AudioContext | null = null;
-function audio(): AudioContext {
-  if (!kontext) kontext = new AudioContext();
-  return kontext;
-}
+/** Pegelwerte je Sekunde aus `kabinen_ton_huellkurve` (Rust `HUELLE_JE_S`). */
+const HUELLE_JE_S = 30;
 
 const schlange: Gespielt[] = [];
 let laeuft = false;
@@ -98,74 +110,36 @@ let durchgang = 0;
  *  die ein schon laufender Takt noch schickt (Codex-QS 2). Erst
  *  `freigeben()` beim Einschalten hebt das auf. */
 let gesperrt = false;
-let aktuelleQuelle: AudioBufferSourceNode | null = null;
-
-async function tonLaden(datei: string): Promise<AudioBuffer> {
-  const daten = await invoke<ArrayBuffer>("kabinen_audio", { datei });
-  return audio().decodeAudioData(daten.slice(0));
-}
 
 function pause(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Spielt einen Puffer und misst dabei den Pegel (RMS) für die Anzeige. */
-function spielen(puffer: AudioBuffer, lautstaerke: number): Promise<void> {
-  const ctx = audio();
-  const quelle = ctx.createBufferSource();
-  quelle.buffer = puffer;
-  const gain = ctx.createGain();
-  gain.gain.value = lautstaerke;
-  const analyse = ctx.createAnalyser();
-  analyse.fftSize = 1024;
-  quelle.connect(gain).connect(analyse).connect(ctx.destination);
-  const proben = new Float32Array(analyse.fftSize);
+/** Spielt eine Tondatei auf dem Ausgabegerät; der Pegel für die Anzeige
+ *  läuft aus der vorab gelesenen Hüllkurve mit der Uhr mit. */
+async function spielen(datei: string, lautstaerke: number): Promise<void> {
+  const huelle = await invoke<number[]>("kabinen_ton_huellkurve", { datei }).catch(() => [] as number[]);
+  const start = performance.now();
   let fertig = false;
   const messen = () => {
     if (fertig) return;
-    analyse.getFloatTimeDomainData(proben);
-    let summe = 0;
-    for (const p of proben) summe += p * p;
-    // Sprache liegt bei RMS ~0,05–0,3; auf 0…1 strecken, Lautstärke herausrechnen.
-    const rms = Math.sqrt(summe / proben.length) / Math.max(lautstaerke, 0.05);
-    const pegel = Math.min(1, rms * 4);
+    const pegel = huelle[Math.floor(((performance.now() - start) / 1000) * HUELLE_JE_S)] ?? 0;
     const glatt = zustand.pegel * 0.6 + pegel * 0.4;
-    const verlauf = [...zustand.verlauf, glatt].slice(-VERLAUF_LAENGE);
-    setzen({ pegel: glatt, verlauf });
+    setzen({ pegel: glatt, verlauf: [...zustand.verlauf, glatt].slice(-VERLAUF_LAENGE) });
     requestAnimationFrame(messen);
   };
-  return new Promise((r) => {
-    quelle.onended = () => {
-      fertig = true;
-      if (aktuelleQuelle === quelle) aktuelleQuelle = null;
-      setzen({ pegel: 0 });
-      r();
-    };
-    aktuelleQuelle = quelle;
-    quelle.start();
-    requestAnimationFrame(messen);
-  });
+  requestAnimationFrame(messen);
+  try {
+    await invoke("kabinen_ton_spielen", { datei, lautstaerke });
+  } finally {
+    fertig = true;
+    setzen({ pegel: 0 });
+  }
 }
 
-/** Doppel-Chime (hoch, tief) — zwei weiche Sinustöne. */
+/** Doppel-Chime (hoch, tief) — erzeugt in Rust. */
 async function chime(lautstaerke: number): Promise<void> {
-  const ctx = audio();
-  const ton = (frequenz: number, start: number) => {
-    const osz = ctx.createOscillator();
-    const g = ctx.createGain();
-    osz.type = "sine";
-    osz.frequency.value = frequenz;
-    const t0 = ctx.currentTime + start;
-    g.gain.setValueAtTime(0, t0);
-    g.gain.linearRampToValueAtTime(0.35 * lautstaerke, t0 + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, t0 + 1.4);
-    osz.connect(g).connect(ctx.destination);
-    osz.start(t0);
-    osz.stop(t0 + 1.5);
-  };
-  ton(880, 0);
-  ton(698.5, 0.55);
-  await pause(2100);
+  await invoke("kabinen_ton_spielen", { datei: null, lautstaerke });
 }
 
 async function abarbeiten(): Promise<void> {
@@ -176,14 +150,17 @@ async function abarbeiten(): Promise<void> {
     while (schlange.length > 0 && meiner === durchgang) {
       const a = schlange.shift()!;
       setzen({ ansage: a, teil: 0, verlauf: [] });
-      if (audio().state === "suspended") await audio().resume();
       if (a.rolle === "chime") {
-        await chime(a.lautstaerke);
+        try {
+          await chime(a.lautstaerke);
+        } catch (e) {
+          console.warn("[kabine] Chime nicht abspielbar", e);
+        }
       } else {
         for (let i = 0; i < a.teile.length && meiner === durchgang; i++) {
           setzen({ teil: i });
           try {
-            await spielen(await tonLaden(a.teile[i].datei), a.lautstaerke);
+            await spielen(a.teile[i].datei, a.lautstaerke);
           } catch (e) {
             console.warn("[kabine] Ton nicht abspielbar", a.slot, e);
           }
@@ -207,12 +184,7 @@ export function stoppen(): void {
   gesperrt = true;
   durchgang += 1;
   schlange.length = 0;
-  try {
-    aktuelleQuelle?.stop();
-  } catch {
-    /* schon zu Ende */
-  }
-  aktuelleQuelle = null;
+  if (isTauri) void invoke("kabinen_ton_stoppen").catch(() => undefined);
   setzen({ ansage: null, pegel: 0, verlauf: [] });
 }
 
@@ -252,3 +224,4 @@ export const azureSchluesselSetzen = (schluessel: string | null) =>
   invoke<boolean>("kabinen_azure_schluessel_setzen", { schluessel });
 export const probe = (rolle: Rolle, sprache: string) => invoke<Gespielt>("kabinen_probe", { rolle, sprache });
 export const ueberblick = () => invoke<Ueberblick | null>("kabinen_ueberblick");
+export const ausgabegeraete = () => invoke<Geraet[]>("kabinen_ausgabegeraete");

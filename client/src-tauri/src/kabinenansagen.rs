@@ -63,6 +63,9 @@ pub struct Einstellungen {
     pub kommandos: bool,
     /// 0.0 … 1.0
     pub lautstaerke: f32,
+    /// Ausgabegeraet (`cpal::DeviceId` als Text). `None` = Systemstandard.
+    /// Fehlt das Geraet (abgezogen), spielt der Systemstandard.
+    pub ausgabe: Option<String>,
 }
 
 impl Default for Einstellungen {
@@ -81,6 +84,7 @@ impl Default for Einstellungen {
             chimes: true,
             kommandos: true,
             lautstaerke: 0.8,
+            ausgabe: None,
         }
     }
 }
@@ -112,6 +116,10 @@ impl Einstellungen {
             }
         }
         self.lautstaerke = if self.lautstaerke.is_finite() { self.lautstaerke.clamp(0.0, 1.0) } else { 0.8 };
+        self.ausgabe = self
+            .ausgabe
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty() && a.len() <= 512);
         self
     }
 
@@ -284,6 +292,10 @@ pub(crate) struct Lauf {
     /// frühester nächster Versuch. Anders als `ton = None` (keine Stimme für
     /// die Sprache) ist das vorübergehend.
     ton_fehler: HashMap<(Slot, String), (u8, i64)>,
+    /// Letzter Fehler beim Holen der Texte / beim Ton, fuer die Begruendung
+    /// auf der Seite „Kabine“ (Thomas: „sagen warum, nicht leere Seite“).
+    texte_fehler: Option<String>,
+    ton_fehler_text: Option<String>,
     warteschlange: cabin_announcements::Warteschlange,
     verlauf: Vec<Gespielt>,
 }
@@ -625,6 +637,7 @@ fn holen(
             let lauf = &mut stats.kabinen_lauf;
             match ergebnis {
                 Ok(d) => {
+                    lauf.texte_fehler = None;
                     if !d.sprachen.is_empty() {
                         lauf.sprachen = d.sprachen.clone();
                     }
@@ -652,6 +665,7 @@ fn holen(
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
+                    lauf.texte_fehler = Some(kurz(&e.to_string()));
                     lauf.angefragt.remove(&schluessel);
                     let n = lauf.fehlversuche.get(&schluessel).map_or(0, |(n, _)| *n) + 1;
                     lauf.fehlversuche.insert(schluessel.clone(), (n, Utc::now().timestamp() + 120));
@@ -688,11 +702,13 @@ fn sprechen_lassen(app: AppHandle, flight: Arc<ActiveFlight>, mut auftraege: Vec
             match ergebnis {
                 Ok(ton) => {
                     lauf.ton_fehler.remove(&k);
+                    lauf.ton_fehler_text = None;
                     lauf.ton.insert(k, ton);
                 }
                 Err(e) => {
                     // Vorübergehend: in einer Minute noch einmal (takt).
                     tracing::warn!(slot = ?k.0, sprache = %k.1, error = %e, "kabinenansage: Ton gerade nicht erzeugbar");
+                    lauf.ton_fehler_text = Some(kurz(&e));
                     let n = lauf.ton_fehler.get(&k).map_or(0, |(n, _)| *n) + 1;
                     lauf.ton_fehler.insert(k, (n, Utc::now().timestamp() + 60));
                 }
@@ -844,6 +860,10 @@ async fn azure_sprechen(key: &str, region: &str, stimme: &str, text: &str) -> Re
 /// eigenen Ton-Ordner, keine Pfade.
 #[tauri::command]
 pub(crate) fn kabinen_audio(app: AppHandle, datei: String) -> Result<tauri::ipc::Response, UiError> {
+    Ok(tauri::ipc::Response::new(ton_datei_lesen(&app, &datei)?))
+}
+
+fn ton_datei_lesen(app: &AppHandle, datei: &str) -> Result<Vec<u8>, UiError> {
     let sauber = !datei.is_empty()
         && datei.ends_with(".wav")
         && datei.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
@@ -851,9 +871,49 @@ pub(crate) fn kabinen_audio(app: AppHandle, datei: String) -> Result<tauri::ipc:
     if !sauber {
         return Err(UiError::new("ungueltig", "invalid file name"));
     }
-    let pfad = ton_ordner(&app).map_err(|e| UiError::new("ordner", e))?.join(datei);
-    let daten = std::fs::read(pfad).map_err(|e| UiError::new("lesen", e.to_string()))?;
-    Ok(tauri::ipc::Response::new(daten))
+    let pfad = ton_ordner(app).map_err(|e| UiError::new("ordner", e))?.join(datei);
+    std::fs::read(pfad).map_err(|e| UiError::new("lesen", e.to_string()))
+}
+
+/// Ausgabegeraete fuer die Auswahl in den Einstellungen.
+#[tauri::command]
+pub(crate) async fn kabinen_ausgabegeraete() -> Result<Vec<ausgabe::Geraet>, UiError> {
+    tauri::async_runtime::spawn_blocking(ausgabe::geraete)
+        .await
+        .map_err(|e| UiError::new("ausgabe", e.to_string()))?
+        .map_err(|e| UiError::new("ausgabe", e))
+}
+
+/// Spielt eine Tondatei — oder mit `datei = None` den Doppel-Chime — auf
+/// dem eingestellten Geraet. Kehrt zurueck, wenn sie zu Ende ist oder
+/// `kabinen_ton_stoppen` kam.
+#[tauri::command]
+pub(crate) async fn kabinen_ton_spielen(app: AppHandle, datei: Option<String>, lautstaerke: f32) -> Result<(), UiError> {
+    let stand = ausgabe::stopp_stand();
+    let (rate, proben) = match datei {
+        Some(d) => ausgabe::wav_lesen(&ton_datei_lesen(&app, &d)?)
+            .ok_or_else(|| UiError::new("format", "unsupported wav"))?,
+        None => (ausgabe::CHIME_RATE, ausgabe::chime(ausgabe::CHIME_RATE)),
+    };
+    let geraet = einstellungen(&app).ausgabe;
+    tauri::async_runtime::spawn_blocking(move || ausgabe::spielen(geraet.as_deref(), rate, &proben, lautstaerke, stand))
+        .await
+        .map_err(|e| UiError::new("ausgabe", e.to_string()))?
+        .map_err(|e| UiError::new("ausgabe", e))
+}
+
+/// Laufende Wiedergabe sofort beenden („Ansagen ausschalten“).
+#[tauri::command]
+pub(crate) fn kabinen_ton_stoppen() {
+    ausgabe::stoppen();
+}
+
+/// Pegel einer Tondatei fuer die Anzeige, `ausgabe::HUELLE_JE_S` Werte je Sekunde.
+#[tauri::command]
+pub(crate) fn kabinen_ton_huellkurve(app: AppHandle, datei: String) -> Result<Vec<f32>, UiError> {
+    let (rate, proben) = ausgabe::wav_lesen(&ton_datei_lesen(&app, &datei)?)
+        .ok_or_else(|| UiError::new("format", "unsupported wav"))?;
+    Ok(ausgabe::huellkurve(rate, &proben))
 }
 
 /// Hörprobe für die Einstellungen: eine Rolle in einer Sprache.
@@ -889,14 +949,69 @@ pub(crate) struct Ueberblick {
     wartend: Vec<Slot>,
     sprachen: Vec<String>,
     beta: Option<bool>,
+    /// Warum gerade keine Ansagen kommen; `None` = alles bereit.
+    grund: Option<Grund>,
+}
+
+/// Warum keine Ansagen kommen — die Seite zeigt es oben statt einer leeren
+/// Seite (Thomas 17.10.2026). Reihenfolge wie die Sperren in [`takt`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "grund", content = "detail", rename_all = "snake_case")]
+pub(crate) enum Grund {
+    Aus,
+    Replay,
+    Fracht,
+    KeinePax,
+    KeinePassagiere,
+    BetaPruefung,
+    NichtFreigeschaltet,
+    TexteFehlen(String),
+    TonFehlt(String),
+}
+
+pub(crate) fn grund(an: bool, stats: &FlightStats) -> Option<Grund> {
+    if !an {
+        return Some(Grund::Aus);
+    }
+    if stats.replay_verdacht {
+        return Some(Grund::Replay);
+    }
+    // Flugart allein (Fracht, Positionierung …), unabhaengig von den Pax.
+    if cabin_announcements::flugart::einordnen(stats.flight_type.as_deref(), Some(1), None, 0) == Flugart::Aus {
+        return Some(Grund::Fracht);
+    }
+    match stats.pax_count {
+        None => return Some(Grund::KeinePax),
+        Some(n) if n <= 0 => return Some(Grund::KeinePassagiere),
+        Some(_) => {}
+    }
+    let lauf = &stats.kabinen_lauf;
+    match lauf.beta {
+        Beta::Nein => return Some(Grund::NichtFreigeschaltet),
+        Beta::Unbekannt | Beta::Angefragt => return Some(Grund::BetaPruefung),
+        Beta::Ja => {}
+    }
+    if lauf.texte.is_empty() {
+        if let Some(f) = &lauf.texte_fehler {
+            return Some(Grund::TexteFehlen(f.clone()));
+        }
+    }
+    lauf.ton_fehler_text.clone().map(Grund::TonFehlt)
+}
+
+/// Fehlertext fuer die Anzeige: eine Zeile, hoechstens 160 Zeichen.
+fn kurz(text: &str) -> String {
+    let zeile = text.lines().next().unwrap_or("").trim();
+    zeile.chars().take(160).collect()
 }
 
 #[tauri::command]
-pub(crate) fn kabinen_ueberblick(state: tauri::State<'_, AppState>) -> Option<Ueberblick> {
+pub(crate) fn kabinen_ueberblick(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ueberblick> {
     let flight = state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone)?;
     let stats = flight.stats.lock().expect("flight stats");
     let lauf = &stats.kabinen_lauf;
     Some(Ueberblick {
+        grund: grund(einstellungen(&app).an, &stats),
         verlauf: lauf.verlauf.clone(),
         wartend: lauf.warteschlange.wartend(),
         sprachen: lauf.sprachen.clone(),
@@ -906,6 +1021,258 @@ pub(crate) fn kabinen_ueberblick(state: tauri::State<'_, AppState>) -> Option<Ue
             _ => None,
         },
     })
+}
+
+// ---------------------------------------------------------------------------
+// Ausgabe: Ton auf dem gewaehlten Geraet (Lautsprecher, Headset, …)
+// ---------------------------------------------------------------------------
+
+/// Wiedergabe in Rust statt im Fenster: Nur so laesst sich das Geraet
+/// waehlen. Die Mac-Oberflaeche kann Ton nicht umleiten, und Windows nennt
+/// die Geraete im Fenster erst nach einer Mikrofon-Freigabe (Thomas
+/// 17.10.2026: „Lautsprecher, Headset … alles was angeschlossen ist“).
+pub(crate) mod ausgabe {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Abtastrate, in der der Chime erzeugt wird (vor dem Umrechnen).
+    pub(crate) const CHIME_RATE: u32 = 48_000;
+    /// Pegelwerte je Sekunde fuer die Anzeige.
+    pub(crate) const HUELLE_JE_S: u32 = 30;
+
+    /// Steigt bei jedem Stopp. Eine Wiedergabe merkt sich den Stand beim
+    /// Aufruf und endet, sobald er sich aendert — auch ein Stopp, der kommt,
+    /// bevor das Geraet ueberhaupt geoeffnet ist, greift so.
+    static STOPP: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn stopp_stand() -> u64 {
+        STOPP.load(Ordering::SeqCst)
+    }
+    pub(crate) fn stoppen() {
+        STOPP.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Ein Ausgabegeraet fuer die Auswahl in den Einstellungen.
+    #[derive(Debug, Clone, serde::Serialize)]
+    pub(crate) struct Geraet {
+        pub id: String,
+        pub name: String,
+    }
+
+    /// Mono-Proben (−1 … 1) und Abtastrate aus einer PCM-16-WAV (Piper und
+    /// Azure liefern beide genau das). Mehrkanalig wird gemittelt.
+    pub(crate) fn wav_lesen(d: &[u8]) -> Option<(u32, Vec<f32>)> {
+        if d.len() < 12 || &d[0..4] != b"RIFF" || &d[8..12] != b"WAVE" {
+            return None;
+        }
+        let mut i = 12;
+        // (Format, Kanaele, Rate, Bits)
+        let mut fmt: Option<(u16, u16, u32, u16)> = None;
+        while i + 8 <= d.len() {
+            let id = &d[i..i + 4];
+            let groesse = u32::from_le_bytes([d[i + 4], d[i + 5], d[i + 6], d[i + 7]]) as usize;
+            let inhalt = i + 8;
+            if id == b"fmt " && inhalt + 16 <= d.len() {
+                let zwei = |o: usize| u16::from_le_bytes([d[inhalt + o], d[inhalt + o + 1]]);
+                let rate = u32::from_le_bytes([d[inhalt + 4], d[inhalt + 5], d[inhalt + 6], d[inhalt + 7]]);
+                fmt = Some((zwei(0), zwei(2), rate, zwei(14)));
+            }
+            if id == b"data" {
+                let (format, kanaele, rate, bits) = fmt?;
+                // 1 = PCM, 0xFFFE = WAVE_FORMAT_EXTENSIBLE (ebenfalls PCM bei 16 Bit)
+                if !(format == 1 || format == 0xFFFE) || bits != 16 || kanaele == 0 || rate == 0 {
+                    return None;
+                }
+                // Manche Kodierer schreiben 0xFFFFFFFF; dann zaehlt, was da ist.
+                let ende = inhalt + groesse.min(d.len().saturating_sub(inhalt));
+                let k = usize::from(kanaele);
+                let proben = d[inhalt..ende]
+                    .chunks_exact(2 * k)
+                    .map(|rahmen| {
+                        let summe: f32 = rahmen
+                            .chunks_exact(2)
+                            .map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32768.0)
+                            .sum();
+                        summe / k as f32
+                    })
+                    .collect();
+                return Some((rate, proben));
+            }
+            i = inhalt + groesse + (groesse & 1);
+        }
+        None
+    }
+
+    /// Linear auf eine andere Abtastrate; fuer Sprache genuegt das.
+    #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
+    pub(crate) fn umrechnen(p: &[f32], von: u32, nach: u32) -> Vec<f32> {
+        if von == nach || p.is_empty() || von == 0 || nach == 0 {
+            return p.to_vec();
+        }
+        let n = (p.len() as u64 * u64::from(nach) / u64::from(von)) as usize;
+        let schritt = f64::from(von) / f64::from(nach);
+        let letzte = p.len() - 1;
+        (0..n)
+            .map(|j| {
+                let x = j as f64 * schritt;
+                let i = (x as usize).min(letzte);
+                let t = (x - i as f64) as f32;
+                let a = p[i];
+                let b = p[(i + 1).min(letzte)];
+                a + (b - a) * t
+            })
+            .collect()
+    }
+
+    /// Doppel-Chime wie bisher im Fenster: 880 Hz, nach 0,55 s 698,5 Hz; je
+    /// 20 ms Anstieg auf 0,35, dann exponentiell auf 0,001 bei 1,4 s, Ende
+    /// bei 1,5 s. Gesamt 2,1 s (mit Ausklang).
+    pub(crate) fn chime(rate: u32) -> Vec<f32> {
+        let n = (2.1 * f64::from(rate)) as usize;
+        let ton = |t: f64, f: f64| -> f64 {
+            if !(0.0..1.5).contains(&t) {
+                return 0.0;
+            }
+            let huelle = if t < 0.02 {
+                0.35 * t / 0.02
+            } else {
+                0.35 * (0.001_f64 / 0.35).powf((t - 0.02) / (1.4 - 0.02))
+            };
+            huelle * (2.0 * std::f64::consts::PI * f * t).sin()
+        };
+        (0..n)
+            .map(|j| {
+                let t = j as f64 / f64::from(rate);
+                (ton(t, 880.0) + ton(t - 0.55, 698.5)) as f32
+            })
+            .collect()
+    }
+
+    /// Pegel fuer die Anzeige: RMS je 1/30 s, auf 0 … 1 gestreckt (Sprache
+    /// liegt bei RMS ~0,05–0,3) — dieselbe Skala wie bisher im Fenster.
+    pub(crate) fn huellkurve(rate: u32, p: &[f32]) -> Vec<f32> {
+        let fenster = (rate / HUELLE_JE_S).max(1) as usize;
+        p.chunks(fenster)
+            .map(|c| {
+                let rms = (c.iter().map(|x| x * x).sum::<f32>() / c.len() as f32).sqrt();
+                (rms * 4.0).min(1.0)
+            })
+            .collect()
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) fn geraete() -> Result<Vec<Geraet>, String> {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        let liste = cpal::default_host().output_devices().map_err(|e| e.to_string())?;
+        Ok(liste
+            .filter_map(|g| {
+                Some(Geraet {
+                    id: g.id().ok()?.to_string(),
+                    name: g.description().ok()?.name().to_string(),
+                })
+            })
+            .collect())
+    }
+
+    /// Spielt die Proben auf dem gewaehlten Geraet (sonst Systemstandard)
+    /// und kehrt zurueck, wenn sie gespielt sind oder gestoppt wurde.
+    /// Blockiert: nur aus `spawn_blocking` rufen — der cpal-Stream ist
+    /// nicht `Send` und lebt nur in diesem Faden.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) fn spielen(geraet: Option<&str>, rate: u32, proben: &[f32], lautstaerke: f32, stand: u64) -> Result<(), String> {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        use std::sync::Arc;
+
+        if STOPP.load(Ordering::SeqCst) != stand {
+            return Ok(());
+        }
+        let host = cpal::default_host();
+        let gewaehlt = geraet
+            .and_then(|id| id.parse::<cpal::DeviceId>().ok())
+            .and_then(|id| host.device_by_id(&id));
+        if geraet.is_some() && gewaehlt.is_none() {
+            tracing::info!("kabinenansagen: gewaehltes Ausgabegeraet fehlt, Systemstandard");
+        }
+        let dev = gewaehlt
+            .or_else(|| host.default_output_device())
+            .ok_or("kein Ausgabegeraet")?;
+        let cfg = dev.default_output_config().map_err(|e| e.to_string())?;
+        let kanaele = usize::from(cfg.channels()).max(1);
+        let ziel = cfg.sample_rate();
+        let v = if lautstaerke.is_finite() { lautstaerke.clamp(0.0, 1.0) } else { 0.8 };
+        let mut daten: Vec<f32> = umrechnen(proben, rate, ziel).into_iter().map(|x| (x * v).clamp(-1.0, 1.0)).collect();
+        // Nachlauf: Ist die letzte Probe uebergeben, spielt das Geraet seinen
+        // Puffer noch — ohne Stille am Ende fehlte der Schluss.
+        daten.resize(daten.len() + (ziel / 5) as usize, 0.0);
+        let gesamt = daten.len();
+        let daten = Arc::new(daten);
+        let pos = Arc::new(AtomicUsize::new(0));
+        let fehler = Arc::new(AtomicBool::new(false));
+
+        fn bauen<T: cpal::SizedSample + cpal::FromSample<f32>>(
+            dev: &cpal::Device,
+            cfg: cpal::StreamConfig,
+            kanaele: usize,
+            daten: Arc<Vec<f32>>,
+            pos: Arc<AtomicUsize>,
+            fehler: Arc<AtomicBool>,
+        ) -> Result<cpal::Stream, String> {
+            dev.build_output_stream(
+                cfg,
+                move |puffer: &mut [T], _: &cpal::OutputCallbackInfo| {
+                    let mut i = pos.load(Ordering::Relaxed);
+                    for rahmen in puffer.chunks_mut(kanaele) {
+                        let x = daten.get(i).copied().unwrap_or(0.0);
+                        i += 1;
+                        for k in rahmen {
+                            *k = T::from_sample(x);
+                        }
+                    }
+                    pos.store(i, Ordering::Relaxed);
+                },
+                move |e| {
+                    tracing::warn!(error = %e, "kabinenansagen: Ausgabegeraet meldet einen Fehler");
+                    fehler.store(true, Ordering::Relaxed);
+                },
+                None,
+            )
+            .map_err(|e| e.to_string())
+        }
+
+        let (d, p, f, c) = (Arc::clone(&daten), Arc::clone(&pos), Arc::clone(&fehler), cfg.config());
+        let stream = match cfg.sample_format() {
+            cpal::SampleFormat::F32 => bauen::<f32>(&dev, c, kanaele, d, p, f),
+            cpal::SampleFormat::I16 => bauen::<i16>(&dev, c, kanaele, d, p, f),
+            cpal::SampleFormat::U16 => bauen::<u16>(&dev, c, kanaele, d, p, f),
+            cpal::SampleFormat::I32 => bauen::<i32>(&dev, c, kanaele, d, p, f),
+            andere => return Err(format!("Tonformat {andere:?} nicht unterstuetzt")),
+        }?;
+        stream.play().map_err(|e| e.to_string())?;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            if STOPP.load(Ordering::SeqCst) != stand {
+                break;
+            }
+            if fehler.load(Ordering::Relaxed) {
+                return Err("Ausgabegeraet meldet einen Fehler".into());
+            }
+            if pos.load(Ordering::Relaxed) >= gesamt {
+                break;
+            }
+        }
+        drop(stream);
+        Ok(())
+    }
+
+    /// Linux: Der Client laeuft dort nicht, nur der CI-Check.
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    pub(crate) fn geraete() -> Result<Vec<Geraet>, String> {
+        Err("nur unter Windows und macOS".into())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    pub(crate) fn spielen(_: Option<&str>, _: u32, _: &[f32], _: f32, _: u64) -> Result<(), String> {
+        Err("nur unter Windows und macOS".into())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1128,4 +1495,149 @@ mod tests {
         assert!(!ton_noetig(&l, &k, 999));
     }
 
+    /// PCM-16-WAV mit echten Proben (Kanaele verschachtelt).
+    fn pcm16(rate: u32, kanaele: u16, proben: &[i16]) -> Vec<u8> {
+        let mut v = b"RIFF\0\0\0\0WAVE".to_vec();
+        v.extend_from_slice(b"fmt ");
+        v.extend_from_slice(&16u32.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&kanaele.to_le_bytes());
+        v.extend_from_slice(&rate.to_le_bytes());
+        v.extend_from_slice(&(rate * 2 * u32::from(kanaele)).to_le_bytes());
+        v.extend_from_slice(&(2 * kanaele).to_le_bytes());
+        v.extend_from_slice(&16u16.to_le_bytes());
+        v.extend_from_slice(b"data");
+        v.extend_from_slice(&((proben.len() * 2) as u32).to_le_bytes());
+        for p in proben {
+            v.extend_from_slice(&p.to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn wav_lesen_liefert_mono_proben() {
+        let (rate, p) = ausgabe::wav_lesen(&pcm16(22_050, 1, &[16_384, -16_384, 0])).unwrap();
+        assert_eq!(rate, 22_050);
+        assert_eq!(p, vec![0.5, -0.5, 0.0]);
+        // Stereo wird gemittelt: (0,5 + −0,5)/2 = 0, (0,5 + 0,5)/2 = 0,5.
+        let (_, p) = ausgabe::wav_lesen(&pcm16(48_000, 2, &[16_384, -16_384, 16_384, 16_384])).unwrap();
+        assert_eq!(p, vec![0.0, 0.5]);
+        // Der alte Test-Kopf (mit LIST-Block und Fuellbyte) wird durchlaufen.
+        assert_eq!(ausgabe::wav_lesen(&wav(44_100, 4)).map(|(r, p)| (r, p.len())), Some((22_050, 2)));
+        // 8 Bit oder Unsinn: kein Ton statt Rauschen.
+        let mut acht = pcm16(8_000, 1, &[0, 0]);
+        acht[34] = 8;
+        assert_eq!(ausgabe::wav_lesen(&acht), None);
+        assert_eq!(ausgabe::wav_lesen(b"kein wav"), None);
+    }
+
+    #[test]
+    fn umrechnen_haelt_laenge_und_verlauf() {
+        let p: Vec<f32> = (0..22_050).map(|i| i as f32 / 22_050.0).collect();
+        let q = ausgabe::umrechnen(&p, 22_050, 48_000);
+        assert_eq!(q.len(), 48_000);
+        // Rampe bleibt Rampe: Mitte bei ~0,5, steigend.
+        assert!((q[24_000] - 0.5).abs() < 1e-3, "{}", q[24_000]);
+        assert!(q.windows(2).all(|w| w[1] >= w[0]));
+        // Gleiche Rate: unveraendert.
+        assert_eq!(ausgabe::umrechnen(&p, 22_050, 22_050), p);
+    }
+
+    #[test]
+    fn chime_wie_im_fenster() {
+        let rate = ausgabe::CHIME_RATE;
+        let c = ausgabe::chime(rate);
+        assert_eq!(c.len(), (2.1 * f64::from(rate)) as usize);
+        let spitze = |von: f64, bis: f64| {
+            c[(von * f64::from(rate)) as usize..(bis * f64::from(rate)) as usize]
+                .iter()
+                .fold(0.0_f32, |m, x| m.max(x.abs()))
+        };
+        assert!(spitze(0.0, 0.3) > 0.3, "erster Ton hoerbar");
+        assert!(spitze(0.6, 0.9) > 0.1, "zweiter Ton hoerbar");
+        assert!(spitze(0.0, 2.1) <= 0.7, "nie uebersteuert");
+        assert!(spitze(2.06, 2.1) < 1e-3, "Ausklang still");
+    }
+
+    #[test]
+    fn huellkurve_folgt_dem_pegel() {
+        let rate = 22_050;
+        let sinus: Vec<f32> = (0..rate)
+            .map(|i| 0.1 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / rate as f32).sin())
+            .collect();
+        let h = ausgabe::huellkurve(rate, &sinus);
+        assert_eq!(h.len(), 30, "30 je Sekunde (22.050 / 30 = 735 ohne Rest)");
+        // RMS 0,1/√2 ≈ 0,071, gestreckt ×4 ≈ 0,28.
+        assert!(h[..30].iter().all(|w| (w - 0.283).abs() < 0.02), "{h:?}");
+        assert!(ausgabe::huellkurve(rate, &vec![0.0; 2205]).iter().all(|w| *w == 0.0));
+    }
+
+    #[test]
+    fn grund_nennt_die_erste_sperre() {
+        let mut st = FlightStats::new();
+        assert_eq!(grund(false, &st), Some(Grund::Aus));
+        assert_eq!(grund(true, &st), Some(Grund::KeinePax), "Fall Thomas: Wechsel mitten im Flug");
+        st.flight_type = Some("F".into());
+        assert_eq!(grund(true, &st), Some(Grund::Fracht));
+        st.flight_type = Some("J".into());
+        st.pax_count = Some(0);
+        assert_eq!(grund(true, &st), Some(Grund::KeinePassagiere));
+        st.pax_count = Some(150);
+        assert_eq!(grund(true, &st), Some(Grund::BetaPruefung));
+        st.kabinen_lauf.beta = Beta::Nein;
+        assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet));
+        st.kabinen_lauf.beta = Beta::Ja;
+        assert_eq!(grund(true, &st), None, "alles bereit");
+        st.kabinen_lauf.texte_fehler = Some(kurz("api 402: budget\nzweite Zeile"));
+        assert_eq!(grund(true, &st), Some(Grund::TexteFehlen("api 402: budget".into())));
+        // Sind Texte da, zaehlt ein alter Textfehler nicht mehr.
+        st.kabinen_lauf.texte.insert((Slot::Boarding, "de-DE".into()), "Hallo".into());
+        assert_eq!(grund(true, &st), None);
+        st.kabinen_lauf.ton_fehler_text = Some("ausgelastet".into());
+        assert_eq!(grund(true, &st), Some(Grund::TonFehlt("ausgelastet".into())));
+        st.replay_verdacht = true;
+        assert_eq!(grund(true, &st), Some(Grund::Replay));
+        // So kommt es in der Oberflaeche an.
+        assert_eq!(
+            serde_json::to_value(Grund::TonFehlt("x".into())).unwrap(),
+            serde_json::json!({ "grund": "ton_fehlt", "detail": "x" })
+        );
+        assert_eq!(serde_json::to_value(Grund::KeinePax).unwrap(), serde_json::json!({ "grund": "keine_pax" }));
+    }
+
+    #[test]
+    fn ausgabegeraet_wird_normalisiert() {
+        let mit = |a: &str| Einstellungen { ausgabe: Some(a.into()), ..Einstellungen::default() }.normalisiert().ausgabe;
+        assert_eq!(mit("  CoreAudio:42  "), Some("CoreAudio:42".into()));
+        assert_eq!(mit("   "), None);
+        assert_eq!(mit(&"x".repeat(600)), None);
+        // Alte Einstellungsdatei ohne das Feld: Systemstandard.
+        let alt: Einstellungen = serde_json::from_str(r#"{"an":true}"#).unwrap();
+        assert_eq!(alt.ausgabe, None);
+    }
+
+    /// Echtes Geraet: listet die Ausgaben und spielt den Chime auf dem
+    /// Systemstandard. Nur von Hand: `cargo test -p aeroacars-app --lib
+    /// chime_auf_echtem_geraet -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "braucht ein echtes Ausgabegeraet"]
+    fn chime_auf_echtem_geraet() {
+        let liste = ausgabe::geraete().expect("Geraete lesbar");
+        for g in &liste {
+            println!("Ausgabe: {} ({})", g.name, g.id);
+        }
+        assert!(!liste.is_empty());
+        let rate = ausgabe::CHIME_RATE;
+        let uhr = std::time::Instant::now();
+        ausgabe::spielen(None, rate, &ausgabe::chime(rate), 0.6, ausgabe::stopp_stand()).expect("spielt");
+        let dauer = uhr.elapsed().as_secs_f64();
+        println!("gespielt in {dauer:.2} s");
+        assert!(dauer >= 2.1, "nicht vorzeitig beendet: {dauer}");
+        // Auf ein gewaehltes Geraet (das erste der Liste) und gleich gestoppt.
+        let stand = ausgabe::stopp_stand();
+        ausgabe::stoppen();
+        let uhr = std::time::Instant::now();
+        ausgabe::spielen(Some(&liste[0].id), rate, &ausgabe::chime(rate), 0.6, stand).expect("spielt");
+        assert!(uhr.elapsed().as_secs_f64() < 0.5, "Stopp vor dem Start greift");
+    }
 }

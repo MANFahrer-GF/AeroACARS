@@ -35,7 +35,11 @@
       "lautstaerke": "Lautstärke",
       "probe": "Hörprobe",
       "lizenzen": "Lizenzen",
-      "lizenz_text": "Piper (GPL-3.0) läuft auf dem GSG-Server und wird nicht auf deinen Rechner geladen. Stimmen: Thorsten und Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, verändert). Azure ist ein Dienst von Microsoft."
+      "lizenz_text": "Piper (GPL-3.0) läuft auf dem GSG-Server und wird nicht auf deinen Rechner geladen. Stimmen: Thorsten und Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, verändert). Azure ist ein Dienst von Microsoft.",
+      "ausgabe": "Ausgabegerät",
+      "ausgabe_standard": "Systemstandard",
+      "ausgabe_fehlt": "Gewähltes Gerät nicht angeschlossen (spielt auf dem Systemstandard)",
+      "ausgabe_hint": "Zum Beispiel ATC im Headset und die Kabine über die Lautsprecher. Ist das Gerät abgezogen, spielt der Systemstandard."
     },
     "rolle": {
       "kapitaen": "Kapitän",
@@ -97,7 +101,46 @@
       "als_naechstes": "Als Nächstes",
       "nichts_wartet": "Nichts in der Warteschlange.",
       "bisher": "Bisher",
-      "noch_nichts": "Noch keine Ansage auf diesem Flug."
+      "noch_nichts": "Noch keine Ansage auf diesem Flug.",
+      "keine_ansagen": "Gerade keine Ansagen, der Grund steht unten."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Ansagen ausgeschaltet",
+        "text": "Die Kabinenansagen sind in den Einstellungen ausgeschaltet."
+      },
+      "replay": {
+        "titel": "Kein echter Flug",
+        "text": "AeroACARS hält diesen Flug für eine Wiedergabe. Ansagen gibt es nur im echten Flug."
+      },
+      "fracht": {
+        "titel": "Frachtflug",
+        "text": "Laut Flugplan ist das ein Flug ohne Passagiere (Fracht, Überführung o. ä.). Dafür gibt es keine Kabinenansagen."
+      },
+      "keine_pax": {
+        "titel": "Keine Passagierzahl",
+        "text": "Für diesen Flug kennt AeroACARS keine Passagierzahl: Es gibt keinen SimBrief-OFP und keine Passagier-Fares im Bid. Am Boden hilft „OFP refreshen“ im aktiven Flug. Wurde der Flug mit einer älteren Version begonnen, holt AeroACARS die Zahl beim nächsten Neustart nach."
+      },
+      "keine_passagiere": {
+        "titel": "Keine Passagiere an Bord",
+        "text": "Der Flugplan nennt 0 Passagiere. Ohne Passagiere gibt es keine Kabinenansagen."
+      },
+      "beta_pruefung": {
+        "titel": "Freischaltung wird geprüft",
+        "text": "AeroACARS fragt den GSG-Server, ob dein Konto für die Beta freigeschaltet ist. Ist der Server nicht erreichbar, versucht es AeroACARS alle 5 Minuten erneut."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Nicht freigeschaltet",
+        "text": "Dein Konto ist für die Kabinenansagen-Beta nicht freigeschaltet. Die Freischaltung macht das GSG-Team."
+      },
+      "texte_fehlen": {
+        "titel": "Texte nicht erhalten",
+        "text": "Der GSG-Server hat die Ansagetexte nicht geliefert. AeroACARS versucht es in 2 Minuten erneut. Meldung des Servers:"
+      },
+      "ton_fehlt": {
+        "titel": "Ton gerade nicht erzeugbar",
+        "text": "Die Sprachausgabe hat den Ton nicht geliefert (Server ausgelastet, Netz oder Azure-Schlüssel). AeroACARS versucht es jede Minute erneut. Meldung:"
+      }
     }
   },
   "app": {

@@ -1,54 +1,69 @@
 // Kabinenansagen: Aus- und gleich wieder Einschalten darf keine neue
-// Ansage liegen lassen (Codex-QS Runde 3).
-import { describe, expect, it, vi } from "vitest";
+// Ansage liegen lassen (Codex-QS Runde 3). Seit beta.2 spielt Rust den Ton
+// (`kabinen_ton_spielen`), das Fenster steuert nur die Reihenfolge.
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const gespielt: string[] = [];
+const aufrufe: { cmd: string; args?: Record<string, unknown> }[] = [];
+let stoppZaehler = 0;
 vi.mock("./ipc", () => ({
-  isTauri: false,
+  isTauri: true,
   listen: vi.fn(),
-  invoke: vi.fn(async (_cmd: string, args?: { datei?: string }) => {
-    gespielt.push(args?.datei ?? "?");
-    await new Promise((r) => setTimeout(r, 20));
-    return new ArrayBuffer(8);
+  invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+    aufrufe.push({ cmd, args });
+    if (cmd === "kabinen_ton_huellkurve") return [0.2, 0.4];
+    if (cmd === "kabinen_ton_stoppen") {
+      stoppZaehler += 1;
+      return undefined;
+    }
+    if (cmd === "kabinen_ton_spielen") {
+      // Wie Rust: endet nach der Spieldauer oder sofort bei einem Stopp.
+      const stand = stoppZaehler;
+      for (let i = 0; i < 4 && stoppZaehler === stand; i++) await new Promise((r) => setTimeout(r, 5));
+      return undefined;
+    }
+    return undefined;
   }),
 }));
-
-class FakeQuelle {
-  buffer: unknown = null;
-  onended: (() => void) | null = null;
-  connect() { return { connect: () => ({ connect: () => undefined }) }; }
-  start() { setTimeout(() => this.onended?.(), 10); }
-  stop() { this.onended?.(); }
-}
-class FakeKontext {
-  state = "running";
-  currentTime = 0;
-  destination = {};
-  async resume() {}
-  async decodeAudioData() { return {}; }
-  createBufferSource() { return new FakeQuelle(); }
-  createGain() { return { gain: { value: 1 }, connect: (x: unknown) => x }; }
-  createAnalyser() { return { fftSize: 0, connect: (x: unknown) => x, getFloatTimeDomainData: () => undefined }; }
-}
-vi.stubGlobal("AudioContext", FakeKontext);
 vi.stubGlobal("requestAnimationFrame", (f: () => void) => setTimeout(f, 5));
 
 const { abspielen, freigeben, stoppen, aktuell } = await import("./kabinenansagen");
 
-const ansage = (datei: string) => ({
-  slot: "boarding", rolle: "kabine" as const, zeit: 0, lautstaerke: 0.8,
-  teile: [{ sprache: "de-DE", text: "x", datei, dauer_s: 1 }],
+const ansage = (datei: string, rolle: "kabine" | "chime" = "kabine") => ({
+  slot: "boarding", rolle, zeit: 0, lautstaerke: 0.8,
+  teile: rolle === "chime" ? [] : [{ sprache: "de-DE", text: "x", datei, dauer_s: 1 }],
 });
+const gespielt = () => aufrufe.filter((a) => a.cmd === "kabinen_ton_spielen").map((a) => a.args?.datei);
+const warten = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("Kabinen-Wiedergabe", () => {
+  beforeEach(() => {
+    aufrufe.length = 0;
+  });
+
   it("spielt nach Stopp und sofortigem Wiedereinschalten die neue Ansage", async () => {
     abspielen(ansage("alt.wav"));
-    await new Promise((r) => setTimeout(r, 5)); // alt lädt gerade
+    await warten(5); // alt lädt gerade
     stoppen();
     freigeben();
     abspielen(ansage("neu.wav"));
-    await new Promise((r) => setTimeout(r, 1500));
-    expect(gespielt).toContain("neu.wav");
+    await warten(1500);
+    expect(gespielt()).toContain("neu.wav");
     expect(aktuell().ansage).toBeNull();
+  });
+
+  it("Stopp beendet die laufende Wiedergabe in Rust", async () => {
+    abspielen(ansage("lang.wav"));
+    await warten(30);
+    stoppen();
+    expect(aufrufe.some((a) => a.cmd === "kabinen_ton_stoppen")).toBe(true);
+    freigeben();
+    await warten(1500);
+  });
+
+  it("Chime geht ohne Datei an Rust, mit der Lautstärke der Ansage", async () => {
+    abspielen(ansage("", "chime"));
+    await warten(1500);
+    const c = aufrufe.find((a) => a.cmd === "kabinen_ton_spielen");
+    expect(c?.args).toEqual({ datei: null, lautstaerke: 0.8 });
   });
 });

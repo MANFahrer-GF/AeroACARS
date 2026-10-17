@@ -90,10 +90,10 @@ export function KabinenSeite({
           <div className="kabine-unter">
             {daten === null || daten === undefined
               ? t("kabine.seite.kein_flug")
-              : daten.beta === false
-                ? t("kabine.seite.nicht_freigeschaltet")
-                : daten.sprachen.length > 0
-                  ? daten.sprachen.map((s) => sprachName(s, namen)).join(" · ")
+              : daten.sprachen.length > 0
+                ? daten.sprachen.map((s) => sprachName(s, namen)).join(" · ")
+                : daten.grund
+                  ? t("kabine.seite.keine_ansagen")
                   : t("kabine.seite.warte_auf_texte")}
           </div>
         </div>
@@ -117,6 +117,17 @@ export function KabinenSeite({
           </button>
         </div>
       </header>
+
+      {/* Warum nichts kommt: oben und ausgeschrieben, nicht als leere Seite. */}
+      {daten?.grund && !a && (
+        <div className="kabine-grund" role="status" data-testid="kabine-grund">
+          <strong>{t(`kabine.grund.${daten.grund.grund}.titel`)}</strong>
+          <p>{t(`kabine.grund.${daten.grund.grund}.text`)}</p>
+          {"detail" in daten.grund && daten.grund.detail && (
+            <p className="kabine-grund-detail">{daten.grund.detail}</p>
+          )}
+        </div>
+      )}
 
       <div className={`kabine-live${a ? " ist-aktiv" : ""}`} aria-live="polite">
         <div className="kabine-live-kopf">

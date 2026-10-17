@@ -35,7 +35,11 @@
       "lautstaerke": "Volume",
       "probe": "Ascolta una prova",
       "lizenzen": "Licenze",
-      "lizenz_text": "Piper (GPL-3.0) gira sul server GSG e non viene scaricato sul tuo computer. Voci: Thorsten e Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, modificata). Azure è un servizio di Microsoft."
+      "lizenz_text": "Piper (GPL-3.0) gira sul server GSG e non viene scaricato sul tuo computer. Voci: Thorsten e Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, modificata). Azure è un servizio di Microsoft.",
+      "ausgabe": "Dispositivo di uscita",
+      "ausgabe_standard": "Predefinito di sistema",
+      "ausgabe_fehlt": "Dispositivo scelto non collegato (suona sul predefinito di sistema)",
+      "ausgabe_hint": "Ad esempio ATC nelle cuffie e la cabina sugli altoparlanti. Se il dispositivo è scollegato, suona il predefinito di sistema."
     },
     "rolle": {
       "kapitaen": "Comandante",
@@ -97,7 +101,46 @@
       "als_naechstes": "Prossimi",
       "nichts_wartet": "Nulla in coda.",
       "bisher": "Finora",
-      "noch_nichts": "Ancora nessun annuncio su questo volo."
+      "noch_nichts": "Ancora nessun annuncio su questo volo.",
+      "keine_ansagen": "Nessun annuncio al momento, il motivo è indicato sotto."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Annunci disattivati",
+        "text": "Gli annunci di cabina sono disattivati nelle impostazioni."
+      },
+      "replay": {
+        "titel": "Non è un volo reale",
+        "text": "AeroACARS ritiene che questo volo sia una riproduzione. Gli annunci vengono riprodotti solo in un volo reale."
+      },
+      "fracht": {
+        "titel": "Volo cargo",
+        "text": "Secondo il piano di volo questo volo non trasporta passeggeri (cargo, trasferimento o simile). Non ci sono annunci di cabina."
+      },
+      "keine_pax": {
+        "titel": "Nessun numero di passeggeri",
+        "text": "AeroACARS non conosce il numero di passeggeri di questo volo: non c'è un OFP SimBrief né tariffe passeggeri nel bid. A terra aiuta \"Aggiorna OFP\" nel volo attivo. Se il volo è stato iniziato con una versione precedente, AeroACARS recupera il numero al prossimo riavvio."
+      },
+      "keine_passagiere": {
+        "titel": "Nessun passeggero a bordo",
+        "text": "Il piano di volo indica 0 passeggeri. Senza passeggeri non ci sono annunci di cabina."
+      },
+      "beta_pruefung": {
+        "titel": "Verifica dell'accesso",
+        "text": "AeroACARS chiede al server GSG se il tuo account è abilitato alla beta. Se il server non è raggiungibile, AeroACARS riprova ogni 5 minuti."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Non abilitato",
+        "text": "Il tuo account non è abilitato alla beta degli annunci di cabina. L'abilitazione la fa il team GSG."
+      },
+      "texte_fehlen": {
+        "titel": "Testi non ricevuti",
+        "text": "Il server GSG non ha fornito i testi degli annunci. AeroACARS riprova tra 2 minuti. Messaggio del server:"
+      },
+      "ton_fehlt": {
+        "titel": "Audio non disponibile al momento",
+        "text": "Il servizio vocale non ha fornito l'audio (server occupato, rete o chiave Azure). AeroACARS riprova ogni minuto. Messaggio:"
+      }
     }
   },
   "app": {

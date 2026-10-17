@@ -89,3 +89,17 @@
 @media (prefers-reduced-motion: reduce) {
   .kabine-live, .kabine-pegel rect { transition: none; }
 }
+
+/* Warum gerade keine Ansagen kommen */
+.kabine-grund {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 1px solid var(--sem-warn, #b7791f);
+  border-radius: 10px;
+  background: var(--sem-warn-bg, color-mix(in srgb, var(--sem-warn, #b7791f) 10%, var(--surface)));
+}
+.kabine-grund strong { font-size: var(--fs-500, 15px); color: var(--text); }
+.kabine-grund p { margin: 0; color: var(--text); font-size: var(--fs-400, 13px); line-height: var(--lh-normal, 1.55); max-width: 70ch; }
+.kabine-grund .kabine-grund-detail { color: var(--text-dim); font-size: var(--fs-300, 12px); }
