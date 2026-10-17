@@ -17,6 +17,9 @@ members = [
     # v1.3.0 (#Hoppie-PDC-CPDLC) — Hoppie-ACARS-Netzwerk-Protokoll +
     # GOLD-Elementtabelle. Pure Logik, kein tauri/reqwest.
     "crates/hoppie-protocol",
+    # v2.0.26 (Beta) — Kabinenansagen: Planer, Warteschlange, Drehbuch,
+    # SSML. Pure Logik, kein tauri/reqwest.
+    "crates/cabin-announcements",
 ]
 resolver = "2"
 
@@ -100,6 +103,7 @@ metar      = { path = "crates/metar" }
 aeroacars-mqtt = { path = "crates/aeroacars-mqtt" }
 landing-scoring = { path = "crates/landing-scoring" }
 hoppie-protocol = { path = "crates/hoppie-protocol" }
+cabin-announcements = { path = "crates/cabin-announcements" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
