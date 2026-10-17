@@ -867,6 +867,11 @@ const HOLDING_BANK_THRESHOLD_DEG: f32 = 15.0;
 const HOLDING_VS_THRESHOLD_FPM: f32 = 200.0;
 /// Sustained climb time required before we classify a Go-Around.
 const GO_AROUND_DWELL_SECS: i64 = 8;
+/// Seit 17.10.2026 („Stück 2“, docs/spec/phase-reiseband-v2.md) nur noch für
+/// v1 im Anflug/Final und für v1 im Reiseband bei v2 im Anflug/Final/Landung;
+/// innerhalb des Reisebands übernimmt v1 v2s Phase direkt (`reiseband_phase`).
+/// Die folgende Beschreibung ist die ursprüngliche Mechanik.
+///
 /// En-Route-Versöhner (Korpus-Audit 2026-07, 632 Flüge): Sicherheitsnetz
 /// für die GANZE Fehlerklasse "alte FSM hängt auf einer Luft-Phase fest",
 /// nicht für einen einzelnen Übergangs-Arm. Historie derselben Klasse,
