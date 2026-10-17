@@ -82,6 +82,22 @@ pub struct Flugdaten {
     pub abheben_epoch: Option<i64>,
 }
 
+/// Phase, ab der ein Slot nicht mehr ausgelöst wird (wie der `Verfall` in
+/// [`Planer::tick`]); `None` = an keine Phase gebunden.
+fn spaetestens_vor(slot: Slot) -> Option<FlightPhase> {
+    use FlightPhase as P;
+    use Slot as S;
+    Some(match slot {
+        S::Boarding => P::Pushback,
+        S::BegruessungTuerenZu | S::Sicherheit | S::KapitaenBegruessung => P::TakeoffRoll,
+        S::AnschnallzeichenAus | S::Reiseflug25 | S::Reiseflug50 | S::Reiseflug80 => P::Descent,
+        S::KapitaenSinkflug | S::KabineSinkflug => P::Final,
+        S::NachDerLandung => P::BlocksOn,
+        S::Aussteigen => P::PirepSubmitted,
+        _ => return None,
+    })
+}
+
 /// Phase, ab der ein Slot ausgelöst wird. Beim Wiedereinstieg gilt alles
 /// davor als erledigt.
 fn ausloese_rang(slot: Slot) -> u8 {
@@ -245,9 +261,15 @@ impl Planer {
 
     /// Für die Anzeige „Als Nächstes“: kommt dieser Slot auf diesem Flug
     /// noch (erlaubt und noch nicht ausgelöst oder übersprungen)?
-    pub fn kommt_noch(&self, slot: Slot) -> bool {
+    /// `phase` ist die aktuelle Flugphase: Was nur bis zu einer Phase
+    /// ausgelöst wird, kommt danach nicht mehr — auch dann nicht, wenn die
+    /// Phasenerkennung die auslösende Phase übersprungen hat (Codex-QS).
+    pub fn kommt_noch(&self, slot: Slot, phase: FlightPhase) -> bool {
         let reiseflug = matches!(slot, Slot::Reiseflug25 | Slot::Reiseflug50 | Slot::Reiseflug80);
-        self.flugart().erlaubt(slot) && !self.schon(slot) && !(reiseflug && self.kurzstrecke())
+        self.flugart().erlaubt(slot)
+            && !self.schon(slot)
+            && !(reiseflug && self.kurzstrecke())
+            && spaetestens_vor(slot).is_none_or(|grenze| rang(phase) < rang(grenze))
     }
 
     /// Verarbeitet einen Tick und liefert die neu fälligen Ansagen in
@@ -601,12 +623,19 @@ mod tests {
     #[test]
     fn kommt_noch_nach_wiedereinstieg_und_kurzstrecke() {
         let p = Planer::fortsetzen(flug(120), Cruise);
-        assert!(!p.kommt_noch(Slot::Boarding), "vor dem Wiedereinstieg erledigt");
-        assert!(p.kommt_noch(Slot::KapitaenSinkflug));
-        assert!(p.kommt_noch(Slot::Reiseflug80));
+        assert!(!p.kommt_noch(Slot::Boarding, Cruise), "vor dem Wiedereinstieg erledigt");
+        assert!(p.kommt_noch(Slot::KapitaenSinkflug, Cruise));
+        assert!(p.kommt_noch(Slot::Reiseflug80, Cruise));
         let kurz = Planer::neu(flug(55));
-        assert!(kurz.kommt_noch(Slot::Boarding));
-        assert!(!kurz.kommt_noch(Slot::Reiseflug50), "Kurzstrecke ohne Reiseflug-Ansagen");
+        assert!(kurz.kommt_noch(Slot::Boarding, Boarding));
+        assert!(!kurz.kommt_noch(Slot::Reiseflug50, Climb), "Kurzstrecke ohne Reiseflug-Ansagen");
+        // Phase uebersprungen (nie Cruise gemeldet): im Sinkflug kommt der
+        // Reiseflug nicht mehr, die Sinkflug-Ansage schon; im Final keine.
+        let p = Planer::neu(flug(120));
+        assert!(!p.kommt_noch(Slot::Reiseflug50, Descent));
+        assert!(p.kommt_noch(Slot::KapitaenSinkflug, Descent));
+        assert!(!p.kommt_noch(Slot::KapitaenSinkflug, Final));
+        assert!(!p.kommt_noch(Slot::Boarding, TaxiOut), "Boarding nur bis zum Pushback");
     }
 
     #[test]

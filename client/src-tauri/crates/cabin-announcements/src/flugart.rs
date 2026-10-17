@@ -21,22 +21,25 @@ pub enum Flugart {
 /// der A380-Versuchstraeger F-WWDD hat in der Unterflotte nur 10 Plaetze).
 /// Unbekannte Typen gelten als Linie.
 const OHNE_KABINENCREW: &[&str] = &[
-    // Business-Jets
-    "C25A", "C25B", "C25C", "C510", "C525", "C550", "C560", "C56X", "C650", "C680", "C68A", "C700", "C750",
-    "CL30", "CL35", "CL60", "CL64", "CL65", "E50P", "E55P", "E13L", "E545", "E550", "F2TH", "F900",
-    "FA10", "FA20", "FA50", "FA7X", "FA8X", "G150", "G280", "GL5T", "GL7T", "GLEX", "GLF4", "GLF5", "GLF6",
-    "H25A", "H25B", "H25C", "HDJT", "LJ31", "LJ35", "LJ40", "LJ45", "LJ60", "LJ75", "PC24", "PRM1", "SF50",
-    "BE40",
-    // Turboprops ohne Flugbegleiter
-    "B190", "B350", "BE9L", "BE10", "BE20", "BE30", "C208", "C404", "C441", "MU2", "P180", "PC12", "TBM7",
-    "TBM8", "TBM9", "AN2",
-    // Kolben-Kleinflugzeuge
-    "AC11", "AEST", "BE24", "BE33", "BE35", "BE36", "BE58", "BE60", "BE76", "C150", "C152", "C162", "C172",
-    "C182", "C185", "C206", "C210", "C310", "C340", "C414", "C421", "DA40", "DA42", "DA50", "DA62", "GA8",
-    "M20P", "M20T", "P28A", "P28R", "P68", "PA24", "PA28", "PA32", "PA34", "PA44", "PA46", "SR20", "SR22",
-    "SR2T", "YK18",
-    // Hubschrauber und Militär
-    "A109", "A139", "EC35", "EC45", "H135", "H145", "EUFI",
+    // Business-Jets: wie `bordbuch::BUSINESS_JETS` (ICAO Doc 8643).
+    "ASTR", "BE40", "C25A", "C25B", "C25C", "C25M", "C500", "C501", "C510", "C525", "C526", "C550",
+    "C551", "C560", "C56X", "C650", "C680", "C68A", "C700", "C750", "CL30", "CL35", "CL60", "E35L",
+    "E50P", "E545", "E550", "E55P", "EA50", "F2TH", "F900", "FA10", "FA20", "FA50", "FA7X", "FA8X",
+    "G150", "G280", "GA5C", "GA6C", "GALX", "GL5T", "GL7T", "GLEX", "GLF2", "GLF3", "GLF4", "GLF5",
+    "GLF6", "H25A", "H25B", "H25C", "HDJT", "LJ23", "LJ24", "LJ25", "LJ31", "LJ35", "LJ40", "LJ45",
+    "LJ55", "LJ60", "LJ70", "LJ75", "PC24", "PRM1", "SF50", "WW24",
+    // Kleinflugzeuge, leichte Turboprops, Hubschrauber: wie `bordbuch::GA_TYPEN`.
+    "AC11", "AN2", "AS50", "ASK2", "B06", "B407", "BE20", "BE33", "BE35", "BE36", "BE55", "BE58",
+    "BE9L", "BE9T", "BL8", "C140", "C150", "C152", "C170", "C172", "C177", "C182", "C206", "C207",
+    "C208", "C210", "C310", "C337", "C340", "C414", "C421", "CRUZ", "DA20", "DA40", "DA42", "DA50",
+    "DA62", "DHC2", "DHC3", "DHC6", "DR40", "EC35", "EC45", "EV97", "GLID", "H125", "H135", "H145",
+    "J3", "KODI", "M20P", "M20T", "P28A", "P28B", "P28R", "P32R", "P46T", "PA18", "PA24", "PA28",
+    "PA31", "PA32", "PA34", "PA44", "PA46", "PC12", "PC6T", "PC7", "R22", "R44", "R66", "RV10",
+    "RV7", "RV8", "S22T", "S76", "SR20", "SR22", "TBM7", "TBM8", "TBM9", "TOBA", "ULAC",
+    // Dazu: Turboprops ohne Flugbegleiter und Muster der GSG-Flotte, die
+    // dort fehlen (Stand 17.10.2026), sowie Militaer.
+    "A109", "A139", "AEST", "B190", "B350", "BE10", "BE24", "BE30", "BE60", "BE76", "C162", "C185",
+    "C404", "C441", "E13L", "EUFI", "GA8", "MU2", "P180", "P68", "SR2T", "YK18",
 ];
 
 /// phpVMS-Flugarten ohne Passagiere: F Scheduled Cargo, A Additional Cargo,

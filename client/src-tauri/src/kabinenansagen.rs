@@ -610,9 +610,14 @@ fn holen(
                     for s in &slots {
                         lauf.texte_fehler.insert(*s, meldung.clone());
                     }
-                    lauf.angefragt.remove(&schluessel);
-                    let n = lauf.fehlversuche.get(&schluessel).map_or(0, |(n, _)| *n) + 1;
-                    lauf.fehlversuche.insert(schluessel.clone(), (n, Utc::now().timestamp() + 120));
+                    // Scheitert die Nachholung („abflug+“), gibt sie den
+                    // Hauptteil frei: Den fragt `takt` wieder an, und der
+                    // Server liefert Fertiges aus dem Zwischenspeicher
+                    // (Codex-QS beta.4; „abflug+“ selbst fragt niemand neu an).
+                    let basis = schluessel.trim_end_matches('+').to_string();
+                    lauf.angefragt.remove(&basis);
+                    let n = lauf.fehlversuche.get(&basis).map_or(0, |(n, _)| *n) + 1;
+                    lauf.fehlversuche.insert(basis, (n, Utc::now().timestamp() + 120));
                     Vec::new()
                 }
             }
@@ -877,15 +882,18 @@ fn geplant(stats: &FlightStats, wartend: &[Slot]) -> Vec<Geplant> {
     ABFLUG
         .into_iter()
         .chain(ANKUNFT)
-        .filter(|s| planer.kommt_noch(*s) && !wartend.contains(s))
-        .map(|slot| {
+        .filter(|s| planer.kommt_noch(*s, stats.phase) && !wartend.contains(s))
+        .filter_map(|slot| {
             // Jede Sprache erledigt; `None` = keine Stimme fuer sie, dieser
-            // Teil entfaellt. Bereit ist es, wenn mindestens ein Ton da ist.
+            // Teil entfaellt. Ganz ohne Stimme kommt die Ansage nie
+            // (Codex-QS), sie steht dann nicht in der Liste.
             let teile: Vec<_> = lauf.sprachen.iter().map(|sp| lauf.ton.get(&(slot, sp.clone()))).collect();
-            let bereit = !teile.is_empty()
-                && teile.iter().all(Option::is_some)
-                && teile.iter().any(|t| matches!(t, Some(Some(_))));
-            Geplant { slot, bereit }
+            let erledigt = !teile.is_empty() && teile.iter().all(Option::is_some);
+            let mit_ton = teile.iter().any(|t| matches!(t, Some(Some(_))));
+            if erledigt && !mit_ton {
+                return None;
+            }
+            Some(Geplant { slot, bereit: erledigt })
         })
         .collect()
 }
@@ -1535,6 +1543,15 @@ mod tests {
         st.kabinen_lauf.ton.insert((Slot::KapitaenBegruessung, "de-DE".into()), None);
         let bereit: Vec<_> = geplant(&st, &[]).into_iter().filter(|g| g.bereit).map(|g| g.slot).collect();
         assert_eq!(bereit, vec![Slot::KapitaenBegruessung], "keine Stimme fuer eine Sprache zaehlt als erledigt");
+        // Fuer keine Sprache eine Stimme: kommt nie, steht nicht in der Liste.
+        st.kabinen_lauf.ton.insert((Slot::Sicherheit, "fr-FR".into()), None);
+        st.kabinen_lauf.ton.insert((Slot::Sicherheit, "de-DE".into()), None);
+        assert!(!geplant(&st, &[]).iter().any(|g| g.slot == Slot::Sicherheit));
+        // Im Sinkflug ist der Abflug vorbei, auch ohne Meldung des Planers.
+        st.phase = crate::FlightPhase::Descent;
+        let slots: Vec<_> = geplant(&st, &[]).into_iter().map(|g| g.slot).collect();
+        assert_eq!(slots.first(), Some(&Slot::KapitaenSinkflug));
+        st.phase = crate::FlightPhase::Boarding;
 
         // Faellige stehen in der Warteschlange, nicht doppelt.
         assert!(!geplant(&st, &[Slot::Boarding]).iter().any(|g| g.slot == Slot::Boarding));
