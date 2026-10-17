@@ -492,7 +492,10 @@ mod tests {
 
     /// Spielt einen ganzen Flug in 10-s-Schritten durch und sammelt alles.
     fn normalflug(min: u32) -> Vec<Slot> {
-        let mut p = Planer::neu(flug(min));
+        normalflug_mit(Planer::neu(flug(min)), min)
+    }
+
+    fn normalflug_mit(mut p: Planer, min: u32) -> Vec<Slot> {
         let mut alle = Vec::new();
         let mut t = 0i64;
         let lauf = |p: &mut Planer, tk: Tick, alle: &mut Vec<Slot>| {
@@ -808,5 +811,17 @@ mod tests {
         assert!(!sinkflug(&mut p, ab + 20 * 60, Cruise), "kurz nach dem Abheben noch kein Sinkflug");
         assert!(!sinkflug(&mut p, ab + 70 * 60, Cruise));
         assert!(sinkflug(&mut p, ab + 76 * 60, Cruise), "5 min vor dem TOD");
+    }
+
+    #[test]
+    fn fortsetzen_beim_start_wie_neu() {
+        // Der Client legt den Planer immer mit `fortsetzen` an, auch beim
+        // normalen Start im Boarding. Das muss denselben Ablauf ergeben.
+        for min in [45, 75, 120] {
+            let neu = normalflug(min);
+            for phase in [Preflight, Boarding] {
+                assert_eq!(normalflug_mit(Planer::fortsetzen(flug(min), phase), min), neu, "{min} min, {phase:?}");
+            }
+        }
     }
 }
