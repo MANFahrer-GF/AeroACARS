@@ -2,13 +2,12 @@
 // Hoppie-Abschnitt (Hauptschalter, darunter eingerückt die Optionen).
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { formatIpcError, listen, openExternal } from "../lib/ipc";
+import { formatIpcError } from "../lib/ipc";
 import {
   abspielen,
   azureSchluesselSetzen,
   einstellungenLesen,
   einstellungenSetzen,
-  piperInstallieren,
   probe,
   stoppen,
   zustandLesen,
@@ -20,12 +19,6 @@ import {
 const EIGENE_SPRACHEN = ["de-DE", "de-AT", "de-CH", "en-GB", "en-US", "fr-FR", "it-IT", "es-ES", "nl-NL", "pt-PT", "pl-PL"];
 const TAGESFORMEN = ["zufall", "sachlich", "herzlich", "charmant", "witzig", "rustikal"];
 
-interface Fortschritt {
-  schritt: string;
-  bytes: number;
-  gesamt: number;
-}
-
 export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean) => void }) {
   const { t } = useTranslation();
   const [e, setE] = useState<Einstellungen | null>(null);
@@ -33,15 +26,10 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
   const [schluessel, setSchluessel] = useState("");
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
-  const [laden, setLaden] = useState<Fortschritt | null>(null);
 
   useEffect(() => {
     void einstellungenLesen().then(setE);
     void zustandLesen().then(setZ).catch(() => setZ(null));
-    const ab = listen<Fortschritt>("kabine-piper-fortschritt", (ev) => setLaden(ev.payload));
-    return () => {
-      void ab.then((f) => f());
-    };
   }, []);
 
   if (!e) {
@@ -84,13 +72,6 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
       const da = await azureSchluesselSetzen(wert);
       setSchluessel("");
       setZ((alt) => (alt ? { ...alt, azure_schluessel: da } : alt));
-    });
-
-  const piperLaden = () =>
-    mitBusy(async () => {
-      const fertig = await piperInstallieren();
-      setLaden(null);
-      setZ((alt) => (alt ? { ...alt, piper_installiert: fertig } : alt));
     });
 
   const hoeren = (rolle: Rolle, sprache: string) =>
@@ -164,29 +145,6 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
           {anbieterWahl("anbieter_kapitaen", t("kabine.rolle.kapitaen"))}
           {anbieterWahl("anbieter_kabine", t("kabine.rolle.kabine"))}
           {anbieterWahl("anbieter_kommando", t("kabine.rolle.kommando"))}
-
-          <div className="settings__field">
-            <span className="settings__field-label">{t("kabine.einstellungen.piper_titel")}</span>
-            {!z?.piper_moeglich ? (
-              <p className="settings__row-hint">{t("kabine.einstellungen.piper_nur_windows")}</p>
-            ) : z.piper_installiert ? (
-              <p className="settings__row-hint">{t("kabine.einstellungen.piper_installiert")}</p>
-            ) : (
-              <>
-                <p className="settings__row-hint">{t("kabine.einstellungen.piper_hint")}</p>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button type="button" className="button button--primary" disabled={busy} onClick={() => void piperLaden()}>
-                    {t("kabine.einstellungen.piper_laden")}
-                  </button>
-                  {laden && (
-                    <span className="settings__row-hint">
-                      {laden.schritt}: {Math.round(laden.bytes / 1e6)} {laden.gesamt > 0 ? `/ ${Math.round(laden.gesamt / 1e6)} ` : ""}MB
-                    </span>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
 
           <div className="settings__field">
             <span className="settings__field-label">{t("kabine.einstellungen.azure_titel")}</span>
@@ -312,11 +270,6 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
           <div className="settings__field">
             <span className="settings__field-label">{t("kabine.einstellungen.lizenzen")}</span>
             <p className="settings__row-hint">{t("kabine.einstellungen.lizenz_text")}</p>
-            {z?.piper_quelle && (
-              <button type="button" className="button button--ghost" onClick={() => void openExternal(z.piper_quelle)}>
-                {t("kabine.einstellungen.quelle")}
-              </button>
-            )}
           </div>
         </div>
       )}

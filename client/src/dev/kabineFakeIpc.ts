@@ -63,8 +63,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
         tagesform_kapitaen: "zufall", tagesform_kabine: "herzlich", chimes: true, kommandos: true, lautstaerke: 0.8,
       }) as T;
     case "kabinen_zustand":
-      return { beta: true, azure_schluessel: true, piper_moeglich: true, piper_installiert: false,
-        piper_quelle: "https://github.com/rhasspy/piper/tree/2023.11.14-2" } as T;
+      return { beta: true, azure_schluessel: true } as T;
     default:
       return null as T;
   }

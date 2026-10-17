@@ -62682,7 +62682,6 @@ pub fn run() {
             kabinenansagen::kabinen_audio,
             kabinenansagen::kabinen_probe,
             kabinenansagen::kabinen_ueberblick,
-            kabinenansagen::piper::kabinen_piper_installieren,
             bid_simbrief_preview,
             ofp_callsign_warning_get,
             flight_resume_after_disconnect,

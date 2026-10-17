@@ -44,9 +44,6 @@ export interface Einstellungen {
 export interface Zustand {
   beta: boolean | null;
   azure_schluessel: boolean;
-  piper_moeglich: boolean;
-  piper_installiert: boolean;
-  piper_quelle: string;
 }
 
 export interface Ueberblick {
@@ -238,6 +235,5 @@ export const einstellungenSetzen = (einstellungen: Einstellungen) =>
 export const zustandLesen = () => invoke<Zustand>("kabinen_zustand");
 export const azureSchluesselSetzen = (schluessel: string | null) =>
   invoke<boolean>("kabinen_azure_schluessel_setzen", { schluessel });
-export const piperInstallieren = () => invoke<boolean>("kabinen_piper_installieren");
 export const probe = (rolle: Rolle, sprache: string) => invoke<Gespielt>("kabinen_probe", { rolle, sprache });
 export const ueberblick = () => invoke<Ueberblick | null>("kabinen_ueberblick");

@@ -12,7 +12,6 @@
 //! nichts — sonst zahlte beim nächsten Release jeder Pilot.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -21,7 +20,6 @@ use cabin_announcements::flugart::Flugart;
 use cabin_announcements::{cache, ssml, Faellig, Rolle, Slot};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sim_core::{FlightPhase, SimSnapshot};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -31,8 +29,6 @@ use crate::{ActiveFlight, AppState, FlightStats, UiError};
 const AZURE_KONTO: &str = "kabinenansagen_azure";
 /// Ereignis an die Oberfläche: eine Ansage spielt jetzt.
 pub(crate) const EREIGNIS_ANSAGE: &str = "kabine-ansage";
-/// Ereignis an die Oberfläche: Fortschritt der Piper-Installation.
-const EREIGNIS_PIPER: &str = "kabine-piper-fortschritt";
 
 // ---------------------------------------------------------------------------
 // Einstellungen
@@ -214,15 +210,10 @@ fn azure_schluessel() -> Option<String> {
 pub(crate) struct Zustand {
     beta: Option<bool>,
     azure_schluessel: bool,
-    piper_moeglich: bool,
-    piper_installiert: bool,
-    /// GPL-3.0: Quellcode genau der ausgelieferten Piper-Version.
-    piper_quelle: &'static str,
 }
 
 #[tauri::command]
 pub(crate) async fn kabinen_zustand(
-    app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Zustand, UiError> {
     let client = state.client.lock().expect("client lock").clone();
@@ -233,9 +224,6 @@ pub(crate) async fn kabinen_zustand(
     Ok(Zustand {
         beta,
         azure_schluessel: azure_schluessel().is_some(),
-        piper_moeglich: piper::moeglich(),
-        piper_installiert: piper::installiert(&app),
-        piper_quelle: piper::QUELLE,
     })
 }
 
@@ -292,6 +280,10 @@ pub(crate) struct Lauf {
     /// `None` = für diese Sprache gibt es keine Stimme, sie entfällt.
     ton: HashMap<(Slot, String), Option<Ton>>,
     in_arbeit: HashSet<(Slot, String)>,
+    /// Ton gerade nicht erzeugbar (Server ausgelastet, Netz): Versuche und
+    /// frühester nächster Versuch. Anders als `ton = None` (keine Stimme für
+    /// die Sprache) ist das vorübergehend.
+    ton_fehler: HashMap<(Slot, String), (u8, i64)>,
     warteschlange: cabin_announcements::Warteschlange,
     verlauf: Vec<Gespielt>,
 }
@@ -341,6 +333,14 @@ fn slot_aus_name(n: &str) -> Option<Slot> {
 fn darf_anfragen(lauf: &Lauf, schluessel: &str, jetzt: i64) -> bool {
     !lauf.angefragt.contains(schluessel)
         && lauf.fehlversuche.get(schluessel).is_none_or(|(n, ab)| *n < 3 && jetzt >= *ab)
+}
+
+/// Braucht dieser Text (noch) Ton? Nicht schon da, nicht in Arbeit, und
+/// nach einem Fehler höchstens fünfmal mit einer Minute Abstand.
+fn ton_noetig(lauf: &Lauf, k: &(Slot, String), jetzt: i64) -> bool {
+    !lauf.ton.contains_key(k)
+        && !lauf.in_arbeit.contains(k)
+        && lauf.ton_fehler.get(k).is_none_or(|(n, ab)| *n < 5 && jetzt >= *ab)
 }
 
 /// Ein Takt der Kabinenansagen. Wird vom Positions-Streamer gerufen, nach
@@ -452,16 +452,30 @@ pub(crate) fn takt(
             .into_iter()
             .filter(|s| flugart.erlaubt(*s))
             .filter_map(|s| s.kommando_text().map(|t| (s, "en-GB".to_string(), t.to_string())))
-            .filter(|(s, sp, _)| {
-                let k = (*s, sp.clone());
-                !stats.kabinen_lauf.ton.contains_key(&k) && !stats.kabinen_lauf.in_arbeit.contains(&k)
-            })
+            .filter(|(s, sp, _)| ton_noetig(&stats.kabinen_lauf, &(*s, sp.clone()), jetzt))
             .collect();
         if !offen.is_empty() {
             for (s, sp, _) in &offen {
                 stats.kabinen_lauf.in_arbeit.insert((*s, sp.clone()));
             }
             sprechen_lassen(app.clone(), Arc::clone(flight), offen);
+        }
+    }
+
+    // ---- Ton nachholen, der vorübergehend nicht ging ----
+    {
+        let lauf = &mut stats.kabinen_lauf;
+        let nachholen: Vec<(Slot, String, String)> = lauf
+            .texte
+            .iter()
+            .filter(|(k, _)| lauf.ton_fehler.contains_key(*k) && ton_noetig(lauf, k, jetzt))
+            .map(|((s, sp), t)| (*s, sp.clone(), t.clone()))
+            .collect();
+        if !nachholen.is_empty() {
+            for (s, sp, _) in &nachholen {
+                lauf.in_arbeit.insert((*s, sp.clone()));
+            }
+            sprechen_lassen(app.clone(), Arc::clone(flight), nachholen);
         }
     }
 
@@ -659,21 +673,30 @@ fn holen(
 
 /// Erzeugt den Ton nacheinander (nicht parallel: Piper braucht die CPU, die
 /// der Simulator auch will) und trägt ihn in den Lauf ein.
-fn sprechen_lassen(app: AppHandle, flight: Arc<ActiveFlight>, auftraege: Vec<(Slot, String, String)>) {
+fn sprechen_lassen(app: AppHandle, flight: Arc<ActiveFlight>, mut auftraege: Vec<(Slot, String, String)>) {
+    // Was im Flug zuerst dran ist, zuerst: Boarding nicht hinter Reiseflug80
+    // warten lassen (der Server-Piper arbeitet eins nach dem anderen).
+    auftraege.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
     tauri::async_runtime::spawn(async move {
         let einst = einstellungen(&app);
         for (slot, sprache, text) in auftraege {
-            let ton = match sprechen(&app, &einst, slot.rolle(), &sprache, &text).await {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::warn!(slot = ?slot, sprache = %sprache, error = %e, "kabinenansage: Ton nicht erzeugt");
-                    None
-                }
-            };
+            let ergebnis = sprechen(&app, &einst, slot.rolle(), &sprache, &text).await;
             let mut stats = flight.stats.lock().expect("flight stats");
+            let lauf = &mut stats.kabinen_lauf;
             let k = (slot, sprache);
-            stats.kabinen_lauf.in_arbeit.remove(&k);
-            stats.kabinen_lauf.ton.insert(k, ton);
+            lauf.in_arbeit.remove(&k);
+            match ergebnis {
+                Ok(ton) => {
+                    lauf.ton_fehler.remove(&k);
+                    lauf.ton.insert(k, ton);
+                }
+                Err(e) => {
+                    // Vorübergehend: in einer Minute noch einmal (takt).
+                    tracing::warn!(slot = ?k.0, sprache = %k.1, error = %e, "kabinenansage: Ton gerade nicht erzeugbar");
+                    let n = lauf.ton_fehler.get(&k).map_or(0, |(n, _)| *n) + 1;
+                    lauf.ton_fehler.insert(k, (n, Utc::now().timestamp() + 60));
+                }
+            }
         }
     });
 }
@@ -748,16 +771,11 @@ async fn sprechen(
             }
             _ => {
                 let Some(stimme) = piper::stimme_fuer(sprache, maennlich(rolle)) else { continue };
-                if !piper::installiert(app) {
-                    continue;
-                }
-                let name = cache::dateiname("piper", stimme.name, sprache, text, "wav");
+                let name = cache::dateiname("piper", stimme, sprache, text, "wav");
                 let pfad = ordner.join(&name);
                 if !pfad.exists() {
-                    let (app2, text2, ziel) = (app.clone(), text.to_string(), pfad.clone());
-                    tauri::async_runtime::spawn_blocking(move || piper::sprechen(&app2, stimme, &text2, &ziel))
-                        .await
-                        .map_err(|e| e.to_string())??;
+                    let wav = piper::sprechen(stimme, text).await?;
+                    std::fs::write(&pfad, &wav).map_err(|e| e.to_string())?;
                 }
                 return ton_aus_datei(&pfad, name).map(Some);
             }
@@ -891,242 +909,54 @@ pub(crate) fn kabinen_ueberblick(state: tauri::State<'_, AppState>) -> Option<Ue
 }
 
 // ---------------------------------------------------------------------------
-// Piper (kostenlos, getrenntes Programm unter GPL-3.0)
+// Piper (kostenlos) — läuft auf dem GSG-Server live.kant.ovh
 // ---------------------------------------------------------------------------
 
+/// Piper rechnet auf dem Server (Entscheidung Thomas 17.10.2026): Ein
+/// fertiges Piper-Programm gibt es nur für Windows, auf dem Server läuft es
+/// für Windows und Mac, und der Pilot lädt nichts herunter. Piper (GPL)
+/// wird so nicht weitergegeben.
 pub(crate) mod piper {
-    use super::*;
-
-    /// rhasspy/piper 2023.11.14-2 (archiviert, letzter Stand mit fertigem
-    /// Windows-Programm). Für macOS gibt es kein brauchbares Archiv (das
-    /// „aarch64“-Paket ist x86_64 ohne Bibliotheken) — dort nur Azure.
-    pub(crate) const PROGRAMM_URL: &str =
-        "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip";
-    pub(crate) const PROGRAMM_SHA256: &str = "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea";
-    pub(crate) const QUELLE: &str = "https://github.com/rhasspy/piper/tree/2023.11.14-2";
-    /// Fester Stand des Stimmen-Repos, damit sich keine Datei unbemerkt ändert.
-    const STIMMEN_STAND: &str = "c10ece1aade47bb51c153c893d14e5bf8e5b7117";
-
-    #[derive(Debug, Clone, Copy)]
-    pub(crate) struct Stimme {
-        pub(crate) name: &'static str,
-        pfad: &'static str,
-        pub(crate) onnx_sha256: &'static str,
-        pub(crate) json_sha256: &'static str,
-    }
-
-    /// Die vier Stimmen der Beta. Thorsten, Kerstin und Jenny hat Thomas nach
-    /// Gehör freigegeben (17.10.2026); Alan („All Rights Reserved“) ist durch
-    /// northern_english_male ersetzt (CC BY-SA 4.0) — noch nicht angehört.
-    pub(crate) const STIMMEN: [Stimme; 4] = [
-        Stimme {
-            name: "de_DE-thorsten-high",
-            pfad: "de/de_DE/thorsten/high",
-            onnx_sha256: "9df1c43c61149ef9b39e618e2b861fbe41e1fcea9390b2dac62e8761573ea4f1",
-            json_sha256: "6de734444e4c3f9e33b7ebe2746dbc19b71e85f613e79c65acf623200b99a76a",
-        },
-        Stimme {
-            name: "de_DE-kerstin-low",
-            pfad: "de/de_DE/kerstin/low",
-            onnx_sha256: "d352a7641892cebf2903859af94e9ba81a141110215fe3943bcda7f7da401b7a",
-            json_sha256: "56e708556b7b9b7a53c4f8957e021421e69f11a600962bba554cffbe72cf2d47",
-        },
-        Stimme {
-            name: "en_GB-northern_english_male-medium",
-            pfad: "en/en_GB/northern_english_male/medium",
-            onnx_sha256: "57a219ae8e638873db7d18893304be5069c42868f392bb95c3ff17f0690d0689",
-            json_sha256: "69557ed3d974463453e9b0c09dd99a7ed0e52b8b87b64b357dbeeb2540a97d47",
-        },
-        Stimme {
-            name: "en_GB-jenny_dioco-medium",
-            pfad: "en/en_GB/jenny_dioco/medium",
-            onnx_sha256: "469c630d209e139dd392a66bf4abde4ab86390a0269c1e47b4e5d7ce81526b01",
-            json_sha256: "a9a7a93a317c9a3cb6563e37eb057df9ef09c06188a8a4341b0fcb58cba54dd4",
-        },
+    /// Die vier Stimmen der Beta — dieselben Namen wie auf dem Server
+    /// (`recorder/src/kabinenTon.ts`, STIMMEN).
+    pub(crate) const STIMMEN: [&str; 4] = [
+        "de_DE-thorsten-high",
+        "de_DE-kerstin-low",
+        "en_GB-northern_english_male-medium",
+        "en_GB-jenny_dioco-medium",
     ];
 
     /// Deutsch (auch de-CH/de-AT, Hochdeutsch) und Englisch; alles andere
     /// nur mit Azure.
-    pub(crate) fn stimme_fuer(sprache: &str, m: bool) -> Option<Stimme> {
-        let name = match (sprache.split('-').next()?, m) {
-            ("de", true) => "de_DE-thorsten-high",
-            ("de", false) => "de_DE-kerstin-low",
-            ("en", true) => "en_GB-northern_english_male-medium",
-            ("en", false) => "en_GB-jenny_dioco-medium",
+    pub(crate) fn stimme_fuer(sprache: &str, m: bool) -> Option<&'static str> {
+        Some(match (sprache.split('-').next()?, m) {
+            ("de", true) => STIMMEN[0],
+            ("de", false) => STIMMEN[1],
+            ("en", true) => STIMMEN[2],
+            ("en", false) => STIMMEN[3],
             _ => return None,
-        };
-        STIMMEN.into_iter().find(|s| s.name == name)
+        })
     }
 
-    pub(crate) fn moeglich() -> bool {
-        cfg!(target_os = "windows")
-    }
-
-    fn basis(app: &AppHandle) -> Option<PathBuf> {
-        app.path().app_data_dir().ok().map(|p| p.join("kabinenansagen"))
-    }
-
-    fn programm(app: &AppHandle) -> Option<PathBuf> {
-        basis(app).map(|b| b.join("piper").join("piper").join("piper.exe"))
-    }
-
-    fn stimm_datei(app: &AppHandle, s: &Stimme, endung: &str) -> Option<PathBuf> {
-        basis(app).map(|b| b.join("stimmen").join(format!("{}{endung}", s.name)))
-    }
-
-    pub(crate) fn installiert(app: &AppHandle) -> bool {
-        moeglich()
-            && programm(app).is_some_and(|p| p.exists())
-            && STIMMEN.iter().all(|s| {
-                stimm_datei(app, s, ".onnx").is_some_and(|p| p.exists())
-                    && stimm_datei(app, s, ".onnx.json").is_some_and(|p| p.exists())
-            })
-    }
-
-    /// Piper als eigener Prozess: Text über stdin, WAV als Datei.
-    pub(crate) fn sprechen(app: &AppHandle, s: Stimme, text: &str, ziel: &Path) -> Result<(), String> {
-        let exe = programm(app).ok_or("kein Datenordner")?;
-        let modell = stimm_datei(app, &s, ".onnx").ok_or("kein Datenordner")?;
-        let teil = ziel.with_extension("part.wav");
-        let mut cmd = std::process::Command::new(&exe);
-        cmd.arg("-m")
-            .arg(&modell)
-            .arg("-f")
-            .arg(&teil)
-            .arg("--sentence_silence")
-            .arg("0.3")
-            .current_dir(exe.parent().ok_or("kein Ordner")?)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            // Kein schwarzes Konsolenfenster über dem Simulator.
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let mut kind = cmd.spawn().map_err(|e| format!("Piper startet nicht: {e}"))?;
-        // Zeilenumbrüche würde Piper als Sätze lesen; ein Text, eine Zeile.
-        let eine_zeile: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        kind.stdin
-            .take()
-            .ok_or("kein stdin")?
-            .write_all(eine_zeile.as_bytes())
-            .map_err(|e| e.to_string())?;
-        let status = kind.wait().map_err(|e| e.to_string())?;
-        if !status.success() {
-            let _ = std::fs::remove_file(&teil);
-            return Err(format!("Piper endete mit {status}"));
-        }
-        std::fs::rename(&teil, ziel).map_err(|e| e.to_string())
-    }
-
-    #[derive(Debug, Clone, Serialize)]
-    struct Fortschritt {
-        schritt: String,
-        bytes: u64,
-        gesamt: u64,
-    }
-
-    async fn laden(
-        app: &AppHandle,
-        client: &reqwest::Client,
-        url: &str,
-        sha256: &str,
-        ziel: &Path,
-        schritt: &str,
-    ) -> Result<Vec<u8>, String> {
-        let mut antwort = client.get(url).send().await.map_err(|e| format!("{schritt}: {e}"))?;
-        if !antwort.status().is_success() {
-            return Err(format!("{schritt}: HTTP {}", antwort.status()));
-        }
-        let gesamt = antwort.content_length().unwrap_or(0);
-        let mut hasher = Sha256::new();
-        let mut puffer = Vec::new();
-        let mut zuletzt = 0u64;
-        while let Some(stueck) = antwort.chunk().await.map_err(|e| format!("{schritt}: {e}"))? {
-            hasher.update(&stueck);
-            puffer.extend_from_slice(&stueck);
-            let n = puffer.len() as u64;
-            if n - zuletzt > 2_000_000 || n == gesamt {
-                zuletzt = n;
-                let _ = app.emit(EREIGNIS_PIPER, Fortschritt { schritt: schritt.into(), bytes: n, gesamt });
-            }
-        }
-        let ist = hex(&hasher.finalize());
-        if ist != sha256 {
-            return Err(format!("{schritt}: Prüfsumme stimmt nicht"));
-        }
-        if let Some(ordner) = ziel.parent() {
-            std::fs::create_dir_all(ordner).map_err(|e| e.to_string())?;
-        }
-        Ok(puffer)
-    }
-
-    fn hex(b: &[u8]) -> String {
-        b.iter().map(|x| format!("{x:02x}")).collect()
-    }
-
-    fn schreiben(ziel: &Path, daten: &[u8]) -> Result<(), String> {
-        let teil = ziel.with_extension("part");
-        std::fs::write(&teil, daten).map_err(|e| e.to_string())?;
-        std::fs::rename(&teil, ziel).map_err(|e| e.to_string())
-    }
-
-    /// Lädt Piper und die vier Stimmen (~330 MB) nach ausdrücklichem Klick.
-    /// Jede Datei wird vor der Nutzung gegen ihre SHA-256 geprüft.
-    #[tauri::command]
-    pub(crate) async fn kabinen_piper_installieren(app: AppHandle) -> Result<bool, UiError> {
-        if !moeglich() {
-            return Err(UiError::new("nur_windows", "Piper is available on Windows only"));
-        }
-        let fehler = |e: String| UiError::new("piper_installation", e);
-        let basis = basis(&app).ok_or_else(|| fehler("kein Datenordner".into()))?;
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(600))
-            .redirect(reqwest::redirect::Policy::limited(8))
+    /// Ton vom Server. `Err` heißt „gerade nicht“ (kein Token, Netz,
+    /// ausgelastet) — der Aufrufer versucht es später wieder.
+    pub(crate) async fn sprechen(stimme: &str, text: &str) -> Result<Vec<u8>, String> {
+        let token = crate::live_zugang::pilot_token().ok_or("noch kein Live-Zugang (nicht provisioniert)")?;
+        let antwort = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
             .build()
-            .map_err(|e| fehler(e.to_string()))?;
-
-        if !programm(&app).is_some_and(|p| p.exists()) {
-            let zip = laden(&app, &client, PROGRAMM_URL, PROGRAMM_SHA256, &basis.join("piper.zip"), "piper").await.map_err(fehler)?;
-            let ziel = basis.join("piper");
-            let mut archiv = zip::ZipArchive::new(std::io::Cursor::new(zip)).map_err(|e| fehler(e.to_string()))?;
-            for i in 0..archiv.len() {
-                let mut eintrag = archiv.by_index(i).map_err(|e| fehler(e.to_string()))?;
-                let Some(rel) = eintrag.enclosed_name().map(|p| p.to_path_buf()) else { continue };
-                let pfad = ziel.join(rel);
-                if !pfad.starts_with(&ziel) {
-                    continue;
-                }
-                if eintrag.is_dir() {
-                    std::fs::create_dir_all(&pfad).map_err(|e| fehler(e.to_string()))?;
-                    continue;
-                }
-                if let Some(o) = pfad.parent() {
-                    std::fs::create_dir_all(o).map_err(|e| fehler(e.to_string()))?;
-                }
-                let mut aus = std::fs::File::create(&pfad).map_err(|e| fehler(e.to_string()))?;
-                std::io::copy(&mut eintrag, &mut aus).map_err(|e| fehler(e.to_string()))?;
-            }
+            .map_err(|e| e.to_string())?
+            .post(format!("{}/api/kabine/ton", crate::live_zugang::LIVE_BASIS))
+            .bearer_auth(token)
+            .header("User-Agent", format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")))
+            .json(&serde_json::json!({ "stimme": stimme, "text": text }))
+            .send()
+            .await
+            .map_err(|e| format!("live.kant.ovh nicht erreichbar: {e}"))?;
+        if !antwort.status().is_success() {
+            return Err(format!("Piper-Server antwortet {}", antwort.status()));
         }
-
-        for s in STIMMEN {
-            for (endung, sha) in [(".onnx", s.onnx_sha256), (".onnx.json", s.json_sha256)] {
-                let ziel = stimm_datei(&app, &s, endung).ok_or_else(|| fehler("kein Datenordner".into()))?;
-                if ziel.exists() {
-                    continue;
-                }
-                let url = format!(
-                    "https://huggingface.co/rhasspy/piper-voices/resolve/{STIMMEN_STAND}/{}/{}{endung}",
-                    s.pfad, s.name
-                );
-                let daten = laden(&app, &client, &url, sha, &ziel, s.name).await.map_err(fehler)?;
-                schreiben(&ziel, &daten).map_err(fehler)?;
-            }
-        }
-        Ok(installiert(&app))
+        antwort.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
     }
 }
 
@@ -1194,8 +1024,8 @@ mod tests {
     fn stimmen_nur_in_ihrer_sprache() {
         // Feste Regel (Thomas 17.10.): eine Sprache spricht nur eine Stimme
         // dieser Sprache — keine deutsche Stimme liest Englisch.
-        assert_eq!(piper::stimme_fuer("de-CH", true).unwrap().name, "de_DE-thorsten-high");
-        assert_eq!(piper::stimme_fuer("en-US", false).unwrap().name, "en_GB-jenny_dioco-medium");
+        assert_eq!(piper::stimme_fuer("de-CH", true), Some("de_DE-thorsten-high"));
+        assert_eq!(piper::stimme_fuer("en-US", false), Some("en_GB-jenny_dioco-medium"));
         assert!(piper::stimme_fuer("fr-FR", true).is_none());
         assert!(piper::stimme_fuer("lv-LV", false).is_none());
         assert_eq!(azure_stimme("de-AT", false), Some("de-AT-IngridNeural"));
@@ -1207,13 +1037,12 @@ mod tests {
                 assert_eq!(ssml::locale_aus_stimme(s), Some(sp), "{s}");
             }
         }
-        // Prüfsummen sind 64 Hex-Zeichen (ein Tippfehler ließe jede
-        // Installation an der Prüfung scheitern).
-        let hex = |h: &str| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit());
-        for s in piper::STIMMEN {
-            assert!(hex(s.onnx_sha256) && hex(s.json_sha256), "{}", s.name);
-        }
-        assert!(hex(piper::PROGRAMM_SHA256));
+        // Dieselben vier Namen wie auf dem Server (kabinenTon.ts STIMMEN);
+        // ein anderer Name gäbe dort 400.
+        assert_eq!(
+            piper::STIMMEN,
+            ["de_DE-thorsten-high", "de_DE-kerstin-low", "en_GB-northern_english_male-medium", "en_GB-jenny_dioco-medium"]
+        );
     }
 
     #[test]
@@ -1277,6 +1106,26 @@ mod tests {
         }
         // Gegenprobe: falscher Schlüssel → Fehler, nicht stilles WAV.
         assert!(azure_sprechen("falsch", &region, "de-DE-KatjaNeural", "Test").await.is_err());
+    }
+
+
+    #[test]
+    fn fehlgeschlagener_ton_wird_spaeter_neu_versucht() {
+        let mut l = Lauf::default();
+        let k = (Slot::Boarding, "de-DE".to_string());
+        assert!(ton_noetig(&l, &k, 0));
+        l.in_arbeit.insert(k.clone());
+        assert!(!ton_noetig(&l, &k, 0), "läuft schon");
+        l.in_arbeit.remove(&k);
+        l.ton_fehler.insert(k.clone(), (1, 60));
+        assert!(!ton_noetig(&l, &k, 30), "noch nicht wieder");
+        assert!(ton_noetig(&l, &k, 60), "nach einer Minute erneut");
+        l.ton_fehler.insert(k.clone(), (5, 0));
+        assert!(!ton_noetig(&l, &k, 999), "nach fünf Fehlern Schluss");
+        // Keine Stimme für die Sprache ist endgültig, kein Fehler.
+        l.ton_fehler.clear();
+        l.ton.insert(k.clone(), None);
+        assert!(!ton_noetig(&l, &k, 999));
     }
 
 }
