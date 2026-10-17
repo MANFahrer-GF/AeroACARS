@@ -1,0 +1,105 @@
+/* Kabinenansagen (Beta): Ansage-Seite. Seitenform wie das Bordbuch
+   (bordbuch.css). Akzentfarbe nur fuer „spricht gerade“. */
+.kabine-seite {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 16px);
+  padding: 1.25rem 1.5rem 2rem;
+  max-width: 920px;
+  margin: 0 auto;
+  width: 100%;
+}
+.kabine-kopf {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--sp-4, 16px);
+  flex-wrap: wrap;
+}
+.kabine-kopf h2 { margin: 0; font-size: var(--fs-600, 18px); }
+.kabine-kopf-knoepfe { display: flex; gap: 8px; flex-wrap: wrap; }
+.kabine-unter { color: var(--text-dim); font-size: var(--fs-300, 12px); margin-top: 4px; }
+
+/* Live-Bereich */
+.kabine-live {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  transition: border-color var(--dur-base, 200ms) var(--ease, ease-out), background-color var(--dur-base, 200ms) var(--ease, ease-out);
+}
+.kabine-live.ist-aktiv {
+  border-color: var(--acc);
+  background: color-mix(in srgb, var(--acc) 5%, var(--surface));
+}
+.kabine-live-kopf { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.kabine-sprecher { font-size: var(--fs-500, 15px); font-weight: var(--fw-bold, 700); color: var(--text); }
+.kabine-live.ist-aktiv .kabine-sprecher { color: var(--acc); }
+.kabine-slot { color: var(--text-dim); font-size: var(--fs-300, 12px); }
+
+.kabine-pegel { width: 100%; height: 56px; display: block; }
+.kabine-pegel rect { fill: var(--tick, #c3ccd6); transition: height 90ms linear, y 90ms linear; }
+.kabine-pegel.ist-aktiv rect { fill: var(--acc); }
+
+.kabine-teile { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.kabine-teile li { display: flex; flex-direction: column; gap: 4px; }
+.kabine-teile p {
+  margin: 0;
+  max-width: 68ch;
+  font-size: 1.05rem;
+  line-height: var(--lh-normal, 1.55);
+  color: var(--text-dim);
+  text-wrap: pretty;
+}
+.kabine-teile li.ist-jetzt p { color: var(--text); font-size: 1.2rem; }
+.kabine-teile li.ist-gesagt p { color: var(--text-dim); }
+.kabine-sprache { font-size: var(--fs-200, 11px); color: var(--text-dim); }
+.kabine-teile li.ist-jetzt .kabine-sprache { color: var(--acc); font-weight: var(--fw-bold, 700); }
+.kabine-ruhe-text { margin: 0; color: var(--text-dim); font-size: var(--fs-400, 13px); }
+
+/* Warteschlange und Verlauf */
+.kabine-spalten {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sp-4, 16px);
+  align-items: start;
+}
+.kabine-h3 { margin: 0 0 8px; font-size: var(--fs-400, 13px); font-weight: var(--fw-bold, 700); }
+.kabine-leer { color: var(--text-dim); font-size: var(--fs-300, 12px); padding: 8px 0; }
+.kabine-liste { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.kabine-liste li { padding: 9px 12px; font-size: var(--fs-400, 13px); background: var(--surface); }
+.kabine-liste li + li { border-top: 1px solid var(--border); }
+.kabine-verlauf-kopf { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.kabine-zeit { font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: var(--fs-300, 12px); }
+.kabine-rolle { color: var(--text-dim); font-size: var(--fs-300, 12px); margin-left: auto; }
+.kabine-verlauf-text {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-300, 12px);
+  line-height: var(--lh-snug, 1.35);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kabine-live, .kabine-pegel rect { transition: none; }
+}
+
+/* Warum gerade keine Ansagen kommen */
+.kabine-grund {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 1px solid var(--sem-warn, #b7791f);
+  border-radius: 10px;
+  background: var(--sem-warn-bg, color-mix(in srgb, var(--sem-warn, #b7791f) 10%, var(--surface)));
+}
+.kabine-grund strong { font-size: var(--fs-500, 15px); color: var(--text); }
+.kabine-grund p { margin: 0; color: var(--text); font-size: var(--fs-400, 13px); line-height: var(--lh-normal, 1.55); max-width: 70ch; }
+.kabine-grund .kabine-grund-detail { color: var(--text-dim); font-size: var(--fs-300, 12px); }

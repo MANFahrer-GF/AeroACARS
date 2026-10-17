@@ -25,6 +25,20 @@
         "1421"
       ],
       "port": 1421
+    },
+    {
+      "name": "kabine-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix",
+        "client",
+        "vite",
+        "--config",
+        "client/vite.kabine.config.mjs",
+        "--port",
+        "1422"
+      ],
+      "port": 1422
     }
   ]
 }

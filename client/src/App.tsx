@@ -7,7 +7,7 @@
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, clearIpcCache } from "./lib/ipc";
+import { invoke, clearIpcCache, isTauri } from "./lib/ipc";
 import { applyTheme, getInitialTheme, type Theme } from "./theme";
 import { hydrateSyncedStorage } from "./lib/syncedStorage";
 import {
@@ -17,6 +17,8 @@ import { LoginPage } from "./components/LoginPage";
 import { CockpitView } from "./components/CockpitView";
 import { TelemetrieView } from "./components/telemetrie/TelemetrieView";
 import { Notizblock } from "./components/notizblock/Notizblock";
+import { KabinenSeite } from "./components/kabine/KabinenSeite";
+import { einstellungenLesen as kabinenEinstellungenLesen, wiedergabeStarten as kabinenWiedergabeStarten } from "./lib/kabinenansagen";
 import { ResumeFlightBanner } from "./components/ResumeFlightBanner";
 import { BriefingView } from "./components/BriefingView";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -136,7 +138,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "bordbuch" | "telemetrie" | "notizblock" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "bordbuch" | "telemetrie" | "notizblock" | "kabine" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -177,6 +179,18 @@ function loadMinimizeToTray(): boolean {
 
 function saveMinimizeToTray(value: boolean): void {
   localStorage.setItem(MINIMIZE_TO_TRAY_KEY, value ? "1" : "0");
+}
+
+/** „Einstellungen öffnen“ aus Kabine und PDC/CPDLC: gleich im Reiter
+ *  „Cockpit“ landen, wo ihre Einstellungen seit 17.10.2026 stehen. Der
+ *  Einstellungs-Reiter liest seine Auswahl beim Öffnen aus dem Speicher. */
+function einstellungenImCockpit(setTab: (t: Tab) => void): void {
+  try {
+    localStorage.setItem("aeroacars.settings.activeTab", "cockpit");
+  } catch {
+    /* noop */
+  }
+  setTab("settings");
 }
 
 function loadLastSeenReleaseNotesVersion(): string | null {
@@ -262,6 +276,14 @@ function App() {
   const [chatUngelesen, setChatUngelesen] = useState(0);
   const [chatTonAn, setChatTonAn] = useState<boolean>(() => chatTonGeladen());
   const [chatAn, setChatAn] = useState<boolean>(() => chatAnGeladen());
+  // Kabinenansagen (Beta): Schalter liegt in Rust (die Sprachausgabe läuft
+  // dort); hier nur für den Reiter. Die Wiedergabe hört ab dem Start.
+  const [kabineAn, setKabineAn] = useState(false);
+  useEffect(() => {
+    if (!isTauri) return;
+    kabinenWiedergabeStarten();
+    void kabinenEinstellungenLesen().then((e) => setKabineAn(e.an)).catch(() => setKabineAn(false));
+  }, []);
   /** Zuletzt eingegangener Zuruf — nur fuer die kurze Einblendung. */
   const [letzterZuruf, setLetzterZuruf] = useState<EingehenderZuruf | null>(null);
   // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
@@ -873,6 +895,7 @@ function App() {
             setTab("cpdlc");
           }}
           chatAn={chatAn}
+          kabineAn={kabineAn}
           chatUngelesen={chatUngelesen}
           onChatOpen={() => {
             setChatUngelesen(0);
@@ -1050,6 +1073,13 @@ function App() {
 
       {status.kind === "loggedIn" && tab === "telemetrie" && <TelemetrieView />}
       {status.kind === "loggedIn" && tab === "notizblock" && <Notizblock />}
+      {status.kind === "loggedIn" && tab === "kabine" && <KabinenSeite
+          onOpenSettings={() => einstellungenImCockpit(setTab)}
+          onAus={() => {
+            setKabineAn(false);
+            setTab("cockpit");
+          }}
+        />}
 
       {status.kind === "loggedIn" && tab === "cockpit" && (
         <CockpitView
@@ -1146,7 +1176,7 @@ function App() {
       {status.kind === "loggedIn" && tab === "cpdlc" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
           <CpdlcPanel
-            onOpenSettings={() => setTab("settings")}
+            onOpenSettings={() => einstellungenImCockpit(setTab)}
             mode={cpdlcMode}
             onModeChange={setCpdlcMode}
           />
@@ -1171,6 +1201,10 @@ function App() {
           onAutoStartChange={handleAutoStartChange}
           autoDeleteFlightLogs={autoDeleteFlightLogs}
           onAutoDeleteFlightLogsChange={handleAutoDeleteFlightLogsChange}
+          onKabineAnChange={(next) => {
+            setKabineAn(next);
+            if (!next) setTab((a) => (a === "kabine" ? "cockpit" : a));
+          }}
           chatAn={chatAn}
           onChatAnChange={(next) => {
             setChatAn(next);

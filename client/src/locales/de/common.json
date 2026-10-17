@@ -1,9 +1,160 @@
 {
+  "kabine": {
+    "einstellungen": {
+      "titel": "Kabinenansagen (Beta)",
+      "an_label": "Kabinenansagen einschalten",
+      "an_hint": "KI-Ansagen von Kapitän und Kabine im Stil der Airline. Nur für freigeschaltete Beta-Piloten; die Texte schreibt der GSG-Server.",
+      "beta_ja": "Freigeschaltet.",
+      "beta_nein": "Für dein Konto noch nicht freigeschaltet.",
+      "beta_unbekannt": "Freischaltung wird beim Flugstart geprüft.",
+      "zweite_sprache": "Sprachen",
+      "sprache_airline": "Airline-Sprache + Englisch",
+      "sprache_airline_de": "Airline-Sprache + Deutsch",
+      "sprache_ziel": "Sprache des Ziellandes + Englisch",
+      "sprache_eigene": "Eigene Sprache + Englisch",
+      "sprache_keine": "Nur Englisch",
+      "sprache_hint": "Spricht die Airline schon Deutsch oder Englisch, kommt die jeweils andere dazu. Gibt es für eine Sprache keine Stimme, entfällt sie.",
+      "eigene_sprache": "Eigene Sprache",
+      "stimmen": "Stimmen",
+      "stimmen_hint": "Piper ist kostenlos und rechnet auf dem GSG-Server (Deutsch und Englisch, Windows und Mac). Kokoro ist ebenfalls kostenlos, klingt im Englischen natürlicher und kann nur Englisch; Deutsch spricht dann Piper. Azure braucht deinen eigenen Schlüssel und kann mehr Sprachen, auch Schweizer und österreichisches Deutsch.",
+      "anbieter_piper": "Piper (kostenlos, GSG-Server)",
+      "anbieter_kokoro": "Kokoro (kostenlos, GSG-Server, nur Englisch)",
+      "anbieter_azure": "Azure (eigener Schlüssel)",
+      "azure_titel": "Azure-Schlüssel",
+      "azure_gespeichert": "Ein Schlüssel ist gespeichert. Er bleibt auf deinem PC und geht nur an Microsoft.",
+      "azure_hint": "Kein Schlüssel gespeichert. Ohne Schlüssel spricht Piper vom GSG-Server.",
+      "azure_platzhalter": "Schlüssel aus dem Azure-Portal",
+      "speichern": "Speichern",
+      "loeschen": "Schlüssel löschen",
+      "azure_region": "Azure-Region (steht im Azure-Portal bei deinem Schlüssel, z. B. germanywestcentral)",
+      "tagesform_kapitaen": "Tagesform des Kapitäns",
+      "tagesform_kabine": "Tagesform der Kabine",
+      "echter_name": "Meinen Namen als Kapitän nennen",
+      "echter_name_hint": "Dein Name geht dann an den GSG-Server und an die KI. Sonst erfindet sie einen Namen.",
+      "kommandos": "Crew-Kommandos abspielen",
+      "doppelt_hint": "Ausschalten, wenn dein Flugzeug eigene Ansagen oder Gongs hat (etwa FlyByWire). Nie zwei Systeme gleichzeitig.",
+      "chimes": "Gong bei 10.000 Fuß",
+      "lautstaerke": "Lautstärke",
+      "probe": "Hörprobe",
+      "lizenzen": "Lizenzen",
+      "lizenz_text": "Piper (GPL-3.0) läuft auf dem GSG-Server und wird nicht auf deinen Rechner geladen. Stimmen: Thorsten und Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, verändert). Azure ist ein Dienst von Microsoft. Kokoro-82M (Apache-2.0) läuft ebenfalls nur auf dem GSG-Server, Stimmen George und Emma.",
+      "ausgabe": "Ausgabegerät",
+      "ausgabe_standard": "Systemstandard",
+      "ausgabe_fehlt": "Gewähltes Gerät nicht angeschlossen (spielt auf dem Systemstandard)",
+      "ausgabe_hint": "Zum Beispiel ATC im Headset und die Kabine über die Lautsprecher. Ist das Gerät abgezogen, spielt der Systemstandard."
+    },
+    "rolle": {
+      "kapitaen": "Kapitän",
+      "kabine": "Kabine",
+      "kommando": "Crew-Kommando",
+      "chime": "Gong"
+    },
+    "spricht": {
+      "kapitaen": "Der Kapitän spricht",
+      "kabine": "Die Kabine spricht",
+      "kommando": "Crew-Kommando",
+      "chime": "Gong"
+    },
+    "tagesform": {
+      "zufall": "Zufall, passend zur Airline",
+      "sachlich": "Sachlich",
+      "herzlich": "Herzlich",
+      "charmant": "Charmant",
+      "witzig": "Witzig",
+      "rustikal": "Rustikal"
+    },
+    "slot": {
+      "boarding": "Boarding",
+      "begruessung_tueren_zu": "Begrüßung, Türen zu",
+      "kommando_tueren_scharf": "Türen scharf",
+      "sicherheit": "Sicherheitshinweise",
+      "kapitaen_begruessung": "Begrüßung des Kapitäns",
+      "kommando_start": "Plätze für den Start",
+      "chime10000_steigflug": "Gong, 10.000 Fuß im Steigflug",
+      "anschnallzeichen_aus": "Anschnallzeichen aus",
+      "reiseflug25": "Service beginnt",
+      "reiseflug50": "Halbzeit",
+      "reiseflug80": "Zweiter Service",
+      "kapitaen_sinkflug": "Sinkflug, Kapitän",
+      "kabine_sinkflug": "Landevorbereitung, Kabine",
+      "chime10000_sinkflug": "Gong, 10.000 Fuß im Sinkflug",
+      "kommando_landung_vorbereiten": "Kabine für die Landung vorbereiten",
+      "kommando_plaetze_landung": "Plätze für die Landung",
+      "nach_der_landung": "Nach der Landung",
+      "kommando_tueren_entschaerfen": "Türen entschärfen",
+      "aussteigen": "Aussteigen",
+      "verspaetung_gate": "Verspätung am Gate",
+      "turbulenz": "Turbulenzen",
+      "turbulenz_vorbei": "Turbulenzen vorbei",
+      "warteschleife": "Warteschleife",
+      "durchstarten": "Durchgestartet",
+      "umleitung": "Umleitung"
+    },
+    "seite": {
+      "titel": "Kabine",
+      "kein_flug": "Kein laufender Flug.",
+      "nicht_freigeschaltet": "Für dein Konto noch nicht freigeschaltet.",
+      "warte_auf_texte": "Die Texte für diesen Flug werden geschrieben.",
+      "ausschalten": "Ansagen ausschalten",
+      "einstellungen": "Einstellungen öffnen",
+      "ruhig": "Gerade keine Ansage",
+      "naechste": "Als Nächstes: {{slot}}",
+      "ruhe_hinweis": "Die nächste Ansage kommt zur passenden Flugphase.",
+      "als_naechstes": "Als Nächstes",
+      "nichts_wartet": "Nichts in der Warteschlange.",
+      "bisher": "Bisher",
+      "noch_nichts": "Noch keine Ansage auf diesem Flug.",
+      "keine_ansagen": "Gerade keine Ansagen, der Grund steht unten."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Ansagen ausgeschaltet",
+        "text": "Die Kabinenansagen sind in den Einstellungen ausgeschaltet."
+      },
+      "replay": {
+        "titel": "Kein echter Flug",
+        "text": "AeroACARS hält diesen Flug für eine Wiedergabe. Ansagen gibt es nur im echten Flug."
+      },
+      "fracht": {
+        "titel": "Frachtflug",
+        "text": "Laut Flugplan ist das ein Flug ohne Passagiere (Fracht, Überführung o. ä.). Dafür gibt es keine Kabinenansagen."
+      },
+      "keine_pax": {
+        "titel": "Keine Passagierzahl",
+        "text": "Für diesen Flug kennt AeroACARS keine Passagierzahl: Es gibt keinen SimBrief-OFP und keine Passagier-Fares im Bid. Am Boden hilft „OFP refreshen“ im aktiven Flug. Wurde der Flug mit einer älteren Version begonnen, holt AeroACARS die Zahl beim nächsten Neustart nach."
+      },
+      "keine_passagiere": {
+        "titel": "Keine Passagiere an Bord",
+        "text": "Der Flugplan nennt 0 Passagiere. Ohne Passagiere gibt es keine Kabinenansagen."
+      },
+      "beta_pruefung": {
+        "titel": "Freischaltung wird geprüft",
+        "text": "AeroACARS fragt den GSG-Server, ob dein Konto für die Beta freigeschaltet ist. Ist der Server nicht erreichbar, versucht es AeroACARS alle 5 Minuten erneut."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Nicht freigeschaltet",
+        "text": "Dein Konto ist für die Kabinenansagen-Beta nicht freigeschaltet. Die Freischaltung macht das GSG-Team."
+      },
+      "texte_fehlen": {
+        "titel": "Texte nicht erhalten",
+        "text": "Der GSG-Server hat die Ansagetexte nicht geliefert. AeroACARS versucht es in 2 Minuten erneut. Meldung des Servers:"
+      },
+      "ton_fehlt": {
+        "titel": "Ton gerade nicht erzeugbar",
+        "text": "Die Sprachausgabe hat den Ton nicht geliefert (Server ausgelastet, Netz oder Azure-Schlüssel). AeroACARS versucht es jede Minute erneut. Meldung:"
+      },
+      "wiedergabe": {
+        "titel": "Ton nicht abspielbar",
+        "text": "Die Ansage war fertig, ließ sich aber nicht abspielen. Ist das gewählte Ausgabegerät belegt oder abgezogen? In den Einstellungen lässt sich ein anderes Gerät oder der Systemstandard wählen. Meldung:"
+      }
+    }
+  },
   "app": {
     "name": "AeroACARS",
     "tagline": "ACARS für phpVMS 7"
   },
   "tabs": {
+    "kabine": "Kabine",
     "cockpit": "Cockpit",
     "map": "Karte",
     "briefing": "Briefing",
@@ -1536,9 +1687,11 @@
       "tech": "🛠 Technik",
       "simulator_hint": "Welcher Flugsim ist installiert? AeroACARS verbindet sich mit dem gewählten Sim für Live-Daten, Touchdown-Forensik und Loadsheet-Vergleich.",
       "required_hint": "SimBrief-Konto + Flug-Aufzeichnungs-Verhalten — Basis für Flugplan-Daten und automatisches Tracking.",
-      "extras_hint": "Optionale Komfort-Einstellungen — Darstellung, Verhalten, Discord-Status.",
+      "extras_hint": "Optionale Komfort-Einstellungen: Sprache und Darstellung, Verhalten, Pilotenchat, Discord-Status.",
+      "cockpit": "🎧 Cockpit",
+      "cockpit_hint": "Was im Flug mitspielt: PDC/CPDLC über Hoppie, Kabinenansagen, die HUDs im Simulator und das Tablet als Fernbedienung.",
       "plugins_hint": "Flugzeug-spezifische Add-ons: PMDG-SDK (Boeing) und AeroACARS-X-Plane-Plugin. Werden automatisch erkannt sobald das passende Flugzeug geladen ist.",
-      "tech_hint": "Diagnose, Debug-Werkzeuge und seltene Maintenance-Funktionen.",
+      "tech_hint": "Speicher und Flug-Logs, anonyme Fehler-Telemetrie, Diagnose, Debug-Werkzeuge und seltene Wartungsfunktionen.",
       "bordbuch": "📓 Bordbuch",
       "bordbuch_hint": "Was das Bordbuch abhakt, leise Hinweise im Flug, Kleinflugzeuge und VFR.",
       "vermessen": "📐 Flugzeug vermessen",
@@ -1765,6 +1918,9 @@
     "about_all_releases": "Alle Releases auf GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Umleitung melden",
+    "umleitung_modal_hint": "Wähle einen der nächstgelegenen Flughäfen oder gib den ICAO-Code des neuen Ziels ein.",
+    "umleitung_modal_submit": "Umleitung melden",
     "title_alternate": "Divert zum geplanten Alternate erkannt",
     "title_nearest": "Anderer Landeplatz erkannt",
     "title_unknown": "Landeplatz nicht erkannt",
@@ -2158,6 +2314,13 @@
     "langsamer": "Die Simulation läuft seit über 2 Minuten langsamer als in Echtzeit. Das kann Flugzeit, Verbrauch und Auswertung verfälschen — bitte zurück auf 1×."
   },
   "active_flight": {
+    "umleitung": "Umleitung",
+    "umleitung_busy": "Melde…",
+    "umleitung_hint": "Neues Ziel melden, wenn du umleitest. Die Kabine sagt die Umleitung an. Den Flugbericht gibst du wie gewohnt nach der Landung ab.",
+    "umleitung_gemeldet": "Umleitung nach {{icao}} gemeldet.",
+    "umleitung_zurueckgenommen": "Umleitung zurückgenommen.",
+    "umleitung_zuruecknehmen": "Umleitung zurücknehmen",
+    "umleitung_anzeige": "Umleitung: {{geplant}} → {{ziel}}",
     "title": "Aktiver Flug",
     "phase": {
       "preflight": "Preflight",

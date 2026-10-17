@@ -20,7 +20,8 @@ function lies(p: string): string {
 describe("Versionsangaben", () => {
   it("stimmen in allen vier Dateien überein", () => {
     const paket = JSON.parse(lies("package.json")).version as string;
-    expect(paket).toMatch(/^\d+\.\d+\.\d+$/);
+    // `-beta.N` / `-rc.N` sind der Beta-Kanal aus release.yml (Pre-Release).
+    expect(paket).toMatch(/^\d+\.\d+\.\d+(-(beta|rc)\.\d+)?$/);
 
     const sperre = JSON.parse(lies("package-lock.json"));
     const tauri = JSON.parse(lies("src-tauri/tauri.conf.json")).version as string;

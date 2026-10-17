@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
-import type { ActiveFlightInfo, FlightEndOutcome, SimSnapshot } from "../types";
+import type { ActiveFlightInfo, FlightEndOutcome, FlightPhase, SimSnapshot } from "../types";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
 import { resolveFlightIdent } from "../lib/callsign";
 import { useConfirm } from "./ConfirmDialog";
@@ -14,6 +14,7 @@ import { FahrplanBand, useJetztSek } from "./FahrplanBand";
 import { LiveTapes } from "./LiveTapes";
 import { LoadsheetMonitor } from "./LoadsheetMonitor";
 import { ManualFileDialog } from "./ManualFileDialog";
+import { ManualDivertModal } from "./DivertBanner";
 import { PhaseCard } from "./PhaseCard";
 import { WeatherBriefing } from "./WeatherBriefing";
 import { SpritWegpunkteLive } from "./SpritWegpunkteLive";
@@ -45,6 +46,17 @@ interface Props {
 }
 
 const EARTH_RADIUS_NM = 3440.065; // nautical miles
+
+/** Umleitung (Beta): Phasen, in denen ein neues Ziel gemeldet werden kann. */
+const IN_DER_LUFT: readonly FlightPhase[] = [
+  "takeoff",
+  "climb",
+  "cruise",
+  "holding",
+  "descent",
+  "approach",
+  "final",
+];
 
 /** Great-circle distance in nautical miles between two lat/lon points —
  *  same formula/constant RouteMap.tsx uses for its own progress-bar math,
@@ -132,13 +144,15 @@ export function ActiveFlightPanel({
   const { t, i18n } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [busy, setBusy] = useState<
-    "end" | "cancel" | "forget" | "refresh" | "sync_route" | null
+    "end" | "cancel" | "forget" | "refresh" | "sync_route" | "umleitung" | null
   >(null);
   const [error, setError] = useState<string | null>(null);
   // v0.3.2: short-lived inline message after a successful OFP refresh
   // ("Plan-Werte aktualisiert"). Cleared on the next action so it
   // doesn't linger forever.
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  /** Umleitung (Beta): Auswahl-Dialog für das neue Ziel offen? */
+  const [umleitungOffen, setUmleitungOffen] = useState(false);
   /**
    * When `flight_end` fails with `flight_validation_failed`, the backend
    * sends back a list of i18n-keyed missing-field codes. We surface the
@@ -506,6 +520,31 @@ export function ActiveFlightPanel({
    * The backend writes only planned_route / planned_waypoints / alternate
    * and re-posts the route to phpVMS — no scored field is touched.
    */
+  /**
+   * Umleitung (Beta): neues Ziel melden (`icao`) oder zurücknehmen (`null`).
+   * Löst nur die Umleitungs-Ansage aus; der Flugbericht wird weiter nach der
+   * Landung über den Divert-Banner abgegeben.
+   */
+  async function handleUmleitung(icao: string | null) {
+    if (busy) return;
+    setBusy("umleitung");
+    setError(null);
+    setRefreshMsg(null);
+    try {
+      const ziel = await invoke<string | null>("flight_umleitung_setzen", { icao });
+      setRefreshMsg(
+        ziel
+          ? t("active_flight.umleitung_gemeldet", { icao: ziel })
+          : t("active_flight.umleitung_zurueckgenommen"),
+      );
+    } catch (err: unknown) {
+      const e = err as { message?: string } | null;
+      setError(e?.message ?? String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleSyncRoute() {
     if (busy) return;
     setBusy("sync_route");
@@ -637,6 +676,14 @@ export function ActiveFlightPanel({
           </span>
           <span className="active-flight__icao">{info.arr_airport}</span>
         </div>
+        {info.umleitung_ziel && (
+          <div className="active-flight__umleitung" data-testid="umleitung-ziel">
+            {t("active_flight.umleitung_anzeige", {
+              geplant: info.arr_airport,
+              ziel: info.umleitung_ziel,
+            })}
+          </div>
+        )}
         {/* v1.5.5 Stand-Erkennung: erkannte Stände unter der Route —
             "Stand" liest sich in beiden Sprachen. Erscheint erst, wenn
             mindestens einer erkannt wurde. */}
@@ -736,6 +783,31 @@ export function ActiveFlightPanel({
             ? t("active_flight.sync_route_busy")
             : t("active_flight.sync_route")}
         </button>
+        {/* Umleitung (Beta): nur in der Luft. Am Boden nach der Landung
+            ist der Divert-Banner zuständig. */}
+        {IN_DER_LUFT.includes(info.phase) && (
+          <button
+            type="button"
+            className="active-flight__umleitung-knopf"
+            onClick={() => setUmleitungOffen(true)}
+            disabled={busy !== null}
+            title={t("active_flight.umleitung_hint")}
+          >
+            {busy === "umleitung"
+              ? t("active_flight.umleitung_busy")
+              : t("active_flight.umleitung")}
+          </button>
+        )}
+        {info.umleitung_ziel && (
+          <button
+            type="button"
+            className="active-flight__umleitung-knopf"
+            onClick={() => void handleUmleitung(null)}
+            disabled={busy !== null}
+          >
+            {t("active_flight.umleitung_zuruecknehmen")}
+          </button>
+        )}
         {/* OFP refresh — pre-takeoff only. After takeoff the plan
             shouldn't change anyway, and we don't want pilots
             accidentally clobbering the loadsheet baseline mid-flight. */}
@@ -785,6 +857,17 @@ export function ActiveFlightPanel({
         </button>
       </div>
 
+      {umleitungOffen && (
+        <ManualDivertModal
+          activeFlight={info}
+          texte="umleitung"
+          onClose={() => setUmleitungOffen(false)}
+          onPicked={(icao) => {
+            setUmleitungOffen(false);
+            void handleUmleitung(icao);
+          }}
+        />
+      )}
       {validationMissing !== null && (
         <ManualFileDialog
           info={info}

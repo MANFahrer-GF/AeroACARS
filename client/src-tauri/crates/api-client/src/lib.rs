@@ -660,6 +660,13 @@ pub struct SimBriefOfp {
     pub sched_off_epoch: Option<i64>,
     #[serde(default)]
     pub sched_on_epoch: Option<i64>,
+    /// Kabinenansagen (Beta): Zeitzone von Abflug und Ziel als Abstand zu UTC
+    /// in Minuten, aus `<times><orig_timezone>` / `<dest_timezone>` (SimBrief
+    /// liefert Stunden, z. B. `-5` oder `5.5`). Fuer Ortszeit und Tageszeit.
+    #[serde(default)]
+    pub orig_utc_offset_min: Option<i32>,
+    #[serde(default)]
+    pub dest_utc_offset_min: Option<i32>,
     /// Briefing-2a Fuel-Transparenz (Pilot-Feedback 2026-08-02: Trip+Reserve
     /// allein ergaben keine plausible Summe zu Block — verifiziert per Live-
     /// XML-Dump: `<fuel>` hat taxi/contingency/alternate_burn/reserve/extra,
@@ -760,6 +767,33 @@ pub struct Fare {
 pub struct PaxFare {
     pub id: i64,
     pub count: i32,
+}
+
+/// Kabinenansagen (Beta): Antwort von `/api/kabinenansagen/status`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KabinenStatus {
+    #[serde(default)]
+    pub beta: bool,
+    #[serde(default)]
+    pub bereit: bool,
+}
+
+/// Kabinenansagen (Beta): ein Text des Drehbuchs. `slot` ist der serde-Name
+/// aus `cabin_announcements::Slot` (der api-client kennt den Baustein nicht).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KabinenEintrag {
+    pub slot: String,
+    pub sprache: String,
+    pub text: String,
+}
+
+/// Kabinenansagen (Beta): Antwort von `/api/kabinenansagen/drehbuch`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KabinenDrehbuch {
+    #[serde(default)]
+    pub sprachen: Vec<String>,
+    #[serde(default)]
+    pub eintraege: Vec<KabinenEintrag>,
 }
 
 /// Response payload of the PaxStudio fares/claim endpoints (inside the `{data:…}`
@@ -1618,6 +1652,22 @@ impl Client {
             &Body { pirep_id },
         )
         .await
+    }
+
+    /// Kabinenansagen (Beta): Darf dieser Pilot die Ansagen nutzen?
+    /// `GET /api/kabinenansagen/status` am GSG-Modul. Nur `beta && bereit`
+    /// schaltet frei; jeder Fehler heisst „aus“ (Aufrufer entscheidet).
+    pub async fn kabinen_status(&self) -> Result<KabinenStatus, ApiError> {
+        self.get_data("/api/kabinenansagen/status").await
+    }
+
+    /// Kabinenansagen (Beta): die Texte eines Flugteils.
+    /// `POST /api/kabinenansagen/drehbuch` am GSG-Modul.
+    pub async fn kabinen_drehbuch(
+        &self,
+        anfrage: &serde_json::Value,
+    ) -> Result<KabinenDrehbuch, ApiError> {
+        self.post_data("/api/kabinenansagen/drehbuch", anfrage).await
     }
 
     /// `GET /api/airports/{icao}` — single airport lookup with coordinates.
@@ -2765,6 +2815,16 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
     let sched_on_epoch = extract_tag(xml, "times")
         .and_then(|inner| extract_tag(inner, "sched_on"))
         .and_then(|s| s.trim().parse::<i64>().ok());
+    // Stunden gegen UTC; ausserhalb von −12…+14 ist es kein Zeitzonenwert.
+    let utc_offset_min = |tag: &str| {
+        extract_tag(xml, "times")
+            .and_then(|inner| extract_tag(inner, tag))
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|h| h.is_finite() && (-12.0..=14.0).contains(h))
+            .map(|h| (h * 60.0).round() as i32)
+    };
+    let orig_utc_offset_min = utc_offset_min("orig_timezone");
+    let dest_utc_offset_min = utc_offset_min("dest_timezone");
 
     Some(SimBriefOfp {
         planned_block_fuel_kg: plan_ramp,
@@ -2798,6 +2858,8 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         sched_in_epoch,
         sched_off_epoch,
         sched_on_epoch,
+        orig_utc_offset_min,
+        dest_utc_offset_min,
         planned_taxi_kg: taxi_fuel,
         planned_contingency_kg: contingency_fuel,
         planned_alternate_burn_kg: alternate_burn_fuel,
@@ -3192,6 +3254,27 @@ mod tests {
         assert_eq!(ofp.sched_off_epoch, Some(1791693900));
         assert_eq!(ofp.sched_on_epoch, Some(1791707940));
         assert_eq!(ofp.sched_in_epoch, Some(1791708480));
+    }
+
+    /// Kabinenansagen (Beta): Zeitzonen aus `<times>` (Stunden → Minuten),
+    /// halbe Stunden bleiben erhalten, Unsinn und Fehlen ergeben `None`.
+    /// Werte wie im phpVMS-Testdatensatz `acars_briefing.xml` (MKJP → MWCR).
+    #[test]
+    fn simbrief_liest_die_zeitzonen() {
+        let ofp_mit = |orig: &str, dest: &str| {
+            parse_simbrief_ofp(&format!(
+                r#"<ofp>
+                    <fuel><plan_ramp>9733</plan_ramp><est_burn>5800</est_burn><reserve>1300</reserve></fuel>
+                    <weights><est_zfw>71242</est_zfw><est_tow>80700</est_tow><est_ldw>75380</est_ldw></weights>
+                    <times>{orig}{dest}</times>
+                </ofp>"#
+            ))
+            .expect("parses")
+        };
+        let ofp = ofp_mit("<orig_timezone>-5</orig_timezone>", "<dest_timezone>5.5</dest_timezone>");
+        assert_eq!((ofp.orig_utc_offset_min, ofp.dest_utc_offset_min), (Some(-300), Some(330)));
+        let ofp = ofp_mit("<orig_timezone>99</orig_timezone>", "");
+        assert_eq!((ofp.orig_utc_offset_min, ofp.dest_utc_offset_min), (None, None));
     }
 
     /// Reproduces the live bug from a GSG pilot 2026-05-03: the

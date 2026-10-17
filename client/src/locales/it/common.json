@@ -1,9 +1,160 @@
 {
+  "kabine": {
+    "einstellungen": {
+      "titel": "Annunci di cabina (beta)",
+      "an_label": "Attiva gli annunci di cabina",
+      "an_hint": "Annunci IA del comandante e dell'equipaggio nello stile della compagnia. Solo per i piloti beta; i testi li scrive il server GSG.",
+      "beta_ja": "Abilitato per il tuo account.",
+      "beta_nein": "Non ancora abilitato per il tuo account.",
+      "beta_unbekannt": "L'abilitazione viene verificata all'inizio del volo.",
+      "zweite_sprache": "Lingue",
+      "sprache_airline": "Lingua della compagnia + inglese",
+      "sprache_airline_de": "Lingua della compagnia + tedesco",
+      "sprache_ziel": "Lingua della destinazione + inglese",
+      "sprache_eigene": "La mia lingua + inglese",
+      "sprache_keine": "Solo inglese",
+      "sprache_hint": "Se la compagnia parla già tedesco o inglese, si aggiunge l'altra. Una lingua senza voce viene saltata.",
+      "eigene_sprache": "La mia lingua",
+      "stimmen": "Voci",
+      "stimmen_hint": "Piper è gratuito e gira sul server GSG (tedesco e inglese, Windows e Mac). Anche Kokoro è gratuito, in inglese suona più naturale e parla solo inglese; il tedesco lo parla allora Piper. Azure richiede la tua chiave e copre più lingue, anche il tedesco svizzero e austriaco.",
+      "anbieter_piper": "Piper (gratuito, server GSG)",
+      "anbieter_kokoro": "Kokoro (gratuito, server GSG, solo inglese)",
+      "anbieter_azure": "Azure (chiave propria)",
+      "azure_titel": "Chiave Azure",
+      "azure_gespeichert": "Una chiave è salvata. Resta sul tuo PC e va solo a Microsoft.",
+      "azure_hint": "Nessuna chiave salvata. Senza chiave parla Piper dal server GSG.",
+      "azure_platzhalter": "Chiave dal portale Azure",
+      "speichern": "Salva",
+      "loeschen": "Elimina chiave",
+      "azure_region": "Regione Azure (indicata accanto alla chiave nel portale Azure, ad es. germanywestcentral)",
+      "tagesform_kapitaen": "Umore del comandante",
+      "tagesform_kabine": "Umore dell'equipaggio",
+      "echter_name": "Usa il mio nome come comandante",
+      "echter_name_hint": "Il tuo nome va allora al server GSG e all'IA. Altrimenti ne inventa uno.",
+      "kommandos": "Riproduci i comandi all'equipaggio",
+      "doppelt_hint": "Disattiva se il tuo aereo ha annunci o segnali propri (ad esempio FlyByWire). Mai due sistemi insieme.",
+      "chimes": "Segnale a 10.000 piedi",
+      "lautstaerke": "Volume",
+      "probe": "Ascolta una prova",
+      "lizenzen": "Licenze",
+      "lizenz_text": "Piper (GPL-3.0) gira sul server GSG e non viene scaricato sul tuo computer. Voci: Thorsten e Kerstin (CC0), Jenny (Dioco), Northern English Male (OpenSLR 83, CC BY-SA 4.0, modificata). Azure è un servizio di Microsoft. Kokoro-82M (Apache-2.0) gira anch'esso solo sul server GSG, voci George ed Emma.",
+      "ausgabe": "Dispositivo di uscita",
+      "ausgabe_standard": "Predefinito di sistema",
+      "ausgabe_fehlt": "Dispositivo scelto non collegato (suona sul predefinito di sistema)",
+      "ausgabe_hint": "Ad esempio ATC nelle cuffie e la cabina sugli altoparlanti. Se il dispositivo è scollegato, suona il predefinito di sistema."
+    },
+    "rolle": {
+      "kapitaen": "Comandante",
+      "kabine": "Cabina",
+      "kommando": "Comando all'equipaggio",
+      "chime": "Segnale"
+    },
+    "spricht": {
+      "kapitaen": "Parla il comandante",
+      "kabine": "Parla l'equipaggio",
+      "kommando": "Comando all'equipaggio",
+      "chime": "Segnale"
+    },
+    "tagesform": {
+      "zufall": "Casuale, adatto alla compagnia",
+      "sachlich": "Sobrio",
+      "herzlich": "Cordiale",
+      "charmant": "Affascinante",
+      "witzig": "Spiritoso",
+      "rustikal": "Alla buona"
+    },
+    "slot": {
+      "boarding": "Imbarco",
+      "begruessung_tueren_zu": "Benvenuto, porte chiuse",
+      "kommando_tueren_scharf": "Porte in automatico",
+      "sicherheit": "Istruzioni di sicurezza",
+      "kapitaen_begruessung": "Benvenuto del comandante",
+      "kommando_start": "Ai posti per il decollo",
+      "chime10000_steigflug": "Segnale, 10.000 piedi in salita",
+      "anschnallzeichen_aus": "Segnale cinture spento",
+      "reiseflug25": "Inizio del servizio",
+      "reiseflug80": "Secondo servizio",
+      "reiseflug50": "Metà volo",
+      "kapitaen_sinkflug": "Discesa, comandante",
+      "kabine_sinkflug": "Preparazione all'atterraggio, cabina",
+      "chime10000_sinkflug": "Segnale, 10.000 piedi in discesa",
+      "kommando_landung_vorbereiten": "Preparare la cabina per l'atterraggio",
+      "kommando_plaetze_landung": "Ai posti per l'atterraggio",
+      "nach_der_landung": "Dopo l'atterraggio",
+      "kommando_tueren_entschaerfen": "Porte in manuale",
+      "aussteigen": "Sbarco",
+      "verspaetung_gate": "Ritardo al gate",
+      "turbulenz": "Turbolenza",
+      "turbulenz_vorbei": "Turbolenza terminata",
+      "warteschleife": "Attesa",
+      "durchstarten": "Riattaccata",
+      "umleitung": "Dirottamento"
+    },
+    "seite": {
+      "titel": "Cabina",
+      "kein_flug": "Nessun volo in corso.",
+      "nicht_freigeschaltet": "Non ancora abilitato per il tuo account.",
+      "warte_auf_texte": "I testi per questo volo sono in preparazione.",
+      "ausschalten": "Disattiva gli annunci",
+      "einstellungen": "Apri le impostazioni",
+      "ruhig": "Nessun annuncio in questo momento",
+      "naechste": "Prossimo: {{slot}}",
+      "ruhe_hinweis": "Il prossimo annuncio arriva con la fase di volo adatta.",
+      "als_naechstes": "Prossimi",
+      "nichts_wartet": "Nulla in coda.",
+      "bisher": "Finora",
+      "noch_nichts": "Ancora nessun annuncio su questo volo.",
+      "keine_ansagen": "Nessun annuncio al momento, il motivo è indicato sotto."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Annunci disattivati",
+        "text": "Gli annunci di cabina sono disattivati nelle impostazioni."
+      },
+      "replay": {
+        "titel": "Non è un volo reale",
+        "text": "AeroACARS ritiene che questo volo sia una riproduzione. Gli annunci vengono riprodotti solo in un volo reale."
+      },
+      "fracht": {
+        "titel": "Volo cargo",
+        "text": "Secondo il piano di volo questo volo non trasporta passeggeri (cargo, trasferimento o simile). Non ci sono annunci di cabina."
+      },
+      "keine_pax": {
+        "titel": "Nessun numero di passeggeri",
+        "text": "AeroACARS non conosce il numero di passeggeri di questo volo: non c'è un OFP SimBrief né tariffe passeggeri nel bid. A terra aiuta \"Aggiorna OFP\" nel volo attivo. Se il volo è stato iniziato con una versione precedente, AeroACARS recupera il numero al prossimo riavvio."
+      },
+      "keine_passagiere": {
+        "titel": "Nessun passeggero a bordo",
+        "text": "Il piano di volo indica 0 passeggeri. Senza passeggeri non ci sono annunci di cabina."
+      },
+      "beta_pruefung": {
+        "titel": "Verifica dell'accesso",
+        "text": "AeroACARS chiede al server GSG se il tuo account è abilitato alla beta. Se il server non è raggiungibile, AeroACARS riprova ogni 5 minuti."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Non abilitato",
+        "text": "Il tuo account non è abilitato alla beta degli annunci di cabina. L'abilitazione la fa il team GSG."
+      },
+      "texte_fehlen": {
+        "titel": "Testi non ricevuti",
+        "text": "Il server GSG non ha fornito i testi degli annunci. AeroACARS riprova tra 2 minuti. Messaggio del server:"
+      },
+      "ton_fehlt": {
+        "titel": "Audio non disponibile al momento",
+        "text": "Il servizio vocale non ha fornito l'audio (server occupato, rete o chiave Azure). AeroACARS riprova ogni minuto. Messaggio:"
+      },
+      "wiedergabe": {
+        "titel": "Audio non riproducibile",
+        "text": "L'annuncio era pronto ma non è stato possibile riprodurlo. Il dispositivo di uscita scelto è occupato o scollegato? Nelle impostazioni puoi scegliere un altro dispositivo o il predefinito di sistema. Messaggio:"
+      }
+    }
+  },
   "app": {
     "name": "AeroACARS",
     "tagline": "ACARS per phpVMS 7"
   },
   "tabs": {
+    "kabine": "Cabina",
     "cockpit": "Cockpit",
     "map": "Mappa",
     "briefing": "Briefing",
@@ -1536,9 +1687,11 @@
       "tech": "🛠 Tecnico",
       "simulator_hint": "Quale flight sim è installato? AeroACARS si connette al sim scelto per dati live, forense del touchdown e confronto loadsheet.",
       "required_hint": "Account SimBrief + comportamento di registrazione volo — la base per i dati del piano di volo e il tracking automatico.",
-      "extras_hint": "Impostazioni opzionali di comfort — aspetto, comportamento, Discord presence.",
+      "extras_hint": "Impostazioni di comfort opzionali: lingua e aspetto, comportamento, chat piloti, stato Discord.",
+      "cockpit": "🎧 Cockpit",
+      "cockpit_hint": "Ciò che accompagna il volo: PDC/CPDLC tramite Hoppie, annunci di cabina, gli HUD nel simulatore e il tablet come telecomando.",
       "plugins_hint": "Add-on specifici per aereo: PMDG SDK (Boeing) e plugin AeroACARS X-Plane. Rilevati automaticamente al caricamento dell'aereo corrispondente.",
-      "tech_hint": "Diagnostica, strumenti di debug e funzioni di manutenzione rare.",
+      "tech_hint": "Archiviazione e log di volo, telemetria anonima degli errori, diagnostica, strumenti di debug e funzioni di manutenzione rare.",
       "bordbuch": "📓 Diario di bordo",
       "bordbuch_hint": "Cosa spunta il diario di bordo, suggerimenti discreti in volo, aerei leggeri e VFR.",
       "vermessen": "📐 Misura aereo",
@@ -1751,6 +1904,9 @@
     "about_all_releases": "Tutte le release su GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Segnala dirottamento",
+    "umleitung_modal_hint": "Scegli uno degli aeroporti più vicini o inserisci il codice ICAO della nuova destinazione.",
+    "umleitung_modal_submit": "Segnala dirottamento",
     "title_alternate": "Divert all'alternato pianificato rilevato",
     "title_nearest": "Atterraggio diverso rilevato",
     "title_unknown": "Aeroporto di atterraggio non riconosciuto",
@@ -2144,6 +2300,13 @@
     "langsamer": "Da oltre 2 minuti la simulazione gira più lenta del tempo reale. Può falsare tempo di volo, consumo e valutazione — torna a 1×."
   },
   "active_flight": {
+    "umleitung": "Dirottamento",
+    "umleitung_busy": "Invio…",
+    "umleitung_hint": "Segnala la nuova destinazione quando dirotti. La cabina annuncia il dirottamento. Il PIREP si invia come sempre dopo l'atterraggio.",
+    "umleitung_gemeldet": "Dirottamento verso {{icao}} segnalato.",
+    "umleitung_zurueckgenommen": "Dirottamento annullato.",
+    "umleitung_zuruecknehmen": "Annulla dirottamento",
+    "umleitung_anzeige": "Dirottamento: {{geplant}} → {{ziel}}",
     "title": "Volo attivo",
     "phase": {
       "preflight": "Preflight",

@@ -486,6 +486,9 @@ export interface ActiveFlightInfo {
    *  the pilot to confirm the actual destination so the PIREP can be
    *  filed with the correct `arr_airport_id`. Null on normal arrivals. */
   divert_hint: DivertHint | null;
+  /** Umleitung (Beta): vom Piloten im Flug gemeldetes neues Ziel (ICAO).
+   *  Löst die Umleitungs-Ansage aus; am Flugbericht ändert es nichts. */
+  umleitung_ziel?: string | null;
   /** Beim Wiederaufnehmen wurde ein physikalisch unmöglicher Sprung erkannt
    *  (Sprit/Höhe/Drift): Der Sim wurde neu geladen, der Flug ging so nicht
    *  weiter. Die App gibt dann nicht mehr von selbst ab — das Cockpit fragt
