@@ -5627,10 +5627,6 @@ struct PersistedFlightStats {
     /// einem Neustart im Reiseflug auf den 240-s-Ersatz zurück.
     #[serde(default)]
     v2_reiseflughoehe_ft: Option<f64>,
-    /// v0.16.12 (#phase-v2): akkumulierte Schatten-Divergenz-Sekunden —
-    /// persistiert, damit das Flug-Aggregat einen App-Restart überlebt.
-    #[serde(default)]
-    shadow_divergence_secs: f64,
 }
 
 impl PersistedFlightStats {
@@ -5880,7 +5876,6 @@ impl PersistedFlightStats {
             // v0.16.12 (#phase-v2)
             planned_cruise_alt_ft: stats.planned_cruise_alt_ft,
             v2_reiseflughoehe_ft: stats.shadow_engine.beobachtete_reiseflughoehe_ft(),
-            shadow_divergence_secs: stats.shadow_divergence_secs,
         }
     }
 
@@ -6184,7 +6179,6 @@ impl PersistedFlightStats {
         stats
             .shadow_engine
             .reiseflughoehe_uebernehmen(self.v2_reiseflughoehe_ft);
-        stats.shadow_divergence_secs = self.shadow_divergence_secs;
     }
 }
 
@@ -6689,13 +6683,6 @@ struct FlightStats {
     /// Letztes Schatten-Segment (z. B. Level während einer Restriction).
     /// Runtime-only.
     shadow_segment: Option<phase_v2::Segment>,
-    /// Akkumulierte Sekunden, in denen Schatten-Phase ≠ alte FSM-Phase
-    /// war (old==Holding ausgenommen — dokumentierter Diff, v2 modelliert
-    /// Holding in Runde 1 nicht). Billiges Aggregat fürs Reporting.
-    shadow_divergence_secs: f64,
-    /// Wall-Clock des letzten Schatten-Engine-Ticks (dt-Quelle für den
-    /// Divergenz-Zähler). Runtime-only.
-    shadow_last_tick_at: Option<DateTime<Utc>>,
     /// v0.19.1: letzte EFFEKTIVE (v2-bevorzugte) Phase, für die eine ACARS-
     /// "Phase: …"-Textlog-Zeile + der retained MQTT-Phase-Publish bereits
     /// abgesetzt wurden. Vorher waren beide rein an v1-Transitions
@@ -10018,14 +10005,17 @@ const HAT_AGL_VERTRAUT_FT: f32 = 600.0;
 /// clears the lowest-AGL tracker (next descent starts a fresh
 /// window), and clears the dwell timer.
 /// v2-Entscheidung des Vortakts für das Reiseband (17.10.2026, „Stück 2"):
-/// `Some(p)`, wenn v2 eine Reiseband-Phase meldet. Anflug, Final und
-/// Landung übernimmt v1 NICHT von v2 — dort entscheiden v1s eigene
-/// Kanten (Anflug-Kante im selben Takt, Durchstart-Detektor mit Zählung
-/// und Forensik-Schnitt, Bodenberührung für den Aufsetz-Zeitpunkt).
+/// `Some(p)`, wenn v2 eine ANDERE Reiseband-Phase meldet als die aktuelle.
+/// Bestätigt v2 nur die aktuelle Phase, kommt `None` — damit die übrigen
+/// Prüfungen des Arms (Warteschleife im Cruise) weiterlaufen. Anflug,
+/// Final und Landung übernimmt v1 NICHT von v2 — dort entscheiden v1s
+/// eigene Kanten (Anflug-Kante im selben Takt, Durchstart-Detektor mit
+/// Zählung und Forensik-Schnitt, Bodenberührung für den Aufsetz-Zeitpunkt).
 fn reiseband_phase(stats: &FlightStats) -> Option<FlightPhase> {
-    stats
-        .shadow_phase
-        .filter(|p| matches!(p, FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent))
+    stats.shadow_phase.filter(|p| {
+        *p != stats.phase
+            && matches!(p, FlightPhase::Climb | FlightPhase::Cruise | FlightPhase::Descent)
+    })
 }
 
 /// Anflug-Kante aus dem Reiseband: tief und sinkend (alte FSM und v2 1:1).
@@ -47428,14 +47418,6 @@ fn phasen_takt(flight: &ActiveFlight, snap: &SimSnapshot, now: DateTime<Utc>) ->
         .filter(|&ft| ft > 0)
         .map(f64::from)
         .or(stats.planned_cruise_alt_ft);
-    // Divergenz-dt: Abstand zum letzten Schatten-Tick, auf 10 s
-    // gekappt (Streamer tickt ≤ 3 s; Resume-Lücken zählen so
-    // höchstens einen gedeckelten Tick).
-    let dt_secs = stats
-        .shadow_last_tick_at
-        .map(|prev| ((now - prev).num_milliseconds() as f64 / 1000.0).clamp(0.0, 10.0))
-        .unwrap_or(0.0);
-    stats.shadow_last_tick_at = Some(now);
     let (shadow_phase, shadow_segment) = stats.shadow_engine.step(
         now,
         snap.altitude_msl_ft,
@@ -47447,11 +47429,6 @@ fn phasen_takt(flight: &ActiveFlight, snap: &SimSnapshot, now: DateTime<Utc>) ->
     );
     stats.shadow_phase = Some(shadow_phase);
     stats.shadow_segment = Some(shadow_segment);
-    // Holding ist in v2 (Runde 1) bewusst unmodelliert — diese Ticks
-    // zählen nicht als Divergenz (Report klammert sie ebenfalls aus).
-    if shadow_phase != old_phase_post_step && old_phase_post_step != FlightPhase::Holding {
-        stats.shadow_divergence_secs += dt_secs;
-    }
     PhasenTakt { wechsel, v2: Some((shadow_phase, shadow_segment)) }
 }
 
@@ -52043,6 +52020,39 @@ mod enroute_reconcile_tests {
     }
 
     // ---- QS-Runde 1: Anti-Oszillations-Gate (segment_contradicts_v1) ----
+
+    /// 17.10.2026 („Stück 2"): Bestätigt v2 nur den Reiseflug, muss die
+    /// Warteschleifen-Erkennung des Cruise-Arms weiterlaufen. Im ersten
+    /// Korpus-Lauf fiel sie still weg (9 → 1 Holding-Eintritte), weil die
+    /// Übernahme auch die eigene Phase „übernahm".
+    #[test]
+    fn holding_entry_from_cruise_still_works() {
+        let flight = fixture();
+        let t0 = Utc::now() - chrono::Duration::seconds(200);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::Cruise;
+            stats.shadow_phase = Some(FlightPhase::Cruise);
+            stats.was_airborne = true;
+            stats.was_on_ground = Some(false);
+        }
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        snap.altitude_msl_ft = 12000.0;
+        snap.altitude_agl_ft = 11000.0;
+        snap.vertical_speed_fpm = 0.0;
+        snap.groundspeed_kt = 220.0;
+        snap.engines_running = 2;
+        snap.bank_deg = 25.0;
+        let mut phase = FlightPhase::Cruise;
+        for i in 0..40 {
+            if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                phase = p;
+            }
+            flight.stats.lock().unwrap().shadow_phase = Some(FlightPhase::Cruise);
+        }
+        assert_eq!(phase, FlightPhase::Holding, "sustained bank in cruise must enter Holding");
+    }
 
     #[test]
     fn atc_step_down_level_off_stays_descent() {
