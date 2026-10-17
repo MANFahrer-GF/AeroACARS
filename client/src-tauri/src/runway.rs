@@ -1303,11 +1303,20 @@ fn find_nearest(
 /// „Voraus" heißt: vor der Schwelle oder noch über der Bahn (ein Abbruch
 /// kurz über der Bahn ist ein Durchstarter), aber nicht hinter dem
 /// Bahnende — dort fliegt man von der Bahn weg.
-pub fn schwelle_voraus(lat: f64, lon: f64, kurs_true_deg: f32, max_nm: f64, max_kurs_deg: f32) -> bool {
+pub fn schwelle_voraus(
+    lat: f64,
+    lon: f64,
+    kurs_true_deg: f32,
+    max_nm: f64,
+    max_kurs_deg: f32,
+) -> bool {
     let rand = max_nm / 60.0 + 0.02;
     let rand_lon = rand / lat.to_radians().cos().abs().max(0.05);
     runways().iter().any(|row| {
-        let bahn_nm = distance_nm(row.le_lat, row.le_lon, row.he_lat, row.he_lon);
+        // Größeres der beiden Maße: liegen die Endkoordinaten an versetzten
+        // Schwellen, ist ihr Abstand kürzer als die Bahn.
+        let bahn_nm = distance_nm(row.le_lat, row.le_lon, row.he_lat, row.he_lon)
+            .max(row.length_ft as f64 / 6076.12);
         [
             (row.le_lat, row.le_lon, row.le_heading_true),
             (row.he_lat, row.he_lon, row.he_heading_true),
@@ -2185,30 +2194,28 @@ mod tests {
 
     /// Codex-QS 17.10.2026: Der Durchstarter-Tiefpunkt zählt vor der
     /// Schwelle und über der Bahn, aber nicht hinter dem Bahnende — auch
-    /// wenn die Schwelle dort noch unter 5 NM entfernt ist. EDDW 27 (eine
-    /// Hauptbahn, EDDF hat Parallelbahnen): Schwelle 53.0474/8.8093,
-    /// Landekurs 268° true, Bahn ~1,4 NM.
+    /// wenn die Schwelle dort noch unter 5 NM entfernt ist. EDDW 27/09 (eine
+    /// Hauptbahn, EDDF hat Parallelbahnen), Punkte direkt aus den beiden
+    /// Endkoordinaten der Datenbank, nicht aus der geprüften Projektion.
     #[test]
     fn schwelle_voraus_vor_ueber_und_hinter_der_bahn() {
-        let (s_lat, s_lon, kurs) = (53.04737_f64, 8.809341_f64, 268.0_f32);
-        let punkt = |entlang_nm: f64| {
-            let r = (kurs as f64).to_radians();
-            (
-                s_lat + entlang_nm * r.cos() / 60.0,
-                s_lon + entlang_nm * r.sin() / (60.0 * s_lat.to_radians().cos()),
-            )
-        };
-        for (entlang, want) in [
-            (-3.0, true),
-            (1.0, true),
-            (2.5, false),
-            (4.0, false),
+        // Ende 27 und Ende 09. f = 0 an der Schwelle 27, 1 am Ende 09;
+        // < 0 davor, > 1 dahinter.
+        let (a_lat, a_lon) = (53.04737_f64, 8.809341_f64);
+        let (b_lat, b_lon) = (53.046479_f64, 8.770064_f64);
+        let punkt = |f: f64| (a_lat + f * (b_lat - a_lat), a_lon + f * (b_lon - a_lon));
+        for (f, want) in [
+            (-2.0, true), // ~2,8 NM im Endanflug 27
+            (0.5, true),  // Mitte der Bahn
+            (0.99, true), // kurz vor dem Ende 09
+            (1.4, false), // ~0,6 NM hinter dem Bahnende
+            (2.5, false), // ~2,1 NM dahinter, Schwelle 27 noch < 5 NM
         ] {
-            let (la, lo) = punkt(entlang);
+            let (la, lo) = punkt(f);
             assert_eq!(
-                schwelle_voraus(la, lo, kurs, 5.0, 45.0),
+                schwelle_voraus(la, lo, 268.0, 5.0, 45.0),
                 want,
-                "{entlang} NM ab Schwelle 27"
+                "Anteil {f} der Bahn 27"
             );
         }
     }
