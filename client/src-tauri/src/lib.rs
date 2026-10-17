@@ -949,7 +949,10 @@ const ENROUTE_RECONCILE_FORWARD_DWELL_SECS: i64 = 45;
 const GO_AROUND_MIN_VS_FPM: f32 = 300.0;
 /// Durchstarter zählen nur mit einer Landeschwelle höchstens so weit voraus
 /// vom tiefsten Anflugpunkt (17.10.2026, siehe `runway::schwelle_voraus`).
-const GO_AROUND_SCHWELLE_NM: f64 = 3.0;
+/// 5 NM: Ein Durchstarter am Stabilitäts-Gate (1000 ft) liegt auf einem
+/// 3°-Gleitpfad 3,1 NM vor der Schwelle, bei 1500 ft 4,7 NM. Im Korpus
+/// lagen die falschen quer zur Bahn oder 5,3–25 NM entfernt.
+const GO_AROUND_SCHWELLE_NM: f64 = 5.0;
 /// … und höchstens so viel Abweichung zwischen Flugzeug- und Bahnkurs.
 const GO_AROUND_SCHWELLE_KURS_DEG: f32 = 45.0;
 /// AGL threshold above which we mark the flight as having actually
@@ -10095,8 +10098,8 @@ fn check_go_around(
             // Anflug (tiefer Überlandflug, Gelände, Höhenänderung) — die
             // Phase geht trotzdem in den Steigflug, aber ohne Zählung
             // (die im PIREP steht und in der Treibstoff-Teilnote eine
-            // Mehrweg-Gutschrift gibt). Korpus: 7 von 18 gezählten
-            // Durchstartern lagen 3–25 NM von jeder Schwelle entfernt.
+            // Mehrweg-Gutschrift gibt). Korpus: 8 von 18 gezählten
+            // Durchstartern lagen quer zur Bahn oder 5,3–25 NM entfernt.
             let an_der_bahn = stats.tiefster_anflugpunkt.is_none_or(|(lat, lon, kurs)| {
                 runway::schwelle_voraus(lat, lon, kurs, GO_AROUND_SCHWELLE_NM, GO_AROUND_SCHWELLE_KURS_DEG)
             });
@@ -64496,12 +64499,15 @@ mod touch_and_go_go_around_tests {
         assert_eq!(stats.tiefster_anflugpunkt, None);
     }
 
-    /// Kurs quer zur Bahn (Überflug des Platzes) zählt nicht.
+    /// Kurs quer zu allen Bahnen (Überflug des Platzes) zählt nicht.
+    /// EDDW: Bahnen 09/27 und 05/23 (88/268°, 52/232°), Kurs 160°.
     #[test]
     fn crossing_the_field_is_no_go_around() {
         let mut stats = FlightStats::default();
-        let mut tief = endanflug_eddf_25c(400.0, -600.0);
-        tief.heading_deg_true = 340.0;
+        let mut tief = snap_at(400.0, -600.0, false);
+        tief.lat = 53.0465;
+        tief.lon = 8.742;
+        tief.heading_deg_true = 160.0;
         update_lowest_approach_agl(&mut stats, &tief);
         let now = t0();
         let climb = snap_at(700.0, 1200.0, false);

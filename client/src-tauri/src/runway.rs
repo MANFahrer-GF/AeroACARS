@@ -1297,8 +1297,8 @@ fn find_nearest(
 /// Landerichtung höchstens `max_kurs_deg` vom Kurs des Flugzeugs abweicht?
 /// Für den Durchstart-Detektor (17.10.2026): Ein Durchstarter hat seinen
 /// Tiefpunkt im Endanflug einer Bahn. Korpus 447 Flüge: echte Durchstarter
-/// 0,1–1,3 NM vor der Schwelle mit ≤ 36° Abweichung; Steigen aus dem
-/// Anflug ohne Bahn 3–25 NM entfernt oder quer zur Bahn (63–158°).
+/// bis 4,1 NM vor der Schwelle mit ≤ 45° Abweichung; Steigen aus dem
+/// Anflug ohne Bahn 5,3–25 NM entfernt oder quer zur Bahn (52–158°).
 pub fn schwelle_voraus(lat: f64, lon: f64, kurs_true_deg: f32, max_nm: f64, max_kurs_deg: f32) -> bool {
     let rand = max_nm / 60.0 + 0.02;
     let rand_lon = rand / lat.to_radians().cos().abs().max(0.05);
