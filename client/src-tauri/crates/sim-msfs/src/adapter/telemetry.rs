@@ -10867,7 +10867,10 @@ mod tests {
     /// 17.10.2026: Parkbremse für die ganze FBW-Familie aus dem Hebel —
     /// A380X (Variable im Paket-Scan belegt) und Headwind A330neo, auch eine
     /// Lackierung ohne Marker mit ICAO A330, die nur am Ordner erkannt wird.
-    /// Mit der Standard-SimVar meldeten beide in 30 Tagen nie „gesetzt".
+    /// Mit der Standard-SimVar meldeten beide in 30 Tagen nie „gesetzt"
+    /// (Korpus: A380X 619/619 Stillstands-Takte am Boden „gelöst", Headwind
+    /// 6 Flüge ebenso; iniBuilds A380 und Aerosoft A339 korrekt). Fehlt die
+    /// LVar bei Headwind, bleibt es bei 0 — schlechter als bisher wird es nicht.
     #[test]
     fn fbw_familie_parkbremse_aus_dem_hebel() {
         let faelle: [(&str, &str, Option<&str>); 3] = [
@@ -10966,23 +10969,8 @@ mod tests {
             let snap = runde2(A32NX.0, A32NX.1, &[("L:LIGHTING_STROBE_0", roh)]);
             assert_eq!(snap.strobe_state, Some(want), "strobe roh={roh}");
         }
-        // Nicht gemessen → bleibt beim alten Weg: A380X und Headwind lesen die
-        // Standard-Parkbremse, nicht den A32NX-Hebel.
-        for muster in [FBW_A380X, HEADWIND] {
-            let snap = runde2(
-                muster.0,
-                muster.1,
-                &[
-                    ("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0),
-                    ("BRAKE PARKING POSITION", 0.0),
-                ],
-            );
-            assert!(
-                !snap.parking_brake,
-                "{} darf den A32NX-Hebel nicht lesen",
-                muster.0
-            );
-        }
+        // A380X und Headwind lesen seit 17.10.2026 ebenfalls den Hebel, siehe
+        // `fbw_familie_parkbremse_aus_dem_hebel`.
     }
 
     /// Gemessen 28.09.2026 („Flugzeug vermessen", iniBuilds A380 in MSFS
