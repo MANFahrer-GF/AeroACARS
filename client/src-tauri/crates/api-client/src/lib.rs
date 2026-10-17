@@ -141,6 +141,8 @@ fn de_int_or_str<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
 //   zu lang — wenn ein Call so lange braucht ist die Verbindung eh tot
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Kabinenansagen: das Modul ruft Sonnet bis zu zweimal mit je 60 s auf.
+const KABINEN_DREHBUCH_TIMEOUT: Duration = Duration::from_secs(150);
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// v1.6.14 — Timeout speziell fuer den Positions-Batch-POST. Siehe
@@ -1667,7 +1669,11 @@ impl Client {
         &self,
         anfrage: &serde_json::Value,
     ) -> Result<KabinenDrehbuch, ApiError> {
-        self.post_data("/api/kabinenansagen/drehbuch", anfrage).await
+        // Sonnet schreibt die Texte erst bei dieser Anfrage: gemessen 11 s
+        // fuer eine Begruessung, das Modul wartet bis 2 x 60 s. Mit dem
+        // Default (10 s) gab der Client auf, bevor die Texte fertig waren.
+        self.post_data_with_timeout("/api/kabinenansagen/drehbuch", anfrage, Some(KABINEN_DREHBUCH_TIMEOUT))
+            .await
     }
 
     /// `GET /api/airports/{icao}` — single airport lookup with coordinates.
@@ -1757,16 +1763,28 @@ impl Client {
         path: &str,
         body: &B,
     ) -> Result<T, ApiError> {
+        self.post_data_with_timeout(path, body, None).await
+    }
+
+    /// Wie [`post_data`], aber mit optionalem Per-Request-Timeout, der den
+    /// Client-Default (`DEFAULT_TIMEOUT`) ueberschreibt.
+    async fn post_data_with_timeout<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+        timeout: Option<Duration>,
+    ) -> Result<T, ApiError> {
         let url = self.endpoint(path)?;
-        let response = self
+        let mut req = self
             .http
             .post(url)
             .header("X-API-Key", &self.conn.api_key)
             .header(header::ACCEPT, "application/json")
-            .json(body)
-            .send()
-            .await
-            .map_err(ApiError::from)?;
+            .json(body);
+        if let Some(t) = timeout {
+            req = req.timeout(t);
+        }
+        let response = req.send().await.map_err(ApiError::from)?;
         let response = check_status(response, path).await?;
         let text = response
             .text()
