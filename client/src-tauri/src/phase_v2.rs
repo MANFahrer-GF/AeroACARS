@@ -185,6 +185,11 @@ pub const SINKFLUG_LEVEL_ZU_CRUISE_SECS: i64 = 600;
 pub const CLIMB_SCHNELLSINK_AGL_FT: f64 = 3000.0;
 pub const CLIMB_SCHNELLSINK_VS_FPM: f32 = -500.0;
 pub const CLIMB_SCHNELLSINK_SECS: i64 = 10;
+/// Der Schnellweg greift erst, wenn der Steigflug so lange besteht: Direkt
+/// nach Start, Durchstarter oder Touch-and-go ist ein kurzes Sinken beim
+/// Nachtrimmen kein Sinkflug (Joel W4B0: abgebrochene Landung, 59 s später
+/// −500 fpm → Schein-Anflug und zweiter gezählter Durchstarter).
+pub const CLIMB_SCHNELLSINK_FRUEHESTENS_SECS: i64 = 120;
 
 // ─── Layer 1: KinematicSegmenter ────────────────────────────────────────
 
@@ -465,6 +470,8 @@ pub struct ShadowPhaseEngine {
     reiseflug_niveau_ft: Option<f64>,
     /// Seit wann der Climb-Schnellweg (`CLIMB_SCHNELLSINK_*`) erfüllt ist.
     schnellsink_seit: Option<DateTime<Utc>>,
+    /// Seit wann die Phase Climb ist (für `CLIMB_SCHNELLSINK_FRUEHESTENS_SECS`).
+    climb_seit: Option<DateTime<Utc>>,
 }
 
 impl ShadowPhaseEngine {
@@ -621,6 +628,11 @@ impl ShadowPhaseEngine {
                 self.reiseflug_niveau_ft = Some(alt_msl_ft);
             }
         }
+        if self.phase == FlightPhase::Climb {
+            self.climb_seit.get_or_insert(t);
+        } else {
+            self.climb_seit = None;
+        }
         (self.phase, segment)
     }
 
@@ -704,7 +716,13 @@ impl ShadowPhaseEngine {
         match self.phase {
             FlightPhase::Climb => {
                 // Schnellweg: tief, deutlich sinkend, kurz bestätigt.
-                if vs_fpm < CLIMB_SCHNELLSINK_VS_FPM && agl_ft < CLIMB_SCHNELLSINK_AGL_FT {
+                let steigflug_alt_genug = self
+                    .climb_seit
+                    .is_some_and(|s| (t - s).num_seconds() >= CLIMB_SCHNELLSINK_FRUEHESTENS_SECS);
+                if steigflug_alt_genug
+                    && vs_fpm < CLIMB_SCHNELLSINK_VS_FPM
+                    && agl_ft < CLIMB_SCHNELLSINK_AGL_FT
+                {
                     let seit = *self.schnellsink_seit.get_or_insert(t);
                     if (t - seit).num_seconds() >= CLIMB_SCHNELLSINK_SECS {
                         self.schnellsink_seit = None;
@@ -1860,13 +1878,29 @@ mod tests {
     fn low_level_sink_from_climb_takes_the_fast_path() {
         let mut sim = Sim::new(None);
         sim.depart();
-        sim.fly(60, 1200.0, FlightPhase::Climb); // ~2000 ft
+        sim.fly(180, 500.0, FlightPhase::Climb); // ~2000 ft, 3 min im Steigflug
         let (p, _) = sim.fly(5, -700.0, FlightPhase::Climb);
         assert_eq!(p, FlightPhase::Climb, "one tick is not enough");
         let (p, _) = sim.fly(5, 300.0, FlightPhase::Climb);
         assert_eq!(p, FlightPhase::Climb);
         let (p, _) = sim.fly(15, -700.0, FlightPhase::Climb);
         assert_eq!(p, FlightPhase::Descent, "sustained low sink → Descent");
+    }
+
+    /// Kurzes Sinken 60 s nach einem Durchstarter ist kein Sinkflug — der
+    /// Schnellweg greift erst nach 2 min Steigflug (Joel W4B0).
+    #[test]
+    fn brief_sink_right_after_go_around_stays_climb() {
+        let mut sim = Sim::new(None);
+        sim.depart();
+        sim.alt = 2500.0;
+        sim.fly(200, -800.0, FlightPhase::Approach);
+        sim.alt = 400.0;
+        sim.fly(20, -500.0, FlightPhase::Final);
+        // Durchstarter der alten FSM, dann 60 s Steigen, dann 15 s −700 fpm.
+        sim.fly(60, 1500.0, FlightPhase::Climb);
+        let (p, _) = sim.fly(15, -700.0, FlightPhase::Climb);
+        assert_eq!(p, FlightPhase::Climb, "brief sink in the go-around climb-out is no descent");
     }
 
     #[test]

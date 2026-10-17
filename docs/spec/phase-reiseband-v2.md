@@ -95,3 +95,22 @@ dem Reiseflug, P3 Ende der Warteschleife — behoben, Runde 2 ohne Befunde.
 Gegenproben: vier Verhaltens-Tests rot auf `main`, Warteschleifen- und
 Codex-Tests rot ohne den jeweiligen Fix. Abschluss-Lauf: jede Landung der
 Grundlinie wird erkannt.
+
+## Restpunkte (2.0.25, 17.10.2026)
+
+Was 2.0.24 als „Backlog" liegen ließ, im selben Thema behoben (Thomas: „kein
+Stückwerk"). Grundlinie = 2.0.24 im selben Korpus-Replay.
+
+| Punkt | Befund | Lösung |
+|---|---|---|
+| Durchstarter | 8 von 18 gezählten lagen quer zur Bahn oder 5,3–25 NM von jeder Schwelle; sie zählten im PIREP und gaben in der Treibstoff-Teilnote eine Mehrweg-Gutschrift | Zählung nur mit Landeschwelle ≤ 5 NM voraus und ≤ 45° Kursabweichung am Tiefpunkt (`runway::schwelle_voraus`); sonst Climb ohne Zählung |
+| Warteschleife | Ende nach 30 s geradeaus — kürzer als ein Schenkel; jede echte Warteschleife zerfiel in Bruchstücke, lange Kurven auf FL388 zählten | Eintritt ≥ 300° gleichsinnige Drehung in 6 min im Höhenflug > 1500 ft AGL; Ende nach 3 min geradeaus |
+| Schwingung / Korrekturen | Climb↔Descent folgte jeder Halbschwingung (±2000 ft) und 40–60-s-Korrekturen | Umkehr-Sperre: über 3000 ft AGL erst nach 120 s anhaltender neuer Richtung |
+| Dellen / Stufen im Reiseflug | Cruise↔Descent bei 600–2300 ft, Cruise↔Climb bei Stufen | Band 2000 ft um die AKTUELLE Reiseflughöhe; 10 min Level im Sinkflug = neuer Reiseflug |
+| Kurze tiefe Sinkflüge | v2 erkannte sie bis 76 s zu spät | Climb-Schnellweg (< 3000 ft AGL, < −500 fpm, 10 s) |
+| Parkbremse FBW-Familie | Headwind A330neo ohne Marker (ICAO A330) als Default erkannt; A380X/Headwind lasen die Standard-SimVar, die sich nie bewegt | Headwind am Ordner; Hebel-Variable für die ganze Familie |
+| Anflug über Gebirge (Joel) | kein Erkennungsfehler: Er sank zu früh auf ~8000 ft und stieg wieder; falsch war nur der gezählte Durchstarter | durch die Durchstart-Regel erledigt; eine Höhen-Regel für den Anflugbeginn hätte 199 von 472 Anflügen verschoben |
+
+Standard-A320neo MSFS 2024 (iniBuilds): bleibt auf der Standard-SimVar; ein
+einziger Flug ohne gesetzte Bremse reicht nicht als Beleg — beim nächsten Flug
+prüfen.
