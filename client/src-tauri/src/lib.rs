@@ -52082,15 +52082,17 @@ mod enroute_reconcile_tests {
                 // Steigende Fenster-Evidenz (+800 fpm) → Segment Climbing;
                 // v2 promotet aus Cruise heraus auf Climb → Ziel = Climb,
                 // Rang 0 < 2 = rückwärts.
+                // 3200 ft Gewinn: mehr als `REISEFLUG_STUFE_FT` über der
+                // Reiseflughöhe, sonst bliebe es eine Stufe im Cruise.
                 let v2 = feed_v2_evidence(
                     &mut stats,
                     FlightPhase::Cruise,
                     40,
                     7000.0,
-                    40.0,
+                    80.0,
                     6000.0,
-                    40.0,
-                    800.0,
+                    80.0,
+                    1600.0,
                     false,
                 );
                 assert_eq!(
