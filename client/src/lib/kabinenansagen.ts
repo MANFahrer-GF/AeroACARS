@@ -8,7 +8,7 @@
 // Headset …; das Fenster könnte das Gerät nicht wählen. Auch der
 // 10.000-ft-Chime entsteht dort aus zwei Sinustönen.
 
-import { invoke, isTauri, listen } from "./ipc";
+import { formatIpcError, invoke, isTauri, listen } from "./ipc";
 
 export type Rolle = "kapitaen" | "kabine" | "kommando" | "chime";
 
@@ -77,9 +77,12 @@ export interface Wiedergabe {
   pegel: number;
   /** Letzte Pegelwerte für die Wellenform, älteste zuerst. */
   verlauf: number[];
+  /** Letzter Wiedergabefehler (Gerät belegt, abgezogen …), bis eine
+   *  Ansage wieder klappt — die Seite nennt ihn statt still zu bleiben. */
+  fehler: string | null;
 }
 
-const LEER: Wiedergabe = { ansage: null, teil: 0, pegel: 0, verlauf: [] };
+const LEER: Wiedergabe = { ansage: null, teil: 0, pegel: 0, verlauf: [], fehler: null };
 const VERLAUF_LAENGE = 64;
 
 let zustand: Wiedergabe = LEER;
@@ -153,16 +156,20 @@ async function abarbeiten(): Promise<void> {
       if (a.rolle === "chime") {
         try {
           await chime(a.lautstaerke);
+          setzen({ fehler: null });
         } catch (e) {
           console.warn("[kabine] Chime nicht abspielbar", e);
+          setzen({ fehler: formatIpcError(e) });
         }
       } else {
         for (let i = 0; i < a.teile.length && meiner === durchgang; i++) {
           setzen({ teil: i });
           try {
             await spielen(a.teile[i].datei, a.lautstaerke);
+            setzen({ fehler: null });
           } catch (e) {
             console.warn("[kabine] Ton nicht abspielbar", a.slot, e);
+            setzen({ fehler: formatIpcError(e) });
           }
           if (i < a.teile.length - 1) await pause(700);
         }

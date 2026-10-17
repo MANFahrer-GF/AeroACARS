@@ -7,6 +7,7 @@ const aufrufe: { cmd: string; args?: Record<string, unknown> }[] = [];
 let stoppZaehler = 0;
 vi.mock("./ipc", () => ({
   isTauri: true,
+  formatIpcError: (e: unknown) => String(e),
   listen: vi.fn(),
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     aufrufe.push({ cmd, args });
@@ -15,6 +16,7 @@ vi.mock("./ipc", () => ({
       stoppZaehler += 1;
       return undefined;
     }
+    if (cmd === "kabinen_ton_spielen" && args?.datei === "kaputt.wav") throw new Error("Gerät belegt");
     if (cmd === "kabinen_ton_spielen") {
       // Wie Rust: endet nach der Spieldauer oder sofort bei einem Stopp.
       const stand = stoppZaehler;
@@ -58,6 +60,15 @@ describe("Kabinen-Wiedergabe", () => {
     expect(aufrufe.some((a) => a.cmd === "kabinen_ton_stoppen")).toBe(true);
     freigeben();
     await warten(1500);
+  });
+
+  it("nennt einen Wiedergabefehler, bis eine Ansage wieder klappt", async () => {
+    abspielen(ansage("kaputt.wav"));
+    await warten(1500);
+    expect(aktuell().fehler).toContain("Gerät belegt");
+    abspielen(ansage("gut.wav"));
+    await warten(1500);
+    expect(aktuell().fehler).toBeNull();
   });
 
   it("Chime geht ohne Datei an Rust, mit der Lautstärke der Ansage", async () => {

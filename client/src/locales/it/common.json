@@ -140,6 +140,10 @@
       "ton_fehlt": {
         "titel": "Audio non disponibile al momento",
         "text": "Il servizio vocale non ha fornito l'audio (server occupato, rete o chiave Azure). AeroACARS riprova ogni minuto. Messaggio:"
+      },
+      "wiedergabe": {
+        "titel": "Audio non riproducibile",
+        "text": "L'annuncio era pronto ma non è stato possibile riprodurlo. Il dispositivo di uscita scelto è occupato o scollegato? Nelle impostazioni puoi scegliere un altro dispositivo o il predefinito di sistema. Messaggio:"
       }
     }
   },

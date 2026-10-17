@@ -140,6 +140,10 @@
       "ton_fehlt": {
         "titel": "Audio not available right now",
         "text": "The speech service did not deliver the audio (server busy, network or Azure key). AeroACARS tries again every minute. Message:"
+      },
+      "wiedergabe": {
+        "titel": "Audio could not be played",
+        "text": "The announcement was ready but could not be played. Is the selected output device busy or unplugged? You can pick another device or the system default in the settings. Message:"
       }
     }
   },

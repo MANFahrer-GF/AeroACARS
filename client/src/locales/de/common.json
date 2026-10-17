@@ -140,6 +140,10 @@
       "ton_fehlt": {
         "titel": "Ton gerade nicht erzeugbar",
         "text": "Die Sprachausgabe hat den Ton nicht geliefert (Server ausgelastet, Netz oder Azure-Schlüssel). AeroACARS versucht es jede Minute erneut. Meldung:"
+      },
+      "wiedergabe": {
+        "titel": "Ton nicht abspielbar",
+        "text": "Die Ansage war fertig, ließ sich aber nicht abspielen. Ist das gewählte Ausgabegerät belegt oder abgezogen? In den Einstellungen lässt sich ein anderes Gerät oder der Systemstandard wählen. Meldung:"
       }
     }
   },

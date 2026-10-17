@@ -119,6 +119,13 @@ export function KabinenSeite({
       </header>
 
       {/* Warum nichts kommt: oben und ausgeschrieben, nicht als leere Seite. */}
+      {live.fehler && !a && (
+        <div className="kabine-grund" role="status" data-testid="kabine-wiedergabe-fehler">
+          <strong>{t("kabine.grund.wiedergabe.titel")}</strong>
+          <p>{t("kabine.grund.wiedergabe.text")}</p>
+          <p className="kabine-grund-detail">{live.fehler}</p>
+        </div>
+      )}
       {daten?.grund && !a && (
         <div className="kabine-grund" role="status" data-testid="kabine-grund">
           <strong>{t(`kabine.grund.${daten.grund.grund}.titel`)}</strong>
