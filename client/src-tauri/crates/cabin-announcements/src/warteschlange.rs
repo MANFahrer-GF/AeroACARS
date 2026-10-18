@@ -45,9 +45,21 @@ impl Warteschlange {
         self.eintraege.iter().map(|e| e.slot).collect()
     }
 
-    /// Slots, die seit dem letzten Aufruf verfallen sind (für das Log).
+    /// Slots, die seit dem letzten Aufruf verfallen sind (für „Bisher“).
     pub fn verfallene_abholen(&mut self) -> Vec<Slot> {
         std::mem::take(&mut self.verfallen)
+    }
+
+    /// Nimmt einen wartenden Slot heraus (er entfällt); `true`, wenn er wartete.
+    pub fn entfernen(&mut self, slot: Slot) -> bool {
+        let vorher = self.eintraege.len();
+        self.eintraege.retain(|e| e.slot != slot);
+        self.eintraege.len() != vorher
+    }
+
+    /// Nimmt alles Wartende heraus (Stumm), in Reihenfolge des Eingangs.
+    pub fn alle_entnehmen(&mut self) -> Vec<Slot> {
+        std::mem::take(&mut self.eintraege).into_iter().map(|e| e.slot).collect()
     }
 
     /// Der Host meldet, dass eine Ansage bis `bis` läuft.
@@ -240,6 +252,16 @@ mod tests {
         v.aufnehmen([f(Slot::Reiseflug50, Verfall::AbPhase(Descent))]);
         assert!(!v.in_pause(5));
         assert_eq!(v.naechstes(5, Cruise, false), Some(Slot::Reiseflug50));
+    }
+
+    #[test]
+    fn entfernen_und_alle_entnehmen() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([f(Slot::Sicherheit, Verfall::Um(100)), f(Slot::Boarding, Verfall::Um(100)), f(Slot::KommandoStart, Verfall::Um(100))]);
+        assert!(w.entfernen(Slot::Sicherheit));
+        assert!(!w.entfernen(Slot::Sicherheit), "nur einmal");
+        assert_eq!(w.alle_entnehmen(), vec![Slot::Boarding, Slot::KommandoStart]);
+        assert!(w.ist_leer());
     }
 
     #[test]

@@ -21,6 +21,6 @@ pub mod warteschlange;
 pub mod zeit;
 
 pub use flugart::Flugart;
-pub use planer::{Faellig, Flugdaten, Planer, Tick, Verfall};
+pub use planer::{Entfall, Faellig, Flugdaten, Planer, Tick, Verfall};
 pub use slot::{Rolle, Slot};
 pub use warteschlange::Warteschlange;

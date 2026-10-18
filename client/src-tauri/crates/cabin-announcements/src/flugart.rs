@@ -74,9 +74,16 @@ impl Flugart {
         match self {
             Flugart::Aus => false,
             Flugart::Linie => true,
+            // Gong (Anschnallzeichen) auch ohne Kabinencrew (Thomas
+            // 18.10.2026: „Gong immer“). Sicherheit nur als Kurzfassung des
+            // Kapitäns: Der Host spielt sie nur, wenn der Server sie so
+            // kennzeichnet (`rolle: kapitaen`), sonst entfällt sie.
             Flugart::Bizjet => matches!(
                 slot,
                 Slot::KapitaenBegruessung
+                    | Slot::Sicherheit
+                    | Slot::Chime10000Steigflug
+                    | Slot::Chime10000Sinkflug
                     | Slot::KapitaenSinkflug
                     | Slot::VerspaetungGate
                     | Slot::Warteschleife
@@ -128,7 +135,13 @@ mod tests {
     #[test]
     fn bizjet_hat_keine_kabine_und_keine_kommandos() {
         assert!(Flugart::Bizjet.erlaubt(Slot::KapitaenBegruessung));
-        assert!(!Flugart::Bizjet.erlaubt(Slot::Sicherheit));
+        // Gong und Kapitäns-Kurzfassung der Sicherheit ja (beta.6) …
+        assert!(Flugart::Bizjet.erlaubt(Slot::Chime10000Steigflug));
+        assert!(Flugart::Bizjet.erlaubt(Slot::Chime10000Sinkflug));
+        assert!(Flugart::Bizjet.erlaubt(Slot::Sicherheit));
+        // … Kabinenansagen und Kommandos nein.
+        assert!(!Flugart::Bizjet.erlaubt(Slot::Boarding));
+        assert!(!Flugart::Bizjet.erlaubt(Slot::KabineSinkflug));
         assert!(!Flugart::Bizjet.erlaubt(Slot::KommandoStart));
         assert!(!Flugart::Bizjet.erlaubt(Slot::NachDerLandung));
         assert!(!Flugart::Aus.erlaubt(Slot::KapitaenBegruessung));
