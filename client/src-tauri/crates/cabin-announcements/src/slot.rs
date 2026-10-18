@@ -142,7 +142,11 @@ impl Slot {
 
     /// Darf trotz Ruhephase (Sterile Cockpit) gespielt werden.
     pub fn in_ruhephase_erlaubt(self) -> bool {
-        matches!(self.rolle(), Rolle::Kommando | Rolle::Chime)
+        // Durchstarten und Umleitung passieren fast immer unter 10.000 ft:
+        // In der Ruhephase gesperrt, konnten sie nie spielen und verfielen im
+        // nächsten Endanflug (Thomas 18.10.2026, AIB 436: „wurde vorbereitet,
+        // aber nicht abgespielt“).
+        matches!(self.rolle(), Rolle::Kommando | Rolle::Chime) || matches!(self, Slot::Durchstarten | Slot::Umleitung)
     }
 
     /// Wartet diese Ansage die Pause nach der vorigen ab (Thomas 18.10.2026:

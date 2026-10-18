@@ -241,4 +241,17 @@ mod tests {
         assert!(!v.in_pause(5));
         assert_eq!(v.naechstes(5, Cruise, false), Some(Slot::Reiseflug50));
     }
+
+    #[test]
+    fn durchstart_ansage_spielt_auch_in_der_ruhephase() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([
+            f(Slot::Durchstarten, Verfall::AbPhase(Final)),
+            f(Slot::Reiseflug50, Verfall::AbPhase(Descent)),
+        ]);
+        // Unter 10.000 ft nach dem Durchstarten: Ruhephase, trotzdem spielt sie.
+        assert_eq!(w.naechstes(10, Climb, true), Some(Slot::Durchstarten));
+        // Gegenprobe: eine normale Ansage bleibt in der Ruhephase gesperrt.
+        assert_eq!(w.naechstes(10, Climb, true), None);
+    }
 }
