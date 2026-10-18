@@ -226,6 +226,7 @@
     },
     "wartet": {
       "andere_ansage": "fällig, wartet auf die laufende Ansage",
+      "pause": "fällig, kurze Pause nach der letzten Ansage",
       "ruhephase": "fällig, wartet auf das Ende der Ruhephase",
       "ton": "fällig, wartet auf den Ton",
       "sim_angehalten": "fällig, Simulator angehalten"

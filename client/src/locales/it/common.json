@@ -226,6 +226,7 @@
     },
     "wartet": {
       "andere_ansage": "previsto, attende l'annuncio in corso",
+      "pause": "previsto, breve pausa dopo l'ultimo annuncio",
       "ruhephase": "previsto, attende la fine della fase sterile",
       "ton": "previsto, attende l'audio",
       "sim_angehalten": "previsto, simulatore in pausa"

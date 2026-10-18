@@ -539,7 +539,7 @@ pub(crate) fn takt(
     };
     // Zwischen den Sprachen eine kurze Pause; ein Chime dauert gut zwei Sekunden.
     let dauer = dauer_s(slot, &teile);
-    lauf.warteschlange.spielt_bis(jetzt + dauer.ceil() as i64 + 1);
+    lauf.warteschlange.ansage_spielt_bis(jetzt + dauer.ceil() as i64 + 1);
     lauf.naechste_id += 1;
     let gespielt = Gespielt {
         id: lauf.naechste_id,
@@ -1218,7 +1218,9 @@ fn wiedergabe_ende(lauf: &mut Lauf, id: u64, ergebnis: &str) -> bool {
     match lauf.verlauf.iter_mut().find(|g| g.id == id && g.ergebnis.is_none()) {
         Some(g) => {
             g.ergebnis = Some(ergebnis.to_string());
-            lauf.warteschlange.frei();
+            // Echte Ansage zu Ende: Pause bis zur nächsten regulären
+            // (Thomas 18.10.2026); das Vorhören oben macht keine.
+            lauf.warteschlange.ansage_zu_ende(Utc::now().timestamp());
             true
         }
         None => false,
@@ -1339,6 +1341,8 @@ pub(crate) enum Stand {
 pub(crate) enum Wartet {
     /// Eine andere Ansage (oder ein Vorhören) läuft.
     AndereAnsage,
+    /// Kurze Pause nach der letzten Ansage, damit nicht alles hintereinander kommt.
+    Pause,
     /// Start, Landung, unter 10.000 ft: nur Kommandos und Gong.
     Ruhephase,
     /// Der Ton ist noch nicht fertig (Stand nennt den Grund).
@@ -1546,6 +1550,8 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
                 Some(Wartet::SimAngehalten)
             } else if lauf.warteschlange.belegt(jetzt) {
                 Some(Wartet::AndereAnsage)
+            } else if lauf.warteschlange.in_pause(jetzt) && slot.wartet_pause() {
+                Some(Wartet::Pause)
             } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() {
                 Some(Wartet::Ruhephase)
             } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.sprachen, slot) {
@@ -2372,6 +2378,11 @@ mod tests {
         assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::Ruhephase));
         st.kabinen_lauf.warteschlange.spielt_bis(100);
         assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::AndereAnsage));
+        // Nach einer echten Ansage: eigener Grund „Pause“, nicht „läuft gerade“.
+        st.kabinen_lauf.warteschlange.ansage_zu_ende(-10);
+        assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::Pause));
+        st.kabinen_lauf.warteschlange.ansage_zu_ende(-1_000);
+        assert_ne!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::Pause), "Pause vorbei");
         st.kabinen_lauf.sim_angehalten = true;
         assert_eq!(zeile(&st, Slot::Reiseflug50).unwrap().wartet, Some(Wartet::SimAngehalten));
         // Fällige stehen oben.
@@ -2449,12 +2460,14 @@ mod tests {
         assert!(anhoeren(&mut l, Slot::Reiseflug50, None, 1, 0.8).is_err(), "gesperrt, solange etwas läuft");
         assert!(!wiedergabe_ende(&mut l, v.id, "gespielt"), "Vorhören kommt nicht in den Verlauf");
         assert!(!l.warteschlange.belegt(1) && l.verlauf.is_empty());
+        assert!(!l.warteschlange.in_pause(Utc::now().timestamp()), "Vorhören löst keine Pause aus");
         // Echte Ansage: erst nach der Rückmeldung „gespielt“.
         l.verlauf.push(Gespielt { id: 7, slot: Slot::Reiseflug50, rolle: Rolle::Kapitaen, zeit: 0, teile: v.teile.clone(), lautstaerke: 0.8, vorschau: false, ergebnis: None });
         l.warteschlange.spielt_bis(50);
         assert!(wiedergabe_ende(&mut l, 7, "abgebrochen"));
         assert_eq!(l.verlauf[0].ergebnis.as_deref(), Some("abgebrochen"));
-        assert!(!l.warteschlange.belegt(1), "die nächste darf sofort");
+        assert!(!l.warteschlange.belegt(1), "nichts läuft mehr");
+        assert!(l.warteschlange.in_pause(Utc::now().timestamp()), "aber erst nach der Pause die nächste reguläre");
         assert!(!wiedergabe_ende(&mut l, 7, "gespielt"), "nur einmal");
         // Nochmal aus „Bisher“, auch wenn der Ton nicht mehr im Lauf steht.
         l.ton.clear();

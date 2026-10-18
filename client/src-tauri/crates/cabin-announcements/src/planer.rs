@@ -159,6 +159,12 @@ pub const VERSPAETUNG_BIS_MIN: i32 = 180;
 pub const DURCHSTART_VERZOEGERUNG_S: i64 = 150;
 /// Warteschleifen-Ansage, sobald die Schleife so lange läuft.
 pub const WARTESCHLEIFE_NACH_S: i64 = 120;
+/// Die Kabine bereitet die Landung frühestens so lange nach der Sinkflug-
+/// Ansage des Kapitäns vor (Thomas 18.10.2026: „sofort danach die Kabine,
+/// das geht nicht“) …
+pub const KABINE_NACH_KAPITAEN_MIN_S: i64 = 120;
+/// … und spätestens so lange danach, auch wenn sie noch hoch ist.
+pub const KABINE_NACH_KAPITAEN_SPAETESTENS_S: i64 = 300;
 
 #[derive(Debug, Default)]
 pub struct Planer {
@@ -178,6 +184,9 @@ pub struct Planer {
     /// Endanflug abgeschlossen (verhindert Doppelmeldung mit dem Host-Signal).
     durchstart_laeuft: bool,
     war_im_reiseflug: bool,
+    /// Wann der Kapitän den Sinkflug angesagt hat: Die Kabine folgt erst
+    /// später ([`KABINE_NACH_KAPITAEN_MIN_S`]).
+    kapitaen_sinkflug_epoch: Option<i64>,
     /// Zuletzt angesagtes Umleitungsziel: Ein neues Ziel (der Pilot ändert
     /// die Umleitung) wird noch einmal angesagt, dasselbe nicht.
     angesagte_umleitung: Option<String>,
@@ -476,6 +485,28 @@ impl Planer {
             let nach_phase = r >= rang(Descent);
             if nach_rest || nach_tod || nach_phase {
                 self.melde(&mut aus, Slot::KapitaenSinkflug, Verfall::AbPhase(Final));
+                if self.schon(Slot::KapitaenSinkflug) && self.kapitaen_sinkflug_epoch.is_none() {
+                    self.kapitaen_sinkflug_epoch = Some(t.jetzt);
+                }
+            }
+        }
+        // Kabine: frühestens zwei Minuten nach dem Kapitän, dann unter
+        // 15.000 ft im Sinkflug bzw. im Anflug, spätestens nach fünf Minuten.
+        // Ohne Kapitänsansage (Bizjet, Wiedereinstieg im Sinkflug) zählt der
+        // Anflug bzw. die Höhe allein.
+        if in_luft && self.war_im_reiseflug && r < rang(Final) && !self.schon(Slot::KabineSinkflug) {
+            let tief = t.phase == Approach || (r >= rang(Descent) && t.hoehe_ft < 15_000.0 && t.vs_fpm < 0.0);
+            let reif = match self.kapitaen_sinkflug_epoch {
+                // Im Anflug sofort, sonst ginge sie bei einem kurzen Sinkflug
+                // verloren; die Pause der Warteschlange trennt sie trotzdem.
+                Some(k) => {
+                    let seit = t.jetzt - k;
+                    t.phase == Approach
+                        || (seit >= KABINE_NACH_KAPITAEN_MIN_S && (tief || seit >= KABINE_NACH_KAPITAEN_SPAETESTENS_S))
+                }
+                None => tief,
+            };
+            if reif {
                 self.melde(&mut aus, Slot::KabineSinkflug, Verfall::AbPhase(Final));
             }
         }
@@ -811,6 +842,27 @@ mod tests {
     }
 
     #[test]
+    fn kabine_folgt_dem_kapitaen_im_sinkflug_mit_abstand() {
+        let mut p = Planer::fortsetzen(flug(120), Cruise);
+        let ticks = [(0, Descent, 30_000.0), (60, Descent, 27_000.0), (130, Descent, 24_000.0), (200, Descent, 14_000.0)];
+        let mut wann = Vec::new();
+        for (dt, ph, h) in ticks {
+            for f in p.tick(&tick(1_000 + dt, ph, h, -2_000.0)) {
+                wann.push((f.slot, dt));
+            }
+        }
+        let bei = |s: Slot| wann.iter().find(|(x, _)| *x == s).map(|(_, t)| *t);
+        assert_eq!(bei(Slot::KapitaenSinkflug), Some(0));
+        // Hoch über 15.000 ft und unter fünf Minuten: noch nicht (auch nicht nach 130 s).
+        assert_eq!(bei(Slot::KabineSinkflug), Some(200), "erst unter 15.000 ft, nicht sofort");
+        // Gegenprobe: spätestens fünf Minuten nach dem Kapitän, auch wenn noch hoch.
+        let mut q = Planer::fortsetzen(flug(120), Cruise);
+        q.tick(&tick(1_000, Descent, 35_000.0, -1_000.0));
+        assert!(q.tick(&tick(1_200, Descent, 32_000.0, -1_000.0)).iter().all(|f| f.slot != Slot::KabineSinkflug));
+        assert!(q.tick(&tick(1_300, Descent, 31_000.0, -1_000.0)).iter().any(|f| f.slot == Slot::KabineSinkflug));
+    }
+
+    #[test]
     fn wiedereinstieg_im_sinkflug_bringt_nur_noch_die_landung() {
         let mut p = Planer::fortsetzen(flug(120), Descent);
         let mut alle = Vec::new();
@@ -819,7 +871,9 @@ mod tests {
         }
         assert_eq!(
             alle,
-            vec![Slot::KapitaenSinkflug, Slot::KabineSinkflug, Slot::KommandoLandungVorbereiten, Slot::Chime10000Sinkflug, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung]
+            // Kabine nicht im selben Takt wie der Kapitän, sondern im Anflug
+            // (wie in echt: Kapitän, Kommando an die Crew, dann die Kabine).
+            vec![Slot::KapitaenSinkflug, Slot::KommandoLandungVorbereiten, Slot::Chime10000Sinkflug, Slot::KabineSinkflug, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung]
         );
     }
 

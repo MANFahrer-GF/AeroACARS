@@ -88,7 +88,7 @@ export type Stand =
   | { art: "ton_aufgegeben"; meldung: string }
   | { art: "bereit" };
 
-export type Wartet = "andere_ansage" | "ruhephase" | "ton" | "sim_angehalten";
+export type Wartet = "andere_ansage" | "pause" | "ruhephase" | "ton" | "sim_angehalten";
 
 export interface TeilAnsicht {
   sprache: string;

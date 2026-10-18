@@ -145,6 +145,14 @@ impl Slot {
         matches!(self.rolle(), Rolle::Kommando | Rolle::Chime)
     }
 
+    /// Wartet diese Ansage die Pause nach der vorigen ab (Thomas 18.10.2026:
+    /// „nicht mehrere Ansagen sofort hintereinander“)? Nein für Kommandos,
+    /// Gong und was sofort kommen muss (Turbulenz, Durchstarten).
+    pub fn wartet_pause(self) -> bool {
+        !matches!(self.rolle(), Rolle::Kommando | Rolle::Chime)
+            && !matches!(self, Slot::Turbulenz | Slot::Durchstarten)
+    }
+
     /// Vorrang in der Warteschlange: kleiner = früher.
     pub fn vorrang(self) -> u8 {
         match self.rolle() {

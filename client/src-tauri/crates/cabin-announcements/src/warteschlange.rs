@@ -14,12 +14,18 @@ struct Eintrag {
     reihenfolge: u64,
 }
 
+/// Ruhe nach einer gesprochenen Ansage, bevor die nächste reguläre kommt.
+/// Kommandos, Gong, Turbulenz und Durchstarten warten nicht ([`Slot::wartet_pause`]).
+pub const PAUSE_NACH_ANSAGE_S: i64 = 90;
+
 #[derive(Debug, Default)]
 pub struct Warteschlange {
     eintraege: Vec<Eintrag>,
     zaehler: u64,
     /// Bis wann die laufende Ansage spielt (UTC-Epoch-Sekunden).
     belegt_bis: Option<i64>,
+    /// Bis wann nach einer gesprochenen Ansage Ruhe ist ([`PAUSE_NACH_ANSAGE_S`]).
+    pause_bis: Option<i64>,
     verfallen: Vec<Slot>,
 }
 
@@ -59,6 +65,25 @@ impl Warteschlange {
         self.belegt_bis = None;
     }
 
+    /// Eine echte Ansage spielt bis `bis`; danach folgt die Pause. Fürs
+    /// Vorhören gilt weiter [`Self::spielt_bis`] (ohne Pause).
+    pub fn ansage_spielt_bis(&mut self, bis: i64) {
+        self.belegt_bis = Some(bis);
+        self.pause_bis = Some(bis + PAUSE_NACH_ANSAGE_S);
+    }
+
+    /// Eine echte Ansage ist zu Ende (gespielt, abgebrochen oder Fehler):
+    /// frei, aber die Pause läuft ab jetzt.
+    pub fn ansage_zu_ende(&mut self, jetzt: i64) {
+        self.belegt_bis = None;
+        self.pause_bis = Some(jetzt + PAUSE_NACH_ANSAGE_S);
+    }
+
+    /// Läuft gerade die Pause nach einer Ansage (und spielt nichts)?
+    pub fn in_pause(&self, jetzt: i64) -> bool {
+        !self.belegt(jetzt) && self.pause_bis.is_some_and(|p| jetzt < p)
+    }
+
     fn abgelaufen(e: &Eintrag, jetzt: i64, phase: FlightPhase) -> bool {
         match e.verfall {
             Verfall::AbPhase(p) => rang(phase) >= rang(p),
@@ -92,11 +117,13 @@ impl Warteschlange {
         if self.belegt_bis.is_some_and(|b| jetzt < b) {
             return None;
         }
+        let pause = self.pause_bis.is_some_and(|p| jetzt < p);
         let idx = self
             .eintraege
             .iter()
             .enumerate()
             .filter(|(_, e)| !ruhephase || e.slot.in_ruhephase_erlaubt())
+            .filter(|(_, e)| !(pause && e.slot.wartet_pause()))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
             .map(|(i, _)| i)?;
@@ -183,4 +210,35 @@ mod tests {
         assert_eq!(w.naechstes_bereit(2, TaxiOut, false, |_| true), Some(Slot::KapitaenBegruessung));
     }
 
+
+    #[test]
+    fn pause_nach_ansage_nur_fuer_regulaere_ansagen() {
+        let mut w = Warteschlange::default();
+        w.ansage_spielt_bis(100);
+        w.ansage_zu_ende(100);
+        w.aufnehmen([
+            f(Slot::KabineSinkflug, Verfall::AbPhase(Final)),
+            f(Slot::KommandoLandungVorbereiten, Verfall::AbPhase(Landing)),
+        ]);
+        assert!(w.in_pause(150));
+        // Kommando darf sofort, die Kabine wartet die Pause ab.
+        assert_eq!(w.naechstes(150, Descent, false), Some(Slot::KommandoLandungVorbereiten));
+        assert_eq!(w.naechstes(150, Descent, false), None, "Kabine wartet");
+        assert_eq!(w.naechstes(100 + PAUSE_NACH_ANSAGE_S, Descent, false), Some(Slot::KabineSinkflug));
+    }
+
+    #[test]
+    fn turbulenz_wartet_keine_pause_und_vorhoeren_macht_keine() {
+        let mut w = Warteschlange::default();
+        w.ansage_zu_ende(0);
+        w.aufnehmen([f(Slot::Turbulenz, Verfall::Um(500))]);
+        assert_eq!(w.naechstes(10, Cruise, false), Some(Slot::Turbulenz));
+        // Gegenprobe: Vorhören (spielt_bis + frei) löst keine Pause aus.
+        let mut v = Warteschlange::default();
+        v.spielt_bis(20);
+        v.frei();
+        v.aufnehmen([f(Slot::Reiseflug50, Verfall::AbPhase(Descent))]);
+        assert!(!v.in_pause(5));
+        assert_eq!(v.naechstes(5, Cruise, false), Some(Slot::Reiseflug50));
+    }
 }

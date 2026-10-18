@@ -226,6 +226,7 @@
     },
     "wartet": {
       "andere_ansage": "due, waiting for the current announcement",
+      "pause": "due, short pause after the last announcement",
       "ruhephase": "due, waiting for the sterile phase to end",
       "ton": "due, waiting for the audio",
       "sim_angehalten": "due, simulator paused"
