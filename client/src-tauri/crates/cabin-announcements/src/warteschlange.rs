@@ -77,6 +77,12 @@ impl Warteschlange {
         self.belegt_bis = None;
     }
 
+    /// Abbruch ohne Hörbares (Stumm): frei und keine Pause.
+    pub fn abbrechen(&mut self) {
+        self.belegt_bis = None;
+        self.pause_bis = None;
+    }
+
     /// Eine echte Ansage spielt bis `bis`; danach folgt die Pause. Fürs
     /// Vorhören gilt weiter [`Self::spielt_bis`] (ohne Pause).
     pub fn ansage_spielt_bis(&mut self, bis: i64) {

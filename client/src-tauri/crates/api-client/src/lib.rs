@@ -787,6 +787,11 @@ pub struct KabinenEintrag {
     pub slot: String,
     pub sprache: String,
     pub text: String,
+    /// Wer spricht, wenn der Server es festlegt: `kapitaen` an der
+    /// Sicherheitsansage von Mustern ohne Kabinencrew (Kurzfassung, GSG-Modul
+    /// ab Paket 2). Fehlt bei allen anderen Einträgen und bei älteren Modulen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolle: Option<String>,
 }
 
 /// Kabinenansagen (Beta): Antwort von `/api/kabinenansagen/drehbuch`.
