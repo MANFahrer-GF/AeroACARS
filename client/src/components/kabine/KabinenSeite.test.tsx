@@ -32,6 +32,8 @@ const ueberblick = {
         { sprache: "fr-FR", text: null, ton: false, keine_stimme: false },
         { sprache: "de-DE", text: null, ton: false, keine_stimme: false },
       ] },
+    { slot: "anschnallzeichen_aus", rolle: "kabine", faellig: false, wartet: "anschnallzeichen", wann: null, stand: { art: "bereit" },
+      teile: [{ sprache: "de-DE", text: "Das Anschnallzeichen ist aus.", ton: true, keine_stimme: false }] },
     { slot: "kommando_plaetze_landung", rolle: "kommando", faellig: false, wartet: null, wann: null,
       stand: { art: "ton_wartet", um: jetzt + 30, meldung: "Piper-Server antwortet 503" },
       teile: [{ sprache: "en-GB", text: "Cabin crew, take your seats for landing.", ton: false, keine_stimme: false }] },
@@ -90,7 +92,10 @@ describe("Seite Kabine", () => {
     expect(within(liste).getByText(`Text ab ca. ${uhr(jetzt + 4000)}`)).toBeTruthy();
     // Deutlich (Thomas 18.10.2026): wann sie spielt, und rechts, ob sie fertig ist.
     expect(within(liste).getByText(`Spielt ca. ${uhr(jetzt + 600)}`)).toBeTruthy();
-    expect(within(liste).getByText("Text und Ton fertig")).toBeTruthy();
+    expect(within(liste).getAllByText("Text und Ton fertig").length).toBeGreaterThan(0);
+    // Wartet auf den Piloten (Anschnallzeichen): kein „Spielt …“ davor (Advisor 2.0.27).
+    expect(within(liste).getByText("wartet, bis du das Anschnallzeichen ausschaltest")).toBeTruthy();
+    expect(liste.textContent).not.toMatch(/Spielt wartet/);
     expect(within(liste).getByText(/Ton wartet \(Server ausgelastet\), neuer Versuch/)).toBeTruthy();
     // Ablauf oben und „Warum diese Ansagen“.
     expect(screen.getByTestId("kabine-ablauf").textContent).toContain("1 von 3 fertig");

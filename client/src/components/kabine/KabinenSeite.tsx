@@ -472,7 +472,7 @@ export function KabinenSeite({
                     <button type="button" className="kabine-plan-kopf" aria-expanded={auf} onClick={() => umschalten(k)}>
                       <span className="kabine-plan-text">
                         <span className="kabine-plan-slot">{slotName(t, g.slot, g.art)}</span>
-                        <span className="kabine-plan-wann">{g.faellig ? wannText(t, g) : t("kabine.zeit.spielt", { wann: wannText(t, g) })}</span>
+                        <span className="kabine-plan-wann">{g.faellig || g.wartet ? wannText(t, g) : t("kabine.zeit.spielt", { wann: wannText(t, g) })}</span>
                       </span>
                       <span className={`kabine-plan-status ${standKlasse(g.stand)}`}>{g.rolle === "chime" && g.stand.art === "bereit" ? t("kabine.stand.bereit_gong") : standText(t, g.stand)}</span>
                     </button>
