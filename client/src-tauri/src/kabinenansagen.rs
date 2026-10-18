@@ -3372,6 +3372,43 @@ mod tests {
         (rest.iter().map(|x| x * x).sum::<f32>() / rest.len() as f32).sqrt()
     }
 
+    /// Hörprobe für Thomas (Punkt 11) mit genau dem ausgelieferten Filter:
+    /// `KLANG_PROBE_WAV=<eingabe.wav> KLANG_PROBE_AUS=<ordner> cargo test … klang_hoerprobe -- --ignored`
+    #[test]
+    #[ignore = "erzeugt Hörproben-Dateien, braucht eine echte WAV"]
+    fn klang_hoerprobe() {
+        let ein = std::env::var("KLANG_PROBE_WAV").expect("KLANG_PROBE_WAV");
+        let aus = std::path::PathBuf::from(std::env::var("KLANG_PROBE_AUS").expect("KLANG_PROBE_AUS"));
+        let (rate, proben) = ausgabe::wav_lesen(&std::fs::read(ein).unwrap()).expect("PCM-16-WAV");
+        let schreiben = |name: &str, rate: u32, p: &[f32]| {
+            let mut d = b"RIFF".to_vec();
+            d.extend_from_slice(&(36 + p.len() as u32 * 2).to_le_bytes());
+            d.extend_from_slice(b"WAVEfmt ");
+            d.extend_from_slice(&16u32.to_le_bytes());
+            d.extend_from_slice(&1u16.to_le_bytes());
+            d.extend_from_slice(&1u16.to_le_bytes());
+            d.extend_from_slice(&rate.to_le_bytes());
+            d.extend_from_slice(&(rate * 2).to_le_bytes());
+            d.extend_from_slice(&2u16.to_le_bytes());
+            d.extend_from_slice(&16u16.to_le_bytes());
+            d.extend_from_slice(b"data");
+            d.extend_from_slice(&(p.len() as u32 * 2).to_le_bytes());
+            for x in p {
+                d.extend_from_slice(&((x.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+            }
+            std::fs::write(aus.join(name), d).unwrap();
+        };
+        let chime = ausgabe::chime(ausgabe::CHIME_RATE);
+        for (name, k) in [("klar", ausgabe::Klang::Klar), ("lautsprecher", ausgabe::Klang::Lautsprecher), ("tuer", ausgabe::Klang::Tuer)] {
+            let mut p = proben.clone();
+            ausgabe::klang_anwenden(&mut p, rate, k);
+            schreiben(&format!("ansage-{name}.wav"), rate, &p);
+            let mut c = chime.clone();
+            ausgabe::klang_anwenden(&mut c, ausgabe::CHIME_RATE, k);
+            schreiben(&format!("gong-{name}.wav"), ausgabe::CHIME_RATE, &c);
+        }
+    }
+
     /// Punkt 11: Bordlautsprecher schneidet Tiefen und Höhen, die Tür klingt
     /// dumpf (Höhen weg), klar bleibt unverändert.
     #[test]
