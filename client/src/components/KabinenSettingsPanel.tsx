@@ -9,6 +9,7 @@ import {
   einstellungenLesen,
   einstellungenSetzen,
   freigeben,
+  lautstaerkeSetzen,
   probe,
   speicherLesen,
   stoppen,
@@ -169,9 +170,16 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
               min={0}
               max={100}
               value={Math.round(e.lautstaerke * 100)}
-              onChange={(ev) => setE({ ...e, lautstaerke: Number(ev.target.value) / 100 })}
-              onMouseUp={() => void aendern({ lautstaerke: e.lautstaerke })}
-              onKeyUp={() => void aendern({ lautstaerke: e.lautstaerke })}
+              onChange={(ev) => {
+                // Eigenes Kommando: wirkt sofort und dreht nichts anderes zurück
+                // (derselbe Wert wie der Regler oben auf der Seite „Kabine“).
+                const v = Number(ev.target.value) / 100;
+                setE({ ...e, lautstaerke: v });
+                void lautstaerkeSetzen(v, false);
+              }}
+              onMouseUp={(ev) => void lautstaerkeSetzen(Number(ev.currentTarget.value) / 100, true)}
+              onTouchEnd={(ev) => void lautstaerkeSetzen(Number(ev.currentTarget.value) / 100, true)}
+              onKeyUp={(ev) => void lautstaerkeSetzen(Number(ev.currentTarget.value) / 100, true)}
             />
           </label>
 

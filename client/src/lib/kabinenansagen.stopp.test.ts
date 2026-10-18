@@ -5,10 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const aufrufe: { cmd: string; args?: Record<string, unknown> }[] = [];
 let stoppZaehler = 0;
+let hoerer: ((e: { payload: unknown }) => void) | null = null;
 vi.mock("./ipc", () => ({
   isTauri: true,
   formatIpcError: (e: unknown) => String(e),
-  listen: vi.fn(),
+  listen: vi.fn(async (_ereignis: string, cb: (e: { payload: unknown }) => void) => {
+    hoerer = cb;
+    return () => undefined;
+  }),
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     aufrufe.push({ cmd, args });
     if (cmd === "kabinen_ton_huellkurve") {
@@ -31,10 +35,10 @@ vi.mock("./ipc", () => ({
 }));
 vi.stubGlobal("requestAnimationFrame", (f: () => void) => setTimeout(f, 5));
 
-const { abspielen, freigeben, stoppen, aktuell } = await import("./kabinenansagen");
+const { abspielen, freigeben, stoppen, aktuell, stummSetzen, wiedergabeStarten } = await import("./kabinenansagen");
 
-const ansage = (datei: string, rolle: "kabine" | "chime" = "kabine") => ({
-  slot: "boarding", rolle, zeit: 0, lautstaerke: 0.8,
+const ansage = (datei: string, rolle: "kabine" | "chime" = "kabine", id = 0) => ({
+  id, slot: "boarding", rolle, zeit: 0, vorschau: false, ergebnis: null,
   teile: rolle === "chime" ? [] : [{ sprache: "de-DE", text: "x", datei, dauer_s: 1 }],
 });
 const gespielt = () => aufrufe.filter((a) => a.cmd === "kabinen_ton_spielen").map((a) => a.args?.datei);
@@ -83,10 +87,40 @@ describe("Kabinen-Wiedergabe", () => {
     expect(aktuell().fehler).toBeNull();
   });
 
-  it("Chime geht ohne Datei an Rust, mit der Lautstärke der Ansage", async () => {
+  it("Chime geht ohne Datei an Rust; die Lautstärke setzt Rust selbst", async () => {
     abspielen(ansage("", "chime"));
     await warten(1500);
     const c = aufrufe.find((a) => a.cmd === "kabinen_ton_spielen");
-    expect(c?.args).toEqual({ datei: null, lautstaerke: 0.8 });
+    expect(c?.args).toEqual({ datei: null });
+  });
+
+  it("meldet den Start vor der ersten Wiedergabe, Hörproben nicht", async () => {
+    abspielen(ansage("start.wav", "kabine", 7));
+    await warten(1500);
+    const start = aufrufe.findIndex((a) => a.cmd === "kabinen_wiedergabe_start");
+    const spiel = aufrufe.findIndex((a) => a.cmd === "kabinen_ton_spielen");
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(aufrufe[start].args).toEqual({ id: 7 });
+    expect(start).toBeLessThan(spiel);
+    aufrufe.length = 0;
+    abspielen(ansage("probe.wav"));
+    await warten(1500);
+    expect(aufrufe.some((a) => a.cmd === "kabinen_wiedergabe_start")).toBe(false);
+  });
+
+  it("Stumm: eine kurz vorher ausgegebene Ansage spielt nicht, sie wird als stumm gemeldet", async () => {
+    wiedergabeStarten();
+    await warten(5);
+    await stummSetzen(true);
+    hoerer?.({ payload: ansage("spaet.wav", "kabine", 11) });
+    await warten(300);
+    expect(gespielt()).not.toContain("spaet.wav");
+    expect(aufrufe.find((a) => a.cmd === "kabinen_wiedergabe_ende")?.args).toEqual({ id: 11, ergebnis: "stumm" });
+    expect(aufrufe.find((a) => a.cmd === "kabinen_stumm")?.args).toEqual({ stumm: true });
+    // Gegenprobe: nach dem Aufheben spielt die nächste wieder.
+    await stummSetzen(false);
+    hoerer?.({ payload: ansage("wieder.wav", "kabine", 12) });
+    await warten(1500);
+    expect(gespielt()).toContain("wieder.wav");
   });
 });

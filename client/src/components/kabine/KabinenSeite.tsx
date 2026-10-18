@@ -265,8 +265,12 @@ export function KabinenSeite({
   const stumm = stummJetzt ?? daten?.stumm ?? false;
   const stummUmschalten = (s: boolean) => {
     setStummJetzt(s);
+    // Erst den neuen Stand aus Rust übernehmen, dann die sofortige Anzeige
+    // lösen — sonst spränge der Knopf kurz auf den alten Stand zurück.
     void stummSetzen(s)
-      .then(() => setNeu((n) => n + 1))
+      .then(() => ueberblick())
+      .then((d) => setDaten(d))
+      .catch(() => undefined)
       .finally(() => setStummJetzt(null));
   };
 
@@ -452,8 +456,12 @@ export function KabinenSeite({
               {verlauf.map((g) => {
                 const k = `b-${g.id}-${g.zeit}`;
                 const auf = offen === k;
-                // Ohne Ausgang läuft sie gerade (Rust verbucht erst nach der Rückmeldung).
-                const ausgang = g.ergebnis === null ? "laeuft" : g.ergebnis !== "gespielt" ? g.ergebnis : null;
+                // Ohne Ausgang: läuft (nach der Startmeldung) oder wird gerade gestartet.
+                const ausgang = g.ergebnis === null ? (g.gestartet ? "laeuft" : "startet") : g.ergebnis !== "gespielt" ? g.ergebnis : null;
+                const ausgangText =
+                  ausgang === "entfallen"
+                    ? t("kabine.ergebnis.entfallen_weil", { grund: t(`kabine.entfall.${g.grund ?? "sonst"}`) })
+                    : ausgang && t(`kabine.ergebnis.${ausgang}`);
                 return (
                   <li key={k} className={auf ? "ist-offen" : ""}>
                     <button type="button" className="kabine-plan-kopf" aria-expanded={auf} onClick={() => umschalten(k)}>
@@ -463,7 +471,7 @@ export function KabinenSeite({
                         <span className="kabine-rolle">{t(`kabine.rolle.${g.rolle}`)}</span>
                       </span>
                       {ausgang && (
-                        <span className={`kabine-plan-status ${ausgang === "laeuft" ? "ist-bereit" : "ist-warnung"}`}>{t(`kabine.ergebnis.${ausgang}`)}</span>
+                        <span className={`kabine-plan-status ${ausgang === "laeuft" || ausgang === "startet" ? "ist-bereit" : "ist-warnung"}`}>{ausgangText}</span>
                       )}
                     </button>
                     {!auf && g.teile[0] && <p className="kabine-verlauf-text kabine-verlauf-text--kurz">{g.teile[0].text}</p>}
@@ -475,11 +483,14 @@ export function KabinenSeite({
                             <p className="kabine-verlauf-text">{teil.text}</p>
                           </div>
                         ))}
-                        <div className="kabine-plan-knoepfe">
-                          <button type="button" className="button button--ghost kabine-knopf" disabled={gesperrt} onClick={() => hoeren(g.slot, g.id)}>
-                            {t("kabine.seite.nochmal")}
-                          </button>
-                        </div>
+                        {/* Entfallene ohne Ton: nichts zum Anhören. */}
+                        {g.teile.length > 0 && (
+                          <div className="kabine-plan-knoepfe">
+                            <button type="button" className="button button--ghost kabine-knopf" disabled={gesperrt} onClick={() => hoeren(g.slot, g.id)}>
+                              {t("kabine.seite.nochmal")}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </li>

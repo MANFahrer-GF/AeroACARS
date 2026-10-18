@@ -28,7 +28,8 @@ function Demo() {
       slot: "kapitaen_sinkflug",
       rolle: "kapitaen",
       zeit: Date.now() / 1000,
-      lautstaerke: 0.8,
+      vorschau: false,
+      ergebnis: null,
       teile: [
         { sprache: "de-DE", text: "Liebe Gäste, hier spricht noch einmal Ihr Kapitän. Wir beginnen in wenigen Minuten mit dem Sinkflug nach Toulouse. Dort ist es zwanzig Uhr fünfunddreißig Ortszeit, leichter Regen bei zwölf Grad.", datei: "lang-de.wav", dauer_s: 6 },
         { sprache: "en-GB", text: "Ladies and gentlemen, this is your captain again. We will begin our descent into Toulouse shortly. Local time is eight thirty-five in the evening, light rain and twelve degrees.", datei: "lang-en.wav", dauer_s: 6 },

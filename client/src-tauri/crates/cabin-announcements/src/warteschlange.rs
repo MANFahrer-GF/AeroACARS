@@ -136,12 +136,20 @@ impl Warteschlange {
             return None;
         }
         let pause = self.pause_bis.is_some_and(|p| jetzt < p);
+        // Am Boden feste Reihenfolge: Begrüßung und Sicherheit vor dem
+        // Kapitän, sobald sie spielbereit sind — sonst überholt er sie mit
+        // seinem Vorrang, und die Sicherheit liefe in den Startlauf (beta.6).
+        let kabine_zuerst = self
+            .eintraege
+            .iter()
+            .any(|e| matches!(e.slot, Slot::BegruessungTuerenZu | Slot::Sicherheit) && bereit(e.slot));
         let idx = self
             .eintraege
             .iter()
             .enumerate()
             .filter(|(_, e)| !ruhephase || e.slot.in_ruhephase_erlaubt())
             .filter(|(_, e)| !(pause && e.slot.wartet_pause()))
+            .filter(|(_, e)| !(kabine_zuerst && e.slot == Slot::KapitaenBegruessung))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
             .map(|(i, _)| i)?;
@@ -258,6 +266,25 @@ mod tests {
         v.aufnehmen([f(Slot::Reiseflug50, Verfall::AbPhase(Descent))]);
         assert!(!v.in_pause(5));
         assert_eq!(v.naechstes(5, Cruise, false), Some(Slot::Reiseflug50));
+    }
+
+    #[test]
+    fn am_boden_begruessung_und_sicherheit_vor_dem_kapitaen() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([
+            f(Slot::BegruessungTuerenZu, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::Sicherheit, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::KapitaenBegruessung, Verfall::AbPhase(TakeoffRoll)),
+        ]);
+        let mut reihe = Vec::new();
+        while let Some(s) = w.naechstes(0, TaxiOut, false) {
+            reihe.push(s);
+        }
+        assert_eq!(reihe, vec![Slot::BegruessungTuerenZu, Slot::Sicherheit, Slot::KapitaenBegruessung]);
+        // Gegenprobe: Ist die Sicherheit noch nicht fertig, wartet der Kapitän nicht auf sie.
+        let mut v = Warteschlange::default();
+        v.aufnehmen([f(Slot::Sicherheit, Verfall::AbPhase(TakeoffRoll)), f(Slot::KapitaenBegruessung, Verfall::AbPhase(TakeoffRoll))]);
+        assert_eq!(v.naechstes_bereit(0, TaxiOut, false, |s| s != Slot::Sicherheit), Some(Slot::KapitaenBegruessung));
     }
 
     #[test]

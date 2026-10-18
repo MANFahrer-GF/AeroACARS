@@ -26,11 +26,16 @@ export interface Gespielt {
   rolle: Rolle;
   zeit: number;
   teile: Teil[];
-  lautstaerke: number;
   /** Nur angehört (Vorhören, Nochmal, Hörprobe): zählt nicht als gespielt. */
   vorschau: boolean;
-  /** Ausgang laut Rückmeldung: gespielt | abgebrochen | fehler | unbekannt; null = läuft. */
+  /** Ausgang: gespielt | abgebrochen | fehler | unbekannt | stumm | entfallen;
+   *  null = ausgegeben bzw. läuft. */
   ergebnis: string | null;
+  /** Die Wiedergabe hat begonnen (erst dann „läuft“). */
+  gestartet?: boolean;
+  /** Warum sie entfiel (zu_wenig_zeit, uebersprungen, ton_nicht_fertig, zu_spaet,
+   *  keine_stimme, kein_kurztext). */
+  grund?: string | null;
 }
 
 export interface Einstellungen {
@@ -197,6 +202,10 @@ let durchgang = 0;
  *  die ein schon laufender Takt noch schickt (Codex-QS 2). Erst
  *  `freigeben()` beim Einschalten hebt das auf. */
 let gesperrt = false;
+/** Stumm (Knopf oben auf der Seite): Was Rust kurz vor dem Stummschalten
+ *  noch geschickt hat, wird nicht gespielt, sondern als „stumm“ gemeldet
+ *  (Codex beta.6: Fenster zwischen Ausgeben und Ereignis). */
+let stummLokal = false;
 
 function pause(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -204,7 +213,7 @@ function pause(ms: number): Promise<void> {
 
 /** Spielt eine Tondatei auf dem Ausgabegerät; der Pegel für die Anzeige
  *  läuft aus der vorab gelesenen Hüllkurve mit der Uhr mit. */
-async function spielen(datei: string, lautstaerke: number, meiner: number): Promise<void> {
+async function spielen(datei: string, meiner: number): Promise<void> {
   const huelle = await invoke<number[]>("kabinen_ton_huellkurve", { datei }).catch(() => [] as number[]);
   // Kam „Ausschalten“, während die Hüllkurve lud, nicht mehr starten: Rust
   // sähe den Stopp nicht mehr, er war vor diesem Aufruf (Codex-QS beta.2).
@@ -220,7 +229,9 @@ async function spielen(datei: string, lautstaerke: number, meiner: number): Prom
   };
   requestAnimationFrame(messen);
   try {
-    await invoke("kabinen_ton_spielen", { datei, lautstaerke });
+    // Die Lautstärke setzt Rust selbst (eine Quelle, wirkt auch mitten in
+    // der Ansage).
+    await invoke("kabinen_ton_spielen", { datei });
   } finally {
     fertig = true;
     setzen({ pegel: 0 });
@@ -228,13 +239,13 @@ async function spielen(datei: string, lautstaerke: number, meiner: number): Prom
 }
 
 /** Doppel-Chime (hoch, tief) — erzeugt in Rust. */
-async function chime(lautstaerke: number): Promise<void> {
-  await invoke("kabinen_ton_spielen", { datei: null, lautstaerke });
+async function chime(): Promise<void> {
+  await invoke("kabinen_ton_spielen", { datei: null });
 }
 
 /** Meldet Rust, wie eine Wiedergabe endete: Erst dann steht die Ansage
  *  in „Bisher“ als gespielt, und die nächste darf sofort beginnen. */
-function melden(a: Gespielt, ergebnis: "gespielt" | "abgebrochen" | "fehler", versuch = 0): void {
+function melden(a: Gespielt, ergebnis: "gespielt" | "abgebrochen" | "fehler" | "stumm", versuch = 0): void {
   if (!isTauri || a.id === 0) return;
   // Geht die Rückmeldung verloren, bliebe die Ansage ohne Ausgang und ein
   // Vorhören sperrte bis zur geschätzten Dauer: kurz wiederholen (Rust
@@ -252,10 +263,12 @@ async function abarbeiten(): Promise<void> {
     while (schlange.length > 0 && meiner === durchgang) {
       const a = schlange.shift()!;
       setzen({ ansage: a, teil: 0, verlauf: [] });
+      // Erst jetzt „läuft“ sie in „Bisher“ (nicht schon beim Ausgeben in Rust).
+      if (isTauri && !a.vorschau && a.id !== 0) void invoke("kabinen_wiedergabe_start", { id: a.id }).catch(() => undefined);
       let fehlgeschlagen = false;
       if (a.rolle === "chime") {
         try {
-          await chime(a.lautstaerke);
+          await chime();
           setzen({ fehler: null });
         } catch (e) {
           console.warn("[kabine] Chime nicht abspielbar", e);
@@ -266,7 +279,7 @@ async function abarbeiten(): Promise<void> {
         for (let i = 0; i < a.teile.length && meiner === durchgang; i++) {
           setzen({ teil: i });
           try {
-            await spielen(a.teile[i].datei, a.lautstaerke, meiner);
+            await spielen(a.teile[i].datei, meiner);
             setzen({ fehler: null });
           } catch (e) {
             console.warn("[kabine] Ton nicht abspielbar", a.slot, e);
@@ -320,6 +333,7 @@ export function anhoerenStoppen(): void {
 /** Stumm schalten: sofort still (laufende Ansage bricht ab); Rust verbucht
  *  alles, was bis zum Aufheben fällig wird, als „stumm übersprungen“. */
 export async function stummSetzen(stumm: boolean): Promise<void> {
+  stummLokal = stumm;
   if (stumm) abbrechen();
   await invoke("kabinen_stumm", { stumm });
 }
@@ -350,6 +364,7 @@ export function wiedergabeStarten(): void {
   listen<Gespielt>("kabine-ansage", (e) => {
     // Kam sie nach „Ausschalten“ noch an: nicht spielen, aber melden.
     if (gesperrt) melden(e.payload, "abgebrochen");
+    else if (stummLokal) melden(e.payload, "stumm");
     else abspielen(e.payload);
   }).catch((e) => {
     // Sonst bliebe die Wiedergabe bis zum Neustart stumm: nach kurzer

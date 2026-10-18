@@ -240,7 +240,9 @@
       "fehler": "could not play",
       "unbekannt": "outcome unknown",
       "stumm": "skipped (muted)",
-      "laeuft": "playing"
+      "laeuft": "playing",
+      "startet": "starting",
+      "entfallen_weil": "skipped: {{grund}}"
     },
     "ton": {
       "titel": "Sound",
@@ -249,6 +251,15 @@
       "lautstaerke": "Announcement volume",
       "stumm_titel": "Mute: the current announcement stops, anything due until you unmute is skipped.",
       "aufheben_titel": "Sound on again: the next announcement comes at its moment."
+    },
+    "entfall": {
+      "zu_wenig_zeit": "too little time before descent",
+      "uebersprungen": "cruise detected late, a later announcement came first",
+      "ton_nicht_fertig": "audio not ready in time",
+      "zu_spaet": "too late (sterile phase or another announcement)",
+      "keine_stimme": "no voice for these languages",
+      "kein_kurztext": "GSG server does not provide the captain's short version yet",
+      "sonst": "no longer possible"
     }
   },
   "app": {

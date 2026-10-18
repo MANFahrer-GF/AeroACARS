@@ -240,7 +240,9 @@
       "fehler": "non riproducibile",
       "unbekannt": "esito sconosciuto",
       "stumm": "saltato (muto)",
-      "laeuft": "in corso"
+      "laeuft": "in corso",
+      "startet": "in avvio",
+      "entfallen_weil": "saltato: {{grund}}"
     },
     "ton": {
       "titel": "Audio",
@@ -249,6 +251,15 @@
       "lautstaerke": "Volume degli annunci",
       "stumm_titel": "Muto: l'annuncio in corso si interrompe, ciò che scade fino alla riattivazione viene saltato.",
       "aufheben_titel": "Audio di nuovo attivo: il prossimo annuncio arriva al suo momento."
+    },
+    "entfall": {
+      "zu_wenig_zeit": "troppo poco tempo prima della discesa",
+      "uebersprungen": "crociera rilevata tardi, è arrivato prima un annuncio successivo",
+      "ton_nicht_fertig": "audio non pronto in tempo",
+      "zu_spaet": "troppo tardi (fase sterile o altro annuncio)",
+      "keine_stimme": "nessuna voce per queste lingue",
+      "kein_kurztext": "il server GSG non fornisce ancora la versione breve del comandante",
+      "sonst": "non più possibile"
     }
   },
   "app": {

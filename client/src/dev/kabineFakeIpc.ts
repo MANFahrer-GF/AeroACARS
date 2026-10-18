@@ -47,7 +47,7 @@ const teile = (fr: string | null, de: string | null, ton = true) => [
   { sprache: "de-DE", text: de, ton: ton && de !== null, keine_stimme: false },
 ];
 const gespielt = (id: number, slot: string, rolle: string, vor: number, de: string, ergebnis: string | null = "gespielt") => ({
-  id, slot, rolle, zeit: jetzt - vor, lautstaerke: 0.8, vorschau: false, ergebnis,
+  id, slot, rolle, zeit: jetzt - vor, vorschau: false, ergebnis, gestartet: true, grund: null as string | null,
   teile: [
     { sprache: "fr-FR", text: "Bonsoir à tous. " + de, datei: "f/lang-a.wav", dauer_s: 6 },
     { sprache: "de-DE", text: de, datei: "f/b.wav", dauer_s: 3.5 },
@@ -95,6 +95,7 @@ export const demoUeberblick = {
           gespielt(1, "kapitaen_begruessung", "kapitaen", 5400, "Willkommen an Bord, hier spricht Ihr Kapitän Thomas Kant. Wir fliegen fünf Stunden und vier Minuten nach Perth."),
           gespielt(2, "anschnallzeichen_aus", "kabine", 4200, "Das Anschnallzeichen ist aus. Gleich kommen wir mit Getränken zu Ihnen.", "abgebrochen"),
           gespielt(3, "reiseflug25", "kabine", 600, "Der Service beginnt. Wir reichen Ihnen ein Menü und Getränke."),
+          ...(fall === "fehler" ? [{ ...gespielt(5, "reiseflug50", "kapitaen", 300, "", "entfallen"), teile: [], grund: "ton_nicht_fertig" }] : []),
           ...(fall === "stumm" ? [gespielt(4, "reiseflug50", "kapitaen", 120, "Hier der Kapitän. Wir haben die Hälfte geschafft.", "stumm")] : []),
         ],
   geplant: (plan[fall] ?? plan.reiseflug).filter((g) => fall !== "stumm" || (g as { slot: string }).slot !== "reiseflug50"),
@@ -157,7 +158,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       const p = (demoUeberblick.geplant as { slot: string; rolle: string; teile: { sprache: string; text: string | null }[] }[]).find((x) => x.slot === args?.slot);
       return (g
         ? { ...g, id: 900, vorschau: true, ergebnis: null }
-        : { id: 901, slot: args?.slot, rolle: p?.rolle ?? "kabine", zeit: jetzt, lautstaerke: 0.8, vorschau: true, ergebnis: null,
+        : { id: 901, slot: args?.slot, rolle: p?.rolle ?? "kabine", zeit: jetzt, vorschau: true, ergebnis: null,
             teile: (p?.teile ?? []).map((t, i) => ({ sprache: t.sprache, text: t.text ?? "", datei: i ? "f/b.wav" : "f/lang-a.wav", dauer_s: i ? 3.5 : 6 })) }) as T;
     }
     case "kabinen_ausgabegeraete":

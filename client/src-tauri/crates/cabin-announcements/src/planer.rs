@@ -218,6 +218,10 @@ pub struct Planer {
     kapitaen_sinkflug: KapitaenSinkflug,
     /// Nicht gemeldete Ansagen mit Grund, bis der Host sie abholt.
     entfallen: Vec<(Slot, Entfall)>,
+    /// Wiedereinstieg im Reiseflug: Was beim ersten Reiseflug-Takt schon
+    /// vorbei ist, lief vor dem Neustart (oder nie) — still erledigt, nicht
+    /// als „entfallen“ (Pilotendurchlauf beta.6).
+    reiseflug_still_nachziehen: bool,
     /// Zuletzt angesagtes Umleitungsziel: Ein neues Ziel (der Pilot ändert
     /// die Umleitung) wird noch einmal angesagt, dasselbe nicht.
     angesagte_umleitung: Option<String>,
@@ -248,6 +252,7 @@ impl Planer {
         if r >= rang(FlightPhase::Cruise) {
             p.war_im_reiseflug = true;
             p.gemeldet.insert(Slot::AnschnallzeichenAus);
+            p.reiseflug_still_nachziehen = true;
         }
         p.letzte_phase = Some(phase);
         p
@@ -498,11 +503,16 @@ impl Planer {
                             self.melde_reiseflug(&mut aus, t, slot);
                             if self.schon(slot) {
                                 for (_, tiefer) in &stufen[i + 1..] {
-                                    self.entfaellt(*tiefer, Entfall::Uebersprungen);
+                                    if self.reiseflug_still_nachziehen {
+                                        self.gemeldet.insert(*tiefer);
+                                    } else {
+                                        self.entfaellt(*tiefer, Entfall::Uebersprungen);
+                                    }
                                 }
                             }
                         }
                     }
+                    self.reiseflug_still_nachziehen = false;
                 }
             }
         }
@@ -972,6 +982,7 @@ mod tests {
         // „Anschnallzeichen aus“, kein „Kapitän Reiseflug“.
         assert_eq!(slots, vec![Slot::Reiseflug50]);
         assert!(!p.schon(Slot::Reiseflug80));
+        assert!(p.entfallene_abholen().is_empty(), "R25 lief vor dem Neustart, kein „entfallen“");
     }
 
     #[test]

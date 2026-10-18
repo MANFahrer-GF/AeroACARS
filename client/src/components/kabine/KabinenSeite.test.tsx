@@ -12,11 +12,14 @@ import deCommon from "../../locales/de/common.json";
 const jetzt = 1_800_000_000;
 const ueberblick = {
   verlauf: [
-    { id: 4, slot: "anschnallzeichen_aus", rolle: "kabine", zeit: jetzt - 3600, lautstaerke: 0.8, vorschau: false, ergebnis: "abgebrochen",
+    { id: 4, slot: "anschnallzeichen_aus", rolle: "kabine", zeit: jetzt - 3600, vorschau: false, ergebnis: "abgebrochen", gestartet: true, grund: null,
       teile: [
         { sprache: "fr-FR", text: "Le signal est éteint.", datei: "f/a.wav", dauer_s: 3 },
         { sprache: "de-DE", text: "Das Anschnallzeichen ist aus.", datei: "f/b.wav", dauer_s: 3 },
       ] },
+    { id: 5, slot: "reiseflug25", rolle: "kabine", zeit: jetzt - 1800, vorschau: false, ergebnis: "entfallen", gestartet: false, grund: "ton_nicht_fertig", teile: [] },
+    { id: 6, slot: "kapitaen_begruessung", rolle: "kapitaen", zeit: jetzt - 10, vorschau: false, ergebnis: null, gestartet: true, grund: null,
+      teile: [{ sprache: "de-DE", text: "Hier spricht Ihr Kapitän.", datei: "f/c.wav", dauer_s: 3 }] },
   ],
   geplant: [
     { slot: "reiseflug50", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 600, stand: { art: "bereit" },
@@ -39,6 +42,8 @@ const ueberblick = {
   ablauf: { freigabe: { art: "ja" }, abflug: { art: "fertig" }, ankunft: { art: "offen", um: jetzt + 4000 }, ton_fertig: 1, ton_gesamt: 3 },
   profil: { flugart: "linie", muster: "A388", flugzeit_min: 304, kurzstrecke: false, flugzeit_bekannt: true, sprachen_ohne_stimme: [] },
   belegt: false,
+  stumm: false,
+  lautstaerke: 0.8,
 };
 
 const aufrufe: { cmd: string; args?: Record<string, unknown> }[] = [];
@@ -48,9 +53,10 @@ vi.mock("../../lib/ipc", () => ({
   listen: vi.fn(async () => () => undefined),
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     aufrufe.push({ cmd, args });
-    if (cmd === "kabinen_ueberblick") return ueberblick;
+    if (cmd === "kabinen_ueberblick") return { ...ueberblick };
+    if (cmd === "kabinen_stumm") ueberblick.stumm = Boolean(args?.stumm);
     if (cmd === "kabinen_anhoeren")
-      return { id: 99, slot: args?.slot, rolle: "kapitaen", zeit: jetzt, lautstaerke: 0.8, vorschau: true, ergebnis: null,
+      return { id: 99, slot: args?.slot, rolle: "kapitaen", zeit: jetzt, vorschau: true, ergebnis: null,
         teile: [{ sprache: "de-DE", text: "Wir haben die Hälfte geschafft.", datei: "f/b.wav", dauer_s: 1 }] };
     if (cmd === "kabinen_ton_huellkurve") return [];
     return null;
@@ -82,7 +88,9 @@ describe("Seite Kabine", () => {
     const liste = await screen.findByTestId("kabine-naechste");
     expect(liste.textContent).not.toMatch(/wird vorbereitet/);
     expect(within(liste).getByText(`Text ab ca. ${uhr(jetzt + 4000)}`)).toBeTruthy();
-    expect(within(liste).getByText(`ca. ${uhr(jetzt + 600)}`)).toBeTruthy();
+    // Deutlich (Thomas 18.10.2026): wann sie spielt, und rechts, ob sie fertig ist.
+    expect(within(liste).getByText(`Spielt ca. ${uhr(jetzt + 600)}`)).toBeTruthy();
+    expect(within(liste).getByText("Text und Ton fertig")).toBeTruthy();
     expect(within(liste).getByText(/Ton wartet \(Server ausgelastet\), neuer Versuch/)).toBeTruthy();
     // Ablauf oben und „Warum diese Ansagen“.
     expect(screen.getByTestId("kabine-ablauf").textContent).toContain("1 von 3 fertig");
@@ -113,5 +121,32 @@ describe("Seite Kabine", () => {
     await vi.waitFor(() => expect(nochmal.disabled).toBe(false));
     fireEvent.click(nochmal);
     await vi.waitFor(() => expect(aufrufe.find((a) => a.cmd === "kabinen_anhoeren")?.args).toEqual({ slot: "anschnallzeichen_aus", id: 4 }));
+  });
+
+  it("„Bisher“: läuft erst nach dem Start, Entfallenes mit Grund und ohne Anhören", async () => {
+    render(<KabinenSeite onOpenSettings={() => undefined} />);
+    const bisher = await screen.findByTestId("kabine-bisher");
+    expect(within(bisher).getByText("läuft")).toBeTruthy();
+    expect(within(bisher).getByText("entfallen: Ton nicht rechtzeitig fertig")).toBeTruthy();
+    fireEvent.click(within(bisher).getByRole("button", { name: /Service beginnt/ }));
+    expect(within(bisher).queryByRole("button", { name: "Nochmal anhören" })).toBeNull();
+  });
+
+  it("Ton oben: Stumm schaltet sofort und sagt es, der Regler setzt die Lautstärke", async () => {
+    ueberblick.stumm = false;
+    render(<KabinenSeite onOpenSettings={() => undefined} />);
+    const ton = await screen.findByTestId("kabine-ton");
+    fireEvent.click(within(ton).getByRole("button", { name: /Ton an/ }));
+    await vi.waitFor(() => expect(aufrufe.find((a) => a.cmd === "kabinen_stumm")?.args).toEqual({ stumm: true }));
+    expect(await screen.findByTestId("kabine-stumm-hinweis")).toBeTruthy();
+    expect(within(ton).getByRole("button", { name: /Stumm/ }).getAttribute("aria-pressed")).toBe("true");
+    const regler = within(ton).getByRole("slider");
+    fireEvent.change(regler, { target: { value: "40" } });
+    fireEvent.mouseUp(regler);
+    await vi.waitFor(() => expect(aufrufe.filter((a) => a.cmd === "kabinen_lautstaerke").map((a) => a.args)).toContainEqual({ lautstaerke: 0.4, speichern: true }));
+    // Aufheben: Hinweis weg.
+    fireEvent.click(within(ton).getByRole("button", { name: /Stumm/ }));
+    await vi.waitFor(() => expect(screen.queryByTestId("kabine-stumm-hinweis")).toBeNull());
+    ueberblick.stumm = false;
   });
 });

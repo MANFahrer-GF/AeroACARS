@@ -240,7 +240,9 @@
       "fehler": "nicht abspielbar",
       "unbekannt": "Ausgang unbekannt",
       "stumm": "stumm übersprungen",
-      "laeuft": "läuft"
+      "laeuft": "läuft",
+      "startet": "wird gestartet",
+      "entfallen_weil": "entfallen: {{grund}}"
     },
     "ton": {
       "titel": "Ton",
@@ -249,6 +251,15 @@
       "lautstaerke": "Lautstärke der Ansagen",
       "stumm_titel": "Stummschalten: Die laufende Ansage bricht ab, was bis zum Aufheben fällig wird, entfällt.",
       "aufheben_titel": "Ton wieder an: Die nächste Ansage kommt zu ihrem Zeitpunkt."
+    },
+    "entfall": {
+      "zu_wenig_zeit": "zu wenig Zeit bis zum Sinkflug",
+      "uebersprungen": "Reiseflug zu spät erkannt, spätere Ansage kam zuerst",
+      "ton_nicht_fertig": "Ton nicht rechtzeitig fertig",
+      "zu_spaet": "zu spät dran (Ruhephase oder andere Ansage)",
+      "keine_stimme": "keine Stimme für diese Sprachen",
+      "kein_kurztext": "GSG-Server liefert noch keine Kurzfassung des Kapitäns",
+      "sonst": "nicht mehr möglich"
     }
   },
   "app": {

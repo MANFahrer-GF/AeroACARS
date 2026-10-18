@@ -708,7 +708,15 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
         Some(teile) => {
             // Zwischen den Sprachen eine kurze Pause; ein Chime dauert gut zwei Sekunden.
             let dauer = dauer_s(slot, &teile);
-            lauf.warteschlange.ansage_spielt_bis(jetzt + dauer.ceil() as i64 + 1);
+            let bis = jetzt + dauer.ceil() as i64 + 1;
+            // Nur Durchsagen an die Gäste lösen die Pause aus, nicht Crew-
+            // Kommandos und Gong (sonst wartete die Begrüßung 90 s auf ein
+            // 5-s-Kommando, Pilotendurchlauf beta.6).
+            if slot.wartet_pause() {
+                lauf.warteschlange.ansage_spielt_bis(bis);
+            } else {
+                lauf.warteschlange.spielt_bis(bis);
+            }
             lauf.naechste_id += 1;
             let g = Gespielt {
                 id: lauf.naechste_id,
@@ -1418,7 +1426,7 @@ pub(crate) fn kabinen_wiedergabe_ende(app: AppHandle, state: tauri::State<'_, Ap
 /// Wie [`wiedergabe_ende`], dazu erfährt der Planer, ob die Sinkflug-Ansage
 /// des Kapitäns wirklich lief (danach richtet sich die Kabine).
 fn ende_melden(stats: &mut FlightStats, id: u64, ergebnis: &str, jetzt: i64) -> bool {
-    if !wiedergabe_ende(&mut stats.kabinen_lauf, id, ergebnis) {
+    if !wiedergabe_ende(&mut stats.kabinen_lauf, id, ergebnis, jetzt) {
         return false;
     }
     let ende = stats.kabinen_lauf.verlauf.iter().find(|g| g.id == id).map(|g| (g.slot, g.ergebnis.as_deref() == Some("gespielt")));
@@ -1456,7 +1464,7 @@ pub(crate) fn kabinen_stumm(app: AppHandle, state: tauri::State<'_, AppState>, s
 }
 
 /// `true` = der Verlauf hat sich geändert (speichern).
-fn wiedergabe_ende(lauf: &mut Lauf, id: u64, ergebnis: &str) -> bool {
+fn wiedergabe_ende(lauf: &mut Lauf, id: u64, ergebnis: &str, jetzt: i64) -> bool {
     let ergebnis = match ergebnis {
         "gespielt" | "abgebrochen" | "fehler" | "stumm" => ergebnis,
         _ => "fehler",
@@ -1472,10 +1480,13 @@ fn wiedergabe_ende(lauf: &mut Lauf, id: u64, ergebnis: &str) -> bool {
             if ergebnis == "stumm" {
                 // Nichts zu hören gewesen: keine Pause.
                 lauf.warteschlange.abbrechen();
+            } else if !g.slot.wartet_pause() {
+                // Kommando, Gong: frei, eine laufende Pause bleibt.
+                lauf.warteschlange.frei();
             } else {
                 // Echte Ansage zu Ende: Pause bis zur nächsten regulären
                 // (Thomas 18.10.2026); das Vorhören oben macht keine.
-                lauf.warteschlange.ansage_zu_ende(Utc::now().timestamp());
+                lauf.warteschlange.ansage_zu_ende(jetzt);
             }
             true
         }
@@ -2775,10 +2786,10 @@ mod tests {
         // „gespielt“ schon.
         let mut l = lauf_mit_ton(&[]);
         l.verlauf.push(Gespielt { id: 5, slot: Slot::Reiseflug25, rolle: Rolle::Kabine, zeit: 0, teile: vec![], vorschau: false, ergebnis: None, gestartet: true, grund: None });
-        assert!(wiedergabe_ende(&mut l, 5, "stumm"));
+        assert!(wiedergabe_ende(&mut l, 5, "stumm", Utc::now().timestamp()));
         assert!(!l.warteschlange.in_pause(Utc::now().timestamp()));
         l.verlauf.push(Gespielt { id: 6, slot: Slot::Reiseflug50, rolle: Rolle::Kapitaen, zeit: 0, teile: vec![], vorschau: false, ergebnis: None, gestartet: true, grund: None });
-        assert!(wiedergabe_ende(&mut l, 6, "gespielt"));
+        assert!(wiedergabe_ende(&mut l, 6, "gespielt", Utc::now().timestamp()));
         assert!(l.warteschlange.in_pause(Utc::now().timestamp()));
     }
 
@@ -2818,6 +2829,227 @@ mod tests {
         abspielen_schritt(&mut st, 20, Cruise, false);
         assert!(st.kabinen_lauf.warteschlange.ist_leer());
         assert_eq!(st.kabinen_lauf.verlauf.last().and_then(|g| g.grund.as_deref()), Some("kein_kurztext"));
+    }
+
+    // ---- Pilotendurchlauf: ganze Flüge durch Planer, Warteschlange und
+    // Abspielen, mit Rückmeldungen wie von der Oberfläche (Pflicht vor dem
+    // Release, Gedächtnis „Kapazität + Nutzerdurchlauf“). ----
+
+    struct Durchlauf {
+        /// (Startzeit relativ zum Boarding in s, Slot, Rolle, Ende)
+        gespielt: Vec<(i64, Slot, Rolle, i64)>,
+        verlauf: Vec<Gespielt>,
+    }
+
+    /// Ein Flug von `min` Minuten Flugzeit, Takt alle 5 s. `einstieg` = Neustart
+    /// des Clients mitten im Reiseflug (Planer setzt dort fort).
+    fn fliegen(flugart: Flugart, min: u32, reise_ft: f64, einstieg: bool) -> Durchlauf {
+        use crate::FlightPhase::*;
+        let start = 1_800_000_000i64;
+        let mut st = FlightStats::new();
+        st.kabinen_lauf.sprachen = vec!["fr-FR".into(), "de-DE".into()];
+        for s in Slot::ALLE {
+            for sp in ["fr-FR", "de-DE", "en-GB"] {
+                st.kabinen_lauf.texte.insert((s, sp.into()), format!("{s:?}"));
+                // Echte Längen je Sprache: Sicherheit gut 1,5 min, Kommando
+                // ein Satz, sonst eine halbe Minute.
+                let dauer_s = match s.rolle() {
+                    _ if s == Slot::Sicherheit => 95.0,
+                    Rolle::Kommando => 4.0,
+                    _ => 30.0,
+                };
+                st.kabinen_lauf.ton.insert((s, sp.into()), Some(Ton { datei: "f/x.wav".into(), dauer_s }));
+            }
+        }
+        st.kabinen_lauf.sicherheit_kapitaen = flugart == Flugart::Bizjet;
+        let flug = |ab: Option<i64>| cabin_announcements::Flugdaten {
+            flugart: Some(flugart),
+            geplante_flugzeit_min: Some(min),
+            tod_nach_abheben_s: None,
+            ziel_plan_icao: Some("EDDF".into()),
+            reiseflughoehe_ft: Some(reise_ft as u32),
+            abheben_epoch: ab,
+        };
+        st.kabinen_planer = Some(cabin_announcements::Planer::neu(flug(None)));
+        // Profil: Boden 18 min, Steigflug 2.000 ft/min, Sinkflug 1.800 ft/min,
+        // Anflug 8 min; Reiseflug füllt die Planzeit auf.
+        let steig = (reise_ft / 2_000.0 * 60.0) as i64;
+        let sink = ((reise_ft - 3_000.0) / 1_800.0 * 60.0) as i64;
+        let anflug = 8 * 60;
+        let reise = (i64::from(min) * 60 - steig - sink - anflug).max(60);
+        let abheben = start + 18 * 60 + 60;
+        let landung = abheben + i64::from(min) * 60;
+        let mut ticks: Vec<(i64, FlightPhase, f64, f64, Option<u8>)> = Vec::new();
+        let mut t = start;
+        let mut schieben = |ph: FlightPhase, dauer: i64, h0: f64, h1: f64, zeichen: Option<u8>, ticks: &mut Vec<_>| {
+            let n = (dauer / 5).max(1);
+            for i in 0..n {
+                let h = h0 + (h1 - h0) * (i as f64 / n as f64);
+                let vs = (h1 - h0) / (dauer as f64 / 60.0);
+                ticks.push((t, ph, h, vs, zeichen));
+                t += 5;
+            }
+        };
+        schieben(Boarding, 10 * 60, 0.0, 0.0, Some(2), &mut ticks);
+        schieben(Pushback, 3 * 60, 0.0, 0.0, Some(2), &mut ticks);
+        schieben(TaxiOut, 5 * 60, 0.0, 0.0, Some(2), &mut ticks);
+        schieben(TakeoffRoll, 40, 0.0, 0.0, Some(2), &mut ticks);
+        schieben(Takeoff, 20, 0.0, 500.0, Some(2), &mut ticks);
+        schieben(Climb, steig, 500.0, reise_ft, Some(1), &mut ticks);
+        schieben(Cruise, reise, reise_ft, reise_ft, Some(0), &mut ticks);
+        schieben(Descent, sink, reise_ft, 3_000.0, Some(2), &mut ticks);
+        schieben(Approach, anflug - 180, 3_000.0, 1_500.0, Some(2), &mut ticks);
+        schieben(Final, 180, 1_500.0, 0.0, Some(2), &mut ticks);
+        schieben(Landing, 30, 0.0, 0.0, Some(2), &mut ticks);
+        schieben(TaxiIn, 5 * 60, 0.0, 0.0, Some(2), &mut ticks);
+        schieben(BlocksOn, 60, 0.0, 0.0, Some(0), &mut ticks);
+        schieben(Arrived, 3 * 60, 0.0, 0.0, Some(0), &mut ticks);
+
+        let mitte = abheben + steig + reise / 2;
+        let mut gespielt = Vec::new();
+        let mut laufend: Option<(u64, i64)> = None;
+        for (jetzt, phase, h, vs, zeichen) in ticks {
+            if einstieg && jetzt < mitte {
+                continue;
+            }
+            if einstieg && st.kabinen_lauf.naechste_id == 0 && st.kabinen_lauf.verlauf.is_empty() && gespielt.is_empty() && jetzt >= mitte && st.kabinen_planer.as_ref().is_some_and(|p| !p.ist_kurzstrecke() || true) {
+                // Neustart: Planer frisch aus Phase und echtem Abheben.
+                if st.kabinen_lauf.angefragt.is_empty() {
+                    st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase));
+                    st.kabinen_lauf.angefragt.insert("neustart".into());
+                }
+            }
+            if let Some((id, ende)) = laufend {
+                if jetzt >= ende {
+                    ende_melden(&mut st, id, "gespielt", jetzt);
+                    laufend = None;
+                }
+            }
+            let tk = cabin_announcements::Tick {
+                jetzt,
+                phase,
+                hoehe_ft: h,
+                vs_fpm: vs,
+                am_boden: matches!(phase, Boarding | Pushback | TaxiOut | TakeoffRoll | TaxiIn | BlocksOn | Arrived),
+                anschnallzeichen: zeichen,
+                rest_min: Some((landung - jetzt) as f64 / 60.0).filter(|m| *m >= 0.0),
+                ziel_icao: None,
+                ..Default::default()
+            };
+            let planer = st.kabinen_planer.as_mut().expect("planer");
+            let faellig = planer.tick(&tk);
+            let ruhe = planer.ruhephase(&tk);
+            for (slot, _) in planer.entfallene_abholen() {
+                verbuchen(&mut st.kabinen_lauf, slot, "entfallen", Some("planer"), jetzt);
+            }
+            st.phase = phase;
+            st.kabinen_lauf.warteschlange.aufnehmen(faellig);
+            let (g, _) = abspielen_schritt(&mut st, jetzt, phase, ruhe);
+            if let Some(g) = g {
+                // Wie die Oberfläche: Start melden, nach der Dauer „gespielt“.
+                if let Some(e) = st.kabinen_lauf.verlauf.iter_mut().find(|x| x.id == g.id) {
+                    e.gestartet = true;
+                }
+                let ende = jetzt + dauer_s(g.slot, &g.teile).ceil() as i64;
+                gespielt.push((jetzt - start, g.slot, g.rolle, ende - start));
+                laufend = Some((g.id, ende));
+            }
+        }
+        Durchlauf { gespielt, verlauf: st.kabinen_lauf.verlauf }
+    }
+
+    fn zeit(s: i64) -> String {
+        format!("{:>3}:{:02}", s / 60, s % 60)
+    }
+
+    fn protokoll(name: &str, d: &Durchlauf) {
+        println!("\n=== {name} ===");
+        for (t, slot, rolle, ende) in &d.gespielt {
+            println!("  {} – {}  {slot:?} ({rolle:?})", zeit(*t), zeit(*ende));
+        }
+        for g in d.verlauf.iter().filter(|g| g.ergebnis.as_deref() != Some("gespielt")) {
+            println!("  nicht gespielt: {:?} {:?} {:?}", g.slot, g.ergebnis, g.grund);
+        }
+    }
+
+    /// Reguläre Ansagen halten 90 s Pause zueinander, die Kabine kommt
+    /// frühestens zwei Minuten nach dem Ende der Kapitänsansage im Sinkflug.
+    fn abstaende_pruefen(name: &str, d: &Durchlauf) {
+        let regulaer: Vec<&(i64, Slot, Rolle, i64)> = d.gespielt.iter().filter(|(_, s, _, _)| s.wartet_pause()).collect();
+        for paar in regulaer.windows(2) {
+            assert!(paar[1].0 - paar[0].3 >= cabin_announcements::warteschlange::PAUSE_NACH_ANSAGE_S, "{name}: {:?} zu dicht nach {:?}", paar[1].1, paar[0].1);
+        }
+        let ende_kapitaen = d.gespielt.iter().find(|x| x.1 == Slot::KapitaenSinkflug).map(|x| x.3);
+        let start_kabine = d.gespielt.iter().find(|x| x.1 == Slot::KabineSinkflug).map(|x| x.0);
+        if let (Some(k), Some(c)) = (ende_kapitaen, start_kabine) {
+            assert!(c - k >= cabin_announcements::planer::KABINE_NACH_KAPITAEN_MIN_S, "{name}: Kabine {}s nach dem Kapitän", c - k);
+        }
+        // Nichts überlappt.
+        for paar in d.gespielt.windows(2) {
+            assert!(paar[1].0 >= paar[0].3, "{name}: {:?} überlappt {:?}", paar[1].1, paar[0].1);
+        }
+    }
+
+    #[test]
+    fn pilotendurchlauf_ganzer_flug() {
+        let slots = |d: &Durchlauf| d.gespielt.iter().map(|x| x.1).collect::<Vec<_>>();
+
+        // Linie, 2 h: der volle Ablauf in Reihenfolge, nichts entfällt.
+        let lang = fliegen(Flugart::Linie, 120, 35_000.0, false);
+        protokoll("Linie 2 h (A320)", &lang);
+        abstaende_pruefen("Linie", &lang);
+        let erwartet = [
+            Slot::Boarding, Slot::KommandoTuerenScharf, Slot::BegruessungTuerenZu, Slot::Sicherheit, Slot::KapitaenBegruessung,
+            Slot::KommandoStart, Slot::Chime10000Steigflug, Slot::AnschnallzeichenAus, Slot::Reiseflug25, Slot::Reiseflug50,
+            Slot::Reiseflug80, Slot::KapitaenSinkflug, Slot::KommandoLandungVorbereiten, Slot::KabineSinkflug,
+            Slot::Chime10000Sinkflug, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung, Slot::KommandoTuerenEntschaerfen, Slot::Aussteigen,
+        ];
+        let mut ist = slots(&lang);
+        ist.retain(|s| erwartet.contains(s));
+        let mut soll = erwartet.to_vec();
+        soll.sort();
+        let mut sortiert = ist.clone();
+        sortiert.sort();
+        assert_eq!(sortiert, soll, "jede Ansage genau einmal: {ist:?}");
+        assert!(lang.verlauf.iter().all(|g| g.ergebnis.as_deref() == Some("gespielt")), "nichts entfällt");
+        let pos = |d: &Durchlauf, s: Slot| d.gespielt.iter().position(|x| x.1 == s).expect("gespielt");
+        assert!(pos(&lang, Slot::Boarding) < pos(&lang, Slot::BegruessungTuerenZu));
+        assert!(pos(&lang, Slot::BegruessungTuerenZu) < pos(&lang, Slot::Sicherheit) && pos(&lang, Slot::Sicherheit) < pos(&lang, Slot::KapitaenBegruessung));
+        assert!(pos(&lang, Slot::Reiseflug80) < pos(&lang, Slot::KapitaenSinkflug) && pos(&lang, Slot::KapitaenSinkflug) < pos(&lang, Slot::KabineSinkflug));
+        assert!(pos(&lang, Slot::NachDerLandung) < pos(&lang, Slot::Aussteigen));
+
+        // Kurzstrecke, 50 min: Service ja, Zwischenstände nein.
+        let kurz = fliegen(Flugart::Linie, 50, 24_000.0, false);
+        protokoll("Kurzstrecke 50 min", &kurz);
+        abstaende_pruefen("Kurzstrecke", &kurz);
+        let k = slots(&kurz);
+        assert!(k.contains(&Slot::Reiseflug25) && !k.contains(&Slot::Reiseflug50) && !k.contains(&Slot::Reiseflug80), "{k:?}");
+        assert!(pos(&kurz, Slot::AnschnallzeichenAus) < pos(&kurz, Slot::Reiseflug25) && pos(&kurz, Slot::Reiseflug25) < pos(&kurz, Slot::KapitaenSinkflug));
+        assert!(kurz.verlauf.iter().all(|g| g.ergebnis.as_deref() == Some("gespielt")), "nichts entfällt");
+
+        // Bizjet, 90 min: Kapitän mit Sicherheits-Kurzfassung und Gong, keine Kabine.
+        let biz = fliegen(Flugart::Bizjet, 90, 41_000.0, false);
+        protokoll("Bizjet 90 min (C25A)", &biz);
+        abstaende_pruefen("Bizjet", &biz);
+        let b = slots(&biz);
+        assert_eq!(b, vec![Slot::Sicherheit, Slot::KapitaenBegruessung, Slot::Chime10000Steigflug, Slot::KapitaenSinkflug, Slot::Chime10000Sinkflug]);
+        assert!(biz.gespielt.iter().filter(|x| x.1 != Slot::Chime10000Steigflug && x.1 != Slot::Chime10000Sinkflug).all(|x| x.2 == Rolle::Kapitaen), "nur der Kapitän spricht");
+
+        // Einstieg mitten im Reiseflug (Neustart des Clients): nichts vom Boden,
+        // keine zweite Begrüßung, der Rest des Fluges läuft normal.
+        let mitte = fliegen(Flugart::Linie, 120, 35_000.0, true);
+        protokoll("Linie 2 h, Neustart mitten im Reiseflug", &mitte);
+        abstaende_pruefen("Neustart", &mitte);
+        let m = slots(&mitte);
+        for vorbei in [Slot::Boarding, Slot::Sicherheit, Slot::KapitaenBegruessung, Slot::AnschnallzeichenAus, Slot::Chime10000Steigflug] {
+            assert!(!m.contains(&vorbei), "{vorbei:?} nach dem Neustart");
+        }
+        for kommt in [Slot::KapitaenSinkflug, Slot::KabineSinkflug, Slot::NachDerLandung, Slot::Aussteigen] {
+            assert!(m.contains(&kommt), "{kommt:?} fehlt nach dem Neustart");
+        }
+        assert!(mitte.verlauf.iter().all(|g| g.ergebnis.as_deref() == Some("gespielt")), "nach dem Neustart kein falsches „entfallen“");
+        // Bizjet: Die Kurzfassung spricht der Kapitän.
+        assert_eq!(biz.gespielt[0].2, Rolle::Kapitaen);
     }
 
     /// Codex beta.6: „läuft“ erst nach der Startmeldung der Oberfläche; bleibt
@@ -2887,17 +3119,17 @@ mod tests {
         assert!(v.vorschau && v.teile[0].text == "Halbzeit");
         assert!(l.warteschlange.belegt(3), "während des Anhörens spielt nichts anderes");
         assert!(anhoeren(&mut l, Slot::Reiseflug50, None, 1).is_err(), "gesperrt, solange etwas läuft");
-        assert!(!wiedergabe_ende(&mut l, v.id, "gespielt"), "Vorhören kommt nicht in den Verlauf");
+        assert!(!wiedergabe_ende(&mut l, v.id, "gespielt", Utc::now().timestamp()), "Vorhören kommt nicht in den Verlauf");
         assert!(!l.warteschlange.belegt(1) && l.verlauf.is_empty());
         assert!(!l.warteschlange.in_pause(Utc::now().timestamp()), "Vorhören löst keine Pause aus");
         // Echte Ansage: erst nach der Rückmeldung „gespielt“.
         l.verlauf.push(Gespielt { id: 7, slot: Slot::Reiseflug50, rolle: Rolle::Kapitaen, zeit: 0, teile: v.teile.clone(), vorschau: false, ergebnis: None, gestartet: true, grund: None });
         l.warteschlange.spielt_bis(50);
-        assert!(wiedergabe_ende(&mut l, 7, "abgebrochen"));
+        assert!(wiedergabe_ende(&mut l, 7, "abgebrochen", Utc::now().timestamp()));
         assert_eq!(l.verlauf[0].ergebnis.as_deref(), Some("abgebrochen"));
         assert!(!l.warteschlange.belegt(1), "nichts läuft mehr");
         assert!(l.warteschlange.in_pause(Utc::now().timestamp()), "aber erst nach der Pause die nächste reguläre");
-        assert!(!wiedergabe_ende(&mut l, 7, "gespielt"), "nur einmal");
+        assert!(!wiedergabe_ende(&mut l, 7, "gespielt", Utc::now().timestamp()), "nur einmal");
         // Nochmal aus „Bisher“, auch wenn der Ton nicht mehr im Lauf steht.
         l.ton.clear();
         let n = anhoeren(&mut l, Slot::Reiseflug50, Some(7), 100).unwrap();
