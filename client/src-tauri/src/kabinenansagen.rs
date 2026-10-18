@@ -3285,6 +3285,149 @@ mod tests {
         assert_eq!(biz.gespielt[0].2, Rolle::Kapitaen);
     }
 
+    /// Thomas 18.10.2026 (Punkt 8/16): Die Stimme folgt dem Geschlecht der
+    /// Crew laut Server; ohne Angabe Kapitän männlich, Kabine weiblich.
+    #[test]
+    fn stimme_folgt_der_crew() {
+        let mut l = Lauf::default();
+        assert!(stimme_maennlich(&l, Rolle::Kapitaen) && !stimme_maennlich(&l, Rolle::Kabine), "ohne Angabe wie bisher");
+        let d = api_client::KabinenDrehbuch {
+            sprachen: vec!["de-DE".into()],
+            eintraege: vec![api_client::KabinenEintrag { slot: "reiseflug80".into(), sprache: "de-DE".into(), text: "x".into(), rolle: None, art: Some("ende_bordverkauf".into()) }],
+            crew: Some(api_client::KabinenCrew { kapitaen: Some("Julia Lange".into()), kapitaen_geschlecht: Some("w".into()), kabine_geschlecht: Some("m".into()) }),
+        };
+        drehbuch_uebernehmen(&mut l, d, &[Slot::Reiseflug80], false);
+        assert!(!stimme_maennlich(&l, Rolle::Kapitaen), "Kapitänin spricht mit Frauenstimme");
+        assert!(stimme_maennlich(&l, Rolle::Kabine), "Purser mit Männerstimme");
+        assert!(stimme_maennlich(&l, Rolle::Kommando));
+        assert_eq!(l.art_r80.as_deref(), Some("ende_bordverkauf"));
+        assert_eq!(l.crew.as_ref().and_then(|c| c.kapitaen.as_deref()), Some("Julia Lange"));
+        // Eine spätere Antwort ohne `crew` (älteres Modul) vergisst die Crew nicht.
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None }, &[], false);
+        assert!(!stimme_maennlich(&l, Rolle::Kapitaen));
+    }
+
+    fn wav_mit_satz(json: &str) -> Vec<u8> {
+        let mut d = Vec::new();
+        let daten = vec![0u8; 3200];
+        let satz = json.as_bytes();
+        d.extend_from_slice(b"RIFF");
+        d.extend_from_slice(&((4 + 24 + 8 + daten.len() + 8 + satz.len() + (satz.len() & 1)) as u32).to_le_bytes());
+        d.extend_from_slice(b"WAVEfmt ");
+        d.extend_from_slice(&16u32.to_le_bytes());
+        d.extend_from_slice(&1u16.to_le_bytes());
+        d.extend_from_slice(&1u16.to_le_bytes());
+        d.extend_from_slice(&16_000u32.to_le_bytes());
+        d.extend_from_slice(&32_000u32.to_le_bytes());
+        d.extend_from_slice(&2u16.to_le_bytes());
+        d.extend_from_slice(&16u16.to_le_bytes());
+        d.extend_from_slice(b"data");
+        d.extend_from_slice(&(daten.len() as u32).to_le_bytes());
+        d.extend_from_slice(&daten);
+        d.extend_from_slice(b"satz");
+        d.extend_from_slice(&(satz.len() as u32).to_le_bytes());
+        d.extend_from_slice(satz);
+        if satz.len() & 1 == 1 {
+            d.push(0);
+        }
+        d
+    }
+
+    /// Ton-Server Paket 3 S1: Satz-Startzeiten im Abschnitt `satz` hinter `data`.
+    #[test]
+    fn satzzeiten_aus_der_wav() {
+        let d = wav_mit_satz(r#"[{"ab_s":0.0,"text":"Guten Tag."},{"ab_s":1.25,"text":"Willkommen an Bord."}]"#);
+        let st = wav_stuecke(&d);
+        assert_eq!(st.len(), 2);
+        assert_eq!(st[1].ab_s, 1.25);
+        assert_eq!(st[1].text, "Willkommen an Bord.");
+        assert!((wav_dauer_s(&d).unwrap() - 0.1).abs() < 1e-6, "Dauer zählt nur data");
+        assert_eq!(ausgabe::wav_lesen(&d).unwrap().1.len(), 1600, "Abschnitt dahinter ist kein Ton");
+        // Ohne Abschnitt oder kaputt: leer, die Seite schätzt.
+        assert!(wav_stuecke(&wav(32_000, 3200)).is_empty());
+        assert!(wav_stuecke(&wav_mit_satz("kein json")).is_empty());
+    }
+
+    /// Michael BER181: dreimal „sechzehn Uhr“ = Planankunft 14:00 UTC, gelandet
+    /// 13:24. In der Luft zählt jetzt Abheben + Flugzeit, früher Abflug auch.
+    #[test]
+    fn ankunft_erwartet_nicht_mehr_nur_der_plan() {
+        let plan_ein = 1_000_000;
+        // Hochrechnung aus der Route hat Vorrang.
+        assert_eq!(ankunft_erwartet(Some(5), Some(1), Some(27), Some(plan_ein), Some(-27), true), Some(5));
+        // In der Luft ohne Route: Abheben + geplante Flugzeit.
+        assert_eq!(ankunft_erwartet(None, Some(900_000), Some(27), Some(plan_ein), Some(-27), true), Some(900_000 + 27 * 60));
+        // Nach dem Off-Block, noch am Boden: 27 min früher los → 27 min früher an.
+        assert_eq!(ankunft_erwartet(None, None, Some(27), Some(plan_ein), Some(-27), true), Some(plan_ein - 27 * 60));
+        // Am Gate: nur Verspätung zählt, eine „Verfrühung“ ist noch nicht sicher.
+        assert_eq!(ankunft_erwartet(None, None, Some(27), Some(plan_ein), Some(-27), false), Some(plan_ein));
+        assert_eq!(ankunft_erwartet(None, None, Some(27), Some(plan_ein), Some(20), false), Some(plan_ein + 20 * 60));
+    }
+
+    fn sinus(f: f32, rate: u32) -> Vec<f32> {
+        (0..rate).map(|i| (2.0 * std::f32::consts::PI * f * i as f32 / rate as f32).sin() * 0.5).collect()
+    }
+    fn pegel(p: &[f32]) -> f32 {
+        let rest = &p[p.len() / 2..];
+        (rest.iter().map(|x| x * x).sum::<f32>() / rest.len() as f32).sqrt()
+    }
+
+    /// Punkt 11: Bordlautsprecher schneidet Tiefen und Höhen, die Tür klingt
+    /// dumpf (Höhen weg), klar bleibt unverändert.
+    #[test]
+    fn klangstufen() {
+        let r = 48_000;
+        for (f, klang, soll_leise) in [
+            (80.0, ausgabe::Klang::Lautsprecher, true),
+            (1_000.0, ausgabe::Klang::Lautsprecher, false),
+            (3_000.0, ausgabe::Klang::Tuer, true),
+            (600.0, ausgabe::Klang::Tuer, false),
+        ] {
+            let mut p = sinus(f, r);
+            let vorher = pegel(&p);
+            ausgabe::klang_anwenden(&mut p, r, klang);
+            let verhaeltnis = pegel(&p) / vorher;
+            assert_eq!(verhaeltnis < 0.4, soll_leise, "{f} Hz {klang:?}: {verhaeltnis}");
+        }
+        let mut p = sinus(80.0, r);
+        let vorher = p.clone();
+        ausgabe::klang_anwenden(&mut p, r, ausgabe::Klang::Klar);
+        assert_eq!(p, vorher);
+        assert!(sinus(1_000.0, r).iter().all(|x| x.abs() <= 1.0));
+    }
+
+    #[test]
+    fn neue_einstellungen_normalisiert_und_alte_datei_lesbar() {
+        let alt: Einstellungen = serde_json::from_str(r#"{"an":true,"lautstaerke":0.5}"#).unwrap();
+        let alt = alt.normalisiert();
+        assert_eq!((alt.kapitaen_geschlecht.as_str(), alt.klang.as_str()), ("auto", "lautsprecher"));
+        assert!(alt.aus.is_empty());
+        let kaputt = Einstellungen { kapitaen_geschlecht: "x".into(), klang: "laut".into(), aus: vec!["boarding".into(), "boarding".into(), "quatsch".into()], ..Einstellungen::default() }.normalisiert();
+        assert_eq!((kaputt.kapitaen_geschlecht.as_str(), kaputt.klang.as_str()), ("auto", "lautsprecher"));
+        assert_eq!(kaputt.aus, vec!["boarding".to_string()]);
+        assert_eq!(kaputt.abgewaehlt(), vec![Slot::Boarding]);
+    }
+
+    /// Punkt 5b: Anschnallzeichen im Reiseflug nach 3 min noch an → Hinweis,
+    /// und „Anschnallzeichen aus“ wartet sichtbar auf den Piloten.
+    #[test]
+    fn hinweis_anschnallzeichen_im_reiseflug() {
+        let mut st = FlightStats::new();
+        st.kabinen_planer = Some(cabin_announcements::Planer::neu(cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(120), ..Default::default() }));
+        st.phase = crate::FlightPhase::Cruise;
+        let mut snap = SimSnapshot { seatbelts_sign: Some(2), ..SimSnapshot::default() };
+        hinweis_pruefen(&mut st, &snap, crate::FlightPhase::Cruise, 0);
+        assert_eq!(st.kabinen_lauf.hinweis, None, "nicht sofort");
+        hinweis_pruefen(&mut st, &snap, crate::FlightPhase::Cruise, 180);
+        assert_eq!(st.kabinen_lauf.hinweis, Some("anschnallzeichen"));
+        assert_eq!(zeile(&st, Slot::AnschnallzeichenAus).unwrap().wartet, Some(Wartet::Anschnallzeichen));
+        snap.seatbelts_sign = Some(0);
+        hinweis_pruefen(&mut st, &snap, crate::FlightPhase::Cruise, 190);
+        assert_eq!(st.kabinen_lauf.hinweis, None, "Zeichen aus: weg");
+        hinweis_pruefen(&mut st, &snap, crate::FlightPhase::Descent, 200);
+        assert_eq!(st.kabinen_lauf.reiseflug_seit, None);
+    }
+
     /// Codex beta.6: Turbulenz wartet nicht, macht danach aber Pause; ein
     /// Kommando macht keine.
     #[test]
