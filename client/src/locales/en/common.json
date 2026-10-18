@@ -13,7 +13,7 @@
       "sprache_hint": "If the airline already speaks German or English, the other one is added.",
       "stimmen_hint": "The GSG server picks the voices to match the language, free and without any download: English is spoken by Kokoro, all other languages by Piper. The crew's mood is rolled by the server for each flight.",
       "echter_name": "Use my name as captain",
-      "echter_name_hint": "Your name is then sent to the GSG server and the AI. Otherwise it invents one.",
+      "echter_name_hint": "Your name then goes to the GSG server and the AI. Otherwise the GSG server gives the crew a name. Applies to flights whose announcements have not been written yet.",
       "kommandos": "Play crew commands",
       "doppelt_hint": "Turn off if your aircraft has its own announcements or chimes (for example FlyByWire). Never run two systems at once.",
       "chimes": "Chime at 10,000 ft",
@@ -27,7 +27,23 @@
       "ausgabe_hint": "For example ATC in the headset and the cabin on the speakers. If the device is unplugged, the system default plays.",
       "beta_kontingent": "Enabled, but the monthly quota is used up: announcements already written still play, new ones do not.",
       "speicher": "Audio files",
-      "speicher_text": "{{mb}} MB on this computer. Audio is kept only for the current flight and deleted when the next flight starts."
+      "speicher_text": "{{mb}} MB on this computer. Audio is kept only for the current flight and deleted when the next flight starts.",
+      "kapitaen_geschlecht": "Captain",
+      "kapitaen_auto": "Automatic (as it turns out)",
+      "kapitaen_m": "Captain (male voice)",
+      "kapitaen_w": "Captain (female voice)",
+      "kapitaen_hint": "The voice matches the crew. With your real name this decides whether you are announced as a male or female captain. Applies to flights whose announcements have not been written yet.",
+      "klang": "Sound",
+      "klang_hint": "Cabin speakers sounds like a real announcement in the cabin, \"through the cockpit door\" even more muffled.",
+      "ansagen": "Turn off single announcements",
+      "ansagen_hint": "For example when GSX, Cockpit 2 Ground or the aircraft itself plays these announcements. Turned-off announcements do not play and cost nothing.",
+      "gruppe_boden": "On the ground",
+      "gruppe_reise": "Cruise",
+      "gruppe_ankunft": "Arrival",
+      "gruppe_ereignis": "Events",
+      "klang_klar": "Clear",
+      "klang_lautsprecher": "Cabin speakers",
+      "klang_tuer": "Through the cockpit door (muffled)"
     },
     "rolle": {
       "kapitaen": "Captain",
@@ -52,7 +68,7 @@
       "anschnallzeichen_aus": "Seatbelt sign off",
       "reiseflug25": "Service starts",
       "reiseflug50": "Halfway",
-      "reiseflug80": "Second service",
+      "reiseflug80": "Late service / onboard sales",
       "kapitaen_sinkflug": "Descent, captain",
       "kabine_sinkflug": "Landing preparation, cabin",
       "chime10000_sinkflug": "Chime, 10,000 ft descending",
@@ -66,7 +82,9 @@
       "turbulenz_vorbei": "Turbulence over",
       "warteschleife": "Holding",
       "durchstarten": "Go-around",
-      "umleitung": "Diversion"
+      "umleitung": "Diversion",
+      "reiseflug80_zweiter_service": "Second service",
+      "reiseflug80_ende_bordverkauf": "End of onboard sales"
     },
     "seite": {
       "titel": "Cabin",
@@ -141,19 +159,19 @@
     },
     "wann": {
       "boarding": "during boarding",
-      "begruessung_tueren_zu": "at pushback",
-      "sicherheit": "at pushback",
+      "begruessung_tueren_zu": "when the doors are closed",
+      "sicherheit": "after the welcome",
       "kapitaen_begruessung": "while taxiing to the runway",
       "anschnallzeichen_aus": "in the climb, when the seatbelt sign goes off",
       "reiseflug25": "a quarter into the cruise",
       "reiseflug50": "halfway through the cruise",
-      "reiseflug80": "towards the end of the cruise",
+      "reiseflug80": "shortly before descent",
       "kapitaen_sinkflug": "shortly before the descent",
-      "kabine_sinkflug": "shortly before the descent",
+      "kabine_sinkflug": "after the captain's descent announcement",
       "nach_der_landung": "while taxiing in after landing",
       "aussteigen": "at the parking position",
-      "kommando_tueren_scharf": "at pushback",
-      "kommando_start": "at the take-off roll",
+      "kommando_tueren_scharf": "when the doors are closed",
+      "kommando_start": "while taxiing to the runway",
       "chime10000_steigflug": "climbing through 10,000 ft",
       "chime10000_sinkflug": "descending through 10,000 ft",
       "kommando_landung_vorbereiten": "on approach",
@@ -221,7 +239,10 @@
       "flugzeit_unbekannt": "flight time unknown, so no cruise announcements",
       "kurzstrecke": "short flight, only the service announcement in cruise",
       "und": " and ",
-      "ohne_stimme": "{{sprache}} skipped (no voice)"
+      "ohne_stimme": "{{sprache}} skipped (no voice)",
+      "kapitaen": "Captain: {{name}}",
+      "kapitaenin": "Captain: {{name}}",
+      "stimmen": "Each language has its own voice"
     },
     "zeit": {
       "jetzt": "now",
@@ -233,7 +254,8 @@
       "pause": "due, short pause after the last announcement",
       "ruhephase": "due, waiting for the sterile phase to end",
       "ton": "due, waiting for the audio",
-      "sim_angehalten": "due, simulator paused"
+      "sim_angehalten": "due, simulator paused",
+      "anschnallzeichen": "waits until you switch the seat belt sign off"
     },
     "ergebnis": {
       "abgebrochen": "stopped",
@@ -259,7 +281,47 @@
       "zu_spaet": "too late (sterile phase or another announcement)",
       "keine_stimme": "no voice for these languages",
       "kein_kurztext": "GSG server does not provide the captain's short version yet",
-      "sonst": "no longer possible"
+      "sonst": "no longer possible",
+      "tueren_zu": "the doors were already closed"
+    },
+    "ausloeser": {
+      "boarding": "Plays when you switch the seat belt sign on, at the latest 5 minutes after boarding starts. At pushback it is too late and it is skipped.",
+      "begruessung_tueren_zu": "Plays when the beacon comes on (doors closed, engine start). Without beacon at pushback or when you start taxiing.",
+      "kommando_tueren_scharf": "Plays together with \"doors closed\": beacon on, pushback or start of taxi.",
+      "sicherheit": "Follows about 10 seconds after the \"doors closed\" welcome.",
+      "kapitaen_begruessung": "Plays while taxiing to the runway, after the welcome and the safety briefing. If there is not enough time before take-off, it plays after take-off above 10,000 ft.",
+      "kommando_start": "Plays while taxiing when you switch the landing lights on. If they are already on or the aircraft reports no landing lights, at the take-off roll.",
+      "chime10000_steigflug": "Chime when climbing through 10,000 ft.",
+      "anschnallzeichen_aus": "Plays in the climb when you switch the seat belt sign off. On AUTO from 10,000 ft. If it stays on, it does not play and the service waits.",
+      "reiseflug25": "After a quarter of the time to descent, at the earliest 90 seconds after \"seat belt sign off\". On flights under one hour right after \"seat belt sign off\".",
+      "reiseflug50": "At half of the time to descent, at least 15 minutes after the previous cruise announcement.",
+      "reiseflug80": "10 to 15 minutes before descent (top of descent from the OFP, otherwise planned time minus 30 minutes).",
+      "kapitaen_sinkflug": "Shortly before descent: 5 minutes before top of descent, 25 minutes before the expected landing or when the descent begins.",
+      "kabine_sinkflug": "At the earliest 2 minutes after the captain has finished, below 15,000 ft in the descent or at the latest 5 minutes later; on the approach right away.",
+      "chime10000_sinkflug": "Chime when descending through 10,000 ft.",
+      "kommando_landung_vorbereiten": "In the descent below 20,000 ft or on the approach.",
+      "kommando_plaetze_landung": "When the landing gear comes down or below 2,000 ft above ground on the approach, otherwise on final.",
+      "nach_der_landung": "While taxiing after landing.",
+      "kommando_tueren_entschaerfen": "At the parking position.",
+      "aussteigen": "After shutdown at the parking position.",
+      "verspaetung_gate": "At the gate when you are 15 minutes or more behind schedule.",
+      "turbulenz": "In cruise when you switch the seat belt sign back on (at most every 10 minutes).",
+      "turbulenz_vorbei": "When you switch the seat belt sign off again afterwards.",
+      "warteschleife": "After 2 minutes in a holding.",
+      "durchstarten": "A good 2 minutes after a go-around, also low on the approach.",
+      "umleitung": "As soon as you report a different destination in flight."
+    },
+    "ausloeser_titel": "When it plays",
+    "untertitel": {
+      "satz": "Sentence {{n}} of {{von}}",
+      "danach": "Next: {{sprachen}}",
+      "fertig": "Already spoken: {{sprachen}}"
+    },
+    "hinweis": {
+      "anschnallzeichen": {
+        "titel": "Seat belt sign still on",
+        "text": "The cabin holds the service until you switch the seat belt sign off."
+      }
     }
   },
   "app": {

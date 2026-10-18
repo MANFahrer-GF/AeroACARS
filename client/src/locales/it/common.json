@@ -13,7 +13,7 @@
       "sprache_hint": "Se la compagnia parla già tedesco o inglese, si aggiunge l'altra.",
       "stimmen_hint": "Le voci le sceglie il server GSG in base alla lingua, gratis e senza download: l'inglese lo parla Kokoro, tutte le altre lingue Piper. L'umore dell'equipaggio lo estrae il server a ogni volo.",
       "echter_name": "Usa il mio nome come comandante",
-      "echter_name_hint": "Il tuo nome va allora al server GSG e all'IA. Altrimenti ne inventa uno.",
+      "echter_name_hint": "Il tuo nome va al server GSG e all'IA. Altrimenti il server GSG dà un nome all'equipaggio. Vale per i voli i cui annunci non sono ancora stati scritti.",
       "kommandos": "Riproduci i comandi all'equipaggio",
       "doppelt_hint": "Disattiva se il tuo aereo ha annunci o segnali propri (ad esempio FlyByWire). Mai due sistemi insieme.",
       "chimes": "Segnale a 10.000 piedi",
@@ -27,7 +27,23 @@
       "ausgabe_hint": "Ad esempio ATC nelle cuffie e la cabina sugli altoparlanti. Se il dispositivo è scollegato, suona il predefinito di sistema.",
       "beta_kontingent": "Abilitato, ma la quota mensile è esaurita: gli annunci già scritti continuano, quelli nuovi no.",
       "speicher": "File audio",
-      "speicher_text": "{{mb}} MB su questo computer. L'audio resta solo per il volo in corso e viene cancellato all'inizio del volo successivo."
+      "speicher_text": "{{mb}} MB su questo computer. L'audio resta solo per il volo in corso e viene cancellato all'inizio del volo successivo.",
+      "kapitaen_geschlecht": "Comandante",
+      "kapitaen_auto": "Automatico (come capita)",
+      "kapitaen_m": "Comandante (voce maschile)",
+      "kapitaen_w": "Comandante (voce femminile)",
+      "kapitaen_hint": "La voce corrisponde all'equipaggio. Con il tuo nome vero decide se vieni annunciato come comandante uomo o donna. Vale per i voli i cui annunci non sono ancora stati scritti.",
+      "klang": "Suono",
+      "klang_hint": "Gli altoparlanti di bordo suonano come un vero annuncio in cabina, \"attraverso la porta del cockpit\" ancora più ovattato.",
+      "ansagen": "Disattiva singoli annunci",
+      "ansagen_hint": "Per esempio se GSX, Cockpit 2 Ground o l'aereo stesso riproducono questi annunci. Gli annunci disattivati non arrivano e non costano nulla.",
+      "gruppe_boden": "A terra",
+      "gruppe_reise": "Crociera",
+      "gruppe_ankunft": "Arrivo",
+      "gruppe_ereignis": "Eventi",
+      "klang_klar": "Chiaro",
+      "klang_lautsprecher": "Altoparlanti di bordo",
+      "klang_tuer": "Attraverso la porta del cockpit (ovattato)"
     },
     "rolle": {
       "kapitaen": "Comandante",
@@ -51,7 +67,7 @@
       "chime10000_steigflug": "Segnale, 10.000 piedi in salita",
       "anschnallzeichen_aus": "Segnale cinture spento",
       "reiseflug25": "Inizio del servizio",
-      "reiseflug80": "Secondo servizio",
+      "reiseflug80": "Servizio tardo / vendita a bordo",
       "reiseflug50": "Metà volo",
       "kapitaen_sinkflug": "Discesa, comandante",
       "kabine_sinkflug": "Preparazione all'atterraggio, cabina",
@@ -66,7 +82,9 @@
       "turbulenz_vorbei": "Turbolenza terminata",
       "warteschleife": "Attesa",
       "durchstarten": "Riattaccata",
-      "umleitung": "Dirottamento"
+      "umleitung": "Dirottamento",
+      "reiseflug80_zweiter_service": "Secondo servizio",
+      "reiseflug80_ende_bordverkauf": "Fine della vendita a bordo"
     },
     "seite": {
       "titel": "Cabina",
@@ -141,19 +159,19 @@
     },
     "wann": {
       "boarding": "durante l'imbarco",
-      "begruessung_tueren_zu": "al pushback",
-      "sicherheit": "al pushback",
+      "begruessung_tueren_zu": "a porte chiuse",
+      "sicherheit": "dopo il benvenuto",
       "kapitaen_begruessung": "durante il rullaggio verso la pista",
       "anschnallzeichen_aus": "in salita, quando si spegne il segnale cinture",
       "reiseflug25": "a un quarto della crociera",
       "reiseflug50": "a metà della crociera",
-      "reiseflug80": "verso la fine della crociera",
+      "reiseflug80": "poco prima della discesa",
       "kapitaen_sinkflug": "poco prima della discesa",
-      "kabine_sinkflug": "poco prima della discesa",
+      "kabine_sinkflug": "dopo l'annuncio di discesa del comandante",
       "nach_der_landung": "durante il rullaggio dopo l'atterraggio",
       "aussteigen": "al parcheggio",
-      "kommando_tueren_scharf": "al pushback",
-      "kommando_start": "alla corsa di decollo",
+      "kommando_tueren_scharf": "a porte chiuse",
+      "kommando_start": "durante il rullaggio verso la pista",
       "chime10000_steigflug": "salendo a 10.000 piedi",
       "chime10000_sinkflug": "scendendo a 10.000 piedi",
       "kommando_landung_vorbereiten": "in avvicinamento",
@@ -221,7 +239,10 @@
       "flugzeit_unbekannt": "durata del volo sconosciuta, quindi niente annunci in crociera",
       "kurzstrecke": "volo breve, solo l'annuncio del servizio in crociera",
       "und": " e ",
-      "ohne_stimme": "{{sprache}} omesso (nessuna voce)"
+      "ohne_stimme": "{{sprache}} omesso (nessuna voce)",
+      "kapitaen": "Comandante: {{name}}",
+      "kapitaenin": "Comandante: {{name}}",
+      "stimmen": "Ogni lingua ha la sua voce"
     },
     "zeit": {
       "jetzt": "ora",
@@ -233,7 +254,8 @@
       "pause": "previsto, breve pausa dopo l'ultimo annuncio",
       "ruhephase": "previsto, attende la fine della fase sterile",
       "ton": "previsto, attende l'audio",
-      "sim_angehalten": "previsto, simulatore in pausa"
+      "sim_angehalten": "previsto, simulatore in pausa",
+      "anschnallzeichen": "aspetta finché non spegni il segnale delle cinture"
     },
     "ergebnis": {
       "abgebrochen": "interrotto",
@@ -259,7 +281,47 @@
       "zu_spaet": "troppo tardi (fase sterile o altro annuncio)",
       "keine_stimme": "nessuna voce per queste lingue",
       "kein_kurztext": "il server GSG non fornisce ancora la versione breve del comandante",
-      "sonst": "non più possibile"
+      "sonst": "non più possibile",
+      "tueren_zu": "le porte erano già chiuse"
+    },
+    "ausloeser": {
+      "boarding": "Arriva quando accendi il segnale delle cinture, al più tardi 5 minuti dopo l'inizio dell'imbarco. Al pushback è troppo tardi e viene saltato.",
+      "begruessung_tueren_zu": "Arriva quando si accende il beacon (porte chiuse, avviamento motori). Senza beacon al pushback o all'inizio del rullaggio.",
+      "kommando_tueren_scharf": "Arriva insieme a \"porte chiuse\": beacon acceso, pushback o inizio del rullaggio.",
+      "sicherheit": "Segue circa 10 secondi dopo il benvenuto \"porte chiuse\".",
+      "kapitaen_begruessung": "Arriva durante il rullaggio verso la pista, dopo benvenuto e istruzioni di sicurezza. Se il tempo prima del decollo non basta, arriva dopo il decollo sopra 10.000 piedi.",
+      "kommando_start": "Arriva durante il rullaggio quando accendi le luci di atterraggio. Se sono già accese o l'aereo non le segnala, alla corsa di decollo.",
+      "chime10000_steigflug": "Gong salendo attraverso 10.000 piedi.",
+      "anschnallzeichen_aus": "Arriva in salita quando spegni il segnale delle cinture. In AUTO da 10.000 piedi. Se resta acceso non arriva e il servizio aspetta.",
+      "reiseflug25": "Dopo un quarto del tempo fino alla discesa, non prima di 90 secondi dopo \"cinture spente\". Sui voli sotto un'ora subito dopo \"cinture spente\".",
+      "reiseflug50": "A metà del tempo fino alla discesa, almeno 15 minuti dopo l'annuncio di crociera precedente.",
+      "reiseflug80": "Da 10 a 15 minuti prima della discesa (top of descent dall'OFP, altrimenti tempo pianificato meno 30 minuti).",
+      "kapitaen_sinkflug": "Poco prima della discesa: 5 minuti prima del top of descent, 25 minuti prima dell'atterraggio previsto o all'inizio della discesa.",
+      "kabine_sinkflug": "Non prima di 2 minuti dopo la fine dell'annuncio del comandante, sotto 15.000 piedi in discesa o al più tardi 5 minuti dopo; in avvicinamento subito.",
+      "chime10000_sinkflug": "Gong scendendo attraverso 10.000 piedi.",
+      "kommando_landung_vorbereiten": "In discesa sotto 20.000 piedi o in avvicinamento.",
+      "kommando_plaetze_landung": "Quando esce il carrello o sotto 2.000 piedi dal suolo in avvicinamento, altrimenti in finale.",
+      "nach_der_landung": "Durante il rullaggio dopo l'atterraggio.",
+      "kommando_tueren_entschaerfen": "Alla posizione di parcheggio.",
+      "aussteigen": "Dopo lo spegnimento alla posizione di parcheggio.",
+      "verspaetung_gate": "Al gate, quando sei 15 minuti o più in ritardo sul piano.",
+      "turbulenz": "In crociera quando riaccendi il segnale delle cinture (al massimo ogni 10 minuti).",
+      "turbulenz_vorbei": "Quando poi spegni di nuovo il segnale delle cinture.",
+      "warteschleife": "Dopo 2 minuti in attesa.",
+      "durchstarten": "Poco più di 2 minuti dopo una riattaccata, anche basso in avvicinamento.",
+      "umleitung": "Appena comunichi in volo una destinazione diversa."
+    },
+    "ausloeser_titel": "Quando arriva",
+    "untertitel": {
+      "satz": "Frase {{n}} di {{von}}",
+      "danach": "Dopo: {{sprachen}}",
+      "fertig": "Già detto: {{sprachen}}"
+    },
+    "hinweis": {
+      "anschnallzeichen": {
+        "titel": "Segnale cinture ancora acceso",
+        "text": "La cabina aspetta con il servizio finché non spegni il segnale delle cinture."
+      }
     }
   },
   "app": {

@@ -21,6 +21,14 @@ import {
   type Zustand,
 } from "../lib/kabinenansagen";
 
+/** Ansagen, die sich einzeln abwählen lassen (Kommandos und Gong haben
+ *  eigene Schalter). Reihenfolge wie im Flug. */
+const GRUPPEN: [string, string[]][] = [
+  ["gruppe_boden", ["boarding", "begruessung_tueren_zu", "sicherheit", "kapitaen_begruessung"]],
+  ["gruppe_reise", ["anschnallzeichen_aus", "reiseflug25", "reiseflug50", "reiseflug80"]],
+  ["gruppe_ankunft", ["kapitaen_sinkflug", "kabine_sinkflug", "nach_der_landung", "aussteigen"]],
+  ["gruppe_ereignis", ["verspaetung_gate", "turbulenz", "turbulenz_vorbei", "warteschleife", "durchstarten", "umleitung"]],
+];
 
 export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean) => void }) {
   const { t } = useTranslation();
@@ -127,6 +135,18 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
               <span className="settings__row-hint">{t("kabine.einstellungen.echter_name_hint")}</span>
             </span>
           </label>
+          <label className="settings__field">
+            <span className="settings__field-label">{t("kabine.einstellungen.kapitaen_geschlecht")}</span>
+            <select
+              value={e.kapitaen_geschlecht}
+              onChange={(ev) => void aendern({ kapitaen_geschlecht: ev.target.value as Einstellungen["kapitaen_geschlecht"] })}
+            >
+              <option value="auto">{t("kabine.einstellungen.kapitaen_auto")}</option>
+              <option value="m">{t("kabine.einstellungen.kapitaen_m")}</option>
+              <option value="w">{t("kabine.einstellungen.kapitaen_w")}</option>
+            </select>
+            <span className="settings__row-hint">{t("kabine.einstellungen.kapitaen_hint")}</span>
+          </label>
           <label className="settings__checkbox">
             <input type="checkbox" checked={e.kommandos} onChange={(ev) => void aendern({ kommandos: ev.target.checked })} />
             <span>
@@ -140,6 +160,33 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
               <strong>{t("kabine.einstellungen.chimes")}</strong>
             </span>
           </label>
+
+          <details className="kabine-einzeln" data-testid="kabine-einzeln">
+            <summary>
+              <strong>{t("kabine.einstellungen.ansagen")}</strong>
+              {e.aus.length > 0 && <span className="settings__row-hint"> · {e.aus.length}</span>}
+            </summary>
+            <span className="settings__row-hint">{t("kabine.einstellungen.ansagen_hint")}</span>
+            <div className="kabine-einzeln-gruppen">
+              {GRUPPEN.map(([gruppe, slots]) => (
+                <fieldset key={gruppe} className="kabine-einzeln-gruppe">
+                  <legend>{t(`kabine.einstellungen.${gruppe}`)}</legend>
+                  {slots.map((slot) => (
+                    <label key={slot} className="settings__checkbox">
+                      <input
+                        type="checkbox"
+                        checked={!e.aus.includes(slot)}
+                        onChange={(ev) =>
+                          void aendern({ aus: ev.target.checked ? e.aus.filter((x) => x !== slot) : [...e.aus, slot] })
+                        }
+                      />
+                      <span>{t(`kabine.slot.${slot}`)}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              ))}
+            </div>
+          </details>
 
           <label className="settings__field">
             <span className="settings__field-label">{t("kabine.einstellungen.ausgabe")}</span>
@@ -181,6 +228,16 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
               onTouchEnd={(ev) => void lautstaerkeSetzen(Number(ev.currentTarget.value) / 100, true)}
               onKeyUp={(ev) => void lautstaerkeSetzen(Number(ev.currentTarget.value) / 100, true)}
             />
+          </label>
+
+          <label className="settings__field">
+            <span className="settings__field-label">{t("kabine.einstellungen.klang")}</span>
+            <select value={e.klang} onChange={(ev) => void aendern({ klang: ev.target.value as Einstellungen["klang"] })}>
+              <option value="klar">{t("kabine.einstellungen.klang_klar")}</option>
+              <option value="lautsprecher">{t("kabine.einstellungen.klang_lautsprecher")}</option>
+              <option value="tuer">{t("kabine.einstellungen.klang_tuer")}</option>
+            </select>
+            <span className="settings__row-hint">{t("kabine.einstellungen.klang_hint")}</span>
           </label>
 
           <div className="settings__field">
