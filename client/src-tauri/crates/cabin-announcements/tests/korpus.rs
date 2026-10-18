@@ -127,6 +127,8 @@ fn planer_an_echten_fluegen() {
                 ziel_icao: None,
                 abweichung_off_block_min: None,
                 durchgestartet: false,
+                hoehe_agl_ft: Some(p.agl),
+                ..Default::default()
             };
             w.aufnehmen(planer.tick(&tick));
             if let Some(s) = w.naechstes(p.t, *phase, planer.ruhephase(&tick)) {
