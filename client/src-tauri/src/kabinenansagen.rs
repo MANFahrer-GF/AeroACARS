@@ -2912,12 +2912,10 @@ mod tests {
             if einstieg && jetzt < mitte {
                 continue;
             }
-            if einstieg && st.kabinen_lauf.naechste_id == 0 && st.kabinen_lauf.verlauf.is_empty() && gespielt.is_empty() && jetzt >= mitte && st.kabinen_planer.as_ref().is_some_and(|p| !p.ist_kurzstrecke() || true) {
-                // Neustart: Planer frisch aus Phase und echtem Abheben.
-                if st.kabinen_lauf.angefragt.is_empty() {
-                    st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase));
-                    st.kabinen_lauf.angefragt.insert("neustart".into());
-                }
+            // Neustart: Planer einmal frisch aus Phase und echtem Abheben.
+            if einstieg && st.kabinen_lauf.angefragt.is_empty() {
+                st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase));
+                st.kabinen_lauf.angefragt.insert("neustart".into());
             }
             if let Some((id, ende)) = laufend {
                 if jetzt >= ende {

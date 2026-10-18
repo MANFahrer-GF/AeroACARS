@@ -341,7 +341,7 @@ impl Planer {
         let reiseflug = matches!(slot, Slot::Reiseflug25 | Slot::Reiseflug50 | Slot::Reiseflug80);
         self.flugart().erlaubt(slot)
             && !self.schon(slot)
-            && !(reiseflug && !self.reiseflug_passt(slot))
+            && (!reiseflug || self.reiseflug_passt(slot))
             // Reiseflug unter 10.000 ft: Der Gong kommt nie.
             && !(matches!(slot, Slot::Chime10000Steigflug | Slot::Chime10000Sinkflug)
                 && self.flug.reiseflughoehe_ft.is_some_and(|h| h < 10_000))
