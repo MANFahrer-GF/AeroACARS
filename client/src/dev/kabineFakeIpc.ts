@@ -58,7 +58,7 @@ const plan: Record<string, unknown[]> = {
   reiseflug: [
     { slot: "reiseflug50", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 32 * 60, stand: { art: "bereit" },
       teile: teile("Ici le commandant. Nous avons passé la moitié du vol.", "Hier der Kapitän. Wir haben die Hälfte geschafft, alles läuft wie geplant.") },
-    { slot: "reiseflug80", rolle: "kabine", faellig: false, wartet: null, wann: jetzt + 95 * 60, stand: { art: "bereit" },
+    { slot: "reiseflug80", rolle: "kabine", faellig: false, wartet: null, wann: jetzt + 95 * 60, stand: { art: "bereit" }, art: "ende_bordverkauf",
       teile: teile("Nous servons maintenant le petit-déjeuner.", "Wir servieren jetzt das Frühstück.") },
     { slot: "kapitaen_sinkflug", rolle: "kapitaen", faellig: false, wartet: null, wann: jetzt + 140 * 60, stand: { art: "text_ab", um: jetzt + 120 * 60 }, teile: teile(null, null) },
     { slot: "kabine_sinkflug", rolle: "kabine", faellig: false, wartet: null, wann: jetzt + 140 * 60, stand: { art: "text_ab", um: jetzt + 120 * 60 }, teile: teile(null, null) },
@@ -117,6 +117,8 @@ export const demoUeberblick = {
     sprachen_ohne_stimme: q.get("ohne_stimme") ? ["lv-LV"] : [],
   },
   belegt: false,
+  kapitaen: "Tobias Berger",
+  hinweis: q.get("hinweis") ? "anschnallzeichen" : null,
   stumm: fall === "stumm",
   lautstaerke: 0.8,
 };
@@ -146,7 +148,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
     case "kabinen_einstellungen_setzen":
       return (args?.einstellungen ?? {
         an: true, zweite_sprache: "airline", echter_name: false,
-        chimes: true, kommandos: true, lautstaerke: 0.8,
+        chimes: true, kommandos: true, lautstaerke: 0.8, ausgabe: null,
+        kapitaen_geschlecht: "auto", lautsprecher_klang: true, aus: ["boarding"],
       }) as T;
     case "kabinen_zustand":
       return { beta: true, kontingent_erschoepft: false } as T;

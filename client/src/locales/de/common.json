@@ -27,7 +27,20 @@
       "ausgabe_hint": "Zum Beispiel ATC im Headset und die Kabine über die Lautsprecher. Ist das Gerät abgezogen, spielt der Systemstandard.",
       "beta_kontingent": "Freigeschaltet, aber das Monatskontingent ist erschöpft: Schon geschriebene Ansagen kommen weiter, neue nicht.",
       "speicher": "Tondateien",
-      "speicher_text": "{{mb}} MB auf diesem Rechner. Die Töne liegen nur für den laufenden Flug vor und werden beim nächsten Flug gelöscht."
+      "speicher_text": "{{mb}} MB auf diesem Rechner. Die Töne liegen nur für den laufenden Flug vor und werden beim nächsten Flug gelöscht.",
+      "kapitaen_geschlecht": "Kapitän",
+      "kapitaen_auto": "Automatisch (wie es sich ergibt)",
+      "kapitaen_m": "Kapitän (männliche Stimme)",
+      "kapitaen_w": "Kapitänin (weibliche Stimme)",
+      "kapitaen_hint": "Die Stimme passt zur Crew. Mit deinem echten Namen bestimmt das hier, ob du als Kapitän oder Kapitänin angesagt wirst.",
+      "klang": "Klang wie aus dem Bordlautsprecher",
+      "klang_hint": "Etwas dünner, wie eine echte Durchsage in der Kabine.",
+      "ansagen": "Einzelne Ansagen abwählen",
+      "ansagen_hint": "Zum Beispiel, wenn GSX, Cockpit 2 Ground oder das Flugzeug selbst diese Ansagen spielt. Abgewählte Ansagen kommen nicht und kosten nichts.",
+      "gruppe_boden": "Am Boden",
+      "gruppe_reise": "Reiseflug",
+      "gruppe_ankunft": "Ankunft",
+      "gruppe_ereignis": "Ereignisse"
     },
     "rolle": {
       "kapitaen": "Kapitän",
@@ -52,7 +65,7 @@
       "anschnallzeichen_aus": "Anschnallzeichen aus",
       "reiseflug25": "Service beginnt",
       "reiseflug50": "Halbzeit",
-      "reiseflug80": "Zweiter Service",
+      "reiseflug80": "Später Service / Bordverkauf",
       "kapitaen_sinkflug": "Sinkflug, Kapitän",
       "kabine_sinkflug": "Landevorbereitung, Kabine",
       "chime10000_sinkflug": "Gong, 10.000 Fuß im Sinkflug",
@@ -66,7 +79,9 @@
       "turbulenz_vorbei": "Turbulenzen vorbei",
       "warteschleife": "Warteschleife",
       "durchstarten": "Durchgestartet",
-      "umleitung": "Umleitung"
+      "umleitung": "Umleitung",
+      "reiseflug80_zweiter_service": "Zweiter Service",
+      "reiseflug80_ende_bordverkauf": "Ende des Bordverkaufs"
     },
     "seite": {
       "titel": "Kabine",
@@ -141,19 +156,19 @@
     },
     "wann": {
       "boarding": "beim Boarding",
-      "begruessung_tueren_zu": "beim Pushback",
-      "sicherheit": "beim Pushback",
+      "begruessung_tueren_zu": "wenn die Türen zu sind",
+      "sicherheit": "nach der Begrüßung",
       "kapitaen_begruessung": "beim Rollen zur Bahn",
       "anschnallzeichen_aus": "im Steigflug, wenn das Anschnallzeichen erlischt",
       "reiseflug25": "nach einem Viertel des Reiseflugs",
       "reiseflug50": "zur Halbzeit des Reiseflugs",
-      "reiseflug80": "gegen Ende des Reiseflugs",
+      "reiseflug80": "kurz vor dem Sinkflug",
       "kapitaen_sinkflug": "kurz vor dem Sinkflug",
       "kabine_sinkflug": "kurz vor dem Sinkflug",
       "nach_der_landung": "beim Rollen nach der Landung",
       "aussteigen": "an der Parkposition",
-      "kommando_tueren_scharf": "beim Pushback",
-      "kommando_start": "beim Startlauf",
+      "kommando_tueren_scharf": "wenn die Türen zu sind",
+      "kommando_start": "beim Rollen zur Bahn",
       "chime10000_steigflug": "beim Steigen durch 10.000 Fuß",
       "chime10000_sinkflug": "beim Sinken durch 10.000 Fuß",
       "kommando_landung_vorbereiten": "im Anflug",
@@ -221,7 +236,10 @@
       "flugzeit_unbekannt": "Flugzeit unbekannt, deshalb keine Reiseflug-Ansagen",
       "kurzstrecke": "Kurzstrecke, nur die Service-Ansage im Reiseflug",
       "und": " und ",
-      "ohne_stimme": "{{sprache}} entfällt (keine Stimme)"
+      "ohne_stimme": "{{sprache}} entfällt (keine Stimme)",
+      "kapitaen": "Kapitän: {{name}}",
+      "kapitaenin": "Kapitänin: {{name}}",
+      "stimmen": "Jede Sprache hat ihre eigene Stimme"
     },
     "zeit": {
       "jetzt": "jetzt",
@@ -260,6 +278,45 @@
       "keine_stimme": "keine Stimme für diese Sprachen",
       "kein_kurztext": "GSG-Server liefert noch keine Kurzfassung des Kapitäns",
       "sonst": "nicht mehr möglich"
+    },
+    "ausloeser": {
+      "boarding": "Kommt, wenn du das Anschnallzeichen einschaltest, spätestens 5 Minuten nach Beginn des Boardings. Beim Pushback ist es dafür zu spät, dann entfällt sie.",
+      "begruessung_tueren_zu": "Kommt, wenn der Beacon angeht (Türen zu, Triebwerksstart). Ohne Beacon beim Pushback oder beim Losrollen.",
+      "kommando_tueren_scharf": "Kommt zusammen mit „Türen zu“: Beacon an, Pushback oder Losrollen.",
+      "sicherheit": "Folgt etwa 10 Sekunden nach der Begrüßung „Türen zu“.",
+      "kapitaen_begruessung": "Kommt beim Rollen zur Bahn, nach Begrüßung und Sicherheitshinweisen. Reicht die Zeit bis zum Start nicht, kommt sie nach dem Start über 10.000 Fuß.",
+      "kommando_start": "Kommt beim Rollen, wenn du das Landelicht einschaltest. Ist es schon an oder meldet das Flugzeug kein Landelicht, beim Startlauf.",
+      "chime10000_steigflug": "Gong beim Steigen durch 10.000 Fuß.",
+      "anschnallzeichen_aus": "Kommt im Steigflug, wenn du das Anschnallzeichen ausschaltest. Steht es auf AUTO, ab 10.000 Fuß. Bleibt es an, kommt sie nicht, und der Service wartet.",
+      "reiseflug25": "Nach einem Viertel der Zeit bis zum Sinkflug, frühestens 90 Sekunden nach „Anschnallzeichen aus“. Auf Flügen unter einer Stunde gleich nach „Anschnallzeichen aus“.",
+      "reiseflug50": "Zur Halbzeit der Zeit bis zum Sinkflug, mindestens 15 Minuten nach der vorigen Reiseflug-Ansage.",
+      "reiseflug80": "10 bis 15 Minuten vor dem Sinkflug (Top of Descent aus dem OFP, sonst Planzeit minus 30 Minuten).",
+      "kapitaen_sinkflug": "Kurz vor dem Sinkflug: 5 Minuten vor dem Top of Descent, 25 Minuten vor der erwarteten Landung oder mit Beginn des Sinkflugs.",
+      "kabine_sinkflug": "Frühestens 2 Minuten nach dem Ende der Kapitänsansage, unter 15.000 Fuß im Sinkflug oder spätestens 5 Minuten danach; im Anflug sofort.",
+      "chime10000_sinkflug": "Gong beim Sinken durch 10.000 Fuß.",
+      "kommando_landung_vorbereiten": "Im Sinkflug unter 20.000 Fuß oder im Anflug.",
+      "kommando_plaetze_landung": "Wenn das Fahrwerk ausfährt oder unter 2.000 Fuß über Grund im Anflug, sonst im Endanflug.",
+      "nach_der_landung": "Beim Rollen nach der Landung.",
+      "kommando_tueren_entschaerfen": "An der Parkposition.",
+      "aussteigen": "Nach dem Abstellen an der Parkposition.",
+      "verspaetung_gate": "Am Gate, wenn du 15 Minuten oder mehr hinter dem Plan bist.",
+      "turbulenz": "Im Reiseflug, wenn du das Anschnallzeichen wieder einschaltest (höchstens alle 10 Minuten).",
+      "turbulenz_vorbei": "Wenn du das Anschnallzeichen danach wieder ausschaltest.",
+      "warteschleife": "Nach 2 Minuten in der Warteschleife.",
+      "durchstarten": "Gut 2 Minuten nach dem Durchstarten, auch tief im Anflug.",
+      "umleitung": "Sobald du im Flug ein anderes Ziel meldest."
+    },
+    "ausloeser_titel": "Wann sie kommt",
+    "untertitel": {
+      "satz": "Satz {{n}} von {{von}}",
+      "danach": "Danach: {{sprachen}}",
+      "fertig": "Schon gesprochen: {{sprachen}}"
+    },
+    "hinweis": {
+      "anschnallzeichen": {
+        "titel": "Anschnallzeichen noch an",
+        "text": "Die Kabine wartet mit dem Service, bis du das Anschnallzeichen ausschaltest."
+      }
     }
   },
   "app": {

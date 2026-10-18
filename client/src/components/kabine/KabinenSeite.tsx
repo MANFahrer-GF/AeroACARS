@@ -4,6 +4,7 @@
 // aufklappbare Zeile: Zeitpunkt, Stand, Text aller Sprachen, Anhören.
 // Gleiche Seitenform wie das Bordbuch.
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { Notice } from "../ui";
 import { useTranslation } from "react-i18next";
 import { formatIpcError } from "../../lib/ipc";
 import {
@@ -24,6 +25,7 @@ import {
   type Profil,
   type Stand,
   type TeilStand,
+  type Teil,
   type Ueberblick,
 } from "../../lib/kabinenansagen";
 import "./kabine.css";
@@ -107,6 +109,67 @@ function teilText(t: T, s: TeilStand): string {
   }
 }
 
+/** Bezeichnung einer Ansage; „Reiseflug 80“ heißt je nach Airline-Service
+ *  „Zweiter Service“ oder „Ende des Bordverkaufs“ (Server liefert `art`). */
+function slotName(t: T, slot: string, art?: string | null): string {
+  return slot === "reiseflug80" && art ? t(`kabine.slot.reiseflug80_${art}`) : t(`kabine.slot.${slot}`);
+}
+
+/** Text in Sätze teilen (an . ! ? mit folgendem Leerzeichen). */
+export function saetzeVon(text: string): string[] {
+  return text.split(/(?<=[.!?…])\s+/u).map((x) => x.trim()).filter(Boolean);
+}
+
+/** Welcher Satz läuft nach `sek` Sekunden? Startzeiten vom Ton-Server, sonst
+ *  geschätzt aus der Länge der Sätze (gleichmäßiges Sprechtempo). */
+export function satzIndex(teil: Teil, sek: number): number {
+  const saetze = saetzeVon(teil.text);
+  if (saetze.length <= 1) return 0;
+  let starts = teil.saetze && teil.saetze.length === saetze.length ? teil.saetze : null;
+  if (!starts) {
+    const gesamt = saetze.reduce((n, x) => n + x.length, 0) || 1;
+    let summe = 0;
+    starts = saetze.map((x) => {
+      const ab = (summe / gesamt) * teil.dauer_s;
+      summe += x.length;
+      return ab;
+    });
+  }
+  let i = 0;
+  while (i + 1 < starts.length && starts[i + 1] <= sek) i++;
+  return i;
+}
+
+/** Untertitel: groß der Satz, der gerade gesprochen wird, blass davor und
+ *  danach — keine Textwand, auch nicht bei der langen Sicherheitsansage
+ *  (Thomas 18.10.2026). Der volle Text bleibt unten aufklappbar. */
+function Untertitel({ ansage, teil, teilStart, namen, t }: { ansage: Gespielt; teil: number; teilStart: number; namen: Intl.DisplayNames | null; t: T }) {
+  const jetzt = ansage.teile[teil];
+  if (!jetzt) return null;
+  const saetze = saetzeVon(jetzt.text);
+  const i = satzIndex(jetzt, Math.max(0, (performance.now() - teilStart) / 1000));
+  const danach = ansage.teile.slice(teil + 1).map((x) => sprachName(x.sprache, namen));
+  const fertig = ansage.teile.slice(0, teil).map((x) => sprachName(x.sprache, namen));
+  return (
+    <div className="kabine-untertitel" data-testid="kabine-untertitel">
+      <div className="kabine-untertitel-kopf">
+        <span className="kabine-sprache">{sprachName(jetzt.sprache, namen)}</span>
+        {saetze.length > 1 && <span className="kabine-untertitel-zaehler">{t("kabine.untertitel.satz", { n: i + 1, von: saetze.length })}</span>}
+      </div>
+      {i > 0 && <p className="kabine-untertitel-davor">{saetze[i - 1]}</p>}
+      <p className="kabine-untertitel-jetzt">{saetze[i] ?? jetzt.text}</p>
+      {i + 1 < saetze.length && <p className="kabine-untertitel-danach">{saetze[i + 1]}</p>}
+      {(danach.length > 0 || fertig.length > 0) && (
+        <p className="kabine-untertitel-sprachen">
+          {fertig.length > 0 && t("kabine.untertitel.fertig", { sprachen: fertig.join(", ") })}
+          {fertig.length > 0 && danach.length > 0 && " · "}
+          {danach.length > 0 && t("kabine.untertitel.danach", { sprachen: danach.join(", ") })}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Ablaufzeile oben: Freigabe → Texte → Ton → nächste Ansage (Hausregel
  *  „Status als Tabelle oben“). */
 function AblaufZeile({ ablauf, naechste, stumm, t }: { ablauf: Ablauf; naechste: Geplant | undefined; stumm: boolean; t: T }) {
@@ -133,7 +196,7 @@ function AblaufZeile({ ablauf, naechste, stumm, t }: { ablauf: Ablauf; naechste:
           <td>{t("kabine.ablauf.ton_stand", { fertig: ablauf.ton_fertig, gesamt: ablauf.ton_gesamt })}</td>
           <td>
             {naechste
-              ? `${t(`kabine.slot.${naechste.slot}`)}, ${wannText(t, naechste)}`
+              ? `${slotName(t, naechste.slot, naechste.art)}, ${wannText(t, naechste)}`
               : t("kabine.ablauf.keine")}
             {stumm && naechste && <span className="kabine-ablauf-stumm"> · {t("kabine.ablauf.stumm")}</span>}
           </td>
@@ -144,9 +207,10 @@ function AblaufZeile({ ablauf, naechste, stumm, t }: { ablauf: Ablauf; naechste:
 }
 
 /** „Warum diese Ansagen“: Typ, Ablauf, Flugzeit, Sprachen. */
-function ProfilZeile({ profil, sprachen, namen, t }: { profil: Profil; sprachen: string[]; namen: Intl.DisplayNames | null; t: T }) {
+function ProfilZeile({ profil, sprachen, namen, kapitaen, t }: { profil: Profil; sprachen: string[]; namen: Intl.DisplayNames | null; kapitaen?: string | null; t: T }) {
   const teile: string[] = [];
   if (profil.muster) teile.push(profil.muster);
+  if (kapitaen) teile.push(t("kabine.profil.kapitaen", { name: kapitaen }));
   if (profil.flugart === "linie" || profil.flugart === "bizjet") teile.push(t(`kabine.profil.${profil.flugart}`));
   if (profil.flugzeit_min !== null) {
     teile.push(t("kabine.profil.flugzeit", { h: Math.floor(profil.flugzeit_min / 60), m: profil.flugzeit_min % 60 }));
@@ -154,6 +218,7 @@ function ProfilZeile({ profil, sprachen, namen, t }: { profil: Profil; sprachen:
   if (!profil.flugzeit_bekannt) teile.push(t("kabine.profil.flugzeit_unbekannt"));
   else if (profil.kurzstrecke) teile.push(t("kabine.profil.kurzstrecke"));
   if (sprachen.length > 0) teile.push(sprachen.map((s) => sprachName(s, namen)).join(t("kabine.profil.und")));
+  if (sprachen.length > 1) teile.push(t("kabine.profil.stimmen"));
   for (const s of profil.sprachen_ohne_stimme) teile.push(t("kabine.profil.ohne_stimme", { sprache: sprachName(s, namen) }));
   return (
     <p className="kabine-profil" data-testid="kabine-profil">
@@ -339,10 +404,18 @@ export function KabinenSeite({
         </div>
       )}
 
+      {daten?.hinweis === "anschnallzeichen" && (
+        <Notice
+          tone="warn"
+          level={t("kabine.hinweis.anschnallzeichen.titel")}
+          data-testid="kabine-hinweis"
+          detail={<span>{t("kabine.hinweis.anschnallzeichen.text")}</span>}
+        />
+      )}
       {daten && (
         <>
           <AblaufZeile ablauf={daten.ablauf} naechste={naechste[0]} stumm={stumm} t={t} />
-          <ProfilZeile profil={daten.profil} sprachen={daten.sprachen} namen={namen} t={t} />
+          <ProfilZeile profil={daten.profil} sprachen={daten.sprachen} namen={namen} kapitaen={daten.kapitaen} t={t} />
         </>
       )}
 
@@ -351,7 +424,7 @@ export function KabinenSeite({
           <span className="kabine-sprecher">
             {a ? (a.vorschau ? t("kabine.seite.vorhoeren") : t(`kabine.spricht.${a.rolle}`)) : t("kabine.seite.ruhig")}
           </span>
-          {a && <span className="kabine-slot">{t(`kabine.slot.${a.slot}`)}</span>}
+          {a && <span className="kabine-slot">{slotName(t, a.slot)}</span>}
           {a?.vorschau && (
             <button type="button" className="button button--ghost kabine-knopf" onClick={anhoerenStoppen}>
               {t("kabine.seite.anhoeren_stoppen")}
@@ -360,16 +433,7 @@ export function KabinenSeite({
         </div>
         {/* Ohne Ansage eine ruhige Linie statt der letzten Messwerte. */}
         <Pegel werte={a ? live.verlauf : []} aktiv={a !== null} />
-        {a && a.rolle !== "chime" && (
-          <ol className="kabine-teile">
-            {a.teile.map((teil, i) => (
-              <li key={teil.sprache} className={i === live.teil ? "ist-jetzt" : i < live.teil ? "ist-gesagt" : ""}>
-                <span className="kabine-sprache">{sprachName(teil.sprache, namen)}</span>
-                <p>{teil.text}</p>
-              </li>
-            ))}
-          </ol>
-        )}
+        {a && a.rolle !== "chime" && <Untertitel ansage={a} teil={live.teil} teilStart={live.teilStart} namen={namen} t={t} />}
         {!a && stumm && (
           <p className="kabine-ruhe-text kabine-stumm-hinweis" data-testid="kabine-stumm-hinweis">
             {t("kabine.seite.stumm_hinweis")}
@@ -379,7 +443,7 @@ export function KabinenSeite({
           <p className="kabine-ruhe-text">
             {naechste.length === 0
               ? t("kabine.seite.ruhe_hinweis")
-              : t("kabine.seite.naechste_wann", { slot: t(`kabine.slot.${naechste[0].slot}`), wann: wannText(t, naechste[0]) })}
+              : t("kabine.seite.naechste_wann", { slot: slotName(t, naechste[0].slot, naechste[0].art), wann: wannText(t, naechste[0]) })}
           </p>
         )}
       </div>
@@ -404,13 +468,16 @@ export function KabinenSeite({
                   <li key={k} className={`kabine-plan${auf ? " ist-offen" : ""}`}>
                     <button type="button" className="kabine-plan-kopf" aria-expanded={auf} onClick={() => umschalten(k)}>
                       <span className="kabine-plan-text">
-                        <span className="kabine-plan-slot">{t(`kabine.slot.${g.slot}`)}</span>
+                        <span className="kabine-plan-slot">{slotName(t, g.slot, g.art)}</span>
                         <span className="kabine-plan-wann">{g.faellig ? wannText(t, g) : t("kabine.zeit.spielt", { wann: wannText(t, g) })}</span>
                       </span>
                       <span className={`kabine-plan-status ${standKlasse(g.stand)}`}>{g.rolle === "chime" && g.stand.art === "bereit" ? t("kabine.stand.bereit_gong") : standText(t, g.stand)}</span>
                     </button>
                     {auf && (
                       <div className="kabine-plan-inhalt">
+                        <p className="kabine-ausloeser">
+                          <span className="kabine-sprache">{t("kabine.ausloeser_titel")}</span> {t(`kabine.ausloeser.${g.slot}`)}
+                        </p>
                         {g.rolle === "chime" ? (
                           <p className="kabine-verlauf-text">{t("kabine.seite.gong_text")}</p>
                         ) : g.teile.every((teil) => teil.text === null) ? (

@@ -44,20 +44,18 @@
 .kabine-pegel rect { fill: var(--tick, #c3ccd6); transition: height 90ms linear, y 90ms linear; }
 .kabine-pegel.ist-aktiv rect { fill: var(--acc); }
 
-.kabine-teile { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-.kabine-teile li { display: flex; flex-direction: column; gap: 4px; }
-.kabine-teile p {
-  margin: 0;
-  max-width: 68ch;
-  font-size: 1.05rem;
-  line-height: var(--lh-normal, 1.55);
-  color: var(--text-dim);
-  text-wrap: pretty;
-}
-.kabine-teile li.ist-jetzt p { color: var(--text); font-size: 1.2rem; }
-.kabine-teile li.ist-gesagt p { color: var(--text-dim); }
 .kabine-sprache { font-size: var(--fs-200, 11px); color: var(--text-dim); }
-.kabine-teile li.ist-jetzt .kabine-sprache { color: var(--acc); font-weight: var(--fw-bold, 700); }
+
+/* Untertitel: der Satz, der gerade gesprochen wird, groß; davor/danach blass */
+.kabine-untertitel { display: flex; flex-direction: column; gap: 6px; max-width: 68ch; }
+.kabine-untertitel-kopf { display: flex; gap: 10px; align-items: baseline; }
+.kabine-untertitel-kopf .kabine-sprache { color: var(--acc); font-weight: var(--fw-bold, 700); }
+.kabine-untertitel-zaehler { font-size: var(--fs-200, 11px); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.kabine-untertitel p { margin: 0; line-height: var(--lh-normal, 1.55); text-wrap: pretty; }
+.kabine-untertitel-jetzt { font-size: 1.25rem; color: var(--text); }
+.kabine-untertitel-davor, .kabine-untertitel-danach { font-size: 0.95rem; color: var(--text-dim); opacity: 0.7; }
+.kabine-untertitel-sprachen { font-size: var(--fs-300, 12px); color: var(--text-dim); }
+.kabine-ausloeser { margin: 0 0 8px; font-size: var(--fs-300, 12px); color: var(--text-dim); }
 .kabine-ruhe-text { margin: 0; color: var(--text-dim); font-size: var(--fs-400, 13px); }
 
 /* Warteschlange und Verlauf */
@@ -186,3 +184,9 @@
 .kabine-ton-wert { min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: var(--fs-300, 12px); }
 .kabine-stumm-hinweis { color: var(--sem-warn, #b7791f); }
 .kabine-ablauf-stumm { color: var(--sem-warn, #b7791f); }
+
+/* Einstellungen: einzelne Ansagen abwählen */
+.kabine-einzeln summary { cursor: pointer; }
+.kabine-einzeln-gruppen { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 8px; }
+.kabine-einzeln-gruppe { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.kabine-einzeln-gruppe legend { font-size: var(--fs-300, 12px); color: var(--text-dim); padding: 0 4px; }

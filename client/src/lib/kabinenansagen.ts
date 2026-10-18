@@ -17,6 +17,9 @@ export interface Teil {
   text: string;
   datei: string;
   dauer_s: number;
+  /** Startzeit jedes Satzes in s (vom Ton-Server); fehlt sie, schätzt die
+   *  Seite die Satzgrenzen aus der Textlänge. */
+  saetze?: number[] | null;
 }
 
 export interface Gespielt {
@@ -49,6 +52,13 @@ export interface Einstellungen {
   lautstaerke: number;
   /** Ausgabegerät (Kennung aus `kabinen_ausgabegeraete`), `null` = Systemstandard. */
   ausgabe: string | null;
+  /** Kapitän männlich/weiblich; „auto“ = der Server würfelt (bei echtem
+   *  Namen: „Kapitän“). Die Stimme folgt dem Geschlecht der Crew. */
+  kapitaen_geschlecht: "auto" | "m" | "w";
+  /** Klang wie aus dem Bordlautsprecher (ab Werk an). */
+  lautsprecher_klang: boolean;
+  /** Abgewählte Ansagen (Slot-Namen), z. B. weil GSX oder das Flugzeug sie spielt. */
+  aus: string[];
 }
 
 export interface Geraet {
@@ -112,6 +122,8 @@ export interface Geplant {
   wann: number | null;
   stand: Stand;
   teile: TeilAnsicht[];
+  /** Nur Reiseflug 80: zweiter_service | ende_bordverkauf (vom GSG-Server). */
+  art?: string | null;
 }
 
 export type TeilStand =
@@ -155,6 +167,10 @@ export interface Ueberblick {
   stumm: boolean;
   /** 0 … 1, wirkt sofort, auch auf eine laufende Ansage. */
   lautstaerke: number;
+  /** Name des Kapitäns auf diesem Flug (vom GSG-Server), sonst null. */
+  kapitaen?: string | null;
+  /** Hinweis an den Piloten, z. B. „anschnallzeichen“ (Zeichen im Reiseflug noch an). */
+  hinweis?: string | null;
 }
 
 /** Was die Seite live anzeigt. */
@@ -162,6 +178,8 @@ export interface Wiedergabe {
   ansage: Gespielt | null;
   /** Index des Teils (Sprache), der gerade spricht. */
   teil: number;
+  /** Seit wann dieser Teil spielt (performance.now()), für die Untertitel. */
+  teilStart: number;
   /** 0 … 1, geglätteter Pegel der laufenden Stimme. */
   pegel: number;
   /** Letzte Pegelwerte für die Wellenform, älteste zuerst. */
@@ -171,7 +189,7 @@ export interface Wiedergabe {
   fehler: string | null;
 }
 
-const LEER: Wiedergabe = { ansage: null, teil: 0, pegel: 0, verlauf: [], fehler: null };
+const LEER: Wiedergabe = { ansage: null, teil: 0, teilStart: 0, pegel: 0, verlauf: [], fehler: null };
 const VERLAUF_LAENGE = 64;
 
 let zustand: Wiedergabe = LEER;
@@ -219,6 +237,7 @@ async function spielen(datei: string, meiner: number): Promise<void> {
   // sähe den Stopp nicht mehr, er war vor diesem Aufruf (Codex-QS beta.2).
   if (meiner !== durchgang) return;
   const start = performance.now();
+  setzen({ teilStart: start });
   let fertig = false;
   const messen = () => {
     if (fertig) return;
