@@ -230,12 +230,14 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
             />
           </label>
 
-          <label className="settings__checkbox">
-            <input type="checkbox" checked={e.lautsprecher_klang} onChange={(ev) => void aendern({ lautsprecher_klang: ev.target.checked })} />
-            <span>
-              <strong>{t("kabine.einstellungen.klang")}</strong>
-              <span className="settings__row-hint">{t("kabine.einstellungen.klang_hint")}</span>
-            </span>
+          <label className="settings__field">
+            <span className="settings__field-label">{t("kabine.einstellungen.klang")}</span>
+            <select value={e.klang} onChange={(ev) => void aendern({ klang: ev.target.value as Einstellungen["klang"] })}>
+              <option value="klar">{t("kabine.einstellungen.klang_klar")}</option>
+              <option value="lautsprecher">{t("kabine.einstellungen.klang_lautsprecher")}</option>
+              <option value="tuer">{t("kabine.einstellungen.klang_tuer")}</option>
+            </select>
+            <span className="settings__row-hint">{t("kabine.einstellungen.klang_hint")}</span>
           </label>
 
           <div className="settings__field">

@@ -20,6 +20,7 @@ const WEATHER_BRIEFING_URL = "https://german-sky-group.eu/weatherbriefing";
 // Section unter dem WeatherBriefing zu hängen.
 import { DivertBanner } from "./DivertBanner";
 import { SimRateHinweis } from "./SimRateHinweis";
+import { KabinenHinweis } from "./kabine/KabinenHinweis";
 import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
 import { BordbuchHinweis } from "./bordbuch/BordbuchHinweis";
 import { Notice } from "./ui";
@@ -336,6 +337,8 @@ export function CockpitView({
         rate={simSnapshot?.simulation_rate}
         aktiv={!activeFlight.was_just_resumed}
       />
+      {/* Kabine wartet auf das Anschnallzeichen (Kabinenansagen, 18.10.2026). */}
+      <KabinenHinweis />
 
       {/* Der Sprung-Banner hängt im App-Rahmen (App.tsx), damit er auf
           JEDEM Reiter erscheint — siehe dortigen Kommentar. */}

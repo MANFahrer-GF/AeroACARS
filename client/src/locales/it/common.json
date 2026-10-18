@@ -13,7 +13,7 @@
       "sprache_hint": "Se la compagnia parla già tedesco o inglese, si aggiunge l'altra.",
       "stimmen_hint": "Le voci le sceglie il server GSG in base alla lingua, gratis e senza download: l'inglese lo parla Kokoro, tutte le altre lingue Piper. L'umore dell'equipaggio lo estrae il server a ogni volo.",
       "echter_name": "Usa il mio nome come comandante",
-      "echter_name_hint": "Il tuo nome va allora al server GSG e all'IA. Altrimenti ne inventa uno.",
+      "echter_name_hint": "Il tuo nome va al server GSG e all'IA. Altrimenti il server GSG dà un nome all'equipaggio. Vale per i voli i cui annunci non sono ancora stati scritti.",
       "kommandos": "Riproduci i comandi all'equipaggio",
       "doppelt_hint": "Disattiva se il tuo aereo ha annunci o segnali propri (ad esempio FlyByWire). Mai due sistemi insieme.",
       "chimes": "Segnale a 10.000 piedi",
@@ -32,15 +32,18 @@
       "kapitaen_auto": "Automatico (come capita)",
       "kapitaen_m": "Comandante (voce maschile)",
       "kapitaen_w": "Comandante (voce femminile)",
-      "kapitaen_hint": "La voce corrisponde all'equipaggio. Con il tuo nome vero decide se vieni annunciato come comandante uomo o donna.",
-      "klang": "Suono come dagli altoparlanti di bordo",
-      "klang_hint": "Un po' più sottile, come un vero annuncio in cabina.",
+      "kapitaen_hint": "La voce corrisponde all'equipaggio. Con il tuo nome vero decide se vieni annunciato come comandante uomo o donna. Vale per i voli i cui annunci non sono ancora stati scritti.",
+      "klang": "Suono",
+      "klang_hint": "Gli altoparlanti di bordo suonano come un vero annuncio in cabina, \"attraverso la porta del cockpit\" ancora più ovattato.",
       "ansagen": "Disattiva singoli annunci",
       "ansagen_hint": "Per esempio se GSX, Cockpit 2 Ground o l'aereo stesso riproducono questi annunci. Gli annunci disattivati non arrivano e non costano nulla.",
       "gruppe_boden": "A terra",
       "gruppe_reise": "Crociera",
       "gruppe_ankunft": "Arrivo",
-      "gruppe_ereignis": "Eventi"
+      "gruppe_ereignis": "Eventi",
+      "klang_klar": "Chiaro",
+      "klang_lautsprecher": "Altoparlanti di bordo",
+      "klang_tuer": "Attraverso la porta del cockpit (ovattato)"
     },
     "rolle": {
       "kapitaen": "Comandante",
@@ -164,7 +167,7 @@
       "reiseflug50": "a metà della crociera",
       "reiseflug80": "poco prima della discesa",
       "kapitaen_sinkflug": "poco prima della discesa",
-      "kabine_sinkflug": "poco prima della discesa",
+      "kabine_sinkflug": "dopo l'annuncio di discesa del comandante",
       "nach_der_landung": "durante il rullaggio dopo l'atterraggio",
       "aussteigen": "al parcheggio",
       "kommando_tueren_scharf": "a porte chiuse",
@@ -251,7 +254,8 @@
       "pause": "previsto, breve pausa dopo l'ultimo annuncio",
       "ruhephase": "previsto, attende la fine della fase sterile",
       "ton": "previsto, attende l'audio",
-      "sim_angehalten": "previsto, simulatore in pausa"
+      "sim_angehalten": "previsto, simulatore in pausa",
+      "anschnallzeichen": "aspetta finché non spegni il segnale delle cinture"
     },
     "ergebnis": {
       "abgebrochen": "interrotto",
@@ -277,7 +281,8 @@
       "zu_spaet": "troppo tardi (fase sterile o altro annuncio)",
       "keine_stimme": "nessuna voce per queste lingue",
       "kein_kurztext": "il server GSG non fornisce ancora la versione breve del comandante",
-      "sonst": "non più possibile"
+      "sonst": "non più possibile",
+      "tueren_zu": "le porte erano già chiuse"
     },
     "ausloeser": {
       "boarding": "Arriva quando accendi il segnale delle cinture, al più tardi 5 minuti dopo l'inizio dell'imbarco. Al pushback è troppo tardi e viene saltato.",

@@ -17,9 +17,9 @@ export interface Teil {
   text: string;
   datei: string;
   dauer_s: number;
-  /** Startzeit jedes Satzes in s (vom Ton-Server); fehlt sie, schätzt die
-   *  Seite die Satzgrenzen aus der Textlänge. */
-  saetze?: number[] | null;
+  /** Gesprochene Stücke mit Startzeit (s) vom Ton-Server; fehlen sie,
+   *  schätzt die Seite die Satzgrenzen aus der Textlänge. */
+  stuecke?: { ab_s: number; text: string }[];
 }
 
 export interface Gespielt {
@@ -55,8 +55,8 @@ export interface Einstellungen {
   /** Kapitän männlich/weiblich; „auto“ = der Server würfelt (bei echtem
    *  Namen: „Kapitän“). Die Stimme folgt dem Geschlecht der Crew. */
   kapitaen_geschlecht: "auto" | "m" | "w";
-  /** Klang wie aus dem Bordlautsprecher (ab Werk an). */
-  lautsprecher_klang: boolean;
+  /** Klang: klar | lautsprecher (Bordlautsprecher, ab Werk) | tuer (dumpf). */
+  klang: "klar" | "lautsprecher" | "tuer";
   /** Abgewählte Ansagen (Slot-Namen), z. B. weil GSX oder das Flugzeug sie spielt. */
   aus: string[];
 }
@@ -103,7 +103,7 @@ export type Stand =
   | { art: "ton_aufgegeben"; meldung: string }
   | { art: "bereit" };
 
-export type Wartet = "andere_ansage" | "pause" | "ruhephase" | "ton" | "sim_angehalten";
+export type Wartet = "andere_ansage" | "pause" | "ruhephase" | "ton" | "sim_angehalten" | "anschnallzeichen";
 
 export interface TeilAnsicht {
   sprache: string;

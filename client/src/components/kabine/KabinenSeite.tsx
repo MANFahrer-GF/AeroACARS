@@ -120,23 +120,25 @@ export function saetzeVon(text: string): string[] {
   return text.split(/(?<=[.!?…])\s+/u).map((x) => x.trim()).filter(Boolean);
 }
 
-/** Welcher Satz läuft nach `sek` Sekunden? Startzeiten vom Ton-Server, sonst
- *  geschätzt aus der Länge der Sätze (gleichmäßiges Sprechtempo). */
-export function satzIndex(teil: Teil, sek: number): number {
+/** Die gesprochenen Stücke eines Teils: vom Ton-Server (Text und Startzeit
+ *  genau), sonst Sätze mit geschätzter Startzeit nach ihrer Länge. */
+export function stueckeVon(teil: Teil): { ab_s: number; text: string }[] {
+  if (teil.stuecke && teil.stuecke.length > 0) return teil.stuecke;
   const saetze = saetzeVon(teil.text);
-  if (saetze.length <= 1) return 0;
-  let starts = teil.saetze && teil.saetze.length === saetze.length ? teil.saetze : null;
-  if (!starts) {
-    const gesamt = saetze.reduce((n, x) => n + x.length, 0) || 1;
-    let summe = 0;
-    starts = saetze.map((x) => {
-      const ab = (summe / gesamt) * teil.dauer_s;
-      summe += x.length;
-      return ab;
-    });
-  }
+  const gesamt = saetze.reduce((n, x) => n + x.length, 0) || 1;
+  let summe = 0;
+  return saetze.map((text) => {
+    const ab_s = (summe / gesamt) * teil.dauer_s;
+    summe += text.length;
+    return { ab_s, text };
+  });
+}
+
+/** Welches Stück läuft nach `sek` Sekunden? */
+export function satzIndex(teil: Teil, sek: number): number {
+  const st = stueckeVon(teil);
   let i = 0;
-  while (i + 1 < starts.length && starts[i + 1] <= sek) i++;
+  while (i + 1 < st.length && st[i + 1].ab_s <= sek) i++;
   return i;
 }
 
@@ -146,7 +148,7 @@ export function satzIndex(teil: Teil, sek: number): number {
 function Untertitel({ ansage, teil, teilStart, namen, t }: { ansage: Gespielt; teil: number; teilStart: number; namen: Intl.DisplayNames | null; t: T }) {
   const jetzt = ansage.teile[teil];
   if (!jetzt) return null;
-  const saetze = saetzeVon(jetzt.text);
+  const saetze = stueckeVon(jetzt).map((x) => x.text);
   const i = satzIndex(jetzt, Math.max(0, (performance.now() - teilStart) / 1000));
   const danach = ansage.teile.slice(teil + 1).map((x) => sprachName(x.sprache, namen));
   const fertig = ansage.teile.slice(0, teil).map((x) => sprachName(x.sprache, namen));
@@ -282,6 +284,7 @@ function TonLeiste({ stumm, lautstaerke, t, onStumm }: { stumm: boolean; lautsta
 
 function wannText(t: T, g: Geplant): string {
   if (g.faellig) return g.wartet ? t(`kabine.wartet.${g.wartet}`) : t("kabine.zeit.jetzt");
+  if (g.wartet === "anschnallzeichen") return t("kabine.wartet.anschnallzeichen");
   return g.wann !== null ? t("kabine.zeit.ca", { zeit: uhrzeit(g.wann) }) : t(`kabine.wann.${g.slot}`);
 }
 

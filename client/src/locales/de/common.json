@@ -13,7 +13,7 @@
       "sprache_hint": "Spricht die Airline schon Deutsch oder Englisch, kommt die jeweils andere dazu.",
       "stimmen_hint": "Die Stimmen wählt der GSG-Server passend zur Sprache, kostenlos und ohne Download: Englisch spricht Kokoro, alle anderen Sprachen Piper. Die Tagesform der Crew würfelt der Server je Flug.",
       "echter_name": "Meinen Namen als Kapitän nennen",
-      "echter_name_hint": "Dein Name geht dann an den GSG-Server und an die KI. Sonst erfindet sie einen Namen.",
+      "echter_name_hint": "Dein Name geht dann an den GSG-Server und an die KI. Sonst bekommt die Crew einen Namen vom GSG-Server. Gilt für Flüge, deren Ansagen noch nicht geschrieben sind.",
       "kommandos": "Crew-Kommandos abspielen",
       "doppelt_hint": "Ausschalten, wenn dein Flugzeug eigene Ansagen oder Gongs hat (etwa FlyByWire). Nie zwei Systeme gleichzeitig.",
       "chimes": "Gong bei 10.000 Fuß",
@@ -32,15 +32,18 @@
       "kapitaen_auto": "Automatisch (wie es sich ergibt)",
       "kapitaen_m": "Kapitän (männliche Stimme)",
       "kapitaen_w": "Kapitänin (weibliche Stimme)",
-      "kapitaen_hint": "Die Stimme passt zur Crew. Mit deinem echten Namen bestimmt das hier, ob du als Kapitän oder Kapitänin angesagt wirst.",
-      "klang": "Klang wie aus dem Bordlautsprecher",
-      "klang_hint": "Etwas dünner, wie eine echte Durchsage in der Kabine.",
+      "kapitaen_hint": "Die Stimme passt zur Crew. Mit deinem echten Namen bestimmt das hier, ob du als Kapitän oder Kapitänin angesagt wirst. Gilt für Flüge, deren Ansagen noch nicht geschrieben sind.",
+      "klang": "Klang",
+      "klang_hint": "Bordlautsprecher klingt wie eine echte Durchsage in der Kabine, „durch die Cockpittür“ noch dumpfer.",
       "ansagen": "Einzelne Ansagen abwählen",
       "ansagen_hint": "Zum Beispiel, wenn GSX, Cockpit 2 Ground oder das Flugzeug selbst diese Ansagen spielt. Abgewählte Ansagen kommen nicht und kosten nichts.",
       "gruppe_boden": "Am Boden",
       "gruppe_reise": "Reiseflug",
       "gruppe_ankunft": "Ankunft",
-      "gruppe_ereignis": "Ereignisse"
+      "gruppe_ereignis": "Ereignisse",
+      "klang_klar": "Klar",
+      "klang_lautsprecher": "Bordlautsprecher",
+      "klang_tuer": "Durch die Cockpittür (dumpf)"
     },
     "rolle": {
       "kapitaen": "Kapitän",
@@ -164,7 +167,7 @@
       "reiseflug50": "zur Halbzeit des Reiseflugs",
       "reiseflug80": "kurz vor dem Sinkflug",
       "kapitaen_sinkflug": "kurz vor dem Sinkflug",
-      "kabine_sinkflug": "kurz vor dem Sinkflug",
+      "kabine_sinkflug": "nach der Sinkflug-Ansage des Kapitäns",
       "nach_der_landung": "beim Rollen nach der Landung",
       "aussteigen": "an der Parkposition",
       "kommando_tueren_scharf": "wenn die Türen zu sind",
@@ -251,7 +254,8 @@
       "pause": "fällig, kurze Pause nach der letzten Ansage",
       "ruhephase": "fällig, wartet auf das Ende der Ruhephase",
       "ton": "fällig, wartet auf den Ton",
-      "sim_angehalten": "fällig, Simulator angehalten"
+      "sim_angehalten": "fällig, Simulator angehalten",
+      "anschnallzeichen": "wartet, bis du das Anschnallzeichen ausschaltest"
     },
     "ergebnis": {
       "abgebrochen": "abgebrochen",
@@ -277,7 +281,8 @@
       "zu_spaet": "zu spät dran (Ruhephase oder andere Ansage)",
       "keine_stimme": "keine Stimme für diese Sprachen",
       "kein_kurztext": "GSG-Server liefert noch keine Kurzfassung des Kapitäns",
-      "sonst": "nicht mehr möglich"
+      "sonst": "nicht mehr möglich",
+      "tueren_zu": "die Türen waren schon zu"
     },
     "ausloeser": {
       "boarding": "Kommt, wenn du das Anschnallzeichen einschaltest, spätestens 5 Minuten nach Beginn des Boardings. Beim Pushback ist es dafür zu spät, dann entfällt sie.",

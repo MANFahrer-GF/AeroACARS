@@ -149,7 +149,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       return (args?.einstellungen ?? {
         an: true, zweite_sprache: "airline", echter_name: false,
         chimes: true, kommandos: true, lautstaerke: 0.8, ausgabe: null,
-        kapitaen_geschlecht: "auto", lautsprecher_klang: true, aus: ["boarding"],
+        kapitaen_geschlecht: "auto", klang: "lautsprecher", aus: ["boarding"],
       }) as T;
     case "kabinen_zustand":
       return { beta: true, kontingent_erschoepft: false } as T;

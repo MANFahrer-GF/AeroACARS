@@ -13,7 +13,7 @@
       "sprache_hint": "If the airline already speaks German or English, the other one is added.",
       "stimmen_hint": "The GSG server picks the voices to match the language, free and without any download: English is spoken by Kokoro, all other languages by Piper. The crew's mood is rolled by the server for each flight.",
       "echter_name": "Use my name as captain",
-      "echter_name_hint": "Your name is then sent to the GSG server and the AI. Otherwise it invents one.",
+      "echter_name_hint": "Your name then goes to the GSG server and the AI. Otherwise the GSG server gives the crew a name. Applies to flights whose announcements have not been written yet.",
       "kommandos": "Play crew commands",
       "doppelt_hint": "Turn off if your aircraft has its own announcements or chimes (for example FlyByWire). Never run two systems at once.",
       "chimes": "Chime at 10,000 ft",
@@ -32,15 +32,18 @@
       "kapitaen_auto": "Automatic (as it turns out)",
       "kapitaen_m": "Captain (male voice)",
       "kapitaen_w": "Captain (female voice)",
-      "kapitaen_hint": "The voice matches the crew. With your real name this decides whether you are announced as a male or female captain.",
-      "klang": "Sound like the cabin speakers",
-      "klang_hint": "A little thinner, like a real announcement in the cabin.",
+      "kapitaen_hint": "The voice matches the crew. With your real name this decides whether you are announced as a male or female captain. Applies to flights whose announcements have not been written yet.",
+      "klang": "Sound",
+      "klang_hint": "Cabin speakers sounds like a real announcement in the cabin, \"through the cockpit door\" even more muffled.",
       "ansagen": "Turn off single announcements",
       "ansagen_hint": "For example when GSX, Cockpit 2 Ground or the aircraft itself plays these announcements. Turned-off announcements do not play and cost nothing.",
       "gruppe_boden": "On the ground",
       "gruppe_reise": "Cruise",
       "gruppe_ankunft": "Arrival",
-      "gruppe_ereignis": "Events"
+      "gruppe_ereignis": "Events",
+      "klang_klar": "Clear",
+      "klang_lautsprecher": "Cabin speakers",
+      "klang_tuer": "Through the cockpit door (muffled)"
     },
     "rolle": {
       "kapitaen": "Captain",
@@ -164,7 +167,7 @@
       "reiseflug50": "halfway through the cruise",
       "reiseflug80": "shortly before descent",
       "kapitaen_sinkflug": "shortly before the descent",
-      "kabine_sinkflug": "shortly before the descent",
+      "kabine_sinkflug": "after the captain's descent announcement",
       "nach_der_landung": "while taxiing in after landing",
       "aussteigen": "at the parking position",
       "kommando_tueren_scharf": "when the doors are closed",
@@ -251,7 +254,8 @@
       "pause": "due, short pause after the last announcement",
       "ruhephase": "due, waiting for the sterile phase to end",
       "ton": "due, waiting for the audio",
-      "sim_angehalten": "due, simulator paused"
+      "sim_angehalten": "due, simulator paused",
+      "anschnallzeichen": "waits until you switch the seat belt sign off"
     },
     "ergebnis": {
       "abgebrochen": "stopped",
@@ -277,7 +281,8 @@
       "zu_spaet": "too late (sterile phase or another announcement)",
       "keine_stimme": "no voice for these languages",
       "kein_kurztext": "GSG server does not provide the captain's short version yet",
-      "sonst": "no longer possible"
+      "sonst": "no longer possible",
+      "tueren_zu": "the doors were already closed"
     },
     "ausloeser": {
       "boarding": "Plays when you switch the seat belt sign on, at the latest 5 minutes after boarding starts. At pushback it is too late and it is skipped.",
