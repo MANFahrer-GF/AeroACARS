@@ -20,6 +20,8 @@ vi.mock("./ipc", () => ({
       return [0.2, 0.4];
     }
     if (cmd === "kabinen_wiedergabe_start") {
+      // Rust antwortet nie: Die Wiedergabe darf nicht hängen.
+      if (args?.id === 31) return new Promise(() => undefined);
       // Rust antwortet verzögert: Der Ton darf erst danach beginnen.
       await new Promise((r) => setTimeout(r, 30));
       aufrufe.push({ cmd: "start_bestaetigt" });
@@ -113,6 +115,24 @@ describe("Kabinen-Wiedergabe", () => {
     abspielen(ansage("probe.wav"));
     await warten(1500);
     expect(aufrufe.some((a) => a.cmd === "kabinen_wiedergabe_start")).toBe(false);
+  });
+
+  it("hängt nicht, wenn die Startmeldung nie beantwortet wird", async () => {
+    freigeben();
+    abspielen(ansage("haengt.wav", "kabine", 31));
+    await warten(3500);
+    expect(gespielt()).toContain("haengt.wav");
+  });
+
+  it("Stopp während der Startmeldung: auch ein Gong fängt nicht mehr an", async () => {
+    freigeben();
+    abspielen(ansage("", "chime", 21));
+    await warten(10); // Startmeldung läuft noch (30 ms)
+    stoppen();
+    await warten(200);
+    expect(aufrufe.some((a) => a.cmd === "kabinen_ton_spielen")).toBe(false);
+    expect(aufrufe.find((a) => a.cmd === "kabinen_wiedergabe_ende")?.args).toEqual({ id: 21, ergebnis: "abgebrochen" });
+    freigeben();
   });
 
   it("Stumm: eine kurz vorher ausgegebene Ansage spielt nicht, sie wird als stumm gemeldet", async () => {

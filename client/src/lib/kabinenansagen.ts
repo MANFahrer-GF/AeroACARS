@@ -265,7 +265,16 @@ async function abarbeiten(): Promise<void> {
       setzen({ ansage: a, teil: 0, verlauf: [] });
       // Erst jetzt „läuft“ sie in „Bisher“ (nicht schon beim Ausgeben in Rust);
       // abwarten, damit Rust es vor dem ersten Ton weiß (Codex beta.6).
-      if (isTauri && !a.vorschau && a.id !== 0) await invoke("kabinen_wiedergabe_start", { id: a.id }).catch(() => undefined);
+      // Höchstens 2 s: Antwortet Rust nicht, spielt sie trotzdem (Codex-Nachprüfung).
+      if (isTauri && !a.vorschau && a.id !== 0) {
+        await Promise.race([invoke("kabinen_wiedergabe_start", { id: a.id }).catch(() => undefined), pause(2000)]);
+      }
+      // Kam währenddessen Stopp oder Stumm: nicht mehr anfangen (sonst
+      // spielte ein Gong noch, Sprachteile prüfen das selbst).
+      if (meiner !== durchgang) {
+        melden(a, "abgebrochen");
+        break;
+      }
       let fehlgeschlagen = false;
       if (a.rolle === "chime") {
         try {
