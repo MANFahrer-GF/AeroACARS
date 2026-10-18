@@ -90,7 +90,8 @@
       "keine_stimme": "keine Stimme, entfällt",
       "anhoeren": "Anhören",
       "erneut": "Erneut versuchen",
-      "nochmal": "Nochmal anhören"
+      "nochmal": "Nochmal anhören",
+      "stumm_hinweis": "Stumm. Fällige Ansagen werden übersprungen und nicht nachgeholt. Nach einem Neustart von AeroACARS ist der Ton wieder an."
     },
     "grund": {
       "aus": {
@@ -175,7 +176,8 @@
       "ton_wird_erzeugt": "Ton wird erzeugt ({{fertig}} von {{von}})",
       "ton_wartet": "Ton wartet ({{grund}}), neuer Versuch {{zeit}}",
       "ton_aufgegeben": "Ton abgelehnt ({{grund}})",
-      "bereit": "bereit"
+      "bereit": "Text und Ton fertig",
+      "bereit_gong": "Gong fertig"
     },
     "fehler": {
       "ausgelastet": "Server ausgelastet",
@@ -209,7 +211,8 @@
         "fertig": "fertig",
         "fehler": "Fehler, neuer Versuch {{zeit}}",
         "aufgegeben": "nicht erhalten"
-      }
+      },
+      "stumm": "stumm, wird übersprungen"
     },
     "profil": {
       "linie": "Linienflug mit Kabinenbesatzung",
@@ -222,7 +225,8 @@
     },
     "zeit": {
       "jetzt": "jetzt",
-      "ca": "ca. {{zeit}}"
+      "ca": "ca. {{zeit}}",
+      "spielt": "Spielt {{wann}}"
     },
     "wartet": {
       "andere_ansage": "fällig, wartet auf die laufende Ansage",
@@ -234,7 +238,17 @@
     "ergebnis": {
       "abgebrochen": "abgebrochen",
       "fehler": "nicht abspielbar",
-      "unbekannt": "Ausgang unbekannt"
+      "unbekannt": "Ausgang unbekannt",
+      "stumm": "stumm übersprungen",
+      "laeuft": "läuft"
+    },
+    "ton": {
+      "titel": "Ton",
+      "an": "Ton an",
+      "stumm": "Stumm",
+      "lautstaerke": "Lautstärke der Ansagen",
+      "stumm_titel": "Stummschalten: Die laufende Ansage bricht ab, was bis zum Aufheben fällig wird, entfällt.",
+      "aufheben_titel": "Ton wieder an: Die nächste Ansage kommt zu ihrem Zeitpunkt."
     }
   },
   "app": {

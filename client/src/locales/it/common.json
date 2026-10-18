@@ -90,7 +90,8 @@
       "keine_stimme": "nessuna voce, omesso",
       "anhoeren": "Ascolta",
       "erneut": "Riprova",
-      "nochmal": "Riascolta"
+      "nochmal": "Riascolta",
+      "stumm_hinweis": "Muto. Gli annunci in scadenza vengono saltati e non recuperati. Dopo il riavvio di AeroACARS l'audio è di nuovo attivo."
     },
     "grund": {
       "aus": {
@@ -175,7 +176,8 @@
       "ton_wird_erzeugt": "Audio in preparazione ({{fertig}} di {{von}})",
       "ton_wartet": "Audio in attesa ({{grund}}), nuovo tentativo {{zeit}}",
       "ton_aufgegeben": "Audio rifiutato ({{grund}})",
-      "bereit": "pronto"
+      "bereit": "Testo e audio pronti",
+      "bereit_gong": "Gong pronto"
     },
     "fehler": {
       "ausgelastet": "server occupato",
@@ -209,7 +211,8 @@
         "fertig": "pronti",
         "fehler": "errore, nuovo tentativo {{zeit}}",
         "aufgegeben": "non ricevuti"
-      }
+      },
+      "stumm": "muto, verrà saltato"
     },
     "profil": {
       "linie": "Volo di linea con equipaggio di cabina",
@@ -222,7 +225,8 @@
     },
     "zeit": {
       "jetzt": "ora",
-      "ca": "verso le {{zeit}}"
+      "ca": "verso le {{zeit}}",
+      "spielt": "In onda {{wann}}"
     },
     "wartet": {
       "andere_ansage": "previsto, attende l'annuncio in corso",
@@ -234,7 +238,17 @@
     "ergebnis": {
       "abgebrochen": "interrotto",
       "fehler": "non riproducibile",
-      "unbekannt": "esito sconosciuto"
+      "unbekannt": "esito sconosciuto",
+      "stumm": "saltato (muto)",
+      "laeuft": "in corso"
+    },
+    "ton": {
+      "titel": "Audio",
+      "an": "Audio attivo",
+      "stumm": "Muto",
+      "lautstaerke": "Volume degli annunci",
+      "stumm_titel": "Muto: l'annuncio in corso si interrompe, ciò che scade fino alla riattivazione viene saltato.",
+      "aufheben_titel": "Audio di nuovo attivo: il prossimo annuncio arriva al suo momento."
     }
   },
   "app": {

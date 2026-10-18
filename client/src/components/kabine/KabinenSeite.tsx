@@ -14,7 +14,9 @@ import {
   einstellungenLesen,
   einstellungenSetzen,
   erneut,
+  lautstaerkeSetzen,
   stoppen,
+  stummSetzen,
   ueberblick,
   type Ablauf,
   type Geplant,
@@ -107,7 +109,7 @@ function teilText(t: T, s: TeilStand): string {
 
 /** Ablaufzeile oben: Freigabe → Texte → Ton → nächste Ansage (Hausregel
  *  „Status als Tabelle oben“). */
-function AblaufZeile({ ablauf, naechste, t }: { ablauf: Ablauf; naechste: Geplant | undefined; t: T }) {
+function AblaufZeile({ ablauf, naechste, stumm, t }: { ablauf: Ablauf; naechste: Geplant | undefined; stumm: boolean; t: T }) {
   const f = ablauf.freigabe;
   const freigabe = f.art === "nicht_erreichbar" ? t("kabine.ablauf.freigabe.nicht_erreichbar", { zeit: uhrzeit(f.um) }) : t(`kabine.ablauf.freigabe.${f.art}`);
   return (
@@ -133,6 +135,7 @@ function AblaufZeile({ ablauf, naechste, t }: { ablauf: Ablauf; naechste: Geplan
             {naechste
               ? `${t(`kabine.slot.${naechste.slot}`)}, ${wannText(t, naechste)}`
               : t("kabine.ablauf.keine")}
+            {stumm && naechste && <span className="kabine-ablauf-stumm"> · {t("kabine.ablauf.stumm")}</span>}
           </td>
         </tr>
       </tbody>
@@ -159,6 +162,59 @@ function ProfilZeile({ profil, sprachen, namen, t }: { profil: Profil; sprachen:
   );
 }
 
+/** Ton oben auf der Seite: Stumm (nur bis zum Neustart) und Lautstärke,
+ *  die sofort wirkt — ohne Umweg über die Einstellungen. */
+function TonLeiste({ stumm, lautstaerke, t, onStumm }: { stumm: boolean; lautstaerke: number; t: T; onStumm: (s: boolean) => void }) {
+  const [wert, setWert] = useState(Math.round(lautstaerke * 100));
+  const [zieht, setZieht] = useState(false);
+  useEffect(() => {
+    if (!zieht) setWert(Math.round(lautstaerke * 100));
+  }, [lautstaerke, zieht]);
+  const loslassen = () => {
+    setZieht(false);
+    void lautstaerkeSetzen(wert / 100, true);
+  };
+  return (
+    <div className={`kabine-ton${stumm ? " ist-stumm" : ""}`} role="group" aria-label={t("kabine.ton.titel")} data-testid="kabine-ton">
+      <button
+        type="button"
+        className="kabine-stumm"
+        aria-pressed={stumm}
+        title={stumm ? t("kabine.ton.aufheben_titel") : t("kabine.ton.stumm_titel")}
+        onClick={() => onStumm(!stumm)}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none" />
+          {stumm ? (
+            <path d="m16 9 5 6M21 9l-5 6" />
+          ) : (
+            <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+          )}
+        </svg>
+        <span>{stumm ? t("kabine.ton.stumm") : t("kabine.ton.an")}</span>
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={wert}
+        aria-label={t("kabine.ton.lautstaerke")}
+        onChange={(ev) => {
+          const v = Number(ev.target.value);
+          setZieht(true);
+          setWert(v);
+          void lautstaerkeSetzen(v / 100, false);
+        }}
+        onMouseUp={loslassen}
+        onTouchEnd={loslassen}
+        onKeyUp={loslassen}
+      />
+      <span className="kabine-ton-wert">{wert} %</span>
+    </div>
+  );
+}
+
 function wannText(t: T, g: Geplant): string {
   if (g.faellig) return g.wartet ? t(`kabine.wartet.${g.wartet}`) : t("kabine.zeit.jetzt");
   return g.wann !== null ? t("kabine.zeit.ca", { zeit: uhrzeit(g.wann) }) : t(`kabine.wann.${g.slot}`);
@@ -178,6 +234,8 @@ export function KabinenSeite({
   const [offen, setOffen] = useState<string | null>(null);
   const [fehler, setFehler] = useState<string | null>(null);
   const [neu, setNeu] = useState(0);
+  // Sofort umschalten, nicht erst beim nächsten Nachlesen aus Rust.
+  const [stummJetzt, setStummJetzt] = useState<boolean | null>(null);
 
   // Verlauf und Stand kommen aus Rust; alle drei Sekunden und nach jeder
   // neuen oder beendeten Ansage nachlesen.
@@ -204,6 +262,13 @@ export function KabinenSeite({
   const verlauf = [...(daten?.verlauf ?? [])].reverse();
   const naechste: Geplant[] = daten?.geplant ?? [];
   const gesperrt = a !== null || daten?.belegt === true;
+  const stumm = stummJetzt ?? daten?.stumm ?? false;
+  const stummUmschalten = (s: boolean) => {
+    setStummJetzt(s);
+    void stummSetzen(s)
+      .then(() => setNeu((n) => n + 1))
+      .finally(() => setStummJetzt(null));
+  };
 
   const hoeren = (slot: string, id?: number) => {
     setFehler(null);
@@ -230,6 +295,7 @@ export function KabinenSeite({
           </div>
         </div>
         <div className="kabine-kopf-knoepfe">
+          {daten && <TonLeiste stumm={stumm} lautstaerke={daten.lautstaerke} t={t} onStumm={stummUmschalten} />}
           <button type="button" className="button button--ghost" onClick={onOpenSettings}>
             {t("kabine.seite.einstellungen")}
           </button>
@@ -271,7 +337,7 @@ export function KabinenSeite({
 
       {daten && (
         <>
-          <AblaufZeile ablauf={daten.ablauf} naechste={naechste[0]} t={t} />
+          <AblaufZeile ablauf={daten.ablauf} naechste={naechste[0]} stumm={stumm} t={t} />
           <ProfilZeile profil={daten.profil} sprachen={daten.sprachen} namen={namen} t={t} />
         </>
       )}
@@ -300,7 +366,12 @@ export function KabinenSeite({
             ))}
           </ol>
         )}
-        {!a && (
+        {!a && stumm && (
+          <p className="kabine-ruhe-text kabine-stumm-hinweis" data-testid="kabine-stumm-hinweis">
+            {t("kabine.seite.stumm_hinweis")}
+          </p>
+        )}
+        {!a && !stumm && (
           <p className="kabine-ruhe-text">
             {naechste.length === 0
               ? t("kabine.seite.ruhe_hinweis")
@@ -330,9 +401,9 @@ export function KabinenSeite({
                     <button type="button" className="kabine-plan-kopf" aria-expanded={auf} onClick={() => umschalten(k)}>
                       <span className="kabine-plan-text">
                         <span className="kabine-plan-slot">{t(`kabine.slot.${g.slot}`)}</span>
-                        <span className="kabine-plan-wann">{wannText(t, g)}</span>
+                        <span className="kabine-plan-wann">{g.faellig ? wannText(t, g) : t("kabine.zeit.spielt", { wann: wannText(t, g) })}</span>
                       </span>
-                      <span className={`kabine-plan-status ${standKlasse(g.stand)}`}>{standText(t, g.stand)}</span>
+                      <span className={`kabine-plan-status ${standKlasse(g.stand)}`}>{g.rolle === "chime" && g.stand.art === "bereit" ? t("kabine.stand.bereit_gong") : standText(t, g.stand)}</span>
                     </button>
                     {auf && (
                       <div className="kabine-plan-inhalt">
@@ -381,7 +452,8 @@ export function KabinenSeite({
               {verlauf.map((g) => {
                 const k = `b-${g.id}-${g.zeit}`;
                 const auf = offen === k;
-                const ausgang = g.ergebnis && g.ergebnis !== "gespielt" ? g.ergebnis : null;
+                // Ohne Ausgang läuft sie gerade (Rust verbucht erst nach der Rückmeldung).
+                const ausgang = g.ergebnis === null ? "laeuft" : g.ergebnis !== "gespielt" ? g.ergebnis : null;
                 return (
                   <li key={k} className={auf ? "ist-offen" : ""}>
                     <button type="button" className="kabine-plan-kopf" aria-expanded={auf} onClick={() => umschalten(k)}>
@@ -390,7 +462,9 @@ export function KabinenSeite({
                         <strong>{t(`kabine.slot.${g.slot}`)}</strong>
                         <span className="kabine-rolle">{t(`kabine.rolle.${g.rolle}`)}</span>
                       </span>
-                      {ausgang && <span className="kabine-plan-status ist-warnung">{t(`kabine.ergebnis.${ausgang}`)}</span>}
+                      {ausgang && (
+                        <span className={`kabine-plan-status ${ausgang === "laeuft" ? "ist-bereit" : "ist-warnung"}`}>{t(`kabine.ergebnis.${ausgang}`)}</span>
+                      )}
                     </button>
                     {!auf && g.teile[0] && <p className="kabine-verlauf-text kabine-verlauf-text--kurz">{g.teile[0].text}</p>}
                     {auf && (

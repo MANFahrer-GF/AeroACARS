@@ -146,6 +146,10 @@ export interface Ueberblick {
   profil: Profil;
   /** Eine Ansage oder ein Vorhören läuft: Anhören-Knöpfe sperren. */
   belegt: boolean;
+  /** Stumm (nur bis zum Neustart): Fälliges wird übersprungen, nicht nachgeholt. */
+  stumm: boolean;
+  /** 0 … 1, wirkt sofort, auch auf eine laufende Ansage. */
+  lautstaerke: number;
 }
 
 /** Was die Seite live anzeigt. */
@@ -312,6 +316,19 @@ export async function anhoeren(slot: string, id?: number): Promise<void> {
 export function anhoerenStoppen(): void {
   abbrechen();
 }
+
+/** Stumm schalten: sofort still (laufende Ansage bricht ab); Rust verbucht
+ *  alles, was bis zum Aufheben fällig wird, als „stumm übersprungen“. */
+export async function stummSetzen(stumm: boolean): Promise<void> {
+  if (stumm) abbrechen();
+  await invoke("kabinen_stumm", { stumm });
+}
+
+/** Lautstärke 0 … 1: wirkt sofort, auch mitten in einer Ansage, und gilt
+ *  dauerhaft (derselbe Wert wie in den Einstellungen). Beim Ziehen nur
+ *  der Wert, beim Loslassen auch die Einstellungsdatei (`speichern`). */
+export const lautstaerkeSetzen = (lautstaerke: number, speichern: boolean) =>
+  invoke<void>("kabinen_lautstaerke", { lautstaerke, speichern });
 
 /** Nach dem Einschalten: Ansagen aus Rust wieder annehmen. */
 export function freigeben(): void {

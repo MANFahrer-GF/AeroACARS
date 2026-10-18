@@ -95,8 +95,9 @@ export const demoUeberblick = {
           gespielt(1, "kapitaen_begruessung", "kapitaen", 5400, "Willkommen an Bord, hier spricht Ihr Kapitän Thomas Kant. Wir fliegen fünf Stunden und vier Minuten nach Perth."),
           gespielt(2, "anschnallzeichen_aus", "kabine", 4200, "Das Anschnallzeichen ist aus. Gleich kommen wir mit Getränken zu Ihnen.", "abgebrochen"),
           gespielt(3, "reiseflug25", "kabine", 600, "Der Service beginnt. Wir reichen Ihnen ein Menü und Getränke."),
+          ...(fall === "stumm" ? [gespielt(4, "reiseflug50", "kapitaen", 120, "Hier der Kapitän. Wir haben die Hälfte geschafft.", "stumm")] : []),
         ],
-  geplant: plan[fall] ?? plan.reiseflug,
+  geplant: (plan[fall] ?? plan.reiseflug).filter((g) => fall !== "stumm" || (g as { slot: string }).slot !== "reiseflug50"),
   sprachen,
   beta: true,
   grund: (() => {
@@ -115,6 +116,8 @@ export const demoUeberblick = {
     sprachen_ohne_stimme: q.get("ohne_stimme") ? ["lv-LV"] : [],
   },
   belegt: false,
+  stumm: fall === "stumm",
+  lautstaerke: 0.8,
 };
 
 /** Silbenhüllkurve wie `wav()`, 30 Werte je Sekunde (Rust `huellkurve`). */
@@ -129,7 +132,13 @@ let gestoppt = 0;
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   switch (cmd) {
     case "kabinen_ueberblick":
-      return demoUeberblick as T;
+      return { ...demoUeberblick } as T;
+    case "kabinen_stumm":
+      demoUeberblick.stumm = Boolean(args?.stumm);
+      return null as T;
+    case "kabinen_lautstaerke":
+      demoUeberblick.lautstaerke = Number(args?.lautstaerke);
+      return null as T;
     case "kabinen_audio":
       return wav(String(args?.datei).startsWith("lang") ? 6 : 3.5) as T;
     case "kabinen_einstellungen_lesen":

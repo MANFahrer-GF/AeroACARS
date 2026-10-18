@@ -95,7 +95,7 @@
 .kabine-knopf { padding: 4px 12px; font-size: var(--fs-300, 12px); }
 .kabine-plan-inhalt .kabine-grund-detail { margin: 0; color: var(--text-dim); font-size: var(--fs-300, 12px); }
 .kabine-plan-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.kabine-plan-wann { color: var(--text-dim); font-size: var(--fs-300, 12px); }
+.kabine-plan-wann { color: var(--text); font-size: var(--fs-400, 13px); font-variant-numeric: tabular-nums; }
 .kabine-plan-status { margin-left: auto; flex-shrink: 0; max-width: 50%; text-align: right; font-size: var(--fs-300, 12px); color: var(--text-dim); }
 .kabine-plan-status.ist-bereit { color: var(--acc); }
 .kabine-plan-status.ist-warnung { color: var(--sem-warn, #b7791f); }
@@ -155,3 +155,34 @@
   .kabine-ablauf thead { display: none; }
   .kabine-ablauf tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 0; padding-top: 8px; }
 }
+
+/* Ton oben: Stumm + Lautstärke ohne Umweg über die Einstellungen */
+.kabine-ton {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.kabine-stumm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.kabine-stumm:hover { background: var(--surface-2, rgba(127, 127, 127, 0.12)); }
+.kabine-ton.ist-stumm { border-color: var(--sem-warn, #b7791f); }
+.kabine-ton.ist-stumm .kabine-stumm { color: var(--sem-warn, #b7791f); font-weight: 600; }
+.kabine-ton input[type="range"] { width: 120px; accent-color: var(--acc); }
+.kabine-ton.ist-stumm input[type="range"] { opacity: 0.5; }
+.kabine-ton-wert { min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: var(--fs-300, 12px); }
+.kabine-stumm-hinweis { color: var(--sem-warn, #b7791f); }
+.kabine-ablauf-stumm { color: var(--sem-warn, #b7791f); }

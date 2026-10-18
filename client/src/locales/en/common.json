@@ -90,7 +90,8 @@
       "keine_stimme": "no voice, skipped",
       "anhoeren": "Listen",
       "erneut": "Try again",
-      "nochmal": "Play again"
+      "nochmal": "Play again",
+      "stumm_hinweis": "Muted. Announcements that fall due are skipped and not repeated later. After restarting AeroACARS the sound is on again."
     },
     "grund": {
       "aus": {
@@ -175,7 +176,8 @@
       "ton_wird_erzeugt": "Audio being made ({{fertig}} of {{von}})",
       "ton_wartet": "Audio waiting ({{grund}}), next try {{zeit}}",
       "ton_aufgegeben": "Audio refused ({{grund}})",
-      "bereit": "ready"
+      "bereit": "Text and audio ready",
+      "bereit_gong": "Chime ready"
     },
     "fehler": {
       "ausgelastet": "server busy",
@@ -209,7 +211,8 @@
         "fertig": "ready",
         "fehler": "error, next try {{zeit}}",
         "aufgegeben": "not received"
-      }
+      },
+      "stumm": "muted, will be skipped"
     },
     "profil": {
       "linie": "Airline flight with cabin crew",
@@ -222,7 +225,8 @@
     },
     "zeit": {
       "jetzt": "now",
-      "ca": "about {{zeit}}"
+      "ca": "about {{zeit}}",
+      "spielt": "Plays {{wann}}"
     },
     "wartet": {
       "andere_ansage": "due, waiting for the current announcement",
@@ -234,7 +238,17 @@
     "ergebnis": {
       "abgebrochen": "stopped",
       "fehler": "could not play",
-      "unbekannt": "outcome unknown"
+      "unbekannt": "outcome unknown",
+      "stumm": "skipped (muted)",
+      "laeuft": "playing"
+    },
+    "ton": {
+      "titel": "Sound",
+      "an": "Sound on",
+      "stumm": "Muted",
+      "lautstaerke": "Announcement volume",
+      "stumm_titel": "Mute: the current announcement stops, anything due until you unmute is skipped.",
+      "aufheben_titel": "Sound on again: the next announcement comes at its moment."
     }
   },
   "app": {
