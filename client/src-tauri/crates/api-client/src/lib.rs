@@ -792,6 +792,22 @@ pub struct KabinenEintrag {
     /// ab Paket 2). Fehlt bei allen anderen Einträgen und bei älteren Modulen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rolle: Option<String>,
+    /// Nur `reiseflug80`: zweiter_service | ende_bordverkauf.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art: Option<String>,
+}
+
+/// Kabinenansagen: Crew des Fluges laut GSG-Server (in jeder Antwort).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KabinenCrew {
+    #[serde(default)]
+    pub kapitaen: Option<String>,
+    /// "m" | "w"
+    #[serde(default)]
+    pub kapitaen_geschlecht: Option<String>,
+    /// "m" | "w" (Purser/Purserin)
+    #[serde(default)]
+    pub kabine_geschlecht: Option<String>,
 }
 
 /// Kabinenansagen (Beta): Antwort von `/api/kabinenansagen/drehbuch`.
@@ -801,6 +817,8 @@ pub struct KabinenDrehbuch {
     pub sprachen: Vec<String>,
     #[serde(default)]
     pub eintraege: Vec<KabinenEintrag>,
+    #[serde(default)]
+    pub crew: Option<KabinenCrew>,
 }
 
 /// Response payload of the PaxStudio fares/claim endpoints (inside the `{data:…}`

@@ -17,6 +17,9 @@ struct Eintrag {
 /// Ruhe nach einer gesprochenen Ansage, bevor die nächste reguläre kommt.
 /// Kommandos, Gong, Turbulenz und Durchstarten warten nicht ([`Slot::wartet_pause`]).
 pub const PAUSE_NACH_ANSAGE_S: i64 = 90;
+/// Ausnahme: Die Sicherheitshinweise folgen der Begrüßung „Türen zu“ nach
+/// höchstens so vielen Sekunden (Thomas 18.10.2026); alles andere wartet 90 s.
+pub const PAUSE_BEGRUESSUNG_SICHERHEIT_S: i64 = 10;
 
 #[derive(Debug, Default)]
 pub struct Warteschlange {
@@ -26,6 +29,8 @@ pub struct Warteschlange {
     belegt_bis: Option<i64>,
     /// Bis wann nach einer gesprochenen Ansage Ruhe ist ([`PAUSE_NACH_ANSAGE_S`]).
     pause_bis: Option<i64>,
+    /// Ein Slot, der die Pause schon ab diesem Zeitpunkt nicht mehr abwartet.
+    pause_ausnahme: Option<(Slot, i64)>,
     verfallen: Vec<Slot>,
 }
 
@@ -81,6 +86,7 @@ impl Warteschlange {
     pub fn abbrechen(&mut self) {
         self.belegt_bis = None;
         self.pause_bis = None;
+        self.pause_ausnahme = None;
     }
 
     /// Eine echte Ansage spielt bis `bis`; danach folgt die Pause. Fürs
@@ -88,6 +94,7 @@ impl Warteschlange {
     pub fn ansage_spielt_bis(&mut self, bis: i64) {
         self.belegt_bis = Some(bis);
         self.pause_bis = Some(bis + PAUSE_NACH_ANSAGE_S);
+        self.pause_ausnahme = None;
     }
 
     /// Eine echte Ansage ist zu Ende (gespielt, abgebrochen oder Fehler):
@@ -95,6 +102,21 @@ impl Warteschlange {
     pub fn ansage_zu_ende(&mut self, jetzt: i64) {
         self.belegt_bis = None;
         self.pause_bis = Some(jetzt + PAUSE_NACH_ANSAGE_S);
+        self.pause_ausnahme = None;
+    }
+
+    /// Wie [`Self::ansage_zu_ende`], mit dem Slot, der gerade lief: Nach der
+    /// Begrüßung „Türen zu“ dürfen die Sicherheitshinweise schon nach
+    /// [`PAUSE_BEGRUESSUNG_SICHERHEIT_S`] kommen, alles andere nach 90 s.
+    pub fn ansage_zu_ende_nach(&mut self, jetzt: i64, slot: Slot) {
+        self.ansage_zu_ende(jetzt);
+        if slot == Slot::BegruessungTuerenZu {
+            self.pause_ausnahme = Some((Slot::Sicherheit, jetzt + PAUSE_BEGRUESSUNG_SICHERHEIT_S));
+        }
+    }
+
+    fn ausnahme_frei(&self, slot: Slot, jetzt: i64) -> bool {
+        self.pause_ausnahme.is_some_and(|(s, ab)| s == slot && jetzt >= ab)
     }
 
     /// Läuft gerade die Pause nach einer Ansage (und spielt nichts)?
@@ -148,7 +170,7 @@ impl Warteschlange {
             .iter()
             .enumerate()
             .filter(|(_, e)| !ruhephase || e.slot.in_ruhephase_erlaubt())
-            .filter(|(_, e)| !(pause && e.slot.wartet_pause()))
+            .filter(|(_, e)| !(pause && e.slot.wartet_pause() && !self.ausnahme_frei(e.slot, jetzt)))
             .filter(|(_, e)| !(kabine_zuerst && e.slot == Slot::KapitaenBegruessung))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
@@ -285,6 +307,23 @@ mod tests {
         let mut v = Warteschlange::default();
         v.aufnehmen([f(Slot::Sicherheit, Verfall::AbPhase(TakeoffRoll)), f(Slot::KapitaenBegruessung, Verfall::AbPhase(TakeoffRoll))]);
         assert_eq!(v.naechstes_bereit(0, TaxiOut, false, |s| s != Slot::Sicherheit), Some(Slot::KapitaenBegruessung));
+    }
+
+    /// Thomas 18.10.2026: Sicherheit höchstens 10 s nach der Begrüßung; der
+    /// Kapitän wartet weiter 90 s.
+    #[test]
+    fn sicherheit_folgt_der_begruessung_nach_zehn_sekunden() {
+        let mut w = Warteschlange::default();
+        w.ansage_spielt_bis(100);
+        w.ansage_zu_ende_nach(100, Slot::BegruessungTuerenZu);
+        w.aufnehmen([f(Slot::Sicherheit, Verfall::AbPhase(TakeoffRoll)), f(Slot::KapitaenBegruessung, Verfall::AbPhase(Descent))]);
+        assert_eq!(w.naechstes_bereit(105, TaxiOut, false, |s| s == Slot::KapitaenBegruessung), None, "Kapitän wartet 90 s");
+        assert_eq!(w.naechstes(109, TaxiOut, false), None, "noch keine 10 s");
+        assert_eq!(w.naechstes(110, TaxiOut, false), Some(Slot::Sicherheit));
+        w.ansage_spielt_bis(300);
+        w.ansage_zu_ende_nach(300, Slot::Sicherheit);
+        assert_eq!(w.naechstes(310, TaxiOut, false), None, "nach der Sicherheit wieder 90 s");
+        assert_eq!(w.naechstes(300 + PAUSE_NACH_ANSAGE_S, TaxiOut, false), Some(Slot::KapitaenBegruessung));
     }
 
     #[test]

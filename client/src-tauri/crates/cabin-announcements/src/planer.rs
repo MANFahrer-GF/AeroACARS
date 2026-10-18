@@ -390,6 +390,11 @@ impl Planer {
         self.gemeldet.contains(&slot)
     }
 
+    /// Ist dieser Slot auf diesem Flug schon ausgelöst (oder übersprungen)?
+    pub fn erledigt(&self, slot: Slot) -> bool {
+        self.schon(slot)
+    }
+
     /// Für die Anzeige „Als Nächstes“: kommt dieser Slot auf diesem Flug
     /// noch (erlaubt und noch nicht ausgelöst oder übersprungen)?
     /// `phase` ist die aktuelle Flugphase: Was nur bis zu einer Phase
@@ -450,7 +455,14 @@ impl Planer {
                 }
                 None
             }
-            Slot::KapitaenSinkflug | Slot::KabineSinkflug => {
+            // Kabine: nach dem Ende der Kapitänsansage (frühestens 2 min);
+            // vorher keine eigene Uhrzeit — die Seite sagt „nach dem Kapitän“
+            // (Thomas AIB437: beide zeigten dieselbe Zeit, die Kabine kam später).
+            Slot::KabineSinkflug => match self.kapitaen_sinkflug {
+                KapitaenSinkflug::Gespielt(k) => Some(k + KABINE_NACH_KAPITAEN_MIN_S),
+                _ => None,
+            },
+            Slot::KapitaenSinkflug => {
                 let aus_tod = self.tod_epoch().map(|t| t - 300);
                 let aus_landung = landung_erwartet.map(|l| l - 25 * 60);
                 match (aus_tod, aus_landung) {
@@ -604,7 +616,11 @@ impl Planer {
         }
 
         // ---- Turbulenz (nur im Reiseflug, nach „Anschnallzeichen aus“) ----
-        if t.phase == Cruise && self.schon(Slot::AnschnallzeichenAus) {
+        // Nicht mehr nach der Sinkflug-Ansage des Kapitäns oder kurz vor der
+        // Landung: Dann schaltet der Pilot das Zeichen für den Sinkflug ein,
+        // das ist keine Turbulenz (Michael BER181: 24 s vor dem Sinkflug).
+        let sinkflug_naht = self.schon(Slot::KapitaenSinkflug) || t.rest_min.is_some_and(|m| m <= 30.0);
+        if t.phase == Cruise && self.schon(Slot::AnschnallzeichenAus) && !sinkflug_naht {
             let an = t.anschnallzeichen == Some(2);
             let war_an = self.letztes_zeichen == Some(2);
             if an && !war_an && !self.turbulenz_aktiv {
