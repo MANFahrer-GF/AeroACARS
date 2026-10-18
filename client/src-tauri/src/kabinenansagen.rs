@@ -712,7 +712,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             // Nur Durchsagen an die Gäste lösen die Pause aus, nicht Crew-
             // Kommandos und Gong (sonst wartete die Begrüßung 90 s auf ein
             // 5-s-Kommando, Pilotendurchlauf beta.6).
-            if slot.wartet_pause() {
+            if slot.loest_pause_aus() {
                 lauf.warteschlange.ansage_spielt_bis(bis);
             } else {
                 lauf.warteschlange.spielt_bis(bis);
@@ -1480,7 +1480,7 @@ fn wiedergabe_ende(lauf: &mut Lauf, id: u64, ergebnis: &str, jetzt: i64) -> bool
             if ergebnis == "stumm" {
                 // Nichts zu hören gewesen: keine Pause.
                 lauf.warteschlange.abbrechen();
-            } else if !g.slot.wartet_pause() {
+            } else if !g.slot.loest_pause_aus() {
                 // Kommando, Gong: frei, eine laufende Pause bleibt.
                 lauf.warteschlange.frei();
             } else {
@@ -3050,6 +3050,30 @@ mod tests {
         assert!(mitte.verlauf.iter().all(|g| g.ergebnis.as_deref() == Some("gespielt")), "nach dem Neustart kein falsches „entfallen“");
         // Bizjet: Die Kurzfassung spricht der Kapitän.
         assert_eq!(biz.gespielt[0].2, Rolle::Kapitaen);
+    }
+
+    /// Codex beta.6: Turbulenz wartet nicht, macht danach aber Pause; ein
+    /// Kommando macht keine.
+    #[test]
+    fn nach_turbulenz_pause_nach_kommando_nicht() {
+        use crate::FlightPhase::*;
+        let mut st = FlightStats::new();
+        st.kabinen_planer = Some(planer_mit(Flugart::Linie, Cruise));
+        st.kabinen_lauf = lauf_mit_ton(&[Slot::Turbulenz, Slot::KommandoLandungVorbereiten]);
+        st.kabinen_lauf.texte.insert((Slot::KommandoLandungVorbereiten, "en-GB".into()), "x".into());
+        st.kabinen_lauf.ton.insert((Slot::KommandoLandungVorbereiten, "en-GB".into()), ton());
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Turbulenz, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        let g = abspielen_schritt(&mut st, 100, Cruise, false).0.expect("Turbulenz");
+        assert!(ende_melden(&mut st, g.id, "gespielt", 105));
+        assert!(st.kabinen_lauf.warteschlange.in_pause(110), "nach der Turbulenz Pause");
+        let mut k = FlightStats::new();
+        k.kabinen_planer = Some(planer_mit(Flugart::Linie, Descent));
+        k.kabinen_lauf = lauf_mit_ton(&[]);
+        k.kabinen_lauf.ton.insert((Slot::KommandoLandungVorbereiten, "en-GB".into()), ton());
+        k.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::KommandoLandungVorbereiten, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        let g = abspielen_schritt(&mut k, 100, Descent, false).0.expect("Kommando");
+        assert!(ende_melden(&mut k, g.id, "gespielt", 105));
+        assert!(!k.kabinen_lauf.warteschlange.in_pause(110), "nach einem Kommando keine Pause");
     }
 
     /// Codex beta.6: „läuft“ erst nach der Startmeldung der Oberfläche; bleibt

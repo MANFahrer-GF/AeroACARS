@@ -263,8 +263,9 @@ async function abarbeiten(): Promise<void> {
     while (schlange.length > 0 && meiner === durchgang) {
       const a = schlange.shift()!;
       setzen({ ansage: a, teil: 0, verlauf: [] });
-      // Erst jetzt „läuft“ sie in „Bisher“ (nicht schon beim Ausgeben in Rust).
-      if (isTauri && !a.vorschau && a.id !== 0) void invoke("kabinen_wiedergabe_start", { id: a.id }).catch(() => undefined);
+      // Erst jetzt „läuft“ sie in „Bisher“ (nicht schon beim Ausgeben in Rust);
+      // abwarten, damit Rust es vor dem ersten Ton weiß (Codex beta.6).
+      if (isTauri && !a.vorschau && a.id !== 0) await invoke("kabinen_wiedergabe_start", { id: a.id }).catch(() => undefined);
       let fehlgeschlagen = false;
       if (a.rolle === "chime") {
         try {

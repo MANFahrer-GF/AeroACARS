@@ -157,6 +157,13 @@ impl Slot {
             && !matches!(self, Slot::Turbulenz | Slot::Durchstarten)
     }
 
+    /// Löst diese Ansage danach die Pause aus? Jede Durchsage an die Gäste,
+    /// auch die dringenden (Turbulenz, Durchstarten), die selbst nicht warten;
+    /// Kommandos und Gong nicht (Codex beta.6).
+    pub fn loest_pause_aus(self) -> bool {
+        !matches!(self.rolle(), Rolle::Kommando | Rolle::Chime)
+    }
+
     /// Vorrang in der Warteschlange: kleiner = früher.
     pub fn vorrang(self) -> u8 {
         match self.rolle() {
@@ -219,6 +226,14 @@ mod tests {
         assert_eq!(Slot::Sicherheit.rolle(), Rolle::Kabine);
         assert!(!Slot::Sicherheit.kommt_aus_drehbuch());
         assert!(Slot::KapitaenBegruessung.kommt_aus_drehbuch());
+    }
+
+    #[test]
+    fn pause_nur_nach_durchsagen_an_die_gaeste() {
+        assert!(Slot::Turbulenz.loest_pause_aus() && !Slot::Turbulenz.wartet_pause(), "dringend: wartet nicht, macht aber Pause danach");
+        assert!(Slot::Durchstarten.loest_pause_aus());
+        assert!(!Slot::KommandoStart.loest_pause_aus() && !Slot::Chime10000Sinkflug.loest_pause_aus());
+        assert!(Slot::Reiseflug50.loest_pause_aus() && Slot::Reiseflug50.wartet_pause());
     }
 
     #[test]

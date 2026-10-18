@@ -19,6 +19,12 @@ vi.mock("./ipc", () => ({
       if (args?.datei === "langsam.wav") await new Promise((r) => setTimeout(r, 40));
       return [0.2, 0.4];
     }
+    if (cmd === "kabinen_wiedergabe_start") {
+      // Rust antwortet verzögert: Der Ton darf erst danach beginnen.
+      await new Promise((r) => setTimeout(r, 30));
+      aufrufe.push({ cmd: "start_bestaetigt" });
+      return undefined;
+    }
     if (cmd === "kabinen_ton_stoppen") {
       stoppZaehler += 1;
       return undefined;
@@ -98,10 +104,11 @@ describe("Kabinen-Wiedergabe", () => {
     abspielen(ansage("start.wav", "kabine", 7));
     await warten(1500);
     const start = aufrufe.findIndex((a) => a.cmd === "kabinen_wiedergabe_start");
+    const bestaetigt = aufrufe.findIndex((a) => a.cmd === "start_bestaetigt");
     const spiel = aufrufe.findIndex((a) => a.cmd === "kabinen_ton_spielen");
     expect(start).toBeGreaterThanOrEqual(0);
     expect(aufrufe[start].args).toEqual({ id: 7 });
-    expect(start).toBeLessThan(spiel);
+    expect(bestaetigt).toBeLessThan(spiel);
     aufrufe.length = 0;
     abspielen(ansage("probe.wav"));
     await warten(1500);
