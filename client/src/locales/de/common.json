@@ -219,7 +219,7 @@
       "bizjet": "Geschäftsreise, nur der Kapitän spricht",
       "flugzeit": "{{h}} h {{m}} min",
       "flugzeit_unbekannt": "Flugzeit unbekannt, deshalb keine Reiseflug-Ansagen",
-      "kurzstrecke": "Kurzstrecke, keine Reiseflug-Ansagen",
+      "kurzstrecke": "Kurzstrecke, nur die Service-Ansage im Reiseflug",
       "und": " und ",
       "ohne_stimme": "{{sprache}} entfällt (keine Stimme)"
     },

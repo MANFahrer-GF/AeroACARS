@@ -219,7 +219,7 @@
       "bizjet": "Jet d'affari, parla solo il comandante",
       "flugzeit": "{{h}} h {{m}} min",
       "flugzeit_unbekannt": "durata del volo sconosciuta, quindi niente annunci in crociera",
-      "kurzstrecke": "volo breve, niente annunci in crociera",
+      "kurzstrecke": "volo breve, solo l'annuncio del servizio in crociera",
       "und": " e ",
       "ohne_stimme": "{{sprache}} omesso (nessuna voce)"
     },

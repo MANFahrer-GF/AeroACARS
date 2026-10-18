@@ -219,7 +219,7 @@
       "bizjet": "Business jet, only the captain speaks",
       "flugzeit": "{{h}} h {{m}} min",
       "flugzeit_unbekannt": "flight time unknown, so no cruise announcements",
-      "kurzstrecke": "short flight, no cruise announcements",
+      "kurzstrecke": "short flight, only the service announcement in cruise",
       "und": " and ",
       "ohne_stimme": "{{sprache}} skipped (no voice)"
     },
