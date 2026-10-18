@@ -31,6 +31,7 @@ export type Tab =
   | "bordbuch"
   | "telemetrie"
   | "notizblock"
+  | "kabine"
   | "news"
   | "log"
   | "settings"
@@ -53,6 +54,11 @@ export function getInitialCollapsed(): boolean {
    vorgelesen. Strichstärke 1.6, currentColor. */
 
 const I = {
+  kabine: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1z" /><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11" />
+    </svg>
+  ),
   notizblock: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" /><path d="M14 8l3 3" />
@@ -197,6 +203,7 @@ export function Sidebar({
   chatAn,
   chatUngelesen,
   onChatOpen,
+  kabineAn,
   unreadNews,
   hasActiveFlight,
   phpvmsConnected,
@@ -216,6 +223,8 @@ export function Sidebar({
   chatAn: boolean;
   chatUngelesen: number;
   onChatOpen: () => void;
+  /** Kabinenansagen (Beta) eingeschaltet: Reiter „Kabine“ zeigen. */
+  kabineAn?: boolean;
   unreadNews: number;
   hasActiveFlight: boolean;
   phpvmsConnected: boolean;
@@ -277,6 +286,11 @@ export function Sidebar({
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
         <Item icon={I.bordbuch} label={t("tabs.bordbuch")} active={tab === "bordbuch"} onClick={() => setTab("bordbuch")} />
+        {/* Kabinenansagen (Beta): nur auf dem Sim-PC und nur eingeschaltet —
+            dort spielt der Ton. */}
+        {isTauri && kabineAn && (
+          <Item icon={I.kabine} label={t("tabs.kabine")} active={tab === "kabine"} onClick={() => setTab("kabine")} />
+        )}
         {/* v1.8.1: Notizblock fuer den Apple Pencil — nur in der Tablet-
             Ansicht (LAN-Fernbedienung), dort sitzt der Stift. */}
         {!isTauri && (

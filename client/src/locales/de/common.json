@@ -1,9 +1,273 @@
 {
+  "kabine": {
+    "einstellungen": {
+      "titel": "Kabinenansagen (Beta)",
+      "an_label": "Kabinenansagen einschalten",
+      "an_hint": "KI-Ansagen von Kapitän und Kabine im Stil der Airline. Nur für freigeschaltete Beta-Piloten; die Texte schreibt der GSG-Server.",
+      "beta_ja": "Freigeschaltet.",
+      "beta_nein": "Für dein Konto noch nicht freigeschaltet.",
+      "beta_unbekannt": "Freischaltung wird beim Flugstart geprüft.",
+      "zweite_sprache": "Sprachen",
+      "sprache_airline": "Airline-Sprache + Englisch",
+      "sprache_airline_de": "Airline-Sprache + Deutsch",
+      "sprache_hint": "Spricht die Airline schon Deutsch oder Englisch, kommt die jeweils andere dazu.",
+      "stimmen_hint": "Die Stimmen wählt der GSG-Server passend zur Sprache, kostenlos und ohne Download: Englisch spricht Kokoro, alle anderen Sprachen Piper. Die Tagesform der Crew würfelt der Server je Flug.",
+      "echter_name": "Meinen Namen als Kapitän nennen",
+      "echter_name_hint": "Dein Name geht dann an den GSG-Server und an die KI. Sonst erfindet sie einen Namen.",
+      "kommandos": "Crew-Kommandos abspielen",
+      "doppelt_hint": "Ausschalten, wenn dein Flugzeug eigene Ansagen oder Gongs hat (etwa FlyByWire). Nie zwei Systeme gleichzeitig.",
+      "chimes": "Gong bei 10.000 Fuß",
+      "lautstaerke": "Lautstärke",
+      "probe": "Hörprobe",
+      "lizenzen": "Lizenzen",
+      "lizenz_text": "Die Stimmen erzeugt der GSG-Server mit Piper (GPL-3.0) und Kokoro-82M (Apache-2.0). Beides läuft nur dort und wird nicht auf deinen Rechner geladen. Die Stimmen stammen aus freien Datensätzen (unter anderem CC0, CC BY und CC BY-SA); die vollständige Liste führt das GSG-Team.",
+      "ausgabe": "Ausgabegerät",
+      "ausgabe_standard": "Systemstandard",
+      "ausgabe_fehlt": "Gewähltes Gerät nicht angeschlossen (spielt auf dem Systemstandard)",
+      "ausgabe_hint": "Zum Beispiel ATC im Headset und die Kabine über die Lautsprecher. Ist das Gerät abgezogen, spielt der Systemstandard.",
+      "beta_kontingent": "Freigeschaltet, aber das Monatskontingent ist erschöpft: Schon geschriebene Ansagen kommen weiter, neue nicht.",
+      "speicher": "Tondateien",
+      "speicher_text": "{{mb}} MB auf diesem Rechner. Die Töne liegen nur für den laufenden Flug vor und werden beim nächsten Flug gelöscht."
+    },
+    "rolle": {
+      "kapitaen": "Kapitän",
+      "kabine": "Kabine",
+      "kommando": "Crew-Kommando",
+      "chime": "Gong"
+    },
+    "spricht": {
+      "kapitaen": "Der Kapitän spricht",
+      "kabine": "Die Kabine spricht",
+      "kommando": "Crew-Kommando",
+      "chime": "Gong"
+    },
+    "slot": {
+      "boarding": "Boarding",
+      "begruessung_tueren_zu": "Begrüßung, Türen zu",
+      "kommando_tueren_scharf": "Türen scharf",
+      "sicherheit": "Sicherheitshinweise",
+      "kapitaen_begruessung": "Begrüßung des Kapitäns",
+      "kommando_start": "Plätze für den Start",
+      "chime10000_steigflug": "Gong, 10.000 Fuß im Steigflug",
+      "anschnallzeichen_aus": "Anschnallzeichen aus",
+      "reiseflug25": "Service beginnt",
+      "reiseflug50": "Halbzeit",
+      "reiseflug80": "Zweiter Service",
+      "kapitaen_sinkflug": "Sinkflug, Kapitän",
+      "kabine_sinkflug": "Landevorbereitung, Kabine",
+      "chime10000_sinkflug": "Gong, 10.000 Fuß im Sinkflug",
+      "kommando_landung_vorbereiten": "Kabine für die Landung vorbereiten",
+      "kommando_plaetze_landung": "Plätze für die Landung",
+      "nach_der_landung": "Nach der Landung",
+      "kommando_tueren_entschaerfen": "Türen entschärfen",
+      "aussteigen": "Aussteigen",
+      "verspaetung_gate": "Verspätung am Gate",
+      "turbulenz": "Turbulenzen",
+      "turbulenz_vorbei": "Turbulenzen vorbei",
+      "warteschleife": "Warteschleife",
+      "durchstarten": "Durchgestartet",
+      "umleitung": "Umleitung"
+    },
+    "seite": {
+      "titel": "Kabine",
+      "kein_flug": "Kein laufender Flug.",
+      "nicht_freigeschaltet": "Für dein Konto noch nicht freigeschaltet.",
+      "warte_auf_texte": "Die Texte für diesen Flug werden geschrieben.",
+      "ausschalten": "Ansagen ausschalten",
+      "einstellungen": "Einstellungen öffnen",
+      "ruhig": "Gerade keine Ansage",
+      "ruhe_hinweis": "Die nächste Ansage kommt zur passenden Flugphase.",
+      "als_naechstes": "Als Nächstes",
+      "nichts_wartet": "Nichts in der Warteschlange.",
+      "bisher": "Bisher",
+      "noch_nichts": "Noch keine Ansage auf diesem Flug.",
+      "keine_ansagen": "Gerade keine Ansagen, der Grund steht unten.",
+      "naechste_wann": "Als Nächstes: {{slot}}, {{wann}}.",
+      "vorhoeren": "Anhören",
+      "anhoeren_stoppen": "Anhören beenden",
+      "gong_text": "Doppelgong (kein Text).",
+      "noch_kein_text": "Noch kein Text.",
+      "keine_stimme": "keine Stimme, entfällt",
+      "anhoeren": "Anhören",
+      "erneut": "Erneut versuchen",
+      "nochmal": "Nochmal anhören",
+      "stumm_hinweis": "Stumm. Fällige Ansagen werden übersprungen und nicht nachgeholt. Nach einem Neustart von AeroACARS ist der Ton wieder an."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Ansagen ausgeschaltet",
+        "text": "Die Kabinenansagen sind in den Einstellungen ausgeschaltet."
+      },
+      "replay": {
+        "titel": "Kein echter Flug",
+        "text": "AeroACARS hält diesen Flug für eine Wiedergabe. Ansagen gibt es nur im echten Flug."
+      },
+      "fracht": {
+        "titel": "Frachtflug",
+        "text": "Laut Flugplan ist das ein Flug ohne Passagiere (Fracht, Überführung o. ä.). Dafür gibt es keine Kabinenansagen."
+      },
+      "keine_pax": {
+        "titel": "Keine Passagierzahl",
+        "text": "Für diesen Flug kennt AeroACARS keine Passagierzahl: Es gibt keinen SimBrief-OFP und keine Passagier-Fares im Bid. Am Boden hilft „OFP refreshen“ im aktiven Flug. Wurde der Flug mit einer älteren Version begonnen, holt AeroACARS die Zahl beim nächsten Neustart nach."
+      },
+      "keine_passagiere": {
+        "titel": "Keine Passagiere an Bord",
+        "text": "Der Flugplan nennt 0 Passagiere. Ohne Passagiere gibt es keine Kabinenansagen."
+      },
+      "beta_pruefung": {
+        "titel": "Freischaltung wird geprüft",
+        "text": "AeroACARS fragt den GSG-Server, ob dein Konto für die Beta freigeschaltet ist."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Nicht freigeschaltet",
+        "text": "Dein Konto ist für die Kabinenansagen-Beta nicht freigeschaltet. Die Freischaltung macht das GSG-Team."
+      },
+      "wiedergabe": {
+        "titel": "Ton nicht abspielbar",
+        "text": "Die Ansage war fertig, ließ sich aber nicht abspielen. Ist das gewählte Ausgabegerät belegt oder abgezogen? In den Einstellungen lässt sich ein anderes Gerät oder der Systemstandard wählen. Meldung:"
+      },
+      "beta_nicht_erreichbar": {
+        "titel": "Server nicht erreichbar",
+        "text": "Der GSG-Server antwortet nicht, deshalb ist die Freischaltung noch offen. Nächster Versuch um {{zeit}}."
+      },
+      "kontingent": {
+        "titel": "Monatskontingent erschöpft",
+        "text": "Dein Konto ist freigeschaltet, das Monatskontingent für neue Texte ist aber aufgebraucht. Schon geschriebene Ansagen kommen weiter, neue nicht."
+      },
+      "sim_angehalten": {
+        "titel": "Simulator angehalten",
+        "text": "Der Simulator ist pausiert oder im Slew-Modus. Solange laufen keine Ansagen, sie kommen danach."
+      }
+    },
+    "wann": {
+      "boarding": "beim Boarding",
+      "begruessung_tueren_zu": "beim Pushback",
+      "sicherheit": "beim Pushback",
+      "kapitaen_begruessung": "beim Rollen zur Bahn",
+      "anschnallzeichen_aus": "im Steigflug, wenn das Anschnallzeichen erlischt",
+      "reiseflug25": "nach einem Viertel des Reiseflugs",
+      "reiseflug50": "zur Halbzeit des Reiseflugs",
+      "reiseflug80": "gegen Ende des Reiseflugs",
+      "kapitaen_sinkflug": "kurz vor dem Sinkflug",
+      "kabine_sinkflug": "kurz vor dem Sinkflug",
+      "nach_der_landung": "beim Rollen nach der Landung",
+      "aussteigen": "an der Parkposition",
+      "kommando_tueren_scharf": "beim Pushback",
+      "kommando_start": "beim Startlauf",
+      "chime10000_steigflug": "beim Steigen durch 10.000 Fuß",
+      "chime10000_sinkflug": "beim Sinken durch 10.000 Fuß",
+      "kommando_landung_vorbereiten": "im Anflug",
+      "kommando_plaetze_landung": "im Endanflug",
+      "kommando_tueren_entschaerfen": "an der Parkposition",
+      "verspaetung_gate": "sobald es passiert",
+      "turbulenz": "sobald es passiert",
+      "turbulenz_vorbei": "sobald es passiert",
+      "warteschleife": "sobald es passiert",
+      "durchstarten": "sobald es passiert",
+      "umleitung": "sobald es passiert"
+    },
+    "stand": {
+      "text_ab": "Text ab ca. {{zeit}}",
+      "text_ab_ohne": "Text kurz vor der Landung",
+      "text_ab_abheben": "Text nach dem Abheben",
+      "text_wird_geschrieben": "Text wird geschrieben",
+      "text_fehler": "Text fehlt ({{grund}}), neuer Versuch {{zeit}}",
+      "text_aufgegeben": "Text nicht erhalten ({{grund}})",
+      "ton_wird_erzeugt": "Ton wird erzeugt ({{fertig}} von {{von}})",
+      "ton_wartet": "Ton wartet ({{grund}}), neuer Versuch {{zeit}}",
+      "ton_aufgegeben": "Ton abgelehnt ({{grund}})",
+      "bereit": "Text und Ton fertig",
+      "bereit_gong": "Gong fertig"
+    },
+    "fehler": {
+      "ausgelastet": "Server ausgelastet",
+      "kontingent": "Kontingent erschöpft",
+      "zugang": "kein Zugang",
+      "zeit": "Zeitüberschreitung",
+      "offline": "keine Verbindung",
+      "sonst": "Serverfehler"
+    },
+    "ablauf": {
+      "texte": "Texte",
+      "ton": "Ton",
+      "naechste": "Nächste Ansage",
+      "abflug": "Abflug",
+      "ankunft": "Ankunft",
+      "ton_stand": "{{fertig}} von {{gesamt}} fertig",
+      "keine": "keine mehr",
+      "freigabe": {
+        "titel": "Freigabe",
+        "ja": "freigeschaltet",
+        "nein": "nicht freigeschaltet",
+        "pruefung": "wird geprüft",
+        "kontingent": "freigeschaltet, Monatskontingent erschöpft",
+        "nicht_erreichbar": "Server nicht erreichbar, nächster Versuch {{zeit}}"
+      },
+      "teil": {
+        "entfaellt": "entfällt",
+        "offen": "folgt",
+        "offen_um": "ab ca. {{zeit}}",
+        "laeuft": "werden geschrieben",
+        "fertig": "fertig",
+        "fehler": "Fehler, neuer Versuch {{zeit}}",
+        "aufgegeben": "nicht erhalten"
+      },
+      "stumm": "stumm, wird übersprungen"
+    },
+    "profil": {
+      "linie": "Linienflug mit Kabinenbesatzung",
+      "bizjet": "Geschäftsreise, nur der Kapitän spricht",
+      "flugzeit": "{{h}} h {{m}} min",
+      "flugzeit_unbekannt": "Flugzeit unbekannt, deshalb keine Reiseflug-Ansagen",
+      "kurzstrecke": "Kurzstrecke, nur die Service-Ansage im Reiseflug",
+      "und": " und ",
+      "ohne_stimme": "{{sprache}} entfällt (keine Stimme)"
+    },
+    "zeit": {
+      "jetzt": "jetzt",
+      "ca": "ca. {{zeit}}",
+      "spielt": "Spielt {{wann}}"
+    },
+    "wartet": {
+      "andere_ansage": "fällig, wartet auf die laufende Ansage",
+      "pause": "fällig, kurze Pause nach der letzten Ansage",
+      "ruhephase": "fällig, wartet auf das Ende der Ruhephase",
+      "ton": "fällig, wartet auf den Ton",
+      "sim_angehalten": "fällig, Simulator angehalten"
+    },
+    "ergebnis": {
+      "abgebrochen": "abgebrochen",
+      "fehler": "nicht abspielbar",
+      "unbekannt": "Ausgang unbekannt",
+      "stumm": "stumm übersprungen",
+      "laeuft": "läuft",
+      "startet": "wird gestartet",
+      "entfallen_weil": "entfallen: {{grund}}"
+    },
+    "ton": {
+      "titel": "Ton",
+      "an": "Ton an",
+      "stumm": "Stumm",
+      "lautstaerke": "Lautstärke der Ansagen",
+      "stumm_titel": "Stummschalten: Die laufende Ansage bricht ab, was bis zum Aufheben fällig wird, entfällt.",
+      "aufheben_titel": "Ton wieder an: Die nächste Ansage kommt zu ihrem Zeitpunkt."
+    },
+    "entfall": {
+      "zu_wenig_zeit": "zu wenig Zeit bis zum Sinkflug",
+      "uebersprungen": "Reiseflug zu spät erkannt, spätere Ansage kam zuerst",
+      "ton_nicht_fertig": "Ton nicht rechtzeitig fertig",
+      "zu_spaet": "zu spät dran (Ruhephase oder andere Ansage)",
+      "keine_stimme": "keine Stimme für diese Sprachen",
+      "kein_kurztext": "GSG-Server liefert noch keine Kurzfassung des Kapitäns",
+      "sonst": "nicht mehr möglich"
+    }
+  },
   "app": {
     "name": "AeroACARS",
     "tagline": "ACARS für phpVMS 7"
   },
   "tabs": {
+    "kabine": "Kabine",
     "cockpit": "Cockpit",
     "map": "Karte",
     "briefing": "Briefing",
@@ -1536,9 +1800,11 @@
       "tech": "🛠 Technik",
       "simulator_hint": "Welcher Flugsim ist installiert? AeroACARS verbindet sich mit dem gewählten Sim für Live-Daten, Touchdown-Forensik und Loadsheet-Vergleich.",
       "required_hint": "SimBrief-Konto + Flug-Aufzeichnungs-Verhalten — Basis für Flugplan-Daten und automatisches Tracking.",
-      "extras_hint": "Optionale Komfort-Einstellungen — Darstellung, Verhalten, Discord-Status.",
+      "extras_hint": "Optionale Komfort-Einstellungen: Sprache und Darstellung, Verhalten, Pilotenchat, Discord-Status.",
+      "cockpit": "🎧 Cockpit",
+      "cockpit_hint": "Was im Flug mitspielt: PDC/CPDLC über Hoppie, Kabinenansagen, die HUDs im Simulator und das Tablet als Fernbedienung.",
       "plugins_hint": "Flugzeug-spezifische Add-ons: PMDG-SDK (Boeing) und AeroACARS-X-Plane-Plugin. Werden automatisch erkannt sobald das passende Flugzeug geladen ist.",
-      "tech_hint": "Diagnose, Debug-Werkzeuge und seltene Maintenance-Funktionen.",
+      "tech_hint": "Speicher und Flug-Logs, anonyme Fehler-Telemetrie, Diagnose, Debug-Werkzeuge und seltene Wartungsfunktionen.",
       "bordbuch": "📓 Bordbuch",
       "bordbuch_hint": "Was das Bordbuch abhakt, leise Hinweise im Flug, Kleinflugzeuge und VFR.",
       "vermessen": "📐 Flugzeug vermessen",
@@ -1765,6 +2031,9 @@
     "about_all_releases": "Alle Releases auf GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Umleitung melden",
+    "umleitung_modal_hint": "Wähle einen der nächstgelegenen Flughäfen oder gib den ICAO-Code des neuen Ziels ein.",
+    "umleitung_modal_submit": "Umleitung melden",
     "title_alternate": "Divert zum geplanten Alternate erkannt",
     "title_nearest": "Anderer Landeplatz erkannt",
     "title_unknown": "Landeplatz nicht erkannt",
@@ -2158,6 +2427,13 @@
     "langsamer": "Die Simulation läuft seit über 2 Minuten langsamer als in Echtzeit. Das kann Flugzeit, Verbrauch und Auswertung verfälschen — bitte zurück auf 1×."
   },
   "active_flight": {
+    "umleitung": "Umleitung",
+    "umleitung_busy": "Melde…",
+    "umleitung_hint": "Neues Ziel melden, wenn du umleitest. Die Kabine sagt die Umleitung an. Den Flugbericht gibst du wie gewohnt nach der Landung ab.",
+    "umleitung_gemeldet": "Umleitung nach {{icao}} gemeldet.",
+    "umleitung_zurueckgenommen": "Umleitung zurückgenommen.",
+    "umleitung_zuruecknehmen": "Umleitung zurücknehmen",
+    "umleitung_anzeige": "Umleitung: {{geplant}} → {{ziel}}",
     "title": "Aktiver Flug",
     "phase": {
       "preflight": "Preflight",

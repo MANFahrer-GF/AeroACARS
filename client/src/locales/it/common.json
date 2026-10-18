@@ -1,9 +1,273 @@
 {
+  "kabine": {
+    "einstellungen": {
+      "titel": "Annunci di cabina (beta)",
+      "an_label": "Attiva gli annunci di cabina",
+      "an_hint": "Annunci IA del comandante e dell'equipaggio nello stile della compagnia. Solo per i piloti beta; i testi li scrive il server GSG.",
+      "beta_ja": "Abilitato per il tuo account.",
+      "beta_nein": "Non ancora abilitato per il tuo account.",
+      "beta_unbekannt": "L'abilitazione viene verificata all'inizio del volo.",
+      "zweite_sprache": "Lingue",
+      "sprache_airline": "Lingua della compagnia + inglese",
+      "sprache_airline_de": "Lingua della compagnia + tedesco",
+      "sprache_hint": "Se la compagnia parla già tedesco o inglese, si aggiunge l'altra.",
+      "stimmen_hint": "Le voci le sceglie il server GSG in base alla lingua, gratis e senza download: l'inglese lo parla Kokoro, tutte le altre lingue Piper. L'umore dell'equipaggio lo estrae il server a ogni volo.",
+      "echter_name": "Usa il mio nome come comandante",
+      "echter_name_hint": "Il tuo nome va allora al server GSG e all'IA. Altrimenti ne inventa uno.",
+      "kommandos": "Riproduci i comandi all'equipaggio",
+      "doppelt_hint": "Disattiva se il tuo aereo ha annunci o segnali propri (ad esempio FlyByWire). Mai due sistemi insieme.",
+      "chimes": "Segnale a 10.000 piedi",
+      "lautstaerke": "Volume",
+      "probe": "Ascolta una prova",
+      "lizenzen": "Licenze",
+      "lizenz_text": "Le voci sono generate dal server GSG con Piper (GPL-3.0) e Kokoro-82M (Apache-2.0). Entrambi girano solo lì e non vengono scaricati sul tuo computer. Le voci provengono da dataset liberi (tra cui CC0, CC BY e CC BY-SA); l'elenco completo è tenuto dal team GSG.",
+      "ausgabe": "Dispositivo di uscita",
+      "ausgabe_standard": "Predefinito di sistema",
+      "ausgabe_fehlt": "Dispositivo scelto non collegato (suona sul predefinito di sistema)",
+      "ausgabe_hint": "Ad esempio ATC nelle cuffie e la cabina sugli altoparlanti. Se il dispositivo è scollegato, suona il predefinito di sistema.",
+      "beta_kontingent": "Abilitato, ma la quota mensile è esaurita: gli annunci già scritti continuano, quelli nuovi no.",
+      "speicher": "File audio",
+      "speicher_text": "{{mb}} MB su questo computer. L'audio resta solo per il volo in corso e viene cancellato all'inizio del volo successivo."
+    },
+    "rolle": {
+      "kapitaen": "Comandante",
+      "kabine": "Cabina",
+      "kommando": "Comando all'equipaggio",
+      "chime": "Segnale"
+    },
+    "spricht": {
+      "kapitaen": "Parla il comandante",
+      "kabine": "Parla l'equipaggio",
+      "kommando": "Comando all'equipaggio",
+      "chime": "Segnale"
+    },
+    "slot": {
+      "boarding": "Imbarco",
+      "begruessung_tueren_zu": "Benvenuto, porte chiuse",
+      "kommando_tueren_scharf": "Porte in automatico",
+      "sicherheit": "Istruzioni di sicurezza",
+      "kapitaen_begruessung": "Benvenuto del comandante",
+      "kommando_start": "Ai posti per il decollo",
+      "chime10000_steigflug": "Segnale, 10.000 piedi in salita",
+      "anschnallzeichen_aus": "Segnale cinture spento",
+      "reiseflug25": "Inizio del servizio",
+      "reiseflug80": "Secondo servizio",
+      "reiseflug50": "Metà volo",
+      "kapitaen_sinkflug": "Discesa, comandante",
+      "kabine_sinkflug": "Preparazione all'atterraggio, cabina",
+      "chime10000_sinkflug": "Segnale, 10.000 piedi in discesa",
+      "kommando_landung_vorbereiten": "Preparare la cabina per l'atterraggio",
+      "kommando_plaetze_landung": "Ai posti per l'atterraggio",
+      "nach_der_landung": "Dopo l'atterraggio",
+      "kommando_tueren_entschaerfen": "Porte in manuale",
+      "aussteigen": "Sbarco",
+      "verspaetung_gate": "Ritardo al gate",
+      "turbulenz": "Turbolenza",
+      "turbulenz_vorbei": "Turbolenza terminata",
+      "warteschleife": "Attesa",
+      "durchstarten": "Riattaccata",
+      "umleitung": "Dirottamento"
+    },
+    "seite": {
+      "titel": "Cabina",
+      "kein_flug": "Nessun volo in corso.",
+      "nicht_freigeschaltet": "Non ancora abilitato per il tuo account.",
+      "warte_auf_texte": "I testi per questo volo sono in preparazione.",
+      "ausschalten": "Disattiva gli annunci",
+      "einstellungen": "Apri le impostazioni",
+      "ruhig": "Nessun annuncio in questo momento",
+      "ruhe_hinweis": "Il prossimo annuncio arriva con la fase di volo adatta.",
+      "als_naechstes": "Prossimi",
+      "nichts_wartet": "Nulla in coda.",
+      "bisher": "Finora",
+      "noch_nichts": "Ancora nessun annuncio su questo volo.",
+      "keine_ansagen": "Nessun annuncio al momento, il motivo è indicato sotto.",
+      "naechste_wann": "Prossimo: {{slot}}, {{wann}}.",
+      "vorhoeren": "Ascolto",
+      "anhoeren_stoppen": "Ferma l'ascolto",
+      "gong_text": "Doppio gong (senza testo).",
+      "noch_kein_text": "Ancora nessun testo.",
+      "keine_stimme": "nessuna voce, omesso",
+      "anhoeren": "Ascolta",
+      "erneut": "Riprova",
+      "nochmal": "Riascolta",
+      "stumm_hinweis": "Muto. Gli annunci in scadenza vengono saltati e non recuperati. Dopo il riavvio di AeroACARS l'audio è di nuovo attivo."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Annunci disattivati",
+        "text": "Gli annunci di cabina sono disattivati nelle impostazioni."
+      },
+      "replay": {
+        "titel": "Non è un volo reale",
+        "text": "AeroACARS ritiene che questo volo sia una riproduzione. Gli annunci vengono riprodotti solo in un volo reale."
+      },
+      "fracht": {
+        "titel": "Volo cargo",
+        "text": "Secondo il piano di volo questo volo non trasporta passeggeri (cargo, trasferimento o simile). Non ci sono annunci di cabina."
+      },
+      "keine_pax": {
+        "titel": "Nessun numero di passeggeri",
+        "text": "AeroACARS non conosce il numero di passeggeri di questo volo: non c'è un OFP SimBrief né tariffe passeggeri nel bid. A terra aiuta \"Aggiorna OFP\" nel volo attivo. Se il volo è stato iniziato con una versione precedente, AeroACARS recupera il numero al prossimo riavvio."
+      },
+      "keine_passagiere": {
+        "titel": "Nessun passeggero a bordo",
+        "text": "Il piano di volo indica 0 passeggeri. Senza passeggeri non ci sono annunci di cabina."
+      },
+      "beta_pruefung": {
+        "titel": "Verifica dell'accesso",
+        "text": "AeroACARS chiede al server GSG se il tuo account è abilitato alla beta."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Non abilitato",
+        "text": "Il tuo account non è abilitato alla beta degli annunci di cabina. L'abilitazione la fa il team GSG."
+      },
+      "wiedergabe": {
+        "titel": "Audio non riproducibile",
+        "text": "L'annuncio era pronto ma non è stato possibile riprodurlo. Il dispositivo di uscita scelto è occupato o scollegato? Nelle impostazioni puoi scegliere un altro dispositivo o il predefinito di sistema. Messaggio:"
+      },
+      "beta_nicht_erreichbar": {
+        "titel": "Server non raggiungibile",
+        "text": "Il server GSG non risponde, quindi l'accesso è ancora da verificare. Nuovo tentativo alle {{zeit}}."
+      },
+      "kontingent": {
+        "titel": "Quota mensile esaurita",
+        "text": "Il tuo account è abilitato, ma la quota mensile per nuovi testi è esaurita. Gli annunci già scritti continuano, quelli nuovi no."
+      },
+      "sim_angehalten": {
+        "titel": "Simulatore in pausa",
+        "text": "Il simulatore è in pausa o in modalità slew. Fino ad allora non partono annunci."
+      }
+    },
+    "wann": {
+      "boarding": "durante l'imbarco",
+      "begruessung_tueren_zu": "al pushback",
+      "sicherheit": "al pushback",
+      "kapitaen_begruessung": "durante il rullaggio verso la pista",
+      "anschnallzeichen_aus": "in salita, quando si spegne il segnale cinture",
+      "reiseflug25": "a un quarto della crociera",
+      "reiseflug50": "a metà della crociera",
+      "reiseflug80": "verso la fine della crociera",
+      "kapitaen_sinkflug": "poco prima della discesa",
+      "kabine_sinkflug": "poco prima della discesa",
+      "nach_der_landung": "durante il rullaggio dopo l'atterraggio",
+      "aussteigen": "al parcheggio",
+      "kommando_tueren_scharf": "al pushback",
+      "kommando_start": "alla corsa di decollo",
+      "chime10000_steigflug": "salendo a 10.000 piedi",
+      "chime10000_sinkflug": "scendendo a 10.000 piedi",
+      "kommando_landung_vorbereiten": "in avvicinamento",
+      "kommando_plaetze_landung": "in finale",
+      "kommando_tueren_entschaerfen": "al parcheggio",
+      "verspaetung_gate": "quando succede",
+      "turbulenz": "quando succede",
+      "turbulenz_vorbei": "quando succede",
+      "warteschleife": "quando succede",
+      "durchstarten": "quando succede",
+      "umleitung": "quando succede"
+    },
+    "stand": {
+      "text_ab": "Testo dalle {{zeit}} circa",
+      "text_ab_ohne": "Testo poco prima dell'atterraggio",
+      "text_ab_abheben": "Testo dopo il decollo",
+      "text_wird_geschrieben": "Testo in scrittura",
+      "text_fehler": "Testo mancante ({{grund}}), nuovo tentativo {{zeit}}",
+      "text_aufgegeben": "Testo non ricevuto ({{grund}})",
+      "ton_wird_erzeugt": "Audio in preparazione ({{fertig}} di {{von}})",
+      "ton_wartet": "Audio in attesa ({{grund}}), nuovo tentativo {{zeit}}",
+      "ton_aufgegeben": "Audio rifiutato ({{grund}})",
+      "bereit": "Testo e audio pronti",
+      "bereit_gong": "Gong pronto"
+    },
+    "fehler": {
+      "ausgelastet": "server occupato",
+      "kontingent": "quota esaurita",
+      "zugang": "nessun accesso",
+      "zeit": "tempo scaduto",
+      "offline": "nessuna connessione",
+      "sonst": "errore del server"
+    },
+    "ablauf": {
+      "texte": "Testi",
+      "ton": "Audio",
+      "naechste": "Prossimo annuncio",
+      "abflug": "Partenza",
+      "ankunft": "Arrivo",
+      "ton_stand": "{{fertig}} di {{gesamt}} pronti",
+      "keine": "nessuno",
+      "freigabe": {
+        "titel": "Accesso",
+        "ja": "abilitato",
+        "nein": "non abilitato",
+        "pruefung": "in verifica",
+        "kontingent": "abilitato, quota mensile esaurita",
+        "nicht_erreichbar": "server non raggiungibile, nuovo tentativo {{zeit}}"
+      },
+      "teil": {
+        "entfaellt": "non previsto",
+        "offen": "in seguito",
+        "offen_um": "dalle {{zeit}} circa",
+        "laeuft": "in scrittura",
+        "fertig": "pronti",
+        "fehler": "errore, nuovo tentativo {{zeit}}",
+        "aufgegeben": "non ricevuti"
+      },
+      "stumm": "muto, verrà saltato"
+    },
+    "profil": {
+      "linie": "Volo di linea con equipaggio di cabina",
+      "bizjet": "Jet d'affari, parla solo il comandante",
+      "flugzeit": "{{h}} h {{m}} min",
+      "flugzeit_unbekannt": "durata del volo sconosciuta, quindi niente annunci in crociera",
+      "kurzstrecke": "volo breve, solo l'annuncio del servizio in crociera",
+      "und": " e ",
+      "ohne_stimme": "{{sprache}} omesso (nessuna voce)"
+    },
+    "zeit": {
+      "jetzt": "ora",
+      "ca": "verso le {{zeit}}",
+      "spielt": "In onda {{wann}}"
+    },
+    "wartet": {
+      "andere_ansage": "previsto, attende l'annuncio in corso",
+      "pause": "previsto, breve pausa dopo l'ultimo annuncio",
+      "ruhephase": "previsto, attende la fine della fase sterile",
+      "ton": "previsto, attende l'audio",
+      "sim_angehalten": "previsto, simulatore in pausa"
+    },
+    "ergebnis": {
+      "abgebrochen": "interrotto",
+      "fehler": "non riproducibile",
+      "unbekannt": "esito sconosciuto",
+      "stumm": "saltato (muto)",
+      "laeuft": "in corso",
+      "startet": "in avvio",
+      "entfallen_weil": "saltato: {{grund}}"
+    },
+    "ton": {
+      "titel": "Audio",
+      "an": "Audio attivo",
+      "stumm": "Muto",
+      "lautstaerke": "Volume degli annunci",
+      "stumm_titel": "Muto: l'annuncio in corso si interrompe, ciò che scade fino alla riattivazione viene saltato.",
+      "aufheben_titel": "Audio di nuovo attivo: il prossimo annuncio arriva al suo momento."
+    },
+    "entfall": {
+      "zu_wenig_zeit": "troppo poco tempo prima della discesa",
+      "uebersprungen": "crociera rilevata tardi, è arrivato prima un annuncio successivo",
+      "ton_nicht_fertig": "audio non pronto in tempo",
+      "zu_spaet": "troppo tardi (fase sterile o altro annuncio)",
+      "keine_stimme": "nessuna voce per queste lingue",
+      "kein_kurztext": "il server GSG non fornisce ancora la versione breve del comandante",
+      "sonst": "non più possibile"
+    }
+  },
   "app": {
     "name": "AeroACARS",
     "tagline": "ACARS per phpVMS 7"
   },
   "tabs": {
+    "kabine": "Cabina",
     "cockpit": "Cockpit",
     "map": "Mappa",
     "briefing": "Briefing",
@@ -1536,9 +1800,11 @@
       "tech": "🛠 Tecnico",
       "simulator_hint": "Quale flight sim è installato? AeroACARS si connette al sim scelto per dati live, forense del touchdown e confronto loadsheet.",
       "required_hint": "Account SimBrief + comportamento di registrazione volo — la base per i dati del piano di volo e il tracking automatico.",
-      "extras_hint": "Impostazioni opzionali di comfort — aspetto, comportamento, Discord presence.",
+      "extras_hint": "Impostazioni di comfort opzionali: lingua e aspetto, comportamento, chat piloti, stato Discord.",
+      "cockpit": "🎧 Cockpit",
+      "cockpit_hint": "Ciò che accompagna il volo: PDC/CPDLC tramite Hoppie, annunci di cabina, gli HUD nel simulatore e il tablet come telecomando.",
       "plugins_hint": "Add-on specifici per aereo: PMDG SDK (Boeing) e plugin AeroACARS X-Plane. Rilevati automaticamente al caricamento dell'aereo corrispondente.",
-      "tech_hint": "Diagnostica, strumenti di debug e funzioni di manutenzione rare.",
+      "tech_hint": "Archiviazione e log di volo, telemetria anonima degli errori, diagnostica, strumenti di debug e funzioni di manutenzione rare.",
       "bordbuch": "📓 Diario di bordo",
       "bordbuch_hint": "Cosa spunta il diario di bordo, suggerimenti discreti in volo, aerei leggeri e VFR.",
       "vermessen": "📐 Misura aereo",
@@ -1751,6 +2017,9 @@
     "about_all_releases": "Tutte le release su GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Segnala dirottamento",
+    "umleitung_modal_hint": "Scegli uno degli aeroporti più vicini o inserisci il codice ICAO della nuova destinazione.",
+    "umleitung_modal_submit": "Segnala dirottamento",
     "title_alternate": "Divert all'alternato pianificato rilevato",
     "title_nearest": "Atterraggio diverso rilevato",
     "title_unknown": "Aeroporto di atterraggio non riconosciuto",
@@ -2144,6 +2413,13 @@
     "langsamer": "Da oltre 2 minuti la simulazione gira più lenta del tempo reale. Può falsare tempo di volo, consumo e valutazione — torna a 1×."
   },
   "active_flight": {
+    "umleitung": "Dirottamento",
+    "umleitung_busy": "Invio…",
+    "umleitung_hint": "Segnala la nuova destinazione quando dirotti. La cabina annuncia il dirottamento. Il PIREP si invia come sempre dopo l'atterraggio.",
+    "umleitung_gemeldet": "Dirottamento verso {{icao}} segnalato.",
+    "umleitung_zurueckgenommen": "Dirottamento annullato.",
+    "umleitung_zuruecknehmen": "Annulla dirottamento",
+    "umleitung_anzeige": "Dirottamento: {{geplant}} → {{ziel}}",
     "title": "Volo attivo",
     "phase": {
       "preflight": "Preflight",

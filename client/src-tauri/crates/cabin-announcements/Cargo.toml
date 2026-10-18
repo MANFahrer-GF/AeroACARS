@@ -1,0 +1,15 @@
+[package]
+name = "cabin-announcements"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Kabinenansagen: wann welche Ansage fällig ist, Warteschlange, Drehbuch-Prüfung, SSML. Pure Logik, kein tauri/reqwest."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sim-core.workspace = true
+
+[lints]
+workspace = true

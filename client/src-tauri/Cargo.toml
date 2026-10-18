@@ -17,11 +17,14 @@ members = [
     # v1.3.0 (#Hoppie-PDC-CPDLC) — Hoppie-ACARS-Netzwerk-Protokoll +
     # GOLD-Elementtabelle. Pure Logik, kein tauri/reqwest.
     "crates/hoppie-protocol",
+    # v2.0.26 (Beta) — Kabinenansagen: Planer, Warteschlange, Drehbuch,
+    # SSML. Pure Logik, kein tauri/reqwest.
+    "crates/cabin-announcements",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "2.0.25"
+version = "2.0.26"
 edition = "2021"
 # Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
 license = "LicenseRef-AeroACARS-Proprietary"
@@ -100,6 +103,7 @@ metar      = { path = "crates/metar" }
 aeroacars-mqtt = { path = "crates/aeroacars-mqtt" }
 landing-scoring = { path = "crates/landing-scoring" }
 hoppie-protocol = { path = "crates/hoppie-protocol" }
+cabin-announcements = { path = "crates/cabin-announcements" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -244,6 +248,7 @@ geo.workspace = true
 metar.workspace = true
 aeroacars-mqtt.workspace = true
 landing-scoring.workspace = true
+cabin-announcements.workspace = true
 # v1.3.0 (#Hoppie-PDC-CPDLC): Hoppie-ACARS-Netzwerk-Protokoll + GOLD-
 # Elementtabelle. Wiring lebt in src/hoppie/.
 hoppie-protocol.workspace = true
@@ -262,6 +267,12 @@ libc = "0.2"
 sim-msfs.workspace = true
 # v2.0.19: Vorrang für den Aufsetz-Messfaden (src/flug_aktivitaet.rs)
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+# Kabinenansagen (Beta): Ausgabegeraet waehlbar (src/kabinenansagen.rs,
+# mod ausgabe). Nur Windows und macOS: unter Linux braeuchte cpal libasound,
+# und dort laeuft der Client nicht (nur CI-cargo-check).
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+cpal = "0.18"
 
 # X-Plane adapter is cross-platform (UDP listener); included on all targets
 [dependencies.sim-xplane]

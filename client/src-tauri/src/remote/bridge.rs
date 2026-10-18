@@ -665,6 +665,16 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "flight_refresh_route_only" => {
             from_uierr(crate::flight_refresh_route_only(app.clone(), st!()).await)
         }
+        // Umleitung (Beta): neues Ziel im Flug melden oder zuruecknehmen.
+        "flight_umleitung_setzen" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(default)]
+                icao: Option<String>,
+            }
+            let icao = parse_args::<A>(body).map(|a| a.icao).unwrap_or(None);
+            from_uierr(crate::flight_umleitung_setzen(app.clone(), st!(), icao).await)
+        }
         "flight_adopt" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -1447,6 +1457,25 @@ mod tests {
         // aussperrt, traegt ihn hier MIT Begruendung ein, statt ihn im
         // Dispatch stillschweigend fehlen zu lassen.
         const DENY_SET: &[&str] = &[
+            // Kabinenansagen (Beta): Der Ton spielt auf dem Sim-PC. Vom
+            // Tablet aus gibt es nichts zu bedienen.
+            "kabinen_einstellungen_lesen",
+            "kabinen_einstellungen_setzen",
+            "kabinen_zustand",
+            "kabinen_audio",
+            "kabinen_ausgabegeraete",
+            "kabinen_ton_spielen",
+            "kabinen_ton_stoppen",
+            "kabinen_ton_huellkurve",
+            "kabinen_probe",
+            "kabinen_ueberblick",
+            "kabinen_wiedergabe_ende",
+            "kabinen_wiedergabe_start",
+            "kabinen_stumm",
+            "kabinen_lautstaerke",
+            "kabinen_anhoeren",
+            "kabinen_erneut",
+            "kabinen_speicher",
             // VATSIM-CDM (v1.6.0): oeffnet ein NATIVES Fenster auf dem
             // Sim-PC. Vom Tablet aus ergibt das keinen Sinn — das Fenster
             // ginge auf dem PC auf, nicht auf dem Tablet. Der Browser-Pfad

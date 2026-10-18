@@ -1,9 +1,273 @@
 {
+  "kabine": {
+    "einstellungen": {
+      "titel": "Cabin announcements (beta)",
+      "an_label": "Turn on cabin announcements",
+      "an_hint": "AI announcements by captain and cabin crew in the airline's style. Only for beta pilots; the GSG server writes the texts.",
+      "beta_ja": "Enabled for your account.",
+      "beta_nein": "Not enabled for your account yet.",
+      "beta_unbekannt": "Access is checked when the flight starts.",
+      "zweite_sprache": "Languages",
+      "sprache_airline": "Airline's language + English",
+      "sprache_airline_de": "Airline's language + German",
+      "sprache_hint": "If the airline already speaks German or English, the other one is added.",
+      "stimmen_hint": "The GSG server picks the voices to match the language, free and without any download: English is spoken by Kokoro, all other languages by Piper. The crew's mood is rolled by the server for each flight.",
+      "echter_name": "Use my name as captain",
+      "echter_name_hint": "Your name is then sent to the GSG server and the AI. Otherwise it invents one.",
+      "kommandos": "Play crew commands",
+      "doppelt_hint": "Turn off if your aircraft has its own announcements or chimes (for example FlyByWire). Never run two systems at once.",
+      "chimes": "Chime at 10,000 ft",
+      "lautstaerke": "Volume",
+      "probe": "Voice sample",
+      "lizenzen": "Licences",
+      "lizenz_text": "The GSG server makes the voices with Piper (GPL-3.0) and Kokoro-82M (Apache-2.0). Both run only there and are not downloaded to your computer. The voices come from open datasets (including CC0, CC BY and CC BY-SA); the GSG team keeps the full list.",
+      "ausgabe": "Output device",
+      "ausgabe_standard": "System default",
+      "ausgabe_fehlt": "Selected device not connected (plays on the system default)",
+      "ausgabe_hint": "For example ATC in the headset and the cabin on the speakers. If the device is unplugged, the system default plays.",
+      "beta_kontingent": "Enabled, but the monthly quota is used up: announcements already written still play, new ones do not.",
+      "speicher": "Audio files",
+      "speicher_text": "{{mb}} MB on this computer. Audio is kept only for the current flight and deleted when the next flight starts."
+    },
+    "rolle": {
+      "kapitaen": "Captain",
+      "kabine": "Cabin",
+      "kommando": "Crew command",
+      "chime": "Chime"
+    },
+    "spricht": {
+      "kapitaen": "The captain is speaking",
+      "kabine": "The cabin crew is speaking",
+      "kommando": "Crew command",
+      "chime": "Chime"
+    },
+    "slot": {
+      "boarding": "Boarding",
+      "begruessung_tueren_zu": "Welcome, doors closed",
+      "kommando_tueren_scharf": "Doors to automatic",
+      "sicherheit": "Safety briefing",
+      "kapitaen_begruessung": "Captain's welcome",
+      "kommando_start": "Seats for take-off",
+      "chime10000_steigflug": "Chime, 10,000 ft climbing",
+      "anschnallzeichen_aus": "Seatbelt sign off",
+      "reiseflug25": "Service starts",
+      "reiseflug50": "Halfway",
+      "reiseflug80": "Second service",
+      "kapitaen_sinkflug": "Descent, captain",
+      "kabine_sinkflug": "Landing preparation, cabin",
+      "chime10000_sinkflug": "Chime, 10,000 ft descending",
+      "kommando_landung_vorbereiten": "Prepare cabin for landing",
+      "kommando_plaetze_landung": "Seats for landing",
+      "nach_der_landung": "After landing",
+      "kommando_tueren_entschaerfen": "Doors to manual",
+      "aussteigen": "Disembarking",
+      "verspaetung_gate": "Delay at the gate",
+      "turbulenz": "Turbulence",
+      "turbulenz_vorbei": "Turbulence over",
+      "warteschleife": "Holding",
+      "durchstarten": "Go-around",
+      "umleitung": "Diversion"
+    },
+    "seite": {
+      "titel": "Cabin",
+      "kein_flug": "No flight in progress.",
+      "nicht_freigeschaltet": "Not enabled for your account yet.",
+      "warte_auf_texte": "The texts for this flight are being written.",
+      "ausschalten": "Turn off announcements",
+      "einstellungen": "Open settings",
+      "ruhig": "No announcement right now",
+      "ruhe_hinweis": "The next announcement comes with the matching flight phase.",
+      "als_naechstes": "Up next",
+      "nichts_wartet": "Nothing queued.",
+      "bisher": "So far",
+      "noch_nichts": "No announcement on this flight yet.",
+      "keine_ansagen": "No announcements right now, the reason is shown below.",
+      "naechste_wann": "Up next: {{slot}}, {{wann}}.",
+      "vorhoeren": "Listening",
+      "anhoeren_stoppen": "Stop listening",
+      "gong_text": "Double chime (no text).",
+      "noch_kein_text": "No text yet.",
+      "keine_stimme": "no voice, skipped",
+      "anhoeren": "Listen",
+      "erneut": "Try again",
+      "nochmal": "Play again",
+      "stumm_hinweis": "Muted. Announcements that fall due are skipped and not repeated later. After restarting AeroACARS the sound is on again."
+    },
+    "grund": {
+      "aus": {
+        "titel": "Announcements switched off",
+        "text": "Cabin announcements are switched off in the settings."
+      },
+      "replay": {
+        "titel": "Not a real flight",
+        "text": "AeroACARS considers this flight a replay. Announcements only play on a real flight."
+      },
+      "fracht": {
+        "titel": "Cargo flight",
+        "text": "According to the flight plan this flight carries no passengers (cargo, ferry or similar). There are no cabin announcements for it."
+      },
+      "keine_pax": {
+        "titel": "No passenger count",
+        "text": "AeroACARS has no passenger count for this flight: there is no SimBrief OFP and no passenger fares in the bid. On the ground, \"Refresh OFP\" in the active flight helps. If the flight was started with an older version, AeroACARS fetches the count at the next restart."
+      },
+      "keine_passagiere": {
+        "titel": "No passengers on board",
+        "text": "The flight plan lists 0 passengers. Without passengers there are no cabin announcements."
+      },
+      "beta_pruefung": {
+        "titel": "Checking access",
+        "text": "AeroACARS is asking the GSG server whether your account is enabled for the beta."
+      },
+      "nicht_freigeschaltet": {
+        "titel": "Not enabled",
+        "text": "Your account is not enabled for the cabin announcements beta. The GSG team enables accounts."
+      },
+      "wiedergabe": {
+        "titel": "Audio could not be played",
+        "text": "The announcement was ready but could not be played. Is the selected output device busy or unplugged? You can pick another device or the system default in the settings. Message:"
+      },
+      "beta_nicht_erreichbar": {
+        "titel": "Server unreachable",
+        "text": "The GSG server is not answering, so your access is still open. Next try at {{zeit}}."
+      },
+      "kontingent": {
+        "titel": "Monthly quota used up",
+        "text": "Your account is enabled, but the monthly quota for new texts is used up. Announcements already written still play, new ones do not."
+      },
+      "sim_angehalten": {
+        "titel": "Simulator paused",
+        "text": "The simulator is paused or in slew mode. No announcements play until it runs again."
+      }
+    },
+    "wann": {
+      "boarding": "during boarding",
+      "begruessung_tueren_zu": "at pushback",
+      "sicherheit": "at pushback",
+      "kapitaen_begruessung": "while taxiing to the runway",
+      "anschnallzeichen_aus": "in the climb, when the seatbelt sign goes off",
+      "reiseflug25": "a quarter into the cruise",
+      "reiseflug50": "halfway through the cruise",
+      "reiseflug80": "towards the end of the cruise",
+      "kapitaen_sinkflug": "shortly before the descent",
+      "kabine_sinkflug": "shortly before the descent",
+      "nach_der_landung": "while taxiing in after landing",
+      "aussteigen": "at the parking position",
+      "kommando_tueren_scharf": "at pushback",
+      "kommando_start": "at the take-off roll",
+      "chime10000_steigflug": "climbing through 10,000 ft",
+      "chime10000_sinkflug": "descending through 10,000 ft",
+      "kommando_landung_vorbereiten": "on approach",
+      "kommando_plaetze_landung": "on final",
+      "kommando_tueren_entschaerfen": "at the gate",
+      "verspaetung_gate": "when it happens",
+      "turbulenz": "when it happens",
+      "turbulenz_vorbei": "when it happens",
+      "warteschleife": "when it happens",
+      "durchstarten": "when it happens",
+      "umleitung": "when it happens"
+    },
+    "stand": {
+      "text_ab": "Text from about {{zeit}}",
+      "text_ab_ohne": "Text shortly before landing",
+      "text_ab_abheben": "Text after take-off",
+      "text_wird_geschrieben": "Text being written",
+      "text_fehler": "Text missing ({{grund}}), next try {{zeit}}",
+      "text_aufgegeben": "Text not received ({{grund}})",
+      "ton_wird_erzeugt": "Audio being made ({{fertig}} of {{von}})",
+      "ton_wartet": "Audio waiting ({{grund}}), next try {{zeit}}",
+      "ton_aufgegeben": "Audio refused ({{grund}})",
+      "bereit": "Text and audio ready",
+      "bereit_gong": "Chime ready"
+    },
+    "fehler": {
+      "ausgelastet": "server busy",
+      "kontingent": "quota used up",
+      "zugang": "no access",
+      "zeit": "timeout",
+      "offline": "no connection",
+      "sonst": "server error"
+    },
+    "ablauf": {
+      "texte": "Texts",
+      "ton": "Audio",
+      "naechste": "Next announcement",
+      "abflug": "Departure",
+      "ankunft": "Arrival",
+      "ton_stand": "{{fertig}} of {{gesamt}} ready",
+      "keine": "none left",
+      "freigabe": {
+        "titel": "Access",
+        "ja": "enabled",
+        "nein": "not enabled",
+        "pruefung": "being checked",
+        "kontingent": "enabled, monthly quota used up",
+        "nicht_erreichbar": "server unreachable, next try {{zeit}}"
+      },
+      "teil": {
+        "entfaellt": "not needed",
+        "offen": "to follow",
+        "offen_um": "from about {{zeit}}",
+        "laeuft": "being written",
+        "fertig": "ready",
+        "fehler": "error, next try {{zeit}}",
+        "aufgegeben": "not received"
+      },
+      "stumm": "muted, will be skipped"
+    },
+    "profil": {
+      "linie": "Airline flight with cabin crew",
+      "bizjet": "Business jet, only the captain speaks",
+      "flugzeit": "{{h}} h {{m}} min",
+      "flugzeit_unbekannt": "flight time unknown, so no cruise announcements",
+      "kurzstrecke": "short flight, only the service announcement in cruise",
+      "und": " and ",
+      "ohne_stimme": "{{sprache}} skipped (no voice)"
+    },
+    "zeit": {
+      "jetzt": "now",
+      "ca": "about {{zeit}}",
+      "spielt": "Plays {{wann}}"
+    },
+    "wartet": {
+      "andere_ansage": "due, waiting for the current announcement",
+      "pause": "due, short pause after the last announcement",
+      "ruhephase": "due, waiting for the sterile phase to end",
+      "ton": "due, waiting for the audio",
+      "sim_angehalten": "due, simulator paused"
+    },
+    "ergebnis": {
+      "abgebrochen": "stopped",
+      "fehler": "could not play",
+      "unbekannt": "outcome unknown",
+      "stumm": "skipped (muted)",
+      "laeuft": "playing",
+      "startet": "starting",
+      "entfallen_weil": "skipped: {{grund}}"
+    },
+    "ton": {
+      "titel": "Sound",
+      "an": "Sound on",
+      "stumm": "Muted",
+      "lautstaerke": "Announcement volume",
+      "stumm_titel": "Mute: the current announcement stops, anything due until you unmute is skipped.",
+      "aufheben_titel": "Sound on again: the next announcement comes at its moment."
+    },
+    "entfall": {
+      "zu_wenig_zeit": "too little time before descent",
+      "uebersprungen": "cruise detected late, a later announcement came first",
+      "ton_nicht_fertig": "audio not ready in time",
+      "zu_spaet": "too late (sterile phase or another announcement)",
+      "keine_stimme": "no voice for these languages",
+      "kein_kurztext": "GSG server does not provide the captain's short version yet",
+      "sonst": "no longer possible"
+    }
+  },
   "app": {
     "name": "AeroACARS",
     "tagline": "ACARS for phpVMS 7"
   },
   "tabs": {
+    "kabine": "Cabin",
     "cockpit": "Cockpit",
     "map": "Map",
     "briefing": "Briefing",
@@ -1536,9 +1800,11 @@
       "tech": "🛠 Technical",
       "simulator_hint": "Which flight sim is installed? AeroACARS connects to the chosen sim for live data, touchdown forensics and loadsheet comparison.",
       "required_hint": "SimBrief account + flight recording behaviour — the basis for flight-plan data and automatic tracking.",
-      "extras_hint": "Optional comfort settings — appearance, behaviour, Discord presence.",
+      "extras_hint": "Optional comfort settings: language and appearance, behaviour, pilot chat, Discord status.",
+      "cockpit": "🎧 Cockpit",
+      "cockpit_hint": "What plays along in flight: PDC/CPDLC via Hoppie, cabin announcements, the HUDs in the simulator and the tablet as a remote.",
       "plugins_hint": "Aircraft-specific add-ons: PMDG SDK (Boeing) and the AeroACARS X-Plane plugin. Detected automatically once the matching aircraft loads.",
-      "tech_hint": "Diagnostics, debug tools and rarely used maintenance features.",
+      "tech_hint": "Storage and flight logs, anonymous error telemetry, diagnostics, debug tools and rare maintenance functions.",
       "bordbuch": "📓 SOP Check",
       "bordbuch_hint": "What the SOP Check ticks off, quiet hints in flight, light aircraft and VFR.",
       "vermessen": "📐 Measure aircraft",
@@ -1765,6 +2031,9 @@
     "about_all_releases": "All releases on GitHub"
   },
   "divert": {
+    "umleitung_modal_title": "Report diversion",
+    "umleitung_modal_hint": "Pick one of the nearest airports or enter the ICAO code of the new destination.",
+    "umleitung_modal_submit": "Report diversion",
     "title_alternate": "Divert to planned alternate detected",
     "title_nearest": "Different landing field detected",
     "title_unknown": "Landing field not recognised",
@@ -2158,6 +2427,13 @@
     "langsamer": "The simulation has been running slower than real time for over 2 minutes. That can distort flight time, fuel use and scoring — please return to 1×."
   },
   "active_flight": {
+    "umleitung": "Divert",
+    "umleitung_busy": "Reporting…",
+    "umleitung_hint": "Report the new destination when you divert. The cabin announces the diversion. File the PIREP after landing as usual.",
+    "umleitung_gemeldet": "Diversion to {{icao}} reported.",
+    "umleitung_zurueckgenommen": "Diversion withdrawn.",
+    "umleitung_zuruecknehmen": "Withdraw diversion",
+    "umleitung_anzeige": "Diverting: {{geplant}} → {{ziel}}",
     "title": "Active flight",
     "phase": {
       "preflight": "Preflight",

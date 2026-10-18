@@ -17,6 +17,7 @@ import { RemoteServerPanel } from "./RemoteServerPanel";
 import { MsfsHudPanel } from "./MsfsHudPanel";
 import { XplaneBandPanel } from "./XplaneBandPanel";
 import { HoppieSettingsPanel } from "./HoppieSettingsPanel";
+import { KabinenSettingsPanel } from "./KabinenSettingsPanel";
 import { BordbuchEinstellungen } from "./bordbuch/BordbuchEinstellungen";
 import { FlugzeugVermessen } from "./vermessen/FlugzeugVermessen";
 
@@ -51,6 +52,8 @@ interface Props {
   minimizeToTray: boolean;
   chatAn: boolean;
   onChatAnChange: (next: boolean) => void;
+  /** Kabinenansagen (Beta) ein/aus — für den Reiter „Kabine“. */
+  onKabineAnChange?: (next: boolean) => void;
   chatTon: boolean;
   onChatTonChange: (next: boolean) => void;
   onMinimizeToTrayChange: (next: boolean) => void;
@@ -80,6 +83,7 @@ export function SettingsPanel({
   onMinimizeToTrayChange,
   chatAn,
   onChatAnChange,
+  onKabineAnChange,
   chatTon,
   onChatTonChange,
   approachAdvisoriesEnabled,
@@ -249,13 +253,14 @@ export function SettingsPanel({
   // Drei Gruppen:
   //   - required: SimBrief + Simulator + Filing → was AeroACARS zwingend
   //     braucht damit Flight-Tracking funktioniert
-  //   - extras: Sprache/Theme + Verhalten + Discord-RPC + Speicher +
-  //     Fehler-Reporting → optionale Komfort/Privacy-Einstellungen
-  //   - tech: Entwickler-Debug + Orphan-Flights-Cleanup → selten
-  //     gebraucht, primär für Troubleshooting
+  //   - extras: Sprache/Theme + Verhalten + Pilotenchat + Discord-RPC
+  //   - cockpit (17.10.2026, „Komfort“ war zu lang): was im Flug
+  //     mitspielt — PDC/CPDLC, Kabinenansagen, HUDs, LAN-Fernbedienung
+  //   - tech: Speicher + Fehler-Telemetrie + Entwickler-Debug + Orphan-
+  //     Flights-Cleanup → selten gebraucht, primär für Troubleshooting
   // Tab-Wahl wird in localStorage gemerkt, damit der Pilot beim nächsten
   // Settings-Öffnen wieder dort landet wo er war.
-  type SettingsTab = "simulator" | "required" | "extras" | "bordbuch" | "plugins" | "vermessen" | "tech";
+  type SettingsTab = "simulator" | "required" | "extras" | "cockpit" | "bordbuch" | "plugins" | "vermessen" | "tech";
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     try {
       const saved = localStorage.getItem("aeroacars.settings.activeTab");
@@ -263,6 +268,7 @@ export function SettingsPanel({
         saved === "simulator" ||
         saved === "required" ||
         saved === "extras" ||
+        saved === "cockpit" ||
         saved === "bordbuch" ||
         saved === "plugins" ||
         saved === "vermessen" ||
@@ -298,13 +304,20 @@ export function SettingsPanel({
       {/* Tab-Bar — Pills, aktive in Akzent-Farbe. v0.13.15: theme-aware
           CSS-Klassen statt hart verdrahteter Dark-Mode-Inline-Farben (waren
           im Light-Mode weiß-auf-weiß = unlesbar, Pilot-Befund). */}
+      <div className="settings__tabs-huelle">
       <div
         className="settings__tabs"
         role="tablist"
         aria-label={t("settings.title") ?? "Settings"}
       >
-        {(["simulator", "required", "extras", "bordbuch", "plugins", "vermessen", "tech"] as SettingsTab[]).map((tab) => {
+        {(["simulator", "required", "extras", "cockpit", "bordbuch", "plugins", "vermessen", "tech"] as SettingsTab[]).map((tab) => {
           const isActive = activeTab === tab;
+          // „🎧 Cockpit“ → Symbol und Text getrennt, damit der Abstand fest
+          // ist und ein zu langer Text gekürzt wird, nicht das Symbol.
+          const label = t(`settings.tabs.${tab}`);
+          const teile = /^(\S+)\s+(.+)$/u.exec(label);
+          const symbol = teile && !/\p{L}/u.test(teile[1]) ? teile[1] : null;
+          const text = symbol && teile ? teile[2] : label;
           return (
             <button
               key={tab}
@@ -313,11 +326,14 @@ export function SettingsPanel({
               aria-selected={isActive}
               onClick={() => switchTab(tab)}
               className={`settings__tab${isActive ? " settings__tab--active" : ""}`}
+              title={label}
             >
-              {t(`settings.tabs.${tab}`)}
+              {symbol && <span className="settings__tab-symbol" aria-hidden="true">{symbol}</span>}
+              <span className="settings__tab-text">{text}</span>
             </button>
           );
         })}
+      </div>
       </div>
       <p
         className="settings__hint"
@@ -487,8 +503,10 @@ export function SettingsPanel({
       )}
 
       {/* ─── Tab: Komfort ─────────────────────────────────────────
-          Sprache/Theme, Verhalten, Speicher, Discord-RPC, Fehler-
-          Reporting — optionale Qualität-Verbesserungen.
+          Sprache/Theme, Pilotenchat, Verhalten, Discord-RPC — optionale
+          Qualität-Verbesserungen. Speicher und Fehler-Telemetrie stehen
+          seit 17.10.2026 unter „Technik“, das Cockpit-Zubehör unter
+          „Cockpit“.
       */}
       {activeTab === "extras" && (
         <>
@@ -585,27 +603,23 @@ export function SettingsPanel({
             </label>
           </div>
 
-          <div className="settings__section">
-            <h3>{t("settings.storage_section")}</h3>
-            <LandingBackupManager />
-            <FlightLogsManager
-              autoDelete={autoDeleteFlightLogs}
-              onAutoDeleteChange={onAutoDeleteFlightLogsChange}
-            />
-          </div>
-
-          {/* v0.9.0 (#GlitchTip): Anonyme Fehler-Telemetrie.
-              Opt-In, Default = aus. Pflicht laut DSGVO Art. 6 (1) a. */}
-          <ErrorReportingPanel />
-
           {/* v0.9.0 (#Discord-RPC): Rich-Presence im Discord-Profil.
               Opt-In, Default = aus. */}
           <DiscordRpcPanel />
 
-          {/* v0.16.0 (#LAN-Remote): LAN-Fernbedienung. Nur im Tauri-Build —
-              ein Browser kann keinen Server hosten. Im LAN-Browser (Tablet)
-              ist diese Sektion ausgeblendet. */}
-          {isTauri && <RemoteServerPanel />}
+        </>
+      )}
+
+      {/* ─── Tab: Cockpit ─────────────────────────────────────────
+          Was im Flug mitspielt: Funk mit der Flugleitung, Kabine, HUDs
+          im Sim, Tablet als Fernbedienung. Reihenfolge nach Gebrauch.
+      */}
+      {activeTab === "cockpit" && (
+        <>
+          {/* v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC-Client ueber das
+              Hoppie-ACARS-Netzwerk. Opt-In, Default = aus. */}
+          <HoppieSettingsPanel />
+          {isTauri && <KabinenSettingsPanel onAnChange={onKabineAnChange} />}
 
           {/* v1.5.0 (#msfs-hud): Diagnose-Schalter für den lokalen
               Panel-Server des In-Sim-HUD. Default = an; wirkt beim
@@ -615,9 +629,10 @@ export function SettingsPanel({
           {/* ADR-0005: Schalter für das X-Plane-HUD-Band. Default = an. */}
           {isTauri && <XplaneBandPanel />}
 
-          {/* v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC-Client ueber das
-              Hoppie-ACARS-Netzwerk. Opt-In, Default = aus. */}
-          <HoppieSettingsPanel />
+          {/* v0.16.0 (#LAN-Remote): LAN-Fernbedienung. Nur im Tauri-Build —
+              ein Browser kann keinen Server hosten. Im LAN-Browser (Tablet)
+              ist diese Sektion ausgeblendet. */}
+          {isTauri && <RemoteServerPanel />}
         </>
       )}
 
@@ -644,6 +659,7 @@ export function SettingsPanel({
       )}
 
       {/* ─── Tab: Technik ─────────────────────────────────────────
+          Speicher + Fehler-Telemetrie (seit 17.10.2026, vorher Komfort),
           Debug-Mode + Sim-Debug + phpVMS-Heartbeat und Orphan-Flight-
           Cleanup — selten gebraucht, primär für Dev/Troubleshooting.
           PMDG-/X-Plane-Premium-Panels sind nicht mehr hier (siehe
@@ -654,6 +670,19 @@ export function SettingsPanel({
 
       {activeTab === "tech" && (
         <>
+          <div className="settings__section">
+            <h3>{t("settings.storage_section")}</h3>
+            <LandingBackupManager />
+            <FlightLogsManager
+              autoDelete={autoDeleteFlightLogs}
+              onAutoDeleteChange={onAutoDeleteFlightLogsChange}
+            />
+          </div>
+
+          {/* v0.9.0 (#GlitchTip): Anonyme Fehler-Telemetrie.
+              Opt-In, Default = aus. Pflicht laut DSGVO Art. 6 (1) a. */}
+          <ErrorReportingPanel />
+
           <div className="settings__section">
             <h3>{t("settings.developer_section")}</h3>
             <label className="settings__checkbox">

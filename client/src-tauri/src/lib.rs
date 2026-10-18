@@ -40,6 +40,7 @@ pub mod szenerie_bahn;
 mod ui_state;
 mod xplane_band;
 mod xplane_plugin_install;
+mod kabinenansagen;
 mod flug_aktivitaet;
 mod stats_sperre;
 
@@ -5519,6 +5520,23 @@ struct PersistedFlightStats {
     /// „Zeiten gegen Flugplan": Planzeiten des OFP — siehe FlightStats.
     #[serde(default)]
     ofp_planzeiten: landing_scoring::flugzeiten::FlugZeiten,
+    /// Kabinenansagen (Beta) — siehe FlightStats. `#[serde(default)]`, damit
+    /// aeltere `active_flight.json` weiter laden (alle vier `None`).
+    #[serde(default)]
+    pax_count: Option<i32>,
+    #[serde(default)]
+    max_passengers: Option<i32>,
+    #[serde(default)]
+    flight_type: Option<String>,
+    #[serde(default)]
+    airline_name: Option<String>,
+    /// Umleitung (Beta) — siehe FlightStats.
+    #[serde(default)]
+    umleitung_ziel: Option<String>,
+    #[serde(default)]
+    utc_versatz_abflug_min: Option<i32>,
+    #[serde(default)]
+    utc_versatz_ziel_min: Option<i32>,
     /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
     /// Summe aller Pause-Sekunden seit Flugstart. `#[serde(default)]`
     /// damit pre-Spec `active_flight.json` weiter ladbar bleibt — alte
@@ -5858,6 +5876,14 @@ impl PersistedFlightStats {
             simbrief_ofp_id: stats.simbrief_ofp_id.clone(),
             simbrief_ofp_generated_at: stats.simbrief_ofp_generated_at.clone(),
             ofp_planzeiten: stats.ofp_planzeiten,
+            // Kabinenansagen (Beta)
+            pax_count: stats.pax_count,
+            max_passengers: stats.max_passengers,
+            flight_type: stats.flight_type.clone(),
+            airline_name: stats.airline_name.clone(),
+            umleitung_ziel: stats.umleitung_ziel.clone(),
+            utc_versatz_abflug_min: stats.utc_versatz_abflug_min,
+            utc_versatz_ziel_min: stats.utc_versatz_ziel_min,
             // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator)
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
@@ -6148,6 +6174,14 @@ impl PersistedFlightStats {
         stats.simbrief_ofp_id = self.simbrief_ofp_id;
         stats.simbrief_ofp_generated_at = self.simbrief_ofp_generated_at;
         stats.ofp_planzeiten = self.ofp_planzeiten;
+        // Kabinenansagen (Beta): Wiedereinstieg braucht dieselben Eingaben.
+        stats.pax_count = self.pax_count;
+        stats.max_passengers = self.max_passengers;
+        stats.flight_type = self.flight_type;
+        stats.airline_name = self.airline_name;
+        stats.umleitung_ziel = self.umleitung_ziel;
+        stats.utc_versatz_abflug_min = self.utc_versatz_abflug_min;
+        stats.utc_versatz_ziel_min = self.utc_versatz_ziel_min;
         // Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
         // ueber `save_active_flight`/Resume hinweg erhalten. Damit
         // wird ein App-Restart waehrend laufender Pause die akkumu-
@@ -7288,6 +7322,35 @@ struct FlightStats {
     /// geladenen OFP (`plan_*`, die Ist-Felder bleiben hier leer — sie
     /// kommen erst in [`flugzeiten`] aus `block_off_at` & Co. dazu).
     ofp_planzeiten: landing_scoring::flugzeiten::FlugZeiten,
+    /// Kabinenansagen (Beta): gebuchte Passagiere aus dem OFP. `Some(0)` ist
+    /// ein Frachtflug und schaltet die Ansagen ab, `None` heisst „kein OFP".
+    /// Deshalb hier NICHT wie bei den Gewichten `0 → None` filtern.
+    pax_count: Option<i32>,
+    /// Kabinenansagen (Beta): Sitzplaetze der geplanten Config (OFP) —
+    /// entscheidet Bizjet oder Linie.
+    max_passengers: Option<i32>,
+    /// Kabinenansagen (Beta): phpVMS-Flugart aus dem Bid (J, F, P …).
+    flight_type: Option<String>,
+    /// Kabinenansagen (Beta): Name der Airline aus dem Bid, fuer den Text.
+    /// Die Kennung steht schon in `ActiveFlight::airline_icao`.
+    airline_name: Option<String>,
+    /// Kabinenansagen (Beta): der Planer dieses Fluges. Nicht gespeichert —
+    /// nach einem Neustart entsteht er mit `Planer::fortsetzen` neu.
+    kabinen_planer: Option<cabin_announcements::Planer>,
+    /// Zuletzt gesehener `go_around_count`: Der Planer will eine Flanke,
+    /// keinen Zaehler.
+    kabinen_durchstarts: u32,
+    /// Kabinenansagen (Beta): Texte, Ton und Warteschlange dieses Fluges.
+    /// Nicht gespeichert — siehe `kabinenansagen::Lauf`.
+    kabinen_lauf: kabinenansagen::Lauf,
+    /// Kabinenansagen (Beta): Zeitzonen von Abflug und Ziel aus dem OFP
+    /// (Minuten gegen UTC). Rueckfall, wenn phpVMS keine Zeitzone kennt.
+    utc_versatz_abflug_min: Option<i32>,
+    utc_versatz_ziel_min: Option<i32>,
+    /// Umleitung (Beta): vom Piloten im Flug gemeldetes neues Ziel (ICAO).
+    /// Loest die Umleitungs-Ansage aus. Der PIREP-Divert laeuft weiter ueber
+    /// den Banner nach der Landung.
+    umleitung_ziel: Option<String>,
     /// Cockpit: erwartete Landung (Unix-s) aus der Planzeit am aktuellen Ort
     /// der Route (`landung_erwartet`). Nur in der Luft, nicht gespeichert —
     /// der naechste Takt rechnet sie neu.
@@ -9377,6 +9440,8 @@ pub struct ActiveFlightInfo {
     /// banner ("you landed at LFBO, planned was LEBL — file as divert
     /// to LFBO?") with action buttons. None for normal arrivals.
     divert_hint: Option<DivertHint>,
+    /// Umleitung (Beta): vom Piloten im Flug gemeldetes neues Ziel.
+    umleitung_ziel: Option<String>,
     /// Beim Wiederaufnehmen wurde ein physikalisch unmoeglicher Sprung
     /// erkannt (Sprit/Hoehe/Drift, s. `is_impossible_discontinuity`): Der
     /// Sim wurde neu geladen, der Flug ging so nicht weiter. Dann gibt die
@@ -16774,6 +16839,7 @@ async fn flight_refresh_simbrief(
             stats.abflug_icao = Some(flight.dpt_airport.trim().to_ascii_uppercase());
         }
         stats.ofp_planzeiten = ofp_planzeiten(&ofp);
+        kabinen_eckdaten_aus_ofp(&mut stats, &ofp);
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -16992,6 +17058,41 @@ fn ofp_nachladen_noetig(st: &FlightStats) -> bool {
     let planzeiten_fehlen = st.simbrief_ofp_generated_at.is_some()
         && st.ofp_planzeiten == landing_scoring::flugzeiten::FlugZeiten::default();
     sprit_plan_fehlt || planzeiten_fehlen
+}
+
+/// Umleitung (Beta): normalisiert die Eingabe des Piloten. Leer heisst
+/// „zuruecknehmen“; das geplante Ziel ebenso (keine Umleitung).
+fn umleitung_ziel_normalisieren(eingabe: Option<&str>, geplant: &str) -> Result<Option<String>, UiError> {
+    let icao = eingabe.unwrap_or("").trim().to_ascii_uppercase();
+    if icao.is_empty() || icao == geplant.trim().to_ascii_uppercase() {
+        return Ok(None);
+    }
+    if icao.len() != 4 || !icao.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(UiError::new("invalid_icao", "ICAO-Code mit 4 Zeichen erwartet"));
+    }
+    Ok(Some(icao))
+}
+
+/// Umleitung (Beta): Der Pilot meldet im Flug ein neues Ziel. Daraus kommt
+/// die Umleitungs-Ansage; am PIREP aendert das nichts.
+#[tauri::command]
+async fn flight_umleitung_setzen(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    icao: Option<String>,
+) -> Result<Option<String>, UiError> {
+    let flight = state
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .as_ref()
+        .map(Arc::clone)
+        .ok_or_else(|| UiError::new("no_active_flight", "no active flight"))?;
+    let ziel = umleitung_ziel_normalisieren(icao.as_deref(), &flight.arr_airport)?;
+    flight.stats.lock().expect("flight stats lock").umleitung_ziel = ziel.clone();
+    save_active_flight(&app, &flight);
+    tracing::info!(ziel = ?ziel, "umleitung vom piloten gemeldet");
+    Ok(ziel)
 }
 
 /// v0.16.23: **Route-Only-Refresh** — holt den AKTUELLEN SimBrief-OFP und
@@ -18617,6 +18718,7 @@ fn flight_info(
         paused_since: stats.paused_since.map(|t| t.to_rfc3339()),
         paused_last_known: stats.paused_last_known.clone(),
         divert_hint: stats.divert_hint.clone(),
+        umleitung_ziel: stats.umleitung_ziel.clone(),
         unmoeglicher_sprung: stats.resume_discontinuity.is_some(),
         abgabe_sperre: abgabe_sperre(&stats).map(|g| g.code().to_string()),
         resume_wartet_grund: stats.resume_wartet.as_ref().map(|(g, _)| g.clone()),
@@ -19720,6 +19822,10 @@ async fn flight_adopt(
         .lock()
         .expect("authenticated_pilot_id lock")
         .map(|id| id.to_string());
+    // Kabinenansagen (Beta): ohne passenden Bid bleiben beide Felder leer.
+    if let Some(b) = matching_bid {
+        kabinen_eckdaten_aus_bid(&mut flight.stats.lock().expect("flight stats lock"), &b.flight);
+    }
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -20550,6 +20656,8 @@ async fn flight_start_mit(
         .lock()
         .expect("authenticated_pilot_id lock")
         .map(|id| id.to_string());
+    // Kabinenansagen (Beta): Flugart und Airline-Name, auch ohne OFP.
+    kabinen_eckdaten_aus_bid(&mut flight.stats.lock().expect("flight stats lock"), &bid.flight);
     save_active_flight(&app, &flight);
 
     // v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
@@ -20664,6 +20772,7 @@ async fn flight_start_mit(
         // (QS-Befund V4, 18.09.2026).
         sprit_plan_neu_lesen(&mut stats);
         stats.ofp_planzeiten = ofp_planzeiten(&ofp);
+        kabinen_eckdaten_aus_ofp(&mut stats, &ofp);
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -21359,6 +21468,8 @@ async fn flight_start_manual(
         .lock()
         .expect("authenticated_pilot_id lock")
         .map(|id| id.to_string());
+    // Kabinenansagen (Beta): Flugart und Airline-Name, auch ohne OFP.
+    kabinen_eckdaten_aus_bid(&mut flight.stats.lock().expect("flight stats lock"), &bid.flight);
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -41855,6 +41966,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             let takt = phasen_takt(&flight, &snap, Utc::now());
             let phase_change = takt.wechsel;
             takt_uhr.abschnitt("step_flight");
+            // Kabinenansagen (Beta): hier und nicht in `phasen_takt`, das
+            // laeuft auch im Korpus-Replay.
+            kabinenansagen::takt(&app, &flight, &client, &snap, Utc::now());
+            takt_uhr.abschnitt("kabinenansagen");
 
             // Die Ausfahrten zur Bahn rechnen, solange die Sperre der
             // Flugdaten FREI ist, in einem eigenen Faden — siehe
@@ -47089,6 +47204,230 @@ fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten:
     }
 }
 
+/// Kabinenansagen (Beta): Flugart und Airline-Name aus dem Bid. Leere Texte
+/// gelten als fehlend — phpVMS liefert den Namen notfalls als "".
+fn kabinen_eckdaten_aus_bid(stats: &mut FlightStats, flight: &api_client::Flight) {
+    let text = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+    stats.flight_type = flight.flight_type.as_deref().and_then(text);
+    stats.airline_name = flight.airline.as_ref().and_then(|a| text(&a.name));
+    // Rueckfall fuer Fluege ohne OFP (Entscheidung Thomas, 17.10.2026): die
+    // Passagier-Fares (phpVMS `type` 0) des Bids. Ohne solche Fares bleibt
+    // es `None`, und der Ansage-Baustein schaltet ab. Der OFP ueberschreibt.
+    let pax_fares: Vec<_> = flight
+        .simbrief
+        .as_ref()
+        .and_then(|sb| sb.subfleet.as_ref())
+        .map(|sf| sf.fares.iter().filter(|f| f.fare_type == Some(0)).collect())
+        .unwrap_or_default();
+    if !pax_fares.is_empty() {
+        stats.pax_count = Some(pax_fares.iter().filter_map(|f| f.count).map(|c| c.max(0)).sum());
+        let sitze: i32 = pax_fares.iter().filter_map(|f| f.capacity).map(|c| c.max(0)).sum();
+        stats.max_passengers = Some(sitze).filter(|&n| n > 0);
+    }
+}
+
+/// Kabinenansagen (Beta): Passagiere und Sitzplaetze aus dem OFP. Eine 0 bei
+/// den Passagieren bleibt stehen: Das ist der Frachtflug ohne Ansagen.
+fn kabinen_eckdaten_aus_ofp(stats: &mut FlightStats, ofp: &api_client::SimBriefOfp) {
+    stats.pax_count = Some(ofp.pax_count.max(0));
+    // Fehlt die Sitzzahl im OFP, bleibt die aus den Fares stehen.
+    if let Some(n) = ofp.max_passengers.filter(|&n| n > 0) {
+        stats.max_passengers = Some(n);
+    }
+    stats.utc_versatz_abflug_min = ofp.orig_utc_offset_min;
+    stats.utc_versatz_ziel_min = ofp.dest_utc_offset_min;
+}
+
+/// Kabinenansagen (Beta): Eckdaten fuer einen Flug nachholen, der sie beim
+/// Start nicht erfasst hat — typisch: mit 2.0.25 gestartet, mitten im Flug
+/// auf die Beta gewechselt (Thomas 17.10.2026: „das Schweigen ist bloed“).
+/// Nur wenn die Passagierzahl fehlt; Bid zuerst, der OFP ueberschreibt wie
+/// beim Start. Ohne passendes Bid bleibt alles, wie es ist.
+fn kabinen_eckdaten_nachholen_aus(
+    stats: &mut FlightStats,
+    bids: &[api_client::Bid],
+    bid_id: i64,
+    ofp: Option<&api_client::SimBriefOfp>,
+) {
+    if stats.pax_count.is_some() {
+        return;
+    }
+    let Some(bid) = bids.iter().find(|b| b.id == bid_id) else {
+        return;
+    };
+    kabinen_eckdaten_aus_bid(stats, &bid.flight);
+    if let Some(ofp) = ofp {
+        kabinen_eckdaten_aus_ofp(stats, ofp);
+    }
+}
+
+/// Bids und OFP fuer [`kabinen_eckdaten_nachholen_aus`] ohne Sperre holen —
+/// fuer den Takt, der es bei fehlender Passagierzahl alle 2 min erneut
+/// versucht (Wiedereinstieg ohne Netz blieb sonst bis zum Neustart stumm).
+async fn kabinen_eckdaten_holen(client: &Client, bid_id: i64) -> Option<(Vec<api_client::Bid>, Option<api_client::SimBriefOfp>)> {
+    let bids = match client.get_bids().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::info!(error = %e, "kabinenansagen: Bids fuer Nachholen nicht erreichbar");
+            return None;
+        }
+    };
+    let sb_id = bids
+        .iter()
+        .find(|b| b.id == bid_id)
+        .and_then(|b| b.flight.simbrief.as_ref())
+        .map(|s| s.id.clone());
+    let ofp = match sb_id {
+        Some(id) => client.fetch_simbrief_ofp(&id).await.ok().flatten(),
+        None => None,
+    };
+    Some((bids, ofp))
+}
+
+/// Netzteil zu [`kabinen_eckdaten_nachholen_aus`]: einmal beim Wiedereinstieg.
+/// Ohne Netz bleibt der Flug stumm wie bisher — kein Wiederholen im Takt.
+async fn kabinen_eckdaten_nachholen(client: &Client, bid_id: i64, stats: &mut FlightStats) {
+    if stats.pax_count.is_some() {
+        return;
+    }
+    let bids = match client.get_bids().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::info!(error = %e, "kabinenansagen: Bids fuer Nachholen nicht erreichbar");
+            return;
+        }
+    };
+    let sb_id = bids
+        .iter()
+        .find(|b| b.id == bid_id)
+        .and_then(|b| b.flight.simbrief.as_ref())
+        .map(|s| s.id.clone());
+    let ofp = match sb_id {
+        Some(id) => client.fetch_simbrief_ofp(&id).await.ok().flatten(),
+        None => None,
+    };
+    kabinen_eckdaten_nachholen_aus(stats, &bids, bid_id, ofp.as_ref());
+}
+
+/// Kabinenansagen (Beta): was der Planer einmal zu Beginn vom Flug wissen
+/// muss. `ziel` ist das geplante Ziel, `planzeit_min` die Flugzeit aus
+/// phpVMS als Rueckfall, wenn der OFP keine Planzeiten traegt.
+fn kabinen_flugdaten(
+    stats: &FlightStats,
+    ziel: &str,
+    planzeit_min: Option<i32>,
+    muster: &str,
+) -> cabin_announcements::Flugdaten {
+    use cabin_announcements::flugart;
+    let u = |v: Option<i32>| v.and_then(|n| u32::try_from(n).ok());
+    let plan = &stats.ofp_planzeiten;
+    let ofp_min = match (plan.plan_abheben, plan.plan_aufsetzen) {
+        (Some(ab), Some(auf)) if auf > ab => Some((auf - ab) / 60),
+        _ => None,
+    };
+    cabin_announcements::Flugdaten {
+        flugart: Some(flugart::einordnen(stats.flight_type.as_deref(), u(stats.pax_count), muster)),
+        geplante_flugzeit_min: ofp_min
+            .and_then(|m| u32::try_from(m).ok())
+            .or(u(planzeit_min))
+            .filter(|&m| m > 0),
+        // Navlog `time_total` zaehlt ab dem Abheben (Steigflug-Fixe der
+        // Testdaten: 23.600 ft nach 513 s).
+        tod_nach_abheben_s: stats
+            .planned_waypoints
+            .iter()
+            .find(|f| f.ident.eq_ignore_ascii_case("TOD"))
+            .and_then(|f| f.zeit_bis_hier_s)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .map(|s| s.round() as i64),
+        ziel_plan_icao: Some(ziel.trim().to_ascii_uppercase()).filter(|s| !s.is_empty()),
+        reiseflughoehe_ft: stats
+            .planned_cruise_alt_ft
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .map(|f| f.round() as u32),
+        abheben_epoch: stats.takeoff_at.map(|t| t.timestamp()),
+    }
+}
+
+/// Kabinenansagen (Beta): Ergebnis eines Planer-Takts.
+struct KabinenSchritt {
+    faellig: Vec<cabin_announcements::Faellig>,
+    /// Ruhephase (Sterile Cockpit): nur Kommandos und Chimes.
+    ruhephase: bool,
+    phase: FlightPhase,
+    rest_min: Option<f64>,
+}
+
+/// Kabinenansagen (Beta): ein Takt des Planers mit der effektiven Phase
+/// (`stats.phase`). Der Aufrufer (`kabinenansagen::takt`) haelt die Sperre,
+/// prueft Einstellung, Freischaltung, Pause/Slew/Replay und dass eine
+/// Passagierzahl bekannt ist; hier ohne Sperre, damit testbar.
+fn kabinen_schritt(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+    ziel: &str,
+    planzeit_min: Option<i32>,
+    muster: &str,
+) -> KabinenSchritt {
+    let jetzt = now.timestamp();
+    if stats.kabinen_planer.is_none() {
+        // `fortsetzen` gilt auch fuer den normalen Start: Vor dem Boarding
+        // loest kein Slot aus, also wird dort nichts uebersprungen.
+        let flug = kabinen_flugdaten(stats, ziel, planzeit_min, muster);
+        stats.kabinen_durchstarts = stats.go_around_count;
+        // Untergrenze aus den Ist-Zeiten: Ist schon abgehoben (bzw. vom
+        // Gate weg), gelten die Boden-Ansagen als vorbei — auch wenn die
+        // Phase nach dem Neustart noch unsicher ist (Codex-QS beta.4, 13).
+        let r = cabin_announcements::planer::rang;
+        let phase = if stats.takeoff_at.is_some() && r(stats.phase) < r(FlightPhase::Climb) {
+            FlightPhase::Climb
+        } else if stats.block_off_at.is_some() && r(stats.phase) < r(FlightPhase::Pushback) {
+            FlightPhase::Pushback
+        } else {
+            stats.phase
+        };
+        stats.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug, phase));
+    }
+    let durchgestartet = stats.go_around_count > stats.kabinen_durchstarts;
+    stats.kabinen_durchstarts = stats.go_around_count;
+    let tick = cabin_announcements::Tick {
+        jetzt,
+        phase: stats.phase,
+        hoehe_ft: snap.altitude_msl_ft,
+        vs_fpm: f64::from(snap.vertical_speed_fpm),
+        am_boden: snap.on_ground,
+        anschnallzeichen: snap.seatbelts_sign,
+        // 0/1/2 = schiebt, 3 = kein Pushback.
+        pushback_aktiv: matches!(snap.pushback_state, Some(0..=2)),
+        rest_min: stats
+            .landung_erwartet
+            .map(|t| (t - jetzt) as f64 / 60.0)
+            .filter(|m| *m >= 0.0),
+        // Das neue Ziel meldet der Pilot im Flug (`flight_umleitung_setzen`);
+        // `divert_hint` kommt erst nach der Landung.
+        ziel_icao: stats.umleitung_ziel.clone(),
+        abweichung_off_block_min: if stats.block_off_at.is_none() {
+            stats
+                .ofp_planzeiten
+                .plan_off_block
+                .and_then(|p| i32::try_from((jetzt - p).div_euclid(60)).ok())
+        } else {
+            None
+        },
+        durchgestartet,
+    };
+    let (faellig, ruhephase) = stats
+        .kabinen_planer
+        .as_mut()
+        .map(|p| {
+            let f = p.tick(&tick);
+            (f, p.ruhephase(&tick))
+        })
+        .unwrap_or_default();
+    KabinenSchritt { faellig, ruhephase, phase: tick.phase, rest_min: tick.rest_min }
+}
+
 /// „Zeiten gegen Flugplan": Plan des OFP plus die Ist-Zeiten dieses Fluges.
 /// Immer `Some` — ohne Plan sagt die Anzeige „kein SimBrief-OFP" (Altbestand
 /// ohne das Feld blendet den Abschnitt dagegen ganz aus).
@@ -51456,6 +51795,271 @@ mod arrived_fallback_geometry_tests {
             "ein anhaengiger Rueckzug muss einen Resume ueberleben, sonst bleibt \
              ein bekanntlich veralteter Wert in der finalen Einreichung unkorrigiert"
         );
+    }
+
+    /// Kabinenansagen (Beta): Flug mit 2.0.25 gestartet, mitten im Flug auf
+    /// die Beta gewechselt. Der gespeicherte Stand kennt keine Passagiere →
+    /// ohne Nachholen stumm (Gegenprobe); nach dem Nachholen aus dem Bid
+    /// laufen die Ansagen, der OFP geht vor, ein fremdes Bid aendert nichts.
+    #[test]
+    fn kabinen_eckdaten_nach_wechsel_mitten_im_flug_nachgeholt() {
+        let mut alt: serde_json::Value =
+            serde_json::to_value(PersistedFlightStats::snapshot_from(&FlightStats::new())).expect("json");
+        for k in ["pax_count", "max_passengers", "flight_type", "airline_name"] {
+            alt.as_object_mut().unwrap().remove(k);
+        }
+        let alt: PersistedFlightStats = serde_json::from_value(alt).expect("Stand von 2.0.25 laedt");
+        let mut stats = FlightStats::new();
+        alt.apply_to(&mut stats);
+        let flugart = |s: &FlightStats| kabinen_flugdaten(s, "LEPA", Some(140), "A320").flugart;
+        assert_eq!(flugart(&stats), Some(cabin_announcements::Flugart::Aus), "ohne Nachholen stumm");
+
+        let bids: Vec<api_client::Bid> = serde_json::from_value(serde_json::json!([
+            { "id": 7, "user_id": 1, "flight_id": "a", "flight": {
+                "id": "a", "flight_number": "100", "dpt_airport_id": "EDDF", "arr_airport_id": "LEPA",
+                "flight_type": "J", "airline": { "id": 1, "icao": "CFG", "name": "Condor" },
+                "simbrief": { "id": "sb7", "subfleet": { "fares": [
+                    { "id": 1, "type": 0, "count": 180, "capacity": 220 }
+                ] } } } }
+        ]))
+        .expect("bids parsen");
+
+        // Fremdes Bid: nichts passiert.
+        kabinen_eckdaten_nachholen_aus(&mut stats, &bids, 99, None);
+        assert_eq!(stats.pax_count, None);
+
+        kabinen_eckdaten_nachholen_aus(&mut stats, &bids, 7, None);
+        assert_eq!(stats.pax_count, Some(180));
+        assert_eq!(stats.airline_name.as_deref(), Some("Condor"));
+        assert_eq!(flugart(&stats), Some(cabin_announcements::Flugart::Linie));
+
+        // Mit OFP gehen dessen Passagiere vor, wie beim Start.
+        let mut mit_ofp = FlightStats::new();
+        let ofp = api_client::SimBriefOfp { pax_count: 164, ..Default::default() };
+        kabinen_eckdaten_nachholen_aus(&mut mit_ofp, &bids, 7, Some(&ofp));
+        assert_eq!(mit_ofp.pax_count, Some(164));
+
+        // Schon bekannte Passagiere bleiben stehen.
+        kabinen_eckdaten_nachholen_aus(&mut mit_ofp, &bids, 7, None);
+        assert_eq!(mit_ofp.pax_count, Some(164));
+    }
+
+    /// Kabinenansagen (Beta): Die Eckdaten kommen aus Bid und OFP, ein
+    /// Frachtflug (0 Passagiere) bleibt `Some(0)` und alles ueberlebt einen
+    /// Resume. Ein altes `active_flight.json` ohne die Felder laedt mit `None`.
+    #[test]
+    fn kabinen_eckdaten_aus_bid_und_ofp_ueberleben_einen_resume() {
+        let bid_flight: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "4711",
+            "flight_number": "8402",
+            "dpt_airport_id": "EDDF",
+            "arr_airport_id": "EDDH",
+            "flight_type": " F ",
+            "airline": { "id": 3, "icao": "BOX", "name": "AeroLogic" }
+        }))
+        .expect("bid parses");
+        let ofp = api_client::SimBriefOfp {
+            pax_count: 0,
+            max_passengers: Some(0),
+            ..Default::default()
+        };
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &bid_flight);
+        kabinen_eckdaten_aus_ofp(&mut stats, &ofp);
+        assert_eq!(stats.flight_type.as_deref(), Some("F"));
+        assert_eq!(stats.airline_name.as_deref(), Some("AeroLogic"));
+        assert_eq!(stats.pax_count, Some(0), "0 Pax ist der Frachtflug, nicht „unbekannt“");
+        assert_eq!(stats.max_passengers, None);
+
+        let snapshot = PersistedFlightStats::snapshot_from(&stats);
+        let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+        let restored: PersistedFlightStats = serde_json::from_str(&json).expect("snapshot parses");
+        let mut fresh = FlightStats::new();
+        restored.apply_to(&mut fresh);
+        assert_eq!(fresh.pax_count, Some(0));
+        assert_eq!(fresh.flight_type.as_deref(), Some("F"));
+        assert_eq!(fresh.airline_name.as_deref(), Some("AeroLogic"));
+
+        let mut alt: serde_json::Value = serde_json::from_str(&json).expect("json");
+        for k in ["pax_count", "max_passengers", "flight_type", "airline_name"] {
+            assert!(alt.as_object_mut().unwrap().remove(k).is_some(), "{k} fehlt im Snapshot");
+        }
+        let alt: PersistedFlightStats = serde_json::from_value(alt).expect("alter Stand laedt");
+        let mut fresh = FlightStats::new();
+        alt.apply_to(&mut fresh);
+        assert_eq!(
+            (fresh.pax_count, fresh.max_passengers, fresh.flight_type, fresh.airline_name),
+            (None, None, None, None)
+        );
+
+        // Leerer Airline-Name und fehlende Flugart gelten als fehlend.
+        let leer: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "1", "flight_number": "1", "dpt_airport_id": "EDDF", "arr_airport_id": "EDDM",
+            "airline": { "id": 1, "name": "  " }
+        }))
+        .expect("bid parses");
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &leer);
+        assert_eq!((stats.flight_type, stats.airline_name), (None, None));
+        assert_eq!(stats.pax_count, None, "ohne Fares keine Passagierzahl → keine Ansagen");
+    }
+
+    /// Kabinenansagen (Beta): Ohne OFP zaehlen nur die Passagier-Fares
+    /// (phpVMS `type` 0) des Bids; Fracht-Fares nicht. Der OFP ueberschreibt
+    /// die Pax, laesst aber die Sitzzahl stehen, wenn er selbst keine hat.
+    #[test]
+    fn kabinen_pax_ohne_ofp_aus_den_passagier_fares() {
+        let bid_flight: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "1", "flight_number": "400", "dpt_airport_id": "EDDF", "arr_airport_id": "KJFK",
+            "simbrief": { "id": "sb1", "subfleet": { "fares": [
+                { "id": 1, "type": 0, "count": 20, "capacity": 30 },
+                { "id": 2, "type": 0, "count": 250, "capacity": 260 },
+                { "id": 3, "type": 1, "count": 9000, "capacity": 20000 },
+                { "id": 4, "count": 7, "capacity": 7 }
+            ] } }
+        }))
+        .expect("bid parses");
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &bid_flight);
+        assert_eq!(stats.pax_count, Some(270));
+        assert_eq!(stats.max_passengers, Some(290));
+
+        kabinen_eckdaten_aus_ofp(
+            &mut stats,
+            &api_client::SimBriefOfp { pax_count: 265, max_passengers: None, ..Default::default() },
+        );
+        assert_eq!((stats.pax_count, stats.max_passengers), (Some(265), Some(290)));
+
+        // Nur Fracht-Fares: keine Passagierzahl.
+        let fracht: api_client::Flight = serde_json::from_value(serde_json::json!({
+            "id": "2", "flight_number": "8400", "dpt_airport_id": "EDDP", "arr_airport_id": "LEJ",
+            "simbrief": { "id": "sb2", "subfleet": { "fares": [
+                { "id": 3, "type": 1, "count": 9000, "capacity": 20000 }
+            ] } }
+        }))
+        .expect("bid parses");
+        let mut stats = FlightStats::new();
+        kabinen_eckdaten_aus_bid(&mut stats, &fracht);
+        assert_eq!((stats.pax_count, stats.max_passengers), (None, None));
+    }
+
+    /// Kabinenansagen (Beta), die Kette: Eckdaten in `FlightStats` →
+    /// Flugdaten → Planer → faellige Ansage. Fracht bleibt stumm, ein
+    /// Linienflug bekommt im Boarding seine Ansage, ein Wiedereinstieg im
+    /// Reiseflug holt das Boarding nicht nach, und ein Durchstarten zaehlt
+    /// als Flanke, nicht bei jedem Takt neu.
+    #[test]
+    fn kabinen_takt_kette_von_den_stats_zur_ansage() {
+        use cabin_announcements::Slot;
+        let jetzt = Utc::now();
+        let snap = SimSnapshot::default();
+        let slots = |f: Vec<cabin_announcements::Faellig>| f.into_iter().map(|f| f.slot).collect::<Vec<_>>();
+
+        let mut fracht = FlightStats::new();
+        fracht.phase = FlightPhase::Boarding;
+        fracht.pax_count = Some(0);
+        assert!(kabinen_schritt(&mut fracht, &snap, jetzt, "EDDH", Some(60), "A320").faellig.is_empty());
+
+        let mut linie = FlightStats::new();
+        linie.phase = FlightPhase::Boarding;
+        linie.pax_count = Some(150);
+        linie.max_passengers = Some(180);
+        linie.flight_type = Some("J".into());
+        assert!(slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60), "A320").faellig).contains(&Slot::Boarding));
+
+        let mut resume = FlightStats::new();
+        resume.phase = FlightPhase::Cruise;
+        resume.pax_count = Some(150);
+        resume.max_passengers = Some(180);
+        resume.takeoff_at = Some(jetzt - chrono::Duration::minutes(20));
+        resume.go_around_count = 1;
+        let erste = slots(kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120), "A320").faellig);
+        assert!(!erste.contains(&Slot::Boarding), "{erste:?}");
+        assert_eq!(resume.kabinen_durchstarts, 1, "ein alter Durchstart ist keine neue Flanke");
+        resume.go_around_count = 2;
+        kabinen_schritt(&mut resume, &snap, jetzt, "EDDH", Some(120), "A320");
+        assert_eq!(resume.kabinen_durchstarts, 2);
+    }
+
+    /// Kabinenansagen (Beta): Flugzeit aus dem OFP vor phpVMS, TOD als
+    /// Abstand vom Abheben aus dem Navlog, Abheben aus `takeoff_at`.
+    #[test]
+    fn kabinen_flugdaten_aus_den_stats() {
+        let mut stats = FlightStats::new();
+        stats.pax_count = Some(6);
+        stats.max_passengers = Some(12);
+        stats.ofp_planzeiten.plan_abheben = Some(10_000);
+        stats.ofp_planzeiten.plan_aufsetzen = Some(10_000 + 95 * 60);
+        stats.planned_waypoints = vec![
+            api_client::RouteFix { ident: "TOC".into(), zeit_bis_hier_s: Some(1_200.0), ..Default::default() },
+            api_client::RouteFix { ident: "TOD".into(), zeit_bis_hier_s: Some(4_500.4), ..Default::default() },
+        ];
+        stats.planned_cruise_alt_ft = Some(41_000.0);
+        let f = kabinen_flugdaten(&stats, " eddm ", Some(70), "C25A");
+        assert_eq!(f.flugart, Some(cabin_announcements::Flugart::Bizjet));
+        assert_eq!(f.geplante_flugzeit_min, Some(95), "OFP vor phpVMS");
+        assert_eq!(f.tod_nach_abheben_s, Some(4_500));
+        assert_eq!(f.ziel_plan_icao.as_deref(), Some("EDDM"));
+        assert_eq!(f.reiseflughoehe_ft, Some(41_000));
+        assert_eq!(f.abheben_epoch, None);
+
+        let ohne_ofp = FlightStats::new();
+        let f = kabinen_flugdaten(&ohne_ofp, "EDDM", Some(70), "C25A");
+        assert_eq!(f.geplante_flugzeit_min, Some(70), "Rueckfall auf phpVMS");
+        assert_eq!(f.flugart, Some(cabin_announcements::Flugart::Aus), "ohne Pax keine Ansagen");
+        assert_eq!(f.tod_nach_abheben_s, None);
+    }
+
+    /// Umleitung (Beta): Eingabe wird normalisiert, Unsinn abgelehnt, leer
+    /// oder das geplante Ziel nimmt die Umleitung zurueck.
+    #[test]
+    fn umleitung_eingabe_normalisieren() {
+        assert_eq!(umleitung_ziel_normalisieren(Some(" lfbd "), "LFBO").unwrap().as_deref(), Some("LFBD"));
+        assert_eq!(umleitung_ziel_normalisieren(Some("lfbo"), "LFBO").unwrap(), None);
+        assert_eq!(umleitung_ziel_normalisieren(Some(""), "LFBO").unwrap(), None);
+        assert_eq!(umleitung_ziel_normalisieren(None, "LFBO").unwrap(), None);
+        assert!(umleitung_ziel_normalisieren(Some("LFB"), "LFBO").is_err());
+        assert!(umleitung_ziel_normalisieren(Some("LF-D"), "LFBO").is_err());
+    }
+
+    /// Umleitung (Beta), die Kette: gemeldetes Ziel → Planer → Ansage, auch
+    /// nach einem Neustart (gespeichert) und im Anflug.
+    #[test]
+    fn umleitung_kommt_als_ansage_und_ueberlebt_einen_resume() {
+        use cabin_announcements::Slot;
+        let jetzt = Utc::now();
+        let mut snap = SimSnapshot::default();
+        snap.on_ground = false;
+        let mut stats = FlightStats::new();
+        stats.phase = FlightPhase::Approach;
+        stats.pax_count = Some(150);
+        stats.max_passengers = Some(180);
+        stats.takeoff_at = Some(jetzt - chrono::Duration::minutes(90));
+        stats.umleitung_ziel = Some("LFBD".into());
+
+        let snapshot = PersistedFlightStats::snapshot_from(&stats);
+        let json = serde_json::to_string(&snapshot).expect("serializes");
+        let mut nach_neustart = FlightStats::new();
+        serde_json::from_str::<PersistedFlightStats>(&json).expect("parses").apply_to(&mut nach_neustart);
+        assert_eq!(nach_neustart.umleitung_ziel.as_deref(), Some("LFBD"));
+
+        let slots: Vec<_> = kabinen_schritt(&mut nach_neustart, &snap, jetzt, "LFBO", Some(120), "A320")
+            .faellig
+            .into_iter()
+            .map(|f| f.slot)
+            .collect();
+        assert!(slots.contains(&Slot::Umleitung), "{slots:?}");
+
+        // Ohne gemeldetes Ziel keine Umleitungs-Ansage.
+        let mut ohne = FlightStats::new();
+        ohne.phase = FlightPhase::Approach;
+        ohne.pax_count = Some(150);
+        let slots: Vec<_> = kabinen_schritt(&mut ohne, &snap, jetzt, "LFBO", Some(120), "A320")
+            .faellig
+            .into_iter()
+            .map(|f| f.slot)
+            .collect();
+        assert!(!slots.contains(&Slot::Umleitung), "{slots:?}");
     }
 
     /// v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,
@@ -59069,6 +59673,10 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
             )),
         );
     }
+    // Kabinenansagen (Beta): Flug aus einer Version ohne Passagierzahl.
+    if crate::kabinenansagen::einstellungen(app).an {
+        kabinen_eckdaten_nachholen(&client, persisted.bid_id, &mut restored_stats).await;
+    }
     // v0.20 (Process-Integrity): overwrite with THIS resume's freshly-
     // determined value — `apply_to` just restored whatever an OLDER resume
     // (if any) had persisted, which says nothing about the restart that
@@ -62196,6 +62804,24 @@ pub fn run() {
             fetch_simbrief_preview,
             flight_refresh_simbrief,
             flight_refresh_route_only,
+            flight_umleitung_setzen,
+            kabinenansagen::kabinen_einstellungen_lesen,
+            kabinenansagen::kabinen_einstellungen_setzen,
+            kabinenansagen::kabinen_zustand,
+            kabinenansagen::kabinen_audio,
+            kabinenansagen::kabinen_ausgabegeraete,
+            kabinenansagen::kabinen_ton_spielen,
+            kabinenansagen::kabinen_ton_stoppen,
+            kabinenansagen::kabinen_ton_huellkurve,
+            kabinenansagen::kabinen_probe,
+            kabinenansagen::kabinen_ueberblick,
+            kabinenansagen::kabinen_wiedergabe_ende,
+            kabinenansagen::kabinen_wiedergabe_start,
+            kabinenansagen::kabinen_stumm,
+            kabinenansagen::kabinen_lautstaerke,
+            kabinenansagen::kabinen_anhoeren,
+            kabinenansagen::kabinen_erneut,
+            kabinenansagen::kabinen_speicher,
             bid_simbrief_preview,
             ofp_callsign_warning_get,
             flight_resume_after_disconnect,
