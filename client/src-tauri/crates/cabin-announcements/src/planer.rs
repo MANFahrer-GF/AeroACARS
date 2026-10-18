@@ -673,10 +673,10 @@ impl Planer {
             let reif = match self.kapitaen_sinkflug {
                 // Im Anflug sofort, sonst ginge sie bei einem kurzen Sinkflug
                 // verloren; die Pause der Warteschlange trennt sie trotzdem.
+                // Mindestens 2 min nach dem Ende, auch im Anflug (Codex 2.0.27).
                 KapitaenSinkflug::Gespielt(k) => {
                     let seit = t.jetzt - k;
-                    t.phase == Approach
-                        || (seit >= KABINE_NACH_KAPITAEN_MIN_S && (tief || seit >= KABINE_NACH_KAPITAEN_SPAETESTENS_S))
+                    seit >= KABINE_NACH_KAPITAEN_MIN_S && (t.phase == Approach || tief || seit >= KABINE_NACH_KAPITAEN_SPAETESTENS_S)
                 }
                 KapitaenSinkflug::Gemeldet => t.phase == Approach,
                 KapitaenSinkflug::Offen | KapitaenSinkflug::KommtNicht => tief,
@@ -764,8 +764,11 @@ impl Planer {
         if self.schon(slot) {
             return;
         }
-        // Zu nah am Sinkflug: entfällt ganz.
-        if t.rest_min.is_some_and(|m| m <= 35.0) {
+        // Zu nah am Sinkflug: entfällt ganz. Die dritte kommt fest vor dem
+        // TOD (Thomas: 10–15 min) und braucht nur die Reserve vor der
+        // Sinkflug-Ansage des Kapitäns, nicht die 35 min (Codex 2.0.27).
+        let reserve = if slot == Slot::Reiseflug80 { KURZSTRECKE_SERVICE_REST_MIN } else { 35.0 };
+        if t.rest_min.is_some_and(|m| m <= reserve) {
             self.entfaellt(slot, Entfall::ZuWenigZeit);
             return;
         }
@@ -915,8 +918,9 @@ mod tests {
         alle
     }
 
-    // 75 min: 80 % fiele schon in den Sinkflug → entfällt.
-    const REISE_75: [Slot; 2] = [Slot::Reiseflug25, Slot::Reiseflug50];
+    // 75 min: Bordverkauf-Ende 12 min vor TOD kommt auch hier (seit 2.0.27,
+    // vorher fiel die dritte Ansage bei 80 % in die 35-min-Sperre).
+    const REISE_75: [Slot; 3] = [Slot::Reiseflug25, Slot::Reiseflug50, Slot::Reiseflug80];
     const REISE_90: [Slot; 3] = [Slot::Reiseflug25, Slot::Reiseflug50, Slot::Reiseflug80];
     const REISE_120: [Slot; 3] = [Slot::Reiseflug25, Slot::Reiseflug50, Slot::Reiseflug80];
 
@@ -1124,6 +1128,12 @@ mod tests {
         q.tick(&tick(1_000, Descent, 30_000.0, -2_000.0));
         q.kapitaen_sinkflug_ende(false, 1_010);
         assert!(kabine(&mut q, 1_020, 14_000.0, Descent));
+        // Im Anflug auch nach dem Kapitän: mindestens 2 min nach seinem Ende.
+        let mut a = Planer::fortsetzen(flug(120), Cruise);
+        a.tick(&tick(1_000, Descent, 30_000.0, -2_000.0));
+        a.kapitaen_sinkflug_ende(true, 1_050);
+        assert!(!kabine(&mut a, 1_100, 4_000.0, Approach), "erst 50 s nach dem Kapitän");
+        assert!(kabine(&mut a, 1_170, 3_500.0, Approach));
         // Wartet der Kapitän noch im Anflug, kommt die Kabine trotzdem.
         let mut r = Planer::fortsetzen(flug(120), Cruise);
         r.tick(&tick(1_000, Descent, 30_000.0, -2_000.0));
@@ -1317,6 +1327,30 @@ mod tests {
         b.jetzt = 10;
         b.hoehe_agl_ft = Some(1_900.0);
         assert!(slots(q.tick(&b)).contains(&Slot::KommandoPlaetzeLandung));
+    }
+
+    /// Codex 2.0.27: Mit TOD aus dem OFP und kurzem Sinkflug liegt die
+    /// Restzeit beim Bordverkauf-Ende unter 35 min — sie kommt trotzdem.
+    #[test]
+    fn reiseflug80_kommt_auch_mit_kurzer_restzeit() {
+        let mut f = flug(120);
+        f.abheben_epoch = Some(0);
+        f.tod_nach_abheben_s = Some(100 * 60);
+        let mut p = Planer::fortsetzen(f, Cruise);
+        p.gemeldet.insert(Slot::Reiseflug25);
+        p.gemeldet.insert(Slot::Reiseflug50);
+        let t = 100 * 60 - REISEFLUG80_VOR_TOD_S;
+        let mut tk = tick(t, Cruise, 37_000.0, 0.0);
+        tk.anschnallzeichen = Some(0);
+        tk.rest_min = Some(32.0);
+        assert!(slots(p.tick(&tk)).contains(&Slot::Reiseflug80));
+        // Gegenprobe: unter der Reserve entfällt sie sichtbar.
+        let mut q = Planer::fortsetzen(Flugdaten { tod_nach_abheben_s: Some(100 * 60), abheben_epoch: Some(0), ..flug(120) }, Cruise);
+        q.gemeldet.insert(Slot::Reiseflug25);
+        q.gemeldet.insert(Slot::Reiseflug50);
+        tk.rest_min = Some(25.0);
+        assert!(!slots(q.tick(&tk)).contains(&Slot::Reiseflug80));
+        assert_eq!(q.entfallene_abholen(), vec![(Slot::Reiseflug80, Entfall::ZuWenigZeit)]);
     }
 
     /// Thomas 18.10.2026: Bordverkauf-Ende 10–15 min vor Top of Descent.

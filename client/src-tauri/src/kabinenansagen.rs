@@ -1041,7 +1041,7 @@ fn anfrage_bauen(
     let wetter = stats.arr_metar_snap.as_ref().and_then(|m| {
         m.temperature_c.map(|t| serde_json::json!({ "temperatur_c": t, "lage": wetterlage(m) }))
     });
-    serde_json::json!({
+    let mut anfrage = serde_json::json!({
         "pirep_id": flight.pirep_id,
         "teil": teil,
         "slots": slots.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(),
@@ -1049,7 +1049,6 @@ fn anfrage_bauen(
         "zweite_sprache": einst.zweite_sprache,
         "echter_name": einst.echter_name,
         // Wirkt nur beim ersten Abruf eines Fluges (Crew wird dann fest).
-        "kapitaen_geschlecht": (einst.kapitaen_geschlecht != "auto").then(|| einst.kapitaen_geschlecht.clone()),
         "flug": {
             "pax": stats.pax_count,
             "sitze": stats.max_passengers,
@@ -1065,7 +1064,13 @@ fn anfrage_bauen(
             "wetter_ziel": wetter,
             "umleitung_icao": stats.umleitung_ziel,
         }
-    })
+    });
+    // Kapitän/Kapitänin: nur bei fester Wahl mitschicken, „auto“ = weglassen
+    // (der Server würfelt). Wirkt nur beim ersten Abruf eines Fluges.
+    if einst.kapitaen_geschlecht != "auto" {
+        anfrage["kapitaen_geschlecht"] = serde_json::json!(einst.kapitaen_geschlecht);
+    }
+    anfrage
 }
 
 /// Erwartete Landung (UTC-Epoch) für die Texte (Michael BER181: dreimal
