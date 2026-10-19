@@ -6117,8 +6117,9 @@ mod tests {
         // Lampen (29.09.2026): +40 (AP1, AP2, A/THR, APPR, HDG gestrichelt);
         // Vref (06.10.2026): +16 (FSS-PFD-VREF, DESIGN SPEED VS0).
         // 16.10.2026: −16 (EX1 und TRANSPONDER STATE:1 in eigene
-        // Definitionen, `OPTIONALE_FELDER`).
-        assert_eq!(buf.len(), 3672, "total block size");
+        // Definitionen, `OPTIONALE_FELDER`). FSS-FGP-Lampen (19.10.2026):
+        // +40 (AP, HDG, NAV, ALT, APP).
+        assert_eq!(buf.len(), 3712, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6422,28 +6423,33 @@ mod tests {
         assert_eq!(t.fss_apu_master, 1360.0); // idx 360
         assert_eq!(t.fss_autobrake, 1361.0); // idx 361
         assert_eq!(t.fss_parkbrake_lever, 1362.0); // idx 362
-        assert_eq!(t.ini_strobe_light_switch, 1363.0); // idx 363, A330 (26.09.2026)
-        assert_eq!(t.ini_tcas_stby_state, 1364.0); // idx 364
-        assert_eq!(t.zulu_time_s, 1365.0); // idx 365, Bordbuch (26.09.2026)
-        assert_eq!(t.zulu_tag_im_jahr, 1366.0); // idx 366
-        assert_eq!(t.zulu_jahr, 1367.0); // idx 367
-        assert_eq!(t.fbw_park_brake_lever, 1368.0); // idx 368, FBW (28.09.2026)
-        assert_eq!(t.fbw_apu_master, 1369.0); // idx 369
-        assert_eq!(t.fbw_tcas_position, 1370.0); // idx 370
-        assert_eq!(t.fbw_strobe, 1371.0); // idx 371
-        assert_eq!(t.ini_fcu_hdg_dashed, 1372.0); // idx 372, A380 (28.09.2026)
-        assert_eq!(t.fnx_fcu_ap1_lampe, 1373.0); // idx 373, Fenix (29.09.2026)
-        assert_eq!(t.fnx_fcu_ap2_lampe, 1374.0); // idx 374
-        assert_eq!(t.fnx_fcu_athr_lampe, 1375.0); // idx 375
-        assert_eq!(t.fnx_fcu_appr_lampe, 1376.0); // idx 376
-        assert_eq!(t.fnx_fcu_hdg_dashed, 1377.0); // idx 377
-        assert_eq!(t.fss_vref, 1378.0); // idx 378, Vref (06.10.2026)
-        assert_eq!(t.semibody_loadfactor_y, Some(1379.0)); // idx 379, Lernpaket
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1380.0); // idx 380
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1381.0)); // idx 381
-        assert_eq!(t.std_light_landing_on_1, Some(1382.0)); // idx 382
-        assert_eq!(t.std_light_landing_on_2, Some(1383.0)); // idx 383
-        assert_eq!(t.design_vs0, Some(1384.0)); // idx 384, zuletzt
+        assert_eq!(t.fss_ap_lampe, 1363.0); // idx 363, FSS-FGP (19.10.2026)
+        assert_eq!(t.fss_hdg_lampe, 1364.0); // idx 364
+        assert_eq!(t.fss_nav_lampe, 1365.0); // idx 365
+        assert_eq!(t.fss_alt_lampe, 1366.0); // idx 366
+        assert_eq!(t.fss_app_lampe, 1367.0); // idx 367
+        assert_eq!(t.ini_strobe_light_switch, 1368.0); // idx 368, A330 (26.09.2026)
+        assert_eq!(t.ini_tcas_stby_state, 1369.0); // idx 369
+        assert_eq!(t.zulu_time_s, 1370.0); // idx 370, Bordbuch (26.09.2026)
+        assert_eq!(t.zulu_tag_im_jahr, 1371.0); // idx 371
+        assert_eq!(t.zulu_jahr, 1372.0); // idx 372
+        assert_eq!(t.fbw_park_brake_lever, 1373.0); // idx 373, FBW (28.09.2026)
+        assert_eq!(t.fbw_apu_master, 1374.0); // idx 374
+        assert_eq!(t.fbw_tcas_position, 1375.0); // idx 375
+        assert_eq!(t.fbw_strobe, 1376.0); // idx 376
+        assert_eq!(t.ini_fcu_hdg_dashed, 1377.0); // idx 377, A380 (28.09.2026)
+        assert_eq!(t.fnx_fcu_ap1_lampe, 1378.0); // idx 378, Fenix (29.09.2026)
+        assert_eq!(t.fnx_fcu_ap2_lampe, 1379.0); // idx 379
+        assert_eq!(t.fnx_fcu_athr_lampe, 1380.0); // idx 380
+        assert_eq!(t.fnx_fcu_appr_lampe, 1381.0); // idx 381
+        assert_eq!(t.fnx_fcu_hdg_dashed, 1382.0); // idx 382
+        assert_eq!(t.fss_vref, 1383.0); // idx 383, Vref (06.10.2026)
+        assert_eq!(t.semibody_loadfactor_y, Some(1384.0)); // idx 384, Lernpaket
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1385.0); // idx 385
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1386.0)); // idx 386
+        assert_eq!(t.std_light_landing_on_1, Some(1387.0)); // idx 387
+        assert_eq!(t.std_light_landing_on_2, Some(1388.0)); // idx 388
+        assert_eq!(t.design_vs0, Some(1389.0)); // idx 389, zuletzt
         assert_eq!(t.std_transponder_state, None); // → OPTIONALE_FELDER
         assert_eq!(TELEMETRY_FIELDS.len(), 385, "letzter Index 384");
     }
@@ -6518,7 +6524,8 @@ mod tests {
         // Fenix-FCU-Lampen (29.09.2026): fuenf LVars dazu → 64 * 8 = 512.
         // Vref (06.10.2026): FSS-VREF und DESIGN SPEED VS0 dazu → 66 * 8 = 528.
         // 16.10.2026: TRANSPONDER STATE:1 → OPTIONALE_FELDER → 65 * 8 = 520.
-        buf.truncate(buf.len() - 520);
+        // FSS-FGP-Lampen (19.10.2026): fuenf LVars dazu → 70 * 8 = 560.
+        buf.truncate(buf.len() - 560);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -6531,6 +6538,7 @@ mod tests {
             "Gruppe K = sicherer Default (kein erfundenes OFF)"
         );
         assert_eq!(t.fss_parkbrake_lever, 0.0, "Runde 3 = sicherer Default");
+        assert_eq!(t.fss_ap_lampe, 0.0, "FSS-FGP = sicherer Default");
         assert_eq!(t.ini_tcas_stby_state, 0.0, "A330 = sicherer Default");
         assert_eq!(t.fbw_park_brake_lever, 0.0, "FBW A32NX = sicherer Default");
         assert_eq!(t.ini_fcu_hdg_dashed, 0.0, "A380 = sicherer Default");
