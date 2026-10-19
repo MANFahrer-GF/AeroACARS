@@ -708,7 +708,7 @@ impl Planer {
             self.abheben_epoch = Some(t.jetzt);
             // Nur ein beobachteter Start taugt für die Restzeit aus der
             // Planzeit; nach einem Neustart im Reiseflug wäre „jetzt“ falsch.
-            self.abheben_gesehen = r <= rang(Climb);
+            self.abheben_gesehen = !self.wiedereinstieg;
         }
         if let Some(h0) = self.letzte_hoehe_ft {
             if in_luft && h0 < 10_000.0 && t.hoehe_ft >= 10_000.0 && t.vs_fpm > 0.0 {
@@ -1981,6 +1981,12 @@ mod tests {
         let mut w = Planer::fortsetzen(ohne, Cruise);
         w.tick(&tick(5_000, Cruise, 37_000.0, 0.0));
         assert_eq!(w.restflug_min(5_000 + 60, None), None);
+        // Auch beim Wiedereinstieg im Steigflug (Codex-Nachprüfung).
+        let mut ohne_steig = flug(100);
+        ohne_steig.abheben_epoch = None;
+        let mut st = Planer::fortsetzen(ohne_steig, Climb);
+        st.tick(&tick(5_000, Climb, 8_000.0, 2_000.0));
+        assert_eq!(st.restflug_min(5_000 + 60, None), None);
         // Beobachteter Start: Schätzung aus Planzeit.
         let mut z = Planer::neu(flug(100));
         z.tick(&tick(0, Takeoff, 500.0, 2_000.0));
