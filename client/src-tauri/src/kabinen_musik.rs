@@ -994,7 +994,8 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_secs(1));
             println!("waehrend Ansage hoerbar: {}", hoerbar());
         }
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        // 3 s Ruhe, dann 2 s hoch (Design §8).
+        std::thread::sleep(std::time::Duration::from_secs(4));
         println!("nach Ansage hoerbar: {}", hoerbar());
         aus();
         std::thread::sleep(std::time::Duration::from_millis(300));
