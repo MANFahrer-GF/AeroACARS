@@ -209,7 +209,8 @@ fn dlh454_zweiter_service_trotz_fruehem_sinkflug() {
     let zweiter = *a.gespielt.get(&Slot::Reiseflug80).expect("zweiter Service kam");
     assert!(sinkflug - zweiter >= 60 * 60, "zweiter Service {} min vor dem Sinkflug", (sinkflug - zweiter) / 60);
     let start = a.gespielt[&Slot::KommandoStart];
-    assert!((90..=180).contains(&(d.abheben - start)), "Seats for take-off {} s vor dem Startlauf", d.abheben - start);    // 2.1.0: Ende des Service kommt vor der Sinkflug-Ansage des Kapitäns.
+    assert!((90..=180).contains(&(d.abheben - start)), "Seats for take-off {} s vor dem Startlauf", d.abheben - start);
+    // 2.1.0: Ende des Service kommt vor der Sinkflug-Ansage des Kapitäns.
     let ende = *a.gespielt.get(&Slot::EndeService).expect("Ende des Service kam");
     assert!(ende < a.gespielt[&Slot::KapitaenSinkflug], "vor dem Kapitän");
     assert!(ende > zweiter, "nach dem zweiten Service");

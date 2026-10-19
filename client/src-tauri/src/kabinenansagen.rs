@@ -800,6 +800,14 @@ fn takt_schritt(
         verlauf_neu_vorab = true;
     }
     hinweis_pruefen(&mut stats, snap, schritt.phase, jetzt);
+    // Altes Modul: Ist Reiseflug 80 das Ende des Bordverkaufs, entfällt eine
+    // schon wartende eigene „Ende des Service“-Ansage (keine Doppelung,
+    // auch wenn die Art erst später ankommt — Codex 2.1.0).
+    if zweiter_service(&stats.kabinen_lauf) == Some(false) && stats.kabinen_lauf.warteschlange.entfernen(Slot::EndeService) {
+        notiz(&mut stats.kabinen_lauf, "entfallen", Some(Slot::EndeService), None, serde_json::json!({ "grund": "uebersprungen" }));
+        verbuchen(&mut stats.kabinen_lauf, Slot::EndeService, "entfallen", Some("uebersprungen"), jetzt);
+        verlauf_neu_vorab = true;
+    }
     let mut verlauf_neu = verlauf_neu_vorab;
     // Was der Planer nicht meldet, obwohl es dran gewesen wäre: in „Bisher“.
     let entfallen = stats.kabinen_planer.as_mut().map(|p| p.entfallene_abholen()).unwrap_or_default();
@@ -3719,6 +3727,17 @@ mod tests {
         l.art_r80 = Some("zweiter_service".into());
         assert!(zweiter_service_zu_spaet(&l, Some(30.0)));
         assert!(!zweiter_service_zu_spaet(&l, Some(95.0)), "noch genug Zeit");
+    }
+
+    /// Codex 2.1.0: Kommt die alte Art „Ende des Bordverkaufs“ erst, als
+    /// „Ende des Service“ schon wartet, entfällt Letztere (keine Doppelung).
+    #[test]
+    fn spaete_alte_art_nimmt_ende_service_heraus() {
+        let mut st = FlightStats::new();
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::EndeService, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
+        st.kabinen_lauf.art_r80 = Some("ende_bordverkauf".into());
+        assert_eq!(zweiter_service(&st.kabinen_lauf), Some(false));
+        assert!(st.kabinen_lauf.warteschlange.entfernen(Slot::EndeService), "der Host nimmt sie heraus");
     }
 
     /// 2.1.0: `fremd` aus dem Drehbuch wird je Text gemerkt und mit einem
