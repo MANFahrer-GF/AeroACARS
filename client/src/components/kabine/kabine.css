@@ -190,3 +190,8 @@
 .kabine-einzeln-gruppen { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 8px; }
 .kabine-einzeln-gruppe { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .kabine-einzeln-gruppe legend { font-size: var(--fs-300, 12px); color: var(--text-dim); padding: 0 4px; }
+
+/* Lange Listen rollen in ihrem Kasten statt die Seite zu verlängern (Thomas
+   19.10.2026: „elendig lang“, aber jede Ansage muss erreichbar bleiben, z. B.
+   zum „Erneut versuchen“). Gut fünf Zeilen sichtbar, der Rest per Rollen. */
+.kabine-liste--rollbar { max-height: 330px; overflow-y: auto; overscroll-behavior: contain; }

@@ -329,6 +329,7 @@ export function KabinenSeite({
   const a: Gespielt | null = live.ansage;
   const verlauf = [...(daten?.verlauf ?? [])].reverse();
   const naechste: Geplant[] = daten?.geplant ?? [];
+
   const gesperrt = a !== null || daten?.belegt === true;
   const stumm = stummJetzt ?? daten?.stumm ?? false;
   const stummUmschalten = (s: boolean) => {
@@ -462,7 +463,7 @@ export function KabinenSeite({
           {naechste.length === 0 ? (
             <div className="kabine-leer">{t("kabine.seite.nichts_wartet")}</div>
           ) : (
-            <ul className="kabine-liste" data-testid="kabine-naechste">
+            <ul className="kabine-liste kabine-liste--rollbar" data-testid="kabine-naechste">
               {naechste.map((g) => {
                 const k = `n-${g.slot}`;
                 const auf = offen === k;
@@ -522,7 +523,7 @@ export function KabinenSeite({
           {verlauf.length === 0 ? (
             <div className="kabine-leer">{t("kabine.seite.noch_nichts")}</div>
           ) : (
-            <ul className="kabine-liste kabine-liste--verlauf" data-testid="kabine-bisher">
+            <ul className="kabine-liste kabine-liste--verlauf kabine-liste--rollbar" data-testid="kabine-bisher">
               {verlauf.map((g) => {
                 const k = `b-${g.id}-${g.zeit}`;
                 const auf = offen === k;
