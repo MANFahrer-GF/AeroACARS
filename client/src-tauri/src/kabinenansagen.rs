@@ -436,24 +436,6 @@ fn protokoll_schreiben(app: &AppHandle, flight: &ActiveFlight, notizen: Vec<Noti
     }
 }
 
-/// Dieselbe Ampel wie das Ladeblatt im Cockpit-Tab (`LoadsheetMonitor.tsx`,
-/// `LsRow`): je Zeile (Ist, Soll, Max) grün bei unter 5 % Abweichung und nicht
-/// über Max; Zeilen ohne Ist und Soll fehlen dort. `None` = keine Soll-Werte
-/// (kein SimBrief-OFP).
-pub(crate) fn ladeblatt_gruen(zeilen: &[(Option<f32>, Option<f32>, Option<f32>)]) -> Option<bool> {
-    if zeilen.iter().all(|(_, soll, _)| soll.is_none()) {
-        return None;
-    }
-    Some(zeilen.iter().all(|(ist, soll, max)| {
-        let abw_ok = match (ist, soll) {
-            (Some(i), Some(s)) if *s != 0.0 => ((i - s) / s).abs() * 100.0 < 5.0,
-            _ => true,
-        };
-        let ueber_max = matches!((ist, max), (Some(i), Some(m)) if i > m);
-        abw_ok && !ueber_max
-    }))
-}
-
 /// Altes Modul: Reiseflug 80 ist das Ende des Bordverkaufs. Eine schon
 /// wartende eigene „Ende des Service“-Ansage entfällt dann. `true` = Verlauf
 /// geändert.
@@ -826,8 +808,6 @@ fn takt_schritt(
         let grund = match grund {
             cabin_announcements::Entfall::ZuWenigZeit => "zu_wenig_zeit",
             cabin_announcements::Entfall::Uebersprungen => "uebersprungen",
-            cabin_announcements::Entfall::TuerenSchonZu => "tueren_zu",
-            cabin_announcements::Entfall::OhneLadeblatt => "ohne_ladeblatt",
         };
         notiz(&mut stats.kabinen_lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
         verbuchen(&mut stats.kabinen_lauf, slot, "entfallen", Some(grund), jetzt);
@@ -952,8 +932,11 @@ fn takt_schritt(
         // Nicht zustellbar: nicht als „läuft“ stehen lassen.
         tracing::warn!(error = %e, "kabinenansage: Ereignis nicht zustellbar");
         let mut stats = flight.stats.lock().expect("flight stats");
-        if ende_melden(&mut stats, gespielt.id, "fehler", Utc::now().timestamp()) {
-            verlauf_speichern(app, flight, &stats.kabinen_lauf);
+        let text = if ende_melden(&mut stats, gespielt.id, "fehler", Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
+        // Datei ohne Flugdaten-Sperre schreiben (2.1.1 D, Punkt 11).
+        drop(stats);
+        if let Some(text) = text {
+            verlauf_schreiben(app, flight, &text);
         }
     }
 }
@@ -1844,12 +1827,6 @@ fn verlauf_uebernehmen(lauf: &mut Lauf, text: Option<String>) {
     }
 }
 
-fn verlauf_speichern(app: &AppHandle, flight: &ActiveFlight, lauf: &Lauf) {
-    if let Some(text) = verlauf_text(lauf) {
-        verlauf_schreiben(app, flight, &text);
-    }
-}
-
 /// Fortlaufende Nummer jeder Verlaufs-Fassung. Vergeben, solange der Aufrufer
 /// die Flugdaten-Sperre hält — die Nummer folgt also dem Stand.
 static VERLAUF_FASSUNG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1942,8 +1919,11 @@ pub(crate) fn kabinen_stumm(app: AppHandle, state: tauri::State<'_, AppState>, s
     ausgabe::stoppen();
     let Some(flight) = aktiver_flug(&state) else { return };
     let mut stats = flight.stats.lock().expect("flight stats");
-    if stumm_anwenden(&mut stats, Utc::now().timestamp()) {
-        verlauf_speichern(&app, &flight, &stats.kabinen_lauf);
+    let text = if stumm_anwenden(&mut stats, Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
+    // Datei ohne Flugdaten-Sperre schreiben (2.1.1 D, Punkt 11).
+    drop(stats);
+    if let Some(text) = text {
+        verlauf_schreiben(&app, &flight, &text);
     }
 }
 
@@ -3562,10 +3542,8 @@ mod tests {
                 anschnallzeichen: zeichen,
                 rest_min: Some((landung - jetzt) as f64 / 60.0).filter(|m| *m >= 0.0),
                 ziel_icao: None,
-                // Einsteigen von Minute 2 bis 8 (50 → 72 t), OFP 72 t.
+                // Einsteigen von Minute 2 bis 8 (50 → 72 t).
                 zfw_kg: Some(zfw(jetzt)),
-                zfw_plan_kg: Some(72_000.0),
-                ladeblatt_gruen: Some((zfw(jetzt) - 72_000.0).abs() / 72_000.0 < 0.05),
                 triebwerke_an: Some(!matches!(phase, Boarding | Pushback | BlocksOn | Arrived)),
                 ..Default::default()
             };
@@ -3702,19 +3680,6 @@ mod tests {
 
     /// Thomas 18.10.2026 (Punkt 8/16): Die Stimme folgt dem Geschlecht der
     /// Crew laut Server; ohne Angabe Kapitän männlich, Kabine weiblich.
-    /// v2.0.28: dieselbe Ampel wie `LsRow` im Cockpit-Tab (< 5 %, nicht über Max).
-    #[test]
-    fn ladeblatt_ampel_wie_im_cockpit_tab() {
-        let z = |ist: f32, soll: f32, max: Option<f32>| (Some(ist), Some(soll), max);
-        assert_eq!(ladeblatt_gruen(&[z(24_000.0, 24_100.0, None), z(72_744.0, 72_746.0, Some(73_500.0))]), Some(true));
-        assert_eq!(ladeblatt_gruen(&[z(24_000.0, 24_100.0, None), z(60_000.0, 72_746.0, Some(73_500.0))]), Some(false), "ZFW 17 % daneben");
-        assert_eq!(ladeblatt_gruen(&[z(73_600.0, 73_400.0, Some(73_500.0))]), Some(false), "über Max ist rot, auch unter 5 %");
-        assert_eq!(ladeblatt_gruen(&[z(69_200.0, 72_746.0, None)]), Some(true), "4,87 % ist noch grün");
-        assert_eq!(ladeblatt_gruen(&[z(69_100.0, 72_746.0, None)]), Some(false), "5,01 % nicht mehr");
-        assert_eq!(ladeblatt_gruen(&[(Some(1.0), None, None), (None, None, None)]), None, "ohne OFP");
-        assert_eq!(ladeblatt_gruen(&[(None, Some(24_000.0), None), z(72_744.0, 72_746.0, None)]), Some(true), "fehlender Ist-Wert färbt nicht");
-    }
-
     /// v2.0.28: „Boarding completed“ ist ein fester englischer Text (wie ein
     /// Kommando), gesprochen von der Kabine.
     #[test]

@@ -120,7 +120,12 @@ impl Warteschlange {
     /// [`PAUSE_BEGRUESSUNG_SICHERHEIT_S`] kommen, alles andere nach 90 s.
     pub fn ansage_zu_ende_nach(&mut self, jetzt: i64, slot: Slot) {
         self.ansage_zu_ende(jetzt);
-        if slot == Slot::BegruessungTuerenZu {
+        // 2.1.1 (Entscheidung 1): Begrüßung → „Türen zu“ → Sicherheit mit je
+        // 10 s Pause, sonst hielte die 90-s-Pause sie beim Beacon bis zum
+        // Startlauf auf.
+        if slot == Slot::Boarding {
+            self.pause_ausnahme = Some((Slot::BegruessungTuerenZu, jetzt + PAUSE_BEGRUESSUNG_SICHERHEIT_S));
+        } else if slot == Slot::BegruessungTuerenZu {
             self.pause_ausnahme = Some((Slot::Sicherheit, jetzt + PAUSE_BEGRUESSUNG_SICHERHEIT_S));
         } else if slot == Slot::Sicherheit {
             self.pause_ausnahme = Some((Slot::KapitaenBegruessung, jetzt + PAUSE_SICHERHEIT_KAPITAEN_S));
@@ -178,6 +183,19 @@ impl Warteschlange {
             .iter()
             .any(|e| matches!(e.slot, Slot::BegruessungTuerenZu | Slot::Sicherheit) && bereit(e.slot));
         let boarding_wartet = self.eintraege.iter().any(|e| e.slot == Slot::Boarding);
+        // 2.1.1 A/E: Begrüßung → „Boarding completed“ → „Türen zu“ →
+        // Sicherheit, auch gegenüber Kommandos. Gehalten wird nur hinter einer
+        // spielbereiten Ansage (wie oben bei der Kabine vor dem Kapitän), damit
+        // ein fehlender Ton die Sicherheit nicht bis zum Startlauf aufhält.
+        let boarding_bereit = self.eintraege.iter().any(|e| e.slot == Slot::Boarding && bereit(e.slot));
+        // „Boarding completed“ selbst wartet auf die Begrüßung (unten); hängt
+        // die ohne Ton, hält es die Gruppe nicht auf.
+        let abgeschlossen_bereit =
+            !boarding_wartet && self.eintraege.iter().any(|e| e.slot == Slot::BoardingAbgeschlossen && bereit(e.slot));
+        let tueren_zu_gruppe = |s: Slot| matches!(s, Slot::KommandoTuerenScharf | Slot::BegruessungTuerenZu | Slot::Sicherheit);
+        // 2.1.1 C: „Ende des Service“ nie vor einem gemeldeten, noch
+        // wartenden Service; beim Sinkflug verfällt der zuerst (oben).
+        let service_wartet = self.eintraege.iter().any(|e| e.slot == Slot::Reiseflug25);
         // „Ende des Service“ kommt vor der Sinkflug-Ansage des Kapitäns, wenn
         // beide zugleich fällig sind (Sinkflugbeginn) und es spielbereit ist.
         let ende_service_zuerst = self.eintraege.iter().any(|e| e.slot == Slot::EndeService && bereit(e.slot));
@@ -193,6 +211,8 @@ impl Warteschlange {
             // „Boarding completed“ (Kommando-Vorrang) überholt die noch
             // wartende Boarding-Ansage nicht.
             .filter(|(_, e)| !(e.slot == Slot::BoardingAbgeschlossen && boarding_wartet))
+            .filter(|(_, e)| !(tueren_zu_gruppe(e.slot) && (boarding_bereit || abgeschlossen_bereit)))
+            .filter(|(_, e)| !(e.slot == Slot::EndeService && service_wartet))
             .filter(|(_, e)| !(e.slot == Slot::KapitaenSinkflug && ende_service_zuerst))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
@@ -404,6 +424,60 @@ mod tests {
         // Gegenprobe: eine normale Ansage bleibt in der Ruhephase gesperrt.
         assert_eq!(w.naechstes(10, Climb, true), None);
     }
+    /// 2.1.1 A/E: Begrüßung → „Boarding completed“ → „Türen zu“ (Kommando
+    /// und Kabine) → Sicherheit, auch gegen den Kommando-Vorrang.
+    #[test]
+    fn beacon_reihenfolge_auch_gegen_kommandos() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([
+            f(Slot::Boarding, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::BoardingAbgeschlossen, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::KommandoTuerenScharf, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::BegruessungTuerenZu, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::Sicherheit, Verfall::AbPhase(TakeoffRoll)),
+        ]);
+        let mut reihe = Vec::new();
+        let mut t = 0;
+        while !w.ist_leer() && t < 600 {
+            if let Some(s) = w.naechstes(t, Boarding, false) {
+                reihe.push((t, s));
+                if s.loest_pause_aus() {
+                    w.ansage_spielt_bis(t + 20);
+                    w.ansage_zu_ende_nach(t + 20, s);
+                } else {
+                    w.spielt_bis(t + 3);
+                    w.frei();
+                }
+            }
+            t += 1;
+        }
+        assert_eq!(
+            reihe,
+            vec![
+                (0, Slot::Boarding),
+                (1, Slot::BoardingAbgeschlossen),
+                (2, Slot::KommandoTuerenScharf),
+                (30, Slot::BegruessungTuerenZu),
+                (60, Slot::Sicherheit),
+            ]
+        );
+        // Ohne Ton für die Begrüßung hält sie die anderen nicht bis zum Startlauf auf.
+        let mut v = Warteschlange::default();
+        v.aufnehmen([f(Slot::Boarding, Verfall::AbPhase(TakeoffRoll)), f(Slot::BegruessungTuerenZu, Verfall::AbPhase(TakeoffRoll))]);
+        assert_eq!(v.naechstes_bereit(0, Boarding, false, |s| s != Slot::Boarding), Some(Slot::BegruessungTuerenZu));
+    }
+
+    /// 2.1.1 C: „Ende des Service“ wartet auf einen gemeldeten Service; beim
+    /// Sinkflug verfällt der zuerst, dann darf das Ende.
+    #[test]
+    fn ende_service_nie_vor_wartendem_service() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([f(Slot::Reiseflug25, Verfall::AbPhase(Descent)), f(Slot::EndeService, Verfall::AbPhase(Approach))]);
+        assert_eq!(w.naechstes(0, Climb, true), None, "Ruhephase: das Ende überholt den Service nicht");
+        assert_eq!(w.naechstes(1, Descent, true), Some(Slot::EndeService));
+        assert_eq!(w.verfallene_abholen(), vec![Slot::Reiseflug25]);
+    }
+
     #[test]
     fn ende_service_vor_dem_kapitaen_beim_sinkflug() {
         let mut w = Warteschlange::default();

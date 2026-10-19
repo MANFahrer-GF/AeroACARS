@@ -47670,14 +47670,8 @@ fn kabinen_schritt(
         hoehe_agl_ft: Some(snap.altitude_agl_ft),
         triebwerke_an: Some(snap.engines_running > 0),
         zfw_kg: stats.last_zfw_kg.map(f64::from),
-        zfw_plan_kg: stats.planned_zfw_kg.map(f64::from),
-        // Ampel wie im Cockpit-Tab, für das Boarding nur Kraftstoff und ZFW:
-        // Am Gate zählt der Sim das Rollkraftstoff zur TOW, die Zeile steht
-        // dort oft über Max (Peter DLH16: +272 kg) und wäre nie grün.
-        ladeblatt_gruen: kabinenansagen::ladeblatt_gruen(&[
-            (stats.last_fuel_kg, stats.planned_block_fuel_kg, None),
-            (stats.last_zfw_kg, stats.planned_zfw_kg, stats.planned_max_zfw_kg),
-        ]),
+        // „Rollt“ für „Plätze für den Start“ (2.1.1 B, ab 3 kt).
+        bodengeschwindigkeit_kt: Some(f64::from(snap.groundspeed_kt)),
     };
     let zweiter_service = kabinenansagen::zweiter_service(&stats.kabinen_lauf);
     let (faellig, ruhephase) = stats
@@ -52210,7 +52204,8 @@ mod arrived_fallback_geometry_tests {
 
     /// Kabinenansagen (Beta), die Kette: Eckdaten in `FlightStats` →
     /// Flugdaten → Planer → faellige Ansage. Fracht bleibt stumm, ein
-    /// Linienflug bekommt im Boarding seine Ansage, ein Wiedereinstieg im
+    /// Linienflug bekommt im Boarding seine Ansage, sobald die Zuladung
+    /// steigt, ein Wiedereinstieg im
     /// Reiseflug holt das Boarding nicht nach, und ein Durchstarten zaehlt
     /// als Flanke, nicht bei jedem Takt neu.
     #[test]
@@ -52230,10 +52225,15 @@ mod arrived_fallback_geometry_tests {
         linie.pax_count = Some(150);
         linie.max_passengers = Some(180);
         linie.flight_type = Some("J".into());
-        // Boarding nicht gleich beim Laden, sondern nach 5 min (ohne Anschnallzeichen).
+        // 2.1.1 A: Begrüßung 30 s nach dem Anstieg der Zuladung (+200 kg),
+        // hier ohne OFP (kein ZFW-Plan) — nicht nach Zeit, nicht am Schalter.
+        linie.last_zfw_kg = Some(43_000.0);
         assert!(!slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
-        let spaeter = jetzt + chrono::Duration::minutes(5);
-        assert!(slots(kabinen_schritt(&mut linie, &snap, spaeter, "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
+        let spaeter = jetzt + chrono::Duration::minutes(8);
+        assert!(!slots(kabinen_schritt(&mut linie, &snap, spaeter, "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
+        linie.last_zfw_kg = Some(46_000.0);
+        kabinen_schritt(&mut linie, &snap, spaeter + chrono::Duration::seconds(10), "EDDH", Some(60), "A320", &[]);
+        assert!(slots(kabinen_schritt(&mut linie, &snap, spaeter + chrono::Duration::seconds(40), "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
 
         let mut resume = FlightStats::new();
         resume.phase = FlightPhase::Cruise;

@@ -74,12 +74,8 @@ pub struct Tick {
     pub triebwerke_an: Option<bool>,
     /// Leergewicht mit Zuladung (ZFW) im Sim, kg; `None` = unbekannt.
     pub zfw_kg: Option<f64>,
-    /// ZFW laut SimBrief-OFP, kg; `None` = kein OFP.
-    pub zfw_plan_kg: Option<f64>,
-    /// Ladeblatt-Ampel wie im Cockpit-Tab für Kraftstoff und ZFW grün (je
-    /// unter 5 % Abweichung, nicht über Max; die TOW-Zeile zählt am Gate
-    /// nicht, sie enthält das Rollkraftstoff); `None` = kein OFP.
-    pub ladeblatt_gruen: Option<bool>,
+    /// Geschwindigkeit über Grund (kt); `None` = unbekannt (2.1.1, „rollt“).
+    pub bodengeschwindigkeit_kt: Option<f64>,
 }
 
 /// Was der Planer vom Flug einmal zu Beginn wissen muss.
@@ -106,8 +102,9 @@ fn spaetestens_vor(slot: Slot) -> Option<FlightPhase> {
     use FlightPhase as P;
     use Slot as S;
     Some(match slot {
-        S::Boarding | S::BoardingAbgeschlossen => P::Pushback,
-        S::BegruessungTuerenZu | S::Sicherheit => P::TakeoffRoll,
+        // 2.1.1 (Thomas 19.10.: nichts verfällt vor dem Pushback): Kam die
+        // Begrüßung bis „Türen zu“ nicht, kommt sie dort noch.
+        S::Boarding | S::BoardingAbgeschlossen | S::BegruessungTuerenZu | S::Sicherheit => P::TakeoffRoll,
         // Kommt sie am Boden nicht mehr dran, nach dem Start (Thomas 18.10.2026).
         S::KapitaenBegruessung => P::Descent,
         S::AnschnallzeichenAus | S::Reiseflug25 | S::Reiseflug50 | S::Reiseflug80 => P::Descent,
@@ -179,10 +176,6 @@ pub enum Entfall {
     ZuWenigZeit,
     /// Eine spätere Reiseflug-Ansage war schon dran (Reiseflug spät erkannt).
     Uebersprungen,
-    /// Die Türen waren schon zu, bevor das Boarding dran war.
-    TuerenSchonZu,
-    /// „Boarding completed“: ohne SimBrief-Ladeblatt nicht feststellbar.
-    OhneLadeblatt,
 }
 
 /// Stand der Sinkflug-Ansage des Kapitäns: Die Kabine folgt mit Abstand
@@ -226,9 +219,6 @@ pub const WARTESCHLEIFE_NACH_S: i64 = 120;
 pub const KABINE_NACH_KAPITAEN_MIN_S: i64 = 120;
 /// … und spätestens so lange danach, auch wenn sie noch hoch ist.
 pub const KABINE_NACH_KAPITAEN_SPAETESTENS_S: i64 = 300;
-/// Boarding-Ansage spätestens so lange nach Beginn des Boardings, wenn das
-/// Anschnallzeichen nicht vorher eingeschaltet wird (Thomas 18.10.2026).
-pub const BOARDING_NACH_S: i64 = 5 * 60;
 /// Ende des Bordverkaufs bzw. zweiter Service so lange vor dem Top of Descent
 /// (Thomas 18.10.2026: „10, 15 Minuten vor Top of Descent“).
 pub const REISEFLUG80_VOR_TOD_S: i64 = 12 * 60;
@@ -243,22 +233,15 @@ pub const ZWEITER_SERVICE_REST_MIN: f64 = 60.0;
 /// „Plätze für die Landung“ im Anflug spätestens unter dieser Höhe über Grund,
 /// wenn das Fahrwerk nicht vorher ausfährt.
 pub const PLAETZE_LANDUNG_AGL_FT: f64 = 2_000.0;
-/// Boarding-Ansage, sobald die Zuladung so weit über dem Wert beim Flugstart
-/// liegt (Einsteigen läuft) … (v2.0.28, Peter: „Begrüßung zu früh“)
+/// Boarding-Begrüßung, sobald die Zuladung so weit über dem Bezugswert liegt
+/// (erster ZFW-Wert der Phase Boarding) … (Thomas 19.10.2026: „Gewicht steigt
+/// → 30 s warten → abspielen“; jeder Anstieg zählt, auch Fracht zuerst)
 pub const BOARDING_ZULADUNG_KG: f64 = 200.0;
-/// … und das so lange (Sekunden).
+/// … und das ununterbrochen so lange (Sekunden).
 pub const BOARDING_ZULADUNG_S: i64 = 30;
-/// Liegt die ZFW beim Flugstart so nah am OFP (Prozent), ist schon geladen:
-/// Boarding wie bisher (Anschnallzeichen / 5 min). Gleiche Grenze wie die
-/// grüne Ampel im Cockpit-Tab.
-pub const LADEBLATT_GRUEN_PROZENT: f64 = 5.0;
-/// „Boarding completed“: ZFW so lange stabil (Sekunden) …
-pub const BOARDING_FERTIG_STABIL_S: i64 = 30;
-/// … innerhalb dieser Schwankung (kg) …
-pub const BOARDING_FERTIG_STABIL_KG: f64 = 50.0;
-/// … und frühestens so lange nach der Boarding-Ansage: War schon beim
-/// Flugstart alles geladen, folgte sie sonst direkt auf „Willkommen an Bord“.
-pub const BOARDING_FERTIG_NACH_ANSAGE_S: i64 = 120;
+/// „Rollt“ für „Plätze für den Start“ ab dieser Geschwindigkeit über Grund
+/// (Thomas 19.10.2026, Entscheidung 3).
+pub const ROLLT_AB_KT: f64 = 3.0;
 /// Erste Service-Ansage außerhalb der Kurzstrecke so lange nach Erreichen der
 /// Reiseflughöhe (v2.0.28, Peter: „Service auf Langstrecke zu spät“).
 pub const SERVICE_NACH_REISEFLUG_S: i64 = 10 * 60;
@@ -296,7 +279,6 @@ pub struct Planer {
     /// ohne gemeldet zu werden — die Abläufe dahinter (Service nach
     /// „Anschnallzeichen aus“, Kabine nach dem Kapitän) laufen weiter.
     abgewaehlt: HashSet<Slot>,
-    boarding_seit: Option<i64>,
     tueren_zu: bool,
     letztes_beacon: Option<bool>,
     letztes_fahrwerk: Option<bool>,
@@ -304,25 +286,20 @@ pub struct Planer {
     landelicht_war_aus: bool,
     /// Erster Reiseflug-Takt (UTC-Epoch) für den frühen Service.
     reiseflug_seit: Option<i64>,
-    /// ZFW beim ersten Boarding-Takt; `None` nach Wiedereinstieg.
+    /// Bezugswert der Zuladung: erster ZFW-Wert der Phase Boarding (auch
+    /// nach einem Neustart im Boarding neu genommen).
     zfw_start_kg: Option<f64>,
-    /// Beim Flugstart war die Zuladung noch nicht an Bord: Boarding folgt
-    /// dem Einsteigen statt Anschnallzeichen / 5 min.
-    boarding_erwartet: bool,
-    /// Seit wann die Zuladung über Start + [`BOARDING_ZULADUNG_KG`] liegt.
+    /// Seit wann die Zuladung ununterbrochen über Bezug +
+    /// [`BOARDING_ZULADUNG_KG`] liegt; fällt sie darunter, wieder `None`.
     zuladung_steigt_seit: Option<i64>,
-    /// ZFW-Bezug und seit wann sie innerhalb [`BOARDING_FERTIG_STABIL_KG`] ist.
-    zfw_stabil: Option<(f64, i64)>,
-    /// Wann die Boarding-Ansage gemeldet wurde (oder entfiel).
-    boarding_um: Option<i64>,
     /// Die Abhebezeit ist echt (aus den Flugdaten oder im Steigflug
     /// beobachtet), nicht erst beim Wiedereinstieg im Reiseflug gesetzt.
     abheben_gesehen: bool,
     /// Art von „Reiseflug 80“ laut Modul: `Some(true)` = zweiter Service,
     /// `Some(false)` = Ende des Bordverkaufs, `None` = noch unbekannt.
     zweiter_service: Option<bool>,
-    /// Wiedereinstieg nach Neustart: Der ZFW-Startwert ist unbekannt,
-    /// Boarding folgt der bisherigen Regel.
+    /// Wiedereinstieg nach dem Boarding (Neustart): Ein beobachtetes Abheben
+    /// gibt es dann nicht.
     wiedereinstieg: bool,
 }
 
@@ -341,8 +318,8 @@ impl Planer {
         let r = rang(phase);
         // Der Host legt den Planer auch beim normalen Flugstart mit
         // `fortsetzen` an (Codex 2.0.28). Bis zum Boarding gilt der erste
-        // ZFW-Wert als Startwert: nach einem Neustart mitten im Boarding
-        // wartet die Ansage dann auf weiteres Einsteigen.
+        // ZFW-Wert als Bezug: nach einem Neustart mitten im Boarding kommt
+        // die Begrüßung beim nächsten Anstieg oder beim Beacon.
         p.wiedereinstieg = r > rang(FlightPhase::Boarding);
         for s in Slot::ALLE {
             // Umleitung und Durchstarten sind Ereignisse, kein Ablauf: Sie
@@ -516,6 +493,12 @@ impl Planer {
         self.schon(slot)
     }
 
+    /// „Türen zu“ ist erkannt (Beacon, Pushback oder Rollen) — dort endet
+    /// die Boarding-Musik (2.1.1 G).
+    pub fn tueren_zu(&self) -> bool {
+        self.tueren_zu
+    }
+
     /// Für die Anzeige „Als Nächstes“: kommt dieser Slot auf diesem Flug
     /// noch (erlaubt und noch nicht ausgelöst oder übersprungen)?
     /// `phase` ist die aktuelle Flugphase: Was nur bis zu einer Phase
@@ -582,6 +565,11 @@ impl Planer {
                 None
             }
             Slot::EndeService => {
+                // Hängt am Service (2.1.1 C): solange er nicht durch ist,
+                // keine Uhrzeit, die nicht stimmen muss.
+                if !self.schon(Slot::Reiseflug25) {
+                    return None;
+                }
                 let b = self.bis_sinkflug_s()?;
                 Some(self.abheben_epoch? + b.round() as i64 - REISEFLUG80_VOR_TOD_S)
             }
@@ -617,57 +605,24 @@ impl Planer {
         let in_luft = !t.am_boden;
 
         // ---- Boden vor dem Start ----
-        // Boarding nicht gleich beim Laden (Thomas 18.10.2026, „oft
-        // bemängelt“): beim Einschalten des Anschnallzeichens, sonst nach
-        // fünf Minuten Boarding.
+        // Boarding-Begrüßung (Thomas 19.10.2026, Pflichtenheft 2.1.1 A):
+        // „Gewicht steigt → 30 s warten → abspielen. Anschnallzeichen löst
+        // nicht mehr aus. Wenn das nicht gelaufen ist, ans Beacon klemmen.“
+        // Bezug ist der erste ZFW-Wert der Phase Boarding, ohne OFP- und
+        // ohne 5-%-Bedingung; den Rückfall am Beacon macht „Türen zu“ unten.
         if t.phase == Boarding {
-            let seit = *self.boarding_seit.get_or_insert(t.jetzt);
-            // v2.0.28 (Peter: „Begrüßung zu früh“): Ist die Zuladung beim
-            // Flugstart noch nicht an Bord, folgt die Ansage dem Einsteigen —
-            // Peter schaltet das Anschnallzeichen schon vor dem Boarding ein.
-            if self.zfw_start_kg.is_none() && !self.wiedereinstieg {
-                if let Some(z) = t.zfw_kg {
-                    self.zfw_start_kg = Some(z);
-                    self.boarding_erwartet = t
-                        .zfw_plan_kg
-                        .filter(|p| *p > 0.0)
-                        .is_some_and(|p| (z - p).abs() / p * 100.0 >= LADEBLATT_GRUEN_PROZENT);
-                }
+            if self.zfw_start_kg.is_none() {
+                self.zfw_start_kg = t.zfw_kg;
             }
-            if self.boarding_erwartet {
-                // Fehlen beim (Neu-)Start noch mindestens 5 % zum OFP, steigt die
-                // Zuladung noch weit über 200 kg; sonst gilt die alte Regel.
-                let steigt = t.zfw_kg.zip(self.zfw_start_kg).is_some_and(|(z, s)| z >= s + BOARDING_ZULADUNG_KG);
-                if steigt {
-                    let ab = *self.zuladung_steigt_seit.get_or_insert(t.jetzt);
-                    if t.jetzt - ab >= BOARDING_ZULADUNG_S {
-                        self.melde(&mut aus, Slot::Boarding, Verfall::AbPhase(Pushback));
-                    }
+            let ueber = t.zfw_kg.zip(self.zfw_start_kg).is_some_and(|(z, s)| z >= s + BOARDING_ZULADUNG_KG);
+            if ueber {
+                let ab = *self.zuladung_steigt_seit.get_or_insert(t.jetzt);
+                if t.jetzt - ab >= BOARDING_ZULADUNG_S {
+                    self.melde(&mut aus, Slot::Boarding, Verfall::AbPhase(TakeoffRoll));
                 }
             } else {
-                let zeichen_an = t.anschnallzeichen == Some(2) && self.letztes_zeichen.is_some_and(|z| z != 2);
-                if zeichen_an || t.jetzt - seit >= BOARDING_NACH_S {
-                    self.melde(&mut aus, Slot::Boarding, Verfall::AbPhase(Pushback));
-                }
-            }
-        }
-        // „Boarding completed“ (v2.0.28, Peter): Ladeblatt im Cockpit-Tab
-        // grün und die Zuladung steht — erst nach der Boarding-Ansage, vor
-        // „Türen zu“. Ohne OFP nicht feststellbar.
-        if let Some(z) = t.zfw_kg {
-            match self.zfw_stabil {
-                Some((bezug, _)) if (z - bezug).abs() < BOARDING_FERTIG_STABIL_KG => {}
-                _ => self.zfw_stabil = Some((z, t.jetzt)),
-            }
-        }
-        if self.schon(Slot::Boarding) && self.boarding_um.is_none() {
-            self.boarding_um = Some(t.jetzt);
-        }
-        if t.am_boden && r < rang(Pushback) && !self.tueren_zu && self.schon(Slot::Boarding) {
-            let stabil = self.zfw_stabil.is_some_and(|(_, seit)| t.jetzt - seit >= BOARDING_FERTIG_STABIL_S);
-            let abstand = self.boarding_um.is_some_and(|b| t.jetzt - b >= BOARDING_FERTIG_NACH_ANSAGE_S);
-            if t.ladeblatt_gruen == Some(true) && stabil && abstand {
-                self.melde(&mut aus, Slot::BoardingAbgeschlossen, Verfall::AbPhase(Pushback));
+                // Ausreißer: Die 30 s beginnen beim nächsten Anstieg von vorn.
+                self.zuladung_steigt_seit = None;
             }
         }
         if let Some(abw) = t.abweichung_off_block_min {
@@ -691,19 +646,13 @@ impl Planer {
             self.tueren_zu = true;
         }
         if self.tueren_zu && r < rang(TakeoffRoll) {
-            // Kam das Boarding bis dahin nicht dran, ist es zu spät.
-            if self.abgewaehlt.contains(&Slot::Boarding) {
-                self.gemeldet.insert(Slot::Boarding);
-            } else {
-                self.entfaellt(Slot::Boarding, Entfall::TuerenSchonZu);
-            }
-            if self.abgewaehlt.contains(&Slot::BoardingAbgeschlossen) {
-                self.gemeldet.insert(Slot::BoardingAbgeschlossen);
-            } else if t.ladeblatt_gruen.is_none() {
-                self.entfaellt(Slot::BoardingAbgeschlossen, Entfall::OhneLadeblatt);
-            } else {
-                self.entfaellt(Slot::BoardingAbgeschlossen, Entfall::TuerenSchonZu);
-            }
+            // Rückfall Beacon (2.1.1 A): Kam die Begrüßung bis hierher nicht,
+            // kommt sie jetzt, vor allem anderen (Reihenfolge erzwingt die
+            // Warteschlange). Abgewählt: `melde` hakt sie still ab.
+            self.melde(&mut aus, Slot::Boarding, Verfall::AbPhase(TakeoffRoll));
+            // „Boarding completed“ (2.1.1 E, Entscheidung 5): kurz vor
+            // „Türen zu“, nach der Begrüßung, auf jedem Flug, ohne OFP.
+            self.melde(&mut aus, Slot::BoardingAbgeschlossen, Verfall::AbPhase(TakeoffRoll));
             self.melde(&mut aus, Slot::KommandoTuerenScharf, Verfall::AbPhase(TakeoffRoll));
             self.melde(&mut aus, Slot::BegruessungTuerenZu, Verfall::AbPhase(TakeoffRoll));
             self.melde(&mut aus, Slot::Sicherheit, Verfall::AbPhase(TakeoffRoll));
@@ -719,11 +668,17 @@ impl Planer {
         // im TaxiOut nie eine Flanke und das Kommando kam erst im Startlauf
         // (Peter DLH454). „War einmal aus“ seit dem Verlassen des Stands,
         // damit ein vom Gate an brennendes Licht nicht sofort auslöst.
+        // 2.1.1 B (Thomas 19.10.2026): Pushback oder Rollen, und das Flugzeug
+        // rollt (ab 3 kt). Ohne brauchbares Signal zählt die Phase allein.
         if t.landelicht == Some(false) && r >= rang(Pushback) {
             self.landelicht_war_aus = true;
         }
         let landelicht_an = t.landelicht == Some(true) && self.landelicht_war_aus;
-        if (t.phase == TaxiOut && landelicht_an) || (rang(TakeoffRoll)..=rang(Climb)).contains(&r) {
+        let rollt = t
+            .bodengeschwindigkeit_kt
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .is_none_or(|v| v >= ROLLT_AB_KT);
+        if (matches!(t.phase, Pushback | TaxiOut) && rollt && landelicht_an) || (rang(TakeoffRoll)..=rang(Climb)).contains(&r) {
             self.melde(&mut aus, Slot::KommandoStart, Verfall::AbPhase(Climb));
         }
 
@@ -839,11 +794,16 @@ impl Planer {
         if self.zweiter_service == Some(false) && !self.schon(Slot::EndeService) {
             self.gemeldet.insert(Slot::EndeService);
         }
+        // 2.1.1 C (Entscheidung 4): nie vor dem Service — frühestens, wenn
+        // Reiseflug 25 gespielt, entfallen oder abgewählt ist (`schon`; ein
+        // gemeldeter, noch wartender Service hält sie in der Warteschlange
+        // zurück), sonst spätestens beim Sinkflug.
         if in_luft && (rang(Climb)..=rang(Descent)).contains(&r) && !self.schon(Slot::EndeService) {
-            let geplant = self
-                .abheben_epoch
-                .zip(self.bis_sinkflug_s())
-                .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - REISEFLUG80_VOR_TOD_S);
+            let geplant = self.schon(Slot::Reiseflug25)
+                && self
+                    .abheben_epoch
+                    .zip(self.bis_sinkflug_s())
+                    .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - REISEFLUG80_VOR_TOD_S);
             if geplant || r >= rang(Descent) {
                 self.melde(&mut aus, Slot::EndeService, Verfall::AbPhase(Approach));
             }
@@ -1169,8 +1129,11 @@ mod tests {
     #[test]
     fn langstrecke_bekommt_den_vollen_ablauf_in_reihenfolge() {
         let alle = normalflug(240);
+        // Ohne ZFW- und Beacon-Signal: Begrüßung und „Boarding completed“
+        // beim Pushback, vor „Türen zu“ (2.1.1 A/E).
         let erwartet = [
             Slot::Boarding,
+            Slot::BoardingAbgeschlossen,
             Slot::KommandoTuerenScharf,
             Slot::BegruessungTuerenZu,
             Slot::Sicherheit,
@@ -1217,7 +1180,10 @@ mod tests {
         assert!(!p.kommt_noch(Slot::Reiseflug50, Descent));
         assert!(p.kommt_noch(Slot::KapitaenSinkflug, Descent));
         assert!(!p.kommt_noch(Slot::KapitaenSinkflug, Final));
-        assert!(!p.kommt_noch(Slot::Boarding, TaxiOut), "Boarding nur bis zum Pushback");
+        // 2.1.1 A: Die Begrüßung kommt noch beim Pushback/Rollen (Rückfall),
+        // ab dem Startlauf nicht mehr.
+        assert!(p.kommt_noch(Slot::Boarding, TaxiOut));
+        assert!(!p.kommt_noch(Slot::Boarding, TakeoffRoll), "Boarding nur bis zum Startlauf");
     }
 
     #[test]
@@ -1479,39 +1445,118 @@ mod tests {
         f.into_iter().map(|x| x.slot).collect()
     }
 
-    /// Thomas 18.10.2026: Boarding nicht gleich beim Laden — beim Einschalten
-    /// des Anschnallzeichens, sonst nach 5 Minuten; sind die Türen vorher zu,
-    /// entfällt es sichtbar.
+    /// Ein Boden-Takt am Gate mit Zuladung (kg), Anschnallzeichen und Beacon.
+    fn gate(jetzt: i64, zfw: Option<f64>, zeichen: u8, beacon: bool) -> Tick {
+        let mut t = boden(jetzt, Boarding);
+        t.zfw_kg = zfw;
+        t.anschnallzeichen = Some(zeichen);
+        t.beacon = Some(beacon);
+        t
+    }
+
+    /// Wann (s) der Planer welche Ansage meldet — jeder Takt alle 10 s.
+    fn melde_zeiten(p: &mut Planer, takte: impl IntoIterator<Item = Tick>) -> Vec<(i64, Slot)> {
+        let mut aus = Vec::new();
+        for t in takte {
+            for f in p.tick(&t) {
+                aus.push((t.jetzt, f.slot));
+            }
+        }
+        aus
+    }
+
+    /// 2.1.1 A, Peter (Thomas 19.10.2026): Strom → Phase Boarding, Zuladung
+    /// leer → Anschnallzeichen an (darf nichts auslösen) → nach 8 min steigt
+    /// die Zuladung um 3.000 kg → Begrüßung 30 s danach.
     #[test]
-    fn boarding_beim_anschnallzeichen_oder_nach_fuenf_minuten() {
-        let mut p = Planer::neu(flug(120));
-        assert!(slots(p.tick(&boden(0, Boarding))).is_empty(), "nicht beim Laden");
-        let mut an = boden(60, Boarding);
-        an.anschnallzeichen = Some(2);
-        assert_eq!(slots(p.tick(&an)), vec![Slot::Boarding], "Zeichen an");
-        // Ohne Zeichen: nach 5 Minuten.
-        let mut q = Planer::neu(flug(120));
-        q.tick(&boden(0, Boarding));
-        assert!(slots(q.tick(&boden(BOARDING_NACH_S - 10, Boarding))).is_empty());
-        assert_eq!(slots(q.tick(&boden(BOARDING_NACH_S, Boarding))), vec![Slot::Boarding]);
-        // War das Zeichen beim Laden schon an, zählt das nicht als Einschalten.
-        let mut r = Planer::neu(flug(120));
-        let mut schon = boden(0, Boarding);
-        schon.anschnallzeichen = Some(2);
-        r.tick(&schon);
-        schon.jetzt = 60;
-        assert!(slots(r.tick(&schon)).is_empty());
-        // Türen vorher zu (Beacon nach 2 min): Boarding entfällt mit Grund.
-        let mut b = Planer::neu(flug(120));
-        b.tick(&boden(0, Boarding));
-        let mut beacon = boden(120, Boarding);
-        beacon.beacon = Some(true);
-        let f = slots(b.tick(&beacon));
-        assert!(!f.contains(&Slot::Boarding) && f.contains(&Slot::BegruessungTuerenZu), "{f:?}");
+    fn peter_begruessung_folgt_der_zuladung_nicht_dem_anschnallzeichen() {
+        // Der Planer kennt keinen OFP mehr: mit und ohne OFP derselbe Ablauf.
+        let mut p = Planer::fortsetzen(flug(45), Boarding);
+        let mut takte = Vec::new();
+        for s in (0..=8 * 60).step_by(10) {
+            // Anschnallzeichen nach 1 min an, Zuladung leer (Grundgewicht).
+            takte.push(gate(s, Some(43_000.0), if s >= 60 { 2 } else { 0 }, false));
+        }
+        for s in (8 * 60 + 10..=12 * 60).step_by(10) {
+            takte.push(gate(s, Some(46_000.0), 2, false));
+        }
+        let z = melde_zeiten(&mut p, takte);
+        assert_eq!(z, vec![(8 * 60 + 10 + BOARDING_ZULADUNG_S, Slot::Boarding)], "nur die Begrüßung, 30 s nach dem Anstieg");
+    }
+
+    /// 2.1.1 A: schon voll geladen, nichts steigt → keine Begrüßung bis zum
+    /// Beacon; dort kommt sie, danach „Boarding completed“ und „Türen zu“.
+    #[test]
+    fn vorab_geladen_begruessung_beim_beacon() {
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        let mut takte: Vec<Tick> = (0..=20 * 60).step_by(10).map(|s| gate(s, Some(72_744.0), 2, false)).collect();
+        takte.push(gate(20 * 60 + 10, Some(72_744.0), 2, true));
+        let z = melde_zeiten(&mut p, takte);
+        let beacon = 20 * 60 + 10;
         assert_eq!(
-            b.entfallene_abholen(),
-            vec![(Slot::Boarding, Entfall::TuerenSchonZu), (Slot::BoardingAbgeschlossen, Entfall::OhneLadeblatt)]
+            z,
+            vec![
+                (beacon, Slot::Boarding),
+                (beacon, Slot::BoardingAbgeschlossen),
+                (beacon, Slot::KommandoTuerenScharf),
+                (beacon, Slot::BegruessungTuerenZu),
+                (beacon, Slot::Sicherheit),
+            ]
         );
+        assert!(p.entfallene_abholen().is_empty(), "nichts entfällt");
+    }
+
+    /// 2.1.1 A: Zuladung kurz über der Schwelle, dann zurück → nichts; ein
+    /// neuer Anstieg zählt die 30 s von vorn.
+    #[test]
+    fn ausreisser_ueber_der_schwelle_loest_nichts_aus() {
+        let mut p = Planer::fortsetzen(flug(60), Boarding);
+        let mut takte = vec![gate(0, Some(50_000.0), 0, false)];
+        takte.extend((10..=20).step_by(10).map(|s| gate(s, Some(50_300.0), 0, false)));
+        takte.push(gate(30, Some(50_100.0), 0, false));
+        takte.extend((40..=60).step_by(10).map(|s| gate(s, Some(50_300.0), 0, false)));
+        assert!(melde_zeiten(&mut p, takte).is_empty(), "20 s + 20 s sind keine 30 s am Stück");
+        assert_eq!(slots(p.tick(&gate(70, Some(50_300.0), 0, false))), vec![Slot::Boarding], "30 s ab dem neuen Anstieg");
+    }
+
+    /// 2.1.1 A: kein ZFW- und kein Beacon-Signal → Begrüßung beim Pushback;
+    /// abgewählt → nichts, aber „Türen zu“ läuft.
+    #[test]
+    fn ohne_signale_beim_pushback_abgewaehlt_nie() {
+        let mut p = Planer::fortsetzen(flug(60), Boarding);
+        let mut t = boden(0, Boarding);
+        t.beacon = None;
+        assert!(slots(p.tick(&t)).is_empty());
+        t.jetzt = 600;
+        assert!(slots(p.tick(&t)).is_empty());
+        t.jetzt = 700;
+        t.phase = Pushback;
+        let f = slots(p.tick(&t));
+        assert_eq!(&f[..2], &[Slot::Boarding, Slot::BoardingAbgeschlossen], "{f:?}");
+        let mut q = Planer::fortsetzen(flug(60), Boarding);
+        q.abwaehlen([Slot::Boarding]);
+        q.tick(&gate(0, Some(50_000.0), 0, false));
+        q.tick(&gate(10, Some(55_000.0), 0, false));
+        assert!(slots(q.tick(&gate(40, Some(55_000.0), 0, false))).is_empty(), "abgewählt");
+        let f = slots(q.tick(&gate(50, Some(55_000.0), 0, true)));
+        assert!(!f.contains(&Slot::Boarding) && f.contains(&Slot::BegruessungTuerenZu), "{f:?}");
+        assert!(q.entfallene_abholen().is_empty());
+    }
+
+    /// 2.1.1 A: Wiedereinstieg im Boarding nimmt den Bezug neu; ab Pushback
+    /// gilt die Begrüßung als erledigt (kein Nachholen).
+    #[test]
+    fn wiedereinstieg_im_boarding_neuer_bezug_ab_pushback_erledigt() {
+        let mut p = Planer::fortsetzen(flug(60), Boarding);
+        p.tick(&gate(0, Some(60_000.0), 2, false));
+        p.tick(&gate(10, Some(60_150.0), 2, false));
+        assert!(slots(p.tick(&gate(60, Some(60_150.0), 2, false))).is_empty(), "+150 kg zum neuen Bezug");
+        p.tick(&gate(70, Some(60_250.0), 2, false));
+        assert_eq!(slots(p.tick(&gate(100, Some(60_250.0), 2, false))), vec![Slot::Boarding]);
+        let mut n = Planer::fortsetzen(flug(60), Pushback);
+        let mut pb = gate(0, Some(60_000.0), 2, true);
+        pb.phase = Pushback;
+        assert!(!n.tick(&pb).iter().any(|f| matches!(f.slot, Slot::Boarding | Slot::BoardingAbgeschlossen)));
     }
 
     /// Michael BER181: kein Pushback (aus eigener Kraft zum Rollen) → der
@@ -1793,88 +1838,30 @@ mod tests {
         assert!(p.tick(&tk).iter().any(|f| f.slot == Slot::Umleitung), "neues Ziel: neue Ansage");
     }
 
-    fn mit_ladung(jetzt: i64, zfw: f64, gruen: bool) -> Tick {
-        let mut t = boden(jetzt, Boarding);
-        t.zfw_kg = Some(zfw);
-        t.zfw_plan_kg = Some(72_746.0);
-        t.ladeblatt_gruen = Some(gruen);
-        t
-    }
-
-    /// v2.0.28, Peter DLH16: Anschnallzeichen 1 min nach Flugstart an, die
-    /// Zuladung stieg erst 12 min später. Die Boarding-Ansage folgt jetzt dem
-    /// Einsteigen (+200 kg, 30 s), nicht dem Schalter.
+    /// 2.1.1 E (Entscheidung 5): „Boarding completed“ kurz vor „Türen zu“,
+    /// nach der Begrüßung, auf jedem Flug — ohne OFP, ohne Ladeblatt.
     #[test]
-    fn boarding_folgt_dem_einsteigen() {
-        let mut p = Planer::neu(flug(40));
-        p.tick(&mit_ladung(0, 49_203.0, false));
-        let mut an = mit_ladung(60, 49_203.0, false);
-        an.anschnallzeichen = Some(2);
-        assert!(slots(p.tick(&an)).is_empty(), "Schalter allein reicht nicht mehr");
-        assert!(slots(p.tick(&mit_ladung(BOARDING_NACH_S + 60, 49_203.0, false))).is_empty(), "auch nicht nach 5 min");
-        assert!(slots(p.tick(&mit_ladung(700, 49_400.0, false))).is_empty(), "+197 kg: noch nicht");
-        assert!(slots(p.tick(&mit_ladung(710, 50_675.0, false))).is_empty(), "steigt seit eben");
-        assert_eq!(slots(p.tick(&mit_ladung(740, 51_555.0, false))), vec![Slot::Boarding]);
-        // Gegenprobe: schon beim Flugstart geladen (KLM759) → alte Regel.
-        let mut q = Planer::neu(flug(40));
-        q.tick(&mit_ladung(0, 72_744.0, true));
-        let mut an = mit_ladung(60, 72_744.0, true);
-        an.anschnallzeichen = Some(2);
-        assert_eq!(slots(q.tick(&an)), vec![Slot::Boarding]);
-        assert!(slots(q.tick(&mit_ladung(60 + BOARDING_FERTIG_NACH_ANSAGE_S - 5, 72_744.0, true))).is_empty(), "nicht direkt nach „Willkommen“");
-        assert_eq!(slots(q.tick(&mit_ladung(60 + BOARDING_FERTIG_NACH_ANSAGE_S, 72_744.0, true))), vec![Slot::BoardingAbgeschlossen]);
-        // So legt der Host den Planer an (auch beim normalen Start): die
-        // Zuladungs-Regel gilt genauso (Codex 2.0.28).
-        let mut w = Planer::fortsetzen(flug(40), Boarding);
-        w.tick(&mit_ladung(0, 49_203.0, false));
-        assert!(slots(w.tick(&mit_ladung(BOARDING_NACH_S, 49_203.0, false))).is_empty(), "wartet aufs Einsteigen");
-        w.tick(&mit_ladung(BOARDING_NACH_S + 10, 50_000.0, false));
-        assert_eq!(slots(w.tick(&mit_ladung(BOARDING_NACH_S + 40, 50_500.0, false))), vec![Slot::Boarding]);
-        // Neustart kurz vor Boarding-Ende (unter 5 % fehlen): kein Anstieg
-        // mehr zu erwarten → alte Regel, spätestens nach 5 min (Codex 2.0.28).
-        let mut e = Planer::fortsetzen(flug(40), Boarding);
-        e.tick(&mit_ladung(0, 69_500.0, false));
-        assert!(slots(e.tick(&mit_ladung(BOARDING_NACH_S - 10, 69_500.0, false))).is_empty());
-        assert_eq!(slots(e.tick(&mit_ladung(BOARDING_NACH_S, 69_500.0, false))), vec![Slot::Boarding]);
-        // Neustart im Pushback: kein Startwert mehr, nichts vom Boden.
-        let mut n = Planer::fortsetzen(flug(40), Pushback);
-        let mut pb = mit_ladung(0, 60_000.0, false);
-        pb.phase = Pushback;
-        assert!(!n.tick(&pb).iter().any(|f| f.slot == Slot::Boarding));
-    }
-
-    /// v2.0.28, Peter: „Boarding completed“, wenn das Ladeblatt grün ist und
-    /// die Zuladung steht — erst nach der Boarding-Ansage, vor „Türen zu“.
-    #[test]
-    fn boarding_completed_bei_gruenem_stehendem_ladeblatt() {
-        let mut p = Planer::neu(flug(40));
-        p.tick(&mit_ladung(0, 49_203.0, false));
-        p.tick(&mit_ladung(10, 52_000.0, false));
-        assert_eq!(slots(p.tick(&mit_ladung(40, 60_000.0, false))), vec![Slot::Boarding]);
-        // Grün, aber es wird noch geladen (ZFW ändert sich) → noch nicht.
-        assert!(slots(p.tick(&mit_ladung(100, 70_000.0, true))).is_empty());
-        assert!(slots(p.tick(&mit_ladung(115, 72_700.0, true))).is_empty());
-        assert!(slots(p.tick(&mit_ladung(140, 72_740.0, true))).is_empty(), "erst 25 s stabil");
-        assert!(slots(p.tick(&mit_ladung(146, 72_744.0, true))).is_empty(), "stabil, aber erst 106 s nach der Boarding-Ansage");
-        assert_eq!(slots(p.tick(&mit_ladung(160, 72_744.0, true))), vec![Slot::BoardingAbgeschlossen]);
-        assert!(slots(p.tick(&mit_ladung(300, 72_744.0, true))).is_empty(), "nur einmal");
-        // Nicht vor der Boarding-Ansage, auch wenn alles grün steht.
-        let mut q = Planer::neu(flug(40));
-        q.tick(&mit_ladung(0, 72_744.0, true));
-        assert!(slots(q.tick(&mit_ladung(60, 72_744.0, true))).is_empty(), "Boarding kam noch nicht");
-        // Ohne OFP: entfällt beim Türen-zu mit Grund.
-        let mut o = Planer::neu(flug(40));
-        o.tick(&boden(0, Boarding));
-        let mut zu = boden(400, Boarding);
-        zu.beacon = Some(true);
-        o.tick(&zu);
-        assert!(o.entfallene_abholen().contains(&(Slot::BoardingAbgeschlossen, Entfall::OhneLadeblatt)));
+    fn boarding_completed_beim_beacon_auf_jedem_flug() {
+        // Begrüßung lief schon (Zuladung stieg): beim Beacon zuerst completed.
+        let mut p = Planer::fortsetzen(flug(40), Boarding);
+        p.tick(&gate(0, Some(49_203.0), 0, false));
+        p.tick(&gate(10, Some(52_000.0), 0, false));
+        assert_eq!(slots(p.tick(&gate(40, Some(60_000.0), 0, false))), vec![Slot::Boarding]);
+        assert!(slots(p.tick(&gate(600, Some(72_744.0), 0, false))).is_empty(), "nicht beim Ende der Beladung");
+        let f = slots(p.tick(&gate(900, Some(72_744.0), 0, true)));
+        assert_eq!(&f[..2], &[Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf], "{f:?}");
+        assert!(slots(p.tick(&gate(910, Some(72_744.0), 0, true))).is_empty(), "nur einmal");
+        // Ohne ZFW (kein OFP, kein Signal): genauso.
+        let mut o = Planer::fortsetzen(flug(40), Boarding);
+        o.tick(&gate(0, None, 0, false));
+        assert!(slots(o.tick(&gate(400, None, 0, true))).contains(&Slot::BoardingAbgeschlossen));
+        assert!(o.entfallene_abholen().is_empty());
         // Bizjet: gibt es nicht.
         let mut b = flug(40);
         b.flugart = Some(Flugart::Bizjet);
-        let mut z = Planer::neu(b);
-        z.tick(&mit_ladung(0, 72_744.0, true));
-        assert!(!z.tick(&mit_ladung(400, 72_744.0, true)).iter().any(|f| f.slot == Slot::BoardingAbgeschlossen));
+        let mut z = Planer::fortsetzen(b, Boarding);
+        z.tick(&gate(0, Some(72_744.0), 0, false));
+        assert!(!z.tick(&gate(400, Some(72_744.0), 0, true)).iter().any(|f| f.slot == Slot::BoardingAbgeschlossen));
     }
 
     /// v2.0.28, Michael LTU181: Schalter auf AUS unter FL100 → die Ansage
@@ -1923,14 +1910,28 @@ mod tests {
     /// erkannte — keine Flanke im TaxiOut, das Kommando kam im Startlauf.
     #[test]
     fn plaetze_fuer_den_start_am_zustand_des_landelichts() {
+        // 2.1.1 B: Licht an kurz nach dem Losrollen, erkannt noch als Pushback.
         let mut p = Planer::neu(flug(120));
         p.tick(&boden(0, Pushback));
         let mut licht = boden(10, Pushback);
         licht.landelicht = Some(true);
-        assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "beim Zurückschieben nicht");
-        licht.phase = TaxiOut;
+        licht.bodengeschwindigkeit_kt = Some(0.0);
+        assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "steht noch");
         licht.jetzt = 20;
-        assert!(p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "brennt beim Wechsel ins Rollen");
+        licht.bodengeschwindigkeit_kt = Some(2.9);
+        assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "unter 3 kt rollt es nicht");
+        licht.jetzt = 30;
+        licht.bodengeschwindigkeit_kt = Some(ROLLT_AB_KT);
+        assert!(p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "Pushback und rollt (ab 3 kt)");
+        // Rollen ohne Geschwindigkeitssignal (oder unbrauchbar): die Phase zählt allein.
+        for gs in [None, Some(f64::NAN), Some(-1.0)] {
+            let mut r = Planer::neu(flug(120));
+            r.tick(&boden(0, TaxiOut));
+            let mut l = boden(10, TaxiOut);
+            l.landelicht = Some(true);
+            l.bodengeschwindigkeit_kt = gs;
+            assert!(r.tick(&l).iter().any(|f| f.slot == Slot::KommandoStart), "{gs:?}");
+        }
         // Brennt das Licht schon am Gate und bleibt an: erst im Startlauf.
         let mut q = Planer::neu(flug(120));
         let mut gate = boden(0, Boarding);
@@ -2049,6 +2050,8 @@ mod tests {
         f.abheben_epoch = Some(0);
         let mut p = Planer::fortsetzen(f.clone(), Cruise);
         let bis = (120.0 - SINKFLUG_MIN) as i64 * 60;
+        assert_eq!(p.zeitpunkt(Slot::EndeService, None), None, "2.1.1 C: hängt am Service");
+        p.schon_gespielt([Slot::Reiseflug25]);
         assert_eq!(p.zeitpunkt(Slot::EndeService, None), Some(bis - REISEFLUG80_VOR_TOD_S));
         assert!(!p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S - 10, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
         assert!(p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
@@ -2071,6 +2074,14 @@ mod tests {
         let mut gelaufen = Planer::fortsetzen(f.clone(), Descent);
         gelaufen.schon_gespielt([Slot::EndeService]);
         assert!(!gelaufen.tick(&tick(bis + 60, Descent, 25_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
+        // 2.1.1 C: Abgewählter Service gibt das Ende frei wie ein gespielter.
+        let mut ab = Planer::fortsetzen(f.clone(), Cruise);
+        ab.abwaehlen([Slot::Reiseflug25]);
+        let mut gesehen = false;
+        for s in (0..bis).step_by(10) {
+            gesehen |= ab.tick(&tick(s, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService);
+        }
+        assert!(gesehen, "nach abgewähltem Service");
         // Darf in der Ruhephase (Sinkflug unter 10.000 ft) spielen, sonst verfiele sie.
         assert!(Slot::EndeService.in_ruhephase_erlaubt());
         // Bizjet: nicht.
@@ -2081,4 +2092,94 @@ mod tests {
         assert!(!bz.tick(&tick(bis, Descent, 30_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
     }
 
+    /// Planer und Warteschlange zusammen: Was spielt wann (alles spielbereit,
+    /// jede Durchsage 20 s, Kommando 3 s) — wie der Host es abspielt.
+    fn abspielen(p: &mut Planer, takte: impl IntoIterator<Item = Tick>) -> Vec<(i64, Slot)> {
+        use crate::warteschlange::Warteschlange;
+        let mut w = Warteschlange::default();
+        let mut laeuft: Option<(Slot, i64)> = None;
+        let mut gespielt = Vec::new();
+        for t in takte {
+            if let Some((s, bis)) = laeuft {
+                if t.jetzt >= bis {
+                    if s.loest_pause_aus() { w.ansage_zu_ende_nach(bis, s) } else { w.frei() }
+                    laeuft = None;
+                }
+            }
+            let ruhe = p.ruhephase(&t);
+            w.aufnehmen(p.tick(&t));
+            if laeuft.is_none() {
+                if let Some(s) = w.naechstes(t.jetzt, t.phase, ruhe) {
+                    let dauer = if s.loest_pause_aus() { 20 } else { 3 };
+                    if s.loest_pause_aus() { w.ansage_spielt_bis(t.jetzt + dauer) } else { w.spielt_bis(t.jetzt + dauer) }
+                    laeuft = Some((s, t.jetzt + dauer));
+                    gespielt.push((t.jetzt, s));
+                }
+            }
+        }
+        gespielt
+    }
+
+    /// 2.1.1 C (Entscheidung 4): 45-min-Flug ohne TOD aus dem OFP. Vorher
+    /// lag „Ende des Service“ ~3 min nach dem Abheben, durfte in der Ruhephase
+    /// spielen und kam vor dem Service.
+    #[test]
+    fn kurzer_flug_ohne_tod_ende_des_service_nach_dem_service() {
+        let mut p = Planer::fortsetzen(flug(45), Boarding);
+        let mut takte = Vec::new();
+        let mut s = 0;
+        for phase in [Boarding, Pushback, TaxiOut, TakeoffRoll] {
+            for _ in 0..12 {
+                s += 10;
+                takte.push(tick(s, phase, 300.0, 0.0));
+            }
+        }
+        // Steigflug auf FL240, Zeichen bei 6.000 ft aus (unter FL100: Ruhephase).
+        let mut h = 300.0;
+        while h < 24_000.0 {
+            s += 10;
+            h += 300.0;
+            let mut t = tick(s, Climb, h, 1_800.0);
+            if h > 6_000.0 {
+                t.anschnallzeichen = Some(0);
+            }
+            takte.push(t);
+        }
+        for _ in 0..60 {
+            s += 10;
+            let mut t = tick(s, Cruise, 24_000.0, 0.0);
+            t.anschnallzeichen = Some(0);
+            takte.push(t);
+        }
+        let reihe: Vec<Slot> = abspielen(&mut p, takte).into_iter().map(|(_, s)| s).collect();
+        let service = reihe.iter().position(|s| *s == Slot::Reiseflug25).expect("Service gespielt");
+        let ende = reihe.iter().position(|s| *s == Slot::EndeService).expect("Ende gespielt");
+        assert!(service < ende, "{reihe:?}");
+    }
+
+    /// 2.1.1 A, Entscheidung 1: Vorab geladen, Beacon an → Begrüßung,
+    /// „Boarding completed“, „Türen zu“, Sicherheit in dieser Reihenfolge,
+    /// je 10 s Pause zwischen den Durchsagen, nichts verfällt.
+    #[test]
+    fn beacon_reihenfolge_mit_zehn_sekunden_pause() {
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        let mut takte: Vec<Tick> = (0..=600).step_by(1).map(|s| gate(s, Some(72_744.0), 2, s >= 300)).collect();
+        for s in 601..=700 {
+            let mut t = gate(s, Some(72_744.0), 2, true);
+            t.phase = Pushback;
+            takte.push(t);
+        }
+        let z = abspielen(&mut p, takte);
+        assert_eq!(
+            z,
+            vec![
+                (300, Slot::Boarding),
+                (320, Slot::BoardingAbgeschlossen),
+                (323, Slot::KommandoTuerenScharf),
+                // 10 s nach dem Ende der Begrüßung (320), nicht 90 s.
+                (330, Slot::BegruessungTuerenZu),
+                (360, Slot::Sicherheit),
+            ]
+        );
+    }
 }
