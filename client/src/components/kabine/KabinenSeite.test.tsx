@@ -41,7 +41,7 @@ const ueberblick = {
   sprachen: ["fr-FR", "de-DE"],
   beta: true,
   grund: null,
-  ablauf: { freigabe: { art: "ja" }, abflug: { art: "fertig" }, ankunft: { art: "offen", um: jetzt + 4000 }, ton_fertig: 1, ton_gesamt: 3 },
+  ablauf: { freigabe: { art: "ja" }, abflug: { art: "fertig" }, halbzeit: { art: "offen", um: jetzt + 600 }, ankunft: { art: "offen", um: jetzt + 4000 }, ton_fertig: 1, ton_gesamt: 3 },
   profil: { flugart: "linie", muster: "A388", flugzeit_min: 304, kurzstrecke: false, flugzeit_bekannt: true, sprachen_ohne_stimme: [] },
   belegt: false,
   stumm: false,
@@ -99,6 +99,8 @@ describe("Seite Kabine", () => {
     expect(within(liste).getByText(/Ton wartet \(Server ausgelastet\), neuer Versuch/)).toBeTruthy();
     // Ablauf oben und „Warum diese Ansagen“.
     expect(screen.getByTestId("kabine-ablauf").textContent).toContain("1 von 3 fertig");
+    // 2.1.1 Zusatz H: Die Halbzeit hat ihren eigenen Teil.
+    expect(screen.getByTestId("kabine-ablauf").textContent).toContain("Halbzeit:");
     expect(screen.getByTestId("kabine-profil").textContent).toContain("A388");
   });
 
@@ -141,7 +143,7 @@ describe("Seite Kabine", () => {
     ueberblick.stumm = false;
     render(<KabinenSeite onOpenSettings={() => undefined} />);
     const ton = await screen.findByTestId("kabine-ton");
-    fireEvent.click(within(ton).getByRole("button", { name: /Ton an/ }));
+    fireEvent.click(within(ton).getByRole("button", { name: /Ansagen/ }));
     await vi.waitFor(() => expect(aufrufe.find((a) => a.cmd === "kabinen_stumm")?.args).toEqual({ stumm: true }));
     expect(await screen.findByTestId("kabine-stumm-hinweis")).toBeTruthy();
     expect(within(ton).getByRole("button", { name: /Stumm/ }).getAttribute("aria-pressed")).toBe("true");

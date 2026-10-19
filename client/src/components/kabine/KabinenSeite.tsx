@@ -19,6 +19,7 @@ import {
   stoppen,
   stummSetzen,
   ueberblick,
+  musikZustand,
   type Ablauf,
   type Geplant,
   type Gespielt,
@@ -27,7 +28,9 @@ import {
   type TeilStand,
   type Teil,
   type Ueberblick,
+  type MusikZustand,
 } from "../../lib/kabinenansagen";
+import { MusikKasten, MusikRegler } from "./BoardingMusik";
 import "./kabine.css";
 
 const BALKEN = 48;
@@ -193,6 +196,12 @@ function AblaufZeile({ ablauf, naechste, stumm, t }: { ablauf: Ablauf; naechste:
           <td>
             {t("kabine.ablauf.abflug")}: {teilText(t, ablauf.abflug)}
             <br />
+            {ablauf.halbzeit && ablauf.halbzeit.art !== "entfaellt" && (
+              <>
+                {t("kabine.ablauf.halbzeit")}: {teilText(t, ablauf.halbzeit)}
+                <br />
+              </>
+            )}
             {t("kabine.ablauf.ankunft")}: {teilText(t, ablauf.ankunft)}
           </td>
           <td>{t("kabine.ablauf.ton_stand", { fertig: ablauf.ton_fertig, gesamt: ablauf.ton_gesamt })}</td>
@@ -230,8 +239,9 @@ function ProfilZeile({ profil, sprachen, namen, kapitaen, t }: { profil: Profil;
 }
 
 /** Ton oben auf der Seite: Stumm (nur bis zum Neustart) und Lautstärke,
- *  die sofort wirkt — ohne Umweg über die Einstellungen. */
-function TonLeiste({ stumm, lautstaerke, t, onStumm }: { stumm: boolean; lautstaerke: number; t: T; onStumm: (s: boolean) => void }) {
+ *  die sofort wirkt — ohne Umweg über die Einstellungen. Darunter der
+ *  eigene Regler der Boarding-Musik (2.1.1, Design 19.10.2026). */
+function TonLeiste({ stumm, lautstaerke, musik, t, onStumm }: { stumm: boolean; lautstaerke: number; musik: number | null; t: T; onStumm: (s: boolean) => void }) {
   const [wert, setWert] = useState(Math.round(lautstaerke * 100));
   const [zieht, setZieht] = useState(false);
   useEffect(() => {
@@ -243,41 +253,44 @@ function TonLeiste({ stumm, lautstaerke, t, onStumm }: { stumm: boolean; lautsta
   };
   return (
     <div className={`kabine-ton${stumm ? " ist-stumm" : ""}`} role="group" aria-label={t("kabine.ton.titel")} data-testid="kabine-ton">
-      <button
-        type="button"
-        className="kabine-stumm"
-        aria-pressed={stumm}
-        title={stumm ? t("kabine.ton.aufheben_titel") : t("kabine.ton.stumm_titel")}
-        onClick={() => onStumm(!stumm)}
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none" />
-          {stumm ? (
-            <path d="m16 9 5 6M21 9l-5 6" />
-          ) : (
-            <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
-          )}
-        </svg>
-        <span>{stumm ? t("kabine.ton.stumm") : t("kabine.ton.an")}</span>
-      </button>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={5}
-        value={wert}
-        aria-label={t("kabine.ton.lautstaerke")}
-        onChange={(ev) => {
-          const v = Number(ev.target.value);
-          setZieht(true);
-          setWert(v);
-          void lautstaerkeSetzen(v / 100, false);
-        }}
-        onMouseUp={loslassen}
-        onTouchEnd={loslassen}
-        onKeyUp={loslassen}
-      />
-      <span className="kabine-ton-wert">{wert} %</span>
+      <div className="kabine-ton-zeile">
+        <button
+          type="button"
+          className="kabine-stumm"
+          aria-pressed={stumm}
+          title={stumm ? t("kabine.ton.aufheben_titel") : t("kabine.ton.stumm_titel")}
+          onClick={() => onStumm(!stumm)}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none" />
+            {stumm ? (
+              <path d="m16 9 5 6M21 9l-5 6" />
+            ) : (
+              <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+            )}
+          </svg>
+          <span>{stumm ? t("kabine.ton.stumm") : t("kabine.ton.ansagen")}</span>
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={wert}
+          aria-label={t("kabine.ton.lautstaerke")}
+          onChange={(ev) => {
+            const v = Number(ev.target.value);
+            setZieht(true);
+            setWert(v);
+            void lautstaerkeSetzen(v / 100, false);
+          }}
+          onMouseUp={loslassen}
+          onTouchEnd={loslassen}
+          onKeyUp={loslassen}
+        />
+        <span className="kabine-ton-wert">{wert} %</span>
+      </div>
+      {musik !== null && <MusikRegler lautstaerke={musik} t={t} />}
     </div>
   );
 }
@@ -304,6 +317,18 @@ export function KabinenSeite({
   const [neu, setNeu] = useState(0);
   // Sofort umschalten, nicht erst beim nächsten Nachlesen aus Rust.
   const [stummJetzt, setStummJetzt] = useState<boolean | null>(null);
+  const [musik, setMusik] = useState<MusikZustand | null>(null);
+  const [musikNeu, setMusikNeu] = useState(0);
+  useEffect(() => {
+    let weg = false;
+    const holen = () => void musikZustand().then((m) => !weg && setMusik(m)).catch(() => undefined);
+    holen();
+    const iv = setInterval(holen, 2000);
+    return () => {
+      weg = true;
+      clearInterval(iv);
+    };
+  }, [musikNeu]);
 
   // Verlauf und Stand kommen aus Rust; alle drei Sekunden und nach jeder
   // neuen oder beendeten Ansage nachlesen.
@@ -368,7 +393,7 @@ export function KabinenSeite({
           </div>
         </div>
         <div className="kabine-kopf-knoepfe">
-          {daten && <TonLeiste stumm={stumm} lautstaerke={daten.lautstaerke} t={t} onStumm={stummUmschalten} />}
+          {daten && <TonLeiste stumm={stumm} lautstaerke={daten.lautstaerke} musik={musik?.lautstaerke ?? null} t={t} onStumm={stummUmschalten} />}
           <button type="button" className="button button--ghost" onClick={onOpenSettings}>
             {t("kabine.seite.einstellungen")}
           </button>
@@ -422,6 +447,7 @@ export function KabinenSeite({
           <ProfilZeile profil={daten.profil} sprachen={daten.sprachen} namen={namen} kapitaen={daten.kapitaen} t={t} />
         </>
       )}
+      {musik && <MusikKasten zustand={musik} t={t} onNeu={() => setMusikNeu((n) => n + 1)} />}
 
       <div className={`kabine-live${a ? " ist-aktiv" : ""}`} aria-live="polite">
         <div className="kabine-live-kopf">

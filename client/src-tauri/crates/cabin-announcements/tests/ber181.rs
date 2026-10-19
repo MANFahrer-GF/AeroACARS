@@ -64,8 +64,11 @@ fn ausloeser_passen_zu_michaels_cockpit() {
     }
     println!("entfallen: {entfallen:?}");
     let bei = |s: Slot| uhr(*wann.get(&s).unwrap_or_else(|| panic!("{s:?} kam nicht")));
-    // Boarding: Anschnallzeichen an um 12:25:59 (nicht beim Laden 12:23:41).
-    assert_eq!(&bei(Slot::Boarding)[..5], "12:26");
+    // Boarding (2.1.1 A): Das Anschnallzeichen (12:25:59) löst nicht mehr
+    // aus; ohne ZFW-Signal im Log kommt die Begrüßung beim Beacon 12:35:13,
+    // vor „Boarding completed“ und „Türen zu“.
+    assert_eq!(bei(Slot::Boarding), bei(Slot::BegruessungTuerenZu));
+    assert_eq!(bei(Slot::BoardingAbgeschlossen), bei(Slot::BegruessungTuerenZu));
     // Türen zu: Beacon an 12:35:13 (vorher erst beim Rollen 12:38:50).
     assert_eq!(&bei(Slot::BegruessungTuerenZu)[..5], "12:35");
     assert_eq!(bei(Slot::BegruessungTuerenZu), bei(Slot::Sicherheit));

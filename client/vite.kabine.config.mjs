@@ -8,11 +8,15 @@ import { fileURLToPath } from "node:url";
 const hier = dirname(fileURLToPath(import.meta.url));
 
 const attrappe = resolve(hier, "src/dev/kabineFakeIpc.ts");
+const dialogAttrappe = resolve(hier, "src/dev/kabineFakeDialog.ts");
 
 export default defineConfig({
   plugins: [react()],
   root: resolve(hier, "src/dev"),
   resolve: {
-    alias: [{ find: /^(\.\.\/lib\/ipc|\.\/ipc|\.\.\/\.\.\/lib\/ipc)$/, replacement: attrappe }],
+    alias: [
+      { find: /^(\.\.\/lib\/ipc|\.\/ipc|\.\.\/\.\.\/lib\/ipc)$/, replacement: attrappe },
+      { find: "@tauri-apps/plugin-dialog", replacement: dialogAttrappe },
+    ],
   },
 });

@@ -14,7 +14,6 @@ type Takt = (i64, FlightPhase, f64, f64, f64, u8, Option<u8>, u8, u8, f64, u8, u
 
 #[derive(Deserialize)]
 struct Daten {
-    zfw_plan_kg: Option<f64>,
     landung: i64,
     abheben: i64,
     ticks: Vec<Takt>,
@@ -63,7 +62,7 @@ fn fliegen_mit(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_service: O
     let mut gespielt = BTreeMap::new();
     let mut gemeldet = BTreeMap::new();
     let mut ende: Option<(i64, Slot)> = None;
-    for &(t, phase, alt, agl, vs, boden, zeichen, beacon, licht, fahrwerk, pushback, triebwerke, zfw, gruen) in &d.ticks {
+    for &(t, phase, alt, agl, vs, boden, zeichen, beacon, licht, fahrwerk, pushback, triebwerke, zfw, _gruen) in &d.ticks {
         if let Some((e, s)) = ende {
             if t >= e {
                 if s.loest_pause_aus() {
@@ -92,8 +91,6 @@ fn fliegen_mit(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_service: O
             hoehe_agl_ft: Some(agl),
             triebwerke_an: Some(triebwerke > 0),
             zfw_kg: (zfw > 0.0).then_some(zfw),
-            zfw_plan_kg: d.zfw_plan_kg,
-            ladeblatt_gruen: gruen.map(|g| g == 1),
             ..Default::default()
         };
         let neu = p.tick(&tk);
@@ -144,16 +141,17 @@ fn ltu181_anschnallzeichen_aus_unter_fl100() {
 }
 
 /// Peter DLH16: Anschnallzeichen 14:29:57 an, Passagiere stiegen 14:41–14:50
-/// ein. Boarding folgt dem Einsteigen, „Boarding completed“ vor „Türen zu“
-/// (Beacon 14:52:23), „Plätze für den Start“ am Landelicht 15:11:18.
+/// ein. Boarding folgt dem Einsteigen, „Boarding completed“ kurz vor „Türen
+/// zu“ beim Beacon 14:52:23 (2.1.1 E), „Plätze für den Start“ am Landelicht
+/// 15:11:18.
 #[test]
 fn dlh16_boarding_folgt_dem_einsteigen() {
     let (_, a) = fliegen(include_str!("daten/dlh16.json"), 40, 29_000);
     let boarding = tageszeit(a.gespielt[&Slot::Boarding]);
     assert!((um("14:41:30")..um("14:43:30")).contains(&boarding), "Boarding beim Einsteigen, war {}", uhr(boarding));
     let fertig = tageszeit(*a.gespielt.get(&Slot::BoardingAbgeschlossen).expect("Boarding completed kam"));
-    // Die letzten Lade-Schritte lagen unter 50 kg: „steht“ ab etwa 14:49:30.
-    assert!(fertig >= um("14:49:30") && fertig < um("14:52:23"), "nach dem Laden, vor Türen zu: {}", uhr(fertig));
+    assert!((um("14:52:23")..um("14:52:40")).contains(&fertig), "beim Beacon: {}", uhr(fertig));
+    assert!(tageszeit(a.gespielt[&Slot::KommandoTuerenScharf]) > fertig);
     assert!(fertig < tageszeit(a.gespielt[&Slot::BegruessungTuerenZu]));
     let start = tageszeit(a.gespielt[&Slot::KommandoStart]);
     assert!((um("15:11:15")..um("15:11:40")).contains(&start), "Plätze für den Start am Landelicht, war {}", uhr(start));
@@ -168,13 +166,22 @@ fn dlh418_tueren_erst_bei_stehenden_triebwerken() {
     assert!(tueren >= um("20:59:39"), "nicht beim Halt auf dem Rollweg, war {}", uhr(tueren));
 }
 
-/// QAF446: Sicherheit bis ~12:23, Startlauf 12:24:14. Mit 30 s Pause kommt
-/// der Kapitän noch am Boden statt nach dem Gong über FL100.
+/// QAF446: Sicherheit bis ~12:23, Startlauf 12:24:14. Mit 30 s Pause kam
+/// der Kapitän 2.0.28 noch am Boden. Seit 2.1.1 (A) steht die Zuladung hier
+/// schon beim Flugstart: Die Begrüßung kommt erst beim Beacon 12:18:32, davor
+/// nichts; danach Begrüßung, „Boarding completed“, „Türen zu“ und Sicherheit
+/// noch am Boden, der Kapitän (wie vorgesehen) nach dem Start über FL100.
 #[test]
-fn qaf446_kapitaen_vor_dem_start() {
+fn qaf446_vorab_geladen_alles_noch_vor_dem_start() {
     let (d, a) = fliegen(include_str!("daten/qaf446.json"), 410, 38_000);
+    let beacon = d.ticks.iter().find(|x| x.7 == 1).expect("Beacon").0;
+    assert_eq!(a.gespielt[&Slot::Boarding], beacon, "Begrüßung beim Beacon");
+    for s in [Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf, Slot::BegruessungTuerenZu, Slot::Sicherheit] {
+        assert!(a.gespielt[&s] > beacon && a.gespielt[&s] < d.abheben, "{s:?} am Boden");
+    }
+    assert!(a.gespielt[&Slot::BegruessungTuerenZu] - (a.gespielt[&Slot::Boarding] + 60) <= 15, "10 s nach der Begrüßung, nicht 90 s");
     let kapitaen = a.gespielt[&Slot::KapitaenBegruessung];
-    assert!(kapitaen < d.abheben, "vor dem Startlauf {}, war {}", uhr(d.abheben), uhr(kapitaen));
+    assert!(kapitaen > d.abheben, "Kapitän nach dem Start, war {}", uhr(kapitaen));
 }
 
 /// AFR218: Reiseflughöhe nach ~25 min, erster Service bisher bei +121 min.

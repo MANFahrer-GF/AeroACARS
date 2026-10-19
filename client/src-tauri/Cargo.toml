@@ -24,7 +24,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 # Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
 license = "LicenseRef-AeroACARS-Proprietary"
@@ -142,6 +142,9 @@ tauri-plugin-process = "2"
 # Pilot musste den Community-/Aircraft-Pfad bisher als Text eintippen
 # (fehleranfaellig unter Windows/macOS-Pfaden). Ein Klick statt Tippen.
 tauri-plugin-dialog = "2"
+# Boarding-Musik (2.1.1 G3): streamend dekodieren (mp3/m4a/aac/wav/flac/ogg),
+# nicht die ganze Datei in den Speicher. Reines Rust, MPL-2.0.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "flac", "ogg", "vorbis", "wav", "pcm"] }
 # v0.18.x: verhindert dass zwei AeroACARS-Prozesse gleichzeitig denselben
 # aktiven Flug tracken (Minimize-to-Tray laesst die App im Hintergrund
 # weiterlaufen — ein erneuter Doppelklick auf das App-Icon startete bisher

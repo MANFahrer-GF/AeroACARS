@@ -41,6 +41,7 @@ mod ui_state;
 mod xplane_band;
 mod xplane_plugin_install;
 mod kabinenansagen;
+mod kabinen_musik;
 mod flug_aktivitaet;
 mod stats_sperre;
 
@@ -32819,6 +32820,8 @@ async fn flight_end(
     // start), and on restore it holds the old flight again (also fine —
     // the existing `active_flight`-occupied check takes back over).
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
 
     // Validation passed — now actually take the flight out of state and file.
     let flight = {
@@ -33897,6 +33900,8 @@ async fn flight_end_manual(
     // the empty `active_flight` slot while this call is still in flight.
     let client = current_client(&state)?;
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
 
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
@@ -34707,6 +34712,8 @@ async fn flight_cancel(
     // der Guard faellt bei JEDEM Rueckgabepfad (inkl. `result?` weiter
     // unten) per `Drop` automatisch.
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         guard.take().ok_or_else(|| {
@@ -35097,6 +35104,8 @@ async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     // Dauer halten, damit ein gleichzeitiger `flight_start`/`flight_adopt`
     // entweder klar VOR oder klar NACH dieser Funktion laeuft, nie waehrend.
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
     let forgotten_pirep_id = if let Some(flight) = state
         .active_flight
         .lock()
@@ -47670,14 +47679,8 @@ fn kabinen_schritt(
         hoehe_agl_ft: Some(snap.altitude_agl_ft),
         triebwerke_an: Some(snap.engines_running > 0),
         zfw_kg: stats.last_zfw_kg.map(f64::from),
-        zfw_plan_kg: stats.planned_zfw_kg.map(f64::from),
-        // Ampel wie im Cockpit-Tab, für das Boarding nur Kraftstoff und ZFW:
-        // Am Gate zählt der Sim das Rollkraftstoff zur TOW, die Zeile steht
-        // dort oft über Max (Peter DLH16: +272 kg) und wäre nie grün.
-        ladeblatt_gruen: kabinenansagen::ladeblatt_gruen(&[
-            (stats.last_fuel_kg, stats.planned_block_fuel_kg, None),
-            (stats.last_zfw_kg, stats.planned_zfw_kg, stats.planned_max_zfw_kg),
-        ]),
+        // „Rollt“ für „Plätze für den Start“ (2.1.1 B, ab 3 kt).
+        bodengeschwindigkeit_kt: Some(f64::from(snap.groundspeed_kt)),
     };
     let zweiter_service = kabinenansagen::zweiter_service(&stats.kabinen_lauf);
     let (faellig, ruhephase) = stats
@@ -52210,7 +52213,8 @@ mod arrived_fallback_geometry_tests {
 
     /// Kabinenansagen (Beta), die Kette: Eckdaten in `FlightStats` →
     /// Flugdaten → Planer → faellige Ansage. Fracht bleibt stumm, ein
-    /// Linienflug bekommt im Boarding seine Ansage, ein Wiedereinstieg im
+    /// Linienflug bekommt im Boarding seine Ansage, sobald die Zuladung
+    /// steigt, ein Wiedereinstieg im
     /// Reiseflug holt das Boarding nicht nach, und ein Durchstarten zaehlt
     /// als Flanke, nicht bei jedem Takt neu.
     #[test]
@@ -52230,10 +52234,15 @@ mod arrived_fallback_geometry_tests {
         linie.pax_count = Some(150);
         linie.max_passengers = Some(180);
         linie.flight_type = Some("J".into());
-        // Boarding nicht gleich beim Laden, sondern nach 5 min (ohne Anschnallzeichen).
+        // 2.1.1 A: Begrüßung 30 s nach dem Anstieg der Zuladung (+200 kg),
+        // hier ohne OFP (kein ZFW-Plan) — nicht nach Zeit, nicht am Schalter.
+        linie.last_zfw_kg = Some(43_000.0);
         assert!(!slots(kabinen_schritt(&mut linie, &snap, jetzt, "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
-        let spaeter = jetzt + chrono::Duration::minutes(5);
-        assert!(slots(kabinen_schritt(&mut linie, &snap, spaeter, "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
+        let spaeter = jetzt + chrono::Duration::minutes(8);
+        assert!(!slots(kabinen_schritt(&mut linie, &snap, spaeter, "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
+        linie.last_zfw_kg = Some(46_000.0);
+        kabinen_schritt(&mut linie, &snap, spaeter + chrono::Duration::seconds(10), "EDDH", Some(60), "A320", &[]);
+        assert!(slots(kabinen_schritt(&mut linie, &snap, spaeter + chrono::Duration::seconds(40), "EDDH", Some(60), "A320", &[]).faellig).contains(&Slot::Boarding));
 
         let mut resume = FlightStats::new();
         resume.phase = FlightPhase::Cruise;
@@ -63087,6 +63096,18 @@ pub fn run() {
             kabinenansagen::kabinen_wiedergabe_start,
             kabinenansagen::kabinen_stumm,
             kabinenansagen::kabinen_lautstaerke,
+            kabinenansagen::kabinen_musik_lautstaerke,
+            kabinenansagen::kabinen_boarding_musik,
+            kabinenansagen::kabinen_musik_zustand,
+            kabinenansagen::kabinen_musik_probe_flug,
+            kabinen_musik::kabinen_musik_ablage,
+            kabinen_musik::kabinen_musik_pruefen,
+            kabinen_musik::kabinen_musik_hinzufuegen,
+            kabinen_musik::kabinen_musik_entfernen,
+            kabinen_musik::kabinen_musik_ordner_oeffnen,
+            kabinen_musik::kabinen_musik_probe,
+            kabinen_musik::kabinen_musik_probe_stopp,
+            kabinen_musik::kabinen_airlines,
             kabinenansagen::kabinen_anhoeren,
             kabinenansagen::kabinen_erneut,
             kabinenansagen::kabinen_speicher,

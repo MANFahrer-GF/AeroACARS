@@ -139,6 +139,8 @@ export type Freigabe =
 export interface Ablauf {
   freigabe: Freigabe;
   abflug: TeilStand;
+  /** Halbzeit-Ansage (2.1.1 Zusatz H), im Reiseflug geschrieben; fehlt bei älterem Stand. */
+  halbzeit?: TeilStand;
   ankunft: TeilStand;
   ton_fertig: number;
   ton_gesamt: number;
@@ -413,3 +415,76 @@ export const ueberblick = () => invoke<Ueberblick | null>("kabinen_ueberblick");
 export const erneut = () => invoke<void>("kabinen_erneut");
 export const speicherLesen = () => invoke<Speicher>("kabinen_speicher");
 export const ausgabegeraete = () => invoke<Geraet[]>("kabinen_ausgabegeraete");
+
+// ---------------------------------------------------------------------------
+// Boarding-Musik (2.1.1 G, Design 19.10.2026): Regler, Kasten, Dialog.
+// Abspielen tut Rust (eigener Pegel, Pause bei jeder Ansage).
+// ---------------------------------------------------------------------------
+
+/** Zustand des Kastens „Boarding-Musik“ (Rust `MusikAnsicht`). */
+export interface MusikZustand {
+  /** Schalter „Boarding-Musik“; aus = keine Musik, kein Lied. */
+  an: boolean;
+  lautstaerke: number;
+  stand: "aus" | "ohne_flug" | "keine" | "wird_erzeugt" | "kein_lied" | "bereit" | "laeuft" | "pausiert" | "beendet" | "probe";
+  quelle: "eigene" | "lied" | null;
+  titel: string | null;
+  strecke: string | null;
+  ordner: string | null;
+  stuecke: number;
+  airline: string | null;
+  /** Abschnitt, solange sie läuft: Boarding oder nach der Landung (Zusatz I). */
+  abschnitt?: "boarding" | "ankunft" | null;
+}
+
+/** Ein Stück der eigenen Ablage. */
+export interface MusikStueck {
+  airline: string;
+  datei: string;
+  dauer_s: number | null;
+}
+
+export interface MusikAblage {
+  ordner: string;
+  stuecke: MusikStueck[];
+  flug_airline: string | null;
+}
+
+export interface AirlineEintrag {
+  icao: string;
+  name: string;
+}
+
+/** Ordnername für „Alle Airlines“ (Rust `musik::ALLE`). */
+export const ALLE_AIRLINES = "Alle";
+/** Erlaubte Formate (Design §4). */
+export const MUSIK_FORMATE = ["mp3", "m4a", "aac", "wav", "flac", "ogg"];
+
+export const musikZustand = () => invoke<MusikZustand>("kabinen_musik_zustand");
+export const musikLautstaerkeSetzen = (lautstaerke: number, speichern: boolean) =>
+  invoke<void>("kabinen_musik_lautstaerke", { lautstaerke, speichern });
+export const boardingMusikSetzen = (an: boolean) => invoke<void>("kabinen_boarding_musik", { an });
+export const musikAblage = () => invoke<MusikAblage>("kabinen_musik_ablage");
+export const musikPruefen = (quelle: string) => invoke<number | null>("kabinen_musik_pruefen", { quelle });
+export const musikHinzufuegen = (quelle: string, airline: string) =>
+  invoke<MusikStueck>("kabinen_musik_hinzufuegen", { quelle, airline });
+export const musikEntfernen = (airline: string, datei: string) => invoke<void>("kabinen_musik_entfernen", { airline, datei });
+export const musikOrdnerOeffnen = () => invoke<void>("kabinen_musik_ordner_oeffnen");
+export const musikProbe = (airline: string, datei: string) => invoke<void>("kabinen_musik_probe", { airline, datei });
+export const musikProbeFlug = () => invoke<void>("kabinen_musik_probe_flug");
+export const musikProbeStopp = () => invoke<void>("kabinen_musik_probe_stopp");
+export const airlinesLesen = () => invoke<AirlineEintrag[]>("kabinen_airlines");
+
+/** Datei-Fenster mit den erlaubten Formaten; `null` = abgebrochen. */
+export async function musikDateiWaehlen(titel: string): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const wahl = await open({ multiple: false, directory: false, title: titel, filters: [{ name: "Audio", extensions: MUSIK_FORMATE }] });
+  return typeof wahl === "string" ? wahl : null;
+}
+
+/** m:ss für Längen. */
+export function laenge(s: number | null | undefined): string {
+  if (s == null || !Number.isFinite(s)) return "–";
+  const g = Math.round(s);
+  return `${Math.floor(g / 60)}:${String(g % 60).padStart(2, "0")}`;
+}

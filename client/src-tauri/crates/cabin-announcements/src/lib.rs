@@ -8,6 +8,7 @@
 //! - [`warteschlange`]: nichts überlappt, Ruhephase, Verfall
 //! - [`drehbuch`]: KI-Texte prüfen, bevor sie gesprochen werden
 //! - [`cache`]: Dateinamen für den Audio-Cache
+//! - [`musik`]: wann Boarding-Musik spielt und ob ein Lied angefragt wird
 //!
 //! Grundlage: LEITFADEN_Ansage-Drehbuch.md (Nextcloud,
 //! Kabinenansagen_2026-10-17).
@@ -15,6 +16,7 @@
 pub mod cache;
 pub mod drehbuch;
 pub mod flugart;
+pub mod musik;
 pub mod planer;
 pub mod slot;
 pub mod warteschlange;

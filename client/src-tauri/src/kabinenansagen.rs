@@ -78,6 +78,11 @@ pub struct Einstellungen {
     pub klang: String,
     /// Abgewählte Ansagen (Slot-Namen): kommen nicht, werden nicht angefragt.
     pub aus: Vec<String>,
+    /// Boarding-Musik an/aus (2.1.1, Entscheidung 15; Schalter auf der Seite
+    /// „Kabine“). Aus = keine Musik und kein Lied angefragt. Ab Werk an.
+    pub boarding_musik: bool,
+    /// Eigener Pegel der Musik 0.0 … 1.0, ab Werk 20 % (Entscheidung 14).
+    pub musik_lautstaerke: f32,
 }
 
 impl Default for Einstellungen {
@@ -93,6 +98,8 @@ impl Default for Einstellungen {
             kapitaen_geschlecht: "auto".into(),
             klang: "lautsprecher".into(),
             aus: Vec::new(),
+            boarding_musik: true,
+            musik_lautstaerke: 0.2,
         }
     }
 }
@@ -107,6 +114,7 @@ impl Einstellungen {
             self.zweite_sprache = std.zweite_sprache.clone();
         }
         self.lautstaerke = if self.lautstaerke.is_finite() { self.lautstaerke.clamp(0.0, 1.0) } else { 0.8 };
+        self.musik_lautstaerke = if self.musik_lautstaerke.is_finite() { self.musik_lautstaerke.clamp(0.0, 1.0) } else { 0.2 };
         self.ausgabe = self
             .ausgabe
             .map(|a| a.trim().to_string())
@@ -160,6 +168,7 @@ pub(crate) fn einstellungen(app: &AppHandle) -> Einstellungen {
     // Azure gibt es nicht mehr: einen alten Schlüssel nicht liegen lassen.
     let _ = secrets::delete_api_key(ALTES_AZURE_KONTO);
     ausgabe::lautstaerke_setzen(geladen.lautstaerke);
+    crate::kabinen_musik::lautstaerke_setzen(geladen.musik_lautstaerke);
     *zelle.write().expect("kabinen einstellungen") = Some(geladen.clone());
     geladen
 }
@@ -191,8 +200,15 @@ pub(crate) fn kabinen_einstellungen_setzen(
     // Die Lautstärke hat ihr eigenes Kommando (Regler auf der Seite und in
     // den Einstellungen): Ein älterer Stand der Einstellungsseite darf sie
     // nicht zurückdrehen (Codex beta.6).
-    neu.lautstaerke = self::einstellungen(&app).lautstaerke;
+    let bisher = self::einstellungen(&app);
+    neu.lautstaerke = bisher.lautstaerke;
+    // Musik-Regler und -Schalter sitzen auf der Seite „Kabine“ (Design
+    // 19.10.2026) und haben eigene Kommandos.
+    neu.musik_lautstaerke = bisher.musik_lautstaerke;
+    neu.boarding_musik = bisher.boarding_musik;
     if !neu.an {
+        // „Ansagen aus“ stoppt auch die Musik sofort.
+        crate::kabinen_musik::aus();
         // Ausgeschaltet heißt aus: Was im laufenden Flug noch wartet, wird
         // verworfen und kommt auch nach einem Wiedereinschalten nicht nach.
         let flug = state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone);
@@ -217,6 +233,32 @@ pub(crate) fn kabinen_lautstaerke(app: AppHandle, lautstaerke: f32, speichern: b
         einstellungen_schreiben(&app, &e)?;
     }
     Ok(())
+}
+
+/// Musik-Lautstärke 0 … 1 (zweiter Regler der Ton-Leiste): wirkt sofort,
+/// auch auf ein laufendes Stück. `speichern` beim Loslassen.
+#[tauri::command]
+pub(crate) fn kabinen_musik_lautstaerke(app: AppHandle, lautstaerke: f32, speichern: bool) -> Result<(), UiError> {
+    let mut e = einstellungen(&app);
+    e.musik_lautstaerke = lautstaerke;
+    let e = e.normalisiert();
+    crate::kabinen_musik::lautstaerke_setzen(e.musik_lautstaerke);
+    if speichern {
+        einstellungen_schreiben(&app, &e)?;
+    }
+    Ok(())
+}
+
+/// Schalter „Boarding-Musik“ (Kasten auf der Seite „Kabine“). Aus stoppt
+/// sofort und fragt kein Lied mehr an (Entscheidung 15).
+#[tauri::command]
+pub(crate) fn kabinen_boarding_musik(app: AppHandle, an: bool) -> Result<(), UiError> {
+    let mut e = einstellungen(&app);
+    e.boarding_musik = an;
+    if !an {
+        crate::kabinen_musik::aus();
+    }
+    einstellungen_schreiben(&app, &e.normalisiert())
 }
 
 /// Für die Einstellungsseite: was steht zur Verfügung?
@@ -389,6 +431,55 @@ pub(crate) struct Lauf {
     /// Zuletzt protokollierte Abwahl des Piloten samt Kommando- und
     /// Gong-Schalter (nur Wechsel).
     abgewaehlt_zuletzt: Option<Vec<Slot>>,
+    /// Boarding-Musik (2.1.1 G): Zeitfenster, Quelle (einmal je Flug
+    /// festgelegt, Design §5) und das Lied des Flugs.
+    musik_fenster: cabin_announcements::musik::MusikFenster,
+    musik_quelle: Option<MusikQuelle>,
+    musik_lief: bool,
+    /// Abschnitt, in dem die Musik zuletzt lief (Anzeige „läuft · …“).
+    musik_abschnitt: Option<cabin_announcements::musik::Abschnitt>,
+    lied: LiedStand,
+}
+
+/// Woher die Boarding-Musik dieses Flugs kommt.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum MusikQuelle {
+    /// Eigene Musik des Piloten (Ordner der Airline oder „Alle“).
+    Eigene { ordner: String, dateien: Vec<PathBuf> },
+    /// Das Lied je Flug (acemusic.ai über den Ton-Server).
+    Lied,
+    /// Nichts: Bizjet/Fracht ohne eigene Musik, oder Schalter aus.
+    Keine,
+}
+
+/// Das Boarding-Lied des Flugs: Vorlage vom Modul, Datei vom Ton-Server.
+#[derive(Debug, Default)]
+pub(crate) struct LiedStand {
+    vorlage: Option<api_client::KabinenLied>,
+    datei: Option<PathBuf>,
+    laeuft: bool,
+    versuche: u32,
+    naechster: i64,
+    fehler: Option<String>,
+    /// Slots der Abflug-Anfrage mit Lied; mit denselben wird nachgefragt,
+    /// dann liefert das Modul das Drehbuch aus dem Zwischenspeicher.
+    slots: Vec<Slot>,
+    /// Das Modul hatte keine Zeit mehr: ab dann noch einmal fragen …
+    nochmal_ab: Option<i64>,
+    /// … aber nur einmal je Flug (Codex 2.1.1: auch eine späte Antwort
+    /// einer anderen Anfrage plant keine zweite Nachfrage).
+    nachgefragt: bool,
+}
+
+/// Quelle der Musik (Design §5): eigene Musik der Airline, sonst „Alle“,
+/// sonst das Lied (nur Linie, nur mit Schalter an); Bizjet und Fracht nur
+/// eigene Musik (Entscheidung 11).
+fn musik_quelle(flugart: Flugart, haken: bool, eigene: Option<(String, Vec<PathBuf>)>) -> MusikQuelle {
+    match eigene {
+        Some((ordner, dateien)) if haken && !dateien.is_empty() => MusikQuelle::Eigene { ordner, dateien },
+        _ if cabin_announcements::musik::lied_anfragen(flugart, haken, false) => MusikQuelle::Lied,
+        _ => MusikQuelle::Keine,
+    }
 }
 
 /// Ein Eintrag des Auswertungs-Logs (`FlightLogEvent::Kabine`).
@@ -434,24 +525,6 @@ fn protokoll_schreiben(app: &AppHandle, flight: &ActiveFlight, notizen: Vec<Noti
             &recorder::FlightLogEvent::Kabine { timestamp: n.zeit, art: n.art.to_string(), slot, sprache: n.sprache, details: n.details },
         );
     }
-}
-
-/// Dieselbe Ampel wie das Ladeblatt im Cockpit-Tab (`LoadsheetMonitor.tsx`,
-/// `LsRow`): je Zeile (Ist, Soll, Max) grün bei unter 5 % Abweichung und nicht
-/// über Max; Zeilen ohne Ist und Soll fehlen dort. `None` = keine Soll-Werte
-/// (kein SimBrief-OFP).
-pub(crate) fn ladeblatt_gruen(zeilen: &[(Option<f32>, Option<f32>, Option<f32>)]) -> Option<bool> {
-    if zeilen.iter().all(|(_, soll, _)| soll.is_none()) {
-        return None;
-    }
-    Some(zeilen.iter().all(|(ist, soll, max)| {
-        let abw_ok = match (ist, soll) {
-            (Some(i), Some(s)) if *s != 0.0 => ((i - s) / s).abs() * 100.0 < 5.0,
-            _ => true,
-        };
-        let ueber_max = matches!((ist, max), (Some(i), Some(m)) if i > m);
-        abw_ok && !ueber_max
-    }))
 }
 
 /// Altes Modul: Reiseflug 80 ist das Ende des Bordverkaufs. Eine schon
@@ -589,18 +662,24 @@ const TON_GLEICHZEITIG: usize = 2;
 /// Wetter, Verspätung und Ankunftszeit stimmen.
 const ANKUNFT_TEXT_VOR_LANDUNG_MIN: i64 = 45;
 
-const ABFLUG: [Slot; 9] = [
+const ABFLUG: [Slot; 8] = [
     Slot::Boarding,
     Slot::BegruessungTuerenZu,
     Slot::Sicherheit,
     Slot::KapitaenBegruessung,
     Slot::AnschnallzeichenAus,
     Slot::Reiseflug25,
-    Slot::Reiseflug50,
     Slot::Reiseflug80,
     // 2.1.0: im Abflug-Teil, damit der Text vor dem Sinkflug sicher da ist.
     Slot::EndeService,
 ];
+/// 2.1.1 Zusatz H (Thomas 19.10.2026): Die Halbzeit-Ansage des Kapitäns
+/// schreibt das Modul erst im Reiseflug, mit Restzeit, Landezeit und
+/// aktuellem Zielwetter (Teil `halbzeit`).
+const HALBZEIT: [Slot; 1] = [Slot::Reiseflug50];
+/// So lange vor ihrem Zeitpunkt wird die Halbzeit-Ansage angefragt (Text
+/// plus Ton brauchen zusammen einige Minuten).
+const HALBZEIT_VORLAUF_MIN: i64 = 15;
 const ANKUNFT: [Slot; 4] = [Slot::KapitaenSinkflug, Slot::KabineSinkflug, Slot::NachDerLandung, Slot::Aussteigen];
 const KOMMANDOS: [Slot; 6] = [
     Slot::BoardingAbgeschlossen,
@@ -630,6 +709,8 @@ fn ist_ereignis(s: Slot) -> bool {
 fn teil_von(s: Slot) -> Option<&'static str> {
     if ABFLUG.contains(&s) {
         Some("abflug")
+    } else if HALBZEIT.contains(&s) {
+        Some("halbzeit")
     } else if ANKUNFT.contains(&s) {
         Some("ankunft")
     } else {
@@ -692,7 +773,357 @@ pub(crate) fn takt(
     now: DateTime<Utc>,
 ) {
     takt_schritt(app, flight, client, snap, now);
+    musik_takt(app, flight, snap, now);
     protokoll_leeren(app, flight);
+}
+
+/// Halbzeit-Text jetzt anfragen? Nur wenn die Ansage auf diesem Flug noch
+/// kommt, im Reiseflug (oder in der Warteschleife) und höchstens
+/// [`HALBZEIT_VORLAUF_MIN`] vor ihrem Zeitpunkt (ohne Zeitpunkt sofort).
+fn halbzeit_anfragen(kommt: bool, phase: FlightPhase, um: Option<i64>, jetzt: i64) -> bool {
+    kommt
+        && matches!(phase, FlightPhase::Cruise | FlightPhase::Holding)
+        && um.is_none_or(|u| u - jetzt <= HALBZEIT_VORLAUF_MIN * 60)
+}
+
+/// Lied mit dem Abflug-Drehbuch anfragen? Quelle Lied (also Linie, ohne
+/// eigene Musik), Schalter an und noch vor „Türen zu“ — nach einem Neustart
+/// im Reiseflug kostete es nur, gespielt würde es nicht mehr.
+fn lied_anfragen(lauf: &Lauf, haken: bool, phase: FlightPhase) -> bool {
+    haken
+        && lauf.musik_quelle == Some(MusikQuelle::Lied)
+        && !lauf.musik_fenster.tueren_zu()
+        && cabin_announcements::planer::rang(phase) < cabin_announcements::planer::rang(FlightPhase::Pushback)
+        && lauf.lied.datei.is_none()
+}
+
+/// Liest die eigene Musik (ganze Dateien, ohne Flugdaten-Sperre) — nur in
+/// dem Takt, in dem die Quelle festgelegt wird: Freigabe da, Flugart steht
+/// fest, Quelle noch offen. Sonst `None` ohne Plattenzugriff.
+fn eigene_lesen(flight: &ActiveFlight) -> Option<(String, Vec<PathBuf>)> {
+    let jetzt_noetig = {
+        let st = flight.stats.lock().expect("flight stats");
+        st.kabinen_lauf.musik_quelle.is_none()
+            && st.kabinen_lauf.beta == Beta::Ja
+            && cabin_announcements::flugart::eingeordnet(st.flight_type.as_deref(), st.pax_count.and_then(|n| u32::try_from(n).ok()))
+    };
+    if !jetzt_noetig {
+        return None;
+    }
+    crate::kabinen_musik::ablage().and_then(|w| crate::kabinen_musik::eigene_fuer(&w, &flight.airline_icao))
+}
+
+/// Nach einer Abflug-Antwort: Lied da, später einmal nachfragen (das Modul
+/// hatte bis zum Zeitlimit keine Zeit mehr), oder keins (dann still).
+fn lied_nach_antwort(lied: &mut LiedStand, angefragt: bool, geliefert: bool, spaeter: bool, jetzt: i64) {
+    if !angefragt || geliefert || lied.vorlage.is_some() {
+        return;
+    }
+    if spaeter && !lied.nachgefragt {
+        lied.nachgefragt = true;
+        lied.nochmal_ab = Some(jetzt + 60);
+    } else if !spaeter || lied.nochmal_ab.is_none() {
+        lied.fehler = Some("Das Modul hat kein Lied geliefert.".into());
+    }
+}
+
+/// Was die Musik nach diesem Takt tun soll.
+#[derive(Debug, Clone, PartialEq)]
+enum MusikTun {
+    Nichts,
+    Spielen(Vec<PathBuf>),
+    Ausblenden,
+    Aus,
+}
+
+/// Boarding-Musik je Takt (2.1.1 G): Fenster, Quelle, Lied holen. Ohne
+/// AppHandle, damit testbar; `eigene` liest der Aufrufer ohne Sperre.
+fn musik_schritt(stats: &mut FlightStats, snap: &SimSnapshot, muster: &str, eigene: Option<(String, Vec<PathBuf>)>, jetzt: i64) -> (MusikTun, Option<api_client::KabinenLied>) {
+    use cabin_announcements::{flugart, musik};
+    if stats.replay_verdacht || stats.kabinen_lauf.beta != Beta::Ja {
+        return (MusikTun::Aus, None);
+    }
+    let pax = stats.pax_count.and_then(|n| u32::try_from(n).ok());
+    // Linienflug ohne Passagierzahl: Die Einordnung kommt noch.
+    if !flugart::eingeordnet(stats.flight_type.as_deref(), pax) {
+        return (MusikTun::Nichts, None);
+    }
+    let art = flugart::einordnen(stats.flight_type.as_deref(), pax, muster);
+    let begruessung = stats.kabinen_planer.as_ref().is_some_and(|p| p.erledigt(Slot::Boarding));
+    // Zusatz I: Ist die Ansage „nach der Landung“ vorbei (gespielt, entfallen,
+    // stumm, abgewählt) oder kommt sie nicht mehr?
+    let nach_landung_vorbei = {
+        let lauf = &stats.kabinen_lauf;
+        let im_verlauf = |fertig: bool| lauf.verlauf.iter().any(|g| g.slot == Slot::NachDerLandung && !g.vorschau && g.ergebnis.is_some() == fertig);
+        im_verlauf(true)
+            || (!im_verlauf(false)
+                && !lauf.warteschlange.wartend().contains(&Slot::NachDerLandung)
+                && !stats.kabinen_planer.as_ref().is_none_or(|p| p.kommt_noch(Slot::NachDerLandung, stats.phase)))
+    };
+    let aussteigen_um = stats
+        .kabinen_lauf
+        .verlauf
+        .iter()
+        .filter(|g| g.slot == Slot::Aussteigen && !g.vorschau && g.ergebnis.as_deref() == Some("gespielt"))
+        .map(|g| g.zeit + dauer_s(g.slot, &g.teile).ceil() as i64)
+        .next();
+    let lauf = &mut stats.kabinen_lauf;
+    if lauf.musik_quelle.is_none() {
+        lauf.musik_quelle = Some(musik_quelle(art, true, eigene));
+    }
+    let takt = musik::MusikTakt {
+        phase: stats.phase,
+        am_boden: snap.on_ground,
+        beacon: snap.light_beacon,
+        pushback_aktiv: matches!(snap.pushback_state, Some(0..=2)),
+        begruessung,
+        jetzt,
+        nach_landung_vorbei,
+        aussteigen_um,
+        triebwerke_an: Some(snap.engines_running > 0),
+    };
+    let abschnitt = lauf.musik_fenster.tick(art, &takt);
+    let soll = abschnitt.is_some();
+    if abschnitt.is_some() {
+        lauf.musik_abschnitt = abschnitt;
+    }
+    let dateien: Vec<PathBuf> = match &lauf.musik_quelle {
+        Some(MusikQuelle::Eigene { dateien, .. }) => dateien.clone(),
+        Some(MusikQuelle::Lied) => lauf.lied.datei.iter().cloned().collect(),
+        _ => Vec::new(),
+    };
+    // Lied nachreichen (Entscheidung 9): bis „Türen zu“ immer wieder.
+    let holen = (lauf.musik_quelle == Some(MusikQuelle::Lied)
+        && lauf.lied.datei.is_none()
+        && !lauf.lied.laeuft
+        && jetzt >= lauf.lied.naechster
+        && !lauf.musik_fenster.tueren_zu())
+    .then(|| lauf.lied.vorlage.clone())
+    .flatten();
+    if holen.is_some() {
+        lauf.lied.laeuft = true;
+    }
+    let tun = if soll && !dateien.is_empty() {
+        lauf.musik_lief = true;
+        MusikTun::Spielen(dateien)
+    } else if lauf.musik_lief && !soll {
+        lauf.musik_lief = false;
+        MusikTun::Ausblenden
+    } else {
+        MusikTun::Nichts
+    };
+    (tun, holen)
+}
+
+fn musik_takt(app: &AppHandle, flight: &Arc<ActiveFlight>, snap: &SimSnapshot, now: DateTime<Utc>) {
+    let einst = einstellungen(app);
+    // Ansagen aus, Schalter aus oder Stumm: sofort still (Pflichtenheft G1).
+    if !einst.an || !einst.boarding_musik || STUMM.load(Ordering::SeqCst) {
+        if crate::kabinen_musik::flug_aktiv() {
+            crate::kabinen_musik::aus();
+        }
+        return;
+    }
+    // Eigene Musik vor dem Flug neu lesen (Design §6), ohne Flugdaten-Sperre.
+    let eigene = eigene_lesen(flight);
+    // Nach einem Neustart liegt das Lied schon im Ordner des Fluges (Codex
+    // 2.1.1): wieder aufnehmen, sonst bliebe es nach der Landung still.
+    let lied_auf_platte = ton_wurzel(app).ok().map(|w| w.join(flug_ordner(flight)).join("boarding-lied.mp3")).filter(|p| p.is_file());
+    let mut stats = flight.stats.lock().expect("flight stats");
+    if stats.kabinen_lauf.lied.datei.is_none() {
+        stats.kabinen_lauf.lied.datei = lied_auf_platte;
+    }
+    let (tun, holen) = musik_schritt(&mut stats, snap, &flight.aircraft_icao, eigene, now.timestamp());
+    if let Some(l) = &holen {
+        let details = serde_json::json!({ "titel": l.titel, "stil": l.stil, "versuch": stats.kabinen_lauf.lied.versuche + 1 });
+        notiz(&mut stats.kabinen_lauf, "lied_anfrage", None, None, details);
+    }
+    drop(stats);
+    match tun {
+        // Probehören (Kasten/Dialog) nicht überschreiben.
+        MusikTun::Spielen(dateien) if !crate::kabinen_musik::probe_aktiv() => {
+            crate::kabinen_musik::spielen(crate::kabinen_musik::Auftrag { dateien, schleife: true, geraet: einst.ausgabe.clone() });
+        }
+        MusikTun::Ausblenden if crate::kabinen_musik::flug_aktiv() => crate::kabinen_musik::ausblenden(),
+        MusikTun::Aus if crate::kabinen_musik::flug_aktiv() => crate::kabinen_musik::aus(),
+        _ => {}
+    }
+    if let Some(l) = holen {
+        lied_holen(app.clone(), Arc::clone(flight), l);
+    }
+}
+
+/// Holt das Lied vom Ton-Server (`POST /api/kabine/lied`) in den Ordner des
+/// Fluges. Fehlschlag: nach `Retry-After` (sonst 60 s) erneut, solange noch
+/// Boarding ist (Entscheidung 9).
+fn lied_holen(app: AppHandle, flight: Arc<ActiveFlight>, lied: api_client::KabinenLied) {
+    tauri::async_runtime::spawn(async move {
+        let beginn = Utc::now();
+        let ergebnis = lied_vom_server(&app, &flight, &lied).await;
+        {
+            let mut stats = flight.stats.lock().expect("flight stats");
+            let lauf = &mut stats.kabinen_lauf;
+            lauf.lied.laeuft = false;
+            let details = match &ergebnis {
+                Ok(p) => {
+                    lauf.lied.datei = Some(p.clone());
+                    lauf.lied.fehler = None;
+                    serde_json::json!({ "ergebnis": "ok", "dauer_ms": (Utc::now() - beginn).num_milliseconds() })
+                }
+                Err((meldung, warte_s)) => {
+                    lauf.lied.versuche += 1;
+                    lauf.lied.naechster = Utc::now().timestamp() + *warte_s as i64;
+                    lauf.lied.fehler = Some(meldung.clone());
+                    serde_json::json!({ "ergebnis": "fehler", "fehler": meldung, "dauer_ms": (Utc::now() - beginn).num_milliseconds() })
+                }
+            };
+            notiz(lauf, "lied_antwort", None, None, details);
+        }
+        protokoll_leeren(&app, &flight);
+    });
+}
+
+async fn lied_vom_server(app: &AppHandle, flight: &ActiveFlight, lied: &api_client::KabinenLied) -> Result<PathBuf, (String, u64)> {
+    let ordner = ton_ordner(app, &flug_ordner(flight)).map_err(|e| (e, 60))?;
+    let ziel = ordner.join("boarding-lied.mp3");
+    // Nach einem Neustart liegt es schon da.
+    if std::fs::metadata(&ziel).is_ok_and(|m| m.len() > 0) {
+        return Ok(ziel);
+    }
+    let token = crate::live_zugang::pilot_token().ok_or_else(|| ("noch kein Live-Zugang (nicht provisioniert)".to_string(), 120))?;
+    let koerper = serde_json::json!({ "pirep_id": flight.pirep_id, "text": lied.text, "stil": lied.stil });
+    let antwort = reqwest::Client::builder()
+        // acemusic.ai braucht für 3 min Musik gut eine Minute, dazu die
+        // Warteschlange des Servers.
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| (e.to_string(), 60))?
+        .post(format!("{}/api/kabine/lied", crate::live_zugang::LIVE_BASIS))
+        .bearer_auth(token)
+        .header("User-Agent", format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")))
+        .json(&koerper)
+        .send()
+        .await
+        .map_err(|e| (format!("live.kant.ovh nicht erreichbar: {e}"), 60))?;
+    let status = antwort.status();
+    if !status.is_success() {
+        let warte = piper::warte_s(antwort.headers().get("retry-after").and_then(|v| v.to_str().ok())).unwrap_or(60);
+        return Err((format!("Ton-Server antwortet {status}"), warte.max(10)));
+    }
+    let mp3 = antwort.bytes().await.map_err(|e| (e.to_string(), 60))?;
+    if mp3.is_empty() {
+        return Err(("leere Antwort".into(), 60));
+    }
+    let zwischen = ordner.join("boarding-lied.mp3.neu");
+    std::fs::write(&zwischen, &mp3).and_then(|_| std::fs::rename(&zwischen, &ziel)).map_err(|e| (e.to_string(), 60))?;
+    Ok(ziel)
+}
+
+/// Zustand der Boarding-Musik für den Kasten auf der Seite „Kabine“.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MusikAnsicht {
+    /// Schalter „Boarding-Musik“.
+    an: bool,
+    lautstaerke: f32,
+    /// aus | ohne_flug | keine | wird_erzeugt | kein_lied | bereit | laeuft |
+    /// pausiert | beendet | probe
+    stand: &'static str,
+    /// eigene | lied
+    quelle: Option<&'static str>,
+    titel: Option<String>,
+    strecke: Option<String>,
+    /// Ordner der eigenen Musik (ICAO oder „Alle“) und Zahl der Stücke.
+    ordner: Option<String>,
+    stuecke: usize,
+    /// Airline des laufenden Flugs (ICAO).
+    airline: Option<String>,
+    /// boarding | ankunft, solange die Musik läuft (Zusatz I).
+    abschnitt: Option<&'static str>,
+}
+
+fn musik_ansicht(einst: &Einstellungen, lauf: Option<&Lauf>, airline: Option<String>, laeuft: bool, hoerbar: bool, probe: bool) -> MusikAnsicht {
+    let mut a = MusikAnsicht {
+        an: einst.boarding_musik,
+        lautstaerke: einst.musik_lautstaerke,
+        stand: "ohne_flug",
+        quelle: None,
+        titel: None,
+        strecke: None,
+        ordner: None,
+        stuecke: 0,
+        airline,
+        abschnitt: None,
+    };
+    if let Some(lauf) = lauf {
+        match &lauf.musik_quelle {
+            Some(MusikQuelle::Eigene { ordner, dateien }) => {
+                a.quelle = Some("eigene");
+                a.ordner = Some(ordner.clone());
+                a.stuecke = dateien.len();
+            }
+            Some(MusikQuelle::Lied) => {
+                a.quelle = Some("lied");
+                a.titel = lauf.lied.vorlage.as_ref().and_then(|l| l.titel.clone());
+                a.strecke = lauf.lied.vorlage.as_ref().and_then(|l| l.strecke.clone());
+            }
+            _ => {}
+        }
+        if laeuft {
+            a.abschnitt = lauf.musik_abschnitt.map(|x| match x {
+                cabin_announcements::musik::Abschnitt::Boarding => "boarding",
+                cabin_announcements::musik::Abschnitt::Ankunft => "ankunft",
+            });
+        }
+        a.stand = match &lauf.musik_quelle {
+            _ if probe => "probe",
+            _ if laeuft => if hoerbar { "laeuft" } else { "pausiert" },
+            // Zwischen „Türen zu“ und der Landung wartet sie auf die Ankunft.
+            _ if lauf.musik_fenster.ankunft_vorbei() => "beendet",
+            None => "ohne_flug",
+            Some(MusikQuelle::Keine) => "keine",
+            Some(MusikQuelle::Lied) if lauf.lied.datei.is_none() => if lauf.lied.fehler.is_some() { "kein_lied" } else { "wird_erzeugt" },
+            Some(_) => "bereit",
+        };
+    } else if probe {
+        a.stand = "probe";
+    }
+    if !einst.boarding_musik {
+        a.stand = "aus";
+    }
+    a
+}
+
+#[tauri::command]
+pub(crate) fn kabinen_musik_zustand(app: AppHandle, state: tauri::State<'_, AppState>) -> MusikAnsicht {
+    let einst = einstellungen(&app);
+    let flug = aktiver_flug(&state);
+    let (laeuft, hoerbar, probe) = (crate::kabinen_musik::flug_aktiv(), crate::kabinen_musik::hoerbar(), crate::kabinen_musik::probe_aktiv());
+    match flug {
+        Some(f) => {
+            let stats = f.stats.lock().expect("flight stats");
+            musik_ansicht(&einst, Some(&stats.kabinen_lauf), Some(f.airline_icao.clone()).filter(|a| !a.is_empty()), laeuft, hoerbar, probe)
+        }
+        None => musik_ansicht(&einst, None, None, false, false, probe),
+    }
+}
+
+/// Probehören im Kasten: die Musik dieses Flugs (Lied oder eigene), einmal.
+#[tauri::command]
+pub(crate) fn kabinen_musik_probe_flug(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), UiError> {
+    let flug = aktiver_flug(&state).ok_or_else(|| UiError::new("kein_flug", "no active flight"))?;
+    let dateien: Vec<PathBuf> = {
+        let stats = flug.stats.lock().expect("flight stats");
+        match &stats.kabinen_lauf.musik_quelle {
+            Some(MusikQuelle::Eigene { dateien, .. }) => dateien.clone(),
+            Some(MusikQuelle::Lied) => stats.kabinen_lauf.lied.datei.iter().cloned().collect(),
+            _ => Vec::new(),
+        }
+    };
+    if dateien.is_empty() {
+        return Err(UiError::new("musik_keine", "no music for this flight yet"));
+    }
+    crate::kabinen_musik::spielen(crate::kabinen_musik::Auftrag { dateien, schleife: false, geraet: einstellungen(&app).ausgabe });
+    Ok(())
 }
 
 fn takt_schritt(
@@ -707,6 +1138,8 @@ fn takt_schritt(
         return;
     }
     let jetzt = now.timestamp();
+    // Eigene Musik vor der Abflug-Anfrage prüfen (Design §5), ohne Sperre.
+    let eigene = if einst.boarding_musik { eigene_lesen(flight) } else { None };
     // Verlaufsdatei ohne Flugdaten-Sperre lesen (v2.0.28: das Lesen hielt die
     // Sperre beim ersten Takt bis 39 ms, Diagnose Pilot 1 und 4).
     let geladen = flight.stats.lock().expect("flight stats").kabinen_lauf.verlauf_geladen;
@@ -786,6 +1219,11 @@ fn takt_schritt(
     if flugart == Flugart::Aus {
         return;
     }
+    // Ist der Schalter aus, bleibt die Quelle offen: Wer ihn im Boarding
+    // einschaltet, bekommt noch eigene Musik.
+    if stats.kabinen_lauf.musik_quelle.is_none() && einst.boarding_musik {
+        stats.kabinen_lauf.musik_quelle = Some(musik_quelle(flugart, true, eigene));
+    }
     let abgewaehlt = einst.abgewaehlt();
     // Abwahl ins Log (einmal je Flug und bei jeder Änderung, auch der
     // Schalter für Kommandos und Gong), damit sich „abgewählt“ von „kam
@@ -826,8 +1264,6 @@ fn takt_schritt(
         let grund = match grund {
             cabin_announcements::Entfall::ZuWenigZeit => "zu_wenig_zeit",
             cabin_announcements::Entfall::Uebersprungen => "uebersprungen",
-            cabin_announcements::Entfall::TuerenSchonZu => "tueren_zu",
-            cabin_announcements::Entfall::OhneLadeblatt => "ohne_ladeblatt",
         };
         notiz(&mut stats.kabinen_lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
         verbuchen(&mut stats.kabinen_lauf, slot, "entfallen", Some(grund), jetzt);
@@ -890,6 +1326,8 @@ fn takt_schritt(
         let kommt = |s: &Slot| flugart.erlaubt(*s) && kommt_noch(&stats, &wartend, *s);
         let abflug: Vec<Slot> = ABFLUG.into_iter().filter(kommt).collect();
         let ankunft: Vec<Slot> = ANKUNFT.into_iter().filter(kommt).collect();
+        let halbzeit_kommt = kommt(&Slot::Reiseflug50);
+        let halbzeit_um = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet));
         let r = cabin_announcements::planer::rang(schritt.phase);
         let kurz = stats.kabinen_planer.as_ref().is_some_and(|p| p.ist_kurzstrecke());
         // Ankunft: in der Luft und kurz vor der Landung (bzw. im Sinkflug).
@@ -903,9 +1341,21 @@ fn takt_schritt(
             lauf.angefragt.insert("abflug".into());
             auftraege.push(("abflug".into(), abflug, 0));
         }
+        // Halbzeit (Zusatz H): im Reiseflug, Vorlauf vor ihrem Zeitpunkt. Ein
+        // Flug ohne Halbzeit-Ansage (Kurzstrecke) fragt nie an.
+        let halbzeit_jetzt = halbzeit_anfragen(halbzeit_kommt, schritt.phase, halbzeit_um, jetzt);
+        if halbzeit_jetzt && darf_anfragen(lauf, "halbzeit", jetzt) {
+            lauf.angefragt.insert("halbzeit".into());
+            auftraege.push(("halbzeit".into(), HALBZEIT.to_vec(), 0));
+        }
         if ankunft_jetzt && !ankunft.is_empty() && darf_anfragen(lauf, "ankunft", jetzt) {
             lauf.angefragt.insert("ankunft".into());
             auftraege.push(("ankunft".into(), ankunft, 0));
+        }
+        // Lied nachfragen, wenn das Modul keine Zeit mehr hatte (einmal).
+        if lauf.lied.nochmal_ab.is_some_and(|ab| jetzt >= ab) && lauf.lied.vorlage.is_none() && !lauf.lied.slots.is_empty() {
+            lauf.lied.nochmal_ab = None;
+            auftraege.push(("abflug:lied".into(), lauf.lied.slots.clone(), 0));
         }
         for f in faellig.iter().filter(|f| ist_ereignis(f.slot)) {
             lauf.anlass += 1;
@@ -915,7 +1365,24 @@ fn takt_schritt(
         }
     }
     for (schluessel, slots, anlass) in auftraege {
-        let anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
+        let mut anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
+        if schluessel == "halbzeit" {
+            // Restzeit zum Abspielzeitpunkt, nicht zum Zeitpunkt der Anfrage
+            // (sonst stimmte „noch etwa zwei Stunden“ um den Vorlauf nicht).
+            let ab = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet)).unwrap_or(jetzt).max(jetzt);
+            anfrage["flug"]["rest_min"] = serde_json::json!(stats.landung_erwartet.map(|t| ((t - ab) / 60).max(0)));
+            // „Früher, pünktlich, später“ gilt hier für die Ankunft, nicht für
+            // den Off-Block (Codex 2.1.1): erwartete gegen geplante Ankunft.
+            if let (Some(an), Some(plan)) = (anfrage["flug"]["ankunft_erwartet"].as_i64(), stats.ofp_planzeiten.plan_on_block) {
+                anfrage["flug"]["abweichung_min"] = serde_json::json!((an - plan).div_euclid(60).clamp(-1440, 1440));
+            }
+        }
+        // Boarding-Lied (2.1.1 G1): mit dem Abflug-Drehbuch, nur wenn keine
+        // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
+        if schluessel.starts_with("abflug") && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
+            anfrage["boarding_lied"] = serde_json::json!(true);
+            stats.kabinen_lauf.lied.slots = slots.clone();
+        }
         holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
     }
 
@@ -952,8 +1419,11 @@ fn takt_schritt(
         // Nicht zustellbar: nicht als „läuft“ stehen lassen.
         tracing::warn!(error = %e, "kabinenansage: Ereignis nicht zustellbar");
         let mut stats = flight.stats.lock().expect("flight stats");
-        if ende_melden(&mut stats, gespielt.id, "fehler", Utc::now().timestamp()) {
-            verlauf_speichern(app, flight, &stats.kabinen_lauf);
+        let text = if ende_melden(&mut stats, gespielt.id, "fehler", Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
+        // Datei ohne Flugdaten-Sperre schreiben (2.1.1 D, Punkt 11).
+        drop(stats);
+        if let Some(text) = text {
+            verlauf_schreiben(app, flight, &text);
         }
     }
 }
@@ -981,7 +1451,15 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     let mut kapitaen_kommt_nicht = false;
     let lauf = &mut stats.kabinen_lauf;
     // Sicher entfallende Slots (Bizjet ohne Kurzfassung) nicht warten lassen.
-    let weg: Vec<(Slot, String)> = lauf.entfaellt.iter().map(|(s, g)| (*s, g.clone())).collect();
+    let mut weg: Vec<(Slot, String)> = lauf.entfaellt.iter().map(|(s, g)| (*s, g.clone())).collect();
+    // 2.1.1: Begrüßung und „Boarding completed“ halten „Türen zu“ und die
+    // Sicherheit auf, bis sie gespielt sind. Kommt ihr Ton sicher nie, gehen
+    // sie heraus, statt alles bis zum Startlauf aufzuhalten.
+    for slot in [Slot::Boarding, Slot::BoardingAbgeschlossen] {
+        if lauf.warteschlange.wartend().contains(&slot) && ton_kommt_nie(lauf, slot) {
+            weg.push((slot, "keine_stimme".into()));
+        }
+    }
     for (slot, grund) in weg {
         if lauf.warteschlange.entfernen(slot) {
             notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
@@ -1106,6 +1584,25 @@ fn dauer_s(slot: Slot, teile: &[Teil]) -> f64 {
     } else {
         teile.iter().map(|t| t.dauer_s + 0.8).sum()
     }
+}
+
+/// Kommt für diesen Slot sicher kein Ton mehr? Je Sprache: keine Stimme,
+/// endgültig abgelehnt, oder kein Text und das Abflug-Drehbuch ist nach drei
+/// Versuchen aufgegeben. Ohne bekannte Sprachen: nein (es kommt noch).
+fn ton_kommt_nie(lauf: &Lauf, slot: Slot) -> bool {
+    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { lauf.sprachen.clone() };
+    let text_aufgegeben = lauf.texte_fehler.contains_key(&slot)
+        && !lauf.angefragt.contains("abflug")
+        && lauf.fehlversuche.get("abflug").is_some_and(|(n, _)| *n >= 3);
+    !sprachen.is_empty()
+        && sprachen.iter().all(|sp| {
+            let k = (slot, sp.clone());
+            match lauf.ton.get(&k) {
+                Some(None) => true,
+                Some(Some(_)) => false,
+                None => lauf.ton_endgueltig.contains_key(&k) || (!lauf.texte.contains_key(&k) && slot.rolle() != Rolle::Kommando && text_aufgegeben),
+            }
+        })
 }
 
 /// Eine verfallene Ansage hinterlässt keine Fehler, die später noch die
@@ -1378,6 +1875,10 @@ fn wetterlage(m: &metar::MetarSnapshot) -> Option<&'static str> {
 /// noch fehlt. Bizjet: Die Sicherheit gilt nur als Kurzfassung des Kapitäns
 /// (`rolle: kapitaen`); fehlt sie, entfällt der Slot sicher.
 fn drehbuch_uebernehmen(lauf: &mut Lauf, d: api_client::KabinenDrehbuch, slots: &[Slot], bizjet: bool) -> Vec<Slot> {
+    // Boarding-Lied (2.1.1 G1): die erste Vorlage gilt für den Flug.
+    if let Some(l) = d.boarding_lied.clone().filter(|l| !l.text.trim().is_empty()) {
+        lauf.lied.vorlage.get_or_insert(l);
+    }
     if !d.sprachen.is_empty() {
         lauf.sprachen = d.sprachen.clone();
     }
@@ -1457,7 +1958,11 @@ fn holen(
             let fehler = ergebnis.as_ref().err().map(|e| kurz(&e.to_string()));
             match ergebnis {
                 Ok(d) => {
+                    // Lied angefragt, aber keins gekommen: still, „kein Lied“.
+                    let angefragt = anfrage.get("boarding_lied").and_then(|v| v.as_bool()) == Some(true);
+                    let (geliefert, spaeter) = (d.boarding_lied.is_some(), d.boarding_lied_spaeter);
                     fehlend = drehbuch_uebernehmen(lauf, d, &slots, bizjet);
+                    lied_nach_antwort(&mut lauf.lied, angefragt, geliefert, spaeter, Utc::now().timestamp());
                     if nachholung {
                         // Auch der gezielte zweite Abruf brachte nichts: auf
                         // der Seite sagen, statt ewig „wird geschrieben“.
@@ -1465,6 +1970,10 @@ fn holen(
                             lauf.texte_fehler.insert(*s, "Der Server hat keinen Text geliefert.".into());
                         }
                     }
+                }
+                Err(e) if schluessel == "abflug:lied" => {
+                    // Nur das Lied fehlte: die Texte sind schon da.
+                    lauf.lied.fehler = Some(kurz(&e.to_string()));
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
@@ -1844,12 +2353,6 @@ fn verlauf_uebernehmen(lauf: &mut Lauf, text: Option<String>) {
     }
 }
 
-fn verlauf_speichern(app: &AppHandle, flight: &ActiveFlight, lauf: &Lauf) {
-    if let Some(text) = verlauf_text(lauf) {
-        verlauf_schreiben(app, flight, &text);
-    }
-}
-
 /// Fortlaufende Nummer jeder Verlaufs-Fassung. Vergeben, solange der Aufrufer
 /// die Flugdaten-Sperre hält — die Nummer folgt also dem Stand.
 static VERLAUF_FASSUNG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1940,10 +2443,17 @@ pub(crate) fn kabinen_stumm(app: AppHandle, state: tauri::State<'_, AppState>, s
         return;
     }
     ausgabe::stoppen();
+    // Stumm stoppt auch die Boarding-Musik sofort (Pflichtenheft G1).
+    if crate::kabinen_musik::flug_aktiv() {
+        crate::kabinen_musik::aus();
+    }
     let Some(flight) = aktiver_flug(&state) else { return };
     let mut stats = flight.stats.lock().expect("flight stats");
-    if stumm_anwenden(&mut stats, Utc::now().timestamp()) {
-        verlauf_speichern(&app, &flight, &stats.kabinen_lauf);
+    let text = if stumm_anwenden(&mut stats, Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
+    // Datei ohne Flugdaten-Sperre schreiben (2.1.1 D, Punkt 11).
+    drop(stats);
+    if let Some(text) = text {
+        verlauf_schreiben(&app, &flight, &text);
     }
 }
 
@@ -2027,10 +2537,14 @@ pub(crate) fn kabinen_erneut(state: tauri::State<'_, AppState>) {
     lauf.ton_fehler.clear();
     // Ein Teil, dessen Abruf gelang, dem aber Slots fehlen, wird neu gefragt.
     let fehlt = |teil: &str| {
-        let slots: &[Slot] = if teil == "abflug" { &ABFLUG } else { &ANKUNFT };
+        let slots: &[Slot] = match teil {
+            "abflug" => &ABFLUG,
+            "halbzeit" => &HALBZEIT,
+            _ => &ANKUNFT,
+        };
         slots.iter().any(|s| lauf.sprachen.iter().any(|sp| !lauf.texte.contains_key(&(*s, sp.clone()))))
     };
-    let neu: Vec<String> = ["abflug", "ankunft"].into_iter().filter(|t| fehlt(t)).map(str::to_string).collect();
+    let neu: Vec<String> = ["abflug", "halbzeit", "ankunft"].into_iter().filter(|t| fehlt(t)).map(str::to_string).collect();
     for t in neu {
         lauf.angefragt.remove(&t);
     }
@@ -2201,6 +2715,8 @@ pub(crate) enum Freigabe {
 pub(crate) struct Ablauf {
     freigabe: Freigabe,
     abflug: TeilStand,
+    /// Zusatz H: Halbzeit-Ansage, im Reiseflug geschrieben.
+    halbzeit: TeilStand,
     ankunft: TeilStand,
     ton_fertig: usize,
     ton_gesamt: usize,
@@ -2266,10 +2782,14 @@ fn teil_stand(lauf: &Lauf, teil: &str, slots: &[Slot], landung: Option<i64>, kur
     if teil == "ankunft" && !kurz {
         return TeilStand::Offen { um: landung.map(|l| l - ANKUNFT_TEXT_VOR_LANDUNG_MIN * 60) };
     }
+    if teil == "halbzeit" {
+        // Hier steht in `landung` der Zeitpunkt der Halbzeit-Ansage.
+        return TeilStand::Offen { um: landung.map(|h| h - HALBZEIT_VORLAUF_MIN * 60) };
+    }
     TeilStand::Offen { um: None }
 }
 
-fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool) -> (Stand, Vec<TeilAnsicht>) {
+fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool, halbzeit_um: Option<i64>) -> (Stand, Vec<TeilAnsicht>) {
     if slot.rolle() == Rolle::Chime {
         return (Stand::Bereit, Vec::new());
     }
@@ -2297,6 +2817,9 @@ fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool) -> (Sta
                 // Abruf gelang, nur dieser Slot fehlte (auch nach dem gezielten zweiten Abruf).
                 None => (Stand::TextAufgegeben { meldung: m.clone() }, teile),
             };
+        }
+        if teil == "halbzeit" && !lauf.angefragt.contains("halbzeit") {
+            return (Stand::TextAb { um: halbzeit_um.map(|h| h - HALBZEIT_VORLAUF_MIN * 60), nach_abheben: false }, teile);
         }
         if teil == "ankunft" && !lauf.angefragt.contains("ankunft") {
             // Kurzstrecke: Der Ankunftstext kommt gleich nach dem Abheben.
@@ -2333,7 +2856,8 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
     let Some(planer) = stats.kabinen_planer.as_ref() else {
         return Vec::new();
     };
-    let mut slots: Vec<Slot> = ABFLUG.into_iter().chain(ANKUNFT).collect();
+    let mut slots: Vec<Slot> = ABFLUG.into_iter().chain(HALBZEIT).chain(ANKUNFT).collect();
+    let halbzeit_um = planer.zeitpunkt(Slot::Reiseflug50, landung);
     if einst.kommandos {
         slots.extend(KOMMANDOS);
     } else {
@@ -2348,7 +2872,7 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
         .filter(|s| !lauf.entfaellt.contains_key(s))
         .filter(|s| wartend.contains(s) || planer.kommt_noch(*s, stats.phase))
         .filter_map(|slot| {
-            let (stand, teile) = slot_stand(lauf, slot, landung, planer.ist_kurzstrecke());
+            let (stand, teile) = slot_stand(lauf, slot, landung, planer.ist_kurzstrecke(), halbzeit_um);
             // Für keine Sprache eine Stimme: kommt nie, steht nicht in der Liste.
             if !teile.is_empty() && teile.iter().all(|t| t.keine_stimme) {
                 return None;
@@ -2452,6 +2976,7 @@ fn ueberblick_bauen(stats: &FlightStats, einst: &Einstellungen, flug: &cabin_ann
     let ablauf = Ablauf {
         freigabe,
         abflug: teil_stand(lauf, "abflug", &kommend(&ABFLUG), landung, false),
+        halbzeit: teil_stand(lauf, "halbzeit", &kommend(&HALBZEIT), planer.and_then(|p| p.zeitpunkt(Slot::Reiseflug50, landung)), false),
         ankunft: teil_stand(lauf, "ankunft", &kommend(&ANKUNFT), landung, planer.is_some_and(|p| p.ist_kurzstrecke())),
         ton_fertig: mit_ton.iter().filter(|g| g.stand == Stand::Bereit).count(),
         ton_gesamt: mit_ton.len(),
@@ -2746,6 +3271,8 @@ pub(crate) mod ausgabe {
         if STOPP.load(Ordering::SeqCst) != stand {
             return Ok(());
         }
+        // Boarding-Musik pausiert, solange eine Ansage (auch der Gong) läuft.
+        let _ansage = crate::kabinen_musik::AnsageLaeuft::neu();
         let host = cpal::default_host();
         let gewaehlt = geraet
             .and_then(|id| id.parse::<cpal::DeviceId>().ok())
@@ -3360,7 +3887,7 @@ mod tests {
         let mut l = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into(), "en-GB".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None };
+            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false };
         assert!(drehbuch_uebernehmen(&mut l, d, &abflug, true).is_empty());
         assert_eq!(rolle_von(&l, Slot::Sicherheit), Rolle::Kapitaen);
         assert!(l.entfaellt.is_empty());
@@ -3369,13 +3896,13 @@ mod tests {
         let mut alt = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None };
+            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false };
         assert!(drehbuch_uebernehmen(&mut alt, d, &abflug, true).is_empty(), "nichts nachholen");
         assert!(!alt.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
         assert_eq!(alt.entfaellt.get(&Slot::Sicherheit).map(String::as_str), Some("kein_kurztext"));
         // Linie ohne Kennzeichen: Kabine wie bisher.
         let mut linie = Lauf::default();
-        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None };
+        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false };
         drehbuch_uebernehmen(&mut linie, d, &[Slot::Sicherheit], false);
         assert_eq!(rolle_von(&linie, Slot::Sicherheit), Rolle::Kabine);
         assert!(linie.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
@@ -3562,10 +4089,8 @@ mod tests {
                 anschnallzeichen: zeichen,
                 rest_min: Some((landung - jetzt) as f64 / 60.0).filter(|m| *m >= 0.0),
                 ziel_icao: None,
-                // Einsteigen von Minute 2 bis 8 (50 → 72 t), OFP 72 t.
+                // Einsteigen von Minute 2 bis 8 (50 → 72 t).
                 zfw_kg: Some(zfw(jetzt)),
-                zfw_plan_kg: Some(72_000.0),
-                ladeblatt_gruen: Some((zfw(jetzt) - 72_000.0).abs() / 72_000.0 < 0.05),
                 triebwerke_an: Some(!matches!(phase, Boarding | Pushback | BlocksOn | Arrived)),
                 ..Default::default()
             };
@@ -3702,17 +4227,248 @@ mod tests {
 
     /// Thomas 18.10.2026 (Punkt 8/16): Die Stimme folgt dem Geschlecht der
     /// Crew laut Server; ohne Angabe Kapitän männlich, Kabine weiblich.
-    /// v2.0.28: dieselbe Ampel wie `LsRow` im Cockpit-Tab (< 5 %, nicht über Max).
+    fn musik_stats(flight_type: &str, pax: Option<i32>) -> FlightStats {
+        let mut st = FlightStats::new();
+        st.phase = crate::FlightPhase::Boarding;
+        st.flight_type = Some(flight_type.into());
+        st.pax_count = pax;
+        st.kabinen_lauf.beta = Beta::Ja;
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(45), ..Default::default() },
+            crate::FlightPhase::Boarding,
+        ));
+        st
+    }
+
+    fn gate_snap(beacon: bool) -> SimSnapshot {
+        SimSnapshot { on_ground: true, light_beacon: Some(beacon), pushback_state: Some(3), ..SimSnapshot::default() }
+    }
+
+    /// Spielt Peters Boarding durch Planer und Musik: Strom → Anschnall-
+    /// zeichen → nach 8 min Zuladung → Begrüßung → Musik (Lied kommt später)
+    /// → Beacon: Musik blendet aus.
     #[test]
-    fn ladeblatt_ampel_wie_im_cockpit_tab() {
-        let z = |ist: f32, soll: f32, max: Option<f32>| (Some(ist), Some(soll), max);
-        assert_eq!(ladeblatt_gruen(&[z(24_000.0, 24_100.0, None), z(72_744.0, 72_746.0, Some(73_500.0))]), Some(true));
-        assert_eq!(ladeblatt_gruen(&[z(24_000.0, 24_100.0, None), z(60_000.0, 72_746.0, Some(73_500.0))]), Some(false), "ZFW 17 % daneben");
-        assert_eq!(ladeblatt_gruen(&[z(73_600.0, 73_400.0, Some(73_500.0))]), Some(false), "über Max ist rot, auch unter 5 %");
-        assert_eq!(ladeblatt_gruen(&[z(69_200.0, 72_746.0, None)]), Some(true), "4,87 % ist noch grün");
-        assert_eq!(ladeblatt_gruen(&[z(69_100.0, 72_746.0, None)]), Some(false), "5,01 % nicht mehr");
-        assert_eq!(ladeblatt_gruen(&[(Some(1.0), None, None), (None, None, None)]), None, "ohne OFP");
-        assert_eq!(ladeblatt_gruen(&[(None, Some(24_000.0), None), z(72_744.0, 72_746.0, None)]), Some(true), "fehlender Ist-Wert färbt nicht");
+    fn peter_musik_mit_der_begruessung_lied_nachgereicht_ende_beim_beacon() {
+        let mut st = musik_stats("J", Some(150));
+        let lied = api_client::KabinenLied { text: "[Verse]\nFly with Lufthansa".into(), stil: "elegant piano".into(), titel: None, strecke: None };
+        st.kabinen_lauf.lied.vorlage = Some(lied.clone());
+        let mut tun = Vec::new();
+        let mut holen = 0;
+        for s in (0..=12 * 60).step_by(10) {
+            let zfw = if s > 8 * 60 { 46_000.0 } else { 43_000.0 };
+            let tk = cabin_announcements::Tick { jetzt: s, phase: crate::FlightPhase::Boarding, am_boden: true, anschnallzeichen: Some(if s >= 60 { 2 } else { 0 }), beacon: Some(false), zfw_kg: Some(zfw), ..Default::default() };
+            st.kabinen_planer.as_mut().unwrap().tick(&tk);
+            let (t, h) = musik_schritt(&mut st, &gate_snap(false), "A320", None, s);
+            holen += usize::from(h.is_some());
+            // Der Ton-Server liefert das Lied 3 min nach der ersten Anfrage.
+            if h.is_some() {
+                st.kabinen_lauf.lied.laeuft = false;
+                st.kabinen_lauf.lied.naechster = s + 60;
+                if s >= 180 {
+                    st.kabinen_lauf.lied.datei = Some(PathBuf::from("/tmp/boarding-lied.mp3"));
+                }
+            }
+            tun.push((s, t));
+        }
+        assert_eq!(st.kabinen_lauf.musik_quelle, Some(MusikQuelle::Lied));
+        assert!(holen >= 2, "nachgereicht: mehrere Versuche bis es kommt");
+        let erstes = tun.iter().find(|(_, t)| matches!(t, MusikTun::Spielen(_))).map(|(s, _)| *s).expect("Musik lief");
+        assert_eq!(erstes, 8 * 60 + 10 + 30, "mit der Begrüßung, nicht beim Anschnallzeichen");
+        // Beacon: einmal ausblenden, danach nichts mehr.
+        let (t, h) = musik_schritt(&mut st, &gate_snap(true), "A320", None, 12 * 60 + 10);
+        assert_eq!((t, h), (MusikTun::Ausblenden, None));
+        let (t, _) = musik_schritt(&mut st, &gate_snap(true), "A320", None, 12 * 60 + 20);
+        assert_eq!(t, MusikTun::Nichts);
+    }
+
+    /// Zusatz I: nach der Ansage „nach der Landung“ läuft die Musik des
+    /// Fluges wieder, bis 15 min nach „Aussteigen“.
+    #[test]
+    fn musik_nach_der_landung_bis_nach_dem_aussteigen() {
+        let mut st = musik_stats("J", Some(150));
+        let eigene = Some(("DLH".to_string(), vec![PathBuf::from("/m/DLH/a.mp3")]));
+        st.phase = crate::FlightPhase::TaxiOut;
+        musik_schritt(&mut st, &gate_snap(true), "A320", eigene, 0);
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(45), ..Default::default() },
+            crate::FlightPhase::TaxiIn,
+        ));
+        st.phase = crate::FlightPhase::TaxiIn;
+        let mut rollen = gate_snap(true);
+        rollen.engines_running = 2;
+        // Die Ansage „nach der Landung“ ist fällig und wartet: noch still.
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::NachDerLandung, verfall: cabin_announcements::Verfall::AbPhase(crate::FlightPhase::BlocksOn), trotz_ruhephase: false }]);
+        st.kabinen_planer.as_mut().unwrap().schon_gespielt([Slot::NachDerLandung]);
+        assert_eq!(musik_schritt(&mut st, &rollen, "A320", None, 100).0, MusikTun::Nichts);
+        // Gespielt: Musik an.
+        st.kabinen_lauf.warteschlange.entfernen(Slot::NachDerLandung);
+        verbuchen(&mut st.kabinen_lauf, Slot::NachDerLandung, "gespielt", None, 110);
+        assert!(matches!(musik_schritt(&mut st, &rollen, "A320", None, 140).0, MusikTun::Spielen(_)));
+        assert_eq!(musik_ansicht(&Einstellungen::default(), Some(&st.kabinen_lauf), None, true, true, false).abschnitt, Some("ankunft"));
+        // Aussteigen gespielt, 15 min später aus.
+        st.phase = crate::FlightPhase::Arrived;
+        verbuchen(&mut st.kabinen_lauf, Slot::Aussteigen, "gespielt", None, 600);
+        assert!(matches!(musik_schritt(&mut st, &gate_snap(true), "A320", None, 600 + 14 * 60).0, MusikTun::Spielen(_)));
+        assert_eq!(musik_schritt(&mut st, &gate_snap(true), "A320", None, 600 + 15 * 60).0, MusikTun::Ausblenden);
+    }
+
+    /// Kein Lied da (Ausfall): still, die Ansagen laufen ungestört (Nr. 9).
+    #[test]
+    fn ohne_lied_bleibt_es_still() {
+        let mut st = musik_stats("J", Some(150));
+        st.kabinen_planer.as_mut().unwrap().schon_gespielt([Slot::Boarding]);
+        let (t, h) = musik_schritt(&mut st, &gate_snap(false), "A320", None, 0);
+        assert_eq!((t, h), (MusikTun::Nichts, None), "noch keine Vorlage, nichts zu holen");
+    }
+
+    /// Eigene Musik geht vor (kein Lied), Fracht und Bizjet nur eigene Musik
+    /// ab Beginn des Boardings (Nr. 11, abgeleitet).
+    #[test]
+    fn eigene_musik_vor_lied_fracht_nur_eigene() {
+        let eigene = Some(("DLH".to_string(), vec![PathBuf::from("/m/DLH/a.mp3")]));
+        let mut st = musik_stats("J", Some(150));
+        musik_schritt(&mut st, &gate_snap(false), "A320", eigene.clone(), 0);
+        assert!(matches!(st.kabinen_lauf.musik_quelle, Some(MusikQuelle::Eigene { .. })));
+        assert!(!lied_anfragen(&st.kabinen_lauf, true, crate::FlightPhase::Boarding), "eigene Musik: kein Lied anfragen");
+        let mut l = musik_stats("J", Some(150));
+        musik_schritt(&mut l, &gate_snap(false), "A320", None, 0);
+        assert!(lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Boarding), "Linie ohne eigene Musik: Lied");
+        assert!(!lied_anfragen(&l.kabinen_lauf, false, crate::FlightPhase::Boarding), "Schalter aus: kein Lied (Nr. 15)");
+        assert!(!lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Cruise), "Neustart im Reiseflug: kein Lied mehr");
+        // Fracht ohne Passagierzahl: steht fest, eigene Musik sofort im Boarding.
+        let mut f = musik_stats("F", None);
+        assert!(matches!(musik_schritt(&mut f, &gate_snap(false), "B77F", eigene.clone(), 0).0, MusikTun::Spielen(_)));
+        let mut ohne = musik_stats("F", None);
+        assert_eq!(musik_schritt(&mut ohne, &gate_snap(false), "B77F", None, 0).0, MusikTun::Nichts);
+        assert_eq!(ohne.kabinen_lauf.musik_quelle, Some(MusikQuelle::Keine), "Fracht ohne eigene Musik: kein Lied");
+        let mut biz = musik_stats("J", Some(6));
+        musik_schritt(&mut biz, &gate_snap(false), "C25A", None, 0);
+        assert_eq!(biz.kabinen_lauf.musik_quelle, Some(MusikQuelle::Keine), "Bizjet: kein Lied");
+        // Linie ohne Passagierzahl: noch nichts entscheiden.
+        let mut offen = musik_stats("J", None);
+        musik_schritt(&mut offen, &gate_snap(false), "A320", eigene, 0);
+        assert_eq!(offen.kabinen_lauf.musik_quelle, None);
+        // Ohne Freischaltung: aus.
+        let mut nein = musik_stats("J", Some(150));
+        nein.kabinen_lauf.beta = Beta::Nein;
+        assert_eq!(musik_schritt(&mut nein, &gate_snap(false), "A320", None, 0).0, MusikTun::Aus);
+    }
+
+    /// 2.1.1 (Codex): Kommt der Ton der Begrüßung sicher nie, hält sie
+    /// „Türen zu“ nicht bis zum Startlauf auf; fehlt er nur noch, wartet alles.
+    #[test]
+    fn begruessung_ohne_ton_haelt_tueren_zu_nur_solange_er_noch_kommt() {
+        let mut st = FlightStats::new();
+        st.kabinen_lauf.sprachen = vec!["de-DE".into()];
+        for s in [Slot::BegruessungTuerenZu, Slot::Sicherheit] {
+            st.kabinen_lauf.texte.insert((s, "de-DE".into()), "x".into());
+            st.kabinen_lauf.ton.insert((s, "de-DE".into()), Some(Ton { datei: "f/x.wav".into(), dauer_s: 3.0, stuecke: vec![], herkunft: "server" }));
+        }
+        st.kabinen_lauf.texte.insert((Slot::Boarding, "de-DE".into()), "Willkommen".into());
+        let f = |slot| Faellig { slot, verfall: cabin_announcements::Verfall::AbPhase(crate::FlightPhase::TakeoffRoll), trotz_ruhephase: false };
+        st.kabinen_lauf.warteschlange.aufnehmen([f(Slot::Boarding), f(Slot::BegruessungTuerenZu), f(Slot::Sicherheit)]);
+        let (g, _) = abspielen_schritt(&mut st, 0, crate::FlightPhase::Boarding, false, false);
+        assert!(g.is_none(), "Ton der Begrüßung kommt noch: alles wartet");
+        st.kabinen_lauf.ton_endgueltig.insert((Slot::Boarding, "de-DE".into()), "400".into());
+        let (g, _) = abspielen_schritt(&mut st, 1, crate::FlightPhase::Boarding, false, false);
+        assert_eq!(g.map(|g| g.slot), Some(Slot::BegruessungTuerenZu));
+        assert!(st.kabinen_lauf.verlauf.iter().any(|g| g.slot == Slot::Boarding && g.grund.as_deref() == Some("keine_stimme")));
+        assert!(!ton_kommt_nie(&Lauf::default(), Slot::Boarding), "ohne Sprachen: kommt noch");
+    }
+
+    /// Advisor 2.1.1: Hatte das Modul keine Zeit mehr, einmal nachfragen,
+    /// nicht gleich „kein Lied“; die Nachfrage selbst fragt nicht weiter.
+    #[test]
+    fn lied_spaeter_wird_einmal_nachgefragt() {
+        let mut l = LiedStand::default();
+        lied_nach_antwort(&mut l, true, false, true, 100);
+        assert_eq!((l.nochmal_ab, l.fehler.is_none()), (Some(160), true));
+        // Späte Antwort einer anderen Anfrage, Nachfrage steht noch aus: nichts Neues.
+        lied_nach_antwort(&mut l, true, false, true, 110);
+        assert_eq!((l.nochmal_ab, l.fehler.is_none()), (Some(160), true));
+        // Die Nachfrage selbst (nochmal_ab beim Senden geleert) kommt wieder ohne Lied.
+        l.nochmal_ab = None;
+        lied_nach_antwort(&mut l, true, false, true, 200);
+        assert!(l.fehler.is_some() && l.nochmal_ab.is_none(), "nur eine Nachfrage, dann still");
+        let mut g = LiedStand::default();
+        lied_nach_antwort(&mut g, true, true, false, 0);
+        assert!(g.fehler.is_none() && g.nochmal_ab.is_none());
+        let mut o = LiedStand::default();
+        lied_nach_antwort(&mut o, false, false, false, 0);
+        assert!(o.fehler.is_none(), "nicht angefragt (eigene Musik): kein Fehler");
+    }
+
+    /// Zusatz H: Reiseflug 50 gehört zum Teil „halbzeit“, nicht mehr zum Abflug.
+    #[test]
+    fn halbzeit_ist_ein_eigener_teil() {
+        assert_eq!(teil_von(Slot::Reiseflug50), Some("halbzeit"));
+        assert_eq!(ton_teil(Slot::Reiseflug50), Some("halbzeit"));
+        assert!(!ABFLUG.contains(&Slot::Reiseflug50) && !ANKUNFT.contains(&Slot::Reiseflug50));
+        assert_eq!(teil_von(Slot::Reiseflug25), Some("abflug"));
+        assert_eq!(teil_stand(&Lauf::default(), "halbzeit", &HALBZEIT, Some(10_000), false), TeilStand::Offen { um: Some(10_000 - 900) });
+    }
+
+    /// Zusatz H: angefragt im Reiseflug, 15 min vor dem Zeitpunkt; nie auf
+    /// der Kurzstrecke, nie im Steigflug.
+    #[test]
+    fn halbzeit_anfrage_zeitpunkt_und_kurzstrecke() {
+        use crate::FlightPhase::*;
+        assert!(!halbzeit_anfragen(true, Cruise, Some(10_000), 10_000 - 16 * 60));
+        assert!(halbzeit_anfragen(true, Cruise, Some(10_000), 10_000 - 15 * 60));
+        assert!(halbzeit_anfragen(true, Holding, None, 0), "ohne Zeitpunkt sofort im Reiseflug");
+        assert!(!halbzeit_anfragen(true, Climb, Some(10_000), 9_999));
+        assert!(!halbzeit_anfragen(false, Cruise, Some(10_000), 9_999), "kommt nicht (Kurzstrecke)");
+        let kurz = cabin_announcements::Planer::neu(cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(50), ..Default::default() });
+        assert!(!kurz.kommt_noch(Slot::Reiseflug50, Cruise), "Kurzstrecke hat keine Halbzeit");
+    }
+
+    /// Zusatz H, Nachspiel AFR218 (510 min): Die Anfrage kommt im Reiseflug,
+    /// 15 min bevor der Planer die Halbzeit meldet.
+    #[test]
+    fn halbzeit_anfrage_im_echten_flug_afr218() {
+        #[derive(serde::Deserialize)]
+        struct Daten {
+            ticks: Vec<(i64, crate::FlightPhase, f64, f64, f64, u8, Option<u8>, u8, u8, f64, u8, u8, f64, Option<u8>)>,
+            landung: i64,
+        }
+        let d: Daten = serde_json::from_str(include_str!("../crates/cabin-announcements/tests/daten/afr218.json")).unwrap();
+        let erste = d.ticks[0].1;
+        let mut p = cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(510), reiseflughoehe_ft: Some(38_000), ..Default::default() },
+            erste,
+        );
+        let (mut angefragt, mut gemeldet) = (None, None);
+        for &(t, phase, alt, _agl, vs, boden, zeichen, ..) in &d.ticks {
+            let tk = cabin_announcements::Tick { jetzt: t, phase, hoehe_ft: alt, vs_fpm: vs, am_boden: boden == 1, anschnallzeichen: zeichen, rest_min: Some((d.landung - t) as f64 / 60.0), ..Default::default() };
+            let um = p.zeitpunkt(Slot::Reiseflug50, Some(d.landung));
+            if angefragt.is_none() && halbzeit_anfragen(p.kommt_noch(Slot::Reiseflug50, phase), phase, um, t) {
+                angefragt = Some((t, phase));
+            }
+            if p.tick(&tk).iter().any(|f| f.slot == Slot::Reiseflug50) {
+                gemeldet = Some(t);
+            }
+        }
+        let (a, phase) = angefragt.expect("angefragt");
+        let g = gemeldet.expect("Halbzeit gemeldet");
+        assert_eq!(phase, crate::FlightPhase::Cruise);
+        assert!((g - a - 15 * 60).abs() <= 120, "Vorlauf {} s", g - a);
+    }
+
+    #[test]
+    fn musik_ansicht_nennt_den_zustand() {
+        let e = Einstellungen::default();
+        let mut l = Lauf::default();
+        assert_eq!(musik_ansicht(&e, None, None, false, false, false).stand, "ohne_flug");
+        l.musik_quelle = Some(MusikQuelle::Lied);
+        assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "wird_erzeugt");
+        l.lied.fehler = Some("x".into());
+        assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "kein_lied");
+        l.lied.datei = Some(PathBuf::from("a.mp3"));
+        assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "bereit");
+        assert_eq!(musik_ansicht(&e, Some(&l), None, true, true, false).stand, "laeuft");
+        assert_eq!(musik_ansicht(&e, Some(&l), None, true, false, false).stand, "pausiert");
+        let aus = Einstellungen { boarding_musik: false, ..Einstellungen::default() };
+        assert_eq!(musik_ansicht(&aus, Some(&l), None, false, false, false).stand, "aus");
     }
 
     /// v2.0.28: „Boarding completed“ ist ein fester englischer Text (wie ein
@@ -3777,9 +4533,9 @@ mod tests {
         let mut l = Lauf::default();
         let fremd = vec![api_client::KabinenFremd { wort: "Times Square".into(), sprache: "en".into() }];
         let eintrag = |text: &str, fremd: Vec<api_client::KabinenFremd>| api_client::KabinenEintrag { slot: "reiseflug25".into(), sprache: "de-DE".into(), text: text.into(), rolle: None, art: None, fremd };
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None }, &[Slot::Reiseflug25], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None, boarding_lied: None, boarding_lied_spaeter: false }, &[Slot::Reiseflug25], false);
         assert_eq!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())), Some(&fremd));
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None }, &[Slot::Reiseflug25], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None, boarding_lied: None, boarding_lied_spaeter: false }, &[Slot::Reiseflug25], false);
         assert!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())).is_none());
     }
 
@@ -3805,6 +4561,8 @@ mod tests {
             sprachen: vec!["de-DE".into()],
             eintraege: vec![api_client::KabinenEintrag { slot: "reiseflug80".into(), sprache: "de-DE".into(), text: "x".into(), rolle: None, art: Some("ende_bordverkauf".into()), fremd: Vec::new() }],
             crew: Some(api_client::KabinenCrew { kapitaen: Some("Julia Lange".into()), kapitaen_geschlecht: Some("w".into()), kabine_geschlecht: Some("m".into()) }),
+            boarding_lied: None,
+            boarding_lied_spaeter: false,
         };
         drehbuch_uebernehmen(&mut l, d, &[Slot::Reiseflug80], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen), "Kapitänin spricht mit Frauenstimme");
@@ -3813,7 +4571,7 @@ mod tests {
         assert_eq!(l.art_r80.as_deref(), Some("ende_bordverkauf"));
         assert_eq!(l.crew.as_ref().and_then(|c| c.kapitaen.as_deref()), Some("Julia Lange"));
         // Eine spätere Antwort ohne `crew` (älteres Modul) vergisst die Crew nicht.
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None }, &[], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None, boarding_lied: None, boarding_lied_spaeter: false }, &[], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen));
     }
 
@@ -3989,6 +4747,14 @@ mod tests {
         assert_eq!((kaputt.kapitaen_geschlecht.as_str(), kaputt.klang.as_str()), ("auto", "lautsprecher"));
         assert_eq!(kaputt.aus, vec!["boarding".to_string()]);
         assert_eq!(kaputt.abgewaehlt(), vec![Slot::Boarding]);
+        // 2.1.1 G3: Altdatei ohne Musik-Felder → Musik an, eigener Pegel 20 %.
+        assert!(alt.boarding_musik, "ab Werk an (Entscheidung 15)");
+        assert!((alt.musik_lautstaerke - 0.2).abs() < 1e-6, "ab Werk 20 % (Entscheidung 14)");
+        assert!((alt.lautstaerke - 0.5).abs() < 1e-6, "getrennte Regler");
+        let laut = Einstellungen { musik_lautstaerke: f32::INFINITY, ..Einstellungen::default() }.normalisiert();
+        assert!((laut.musik_lautstaerke - 0.2).abs() < 1e-6);
+        let aus: Einstellungen = serde_json::from_str(r#"{"an":true,"boarding_musik":false,"musik_lautstaerke":0.35}"#).unwrap();
+        assert!(!aus.boarding_musik && (aus.musik_lautstaerke - 0.35).abs() < 1e-6);
     }
 
     /// Punkt 5b: Anschnallzeichen im Reiseflug nach 3 min noch an → Hinweis,
