@@ -454,6 +454,18 @@ pub(crate) fn ladeblatt_gruen(zeilen: &[(Option<f32>, Option<f32>, Option<f32>)]
     }))
 }
 
+/// Altes Modul: Reiseflug 80 ist das Ende des Bordverkaufs. Eine schon
+/// wartende eigene „Ende des Service“-Ansage entfällt dann. `true` = Verlauf
+/// geändert.
+fn ende_service_bei_alter_art(lauf: &mut Lauf, jetzt: i64) -> bool {
+    if zweiter_service(lauf) != Some(false) || !lauf.warteschlange.entfernen(Slot::EndeService) {
+        return false;
+    }
+    notiz(lauf, "entfallen", Some(Slot::EndeService), None, serde_json::json!({ "grund": "uebersprungen" }));
+    verbuchen(lauf, Slot::EndeService, "entfallen", Some("uebersprungen"), jetzt);
+    true
+}
+
 /// Slots, die in diesem Flug schon zu Ende gespielt wurden (Verlauf).
 pub(crate) fn gespielte_slots(lauf: &Lauf) -> Vec<Slot> {
     lauf.verlauf.iter().filter(|g| !g.vorschau && g.ergebnis.as_deref() == Some("gespielt")).map(|g| g.slot).collect()
@@ -803,11 +815,7 @@ fn takt_schritt(
     // Altes Modul: Ist Reiseflug 80 das Ende des Bordverkaufs, entfällt eine
     // schon wartende eigene „Ende des Service“-Ansage (keine Doppelung,
     // auch wenn die Art erst später ankommt — Codex 2.1.0).
-    if zweiter_service(&stats.kabinen_lauf) == Some(false) && stats.kabinen_lauf.warteschlange.entfernen(Slot::EndeService) {
-        notiz(&mut stats.kabinen_lauf, "entfallen", Some(Slot::EndeService), None, serde_json::json!({ "grund": "uebersprungen" }));
-        verbuchen(&mut stats.kabinen_lauf, Slot::EndeService, "entfallen", Some("uebersprungen"), jetzt);
-        verlauf_neu_vorab = true;
-    }
+    verlauf_neu_vorab |= ende_service_bei_alter_art(&mut stats.kabinen_lauf, jetzt);
     let mut verlauf_neu = verlauf_neu_vorab;
     // Was der Planer nicht meldet, obwohl es dran gewesen wäre: in „Bisher“.
     let entfallen = stats.kabinen_planer.as_mut().map(|p| p.entfallene_abholen()).unwrap_or_default();
@@ -3733,11 +3741,19 @@ mod tests {
     /// „Ende des Service“ schon wartet, entfällt Letztere (keine Doppelung).
     #[test]
     fn spaete_alte_art_nimmt_ende_service_heraus() {
-        let mut st = FlightStats::new();
-        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::EndeService, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
-        st.kabinen_lauf.art_r80 = Some("ende_bordverkauf".into());
-        assert_eq!(zweiter_service(&st.kabinen_lauf), Some(false));
-        assert!(st.kabinen_lauf.warteschlange.entfernen(Slot::EndeService), "der Host nimmt sie heraus");
+        let mut l = Lauf::default();
+        l.warteschlange.aufnehmen([Faellig { slot: Slot::EndeService, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
+        // Neues Modul (zweiter Service): bleibt.
+        l.art_r80 = Some("zweiter_service".into());
+        assert!(!ende_service_bei_alter_art(&mut l, 100));
+        assert!(l.warteschlange.wartend().contains(&Slot::EndeService));
+        // Altes Modul (Ende des Bordverkaufs): entfällt mit Grund in „Bisher“.
+        l.art_r80 = Some("ende_bordverkauf".into());
+        assert!(ende_service_bei_alter_art(&mut l, 100));
+        assert!(!l.warteschlange.wartend().contains(&Slot::EndeService));
+        let g = l.verlauf.last().expect("verbucht");
+        assert_eq!((g.slot, g.ergebnis.as_deref(), g.grund.as_deref()), (Slot::EndeService, Some("entfallen"), Some("uebersprungen")));
+        assert!(!ende_service_bei_alter_art(&mut l, 101), "nur einmal");
     }
 
     /// 2.1.0: `fremd` aus dem Drehbuch wird je Text gemerkt und mit einem
