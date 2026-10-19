@@ -55,6 +55,11 @@ impl Warteschlange {
         self.eintraege.iter().map(|e| e.slot).collect()
     }
 
+    /// Darf dieser wartende Slot im Steigflug trotz Ruhephase spielen?
+    pub fn trotz_ruhephase(&self, slot: Slot) -> bool {
+        self.eintraege.iter().any(|e| e.slot == slot && e.trotz_ruhephase)
+    }
+
     /// Slots, die seit dem letzten Aufruf verfallen sind (für „Bisher“).
     pub fn verfallene_abholen(&mut self) -> Vec<Slot> {
         std::mem::take(&mut self.verfallen)

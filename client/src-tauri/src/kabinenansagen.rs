@@ -1713,9 +1713,15 @@ fn aktiver_flug(state: &AppState) -> Option<Arc<ActiveFlight>> {
 pub(crate) fn kabinen_wiedergabe_ende(app: AppHandle, state: tauri::State<'_, AppState>, id: u64, ergebnis: String) {
     let Some(flight) = aktiver_flug(&state) else { return };
     let mut stats = flight.stats.lock().expect("flight stats");
-    if ende_melden(&mut stats, id, &ergebnis, Utc::now().timestamp()) {
-        verlauf_speichern(&app, &flight, &stats.kabinen_lauf);
+    let text = if ende_melden(&mut stats, id, &ergebnis, Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
+    // Gleich schreiben (die letzte Ansage des Fluges hat keinen Takt mehr
+    // danach), Datei und Protokoll ohne Flugdaten-Sperre.
+    let notizen = std::mem::take(&mut stats.kabinen_lauf.protokoll);
+    drop(stats);
+    if let Some(text) = text {
+        verlauf_schreiben(&app, &flight, &text);
     }
+    protokoll_schreiben(&app, &flight, notizen);
 }
 
 /// Wie [`wiedergabe_ende`], dazu erfährt der Planer, ob die Sinkflug-Ansage
@@ -1940,7 +1946,7 @@ fn wartegrund(lauf: &Lauf, slot: Slot, jetzt: i64) -> Option<Wartet> {
         Some(Wartet::AndereAnsage)
     } else if lauf.warteschlange.in_pause(jetzt) && slot.wartet_pause() {
         Some(Wartet::Pause)
-    } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() {
+    } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() && !lauf.warteschlange.trotz_ruhephase(slot) {
         Some(Wartet::Ruhephase)
     } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.sprachen, slot) {
         Some(Wartet::Ton)
