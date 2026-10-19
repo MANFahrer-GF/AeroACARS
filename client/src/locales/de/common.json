@@ -338,7 +338,7 @@
       "alle": "Alle Airlines",
       "stuecke_one": "{{count}} Stück",
       "stuecke_other": "{{count}} Stücke",
-      "quelle_lied": "Lied für diesen Flug",
+      "quelle_lied": "Für diesen Flug erzeugt",
       "quelle_eigene": "Eigene Musik",
       "quelle_keine": "Auf diesem Flug nur eigene Musik (Bizjet oder Fracht) – keine hinterlegt.",
       "quelle_ohne_flug": "Kein Flug aktiv. Eigene Musik kannst du schon jetzt hinzufügen.",
@@ -347,7 +347,7 @@
         "ohne_flug": "kein Flug",
         "keine": "keine Musik",
         "wird_erzeugt": "wird erzeugt",
-        "kein_lied": "kein Lied",
+        "kein_lied": "nicht geladen",
         "bereit": "bereit",
         "laeuft": "läuft",
         "pausiert": "pausiert für Ansage",
@@ -362,7 +362,7 @@
       "dialog": {
         "titel": "Eigene Boarding-Musik",
         "schliessen": "Schließen",
-        "unter": "Eigene Musik ersetzt das Lied für diesen Flug. Sie bleibt auf deinem Rechner.",
+        "unter": "Eigene Musik ersetzt die Boarding-Musik, die sonst für diesen Flug erzeugt wird. Sie bleibt auf deinem Rechner.",
         "keine": "Keine eigene Musik",
         "entfernen": "Entfernen",
         "entfernen_frage": "Aus der Boarding-Musik entfernen?",
@@ -387,7 +387,8 @@
       "abschnitt": {
         "boarding": "Boarding",
         "ankunft": "Ankunft"
-      }
+      },
+      "laden": "Boarding-Musik laden"
     }
   },
   "app": {

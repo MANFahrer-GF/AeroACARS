@@ -16,6 +16,7 @@ import {
   musikDateiWaehlen,
   musikEntfernen,
   musikHinzufuegen,
+  musikLaden,
   musikLautstaerkeSetzen,
   musikOrdnerOeffnen,
   musikProbe,
@@ -140,6 +141,20 @@ export function MusikKasten({ zustand, t, onNeu }: { zustand: MusikZustand; t: T
         <button type="button" className="button button--ghost kabine-knopf" onClick={hoeren} disabled={!probe && !(z.quelle && ["bereit", "laeuft", "pausiert", "beendet"].includes(z.stand))}>
           {probe ? t("kabine.musik.stopp") : t("kabine.musik.probehoeren")}
         </button>
+        {/* Keine Boarding-Musik da (z. B. Update mitten im Flug): von Hand
+            neu laden (Thomas 19.10.2026). */}
+        {z.stand === "kein_lied" && (
+          <button
+            type="button"
+            className="button button--ghost kabine-knopf"
+            onClick={() => {
+              setFehler(null);
+              void musikLaden().then(onNeu).catch((e) => setFehler(formatIpcError(e)));
+            }}
+          >
+            {t("kabine.musik.laden")}
+          </button>
+        )}
         <button type="button" className="button button--ghost kabine-knopf" onClick={() => setDialog(true)}>
           {t("kabine.musik.eigene")}
         </button>

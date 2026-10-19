@@ -472,6 +472,8 @@ export const musikEntfernen = (airline: string, datei: string) => invoke<void>("
 export const musikOrdnerOeffnen = () => invoke<void>("kabinen_musik_ordner_oeffnen");
 export const musikProbe = (airline: string, datei: string) => invoke<void>("kabinen_musik_probe", { airline, datei });
 export const musikProbeFlug = () => invoke<void>("kabinen_musik_probe_flug");
+/** „Boarding-Musik laden“: Ist keine da, das Laden neu anstoßen (Thomas 19.10.2026). */
+export const musikLaden = () => invoke<void>("kabinen_musik_laden");
 export const musikProbeStopp = () => invoke<void>("kabinen_musik_probe_stopp");
 export const airlinesLesen = () => invoke<AirlineEintrag[]>("kabinen_airlines");
 

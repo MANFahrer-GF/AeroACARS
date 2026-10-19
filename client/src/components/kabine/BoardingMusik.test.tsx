@@ -57,7 +57,7 @@ describe("Kasten Boarding-Musik", () => {
     render(<MusikKasten zustand={zustand({})} t={t} onNeu={() => undefined} />);
     const k = screen.getByTestId("kabine-musik");
     expect(within(k).getByText("Boarding-Musik · Fly with Swiss")).toBeTruthy();
-    expect(within(k).getByText("Lied für diesen Flug · Zürich → Budapest · 3:00")).toBeTruthy();
+    expect(within(k).getByText("Für diesen Flug erzeugt · Zürich → Budapest · 3:00")).toBeTruthy();
     expect(screen.getByTestId("kabine-musik-stand").textContent).toBe("läuft");
     expect(within(k).getByText(/nach der Landung bis zum Aussteigen/)).toBeTruthy();
   });
@@ -68,11 +68,20 @@ describe("Kasten Boarding-Musik", () => {
   });
 
   it("nennt Pause, Ausfall und Aus", () => {
-    for (const [stand, text] of [["pausiert", "pausiert für Ansage"], ["kein_lied", "kein Lied"], ["wird_erzeugt", "wird erzeugt"], ["aus", "aus"]] as const) {
+    for (const [stand, text] of [["pausiert", "pausiert für Ansage"], ["kein_lied", "nicht geladen"], ["wird_erzeugt", "wird erzeugt"], ["aus", "aus"]] as const) {
       render(<MusikKasten zustand={zustand({ stand })} t={t} onNeu={() => undefined} />);
       expect(screen.getByTestId("kabine-musik-stand").textContent).toBe(text);
       cleanup();
     }
+  });
+
+  it("„Boarding-Musik laden“ nur ohne Musik, stößt das Laden an (Thomas 19.10.2026)", async () => {
+    render(<MusikKasten zustand={zustand({ stand: "bereit" })} t={t} onNeu={() => undefined} />);
+    expect(screen.queryByRole("button", { name: "Boarding-Musik laden" })).toBeNull();
+    cleanup();
+    render(<MusikKasten zustand={zustand({ stand: "kein_lied" })} t={t} onNeu={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Boarding-Musik laden" }));
+    await waitFor(() => expect(aufrufe.some((a) => a.cmd === "kabinen_musik_laden")).toBe(true));
   });
 
   it("Schalter aus schickt boarding_musik = false (Entscheidung 15)", async () => {
