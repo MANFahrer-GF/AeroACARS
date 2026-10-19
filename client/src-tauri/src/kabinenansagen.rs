@@ -926,7 +926,13 @@ fn musik_takt(app: &AppHandle, flight: &Arc<ActiveFlight>, snap: &SimSnapshot, n
     }
     // Eigene Musik vor dem Flug neu lesen (Design §6), ohne Flugdaten-Sperre.
     let eigene = eigene_lesen(flight);
+    // Nach einem Neustart liegt das Lied schon im Ordner des Fluges (Codex
+    // 2.1.1): wieder aufnehmen, sonst bliebe es nach der Landung still.
+    let lied_auf_platte = ton_wurzel(app).ok().map(|w| w.join(flug_ordner(flight)).join("boarding-lied.mp3")).filter(|p| p.is_file());
     let mut stats = flight.stats.lock().expect("flight stats");
+    if stats.kabinen_lauf.lied.datei.is_none() {
+        stats.kabinen_lauf.lied.datei = lied_auf_platte;
+    }
     let (tun, holen) = musik_schritt(&mut stats, snap, &flight.aircraft_icao, eigene, now.timestamp());
     if let Some(l) = &holen {
         let details = serde_json::json!({ "titel": l.titel, "stil": l.stil, "versuch": stats.kabinen_lauf.lied.versuche + 1 });
@@ -1365,6 +1371,11 @@ fn takt_schritt(
             // (sonst stimmte „noch etwa zwei Stunden“ um den Vorlauf nicht).
             let ab = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet)).unwrap_or(jetzt).max(jetzt);
             anfrage["flug"]["rest_min"] = serde_json::json!(stats.landung_erwartet.map(|t| ((t - ab) / 60).max(0)));
+            // „Früher, pünktlich, später“ gilt hier für die Ankunft, nicht für
+            // den Off-Block (Codex 2.1.1): erwartete gegen geplante Ankunft.
+            if let (Some(an), Some(plan)) = (anfrage["flug"]["ankunft_erwartet"].as_i64(), stats.ofp_planzeiten.plan_on_block) {
+                anfrage["flug"]["abweichung_min"] = serde_json::json!((an - plan).div_euclid(60).clamp(-1440, 1440));
+            }
         }
         // Boarding-Lied (2.1.1 G1): mit dem Abflug-Drehbuch, nur wenn keine
         // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
