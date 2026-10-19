@@ -6451,7 +6451,7 @@ mod tests {
         assert_eq!(t.std_light_landing_on_2, Some(1388.0)); // idx 388
         assert_eq!(t.design_vs0, Some(1389.0)); // idx 389, zuletzt
         assert_eq!(t.std_transponder_state, None); // → OPTIONALE_FELDER
-        assert_eq!(TELEMETRY_FIELDS.len(), 385, "letzter Index 384");
+        assert_eq!(TELEMETRY_FIELDS.len(), 390, "letzter Index 389");
     }
 
     #[test]
