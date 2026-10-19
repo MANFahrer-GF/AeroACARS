@@ -1743,13 +1743,32 @@ fn verlauf_speichern(app: &AppHandle, flight: &ActiveFlight, lauf: &Lauf) {
     }
 }
 
-fn verlauf_text(lauf: &Lauf) -> Option<String> {
-    serde_json::to_string(&lauf.verlauf).ok()
+/// Fortlaufende Nummer jeder Verlaufs-Fassung. Vergeben, solange der Aufrufer
+/// die Flugdaten-Sperre hält — die Nummer folgt also dem Stand.
+static VERLAUF_FASSUNG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Eine Verlaufs-Fassung zum Schreiben (Nummer, JSON). Unter der Sperre bauen.
+struct VerlaufText(u64, String);
+
+fn verlauf_text(lauf: &Lauf) -> Option<VerlaufText> {
+    let text = serde_json::to_string(&lauf.verlauf).ok()?;
+    Some(VerlaufText(VERLAUF_FASSUNG.fetch_add(1, Ordering::SeqCst) + 1, text))
 }
 
-fn verlauf_schreiben(app: &AppHandle, flight: &ActiveFlight, text: &str) {
-    if let Some(p) = verlauf_pfad(app, flight) {
-        let _ = std::fs::write(p, text);
+/// Schreibt ohne Flugdaten-Sperre, aber geordnet: Eine ältere Fassung
+/// überschreibt nie eine neuere (Takt und Befehle der Oberfläche laufen
+/// gleichzeitig), und die Datei wird über eine Zwischendatei ersetzt, damit
+/// nie halbes JSON liegt (Codex-Review PR #158).
+fn verlauf_schreiben(app: &AppHandle, flight: &ActiveFlight, text: &VerlaufText) {
+    static GESCHRIEBEN: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+    let Some(p) = verlauf_pfad(app, flight) else { return };
+    let mut zuletzt = GESCHRIEBEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if text.0 <= *zuletzt {
+        return;
+    }
+    let zwischen = p.with_extension("json.neu");
+    if std::fs::write(&zwischen, &text.1).is_ok() && std::fs::rename(&zwischen, &p).is_ok() {
+        *zuletzt = text.0;
     }
 }
 

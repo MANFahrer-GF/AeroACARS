@@ -12668,6 +12668,20 @@ mod premium_td_tests {
 mod aufsetzen_in_pause_tests {
     use super::*;
 
+    /// Codex-Review PR #158: Der Abtaster erkennt den Neulade-Sprung selbst,
+    /// bevor der Streamer das Pausen-Flag setzt (bis ~3 s später).
+    #[test]
+    fn abtaster_erkennt_neuladen_selbst() {
+        // KLM759 17.10.: FL372 in der Luft → 233 ft am Boden.
+        assert!(sampler_sieht_neuladen(FlightPhase::Cruise, Some((false, 37_226.0)), true, 233.0));
+        // Echte Landung: 20 ms vorher knapp über der Bahn → kein Neuladen.
+        assert!(!sampler_sieht_neuladen(FlightPhase::Final, Some((false, 312.0)), true, 310.0));
+        // Kein Vorwert (erster Messwert, nach der Pause) → nichts annehmen.
+        assert!(!sampler_sieht_neuladen(FlightPhase::Cruise, None, true, 233.0));
+        // Am Boden geblieben (Rollen) → kein Neuladen.
+        assert!(!sampler_sieht_neuladen(FlightPhase::Cruise, Some((true, 233.0)), true, 233.0));
+    }
+
     /// Der pausierte Flug wie bei DLA 8260: Phase bleibt HOLDING, war in der
     /// Luft, und vor dem Neuladen steht schon ein Kandidat samt Messpuffer.
     fn pausierter_flug(t0: DateTime<Utc>) -> FlightStats {
@@ -38358,6 +38372,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         // `on_ground`-Edge wie vorher (MSFS hat eh den separaten
         // `PLANE TOUCHDOWN NORMAL VELOCITY`-SimVar als Primary).
         let mut prev_in_air: Option<bool> = None;
+        // Letzter Messwert (am Boden, Höhe MSL) für die eigene Erkennung eines
+        // Sim-Neuladens — siehe `sampler_sieht_neuladen`.
+        let mut prev_hoehe: Option<(bool, f64)> = None;
         // ── Messen und Auswerten in ZWEI Fäden (v2.0.17) ─────────────────
         //
         // Anlass AIB 431 (OMDB, 13.10.2026): Seit 2.0.14 hatte jeder Flug
@@ -38489,6 +38506,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 flight.was_just_resumed.load(Ordering::SeqCst),
             ) {
                 prev_in_air = None;
+                prev_hoehe = None;
                 if let Some(td) = premium {
                     tracing::debug!(
                         pirep_id = %flight.pirep_id,
@@ -38496,6 +38514,22 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         "premium TD event dropped (flight paused after sim reload)"
                     );
                 }
+                continue;
+            }
+            // Das Pausen-Flag setzt erst der Streamer im nächsten Takt (bis
+            // ~3 s); der 50-Hz-Abtaster könnte die Luft→Boden-Flanke des
+            // neu geladenen Sims vorher schon bestätigen. Darum erkennt er den
+            // Sprung selbst und verwirft ihn (Codex-Review PR #158).
+            let neu_geladen = sampler_sieht_neuladen(stats.phase, prev_hoehe, snap.on_ground, snap.altitude_msl_ft);
+            prev_hoehe = Some((snap.on_ground, snap.altitude_msl_ft));
+            if neu_geladen {
+                aufsetz_erkennung_ruht_nach_reload(&mut stats, true);
+                prev_in_air = None;
+                tracing::warn!(
+                    pirep_id = %flight.pirep_id,
+                    alt_ft = snap.altitude_msl_ft,
+                    "Aufsetz-Abtaster: Sim-Neuladen erkannt, Messwert verworfen"
+                );
                 continue;
             }
             // v1.8.1: das Muster frueh festhalten, mit derselben Kette wie im
@@ -44305,6 +44339,12 @@ fn aufsetz_kandidat_zulaessig(stats: &FlightStats, sim_pausiert: bool) -> bool {
 /// Anlass DLA 8260 (12.10.2026, Client 2.0.12): Nach „Sim-Reload erkannt"
 /// flog der Pilot im Sim Platzrunden in EDDN — rund zwoelf davon wurden als
 /// Landung des pausierten Flugs bestaetigt, jede ueberschrieb die Landerate.
+/// Sieht der Aufsetz-Abtaster selbst einen Sim-Neuladen (gleiches Kriterium
+/// wie Stream F: aus der Luft plötzlich am Boden, tausende Fuß tiefer)?
+fn sampler_sieht_neuladen(phase: FlightPhase, vorher: Option<(bool, f64)>, am_boden: bool, hoehe_ft: f64) -> bool {
+    vorher.is_some_and(|(boden, alt)| is_mid_session_sim_crash_recovery(phase, boden, alt, am_boden, hoehe_ft))
+}
+
 fn aufsetz_erkennung_ruht_nach_reload(stats: &mut FlightStats, sim_neu_geladen: bool) -> bool {
     if !sim_neu_geladen {
         return false;
