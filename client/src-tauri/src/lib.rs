@@ -63100,6 +63100,7 @@ pub fn run() {
             kabinenansagen::kabinen_boarding_musik,
             kabinenansagen::kabinen_musik_zustand,
             kabinenansagen::kabinen_musik_probe_flug,
+            kabinenansagen::kabinen_musik_laden,
             kabinen_musik::kabinen_musik_ablage,
             kabinen_musik::kabinen_musik_pruefen,
             kabinen_musik::kabinen_musik_hinzufuegen,

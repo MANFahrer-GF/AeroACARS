@@ -1482,6 +1482,7 @@ mod tests {
             "kabinen_boarding_musik",
             "kabinen_musik_zustand",
             "kabinen_musik_probe_flug",
+            "kabinen_musik_laden",
             "kabinen_musik_ablage",
             "kabinen_musik_pruefen",
             "kabinen_musik_hinzufuegen",

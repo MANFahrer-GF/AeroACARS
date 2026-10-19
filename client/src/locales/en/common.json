@@ -338,7 +338,7 @@
       "alle": "All airlines",
       "stuecke_one": "{{count}} track",
       "stuecke_other": "{{count}} tracks",
-      "quelle_lied": "Song for this flight",
+      "quelle_lied": "Created for this flight",
       "quelle_eigene": "Own music",
       "quelle_keine": "Only your own music on this flight (bizjet or cargo) – none stored.",
       "quelle_ohne_flug": "No active flight. You can already add your own music.",
@@ -347,7 +347,7 @@
         "ohne_flug": "no flight",
         "keine": "no music",
         "wird_erzeugt": "being created",
-        "kein_lied": "no song",
+        "kein_lied": "not loaded",
         "bereit": "ready",
         "laeuft": "playing",
         "pausiert": "paused for announcement",
@@ -362,7 +362,7 @@
       "dialog": {
         "titel": "Own boarding music",
         "schliessen": "Close",
-        "unter": "Your own music replaces the song for this flight. It stays on your computer.",
+        "unter": "Your own music replaces the boarding music otherwise created for this flight. It stays on your computer.",
         "keine": "No own music",
         "entfernen": "Remove",
         "entfernen_frage": "Remove from boarding music?",
@@ -387,7 +387,8 @@
       "abschnitt": {
         "boarding": "boarding",
         "ankunft": "arrival"
-      }
+      },
+      "laden": "Load boarding music"
     }
   },
   "app": {

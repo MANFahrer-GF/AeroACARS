@@ -338,7 +338,7 @@
       "alle": "Tutte le compagnie",
       "stuecke_one": "{{count}} brano",
       "stuecke_other": "{{count}} brani",
-      "quelle_lied": "Canzone per questo volo",
+      "quelle_lied": "Creata per questo volo",
       "quelle_eigene": "Musica propria",
       "quelle_keine": "Su questo volo solo musica propria (bizjet o cargo) – nessuna salvata.",
       "quelle_ohne_flug": "Nessun volo attivo. Puoi già aggiungere la tua musica.",
@@ -347,7 +347,7 @@
         "ohne_flug": "nessun volo",
         "keine": "nessuna musica",
         "wird_erzeugt": "in creazione",
-        "kein_lied": "nessuna canzone",
+        "kein_lied": "non caricata",
         "bereit": "pronta",
         "laeuft": "in riproduzione",
         "pausiert": "in pausa per annuncio",
@@ -362,7 +362,7 @@
       "dialog": {
         "titel": "Musica d'imbarco propria",
         "schliessen": "Chiudi",
-        "unter": "La tua musica sostituisce la canzone per questo volo. Resta sul tuo computer.",
+        "unter": "La tua musica sostituisce la musica d'imbarco altrimenti creata per questo volo. Resta sul tuo computer.",
         "keine": "Nessuna musica propria",
         "entfernen": "Rimuovi",
         "entfernen_frage": "Rimuovere dalla musica d'imbarco?",
@@ -387,7 +387,8 @@
       "abschnitt": {
         "boarding": "imbarco",
         "ankunft": "arrivo"
-      }
+      },
+      "laden": "Carica musica d'imbarco"
     }
   },
   "app": {

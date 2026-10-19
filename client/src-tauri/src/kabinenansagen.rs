@@ -472,7 +472,15 @@ pub(crate) struct LiedStand {
     /// … aber nur einmal je Flug (Codex 2.1.1: auch eine späte Antwort
     /// einer anderen Anfrage plant keine zweite Nachfrage).
     nachgefragt: bool,
+    /// Der Ordner des Flugs wurde nach einer schon geladenen Musikdatei
+    /// durchsucht (nach einem Neustart): erst danach anfragen (Codex 2.1.3).
+    platte_geprueft: bool,
 }
+
+/// Höchstens so oft die Musikdatei beim Ton-Server holen, dann „nicht geladen“
+/// (Codex 2.1.3: sonst alle 60 s bis zur Landung); „Boarding-Musik laden“
+/// setzt das zurück.
+const LIED_TON_VERSUCHE: u32 = 5;
 
 /// Quelle der Musik (Design §5): eigene Musik der Airline, sonst „Alle“,
 /// sonst das Lied (nur Linie, nur mit Schalter an); Bizjet und Fracht nur
@@ -792,12 +800,23 @@ fn halbzeit_anfragen(kommt: bool, phase: FlightPhase, um: Option<i64>, jetzt: i6
 /// Lied mit dem Abflug-Drehbuch anfragen? Quelle Lied (also Linie, ohne
 /// eigene Musik), Schalter an und noch vor „Türen zu“ — nach einem Neustart
 /// im Reiseflug kostete es nur, gespielt würde es nicht mehr.
-fn lied_anfragen(lauf: &Lauf, haken: bool, phase: FlightPhase) -> bool {
+/// Das Lied wird gebraucht, solange noch Musik kommt: beim Boarding UND nach
+/// der Landung (Zusatz I). Thomas 19.10.2026: nach einem Update mitten im Flug
+/// kam keins, weil nur bis zum Pushback angefragt wurde.
+fn lied_anfragen(lauf: &Lauf, haken: bool, _phase: FlightPhase) -> bool {
     haken
+        && lauf.lied.platte_geprueft
         && lauf.musik_quelle == Some(MusikQuelle::Lied)
-        && !lauf.musik_fenster.tueren_zu()
-        && cabin_announcements::planer::rang(phase) < cabin_announcements::planer::rang(FlightPhase::Pushback)
+        && !lauf.musik_fenster.ankunft_vorbei()
         && lauf.lied.datei.is_none()
+        && lauf.lied.vorlage.is_none()
+}
+
+/// Eigene Anfrage „lied“ (Modul ab 2.1.3) nach einem Update oder Neustart
+/// mitten im Flug: noch nicht angefragt, kein Abflug-Drehbuch in diesem Takt,
+/// das das Lied mitnimmt, und die Musik kommt noch.
+fn lied_einzeln_anfragen(lauf: &Lauf, haken: bool, phase: FlightPhase, abflug_dabei: bool, jetzt: i64) -> bool {
+    !lauf.lied.angefragt && !abflug_dabei && lied_anfragen(lauf, haken, phase) && darf_anfragen(lauf, "lied", jetzt)
 }
 
 /// Liest die eigene Musik (ganze Dateien, ohne Flugdaten-Sperre) — nur in
@@ -895,12 +914,14 @@ fn musik_schritt(stats: &mut FlightStats, snap: &SimSnapshot, muster: &str, eige
         Some(MusikQuelle::Lied) => lauf.lied.datei.iter().cloned().collect(),
         _ => Vec::new(),
     };
-    // Lied nachreichen (Entscheidung 9): bis „Türen zu“ immer wieder.
+    // Lied nachreichen (Entscheidung 9), solange noch Musik kommt: auch nach
+    // „Türen zu“ für die Musik nach der Landung (Thomas 19.10.2026, Update im Flug).
     let holen = (lauf.musik_quelle == Some(MusikQuelle::Lied)
         && lauf.lied.datei.is_none()
         && !lauf.lied.laeuft
         && jetzt >= lauf.lied.naechster
-        && !lauf.musik_fenster.tueren_zu())
+        && lauf.lied.versuche < LIED_TON_VERSUCHE
+        && !lauf.musik_fenster.ankunft_vorbei())
     .then(|| lauf.lied.vorlage.clone())
     .flatten();
     if holen.is_some() {
@@ -936,6 +957,7 @@ fn musik_takt(app: &AppHandle, flight: &Arc<ActiveFlight>, snap: &SimSnapshot, n
     if stats.kabinen_lauf.lied.datei.is_none() {
         stats.kabinen_lauf.lied.datei = lied_auf_platte;
     }
+    stats.kabinen_lauf.lied.platte_geprueft = true;
     let (tun, holen) = musik_schritt(&mut stats, snap, &flight.aircraft_icao, eigene, now.timestamp());
     if let Some(l) = &holen {
         let details = serde_json::json!({ "titel": l.titel, "stil": l.stil, "versuch": stats.kabinen_lauf.lied.versuche + 1 });
@@ -1131,6 +1153,40 @@ pub(crate) fn kabinen_musik_probe_flug(app: AppHandle, state: tauri::State<'_, A
         return Err(UiError::new("musik_keine", "no music for this flight yet"));
     }
     crate::kabinen_musik::spielen(crate::kabinen_musik::Auftrag { dateien, schleife: false, geraet: einstellungen(&app).ausgabe });
+    Ok(())
+}
+
+/// „Boarding-Musik laden“ (Thomas 19.10.2026): Ist für diesen Flug keine
+/// Boarding-Musik da, stößt der Pilot das Laden von Hand neu an. Der nächste
+/// Takt fragt den Text an bzw. holt die Musikdatei.
+#[tauri::command]
+pub(crate) fn kabinen_musik_laden(state: tauri::State<'_, AppState>) -> Result<(), UiError> {
+    let flug = aktiver_flug(&state).ok_or_else(|| UiError::new("kein_flug", "no active flight"))?;
+    let mut stats = flug.stats.lock().expect("flight stats");
+    musik_neu_laden(&mut stats.kabinen_lauf).map_err(|grund| UiError::new(grund, "boarding music cannot be loaded now"))
+}
+
+fn musik_neu_laden(lauf: &mut Lauf) -> Result<(), &'static str> {
+    if lauf.musik_quelle != Some(MusikQuelle::Lied) {
+        return Err("musik_keine");
+    }
+    if lauf.musik_fenster.ankunft_vorbei() {
+        return Err("musik_vorbei");
+    }
+    if lauf.lied.datei.is_some() || lauf.lied.laeuft {
+        return Ok(());
+    }
+    lauf.lied.fehler = None;
+    lauf.lied.naechster = 0;
+    lauf.lied.versuche = 0;
+    if lauf.lied.vorlage.is_none() {
+        // Text neu anfragen: über den Teil „lied“.
+        lauf.lied.angefragt = false;
+        lauf.lied.nachgefragt = false;
+        lauf.lied.nochmal_ab = None;
+        lauf.angefragt.remove("lied");
+        lauf.fehlversuche.remove("lied");
+    }
     Ok(())
 }
 
@@ -1360,10 +1416,23 @@ fn takt_schritt(
             lauf.angefragt.insert("ankunft".into());
             auftraege.push(("ankunft".into(), ankunft, 0));
         }
-        // Lied nachfragen, wenn das Modul keine Zeit mehr hatte (einmal).
-        if lauf.lied.nochmal_ab.is_some_and(|ab| jetzt >= ab) && lauf.lied.vorlage.is_none() && !lauf.lied.slots.is_empty() {
+        // Lied nachfragen, wenn das Modul keine Zeit mehr hatte (einmal). Ohne
+        // Abflug-Slots (Lied kam ueber den Teil „lied“) wieder ueber „lied“.
+        if lauf.lied.nochmal_ab.is_some_and(|ab| jetzt >= ab) && lauf.lied.vorlage.is_none() {
             lauf.lied.nochmal_ab = None;
-            auftraege.push(("abflug:lied".into(), lauf.lied.slots.clone(), 0));
+            if lauf.lied.slots.is_empty() {
+                auftraege.push(("lied".into(), Vec::new(), 0));
+            } else {
+                auftraege.push(("abflug:lied".into(), lauf.lied.slots.clone(), 0));
+            }
+        }
+        // Update oder Neustart mitten im Flug: Kein Abflug-Drehbuch traegt das
+        // Lied mehr, also eine eigene Anfrage „lied“ (Modul ab 2.1.3), solange
+        // die Musik noch kommt (Thomas 19.10.2026).
+        let abflug_dabei = auftraege.iter().any(|(s, _, _)| s.starts_with("abflug"));
+        if lied_einzeln_anfragen(lauf, einst.boarding_musik, schritt.phase, abflug_dabei, jetzt) {
+            lauf.angefragt.insert("lied".into());
+            auftraege.push(("lied".into(), Vec::new(), 0));
         }
         for f in faellig.iter().filter(|f| ist_ereignis(f.slot)) {
             lauf.anlass += 1;
@@ -1387,7 +1456,7 @@ fn takt_schritt(
         }
         // Boarding-Lied (2.1.1 G1): mit dem Abflug-Drehbuch, nur wenn keine
         // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
-        if schluessel.starts_with("abflug") && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
+        if (schluessel.starts_with("abflug") || schluessel == "lied") && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
             anfrage["boarding_lied"] = serde_json::json!(true);
             stats.kabinen_lauf.lied.angefragt = true;
             stats.kabinen_lauf.lied.slots = slots.clone();
@@ -1983,6 +2052,21 @@ fn holen(
                 Err(e) if schluessel == "abflug:lied" => {
                     // Nur das Lied fehlte: die Texte sind schon da.
                     lauf.lied.fehler = Some(kurz(&e.to_string()));
+                }
+                Err(e) if schluessel == "lied" => {
+                    // Netz oder Server: spaeter noch einmal (hoechstens drei Versuche
+                    // ueber `darf_anfragen`), erst dann „nicht geladen“. Lehnt das
+                    // Modul ab (4xx, z. B. altes Modul ohne Teil „lied“), nicht
+                    // wiederholen (Codex 2.1.3).
+                    lauf.angefragt.remove("lied");
+                    lauf.lied.angefragt = false;
+                    let abgelehnt = matches!(&e, api_client::ApiError::Server { status, .. } if (400..500).contains(status))
+                        || matches!(&e, api_client::ApiError::Forbidden | api_client::ApiError::NotFound);
+                    let n = if abgelehnt { 3 } else { lauf.fehlversuche.get("lied").map_or(0, |(n, _)| *n) + 1 };
+                    lauf.fehlversuche.insert("lied".into(), (n, Utc::now().timestamp() + 120));
+                    if n >= 3 {
+                        lauf.lied.fehler = Some(kurz(&e.to_string()));
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
@@ -4341,9 +4425,34 @@ mod tests {
         assert!(!lied_anfragen(&st.kabinen_lauf, true, crate::FlightPhase::Boarding), "eigene Musik: kein Lied anfragen");
         let mut l = musik_stats("J", Some(150));
         musik_schritt(&mut l, &gate_snap(false), "A320", None, 0);
+        assert!(!lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Boarding), "erst den Ordner nach schon geladener Musik durchsuchen (Neustart)");
+        l.kabinen_lauf.lied.platte_geprueft = true;
         assert!(lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Boarding), "Linie ohne eigene Musik: Lied");
         assert!(!lied_anfragen(&l.kabinen_lauf, false, crate::FlightPhase::Boarding), "Schalter aus: kein Lied (Nr. 15)");
-        assert!(!lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Cruise), "Neustart im Reiseflug: kein Lied mehr");
+        // Thomas 19.10.2026: Update mitten im Flug braucht das Lied fuer die
+        // Musik nach der Landung (vorher fest „kein Lied mehr“, das war falsch).
+        assert!(lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Cruise), "Update im Reiseflug: Lied noch anfragen");
+        assert!(lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::TaxiIn), "auch nach der Landung, solange die Musik kommt");
+        // „Boarding-Musik laden“ setzt einen Fehlschlag zurück, die Anfrage geht wieder raus.
+        l.kabinen_lauf.lied.angefragt = true;
+        l.kabinen_lauf.lied.fehler = Some("x".into());
+        assert!(musik_neu_laden(&mut l.kabinen_lauf).is_ok());
+        assert!(l.kabinen_lauf.lied.fehler.is_none() && !l.kabinen_lauf.lied.angefragt);
+        // Eigene Anfrage „lied“ nach dem Update: nur ohne Abflug-Drehbuch im Takt, nur einmal.
+        assert!(lied_einzeln_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Cruise, false, 0), "Update im Flug: eigene Lied-Anfrage");
+        assert!(!lied_einzeln_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Cruise, true, 0), "Abflug-Drehbuch nimmt das Lied mit");
+        assert!(!lied_einzeln_anfragen(&l.kabinen_lauf, false, crate::FlightPhase::Cruise, false, 0), "Schalter aus: nichts");
+        l.kabinen_lauf.lied.angefragt = true;
+        assert!(!lied_einzeln_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Cruise, false, 0), "schon angefragt: nicht doppelt");
+        l.kabinen_lauf.lied.angefragt = false;
+        // Musik nach der Landung vorbei: 15 min nach „Aussteigen“ (echter Ablauf ueber tick).
+        let ende = cabin_announcements::musik::MusikTakt {
+            phase: crate::FlightPhase::TaxiIn, am_boden: true, nach_landung_vorbei: true,
+            aussteigen_um: Some(0), jetzt: cabin_announcements::musik::ANKUNFT_NACH_AUSSTEIGEN_S + 1, ..Default::default()
+        };
+        assert_eq!(l.kabinen_lauf.musik_fenster.tick(cabin_announcements::flugart::Flugart::Linie, &ende), None);
+        assert!(l.kabinen_lauf.musik_fenster.ankunft_vorbei());
+        assert!(!lied_einzeln_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::BlocksOn, false, 0), "Musik nach der Landung vorbei: kein Lied mehr");
         // Fracht ohne Passagierzahl: steht fest, eigene Musik sofort im Boarding.
         let mut f = musik_stats("F", None);
         assert!(matches!(musik_schritt(&mut f, &gate_snap(false), "B77F", eigene.clone(), 0).0, MusikTun::Spielen(_)));
