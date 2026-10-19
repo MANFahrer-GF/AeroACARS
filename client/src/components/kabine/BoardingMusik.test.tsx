@@ -59,7 +59,12 @@ describe("Kasten Boarding-Musik", () => {
     expect(within(k).getByText("Boarding-Musik · Fly with Swiss")).toBeTruthy();
     expect(within(k).getByText("Lied für diesen Flug · Zürich → Budapest · 3:00")).toBeTruthy();
     expect(screen.getByTestId("kabine-musik-stand").textContent).toBe("läuft");
-    expect(within(k).getByText(/endet mit „Türen zu“/)).toBeTruthy();
+    expect(within(k).getByText(/nach der Landung bis zum Aussteigen/)).toBeTruthy();
+  });
+
+  it("nennt den Abschnitt, solange sie läuft (Zusatz I)", () => {
+    render(<MusikKasten zustand={zustand({ abschnitt: "ankunft" })} t={t} onNeu={() => undefined} />);
+    expect(screen.getByTestId("kabine-musik-stand").textContent).toBe("läuft · Ankunft");
   });
 
   it("nennt Pause, Ausfall und Aus", () => {

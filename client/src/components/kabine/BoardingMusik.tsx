@@ -124,6 +124,7 @@ export function MusikKasten({ zustand, t, onNeu }: { zustand: MusikZustand; t: T
         </div>
         <span className={`kabine-plakette ist-${z.stand}`} data-testid="kabine-musik-stand">
           {t(`kabine.musik.stand.${z.stand}`)}
+          {z.abschnitt && (z.stand === "laeuft" || z.stand === "pausiert") ? ` · ${t(`kabine.musik.abschnitt.${z.abschnitt}`)}` : ""}
         </span>
       </div>
       <div className="kabine-musik-knoepfe">

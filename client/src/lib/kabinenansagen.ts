@@ -431,6 +431,8 @@ export interface MusikZustand {
   ordner: string | null;
   stuecke: number;
   airline: string | null;
+  /** Abschnitt, solange sie läuft: Boarding oder nach der Landung (Zusatz I). */
+  abschnitt?: "boarding" | "ankunft" | null;
 }
 
 /** Ein Stück der eigenen Ablage. */

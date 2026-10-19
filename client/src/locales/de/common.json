@@ -357,7 +357,7 @@
       "stopp": "Stopp",
       "eigene": "Eigene Musik …",
       "schalter": "Boarding-Musik an",
-      "erklaerung": "Läuft ab der Boarding-Ansage in Schleife, pausiert bei jeder Ansage, endet mit „Türen zu“.",
+      "erklaerung": "Läuft beim Boarding bis „Türen zu“ und nach der Landung bis zum Aussteigen, pausiert bei jeder Ansage.",
       "dialog": {
         "titel": "Eigene Boarding-Musik",
         "schliessen": "Schließen",
@@ -382,6 +382,10 @@
           "musik_format": "Nur MP3, M4A/AAC, WAV, FLAC oder OGG.",
           "musik_ordner": "Der Ordner ist nicht beschreibbar: {{detail}}"
         }
+      },
+      "abschnitt": {
+        "boarding": "Boarding",
+        "ankunft": "Ankunft"
       }
     }
   },

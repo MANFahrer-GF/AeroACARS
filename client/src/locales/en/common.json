@@ -357,7 +357,7 @@
       "stopp": "Stop",
       "eigene": "Own music …",
       "schalter": "Boarding music on",
-      "erklaerung": "Plays in a loop from the boarding announcement, pauses for every announcement, ends with \"doors closed\".",
+      "erklaerung": "Plays during boarding until \"doors closed\" and after landing until disembarkation, pauses for every announcement.",
       "dialog": {
         "titel": "Own boarding music",
         "schliessen": "Close",
@@ -382,6 +382,10 @@
           "musik_format": "Only MP3, M4A/AAC, WAV, FLAC or OGG.",
           "musik_ordner": "The folder is not writable: {{detail}}"
         }
+      },
+      "abschnitt": {
+        "boarding": "boarding",
+        "ankunft": "arrival"
       }
     }
   },

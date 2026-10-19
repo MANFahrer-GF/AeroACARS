@@ -436,6 +436,8 @@ pub(crate) struct Lauf {
     musik_fenster: cabin_announcements::musik::MusikFenster,
     musik_quelle: Option<MusikQuelle>,
     musik_lief: bool,
+    /// Abschnitt, in dem die Musik zuletzt lief (Anzeige „läuft · …“).
+    musik_abschnitt: Option<cabin_announcements::musik::Abschnitt>,
     lied: LiedStand,
 }
 
@@ -831,6 +833,23 @@ fn musik_schritt(stats: &mut FlightStats, snap: &SimSnapshot, muster: &str, eige
     }
     let art = flugart::einordnen(stats.flight_type.as_deref(), pax, muster);
     let begruessung = stats.kabinen_planer.as_ref().is_some_and(|p| p.erledigt(Slot::Boarding));
+    // Zusatz I: Ist die Ansage „nach der Landung“ vorbei (gespielt, entfallen,
+    // stumm, abgewählt) oder kommt sie nicht mehr?
+    let nach_landung_vorbei = {
+        let lauf = &stats.kabinen_lauf;
+        let im_verlauf = |fertig: bool| lauf.verlauf.iter().any(|g| g.slot == Slot::NachDerLandung && !g.vorschau && g.ergebnis.is_some() == fertig);
+        im_verlauf(true)
+            || (!im_verlauf(false)
+                && !lauf.warteschlange.wartend().contains(&Slot::NachDerLandung)
+                && !stats.kabinen_planer.as_ref().is_none_or(|p| p.kommt_noch(Slot::NachDerLandung, stats.phase)))
+    };
+    let aussteigen_um = stats
+        .kabinen_lauf
+        .verlauf
+        .iter()
+        .filter(|g| g.slot == Slot::Aussteigen && !g.vorschau && g.ergebnis.as_deref() == Some("gespielt"))
+        .map(|g| g.zeit + dauer_s(g.slot, &g.teile).ceil() as i64)
+        .next();
     let lauf = &mut stats.kabinen_lauf;
     if lauf.musik_quelle.is_none() {
         lauf.musik_quelle = Some(musik_quelle(art, true, eigene));
@@ -841,8 +860,16 @@ fn musik_schritt(stats: &mut FlightStats, snap: &SimSnapshot, muster: &str, eige
         beacon: snap.light_beacon,
         pushback_aktiv: matches!(snap.pushback_state, Some(0..=2)),
         begruessung,
+        jetzt,
+        nach_landung_vorbei,
+        aussteigen_um,
+        triebwerke_an: Some(snap.engines_running > 0),
     };
-    let soll = lauf.musik_fenster.tick(art, &takt);
+    let abschnitt = lauf.musik_fenster.tick(art, &takt);
+    let soll = abschnitt.is_some();
+    if abschnitt.is_some() {
+        lauf.musik_abschnitt = abschnitt;
+    }
     let dateien: Vec<PathBuf> = match &lauf.musik_quelle {
         Some(MusikQuelle::Eigene { dateien, .. }) => dateien.clone(),
         Some(MusikQuelle::Lied) => lauf.lied.datei.iter().cloned().collect(),
@@ -987,6 +1014,8 @@ pub(crate) struct MusikAnsicht {
     stuecke: usize,
     /// Airline des laufenden Flugs (ICAO).
     airline: Option<String>,
+    /// boarding | ankunft, solange die Musik läuft (Zusatz I).
+    abschnitt: Option<&'static str>,
 }
 
 fn musik_ansicht(einst: &Einstellungen, lauf: Option<&Lauf>, airline: Option<String>, laeuft: bool, hoerbar: bool, probe: bool) -> MusikAnsicht {
@@ -1000,6 +1029,7 @@ fn musik_ansicht(einst: &Einstellungen, lauf: Option<&Lauf>, airline: Option<Str
         ordner: None,
         stuecke: 0,
         airline,
+        abschnitt: None,
     };
     if let Some(lauf) = lauf {
         match &lauf.musik_quelle {
@@ -1015,10 +1045,17 @@ fn musik_ansicht(einst: &Einstellungen, lauf: Option<&Lauf>, airline: Option<Str
             }
             _ => {}
         }
+        if laeuft {
+            a.abschnitt = lauf.musik_abschnitt.map(|x| match x {
+                cabin_announcements::musik::Abschnitt::Boarding => "boarding",
+                cabin_announcements::musik::Abschnitt::Ankunft => "ankunft",
+            });
+        }
         a.stand = match &lauf.musik_quelle {
             _ if probe => "probe",
             _ if laeuft => if hoerbar { "laeuft" } else { "pausiert" },
-            _ if lauf.musik_fenster.tueren_zu() => "beendet",
+            // Zwischen „Türen zu“ und der Landung wartet sie auf die Ankunft.
+            _ if lauf.musik_fenster.ankunft_vorbei() => "beendet",
             None => "ohne_flug",
             Some(MusikQuelle::Keine) => "keine",
             Some(MusikQuelle::Lied) if lauf.lied.datei.is_none() => if lauf.lied.fehler.is_some() { "kein_lied" } else { "wird_erzeugt" },
@@ -4184,6 +4221,37 @@ mod tests {
         assert_eq!((t, h), (MusikTun::Ausblenden, None));
         let (t, _) = musik_schritt(&mut st, &gate_snap(true), "A320", None, 12 * 60 + 20);
         assert_eq!(t, MusikTun::Nichts);
+    }
+
+    /// Zusatz I: nach der Ansage „nach der Landung“ läuft die Musik des
+    /// Fluges wieder, bis 15 min nach „Aussteigen“.
+    #[test]
+    fn musik_nach_der_landung_bis_nach_dem_aussteigen() {
+        let mut st = musik_stats("J", Some(150));
+        let eigene = Some(("DLH".to_string(), vec![PathBuf::from("/m/DLH/a.mp3")]));
+        st.phase = crate::FlightPhase::TaxiOut;
+        musik_schritt(&mut st, &gate_snap(true), "A320", eigene, 0);
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(45), ..Default::default() },
+            crate::FlightPhase::TaxiIn,
+        ));
+        st.phase = crate::FlightPhase::TaxiIn;
+        let mut rollen = gate_snap(true);
+        rollen.engines_running = 2;
+        // Die Ansage „nach der Landung“ ist fällig und wartet: noch still.
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::NachDerLandung, verfall: cabin_announcements::Verfall::AbPhase(crate::FlightPhase::BlocksOn), trotz_ruhephase: false }]);
+        st.kabinen_planer.as_mut().unwrap().schon_gespielt([Slot::NachDerLandung]);
+        assert_eq!(musik_schritt(&mut st, &rollen, "A320", None, 100).0, MusikTun::Nichts);
+        // Gespielt: Musik an.
+        st.kabinen_lauf.warteschlange.entfernen(Slot::NachDerLandung);
+        verbuchen(&mut st.kabinen_lauf, Slot::NachDerLandung, "gespielt", None, 110);
+        assert!(matches!(musik_schritt(&mut st, &rollen, "A320", None, 140).0, MusikTun::Spielen(_)));
+        assert_eq!(musik_ansicht(&Einstellungen::default(), Some(&st.kabinen_lauf), None, true, true, false).abschnitt, Some("ankunft"));
+        // Aussteigen gespielt, 15 min später aus.
+        st.phase = crate::FlightPhase::Arrived;
+        verbuchen(&mut st.kabinen_lauf, Slot::Aussteigen, "gespielt", None, 600);
+        assert!(matches!(musik_schritt(&mut st, &gate_snap(true), "A320", None, 600 + 14 * 60).0, MusikTun::Spielen(_)));
+        assert_eq!(musik_schritt(&mut st, &gate_snap(true), "A320", None, 600 + 15 * 60).0, MusikTun::Ausblenden);
     }
 
     /// Kein Lied da (Ausfall): still, die Ansagen laufen ungestört (Nr. 9).

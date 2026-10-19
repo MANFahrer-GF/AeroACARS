@@ -6,8 +6,12 @@
 //!   abgewählt), Schleife bis „Türen zu“.
 //! - Bizjet und Fracht (keine Begrüßung): Start mit der Phase Boarding, Ende
 //!   beim Beacon bzw. Pushback — nur eigene Musik, nie ein erzeugtes Lied.
-//! - Eigene Musik für die Airline des Flugs (sonst „alle“) geht vor; dann
+//! - Eigene Musik für die Airline des Flugs (sonst „Alle“) geht vor; dann
 //!   wird kein Lied angefragt.
+//! - Nach der Landung (Zusatz I, Thomas 19.10.2026): dieselbe Musik nach der
+//!   Ansage „nach der Landung“ (entfallen/abgewählt: mit dem Rollen), bis
+//!   spätestens 15 min nach „Aussteigen“, ohne Aussteigen-Ansage 20 min nach
+//!   „Triebwerke aus“; das Flugende stoppt sie im Host.
 
 use sim_core::FlightPhase;
 
@@ -29,7 +33,28 @@ pub struct MusikTakt {
     /// Linienflug: Die Boarding-Begrüßung ist gemeldet (auch abgewählt oder
     /// schon vor einem Neustart gelaufen).
     pub begruessung: bool,
+    /// UTC-Epoch-Sekunden.
+    pub jetzt: i64,
+    /// Linienflug: Die Ansage „nach der Landung“ ist vorbei (gespielt,
+    /// entfallen, abgewählt) oder kommt nicht.
+    pub nach_landung_vorbei: bool,
+    /// Ende der Ansage „Aussteigen“ (UTC-Epoch), falls sie lief.
+    pub aussteigen_um: Option<i64>,
+    /// Mindestens ein Triebwerk läuft; `None` = unbekannt.
+    pub triebwerke_an: Option<bool>,
 }
+
+/// In welchem Abschnitt die Musik spielt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Abschnitt {
+    Boarding,
+    Ankunft,
+}
+
+/// Musik nach der Landung endet spätestens so lange nach „Aussteigen“ …
+pub const ANKUNFT_NACH_AUSSTEIGEN_S: i64 = 15 * 60;
+/// … ohne Aussteigen-Ansage so lange nach „Triebwerke aus“.
+pub const ANKUNFT_NACH_TRIEBWERKE_AUS_S: i64 = 20 * 60;
 
 /// Das Zeitfenster der Musik auf einem Flug. „Türen zu“ wie im Planer:
 /// Beacon geht am Boden an, sonst Pushback oder eine spätere Phase. Danach
@@ -38,28 +63,62 @@ pub struct MusikTakt {
 pub struct MusikFenster {
     letztes_beacon: Option<bool>,
     tueren_zu: bool,
+    ankunft_seit: Option<i64>,
+    triebwerke_aus_seit: Option<i64>,
+    ankunft_vorbei: bool,
 }
 
 impl MusikFenster {
-    /// Soll jetzt Musik laufen?
-    pub fn tick(&mut self, flugart: Flugart, t: &MusikTakt) -> bool {
+    /// Soll jetzt Musik laufen, und in welchem Abschnitt?
+    pub fn tick(&mut self, flugart: Flugart, t: &MusikTakt) -> Option<Abschnitt> {
         let r = rang(t.phase);
         let beacon_an = t.am_boden && t.beacon == Some(true) && self.letztes_beacon == Some(false);
         self.letztes_beacon = t.beacon;
         if beacon_an || t.pushback_aktiv || r >= rang(FlightPhase::Pushback) {
             self.tueren_zu = true;
         }
-        if self.tueren_zu || t.phase != FlightPhase::Boarding {
-            return false;
+        if !self.tueren_zu && t.phase == FlightPhase::Boarding {
+            let an = match flugart {
+                Flugart::Linie => t.begruessung,
+                Flugart::Bizjet | Flugart::Aus => true,
+            };
+            return an.then_some(Abschnitt::Boarding);
         }
-        match flugart {
-            Flugart::Linie => t.begruessung,
-            Flugart::Bizjet | Flugart::Aus => true,
+        // ---- Nach der Landung (Zusatz I) ----
+        if self.ankunft_vorbei || !t.am_boden || r < rang(FlightPhase::TaxiIn) {
+            return None;
         }
+        if t.triebwerke_an == Some(false) {
+            self.triebwerke_aus_seit.get_or_insert(t.jetzt);
+        }
+        if self.ankunft_seit.is_none() {
+            let frei = match flugart {
+                Flugart::Linie => t.nach_landung_vorbei,
+                Flugart::Bizjet | Flugart::Aus => true,
+            };
+            if !frei {
+                return None;
+            }
+            self.ankunft_seit = Some(t.jetzt);
+        }
+        let ende = match t.aussteigen_um {
+            Some(a) => t.jetzt >= a + ANKUNFT_NACH_AUSSTEIGEN_S,
+            None => self.triebwerke_aus_seit.is_some_and(|aus| t.jetzt >= aus + ANKUNFT_NACH_TRIEBWERKE_AUS_S),
+        };
+        if ende {
+            self.ankunft_vorbei = true;
+            return None;
+        }
+        Some(Abschnitt::Ankunft)
     }
 
     pub fn tueren_zu(&self) -> bool {
         self.tueren_zu
+    }
+
+    /// Die Musik nach der Landung ist vorbei (Zusatz I).
+    pub fn ankunft_vorbei(&self) -> bool {
+        self.ankunft_vorbei
     }
 }
 
@@ -119,18 +178,21 @@ mod tests {
     use FlightPhase::*;
 
     fn takt(phase: FlightPhase, beacon: bool, begruessung: bool) -> MusikTakt {
-        MusikTakt { phase, am_boden: true, beacon: Some(beacon), pushback_aktiv: false, begruessung }
+        MusikTakt { phase, am_boden: true, beacon: Some(beacon), begruessung, ..Default::default() }
     }
+
+    const B: Option<Abschnitt> = Some(Abschnitt::Boarding);
+    const A: Option<Abschnitt> = Some(Abschnitt::Ankunft);
 
     /// Peter: Musik erst mit der Begrüßung, Schleife bis „Türen zu“ (Beacon).
     #[test]
     fn linie_von_der_begruessung_bis_tueren_zu() {
         let mut f = MusikFenster::default();
-        assert!(!f.tick(Flugart::Linie, &takt(Boarding, false, false)), "vor der Begrüßung still");
-        assert!(f.tick(Flugart::Linie, &takt(Boarding, false, true)));
-        assert!(f.tick(Flugart::Linie, &takt(Boarding, false, true)));
-        assert!(!f.tick(Flugart::Linie, &takt(Boarding, true, true)), "Beacon = Türen zu");
-        assert!(!f.tick(Flugart::Linie, &takt(Boarding, false, true)), "danach nie wieder auf diesem Flug");
+        assert_eq!(f.tick(Flugart::Linie, &takt(Boarding, false, false)), None, "vor der Begrüßung still");
+        assert_eq!(f.tick(Flugart::Linie, &takt(Boarding, false, true)), B);
+        assert_eq!(f.tick(Flugart::Linie, &takt(Boarding, false, true)), B);
+        assert_eq!(f.tick(Flugart::Linie, &takt(Boarding, true, true)), None, "Beacon = Türen zu");
+        assert_eq!(f.tick(Flugart::Linie, &takt(Boarding, false, true)), None, "danach kein Boarding mehr");
     }
 
     /// Bizjet/Fracht: ab Phase Boarding bis Beacon bzw. Pushback.
@@ -138,16 +200,50 @@ mod tests {
     fn bizjet_und_fracht_ab_boarding_bis_pushback() {
         for art in [Flugart::Bizjet, Flugart::Aus] {
             let mut f = MusikFenster::default();
-            assert!(!f.tick(art, &takt(Preflight, false, false)));
-            assert!(f.tick(art, &takt(Boarding, false, false)), "{art:?}");
-            assert!(!f.tick(art, &takt(Pushback, false, false)), "{art:?}");
+            assert_eq!(f.tick(art, &takt(Preflight, false, false)), None);
+            assert_eq!(f.tick(art, &takt(Boarding, false, false)), B, "{art:?}");
+            assert_eq!(f.tick(art, &takt(Pushback, false, false)), None, "{art:?}");
         }
         // Beacon schon beim Laden an: keine Flanke, Ende erst beim Pushback.
         let mut f = MusikFenster::default();
-        assert!(f.tick(Flugart::Aus, &takt(Boarding, true, false)));
+        assert_eq!(f.tick(Flugart::Aus, &takt(Boarding, true, false)), B);
         let mut pb = takt(Boarding, true, false);
         pb.pushback_aktiv = true;
-        assert!(!f.tick(Flugart::Aus, &pb));
+        assert_eq!(f.tick(Flugart::Aus, &pb), None);
+    }
+
+    fn ankunft(jetzt: i64, phase: FlightPhase, vorbei: bool, aussteigen: Option<i64>, triebwerke: bool) -> MusikTakt {
+        MusikTakt { phase, am_boden: true, beacon: Some(true), jetzt, nach_landung_vorbei: vorbei, aussteigen_um: aussteigen, triebwerke_an: Some(triebwerke), ..Default::default() }
+    }
+
+    /// Zusatz I: nach „nach der Landung“, bis 15 min nach „Aussteigen“.
+    #[test]
+    fn linie_nach_der_landung_bis_nach_dem_aussteigen() {
+        let mut f = MusikFenster::default();
+        assert_eq!(f.tick(Flugart::Linie, &takt(Boarding, false, true)), B);
+        assert_eq!(f.tick(Flugart::Linie, &takt(Pushback, true, true)), None);
+        let mut luft = ankunft(0, Landing, false, None, true);
+        luft.am_boden = false;
+        assert_eq!(f.tick(Flugart::Linie, &luft), None);
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(10, TaxiIn, false, None, true)), None, "die Ansage nach der Landung läuft noch");
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(60, TaxiIn, true, None, true)), A, "nach der Ansage");
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(400, Arrived, true, Some(300), false)), A);
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + ANKUNFT_NACH_AUSSTEIGEN_S - 1, Arrived, true, Some(300), false)), A);
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + ANKUNFT_NACH_AUSSTEIGEN_S, Arrived, true, Some(300), false)), None, "15 min nach Aussteigen");
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + ANKUNFT_NACH_AUSSTEIGEN_S + 10, Arrived, true, Some(300), false)), None, "danach nicht wieder");
+    }
+
+    /// Zusatz I: ohne Aussteigen-Ansage 20 min nach „Triebwerke aus“;
+    /// Bizjet/Fracht ab dem Rollen nach der Landung.
+    #[test]
+    fn ohne_aussteigen_zwanzig_minuten_nach_triebwerke_aus() {
+        for art in [Flugart::Bizjet, Flugart::Aus] {
+            let mut f = MusikFenster::default();
+            assert_eq!(f.tick(art, &ankunft(0, TaxiIn, false, None, true)), A, "{art:?} mit dem Rollen");
+            assert_eq!(f.tick(art, &ankunft(100, BlocksOn, false, None, false)), A);
+            assert_eq!(f.tick(art, &ankunft(100 + ANKUNFT_NACH_TRIEBWERKE_AUS_S - 1, Arrived, false, None, false)), A);
+            assert_eq!(f.tick(art, &ankunft(100 + ANKUNFT_NACH_TRIEBWERKE_AUS_S, Arrived, false, None, false)), None);
+        }
     }
 
     #[test]

@@ -357,7 +357,7 @@
       "stopp": "Stop",
       "eigene": "Musica propria …",
       "schalter": "Musica d'imbarco attiva",
-      "erklaerung": "Suona in loop dall'annuncio d'imbarco, si ferma a ogni annuncio, termina con \"porte chiuse\".",
+      "erklaerung": "Suona durante l'imbarco fino a \"porte chiuse\" e dopo l'atterraggio fino allo sbarco, si ferma a ogni annuncio.",
       "dialog": {
         "titel": "Musica d'imbarco propria",
         "schliessen": "Chiudi",
@@ -382,6 +382,10 @@
           "musik_format": "Solo MP3, M4A/AAC, WAV, FLAC o OGG.",
           "musik_ordner": "La cartella non è scrivibile: {{detail}}"
         }
+      },
+      "abschnitt": {
+        "boarding": "imbarco",
+        "ankunft": "arrivo"
       }
     }
   },

@@ -43,9 +43,29 @@ pub(crate) fn lautstaerke() -> f32 {
 /// Laufende Ansagen (Ton oder Gong) und Ende der letzten (ms seit 1970).
 static ANSAGEN: AtomicUsize = AtomicUsize::new(0);
 static ANSAGE_ENDE_MS: AtomicU64 = AtomicU64::new(0);
-/// Nach einer Ansage so lange still: Zwischen den Sprachen einer Ansage
-/// liegen 0,7 s Pause, die Musik soll dort nicht kurz hochkommen.
-const NACHLAUF_MS: u64 = 1_500;
+/// Nach einer Ansage so lange still, dann wieder hoch (Design §8, Thomas
+/// 19.10.2026: „Ansagen immer Vorrang“). Die Pausen zwischen den Sprachen
+/// einer Ansage (0,7 s) und zwischen Kommandos (0,4 s) liegen darunter: Die
+/// Musik bleibt dort unten.
+const NACHLAUF_MS: u64 = 1_000;
+/// Ausblenden, wenn eine Ansage beginnt (s); die Ansage wartet nicht darauf.
+pub(crate) const RAMPE_RUNTER_S: f32 = 0.5;
+/// Einblenden nach der Ruhe (s), an derselben Stelle.
+pub(crate) const RAMPE_HOCH_S: f32 = 2.0;
+/// Ausblenden am Ende („Türen zu“, Ende nach der Landung) (s).
+pub(crate) const RAMPE_ENDE_S: f32 = 3.0;
+
+/// Ein Abtastschritt der Lautstärke-Rampe: Die Dauer gilt für den ganzen
+/// Weg zwischen 0 und der eingestellten Musik-Lautstärke.
+pub(crate) fn pegel_schritt(pegel: f32, ziel: f32, lautstaerke: f32, rate: f32, am_ende: bool) -> f32 {
+    let weg = lautstaerke.max(0.01);
+    if pegel < ziel {
+        (pegel + weg / (rate * RAMPE_HOCH_S)).min(ziel)
+    } else {
+        let s = if am_ende { RAMPE_ENDE_S } else { RAMPE_RUNTER_S };
+        (pegel - weg / (rate * s)).max(ziel)
+    }
+}
 
 fn jetzt_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -635,8 +655,6 @@ mod wiedergabe {
     /// So viel liegt höchstens dekodiert bereit (Sekunden).
     const VORRAT_S: f32 = 1.5;
     /// Ein- und Ausblenden bei Ansagen (s) und am Ende (s).
-    const RAMPE_ANSAGE_S: f32 = 0.3;
-    const RAMPE_ENDE_S: f32 = 3.0;
 
     struct Ausgabe {
         _strom: cpal::Stream,
@@ -679,8 +697,8 @@ mod wiedergabe {
                 move |aus: &mut [T], _: &cpal::OutputCallbackInfo| {
                     let halten = ansage_haelt(jetzt_ms());
                     let am_ende = ende.load(Ordering::Relaxed);
-                    let ziel = if halten || am_ende { 0.0 } else { lautstaerke() };
-                    let schritt = 1.0 / (rate * if am_ende { RAMPE_ENDE_S } else { RAMPE_ANSAGE_S });
+                    let v = lautstaerke();
+                    let ziel = if halten || am_ende { 0.0 } else { v };
                     // Nie blockierend auf den Dekoder warten (Echtzeit-Faden).
                     // Er hält die Sperre nur für ein `extend` (Mikrosekunden):
                     // kurz erneut versuchen, erst dann diesen Block still.
@@ -706,7 +724,7 @@ mod wiedergabe {
                         return;
                     };
                     for rahmen in aus.chunks_mut(kanaele) {
-                        pegel = if pegel < ziel { (pegel + schritt).min(ziel) } else { (pegel - schritt).max(ziel) };
+                        pegel = pegel_schritt(pegel, ziel, v, rate, am_ende);
                         // Ansage: ausgeblendet anhalten, die Stelle bleibt.
                         if halten && pegel <= 0.0 {
                             for k in rahmen {
@@ -981,6 +999,24 @@ mod tests {
         println!("nach Ansage hoerbar: {}", hoerbar());
         aus();
         std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    /// Design §8: runter in 0,5 s, nach 1 s Ruhe in 2 s hoch, Ende in 3 s.
+    #[test]
+    fn rampen_nach_design() {
+        let rate = 1_000.0;
+        let laufen = |mut p: f32, ziel: f32, am_ende: bool| {
+            let mut n = 0;
+            while (p - ziel).abs() > 1e-6 && n < 100_000 {
+                p = pegel_schritt(p, ziel, 0.2, rate, am_ende);
+                n += 1;
+            }
+            n as f32 / rate
+        };
+        assert!((laufen(0.2, 0.0, false) - RAMPE_RUNTER_S).abs() < 0.01);
+        assert!((laufen(0.0, 0.2, false) - RAMPE_HOCH_S).abs() < 0.01);
+        assert!((laufen(0.2, 0.0, true) - RAMPE_ENDE_S).abs() < 0.01);
+        assert_eq!(NACHLAUF_MS, 1_000);
     }
 
     #[test]
