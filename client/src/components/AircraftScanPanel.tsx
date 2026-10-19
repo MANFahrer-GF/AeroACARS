@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "../lib/ipc";
+import { formatIpcError, invoke } from "../lib/ipc";
 
 interface FoundAircraft {
   index: number;
@@ -72,7 +72,7 @@ export function AircraftScanPanel() {
         setManualDir(selected);
       }
     } catch (e) {
-      setError(String(e));
+      setError(formatIpcError(e));
     }
   };
 
@@ -98,7 +98,7 @@ export function AircraftScanPanel() {
       }
       setStep({ kind: "list", aircraft });
     } catch (e) {
-      setError(String(e));
+      setError(formatIpcError(e));
       setStep({ kind: "idle" });
     }
   };
@@ -113,7 +113,7 @@ export function AircraftScanPanel() {
       const collected = await invoke<CollectResult>("ascan_collect", { index: plane.index });
       setStep({ kind: "confirm", plane, collected });
     } catch (e) {
-      setError(String(e));
+      setError(formatIpcError(e));
       setStep({ kind: "idle" });
     }
   };
@@ -125,7 +125,7 @@ export function AircraftScanPanel() {
       const result = await invoke<SubmitResult>("ascan_submit", { index: plane.index });
       setStep({ kind: "done", plane, result });
     } catch (e) {
-      setError(String(e));
+      setError(formatIpcError(e));
       setStep({ kind: "idle" });
     }
   };
