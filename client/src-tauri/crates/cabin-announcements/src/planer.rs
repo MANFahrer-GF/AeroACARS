@@ -566,6 +566,8 @@ impl Planer {
                 }
             }
             if self.boarding_erwartet {
+                // Fehlen beim (Neu-)Start noch mindestens 5 % zum OFP, steigt die
+                // Zuladung noch weit über 200 kg; sonst gilt die alte Regel.
                 let steigt = t.zfw_kg.zip(self.zfw_start_kg).is_some_and(|(z, s)| z >= s + BOARDING_ZULADUNG_KG);
                 if steigt {
                     let ab = *self.zuladung_steigt_seit.get_or_insert(t.jetzt);
@@ -1728,6 +1730,12 @@ mod tests {
         assert!(slots(w.tick(&mit_ladung(BOARDING_NACH_S, 49_203.0, false))).is_empty(), "wartet aufs Einsteigen");
         w.tick(&mit_ladung(BOARDING_NACH_S + 10, 50_000.0, false));
         assert_eq!(slots(w.tick(&mit_ladung(BOARDING_NACH_S + 40, 50_500.0, false))), vec![Slot::Boarding]);
+        // Neustart kurz vor Boarding-Ende (unter 5 % fehlen): kein Anstieg
+        // mehr zu erwarten → alte Regel, spätestens nach 5 min (Codex 2.0.28).
+        let mut e = Planer::fortsetzen(flug(40), Boarding);
+        e.tick(&mit_ladung(0, 69_500.0, false));
+        assert!(slots(e.tick(&mit_ladung(BOARDING_NACH_S - 10, 69_500.0, false))).is_empty());
+        assert_eq!(slots(e.tick(&mit_ladung(BOARDING_NACH_S, 69_500.0, false))), vec![Slot::Boarding]);
         // Neustart im Pushback: kein Startwert mehr, nichts vom Boden.
         let mut n = Planer::fortsetzen(flug(40), Pushback);
         let mut pb = mit_ladung(0, 60_000.0, false);

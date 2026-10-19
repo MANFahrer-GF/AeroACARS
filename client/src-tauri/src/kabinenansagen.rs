@@ -384,7 +384,8 @@ pub(crate) struct Lauf {
     protokoll: Vec<Notiz>,
     /// Zuletzt protokollierter Wartegrund je fälliger Ansage (nur Wechsel).
     wartet_zuletzt: HashMap<Slot, Option<Wartet>>,
-    /// Zuletzt protokollierte Abwahl des Piloten (nur Wechsel).
+    /// Zuletzt protokollierte Abwahl des Piloten samt Kommando- und
+    /// Gong-Schalter (nur Wechsel).
     abgewaehlt_zuletzt: Option<Vec<Slot>>,
 }
 
@@ -409,6 +410,11 @@ fn notiz(lauf: &mut Lauf, art: &'static str, slot: Option<Slot>, sprache: Option
 /// Sperre — nach jedem Takt (auch bei frühem Ende) und nach Antworten des
 /// Servers, damit am Flugende nichts im Puffer liegen bleibt (Codex 2.0.28).
 fn protokoll_leeren(app: &AppHandle, flight: &ActiveFlight) {
+    // Entnehmen und Schreiben am Stück, damit zwei gleichzeitige Leerungen
+    // (Takt und Serverantwort) die Reihenfolge im Protokoll nicht vertauschen
+    // (Codex 2.0.28). Nie unter der Flugdaten-Sperre aufrufen.
+    static SCHREIBEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _reihe = SCHREIBEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let notizen = std::mem::take(&mut flight.stats.lock().expect("flight stats").kabinen_lauf.protokoll);
     if !notizen.is_empty() {
         protokoll_schreiben(app, flight, notizen);
@@ -719,19 +725,20 @@ fn takt_schritt(
         return;
     }
     let abgewaehlt = einst.abgewaehlt();
-    // Abwahl ins Log (einmal je Flug und bei jeder Änderung), damit sich
-    // „abgewählt“ von „kam nicht“ unterscheiden lässt.
-    if stats.kabinen_lauf.abgewaehlt_zuletzt.as_ref() != Some(&abgewaehlt) {
-        let mut liste = abgewaehlt.clone();
-        if !einst.kommandos {
-            liste.extend(KOMMANDOS.into_iter().filter(|s| *s != Slot::BoardingAbgeschlossen));
-        }
-        if !einst.chimes {
-            liste.extend(GONGS);
-        }
+    // Abwahl ins Log (einmal je Flug und bei jeder Änderung, auch der
+    // Schalter für Kommandos und Gong), damit sich „abgewählt“ von „kam
+    // nicht“ unterscheiden lässt.
+    let mut liste = abgewaehlt.clone();
+    if !einst.kommandos {
+        liste.extend(KOMMANDOS.into_iter().filter(|s| *s != Slot::BoardingAbgeschlossen));
+    }
+    if !einst.chimes {
+        liste.extend(GONGS);
+    }
+    if stats.kabinen_lauf.abgewaehlt_zuletzt.as_ref() != Some(&liste) {
         let details = serde_json::json!({ "slots": liste.iter().map(|s| slot_name(*s)).collect::<Vec<_>>() });
         notiz(&mut stats.kabinen_lauf, "abgewaehlt", None, None, details);
-        stats.kabinen_lauf.abgewaehlt_zuletzt = Some(abgewaehlt.clone());
+        stats.kabinen_lauf.abgewaehlt_zuletzt = Some(liste);
     }
     let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao, &abgewaehlt);
     stats.kabinen_lauf.ruhephase = schritt.ruhephase;
@@ -1764,12 +1771,11 @@ pub(crate) fn kabinen_wiedergabe_ende(app: AppHandle, state: tauri::State<'_, Ap
     let text = if ende_melden(&mut stats, id, &ergebnis, Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
     // Gleich schreiben (die letzte Ansage des Fluges hat keinen Takt mehr
     // danach), Datei und Protokoll ohne Flugdaten-Sperre.
-    let notizen = std::mem::take(&mut stats.kabinen_lauf.protokoll);
     drop(stats);
     if let Some(text) = text {
         verlauf_schreiben(&app, &flight, &text);
     }
-    protokoll_schreiben(&app, &flight, notizen);
+    protokoll_leeren(&app, &flight);
 }
 
 /// Wie [`wiedergabe_ende`], dazu erfährt der Planer, ob die Sinkflug-Ansage
