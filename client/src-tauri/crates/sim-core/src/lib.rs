@@ -1282,6 +1282,9 @@ pub enum AircraftProfile {
     ///     (Pedestal/Pedestal.xml:68-76)
     /// Spoiler ARMED hat keine LVar (None); Transponder über die Standard-
     /// SimVar `TRANSPONDER STATE:1` (fss.wasm enthält den String).
+    /// Autopilot (Entwurf 19.10.2026, HubHop + fss.wasm, Messung steht aus):
+    /// FGP-Lampen `L:FSS_EXX_FGC_LT_AP/HDG/NAV/Alt/APP`, 0 = aus — die
+    /// Standard-`AUTOPILOT *`-SimVars bewegt der E-Jet nicht.
     FssEjet,
 }
 
