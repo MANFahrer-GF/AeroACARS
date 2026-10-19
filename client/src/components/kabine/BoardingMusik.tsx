@@ -3,7 +3,7 @@
 // - MusikRegler: zweite Zeile der Ton-Leiste (eigener Pegel, ab Werk 20 %)
 // - MusikKasten: Zustand, Quelle, Probehören, Schalter, „Eigene Musik …“
 // - MusikDialog: eigene Musik je Airline hinzufügen, anhören, entfernen
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatIpcError } from "../../lib/ipc";
 import { useConfirm } from "../ConfirmDialog";
 import { Modal } from "../ui";
@@ -90,6 +90,15 @@ export function MusikKasten({ zustand, t, onNeu }: { zustand: MusikZustand; t: T
   const [dialog, setDialog] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
   const [namen, setNamen] = useState<Map<string, string>>(new Map());
+  // Der Kasten wird alle 2 s neu gezeichnet (Zustand aus Rust). Das Schließen
+  // muss dabei dieselbe Funktion bleiben, sonst setzt das Dialogfenster den
+  // Fokus neu und ein Klick ins Airline-Feld springt weg (Thomas 19.10.2026).
+  const onNeuRef = useRef(onNeu);
+  onNeuRef.current = onNeu;
+  const dialogZu = useCallback(() => {
+    setDialog(false);
+    onNeuRef.current();
+  }, []);
   useEffect(() => {
     void airlinesLesen()
       .then((l) => setNamen(new Map(l.map((a) => [a.icao, a.name]))))
@@ -151,7 +160,7 @@ export function MusikKasten({ zustand, t, onNeu }: { zustand: MusikZustand; t: T
           {fehler}
         </p>
       )}
-      <MusikDialog open={dialog} onClose={() => { setDialog(false); onNeu(); }} t={t} namen={namen} />
+      <MusikDialog open={dialog} onClose={dialogZu} t={t} namen={namen} />
     </section>
   );
 }
@@ -170,6 +179,8 @@ export function MusikDialog({ open, onClose, t, namen }: { open: boolean; onClos
   const [fehler, setFehler] = useState<string | null>(null);
   const [laeuft, setLaeuft] = useState(false);
   const [probe, setProbe] = useState<string | null>(null);
+  const vorgewaehlt = useRef(false);
+  const andereGewaehlt = useRef(false);
 
   const neu = () => void musikAblage().then(setAblage).catch((e) => setFehler(formatIpcError(e)));
   useEffect(() => {
@@ -179,15 +190,20 @@ export function MusikDialog({ open, onClose, t, namen }: { open: boolean; onClos
     setDateiLaenge(null);
     setAblage(null);
     setFuer("");
+    vorgewaehlt.current = false;
+    andereGewaehlt.current = false;
     neu();
     void airlinesLesen().then(setAirlines).catch(() => undefined);
   }, [open]);
   useEffect(() => {
     // Vorgewählt: die Airline des Flugs, ohne Flug „Alle Airlines“; ihre
     // Gruppe ist offen. Erst, wenn die Ablage gelesen ist.
-    if (!ablage) return;
+    // Nur einmal je Öffnen: Hat der Pilot schon „Andere Airline“ gewählt,
+    // bevor die Ablage gelesen war, bleibt seine Wahl stehen.
+    if (!ablage || vorgewaehlt.current) return;
+    vorgewaehlt.current = true;
     const flug = ablage.flug_airline;
-    setFuer((f) => f || flug || ALLE_AIRLINES);
+    if (!andereGewaehlt.current) setFuer(flug || ALLE_AIRLINES);
     if (flug) setAuf((a) => new Set(a).add(flug));
   }, [ablage]);
 
@@ -260,11 +276,15 @@ export function MusikDialog({ open, onClose, t, namen }: { open: boolean; onClos
       void musikProbe(airline, d).then(() => setProbe(k)).catch((e) => setFehler(meldung(e)));
     }
   };
-  const schliessen = () => {
-    if (probe) void musikProbeStopp();
+  const probeRef = useRef(probe);
+  probeRef.current = probe;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const schliessen = useCallback(() => {
+    if (probeRef.current) void musikProbeStopp();
     setProbe(null);
-    onClose();
-  };
+    onCloseRef.current();
+  }, []);
   const dateiName = datei ? datei.split(/[\\/]/).pop() : null;
   const flug = ablage?.flug_airline ?? null;
 
@@ -338,7 +358,15 @@ export function MusikDialog({ open, onClose, t, namen }: { open: boolean; onClos
                   {t("kabine.musik.alle")}
                 </label>
                 <label>
-                  <input type="radio" name="fuer" checked={fuer !== flug && fuer !== ALLE_AIRLINES} onChange={() => setFuer(fuerSuche.toUpperCase() || "")} />
+                  <input
+                    type="radio"
+                    name="fuer"
+                    checked={fuer !== flug && fuer !== ALLE_AIRLINES}
+                    onChange={() => {
+                      andereGewaehlt.current = true;
+                      setFuer(fuerSuche.toUpperCase() || "");
+                    }}
+                  />
                   {t("kabine.musik.dialog.andere")}
                 </label>
               </div>
