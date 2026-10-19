@@ -43,11 +43,10 @@ pub(crate) fn lautstaerke() -> f32 {
 /// Laufende Ansagen (Ton oder Gong) und Ende der letzten (ms seit 1970).
 static ANSAGEN: AtomicUsize = AtomicUsize::new(0);
 static ANSAGE_ENDE_MS: AtomicU64 = AtomicU64::new(0);
-/// Nach einer Ansage so lange still, dann wieder hoch (Design §8, Thomas
-/// 19.10.2026: „Ansagen immer Vorrang“). Die Pausen zwischen den Sprachen
-/// einer Ansage (0,7 s) und zwischen Kommandos (0,4 s) liegen darunter: Die
-/// Musik bleibt dort unten.
-const NACHLAUF_MS: u64 = 1_000;
+/// Nach der letzten Ansage so lange still, dann wieder hoch (Design §8,
+/// Thomas 19.10.2026: „Ansagen immer Vorrang“; Ruhe 3 s, damit die Musik
+/// bei Ansagen kurz hintereinander nicht dazwischen hochkommt).
+const NACHLAUF_MS: u64 = 3_000;
 /// Ausblenden, wenn eine Ansage beginnt (s); die Ansage wartet nicht darauf.
 pub(crate) const RAMPE_RUNTER_S: f32 = 0.5;
 /// Einblenden nach der Ruhe (s), an derselben Stelle.
@@ -1016,7 +1015,7 @@ mod tests {
         assert!((laufen(0.2, 0.0, false) - RAMPE_RUNTER_S).abs() < 0.01);
         assert!((laufen(0.0, 0.2, false) - RAMPE_HOCH_S).abs() < 0.01);
         assert!((laufen(0.2, 0.0, true) - RAMPE_ENDE_S).abs() < 0.01);
-        assert_eq!(NACHLAUF_MS, 1_000);
+        assert_eq!(NACHLAUF_MS, 3_000, "Ruhe 3 s nach der letzten Ansage");
     }
 
     #[test]
