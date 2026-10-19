@@ -760,9 +760,14 @@ pub(crate) fn takt(
 }
 
 /// Lied mit dem Abflug-Drehbuch anfragen? Quelle Lied (also Linie, ohne
-/// eigene Musik), Schalter an und noch vor „Türen zu“.
-fn lied_anfragen(lauf: &Lauf, haken: bool) -> bool {
-    haken && lauf.musik_quelle == Some(MusikQuelle::Lied) && !lauf.musik_fenster.tueren_zu() && lauf.lied.datei.is_none()
+/// eigene Musik), Schalter an und noch vor „Türen zu“ — nach einem Neustart
+/// im Reiseflug kostete es nur, gespielt würde es nicht mehr.
+fn lied_anfragen(lauf: &Lauf, haken: bool, phase: FlightPhase) -> bool {
+    haken
+        && lauf.musik_quelle == Some(MusikQuelle::Lied)
+        && !lauf.musik_fenster.tueren_zu()
+        && cabin_announcements::planer::rang(phase) < cabin_announcements::planer::rang(FlightPhase::Pushback)
+        && lauf.lied.datei.is_none()
 }
 
 /// Was die Musik nach diesem Takt tun soll.
@@ -1257,7 +1262,7 @@ fn takt_schritt(
         let mut anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
         // Boarding-Lied (2.1.1 G1): mit dem Abflug-Drehbuch, nur wenn keine
         // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
-        if schluessel == "abflug" && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik) {
+        if schluessel == "abflug" && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
             anfrage["boarding_lied"] = serde_json::json!(true);
         }
         holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
@@ -2292,6 +2297,10 @@ pub(crate) fn kabinen_stumm(app: AppHandle, state: tauri::State<'_, AppState>, s
         return;
     }
     ausgabe::stoppen();
+    // Stumm stoppt auch die Boarding-Musik sofort (Pflichtenheft G1).
+    if crate::kabinen_musik::flug_aktiv() {
+        crate::kabinen_musik::aus();
+    }
     let Some(flight) = aktiver_flug(&state) else { return };
     let mut stats = flight.stats.lock().expect("flight stats");
     let text = if stumm_anwenden(&mut stats, Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
@@ -4128,7 +4137,12 @@ mod tests {
         let mut st = musik_stats("J", Some(150));
         musik_schritt(&mut st, &gate_snap(false), "A320", eigene.clone(), 0);
         assert!(matches!(st.kabinen_lauf.musik_quelle, Some(MusikQuelle::Eigene { .. })));
-        assert!(!lied_anfragen(&st.kabinen_lauf, true), "eigene Musik: kein Lied anfragen");
+        assert!(!lied_anfragen(&st.kabinen_lauf, true, crate::FlightPhase::Boarding), "eigene Musik: kein Lied anfragen");
+        let mut l = musik_stats("J", Some(150));
+        musik_schritt(&mut l, &gate_snap(false), "A320", None, 0);
+        assert!(lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Boarding), "Linie ohne eigene Musik: Lied");
+        assert!(!lied_anfragen(&l.kabinen_lauf, false, crate::FlightPhase::Boarding), "Schalter aus: kein Lied (Nr. 15)");
+        assert!(!lied_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::Cruise), "Neustart im Reiseflug: kein Lied mehr");
         // Fracht ohne Passagierzahl: steht fest, eigene Musik sofort im Boarding.
         let mut f = musik_stats("F", None);
         assert!(matches!(musik_schritt(&mut f, &gate_snap(false), "B77F", eigene.clone(), 0).0, MusikTun::Spielen(_)));

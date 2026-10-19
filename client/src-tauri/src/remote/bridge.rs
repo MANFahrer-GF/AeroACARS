@@ -1476,6 +1476,20 @@ mod tests {
             "kabinen_anhoeren",
             "kabinen_erneut",
             "kabinen_speicher",
+            // Boarding-Musik (2.1.1): spielt ebenfalls auf dem Sim-PC, die
+            // Ablage liegt dort (Dokumente/AeroACARS/Boarding-Musik).
+            "kabinen_musik_lautstaerke",
+            "kabinen_boarding_musik",
+            "kabinen_musik_zustand",
+            "kabinen_musik_probe_flug",
+            "kabinen_musik_ablage",
+            "kabinen_musik_pruefen",
+            "kabinen_musik_hinzufuegen",
+            "kabinen_musik_entfernen",
+            "kabinen_musik_ordner_oeffnen",
+            "kabinen_musik_probe",
+            "kabinen_musik_probe_stopp",
+            "kabinen_airlines",
             // VATSIM-CDM (v1.6.0): oeffnet ein NATIVES Fenster auf dem
             // Sim-PC. Vom Tablet aus ergibt das keinen Sinn — das Fenster
             // ginge auf dem PC auf, nicht auf dem Tablet. Der Browser-Pfad
