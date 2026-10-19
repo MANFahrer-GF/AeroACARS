@@ -184,14 +184,10 @@ impl Warteschlange {
             .any(|e| matches!(e.slot, Slot::BegruessungTuerenZu | Slot::Sicherheit) && bereit(e.slot));
         let boarding_wartet = self.eintraege.iter().any(|e| e.slot == Slot::Boarding);
         // 2.1.1 A/E: Begrüßung → „Boarding completed“ → „Türen zu“ →
-        // Sicherheit, auch gegenüber Kommandos. Gehalten wird nur hinter einer
-        // spielbereiten Ansage (wie oben bei der Kabine vor dem Kapitän), damit
-        // ein fehlender Ton die Sicherheit nicht bis zum Startlauf aufhält.
-        let boarding_bereit = self.eintraege.iter().any(|e| e.slot == Slot::Boarding && bereit(e.slot));
-        // „Boarding completed“ selbst wartet auf die Begrüßung (unten); hängt
-        // die ohne Ton, hält es die Gruppe nicht auf.
-        let abgeschlossen_bereit =
-            !boarding_wartet && self.eintraege.iter().any(|e| e.slot == Slot::BoardingAbgeschlossen && bereit(e.slot));
+        // Sicherheit, auch gegenüber Kommandos, auch wenn der Ton der Begrüßung
+        // noch nicht fertig ist. Kommt er sicher nie (keine Stimme, endgültig
+        // abgelehnt), nimmt der Host sie heraus.
+        let abgeschlossen_wartet = self.eintraege.iter().any(|e| e.slot == Slot::BoardingAbgeschlossen);
         let tueren_zu_gruppe = |s: Slot| matches!(s, Slot::KommandoTuerenScharf | Slot::BegruessungTuerenZu | Slot::Sicherheit);
         // 2.1.1 C: „Ende des Service“ nie vor einem gemeldeten, noch
         // wartenden Service; beim Sinkflug verfällt der zuerst (oben).
@@ -211,7 +207,7 @@ impl Warteschlange {
             // „Boarding completed“ (Kommando-Vorrang) überholt die noch
             // wartende Boarding-Ansage nicht.
             .filter(|(_, e)| !(e.slot == Slot::BoardingAbgeschlossen && boarding_wartet))
-            .filter(|(_, e)| !(tueren_zu_gruppe(e.slot) && (boarding_bereit || abgeschlossen_bereit)))
+            .filter(|(_, e)| !(tueren_zu_gruppe(e.slot) && (boarding_wartet || abgeschlossen_wartet)))
             .filter(|(_, e)| !(e.slot == Slot::EndeService && service_wartet))
             .filter(|(_, e)| !(e.slot == Slot::KapitaenSinkflug && ende_service_zuerst))
             .filter(|(_, e)| bereit(e.slot))
@@ -461,10 +457,16 @@ mod tests {
                 (60, Slot::Sicherheit),
             ]
         );
-        // Ohne Ton für die Begrüßung hält sie die anderen nicht bis zum Startlauf auf.
+        // Ton der Begrüßung noch nicht fertig: „Türen zu“ überholt sie nicht
+        // (Codex 2.1.1), auch das Kommando nicht.
         let mut v = Warteschlange::default();
-        v.aufnehmen([f(Slot::Boarding, Verfall::AbPhase(TakeoffRoll)), f(Slot::BegruessungTuerenZu, Verfall::AbPhase(TakeoffRoll))]);
-        assert_eq!(v.naechstes_bereit(0, Boarding, false, |s| s != Slot::Boarding), Some(Slot::BegruessungTuerenZu));
+        v.aufnehmen([
+            f(Slot::Boarding, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::KommandoTuerenScharf, Verfall::AbPhase(TakeoffRoll)),
+            f(Slot::BegruessungTuerenZu, Verfall::AbPhase(TakeoffRoll)),
+        ]);
+        assert_eq!(v.naechstes_bereit(0, Boarding, false, |s| s != Slot::Boarding), None);
+        assert_eq!(v.naechstes_bereit(1, Boarding, false, |_| true), Some(Slot::Boarding));
     }
 
     /// 2.1.1 C: „Ende des Service“ wartet auf einen gemeldeten Service; beim

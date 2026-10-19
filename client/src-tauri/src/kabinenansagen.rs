@@ -770,6 +770,22 @@ fn lied_anfragen(lauf: &Lauf, haken: bool, phase: FlightPhase) -> bool {
         && lauf.lied.datei.is_none()
 }
 
+/// Liest die eigene Musik (ganze Dateien, ohne Flugdaten-Sperre) — nur in
+/// dem Takt, in dem die Quelle festgelegt wird: Freigabe da, Flugart steht
+/// fest, Quelle noch offen. Sonst `None` ohne Plattenzugriff.
+fn eigene_lesen(flight: &ActiveFlight) -> Option<(String, Vec<PathBuf>)> {
+    let jetzt_noetig = {
+        let st = flight.stats.lock().expect("flight stats");
+        st.kabinen_lauf.musik_quelle.is_none()
+            && st.kabinen_lauf.beta == Beta::Ja
+            && cabin_announcements::flugart::eingeordnet(st.flight_type.as_deref(), st.pax_count.and_then(|n| u32::try_from(n).ok()))
+    };
+    if !jetzt_noetig {
+        return None;
+    }
+    crate::kabinen_musik::ablage().and_then(|w| crate::kabinen_musik::eigene_fuer(&w, &flight.airline_icao))
+}
+
 /// Was die Musik nach diesem Takt tun soll.
 #[derive(Debug, Clone, PartialEq)]
 enum MusikTun {
@@ -843,8 +859,7 @@ fn musik_takt(app: &AppHandle, flight: &Arc<ActiveFlight>, snap: &SimSnapshot, n
         return;
     }
     // Eigene Musik vor dem Flug neu lesen (Design §6), ohne Flugdaten-Sperre.
-    let offen = flight.stats.lock().expect("flight stats").kabinen_lauf.musik_quelle.is_none();
-    let eigene = if offen { crate::kabinen_musik::ablage().and_then(|w| crate::kabinen_musik::eigene_fuer(&w, &flight.airline_icao)) } else { None };
+    let eigene = eigene_lesen(flight);
     let mut stats = flight.stats.lock().expect("flight stats");
     let (tun, holen) = musik_schritt(&mut stats, snap, &flight.aircraft_icao, eigene, now.timestamp());
     if let Some(l) = &holen {
@@ -1042,12 +1057,7 @@ fn takt_schritt(
     }
     let jetzt = now.timestamp();
     // Eigene Musik vor der Abflug-Anfrage prüfen (Design §5), ohne Sperre.
-    let quelle_offen = flight.stats.lock().expect("flight stats").kabinen_lauf.musik_quelle.is_none();
-    let eigene = if quelle_offen && einst.boarding_musik {
-        crate::kabinen_musik::ablage().and_then(|w| crate::kabinen_musik::eigene_fuer(&w, &flight.airline_icao))
-    } else {
-        None
-    };
+    let eigene = if einst.boarding_musik { eigene_lesen(flight) } else { None };
     // Verlaufsdatei ohne Flugdaten-Sperre lesen (v2.0.28: das Lesen hielt die
     // Sperre beim ersten Takt bis 39 ms, Diagnose Pilot 1 und 4).
     let geladen = flight.stats.lock().expect("flight stats").kabinen_lauf.verlauf_geladen;
@@ -1333,7 +1343,15 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     let mut kapitaen_kommt_nicht = false;
     let lauf = &mut stats.kabinen_lauf;
     // Sicher entfallende Slots (Bizjet ohne Kurzfassung) nicht warten lassen.
-    let weg: Vec<(Slot, String)> = lauf.entfaellt.iter().map(|(s, g)| (*s, g.clone())).collect();
+    let mut weg: Vec<(Slot, String)> = lauf.entfaellt.iter().map(|(s, g)| (*s, g.clone())).collect();
+    // 2.1.1: Begrüßung und „Boarding completed“ halten „Türen zu“ und die
+    // Sicherheit auf, bis sie gespielt sind. Kommt ihr Ton sicher nie, gehen
+    // sie heraus, statt alles bis zum Startlauf aufzuhalten.
+    for slot in [Slot::Boarding, Slot::BoardingAbgeschlossen] {
+        if lauf.warteschlange.wartend().contains(&slot) && ton_kommt_nie(lauf, slot) {
+            weg.push((slot, "keine_stimme".into()));
+        }
+    }
     for (slot, grund) in weg {
         if lauf.warteschlange.entfernen(slot) {
             notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
@@ -1458,6 +1476,25 @@ fn dauer_s(slot: Slot, teile: &[Teil]) -> f64 {
     } else {
         teile.iter().map(|t| t.dauer_s + 0.8).sum()
     }
+}
+
+/// Kommt für diesen Slot sicher kein Ton mehr? Je Sprache: keine Stimme,
+/// endgültig abgelehnt, oder kein Text und das Abflug-Drehbuch ist nach drei
+/// Versuchen aufgegeben. Ohne bekannte Sprachen: nein (es kommt noch).
+fn ton_kommt_nie(lauf: &Lauf, slot: Slot) -> bool {
+    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { lauf.sprachen.clone() };
+    let text_aufgegeben = lauf.texte_fehler.contains_key(&slot)
+        && !lauf.angefragt.contains("abflug")
+        && lauf.fehlversuche.get("abflug").is_some_and(|(n, _)| *n >= 3);
+    !sprachen.is_empty()
+        && sprachen.iter().all(|sp| {
+            let k = (slot, sp.clone());
+            match lauf.ton.get(&k) {
+                Some(None) => true,
+                Some(Some(_)) => false,
+                None => lauf.ton_endgueltig.contains_key(&k) || (!lauf.texte.contains_key(&k) && slot.rolle() != Rolle::Kommando && text_aufgegeben),
+            }
+        })
 }
 
 /// Eine verfallene Ansage hinterlässt keine Fehler, die später noch die
@@ -4160,6 +4197,28 @@ mod tests {
         let mut nein = musik_stats("J", Some(150));
         nein.kabinen_lauf.beta = Beta::Nein;
         assert_eq!(musik_schritt(&mut nein, &gate_snap(false), "A320", None, 0).0, MusikTun::Aus);
+    }
+
+    /// 2.1.1 (Codex): Kommt der Ton der Begrüßung sicher nie, hält sie
+    /// „Türen zu“ nicht bis zum Startlauf auf; fehlt er nur noch, wartet alles.
+    #[test]
+    fn begruessung_ohne_ton_haelt_tueren_zu_nur_solange_er_noch_kommt() {
+        let mut st = FlightStats::new();
+        st.kabinen_lauf.sprachen = vec!["de-DE".into()];
+        for s in [Slot::BegruessungTuerenZu, Slot::Sicherheit] {
+            st.kabinen_lauf.texte.insert((s, "de-DE".into()), "x".into());
+            st.kabinen_lauf.ton.insert((s, "de-DE".into()), Some(Ton { datei: "f/x.wav".into(), dauer_s: 3.0, stuecke: vec![], herkunft: "server" }));
+        }
+        st.kabinen_lauf.texte.insert((Slot::Boarding, "de-DE".into()), "Willkommen".into());
+        let f = |slot| Faellig { slot, verfall: cabin_announcements::Verfall::AbPhase(crate::FlightPhase::TakeoffRoll), trotz_ruhephase: false };
+        st.kabinen_lauf.warteschlange.aufnehmen([f(Slot::Boarding), f(Slot::BegruessungTuerenZu), f(Slot::Sicherheit)]);
+        let (g, _) = abspielen_schritt(&mut st, 0, crate::FlightPhase::Boarding, false, false);
+        assert!(g.is_none(), "Ton der Begrüßung kommt noch: alles wartet");
+        st.kabinen_lauf.ton_endgueltig.insert((Slot::Boarding, "de-DE".into()), "400".into());
+        let (g, _) = abspielen_schritt(&mut st, 1, crate::FlightPhase::Boarding, false, false);
+        assert_eq!(g.map(|g| g.slot), Some(Slot::BegruessungTuerenZu));
+        assert!(st.kabinen_lauf.verlauf.iter().any(|g| g.slot == Slot::Boarding && g.grund.as_deref() == Some("keine_stimme")));
+        assert!(!ton_kommt_nie(&Lauf::default(), Slot::Boarding), "ohne Sprachen: kommt noch");
     }
 
     #[test]

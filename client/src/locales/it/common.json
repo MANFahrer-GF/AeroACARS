@@ -296,7 +296,7 @@
       "kommando_tueren_scharf": "Arriva insieme a \"porte chiuse\": beacon acceso, pushback o inizio del rullaggio.",
       "sicherheit": "Segue circa 10 secondi dopo il benvenuto \"porte chiuse\".",
       "kapitaen_begruessung": "Arriva durante il rullaggio verso la pista, 30 secondi dopo le istruzioni di sicurezza. Se il tempo prima del decollo non basta, arriva dopo il decollo sopra 10.000 piedi.",
-      "kommando_start": "Arriva durante il pushback o il rullaggio verso la pista non appena l'aereo si muove (da 3 nodi) e le luci di atterraggio sono accese (devono essere state spente almeno una volta dopo aver lasciato il parcheggio). Se l'aereo non le segnala o restano accese dal gate, alla corsa di decollo.",
+      "kommando_start": "Arriva durante il rullaggio verso la pista non appena l'aereo si muove (da 3 nodi) e le luci di atterraggio sono accese (devono essere state spente almeno una volta dopo aver lasciato il parcheggio); non ancora durante il pushback. Se l'aereo non le segnala o restano accese dal gate, alla corsa di decollo.",
       "chime10000_steigflug": "Gong salendo attraverso 10.000 piedi.",
       "anschnallzeichen_aus": "Arriva in salita quando spegni il segnale delle cinture, anche sotto 10.000 piedi. In AUTO da 10.000 piedi. Se resta acceso non arriva e il servizio aspetta.",
       "reiseflug25": "10 minuti dopo aver raggiunto la quota di crociera (e dopo \"cinture spente\"), al più tardi dopo un quarto del tempo fino alla discesa. Sui voli sotto un'ora subito dopo \"cinture spente\".",

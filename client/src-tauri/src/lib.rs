@@ -32820,6 +32820,8 @@ async fn flight_end(
     // start), and on restore it holds the old flight again (also fine —
     // the existing `active_flight`-occupied check takes back over).
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
 
     // Validation passed — now actually take the flight out of state and file.
     let flight = {
@@ -33898,6 +33900,8 @@ async fn flight_end_manual(
     // the empty `active_flight` slot while this call is still in flight.
     let client = current_client(&state)?;
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
 
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
@@ -34708,6 +34712,8 @@ async fn flight_cancel(
     // der Guard faellt bei JEDEM Rueckgabepfad (inkl. `result?` weiter
     // unten) per `Drop` automatisch.
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         guard.take().ok_or_else(|| {
@@ -35098,6 +35104,8 @@ async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     // Dauer halten, damit ein gleichzeitiger `flight_start`/`flight_adopt`
     // entweder klar VOR oder klar NACH dieser Funktion laeuft, nie waehrend.
     let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    // Boarding-Musik (2.1.1): Flugende, Abbruch und Vergessen stoppen sie sofort.
+    kabinen_musik::aus();
     let forgotten_pirep_id = if let Some(flight) = state
         .active_flight
         .lock()

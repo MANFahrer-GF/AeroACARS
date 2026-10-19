@@ -110,13 +110,27 @@ pub(crate) fn ordner_mit_musik(wurzel: &Path) -> Vec<String> {
     v
 }
 
-/// Eigene Musik für diese Airline: Ordner und Stücke (der Airline, sonst
-/// „Alle“). Wird vor jedem Flug neu gelesen (Design §6).
+/// Ist diese Datei vor dem Flug abspielbar? Ganz gelesen (ein OneDrive-
+/// Platzhalter wird so geladen) und das erste Stück Ton dekodiert.
+pub(crate) fn abspielbar(p: &Path) -> bool {
+    std::fs::read(p).is_ok_and(|d| !d.is_empty()) && Dekoder::oeffnen(p).ok().and_then(|mut d| d.naechstes()).is_some()
+}
+
+/// Eigene Musik für diese Airline: Ordner und abspielbare Stücke (der
+/// Airline, sonst „Alle“). Wird vor jedem Flug neu gelesen; fehlt eine Datei
+/// oder ist sie kaputt, wird sie übersprungen, und bleibt keine übrig, kommt
+/// das Lied (Design §6).
 pub(crate) fn eigene_fuer(wurzel: &Path, airline_icao: &str) -> Option<(String, Vec<PathBuf>)> {
-    let ordner = ordner_mit_musik(wurzel);
-    let o = musik::eigener_ordner(airline_icao, &ordner)?.to_string();
-    let stuecke = stuecke_in(&wurzel.join(&o));
-    Some((o, stuecke))
+    let mut ordner = ordner_mit_musik(wurzel);
+    loop {
+        let o = musik::eigener_ordner(airline_icao, &ordner)?.to_string();
+        let stuecke: Vec<PathBuf> = stuecke_in(&wurzel.join(&o)).into_iter().filter(|p| abspielbar(p)).collect();
+        if !stuecke.is_empty() {
+            return Some((o, stuecke));
+        }
+        // Nichts Gültiges in diesem Ordner: den nächsten („Alle“) versuchen.
+        ordner.retain(|x| *x != o);
+    }
 }
 
 /// Freier Dateiname im Ordner: Originalname, sonst „Name (2).mp3“ …
@@ -150,12 +164,24 @@ pub(crate) fn pruefen(pfad: &Path) -> Result<Option<f64>, UiError> {
     if groesse > MAX_BYTES {
         return Err(UiError::new("musik_zu_gross", "file larger than 50 MB"));
     }
+    // Ganz dekodieren (Design §4): Eine Datei, die erst in der Mitte kaputt
+    // ist, bräche sonst mitten im Boarding ab.
     let mut dek = Dekoder::oeffnen(pfad).map_err(|e| UiError::new("musik_kaputt", e))?;
-    let dauer = dek.dauer_s();
-    if dek.naechstes().is_none() {
-        return Err(UiError::new("musik_kaputt", "no audio"));
+    let mut rahmen = 0u64;
+    let mut rate = 0u32;
+    while let Some((r, k, proben)) = dek.naechstes() {
+        rate = r;
+        rahmen += (proben.len() / k.max(1)) as u64;
     }
-    Ok(dauer)
+    if rahmen == 0 || dek.abgebrochen {
+        return Err(UiError::new("musik_kaputt", "no audio or broken stream"));
+    }
+    let gelesen = rahmen as f64 / f64::from(rate.max(1));
+    // Weniger als 90 % der angegebenen Länge: abgeschnitten.
+    if dek.dauer_s().is_some_and(|d| gelesen < d * 0.9) {
+        return Err(UiError::new("musik_kaputt", "truncated"));
+    }
+    Ok(dek.dauer_s().or(Some(gelesen)))
 }
 
 /// Kopiert eine Datei in die Ablage (Zwischendatei, dann umbenennen — nie
@@ -322,6 +348,8 @@ pub(crate) struct Dekoder {
     dekoder: Box<dyn symphonia::core::codecs::Decoder>,
     spur: u32,
     dauer_s: Option<f64>,
+    /// Der Strom brach mit einem Fehler ab (nicht am Dateiende).
+    pub(crate) abgebrochen: bool,
 }
 
 impl Dekoder {
@@ -345,7 +373,7 @@ impl Dekoder {
         let p = &spur.codec_params;
         let dauer_s = p.n_frames.zip(p.sample_rate).filter(|(_, r)| *r > 0).map(|(n, r)| n as f64 / f64::from(r));
         let dekoder = symphonia::default::get_codecs().make(p, &DecoderOptions::default()).map_err(|e| e.to_string())?;
-        Ok(Dekoder { spur: spur.id, format, dekoder, dauer_s })
+        Ok(Dekoder { spur: spur.id, format, dekoder, dauer_s, abgebrochen: false })
     }
 
     pub(crate) fn dauer_s(&self) -> Option<f64> {
@@ -357,7 +385,15 @@ impl Dekoder {
         use symphonia::core::audio::SampleBuffer;
         use symphonia::core::errors::Error;
         loop {
-            let paket = self.format.next_packet().ok()?;
+            let paket = match self.format.next_packet() {
+                Ok(p) => p,
+                Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => return None,
+                Err(Error::ResetRequired) => return None,
+                Err(_) => {
+                    self.abgebrochen = true;
+                    return None;
+                }
+            };
             if paket.track_id() != self.spur {
                 continue;
             }
@@ -631,7 +667,14 @@ mod wiedergabe {
                     let am_ende = ende.load(Ordering::Relaxed);
                     let ziel = if halten || am_ende { 0.0 } else { lautstaerke() };
                     let schritt = 1.0 / (rate * if am_ende { RAMPE_ENDE_S } else { RAMPE_ANSAGE_S });
-                    let mut q = puffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    // Nie auf den Dekoder warten (Echtzeit-Faden): Ist der
+                    // Puffer gerade belegt, diesen Block still ausgeben.
+                    let Ok(mut q) = puffer.try_lock() else {
+                        for k in aus.iter_mut() {
+                            *k = T::from_sample(0.0);
+                        }
+                        return;
+                    };
                     for rahmen in aus.chunks_mut(kanaele) {
                         pegel = if pegel < ziel { (pegel + schritt).min(ziel) } else { (pegel - schritt).max(ziel) };
                         // Ansage: ausgeblendet anhalten, die Stelle bleibt.
@@ -722,8 +765,10 @@ mod wiedergabe {
                     }
                     match dek.naechstes() {
                         Some((rate, k, proben)) => {
-                            let mut q = ausgabe.puffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                            um.umrechnen(rate, k, &proben, &mut q);
+                            // Umrechnen ohne Sperre, dann kurz anhängen.
+                            let mut neu = VecDeque::new();
+                            um.umrechnen(rate, k, &proben, &mut neu);
+                            ausgabe.puffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).extend(neu);
                         }
                         None => break,
                     }
@@ -829,6 +874,27 @@ mod tests {
         assert!(pfad_von(&wurzel, "DLH", "../Alle/Mein Lied.wav").is_none());
         assert!(pfad_von(&wurzel, "DLH", "Mein Lied.wav").is_some());
         assert!(std::fs::read_dir(wurzel.join("DLH")).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".neu")));
+    }
+
+    /// Codex 2.1.1: Eine erst später kaputte (abgeschnittene) Datei wird beim
+    /// Hinzufügen abgelehnt; eine kaputte in der Ablage gilt nicht als eigene
+    /// Musik, dann kommt „Alle“ bzw. das Lied.
+    #[test]
+    fn abgeschnittene_und_kaputte_dateien_zaehlen_nicht() {
+        let d = ordner("schnitt");
+        let ganz = wav(8_000, 1, &vec![1000i16; 8_000 * 4]);
+        // Kopf sagt 4 s, Daten reichen nur 1 s.
+        let kurz = ganz[..44 + 8_000 * 2].to_vec();
+        let p = d.join("abgeschnitten.wav");
+        std::fs::write(&p, &kurz).unwrap();
+        assert_eq!(pruefen(&p).unwrap_err().code, "musik_kaputt");
+        let wurzel = d.join("Boarding-Musik");
+        std::fs::create_dir_all(wurzel.join("DLH")).unwrap();
+        std::fs::create_dir_all(wurzel.join("Alle")).unwrap();
+        std::fs::write(wurzel.join("DLH").join("kaputt.mp3"), b"kein mp3").unwrap();
+        assert_eq!(eigene_fuer(&wurzel, "DLH"), None, "nur Kaputtes: keine eigene Musik → Lied");
+        std::fs::write(wurzel.join("Alle").join("gut.wav"), &ganz).unwrap();
+        assert_eq!(eigene_fuer(&wurzel, "DLH").map(|(o, s)| (o, s.len())), Some(("Alle".into(), 1)));
     }
 
     #[test]

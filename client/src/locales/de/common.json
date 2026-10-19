@@ -296,7 +296,7 @@
       "kommando_tueren_scharf": "Kommt zusammen mit „Türen zu“: Beacon an, Pushback oder Losrollen.",
       "sicherheit": "Folgt etwa 10 Sekunden nach der Begrüßung „Türen zu“.",
       "kapitaen_begruessung": "Kommt beim Rollen zur Bahn, 30 Sekunden nach den Sicherheitshinweisen. Reicht die Zeit bis zum Start nicht, kommt sie nach dem Start über 10.000 Fuß.",
-      "kommando_start": "Kommt beim Zurückschieben oder Rollen zur Bahn, sobald das Flugzeug rollt (ab 3 Knoten) und das Landelicht an ist (es muss seit dem Verlassen der Parkposition einmal aus gewesen sein). Meldet das Flugzeug kein Landelicht oder bleibt es vom Gate an an, beim Startlauf.",
+      "kommando_start": "Kommt beim Rollen zur Bahn, sobald das Flugzeug rollt (ab 3 Knoten) und das Landelicht an ist (es muss seit dem Verlassen der Parkposition einmal aus gewesen sein); beim Zurückschieben noch nicht. Meldet das Flugzeug kein Landelicht oder bleibt es vom Gate an an, beim Startlauf.",
       "chime10000_steigflug": "Gong beim Steigen durch 10.000 Fuß.",
       "anschnallzeichen_aus": "Kommt im Steigflug, wenn du das Anschnallzeichen ausschaltest, auch unter 10.000 Fuß. Steht es auf AUTO, ab 10.000 Fuß. Bleibt es an, kommt sie nicht, und der Service wartet.",
       "reiseflug25": "10 Minuten nach Erreichen der Reiseflughöhe (und nach „Anschnallzeichen aus“), spätestens nach einem Viertel der Zeit bis zum Sinkflug. Auf Flügen unter einer Stunde gleich nach „Anschnallzeichen aus“.",

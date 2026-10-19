@@ -296,7 +296,7 @@
       "kommando_tueren_scharf": "Plays together with \"doors closed\": beacon on, pushback or start of taxi.",
       "sicherheit": "Follows about 10 seconds after the \"doors closed\" welcome.",
       "kapitaen_begruessung": "Plays while taxiing to the runway, 30 seconds after the safety briefing. If there is not enough time before take-off, it plays after take-off above 10,000 ft.",
-      "kommando_start": "Plays during pushback or taxi to the runway as soon as the aircraft is moving (from 3 knots) and the landing lights are on (they must have been off once since leaving the stand). If the aircraft reports no landing lights or they stay on from the gate, at the take-off roll.",
+      "kommando_start": "Plays while taxiing to the runway as soon as the aircraft is moving (from 3 knots) and the landing lights are on (they must have been off once since leaving the stand); not yet during pushback. If the aircraft reports no landing lights or they stay on from the gate, at the take-off roll.",
       "chime10000_steigflug": "Chime when climbing through 10,000 ft.",
       "anschnallzeichen_aus": "Plays in the climb when you switch the seat belt sign off, also below 10,000 ft. On AUTO from 10,000 ft. If it stays on, it does not play and the service waits.",
       "reiseflug25": "10 minutes after reaching cruise altitude (and after \"seat belt sign off\"), at the latest after a quarter of the time to descent. On flights under one hour right after \"seat belt sign off\".",

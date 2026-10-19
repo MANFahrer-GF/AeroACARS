@@ -668,8 +668,9 @@ impl Planer {
         // im TaxiOut nie eine Flanke und das Kommando kam erst im Startlauf
         // (Peter DLH454). „War einmal aus“ seit dem Verlassen des Stands,
         // damit ein vom Gate an brennendes Licht nicht sofort auslöst.
-        // 2.1.1 B (Thomas 19.10.2026): Pushback oder Rollen, und das Flugzeug
-        // rollt (ab 3 kt). Ohne brauchbares Signal zählt die Phase allein.
+        // 2.1.1 B (Thomas 19.10.2026, Nachtrag: „darf aber nicht in Pushback
+        // funktionieren, sondern nur in Taxi“): nur beim Rollen, und das
+        // Flugzeug rollt (ab 3 kt). Ohne brauchbares Signal zählt die Phase.
         if t.landelicht == Some(false) && r >= rang(Pushback) {
             self.landelicht_war_aus = true;
         }
@@ -678,7 +679,7 @@ impl Planer {
             .bodengeschwindigkeit_kt
             .filter(|v| v.is_finite() && *v >= 0.0)
             .is_none_or(|v| v >= ROLLT_AB_KT);
-        if (matches!(t.phase, Pushback | TaxiOut) && rollt && landelicht_an) || (rang(TakeoffRoll)..=rang(Climb)).contains(&r) {
+        if (t.phase == TaxiOut && rollt && landelicht_an) || (rang(TakeoffRoll)..=rang(Climb)).contains(&r) {
             self.melde(&mut aus, Slot::KommandoStart, Verfall::AbPhase(Climb));
         }
 
@@ -1910,19 +1911,24 @@ mod tests {
     /// erkannte — keine Flanke im TaxiOut, das Kommando kam im Startlauf.
     #[test]
     fn plaetze_fuer_den_start_am_zustand_des_landelichts() {
-        // 2.1.1 B: Licht an kurz nach dem Losrollen, erkannt noch als Pushback.
+        // 2.1.1 B (Nachtrag Thomas): Licht im Pushback an, rückwärts rollen →
+        // kein Kommando; erst beim Rollen (TaxiOut) ab 3 kt.
         let mut p = Planer::neu(flug(120));
         p.tick(&boden(0, Pushback));
         let mut licht = boden(10, Pushback);
         licht.landelicht = Some(true);
-        licht.bodengeschwindigkeit_kt = Some(0.0);
-        assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "steht noch");
+        licht.bodengeschwindigkeit_kt = Some(4.0);
+        assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "nicht im Pushback, auch rollend");
+        licht.phase = TaxiOut;
         licht.jetzt = 20;
+        licht.bodengeschwindigkeit_kt = Some(0.0);
+        assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "Rollen erkannt, steht aber noch");
+        licht.jetzt = 25;
         licht.bodengeschwindigkeit_kt = Some(2.9);
         assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "unter 3 kt rollt es nicht");
         licht.jetzt = 30;
         licht.bodengeschwindigkeit_kt = Some(ROLLT_AB_KT);
-        assert!(p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "Pushback und rollt (ab 3 kt)");
+        assert!(p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "Rollen und rollt (ab 3 kt)");
         // Rollen ohne Geschwindigkeitssignal (oder unbrauchbar): die Phase zählt allein.
         for gs in [None, Some(f64::NAN), Some(-1.0)] {
             let mut r = Planer::neu(flug(120));
