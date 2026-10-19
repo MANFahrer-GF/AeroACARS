@@ -23,6 +23,10 @@ pub enum Rolle {
 pub enum Slot {
     // ---- Normalflug (Leitfaden Abschnitt 2) ----
     Boarding,
+    /// „Boarding completed.“ — interne Meldung der Kabine an das Cockpit
+    /// (v2.0.28, Peter): fester englischer Text wie die Kommandos, aber mit
+    /// der Kabinenstimme.
+    BoardingAbgeschlossen,
     BegruessungTuerenZu,
     KommandoTuerenScharf,
     Sicherheit,
@@ -51,8 +55,9 @@ pub enum Slot {
 }
 
 impl Slot {
-    pub const ALLE: [Slot; 25] = [
+    pub const ALLE: [Slot; 26] = [
         Slot::Boarding,
+        Slot::BoardingAbgeschlossen,
         Slot::BegruessungTuerenZu,
         Slot::KommandoTuerenScharf,
         Slot::Sicherheit,
@@ -82,7 +87,8 @@ impl Slot {
     pub fn rolle(self) -> Rolle {
         use Slot::*;
         match self {
-            KommandoTuerenScharf
+            BoardingAbgeschlossen
+            | KommandoTuerenScharf
             | KommandoStart
             | KommandoLandungVorbereiten
             | KommandoPlaetzeLandung
@@ -127,7 +133,7 @@ impl Slot {
             VerspaetungGate => 45,
             Turbulenz | TurbulenzVorbei => 30,
             Warteschleife | Durchstarten | Umleitung => 45,
-            KommandoTuerenScharf | KommandoStart | KommandoLandungVorbereiten
+            BoardingAbgeschlossen | KommandoTuerenScharf | KommandoStart | KommandoLandungVorbereiten
             | KommandoPlaetzeLandung | KommandoTuerenEntschaerfen => 5,
             Chime10000Steigflug | Chime10000Sinkflug => 0,
         };
@@ -178,6 +184,7 @@ impl Slot {
     /// `None` für alle anderen Slots.
     pub fn kommando_text(self) -> Option<&'static str> {
         match self {
+            Slot::BoardingAbgeschlossen => Some("Boarding completed."),
             Slot::KommandoTuerenScharf => Some("Cabin crew, doors to automatic and cross-check."),
             Slot::KommandoStart => Some("Cabin crew, please take your seats for take-off."),
             Slot::KommandoLandungVorbereiten => Some("Cabin crew, prepare for landing."),
@@ -255,7 +262,7 @@ mod tests {
         assert_eq!(
             namen,
             [
-                "boarding", "begruessung_tueren_zu", "kommando_tueren_scharf", "sicherheit",
+                "boarding", "boarding_abgeschlossen", "begruessung_tueren_zu", "kommando_tueren_scharf", "sicherheit",
                 "kapitaen_begruessung", "kommando_start", "chime10000_steigflug", "anschnallzeichen_aus",
                 "reiseflug25", "reiseflug50", "reiseflug80", "kapitaen_sinkflug", "kabine_sinkflug",
                 "chime10000_sinkflug", "kommando_landung_vorbereiten", "kommando_plaetze_landung",

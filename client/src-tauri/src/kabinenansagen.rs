@@ -265,6 +265,8 @@ struct Ton {
     /// Satz-Startzeiten aus dem WAV-Abschnitt `satz` (Ton-Server); leer bei
     /// älteren Tönen — dann schätzt die Seite.
     stuecke: Vec<Stueck>,
+    /// Für das Auswertungs-Log: `lokal` (Zwischenspeicher), `server`, `ersatz`.
+    herkunft: &'static str,
 }
 
 /// Ein gesprochenes Stück (Satz) mit Startzeit, für die Untertitel.
@@ -377,6 +379,77 @@ pub(crate) struct Lauf {
     reiseflug_seit: Option<i64>,
     /// Hinweis an den Piloten (z. B. „anschnallzeichen“), sonst `None`.
     hinweis: Option<&'static str>,
+    /// Auswertungs-Log (v2.0.28): Einträge fürs Flugprotokoll, geschrieben
+    /// im nächsten Takt außerhalb der Flugdaten-Sperre.
+    protokoll: Vec<Notiz>,
+    /// Zuletzt protokollierter Wartegrund je fälliger Ansage (nur Wechsel).
+    wartet_zuletzt: HashMap<Slot, Option<Wartet>>,
+    /// Zuletzt protokollierte Abwahl des Piloten samt Kommando- und
+    /// Gong-Schalter (nur Wechsel).
+    abgewaehlt_zuletzt: Option<Vec<Slot>>,
+}
+
+/// Ein Eintrag des Auswertungs-Logs (`FlightLogEvent::Kabine`).
+#[derive(Debug, Clone)]
+struct Notiz {
+    zeit: DateTime<Utc>,
+    art: &'static str,
+    slot: Option<Slot>,
+    sprache: Option<String>,
+    details: serde_json::Value,
+}
+
+/// Merkt einen Schritt einer Ansage fürs Flugprotokoll vor (v2.0.28: „ob der
+/// Server rechtzeitig angenommen und geliefert hat — das muss man aus den
+/// Logs lesen können“, Thomas 19.10.2026).
+fn notiz(lauf: &mut Lauf, art: &'static str, slot: Option<Slot>, sprache: Option<&str>, details: serde_json::Value) {
+    lauf.protokoll.push(Notiz { zeit: Utc::now(), art, slot, sprache: sprache.map(str::to_string), details });
+}
+
+/// Nimmt die vorgemerkten Einträge (kurz gesperrt) und schreibt sie ohne
+/// Sperre — nach jedem Takt (auch bei frühem Ende) und nach Antworten des
+/// Servers, damit am Flugende nichts im Puffer liegen bleibt (Codex 2.0.28).
+fn protokoll_leeren(app: &AppHandle, flight: &ActiveFlight) {
+    // Entnehmen und Schreiben am Stück, damit zwei gleichzeitige Leerungen
+    // (Takt und Serverantwort) die Reihenfolge im Protokoll nicht vertauschen
+    // (Codex 2.0.28). Nie unter der Flugdaten-Sperre aufrufen.
+    static SCHREIBEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _reihe = SCHREIBEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let notizen = std::mem::take(&mut flight.stats.lock().expect("flight stats").kabinen_lauf.protokoll);
+    if !notizen.is_empty() {
+        protokoll_schreiben(app, flight, notizen);
+    }
+}
+
+/// Schreibt die vorgemerkten Einträge ins Flugprotokoll (ohne Sperre).
+fn protokoll_schreiben(app: &AppHandle, flight: &ActiveFlight, notizen: Vec<Notiz>) {
+    for n in notizen {
+        let slot = n.slot.map(slot_name);
+        tracing::info!(art = n.art, slot = ?slot, sprache = ?n.sprache, details = %n.details, "kabine");
+        crate::record_event(
+            app,
+            &flight.pirep_id,
+            &recorder::FlightLogEvent::Kabine { timestamp: n.zeit, art: n.art.to_string(), slot, sprache: n.sprache, details: n.details },
+        );
+    }
+}
+
+/// Dieselbe Ampel wie das Ladeblatt im Cockpit-Tab (`LoadsheetMonitor.tsx`,
+/// `LsRow`): je Zeile (Ist, Soll, Max) grün bei unter 5 % Abweichung und nicht
+/// über Max; Zeilen ohne Ist und Soll fehlen dort. `None` = keine Soll-Werte
+/// (kein SimBrief-OFP).
+pub(crate) fn ladeblatt_gruen(zeilen: &[(Option<f32>, Option<f32>, Option<f32>)]) -> Option<bool> {
+    if zeilen.iter().all(|(_, soll, _)| soll.is_none()) {
+        return None;
+    }
+    Some(zeilen.iter().all(|(ist, soll, max)| {
+        let abw_ok = match (ist, soll) {
+            (Some(i), Some(s)) if *s != 0.0 => ((i - s) / s).abs() * 100.0 < 5.0,
+            _ => true,
+        };
+        let ueber_max = matches!((ist, max), (Some(i), Some(m)) if i > m);
+        abw_ok && !ueber_max
+    }))
 }
 
 /// Männliche Stimme? Folgt dem Geschlecht der Crew (Server); ohne Angabe
@@ -397,6 +470,9 @@ fn stimme_maennlich(lauf: &Lauf, rolle: Rolle) -> bool {
 fn rolle_von(lauf: &Lauf, slot: Slot) -> Rolle {
     if slot == Slot::Sicherheit && lauf.sicherheit_kapitaen {
         Rolle::Kapitaen
+    } else if slot == Slot::BoardingAbgeschlossen {
+        // Fester englischer Text wie ein Kommando, aber die Kabine spricht.
+        Rolle::Kabine
     } else {
         slot.rolle()
     }
@@ -464,7 +540,8 @@ const ABFLUG: [Slot; 8] = [
     Slot::Reiseflug80,
 ];
 const ANKUNFT: [Slot; 4] = [Slot::KapitaenSinkflug, Slot::KabineSinkflug, Slot::NachDerLandung, Slot::Aussteigen];
-const KOMMANDOS: [Slot; 5] = [
+const KOMMANDOS: [Slot; 6] = [
+    Slot::BoardingAbgeschlossen,
     Slot::KommandoTuerenScharf,
     Slot::KommandoStart,
     Slot::KommandoLandungVorbereiten,
@@ -552,13 +629,30 @@ pub(crate) fn takt(
     snap: &SimSnapshot,
     now: DateTime<Utc>,
 ) {
+    takt_schritt(app, flight, client, snap, now);
+    protokoll_leeren(app, flight);
+}
+
+fn takt_schritt(
+    app: &AppHandle,
+    flight: &Arc<ActiveFlight>,
+    client: &Client,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+) {
     let einst = einstellungen(app);
     if !einst.an {
         return;
     }
     let jetzt = now.timestamp();
+    // Verlaufsdatei ohne Flugdaten-Sperre lesen (v2.0.28: das Lesen hielt die
+    // Sperre beim ersten Takt bis 39 ms, Diagnose Pilot 1 und 4).
+    let geladen = flight.stats.lock().expect("flight stats").kabinen_lauf.verlauf_geladen;
+    let alt = if geladen { None } else { Some(verlauf_datei_lesen(app, flight)) };
     let mut stats = flight.stats.lock().expect("flight stats");
-    verlauf_laden(app, flight, &mut stats.kabinen_lauf);
+    if let Some(alt) = alt {
+        verlauf_uebernehmen(&mut stats.kabinen_lauf, alt);
+    }
     // Sim angehalten oder im Slew: Der Takt steht, die Seite sagt es.
     stats.kabinen_lauf.sim_angehalten = snap.paused || snap.slew_mode;
     if stats.kabinen_lauf.sim_angehalten || stats.replay_verdacht {
@@ -630,7 +724,23 @@ pub(crate) fn takt(
     if flugart == Flugart::Aus {
         return;
     }
-    let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao, &einst.abgewaehlt());
+    let abgewaehlt = einst.abgewaehlt();
+    // Abwahl ins Log (einmal je Flug und bei jeder Änderung, auch der
+    // Schalter für Kommandos und Gong), damit sich „abgewählt“ von „kam
+    // nicht“ unterscheiden lässt.
+    let mut liste = abgewaehlt.clone();
+    if !einst.kommandos {
+        liste.extend(KOMMANDOS.into_iter().filter(|s| *s != Slot::BoardingAbgeschlossen));
+    }
+    if !einst.chimes {
+        liste.extend(GONGS);
+    }
+    if stats.kabinen_lauf.abgewaehlt_zuletzt.as_ref() != Some(&liste) {
+        let details = serde_json::json!({ "slots": liste.iter().map(|s| slot_name(*s)).collect::<Vec<_>>() });
+        notiz(&mut stats.kabinen_lauf, "abgewaehlt", None, None, details);
+        stats.kabinen_lauf.abgewaehlt_zuletzt = Some(liste);
+    }
+    let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao, &abgewaehlt);
     stats.kabinen_lauf.ruhephase = schritt.ruhephase;
     hinweis_pruefen(&mut stats, snap, schritt.phase, jetzt);
     let mut verlauf_neu = false;
@@ -641,7 +751,9 @@ pub(crate) fn takt(
             cabin_announcements::Entfall::ZuWenigZeit => "zu_wenig_zeit",
             cabin_announcements::Entfall::Uebersprungen => "uebersprungen",
             cabin_announcements::Entfall::TuerenSchonZu => "tueren_zu",
+            cabin_announcements::Entfall::OhneLadeblatt => "ohne_ladeblatt",
         };
+        notiz(&mut stats.kabinen_lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
         verbuchen(&mut stats.kabinen_lauf, slot, "entfallen", Some(grund), jetzt);
         verlauf_neu = true;
     }
@@ -650,16 +762,39 @@ pub(crate) fn takt(
         .into_iter()
         .filter(|f| match f.slot.rolle() {
             Rolle::Chime => einst.chimes,
-            Rolle::Kommando => einst.kommandos,
+            // „Boarding completed“ ist eine Kabinenmeldung mit eigener Abwahl,
+            // kein Crew-Kommando (Codex 2.0.28).
+            Rolle::Kommando => einst.kommandos || f.slot == Slot::BoardingAbgeschlossen,
             _ => true,
         })
         .collect();
+    for f in &faellig {
+        let details = serde_json::json!({
+            "phase": schritt.phase,
+            "hoehe_ft": snap.altitude_msl_ft.round(),
+            "agl_ft": snap.altitude_agl_ft.round(),
+            "vs_fpm": snap.vertical_speed_fpm.round(),
+            "am_boden": snap.on_ground,
+            "anschnallzeichen": snap.seatbelts_sign,
+            "beacon": snap.light_beacon,
+            "landelicht": snap.light_landing,
+            "fahrwerk": snap.gear_position,
+            "triebwerke": snap.engines_running,
+            "zfw_kg": stats.last_zfw_kg,
+            "zfw_plan_kg": stats.planned_zfw_kg,
+            "ruhephase": schritt.ruhephase,
+            "trotz_ruhephase": f.trotz_ruhephase,
+            "rest_min": schritt.rest_min.map(f64::round),
+        });
+        notiz(&mut stats.kabinen_lauf, "gemeldet", Some(f.slot), None, details);
+    }
     // Stumm: Fälliges wird gleich als übersprungen verbucht, nicht eingereiht
     // (kommt auch nach dem Aufheben nicht nach — Thomas 18.10.2026).
     if STUMM.load(Ordering::SeqCst) {
         verlauf_neu |= stumm_anwenden(&mut stats, jetzt);
         let mut kapitaen = false;
         for f in faellig.drain(..) {
+            notiz(&mut stats.kabinen_lauf, "stumm", Some(f.slot), None, serde_json::Value::Null);
             verbuchen(&mut stats.kabinen_lauf, f.slot, "stumm", None, jetzt);
             kapitaen |= f.slot == Slot::KapitaenSinkflug;
             verlauf_neu = true;
@@ -705,7 +840,7 @@ pub(crate) fn takt(
     }
     for (schluessel, slots, anlass) in auftraege {
         let anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
-        holen(Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
+        holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
     }
 
     // ---- Ton: das Dringendste zuerst, höchstens zwei zugleich ----
@@ -719,10 +854,22 @@ pub(crate) fn takt(
         && cabin_announcements::planer::rang(schritt.phase) < cabin_announcements::planer::rang(FlightPhase::Cruise);
     let (gespielt, neu) = abspielen_schritt(&mut stats, jetzt, schritt.phase, schritt.ruhephase, tief_nach_start);
     verlauf_neu |= neu;
-    if verlauf_neu {
-        verlauf_speichern(app, flight, &stats.kabinen_lauf);
+    wartegruende_notieren(&mut stats.kabinen_lauf, jetzt);
+    if let Some(g) = &gespielt {
+        let details = serde_json::json!({
+            "dauer_s": g.teile.iter().map(|t| t.dauer_s).sum::<f64>(),
+            "sprachen": g.teile.iter().map(|t| t.sprache.clone()).collect::<Vec<_>>(),
+            "phase": schritt.phase,
+            "hoehe_ft": snap.altitude_msl_ft.round(),
+        });
+        notiz(&mut stats.kabinen_lauf, "spielt", Some(g.slot), None, details);
     }
+    let text = verlauf_neu.then(|| verlauf_text(&stats.kabinen_lauf)).flatten();
     drop(stats);
+    // Datei ohne Flugdaten-Sperre schreiben (v2.0.28); das Log schreibt `takt`.
+    if let Some(text) = text {
+        verlauf_schreiben(app, flight, &text);
+    }
     let Some(gespielt) = gespielt else { return };
     tracing::info!(slot = ?gespielt.slot, "kabinenansage spielt");
     if let Err(e) = app.emit(EREIGNIS_ANSAGE, gespielt.clone()) {
@@ -761,6 +908,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     let weg: Vec<(Slot, String)> = lauf.entfaellt.iter().map(|(s, g)| (*s, g.clone())).collect();
     for (slot, grund) in weg {
         if lauf.warteschlange.entfernen(slot) {
+            notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
             verbuchen(lauf, slot, "entfallen", Some(&grund), jetzt);
             verlauf_neu = true;
         }
@@ -779,8 +927,8 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     // Verfallene in jedem Takt abholen (nicht nur, wenn nichts spielt) und in
     // „Bisher“ mit Grund zeigen: Ton nicht rechtzeitig fertig oder zu spät dran.
     for weg in lauf.warteschlange.verfallene_abholen() {
-        tracing::info!(slot = ?weg, "kabinenansage verfallen");
         let grund = if ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.sprachen, weg) { "zu_spaet" } else { "ton_nicht_fertig" };
+        notiz(lauf, "verfallen", Some(weg), None, serde_json::json!({ "grund": grund }));
         verbuchen(lauf, weg, "entfallen", Some(grund), jetzt);
         verfallen_aufraeumen(lauf, weg);
         kapitaen_kommt_nicht |= weg == Slot::KapitaenSinkflug;
@@ -816,7 +964,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             Some(g)
         }
         None => {
-            tracing::info!(slot = ?slot, "kabinenansage ohne Stimme entfällt");
+            notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": "keine_stimme" }));
             verbuchen(lauf, slot, "entfallen", Some("keine_stimme"), jetzt);
             kapitaen_kommt_nicht |= slot == Slot::KapitaenSinkflug;
             verlauf_neu = true;
@@ -944,10 +1092,11 @@ fn ton_kandidaten(stats: &FlightStats, kommandos: bool, flugart: Flugart, jetzt:
         .iter()
         .map(|((s, sp), t)| (*s, sp.clone(), t.clone()))
         .collect();
-    if kommandos {
+    {
         kandidaten.extend(
             KOMMANDOS
                 .into_iter()
+                .filter(|s| kommandos || *s == Slot::BoardingAbgeschlossen)
                 .filter(|s| flugart.erlaubt(*s))
                 .filter_map(|s| s.kommando_text().map(|t| (s, "en-GB".to_string(), t.to_string()))),
         );
@@ -975,13 +1124,33 @@ fn ton_auftrag(
         lauf.ton_laufend += 1;
     }
     let maennlich = stimme_maennlich(lauf, rolle_von(lauf, slot));
+    notiz(lauf, "ton_anfrage", Some(slot), Some(&sprache), serde_json::json!({ "gebraucht_in_s": gebraucht_in_s, "faellig": faellig }));
     let ordner = flug_ordner(flight);
     let (app, flight) = (app.clone(), Arc::clone(flight));
     tauri::async_runtime::spawn(async move {
+        let gestartet = Utc::now();
         let wunsch = Wunsch { slot: Some(slot), gebraucht_in_s, ordner: &ordner };
         let ergebnis = sprechen(&app, maennlich, &sprache, &text, wunsch).await;
+        let dauer_ms = (Utc::now() - gestartet).num_milliseconds();
         let mut stats = flight.stats.lock().expect("flight stats");
         let lauf = &mut stats.kabinen_lauf;
+        let (ergebnis_art, meldung, ton_s, herkunft) = match &ergebnis {
+            Ok(Some(t)) => ("ok", None, Some(t.dauer_s), Some(t.herkunft)),
+            Ok(None) => ("keine_stimme", None, None, None),
+            Err(f) if f.endgueltig => ("abgelehnt", Some(f.meldung.clone()), None, None),
+            Err(f) => ("fehler", Some(f.meldung.clone()), None, None),
+        };
+        let details = serde_json::json!({
+            "angefragt_um": gestartet.to_rfc3339(),
+            "dauer_ms": dauer_ms,
+            "gebraucht_in_s": gebraucht_in_s,
+            "faellig": faellig,
+            "ergebnis": ergebnis_art,
+            "meldung": meldung,
+            "ton_s": ton_s,
+            "herkunft": herkunft,
+        });
+        notiz(lauf, "ton_antwort", Some(slot), Some(&sprache), details);
         let k = (slot, sprache);
         lauf.in_arbeit.remove(&k);
         if !faellig {
@@ -990,6 +1159,8 @@ fn ton_auftrag(
         // Kam inzwischen ein neuer Text (zweite Turbulenz o. ä.), gehört
         // dieser Ton zum alten: verwerfen, der neue wird angefragt.
         if lauf.texte.get(&k).is_some_and(|t| *t != text) {
+            drop(stats);
+            protokoll_leeren(&app, &flight);
             return;
         }
         match ergebnis {
@@ -1008,6 +1179,8 @@ fn ton_auftrag(
                 lauf.ton_fehler.insert(k, TonFehler { versuche, ab, meldung: f.meldung });
             }
         }
+        drop(stats);
+        protokoll_leeren(&app, &flight);
     });
 }
 
@@ -1175,6 +1348,7 @@ fn drehbuch_uebernehmen(lauf: &mut Lauf, d: api_client::KabinenDrehbuch, slots: 
 }
 
 fn holen(
+    app: AppHandle,
     flight: Arc<ActiveFlight>,
     client: Client,
     schluessel: String,
@@ -1184,11 +1358,19 @@ fn holen(
     bizjet: bool,
 ) {
     tauri::async_runtime::spawn(async move {
+        let gestartet = Utc::now();
+        {
+            let details = serde_json::json!({ "teil": schluessel, "slots": slots.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(), "nachholung": nachholung });
+            notiz(&mut flight.stats.lock().expect("flight stats").kabinen_lauf, "text_anfrage", None, None, details);
+        }
+        protokoll_leeren(&app, &flight);
         let ergebnis = client.kabinen_drehbuch(&anfrage).await;
+        let dauer_ms = (Utc::now() - gestartet).num_milliseconds();
         let mut fehlend: Vec<Slot> = Vec::new();
         {
             let mut stats = flight.stats.lock().expect("flight stats");
             let lauf = &mut stats.kabinen_lauf;
+            let fehler = ergebnis.as_ref().err().map(|e| kurz(&e.to_string()));
             match ergebnis {
                 Ok(d) => {
                     fehlend = drehbuch_uebernehmen(lauf, d, &slots, bizjet);
@@ -1216,12 +1398,23 @@ fn holen(
                     lauf.fehlversuche.insert(basis, (n, Utc::now().timestamp() + 120));
                 }
             }
+            let details = serde_json::json!({
+                "teil": schluessel,
+                "angefragt_um": gestartet.to_rfc3339(),
+                "dauer_ms": dauer_ms,
+                "slots": slots.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(),
+                "fehlend": fehlend.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(),
+                "nachholung": nachholung,
+                "fehler": fehler,
+            });
+            notiz(lauf, "text_antwort", None, None, details);
         }
+        protokoll_leeren(&app, &flight);
         if !nachholung && !fehlend.is_empty() {
             let mut erneut = anfrage.clone();
             erneut["slots"] = serde_json::json!(fehlend.iter().map(|s| slot_name(*s)).collect::<Vec<_>>());
             tracing::info!(teil = %schluessel, fehlend = ?fehlend, "kabinenansagen: fehlende Texte nachholen");
-            holen(flight, client, format!("{schluessel}+"), erneut, fehlend, true, bizjet);
+            holen(app, flight, client, format!("{schluessel}+"), erneut, fehlend, true, bizjet);
         }
     });
 }
@@ -1382,7 +1575,8 @@ async fn sprechen(app: &AppHandle, maennlich: bool, sprache: &str, text: &str, w
     };
     let pfad = ordner.join(&name);
     std::fs::write(&pfad, &ton.wav).map_err(|e| TonFehlerAntwort::spaeter(e.to_string(), None))?;
-    ton_aus_datei(&pfad, relativ(&name)).map(Some).map_err(|e| TonFehlerAntwort::spaeter(e, None))
+    let herkunft = if ton.ersatz { "ersatz" } else { "server" };
+    ton_aus_datei(&pfad, relativ(&name)).map(|t| Some(Ton { herkunft, ..t })).map_err(|e| TonFehlerAntwort::spaeter(e, None))
 }
 
 /// `auto:<sprache>:<m|w>` → vom Server gewaehlte Stimme, je Sitzung.
@@ -1395,7 +1589,7 @@ fn ton_aus_datei(pfad: &Path, name: String) -> Result<Ton, String> {
         let _ = std::fs::remove_file(pfad);
         "kein gültiges WAV".to_string()
     })?;
-    Ok(Ton { datei: name, dauer_s, stuecke: wav_stuecke(&daten) })
+    Ok(Ton { datei: name, dauer_s, stuecke: wav_stuecke(&daten), herkunft: "lokal" })
 }
 
 /// Satz-Startzeiten aus dem RIFF-Abschnitt `satz` (UTF-8-JSON
@@ -1518,12 +1712,18 @@ fn verlauf_pfad(app: &AppHandle, flight: &ActiveFlight) -> Option<PathBuf> {
     ton_ordner(app, &flug_ordner(flight)).ok().map(|d| d.join("verlauf.json"))
 }
 
-fn verlauf_laden(app: &AppHandle, flight: &ActiveFlight, lauf: &mut Lauf) {
+/// Liest die Verlaufsdatei (ohne Sperre aufrufen).
+fn verlauf_datei_lesen(app: &AppHandle, flight: &ActiveFlight) -> Option<String> {
+    verlauf_pfad(app, flight).and_then(|p| std::fs::read_to_string(p).ok())
+}
+
+/// Übernimmt den gelesenen Verlauf einmal je Flug.
+fn verlauf_uebernehmen(lauf: &mut Lauf, text: Option<String>) {
     if lauf.verlauf_geladen {
         return;
     }
     lauf.verlauf_geladen = true;
-    let Some(text) = verlauf_pfad(app, flight).and_then(|p| std::fs::read_to_string(p).ok()) else { return };
+    let Some(text) = text else { return };
     if let Ok(mut alt) = serde_json::from_str::<Vec<Gespielt>>(&text) {
         for g in &mut alt {
             // Lief beim Beenden der App noch: Ausgang unbekannt.
@@ -1538,10 +1738,37 @@ fn verlauf_laden(app: &AppHandle, flight: &ActiveFlight, lauf: &mut Lauf) {
 }
 
 fn verlauf_speichern(app: &AppHandle, flight: &ActiveFlight, lauf: &Lauf) {
-    if let Some(p) = verlauf_pfad(app, flight) {
-        if let Ok(text) = serde_json::to_string(&lauf.verlauf) {
-            let _ = std::fs::write(p, text);
-        }
+    if let Some(text) = verlauf_text(lauf) {
+        verlauf_schreiben(app, flight, &text);
+    }
+}
+
+/// Fortlaufende Nummer jeder Verlaufs-Fassung. Vergeben, solange der Aufrufer
+/// die Flugdaten-Sperre hält — die Nummer folgt also dem Stand.
+static VERLAUF_FASSUNG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Eine Verlaufs-Fassung zum Schreiben (Nummer, JSON). Unter der Sperre bauen.
+struct VerlaufText(u64, String);
+
+fn verlauf_text(lauf: &Lauf) -> Option<VerlaufText> {
+    let text = serde_json::to_string(&lauf.verlauf).ok()?;
+    Some(VerlaufText(VERLAUF_FASSUNG.fetch_add(1, Ordering::SeqCst) + 1, text))
+}
+
+/// Schreibt ohne Flugdaten-Sperre, aber geordnet: Eine ältere Fassung
+/// überschreibt nie eine neuere (Takt und Befehle der Oberfläche laufen
+/// gleichzeitig), und die Datei wird über eine Zwischendatei ersetzt, damit
+/// nie halbes JSON liegt (Codex-Review PR #158).
+fn verlauf_schreiben(app: &AppHandle, flight: &ActiveFlight, text: &VerlaufText) {
+    static GESCHRIEBEN: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+    let Some(p) = verlauf_pfad(app, flight) else { return };
+    let mut zuletzt = GESCHRIEBEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if text.0 <= *zuletzt {
+        return;
+    }
+    let zwischen = p.with_extension("json.neu");
+    if std::fs::write(&zwischen, &text.1).is_ok() && std::fs::rename(&zwischen, &p).is_ok() {
+        *zuletzt = text.0;
     }
 }
 
@@ -1560,9 +1787,14 @@ fn aktiver_flug(state: &AppState) -> Option<Arc<ActiveFlight>> {
 pub(crate) fn kabinen_wiedergabe_ende(app: AppHandle, state: tauri::State<'_, AppState>, id: u64, ergebnis: String) {
     let Some(flight) = aktiver_flug(&state) else { return };
     let mut stats = flight.stats.lock().expect("flight stats");
-    if ende_melden(&mut stats, id, &ergebnis, Utc::now().timestamp()) {
-        verlauf_speichern(&app, &flight, &stats.kabinen_lauf);
+    let text = if ende_melden(&mut stats, id, &ergebnis, Utc::now().timestamp()) { verlauf_text(&stats.kabinen_lauf) } else { None };
+    // Gleich schreiben (die letzte Ansage des Fluges hat keinen Takt mehr
+    // danach), Datei und Protokoll ohne Flugdaten-Sperre.
+    drop(stats);
+    if let Some(text) = text {
+        verlauf_schreiben(&app, &flight, &text);
     }
+    protokoll_leeren(&app, &flight);
 }
 
 /// Wie [`wiedergabe_ende`], dazu erfährt der Planer, ob die Sinkflug-Ansage
@@ -1572,6 +1804,9 @@ fn ende_melden(stats: &mut FlightStats, id: u64, ergebnis: &str, jetzt: i64) -> 
         return false;
     }
     let ende = stats.kabinen_lauf.verlauf.iter().find(|g| g.id == id).map(|g| (g.slot, g.ergebnis.as_deref() == Some("gespielt")));
+    if let Some((slot, _)) = ende {
+        notiz(&mut stats.kabinen_lauf, "ende", Some(slot), None, serde_json::json!({ "ergebnis": ergebnis }));
+    }
     if let (Some((Slot::KapitaenSinkflug, gespielt)), Some(p)) = (ende, stats.kabinen_planer.as_mut()) {
         p.kapitaen_sinkflug_ende(gespielt, jetzt);
     }
@@ -1772,6 +2007,40 @@ pub(crate) enum Wartet {
     Anschnallzeichen,
 }
 
+/// Warum eine fällige Ansage gerade nicht spielt (für Seite und Log).
+fn wartegrund(lauf: &Lauf, slot: Slot, jetzt: i64) -> Option<Wartet> {
+    // „Anschnallzeichen aus“ wartet auf den Piloten (Hinweis).
+    if slot == Slot::AnschnallzeichenAus && lauf.hinweis == Some("anschnallzeichen") {
+        return Some(Wartet::Anschnallzeichen);
+    }
+    if lauf.sim_angehalten {
+        Some(Wartet::SimAngehalten)
+    } else if lauf.warteschlange.belegt(jetzt) {
+        Some(Wartet::AndereAnsage)
+    } else if lauf.warteschlange.in_pause(jetzt) && slot.wartet_pause() {
+        Some(Wartet::Pause)
+    } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() && !lauf.warteschlange.trotz_ruhephase(slot) {
+        Some(Wartet::Ruhephase)
+    } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.sprachen, slot) {
+        Some(Wartet::Ton)
+    } else {
+        None // spielt im nächsten Takt
+    }
+}
+
+/// Protokolliert, wenn sich der Wartegrund einer fälligen Ansage ändert.
+fn wartegruende_notieren(lauf: &mut Lauf, jetzt: i64) {
+    let wartend = lauf.warteschlange.wartend();
+    lauf.wartet_zuletzt.retain(|s, _| wartend.contains(s));
+    for slot in wartend {
+        let grund = wartegrund(lauf, slot, jetzt);
+        if lauf.wartet_zuletzt.get(&slot) != Some(&grund) {
+            lauf.wartet_zuletzt.insert(slot, grund);
+            notiz(lauf, "wartet", Some(slot), None, serde_json::json!({ "grund": grund }));
+        }
+    }
+}
+
 /// Text einer Sprache für die aufklappbare Zeile.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TeilAnsicht {
@@ -1960,6 +2229,8 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
     let mut slots: Vec<Slot> = ABFLUG.into_iter().chain(ANKUNFT).collect();
     if einst.kommandos {
         slots.extend(KOMMANDOS);
+    } else {
+        slots.push(Slot::BoardingAbgeschlossen);
     }
     if einst.chimes {
         slots.extend(GONGS);
@@ -1976,23 +2247,14 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
                 return None;
             }
             let faellig = wartend.contains(&slot);
-            let wartet = if !faellig {
-                None
-            } else if lauf.sim_angehalten {
-                Some(Wartet::SimAngehalten)
-            } else if lauf.warteschlange.belegt(jetzt) {
-                Some(Wartet::AndereAnsage)
-            } else if lauf.warteschlange.in_pause(jetzt) && slot.wartet_pause() {
-                Some(Wartet::Pause)
-            } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() {
-                Some(Wartet::Ruhephase)
-            } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.sprachen, slot) {
-                Some(Wartet::Ton)
+            let wartet = if faellig {
+                wartegrund(lauf, slot, jetzt)
+            } else if slot == Slot::AnschnallzeichenAus && lauf.hinweis == Some("anschnallzeichen") {
+                // Wartet auf den Piloten, auch bevor sie fällig ist (Hinweis).
+                Some(Wartet::Anschnallzeichen)
             } else {
-                None // spielt im nächsten Takt
+                None
             };
-            // „Anschnallzeichen aus“ wartet auf den Piloten (Hinweis).
-            let wartet = if slot == Slot::AnschnallzeichenAus && lauf.hinweis == Some("anschnallzeichen") { Some(Wartet::Anschnallzeichen) } else { wartet };
             let art = (slot == Slot::Reiseflug80).then(|| lauf.art_r80.clone()).flatten();
             Some(Geplant { slot, rolle: rolle_von(lauf, slot), faellig, wartet, wann: planer.zeitpunkt(slot, landung), stand, teile, art })
         })
@@ -2125,8 +2387,12 @@ fn ueberblick_bauen(stats: &FlightStats, einst: &Einstellungen, flug: &cabin_ann
 pub(crate) fn kabinen_ueberblick(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ueberblick> {
     let flight = aktiver_flug(&state)?;
     let einst = einstellungen(&app);
+    let geladen = flight.stats.lock().expect("flight stats").kabinen_lauf.verlauf_geladen;
+    let alt = if geladen { None } else { Some(verlauf_datei_lesen(&app, &flight)) };
     let mut stats = flight.stats.lock().expect("flight stats");
-    verlauf_laden(&app, &flight, &mut stats.kabinen_lauf);
+    if let Some(alt) = alt {
+        verlauf_uebernehmen(&mut stats.kabinen_lauf, alt);
+    }
     let flug = crate::kabinen_flugdaten(&stats, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao);
     Some(ueberblick_bauen(&stats, &einst, &flug, &flight.aircraft_icao, Utc::now().timestamp()))
 }
@@ -2802,7 +3068,7 @@ mod tests {
     }
 
     fn ton() -> Option<Ton> {
-        Some(Ton { datei: "f/x.wav".into(), dauer_s: 1.0, stuecke: vec![] })
+        Some(Ton { datei: "f/x.wav".into(), dauer_s: 1.0, stuecke: vec![], herkunft: "server" })
     }
 
     fn einst() -> Einstellungen {
@@ -2889,7 +3155,7 @@ mod tests {
         st.kabinen_planer = Some(planer_mit(Flugart::Linie, crate::FlightPhase::Cruise));
         st.phase = crate::FlightPhase::Cruise;
         st.kabinen_lauf.sprachen = vec!["de-DE".into()];
-        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         let z = zeile(&st, Slot::Reiseflug50).unwrap();
         assert!(z.faellig);
         assert_eq!(z.wartet, Some(Wartet::Ton), "noch kein Text/Ton");
@@ -3001,8 +3267,8 @@ mod tests {
         st.kabinen_lauf.naechste_id = 1;
         st.kabinen_lauf.warteschlange.ansage_spielt_bis(100);
         st.kabinen_lauf.warteschlange.aufnehmen([
-            Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::Um(9_999) },
-            Faellig { slot: Slot::Turbulenz, verfall: cabin_announcements::Verfall::Um(9_999) },
+            Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false },
+            Faellig { slot: Slot::Turbulenz, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false },
         ]);
         assert!(stumm_anwenden(&mut st, 10));
         let l = &st.kabinen_lauf;
@@ -3033,8 +3299,8 @@ mod tests {
         // R80: Ton fehlt bis zum Verfall → „Ton nicht fertig“.
         st.kabinen_lauf = lauf_mit_ton(&[Slot::Reiseflug50]);
         st.kabinen_lauf.warteschlange.aufnehmen([
-            Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::AbPhase(Descent) },
-            Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::AbPhase(Descent) },
+            Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::AbPhase(Descent), trotz_ruhephase: false },
+            Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::AbPhase(Descent), trotz_ruhephase: false },
         ]);
         let (g, neu) = abspielen_schritt(&mut st, 100, Cruise, true, false);
         assert!(g.is_none() && !neu, "Ruhephase: wartet noch");
@@ -3048,13 +3314,13 @@ mod tests {
         st.kabinen_lauf = lauf_mit_ton(&[]);
         st.kabinen_lauf.texte.insert((Slot::Reiseflug25, "de-DE".into()), "x".into());
         st.kabinen_lauf.ton.insert((Slot::Reiseflug25, "de-DE".into()), None);
-        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug25, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug25, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         let (g, _) = abspielen_schritt(&mut st, 10, Cruise, false, false);
         assert!(g.is_none());
         assert_eq!(st.kabinen_lauf.verlauf[0].grund.as_deref(), Some("keine_stimme"));
         // Sicher entfallend (Bizjet ohne Kurzfassung): aus der Warteschlange raus.
         st.kabinen_lauf.entfaellt.insert(Slot::Sicherheit, "kein_kurztext".into());
-        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Sicherheit, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Sicherheit, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         abspielen_schritt(&mut st, 20, Cruise, false, false);
         assert!(st.kabinen_lauf.warteschlange.ist_leer());
         assert_eq!(st.kabinen_lauf.verlauf.last().and_then(|g| g.grund.as_deref()), Some("kein_kurztext"));
@@ -3087,7 +3353,7 @@ mod tests {
                     Rolle::Kommando => 4.0,
                     _ => 30.0,
                 };
-                st.kabinen_lauf.ton.insert((s, sp.into()), Some(Ton { datei: "f/x.wav".into(), dauer_s, stuecke: vec![] }));
+                st.kabinen_lauf.ton.insert((s, sp.into()), Some(Ton { datei: "f/x.wav".into(), dauer_s, stuecke: vec![], herkunft: "server" }));
             }
         }
         st.kabinen_lauf.sicherheit_kapitaen = flugart == Flugart::Bizjet;
@@ -3135,6 +3401,7 @@ mod tests {
         schieben(Arrived, 3 * 60, 0.0, 0.0, Some(0), &mut ticks);
 
         let mitte = abheben + steig + reise / 2;
+        let zfw = |t: i64| 50_000.0 + 22_000.0 * ((t - start - 120) as f64 / 360.0).clamp(0.0, 1.0);
         let mut gespielt = Vec::new();
         let mut laufend: Option<(u64, i64)> = None;
         for (jetzt, phase, h, vs, zeichen) in ticks {
@@ -3161,6 +3428,11 @@ mod tests {
                 anschnallzeichen: zeichen,
                 rest_min: Some((landung - jetzt) as f64 / 60.0).filter(|m| *m >= 0.0),
                 ziel_icao: None,
+                // Einsteigen von Minute 2 bis 8 (50 → 72 t), OFP 72 t.
+                zfw_kg: Some(zfw(jetzt)),
+                zfw_plan_kg: Some(72_000.0),
+                ladeblatt_gruen: Some((zfw(jetzt) - 72_000.0).abs() / 72_000.0 < 0.05),
+                triebwerke_an: Some(!matches!(phase, Boarding | Pushback | BlocksOn | Arrived)),
                 ..Default::default()
             };
             let planer = st.kabinen_planer.as_mut().expect("planer");
@@ -3205,9 +3477,12 @@ mod tests {
     fn abstaende_pruefen(name: &str, d: &Durchlauf) {
         let regulaer: Vec<&(i64, Slot, Rolle, i64)> = d.gespielt.iter().filter(|(_, s, _, _)| s.wartet_pause()).collect();
         for paar in regulaer.windows(2) {
-            // Ausnahme: Sicherheit folgt der Begrüßung nach 10 s (Thomas 18.10.2026).
+            // Ausnahmen: Sicherheit folgt der Begrüßung nach 10 s (Thomas 18.10.2026) …
             let mindestens = if (paar[0].1, paar[1].1) == (Slot::BegruessungTuerenZu, Slot::Sicherheit) {
                 cabin_announcements::warteschlange::PAUSE_BEGRUESSUNG_SICHERHEIT_S
+            } else if (paar[0].1, paar[1].1) == (Slot::Sicherheit, Slot::KapitaenBegruessung) {
+                // Und der Kapitän der Sicherheit nach 30 s (v2.0.28, QAF446).
+                cabin_announcements::warteschlange::PAUSE_SICHERHEIT_KAPITAEN_S
             } else {
                 cabin_announcements::warteschlange::PAUSE_NACH_ANSAGE_S
             };
@@ -3237,7 +3512,7 @@ mod tests {
         protokoll("Linie 2 h (A320)", &lang);
         abstaende_pruefen("Linie", &lang);
         let erwartet = [
-            Slot::Boarding, Slot::KommandoTuerenScharf, Slot::BegruessungTuerenZu, Slot::Sicherheit, Slot::KapitaenBegruessung,
+            Slot::Boarding, Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf, Slot::BegruessungTuerenZu, Slot::Sicherheit, Slot::KapitaenBegruessung,
             Slot::KommandoStart, Slot::Chime10000Steigflug, Slot::AnschnallzeichenAus, Slot::Reiseflug25, Slot::Reiseflug50,
             Slot::Reiseflug80, Slot::KapitaenSinkflug, Slot::KommandoLandungVorbereiten, Slot::KabineSinkflug,
             Slot::Chime10000Sinkflug, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung, Slot::KommandoTuerenEntschaerfen, Slot::Aussteigen,
@@ -3251,7 +3526,8 @@ mod tests {
         assert_eq!(sortiert, soll, "jede Ansage genau einmal: {ist:?}");
         assert!(lang.verlauf.iter().all(|g| g.ergebnis.as_deref() == Some("gespielt")), "nichts entfällt");
         let pos = |d: &Durchlauf, s: Slot| d.gespielt.iter().position(|x| x.1 == s).expect("gespielt");
-        assert!(pos(&lang, Slot::Boarding) < pos(&lang, Slot::BegruessungTuerenZu));
+        assert!(pos(&lang, Slot::Boarding) < pos(&lang, Slot::BoardingAbgeschlossen));
+        assert!(pos(&lang, Slot::BoardingAbgeschlossen) < pos(&lang, Slot::BegruessungTuerenZu));
         assert!(pos(&lang, Slot::BegruessungTuerenZu) < pos(&lang, Slot::Sicherheit) && pos(&lang, Slot::Sicherheit) < pos(&lang, Slot::KapitaenBegruessung));
         assert!(pos(&lang, Slot::Reiseflug80) < pos(&lang, Slot::KapitaenSinkflug) && pos(&lang, Slot::KapitaenSinkflug) < pos(&lang, Slot::KabineSinkflug));
         assert!(pos(&lang, Slot::NachDerLandung) < pos(&lang, Slot::Aussteigen));
@@ -3292,6 +3568,44 @@ mod tests {
 
     /// Thomas 18.10.2026 (Punkt 8/16): Die Stimme folgt dem Geschlecht der
     /// Crew laut Server; ohne Angabe Kapitän männlich, Kabine weiblich.
+    /// v2.0.28: dieselbe Ampel wie `LsRow` im Cockpit-Tab (< 5 %, nicht über Max).
+    #[test]
+    fn ladeblatt_ampel_wie_im_cockpit_tab() {
+        let z = |ist: f32, soll: f32, max: Option<f32>| (Some(ist), Some(soll), max);
+        assert_eq!(ladeblatt_gruen(&[z(24_000.0, 24_100.0, None), z(72_744.0, 72_746.0, Some(73_500.0))]), Some(true));
+        assert_eq!(ladeblatt_gruen(&[z(24_000.0, 24_100.0, None), z(60_000.0, 72_746.0, Some(73_500.0))]), Some(false), "ZFW 17 % daneben");
+        assert_eq!(ladeblatt_gruen(&[z(73_600.0, 73_400.0, Some(73_500.0))]), Some(false), "über Max ist rot, auch unter 5 %");
+        assert_eq!(ladeblatt_gruen(&[z(69_200.0, 72_746.0, None)]), Some(true), "4,87 % ist noch grün");
+        assert_eq!(ladeblatt_gruen(&[z(69_100.0, 72_746.0, None)]), Some(false), "5,01 % nicht mehr");
+        assert_eq!(ladeblatt_gruen(&[(Some(1.0), None, None), (None, None, None)]), None, "ohne OFP");
+        assert_eq!(ladeblatt_gruen(&[(None, Some(24_000.0), None), z(72_744.0, 72_746.0, None)]), Some(true), "fehlender Ist-Wert färbt nicht");
+    }
+
+    /// v2.0.28: „Boarding completed“ ist ein fester englischer Text (wie ein
+    /// Kommando), gesprochen von der Kabine.
+    #[test]
+    fn boarding_completed_spricht_die_kabine() {
+        let l = Lauf::default();
+        assert_eq!(rolle_von(&l, Slot::BoardingAbgeschlossen), Rolle::Kabine);
+        assert!(!stimme_maennlich(&l, rolle_von(&l, Slot::BoardingAbgeschlossen)), "Kabine ohne Angabe: Frauenstimme");
+        assert_eq!(Slot::BoardingAbgeschlossen.kommando_text(), Some("Boarding completed."));
+        assert!(KOMMANDOS.contains(&Slot::BoardingAbgeschlossen), "Ton wird wie bei Kommandos vorab erzeugt");
+    }
+
+    /// v2.0.28 (Punkt 9): Der Wartegrund geht nur beim Wechsel ins Log.
+    #[test]
+    fn wartegrund_nur_beim_wechsel_im_protokoll() {
+        let mut l = Lauf::default();
+        l.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug25, verfall: cabin_announcements::Verfall::Um(1_000), trotz_ruhephase: false }]);
+        l.ruhephase = true;
+        wartegruende_notieren(&mut l, 0);
+        wartegruende_notieren(&mut l, 5);
+        l.ruhephase = false;
+        wartegruende_notieren(&mut l, 10);
+        let arten: Vec<_> = l.protokoll.iter().map(|n| (n.art, n.details["grund"].clone())).collect();
+        assert_eq!(arten, vec![("wartet", serde_json::json!("ruhephase")), ("wartet", serde_json::json!("ton"))]);
+    }
+
     #[test]
     fn stimme_folgt_der_crew() {
         let mut l = Lauf::default();
@@ -3480,7 +3794,7 @@ mod tests {
         st.kabinen_lauf = lauf_mit_ton(&[Slot::Turbulenz, Slot::KommandoLandungVorbereiten]);
         st.kabinen_lauf.texte.insert((Slot::KommandoLandungVorbereiten, "en-GB".into()), "x".into());
         st.kabinen_lauf.ton.insert((Slot::KommandoLandungVorbereiten, "en-GB".into()), ton());
-        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Turbulenz, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Turbulenz, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         let g = abspielen_schritt(&mut st, 100, Cruise, false, false).0.expect("Turbulenz");
         assert!(ende_melden(&mut st, g.id, "gespielt", 105));
         assert!(st.kabinen_lauf.warteschlange.in_pause(110), "nach der Turbulenz Pause");
@@ -3488,7 +3802,7 @@ mod tests {
         k.kabinen_planer = Some(planer_mit(Flugart::Linie, Descent));
         k.kabinen_lauf = lauf_mit_ton(&[]);
         k.kabinen_lauf.ton.insert((Slot::KommandoLandungVorbereiten, "en-GB".into()), ton());
-        k.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::KommandoLandungVorbereiten, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        k.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::KommandoLandungVorbereiten, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         let g = abspielen_schritt(&mut k, 100, Descent, false, false).0.expect("Kommando");
         assert!(ende_melden(&mut k, g.id, "gespielt", 105));
         assert!(!k.kabinen_lauf.warteschlange.in_pause(110), "nach einem Kommando keine Pause");
@@ -3502,7 +3816,7 @@ mod tests {
         let mut st = FlightStats::new();
         st.kabinen_planer = Some(planer_mit(Flugart::Linie, Cruise));
         st.kabinen_lauf = lauf_mit_ton(&[Slot::Reiseflug50]);
-        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         let (g, _) = abspielen_schritt(&mut st, 100, Cruise, false, false);
         let g = g.expect("spielt");
         assert!(!g.gestartet && g.ergebnis.is_none());
@@ -3515,7 +3829,7 @@ mod tests {
         let mut st2 = FlightStats::new();
         st2.kabinen_planer = Some(planer_mit(Flugart::Linie, Cruise));
         st2.kabinen_lauf = lauf_mit_ton(&[Slot::Reiseflug50]);
-        st2.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        st2.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         abspielen_schritt(&mut st2, 100, Cruise, false, false);
         st2.kabinen_lauf.verlauf[0].gestartet = true;
         abspielen_schritt(&mut st2, 200, Cruise, false, false);
@@ -3556,7 +3870,7 @@ mod tests {
         // Noch kein Ton: nichts zum Anhören.
         assert!(anhoeren(&mut l, Slot::Reiseflug50, None, 0).is_err());
         l.texte.insert(k.clone(), "Halbzeit".into());
-        l.ton.insert(k.clone(), Some(Ton { datei: "f/a.wav".into(), dauer_s: 4.0, stuecke: vec![] }));
+        l.ton.insert(k.clone(), Some(Ton { datei: "f/a.wav".into(), dauer_s: 4.0, stuecke: vec![], herkunft: "server" }));
         let v = anhoeren(&mut l, Slot::Reiseflug50, None, 0).unwrap();
         assert!(v.vorschau && v.teile[0].text == "Halbzeit");
         assert!(l.warteschlange.belegt(3), "während des Anhörens spielt nichts anderes");
@@ -3589,7 +3903,7 @@ mod tests {
                 st.kabinen_lauf.texte.insert((s, sp.into()), "x".into());
             }
         }
-        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::Um(9_999) }]);
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
         let reihe: Vec<(Slot, String)> = ton_kandidaten(&st, false, Flugart::Linie, 0).into_iter().map(|(s, sp, _)| (s, sp)).collect();
         assert_eq!(
             reihe,
