@@ -37,6 +37,9 @@ pub enum Slot {
     Reiseflug25,
     Reiseflug50,
     Reiseflug80,
+    /// Ende des Service bzw. Bordverkaufs kurz vor dem Sinkflug (2.1.0,
+    /// Thomas/Peter: kommt auf jedem Flug, ab dann nichts mehr zu bestellen).
+    EndeService,
     KapitaenSinkflug,
     KabineSinkflug,
     Chime10000Sinkflug,
@@ -55,7 +58,7 @@ pub enum Slot {
 }
 
 impl Slot {
-    pub const ALLE: [Slot; 26] = [
+    pub const ALLE: [Slot; 27] = [
         Slot::Boarding,
         Slot::BoardingAbgeschlossen,
         Slot::BegruessungTuerenZu,
@@ -68,6 +71,7 @@ impl Slot {
         Slot::Reiseflug25,
         Slot::Reiseflug50,
         Slot::Reiseflug80,
+        Slot::EndeService,
         Slot::KapitaenSinkflug,
         Slot::KabineSinkflug,
         Slot::Chime10000Sinkflug,
@@ -97,7 +101,7 @@ impl Slot {
             KapitaenBegruessung | Reiseflug50 | KapitaenSinkflug
             | VerspaetungGate | Warteschleife | Durchstarten | Umleitung => Rolle::Kapitaen,
             Boarding | BegruessungTuerenZu | Sicherheit | AnschnallzeichenAus | Reiseflug25
-            | Reiseflug80 | KabineSinkflug | NachDerLandung | Aussteigen | Turbulenz
+            | Reiseflug80 | EndeService | KabineSinkflug | NachDerLandung | Aussteigen | Turbulenz
             | TurbulenzVorbei => Rolle::Kabine,
         }
     }
@@ -124,7 +128,7 @@ impl Slot {
             Sicherheit => 180,
             KapitaenBegruessung => 60,
             AnschnallzeichenAus => 40,
-            Reiseflug25 | Reiseflug80 => 30,
+            Reiseflug25 | Reiseflug80 | EndeService => 30,
             Reiseflug50 => 40,
             KapitaenSinkflug => 40,
             KabineSinkflug => 45,
@@ -152,7 +156,10 @@ impl Slot {
         // In der Ruhephase gesperrt, konnten sie nie spielen und verfielen im
         // nächsten Endanflug (Thomas 18.10.2026, AIB 436: „wurde vorbereitet,
         // aber nicht abgespielt“).
-        matches!(self.rolle(), Rolle::Kommando | Rolle::Chime) || matches!(self, Slot::Durchstarten | Slot::Umleitung)
+        // „Ende des Service“ beginnt oft schon im Sinkflug unter 10.000 ft
+        // und verfiele sonst (Codex 2.1.0); eine kurze Kabinendurchsage.
+        matches!(self.rolle(), Rolle::Kommando | Rolle::Chime)
+            || matches!(self, Slot::Durchstarten | Slot::Umleitung | Slot::EndeService)
     }
 
     /// Wartet diese Ansage die Pause nach der vorigen ab (Thomas 18.10.2026:
@@ -264,7 +271,7 @@ mod tests {
             [
                 "boarding", "boarding_abgeschlossen", "begruessung_tueren_zu", "kommando_tueren_scharf", "sicherheit",
                 "kapitaen_begruessung", "kommando_start", "chime10000_steigflug", "anschnallzeichen_aus",
-                "reiseflug25", "reiseflug50", "reiseflug80", "kapitaen_sinkflug", "kabine_sinkflug",
+                "reiseflug25", "reiseflug50", "reiseflug80", "ende_service", "kapitaen_sinkflug", "kabine_sinkflug",
                 "chime10000_sinkflug", "kommando_landung_vorbereiten", "kommando_plaetze_landung",
                 "nach_der_landung", "kommando_tueren_entschaerfen", "aussteigen", "verspaetung_gate",
                 "turbulenz", "turbulenz_vorbei", "warteschleife", "durchstarten", "umleitung",

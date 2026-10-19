@@ -795,6 +795,17 @@ pub struct KabinenEintrag {
     /// Nur `reiseflug80`: zweiter_service | ende_bordverkauf.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub art: Option<String>,
+    /// Fremde Namen im Text samt ihrer Sprache (2.1.0): Der Ton-Server
+    /// spricht sie in ihrer Sprache. Fehlt bei älteren Modulen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fremd: Vec<KabinenFremd>,
+}
+
+/// Ein fremder Name in einem Ansagetext, z. B. „Times Square“ (en).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct KabinenFremd {
+    pub wort: String,
+    pub sprache: String,
 }
 
 /// Kabinenansagen: Crew des Fluges laut GSG-Server (in jeder Antwort).
