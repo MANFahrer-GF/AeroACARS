@@ -111,7 +111,10 @@ pub(crate) fn ordner_mit_musik(wurzel: &Path) -> Vec<String> {
 }
 
 /// Ist diese Datei vor dem Flug abspielbar? Ganz gelesen (ein OneDrive-
-/// Platzhalter wird so geladen) und das erste Stück Ton dekodiert.
+/// Platzhalter wird so geladen) und das erste Stück Ton dekodiert. Ganz
+/// dekodiert wird beim Hinzufügen ([`pruefen`]); hier liefe das im Takt des
+/// Positions-Streamers. Ist eine Datei erst später kaputt, spielt sie bis
+/// dorthin und die nächste folgt — still bleibt es dadurch nicht.
 pub(crate) fn abspielbar(p: &Path) -> bool {
     std::fs::read(p).is_ok_and(|d| !d.is_empty()) && Dekoder::oeffnen(p).ok().and_then(|mut d| d.naechstes()).is_some()
 }
@@ -173,7 +176,9 @@ pub(crate) fn pruefen(pfad: &Path) -> Result<Option<f64>, UiError> {
         rate = r;
         rahmen += (proben.len() / k.max(1)) as u64;
     }
-    if rahmen == 0 || dek.abgebrochen {
+    // Beim Hinzufügen streng: jedes kaputte Paket lehnt die Datei ab. Beim
+    // Spielen wird es nur übersprungen.
+    if rahmen == 0 || dek.abgebrochen || dek.kaputte_pakete > 0 {
         return Err(UiError::new("musik_kaputt", "no audio or broken stream"));
     }
     let gelesen = rahmen as f64 / f64::from(rate.max(1));
@@ -350,6 +355,8 @@ pub(crate) struct Dekoder {
     dauer_s: Option<f64>,
     /// Der Strom brach mit einem Fehler ab (nicht am Dateiende).
     pub(crate) abgebrochen: bool,
+    /// Pakete, die sich nicht dekodieren ließen (beim Spielen übersprungen).
+    pub(crate) kaputte_pakete: u32,
 }
 
 impl Dekoder {
@@ -373,7 +380,7 @@ impl Dekoder {
         let p = &spur.codec_params;
         let dauer_s = p.n_frames.zip(p.sample_rate).filter(|(_, r)| *r > 0).map(|(n, r)| n as f64 / f64::from(r));
         let dekoder = symphonia::default::get_codecs().make(p, &DecoderOptions::default()).map_err(|e| e.to_string())?;
-        Ok(Dekoder { spur: spur.id, format, dekoder, dauer_s, abgebrochen: false })
+        Ok(Dekoder { spur: spur.id, format, dekoder, dauer_s, abgebrochen: false, kaputte_pakete: 0 })
     }
 
     pub(crate) fn dauer_s(&self) -> Option<f64> {
@@ -408,8 +415,14 @@ impl Dekoder {
                     return Some((spec.rate, spec.channels.count().max(1), sb.samples().to_vec()));
                 }
                 // Ein kaputtes Paket überspringen, nicht das ganze Stück.
-                Err(Error::DecodeError(_)) => continue,
-                Err(_) => return None,
+                Err(Error::DecodeError(_)) => {
+                    self.kaputte_pakete += 1;
+                    continue;
+                }
+                Err(_) => {
+                    self.abgebrochen = true;
+                    return None;
+                }
             }
         }
     }
@@ -660,6 +673,7 @@ mod wiedergabe {
         ) -> Result<cpal::Stream, String> {
             let rate = cfg.sample_rate.max(1) as f32;
             let mut pegel = 0.0f32;
+            let mut versuche = 0u32;
             dev.build_output_stream(
                 cfg,
                 move |aus: &mut [T], _: &cpal::OutputCallbackInfo| {
@@ -667,12 +681,28 @@ mod wiedergabe {
                     let am_ende = ende.load(Ordering::Relaxed);
                     let ziel = if halten || am_ende { 0.0 } else { lautstaerke() };
                     let schritt = 1.0 / (rate * if am_ende { RAMPE_ENDE_S } else { RAMPE_ANSAGE_S });
-                    // Nie auf den Dekoder warten (Echtzeit-Faden): Ist der
-                    // Puffer gerade belegt, diesen Block still ausgeben.
-                    let Ok(mut q) = puffer.try_lock() else {
+                    // Nie blockierend auf den Dekoder warten (Echtzeit-Faden).
+                    // Er hält die Sperre nur für ein `extend` (Mikrosekunden):
+                    // kurz erneut versuchen, erst dann diesen Block still.
+                    let mut q = loop {
+                        match puffer.try_lock() {
+                            Ok(q) => break Some(q),
+                            Err(std::sync::TryLockError::Poisoned(p)) => break Some(p.into_inner()),
+                            Err(std::sync::TryLockError::WouldBlock) => {
+                                versuche += 1;
+                                if versuche > 2_000 {
+                                    break None;
+                                }
+                                std::hint::spin_loop();
+                            }
+                        }
+                    };
+                    versuche = 0;
+                    let Some(q) = q.as_mut() else {
                         for k in aus.iter_mut() {
                             *k = T::from_sample(0.0);
                         }
+                        pegel = 0.0;
                         return;
                     };
                     for rahmen in aus.chunks_mut(kanaele) {
