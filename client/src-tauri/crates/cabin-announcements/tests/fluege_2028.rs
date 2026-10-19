@@ -198,3 +198,16 @@ fn afr218_zweiter_service_neunzig_minuten_vor_dem_sinkflug() {
     assert!((60..=120).contains(&vorlauf_min), "zweiter Service {vorlauf_min} min vor dem Sinkflug");
     assert!(a.gespielt[&Slot::Reiseflug50] < zweiter, "nach der Halbzeit");
 }
+
+/// Peter DLH454 (19.10., noch 2.0.27): Reiseflug 80 fiel weg, weil er vor
+/// TOD − 12 in den Sinkflug ging. Mit dem zweiten Service bei TOD − 90 kommt
+/// er weit vorher. „Seats for take-off“ am Landelicht: 2 min vor dem Startlauf.
+#[test]
+fn dlh454_zweiter_service_trotz_fruehem_sinkflug() {
+    let (d, a) = fliegen_mit(include_str!("daten/dlh454.json"), 401, 39_000, Some(true));
+    let sinkflug = d.ticks.iter().find(|x| x.1 == FlightPhase::Descent).expect("Sinkflug").0;
+    let zweiter = *a.gespielt.get(&Slot::Reiseflug80).expect("zweiter Service kam");
+    assert!(sinkflug - zweiter >= 60 * 60, "zweiter Service {} min vor dem Sinkflug", (sinkflug - zweiter) / 60);
+    let start = a.gespielt[&Slot::KommandoStart];
+    assert!((90..=180).contains(&(d.abheben - start)), "Seats for take-off {} s vor dem Startlauf", d.abheben - start);
+}
