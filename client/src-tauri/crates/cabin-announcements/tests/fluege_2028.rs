@@ -1,0 +1,181 @@
+//! Echte Flüge als Prüfstein für v2.0.28: jede Rückmeldung an dem Flug, an
+//! dem sie auffiel. Planer und Warteschlange laufen über jeden Takt des
+//! Flight-Logs (5-s-Raster, im Reiseflug 60 s) mit echten Sprechdauern.
+
+use std::collections::BTreeMap;
+
+use cabin_announcements::flugart::Flugart;
+use cabin_announcements::slot::{Rolle, Slot};
+use cabin_announcements::{Flugdaten, Planer, Tick, Warteschlange};
+use serde::Deserialize;
+use sim_core::FlightPhase;
+
+type Takt = (i64, FlightPhase, f64, f64, f64, u8, Option<u8>, u8, u8, f64, u8, u8, f64, Option<u8>);
+
+#[derive(Deserialize)]
+struct Daten {
+    zfw_plan_kg: Option<f64>,
+    landung: i64,
+    abheben: i64,
+    ticks: Vec<Takt>,
+}
+
+fn uhr(t: i64) -> String {
+    let s = t.rem_euclid(86_400);
+    format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+}
+
+/// Echte Längen, zwei Sprachen: Sicherheit gut 1,5 min je Sprache, Kommando
+/// ein Satz, sonst eine halbe Minute je Sprache.
+fn dauer(s: Slot) -> i64 {
+    match s.rolle() {
+        Rolle::Chime => 3,
+        Rolle::Kommando => 4,
+        _ if s == Slot::Sicherheit => 190,
+        _ => 60,
+    }
+}
+
+/// Wann jede Ansage gespielt wurde, und wann sie gemeldet war.
+struct Ablauf {
+    gespielt: BTreeMap<Slot, i64>,
+    gemeldet: BTreeMap<Slot, i64>,
+}
+
+fn fliegen(datei: &str, flugzeit_min: u32, reise_ft: u32) -> (Daten, Ablauf) {
+    let d: Daten = serde_json::from_str(datei).expect("Testdaten");
+    let mut p = Planer::neu(Flugdaten {
+        flugart: Some(Flugart::Linie),
+        geplante_flugzeit_min: Some(flugzeit_min),
+        tod_nach_abheben_s: None,
+        ziel_plan_icao: Some("ZIEL".into()),
+        reiseflughoehe_ft: Some(reise_ft),
+        abheben_epoch: None,
+    });
+    let mut w = Warteschlange::default();
+    let mut gespielt = BTreeMap::new();
+    let mut gemeldet = BTreeMap::new();
+    let mut ende: Option<(i64, Slot)> = None;
+    for &(t, phase, alt, agl, vs, boden, zeichen, beacon, licht, fahrwerk, pushback, triebwerke, zfw, gruen) in &d.ticks {
+        if let Some((e, s)) = ende {
+            if t >= e {
+                if s.loest_pause_aus() {
+                    w.ansage_zu_ende_nach(e, s);
+                } else {
+                    w.frei();
+                }
+                if s == Slot::KapitaenSinkflug {
+                    p.kapitaen_sinkflug_ende(true, e);
+                }
+                ende = None;
+            }
+        }
+        let tk = Tick {
+            jetzt: t,
+            phase,
+            hoehe_ft: alt,
+            vs_fpm: vs,
+            am_boden: boden == 1,
+            anschnallzeichen: zeichen,
+            pushback_aktiv: pushback == 1,
+            rest_min: (t < d.landung).then(|| (d.landung - t) as f64 / 60.0),
+            beacon: Some(beacon == 1),
+            landelicht: Some(licht == 1),
+            fahrwerk_unten: Some(fahrwerk >= 0.9),
+            hoehe_agl_ft: Some(agl),
+            triebwerke_an: Some(triebwerke > 0),
+            zfw_kg: (zfw > 0.0).then_some(zfw),
+            zfw_plan_kg: d.zfw_plan_kg,
+            ladeblatt_gruen: gruen.map(|g| g == 1),
+            ..Default::default()
+        };
+        let neu = p.tick(&tk);
+        for f in &neu {
+            gemeldet.entry(f.slot).or_insert(t);
+        }
+        w.aufnehmen(neu);
+        // Host-Regel: Kapitän nach dem Start erst über 10.000 ft.
+        let tief = boden == 0 && alt < 10_000.0 && cabin_announcements::planer::rang(phase) < cabin_announcements::planer::rang(FlightPhase::Cruise);
+        if let Some(s) = w.naechstes_bereit(t, phase, p.ruhephase(&tk), |s| !(tief && s == Slot::KapitaenBegruessung)) {
+            let bis = t + dauer(s);
+            if s.loest_pause_aus() {
+                w.ansage_spielt_bis(bis);
+            } else {
+                w.spielt_bis(bis);
+            }
+            ende = Some((bis, s));
+            gespielt.entry(s).or_insert(t);
+        }
+        let _ = w.verfallene_abholen();
+        let _ = p.entfallene_abholen();
+    }
+    let mut zeilen: Vec<_> = gespielt.iter().collect();
+    zeilen.sort_by_key(|(_, t)| **t);
+    for (s, t) in zeilen {
+        println!("{} {s:?} (gemeldet {})", uhr(*t), uhr(gemeldet[s]));
+    }
+    (d, Ablauf { gespielt, gemeldet })
+}
+
+fn um(s: &str) -> i64 {
+    let teile: Vec<i64> = s.split(':').map(|x| x.parse().unwrap()).collect();
+    teile[0] * 3600 + teile[1] * 60 + teile[2]
+}
+
+fn tageszeit(t: i64) -> i64 {
+    t.rem_euclid(86_400)
+}
+
+/// Michael LTU181: Anschnallzeichen 15:49:56 unter FL100 aus, Ansage kam
+/// erst 15:51:14 nach dem Gong. Jetzt direkt nach dem Schalter.
+#[test]
+fn ltu181_anschnallzeichen_aus_unter_fl100() {
+    let (_, a) = fliegen(include_str!("daten/ltu181.json"), 32, 17_000);
+    let aus = tageszeit(a.gespielt[&Slot::AnschnallzeichenAus]);
+    assert!(aus < um("15:51:10"), "vor FL100 (15:51:10), war {}", uhr(aus));
+    assert!(tageszeit(a.gemeldet[&Slot::AnschnallzeichenAus]) >= um("15:49:55"), "nicht vor dem Schalter");
+}
+
+/// Peter DLH16: Anschnallzeichen 14:29:57 an, Passagiere stiegen 14:41–14:50
+/// ein. Boarding folgt dem Einsteigen, „Boarding completed“ vor „Türen zu“
+/// (Beacon 14:52:23), „Plätze für den Start“ am Landelicht 15:11:18.
+#[test]
+fn dlh16_boarding_folgt_dem_einsteigen() {
+    let (_, a) = fliegen(include_str!("daten/dlh16.json"), 40, 29_000);
+    let boarding = tageszeit(a.gespielt[&Slot::Boarding]);
+    assert!((um("14:41:30")..um("14:43:30")).contains(&boarding), "Boarding beim Einsteigen, war {}", uhr(boarding));
+    let fertig = tageszeit(*a.gespielt.get(&Slot::BoardingAbgeschlossen).expect("Boarding completed kam"));
+    // Die letzten Lade-Schritte lagen unter 50 kg: „steht“ ab etwa 14:49:30.
+    assert!(fertig >= um("14:49:30") && fertig < um("14:52:23"), "nach dem Laden, vor Türen zu: {}", uhr(fertig));
+    assert!(fertig < tageszeit(a.gespielt[&Slot::BegruessungTuerenZu]));
+    let start = tageszeit(a.gespielt[&Slot::KommandoStart]);
+    assert!((um("15:11:15")..um("15:11:40")).contains(&start), "Plätze für den Start am Landelicht, war {}", uhr(start));
+}
+
+/// A346 DLH418: Halt mit vier laufenden Triebwerken auf dem Rollweg
+/// (BlocksOn 20:56:45), echte Parkposition 20:59:39, Triebwerke aus ~21:00.
+#[test]
+fn dlh418_tueren_erst_bei_stehenden_triebwerken() {
+    let (_, a) = fliegen(include_str!("daten/dlh418.json"), 495, 38_000);
+    let tueren = tageszeit(a.gespielt[&Slot::KommandoTuerenEntschaerfen]);
+    assert!(tueren >= um("20:59:39"), "nicht beim Halt auf dem Rollweg, war {}", uhr(tueren));
+}
+
+/// QAF446: Sicherheit bis ~12:23, Startlauf 12:24:14. Mit 30 s Pause kommt
+/// der Kapitän noch am Boden statt nach dem Gong über FL100.
+#[test]
+fn qaf446_kapitaen_vor_dem_start() {
+    let (d, a) = fliegen(include_str!("daten/qaf446.json"), 410, 38_000);
+    let kapitaen = a.gespielt[&Slot::KapitaenBegruessung];
+    assert!(kapitaen < d.abheben, "vor dem Startlauf {}, war {}", uhr(d.abheben), uhr(kapitaen));
+}
+
+/// AFR218: Reiseflughöhe nach ~25 min, erster Service bisher bei +121 min.
+#[test]
+fn afr218_service_kurz_nach_reiseflughoehe() {
+    let (d, a) = fliegen(include_str!("daten/afr218.json"), 510, 38_000);
+    let reiseflug = d.ticks.iter().find(|x| x.1 == FlightPhase::Cruise).expect("Reiseflug").0;
+    let service = a.gespielt[&Slot::Reiseflug25];
+    assert!(service - reiseflug <= 12 * 60, "Service {} min nach Reiseflugbeginn", (service - reiseflug) / 60);
+    assert!(service - d.abheben < 60 * 60, "statt +121 min jetzt +{} min", (service - d.abheben) / 60);
+}

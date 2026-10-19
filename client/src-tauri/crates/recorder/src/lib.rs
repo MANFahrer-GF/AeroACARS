@@ -249,6 +249,19 @@ pub enum FlightLogEvent {
         timestamp: DateTime<Utc>,
         payload: serde_json::Value,
     },
+    /// v2.0.28: Kabinenansagen auswertbar — jeder Schritt einer Ansage
+    /// (`art`: gemeldet, wartet, text, ton, spielt, ende, verfallen,
+    /// entfallen, stumm) mit dem, was in dem Moment galt (`details`).
+    Kabine {
+        timestamp: DateTime<Utc>,
+        art: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slot: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sprache: Option<String>,
+        #[serde(default)]
+        details: serde_json::Value,
+    },
     /// v0.7.0 (Forensik v2): emittiert pro VALIDATED contact_frame
     /// (= Layer 2 PASS in touchdown_v2). Enthaelt strukturierte Daten
     /// mit forensics_version=2 marker damit aeroacars-live + zukuenftige

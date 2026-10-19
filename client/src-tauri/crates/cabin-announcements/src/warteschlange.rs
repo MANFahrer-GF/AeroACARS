@@ -12,6 +12,7 @@ struct Eintrag {
     slot: Slot,
     verfall: Verfall,
     reihenfolge: u64,
+    trotz_ruhephase: bool,
 }
 
 /// Ruhe nach einer gesprochenen Ansage, bevor die nächste reguläre kommt.
@@ -20,6 +21,10 @@ pub const PAUSE_NACH_ANSAGE_S: i64 = 90;
 /// Ausnahme: Die Sicherheitshinweise folgen der Begrüßung „Türen zu“ nach
 /// höchstens so vielen Sekunden (Thomas 18.10.2026); alles andere wartet 90 s.
 pub const PAUSE_BEGRUESSUNG_SICHERHEIT_S: i64 = 10;
+/// Am Boden folgt die Kapitän-Begrüßung den Sicherheitshinweisen nach
+/// höchstens so vielen Sekunden — sonst rutscht sie bei kurzem Rollweg hinter
+/// den Start (v2.0.28, QAF446). Reicht es nicht, spricht er nach dem Start.
+pub const PAUSE_SICHERHEIT_KAPITAEN_S: i64 = 30;
 
 #[derive(Debug, Default)]
 pub struct Warteschlange {
@@ -38,7 +43,7 @@ impl Warteschlange {
     pub fn aufnehmen(&mut self, faellig: impl IntoIterator<Item = Faellig>) {
         for f in faellig {
             self.zaehler += 1;
-            self.eintraege.push(Eintrag { slot: f.slot, verfall: f.verfall, reihenfolge: self.zaehler });
+            self.eintraege.push(Eintrag { slot: f.slot, verfall: f.verfall, reihenfolge: self.zaehler, trotz_ruhephase: f.trotz_ruhephase });
         }
     }
 
@@ -112,6 +117,8 @@ impl Warteschlange {
         self.ansage_zu_ende(jetzt);
         if slot == Slot::BegruessungTuerenZu {
             self.pause_ausnahme = Some((Slot::Sicherheit, jetzt + PAUSE_BEGRUESSUNG_SICHERHEIT_S));
+        } else if slot == Slot::Sicherheit {
+            self.pause_ausnahme = Some((Slot::KapitaenBegruessung, jetzt + PAUSE_SICHERHEIT_KAPITAEN_S));
         }
     }
 
@@ -165,13 +172,19 @@ impl Warteschlange {
             .eintraege
             .iter()
             .any(|e| matches!(e.slot, Slot::BegruessungTuerenZu | Slot::Sicherheit) && bereit(e.slot));
+        let boarding_wartet = self.eintraege.iter().any(|e| e.slot == Slot::Boarding);
         let idx = self
             .eintraege
             .iter()
             .enumerate()
-            .filter(|(_, e)| !ruhephase || e.slot.in_ruhephase_erlaubt())
+            .filter(|(_, e)| {
+                !ruhephase || e.slot.in_ruhephase_erlaubt() || (e.trotz_ruhephase && phase == FlightPhase::Climb)
+            })
             .filter(|(_, e)| !(pause && e.slot.wartet_pause() && !self.ausnahme_frei(e.slot, jetzt)))
             .filter(|(_, e)| !(kabine_zuerst && e.slot == Slot::KapitaenBegruessung))
+            // „Boarding completed“ (Kommando-Vorrang) überholt die noch
+            // wartende Boarding-Ansage nicht.
+            .filter(|(_, e)| !(e.slot == Slot::BoardingAbgeschlossen && boarding_wartet))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
             .map(|(i, _)| i)?;
@@ -185,7 +198,7 @@ mod tests {
     use FlightPhase::*;
 
     fn f(slot: Slot, verfall: Verfall) -> Faellig {
-        Faellig { slot, verfall }
+        Faellig { slot, verfall, trotz_ruhephase: false }
     }
 
     #[test]
@@ -322,8 +335,42 @@ mod tests {
         assert_eq!(w.naechstes(110, TaxiOut, false), Some(Slot::Sicherheit));
         w.ansage_spielt_bis(300);
         w.ansage_zu_ende_nach(300, Slot::Sicherheit);
-        assert_eq!(w.naechstes(310, TaxiOut, false), None, "nach der Sicherheit wieder 90 s");
-        assert_eq!(w.naechstes(300 + PAUSE_NACH_ANSAGE_S, TaxiOut, false), Some(Slot::KapitaenBegruessung));
+        // v2.0.28: Nach der Sicherheit wartet der Kapitän nur 30 s (QAF446).
+        assert_eq!(w.naechstes(329, TaxiOut, false), None, "noch keine 30 s");
+        assert_eq!(w.naechstes(300 + PAUSE_SICHERHEIT_KAPITAEN_S, TaxiOut, false), Some(Slot::KapitaenBegruessung));
+    }
+
+    #[test]
+    fn nach_dem_kapitaen_wieder_neunzig_sekunden() {
+        let mut w = Warteschlange::default();
+        w.ansage_spielt_bis(100);
+        w.ansage_zu_ende_nach(100, Slot::KapitaenBegruessung);
+        w.aufnehmen([f(Slot::AnschnallzeichenAus, Verfall::AbPhase(Descent))]);
+        assert_eq!(w.naechstes(130, Climb, false), None, "die 30-s-Ausnahme gilt nur für den Kapitän nach der Sicherheit");
+        assert_eq!(w.naechstes(100 + PAUSE_NACH_ANSAGE_S, Climb, false), Some(Slot::AnschnallzeichenAus));
+    }
+
+    #[test]
+    fn anschnallzeichen_aus_durchbricht_die_ruhephase_nur_im_steigflug() {
+        let mut w = Warteschlange::default();
+        let mut aus = f(Slot::AnschnallzeichenAus, Verfall::AbPhase(Descent));
+        aus.trotz_ruhephase = true;
+        w.aufnehmen([aus, f(Slot::Reiseflug25, Verfall::AbPhase(Descent))]);
+        assert_eq!(w.naechstes(0, Takeoff, true), None, "beim Abheben gesperrt");
+        assert_eq!(w.naechstes(1, Climb, true), Some(Slot::AnschnallzeichenAus));
+        w.ansage_zu_ende(2);
+        assert_eq!(w.naechstes(2 + PAUSE_NACH_ANSAGE_S, Climb, true), None, "der Service wartet weiter auf FL100");
+        assert_eq!(w.naechstes(2 + PAUSE_NACH_ANSAGE_S, Climb, false), Some(Slot::Reiseflug25));
+    }
+
+    #[test]
+    fn boarding_completed_ueberholt_die_boarding_ansage_nicht() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([f(Slot::Boarding, Verfall::AbPhase(Pushback)), f(Slot::BoardingAbgeschlossen, Verfall::AbPhase(Pushback))]);
+        assert_eq!(w.naechstes_bereit(0, Boarding, false, |s| s != Slot::Boarding), None, "Boarding-Ton fehlt noch: warten");
+        assert_eq!(w.naechstes(1, Boarding, false), Some(Slot::Boarding));
+        w.ansage_zu_ende(30);
+        assert_eq!(w.naechstes(31, Boarding, false), Some(Slot::BoardingAbgeschlossen), "Kommando wartet keine Pause ab");
     }
 
     #[test]

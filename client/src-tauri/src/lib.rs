@@ -47422,6 +47422,16 @@ fn kabinen_schritt(
         landelicht: snap.light_landing,
         fahrwerk_unten: Some(snap.gear_position >= 0.9),
         hoehe_agl_ft: Some(snap.altitude_agl_ft),
+        triebwerke_an: Some(snap.engines_running > 0),
+        zfw_kg: stats.last_zfw_kg.map(f64::from),
+        zfw_plan_kg: stats.planned_zfw_kg.map(f64::from),
+        // Ampel wie im Cockpit-Tab, für das Boarding nur Kraftstoff und ZFW:
+        // Am Gate zählt der Sim das Rollkraftstoff zur TOW, die Zeile steht
+        // dort oft über Max (Peter DLH16: +272 kg) und wäre nie grün.
+        ladeblatt_gruen: kabinenansagen::ladeblatt_gruen(&[
+            (stats.last_fuel_kg, stats.planned_block_fuel_kg, None),
+            (stats.last_zfw_kg, stats.planned_zfw_kg, stats.planned_max_zfw_kg),
+        ]),
     };
     let (faellig, ruhephase) = stats
         .kabinen_planer
