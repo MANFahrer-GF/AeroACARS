@@ -459,6 +459,11 @@ pub(crate) struct LiedStand {
     versuche: u32,
     naechster: i64,
     fehler: Option<String>,
+    /// Slots der Abflug-Anfrage mit Lied; mit denselben wird nachgefragt,
+    /// dann liefert das Modul das Drehbuch aus dem Zwischenspeicher.
+    slots: Vec<Slot>,
+    /// Das Modul hatte keine Zeit mehr: ab dann noch einmal fragen.
+    nochmal_ab: Option<i64>,
 }
 
 /// Quelle der Musik (Design §5): eigene Musik der Airline, sonst „Alle“,
@@ -784,6 +789,19 @@ fn eigene_lesen(flight: &ActiveFlight) -> Option<(String, Vec<PathBuf>)> {
         return None;
     }
     crate::kabinen_musik::ablage().and_then(|w| crate::kabinen_musik::eigene_fuer(&w, &flight.airline_icao))
+}
+
+/// Nach einer Abflug-Antwort: Lied da, später einmal nachfragen (das Modul
+/// hatte bis zum Zeitlimit keine Zeit mehr), oder keins (dann still).
+fn lied_nach_antwort(lied: &mut LiedStand, angefragt: bool, geliefert: bool, spaeter: bool, war_nachfrage: bool, jetzt: i64) {
+    if !angefragt || geliefert || lied.vorlage.is_some() {
+        return;
+    }
+    if spaeter && !war_nachfrage {
+        lied.nochmal_ab = Some(jetzt + 60);
+    } else {
+        lied.fehler = Some("Das Modul hat kein Lied geliefert.".into());
+    }
 }
 
 /// Was die Musik nach diesem Takt tun soll.
@@ -1261,6 +1279,11 @@ fn takt_schritt(
             lauf.angefragt.insert("ankunft".into());
             auftraege.push(("ankunft".into(), ankunft, 0));
         }
+        // Lied nachfragen, wenn das Modul keine Zeit mehr hatte (einmal).
+        if lauf.lied.nochmal_ab.is_some_and(|ab| jetzt >= ab) && lauf.lied.vorlage.is_none() && !lauf.lied.slots.is_empty() {
+            lauf.lied.nochmal_ab = None;
+            auftraege.push(("abflug:lied".into(), lauf.lied.slots.clone(), 0));
+        }
         for f in faellig.iter().filter(|f| ist_ereignis(f.slot)) {
             lauf.anlass += 1;
             let schluessel = format!("ereignis:{}", lauf.anlass);
@@ -1272,8 +1295,9 @@ fn takt_schritt(
         let mut anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
         // Boarding-Lied (2.1.1 G1): mit dem Abflug-Drehbuch, nur wenn keine
         // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
-        if schluessel == "abflug" && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
+        if schluessel.starts_with("abflug") && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
             anfrage["boarding_lied"] = serde_json::json!(true);
+            stats.kabinen_lauf.lied.slots = slots.clone();
         }
         holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
     }
@@ -1851,13 +1875,10 @@ fn holen(
             match ergebnis {
                 Ok(d) => {
                     // Lied angefragt, aber keins gekommen: still, „kein Lied“.
-                    let lied_fehlt = anfrage.get("boarding_lied").and_then(|v| v.as_bool()) == Some(true)
-                        && d.boarding_lied.is_none()
-                        && lauf.lied.vorlage.is_none();
+                    let angefragt = anfrage.get("boarding_lied").and_then(|v| v.as_bool()) == Some(true);
+                    let (geliefert, spaeter) = (d.boarding_lied.is_some(), d.boarding_lied_spaeter);
                     fehlend = drehbuch_uebernehmen(lauf, d, &slots, bizjet);
-                    if lied_fehlt {
-                        lauf.lied.fehler = Some("Das Modul hat kein Lied geliefert.".into());
-                    }
+                    lied_nach_antwort(&mut lauf.lied, angefragt, geliefert, spaeter, schluessel == "abflug:lied", Utc::now().timestamp());
                     if nachholung {
                         // Auch der gezielte zweite Abruf brachte nichts: auf
                         // der Seite sagen, statt ewig „wird geschrieben“.
@@ -1865,6 +1886,10 @@ fn holen(
                             lauf.texte_fehler.insert(*s, "Der Server hat keinen Text geliefert.".into());
                         }
                     }
+                }
+                Err(e) if schluessel == "abflug:lied" => {
+                    // Nur das Lied fehlte: die Texte sind schon da.
+                    lauf.lied.fehler = Some(kurz(&e.to_string()));
                 }
                 Err(e) => {
                     tracing::warn!(teil = %schluessel, error = %e, "kabinenansagen: drehbuch nicht erhalten");
@@ -3763,7 +3788,7 @@ mod tests {
         let mut l = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into(), "en-GB".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None, boarding_lied: None };
+            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false };
         assert!(drehbuch_uebernehmen(&mut l, d, &abflug, true).is_empty());
         assert_eq!(rolle_von(&l, Slot::Sicherheit), Rolle::Kapitaen);
         assert!(l.entfaellt.is_empty());
@@ -3772,13 +3797,13 @@ mod tests {
         let mut alt = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None, boarding_lied: None };
+            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false };
         assert!(drehbuch_uebernehmen(&mut alt, d, &abflug, true).is_empty(), "nichts nachholen");
         assert!(!alt.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
         assert_eq!(alt.entfaellt.get(&Slot::Sicherheit).map(String::as_str), Some("kein_kurztext"));
         // Linie ohne Kennzeichen: Kabine wie bisher.
         let mut linie = Lauf::default();
-        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None, boarding_lied: None };
+        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false };
         drehbuch_uebernehmen(&mut linie, d, &[Slot::Sicherheit], false);
         assert_eq!(rolle_von(&linie, Slot::Sicherheit), Rolle::Kabine);
         assert!(linie.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
@@ -4221,6 +4246,23 @@ mod tests {
         assert!(!ton_kommt_nie(&Lauf::default(), Slot::Boarding), "ohne Sprachen: kommt noch");
     }
 
+    /// Advisor 2.1.1: Hatte das Modul keine Zeit mehr, einmal nachfragen,
+    /// nicht gleich „kein Lied“; die Nachfrage selbst fragt nicht weiter.
+    #[test]
+    fn lied_spaeter_wird_einmal_nachgefragt() {
+        let mut l = LiedStand::default();
+        lied_nach_antwort(&mut l, true, false, true, false, 100);
+        assert_eq!((l.nochmal_ab, l.fehler.is_none()), (Some(160), true));
+        lied_nach_antwort(&mut l, true, false, true, true, 200);
+        assert!(l.fehler.is_some(), "nach der Nachfrage: kein Lied, still");
+        let mut g = LiedStand::default();
+        lied_nach_antwort(&mut g, true, true, false, false, 0);
+        assert!(g.fehler.is_none() && g.nochmal_ab.is_none());
+        let mut o = LiedStand::default();
+        lied_nach_antwort(&mut o, false, false, false, false, 0);
+        assert!(o.fehler.is_none(), "nicht angefragt (eigene Musik): kein Fehler");
+    }
+
     #[test]
     fn musik_ansicht_nennt_den_zustand() {
         let e = Einstellungen::default();
@@ -4300,9 +4342,9 @@ mod tests {
         let mut l = Lauf::default();
         let fremd = vec![api_client::KabinenFremd { wort: "Times Square".into(), sprache: "en".into() }];
         let eintrag = |text: &str, fremd: Vec<api_client::KabinenFremd>| api_client::KabinenEintrag { slot: "reiseflug25".into(), sprache: "de-DE".into(), text: text.into(), rolle: None, art: None, fremd };
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None, boarding_lied: None }, &[Slot::Reiseflug25], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None, boarding_lied: None, boarding_lied_spaeter: false }, &[Slot::Reiseflug25], false);
         assert_eq!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())), Some(&fremd));
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None, boarding_lied: None }, &[Slot::Reiseflug25], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None, boarding_lied: None, boarding_lied_spaeter: false }, &[Slot::Reiseflug25], false);
         assert!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())).is_none());
     }
 
@@ -4329,6 +4371,7 @@ mod tests {
             eintraege: vec![api_client::KabinenEintrag { slot: "reiseflug80".into(), sprache: "de-DE".into(), text: "x".into(), rolle: None, art: Some("ende_bordverkauf".into()), fremd: Vec::new() }],
             crew: Some(api_client::KabinenCrew { kapitaen: Some("Julia Lange".into()), kapitaen_geschlecht: Some("w".into()), kabine_geschlecht: Some("m".into()) }),
             boarding_lied: None,
+            boarding_lied_spaeter: false,
         };
         drehbuch_uebernehmen(&mut l, d, &[Slot::Reiseflug80], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen), "Kapitänin spricht mit Frauenstimme");
@@ -4337,7 +4380,7 @@ mod tests {
         assert_eq!(l.art_r80.as_deref(), Some("ende_bordverkauf"));
         assert_eq!(l.crew.as_ref().and_then(|c| c.kapitaen.as_deref()), Some("Julia Lange"));
         // Eine spätere Antwort ohne `crew` (älteres Modul) vergisst die Crew nicht.
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None, boarding_lied: None }, &[], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None, boarding_lied: None, boarding_lied_spaeter: false }, &[], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen));
     }
 

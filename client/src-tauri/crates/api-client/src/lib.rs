@@ -834,6 +834,10 @@ pub struct KabinenDrehbuch {
     /// `boarding_lied: true` angefragt hat und das Modul es schreiben konnte.
     #[serde(default)]
     pub boarding_lied: Option<KabinenLied>,
+    /// Das Modul hatte bis zum Zeitlimit keine Zeit mehr für das Lied: kurz
+    /// danach noch einmal fragen (Drehbuch kommt dann aus dem Zwischenspeicher).
+    #[serde(default)]
+    pub boarding_lied_spaeter: bool,
 }
 
 /// Text und Stil des Boarding-Lieds für den Ton-Server (acemusic.ai).
