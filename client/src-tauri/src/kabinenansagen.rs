@@ -462,8 +462,11 @@ pub(crate) struct LiedStand {
     /// Slots der Abflug-Anfrage mit Lied; mit denselben wird nachgefragt,
     /// dann liefert das Modul das Drehbuch aus dem Zwischenspeicher.
     slots: Vec<Slot>,
-    /// Das Modul hatte keine Zeit mehr: ab dann noch einmal fragen.
+    /// Das Modul hatte keine Zeit mehr: ab dann noch einmal fragen …
     nochmal_ab: Option<i64>,
+    /// … aber nur einmal je Flug (Codex 2.1.1: auch eine späte Antwort
+    /// einer anderen Anfrage plant keine zweite Nachfrage).
+    nachgefragt: bool,
 }
 
 /// Quelle der Musik (Design §5): eigene Musik der Airline, sonst „Alle“,
@@ -793,13 +796,14 @@ fn eigene_lesen(flight: &ActiveFlight) -> Option<(String, Vec<PathBuf>)> {
 
 /// Nach einer Abflug-Antwort: Lied da, später einmal nachfragen (das Modul
 /// hatte bis zum Zeitlimit keine Zeit mehr), oder keins (dann still).
-fn lied_nach_antwort(lied: &mut LiedStand, angefragt: bool, geliefert: bool, spaeter: bool, war_nachfrage: bool, jetzt: i64) {
+fn lied_nach_antwort(lied: &mut LiedStand, angefragt: bool, geliefert: bool, spaeter: bool, jetzt: i64) {
     if !angefragt || geliefert || lied.vorlage.is_some() {
         return;
     }
-    if spaeter && !war_nachfrage {
+    if spaeter && !lied.nachgefragt {
+        lied.nachgefragt = true;
         lied.nochmal_ab = Some(jetzt + 60);
-    } else {
+    } else if !spaeter || lied.nochmal_ab.is_none() {
         lied.fehler = Some("Das Modul hat kein Lied geliefert.".into());
     }
 }
@@ -1878,7 +1882,7 @@ fn holen(
                     let angefragt = anfrage.get("boarding_lied").and_then(|v| v.as_bool()) == Some(true);
                     let (geliefert, spaeter) = (d.boarding_lied.is_some(), d.boarding_lied_spaeter);
                     fehlend = drehbuch_uebernehmen(lauf, d, &slots, bizjet);
-                    lied_nach_antwort(&mut lauf.lied, angefragt, geliefert, spaeter, schluessel == "abflug:lied", Utc::now().timestamp());
+                    lied_nach_antwort(&mut lauf.lied, angefragt, geliefert, spaeter, Utc::now().timestamp());
                     if nachholung {
                         // Auch der gezielte zweite Abruf brachte nichts: auf
                         // der Seite sagen, statt ewig „wird geschrieben“.
@@ -4251,15 +4255,20 @@ mod tests {
     #[test]
     fn lied_spaeter_wird_einmal_nachgefragt() {
         let mut l = LiedStand::default();
-        lied_nach_antwort(&mut l, true, false, true, false, 100);
+        lied_nach_antwort(&mut l, true, false, true, 100);
         assert_eq!((l.nochmal_ab, l.fehler.is_none()), (Some(160), true));
-        lied_nach_antwort(&mut l, true, false, true, true, 200);
-        assert!(l.fehler.is_some(), "nach der Nachfrage: kein Lied, still");
+        // Späte Antwort einer anderen Anfrage, Nachfrage steht noch aus: nichts Neues.
+        lied_nach_antwort(&mut l, true, false, true, 110);
+        assert_eq!((l.nochmal_ab, l.fehler.is_none()), (Some(160), true));
+        // Die Nachfrage selbst (nochmal_ab beim Senden geleert) kommt wieder ohne Lied.
+        l.nochmal_ab = None;
+        lied_nach_antwort(&mut l, true, false, true, 200);
+        assert!(l.fehler.is_some() && l.nochmal_ab.is_none(), "nur eine Nachfrage, dann still");
         let mut g = LiedStand::default();
-        lied_nach_antwort(&mut g, true, true, false, false, 0);
+        lied_nach_antwort(&mut g, true, true, false, 0);
         assert!(g.fehler.is_none() && g.nochmal_ab.is_none());
         let mut o = LiedStand::default();
-        lied_nach_antwort(&mut o, false, false, false, false, 0);
+        lied_nach_antwort(&mut o, false, false, false, 0);
         assert!(o.fehler.is_none(), "nicht angefragt (eigene Musik): kein Fehler");
     }
 
