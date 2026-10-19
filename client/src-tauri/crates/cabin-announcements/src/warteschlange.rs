@@ -178,6 +178,9 @@ impl Warteschlange {
             .iter()
             .any(|e| matches!(e.slot, Slot::BegruessungTuerenZu | Slot::Sicherheit) && bereit(e.slot));
         let boarding_wartet = self.eintraege.iter().any(|e| e.slot == Slot::Boarding);
+        // „Ende des Service“ kommt vor der Sinkflug-Ansage des Kapitäns, wenn
+        // beide zugleich fällig sind (Sinkflugbeginn) und es spielbereit ist.
+        let ende_service_zuerst = self.eintraege.iter().any(|e| e.slot == Slot::EndeService && bereit(e.slot));
         let idx = self
             .eintraege
             .iter()
@@ -190,6 +193,7 @@ impl Warteschlange {
             // „Boarding completed“ (Kommando-Vorrang) überholt die noch
             // wartende Boarding-Ansage nicht.
             .filter(|(_, e)| !(e.slot == Slot::BoardingAbgeschlossen && boarding_wartet))
+            .filter(|(_, e)| !(e.slot == Slot::KapitaenSinkflug && ende_service_zuerst))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
             .map(|(i, _)| i)?;
@@ -400,4 +404,15 @@ mod tests {
         // Gegenprobe: eine normale Ansage bleibt in der Ruhephase gesperrt.
         assert_eq!(w.naechstes(10, Climb, true), None);
     }
+    #[test]
+    fn ende_service_vor_dem_kapitaen_beim_sinkflug() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([f(Slot::KapitaenSinkflug, Verfall::AbPhase(Final)), f(Slot::EndeService, Verfall::AbPhase(Approach))]);
+        assert_eq!(w.naechstes(0, Descent, false), Some(Slot::EndeService));
+        // Ohne Ton für die Kabine wartet der Kapitän nicht.
+        let mut v = Warteschlange::default();
+        v.aufnehmen([f(Slot::KapitaenSinkflug, Verfall::AbPhase(Final)), f(Slot::EndeService, Verfall::AbPhase(Approach))]);
+        assert_eq!(v.naechstes_bereit(0, Descent, false, |s| s != Slot::EndeService), Some(Slot::KapitaenSinkflug));
+    }
+
 }

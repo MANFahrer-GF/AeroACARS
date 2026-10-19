@@ -111,6 +111,7 @@ fn spaetestens_vor(slot: Slot) -> Option<FlightPhase> {
         // Kommt sie am Boden nicht mehr dran, nach dem Start (Thomas 18.10.2026).
         S::KapitaenBegruessung => P::Descent,
         S::AnschnallzeichenAus | S::Reiseflug25 | S::Reiseflug50 | S::Reiseflug80 => P::Descent,
+        S::EndeService => P::Approach,
         S::KapitaenSinkflug | S::KabineSinkflug => P::Final,
         S::NachDerLandung => P::BlocksOn,
         S::Aussteigen => P::PirepSubmitted,
@@ -132,6 +133,7 @@ fn ausloese_rang(slot: Slot) -> u8 {
         S::Reiseflug25
         | S::Reiseflug50
         | S::Reiseflug80
+        | S::EndeService
         | S::Turbulenz
         | S::TurbulenzVorbei => P::Cruise,
         S::Warteschleife => P::Holding,
@@ -402,12 +404,18 @@ impl Planer {
     /// Flugreihenfolge: 25 % und 50 % der Zeit bis zum Sinkflug, die dritte
     /// fest vor dem Top of Descent ([`REISEFLUG80_VOR_TOD_S`]). Bezugsgröße
     /// ist der TOD aus dem OFP, sonst Planzeit minus 30 min Sinkflug.
-    fn reiseflug_schwellen(&self) -> Option<[(i64, Slot); 3]> {
+    /// Zeit vom Abheben bis zum Sinkflug (s): TOD aus dem OFP, sonst
+    /// Planzeit minus [`SINKFLUG_MIN`].
+    fn bis_sinkflug_s(&self) -> Option<f64> {
         let plan = self.flug.geplante_flugzeit_min?;
-        let bis_sinkflug_s = match self.flug.tod_nach_abheben_s {
+        Some(match self.flug.tod_nach_abheben_s {
             Some(tod) if tod > 0 => tod as f64,
             _ => (f64::from(plan) - SINKFLUG_MIN).max(1.0) * 60.0,
-        };
+        })
+    }
+
+    fn reiseflug_schwellen(&self) -> Option<[(i64, Slot); 3]> {
+        let bis_sinkflug_s = self.bis_sinkflug_s()?;
         let r25 = (0.25 * bis_sinkflug_s).round() as i64;
         let r50 = (0.50 * bis_sinkflug_s).round() as i64;
         let r80 = if self.zweiter_service == Some(true) {
@@ -560,6 +568,10 @@ impl Planer {
                     vorige = Some(t);
                 }
                 None
+            }
+            Slot::EndeService => {
+                let b = self.bis_sinkflug_s()?;
+                Some(self.abheben_epoch? + b.round() as i64 - REISEFLUG80_VOR_TOD_S)
             }
             // Kabine: nach dem Ende der Kapitänsansage (frühestens 2 min);
             // vorher keine eigene Uhrzeit — die Seite sagt „nach dem Kapitän“
@@ -802,6 +814,21 @@ impl Planer {
                 self.entfaellt(Slot::Reiseflug25, Entfall::ZuWenigZeit);
             } else {
                 self.melde(&mut aus, Slot::Reiseflug25, Verfall::AbPhase(Descent));
+            }
+        }
+
+        // ---- Ende des Service/Bordverkaufs (2.1.0) ----
+        // Auf jedem Flug (Thomas 19.10.: „ab dann kann man nichts mehr
+        // kaufen“) 12 min vor dem geplanten Sinkflug — spätestens beim
+        // tatsächlichen Sinkflugbeginn, damit es bei frühem Sinkflug nicht
+        // wegfällt (Peter DLH454: Reiseflug 80 fiel so weg).
+        if in_luft && (rang(Climb)..=rang(Descent)).contains(&r) && !self.schon(Slot::EndeService) {
+            let geplant = self
+                .abheben_epoch
+                .zip(self.bis_sinkflug_s())
+                .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - REISEFLUG80_VOR_TOD_S);
+            if geplant || r >= rang(Descent) {
+                self.melde(&mut aus, Slot::EndeService, Verfall::AbPhase(Approach));
             }
         }
 
@@ -1137,6 +1164,8 @@ mod tests {
             Slot::Reiseflug25,
             Slot::Reiseflug50,
             Slot::Reiseflug80,
+            // 2.1.0: Ende des Service 12 min vor dem Sinkflug.
+            Slot::EndeService,
             Slot::KapitaenSinkflug,
             Slot::KabineSinkflug,
             // Unter FL200 im Sinkflug — also vor dem 10.000-ft-Chime.
@@ -1991,6 +2020,34 @@ mod tests {
         let mut z = Planer::neu(flug(100));
         z.tick(&tick(0, Takeoff, 500.0, 2_000.0));
         assert_eq!(z.restflug_min(40 * 60, None), Some(60.0));
+    }
+
+    /// 2.1.0 (Thomas/Peter): „Ende des Service/Bordverkaufs“ auf jedem Flug,
+    /// 12 min vor dem geplanten Sinkflug, spätestens beim Sinkflugbeginn.
+    #[test]
+    fn ende_service_auf_jedem_flug_spaetestens_beim_sinkflug() {
+        let mut f = flug(120);
+        f.abheben_epoch = Some(0);
+        let mut p = Planer::fortsetzen(f.clone(), Cruise);
+        let bis = (120.0 - SINKFLUG_MIN) as i64 * 60;
+        assert_eq!(p.zeitpunkt(Slot::EndeService, None), Some(bis - REISEFLUG80_VOR_TOD_S));
+        assert!(!p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S - 10, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
+        assert!(p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
+        // Früher Sinkflug (DLH454): kommt beim Sinkflugbeginn.
+        let mut q = Planer::fortsetzen(f.clone(), Cruise);
+        q.tick(&tick(30 * 60, Cruise, 37_000.0, 0.0));
+        assert!(q.tick(&tick(31 * 60, Descent, 36_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
+        // Kurzstrecke unter einer Stunde: kommt auch.
+        let mut k = flug(45);
+        k.abheben_epoch = Some(0);
+        let mut ks = Planer::fortsetzen(k, Climb);
+        assert!(ks.tick(&tick(20 * 60, Descent, 15_000.0, -1_500.0)).iter().any(|x| x.slot == Slot::EndeService));
+        // Bizjet: nicht.
+        let mut b = flug(120);
+        b.flugart = Some(Flugart::Bizjet);
+        b.abheben_epoch = Some(0);
+        let mut bz = Planer::fortsetzen(b, Cruise);
+        assert!(!bz.tick(&tick(bis, Descent, 30_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
     }
 
 }

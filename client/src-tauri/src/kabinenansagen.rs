@@ -384,6 +384,8 @@ pub(crate) struct Lauf {
     protokoll: Vec<Notiz>,
     /// Zuletzt protokollierter Wartegrund je fälliger Ansage (nur Wechsel).
     wartet_zuletzt: HashMap<Slot, Option<Wartet>>,
+    /// Fremde Namen je Text (Slot, Sprache) aus dem Drehbuch (2.1.0).
+    fremd: HashMap<(Slot, String), Vec<api_client::KabinenFremd>>,
     /// Zuletzt protokollierte Abwahl des Piloten samt Kommando- und
     /// Gong-Schalter (nur Wechsel).
     abgewaehlt_zuletzt: Option<Vec<Slot>>,
@@ -567,7 +569,7 @@ const TON_GLEICHZEITIG: usize = 2;
 /// Wetter, Verspätung und Ankunftszeit stimmen.
 const ANKUNFT_TEXT_VOR_LANDUNG_MIN: i64 = 45;
 
-const ABFLUG: [Slot; 8] = [
+const ABFLUG: [Slot; 9] = [
     Slot::Boarding,
     Slot::BegruessungTuerenZu,
     Slot::Sicherheit,
@@ -576,6 +578,8 @@ const ABFLUG: [Slot; 8] = [
     Slot::Reiseflug25,
     Slot::Reiseflug50,
     Slot::Reiseflug80,
+    // 2.1.0: im Abflug-Teil, damit der Text vor dem Sinkflug sicher da ist.
+    Slot::EndeService,
 ];
 const ANKUNFT: [Slot; 4] = [Slot::KapitaenSinkflug, Slot::KabineSinkflug, Slot::NachDerLandung, Slot::Aussteigen];
 const KOMMANDOS: [Slot; 6] = [
@@ -1174,12 +1178,13 @@ fn ton_auftrag(
     let rolle = rolle_von(lauf, slot);
     let maennlich = stimme_maennlich(lauf, rolle);
     let flug = flug_kennung(&flight.pirep_id);
+    let fremd = lauf.fremd.get(&(slot, sprache.clone())).cloned().unwrap_or_default();
     notiz(lauf, "ton_anfrage", Some(slot), Some(&sprache), serde_json::json!({ "gebraucht_in_s": gebraucht_in_s, "faellig": faellig }));
     let ordner = flug_ordner(flight);
     let (app, flight) = (app.clone(), Arc::clone(flight));
     tauri::async_runtime::spawn(async move {
         let gestartet = Utc::now();
-        let wunsch = Wunsch { slot: Some(slot), gebraucht_in_s, ordner: &ordner, flug: flug.as_deref(), rolle: server_rolle(rolle) };
+        let wunsch = Wunsch { slot: Some(slot), gebraucht_in_s, ordner: &ordner, flug: flug.as_deref(), rolle: server_rolle(rolle), fremd: &fremd };
         let ergebnis = sprechen(&app, maennlich, &sprache, &text, wunsch).await;
         let dauer_ms = (Utc::now() - gestartet).num_milliseconds();
         let mut stats = flight.stats.lock().expect("flight stats");
@@ -1375,6 +1380,11 @@ fn drehbuch_uebernehmen(lauf: &mut Lauf, d: api_client::KabinenDrehbuch, slots: 
         if ist_ereignis(slot) {
             lauf.ton.remove(&k);
             lauf.ton_endgueltig.remove(&k);
+        }
+        if e.fremd.is_empty() {
+            lauf.fremd.remove(&k);
+        } else {
+            lauf.fremd.insert(k.clone(), e.fremd.clone());
         }
         lauf.texte.insert(k, e.text);
     }
@@ -1578,6 +1588,8 @@ struct Wunsch<'a> {
     /// Ohne (Hörprobe): erste Stimme des Kreises bzw. für die Kabine die zweite.
     flug: Option<&'a str>,
     rolle: Option<&'static str>,
+    /// Fremde Namen im Text (2.1.0), gehen unverändert an den Ton-Server.
+    fremd: &'a [api_client::KabinenFremd],
 }
 
 /// Fehler einer Ton-Anfrage.
@@ -1612,15 +1624,22 @@ async fn sprechen(app: &AppHandle, maennlich: bool, sprache: &str, text: &str, w
     // Gespeichert wird unter der Stimme, die der Server gewaehlt hat — so
     // verdeckt der Zwischenspeicher keinen Stimmwechsel auf dem Server
     // (Codex-QS beta.4). Je Sitzung fragt der Client einmal nach.
+    // Fremde Namen ändern den Ton bei gleichem Text: Sie gehören in den Namen
+    // der zwischengespeicherten Datei (2.1.0).
+    let schluessel = if wunsch.fremd.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}|{}", serde_json::to_string(wunsch.fremd).unwrap_or_default())
+    };
     let bekannt = GEWAEHLT.lock().expect("gewaehlt").get(&gemerkt).cloned();
     if let Some(stimme) = &bekannt {
-        let name = cache::dateiname("server", stimme, sprache, text, "wav");
+        let name = cache::dateiname("server", stimme, sprache, &schluessel, "wav");
         if ordner.join(&name).exists() {
             return ton_aus_datei(&ordner.join(&name), relativ(&name)).map(Some).map_err(|e| TonFehlerAntwort::spaeter(e, None));
         }
     }
     let teil = wunsch.slot.and_then(ton_teil);
-    let wahl = piper::Wahl { flug: wunsch.flug, rolle: wunsch.rolle };
+    let wahl = piper::Wahl { flug: wunsch.flug, rolle: wunsch.rolle, fremd: wunsch.fremd };
     let Some(ton) = piper::sprechen(&anfrage, text, wunsch.gebraucht_in_s, teil, wunsch.slot.map(slot_name), wahl).await? else {
         return Ok(None);
     };
@@ -1630,7 +1649,7 @@ async fn sprechen(app: &AppHandle, maennlich: bool, sprache: &str, text: &str, w
     } else {
         let stimme = ton.stimme.unwrap_or(anfrage.clone());
         GEWAEHLT.lock().expect("gewaehlt").insert(gemerkt, stimme.clone());
-        cache::dateiname("server", &stimme, sprache, text, "wav")
+        cache::dateiname("server", &stimme, sprache, &schluessel, "wav")
     };
     let pfad = ordner.join(&name);
     std::fs::write(&pfad, &ton.wav).map_err(|e| TonFehlerAntwort::spaeter(e.to_string(), None))?;
@@ -2014,7 +2033,7 @@ pub(crate) async fn kabinen_probe(app: AppHandle, rolle: Rolle, sprache: String)
         (_, Rolle::Kapitaen) => "Good afternoon, ladies and gentlemen, this is your captain speaking. This is a voice sample.",
         _ => "Welcome on board. This is a voice sample from your cabin crew.",
     };
-    let wunsch = Wunsch { slot: None, gebraucht_in_s: Some(0), ordner: PROBE_ORDNER, flug: None, rolle: server_rolle(rolle) };
+    let wunsch = Wunsch { slot: None, gebraucht_in_s: Some(0), ordner: PROBE_ORDNER, flug: None, rolle: server_rolle(rolle), fremd: &[] };
     let ton = sprechen(&app, maennlich, &sprache, text, wunsch)
         .await
         .map_err(|e| UiError::new("sprachausgabe", e.meldung))?
@@ -2854,6 +2873,7 @@ pub(crate) mod piper {
     pub(crate) struct Wahl<'a> {
         pub flug: Option<&'a str>,
         pub rolle: Option<&'static str>,
+        pub fremd: &'a [api_client::KabinenFremd],
     }
 
     /// Koerper der Anfrage an /api/kabine/ton.
@@ -2877,6 +2897,10 @@ pub(crate) mod piper {
         }
         if let Some(r) = wahl.rolle {
             koerper["rolle"] = serde_json::json!(r);
+        }
+        // Fremde Namen (2.1.0): Der Server spricht sie in ihrer Sprache.
+        if !wahl.fremd.is_empty() {
+            koerper["fremd"] = serde_json::json!(wahl.fremd);
         }
         koerper
     }
@@ -3302,7 +3326,7 @@ mod tests {
     }
 
     fn eintrag(slot: &str, sprache: &str, rolle: Option<&str>) -> api_client::KabinenEintrag {
-        api_client::KabinenEintrag { slot: slot.into(), sprache: sprache.into(), text: format!("{slot} {sprache}"), rolle: rolle.map(str::to_string), art: None }
+        api_client::KabinenEintrag { slot: slot.into(), sprache: sprache.into(), text: format!("{slot} {sprache}"), rolle: rolle.map(str::to_string), art: None, fremd: Vec::new() }
     }
 
     #[test]
@@ -3692,6 +3716,19 @@ mod tests {
         assert!(!zweiter_service_zu_spaet(&l, Some(95.0)), "noch genug Zeit");
     }
 
+    /// 2.1.0: `fremd` aus dem Drehbuch wird je Text gemerkt und mit einem
+    /// neuen Text ohne Fremdwörter wieder vergessen.
+    #[test]
+    fn fremdwoerter_werden_je_text_gemerkt() {
+        let mut l = Lauf::default();
+        let fremd = vec![api_client::KabinenFremd { wort: "Times Square".into(), sprache: "en".into() }];
+        let eintrag = |text: &str, fremd: Vec<api_client::KabinenFremd>| api_client::KabinenEintrag { slot: "reiseflug25".into(), sprache: "de-DE".into(), text: text.into(), rolle: None, art: None, fremd };
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None }, &[Slot::Reiseflug25], false);
+        assert_eq!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())), Some(&fremd));
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None }, &[Slot::Reiseflug25], false);
+        assert!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())).is_none());
+    }
+
     /// v2.0.28 (Punkt 9): Der Wartegrund geht nur beim Wechsel ins Log.
     #[test]
     fn wartegrund_nur_beim_wechsel_im_protokoll() {
@@ -3712,7 +3749,7 @@ mod tests {
         assert!(stimme_maennlich(&l, Rolle::Kapitaen) && !stimme_maennlich(&l, Rolle::Kabine), "ohne Angabe wie bisher");
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into()],
-            eintraege: vec![api_client::KabinenEintrag { slot: "reiseflug80".into(), sprache: "de-DE".into(), text: "x".into(), rolle: None, art: Some("ende_bordverkauf".into()) }],
+            eintraege: vec![api_client::KabinenEintrag { slot: "reiseflug80".into(), sprache: "de-DE".into(), text: "x".into(), rolle: None, art: Some("ende_bordverkauf".into()), fremd: Vec::new() }],
             crew: Some(api_client::KabinenCrew { kapitaen: Some("Julia Lange".into()), kapitaen_geschlecht: Some("w".into()), kabine_geschlecht: Some("m".into()) }),
         };
         drehbuch_uebernehmen(&mut l, d, &[Slot::Reiseflug80], false);
@@ -3750,9 +3787,14 @@ mod tests {
         assert_ne!(k(Some("A1"), Some("kapitaen")), k(Some("A2"), Some("kapitaen")), "anderer Flug");
         assert_ne!(k(Some("A1"), Some("kapitaen")), k(Some("A1"), Some("kabine")), "andere Rolle, gleiches Geschlecht");
         assert_eq!(k(Some("A1"), Some("kabine")), k(Some("A1"), Some("kabine")));
-        let mit = piper::koerper("auto:de-DE:w", "Hallo", Some(0), None, None, piper::Wahl { flug: Some("A1"), rolle: Some("kabine") });
+        let mit = piper::koerper("auto:de-DE:w", "Hallo", Some(0), None, None, piper::Wahl { flug: Some("A1"), rolle: Some("kabine"), fremd: &[] });
         assert_eq!(mit["pirep_id"], "A1");
         assert_eq!(mit["rolle"], "kabine");
+        assert!(mit.get("fremd").is_none(), "ohne Fremdwörter kein Feld (alte Server)");
+        // 2.1.0: Fremde Namen gehen unverändert an den Ton-Server.
+        let fremd = [api_client::KabinenFremd { wort: "Times Square".into(), sprache: "en".into() }];
+        let mf = piper::koerper("auto:de-DE:w", "Am Times Square", Some(0), None, None, piper::Wahl { flug: Some("A1"), rolle: Some("kabine"), fremd: &fremd });
+        assert_eq!(mf["fremd"], serde_json::json!([{ "wort": "Times Square", "sprache": "en" }]));
         let ohne = piper::koerper("auto:de-DE:w", "Hallo", None, None, None, piper::Wahl::default());
         assert!(ohne.get("pirep_id").is_none() && ohne.get("rolle").is_none(), "Hörprobe ohne Flug");
     }
