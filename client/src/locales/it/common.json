@@ -161,7 +161,7 @@
     },
     "wann": {
       "boarding": "durante l'imbarco",
-      "boarding_abgeschlossen": "quando il foglio di carico torna",
+      "boarding_abgeschlossen": "poco prima di \"porte chiuse\"",
       "begruessung_tueren_zu": "a porte chiuse",
       "sicherheit": "dopo il benvenuto",
       "kapitaen_begruessung": "durante il rullaggio verso la pista",
@@ -272,11 +272,11 @@
     },
     "ton": {
       "titel": "Audio",
-      "an": "Audio attivo",
       "stumm": "Muto",
       "lautstaerke": "Volume degli annunci",
       "stumm_titel": "Muto: l'annuncio in corso si interrompe, ciò che scade fino alla riattivazione viene saltato.",
-      "aufheben_titel": "Audio di nuovo attivo: il prossimo annuncio arriva al suo momento."
+      "aufheben_titel": "Audio di nuovo attivo: il prossimo annuncio arriva al suo momento.",
+      "ansagen": "Annunci"
     },
     "entfall": {
       "zu_wenig_zeit": "troppo poco tempo prima della discesa",
@@ -290,19 +290,19 @@
       "ohne_ladeblatt": "senza foglio di carico SimBrief non determinabile"
     },
     "ausloeser": {
-      "boarding": "Arriva quando i passeggeri salgono a bordo: il carico nel simulatore aumenta di almeno 200 kg, poi 30 secondi dopo. Se all'inizio del volo è già tutto caricato (o manca l'OFP SimBrief), quando accendi il segnale delle cinture, al più tardi 5 minuti dopo l'inizio dell'imbarco. Al pushback è troppo tardi e viene saltato.",
-      "boarding_abgeschlossen": "Messaggio interno della cabina (\"Boarding completed.\"). Arriva quando nella scheda Cockpit carburante e ZFW sono verdi e il carico non cambia da 30 secondi, non prima di 2 minuti dopo l'annuncio d'imbarco. Se le porte si chiudono prima o manca l'OFP SimBrief, viene saltato.",
+      "boarding": "Arriva quando i passeggeri salgono a bordo: il carico nel simulatore supera di almeno 200 kg il valore di inizio imbarco e resta sopra per 30 secondi. Il segnale delle cinture non lo attiva. Se non sale nulla (già caricato, nessun segnale), arriva al beacon o al pushback, subito prima di \"porte chiuse\".",
+      "boarding_abgeschlossen": "Messaggio interno della cabina (\"Boarding completed.\"). Arriva su ogni volo poco prima di \"porte chiuse\" (al beacon o al pushback), dopo il benvenuto d'imbarco.",
       "begruessung_tueren_zu": "Arriva quando si accende il beacon (porte chiuse, avviamento motori). Senza beacon al pushback o all'inizio del rullaggio.",
       "kommando_tueren_scharf": "Arriva insieme a \"porte chiuse\": beacon acceso, pushback o inizio del rullaggio.",
       "sicherheit": "Segue circa 10 secondi dopo il benvenuto \"porte chiuse\".",
       "kapitaen_begruessung": "Arriva durante il rullaggio verso la pista, 30 secondi dopo le istruzioni di sicurezza. Se il tempo prima del decollo non basta, arriva dopo il decollo sopra 10.000 piedi.",
-      "kommando_start": "Arriva durante il rullaggio verso la pista non appena le luci di atterraggio sono accese (devono essere state spente almeno una volta dopo aver lasciato il parcheggio). Se l'aereo non le segnala o restano accese dal gate, alla corsa di decollo.",
+      "kommando_start": "Arriva durante il pushback o il rullaggio verso la pista non appena l'aereo si muove (da 3 nodi) e le luci di atterraggio sono accese (devono essere state spente almeno una volta dopo aver lasciato il parcheggio). Se l'aereo non le segnala o restano accese dal gate, alla corsa di decollo.",
       "chime10000_steigflug": "Gong salendo attraverso 10.000 piedi.",
       "anschnallzeichen_aus": "Arriva in salita quando spegni il segnale delle cinture, anche sotto 10.000 piedi. In AUTO da 10.000 piedi. Se resta acceso non arriva e il servizio aspetta.",
       "reiseflug25": "10 minuti dopo aver raggiunto la quota di crociera (e dopo \"cinture spente\"), al più tardi dopo un quarto del tempo fino alla discesa. Sui voli sotto un'ora subito dopo \"cinture spente\".",
       "reiseflug50": "A metà del tempo fino alla discesa, almeno 15 minuti dopo l'annuncio di crociera precedente.",
       "reiseflug80": "Secondo servizio: circa 90 minuti prima della discesa, non prima di 15 minuti dopo l'annuncio a metà volo; se il tempo non basta viene saltato. La fine del servizio o della vendita a bordo è un annuncio a parte poco prima della discesa.",
-      "ende_service": "La cabina chiude il servizio o la vendita a bordo: da quel momento niente più ordini. Arriva su ogni volo 12 minuti prima della discesa prevista, al più tardi all'inizio della discesa e allora prima dell'annuncio del comandante.",
+      "ende_service": "La cabina chiude il servizio o la vendita a bordo: da quel momento niente più ordini. Arriva su ogni volo 12 minuti prima della discesa prevista, ma mai prima dell'annuncio del servizio; al più tardi all'inizio della discesa e allora prima dell'annuncio del comandante.",
       "kapitaen_sinkflug": "Poco prima della discesa: 5 minuti prima del top of descent, 25 minuti prima dell'atterraggio previsto o all'inizio della discesa.",
       "kabine_sinkflug": "Non prima di 2 minuti dopo la fine dell'annuncio del comandante, sotto 15.000 piedi in discesa o al più tardi 5 minuti dopo; in avvicinamento subito.",
       "chime10000_sinkflug": "Gong scendendo attraverso 10.000 piedi.",
@@ -328,6 +328,60 @@
       "anschnallzeichen": {
         "titel": "Segnale cinture ancora acceso",
         "text": "La cabina aspetta con il servizio finché non spegni il segnale delle cinture."
+      }
+    },
+    "musik": {
+      "regler": "Musica d'imbarco",
+      "lautstaerke": "Volume della musica d'imbarco",
+      "titel": "Musica d'imbarco",
+      "alle": "Tutte le compagnie",
+      "stuecke_one": "{{count}} brano",
+      "stuecke_other": "{{count}} brani",
+      "quelle_lied": "Canzone per questo volo",
+      "quelle_eigene": "Musica propria",
+      "quelle_keine": "Su questo volo solo musica propria (bizjet o cargo) – nessuna salvata.",
+      "quelle_ohne_flug": "Nessun volo attivo. Puoi già aggiungere la tua musica.",
+      "stand": {
+        "aus": "spenta",
+        "ohne_flug": "nessun volo",
+        "keine": "nessuna musica",
+        "wird_erzeugt": "in creazione",
+        "kein_lied": "nessuna canzone",
+        "bereit": "pronta",
+        "laeuft": "in riproduzione",
+        "pausiert": "in pausa per annuncio",
+        "beendet": "terminata",
+        "probe": "ascolto di prova"
+      },
+      "probehoeren": "Ascolta",
+      "stopp": "Stop",
+      "eigene": "Musica propria …",
+      "schalter": "Musica d'imbarco attiva",
+      "erklaerung": "Suona in loop dall'annuncio d'imbarco, si ferma a ogni annuncio, termina con \"porte chiuse\".",
+      "dialog": {
+        "titel": "Musica d'imbarco propria",
+        "schliessen": "Chiudi",
+        "unter": "La tua musica sostituisce la canzone per questo volo. Resta sul tuo computer.",
+        "keine": "Nessuna musica propria",
+        "entfernen": "Rimuovi",
+        "entfernen_frage": "Rimuovere dalla musica d'imbarco?",
+        "hinzufuegen_titel": "Aggiungi musica",
+        "datei_waehlen": "Scegli file",
+        "keine_datei": "Nessun file scelto",
+        "fuer": "Per quale compagnia",
+        "diese": "Questa compagnia: {{name}}",
+        "andere": "Altra compagnia …",
+        "hinzufuegen": "Aggiungi",
+        "suchen": "Cerca compagnia (ICAO o nome)",
+        "kurz": "Più breve di 30 secondi: verrà ripetuta in loop.",
+        "hinweis_recht": "Usa solo musica che puoi usare privatamente.",
+        "ordner": "Apri cartella",
+        "fehler": {
+          "musik_kaputt": "Questo file non può essere riprodotto.",
+          "musik_zu_gross": "Il file supera i 50 MB.",
+          "musik_format": "Solo MP3, M4A/AAC, WAV, FLAC o OGG.",
+          "musik_ordner": "La cartella non è scrivibile: {{detail}}"
+        }
       }
     }
   },

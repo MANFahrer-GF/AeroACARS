@@ -141,7 +141,7 @@ describe("Seite Kabine", () => {
     ueberblick.stumm = false;
     render(<KabinenSeite onOpenSettings={() => undefined} />);
     const ton = await screen.findByTestId("kabine-ton");
-    fireEvent.click(within(ton).getByRole("button", { name: /Ton an/ }));
+    fireEvent.click(within(ton).getByRole("button", { name: /Ansagen/ }));
     await vi.waitFor(() => expect(aufrufe.find((a) => a.cmd === "kabinen_stumm")?.args).toEqual({ stumm: true }));
     expect(await screen.findByTestId("kabine-stumm-hinweis")).toBeTruthy();
     expect(within(ton).getByRole("button", { name: /Stumm/ }).getAttribute("aria-pressed")).toBe("true");

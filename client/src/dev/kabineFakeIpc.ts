@@ -181,7 +181,53 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       while (Date.now() < ende && gestoppt === stand) await new Promise((r) => setTimeout(r, 50));
       return null as T;
     }
+    case "kabinen_musik_zustand":
+      return { ...demoMusik } as T;
+    case "kabinen_musik_lautstaerke":
+      demoMusik.lautstaerke = Number(args?.lautstaerke);
+      return null as T;
+    case "kabinen_boarding_musik":
+      demoMusik.an = Boolean(args?.an);
+      demoMusik.stand = demoMusik.an ? "laeuft" : "aus";
+      return null as T;
+    case "kabinen_airlines":
+      return [
+        { icao: "AFR", name: "Air France" }, { icao: "AUA", name: "Austrian Airlines" }, { icao: "DLH", name: "Lufthansa" },
+        { icao: "EWG", name: "Eurowings" }, { icao: "ITY", name: "ITA Airways" }, { icao: "KLM", name: "KLM" }, { icao: "SWR", name: "Swiss" },
+      ] as T;
+    case "kabinen_musik_ablage":
+      return { ordner: "~/Documents/AeroACARS/Boarding-Musik", flug_airline: "DLH", stuecke: demoStuecke } as T;
+    case "kabinen_musik_pruefen":
+      return 212.4 as T;
+    case "kabinen_musik_hinzufuegen": {
+      const st = { airline: String(args?.airline), datei: String(args?.quelle).split("/").pop() ?? "", dauer_s: 212.4 };
+      demoStuecke.push(st);
+      return st as T;
+    }
+    case "kabinen_musik_entfernen":
+      demoStuecke.splice(demoStuecke.findIndex((x) => x.airline === args?.airline && x.datei === args?.datei), 1);
+      return null as T;
     default:
       return null as T;
   }
 }
+
+/** Boarding-Musik der Demo: `?musik=` laeuft (Standard), lied, kein_lied, eigene, aus. */
+const musikFall = q.get("musik") ?? "laeuft";
+const demoMusik = {
+  an: musikFall !== "aus",
+  lautstaerke: 0.2,
+  stand: musikFall === "lied" ? "wird_erzeugt" : musikFall === "eigene" ? "bereit" : musikFall,
+  quelle: musikFall === "eigene" ? "eigene" : "lied",
+  titel: musikFall === "eigene" ? null : "Fly with Lufthansa",
+  strecke: "Frankfurt → Hamburg",
+  ordner: musikFall === "eigene" ? "DLH" : null,
+  stuecke: musikFall === "eigene" ? 2 : 0,
+  airline: "DLH",
+};
+const demoStuecke = [
+  { airline: "DLH", datei: "Lufthansa Boarding Theme.mp3", dauer_s: 184.2 },
+  { airline: "DLH", datei: "Piano Lounge.m4a", dauer_s: 241 },
+  { airline: "KLM", datei: "Blue Skies.mp3", dauer_s: 158.7 },
+  { airline: "Alle", datei: "Chill Jazz.flac", dauer_s: 27.5 },
+];

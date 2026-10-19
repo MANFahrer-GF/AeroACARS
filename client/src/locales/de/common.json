@@ -161,7 +161,7 @@
     },
     "wann": {
       "boarding": "beim Boarding",
-      "boarding_abgeschlossen": "wenn das Ladeblatt stimmt",
+      "boarding_abgeschlossen": "kurz vor „Türen zu“",
       "begruessung_tueren_zu": "wenn die Türen zu sind",
       "sicherheit": "nach der Begrüßung",
       "kapitaen_begruessung": "beim Rollen zur Bahn",
@@ -272,11 +272,11 @@
     },
     "ton": {
       "titel": "Ton",
-      "an": "Ton an",
       "stumm": "Stumm",
       "lautstaerke": "Lautstärke der Ansagen",
       "stumm_titel": "Stummschalten: Die laufende Ansage bricht ab, was bis zum Aufheben fällig wird, entfällt.",
-      "aufheben_titel": "Ton wieder an: Die nächste Ansage kommt zu ihrem Zeitpunkt."
+      "aufheben_titel": "Ton wieder an: Die nächste Ansage kommt zu ihrem Zeitpunkt.",
+      "ansagen": "Ansagen"
     },
     "entfall": {
       "zu_wenig_zeit": "zu wenig Zeit bis zum Sinkflug",
@@ -290,19 +290,19 @@
       "ohne_ladeblatt": "ohne SimBrief-Ladeblatt nicht feststellbar"
     },
     "ausloeser": {
-      "boarding": "Kommt, wenn die Passagiere einsteigen: Die Zuladung im Simulator steigt um mindestens 200 kg, dann 30 Sekunden später. Ist schon beim Flugstart alles geladen (oder kein SimBrief-OFP), beim Einschalten des Anschnallzeichens, spätestens 5 Minuten nach Beginn des Boardings. Beim Pushback ist es dafür zu spät, dann entfällt sie.",
-      "boarding_abgeschlossen": "Interne Meldung der Kabine („Boarding completed.“). Kommt, wenn im Cockpit-Tab Kraftstoff und ZFW grün sind und sich die Zuladung 30 Sekunden nicht mehr ändert, frühestens 2 Minuten nach der Boarding-Ansage. Sind die Türen vorher zu oder gibt es kein SimBrief-OFP, entfällt sie.",
+      "boarding": "Kommt, wenn die Passagiere einsteigen: Die Zuladung im Simulator steigt um mindestens 200 kg über den Wert zu Beginn des Boardings und bleibt 30 Sekunden darüber. Das Anschnallzeichen löst sie nicht aus. Steigt nichts (schon vorher geladen, kein Signal), kommt sie beim Beacon bzw. Pushback, direkt vor „Türen zu“.",
+      "boarding_abgeschlossen": "Interne Meldung der Kabine („Boarding completed.“). Kommt auf jedem Flug kurz vor „Türen zu“ (beim Beacon bzw. Pushback), nach der Boarding-Begrüßung.",
       "begruessung_tueren_zu": "Kommt, wenn der Beacon angeht (Türen zu, Triebwerksstart). Ohne Beacon beim Pushback oder beim Losrollen.",
       "kommando_tueren_scharf": "Kommt zusammen mit „Türen zu“: Beacon an, Pushback oder Losrollen.",
       "sicherheit": "Folgt etwa 10 Sekunden nach der Begrüßung „Türen zu“.",
       "kapitaen_begruessung": "Kommt beim Rollen zur Bahn, 30 Sekunden nach den Sicherheitshinweisen. Reicht die Zeit bis zum Start nicht, kommt sie nach dem Start über 10.000 Fuß.",
-      "kommando_start": "Kommt beim Rollen zur Bahn, sobald das Landelicht an ist (es muss seit dem Verlassen der Parkposition einmal aus gewesen sein). Meldet das Flugzeug kein Landelicht oder bleibt es vom Gate an an, beim Startlauf.",
+      "kommando_start": "Kommt beim Zurückschieben oder Rollen zur Bahn, sobald das Flugzeug rollt (ab 3 Knoten) und das Landelicht an ist (es muss seit dem Verlassen der Parkposition einmal aus gewesen sein). Meldet das Flugzeug kein Landelicht oder bleibt es vom Gate an an, beim Startlauf.",
       "chime10000_steigflug": "Gong beim Steigen durch 10.000 Fuß.",
       "anschnallzeichen_aus": "Kommt im Steigflug, wenn du das Anschnallzeichen ausschaltest, auch unter 10.000 Fuß. Steht es auf AUTO, ab 10.000 Fuß. Bleibt es an, kommt sie nicht, und der Service wartet.",
       "reiseflug25": "10 Minuten nach Erreichen der Reiseflughöhe (und nach „Anschnallzeichen aus“), spätestens nach einem Viertel der Zeit bis zum Sinkflug. Auf Flügen unter einer Stunde gleich nach „Anschnallzeichen aus“.",
       "reiseflug50": "Zur Halbzeit der Zeit bis zum Sinkflug, mindestens 15 Minuten nach der vorigen Reiseflug-Ansage.",
       "reiseflug80": "Zweiter Service: etwa 90 Minuten vor dem Sinkflug, frühestens 15 Minuten nach der Ansage zur Halbzeit; reicht die Zeit nicht, entfällt er. Das Ende des Service bzw. Bordverkaufs ist eine eigene Ansage kurz vor dem Sinkflug.",
-      "ende_service": "Die Kabine beendet Service bzw. Bordverkauf: Ab dann gibt es keine Bestellungen mehr. Kommt auf jedem Flug 12 Minuten vor dem geplanten Sinkflug, spätestens beim Beginn des Sinkflugs und dann vor der Ansage des Kapitäns.",
+      "ende_service": "Die Kabine beendet Service bzw. Bordverkauf: Ab dann gibt es keine Bestellungen mehr. Kommt auf jedem Flug 12 Minuten vor dem geplanten Sinkflug, aber nie vor der Service-Ansage; spätestens beim Beginn des Sinkflugs und dann vor der Ansage des Kapitäns.",
       "kapitaen_sinkflug": "Kurz vor dem Sinkflug: 5 Minuten vor dem Top of Descent, 25 Minuten vor der erwarteten Landung oder mit Beginn des Sinkflugs.",
       "kabine_sinkflug": "Frühestens 2 Minuten nach dem Ende der Kapitänsansage, unter 15.000 Fuß im Sinkflug oder spätestens 5 Minuten danach; im Anflug sofort.",
       "chime10000_sinkflug": "Gong beim Sinken durch 10.000 Fuß.",
@@ -328,6 +328,60 @@
       "anschnallzeichen": {
         "titel": "Anschnallzeichen noch an",
         "text": "Die Kabine wartet mit dem Service, bis du das Anschnallzeichen ausschaltest."
+      }
+    },
+    "musik": {
+      "regler": "Boarding-Musik",
+      "lautstaerke": "Lautstärke der Boarding-Musik",
+      "titel": "Boarding-Musik",
+      "alle": "Alle Airlines",
+      "stuecke_one": "{{count}} Stück",
+      "stuecke_other": "{{count}} Stücke",
+      "quelle_lied": "Lied für diesen Flug",
+      "quelle_eigene": "Eigene Musik",
+      "quelle_keine": "Auf diesem Flug nur eigene Musik (Bizjet oder Fracht) – keine hinterlegt.",
+      "quelle_ohne_flug": "Kein Flug aktiv. Eigene Musik kannst du schon jetzt hinzufügen.",
+      "stand": {
+        "aus": "aus",
+        "ohne_flug": "kein Flug",
+        "keine": "keine Musik",
+        "wird_erzeugt": "wird erzeugt",
+        "kein_lied": "kein Lied",
+        "bereit": "bereit",
+        "laeuft": "läuft",
+        "pausiert": "pausiert für Ansage",
+        "beendet": "beendet",
+        "probe": "Probehören"
+      },
+      "probehoeren": "Probehören",
+      "stopp": "Stopp",
+      "eigene": "Eigene Musik …",
+      "schalter": "Boarding-Musik an",
+      "erklaerung": "Läuft ab der Boarding-Ansage in Schleife, pausiert bei jeder Ansage, endet mit „Türen zu“.",
+      "dialog": {
+        "titel": "Eigene Boarding-Musik",
+        "schliessen": "Schließen",
+        "unter": "Eigene Musik ersetzt das Lied für diesen Flug. Sie bleibt auf deinem Rechner.",
+        "keine": "Keine eigene Musik",
+        "entfernen": "Entfernen",
+        "entfernen_frage": "Aus der Boarding-Musik entfernen?",
+        "hinzufuegen_titel": "Musik hinzufügen",
+        "datei_waehlen": "Datei wählen",
+        "keine_datei": "Keine Datei gewählt",
+        "fuer": "Für welche Airline",
+        "diese": "Diese Airline: {{name}}",
+        "andere": "Andere Airline …",
+        "hinzufuegen": "Hinzufügen",
+        "suchen": "Airline suchen (ICAO oder Name)",
+        "kurz": "Kürzer als 30 Sekunden: wird in Schleife wiederholt.",
+        "hinweis_recht": "Nur Musik verwenden, die du privat nutzen darfst.",
+        "ordner": "Ordner öffnen",
+        "fehler": {
+          "musik_kaputt": "Diese Datei lässt sich nicht abspielen.",
+          "musik_zu_gross": "Die Datei ist größer als 50 MB.",
+          "musik_format": "Nur MP3, M4A/AAC, WAV, FLAC oder OGG.",
+          "musik_ordner": "Der Ordner ist nicht beschreibbar: {{detail}}"
+        }
       }
     }
   },
