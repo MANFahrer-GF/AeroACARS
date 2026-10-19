@@ -29,6 +29,10 @@ const MAX_TEXT_FILE: u64 = 5 * 1024 * 1024;
 const MAX_WASM_FILE: u64 = 110 * 1024 * 1024;
 const MAX_TOTAL: u64 = 400 * 1024 * 1024;
 const MAX_FILES: usize = 3000;
+/// Groesste ZIP-Einreichung, die live.kant.ovh annimmt — muss zu
+/// MAX_SUBMISSION_BYTES in recorder/src/aircraftScan.ts passen. Darueber
+/// lehnt der Server mit 413 ab, bevor ein Byte ankommt; wir sagen es vorher.
+const ASCAN_MAX_ZIP_BYTES: u64 = 250 * 1024 * 1024;
 
 const DEFAULT_ENDPOINT: &str = "https://live.kant.ovh/api/ascan/submissions";
 
@@ -721,6 +725,7 @@ pub async fn ascan_submit(
 
     let url = endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
     let zip_len = zip_bytes.len() as u64;
+    zip_groesse_pruefen(zip_len)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(180))
         .build()
@@ -779,9 +784,29 @@ pub async fn ascan_submit(
     })
 }
 
+fn zip_groesse_pruefen(zip_len: u64) -> Result<(), String> {
+    if zip_len <= ASCAN_MAX_ZIP_BYTES {
+        return Ok(());
+    }
+    let mb = |b: u64| b / (1024 * 1024);
+    Err(format!(
+        "Paket zu groß: {} MB gepackt, der Server nimmt höchstens {} MB an.",
+        mb(zip_len),
+        mb(ASCAN_MAX_ZIP_BYTES)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zip_ueber_servergrenze_wird_vor_dem_upload_abgelehnt() {
+        assert!(zip_groesse_pruefen(ASCAN_MAX_ZIP_BYTES).is_ok());
+        let err = zip_groesse_pruefen(177_107_762 + ASCAN_MAX_ZIP_BYTES).unwrap_err();
+        assert!(err.contains("Paket zu groß"), "{err}");
+        assert!(err.contains("250 MB"), "{err}");
+    }
 
     #[test]
     fn parses_installed_packages_path() {
