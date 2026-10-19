@@ -454,6 +454,11 @@ pub(crate) fn ladeblatt_gruen(zeilen: &[(Option<f32>, Option<f32>, Option<f32>)]
     }))
 }
 
+/// Slots, die in diesem Flug schon zu Ende gespielt wurden (Verlauf).
+pub(crate) fn gespielte_slots(lauf: &Lauf) -> Vec<Slot> {
+    lauf.verlauf.iter().filter(|g| !g.vorschau && g.ergebnis.as_deref() == Some("gespielt")).map(|g| g.slot).collect()
+}
+
 /// Wartet Reiseflug 80 als zweiter Service, obwohl weniger als
 /// [`cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN`] Restflug bleiben?
 fn zweiter_service_zu_spaet(lauf: &Lauf, rest_min: Option<f64>) -> bool {

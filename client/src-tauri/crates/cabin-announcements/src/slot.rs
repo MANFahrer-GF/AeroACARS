@@ -156,7 +156,10 @@ impl Slot {
         // In der Ruhephase gesperrt, konnten sie nie spielen und verfielen im
         // nächsten Endanflug (Thomas 18.10.2026, AIB 436: „wurde vorbereitet,
         // aber nicht abgespielt“).
-        matches!(self.rolle(), Rolle::Kommando | Rolle::Chime) || matches!(self, Slot::Durchstarten | Slot::Umleitung)
+        // „Ende des Service“ beginnt oft schon im Sinkflug unter 10.000 ft
+        // und verfiele sonst (Codex 2.1.0); eine kurze Kabinendurchsage.
+        matches!(self.rolle(), Rolle::Kommando | Rolle::Chime)
+            || matches!(self, Slot::Durchstarten | Slot::Umleitung | Slot::EndeService)
     }
 
     /// Wartet diese Ansage die Pause nach der vorigen ab (Thomas 18.10.2026:

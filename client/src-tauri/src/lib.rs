@@ -47632,7 +47632,9 @@ fn kabinen_schritt(
         } else {
             stats.phase
         };
-        stats.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug, phase));
+        let mut planer = cabin_announcements::Planer::fortsetzen(flug, phase);
+        planer.schon_gespielt(kabinenansagen::gespielte_slots(&stats.kabinen_lauf));
+        stats.kabinen_planer = Some(planer);
     }
     let durchgestartet = stats.go_around_count > stats.kabinen_durchstarts;
     stats.kabinen_durchstarts = stats.go_around_count;

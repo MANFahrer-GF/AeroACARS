@@ -133,11 +133,13 @@ fn ausloese_rang(slot: Slot) -> u8 {
         S::Reiseflug25
         | S::Reiseflug50
         | S::Reiseflug80
-        | S::EndeService
         | S::Turbulenz
         | S::TurbulenzVorbei => P::Cruise,
         S::Warteschleife => P::Holding,
-        S::KapitaenSinkflug
+        // Spätestens beim Sinkflugbeginn: nach einem Neustart im Sinkflug
+        // kommt sie noch (Codex 2.1.0); schon Gespieltes meldet der Host.
+        S::EndeService
+        | S::KapitaenSinkflug
         | S::KabineSinkflug
         | S::Chime10000Sinkflug
         | S::KommandoLandungVorbereiten
@@ -385,6 +387,16 @@ impl Planer {
             let ab = self.abheben_epoch?;
             Some((plan - (jetzt - ab) as f64 / 60.0).max(0.0))
         })
+    }
+
+    /// Nach einem Neustart: Ansagen, die laut Verlauf schon liefen, gelten als
+    /// erledigt (sonst käme z. B. „Ende des Service“ im Sinkflug doppelt).
+    pub fn schon_gespielt(&mut self, slots: impl IntoIterator<Item = Slot>) {
+        for s in slots {
+            if s.einmalig() {
+                self.gemeldet.insert(s);
+            }
+        }
     }
 
     /// Der Host meldet die Art von „Reiseflug 80“, sobald das Drehbuch sie
@@ -822,6 +834,11 @@ impl Planer {
         // kaufen“) 12 min vor dem geplanten Sinkflug — spätestens beim
         // tatsächlichen Sinkflugbeginn, damit es bei frühem Sinkflug nicht
         // wegfällt (Peter DLH454: Reiseflug 80 fiel so weg).
+        // Altes Modul (art=ende_bordverkauf): Dann ist Reiseflug 80 schon das
+        // Ende des Bordverkaufs — keine zweite Ende-Ansage (Codex 2.1.0).
+        if self.zweiter_service == Some(false) && !self.schon(Slot::EndeService) {
+            self.gemeldet.insert(Slot::EndeService);
+        }
         if in_luft && (rang(Climb)..=rang(Descent)).contains(&r) && !self.schon(Slot::EndeService) {
             let geplant = self
                 .abheben_epoch
@@ -1378,7 +1395,9 @@ mod tests {
             alle,
             // Kabine nicht im selben Takt wie der Kapitän, sondern im Anflug
             // (wie in echt: Kapitän, Kommando an die Crew, dann die Kabine).
-            vec![Slot::KapitaenSinkflug, Slot::KommandoLandungVorbereiten, Slot::Chime10000Sinkflug, Slot::KabineSinkflug, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung]
+            // 2.1.0: „Ende des Service“ kommt nach einem Neustart im Sinkflug
+            // noch (der Host meldet, falls sie vorher schon lief).
+            vec![Slot::EndeService, Slot::KapitaenSinkflug, Slot::KommandoLandungVorbereiten, Slot::Chime10000Sinkflug, Slot::KabineSinkflug, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung]
         );
     }
 
@@ -2042,6 +2061,18 @@ mod tests {
         k.abheben_epoch = Some(0);
         let mut ks = Planer::fortsetzen(k, Climb);
         assert!(ks.tick(&tick(20 * 60, Descent, 15_000.0, -1_500.0)).iter().any(|x| x.slot == Slot::EndeService));
+        // Altes Modul (Reiseflug 80 = Ende des Bordverkaufs): keine zweite Ende-Ansage.
+        let mut alt = Planer::fortsetzen(f.clone(), Cruise);
+        alt.reiseflug80_art(Some(false));
+        assert!(!alt.tick(&tick(bis, Descent, 30_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
+        // Neustart im Sinkflug: kommt noch — außer sie lief laut Verlauf schon.
+        let mut neu = Planer::fortsetzen(f.clone(), Descent);
+        assert!(neu.tick(&tick(bis + 60, Descent, 25_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
+        let mut gelaufen = Planer::fortsetzen(f.clone(), Descent);
+        gelaufen.schon_gespielt([Slot::EndeService]);
+        assert!(!gelaufen.tick(&tick(bis + 60, Descent, 25_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
+        // Darf in der Ruhephase (Sinkflug unter 10.000 ft) spielen, sonst verfiele sie.
+        assert!(Slot::EndeService.in_ruhephase_erlaubt());
         // Bizjet: nicht.
         let mut b = flug(120);
         b.flugart = Some(Flugart::Bizjet);
