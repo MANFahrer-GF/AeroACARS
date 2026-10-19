@@ -228,6 +228,14 @@ pub const BOARDING_NACH_S: i64 = 5 * 60;
 /// Ende des Bordverkaufs bzw. zweiter Service so lange vor dem Top of Descent
 /// (Thomas 18.10.2026: „10, 15 Minuten vor Top of Descent“).
 pub const REISEFLUG80_VOR_TOD_S: i64 = 12 * 60;
+/// Der zweite Service (Modul-Art `zweiter_service`) beginnt so lange vor dem
+/// Top of Descent (Thomas 19.10.2026: „so anderthalb Stunden, bevor wir mit
+/// dem Sinkflug sind“) — das Ende des Bordverkaufs bleibt bei
+/// [`REISEFLUG80_VOR_TOD_S`].
+pub const ZWEITER_SERVICE_VOR_TOD_S: i64 = 90 * 60;
+/// Zweiter Service nur, wenn danach noch so viel Restflugzeit bleibt (min):
+/// 30 min Service vor dem Sinkflug plus Sinkflug und Anflug.
+pub const ZWEITER_SERVICE_REST_MIN: f64 = 60.0;
 /// „Plätze für die Landung“ im Anflug spätestens unter dieser Höhe über Grund,
 /// wenn das Fahrwerk nicht vorher ausfährt.
 pub const PLAETZE_LANDUNG_AGL_FT: f64 = 2_000.0;
@@ -303,6 +311,9 @@ pub struct Planer {
     zfw_stabil: Option<(f64, i64)>,
     /// Wann die Boarding-Ansage gemeldet wurde (oder entfiel).
     boarding_um: Option<i64>,
+    /// Art von „Reiseflug 80“ laut Modul: `Some(true)` = zweiter Service,
+    /// `Some(false)` = Ende des Bordverkaufs, `None` = noch unbekannt.
+    zweiter_service: Option<bool>,
     /// Wiedereinstieg nach Neustart: Der ZFW-Startwert ist unbekannt,
     /// Boarding folgt der bisherigen Regel.
     wiedereinstieg: bool,
@@ -357,6 +368,15 @@ impl Planer {
     /// Kommt dieser Reiseflug-Slot nach der Flugdauer überhaupt? Kurzstrecke
     /// mit bekannter Flugzeit: nur der Service (R25); unbekannte Flugzeit:
     /// keiner (ohne Planzeit gibt es keinen Anhalt).
+    /// Der Host meldet die Art von „Reiseflug 80“, sobald das Drehbuch sie
+    /// liefert (v2.0.28): zweiter Service 90 min vor dem Sinkflug, Ende des
+    /// Bordverkaufs 12 min davor.
+    pub fn reiseflug80_art(&mut self, zweiter_service: Option<bool>) {
+        if zweiter_service.is_some() {
+            self.zweiter_service = zweiter_service;
+        }
+    }
+
     fn reiseflug_passt(&self, slot: Slot) -> bool {
         !self.kurzstrecke() || (slot == Slot::Reiseflug25 && self.flugzeit_bekannt())
     }
@@ -373,7 +393,15 @@ impl Planer {
         };
         let r25 = (0.25 * bis_sinkflug_s).round() as i64;
         let r50 = (0.50 * bis_sinkflug_s).round() as i64;
-        let r80 = (bis_sinkflug_s.round() as i64 - REISEFLUG80_VOR_TOD_S).max(r50);
+        let r80 = if self.zweiter_service == Some(true) {
+            // Zweiter Service 90 min vor dem Sinkflug, mit dem üblichen
+            // Abstand nach Reiseflug 50 (sonst gälte Reiseflug 50 als
+            // übersprungen). Reicht die Zeit nicht, entfällt er (Reserve in
+            // `melde_reiseflug`).
+            (bis_sinkflug_s.round() as i64 - ZWEITER_SERVICE_VOR_TOD_S).max(r50 + REISEFLUG_ABSTAND_S)
+        } else {
+            (bis_sinkflug_s.round() as i64 - REISEFLUG80_VOR_TOD_S).max(r50)
+        };
         Some([(r25, Slot::Reiseflug25), (r50, Slot::Reiseflug50), (r80, Slot::Reiseflug80)])
     }
 
@@ -913,7 +941,11 @@ impl Planer {
         // Zu nah am Sinkflug: entfällt ganz. Die dritte kommt fest vor dem
         // TOD (Thomas: 10–15 min) und braucht nur die Reserve vor der
         // Sinkflug-Ansage des Kapitäns, nicht die 35 min (Codex 2.0.27).
-        let reserve = if slot == Slot::Reiseflug80 { KURZSTRECKE_SERVICE_REST_MIN } else { 35.0 };
+        let reserve = match slot {
+            Slot::Reiseflug80 if self.zweiter_service == Some(true) => ZWEITER_SERVICE_REST_MIN,
+            Slot::Reiseflug80 => KURZSTRECKE_SERVICE_REST_MIN,
+            _ => 35.0,
+        };
         if t.rest_min.is_some_and(|m| m <= reserve) {
             self.entfaellt(slot, Entfall::ZuWenigZeit);
             return;
@@ -1862,6 +1894,59 @@ mod tests {
         let mut an = boden(0, Arrived);
         an.triebwerke_an = Some(true);
         assert!(r.tick(&an).iter().any(|f| f.slot == Slot::KommandoTuerenEntschaerfen));
+    }
+
+    /// v2.0.28 (Thomas 19.10.): Der zweite Service beginnt ~90 min vor dem
+    /// Sinkflug, das Ende des Bordverkaufs bleibt 12 min davor.
+    #[test]
+    fn zweiter_service_neunzig_minuten_vor_dem_sinkflug() {
+        let mut f = flug(480);
+        f.abheben_epoch = Some(0);
+        f.tod_nach_abheben_s = Some(450 * 60);
+        let mut p = Planer::fortsetzen(f.clone(), Cruise);
+        p.reiseflug80_art(Some(true));
+        assert_eq!(p.zeitpunkt(Slot::Reiseflug80, None), Some((450 - 90) * 60));
+        p.tick(&tick(0, Cruise, 37_000.0, 0.0));
+        let mut r80 = None;
+        let mut t = 60;
+        while t < 450 * 60 {
+            let mut tk = tick(t, Cruise, 37_000.0, 0.0);
+            tk.rest_min = Some((480 * 60 - t) as f64 / 60.0);
+            if p.tick(&tk).iter().any(|x| x.slot == Slot::Reiseflug80) {
+                r80 = Some(t);
+                break;
+            }
+            t += 60;
+        }
+        assert_eq!(r80, Some((450 - 90) * 60), "zweiter Service bei TOD − 90 min");
+        // Bordverkauf: 12 min vor dem Sinkflug wie bisher.
+        let mut b = Planer::fortsetzen(f.clone(), Cruise);
+        b.reiseflug80_art(Some(false));
+        assert_eq!(b.zeitpunkt(Slot::Reiseflug80, None), Some(450 * 60 - REISEFLUG80_VOR_TOD_S));
+        // Art unbekannt: wie bisher; ein späteres `None` löscht die Art nicht.
+        let mut u = Planer::fortsetzen(f, Cruise);
+        assert_eq!(u.zeitpunkt(Slot::Reiseflug80, None), Some(450 * 60 - REISEFLUG80_VOR_TOD_S));
+        u.reiseflug80_art(Some(true));
+        u.reiseflug80_art(None);
+        assert_eq!(u.zeitpunkt(Slot::Reiseflug80, None), Some((450 - 90) * 60));
+    }
+
+    /// Kurzer Flug: Der zweite Service käme nach der Halbzeit zu spät — er
+    /// entfällt mit Grund statt kurz vor dem Sinkflug.
+    #[test]
+    fn zweiter_service_entfaellt_auf_kurzem_flug() {
+        let mut f = flug(100);
+        f.abheben_epoch = Some(0);
+        let mut p = Planer::fortsetzen(f, Cruise);
+        p.reiseflug80_art(Some(true));
+        // TOD 70 min: R50 bei 35 min, R80 frühestens 50 min — 50 min Rest.
+        assert_eq!(p.zeitpunkt(Slot::Reiseflug80, None), Some(50 * 60));
+        let mut tk = tick(50 * 60, Cruise, 37_000.0, 0.0);
+        tk.rest_min = Some(50.0);
+        p.gemeldet.insert(Slot::Reiseflug25);
+        p.gemeldet.insert(Slot::Reiseflug50);
+        assert!(!p.tick(&tk).iter().any(|x| x.slot == Slot::Reiseflug80));
+        assert!(p.entfallene_abholen().contains(&(Slot::Reiseflug80, Entfall::ZuWenigZeit)));
     }
 
 }

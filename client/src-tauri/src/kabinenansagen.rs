@@ -452,6 +452,16 @@ pub(crate) fn ladeblatt_gruen(zeilen: &[(Option<f32>, Option<f32>, Option<f32>)]
     }))
 }
 
+/// Art von „Reiseflug 80“ laut Drehbuch: `Some(true)` = zweiter Service,
+/// `Some(false)` = Ende des Bordverkaufs, `None` = noch nicht bekannt.
+pub(crate) fn zweiter_service(lauf: &Lauf) -> Option<bool> {
+    match lauf.art_r80.as_deref() {
+        Some("zweiter_service") => Some(true),
+        Some("ende_bordverkauf") => Some(false),
+        _ => None,
+    }
+}
+
 /// Männliche Stimme? Folgt dem Geschlecht der Crew (Server); ohne Angabe
 /// Kapitän männlich, Kabine weiblich. Kommandos männlich.
 fn stimme_maennlich(lauf: &Lauf, rolle: Rolle) -> bool {
