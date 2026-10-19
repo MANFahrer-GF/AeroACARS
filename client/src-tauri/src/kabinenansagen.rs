@@ -1,6 +1,6 @@
 //! Kabinenansagen (Beta): Einstellungen, Freischaltung, Drehbuch vom
-//! GSG-Server, Sprachausgabe (kostenlos auf dem GSG-Server: Piper fuer alle
-//! Sprachen, fuer Englisch wahlweise Kokoro) und das Wiedergabe-Ereignis an
+//! GSG-Server, Sprachausgabe (kostenlos auf dem GSG-Server: seit 2.1.0
+//! Supertonic, eine Stimme je Rolle in allen Sprachen) und das Wiedergabe-Ereignis an
 //! die Oberfläche. Azure ist seit beta.4 entfernt (Thomas 17.10.2026).
 //!
 //! WANN eine Ansage dran ist, entscheidet der Baustein `cabin-announcements`
@@ -471,14 +471,35 @@ pub(crate) fn zweiter_service(lauf: &Lauf) -> Option<bool> {
 }
 
 /// Männliche Stimme? Folgt dem Geschlecht der Crew (Server); ohne Angabe
-/// Kapitän männlich, Kabine weiblich. Kommandos männlich.
+/// Kapitän männlich, Kabine weiblich. Kommandos sprechen mit der Stimme des
+/// Kapitäns (Thomas 19.10.2026, 2.1.0; vorher fest männlich).
 fn stimme_maennlich(lauf: &Lauf, rolle: Rolle) -> bool {
     let crew = lauf.crew.as_ref();
     match rolle {
-        Rolle::Kapitaen => crew.and_then(|c| c.kapitaen_geschlecht.as_deref()) != Some("w"),
+        Rolle::Kapitaen | Rolle::Kommando => crew.and_then(|c| c.kapitaen_geschlecht.as_deref()) != Some("w"),
         Rolle::Kabine => crew.and_then(|c| c.kabine_geschlecht.as_deref()) == Some("m"),
-        Rolle::Kommando | Rolle::Chime => true,
+        Rolle::Chime => true,
     }
+}
+
+/// Rolle für den Ton-Server (`rolle`, ab 2.1.0): Mit ihr und der PIREP-Nummer
+/// wählt er je Flug eine Stimme je Rolle, gleich in allen Sprachen, und
+/// Kapitän und Kabine nie dieselbe — auch bei gleichem Geschlecht.
+fn server_rolle(rolle: Rolle) -> Option<&'static str> {
+    match rolle {
+        Rolle::Kapitaen => Some("kapitaen"),
+        Rolle::Kabine => Some("kabine"),
+        Rolle::Kommando => Some("kommando"),
+        Rolle::Chime => None,
+    }
+}
+
+/// PIREP-Nummer für den Ton-Server (`flug`), nur in der Form, die er annimmt
+/// (`[A-Za-z0-9_-]{1,64}`); sonst ohne — eine abgelehnte Nummer hieße 400 und
+/// damit keine Ansage.
+fn flug_kennung(pirep_id: &str) -> Option<String> {
+    let gut = (1..=64).contains(&pirep_id.len()) && pirep_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    gut.then(|| pirep_id.to_string())
 }
 
 /// Wer spricht: die Rolle des Slots, außer der Server legt sie fest (die
@@ -1151,13 +1172,15 @@ fn ton_auftrag(
     if !faellig {
         lauf.ton_laufend += 1;
     }
-    let maennlich = stimme_maennlich(lauf, rolle_von(lauf, slot));
+    let rolle = rolle_von(lauf, slot);
+    let maennlich = stimme_maennlich(lauf, rolle);
+    let flug = flug_kennung(&flight.pirep_id);
     notiz(lauf, "ton_anfrage", Some(slot), Some(&sprache), serde_json::json!({ "gebraucht_in_s": gebraucht_in_s, "faellig": faellig }));
     let ordner = flug_ordner(flight);
     let (app, flight) = (app.clone(), Arc::clone(flight));
     tauri::async_runtime::spawn(async move {
         let gestartet = Utc::now();
-        let wunsch = Wunsch { slot: Some(slot), gebraucht_in_s, ordner: &ordner };
+        let wunsch = Wunsch { slot: Some(slot), gebraucht_in_s, ordner: &ordner, flug: flug.as_deref(), rolle: server_rolle(rolle) };
         let ergebnis = sprechen(&app, maennlich, &sprache, &text, wunsch).await;
         let dauer_ms = (Utc::now() - gestartet).num_milliseconds();
         let mut stats = flight.stats.lock().expect("flight stats");
@@ -1552,6 +1575,10 @@ struct Wunsch<'a> {
     /// Sekunden bis zur Wiedergabe; 0 = fällig; `None` = unbekannt.
     gebraucht_in_s: Option<i64>,
     ordner: &'a str,
+    /// PIREP-Nummer und Rolle: Der Server wählt danach die Stimme des Flugs.
+    /// Ohne (Hörprobe): erste Stimme des Kreises bzw. für die Kabine die zweite.
+    flug: Option<&'a str>,
+    rolle: Option<&'static str>,
 }
 
 /// Fehler einer Ton-Anfrage.
@@ -1573,16 +1600,20 @@ impl TonFehlerAntwort {
 /// Text zu Ton ueber den GSG-Server. Gibt es für die Sprache keine Stimme,
 /// entfällt sie (`Ok(None)`) — nie eine Stimme einer anderen Sprache.
 async fn sprechen(app: &AppHandle, maennlich: bool, sprache: &str, text: &str, wunsch: Wunsch<'_>) -> Result<Option<Ton>, TonFehlerAntwort> {
-    // Der Server waehlt die Stimme zur Sprache (Englisch: Kokoro, sonst
-    // Piper). Hat er keine, entfaellt die Sprache; ein Fehler (Netz,
+    // Der Server waehlt die Stimme zu Sprache, Flug und Rolle (Supertonic,
+    // ab 2.1.0). Hat er keine, entfaellt die Sprache; ein Fehler (Netz,
     // ausgelastet) kommt zurueck und der Takt versucht es spaeter wieder.
     let Some(anfrage) = piper::stimme_fuer(sprache, maennlich) else { return Ok(None) };
+    // Gemerkt je Flug und Rolle: Im naechsten Flug oder fuer die andere Rolle
+    // waehlt der Server eine andere Stimme, und keine gespeicherte Ansage darf
+    // in der Stimme des Vorflugs oder der anderen Rolle kommen.
+    let gemerkt = gewaehlt_schluessel(&anfrage, wunsch.flug, wunsch.rolle);
     let ordner = ton_ordner(app, wunsch.ordner).map_err(|e| TonFehlerAntwort::spaeter(e, None))?;
     let relativ = |name: &str| format!("{}/{name}", wunsch.ordner);
     // Gespeichert wird unter der Stimme, die der Server gewaehlt hat — so
     // verdeckt der Zwischenspeicher keinen Stimmwechsel auf dem Server
     // (Codex-QS beta.4). Je Sitzung fragt der Client einmal nach.
-    let bekannt = GEWAEHLT.lock().expect("gewaehlt").get(&anfrage).cloned();
+    let bekannt = GEWAEHLT.lock().expect("gewaehlt").get(&gemerkt).cloned();
     if let Some(stimme) = &bekannt {
         let name = cache::dateiname("server", stimme, sprache, text, "wav");
         if ordner.join(&name).exists() {
@@ -1590,15 +1621,16 @@ async fn sprechen(app: &AppHandle, maennlich: bool, sprache: &str, text: &str, w
         }
     }
     let teil = wunsch.slot.and_then(ton_teil);
-    let Some(ton) = piper::sprechen(&anfrage, text, wunsch.gebraucht_in_s, teil, wunsch.slot.map(slot_name)).await? else {
+    let wahl = piper::Wahl { flug: wunsch.flug, rolle: wunsch.rolle };
+    let Some(ton) = piper::sprechen(&anfrage, text, wunsch.gebraucht_in_s, teil, wunsch.slot.map(slot_name), wahl).await? else {
         return Ok(None);
     };
     let name = if ton.ersatz {
-        // Ersatzstimme (Kokoro gerade aus): nicht als diese Stimme merken.
+        // Ersatzstimme (Server bis 2.0.x, Kokoro gerade aus): nicht als diese Stimme merken.
         cache::dateiname("ersatz", &format!("{anfrage}|{}", Utc::now().timestamp_millis()), sprache, text, "wav")
     } else {
         let stimme = ton.stimme.unwrap_or(anfrage.clone());
-        GEWAEHLT.lock().expect("gewaehlt").insert(anfrage, stimme.clone());
+        GEWAEHLT.lock().expect("gewaehlt").insert(gemerkt, stimme.clone());
         cache::dateiname("server", &stimme, sprache, text, "wav")
     };
     let pfad = ordner.join(&name);
@@ -1607,9 +1639,14 @@ async fn sprechen(app: &AppHandle, maennlich: bool, sprache: &str, text: &str, w
     ton_aus_datei(&pfad, relativ(&name)).map(|t| Some(Ton { herkunft, ..t })).map_err(|e| TonFehlerAntwort::spaeter(e, None))
 }
 
-/// `auto:<sprache>:<m|w>` → vom Server gewaehlte Stimme, je Sitzung.
+/// `auto:<sprache>:<m|w>` je Flug und Rolle → vom Server gewaehlte Stimme,
+/// je Sitzung (Schluessel aus `gewaehlt_schluessel`).
 static GEWAEHLT: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(Default::default);
+
+fn gewaehlt_schluessel(anfrage: &str, flug: Option<&str>, rolle: Option<&str>) -> String {
+    format!("{anfrage}|{}|{}", flug.unwrap_or(""), rolle.unwrap_or(""))
+}
 
 fn ton_aus_datei(pfad: &Path, name: String) -> Result<Ton, String> {
     let daten = std::fs::read(pfad).map_err(|e| e.to_string())?;
@@ -1978,7 +2015,7 @@ pub(crate) async fn kabinen_probe(app: AppHandle, rolle: Rolle, sprache: String)
         (_, Rolle::Kapitaen) => "Good afternoon, ladies and gentlemen, this is your captain speaking. This is a voice sample.",
         _ => "Welcome on board. This is a voice sample from your cabin crew.",
     };
-    let wunsch = Wunsch { slot: None, gebraucht_in_s: Some(0), ordner: PROBE_ORDNER };
+    let wunsch = Wunsch { slot: None, gebraucht_in_s: Some(0), ordner: PROBE_ORDNER, flug: None, rolle: server_rolle(rolle) };
     let ton = sprechen(&app, maennlich, &sprache, text, wunsch)
         .await
         .map_err(|e| UiError::new("sprachausgabe", e.meldung))?
@@ -2539,8 +2576,8 @@ pub(crate) mod ausgabe {
         pub name: String,
     }
 
-    /// Mono-Proben (−1 … 1) und Abtastrate aus einer PCM-16-WAV (Piper und
-    /// Kokoro auf dem Server liefern genau das). Mehrkanalig wird gemittelt.
+    /// Mono-Proben (−1 … 1) und Abtastrate aus einer PCM-16-WAV (der
+    /// Ton-Server liefert genau das). Mehrkanalig wird gemittelt.
     pub(crate) fn wav_lesen(d: &[u8]) -> Option<(u32, Vec<f32>)> {
         if d.len() < 12 || &d[0..4] != b"RIFF" || &d[8..12] != b"WAVE" {
             return None;
@@ -2787,7 +2824,7 @@ pub(crate) mod ausgabe {
 /// wird so nicht weitergegeben.
 pub(crate) mod piper {
     /// Jede Sprache fragt `auto:<sprache>:<m|w>` an; der Server waehlt die
-    /// Stimme (`SPRACH_STIMMEN`, Englisch Kokoro). So kommen Sprachen und
+    /// Stimme (`SPRACHEN`, Supertonic, nach Flug und Rolle). So kommen Sprachen und
     /// Stimmwechsel ohne neue Client-Beta (Thomas 17.10.2026). Hat er keine,
     /// liefert [`sprechen`] `Ok(None)` und die Sprache entfaellt.
     pub(crate) fn stimme_fuer(sprache: &str, m: bool) -> Option<String> {
@@ -2813,15 +2850,15 @@ pub(crate) mod piper {
         pub ersatz: bool,
     }
 
-    pub(crate) async fn sprechen(
-        stimme: &str,
-        text: &str,
-        gebraucht_in_s: Option<i64>,
-        teil: Option<&str>,
-        slot: Option<String>,
-    ) -> Result<Option<ServerTon>, super::TonFehlerAntwort> {
-        use super::TonFehlerAntwort as F;
-        let token = crate::live_zugang::pilot_token().ok_or_else(|| F::spaeter("noch kein Live-Zugang (nicht provisioniert)", Some(120)))?;
+    /// Wonach der Server die Stimme waehlt (ab 2.1.0, siehe `super::Wunsch`).
+    #[derive(Clone, Copy, Default)]
+    pub(crate) struct Wahl<'a> {
+        pub flug: Option<&'a str>,
+        pub rolle: Option<&'static str>,
+    }
+
+    /// Koerper der Anfrage an /api/kabine/ton.
+    pub(crate) fn koerper(stimme: &str, text: &str, gebraucht_in_s: Option<i64>, teil: Option<&str>, slot: Option<String>, wahl: Wahl<'_>) -> serde_json::Value {
         // Wofuer der Ton gebraucht wird: Der Server arbeitet danach ab
         // (faellig vor Vorrat, Abflug vor Ankunft, reihum je Pilot).
         let mut koerper = serde_json::json!({ "stimme": stimme, "text": text });
@@ -2834,8 +2871,28 @@ pub(crate) mod piper {
         if let Some(s) = slot {
             koerper["slot"] = serde_json::json!(s);
         }
+        if let Some(f) = wahl.flug {
+            koerper["flug"] = serde_json::json!(f);
+        }
+        if let Some(r) = wahl.rolle {
+            koerper["rolle"] = serde_json::json!(r);
+        }
+        koerper
+    }
+
+    pub(crate) async fn sprechen(
+        stimme: &str,
+        text: &str,
+        gebraucht_in_s: Option<i64>,
+        teil: Option<&str>,
+        slot: Option<String>,
+        wahl: Wahl<'_>,
+    ) -> Result<Option<ServerTon>, super::TonFehlerAntwort> {
+        use super::TonFehlerAntwort as F;
+        let token = crate::live_zugang::pilot_token().ok_or_else(|| F::spaeter("noch kein Live-Zugang (nicht provisioniert)", Some(120)))?;
+        let koerper = koerper(stimme, text, gebraucht_in_s, teil, slot, wahl);
         let antwort = reqwest::Client::builder()
-            // Lange Ansagen mit Kokoro rechnen bis ~2 min, dazu die
+            // Lange Ansagen rechnen bis ~1,5 min, dazu die
             // Warteschlange des Servers.
             .timeout(std::time::Duration::from_secs(300))
             .build()
@@ -3660,12 +3717,43 @@ mod tests {
         drehbuch_uebernehmen(&mut l, d, &[Slot::Reiseflug80], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen), "Kapitänin spricht mit Frauenstimme");
         assert!(stimme_maennlich(&l, Rolle::Kabine), "Purser mit Männerstimme");
-        assert!(stimme_maennlich(&l, Rolle::Kommando));
+        assert!(!stimme_maennlich(&l, Rolle::Kommando), "Kommandos mit der Stimme der Kapitänin (2.1.0)");
         assert_eq!(l.art_r80.as_deref(), Some("ende_bordverkauf"));
         assert_eq!(l.crew.as_ref().and_then(|c| c.kapitaen.as_deref()), Some("Julia Lange"));
         // Eine spätere Antwort ohne `crew` (älteres Modul) vergisst die Crew nicht.
         drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None }, &[], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen));
+    }
+
+    /// 2.1.0: Ohne Crew-Angabe sprechen Kommandos männlich wie der Kapitän.
+    #[test]
+    fn kommando_folgt_dem_kapitaen() {
+        let l = Lauf::default();
+        assert!(stimme_maennlich(&l, Rolle::Kommando));
+        assert_eq!(stimme_maennlich(&l, Rolle::Kommando), stimme_maennlich(&l, Rolle::Kapitaen));
+    }
+
+    /// 2.1.0: Flug und Rolle gehen an den Ton-Server; die gemerkte Stimme
+    /// gilt nur für denselben Flug und dieselbe Rolle.
+    #[test]
+    fn flug_und_rolle_fuer_den_ton_server() {
+        assert_eq!(server_rolle(Rolle::Kapitaen), Some("kapitaen"));
+        assert_eq!(server_rolle(Rolle::Kabine), Some("kabine"));
+        assert_eq!(server_rolle(Rolle::Kommando), Some("kommando"));
+        assert_eq!(server_rolle(Rolle::Chime), None);
+        assert_eq!(flug_kennung("7xKq2A-b_9").as_deref(), Some("7xKq2A-b_9"));
+        for falsch in ["", "a/b", "ab cd", "ä", &"x".repeat(65)] {
+            assert_eq!(flug_kennung(falsch), None, "{falsch}");
+        }
+        let k = |f, r| gewaehlt_schluessel("auto:de-DE:w", f, r);
+        assert_ne!(k(Some("A1"), Some("kapitaen")), k(Some("A2"), Some("kapitaen")), "anderer Flug");
+        assert_ne!(k(Some("A1"), Some("kapitaen")), k(Some("A1"), Some("kabine")), "andere Rolle, gleiches Geschlecht");
+        assert_eq!(k(Some("A1"), Some("kabine")), k(Some("A1"), Some("kabine")));
+        let mit = piper::koerper("auto:de-DE:w", "Hallo", Some(0), None, None, piper::Wahl { flug: Some("A1"), rolle: Some("kabine") });
+        assert_eq!(mit["flug"], "A1");
+        assert_eq!(mit["rolle"], "kabine");
+        let ohne = piper::koerper("auto:de-DE:w", "Hallo", None, None, None, piper::Wahl::default());
+        assert!(ohne.get("flug").is_none() && ohne.get("rolle").is_none(), "Hörprobe ohne Flug");
     }
 
     fn wav_mit_satz(json: &str) -> Vec<u8> {
