@@ -311,6 +311,9 @@ pub struct Planer {
     zfw_stabil: Option<(f64, i64)>,
     /// Wann die Boarding-Ansage gemeldet wurde (oder entfiel).
     boarding_um: Option<i64>,
+    /// Die Abhebezeit ist echt (aus den Flugdaten oder im Steigflug
+    /// beobachtet), nicht erst beim Wiedereinstieg im Reiseflug gesetzt.
+    abheben_gesehen: bool,
     /// Art von „Reiseflug 80“ laut Modul: `Some(true)` = zweiter Service,
     /// `Some(false)` = Ende des Bordverkaufs, `None` = noch unbekannt.
     zweiter_service: Option<bool>,
@@ -322,7 +325,7 @@ pub struct Planer {
 impl Planer {
     pub fn neu(flug: Flugdaten) -> Self {
         let abheben_epoch = flug.abheben_epoch;
-        Planer { flug, abheben_epoch, ..Default::default() }
+        Planer { flug, abheben_epoch, abheben_gesehen: abheben_epoch.is_some(), ..Default::default() }
     }
 
     /// Wiedereinstieg mitten im Flug (Neustart des Clients): alles, was vor
@@ -374,6 +377,9 @@ impl Planer {
     pub fn restflug_min(&self, jetzt: i64, rest_min: Option<f64>) -> Option<f64> {
         rest_min.or_else(|| {
             let plan = f64::from(self.flug.geplante_flugzeit_min?);
+            if !self.abheben_gesehen {
+                return None;
+            }
             let ab = self.abheben_epoch?;
             Some((plan - (jetzt - ab) as f64 / 60.0).max(0.0))
         })
@@ -700,6 +706,9 @@ impl Planer {
         // ---- Steigflug / Reiseflug ----
         if in_luft && self.abheben_epoch.is_none() && r >= rang(Takeoff) {
             self.abheben_epoch = Some(t.jetzt);
+            // Nur ein beobachteter Start taugt für die Restzeit aus der
+            // Planzeit; nach einem Neustart im Reiseflug wäre „jetzt“ falsch.
+            self.abheben_gesehen = r <= rang(Climb);
         }
         if let Some(h0) = self.letzte_hoehe_ft {
             if in_luft && h0 < 10_000.0 && t.hoehe_ft >= 10_000.0 && t.vs_fpm > 0.0 {
@@ -789,7 +798,7 @@ impl Planer {
             && self.schon(Slot::AnschnallzeichenAus)
             && !self.schon(Slot::Reiseflug25)
         {
-            if t.rest_min.is_some_and(|m| m <= KURZSTRECKE_SERVICE_REST_MIN) {
+            if self.restflug_min(t.jetzt, t.rest_min).is_some_and(|m| m <= KURZSTRECKE_SERVICE_REST_MIN) {
                 self.entfaellt(Slot::Reiseflug25, Entfall::ZuWenigZeit);
             } else {
                 self.melde(&mut aus, Slot::Reiseflug25, Verfall::AbPhase(Descent));
@@ -1965,6 +1974,17 @@ mod tests {
         tk.rest_min = None;
         assert!(!q.tick(&tk).iter().any(|x| x.slot == Slot::Reiseflug80));
         assert!(q.entfallene_abholen().contains(&(Slot::Reiseflug80, Entfall::ZuWenigZeit)));
+        // Neustart im Reiseflug ohne bekannte Abhebezeit: keine Schätzung
+        // (sonst gälte der Neustart als Abheben und die ganze Planzeit als Rest).
+        let mut ohne = flug(100);
+        ohne.abheben_epoch = None;
+        let mut w = Planer::fortsetzen(ohne, Cruise);
+        w.tick(&tick(5_000, Cruise, 37_000.0, 0.0));
+        assert_eq!(w.restflug_min(5_000 + 60, None), None);
+        // Beobachteter Start: Schätzung aus Planzeit.
+        let mut z = Planer::neu(flug(100));
+        z.tick(&tick(0, Takeoff, 500.0, 2_000.0));
+        assert_eq!(z.restflug_min(40 * 60, None), Some(60.0));
     }
 
 }
