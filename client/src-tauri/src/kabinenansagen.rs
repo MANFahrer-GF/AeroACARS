@@ -494,9 +494,8 @@ fn server_rolle(rolle: Rolle) -> Option<&'static str> {
     }
 }
 
-/// PIREP-Nummer für den Ton-Server (`flug`), nur in der Form, die er annimmt
-/// (`[A-Za-z0-9_-]{1,64}`); sonst ohne — eine abgelehnte Nummer hieße 400 und
-/// damit keine Ansage.
+/// PIREP-Nummer für den Ton-Server (`pirep_id`), nur in der Form, mit der er
+/// die Stimme wählt (`[A-Za-z0-9_-]{1,64}`); sonst ohne.
 fn flug_kennung(pirep_id: &str) -> Option<String> {
     let gut = (1..=64).contains(&pirep_id.len()) && pirep_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     gut.then(|| pirep_id.to_string())
@@ -2871,8 +2870,10 @@ pub(crate) mod piper {
         if let Some(s) = slot {
             koerper["slot"] = serde_json::json!(s);
         }
+        // `pirep_id`: waehlt die Stimmen des Flugs und steht im Protokoll
+        // des Servers (Zeile `kabine_ton`).
         if let Some(f) = wahl.flug {
-            koerper["flug"] = serde_json::json!(f);
+            koerper["pirep_id"] = serde_json::json!(f);
         }
         if let Some(r) = wahl.rolle {
             koerper["rolle"] = serde_json::json!(r);
@@ -3750,10 +3751,10 @@ mod tests {
         assert_ne!(k(Some("A1"), Some("kapitaen")), k(Some("A1"), Some("kabine")), "andere Rolle, gleiches Geschlecht");
         assert_eq!(k(Some("A1"), Some("kabine")), k(Some("A1"), Some("kabine")));
         let mit = piper::koerper("auto:de-DE:w", "Hallo", Some(0), None, None, piper::Wahl { flug: Some("A1"), rolle: Some("kabine") });
-        assert_eq!(mit["flug"], "A1");
+        assert_eq!(mit["pirep_id"], "A1");
         assert_eq!(mit["rolle"], "kabine");
         let ohne = piper::koerper("auto:de-DE:w", "Hallo", None, None, None, piper::Wahl::default());
-        assert!(ohne.get("flug").is_none() && ohne.get("rolle").is_none(), "Hörprobe ohne Flug");
+        assert!(ohne.get("pirep_id").is_none() && ohne.get("rolle").is_none(), "Hörprobe ohne Flug");
     }
 
     fn wav_mit_satz(json: &str) -> Vec<u8> {
