@@ -320,8 +320,12 @@ impl Planer {
     /// vom echten Abheben weiter (siehe [`Flugdaten::abheben_epoch`]).
     pub fn fortsetzen(flug: Flugdaten, phase: FlightPhase) -> Self {
         let mut p = Planer::neu(flug);
-        p.wiedereinstieg = true;
         let r = rang(phase);
+        // Der Host legt den Planer auch beim normalen Flugstart mit
+        // `fortsetzen` an (Codex 2.0.28). Bis zum Boarding gilt der erste
+        // ZFW-Wert als Startwert: nach einem Neustart mitten im Boarding
+        // wartet die Ansage dann auf weiteres Einsteigen.
+        p.wiedereinstieg = r > rang(FlightPhase::Boarding);
         for s in Slot::ALLE {
             // Umleitung und Durchstarten sind Ereignisse, kein Ablauf: Sie
             // koennen nach dem Wiedereinstieg noch kommen (typisch im
@@ -1717,10 +1721,18 @@ mod tests {
         assert_eq!(slots(q.tick(&an)), vec![Slot::Boarding]);
         assert!(slots(q.tick(&mit_ladung(60 + BOARDING_FERTIG_NACH_ANSAGE_S - 5, 72_744.0, true))).is_empty(), "nicht direkt nach „Willkommen“");
         assert_eq!(slots(q.tick(&mit_ladung(60 + BOARDING_FERTIG_NACH_ANSAGE_S, 72_744.0, true))), vec![Slot::BoardingAbgeschlossen]);
-        // Nach einem Neustart ist der Startwert unbekannt → alte Regel.
+        // So legt der Host den Planer an (auch beim normalen Start): die
+        // Zuladungs-Regel gilt genauso (Codex 2.0.28).
         let mut w = Planer::fortsetzen(flug(40), Boarding);
-        w.tick(&mit_ladung(0, 60_000.0, false));
-        assert_eq!(slots(w.tick(&mit_ladung(BOARDING_NACH_S, 60_000.0, false))), vec![Slot::Boarding]);
+        w.tick(&mit_ladung(0, 49_203.0, false));
+        assert!(slots(w.tick(&mit_ladung(BOARDING_NACH_S, 49_203.0, false))).is_empty(), "wartet aufs Einsteigen");
+        w.tick(&mit_ladung(BOARDING_NACH_S + 10, 50_000.0, false));
+        assert_eq!(slots(w.tick(&mit_ladung(BOARDING_NACH_S + 40, 50_500.0, false))), vec![Slot::Boarding]);
+        // Neustart im Pushback: kein Startwert mehr, nichts vom Boden.
+        let mut n = Planer::fortsetzen(flug(40), Pushback);
+        let mut pb = mit_ladung(0, 60_000.0, false);
+        pb.phase = Pushback;
+        assert!(!n.tick(&pb).iter().any(|f| f.slot == Slot::Boarding));
     }
 
     /// v2.0.28, Peter: „Boarding completed“, wenn das Ladeblatt grün ist und

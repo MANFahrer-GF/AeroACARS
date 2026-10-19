@@ -44,14 +44,16 @@ struct Ablauf {
 
 fn fliegen(datei: &str, flugzeit_min: u32, reise_ft: u32) -> (Daten, Ablauf) {
     let d: Daten = serde_json::from_str(datei).expect("Testdaten");
-    let mut p = Planer::neu(Flugdaten {
+    // Wie der Host: Planer mit `fortsetzen` aus der ersten Phase.
+    let erste = d.ticks.first().map(|x| x.1).expect("Takte");
+    let mut p = Planer::fortsetzen(Flugdaten {
         flugart: Some(Flugart::Linie),
         geplante_flugzeit_min: Some(flugzeit_min),
         tod_nach_abheben_s: None,
         ziel_plan_icao: Some("ZIEL".into()),
         reiseflughoehe_ft: Some(reise_ft),
         abheben_epoch: None,
-    });
+    }, erste);
     let mut w = Warteschlange::default();
     let mut gespielt = BTreeMap::new();
     let mut gemeldet = BTreeMap::new();
