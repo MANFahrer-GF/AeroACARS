@@ -452,6 +452,24 @@ pub(crate) fn ladeblatt_gruen(zeilen: &[(Option<f32>, Option<f32>, Option<f32>)]
     }))
 }
 
+/// Wartet Reiseflug 80 als zweiter Service, obwohl weniger als
+/// [`cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN`] Restflug bleiben?
+fn zweiter_service_zu_spaet(lauf: &Lauf, rest_min: Option<f64>) -> bool {
+    zweiter_service(lauf) == Some(true)
+        && lauf.warteschlange.wartend().contains(&Slot::Reiseflug80)
+        && rest_min.is_some_and(|m| m <= cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN)
+}
+
+/// Art von „Reiseflug 80“ laut Drehbuch: `Some(true)` = zweiter Service,
+/// `Some(false)` = Ende des Bordverkaufs, `None` = noch nicht bekannt.
+pub(crate) fn zweiter_service(lauf: &Lauf) -> Option<bool> {
+    match lauf.art_r80.as_deref() {
+        Some("zweiter_service") => Some(true),
+        Some("ende_bordverkauf") => Some(false),
+        _ => None,
+    }
+}
+
 /// Männliche Stimme? Folgt dem Geschlecht der Crew (Server); ohne Angabe
 /// Kapitän männlich, Kabine weiblich. Kommandos männlich.
 fn stimme_maennlich(lauf: &Lauf, rolle: Rolle) -> bool {
@@ -740,10 +758,20 @@ fn takt_schritt(
         notiz(&mut stats.kabinen_lauf, "abgewaehlt", None, None, details);
         stats.kabinen_lauf.abgewaehlt_zuletzt = Some(liste);
     }
+    let mut verlauf_neu_vorab = false;
     let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao, &abgewaehlt);
     stats.kabinen_lauf.ruhephase = schritt.ruhephase;
+    // Kam die Art „zweiter Service“ erst, als Reiseflug 80 schon nach der
+    // 12-min-Regel wartete, und reicht die Zeit nicht mehr (unter 60 min
+    // Restflug): entfällt statt kurz vor dem Sinkflug (Codex 2.0.28).
+    let rest = stats.kabinen_planer.as_ref().and_then(|p| p.restflug_min(jetzt, schritt.rest_min));
+    if zweiter_service_zu_spaet(&stats.kabinen_lauf, rest) && stats.kabinen_lauf.warteschlange.entfernen(Slot::Reiseflug80) {
+        notiz(&mut stats.kabinen_lauf, "entfallen", Some(Slot::Reiseflug80), None, serde_json::json!({ "grund": "zu_wenig_zeit" }));
+        verbuchen(&mut stats.kabinen_lauf, Slot::Reiseflug80, "entfallen", Some("zu_wenig_zeit"), jetzt);
+        verlauf_neu_vorab = true;
+    }
     hinweis_pruefen(&mut stats, snap, schritt.phase, jetzt);
-    let mut verlauf_neu = false;
+    let mut verlauf_neu = verlauf_neu_vorab;
     // Was der Planer nicht meldet, obwohl es dran gewesen wäre: in „Bisher“.
     let entfallen = stats.kabinen_planer.as_mut().map(|p| p.entfallene_abholen()).unwrap_or_default();
     for (slot, grund) in entfallen {
@@ -3590,6 +3618,20 @@ mod tests {
         assert!(!stimme_maennlich(&l, rolle_von(&l, Slot::BoardingAbgeschlossen)), "Kabine ohne Angabe: Frauenstimme");
         assert_eq!(Slot::BoardingAbgeschlossen.kommando_text(), Some("Boarding completed."));
         assert!(KOMMANDOS.contains(&Slot::BoardingAbgeschlossen), "Ton wird wie bei Kommandos vorab erzeugt");
+    }
+
+    /// Codex 2.0.28: Kommt `zweiter_service` erst, als Reiseflug 80 schon
+    /// nach der 12-min-Regel wartet, und bleiben unter 60 min — entfällt.
+    #[test]
+    fn spaet_erkannter_zweiter_service_entfaellt() {
+        let mut l = Lauf::default();
+        l.warteschlange.aufnehmen([Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
+        assert!(!zweiter_service_zu_spaet(&l, Some(30.0)), "Art unbekannt: 12-min-Regel gilt");
+        l.art_r80 = Some("ende_bordverkauf".into());
+        assert!(!zweiter_service_zu_spaet(&l, Some(30.0)), "Bordverkauf darf kurz vor dem Sinkflug");
+        l.art_r80 = Some("zweiter_service".into());
+        assert!(zweiter_service_zu_spaet(&l, Some(30.0)));
+        assert!(!zweiter_service_zu_spaet(&l, Some(95.0)), "noch genug Zeit");
     }
 
     /// v2.0.28 (Punkt 9): Der Wartegrund geht nur beim Wechsel ins Log.

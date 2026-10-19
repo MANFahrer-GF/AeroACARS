@@ -47677,11 +47677,13 @@ fn kabinen_schritt(
             (stats.last_zfw_kg, stats.planned_zfw_kg, stats.planned_max_zfw_kg),
         ]),
     };
+    let zweiter_service = kabinenansagen::zweiter_service(&stats.kabinen_lauf);
     let (faellig, ruhephase) = stats
         .kabinen_planer
         .as_mut()
         .map(|p| {
             p.abwaehlen(abgewaehlt.iter().copied());
+            p.reiseflug80_art(zweiter_service);
             let f = p.tick(&tick);
             (f, p.ruhephase(&tick))
         })

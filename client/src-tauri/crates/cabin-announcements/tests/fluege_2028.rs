@@ -43,6 +43,10 @@ struct Ablauf {
 }
 
 fn fliegen(datei: &str, flugzeit_min: u32, reise_ft: u32) -> (Daten, Ablauf) {
+    fliegen_mit(datei, flugzeit_min, reise_ft, None)
+}
+
+fn fliegen_mit(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_service: Option<bool>) -> (Daten, Ablauf) {
     let d: Daten = serde_json::from_str(datei).expect("Testdaten");
     // Wie der Host: Planer mit `fortsetzen` aus der ersten Phase.
     let erste = d.ticks.first().map(|x| x.1).expect("Takte");
@@ -54,6 +58,7 @@ fn fliegen(datei: &str, flugzeit_min: u32, reise_ft: u32) -> (Daten, Ablauf) {
         reiseflughoehe_ft: Some(reise_ft),
         abheben_epoch: None,
     }, erste);
+    p.reiseflug80_art(zweiter_service);
     let mut w = Warteschlange::default();
     let mut gespielt = BTreeMap::new();
     let mut gemeldet = BTreeMap::new();
@@ -180,4 +185,16 @@ fn afr218_service_kurz_nach_reiseflughoehe() {
     let service = a.gespielt[&Slot::Reiseflug25];
     assert!(service - reiseflug <= 12 * 60, "Service {} min nach Reiseflugbeginn", (service - reiseflug) / 60);
     assert!(service - d.abheben < 60 * 60, "statt +121 min jetzt +{} min", (service - d.abheben) / 60);
+}
+
+/// Thomas 19.10.: Der zweite Service (AFR: `zweiter_service`) beginnt rund
+/// 90 min vor dem Sinkflug — bisher 12 min davor wie das Ende des Bordverkaufs.
+#[test]
+fn afr218_zweiter_service_neunzig_minuten_vor_dem_sinkflug() {
+    let (d, a) = fliegen_mit(include_str!("daten/afr218.json"), 510, 38_000, Some(true));
+    let sinkflug = d.ticks.iter().find(|x| x.1 == FlightPhase::Descent).expect("Sinkflug").0;
+    let zweiter = a.gespielt[&Slot::Reiseflug80];
+    let vorlauf_min = (sinkflug - zweiter) / 60;
+    assert!((60..=120).contains(&vorlauf_min), "zweiter Service {vorlauf_min} min vor dem Sinkflug");
+    assert!(a.gespielt[&Slot::Reiseflug50] < zweiter, "nach der Halbzeit");
 }
