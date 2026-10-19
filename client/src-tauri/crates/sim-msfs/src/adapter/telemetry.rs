@@ -975,6 +975,15 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:FSS_EXX_AUTOBRAKE", "Number"),
     // Pedestal/Pedestal.xml:68-76: 0 = Off.
     F::f64("L:FSS_EXX_PARKBRAKE_BV_LEVER", "Number"),
+    // Autopilot (19.10.2026, Entwurf): die Standard-`AUTOPILOT *`-SimVars
+    // bewegten sich in Stephans E195-Luftmessung nicht. Zustand = die
+    // FGP-Lampen; fss.wasm setzt die Namen aus `FSS_EXX_FGC_` + `LT_*`
+    // zusammen. HubHop (E1XX, „Cpt Yoke AP Disc“) prüft `LT_AP` 1 ==.
+    F::f64("L:FSS_EXX_FGC_LT_AP", "Number"),
+    F::f64("L:FSS_EXX_FGC_LT_HDG", "Number"),
+    F::f64("L:FSS_EXX_FGC_LT_NAV", "Number"),
+    F::f64("L:FSS_EXX_FGC_LT_Alt", "Number"),
+    F::f64("L:FSS_EXX_FGC_LT_APP", "Number"),
     // iniBuilds A330 (MSFS 2024), gemessen 26.09.2026: Strobe 0=ON 1=AUTO
     // 2=OFF, ATC-Wahlschalter 0=STBY 1=AUTO 2=ON. LVars — koennen nicht
     // abgelehnt werden, stehen deshalb VOR dem Standard-SimVar-Schwanz.
@@ -1714,6 +1723,12 @@ pub struct Telemetry {
     pub fss_apu_master: f64,
     pub fss_autobrake: f64,
     pub fss_parkbrake_lever: f64,
+    /// FSS E-Jet FGP-Lampen `L:FSS_EXX_FGC_LT_AP/HDG/NAV/Alt/APP`, 0 = aus.
+    pub fss_ap_lampe: f64,
+    pub fss_hdg_lampe: f64,
+    pub fss_nav_lampe: f64,
+    pub fss_alt_lampe: f64,
+    pub fss_app_lampe: f64,
     /// iniBuilds A330 `L:INI_STROBE_LIGHT_SWITCH` 0=ON 1=AUTO 2=OFF.
     pub ini_strobe_light_switch: f64,
     /// iniBuilds A330 `L:INI_TCAS_STBY_STATE` 0=STBY 1=AUTO 2=ON.
@@ -2530,6 +2545,11 @@ impl Telemetry {
         pull_f64!(t.fss_apu_master);
         pull_f64!(t.fss_autobrake);
         pull_f64!(t.fss_parkbrake_lever);
+        pull_f64!(t.fss_ap_lampe);
+        pull_f64!(t.fss_hdg_lampe);
+        pull_f64!(t.fss_nav_lampe);
+        pull_f64!(t.fss_alt_lampe);
+        pull_f64!(t.fss_app_lampe);
         pull_f64!(t.ini_strobe_light_switch);
         pull_f64!(t.ini_tcas_stby_state);
         pull_f64!(t.zulu_time_s);
@@ -3594,6 +3614,17 @@ fn telemetry_to_snapshot_mit_pfad(
             t.syn_fg_altitude != 0.0 || t.ap_altitude,
             t.syn_fg_lnav != 0.0 || t.ap_nav,
             t.syn_fg_approach != 0.0 || t.ap_approach,
+        )
+    } else if is_fss {
+        // FSS E-Jet (Entwurf 19.10.2026, Bestätigung durch Stephans
+        // Messung steht aus): FGP-Lampen statt der toten Standard-SimVars.
+        // Standard-SimVar gewinnt per ODER, falls doch verdrahtet.
+        (
+            t.fss_ap_lampe != 0.0 || t.ap_master,
+            t.fss_hdg_lampe != 0.0 || t.ap_heading,
+            t.fss_alt_lampe != 0.0 || t.ap_altitude,
+            t.fss_nav_lampe != 0.0 || t.ap_nav,
+            t.fss_app_lampe != 0.0 || t.ap_approach,
         )
     } else {
         (
@@ -10514,6 +10545,45 @@ mod tests {
             &[("TRANSPONDER STATE:1", 4.0)],
         );
         assert_eq!(snap.xpdr_mode_label.as_deref(), Some("ALT"));
+    }
+
+    #[test]
+    fn runde3_fss_ejet_autopilot_aus_fgp_lampen() {
+        // Standard-SimVars aus (wie in der E195-Messung 19.10.2026), Lampe an → an.
+        let snap = runde3(
+            FSS_E190.0,
+            FSS_E190.1,
+            None,
+            &[("L:FSS_EXX_FGC_LT_AP", 1.0)],
+        );
+        assert_eq!(snap.autopilot_master, Some(true));
+        assert_eq!(snap.autopilot_heading, Some(false));
+        for (name, feld) in [
+            ("L:FSS_EXX_FGC_LT_HDG", 0),
+            ("L:FSS_EXX_FGC_LT_Alt", 1),
+            ("L:FSS_EXX_FGC_LT_NAV", 2),
+            ("L:FSS_EXX_FGC_LT_APP", 3),
+        ] {
+            let snap = runde3(FSS_E175.0, FSS_E175.1, None, &[(name, 1.0)]);
+            let modi = [
+                snap.autopilot_heading,
+                snap.autopilot_altitude,
+                snap.autopilot_nav,
+                snap.autopilot_approach,
+            ];
+            for (i, m) in modi.iter().enumerate() {
+                assert_eq!(*m, Some(i == feld), "{name} → Modus {i}");
+            }
+            assert_eq!(snap.autopilot_master, Some(false), "{name}");
+        }
+        // Alles aus → aus; die Standard-SimVar zählt weiter per ODER.
+        let snap = runde3(FSS_E190.0, FSS_E190.1, None, &[]);
+        assert_eq!(snap.autopilot_master, Some(false));
+        let snap = runde3(FSS_E190.0, FSS_E190.1, None, &[("AUTOPILOT MASTER", 1.0)]);
+        assert_eq!(snap.autopilot_master, Some(true));
+        // Die Lampen gehören nur dem E-Jet: ein anderes Muster ignoriert sie.
+        let snap = runde3(BARON.0, BARON.1, None, &[("L:FSS_EXX_FGC_LT_AP", 1.0)]);
+        assert_eq!(snap.autopilot_master, Some(false));
     }
 
     #[test]
