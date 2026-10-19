@@ -68,6 +68,13 @@ pub fn einordnen(flight_type: Option<&str>, pax: Option<u32>, muster: &str) -> F
     }
 }
 
+/// Steht die Einordnung fest? Ohne Passagierzahl ist ein Flug erst dann
+/// sicher „aus“, wenn seine Flugart keine Passagiere kennt (Fracht,
+/// Überführung); sonst holt der Host die Zahl vielleicht noch nach.
+pub fn eingeordnet(flight_type: Option<&str>, pax: Option<u32>) -> bool {
+    pax.is_some() || flight_type.is_some_and(|ft| OHNE_PASSAGIERE.contains(&ft.trim().to_ascii_uppercase().as_str()))
+}
+
 impl Flugart {
     /// Darf dieser Slot bei dieser Flugart überhaupt kommen?
     pub fn erlaubt(self, slot: Slot) -> bool {
@@ -122,6 +129,14 @@ mod tests {
         // Unbekannter oder fehlender Typ: Linie.
         assert_eq!(einordnen(None, Some(150), ""), Flugart::Linie);
         assert_eq!(einordnen(None, Some(150), "ZZZZ"), Flugart::Linie);
+    }
+
+    #[test]
+    fn eingeordnet_erst_mit_passagierzahl_oder_frachtart() {
+        assert!(eingeordnet(Some("F"), None), "Fracht steht fest");
+        assert!(!eingeordnet(Some("J"), None), "Linie ohne Zahl: noch offen");
+        assert!(!eingeordnet(None, None));
+        assert!(eingeordnet(None, Some(0)));
     }
 
     #[test]

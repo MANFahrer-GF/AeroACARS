@@ -41,6 +41,7 @@ mod ui_state;
 mod xplane_band;
 mod xplane_plugin_install;
 mod kabinenansagen;
+mod kabinen_musik;
 mod flug_aktivitaet;
 mod stats_sperre;
 
@@ -63087,6 +63088,18 @@ pub fn run() {
             kabinenansagen::kabinen_wiedergabe_start,
             kabinenansagen::kabinen_stumm,
             kabinenansagen::kabinen_lautstaerke,
+            kabinenansagen::kabinen_musik_lautstaerke,
+            kabinenansagen::kabinen_boarding_musik,
+            kabinenansagen::kabinen_musik_zustand,
+            kabinenansagen::kabinen_musik_probe_flug,
+            kabinen_musik::kabinen_musik_ablage,
+            kabinen_musik::kabinen_musik_pruefen,
+            kabinen_musik::kabinen_musik_hinzufuegen,
+            kabinen_musik::kabinen_musik_entfernen,
+            kabinen_musik::kabinen_musik_ordner_oeffnen,
+            kabinen_musik::kabinen_musik_probe,
+            kabinen_musik::kabinen_musik_probe_stopp,
+            kabinen_musik::kabinen_airlines,
             kabinenansagen::kabinen_anhoeren,
             kabinenansagen::kabinen_erneut,
             kabinenansagen::kabinen_speicher,

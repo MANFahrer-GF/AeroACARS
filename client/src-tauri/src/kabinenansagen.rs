@@ -78,6 +78,11 @@ pub struct Einstellungen {
     pub klang: String,
     /// Abgewählte Ansagen (Slot-Namen): kommen nicht, werden nicht angefragt.
     pub aus: Vec<String>,
+    /// Boarding-Musik an/aus (2.1.1, Entscheidung 15; Schalter auf der Seite
+    /// „Kabine“). Aus = keine Musik und kein Lied angefragt. Ab Werk an.
+    pub boarding_musik: bool,
+    /// Eigener Pegel der Musik 0.0 … 1.0, ab Werk 20 % (Entscheidung 14).
+    pub musik_lautstaerke: f32,
 }
 
 impl Default for Einstellungen {
@@ -93,6 +98,8 @@ impl Default for Einstellungen {
             kapitaen_geschlecht: "auto".into(),
             klang: "lautsprecher".into(),
             aus: Vec::new(),
+            boarding_musik: true,
+            musik_lautstaerke: 0.2,
         }
     }
 }
@@ -107,6 +114,7 @@ impl Einstellungen {
             self.zweite_sprache = std.zweite_sprache.clone();
         }
         self.lautstaerke = if self.lautstaerke.is_finite() { self.lautstaerke.clamp(0.0, 1.0) } else { 0.8 };
+        self.musik_lautstaerke = if self.musik_lautstaerke.is_finite() { self.musik_lautstaerke.clamp(0.0, 1.0) } else { 0.2 };
         self.ausgabe = self
             .ausgabe
             .map(|a| a.trim().to_string())
@@ -160,6 +168,7 @@ pub(crate) fn einstellungen(app: &AppHandle) -> Einstellungen {
     // Azure gibt es nicht mehr: einen alten Schlüssel nicht liegen lassen.
     let _ = secrets::delete_api_key(ALTES_AZURE_KONTO);
     ausgabe::lautstaerke_setzen(geladen.lautstaerke);
+    crate::kabinen_musik::lautstaerke_setzen(geladen.musik_lautstaerke);
     *zelle.write().expect("kabinen einstellungen") = Some(geladen.clone());
     geladen
 }
@@ -191,8 +200,15 @@ pub(crate) fn kabinen_einstellungen_setzen(
     // Die Lautstärke hat ihr eigenes Kommando (Regler auf der Seite und in
     // den Einstellungen): Ein älterer Stand der Einstellungsseite darf sie
     // nicht zurückdrehen (Codex beta.6).
-    neu.lautstaerke = self::einstellungen(&app).lautstaerke;
+    let bisher = self::einstellungen(&app);
+    neu.lautstaerke = bisher.lautstaerke;
+    // Musik-Regler und -Schalter sitzen auf der Seite „Kabine“ (Design
+    // 19.10.2026) und haben eigene Kommandos.
+    neu.musik_lautstaerke = bisher.musik_lautstaerke;
+    neu.boarding_musik = bisher.boarding_musik;
     if !neu.an {
+        // „Ansagen aus“ stoppt auch die Musik sofort.
+        crate::kabinen_musik::aus();
         // Ausgeschaltet heißt aus: Was im laufenden Flug noch wartet, wird
         // verworfen und kommt auch nach einem Wiedereinschalten nicht nach.
         let flug = state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone);
@@ -217,6 +233,32 @@ pub(crate) fn kabinen_lautstaerke(app: AppHandle, lautstaerke: f32, speichern: b
         einstellungen_schreiben(&app, &e)?;
     }
     Ok(())
+}
+
+/// Musik-Lautstärke 0 … 1 (zweiter Regler der Ton-Leiste): wirkt sofort,
+/// auch auf ein laufendes Stück. `speichern` beim Loslassen.
+#[tauri::command]
+pub(crate) fn kabinen_musik_lautstaerke(app: AppHandle, lautstaerke: f32, speichern: bool) -> Result<(), UiError> {
+    let mut e = einstellungen(&app);
+    e.musik_lautstaerke = lautstaerke;
+    let e = e.normalisiert();
+    crate::kabinen_musik::lautstaerke_setzen(e.musik_lautstaerke);
+    if speichern {
+        einstellungen_schreiben(&app, &e)?;
+    }
+    Ok(())
+}
+
+/// Schalter „Boarding-Musik“ (Kasten auf der Seite „Kabine“). Aus stoppt
+/// sofort und fragt kein Lied mehr an (Entscheidung 15).
+#[tauri::command]
+pub(crate) fn kabinen_boarding_musik(app: AppHandle, an: bool) -> Result<(), UiError> {
+    let mut e = einstellungen(&app);
+    e.boarding_musik = an;
+    if !an {
+        crate::kabinen_musik::aus();
+    }
+    einstellungen_schreiben(&app, &e.normalisiert())
 }
 
 /// Für die Einstellungsseite: was steht zur Verfügung?
@@ -389,6 +431,45 @@ pub(crate) struct Lauf {
     /// Zuletzt protokollierte Abwahl des Piloten samt Kommando- und
     /// Gong-Schalter (nur Wechsel).
     abgewaehlt_zuletzt: Option<Vec<Slot>>,
+    /// Boarding-Musik (2.1.1 G): Zeitfenster, Quelle (einmal je Flug
+    /// festgelegt, Design §5) und das Lied des Flugs.
+    musik_fenster: cabin_announcements::musik::MusikFenster,
+    musik_quelle: Option<MusikQuelle>,
+    musik_lief: bool,
+    lied: LiedStand,
+}
+
+/// Woher die Boarding-Musik dieses Flugs kommt.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum MusikQuelle {
+    /// Eigene Musik des Piloten (Ordner der Airline oder „Alle“).
+    Eigene { ordner: String, dateien: Vec<PathBuf> },
+    /// Das Lied je Flug (acemusic.ai über den Ton-Server).
+    Lied,
+    /// Nichts: Bizjet/Fracht ohne eigene Musik, oder Schalter aus.
+    Keine,
+}
+
+/// Das Boarding-Lied des Flugs: Vorlage vom Modul, Datei vom Ton-Server.
+#[derive(Debug, Default)]
+pub(crate) struct LiedStand {
+    vorlage: Option<api_client::KabinenLied>,
+    datei: Option<PathBuf>,
+    laeuft: bool,
+    versuche: u32,
+    naechster: i64,
+    fehler: Option<String>,
+}
+
+/// Quelle der Musik (Design §5): eigene Musik der Airline, sonst „Alle“,
+/// sonst das Lied (nur Linie, nur mit Schalter an); Bizjet und Fracht nur
+/// eigene Musik (Entscheidung 11).
+fn musik_quelle(flugart: Flugart, haken: bool, eigene: Option<(String, Vec<PathBuf>)>) -> MusikQuelle {
+    match eigene {
+        Some((ordner, dateien)) if haken && !dateien.is_empty() => MusikQuelle::Eigene { ordner, dateien },
+        _ if cabin_announcements::musik::lied_anfragen(flugart, haken, false) => MusikQuelle::Lied,
+        _ => MusikQuelle::Keine,
+    }
 }
 
 /// Ein Eintrag des Auswertungs-Logs (`FlightLogEvent::Kabine`).
@@ -674,7 +755,273 @@ pub(crate) fn takt(
     now: DateTime<Utc>,
 ) {
     takt_schritt(app, flight, client, snap, now);
+    musik_takt(app, flight, snap, now);
     protokoll_leeren(app, flight);
+}
+
+/// Lied mit dem Abflug-Drehbuch anfragen? Quelle Lied (also Linie, ohne
+/// eigene Musik), Schalter an und noch vor „Türen zu“.
+fn lied_anfragen(lauf: &Lauf, haken: bool) -> bool {
+    haken && lauf.musik_quelle == Some(MusikQuelle::Lied) && !lauf.musik_fenster.tueren_zu() && lauf.lied.datei.is_none()
+}
+
+/// Was die Musik nach diesem Takt tun soll.
+#[derive(Debug, Clone, PartialEq)]
+enum MusikTun {
+    Nichts,
+    Spielen(Vec<PathBuf>),
+    Ausblenden,
+    Aus,
+}
+
+/// Boarding-Musik je Takt (2.1.1 G): Fenster, Quelle, Lied holen. Ohne
+/// AppHandle, damit testbar; `eigene` liest der Aufrufer ohne Sperre.
+fn musik_schritt(stats: &mut FlightStats, snap: &SimSnapshot, muster: &str, eigene: Option<(String, Vec<PathBuf>)>, jetzt: i64) -> (MusikTun, Option<api_client::KabinenLied>) {
+    use cabin_announcements::{flugart, musik};
+    if stats.replay_verdacht || stats.kabinen_lauf.beta != Beta::Ja {
+        return (MusikTun::Aus, None);
+    }
+    let pax = stats.pax_count.and_then(|n| u32::try_from(n).ok());
+    // Linienflug ohne Passagierzahl: Die Einordnung kommt noch.
+    if !flugart::eingeordnet(stats.flight_type.as_deref(), pax) {
+        return (MusikTun::Nichts, None);
+    }
+    let art = flugart::einordnen(stats.flight_type.as_deref(), pax, muster);
+    let begruessung = stats.kabinen_planer.as_ref().is_some_and(|p| p.erledigt(Slot::Boarding));
+    let lauf = &mut stats.kabinen_lauf;
+    if lauf.musik_quelle.is_none() {
+        lauf.musik_quelle = Some(musik_quelle(art, true, eigene));
+    }
+    let takt = musik::MusikTakt {
+        phase: stats.phase,
+        am_boden: snap.on_ground,
+        beacon: snap.light_beacon,
+        pushback_aktiv: matches!(snap.pushback_state, Some(0..=2)),
+        begruessung,
+    };
+    let soll = lauf.musik_fenster.tick(art, &takt);
+    let dateien: Vec<PathBuf> = match &lauf.musik_quelle {
+        Some(MusikQuelle::Eigene { dateien, .. }) => dateien.clone(),
+        Some(MusikQuelle::Lied) => lauf.lied.datei.iter().cloned().collect(),
+        _ => Vec::new(),
+    };
+    // Lied nachreichen (Entscheidung 9): bis „Türen zu“ immer wieder.
+    let holen = (lauf.musik_quelle == Some(MusikQuelle::Lied)
+        && lauf.lied.datei.is_none()
+        && !lauf.lied.laeuft
+        && jetzt >= lauf.lied.naechster
+        && !lauf.musik_fenster.tueren_zu())
+    .then(|| lauf.lied.vorlage.clone())
+    .flatten();
+    if holen.is_some() {
+        lauf.lied.laeuft = true;
+    }
+    let tun = if soll && !dateien.is_empty() {
+        lauf.musik_lief = true;
+        MusikTun::Spielen(dateien)
+    } else if lauf.musik_lief && !soll {
+        lauf.musik_lief = false;
+        MusikTun::Ausblenden
+    } else {
+        MusikTun::Nichts
+    };
+    (tun, holen)
+}
+
+fn musik_takt(app: &AppHandle, flight: &Arc<ActiveFlight>, snap: &SimSnapshot, now: DateTime<Utc>) {
+    let einst = einstellungen(app);
+    // Ansagen aus, Schalter aus oder Stumm: sofort still (Pflichtenheft G1).
+    if !einst.an || !einst.boarding_musik || STUMM.load(Ordering::SeqCst) {
+        if crate::kabinen_musik::flug_aktiv() {
+            crate::kabinen_musik::aus();
+        }
+        return;
+    }
+    // Eigene Musik vor dem Flug neu lesen (Design §6), ohne Flugdaten-Sperre.
+    let offen = flight.stats.lock().expect("flight stats").kabinen_lauf.musik_quelle.is_none();
+    let eigene = if offen { crate::kabinen_musik::ablage().and_then(|w| crate::kabinen_musik::eigene_fuer(&w, &flight.airline_icao)) } else { None };
+    let mut stats = flight.stats.lock().expect("flight stats");
+    let (tun, holen) = musik_schritt(&mut stats, snap, &flight.aircraft_icao, eigene, now.timestamp());
+    if let Some(l) = &holen {
+        let details = serde_json::json!({ "titel": l.titel, "stil": l.stil, "versuch": stats.kabinen_lauf.lied.versuche + 1 });
+        notiz(&mut stats.kabinen_lauf, "lied_anfrage", None, None, details);
+    }
+    drop(stats);
+    match tun {
+        // Probehören (Kasten/Dialog) nicht überschreiben.
+        MusikTun::Spielen(dateien) if !crate::kabinen_musik::probe_aktiv() => {
+            crate::kabinen_musik::spielen(crate::kabinen_musik::Auftrag { dateien, schleife: true, geraet: einst.ausgabe.clone() });
+        }
+        MusikTun::Ausblenden if crate::kabinen_musik::flug_aktiv() => crate::kabinen_musik::ausblenden(),
+        MusikTun::Aus if crate::kabinen_musik::flug_aktiv() => crate::kabinen_musik::aus(),
+        _ => {}
+    }
+    if let Some(l) = holen {
+        lied_holen(app.clone(), Arc::clone(flight), l);
+    }
+}
+
+/// Holt das Lied vom Ton-Server (`POST /api/kabine/lied`) in den Ordner des
+/// Fluges. Fehlschlag: nach `Retry-After` (sonst 60 s) erneut, solange noch
+/// Boarding ist (Entscheidung 9).
+fn lied_holen(app: AppHandle, flight: Arc<ActiveFlight>, lied: api_client::KabinenLied) {
+    tauri::async_runtime::spawn(async move {
+        let beginn = Utc::now();
+        let ergebnis = lied_vom_server(&app, &flight, &lied).await;
+        {
+            let mut stats = flight.stats.lock().expect("flight stats");
+            let lauf = &mut stats.kabinen_lauf;
+            lauf.lied.laeuft = false;
+            let details = match &ergebnis {
+                Ok(p) => {
+                    lauf.lied.datei = Some(p.clone());
+                    lauf.lied.fehler = None;
+                    serde_json::json!({ "ergebnis": "ok", "dauer_ms": (Utc::now() - beginn).num_milliseconds() })
+                }
+                Err((meldung, warte_s)) => {
+                    lauf.lied.versuche += 1;
+                    lauf.lied.naechster = Utc::now().timestamp() + *warte_s as i64;
+                    lauf.lied.fehler = Some(meldung.clone());
+                    serde_json::json!({ "ergebnis": "fehler", "fehler": meldung, "dauer_ms": (Utc::now() - beginn).num_milliseconds() })
+                }
+            };
+            notiz(lauf, "lied_antwort", None, None, details);
+        }
+        protokoll_leeren(&app, &flight);
+    });
+}
+
+async fn lied_vom_server(app: &AppHandle, flight: &ActiveFlight, lied: &api_client::KabinenLied) -> Result<PathBuf, (String, u64)> {
+    let ordner = ton_ordner(app, &flug_ordner(flight)).map_err(|e| (e, 60))?;
+    let ziel = ordner.join("boarding-lied.mp3");
+    // Nach einem Neustart liegt es schon da.
+    if std::fs::metadata(&ziel).is_ok_and(|m| m.len() > 0) {
+        return Ok(ziel);
+    }
+    let token = crate::live_zugang::pilot_token().ok_or_else(|| ("noch kein Live-Zugang (nicht provisioniert)".to_string(), 120))?;
+    let koerper = serde_json::json!({ "pirep_id": flight.pirep_id, "text": lied.text, "stil": lied.stil });
+    let antwort = reqwest::Client::builder()
+        // acemusic.ai braucht für 3 min Musik gut eine Minute, dazu die
+        // Warteschlange des Servers.
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| (e.to_string(), 60))?
+        .post(format!("{}/api/kabine/lied", crate::live_zugang::LIVE_BASIS))
+        .bearer_auth(token)
+        .header("User-Agent", format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")))
+        .json(&koerper)
+        .send()
+        .await
+        .map_err(|e| (format!("live.kant.ovh nicht erreichbar: {e}"), 60))?;
+    let status = antwort.status();
+    if !status.is_success() {
+        let warte = piper::warte_s(antwort.headers().get("retry-after").and_then(|v| v.to_str().ok())).unwrap_or(60);
+        return Err((format!("Ton-Server antwortet {status}"), warte.max(10)));
+    }
+    let mp3 = antwort.bytes().await.map_err(|e| (e.to_string(), 60))?;
+    if mp3.is_empty() {
+        return Err(("leere Antwort".into(), 60));
+    }
+    let zwischen = ordner.join("boarding-lied.mp3.neu");
+    std::fs::write(&zwischen, &mp3).and_then(|_| std::fs::rename(&zwischen, &ziel)).map_err(|e| (e.to_string(), 60))?;
+    Ok(ziel)
+}
+
+/// Zustand der Boarding-Musik für den Kasten auf der Seite „Kabine“.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MusikAnsicht {
+    /// Schalter „Boarding-Musik“.
+    an: bool,
+    lautstaerke: f32,
+    /// aus | ohne_flug | keine | wird_erzeugt | kein_lied | bereit | laeuft |
+    /// pausiert | beendet | probe
+    stand: &'static str,
+    /// eigene | lied
+    quelle: Option<&'static str>,
+    titel: Option<String>,
+    strecke: Option<String>,
+    /// Ordner der eigenen Musik (ICAO oder „Alle“) und Zahl der Stücke.
+    ordner: Option<String>,
+    stuecke: usize,
+    /// Airline des laufenden Flugs (ICAO).
+    airline: Option<String>,
+}
+
+fn musik_ansicht(einst: &Einstellungen, lauf: Option<&Lauf>, airline: Option<String>, laeuft: bool, hoerbar: bool, probe: bool) -> MusikAnsicht {
+    let mut a = MusikAnsicht {
+        an: einst.boarding_musik,
+        lautstaerke: einst.musik_lautstaerke,
+        stand: "ohne_flug",
+        quelle: None,
+        titel: None,
+        strecke: None,
+        ordner: None,
+        stuecke: 0,
+        airline,
+    };
+    if let Some(lauf) = lauf {
+        match &lauf.musik_quelle {
+            Some(MusikQuelle::Eigene { ordner, dateien }) => {
+                a.quelle = Some("eigene");
+                a.ordner = Some(ordner.clone());
+                a.stuecke = dateien.len();
+            }
+            Some(MusikQuelle::Lied) => {
+                a.quelle = Some("lied");
+                a.titel = lauf.lied.vorlage.as_ref().and_then(|l| l.titel.clone());
+                a.strecke = lauf.lied.vorlage.as_ref().and_then(|l| l.strecke.clone());
+            }
+            _ => {}
+        }
+        a.stand = match &lauf.musik_quelle {
+            _ if probe => "probe",
+            _ if laeuft => if hoerbar { "laeuft" } else { "pausiert" },
+            _ if lauf.musik_fenster.tueren_zu() => "beendet",
+            None => "ohne_flug",
+            Some(MusikQuelle::Keine) => "keine",
+            Some(MusikQuelle::Lied) if lauf.lied.datei.is_none() => if lauf.lied.fehler.is_some() { "kein_lied" } else { "wird_erzeugt" },
+            Some(_) => "bereit",
+        };
+    } else if probe {
+        a.stand = "probe";
+    }
+    if !einst.boarding_musik {
+        a.stand = "aus";
+    }
+    a
+}
+
+#[tauri::command]
+pub(crate) fn kabinen_musik_zustand(app: AppHandle, state: tauri::State<'_, AppState>) -> MusikAnsicht {
+    let einst = einstellungen(&app);
+    let flug = aktiver_flug(&state);
+    let (laeuft, hoerbar, probe) = (crate::kabinen_musik::flug_aktiv(), crate::kabinen_musik::hoerbar(), crate::kabinen_musik::probe_aktiv());
+    match flug {
+        Some(f) => {
+            let stats = f.stats.lock().expect("flight stats");
+            musik_ansicht(&einst, Some(&stats.kabinen_lauf), Some(f.airline_icao.clone()).filter(|a| !a.is_empty()), laeuft, hoerbar, probe)
+        }
+        None => musik_ansicht(&einst, None, None, false, false, probe),
+    }
+}
+
+/// Probehören im Kasten: die Musik dieses Flugs (Lied oder eigene), einmal.
+#[tauri::command]
+pub(crate) fn kabinen_musik_probe_flug(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), UiError> {
+    let flug = aktiver_flug(&state).ok_or_else(|| UiError::new("kein_flug", "no active flight"))?;
+    let dateien: Vec<PathBuf> = {
+        let stats = flug.stats.lock().expect("flight stats");
+        match &stats.kabinen_lauf.musik_quelle {
+            Some(MusikQuelle::Eigene { dateien, .. }) => dateien.clone(),
+            Some(MusikQuelle::Lied) => stats.kabinen_lauf.lied.datei.iter().cloned().collect(),
+            _ => Vec::new(),
+        }
+    };
+    if dateien.is_empty() {
+        return Err(UiError::new("musik_keine", "no music for this flight yet"));
+    }
+    crate::kabinen_musik::spielen(crate::kabinen_musik::Auftrag { dateien, schleife: false, geraet: einstellungen(&app).ausgabe });
+    Ok(())
 }
 
 fn takt_schritt(
@@ -689,6 +1036,13 @@ fn takt_schritt(
         return;
     }
     let jetzt = now.timestamp();
+    // Eigene Musik vor der Abflug-Anfrage prüfen (Design §5), ohne Sperre.
+    let quelle_offen = flight.stats.lock().expect("flight stats").kabinen_lauf.musik_quelle.is_none();
+    let eigene = if quelle_offen && einst.boarding_musik {
+        crate::kabinen_musik::ablage().and_then(|w| crate::kabinen_musik::eigene_fuer(&w, &flight.airline_icao))
+    } else {
+        None
+    };
     // Verlaufsdatei ohne Flugdaten-Sperre lesen (v2.0.28: das Lesen hielt die
     // Sperre beim ersten Takt bis 39 ms, Diagnose Pilot 1 und 4).
     let geladen = flight.stats.lock().expect("flight stats").kabinen_lauf.verlauf_geladen;
@@ -767,6 +1121,11 @@ fn takt_schritt(
     let flugart = flugdaten.flugart.unwrap_or(Flugart::Aus);
     if flugart == Flugart::Aus {
         return;
+    }
+    // Ist der Schalter aus, bleibt die Quelle offen: Wer ihn im Boarding
+    // einschaltet, bekommt noch eigene Musik.
+    if stats.kabinen_lauf.musik_quelle.is_none() && einst.boarding_musik {
+        stats.kabinen_lauf.musik_quelle = Some(musik_quelle(flugart, true, eigene));
     }
     let abgewaehlt = einst.abgewaehlt();
     // Abwahl ins Log (einmal je Flug und bei jeder Änderung, auch der
@@ -895,7 +1254,12 @@ fn takt_schritt(
         }
     }
     for (schluessel, slots, anlass) in auftraege {
-        let anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
+        let mut anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
+        // Boarding-Lied (2.1.1 G1): mit dem Abflug-Drehbuch, nur wenn keine
+        // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
+        if schluessel == "abflug" && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik) {
+            anfrage["boarding_lied"] = serde_json::json!(true);
+        }
         holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
     }
 
@@ -1361,6 +1725,10 @@ fn wetterlage(m: &metar::MetarSnapshot) -> Option<&'static str> {
 /// noch fehlt. Bizjet: Die Sicherheit gilt nur als Kurzfassung des Kapitäns
 /// (`rolle: kapitaen`); fehlt sie, entfällt der Slot sicher.
 fn drehbuch_uebernehmen(lauf: &mut Lauf, d: api_client::KabinenDrehbuch, slots: &[Slot], bizjet: bool) -> Vec<Slot> {
+    // Boarding-Lied (2.1.1 G1): die erste Vorlage gilt für den Flug.
+    if let Some(l) = d.boarding_lied.clone().filter(|l| !l.text.trim().is_empty()) {
+        lauf.lied.vorlage.get_or_insert(l);
+    }
     if !d.sprachen.is_empty() {
         lauf.sprachen = d.sprachen.clone();
     }
@@ -1440,7 +1808,14 @@ fn holen(
             let fehler = ergebnis.as_ref().err().map(|e| kurz(&e.to_string()));
             match ergebnis {
                 Ok(d) => {
+                    // Lied angefragt, aber keins gekommen: still, „kein Lied“.
+                    let lied_fehlt = anfrage.get("boarding_lied").and_then(|v| v.as_bool()) == Some(true)
+                        && d.boarding_lied.is_none()
+                        && lauf.lied.vorlage.is_none();
                     fehlend = drehbuch_uebernehmen(lauf, d, &slots, bizjet);
+                    if lied_fehlt {
+                        lauf.lied.fehler = Some("Das Modul hat kein Lied geliefert.".into());
+                    }
                     if nachholung {
                         // Auch der gezielte zweite Abruf brachte nichts: auf
                         // der Seite sagen, statt ewig „wird geschrieben“.
@@ -2726,6 +3101,8 @@ pub(crate) mod ausgabe {
         if STOPP.load(Ordering::SeqCst) != stand {
             return Ok(());
         }
+        // Boarding-Musik pausiert, solange eine Ansage (auch der Gong) läuft.
+        let _ansage = crate::kabinen_musik::AnsageLaeuft::neu();
         let host = cpal::default_host();
         let gewaehlt = geraet
             .and_then(|id| id.parse::<cpal::DeviceId>().ok())
@@ -3340,7 +3717,7 @@ mod tests {
         let mut l = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into(), "en-GB".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None };
+            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None, boarding_lied: None };
         assert!(drehbuch_uebernehmen(&mut l, d, &abflug, true).is_empty());
         assert_eq!(rolle_von(&l, Slot::Sicherheit), Rolle::Kapitaen);
         assert!(l.entfaellt.is_empty());
@@ -3349,13 +3726,13 @@ mod tests {
         let mut alt = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None };
+            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None, boarding_lied: None };
         assert!(drehbuch_uebernehmen(&mut alt, d, &abflug, true).is_empty(), "nichts nachholen");
         assert!(!alt.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
         assert_eq!(alt.entfaellt.get(&Slot::Sicherheit).map(String::as_str), Some("kein_kurztext"));
         // Linie ohne Kennzeichen: Kabine wie bisher.
         let mut linie = Lauf::default();
-        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None };
+        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None, boarding_lied: None };
         drehbuch_uebernehmen(&mut linie, d, &[Slot::Sicherheit], false);
         assert_eq!(rolle_von(&linie, Slot::Sicherheit), Rolle::Kabine);
         assert!(linie.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
@@ -3680,6 +4057,114 @@ mod tests {
 
     /// Thomas 18.10.2026 (Punkt 8/16): Die Stimme folgt dem Geschlecht der
     /// Crew laut Server; ohne Angabe Kapitän männlich, Kabine weiblich.
+    fn musik_stats(flight_type: &str, pax: Option<i32>) -> FlightStats {
+        let mut st = FlightStats::new();
+        st.phase = crate::FlightPhase::Boarding;
+        st.flight_type = Some(flight_type.into());
+        st.pax_count = pax;
+        st.kabinen_lauf.beta = Beta::Ja;
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(45), ..Default::default() },
+            crate::FlightPhase::Boarding,
+        ));
+        st
+    }
+
+    fn gate_snap(beacon: bool) -> SimSnapshot {
+        SimSnapshot { on_ground: true, light_beacon: Some(beacon), pushback_state: Some(3), ..SimSnapshot::default() }
+    }
+
+    /// Spielt Peters Boarding durch Planer und Musik: Strom → Anschnall-
+    /// zeichen → nach 8 min Zuladung → Begrüßung → Musik (Lied kommt später)
+    /// → Beacon: Musik blendet aus.
+    #[test]
+    fn peter_musik_mit_der_begruessung_lied_nachgereicht_ende_beim_beacon() {
+        let mut st = musik_stats("J", Some(150));
+        let lied = api_client::KabinenLied { text: "[Verse]\nFly with Lufthansa".into(), stil: "elegant piano".into(), titel: None, strecke: None };
+        st.kabinen_lauf.lied.vorlage = Some(lied.clone());
+        let mut tun = Vec::new();
+        let mut holen = 0;
+        for s in (0..=12 * 60).step_by(10) {
+            let zfw = if s > 8 * 60 { 46_000.0 } else { 43_000.0 };
+            let tk = cabin_announcements::Tick { jetzt: s, phase: crate::FlightPhase::Boarding, am_boden: true, anschnallzeichen: Some(if s >= 60 { 2 } else { 0 }), beacon: Some(false), zfw_kg: Some(zfw), ..Default::default() };
+            st.kabinen_planer.as_mut().unwrap().tick(&tk);
+            let (t, h) = musik_schritt(&mut st, &gate_snap(false), "A320", None, s);
+            holen += usize::from(h.is_some());
+            // Der Ton-Server liefert das Lied 3 min nach der ersten Anfrage.
+            if h.is_some() {
+                st.kabinen_lauf.lied.laeuft = false;
+                st.kabinen_lauf.lied.naechster = s + 60;
+                if s >= 180 {
+                    st.kabinen_lauf.lied.datei = Some(PathBuf::from("/tmp/boarding-lied.mp3"));
+                }
+            }
+            tun.push((s, t));
+        }
+        assert_eq!(st.kabinen_lauf.musik_quelle, Some(MusikQuelle::Lied));
+        assert!(holen >= 2, "nachgereicht: mehrere Versuche bis es kommt");
+        let erstes = tun.iter().find(|(_, t)| matches!(t, MusikTun::Spielen(_))).map(|(s, _)| *s).expect("Musik lief");
+        assert_eq!(erstes, 8 * 60 + 10 + 30, "mit der Begrüßung, nicht beim Anschnallzeichen");
+        // Beacon: einmal ausblenden, danach nichts mehr.
+        let (t, h) = musik_schritt(&mut st, &gate_snap(true), "A320", None, 12 * 60 + 10);
+        assert_eq!((t, h), (MusikTun::Ausblenden, None));
+        let (t, _) = musik_schritt(&mut st, &gate_snap(true), "A320", None, 12 * 60 + 20);
+        assert_eq!(t, MusikTun::Nichts);
+    }
+
+    /// Kein Lied da (Ausfall): still, die Ansagen laufen ungestört (Nr. 9).
+    #[test]
+    fn ohne_lied_bleibt_es_still() {
+        let mut st = musik_stats("J", Some(150));
+        st.kabinen_planer.as_mut().unwrap().schon_gespielt([Slot::Boarding]);
+        let (t, h) = musik_schritt(&mut st, &gate_snap(false), "A320", None, 0);
+        assert_eq!((t, h), (MusikTun::Nichts, None), "noch keine Vorlage, nichts zu holen");
+    }
+
+    /// Eigene Musik geht vor (kein Lied), Fracht und Bizjet nur eigene Musik
+    /// ab Beginn des Boardings (Nr. 11, abgeleitet).
+    #[test]
+    fn eigene_musik_vor_lied_fracht_nur_eigene() {
+        let eigene = Some(("DLH".to_string(), vec![PathBuf::from("/m/DLH/a.mp3")]));
+        let mut st = musik_stats("J", Some(150));
+        musik_schritt(&mut st, &gate_snap(false), "A320", eigene.clone(), 0);
+        assert!(matches!(st.kabinen_lauf.musik_quelle, Some(MusikQuelle::Eigene { .. })));
+        assert!(!lied_anfragen(&st.kabinen_lauf, true), "eigene Musik: kein Lied anfragen");
+        // Fracht ohne Passagierzahl: steht fest, eigene Musik sofort im Boarding.
+        let mut f = musik_stats("F", None);
+        assert!(matches!(musik_schritt(&mut f, &gate_snap(false), "B77F", eigene.clone(), 0).0, MusikTun::Spielen(_)));
+        let mut ohne = musik_stats("F", None);
+        assert_eq!(musik_schritt(&mut ohne, &gate_snap(false), "B77F", None, 0).0, MusikTun::Nichts);
+        assert_eq!(ohne.kabinen_lauf.musik_quelle, Some(MusikQuelle::Keine), "Fracht ohne eigene Musik: kein Lied");
+        let mut biz = musik_stats("J", Some(6));
+        musik_schritt(&mut biz, &gate_snap(false), "C25A", None, 0);
+        assert_eq!(biz.kabinen_lauf.musik_quelle, Some(MusikQuelle::Keine), "Bizjet: kein Lied");
+        // Linie ohne Passagierzahl: noch nichts entscheiden.
+        let mut offen = musik_stats("J", None);
+        musik_schritt(&mut offen, &gate_snap(false), "A320", eigene, 0);
+        assert_eq!(offen.kabinen_lauf.musik_quelle, None);
+        // Ohne Freischaltung: aus.
+        let mut nein = musik_stats("J", Some(150));
+        nein.kabinen_lauf.beta = Beta::Nein;
+        assert_eq!(musik_schritt(&mut nein, &gate_snap(false), "A320", None, 0).0, MusikTun::Aus);
+    }
+
+    #[test]
+    fn musik_ansicht_nennt_den_zustand() {
+        let e = Einstellungen::default();
+        let mut l = Lauf::default();
+        assert_eq!(musik_ansicht(&e, None, None, false, false, false).stand, "ohne_flug");
+        l.musik_quelle = Some(MusikQuelle::Lied);
+        assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "wird_erzeugt");
+        l.lied.fehler = Some("x".into());
+        assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "kein_lied");
+        l.lied.datei = Some(PathBuf::from("a.mp3"));
+        assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "bereit");
+        assert_eq!(musik_ansicht(&e, Some(&l), None, true, true, false).stand, "laeuft");
+        assert_eq!(musik_ansicht(&e, Some(&l), None, true, false, false).stand, "pausiert");
+        let aus = Einstellungen { boarding_musik: false, ..Einstellungen::default() };
+        assert_eq!(musik_ansicht(&aus, Some(&l), None, false, false, false).stand, "aus");
+    }
+
     /// v2.0.28: „Boarding completed“ ist ein fester englischer Text (wie ein
     /// Kommando), gesprochen von der Kabine.
     #[test]
@@ -3742,9 +4227,9 @@ mod tests {
         let mut l = Lauf::default();
         let fremd = vec![api_client::KabinenFremd { wort: "Times Square".into(), sprache: "en".into() }];
         let eintrag = |text: &str, fremd: Vec<api_client::KabinenFremd>| api_client::KabinenEintrag { slot: "reiseflug25".into(), sprache: "de-DE".into(), text: text.into(), rolle: None, art: None, fremd };
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None }, &[Slot::Reiseflug25], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None, boarding_lied: None }, &[Slot::Reiseflug25], false);
         assert_eq!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())), Some(&fremd));
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None }, &[Slot::Reiseflug25], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None, boarding_lied: None }, &[Slot::Reiseflug25], false);
         assert!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())).is_none());
     }
 
@@ -3770,6 +4255,7 @@ mod tests {
             sprachen: vec!["de-DE".into()],
             eintraege: vec![api_client::KabinenEintrag { slot: "reiseflug80".into(), sprache: "de-DE".into(), text: "x".into(), rolle: None, art: Some("ende_bordverkauf".into()), fremd: Vec::new() }],
             crew: Some(api_client::KabinenCrew { kapitaen: Some("Julia Lange".into()), kapitaen_geschlecht: Some("w".into()), kabine_geschlecht: Some("m".into()) }),
+            boarding_lied: None,
         };
         drehbuch_uebernehmen(&mut l, d, &[Slot::Reiseflug80], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen), "Kapitänin spricht mit Frauenstimme");
@@ -3778,7 +4264,7 @@ mod tests {
         assert_eq!(l.art_r80.as_deref(), Some("ende_bordverkauf"));
         assert_eq!(l.crew.as_ref().and_then(|c| c.kapitaen.as_deref()), Some("Julia Lange"));
         // Eine spätere Antwort ohne `crew` (älteres Modul) vergisst die Crew nicht.
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None }, &[], false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None, boarding_lied: None }, &[], false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen));
     }
 
@@ -3954,6 +4440,14 @@ mod tests {
         assert_eq!((kaputt.kapitaen_geschlecht.as_str(), kaputt.klang.as_str()), ("auto", "lautsprecher"));
         assert_eq!(kaputt.aus, vec!["boarding".to_string()]);
         assert_eq!(kaputt.abgewaehlt(), vec![Slot::Boarding]);
+        // 2.1.1 G3: Altdatei ohne Musik-Felder → Musik an, eigener Pegel 20 %.
+        assert!(alt.boarding_musik, "ab Werk an (Entscheidung 15)");
+        assert!((alt.musik_lautstaerke - 0.2).abs() < 1e-6, "ab Werk 20 % (Entscheidung 14)");
+        assert!((alt.lautstaerke - 0.5).abs() < 1e-6, "getrennte Regler");
+        let laut = Einstellungen { musik_lautstaerke: f32::INFINITY, ..Einstellungen::default() }.normalisiert();
+        assert!((laut.musik_lautstaerke - 0.2).abs() < 1e-6);
+        let aus: Einstellungen = serde_json::from_str(r#"{"an":true,"boarding_musik":false,"musik_lautstaerke":0.35}"#).unwrap();
+        assert!(!aus.boarding_musik && (aus.musik_lautstaerke - 0.35).abs() < 1e-6);
     }
 
     /// Punkt 5b: Anschnallzeichen im Reiseflug nach 3 min noch an → Hinweis,

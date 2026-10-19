@@ -830,6 +830,24 @@ pub struct KabinenDrehbuch {
     pub eintraege: Vec<KabinenEintrag>,
     #[serde(default)]
     pub crew: Option<KabinenCrew>,
+    /// Boarding-Lied (2.1.1 G1): nur, wenn der Client es mit
+    /// `boarding_lied: true` angefragt hat und das Modul es schreiben konnte.
+    #[serde(default)]
+    pub boarding_lied: Option<KabinenLied>,
+}
+
+/// Text und Stil des Boarding-Lieds für den Ton-Server (acemusic.ai).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct KabinenLied {
+    /// Englischer Liedtext mit Marken `[Verse]`, `[Chorus]` …
+    pub text: String,
+    /// Musikstil (Steckbrief der Airline, sonst von der KI gewählt).
+    pub stil: String,
+    /// Für die Anzeige: Titel und Strecke („Frankfurt → Hamburg“).
+    #[serde(default)]
+    pub titel: Option<String>,
+    #[serde(default)]
+    pub strecke: Option<String>,
 }
 
 /// Response payload of the PaxStudio fares/claim endpoints (inside the `{data:…}`
@@ -1708,6 +1726,12 @@ impl Client {
         // Default (10 s) gab der Client auf, bevor die Texte fertig waren.
         self.post_data_with_timeout("/api/kabinenansagen/drehbuch", anfrage, Some(KABINEN_DREHBUCH_TIMEOUT))
             .await
+    }
+
+    /// `GET /api/airlines?page=N` — aktive Airlines der VA, nach Namen
+    /// (phpVMS `paginate()`); für die Airline-Wahl der Boarding-Musik.
+    pub async fn get_airlines(&self, page: u32) -> Result<Vec<Airline>, ApiError> {
+        self.get_data(&format!("/api/airlines?page={page}")).await
     }
 
     /// `GET /api/airports/{icao}` — single airport lookup with coordinates.
