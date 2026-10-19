@@ -466,9 +466,12 @@ fn ende_service_bei_alter_art(lauf: &mut Lauf, jetzt: i64) -> bool {
     true
 }
 
-/// Slots, die in diesem Flug schon zu Ende gespielt wurden (Verlauf).
-pub(crate) fn gespielte_slots(lauf: &Lauf) -> Vec<Slot> {
-    lauf.verlauf.iter().filter(|g| !g.vorschau && g.ergebnis.as_deref() == Some("gespielt")).map(|g| g.slot).collect()
+/// Slots, die in diesem Flug schon erledigt sind (Verlauf): gespielt, aber
+/// auch stumm übersprungen, entfallen, abgebrochen oder mit unbekanntem
+/// Ausgang — nichts davon kommt nach einem Neustart noch einmal
+/// (Codex-Review PR #160).
+pub(crate) fn erledigte_slots(lauf: &Lauf) -> Vec<Slot> {
+    lauf.verlauf.iter().filter(|g| !g.vorschau && g.ergebnis.is_some()).map(|g| g.slot).collect()
 }
 
 /// Wartet Reiseflug 80 als zweiter Service, obwohl weniger als
@@ -3735,6 +3738,17 @@ mod tests {
         l.art_r80 = Some("zweiter_service".into());
         assert!(zweiter_service_zu_spaet(&l, Some(30.0)));
         assert!(!zweiter_service_zu_spaet(&l, Some(95.0)), "noch genug Zeit");
+    }
+
+    /// Codex-Review PR #160: Nach einem Neustart gilt jeder abgeschlossene
+    /// Ausgang als erledigt, nicht nur „gespielt“ (stumm kommt nicht nach).
+    #[test]
+    fn neustart_uebernimmt_jeden_abgeschlossenen_ausgang() {
+        let mut l = Lauf::default();
+        verbuchen(&mut l, Slot::EndeService, "stumm", None, 1);
+        verbuchen(&mut l, Slot::Reiseflug80, "entfallen", Some("zu_wenig_zeit"), 2);
+        let e = erledigte_slots(&l);
+        assert!(e.contains(&Slot::EndeService) && e.contains(&Slot::Reiseflug80), "{e:?}");
     }
 
     /// Codex 2.1.0: Kommt die alte Art „Ende des Bordverkaufs“ erst, als
