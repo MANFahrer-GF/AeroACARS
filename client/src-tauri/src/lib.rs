@@ -62708,6 +62708,11 @@ pub fn run() {
     let app_state = AppState::default();
 
     tauri::Builder::default()
+        // 2.1.3 (Beenden-Hänger Thomas 19.10.2026): steht VOR single-instance,
+        // damit `RunEvent::Exit` geloggt wird, bevor irgendein anderer
+        // Plugin-Hook läuft. Das Plugin hat kein setup, es ändert also nichts
+        // daran, dass single-instance als erstes Plugin beim Start prüft.
+        .plugin(beenden_protokoll_plugin())
         // v0.18.x: MUSS das erste registrierte Plugin sein (Tauri-Doku).
         // Verhindert einen zweiten AeroACARS-Prozess fuer denselben Piloten
         // (z. B. erneuter Doppelklick aufs App-Icon, waehrend die App via
@@ -63306,9 +63311,28 @@ pub fn run() {
                         tokio::time::sleep(std::time::Duration::from_millis(200))
                             .await;
                     }
+                    // 2.1.3: Beenden-Hänger 19.10.2026 eingrenzen. Fehlt diese
+                    // Zeile, hing es im Hoppie-Logoff oder in der 200-ms-Pause.
+                    tracing::info!("Beenden: Herunterfahren im block_on fertig");
                 });
+                // Fehlt diese Zeile trotz der vorigen, hing die Rückkehr aus block_on.
+                tracing::info!("Beenden: ExitRequested-Zweig fertig, Ereignisschleife darf enden");
             }
         });
+}
+
+/// 2.1.3 (Beenden-Hänger Thomas 19.10.2026): loggt `RunEvent::Exit` als
+/// allererster Hook. Fehlt die Zeile nach „ExitRequested-Zweig fertig“, kam
+/// die Ereignisschleife nie bei Exit an. Steht sie da, aber nicht
+/// „panel_server: shutdown signalled“, hing ein Plugin-Hook dazwischen.
+fn beenden_protokoll_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("beenden-protokoll")
+        .on_event(|_app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                tracing::info!("Beenden: RunEvent::Exit erreicht");
+            }
+        })
+        .build()
 }
 
 // ----------------------------------------------------------------------
