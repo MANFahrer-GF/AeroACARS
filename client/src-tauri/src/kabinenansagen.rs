@@ -764,7 +764,8 @@ fn takt_schritt(
     // Kam die Art „zweiter Service“ erst, als Reiseflug 80 schon nach der
     // 12-min-Regel wartete, und reicht die Zeit nicht mehr (unter 60 min
     // Restflug): entfällt statt kurz vor dem Sinkflug (Codex 2.0.28).
-    if zweiter_service_zu_spaet(&stats.kabinen_lauf, schritt.rest_min) && stats.kabinen_lauf.warteschlange.entfernen(Slot::Reiseflug80) {
+    let rest = stats.kabinen_planer.as_ref().and_then(|p| p.restflug_min(jetzt, schritt.rest_min));
+    if zweiter_service_zu_spaet(&stats.kabinen_lauf, rest) && stats.kabinen_lauf.warteschlange.entfernen(Slot::Reiseflug80) {
         notiz(&mut stats.kabinen_lauf, "entfallen", Some(Slot::Reiseflug80), None, serde_json::json!({ "grund": "zu_wenig_zeit" }));
         verbuchen(&mut stats.kabinen_lauf, Slot::Reiseflug80, "entfallen", Some("zu_wenig_zeit"), jetzt);
         verlauf_neu_vorab = true;

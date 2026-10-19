@@ -368,6 +368,17 @@ impl Planer {
     /// Kommt dieser Reiseflug-Slot nach der Flugdauer überhaupt? Kurzstrecke
     /// mit bekannter Flugzeit: nur der Service (R25); unbekannte Flugzeit:
     /// keiner (ohne Planzeit gibt es keinen Anhalt).
+    /// Restflugzeit (min): vom Host (Route/ETA), sonst aus Planzeit und
+    /// Abheben — damit die Reserven auch ohne Navlog-Wegpunkte greifen
+    /// (Codex-Review PR #159).
+    pub fn restflug_min(&self, jetzt: i64, rest_min: Option<f64>) -> Option<f64> {
+        rest_min.or_else(|| {
+            let plan = f64::from(self.flug.geplante_flugzeit_min?);
+            let ab = self.abheben_epoch?;
+            Some((plan - (jetzt - ab) as f64 / 60.0).max(0.0))
+        })
+    }
+
     /// Der Host meldet die Art von „Reiseflug 80“, sobald das Drehbuch sie
     /// liefert (v2.0.28): zweiter Service 90 min vor dem Sinkflug, Ende des
     /// Bordverkaufs 12 min davor.
@@ -946,7 +957,7 @@ impl Planer {
             Slot::Reiseflug80 => KURZSTRECKE_SERVICE_REST_MIN,
             _ => 35.0,
         };
-        if t.rest_min.is_some_and(|m| m <= reserve) {
+        if self.restflug_min(t.jetzt, t.rest_min).is_some_and(|m| m <= reserve) {
             self.entfaellt(slot, Entfall::ZuWenigZeit);
             return;
         }
@@ -1941,12 +1952,19 @@ mod tests {
         p.reiseflug80_art(Some(true));
         // TOD 70 min: R50 bei 35 min, R80 frühestens 50 min — 50 min Rest.
         assert_eq!(p.zeitpunkt(Slot::Reiseflug80, None), Some(50 * 60));
-        let mut tk = tick(50 * 60, Cruise, 37_000.0, 0.0);
-        tk.rest_min = Some(50.0);
         p.gemeldet.insert(Slot::Reiseflug25);
         p.gemeldet.insert(Slot::Reiseflug50);
+        let mut q = Planer::fortsetzen(p.flug.clone(), Cruise);
+        q.reiseflug80_art(Some(true));
+        q.gemeldet = p.gemeldet.clone();
+        let mut tk = tick(50 * 60, Cruise, 37_000.0, 0.0);
+        tk.rest_min = Some(50.0);
         assert!(!p.tick(&tk).iter().any(|x| x.slot == Slot::Reiseflug80));
         assert!(p.entfallene_abholen().contains(&(Slot::Reiseflug80, Entfall::ZuWenigZeit)));
+        // Ohne ETA vom Host (keine Navlog-Wegpunkte): Reserve aus der Planzeit.
+        tk.rest_min = None;
+        assert!(!q.tick(&tk).iter().any(|x| x.slot == Slot::Reiseflug80));
+        assert!(q.entfallene_abholen().contains(&(Slot::Reiseflug80, Entfall::ZuWenigZeit)));
     }
 
 }
