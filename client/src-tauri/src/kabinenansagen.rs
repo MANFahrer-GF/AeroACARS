@@ -464,6 +464,9 @@ pub(crate) struct LiedStand {
     /// Slots der Abflug-Anfrage mit Lied; mit denselben wird nachgefragt,
     /// dann liefert das Modul das Drehbuch aus dem Zwischenspeicher.
     slots: Vec<Slot>,
+    /// Das Lied wurde mit dem Abflug-Drehbuch angefragt (sonst kommt keins:
+    /// nach einem Neustart ab „Türen zu“ wird nicht mehr angefragt).
+    angefragt: bool,
     /// Das Modul hatte keine Zeit mehr: ab dann noch einmal fragen …
     nochmal_ab: Option<i64>,
     /// … aber nur einmal je Flug (Codex 2.1.1: auch eine späte Antwort
@@ -1081,7 +1084,12 @@ fn musik_ansicht(einst: &Einstellungen, lauf: Option<&Lauf>, airline: Option<Str
             _ if lauf.musik_fenster.ankunft_vorbei() => "beendet",
             None => "ohne_flug",
             Some(MusikQuelle::Keine) => "keine",
-            Some(MusikQuelle::Lied) if lauf.lied.datei.is_none() => if lauf.lied.fehler.is_some() { "kein_lied" } else { "wird_erzeugt" },
+            // „wird erzeugt“ nur, solange wirklich etwas unterwegs ist (Thomas
+            // 19.10.2026: Update mitten im Flug zeigte es ohne Anfrage).
+            Some(MusikQuelle::Lied) if lauf.lied.datei.is_none() => {
+                let unterwegs = lauf.lied.fehler.is_none() && (lauf.lied.angefragt || lauf.lied.laeuft || lauf.lied.nochmal_ab.is_some());
+                if unterwegs { "wird_erzeugt" } else { "kein_lied" }
+            }
             Some(_) => "bereit",
         };
     } else if probe {
@@ -1381,6 +1389,7 @@ fn takt_schritt(
         // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
         if schluessel.starts_with("abflug") && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
             anfrage["boarding_lied"] = serde_json::json!(true);
+            stats.kabinen_lauf.lied.angefragt = true;
             stats.kabinen_lauf.lied.slots = slots.clone();
         }
         holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
@@ -4460,6 +4469,8 @@ mod tests {
         let mut l = Lauf::default();
         assert_eq!(musik_ansicht(&e, None, None, false, false, false).stand, "ohne_flug");
         l.musik_quelle = Some(MusikQuelle::Lied);
+        assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "kein_lied", "nichts angefragt (Neustart nach Türen zu)");
+        l.lied.angefragt = true;
         assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "wird_erzeugt");
         l.lied.fehler = Some("x".into());
         assert_eq!(musik_ansicht(&e, Some(&l), None, false, false, false).stand, "kein_lied");

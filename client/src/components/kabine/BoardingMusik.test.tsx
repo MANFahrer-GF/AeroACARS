@@ -4,7 +4,7 @@
 // Airlines mit Musik (plus die des Flugs), „Hinzufügen“ kopiert in den
 // Ordner der gewählten Airline, „Entfernen“ fragt nach.
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../locales/de/common.json";
@@ -126,5 +126,25 @@ describe("Dialog Eigene Boarding-Musik", () => {
     fireEvent.click(within(frage).getAllByRole("button", { name: "Abbrechen" }).at(-1)!);
     await waitFor(() => expect(screen.queryByText("Aus der Boarding-Musik entfernen?")).toBeNull());
     expect(aufrufe.some((a) => a.cmd === "kabinen_musik_entfernen")).toBe(false);
+  });
+
+  it("Neuzeichnen des Kastens setzt den Fokus im Dialog nicht um (Thomas 19.10.2026)", async () => {
+    const { rerender } = render(<MusikKasten zustand={zustand({})} t={t} onNeu={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Eigene Musik …" }));
+    const d = await screen.findByTestId("kabine-musik-dialog");
+    fireEvent.click(await within(d).findByRole("radio", { name: "Andere Airline …" }));
+    await within(d).findByPlaceholderText(/Airline suchen/);
+    // Offene Lesevorgänge (Ablage, Airlines) abwarten, bevor gezählt wird.
+    await waitFor(() => expect(within(d).getByRole("radio", { name: "Diese Airline: Swiss (SWR)" })).toBeTruthy());
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    // Ab hier: Wer fokussiert etwas? Der Pilot tippt gerade ins Feld.
+    const fokus = vi.spyOn(HTMLElement.prototype, "focus");
+    // Wie die Seite alle 2 s: neuer Zustand, neue Rückruf-Funktion.
+    rerender(<MusikKasten zustand={zustand({ stand: "pausiert" })} t={t} onNeu={() => undefined} />);
+    rerender(<MusikKasten zustand={zustand({ stand: "laeuft" })} t={t} onNeu={() => undefined} />);
+    // Bei Rot: wer den Fokus bekam (Hilfe zur Diagnose).
+    if (fokus.mock.calls.length) console.log("Fokus an", fokus.mock.contexts.map((c) => (c as HTMLElement).outerHTML.slice(0, 120)).join(" || "));
+    expect(fokus).not.toHaveBeenCalled();
+    fokus.mockRestore();
   });
 });
