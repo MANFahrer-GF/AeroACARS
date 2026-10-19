@@ -234,7 +234,8 @@
         "fehler": "error, next try {{zeit}}",
         "aufgegeben": "not received"
       },
-      "stumm": "muted, will be skipped"
+      "stumm": "muted, will be skipped",
+      "halbzeit": "Halfway"
     },
     "profil": {
       "linie": "Airline flight with cabin crew",

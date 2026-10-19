@@ -234,7 +234,8 @@
         "fehler": "Fehler, neuer Versuch {{zeit}}",
         "aufgegeben": "nicht erhalten"
       },
-      "stumm": "stumm, wird übersprungen"
+      "stumm": "stumm, wird übersprungen",
+      "halbzeit": "Halbzeit"
     },
     "profil": {
       "linie": "Linienflug mit Kabinenbesatzung",

@@ -139,6 +139,8 @@ export type Freigabe =
 export interface Ablauf {
   freigabe: Freigabe;
   abflug: TeilStand;
+  /** Halbzeit-Ansage (2.1.1 Zusatz H), im Reiseflug geschrieben; fehlt bei älterem Stand. */
+  halbzeit?: TeilStand;
   ankunft: TeilStand;
   ton_fertig: number;
   ton_gesamt: number;

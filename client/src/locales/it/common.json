@@ -234,7 +234,8 @@
         "fehler": "errore, nuovo tentativo {{zeit}}",
         "aufgegeben": "non ricevuti"
       },
-      "stumm": "muto, verrà saltato"
+      "stumm": "muto, verrà saltato",
+      "halbzeit": "Metà volo"
     },
     "profil": {
       "linie": "Volo di linea con equipaggio di cabina",

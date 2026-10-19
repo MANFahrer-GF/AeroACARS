@@ -196,6 +196,12 @@ function AblaufZeile({ ablauf, naechste, stumm, t }: { ablauf: Ablauf; naechste:
           <td>
             {t("kabine.ablauf.abflug")}: {teilText(t, ablauf.abflug)}
             <br />
+            {ablauf.halbzeit && ablauf.halbzeit.art !== "entfaellt" && (
+              <>
+                {t("kabine.ablauf.halbzeit")}: {teilText(t, ablauf.halbzeit)}
+                <br />
+              </>
+            )}
             {t("kabine.ablauf.ankunft")}: {teilText(t, ablauf.ankunft)}
           </td>
           <td>{t("kabine.ablauf.ton_stand", { fertig: ablauf.ton_fertig, gesamt: ablauf.ton_gesamt })}</td>

@@ -662,18 +662,24 @@ const TON_GLEICHZEITIG: usize = 2;
 /// Wetter, Verspätung und Ankunftszeit stimmen.
 const ANKUNFT_TEXT_VOR_LANDUNG_MIN: i64 = 45;
 
-const ABFLUG: [Slot; 9] = [
+const ABFLUG: [Slot; 8] = [
     Slot::Boarding,
     Slot::BegruessungTuerenZu,
     Slot::Sicherheit,
     Slot::KapitaenBegruessung,
     Slot::AnschnallzeichenAus,
     Slot::Reiseflug25,
-    Slot::Reiseflug50,
     Slot::Reiseflug80,
     // 2.1.0: im Abflug-Teil, damit der Text vor dem Sinkflug sicher da ist.
     Slot::EndeService,
 ];
+/// 2.1.1 Zusatz H (Thomas 19.10.2026): Die Halbzeit-Ansage des Kapitäns
+/// schreibt das Modul erst im Reiseflug, mit Restzeit, Landezeit und
+/// aktuellem Zielwetter (Teil `halbzeit`).
+const HALBZEIT: [Slot; 1] = [Slot::Reiseflug50];
+/// So lange vor ihrem Zeitpunkt wird die Halbzeit-Ansage angefragt (Text
+/// plus Ton brauchen zusammen einige Minuten).
+const HALBZEIT_VORLAUF_MIN: i64 = 15;
 const ANKUNFT: [Slot; 4] = [Slot::KapitaenSinkflug, Slot::KabineSinkflug, Slot::NachDerLandung, Slot::Aussteigen];
 const KOMMANDOS: [Slot; 6] = [
     Slot::BoardingAbgeschlossen,
@@ -703,6 +709,8 @@ fn ist_ereignis(s: Slot) -> bool {
 fn teil_von(s: Slot) -> Option<&'static str> {
     if ABFLUG.contains(&s) {
         Some("abflug")
+    } else if HALBZEIT.contains(&s) {
+        Some("halbzeit")
     } else if ANKUNFT.contains(&s) {
         Some("ankunft")
     } else {
@@ -767,6 +775,15 @@ pub(crate) fn takt(
     takt_schritt(app, flight, client, snap, now);
     musik_takt(app, flight, snap, now);
     protokoll_leeren(app, flight);
+}
+
+/// Halbzeit-Text jetzt anfragen? Nur wenn die Ansage auf diesem Flug noch
+/// kommt, im Reiseflug (oder in der Warteschleife) und höchstens
+/// [`HALBZEIT_VORLAUF_MIN`] vor ihrem Zeitpunkt (ohne Zeitpunkt sofort).
+fn halbzeit_anfragen(kommt: bool, phase: FlightPhase, um: Option<i64>, jetzt: i64) -> bool {
+    kommt
+        && matches!(phase, FlightPhase::Cruise | FlightPhase::Holding)
+        && um.is_none_or(|u| u - jetzt <= HALBZEIT_VORLAUF_MIN * 60)
 }
 
 /// Lied mit dem Abflug-Drehbuch anfragen? Quelle Lied (also Linie, ohne
@@ -1303,6 +1320,8 @@ fn takt_schritt(
         let kommt = |s: &Slot| flugart.erlaubt(*s) && kommt_noch(&stats, &wartend, *s);
         let abflug: Vec<Slot> = ABFLUG.into_iter().filter(kommt).collect();
         let ankunft: Vec<Slot> = ANKUNFT.into_iter().filter(kommt).collect();
+        let halbzeit_kommt = kommt(&Slot::Reiseflug50);
+        let halbzeit_um = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet));
         let r = cabin_announcements::planer::rang(schritt.phase);
         let kurz = stats.kabinen_planer.as_ref().is_some_and(|p| p.ist_kurzstrecke());
         // Ankunft: in der Luft und kurz vor der Landung (bzw. im Sinkflug).
@@ -1315,6 +1334,13 @@ fn takt_schritt(
         if !abflug.is_empty() && darf_anfragen(lauf, "abflug", jetzt) {
             lauf.angefragt.insert("abflug".into());
             auftraege.push(("abflug".into(), abflug, 0));
+        }
+        // Halbzeit (Zusatz H): im Reiseflug, Vorlauf vor ihrem Zeitpunkt. Ein
+        // Flug ohne Halbzeit-Ansage (Kurzstrecke) fragt nie an.
+        let halbzeit_jetzt = halbzeit_anfragen(halbzeit_kommt, schritt.phase, halbzeit_um, jetzt);
+        if halbzeit_jetzt && darf_anfragen(lauf, "halbzeit", jetzt) {
+            lauf.angefragt.insert("halbzeit".into());
+            auftraege.push(("halbzeit".into(), HALBZEIT.to_vec(), 0));
         }
         if ankunft_jetzt && !ankunft.is_empty() && darf_anfragen(lauf, "ankunft", jetzt) {
             lauf.angefragt.insert("ankunft".into());
@@ -1334,6 +1360,12 @@ fn takt_schritt(
     }
     for (schluessel, slots, anlass) in auftraege {
         let mut anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
+        if schluessel == "halbzeit" {
+            // Restzeit zum Abspielzeitpunkt, nicht zum Zeitpunkt der Anfrage
+            // (sonst stimmte „noch etwa zwei Stunden“ um den Vorlauf nicht).
+            let ab = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet)).unwrap_or(jetzt).max(jetzt);
+            anfrage["flug"]["rest_min"] = serde_json::json!(stats.landung_erwartet.map(|t| ((t - ab) / 60).max(0)));
+        }
         // Boarding-Lied (2.1.1 G1): mit dem Abflug-Drehbuch, nur wenn keine
         // eigene Musik passt und der Schalter an ist — und nur bis „Türen zu“.
         if schluessel.starts_with("abflug") && lied_anfragen(&stats.kabinen_lauf, einst.boarding_musik, schritt.phase) {
@@ -2494,10 +2526,14 @@ pub(crate) fn kabinen_erneut(state: tauri::State<'_, AppState>) {
     lauf.ton_fehler.clear();
     // Ein Teil, dessen Abruf gelang, dem aber Slots fehlen, wird neu gefragt.
     let fehlt = |teil: &str| {
-        let slots: &[Slot] = if teil == "abflug" { &ABFLUG } else { &ANKUNFT };
+        let slots: &[Slot] = match teil {
+            "abflug" => &ABFLUG,
+            "halbzeit" => &HALBZEIT,
+            _ => &ANKUNFT,
+        };
         slots.iter().any(|s| lauf.sprachen.iter().any(|sp| !lauf.texte.contains_key(&(*s, sp.clone()))))
     };
-    let neu: Vec<String> = ["abflug", "ankunft"].into_iter().filter(|t| fehlt(t)).map(str::to_string).collect();
+    let neu: Vec<String> = ["abflug", "halbzeit", "ankunft"].into_iter().filter(|t| fehlt(t)).map(str::to_string).collect();
     for t in neu {
         lauf.angefragt.remove(&t);
     }
@@ -2668,6 +2704,8 @@ pub(crate) enum Freigabe {
 pub(crate) struct Ablauf {
     freigabe: Freigabe,
     abflug: TeilStand,
+    /// Zusatz H: Halbzeit-Ansage, im Reiseflug geschrieben.
+    halbzeit: TeilStand,
     ankunft: TeilStand,
     ton_fertig: usize,
     ton_gesamt: usize,
@@ -2733,10 +2771,14 @@ fn teil_stand(lauf: &Lauf, teil: &str, slots: &[Slot], landung: Option<i64>, kur
     if teil == "ankunft" && !kurz {
         return TeilStand::Offen { um: landung.map(|l| l - ANKUNFT_TEXT_VOR_LANDUNG_MIN * 60) };
     }
+    if teil == "halbzeit" {
+        // Hier steht in `landung` der Zeitpunkt der Halbzeit-Ansage.
+        return TeilStand::Offen { um: landung.map(|h| h - HALBZEIT_VORLAUF_MIN * 60) };
+    }
     TeilStand::Offen { um: None }
 }
 
-fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool) -> (Stand, Vec<TeilAnsicht>) {
+fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool, halbzeit_um: Option<i64>) -> (Stand, Vec<TeilAnsicht>) {
     if slot.rolle() == Rolle::Chime {
         return (Stand::Bereit, Vec::new());
     }
@@ -2764,6 +2806,9 @@ fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool) -> (Sta
                 // Abruf gelang, nur dieser Slot fehlte (auch nach dem gezielten zweiten Abruf).
                 None => (Stand::TextAufgegeben { meldung: m.clone() }, teile),
             };
+        }
+        if teil == "halbzeit" && !lauf.angefragt.contains("halbzeit") {
+            return (Stand::TextAb { um: halbzeit_um.map(|h| h - HALBZEIT_VORLAUF_MIN * 60), nach_abheben: false }, teile);
         }
         if teil == "ankunft" && !lauf.angefragt.contains("ankunft") {
             // Kurzstrecke: Der Ankunftstext kommt gleich nach dem Abheben.
@@ -2800,7 +2845,8 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
     let Some(planer) = stats.kabinen_planer.as_ref() else {
         return Vec::new();
     };
-    let mut slots: Vec<Slot> = ABFLUG.into_iter().chain(ANKUNFT).collect();
+    let mut slots: Vec<Slot> = ABFLUG.into_iter().chain(HALBZEIT).chain(ANKUNFT).collect();
+    let halbzeit_um = planer.zeitpunkt(Slot::Reiseflug50, landung);
     if einst.kommandos {
         slots.extend(KOMMANDOS);
     } else {
@@ -2815,7 +2861,7 @@ fn geplant(stats: &FlightStats, einst: &Einstellungen, jetzt: i64) -> Vec<Geplan
         .filter(|s| !lauf.entfaellt.contains_key(s))
         .filter(|s| wartend.contains(s) || planer.kommt_noch(*s, stats.phase))
         .filter_map(|slot| {
-            let (stand, teile) = slot_stand(lauf, slot, landung, planer.ist_kurzstrecke());
+            let (stand, teile) = slot_stand(lauf, slot, landung, planer.ist_kurzstrecke(), halbzeit_um);
             // Für keine Sprache eine Stimme: kommt nie, steht nicht in der Liste.
             if !teile.is_empty() && teile.iter().all(|t| t.keine_stimme) {
                 return None;
@@ -2919,6 +2965,7 @@ fn ueberblick_bauen(stats: &FlightStats, einst: &Einstellungen, flug: &cabin_ann
     let ablauf = Ablauf {
         freigabe,
         abflug: teil_stand(lauf, "abflug", &kommend(&ABFLUG), landung, false),
+        halbzeit: teil_stand(lauf, "halbzeit", &kommend(&HALBZEIT), planer.and_then(|p| p.zeitpunkt(Slot::Reiseflug50, landung)), false),
         ankunft: teil_stand(lauf, "ankunft", &kommend(&ANKUNFT), landung, planer.is_some_and(|p| p.ist_kurzstrecke())),
         ton_fertig: mit_ton.iter().filter(|g| g.stand == Stand::Bereit).count(),
         ton_gesamt: mit_ton.len(),
@@ -4338,6 +4385,62 @@ mod tests {
         let mut o = LiedStand::default();
         lied_nach_antwort(&mut o, false, false, false, 0);
         assert!(o.fehler.is_none(), "nicht angefragt (eigene Musik): kein Fehler");
+    }
+
+    /// Zusatz H: Reiseflug 50 gehört zum Teil „halbzeit“, nicht mehr zum Abflug.
+    #[test]
+    fn halbzeit_ist_ein_eigener_teil() {
+        assert_eq!(teil_von(Slot::Reiseflug50), Some("halbzeit"));
+        assert_eq!(ton_teil(Slot::Reiseflug50), Some("halbzeit"));
+        assert!(!ABFLUG.contains(&Slot::Reiseflug50) && !ANKUNFT.contains(&Slot::Reiseflug50));
+        assert_eq!(teil_von(Slot::Reiseflug25), Some("abflug"));
+        assert_eq!(teil_stand(&Lauf::default(), "halbzeit", &HALBZEIT, Some(10_000), false), TeilStand::Offen { um: Some(10_000 - 900) });
+    }
+
+    /// Zusatz H: angefragt im Reiseflug, 15 min vor dem Zeitpunkt; nie auf
+    /// der Kurzstrecke, nie im Steigflug.
+    #[test]
+    fn halbzeit_anfrage_zeitpunkt_und_kurzstrecke() {
+        use crate::FlightPhase::*;
+        assert!(!halbzeit_anfragen(true, Cruise, Some(10_000), 10_000 - 16 * 60));
+        assert!(halbzeit_anfragen(true, Cruise, Some(10_000), 10_000 - 15 * 60));
+        assert!(halbzeit_anfragen(true, Holding, None, 0), "ohne Zeitpunkt sofort im Reiseflug");
+        assert!(!halbzeit_anfragen(true, Climb, Some(10_000), 9_999));
+        assert!(!halbzeit_anfragen(false, Cruise, Some(10_000), 9_999), "kommt nicht (Kurzstrecke)");
+        let kurz = cabin_announcements::Planer::neu(cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(50), ..Default::default() });
+        assert!(!kurz.kommt_noch(Slot::Reiseflug50, Cruise), "Kurzstrecke hat keine Halbzeit");
+    }
+
+    /// Zusatz H, Nachspiel AFR218 (510 min): Die Anfrage kommt im Reiseflug,
+    /// 15 min bevor der Planer die Halbzeit meldet.
+    #[test]
+    fn halbzeit_anfrage_im_echten_flug_afr218() {
+        #[derive(serde::Deserialize)]
+        struct Daten {
+            ticks: Vec<(i64, crate::FlightPhase, f64, f64, f64, u8, Option<u8>, u8, u8, f64, u8, u8, f64, Option<u8>)>,
+            landung: i64,
+        }
+        let d: Daten = serde_json::from_str(include_str!("../crates/cabin-announcements/tests/daten/afr218.json")).unwrap();
+        let erste = d.ticks[0].1;
+        let mut p = cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(510), reiseflughoehe_ft: Some(38_000), ..Default::default() },
+            erste,
+        );
+        let (mut angefragt, mut gemeldet) = (None, None);
+        for &(t, phase, alt, _agl, vs, boden, zeichen, ..) in &d.ticks {
+            let tk = cabin_announcements::Tick { jetzt: t, phase, hoehe_ft: alt, vs_fpm: vs, am_boden: boden == 1, anschnallzeichen: zeichen, rest_min: Some((d.landung - t) as f64 / 60.0), ..Default::default() };
+            let um = p.zeitpunkt(Slot::Reiseflug50, Some(d.landung));
+            if angefragt.is_none() && halbzeit_anfragen(p.kommt_noch(Slot::Reiseflug50, phase), phase, um, t) {
+                angefragt = Some((t, phase));
+            }
+            if p.tick(&tk).iter().any(|f| f.slot == Slot::Reiseflug50) {
+                gemeldet = Some(t);
+            }
+        }
+        let (a, phase) = angefragt.expect("angefragt");
+        let g = gemeldet.expect("Halbzeit gemeldet");
+        assert_eq!(phase, crate::FlightPhase::Cruise);
+        assert!((g - a - 15 * 60).abs() <= 120, "Vorlauf {} s", g - a);
     }
 
     #[test]
