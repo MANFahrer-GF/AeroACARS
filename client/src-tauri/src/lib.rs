@@ -7356,6 +7356,9 @@ struct FlightStats {
     /// der Route (`landung_erwartet`). Nur in der Luft, nicht gespeichert —
     /// der naechste Takt rechnet sie neu.
     landung_erwartet: Option<i64>,
+    /// Kabinenansagen: erwarteter Sinkflugbeginn (Unix-s), wie
+    /// `landung_erwartet`, aber bis zum TOD-Fix des Navlogs.
+    tod_erwartet: Option<i64>,
     // ─── v0.5.26 Erweiterte Landung-Metriken ───────────────────────────
     //
     // Phase 1 — Sicherheits-Indikatoren:
@@ -26970,9 +26973,11 @@ fn sprit_wegpunkt_tick(
         // Neben der Route: keine Planzeit — lieber keine Schaetzung als eine
         // veraltete.
         stats.landung_erwartet = None;
+        stats.tod_erwartet = None;
         return;
     };
     stats.landung_erwartet = landung_erwartet(&stats.planned_waypoints, &ort, jetzt_ms);
+    stats.tod_erwartet = tod_erwartet(&stats.planned_waypoints, &ort, jetzt_ms);
     let neu = ort.segment;
     match stats.sprit_wp_segment {
         // Erster Tick in der Luft: Was davor lag, wurde nicht gemessen — es
@@ -47442,6 +47447,40 @@ fn landung_erwartet(
     Some(jetzt_ms.div_euclid(1000) + rest.round() as i64)
 }
 
+/// Kabinenansagen: erwarteter Sinkflugbeginn wie [`landung_erwartet`], bis
+/// zum TOD-Fix. Liegt er schon hinter uns, ist es „jetzt“.
+fn tod_erwartet(fixes: &[api_client::RouteFix], ort: &SpritPlanOrt, jetzt_ms: i64) -> Option<i64> {
+    let bis = ort.plan_bis_s?;
+    let tod = fixes.iter().find(|f| f.ident.eq_ignore_ascii_case("TOD"))?.zeit_bis_hier_s? as f64;
+    Some(jetzt_ms.div_euclid(1000) + (tod - bis).max(0.0).round() as i64)
+}
+
+#[cfg(test)]
+mod tod_erwartet_tests {
+    use super::*;
+
+    fn ort(plan_bis_s: Option<f64>) -> SpritPlanOrt {
+        SpritPlanOrt { plan_bis_kg: 0.0, plan_bis_s, plan_rest_nm: 0.0, abstand_nm: 0.0, segment: 0 }
+    }
+
+    /// Wie `landung_erwartet`, nur bis zum TOD-Fix; dahinter „jetzt“, ohne
+    /// TOD-Fix oder ohne Planzeit am Ort kein Wert.
+    #[test]
+    fn tod_aus_der_position_auf_der_route() {
+        let fixes = vec![
+            api_client::RouteFix { ident: "TOC".into(), zeit_bis_hier_s: Some(1_200.0), ..Default::default() },
+            api_client::RouteFix { ident: "TOD".into(), zeit_bis_hier_s: Some(4_500.0), ..Default::default() },
+            api_client::RouteFix { ident: "EDDH".into(), zeit_bis_hier_s: Some(5_700.0), ..Default::default() },
+        ];
+        let jetzt_ms = 1_000_000_000_i64;
+        assert_eq!(tod_erwartet(&fixes, &ort(Some(3_000.0)), jetzt_ms), Some(1_000_000 + 1_500));
+        assert_eq!(landung_erwartet(&fixes, &ort(Some(3_000.0)), jetzt_ms), Some(1_000_000 + 2_700));
+        assert_eq!(tod_erwartet(&fixes, &ort(Some(5_000.0)), jetzt_ms), Some(1_000_000), "hinter dem TOD: jetzt");
+        assert_eq!(tod_erwartet(&fixes, &ort(None), jetzt_ms), None);
+        assert_eq!(tod_erwartet(&fixes[2..], &ort(Some(3_000.0)), jetzt_ms), None, "ohne TOD-Fix");
+    }
+}
+
 /// „Zeiten gegen Flugplan": die vier Planzeiten eines OFP und seine
 /// Erstellzeit. Null oder negativ (leeres Feld) gilt als fehlend.
 fn ofp_planzeiten(ofp: &api_client::SimBriefOfp) -> landing_scoring::flugzeiten::FlugZeiten {
@@ -47678,6 +47717,7 @@ fn kabinen_schritt(
         fahrwerk_unten: Some(snap.gear_position >= 0.9),
         hoehe_agl_ft: Some(snap.altitude_agl_ft),
         triebwerke_an: Some(snap.engines_running > 0),
+        tod_erwartet: stats.tod_erwartet,
         zfw_kg: stats.last_zfw_kg.map(f64::from),
         planned_zfw_kg: stats.planned_zfw_kg.map(f64::from),
         // „Rollt“ für „Plätze für den Start“ (2.1.1 B, ab 3 kt).
