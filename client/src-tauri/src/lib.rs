@@ -70447,6 +70447,23 @@ mod sim_pause_tests {
             .collect();
         let a20n = KonfigKontext { typical_vref_kt: Some(137.0), ..Default::default() };
         assert_eq!(compute_approach_stability_v2(&rempler, None, None, None, None, a20n).stable_at_da, Some(true));
+
+        // Codex-Review: Das Abfangen (letzte 3 s vor dem Aufsetzen) zaehlt am
+        // 200-ft-Tor nicht mit — sonst laese die Vref-Pruefung die planmaessig
+        // fallende Fahrt als „zu langsam“. Mit Aufsetz-Zeitpunkt faellt das
+        // letzte Sample (2 s davor) weg; ohne kippt es das Tor.
+        let abfangen: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(150.0, 135.0, 136.0, -720.0, 1.0, 1.0),
+            approach_sample(110.0, 135.0, 136.0, -715.0, 1.0, 1.0),
+            approach_sample(70.0, 135.0, 136.0, -720.0, 1.0, 1.0),
+            approach_sample(20.0, 100.0, 60.0, -200.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .collect();
+        let td = abfangen.back().unwrap().at + chrono::Duration::seconds(2);
+        let a20n = KonfigKontext { typical_vref_kt: Some(137.0), ..Default::default() };
+        assert_eq!(compute_approach_stability_v2(&abfangen, None, Some(td), None, None, a20n).stable_at_da, Some(true), "Abfangen ausgeschnitten");
+        assert_eq!(compute_approach_stability_v2(&abfangen, None, None, None, None, a20n).stable_at_da, Some(false), "ohne Schnitt kippt das Sample");
     }
 
     #[test]
