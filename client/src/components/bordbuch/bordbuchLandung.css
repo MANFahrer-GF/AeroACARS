@@ -18,6 +18,12 @@
 
 :where(.bb-cl-abschnitt) { break-inside: avoid; margin: 0 0 14px; }
 
+/* Unter der Landung und im Bericht ohne Innenrahmen: der Abschnitt hat schon
+   einen. Spezifität (0,2,0) mit Absicht — im Client gilt daneben die Regel
+   `.bb-checkliste` aus bordbuch.css (Rahmen für den Bordbuch-Reiter), und
+   ein Gleichstand hinge von der Ladereihenfolge ab. */
+.bb-landung .bb-checkliste { border: 0; background: none; padding: 4px 0 0; }
+
 :where(.bb-cl-abschnitt) ul { list-style: none; margin: 0; padding: 0; }
 
 :where(.bb-cl-kopf) {
@@ -139,7 +145,6 @@
   color: var(--text);
 }
 
-:where(.bb-bericht) .bb-checkliste { columns: 290px 2; }
 
 :where(.bb-bericht) .bb-cl-zeile { color: var(--text); }
 
