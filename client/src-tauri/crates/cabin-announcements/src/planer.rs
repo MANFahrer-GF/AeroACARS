@@ -274,7 +274,17 @@ pub struct Planer {
     /// Ein Durchstarten ist erkannt und noch nicht durch einen neuen
     /// Endanflug abgeschlossen (verhindert Doppelmeldung mit dem Host-Signal).
     durchstart_laeuft: bool,
-    war_im_reiseflug: bool,
+    /// Der Steigflug ist vorbei: Phase Cruise erreicht oder in der Luft
+    /// direkt vom Steig- in den Sinkflug gewechselt. Einmal gesetzt, bleibt
+    /// er (Step-Climb, Durchstarter). Kapitän und Kabine im Sinkflug und der
+    /// Gong im Sinkflug hängen daran, nicht an der Phase Cruise selbst:
+    /// Wer kurz unter der OFP-Höhe fliegt, bekommt nach phase_v2 erst nach
+    /// 10 min Cruise (Lasse NOZ 607, 20.10.2026: 8 min FL250 statt FL330,
+    /// Climb → Descent, Sinkflug-Ansagen fehlten). Service und Turbulenz
+    /// bleiben an der echten Phase Cruise.
+    steigflug_vorbei: bool,
+    /// Höchste Höhe in der Luft (ft), für den nachgeholten Gong.
+    hoechste_hoehe_ft: Option<f64>,
     /// Die Kabine folgt dem Kapitän erst später ([`KABINE_NACH_KAPITAEN_MIN_S`]).
     kapitaen_sinkflug: KapitaenSinkflug,
     /// Nicht gemeldete Ansagen mit Grund, bis der Host sie abholt.
@@ -350,7 +360,7 @@ impl Planer {
             }
         }
         if r >= rang(FlightPhase::Cruise) {
-            p.war_im_reiseflug = true;
+            p.steigflug_vorbei = true;
             p.gemeldet.insert(Slot::AnschnallzeichenAus);
             p.reiseflug_still_nachziehen = true;
         }
@@ -599,6 +609,10 @@ impl Planer {
                 KapitaenSinkflug::Gespielt(k) => Some(k + KABINE_NACH_KAPITAEN_MIN_S),
                 _ => None,
             },
+            // Vor dem Ende des Steigflugs keine Uhrzeit: Die Ansage wartet
+            // darauf, die Seite sagt „kurz vor dem Sinkflug“ (Lasse NOZ 607:
+            // „Spielt ca. 17:55“ verstrich ohne Ansage).
+            Slot::KapitaenSinkflug if !self.steigflug_vorbei => None,
             Slot::KapitaenSinkflug => {
                 let aus_tod = self.tod_epoch().map(|t| t - 300);
                 let aus_landung = landung_erwartet.map(|l| l - 25 * 60);
@@ -745,12 +759,23 @@ impl Planer {
             // Planzeit; nach einem Neustart im Reiseflug wäre „jetzt“ falsch.
             self.abheben_gesehen = !self.wiedereinstieg;
         }
+        if in_luft {
+            self.hoechste_hoehe_ft = Some(self.hoechste_hoehe_ft.map_or(t.hoehe_ft, |h| h.max(t.hoehe_ft)));
+        }
+        if in_luft && !self.steigflug_vorbei && vorher == Some(Climb) && t.phase == Descent {
+            self.steigflug_vorbei = true;
+            // Erkennt phase_v2 den Sinkflug erst unter 10.000 ft, ist die
+            // Flanke für den Gong schon vorbei: einmal nachholen.
+            if t.hoehe_ft < 10_000.0 && self.hoechste_hoehe_ft.is_some_and(|h| h >= 10_000.0) {
+                self.melde(&mut aus, Slot::Chime10000Sinkflug, Verfall::Um(t.jetzt + 30));
+            }
+        }
         if let Some(h0) = self.letzte_hoehe_ft {
             if in_luft && h0 < 10_000.0 && t.hoehe_ft >= 10_000.0 && t.vs_fpm > 0.0 {
                 self.melde(&mut aus, Slot::Chime10000Steigflug, Verfall::Um(t.jetzt + 30));
             }
             if in_luft
-                && self.war_im_reiseflug
+                && self.steigflug_vorbei
                 && h0 >= 10_000.0
                 && t.hoehe_ft < 10_000.0
                 && t.vs_fpm < 0.0
@@ -780,7 +805,7 @@ impl Planer {
             }
         }
         if t.phase == Cruise {
-            self.war_im_reiseflug = true;
+            self.steigflug_vorbei = true;
             // Nur der beobachtete Übergang zählt: Nach einem Wiedereinstieg im
             // Reiseflug ist das Erreichen der Höhe unbekannt (dann 25 %).
             if self.reiseflug_seit.is_none() && vorher.is_some_and(|v| v != Cruise) {
@@ -902,7 +927,7 @@ impl Planer {
         }
 
         // ---- Sinkflug und Landung ----
-        if in_luft && self.war_im_reiseflug && r < rang(Final) {
+        if in_luft && self.steigflug_vorbei && r < rang(Final) {
             let nach_rest = t.rest_min.is_some_and(|m| m <= 25.0);
             let nach_tod = self.tod_epoch().is_some_and(|tod| t.jetzt >= tod - 300);
             let nach_phase = r >= rang(Descent);
@@ -918,7 +943,7 @@ impl Planer {
         // fünf Minuten. Wartet der Kapitän noch (Ton, Pause), wartet die
         // Kabine mit — außer im Anflug. Kommt keine Kapitänsansage (stumm,
         // Fehler, Wiedereinstieg im Sinkflug), zählen Anflug bzw. Höhe allein.
-        if in_luft && self.war_im_reiseflug && r < rang(Final) && !self.schon(Slot::KabineSinkflug) {
+        if in_luft && self.steigflug_vorbei && r < rang(Final) && !self.schon(Slot::KabineSinkflug) {
             let tief = t.phase == Approach || (r >= rang(Descent) && t.hoehe_ft < 15_000.0 && t.vs_fpm < 0.0);
             let reif = match self.kapitaen_sinkflug {
                 // Im Anflug sofort, sonst ginge sie bei einem kurzen Sinkflug
@@ -1351,6 +1376,119 @@ mod tests {
         assert!(p.entfallene_abholen().is_empty(), "R25 lief vor dem Neustart, kein „entfallen“");
     }
 
+    /// Lasse NOZ 607 (20.10.2026, Protokoll pMZYLPYPnQDxEyOQ): OFP FL330,
+    /// geflogen 8 min FL250 – phase_v2 bleibt dabei in Climb und wechselt
+    /// direkt in Descent (bei FL197). Bisher kamen Kapitän, Kabine und Gong im
+    /// Sinkflug nie, nur „prepare for landing“. Jetzt kommen alle drei, und
+    /// vor dem Ende des Steigflugs nennt die Seite keine Uhrzeit.
+    #[test]
+    fn lasse_noz607_sinkflug_ohne_erkannten_reiseflug() {
+        let landung = 2_160; // 36 min nach dem Abheben
+        let mut p = Planer::neu(flug(65));
+        let mut wann: Vec<(Slot, i64)> = Vec::new();
+        fn lauf(p: &mut Planer, wann: &mut Vec<(Slot, i64)>, s: i64, phase: FlightPhase, h: f64, vs: f64) {
+            let mut tk = tick(s, phase, h, vs);
+            tk.rest_min = Some((2_160 - s) as f64 / 60.0);
+            for f in p.tick(&tk) {
+                if f.slot == Slot::KapitaenSinkflug {
+                    p.kapitaen_sinkflug_ende(true, s + 40);
+                }
+                wann.push((f.slot, s));
+            }
+        }
+        lauf(&mut p, &mut wann, 0, Takeoff, 700.0, 3_000.0);
+        for s in (10..600).step_by(10) {
+            lauf(&mut p, &mut wann, s, Climb, 700.0 + f64::from(s as i32) * 40.0, 2_500.0);
+        }
+        // 8 min FL250, Restzeit fällt unter 25 min – weiter Climb.
+        for s in (600..1_090).step_by(10) {
+            lauf(&mut p, &mut wann, s, Climb, 25_000.0, 0.0);
+            assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, Some(landung)), None, "keine Uhrzeit vor dem Ende des Steigflugs ({s})");
+        }
+        // Sinken, phase_v2 bestätigt den Sinkflug erst nach 120 s.
+        for s in (1_090..1_210).step_by(10) {
+            lauf(&mut p, &mut wann, s, Climb, 25_000.0 - f64::from((s - 1_090) as i32) * 40.0, -2_000.0);
+        }
+        assert!(wann.iter().all(|(x, _)| *x != Slot::KapitaenSinkflug), "nicht im Steigflug");
+        for s in (1_210..1_800).step_by(10) {
+            let h = 19_700.0 - f64::from((s - 1_210) as i32) * 30.0;
+            lauf(&mut p, &mut wann, s, if h < 5_000.0 { Approach } else { Descent }, h, -1_800.0);
+        }
+        let bei = |x: Slot| wann.iter().find(|(y, _)| *y == x).map(|(_, t)| *t);
+        assert_eq!(bei(Slot::KapitaenSinkflug), Some(1_210), "mit dem Wechsel in den Sinkflug");
+        let kabine = bei(Slot::KabineSinkflug).expect("Kabine kommt");
+        assert!(kabine >= 1_250 + KABINE_NACH_KAPITAEN_MIN_S, "nach dem Kapitän: {kabine}");
+        let gong = bei(Slot::Chime10000Sinkflug).expect("Gong kommt");
+        assert!((1_530..=1_540).contains(&gong), "bei 10.000 ft: {gong}");
+        assert_eq!(wann.iter().filter(|(x, _)| *x == Slot::Chime10000Sinkflug).count(), 1);
+    }
+
+    /// Hamadoun oBmVxn66 (E195): Höhe schwingt ±700 ft mit ±5000 fpm, nie
+    /// ein Level, nie Cruise; Climb → Descent bei 17.658 ft. Der Kapitän
+    /// kommt dann, nicht in der Schwingung.
+    #[test]
+    fn hamadoun_schwingung_kapitaen_beim_sinkflug() {
+        let mut p = Planer::neu(flug(38));
+        p.tick(&tick(0, Takeoff, 700.0, 3_000.0));
+        for s in (10..1_500).step_by(10) {
+            let auf = (s / 60) % 2 == 0;
+            let mut tk = tick(s, Climb, if auf { 22_200.0 } else { 21_500.0 }, if auf { 5_000.0 } else { -5_000.0 });
+            tk.rest_min = Some(20.0);
+            assert!(slots(p.tick(&tk)).iter().all(|x| *x != Slot::KapitaenSinkflug), "nicht in der Schwingung ({s})");
+        }
+        let mut tk = tick(1_500, Descent, 17_658.0, -2_000.0);
+        tk.rest_min = Some(13.0);
+        assert!(slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug));
+    }
+
+    /// Warum es keine Regel „Höhe gehalten über 10.000 ft“ gibt: Eine ATC-
+    /// Zwischenhöhe (3 min FL120) auf einem kurzen Flug darf den Kapitän nicht
+    /// mitten im Steigflug auslösen. Er kommt erst mit dem Reiseflug.
+    #[test]
+    fn atc_zwischenhoehe_loest_den_kapitaen_nicht_aus() {
+        let mut p = Planer::neu(flug(40));
+        p.tick(&tick(0, Takeoff, 700.0, 3_000.0));
+        for s in (10..=400).step_by(10) {
+            let mut tk = tick(s, Climb, if s < 220 { 700.0 + f64::from(s as i32) * 52.0 } else { 12_000.0 }, if s < 220 { 2_500.0 } else { 0.0 });
+            tk.rest_min = Some(22.0);
+            assert!(slots(p.tick(&tk)).iter().all(|x| *x != Slot::KapitaenSinkflug), "nicht auf der Zwischenhöhe ({s})");
+        }
+        let mut tk = tick(700, Cruise, 20_000.0, 0.0);
+        tk.rest_min = Some(17.0);
+        assert!(slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug), "mit dem Reiseflug");
+    }
+
+    /// Erkennt phase_v2 den Sinkflug erst unter 10.000 ft (Spitze darüber),
+    /// ist die Flanke vorbei: Gong einmal nachholen, nicht doppelt.
+    #[test]
+    fn gong_nachgeholt_wenn_der_sinkflug_erst_unter_10000_erkannt_wird() {
+        let mut p = Planer::neu(flug(30));
+        p.tick(&tick(0, Takeoff, 700.0, 3_000.0));
+        p.tick(&tick(100, Climb, 12_000.0, 0.0));
+        p.tick(&tick(200, Climb, 10_500.0, -1_500.0));
+        assert!(slots(p.tick(&tick(240, Climb, 9_800.0, -1_500.0))).is_empty(), "Flanke im Steigflug: kein Gong");
+        let f = slots(p.tick(&tick(300, Descent, 9_500.0, -1_500.0)));
+        assert!(f.contains(&Slot::Chime10000Sinkflug), "{f:?}");
+        assert!(!slots(p.tick(&tick(310, Descent, 9_300.0, -1_500.0))).contains(&Slot::Chime10000Sinkflug));
+    }
+
+    /// Neustart im Sinkflug: Der Merker ist gesetzt, schon Gespieltes kommt
+    /// nicht noch einmal.
+    #[test]
+    fn wiedereinstieg_im_sinkflug_ohne_doppelte_ansagen() {
+        for phase in [Cruise, Holding, Descent, Approach, Final] {
+            assert!(Planer::fortsetzen(flug(60), phase).steigflug_vorbei, "Merker nach dem Neustart in {phase:?}");
+        }
+        assert!(!Planer::fortsetzen(flug(60), Climb).steigflug_vorbei, "im Steigflug noch nicht");
+        assert!(Planer::fortsetzen(flug(60), Descent).zeitpunkt(Slot::KapitaenSinkflug, Some(3_000)).is_some(), "Uhrzeit nach dem Neustart im Sinkflug");
+        let mut p = Planer::fortsetzen(flug(60), Descent);
+        p.schon_gespielt([Slot::KapitaenSinkflug]);
+        let f = slots(p.tick(&tick(1_000, Descent, 18_000.0, -2_000.0)));
+        assert!(!f.contains(&Slot::KapitaenSinkflug), "{f:?}");
+        let mut q = Planer::fortsetzen(flug(60), Descent);
+        assert!(slots(q.tick(&tick(1_000, Descent, 18_000.0, -2_000.0))).contains(&Slot::KapitaenSinkflug), "noch nicht gespielt: kommt");
+    }
+
     #[test]
     fn kabine_folgt_dem_kapitaen_im_sinkflug_mit_abstand() {
         let mut p = Planer::fortsetzen(flug(120), Cruise);
@@ -1439,7 +1577,7 @@ mod tests {
     #[test]
     fn durchstarten_vom_host_signal_einmal() {
         let mut p = Planer::neu(flug(120));
-        p.war_im_reiseflug = true;
+        p.steigflug_vorbei = true;
         let mut n = 0;
         for t in (0..600).step_by(10) {
             let mut tk = tick(t, Approach, 2_500.0, 500.0);
@@ -1907,7 +2045,7 @@ mod tests {
     #[test]
     fn durchstarten_kommt_verzoegert_und_kommando_darf_nochmal() {
         let mut p = Planer::neu(flug(120));
-        p.war_im_reiseflug = true;
+        p.steigflug_vorbei = true;
         let f = p.tick(&tick(0, Final, 800.0, -700.0));
         assert!(f.iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung));
         assert!(p.tick(&tick(10, Climb, 1500.0, 2000.0)).iter().all(|f| f.slot != Slot::Durchstarten));
