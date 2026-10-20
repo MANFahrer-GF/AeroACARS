@@ -816,8 +816,11 @@ const ARRIVED_STANDSTILL_DWELL_SECS: i64 = 300;
 //   bounce-rebound height (which is at most ~40 ft on the worst
 //   bounces), but low enough that a deliberate climb-out from a
 //   training landing crosses it quickly.
-// * 30 s observation window — even a slow GA-pattern aircraft
-//   (172, J3 Cub) climbs past 100 ft in less than that.
+// * KEIN Beobachtungsfenster mehr (20.10.2026, EWG 1599): bis 2.1.4
+//   zaehlte ein Wegsteigen nur innerhalb von 30 s ab dem Aufsetzen. Nach
+//   26 s Bodenlauf kamen die 100 ft erst nach 35,9 s — die Phase blieb
+//   15 Minuten in der Luft auf `Landing`. Siehe
+//   [`landung_beim_wegsteigen_abschliessen`].
 // * 200 ft recovery for GA — a missed approach typically initiates
 //   at ≥200 ft above the lowest observed altitude, and 200 ft is
 //   the standard Cat I missed-approach decision height. Sustained
@@ -825,10 +828,12 @@ const ARRIVED_STANDSTILL_DWELL_SECS: i64 = 300;
 // * +500 fpm V/S filter on GA — pilots really go around with positive
 //   V/S, no false positives from a flare round-out.
 
-/// Time after a touchdown during which we watch for the aircraft
-/// climbing back out (= touch-and-go). After this window expires
-/// the touchdown is finalised as a regular landing.
-const TOUCH_AND_GO_WATCH_SECS: i64 = 30;
+/// Nach so vielen Sekunden am Boden wird ein Aufsetzer vorlaeufig als
+/// `FinalLanding` in `touchdown_events` verbucht (spaetestens beim Wechsel
+/// nach `TaxiIn`). Steigt das Flugzeug danach doch noch weg, macht
+/// [`landung_beim_wegsteigen_abschliessen`] aus genau diesem Eintrag einen
+/// `TouchAndGo` — die Zeit begrenzt das Erkennen des Wegsteigens nicht mehr.
+const FINAL_LANDING_VERBUCHEN_NACH_SECS: i64 = 30;
 /// Aircraft must climb above this AGL after a touchdown to count
 /// as a touch-and-go (not a tall bounce or runway-end pop-up).
 const TOUCH_AND_GO_AGL_THRESHOLD_FT: f32 = 100.0;
@@ -7976,12 +7981,19 @@ struct FlightStats {
     /// `landing_peak_vs_fpm` etc. fields keep being refined for the
     /// CURRENT (= newest) touchdown until the bounce window closes.
     touchdown_events: Vec<TouchdownEvent>,
-    /// Watcher state for the touch-and-go classifier. Holds the AGL
-    /// excursion starting from a Touchdown event so we can decide
-    /// (within `TOUCH_AND_GO_WATCH_SECS`) whether the aircraft is
-    /// climbing back out for real (= T&G) or just bouncing/rolling
-    /// out (= regular landing). `None` between touchdowns.
+    /// Haltezeit-Uhr des Wegsteigens nach einem Aufsetzen: seit wann die
+    /// Bedingung von [`wegsteigen_nach_aufsetzen`] ununterbrochen steht.
+    /// Nach `TOUCH_AND_GO_DWELL_SECS` schliesst
+    /// [`landung_beim_wegsteigen_abschliessen`] die Landung ab. `None`
+    /// zwischen den Aufsetzern.
     touch_and_go_pending_since: Option<DateTime<Utc>>,
+    /// Eine Landung wurde beim Wegsteigen abgeschlossen, die Phase steht
+    /// aber noch auf `Landing` — der naechste Phasen-Takt wechselt nach
+    /// `Climb`. Gesetzt von [`landung_beim_wegsteigen_abschliessen`], das
+    /// auch der Aufsetz-Sampler aus seinem Faden aufruft; den Phasenwechsel
+    /// selbst macht `step_flight_at`. Nicht persistiert: nach einem Neustart
+    /// faengt der Takt ihn ueber `landing_at == None` in der Luft auf.
+    landung_abgebrochen_phase_offen: bool,
     /// Counter of go-arounds (rejected approaches without touchdown
     /// followed by climb-back-out). Surfaced as a custom PIREP field
     /// "Go-Arounds: N". Most flights = 0.
@@ -8809,8 +8821,9 @@ pub enum TouchdownKind {
 }
 
 /// One touchdown event during a flight. Captured at the moment the
-/// touchdown is classified (= when either the bounce window closes
-/// for a normal landing, or the T&G watcher confirms a climb-back).
+/// touchdown is classified (= after `FINAL_LANDING_VERBUCHEN_NACH_SECS`
+/// on the ground or when rolling off for a normal landing, or when
+/// `landung_beim_wegsteigen_abschliessen` closes it on climb-out).
 /// Snapshot semantics — the values reflect the analyzer state at
 /// classification time and don't update afterwards.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37900,6 +37913,11 @@ fn landung_episode_zuruecksetzen(stats: &mut FlightStats) {
     // Landung derselben Episode durchschlagen und `finalize_landing_score_
     // if_due` fuer sie blockieren.
     stats.sampler_touchdown_rejected_reason = None;
+    // 20.10.2026 (Stück 3): auch „Aufsetzfenster nicht gemessen“ latcht
+    // (gesetzt, wenn noch keins steht) und gehoert zu EINEM Aufsetzer. Ohne
+    // diesen Reset galt nach einem ungemessenen ersten Aufsetzer auch die
+    // finale Landung als nicht messbar — keine Sinkrate, keine Note.
+    stats.landung_abdeckung_fehlt = None;
 }
 
 /// GAF-707-Folgefund (Bugreport 05.09.2026): reine, testbare Entscheidung,
@@ -39879,68 +39897,15 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // Pruefung loeschte so ein Wert nach der Landung den
                 // Landesprit, auch ganz ohne Absturz (Codex-QS 24.09.2026).
                 if dumped && echter_steigflug_nach_aufsetzen(&snap) {
-                    // Climb-out detected nach Dump → bereit fuer naechste TD.
-                    // Reset alle TD-state-fields.
-                    s.sampler_touchdown_at = None;
-                    s.sampler_touchdown_vs_fpm = None;
-                    s.sampler_touchdown_vs_vom_plugin = false;
-                    s.sampler_touchdown_g_force = None;
-                    s.touchdown_window_dumped_at = None;
-                    // GAF-707-Race: siehe Feldkommentar — neue Episode,
-                    // alte Rohdaten sind nicht mehr gueltig.
-                    s.touchdown_window_score_data_ready_at = None;
-                    s.post_touchdown_buffer.clear();
-                    s.landing_score_finalized = false;
-                    // Auch die Merkung „Landung nicht messbar" — sonst
-                    // schwiege die Warnung fuer die ECHTE Landung danach
-                    // (Cloud-QS 23.09.2026).
-                    s.landung_unmessbar_gemeldet = false;
-                    // v0.16.5: re-arm the sampler-path metadata stamp. Its
-                    // once-guard keys on `landing_lat.is_none()` — on a
-                    // touch-and-go the FINAL touchdown must stamp fresh
-                    // metadata, not keep TD#1's (the FSM Landing arm never
-                    // runs on bush flights to overwrite it). Clearing the
-                    // anchor re-arms the guard; the next stamp overwrites
-                    // MOST other landing_* fields anyway — but NOT
-                    // `landing_peak_g_force` (Codex-Folgefund, 05.09.2026,
-                    // gegen den GAF-707-Fruehdump-Fix): das Feld ist ein
-                    // reiner RUNNING-MAX ueber die gesamte Session
-                    // (`if g > cur { s.landing_peak_g_force = Some(g) }`,
-                    // s. u.), kein bedingungsloses Ueberschreiben wie Lat/Lon.
-                    // Ohne den expliziten Reset hier ueberlebt TD#1s G-Kraft
-                    // in TD#2s `apply_accident_heuristic`-Aufruf — ein
-                    // harter erster Touchdown (hohes G, aber V/S unter der
-                    // Schwelle) haette dann zusammen mit einem zweiten,
-                    // eigentlich unauffaelligen Touchdown (normales G, aber
-                    // V/S ueber der Schwelle) faelschlich Confirmed(Impact)
-                    // ausgeloest — zwei physisch getrennte Ereignisse
-                    // vermischt zu einem Falsch-Alarm. Die „haerterer Wert
-                    // gewinnt"-Doktrin (v1.6.3) gilt INNERHALB eines
-                    // Touchdowns fuer mehrere Messquellen desselben
-                    // Ereignisses — nicht ueber zwei verschiedene Touchdowns
-                    // hinweg.
-                    s.landing_peak_g_force = None;
-                    s.landing_lat = None;
-                    s.landing_lon = None;
-                    // v1.6.3: der Landewind muss hier ausdruecklich mit weg.
-                    // Die Zusage eine Zeile darueber ("der naechste Stempel
-                    // ueberschreibt ohnehin jedes andere Feld") gilt fuer ihn
-                    // NICHT: er wird nur mit einem gueltigen Wert
-                    // ueberschrieben, damit ein fehlender Tick den guten Wert
-                    // nicht loescht. Ohne diesen Rücksetzer rechnete die
-                    // Seitenwind-Kompensation der Ausrichtungs-Achse beim
-                    // FINALEN Aufsetzen mit dem Wind des ersten.
-                    landung_episode_zuruecksetzen(&mut s);
-                    // v1.7.35: auch der Sprit. Dieselbe Begruendung wie oben —
-                    // sonst traegt das FINALE Aufsetzen die Auswertung des
-                    // abgebrochenen, samt dessen Reserve-Quote.
-                    sprit_durchstart_zuruecksetzen(&mut s);
-                    // v0.16.6: stability stats + rollout are per-episode too —
-                    // the FINAL touchdown must re-evaluate its own approach
-                    // window and re-accumulate its own rollout (on bush
-                    // flights no FSM Landing arm ever overwrites them).
-                    clear_approach_stability_and_rollout(&mut s);
-                    // landing_critical_until bleibt write-only (legacy field)
+                    // 20.10.2026 („Stück 3“): eine Stelle fuer das Abschliessen
+                    // einer Landung beim Wegsteigen — dieselbe, die die
+                    // Phasenlogik ruft. Bis 2.1.4 setzte dieser Block nur die
+                    // Sampler-Haelfte zurueck; Note, Live-Meldung und Phase
+                    // blieben beim ersten Aufsetzer (EWG 1599). Hier sofort,
+                    // ohne Haltezeit: ein Aufprall Sekunden nach einem Hopser
+                    // braucht den neu scharfgeschalteten Sampler
+                    // (JGXrGwlwa4aOGZpn, siehe `touchdown_dump_faellig`).
+                    landung_beim_wegsteigen_abschliessen(&mut s, &snap, Utc::now());
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
                         agl_ft = agl_now,
@@ -47981,6 +47946,153 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.rollout_finalize_reason = None;
 }
 
+/// Steigt das Flugzeug nach einem Aufsetzen gerade wieder weg (20.10.2026,
+/// „Stück 3“)? Eine offene Landung (Phasenlogik oder Aufsetz-Sampler), eine
+/// Phase, in der gelandet werden kann, ein echter Steigflug ueber 100 ft —
+/// und die Auswertung dieses Aufsetzers liegt vor (der Puffer-Dump, oder er
+/// kommt nicht mehr). Bewusst OHNE Zeitgrenze ab dem Aufsetzen und ohne
+/// Triebwerks-Riegel: genau so, wie der Sampler sein Wegsteigen schon immer
+/// erkannt hat. Die Haltezeit legt der Aufrufer darueber.
+fn wegsteigen_nach_aufsetzen(stats: &FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) -> bool {
+    let offen = stats.landing_at.is_some() || stats.sampler_touchdown_at.is_some();
+    if !offen || !is_touchdown_capturable_phase(stats.phase, stats.was_airborne) {
+        return false;
+    }
+    if !echter_steigflug_nach_aufsetzen(snap) {
+        return false;
+    }
+    match (stats.sampler_touchdown_at, stats.touchdown_window_dumped_at) {
+        (Some(td), None) => (now - td).num_milliseconds() >= SAMPLER_DUMP_WAIT_TIMEOUT_MS,
+        _ => true,
+    }
+}
+
+/// Schliesst die laufende Landung ab, weil das Flugzeug wieder wegsteigt
+/// (Touch-and-Go, abgebrochene Landung, Durchstart nach Bodenlauf) — die
+/// EINE Stelle dafuer (20.10.2026, „Stück 3“).
+///
+/// Bis 2.1.4 gab es zwei Haelften: Der Aufsetz-Sampler setzte beim
+/// Wegsteigen seine Messfelder zurueck, die Phasenlogik ihre eigenen — aber
+/// nur innerhalb von 30 s ab dem Aufsetzen. EWG 1599 (Pilot 15, 20.10.2026)
+/// lief durch die Luecke: Bodenlauf 26 s, 100 ft nach 35,9 s. Der Sampler
+/// schaltete sich neu scharf und erfasste den zweiten Aufsetzer, die Note,
+/// die Live-Meldung und die Phase blieben beim ersten. Live zeigte −667 fpm,
+/// phpVMS −55, die Gesamtnote mischte beide, und 15 Minuten stand die Phase
+/// in 4000 ft auf `Landing` — mit einer „Ausrollstrecke“ von 6.639 m auf einer
+/// 3.405-m-Bahn aus dem Steigflug.
+///
+/// Reihenfolge: erst den Eintrag mit den Werten DIESES Aufsetzers sichern,
+/// dann alles zuruecksetzen, was zu ihm gehoert. Aufgerufen vom Sampler
+/// (sofort, er braucht die Re-Armierung fuer einen Aufprall Sekunden spaeter,
+/// JGXrGwlwa4aOGZpn) und von `step_flight_at` (nach der Haltezeit, wenn kein
+/// Sampler laeuft). Wer zuerst kommt, schliesst ab; danach ist keine Landung
+/// mehr offen.
+fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
+    let Some(aufsetzen) = stats.landing_at.or(stats.sampler_touchdown_at) else {
+        return;
+    };
+    let event = TouchdownEvent {
+        timestamp: aufsetzen,
+        kind: TouchdownKind::TouchAndGo,
+        // Ueber die Kanonik — dieselbe Zahl, die Live-Meldung und PIREP fuer
+        // diesen Aufsetzer tragen.
+        peak_vs_fpm: stats.canonical_landing_rate_fpm().unwrap_or(0.0),
+        peak_g: stats
+            .landing_peak_g_force
+            .or(stats.sampler_touchdown_g_force)
+            .unwrap_or(0.0),
+        lat: stats.landing_lat.unwrap_or(snap.lat),
+        lon: stats.landing_lon.unwrap_or(snap.lon),
+        sub_bounces: stats.bounce_count,
+    };
+    // War der Aufsetzer schon vorlaeufig als finale Landung verbucht
+    // (`FINAL_LANDING_VERBUCHEN_NACH_SECS`), wird aus genau diesem Eintrag
+    // der Touch-and-Go — kein zweiter Eintrag fuer denselben Aufsetzer.
+    match stats.touchdown_events.last_mut() {
+        Some(letzter) if letzter.timestamp == aufsetzen => *letzter = event.clone(),
+        _ => stats.touchdown_events.push(event.clone()),
+    }
+    // JBU327-Fix: ein Touch-and-Go / Balked-Landing IST ein Go-Around — der
+    // Anflug wurde abgebrochen und neu angesetzt. Reporting-only, KEIN
+    // Score-Einfluss (`go_around_count` fliesst nicht in `landing_scoring`).
+    stats.go_around_count = stats.go_around_count.saturating_add(1);
+    stats.vref_gemessen = None;
+    // Lernpaket AP4/AP5: Schnitt fuer die Forensik.
+    anflug_forensik_schneiden(stats, Some(now));
+    let ga_count = stats.go_around_count;
+    tracing::info!(
+        go_around_count = ga_count,
+        peak_vs = event.peak_vs_fpm,
+        peak_g = event.peak_g,
+        sub_bounces = event.sub_bounces,
+        agl_ft = snap.altitude_agl_ft,
+        "touch-and-go classified (counts as go-around) — landing closed on climb-out"
+    );
+    stats.pending_acars_logs.push(format!(
+        "Go-around #{} (touch-and-go) — V/S {:.0} fpm, G {:.2}",
+        ga_count, event.peak_vs_fpm, event.peak_g
+    ));
+
+    // ── Die Landung der Phasenlogik ───────────────────────────────────
+    stats.landing_at = None;
+    stats.landing_peak_vs_fpm = None;
+    stats.landing_peak_g_force = None;
+    stats.landing_score = None;
+    stats.landing_score_announced = false;
+    stats.landing_lat = None;
+    stats.landing_lon = None;
+    stats.bounce_count = 0;
+    stats.bounce_armed_above_threshold = false;
+    stats.bounce_boden_agl_ft = None;
+    // v0.20 (QS-Fix, /code-review high): ohne diesen Reset ueberlebt die
+    // Forensik der T&G-Landung bis zum naechsten Sampler-Dump — faellt der
+    // echte finale Touchdown auf `fallback_zero` zurueck, laese die Kanonik
+    // sonst den Edge-Wert aus dem ALTEN `landing_analysis`.
+    stats.landing_rate_fpm = None;
+    stats.landing_analysis = None;
+    stats.abfangen_gesichert = None;
+    stats.landing_source = None;
+    stats.touch_and_go_pending_since = None;
+
+    // ── Die Landung des Aufsetz-Samplers ──────────────────────────────
+    // Re-armiert den Sampler fuer den naechsten Aufsetzer (sein
+    // Einmal-Riegel ist `sampler_touchdown_at.is_none()`).
+    stats.sampler_touchdown_at = None;
+    stats.sampler_touchdown_vs_fpm = None;
+    stats.sampler_touchdown_vs_vom_plugin = false;
+    stats.sampler_touchdown_g_force = None;
+    stats.pending_td_at = None;
+    stats.touchdown_window_dumped_at = None;
+    // GAF-707-Race: neue Episode, alte Rohdaten sind nicht mehr gueltig.
+    stats.touchdown_window_score_data_ready_at = None;
+    stats.post_touchdown_buffer.clear();
+    stats.landing_score_finalized = false;
+    // Auch die Merkung „Landung nicht messbar" — sonst schwiege die Warnung
+    // fuer die ECHTE Landung danach (Cloud-QS 23.09.2026).
+    stats.landung_unmessbar_gemeldet = false;
+
+    // ── Was zu jeder Landung gehoert ──────────────────────────────────
+    // Wind, Eigengeschwindigkeit, Ablehnungsgrund (v1.6.3), Sprit (v1.7.35),
+    // Anflug-Stabilitaet + Rollstrecke + Spur (v0.16.6). Die Rollstrecke
+    // fehlte bis hierher im Pfad der Phasenlogik: Bei einem Touch-and-Go
+    // ohne Sampler blieb die Strecke des Steigflugs stehen.
+    landung_episode_zuruecksetzen(stats);
+    sprit_durchstart_zuruecksetzen(stats);
+    clear_approach_stability_and_rollout(stats);
+
+    // ── Der naechste Anflug beginnt frisch ────────────────────────────
+    // Ohne diesen Reset waere der ~50-ft-Tiefpunkt dieses Aufsetzers die
+    // Messlatte des naechsten Durchstart-Detektors — jeder spaetere Anflug
+    // loeste beim Steigen ueber 250 ft sofort einen falschen Durchstart aus.
+    stats.lowest_agl_during_approach_ft = None;
+    stats.tiefster_anflugpunkt = None;
+    stats.go_around_climb_pending_since = None;
+    // v0.5.11: frischer Steigflug-Gipfel, sonst kippte der Steigflug nach dem
+    // Touch-and-Go ueber Altdaten sofort in den Sinkflug.
+    stats.climb_peak_msl = None;
+    stats.landung_abgebrochen_phase_offen = true;
+}
+
 /// Groundspeed-Schwelle, unter der TakeoffRoll (nachhaltig) als „rollt
 /// nicht" gilt. 10 kt unter dem Vorwärts-Trigger (GS > 30 kt) → Hysterese
 /// gegen Flip-Flop an der Schwelle.
@@ -50341,6 +50453,22 @@ fn step_flight_at(
                 stats.zwischenstand("aufsetzen_anflug_note");
             }
         }
+        // 20.10.2026 („Stück 3“): Die Landung ist beim Wegsteigen
+        // abgeschlossen (hier im Takt oder vom Sampler zwischen zwei Takten),
+        // oder es ist gar keine mehr offen und das Flugzeug steigt — dann
+        // gehoert die Phase in den Steigflug, und der Landing-Arm darf
+        // keine Rollstrecke und keine Spur mehr aus der Luft aufzeichnen.
+        // `landing_at == None && sampler_touchdown_at == None` faengt auch
+        // einen Neustart der App mitten im Steigflug ab (der Merker ist
+        // nicht persistiert).
+        FlightPhase::Landing
+            if stats.landung_abgebrochen_phase_offen
+                || (stats.landing_at.is_none()
+                    && stats.sampler_touchdown_at.is_none()
+                    && echter_steigflug_nach_aufsetzen(snap)) =>
+        {
+            next_phase = FlightPhase::Climb;
+        }
         FlightPhase::Landing => {
             // Rollout-distance accumulator: from `landing_lat/lon` until
             // the rollout finalises (~40 kt exit speed / >30° heading
@@ -50463,149 +50591,11 @@ fn step_flight_at(
                 // Ent-Kopplung zieht dieselbe Lehre konsequent auf die
                 // Score-Finalisierung selbst durch.
 
-                // Touch-and-Go classifier — runs in parallel with the
-                // bounce/score windows. Looks for a sustained climb
-                // back above TOUCH_AND_GO_AGL_THRESHOLD_FT within
-                // TOUCH_AND_GO_WATCH_SECS of the touchdown. If the
-                // pilot really lifted off and is climbing out (= T&G),
-                // we record the touchdown as kind=TouchAndGo, reset
-                // the landing window for the next touchdown, and bump
-                // the FSM back to Climb so subsequent phase
-                // transitions work normally on the next descent.
-                let tg_in_window = elapsed_secs <= TOUCH_AND_GO_WATCH_SECS;
-                if tg_in_window {
-                    let agl = snap.altitude_agl_ft as f32;
-                    let conds_met = agl > TOUCH_AND_GO_AGL_THRESHOLD_FT
-                        && !snap.on_ground
-                        && snap.engines_running > 0;
-                    if conds_met {
-                        let pending = stats.touch_and_go_pending_since.get_or_insert(now);
-                        if (now - *pending).num_seconds() >= TOUCH_AND_GO_DWELL_SECS {
-                            // CONFIRMED: this was a touch-and-go.
-                            let event = TouchdownEvent {
-                                timestamp: touchdown,
-                                kind: TouchdownKind::TouchAndGo,
-                                peak_vs_fpm: stats.landing_peak_vs_fpm.unwrap_or(0.0),
-                                peak_g: stats.landing_peak_g_force.unwrap_or(0.0),
-                                lat: stats.landing_lat.unwrap_or(snap.lat),
-                                lon: stats.landing_lon.unwrap_or(snap.lon),
-                                sub_bounces: stats.bounce_count,
-                            };
-                            stats.touchdown_events.push(event.clone());
-                            // JBU327-Fix: ein Touch-and-Go / Balked-Landing IST
-                            // ein Go-Around — der Anflug wurde abgebrochen und neu
-                            // angesetzt. `check_go_around` (nur Approach/Final)
-                            // erfasst ausschliesslich den Go-Around OHNE
-                            // Bodenberuehrung; der balked-landing-Fall (Raeder
-                            // beruehrten kurz, dann Wegstieg) lief bisher NUR durch
-                            // diesen T&G-Pfad und blieb in `go_around_count`
-                            // ungezaehlt — fehlte damit im PIREP (phpVMS) + auf der
-                            // Live-Map. Hier mitzaehlen. Reporting-only, KEIN
-                            // Score-Einfluss (`go_around_count` fliesst nicht in
-                            // `landing_scoring`).
-                            stats.go_around_count = stats.go_around_count.saturating_add(1);
-                            stats.vref_gemessen = None;
-                            // Lernpaket AP4/AP5: Schnitt fuer die Forensik.
-                            anflug_forensik_schneiden(&mut stats, Some(now));
-                            let ga_count = stats.go_around_count;
-                            let tg_count = stats
-                                .touchdown_events
-                                .iter()
-                                .filter(|e| matches!(e.kind, TouchdownKind::TouchAndGo))
-                                .count();
-                            tracing::info!(
-                                count = tg_count,
-                                go_around_count = ga_count,
-                                peak_vs = event.peak_vs_fpm,
-                                peak_g = event.peak_g,
-                                sub_bounces = event.sub_bounces,
-                                "touch-and-go classified (counts as go-around) — resetting landing window"
-                            );
-                            stats.pending_acars_logs.push(format!(
-                                "Go-around #{} (touch-and-go) — V/S {:.0} fpm, G {:.2}",
-                                ga_count, event.peak_vs_fpm, event.peak_g
-                            ));
-                            // Reset landing window so the NEXT touchdown
-                            // gets a fresh score window. Bounce count
-                            // resets too — T&Gs don't drag down the
-                            // final-landing's score.
-                            stats.landing_at = None;
-                            stats.landing_peak_vs_fpm = None;
-                            stats.landing_peak_g_force = None;
-                            stats.landing_score = None;
-                            stats.landing_score_announced = false;
-                            stats.landing_lat = None;
-                            stats.landing_lon = None;
-                            stats.bounce_count = 0;
-                            // v0.20 (QS-Fix, /code-review high): `landing_rate_fpm`
-                            // (die zweite Haelfte des `finalize_landing_rate`-Paars)
-                            // sowie `landing_analysis`/`landing_source` fehlten hier —
-                            // ohne diesen Reset ueberlebt die Forensik der T&G-Landung
-                            // bis zum naechsten Sampler-Dump. Faellt der ECHTE finale
-                            // Touchdown dann auf `fallback_zero` zurueck (derselbe
-                            // Sim-Stotterer/Sparse-UDP-Fehlerklasse wie beim Joel-
-                            // Vorfall), las `canonical_landing_rate_fpm()`/
-                            // `score_g_for_stats()` den `edge`/`scored_g`-Kandidaten
-                            // aus dem ALTEN `landing_analysis` — der ist nur dann
-                            // "von selbst leer" (die Praemisse hinter dem fallback_
-                            // zero-Gate), wenn hier auch wirklich genullt wird.
-                            stats.landing_rate_fpm = None;
-                            stats.landing_analysis = None;
-                            stats.abfangen_gesichert = None;
-                            stats.landing_source = None;
-                            // v1.6.3: derselbe Gedanke fuer den Landewind.
-                            // Nach einem Touch-and-Go am Platz A und einer
-                            // Landung am Platz B haette die Seitenwind-
-                            // Kompensation der Ausrichtungs-Achse sonst den
-                            // Wind von A gegen Bahnkurs und Steuerkurs von B
-                            // gerechnet. Sie kann nur schenken, nie strafen —
-                            // im schlechtesten Fall also fuenf Grad
-                            // geschenkter Vorhalt fuer eine wirklich schiefe
-                            // Landung.
-                            landung_episode_zuruecksetzen(&mut stats);
-                            sprit_durchstart_zuruecksetzen(&mut stats);
-                            stats.bounce_armed_above_threshold = false;
-                            stats.bounce_boden_agl_ft = None;
-                            stats.touch_and_go_pending_since = None;
-                            // CRITICAL: also clear the GA tracker so the
-                            // NEXT approach starts with a fresh AGL
-                            // minimum. Without this, the just-recorded
-                            // T&G's ~50 ft touchdown AGL becomes the
-                            // floor against which the next GA detector
-                            // compares — which means EVERY future
-                            // approach would trivially exceed
-                            // "lowest + 200 ft" the moment the pilot
-                            // climbs above 250 ft AGL, hiding any real
-                            // missed-approach behind an immediate
-                            // false-positive trigger.
-                            stats.lowest_agl_during_approach_ft = None;
-                            stats.tiefster_anflugpunkt = None;
-                            stats.go_around_climb_pending_since = None;
-                            // v0.5.11: also reset climb_peak_msl so
-                            // the new Climb segment after T&G starts
-                            // fresh. Without this, the prior pattern
-                            // altitude (e.g. 2000 ft) stays as the
-                            // peak — and the moment the aircraft
-                            // descends 500+ ft below it for the next
-                            // approach, the v0.5.10 low-altitude
-                            // Climb→Descent trigger would fire
-                            // immediately (lost_from_peak > 500
-                            // already satisfied via stale data).
-                            // Pattern flying with multiple T&Gs
-                            // would oscillate between Climb and
-                            // Descent on every traffic-pattern leg.
-                            stats.climb_peak_msl = None;
-                            // FSM: revert to Climb so the streamer's
-                            // phase-change handler emits "Phase: Climb"
-                            // and subsequent descent re-detection works.
-                            next_phase = FlightPhase::Climb;
-                        }
-                    } else {
-                        // Conditions broke (engines off, AGL dropped,
-                        // back on ground) — restart the dwell timer.
-                        stats.touch_and_go_pending_since = None;
-                    }
-                }
+                // Touch-and-Go: kein eigener Erkenner mehr in diesem Arm
+                // (20.10.2026, „Stück 3“). Das Wegsteigen nach dem Aufsetzen
+                // schliesst `landung_beim_wegsteigen_abschliessen` ab — ohne
+                // Zeitgrenze, an einer Stelle fuer Sampler und Phasenlogik.
+                // Aufrufstelle nach dem `match prev_phase`.
 
                 // v0.7.20 (QS-Nebenfund GSG219): FinalLanding-Push aus dem
                 // `else if`-Branch entkoppelt — vorher konnte der Push
@@ -50629,7 +50619,15 @@ fn step_flight_at(
                 // peak_vs_fpm fuellt sich aus dem besten verfuegbaren Wert:
                 // Sampler-Peak (best) → landing_rate_fpm (Fallback aus dem
                 // touchdown_v2-Cascade) → 0.0 (defensiv).
-                if !tg_in_window
+                //
+                // 20.10.2026: verbucht nach `FINAL_LANDING_VERBUCHEN_NACH_SECS`
+                // am Boden ODER beim Abrollen (TaxiIn folgt in diesem Takt) —
+                // EWG 1599s zweite Landung rollte nach 20 s ab und stand nur
+                // ueber `effective_touchdown_events` im PIREP. Steigt das
+                // Flugzeug spaeter doch weg, wird aus diesem Eintrag der
+                // Touch-and-Go (`landung_beim_wegsteigen_abschliessen`).
+                let rollt_ab = snap.groundspeed_kt < 30.0 && snap.on_ground;
+                if (elapsed_secs > FINAL_LANDING_VERBUCHEN_NACH_SECS || rollt_ab)
                     && stats.landing_at == Some(touchdown)
                     && stats
                         .touchdown_events
@@ -51135,6 +51133,27 @@ fn step_flight_at(
         // Frische v1-Transition (= lebendige FSM, wird NIE übersteuert)
         // oder Reload-Glitch-Tick: Divergenz-Uhr neu starten.
         stats.enroute_divergence_since = None;
+    }
+
+    // 20.10.2026 („Stück 3“): Wegsteigen nach einem Aufsetzen schliesst die
+    // Landung ab — in jeder Phase, in der eine offen ist (auch die Busch-
+    // Landung in `Takeoff`), ohne Zeitgrenze ab dem Aufsetzen. NACH dem
+    // Match: Der Landing-Arm hat in diesem Takt schon Rollstrecke und Spur
+    // fortgeschrieben, der Abschluss raeumt sie mit weg. VOR der
+    // Note-Finalisierung: Die sieht danach keine offene Landung mehr.
+    if wegsteigen_nach_aufsetzen(&stats, snap, now) {
+        let seit = *stats.touch_and_go_pending_since.get_or_insert(now);
+        if (now - seit).num_seconds() >= TOUCH_AND_GO_DWELL_SECS {
+            landung_beim_wegsteigen_abschliessen(&mut stats, snap, now);
+        }
+    } else {
+        stats.touch_and_go_pending_since = None;
+    }
+    if stats.landung_abgebrochen_phase_offen {
+        if prev_phase == FlightPhase::Landing {
+            next_phase = FlightPhase::Climb;
+        }
+        stats.landung_abgebrochen_phase_offen = false;
     }
 
     // v1.7.24: JEDEN Tick, unabhaengig von `prev_phase`/`next_phase` — siehe
@@ -63531,10 +63550,12 @@ mod final_landing_push_condition_tests {
     use super::*;
 
     /// Spiegel der `step_flight`-Bedingung fuer den FinalLanding-Push.
-    /// Dieselbe Form wie im Original-Code:
+    /// Seit 20.10.2026 heisst der erste Teil `(elapsed_secs >
+    /// FINAL_LANDING_VERBUCHEN_NACH_SECS || rollt_ab)`; `tg_in_window` hier
+    /// steht fuer dessen Gegenteil („noch nicht faellig“):
     ///
     /// ```ignore
-    /// if !tg_in_window
+    /// if (elapsed_secs > FINAL_LANDING_VERBUCHEN_NACH_SECS || rollt_ab)
     ///     && stats.landing_at == Some(touchdown)
     ///     && stats.touchdown_events.last()
     ///         .map(|e| e.timestamp != touchdown)
@@ -81401,21 +81422,32 @@ mod v163_mutationsluecken {
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
-        for funktion in ["fn spawn_touchdown_sampler", "fn step_flight_at"] {
+        // 20.10.2026 (Stück 3): Beide Episoden-Enden rufen dieselbe Funktion
+        // `landung_beim_wegsteigen_abschliessen` — dort stehen die Aufraeumer
+        // genau einmal (Ablauf-Test: `landung_episoden_tests::
+        // abschluss_raeumt_wind_und_sprit_ab`). Gewacht wird hier, dass keiner
+        // der beiden Aufrufer sie verliert.
+        for funktion in [
+            "fn spawn_touchdown_sampler",
+            "fn step_flight_at",
+            "fn landung_beim_wegsteigen_abschliessen",
+        ] {
             let start = ohne_kommentare.find(funktion).unwrap_or_else(|| {
                 panic!("{funktion} nicht mehr gefunden — Test anpassen, nicht löschen")
             });
             let rest = &ohne_kommentare[start..];
             let ende = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
-            // v1.7.35: BEIDE Aufraeumer. Der Sprit-Teil wurde aus
-            // `landung_episode_zuruecksetzen` herausgeloest (die greift auch
-            // bei einem blossen AGL-Ausreisser im Ausrollen) — und prompt
-            // fehlte er an einer der beiden Stellen, ohne dass dieser
-            // Waechter fiel: er kannte nur den einen Namen.
-            for aufraeumer in [
-                "landung_episode_zuruecksetzen(",
-                "sprit_durchstart_zuruecksetzen(",
-            ] {
+            let aufraeumer: &[&str] = if funktion == "fn landung_beim_wegsteigen_abschliessen" {
+                // v1.7.35: BEIDE Aufraeumer. Der Sprit-Teil wurde aus
+                // `landung_episode_zuruecksetzen` herausgeloest (die greift
+                // auch bei einem blossen AGL-Ausreisser im Ausrollen) — und
+                // prompt fehlte er an einer der beiden Stellen, ohne dass
+                // dieser Waechter fiel: er kannte nur den einen Namen.
+                &["landung_episode_zuruecksetzen(", "sprit_durchstart_zuruecksetzen("]
+            } else {
+                &["landung_beim_wegsteigen_abschliessen("]
+            };
+            for aufraeumer in aufraeumer {
                 assert!(
                     rest[..ende].contains(aufraeumer),
                     "{funktion} ruft {aufraeumer} nicht mehr — nach einem \
@@ -81707,29 +81739,34 @@ mod gaf707_bounce_in_aufprall_tests {
         );
     }
 
-    /// Wiring-Guard fuer den Fund oben: der Sampler-Klettern-Reset-Block
-    /// (`spawn_touchdown_sampler`, Marker "Multi-TD via Climb-out-Reset")
-    /// muss `landing_peak_g_force` zuruecksetzen. Ein Ablauf-Test kann diesen
-    /// Block nicht direkt ausueben (Tauri/AppHandle-gebunden, siehe die
-    /// uebrige Sampler-Infrastruktur) — ein Quelltext-Wächter faengt
-    /// trotzdem das ersatzlose Streichen der Zeile.
+    /// Fuer den Fund oben: Das Abschliessen der Landung beim Wegsteigen muss
+    /// `landing_peak_g_force` zuruecksetzen. Seit 20.10.2026 (Stück 3) liegt
+    /// das in einer reinen Funktion, die der Sampler-Klettern-Block und die
+    /// Phasenlogik beide rufen — damit ist es ein Ablauf-Test statt eines
+    /// Quelltext-Wächters (dass beide sie rufen, bewacht
+    /// `v163_mutationsluecken::beide_episoden_enden_raeumen_die_landung_ab`).
     #[test]
     fn multi_td_klettern_reset_setzt_auch_landing_peak_g_force_zurueck() {
-        const SRC: &str = include_str!("lib.rs");
-        let start = SRC
-            .find("Multi-TD via Climb-out-Reset")
-            .expect("Multi-TD-Reset-Block nicht mehr gefunden — Test anpassen, nicht loeschen");
-        let ende = SRC[start..]
-            .find("touchdown sampler stopped")
-            .map(|i| i + start)
-            .unwrap_or(SRC.len());
-        assert!(
-            SRC[start..ende].contains("s.landing_peak_g_force = None"),
-            "der Klettern-Reset-Block setzt landing_peak_g_force nicht mehr \
-             zurueck — ein hohes G vom ersten Touchdown wuerde dann in die \
-             Unfall-Klassifikation des zweiten ueberleben (Codex-Folgefund \
-             05.09.2026)"
+        let mut stats = FlightStats::default();
+        let td = Utc::now();
+        stats.phase = FlightPhase::Landing;
+        stats.landing_at = Some(td);
+        stats.sampler_touchdown_at = Some(td);
+        stats.landing_peak_g_force = Some(2.7);
+        stats.sampler_touchdown_g_force = Some(2.7);
+        let mut snap = SimSnapshot::default();
+        snap.lat = 50.0;
+        snap.lon = 8.0;
+        snap.altitude_msl_ft = 600.0;
+        snap.altitude_agl_ft = 300.0;
+        landung_beim_wegsteigen_abschliessen(&mut stats, &snap, td + chrono::Duration::seconds(20));
+        assert_eq!(
+            stats.landing_peak_g_force, None,
+            "ein hohes G vom ersten Touchdown wuerde in die Unfall-Klassifikation \
+             des zweiten ueberleben (Codex-Folgefund 05.09.2026)"
         );
+        assert_eq!(stats.sampler_touchdown_g_force, None);
+        assert!((stats.touchdown_events[0].peak_g - 2.7).abs() < 1e-6, "vorher gesichert");
     }
 
     /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): der Merge
@@ -87908,6 +87945,7 @@ mod landung_episoden_tests {
             st.sampler_touchdown_vs_fpm = Some(-310.0);
             st.sampler_touchdown_g_force = Some(1.25);
             st.touchdown_window_dumped_at = Some(td + chrono::Duration::seconds(10));
+            st.touchdown_window_score_data_ready_at = Some(td + chrono::Duration::seconds(10));
             st.landing_peak_vs_fpm = Some(-310.0);
             st.landing_rate_fpm = Some(-310.0);
             st.landing_peak_g_force = Some(1.25);
@@ -87922,6 +87960,47 @@ mod landung_episoden_tests {
         assert!((st.touchdown_events[0].peak_vs_fpm + 310.0).abs() < 0.5);
         assert_eq!(st.sampler_touchdown_at, None, "Sampler für den nächsten Aufsetzer bereit");
         assert_eq!(st.touchdown_window_dumped_at, None);
+    }
+
+    /// „Aufsetzfenster nicht gemessen“ gehoert zu EINEM Aufsetzer. War der
+    /// erste nicht messbar, muss die finale Landung trotzdem bewertbar sein.
+    #[test]
+    fn ungemessener_erster_aufsetzer_sperrt_die_finale_landung_nicht() {
+        let flight = fixture();
+        let td = t0();
+        gerade_aufgesetzt(&flight, td);
+        let mut st = flight.stats.lock().unwrap();
+        st.landung_abdeckung_fehlt = Some(touchdown_v2::FehlendeAbdeckung {
+            groesste_luecke_ms: 4_000,
+            proben: 0,
+        });
+        let s = snap(2_000.0, 400.0, 900.0, 140.0, false, 2);
+        landung_beim_wegsteigen_abschliessen(&mut st, &s, td + chrono::Duration::seconds(40));
+        assert!(st.landung_abdeckung_fehlt.is_none());
+        assert_eq!(st.touchdown_events.len(), 1);
+        assert!(st.landung_abgebrochen_phase_offen);
+    }
+
+    /// Wind, Eigengeschwindigkeit und Sprit gehoeren zum abgebrochenen
+    /// Aufsetzer — die naechste Landung rechnet mit ihren eigenen.
+    #[test]
+    fn abschluss_raeumt_wind_und_sprit_ab() {
+        let flight = fixture();
+        let td = t0();
+        gerade_aufgesetzt(&flight, td);
+        let mut st = flight.stats.lock().unwrap();
+        st.landing_wind_direction_deg = Some(70.0);
+        st.landing_wind_speed_kt = Some(7.0);
+        st.landing_true_airspeed_kt = Some(135.0);
+        st.landing_fuel_kg = Some(3_340.0);
+        st.landing_fuel_puffer = true;
+        let s = snap(2_000.0, 400.0, 900.0, 140.0, false, 2);
+        landung_beim_wegsteigen_abschliessen(&mut st, &s, td + chrono::Duration::seconds(40));
+        assert_eq!(st.landing_wind_direction_deg, None);
+        assert_eq!(st.landing_wind_speed_kt, None);
+        assert_eq!(st.landing_true_airspeed_kt, None);
+        assert_eq!(st.landing_fuel_kg, None);
+        assert!(!st.landing_fuel_puffer);
     }
 
     /// Kinematik aus dem echten Flug (EWG 1599, 20.10.2026, 15:34–15:57Z),
@@ -88002,8 +88081,9 @@ mod landung_episoden_tests {
         assert_eq!(st.go_around_count, 1);
         let arten: Vec<_> = st.touchdown_events.iter().map(|e| e.kind).collect();
         assert_eq!(arten, vec![TouchdownKind::TouchAndGo, TouchdownKind::FinalLanding], "{:?}", st.touchdown_events);
-        assert!(st.touchdown_events[0].peak_vs_fpm < -400.0, "{:?}", st.touchdown_events[0]);
-        assert!(st.touchdown_events[1].peak_vs_fpm > -200.0, "{:?}", st.touchdown_events[1]);
+        // Die Sinkraten selbst misst der Aufsetz-Sampler, der im Replay nicht
+        // laeuft — beide Aufsetzer gelten hier als nicht gemessen. Die Werte
+        // je Eintrag pruefen die Faelle mit gesetzten Messwerten oben.
         assert!(st.touchdown_events[0].timestamp < zeit("15:39:30"));
         assert!(st.touchdown_events[1].timestamp > zeit("15:55:00"));
     }
