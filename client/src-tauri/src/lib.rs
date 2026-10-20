@@ -11791,10 +11791,6 @@ fn laengster_sinklauf<'a>(
     bester
 }
 
-fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], gs_factor: f64) -> bool {
-    laengster_sinklauf(samples, gs_factor).is_some_and(|l| l.dauer_ms() >= SINK_TOLERANZ_MS)
-}
-
 /// Groesster Abstand zweier Samples innerhalb eines Laufs (Kadenz ~1 s).
 const SINK_MAX_LUECKE_MS: i64 = 4000;
 
