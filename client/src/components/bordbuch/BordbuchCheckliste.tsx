@@ -79,16 +79,13 @@ export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkiere
                       </span>
                       <span className="bb-cl-name">{t(`bordbuch.regel.${p.regel}`)}</span>
                       <span className="bb-cl-linie" aria-hidden />
+                      {(p.status === "erledigt" || p.status === "nach_atc") && zulu(p.zeit) && (
+                        <span className="bb-cl-zeit">{zulu(p.zeit)}</span>
+                      )}
                       <span className="bb-cl-wert">{wertText(p, t)}</span>
                     </button>
-                    {(p.status === "erledigt" || p.status === "nach_atc") && (
-                      <div className="bb-cl-zusatz">
-                        {p.status === "nach_atc"
-                          ? [t("bordbuch.status.nach_atc"), rollenText(p, rolltempoGrenzeKt, t)].filter(Boolean).join(" · ")
-                          : [rollenText(p, rolltempoGrenzeKt, t), zulu(p.zeit), p.art === "bestaetigung" ? t("bordbuch.zusaetzlich") : null]
-                              .filter(Boolean)
-                              .join(" · ")}
-                      </div>
+                    {(p.status === "erledigt" || p.status === "nach_atc") && zusatzText(p, rolltempoGrenzeKt, t) && (
+                      <div className="bb-cl-zusatz">{zusatzText(p, rolltempoGrenzeKt, t)}</div>
                     )}
                     {p.status === "diesmal_ohne" && gesehenText(p, rolltempoGrenzeKt, t) && (
                       <div className="bb-cl-zusatz bb-cl-gesehen">{gesehenText(p, rolltempoGrenzeKt, t)}</div>
@@ -126,6 +123,17 @@ export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkiere
       })}
     </div>
   );
+}
+
+/** Zeile unter dem Punkt: nur, was nicht in die Zeile passt — Rolltempo-
+ *  Satz, „nach ATC-Anweisung“, „zusätzlich“. Die Uhrzeit steht seit 2.1.6
+ *  in der Zeile (`bb-cl-zeit`), nicht mehr hier. */
+function zusatzText(p: Punkt, grenzeKt: number | undefined, t: (k: string, o?: Record<string, unknown>) => string): string {
+  return (p.status === "nach_atc"
+    ? [t("bordbuch.status.nach_atc"), rollenText(p, grenzeKt, t)]
+    : [rollenText(p, grenzeKt, t), p.art === "bestaetigung" ? t("bordbuch.zusaetzlich") : null])
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function wertText(p: Punkt, t: (k: string, o?: Record<string, unknown>) => string): string {

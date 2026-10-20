@@ -5,17 +5,24 @@
  * nutzen sie); hier als Kopien mit Spezifität 0. */
 
 :where(.bb-checkliste) {
-  display: grid;
-  /* min(…, 100%): auf schmalen iPhones (Webapp-Modal) lief die Liste sonst
-     waagerecht über (QS 06.10.2026). */
-  grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr));
-  gap: 14px 22px;
-  padding: 16px 18px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-2);
+  /* 2.1.6 (Thomas 20.10.2026, SAS 252): Das Raster mit festen Zellen ließ
+     neben „Start“ (7 Punkte) drei Viertel der Zeile leer und schob den
+     Anflug unter den Rand. Spalten füllen sich jetzt der Reihe nach und
+     gleich hoch (Mehrspaltensatz), höchstens drei; auf schmalen iPhones
+     (Webapp-Modal) eine. Der Rahmen entfällt — der Abschnitt hat schon einen. */
+  columns: 290px 3;
+  column-gap: 28px;
+  padding: 4px 0 0;
   font-family: var(--font-acars, "B612 Mono", "SF Mono", Menlo, Consolas, monospace);
 }
+
+:where(.bb-cl-abschnitt) { break-inside: avoid; margin: 0 0 14px; }
+
+/* Unter der Landung und im Bericht ohne Innenrahmen: der Abschnitt hat schon
+   einen. Spezifität (0,2,0) mit Absicht — im Client gilt daneben die Regel
+   `.bb-checkliste` aus bordbuch.css (Rahmen für den Bordbuch-Reiter), und
+   ein Gleichstand hinge von der Ladereihenfolge ab. */
+.bb-landung .bb-checkliste { border: 0; background: none; padding: 4px 0 0; }
 
 :where(.bb-cl-abschnitt) ul { list-style: none; margin: 0; padding: 0; }
 
@@ -68,6 +75,9 @@
 :where(.bb-cl-linie) { flex: 1; min-width: 10px; border-bottom: 1px dotted var(--text-dim, #8695a3); opacity: 0.6; transform: translateY(-3px); }
 
 :where(.bb-cl-wert) { white-space: nowrap; }
+
+/* Uhrzeit in der Zeile statt darunter (2.1.6). */
+:where(.bb-cl-zeit) { white-space: nowrap; font-size: var(--fs-200, 11px); color: var(--text-dim, #8695a3); margin-right: 6px; }
 
 :where(.bb-cl-zusatz) { font-size: var(--fs-200, 11px); color: var(--text-dim, #8695a3); padding: 0 0 4px 18px; font-family: var(--font-sans, system-ui, sans-serif); }
 
@@ -135,7 +145,6 @@
   color: var(--text);
 }
 
-:where(.bb-bericht) .bb-checkliste { background: none; border-color: var(--border); }
 
 :where(.bb-bericht) .bb-cl-zeile { color: var(--text); }
 

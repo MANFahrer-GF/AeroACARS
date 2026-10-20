@@ -11707,6 +11707,16 @@ pub struct ApproachStabilityV2 {
 /// mindestens 10 s am Stueck unterschritten wird. Die Grenze selbst
 /// bleibt hart; nur kurzes Ueberschiessen kostet nichts.
 const SINK_TOLERANZ_MS: i64 = 10_000;
+/// Dasselbe am 200-ft-Tor (2.1.6, SWR 255 EBBR 20.10.2026: −1180 fpm und
+/// 32 kt unter Vref, trotzdem „stabil bei 200 ft“). Unter 200 ft dauert der
+/// Anflug nur ~11–20 s; 10 s am Stueck waren dort nie zu erreichen, ein
+/// einzelnes Sample knapp ueber der Grenze riss den Lauf. Die Haelfte des
+/// Fensters genuegt.
+const DA_SINK_TOLERANZ_MS: i64 = 5_000;
+/// Fahrt am 200-ft-Tor: so weit unter der typischen Vref des Musters ist
+/// der Anflug nicht stabil, egal wie gleichmaessig er ist. Die Toleranz
+/// deckt leichte Gewichte (Vref liegt je nach Masse ±10 kt um den typischen Wert).
+const DA_VREF_TOLERANZ_KT: f32 = 15.0;
 
 /// Score-Version 24: Bezugs-Grundgeschwindigkeit der Sinkgrenze (kt).
 ///
@@ -11779,10 +11789,6 @@ fn laengster_sinklauf<'a>(
         }
     }
     bester
-}
-
-fn sinkrate_zu_lange_unter(samples: &[&ApproachBufferSample], gs_factor: f64) -> bool {
-    laengster_sinklauf(samples, gs_factor).is_some_and(|l| l.dauer_ms() >= SINK_TOLERANZ_MS)
 }
 
 /// Groesster Abstand zweier Samples innerhalb eines Laufs (Kadenz ~1 s).
@@ -12204,11 +12210,18 @@ fn compute_approach_stability_v2_mit_final(
 
     // 10) v0.5.26: Stable-At-DA (200 ft) — gleicher Composite-Check
     //     aber mit den Samples die im 200-ft-Gate lagen (= subset).
+    //     2.1.6 (Codex-Review): ohne die letzten 3 s vor dem Aufsetzen, wie
+    //     das 1000-ft-Tor — im Abfangen faellt die Fahrt planmaessig, und die
+    //     neue Vref-Pruefung soll das Abfangen nicht als „zu langsam“ lesen.
     let da_samples: Vec<&ApproachBufferSample> = buf
         .iter()
         .filter(|s| {
             let h = height_for(s);
-            h > 0.0 && h <= 200.0
+            let pre_flare = match td_ts {
+                Some(td) => (td - s.at).num_milliseconds() >= APPROACH_FLARE_CUTOFF_MS,
+                None => true,
+            };
+            h > 0.0 && h <= 200.0 && pre_flare
         })
         .collect();
     if da_samples.len() >= 3 {
@@ -12251,9 +12264,18 @@ fn compute_approach_stability_v2_mit_final(
         // (4° @143 kt ≈ −1013 fpm), sodass `stable_at_da` dort mathematisch NIE
         // erreichbar war. Jetzt winkel-korrekt → identisch zum 1000-ft-Gate.
         // Score-Version 24: dieselbe GS-abhaengige Grenze wie das Gate.
-        let da_excess_sink = sinkrate_zu_lange_unter(&da_samples, gs_factor);
+        // 2.1.6: unter 200 ft genuegt ein Sinklauf von 5 s (`DA_SINK_TOLERANZ_MS`),
+        // und die Fahrt muss in der Naehe der typischen Vref liegen — bisher
+        // zaehlte nur die Streuung, nicht die Lage (SWR 255: 32 kt zu langsam
+        // und −1180 fpm galten als „stabil bei 200 ft“). Ohne bekannte Vref
+        // (Muster unbekannt) entfaellt die Fahrtpruefung.
+        let da_excess_sink =
+            laengster_sinklauf(&da_samples, gs_factor).is_some_and(|l| l.dauer_ms() >= DA_SINK_TOLERANZ_MS);
+        let da_zu_langsam = konfig
+            .typical_vref_kt
+            .is_some_and(|vref| da_ias_mean < f64::from(vref - DA_VREF_TOLERANZ_KT));
         // Strenger Cutoff bei DA: jerk < 80, bank < 3°, ias < 8 kt
-        let da_stable = da_jerk < 80.0 && da_bank_sd < 3.0 && da_ias_sd < 8.0 && !da_excess_sink;
+        let da_stable = da_jerk < 80.0 && da_bank_sd < 3.0 && da_ias_sd < 8.0 && !da_excess_sink && !da_zu_langsam;
         out.stable_at_da = Some(da_stable);
     }
 
@@ -70374,6 +70396,70 @@ mod sim_pause_tests {
         let out_3_explicit =
             compute_approach_stability_v2(&buf, None, None, Some(3.0), None, Default::default());
         assert_eq!(out_3.stable_at_da, out_3_explicit.stable_at_da);
+    }
+
+    /// 2.1.6 — SWR 255 LFSB–EBBR (X-Plane A20N, 20.10.2026): unter 200 ft
+    /// 116 → 104 kt bei Vref 135 und −970…−1110 fpm, kein Abfangen, −1180 fpm
+    /// am Boden — und `stable_at_da` stand auf true, weil das Tor nur die
+    /// Streuung pruefte (ruhig, aber falsch) und der Sinklauf 10 s brauchte.
+    /// Die Samples sind das Flugprotokoll (2 s Raster, gleiche Werte).
+    #[test]
+    fn da_gate_swr255_zu_langsam_und_zu_steil_ist_nicht_stabil() {
+        let swr255 = || -> std::collections::VecDeque<ApproachBufferSample> {
+            [
+                approach_sample(190.0, 119.0, 116.0, -1093.0, 1.0, 1.0),
+                approach_sample(176.0, 118.0, 115.0, -1082.0, 1.0, 1.0),
+                approach_sample(163.0, 118.0, 114.0, -1062.0, 1.0, 1.0),
+                approach_sample(151.0, 117.0, 113.0, -1030.0, 1.0, 1.0),
+                approach_sample(139.0, 117.0, 112.0, -1003.0, 1.0, 1.0),
+                approach_sample(128.0, 116.0, 111.0, -993.0, 1.0, 1.0),
+                approach_sample(115.0, 115.0, 110.0, -985.0, 1.0, 1.0),
+                approach_sample(103.0, 115.0, 109.0, -974.0, 1.0, 1.0),
+                approach_sample(90.0, 114.0, 108.0, -969.0, 1.0, 1.0),
+                approach_sample(75.0, 113.0, 107.0, -996.0, 1.0, 1.0),
+                approach_sample(57.0, 113.0, 106.0, -1054.0, 1.0, 1.0),
+                approach_sample(39.0, 112.0, 105.0, -1092.0, 1.0, 1.0),
+                approach_sample(19.0, 112.0, 104.0, -1108.0, 1.0, 1.0),
+            ]
+            .into_iter()
+            .collect()
+        };
+        let a20n = KonfigKontext { typical_vref_kt: Some(137.0), ..Default::default() };
+        let out = compute_approach_stability_v2(&swr255(), None, None, None, None, a20n);
+        assert_eq!(out.stable_at_da, Some(false), "32 kt unter Vref und 8 s unter der Sinkgrenze: nicht stabil");
+        // Ohne bekannte Vref traegt der kurze Sinklauf allein.
+        let out_ohne_vref = compute_approach_stability_v2(&swr255(), None, None, None, None, Default::default());
+        assert_eq!(out_ohne_vref.stable_at_da, Some(false), "der 8-s-Sinklauf unter 200 ft genuegt");
+
+        // Gegenprobe: dieselbe Ruhe mit 3°-Sinkrate und Fahrt um Vref ist stabil.
+        let ruhig: std::collections::VecDeque<ApproachBufferSample> = (0..13)
+            .map(|i| approach_sample(190.0 - 14.0 * i as f32, 135.0, 137.0 - 0.3 * i as f32, -720.0 + 5.0 * (i % 3) as f32, 1.0, 1.0))
+            .collect();
+        let a20n = KonfigKontext { typical_vref_kt: Some(137.0), ..Default::default() };
+        assert_eq!(compute_approach_stability_v2(&ruhig, None, None, None, None, a20n).stable_at_da, Some(true));
+        // Nur 3 s unter der Grenze (ein Rempler) bleibt stabil; 12 kt unter Vref auch.
+        let rempler: std::collections::VecDeque<ApproachBufferSample> = (0..13)
+            .map(|i| approach_sample(190.0 - 14.0 * i as f32, 130.0, 126.0, if i == 6 { -1050.0 } else { -720.0 }, 1.0, 1.0))
+            .collect();
+        let a20n = KonfigKontext { typical_vref_kt: Some(137.0), ..Default::default() };
+        assert_eq!(compute_approach_stability_v2(&rempler, None, None, None, None, a20n).stable_at_da, Some(true));
+
+        // Codex-Review: Das Abfangen (letzte 3 s vor dem Aufsetzen) zaehlt am
+        // 200-ft-Tor nicht mit — sonst laese die Vref-Pruefung die planmaessig
+        // fallende Fahrt als „zu langsam“. Mit Aufsetz-Zeitpunkt faellt das
+        // letzte Sample (2 s davor) weg; ohne kippt es das Tor.
+        let abfangen: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(150.0, 135.0, 136.0, -720.0, 1.0, 1.0),
+            approach_sample(110.0, 135.0, 136.0, -715.0, 1.0, 1.0),
+            approach_sample(70.0, 135.0, 136.0, -720.0, 1.0, 1.0),
+            approach_sample(20.0, 100.0, 60.0, -200.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .collect();
+        let td = abfangen.back().unwrap().at + chrono::Duration::seconds(2);
+        let a20n = KonfigKontext { typical_vref_kt: Some(137.0), ..Default::default() };
+        assert_eq!(compute_approach_stability_v2(&abfangen, None, Some(td), None, None, a20n).stable_at_da, Some(true), "Abfangen ausgeschnitten");
+        assert_eq!(compute_approach_stability_v2(&abfangen, None, None, None, None, a20n).stable_at_da, Some(false), "ohne Schnitt kippt das Sample");
     }
 
     #[test]

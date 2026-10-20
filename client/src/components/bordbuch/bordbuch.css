@@ -70,15 +70,18 @@
 
 /* Variante A: Papier-Checkliste */
 .bb-checkliste {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 14px 22px;
+  /* 2.1.6: Mehrspaltensatz statt Raster — Spalten füllen sich der Reihe
+     nach und gleich hoch, keine Leerflächen neben „Start“ (siehe
+     bordbuchLandung.css). */
+  columns: 290px 3;
+  column-gap: 28px;
   padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface-2);
   font-family: var(--font-acars);
 }
+.bb-cl-abschnitt { break-inside: avoid; margin: 0 0 14px; }
 .bb-cl-abschnitt ul { list-style: none; margin: 0; padding: 0; }
 .bb-cl-kopf {
   display: flex;
@@ -116,6 +119,7 @@
 .bb-cl-name { white-space: nowrap; }
 .bb-cl-linie { flex: 1; min-width: 10px; border-bottom: 1px dotted var(--text-dim); opacity: 0.6; transform: translateY(-3px); }
 .bb-cl-wert { white-space: nowrap; }
+.bb-cl-zeit { white-space: nowrap; font-size: var(--fs-200, 11px); color: var(--text-dim); margin-right: 6px; }
 .bb-cl-zusatz { font-size: var(--fs-200, 11px); color: var(--text-dim); padding: 0 0 4px 18px; font-family: var(--font-sans, system-ui, sans-serif); }
 .bb-cl-nm { line-height: 1.4; }
 .bb-st-erledigt .bb-cl-wert { color: var(--sem-ok); }
@@ -299,7 +303,7 @@
   .bb-seite { padding: 1rem 16px 1.5rem; }
   .bb-listen-zeile { grid-template-columns: 64px 1fr 84px; }
   .bb-l-muster { display: none; }
-  .bb-checkliste { grid-template-columns: 1fr; padding: 12px; }
+  .bb-checkliste { columns: 1; padding: 12px; }
 }
 
 /* Bordbuch im Landungs-Tab und im PDF-Bericht */
