@@ -7867,6 +7867,11 @@ struct FlightStats {
     landung_payload: Option<Box<aeroacars_mqtt::TouchdownPayload>>,
     /// Hat der Broker die Landung bestätigt (PUBACK)?
     landung_live_bestaetigt: bool,
+    /// Was an live als Landung ging: Aufsetz-Zeitpunkt (ms) und Sinkrate.
+    /// Anders als `landung_payload` bleibt es nach der Bestätigung stehen —
+    /// beim Einreichen vergleicht [`landung_widerspricht_meldung`] den PIREP
+    /// damit (20.10.2026, EWG 1599: live −667, phpVMS −55). Nicht persistiert.
+    gemeldete_landung: Option<(i64, i32)>,
     /// Laeuft die Spuraufzeichnung gerade?
     ///
     /// Steuert den Aufzeichnungstakt (`adaptive_tick_interval_v2`). Ohne
@@ -7994,6 +7999,10 @@ struct FlightStats {
     /// selbst macht `step_flight_at`. Nicht persistiert: nach einem Neustart
     /// faengt der Takt ihn ueber `landing_at == None` in der Luft auf.
     landung_abgebrochen_phase_offen: bool,
+    /// Haltezeit-Uhr des Aufsetz-Samplers fuer dasselbe Wegsteigen
+    /// ([`steigflug_gehalten`]) — getrennt von `touch_and_go_pending_since`,
+    /// weil beide Faeden in eigenem Takt messen. Nicht persistiert.
+    sampler_steigflug_seit: Option<DateTime<Utc>>,
     /// Counter of go-arounds (rejected approaches without touchdown
     /// followed by climb-back-out). Surfaced as a custom PIREP field
     /// "Go-Arounds: N". Most flights = 0.
@@ -25507,6 +25516,68 @@ fn effective_touchdown_events(stats: &FlightStats) -> std::borrow::Cow<'_, [Touc
     std::borrow::Cow::Owned(events)
 }
 
+/// Die Aufsetzer fuer den PIREP (20.10.2026, Stück 3) — und daraus der
+/// haerteste. Nur bei mehr als einem Aufsetzer; bei einer einzigen Landung
+/// steht alles schon in den `landing_*`-Feldern. Ungemessene Aufsetzer
+/// (Sinkrate 0) zaehlen fuer den haertesten nicht.
+fn aufsetzer_fuer_pirep(
+    stats: &FlightStats,
+) -> (Vec<aeroacars_mqtt::AufsetzerEintrag>, Option<TouchdownEvent>) {
+    let events = effective_touchdown_events(stats);
+    if events.len() < 2 {
+        return (Vec::new(), None);
+    }
+    let eintraege = events
+        .iter()
+        .map(|e| aeroacars_mqtt::AufsetzerEintrag {
+            ts_ms: e.timestamp.timestamp_millis(),
+            art: match e.kind {
+                TouchdownKind::TouchAndGo => "touch_and_go",
+                TouchdownKind::FinalLanding => "final_landing",
+            },
+            vs_fpm: e.peak_vs_fpm,
+            g: e.peak_g,
+            lat: e.lat,
+            lon: e.lon,
+        })
+        .collect();
+    let haertester = events
+        .iter()
+        .filter(|e| e.peak_vs_fpm < 0.0)
+        .min_by(|a, b| a.peak_vs_fpm.total_cmp(&b.peak_vs_fpm))
+        .cloned();
+    (eintraege, haertester)
+}
+
+/// Weicht der PIREP von dem ab, was als Landung an live ging (20.10.2026,
+/// Stück 3)? Verglichen werden Aufsetz-Zeitpunkt (±2 s, wie der Recorder
+/// zuordnet) und Sinkrate (ganze fpm, wie `landing_vs_fpm`). `None`, wenn
+/// alles passt oder nichts gemeldet wurde (keine Leitung — dann holt das
+/// Flugprotokoll die Landung nach).
+///
+/// Entscheid Thomas: Bei Abweichung geht der PIREP trotzdem mit dem EINEN
+/// kanonischen Wert raus, der Recorder zieht live darauf und schlaegt Alarm.
+/// Hier: laut ins Protokoll.
+fn landung_widerspricht_meldung(stats: &FlightStats) -> Option<String> {
+    let (gemeldet_ts, gemeldet_vs) = stats.gemeldete_landung?;
+    let aufsetzen = stats.landing_at.or(stats.sampler_touchdown_at);
+    let vs = stats.canonical_landing_rate_fpm().map(|v| v.round() as i32);
+    match (aufsetzen, vs) {
+        (Some(ts), _) if (ts.timestamp_millis() - gemeldet_ts).abs() > 2_000 => Some(format!(
+            "live meldete den Aufsetzer {gemeldet_ts}, der PIREP traegt {}",
+            ts.timestamp_millis()
+        )),
+        (None, _) => Some(format!("live meldete den Aufsetzer {gemeldet_ts}, der PIREP hat keinen")),
+        (Some(_), Some(v)) if v != gemeldet_vs => Some(format!(
+            "live meldete {gemeldet_vs} fpm, der PIREP traegt {v} fpm"
+        )),
+        (Some(_), None) => Some(format!(
+            "live meldete {gemeldet_vs} fpm, der PIREP hat keine Sinkrate"
+        )),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod effective_touchdown_events_tests {
     use super::*;
@@ -25632,6 +25703,14 @@ fn build_pirep_payload(
     // kommt und egal, wer fragt.
     let sprit_auswertung = sprit_auswertung_einmal(&mut stats);
     let touchdown_count = effective_touchdown_events(&stats).len() as u32;
+    let (aufsetzer, haertester_aufsetzer) = aufsetzer_fuer_pirep(&stats);
+    if let Some(widerspruch) = landung_widerspricht_meldung(&stats) {
+        tracing::error!(
+            pirep_id = %flight.pirep_id,
+            %widerspruch,
+            "PIREP weicht von der Live-Meldung der Landung ab — der Recorder gleicht live an"
+        );
+    }
     // Divert-Marker via pure Helper: bestätigter Divert vs. bloßer Verdacht.
     let divert_markers = divert_payload_markers(
         effective_arr_icao,
@@ -25728,6 +25807,9 @@ fn build_pirep_payload(
             .and_then(|_| landing_scoring::master_deckel_wirksam(&payload_sub_scores)),
         go_around_count: Some(stats.go_around_count),
         touchdown_count: Some(touchdown_count),
+        aufsetzer,
+        haertester_aufsetzer_fpm: haertester_aufsetzer.as_ref().map(|e| e.peak_vs_fpm),
+        haertester_aufsetzer_g: haertester_aufsetzer.as_ref().map(|e| e.peak_g),
         dep_gate: stats.dep_gate.clone(),
         // Nur der Standplatz des Flughafens, gegen den wirklich eingereicht
         // wird — siehe `arr_gate_for`.
@@ -39896,16 +39978,23 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // eines GSX-Pushbacks AGL = 53.819 ft (PMDG 737) — ohne diese
                 // Pruefung loeschte so ein Wert nach der Landung den
                 // Landesprit, auch ganz ohne Absturz (Codex-QS 24.09.2026).
-                if dumped && echter_steigflug_nach_aufsetzen(&snap) {
+                let jetzt = Utc::now();
+                let steigt = dumped && echter_steigflug_nach_aufsetzen(&snap);
+                if steigflug_gehalten(&mut s.sampler_steigflug_seit, steigt, jetzt) {
                     // 20.10.2026 („Stück 3“): eine Stelle fuer das Abschliessen
                     // einer Landung beim Wegsteigen — dieselbe, die die
                     // Phasenlogik ruft. Bis 2.1.4 setzte dieser Block nur die
                     // Sampler-Haelfte zurueck; Note, Live-Meldung und Phase
-                    // blieben beim ersten Aufsetzer (EWG 1599). Hier sofort,
-                    // ohne Haltezeit: ein Aufprall Sekunden nach einem Hopser
-                    // braucht den neu scharfgeschalteten Sampler
-                    // (JGXrGwlwa4aOGZpn, siehe `touchdown_dump_faellig`).
-                    landung_beim_wegsteigen_abschliessen(&mut s, &snap, Utc::now());
+                    // blieben beim ersten Aufsetzer (EWG 1599).
+                    //
+                    // Mit derselben Haltezeit wie die Phasenlogik: Seit hier die
+                    // GANZE Landung abgeschlossen wird, haette ein einzelner
+                    // AGL-Ausreisser im Ausrollen eine echte Landung zum
+                    // Touch-and-Go gemacht. Eine Sekunde reicht noch fuer den
+                    // Aufprall Sekunden nach einem Hopser (JGXrGwlwa4aOGZpn,
+                    // siehe `touchdown_dump_faellig`) — der Dump selbst faellt
+                    // weiter sofort bei 100 ft.
+                    landung_beim_wegsteigen_abschliessen(&mut s, &snap, jetzt);
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
                         agl_ft = agl_now,
@@ -43311,6 +43400,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     );
                     {
                         let mut st = flight.stats.lock().expect("flight stats lock");
+                        st.gemeldete_landung = Some((payload.ts, payload.vs_fpm));
                         st.landung_payload = Some(Box::new(payload.clone()));
                         st.landung_live_bestaetigt = false;
                     }
@@ -47967,6 +48057,19 @@ fn wegsteigen_nach_aufsetzen(stats: &FlightStats, snap: &SimSnapshot, now: DateT
     }
 }
 
+/// Haltezeit fuer das Wegsteigen nach einem Aufsetzen: `true`, sobald
+/// `steigt` seit `TOUCH_AND_GO_DWELL_SECS` ununterbrochen gilt. Faellt die
+/// Bedingung weg, beginnt die Uhr neu. Fuer den Sampler-Faden, der sonst auf
+/// einen einzelnen Messwert hin abschloesse.
+fn steigflug_gehalten(seit: &mut Option<DateTime<Utc>>, steigt: bool, now: DateTime<Utc>) -> bool {
+    if !steigt {
+        *seit = None;
+        return false;
+    }
+    let beginn = *seit.get_or_insert(now);
+    (now - beginn).num_milliseconds() >= TOUCH_AND_GO_DWELL_SECS * 1_000
+}
+
 /// Schliesst die laufende Landung ab, weil das Flugzeug wieder wegsteigt
 /// (Touch-and-Go, abgebrochene Landung, Durchstart nach Bodenlauf) — die
 /// EINE Stelle dafuer (20.10.2026, „Stück 3“).
@@ -48059,6 +48162,15 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     stats.abfangen_gesichert = None;
     stats.landing_source = None;
     stats.touch_and_go_pending_since = None;
+    stats.sampler_steigflug_seit = None;
+    // Die Live-Meldung dieses Aufsetzers ist nicht die Landung des Flugs:
+    // weder vor dem Einreichen nachschicken (sonst kaeme der abgebrochene
+    // Aufsetzer als „die Landung“ an, wenn seine Meldung nicht bestaetigt
+    // war) noch als Vergleichswert fuer den PIREP nehmen. Den Touch-and-Go
+    // traegt der PIREP in `aufsetzer`.
+    stats.landung_payload = None;
+    stats.landung_live_bestaetigt = false;
+    stats.gemeldete_landung = None;
 
     // ── Die Landung des Aufsetz-Samplers ──────────────────────────────
     // Re-armiert den Sampler fuer den naechsten Aufsetzer (sein
@@ -54844,6 +54956,25 @@ fn build_pirep_fields(
             format!(" ({} T&G + final)", tg_count)
         };
         f.insert("Touchdowns".into(), format!("{}{}", total, suffix));
+    }
+    // 20.10.2026 (Stück 3, EWG 1599): der haerteste Aufsetzer, Zahl zuerst —
+    // die GSG-Wartung (Hard Landing Check) liest ihn neben `landing_rate`,
+    // damit ein harter Aufsetzer vor einem Durchstart nicht verschwindet.
+    if let (_, Some(h)) = aufsetzer_fuer_pirep(stats) {
+        let art = match h.kind {
+            TouchdownKind::TouchAndGo => "T&G",
+            TouchdownKind::FinalLanding => "Final",
+        };
+        f.insert(
+            "Hardest Touchdown".into(),
+            format!(
+                "{:.0} fpm ({} {}Z, G {:.2})",
+                h.peak_vs_fpm,
+                art,
+                h.timestamp.format("%H:%M"),
+                h.peak_g
+            ),
+        );
     }
     if stats.go_around_count > 0 {
         f.insert("Go-Arounds".into(), stats.go_around_count.to_string());
@@ -88017,6 +88148,111 @@ mod landung_episoden_tests {
             assert_eq!(st.landing_at, Some(td), "{phase:?}");
             assert!(!st.landung_abgebrochen_phase_offen, "{phase:?}");
         }
+    }
+
+    /// Der Sampler misst mit 50 Hz. Ein einzelner AGL-Ausreisser im Ausrollen
+    /// darf die Landung nicht abschliessen — erst eine Sekunde am Stueck.
+    #[test]
+    fn einzelner_ausreisser_schliesst_keine_landung_ab() {
+        let t = t0();
+        let ms = |n: i64| t + chrono::Duration::milliseconds(n);
+        let mut seit = None;
+        assert!(!steigflug_gehalten(&mut seit, true, ms(0)), "erster Messwert");
+        assert!(!steigflug_gehalten(&mut seit, false, ms(20)), "Ausreisser vorbei");
+        assert_eq!(seit, None, "Uhr beginnt neu");
+        for n in 0..50 {
+            assert!(!steigflug_gehalten(&mut seit, true, ms(1_000 + 20 * n)), "nach {} ms", 20 * n);
+        }
+        assert!(steigflug_gehalten(&mut seit, true, ms(2_000)), "eine Sekunde am Stueck");
+    }
+
+    fn ev(sek: i64, art: TouchdownKind, vs: f32, g: f32) -> TouchdownEvent {
+        TouchdownEvent {
+            timestamp: t0() + chrono::Duration::seconds(sek),
+            kind: art,
+            peak_vs_fpm: vs,
+            peak_g: g,
+            lat: 28.445,
+            lon: -13.8637,
+            sub_bounces: 0,
+        }
+    }
+
+    /// Ein Flug, eine Landung: nichts Zusaetzliches im PIREP (byte-gleich zu
+    /// vorher). Touch-and-Go + Landung: beide Eintraege, der haerteste ist
+    /// der Touch-and-Go — und er steht als Zahl vorn im phpVMS-Feld, das die
+    /// GSG-Wartung liest.
+    #[test]
+    fn haertester_aufsetzer_kommt_in_den_pirep() {
+        let flight = fixture();
+        let mut st = flight.stats.lock().unwrap();
+        st.touchdown_events.push(ev(0, TouchdownKind::FinalLanding, -180.0, 1.2));
+        let (liste, h) = aufsetzer_fuer_pirep(&st);
+        assert!(liste.is_empty());
+        assert!(h.is_none());
+        assert!(!build_pirep_fields(&flight, &st, "YYYY").contains_key("Hardest Touchdown"));
+
+        st.touchdown_events.clear();
+        st.touchdown_events.push(ev(0, TouchdownKind::TouchAndGo, -667.0, 1.71));
+        st.touchdown_events.push(ev(960, TouchdownKind::FinalLanding, -55.0, 1.10));
+        let (liste, h) = aufsetzer_fuer_pirep(&st);
+        let arten: Vec<_> = liste.iter().map(|e| e.art).collect();
+        assert_eq!(arten, vec!["touch_and_go", "final_landing"]);
+        let h = h.expect("haertester");
+        assert!((h.peak_vs_fpm + 667.0).abs() < 0.5);
+        assert!((h.peak_g - 1.71).abs() < 0.01);
+        let feld = build_pirep_fields(&flight, &st, "YYYY")
+            .remove("Hardest Touchdown")
+            .expect("Feld fuer die Wartung");
+        assert!(feld.starts_with("-667 fpm"), "{feld}");
+        assert!(feld.contains("T&G"), "{feld}");
+    }
+
+    /// Ein ungemessener Aufsetzer (Sinkrate 0) ist nie der haerteste.
+    #[test]
+    fn ungemessener_aufsetzer_ist_nicht_der_haerteste() {
+        let flight = fixture();
+        let mut st = flight.stats.lock().unwrap();
+        st.touchdown_events.push(ev(0, TouchdownKind::TouchAndGo, 0.0, 0.0));
+        st.touchdown_events.push(ev(600, TouchdownKind::FinalLanding, -240.0, 1.3));
+        let (_, h) = aufsetzer_fuer_pirep(&st);
+        assert!((h.expect("haertester").peak_vs_fpm + 240.0).abs() < 0.5);
+    }
+
+    /// Vergleich PIREP gegen Live-Meldung: gleich → nichts; andere Sinkrate
+    /// oder anderer Aufsetzer → Widerspruch. Ohne Meldung kein Vergleich.
+    #[test]
+    fn widerspruch_zur_live_meldung_wird_erkannt() {
+        let flight = fixture();
+        let td = t0();
+        gerade_aufgesetzt(&flight, td);
+        let mut st = flight.stats.lock().unwrap();
+        assert_eq!(landung_widerspricht_meldung(&st), None, "nichts gemeldet");
+        st.gemeldete_landung = Some((td.timestamp_millis(), -667));
+        assert_eq!(landung_widerspricht_meldung(&st), None, "gleich");
+        st.gemeldete_landung = Some((td.timestamp_millis() + 1_500, -667));
+        assert_eq!(landung_widerspricht_meldung(&st), None, "±2 s wie der Recorder");
+        st.gemeldete_landung = Some((td.timestamp_millis(), -55));
+        assert!(landung_widerspricht_meldung(&st).is_some(), "andere Sinkrate");
+        st.gemeldete_landung = Some((td.timestamp_millis() - 960_000, -667));
+        assert!(landung_widerspricht_meldung(&st).is_some(), "anderer Aufsetzer");
+    }
+
+    /// Die Live-Meldung eines abgebrochenen Aufsetzers ist nicht die
+    /// Landung: nicht nachschicken, nicht vergleichen.
+    #[test]
+    fn abschluss_vergisst_die_live_meldung_des_abgebrochenen_aufsetzers() {
+        let flight = fixture();
+        let td = t0();
+        gerade_aufgesetzt(&flight, td);
+        let mut st = flight.stats.lock().unwrap();
+        st.gemeldete_landung = Some((td.timestamp_millis(), -667));
+        st.landung_live_bestaetigt = false;
+        let s = snap(2_000.0, 400.0, 900.0, 140.0, false, 2);
+        landung_beim_wegsteigen_abschliessen(&mut st, &s, td + chrono::Duration::seconds(40));
+        assert!(st.landung_payload.is_none());
+        assert_eq!(st.gemeldete_landung, None);
+        assert_eq!(landung_widerspricht_meldung(&st), None);
     }
 
     /// Wind, Eigengeschwindigkeit und Sprit gehoeren zum abgebrochenen
