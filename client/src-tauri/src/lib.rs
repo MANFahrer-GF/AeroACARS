@@ -54957,24 +54957,14 @@ fn build_pirep_fields(
         };
         f.insert("Touchdowns".into(), format!("{}{}", total, suffix));
     }
-    // 20.10.2026 (Stück 3, EWG 1599): der haerteste Aufsetzer, Zahl zuerst —
-    // die GSG-Wartung (Hard Landing Check) liest ihn neben `landing_rate`,
-    // damit ein harter Aufsetzer vor einem Durchstart nicht verschwindet.
+    // 20.10.2026 (Stück 3, EWG 1599): der haerteste Aufsetzer — die
+    // GSG-Wartung (Hard Landing Check) liest ihn neben "Landing Rate", damit
+    // ein harter Aufsetzer vor einem Durchstart nicht verschwindet. NUR die
+    // Zahl, aus demselben Grund wie bei "Landing Rate" (v0.5.16): die
+    // Wartung prueft `is_numeric()`. Zeit, Art und G stehen in den Notizen
+    // (Abschnitt TOUCHDOWNS).
     if let (_, Some(h)) = aufsetzer_fuer_pirep(stats) {
-        let art = match h.kind {
-            TouchdownKind::TouchAndGo => "T&G",
-            TouchdownKind::FinalLanding => "Final",
-        };
-        f.insert(
-            "Hardest Touchdown".into(),
-            format!(
-                "{:.0} fpm ({} {}Z, G {:.2})",
-                h.peak_vs_fpm,
-                art,
-                h.timestamp.format("%H:%M"),
-                h.peak_g
-            ),
-        );
+        f.insert("Hardest Touchdown".into(), format!("{:.0}", h.peak_vs_fpm));
     }
     if stats.go_around_count > 0 {
         f.insert("Go-Arounds".into(), stats.go_around_count.to_string());
@@ -87835,10 +87825,20 @@ mod phasen_korpus_replay {
             }
             let mut bogen: Vec<(String, String)> = Vec::new();
             let mut anflug_puffer: Vec<serde_json::Value> = Vec::new();
+            // Stück 3 (20.10.2026): wie lange stand die Phase hoechstens am
+            // Stueck auf `Landing`, waehrend das Flugzeug ueber 300 ft flog?
+            let mut luft_landing_seit: Option<DateTime<Utc>> = None;
+            let mut luft_landing_max_s = 0_i64;
             for (t, snap) in &a.positionen {
                 let vorher = flight.stats.lock().unwrap().phase;
                 let _ = phasen_takt(&flight, snap, *t);
                 let stats = flight.stats.lock().unwrap();
+                if stats.phase == FlightPhase::Landing && !snap.on_ground && snap.altitude_agl_ft > 300.0 {
+                    let seit = *luft_landing_seit.get_or_insert(*t);
+                    luft_landing_max_s = luft_landing_max_s.max((*t - seit).num_seconds());
+                } else {
+                    luft_landing_seit = None;
+                }
                 if stats.phase != vorher || bogen.is_empty() {
                     if stats.phase == FlightPhase::Landing && vorher != FlightPhase::Landing {
                         let mut f = fingerabdruck(&stats.approach_buffer);
@@ -87871,6 +87871,12 @@ mod phasen_korpus_replay {
                 "go_arounds_neu": stats.go_around_count,
                 "go_arounds_pirep": a.go_arounds_pirep,
                 "anflug_puffer": anflug_puffer,
+                "luft_landing_max_s": luft_landing_max_s,
+                "aufsetzer": stats
+                    .touchdown_events
+                    .iter()
+                    .map(|e| format!("{:?}@{}", e.kind, e.timestamp.format("%H:%M:%S")))
+                    .collect::<Vec<_>>(),
             });
             writeln!(w, "{zeile}").expect("schreiben");
         }
@@ -88204,8 +88210,8 @@ mod landung_episoden_tests {
         let feld = build_pirep_fields(&flight, &st, "YYYY")
             .remove("Hardest Touchdown")
             .expect("Feld fuer die Wartung");
-        assert!(feld.starts_with("-667 fpm"), "{feld}");
-        assert!(feld.contains("T&G"), "{feld}");
+        // Reine Zahl wie "Landing Rate" — die Wartung prueft is_numeric().
+        assert_eq!(feld, "-667");
     }
 
     /// Ein ungemessener Aufsetzer (Sinkrate 0) ist nie der haerteste.
