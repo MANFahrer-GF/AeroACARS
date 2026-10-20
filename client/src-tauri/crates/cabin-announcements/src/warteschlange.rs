@@ -195,6 +195,15 @@ impl Warteschlange {
         // „Ende des Service“ kommt vor der Sinkflug-Ansage des Kapitäns, wenn
         // beide zugleich fällig sind (Sinkflugbeginn) und es spielbereit ist.
         let ende_service_zuerst = self.eintraege.iter().any(|e| e.slot == Slot::EndeService && bereit(e.slot));
+        // „Prepare for landing“ überholt die wartende Landevorbereitung der
+        // Kabine nicht (Thomas 20.10.2026, Variante A). Nicht in der Ruhephase
+        // (die Kabine darf dort nicht sprechen) und im Anflug nur, solange
+        // ihr Ton fertig ist – sonst hinge das Kommando bis zum Endanflug.
+        let kabine_vor_kommando = !ruhephase
+            && self
+                .eintraege
+                .iter()
+                .any(|e| e.slot == Slot::KabineSinkflug && (bereit(e.slot) || rang(phase) < rang(FlightPhase::Approach)));
         let idx = self
             .eintraege
             .iter()
@@ -210,6 +219,7 @@ impl Warteschlange {
             .filter(|(_, e)| !(tueren_zu_gruppe(e.slot) && (boarding_wartet || abgeschlossen_wartet)))
             .filter(|(_, e)| !(e.slot == Slot::EndeService && service_wartet))
             .filter(|(_, e)| !(e.slot == Slot::KapitaenSinkflug && ende_service_zuerst))
+            .filter(|(_, e)| !(e.slot == Slot::KommandoLandungVorbereiten && kabine_vor_kommando))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
             .map(|(i, _)| i)?;
@@ -304,13 +314,49 @@ mod tests {
         w.ansage_zu_ende(100);
         w.aufnehmen([
             f(Slot::KabineSinkflug, Verfall::AbPhase(Final)),
-            f(Slot::KommandoLandungVorbereiten, Verfall::AbPhase(Landing)),
+            // Nicht „prepare for landing“: Das wartet seit 20.10. auf die Kabine.
+            f(Slot::KommandoPlaetzeLandung, Verfall::AbPhase(Landing)),
         ]);
         assert!(w.in_pause(150));
         // Kommando darf sofort, die Kabine wartet die Pause ab.
-        assert_eq!(w.naechstes(150, Descent, false), Some(Slot::KommandoLandungVorbereiten));
+        assert_eq!(w.naechstes(150, Descent, false), Some(Slot::KommandoPlaetzeLandung));
         assert_eq!(w.naechstes(150, Descent, false), None, "Kabine wartet");
         assert_eq!(w.naechstes(100 + PAUSE_NACH_ANSAGE_S, Descent, false), Some(Slot::KabineSinkflug));
+    }
+
+    /// Thomas 20.10.2026, Variante A: „Prepare for landing“ überholt die
+    /// wartende Landevorbereitung der Kabine nicht – trotz Kommando-Vorrang.
+    /// Ausnahmen: Ruhephase (Kabine darf nicht sprechen) und Anflug mit noch
+    /// nicht fertigem Kabinen-Ton (sonst hinge das Kommando bis Final).
+    #[test]
+    fn prepare_for_landing_ueberholt_die_kabine_nicht() {
+        let beide = || {
+            let mut w = Warteschlange::default();
+            w.aufnehmen([
+                f(Slot::KommandoLandungVorbereiten, Verfall::AbPhase(Landing)),
+                f(Slot::KabineSinkflug, Verfall::AbPhase(Final)),
+            ]);
+            w
+        };
+        let mut w = beide();
+        assert_eq!(w.naechstes(0, Descent, false), Some(Slot::KabineSinkflug));
+        assert_eq!(w.naechstes(0, Descent, false), Some(Slot::KommandoLandungVorbereiten));
+        // Kabinen-Ton im Sinkflug noch nicht fertig: Kommando wartet mit.
+        let mut t = beide();
+        assert_eq!(t.naechstes_bereit(0, Descent, false, |s| s != Slot::KabineSinkflug), None);
+        // Im Anflug ohne fertigen Kabinen-Ton: Kommando geht.
+        let mut a = beide();
+        assert_eq!(a.naechstes_bereit(0, Approach, false, |s| s != Slot::KabineSinkflug), Some(Slot::KommandoLandungVorbereiten));
+        // Ruhephase: Kabine darf nicht, Kommando geht.
+        let mut r = beide();
+        assert_eq!(r.naechstes(0, Descent, true), Some(Slot::KommandoLandungVorbereiten));
+        // Pause nach einer Ansage: Die Kabine wartet sie ab, das Kommando
+        // zieht trotz Kommando-Ausnahme nicht vorbei.
+        let mut p = beide();
+        p.ansage_spielt_bis(100);
+        p.ansage_zu_ende(100);
+        assert_eq!(p.naechstes(150, Descent, false), None);
+        assert_eq!(p.naechstes(100 + PAUSE_NACH_ANSAGE_S, Descent, false), Some(Slot::KabineSinkflug));
     }
 
     #[test]
