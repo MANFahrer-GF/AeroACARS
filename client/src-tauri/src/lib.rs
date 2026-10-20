@@ -12214,11 +12214,18 @@ fn compute_approach_stability_v2_mit_final(
 
     // 10) v0.5.26: Stable-At-DA (200 ft) — gleicher Composite-Check
     //     aber mit den Samples die im 200-ft-Gate lagen (= subset).
+    //     2.1.6 (Codex-Review): ohne die letzten 3 s vor dem Aufsetzen, wie
+    //     das 1000-ft-Tor — im Abfangen faellt die Fahrt planmaessig, und die
+    //     neue Vref-Pruefung soll das Abfangen nicht als „zu langsam“ lesen.
     let da_samples: Vec<&ApproachBufferSample> = buf
         .iter()
         .filter(|s| {
             let h = height_for(s);
-            h > 0.0 && h <= 200.0
+            let pre_flare = match td_ts {
+                Some(td) => (td - s.at).num_milliseconds() >= APPROACH_FLARE_CUTOFF_MS,
+                None => true,
+            };
+            h > 0.0 && h <= 200.0 && pre_flare
         })
         .collect();
     if da_samples.len() >= 3 {
