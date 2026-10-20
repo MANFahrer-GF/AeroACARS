@@ -47679,6 +47679,7 @@ fn kabinen_schritt(
         hoehe_agl_ft: Some(snap.altitude_agl_ft),
         triebwerke_an: Some(snap.engines_running > 0),
         zfw_kg: stats.last_zfw_kg.map(f64::from),
+        planned_zfw_kg: stats.planned_zfw_kg.map(f64::from),
         // „Rollt“ für „Plätze für den Start“ (2.1.1 B, ab 3 kt).
         bodengeschwindigkeit_kt: Some(f64::from(snap.groundspeed_kt)),
     };

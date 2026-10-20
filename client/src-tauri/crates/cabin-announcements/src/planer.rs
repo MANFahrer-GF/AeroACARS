@@ -74,6 +74,8 @@ pub struct Tick {
     pub triebwerke_an: Option<bool>,
     /// Leergewicht mit Zuladung (ZFW) im Sim, kg; `None` = unbekannt.
     pub zfw_kg: Option<f64>,
+    /// Geplanter ZFW aus dem OFP, kg; `None` = kein OFP.
+    pub planned_zfw_kg: Option<f64>,
     /// Geschwindigkeit über Grund (kt); `None` = unbekannt (2.1.1, „rollt“).
     pub bodengeschwindigkeit_kt: Option<f64>,
 }
@@ -239,6 +241,15 @@ pub const PLAETZE_LANDUNG_AGL_FT: f64 = 2_000.0;
 pub const BOARDING_ZULADUNG_KG: f64 = 200.0;
 /// … und das ununterbrochen so lange (Sekunden).
 pub const BOARDING_ZULADUNG_S: i64 = 30;
+/// Boarding-Begrüßung auch, wenn der ZFW so nah am geplanten ZFW des OFP
+/// liegt (der größere der beiden Werte) … (20.10.2026, Peter SVA 179: „Load
+/// instant“ von der Standardladung des Add-ons herunter auf den Plan; an 430
+/// Flügen gemessen: ohne Boarding-Musik 16 % statt 42 %, siehe
+/// handoff/2026-10-20-boarding-erkennung.md)
+pub const BOARDING_OFP_KG: f64 = 300.0;
+pub const BOARDING_OFP_ANTEIL: f64 = 0.01;
+/// … und das ununterbrochen so lange (Sekunden).
+pub const BOARDING_OFP_S: i64 = 60;
 /// „Rollt“ für „Plätze für den Start“ ab dieser Geschwindigkeit über Grund
 /// (Thomas 19.10.2026, Entscheidung 3).
 pub const ROLLT_AB_KT: f64 = 3.0;
@@ -292,6 +303,14 @@ pub struct Planer {
     /// Seit wann die Zuladung ununterbrochen über Bezug +
     /// [`BOARDING_ZULADUNG_KG`] liegt; fällt sie darunter, wieder `None`.
     zuladung_steigt_seit: Option<i64>,
+    /// Seit wann der ZFW ununterbrochen am geplanten ZFW liegt
+    /// ([`BOARDING_OFP_KG`], [`BOARDING_OFP_ANTEIL`]).
+    am_ofp_seit: Option<i64>,
+    /// Höchster ZFW seit dem Bezug; daran wird Entladen gemessen.
+    zfw_hoch_kg: Option<f64>,
+    /// Seit wann der ZFW ununterbrochen [`BOARDING_ZULADUNG_KG`] unter dem
+    /// Höchstwert liegt (Entladen, erst nach [`BOARDING_ZULADUNG_S`] gültig).
+    zuladung_sinkt_seit: Option<i64>,
     /// Die Abhebezeit ist echt (aus den Flugdaten oder im Steigflug
     /// beobachtet), nicht erst beim Wiedereinstieg im Reiseflug gesetzt.
     abheben_gesehen: bool,
@@ -614,7 +633,28 @@ impl Planer {
             if self.zfw_start_kg.is_none() {
                 self.zfw_start_kg = t.zfw_kg;
             }
-            let ueber = t.zfw_kg.zip(self.zfw_start_kg).is_some_and(|(z, s)| z >= s + BOARDING_ZULADUNG_KG);
+            // Sinkt die Zuladung unter den Höchstwert, wird entladen
+            // (Standardladung des Add-ons weg, danach GSX): Das ist kein
+            // Boarding. Hält das Absinken 30 s, ist der niedrigere Wert der
+            // neue Bezug für den Anstieg; ein einzelner Ausreißer nach unten
+            // ändert nichts (20.10.2026, Codex).
+            let mut entlaedt = false;
+            if let (Some(z), Some(s)) = (t.zfw_kg, self.zfw_start_kg) {
+                let hoch = self.zfw_hoch_kg.map_or(s.max(z), |h| h.max(z));
+                self.zfw_hoch_kg = Some(hoch);
+                if z <= hoch - BOARDING_ZULADUNG_KG {
+                    entlaedt = true;
+                    let ab = *self.zuladung_sinkt_seit.get_or_insert(t.jetzt);
+                    if t.jetzt - ab >= BOARDING_ZULADUNG_S {
+                        self.zfw_start_kg = Some(z);
+                        self.zfw_hoch_kg = Some(z);
+                        self.zuladung_sinkt_seit = None;
+                    }
+                } else {
+                    self.zuladung_sinkt_seit = None;
+                }
+            }
+            let ueber = !entlaedt && t.zfw_kg.zip(self.zfw_start_kg).is_some_and(|(z, s)| z >= s + BOARDING_ZULADUNG_KG);
             if ueber {
                 let ab = *self.zuladung_steigt_seit.get_or_insert(t.jetzt);
                 if t.jetzt - ab >= BOARDING_ZULADUNG_S {
@@ -623,6 +663,21 @@ impl Planer {
             } else {
                 // Ausreißer: Die 30 s beginnen beim nächsten Anstieg von vorn.
                 self.zuladung_steigt_seit = None;
+            }
+            // Zuladung passt zum OFP: Das Flugzeug ist beladen, auch wenn es
+            // schon beim Start von AeroACARS voll war oder per Sofortladung
+            // nach unten auf den Plan ging.
+            let am_ofp = t
+                .zfw_kg
+                .zip(t.planned_zfw_kg)
+                .is_some_and(|(z, p)| p > 0.0 && (z - p).abs() <= (p * BOARDING_OFP_ANTEIL).max(BOARDING_OFP_KG));
+            if am_ofp {
+                let ab = *self.am_ofp_seit.get_or_insert(t.jetzt);
+                if t.jetzt - ab >= BOARDING_OFP_S {
+                    self.melde(&mut aus, Slot::Boarding, Verfall::AbPhase(TakeoffRoll));
+                }
+            } else {
+                self.am_ofp_seit = None;
             }
         }
         if let Some(abw) = t.abweichung_off_block_min {
@@ -1505,6 +1560,110 @@ mod tests {
             ]
         );
         assert!(p.entfallene_abholen().is_empty(), "nichts entfällt");
+    }
+
+    fn mit_ofp(mut t: Tick, plan: f64) -> Tick {
+        t.planned_zfw_kg = Some(plan);
+        t
+    }
+
+    /// Peter SVA 179 (20.10.2026, Flugprotokoll wZR0goDQ): beim Start die
+    /// Standardladung des Add-ons (237.682 kg), nach 12,5 min „Load instant“
+    /// herunter auf den Plan (230.463 kg), Beacon nach 23,2 min. Bisher kam
+    /// die Begrüßung erst am Beacon (keine Boarding-Musik); jetzt 60 s nach
+    /// der Sofortladung.
+    #[test]
+    fn peter_sva179_sofortladung_auf_den_plan_begruesst() {
+        let plan = 230_463.0;
+        let mut p = Planer::fortsetzen(flug(400), Boarding);
+        let mut takte: Vec<Tick> = (0..750).step_by(10).map(|s| mit_ofp(gate(s, Some(237_682.0), 2, false), plan)).collect();
+        takte.extend((750..1390).step_by(10).map(|s| mit_ofp(gate(s, Some(plan), 2, false), plan)));
+        let z = melde_zeiten(&mut p, takte);
+        assert_eq!(z, vec![(750 + BOARDING_OFP_S, Slot::Boarding)], "60 s nach der Sofortladung, nicht erst am Beacon");
+        let f = slots(p.tick(&mit_ofp(gate(1390, Some(plan), 2, true), plan)));
+        assert!(!f.contains(&Slot::Boarding) && f.contains(&Slot::BegruessungTuerenZu), "{f:?}");
+    }
+
+    /// 7LRplO7E (Pilot 30): beladen gestartet (nicht am Plan), nach 7,9 min
+    /// entladen, danach GSX-Boarding. Die Begrüßung kommt mit dem Boarding,
+    /// nicht beim Start und nicht beim Entladen. Ohne neuen Bezug nach dem
+    /// Entladen käme sie erst, wenn GSX die alte Startladung übertrifft.
+    #[test]
+    fn entladen_setzt_den_bezug_neu_begruessung_mit_dem_boarding() {
+        let plan = 39_600.0;
+        let mut p = Planer::fortsetzen(flug(90), Boarding);
+        let mut takte: Vec<Tick> = (0..480).step_by(10).map(|s| mit_ofp(gate(s, Some(36_400.0), 2, false), plan)).collect();
+        takte.extend((480..1260).step_by(10).map(|s| mit_ofp(gate(s, Some(27_600.0), 2, false), plan)));
+        // GSX: alle 60 s 500 kg mehr.
+        takte.extend((1260..1500).step_by(10).map(|s| mit_ofp(gate(s, Some(27_600.0 + 500.0 * f64::from(((s - 1200) / 60) as i32)), 2, false), plan)));
+        let z = melde_zeiten(&mut p, takte);
+        assert_eq!(z, vec![(1260 + BOARDING_ZULADUNG_S, Slot::Boarding)]);
+    }
+
+    /// Codex 20.10.2026: Entladen zählt vom Höchstwert, nicht vom Start
+    /// (50 t → 55 t für 20 s → 54 t: der laufende Anstieg zählt nicht weiter);
+    /// ein einzelner Ausreißer nach unten setzt keinen neuen Bezug.
+    #[test]
+    fn entladen_vom_hoechstwert_und_ausreisser_nach_unten() {
+        let mut p = Planer::fortsetzen(flug(60), Boarding);
+        let mut takte = vec![gate(0, Some(50_000.0), 0, false)];
+        takte.extend((10..=20).step_by(10).map(|s| gate(s, Some(55_000.0), 0, false)));
+        takte.extend((30..=200).step_by(10).map(|s| gate(s, Some(54_000.0 - f64::from(s as i32) * 10.0), 0, false)));
+        assert!(melde_zeiten(&mut p, takte).is_empty(), "während des Entladens keine Begrüßung");
+        // Ausreißer: ein Takt 300 kg tiefer, dann zurück → Bezug bleibt 60 t.
+        let mut q = Planer::fortsetzen(flug(60), Boarding);
+        let mut takte: Vec<Tick> = (0..=50).step_by(10).map(|s| gate(s, Some(60_000.0), 0, false)).collect();
+        takte.push(gate(60, Some(59_700.0), 0, false));
+        takte.extend((70..=200).step_by(10).map(|s| gate(s, Some(60_000.0), 0, false)));
+        assert!(melde_zeiten(&mut q, takte).is_empty(), "Rückkehr nach dem Ausreißer ist kein Anstieg");
+    }
+
+    /// Kleiner Plan: dort gilt die Mindesttoleranz 300 kg (1 % wären 200 kg),
+    /// und die 60 s am Stück bei laufender Abtastung.
+    #[test]
+    fn am_ofp_mindesttoleranz_300_kg() {
+        let plan = 20_000.0;
+        let lauf = |zfw: f64| {
+            let mut p = Planer::fortsetzen(flug(30), Boarding);
+            melde_zeiten(&mut p, (0..=60).step_by(10).map(|s| mit_ofp(gate(s, Some(zfw), 0, false), plan)))
+        };
+        assert_eq!(lauf(20_290.0), vec![(60, Slot::Boarding)], "290 kg über dem Plan: innerhalb");
+        assert_eq!(lauf(19_700.0), vec![(60, Slot::Boarding)], "genau 300 kg darunter: innerhalb");
+        assert!(lauf(20_310.0).is_empty(), "310 kg: außerhalb");
+    }
+
+    /// 51KwpLwM (Pilot 30): 45 min leer am Gate, OFP vorhanden → nichts bis
+    /// zum Beacon (kein Zeit-Rückfall, ein leeres Flugzeug wird nicht begrüßt).
+    #[test]
+    fn leer_am_gate_mit_ofp_begruesst_erst_am_beacon() {
+        let plan = 240_000.0;
+        let mut p = Planer::fortsetzen(flug(500), Boarding);
+        let takte: Vec<Tick> = (0..2730).step_by(10).map(|s| mit_ofp(gate(s, Some(184_600.0), 2, false), plan)).collect();
+        assert!(melde_zeiten(&mut p, takte).is_empty());
+        let f = slots(p.tick(&mit_ofp(gate(2730, Some(184_600.0), 2, true), plan)));
+        assert_eq!(&f[..2], &[Slot::Boarding, Slot::BoardingAbgeschlossen], "{f:?}");
+    }
+
+    /// Am Plan, aber nur 50 s (Durchgang beim Laden) → nichts; die 60 s
+    /// zählen beim nächsten Erreichen von vorn. Grenze der Toleranz:
+    /// max(300 kg, 1 %).
+    #[test]
+    fn am_ofp_braucht_60_s_am_stueck_und_die_toleranz() {
+        let plan = 60_000.0;
+        // Toleranz: 1 % = 600 kg (größer als 300 kg).
+        let mut aussen = Planer::fortsetzen(flug(60), Boarding);
+        aussen.tick(&mit_ofp(gate(0, Some(60_700.0), 0, false), plan));
+        assert!(aussen.tick(&mit_ofp(gate(70, Some(60_700.0), 0, false), plan)).is_empty(), "700 kg über dem Plan");
+        let mut innen = Planer::fortsetzen(flug(60), Boarding);
+        innen.tick(&mit_ofp(gate(0, Some(60_550.0), 0, false), plan));
+        assert_eq!(slots(innen.tick(&mit_ofp(gate(60, Some(60_550.0), 0, false), plan))), vec![Slot::Boarding], "550 kg");
+        // 40 s am Plan, dann weg vom Plan (nach unten, also kein Anstieg) → nichts.
+        let mut p = Planer::fortsetzen(flug(60), Boarding);
+        let mut takte: Vec<Tick> = (0..=40).step_by(10).map(|s| mit_ofp(gate(s, Some(60_100.0), 0, false), plan)).collect();
+        takte.push(mit_ofp(gate(50, Some(58_000.0), 0, false), plan));
+        assert!(melde_zeiten(&mut p, takte).is_empty());
+        assert!(p.tick(&mit_ofp(gate(60, Some(60_000.0), 0, false), plan)).is_empty(), "neuer Anlauf beginnt");
+        assert_eq!(slots(p.tick(&mit_ofp(gate(120, Some(60_000.0), 0, false), plan))), vec![Slot::Boarding], "60 s ab dem neuen Erreichen");
     }
 
     /// 2.1.1 A: Zuladung kurz über der Schwelle, dann zurück → nichts; ein
