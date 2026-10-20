@@ -39979,7 +39979,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // Pruefung loeschte so ein Wert nach der Landung den
                 // Landesprit, auch ganz ohne Absturz (Codex-QS 24.09.2026).
                 let jetzt = Utc::now();
-                let steigt = dumped && echter_steigflug_nach_aufsetzen(&snap);
+                let steigt = dumped && wegsteigen_mit_fahrt(&snap);
                 if steigflug_gehalten(&mut s.sampler_steigflug_seit, steigt, jetzt) {
                     // 20.10.2026 („Stück 3“): eine Stelle fuer das Abschliessen
                     // einer Landung beim Wegsteigen — dieselbe, die die
@@ -48048,13 +48048,37 @@ fn wegsteigen_nach_aufsetzen(stats: &FlightStats, snap: &SimSnapshot, now: DateT
     if !offen || !is_touchdown_capturable_phase(stats.phase, stats.was_airborne) {
         return false;
     }
-    if !echter_steigflug_nach_aufsetzen(snap) {
+    if !wegsteigen_mit_fahrt(snap) {
         return false;
     }
     match (stats.sampler_touchdown_at, stats.touchdown_window_dumped_at) {
         (Some(td), None) => (now - td).num_milliseconds() >= SAMPLER_DUMP_WAIT_TIMEOUT_MS,
         _ => true,
     }
+}
+
+/// Ein echtes Wegsteigen nach dem Aufsetzen hat Fahrt. `echter_steigflug_
+/// nach_aufsetzen` prueft Hoehe und Gelaende, aber nicht, ob sich das
+/// Flugzeug bewegt — nach einem Neuladen meldet MSFS kurz eine Fantasie-
+/// Position (Korpus-Fund J4dxXAPBz9BvZd0P: lat 0 / lon 90, 211 ft, Fahrt 0,
+/// Triebwerke aus), und das war fuer die Pruefung ein Steigflug.
+/// Hubschrauber steigen auch ohne Fahrt weg und sind ausgenommen.
+fn wegsteigen_mit_fahrt(snap: &SimSnapshot) -> bool {
+    const MIN_FAHRT_KT: f32 = 30.0;
+    if !echter_steigflug_nach_aufsetzen(snap) {
+        return false;
+    }
+    let hubschrauber = aircraft_category::resolve_category(
+        snap.aircraft_icao.as_deref(),
+        snap.gear_is_skid,
+        snap.gear_is_floats,
+        snap.gear_is_wheels,
+        snap.water_rudder_present,
+    )
+    .is_rotorcraft();
+    hubschrauber
+        || snap.groundspeed_kt >= MIN_FAHRT_KT
+        || snap.indicated_airspeed_kt >= MIN_FAHRT_KT
 }
 
 /// Haltezeit fuer das Wegsteigen nach einem Aufsetzen: `true`, sobald
@@ -50583,7 +50607,7 @@ fn step_flight_at(
             if stats.landung_abgebrochen_phase_offen
                 || (stats.landing_at.is_none()
                     && stats.sampler_touchdown_at.is_none()
-                    && echter_steigflug_nach_aufsetzen(snap)) =>
+                    && wegsteigen_mit_fahrt(snap)) =>
         {
             next_phase = FlightPhase::Climb;
         }
@@ -88154,6 +88178,30 @@ mod landung_episoden_tests {
             assert_eq!(st.landing_at, Some(td), "{phase:?}");
             assert!(!st.landung_abgebrochen_phase_offen, "{phase:?}");
         }
+    }
+
+    /// Korpus-Fund J4dxXAPBz9BvZd0P (Pilot 15, 30-Tage-Replay 20.10.2026):
+    /// Nach der Landung riss die Aufzeichnung sechs Minuten ab, danach
+    /// meldete MSFS beim Neuladen eine Fantasie-Position (lat 0, lon 90,
+    /// 211 ft ueber Grund, Fahrt 0, Triebwerke aus). Das ist kein Wegsteigen —
+    /// die Landung bleibt die Landung.
+    #[test]
+    fn teleport_ohne_fahrt_ist_kein_wegsteigen() {
+        let flight = fixture();
+        let td = t0();
+        gerade_aufgesetzt(&flight, td);
+        for k in 0..90_i64 {
+            let mut s = snap(0.0, 211.0, 0.0, 0.0, false, 0);
+            s.lat = -0.0;
+            s.lon = 90.0003;
+            s.altitude_msl_ft = 228.0;
+            phasen_takt(&flight, &s, td + chrono::Duration::seconds(372 + k));
+        }
+        let st = flight.stats.lock().unwrap();
+        assert_eq!(st.phase, FlightPhase::Landing);
+        assert!(st.touchdown_events.iter().all(|e| e.kind != TouchdownKind::TouchAndGo), "{:?}", st.touchdown_events);
+        assert_eq!(st.go_around_count, 0);
+        assert_eq!(st.landing_at, Some(td));
     }
 
     /// Der Sampler misst mit 50 Hz. Ein einzelner AGL-Ausreisser im Ausrollen
