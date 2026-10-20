@@ -736,6 +736,9 @@ fn ton_teil(s: Slot) -> Option<&'static str> {
     match s {
         Slot::KommandoTuerenScharf | Slot::KommandoStart => Some("abflug"),
         Slot::KommandoLandungVorbereiten | Slot::KommandoPlaetzeLandung | Slot::KommandoTuerenEntschaerfen => Some("ankunft"),
+        // 2.1.6: Ein Ereignis ist im Augenblick der Anfrage fällig und war
+        // nie vorab zu holen — der Server zählt es nicht als „zu spät“.
+        _ if ist_ereignis(s) => Some("ereignis"),
         _ => teil_von(s),
     }
 }
@@ -4524,6 +4527,18 @@ mod tests {
         assert!(!ABFLUG.contains(&Slot::Reiseflug50) && !ANKUNFT.contains(&Slot::Reiseflug50));
         assert_eq!(teil_von(Slot::Reiseflug25), Some("abflug"));
         assert_eq!(teil_stand(&Lauf::default(), "halbzeit", &HALBZEIT, Some(10_000), false), TeilStand::Offen { um: Some(10_000 - 900) });
+    }
+
+    /// 2.1.6: Ereignisse sagen dem Server, dass sie sofort fällig sind
+    /// (SWR 255, 20.10.2026: die Gate-Verspätung zählte als „zu spät“).
+    #[test]
+    fn ereignis_ton_traegt_seinen_teil() {
+        assert_eq!(ton_teil(Slot::VerspaetungGate), Some("ereignis"));
+        assert_eq!(ton_teil(Slot::Turbulenz), Some("ereignis"));
+        assert_eq!(ton_teil(Slot::Boarding), Some("abflug"));
+        assert_eq!(ton_teil(Slot::KommandoStart), Some("abflug"));
+        let k = piper::koerper("auto:de-DE:w", "Hallo", Some(0), ton_teil(Slot::VerspaetungGate), Some("verspaetung_gate".into()), piper::Wahl::default());
+        assert_eq!(k["teil"], "ereignis");
     }
 
     /// Zusatz H: angefragt im Reiseflug, 15 min vor dem Zeitpunkt; nie auf
