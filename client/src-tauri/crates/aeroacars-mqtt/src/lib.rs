@@ -1336,6 +1336,20 @@ pub struct GateWindow {
     pub sample_count: u32,
 }
 
+/// Ein Aufsetzer im PIREP (siehe `PirepPayload::aufsetzer`). `ts_ms` ist der
+/// Aufsetz-Zeitpunkt — derselbe Schlüssel wie bei `touchdown_complete`, über
+/// den der Recorder Zeile und Eintrag zuordnet (±2 s).
+#[derive(Clone, Debug, Serialize)]
+pub struct AufsetzerEintrag {
+    pub ts_ms: i64,
+    /// `"touch_and_go"` oder `"final_landing"`.
+    pub art: &'static str,
+    pub vs_fpm: f32,
+    pub g: f32,
+    pub lat: f64,
+    pub lon: f64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct PirepPayload {
     pub ts: i64,
@@ -1437,6 +1451,22 @@ pub struct PirepPayload {
     pub landing_score_deckel: Option<String>,
     pub go_around_count: Option<u32>,
     pub touchdown_count: Option<u32>,
+    /// 20.10.2026 (Stück 3, EWG 1599): jeder Aufsetzer des Flugs, in der
+    /// Reihenfolge — frühere als `touch_and_go`, der letzte als
+    /// `final_landing`. Der Recorder legt für einen Touch-and-Go ohne eigene
+    /// Touchdown-Zeile eine überholte Zeile an und gleicht die finale Zeile
+    /// mit dem PIREP ab. Leer bei einer einzigen Landung (dann
+    /// byte-identisch zu vorher).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aufsetzer: Vec<AufsetzerEintrag>,
+    /// Der härteste Aufsetzer des Flugs (betragsgrößte Sinkrate über alle
+    /// Einträge in `aufsetzer`) — für die Hard-Landing-Prüfung, auch wenn
+    /// danach durchgestartet und weich gelandet wurde. Nur gesetzt, wenn es
+    /// mehr als einen Aufsetzer gab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub haertester_aufsetzer_fpm: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub haertester_aufsetzer_g: Option<f32>,
     pub dep_gate: Option<String>,
     pub arr_gate: Option<String>,
     pub approach_runway: Option<String>,
