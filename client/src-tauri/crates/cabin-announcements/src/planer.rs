@@ -960,7 +960,14 @@ impl Planer {
                 self.melde(&mut aus, Slot::KabineSinkflug, Verfall::AbPhase(Final));
             }
         }
+        // „Cabin crew, prepare for landing“ erst nach der Landevorbereitung
+        // der Kabine (Thomas 20.10.2026, Variante A; vorher kam es bei 5 von
+        // 19 Flügen davor). Die Höhe bleibt (Entscheidung 19.10.). Kommt die
+        // Kabine nicht mehr (abgewählt, Bizjet, entfallen) oder ist der Anflug
+        // erreicht, wartet es nicht: kurzer Sinkflug, Ruhephase.
+        let kabine_vorbei = self.schon(Slot::KabineSinkflug) || !self.kommt_noch(Slot::KabineSinkflug, t.phase);
         if in_luft
+            && (kabine_vorbei || t.phase == Approach)
             && (t.phase == Approach
                 || (r >= rang(Descent) && t.hoehe_ft < 20_000.0 && t.vs_fpm < -300.0))
         {
@@ -1489,6 +1496,48 @@ mod tests {
         assert!(slots(q.tick(&tick(1_000, Descent, 18_000.0, -2_000.0))).contains(&Slot::KapitaenSinkflug), "noch nicht gespielt: kommt");
     }
 
+    /// SAS 315 (Hamadoun, 20.10.2026, KEymQD5G): Kapitän im Reiseflug,
+    /// danach Sinkflug mit ~2000 fpm. „Prepare for landing“ (unter FL200)
+    /// kam 6 s VOR der Kabine (5 min nach dem Kapitän). Variante A (Thomas
+    /// 20.10.): erst die Kabine, im selben Takt danach das Kommando.
+    #[test]
+    fn sas315_kabine_vor_prepare_for_landing() {
+        let mut p = Planer::fortsetzen(flug(60), Cruise);
+        let mut tk = tick(0, Cruise, 30_400.0, 0.0);
+        tk.rest_min = Some(20.0);
+        assert!(slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug));
+        p.kapitaen_sinkflug_ende(true, 30);
+        let mut reihe: Vec<(i64, Slot)> = Vec::new();
+        for s in (40..=500).step_by(10) {
+            let h = 28_700.0 - f64::from((s - 40) as i32) * 33.0;
+            for f in p.tick(&tick(s, Descent, h, -2_000.0)) {
+                reihe.push((s, f.slot));
+            }
+        }
+        let bei = |x: Slot| reihe.iter().position(|(_, y)| *y == x);
+        let kab = bei(Slot::KabineSinkflug).expect("Kabine");
+        let kom = bei(Slot::KommandoLandungVorbereiten).expect("Kommando");
+        assert!(kab < kom, "Kabine vor dem Kommando: {reihe:?}");
+        assert_eq!(reihe[kab].0, reihe[kom].0, "Kommando direkt danach, nicht erst später: {reihe:?}");
+        assert_eq!(reihe[kab].0, 330, "Kabine 5 min nach dem Kapitän: {reihe:?}");
+    }
+
+    /// Kabine abgewählt: „Prepare for landing“ wie bisher unter FL200.
+    /// Kurzer Sinkflug: Im Anflug wartet es nicht auf die Kabine (die noch
+    /// 2 min Abstand zum Kapitän hält) – die Seite verspricht es „im Anflug“.
+    #[test]
+    fn prepare_for_landing_ohne_kabine_und_im_anflug() {
+        let mut p = Planer::fortsetzen(flug(60), Cruise);
+        p.abwaehlen([Slot::KabineSinkflug]);
+        p.tick(&tick(0, Descent, 25_000.0, -2_000.0));
+        assert!(slots(p.tick(&tick(10, Descent, 19_800.0, -2_000.0))).contains(&Slot::KommandoLandungVorbereiten));
+        let mut q = Planer::fortsetzen(flug(60), Cruise);
+        q.tick(&tick(0, Descent, 12_000.0, -2_000.0));
+        q.kapitaen_sinkflug_ende(true, 40);
+        let f = slots(q.tick(&tick(60, Approach, 4_800.0, -1_000.0)));
+        assert!(f.contains(&Slot::KommandoLandungVorbereiten) && !f.contains(&Slot::KabineSinkflug), "{f:?}");
+    }
+
     #[test]
     fn kabine_folgt_dem_kapitaen_im_sinkflug_mit_abstand() {
         let mut p = Planer::fortsetzen(flug(120), Cruise);
@@ -1553,11 +1602,13 @@ mod tests {
         }
         assert_eq!(
             alle,
-            // Kabine nicht im selben Takt wie der Kapitän, sondern im Anflug
-            // (wie in echt: Kapitän, Kommando an die Crew, dann die Kabine).
+            // Kabine nicht im selben Takt wie der Kapitän, sondern im Anflug.
+            // Thomas 20.10.2026 (Variante A): erst die Landevorbereitung der
+            // Kabine, dann „Cabin crew, prepare for landing“ (bis dahin hieß
+            // es hier „Kapitän, Kommando an die Crew, dann die Kabine“).
             // 2.1.0: „Ende des Service“ kommt nach einem Neustart im Sinkflug
             // noch (der Host meldet, falls sie vorher schon lief).
-            vec![Slot::EndeService, Slot::KapitaenSinkflug, Slot::KommandoLandungVorbereiten, Slot::Chime10000Sinkflug, Slot::KabineSinkflug, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung]
+            vec![Slot::EndeService, Slot::KapitaenSinkflug, Slot::Chime10000Sinkflug, Slot::KabineSinkflug, Slot::KommandoLandungVorbereiten, Slot::KommandoPlaetzeLandung, Slot::NachDerLandung]
         );
     }
 
