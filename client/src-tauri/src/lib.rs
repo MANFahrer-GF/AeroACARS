@@ -47988,6 +47988,12 @@ fn wegsteigen_nach_aufsetzen(stats: &FlightStats, snap: &SimSnapshot, now: DateT
 /// Sampler laeuft). Wer zuerst kommt, schliesst ab; danach ist keine Landung
 /// mehr offen.
 fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
+    // Nach dem Abrollen ist die Landung fertig. Ein Slew, ein Neuladen oder
+    // ein Versetzen in die Hoehe danach ist kein Touch-and-Go — hier und
+    // nicht beim Aufrufer, weil der Sampler ohne Phasenpruefung ruft.
+    if !is_touchdown_capturable_phase(stats.phase, stats.was_airborne) {
+        return;
+    }
     let Some(aufsetzen) = stats.landing_at.or(stats.sampler_touchdown_at) else {
         return;
     };
@@ -87979,6 +87985,38 @@ mod landung_episoden_tests {
         assert!(st.landung_abdeckung_fehlt.is_none());
         assert_eq!(st.touchdown_events.len(), 1);
         assert!(st.landung_abgebrochen_phase_offen);
+    }
+
+    /// Eine abgeschlossene Landung bleibt abgeschlossen: Nach dem Abrollen
+    /// (TaxiIn/BlocksOn) setzt ein Slew oder Neuladen das Flugzeug in die
+    /// Hoehe — das ist kein Touch-and-Go. Der Sampler ruft den Abschluss
+    /// ohne eigene Phasenpruefung; die Sperre muss in der Funktion selbst
+    /// sitzen.
+    #[test]
+    fn abgerollte_landung_wird_nicht_nachtraeglich_zum_touch_and_go() {
+        for phase in [FlightPhase::TaxiIn, FlightPhase::BlocksOn, FlightPhase::Arrived] {
+            let flight = fixture();
+            let td = t0();
+            gerade_aufgesetzt(&flight, td);
+            let mut st = flight.stats.lock().unwrap();
+            st.phase = phase;
+            st.touchdown_events.push(TouchdownEvent {
+                timestamp: td,
+                kind: TouchdownKind::FinalLanding,
+                peak_vs_fpm: -55.0,
+                peak_g: 1.1,
+                lat: 28.445,
+                lon: -13.8637,
+                sub_bounces: 0,
+            });
+            let s = snap(2_000.0, 3_000.0, 0.0, 250.0, false, 2);
+            landung_beim_wegsteigen_abschliessen(&mut st, &s, td + chrono::Duration::seconds(600));
+            assert_eq!(st.touchdown_events.len(), 1, "{phase:?}");
+            assert_eq!(st.touchdown_events[0].kind, TouchdownKind::FinalLanding, "{phase:?}");
+            assert_eq!(st.go_around_count, 0, "{phase:?}");
+            assert_eq!(st.landing_at, Some(td), "{phase:?}");
+            assert!(!st.landung_abgebrochen_phase_offen, "{phase:?}");
+        }
     }
 
     /// Wind, Eigengeschwindigkeit und Sprit gehoeren zum abgebrochenen
