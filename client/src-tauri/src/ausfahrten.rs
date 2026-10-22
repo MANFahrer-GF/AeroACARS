@@ -69,6 +69,12 @@ pub struct Ausfahrt {
     /// Verbraucher faellt dann auf den Stummel zurueck.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verlauf: Vec<Verlaufspunkt>,
+    /// Der letzte Stützpunkt auf der Bahn vor dem Übergang — nur intern:
+    /// Zwei Rollwege, die am selben Punkt abzweigen, sind dieselbe
+    /// Abzweigung, auch wenn ihre Schnittpunkte mit der Kante auseinander
+    /// liegen (EDDG B und S1, `doppelnamen_zusammenfassen`).
+    #[serde(skip)]
+    pub abzweig: Option<(f64, f64)>,
 }
 
 /// Mindestabstand zweier Verlaufspunkte, in Metern.
@@ -144,7 +150,10 @@ const DRAUSSEN_MIN_M: f64 = 2.0;
 /// Ein Zug, der nur von aussen an die Kante heranführt und dort endet (OSM
 /// endet oft an der Kante), zählt an seinem Endpunkt, wenn er von dort
 /// nach aussen führt.
-fn kantenpunkte(zug: &[(f64, f64)], halbe_breite: f64) -> Vec<(f64, f64, &'static str)> {
+fn kantenpunkte(
+    zug: &[(f64, f64)],
+    halbe_breite: f64,
+) -> Vec<(f64, f64, &'static str, Option<(f64, f64)>)> {
     let mut aus = Vec::new();
     let n = zug.len();
     for (seite, s) in [("left", -1.0_f64), ("right", 1.0_f64)] {
@@ -171,14 +180,13 @@ fn kantenpunkte(zug: &[(f64, f64)], halbe_breite: f64) -> Vec<(f64, f64, &'stati
             if !reicht_hinaus(aussen, schritt) {
                 continue;
             }
+            // Immer der Schnittpunkt des Segments mit der Kante (Codex
+            // Runde 2: ein langes flaches Segment schneidet erst weit hinter
+            // seinem letzten inneren Punkt).
             let di = d(innen);
-            if di >= -KANTE_INNEN_M {
-                aus.push((zug[innen].0, di.abs(), seite));
-            } else {
-                let (a, b) = (zug[innen], zug[aussen]);
-                let t = di / (di - d(aussen));
-                aus.push((a.0 + t * (b.0 - a.0), 0.0, seite));
-            }
+            let (a, b) = (zug[innen], zug[aussen]);
+            let t = di / (di - d(aussen));
+            aus.push((a.0 + t * (b.0 - a.0), 0.0, seite, Some(a)));
         }
         // Endpunkte, die von aussen an die Kante heranführen: der Endpunkt
         // liegt der Kante am nächsten, der Zug reicht von dort hinaus.
@@ -186,7 +194,7 @@ fn kantenpunkte(zug: &[(f64, f64)], halbe_breite: f64) -> Vec<(f64, f64, &'stati
             for (ende, nachbar, schritt) in [(0usize, 1usize, 1isize), (n - 1, n - 2, -1isize)] {
                 let de = d(ende);
                 if (0.0..=KANTEN_TOLERANZ_M).contains(&de) && de <= d(nachbar) && reicht_hinaus(ende, schritt) {
-                    aus.push((zug[ende].0, de, seite));
+                    aus.push((zug[ende].0, de, seite, Some(zug[ende])));
                 }
             }
         }
@@ -218,7 +226,14 @@ pub fn doppelnamen_zusammenfassen(
     for a in liste {
         match aus
             .iter_mut()
-            .find(|b| b.seite == a.seite && (b.laengs_m - a.laengs_m).abs() <= DIESELBE_ABZWEIGUNG_M)
+            .find(|b| {
+                let gleicher_abzweig = match (a.abzweig, b.abzweig) {
+                    (Some(p), Some(q)) => (p.0 - q.0).hypot(p.1 - q.1) <= DIESELBE_ABZWEIGUNG_M,
+                    _ => false,
+                };
+                b.seite == a.seite
+                    && (gleicher_abzweig || (b.laengs_m - a.laengs_m).abs() <= DIESELBE_ABZWEIGUNG_M)
+            })
         {
             Some(b) => {
                 if rang(&a) < rang(b) {
@@ -278,7 +293,7 @@ pub fn ausfahrten_fuer_bahn(
     //
     // Ein Rollweg berührt die Bahn oft mit mehreren Stützpunkten; ohne diese
     // Auswahl bekäme derselbe Rollweg mehrere Stummel nebeneinander.
-    let mut beste: Vec<(String, String, f64, f64, Vec<(f64, f64)>)> = Vec::new();
+    let mut beste: Vec<(String, String, f64, f64, Vec<(f64, f64)>, Option<(f64, f64)>)> = Vec::new();
     for m in merkmale {
         let props = m.get("properties");
         if props.and_then(|p| p.get("k")).and_then(|k| k.as_str()) != Some("taxiway") {
@@ -321,7 +336,7 @@ pub fn ausfahrten_fuer_bahn(
             })
             .collect();
 
-        for (laengs, kantenabstand, seite) in kantenpunkte(&projiziert, halbe_breite) {
+        for (laengs, kantenabstand, seite, abzweig) in kantenpunkte(&projiziert, halbe_breite) {
             // Nur entlang der Bahn: Ein Abzweig hinter dem Bahnende oder
             // vor dem Bahnanfang ist keine Seitenausfahrt (Codex 22.10.2026).
             if laengs < 0.0 || laengs > bahnlaenge {
@@ -329,12 +344,13 @@ pub fn ausfahrten_fuer_bahn(
             }
             match beste
                 .iter_mut()
-                .find(|(n, s, _, _, _)| n == name && s == seite)
+                .find(|(n, s, _, _, _, _)| n == name && s == seite)
             {
                 Some(eintrag) if kantenabstand < eintrag.3 => {
                     eintrag.2 = laengs;
                     eintrag.3 = kantenabstand;
                     eintrag.4 = projiziert.clone();
+                    eintrag.5 = abzweig;
                 }
                 Some(_) => {}
                 None => beste.push((
@@ -343,6 +359,7 @@ pub fn ausfahrten_fuer_bahn(
                     laengs,
                     kantenabstand,
                     projiziert.clone(),
+                    abzweig,
                 )),
             }
         }
@@ -351,11 +368,12 @@ pub fn ausfahrten_fuer_bahn(
     beste.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
     beste
         .into_iter()
-        .map(|(name, seite, laengs_m, _, roh)| Ausfahrt {
+        .map(|(name, seite, laengs_m, _, roh, abzweig)| Ausfahrt {
             name,
             laengs_m: (laengs_m * 10.0).round() / 10.0,
             seite,
             verlauf: verlauf_ausduennen(&roh, laengs_m, halbe_breite),
+            abzweig,
         })
         .collect()
 }
@@ -889,6 +907,17 @@ mod tests {
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         assert_eq!(a.len(), 1, "{a:?}");
         assert!((a[0].laengs_m - 1300.0).abs() < 15.0, "Ausfahrt bei {} statt ~1300 m", a[0].laengs_m);
+    }
+
+    #[test]
+    fn codex_flaches_segment_schnitt_mit_der_kante() {
+        // Codex Runde 2: Der letzte Punkt auf der Bahn liegt 3 m innen bei
+        // 1000 m, das Segment bis 2000 m schneidet die Kante erst bei
+        // ~1600 m. Die Ausfahrt ist der Schnittpunkt, nicht 1000 m.
+        let g = karte(&rollweg_aus("F", &[(1000.0, -20.0), (2000.0, -25.0), (2010.0, -70.0)]));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!((a[0].laengs_m - 1600.0).abs() < 10.0, "Ausfahrt bei {} statt ~1600 m", a[0].laengs_m);
     }
 
     #[test]
