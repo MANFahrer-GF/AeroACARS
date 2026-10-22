@@ -504,6 +504,18 @@ impl Planer {
             && matches!(t.phase, Climb | Descent | Approach)
     }
 
+    /// Im Sinkflug noch über 10.000 ft, aber mit der aktuellen Sinkrate in
+    /// höchstens [`crate::warteschlange::PAUSE_NACH_ANSAGE_S`] darunter — nur
+    /// bei Flügen mit Ruhephase (Reiseflug ab 12.000 ft, wie [`Self::ruhephase`]).
+    fn kurz_vor_ruhephase(&self, t: &Tick) -> bool {
+        let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| h >= 12_000);
+        hoch && !t.am_boden
+            && rang(t.phase) >= rang(FlightPhase::Descent)
+            && t.hoehe_ft >= 10_000.0
+            && t.vs_fpm < 0.0
+            && (t.hoehe_ft - 10_000.0) / -t.vs_fpm * 60.0 <= crate::warteschlange::PAUSE_NACH_ANSAGE_S as f64
+    }
+
     fn melde(&mut self, aus: &mut Vec<Faellig>, slot: Slot, verfall: Verfall) {
         if slot.einmalig() && self.gemeldet.contains(&slot) {
             return;
@@ -994,7 +1006,13 @@ impl Planer {
                 KapitaenSinkflug::Gemeldet => t.phase == Approach,
                 KapitaenSinkflug::Offen | KapitaenSinkflug::KommtNicht => tief,
             };
-            if reif {
+            // 1c (Rundumschlag 22.10.2026, ANZ 438): spätestens so früh vor der
+            // Ruhephase unter 10.000 ft, dass die Ansage nach der Pause hinter
+            // der vorigen ([`crate::warteschlange::PAUSE_NACH_ANSAGE_S`]) noch
+            // darüber beginnt — sonst wartete sie in der Ruhephase und verfiel
+            // bei Final. Das schlägt die 2-min-Frist nach dem Kapitän und gilt
+            // auch, wenn der Kapitän selbst noch wartet.
+            if reif || self.kurz_vor_ruhephase(t) {
                 self.melde(&mut aus, Slot::KabineSinkflug, Verfall::AbPhase(Final));
             }
         }
@@ -1613,6 +1631,33 @@ mod tests {
         q.kapitaen_sinkflug_ende(true, 1_000);
         assert!(q.tick(&tick(1_200, Descent, 32_000.0, -1_000.0)).iter().all(|f| f.slot != Slot::KabineSinkflug));
         assert!(q.tick(&tick(1_300, Descent, 31_000.0, -1_000.0)).iter().any(|f| f.slot == Slot::KabineSinkflug));
+    }
+
+    /// 1c (Rundumschlag 22.10.2026, ANZ 438): Kabine Sinkflug wird nie erst
+    /// in der Ruhephase fällig — spätestens, wenn die Sinkrate sie in der
+    /// Pause hinter der vorigen Ansage unter 10.000 ft brächte; das schlägt
+    /// die 2-min-Frist nach dem Kapitän und gilt auch, wenn der Kapitän noch
+    /// wartet. Rot auf v2.1.6: bei 11.500 ft, 30 s nach dem Kapitän, nichts.
+    #[test]
+    fn kabine_sinkflug_spaetestens_vor_der_ruhephase() {
+        let kabine = |p: &mut Planer, t: i64, h: f64| p.tick(&tick(t, Descent, h, -2_000.0)).iter().any(|f| f.slot == Slot::KabineSinkflug);
+        // Kapitän spät zu Ende (Mac-Oberfläche hing): 30 s danach.
+        let mut p = Planer::fortsetzen(flug(120), Cruise);
+        assert!(p.tick(&tick(1_000, Descent, 30_000.0, -2_000.0)).iter().any(|f| f.slot == Slot::KapitaenSinkflug));
+        p.kapitaen_sinkflug_ende(true, 1_500);
+        assert!(!kabine(&mut p, 1_510, 14_000.0), "noch 120 s bis 10.000 ft: die Frist gilt");
+        assert!(kabine(&mut p, 1_530, 11_500.0), "45 s bis 10.000 ft: jetzt, sonst Ruhephase");
+        // Kapitän wartet noch (gemeldet, nicht gespielt): auch dann.
+        let mut q = Planer::fortsetzen(flug(120), Cruise);
+        q.tick(&tick(1_000, Descent, 30_000.0, -2_000.0));
+        assert!(kabine(&mut q, 1_500, 11_000.0));
+        // Ohne Ruhephase (Reiseflug unter 12.000 ft) greift die Regel nicht.
+        let mut niedrig = flug(120);
+        niedrig.reiseflughoehe_ft = Some(11_000);
+        let mut r = Planer::fortsetzen(niedrig, Cruise);
+        r.tick(&tick(1_000, Descent, 11_000.0, -500.0));
+        r.kapitaen_sinkflug_ende(true, 1_500);
+        assert!(!kabine(&mut r, 1_530, 10_500.0), "kein Flug mit Ruhephase: 2-min-Frist bleibt");
     }
 
     /// Der Abstand zählt ab dem Ende der Kapitänsansage, nicht ab ihrer
