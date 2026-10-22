@@ -7,7 +7,7 @@
 // Kanten, damit der Aufsetzpunkt oben senkrecht über der Marke unten liegt.
 
 import { useTranslation } from "react-i18next";
-import { bandFarbeFuer, DURCHGANG_FARBE } from "./bahnHilfen";
+import { ausfahrtenFuerAnzeige, bandFarbeFuer, DURCHGANG_FARBE, genutzteAusfahrt, rollwegQuelle } from "./bahnHilfen";
 import { bewertungsEnde as fruehestesEnde } from "../lib/bahnQuerMassstab";
 import { RunwayExitLupe } from "./RunwayExitLupe";
 import type { Projektion } from "../lib/runwayProjection";
@@ -159,21 +159,13 @@ export function RunwayDisciplinePanel({
           })}
         />
       )}
-      {/* Variante B (22.10.2026): Die Queransicht ist in die Draufsicht
-          darüber gewandert — ihre Erklärung steht jetzt direkt unter ihr,
-          auch wenn die seitliche Bewertung entfällt (die Spur ist trotzdem
-          gezeichnet). */}
-      {breite != null && breite > 0 && (
-        <SoLiestDu text={t("runway_v2.b.so_liest_du")} />
-      )}
+      {/* Bahnansicht 2.1.8 (Entscheidung 6): Erklärung und Legende der
+          Draufsicht stehen jetzt in EINER Legende direkt unter ihr
+          (RunwayDiagramV2) — hier stand eine zweite samt langem Fliesstext. */}
       {grund ? (
         <Hinweis text={t(`runway_v2.discipline_skip.${grund}`, skipText(grund))} />
       ) : (
         <>
-          <QuerLegende
-            props={props}
-            bandFarbe={bandFarbeFuer(tokens, props.overrun_m, props.min_edge_clearance_m)}
-          />
           {/* Das Abrollen im echten Massstab — die Queransicht darüber ist
               quer überhöht und zeichnet eine Ausfahrt als Haken. Ohne
               Abrollen (kein Räumpunkt, Spur bleibt auf der Bahn) fehlt sie. */}
@@ -185,6 +177,11 @@ export function RunwayDisciplinePanel({
               clearanceM={props.clearance_point_m}
               clearanceSide={props.clearance_side}
               ausfahrten={props.runway_exits}
+              // EINE Quelle für den Namen (Entscheidung 2) und die
+              // richtige Rollweg-Quelle (Szenerie/OSM).
+              genutzt={genutzteAusfahrt(props)}
+              namen={ausfahrtenFuerAnzeige(props)}
+              rollwegQuelle={rollwegQuelle(props)}
               bandFarbe={bandFarbeFuer(tokens, props.overrun_m, props.min_edge_clearance_m)}
               width={width}
               schriftMindest={props.schriftMindest}
@@ -434,18 +431,6 @@ function Hinweis({ text }: { text: string }) {
 /** Kleine, unaufdringliche Notiz NEBEN der Grafik — kein Ersatz für sie.
  *  Zeigt an, dass die Bewertung kein Urteil gefällt hat, obwohl die Spur
  *  zu sehen ist (siehe `keinUrteilGrund` oben). */
-/** Ein Satz, wie eine Ansicht zu lesen ist — direkt unter ihr. */
-export function SoLiestDu({ text }: { text: string }) {
-  return (
-    <div
-      style={{ fontSize: "0.76rem", color: "#94a3b8", lineHeight: 1.5, maxWidth: "70rem" }}
-      data-zeile="so-liest-du"
-    >
-      {text}
-    </div>
-  );
-}
-
 function KeinUrteilNotiz({ text }: { text: string }) {
   return (
     <div
@@ -663,136 +648,6 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
         </li>
       ))}
     </ol>
-  );
-}
-
-// ─── Legende der Queransicht ───────────────────────────────────────────
-//
-// Die vorhandene Legende gehört zur Längsansicht und erklärt Schwelle,
-// Aufsetzzone und Zielmarkierung. Die Queransicht zeigt anderes: den
-// gefahrenen Streifen, seine Messpunkte, die Ausfahrten und den Bogen zur
-// genutzten. Ohne eigene Legende muss man raten, was die dünnen Striche am
-// Rand bedeuten.
-
-function QuerLegende({ props, bandFarbe }: { props: RunwayDiagramV2Props; bandFarbe: string }) {
-  const { t } = useTranslation();
-  const n = props.lateral_samples?.length ?? 0;
-  const eintraege: Array<{ farbe: string; text: string; gestrichelt?: boolean }> = [
-    {
-      farbe: "#22c55e",
-      text: t("runway_v2.legend_td", { defaultValue: "Aufsetzpunkt (TD)" }),
-    },
-    {
-      // Die Farbe, die das Band im Bild WIRKLICH hat — sie hängt am
-      // Ergebnis (grün/gelb/rot). Fest cyan passte zu keinem Bild.
-      farbe: bandFarbe,
-      text: t("runway_v2.legend_track", {
-        defaultValue: "Spur — {{n}} gemessene Stützpunkte",
-        n,
-      }),
-    },
-  ];
-  // Nur am Räumpunkt, NICHT an der Ausfahrtsseite.
-  //
-  // Die gestrichelte Spur im Bild hängt allein an `clearance_point_m`
-  // (siehe `trennIdx` in RunwayCrossSection). Hing die Legende zusätzlich
-  // an der Seite, fehlte die Erklärung genau dann, wenn die Richtung nicht
-  // eindeutig war — und im Bild stand eine gestrichelte Linie, die
-  // niemand deutet.
-  //
-  // Die Richtung ist bewusst oft leer: Sie wird nur gesetzt, wenn Kurs UND
-  // Querbewegung dasselbe sagen (Spec §8.6). Das ist der Normalfall für
-  // eine unklare Ausfahrt, nicht die Ausnahme.
-  if (props.clearance_point_m != null) {
-    eintraege.push({
-      farbe: bandFarbe,
-      gestrichelt: true,
-      text: t("runway_v2.legend_exit_arc", {
-        defaultValue: "Ausfahrt — Richtung echt, ab hier nicht mehr gewertet",
-      }),
-    });
-  }
-  // Ausfahrten: entweder erklären, was die Stummel bedeuten — oder sagen,
-  // warum keine da sind.
-  //
-  // Kleine Plätze haben oft keine OpenStreetMap-Bodenkarte; EDXB und EDXF
-  // etwa sind gar nicht erfasst. Ohne Hinweis liest sich das wie „hier gibt
-  // es keine Ausfahrten", und das ist etwas anderes als „wir wissen es
-  // nicht".
-  if ((props.runway_exits?.length ?? 0) > 0) {
-    eintraege.push({
-      farbe: "#4E6350",
-      text: t("runway_v2.legend_exits", {
-        defaultValue: "Ausfahrten (OSM) · genutzte hervorgehoben",
-      }),
-    });
-  } else {
-    eintraege.push({
-      farbe: "#334155",
-      text: t("runway_v2.exits_none", {
-        defaultValue: "Für diesen Platz sind keine Rollwege hinterlegt",
-      }),
-    });
-  }
-  if ((props.vorherige_durchgaenge ?? []).some((d) => (d.lateral_samples?.length ?? 0) >= 2)) {
-    eintraege.push({
-      farbe: DURCHGANG_FARBE,
-      gestrichelt: true,
-      text: t("runway_v2.legend_durchgang", {
-        defaultValue: "Früherer Durchgang — durchgestartet, nicht gewertet",
-      }),
-    });
-  }
-  if (props.mess_ende_laengs_m != null) {
-    eintraege.push({
-      farbe: "#fbbf24",
-      text: t("runway_v2.legend_mess_ende", {
-        defaultValue: "▲ Querversatz bewertet bis hier — danach nur noch gezeichnet",
-      }),
-    });
-  }
-  // Der Grünstreifen NEBEN der Bahn — nicht die Bahn selbst.
-  //
-  // Der Eintrag hiess „unbefestigt" und stand unter einer Legende, die
-  // sonst nur von der Bahn handelt. Bei EDLW 24 (Asphalt, B738) las sich
-  // das als Aussage über die Landebahn.
-  //
-  // Verkehrt war es doppelt: Er erschien bei allen fünf Varianten mit
-  // befestigter Bahn — und gerade NICHT bei Gras und Wasser, weil dort
-  // die Queransicht mitsamt Legende entfällt.
-  eintraege.push({
-    farbe: "#3F6B4A",
-    text: t("runway_v2.legend_shoulder", {
-      defaultValue: "neben der Bahn — unbefestigt",
-    }),
-  });
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "5px 18px",
-        fontSize: "0.72rem",
-        color: "#94a3b8",
-      }}
-    >
-      {eintraege.map((e) => (
-        <span key={e.text} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <span
-            style={{
-              display: "inline-block",
-              width: 11,
-              height: e.gestrichelt ? 0 : 11,
-              borderRadius: e.gestrichelt ? 0 : 2,
-              background: e.gestrichelt ? "none" : e.farbe,
-              borderTop: e.gestrichelt ? `2px dashed ${e.farbe}` : undefined,
-            }}
-          />
-          {e.text}
-        </span>
-      ))}
-    </div>
   );
 }
 

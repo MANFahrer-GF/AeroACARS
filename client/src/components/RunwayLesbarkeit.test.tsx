@@ -36,6 +36,7 @@ interface Kasten {
   b: number;
   h: number;
   text: string;
+  rolle?: string;
 }
 
 /**
@@ -69,7 +70,7 @@ function textKaesten(svg: string): Kasten[] {
     let x = zahl("x", 0);
     if (anker === "middle") x -= b / 2;
     else if (anker === "end") x -= b;
-    out.push({ x, y: zahl("y", 0) - fs * 0.8, b, h: fs * 1.15, text });
+    out.push({ x, y: zahl("y", 0) - fs * 0.8, b, h: fs * 1.15, text, rolle: /data-rolle="([^"]+)"/.exec(attr)?.[1] });
   }
   return out;
 }
@@ -221,6 +222,11 @@ describe("§8.6 Lesbarkeit — über alle Demo-Varianten", () => {
           // Bahnkennungen sind erlaubt: kurze Zeichenfolgen wie „23" oder
           // „05L". Alles Längere gehört nicht auf die Fläche.
           if (/^\d{1,2}[LRC]?$/.test(k.text)) continue;
+          // Ausnahme seit 2.1.8 (Thomas, Entscheidung 3 zu #1936): Marke 2
+          // trägt ihre Zahl „direkt daneben“ — die Marke sitzt auf der Spur,
+          // also auf der Bahn. Der Text liegt nicht auf dem Band (Prüfung
+          // „über einem Linienzug“ oben bleibt streng).
+          if (k.rolle === "marke2-text") continue;
           const mx = k.x + k.b / 2;
           const my = k.y + k.h / 2;
           if (

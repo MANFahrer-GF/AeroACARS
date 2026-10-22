@@ -29550,9 +29550,35 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // durchaus vorliegt.
     let landeplatz_der_bahn = rm.map(|m| m.airport_ident.as_str());
 
+    // Woher die Rollwege stammen — die Anzeige nennt die Quelle
+    // („aus der Szenerie“ / „aus OpenStreetMap“, Bahnansicht 2.1.8).
+    let mut ausfahrten_quelle: Option<String> = None;
     // ⚠ Gemerkt je Bodenkarte und Bahn — siehe `ausfahrten_gemerkt`.
     let ausfahrten: Vec<storage::RunwayExit> = match (rm, bodenquelle(stats, landeplatz_der_bahn)) {
-        (Some(m), Some(quelle)) if m.width_ft > 0.0 => ausfahrten_gemerkt(stats, quelle, m)
+        (Some(m), Some(quelle)) if m.width_ft > 0.0 => {
+            let aus_szenerie = matches!(quelle, Bodenquelle::Szenerie(_));
+            ausfahrten_quelle = Some(if aus_szenerie { "szenerie" } else { "osm" }.to_string());
+            // Doppelnamen an derselben Abzweigung → ein Name (#1936): der,
+            // den die Bodenkarte des Servers (OSM) kennt — nur sinnvoll,
+            // wenn die Rollwege aus der Szenerie stammen und die Karte zum
+            // selben Platz gehoert (dieselbe Pruefung wie `bodenquelle`).
+            let osm = stats
+                .arr_ground_geojson
+                .as_ref()
+                .filter(|_| aus_szenerie)
+                .filter(|_| {
+                    matches!(
+                        (stats.arr_ground_geojson_icao.as_deref(), landeplatz_der_bahn),
+                        (Some(gi), Some(lp)) if gi.eq_ignore_ascii_case(lp)
+                    )
+                });
+            let bekannt = |name: &str| {
+                osm.is_some_and(|k| {
+                    serde_json::to_string(name)
+                        .is_ok_and(|n| k.contains(&format!("\"r\":{n}")))
+                })
+            };
+            ausfahrten::doppelnamen_zusammenfassen(ausfahrten_gemerkt(stats, quelle, m), bekannt)
             .into_iter()
             .map(|a| storage::RunwayExit {
                 name: a.name,
@@ -29575,7 +29601,8 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
                     })
                     .collect(),
             })
-            .collect(),
+            .collect()
+        }
         _ => Vec::new(),
     };
 
@@ -29617,6 +29644,20 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
             a.verlauf.clear();
         }
     }
+    // Die genutzte Ausfahrt — EINMAL hier bestimmt und als eigenes Feld
+    // gesendet (Bahnansicht 2.1.8, #1936): Kopf, Bild, Lupe, PDF und
+    // Webapp zeigen nur diesen Namen, statt dreimal selbst zu suchen.
+    //
+    // Aussen `None`: keine Bodenkarte — nichts sagen. `Some(None)`: Karte da,
+    // aber keine genutzte Ausfahrt — geht als `null` raus und loescht beim
+    // Recorder den Namen einer frueheren Revision (Codex 22.10.2026).
+    let clearance_exit: Option<Option<String>> = ausfahrten_quelle.as_ref().map(|_| match (kante_m, raeum_seite.as_deref()) {
+        (Some(r), Some(seite)) => {
+            ausfahrten::genutzte_ausfahrt(&ausfahrten, r, seite, |a| (a.seite.as_str(), a.laengs_m))
+                .map(|a| a.name.clone())
+        }
+        _ => None,
+    });
 
     BahnFelder {
         // Genau der Anteil, den `assess_touchdown` von der Aufsetz-
@@ -29681,6 +29722,8 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
         },
         overrun_m: stats.bahn_overrun_m,
         lateral_skip_reason: skip_grund,
+        clearance_exit,
+        runway_exits_quelle: if ausfahrten.is_empty() { None } else { ausfahrten_quelle },
         runway_exits: ausfahrten,
     }
 }
@@ -29775,6 +29818,11 @@ impl BahnFelder {
             // leere Liste sieht in der Anzeige aus wie „diese Bahn hat
             // keine Ausfahrten" — das ist etwas anderes als „wir hatten
             // keine Bodenkarte".
+            // Wie die Ausfahrten: abgeleitet aus der Bodenkarte, deshalb
+            // ohne Karte weggelassen statt `null` (ein `null` loeschte beim
+            // Recorder den gespeicherten Wert, RFC 7396).
+            clearance_exit: self.clearance_exit.clone(),
+            runway_exits_quelle: self.runway_exits_quelle.clone(),
             runway_exits: if self.runway_exits.is_empty() {
                 None
             } else {
@@ -29900,6 +29948,12 @@ struct BahnFelder {
     surface_paved: Option<bool>,
     overrun_m: Option<f64>,
     lateral_skip_reason: Option<String>,
+    /// Die genutzte Ausfahrt (Name), einmal hier bestimmt — siehe
+    /// `bahn_felder`. Kopf, Bild, Lupe, PDF und Webapp zeigen nur sie.
+    /// Aussen `None` = keine Bodenkarte, `Some(None)` = Karte, kein Treffer.
+    clearance_exit: Option<Option<String>>,
+    /// Woher `runway_exits` stammen: `"szenerie"` oder `"osm"`.
+    runway_exits_quelle: Option<String>,
     runway_exits: Vec<storage::RunwayExit>,
 }
 
@@ -30115,6 +30169,8 @@ where
         mess_ende_laengs_m: bahn.mess_ende_laengs_m,
         lateral_skip_reason: bahn.lateral_skip_reason.clone(),
         runway_exits: bahn.runway_exits.clone(),
+        clearance_exit: bahn.clearance_exit.clone().flatten(),
+        runway_exits_quelle: bahn.runway_exits_quelle.clone(),
         clearance_speed_kt: bahn.clearance_speed_kt,
         clearance_side: bahn.clearance_side,
         track_width_m: bahn.track_width_m,
@@ -79085,6 +79141,60 @@ mod v0_16_6_bush_completeness_tests {
             "die veraltete Szenerie-Auskunft eines anderen Flughafens darf \
              die gueltige Serverkarte nicht verdraengen"
         );
+    }
+
+    /// Codex 22.10.2026 (Befund 1): Liegt die Bodenkarte vor, findet sich
+    /// aber keine genutzte Ausfahrt (etwa nach einer Bahnkorrektur), muss
+    /// `clearance_exit` als `null` auf die Leitung — nur dann loescht der
+    /// Recorder (RFC 7396) den Namen der vorigen Revision. Fehlt die Karte,
+    /// bleibt das Feld weg (Eingabe fehlt, nichts loeschen).
+    #[test]
+    fn clearance_exit_wird_bei_karte_ohne_treffer_geloescht() {
+        let mut stats = FlightStats::default();
+        stats.runway_correlation_icao = Some("EDDH".to_string());
+        stats.arr_ground_geojson_icao = Some("EDDH".to_string());
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "23".to_string(),
+            heading_true_deg: 230.21,
+            length_ft: 10663.0,
+            width_ft: 151.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 53.636011,
+            threshold_lon: 9.999656,
+            end_lat: 53.619958,
+            end_lon: 9.967167,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 720.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+            geometry_implied_displaced_threshold_ft: 0,
+        });
+        stats.arr_ground_geojson = Some(
+            r#"{"features":[
+              {"properties":{"k":"taxiway","r":"D4"},
+               "geometry":{"type":"LineString",
+                 "coordinates":[[9.976905,53.624765],[9.976979,53.624791],
+                   [9.977071,53.624815],[9.977195,53.624835],
+                   [9.977291,53.624842],[9.977414,53.62484],
+                   [9.97753,53.624826],[9.977643,53.624802],
+                   [9.977733,53.624771],[9.97781,53.62474],
+                   [9.977883,53.624694],[9.978041,53.62458]]}}
+            ]}"#
+            .into(),
+        );
+        // Karte da, kein Raeumpunkt → keine genutzte Ausfahrt → `null`.
+        let j = serde_json::to_value(bahn_felder(&stats, Some("A320"), None).wire(true)).unwrap();
+        assert!(
+            j.get("clearance_exit").is_some_and(|v| v.is_null()),
+            "clearance_exit muss als null kommen, nicht fehlen: {:?}",
+            j.get("clearance_exit")
+        );
+        // Ohne Karte: das Feld fehlt ganz.
+        stats.arr_ground_geojson = None;
+        let ohne = serde_json::to_value(bahn_felder(&stats, Some("A320"), None).wire(true)).unwrap();
+        assert!(ohne.get("clearance_exit").is_none(), "{:?}", ohne.get("clearance_exit"));
     }
 
     /// Runde 7 (externe Gegenpruefung, Codex, adversarial, 04.09.2026):

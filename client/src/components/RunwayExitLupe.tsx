@@ -34,6 +34,15 @@ export interface LupeProps {
   clearanceM?: number | null;
   clearanceSide?: "left" | "right" | null;
   ausfahrten?: Ausfahrt[] | null;
+  /**
+   * Die genutzte Ausfahrt — EINE Quelle mit Kopf und Draufsicht
+   * (`genutzteAusfahrt`, Bahnansicht 2.1.8). Ohne Angabe keine Hervorhebung.
+   */
+  genutzt?: Ausfahrt | null;
+  /** Die Namen, wie alle Ansichten sie zeigen: einer je Abzweigung. */
+  namen?: Ausfahrt[] | null;
+  /** Woher die Rollwege stammen — für die Legende. `null`: nicht gespeichert. */
+  rollwegQuelle?: "szenerie" | "osm" | null;
   /** Farbe des Bandes — dieselbe wie in der Queransicht. */
   bandFarbe: string;
   width: number;
@@ -165,23 +174,11 @@ export function RunwayExitLupe(p: LupeProps) {
   );
 
 
-  // Hervorgehoben wird der Rollweg, auf den die Spur gefahren ist. Die
-  // Seite kommt aus der Bewertung; fehlt sie (EWG9503: `clearance_side`
-  // leer), zeigt die Spur selbst, wohin es ging — sie endet neben der Bahn.
-  const letzter = spur[spur.length - 1]!;
-  const seite =
-    p.clearanceSide ??
-    (Math.abs(letzter.quer_m) > halbeBahn ? (letzter.quer_m < 0 ? "left" : "right") : null);
-  // Die NÄCHSTE Ausfahrt, nicht jede im Fenster: In München liegen B7
-  // (2.259 m) und B6 (2.368 m) beide innerhalb von 120 m um den Räumpunkt
-  // 2.345 m — genommen wurde B6 (DLH369, siehe RunwayQS.test.tsx).
-  const genutzteAusfahrt =
-    seite == null
-      ? null
-      : ((p.ausfahrten ?? [])
-          .filter((a) => a.seite === seite && Math.abs(a.laengs_m - anker) < 120)
-          .sort((a, b) => Math.abs(a.laengs_m - anker) - Math.abs(b.laengs_m - anker))[0] ??
-        null);
+  // Hervorgehoben wird der Rollweg, auf den die Spur gefahren ist — aus
+  // DERSELBEN Quelle wie Kopf und Draufsicht (`genutzteAusfahrt` in
+  // bahnHilfen; ab 2.1.8 vom Client gemeldet). Bis 2.1.7 suchte die Lupe
+  // selbst und nannte bei #1936 „B“, die Draufsicht „B/S1“.
+  const genutzteAusfahrt = p.genutzt ?? null;
   const genutzt = (a: Ausfahrt) =>
     genutzteAusfahrt != null &&
     a.name === genutzteAusfahrt.name &&
@@ -251,7 +248,7 @@ export function RunwayExitLupe(p: LupeProps) {
   // Name, der einen gesetzten überdecken würde, entfällt. Die Queransicht
   // darüber führt alle Namen.
   const namenOhneUeberlappung: Array<{ a: Ausfahrt; xx: number }> = [];
-  for (const a of [...(p.ausfahrten ?? [])]
+  for (const a of [...(p.namen ?? p.ausfahrten ?? [])]
     .filter((a) => a.laengs_m >= von && a.laengs_m <= bis)
     .sort((m, n) => Number(genutzt(n)) - Number(genutzt(m)))) {
     const xx = x(a.laengs_m);
@@ -282,9 +279,14 @@ export function RunwayExitLupe(p: LupeProps) {
           {
             farbe: p.tokens.rollweg,
             flaeche: true,
-            text: t("runway_v2.lupe_legend_rollweg", {
-              defaultValue: "Rollweg aus OpenStreetMap (23 m breit angenommen) — kräftig: der genommene",
-            }),
+            // Die Quelle richtig benannt (Entscheidung 6, #1936: Szenerie,
+            // nicht OpenStreetMap).
+            text:
+              p.rollwegQuelle === "szenerie"
+                ? t("runway_v2.b.lupe_rollweg_szenerie")
+                : p.rollwegQuelle === "osm"
+                ? t("runway_v2.b.lupe_rollweg_osm")
+                : t("runway_v2.b.lupe_rollweg"),
           },
         ]
       : []),

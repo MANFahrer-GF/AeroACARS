@@ -57,6 +57,10 @@ const FELDER = [
   "surface_paved",
   "overrun_m",
   "runway_exits",
+  // Bahnansicht 2.1.8: die genutzte Ausfahrt (einmal im Client bestimmt)
+  // und die Quelle der Rollwege.
+  "clearance_exit",
+  "runway_exits_quelle",
   "lateral_skip_reason",
 ];
 

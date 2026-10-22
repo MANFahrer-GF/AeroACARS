@@ -1494,8 +1494,10 @@ mod bodenkarte_tests {
     fn weg(name: &str) -> SzenerieRollweg {
         SzenerieRollweg {
             name: name.to_string(),
-            // (Breite, Länge) — Hamburg.
-            punkte: vec![(53.6304, 9.9882), (53.6310, 9.9890)],
+            // (Breite, Länge) — Hamburg. Der zweite Punkt liegt 125 m links
+            // neben der Testbahn: Seit 2.1.8 zählt nur ein Rollweg, der die
+            // Bahn wirklich verlässt (#1936); bis dahin lag er auf ihr.
+            punkte: vec![(53.6304, 9.9882), (53.6312, 9.9870)],
         }
     }
 

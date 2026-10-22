@@ -23,6 +23,7 @@
 
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { render } from "@testing-library/react";
 import { MOCK_LANDING_OPTIONS, skipGrundAbleiten } from "../dev/mockLandingRecords";
 import { mapLandingRecordToV2Props } from "../dev/runwayDiagramV2Mapper";
 import { RunwayDiagramV2, type RunwayDiagramV2Props } from "./RunwayDiagramV2";
@@ -301,7 +302,8 @@ describe("QS — Spur und Marken der Queransicht", () => {
         }
         continue;
       }
-      if (!quer.includes(`Spurweite ${spur.toFixed(1)} m`)) {
+      // Seit 2.1.8 im Format der Sprache (Entscheidung 7) — die Tests laufen deutsch.
+      if (!quer.includes(`Spurweite ${spur.toFixed(1).replace(".", ",")} m`)) {
         befunde.push(`${v.key}: Spurweite ${spur.toFixed(1)} m steht nicht im Kopf`);
       }
       if (v.props.aircraft_icao && !quer.includes(v.props.aircraft_icao)) {
@@ -666,7 +668,11 @@ describe("QS — Vollständigkeit", () => {
     // Genau der Fall: Räumpunkt bekannt, Richtung nicht eindeutig.
     r!.clearance_side = null;
     const props = mapLandingRecordToV2Props(r!);
-    const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+    // Seit 2.1.8 folgt die Legende dem, was gezeichnet IST (nach dem
+    // Zeichnen gelesen) — deshalb echt gerendert, nicht als statisches Markup.
+    const { container, unmount } = render(<RunwayDiagramV2 {...props!} />);
+    const markup = container.innerHTML;
+    unmount();
     expect(
       markup,
       "die gestrichelte Spur wird gezeichnet, aber nirgends erklärt",
@@ -1275,14 +1281,16 @@ describe("Rollweg der genommenen Ausfahrt (Lupe)", () => {
         name: "B7", laengs_m: 2259, seite: "right",
         verlauf: [
           { laengs_m: 2259, quer_m: 2 },
-          { laengs_m: 2300, quer_m: 28 },
+          // Seit 2.1.8 muss der Verlauf die 60-m-Bahn wirklich verlassen
+          // (nur echte Ausfahrten); bis dahin endete er 2 m vor der Kante.
+          { laengs_m: 2300, quer_m: 45 },
         ],
       },
       {
         name: "B6", laengs_m: 2368, seite: "right",
         verlauf: [
           { laengs_m: 2368, quer_m: 22 },
-          { laengs_m: 2400, quer_m: 31 },
+          { laengs_m: 2400, quer_m: 45 },
         ],
       },
     ];

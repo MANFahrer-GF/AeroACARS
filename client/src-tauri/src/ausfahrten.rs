@@ -69,6 +69,12 @@ pub struct Ausfahrt {
     /// Verbraucher faellt dann auf den Stummel zurueck.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verlauf: Vec<Verlaufspunkt>,
+    /// Der letzte Stützpunkt auf der Bahn vor dem Übergang — nur intern:
+    /// Zwei Rollwege, die am selben Punkt abzweigen, sind dieselbe
+    /// Abzweigung, auch wenn ihre Schnittpunkte mit der Kante auseinander
+    /// liegen (EDDG B und S1, `doppelnamen_zusammenfassen`).
+    #[serde(skip)]
+    pub abzweig: Option<(f64, f64)>,
 }
 
 /// Mindestabstand zweier Verlaufspunkte, in Metern.
@@ -110,8 +116,152 @@ const VERLAUF_QUER_UEBER_KANTE_M: f64 = 150.0;
 /// mit, die die Bahn nie berühren.
 const KANTEN_TOLERANZ_M: f64 = 25.0;
 
-/// Wie weit hinter dem Bahnende noch gesucht wird.
-const HINTER_DEM_ENDE_M: f64 = 200.0;
+
+
+/// Wie weit ein Rollweg über die Kante hinausreichen muss, damit er die
+/// Bahn auf dieser Seite wirklich verlässt, in Metern.
+const DRAUSSEN_MIN_M: f64 = 2.0;
+
+/// Wo ein Rollwegzug die Bahn verlässt: (laengs, Kantenabstand, Seite).
+///
+/// # Nur echte Ausfahrten (#1936, EDDG 25, 22.10.2026)
+///
+/// Bis 2.1.7 zählte JEDER Stützpunkt bis 25 m von der Kante — auch einer
+/// auf der Mittellinie einer schmalen Bahn (22,6 m von der Kante), und die
+/// Seite kam aus dem Vorzeichen dieses Punktes. Die MSFS-Szenerie führt
+/// B und S1 in Dortmund ab der Mittellinie (0,3 m rechts davon) auf der
+/// Bahn bis zum Bahnende, wo sie nach links abbiegen. Gezeigt wurden „B/S1“
+/// rechts bei 1839,6 m — eine Ausfahrt, die es nicht gibt.
+///
+/// # Der Übergang, nicht der kantennächste Punkt (Codex 22.10.2026)
+///
+/// Eine Ausfahrt ist die Stelle, an der der Linienzug von der Bahn nach
+/// aussen übergeht und dort mindestens `DRAUSSEN_MIN_M` über die Kante
+/// hinausreicht. Läuft ein Rollweg lange knapp innen an der Kante entlang,
+/// zählt erst der Übergang am Ende, nicht sein erster kantennaher Punkt.
+/// Die Stelle ist immer der Schnittpunkt des Segments mit der Kante
+/// (Codex-Nachprüfung 2.1.8: der letzte Punkt auf der Bahn lag bei flachen
+/// Rollwegen bis zu Hunderte Meter zu früh).
+///
+/// Ein Zug, der nur von aussen an die Kante heranführt und dort endet (OSM
+/// endet oft an der Kante), zählt an seinem Endpunkt, wenn er von dort
+/// nach aussen führt.
+fn kantenpunkte(
+    zug: &[(f64, f64)],
+    halbe_breite: f64,
+) -> Vec<(f64, f64, &'static str, Option<(f64, f64)>)> {
+    let mut aus = Vec::new();
+    let n = zug.len();
+    for (seite, s) in [("left", -1.0_f64), ("right", 1.0_f64)] {
+        // Aussen positiv, auf der Bahn negativ — bezogen auf DIESE Kante.
+        let d = |i: usize| s * zug[i].1 - halbe_breite;
+        // Reicht der Lauf ausserhalb ab Index `i` (in Richtung `schritt`)
+        // weit genug hinaus, bevor er wieder auf die Bahn kommt?
+        let reicht_hinaus = |i: usize, schritt: isize| {
+            let mut j = i as isize;
+            while j >= 0 && (j as usize) < n && d(j as usize) >= 0.0 {
+                if d(j as usize) >= DRAUSSEN_MIN_M {
+                    return true;
+                }
+                j += schritt;
+            }
+            false
+        };
+        for i in 0..n.saturating_sub(1) {
+            let (innen, aussen, schritt) = match (d(i) < 0.0, d(i + 1) < 0.0) {
+                (true, false) => (i, i + 1, 1isize),
+                (false, true) => (i + 1, i, -1isize),
+                _ => continue,
+            };
+            if !reicht_hinaus(aussen, schritt) {
+                continue;
+            }
+            // Immer der Schnittpunkt des Segments mit der Kante (Codex
+            // Runde 2: ein langes flaches Segment schneidet erst weit hinter
+            // seinem letzten inneren Punkt).
+            let di = d(innen);
+            let (a, b) = (zug[innen], zug[aussen]);
+            let t = di / (di - d(aussen));
+            aus.push((a.0 + t * (b.0 - a.0), 0.0, seite, Some(a)));
+        }
+        // Endpunkte, die von aussen an die Kante heranführen: der Endpunkt
+        // liegt der Kante am nächsten, der Zug reicht von dort hinaus.
+        if n >= 2 {
+            for (ende, nachbar, schritt) in [(0usize, 1usize, 1isize), (n - 1, n - 2, -1isize)] {
+                let de = d(ende);
+                if (0.0..=KANTEN_TOLERANZ_M).contains(&de) && de <= d(nachbar) && reicht_hinaus(ende, schritt) {
+                    aus.push((zug[ende].0, de, seite, Some(zug[ende])));
+                }
+            }
+        }
+    }
+    aus
+}
+
+/// Wie weit zwei Ausfahrten derselben Seite auseinander liegen dürfen und
+/// noch dieselbe Abzweigung sind, in Metern: derselbe Stützpunkt (B und S1
+/// in EDDG liegen beide bei 1947,0 m). Getrennte Rollwege wenige Meter
+/// auseinander (Frankfurt R11/M19/R13) bleiben getrennt und werden in der
+/// Anzeige gezählt.
+const DIESELBE_ABZWEIGUNG_M: f64 = 0.5;
+
+/// Doppelnamen an derselben Abzweigung → EIN Name (Thomas, 22.10.2026).
+///
+/// Die Szenerie von EDDG führt „B“ und „S1“ mit denselben Stützpunkten;
+/// gezeigt wurde „B/S1“, im Kopf aber „B“. Entscheidung: ein Name — der,
+/// den die Navigationsdaten (die Bodenkarte des Servers, OSM) kennen
+/// (`bekannt`), sonst der kürzere, bei Gleichstand der alphabetisch erste.
+/// Dieselbe Regel rechnet die Anzeige für Flüge vor 2.1.8
+/// (`doppelnamenZusammenfassen` in `bahnHilfen.ts`), dort ohne Karte.
+pub fn doppelnamen_zusammenfassen(
+    liste: Vec<Ausfahrt>,
+    bekannt: impl Fn(&str) -> bool,
+) -> Vec<Ausfahrt> {
+    let rang = |a: &Ausfahrt| (!bekannt(&a.name), a.name.chars().count(), a.name.clone());
+    let mut aus: Vec<Ausfahrt> = Vec::with_capacity(liste.len());
+    for a in liste {
+        match aus
+            .iter_mut()
+            .find(|b| {
+                let gleicher_abzweig = match (a.abzweig, b.abzweig) {
+                    (Some(p), Some(q)) => (p.0 - q.0).hypot(p.1 - q.1) <= DIESELBE_ABZWEIGUNG_M,
+                    _ => false,
+                };
+                b.seite == a.seite
+                    && (gleicher_abzweig || (b.laengs_m - a.laengs_m).abs() <= DIESELBE_ABZWEIGUNG_M)
+            })
+        {
+            Some(b) => {
+                if rang(&a) < rang(b) {
+                    *b = a;
+                }
+            }
+            None => aus.push(a),
+        }
+    }
+    aus
+}
+
+/// Die genutzte Ausfahrt: auf der Räumseite, höchstens 120 m vom
+/// Räumpunkt, die nächste (DLH369 EDDM: B6, nicht das 86 m entfernte B7).
+/// Dieselbe Auswahl wie bis 2.1.7 in der Anzeige — jetzt EINMAL im Client,
+/// als eigenes Feld (`clearance_exit`), damit Kopf, Bild, Lupe, PDF und
+/// Webapp denselben Namen zeigen.
+///
+/// `lage` liest Seite und Längsposition — die Liste liegt im Client als
+/// `Ausfahrt` und als `storage::RunwayExit` vor.
+pub fn genutzte_ausfahrt<'a, T>(
+    liste: &'a [T],
+    raeum_m: f64,
+    seite: &str,
+    lage: impl Fn(&T) -> (&str, f64),
+) -> Option<&'a T> {
+    let abstand = |a: &T| (lage(a).1 - raeum_m).abs();
+    liste
+        .iter()
+        .filter(|a| lage(a).0 == seite && abstand(a) < 120.0)
+        .min_by(|a, b| abstand(a).partial_cmp(&abstand(b)).unwrap_or(std::cmp::Ordering::Equal))
+}
 
 /// Ausfahrten aus einer Bodenkarte für eine bestimmte Bahn.
 ///
@@ -139,7 +289,7 @@ pub fn ausfahrten_fuer_bahn(
     //
     // Ein Rollweg berührt die Bahn oft mit mehreren Stützpunkten; ohne diese
     // Auswahl bekäme derselbe Rollweg mehrere Stummel nebeneinander.
-    let mut beste: Vec<(String, String, f64, f64, Vec<(f64, f64)>)> = Vec::new();
+    let mut beste: Vec<(String, String, f64, f64, Vec<(f64, f64)>, Option<(f64, f64)>)> = Vec::new();
     for m in merkmale {
         let props = m.get("properties");
         if props.and_then(|p| p.get("k")).and_then(|k| k.as_str()) != Some("taxiway") {
@@ -182,23 +332,21 @@ pub fn ausfahrten_fuer_bahn(
             })
             .collect();
 
-        for &(laengs, quer) in &projiziert {
-            if laengs < 20.0 || laengs > bahnlaenge + HINTER_DEM_ENDE_M {
+        for (laengs, kantenabstand, seite, abzweig) in kantenpunkte(&projiziert, halbe_breite) {
+            // Nur entlang der Bahn: Ein Abzweig hinter dem Bahnende oder
+            // vor dem Bahnanfang ist keine Seitenausfahrt (Codex 22.10.2026).
+            if laengs < 0.0 || laengs > bahnlaenge {
                 continue;
             }
-            let kantenabstand = (quer.abs() - halbe_breite).abs();
-            if kantenabstand > KANTEN_TOLERANZ_M {
-                continue;
-            }
-            let seite = if quer > 0.0 { "right" } else { "left" };
             match beste
                 .iter_mut()
-                .find(|(n, s, _, _, _)| n == name && s == seite)
+                .find(|(n, s, _, _, _, _)| n == name && s == seite)
             {
                 Some(eintrag) if kantenabstand < eintrag.3 => {
                     eintrag.2 = laengs;
                     eintrag.3 = kantenabstand;
                     eintrag.4 = projiziert.clone();
+                    eintrag.5 = abzweig;
                 }
                 Some(_) => {}
                 None => beste.push((
@@ -207,6 +355,7 @@ pub fn ausfahrten_fuer_bahn(
                     laengs,
                     kantenabstand,
                     projiziert.clone(),
+                    abzweig,
                 )),
             }
         }
@@ -215,11 +364,12 @@ pub fn ausfahrten_fuer_bahn(
     beste.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
     beste
         .into_iter()
-        .map(|(name, seite, laengs_m, _, roh)| Ausfahrt {
+        .map(|(name, seite, laengs_m, _, roh, abzweig)| Ausfahrt {
             name,
             laengs_m: (laengs_m * 10.0).round() / 10.0,
             seite,
             verlauf: verlauf_ausduennen(&roh, laengs_m, halbe_breite),
+            abzweig,
         })
         .collect()
 }
@@ -298,6 +448,11 @@ fn verlauf_ausduennen(
             let d = (laengs - letzter.laengs_m).hypot(quer - letzter.quer_m);
             if d < VERLAUF_MIN_ABSTAND_M && i + 1 < n {
                 continue;
+            }
+            // Der letzte Punkt ersetzt einen zu nahen Vorgänger (ausser dem
+            // ersten), statt zwei Punkte dicht nebeneinander zu lassen.
+            if d < VERLAUF_MIN_ABSTAND_M && aus.len() > 1 {
+                aus.pop();
             }
         }
         aus.push(Verlaufspunkt {
@@ -392,14 +547,16 @@ mod tests {
         format!(r#"{{"type":"FeatureCollection","features":[{merkmale}]}}"#)
     }
 
-    /// Ein Rollweg, der die Bahn bei etwa 900 m links trifft.
-    fn rollweg(name: &str, lat: f64, lon: f64) -> String {
-        format!(
-            r#"{{"type":"Feature","properties":{{"k":"taxiway","r":"{name}"}},
-                 "geometry":{{"type":"LineString","coordinates":[[{lon},{lat}],[{lon2},{lat2}]]}}}}"#,
-            lon2 = lon + 0.002,
-            lat2 = lat + 0.002,
-        )
+    /// Ein Rollweg, der die Bahn bei `laengs` an der Kante `quer` trifft und
+    /// 80 m nach aussen führt.
+    ///
+    /// Bis 2.1.7 lag der zweite Punkt pauschal 0,002° nördlich und östlich —
+    /// an EDDH 23 quer über die Bahn auf die andere Seite. Das zählte nicht,
+    /// solange jeder Punkt nahe der Kante eine Ausfahrt war; seit nur noch
+    /// Rollwege zählen, die die Bahn wirklich verlassen (#1936), muss die
+    /// Testgeometrie das auch tun.
+    fn rollweg(name: &str, laengs: f64, quer: f64) -> String {
+        rollweg_aus(name, &[(laengs, quer), (laengs, quer + quer.signum() * 80.0)])
     }
 
     /// Ein Rollweg aus beliebig vielen Punkten in Bahn-Koordinaten.
@@ -574,8 +731,7 @@ mod tests {
         // Bleibt nach dem Beschneiden nur ein Punkt uebrig, gibt es
         // nichts zu zeichnen — dann lieber gar keinen Verlauf als einen,
         // den die Anzeige zu einer Linie verlaengert.
-        let (lat, lon) = punkt_auf_bahn(900.0, -23.0);
-        let g = karte(&rollweg("D8", lat, lon));
+        let g = karte(&rollweg("D8", 900.0, -23.0));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         assert_eq!(a.len(), 1);
         // Der Zwei-Punkte-Helfer legt den zweiten Punkt weit weg —
@@ -587,8 +743,7 @@ mod tests {
     fn findet_einen_rollweg_an_der_kante() {
         // Ein Punkt rund 23 m links der Mittellinie bei etwa 900 m — genau
         // auf der Kante einer 46-m-Bahn.
-        let (lat, lon) = punkt_auf_bahn(900.0, -23.0);
-        let g = karte(&rollweg("D8", lat, lon));
+        let g = karte(&rollweg("D8", 900.0, -23.0));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         assert_eq!(a.len(), 1, "{a:?}");
         assert_eq!(a[0].name, "D8");
@@ -645,12 +800,10 @@ mod tests {
 
     #[test]
     fn beide_seiten_werden_unterschieden() {
-        let (la, lo) = punkt_auf_bahn(900.0, -23.0);
-        let (ra, ro) = punkt_auf_bahn(1200.0, 23.0);
         let g = karte(&format!(
             "{},{}",
-            rollweg("D8", la, lo),
-            rollweg("D7", ra, ro)
+            rollweg("D8", 900.0, -23.0),
+            rollweg("D7", 1200.0, 23.0)
         ));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         assert_eq!(a.len(), 2, "{a:?}");
@@ -679,6 +832,152 @@ mod tests {
                  "geometry":{{"type":"LineString","coordinates":[[{lon},{lat}],[{lon},{lat}]]}}}}"#
         ));
         assert!(ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0).is_empty());
+    }
+
+    // ── #1936 (EDDG 25, MSFS-Szenerie, 22.10.2026) ──────────────────
+    //
+    // Die Szenerie liefert zwei Rollwegzüge „B“ und „S1“ mit denselben
+    // Stützpunkten: Sie beginnen auf der Mittellinie bei 1839,6 m (knapp
+    // RECHTS davon), laufen auf der Bahn bis 1947 m und verlassen sie dort
+    // nach links. Die OSM-Karte von EDDG zeigt dasselbe für B (Mittellinie
+    // ab 1838 m, links hinaus bei 1943 m) und kennt kein S1.
+    //
+    // Gespeichert waren „B 1839,6 rechts“ und „S1 1839,6 rechts“: Der
+    // Mittellinienpunkt lag 22,6 m von der rechten Kante — innerhalb der
+    // 25-m-Toleranz — und galt als Ausfahrt nach rechts. Thomas: „gleiche
+    // Ausfahrtsnamen auf beiden Seiten?“. Ein Rollwegstück auf der Bahn ist
+    // keine Ausfahrt; nur wo der Rollweg die Bahn wirklich verlässt.
+    // Bahn hier: EDDH-Geometrie mit 46 m (EDDG: 45,1 m) — die Form zählt.
+
+    /// Wie die Szenerie B und S1 an EDDG 25 liefert (Bahn-Koordinaten).
+    fn eddg_szenerie() -> String {
+        karte(&format!(
+            "{},{}",
+            rollweg_aus(
+                "B",
+                &[
+                    (1839.6, 0.3),
+                    (1904.0, -1.0),
+                    (1926.0, -8.0),
+                    (1941.0, -21.0),
+                    (1947.0, -22.0),
+                    (1950.0, -28.0),
+                    (1952.0, -56.0),
+                ],
+            ),
+            rollweg_aus(
+                "S1",
+                &[(1839.6, 0.3), (1904.0, -1.0), (1947.0, -22.0), (1897.0, -37.0)],
+            ),
+        ))
+    }
+
+    #[test]
+    fn eddg_ein_rollwegstueck_auf_der_bahn_ist_keine_ausfahrt() {
+        let a = ausfahrten_fuer_bahn(&eddg_szenerie(), T.0, T.1, T.2, T.3, 46.0);
+        assert!(
+            a.iter().all(|x| x.seite != "right"),
+            "Phantom-Ausfahrt rechts — B und S1 verlassen die Bahn dort nicht: {a:?}"
+        );
+        // Die echte Ausfahrt bleibt: links bei rund 1947 m.
+        assert!(
+            a.iter()
+                .any(|x| x.name == "B" && x.seite == "left" && (x.laengs_m - 1947.0).abs() < 8.0),
+            "{a:?}"
+        );
+    }
+
+    fn lage(a: &Ausfahrt) -> (&str, f64) {
+        (a.seite.as_str(), a.laengs_m)
+    }
+
+    #[test]
+    fn codex_entlang_der_kante_zaehlt_erst_der_uebergang() {
+        // Codex 22.10.2026 (Befund 2): Ein Rollweg läuft 300 m knapp innen
+        // an der Kante entlang und verlässt die Bahn erst bei 1300 m. Die
+        // Ausfahrt ist der Übergang, nicht der erste kantennahe Punkt.
+        let g = karte(&rollweg_aus(
+            "K",
+            &[(1000.0, -20.0), (1100.0, -20.5), (1200.0, -20.0), (1300.0, -20.0), (1310.0, -40.0), (1320.0, -90.0)],
+        ));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!((a[0].laengs_m - 1300.0).abs() < 15.0, "Ausfahrt bei {} statt ~1300 m", a[0].laengs_m);
+    }
+
+    #[test]
+    fn codex_flaches_segment_schnitt_mit_der_kante() {
+        // Codex Runde 2: Der letzte Punkt auf der Bahn liegt 3 m innen bei
+        // 1000 m, das Segment bis 2000 m schneidet die Kante erst bei
+        // ~1600 m. Die Ausfahrt ist der Schnittpunkt, nicht 1000 m.
+        let g = karte(&rollweg_aus("F", &[(1000.0, -20.0), (2000.0, -25.0), (2010.0, -70.0)]));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!((a[0].laengs_m - 1600.0).abs() < 10.0, "Ausfahrt bei {} statt ~1600 m", a[0].laengs_m);
+    }
+
+    #[test]
+    fn codex_abzweig_hinter_dem_bahnende_ist_keine_seitenausfahrt() {
+        // Codex 22.10.2026 (Befund 3): Ein Rollweg läuft auf der Achse über
+        // das Bahnende hinaus und biegt 100 m dahinter ab — keine linke
+        // Ausfahrt der Bahn. Am Bahnanfang gilt dasselbe (100 m davor).
+        let l = ::geo::distance_m(T.0, T.1, T.2, T.3);
+        let hinten = karte(&rollweg_aus("E", &[(l - 100.0, 0.0), (l + 100.0, 0.0), (l + 100.0, -90.0)]));
+        let vorn = karte(&rollweg_aus("V", &[(100.0, 0.0), (-100.0, 0.0), (-100.0, 90.0)]));
+        for g in [hinten, vorn] {
+            let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+            assert!(a.is_empty(), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn eddg_doppelname_an_derselben_abzweigung_wird_ein_name() {
+        let a = ausfahrten_fuer_bahn(&eddg_szenerie(), T.0, T.1, T.2, T.3, 46.0);
+        // Ohne Karte: der kürzere — „B“, nicht „B/S1“ und nicht „S1“.
+        let eins = doppelnamen_zusammenfassen(a.clone(), |_| false);
+        let links: Vec<&str> = eins
+            .iter()
+            .filter(|x| x.seite == "left")
+            .map(|x| x.name.as_str())
+            .collect();
+        assert_eq!(links, ["B"], "{eins:?}");
+        // Kennt die Bodenkarte nur S1, gewinnt S1 (Karte vor „kürzer“).
+        let karte = doppelnamen_zusammenfassen(a, |n| n == "S1");
+        assert!(karte.iter().any(|x| x.name == "S1"), "{karte:?}");
+        assert!(karte.iter().all(|x| x.name != "B"), "{karte:?}");
+        // Die genutzte Ausfahrt am Räumpunkt 1946,4 m links: B.
+        assert_eq!(
+            genutzte_ausfahrt(&eins, 1946.4, "left", lage).map(|x| x.name.as_str()),
+            Some("B")
+        );
+        assert!(genutzte_ausfahrt(&eins, 1946.4, "right", lage).is_none());
+    }
+
+    #[test]
+    fn verschiedene_abzweigungen_bleiben_getrennt() {
+        // Zwei Rollwege 30 m auseinander sind zwei Ausfahrten, keine
+        // Doppelnamen (Frankfurt M17/M19 liegen dicht, aber getrennt).
+        let a = ausfahrten_fuer_bahn(
+            &karte(&format!("{},{}", rollweg("M17", 1500.0, -23.0), rollweg("M19", 1530.0, -23.0))),
+            T.0,
+            T.1,
+            T.2,
+            T.3,
+            46.0,
+        );
+        assert_eq!(doppelnamen_zusammenfassen(a, |_| false).len(), 2);
+    }
+
+    #[test]
+    fn schnellabrollweg_von_der_mittellinie_zaehlt_an_der_kante() {
+        // OSM: eine Gerade von der Mittellinie weit hinaus. Die Stelle ist
+        // der Schnittpunkt mit der Kante, die Seite die, auf der er die
+        // Bahn verlässt — nicht das Vorzeichen des Mittellinienpunkts.
+        let g = karte(&rollweg_aus("S4", &[(1000.0, -0.2), (1200.0, 120.0)]));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert_eq!(a[0].seite, "right");
+        assert!((a[0].laengs_m - 1038.6).abs() < 3.0, "{}", a[0].laengs_m);
     }
 
     /// Ein Punkt auf der Bahnachse: `laengs` Meter nach der Schwelle,

@@ -14,13 +14,13 @@
 //   3. Legende
 //   4. 4 Detail-Karten (Aufsetz-Bewertung / Position / Anflug-Profil / Datenquelle)
 
-import { useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fmtSigned } from "../lib/landungsFormat";
 import { erzeugeProjektion } from "../lib/runwayProjection";
 import { useBahnZoom } from "../lib/useBahnZoom";
 import { RunwayDisciplinePanel, spurBereinigen, endpunktNummer, versatzUnglaubwuerdig, kanteTraegtNicht } from "./RunwayDisciplinePanel";
-import { BahnSpurOverlay, BahnSpurHinweise, bahnHinweise, type BahnSpurOverlayProps } from "./BahnSpurOverlay";
-import { bandFarbeFuer } from "./bahnHilfen";
+import { BahnSpurOverlay, BahnSpurHinweise, bahnHinweise, spurImBild, textKasten, type BahnSpurOverlayProps, type Kasten } from "./BahnSpurOverlay";
+import { ausfahrtenFuerAnzeige, bandFarbeFuer, DURCHGANG_FARBE, genutzteAusfahrt, rollwegQuelle } from "./bahnHilfen";
 import { querMassstab, bewertungsEnde, aussenkanteHalbM } from "../lib/bahnQuerMassstab";
 import { useTranslation } from "react-i18next";
 import { GlossaryModal } from "./RunwayGlossaryModal";
@@ -53,6 +53,15 @@ const SPUR_GEOMETRIE_UNSICHER = new Set(["untrusted_geometry", "off_airport_land
 /** B7: Mindestbreite der Bahn-Grafik in CSS-Pixeln (Faktor 760/1200 ≈ 0,63 —
  *  9er-Schrift ≥ 5,7 px statt 2,7 px am Handy). */
 export const MIN_ANZEIGE_BREITE_PX = 760;
+/**
+ * Unter dieser Kastenbreite (CSS-Pixel) zeichnet die Draufsicht schmal
+ * (Bahnansicht 2.1.8, Entscheidung 7): Die viewBox wird enger, damit die
+ * ganze Bahn mit Ausfahrt auf die Bildschirmbreite passt — gestaucht statt
+ * im Kasten gerollt — und die Schrift lesbar bleibt.
+ */
+const SCHMAL_UNTER_PX = MIN_ANZEIGE_BREITE_PX;
+const SCHMAL_W = 560;
+const SCHMAL_PAD_X = 50;
 /** B9: Grund der Bahn-Grafik, in beiden Themen gleich dunkel. */
 export const BAHN_GRUND = "#0c1628";
 
@@ -164,6 +173,15 @@ export interface RunwayDiagramV2Props {
     seite: "left" | "right";
     verlauf?: Array<{ laengs_m: number; quer_m: number }> | null;
   }> | null;
+  /**
+   * Die genutzte Ausfahrt (Name) — ab 2.1.8 EINMAL im Client bestimmt.
+   * Kopf, Draufsicht, Lupe und PDF zeigen nur diesen Namen
+   * (`genutzteAusfahrt` in bahnHilfen.ts); ältere Flüge rechnen dort nach
+   * derselben Regel.
+   */
+  clearance_exit?: string | null;
+  /** Woher `runway_exits` stammen: „szenerie“ oder „osm“ (ab 2.1.8). */
+  runway_exits_quelle?: string | null;
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
@@ -253,13 +271,31 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   const skin = useV2Skin();
   const TOKENS = skin.tokens;
   const display = skin.display;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [glossaryOpen, setGlossaryOpen] = useState(false);
 
-  const W = skin.geometry.svgWidth;
-  const padX = skin.geometry.rwyPaddingX;
-  const padY = skin.geometry.rwyPaddingY;
-  const innerW = W - 2 * padX;
+  // Schmal (Handy): engere viewBox statt Mindestbreite und Rollkasten.
+  const kasten = useRef<HTMLDivElement | null>(null);
+  const [kastenBreite, setKastenBreite] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = kasten.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((e) => setKastenBreite(e[0]?.contentRect.width ?? null));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const schmal = kastenBreite != null && kastenBreite > 0 && kastenBreite < SCHMAL_UNTER_PX && !props.schriftMindest;
+  const sprache = props.locale ?? i18n?.language;
+  /** Zahl mit dem Dezimalzeichen der Sprache: de/it Komma, en Punkt. */
+  const dez = (n: number, stellen = 1) => {
+    const z = n.toFixed(stellen);
+    return (sprache ?? "de").startsWith("en") ? z : z.replace(".", ",");
+  };
+
+  const W = schmal ? SCHMAL_W : skin.geometry.svgWidth;
+  const padXBasis = schmal ? SCHMAL_PAD_X : skin.geometry.rwyPaddingX;
+  // Schmal steht der Kopf in einer eigenen Zeile — darunter Platz lassen.
+  const padY = skin.geometry.rwyPaddingY + (schmal ? 16 : 0);
 
   // Bahn-Geometrie.
   // - lengthM: nutzbare LANDE-Bahn (= nach dem displaced threshold)
@@ -292,20 +328,80 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // Zoom — EIN Zustand für beide Ansichten. Getrennte Zustände wären der
   // Fehler, gegen den §8.4 die gemeinsame Projektion vorschreibt: Zwei
   // Ansichten, die nicht mehr fluchten, sind schlimmer als eine.
-  const zoom = useBahnZoom(
-    -(props.displaced_threshold_m ?? 0),
-    Number.isFinite(props.length_m) ? Math.max(100, props.length_m) : 500,
-  );
+  // Variante B braucht die echte Breite (siehe unten); davon hängt der
+  // Zeichenbereich ab — rechts steht die Querskala.
+  const breiteEchtM =
+    props.runway_width_m != null && props.runway_width_m > 0 ? props.runway_width_m : null;
+  // Blockiert die Bewertung die seitliche Aussage (falsche Achse, unsichere
+  // Geometrie …), wird auch keine Spur gezeichnet — wie früher die
+  // Queransicht; die Liste nennt den Grund.
+  const mitVariante =
+    breiteEchtM != null && !SPUR_GEOMETRIE_UNSICHER.has(props.lateral_skip_reason ?? "");
+  const qm = mitVariante ? querMassstab(breiteEchtM!) : null;
+  const pxQuer: number | null = qm ? qm.pxProQuerM : null;
+  // Grünstreifen beidseits der Bahn — Platz für ein Rad neben der Kante,
+  // ohne in die Beschriftung zu laufen.
+  const randPx = mitVariante ? 24 : 0;
+  const randM = pxQuer ? randPx / pxQuer : 0;
+  // Ränder nur so breit, wie es nötig ist (Thomas 22.10.2026: „rechts zu
+  // viel Platz verschenkt“): links die Kennung („25“), rechts KEINE eigene
+  // Spalte — „07“ und die Länge stehen unter dem Bahnende (Zeile von
+  // „BAHN-ENDE“), die Kantenangaben im Grünstreifen. Den Platz hinter dem
+  // Bahnende, den eine Ausfahrt braucht, gibt `nachM` (Entscheidung 1).
+  const zb = (text: string, schrift: number) => text.length * sf(schrift) * 0.62;
+  const kennungGegen = oppositeRunway(props.runway_ident);
+  const laengeText = `${props.length_m.toFixed(0)} m`;
+  const padX = mitVariante ? Math.ceil(Math.max(36, zb(props.runway_ident, 28) + 14)) : padXBasis;
+  const rechtsRand = mitVariante ? 6 : padX;
+  const innerW = W - padX - rechtsRand;
+
+  // Platz vor dem Bahnanfang und hinter dem Bahnende (Entscheidung 1): nur
+  // so viel, dass Spur bis zum Bildrand, Räumpunkt und genutzte Ausfahrt
+  // ganz im Bild liegen. #1936: Ausfahrt bei 1946 m von 1970 m — sie lag
+  // vorher am Bildrand, ihr Text lief hinaus.
+  const lengthRoh = Number.isFinite(props.length_m) ? Math.max(100, props.length_m) : 500;
+  const ddsRoh = props.displaced_threshold_m ?? 0;
+  const spurVersatz = props.spur_nullpunkt_versatz_m ?? 0;
+  const genutzt = genutzteAusfahrt(props);
+  const { vorM, nachM } = (() => {
+    if (!mitVariante) return { vorM: 0, nachM: 0 };
+    const sichtbarM = breiteEchtM! / 2 + randM;
+    const spur = spurImBild(
+      props.lateral_samples ? spurBereinigen(props.lateral_samples) : [],
+      props.clearance_point_m ?? null,
+      sichtbarM,
+    ).spur;
+    // Ab Landeschwelle (die Spurwerte tragen den Nullpunkt der Navdaten).
+    const stellen = [
+      ...spur.map((x) => x.laengs_m - spurVersatz),
+      ...(props.clearance_point_m != null ? [props.clearance_point_m - spurVersatz] : []),
+      ...(genutzt ? [genutzt.laengs_m - spurVersatz] : []),
+    ];
+    if (!stellen.length) return { vorM: 0, nachM: 0 };
+    // Rand in Metern: Marke (Radius 9) samt Luft (16 Einheiten) — oder das
+    // halbe Band, das in einer steilen Ausfahrt waagerecht absteht.
+    const halbBandPx =
+      props.track_width_m != null && props.track_width_m > 0 ? aussenkanteHalbM(props.track_width_m) * pxQuer! : 0;
+    const randMeter = (Math.max(16, halbBandPx + 4) * (lengthRoh + ddsRoh)) / Math.max(1, innerW);
+    const deckel = 0.2 * lengthRoh;
+    return {
+      vorM: Math.min(deckel, Math.max(0, -ddsRoh - (Math.min(...stellen) - randMeter))),
+      nachM: Math.min(deckel, Math.max(0, Math.max(...stellen) + randMeter - lengthRoh)),
+    };
+  })();
+  const zoom = useBahnZoom(-ddsRoh - vorM, lengthRoh + nachM);
   const projektion = erzeugeProjektion({
     lengthM: props.length_m,
     ddsM: props.displaced_threshold_m ?? 0,
     // ⚠ Der Nullpunkt der Spurwerte — NICHT die versetzte Schwelle.
     // Siehe `ProjektionsEingang.spurVersatzM`.
-    spurVersatzM: props.spur_nullpunkt_versatz_m ?? 0,
+    spurVersatzM: spurVersatz,
     padX,
     innerW,
     sichtVonM: zoom.vonM,
     sichtBisM: zoom.bisM,
+    vorM,
+    nachM,
   });
   const lengthM = projektion.lengthM;
   const ddsM = projektion.ddsM;
@@ -326,19 +422,6 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // die Queransicht zeigte. Querachse = `querMassstab` (derselbe Massstab
   // wie die frühere Queransicht). Ohne Breite: alte Geometrie, aber die
   // Ausroll-Linie gestrichelt und erklärt — nie eine Behauptung „mittig“.
-  const breiteEchtM =
-    props.runway_width_m != null && props.runway_width_m > 0 ? props.runway_width_m : null;
-  // Blockiert die Bewertung die seitliche Aussage (falsche Achse, unsichere
-  // Geometrie …), wird auch keine Spur gezeichnet — wie früher die
-  // Queransicht; die Liste nennt den Grund.
-  const mitVariante =
-    breiteEchtM != null && !SPUR_GEOMETRIE_UNSICHER.has(props.lateral_skip_reason ?? "");
-  const qm = mitVariante ? querMassstab(breiteEchtM!) : null;
-  const pxQuer: number | null = qm ? qm.pxProQuerM : null;
-  // Grünstreifen beidseits der Bahn — Platz für ein Rad neben der Kante,
-  // ohne in die Beschriftung zu laufen.
-  const randPx = mitVariante ? 24 : 0;
-  const randM = pxQuer ? randPx / pxQuer : 0;
   const innerH = !mitVariante
     ? skin.geometry.svgHeight - 2 * padY
     : Math.max(3, breiteEchtM! * pxQuer!);
@@ -459,17 +542,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
       ? props.td_distance_from_threshold_m + props.rollout_m
       : null;
   const ausrollEndeUeberBahn = ausrollEndeM != null && ausrollEndeM > lengthM;
-  // Die Ausfahrt, über die geräumt wurde — für die Beschriftung. Nur wenn
-  // die Seite feststeht: Ohne Seite gibt es keine eindeutige Zuordnung,
-  // und einen Namen zu raten wäre schlimmer als keiner (§8.6).
-  const raeumAusfahrt =
-    raeumM != null && props.clearance_side != null
-      ? (props.runway_exits ?? [])
-          .filter((e) => e.seite === props.clearance_side)
-          .map((e) => ({ e, d: Math.abs(e.laengs_m - raeumM) }))
-          .filter((x) => x.d < 120)
-          .sort((a, b) => a.d - b.d)[0]?.e ?? null
-      : null;
+  // Die Ausfahrt, über die geräumt wurde — EINE Quelle für Kopf, Bild,
+  // Lupe und PDF (`genutzteAusfahrt`, ab 2.1.8 vom Client gemeldet). Nur
+  // wenn die Seite feststeht: einen Namen zu raten wäre schlimmer als
+  // keiner (§8.6).
+  const raeumAusfahrt = genutzt;
 
   // Bahn-Auslastung.
   //
@@ -539,7 +616,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 rollweg: TOKENS.rollweg,
               },
         sf: sf,
-        ausfahrten: props.runway_exits as never,
+        ausfahrten: ausfahrtenFuerAnzeige(props),
+        genutzt,
+        bildVonX: 2,
+        bildBisX: padX + innerW,
+        dez,
         messEndeM: bewertungsEnde(props.mess_ende_laengs_m, props.scoring_cutoff_m, props.clearance_point_m),
         durchgaenge: (props.vorherige_durchgaenge ?? []).map((d) => spurBereinigen(d.lateral_samples ?? [])),
         textY: H - 6,
@@ -550,6 +631,138 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         maxLateralOffsetM: props.max_lateral_offset_m ?? null,
       }
     : null;
+
+  // Die Legende zeigt GENAU das, was gezeichnet ist (Entscheidung 6): Jede
+  // Form im Bild trägt `data-legende` (ihr Schlüssel) oder „beschriftung“
+  // (Skalen, Klammern — sie erklären sich selbst). Gelesen wird nach dem
+  // Zeichnen, also auch beim Zoomen richtig; der Abnahmetest prüft, dass
+  // keine Form ohne Zuordnung bleibt.
+  const svgEl = useRef<SVGSVGElement | null>(null);
+  const radAnschluss = zoom.radAnschluss;
+  const svgRef = useCallback(
+    (el: SVGSVGElement | null) => {
+      svgEl.current = el;
+      return radAnschluss(el);
+    },
+    [radAnschluss],
+  );
+  const [gezeichnet, setGezeichnet] = useState<Record<string, string>>({});
+  useLayoutEffect(() => {
+    const el = svgEl.current;
+    if (!el) return;
+    const neu: Record<string, string> = {};
+    for (const e of el.querySelectorAll("[data-legende]")) {
+      const k = e.getAttribute("data-legende")!;
+      if (k === "beschriftung") continue;
+      neu[k] = neu[k] || (e.getAttribute("data-legende-farbe") ?? "");
+    }
+    const neuText = JSON.stringify(neu);
+    setGezeichnet((alt) => (JSON.stringify(alt) === neuText ? alt : neu));
+  });
+  const bandFarbe =
+    props.surface_paved === false ? TOKENS.rollout : bandFarbeFuer(TOKENS, props.overrun_m, props.min_edge_clearance_m);
+  const quelle = rollwegQuelle(props);
+  // Kopf des Räumpunkts — am Bildrand nach innen gerückt (Entscheidung 1,
+  // #1936: „… Ausfahrt B li“ lief rechts aus dem Bild).
+  const raeumTitel = t("runway_v2.cleared_title", { defaultValue: "BAHN GERÄUMT" });
+  const raeumZeile =
+    raeumM == null
+      ? ""
+      : [
+          `${raeumM.toFixed(0)} m`,
+          props.clearance_speed_kt != null ? `${props.clearance_speed_kt.toFixed(0)} kt` : null,
+          raeumAusfahrt
+            ? t("runway_v2.cleared_via", {
+                defaultValue: "Ausfahrt {{name}} {{seite}}",
+                name: raeumAusfahrt.name,
+                seite: t(
+                  props.clearance_side === "left" ? "runway_v2.side_left_word" : "runway_v2.side_right_word",
+                  { defaultValue: props.clearance_side === "left" ? "links" : "rechts" },
+                ),
+              })
+            : props.clearance_side != null
+            ? t(props.clearance_side === "left" ? "runway_v2.side_left_word" : "runway_v2.side_right_word", {
+                defaultValue: props.clearance_side === "left" ? "links" : "rechts",
+              })
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+  const raeumHalb = Math.max(raeumTitel.length * sf(11), raeumZeile.length * sf(10)) * 0.62 / 2;
+  const ausrollEndeText =
+    t("runway_v2.rollout_end", { defaultValue: "AUSROLLEN ENDE" }) +
+    (ausrollEndeUeberBahn
+      ? ` · ${t("runway_v2.rollout_end_beyond", { defaultValue: "hinter dem Bahnende" })}`
+      : exitDistM != null
+      ? ` · ${exitDistM.toFixed(0)} m`
+      : "");
+  const raeumTextX =
+    raeumX == null ? 0 : Math.min(Math.max(raeumX, raeumHalb + 4), padX + innerW - raeumHalb);
+  // Variante B: „BAHN-ENDE · 07 · 1970 m“ in EINER Zeile unter dem Bahnende
+  // (keine Spalte rechts daneben, Thomas 22.10.2026).
+  const endeZeileY = rwyBot + unten + 18;
+  const kennungX = projektion.bahnEndeX - (display.show_bahn_length ? zb(laengeText, 9.5) + 6 : 0);
+  const bahnEndeTextX = mitVariante
+    ? kennungX - (display.show_opposite_runway ? zb(kennungGegen, 13) + 8 : 0)
+    : projektion.bahnEndeX;
+  // Die Texte der Draufsicht, denen die neuen Beschriftungen im Overlay
+  // ausweichen (Pfeil, Marke 2, Dreieck) — dieselben Kästen wie die
+  // Lesbarkeitsprüfung.
+  const fremdeTexte: Kasten[] = [
+    ...(tdzEndX != null && tdzEndX > thresholdX + 24 && display.show_aufsetzzone_box
+      ? [textKasten((thresholdX + tdzEndX) / 2, rwyTop - oben - 20, `${t("runway_v2.aufsetzzone_prefix")} ${props.td_tdz_length_m?.toFixed(0)} m`, sf(11), "middle")]
+      : []),
+    ...(aimX != null && display.show_aim_marker
+      ? [textKasten(aimX, rwyBot + unten + 20, `${t("runway_v2.aim_point_prefix")} ${props.aim_point_m?.toFixed(0)} m`, sf(10.5), "middle")]
+      : []),
+    textKasten(bahnEndeTextX, rwyBot + unten + 18, t("runway_v2.runway_end", { defaultValue: "BAHN-ENDE" }), sf(9.5), "end"),
+    ...(mitVariante
+      ? [
+          textKasten(kennungX, endeZeileY, kennungGegen, sf(13), "end"),
+          textKasten(projektion.bahnEndeX, endeZeileY, laengeText, sf(9.5), "end"),
+        ]
+      : []),
+    ...(raeumX != null
+      ? [
+          textKasten(raeumTextX, rwyTop - oben - 52, raeumTitel, sf(11), "middle"),
+          textKasten(raeumTextX, rwyTop - oben - 52 + zeile(11), raeumZeile, sf(10), "middle"),
+        ]
+      : []),
+  ];
+  const overlay: BahnSpurOverlayProps | null = overlayProps ? { ...overlayProps, fremdeTexte } : null;
+  const nSpur = props.lateral_samples?.length ?? 0;
+  const legendeEintraege: Array<{ k: string; art: LegendeArt; farbe: string; text: string }> = [
+    { k: "schwelle", art: "flaeche", farbe: TOKENS.threshold, text: t("runway_v2.b.leg_schwelle") },
+    { k: "dds", art: "flaeche", farbe: TOKENS.ddsBorder, text: t("runway_v2.legend_pre_threshold") },
+    { k: "tdz", art: "flaeche", farbe: TOKENS.tdzStroke, text: t("runway_v2.legend_tdz") },
+    { k: "aim", art: "flaeche", farbe: TOKENS.aimMarker, text: t("runway_v2.legend_aim") },
+    { k: "td", art: "punkt", farbe: dotColor, text: mitVariante ? t("runway_v2.b.leg_marke1") : t("runway_v2.legend_td") },
+    { k: "band", art: "flaeche", farbe: bandFarbe, text: t("runway_v2.b.leg_band") },
+    { k: "mitte", art: "linie", farbe: "#e2e8f0", text: t("runway_v2.b.leg_mitte", { n: nSpur }) },
+    { k: "gruen", art: "flaeche", farbe: "#2f5a38", text: t("runway_v2.b.leg_gruen") },
+    {
+      k: "rollwege",
+      art: "flaeche",
+      farbe: TOKENS.rollweg,
+      text:
+        quelle === "szenerie"
+          ? t("runway_v2.b.leg_rollwege_szenerie")
+          : quelle === "osm"
+          ? t("runway_v2.b.leg_rollwege_osm")
+          : t("runway_v2.b.leg_rollwege"),
+    },
+    { k: "marke2", art: "punkt", farbe: TOKENS.tdPerfect, text: t("runway_v2.b.leg_marke2") },
+    { k: "marke3", art: "punkt", farbe: TOKENS.rollout, text: t("runway_v2.b.leg_marke3") },
+    { k: "endpunkt", art: "punkt", farbe: TOKENS.rollout, text: t("runway_v2.b.leg_endpunkt") },
+    { k: "marke4", art: "punkt", farbe: TOKENS.tdSevere, text: t("runway_v2.b.leg_marke4") },
+    { k: "dreieck", art: "dreieck", farbe: "#fbbf24", text: t("runway_v2.b.leg_dreieck") },
+    { k: "durchgang", art: "gestrichelt", farbe: DURCHGANG_FARBE, text: t("runway_v2.b.leg_durchgang") },
+    { k: "pfeil", art: "dreieck", farbe: "#e2e8f0", text: t("runway_v2.b.leg_pfeil") },
+    { k: "ersatz", art: "gestrichelt", farbe: TOKENS.rollout, text: t("runway_v2.b.leg_ersatz") },
+    { k: "ausrollen", art: ohneSpurHinweis ? "gestrichelt" : "linie", farbe: TOKENS.rollout, text: t("runway_v2.b.leg_ausrollen") },
+    { k: "ausroll-ende", art: "raute", farbe: TOKENS.rollout, text: t("runway_v2.b.leg_ausroll_ende") },
+    { k: "raeum", art: "raute", farbe: TOKENS.rollout, text: t("runway_v2.b.leg_raeum") },
+  ];
 
   return (
     <section
@@ -685,6 +898,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
       {/* ─── 2. SVG-DIAGRAMM ───────────────────────────────────────── */}
       <div
         data-rolle="bahn-grafik"
+        ref={kasten}
         style={{
           width: "100%",
           // B9 (22.10.2026): eigener dunkler Grund — die Grafik ist für
@@ -699,18 +913,22 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           // Container scrollte waagerecht. §8.6.5 verbietet genau das.
           boxSizing: "border-box",
           maxWidth: "100%",
-          // B7 (22.10.2026): Am Handy (360 px) wurde die viewBox von 1200
-          // auf 0,30 gestaucht — 10er-Schrift landete bei 3 px. Die Grafik
-          // hat jetzt eine Mindestbreite und rollt darunter IN ihrem Kasten
-          // waagerecht; die Seite selbst rollt weiterhin nie (§8.6.5).
-          overflowX: "auto",
+          // Entscheidung 7 (2.1.8): Am Handy NICHT mehr im Kasten gerollt —
+          // die ganze Bahn mit Ausfahrt auf einen Blick. Die Grafik zeichnet
+          // dort mit engerer viewBox (`schmal`), damit die Schrift lesbar
+          // bleibt; der Zoom bleibt.
         }}
       >
         <svg
           // Nicht `onWheel`: React bindet Rad-Ereignisse passiv, und dort
           // ist `preventDefault()` wirkungslos — der Browser hätte die
           // ganze Seite mitgezoomt. Siehe `radAnschluss`.
-          ref={zoom.radAnschluss}
+          ref={svgRef}
+          // Der Zeichenbereich, offen für Prüfungen (Abnahmetest).
+          data-pad-x={padX}
+          data-inner-w={innerW}
+          data-vor-m={vorM.toFixed(1)}
+          data-nach-m={nachM.toFixed(1)}
           onMouseDown={zoom.aufZiehStart}
           onMouseMove={zoom.aufZiehen}
           onMouseUp={zoom.aufZiehEnde}
@@ -719,7 +937,6 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           preserveAspectRatio="xMidYMid meet"
           style={{
             width: "100%",
-            minWidth: MIN_ANZEIGE_BREITE_PX,
             height: "auto",
             display: "block",
             cursor: zoom.zieht ? "grabbing" : zoom.gezoomt ? "grab" : "default",
@@ -729,17 +946,18 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         >
           {/* PROTOTYP: Grünstreifen beidseits (nur Varianten). */}
           {mitVariante && (
-            <g data-rolle="gruenstreifen">
-              <rect x={padX} y={rwyTop - randPx} width={innerW} height={randPx} fill="#1f3a24" opacity={0.55} />
-              <rect x={padX} y={rwyBot} width={innerW} height={randPx} fill="#1f3a24" opacity={0.55} />
+            <g data-rolle="gruenstreifen" data-legende="gruen">
+              <rect x={projektion.bahnAnfangX} y={rwyTop - randPx} width={projektion.bahnEndeX - projektion.bahnAnfangX} height={randPx} fill="#1f3a24" opacity={0.55} />
+              <rect x={projektion.bahnAnfangX} y={rwyBot} width={projektion.bahnEndeX - projektion.bahnAnfangX} height={randPx} fill="#1f3a24" opacity={0.55} />
             </g>
           )}
           {/* Tarmac */}
           <rect
             data-rolle="bahnflaeche"
-            x={padX}
+            data-legende="beschriftung"
+            x={projektion.bahnAnfangX}
             y={rwyTop}
-            width={innerW}
+            width={projektion.bahnEndeX - projektion.bahnAnfangX}
             height={innerH}
             fill={TOKENS.tarmac}
             stroke={TOKENS.tarmacBorder}
@@ -751,7 +969,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               verboten) mit Chevron-Hatch (= echte Bahn-Markierung).
               Liegt zwischen padX (Bahn-Anfang) und thresholdX (Landethreshold). */}
           {ddsActive && (
-            <g>
+            <g data-legende="dds">
               <defs>
                 <pattern
                   id="dds-chevron"
@@ -764,24 +982,24 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 </pattern>
               </defs>
               <rect
-                x={padX + 2}
+                x={projektion.bahnAnfangX + 2}
                 y={rwyTop + 4}
-                width={Math.max(0, thresholdX - padX - 2)}
+                width={Math.max(0, thresholdX - projektion.bahnAnfangX - 2)}
                 height={Math.max(1, innerH - 8)}
                 fill={TOKENS.ddsZone}
               />
               <rect
-                x={padX + 2}
+                x={projektion.bahnAnfangX + 2}
                 y={rwyTop + 4}
-                width={Math.max(0, thresholdX - padX - 2)}
+                width={Math.max(0, thresholdX - projektion.bahnAnfangX - 2)}
                 height={Math.max(1, innerH - 8)}
                 fill="url(#dds-chevron)"
                 opacity="0.6"
               />
               <rect
-                x={padX + 2}
+                x={projektion.bahnAnfangX + 2}
                 y={rwyTop + 4}
-                width={Math.max(0, thresholdX - padX - 2)}
+                width={Math.max(0, thresholdX - projektion.bahnAnfangX - 2)}
                 height={Math.max(1, innerH - 8)}
                 fill="none"
                 stroke={TOKENS.ddsBorder}
@@ -837,7 +1055,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           {/* Landethreshold-Streifen — am Ort thresholdX (= 0m from
               landing threshold). Bei aktivem DDS verschoben nach
               rechts. */}
-          <g>
+          <g data-legende="schwelle">
             {Array.from({ length: 8 }, (_, i) => (
               <rect
                 key={i}
@@ -864,11 +1082,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           {/* Bahn-Ende rechts — gespiegelte 8 weiße Streifen + solides
               weißes End-Band. Macht visuell klar dass die Bahn HIER
               aufhört und nicht endlos weiterläuft (User-Befund). */}
-          <g>
+          <g data-legende="schwelle">
             {Array.from({ length: 8 }, (_, i) => (
               <rect
                 key={i}
-                x={padX + innerW - 24}
+                x={projektion.bahnEndeX - 24}
                 y={rwyTop + 4 + (i * (innerH - 8)) / 8}
                 width={20}
                 height={Math.max(0.5, (innerH - 8) / 8 - 2)}
@@ -877,7 +1095,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               />
             ))}
             <rect
-              x={padX + innerW - 2}
+              x={projektion.bahnEndeX - 2}
               y={rwyTop + 4}
               width={4}
               height={Math.max(1, innerH - 8)}
@@ -890,7 +1108,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               Rahmen + Label. Die diagonale Schraffur soll visuell
               vermitteln "hier soll der Touchdown rein". */}
           {tdzEndX != null && tdzEndX > thresholdX + 24 && display.show_aufsetzzone_box && (
-            <g>
+            <g data-legende="tdz">
               <defs>
                 <pattern
                   id="tdz-hatch"
@@ -980,9 +1198,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
           {/* Centerline (gestrichelt). */}
           <line
+            data-legende="beschriftung"
             x1={thresholdX + 28}
             y1={rwyCl}
-            x2={padX + innerW - 6}
+            x2={projektion.bahnEndeX - 6}
             y2={rwyCl}
             stroke={TOKENS.centerline}
             strokeWidth="1.6"
@@ -997,7 +1216,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               hier 24 px (entspricht ~50 m Real-Länge, ICAO gibt 30–60 m
               je nach Bahn). */}
           {aimX != null && display.show_aim_marker && (
-            <g>
+            <g data-legende="aim">
               <rect
                 x={aimX - 12}
                 y={rwyCl - 22}
@@ -1064,7 +1283,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
           {/* Ausroll-Linie (Schein + Kern) — endet an `rolloutEndeX`. */}
           {!mitVariante && rolloutEndeX != null && rolloutEndeX > tdX && (
-            <g>
+            <g data-legende="ausrollen">
               <line
                 x1={tdX}
                 y1={tdY}
@@ -1088,36 +1307,35 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
           {/* Variante B: die echte Spur mit Fahrwerksbreite bis zur Reifen-Aussenkante. */}
           {mitVariante && (
-            <BahnSpurOverlay {...overlayProps!} />
+            <BahnSpurOverlay {...overlay!} />
           )}
           {mitVariante && (
+            // Kopf (Entscheidung 7): „A320 · Spurweite 7,6 m · Bahn 45 m
+            // breit · quer 8-fach gestreckt“ — Zahlen im Format der Sprache,
+            // „gestreckt“ statt „überhöht“. Schmal in einer eigenen Zeile.
             <text
-              x={padX + innerW}
-              y={16}
+              x={schmal ? W - 4 : padX + innerW}
+              y={schmal ? 32 : 16}
               textAnchor="end"
               fontSize={sf(10.5)}
               fill="#8B95A8"
               data-rolle="ueberhoehung"
             >
-              {`${
+              {[
+                props.aircraft_icao || null,
                 props.track_width_m != null
-                  ? t("runway_v2.cross_aircraft", {
-                      defaultValue: "{{typ}} · Spurweite {{m}} m",
-                      typ: props.aircraft_icao ?? "",
-                      m: props.track_width_m.toFixed(1),
-                    }).trim()
-                  : t("runway_v2.cross_aircraft_unknown", { defaultValue: "Spurweite nicht bekannt" })
-              }`.replace(/^·\s*/, "") + " · "}
-              {t("runway_v2.b.kopf", {
-                faktor: ueberhoehung!.toFixed(1).replace(".", ","),
-                zusatz:
-                  qm && qm.dehnung > 1.01
+                  ? t("runway_v2.b.kopf_spur", { m: dez(props.track_width_m) })
+                  : t("runway_v2.b.kopf_spur_unbekannt"),
+                t("runway_v2.b.kopf_bahn", { m: breiteEchtM!.toFixed(0) }),
+                t("runway_v2.b.kopf_quer", { faktor: Math.max(1, Math.round(ueberhoehung!)) }) +
+                  (qm && qm.dehnung > 1.01
                     ? t("runway_v2.b.kopf_gedehnt")
                     : breiteEchtM! > 60
                     ? t("runway_v2.b.kopf_gestaucht")
-                    : "",
-                breite: breiteEchtM!.toFixed(0),
-              })}
+                    : ""),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </text>
           )}
 
@@ -1136,7 +1354,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               liest sich der rote Streifen rechts wie ein zweiter
               Landeverbotsbereich. */}
           <text
-            x={padX + innerW}
+            x={bahnEndeTextX}
             y={rwyBot + unten + 18}
             textAnchor="end"
             fontSize={sf(9.5)}
@@ -1161,7 +1379,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               Marke, ohne Geschwindigkeit und ohne Seite, weil beides nicht
               erfasst wurde. */}
           {raeumX == null && rolloutEndeX != null && (
-            <g>
+            <g data-legende="ausroll-ende">
               <path
                 d={`M ${rolloutEndeX} ${tdY - 9} l 8 9 l -8 9 l -8 -9 z`}
                 fill={TOKENS.rollout}
@@ -1184,7 +1402,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               <text
                 x={Math.min(
                   Math.max(rolloutEndeX, padX + 70),
-                  padX + innerW - 70,
+                  // Rechts so weit eingerückt, wie der Text breit ist (der
+                  // Rand rechts ist seit 2.1.8 schmal).
+                  Math.min(padX + innerW - 70, W - 2 - (ausrollEndeText.length * sf(10) * 0.62) / 2),
                 )}
                 y={rwyTop - oben - 36}
                 textAnchor="middle"
@@ -1241,6 +1461,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 if (mitVariante) return null;
                 return (
                   <path
+                    data-legende="raeum"
                     d={bogen}
                     fill="none"
                     stroke={TOKENS.rollout}
@@ -1250,25 +1471,32 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   />
                 );
               })()}
-              <path
-                d={`M ${raeumX} ${raeumY - 11} l 10 11 l -10 11 l -10 -11 z`}
-                // Variante B: Marke 3 der Spur sitzt hier — die Raute würde
-                // sie verdecken (Sichtprüfung 22.10.2026).
-                fill={mitVariante ? "none" : TOKENS.rollout}
-              />
-              <line
-                x1={raeumX}
-                y1={rwyTop - oben - 44}
-                x2={raeumX}
-                // Variante B: endet über dem Grünstreifen — darin stehen
-                // die Ausfahrtsnamen.
-                y2={mitVariante ? rwyTop - oben - 2 : raeumY - 15}
-                stroke={TOKENS.rollout}
-                strokeWidth="1"
-                opacity="0.45"
-              />
+              {/* Variante B: Marke 3 der Spur sitzt hier — die Raute würde
+                  sie verdecken (Sichtprüfung 22.10.2026). */}
+              {!mitVariante && (
+                <path
+                  data-legende="raeum"
+                  d={`M ${raeumX} ${raeumY - 11} l 10 11 l -10 11 l -10 -11 z`}
+                  fill={TOKENS.rollout}
+                />
+              )}
+              {/* Variante B: keine Bezugslinie — sie endete über dem
+                  Grünstreifen im Leeren (Entscheidung 3/Kritik #4); der Text
+                  steht über Marke 3, Pfeil und Ausfahrtname darunter. */}
+              {!mitVariante && (
+                <line
+                  data-legende="beschriftung"
+                  x1={raeumX}
+                  y1={rwyTop - oben - 44}
+                  x2={raeumX}
+                  y2={raeumY - 15}
+                  stroke={TOKENS.rollout}
+                  strokeWidth="1"
+                  opacity="0.45"
+                />
+              )}
               <text
-                x={raeumX}
+                x={raeumTextX}
                 y={rwyTop - oben - 52}
                 textAnchor="middle"
                 fontSize={sf(11)}
@@ -1276,43 +1504,17 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 fill={TOKENS.rollout}
                 fontFamily="monospace"
               >
-                {t("runway_v2.cleared_title", { defaultValue: "BAHN GERÄUMT" })}
+                {raeumTitel}
               </text>
               <text
-                x={raeumX}
+                x={raeumTextX}
                 y={rwyTop - oben - 52 + zeile(11)}
                 textAnchor="middle"
                 fontSize={sf(10)}
                 fill="#8B95A8"
                 fontFamily="monospace"
               >
-                {[
-                  `${raeumM!.toFixed(0)} m`,
-                  props.clearance_speed_kt != null
-                    ? `${props.clearance_speed_kt.toFixed(0)} kt`
-                    : null,
-                  raeumAusfahrt
-                    ? t("runway_v2.cleared_via", {
-                        defaultValue: "Ausfahrt {{name}} {{seite}}",
-                        name: raeumAusfahrt.name,
-                        seite: t(
-                          props.clearance_side === "left"
-                            ? "runway_v2.side_left_word"
-                            : "runway_v2.side_right_word",
-                          { defaultValue: props.clearance_side === "left" ? "links" : "rechts" },
-                        ),
-                      })
-                    : props.clearance_side != null
-                    ? t(
-                        props.clearance_side === "left"
-                          ? "runway_v2.side_left_word"
-                          : "runway_v2.side_right_word",
-                        { defaultValue: props.clearance_side === "left" ? "links" : "rechts" },
-                      )
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {raeumZeile}
               </text>
             </g>
           )}
@@ -1342,7 +1544,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               neben dem Aufsetzpunkt und kann mit nichts kollidieren. */}
 
           {/* Touchdown-Punkt — Doppel-Glow + Solid Dot. */}
-          <g>
+          <g data-legende="td" data-legende-farbe={dotColor}>
             <circle cx={tdX} cy={tdY} r="22" fill={dotColor} opacity="0.10" />
             <circle cx={tdX} cy={tdY} r="14" fill={dotColor} opacity="0.22" />
             <circle data-rolle="td-punkt" cx={tdX} cy={tdY} r="9" fill={dotColor} stroke="#0c1628" strokeWidth="2" />
@@ -1389,7 +1591,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
           {/* RWY-Designator (groß links) — die Landerichtung. */}
           <text
-            x={padX / 2 - 4}
+            x={mitVariante ? padX / 2 - 2 : padX / 2 - 4}
             y={rwyCl + 10}
             textAnchor="middle"
             fontSize={sf(28)}
@@ -1405,28 +1607,28 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               z. B. RWY 32 ↔ RWY 14). Plus Bahn-Gesamtlänge darunter. */}
           {display.show_opposite_runway && (
             <text
-              x={W - padX / 2 + 8}
-              y={rwyCl - 2}
-              textAnchor="middle"
-              fontSize={sf(20)}
+              x={mitVariante ? kennungX : W - padX / 2 + 8}
+              y={mitVariante ? endeZeileY : rwyCl - 2}
+              textAnchor={mitVariante ? "end" : "middle"}
+              fontSize={mitVariante ? sf(13) : sf(20)}
               fill="#94a3b8"
               fontWeight="700"
               fontFamily="monospace"
               opacity="0.85"
             >
-              {oppositeRunway(props.runway_ident)}
+              {kennungGegen}
             </text>
           )}
           {display.show_bahn_length && (
             <text
-              x={W - padX / 2 + 8}
-              y={rwyCl + 18}
-              textAnchor="middle"
-              fontSize={sf(11)}
+              x={mitVariante ? projektion.bahnEndeX : W - padX / 2 + 8}
+              y={mitVariante ? endeZeileY : rwyCl + 18}
+              textAnchor={mitVariante ? "end" : "middle"}
+              fontSize={mitVariante ? sf(9.5) : sf(11)}
               fill="#64748b"
               fontFamily="monospace"
             >
-              {props.length_m.toFixed(0)} m
+              {laengeText}
             </text>
           )}
 
@@ -1468,11 +1670,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           </g>
 
           {/* Distanz-Skala unter der Bahn. */}
-          <g>
+          <g data-legende="beschriftung">
             <line
-              x1={padX}
+              x1={projektion.bahnAnfangX}
               y1={rwyBot + unten + 62}
-              x2={padX + innerW}
+              x2={projektion.bahnEndeX}
               y2={rwyBot + unten + 62}
               stroke="rgba(255,255,255,0.25)"
               strokeWidth="1"
@@ -1490,7 +1692,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                     strokeWidth="1.2"
                   />
                   <text
-                    x={x}
+                    x={Math.min(x, W - 2 - (`${d} m`.length * sf(10) * 0.62) / 2)}
                     y={rwyBot + unten + 80}
                     textAnchor="middle"
                     fontSize={sf(10)}
@@ -1509,8 +1711,8 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           um, statt mit der Grafik zu rollen (Sichtprüfung 22.10.2026). */}
       <BahnSpurHinweise
         zeilen={
-          overlayProps
-            ? bahnHinweise(overlayProps, t)
+          overlay
+            ? bahnHinweise(overlay, t)
             : ohneSpurHinweis
             ? [{
                 rolle: "hinweis-ohne-spur",
@@ -1580,26 +1782,46 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           )}
         </div>
 
-          {/* ─── LEGENDE DER LAENGSANSICHT ───────────────────────────────
-              Direkt unter IHREM Bild, nicht unter allen dreien. Thomas
-              (19.09.2026): „das muss direkt unter das jeweilige Bild." Sie
-              stand bis dahin nach Queransicht, Lupe und Ereignisliste. */}
+          {/* ─── EINE LEGENDE, VOLLSTÄNDIG (Entscheidung 6) ─────────────
+              Direkt unter IHREM Bild (Thomas 19.09.2026). Jedes gezeichnete
+              Element steht hier — und nur diese: Die Einträge folgen dem,
+              was das Bild tatsächlich trägt (`gezeichnet`). Die zweite
+              Legende und der lange Erklärtext unter der Lupe sind entfallen;
+              mehr steht unter „Begriffe erklärt“. */}
         <div
+          data-rolle="legende"
           style={{
             display: "flex",
-            gap: 18,
-            flexWrap: "wrap",
+            flexDirection: "column",
+            gap: 6,
             minWidth: 0,
-            fontSize: "0.78rem",
-            opacity: 0.85,
             padding: "0 4px",
           }}
         >
-          <LegendItem swatch={TOKENS.threshold} label={t("runway_v2.legend_threshold")} />
-          {tdzEndX && display.show_aufsetzzone_box && <LegendItem swatch={TOKENS.tdzStroke} label={t("runway_v2.legend_tdz")} />}
-          {aimX && display.show_aim_marker && <LegendItem swatch={TOKENS.aimMarker} label={t("runway_v2.legend_aim")} />}
-          <LegendDot color={dotColor} label={t("runway_v2.legend_td")} />
-          {ddsActive && <LegendItem swatch={TOKENS.ddsBorder} label={t("runway_v2.legend_pre_threshold")} />}
+          <div style={{ display: "flex", gap: "5px 18px", flexWrap: "wrap", fontSize: "0.78rem", opacity: 0.9 }}>
+            {legendeEintraege
+              .filter((e) => e.k in gezeichnet)
+              .map((e) => (
+                <span
+                  key={e.k}
+                  data-legende-eintrag={e.k}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <LegendeZeichen art={e.art} farbe={gezeichnet[e.k] || e.farbe} />
+                  {e.text}
+                </span>
+              ))}
+            {mitVariante && (props.runway_exits?.length ?? 0) === 0 && (
+              <span data-legende-eintrag="keine-rollwege" style={{ opacity: 0.8 }}>
+                {t("runway_v2.exits_none", { defaultValue: "Für diesen Platz sind keine Rollwege hinterlegt" })}
+              </span>
+            )}
+          </div>
+          {mitVariante && (
+            <div style={{ fontSize: "0.76rem", color: "#94a3b8", lineHeight: 1.5 }} data-zeile="so-liest-du">
+              {t("runway_v2.b.satz")} {t("runway_v2.b.mehr")}
+            </div>
+          )}
         </div>
 
         {/* ─── 2b. QUERANSICHT + EREIGNISSE + GROESSENVERGLEICH ────────
@@ -2000,38 +2222,26 @@ function Pill({
   );
 }
 
-function LegendItem({ swatch, label }: { swatch: string; label: string }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <span
-        style={{
-          width: 14,
-          height: 8,
-          background: swatch,
-          display: "inline-block",
-          borderRadius: 2,
-        }}
-      />
-      {label}
-    </span>
-  );
-}
+type LegendeArt = "flaeche" | "linie" | "gestrichelt" | "punkt" | "dreieck" | "raute";
 
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+/** Das kleine Zeichen vor einem Legendeneintrag — in der Form des Bildes. */
+function LegendeZeichen({ art, farbe }: { art: LegendeArt; farbe: string }) {
+  if (art === "linie" || art === "gestrichelt")
+    return (
       <span
-        style={{
-          width: 10,
-          height: 10,
-          background: color,
-          borderRadius: 999,
-          display: "inline-block",
-        }}
+        aria-hidden
+        style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px ${art === "gestrichelt" ? "dashed" : "solid"} ${farbe}` }}
       />
-      {label}
-    </span>
-  );
+    );
+  const form =
+    art === "punkt"
+      ? { borderRadius: "50%" }
+      : art === "dreieck"
+      ? { clipPath: "polygon(50% 0, 100% 100%, 0 100%)" }
+      : art === "raute"
+      ? { clipPath: "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)" }
+      : { borderRadius: 2, opacity: 0.85 };
+  return <span aria-hidden style={{ display: "inline-block", width: 11, height: 11, background: farbe, ...form }} />;
 }
 
 // ─── Pure label helpers ─────────────────────────────────────────────
