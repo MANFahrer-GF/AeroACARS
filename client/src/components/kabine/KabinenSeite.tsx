@@ -30,7 +30,7 @@ import {
   type Ueberblick,
   type MusikZustand,
 } from "../../lib/kabinenansagen";
-import { MusikKasten, MusikRegler } from "./BoardingMusik";
+import { MusikKasten, MusikRegler, useLautstaerkeRegler } from "./BoardingMusik";
 import "./kabine.css";
 
 const BALKEN = 48;
@@ -241,15 +241,7 @@ function ProfilZeile({ profil, sprachen, namen, kapitaen, t }: { profil: Profil;
  *  die sofort wirkt — ohne Umweg über die Einstellungen. Darunter der
  *  eigene Regler der Boarding-Musik (2.1.1, Design 19.10.2026). */
 function TonLeiste({ stumm, lautstaerke, musik, t, onStumm }: { stumm: boolean; lautstaerke: number; musik: number | null; t: T; onStumm: (s: boolean) => void }) {
-  const [wert, setWert] = useState(Math.round(lautstaerke * 100));
-  const [zieht, setZieht] = useState(false);
-  useEffect(() => {
-    if (!zieht) setWert(Math.round(lautstaerke * 100));
-  }, [lautstaerke, zieht]);
-  const loslassen = () => {
-    setZieht(false);
-    void lautstaerkeSetzen(wert / 100, true);
-  };
+  const { wert, eingabe } = useLautstaerkeRegler(lautstaerke, lautstaerkeSetzen);
   return (
     <div className={`kabine-ton${stumm ? " ist-stumm" : ""}`} role="group" aria-label={t("kabine.ton.titel")} data-testid="kabine-ton">
       <div className="kabine-ton-zeile">
@@ -270,23 +262,7 @@ function TonLeiste({ stumm, lautstaerke, musik, t, onStumm }: { stumm: boolean; 
           </svg>
           <span>{stumm ? t("kabine.ton.stumm") : t("kabine.ton.ansagen")}</span>
         </button>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={5}
-          value={wert}
-          aria-label={t("kabine.ton.lautstaerke")}
-          onChange={(ev) => {
-            const v = Number(ev.target.value);
-            setZieht(true);
-            setWert(v);
-            void lautstaerkeSetzen(v / 100, false);
-          }}
-          onMouseUp={loslassen}
-          onTouchEnd={loslassen}
-          onKeyUp={loslassen}
-        />
+        <input {...eingabe} aria-label={t("kabine.ton.lautstaerke")} />
         <span className="kabine-ton-wert">{wert} %</span>
       </div>
       {musik !== null && <MusikRegler lautstaerke={musik} t={t} />}

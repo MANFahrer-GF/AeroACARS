@@ -149,7 +149,7 @@ describe("Seite Kabine", () => {
     expect(within(ton).getByRole("button", { name: /Stumm/ }).getAttribute("aria-pressed")).toBe("true");
     const regler = within(ton).getByRole("slider");
     fireEvent.change(regler, { target: { value: "40" } });
-    fireEvent.mouseUp(regler);
+    fireEvent.pointerUp(regler);
     await vi.waitFor(() => expect(aufrufe.filter((a) => a.cmd === "kabinen_lautstaerke").map((a) => a.args)).toContainEqual({ lautstaerke: 0.4, speichern: true }));
     // Aufheben: Hinweis weg.
     fireEvent.click(within(ton).getByRole("button", { name: /Stumm/ }));

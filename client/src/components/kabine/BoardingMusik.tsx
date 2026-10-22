@@ -48,39 +48,60 @@ function NotenSymbol() {
 }
 
 /** Zweite Zeile der Ton-Leiste: Noten · „Boarding-Musik“ · Regler · %. */
-export function MusikRegler({ lautstaerke, t }: { lautstaerke: number; t: T }) {
+/** Gemeinsame Bedienung der Lautstärke-Regler (Ansagen und Musik). Beim
+ *  Ziehen nur setzen, beim Loslassen speichern. Danach hält der Regler den
+ *  gezogenen Wert, bis der neue Stand gemeldet ist (höchstens 5 s): Vorher
+ *  sprang er auf den zuletzt abgefragten alten Wert zurück (Thomas 22.10.2026). */
+export function useLautstaerkeRegler(lautstaerke: number, setzen: (l: number, speichern: boolean) => Promise<void>) {
   const [wert, setWert] = useState(Math.round(lautstaerke * 100));
-  const [zieht, setZieht] = useState(false);
+  const zieht = useRef(false);
+  const gehalten = useRef<{ v: number; bis: number } | null>(null);
   useEffect(() => {
-    if (!zieht) setWert(Math.round(lautstaerke * 100));
-  }, [lautstaerke, zieht]);
+    const v = Math.round(lautstaerke * 100);
+    if (zieht.current) return;
+    const g = gehalten.current;
+    if (g && v !== g.v && Date.now() < g.bis) return;
+    gehalten.current = null;
+    setWert(v);
+  }, [lautstaerke]);
   const loslassen = () => {
-    setZieht(false);
-    void musikLautstaerkeSetzen(wert / 100, true);
+    if (!zieht.current) return;
+    zieht.current = false;
+    gehalten.current = { v: wert, bis: Date.now() + 5000 };
+    void setzen(wert / 100, true);
   };
+  return {
+    wert,
+    eingabe: {
+      type: "range" as const,
+      min: 0,
+      max: 100,
+      step: 5,
+      value: wert,
+      onChange: (ev: React.ChangeEvent<HTMLInputElement>) => {
+        const v = Number(ev.target.value);
+        zieht.current = true;
+        setWert(v);
+        void setzen(v / 100, false);
+      },
+      // Pointer statt Maus/Touch: auch Loslassen außerhalb des Reglers zählt.
+      onPointerUp: loslassen,
+      onPointerCancel: loslassen,
+      onKeyUp: loslassen,
+      onBlur: loslassen,
+    },
+  };
+}
+
+export function MusikRegler({ lautstaerke, t }: { lautstaerke: number; t: T }) {
+  const { wert, eingabe } = useLautstaerkeRegler(lautstaerke, musikLautstaerkeSetzen);
   return (
     <div className="kabine-ton-zeile" data-testid="kabine-musik-regler">
       <span className="kabine-ton-name">
         <NotenSymbol />
         <span>{t("kabine.musik.regler")}</span>
       </span>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={5}
-        value={wert}
-        aria-label={t("kabine.musik.lautstaerke")}
-        onChange={(ev) => {
-          const v = Number(ev.target.value);
-          setZieht(true);
-          setWert(v);
-          void musikLautstaerkeSetzen(v / 100, false);
-        }}
-        onMouseUp={loslassen}
-        onTouchEnd={loslassen}
-        onKeyUp={loslassen}
-      />
+      <input {...eingabe} aria-label={t("kabine.musik.lautstaerke")} />
       <span className="kabine-ton-wert">{wert} %</span>
     </div>
   );
