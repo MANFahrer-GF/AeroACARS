@@ -3034,9 +3034,6 @@
     "side_right_word": "a destra",
     "side_unclear": "direzione non univoca",
     "on_centerline": "sulla linea centrale",
-    "cross_exaggeration": "{{f}}× esagerato · in scala interna",
-    "cross_section_aria": "Sezione trasversale della pista con la traccia percorsa",
-    "cross_title": "SEZIONE — DOVE HANNO CORSO LE RUOTE",
     "spur_ausser_bild": "La traccia continua — scostamento reale fino a {{m}} m",
     "mark": {
       "touchdown": "Contatto",
@@ -3067,9 +3064,6 @@
       "insufficient_samples": "La velocità al tocco era già vicina alla soglia di valutazione — la finestra di misura è troppo breve per un verdetto sulla disciplina di pista, ma la traccia è comunque mostrata qui sotto.",
       "water_runway": "Ammaraggio — non c'è un bordo pavimentato da cui misurare una distanza."
     },
-    "edge_left": "Bordo",
-    "edge_right": "Bordo",
-    "centre": "Centro",
     "laengs_title": "LONGITUDINALE — DOVE HA TOCCATO, DOVE HA LIBERATO",
     "runway_end": "FINE PISTA",
     "cleared_title": "PISTA LIBERATA",
@@ -3092,7 +3086,6 @@
     "zoom_hint": "Ctrl + rotella ingrandisce · trascina per spostare",
     "zoom_in": "Ingrandisci",
     "zoom_out": "Riduci",
-    "cross_exaggeration_stretched": "{{f}}× esagerazione laterale · pista stretta ingrandita {{d}}×",
     "legend_shoulder": "a lato della pista — non asfaltato",
     "lupe_aria": "Uscita dalla pista in scala reale: traccia e via di rullaggio in pianta",
     "lupe_title": "USCITA DALLA PISTA — IN SCALA REALE",

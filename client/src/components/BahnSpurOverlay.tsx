@@ -19,7 +19,7 @@
 import { useTranslation } from "react-i18next";
 import type { Projektion } from "../lib/runwayProjection";
 import { aussenkanteHalbM, randstelle } from "../lib/bahnQuerMassstab";
-import { gruppiere, type Ausfahrt } from "./RunwayCrossSection";
+import { gruppiere, type Ausfahrt } from "./bahnHilfen";
 import { stelleDesVersatzes } from "./RunwayDisciplinePanel";
 
 export interface BahnSpurOverlayProps {
@@ -190,7 +190,8 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   // Marke 1 sitzt AUF dem Aufsetzpunkt der Draufsicht (nur die Ziffer) —
   // ein zweiter Kreis an derselben Stelle wäre eine verdeckte Marke.
   const marken: Array<{ n: number; x: number; y: number; farbe: string | null }> = [];
-  marken.push({ n: 1, x: tdX, y: y(p.tdOffsetM), farbe: null });
+  // Ziffer 1 zeichnet die Draufsicht selbst auf ihren Aufsetzpunkt (sonst
+  // läge der Punkt über der Ziffer).
   // Marke 2 dort, wo die Ereignisliste den Grösstversatz nennt (dieselbe
   // Suche, `stelleDesVersatzes`) — sonst nennen Bild und Text zwei Orte.
   if (p.mitVersatzMarke !== false && p.maxLateralOffsetM != null) {

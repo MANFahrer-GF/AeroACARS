@@ -7,7 +7,7 @@
 // Kanten, damit der Aufsetzpunkt oben senkrecht über der Marke unten liegt.
 
 import { useTranslation } from "react-i18next";
-import { bandFarbeFuer, DURCHGANG_FARBE } from "./RunwayCrossSection";
+import { bandFarbeFuer, DURCHGANG_FARBE } from "./bahnHilfen";
 import { bewertungsEnde as fruehestesEnde } from "../lib/bahnQuerMassstab";
 import { RunwayExitLupe } from "./RunwayExitLupe";
 import type { Projektion } from "../lib/runwayProjection";

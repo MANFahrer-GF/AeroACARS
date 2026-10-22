@@ -20,7 +20,7 @@ import { erzeugeProjektion } from "../lib/runwayProjection";
 import { useBahnZoom } from "../lib/useBahnZoom";
 import { RunwayDisciplinePanel, spurBereinigen, endpunktNummer, versatzUnglaubwuerdig, kanteTraegtNicht } from "./RunwayDisciplinePanel";
 import { BahnSpurOverlay } from "./BahnSpurOverlay";
-import { bandFarbeFuer } from "./RunwayCrossSection";
+import { bandFarbeFuer } from "./bahnHilfen";
 import { querMassstab, bewertungsEnde, aussenkanteHalbM } from "../lib/bahnQuerMassstab";
 import { useTranslation } from "react-i18next";
 import { GlossaryModal } from "./RunwayGlossaryModal";
@@ -514,7 +514,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
   return (
     <section
-      className="rwy-v2"
+      className="rwy-v2 rwy-v2--dunkel"
       aria-label="Landebahn-Analyse"
       style={{
         width: "100%",
@@ -535,6 +535,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         boxSizing: "border-box",
         minWidth: 0,
         maxWidth: "100%",
+        // B9 (Sichtprüfung 22.10.2026): dunkler Grund und helle Grundschrift
+        // über die Klasse `rwy-v2--dunkel` (App.css/styles.css) — nicht
+        // inline, weil der Druck sie zurücknimmt (Papier-Darstellung wie
+        // bisher; eine Inline-Farbe fiele unter die Druck-Abdunkelung).
       }}
     >
       {/* ─── 1. HEADER ─────────────────────────────────────────────── */}
@@ -1104,7 +1108,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                       m: props.track_width_m.toFixed(1),
                     }).trim()
                   : t("runway_v2.cross_aircraft_unknown", { defaultValue: "Spurweite nicht bekannt" })
-              } · `}
+              }`.replace(/^·\s*/, "") + " · "}
               {t("runway_v2.b.kopf", {
                 faktor: ueberhoehung!.toFixed(1).replace(".", ","),
                 zusatz:
@@ -1249,7 +1253,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               })()}
               <path
                 d={`M ${raeumX} ${raeumY - 11} l 10 11 l -10 11 l -10 -11 z`}
-                fill={TOKENS.rollout}
+                // Variante B: Marke 3 der Spur sitzt hier — die Raute würde
+                // sie verdecken (Sichtprüfung 22.10.2026).
+                fill={mitVariante ? "none" : TOKENS.rollout}
               />
               <line
                 x1={raeumX}
@@ -1341,6 +1347,12 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             <circle cx={tdX} cy={tdY} r="22" fill={dotColor} opacity="0.10" />
             <circle cx={tdX} cy={tdY} r="14" fill={dotColor} opacity="0.22" />
             <circle data-rolle="td-punkt" cx={tdX} cy={tdY} r="9" fill={dotColor} stroke="#0c1628" strokeWidth="2" />
+            {/* Variante B: Marke 1 auf dem Aufsetzpunkt (über ihm gezeichnet). */}
+            {mitVariante && (
+              <text x={tdX} y={tdY + 3.8} textAnchor="middle" fontSize={sf(11)} fontWeight={700} fill="#0B0F17">
+                1
+              </text>
+            )}
             <title>
               {t("runway_v2.tooltip_touchdown", {
                 distance: props.td_distance_from_threshold_m.toFixed(0),

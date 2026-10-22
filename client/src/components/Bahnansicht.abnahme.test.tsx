@@ -199,7 +199,9 @@ describe("Bahnansicht B — zehn echte Landungen (golden)", () => {
     const namen = [...z.svg.querySelectorAll('[data-rolle="ausfahrt-name"]')].map((n) => n.textContent ?? "");
     const behauptet = namen.reduce((a, s) => a + s.replace(/\s*\+\d+$/, "").split("/").length + Number(/\+(\d+)$/.exec(s)?.[1] ?? 0), 0);
     expect(behauptet).toBeGreaterThan(20);
-    expect([1, 2, 3].every((n) => z.svg.querySelector(`[data-marke="${n}"]`))).toBe(true);
+    // Marke 1 sitzt als Ziffer auf dem Aufsetzpunkt, 2 und 3 im Overlay.
+    const ziffern = [...z.svg.querySelectorAll('text[fill="#0B0F17"]')].map((t) => t.textContent);
+    expect(["1", "2", "3"].every((n) => ziffern.includes(n))).toBe(true);
     expect(z.svg.querySelector('[data-rolle="mess-ende"]')).not.toBeNull();
     // Eigene Legende direkt unter der Draufsicht; keine zweite überhöhte Ansicht mehr.
     expect(text).toMatch(/Band reicht bis zur Außenkante der äußeren Reifen/);

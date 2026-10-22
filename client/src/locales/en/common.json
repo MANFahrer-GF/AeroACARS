@@ -3048,9 +3048,6 @@
     "side_right_word": "right",
     "side_unclear": "direction not conclusive",
     "on_centerline": "on the centreline",
-    "cross_exaggeration": "{{f}}× exaggerated · internally to scale",
-    "cross_section_aria": "Cross section of the runway with the track driven",
-    "cross_title": "CROSS SECTION — WHERE THE WHEELS RAN",
     "spur_ausser_bild": "Track continues — real offset up to {{m}} m",
     "mark": {
       "touchdown": "Touchdown",
@@ -3081,9 +3078,6 @@
       "insufficient_samples": "Groundspeed at touchdown was already close to the scoring threshold — the measuring window is too short for a runway-discipline verdict, but the track is still shown below.",
       "water_runway": "Water landing — there is no paved edge to measure a distance to."
     },
-    "edge_left": "Edge",
-    "edge_right": "Edge",
-    "centre": "Centre",
     "laengs_title": "ALONG — WHERE IT TOUCHED DOWN, WHERE IT VACATED",
     "runway_end": "RUNWAY END",
     "cleared_title": "RUNWAY VACATED",
@@ -3106,7 +3100,6 @@
     "zoom_hint": "Ctrl + wheel zooms · drag pans",
     "zoom_in": "Zoom in",
     "zoom_out": "Zoom out",
-    "cross_exaggeration_stretched": "{{f}}× vertical stretch · narrow runway scaled up {{d}}×",
     "legend_shoulder": "beside the runway — unpaved",
     "lupe_aria": "Runway exit at true scale: track and taxiway in plan view",
     "lupe_title": "RUNWAY EXIT — TRUE SCALE",

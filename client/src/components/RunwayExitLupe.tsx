@@ -22,8 +22,8 @@
 import { aussenkanteHalbM } from "../lib/bahnQuerMassstab";
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
-import type { Ausfahrt } from "./RunwayCrossSection";
-import { weicherPfad } from "./RunwayCrossSection";
+import type { Ausfahrt } from "./bahnHilfen";
+import { weicherPfad } from "./bahnHilfen";
 
 export interface LupeProps {
   /** Die bereinigte Spur, ab Bahnanfang gemessen. */
@@ -307,8 +307,9 @@ export function RunwayExitLupe(p: LupeProps) {
       aria-label={t("runway_v2.lupe_aria", {
         defaultValue: "Abrollen im echten Massstab: Spur und Rollweg als Draufsicht",
       })}
-      // B7: dieselbe Mindestbreite wie die Draufsicht (`MIN_ANZEIGE_BREITE_PX`).
-      style={{ display: "block", minWidth: 760 }}
+      // B7: KEINE Mindestbreite — am Handy läge die Ausfahrt sonst rechts
+      // ausserhalb des sichtbaren Teils (Sichtprüfung 22.10.2026).
+      style={{ display: "block" }}
       data-ansicht="lupe"
     >
       <defs>

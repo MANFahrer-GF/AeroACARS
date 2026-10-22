@@ -57,7 +57,8 @@ const WEBAPP = resolve(HIER, "..", "..", "aeroacars-live", "webapp", "src");
 export const DATEIEN = [
   "components/RunwayDiagramV2.tsx",
   "components/RunwayDisciplinePanel.tsx",
-  "components/RunwayCrossSection.tsx",
+  // Seit Variante B (22.10.2026) ohne Queransicht; ihre gemeinsamen Hilfen.
+  "components/bahnHilfen.ts",
   // v1.7.40: Lupe „Abrollen im echten Massstab" unter der Queransicht.
   "components/RunwayExitLupe.tsx",
   // Variante B (22.10.2026): Spur, Band und Queransicht-Stücke in der
