@@ -55108,6 +55108,12 @@ fn build_pirep_fields(
         // and it added noise without information.
         f.insert("Bounces".into(), stats.bounce_count.to_string());
     }
+    // P1/8b (Score-Version 26): leichte Hopser erscheinen auf der GSG-Seite
+    // (PIREP-Felder) wie in Client und Webapp — nur wenn kein normaler da
+    // ist, denn dann zaehlen sie nicht (Thomas 22.10.2026).
+    if stats.bounce_count == 0 && stats.light_bounce_count > 0 {
+        f.insert("Light Bounces".into(), stats.light_bounce_count.to_string());
+    }
 
     // ---- Touch-and-Go + Go-Around counters (v0.1.26) ----
     // Only surface when nonzero — every routine PIREP has zero of
@@ -76381,6 +76387,23 @@ mod touchdown_metadata_stamp_tests {
             Some(""),
             "bei anhaengigem Rueckzug muss das Feld als leerer String vorhanden sein, nicht fehlen"
         );
+    }
+
+    /// P1/8b: leichter Hopser als PIREP-Feld (GSG-Seite), nicht neben einem
+    /// normalen Hopser; ohne beides kein Feld.
+    #[test]
+    fn leichter_hopser_steht_als_pirep_feld() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        assert!(build_pirep_fields(&flight, &stats, "EDDP").get("Light Bounces").is_none());
+        stats.light_bounce_count = 1;
+        let f = build_pirep_fields(&flight, &stats, "EDDP");
+        assert_eq!(f.get("Light Bounces").map(String::as_str), Some("1"));
+        assert!(f.get("Bounces").is_none());
+        stats.bounce_count = 1;
+        let f = build_pirep_fields(&flight, &stats, "EDDP");
+        assert!(f.get("Light Bounces").is_none(), "neben einem normalen Hopser zaehlt der leichte nicht");
+        assert_eq!(f.get("Bounces").map(String::as_str), Some("1"));
     }
 
     #[test]
