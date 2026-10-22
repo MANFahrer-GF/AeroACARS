@@ -731,6 +731,11 @@ pub struct TouchdownPayload {
     /// „bounces" einfliesst — ueber `scored_bounce_count_for_score()`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scored_bounce_count: Option<u8>,
+    /// P1/8b (Score-Version 26): leichte Hopser (>= 1 s ohne Bodenkontakt,
+    /// 2 bis unter 5 ft ueber Bodenhoehe, mit zweitem Kontakt). Fehlt bei
+    /// aelteren Clients — dort gab es die Stufe nicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scored_light_bounce_count: Option<u8>,
     pub runway: Option<String>,
     /// v0.7.18 (B-012): aufgeloester Touchdown-Airport.
     /// - Wenn `runway_match` zur runway korreliert wurde: dessen ICAO.

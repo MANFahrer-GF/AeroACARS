@@ -312,6 +312,10 @@ pub struct LandingScoringInput {
     /// Alt-Verhalten (Roh-Peak).
     pub scored_g_load: Option<f32>,
     pub bounce_count: Option<u32>,
+    /// P1/8b (Score-Version 26): leichte Hopser (>= 1 s in der Luft,
+    /// 2 bis unter 5 ft ueber Bodenhoehe, mit zweitem Kontakt). `None` =
+    /// nicht gezaehlt (Altbestand) → alte Hopser-Tabelle.
+    pub light_bounce_count: Option<u32>,
     pub approach_vs_stddev_fpm: Option<f32>,
     pub approach_bank_stddev_deg: Option<f32>,
     /// v1.9.16: die sieben Gate-Messwerte hinter dem STABLE/PARTIAL/UNSTABLE-
@@ -492,7 +496,10 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     if let Some(g) = input.scored_g_load.or(input.peak_g_load) {
         out.push(sub_g_force::sub_g_force(g));
     }
-    out.push(sub_bounces::sub_bounces(input.bounce_count.unwrap_or(0)));
+    out.push(sub_bounces::sub_bounces_mit_leichten(
+        input.bounce_count.unwrap_or(0),
+        input.light_bounce_count,
+    ));
 
     let pruefung = anflug_urteil::anflug_pruefung(&input.anflug);
     let urteil = anflug_urteil::urteil_aus(&pruefung);
@@ -1937,6 +1944,7 @@ mod tests {
             peak_g_load: Some(1.4),
             scored_g_load: Some(1.3),
             bounce_count: Some(1),
+            light_bounce_count: Some(1),
             approach_vs_stddev_fpm: Some(120.0),
             approach_bank_stddev_deg: Some(3.0),
             rollout_distance_m: Some(1500.0),

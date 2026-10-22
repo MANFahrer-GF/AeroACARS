@@ -665,6 +665,11 @@ pub struct LandingRecord {
     /// `bounce_count` und den Landing-Score einfliesst.
     #[serde(default)]
     pub scored_bounce_count: Option<u8>,
+    /// P1/8b (Score-Version 26): leichte Hopser (>= 1 s ohne Bodenkontakt,
+    /// 2 bis unter 5 ft ueber Bodenhoehe, mit zweitem Kontakt). `None` bei
+    /// Landungen vor Version 26 — dort gab es die Stufe nicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scored_light_bounce_count: Option<u8>,
 
     // ─── v0.7.1 Erweiterung (Spec §5.1 + §5.4) ───────────────────────
     // Alle Felder mit #[serde(default)] — alte landing_history.json-
