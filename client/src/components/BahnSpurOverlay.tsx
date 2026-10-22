@@ -70,8 +70,101 @@ export interface BahnSpurOverlayProps {
 
 type P = { x: number; y: number };
 
-/** Zeilenabstand der Textzeilen unter der Bahn, in Schriftgrössen. */
-const ZEILE = 14;
+/**
+ * Die gezeichnete Spur: nach dem Räumpunkt abgeschnitten, sobald sie das Bild
+ * verlässt (eine Ausfahrt ist kein Ausbrechen); davor geklemmt — ein
+ * Ausbrechen bleibt im Bild. `ausserBildM`: wie weit sie real noch reicht.
+ */
+function spurImBild(p: BahnSpurOverlayProps) {
+  const sichtbarM = p.halbeBahnM + p.randM;
+  const spur: Array<{ laengs_m: number; quer_m: number; geklemmt: boolean }> = [];
+  let ausserBildM: number | null = null;
+  for (let i = 0; i < p.samples.length; i++) {
+    const s = p.samples[i]!;
+    const nachRaeum = p.clearanceM != null && s.laengs_m > p.clearanceM;
+    if (nachRaeum && Math.abs(s.quer_m) > sichtbarM) {
+      ausserBildM = Math.max(...p.samples.slice(i).map((r) => Math.abs(r.quer_m)));
+      break;
+    }
+    spur.push({ ...s, geklemmt: Math.abs(s.quer_m) > sichtbarM });
+  }
+  return { spur, ausserBildM };
+}
+
+export interface BahnHinweis {
+  rolle: "randstelle-text" | "aufgesetzt-neben" | "laeuft-weiter" | "hinweis-ohne-spur";
+  text: string;
+  farbe: string;
+  fett: boolean;
+}
+
+/**
+ * Die Textzeilen unter der Draufsicht — als TEXT (HTML), nicht im Bild:
+ * Die Grafik rollt am Handy in ihrem Kasten, diese Zeilen brechen um und
+ * sind ohne Rollen lesbar (Sichtprüfung 22.10.2026).
+ */
+export function bahnHinweise(
+  p: BahnSpurOverlayProps,
+  t: (k: string, o?: Record<string, unknown>) => string,
+): BahnHinweis[] {
+  const fmt = (n: number) => n.toFixed(1).replace(".", ",");
+  const seite = (q: number) => t(q < 0 ? "runway_v2.b.seite_links" : "runway_v2.b.seite_rechts");
+  if (p.samples.length < 2) {
+    return [{ rolle: "hinweis-ohne-spur", text: t("runway_v2.b.ohne_spur"), farbe: "#fbbf24", fett: false }];
+  }
+  const aus: BahnHinweis[] = [];
+  const rs =
+    p.trackWidthM != null && p.trackWidthM > 0
+      ? randstelle(p.samples, p.halbeBahnM, p.trackWidthM, p.bewertungsEndeM, p.minEdgeClearanceM)
+      : null;
+  if (rs && (p.mitRandabstand !== false || p.unbefestigt)) {
+    const draussen = rs.randabstand_m < 0 && !p.unbefestigt;
+    aus.push({
+      rolle: "randstelle-text",
+      text: p.unbefestigt
+        ? t("runway_v2.b.gras", { m: fmt(Math.abs(rs.quer_m)), seite: seite(rs.quer_m) })
+        : draussen
+        ? t("runway_v2.b.rad_draussen", { m: fmt(-rs.randabstand_m), seite: seite(rs.quer_m), laengs: rs.laengs_m.toFixed(0) })
+        : t("runway_v2.b.knappste", { m: fmt(rs.randabstand_m), laengs: rs.laengs_m.toFixed(0) }),
+      farbe: draussen ? p.tokens.tdSevere : "#cbd5e1",
+      fett: true,
+    });
+  }
+  if (p.aufgesetztNebenM != null && p.aufgesetztNebenM > 0)
+    aus.push({
+      rolle: "aufgesetzt-neben",
+      text: t("runway_v2.b.aufgesetzt_neben", { m: fmt(p.aufgesetztNebenM) }),
+      farbe: p.tokens.tdSevere,
+      fett: true,
+    });
+  const { spur, ausserBildM } = spurImBild(p);
+  const letzte = p.samples[p.samples.length - 1]!;
+  const laeuftWeiter = p.projektion.mAbBahnanfangZuX(letzte.laengs_m) > p.projektion.bahnEndeX;
+  const geklemmtMax = spur.some((s) => s.geklemmt) ? Math.max(...spur.map((s) => Math.abs(s.quer_m))) : null;
+  const weiter = [
+    geklemmtMax != null ? t("runway_v2.b.geklemmt", { m: fmt(geklemmtMax) }) : null,
+    laeuftWeiter ? t("runway_v2.b.laeuft_weiter", { m: letzte.laengs_m.toFixed(0) }) : null,
+    ausserBildM != null
+      ? t("runway_v2.spur_ausser_bild", { defaultValue: "Spur läuft weiter — real bis {{m}} m", m: ausserBildM.toFixed(0) })
+      : null,
+  ].filter(Boolean);
+  if (weiter.length) aus.push({ rolle: "laeuft-weiter", text: weiter.join(" · "), farbe: "#fbbf24", fett: false });
+  return aus;
+}
+
+/** Die Hinweiszeilen als HTML unter der Grafik (ausserhalb des Rollkastens). */
+export function BahnSpurHinweise({ zeilen }: { zeilen: BahnHinweis[] }) {
+  if (!zeilen.length) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, fontFamily: "monospace", fontSize: "0.8rem", padding: "4px 8px", overflowWrap: "anywhere" }}>
+      {zeilen.map((z) => (
+        <div key={z.rolle} data-rolle={z.rolle} style={{ color: z.farbe, fontWeight: z.fett ? 700 : 400 }}>
+          {z.text}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   const { t } = useTranslation();
@@ -81,7 +174,6 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   const kanteOben = y(-p.halbeBahnM);
   const kanteUnten = y(p.halbeBahnM);
   const fmt = (n: number) => n.toFixed(1).replace(".", ",");
-  const seite = (q: number) => t(q < 0 ? "runway_v2.b.seite_links" : "runway_v2.b.seite_rechts");
 
   // Querskala am rechten Bildrand — die Überhöhung bleibt ablesbar
   // (Inventar §3: Querskala, Kanten-Beschriftung; vorher Queransicht).
@@ -130,16 +222,6 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
             opacity={0.7}
           />
         )}
-        <text
-          data-rolle="hinweis-ohne-spur"
-          x={p.projektion.bahnAnfangX}
-          y={p.textY}
-          fontSize={p.sf(11)}
-          fill="#fbbf24"
-          fontFamily="monospace"
-        >
-          {t("runway_v2.b.ohne_spur")}
-        </text>
       </g>
     );
   }
@@ -149,18 +231,7 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   // Nach dem Räumpunkt wird abgeschnitten, sobald die Spur das Bild
   // verlässt (eine Ausfahrt ist kein Ausbrechen); davor wird geklemmt —
   // ein Ausbrechen soll im Bild bleiben, nicht verschwinden.
-  const spur: Array<{ laengs_m: number; quer_m: number; geklemmt: boolean }> = [];
-  // Wie weit die Spur hinter dem Bildrand real noch reicht (nach dem Räumen).
-  let ausserBildM: number | null = null;
-  for (let i = 0; i < p.samples.length; i++) {
-    const s = p.samples[i]!;
-    const nachRaeum = p.clearanceM != null && s.laengs_m > p.clearanceM;
-    if (nachRaeum && Math.abs(s.quer_m) > sichtbarM) {
-      ausserBildM = Math.max(...p.samples.slice(i).map((r) => Math.abs(r.quer_m)));
-      break;
-    }
-    spur.push({ ...s, geklemmt: Math.abs(s.quer_m) > sichtbarM });
-  }
+  const { spur } = spurImBild(p);
   const achse: P[] = spur.map((s) => ({ x: x(s.laengs_m), y: y(s.quer_m) }));
   const halbPx = aussenM * p.pxProQuerM;
   const rand = (v: 1 | -1): P[] =>
@@ -182,6 +253,7 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
       ? randstelle(p.samples, p.halbeBahnM, p.trackWidthM, p.bewertungsEndeM, p.minEdgeClearanceM)
       : null;
   const draussen = rs != null && rs.randabstand_m < 0 && !p.unbefestigt;
+  void draussen;
   const rsX = rs ? x(rs.laengs_m) : 0;
   const rsRadY = rs ? y(rs.quer_m) + Math.sign(rs.quer_m || 1) * aussenM * p.pxProQuerM : 0;
   const rsKanteY = rs ? (rs.quer_m < 0 ? kanteOben : kanteUnten) : 0;
@@ -212,6 +284,17 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
     // der Nummer der Ereignisliste.
     marken.push({ n: p.endpunktNummer ?? 3, x: achse[achse.length - 1]!.x, y: achse[achse.length - 1]!.y, farbe: p.tokens.rollout });
   if ((p.overrunM ?? 0) > 0) marken.push({ n: 4, x: p.projektion.bahnEndeX, y: p.mitteY, farbe: p.tokens.tdSevere });
+  // Marken überdecken sich nie (#1738: 2 bei 345 m, 3 bei 350 m am
+  // Bildrand): Liegt eine Marke näher als ihr Durchmesser an einer früheren
+  // (oder am Aufsetzpunkt mit Marke 1), rückt sie zur Bahnmitte hin nach.
+  {
+    const belegt: P[] = [{ x: tdX, y: y(p.tdOffsetM) }];
+    for (const m of marken) {
+      const richtung = m.y <= p.mitteY ? 1 : -1;
+      for (let n = 0; n < 8 && belegt.some((b) => Math.hypot(b.x - m.x, b.y - m.y) < 20); n++) m.y += richtung * 20;
+      belegt.push({ x: m.x, y: m.y });
+    }
+  }
   const genutzt =
     p.clearanceM != null && p.clearanceSide != null
       ? (p.ausfahrten ?? [])
@@ -235,13 +318,6 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   const istGenutzteGruppe = (g: Ausfahrt) =>
     genutzt != null && g.seite === genutzt.seite && g.name.split(/[/ ]/).includes(genutzt.name);
 
-  const letzteProbe = p.samples[p.samples.length - 1]!;
-  const laeuftWeiter = x(letzteProbe.laengs_m) > p.projektion.bahnEndeX;
-  const geklemmtMax = spur.some((s) => s.geklemmt) ? Math.max(...spur.map((s) => Math.abs(s.quer_m))) : null;
-
-  const zeilenY = (i: number) => p.textY + i * p.sf(ZEILE);
-  const textX = (lx: number, halbBreite: number) =>
-    Math.min(Math.max(lx, p.projektion.bahnAnfangX + halbBreite), p.projektion.bahnEndeX - halbBreite);
 
   return (
     <g data-rolle="spur-overlay">
@@ -326,67 +402,14 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
             // Ausfahrtsnamen.
             y1={Math.max(rsKanteY, rsRadY, kanteUnten + p.randM * p.pxProQuerM)}
             x2={rsX}
-            y2={zeilenY(0) - p.sf(12)}
+            // Bis zum unteren Bildrand — die Zahl steht darunter als Text
+            // (`BahnSpurHinweise`), der am Handy umbricht statt zu rollen.
+            y2={p.textY}
             stroke={draussen ? p.tokens.tdSevere : "#8B95A8"}
             strokeWidth={1}
             strokeDasharray="2 3"
           />
-          <text
-            data-rolle="randstelle-text"
-            x={textX(rsX, 180)}
-            y={zeilenY(0)}
-            textAnchor="middle"
-            fontSize={p.sf(12)}
-            fontWeight={700}
-            fill={draussen ? p.tokens.tdSevere : "#cbd5e1"}
-            fontFamily="monospace"
-          >
-            {p.unbefestigt
-              ? t("runway_v2.b.gras", { m: fmt(Math.abs(rs.quer_m)), seite: seite(rs.quer_m) })
-              : draussen
-              ? t("runway_v2.b.rad_draussen", { m: fmt(-rs.randabstand_m), seite: seite(rs.quer_m), laengs: rs.laengs_m.toFixed(0) })
-              : t("runway_v2.b.knappste", { m: fmt(rs.randabstand_m), laengs: rs.laengs_m.toFixed(0) })}
-          </text>
         </g>
-      )}
-      {p.aufgesetztNebenM != null && p.aufgesetztNebenM > 0 && (
-        <text
-          data-rolle="aufgesetzt-neben"
-          x={textX(tdX, 150)}
-          y={zeilenY(1)}
-          textAnchor="middle"
-          fontSize={p.sf(12)}
-          fontWeight={700}
-          fill={p.tokens.tdSevere}
-          fontFamily="monospace"
-        >
-          {t("runway_v2.b.aufgesetzt_neben", { m: fmt(p.aufgesetztNebenM) })}
-        </text>
-      )}
-      {(geklemmtMax != null || laeuftWeiter || ausserBildM != null) && (
-        <text
-          data-rolle="laeuft-weiter"
-          data-annotation="spur-ausser-bild"
-          x={p.projektion.bahnEndeX}
-          y={zeilenY(2)}
-          textAnchor="end"
-          fontSize={p.sf(10)}
-          fill="#fbbf24"
-          fontFamily="monospace"
-        >
-          {[
-            geklemmtMax != null ? t("runway_v2.b.geklemmt", { m: fmt(geklemmtMax) }) : null,
-            laeuftWeiter ? t("runway_v2.b.laeuft_weiter", { m: letzteProbe.laengs_m.toFixed(0) }) : null,
-            ausserBildM != null
-              ? t("runway_v2.spur_ausser_bild", {
-                  defaultValue: "Spur läuft weiter — real bis {{m}} m",
-                  m: ausserBildM.toFixed(0),
-                })
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        </text>
       )}
       {marken.map((m) => (
         <g key={`m${m.n}`} data-marke={m.n}>

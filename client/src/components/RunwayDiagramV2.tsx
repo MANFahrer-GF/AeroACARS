@@ -19,7 +19,7 @@ import { fmtSigned } from "../lib/landungsFormat";
 import { erzeugeProjektion } from "../lib/runwayProjection";
 import { useBahnZoom } from "../lib/useBahnZoom";
 import { RunwayDisciplinePanel, spurBereinigen, endpunktNummer, versatzUnglaubwuerdig, kanteTraegtNicht } from "./RunwayDisciplinePanel";
-import { BahnSpurOverlay } from "./BahnSpurOverlay";
+import { BahnSpurOverlay, BahnSpurHinweise, bahnHinweise, type BahnSpurOverlayProps } from "./BahnSpurOverlay";
 import { bandFarbeFuer } from "./bahnHilfen";
 import { querMassstab, bewertungsEnde, aussenkanteHalbM } from "../lib/bahnQuerMassstab";
 import { useTranslation } from "react-i18next";
@@ -346,10 +346,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   const unten = randPx;
   // Drei Textzeilen unter der Bahn: Randstelle, „aufgesetzt neben der
   // Bahn“, Hinweis „läuft weiter“ (BahnSpurOverlay `zeilenY`).
-  const spurTextZeile = mitVariante ? 78 : 0;
+  const spurTextZeile = mitVariante ? 14 : 0;
   const ohneSpurHinweis = !mitVariante;
   const H = !mitVariante
-    ? skin.geometry.svgHeight + (ohneSpurHinweis ? 26 : 0)
+    ? skin.geometry.svgHeight
     : 2 * padY + innerH + 2 * randPx + spurTextZeile;
   const rwyTop = padY + oben;
   const rwyBot = rwyTop + innerH;
@@ -511,6 +511,45 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
     }
     return t("runway_v2.source_ourairports_legacy");
   })();
+
+  const overlayProps: BahnSpurOverlayProps | null = mitVariante
+    ? {
+        projektion: projektion,
+        mitteY: rwyCl,
+        pxProQuerM: pxQuer!,
+        halbeBahnM: breiteEchtM! / 2,
+        randM: randM,
+        samples: props.lateral_samples ? spurBereinigen(props.lateral_samples) : [],
+        trackWidthM: props.track_width_m ?? null,
+        bewertungsEndeM: bewertungsEnde(props.mess_ende_laengs_m, props.scoring_cutoff_m, props.clearance_point_m),
+        minEdgeClearanceM: props.min_edge_clearance_m ?? null,
+        clearanceM: props.clearance_point_m ?? null,
+        clearanceSide: props.clearance_side ?? null,
+        overrunM: props.overrun_m ?? null,
+        tdM: props.td_distance_from_threshold_m,
+        tdOffsetM: props.td_centerline_offset_m,
+        aufgesetztNebenM: aufgesetztNebenM,
+        ersatzEndeX: rolloutEndeX,
+        bandFarbe: props.surface_paved === false ? TOKENS.rollout : bandFarbeFuer(TOKENS, props.overrun_m, props.min_edge_clearance_m),
+        tokens: {
+                rollout: TOKENS.rollout,
+                tdPerfect: TOKENS.tdPerfect,
+                tdWarn: TOKENS.tdWarn,
+                tdSevere: TOKENS.tdSevere,
+                rollweg: TOKENS.rollweg,
+              },
+        sf: sf,
+        ausfahrten: props.runway_exits as never,
+        messEndeM: bewertungsEnde(props.mess_ende_laengs_m, props.scoring_cutoff_m, props.clearance_point_m),
+        durchgaenge: (props.vorherige_durchgaenge ?? []).map((d) => spurBereinigen(d.lateral_samples ?? [])),
+        textY: H - 6,
+        unbefestigt: props.surface_paved === false,
+        mitVersatzMarke: !versatzUnglaubwuerdig(props),
+        mitRandabstand: !kanteTraegtNicht(props),
+        endpunktNummer: endpunktNummer(props),
+        maxLateralOffsetM: props.max_lateral_offset_m ?? null,
+      }
+    : null;
 
   return (
     <section
@@ -1047,49 +1086,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             </g>
           )}
 
-          {ohneSpurHinweis && (
-            <text data-rolle="hinweis-ohne-spur" x={padX} y={H - 8} fontSize={sf(11)} fill="#fbbf24" fontFamily="monospace">
-              {props.lateral_samples?.length ? t("runway_v2.b.ohne_breite") : t("runway_v2.b.ohne_spur")}
-            </text>
-          )}
           {/* Variante B: die echte Spur mit Fahrwerksbreite bis zur Reifen-Aussenkante. */}
           {mitVariante && (
-            <BahnSpurOverlay
-              projektion={projektion}
-              mitteY={rwyCl}
-              pxProQuerM={pxQuer!}
-              halbeBahnM={breiteEchtM! / 2}
-              randM={randM}
-              samples={props.lateral_samples ? spurBereinigen(props.lateral_samples) : []}
-              trackWidthM={props.track_width_m ?? null}
-              bewertungsEndeM={bewertungsEnde(props.mess_ende_laengs_m, props.scoring_cutoff_m, props.clearance_point_m)}
-              minEdgeClearanceM={props.min_edge_clearance_m ?? null}
-              clearanceM={props.clearance_point_m ?? null}
-              clearanceSide={props.clearance_side ?? null}
-              overrunM={props.overrun_m ?? null}
-              tdM={props.td_distance_from_threshold_m}
-              tdOffsetM={props.td_centerline_offset_m}
-              aufgesetztNebenM={aufgesetztNebenM}
-              ersatzEndeX={rolloutEndeX}
-              bandFarbe={props.surface_paved === false ? TOKENS.rollout : bandFarbeFuer(TOKENS, props.overrun_m, props.min_edge_clearance_m)}
-              tokens={{
-                rollout: TOKENS.rollout,
-                tdPerfect: TOKENS.tdPerfect,
-                tdWarn: TOKENS.tdWarn,
-                tdSevere: TOKENS.tdSevere,
-                rollweg: TOKENS.rollweg,
-              }}
-              sf={sf}
-              ausfahrten={props.runway_exits as never}
-              messEndeM={bewertungsEnde(props.mess_ende_laengs_m, props.scoring_cutoff_m, props.clearance_point_m)}
-              durchgaenge={(props.vorherige_durchgaenge ?? []).map((d) => spurBereinigen(d.lateral_samples ?? []))}
-              textY={H - 50}
-              unbefestigt={props.surface_paved === false}
-              mitVersatzMarke={!versatzUnglaubwuerdig(props)}
-              mitRandabstand={!kanteTraegtNicht(props)}
-              endpunktNummer={endpunktNummer(props)}
-              maxLateralOffsetM={props.max_lateral_offset_m ?? null}
-            />
+            <BahnSpurOverlay {...overlayProps!} />
           )}
           {mitVariante && (
             <text
@@ -1505,6 +1504,24 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             })}
           </g>
         </svg>
+      </div>
+      {/* Hinweiszeilen als Text unter dem Rollkasten — sie brechen am Handy
+          um, statt mit der Grafik zu rollen (Sichtprüfung 22.10.2026). */}
+      <BahnSpurHinweise
+        zeilen={
+          overlayProps
+            ? bahnHinweise(overlayProps, t)
+            : ohneSpurHinweis
+            ? [{
+                rolle: "hinweis-ohne-spur",
+                text: props.lateral_samples?.length ? t("runway_v2.b.ohne_breite") : t("runway_v2.b.ohne_spur"),
+                farbe: "#fbbf24",
+                fett: false,
+              }]
+            : []
+        }
+      />
+      <div>
 
         {/* Bedienung: Der Hinweis steht nur da, solange nicht gezoomt ist —
             danach erklärt sich der Zustand selbst, und der Platz gehört dem

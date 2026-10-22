@@ -28871,6 +28871,10 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// 2 bis unter 5 ft ueber Bodenhoehe, mit zweitem Kontakt) gibt in der
 /// Teilnote „Hopser“ 85 (einer) bzw. 70 (zwei und mehr); mit einem
 /// normalen Hopser gilt die alte Tabelle. Altbestand wird nicht neu gerechnet.
+/// Ebenfalls 26 (B5b, Thomas 22.10.2026, dasselbe Release): War der
+/// Kurswechsel ein Schlenker zur anderen Seite als der endgueltige
+/// Kantenuebertritt, endet `scoring_cutoff_m` am Uebertritt (siehe
+/// `bahn_felder`).
 const SCORE_ALGORITHMUS_VERSION: u8 = 26;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
@@ -29459,6 +29463,18 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // ist die direkte Beobachtung; er hat Vorrang vor der Kurs-Probe.
     let kante_seite: Option<String> =
         kante_mit_quer.map(|(_, q)| if q > 0.0 { "right" } else { "left" }.to_string());
+    // B5b (Thomas 22.10.2026, Score-Version 26 — dasselbe, noch nicht
+    // veroeffentlichte Release): War der Kurswechsel ein Schlenker zur
+    // ANDEREN Seite als der endgueltige Kantenuebertritt, endet der bewertete
+    // Teil dort, wo die Spur die Kante endgueltig verlaesst — nicht am
+    // Schlenker. Ohne solchen Uebertritt (oder bei gleicher Seite) bleibt es
+    // beim Beginn des Ausschwenkens. Nur neue Fluege; Altbestand wird nie neu
+    // gerechnet. Das Messfenster (`mess_ende_laengs_m`, Fahrt) ist davon
+    // unberuehrt.
+    let bewertungs_ende_raeum_m: Option<f64> = match (kante_mit_quer, &kante_seite, &stats.bahn_raeum_seite) {
+        (Some((k, _)), Some(ks), Some(live)) if ks != live => Some(k),
+        _ => stats.bahn_raeum_laengs_m,
+    };
 
     // ── Punkt und Fahrt gehoeren zusammen ────────────────────────────────
     //
@@ -29623,7 +29639,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
         // zusammen, und das Ausschwenken zaehlte als Fehler des Piloten —
         // bei `0Ab3v9EvNN1LKZ8z` (EDDH 05) 21,95 m auf einer Bahn mit
         // 23 m Halbbreite, gemessen unmittelbar vor dem Abbiegen.
-        scoring_cutoff_m: stats.bahn_raeum_laengs_m,
+        scoring_cutoff_m: bewertungs_ende_raeum_m,
         mess_ende_laengs_m: stats.bahn_fenster_zu_laengs_m,
         // Die Ausfahrtsseite, notfalls nachgerechnet.
         //
@@ -71431,10 +71447,28 @@ mod touchdown_metadata_stamp_tests {
         let f = bahn_felder(&stats, Some("A320"), None);
         assert_eq!(f.clearance_side.as_deref(), Some("right"));
         assert!((f.clearance_point_m.unwrap() - 2031.0).abs() < 15.0, "{:?}", f.clearance_point_m);
+        // B5b: der bewertete Teil endet am endgueltigen Uebertritt (~2031 m),
+        // nicht am Schlenker (1535 m). Alter Stand: 1534,6 (rot).
+        assert!((f.scoring_cutoff_m.unwrap() - 2031.0).abs() < 15.0, "{:?}", f.scoring_cutoff_m);
         // Gegenprobe: bleibt die Spur auf der Bahn, gilt weiter die Kurs-Probe.
         stats.bahn_spur.retain(|(l, _)| *l < 1900.0);
         let f = bahn_felder(&stats, Some("A320"), None);
         assert_eq!(f.clearance_side.as_deref(), Some("left"));
+        // ... und der bewertete Teil endet wie bisher am Ausschwenken.
+        assert_eq!(f.scoring_cutoff_m, fall["scoring_cutoff_m"].as_f64());
+        // Gleiche Seite wie der Uebertritt: unveraendert am Ausschwenken.
+        let mut gleich = FlightStats::default();
+        gleich.runway_match = stats.runway_match.clone();
+        gleich.bahn_spur = fall["lateral_samples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["laengs_m"].as_f64().unwrap() as f32, p["quer_m"].as_f64().unwrap() as f32))
+            .collect();
+        gleich.bahn_raeum_laengs_m = Some(1900.0);
+        gleich.bahn_raeum_seite = Some("right".into());
+        let f = bahn_felder(&gleich, Some("A320"), None);
+        assert_eq!(f.scoring_cutoff_m, Some(1900.0));
     }
 
     /// ⚠ Die Ausfahrten entstehen je Bodenkarte und Bahn EINMAL.

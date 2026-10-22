@@ -94,8 +94,6 @@ C12
 C12/C13 +2
 C13
 C14
-knappste Stelle: äußeres Rad 19,5 m vor der Kante · bei 1132 m
-Spur läuft weiter — real bis 110 m
 2
 3
 Spurweite 10.7 m · quer 15,7× überhöht (breite Bahn gestaucht) · Bahn 65 m · Band bis Reifen-Außenkante
@@ -120,6 +118,8 @@ TD 820 m · 3.1 m rechts
 2400 m
 3000 m
 3600 m
+knappste Stelle: äußeres Rad 19,5 m vor der Kante · bei 1132 m
+Spur läuft weiter — real bis 110 m
 Strg + Mausrad zoomt · Ziehen verschiebt
 −
 +

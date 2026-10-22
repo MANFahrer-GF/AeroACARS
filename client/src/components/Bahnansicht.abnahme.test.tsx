@@ -156,16 +156,16 @@ describe("Bahnansicht B — zehn echte Landungen (golden)", () => {
     const rs = z.svg.querySelector('[data-rolle="randstelle"]')!;
     expect(Number(rs.getAttribute("data-randabstand"))).toBeCloseTo(payload(1914).min_edge_clearance_m as number, 2);
     expect(Math.abs(Number(rs.getAttribute("data-laengs")) - 1534)).toBeLessThan(30);
-    expect(z.svg.querySelector('[data-rolle="randstelle-text"]')!.textContent).toMatch(/Rad 5,8 m neben der Bahn \(rechts\)/);
+    expect(z.container.querySelector('[data-rolle="randstelle-text"]')!.textContent).toMatch(/Rad 5,8 m neben der Bahn \(rechts\)/);
   });
 
   it("#1662: zweite Zahl „aufgesetzt X m neben der Bahn“ nur bei off_runway_surface (Entscheidung 11)", () => {
-    const t1662 = zeichne(fall(1662)).svg.querySelector('[data-rolle="aufgesetzt-neben"]');
+    const t1662 = zeichne(fall(1662)).container.querySelector('[data-rolle="aufgesetzt-neben"]');
     // −26,2 m Versatz + 4,35 m Aussenkante (A320) − 22,86 m halbe Bahn ≈ 7,6 m
     expect(t1662?.textContent).toMatch(/aufgesetzt 7,\d m neben der Bahn/);
     // Gegenprobe: #1914 hat Ausrichtung off_centerline, #1884 sauber → keine zweite Zahl.
-    expect(zeichne(fall(1914)).svg.querySelector('[data-rolle="aufgesetzt-neben"]')).toBeNull();
-    expect(zeichne(fall(1884)).svg.querySelector('[data-rolle="aufgesetzt-neben"]')).toBeNull();
+    expect(zeichne(fall(1914)).container.querySelector('[data-rolle="aufgesetzt-neben"]')).toBeNull();
+    expect(zeichne(fall(1884)).container.querySelector('[data-rolle="aufgesetzt-neben"]')).toBeNull();
   });
 
   it("#1905: Messfenster-Marke am frühesten Ende (1604 m), nicht bei 3418 m aus dem Touch-and-go (B3)", () => {
@@ -177,9 +177,34 @@ describe("Bahnansicht B — zehn echte Landungen (golden)", () => {
     expect(z.svg.querySelector('[data-rolle="durchgang"]')).not.toBeNull();
   });
 
+  it("#1738: Marken überdecken sich nie (2 bei 345 m, 3 bei 350 m am Bildrand)", () => {
+    // Alter Stand (Sichtprüfung 22.10.2026): Marke 2 lag genau unter Marke 3.
+    const z = zeichne(fall(1738));
+    const kreise = [...z.svg.querySelectorAll("[data-marke] circle")].map((c) => [
+      Number(c.getAttribute("cx")),
+      Number(c.getAttribute("cy")),
+    ]);
+    const td = z.svg.querySelector('[data-rolle="td-punkt"]')!;
+    kreise.push([Number(td.getAttribute("cx")), Number(td.getAttribute("cy"))]);
+    expect(kreise.length).toBeGreaterThanOrEqual(3);
+    for (let i = 0; i < kreise.length; i++)
+      for (let j = i + 1; j < kreise.length; j++)
+        expect(Math.hypot(kreise[i]![0]! - kreise[j]![0]!, kreise[i]![1]! - kreise[j]![1]!), `${i}/${j}`).toBeGreaterThanOrEqual(18);
+  });
+
+  it("Handy: Hinweiszeilen stehen als Text ausserhalb der rollenden Grafik", () => {
+    const z = zeichne(fall(1662));
+    const kasten = z.container.querySelector('[data-rolle="bahn-grafik"]')!;
+    for (const r of ["randstelle-text", "aufgesetzt-neben"]) {
+      const el = z.container.querySelector(`[data-rolle="${r}"]`)!;
+      expect(el.tagName.toLowerCase(), r).toBe("div");
+      expect(kasten.contains(el), r).toBe(false);
+    }
+  });
+
   it("#1062 (ohne Spurdaten): gestrichelt mit Hinweis, keine Behauptung „mittig“", () => {
     const z = zeichne(fall(1062));
-    expect(z.svg.querySelector('[data-rolle="hinweis-ohne-spur"]')?.textContent).toMatch(/Keine Spurdaten/);
+    expect(z.container.querySelector('[data-rolle="hinweis-ohne-spur"]')?.textContent).toMatch(/Keine Spurdaten/);
     expect([...z.svg.querySelectorAll("line")].some((l) => l.getAttribute("stroke-dasharray") === "8 6")).toBe(true);
   });
 
@@ -207,7 +232,7 @@ describe("Bahnansicht B — zehn echte Landungen (golden)", () => {
     expect(text).toMatch(/Band reicht bis zur Außenkante der äußeren Reifen/);
     expect(text).not.toMatch(/QUER — WO DIE RÄDER LIEFEN/);
     // „am Bildrand angehalten“ — #1738 (Graspiste, Spur fast ganz ausserhalb)
-    expect(zeichne(fall(1738)).svg.querySelector('[data-rolle="laeuft-weiter"]')?.textContent).toMatch(/am Bildrand angehalten/);
+    expect(zeichne(fall(1738)).container.querySelector('[data-rolle="laeuft-weiter"]')?.textContent).toMatch(/am Bildrand angehalten/);
   });
 
   it("B7: Handy — Grafik mit Mindestbreite, kleinste Schrift ≥ 5,5 px (vorher 2,7 px bei 360 px)", () => {
