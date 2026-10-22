@@ -289,6 +289,7 @@
       "keine_stimme": "keine Stimme für diese Sprachen",
       "kein_kurztext": "GSG-Server liefert noch keine Kurzfassung des Kapitäns",
       "flug_beendet": "Flug war schon eingereicht",
+      "ansagen_aus": "Ansagen wurden ausgeschaltet",
       "sonst": "nicht mehr möglich",
       "tueren_zu": "die Türen waren schon zu",
       "ohne_ladeblatt": "ohne SimBrief-Ladeblatt nicht feststellbar"

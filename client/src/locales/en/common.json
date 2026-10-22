@@ -289,6 +289,7 @@
       "keine_stimme": "no voice for these languages",
       "kein_kurztext": "GSG server does not provide the captain's short version yet",
       "flug_beendet": "flight was already filed",
+      "ansagen_aus": "announcements were switched off",
       "sonst": "no longer possible",
       "tueren_zu": "the doors were already closed",
       "ohne_ladeblatt": "cannot be determined without a SimBrief load sheet"
