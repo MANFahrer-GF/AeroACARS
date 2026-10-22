@@ -510,3 +510,50 @@ describe("Legende vollständig — jedes gezeichnete Element (alle elf Fälle)",
     });
   }
 });
+
+// ── Thomas 22.10.2026 (nach den 2.1.8-Bildern) ─────────────────────────
+describe("Kantenangabe überdeckt nichts (alle elf Fälle)", () => {
+  for (const id of [1062, 1662, 1738, 1779, 1842, 1884, 1905, 1909, 1914, 1916, 1936]) {
+    it(`#${id}: „Kante … m“ liegt auf keinem Stummel und keinem anderen Text`, () => {
+      const z = zeichne(fall(id));
+      const kanten = [...z.svg.querySelectorAll('[data-rolle="querskala"] text')];
+      const kasten = (t: Element) => textKasten(t);
+      const ueber = (a: { links: number; rechts: number; oben: number; unten: number }, b: typeof a) =>
+        !(a.rechts <= b.links || b.rechts <= a.links || a.unten <= b.oben || b.unten <= a.oben);
+      const stummel = [...z.svg.querySelectorAll('[data-rolle="ausfahrt"]')].map((r) => {
+        const x = Number(r.getAttribute("x"));
+        const y = Number(r.getAttribute("y"));
+        return { links: x, rechts: x + Number(r.getAttribute("width")), oben: y, unten: y + Number(r.getAttribute("height")) };
+      });
+      const andere = [...z.svg.querySelectorAll("text")].filter((t) => !kanten.includes(t) && (t.textContent ?? "").trim());
+      for (const k of kanten) {
+        const kk = kasten(k);
+        expect(stummel.filter((s) => ueber(kk, s)).length, `${k.textContent} auf Stummel`).toBe(0);
+        const treffer = andere.filter((t) => ueber(kk, kasten(t))).map((t) => t.textContent);
+        expect(treffer, `${k.textContent} auf Text`).toEqual([]);
+      }
+    });
+  }
+});
+
+describe("#1936 Altbestand: kein Rollwegstück auf der Bahn als Ausfahrt", () => {
+  it("unten bei ~1840 m kein Stummel und kein „B“, in der Lupe unten kein „B“", () => {
+    const z = draufsicht();
+    const unten = [...z.svg.querySelectorAll('[data-rolle="ausfahrt"]')].filter(
+      (r) => Number(r.getAttribute("y")) >= z.bot - 0.5,
+    );
+    const x1840 = z.projektion.mAbBahnanfangZuX(1839.6);
+    expect(unten.filter((r) => Math.abs(Number(r.getAttribute("x")) + 4 - x1840) < 6).length).toBe(0);
+    const namenUnten = [...z.svg.querySelectorAll('[data-rolle="ausfahrt-name"]')]
+      .filter((t) => Number(t.getAttribute("y")) > z.bot)
+      .map((t) => t.textContent);
+    expect(namenUnten).not.toContain("B");
+    // Lupe: Namen unter der Bahn (rechte Seite) — kein „B“ mehr.
+    const lupe = z.container.querySelector('svg[data-ansicht="lupe"]')!;
+    const H = Number(lupe.getAttribute("viewBox")!.split(" ")[3]);
+    const lupeUnten = [...lupe.querySelectorAll("text")]
+      .filter((t) => t.textContent === "B")
+      .map((t) => Number(t.getAttribute("y")));
+    expect(lupeUnten.filter((yy) => yy > H / 2)).toEqual([]);
+  });
+});

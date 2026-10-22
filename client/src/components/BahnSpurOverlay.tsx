@@ -244,20 +244,29 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   // (Thomas 22.10.2026: keine eigene Spalte rechts, „Mitte“ entfällt — die
   // gestrichelte Mittellinie spricht für sich). Die Ausfahrtsnamen stehen
   // in der äusseren Hälfte des Streifens, diese Angaben in der inneren.
-  const skala = (
+  //
+  // Die Angabe überdeckt nie einen Stummel, eine Marke, das Band oder einen
+  // anderen Text (Thomas: „Kante 22,6 m“ lag auf dem Stummel „A“): Sie
+  // rückt im Streifen nach rechts, bis die Stelle frei ist.
+  const kanteSchrift = p.sf(9.5);
+  const kanteText = (q: number) =>
+    t(q < 0 ? "runway_v2.b.skala_kante_links" : "runway_v2.b.skala_kante_rechts", { m: fmt(Math.abs(q)) });
+  const kanteY = (q: number) => (q < 0 ? kanteOben - 2 : kanteUnten + kanteSchrift - 1);
+  const kanteX: Record<string, number> = {};
+  const skala = () => (
     <g data-rolle="querskala" data-legende="beschriftung">
       {[-p.halbeBahnM, p.halbeBahnM].map((q) => (
         <text
           key={q}
           data-kante={q < 0 ? "links" : "rechts"}
-          x={p.projektion.bahnAnfangX + 4}
-          y={q < 0 ? kanteOben - 3 : kanteUnten + p.sf(9.5) - 0.5}
+          x={kanteX[q < 0 ? "links" : "rechts"] ?? p.projektion.bahnAnfangX + 4}
+          y={kanteY(q)}
           // 9,5: Schriftgrösse 9 tragen nur die Ausfahrtsnamen (QS zählt sie).
-          fontSize={p.sf(9.5)}
+          fontSize={kanteSchrift}
           fill="#C9D2E0"
           fontFamily="monospace"
         >
-          {t(q < 0 ? "runway_v2.b.skala_kante_links" : "runway_v2.b.skala_kante_rechts", { m: fmt(Math.abs(q)) })}
+          {kanteText(q)}
         </text>
       ))}
     </g>
@@ -270,7 +279,7 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
     const tdY = y(p.tdOffsetM);
     return (
       <g data-rolle="ohne-spur">
-        {skala}
+        {skala()}
         {p.ersatzEndeX != null && p.ersatzEndeX > tdX && (
           <line
             data-rolle="ersatz-linie"
@@ -426,6 +435,27 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
     ...marken.map((m) => ({ x: m.x - 10, y: m.y - 10, b: 20, h: 20 })),
   ];
   const bandPunkte = [...links, ...rechts];
+  // Kantenangaben zuerst setzen: von links nach rechts die erste freie
+  // Stelle im Streifen (Hindernisse: Stummel, Texte, Marken, Band).
+  for (const q of [-p.halbeBahnM, p.halbeBahnM]) {
+    const seite = q < 0 ? "left" : "right";
+    const text = kanteText(q);
+    const yy = kanteY(q);
+    const stummel: Kasten[] = (p.ausfahrten ?? [])
+      .filter((a) => a.seite === seite)
+      .map((a) => ({ x: x(a.laengs_m) - 4, y: q < 0 ? kanteOben - lang : kanteUnten, b: 8, h: lang }));
+    let xx = p.projektion.bahnAnfangX + 4;
+    for (let n = 0; n < 200; n++) {
+      const k = textKasten(xx, yy, text, kanteSchrift, "start");
+      const hinderniss = [...stummel, ...belegt].filter((b) => ueberlappt(k, b));
+      const punkt = bandPunkte.filter((q2) => q2.x >= k.x && q2.x <= k.x + k.b && q2.y >= k.y && q2.y <= k.y + k.h);
+      if (!hinderniss.length && !punkt.length) break;
+      xx = Math.max(xx + 2, ...hinderniss.map((b) => b.x + b.b + 3), ...punkt.map((q2) => q2.x + 3));
+    }
+    if (xx + breite(text, kanteSchrift) > p.bildBisX) xx = p.projektion.bahnAnfangX + 4;
+    kanteX[seite === "left" ? "links" : "rechts"] = xx;
+    belegt.push(textKasten(xx, yy, text, kanteSchrift, "start"));
+  }
   const setze = (text: string, schrift: number, plaetze: Platz[]): Platz => {
     const frei = (q: Platz) => {
       const k = textKasten(q.x, q.y, text, schrift, q.anker);
@@ -554,7 +584,7 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
 
   return (
     <g data-rolle="spur-overlay">
-      {skala}
+      {skala()}
       {endeX != null && (
         <defs>
           {/* Als Pfad, nicht als Rechteck: Prüfungen suchen die Bahn als

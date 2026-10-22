@@ -1281,14 +1281,16 @@ describe("Rollweg der genommenen Ausfahrt (Lupe)", () => {
         name: "B7", laengs_m: 2259, seite: "right",
         verlauf: [
           { laengs_m: 2259, quer_m: 2 },
-          { laengs_m: 2300, quer_m: 28 },
+          // Seit 2.1.8 muss der Verlauf die 60-m-Bahn wirklich verlassen
+          // (nur echte Ausfahrten); bis dahin endete er 2 m vor der Kante.
+          { laengs_m: 2300, quer_m: 45 },
         ],
       },
       {
         name: "B6", laengs_m: 2368, seite: "right",
         verlauf: [
           { laengs_m: 2368, quer_m: 22 },
-          { laengs_m: 2400, quer_m: 31 },
+          { laengs_m: 2400, quer_m: 45 },
         ],
       },
     ];

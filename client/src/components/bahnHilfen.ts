@@ -280,14 +280,47 @@ export function doppelnamenZusammenfassen<A extends Ausfahrt>(liste: A[], bevorz
 
 export interface AusfahrtQuelle {
   runway_exits?: Ausfahrt[] | null;
+  /** Bahnbreite — für die Prüfung „verlässt die Bahn“ im Altbestand. */
+  runway_width_m?: number | null;
   clearance_exit?: string | null;
   clearance_point_m?: number | null;
   clearance_side?: "left" | "right" | null;
 }
 
-/** Die Ausfahrten, wie alle Ansichten sie zeigen: ein Name je Abzweigung. */
+/** Wie weit ein Rollweg über die Kante hinausreichen muss (wie `DRAUSSEN_MIN_M` im Client). */
+const DRAUSSEN_MIN_M = 2;
+
+/**
+ * Nur echte Ausfahrten — für Flüge vor 2.1.8 (ohne `clearance_exit`); ab
+ * 2.1.8 filtert der Client selbst (`ausfahrten.rs`, `kantenpunkte`).
+ *
+ * Dieselbe Regel wie im Client: Ein Rollweg ist auf einer Seite nur dann
+ * eine Ausfahrt, wenn er dort über die Kante hinausreicht. Prüfbar ist das
+ * im Altbestand nur, wo der Verlauf gespeichert ist (nahe dem Räumpunkt):
+ *
+ * - Mit Verlauf: zeigen, wenn er auf seiner Seite ≥ 2 m über die Kante
+ *   hinausreicht — sonst liegt das Stück auf der Bahn.
+ * - Ohne Verlauf: weglassen, wenn derselbe Rollweg auf der GEGENSEITE
+ *   nachweislich abzweigt (Verlauf reicht dort hinaus) — dann ist dieser
+ *   Eintrag ein Stück auf der Bahn. #1936: B und S1 „rechts bei 1839,6 m“
+ *   waren der Mittellinienpunkt, abgezweigt wird links bei 1947 m.
+ */
+export function echteAusfahrten(p: AusfahrtQuelle): Ausfahrt[] {
+  const liste = p.runway_exits ?? [];
+  const breite = p.runway_width_m;
+  if (p.clearance_exit != null || breite == null || !(breite > 0)) return liste;
+  const halbe = Math.max(breite / 2, 10);
+  const verlaesst = (a: Ausfahrt) =>
+    (a.verlauf ?? []).some((v) => (a.seite === "left" ? -v.quer_m : v.quer_m) >= halbe + DRAUSSEN_MIN_M);
+  return liste.filter((a) => {
+    if ((a.verlauf ?? []).length >= 2) return verlaesst(a);
+    return !liste.some((b) => b.name === a.name && b.seite !== a.seite && verlaesst(b));
+  });
+}
+
+/** Die Ausfahrten, wie alle Ansichten sie zeigen: nur echte, ein Name je Abzweigung. */
 export function ausfahrtenFuerAnzeige(p: AusfahrtQuelle): Ausfahrt[] {
-  return doppelnamenZusammenfassen(p.runway_exits ?? [], p.clearance_exit);
+  return doppelnamenZusammenfassen(echteAusfahrten(p), p.clearance_exit);
 }
 
 /**
