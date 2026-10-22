@@ -73,8 +73,6 @@ export interface BahnSpurOverlayProps {
    * Namen je Abzweigung zusammengefasst (`ausfahrtenFuerAnzeige`).
    */
   genutzt?: Ausfahrt | null;
-  /** x der Querskala (rechts hinter dem Zeichenbereich). */
-  skalaX: number;
   /** Zeichenbereich in x — Texte und Pfeile bleiben darin. */
   bildVonX: number;
   bildBisX: number;
@@ -242,20 +240,25 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
     return xx + verschiebung;
   };
 
-  // Querskala rechts hinter dem Zeichenbereich (Entscheidung 7): „Kante
-  // 22,6 m links“ / „Mitte“ / „Kante 22,6 m rechts“ — die halbe Breite
-  // steht bei ihrer Kante, nicht als lose Zahl neben „Bahn 45 m“.
+  // Kantenangaben IM Grünstreifen am Bahnanfang, direkt an der Kante
+  // (Thomas 22.10.2026: keine eigene Spalte rechts, „Mitte“ entfällt — die
+  // gestrichelte Mittellinie spricht für sich). Die Ausfahrtsnamen stehen
+  // in der äusseren Hälfte des Streifens, diese Angaben in der inneren.
   const skala = (
     <g data-rolle="querskala" data-legende="beschriftung">
-      {[-p.halbeBahnM, 0, p.halbeBahnM].map((q) => (
-        <g key={q}>
-          <line x1={p.skalaX} y1={y(q)} x2={p.skalaX + 6} y2={y(q)} stroke="#8B95A8" strokeWidth={1} />
-          <text x={p.skalaX + 9} y={y(q) + 3.5} fontSize={p.sf(9.5)} fill="#C9D2E0" fontFamily="monospace">
-            {q === 0
-              ? t("runway_v2.b.skala_mitte")
-              : t(q < 0 ? "runway_v2.b.skala_kante_links" : "runway_v2.b.skala_kante_rechts", { m: fmt(Math.abs(q)) })}
-          </text>
-        </g>
+      {[-p.halbeBahnM, p.halbeBahnM].map((q) => (
+        <text
+          key={q}
+          data-kante={q < 0 ? "links" : "rechts"}
+          x={p.projektion.bahnAnfangX + 4}
+          y={q < 0 ? kanteOben - 3 : kanteUnten + p.sf(9.5) - 0.5}
+          // 9,5: Schriftgrösse 9 tragen nur die Ausfahrtsnamen (QS zählt sie).
+          fontSize={p.sf(9.5)}
+          fill="#C9D2E0"
+          fontFamily="monospace"
+        >
+          {t(q < 0 ? "runway_v2.b.skala_kante_links" : "runway_v2.b.skala_kante_rechts", { m: fmt(Math.abs(q)) })}
+        </text>
       ))}
     </g>
   );
@@ -290,19 +293,21 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
 
   const { spur, raus } = spurImBild(p.samples, p.clearanceM, sichtbarM);
   const achse: P[] = spur.map((s) => ({ x: x(s.laengs_m), y: y(s.quer_m) }));
-  // Das Band QUER abgesetzt, nicht senkrecht zur gezeichneten Linie
-  // (Bahnansicht 2.1.8, Kritik #12 / Zusicherung 5): Die Radlinien sind die
-  // echten äusseren Räder an ihrer echten Stelle. Senkrecht zur 8-fach
-  // gestreckten Linie abgesetzt, ragte das Band bei #1936 schon 15 m vor dem
-  // Kantenübertritt über die Kante (echt noch +8 m Rand).
-  // Am Bildrand geklemmte Proben (Spur weit neben der Bahn, #1738) behalten
-  // ihre Breite um die geklemmte Mitte — sonst fiele das Band zur Linie.
-  const rad = (s: { laengs_m: number; quer_m: number; geklemmt: boolean }, v: 1 | -1): P => ({
-    x: x(s.laengs_m),
-    y: s.geklemmt ? y(s.quer_m) + v * aussenM * p.pxProQuerM : y(s.quer_m + v * aussenM),
-  });
-  const links: P[] = spur.map((s) => rad(s, -1));
-  const rechts: P[] = spur.map((s) => rad(s, 1));
+  // Das Band senkrecht zur gezeichneten Linie abgesetzt — wie bis 2.1.7
+  // (Thomas: so ist die Kurve zu sehen; quer abgesetzt wurde sie in der
+  // Ausfahrt zur Linie gequetscht).
+  const halbPx = aussenM * p.pxProQuerM;
+  const rand = (v: 1 | -1): P[] =>
+    achse.map((q, i) => {
+      const a = achse[Math.max(0, i - 1)]!;
+      const b = achse[Math.min(achse.length - 1, i + 1)]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const l = Math.hypot(dx, dy) || 1;
+      return { x: q.x + (v * -dy * halbPx) / l, y: q.y + (v * dx * halbPx) / l };
+    });
+  const links = rand(-1);
+  const rechts = rand(1);
   const pts = (a: P[]) => a.map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(" ");
   const flaeche = `M ${pts(links).replace(/ /g, " L ")} L ${pts(rechts.slice().reverse()).replace(/ /g, " L ")} Z`;
 

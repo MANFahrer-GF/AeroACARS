@@ -358,50 +358,51 @@ describe("#1936 EDDG 25 — Kritik 22.10.2026 (golden)", () => {
     expect(raus).toEqual([]);
   });
 
-  it("3b · kein unbenutzter Randstreifen: Ränder so breit wie ihre Beschriftung (Thomas: „rechts zu viel Platz“)", () => {
-    // Der Bedarf ist der Text selbst: rechts Querskala bzw. „07“/Länge, links
-    // die Kennung „25“. Erlaubt sind 4 Einheiten Luft plus Rundung (< 10).
+  it("3b · kein unbenutzter Randstreifen: keine Spalte rechts, Ränder so breit wie nötig (Thomas: „rechts zu viel Platz“)", () => {
+    // Bedarf links: die Kennung „25“ (+ 14 Luft). Rechts: nur der Platz, den
+    // die Ausfahrt hinter dem Bahnende braucht — keine Textspalte daneben.
     const z = draufsicht();
+    const pad = Number(z.svg.getAttribute("data-pad-x"));
+    const bildRand = pad + Number(z.svg.getAttribute("data-inner-w"));
+    expect(z.W - bildRand).toBeLessThanOrEqual(8);
     const kaesten = [...z.svg.querySelectorAll("text")]
       .filter((t) => (t.textContent ?? "").trim() !== "")
-      .map((t) => textKasten(t));
-    expect(z.W - Math.max(...kaesten.map((k) => k.rechts))).toBeLessThan(10);
-    expect(Math.min(...kaesten.map((k) => k.links))).toBeLessThan(10);
-    // Und JEDE Zeile der rechten Spalte (Kante oben, Mitte, Kante unten)
-    // reicht bis an den Rand — keine halb leere Spalte wie bis 2.1.7
-    // („22,6 m“ endete 20 Einheiten vor dem Rand). Grenze 12: 4 Luft plus
-    // der Längenunterschied „links“/„rechts“ (ein Zeichen, ~6).
-    const zeilen = [...z.svg.querySelectorAll('[data-rolle="querskala"] line')].map((l) => Number(l.getAttribute("y1")));
-    expect(zeilen.length).toBe(3);
-    for (const zy of zeilen) {
-      const inZeile = kaesten.filter((k) => Math.abs((k.oben + k.unten) / 2 - zy) < 12);
-      expect(z.W - Math.max(...inZeile.map((k) => k.rechts)), `Zeile y=${zy}`).toBeLessThan(12);
-    }
+      .map((t) => ({ t: t.textContent ?? "", ...textKasten(t) }));
+    // Kein Text rechts neben dem Zeichenbereich.
+    expect(kaesten.filter((k) => k.links > bildRand - 0.5).map((k) => k.t)).toEqual([]);
+    // Links: nur die Kennung, so breit wie sie selbst.
+    const kennung = kaesten.find((k) => k.t === "25")!;
+    expect(pad - (kennung.rechts - kennung.links)).toBeLessThanOrEqual(16);
   });
 
-  it("4 · Ausfahrt ganz im Bild: Spur, Marke 3 und Stummel enden vor der Querskala, Bahn nicht bündig am Rand", () => {
+  it("4 · Ausfahrt ganz im Bild: Band, Marke 3 und Stummel im Zeichenbereich, Bahn nicht bündig am Rand", () => {
     const z = draufsicht();
-    const skalaX = Math.min(...[...z.svg.querySelectorAll('[data-rolle="querskala"] line')].map((l) => Number(l.getAttribute("x1"))));
+    const bildRand = Number(z.svg.getAttribute("data-pad-x")) + Number(z.svg.getAttribute("data-inner-w"));
     const xs = [
       ...(z.links ?? []).map(([x]) => x),
       ...(z.rechts ?? []).map(([x]) => x),
       ...[...z.svg.querySelectorAll('[data-marke="3"] circle')].map((c) => Number(c.getAttribute("cx")) + Number(c.getAttribute("r"))),
       ...[...z.svg.querySelectorAll('[data-rolle="ausfahrt"]')].map((r) => Number(r.getAttribute("x")) + Number(r.getAttribute("width"))),
     ];
-    expect(Math.max(...xs)).toBeLessThan(skalaX - 6);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(bildRand);
     // Platz hinter dem Bahnende (Entscheidung 1): die Bahn endet vor dem Zeichenbereich.
     expect(z.svg.getAttribute("data-nach-m")).not.toBeNull();
     expect(Number(z.svg.getAttribute("data-nach-m"))).toBeGreaterThan(0);
   });
 
-  it("5 · Band quer richtig: 1900–1940 m kein äusseres Rad jenseits der Kante, ab 1945 m schon", () => {
+  it("5 · Band in der Kurve nirgends schmaler als in der Geraden (wie 2.1.7, senkrecht zur Linie)", () => {
+    // Thomas 22.10.2026: Quer abgesetzt wurde die Ausfahrtskurve zur Linie
+    // gequetscht („wieder bei Punkt Null“). Die Bandbreite senkrecht zur
+    // gezeichneten Linie bleibt überall gleich — auch in der Ausfahrt.
     const z = draufsicht();
     const l = z.links!;
+    const r = z.rechts!;
+    const breiten = l.map(([x1, y1], i) => Math.hypot(r[i]![0] - x1, r[i]![1] - y1));
+    const gerade = breiten[Math.floor(breiten.length / 2)]!;
     const x = (m: number) => z.projektion.mAbBahnanfangZuX(m);
-    const drin = l.filter(([px]) => px >= x(1900) && px <= x(1940));
-    expect(drin.length).toBeGreaterThan(0);
-    for (const [px, py] of drin) expect(py, `x=${px}`).toBeGreaterThanOrEqual(z.top - 0.5);
-    expect(l.some(([px, py]) => px >= x(1945) && py < z.top - 0.5)).toBe(true);
+    const kurve = z.mitte!.map(([px], i) => ({ px, b: breiten[i]! })).filter((q) => q.px >= x(1925));
+    expect(kurve.length).toBeGreaterThan(2);
+    for (const q of kurve) expect(q.b, `x=${q.px}`).toBeGreaterThanOrEqual(gerade * 0.97);
   });
 
   it("6 · kein missverständliches „real bis 102 m“ — stattdessen der Pfeil an der Austrittsstelle", () => {
@@ -457,8 +458,14 @@ describe("#1936 EDDG 25 — Kritik 22.10.2026 (golden)", () => {
     expect(z.svg.querySelector('[data-rolle="ueberhoehung"]')!.textContent).toMatch(
       /^A320 · Spurweite 7,6 m · Bahn 45 m breit · quer \d-fach gestreckt$/,
     );
+    // Kantenangaben im Grünstreifen; „Mitte“ entfällt (Thomas 22.10.2026).
     const skala = [...z.svg.querySelectorAll('[data-rolle="querskala"] text')].map((t) => t.textContent);
-    expect(skala).toEqual(["Kante 22,6 m links", "Mitte", "Kante 22,6 m rechts"]);
+    expect(skala).toEqual(["Kante 22,6 m links", "Kante 22,6 m rechts"]);
+    // „07“ und Länge in der Zeile von BAHN-ENDE, nicht in einer Spalte.
+    const texte = [...z.svg.querySelectorAll("text")];
+    const ende = texte.find((t) => t.textContent === "BAHN-ENDE")!;
+    for (const k of ["07", "1970 m"])
+      expect(texte.find((t) => t.textContent === k)!.getAttribute("y"), k).toBe(ende.getAttribute("y"));
     // Handy: gestaucht statt im Kasten gerollt.
     expect(z.svg.style.minWidth).toBe("");
     expect((z.container.querySelector('[data-rolle="bahn-grafik"]') as HTMLElement).style.overflowX).not.toBe("auto");

@@ -343,35 +343,17 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // ohne in die Beschriftung zu laufen.
   const randPx = mitVariante ? 24 : 0;
   const randM = pxQuer ? randPx / pxQuer : 0;
-  // Rechts hinter dem Zeichenbereich: die Querskala „Kante 22,6 m links“ /
-  // „Mitte“ / „Kante 22,6 m rechts“ (Entscheidung 7) — so breit wie ihr
-  // längster Text.
-  const skalaTexte = mitVariante
-    ? [
-        t("runway_v2.b.skala_kante_links", { m: dez(breiteEchtM! / 2) }),
-        t("runway_v2.b.skala_kante_rechts", { m: dez(breiteEchtM! / 2) }),
-        t("runway_v2.b.skala_mitte"),
-      ]
-    : [];
-  // Ränder nur so breit, wie ihre Beschriftung es braucht (Thomas
-  // 22.10.2026: „rechts ist zu viel freier Platz“): links die Kennung
-  // („25“), rechts die Querskala und daneben „07“ mit der Länge — beide an
-  // der Linie „Mitte“, keine leere Spalte.
+  // Ränder nur so breit, wie es nötig ist (Thomas 22.10.2026: „rechts zu
+  // viel Platz verschenkt“): links die Kennung („25“), rechts KEINE eigene
+  // Spalte — „07“ und die Länge stehen unter dem Bahnende (Zeile von
+  // „BAHN-ENDE“), die Kantenangaben im Grünstreifen. Den Platz hinter dem
+  // Bahnende, den eine Ausfahrt braucht, gibt `nachM` (Entscheidung 1).
   const zb = (text: string, schrift: number) => text.length * sf(schrift) * 0.62;
   const kennungGegen = oppositeRunway(props.runway_ident);
   const laengeText = `${props.length_m.toFixed(0)} m`;
   const padX = mitVariante ? Math.ceil(Math.max(36, zb(props.runway_ident, 28) + 14)) : padXBasis;
-  const mitteB = mitVariante ? zb(skalaTexte[2]!, 9.5) : 0;
-  const endeSpalteB = Math.max(
-    display.show_opposite_runway ? zb(kennungGegen, 20) : 0,
-    display.show_bahn_length ? zb(laengeText, 11) : 0,
-  );
-  const rechtsRand = mitVariante
-    ? Math.ceil(15 + Math.max(...skalaTexte.slice(0, 2).map((x) => zb(x, 9.5)), mitteB + 10 + endeSpalteB) + 4)
-    : padX;
+  const rechtsRand = mitVariante ? 6 : padX;
   const innerW = W - padX - rechtsRand;
-  /** „07“/Länge: rechtsbündig am Bildrand, neben „Mitte“. */
-  const endeSpalteX = W - 4;
 
   // Platz vor dem Bahnanfang und hinter dem Bahnende (Entscheidung 1): nur
   // so viel, dass Spur bis zum Bildrand, Räumpunkt und genutzte Ausfahrt
@@ -396,8 +378,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
       ...(genutzt ? [genutzt.laengs_m - spurVersatz] : []),
     ];
     if (!stellen.length) return { vorM: 0, nachM: 0 };
-    // Rand in Metern: Marke (Radius 9) und Stummel samt Luft, ~16 Einheiten.
-    const randMeter = (16 * (lengthRoh + ddsRoh)) / Math.max(1, innerW);
+    // Rand in Metern: Marke (Radius 9) samt Luft (16 Einheiten) — oder das
+    // halbe Band, das in einer steilen Ausfahrt waagerecht absteht.
+    const halbBandPx =
+      props.track_width_m != null && props.track_width_m > 0 ? aussenkanteHalbM(props.track_width_m) * pxQuer! : 0;
+    const randMeter = (Math.max(16, halbBandPx + 4) * (lengthRoh + ddsRoh)) / Math.max(1, innerW);
     const deckel = 0.2 * lengthRoh;
     return {
       vorM: Math.min(deckel, Math.max(0, -ddsRoh - (Math.min(...stellen) - randMeter))),
@@ -633,7 +618,6 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         sf: sf,
         ausfahrten: ausfahrtenFuerAnzeige(props),
         genutzt,
-        skalaX: padX + innerW + 6,
         bildVonX: 2,
         bildBisX: padX + innerW,
         dez,
@@ -705,8 +689,22 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           .filter(Boolean)
           .join(" · ");
   const raeumHalb = Math.max(raeumTitel.length * sf(11), raeumZeile.length * sf(10)) * 0.62 / 2;
+  const ausrollEndeText =
+    t("runway_v2.rollout_end", { defaultValue: "AUSROLLEN ENDE" }) +
+    (ausrollEndeUeberBahn
+      ? ` · ${t("runway_v2.rollout_end_beyond", { defaultValue: "hinter dem Bahnende" })}`
+      : exitDistM != null
+      ? ` · ${exitDistM.toFixed(0)} m`
+      : "");
   const raeumTextX =
     raeumX == null ? 0 : Math.min(Math.max(raeumX, raeumHalb + 4), padX + innerW - raeumHalb);
+  // Variante B: „BAHN-ENDE · 07 · 1970 m“ in EINER Zeile unter dem Bahnende
+  // (keine Spalte rechts daneben, Thomas 22.10.2026).
+  const endeZeileY = rwyBot + unten + 18;
+  const kennungX = projektion.bahnEndeX - (display.show_bahn_length ? zb(laengeText, 9.5) + 6 : 0);
+  const bahnEndeTextX = mitVariante
+    ? kennungX - (display.show_opposite_runway ? zb(kennungGegen, 13) + 8 : 0)
+    : projektion.bahnEndeX;
   // Die Texte der Draufsicht, denen die neuen Beschriftungen im Overlay
   // ausweichen (Pfeil, Marke 2, Dreieck) — dieselben Kästen wie die
   // Lesbarkeitsprüfung.
@@ -717,7 +715,13 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
     ...(aimX != null && display.show_aim_marker
       ? [textKasten(aimX, rwyBot + unten + 20, `${t("runway_v2.aim_point_prefix")} ${props.aim_point_m?.toFixed(0)} m`, sf(10.5), "middle")]
       : []),
-    textKasten(projektion.bahnEndeX, rwyBot + unten + 18, t("runway_v2.runway_end", { defaultValue: "BAHN-ENDE" }), sf(9.5), "end"),
+    textKasten(bahnEndeTextX, rwyBot + unten + 18, t("runway_v2.runway_end", { defaultValue: "BAHN-ENDE" }), sf(9.5), "end"),
+    ...(mitVariante
+      ? [
+          textKasten(kennungX, endeZeileY, kennungGegen, sf(13), "end"),
+          textKasten(projektion.bahnEndeX, endeZeileY, laengeText, sf(9.5), "end"),
+        ]
+      : []),
     ...(raeumX != null
       ? [
           textKasten(raeumTextX, rwyTop - oben - 52, raeumTitel, sf(11), "middle"),
@@ -1350,7 +1354,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               liest sich der rote Streifen rechts wie ein zweiter
               Landeverbotsbereich. */}
           <text
-            x={projektion.bahnEndeX}
+            x={bahnEndeTextX}
             y={rwyBot + unten + 18}
             textAnchor="end"
             fontSize={sf(9.5)}
@@ -1398,7 +1402,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               <text
                 x={Math.min(
                   Math.max(rolloutEndeX, padX + 70),
-                  padX + innerW - 70,
+                  // Rechts so weit eingerückt, wie der Text breit ist (der
+                  // Rand rechts ist seit 2.1.8 schmal).
+                  Math.min(padX + innerW - 70, W - 2 - (ausrollEndeText.length * sf(10) * 0.62) / 2),
                 )}
                 y={rwyTop - oben - 36}
                 textAnchor="middle"
@@ -1601,10 +1607,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               z. B. RWY 32 ↔ RWY 14). Plus Bahn-Gesamtlänge darunter. */}
           {display.show_opposite_runway && (
             <text
-              x={mitVariante ? endeSpalteX : W - padX / 2 + 8}
-              y={rwyCl - 2}
+              x={mitVariante ? kennungX : W - padX / 2 + 8}
+              y={mitVariante ? endeZeileY : rwyCl - 2}
               textAnchor={mitVariante ? "end" : "middle"}
-              fontSize={sf(20)}
+              fontSize={mitVariante ? sf(13) : sf(20)}
               fill="#94a3b8"
               fontWeight="700"
               fontFamily="monospace"
@@ -1615,10 +1621,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           )}
           {display.show_bahn_length && (
             <text
-              x={mitVariante ? endeSpalteX : W - padX / 2 + 8}
-              y={rwyCl + 18}
+              x={mitVariante ? projektion.bahnEndeX : W - padX / 2 + 8}
+              y={mitVariante ? endeZeileY : rwyCl + 18}
               textAnchor={mitVariante ? "end" : "middle"}
-              fontSize={sf(11)}
+              fontSize={mitVariante ? sf(9.5) : sf(11)}
               fill="#64748b"
               fontFamily="monospace"
             >
@@ -1686,7 +1692,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                     strokeWidth="1.2"
                   />
                   <text
-                    x={x}
+                    x={Math.min(x, W - 2 - (`${d} m`.length * sf(10) * 0.62) / 2)}
                     y={rwyBot + unten + 80}
                     textAnchor="middle"
                     fontSize={sf(10)}

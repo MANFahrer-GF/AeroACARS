@@ -71,7 +71,6 @@ AUFSETZZONE (TDZ) 900 m
 AIM-POINT 400 m
 Aim-Point — die zwei großen weißen Quadrate auf der echten Bahn (hier gelb gezeichnet). Pilot zielt im Anflug auf diese Markierung; durch den Flare setzt er typisch 50–150 m DAHINTER auf (= Anfang der TDZ). Position: 400 m hinter Schwelle.
 Kante 32,5 m links
-Mitte
 Kante 32,5 m rechts
 B1B/A10
 B1B/A10 +1
@@ -97,7 +96,7 @@ Bewertung bis hier
 weiter auf Rollweg C8
 2
 3
-Spurweite 10,7 m · Bahn 65 m breit · quer 17-fach gestreckt (breite Bahn gestaucht)
+Spurweite 10,7 m · Bahn 65 m breit · quer 15-fach gestreckt (breite Bahn gestaucht)
 DRAUFSICHT — AUFSETZEN, SPUR, RAND, AUSFAHRT
 BAHN-ENDE
 BAHN GERÄUMT
