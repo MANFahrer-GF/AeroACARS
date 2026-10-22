@@ -107,6 +107,7 @@
       "anhoeren_stoppen": "Stop listening",
       "gong_text": "Double chime (no text).",
       "noch_kein_text": "No text yet.",
+      "text_fehlt": "no text (not even after retrying)",
       "keine_stimme": "no voice, skipped",
       "anhoeren": "Listen",
       "erneut": "Try again",
@@ -245,6 +246,7 @@
       "kurzstrecke": "short flight, only the service announcement in cruise",
       "und": " and ",
       "ohne_stimme": "{{sprache}} skipped (no voice)",
+      "keine_vorlage": "Safety briefing in {{sprache}} skipped (no template)",
       "kapitaen": "Captain: {{name}}",
       "kapitaenin": "Captain: {{name}}",
       "stimmen": "Each language has its own voice"
@@ -286,6 +288,7 @@
       "zu_spaet": "too late (sterile phase or another announcement)",
       "keine_stimme": "no voice for these languages",
       "kein_kurztext": "GSG server does not provide the captain's short version yet",
+      "flug_beendet": "flight was already filed",
       "sonst": "no longer possible",
       "tueren_zu": "the doors were already closed",
       "ohne_ladeblatt": "cannot be determined without a SimBrief load sheet"
@@ -326,6 +329,9 @@
       "fertig": "Already spoken: {{sprachen}}"
     },
     "hinweis": {
+      "entfaellt": {
+        "titel": "Not all languages available"
+      },
       "anschnallzeichen": {
         "titel": "Seat belt sign still on",
         "text": "The cabin holds the service until you switch the seat belt sign off."

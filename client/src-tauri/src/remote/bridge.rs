@@ -1471,6 +1471,7 @@ mod tests {
             "kabinen_ueberblick",
             "kabinen_wiedergabe_ende",
             "kabinen_wiedergabe_start",
+            "kabinen_fenster",
             "kabinen_stumm",
             "kabinen_lautstaerke",
             "kabinen_anhoeren",
