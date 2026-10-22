@@ -29438,7 +29438,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // Nachrechnung fehlte er, und der Test von damals ging durch den
     // Live-Pfad und sah es nicht.
     let ab_m = stats.bahn_raeum_laengs_m.unwrap_or(f64::NEG_INFINITY);
-    let kante_aus_spur = breite_m.and_then(|b| {
+    let kante_mit_quer = breite_m.and_then(|b| {
         let halbe = b / 2.0;
         let spur = &stats.bahn_spur;
         (1..spur.len()).find_map(|i| {
@@ -29447,9 +29447,18 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
             let nach_dem_ausschwenken = spur[i].0 as f64 >= ab_m;
             let bleibt_draussen = spur[i..].iter().all(|(_, q)| (*q as f64).abs() > halbe);
             (drin_davor && draussen && nach_dem_ausschwenken && bleibt_draussen)
-                .then(|| spur[i].0 as f64)
+                .then(|| (spur[i].0 as f64, spur[i].1))
         })
     });
+    let kante_aus_spur = kante_mit_quer.map(|(l, _)| l);
+    // B5 (Bahnansicht 22.10.2026, #1662 ESSA 19L): Die Seite, auf der die
+    // Spur die Bahn ENDGUELTIG verlaesst. Der Kurswechsel-Ausloeser hatte
+    // bei 1535 m auf einen Linksschlenker reagiert (Kurs und Querbewegung
+    // beide links, also „bestaetigt") — verlassen wurde die Bahn aber bei
+    // 2031 m rechts, ueber +23 m hinaus und danach draussen. Der Uebertritt
+    // ist die direkte Beobachtung; er hat Vorrang vor der Kurs-Probe.
+    let kante_seite: Option<String> =
+        kante_mit_quer.map(|(_, q)| if q > 0.0 { "right" } else { "left" }.to_string());
 
     // ── Punkt und Fahrt gehoeren zusammen ────────────────────────────────
     //
@@ -29574,7 +29583,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     const VERLAUF_BEHALTEN_M: f64 = 200.0;
     // Dieselbe Ableitung wie unten in `clearance_side` — einmal
     // gerechnet, damit beide nicht auseinanderlaufen koennen.
-    let raeum_seite: Option<String> = stats.bahn_raeum_seite.clone().or_else(|| {
+    let raeum_seite: Option<String> = kante_seite.clone().or_else(|| stats.bahn_raeum_seite.clone()).or_else(|| {
         match (stats.bahn_raeum_kurs_diff, stats.bahn_raeum_laengs_m) {
             (Some(d), Some(ab)) => bahn_raeum_seite(d, &stats.bahn_spur, ab),
             _ => None,
@@ -71379,6 +71388,53 @@ mod touchdown_metadata_stamp_tests {
             ..Default::default()
         });
         bahn
+    }
+
+    /// B5 (#1662, ESSA 19L, Client 2.0.2): Räumseite „links“, die Spur
+    /// verlässt die Bahn aber bei 2031 m rechts und bleibt draussen. Der
+    /// Kurswechsel bei 1535 m war ein Linksschlenker. Mit den echten Proben
+    /// aus `fixtures/1662.json`: die Seite kommt aus dem Kantenübertritt.
+    /// Alter Stand: „left“ (rot).
+    #[test]
+    fn raeumseite_folgt_dem_kantenuebertritt_nicht_dem_schlenker() {
+        let fall: serde_json::Value =
+            serde_json::from_str(include_str!("../../src/dev/bahnansicht/fixtures/1662.json")).unwrap();
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "ESSA".into(),
+            runway_ident: "19L".into(),
+            heading_true_deg: 190.0,
+            length_ft: 8208.0,
+            width_ft: 150.0,
+            surface: "ASP".into(),
+            threshold_lat: 59.66,
+            threshold_lon: 17.96,
+            end_lat: 59.64,
+            end_lon: 17.95,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 0.0,
+            side: "left".into(),
+            displaced_threshold_ft: 0,
+            geometry_implied_displaced_threshold_ft: 0,
+        });
+        stats.bahn_spur = fall["lateral_samples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["laengs_m"].as_f64().unwrap() as f32, p["quer_m"].as_f64().unwrap() as f32))
+            .collect();
+        stats.bahn_raeum_laengs_m = fall["scoring_cutoff_m"].as_f64();
+        stats.bahn_raeum_kurs_diff = Some(-12.0);
+        // So hatte der Client 2.0.2 sie live gesetzt (Schlenker links).
+        stats.bahn_raeum_seite = Some("left".into());
+        let f = bahn_felder(&stats, Some("A320"), None);
+        assert_eq!(f.clearance_side.as_deref(), Some("right"));
+        assert!((f.clearance_point_m.unwrap() - 2031.0).abs() < 15.0, "{:?}", f.clearance_point_m);
+        // Gegenprobe: bleibt die Spur auf der Bahn, gilt weiter die Kurs-Probe.
+        stats.bahn_spur.retain(|(l, _)| *l < 1900.0);
+        let f = bahn_felder(&stats, Some("A320"), None);
+        assert_eq!(f.clearance_side.as_deref(), Some("left"));
     }
 
     /// ⚠ Die Ausfahrten entstehen je Bodenkarte und Bahn EINMAL.
