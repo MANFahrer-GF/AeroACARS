@@ -1754,6 +1754,9 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
         if lauf.warteschlange.entfernen(slot) {
             notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
             verbuchen(lauf, slot, "entfallen", Some(&grund), jetzt);
+            // Codex-Nachprüfung: Der Planer muss es wissen, sonst wartet die
+            // Kabine auf einen Kapitän, der nie kommt.
+            kapitaen_kommt_nicht |= slot == Slot::KapitaenSinkflug;
             verlauf_neu = true;
         }
     }
@@ -5974,6 +5977,29 @@ mod rundumschlag_p1_tests {
         z.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::Aussteigen)]);
         assert!(kabine_haelt_abgabe(&mut z, true, 1_000));
         assert!(!kabine_haelt_abgabe(&mut z, true, 900), "Uhr rückwärts: einreichen");
+    }
+
+    /// Codex-Nachprüfung 230984a0: Im echten Takt entfällt eine Ansage, deren
+    /// Sprachen alle gestrichen sind, sofort, und beim Kapitän Sinkflug weiß
+    /// der Planer, dass er nicht mehr kommt. Rot vorher: wartete bis zum Verfall.
+    #[test]
+    fn gestrichener_kapitaen_im_takt_entfaellt_und_planer_weiss_es() {
+        // Der echte Takt: Kapitän Sinkflug wartet, beide Sprachen gestrichen,
+        // kein Text → entfällt im nächsten Schritt, und der Planer weiß es.
+        let mut st = flug(Cruise, &[]);
+        st.kabinen_lauf.sprachen = vec!["zh-CN".into()];
+        st.kabinen_lauf.ohne_stimme.insert("zh-CN".into());
+        let tk = |jetzt: i64, h: f64| cabin_announcements::Tick { jetzt, phase: Descent, hoehe_ft: h, vs_fpm: -2_000.0, ..Default::default() };
+        let f = st.kabinen_planer.as_mut().unwrap().tick(&tk(1_000, 30_000.0));
+        assert!(f.iter().any(|x| x.slot == Slot::KapitaenSinkflug), "Kapitän gemeldet");
+        st.kabinen_lauf.warteschlange.aufnehmen(f);
+        abspielen_schritt(&mut st, 1_000, Descent, false, false);
+        assert!(!st.kabinen_lauf.warteschlange.wartend().contains(&Slot::KapitaenSinkflug), "nicht bis zum Verfall warten");
+        let g = st.kabinen_lauf.verlauf.iter().find(|g| g.slot == Slot::KapitaenSinkflug).expect("in Bisher");
+        assert_eq!((g.ergebnis.as_deref(), g.grund.as_deref()), (Some("entfallen"), Some("keine_stimme")));
+        // Planer weiß Bescheid: Die Kabine kommt mit der Höhe, nicht erst im Anflug.
+        let k = st.kabinen_planer.as_mut().unwrap().tick(&tk(1_400, 15_000.0));
+        assert!(k.iter().any(|x| x.slot == Slot::KabineSinkflug), "Kabine wartet nicht auf den Kapitän: {k:?}");
     }
 
     // ---- 1d ----
