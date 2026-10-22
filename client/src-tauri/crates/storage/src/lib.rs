@@ -489,6 +489,14 @@ pub struct LandingRecord {
     /// zeichnet sie Stummel nur, wenn wirklich welche gefunden wurden.
     #[serde(default)]
     pub runway_exits: Vec<RunwayExit>,
+    /// Die genutzte Ausfahrt (Name), einmal im Client bestimmt
+    /// (Bahnansicht 2.1.8). Fehlt bei Fluegen davor — dann sucht die
+    /// Anzeige selbst, nach derselben Regel.
+    #[serde(default)]
+    pub clearance_exit: Option<String>,
+    /// Woher `runway_exits` stammen: `"szenerie"` oder `"osm"`.
+    #[serde(default)]
+    pub runway_exits_quelle: Option<String>,
     /// Geschwindigkeit beim Raeumen, in Knoten.
     #[serde(default)]
     pub clearance_speed_kt: Option<f64>,

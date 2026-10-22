@@ -29550,9 +29550,35 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // durchaus vorliegt.
     let landeplatz_der_bahn = rm.map(|m| m.airport_ident.as_str());
 
+    // Woher die Rollwege stammen — die Anzeige nennt die Quelle
+    // („aus der Szenerie“ / „aus OpenStreetMap“, Bahnansicht 2.1.8).
+    let mut ausfahrten_quelle: Option<String> = None;
     // ⚠ Gemerkt je Bodenkarte und Bahn — siehe `ausfahrten_gemerkt`.
     let ausfahrten: Vec<storage::RunwayExit> = match (rm, bodenquelle(stats, landeplatz_der_bahn)) {
-        (Some(m), Some(quelle)) if m.width_ft > 0.0 => ausfahrten_gemerkt(stats, quelle, m)
+        (Some(m), Some(quelle)) if m.width_ft > 0.0 => {
+            let aus_szenerie = matches!(quelle, Bodenquelle::Szenerie(_));
+            ausfahrten_quelle = Some(if aus_szenerie { "szenerie" } else { "osm" }.to_string());
+            // Doppelnamen an derselben Abzweigung → ein Name (#1936): der,
+            // den die Bodenkarte des Servers (OSM) kennt — nur sinnvoll,
+            // wenn die Rollwege aus der Szenerie stammen und die Karte zum
+            // selben Platz gehoert (dieselbe Pruefung wie `bodenquelle`).
+            let osm = stats
+                .arr_ground_geojson
+                .as_ref()
+                .filter(|_| aus_szenerie)
+                .filter(|_| {
+                    matches!(
+                        (stats.arr_ground_geojson_icao.as_deref(), landeplatz_der_bahn),
+                        (Some(gi), Some(lp)) if gi.eq_ignore_ascii_case(lp)
+                    )
+                });
+            let bekannt = |name: &str| {
+                osm.is_some_and(|k| {
+                    serde_json::to_string(name)
+                        .is_ok_and(|n| k.contains(&format!("\"r\":{n}")))
+                })
+            };
+            ausfahrten::doppelnamen_zusammenfassen(ausfahrten_gemerkt(stats, quelle, m), bekannt)
             .into_iter()
             .map(|a| storage::RunwayExit {
                 name: a.name,
@@ -29575,7 +29601,8 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
                     })
                     .collect(),
             })
-            .collect(),
+            .collect()
+        }
         _ => Vec::new(),
     };
 
@@ -29617,6 +29644,16 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
             a.verlauf.clear();
         }
     }
+    // Die genutzte Ausfahrt — EINMAL hier bestimmt und als eigenes Feld
+    // gesendet (Bahnansicht 2.1.8, #1936): Kopf, Bild, Lupe, PDF und
+    // Webapp zeigen nur diesen Namen, statt dreimal selbst zu suchen.
+    let clearance_exit: Option<String> = match (kante_m, raeum_seite.as_deref()) {
+        (Some(r), Some(seite)) => {
+            ausfahrten::genutzte_ausfahrt(&ausfahrten, r, seite, |a| (a.seite.as_str(), a.laengs_m))
+                .map(|a| a.name.clone())
+        }
+        _ => None,
+    };
 
     BahnFelder {
         // Genau der Anteil, den `assess_touchdown` von der Aufsetz-
@@ -29681,6 +29718,8 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
         },
         overrun_m: stats.bahn_overrun_m,
         lateral_skip_reason: skip_grund,
+        clearance_exit,
+        runway_exits_quelle: if ausfahrten.is_empty() { None } else { ausfahrten_quelle },
         runway_exits: ausfahrten,
     }
 }
@@ -29775,6 +29814,11 @@ impl BahnFelder {
             // leere Liste sieht in der Anzeige aus wie „diese Bahn hat
             // keine Ausfahrten" — das ist etwas anderes als „wir hatten
             // keine Bodenkarte".
+            // Wie die Ausfahrten: abgeleitet aus der Bodenkarte, deshalb
+            // ohne Karte weggelassen statt `null` (ein `null` loeschte beim
+            // Recorder den gespeicherten Wert, RFC 7396).
+            clearance_exit: self.clearance_exit.clone(),
+            runway_exits_quelle: self.runway_exits_quelle.clone(),
             runway_exits: if self.runway_exits.is_empty() {
                 None
             } else {
@@ -29900,6 +29944,11 @@ struct BahnFelder {
     surface_paved: Option<bool>,
     overrun_m: Option<f64>,
     lateral_skip_reason: Option<String>,
+    /// Die genutzte Ausfahrt (Name), einmal hier bestimmt — siehe
+    /// `bahn_felder`. Kopf, Bild, Lupe, PDF und Webapp zeigen nur sie.
+    clearance_exit: Option<String>,
+    /// Woher `runway_exits` stammen: `"szenerie"` oder `"osm"`.
+    runway_exits_quelle: Option<String>,
     runway_exits: Vec<storage::RunwayExit>,
 }
 
@@ -30115,6 +30164,8 @@ where
         mess_ende_laengs_m: bahn.mess_ende_laengs_m,
         lateral_skip_reason: bahn.lateral_skip_reason.clone(),
         runway_exits: bahn.runway_exits.clone(),
+        clearance_exit: bahn.clearance_exit.clone(),
+        runway_exits_quelle: bahn.runway_exits_quelle.clone(),
         clearance_speed_kt: bahn.clearance_speed_kt,
         clearance_side: bahn.clearance_side,
         track_width_m: bahn.track_width_m,
