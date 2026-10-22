@@ -1168,6 +1168,17 @@ pub struct TouchdownPayload {
 /// das nur der Client sieht, und eine zweite Herleitung aus groberen
 /// Daten kaeme zwangslaeufig auf andere Zahlen. Zwei Zahlen fuer dieselbe
 /// Landung sind schlimmer als eine fehlende.
+/// `null` als `Some(None)` lesen, ein fehlendes Feld als `None` (mit
+/// `#[serde(default)]`) — sonst wäre „löschen“ von „nicht gesendet“ beim
+/// Zurücklesen nicht zu unterscheiden.
+fn doppelt<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    serde::Deserialize::deserialize(d).map(Some)
+}
+
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub struct BahnWire {
     /// Um wie viele Meter die Laengsmasse der Spur gegen die
@@ -1258,8 +1269,12 @@ pub struct BahnWire {
     /// (Bahnansicht 2.1.8): Kopf, Bild, Lupe, PDF und Webapp zeigen nur
     /// sie. Wie `runway_exits` eine Ableitung aus der Bodenkarte — ohne
     /// Karte weggelassen, nicht `null`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clearance_exit: Option<String>,
+    ///
+    /// Aussen `None` (keine Bodenkarte) fehlt das Feld; `Some(None)` (Karte,
+    /// aber keine genutzte Ausfahrt) geht als `null` raus und loescht beim
+    /// Recorder den Namen einer frueheren Revision (Codex 22.10.2026).
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "doppelt")]
+    pub clearance_exit: Option<Option<String>>,
     /// Woher `runway_exits` stammen: `"szenerie"` oder `"osm"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runway_exits_quelle: Option<String>,

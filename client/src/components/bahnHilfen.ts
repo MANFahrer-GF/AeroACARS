@@ -334,12 +334,22 @@ export function ausfahrtenFuerAnzeige(p: AusfahrtQuelle): Ausfahrt[] {
 export function genutzteAusfahrt(p: AusfahrtQuelle): Ausfahrt | null {
   const raeum = p.clearance_point_m;
   if (raeum == null || p.clearance_side == null) return null;
-  const kandidaten = ausfahrtenFuerAnzeige(p)
-    .filter((a) => a.seite === p.clearance_side && Math.abs(a.laengs_m - raeum) < 120)
-    .sort((a, b) => Math.abs(a.laengs_m - raeum) - Math.abs(b.laengs_m - raeum));
-  // Ein gemeldeter Name, der hier nicht (mehr) liegt — etwa nach einer
-  // späteren Bahnkorrektur —, wird nicht erfunden: dann die Regel.
-  return kandidaten.find((a) => a.name === p.clearance_exit) ?? kandidaten[0] ?? null;
+  const naeher = (a: Ausfahrt, b: Ausfahrt) => Math.abs(a.laengs_m - raeum) - Math.abs(b.laengs_m - raeum);
+  // Gemeldet (ab 2.1.8): NUR dieser Name, nie ein anderer Kandidat (Codex
+  // 22.10.2026). Liegt sein Stummel nicht in der Liste, steht der Name
+  // trotzdem — am Räumpunkt, ohne Stummel.
+  if (p.clearance_exit != null) {
+    const gleich = ausfahrtenFuerAnzeige(p)
+      .filter((a) => a.name === p.clearance_exit && a.seite === p.clearance_side)
+      .sort(naeher)[0];
+    return gleich ?? { name: p.clearance_exit, laengs_m: raeum, seite: p.clearance_side };
+  }
+  // Nachberechnung nur ohne Feld (Altbestand).
+  return (
+    ausfahrtenFuerAnzeige(p)
+      .filter((a) => a.seite === p.clearance_side && Math.abs(a.laengs_m - raeum) < 120)
+      .sort(naeher)[0] ?? null
+  );
 }
 
 /**

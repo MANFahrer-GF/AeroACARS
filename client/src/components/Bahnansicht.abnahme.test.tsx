@@ -557,3 +557,29 @@ describe("#1936 Altbestand: kein Rollwegstück auf der Bahn als Ausfahrt", () =>
     expect(lupeUnten.filter((yy) => yy > H / 2)).toEqual([]);
   });
 });
+
+// ── Codex 22.10.2026 ───────────────────────────────────────────────────
+describe("Codex-Befunde 4 und 5", () => {
+  it("4 · ist clearance_exit gesetzt, zeigt die Anzeige NUR diesen Namen — kein anderer Kandidat", () => {
+    // Der gemeldete Name liegt nicht in der Liste (andere Revision): Kopf
+    // nennt ihn trotzdem, kein Stummel wird stattdessen hervorgehoben.
+    cleanup();
+    const { container } = render(<RunwayDiagramV2 {...fall(1936)} clearance_exit="Q9" runway_exits_quelle="szenerie" />);
+    const svg = container.querySelector("svg")!;
+    const kopf = [...svg.querySelectorAll("text")].map((t) => /Ausfahrt (\S+) (links|rechts)/.exec(t.textContent ?? "")?.[1]).find(Boolean);
+    expect(kopf).toBe("Q9");
+    expect([...svg.querySelectorAll('[data-rolle="ausfahrt-name"][font-weight="700"]')].map((t) => t.textContent)).toEqual([]);
+    expect(svg.querySelector('[data-rolle="weiter-pfeil"]')?.textContent).toBe("weiter auf Rollweg Q9");
+  });
+
+  it("5 · die beschlossenen Legendeneinträge stehen fest da (Entscheidung 6), unabhängig vom DOM", () => {
+    // Schwelle, TDZ, AIM, Band, Flugzeugmitte, Grünstreifen, Rollwege,
+    // Marken 1/2/3, Dreieck — bei #1936 alle gezeichnet, also alle Pflicht.
+    const z = draufsicht();
+    const da = [...z.container.querySelectorAll('[data-rolle="legende"] [data-legende-eintrag]')].map((e) =>
+      e.getAttribute("data-legende-eintrag"),
+    );
+    for (const k of ["schwelle", "tdz", "aim", "td", "band", "mitte", "gruen", "rollwege", "marke2", "marke3", "dreieck"])
+      expect(da, k).toContain(k);
+  });
+});

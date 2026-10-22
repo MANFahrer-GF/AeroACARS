@@ -110,8 +110,6 @@ const VERLAUF_QUER_UEBER_KANTE_M: f64 = 150.0;
 /// mit, die die Bahn nie berühren.
 const KANTEN_TOLERANZ_M: f64 = 25.0;
 
-/// Wie weit hinter dem Bahnende noch gesucht wird.
-const HINTER_DEM_ENDE_M: f64 = 200.0;
 
 /// Wie weit ein Stützpunkt AUF der Bahn liegen darf und noch als Punkt an
 /// der Kante zählt, in Metern. Tiefer drinnen liegt er auf der Bahn — dort
@@ -133,37 +131,64 @@ const DRAUSSEN_MIN_M: f64 = 2.0;
 /// Bahn bis zum Bahnende, wo sie nach links abbiegen. Gezeigt wurden „B/S1“
 /// rechts bei 1839,6 m — eine Ausfahrt, die es nicht gibt.
 ///
-/// Jetzt gilt: Ein Zug ist auf einer Seite nur dann eine Ausfahrt, wenn er
-/// dort mindestens `DRAUSSEN_MIN_M` über die Kante hinausreicht. Die Stelle
-/// ist der Stützpunkt nahe der Kante (bis `KANTE_INNEN_M` drinnen, bis
-/// `KANTEN_TOLERANZ_M` draussen) — oder, wenn der Zug von tief drinnen in
-/// einem Schritt hinausläuft (OSM: Schnellabrollweg als Gerade von der
-/// Mittellinie), der Schnittpunkt mit der Kante.
+/// # Der Übergang, nicht der kantennächste Punkt (Codex 22.10.2026)
+///
+/// Eine Ausfahrt ist die Stelle, an der der Linienzug von der Bahn nach
+/// aussen übergeht und dort mindestens `DRAUSSEN_MIN_M` über die Kante
+/// hinausreicht. Läuft ein Rollweg lange knapp innen an der Kante entlang,
+/// zählt erst der Übergang am Ende, nicht sein erster kantennaher Punkt.
+/// Die Stelle ist der letzte Punkt auf der Bahn, wenn er nahe der Kante
+/// liegt (bis `KANTE_INNEN_M`), sonst der Schnittpunkt mit der Kante (OSM:
+/// Schnellabrollweg als Gerade von der Mittellinie).
+///
+/// Ein Zug, der nur von aussen an die Kante heranführt und dort endet (OSM
+/// endet oft an der Kante), zählt an seinem Endpunkt, wenn er von dort
+/// nach aussen führt.
 fn kantenpunkte(zug: &[(f64, f64)], halbe_breite: f64) -> Vec<(f64, f64, &'static str)> {
     let mut aus = Vec::new();
+    let n = zug.len();
     for (seite, s) in [("left", -1.0_f64), ("right", 1.0_f64)] {
         // Aussen positiv, auf der Bahn negativ — bezogen auf DIESE Kante.
-        let draussen = |q: f64| s * q - halbe_breite;
-        if !zug.iter().any(|&(_, q)| draussen(q) >= DRAUSSEN_MIN_M) {
-            continue;
-        }
-        for &(laengs, quer) in zug {
-            let d = draussen(quer);
-            if (-KANTE_INNEN_M..=KANTEN_TOLERANZ_M).contains(&d) {
-                aus.push((laengs, d.abs(), seite));
+        let d = |i: usize| s * zug[i].1 - halbe_breite;
+        // Reicht der Lauf ausserhalb ab Index `i` (in Richtung `schritt`)
+        // weit genug hinaus, bevor er wieder auf die Bahn kommt?
+        let reicht_hinaus = |i: usize, schritt: isize| {
+            let mut j = i as isize;
+            while j >= 0 && (j as usize) < n && d(j as usize) >= 0.0 {
+                if d(j as usize) >= DRAUSSEN_MIN_M {
+                    return true;
+                }
+                j += schritt;
             }
-        }
-        for w in zug.windows(2) {
-            let (a, b) = (w[0], w[1]);
-            let (da, db) = (draussen(a.1), draussen(b.1));
-            // Nur ein Schritt von TIEF drinnen nach draussen — liegt der
-            // innere Punkt nahe der Kante, zählt er oben schon selbst.
-            let innen = if da < 0.0 { da } else { db };
-            if (da < 0.0) == (db < 0.0) || innen >= -KANTE_INNEN_M {
+            false
+        };
+        for i in 0..n.saturating_sub(1) {
+            let (innen, aussen, schritt) = match (d(i) < 0.0, d(i + 1) < 0.0) {
+                (true, false) => (i, i + 1, 1isize),
+                (false, true) => (i + 1, i, -1isize),
+                _ => continue,
+            };
+            if !reicht_hinaus(aussen, schritt) {
                 continue;
             }
-            let t = da / (da - db);
-            aus.push((a.0 + t * (b.0 - a.0), 0.0, seite));
+            let di = d(innen);
+            if di >= -KANTE_INNEN_M {
+                aus.push((zug[innen].0, di.abs(), seite));
+            } else {
+                let (a, b) = (zug[innen], zug[aussen]);
+                let t = di / (di - d(aussen));
+                aus.push((a.0 + t * (b.0 - a.0), 0.0, seite));
+            }
+        }
+        // Endpunkte, die von aussen an die Kante heranführen: der Endpunkt
+        // liegt der Kante am nächsten, der Zug reicht von dort hinaus.
+        if n >= 2 {
+            for (ende, nachbar, schritt) in [(0usize, 1usize, 1isize), (n - 1, n - 2, -1isize)] {
+                let de = d(ende);
+                if (0.0..=KANTEN_TOLERANZ_M).contains(&de) && de <= d(nachbar) && reicht_hinaus(ende, schritt) {
+                    aus.push((zug[ende].0, de, seite));
+                }
+            }
         }
     }
     aus
@@ -297,7 +322,9 @@ pub fn ausfahrten_fuer_bahn(
             .collect();
 
         for (laengs, kantenabstand, seite) in kantenpunkte(&projiziert, halbe_breite) {
-            if laengs < 20.0 || laengs > bahnlaenge + HINTER_DEM_ENDE_M {
+            // Nur entlang der Bahn: Ein Abzweig hinter dem Bahnende oder
+            // vor dem Bahnanfang ist keine Seitenausfahrt (Codex 22.10.2026).
+            if laengs < 0.0 || laengs > bahnlaenge {
                 continue;
             }
             match beste
@@ -407,6 +434,11 @@ fn verlauf_ausduennen(
             let d = (laengs - letzter.laengs_m).hypot(quer - letzter.quer_m);
             if d < VERLAUF_MIN_ABSTAND_M && i + 1 < n {
                 continue;
+            }
+            // Der letzte Punkt ersetzt einen zu nahen Vorgänger (ausser dem
+            // ersten), statt zwei Punkte dicht nebeneinander zu lassen.
+            if d < VERLAUF_MIN_ABSTAND_M && aus.len() > 1 {
+                aus.pop();
             }
         }
         aus.push(Verlaufspunkt {
@@ -843,6 +875,34 @@ mod tests {
 
     fn lage(a: &Ausfahrt) -> (&str, f64) {
         (a.seite.as_str(), a.laengs_m)
+    }
+
+    #[test]
+    fn codex_entlang_der_kante_zaehlt_erst_der_uebergang() {
+        // Codex 22.10.2026 (Befund 2): Ein Rollweg läuft 300 m knapp innen
+        // an der Kante entlang und verlässt die Bahn erst bei 1300 m. Die
+        // Ausfahrt ist der Übergang, nicht der erste kantennahe Punkt.
+        let g = karte(&rollweg_aus(
+            "K",
+            &[(1000.0, -20.0), (1100.0, -20.5), (1200.0, -20.0), (1300.0, -20.0), (1310.0, -40.0), (1320.0, -90.0)],
+        ));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!((a[0].laengs_m - 1300.0).abs() < 15.0, "Ausfahrt bei {} statt ~1300 m", a[0].laengs_m);
+    }
+
+    #[test]
+    fn codex_abzweig_hinter_dem_bahnende_ist_keine_seitenausfahrt() {
+        // Codex 22.10.2026 (Befund 3): Ein Rollweg läuft auf der Achse über
+        // das Bahnende hinaus und biegt 100 m dahinter ab — keine linke
+        // Ausfahrt der Bahn. Am Bahnanfang gilt dasselbe (100 m davor).
+        let l = ::geo::distance_m(T.0, T.1, T.2, T.3);
+        let hinten = karte(&rollweg_aus("E", &[(l - 100.0, 0.0), (l + 100.0, 0.0), (l + 100.0, -90.0)]));
+        let vorn = karte(&rollweg_aus("V", &[(100.0, 0.0), (-100.0, 0.0), (-100.0, 90.0)]));
+        for g in [hinten, vorn] {
+            let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+            assert!(a.is_empty(), "{a:?}");
+        }
     }
 
     #[test]
