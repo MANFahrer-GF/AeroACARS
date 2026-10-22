@@ -107,6 +107,7 @@
       "anhoeren_stoppen": "Ferma l'ascolto",
       "gong_text": "Doppio gong (senza testo).",
       "noch_kein_text": "Ancora nessun testo.",
+      "text_fehlt": "nessun testo (nemmeno dopo il nuovo tentativo)",
       "keine_stimme": "nessuna voce, omesso",
       "anhoeren": "Ascolta",
       "erneut": "Riprova",
@@ -245,6 +246,7 @@
       "kurzstrecke": "volo breve, solo l'annuncio del servizio in crociera",
       "und": " e ",
       "ohne_stimme": "{{sprache}} omesso (nessuna voce)",
+      "keine_vorlage": "Annuncio di sicurezza in {{sprache}} omesso (nessun modello)",
       "kapitaen": "Comandante: {{name}}",
       "kapitaenin": "Comandante: {{name}}",
       "stimmen": "Ogni lingua ha la sua voce"
@@ -286,6 +288,7 @@
       "zu_spaet": "troppo tardi (fase sterile o altro annuncio)",
       "keine_stimme": "nessuna voce per queste lingue",
       "kein_kurztext": "il server GSG non fornisce ancora la versione breve del comandante",
+      "flug_beendet": "il volo era già stato inviato",
       "sonst": "non più possibile",
       "tueren_zu": "le porte erano già chiuse",
       "ohne_ladeblatt": "senza foglio di carico SimBrief non determinabile"
@@ -326,6 +329,9 @@
       "fertig": "Già detto: {{sprachen}}"
     },
     "hinweis": {
+      "entfaellt": {
+        "titel": "Non tutte le lingue disponibili"
+      },
       "anschnallzeichen": {
         "titel": "Segnale cinture ancora acceso",
         "text": "La cabina aspetta con il servizio finché non spegni il segnale delle cinture."

@@ -1418,6 +1418,9 @@ fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>, beim_wechsel
     {
         return;
     }
+    // 1a (Rundumschlag 22.10.2026): Kabinen-Einstellung ausserhalb der
+    // Flugdaten-Sperre lesen.
+    let ansagen_an = kabinenansagen::einstellungen(app).an;
     let entscheidung = {
         let mut st = flight.stats.lock().expect("flight stats");
         if st.auto_file_gestartet {
@@ -1427,6 +1430,12 @@ fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>, beim_wechsel
         let sperre = abgabe_sperre(&st);
         if is_divert || sperre.is_some() {
             Err((is_divert, sperre))
+        } else if kabinenansagen::kabine_haelt_abgabe(&mut st, ansagen_an, Utc::now().timestamp()) {
+            // 1a: Erst die Kabine zu Ende spielen lassen (Tueren entschaerfen,
+            // Aussteigen), hoechstens 90 s — sonst fiel „Aussteigen“ in 8 von
+            // 17 Fluegen weg, und das Protokoll sagte es nicht. Der Takt ruft
+            // hier in `Arrived` jede Sekunde wieder auf.
+            return;
         } else {
             st.auto_file_gestartet = true;
             Ok(())
@@ -33261,6 +33270,9 @@ async fn flight_end(
                     }
                 },
             );
+            // 1a: Was in der Kabine noch wartet, als entfallen vermerken — vor
+            // `pirep_filed`, danach kommt kein Takt mehr.
+            kabinenansagen::flug_beendet(&app, &flight);
             record_event(
                 &app,
                 &flight.pirep_id,
@@ -33497,6 +33509,9 @@ async fn flight_end(
                         friendly_net_error(&e)
                     )),
                 );
+                // 1a: Was in der Kabine noch wartet, als entfallen vermerken — vor
+                // `pirep_filed`, danach kommt kein Takt mehr.
+                kabinenansagen::flug_beendet(&app, &flight);
                 record_event(
                     &app,
                     &flight.pirep_id,
@@ -34377,6 +34392,9 @@ async fn flight_end_manual(
                 },
                 Some("Source tagged 'manual' — admin will review".into()),
             );
+            // 1a: Was in der Kabine noch wartet, als entfallen vermerken — vor
+            // `pirep_filed`, danach kommt kein Takt mehr.
+            kabinenansagen::flug_beendet(&app, &flight);
             record_event(
                 &app,
                 &flight.pirep_id,
@@ -62983,6 +63001,13 @@ pub fn run() {
         .manage(ui_state::UiStateStore::default())
         .on_window_event(|window, event| {
             fenster::nach_aenderung_sichern(window, event);
+            // 1b (Rundumschlag 22.10.2026): Vorder-/Hintergrund ins
+            // Flugprotokoll — macOS drosselt die Oberflaeche im Hintergrund.
+            if let tauri::WindowEvent::Focused(fokus) = event {
+                if window.label() == "main" {
+                    kabinenansagen::fenster_notieren(window.app_handle(), serde_json::json!({ "fokus": fokus }));
+                }
+            }
             // CloseRequested fires when the user clicks the red X
             // (Mac) or the title-bar X (Win). When the
             // minimize-to-tray toggle is on, we suppress the close
@@ -63332,6 +63357,7 @@ pub fn run() {
             kabinenansagen::kabinen_ueberblick,
             kabinenansagen::kabinen_wiedergabe_ende,
             kabinenansagen::kabinen_wiedergabe_start,
+            kabinenansagen::kabinen_fenster,
             kabinenansagen::kabinen_stumm,
             kabinenansagen::kabinen_lautstaerke,
             kabinenansagen::kabinen_musik_lautstaerke,

@@ -8,7 +8,6 @@ import {
   ausgabegeraete,
   einstellungenLesen,
   einstellungenSetzen,
-  freigeben,
   lautstaerkeSetzen,
   probe,
   speicherLesen,
@@ -64,8 +63,7 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
     setE(neu);
     try {
       if (patch.an === false) stoppen();
-      if (patch.an === true) freigeben();
-      const gespeichert = await einstellungenSetzen(neu);
+      const gespeichert = await einstellungenSetzen(neu, "einstellungen");
       setE(gespeichert);
       if (patch.an !== undefined) onAnChange?.(gespeichert.an);
     } catch (err) {

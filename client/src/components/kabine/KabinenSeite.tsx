@@ -230,7 +230,6 @@ function ProfilZeile({ profil, sprachen, namen, kapitaen, t }: { profil: Profil;
   else if (profil.kurzstrecke) teile.push(t("kabine.profil.kurzstrecke"));
   if (sprachen.length > 0) teile.push(sprachen.map((s) => sprachName(s, namen)).join(t("kabine.profil.und")));
   if (sprachen.length > 1) teile.push(t("kabine.profil.stimmen"));
-  for (const s of profil.sprachen_ohne_stimme) teile.push(t("kabine.profil.ohne_stimme", { sprache: sprachName(s, namen) }));
   return (
     <p className="kabine-profil" data-testid="kabine-profil">
       {teile.join(" · ")}
@@ -405,7 +404,7 @@ export function KabinenSeite({
               // in den Einstellungen).
               stoppen();
               void einstellungenLesen()
-                .then((e) => einstellungenSetzen({ ...e, an: false }))
+                .then((e) => einstellungenSetzen({ ...e, an: false }, "seite"))
                 .then(() => onAus?.());
             }}
           >
@@ -439,6 +438,23 @@ export function KabinenSeite({
           level={t("kabine.hinweis.anschnallzeichen.titel")}
           data-testid="kabine-hinweis"
           detail={<span>{t("kabine.hinweis.anschnallzeichen.text")}</span>}
+        />
+      )}
+      {daten && (daten.profil.sprachen_ohne_stimme.length > 0 || (daten.profil.sicherheit_ohne_vorlage ?? []).length > 0) && (
+        // Punkt 4: einmal für den Flug und sichtbar oben, nicht je Ansage
+        // und nicht im Aufklapper (vorher eine graue Zeile im Profil).
+        <Notice
+          tone="info"
+          level={t("kabine.hinweis.entfaellt.titel")}
+          data-testid="kabine-entfaellt"
+          detail={
+            <span>
+              {[
+                ...daten.profil.sprachen_ohne_stimme.map((s) => t("kabine.profil.ohne_stimme", { sprache: sprachName(s, namen) })),
+                ...(daten.profil.sicherheit_ohne_vorlage ?? []).map((s) => t("kabine.profil.keine_vorlage", { sprache: sprachName(s, namen) })),
+              ].join(" · ")}
+            </span>
+          }
         />
       )}
       {daten && (
@@ -519,7 +535,7 @@ export function KabinenSeite({
                                 {sprachName(teil.sprache, namen)}
                                 {teil.keine_stimme && ` · ${t("kabine.seite.keine_stimme")}`}
                               </span>
-                              <p className="kabine-verlauf-text">{teil.text ?? t("kabine.seite.noch_kein_text")}</p>
+                              <p className="kabine-verlauf-text">{teil.text ?? (teil.fehlt ? t("kabine.seite.text_fehlt") : t("kabine.seite.noch_kein_text"))}</p>
                             </div>
                           ))
                         )}

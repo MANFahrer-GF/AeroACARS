@@ -107,6 +107,7 @@
       "anhoeren_stoppen": "Anhören beenden",
       "gong_text": "Doppelgong (kein Text).",
       "noch_kein_text": "Noch kein Text.",
+      "text_fehlt": "kein Text (auch nach dem Nachholen nicht)",
       "keine_stimme": "keine Stimme, entfällt",
       "anhoeren": "Anhören",
       "erneut": "Erneut versuchen",
@@ -245,6 +246,7 @@
       "kurzstrecke": "Kurzstrecke, nur die Service-Ansage im Reiseflug",
       "und": " und ",
       "ohne_stimme": "{{sprache}} entfällt (keine Stimme)",
+      "keine_vorlage": "Sicherheitsansage auf {{sprache}} entfällt (keine Vorlage)",
       "kapitaen": "Kapitän: {{name}}",
       "kapitaenin": "Kapitänin: {{name}}",
       "stimmen": "Jede Sprache hat ihre eigene Stimme"
@@ -286,6 +288,7 @@
       "zu_spaet": "zu spät dran (Ruhephase oder andere Ansage)",
       "keine_stimme": "keine Stimme für diese Sprachen",
       "kein_kurztext": "GSG-Server liefert noch keine Kurzfassung des Kapitäns",
+      "flug_beendet": "Flug war schon eingereicht",
       "sonst": "nicht mehr möglich",
       "tueren_zu": "die Türen waren schon zu",
       "ohne_ladeblatt": "ohne SimBrief-Ladeblatt nicht feststellbar"
@@ -326,6 +329,9 @@
       "fertig": "Schon gesprochen: {{sprachen}}"
     },
     "hinweis": {
+      "entfaellt": {
+        "titel": "Nicht alle Sprachen verfügbar"
+      },
       "anschnallzeichen": {
         "titel": "Anschnallzeichen noch an",
         "text": "Die Kabine wartet mit dem Service, bis du das Anschnallzeichen ausschaltest."
