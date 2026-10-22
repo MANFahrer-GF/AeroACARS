@@ -2271,6 +2271,28 @@ mod tests {
         assert!(slots(p.tick(&tick(1_500, Descent, 19_500.0, -1_500.0))).contains(&Slot::KabineSinkflug), "unter 20.000 ft");
     }
 
+    /// Thomas 22.10.2026: „Was passiert, wenn wir keine 20.000 fliegen?“ —
+    /// Reiseflug auf FL150: Die Kabine wartet auf Reiseflughöhe, kommt mit dem
+    /// Sinkflug (≥ 2 min nach dem Kapitän), im Anflug sofort.
+    #[test]
+    fn kabine_bei_reiseflug_unter_20000_ft() {
+        let mut niedrig = flug(60);
+        niedrig.reiseflughoehe_ft = Some(15_000);
+        let kabine = |p: &mut Planer, t: i64, ph: FlightPhase, h: f64, vs: f64| p.tick(&tick(t, ph, h, vs)).iter().any(|f| f.slot == Slot::KabineSinkflug);
+        let mut p = Planer::fortsetzen(niedrig.clone(), Cruise);
+        p.kapitaen_sinkflug_ende(true, 100);
+        assert!(!kabine(&mut p, 400, Cruise, 15_000.0, 0.0), "auf Reiseflughöhe noch nicht");
+        assert!(kabine(&mut p, 460, Descent, 14_500.0, -1_200.0), "mit dem Sinkflug");
+        // Kapitän gerade erst fertig: die 2 min gelten auch hier.
+        let mut q = Planer::fortsetzen(niedrig.clone(), Cruise);
+        q.kapitaen_sinkflug_ende(true, 400);
+        assert!(!kabine(&mut q, 460, Descent, 14_500.0, -1_200.0));
+        assert!(kabine(&mut q, 520, Descent, 13_000.0, -1_200.0));
+        // Sehr kurzer Sinkflug, schon im Anflug: sofort, nicht verloren.
+        let mut r = Planer::fortsetzen(niedrig, Cruise);
+        assert!(kabine(&mut r, 400, Approach, 4_000.0, -800.0));
+    }
+
     /// 20.10.2026: Der TOD aus der Position auf der Route schlägt die starre
     /// OFP-Uhrzeit (Abheben + TOD-Abstand), die bis zu 35 min zu früh kam.
     /// Verlässt der Flug kurz die Route, gilt der zuletzt bekannte TOD weiter.
