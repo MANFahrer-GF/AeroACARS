@@ -127,7 +127,7 @@ Schwelle
 Aufsetzzone (TDZ)
 Ziel-Markierung (AIM)
 Aufsetzpunkt (TD)
-Blick von oben auf die ganze Bahn, quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung sichtbar werden. Das Band reicht bis zur Außenkante der äußeren Reifen — genau diese Kante wird bewertet; die helle Linie darin ist die Flugzeugmitte. Marke 1 Aufsetzen, 2 knappste Stelle zur Kante (die Zahl darunter ist der bewertete Randabstand), 3 Bahn geräumt, 4 über das Bahnende. Das gelbe Dreieck unter der Bahn markiert das Ende des bewerteten Teils; danach zählt die Spur nicht mehr. Violett gestrichelt: ein früherer Durchgang (durchgestartet). Die Stummel am Rand sind die Ausfahrten. Die Streckung verbiegt Winkel — wie das Abrollen wirklich verlief, zeigt die Lupe darunter.
+Blick von oben auf die ganze Bahn, quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung sichtbar werden. Das Band reicht bis zur Außenkante der äußeren Reifen — genau diese Kante wird bewertet; die helle Linie darin ist die Flugzeugmitte. Marke 1 Aufsetzen, 2 knappste Stelle zur Kante (die Zahl darunter ist der bewertete Randabstand), 3 Bahn geräumt, 4 über das Bahnende. Das gelbe Dreieck unter der Bahn markiert das Ende des bewerteten Teils; danach zählt die Spur nicht mehr. Violett gestrichelt: ein früherer Durchgang (durchgestartet). Die Stummel am Rand sind die Ausfahrten. Die Streckung verbiegt Winkel — wie das Abrollen wirklich verlief, zeigt die Lupe darunter. Rot „aufgesetzt X m neben der Bahn“: So weit stand das äußere Rad beim Aufsetzen jenseits der Kante — das bewertet die Teilnote Ausrichtung (steht nur dann da).
 Aufsetzpunkt (TD)
 Spur — 139 gemessene Stützpunkte
 nach dem Räumen — gemessen, nicht mehr gewertet
