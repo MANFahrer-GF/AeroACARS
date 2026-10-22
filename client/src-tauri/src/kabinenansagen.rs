@@ -214,7 +214,18 @@ pub(crate) fn kabinen_einstellungen_setzen(
         // verworfen und kommt auch nach einem Wiedereinschalten nicht nach.
         let flug = state.active_flight.lock().expect("active_flight lock").as_ref().map(Arc::clone);
         if let Some(f) = flug {
-            f.stats.lock().expect("flight stats").kabinen_lauf.warteschlange = Default::default();
+            // Was wartete, steht als `entfallen{ansagen_aus}` im Protokoll
+            // (Codex-QS 22.10.2026: vorher still geleert).
+            let jetzt = Utc::now().timestamp();
+            {
+                let mut st = f.stats.lock().expect("flight stats");
+                let lauf = &mut st.kabinen_lauf;
+                for slot in lauf.warteschlange.alle_entnehmen() {
+                    notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": "ansagen_aus" }));
+                    verbuchen(lauf, slot, "entfallen", Some("ansagen_aus"), jetzt);
+                }
+            }
+            protokoll_leeren(&app, &f);
         }
         // Seit 1b spielt das Backend: eine laufende Ansage hier beenden,
         // nicht erst über die Oberfläche.
@@ -904,16 +915,24 @@ pub(crate) fn kabine_haelt_abgabe(stats: &mut FlightStats, an: bool, jetzt: i64)
             jetzt
         }
     };
-    jetzt - seit < ABGABE_WARTET_HOECHSTENS_S
+    // Uhr zurückgestellt (NTP, Hand): nicht länger warten, sondern einreichen
+    // (Codex-QS 22.10.2026).
+    let vergangen = jetzt - seit;
+    (0..ABGABE_WARTET_HOECHSTENS_S).contains(&vergangen)
 }
 
 /// 1a: Was beim Einreichen noch wartet (oder als Ankunftsansage noch käme),
 /// fällt nicht still weg: `entfallen{grund:"flug_beendet"}` ins Protokoll und
 /// in „Bisher“. Nur, wenn die Kabine überhaupt lief.
 fn flug_beendet_notieren(stats: &mut FlightStats, einst: &Einstellungen, jetzt: i64) {
-    if stats.kabinen_lauf.beta != Beta::Ja || sperre_name(einst.an, stats).is_some() {
+    // Ansagen aus: nichts vermerken (das Ausschalten selbst steht im
+    // Protokoll). Jede andere Sperre (Pause, Slew …) beim Einreichen ändert
+    // nichts daran, dass der Rest wegfällt — mit Sperre im Eintrag (Codex-QS
+    // 22.10.2026: vorher ging der Rest dann still verloren).
+    if stats.kabinen_lauf.beta != Beta::Ja || !einst.an {
         return;
     }
+    let sperre = sperre_name(einst.an, stats);
     let mut weg = stats.kabinen_lauf.warteschlange.alle_entnehmen();
     if let Some(p) = stats.kabinen_planer.as_ref() {
         for s in [Slot::NachDerLandung, Slot::KommandoTuerenEntschaerfen, Slot::Aussteigen] {
@@ -925,7 +944,11 @@ fn flug_beendet_notieren(stats: &mut FlightStats, einst: &Einstellungen, jetzt: 
     }
     let lauf = &mut stats.kabinen_lauf;
     for slot in weg {
-        notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": "flug_beendet" }));
+        let details = match sperre {
+            Some(sp) => serde_json::json!({ "grund": "flug_beendet", "sperre": sp }),
+            None => serde_json::json!({ "grund": "flug_beendet" }),
+        };
+        notiz(lauf, "entfallen", Some(slot), None, details);
         verbuchen(lauf, slot, "entfallen", Some("flug_beendet"), jetzt);
     }
 }
@@ -5853,6 +5876,28 @@ mod rundumschlag_p1_tests {
         aus.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::Aussteigen)]);
         flug_beendet_notieren(&mut aus, &Einstellungen::default(), 1_090);
         assert!(aus.kabinen_lauf.protokoll.is_empty());
+    }
+
+    /// Codex-QS 22.10.2026: Wartet die Abgabe und kommt dann eine Sperre
+    /// (Pause/Slew), reicht sie sofort ein — der Rest steht trotzdem als
+    /// `entfallen{flug_beendet}` mit Sperre im Protokoll. Rot vorher: nichts.
+    #[test]
+    fn sperre_waehrend_des_wartens_rest_nicht_still() {
+        let mut st = flug(Arrived, &[]);
+        st.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::Aussteigen)]);
+        assert!(kabine_haelt_abgabe(&mut st, true, 1_000));
+        st.kabinen_lauf.sim_angehalten = true;
+        assert!(sperre_name(true, &st).is_some(), "Testvoraussetzung: Pause sperrt");
+        assert!(!kabine_haelt_abgabe(&mut st, true, 1_010), "gesperrt: einreichen");
+        let einst = Einstellungen { an: true, kommandos: true, ..Einstellungen::default() };
+        flug_beendet_notieren(&mut st, &einst, 1_010);
+        let n = arten(&st.kabinen_lauf).into_iter().filter(|(a, g)| a == "entfallen" && g.as_deref() == Some("flug_beendet")).count();
+        assert!(n >= 1, "Aussteigen fällt nicht still weg");
+        // Uhr zurückgestellt: kein Warten über die Grenze hinaus.
+        let mut z = flug(Arrived, &[]);
+        z.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::Aussteigen)]);
+        assert!(kabine_haelt_abgabe(&mut z, true, 1_000));
+        assert!(!kabine_haelt_abgabe(&mut z, true, 900), "Uhr rückwärts: einreichen");
     }
 
     // ---- 1d ----

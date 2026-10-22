@@ -12545,7 +12545,7 @@ const BOUNCE_LIGHT_MIN_AGL_FT: f32 = 2.0;
 fn leichter_hopser_im_streamer(dauer_ms: i64, max_ueber_boden_ft: f64) -> bool {
     dauer_ms >= BOUNCE_LIGHT_MIN_DAUER_MS
         && max_ueber_boden_ft >= BOUNCE_LIGHT_MIN_AGL_FT as f64
-        && max_ueber_boden_ft <= BOUNCE_AGL_THRESHOLD_FT
+        && max_ueber_boden_ft < BOUNCE_AGL_THRESHOLD_FT
 }
 
 /// AGL altitude (ft) the aircraft must climb above before we can
@@ -84902,6 +84902,8 @@ mod sprung_thy42_tests {
         assert!(!leichter_hopser_im_streamer(7088, 0.05), "Flattern");
         assert!(!leichter_hopser_im_streamer(2000, 6.0), "normaler Hopser");
         assert!(leichter_hopser_im_streamer(1000, 2.0), "Grenze eingeschlossen");
+        // Codex-QS 22.10.2026: genau 5 ft ist wie in der 50-Hz-Auswertung kein leichter Hopser.
+        assert!(!leichter_hopser_im_streamer(2000, 5.0), "5 ft gehört nicht mehr zum leichten Hopser");
         assert_eq!(BOUNCE_LIGHT_MIN_AGL_FT, 2.0);
         assert_eq!(BOUNCE_LIGHT_MIN_DAUER_MS, 1000);
         assert_eq!(BOUNCE_AGL_THRESHOLD_FT as f32, touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
