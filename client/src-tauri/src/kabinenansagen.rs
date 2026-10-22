@@ -1770,13 +1770,13 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     // spätes Ende der Oberfläche setzte die Belegung der neuen Ansage zurück.
     let offen = laeuft(lauf);
     let sprachen = lauf.sprachen.clone();
-    let (texte, toene, fehlt, fehlen) = (&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen);
-    let bereit = |slot: Slot| ansage_bereit(texte, toene, fehlt, fehlen, &sprachen, slot) && !(tief_nach_start && slot == Slot::KapitaenBegruessung);
+    let (texte, toene, fehlt, fehlen, ohne_st, ohne_vl) = (&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.ohne_stimme, &lauf.ohne_vorlage);
+    let bereit = |slot: Slot| ansage_bereit(texte, toene, fehlt, fehlen, &sprachen, ohne_st, ohne_vl, slot) && !(tief_nach_start && slot == Slot::KapitaenBegruessung);
     let naechstes = if offen { None } else { lauf.warteschlange.naechstes_bereit(jetzt, phase, ruhephase, bereit) };
     // Verfallene in jedem Takt abholen (nicht nur, wenn nichts spielt) und in
     // „Bisher“ mit Grund zeigen: Ton nicht rechtzeitig fertig oder zu spät dran.
     for weg in lauf.warteschlange.verfallene_abholen() {
-        let grund = if ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, weg) { "zu_spaet" } else { "ton_nicht_fertig" };
+        let grund = if ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, &lauf.ohne_stimme, &lauf.ohne_vorlage, weg) { "zu_spaet" } else { "ton_nicht_fertig" };
         notiz(lauf, "verfallen", Some(weg), None, serde_json::json!({ "grund": grund }));
         verbuchen(lauf, weg, "entfallen", Some(grund), jetzt);
         verfallen_aufraeumen(lauf, weg);
@@ -1837,8 +1837,21 @@ type Toene = HashMap<(Slot, String), Option<Ton>>;
 /// fehlt (`texte_fehler`) — sonst spielte eine fällige Ansage einsprachig,
 /// während die zweite Sprache noch nachgeholt wird (Codex-QS beta.5). Seit
 /// 1f zählt auch eine einzelne Sprache, die die Nachholung nicht brachte
-/// (`fehlen`), als endgültig fehlend.
-fn ansage_bereit(texte: &Texte, ton: &Toene, texte_fehler: &std::collections::BTreeMap<Slot, String>, fehlen: &Fehlen, sprachen: &[String], slot: Slot) -> bool {
+/// (`fehlen`), als endgültig fehlend. Eine für den Flug gestrichene Sprache
+/// (keine Stimme, Punkt 4; Sicherheit ohne Vorlage) zählt nicht mit — sonst
+/// wartete die Ansage auf einen Text, den der Server nie schickt (Codex-
+/// Review PR #167).
+#[allow(clippy::too_many_arguments)]
+fn ansage_bereit(
+    texte: &Texte,
+    ton: &Toene,
+    texte_fehler: &std::collections::BTreeMap<Slot, String>,
+    fehlen: &Fehlen,
+    sprachen: &[String],
+    ohne_stimme: &std::collections::BTreeSet<String>,
+    ohne_vorlage: &std::collections::BTreeSet<String>,
+    slot: Slot,
+) -> bool {
     match slot.rolle() {
         Rolle::Chime => true,
         Rolle::Kommando => ton.contains_key(&(slot, "en-GB".to_string())),
@@ -1847,7 +1860,8 @@ fn ansage_bereit(texte: &Texte, ton: &Toene, texte_fehler: &std::collections::BT
             mit_text > 0
                 && sprachen.iter().all(|sp| {
                     let k = (slot, sp.clone());
-                    if texte.contains_key(&k) { ton.contains_key(&k) } else { texte_fehler.contains_key(&slot) || fehlen.contains_key(&k) }
+                    let gestrichen = ohne_stimme.contains(sp.as_str()) || (slot == Slot::Sicherheit && ohne_vorlage.contains(sp.as_str()));
+                    if texte.contains_key(&k) { ton.contains_key(&k) } else { gestrichen || texte_fehler.contains_key(&slot) || fehlen.contains_key(&k) }
                 })
         }
     }
@@ -3007,7 +3021,7 @@ fn anhoeren(lauf: &mut Lauf, slot: Slot, id: Option<u64>, jetzt: i64) -> Result<
     }
     let teile = match id {
         Some(id) => lauf.verlauf.iter().find(|g| g.id == id && !g.vorschau && !g.teile.is_empty()).map(|g| g.teile.clone()),
-        None => teile_von(lauf, slot).filter(|_| ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, slot)),
+        None => teile_von(lauf, slot).filter(|_| ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, &lauf.ohne_stimme, &lauf.ohne_vorlage, slot)),
     }
     .ok_or_else(|| UiError::new("nicht_bereit", "no audio for this announcement yet"))?;
     lauf.naechste_id += 1;
@@ -3147,7 +3161,7 @@ fn wartegrund(lauf: &Lauf, slot: Slot, jetzt: i64) -> Option<Wartet> {
         Some(Wartet::Pause)
     } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() && !lauf.warteschlange.trotz_ruhephase(slot) {
         Some(Wartet::Ruhephase)
-    } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, slot) {
+    } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, &lauf.ohne_stimme, &lauf.ohne_vorlage, slot) {
         Some(Wartet::Ton)
     } else {
         None // spielt im nächsten Takt
@@ -4379,15 +4393,41 @@ mod tests {
         let s = Slot::Reiseflug50;
         l.texte.insert((s, "fr-FR".into()), "x".into());
         l.ton.insert((s, "fr-FR".into()), ton());
-        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, s), "Deutsch wird noch nachgeholt");
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, s), "Deutsch wird noch nachgeholt");
         l.texte_fehler.insert(s, "kein Text".into());
-        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, s), "Deutsch fehlt endgültig");
+        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, s), "Deutsch fehlt endgültig");
         l.texte_fehler.clear();
         l.texte.insert((s, "de-DE".into()), "y".into());
-        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, s), "Ton fehlt noch");
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, s), "Ton fehlt noch");
         l.ton.insert((s, "de-DE".into()), None);
-        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, s), "keine Stimme zählt als erledigt");
-        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, Slot::Reiseflug80), "ohne Text nie");
+        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, s), "keine Stimme zählt als erledigt");
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, Slot::Reiseflug80), "ohne Text nie");
+    }
+
+    /// Codex-Review PR #167: Schickt der Server für eine Sprache ohne Stimme
+    /// keinen Text (`entfaellt: keine_stimme`), wartet die Ansage nicht auf
+    /// ihn, sondern spielt in den übrigen Sprachen; ebenso die Sicherheit
+    /// ohne Vorlage. Rot vorher: nie bereit, die Ansage verfiel.
+    #[test]
+    fn gestrichene_sprache_haelt_die_ansage_nicht_auf() {
+        let mut l = Lauf::default();
+        let sp = vec!["zh-CN".to_string(), "en-GB".to_string()];
+        let s = Slot::Boarding;
+        l.texte.insert((s, "en-GB".into()), "x".into());
+        l.ton.insert((s, "en-GB".into()), ton());
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, s), "Chinesisch noch offen");
+        l.ohne_stimme.insert("zh-CN".into());
+        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, s), "Chinesisch gestrichen");
+        // Sicherheit ohne Vorlage in Schwedisch: nur für die Sicherheit.
+        let mut m = Lauf::default();
+        let sv = vec!["sv-SE".to_string(), "en-GB".to_string()];
+        for slot in [Slot::Sicherheit, Slot::Boarding] {
+            m.texte.insert((slot, "en-GB".into()), "x".into());
+            m.ton.insert((slot, "en-GB".into()), ton());
+        }
+        m.ohne_vorlage.insert("sv-SE".into());
+        assert!(ansage_bereit(&m.texte, &m.ton, &m.texte_fehler, &m.texte_fehlen, &sv, &m.ohne_stimme, &m.ohne_vorlage, Slot::Sicherheit));
+        assert!(!ansage_bereit(&m.texte, &m.ton, &m.texte_fehler, &m.texte_fehlen, &sv, &m.ohne_stimme, &m.ohne_vorlage, Slot::Boarding), "Boarding wartet weiter auf Schwedisch");
     }
 
     /// beta.6 (Thomas 18.10.2026): Bizjets bekommen den Gong und die
@@ -6017,7 +6057,7 @@ mod rundumschlag_p1_tests {
         for k in f2 {
             l.texte_fehlen.insert(k, "Der Server hat keinen Text geliefert.".into());
         }
-        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &l.sprachen, Slot::Boarding), "spielt auf Deutsch");
+        assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &l.sprachen, &l.ohne_stimme, &l.ohne_vorlage, Slot::Boarding), "spielt auf Deutsch");
         assert_eq!(teile_von(&l, Slot::Boarding).unwrap().len(), 1);
         assert_eq!(teil_stand(&l, "abflug", &[Slot::Boarding, Slot::Sicherheit], None, false), TeilStand::Fertig, "Teil nicht aufgegeben");
         let (stand, teile) = slot_stand(&l, Slot::Boarding, None, false, None);
@@ -6044,7 +6084,7 @@ mod rundumschlag_p1_tests {
         let fehlend = drehbuch_uebernehmen(&mut l, d, &[Slot::Sicherheit], false, false);
         assert!(fehlend.is_empty(), "Sicherheit sv-SE nicht nachholen: {fehlend:?}");
         assert!(l.ohne_stimme.contains("zh-CN") && l.ohne_vorlage.contains("sv-SE"));
-        assert!(ansage_bereit(&l.texte, &[((Slot::Sicherheit, "en-GB".to_string()), ton_s(5.0))].into_iter().collect(), &l.texte_fehler, &l.texte_fehlen, &l.sprachen, Slot::Sicherheit));
+        assert!(ansage_bereit(&l.texte, &[((Slot::Sicherheit, "en-GB".to_string()), ton_s(5.0))].into_iter().collect(), &l.texte_fehler, &l.texte_fehlen, &l.sprachen, &l.ohne_stimme, &l.ohne_vorlage, Slot::Sicherheit));
         assert_eq!(arten(&l).iter().filter(|(a, _)| a == "entfaellt").count(), 2, "je Fund ein Eintrag");
         // Eine leere PHP-Liste statt Objekt bricht das Drehbuch nicht.
         let leer: api_client::KabinenDrehbuch = serde_json::from_str(r#"{"sprachen":[],"eintraege":[],"entfaellt":[]}"#).unwrap();
@@ -6071,7 +6111,7 @@ mod rundumschlag_p1_tests {
         assert_eq!(zh(&st), 0, "keine weitere Anfrage für zh-CN");
         assert!(ton_kandidaten(&st, false, Flugart::Linie, 0).iter().any(|(_, sp, _)| sp == "en-GB"), "Englisch bleibt");
         st.kabinen_lauf.ton.insert((Slot::Sicherheit, "en-GB".into()), ton_s(5.0));
-        assert!(ansage_bereit(&st.kabinen_lauf.texte, &st.kabinen_lauf.ton, &st.kabinen_lauf.texte_fehler, &st.kabinen_lauf.texte_fehlen, &st.kabinen_lauf.sprachen, Slot::Sicherheit), "wartet nicht auf Chinesisch");
+        assert!(ansage_bereit(&st.kabinen_lauf.texte, &st.kabinen_lauf.ton, &st.kabinen_lauf.texte_fehler, &st.kabinen_lauf.texte_fehlen, &st.kabinen_lauf.sprachen, &st.kabinen_lauf.ohne_stimme, &st.kabinen_lauf.ohne_vorlage, Slot::Sicherheit), "wartet nicht auf Chinesisch");
         stimme_streichen(&mut st.kabinen_lauf, "en-GB");
         assert!(!st.kabinen_lauf.ohne_stimme.contains("en-GB"));
         assert_eq!(arten(&st.kabinen_lauf).iter().filter(|(a, _)| a == "entfaellt").count(), 1, "einmal für den Flug");
