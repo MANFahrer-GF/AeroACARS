@@ -294,7 +294,8 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
   const W = schmal ? SCHMAL_W : skin.geometry.svgWidth;
   const padX = schmal ? SCHMAL_PAD_X : skin.geometry.rwyPaddingX;
-  const padY = skin.geometry.rwyPaddingY;
+  // Schmal steht der Kopf in einer eigenen Zeile — darunter Platz lassen.
+  const padY = skin.geometry.rwyPaddingY + (schmal ? 16 : 0);
 
   // Bahn-Geometrie.
   // - lengthM: nutzbare LANDE-Bahn (= nach dem displaced threshold)
@@ -706,8 +707,6 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
       ? [
           textKasten(raeumTextX, rwyTop - oben - 52, raeumTitel, sf(11), "middle"),
           textKasten(raeumTextX, rwyTop - oben - 52 + zeile(11), raeumZeile, sf(10), "middle"),
-          // Die Bezugslinie vom Text zum Stummel.
-          { x: raeumX - 1, y: rwyTop - oben - 44, b: 2, h: 42 },
         ]
       : []),
   ];
@@ -1460,18 +1459,21 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   fill={TOKENS.rollout}
                 />
               )}
-              <line
-                data-legende="beschriftung"
-                x1={raeumX}
-                y1={rwyTop - oben - 44}
-                x2={raeumX}
-                // Variante B: endet über dem Grünstreifen — darin stehen
-                // die Ausfahrtsnamen.
-                y2={mitVariante ? rwyTop - oben - 2 : raeumY - 15}
-                stroke={TOKENS.rollout}
-                strokeWidth="1"
-                opacity="0.45"
-              />
+              {/* Variante B: keine Bezugslinie — sie endete über dem
+                  Grünstreifen im Leeren (Entscheidung 3/Kritik #4); der Text
+                  steht über Marke 3, Pfeil und Ausfahrtname darunter. */}
+              {!mitVariante && (
+                <line
+                  data-legende="beschriftung"
+                  x1={raeumX}
+                  y1={rwyTop - oben - 44}
+                  x2={raeumX}
+                  y2={raeumY - 15}
+                  stroke={TOKENS.rollout}
+                  strokeWidth="1"
+                  opacity="0.45"
+                />
+              )}
               <text
                 x={raeumTextX}
                 y={rwyTop - oben - 52}

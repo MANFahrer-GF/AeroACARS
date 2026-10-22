@@ -225,7 +225,15 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   const kanteUnten = y(p.halbeBahnM);
   const lang = p.randM * p.pxProQuerM;
   const fmt = (n: number) => p.dez(n, 1);
-  const halo = { stroke: "#0c1628", strokeWidth: 3, paintOrder: "stroke" as const, strokeLinejoin: "round" as const };
+  // Dunkler Rand um die neuen Beschriftungen, damit sie auf Band und
+  // Grünstreifen lesbar bleiben. Im Druck (Schrift-Untergrenze gesetzt)
+  // schmaler: 3 Einheiten verschmierten dort die Schrift (PDF #1936).
+  const halo = {
+    stroke: "#0c1628",
+    strokeWidth: p.sf(0) > 0 ? 1.2 : 3,
+    paintOrder: "stroke" as const,
+    strokeLinejoin: "round" as const,
+  };
   /** x eines Textes so setzen, dass er ganz im Zeichenbereich liegt. */
   const imBild = (xx: number, text: string, schrift: number, anker: "start" | "middle" | "end") => {
     const b = breite(text, schrift);
@@ -384,6 +392,13 @@ export function BahnSpurOverlay(p: BahnSpurOverlayProps) {
   } else if (letzte && !p.projektion.gezoomt && p.projektion.mAbBahnanfangZuX(letzte.laengs_m) >= p.bildBisX - 0.5) {
     // … oder längs hinter dem Platz hinter dem Bahnende.
     pfeil = { x: p.bildBisX, y: y(letzte.quer_m), richtung: "rechts" };
+  }
+  // Liegt der helle Name der genutzten Ausfahrt an der Austrittsstelle,
+  // steht der Pfeil ÜBER (bzw. unter) ihm — nicht darauf.
+  if (pfeil && pfeil.richtung !== "rechts") {
+    const g = gruppen.find(istGenutzteGruppe);
+    if (g && Math.abs(x(g.laengs_m) - pfeil.x) < 24)
+      pfeil = { ...pfeil, y: pfeil.y + (pfeil.richtung === "oben" ? -1 : 1) * (p.sf(9) + 6) };
   }
   const pfeilText = p.genutzt
     ? t("runway_v2.b.weiter_rollweg", { name: p.genutzt.name })
