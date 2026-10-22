@@ -60,6 +60,10 @@ export const DATEIEN = [
   "components/RunwayCrossSection.tsx",
   // v1.7.40: Lupe „Abrollen im echten Massstab" unter der Queransicht.
   "components/RunwayExitLupe.tsx",
+  // Variante B (22.10.2026): Spur, Band und Queransicht-Stücke in der
+  // Draufsicht, mit Quermassstab und Reifen-Aussenkante.
+  "components/BahnSpurOverlay.tsx",
+  "lib/bahnQuerMassstab.ts",
   "components/SkinContext.tsx",
   // Die Farbtabelle. Sie stand nicht in der ersten Fassung dieser Liste,
   // und der Baum-Test hat sie gefunden: Die Webapp-Fassung schleppte noch

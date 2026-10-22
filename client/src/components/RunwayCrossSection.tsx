@@ -1170,7 +1170,7 @@ function mindestAbstandPx(links: string, rechts: string, schrift: number): numbe
  * einer langen. Wie viele Pixel noetig sind, haengt am Namen selbst —
  * siehe `mindestAbstandPx`.
  */
-function gruppiere(
+export function gruppiere(
   liste: Ausfahrt[],
   proj: Projektion,
   schrift: number,
