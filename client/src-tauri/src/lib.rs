@@ -5117,6 +5117,9 @@ struct PersistedFlightStats {
     landing_wind_speed_kt: Option<f32>,
     #[serde(default)]
     bounce_count: u8,
+    /// P1/8b: leichte Hopser (Score-Version 26), wie `bounce_count`.
+    #[serde(default)]
+    light_bounce_count: u8,
     #[serde(default)]
     landing_score: Option<LandingScore>,
     #[serde(default)]
@@ -5728,6 +5731,7 @@ impl PersistedFlightStats {
                 .map(|s| serde_json::to_string(&s).unwrap_or_default()),
             bahn_revision: stats.bahn_revision,
             bounce_count: stats.bounce_count,
+            light_bounce_count: stats.light_bounce_count,
             landing_score: stats.landing_score,
             landing_score_announced: stats.landing_score_announced,
             dep_gate: stats.dep_gate.clone(),
@@ -6014,6 +6018,7 @@ impl PersistedFlightStats {
             });
         stats.bahn_revision = self.bahn_revision;
         stats.bounce_count = self.bounce_count;
+        stats.light_bounce_count = self.light_bounce_count;
         stats.landing_score = self.landing_score;
         stats.landing_score_announced = self.landing_score_announced;
         stats.dep_gate = self.dep_gate;
@@ -7126,6 +7131,16 @@ struct FlightStats {
     /// within the touchdown window. >0 implies the pilot didn't put it
     /// down clean.
     bounce_count: u8,
+    /// P1/8b (Thomas 22.10.2026): leichte Hopser — >= `BOUNCE_LIGHT_MIN_DAUER_MS`
+    /// ununterbrochen ohne Bodenkontakt, >= `BOUNCE_LIGHT_MIN_AGL_FT` und unter
+    /// der Hopser-Schwelle (5 ft) ueber der Bodenhoehe, mit zweitem Kontakt.
+    /// Gezaehlt wie `bounce_count` (Streamer als Vorwert, 50-Hz-Analyse
+    /// ueberschreibt). Teilnote siehe `sub_bounces_mit_leichten`.
+    light_bounce_count: u8,
+    /// 1-Hz-Streamer: Beginn der laufenden Luftphase nach dem Aufsetzen (ms
+    /// seit Aufsetzen) und ihre Hoehe ueber Boden, fuer den leichten Hopser.
+    bounce_luft_seit_ms: Option<i64>,
+    bounce_luft_max_ft: f64,
     /// Categorised score, computed once when the window closes. The
     /// activity log emits this and we ship it in the PIREP custom fields.
     landing_score: Option<LandingScore>,
@@ -12502,6 +12517,27 @@ const BOUNCE_WINDOW_SECS: i64 = 8;
 /// 300 ms ist bewusst grosszuegig: Ein Sprung, der kuerzer ist, hat das
 /// Flugzeug auch kaum vom Boden gebracht.
 const BOUNCE_MIN_DAUER_MS: i64 = 300;
+
+/// P1/8b (Thomas 22.10.2026): Mindestdauer einer Luftphase fuer den
+/// „leichten Hopser“ (unter der 5-ft-Hopser-Schwelle). Messung am Bestand
+/// (`handoff/2026-10-22-hopser-messung.md`, 1738 Landungen): keine Phase
+/// unter 1 s erreicht 2 ft; Flattern bleibt unter 1 ft (AFR1010 7,1 s bei
+/// 0,05 ft). Gilt fuer den 50-Hz-Pfad und den 1-Hz-Streamer.
+const BOUNCE_LIGHT_MIN_DAUER_MS: i64 = 1000;
+
+/// P1/8b: Mindesthoehe ueber der Bodenhoehe (erste Probe mit Bodenkontakt)
+/// fuer den leichten Hopser. Darueber ab `BOUNCE_SCORED_MIN_AGL_FT` ist es
+/// ein normaler Hopser.
+const BOUNCE_LIGHT_MIN_AGL_FT: f32 = 2.0;
+
+/// P1/8b: Regel des leichten Hopsers fuer den 1-Hz-Streamer (eine Luftphase,
+/// die mit Bodenkontakt endete). Unter `BOUNCE_AGL_THRESHOLD_FT` — darueber
+/// zaehlt der Streamer einen normalen Hopser.
+fn leichter_hopser_im_streamer(dauer_ms: i64, max_ueber_boden_ft: f64) -> bool {
+    dauer_ms >= BOUNCE_LIGHT_MIN_DAUER_MS
+        && max_ueber_boden_ft >= BOUNCE_LIGHT_MIN_AGL_FT as f64
+        && max_ueber_boden_ft <= BOUNCE_AGL_THRESHOLD_FT
+}
 
 /// AGL altitude (ft) the aircraft must climb above before we can
 /// detect a bounce. Below this, on-ground flickers are noise (gear
@@ -25813,7 +25849,10 @@ fn build_pirep_payload(
         landing_bank_deg: aufsetz_bank_deg(&stats),
         fenster_unzureichend: stats.landung_abdeckung_fehlt.is_some().then_some(true),
         peak_altitude_ft: stats.peak_altitude_ft.map(|v| v.round() as i32),
-        landing_vs_fpm: body.landing_rate.map(|r| r as i32),
+        // P1/9 (22.10.2026, GlitchTip 209): RUNDEN wie Anzeige, MQTT-Touchdown
+        // und phpVMS-Feld. Vorher `body.landing_rate.map(|r| r as i32)` —
+        // abgeschnitten, bei jeder zweiten Landung 1 fpm anders als der Client.
+        landing_vs_fpm: stats.canonical_landing_rate_fpm().map(|v| v.round() as i32),
         // v0.7.1 P1.3-Fix: gewichteter Aggregate-Score
         // (Fuel/Loadsheet/Stability/Rollout fliessen ein),
         // mit Fallback auf Touchdown-Klassifikation.
@@ -28818,7 +28857,12 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 ///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 25;
+///
+/// 26 (P1/8b, 22.10.2026): leichter Hopser (>= 1 s ohne Bodenkontakt,
+/// 2 bis unter 5 ft ueber Bodenhoehe, mit zweitem Kontakt) gibt in der
+/// Teilnote „Hopser“ 85 (einer) bzw. 70 (zwei und mehr); mit einem
+/// normalen Hopser gilt die alte Tabelle. Altbestand wird nicht neu gerechnet.
+const SCORE_ALGORITHMUS_VERSION: u8 = 26;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -28887,6 +28931,12 @@ fn scoring_eingang(
             None
         } else {
             Some(scored_bounce_count_for_score(stats))
+        },
+        // P1/8b (Score-Version 26): leichte Hopser, gleiche Sperre.
+        light_bounce_count: if stats.landung_abdeckung_fehlt.is_some() {
+            None
+        } else {
+            Some(stats.light_bounce_count as u32)
         },
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
         approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
@@ -30212,6 +30262,8 @@ where
         forensic_bounce_count: ana_u32(&stats.landing_analysis, "forensic_bounce_count")
             .map(|n| n.min(u8::MAX as u32) as u8),
         scored_bounce_count: ana_u32(&stats.landing_analysis, "scored_bounce_count")
+            .map(|n| n.min(u8::MAX as u32) as u8),
+        scored_light_bounce_count: ana_u32(&stats.landing_analysis, "scored_light_bounce_count")
             .map(|n| n.min(u8::MAX as u32) as u8),
 
         // ─── v0.7.1 Felder (Spec docs/spec/v0.7.1-landing-ux-fairness.md §5) ──
@@ -37849,6 +37901,7 @@ fn compute_landing_analysis(
 
     let mut forensic_bounces = 0_u32;
     let mut scored_bounces = 0_u32;
+    let mut scored_light_bounces = 0_u32;
     let mut bounce_max_agl: f32 = 0.0;
     let mut in_bounce = false;
     let mut current_bounce_max: f32 = 0.0;
@@ -37882,6 +37935,12 @@ fn compute_landing_analysis(
                 }
                 if current_bounce_max >= touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT {
                     scored_bounces += 1;
+                } else if dauer_ms >= BOUNCE_LIGHT_MIN_DAUER_MS
+                    && current_bounce_max >= BOUNCE_LIGHT_MIN_AGL_FT
+                {
+                    // P1/8b: leichter Hopser — lange in der Luft, aber unter
+                    // der Hopser-Schwelle. Nie zusaetzlich zu einem normalen.
+                    scored_light_bounces += 1;
                 }
             }
             in_bounce = false;
@@ -37963,6 +38022,7 @@ fn compute_landing_analysis(
         "bounce_count": forensic_bounces,
         "forensic_bounce_count": forensic_bounces,
         "scored_bounce_count": scored_bounces,
+        "scored_light_bounce_count": scored_light_bounces,
         "bounce_max_agl_ft": if bounce_max_agl > 0.0 { Some(bounce_max_agl) } else { None },
         "sample_count": samples.len(),
         "pre_edge_sample_count": pre_count,
@@ -39888,6 +39948,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         })
                         .unwrap_or(s.bounce_count);
                     s.bounce_count = scored_bounce;
+                    // P1/8b: leichte Hopser ebenso aus der 50-Hz-Analyse.
+                    s.light_bounce_count = analysis
+                        .get("scored_light_bounce_count")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n.min(u8::MAX as u64) as u8)
+                        .unwrap_or(s.light_bounce_count);
                     // GAF-707-Race, strukturell geloest (Vereinheitlichung
                     // 09/2026): ERST jetzt, nachdem wirklich ALLE score-
                     // relevanten Rohdaten geschrieben sind (VS-Kaskade oben
@@ -43325,6 +43391,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 scored_bounce_count: ana_u32(
                                     &stats.landing_analysis,
                                     "scored_bounce_count",
+                                )
+                                .filter(|_| stats.landung_abdeckung_fehlt.is_none())
+                                .map(|n| n.min(u8::MAX as u32) as u8),
+                                scored_light_bounce_count: ana_u32(
+                                    &stats.landing_analysis,
+                                    "scored_light_bounce_count",
                                 )
                                 .filter(|_| stats.landung_abdeckung_fehlt.is_none())
                                 .map(|n| n.min(u8::MAX as u32) as u8),
@@ -48237,6 +48309,9 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     stats.landing_lat = None;
     stats.landing_lon = None;
     stats.bounce_count = 0;
+    stats.light_bounce_count = 0;
+    stats.bounce_luft_seit_ms = None;
+    stats.bounce_luft_max_ft = 0.0;
     stats.bounce_armed_above_threshold = false;
     stats.bounce_boden_agl_ft = None;
     // v0.20 (QS-Fix, /code-review high): ohne diesen Reset ueberlebt die
@@ -50406,6 +50481,9 @@ fn step_flight_at(
                 // gesetzt, ginge ein Hopser, der vorher beginnt, verloren.
                 stats.bounce_boden_agl_ft = snap.on_ground.then_some(snap.altitude_agl_ft);
                 stats.bounce_count = 0;
+                stats.light_bounce_count = 0;
+                stats.bounce_luft_seit_ms = None;
+                stats.bounce_luft_max_ft = 0.0;
 
                 // ---- Landing Analyzer (Stage 1) ----
 
@@ -50753,6 +50831,21 @@ fn step_flight_at(
                 }
                 if let (true, Some(boden)) = (in_bounce_window, stats.bounce_boden_agl_ft) {
                     let ueber_boden = snap.altitude_agl_ft - boden;
+                    // P1/8b: leichter Hopser im 1-Hz-Vorwert — gleiche Regel
+                    // wie der 50-Hz-Pfad (Dauer ohne Bodenkontakt + Hoehe,
+                    // mit zweitem Kontakt, unter der Hopser-Schwelle).
+                    if !snap.on_ground {
+                        if stats.bounce_luft_seit_ms.is_none() {
+                            stats.bounce_luft_seit_ms = Some(elapsed_ms);
+                            stats.bounce_luft_max_ft = 0.0;
+                        }
+                        stats.bounce_luft_max_ft = stats.bounce_luft_max_ft.max(ueber_boden);
+                    } else if let Some(seit) = stats.bounce_luft_seit_ms.take() {
+                        if leichter_hopser_im_streamer(elapsed_ms - seit, stats.bounce_luft_max_ft) {
+                            stats.light_bounce_count = stats.light_bounce_count.saturating_add(1);
+                        }
+                        stats.bounce_luft_max_ft = 0.0;
+                    }
                     // Nur in der Luft scharfschalten (Codex-QS): Ein AGL-
                     // Sprung bei gesetztem Bodenflag (Gelaende, Ausreisser)
                     // ist kein Hopser — der 50-Hz-Pfad verlangt dasselbe.
@@ -55014,6 +55107,12 @@ fn build_pirep_fields(
         // Suppress the "Bounces: 0" row — every clean landing had it
         // and it added noise without information.
         f.insert("Bounces".into(), stats.bounce_count.to_string());
+    }
+    // P1/8b (Score-Version 26): leichte Hopser erscheinen auf der GSG-Seite
+    // (PIREP-Felder) wie in Client und Webapp — nur wenn kein normaler da
+    // ist, denn dann zaehlen sie nicht (Thomas 22.10.2026).
+    if stats.bounce_count == 0 && stats.light_bounce_count > 0 {
+        f.insert("Light Bounces".into(), stats.light_bounce_count.to_string());
     }
 
     // ---- Touch-and-Go + Go-Around counters (v0.1.26) ----
@@ -72245,6 +72344,30 @@ mod touchdown_metadata_stamp_tests {
         assert!(j.get("aircraft_registration").is_none());
     }
 
+    /// P1/9 (22.10.2026): Der MQTT-PIREP trägt die Landerate GERUNDET, wie
+    /// Client-Anzeige, MQTT-Touchdown und phpVMS-Feld. Auf dem alten Stand
+    /// (`r as i32`) kam hier −559 statt −560 heraus.
+    #[test]
+    fn pirep_landing_vs_fpm_ist_gerundeter_anzeigewert() {
+        let flight = flight_fixture("GCLP");
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.landing_rate_fpm = Some(-559.6);
+            st.landing_peak_vs_fpm = Some(-559.6);
+        }
+        let erwartet = flight
+            .stats
+            .lock()
+            .unwrap()
+            .canonical_landing_rate_fpm()
+            .map(|v| v.round() as i32);
+        assert_eq!(erwartet, Some(-560), "Vorrichtung: kanonische Rate muss −559,6 sein");
+        let mut body = api_client::FileBody::default();
+        body.landing_rate = Some(-559.6);
+        let p = build_pirep_payload(&flight, &body, "GCLP", "GCLP");
+        assert_eq!(p.landing_vs_fpm, Some(-560));
+    }
+
     #[test]
     fn resolve_flight_ident_falls_back_when_callsign_none() {
         assert_eq!(resolve_flight_ident("1434", None), "1434");
@@ -76264,6 +76387,23 @@ mod touchdown_metadata_stamp_tests {
             Some(""),
             "bei anhaengigem Rueckzug muss das Feld als leerer String vorhanden sein, nicht fehlen"
         );
+    }
+
+    /// P1/8b: leichter Hopser als PIREP-Feld (GSG-Seite), nicht neben einem
+    /// normalen Hopser; ohne beides kein Feld.
+    #[test]
+    fn leichter_hopser_steht_als_pirep_feld() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        assert!(build_pirep_fields(&flight, &stats, "EDDP").get("Light Bounces").is_none());
+        stats.light_bounce_count = 1;
+        let f = build_pirep_fields(&flight, &stats, "EDDP");
+        assert_eq!(f.get("Light Bounces").map(String::as_str), Some("1"));
+        assert!(f.get("Bounces").is_none());
+        stats.bounce_count = 1;
+        let f = build_pirep_fields(&flight, &stats, "EDDP");
+        assert!(f.get("Light Bounces").is_none(), "neben einem normalen Hopser zaehlt der leichte nicht");
+        assert_eq!(f.get("Bounces").map(String::as_str), Some("1"));
     }
 
     #[test]
@@ -84499,6 +84639,157 @@ mod sprung_thy42_tests {
             "ein 20-ft-Sprung bei niedrigem Modellursprung wurde verschluckt"
         );
     }
+    // ─── P1/8b leichter Hopser (Thomas 22.10.2026) ─────────────────────
+
+    /// (normal, leicht) aus dem 50-Hz-Pfad.
+    fn zaehle_beide(samples: &[TouchdownWindowSample], base: DateTime<Utc>, edge_ms: i64) -> (u64, u64) {
+        let ana = compute_landing_analysis(
+            samples,
+            base + chrono::Duration::milliseconds(edge_ms),
+            Simulator::Msfs2024,
+            None,
+        );
+        (
+            ana["scored_bounce_count"].as_u64().unwrap_or(999),
+            ana["scored_light_bounce_count"].as_u64().unwrap_or(999),
+        )
+    }
+
+    /// LNK 861 FASZ (04.10.2026, yp5VXAZd0JJz3KYR), Werte aus der Messung:
+    /// Bodenhoehe 9,88 ft, Luftphase ab 0,59 s fuer 2735 ms, Gipfel 4,90 ft
+    /// ueber Boden. Heute 0 Hopser — mit der Regel genau 1 leichter.
+    /// Auf dem alten Stand fehlte `scored_light_bounce_count` (→ 999, rot).
+    #[test]
+    fn lnk861_ist_ein_leichter_hopser() {
+        let base = Utc::now();
+        let b = 9.88_f32;
+        let s = vec![
+            tw(base, 0, b + 30.0, 4.0, false, -736.0),
+            tw(base, 1000, b, 5.0, true, -736.0),
+            tw(base, 1590, b + 0.4, 5.0, false, 85.0),
+            tw(base, 2500, b + 4.90, 4.5, false, 0.0),
+            tw(base, 3800, b + 1.0, 4.0, false, -300.0),
+            tw(base, 4325, b + 0.1, 4.0, true, -378.0),
+            tw(base, 9000, b - 1.0, 1.0, true, 0.0),
+        ];
+        assert_eq!(zaehle_beide(&s, base, 1000), (0, 1));
+    }
+
+    /// THY42: zwei Flatterphasen von 160 und 40 ms bei 0 ft — weder normal
+    /// noch leicht.
+    #[test]
+    fn thy42_bleibt_ohne_leichten_hopser() {
+        let base = Utc::now();
+        assert_eq!(zaehle_beide(&thy42_verlauf(base), base, 3900), (0, 0));
+    }
+
+    /// AFR1010 (pr2LDBwPGQ0LK2LQ, „td 1492“): 7088 ms ohne Bodenkontakt bei
+    /// 0,05 ft — Flattern, kein Sprung. Die Dauer allein darf nicht zaehlen.
+    #[test]
+    fn afr1010_langes_flattern_ist_kein_leichter_hopser() {
+        let base = Utc::now();
+        let b = 11.0_f32;
+        let s = vec![
+            tw(base, 0, b + 25.0, 4.0, false, -300.0),
+            tw(base, 1000, b, 5.0, true, -250.0),
+            tw(base, 1530, b + 0.05, 5.0, false, -20.0),
+            tw(base, 5000, b + 0.03, 4.0, false, -10.0),
+            tw(base, 8618, b + 0.02, 3.0, true, 0.0),
+        ];
+        assert_eq!(zaehle_beide(&s, base, 1000), (0, 0));
+    }
+
+    /// Touch-and-go / Durchstarten: eine lange, hohe Luftphase OHNE zweiten
+    /// Kontakt zaehlt nicht. Gegenprobe: dieselbe Phase mit Kontakt zaehlt.
+    #[test]
+    fn durchstart_ohne_zweiten_kontakt_ist_kein_leichter_hopser() {
+        let base = Utc::now();
+        let b = 10.0_f32;
+        let mut s = vec![
+            tw(base, 0, b + 30.0, 4.0, false, -400.0),
+            tw(base, 1000, b, 5.0, true, -300.0),
+            tw(base, 1600, b + 1.0, 6.0, false, 200.0),
+            tw(base, 2800, b + 3.5, 7.0, false, 400.0),
+        ];
+        assert_eq!(zaehle_beide(&s, base, 1000), (0, 0), "Durchstart gezaehlt");
+        s.push(tw(base, 3000, b + 0.2, 5.0, true, -200.0));
+        assert_eq!(zaehle_beide(&s, base, 1000), (0, 1), "Gegenprobe mit Kontakt");
+    }
+
+    /// Ein normaler Hopser (>= 5 ft) wird nie zusaetzlich leicht gezaehlt.
+    #[test]
+    fn normaler_hopser_ist_nicht_auch_leicht() {
+        let base = Utc::now();
+        let b = 10.0_f32;
+        let s = vec![
+            tw(base, 0, b + 30.0, 4.0, false, -400.0),
+            tw(base, 1000, b, 5.0, true, -600.0),
+            tw(base, 1500, b + 3.0, 5.0, false, 200.0),
+            tw(base, 2300, b + 6.0, 5.0, false, 0.0),
+            tw(base, 3200, b + 0.1, 4.0, true, -300.0),
+        ];
+        assert_eq!(zaehle_beide(&s, base, 1000), (1, 0));
+    }
+
+    /// Nachrechnung am Bestand: alle 1738 Landungen der Messung vom
+    /// 22.10.2026 (`handoff/2026-10-22-hopser-messung.md`). Die Fixture
+    /// traegt je Landung die echten Luftphasen >= 300 ms (Beginn, Dauer,
+    /// Hoehe ueber Boden, mit/ohne Kontakt) aus den 30/50-Hz-Fenstern; der
+    /// Test baut daraus Probenfolgen und schickt sie durch die ECHTE
+    /// `compute_landing_analysis`. Erwartet: heute 18 Landungen mit
+    /// Hopser, mit leichtem Hopser 62 (+44). Einschraenkung: die Proben
+    /// zwischen den Phasen sind nachgebaut (Bodenkontakt), nicht roh.
+    #[test]
+    fn bestand_nachgerechnet_62_landungen_mit_hopser() {
+        let f: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/hopser_bestand.json")).unwrap();
+        let base = Utc::now();
+        let b = 10.0_f32;
+        let (mut mit_normal, mut mit_irgendeinem) = (0, 0);
+        for landung in f["phasen"].as_array().unwrap() {
+            let mut s = vec![
+                tw(base, 0, b + 30.0, 4.0, false, -400.0),
+                tw(base, 1000, b, 5.0, true, -300.0),
+            ];
+            for p in landung[1].as_array().unwrap() {
+                let ofs = p[0].as_i64().unwrap();
+                let dauer = p[1].as_i64().unwrap();
+                let max = p[2].as_f64().unwrap() as f32;
+                let kontakt = p[3].as_bool().unwrap();
+                let t0 = 1000 + ofs.max(1);
+                if s.last().unwrap().at < base + chrono::Duration::milliseconds(t0 - 5) {
+                    s.push(tw(base, t0 - 5, b, 5.0, true, -50.0));
+                }
+                s.push(tw(base, t0, b + max * 0.3, 5.0, false, 50.0));
+                s.push(tw(base, t0 + dauer / 2, b + max, 5.0, false, 0.0));
+                s.push(tw(base, t0 + dauer - 1, b + max * 0.2, 5.0, false, -100.0));
+                if kontakt {
+                    s.push(tw(base, t0 + dauer, b, 5.0, true, -100.0));
+                } else {
+                    break;
+                }
+            }
+            let (normal, leicht) = zaehle_beide(&s, base, 1000);
+            mit_normal += (normal > 0) as u32;
+            mit_irgendeinem += (normal > 0 || leicht > 0) as u32;
+        }
+        assert_eq!(f["landungen_gesamt"].as_u64(), Some(1738));
+        assert_eq!(mit_normal, 18, "heutige Regel am Bestand");
+        assert_eq!(mit_irgendeinem, 62, "mit leichtem Hopser am Bestand");
+    }
+
+    /// Der 1-Hz-Streamer (Vorwert) nutzt dieselben Grenzen.
+    #[test]
+    fn streamer_regel_leichter_hopser() {
+        assert!(leichter_hopser_im_streamer(2735, 4.9));
+        assert!(!leichter_hopser_im_streamer(999, 4.9), "unter 1 s");
+        assert!(!leichter_hopser_im_streamer(7088, 0.05), "Flattern");
+        assert!(!leichter_hopser_im_streamer(2000, 6.0), "normaler Hopser");
+        assert!(leichter_hopser_im_streamer(1000, 2.0), "Grenze eingeschlossen");
+        assert_eq!(BOUNCE_LIGHT_MIN_AGL_FT, 2.0);
+        assert_eq!(BOUNCE_LIGHT_MIN_DAUER_MS, 1000);
+        assert_eq!(BOUNCE_AGL_THRESHOLD_FT as f32, touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+    }
 }
 
 #[cfg(test)]
@@ -88540,5 +88831,71 @@ mod landung_episoden_tests {
         // je Eintrag pruefen die Faelle mit gesetzten Messwerten oben.
         assert!(st.touchdown_events[0].timestamp < zeit("15:39:30"));
         assert!(st.touchdown_events[1].timestamp > zeit("15:55:00"));
+    }
+    /// P1/B3 (Bahnansicht-Befund, 22.10.2026): #1905 (EWG 1599 GCFV 01,
+    /// Client 2.1.4) trug in `lateral_samples` zuerst 68 Proben bei
+    /// 2560–3656 m und `mess_ende_laengs_m = 3418` — beides aus dem
+    /// Touch-and-go davor (#1896). Am Code bestaetigt: 2.1.4 schloss die
+    /// Landung beim Wegsteigen nicht ab (`landung_beim_wegsteigen_abschliessen`
+    /// fehlt dort); seit 2.1.5 (be1b3f31) laeuft dabei
+    /// `clear_approach_stability_and_rollout` → `spur_verwerfen`.
+    ///
+    /// Dieser Test haelt das an den ECHTEN Proben aus `fixtures/1905.json`
+    /// fest und prueft, was der bestehende Kettentest offen liess: Die Spur
+    /// ist nicht nur leer, sie ist als frueherer Durchgang gesichert
+    /// (Gegenprobe gegen „nie gesetzt“), und das Messfenster-Ende der
+    /// ersten Landung ist weg.
+    #[test]
+    fn touch_and_go_gibt_spur_und_messende_nicht_an_die_naechste_landung() {
+        let fall: serde_json::Value = serde_json::from_str(include_str!(
+            "../../src/dev/bahnansicht/fixtures/1905.json"
+        ))
+        .unwrap();
+        let tg_spur: Vec<(f32, f32)> = fall["lateral_samples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .take(68)
+            .map(|p| (p["laengs_m"].as_f64().unwrap() as f32, p["quer_m"].as_f64().unwrap() as f32))
+            .collect();
+        assert_eq!(tg_spur.first(), Some(&(2559.7, -2.8)), "Vorrichtung: Proben aus 1905");
+        let mess_ende = fall["mess_ende_laengs_m"].as_f64().unwrap();
+        assert!((mess_ende - 3417.97).abs() < 0.01);
+
+        let flight = fixture();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "GCFV".into(),
+                runway_ident: "01".into(),
+                heading_true_deg: 9.0,
+                length_ft: 11155.0,
+                width_ft: 251.0,
+                surface: "ASP".into(),
+                threshold_lat: 28.43,
+                threshold_lon: -13.86,
+                end_lat: 28.46,
+                end_lon: -13.86,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 0.0,
+                side: "right".into(),
+                displaced_threshold_ft: 0,
+                geometry_implied_displaced_threshold_ft: 0,
+            });
+            st.bahn_spur = tg_spur.clone();
+            st.bahn_fenster_zu_laengs_m = Some(mess_ende);
+            st.bahn_raeum_laengs_m = Some(3500.0);
+        }
+        durchstart_nach_bodenlauf(&flight, 10, 2);
+        let st = flight.stats.lock().unwrap();
+        assert_eq!(st.touchdown_events.len(), 1);
+        assert!(st.bahn_spur.is_empty(), "Spur des Touch-and-go blieb fuer die naechste Landung");
+        assert_eq!(st.bahn_fenster_zu_laengs_m, None, "Messfenster-Ende des Touch-and-go blieb stehen");
+        assert_eq!(st.bahn_raeum_laengs_m, None);
+        let (bahn, vorige) = st.bahn_vorige_spuren.last().expect("Touch-and-go als frueherer Durchgang");
+        assert_eq!(bahn, "GCFV 01");
+        assert_eq!(vorige.first(), tg_spur.first(), "gesichert wurde nicht die Spur des Touch-and-go");
+        assert!(vorige.len() >= tg_spur.len());
     }
 }

@@ -93,6 +93,10 @@ export function mapLandingRecordToV2Props(
     // zeichnen, und eine geratene Breite waere eine Behauptung ueber die
     // Kante, an der die Bewertung haengt.
     runway_width_m: record.runway_width_m ?? null,
+    // Variante B (22.10.2026): die Begründung der Ausrichtung aus den
+    // eingefrorenen Teilnoten — nur `off_runway_surface` setzt die zweite
+    // Zahl „aufgesetzt X m neben der Bahn“.
+    ausrichtung_grund: ausrichtungGrund(record.sub_scores),
     runway_exits: record.runway_exits ?? null,
     min_edge_clearance_m: record.min_edge_clearance_m ?? null,
     max_lateral_offset_m: record.max_lateral_offset_m ?? null,
@@ -122,4 +126,12 @@ export function mapLandingRecordToV2Props(
     crosswind_kt: record.crosswind_kt ?? null,
     locale: "de",
   };
+}
+
+/** Begründung der Teilnote Ausrichtung ohne `landing.rat.`, sonst null. */
+export function ausrichtungGrund(
+  subs: ReadonlyArray<{ key: string; skipped?: boolean | null; rationale_key?: string | null }> | null | undefined,
+): string | null {
+  const a = (subs ?? []).find((s) => s.key === "alignment" && !s.skipped);
+  return a?.rationale_key?.replace(/^landing\.rat\./, "") ?? null;
 }

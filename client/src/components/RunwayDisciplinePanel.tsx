@@ -7,7 +7,8 @@
 // Kanten, damit der Aufsetzpunkt oben senkrecht über der Marke unten liegt.
 
 import { useTranslation } from "react-i18next";
-import { RunwayCrossSection, bandFarbeFuer, DURCHGANG_FARBE } from "./RunwayCrossSection";
+import { bandFarbeFuer, DURCHGANG_FARBE } from "./RunwayCrossSection";
+import { bewertungsEnde as fruehestesEnde } from "../lib/bahnQuerMassstab";
 import { RunwayExitLupe } from "./RunwayExitLupe";
 import type { Projektion } from "../lib/runwayProjection";
 import type { BahnZoom } from "../lib/useBahnZoom";
@@ -16,7 +17,8 @@ import type { RunwayDiagramV2Props } from "./RunwayDiagramV2";
 export interface DisziplinProps {
   props: RunwayDiagramV2Props;
   projektion: Projektion;
-  /** Derselbe Zoom-Zustand wie die Längsansicht — nicht ein zweiter. */
+  /** Derselbe Zoom-Zustand wie die Längsansicht — nicht ein zweiter.
+   *  Seit Variante B (22.10.2026) ohne Queransicht; die Draufsicht trägt den Zoom. */
   zoom?: BahnZoom;
   width: number;
   tokens: {
@@ -35,7 +37,6 @@ export interface DisziplinProps {
 export function RunwayDisciplinePanel({
   props: roh,
   projektion,
-  zoom,
   width,
   tokens,
 }: DisziplinProps) {
@@ -158,56 +159,17 @@ export function RunwayDisciplinePanel({
           })}
         />
       )}
+      {/* Variante B (22.10.2026): Die Queransicht ist in die Draufsicht
+          darüber gewandert — ihre Erklärung steht jetzt direkt unter ihr,
+          auch wenn die seitliche Bewertung entfällt (die Spur ist trotzdem
+          gezeichnet). */}
+      {breite != null && breite > 0 && (
+        <SoLiestDu text={t("runway_v2.b.so_liest_du")} />
+      )}
       {grund ? (
         <Hinweis text={t(`runway_v2.discipline_skip.${grund}`, skipText(grund))} />
       ) : (
         <>
-          <RunwayCrossSection
-            // Der Maßstab reist mit `props` — eine Quelle, kein zweiter Weg.
-            schriftMindest={props.schriftMindest}
-            projektion={projektion}
-            runwayWidthM={breite!}
-            trackWidthM={props.track_width_m ?? null}
-            samples={samples}
-            touchdownM={props.td_distance_from_threshold_m}
-            touchdownOffsetM={props.td_centerline_offset_m}
-            clearanceM={props.clearance_point_m}
-            scoringCutoffM={props.scoring_cutoff_m}
-            messEndeM={props.mess_ende_laengs_m}
-            clearanceSide={props.clearance_side}
-            minEdgeClearanceM={props.min_edge_clearance_m}
-            // Die Marke an der Stelle, die die Spur trägt — siehe
-            // `stelleDesVersatzes`.
-            maxLateralOffsetM={
-              props.max_lateral_offset_m != null
-                ? stelleDesVersatzes(
-                    samples,
-                    props.max_lateral_offset_m,
-                    props.mess_ende_laengs_m ?? props.scoring_cutoff_m ?? props.clearance_point_m,
-                  )?.probe.quer_m ?? null
-                : null
-            }
-            overrunM={props.overrun_m}
-            endpunktNummer={endpunktNummer(props)}
-            vorherigeDurchgaenge={durchgaenge}
-            ausfahrten={props.runway_exits}
-            aircraftIcao={props.aircraft_icao}
-            width={width}
-            zoom={zoom}
-            tokens={tokens}
-          />
-          {/* Jede Ansicht erklärt sich direkt unter sich — Thomas (19.09.):
-              „nur das erste Bild oben ist beschrieben, bei allem anderen
-              muss man raten." Die Legende stand bis dahin ganz unten, nach
-              Ereignisliste und Lupe, weit weg vom Bild, das sie erklärt. */}
-          <SoLiestDu
-            text={t("runway_v2.quer_erklaerung", {
-              defaultValue:
-                "Blick von oben auf die ganze Bahn — aber quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung zur Mitte sichtbar werden. " +
-                "Das Band sind die beiden Hauptfahrwerke, die Linie darin ihre Mitte, die Punkte die Messungen. " +
-                "Die Streckung verbiegt Winkel: Eine Ausfahrt sieht hier wie ein Haken aus — wie sie wirklich verlief, zeigt die Lupe darunter.",
-            })}
-          />
           <QuerLegende
             props={props}
             bandFarbe={bandFarbeFuer(tokens, props.overrun_m, props.min_edge_clearance_m)}
@@ -322,7 +284,7 @@ export function spurBereinigen<T extends { laengs_m: number; quer_m: number }>(
  * Zwei Meter Spielraum: Die Ablage dünnt auf zehn Meter aus, der
  * Grösstwert kann zwischen zwei Punkten gelegen haben.
  */
-function stelleDesVersatzes(
+export function stelleDesVersatzes(
   samples: Array<{ laengs_m: number; quer_m: number }>,
   max: number,
   bewertungsEnde: number | null | undefined,
@@ -343,7 +305,18 @@ function stelleDesVersatzes(
  * Eintrag ②. Eine Stelle, weil auch die Nummer des Spurendes im Bild davon
  * abhängt (siehe `endpunktNummer`).
  */
-function versatzUnglaubwuerdig(props: RunwayDiagramV2Props): boolean {
+/**
+ * Ob die Kante den Randabstand nicht trägt — dann steht er nirgends als Zahl
+ * (Liste und Draufsicht, Variante B). Eine Stelle für beide.
+ */
+export function kanteTraegtNicht(props: RunwayDiagramV2Props): boolean {
+  return (
+    versatzUnglaubwuerdig(props) ||
+    ["unpaved_runway", "surface_unknown", "water_runway"].includes(props.lateral_skip_reason ?? "")
+  );
+}
+
+export function versatzUnglaubwuerdig(props: RunwayDiagramV2Props): boolean {
   return [
     // Der Versatz selbst ist unglaubwürdig.
     "implausible_lateral_track",
@@ -371,7 +344,7 @@ function versatzUnglaubwuerdig(props: RunwayDiagramV2Props): boolean {
  * Spurende die Räumung, nur ohne bekannte Seite), sonst die Nummer nach
  * Aufsetzen und — falls geführt — Grösstversatz.
  */
-function endpunktNummer(props: RunwayDiagramV2Props): number {
+export function endpunktNummer(props: RunwayDiagramV2Props): number {
   if (props.clearance_point_m != null) return 3;
   const mitVersatz = !versatzUnglaubwuerdig(props) && props.max_lateral_offset_m != null;
   return mitVersatz ? 3 : 2;
@@ -521,11 +494,7 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
   // verschwände eine Messung, die stimmt.
   const versatzEntwertet = versatzUnglaubwuerdig(props);
   // Die Kante trägt zusätzlich dann nicht, wenn sie keine feste Grenze ist.
-  const kanteEntwertet =
-    versatzEntwertet ||
-    ["unpaved_runway", "surface_unknown", "water_runway"].includes(
-      props.lateral_skip_reason ?? "",
-    );
+  const kanteEntwertet = kanteTraegtNicht(props);
 
   const max = versatzEntwertet ? null : props.max_lateral_offset_m;
   if (max != null) {
@@ -546,10 +515,13 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
     // ob das kurz nach dem Aufsetzen passierte oder erst beim Abbiegen.
     // Dieselbe Grenze wie in der Queransicht — sonst nennt der Text
     // eine andere Stelle als die Marke im Bild zeigt.
-    const bewertungsEnde =
-      props.mess_ende_laengs_m ??
-      props.scoring_cutoff_m ??
-      props.clearance_point_m;
+    // B3 (#1905): das FRÜHESTE der gespeicherten Enden — bei Touch-and-go-
+    // Altbestand (Client 2.1.4) stammt `mess_ende` aus dem Durchgang davor.
+    const bewertungsEnde = fruehestesEnde(
+      props.mess_ende_laengs_m,
+      props.scoring_cutoff_m,
+      props.clearance_point_m,
+    );
     const stelle = stelleDesVersatzes(props.lateral_samples ?? [], max, bewertungsEnde);
     const wo = stelle?.probe ?? null;
     const beiM =

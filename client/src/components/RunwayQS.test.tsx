@@ -37,8 +37,23 @@ interface Variante {
 const VARIANTEN: Variante[] = MOCK_LANDING_OPTIONS.map((o) => {
   const props = mapLandingRecordToV2Props(o.build())!;
   const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props} />);
-  return { key: o.key, props, markup, svgs: markup.match(/<svg[\s\S]*?<\/svg>/g) ?? [] };
+  return { key: o.key, props, markup, svgs: ansichten(markup) };
 });
+
+/**
+ * Die Ansichten einer Seite: [Draufsicht, „Queransicht“, …].
+ *
+ * Seit Variante B (Thomas 22.10.2026) gibt es keine eigene Queransicht
+ * mehr — ihre Einzelstücke stehen in der Draufsicht. Deshalb steht dort,
+ * wo diese Prüfungen die Queransicht erwarten, die Draufsicht selbst: Jede
+ * Regel, die die Queransicht erfüllen musste, muss jetzt die Draufsicht
+ * erfüllen (Inventar §3 als Prüfung, nicht als Liste).
+ */
+function ansichten(markup: string): string[] {
+  const svgs = markup.match(/<svg[\s\S]*?<\/svg>/g) ?? [];
+  if (svgs[0]?.includes('data-rolle="spur-overlay"')) return [svgs[0], ...svgs];
+  return svgs;
+}
 
 /** Alle sichtbaren Texte eines Markup-Abschnitts. */
 function texte(teil: string): string[] {
@@ -309,8 +324,8 @@ describe("QS — Spur und Marken der Queransicht", () => {
     for (const v of VARIANTEN) {
       if ((v.props.overrun_m ?? 0) <= 0 || v.svgs.length < 2) continue;
       const quer = v.svgs[1]!;
-      const band = /<path[^>]*fill-opacity="0.22"[^>]*fill="([^"]+)"/.exec(quer)
-        ?? /<path[^>]*fill="([^"]+)"[^>]*fill-opacity="0.22"/.exec(quer);
+      // Variante B: das Band der Draufsicht (`data-rolle="band"`).
+      const band = /<path[^>]*data-rolle="band"[^>]*fill="([^"]+)"/.exec(quer);
       if (!band) {
         befunde.push(`${v.key}: kein Band gefunden`);
         continue;
@@ -401,7 +416,10 @@ describe("QS — Spur und Marken der Queransicht", () => {
     for (const v of VARIANTEN) {
       const quer = v.svgs[1];
       if (!quer) continue;
+      // Variante B: Der Aufsetzpunkt der Draufsicht trägt zwei durchscheinende
+      // Höfe (`opacity`) um seinen Kreis — das sind keine Marken.
       const kreise = [...quer.matchAll(/<circle([^>]*)\/?>/g)]
+        .filter((m) => !/\sopacity="0\.(10|22|1|2)"/.test(m[1]!))
         .map((m) => ({
           x: attr(m[1]!, "cx"),
           y: attr(m[1]!, "cy"),
@@ -453,9 +471,10 @@ describe("QS — Vollständigkeit", () => {
   it("gibt jeder Ansicht einen Titel", () => {
     const befunde: string[] = [];
     for (const v of VARIANTEN) {
-      if (!v.markup.includes("LÄNGS —")) befunde.push(`${v.key}: Längsansicht ohne Titel`);
-      if (v.svgs.length > 1 && !v.markup.includes("QUER —"))
-        befunde.push(`${v.key}: Queransicht ohne Titel`);
+      // Variante B: eine Ansicht; mit Spur heisst sie Draufsicht.
+      const b = v.svgs[0]?.includes('data-rolle="spur-overlay"');
+      if (!v.markup.includes(b ? "DRAUFSICHT —" : "LÄNGS —")) befunde.push(`${v.key}: Draufsicht ohne Titel`);
+      if (v.markup.includes("QUER —")) befunde.push(`${v.key}: Queransicht gezeichnet (Variante B: entfällt)`);
     }
     expect(befunde, befunde.join("\n")).toEqual([]);
   });
@@ -683,7 +702,7 @@ describe("QS — Vollständigkeit", () => {
       expect(
         markup,
         "die Queransicht wird trotz verworfener Bewertung gezeichnet",
-      ).not.toContain("QUER —");
+      ).not.toContain('data-rolle="spur-overlay"');
     },
   );
   /**
@@ -716,7 +735,7 @@ describe("QS — Vollständigkeit", () => {
       expect(
         markup,
         "die Queransicht fehlt, obwohl die Rohdaten reichen",
-      ).toContain("QUER —");
+      ).toContain('data-rolle="spur-overlay"');
       expect(
         markup,
         `der Grund „${grund}" fehlt als Zusatzhinweis`,
@@ -740,7 +759,7 @@ describe("QS — Vollständigkeit", () => {
     expect(
       markup,
       "die Queransicht wird trotz fehlender Rohdaten gezeichnet",
-    ).not.toContain("QUER —");
+    ).not.toContain('data-rolle="spur-overlay"');
   });
   /**
    * Verworfene Zahlen verschwinden — geprüfte bleiben stehen.

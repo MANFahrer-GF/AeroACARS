@@ -85,8 +85,9 @@ describe("Altbestand durch die echte Anzeige", () => {
         overrun_m={null}
       />,
     );
+    // Variante B (22.10.2026): die Spur steht in der Draufsicht.
     const quer = (markup.match(/<svg[\s\S]*?<\/svg>/g) ?? []).find((s) =>
-      s.includes("Queransicht"),
+      s.includes('data-rolle="spur-overlay"'),
     );
     return { markup, quer: quer ?? "" };
   };
@@ -131,7 +132,7 @@ describe("Altbestand durch die echte Anzeige", () => {
         vorherige_durchgaenge={[{ lateral_samples: erster }]}
       />,
     );
-    const quer = (markup.match(/<svg[\s\S]*?<\/svg>/g) ?? []).find((x) => x.includes("Queransicht"))!;
+    const quer = (markup.match(/<svg[\s\S]*?<\/svg>/g) ?? []).find((x) => x.includes('data-rolle="spur-overlay"'))!;
     expect(quer).toMatch(/data-durchgang="1"/);
     expect(markup).toMatch(/Früherer Durchgang · aufgesetzt/);
     // Die Ziffern gehören der gewerteten Landung — der Durchgang bekommt keine.

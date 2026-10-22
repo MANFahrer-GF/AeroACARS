@@ -70,7 +70,37 @@ Landeschwelle (Threshold) — Beginn des landbaren Bahn-Teils.Bahn-Ende — Ende
 AUFSETZZONE (TDZ) 900 m
 AIM-POINT 400 m
 Aim-Point — die zwei großen weißen Quadrate auf der echten Bahn (hier gelb gezeichnet). Pilot zielt im Anflug auf diese Markierung; durch den Flare setzt er typisch 50–150 m DAHINTER auf (= Anfang der TDZ). Position: 400 m hinter Schwelle.
-LÄNGS — WO AUFGESETZT, WO GERÄUMT
+32,5 m
+0
+32,5 m
+Kante
+LINKS
+RECHTS
+B1B/A10
+B1B/C1A +2
+C3A
+B3B
+B3B/C4A +2
+B4B
+B5B
+C6
+C7
+C8
+C9
+C10
+B9B/C11
+C11
+C12
+C12/C13 +2
+C13
+C14
+knappste Stelle: äußeres Rad 19,5 m vor der Kante · bei 1132 m
+Spur läuft weiter — real bis 110 m
+1
+2
+3
+· Spurweite 10.7 m · quer 15,7× überhöht (breite Bahn gestaucht) · Bahn 65 m · Band bis Reifen-Außenkante
+DRAUFSICHT — AUFSETZEN, SPUR, RAND, AUSFAHRT
 BAHN-ENDE
 BAHN GERÄUMT
 1993 m · 28 kt · Ausfahrt C8 rechts
@@ -97,44 +127,7 @@ Schwelle
 Aufsetzzone (TDZ)
 Ziel-Markierung (AIM)
 Aufsetzpunkt (TD)
-QUER — WO DIE RÄDER LIEFEN
-· Spurweite 10.7 m
-15.7× überhöht · in sich maßstäblich
-B1B/A10
-B1B/C1A +2
-C3A
-B3B
-B3B/C4A +2
-B4B
-B5B
-C6
-C7
-C8
-C9
-C10
-B9B/C11
-C11
-C12
-C12/C13 +2
-C13
-C14
-Spur läuft weiter — real bis 110 m
-1
-2
-3
-0
-10
-10
-20
-20
-32 m
-32 m
-LINKS
-RECHTS
-Kante
-Mitte
-Kante
-Blick von oben auf die ganze Bahn — aber quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung zur Mitte sichtbar werden. Das Band sind die beiden Hauptfahrwerke, die Linie darin ihre Mitte, die Punkte die Messungen. Die Streckung verbiegt Winkel: Eine Ausfahrt sieht hier wie ein Haken aus — wie sie wirklich verlief, zeigt die Lupe darunter.
+Blick von oben auf die ganze Bahn, quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung sichtbar werden. Das Band reicht bis zur Außenkante der äußeren Reifen — genau diese Kante wird bewertet; die helle Linie darin ist die Flugzeugmitte. Marke 1 Aufsetzen, 2 knappste Stelle zur Kante (die Zahl darunter ist der bewertete Randabstand), 3 Bahn geräumt, 4 über das Bahnende. Das gelbe Dreieck unter der Bahn markiert das Ende des bewerteten Teils; danach zählt die Spur nicht mehr. Violett gestrichelt: ein früherer Durchgang (durchgestartet). Die Stummel am Rand sind die Ausfahrten. Die Streckung verbiegt Winkel — wie das Abrollen wirklich verlief, zeigt die Lupe darunter. Rot „aufgesetzt X m neben der Bahn“: So weit stand das äußere Rad beim Aufsetzen jenseits der Kante — das bewertet die Teilnote Ausrichtung (steht nur dann da).
 Aufsetzpunkt (TD)
 Spur — 139 gemessene Stützpunkte
 nach dem Räumen — gemessen, nicht mehr gewertet

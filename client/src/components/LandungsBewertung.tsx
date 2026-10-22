@@ -11,7 +11,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { LandingCategory, LandingRecord } from "../lib/landungsDatensatz";
 import { gateAus, gateGruende, gateMarke, gateUrteil, type GatePunkt } from "../lib/stableGate";
-import { landungsMarkenV19 } from "../lib/landungsUrteil";
+import { landungsMarkenV19, type NebenDerBahnOrt } from "../lib/landungsUrteil";
+import { bewertungsEnde, randstelle } from "../lib/bahnQuerMassstab";
 import { fensterWerteGueltig, fmtSigned, scoreG } from "../lib/landungsFormat";
 import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import { scoreBasisVs } from "./SinkrateForensik";
@@ -711,6 +712,28 @@ export function OffAirportBanner({ record }: { record: LandingRecord }) {
   );
 }
 
+/**
+ * Wo „neben der Bahn“ geschah — aus gespeicherten Werten gesucht, nicht neu
+ * gerechnet: Aufsetzen = Aufsetzpunkt ab der Schwelle; Ausrollen = die
+ * Probe, an der der gespeicherte `min_edge_clearance_m` entstand (dieselbe
+ * Stelle wie Marke 2 im Bild, frühestes Ende wie dort).
+ */
+export function nebenDerBahnOrt(r: LandingRecord): NebenDerBahnOrt {
+  const breite = r.runway_width_m;
+  const spur = r.track_width_m;
+  const rs =
+    breite != null && breite > 0 && spur != null && spur > 0 && (r.lateral_samples?.length ?? 0) >= 2
+      ? randstelle(
+          r.lateral_samples!,
+          breite / 2,
+          spur,
+          bewertungsEnde(r.mess_ende_laengs_m, r.scoring_cutoff_m, r.clearance_point_m),
+          r.min_edge_clearance_m,
+        )
+      : null;
+  return { aufsetzenM: r.td_distance_from_threshold_m ?? null, ausrollenM: rs?.laengs_m ?? null };
+}
+
 export function QuickFlags({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
   const flags: { label: string; tone: "warn" | "err" }[] = [];
@@ -734,6 +757,8 @@ export function QuickFlags({ record }: { record: LandingRecord }) {
           bounceCount: hopserGemessen ? (record.bounce_count ?? 0) : 0,
           forensicBounceCount: hopserGemessen ? record.forensic_bounce_count : 0,
           bounceMaxAglFt: record.bounce_max_agl_ft,
+          lightBounceCount: hopserGemessen ? record.scored_light_bounce_count : 0,
+          nebenDerBahnOrt: nebenDerBahnOrt(record),
         },
         t,
       ),

@@ -19,6 +19,7 @@
 // EGFF, LTFJ, EDDF, LEBB, VHHH): flache Schnellabrollwege wie rechtwinklige
 // Abbieger lesen sich so, wie sie gefahren wurden.
 
+import { aussenkanteHalbM } from "../lib/bahnQuerMassstab";
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import type { Ausfahrt } from "./RunwayCrossSection";
@@ -147,7 +148,10 @@ export function RunwayExitLupe(p: LupeProps) {
 
   const spur = p.samples.filter(imFenster);
   if (spur.length < 2) return null;
-  const halbeSpur = (p.trackWidthM ?? 0) / 2;
+  // B2 (Bahnansicht 22.10.2026): Das Band reicht bis zur REIFEN-AUSSENKANTE
+  // (Spiegel von `aussenkante_halb_aus_spur`), nicht bis zur Radmitte —
+  // bewertet wird die Aussenkante (0,15–0,55 m je Seite mehr).
+  const halbeSpur = p.trackWidthM != null && p.trackWidthM > 0 ? aussenkanteHalbM(p.trackWidthM) : 0;
 
   // Rollwege genau auf den Ausschnitt — was darüber hinausragt, läge unter
   // den Namen am Rand.
@@ -303,7 +307,8 @@ export function RunwayExitLupe(p: LupeProps) {
       aria-label={t("runway_v2.lupe_aria", {
         defaultValue: "Abrollen im echten Massstab: Spur und Rollweg als Draufsicht",
       })}
-      style={{ display: "block" }}
+      // B7: dieselbe Mindestbreite wie die Draufsicht (`MIN_ANZEIGE_BREITE_PX`).
+      style={{ display: "block", minWidth: 760 }}
       data-ansicht="lupe"
     >
       <defs>
