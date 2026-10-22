@@ -1742,6 +1742,14 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             weg.push((slot, "keine_stimme".into()));
         }
     }
+    // Codex-Review PR #167: Ist jede Sprache einer wartenden Ansage für den
+    // Flug gestrichen (keine Stimme; Sicherheit ohne Vorlage) und kam kein
+    // Text, entfällt sie sofort, statt bis zum Verfall zu warten.
+    for slot in lauf.warteschlange.wartend() {
+        if !weg.iter().any(|(s, _)| *s == slot) && alle_sprachen_gestrichen(lauf, slot) {
+            weg.push((slot, "keine_stimme".into()));
+        }
+    }
     for (slot, grund) in weg {
         if lauf.warteschlange.entfernen(slot) {
             notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": grund }));
@@ -1895,6 +1903,18 @@ fn dauer_s(slot: Slot, teile: &[Teil]) -> f64 {
     } else {
         teile.iter().map(|t| t.dauer_s + 0.8).sum()
     }
+}
+
+/// Jede Sprache dieser Ansage ist für den Flug gestrichen (keine Stimme,
+/// Punkt 4; Sicherheit ohne Vorlage) und es liegt kein Text vor. Gong und
+/// Kommandos (Englisch, nie gestrichen) nie.
+fn alle_sprachen_gestrichen(lauf: &Lauf, slot: Slot) -> bool {
+    matches!(slot.rolle(), Rolle::Kapitaen | Rolle::Kabine)
+        && !lauf.sprachen.is_empty()
+        && lauf.sprachen.iter().all(|sp| {
+            !lauf.texte.contains_key(&(slot, sp.clone()))
+                && (lauf.ohne_stimme.contains(sp) || (slot == Slot::Sicherheit && lauf.ohne_vorlage.contains(sp)))
+        })
 }
 
 /// Kommt für diesen Slot sicher kein Ton mehr? Je Sprache: keine Stimme,
@@ -4402,6 +4422,22 @@ mod tests {
         l.ton.insert((s, "de-DE".into()), None);
         assert!(ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, s), "keine Stimme zählt als erledigt");
         assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, &sp, &l.ohne_stimme, &l.ohne_vorlage, Slot::Reiseflug80), "ohne Text nie");
+    }
+
+    /// Codex-Nachprüfung a39e33e9: Ist jede Sprache gestrichen, entfällt
+    /// die Ansage sofort statt bis zum Verfall zu warten. Rot vorher: die
+    /// Prüfung gab es nur für Boarding und „Boarding abgeschlossen“.
+    #[test]
+    fn alle_sprachen_gestrichen_entfaellt_sofort() {
+        let mut l = Lauf { sprachen: vec!["zh-CN".to_string()], ..Lauf::default() };
+        assert!(!alle_sprachen_gestrichen(&l, Slot::Reiseflug50), "noch nicht gestrichen");
+        l.ohne_stimme.insert("zh-CN".into());
+        assert!(alle_sprachen_gestrichen(&l, Slot::Reiseflug50));
+        assert!(!alle_sprachen_gestrichen(&l, Slot::KommandoStart), "Kommandos nie");
+        let mut m = Lauf { sprachen: vec!["lb-LU".to_string()], ..Lauf::default() };
+        m.ohne_vorlage.insert("lb-LU".into());
+        assert!(alle_sprachen_gestrichen(&m, Slot::Sicherheit));
+        assert!(!alle_sprachen_gestrichen(&m, Slot::Boarding), "ohne Vorlage gilt nur für die Sicherheit");
     }
 
     /// Codex-Review PR #167: Schickt der Server für eine Sprache ohne Stimme
