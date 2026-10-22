@@ -1602,7 +1602,9 @@ mod tests {
         p.tick(&tick(0, Descent, 25_000.0, -2_000.0));
         assert!(slots(p.tick(&tick(10, Descent, 19_800.0, -2_000.0))).contains(&Slot::KommandoLandungVorbereiten));
         let mut q = Planer::fortsetzen(flug(60), Cruise);
-        q.tick(&tick(0, Descent, 12_000.0, -2_000.0));
+        // Langsam sinkend, damit 1c (spätestens 90 s vor 10.000 ft) die
+        // Kabine nicht schon hier meldet; geprüft wird das Kommando im Anflug.
+        q.tick(&tick(0, Descent, 12_000.0, -500.0));
         q.kapitaen_sinkflug_ende(true, 40);
         let f = slots(q.tick(&tick(60, Approach, 4_800.0, -1_000.0)));
         assert!(f.contains(&Slot::KommandoLandungVorbereiten) && !f.contains(&Slot::KabineSinkflug), "{f:?}");
@@ -1671,8 +1673,10 @@ mod tests {
         // Tief und lange nach der Meldung, aber der Kapitän lief noch nicht.
         assert!(!kabine(&mut p, 1_240, 14_000.0, Descent));
         p.kapitaen_sinkflug_ende(true, 1_250);
-        assert!(!kabine(&mut p, 1_300, 13_000.0, Descent), "noch keine zwei Minuten nach dem Ende");
-        assert!(kabine(&mut p, 1_370, 12_000.0, Descent));
+        // Höhen so, dass 1c (spätestens 90 s vor 10.000 ft) nicht greift:
+        // hier geht es nur um den Abstand zum Kapitän.
+        assert!(!kabine(&mut p, 1_300, 14_500.0, Descent), "noch keine zwei Minuten nach dem Ende");
+        assert!(kabine(&mut p, 1_370, 14_000.0, Descent));
         // Stumm/Fehler: Die Kabine richtet sich nur nach der Höhe.
         let mut q = Planer::fortsetzen(flug(120), Cruise);
         q.tick(&tick(1_000, Descent, 30_000.0, -2_000.0));
