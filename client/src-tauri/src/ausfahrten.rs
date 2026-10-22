@@ -681,6 +681,59 @@ mod tests {
         assert!(ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0).is_empty());
     }
 
+    // ── #1936 (EDDG 25, MSFS-Szenerie, 22.10.2026) ──────────────────
+    //
+    // Die Szenerie liefert zwei Rollwegzüge „B“ und „S1“ mit denselben
+    // Stützpunkten: Sie beginnen auf der Mittellinie bei 1839,6 m (knapp
+    // RECHTS davon), laufen auf der Bahn bis 1947 m und verlassen sie dort
+    // nach links. Die OSM-Karte von EDDG zeigt dasselbe für B (Mittellinie
+    // ab 1838 m, links hinaus bei 1943 m) und kennt kein S1.
+    //
+    // Gespeichert waren „B 1839,6 rechts“ und „S1 1839,6 rechts“: Der
+    // Mittellinienpunkt lag 22,6 m von der rechten Kante — innerhalb der
+    // 25-m-Toleranz — und galt als Ausfahrt nach rechts. Thomas: „gleiche
+    // Ausfahrtsnamen auf beiden Seiten?“. Ein Rollwegstück auf der Bahn ist
+    // keine Ausfahrt; nur wo der Rollweg die Bahn wirklich verlässt.
+    // Bahn hier: EDDH-Geometrie mit 46 m (EDDG: 45,1 m) — die Form zählt.
+
+    /// Wie die Szenerie B und S1 an EDDG 25 liefert (Bahn-Koordinaten).
+    fn eddg_szenerie() -> String {
+        karte(&format!(
+            "{},{}",
+            rollweg_aus(
+                "B",
+                &[
+                    (1839.6, 0.3),
+                    (1904.0, -1.0),
+                    (1926.0, -8.0),
+                    (1941.0, -21.0),
+                    (1947.0, -22.0),
+                    (1950.0, -28.0),
+                    (1952.0, -56.0),
+                ],
+            ),
+            rollweg_aus(
+                "S1",
+                &[(1839.6, 0.3), (1904.0, -1.0), (1947.0, -22.0), (1897.0, -37.0)],
+            ),
+        ))
+    }
+
+    #[test]
+    fn eddg_ein_rollwegstueck_auf_der_bahn_ist_keine_ausfahrt() {
+        let a = ausfahrten_fuer_bahn(&eddg_szenerie(), T.0, T.1, T.2, T.3, 46.0);
+        assert!(
+            a.iter().all(|x| x.seite != "right"),
+            "Phantom-Ausfahrt rechts — B und S1 verlassen die Bahn dort nicht: {a:?}"
+        );
+        // Die echte Ausfahrt bleibt: links bei rund 1947 m.
+        assert!(
+            a.iter()
+                .any(|x| x.name == "B" && x.seite == "left" && (x.laengs_m - 1947.0).abs() < 8.0),
+            "{a:?}"
+        );
+    }
+
     /// Ein Punkt auf der Bahnachse: `laengs` Meter nach der Schwelle,
     /// `quer` Meter seitlich (positiv rechts in Landerichtung).
     fn punkt_auf_bahn(laengs: f64, quer: f64) -> (f64, f64) {

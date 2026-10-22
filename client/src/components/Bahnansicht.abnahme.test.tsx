@@ -25,9 +25,14 @@ const FAELLE = import.meta.glob("../dev/bahnansicht/fixtures/*.json", { eager: t
   Record<string, unknown>
 >;
 const payload = (id: number) => FAELLE[`../dev/bahnansicht/fixtures/${id}.json`]!;
+// Der Typ steht nicht im Touchdown-Payload; die Webapp ergänzt ihn aus
+// `flight_sessions` (`LandingAnalysis`), der Client aus dem LandingRecord.
+// Live gelesen (sqlite3 -readonly, 22.10.2026).
+const TYP: Record<number, string> = { 1936: "A320" };
 const fall = (id: number) => {
   const pl = payload(id);
-  return mapTouchdownPayloadToV2Props(pl, Array.isArray(pl.sub_scores) ? (pl.sub_scores as never) : null)!;
+  const p = mapTouchdownPayloadToV2Props(pl, Array.isArray(pl.sub_scores) ? (pl.sub_scores as never) : null)!;
+  return TYP[id] ? { ...p, aircraft_icao: p.aircraft_icao ?? TYP[id] } : p;
 };
 
 function zeichne(props: RunwayDiagramV2Props) {
@@ -46,13 +51,18 @@ function zeichne(props: RunwayDiagramV2Props) {
       .split(/\s+/)
       .map((p) => p.split(",").map(Number) as [number, number]);
   };
+  // Ab 2.1.8 legt die Grafik ihren Zeichenbereich offen (Platz hinter dem
+  // Bahnende, Skala rechts) — sonst die feste Geometrie bis 2.1.7.
+  const zahl = (n: string) => (svg.hasAttribute(n) ? Number(svg.getAttribute(n)) : null);
   const projektion = erzeugeProjektion({
     lengthM: props.length_m,
     ddsM: props.displaced_threshold_m ?? 0,
     spurVersatzM: props.spur_nullpunkt_versatz_m ?? 0,
-    padX: 70,
-    innerW: 1060,
-  });
+    padX: zahl("data-pad-x") ?? 70,
+    innerW: zahl("data-inner-w") ?? 1060,
+    nachM: zahl("data-nach-m") ?? 0,
+    vorM: zahl("data-vor-m") ?? 0,
+  } as Parameters<typeof erzeugeProjektion>[0]);
   return { container, svg, top, bot, links: linie("rad-links"), rechts: linie("rad-rechts"), mitte: linie("spur-mitte"), projektion };
 }
 
@@ -277,4 +287,172 @@ describe("Neue Beschriftungen nur mit Zeichen aus B612 Mono", () => {
     }
     expect(fehlt).toEqual([]);
   });
+});
+
+// ── #1936 (DLH 250, EDDG 25, A320, Client 2.1.6) als elfter fester Fall ──
+// Kritik Thomas 22.10.2026 (`handoff/bahnansicht/kritik-2026-10-22.md`),
+// Entscheidungen 1–7 (`entscheidungen-2026-10-22.md`). Jede Zusicherung ist
+// auf dem Stand v2.1.7 ROT (Beleg im Nachweis). Die Phantom-Ausfahrt rechts
+// bei 1839,6 m prüft der Rust-Test `ausfahrten::tests::eddg_*`: Der
+// gespeicherte Payload trägt sie, und die Szenerie-Züge sind nicht gespeichert.
+
+/** Textbreite geschätzt wie in `bahnHilfen.gruppiere` (0,62 em je Zeichen). */
+function textKasten(t: Element) {
+  const fs = Number(t.getAttribute("font-size") ?? 10);
+  const x = Number(t.getAttribute("x") ?? 0);
+  const y = Number(t.getAttribute("y") ?? 0);
+  const b = (t.textContent ?? "").length * fs * 0.62;
+  const anker = t.getAttribute("text-anchor") ?? "start";
+  const links = anker === "middle" ? x - b / 2 : anker === "end" ? x - b : x;
+  return { links, rechts: links + b, oben: y - fs, unten: y + fs * 0.25 };
+}
+
+function draufsicht() {
+  const z = zeichne(fall(1936));
+  const vb = z.svg.getAttribute("viewBox")!.split(" ").map(Number);
+  return { ...z, W: vb[2]!, H: vb[3]! };
+}
+
+describe("#1936 EDDG 25 — Kritik 22.10.2026 (golden)", () => {
+  it("1 · ein Ausfahrtname überall: Kopf, Stummel, Lupe und Pfeil sagen „B“ (nicht „B/S1“)", () => {
+    const z = draufsicht();
+    const texte = [...z.svg.querySelectorAll("text")].map((t) => t.textContent ?? "");
+    const kopf = texte.map((s) => /Ausfahrt (\S+) (links|rechts)/.exec(s)?.[1]).find(Boolean);
+    const stummel = [...z.svg.querySelectorAll('[data-rolle="ausfahrt-name"][font-weight="700"]')].map((t) => t.textContent);
+    const lupe = [...z.container.querySelectorAll('svg[data-ansicht="lupe"] text[font-weight="700"]')].map((t) => t.textContent);
+    expect(kopf).toBe("B");
+    expect(stummel).toEqual(["B"]);
+    expect(lupe).toEqual(["B"]);
+    expect(z.svg.querySelector('[data-rolle="weiter-pfeil"]')?.textContent).toBe("weiter auf Rollweg B");
+    // Doppelname an derselben Abzweigung: ein Name, nirgends „S1“.
+    const namen = [...z.svg.querySelectorAll('[data-rolle="ausfahrt-name"]')].map((t) => t.textContent ?? "");
+    expect(namen.some((n) => n.includes("S1") || n.includes("/"))).toBe(false);
+  });
+
+  it("3 · kein Text ausserhalb des Bildes (ausdrücklich der Räumpunkt-Kopf)", () => {
+    const z = draufsicht();
+    const raus = [...z.svg.querySelectorAll("text")]
+      .filter((t) => (t.textContent ?? "").trim() !== "")
+      .filter((t) => {
+        const k = textKasten(t);
+        return k.links < -0.5 || k.rechts > z.W + 0.5 || k.oben < -0.5 || k.unten > z.H + 0.5;
+      })
+      .map((t) => t.textContent);
+    expect(raus).toEqual([]);
+  });
+
+  it("4 · Ausfahrt ganz im Bild: Spur, Marke 3 und Stummel enden vor der Querskala, Bahn nicht bündig am Rand", () => {
+    const z = draufsicht();
+    const skalaX = Math.min(...[...z.svg.querySelectorAll('[data-rolle="querskala"] line')].map((l) => Number(l.getAttribute("x1"))));
+    const xs = [
+      ...(z.links ?? []).map(([x]) => x),
+      ...(z.rechts ?? []).map(([x]) => x),
+      ...[...z.svg.querySelectorAll('[data-marke="3"] circle')].map((c) => Number(c.getAttribute("cx")) + Number(c.getAttribute("r"))),
+      ...[...z.svg.querySelectorAll('[data-rolle="ausfahrt"]')].map((r) => Number(r.getAttribute("x")) + Number(r.getAttribute("width"))),
+    ];
+    expect(Math.max(...xs)).toBeLessThan(skalaX - 6);
+    // Platz hinter dem Bahnende (Entscheidung 1): die Bahn endet vor dem Zeichenbereich.
+    expect(z.svg.getAttribute("data-nach-m")).not.toBeNull();
+    expect(Number(z.svg.getAttribute("data-nach-m"))).toBeGreaterThan(0);
+  });
+
+  it("5 · Band quer richtig: 1900–1940 m kein äusseres Rad jenseits der Kante, ab 1945 m schon", () => {
+    const z = draufsicht();
+    const l = z.links!;
+    const x = (m: number) => z.projektion.mAbBahnanfangZuX(m);
+    const drin = l.filter(([px]) => px >= x(1900) && px <= x(1940));
+    expect(drin.length).toBeGreaterThan(0);
+    for (const [px, py] of drin) expect(py, `x=${px}`).toBeGreaterThanOrEqual(z.top - 0.5);
+    expect(l.some(([px, py]) => px >= x(1945) && py < z.top - 0.5)).toBe(true);
+  });
+
+  it("6 · kein missverständliches „real bis 102 m“ — stattdessen der Pfeil an der Austrittsstelle", () => {
+    const z = draufsicht();
+    expect(z.container.textContent).not.toMatch(/real bis/);
+    const pfeil = z.svg.querySelector('[data-rolle="weiter-pfeil"]');
+    expect(pfeil).not.toBeNull();
+    const letzte = z.mitte![z.mitte!.length - 1]!;
+    const spitze = pfeil!.querySelector("polygon")!.getAttribute("points")!.split(" ")[0]!.split(",").map(Number);
+    expect(Math.abs(spitze[0]! - letzte[0])).toBeLessThan(12);
+  });
+
+  it("8 · keine Linie ins Leere (kein Strich und keine gestrichelte Linie an Marke 2)", () => {
+    const z = draufsicht();
+    expect(z.svg.querySelectorAll('[data-rolle="randstelle"] line').length).toBe(0);
+    const insLeere = [...z.svg.querySelectorAll("line")].filter((l) => Number(l.getAttribute("y2")) > z.H - 12);
+    expect(insLeere.length).toBe(0);
+  });
+
+  it("9 · Quelle der Rollwege richtig benannt: Szenerie, nicht OpenStreetMap (Draufsicht und Lupe)", () => {
+    const z = draufsicht();
+    const leg = z.container.querySelector('[data-rolle="legende"]');
+    expect(leg?.querySelector('[data-legende-eintrag="rollwege"]')?.textContent).toMatch(/aus der Szenerie/);
+    expect(z.container.textContent).not.toMatch(/OpenStreetMap|\(OSM\)/);
+  });
+
+  it("10 · Marke 2 mit Zahl daneben und Farbe grün (16,3 m Rand)", () => {
+    const z = draufsicht();
+    const m2 = z.svg.querySelector('[data-marke="2"]')!;
+    expect(m2.querySelector("circle")!.getAttribute("fill")).toBe("#22c55e");
+    expect(z.svg.querySelector('[data-rolle="marke2-text"]')?.textContent).toBe("16,3 m zur Kante");
+  });
+
+  it("Dreieck „Bewertung bis hier“ beschriftet, Spur danach blasser (Entscheidung 4)", () => {
+    const z = draufsicht();
+    expect(z.svg.querySelector('[data-rolle="mess-ende-text"]')?.textContent).toBe("Bewertung bis hier");
+    const vor = z.svg.querySelector('[data-rolle="band"]')!;
+    const nach = z.svg.querySelector('[data-rolle="band-nach"]')!;
+    expect(Number(nach.getAttribute("fill-opacity"))).toBeLessThan(Number(vor.getAttribute("fill-opacity")) / 2);
+  });
+
+  it("Kopf, Querskala und Handy (Entscheidung 7)", () => {
+    const z = draufsicht();
+    expect(z.svg.querySelector('[data-rolle="ueberhoehung"]')!.textContent).toBe(
+      "A320 · Spurweite 7,6 m · Bahn 45 m breit · quer 8-fach gestreckt",
+    );
+    const skala = [...z.svg.querySelectorAll('[data-rolle="querskala"] text')].map((t) => t.textContent);
+    expect(skala).toEqual(["Kante 22,6 m links", "Mitte", "Kante 22,6 m rechts"]);
+    // Handy: gestaucht statt im Kasten gerollt.
+    expect(z.svg.style.minWidth).toBe("");
+    expect((z.container.querySelector('[data-rolle="bahn-grafik"]') as HTMLElement).style.overflowX).not.toBe("auto");
+  });
+
+  it("eine Legende direkt unter der Draufsicht, ein Satz statt Fliesstext (Entscheidung 6)", () => {
+    const z = draufsicht();
+    const legenden = z.container.querySelectorAll('[data-rolle="legende"]');
+    expect(legenden.length).toBe(1);
+    expect(z.container.textContent).toMatch(
+      /Quer stark gestreckt, damit schon ein, zwei Meter sichtbar werden\. Echte Winkel zeigt die Lupe darunter\./,
+    );
+    expect(z.container.textContent).not.toMatch(/Blick von oben auf die ganze Bahn/);
+    // Die Legende steht VOR der Lupe.
+    const lupe = z.container.querySelector('svg[data-ansicht="lupe"]')!;
+    expect(legenden[0]!.compareDocumentPosition(lupe) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+// ── 7 · Jedes gezeichnete Element steht in der Legende ─────────────────
+// Fängt auch KÜNFTIGE Elemente: Jede Form im Bild (rect, line, path,
+// polyline, polygon, circle) muss über sich oder einen Vorfahren ein
+// `data-legende` tragen. Entweder einen Schlüssel, der in der Legende unter
+// der Grafik steht, oder `beschriftung` (Skalen, Klammern, Bezugsstriche —
+// sie tragen ihren Text selbst). Eine neue Form ohne Zuordnung wird rot.
+describe("Legende vollständig — jedes gezeichnete Element (alle elf Fälle)", () => {
+  const FORMEN = "rect, line, path, polyline, polygon, circle";
+  for (const id of [1062, 1662, 1738, 1779, 1842, 1884, 1905, 1909, 1914, 1916, 1936]) {
+    it(`#${id}`, () => {
+      const z = zeichne(fall(id));
+      const eintraege = new Set(
+        [...z.container.querySelectorAll("[data-legende-eintrag]")].map((e) => e.getAttribute("data-legende-eintrag")),
+      );
+      const fehlt = new Set<string>();
+      for (const f of z.svg.querySelectorAll(FORMEN)) {
+        if (f.closest("defs, clipPath, pattern")) continue;
+        const k = f.closest("[data-legende]")?.getAttribute("data-legende");
+        if (!k) fehlt.add(`${f.tagName} ohne Zuordnung (${f.parentElement?.getAttribute("data-rolle") ?? "?"})`);
+        else if (k !== "beschriftung" && !eintraege.has(k)) fehlt.add(`${k} fehlt in der Legende`);
+      }
+      expect([...fehlt]).toEqual([]);
+    });
+  }
 });
