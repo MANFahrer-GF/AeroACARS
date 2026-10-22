@@ -163,6 +163,10 @@ export interface LandingRecord {
    * Queransicht einfach keine Stummel.
    */
   runway_exits?: Array<{ name: string; laengs_m: number; seite: "left" | "right" }> | null;
+  /** Die genutzte Ausfahrt (Name), einmal im Client bestimmt — ab 2.1.8. */
+  clearance_exit?: string | null;
+  /** Woher `runway_exits` stammen: „szenerie“ oder „osm“ — ab 2.1.8. */
+  runway_exits_quelle?: string | null;
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;

@@ -15,7 +15,7 @@
 import { describe, expect, it } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 import { readFileSync } from "node:fs";
-import { RunwayDiagramV2, MIN_ANZEIGE_BREITE_PX, BAHN_GRUND, type RunwayDiagramV2Props } from "./RunwayDiagramV2";
+import { RunwayDiagramV2, BAHN_GRUND, type RunwayDiagramV2Props } from "./RunwayDiagramV2";
 import { mapTouchdownPayloadToV2Props } from "../dev/bahnansicht/payloadMapper";
 import { erzeugeProjektion } from "../lib/runwayProjection";
 import { aussenkanteHalbM } from "../lib/bahnQuerMassstab";
@@ -228,7 +228,8 @@ describe("Bahnansicht B — zehn echte Landungen (golden)", () => {
     const z = zeichne(fall(1909));
     const text = z.container.textContent ?? "";
     expect(z.svg.querySelector('[data-rolle="querskala"]')).not.toBeNull();
-    expect(z.svg.querySelector('[data-rolle="ueberhoehung"]')!.textContent).toMatch(/Spurweite 7\.6 m · quer \d+,\d× überhöht · Bahn 46 m/);
+    // Kopf seit 2.1.8 (Entscheidung 7): Komma im Deutschen, „gestreckt“.
+    expect(z.svg.querySelector('[data-rolle="ueberhoehung"]')!.textContent).toMatch(/Spurweite 7,6 m · Bahn 46 m breit · quer \d+-fach gestreckt/);
     // Alle 31 Ausfahrten als Stummel, und benannt (zusammengefasst, gezählt).
     expect(z.svg.querySelectorAll('[data-rolle="ausfahrt"]').length).toBeGreaterThan(20);
     const namen = [...z.svg.querySelectorAll('[data-rolle="ausfahrt-name"]')].map((n) => n.textContent ?? "");
@@ -239,22 +240,38 @@ describe("Bahnansicht B — zehn echte Landungen (golden)", () => {
     expect(["1", "2", "3"].every((n) => ziffern.includes(n))).toBe(true);
     expect(z.svg.querySelector('[data-rolle="mess-ende"]')).not.toBeNull();
     // Eigene Legende direkt unter der Draufsicht; keine zweite überhöhte Ansicht mehr.
-    expect(text).toMatch(/Band reicht bis zur Außenkante der äußeren Reifen/);
+    expect(z.container.querySelector('[data-legende-eintrag="band"]')?.textContent).toMatch(/Band bis Reifen-Außenkante/);
     expect(text).not.toMatch(/QUER — WO DIE RÄDER LIEFEN/);
     // „am Bildrand angehalten“ — #1738 (Graspiste, Spur fast ganz ausserhalb)
     expect(zeichne(fall(1738)).container.querySelector('[data-rolle="laeuft-weiter"]')?.textContent).toMatch(/am Bildrand angehalten/);
   });
 
-  it("B7: Handy — Grafik mit Mindestbreite, kleinste Schrift ≥ 5,5 px (vorher 2,7 px bei 360 px)", () => {
-    const z = zeichne(fall(1914));
-    expect(z.svg.style.minWidth).toBe(`${MIN_ANZEIGE_BREITE_PX}px`);
-    const kasten = z.container.querySelector('[data-rolle="bahn-grafik"]') as HTMLElement;
-    expect(kasten.style.overflowX).toBe("auto");
-    const kleinste = Math.min(
-      ...[...z.svg.querySelectorAll("text")].map((t) => Number(t.getAttribute("font-size"))).filter((n) => n > 0),
-    );
-    const vb = Number(z.svg.getAttribute("viewBox")!.split(" ")[2]);
-    expect((kleinste * MIN_ANZEIGE_BREITE_PX) / vb).toBeGreaterThanOrEqual(5.5);
+  it("B7/Entscheidung 7: Handy — gestaucht statt gerollt, kleinste Schrift ≥ 5,5 px bei 358 px", () => {
+    // jsdom misst nicht — der Kasten meldet seine Breite über ResizeObserver.
+    const echt = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe() {
+        this.cb([{ contentRect: { width: 358 } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      const z = zeichne(fall(1914));
+      expect(z.svg.style.minWidth).toBe("");
+      const kasten = z.container.querySelector('[data-rolle="bahn-grafik"]') as HTMLElement;
+      expect(kasten.style.overflowX).not.toBe("auto");
+      const vb = Number(z.svg.getAttribute("viewBox")!.split(" ")[2]);
+      const kleinste = Math.min(
+        ...[...z.svg.querySelectorAll("text")].map((t) => Number(t.getAttribute("font-size"))).filter((n) => n > 0),
+      );
+      expect((kleinste * 358) / vb).toBeGreaterThanOrEqual(5.5);
+      // Die ganze Bahn ist im Bild, nicht rechts abgeschnitten.
+      expect(Number(z.svg.getAttribute("data-pad-x")) + Number(z.svg.getAttribute("data-inner-w"))).toBeLessThanOrEqual(vb);
+    } finally {
+      globalThis.ResizeObserver = echt;
+    }
   });
 
   it("B9: helles Thema — die Grafik steht auf ihrem eigenen dunklen Grund", () => {
@@ -383,11 +400,18 @@ describe("#1936 EDDG 25 — Kritik 22.10.2026 (golden)", () => {
     expect(insLeere.length).toBe(0);
   });
 
-  it("9 · Quelle der Rollwege richtig benannt: Szenerie, nicht OpenStreetMap (Draufsicht und Lupe)", () => {
+  it("9 · Quelle der Rollwege richtig benannt: nie mehr pauschal OpenStreetMap (Draufsicht und Lupe)", () => {
+    // Gespeichert (2.1.6): keine Quelle — die Legende sagt das, statt „OSM“ zu raten.
     const z = draufsicht();
-    const leg = z.container.querySelector('[data-rolle="legende"]');
-    expect(leg?.querySelector('[data-legende-eintrag="rollwege"]')?.textContent).toMatch(/aus der Szenerie/);
+    const eintrag = () => z.container.querySelector('[data-rolle="legende"] [data-legende-eintrag="rollwege"]')?.textContent;
+    expect(eintrag()).toMatch(/Quelle nicht gespeichert/);
     expect(z.container.textContent).not.toMatch(/OpenStreetMap|\(OSM\)/);
+    // Ab 2.1.8 meldet der Client sie: #1936 kam aus der MSFS-Szenerie.
+    cleanup();
+    const { container } = render(<RunwayDiagramV2 {...fall(1936)} runway_exits_quelle="szenerie" />);
+    expect(container.querySelector('[data-legende-eintrag="rollwege"]')?.textContent).toMatch(/aus der Szenerie/);
+    expect(container.querySelector('svg[data-ansicht="lupe"]')!.parentElement!.textContent).toMatch(/Rollweg aus der Szenerie/);
+    expect(container.textContent).not.toMatch(/OpenStreetMap|\(OSM\)/);
   });
 
   it("10 · Marke 2 mit Zahl daneben und Farbe grün (16,3 m Rand)", () => {
@@ -407,8 +431,10 @@ describe("#1936 EDDG 25 — Kritik 22.10.2026 (golden)", () => {
 
   it("Kopf, Querskala und Handy (Entscheidung 7)", () => {
     const z = draufsicht();
-    expect(z.svg.querySelector('[data-rolle="ueberhoehung"]')!.textContent).toBe(
-      "A320 · Spurweite 7,6 m · Bahn 45 m breit · quer 8-fach gestreckt",
+    // Der Faktor ist gerechnet (mit der Querskala rechts ist die Bahn etwas
+    // kürzer gezeichnet: 9 statt 8,2 wie im Bildschirmfoto).
+    expect(z.svg.querySelector('[data-rolle="ueberhoehung"]')!.textContent).toMatch(
+      /^A320 · Spurweite 7,6 m · Bahn 45 m breit · quer \d-fach gestreckt$/,
     );
     const skala = [...z.svg.querySelectorAll('[data-rolle="querskala"] text')].map((t) => t.textContent);
     expect(skala).toEqual(["Kante 22,6 m links", "Mitte", "Kante 22,6 m rechts"]);

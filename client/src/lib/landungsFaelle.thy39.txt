@@ -70,17 +70,15 @@ Landeschwelle (Threshold) — Beginn des landbaren Bahn-Teils.Bahn-Ende — Ende
 AUFSETZZONE (TDZ) 900 m
 AIM-POINT 400 m
 Aim-Point — die zwei großen weißen Quadrate auf der echten Bahn (hier gelb gezeichnet). Pilot zielt im Anflug auf diese Markierung; durch den Flare setzt er typisch 50–150 m DAHINTER auf (= Anfang der TDZ). Position: 400 m hinter Schwelle.
-32,5 m
-0
-32,5 m
-Kante
-LINKS
-RECHTS
+Kante 32,5 m links
+Mitte
+Kante 32,5 m rechts
 B1B/A10
-B1B/C1A +2
+B1B/A10 +1
 C3A
 B3B
-B3B/C4A +2
+B3B
+B4B
 B4B
 B5B
 C6
@@ -91,12 +89,15 @@ C10
 B9B/C11
 C11
 C12
-C12/C13 +2
+C12/C13 +1
 C13
 C14
+Bewertung bis hier
+19,5 m zur Kante
+weiter auf Rollweg C8
 2
 3
-Spurweite 10.7 m · quer 15,7× überhöht (breite Bahn gestaucht) · Bahn 65 m · Band bis Reifen-Außenkante
+Spurweite 10,7 m · Bahn 65 m breit · quer 17-fach gestreckt (breite Bahn gestaucht)
 DRAUFSICHT — AUFSETZEN, SPUR, RAND, AUSFAHRT
 BAHN-ENDE
 BAHN GERÄUMT
@@ -119,21 +120,22 @@ TD 820 m · 3.1 m rechts
 3000 m
 3600 m
 knappste Stelle: äußeres Rad 19,5 m vor der Kante · bei 1132 m
-Spur läuft weiter — real bis 110 m
 Strg + Mausrad zoomt · Ziehen verschiebt
 −
 +
-Schwelle
+Schwelle (links Landeschwelle, rechts Gegenrichtung)
 Aufsetzzone (TDZ)
 Ziel-Markierung (AIM)
-Aufsetzpunkt (TD)
-Blick von oben auf die ganze Bahn, quer stark gestreckt (Faktor rechts oben), damit schon ein, zwei Meter Abweichung sichtbar werden. Das Band reicht bis zur Außenkante der äußeren Reifen — genau diese Kante wird bewertet; die helle Linie darin ist die Flugzeugmitte. Marke 1 Aufsetzen, 2 knappste Stelle zur Kante (die Zahl darunter ist der bewertete Randabstand), 3 Bahn geräumt, 4 über das Bahnende. Das gelbe Dreieck unter der Bahn markiert das Ende des bewerteten Teils; danach zählt die Spur nicht mehr. Violett gestrichelt: ein früherer Durchgang (durchgestartet). Die Stummel am Rand sind die Ausfahrten. Die Streckung verbiegt Winkel — wie das Abrollen wirklich verlief, zeigt die Lupe darunter. Rot „aufgesetzt X m neben der Bahn“: So weit stand das äußere Rad beim Aufsetzen jenseits der Kante — das bewertet die Teilnote Ausrichtung (steht nur dann da).
-Aufsetzpunkt (TD)
-Spur — 139 gemessene Stützpunkte
-nach dem Räumen — gemessen, nicht mehr gewertet
-Ausfahrten (OSM) · genutzte hervorgehoben
-▲ Querversatz bewertet bis hier — danach nur noch gezeichnet
-neben der Bahn — unbefestigt
+1 Aufsetzen
+Band bis Reifen-Außenkante: Ränder = äußere Räder, Farbe nach Abstand zur Kante
+Flugzeugmitte, Punkte = Messungen (139)
+Grünstreifen neben der Bahn (Breite nicht maßstäblich)
+Rollwege (Quelle nicht gespeichert), hell: genutzte Ausfahrt
+2 knappste Stelle zur Kante: grün viel Abstand, gelb eng, rot Rad neben der Bahn
+3 Bahn geräumt
+Bewertung bis hier, danach Spur blasser (nicht mehr gewertet)
+Spur läuft dort aus dem Bild weiter
+Quer stark gestreckt, damit schon ein, zwei Meter sichtbar werden. Echte Winkel zeigt die Lupe darunter. Mehr unter „Begriffe erklärt“.
 ABROLLEN — IM ECHTEN MASSSTAB
 längs und quer gleicher Maßstab · Winkel wie gefahren
 C8
@@ -143,7 +145,7 @@ Landerichtung →
 50 m
 Ausschnitt um die Stelle, an der die Bahn verlassen wurde — längs und quer im selben Maßstab, also mit den echten Winkeln. So ist das Flugzeug abgerollt.
 Spur der Hauptfahrwerke, Punkte = Messungen
-Rollweg aus OpenStreetMap (23 m breit angenommen) — kräftig: der genommene
+Rollweg (Quelle nicht gespeichert, 23 m breit angenommen), kräftig: der genommene
 ③ hier hat die Spur die Bahn verlassen
 1
 Aufsetzen · 820 m hinter der Schwelle · 3.1 m rechts

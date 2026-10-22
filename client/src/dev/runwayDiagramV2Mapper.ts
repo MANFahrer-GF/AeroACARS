@@ -98,6 +98,10 @@ export function mapLandingRecordToV2Props(
     // Zahl „aufgesetzt X m neben der Bahn“.
     ausrichtung_grund: ausrichtungGrund(record.sub_scores),
     runway_exits: record.runway_exits ?? null,
+    // Bahnansicht 2.1.8: die genutzte Ausfahrt und die Quelle der Rollwege
+    // kommen vom Client — Kopf, Bild, Lupe und PDF zeigen nur diesen Namen.
+    clearance_exit: record.clearance_exit ?? null,
+    runway_exits_quelle: record.runway_exits_quelle ?? null,
     min_edge_clearance_m: record.min_edge_clearance_m ?? null,
     max_lateral_offset_m: record.max_lateral_offset_m ?? null,
     lateral_samples: record.lateral_samples ?? null,

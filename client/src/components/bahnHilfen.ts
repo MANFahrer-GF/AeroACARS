@@ -244,3 +244,79 @@ function beschriftung(namen: string[]): string {
   const kopf = eindeutig.slice(0, 2).join("/");
   return rest > 0 ? `${kopf} +${rest}` : kopf;
 }
+
+// ── Eine Quelle für den Ausfahrtnamen (Bahnansicht 2.1.8, #1936) ─────────
+//
+// Bis 2.1.7 suchten Kopf („BAHN GERÄUMT … Ausfahrt B“), Draufsicht
+// (hervorgehobener Stummel „B/S1“) und Lupe („B“) die genutzte Ausfahrt
+// je selbst — drei Suchen, zwei Antworten. Seit 2.1.8 bestimmt der Client
+// sie einmal (`clearance_exit`); für ältere Flüge rechnet DIESE Funktion
+// einmal nach derselben Regel wie der Client (`ausfahrten.rs`).
+
+/** Wie weit zwei Ausfahrten derselben Seite auseinander liegen dürfen und
+ *  noch dieselbe Abzweigung sind (wie `DIESELBE_ABZWEIGUNG_M` im Client):
+ *  derselbe Stützpunkt. Getrennte Rollwege wenige Meter auseinander
+ *  (Frankfurt R11/M19/R13) bleiben getrennt — sie werden gezählt. */
+const DIESELBE_ABZWEIGUNG_M = 0.5;
+
+/**
+ * Doppelnamen an derselben Abzweigung → EIN Name (Thomas, 22.10.2026):
+ * `bevorzugt` (der Name, den der Client gemeldet hat), sonst der kürzere,
+ * bei Gleichstand der alphabetisch erste. Der Client bevorzugt zusätzlich
+ * den Namen der Bodenkarte; die liegt der Anzeige nicht vor.
+ */
+export function doppelnamenZusammenfassen<A extends Ausfahrt>(liste: A[], bevorzugt?: string | null): A[] {
+  const rang = (a: A): [number, number, string] => [a.name === bevorzugt ? 0 : 1, [...a.name].length, a.name];
+  const kleiner = (x: [number, number, string], y: [number, number, string]) =>
+    x[0] !== y[0] ? x[0] < y[0] : x[1] !== y[1] ? x[1] < y[1] : x[2] < y[2];
+  const aus: A[] = [];
+  for (const a of liste) {
+    const i = aus.findIndex((b) => b.seite === a.seite && Math.abs(b.laengs_m - a.laengs_m) <= DIESELBE_ABZWEIGUNG_M);
+    if (i < 0) aus.push(a);
+    else if (kleiner(rang(a), rang(aus[i]!))) aus[i] = a;
+  }
+  return aus;
+}
+
+export interface AusfahrtQuelle {
+  runway_exits?: Ausfahrt[] | null;
+  clearance_exit?: string | null;
+  clearance_point_m?: number | null;
+  clearance_side?: "left" | "right" | null;
+}
+
+/** Die Ausfahrten, wie alle Ansichten sie zeigen: ein Name je Abzweigung. */
+export function ausfahrtenFuerAnzeige(p: AusfahrtQuelle): Ausfahrt[] {
+  return doppelnamenZusammenfassen(p.runway_exits ?? [], p.clearance_exit);
+}
+
+/**
+ * Die genutzte Ausfahrt — für Kopf, Draufsicht, Lupe, Pfeil und PDF.
+ *
+ * Mit `clearance_exit` (ab 2.1.8): genau dieser Name, an seinem Stummel
+ * nächst dem Räumpunkt. Ohne (älter): auf der Räumseite, höchstens 120 m
+ * vom Räumpunkt, die nächste — wie der Client (DLH369 EDDM: B6, nicht B7).
+ * Ohne Räumseite kein Name: Eine geratene Seite wäre schlimmer als keine.
+ */
+export function genutzteAusfahrt(p: AusfahrtQuelle): Ausfahrt | null {
+  const raeum = p.clearance_point_m;
+  if (raeum == null || p.clearance_side == null) return null;
+  const kandidaten = ausfahrtenFuerAnzeige(p)
+    .filter((a) => a.seite === p.clearance_side && Math.abs(a.laengs_m - raeum) < 120)
+    .sort((a, b) => Math.abs(a.laengs_m - raeum) - Math.abs(b.laengs_m - raeum));
+  // Ein gemeldeter Name, der hier nicht (mehr) liegt — etwa nach einer
+  // späteren Bahnkorrektur —, wird nicht erfunden: dann die Regel.
+  return kandidaten.find((a) => a.name === p.clearance_exit) ?? kandidaten[0] ?? null;
+}
+
+/**
+ * Woher die Rollwege stammen — ab 2.1.8 meldet es der Client
+ * (`runway_exits_quelle`). Davor ist es nicht gespeichert: `null`, die
+ * Legende sagt „Quelle nicht gespeichert“ statt eine zu raten (bis 2.1.7
+ * stand pauschal „OSM“, bei #1936 falsch). Nicht aus der Bahn-Herkunft
+ * geschlossen: Die kennt nur der Payload der Webapp, nicht der Datensatz
+ * des Clients — beide Seiten zeigten sonst Verschiedenes.
+ */
+export function rollwegQuelle(p: { runway_exits_quelle?: string | null }): "szenerie" | "osm" | null {
+  return p.runway_exits_quelle === "szenerie" || p.runway_exits_quelle === "osm" ? p.runway_exits_quelle : null;
+}

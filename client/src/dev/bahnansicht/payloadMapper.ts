@@ -240,6 +240,9 @@ export function mapTouchdownPayloadToV2Props(
     // mitnimmt: Eine Typangabe, die ein vorhandenes Feld verschweigt,
     // ist eine Einladung, es beim Aufraeumen zu entfernen. Aus ihm
     // zeichnet die Queransicht den Korridor des genommenen Rollwegs.
+    // Bahnansicht 2.1.8: genutzte Ausfahrt und Quelle der Rollwege (Client).
+    clearance_exit: (pl.clearance_exit as string | null) ?? null,
+    runway_exits_quelle: (pl.runway_exits_quelle as string | null) ?? null,
     runway_exits:
       (pl.runway_exits as Array<{
         name: string;

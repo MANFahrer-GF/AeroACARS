@@ -53,6 +53,14 @@ export interface ProjektionsEingang {
    */
   sichtVonM?: number;
   sichtBisM?: number;
+  /**
+   * Platz vor dem Bahnanfang und hinter dem Bahnende, in Metern
+   * (Bahnansicht 2.1.8, Entscheidung 1): nur so viel, dass Ausfahrt und
+   * Räumpunkt ganz im Bild liegen. Ohne Angabe 0 — die Bahn füllt den
+   * Zeichenbereich wie bisher.
+   */
+  vorM?: number;
+  nachM?: number;
 }
 
 /** Die Projektion — für beide Ansichten identisch. */
@@ -152,8 +160,10 @@ export function erzeugeProjektion(e: ProjektionsEingang): Projektion {
   // Bereich — auf die Bahn begrenzt und mit einer Mindestbreite, damit
   // ein versehentlicher Vollzoom die Projektion nicht entarten lässt.
   const MIN_SICHT_M = 50;
-  const ganzVon = -ddsM;
-  const ganzBis = lengthM;
+  const vorM = Number.isFinite(e.vorM as number) ? Math.max(0, e.vorM as number) : 0;
+  const nachM = Number.isFinite(e.nachM as number) ? Math.max(0, e.nachM as number) : 0;
+  const ganzVon = -ddsM - vorM;
+  const ganzBis = lengthM + nachM;
   let von = Number.isFinite(e.sichtVonM ?? NaN) ? e.sichtVonM! : ganzVon;
   let bis = Number.isFinite(e.sichtBisM ?? NaN) ? e.sichtBisM! : ganzBis;
   von = Math.max(ganzVon, Math.min(von, ganzBis - MIN_SICHT_M));
@@ -182,8 +192,8 @@ export function erzeugeProjektion(e: ProjektionsEingang): Projektion {
     // Bahnanfang und -ende liegen ausserhalb des Zeichenbereichs, sobald
     // hineingezoomt ist. Sie werden geklemmt, damit die Flächen an den
     // Bildrändern enden statt darüber hinaus.
-    bahnAnfangX: Math.max(e.padX, mToXUnbegrenzt(ganzVon)),
-    bahnEndeX: Math.min(e.padX + e.innerW, mToXUnbegrenzt(ganzBis)),
+    bahnAnfangX: Math.max(e.padX, mToXUnbegrenzt(-ddsM)),
+    bahnEndeX: Math.min(e.padX + e.innerW, mToXUnbegrenzt(lengthM)),
     totalVisualM,
     pxProMeter,
     lengthM,

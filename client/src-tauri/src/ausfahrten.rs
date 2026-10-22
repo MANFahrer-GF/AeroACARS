@@ -170,8 +170,11 @@ fn kantenpunkte(zug: &[(f64, f64)], halbe_breite: f64) -> Vec<(f64, f64, &'stati
 }
 
 /// Wie weit zwei Ausfahrten derselben Seite auseinander liegen dürfen und
-/// noch dieselbe Abzweigung sind, in Metern.
-const DIESELBE_ABZWEIGUNG_M: f64 = 2.0;
+/// noch dieselbe Abzweigung sind, in Metern: derselbe Stützpunkt (B und S1
+/// in EDDG liegen beide bei 1947,0 m). Getrennte Rollwege wenige Meter
+/// auseinander (Frankfurt R11/M19/R13) bleiben getrennt und werden in der
+/// Anzeige gezählt.
+const DIESELBE_ABZWEIGUNG_M: f64 = 0.5;
 
 /// Doppelnamen an derselben Abzweigung → EIN Name (Thomas, 22.10.2026).
 ///
