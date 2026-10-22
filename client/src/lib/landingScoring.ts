@@ -58,6 +58,8 @@ export const RATIONALE_LABELS: Record<string, string> = {
   one_bounce: "Einmal kurz aufgesetzt",
   two_bounces: "Mehrfach aufgesetzt",
   many_bounces: "Mehrere Bounces",
+  one_light_bounce: "Ein leichter Hopser (unter 5 ft)",
+  light_bounces: "Mehrere leichte Hopser (unter 5 ft)",
   very_stable: "Sehr stabiler Anflug",
   stable: "Stabiler Anflug",
   average_stability: "Durchschnittlich stabil",
@@ -96,6 +98,8 @@ export const TIP_LABELS: Record<string, string> = {
   one_bounce: "Hopser über 5 ft: Nach Airbus-Verfahren (FCTM) Fluglage halten und durchstarten – nicht nachdrücken. Ursache meist zu hohe Sinkrate oder zu starkes Abfangen.",
   two_bounces: "Mehrere Hopser über 5 ft: Nach Airbus-Verfahren wäre schon beim ersten ein Durchstart vorgesehen (Fluglage halten, nicht nachdrücken). Stabileren Anflug fliegen, weniger ziehen im Flare.",
   many_bounces: "Wiederholte Hopser über 5 ft: Nach Airbus-Verfahren Fluglage halten und durchstarten, statt weiter aufzusetzen. Deutet auf ein instabiles Aufsetzprofil.",
+  one_light_bounce: "Leichter Hopser: mindestens 1 s in der Luft und 2 bis unter 5 ft über dem Boden, dann erneut aufgesetzt. Nach Airbus-Verfahren (FCTM) ein „light bounce“: Fluglage halten, nicht nachdrücken, sanft wieder aufsetzen. Meist zu viel Zug im Flare oder Schub nicht ganz auf Leerlauf.",
+  light_bounces: "Mehrere leichte Hopser (je mindestens 1 s in der Luft, 2 bis unter 5 ft): Fluglage halten, nicht nachdrücken. Flare ruhiger einleiten und Schub rechtzeitig auf Leerlauf.",
   very_stable: "Beispielhaft stabiler Anflug — V/S und Bank kaum Schwankungen.",
   stable: "Stabiler Anflug. Auf konstantem Glideslope bleiben.",
   average_stability: "OK, aber Pitch- und V/S-Schwankungen reduzieren — kleine Korrekturen statt großer.",
@@ -205,7 +209,14 @@ function subGForce(peakG: number): SubScore {
   return                       { key: "g_force", points: 0,   value: v, band: "bad",  rationale: "severe_g" };
 }
 
-function subBounces(bounces: number): SubScore {
+// P1/8b (Score-Version 26, Thomas 22.10.2026) — Zwilling von Rust
+// `sub_bounces_mit_leichten`: leichte Hopser (>= 1 s in der Luft, 2 bis
+// unter 5 ft) geben 85 (einer) bzw. 70 (zwei und mehr); mit einem normalen
+// Hopser gilt die alte Tabelle. `light` fehlt = Altbestand → alte Tabelle.
+function subBounces(bounces: number, light?: number | null): SubScore {
+  const l = light ?? 0;
+  if (bounces === 0 && l === 1) return { key: "bounces", points: 85, value: "1", band: "good", rationale: "one_light_bounce" };
+  if (bounces === 0 && l >= 2)  return { key: "bounces", points: 70, value: `${l}`, band: "ok", rationale: "light_bounces" };
   if (bounces === 0) return { key: "bounces", points: 100, value: "0", band: "good", rationale: "clean_set" };
   if (bounces === 1) return { key: "bounces", points: 70,  value: "1", band: "ok",   rationale: "one_bounce" };
   if (bounces === 2) return { key: "bounces", points: 40,  value: "2", band: "bad",  rationale: "two_bounces" };
@@ -265,6 +276,8 @@ export function computeSubScores(p: {
    *  this value; else it falls back to the raw peak_g_load. */
   scored_g_load?: number | null;
   bounce_count?: number | null;
+  /** P1/8b: leichte Hopser (Score-Version 26); fehlt bei Altbestand. */
+  light_bounce_count?: number | null;
   approach_vs_stddev_fpm?: number | null;
   approach_bank_stddev_deg?: number | null;
   rollout_distance_m?: number | null;
@@ -275,7 +288,7 @@ export function computeSubScores(p: {
   // v0.12.3 (LE8): score the EMA-smoothed scored_g_load when present.
   const gForScore = p.scored_g_load ?? p.peak_g_load;
   if (gForScore != null) out.push(subGForce(gForScore));
-  out.push(subBounces(p.bounce_count ?? 0));
+  out.push(subBounces(p.bounce_count ?? 0, p.light_bounce_count));
   const stab = subStability(p.approach_vs_stddev_fpm, p.approach_bank_stddev_deg);
   if (stab) out.push(stab);
   const ro = subRollout(p.rollout_distance_m);

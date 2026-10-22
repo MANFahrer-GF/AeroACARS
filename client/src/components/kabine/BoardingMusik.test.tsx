@@ -34,7 +34,7 @@ vi.mock("../../lib/ipc", () => ({
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => "/home/neu.mp3") }));
 
-import { MusikKasten } from "./BoardingMusik";
+import { MusikKasten, MusikRegler } from "./BoardingMusik";
 import type { MusikZustand } from "../../lib/kabinenansagen";
 
 const t = (k: string, o?: Record<string, unknown>) => i18next.t(k, o) as string;
@@ -155,5 +155,26 @@ describe("Dialog Eigene Boarding-Musik", () => {
     if (fokus.mock.calls.length) console.log("Fokus an", fokus.mock.contexts.map((c) => (c as HTMLElement).outerHTML.slice(0, 120)).join(" || "));
     expect(fokus).not.toHaveBeenCalled();
     fokus.mockRestore();
+  });
+});
+
+// Thomas 22.10.2026: „Wenn ich die Lautstärke verstelle, verändert sich alles.“
+// Nachgestellt: Nach dem Loslassen sprang der Regler auf den zuletzt
+// abgefragten alten Wert zurück, bis die nächste Abfrage kam.
+describe("Lautstärke-Regler springt nach dem Loslassen nicht zurück", () => {
+  it("behält den gezogenen Wert, bis der neue Stand gemeldet ist", () => {
+    const t = i18next.getFixedT("de");
+    const { rerender } = render(<MusikRegler lautstaerke={0.2} t={t} />);
+    const regler = screen.getByRole("slider");
+    fireEvent.change(regler, { target: { value: "60" } });
+    fireEvent.pointerUp(regler);
+    expect((regler as HTMLInputElement).value).toBe("60");
+    // Abfrage liefert noch den alten Wert: bleibt bei 60.
+    rerender(<MusikRegler lautstaerke={0.2} t={t} />);
+    expect((regler as HTMLInputElement).value).toBe("60");
+    // Neuer Stand gemeldet, danach folgt der Regler wieder von außen.
+    rerender(<MusikRegler lautstaerke={0.6} t={t} />);
+    rerender(<MusikRegler lautstaerke={0.3} t={t} />);
+    expect((regler as HTMLInputElement).value).toBe("30");
   });
 });

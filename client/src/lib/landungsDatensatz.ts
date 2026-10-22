@@ -256,6 +256,9 @@ export interface LandingRecord {
   /// = was im Score bestraft wird,
   /// identisch mit bounce_count nach Override-Pfad).
   scored_bounce_count?: number | null;
+  /// P1/8b (Score-Version 26): leichte Hopser — >= 1 s in der Luft, 2 bis
+  /// unter 5 ft. Fehlt bei Landungen vor Version 26.
+  scored_light_bounce_count?: number | null;
 
   // ─── v0.7.1 Felder (Spec docs/spec/v0.7.1-landing-ux-fairness.md §5) ──
   // Phase 1: nur Felder durchreichen, keine UI-Aenderung. Phase 3

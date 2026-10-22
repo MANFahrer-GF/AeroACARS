@@ -181,7 +181,7 @@
 .kabine-ton.ist-stumm .kabine-stumm { color: var(--sem-warn, #b7791f); font-weight: 600; }
 .kabine-ton input[type="range"] { width: 120px; accent-color: var(--acc); }
 .kabine-ton.ist-stumm input[type="range"] { opacity: 0.5; }
-.kabine-ton-wert { min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: var(--fs-300, 12px); }
+.kabine-ton-wert { flex: 0 0 auto; width: 5.5ch; /* feste Breite: „5 %“ bis „100 %“ verschiebt den Regler nicht (22.10.2026) */ text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: var(--fs-300, 12px); }
 .kabine-stumm-hinweis { color: var(--sem-warn, #b7791f); }
 .kabine-ablauf-stumm { color: var(--sem-warn, #b7791f); }
 

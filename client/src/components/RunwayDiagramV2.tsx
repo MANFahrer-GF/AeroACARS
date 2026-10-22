@@ -18,7 +18,10 @@ import { useMemo, useState } from "react";
 import { fmtSigned } from "../lib/landungsFormat";
 import { erzeugeProjektion } from "../lib/runwayProjection";
 import { useBahnZoom } from "../lib/useBahnZoom";
-import { RunwayDisciplinePanel } from "./RunwayDisciplinePanel";
+import { RunwayDisciplinePanel, spurBereinigen, endpunktNummer, versatzUnglaubwuerdig, kanteTraegtNicht } from "./RunwayDisciplinePanel";
+import { BahnSpurOverlay, BahnSpurHinweise, bahnHinweise, type BahnSpurOverlayProps } from "./BahnSpurOverlay";
+import { bandFarbeFuer } from "./bahnHilfen";
+import { querMassstab, bewertungsEnde, aussenkanteHalbM } from "../lib/bahnQuerMassstab";
 import { useTranslation } from "react-i18next";
 import { GlossaryModal } from "./RunwayGlossaryModal";
 import { useV2Skin } from "./SkinContext";
@@ -38,6 +41,20 @@ export type TchClass =
   | "slightly_high"
   | "high"
   | "below_profile";
+
+/**
+ * Gründe, bei denen die Spur gegen eine Achse projiziert ist, der die
+ * Bewertung nicht traut — dann zeichnet die Draufsicht kein Band (wie früher
+ * die Queransicht). Graspiste, unbekannter Belag, fehlende Spurweite oder zu
+ * wenige Proben verbergen die Spur NICHT; dort entfällt nur das Urteil.
+ */
+const SPUR_GEOMETRIE_UNSICHER = new Set(["untrusted_geometry", "off_airport_landing", "runway_axis_mismatch"]);
+
+/** B7: Mindestbreite der Bahn-Grafik in CSS-Pixeln (Faktor 760/1200 ≈ 0,63 —
+ *  9er-Schrift ≥ 5,7 px statt 2,7 px am Handy). */
+export const MIN_ANZEIGE_BREITE_PX = 760;
+/** B9: Grund der Bahn-Grafik, in beiden Themen gleich dunkel. */
+export const BAHN_GRUND = "#0c1628";
 
 export interface RunwayDiagramV2Props {
   /**
@@ -127,6 +144,12 @@ export interface RunwayDiagramV2Props {
   wingspan_m?: number | null;
   /** Bahnbreite in Metern — Grundlage der Queransicht. */
   runway_width_m?: number | null;
+  /**
+   * Begründung der Teilnote Ausrichtung (ohne `landing.rat.`), aus den
+   * gespeicherten `sub_scores`. Nur `off_runway_surface` setzt im Bild die
+   * zweite Zahl „aufgesetzt X m neben der Bahn“ (Entscheidung 11, #1662).
+   */
+  ausrichtung_grund?: string | null;
   /**
    * Rollwege, die die Bahn treffen (OpenStreetMap-Bodenkarte).
    *
@@ -234,14 +257,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   const [glossaryOpen, setGlossaryOpen] = useState(false);
 
   const W = skin.geometry.svgWidth;
-  const H = skin.geometry.svgHeight;
   const padX = skin.geometry.rwyPaddingX;
   const padY = skin.geometry.rwyPaddingY;
   const innerW = W - 2 * padX;
-  const innerH = H - 2 * padY;
-  const rwyTop = padY;
-  const rwyBot = padY + innerH;
-  const rwyCl = (rwyTop + rwyBot) / 2;
 
   // Bahn-Geometrie.
   // - lengthM: nutzbare LANDE-Bahn (= nach dem displaced threshold)
@@ -302,6 +320,51 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // Negative m → vor dem Threshold (= in der DDS-Zone).
   const mToX = projektion.mToX;
 
+  // ── Bahnansicht Variante B (Thomas 22.10.2026, Spec §8.3) ────────────
+  // EINE überhöhte Ansicht: Die Draufsicht trägt die echte Spur mit Band bis
+  // zur Reifen-Aussenkante, die echte Bahnbreite und alles, was bis dahin nur
+  // die Queransicht zeigte. Querachse = `querMassstab` (derselbe Massstab
+  // wie die frühere Queransicht). Ohne Breite: alte Geometrie, aber die
+  // Ausroll-Linie gestrichelt und erklärt — nie eine Behauptung „mittig“.
+  const breiteEchtM =
+    props.runway_width_m != null && props.runway_width_m > 0 ? props.runway_width_m : null;
+  // Blockiert die Bewertung die seitliche Aussage (falsche Achse, unsichere
+  // Geometrie …), wird auch keine Spur gezeichnet — wie früher die
+  // Queransicht; die Liste nennt den Grund.
+  const mitVariante =
+    breiteEchtM != null && !SPUR_GEOMETRIE_UNSICHER.has(props.lateral_skip_reason ?? "");
+  const qm = mitVariante ? querMassstab(breiteEchtM!) : null;
+  const pxQuer: number | null = qm ? qm.pxProQuerM : null;
+  // Grünstreifen beidseits der Bahn — Platz für ein Rad neben der Kante,
+  // ohne in die Beschriftung zu laufen.
+  const randPx = mitVariante ? 24 : 0;
+  const randM = pxQuer ? randPx / pxQuer : 0;
+  const innerH = !mitVariante
+    ? skin.geometry.svgHeight - 2 * padY
+    : Math.max(3, breiteEchtM! * pxQuer!);
+  const oben = randPx;
+  const unten = randPx;
+  // Drei Textzeilen unter der Bahn: Randstelle, „aufgesetzt neben der
+  // Bahn“, Hinweis „läuft weiter“ (BahnSpurOverlay `zeilenY`).
+  const spurTextZeile = mitVariante ? 14 : 0;
+  const ohneSpurHinweis = !mitVariante;
+  const H = !mitVariante
+    ? skin.geometry.svgHeight
+    : 2 * padY + innerH + 2 * randPx + spurTextZeile;
+  const rwyTop = padY + oben;
+  const rwyBot = rwyTop + innerH;
+  const rwyCl = (rwyTop + rwyBot) / 2;
+  const ueberhoehung = pxQuer ? pxQuer / projektion.pxProMeter : null;
+  // Zweite Zahl (Entscheidung 11): nur wenn die Ausrichtung
+  // `off_runway_surface` meldet — Abstand des äusseren Rades (Reifen-
+  // Aussenkante, wie die Bewertung) jenseits der Kante beim Aufsetzen.
+  const aufgesetztNebenM =
+    props.ausrichtung_grund === "off_runway_surface" && breiteEchtM != null
+      ? Math.abs(props.td_centerline_offset_m) +
+        (props.track_width_m != null && props.track_width_m > 0 ? aussenkanteHalbM(props.track_width_m) : 0) -
+        breiteEchtM / 2
+      : null;
+
   // Centerline-Offset → Y. ±widthM/2 → ±(innerH/2 - safetyMargin).
   // widthM = 45 m typisch, aber wir stretchen für Sichtbarkeit (sonst
   // wäre ±2 m visuell unsichtbar).
@@ -311,8 +374,19 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
     -widthM / 2,
     Math.min(widthM / 2, props.td_centerline_offset_m),
   );
-  const tdY = rwyCl + (clampedOffset / (widthM / 2)) * yMaxOffset;
+  const tdY = pxQuer
+    ? rwyCl +
+      Math.max(-(breiteEchtM! / 2 + randM), Math.min(breiteEchtM! / 2 + randM, props.td_centerline_offset_m)) *
+        pxQuer
+    : rwyCl + (clampedOffset / (widthM / 2)) * yMaxOffset;
   const tdX = mToX(props.td_distance_from_threshold_m);
+  const raeumY = !mitVariante
+    ? tdY
+    : props.clearance_side === "left"
+    ? rwyTop
+    : props.clearance_side === "right"
+    ? rwyBot
+    : rwyCl;
   // Halbe Breite der TD-Beschriftung, geschaetzt aus Zeichenzahl und
   // Schriftgroesse (13 px, Monospace ~0,6 em je Zeichen). Nur fuer die
   // Klemmung am Rand -- auf den Pixel kommt es dabei nicht an.
@@ -438,9 +512,48 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
     return t("runway_v2.source_ourairports_legacy");
   })();
 
+  const overlayProps: BahnSpurOverlayProps | null = mitVariante
+    ? {
+        projektion: projektion,
+        mitteY: rwyCl,
+        pxProQuerM: pxQuer!,
+        halbeBahnM: breiteEchtM! / 2,
+        randM: randM,
+        samples: props.lateral_samples ? spurBereinigen(props.lateral_samples) : [],
+        trackWidthM: props.track_width_m ?? null,
+        bewertungsEndeM: bewertungsEnde(props.mess_ende_laengs_m, props.scoring_cutoff_m, props.clearance_point_m),
+        minEdgeClearanceM: props.min_edge_clearance_m ?? null,
+        clearanceM: props.clearance_point_m ?? null,
+        clearanceSide: props.clearance_side ?? null,
+        overrunM: props.overrun_m ?? null,
+        tdM: props.td_distance_from_threshold_m,
+        tdOffsetM: props.td_centerline_offset_m,
+        aufgesetztNebenM: aufgesetztNebenM,
+        ersatzEndeX: rolloutEndeX,
+        bandFarbe: props.surface_paved === false ? TOKENS.rollout : bandFarbeFuer(TOKENS, props.overrun_m, props.min_edge_clearance_m),
+        tokens: {
+                rollout: TOKENS.rollout,
+                tdPerfect: TOKENS.tdPerfect,
+                tdWarn: TOKENS.tdWarn,
+                tdSevere: TOKENS.tdSevere,
+                rollweg: TOKENS.rollweg,
+              },
+        sf: sf,
+        ausfahrten: props.runway_exits as never,
+        messEndeM: bewertungsEnde(props.mess_ende_laengs_m, props.scoring_cutoff_m, props.clearance_point_m),
+        durchgaenge: (props.vorherige_durchgaenge ?? []).map((d) => spurBereinigen(d.lateral_samples ?? [])),
+        textY: H - 6,
+        unbefestigt: props.surface_paved === false,
+        mitVersatzMarke: !versatzUnglaubwuerdig(props),
+        mitRandabstand: !kanteTraegtNicht(props),
+        endpunktNummer: endpunktNummer(props),
+        maxLateralOffsetM: props.max_lateral_offset_m ?? null,
+      }
+    : null;
+
   return (
     <section
-      className="rwy-v2"
+      className="rwy-v2 rwy-v2--dunkel"
       aria-label="Landebahn-Analyse"
       style={{
         width: "100%",
@@ -461,6 +574,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         boxSizing: "border-box",
         minWidth: 0,
         maxWidth: "100%",
+        // B9 (Sichtprüfung 22.10.2026): dunkler Grund und helle Grundschrift
+        // über die Klasse `rwy-v2--dunkel` (App.css/styles.css) — nicht
+        // inline, weil der Druck sie zurücknimmt (Papier-Darstellung wie
+        // bisher; eine Inline-Farbe fiele unter die Druck-Abdunkelung).
       }}
     >
       {/* ─── 1. HEADER ─────────────────────────────────────────────── */}
@@ -567,9 +684,14 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
       {/* ─── 2. SVG-DIAGRAMM ───────────────────────────────────────── */}
       <div
+        data-rolle="bahn-grafik"
         style={{
           width: "100%",
-          background: "rgba(0,0,0,0.25)",
+          // B9 (22.10.2026): eigener dunkler Grund — die Grafik ist für
+          // dunkle Flächen gebaut (Bahn, Grünstreifen, helle Schrift). Ein
+          // halbdurchsichtiges Schwarz wurde im hellen Thema zu Hellgrau,
+          // die Beschriftung blass auf hell.
+          background: BAHN_GRUND,
           borderRadius: 8,
           padding: "12px 8px 4px 8px",
           // Ohne `border-box` kommen die sechzehn Pixel Innenabstand zur
@@ -577,7 +699,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           // Container scrollte waagerecht. §8.6.5 verbietet genau das.
           boxSizing: "border-box",
           maxWidth: "100%",
-          overflowX: "hidden",
+          // B7 (22.10.2026): Am Handy (360 px) wurde die viewBox von 1200
+          // auf 0,30 gestaucht — 10er-Schrift landete bei 3 px. Die Grafik
+          // hat jetzt eine Mindestbreite und rollt darunter IN ihrem Kasten
+          // waagerecht; die Seite selbst rollt weiterhin nie (§8.6.5).
+          overflowX: "auto",
         }}
       >
         <svg
@@ -593,6 +719,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           preserveAspectRatio="xMidYMid meet"
           style={{
             width: "100%",
+            minWidth: MIN_ANZEIGE_BREITE_PX,
             height: "auto",
             display: "block",
             cursor: zoom.zieht ? "grabbing" : zoom.gezoomt ? "grab" : "default",
@@ -600,8 +727,16 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           role="img"
           aria-label="Bahn-Geometrie mit Aufsetzpunkt"
         >
+          {/* PROTOTYP: Grünstreifen beidseits (nur Varianten). */}
+          {mitVariante && (
+            <g data-rolle="gruenstreifen">
+              <rect x={padX} y={rwyTop - randPx} width={innerW} height={randPx} fill="#1f3a24" opacity={0.55} />
+              <rect x={padX} y={rwyBot} width={innerW} height={randPx} fill="#1f3a24" opacity={0.55} />
+            </g>
+          )}
           {/* Tarmac */}
           <rect
+            data-rolle="bahnflaeche"
             x={padX}
             y={rwyTop}
             width={innerW}
@@ -632,14 +767,14 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 x={padX + 2}
                 y={rwyTop + 4}
                 width={Math.max(0, thresholdX - padX - 2)}
-                height={innerH - 8}
+                height={Math.max(1, innerH - 8)}
                 fill={TOKENS.ddsZone}
               />
               <rect
                 x={padX + 2}
                 y={rwyTop + 4}
                 width={Math.max(0, thresholdX - padX - 2)}
-                height={innerH - 8}
+                height={Math.max(1, innerH - 8)}
                 fill="url(#dds-chevron)"
                 opacity="0.6"
               />
@@ -647,7 +782,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 x={padX + 2}
                 y={rwyTop + 4}
                 width={Math.max(0, thresholdX - padX - 2)}
-                height={innerH - 8}
+                height={Math.max(1, innerH - 8)}
                 fill="none"
                 stroke={TOKENS.ddsBorder}
                 strokeDasharray="4,4"
@@ -680,7 +815,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   verankert ist die Position unabhaengig von der Zonenbreite. */}
               <text
                 x={padX}
-                y={rwyBot + 18}
+                y={rwyBot + unten + 18}
                 fontSize={sf(9.5)}
                 fill={TOKENS.tdSevere}
                 fontFamily="monospace"
@@ -689,7 +824,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               </text>
               <text
                 x={padX}
-                y={rwyBot + 18 + zeile(9.5)}
+                y={rwyBot + unten + 18 + zeile(9.5)}
                 fontSize={sf(9.5)}
                 fill={TOKENS.tdSevere}
                 fontFamily="monospace"
@@ -709,7 +844,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 x={thresholdX + 4}
                 y={rwyTop + 4 + (i * (innerH - 8)) / 8}
                 width={20}
-                height={(innerH - 8) / 8 - 2}
+                height={Math.max(0.5, (innerH - 8) / 8 - 2)}
                 fill={TOKENS.threshold}
               />
             ))}
@@ -736,7 +871,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 x={padX + innerW - 24}
                 y={rwyTop + 4 + (i * (innerH - 8)) / 8}
                 width={20}
-                height={(innerH - 8) / 8 - 2}
+                height={Math.max(0.5, (innerH - 8) / 8 - 2)}
                 fill={TOKENS.threshold}
                 opacity="0.7"
               />
@@ -745,7 +880,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               x={padX + innerW - 2}
               y={rwyTop + 4}
               width={4}
-              height={innerH - 8}
+              height={Math.max(1, innerH - 8)}
               fill="rgba(255,255,255,0.9)"
             />
             <title>{t("runway_v2.tooltip_runway_end")}</title>
@@ -776,17 +911,17 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               </defs>
               <rect
                 x={thresholdX + 24}
-                y={rwyTop + 30}
+                y={rwyTop + Math.min(30, innerH * 0.15)}
                 width={tdzEndX - thresholdX - 24}
-                height={innerH - 60}
+                height={Math.max(1, innerH - 60)}
                 fill="url(#tdz-hatch)"
                 opacity="0.55"
               />
               <rect
                 x={thresholdX + 24}
-                y={rwyTop + 30}
+                y={rwyTop + Math.min(30, innerH * 0.15)}
                 width={tdzEndX - thresholdX - 24}
-                height={innerH - 60}
+                height={Math.max(1, innerH - 60)}
                 fill={TOKENS.tdzFill}
                 stroke={TOKENS.tdzStroke}
                 strokeDasharray="6,5"
@@ -807,31 +942,31 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   Randmarken nicht. */}
               <line
                 x1={thresholdX}
-                y1={rwyTop - 14}
+                y1={rwyTop - oben - 14}
                 x2={tdzEndX}
-                y2={rwyTop - 14}
+                y2={rwyTop - oben - 14}
                 stroke={TOKENS.tdzStroke}
                 strokeWidth="1.5"
               />
               <line
                 x1={thresholdX}
-                y1={rwyTop - 14}
+                y1={rwyTop - oben - 14}
                 x2={thresholdX}
-                y2={rwyTop - 6}
+                y2={rwyTop - oben - 6}
                 stroke={TOKENS.tdzStroke}
                 strokeWidth="1.5"
               />
               <line
                 x1={tdzEndX}
-                y1={rwyTop - 14}
+                y1={rwyTop - oben - 14}
                 x2={tdzEndX}
-                y2={rwyTop - 6}
+                y2={rwyTop - oben - 6}
                 stroke={TOKENS.tdzStroke}
                 strokeWidth="1.5"
               />
               <text
                 x={(thresholdX + tdzEndX) / 2}
-                y={rwyTop - 20}
+                y={rwyTop - oben - 20}
                 fontSize={sf(11)}
                 fill={TOKENS.tdzStroke}
                 fontWeight="600"
@@ -883,7 +1018,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   dass die zwei großen gelben Streifen die Aim-Point-
                   Markierungen sind (wie auf echten Runways gemalt). */}
               <polygon
-                points={`${aimX - 7},${rwyTop - 14} ${aimX + 7},${rwyTop - 14} ${aimX},${rwyTop - 4}`}
+                points={`${aimX - 7},${rwyTop - oben - 14} ${aimX + 7},${rwyTop - oben - 14} ${aimX},${rwyTop - oben - 4}`}
                 fill={TOKENS.aimMarker}
               />
               {/* Beschriftung UNTER der Bahn — der Platz darueber gehoert
@@ -892,15 +1027,15 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   ueberdeckt. Die Referenzgrafik ordnet es ebenso an. */}
               <line
                 x1={aimX}
-                y1={rwyBot + 2}
+                y1={rwyBot + unten + 2}
                 x2={aimX}
-                y2={rwyBot + 9}
+                y2={rwyBot + unten + 9}
                 stroke={TOKENS.aimMarker}
                 strokeWidth="1.5"
               />
               <text
                 x={aimX}
-                y={rwyBot + 20}
+                y={rwyBot + unten + 20}
                 textAnchor="middle"
                 fontSize={sf(10.5)}
                 fill={TOKENS.aimMarker}
@@ -928,7 +1063,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           )}
 
           {/* Ausroll-Linie (Schein + Kern) — endet an `rolloutEndeX`. */}
-          {rolloutEndeX != null && rolloutEndeX > tdX && (
+          {!mitVariante && rolloutEndeX != null && rolloutEndeX > tdX && (
             <g>
               <line
                 x1={tdX}
@@ -936,7 +1071,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 x2={rolloutEndeX}
                 y2={tdY}
                 stroke={TOKENS.rolloutGlow}
-                strokeWidth="14"
+                strokeWidth={ohneSpurHinweis ? 0 : 14}
               />
               <line
                 x1={tdX}
@@ -945,17 +1080,55 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 y2={tdY}
                 stroke={TOKENS.rollout}
                 strokeWidth="3"
+                strokeDasharray={ohneSpurHinweis ? "8 6" : undefined}
                 opacity="0.75"
               />
             </g>
           )}
 
+          {/* Variante B: die echte Spur mit Fahrwerksbreite bis zur Reifen-Aussenkante. */}
+          {mitVariante && (
+            <BahnSpurOverlay {...overlayProps!} />
+          )}
+          {mitVariante && (
+            <text
+              x={padX + innerW}
+              y={16}
+              textAnchor="end"
+              fontSize={sf(10.5)}
+              fill="#8B95A8"
+              data-rolle="ueberhoehung"
+            >
+              {`${
+                props.track_width_m != null
+                  ? t("runway_v2.cross_aircraft", {
+                      defaultValue: "{{typ}} · Spurweite {{m}} m",
+                      typ: props.aircraft_icao ?? "",
+                      m: props.track_width_m.toFixed(1),
+                    }).trim()
+                  : t("runway_v2.cross_aircraft_unknown", { defaultValue: "Spurweite nicht bekannt" })
+              }`.replace(/^·\s*/, "") + " · "}
+              {t("runway_v2.b.kopf", {
+                faktor: ueberhoehung!.toFixed(1).replace(".", ","),
+                zusatz:
+                  qm && qm.dehnung > 1.01
+                    ? t("runway_v2.b.kopf_gedehnt")
+                    : breiteEchtM! > 60
+                    ? t("runway_v2.b.kopf_gestaucht")
+                    : "",
+                breite: breiteEchtM!.toFixed(0),
+              })}
+            </text>
+          )}
+
           {/* Titel der Ansicht — beide Ansichten tragen einen, sonst ist
               beim Blick auf zwei Bahnrechtecke nicht klar, was welche zeigt. */}
           <text x={padX} y={16} fontSize={sf(10.5)} letterSpacing={1.4} fill="#8B95A8">
-            {t("runway_v2.laengs_title", {
-              defaultValue: "LÄNGS — WO AUFGESETZT, WO GERÄUMT",
-            })}
+            {mitVariante
+              ? t("runway_v2.b.titel")
+              : t("runway_v2.laengs_title", {
+                  defaultValue: "LÄNGS — WO AUFGESETZT, WO GERÄUMT",
+                })}
           </text>
 
           {/* „BAHN-ENDE" unter der Sperrfläche am Bahnende — das
@@ -964,7 +1137,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               Landeverbotsbereich. */}
           <text
             x={padX + innerW}
-            y={rwyBot + 18}
+            y={rwyBot + unten + 18}
             textAnchor="end"
             fontSize={sf(9.5)}
             fill={TOKENS.tdSevere}
@@ -996,7 +1169,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               />
               <line
                 x1={rolloutEndeX}
-                y1={rwyTop - 30}
+                y1={rwyTop - oben - 30}
                 x2={rolloutEndeX}
                 y2={tdY - 13}
                 stroke={TOKENS.rollout}
@@ -1013,7 +1186,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   Math.max(rolloutEndeX, padX + 70),
                   padX + innerW - 70,
                 )}
-                y={rwyTop - 36}
+                y={rwyTop - oben - 36}
                 textAnchor="middle"
                 fontSize={sf(10)}
                 fill="#8B95A8"
@@ -1065,6 +1238,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 const bogen = `M ${raeumX} ${tdY} C ${raeumX + 32} ${tdY + dy * 3}, ${
                   raeumX + 58
                 } ${tdY + dy * 14}, ${ende} ${tdY + dy * 42}`;
+                if (mitVariante) return null;
                 return (
                   <path
                     d={bogen}
@@ -1077,21 +1251,25 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 );
               })()}
               <path
-                d={`M ${raeumX} ${tdY - 11} l 10 11 l -10 11 l -10 -11 z`}
-                fill={TOKENS.rollout}
+                d={`M ${raeumX} ${raeumY - 11} l 10 11 l -10 11 l -10 -11 z`}
+                // Variante B: Marke 3 der Spur sitzt hier — die Raute würde
+                // sie verdecken (Sichtprüfung 22.10.2026).
+                fill={mitVariante ? "none" : TOKENS.rollout}
               />
               <line
                 x1={raeumX}
-                y1={rwyTop - 44}
+                y1={rwyTop - oben - 44}
                 x2={raeumX}
-                y2={tdY - 15}
+                // Variante B: endet über dem Grünstreifen — darin stehen
+                // die Ausfahrtsnamen.
+                y2={mitVariante ? rwyTop - oben - 2 : raeumY - 15}
                 stroke={TOKENS.rollout}
                 strokeWidth="1"
                 opacity="0.45"
               />
               <text
                 x={raeumX}
-                y={rwyTop - 52}
+                y={rwyTop - oben - 52}
                 textAnchor="middle"
                 fontSize={sf(11)}
                 fontWeight="600"
@@ -1102,7 +1280,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               </text>
               <text
                 x={raeumX}
-                y={rwyTop - 52 + zeile(11)}
+                y={rwyTop - oben - 52 + zeile(11)}
                 textAnchor="middle"
                 fontSize={sf(10)}
                 fill="#8B95A8"
@@ -1167,7 +1345,13 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           <g>
             <circle cx={tdX} cy={tdY} r="22" fill={dotColor} opacity="0.10" />
             <circle cx={tdX} cy={tdY} r="14" fill={dotColor} opacity="0.22" />
-            <circle cx={tdX} cy={tdY} r="9" fill={dotColor} stroke="#0c1628" strokeWidth="2" />
+            <circle data-rolle="td-punkt" cx={tdX} cy={tdY} r="9" fill={dotColor} stroke="#0c1628" strokeWidth="2" />
+            {/* Variante B: Marke 1 auf dem Aufsetzpunkt (über ihm gezeichnet). */}
+            {mitVariante && (
+              <text x={tdX} y={tdY + 3.8} textAnchor="middle" fontSize={sf(11)} fontWeight={700} fill="#0B0F17">
+                1
+              </text>
+            )}
             <title>
               {t("runway_v2.tooltip_touchdown", {
                 distance: props.td_distance_from_threshold_m.toFixed(0),
@@ -1264,7 +1448,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 Math.max(tdX, padX + tdLabelHalb),
                 padX + innerW - tdLabelHalb,
               )}
-              y={rwyBot + 46}
+              y={rwyBot + unten + 46}
               textAnchor="middle"
               fontSize={sf(13)}
               fill={dotColor}
@@ -1287,9 +1471,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           <g>
             <line
               x1={padX}
-              y1={rwyBot + 62}
+              y1={rwyBot + unten + 62}
               x2={padX + innerW}
-              y2={rwyBot + 62}
+              y2={rwyBot + unten + 62}
               stroke="rgba(255,255,255,0.25)"
               strokeWidth="1"
             />
@@ -1299,15 +1483,15 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 <g key={d}>
                   <line
                     x1={x}
-                    y1={rwyBot + 57}
+                    y1={rwyBot + unten + 57}
                     x2={x}
-                    y2={rwyBot + 67}
+                    y2={rwyBot + unten + 67}
                     stroke="rgba(255,255,255,0.5)"
                     strokeWidth="1.2"
                   />
                   <text
                     x={x}
-                    y={rwyBot + 80}
+                    y={rwyBot + unten + 80}
                     textAnchor="middle"
                     fontSize={sf(10)}
                     fill="rgba(255,255,255,0.55)"
@@ -1320,6 +1504,24 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             })}
           </g>
         </svg>
+      </div>
+      {/* Hinweiszeilen als Text unter dem Rollkasten — sie brechen am Handy
+          um, statt mit der Grafik zu rollen (Sichtprüfung 22.10.2026). */}
+      <BahnSpurHinweise
+        zeilen={
+          overlayProps
+            ? bahnHinweise(overlayProps, t)
+            : ohneSpurHinweis
+            ? [{
+                rolle: "hinweis-ohne-spur",
+                text: props.lateral_samples?.length ? t("runway_v2.b.ohne_breite") : t("runway_v2.b.ohne_spur"),
+                farbe: "#fbbf24",
+                fett: false,
+              }]
+            : []
+        }
+      />
+      <div>
 
         {/* Bedienung: Der Hinweis steht nur da, solange nicht gezoomt ist —
             danach erklärt sich der Zustand selbst, und der Platz gehört dem

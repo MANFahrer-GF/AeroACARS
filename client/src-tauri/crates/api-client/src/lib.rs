@@ -838,6 +838,18 @@ pub struct KabinenDrehbuch {
     /// danach noch einmal fragen (Drehbuch kommt dann aus dem Zwischenspeicher).
     #[serde(default)]
     pub boarding_lied_spaeter: bool,
+    /// Was auf diesem Flug sicher entfällt (Modul ab Rundumschlag 22.10.2026):
+    /// `sicherheit/sv-SE` → `keine_vorlage`, `sprache/zh-CN` → `keine_stimme`.
+    /// Ältere Module schicken nichts; eine leere PHP-Liste (`[]`) zählt als leer.
+    #[serde(default, deserialize_with = "entfaellt_lesen")]
+    pub entfaellt: std::collections::BTreeMap<String, String>,
+}
+
+fn entfaellt_lesen<'de, D: serde::Deserializer<'de>>(d: D) -> Result<std::collections::BTreeMap<String, String>, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(v.as_object()
+        .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .unwrap_or_default())
 }
 
 /// Text und Stil des Boarding-Lieds für den Ton-Server (acemusic.ai).

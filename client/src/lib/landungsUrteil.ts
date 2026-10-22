@@ -106,6 +106,59 @@ export interface MarkenTeil {
   score?: number | null;
   band?: string | null;
   skipped?: boolean | null;
+  /** Für „neben der Bahn“: in welcher Phase (P1, 22.10.2026). */
+  rationale_key?: string | null;
+  messwert?: number | null;
+}
+
+/** Wo „neben der Bahn“ geschah — Längspositionen in Metern, sofern bekannt. */
+export interface NebenDerBahnOrt {
+  /** Aufsetzpunkt ab der Schwelle. */
+  aufsetzenM?: number | null;
+  /** Knappste Stelle beim Ausrollen (Längswert der Spur, wie die Ereignisliste). */
+  ausrollenM?: number | null;
+}
+
+/**
+ * Phase von „neben der Bahn“ aus den EINGEFRORENEN Teilnoten — nichts neu
+ * gerechnet, gilt für Altbestand und neue Flüge gleich:
+ * Aufsetzen = Ausrichtung jenseits der Fläche (wie `gefahr_grund` in Rust:
+ * Messwert > 1 oder Begründung `off_runway_surface`), Ausrollen = Bahn-
+ * disziplin `off_pavement`.
+ */
+export function nebenDerBahnPhase(
+  subs: readonly MarkenTeil[],
+): "aufsetzen" | "ausrollen" | "beides" | null {
+  const teil = (k: string) => subs.find((s) => s.key === k && !s.skipped);
+  const a = teil("alignment");
+  const r = teil("rollout");
+  const aufsetzen =
+    a != null && ((a.messwert ?? 0) > 1 || a.rationale_key === "landing.rat.off_runway_surface");
+  const ausrollen = r != null && r.rationale_key === "landing.rat.off_pavement";
+  return aufsetzen && ausrollen ? "beides" : aufsetzen ? "aufsetzen" : ausrollen ? "ausrollen" : null;
+}
+
+/** Der Text der Marke „neben der Bahn“ mit Phase und Ort. */
+export function nebenDerBahnText(
+  subs: readonly MarkenTeil[],
+  ort: NebenDerBahnOrt | null | undefined,
+  t: Uebersetzer,
+): string {
+  const phase = nebenDerBahnPhase(subs);
+  if (phase == null) return t("landing.flag.neben_der_bahn");
+  const zahl = (m: number) =>
+    new Intl.NumberFormat(t("landing.flag.zahl_sprache"), { maximumFractionDigits: 0 }).format(Math.round(m));
+  const a = ort?.aufsetzenM;
+  const b = ort?.ausrollenM;
+  const wo =
+    phase === "aufsetzen"
+      ? a != null ? t("landing.flag.neben_ort", { m: zahl(a) }) : ""
+      : phase === "ausrollen"
+      ? b != null ? t("landing.flag.neben_ort", { m: zahl(b) }) : ""
+      : a != null && b != null
+      ? t("landing.flag.neben_ort_beides", { a: zahl(a), b: zahl(b) })
+      : "";
+  return t(`landing.flag.neben_der_bahn_${phase}`, { ort: wo });
 }
 
 /** Die Hinweis-Marken einer Landung ab Score-Version 19.
@@ -125,6 +178,10 @@ export function landungsMarkenV19(
     bounceCount: number | null | undefined;
     forensicBounceCount?: number | null;
     bounceMaxAglFt?: number | null;
+    /** P1/8b: leichte Hopser (Score-Version 26). */
+    lightBounceCount?: number | null;
+    /** Wo „neben der Bahn“ geschah (Phase kommt aus `subs`). */
+    nebenDerBahnOrt?: NebenDerBahnOrt | null;
   },
   t: Uebersetzer,
 ): LandungsMarke[] {
@@ -142,8 +199,12 @@ export function landungsMarkenV19(
     marken.push({ label: t("landing.flag.hard"), tone: "err" });
   }
   const n = e.bounceCount ?? 0;
+  const leicht = e.lightBounceCount ?? 0;
   if (n > 0) {
     marken.push({ label: `${t("landing.flag.bounce")} × ${n}`, tone: n >= 2 ? "err" : "warn" });
+  } else if (leicht > 0) {
+    // P1/8b: gezählter leichter Hopser (zählt zur Note, 85/70).
+    marken.push({ label: t("landing.flag.bounce_leicht", { count: leicht }), tone: "warn" });
   } else if ((e.forensicBounceCount ?? 0) > 0) {
     marken.push({
       label:
@@ -155,7 +216,8 @@ export function landungsMarkenV19(
   }
   if (hat("vor_der_schwelle")) marken.push({ label: t("landing.flag.vor_der_schwelle"), tone: "err" });
   if (hat("overrun")) marken.push({ label: t("landing.flag.overrun"), tone: "err" });
-  if (hat("neben_der_bahn")) marken.push({ label: t("landing.flag.neben_der_bahn"), tone: "err" });
+  if (hat("neben_der_bahn"))
+    marken.push({ label: nebenDerBahnText(e.subs, e.nebenDerBahnOrt, t), tone: "err" });
   const ausrichtung = achse("alignment");
   if (
     ausrichtung != null &&

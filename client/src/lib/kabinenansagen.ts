@@ -1,9 +1,10 @@
 // Kabinenansagen (Beta): Ablauf der Wiedergabe.
 //
 // Rust entscheidet, WANN eine Ansage spielt (Planer + Warteschlange), und
-// schickt das Ereignis `kabine-ansage` mit den fertigen Tondateien. Hier
-// wird die Reihenfolge gesteuert: Sprache für Sprache nacheinander, mit
-// Pegel für die Live-Anzeige der Ansage-Seite. Den Ton selbst spielt Rust
+// spielt sie seit 1b (Rundumschlag 22.10.2026) auch selbst, Sprache für
+// Sprache, samt Ende. Die Seite zeigt sie über `kabine-ansage`,
+// `kabine-teil` und `kabine-ende` an (Untertitel, Pegel). Selbst gesteuert
+// werden hier nur Vorhören und Hörprobe. Den Ton selbst spielt Rust
 // (`kabinen_ton_spielen`) auf dem gewählten Ausgabegerät — Lautsprecher,
 // Headset …; das Fenster könnte das Gerät nicht wählen. Auch der
 // 10.000-ft-Chime entsteht dort aus zwei Sinustönen.
@@ -37,7 +38,7 @@ export interface Gespielt {
   /** Die Wiedergabe hat begonnen (erst dann „läuft“). */
   gestartet?: boolean;
   /** Warum sie entfiel (zu_wenig_zeit, uebersprungen, ton_nicht_fertig, zu_spaet,
-   *  keine_stimme, kein_kurztext). */
+   *  keine_stimme, kein_kurztext, flug_beendet). */
   grund?: string | null;
 }
 
@@ -110,6 +111,8 @@ export interface TeilAnsicht {
   text: string | null;
   ton: boolean;
   keine_stimme: boolean;
+  /** Text dieser Sprache auch nach der Nachholung ausgeblieben (1f), mit Grund. */
+  fehlt?: string | null;
 }
 
 /** Eine fällige oder noch kommende Ansage. */
@@ -153,6 +156,8 @@ export interface Profil {
   kurzstrecke: boolean;
   flugzeit_bekannt: boolean;
   sprachen_ohne_stimme: string[];
+  /** Sprachen ohne Sicherheitsvorlage (Server `entfaellt`), einmal je Flug genannt. */
+  sicherheit_ohne_vorlage?: string[];
 }
 
 export interface Ueberblick {
@@ -214,18 +219,14 @@ export function aktuell(): Wiedergabe {
 /** Pegelwerte je Sekunde aus `kabinen_ton_huellkurve` (Rust `HUELLE_JE_S`). */
 const HUELLE_JE_S = 30;
 
+/** Hier abgespielt werden nur noch Vorhören und Hörprobe (Knopf auf der
+ *  Seite, das Fenster ist dann vorne). Ansagen des Fluges spielt seit 1b
+ *  das Backend selbst und trägt ihr Ende ein — die Oberfläche zeigt sie nur
+ *  an, damit eine im Hintergrund schlafende WebView nichts mehr aufhält. */
 const schlange: Gespielt[] = [];
 let laeuft = false;
 /** Steigt bei jedem Stopp: eine laufende Abarbeitung bricht dann ab. */
 let durchgang = 0;
-/** Nach „Ausschalten“: keine Ansage aus Rust mehr annehmen, auch keine,
- *  die ein schon laufender Takt noch schickt (Codex-QS 2). Erst
- *  `freigeben()` beim Einschalten hebt das auf. */
-let gesperrt = false;
-/** Stumm (Knopf oben auf der Seite): Was Rust kurz vor dem Stummschalten
- *  noch geschickt hat, wird nicht gespielt, sondern als „stumm“ gemeldet
- *  (Codex beta.6: Fenster zwischen Ausgeben und Ereignis). */
-let stummLokal = false;
 
 function pause(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -333,9 +334,9 @@ async function abarbeiten(): Promise<void> {
 }
 
 /** Sofort still: laufende Ansage abbrechen, Wartendes verwerfen. Für
- *  „Ansagen ausschalten“ — wer das nicht möchte, hört ab dem Klick nichts. */
+ *  „Ansagen ausschalten“ — wer das nicht möchte, hört ab dem Klick nichts.
+ *  Die Ansage, die das Backend gerade spielt, endet über denselben Stopp. */
 export function stoppen(): void {
-  gesperrt = true;
   abbrechen();
 }
 
@@ -364,7 +365,6 @@ export function anhoerenStoppen(): void {
 /** Stumm schalten: sofort still (laufende Ansage bricht ab); Rust verbucht
  *  alles, was bis zum Aufheben fällig wird, als „stumm übersprungen“. */
 export async function stummSetzen(stumm: boolean): Promise<void> {
-  stummLokal = stumm;
   if (stumm) abbrechen();
   await invoke("kabinen_stumm", { stumm });
 }
@@ -375,40 +375,93 @@ export async function stummSetzen(stumm: boolean): Promise<void> {
 export const lautstaerkeSetzen = (lautstaerke: number, speichern: boolean) =>
   invoke<void>("kabinen_lautstaerke", { lautstaerke, speichern });
 
-/** Nach dem Einschalten: Ansagen aus Rust wieder annehmen. */
-export function freigeben(): void {
-  gesperrt = false;
-}
-
 /** Eine Ansage einreihen (Ereignis oder Hörprobe). */
 export function abspielen(a: Gespielt): void {
   schlange.push(a);
   void abarbeiten();
 }
 
+/** Steigt mit jedem angezeigten Teil: beendet den Pegel des vorigen. */
+let anzeigeTeil = 0;
+/** Die Ansage, die das Backend gerade spielt (nur Anzeige). */
+let backendAnsage: Gespielt | null = null;
+
+/** Teil `teil` einer Ansage des Backends beginnt: Untertitel und Pegel aus
+ *  der Hüllkurve, mit der Uhr — kein Ton aus dem Fenster. */
+function teilAnzeigen(a: Gespielt, teil: number): void {
+  const meiner = ++anzeigeTeil;
+  const start = performance.now();
+  setzen({ ansage: a, teil, teilStart: start, ...(teil === 0 ? { verlauf: [] } : {}) });
+  const datei = a.teile[teil]?.datei;
+  if (!datei) return;
+  void invoke<number[]>("kabinen_ton_huellkurve", { datei })
+    .catch(() => [] as number[])
+    .then((huelle) => {
+      const messen = () => {
+        if (meiner !== anzeigeTeil) return;
+        const i = Math.floor(((performance.now() - start) / 1000) * HUELLE_JE_S);
+        if (i >= huelle.length) {
+          setzen({ pegel: 0 });
+          return;
+        }
+        const glatt = zustand.pegel * 0.6 + (huelle[i] ?? 0) * 0.4;
+        setzen({ pegel: glatt, verlauf: [...zustand.verlauf, glatt].slice(-VERLAUF_LAENGE) });
+        requestAnimationFrame(messen);
+      };
+      requestAnimationFrame(messen);
+    });
+}
+
+interface TeilEreignis {
+  id: number;
+  teil: number;
+}
+interface EndeEreignis {
+  id: number;
+  ergebnis: string;
+  fehler: string | null;
+}
+
 let gestartet = false;
-/** Einmal beim Start der App: auf Ansagen aus Rust hören. Nur im Fenster
- *  des Sim-PCs — auf dem Tablet (LAN-Fernbedienung) spielt nichts. */
+/** Einmal beim Start der App: anzeigen, was das Backend spielt. Nur im
+ *  Fenster des Sim-PCs — auf dem Tablet (LAN-Fernbedienung) nichts. */
 export function wiedergabeStarten(): void {
   if (gestartet || !isTauri) return;
   gestartet = true;
-  listen<Gespielt>("kabine-ansage", (e) => {
-    // Kam sie nach „Ausschalten“ noch an: nicht spielen, aber melden.
-    if (gesperrt) melden(e.payload, "abgebrochen");
-    else if (stummLokal) melden(e.payload, "stumm");
-    else abspielen(e.payload);
-  }).catch((e) => {
-    // Sonst bliebe die Wiedergabe bis zum Neustart stumm: nach kurzer
-    // Pause erneut anmelden.
+  Promise.all([
+    listen<Gespielt>("kabine-ansage", (e) => {
+      backendAnsage = e.payload;
+    }),
+    listen<TeilEreignis>("kabine-teil", (e) => {
+      if (backendAnsage?.id === e.payload.id) teilAnzeigen(backendAnsage, e.payload.teil);
+    }),
+    listen<EndeEreignis>("kabine-ende", (e) => {
+      if (backendAnsage?.id !== e.payload.id) return;
+      backendAnsage = null;
+      anzeigeTeil += 1;
+      setzen({ ansage: null, pegel: 0 });
+      if (e.payload.fehler) setzen({ fehler: e.payload.fehler });
+      else if (e.payload.ergebnis === "gespielt") setzen({ fehler: null });
+    }),
+  ]).catch((e) => {
+    // Sonst bliebe die Anzeige bis zum Neustart leer: nach kurzer Pause
+    // erneut anmelden.
     console.warn("[kabine] Anmelden fehlgeschlagen, neuer Versuch", e);
     gestartet = false;
     setTimeout(wiedergabeStarten, 5000);
   });
+  // 1b: Sichtbarkeit ins Flugprotokoll (macOS drosselt verdeckte WebViews).
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      void invoke("kabinen_fenster", { sichtbar: document.visibilityState === "visible" }).catch(() => undefined);
+    });
+  }
 }
 
 export const einstellungenLesen = () => invoke<Einstellungen>("kabinen_einstellungen_lesen");
-export const einstellungenSetzen = (einstellungen: Einstellungen) =>
-  invoke<Einstellungen>("kabinen_einstellungen_setzen", { einstellungen });
+/** `herkunft` steht beim Ein-/Ausschalten im Flugprotokoll (1d). */
+export const einstellungenSetzen = (einstellungen: Einstellungen, herkunft?: "einstellungen" | "seite") =>
+  invoke<Einstellungen>("kabinen_einstellungen_setzen", { einstellungen, herkunft: herkunft ?? null });
 export const zustandLesen = () => invoke<Zustand>("kabinen_zustand");
 export const probe = (rolle: Rolle, sprache: string) => invoke<Gespielt>("kabinen_probe", { rolle, sprache });
 export const ueberblick = () => invoke<Ueberblick | null>("kabinen_ueberblick");

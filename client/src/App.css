@@ -7072,7 +7072,24 @@ input:disabled {
 }
 
 /* Druck: nur den Report zeigen, App ausblenden. */
+/* Bahnansicht B9 (22.10.2026): Die Bahnanalyse steht im hellen Thema auf
+   ihrem eigenen dunklen Grund — Legende und Karten sind für Dunkel gebaut. */
+.rwy-v2--dunkel {
+  background: #0c1628;
+  color: #e2e8f0;
+  border-radius: 10px;
+}
+
 @media print {
+  /* Bahnansicht B9: auf Papier wie bisher — kein dunkler Block. */
+  .landing-report .rwy-v2--dunkel {
+    background: transparent;
+    color: inherit;
+  }
+  .landing-report [data-rolle="bahn-grafik"] {
+    background: rgba(0, 0, 0, 0.25) !important;
+  }
+
   /* v0.12.8-dev: Der @page-Rand liefert jetzt den druckbaren Rahmen
      (vorher margin:0 + 15mm-Padding pro Box). Der Browser paginiert
      den fließenden Report selbst — keine erzwungenen Leerseiten mehr. */

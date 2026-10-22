@@ -427,7 +427,47 @@ selbst waren es 13,4 m).
 
 ---
 
-## v1.7.0 — Darstellungsregeln der zwei Ansichten
+## v1.7.0 — Darstellungsregeln der zwei Ansichten (seit 22.10.2026: eine, Variante B)
+
+**Ab 22.10.2026 gilt Variante B (Thomas, Entscheidung 10/11; `handoff/bahnansicht/vorschlag.md` §8).**
+Draufsicht und Queransicht sind **eine** überhöhte Ansicht. Die Queransicht wird nicht mehr
+gezeichnet; jedes ihrer Einzelstücke zieht in die Draufsicht um. Lupe, Ereignisliste und
+Größenvergleich bleiben. Pflichtliste (Inventar §3, nichts fällt weg):
+
+| Stück aus der Queransicht | Zuhause in der Draufsicht (B) | Prüfung |
+|---|---|---|
+| Spur ganzer Weg + Messpunkte | Band + Mittellinie `spur-mitte` | Render-Test 10 Fälle |
+| Fahrwerksbreite (Band) | Band bis **Reifen-Außenkante** (`aussenkanteHalbM`, Spiegel `aussenkante_halb_aus_spur`), nicht Radmitte (B2) | Band : Bahnhöhe = 2·Außenkante : echte Breite |
+| echte Bahnbreite, Kanten, Grünstreifen | Bahnrechteck mit echter Breite (`querMassstab`), Grünstreifen beidseits; **kein** `widthM = 45`, **keine** Klemmung auf ±22,5 m (B1) | #1738 27 m, #1779 61 m |
+| Messfenster ▲ + „nach dem Räumen nicht gewertet“ | Marke `mess-ende` am frühesten Ende (`mess_ende`, `scoring_cutoff`, Räumpunkt; B3) + Legende | #1905 |
+| schlechteste Stelle ② | Marke ② + Strich Kante–Rad + Zahl = **gespeicherter `min_edge_clearance_m`** | #1914 −5,8 m bei 1534 m |
+| Räumpunkt ③ + Ausfahrt + Geschwindigkeit | Marke ③ an der Kante der Räumseite | #1916 |
+| alle Ausfahrt-Stummel **mit Namen** | Stummel am Rand, jeder benannt (genutzte hervorgehoben) | #1909 |
+| früherer Durchgang (violett) | gestrichelte violette Linie | #1905 |
+| Überrollen ④ | Marke ④ am Bahnende | – |
+| Querskala links/rechts in m | Skala am rechten Bildrand (Kante = halbe Breite, Mitte 0) | Render-Test |
+| Kopf: Muster, Spurweite, Überhöhungsfaktor | Kopfzeile rechts oben | Render-Test |
+| „Spur läuft weiter — real bis … m“ | Hinweis, wenn Proben über den Bildrand gehen (am Rand geklemmt, nie abgeschnitten vor dem Räumpunkt) | #1662 |
+| Kanten-Beschriftung | Beschriftung „Bahnkante“ an der Skala | Render-Test |
+| eigene Legende „so liest du es“ | `SoLiestDu` direkt unter der Draufsicht | Render-Test |
+
+Band: durchgehend bis zur Ausfahrt, **nie verjüngt, nie an einer Heuristik beendet**, vor dem
+Räumpunkt am Bildrand **geklemmt statt abgeschnitten** (ein Abkommen bleibt sichtbar).
+**Zwei Zahlen** (Entscheidung 11): Am Aufsetzpunkt steht zusätzlich „aufgesetzt X m neben der
+Bahn“, **nur** wenn die Achse Ausrichtung `off_runway_surface` meldet (#1662); X ist der
+gespeicherte Versatz des äußeren Rades jenseits der Kante, sonst nie.
+Marke „neben der Bahn“ nennt Phase (beim Aufsetzen / beim Ausrollen / beides) und Ort
+(„beim Ausrollen bei 1.534 m“), abgeleitet aus den gespeicherten Teilnoten
+(`alignment`=`off_runway_surface` → Aufsetzen, `rollout`=`off_pavement` → Ausrollen) und der
+gespeicherten Randstelle — gilt für Altbestand und neue Flüge gleich. Die Bewertung ändert
+sich dadurch nicht.
+Neue Beschriftungen nur mit Zeichen aus B612 Mono (kein U+2011, →, ←, ≤, ≥).
+Ohne Spur (Altbestand vor v1.7.0) wird die Ausroll-Linie gestrichelt und erklärt, nie als
+Messung „mittig“ gezeichnet.
+
+Die Regeln 1–6 unten gelten seitdem für Draufsicht und Lupe; „Queransicht“ heißt dort die Draufsicht (B).
+
+*Bis 22.10.2026:*
 
 Ausführlich in `docs/spec/v1.7.0-bahndisziplin.md` §8.3 bis §8.6. Verbindlich hier:
 
