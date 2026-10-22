@@ -358,6 +358,27 @@ describe("#1936 EDDG 25 — Kritik 22.10.2026 (golden)", () => {
     expect(raus).toEqual([]);
   });
 
+  it("3b · kein unbenutzter Randstreifen: Ränder so breit wie ihre Beschriftung (Thomas: „rechts zu viel Platz“)", () => {
+    // Der Bedarf ist der Text selbst: rechts Querskala bzw. „07“/Länge, links
+    // die Kennung „25“. Erlaubt sind 4 Einheiten Luft plus Rundung (< 10).
+    const z = draufsicht();
+    const kaesten = [...z.svg.querySelectorAll("text")]
+      .filter((t) => (t.textContent ?? "").trim() !== "")
+      .map((t) => textKasten(t));
+    expect(z.W - Math.max(...kaesten.map((k) => k.rechts))).toBeLessThan(10);
+    expect(Math.min(...kaesten.map((k) => k.links))).toBeLessThan(10);
+    // Und JEDE Zeile der rechten Spalte (Kante oben, Mitte, Kante unten)
+    // reicht bis an den Rand — keine halb leere Spalte wie bis 2.1.7
+    // („22,6 m“ endete 20 Einheiten vor dem Rand). Grenze 12: 4 Luft plus
+    // der Längenunterschied „links“/„rechts“ (ein Zeichen, ~6).
+    const zeilen = [...z.svg.querySelectorAll('[data-rolle="querskala"] line')].map((l) => Number(l.getAttribute("y1")));
+    expect(zeilen.length).toBe(3);
+    for (const zy of zeilen) {
+      const inZeile = kaesten.filter((k) => Math.abs((k.oben + k.unten) / 2 - zy) < 12);
+      expect(z.W - Math.max(...inZeile.map((k) => k.rechts)), `Zeile y=${zy}`).toBeLessThan(12);
+    }
+  });
+
   it("4 · Ausfahrt ganz im Bild: Spur, Marke 3 und Stummel enden vor der Querskala, Bahn nicht bündig am Rand", () => {
     const z = draufsicht();
     const skalaX = Math.min(...[...z.svg.querySelectorAll('[data-rolle="querskala"] line')].map((l) => Number(l.getAttribute("x1"))));

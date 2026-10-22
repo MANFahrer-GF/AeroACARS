@@ -293,7 +293,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   };
 
   const W = schmal ? SCHMAL_W : skin.geometry.svgWidth;
-  const padX = schmal ? SCHMAL_PAD_X : skin.geometry.rwyPaddingX;
+  const padXBasis = schmal ? SCHMAL_PAD_X : skin.geometry.rwyPaddingX;
   // Schmal steht der Kopf in einer eigenen Zeile — darunter Platz lassen.
   const padY = skin.geometry.rwyPaddingY + (schmal ? 16 : 0);
 
@@ -353,10 +353,25 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         t("runway_v2.b.skala_mitte"),
       ]
     : [];
+  // Ränder nur so breit, wie ihre Beschriftung es braucht (Thomas
+  // 22.10.2026: „rechts ist zu viel freier Platz“): links die Kennung
+  // („25“), rechts die Querskala und daneben „07“ mit der Länge — beide an
+  // der Linie „Mitte“, keine leere Spalte.
+  const zb = (text: string, schrift: number) => text.length * sf(schrift) * 0.62;
+  const kennungGegen = oppositeRunway(props.runway_ident);
+  const laengeText = `${props.length_m.toFixed(0)} m`;
+  const padX = mitVariante ? Math.ceil(Math.max(36, zb(props.runway_ident, 28) + 14)) : padXBasis;
+  const mitteB = mitVariante ? zb(skalaTexte[2]!, 9.5) : 0;
+  const endeSpalteB = Math.max(
+    display.show_opposite_runway ? zb(kennungGegen, 20) : 0,
+    display.show_bahn_length ? zb(laengeText, 11) : 0,
+  );
   const rechtsRand = mitVariante
-    ? Math.max(padX, Math.ceil(Math.max(...skalaTexte.map((x) => x.length)) * sf(9.5) * 0.62) + 22)
+    ? Math.ceil(15 + Math.max(...skalaTexte.slice(0, 2).map((x) => zb(x, 9.5)), mitteB + 10 + endeSpalteB) + 4)
     : padX;
   const innerW = W - padX - rechtsRand;
+  /** „07“/Länge: rechtsbündig am Bildrand, neben „Mitte“. */
+  const endeSpalteX = W - 4;
 
   // Platz vor dem Bahnanfang und hinter dem Bahnende (Entscheidung 1): nur
   // so viel, dass Spur bis zum Bildrand, Räumpunkt und genutzte Ausfahrt
@@ -1570,7 +1585,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
           {/* RWY-Designator (groß links) — die Landerichtung. */}
           <text
-            x={padX / 2 - 4}
+            x={mitVariante ? padX / 2 - 2 : padX / 2 - 4}
             y={rwyCl + 10}
             textAnchor="middle"
             fontSize={sf(28)}
@@ -1586,28 +1601,28 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               z. B. RWY 32 ↔ RWY 14). Plus Bahn-Gesamtlänge darunter. */}
           {display.show_opposite_runway && (
             <text
-              x={mitVariante ? W - 24 : W - padX / 2 + 8}
+              x={mitVariante ? endeSpalteX : W - padX / 2 + 8}
               y={rwyCl - 2}
-              textAnchor="middle"
+              textAnchor={mitVariante ? "end" : "middle"}
               fontSize={sf(20)}
               fill="#94a3b8"
               fontWeight="700"
               fontFamily="monospace"
               opacity="0.85"
             >
-              {oppositeRunway(props.runway_ident)}
+              {kennungGegen}
             </text>
           )}
           {display.show_bahn_length && (
             <text
-              x={mitVariante ? W - 26 : W - padX / 2 + 8}
+              x={mitVariante ? endeSpalteX : W - padX / 2 + 8}
               y={rwyCl + 18}
-              textAnchor="middle"
+              textAnchor={mitVariante ? "end" : "middle"}
               fontSize={sf(11)}
               fill="#64748b"
               fontFamily="monospace"
             >
-              {props.length_m.toFixed(0)} m
+              {laengeText}
             </text>
           )}
 
