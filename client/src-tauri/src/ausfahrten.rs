@@ -117,10 +117,6 @@ const VERLAUF_QUER_UEBER_KANTE_M: f64 = 150.0;
 const KANTEN_TOLERANZ_M: f64 = 25.0;
 
 
-/// Wie weit ein Stützpunkt AUF der Bahn liegen darf und noch als Punkt an
-/// der Kante zählt, in Metern. Tiefer drinnen liegt er auf der Bahn — dort
-/// verlässt kein Rollweg die Bahn (#1936, siehe `kantenpunkte`).
-const KANTE_INNEN_M: f64 = 5.0;
 
 /// Wie weit ein Rollweg über die Kante hinausreichen muss, damit er die
 /// Bahn auf dieser Seite wirklich verlässt, in Metern.
@@ -143,9 +139,9 @@ const DRAUSSEN_MIN_M: f64 = 2.0;
 /// aussen übergeht und dort mindestens `DRAUSSEN_MIN_M` über die Kante
 /// hinausreicht. Läuft ein Rollweg lange knapp innen an der Kante entlang,
 /// zählt erst der Übergang am Ende, nicht sein erster kantennaher Punkt.
-/// Die Stelle ist der letzte Punkt auf der Bahn, wenn er nahe der Kante
-/// liegt (bis `KANTE_INNEN_M`), sonst der Schnittpunkt mit der Kante (OSM:
-/// Schnellabrollweg als Gerade von der Mittellinie).
+/// Die Stelle ist immer der Schnittpunkt des Segments mit der Kante
+/// (Codex-Nachprüfung 2.1.8: der letzte Punkt auf der Bahn lag bei flachen
+/// Rollwegen bis zu Hunderte Meter zu früh).
 ///
 /// Ein Zug, der nur von aussen an die Kante heranführt und dort endet (OSM
 /// endet oft an der Kante), zählt an seinem Endpunkt, wenn er von dort
