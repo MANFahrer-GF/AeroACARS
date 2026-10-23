@@ -53,7 +53,7 @@ export const ANSAGEN = {
   reiseflug50: "Halbzeit",
   reiseflug80: "2. Service",
   ende_service: "Service-Ende",
-  kapitaen_sinkflug: "Sinkflug",
+  kapitaen_sinkflug: "Kapitän",
   kabine_sinkflug: "Sinkflug",
   chime10000_sinkflug: "10.000 ft",
   kommando_landung_vorbereiten: "Landung vorb.",

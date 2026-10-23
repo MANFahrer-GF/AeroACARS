@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import streamDeck, { SingletonAction } from "@elgato/streamdeck";
 import { zustand, ausfuehren } from "./befehle.js";
+import { befehl } from "./aeroacars.js";
 import { szene, streifen, kachelOrt, KACHEL, INFO_RAD } from "./szene.js";
 import { vorbereiten, rastern, pngAusschnitt, alsPngUrl } from "./render.js";
 import { uuid } from "./belegung.js";
@@ -140,8 +141,16 @@ async function tun(was, aktion) {
       // Verlustfrei: live auf 0 ohne Speichern; laut = zurück auf die Einstellung.
       return ausfuehren(aktion, "kabinen_musik_lautstaerke", (j) => j && { lautstaerke: musikStumm(j) ? j.musik_gespeichert : 0, speichern: false });
     case "boarding": return ausfuehren(aktion, "kabinen_boarding_musik", (j) => j && { an: !j.boarding_musik });
-    case "metar_start": return ausfuehren(aktion, "metar_laden", { ort: "start" });
-    case "metar_ziel": return ausfuehren(aktion, "metar_laden", { ort: "ziel" });
+    case "metar_start":
+    case "metar_ziel":
+      // An der Befehlskette vorbei: der Abruf geht übers Internet und darf
+      // Lautstärke-Drücke nicht aufhalten. Haken bei Erfolg, Dreieck nur bei echtem Fehler.
+      return befehl("metar_laden", { ort: was === "metar_ziel" ? "ziel" : "start" })
+        .then(() => aktion.showOk())
+        .catch((e) => {
+          streamDeck.logger.warn(`metar_laden fehlgeschlagen: ${e.message}`);
+          return aktion.showAlert();
+        });
     default:
       if (was) return ausfuehren(aktion, "fenster_zeigen", { seite: was });
   }

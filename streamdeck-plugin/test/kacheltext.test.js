@@ -12,6 +12,8 @@ import { textBreite } from "../src/schriftmass.js";
 
 export function texteAusserhalb(svg) {
   const fehler = [];
+  // Ausnahme: die Laufschrift im Band (wandert, Thomas will sie so).
+  svg = svg.replace(/<g clip-path="url\(#lauf\)">.*?<\/g>/g, "");
   for (const m of svg.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)"[^>]*font-size="([\d.]+)" font-weight="(\d+)"[^>]*text-anchor="(\w+)" letter-spacing="([\d.]+)"[^>]*>([^<]*)<\/text>/g)) {
     const [, xs, ys, gs, fw, anker, ab, roh] = m;
     const txt = roh.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");

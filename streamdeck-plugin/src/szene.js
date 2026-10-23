@@ -13,6 +13,7 @@
 // laufen, Text nicht (er bleibt innerhalb einer Kachel). Die Laufschrift ist
 // die einzige Ausnahme — sie wandert und ist deshalb trotzdem lesbar.
 
+import { textBreite } from "./schriftmass.js";
 import { FARBE, text, marke, flaeche, LEUCHTEN, flugzeug, balken, bogen, pfeil, note, lautsprecher } from "./glas.js";
 import { ANSAGEN } from "./tasten.js";
 
@@ -92,6 +93,16 @@ function wertKachel(c, r, { marke: m, wert, unter, farbe = FARBE.text, markeFarb
   ].join("");
 }
 
+/**
+ * Rückt eine x-Position so ein, dass das Flugzeug (≈ 40 px) ganz in einer
+ * Kachel steht — nie in der Blende (Thomas 23.10.: „verschwindet aus der Kachel“).
+ */
+export function inKachel(x, c0, c1) {
+  const rand = 26;
+  const c = Math.min(c1, Math.max(c0, Math.round((x - KACHEL / 2) / (KACHEL + FUGE))));
+  return Math.min(kx(c) + KACHEL - rand, Math.max(kx(c) + rand, x));
+}
+
 /** Streckenband über die Spalten c0..c1 in Reihe r, mit Laufschrift. */
 function band(st, s, c0, c1, r, t) {
   const y = ky(r);
@@ -100,7 +111,7 @@ function band(st, s, c0, c1, r, t) {
   // Linie beginnt hinter dem Startcode und endet vor dem Zielcode.
   const lx0 = kx(c0 + 1) + 6, lx1 = kx(c1) - 6;
   const ly = y + 62;
-  const px = lx0 + (lx1 - lx0) * p;
+  const px = inKachel(lx0 + (lx1 - lx0) * p, c0, c1);
   const g = phasenGruppe(st?.phase);
   const phasenFarbe = g === "anflug" ? FARBE.amber : g === "flug" ? FARBE.gruen : FARBE.cyan;
   const ab = iso(st?.takeoff_at) ?? iso(st?.block_off_at);
@@ -127,43 +138,17 @@ function band(st, s, c0, c1, r, t) {
   const kx0 = kx(kachelDesFlugzeugs);
   teile.push(text(kx0 + KACHEL / 2, y + 30, PHASE_TEXT[st?.phase] ?? "", { groesse: 15, farbe: phasenFarbe, fett: true, anker: "middle", abstand: 1.5 }));
 
-  // Fallblatt statt Laufschrift (Thomas 23.10. am Gerät: Text darf nicht über
-  // die Blenden laufen). Jede Mittelkachel zeigt eine Angabe; alle vier
-  // Sekunden rücken die Angaben eine Kachel weiter.
-  const infos = bandInfos(st, s);
-  const mitte = c1 - c0 - 1;
-  const schritt = infos.length > mitte ? Math.floor(t / 4) : 0;
-  for (let i = 0; i < Math.min(mitte, infos.length); i++) {
-    const [marke2, wert] = infos[(i + schritt) % infos.length];
-    const cx = kx(c0 + 1 + i) + KACHEL / 2;
-    teile.push(
-      text(cx, y + 104, marke2, { groesse: 13, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1, max: INNEN }),
-      text(cx, y + 130, wert, { groesse: 22, fett: true, farbe: FARBE.amber, anker: "middle", max: INNEN }),
-    );
-  }
+  // Laufschrift unter der Linie, nur im Mittelteil. Die einzige Ausnahme von
+  // der Regel „Text bleibt in der Kachel“: sie wandert und bleibt so lesbar
+  // (Thomas 23.10.: mit Laufschrift war es besser als mit dem Fallblatt).
+  const lauf = laufschrift(st, s);
+  const mx0 = kx(c0 + 1), mx1 = kx(c1);
+  const tempo = 16; // px je Sekunde; 36 war zu schnell
+  const breiteLauf = textBreite(lauf, 22, true, 1) + 200;
+  const versatz = (t * tempo) % breiteLauf;
+  const zeile = (x0) => text(x0, y + 124, lauf, { groesse: 22, farbe: FARBE.amber, fett: true, abstand: 1 });
+  teile.push(`<clipPath id="lauf"><rect x="${mx0}" y="${y + 92}" width="${mx1 - mx0}" height="44"/></clipPath>`, `<g clip-path="url(#lauf)">${zeile(mx1 - versatz)}${zeile(mx1 - versatz + breiteLauf)}</g>`);
   return teile.join("");
-}
-
-/** Angaben für das Fallblatt im Band: [Marke, Wert], je Phase das Wichtige. */
-export function bandInfos(st, s) {
-  if (!st) return [["AEROACARS", "BEREIT"], ["FLUG", "KEINER"]];
-  const g = phasenGruppe(st.phase);
-  const m = g === "vor" ? st.dep_metar_decoded : st.arr_metar_decoded;
-  const icao = g === "vor" ? st.dpt_airport : st.arr_airport;
-  const liste = [["FLUG", st.callsign ?? "–"]];
-  if (st.aircraft_icao) liste.push(["MUSTER", st.aircraft_icao]);
-  if (m) {
-    const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
-    liste.push([`WIND ${icao ?? ""}`, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : String(Math.round(kt)).padStart(2, "0")}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`]);
-    if (m.qnh_hpa != null) liste.push([`QNH ${icao ?? ""}`, `Q${Math.round(m.qnh_hpa)}`]);
-  } else liste.push([`WETTER ${icao ?? ""}`, "FEHLT"]);
-  const bahn = st.approach_runway ?? st.predicted_runway;
-  if (bahn) liste.push(["BAHN", bahn]);
-  if (st.planned_alternate) liste.push(["ALTN", st.planned_alternate]);
-  const n = s.kabine?.naechste;
-  if (n) liste.push(["ANSAGE", n.wann ? `${uhrZ(n.wann * 1000)}Z` : (ANSAGEN[n.slot] ?? n.slot).toUpperCase()]);
-  if (zahl(st.distance_nm)) liste.push(["GEFLOGEN", `${Math.round(st.distance_nm)} NM`]);
-  return liste;
 }
 
 /** Was in der Laufschrift steht — je Phase das, was gerade zählt. */
@@ -327,21 +312,34 @@ function musikFlaeche(c, r, n, s, t) {
   return teile.join("");
 }
 
-/** Kabinen-Zeitstrahl: Stationen auf Kachelmitten, Lichtpunkt zur nächsten. */
+/**
+ * Kabinen-Zeitstrahl. Erste Kachel: Überschrift mit Countdown bis zur
+ * nächsten Ansage; ab der zweiten je Kachel eine Station (Feldbefund 23.10.:
+ * Titel, Uhrzeit und Station in einer Kachel waren zu eng).
+ */
 function kabinenStrahl(c, r, n, s, t) {
   const k = s.kabine;
   const x = kx(c), y = ky(r), b = spanne(n);
-  const folge = (k?.folgende?.length ? k.folgende : k?.naechste ? [k.naechste] : []).slice(0, Math.min(4, n));
+  const plaetze = n - 1;
+  const folge = (k?.folgende?.length ? k.folgende : k?.naechste ? [k.naechste] : []).slice(0, Math.min(4, plaetze));
   const teile = [flaeche(x, y, b, KACHEL, FARBE.flaeche, 18), marke(x + 14, y + 30, "Kabine", FARBE.cyan)];
   if (!k) return teile.join("") + text(x + 14, y + 90, "Client zu alt", { groesse: 20, farbe: FARBE.leise, max: INNEN });
-  if (k.stumm) teile.push(text(kx(c + n - 1) + KACHEL - 12, y + 30, "STUMM", { groesse: 15, fett: true, farbe: FARBE.rot, anker: "end", abstand: 1.5, max: INNEN }));
+  const wartet = k.hinweis === "anschnallzeichen";
+  const n0 = folge[0];
+  const minuten = n0?.wann ? Math.max(0, Math.round((n0.wann * 1000 - s.jetzt) / 60000)) : null;
+  // Kopf-Kachel: Zustand groß
+  const [kopf, unter, kopfFarbe] = k.stumm ? ["STUMM", "drücken: Ansagen", FARBE.rot]
+    : wartet ? ["WARTET", "Gurte aus", FARBE.amber]
+      : n0?.faellig ? ["GLEICH", "nächste Ansage", FARBE.cyan]
+        : minuten != null ? [minuten >= 60 ? `${Math.floor(minuten / 60)}:${zwei(minuten % 60)}` : `${minuten} min`, "bis zur nächsten", FARBE.cyan]
+          : n0 ? ["BEREIT", "nächste Ansage", FARBE.cyan] : ["–", "keine Ansage", FARBE.leise];
+  teile.push(text(x + 14, y + 86, kopf, { groesse: 30, fett: true, farbe: kopfFarbe, max: INNEN }), text(x + 14, y + 122, unter, { groesse: 15, farbe: FARBE.leise, max: INNEN }));
   const ly = y + 78;
   const m = folge.length;
-  // Kachel je Station: gleichmäßig verteilt, bei einer Station in der Mitte.
-  const kachelVon = (i) => (m === 1 ? Math.floor((n - 1) / 2) : Math.round((i * (n - 1)) / (m - 1)));
+  // Stationen ab der zweiten Kachel, gleichmäßig verteilt.
+  const kachelVon = (i) => 1 + (m === 1 ? 0 : Math.round((i * (plaetze - 1)) / Math.max(1, m - 1)));
   const mitte = (i) => kx(c + kachelVon(i)) + KACHEL / 2;
-  teile.push(`<line x1="${x + 24}" y1="${ly}" x2="${x + b - 24}" y2="${ly}" stroke="${FARBE.linie}" stroke-width="4"/>`);
-  const wartet = k.hinweis === "anschnallzeichen";
+  if (m) teile.push(`<line x1="${kx(c + 1) + 10}" y1="${ly}" x2="${x + b - 24}" y2="${ly}" stroke="${FARBE.linie}" stroke-width="4"/>`);
   folge.forEach((f, i) => {
     const px = mitte(i);
     const farbe = i === 0 ? (wartet ? FARBE.amber : FARBE.cyan) : FARBE.leise;
@@ -351,10 +349,11 @@ function kabinenStrahl(c, r, n, s, t) {
     if (i === 0 && wartet) teile.push(`<rect x="${px - 34}" y="${ly - 14}" width="6" height="28" rx="2" fill="${FARBE.amber}"/>`);
   });
   if (m) {
-    const ziel = mitte(0), start = x + 24;
-    const pos = wartet ? ziel - 46 : start + ((t * 30) % Math.max(1, ziel - start - 14));
-    teile.push(`<circle cx="${pos}" cy="${ly}" r="6" fill="${wartet ? FARBE.amber : FARBE.cyan}" filter="url(#leuchten)"/>`);
-  } else teile.push(text(x + 14, y + 104, "keine Ansage", { groesse: 18, farbe: FARBE.leise, max: INNEN }));
+    // Lichtpunkt läuft in der Kachel vor der ersten Station auf sie zu.
+    const ziel = mitte(0), start = kx(c + kachelVon(0)) + 12;
+    const pos = wartet ? ziel - 46 : start + ((t * 12) % Math.max(1, ziel - start - 16));
+    teile.push(`<circle cx="${pos}" cy="${ly}" r="5" fill="${wartet ? FARBE.amber : FARBE.cyan}" filter="url(#leuchten)"/>`);
+  }
   return teile.join("");
 }
 

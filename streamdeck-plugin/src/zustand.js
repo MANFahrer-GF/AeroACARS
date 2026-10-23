@@ -3,9 +3,11 @@
 // nur nach dem Aufsetzen und dann alle fünf Sekunden (der Panel-Server
 // protokolliert gehäufte Landungsabfragen).
 
-import { lesen } from "./aeroacars.js";
+import { lesen, befehl } from "./aeroacars.js";
 
 const TAKT_MS = 1000;
+/** Fehlendes METAR höchstens so oft selbst nachladen. */
+const METAR_ABSTAND_MS = 5 * 60 * 1000;
 
 export class Zustand {
   constructor() {
@@ -13,6 +15,7 @@ export class Zustand {
     this.hoerer = new Set();
     this.takt = null;
     this.runde = 0;
+    this.metarVersuch = { start: 0, ziel: 0 };
   }
 
   /** `fn(s)` bei jeder Runde; liefert eine Abmelde-Funktion. */
@@ -71,6 +74,24 @@ export class Zustand {
     else if (runde % 5 === 0 || !s.debrief) s.debrief = await lesen("/panel/debrief").catch(() => s.debrief);
     this.s = s;
     this.melden();
+    this.metarNachladen(s);
+  }
+
+  /**
+   * Fehlt Start- oder Zielwetter, holt das Plugin es selbst (Thomas 23.10.:
+   * „wir haben immer noch kein Wetter“). AeroACARS lädt das Ziel-METAR von
+   * sich aus erst im Sinkflug; nach dem Laden ist es nur Anzeige, PIREP und
+   * Landung bekommen weiter das reguläre (siehe metar_nachladen im Client).
+   * Nur mit Client, der die Befehlsroute kennt (dann gibt es `kabine`).
+   */
+  metarNachladen(s) {
+    if (!s.status || !s.kabine) return;
+    const jetzt = Date.now();
+    for (const [ort, feld] of [["start", "dep_metar_decoded"], ["ziel", "arr_metar_decoded"]]) {
+      if (s.status[feld] || jetzt - this.metarVersuch[ort] < METAR_ABSTAND_MS) continue;
+      this.metarVersuch[ort] = jetzt;
+      befehl("metar_laden", { ort }).catch(() => {});
+    }
   }
 
   melden() {

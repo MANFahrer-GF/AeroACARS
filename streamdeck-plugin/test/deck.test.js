@@ -94,3 +94,37 @@ test("Status-Taste: ACARS, SIM, SERVER in jeder Phase, mit den richtigen Zustän
     assert.ok(szene(g, f, 1).svg.includes(">STATUS<"), `${g}/${phase}`);
   }
 });
+
+test("Flugzeug steht nie in der Blende", async () => {
+  const { inKachel, KACHEL, FUGE } = await import("../src/szene.js");
+  for (let x = 0; x < 8 * (KACHEL + FUGE); x += 3) {
+    const px = inKachel(x, 0, 7);
+    const c = Math.floor(px / (KACHEL + FUGE));
+    const innen = px - c * (KACHEL + FUGE);
+    assert.ok(innen >= 26 && innen <= KACHEL - 26, `x ${x} → ${px} (innen ${innen})`);
+  }
+});
+
+test("fehlendes METAR lädt das Plugin selbst, höchstens alle 5 Minuten", async () => {
+  const { Zustand } = await import("../src/zustand.js");
+  const http = await import("node:http");
+  const anfragen = [];
+  const server = http.createServer((req, res) => { anfragen.push(req.url); res.end("{}"); });
+  await new Promise((ok, f) => server.once("error", f).listen(47847, "127.0.0.1", ok));
+  try {
+    const z = new Zustand();
+    const s = { status: { phase: "cruise", dep_metar_decoded: { icao: "NZCH" }, arr_metar_decoded: null }, kabine: {} };
+    z.metarNachladen(s);
+    z.metarNachladen(s); // gleich danach: nicht nochmal
+    // Auf die Anfrage warten (erster fetch im Prozess ist langsam), dann kurz nachsehen, ob eine zweite kommt.
+    for (let i = 0; i < 50 && !anfragen.length; i++) await new Promise((ok) => setTimeout(ok, 50));
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.deepEqual(anfragen, ["/panel/cmd/metar_laden"]);
+    // Ohne neue Befehlsroute (alter Client, kabine null): nichts.
+    new Zustand().metarNachladen({ ...s, kabine: null });
+    await new Promise((ok) => setTimeout(ok, 100));
+    assert.equal(anfragen.length, 1);
+  } finally {
+    server.close();
+  }
+});
