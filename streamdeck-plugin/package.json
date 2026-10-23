@@ -10,7 +10,8 @@
     "pack": "npm run build && streamdeck validate eu.german-sky-group.aeroacars.sdPlugin && streamdeck pack eu.german-sky-group.aeroacars.sdPlugin --output dist --force"
   },
   "dependencies": {
-    "@elgato/streamdeck": "3.0.2"
+    "@elgato/streamdeck": "3.0.2",
+    "@resvg/resvg-wasm": "2.6.2"
   },
   "devDependencies": {
     "@elgato/cli": "1.10.2",
