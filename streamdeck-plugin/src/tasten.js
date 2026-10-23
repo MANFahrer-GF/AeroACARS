@@ -495,8 +495,8 @@ export const TASTEN = {
 };
 
 function wetterBild(m, icao, ansicht = 0) {
+  if (!m) return { label: icao || "–", wert: "–", unter: "kein METAR" };
   const w = wind(m);
-  if (!w) return { label: icao || "–", wert: "–", unter: "kein METAR" };
   const label = m.icao || icao;
   if (ansicht === 1) {
     const sicht = m.visibility_m == null ? "–" : m.visibility_m >= 9999 ? "10 km+" : m.visibility_m >= 5000 ? `${Math.round(m.visibility_m / 1000)} km` : `${m.visibility_m} m`;
@@ -507,7 +507,8 @@ function wetterBild(m, icao, ansicht = 0) {
     const t = (v) => (v == null ? "–" : `${Math.round(v)}°`);
     return { label, wert: `${t(m.temperature_c)}/${t(m.dewpoint_c)}`, unter: "Temp / Taupunkt", klein: true };
   }
-  return { label, wert: w, unter: m.qnh_hpa != null ? `Q${Math.round(m.qnh_hpa)}` : "", klein: true };
+  // Wind ist im METAR optional: dann „–“, die anderen Ansichten bleiben.
+  return { label, wert: w ?? "–", unter: m.qnh_hpa != null ? `Q${Math.round(m.qnh_hpa)}` : "", klein: true };
 }
 
 // ---- Drehregler (StreamDeck +) --------------------------------------------

@@ -275,3 +275,13 @@ test("jede Zielseite für den langen Druck erlaubt der Client (DECK_SEITEN in pa
   const app = fs.readFileSync(path.resolve(import.meta.dirname, "../../client/src/App.tsx"), "utf8");
   for (const seite of erlaubt) assert.ok(app.includes(`"${seite}"`), seite);
 });
+
+test("METAR ohne Windangabe: Sicht, Wolken und Temperatur bleiben sichtbar (Codex)", () => {
+  const m = { icao: "YBBN", wind_speed_kt: null, qnh_hpa: 1013, visibility_m: 4000, cloud_layers: [], temperature_c: 20, dewpoint_c: 15 };
+  const s = { ...voll, status: { ...status, arr_metar_decoded: m } };
+  assert.equal(TASTEN.wetter_ziel.bild(s, 0).wert, "–");
+  assert.equal(TASTEN.wetter_ziel.bild(s, 0).unter, "Q1013");
+  assert.equal(TASTEN.wetter_ziel.bild(s, 1).wert, "4000 m");
+  assert.equal(TASTEN.wetter_ziel.bild(s, 2).wert, "20°/15°");
+  assert.equal(TASTEN.wetter_ziel.bild({ ...voll, status: { ...status, arr_metar_decoded: null } }, 0).unter, "kein METAR");
+});
