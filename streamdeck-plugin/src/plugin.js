@@ -14,13 +14,22 @@ const SPEICHERN_NACH_MS = 800;
 
 const zustand = new Zustand();
 
-async function ausfuehren(aktion, name, args) {
-  try {
-    zustand.kabineSetzen(await befehl(name, args));
-  } catch (e) {
-    streamDeck.logger.warn(`${name} fehlgeschlagen: ${e.message}`);
-    await aktion.showAlert();
-  }
+// Befehle strikt nacheinander: so kommen sie in der Reihenfolge beim Server
+// an, in der sie ausgelöst wurden. Sonst könnte ein langsamer Live-Pegel vom
+// Drehen nach dem Speichern eintreffen und den Klang wieder zurückstellen.
+let kette = Promise.resolve();
+
+function ausfuehren(aktion, name, args) {
+  const lauf = kette.then(async () => {
+    try {
+      zustand.kabineSetzen(await befehl(name, args));
+    } catch (e) {
+      streamDeck.logger.warn(`${name} fehlgeschlagen: ${e.message}`);
+      await aktion.showAlert();
+    }
+  });
+  kette = lauf;
+  return lauf;
 }
 
 /** Gemeinsame Grundlage: Bild bei jeder Abfragerunde neu zeichnen. */
