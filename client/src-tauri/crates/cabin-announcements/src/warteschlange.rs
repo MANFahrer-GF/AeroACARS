@@ -37,6 +37,10 @@ pub struct Warteschlange {
     /// Ein Slot, der die Pause schon ab diesem Zeitpunkt nicht mehr abwartet.
     pause_ausnahme: Option<(Slot, i64)>,
     verfallen: Vec<Slot>,
+    /// Ein Slot, der bis zu diesem Zeitpunkt zurückgehalten wird: Er spielt
+    /// nicht und verfällt nicht (der Host wartet auf frischen Ton, siehe
+    /// [`Self::zurueckhalten`]).
+    zurueckgehalten: Option<(Slot, i64)>,
 }
 
 impl Warteschlange {
@@ -132,6 +136,18 @@ impl Warteschlange {
         }
     }
 
+    /// Hält einen wartenden Slot bis `bis` zurück (`None` = frei): Er spielt
+    /// so lange nicht und verfällt auch nicht — danach gilt wieder sein
+    /// normaler Verfall (23.10.2026: Die Sinkflug-Ansage des Kapitäns wartet
+    /// höchstens eine Minute auf ihre aufgefrischte Restzeit).
+    pub fn zurueckhalten(&mut self, slot: Slot, bis: Option<i64>) {
+        self.zurueckgehalten = bis.map(|b| (slot, b));
+    }
+
+    fn haelt_zurueck(&self, slot: Slot, jetzt: i64) -> bool {
+        self.zurueckgehalten.is_some_and(|(s, bis)| s == slot && jetzt < bis)
+    }
+
     fn ausnahme_frei(&self, slot: Slot, jetzt: i64) -> bool {
         self.pause_ausnahme.is_some_and(|(s, ab)| s == slot && jetzt >= ab)
     }
@@ -165,9 +181,10 @@ impl Warteschlange {
         ruhephase: bool,
         bereit: impl Fn(Slot) -> bool,
     ) -> Option<Slot> {
+        let gehalten = self.zurueckgehalten.filter(|(_, bis)| jetzt < *bis).map(|(s, _)| s);
         let (behalten, weg): (Vec<_>, Vec<_>) = std::mem::take(&mut self.eintraege)
             .into_iter()
-            .partition(|e| !Self::abgelaufen(e, jetzt, phase));
+            .partition(|e| gehalten == Some(e.slot) || !Self::abgelaufen(e, jetzt, phase));
         self.eintraege = behalten;
         self.verfallen.extend(weg.into_iter().map(|e| e.slot));
 
@@ -220,6 +237,7 @@ impl Warteschlange {
             .filter(|(_, e)| !(e.slot == Slot::EndeService && service_wartet))
             .filter(|(_, e)| !(e.slot == Slot::KapitaenSinkflug && ende_service_zuerst))
             .filter(|(_, e)| !(e.slot == Slot::KommandoLandungVorbereiten && kabine_vor_kommando))
+            .filter(|(_, e)| !self.haelt_zurueck(e.slot, jetzt))
             .filter(|(_, e)| bereit(e.slot))
             .min_by_key(|(_, e)| (e.slot.vorrang(), e.reihenfolge))
             .map(|(i, _)| i)?;
@@ -253,6 +271,29 @@ mod tests {
             reihe,
             vec![Slot::KommandoTuerenScharf, Slot::KapitaenSinkflug, Slot::BegruessungTuerenZu, Slot::KabineSinkflug]
         );
+    }
+
+    /// Zurückgehalten: spielt nicht und verfällt nicht, auch nicht in seiner
+    /// Verfallsphase; danach gilt der normale Verfall. Andere laufen weiter.
+    #[test]
+    fn zurueckgehalten_spielt_nicht_und_verfaellt_nicht() {
+        let mut w = Warteschlange::default();
+        w.aufnehmen([f(Slot::KapitaenSinkflug, Verfall::AbPhase(Final)), f(Slot::EndeService, Verfall::AbPhase(Approach))]);
+        w.zurueckhalten(Slot::KapitaenSinkflug, Some(160));
+        assert_eq!(w.naechstes(100, Descent, false), Some(Slot::EndeService), "andere nicht blockiert");
+        w.frei();
+        assert_eq!(w.naechstes(150, Final, false), None);
+        assert!(w.verfallene_abholen().is_empty(), "verfällt nicht in der Frist");
+        assert_eq!(w.wartend(), vec![Slot::KapitaenSinkflug]);
+        assert_eq!(w.naechstes(160, Final, false), None);
+        assert_eq!(w.verfallene_abholen(), vec![Slot::KapitaenSinkflug], "nach der Frist normal");
+        // Vorzeitig freigegeben: sofort spielbar.
+        let mut w = Warteschlange::default();
+        w.aufnehmen([f(Slot::KapitaenSinkflug, Verfall::AbPhase(Final))]);
+        w.zurueckhalten(Slot::KapitaenSinkflug, Some(160));
+        assert_eq!(w.naechstes(100, Descent, false), None);
+        w.zurueckhalten(Slot::KapitaenSinkflug, None);
+        assert_eq!(w.naechstes(101, Descent, false), Some(Slot::KapitaenSinkflug));
     }
 
     #[test]

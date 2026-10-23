@@ -4750,7 +4750,7 @@ mod tests {
         let mut l = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into(), "en-GB".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default() };
+            eintraege: vec![eintrag("sicherheit", "de-DE", Some("kapitaen")), eintrag("sicherheit", "en-GB", Some("kapitaen")), eintrag("kapitaen_begruessung", "de-DE", None), eintrag("kapitaen_begruessung", "en-GB", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default(), aufgefrischt: false };
         assert!(drehbuch_uebernehmen(&mut l, d, &abflug, true, false).is_empty());
         assert_eq!(rolle_von(&l, Slot::Sicherheit), Rolle::Kapitaen);
         assert!(l.entfaellt.is_empty());
@@ -4759,13 +4759,13 @@ mod tests {
         let mut alt = Lauf::default();
         let d = api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into()],
-            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default() };
+            eintraege: vec![eintrag("sicherheit", "de-DE", None), eintrag("kapitaen_begruessung", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default(), aufgefrischt: false };
         assert!(drehbuch_uebernehmen(&mut alt, d, &abflug, true, false).is_empty(), "nichts nachholen");
         assert!(!alt.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
         assert_eq!(alt.entfaellt.get(&Slot::Sicherheit).map(String::as_str), Some("kein_kurztext"));
         // Linie ohne Kennzeichen: Kabine wie bisher.
         let mut linie = Lauf::default();
-        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default() };
+        let d = api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("sicherheit", "de-DE", None)], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default(), aufgefrischt: false };
         drehbuch_uebernehmen(&mut linie, d, &[Slot::Sicherheit], false, false);
         assert_eq!(rolle_von(&linie, Slot::Sicherheit), Rolle::Kabine);
         assert!(linie.texte.contains_key(&(Slot::Sicherheit, "de-DE".to_string())));
@@ -5437,9 +5437,9 @@ mod tests {
         let mut l = Lauf::default();
         let fremd = vec![api_client::KabinenFremd { wort: "Times Square".into(), sprache: "en".into() }];
         let eintrag = |text: &str, fremd: Vec<api_client::KabinenFremd>| api_client::KabinenEintrag { slot: "reiseflug25".into(), sprache: "de-DE".into(), text: text.into(), rolle: None, art: None, fremd };
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default() }, &[Slot::Reiseflug25], false, false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Times Square", fremd.clone())], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default(), aufgefrischt: false }, &[Slot::Reiseflug25], false, false);
         assert_eq!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())), Some(&fremd));
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default() }, &[Slot::Reiseflug25], false, false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec!["de-DE".into()], eintraege: vec![eintrag("Am Hafen", Vec::new())], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default(), aufgefrischt: false }, &[Slot::Reiseflug25], false, false);
         assert!(l.fremd.get(&(Slot::Reiseflug25, "de-DE".into())).is_none());
     }
 
@@ -5468,6 +5468,7 @@ mod tests {
             boarding_lied: None,
             boarding_lied_spaeter: false,
             entfaellt: Default::default(),
+            aufgefrischt: false,
         };
         drehbuch_uebernehmen(&mut l, d, &[Slot::Reiseflug80], false, false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen), "Kapitänin spricht mit Frauenstimme");
@@ -5476,7 +5477,7 @@ mod tests {
         assert_eq!(l.art_r80.as_deref(), Some("ende_bordverkauf"));
         assert_eq!(l.crew.as_ref().and_then(|c| c.kapitaen.as_deref()), Some("Julia Lange"));
         // Eine spätere Antwort ohne `crew` (älteres Modul) vergisst die Crew nicht.
-        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default() }, &[], false, false);
+        drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default(), aufgefrischt: false }, &[], false, false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen));
     }
 
@@ -6350,6 +6351,7 @@ mod rundumschlag_p1_tests {
             boarding_lied: None,
             boarding_lied_spaeter: false,
             entfaellt: Default::default(),
+            aufgefrischt: false,
         }
     }
 

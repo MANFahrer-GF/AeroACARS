@@ -843,6 +843,11 @@ pub struct KabinenDrehbuch {
     /// Ältere Module schicken nichts; eine leere PHP-Liste (`[]`) zählt als leer.
     #[serde(default, deserialize_with = "entfaellt_lesen")]
     pub entfaellt: std::collections::BTreeMap<String, String>,
+    /// Antwort auf `auffrischen: true` (Modul ab 23.10.2026): Restzeit und
+    /// Landezeit neu in die geprüfte Rohfassung eingesetzt. Ein älteres
+    /// Modul kennt den Schalter nicht und schickt das Feld nicht.
+    #[serde(default)]
+    pub aufgefrischt: bool,
 }
 
 fn entfaellt_lesen<'de, D: serde::Deserializer<'de>>(d: D) -> Result<std::collections::BTreeMap<String, String>, D::Error> {
