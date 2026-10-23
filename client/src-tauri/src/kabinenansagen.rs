@@ -50,7 +50,8 @@ const START_SPAETESTENS_S: i64 = 30;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Einstellungen {
-    /// Hauptschalter. Standard AUS.
+    /// Hauptschalter. Ab Werk AN seit 2.1.9 (Thomas 23.10.2026: aus der Beta
+    /// raus, für alle); wer ihn einmal gespeichert hat, behält seine Wahl.
     pub an: bool,
     /// Sprachen: airline (Airline + Englisch) | airline_de (Airline +
     /// Deutsch). Alles andere — Stimme je Sprache, Tagesform — bestimmt der
@@ -92,7 +93,7 @@ pub struct Einstellungen {
 impl Default for Einstellungen {
     fn default() -> Self {
         Einstellungen {
-            an: false,
+            an: true,
             zweite_sprache: "airline".into(),
             echter_name: false,
             chimes: true,
@@ -4704,9 +4705,13 @@ mod tests {
     }
 
     #[test]
-    fn einstellungen_standard_aus_und_normalisiert() {
+    fn einstellungen_standard_an_und_normalisiert() {
         let e = Einstellungen::default();
-        assert!(!e.an, "Standard aus — sonst zahlt jeder Pilot");
+        // Thomas 23.10.2026: aus der Beta raus, ab Werk an (Kosten gemessen:
+        // ~30 $/Monat mehr, Deckel bleibt 100 $).
+        assert!(e.an, "Standard an seit 2.1.9");
+        let gespeichert: Einstellungen = serde_json::from_str(r#"{"an":false}"#).unwrap();
+        assert!(!gespeichert.an, "wer ausgeschaltet hat, bleibt aus");
         assert_eq!(e.zweite_sprache, "airline");
         let kaputt = Einstellungen { zweite_sprache: "klingonisch".into(), lautstaerke: 7.0, ..Einstellungen::default() }.normalisiert();
         assert_eq!(kaputt.zweite_sprache, "airline");
@@ -6545,7 +6550,7 @@ mod rundumschlag_p1_tests {
         // Ansagen aus: nichts vermerken (es lief nichts).
         let mut aus = flug(Arrived, &[]);
         aus.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::Aussteigen)]);
-        flug_beendet_notieren(&mut aus, &Einstellungen::default(), 1_090);
+        flug_beendet_notieren(&mut aus, &Einstellungen { an: false, ..Einstellungen::default() }, 1_090);
         assert!(aus.kabinen_lauf.protokoll.is_empty());
     }
 
