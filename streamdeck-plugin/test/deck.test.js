@@ -80,3 +80,17 @@ test("Zielgate erst nach der Landung", () => {
   assert.ok(!szene("xl", s, 1).svg.includes(">Ziel 75<"));
   assert.ok(szene("xl", PHASEN.gelandet, 1).svg.includes("GATE ZIEL"));
 });
+
+test("Status-Taste: ACARS, SIM, SERVER in jeder Phase, mit den richtigen Zuständen", async () => {
+  const { statusZeilen } = await import("../src/szene.js");
+  const s = PHASEN.reiseflug;
+  assert.deepEqual(statusZeilen(s.status, s).map(([, z]) => z), ["ok", "ok", "ok"]);
+  assert.equal(statusZeilen({ ...s.status, paused_since: "x" }, s)[1][1], "warn");
+  assert.equal(statusZeilen({ ...s.status, live: null }, s)[1][1], "aus");
+  assert.equal(statusZeilen({ ...s.status, connection_state: "failing" }, s)[2][1], "warn");
+  assert.equal(statusZeilen({ ...s.status, connection_state: "blocked" }, s)[2][1], "aus");
+  assert.equal(statusZeilen(null, { erreichbar: false })[0][1], "aus");
+  for (const g of ["xl", "15", "plus"]) for (const [phase, f] of Object.entries(PHASEN)) {
+    assert.ok(szene(g, f, 1).svg.includes(">STATUS<"), `${g}/${phase}`);
+  }
+});

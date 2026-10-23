@@ -247,12 +247,8 @@ function instrument(art, c, r, st, s) {
       return kachelGrund(c, r) + marke(x + 14, y + 30, "TOW") + text(x + 14, y + 84, tonnen(tow), { groesse: 36, fett: true }) +
         balken(x + 14, y + 104, 116, max ? tow / max : 0, tow && max && tow > max ? FARBE.rot : FARBE.gruen, 7) + text(x + 14, y + 130, max ? `max ${tonnen(max)} t` : "", { groesse: 15, farbe: FARBE.leise });
     }
-    case "netz": {
-      const sim = !!st?.live, srv = st?.connection_state === "live";
-      const ok = sim && srv;
-      return kachelGrund(c, r) + marke(x + 14, y + 30, "Status") + text(x + 14, y + 80, ok ? "OK" : !sim ? "SIM" : "SRV", { groesse: 40, fett: true, farbe: ok ? FARBE.gruen : FARBE.rot }) +
-        text(x + 14, y + 112, `Sim ${sim ? "●" : "○"}  Server ${srv ? "●" : "○"}`, { groesse: 15, farbe: FARBE.leise });
-    }
+    case "netz":
+      return statusKachel(c, r, st, s);
     case "bahn":
       return wertKachel(c, r, { marke: "Bahn", wert: st?.approach_runway ?? st?.predicted_runway ?? "–", unter: st?.approach_runway ? "im Anflug" : "erwartet", farbe: FARBE.cyan });
     case "strecke":
@@ -262,13 +258,46 @@ function instrument(art, c, r, st, s) {
   }
 }
 
+// Status (ACARS/SIM/SERVER) steht in jeder Phase ganz rechts (Thomas 23.10.).
 export const INSTRUMENTE = {
-  kein: ["utc", "netz", "gate", "std", "sta", "blockfuel", "zfw", "tow"],
+  kein: ["utc", "gate", "std", "sta", "blockfuel", "zfw", "tow", "netz"],
   vor: ["gate", "std", "sta", "blockfuel", "zfw", "tow", "utc", "netz"],
-  flug: ["hoehe", "vs", "gs", "wind", "sprit", "eta", "luft", "utc"],
-  anflug: ["hoehe", "vs", "gs", "wind", "bahn", "eta", "sprit", "utc"],
+  flug: ["hoehe", "vs", "gs", "wind", "sprit", "eta", "utc", "netz"],
+  anflug: ["hoehe", "vs", "gs", "wind", "bahn", "eta", "sprit", "netz"],
   nach: ["block", "luft", "strecke", "sprit", "gate", "sta", "utc", "netz"],
 };
+
+/**
+ * Status-Taste: drei Leuchtdioden — erreicht das Deck AeroACARS, kommen
+ * Simulator-Daten an, steht die Verbindung zum GSG-Server.
+ * Thomas 23.10.: „ob SIM und Server da sind — das wäre ein Traum“.
+ */
+export function statusZeilen(st, s) {
+  const acars = s.erreichbar ? ["ok", "OK"] : ["aus", "AUS"];
+  const sim = !s.erreichbar ? ["leer", "–"] : !st ? ["leer", "KEIN FLUG"] : st.paused_since ? ["warn", "PAUSE"] : st.live ? ["ok", "OK"] : ["aus", "WEG"];
+  const server = !s.erreichbar || !st ? ["leer", "–"]
+    : st.connection_state === "live" ? ["ok", "OK"]
+      : st.connection_state === "blocked" ? ["aus", "GESPERRT"] : ["warn", "STÖRT"];
+  return [["ACARS", ...acars], ["SIM", ...sim], ["SERVER", ...server]];
+}
+
+function statusKachel(c, r, st, s) {
+  const x = kx(c), y = ky(r);
+  const farbe = { ok: FARBE.gruen, warn: FARBE.amber, aus: FARBE.rot, leer: FARBE.leise };
+  const zeilen = statusZeilen(st, s);
+  const alles = zeilen.every(([, z]) => z === "ok");
+  const teile = [kachelGrund(c, r), marke(x + 14, y + 30, "Status", alles ? FARBE.gruen : FARBE.leise)];
+  zeilen.forEach(([name, z, wort], i) => {
+    const ly = y + 58 + i * 30;
+    const f = farbe[z];
+    teile.push(
+      `<circle cx="${x + 22}" cy="${ly - 5}" r="7" fill="${z === "leer" ? "none" : f}" stroke="${f}" stroke-width="2"${z === "ok" || z === "warn" ? ` filter="url(#leuchten)"` : ""}/>`,
+      text(x + 36, ly, name, { groesse: 13, fett: true, farbe: FARBE.leise, abstand: 1, max: 50 }),
+      text(x + KACHEL - 10, ly, wort, { groesse: 14, fett: true, farbe: f, anker: "end", max: 44 }),
+    );
+  });
+  return teile.join("");
+}
 
 // ---- Phasen-Zone ----------------------------------------------------------
 
@@ -550,7 +579,7 @@ export function szene(geraet, s, t = 0) {
     for (let c = 0; c < 5; c++) setze(c, 0, { kurz: "cockpit", lang: "map" });
     teile.push(audioLeiste("ans", 0, 1, s), audioLeiste("mus", 0, 2, s));
     audioAktionen("ans", 0, 1, setze); audioAktionen("mus", 0, 2, setze);
-    const zwei = { kein: ["utc", "gate"], vor: ["gate", "std"], flug: ["hoehe", "eta"], anflug: ["bahn", "eta"], nach: ["block", "utc"] }[g];
+    const zwei = { kein: ["utc", "netz"], vor: ["gate", "netz"], flug: ["eta", "netz"], anflug: ["bahn", "netz"], nach: ["block", "netz"] }[g];
     zwei.forEach((art, i) => { teile.push(instrument(art, 3 + i, 1, st, s)); setze(3 + i, 1, { lang: "cockpit" }); });
     teile.push(bedienKachel("cdm", 3, 2, s), bedienKachel("zurueck", 4, 2, s));
     setze(3, 2, { bedienung: "cdm" }); setze(4, 2, { bedienung: "zurueck" });
@@ -560,7 +589,7 @@ export function szene(geraet, s, t = 0) {
   // StreamDeck +: 4 × 2 Tasten; der Touch-Streifen bekommt das Band eigens (streifen()).
   const instr = INSTRUMENTE[g === "kein" ? "kein" : g];
   // Thomas 23.10.: Audio machen beim + die Räder — die Tasten zeigen Instrumente.
-  instr.slice(0, 6).forEach((art, i) => {
+  [...instr.filter((a) => a !== "netz").slice(0, 5), "netz"].forEach((art, i) => {
     const c = i % 4, r = Math.floor(i / 4);
     teile.push(instrument(art, c, r, st, s));
     setze(c, r, { lang: ["sprit", "blockfuel", "zfw", "tow"].includes(art) ? "briefing" : "cockpit" });
