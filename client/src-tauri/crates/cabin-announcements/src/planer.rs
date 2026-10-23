@@ -208,8 +208,8 @@ enum Service {
     Offen,
     /// Gemeldet, das Ende steht noch aus (wartet auf Ton, Pause, spielt …).
     Gemeldet,
-    /// Zu Ende gespielt — oder abgewählt (2.1.1 C: dann spielt ihn GSX oder
-    /// das Flugzeug).
+    /// Zu Ende gespielt (abgewählt zählt ebenso, siehe
+    /// [`Planer::service_gelaufen`]).
     Gespielt,
     /// Kommt nicht (stumm, abgebrochen, Fehler, verfallen).
     KommtNicht,
@@ -519,6 +519,19 @@ impl Planer {
         }
     }
 
+    /// Fand der Service statt? Gespielt — oder abgewählt (2.1.1 C, Thomas:
+    /// dann spielt ihn GSX oder das Flugzeug). Die Abwahl gilt jederzeit, auch
+    /// nach einem Neustart und wenn sie erst kommt, als der Service schon in
+    /// der Schlange stand (Codex 23.10.2026).
+    fn service_gelaufen(&self) -> bool {
+        self.service == Service::Gespielt || self.abgewaehlt.contains(&Slot::Reiseflug25)
+    }
+
+    /// Kommt „Ende des Service“ sicher nicht mehr (Service ausgefallen)?
+    fn service_ausgefallen(&self) -> bool {
+        self.service == Service::KommtNicht && !self.service_gelaufen()
+    }
+
     fn entfaellt(&mut self, slot: Slot, grund: Entfall) {
         if !self.schon(slot) && self.flugart().erlaubt(slot) {
             self.gemeldet.insert(slot);
@@ -564,12 +577,6 @@ impl Planer {
         if self.abgewaehlt.contains(&slot) {
             if slot == Slot::KapitaenSinkflug {
                 self.kapitaen_sinkflug = KapitaenSinkflug::KommtNicht;
-            }
-            // 2.1.1 C (Thomas): Abgewählt heißt, GSX oder das Flugzeug spielt
-            // den Service selbst — er findet statt, das Ende kommt wie nach
-            // einem gespielten.
-            if slot == Slot::Reiseflug25 {
-                self.service = Service::Gespielt;
             }
             return;
         }
@@ -621,6 +628,8 @@ impl Planer {
             && !(matches!(slot, Slot::Chime10000Steigflug | Slot::Chime10000Sinkflug)
                 && self.flug.reiseflughoehe_ft.is_some_and(|h| h < 10_000))
             && spaetestens_vor(slot).is_none_or(|grenze| rang(phase) < rang(grenze))
+            // Ende des Service: nicht mehr, wenn der Service ausgefallen ist (Codex).
+            && !(slot == Slot::EndeService && self.service_ausgefallen())
     }
 
     /// Ohne bekannte Flugzeit zählt der Flug als Kurzstrecke (ohne
@@ -674,7 +683,7 @@ impl Planer {
             Slot::EndeService => {
                 // Hängt am Service (2.1.1 C): solange er nicht durch ist,
                 // keine Uhrzeit, die nicht stimmen muss.
-                if !self.schon(Slot::Reiseflug25) {
+                if !self.schon(Slot::Reiseflug25) || self.service_ausgefallen() {
                     return None;
                 }
                 let b = self.bis_sinkflug_s()?;
@@ -995,11 +1004,12 @@ impl Planer {
                 .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - REISEFLUG80_VOR_TOD_S);
             let im_fenster = in_luft && (rang(Climb)..=rang(Descent)).contains(&r);
             match self.service {
-                Service::Gespielt => {
+                _ if self.service_gelaufen() => {
                     if im_fenster && (geplant || r >= rang(Descent)) {
                         self.melde(&mut aus, Slot::EndeService, Verfall::AbPhase(Approach));
                     }
                 }
+                Service::Gespielt => {}
                 Service::Gemeldet => {
                     if r > rang(Descent) {
                         self.entfaellt(Slot::EndeService, Entfall::Uebersprungen);
@@ -2870,6 +2880,25 @@ mod tests {
         // Ein spätes „gespielt“ nach dem Aus ändert nichts mehr.
         r.service_ende(true);
         assert!(!ende(&mut r, bis + 30, Descent));
+        // Codex: ausgefallener Service → die Seite zeigt das Ende nicht mehr
+        // als kommend und ohne Uhrzeit.
+        let mut aus = mit_service();
+        assert!(aus.kommt_noch(Slot::EndeService, Cruise) && aus.zeitpunkt(Slot::EndeService, None).is_some());
+        aus.service_ende(false);
+        assert!(!aus.kommt_noch(Slot::EndeService, Cruise), "ausgefallen: kommt nicht mehr");
+        assert_eq!(aus.zeitpunkt(Slot::EndeService, None), None);
+        // Codex: Abwahl erst, als der Service schon in der Schlange stand —
+        // zählt trotzdem als gelaufen (2.1.1 C), auch wenn er danach abbricht.
+        let mut spaet = mit_service();
+        spaet.abwaehlen([Slot::Reiseflug25]);
+        spaet.service_ende(false);
+        assert!(spaet.kommt_noch(Slot::EndeService, Cruise));
+        assert!(ende(&mut spaet, bis, Descent), "Abwahl gibt das Ende frei");
+        // Codex: Neustart im Sinkflug mit abgewähltem Service → Ende kommt.
+        let mut neu = Planer::fortsetzen(f.clone(), Descent);
+        neu.abwaehlen([Slot::Reiseflug25]);
+        assert!(ende(&mut neu, bis + 60, Descent), "nach Neustart mit Abwahl");
+        assert!(!uebersprungen(&mut neu));
         // Gespielt: zur geplanten Zeit, wie bisher.
         let mut g = mit_service();
         g.service_ende(true);
