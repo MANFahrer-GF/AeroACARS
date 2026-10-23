@@ -740,6 +740,10 @@ mod wiedergabe {
                         pegel = 0.0;
                         return;
                     };
+                    // Hörbar nur, wenn auch Töne kamen: Ein leerer Puffer bei
+                    // stehendem Pegel ist still (Codex 23.10.2026 —
+                    // sonst verdrängte er die Kabinen-Reaktion dauerhaft).
+                    let mut geliefert = false;
                     for rahmen in aus.chunks_mut(kanaele) {
                         pegel = pegel_schritt(pegel, ziel, v, rate, am_ende);
                         // Ansage: ausgeblendet anhalten, die Stelle bleibt.
@@ -750,11 +754,12 @@ mod wiedergabe {
                             continue;
                         }
                         for k in rahmen {
-                            let x = q.pop_front().unwrap_or(0.0);
-                            *k = T::from_sample((x * pegel).clamp(-1.0, 1.0));
+                            let x = q.pop_front();
+                            geliefert |= x.is_some();
+                            *k = T::from_sample((x.unwrap_or(0.0) * pegel).clamp(-1.0, 1.0));
                         }
                     }
-                    still.store(pegel <= 0.0, Ordering::Relaxed);
+                    still.store(pegel <= 0.0 || !geliefert, Ordering::Relaxed);
                 },
                 move |e| {
                     tracing::warn!(error = %e, "boarding-musik: Ausgabegeraet meldet einen Fehler");
