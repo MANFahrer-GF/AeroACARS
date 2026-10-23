@@ -9,6 +9,8 @@
 //   rot    = Störung
 //   weiß   = Messwert
 
+import { textBreite } from "./schriftmass.js";
+
 export const FARBE = {
   grund: "#04070b",
   flaeche: "#0b1118",
@@ -27,14 +29,23 @@ export const SCHRIFT = "B612";
 
 const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-/** Text; `opt`: { groesse, farbe, fett, anker: start|middle|end, abstand } */
+/**
+ * Text; `opt`: { groesse, farbe, fett, anker: start|middle|end, abstand, max }.
+ * `max` = höchstens so viele Pixel breit: die Schrift wird so weit verkleinert,
+ * dass der Text in seine Kachel passt (gemessen an den echten B612-Breiten).
+ */
 export function text(x, y, inhalt, opt = {}) {
-  const { groesse = 20, farbe = FARBE.text, fett = false, anker = "start", abstand = 0, deckkraft = 1 } = opt;
+  const { farbe = FARBE.text, fett = false, anker = "start", abstand = 0, deckkraft = 1, max } = opt;
+  let { groesse = 20 } = opt;
+  if (max) {
+    const b = textBreite(inhalt, groesse, fett, abstand);
+    if (b > max) groesse = Math.max(9, Math.floor((groesse * max) / b * 10) / 10);
+  }
   return `<text x="${x}" y="${y}" font-family="${SCHRIFT}" font-size="${groesse}" font-weight="${fett ? 700 : 400}" fill="${farbe}" text-anchor="${anker}" letter-spacing="${abstand}" opacity="${deckkraft}">${esc(inhalt)}</text>`;
 }
 
 /** Kleine Großbuchstaben-Beschriftung über einem Wert. */
-export const marke = (x, y, inhalt, farbe = FARBE.leise, anker = "start") => text(x, y, String(inhalt).toUpperCase(), { groesse: 15, farbe, fett: true, anker, abstand: 1.5 });
+export const marke = (x, y, inhalt, farbe = FARBE.leise, anker = "start", max = 116) => text(x, y, String(inhalt).toUpperCase(), { groesse: 15, farbe, fett: true, anker, abstand: 1.5, max });
 
 /** Abgerundete Fläche als Kachelgrund. */
 export const flaeche = (x, y, b, h, farbe = FARBE.flaeche, r = 16) => `<rect x="${x}" y="${y}" width="${b}" height="${h}" rx="${r}" fill="${farbe}"/>`;

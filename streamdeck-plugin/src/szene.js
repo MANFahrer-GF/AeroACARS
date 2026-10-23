@@ -20,6 +20,8 @@ export const KACHEL = 144;
 export const FUGE = 36;
 
 const kx = (c) => c * (KACHEL + FUGE);
+/** Nutzbare Textbreite in einer Kachel (14 px Rand links, 10 rechts). */
+const INNEN = KACHEL - 24;
 /** Linke obere Ecke der Kachel c/r in der Szene (zum Ausschneiden). */
 export const kachelOrt = (c, r) => ({ x: c * (KACHEL + FUGE), y: r * (KACHEL + FUGE) });
 const ky = (r) => r * (KACHEL + FUGE);
@@ -85,8 +87,8 @@ function wertKachel(c, r, { marke: m, wert, unter, farbe = FARBE.text, markeFarb
   return [
     kachelGrund(c, r),
     marke(x, y + 30, m, markeFarbe),
-    text(x, y + 88, w, { groesse: g, farbe, fett: true }),
-    unter ? text(x, y + 124, unter, { groesse: 17, farbe: FARBE.leise }) : "",
+    text(x, y + 88, w, { groesse: g, farbe, fett: true, max: INNEN }),
+    unter ? text(x, y + 124, unter, { groesse: 17, farbe: FARBE.leise, max: INNEN }) : "",
   ].join("");
 }
 
@@ -125,18 +127,43 @@ function band(st, s, c0, c1, r, t) {
   const kx0 = kx(kachelDesFlugzeugs);
   teile.push(text(kx0 + KACHEL / 2, y + 30, PHASE_TEXT[st?.phase] ?? "", { groesse: 15, farbe: phasenFarbe, fett: true, anker: "middle", abstand: 1.5 }));
 
-  // Laufschrift unter der Linie, nur im Mittelteil.
-  const lauf = laufschrift(st, s);
-  const mx0 = kx(c0 + 1), mx1 = kx(c1);
-  // Thomas 23.10.: die erste Fassung (36 px/s) war zu schnell.
-  const tempo = 16; // px je Sekunde
-  const textBreite = lauf.length * 13.2 + 200;
-  const versatz = ((t * tempo) % textBreite);
-  teile.push(
-    `<clipPath id="lauf"><rect x="${mx0}" y="${y + 92}" width="${mx1 - mx0}" height="44"/></clipPath>`,
-    `<g clip-path="url(#lauf)">${text(mx1 - versatz, y + 124, lauf, { groesse: 22, farbe: FARBE.amber, fett: true, abstand: 1 })}${text(mx1 - versatz + textBreite, y + 124, lauf, { groesse: 22, farbe: FARBE.amber, fett: true, abstand: 1 })}</g>`,
-  );
+  // Fallblatt statt Laufschrift (Thomas 23.10. am Gerät: Text darf nicht über
+  // die Blenden laufen). Jede Mittelkachel zeigt eine Angabe; alle vier
+  // Sekunden rücken die Angaben eine Kachel weiter.
+  const infos = bandInfos(st, s);
+  const mitte = c1 - c0 - 1;
+  const schritt = infos.length > mitte ? Math.floor(t / 4) : 0;
+  for (let i = 0; i < Math.min(mitte, infos.length); i++) {
+    const [marke2, wert] = infos[(i + schritt) % infos.length];
+    const cx = kx(c0 + 1 + i) + KACHEL / 2;
+    teile.push(
+      text(cx, y + 104, marke2, { groesse: 13, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1, max: INNEN }),
+      text(cx, y + 130, wert, { groesse: 22, fett: true, farbe: FARBE.amber, anker: "middle", max: INNEN }),
+    );
+  }
   return teile.join("");
+}
+
+/** Angaben für das Fallblatt im Band: [Marke, Wert], je Phase das Wichtige. */
+export function bandInfos(st, s) {
+  if (!st) return [["AEROACARS", "BEREIT"], ["FLUG", "KEINER"]];
+  const g = phasenGruppe(st.phase);
+  const m = g === "vor" ? st.dep_metar_decoded : st.arr_metar_decoded;
+  const icao = g === "vor" ? st.dpt_airport : st.arr_airport;
+  const liste = [["FLUG", st.callsign ?? "–"]];
+  if (st.aircraft_icao) liste.push(["MUSTER", st.aircraft_icao]);
+  if (m) {
+    const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
+    liste.push([`WIND ${icao ?? ""}`, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : String(Math.round(kt)).padStart(2, "0")}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`]);
+    if (m.qnh_hpa != null) liste.push([`QNH ${icao ?? ""}`, `Q${Math.round(m.qnh_hpa)}`]);
+  } else liste.push([`WETTER ${icao ?? ""}`, "FEHLT"]);
+  const bahn = st.approach_runway ?? st.predicted_runway;
+  if (bahn) liste.push(["BAHN", bahn]);
+  if (st.planned_alternate) liste.push(["ALTN", st.planned_alternate]);
+  const n = s.kabine?.naechste;
+  if (n) liste.push(["ANSAGE", n.wann ? `${uhrZ(n.wann * 1000)}Z` : (ANSAGEN[n.slot] ?? n.slot).toUpperCase()]);
+  if (zahl(st.distance_nm)) liste.push(["GEFLOGEN", `${Math.round(st.distance_nm)} NM`]);
+  return liste;
 }
 
 /** Was in der Laufschrift steht — je Phase das, was gerade zählt. */
@@ -245,54 +272,60 @@ export const INSTRUMENTE = {
 
 // ---- Phasen-Zone ----------------------------------------------------------
 
-/** Boarding-Musik als große Fläche über n Kacheln, mit Equalizer. */
+// Regel (Thomas 23.10. am Gerät): Text bleibt in seiner Kachel. Flächen über
+// mehrere Kacheln ordnen jeden Text einer Kachel zu; nur Linien und Grafik
+// laufen über die Blenden. test/kacheltext.test.js prüft das für jede Szene.
+
+/** Boarding-Musik über n Kacheln: Zustand links, Equalizer daneben. */
 function musikFlaeche(c, r, n, s, t) {
   const k = s.kabine;
   const x = kx(c), y = ky(r), b = spanne(n);
   const an = !!k?.boarding_musik;
   const stumm = k && k.musik_live <= 0.001 && k.musik_gespeichert > 0.001;
   const farbe = !k ? FARBE.leise : !an ? FARBE.leise : stumm ? FARBE.amber : FARBE.cyan;
-  const saeulen = [];
-  for (let i = 0; i < 14; i++) {
-    const h = an && !stumm ? 10 + Math.abs(Math.sin(t * 1.7 + i * 0.9)) * 38 + (i % 3) * 4 : 6;
-    saeulen.push(`<rect x="${x + 14 + i * ((b - 28) / 14)}" y="${y + 112 - h}" width="${(b - 28) / 14 - 6}" height="${h}" rx="3" fill="${farbe}" opacity="${an ? 0.9 : 0.35}"/>`);
+  const teile = [flaeche(x, y, b, KACHEL, FARBE.flaeche, 18), marke(x + 14, y + 30, "Musik", farbe)];
+  teile.push(text(x + 14, y + 86, !k ? "–" : !an ? "AUS" : stumm ? "STUMM" : `${Math.round(k.musik_gespeichert * 100)} %`, { groesse: 36, fett: true, farbe, max: INNEN }));
+  teile.push(text(x + 14, y + 124, !k ? "Client zu alt" : an ? "kurz: stumm" : "halten: an", { groesse: 15, farbe: FARBE.leise, max: INNEN }));
+  // Equalizer in den übrigen Kacheln, je Kachel für sich.
+  for (let j = 1; j < n; j++) {
+    const ex = kx(c + j);
+    for (let i = 0; i < 8; i++) {
+      const h = an && !stumm ? 10 + Math.abs(Math.sin(t * 1.7 + (i + j * 8) * 0.9)) * 64 : 6;
+      teile.push(`<rect x="${ex + 14 + i * 15}" y="${y + 112 - h}" width="10" height="${h}" rx="3" fill="${farbe}" opacity="${an ? 0.9 : 0.35}"/>`);
+    }
+    if (j === n - 1 && an) teile.push(text(ex + 14, y + 134, "halten: aus", { groesse: 14, farbe: FARBE.leise, max: INNEN }));
   }
-  return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, "Boarding-Musik", farbe) +
-    text(x + b - 14, y + 30, !k ? "CLIENT ZU ALT" : !an ? "AUS" : stumm ? "STUMM" : `${Math.round(k.musik_gespeichert * 100)} %`, { groesse: 15, fett: true, farbe, anker: "end", abstand: 1.5 }) +
-    saeulen.join("") + text(x + 14, y + 134, an ? "kurz: stumm · halten: aus" : "halten: einschalten", { groesse: 14, farbe: FARBE.leise });
+  return teile.join("");
 }
 
-/** Kabinen-Zeitstrahl: kommende Ansagen als Stationen, Lichtpunkt zur nächsten. */
+/** Kabinen-Zeitstrahl: Stationen auf Kachelmitten, Lichtpunkt zur nächsten. */
 function kabinenStrahl(c, r, n, s, t) {
   const k = s.kabine;
   const x = kx(c), y = ky(r), b = spanne(n);
-  const folge = k?.folgende ?? (k?.naechste ? [k.naechste] : []);
+  const folge = (k?.folgende?.length ? k.folgende : k?.naechste ? [k.naechste] : []).slice(0, Math.min(4, n));
   const teile = [flaeche(x, y, b, KACHEL, FARBE.flaeche, 18), marke(x + 14, y + 30, "Kabine", FARBE.cyan)];
-  if (!k) return teile.join("") + text(x + 14, y + 90, "Client zu alt", { groesse: 22, farbe: FARBE.leise });
-  if (k.stumm) teile.push(text(x + b - 14, y + 30, "STUMM", { groesse: 15, fett: true, farbe: FARBE.rot, anker: "end", abstand: 1.5 }));
-  const ly = y + 74;
-  const sx = (i) => x + 60 + i * ((b - 120) / Math.max(1, Math.min(folge.length, 4) - 1 || 1));
-  teile.push(`<line x1="${x + 30}" y1="${ly}" x2="${x + b - 30}" y2="${ly}" stroke="${FARBE.linie}" stroke-width="4"/>`);
-  folge.slice(0, 4).forEach((f, i) => {
-    const px = folge.length === 1 ? x + b / 2 : sx(i);
-    const wartet = i === 0 && k.hinweis === "anschnallzeichen";
+  if (!k) return teile.join("") + text(x + 14, y + 90, "Client zu alt", { groesse: 20, farbe: FARBE.leise, max: INNEN });
+  if (k.stumm) teile.push(text(kx(c + n - 1) + KACHEL - 12, y + 30, "STUMM", { groesse: 15, fett: true, farbe: FARBE.rot, anker: "end", abstand: 1.5, max: INNEN }));
+  const ly = y + 78;
+  const m = folge.length;
+  // Kachel je Station: gleichmäßig verteilt, bei einer Station in der Mitte.
+  const kachelVon = (i) => (m === 1 ? Math.floor((n - 1) / 2) : Math.round((i * (n - 1)) / (m - 1)));
+  const mitte = (i) => kx(c + kachelVon(i)) + KACHEL / 2;
+  teile.push(`<line x1="${x + 24}" y1="${ly}" x2="${x + b - 24}" y2="${ly}" stroke="${FARBE.linie}" stroke-width="4"/>`);
+  const wartet = k.hinweis === "anschnallzeichen";
+  folge.forEach((f, i) => {
+    const px = mitte(i);
     const farbe = i === 0 ? (wartet ? FARBE.amber : FARBE.cyan) : FARBE.leise;
     teile.push(`<circle cx="${px}" cy="${ly}" r="${i === 0 ? 9 : 6}" fill="${farbe}"/>`);
-    // Text innerhalb der Kachel, in der die Station liegt.
-    const kc = Math.floor(px / (KACHEL + FUGE));
-    const tx = Math.min(Math.max(px, kx(kc) + 10), kx(kc) + KACHEL - 10);
-    teile.push(text(tx, ly + 34, (ANSAGEN[f.slot] ?? f.slot).toUpperCase(), { groesse: 15, fett: true, farbe, anker: "middle" }));
-    if (f.wann) teile.push(text(tx, ly - 18, `${uhrZ(f.wann * 1000)}Z`, { groesse: 15, farbe: FARBE.leise, anker: "middle" }));
-    if (wartet) teile.push(`<rect x="${px - 30}" y="${ly - 14}" width="6" height="28" rx="2" fill="${FARBE.amber}"/>`);
+    if (f.wann) teile.push(text(px, ly - 20, `${uhrZ(f.wann * 1000)}Z`, { groesse: 15, farbe: FARBE.leise, anker: "middle", max: INNEN }));
+    teile.push(text(px, ly + 36, (ANSAGEN[f.slot] ?? f.slot).toUpperCase(), { groesse: 15, fett: true, farbe, anker: "middle", max: INNEN }));
+    if (i === 0 && wartet) teile.push(`<rect x="${px - 34}" y="${ly - 14}" width="6" height="28" rx="2" fill="${FARBE.amber}"/>`);
   });
-  // Lichtpunkt wandert auf die nächste Station zu (oder steht an der Schranke).
-  if (folge.length) {
-    const ziel = folge.length === 1 ? x + b / 2 : sx(0);
-    const start = x + 30;
-    const wartet = k.hinweis === "anschnallzeichen";
-    const pos = wartet ? ziel - 44 : start + ((t * 30) % Math.max(1, ziel - start - 12));
+  if (m) {
+    const ziel = mitte(0), start = x + 24;
+    const pos = wartet ? ziel - 46 : start + ((t * 30) % Math.max(1, ziel - start - 14));
     teile.push(`<circle cx="${pos}" cy="${ly}" r="6" fill="${wartet ? FARBE.amber : FARBE.cyan}" filter="url(#leuchten)"/>`);
-  }
+  } else teile.push(text(x + 14, y + 104, "keine Ansage", { groesse: 18, farbe: FARBE.leise, max: INNEN }));
   return teile.join("");
 }
 
@@ -305,20 +338,26 @@ function landebahn(c, r, n, st) {
   const teile = [
     flaeche(x, y, b, KACHEL, FARBE.flaeche, 18),
     marke(x + 14, y + 30, "Landebahn", FARBE.cyan),
-    // Bahn als Draufsicht, Anflug von links
     `<rect x="${x + 70}" y="${by}" width="${b - 140}" height="34" rx="4" fill="#2a3440"/>`,
     ...Array.from({ length: Math.floor((b - 200) / 46) }, (_, i) => `<rect x="${x + 100 + i * 46}" y="${by + 15}" width="24" height="4" fill="#d7dee5"/>`),
     `<line x1="${x + 30}" y1="${by + 17}" x2="${x + 70}" y2="${by + 17}" stroke="${FARBE.magenta}" stroke-width="3" stroke-dasharray="6 6"/>`,
-    text(x + 14, y + 134, `RWY ${bahn}`, { groesse: 22, fett: true, farbe: FARBE.cyan }),
+    text(x + 14, y + 134, `RWY ${bahn}`, { groesse: 22, fett: true, farbe: FARBE.cyan, max: INNEN }),
   ];
-  // Werte in der rechten Kachel
   const rx = kx(c + n - 1) + 14;
-  teile.push(
-    text(rx, y + 30, gw == null ? "" : gw >= 0 ? "GEGENWIND" : "RÜCKENWIND", { groesse: 14, fett: true, farbe: gw != null && gw < 0 ? FARBE.amber : FARBE.leise, abstand: 1 }),
-    text(rx, y + 134, sw == null ? "" : `X ${Math.abs(Math.round(sw))} kt`, { groesse: 20, fett: true, farbe: Math.abs(sw ?? 0) > 20 ? FARBE.amber : FARBE.text }),
-    gw == null ? "" : text(kx(c + n - 2) + KACHEL - 14, y + 134, `${Math.abs(Math.round(gw))} kt`, { groesse: 20, fett: true, anker: "end" }),
-  );
-  if (sw != null && Math.abs(sw) > 1) teile.push(pfeil(x + b / 2, by + 17, 54, sw > 0 ? 0 : 180, FARBE.amber, 5));
+  if (gw != null) {
+    teile.push(
+      text(rx, y + 30, gw >= 0 ? "GEGENWIND" : "RÜCKENWIND", { groesse: 14, fett: true, farbe: gw < 0 ? FARBE.amber : FARBE.leise, abstand: 1, max: INNEN }),
+      text(rx, y + 134, `${Math.abs(Math.round(gw))} kt`, { groesse: 20, fett: true, max: INNEN }),
+    );
+  }
+  if (sw != null) {
+    const sx = kx(c + n - 2) + 14;
+    teile.push(
+      text(sx, y + 30, "SEITENWIND", { groesse: 14, fett: true, farbe: FARBE.leise, abstand: 1, max: INNEN }),
+      text(sx, y + 134, `${Math.abs(Math.round(sw))} kt`, { groesse: 20, fett: true, farbe: Math.abs(sw) > 20 ? FARBE.amber : FARBE.text, max: INNEN }),
+    );
+    if (Math.abs(sw) > 1) teile.push(pfeil(x + b / 2, by + 17, 54, sw > 0 ? 0 : 180, FARBE.amber, 5));
+  }
   return teile.join("");
 }
 
@@ -328,38 +367,46 @@ function landungFlaeche(c, r, n, st, s) {
   const d = s.debrief;
   const fpm = zahl(st?.landing_rate_fpm), g = zahl(st?.landing_g_force);
   const farbe = { smooth: FARBE.gruen, acceptable: FARBE.gruen, firm: FARBE.amber, hard: FARBE.rot, severe: FARBE.rot }[d?.score_label] ?? FARBE.text;
-  return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, "Landung", FARBE.cyan) +
-    text(x + 14, y + 100, fpm == null ? "—" : `${Math.round(fpm)}`, { groesse: 56, fett: true }) + text(x + 14, y + 132, "ft/min", { groesse: 17, farbe: FARBE.leise }) +
-    text(kx(c + 1) + 14, y + 100, g == null ? "" : `${g.toFixed(2).replace(".", ",")}`, { groesse: 44, fett: true }) + text(kx(c + 1) + 14, y + 132, g == null ? "" : "G", { groesse: 17, farbe: FARBE.leise }) +
-    (n > 2 ? marke(kx(c + 2) + 14, y + 30, "Bewertung") + text(kx(c + 2) + 14, y + 100, d?.grade_letter ?? "…", { groesse: 56, fett: true, farbe }) + text(kx(c + 2) + 14, y + 132, d?.score_numeric != null ? `${d.score_numeric}/100` : "wird bewertet", { groesse: 17, farbe: FARBE.leise }) : "") +
-    (n > 3 ? marke(kx(c + 3) + 14, y + 30, "Bahn") + text(kx(c + 3) + 14, y + 100, st?.approach_runway ?? "–", { groesse: 44, fett: true, farbe: FARBE.cyan }) : "");
+  const spalte = (i) => kx(c + i) + 14;
+  return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(spalte(0), y + 30, "Landung", FARBE.cyan) +
+    text(spalte(0), y + 100, fpm == null ? "—" : `${Math.round(fpm)}`, { groesse: 52, fett: true, max: INNEN }) + text(spalte(0), y + 132, "ft/min", { groesse: 17, farbe: FARBE.leise, max: INNEN }) +
+    marke(spalte(1), y + 30, "G-Last") + text(spalte(1), y + 100, g == null ? "—" : `${g.toFixed(2).replace(".", ",")}`, { groesse: 44, fett: true, max: INNEN }) +
+    (n > 2 ? marke(spalte(2), y + 30, "Bewertung") + text(spalte(2), y + 100, d?.grade_letter ?? "…", { groesse: 56, fett: true, farbe, max: INNEN }) + text(spalte(2), y + 132, d?.score_numeric != null ? `${d.score_numeric}/100` : "wird bewertet", { groesse: 17, farbe: FARBE.leise, max: INNEN }) : "") +
+    (n > 3 ? marke(spalte(3), y + 30, "Bahn") + text(spalte(3), y + 100, st?.approach_runway ?? "–", { groesse: 44, fett: true, farbe: FARBE.cyan, max: INNEN }) : "");
 }
 
-/** Wetter am Flughafen über zwei Kacheln: Windpfeil links, Werte rechts. */
+/** Wetter über zwei Kacheln: links Windrose, rechts die Werte. */
 function wetterFlaeche(c, r, m, icao) {
   const x = kx(c), y = ky(r), b = spanne(2);
-  if (!m) return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, `Wetter ${icao ?? ""}`) + text(x + 14, y + 90, "kein METAR", { groesse: 24, farbe: FARBE.leise }) + text(x + 14, y + 124, "drücken: laden", { groesse: 16, farbe: FARBE.cyan });
-  const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
-  const sicht = m.visibility_m == null ? "–" : m.visibility_m >= 9999 ? "10km+" : `${Math.round(m.visibility_m / 100) / 10}km`;
-  const wolke = (m.cloud_layers ?? [])[0];
   const rx = kx(c + 1) + 14;
+  if (!m) {
+    return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, `Wetter ${icao ?? ""}`) +
+      text(x + 14, y + 90, "kein METAR", { groesse: 22, farbe: FARBE.leise, max: INNEN }) +
+      marke(rx, y + 30, "Drücken", FARBE.cyan) + text(rx, y + 90, "laden", { groesse: 28, fett: true, farbe: FARBE.cyan, max: INNEN });
+  }
+  const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
+  const sicht = m.visibility_m == null ? "–" : m.visibility_m >= 9999 ? "10 km+" : `${Math.round(m.visibility_m / 100) / 10} km`;
+  const wolke = (m.cloud_layers ?? [])[0];
   return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, `Wetter ${m.icao ?? icao ?? ""}`, FARBE.cyan) +
     `<circle cx="${x + 72}" cy="${y + 86}" r="40" fill="none" stroke="${FARBE.linie}" stroke-width="3"/>` +
-    (dir != null && kt > 0 ? pfeil(x + 72, y + 86, 66, dir + 180, FARBE.cyan, 5) : text(x + 72, y + 94, "CALM", { groesse: 18, anker: "middle", fett: true })) +
-    text(rx, y + 52, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : Math.round(kt)}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`, { groesse: 22, fett: true }) +
-    text(rx, y + 82, `Q${Math.round(m.qnh_hpa ?? 0)}`, { groesse: 22, fett: true, farbe: FARBE.cyan }) +
-    text(rx, y + 110, sicht, { groesse: 19 }) +
-    text(rx, y + 134, wolke ? `${wolke.cover} ${wolke.base_ft ?? ""}` : `${m.temperature_c != null ? Math.round(m.temperature_c) + "°" : ""}`, { groesse: 17, farbe: FARBE.leise });
+    (dir != null && kt > 0 ? pfeil(x + 72, y + 86, 66, dir + 180, FARBE.cyan, 5) : text(x + 72, y + 94, "CALM", { groesse: 18, anker: "middle", fett: true, max: INNEN })) +
+    text(rx, y + 40, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : String(Math.round(kt)).padStart(2, "0")}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`, { groesse: 22, fett: true, max: INNEN }) +
+    text(rx, y + 72, `Q${Math.round(m.qnh_hpa ?? 0)}`, { groesse: 24, fett: true, farbe: FARBE.cyan, max: INNEN }) +
+    text(rx, y + 102, sicht, { groesse: 19, max: INNEN }) +
+    text(rx, y + 130, wolke ? `${wolke.cover} ${wolke.base_ft ?? ""}` : m.temperature_c != null ? `${Math.round(m.temperature_c)}°` : "", { groesse: 17, farbe: FARBE.leise, max: INNEN });
 }
 
-/** Nächste Ansage als Karte über zwei Kacheln. */
+/** Nächste Ansage über zwei Kacheln: links was, rechts wann. */
 function ansageKarte(c, r, s) {
   const x = kx(c), y = ky(r), b = spanne(2);
   const k = s.kabine, n = k?.naechste;
   const wartet = k?.hinweis === "anschnallzeichen";
-  return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, "Nächste Ansage", wartet ? FARBE.amber : FARBE.cyan) +
-    text(x + 14, y + 86, !k ? "–" : k.stumm ? "KABINE STUMM" : n ? (ANSAGEN[n.slot] ?? n.slot).toUpperCase() : "KEINE", { groesse: 28, fett: true, farbe: k?.stumm ? FARBE.rot : FARBE.text }) +
-    text(x + 14, y + 124, wartet ? "wartet: Anschnallzeichen aus" : n?.wann ? `ca. ${uhrZ(n.wann * 1000)}Z` : "", { groesse: 17, farbe: wartet ? FARBE.amber : FARBE.leise });
+  const rx = kx(c + 1) + 14;
+  return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, "Ansage", wartet ? FARBE.amber : FARBE.cyan) +
+    text(x + 14, y + 86, !k ? "–" : k.stumm ? "STUMM" : n ? (ANSAGEN[n.slot] ?? n.slot).toUpperCase() : "KEINE", { groesse: 24, fett: true, farbe: k?.stumm ? FARBE.rot : FARBE.text, max: INNEN }) +
+    text(x + 14, y + 124, "als nächste", { groesse: 15, farbe: FARBE.leise, max: INNEN }) +
+    marke(rx, y + 30, wartet ? "wartet" : "Uhrzeit", wartet ? FARBE.amber : FARBE.leise) +
+    text(rx, y + 86, wartet ? "Gurte aus" : n?.wann ? `${uhrZ(n.wann * 1000)}Z` : "–", { groesse: 26, fett: true, farbe: wartet ? FARBE.amber : FARBE.cyan, max: INNEN });
 }
 
 // ---- Bedienreihe ----------------------------------------------------------
@@ -412,33 +459,35 @@ function bedienKachel(art, c, r, s) {
 }
 
 /**
- * Audio-Leiste über drei Kacheln: − | stumm | +, Pegelbalken über alles.
+ * Audio-Leiste aus drei eigenständigen Tasten: − | stumm | +.
  * `art` "ans" = Kabinenansagen, "mus" = Boarding-Musik.
- * Thomas 23.10.: „das Wichtigste: laut, leise und muten — Musik und Ansagen“.
+ * Thomas 23.10.: „laut, leise und muten — Musik und Ansagen“; am Gerät:
+ * nichts über die Blenden (der durchgehende Rahmen/Balken sah zerrissen aus).
  */
 function audioLeiste(art, c, r, s) {
-  const k = s.kabine, x = kx(c), y = ky(r), b = spanne(3);
+  const k = s.kabine;
   const ansage = art === "ans";
   const pegel = !k ? 0 : ansage ? k.lautstaerke_gespeichert : k.musik_gespeichert;
   const stumm = !!k && (ansage ? k.stumm : k.musik_live <= 0.001 && k.musik_gespeichert > 0.001);
   const aus = !!k && !ansage && !k.boarding_musik;
   const farbe = !k ? FARBE.leise : stumm ? (ansage ? FARBE.rot : FARBE.amber) : aus ? FARBE.leise : FARBE.cyan;
-  const mx = kx(c + 1) + KACHEL / 2;
-  const teile = [
-    flaeche(x, y, b, KACHEL, "#0d1622", 22),
-    `<rect x="${x + 1}" y="${y + 1}" width="${b - 2}" height="${KACHEL - 2}" rx="21" fill="none" stroke="${farbe}" stroke-opacity="0.45" stroke-width="2"/>`,
-    text(kx(c) + KACHEL / 2, y + 88, "−", { groesse: 70, fett: true, farbe: k ? FARBE.cyan : FARBE.leise, anker: "middle" }),
-    text(kx(c + 2) + KACHEL / 2, y + 88, "+", { groesse: 70, fett: true, farbe: k ? FARBE.cyan : FARBE.leise, anker: "middle" }),
-    text(mx, y + 28, ansage ? "ANSAGEN" : "MUSIK", { groesse: 15, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1.5 }),
-    ansage
-      ? lautsprecher(mx, y + 64, 44, farbe, stumm)
-      : note(mx, y + 64, 40, farbe),
-    stumm && !ansage ? `<line x1="${mx - 24}" y1="${y + 40}" x2="${mx + 24}" y2="${y + 88}" stroke="${farbe}" stroke-width="5" stroke-linecap="round"/>` : "",
-    text(mx, y + 106, !k ? "Client zu alt" : stumm ? "STUMM" : aus ? "AUS" : `${Math.round(pegel * 100)} %`, { groesse: 18, fett: true, farbe, anker: "middle" }),
-    // Pegel über alle drei Kacheln — eine Linie darf über die Blenden laufen.
-    balken(x + 22, y + 120, b - 44, stumm || aus ? 0 : pegel, farbe, 8),
-  ];
-  return teile.join("");
+  const name = ansage ? "ANSAGEN" : "MUSIK";
+  const taste = (i, rahmen) => flaeche(kx(c + i), ky(r), KACHEL, KACHEL, "#0d1622", 18) +
+    `<rect x="${kx(c + i) + 1}" y="${ky(r) + 1}" width="${KACHEL - 2}" height="${KACHEL - 2}" rx="17" fill="none" stroke="${rahmen}" stroke-opacity="0.45" stroke-width="2"/>`;
+  const plusMinus = (i, zeichen) => taste(i, k ? FARBE.cyan : FARBE.leise) +
+    text(kx(c + i) + KACHEL / 2, ky(r) + 30, name, { groesse: 13, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1.5, max: INNEN }) +
+    text(kx(c + i) + KACHEL / 2, ky(r) + 104, zeichen, { groesse: 76, fett: true, farbe: k ? FARBE.cyan : FARBE.leise, anker: "middle" });
+  const mx = kx(c + 1) + KACHEL / 2, y = ky(r);
+  return [
+    plusMinus(0, "−"),
+    taste(1, farbe),
+    text(mx, y + 28, name, { groesse: 13, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1.5, max: INNEN }),
+    ansage ? lautsprecher(mx, y + 62, 42, farbe, stumm) : note(mx, y + 62, 38, farbe),
+    stumm && !ansage ? `<line x1="${mx - 22}" y1="${y + 40}" x2="${mx + 22}" y2="${y + 84}" stroke="${farbe}" stroke-width="5" stroke-linecap="round"/>` : "",
+    text(mx, y + 106, !k ? "zu alt" : stumm ? "STUMM" : aus ? "AUS" : `${Math.round(pegel * 100)} %`, { groesse: 20, fett: true, farbe, anker: "middle", max: INNEN }),
+    balken(kx(c + 1) + 18, y + 120, KACHEL - 36, stumm || aus ? 0 : pegel, farbe, 7),
+    plusMinus(2, "+"),
+  ].join("");
 }
 
 /** Bedienung der Audio-Leiste je Kachel (links, Mitte, rechts). */
@@ -469,7 +518,7 @@ export function szene(geraet, s, t = 0) {
 
   if (geraet === "xl") {
     teile.push(band(st, s, 0, 7, 0, t));
-    for (let c = 0; c < 8; c++) setze(c, 0, { lang: "map" });
+    for (let c = 0; c < 8; c++) setze(c, 0, { kurz: "cockpit", lang: "map" }); // kurz: AeroACARS nach vorn
     INSTRUMENTE[g === "kein" ? "kein" : g].forEach((art, c) => {
       teile.push(instrument(art, c, 1, st, s));
       setze(c, 1, { lang: ["sprit", "blockfuel", "zfw", "tow"].includes(art) ? "briefing" : "cockpit" });
@@ -498,7 +547,7 @@ export function szene(geraet, s, t = 0) {
     // Band oben; darunter Ansagen und Musik je als Leiste, rechts daneben
     // zwei Instrumente der Phase, CDM und Zurück.
     teile.push(band(st, s, 0, 4, 0, t));
-    for (let c = 0; c < 5; c++) setze(c, 0, { lang: "map" });
+    for (let c = 0; c < 5; c++) setze(c, 0, { kurz: "cockpit", lang: "map" });
     teile.push(audioLeiste("ans", 0, 1, s), audioLeiste("mus", 0, 2, s));
     audioAktionen("ans", 0, 1, setze); audioAktionen("mus", 0, 2, setze);
     const zwei = { kein: ["utc", "gate"], vor: ["gate", "std"], flug: ["hoehe", "eta"], anflug: ["bahn", "eta"], nach: ["block", "utc"] }[g];
@@ -605,7 +654,7 @@ function radAnzeige(s, st, dreh) {
   const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
   return marker + text(24, 34, `WETTER ${ziel ? "ZIEL" : "START"} ${m.icao ?? icao ?? ""}`, { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) +
     (dir != null && kt > 0 ? pfeil(60, 66, 40, dir + 180, FARBE.cyan, 4) : "") +
-    text(100, 80, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : Math.round(kt)}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`, { groesse: 34, fett: true }) +
+    text(100, 80, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : String(Math.round(kt)).padStart(2, "0")}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`, { groesse: 34, fett: true }) +
     text(400, 80, `Q${Math.round(m.qnh_hpa ?? 0)}`, { groesse: 34, fett: true, farbe: FARBE.cyan }) +
     text(784, 62, m.visibility_m >= 9999 ? "10 km+" : m.visibility_m != null ? `${Math.round(m.visibility_m / 100) / 10} km` : "", { groesse: 18, anker: "end" }) +
     text(784, 88, (m.cloud_layers ?? [])[0] ? `${m.cloud_layers[0].cover} ${m.cloud_layers[0].base_ft ?? ""}` : "", { groesse: 16, farbe: FARBE.leise, anker: "end" });

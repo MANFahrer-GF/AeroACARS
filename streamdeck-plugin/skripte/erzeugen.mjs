@@ -10,6 +10,8 @@ import path from "node:path";
 import { TASTEN } from "../src/tasten.js";
 import { tasteSvg, listenIconSvg, icon } from "../src/bild.js";
 import { REGLER, PROFILE, PRAEFIX, uuid } from "../src/belegung.js";
+import { szene, kachelOrt, KACHEL } from "../src/szene.js";
+import { vorbereiten, rastern, pngAusschnitt } from "../src/render.js";
 const ORDNER = path.resolve(import.meta.dirname, `../${PRAEFIX}.sdPlugin`);
 const VERSION = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../package.json"), "utf8")).version + ".0";
 
@@ -121,6 +123,37 @@ function aktion(id, name) {
   };
 }
 
+// Zurück-Taste: Elgatos eigene Aktion „Profil wechseln“ mit unserem Bild.
+// Thomas 23.10.: das Plugin kennt kein fremdes Profil (switchToProfile ohne
+// Namen griff nicht); so wählt der Pilot das Ziel einmal in der StreamDeck-
+// Software, und das Bild der Szene bleibt erhalten.
+await vorbereiten(ORDNER);
+const LEER_ZUSTAND = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: 0 };
+const LAYOUT = { 0: "15", 2: "xl", 7: "plus" };
+function zurueckTaste(p) {
+  const sz = szene(LAYOUT[p.geraetetyp], LEER_ZUSTAND, 0);
+  const ort = Object.entries(sz.aktionen).find(([, a]) => a.bedienung === "zurueck")?.[0];
+  if (!ort) return null;
+  const [c, r] = ort.split(",").map(Number);
+  const { x, y } = kachelOrt(c, r);
+  const png = pngAusschnitt(rastern(sz.svg), x, y, KACHEL, KACHEL);
+  return { ort, png };
+}
+
+function profilWechsel() {
+  return {
+    ActionID: randomUUID(),
+    LinkedTitle: false,
+    Name: "Profil wechseln",
+    Plugin: { Name: "Switch Profile", UUID: "com.elgato.streamdeck.profile.rotate", Version: "1.0" },
+    Resources: null,
+    Settings: { DeviceUUID: "", PageIndex: 0, ProfileUUID: "" },
+    State: 0,
+    States: [{ Image: "Images/zurueck.png", ShowTitle: false, Title: "", TitleAlignment: "middle" }],
+    UUID: "com.elgato.streamdeck.profile.rotate",
+  };
+}
+
 function profilBauen(p) {
   const arbeit = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR || "/tmp"), "aa-profil-"));
   const profilId = randomUUID();
@@ -130,14 +163,17 @@ function profilBauen(p) {
   const tasten = {};
   // Entwurf 2: auf jeder Taste die Kachel — die Szene verteilt die Inhalte.
   for (let r = 0; r < p.reihen; r++) for (let c = 0; c < p.spalten; c++) tasten[`${c},${r}`] = aktion("kachel", "AeroACARS-Kachel");
+  const zurueck = zurueckTaste(p);
+  if (zurueck) tasten[zurueck.ort] = profilWechsel();
   const regler = {};
   (p.regler ?? []).forEach((id, c) => (regler[`${c},0`] = aktion(id, REGLER[id].name)));
   const steuer = (acts) => [{ Type: "Keypad", Actions: acts }, ...(p.regler ? [{ Type: "Encoder", Actions: regler }] : [])];
 
-  schreiben(`${arbeit}/package.json`, JSON.stringify({ AppVersion: "7.1.0", DeviceModel: p.modell, DeviceSettings: null, FormatVersion: 1, OSType: "Windows", OSVersion: "10.0", RequiredPlugins: [PRAEFIX] }, null, 2));
+  schreiben(`${arbeit}/package.json`, JSON.stringify({ AppVersion: "7.1.0", DeviceModel: p.modell, DeviceSettings: null, FormatVersion: 1, OSType: "Windows", OSVersion: "10.0", RequiredPlugins: [PRAEFIX, "com.elgato.streamdeck.profile.rotate"] }, null, 2));
   schreiben(`${wurzel}/manifest.json`, JSON.stringify({ Device: { Model: p.modell, UUID: "" }, Name: p.name, Pages: { Current: seite, Default: leer, Pages: [seite] }, Version: "3.0" }, null, 2));
   schreiben(`${wurzel}/Profiles/${leer.toUpperCase()}/manifest.json`, JSON.stringify({ Controllers: steuer({}), Icon: "", Name: "" }, null, 2));
   schreiben(`${wurzel}/Profiles/${seite.toUpperCase()}/manifest.json`, JSON.stringify({ Controllers: steuer(tasten), Icon: "", Name: p.name }, null, 2));
+  if (zurueck) schreiben(`${wurzel}/Profiles/${seite.toUpperCase()}/Images/zurueck.png`, zurueck.png);
 
   const ziel = `${ORDNER}/profiles/${p.datei}.streamDeckProfile`;
   fs.mkdirSync(path.dirname(ziel), { recursive: true });
