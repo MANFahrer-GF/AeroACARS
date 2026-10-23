@@ -13,7 +13,7 @@
 // laufen, Text nicht (er bleibt innerhalb einer Kachel). Die Laufschrift ist
 // die einzige Ausnahme — sie wandert und ist deshalb trotzdem lesbar.
 
-import { FARBE, text, marke, flaeche, LEUCHTEN, flugzeug, balken, bogen, pfeil, note } from "./glas.js";
+import { FARBE, text, marke, flaeche, LEUCHTEN, flugzeug, balken, bogen, pfeil, note, lautsprecher } from "./glas.js";
 import { ANSAGEN } from "./tasten.js";
 
 export const KACHEL = 144;
@@ -126,9 +126,10 @@ function band(st, s, c0, c1, r, t) {
   // Laufschrift unter der Linie, nur im Mittelteil.
   const lauf = laufschrift(st, s);
   const mx0 = kx(c0 + 1), mx1 = kx(c1);
-  const schritt = 18; // px je Takt
+  // Thomas 23.10.: die erste Fassung (36 px/s) war zu schnell.
+  const tempo = 16; // px je Sekunde
   const textBreite = lauf.length * 13.2 + 200;
-  const versatz = ((t * schritt) % textBreite);
+  const versatz = ((t * tempo) % textBreite);
   teile.push(
     `<clipPath id="lauf"><rect x="${mx0}" y="${y + 92}" width="${mx1 - mx0}" height="44"/></clipPath>`,
     `<g clip-path="url(#lauf)">${text(mx1 - versatz, y + 124, lauf, { groesse: 22, farbe: FARBE.amber, fett: true, abstand: 1 })}${text(mx1 - versatz + textBreite, y + 124, lauf, { groesse: 22, farbe: FARBE.amber, fett: true, abstand: 1 })}</g>`,
@@ -196,7 +197,11 @@ function instrument(art, c, r, st, s) {
     case "utc":
       return wertKachel(c, r, { marke: "UTC", wert: uhrZ(s.jetzt), unter: `lokal ${zwei(new Date(s.jetzt).getHours())}:${zwei(new Date(s.jetzt).getMinutes())}` });
     case "gate":
-      return wertKachel(c, r, { marke: "Gate", wert: st?.dep_gate ?? "–", unter: st?.arr_gate ? `Ziel ${st.arr_gate}` : "", farbe: FARBE.cyan });
+      // Das Zielgate steht erst am Ziel fest (Thomas 23.10.: „vorher geraten“):
+      // nach der Landung das Ankunftsgate, davor nur das Abfluggate.
+      return phasenGruppe(st?.phase) === "nach"
+        ? wertKachel(c, r, { marke: "Gate Ziel", wert: st?.arr_gate ?? "–", unter: st?.arr_gate ? "angekommen" : "noch offen", farbe: FARBE.cyan })
+        : wertKachel(c, r, { marke: "Gate", wert: st?.dep_gate ?? "–", unter: "Abflug", farbe: FARBE.cyan });
     case "std":
       return wertKachel(c, r, { marke: "STD", wert: uhrZ((st?.flugzeiten?.plan_off_block ?? null) * 1000 || null), unter: "Off-Block Plan" });
     case "sta":
@@ -331,7 +336,7 @@ function landungFlaeche(c, r, n, st, s) {
 /** Wetter am Flughafen über zwei Kacheln: Windpfeil links, Werte rechts. */
 function wetterFlaeche(c, r, m, icao) {
   const x = kx(c), y = ky(r), b = spanne(2);
-  if (!m) return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, `Wetter ${icao ?? ""}`) + text(x + 14, y + 90, "kein METAR", { groesse: 24, farbe: FARBE.leise });
+  if (!m) return flaeche(x, y, b, KACHEL, FARBE.flaeche, 18) + marke(x + 14, y + 30, `Wetter ${icao ?? ""}`) + text(x + 14, y + 90, "kein METAR", { groesse: 24, farbe: FARBE.leise }) + text(x + 14, y + 124, "drücken: laden", { groesse: 16, farbe: FARBE.cyan });
   const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
   const sicht = m.visibility_m == null ? "–" : m.visibility_m >= 9999 ? "10km+" : `${Math.round(m.visibility_m / 100) / 10}km`;
   const wolke = (m.cloud_layers ?? [])[0];
@@ -366,6 +371,18 @@ function bedienKachel(art, c, r, s) {
   switch (art) {
     case "zurueck":
       return grund + `<path d="M${mx + 6} ${y + 46} l-26 24 26 24" stroke="${FARBE.cyan}" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>` + text(mx, y + 128, "ZURÜCK", { groesse: 15, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1.5 });
+    case "ans_stumm":
+      return !k ? knopf("ANSAGEN", "", FARBE.leise, "Client zu alt") : grund + lautsprecher(mx, y + 58, 46, k.stumm ? FARBE.rot : FARBE.cyan, k.stumm) +
+        text(mx, y + 108, k.stumm ? "STUMM" : `${Math.round(k.lautstaerke_gespeichert * 100)} %`, { groesse: 20, fett: true, farbe: k.stumm ? FARBE.rot : FARBE.cyan, anker: "middle" }) +
+        text(mx, y + 132, k.stumm ? "drücken: an" : "halten: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
+    case "mus_stumm": {
+      if (!k) return knopf("MUSIK", "", FARBE.leise, "Client zu alt");
+      const stumm = k.musik_live <= 0.001 && k.musik_gespeichert > 0.001;
+      const f = !k.boarding_musik ? FARBE.leise : stumm ? FARBE.amber : FARBE.cyan;
+      return grund + note(mx, y + 56, 42, f) + (stumm ? `<line x1="${mx - 22}" y1="${y + 34}" x2="${mx + 22}" y2="${y + 78}" stroke="${f}" stroke-width="5" stroke-linecap="round"/>` : "") +
+        text(mx, y + 108, !k.boarding_musik ? "AUS" : stumm ? "STUMM" : `${Math.round(k.musik_gespeichert * 100)} %`, { groesse: 20, fett: true, farbe: f, anker: "middle" }) +
+        text(mx, y + 132, !k.boarding_musik ? "halten: an" : "kurz: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
+    }
     case "pa":
       return !k ? knopf("PA", "", FARBE.leise, "Client zu alt") : k.stumm ? knopf("PA", "STUMM", FARBE.rot, "drücken: an") : knopf("PA", "AN", FARBE.gruen, "1 s halten: stumm");
     case "ans_minus":
@@ -392,10 +409,53 @@ function bedienKachel(art, c, r, s) {
   }
 }
 
+/**
+ * Audio-Leiste über drei Kacheln: − | stumm | +, Pegelbalken über alles.
+ * `art` "ans" = Kabinenansagen, "mus" = Boarding-Musik.
+ * Thomas 23.10.: „das Wichtigste: laut, leise und muten — Musik und Ansagen“.
+ */
+function audioLeiste(art, c, r, s) {
+  const k = s.kabine, x = kx(c), y = ky(r), b = spanne(3);
+  const ansage = art === "ans";
+  const pegel = !k ? 0 : ansage ? k.lautstaerke_gespeichert : k.musik_gespeichert;
+  const stumm = !!k && (ansage ? k.stumm : k.musik_live <= 0.001 && k.musik_gespeichert > 0.001);
+  const aus = !!k && !ansage && !k.boarding_musik;
+  const farbe = !k ? FARBE.leise : stumm ? (ansage ? FARBE.rot : FARBE.amber) : aus ? FARBE.leise : FARBE.cyan;
+  const mx = kx(c + 1) + KACHEL / 2;
+  const teile = [
+    flaeche(x, y, b, KACHEL, "#0d1622", 22),
+    `<rect x="${x + 1}" y="${y + 1}" width="${b - 2}" height="${KACHEL - 2}" rx="21" fill="none" stroke="${farbe}" stroke-opacity="0.45" stroke-width="2"/>`,
+    text(kx(c) + KACHEL / 2, y + 88, "−", { groesse: 70, fett: true, farbe: k ? FARBE.cyan : FARBE.leise, anker: "middle" }),
+    text(kx(c + 2) + KACHEL / 2, y + 88, "+", { groesse: 70, fett: true, farbe: k ? FARBE.cyan : FARBE.leise, anker: "middle" }),
+    text(mx, y + 28, ansage ? "ANSAGEN" : "MUSIK", { groesse: 15, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1.5 }),
+    ansage
+      ? lautsprecher(mx, y + 64, 44, farbe, stumm)
+      : note(mx, y + 64, 40, farbe),
+    stumm && !ansage ? `<line x1="${mx - 24}" y1="${y + 40}" x2="${mx + 24}" y2="${y + 88}" stroke="${farbe}" stroke-width="5" stroke-linecap="round"/>` : "",
+    text(mx, y + 106, !k ? "Client zu alt" : stumm ? "STUMM" : aus ? "AUS" : `${Math.round(pegel * 100)} %`, { groesse: 18, fett: true, farbe, anker: "middle" }),
+    // Pegel über alle drei Kacheln — eine Linie darf über die Blenden laufen.
+    balken(x + 22, y + 120, b - 44, stumm || aus ? 0 : pegel, farbe, 8),
+  ];
+  return teile.join("");
+}
+
+/** Bedienung der Audio-Leiste je Kachel (links, Mitte, rechts). */
+function audioAktionen(art, c, r, setze) {
+  if (art === "ans") {
+    setze(c, r, { bedienung: "ans_minus" });
+    setze(c + 1, r, { bedienung: "ans_stumm" }); // 1 s halten: stumm, kurz: Ton an
+    setze(c + 2, r, { bedienung: "ans_plus" });
+  } else {
+    setze(c, r, { bedienung: "mus_minus" });
+    setze(c + 1, r, { bedienung: "mus_stumm" }); // kurz: stumm/laut, halten: Boarding-Musik an/aus
+    setze(c + 2, r, { bedienung: "mus_plus" });
+  }
+}
+
 // ---- Geräte ---------------------------------------------------------------
 
 /**
- * Die Szene für ein Gerät. `t` ist die Zeit in Takten (für Bewegung).
+ * Die Szene für ein Gerät. `t` ist die Zeit in Sekunden (für Bewegung).
  * Ergebnis: { breite, hoehe, svg, aktionen: { "c,r": {kurz, lang, halten} } }
  */
 export function szene(geraet, s, t = 0) {
@@ -415,48 +475,47 @@ export function szene(geraet, s, t = 0) {
     if (g === "vor" || g === "kein") {
       teile.push(musikFlaeche(0, 2, 2, s, t), wetterFlaeche(2, 2, st?.dep_metar_decoded, st?.dpt_airport), wetterFlaeche(4, 2, st?.arr_metar_decoded, st?.arr_airport), ansageKarte(6, 2, s));
       setze(0, 2, { kurz: "musik_stumm", halten: "boarding" }); setze(1, 2, { kurz: "musik_stumm", halten: "boarding" });
-      [2, 3, 4, 5].forEach((c) => setze(c, 2, { lang: "briefing" })); [6, 7].forEach((c) => setze(c, 2, { lang: "kabine" }));
+      [2, 3].forEach((c) => setze(c, 2, { kurz: "metar_start", lang: "briefing" })); [4, 5].forEach((c) => setze(c, 2, { kurz: "metar_ziel", lang: "briefing" })); [6, 7].forEach((c) => setze(c, 2, { lang: "kabine" }));
     } else if (g === "flug") {
       teile.push(kabinenStrahl(0, 2, 6, s, t), wetterFlaeche(6, 2, st?.arr_metar_decoded, st?.arr_airport));
-      for (let c = 0; c < 6; c++) setze(c, 2, { lang: "kabine" }); [6, 7].forEach((c) => setze(c, 2, { lang: "briefing" }));
+      for (let c = 0; c < 6; c++) setze(c, 2, { lang: "kabine" }); [6, 7].forEach((c) => setze(c, 2, { kurz: "metar_ziel", lang: "briefing" }));
     } else if (g === "anflug") {
       teile.push(landebahn(0, 2, 4, st), wetterFlaeche(4, 2, st?.arr_metar_decoded, st?.arr_airport), ansageKarte(6, 2, s));
-      for (let c = 0; c < 6; c++) setze(c, 2, { lang: c < 4 ? "landing" : "briefing" }); [6, 7].forEach((c) => setze(c, 2, { lang: "kabine" }));
+      for (let c = 0; c < 6; c++) setze(c, 2, c < 4 ? { lang: "landing" } : { kurz: "metar_ziel", lang: "briefing" }); [6, 7].forEach((c) => setze(c, 2, { lang: "kabine" }));
     } else {
       teile.push(landungFlaeche(0, 2, 4, st, s), musikFlaeche(4, 2, 2, s, t), ansageKarte(6, 2, s));
       for (let c = 0; c < 4; c++) setze(c, 2, { lang: "landing" });
       setze(4, 2, { kurz: "musik_stumm", halten: "boarding" }); setze(5, 2, { kurz: "musik_stumm", halten: "boarding" }); [6, 7].forEach((c) => setze(c, 2, { lang: "kabine" }));
     }
-    ["zurueck", "pa", "ans_minus", "ans_plus", "mus_minus", "mus_plus", "boarding", "cdm"].forEach((art, c) => {
-      teile.push(bedienKachel(art, c, 3, s));
-      setze(c, 3, { bedienung: art });
-    });
+    teile.push(bedienKachel("zurueck", 0, 3, s), audioLeiste("ans", 1, 3, s), audioLeiste("mus", 4, 3, s), bedienKachel("cdm", 7, 3, s));
+    setze(0, 3, { bedienung: "zurueck" }); audioAktionen("ans", 1, 3, setze); audioAktionen("mus", 4, 3, setze); setze(7, 3, { bedienung: "cdm" });
     return fertig(8, 4, teile, aktionen);
   }
 
   if (geraet === "15") {
+    // Band oben; darunter Ansagen und Musik je als Leiste, rechts daneben
+    // zwei Instrumente der Phase, CDM und Zurück.
     teile.push(band(st, s, 0, 4, 0, t));
     for (let c = 0; c < 5; c++) setze(c, 0, { lang: "map" });
-    if (g === "vor" || g === "kein") {
-      teile.push(musikFlaeche(0, 1, 2, s, t), instrument("std", 2, 1, st, s), instrument("gate", 3, 1, st, s), instrument("utc", 4, 1, st, s));
-      setze(0, 1, { kurz: "musik_stumm", halten: "boarding" }); setze(1, 1, { kurz: "musik_stumm", halten: "boarding" });
-    } else if (g === "flug") {
-      ["hoehe", "gs", "wind", "eta", "sprit"].forEach((art, c) => { teile.push(instrument(art, c, 1, st, s)); setze(c, 1, { lang: "cockpit" }); });
-    } else if (g === "anflug") {
-      teile.push(landebahn(0, 1, 3, st), instrument("hoehe", 3, 1, st, s), instrument("eta", 4, 1, st, s));
-      for (let c = 0; c < 3; c++) setze(c, 1, { lang: "landing" });
-    } else {
-      teile.push(landungFlaeche(0, 1, 3, st, s), instrument("block", 3, 1, st, s), instrument("utc", 4, 1, st, s));
-      for (let c = 0; c < 3; c++) setze(c, 1, { lang: "landing" });
-    }
-    ["zurueck", "pa", "ans_minus", "ans_plus", "boarding"].forEach((art, c) => { teile.push(bedienKachel(art, c, 2, s)); setze(c, 2, { bedienung: art }); });
+    teile.push(audioLeiste("ans", 0, 1, s), audioLeiste("mus", 0, 2, s));
+    audioAktionen("ans", 0, 1, setze); audioAktionen("mus", 0, 2, setze);
+    const zwei = { kein: ["utc", "gate"], vor: ["gate", "std"], flug: ["hoehe", "eta"], anflug: ["bahn", "eta"], nach: ["block", "utc"] }[g];
+    zwei.forEach((art, i) => { teile.push(instrument(art, 3 + i, 1, st, s)); setze(3 + i, 1, { lang: "cockpit" }); });
+    teile.push(bedienKachel("cdm", 3, 2, s), bedienKachel("zurueck", 4, 2, s));
+    setze(3, 2, { bedienung: "cdm" }); setze(4, 2, { bedienung: "zurueck" });
     return fertig(5, 3, teile, aktionen);
   }
 
   // StreamDeck +: 4 × 2 Tasten; der Touch-Streifen bekommt das Band eigens (streifen()).
   const instr = INSTRUMENTE[g === "kein" ? "kein" : g];
-  instr.slice(0, 4).forEach((art, c) => { teile.push(instrument(art, c, 0, st, s)); setze(c, 0, { lang: "cockpit" }); });
-  ["zurueck", "pa", "boarding", "cdm"].forEach((art, c) => { teile.push(bedienKachel(art, c, 1, s)); setze(c, 1, { bedienung: art }); });
+  // Thomas 23.10.: Audio machen beim + die Räder — die Tasten zeigen Instrumente.
+  instr.slice(0, 6).forEach((art, i) => {
+    const c = i % 4, r = Math.floor(i / 4);
+    teile.push(instrument(art, c, r, st, s));
+    setze(c, r, { lang: ["sprit", "blockfuel", "zfw", "tow"].includes(art) ? "briefing" : "cockpit" });
+  });
+  teile.push(bedienKachel("cdm", 2, 1, s), bedienKachel("zurueck", 3, 1, s));
+  setze(2, 1, { bedienung: "cdm" }); setze(3, 1, { bedienung: "zurueck" });
   return fertig(4, 2, teile, aktionen);
 }
 
@@ -472,23 +531,80 @@ export function kachelSvg(sz, c, r) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${KACHEL}" height="${KACHEL}" viewBox="${kx(c)} ${ky(r)} ${KACHEL} ${KACHEL}">${inhalt}</svg>`;
 }
 
-/** Touch-Streifen des StreamDeck + (800 × 100, ohne Blenden): das Band am Stück. */
-export function streifen(s, t = 0) {
+/** Seiten des Flugdaten-Rads am StreamDeck + (Rad 3). */
+export const INFO_RAD = ["hoehe", "gs", "wind", "eta", "sprit", "luft"];
+
+/**
+ * Touch-Streifen des StreamDeck + (800 × 100, ohne Blenden).
+ * Normal: das Streckenband am Stück. Solange an einem Rad gedreht wird
+ * (`dreh` = { rad: "ans"|"mus"|"info"|"wetter", seite? }), gehört der ganze
+ * Streifen diesem Rad; danach blendet das Plugin zurück aufs Band.
+ */
+export function streifen(s, t = 0, dreh = null) {
   const st = s.erreichbar ? s.status : null;
+  const kopf = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="100" viewBox="0 0 800 100"><defs>${LEUCHTEN}<clipPath id="ls"><rect x="110" y="66" width="580" height="34"/></clipPath></defs><rect width="800" height="100" fill="${FARBE.grund}"/>`;
+  if (dreh) return kopf + radAnzeige(s, st, dreh) + "</svg>";
   const p = fortschritt(st, s.jetzt);
   const x0 = 120, x1 = 680, ly = 44;
   const px = x0 + (x1 - x0) * p;
   const lauf = laufschrift(st, s);
   const textBreite = lauf.length * 11 + 160;
-  const v = (t * 16) % textBreite;
+  const v = (t * 14) % textBreite;
   const g = phasenGruppe(st?.phase);
   const eta = zahl(st?.live?.ete_min) != null ? s.jetzt + st.live.ete_min * 60000 : null;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="100" viewBox="0 0 800 100"><defs>${LEUCHTEN}<clipPath id="ls"><rect x="110" y="66" width="580" height="34"/></clipPath></defs>
-<rect width="800" height="100" fill="${FARBE.grund}"/>
+  return `${kopf}
 ${text(16, 44, st?.dpt_airport ?? "----", { groesse: 34, fett: true, farbe: FARBE.cyan })}${text(16, 86, PHASE_TEXT[st?.phase] ?? "", { groesse: 13, fett: true, farbe: g === "anflug" ? FARBE.amber : FARBE.gruen, abstand: 1 })}
 ${text(784, 44, st?.arr_airport ?? "----", { groesse: 34, fett: true, farbe: FARBE.cyan, anker: "end" })}${text(784, 86, eta ? `ETA ${uhrZ(eta)}Z` : "", { groesse: 13, fett: true, farbe: FARBE.leise, anker: "end" })}
 <line x1="${x0}" y1="${ly}" x2="${x1}" y2="${ly}" stroke="${FARBE.magenta}" stroke-width="3" stroke-dasharray="12 9"/>
 <line x1="${x0}" y1="${ly}" x2="${px}" y2="${ly}" stroke="${FARBE.gruen}" stroke-width="4" stroke-linecap="round"/>
 ${flugzeug(px, ly, 30, FARBE.text)}
 <g clip-path="url(#ls)">${text(690 - v, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}${text(690 - v + textBreite, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}</g></svg>`;
+}
+
+/** Ganzer Streifen für das gedrehte Rad: große Skala bzw. großer Wert. */
+function radAnzeige(s, st, dreh) {
+  const k = s.kabine;
+  // Kleine Markierung über dem Rad, das gerade dran ist.
+  const rad = { ans: 0, mus: 1, info: 2, wetter: 3 }[dreh.rad] ?? 0;
+  const marker = `<rect x="${rad * 200 + 70}" y="0" width="60" height="4" rx="2" fill="${FARBE.cyan}"/>`;
+  if (dreh.rad === "ans" || dreh.rad === "mus") {
+    const ansage = dreh.rad === "ans";
+    const pegel = !k ? 0 : (dreh.wert ?? (ansage ? k.lautstaerke_live : k.musik_live));
+    const stumm = !!k && (ansage ? k.stumm : k.musik_live <= 0.001 && k.musik_gespeichert > 0.001 && dreh.wert == null);
+    const farbe = !k ? FARBE.leise : stumm ? (ansage ? FARBE.rot : FARBE.amber) : FARBE.cyan;
+    const striche = Array.from({ length: 11 }, (_, i) => `<rect x="${200 + i * 52}" y="${i % 5 === 0 ? 58 : 64}" width="3" height="${i % 5 === 0 ? 22 : 12}" fill="${FARBE.leise}" opacity="0.6"/>`).join("");
+    return marker + (ansage ? lautsprecher(52, 50, 46, farbe, stumm) : note(52, 50, 42, farbe)) +
+      text(96, 38, ansage ? "ANSAGEN" : "MUSIK", { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) +
+      text(96, 80, !k ? "–" : stumm ? "STUMM" : `${Math.round(pegel * 100)} %`, { groesse: 34, fett: true, farbe }) +
+      `<rect x="200" y="36" width="523" height="14" rx="7" fill="#ffffff" opacity="0.10"/>` +
+      `<rect x="200" y="36" width="${Math.round(523 * (stumm ? 0 : pegel))}" height="14" rx="7" fill="${farbe}"/>` + striche +
+      text(784, 94, ansage ? "drücken: stumm" : "drücken: stumm · halten: an/aus", { groesse: 12, farbe: FARBE.leise, anker: "end" });
+  }
+  if (dreh.rad === "info") {
+    const art = INFO_RAD[(dreh.seite ?? 0) % INFO_RAD.length];
+    const live = st?.live ?? {};
+    const werte = {
+      hoehe: ["HÖHE", hoehe(zahl(live.altitude_pressure_ft) ?? zahl(live.altitude_msl_ft)), `V/S ${zahl(live.vertical_speed_fpm) == null ? "–" : Math.round(live.vertical_speed_fpm / 10) * 10} ft/min`],
+      gs: ["GESCHWINDIGKEIT", `${zahl(live.gs_kt) == null ? "–" : Math.round(live.gs_kt)} KT`, `IAS ${zahl(live.ias_kt) == null ? "–" : Math.round(live.ias_kt)} kt`],
+      wind: ["WIND", `${zahl(live.wind_dir_deg) == null ? "–" : String(Math.round(live.wind_dir_deg)).padStart(3, "0")}° / ${zahl(live.wind_speed_kt) == null ? "–" : Math.round(live.wind_speed_kt)} KT`, "am Flugzeug"],
+      eta: ["ETA", zahl(live.ete_min) == null ? "--:--" : `${uhrZ(s.jetzt + live.ete_min * 60000)}Z`, zahl(live.ete_min) == null ? "" : `noch ${Math.floor(live.ete_min / 60)}:${zwei(Math.round(live.ete_min % 60))}`],
+      sprit: ["SPRIT", `${tonnen(zahl(st?.sim_fuel_kg ?? live.fuel_total_kg))} T`, `Reserve ${tonnen(zahl(st?.planned_reserve_kg))} t · Block ${tonnen(zahl(st?.planned_block_fuel_kg))} t`],
+      luft: ["IN DER LUFT", dauer(iso(st?.takeoff_at), iso(st?.landing_at) ?? s.jetzt), st?.takeoff_at ? `abgehoben ${uhrZ(iso(st.takeoff_at))}Z` : ""],
+    }[art];
+    const punkte = INFO_RAD.map((_, i) => `<circle cx="${700 + i * 14}" cy="22" r="4" fill="${i === (dreh.seite ?? 0) % INFO_RAD.length ? FARBE.cyan : "#ffffff"}" opacity="${i === (dreh.seite ?? 0) % INFO_RAD.length ? 1 : 0.3}"/>`).join("");
+    return marker + punkte + text(24, 34, werte[0], { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) +
+      text(24, 84, werte[1], { groesse: 44, fett: true, farbe: FARBE.gruen }) + text(784, 84, werte[2], { groesse: 18, farbe: FARBE.leise, anker: "end" });
+  }
+  // Wetter: Start oder Ziel
+  const ziel = (dreh.seite ?? 1) % 2 === 1;
+  const m = ziel ? st?.arr_metar_decoded : st?.dep_metar_decoded;
+  const icao = ziel ? st?.arr_airport : st?.dpt_airport;
+  if (!m) return marker + text(24, 34, `WETTER ${ziel ? "ZIEL" : "START"} ${icao ?? ""}`, { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) + text(24, 80, "kein METAR", { groesse: 30, fett: true, farbe: FARBE.leise }) + text(784, 80, "drücken: laden", { groesse: 18, fett: true, farbe: FARBE.cyan, anker: "end" });
+  const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
+  return marker + text(24, 34, `WETTER ${ziel ? "ZIEL" : "START"} ${m.icao ?? icao ?? ""}`, { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) +
+    (dir != null && kt > 0 ? pfeil(60, 66, 40, dir + 180, FARBE.cyan, 4) : "") +
+    text(100, 80, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : Math.round(kt)}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`, { groesse: 34, fett: true }) +
+    text(400, 80, `Q${Math.round(m.qnh_hpa ?? 0)}`, { groesse: 34, fett: true, farbe: FARBE.cyan }) +
+    text(784, 62, m.visibility_m >= 9999 ? "10 km+" : m.visibility_m != null ? `${Math.round(m.visibility_m / 100) / 10} km` : "", { groesse: 18, anker: "end" }) +
+    text(784, 88, (m.cloud_layers ?? [])[0] ? `${m.cloud_layers[0].cover} ${m.cloud_layers[0].base_ft ?? ""}` : "", { groesse: 16, farbe: FARBE.leise, anker: "end" });
 }

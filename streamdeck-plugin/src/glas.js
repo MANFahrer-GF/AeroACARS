@@ -77,3 +77,12 @@ export function note(x, y, groesse, farbe) {
   const k = groesse / 24;
   return `<g transform="translate(${x} ${y}) scale(${k}) translate(-12 -12)" fill="none" stroke="${farbe}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3" fill="${farbe}"/><circle cx="17" cy="16" r="3" fill="${farbe}"/></g>`;
 }
+
+/** Lautsprecher, durchgestrichen wenn stumm. Mitte bei x/y. */
+export function lautsprecher(x, y, groesse, farbe, stumm = false) {
+  const k = groesse / 24;
+  const wellen = stumm
+    ? `<path d="M16 9.5l5 5M21 9.5l-5 5"/>`
+    : `<path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/>`;
+  return `<g transform="translate(${x} ${y}) scale(${k}) translate(-12 -12)" fill="none" stroke="${farbe}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h4l5-4v12l-5-4H4z" fill="${farbe}"/>${wellen}</g>`;
+}

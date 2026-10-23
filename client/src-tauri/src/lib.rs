@@ -32137,6 +32137,45 @@ async fn metar_get(icao: String) -> Result<MetarSnapshot, UiError> {
     })
 }
 
+/// StreamDeck (Thomas 23.10.2026: „der Wind war gar nicht geladen“): METAR
+/// für Start oder Ziel des aktiven Flugs jetzt holen, zur ANZEIGE.
+///
+/// Das Ziel-METAR holt der Streamer regulär erst im Sinkflug/Endanflug; davor
+/// zeigt das Deck „kein METAR“. Hier wird bewusst nur `*_metar_snap`
+/// geschrieben, NICHT `*_metar_raw`: der Rohtext geht in PIREP und
+/// Landungsdatensatz — ein im Reiseflug nachgeladenes Wetter darf dort nicht
+/// landen, falls der spätere Abruf scheitert. Die `*_requested`-Flags bleiben
+/// unberührt, der reguläre Abruf läuft also weiter und überschreibt.
+/// Höchstens ein Abruf je Seite pro Minute (aviationweather.gov schonen).
+pub(crate) async fn metar_nachladen(app: &AppHandle, ziel: bool) -> Result<(), UiError> {
+    static ZULETZT: Mutex<[Option<std::time::Instant>; 2]> = Mutex::new([None, None]);
+    let flight = app
+        .state::<AppState>()
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| UiError::new("kein_flug", "kein aktiver Flug"))?;
+    {
+        let mut zuletzt = ZULETZT.lock().expect("metar nachladen");
+        let i = usize::from(ziel);
+        if zuletzt[i].is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60)) {
+            return Ok(());
+        }
+        zuletzt[i] = Some(std::time::Instant::now());
+    }
+    let icao = if ziel { flight.arr_airport.clone() } else { flight.dpt_airport.clone() };
+    let snap = metar_get(icao).await?;
+    let mut stats = flight.stats.lock().expect("flight stats");
+    if ziel {
+        stats.arr_metar_snap = Some(snap);
+    } else {
+        stats.dep_metar_snap = Some(snap);
+    }
+    Ok(())
+}
+
 /// Distance (nm) from the live sim position to the airport with the given ICAO.
 /// `None` when we have no sim snapshot yet, or no coordinates for the airport
 /// from any source — in which case the caller must not gate on it.

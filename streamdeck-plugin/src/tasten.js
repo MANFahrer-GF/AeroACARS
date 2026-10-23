@@ -193,7 +193,12 @@ export const TASTEN = {
     tip: "Abflug- und Ankunftsgate.",
     icon: "gate",
     seite: "cockpit",
-    bild: flugTaste("Gates", "gate", (st) => ({ wert: `${st.dep_gate || "–"}›${st.arr_gate || "–"}`, unter: "Start › Ziel", klein: true })),
+    // Zielgate erst nach der Landung — vorher wäre es geraten (Thomas 23.10.).
+    bild: flugTaste("Gates", "gate", (st) =>
+      ["taxi_in", "blocks_on", "arrived", "pirep_submitted"].includes(st.phase)
+        ? { label: "Gate Ziel", wert: st.arr_gate || "–", unter: `ab ${st.dep_gate || "–"}`, klein: true }
+        : { wert: st.dep_gate || "–", unter: "Abflug", klein: true },
+    ),
   },
   block: {
     name: "Blockzeit",

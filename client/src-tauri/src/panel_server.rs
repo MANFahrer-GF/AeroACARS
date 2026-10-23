@@ -52,7 +52,8 @@
 //! Das StreamDeck-Plugin läuft wie das Panel auf DEMSELBEN PC und liest
 //! hier mit. Neu ist, dass es auch BEDIENT: Kabine stumm, beide
 //! Lautstärken, Boarding-Musik, das VATSIM-CDM-Fenster, und das Hauptfenster
-//! auf einer festen Seite nach vorn holen (langer Druck auf eine Anzeigetaste). Genau diese Befehle
+//! auf einer festen Seite nach vorn holen (langer Druck auf eine Anzeigetaste),
+//! METAR für Start/Ziel zur Anzeige nachladen (siehe `metar_nachladen`). Genau diese Befehle
 //! sperrt die LAN-Brücke („der Ton spielt auf dem Sim-PC“) — das Deck steht
 //! am Sim-PC, für das Tablet bleibt die Sperre richtig.
 //!
@@ -656,6 +657,8 @@ enum DeckBefehl {
     CdmFenster,
     /// Hauptfenster nach vorn holen, auf eine Seite aus [`DECK_SEITEN`].
     Fenster(&'static str),
+    /// METAR für die Anzeige nachladen; `true` = Ziel, `false` = Start.
+    Metar(bool),
 }
 
 /// Seiten der App, die das Deck per langem Druck öffnen darf. Die Namen sind
@@ -688,6 +691,11 @@ impl DeckBefehl {
             }
             "kabinen_boarding_musik" => Ok(Self::BoardingMusik(wahr("an")?)),
             "vdgs_fenster_oeffnen" => Ok(Self::CdmFenster),
+            "metar_laden" => match args.get("ort").and_then(Value::as_str) {
+                Some("start") => Ok(Self::Metar(false)),
+                Some("ziel") => Ok(Self::Metar(true)),
+                _ => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            },
             "fenster_zeigen" => {
                 let seite = args.get("seite").and_then(Value::as_str).unwrap_or("");
                 DECK_SEITEN
@@ -826,6 +834,7 @@ async fn cmd_handler(
         }
         DeckBefehl::BoardingMusik(an) => crate::kabinenansagen::kabinen_boarding_musik(app.clone(), an),
         DeckBefehl::CdmFenster => crate::vdgs_fenster_oeffnen(app.clone()).await,
+        DeckBefehl::Metar(ziel) => crate::metar_nachladen(&app, ziel).await,
         DeckBefehl::Fenster(seite) => {
             // Wie „Anzeigen“ im Tray-Menü, dazu der Seitenwechsel.
             if let Some(w) = app.get_webview_window("main") {
@@ -898,6 +907,9 @@ mod deck_tests {
             DeckBefehl::lesen("fenster_zeigen", &json!({"seite": "cpdlc"})),
             Ok(DeckBefehl::Fenster("cpdlc"))
         );
+        assert_eq!(DeckBefehl::lesen("metar_laden", &json!({"ort": "ziel"})), Ok(DeckBefehl::Metar(true)));
+        assert_eq!(DeckBefehl::lesen("metar_laden", &json!({"ort": "start"})), Ok(DeckBefehl::Metar(false)));
+        assert_eq!(DeckBefehl::lesen("metar_laden", &json!({"ort": "EDDF"})), Err(StatusCode::UNPROCESSABLE_ENTITY));
         // Nur Seiten aus der Liste: keine Einstellungen, kein Logbuch-Löschen o. Ä.
         for seite in ["settings", "logbook", "", "../x"] {
             assert_eq!(
