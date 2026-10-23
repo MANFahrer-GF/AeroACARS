@@ -112,12 +112,13 @@ pub(crate) fn ende_abholen() -> Option<&'static str> {
 }
 
 /// Was die Reaktion verdrängt: eine Ansage (auch kurz danach) oder die Musik.
-/// Schon der Musik-Auftrag zählt, nicht erst hörbare Musik — sonst liefen
-/// beide kurz zusammen, wenn die Musik im selben Takt startet (Codex).
+/// Schon ein frischer Musik-Auftrag zählt, nicht erst hörbare Musik — sonst
+/// liefen beide kurz zusammen, wenn die Musik im selben Takt startet; nach dem
+/// Anlauf nur noch hörbare Musik (Codex).
 pub(crate) fn verdraengt(jetzt_ms: u64) -> Option<&'static str> {
     if crate::kabinen_musik::ansage_haelt(jetzt_ms) {
         Some("ansage")
-    } else if crate::kabinen_musik::flug_aktiv() {
+    } else if crate::kabinen_musik::flug_hoerbar_oder_anlauf(jetzt_ms) {
         Some("musik")
     } else {
         None

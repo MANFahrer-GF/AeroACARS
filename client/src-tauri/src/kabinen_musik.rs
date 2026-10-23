@@ -551,6 +551,7 @@ pub(crate) fn spielen(auftrag: Auftrag) {
             s.auftrag = Some(auftrag);
             s.ausblenden = false;
             s.fassung += 1;
+            NEU_SEIT_MS.store(jetzt_ms(), Ordering::SeqCst);
         }
     }
     FADEN.get_or_init(|| {
@@ -579,6 +580,23 @@ pub(crate) fn aus() {
 /// Läuft die Musik eines Flugs (Schleife, auch pausiert)?
 pub(crate) fn flug_aktiv() -> bool {
     steuer().auftrag.as_ref().is_some_and(|a| a.schleife)
+}
+
+/// Beginn des aktuellen Auftrags (ms).
+static NEU_SEIT_MS: AtomicU64 = AtomicU64::new(0);
+/// So lange gilt ein neuer Auftrag als „Musik kommt gleich“, auch bevor
+/// der Strom offen und sie hörbar ist.
+const ANLAUF_MS: u64 = 3_000;
+
+/// Ist Flug-Musik zu hören oder läuft gerade an? Ein Auftrag, der nicht
+/// spielen kann (kein Gerät, kaputte Dateien) oder leise steht, zählt nach
+/// dem Anlauf nicht mehr (Codex 23.10.2026, Kabinen-Reaktionen).
+pub(crate) fn flug_hoerbar_oder_anlauf(jetzt: u64) -> bool {
+    hoerbar_oder_anlauf(flug_aktiv(), hoerbar(), NEU_SEIT_MS.load(Ordering::SeqCst), jetzt)
+}
+
+fn hoerbar_oder_anlauf(aktiv: bool, hoerbar: bool, neu_seit: u64, jetzt: u64) -> bool {
+    aktiv && (hoerbar || jetzt.saturating_sub(neu_seit) < ANLAUF_MS)
 }
 
 /// Läuft ein Probehören (einmal, ohne Takt)?
@@ -999,6 +1017,18 @@ mod tests {
         println!("nach Ansage hoerbar: {}", hoerbar());
         aus();
         std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    /// Kabinen-Reaktion: Ein frischer Auftrag zählt sofort als Musik, ein
+    /// stummer (kein Gerät, kaputte Dateien, Pegel 0) nach dem Anlauf nicht
+    /// mehr; ohne Auftrag nie.
+    #[test]
+    fn musik_verdraengt_nur_hoerbar_oder_im_anlauf() {
+        assert!(hoerbar_oder_anlauf(true, false, 10_000, 10_000));
+        assert!(hoerbar_oder_anlauf(true, false, 10_000, 10_000 + ANLAUF_MS - 1));
+        assert!(!hoerbar_oder_anlauf(true, false, 10_000, 10_000 + ANLAUF_MS));
+        assert!(hoerbar_oder_anlauf(true, true, 10_000, 99_000));
+        assert!(!hoerbar_oder_anlauf(false, true, 10_000, 10_000));
     }
 
     /// Design §8: runter in 0,5 s, nach 1 s Ruhe in 2 s hoch, Ende in 3 s.
