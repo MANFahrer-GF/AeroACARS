@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TASTEN, INFO_SEITEN, WETTER_SEITEN, hinweis, musikStumm, schritt, dauer, hoehe, wind, flughoehe } from "../src/tasten.js";
 import { REGLER, PROFILE, uuid } from "../src/belegung.js";
-import { tasteSvg } from "../src/bild.js";
+import { tasteSvg, passend } from "../src/bild.js";
 
 // Feldnamen wie ActiveFlightInfo (lib.rs) sie serialisiert.
 const status = {
@@ -204,4 +204,17 @@ test("Profile, Regler und Manifest passen zueinander", () => {
   const manifest = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/manifest.json"), "utf8"));
   const imManifest = new Set(manifest.Actions.map((a) => a.UUID));
   assert.deepEqual([...imManifest].sort(), [...bekannt].map(uuid).sort(), "npm run erzeugen vergessen?");
+});
+
+test("lange Texte werden kleiner statt aus der Taste zu laufen (Feldbefund Windows)", () => {
+  // Kurze Werte behalten die volle Größe …
+  assert.equal(passend("0:37", 40, 118), 40);
+  // … die abgeschnittenen vom Foto werden so klein, dass sie mit Arial passen.
+  for (const [text, max] of [["Reiseflug", 30], ["19:09Z", 40], ["360/03G18", 30], ["AIB 4417", 30]]) {
+    const g = passend(text, max, 118);
+    assert.ok(g < max, `${text}: ${g}`);
+    assert.ok(g >= 18, `${text} unlesbar klein: ${g}`);
+  }
+  const svg = tasteSvg({ label: "Phase", wert: "Reiseflug", unter: "FL380", ton: "ok", icon: "plane" });
+  assert.match(svg, /font-size="2\d"[^>]*>Reiseflug</);
 });

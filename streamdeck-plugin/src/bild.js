@@ -44,7 +44,35 @@ const TOENE = {
   crit: ["#4d1a16", "#ff8a7a"],
   ctl: ["#1b2f4d", "#8fbaff"],
 };
-const SCHRIFT = "Arial Narrow, Helvetica Neue, Arial, sans-serif";
+// Bahnschrift (Windows 10+) zuerst, Arial Narrow auf dem Mac. Fehlt beides,
+// nimmt die Software Arial — deshalb rechnet `passend` mit Arials Breiten.
+// Feldbefund 23.10.: mit „Arial Narrow“ allein liefen Texte auf Windows rechts
+// aus der Taste („Reiseflu…“, „19:09…“).
+const SCHRIFT = "Bahnschrift SemiBold Condensed, Bahnschrift Condensed, Bahnschrift, Arial Narrow, Arial, sans-serif";
+
+// Ungefähre Zeichenbreiten von Arial Bold in em — für eine Schätzung, die
+// eher zu breit als zu schmal liegt.
+function breiteEm(text) {
+  let em = 0;
+  for (const z of String(text)) {
+    if (/[0-9]/.test(z)) em += 0.56;
+    else if (/[A-ZÄÖÜ]/.test(z)) em += z === "I" ? 0.28 : /[MW]/.test(z) ? 0.94 : 0.72;
+    else if (/[a-zäöüß]/.test(z)) em += /[il]/.test(z) ? 0.28 : /[mw]/.test(z) ? 0.89 : /[fjrt]/.test(z) ? 0.39 : 0.61;
+    else if (z === " ") em += 0.28;
+    else if (/[.,:;'!|]/.test(z)) em += 0.33;
+    else if (/[—%✓✗]/.test(z)) em += 0.95;
+    else em += 0.6;
+  }
+  return em;
+}
+
+/** Größte Schriftgröße ≤ `max`, mit der `text` in `platz` Pixel passt. */
+export function passend(text, max, platz, extraJeZeichen = 0) {
+  const n = [...String(text ?? "")].length;
+  if (!n) return max;
+  const g = Math.floor((platz - extraJeZeichen * n) / breiteEm(text));
+  return Math.max(10, Math.min(max, g));
+}
 
 const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
@@ -63,13 +91,14 @@ export function tasteSvg(b) {
     `<rect width="144" height="144" rx="18" fill="${grund}"/>`,
     `<rect width="144" height="72" rx="18" fill="#ffffff" opacity="0.05"/>`,
     icon(b.icon, 12, 12, 30, farbe),
-    `<text x="50" y="34" font-family="${SCHRIFT}" font-size="${String(b.label ?? "").length > 7 ? 16 : 19}" font-weight="700" fill="#8a96a3" letter-spacing="1">${esc(String(b.label ?? "").toUpperCase())}</text>`,
+    `<text x="50" y="34" font-family="${SCHRIFT}" font-size="${passend(String(b.label ?? "").toUpperCase(), 19, 84, 1)}" font-weight="700" fill="#8a96a3" letter-spacing="1">${esc(String(b.label ?? "").toUpperCase())}</text>`,
   ];
   if (b.zurueck) teile.push(icon("back", 112, 112, 22, "#c7d0d9"));
   if (b.gross) {
     teile.push(icon(b.gross, 44, 50, 56, farbe));
   } else {
-    const groesse = b.klein || String(b.wert ?? "").length > 6 ? 30 : 40;
+    // Rand der Taste: die Blende des Geräts schneidet ein paar Pixel ab.
+    const groesse = passend(b.wert, b.klein || String(b.wert ?? "").length > 6 ? 30 : 40, 118);
     teile.push(`<text x="12" y="${groesse > 30 ? 92 : 88}" font-family="${SCHRIFT}" font-size="${groesse}" font-weight="700" fill="${hell}">${esc(b.wert)}</text>`);
   }
   if (b.balken != null) {
@@ -82,7 +111,7 @@ export function tasteSvg(b) {
       teile.push(`<rect x="${12 + i * 15}" y="118" width="12" height="7" rx="3" fill="${f}" opacity="${o}"/>`);
     }
   } else if (b.unter) {
-    teile.push(`<text x="12" y="126" font-family="${SCHRIFT}" font-size="18" fill="#8a96a3">${esc(b.unter)}</text>`);
+    teile.push(`<text x="12" y="126" font-family="${SCHRIFT}" font-size="${passend(b.unter, 18, 118)}" fill="#8a96a3">${esc(b.unter)}</text>`);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">${teile.join("")}</svg>`;
 }
