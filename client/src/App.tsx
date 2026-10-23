@@ -851,6 +851,15 @@ function App() {
     if (!cpdlcEnabled && tab === "cpdlc") setTab("cockpit");
   }, [cpdlcEnabled, tab]);
 
+  // StreamDeck: langer Druck auf eine Anzeigetaste holt das Fenster nach vorn
+  // und wechselt hierher. Welche Seiten erlaubt sind, prüft der Panel-Server
+  // (`DECK_SEITEN` in panel_server.rs); ein abgeschaltetes CPDLC fängt der
+  // Effekt oben ab.
+  useEffect(() => {
+    const p = listen<Tab>("deck-seite", (e) => setTab(e.payload));
+    return () => { void p.then((ab) => ab()); };
+  }, []);
+
   const phpvmsConnected = status.kind === "loggedIn";
   const simConnected = simState === "connected";
   const simConnecting = simState === "connecting";

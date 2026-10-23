@@ -46,6 +46,26 @@
 //!     (Ereignis 1000, `0xC0000374`) sind ungeklärt, und der Schalter
 //!     erlaubt den A/B-Test „stürzt es auch OHNE Panel-Server ab?" —
 //!     ohne auf v1.4.7 zurückzumüssen.
+//!
+//! ## StreamDeck (`/panel/kabine`, `/panel/hoppie`, `/panel/cmd/{name}`)
+//!
+//! Das StreamDeck-Plugin läuft wie das Panel auf DEMSELBEN PC und liest
+//! hier mit. Neu ist, dass es auch BEDIENT: Kabine stumm, beide
+//! Lautstärken, Boarding-Musik, das VATSIM-CDM-Fenster, und das Hauptfenster
+//! auf einer festen Seite nach vorn holen (langer Druck auf eine Anzeigetaste),
+//! METAR für Start/Ziel zur Anzeige nachladen (siehe `metar_nachladen`). Genau diese Befehle
+//! sperrt die LAN-Brücke („der Ton spielt auf dem Sim-PC“) — das Deck steht
+//! am Sim-PC, für das Tablet bleibt die Sperre richtig.
+//!
+//! Bedrohung: Ohne PIN darf jeder Prozess auf dem eigenen Rechner diese
+//! Befehle rufen — vertretbar, weil sie höchstens Ton und ein Fenster
+//! betreffen. Nicht vertretbar wäre, dass eine WEBSEITE im Browser des
+//! Piloten sie auslöst (die GET-Routen tragen `Access-Control-Allow-Origin: *`,
+//! ein `text/plain`-POST braucht keinen Preflight). Deshalb gilt für
+//! `/panel/cmd/*` ([`deck_anfrage_erlaubt`]): kein `Origin`-Kopf (Browser
+//! senden ihn immer, Node nie), Pflichtkopf [`DECK_KOPF`] (erzwänge einen
+//! Preflight, den hier niemand beantwortet), keine CORS-Antwortköpfe. Was
+//! einen Flug beenden oder abbrechen kann, gehört NIE in [`DeckBefehl`].
 
 use std::future::Future as _;
 use std::net::SocketAddr;
@@ -56,10 +76,10 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::{
-    extract::{ConnectInfo, Query, State},
-    http::{header, HeaderValue, StatusCode},
+    extract::{ConnectInfo, Path as UrlPfad, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -296,6 +316,9 @@ fn spawn_listener(addr: SocketAddr, ctx: PanelCtx, stop_rx: tokio::sync::watch::
             .route("/panel/status", get(status_handler))
             .route("/panel/debrief", get(debrief_handler))
             .route("/panel/activity", get(activity_handler))
+            .route("/panel/kabine", get(kabine_handler))
+            .route("/panel/hoppie", get(hoppie_handler))
+            .route("/panel/cmd/{name}", post(cmd_handler))
             .route("/hud", get(hud_handler))
             .with_state(ctx);
         let mut stop_serve = stop_rx;
@@ -603,6 +626,365 @@ async fn activity_handler(
     let entries = crate::activity_log_tail(&state, limit);
     let value = serde_json::to_value(entries).unwrap_or(Value::Null);
     cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
+// ---------------------------------------------------------------------------
+// StreamDeck
+// ---------------------------------------------------------------------------
+
+/// Pflichtkopf auf `/panel/cmd/*`, Wert `1`. Siehe Modul-Doku „StreamDeck“.
+pub(crate) const DECK_KOPF: &str = "x-aeroacars-deck";
+
+/// Darf diese Anfrage einen Befehl auslösen? Eigene Funktion, damit der
+/// Test genau diese Entscheidung an echten Köpfen prüft.
+fn deck_anfrage_erlaubt(koepfe: &HeaderMap) -> Result<(), StatusCode> {
+    if koepfe.contains_key(header::ORIGIN) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    match koepfe.get(DECK_KOPF) {
+        Some(v) if v.as_bytes() == b"1" => Ok(()),
+        _ => Err(StatusCode::FORBIDDEN),
+    }
+}
+
+/// Die Befehle, die das Deck auslösen darf — abschließend.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DeckBefehl {
+    Stumm(bool),
+    Lautstaerke { wert: f32, speichern: bool },
+    MusikLautstaerke { wert: f32, speichern: bool },
+    BoardingMusik(bool),
+    CdmFenster,
+    /// Hauptfenster nach vorn holen, auf eine Seite aus [`DECK_SEITEN`].
+    Fenster(&'static str),
+    /// METAR für die Anzeige nachladen; `true` = Ziel, `false` = Start.
+    Metar(bool),
+}
+
+/// Seiten der App, die das Deck per langem Druck öffnen darf. Die Namen sind
+/// die `Tab`-Werte in `client/src/App.tsx`.
+const DECK_SEITEN: &[&str] = &["cockpit", "briefing", "landing", "kabine", "map", "cpdlc"];
+
+/// Ereignis an die Oberfläche: auf diese Seite wechseln.
+pub(crate) const EREIGNIS_DECK_SEITE: &str = "deck-seite";
+
+impl DeckBefehl {
+    /// 404 für jeden Namen außerhalb der Liste, 422 für fehlende oder
+    /// unsinnige Werte. Lautstärken werden HIER geprüft und nicht erst von
+    /// `normalisiert()` — das machte aus NaN still den Werkswert und
+    /// überschriebe so die Einstellung des Piloten.
+    fn lesen(name: &str, args: &Value) -> Result<Self, StatusCode> {
+        let wahr = |k: &str| args.get(k).and_then(Value::as_bool).ok_or(StatusCode::UNPROCESSABLE_ENTITY);
+        let pegel = || {
+            let wert = args
+                .get("lautstaerke")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+                .ok_or(StatusCode::UNPROCESSABLE_ENTITY)?;
+            Ok::<_, StatusCode>((wert as f32, wahr("speichern")?))
+        };
+        match name {
+            "kabinen_stumm" => Ok(Self::Stumm(wahr("stumm")?)),
+            "kabinen_lautstaerke" => pegel().map(|(wert, speichern)| Self::Lautstaerke { wert, speichern }),
+            "kabinen_musik_lautstaerke" => {
+                pegel().map(|(wert, speichern)| Self::MusikLautstaerke { wert, speichern })
+            }
+            "kabinen_boarding_musik" => Ok(Self::BoardingMusik(wahr("an")?)),
+            "vdgs_fenster_oeffnen" => Ok(Self::CdmFenster),
+            "metar_laden" => match args.get("ort").and_then(Value::as_str) {
+                Some("start") => Ok(Self::Metar(false)),
+                Some("ziel") => Ok(Self::Metar(true)),
+                _ => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            },
+            "fenster_zeigen" => {
+                let seite = args.get("seite").and_then(Value::as_str).unwrap_or("");
+                DECK_SEITEN
+                    .iter()
+                    .find(|s| **s == seite)
+                    .map(|s| Self::Fenster(s))
+                    .ok_or(StatusCode::UNPROCESSABLE_ENTITY)
+            }
+            _ => Err(StatusCode::NOT_FOUND),
+        }
+    }
+}
+
+/// Zustand der Kabine für das Deck — schmal statt des ganzen Überblicks
+/// (der trägt Verlauf, Profil, Kapitänsname). Beide Lautstärken doppelt:
+/// `live` ist, was gerade klingt, `gespeichert` die Einstellung. Daraus
+/// liest das Plugin „Musik stumm“ (live 0, gespeichert > 0), ohne sich
+/// selbst etwas merken zu müssen.
+fn kabine_zusammenfassen(
+    einst: &crate::kabinenansagen::Einstellungen,
+    stumm: bool,
+    ansage_live: f32,
+    musik_live: f32,
+    ueberblick: Option<&Value>,
+) -> Value {
+    let kurz = |g: &Value| {
+        serde_json::json!({
+            "slot": g.get("slot"),
+            "wann": g.get("wann"),
+            "faellig": g.get("faellig"),
+            "wartet": g.get("wartet"),
+        })
+    };
+    let geplant = ueberblick.and_then(|u| u.get("geplant")).and_then(Value::as_array);
+    let naechste = geplant.and_then(|g| g.first()).map(kurz);
+    // Für den Kabinen-Zeitstrahl am Deck: die nächsten vier.
+    let folgende: Vec<Value> = geplant.map(|g| g.iter().take(4).map(kurz).collect()).unwrap_or_default();
+    let feld = |k: &str| ueberblick.and_then(|u| u.get(k)).cloned().unwrap_or(Value::Null);
+    serde_json::json!({
+        "an": einst.an,
+        "stumm": stumm,
+        "lautstaerke_live": ansage_live,
+        "lautstaerke_gespeichert": einst.lautstaerke,
+        "musik_live": musik_live,
+        "musik_gespeichert": einst.musik_lautstaerke,
+        "boarding_musik": einst.boarding_musik,
+        "flug": ueberblick.is_some(),
+        "grund": feld("grund"),
+        "belegt": feld("belegt"),
+        "hinweis": feld("hinweis"),
+        "naechste": naechste,
+        "folgende": folgende,
+    })
+}
+
+fn kabine_fuer_deck(app: &AppHandle) -> Value {
+    let einst = crate::kabinenansagen::kabinen_einstellungen_lesen(app.clone());
+    let ueberblick = crate::kabinenansagen::kabinen_ueberblick(app.clone(), app.state::<crate::AppState>())
+        .and_then(|u| serde_json::to_value(u).ok());
+    kabine_zusammenfassen(
+        &einst,
+        crate::kabinenansagen::ist_stumm(),
+        crate::kabinenansagen::ausgabe::lautstaerke(),
+        crate::kabinen_musik::lautstaerke(),
+        ueberblick.as_ref(),
+    )
+}
+
+async fn kabine_handler(
+    State(ctx): State<PanelCtx>,
+    ConnectInfo(PanelPeer(peer)): ConnectInfo<PanelPeer>,
+) -> Response {
+    if let Some(r) = reject_non_loopback(peer) {
+        return r;
+    }
+    cors_open((StatusCode::OK, Json(kabine_fuer_deck(&ctx.app))).into_response())
+}
+
+async fn hoppie_handler(
+    State(ctx): State<PanelCtx>,
+    ConnectInfo(PanelPeer(peer)): ConnectInfo<PanelPeer>,
+) -> Response {
+    if let Some(r) = reject_non_loopback(peer) {
+        return r;
+    }
+    let value = match crate::hoppie::hoppie_status(ctx.app.state::<crate::AppState>()).await {
+        Ok(s) => serde_json::json!({
+            "connected": s.connected,
+            "logged_on": s.logged_on,
+            "station_id": s.station_id,
+            "pending_uplink_count": s.pending_uplink_count,
+            "pending_response_count": s.pending_response_count,
+        }),
+        Err(_) => Value::Null,
+    };
+    cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
+/// Bewusst OHNE [`cors_open`]: Browser bekommen keine Antwort zu lesen.
+async fn cmd_handler(
+    State(ctx): State<PanelCtx>,
+    ConnectInfo(PanelPeer(peer)): ConnectInfo<PanelPeer>,
+    UrlPfad(name): UrlPfad<String>,
+    koepfe: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Some(r) = reject_non_loopback(peer) {
+        return r;
+    }
+    if let Err(code) = deck_anfrage_erlaubt(&koepfe) {
+        tracing::warn!(%name, "panel_server: Deck-Befehl ohne Deck-Kopf oder mit Origin abgewiesen");
+        return (code, "forbidden").into_response();
+    }
+    let args = if body.is_empty() {
+        Value::Object(Default::default())
+    } else {
+        match serde_json::from_slice::<Value>(&body) {
+            Ok(v) => v,
+            Err(_) => return (StatusCode::UNPROCESSABLE_ENTITY, "bad json").into_response(),
+        }
+    };
+    let befehl = match DeckBefehl::lesen(&name, &args) {
+        Ok(b) => b,
+        Err(code) => return (code, "unknown command or bad arguments").into_response(),
+    };
+    let app = ctx.app.clone();
+    let ergebnis = match befehl {
+        DeckBefehl::Stumm(stumm) => {
+            crate::kabinenansagen::kabinen_stumm(app.clone(), app.state::<crate::AppState>(), stumm);
+            Ok(())
+        }
+        DeckBefehl::Lautstaerke { wert, speichern } => {
+            crate::kabinenansagen::kabinen_lautstaerke(app.clone(), wert, speichern)
+        }
+        DeckBefehl::MusikLautstaerke { wert, speichern } => {
+            crate::kabinenansagen::kabinen_musik_lautstaerke(app.clone(), wert, speichern)
+        }
+        DeckBefehl::BoardingMusik(an) => crate::kabinenansagen::kabinen_boarding_musik(app.clone(), an),
+        DeckBefehl::CdmFenster => crate::vdgs_fenster_oeffnen(app.clone()).await,
+        DeckBefehl::Metar(ziel) => crate::metar_nachladen(&app, ziel).await,
+        DeckBefehl::Fenster(seite) => {
+            // Wie „Anzeigen“ im Tray-Menü, dazu der Seitenwechsel.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+            let _ = tauri::Emitter::emit(&app, EREIGNIS_DECK_SEITE, seite);
+            Ok(())
+        }
+    };
+    match ergebnis {
+        // Antwort = frischer Kabinenzustand, damit die Taste sofort stimmt.
+        Ok(()) => (StatusCode::OK, Json(kabine_fuer_deck(&app))).into_response(),
+        Err(e) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "code": e.code, "message": e.message })),
+        )
+            .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod deck_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn koepfe(paare: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in paare {
+            h.insert(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn nur_das_deck_darf_befehle_ausloesen() {
+        assert!(deck_anfrage_erlaubt(&koepfe(&[(DECK_KOPF, "1")])).is_ok());
+        // Ohne Kopf: z. B. ein `text/plain`-POST aus einer Webseite.
+        assert_eq!(deck_anfrage_erlaubt(&koepfe(&[])), Err(StatusCode::FORBIDDEN));
+        assert_eq!(deck_anfrage_erlaubt(&koepfe(&[(DECK_KOPF, "0")])), Err(StatusCode::FORBIDDEN));
+        // Mit Kopf, aber aus einem Browser (Origin): trotzdem nein.
+        assert_eq!(
+            deck_anfrage_erlaubt(&koepfe(&[(DECK_KOPF, "1"), ("origin", "https://example.com")])),
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            deck_anfrage_erlaubt(&koepfe(&[(DECK_KOPF, "1"), ("origin", "null")])),
+            Err(StatusCode::FORBIDDEN)
+        );
+    }
+
+    #[test]
+    fn die_befehlsliste_ist_abschliessend() {
+        assert_eq!(DeckBefehl::lesen("kabinen_stumm", &json!({"stumm": true})), Ok(DeckBefehl::Stumm(true)));
+        assert_eq!(
+            DeckBefehl::lesen("kabinen_musik_lautstaerke", &json!({"lautstaerke": 0.0, "speichern": false})),
+            Ok(DeckBefehl::MusikLautstaerke { wert: 0.0, speichern: false })
+        );
+        assert_eq!(
+            DeckBefehl::lesen("kabinen_lautstaerke", &json!({"lautstaerke": 0.5, "speichern": true})),
+            Ok(DeckBefehl::Lautstaerke { wert: 0.5, speichern: true })
+        );
+        assert_eq!(DeckBefehl::lesen("kabinen_boarding_musik", &json!({"an": false})), Ok(DeckBefehl::BoardingMusik(false)));
+        assert_eq!(DeckBefehl::lesen("vdgs_fenster_oeffnen", &json!({})), Ok(DeckBefehl::CdmFenster));
+        assert_eq!(
+            DeckBefehl::lesen("fenster_zeigen", &json!({"seite": "cpdlc"})),
+            Ok(DeckBefehl::Fenster("cpdlc"))
+        );
+        assert_eq!(DeckBefehl::lesen("metar_laden", &json!({"ort": "ziel"})), Ok(DeckBefehl::Metar(true)));
+        assert_eq!(DeckBefehl::lesen("metar_laden", &json!({"ort": "start"})), Ok(DeckBefehl::Metar(false)));
+        assert_eq!(DeckBefehl::lesen("metar_laden", &json!({"ort": "EDDF"})), Err(StatusCode::UNPROCESSABLE_ENTITY));
+        // Nur Seiten aus der Liste: keine Einstellungen, kein Logbuch-Löschen o. Ä.
+        for seite in ["settings", "logbook", "", "../x"] {
+            assert_eq!(
+                DeckBefehl::lesen("fenster_zeigen", &json!({"seite": seite})),
+                Err(StatusCode::UNPROCESSABLE_ENTITY),
+                "{seite}"
+            );
+        }
+        // Alles, was einen Flug beendet, abbricht oder abgibt, bleibt draußen.
+        for name in [
+            "flight_end",
+            "flight_end_manual",
+            "flight_cancel",
+            "flight_forget",
+            "flight_start",
+            "phpvms_logout",
+            "kabinen_einstellungen_setzen",
+            "remote_server_start",
+        ] {
+            assert_eq!(DeckBefehl::lesen(name, &json!({})), Err(StatusCode::NOT_FOUND), "{name}");
+        }
+    }
+
+    #[test]
+    fn unsinnige_lautstaerken_werden_abgewiesen_statt_auf_den_werkswert_gesetzt() {
+        for wert in [json!(1.5), json!(-0.1), json!("0.5"), json!(null)] {
+            assert_eq!(
+                DeckBefehl::lesen("kabinen_lautstaerke", &json!({"lautstaerke": wert, "speichern": true})),
+                Err(StatusCode::UNPROCESSABLE_ENTITY),
+                "{wert}"
+            );
+        }
+        // NaN/Unendlich kommen aus JSON nicht an; fehlendes `speichern` schon.
+        assert_eq!(
+            DeckBefehl::lesen("kabinen_musik_lautstaerke", &json!({"lautstaerke": 0.3})),
+            Err(StatusCode::UNPROCESSABLE_ENTITY)
+        );
+        assert_eq!(DeckBefehl::lesen("kabinen_stumm", &json!({})), Err(StatusCode::UNPROCESSABLE_ENTITY));
+    }
+
+    #[test]
+    fn kabinenzustand_ohne_flug_und_mit_naechster_ansage() {
+        let einst = crate::kabinenansagen::Einstellungen {
+            lautstaerke: 0.8,
+            musik_lautstaerke: 0.2,
+            boarding_musik: true,
+            ..Default::default()
+        };
+        // Ohne Flug: Schalter und Pegel trotzdem da, keine nächste Ansage.
+        let v = kabine_zusammenfassen(&einst, false, 0.8, 0.0, None);
+        assert_eq!(v["flug"], false);
+        assert_eq!(v["musik_live"], 0.0);
+        assert!((v["musik_gespeichert"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+        assert_eq!(v["boarding_musik"], true);
+        assert!(v["naechste"].is_null());
+
+        let u = json!({
+            "geplant": [
+                {"slot": "kabine_sinkflug", "wann": 1_800_000_000, "faellig": false, "wartet": null, "teile": []},
+                {"slot": "nach_der_landung", "wann": null, "faellig": false, "wartet": null}
+            ],
+            "hinweis": "anschnallzeichen", "belegt": false, "grund": null, "kapitaen": "Max Muster"
+        });
+        let v = kabine_zusammenfassen(&einst, true, 0.8, 0.2, Some(&u));
+        assert_eq!(v["flug"], true);
+        assert_eq!(v["stumm"], true);
+        assert_eq!(v["naechste"]["slot"], "kabine_sinkflug");
+        assert_eq!(v["naechste"]["wann"], 1_800_000_000);
+        assert_eq!(v["folgende"].as_array().map(Vec::len), Some(2));
+        assert_eq!(v["folgende"][1]["slot"], "nach_der_landung");
+        assert_eq!(v["hinweis"], "anschnallzeichen");
+        // Schmal: der Kapitänsname geht nicht über die offene Route.
+        assert!(v.get("kapitaen").is_none());
+    }
 }
 
 #[cfg(test)]

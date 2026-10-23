@@ -1,0 +1,4 @@
+node_modules/
+dist/
+eu.german-sky-group.aeroacars.sdPlugin/bin/
+eu.german-sky-group.aeroacars.sdPlugin/wasm/

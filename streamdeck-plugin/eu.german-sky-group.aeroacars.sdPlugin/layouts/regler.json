@@ -1,0 +1,15 @@
+{
+  "id": "eu.german-sky-group.aeroacars.regler",
+  "items": [
+    {
+      "key": "bild",
+      "type": "pixmap",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    }
+  ]
+}

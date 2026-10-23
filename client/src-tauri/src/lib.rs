@@ -32137,6 +32137,52 @@ async fn metar_get(icao: String) -> Result<MetarSnapshot, UiError> {
     })
 }
 
+/// StreamDeck (Thomas 23.10.2026: „der Wind war gar nicht geladen“): METAR
+/// für Start oder Ziel des aktiven Flugs jetzt holen, zur ANZEIGE.
+///
+/// Das Ziel-METAR holt der Streamer regulär erst im Sinkflug/Endanflug; davor
+/// zeigt das Deck „kein METAR“. Hier wird bewusst nur `*_metar_snap`
+/// geschrieben, NICHT `*_metar_raw`: der Rohtext geht in PIREP und
+/// Landungsdatensatz — ein im Reiseflug nachgeladenes Wetter darf dort nicht
+/// landen, falls der spätere Abruf scheitert. Die `*_requested`-Flags bleiben
+/// unberührt, der reguläre Abruf läuft also weiter und überschreibt.
+/// Höchstens ein erfolgreicher Abruf je Flughafen pro Minute
+/// (aviationweather.gov schonen); ein Fehlschlag gibt die Sperre sofort frei.
+pub(crate) async fn metar_nachladen(app: &AppHandle, ziel: bool) -> Result<(), UiError> {
+    static ZULETZT: std::sync::OnceLock<Mutex<HashMap<String, std::time::Instant>>> = std::sync::OnceLock::new();
+    let zuletzt = || ZULETZT.get_or_init(|| Mutex::new(HashMap::new())).lock().expect("metar nachladen");
+    let flight = app
+        .state::<AppState>()
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| UiError::new("kein_flug", "kein aktiver Flug"))?;
+    let icao = if ziel { flight.arr_airport.clone() } else { flight.dpt_airport.clone() };
+    {
+        let mut z = zuletzt();
+        if z.get(&icao).is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60)) {
+            return Ok(());
+        }
+        z.insert(icao.clone(), std::time::Instant::now());
+    }
+    let snap = match metar_get(icao.clone()).await {
+        Ok(snap) => snap,
+        Err(e) => {
+            zuletzt().remove(&icao);
+            return Err(e);
+        }
+    };
+    let mut stats = flight.stats.lock().expect("flight stats");
+    if ziel {
+        stats.arr_metar_snap = Some(snap);
+    } else {
+        stats.dep_metar_snap = Some(snap);
+    }
+    Ok(())
+}
+
 /// Distance (nm) from the live sim position to the airport with the given ICAO.
 /// `None` when we have no sim snapshot yet, or no coordinates for the airport
 /// from any source — in which case the caller must not gate on it.

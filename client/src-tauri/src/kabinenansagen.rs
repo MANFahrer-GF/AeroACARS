@@ -37,6 +37,13 @@ pub(crate) const EREIGNIS_ANSAGE: &str = "kabine-ansage";
 /// „stumm übersprungen“ und kommt nicht nach. Nicht gespeichert — nach einem
 /// Neustart ist der Ton wieder an, sonst startete der nächste Flug stumm.
 static STUMM: AtomicBool = AtomicBool::new(false);
+
+/// Ist die Kabine gerade stumm? Für das StreamDeck (`/panel/kabine`), das
+/// den Zustand auch ohne aktiven Flug anzeigen muss.
+pub(crate) fn ist_stumm() -> bool {
+    STUMM.load(Ordering::SeqCst)
+}
+
 /// Ohne Startmeldung der Oberfläche gilt eine Ansage nach so vielen Sekunden
 /// als „Ausgang unbekannt“ (Ereignis verloren, Fenster weg).
 const START_SPAETESTENS_S: i64 = 30;
