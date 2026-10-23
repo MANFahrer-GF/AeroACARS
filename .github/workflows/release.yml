@@ -80,19 +80,30 @@ jobs:
           echo "Release-Notes vorhanden: $NOTES"
           wc -l "$NOTES"
 
-      - name: Install Tauri Linux deps (libwebkit2gtk etc.)
+      # Ohne Recommends (= frueheres --no-install-recommends in ci.yml). Muss in
+      # ci.yml und release.yml gleich sein: gleiche Paketliste + gleiche
+      # `version` = gleicher Cache-Key, und der Release-Tag liest den Cache,
+      # den ci.yml auf main gespeichert hat. `apt-get update` (7 s, nicht der
+      # langsame Teil) macht die Action selbst nicht: ohne frische Listen
+      # liefe ein Cache-Miss auf veraltete Versionen und 404.
+      - name: apt vorbereiten (Listen aktualisieren, ohne Recommends)
+        timeout-minutes: 3
         run: |
-          sudo apt update
-          sudo apt install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+          echo 'APT::Install-Recommends "false";' | sudo tee /etc/apt/apt.conf.d/99-no-recommends
+          sudo apt-get update
+
+      # Pakete aus dem Actions-Cache statt vom Ubuntu-Mirror: azure.archive.
+      # ubuntu.com lieferte in Lauf 39844274945 (v2.1.8) nur 29.8 kB/s, der
+      # apt-Download dauerte 26½ min statt 26 s. Ein Retry traefe denselben
+      # Mirror, deshalb raus aus dem kritischen Pfad. Nur ein Cache-Miss (neue
+      # Paketversion / neues Ubuntu) laedt noch vom Mirror; timeout-minutes
+      # ist die Notbremse dafuer.
+      - name: Install Tauri Linux deps (libwebkit2gtk etc.)
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        timeout-minutes: 12
+        with:
+          packages: libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          version: tauri-deps-1
         # v0.10.0 hotfix-2: `cargo check` weiter unten kompiliert den
         # `aeroacars-app`-Crate (Tauri-App), der auf Linux libwebkit2gtk-
         # 4.1, glib-2.0 etc. als System-Lib braucht. Ohne diesen Step
