@@ -1,0 +1,44 @@
+AeroACARS-Tasten auf eigene Seiten legen
+==========================================
+
+Die mitgelieferten Profile sind nur ein Vorschlag. Jede AeroACARS-Taste
+lässt sich einzeln auf jede Seite, jeden Ordner und jedes Profil legen –
+auch mehrfach und auf mehreren Decks gleichzeitig.
+
+1. TASTE AUF EINE EIGENE SEITE ZIEHEN
+   - StreamDeck-Software öffnen, oben das gewünschte Profil wählen.
+   - Rechts in der Aktionsliste die Kategorie "AeroACARS" aufklappen
+     (31 Tasten, 4 Drehregler).
+   - Eine Aktion, z. B. "Sprit" oder "Kabine stumm", mit der Maus auf
+     eine freie Taste ziehen. Fertig – sie zeigt sofort den Live-Wert.
+   - Belegte Taste ersetzen: einfach darüber ziehen.
+   - Taste entfernen: Rechtsklick auf die Taste -> Löschen.
+
+2. EIGENE SEITE ODER EIGENEN ORDNER ANLEGEN
+   - Seite: unten unter der Tastenansicht auf "+" (neue Seite).
+     Zwischen Seiten wechselt man mit den Aktionen "Nächste Seite" /
+     "Vorherige Seite" aus der Kategorie "Navigation".
+   - Ordner: Aktion "Ordner erstellen" (Kategorie "Navigation") auf eine
+     Taste ziehen, doppelklicken, dann AeroACARS-Aktionen hineinziehen.
+     Oben links im Ordner setzt das StreamDeck automatisch "Zurück".
+
+3. ZUM AEROACARS-PROFIL SPRINGEN
+   - In deinem normalen Profil die Aktion "Profil wechseln" (Kategorie
+     "Navigation") auf eine Taste legen und als Ziel "AeroACARS" wählen.
+   - Zurück kommst du über die Phasen-Taste (oben links, kleiner Pfeil).
+   - Achtung: Die Phasen-Taste springt IMMER ins vorherige Profil. Legst du
+     sie in dein eigenes Profil, springt sie von dort ebenfalls weg.
+
+4. STREAMDECK + (DREHREGLER)
+   - Die vier Regler-Aktionen ("Regler Ansagen", "Regler Musik",
+     "Regler Flugdaten", "Regler Wetter") auf einen Drehregler ziehen.
+     Normale Tasten-Aktionen funktionieren auf den 8 Tasten des +.
+
+5. WAS DIE TASTEN TUN
+   Bedienen:  Kabine stumm (1 s halten), Ansagen/Musik leiser/lauter,
+              Musik-Lautstärke (drücken = Musik stumm), Boarding-Musik
+              an/aus, VATSIM CDM (öffnet das Fenster), Phase (zurück).
+   Anzeigen:  alle anderen. Sie zeigen nur an.
+
+Hinweis: Eigene Titel braucht keine Taste – Beschriftung und Icon kommen
+vom Plugin. Ein Titel aus der StreamDeck-Software würde darübergelegt.

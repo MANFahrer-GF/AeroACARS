@@ -125,18 +125,21 @@ export function reglerSvg(b) {
   const [grund, farbe] = TOENE[b.ton] ?? TOENE.neutral;
   const hell = b.ton === "aus" ? "#7c8792" : "#e9edf2";
   const label = String(b.label ?? "").toUpperCase();
+  // Feld links und rechts 5 px eingerückt: zwischen zwei Reglern bleibt eine
+  // schwarze Fuge von 10 px (Feldbefund: die Felder klebten aneinander).
   const teile = [
-    `<rect width="200" height="100" rx="12" fill="${grund}"/>`,
-    `<rect width="200" height="46" rx="12" fill="#ffffff" opacity="0.05"/>`,
-    icon(b.icon, 10, 9, 22, farbe),
-    `<text x="40" y="27" font-family="${SCHRIFT}" font-size="${passend(label, 15, 150, 1)}" font-weight="700" fill="#8a96a3" letter-spacing="1">${esc(label)}</text>`,
+    `<rect width="200" height="100" fill="#000000"/>`,
+    `<rect x="5" y="2" width="190" height="96" rx="12" fill="${grund}"/>`,
+    `<rect x="5" y="2" width="190" height="44" rx="12" fill="#ffffff" opacity="0.05"/>`,
+    icon(b.icon, 14, 10, 22, farbe),
+    `<text x="44" y="28" font-family="${SCHRIFT}" font-size="${passend(label, 15, 142, 1)}" font-weight="700" fill="#8a96a3" letter-spacing="1">${esc(label)}</text>`,
   ];
-  teile.push(`<text x="10" y="64" font-family="${SCHRIFT}" font-size="${passend(b.wert, 32, 180)}" font-weight="700" fill="${hell}">${esc(b.wert)}</text>`);
+  teile.push(`<text x="14" y="64" font-family="${SCHRIFT}" font-size="${passend(b.wert, 32, 172)}" font-weight="700" fill="${hell}">${esc(b.wert)}</text>`);
   if (b.balken != null) {
-    const w = Math.round(180 * Math.min(1, Math.max(0, b.balken)));
-    teile.push(`<rect x="10" y="80" width="180" height="8" rx="4" fill="#ffffff" opacity="0.12"/>`, `<rect x="10" y="80" width="${w}" height="8" rx="4" fill="${farbe}"/>`);
+    const w = Math.round(172 * Math.min(1, Math.max(0, b.balken)));
+    teile.push(`<rect x="14" y="80" width="172" height="8" rx="4" fill="#ffffff" opacity="0.12"/>`, `<rect x="14" y="80" width="${w}" height="8" rx="4" fill="${farbe}"/>`);
   } else if (b.unter) {
-    teile.push(`<text x="10" y="90" font-family="${SCHRIFT}" font-size="${passend(b.unter, 15, 180)}" fill="#8a96a3">${esc(b.unter)}</text>`);
+    teile.push(`<text x="14" y="89" font-family="${SCHRIFT}" font-size="${passend(b.unter, 15, 172)}" fill="#8a96a3">${esc(b.unter)}</text>`);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">${teile.join("")}</svg>`;
 }
