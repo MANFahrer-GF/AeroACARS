@@ -138,17 +138,43 @@ function band(st, s, c0, c1, r, t) {
   const kx0 = kx(kachelDesFlugzeugs);
   teile.push(text(kx0 + KACHEL / 2, y + 30, PHASE_TEXT[st?.phase] ?? "", { groesse: 15, farbe: phasenFarbe, fett: true, anker: "middle", abstand: 1.5 }));
 
-  // Laufschrift unter der Linie, nur im Mittelteil. Die einzige Ausnahme von
-  // der Regel „Text bleibt in der Kachel“: sie wandert und bleibt so lesbar
-  // (Thomas 23.10.: mit Laufschrift war es besser als mit dem Fallblatt).
-  const lauf = laufschrift(st, s);
-  const mx0 = kx(c0 + 1), mx1 = kx(c1);
-  const tempo = 16; // px je Sekunde; 36 war zu schnell
-  const breiteLauf = textBreite(lauf, 22, true, 1) + 200;
-  const versatz = (t * tempo) % breiteLauf;
-  const zeile = (x0) => text(x0, y + 124, lauf, { groesse: 22, farbe: FARBE.amber, fett: true, abstand: 1 });
-  teile.push(`<clipPath id="lauf"><rect x="${mx0}" y="${y + 92}" width="${mx1 - mx0}" height="44"/></clipPath>`, `<g clip-path="url(#lauf)">${zeile(mx1 - versatz)}${zeile(mx1 - versatz + breiteLauf)}</g>`);
+  // Fallblatt statt Laufschrift (Thomas 23.10. am Gerät: Text darf nicht über
+  // die Blenden laufen; die Laufschrift kurz zurück „hat verwirrt“ — Fallblatt bleibt). Jede Mittelkachel zeigt eine Angabe; alle vier
+  // Sekunden rücken die Angaben eine Kachel weiter.
+  const infos = bandInfos(st, s);
+  const mitte = c1 - c0 - 1;
+  const schritt = infos.length > mitte ? Math.floor(t / 4) : 0;
+  for (let i = 0; i < Math.min(mitte, infos.length); i++) {
+    const [marke2, wert] = infos[(i + schritt) % infos.length];
+    const cx = kx(c0 + 1 + i) + KACHEL / 2;
+    teile.push(
+      text(cx, y + 104, marke2, { groesse: 13, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1, max: INNEN }),
+      text(cx, y + 130, wert, { groesse: 22, fett: true, farbe: FARBE.amber, anker: "middle", max: INNEN }),
+    );
+  }
   return teile.join("");
+}
+
+/** Angaben für das Fallblatt im Band: [Marke, Wert], je Phase das Wichtige. */
+export function bandInfos(st, s) {
+  if (!st) return [["AEROACARS", "BEREIT"], ["FLUG", "KEINER"]];
+  const g = phasenGruppe(st.phase);
+  const m = g === "vor" ? st.dep_metar_decoded : st.arr_metar_decoded;
+  const icao = g === "vor" ? st.dpt_airport : st.arr_airport;
+  const liste = [["FLUG", st.callsign ?? "–"]];
+  if (st.aircraft_icao) liste.push(["MUSTER", st.aircraft_icao]);
+  if (m) {
+    const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
+    liste.push([`WIND ${icao ?? ""}`, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : String(Math.round(kt)).padStart(2, "0")}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`]);
+    if (m.qnh_hpa != null) liste.push([`QNH ${icao ?? ""}`, `Q${Math.round(m.qnh_hpa)}`]);
+  } else liste.push([`WETTER ${icao ?? ""}`, "FEHLT"]);
+  const bahn = st.approach_runway ?? st.predicted_runway;
+  if (bahn) liste.push(["BAHN", bahn]);
+  if (st.planned_alternate) liste.push(["ALTN", st.planned_alternate]);
+  const n = s.kabine?.naechste;
+  if (n) liste.push(["ANSAGE", n.wann ? `${uhrZ(n.wann * 1000)}Z` : (ANSAGEN[n.slot] ?? n.slot).toUpperCase()]);
+  if (zahl(st.distance_nm)) liste.push(["GEFLOGEN", `${Math.round(st.distance_nm)} NM`]);
+  return liste;
 }
 
 /** Was in der Laufschrift steht — je Phase das, was gerade zählt. */
