@@ -7,7 +7,7 @@ import { befehl } from "./aeroacars.js";
 import { TASTEN, INFO_SEITEN, WETTER_SEITEN, musikStumm, schritt } from "./tasten.js";
 import { tasteSvg, reglerSvg, alsDatenUrl, alsBase64 } from "./bild.js";
 import { Zustand } from "./zustand.js";
-import { uuid } from "./belegung.js";
+import { uuid, profilFuer } from "./belegung.js";
 
 const HALTEN_MS = 1000;
 const SPEICHERN_NACH_MS = 800;
@@ -79,7 +79,19 @@ class Taste extends SingletonAction {
 class PhaseTaste extends Taste {
   async onKeyDown(ev) {
     // Ohne Profilnamen springt das StreamDeck in das vorherige Profil zurück.
+    // Feldbefund 23.10.: Das klappt nur, wenn das Plugin selbst hergewechselt
+    // hat (Taste „AeroACARS öffnen“), nicht nach Auswahl von Hand.
     await streamDeck.profiles.switchToProfile(ev.action.device.id);
+  }
+}
+
+/** Wechselt ins mitgelieferte Profil dieses Gerätetyps. */
+class OeffnenTaste extends Taste {
+  async onKeyDown(ev) {
+    const a = ev.action;
+    const profil = profilFuer(a.device.type);
+    if (!profil) return a.showAlert(); // Mini, Neo …: kein mitgeliefertes Profil
+    await streamDeck.profiles.switchToProfile(a.device.id, profil);
   }
 }
 
@@ -267,6 +279,7 @@ class BlaetterRegler extends Taste {
 
 const besondere = {
   phase: () => new PhaseTaste("phase"),
+  oeffnen: () => new OeffnenTaste("oeffnen"),
   kabine_stumm: () => new StummTaste("kabine_stumm"),
   ansage_leiser: () => new SchrittTaste("ansage_leiser", "kabinen_lautstaerke", "lautstaerke_gespeichert", -1),
   ansage_lauter: () => new SchrittTaste("ansage_lauter", "kabinen_lautstaerke", "lautstaerke_gespeichert", +1),

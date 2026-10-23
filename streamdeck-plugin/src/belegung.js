@@ -71,3 +71,9 @@ export const PROFILE = [
     regler: ["regler_ansage", "regler_musik", "regler_info", "regler_wetter"],
   },
 ];
+
+/** Name des mitgelieferten Profils je Gerätetyp, wie im Manifest (`profiles/…`). */
+export const profilFuer = (geraetetyp) => {
+  const p = PROFILE.find((x) => x.geraetetyp === geraetetyp);
+  return p ? `profiles/${p.datei}` : null;
+};

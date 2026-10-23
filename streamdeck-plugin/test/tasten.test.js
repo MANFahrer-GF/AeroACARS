@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { TASTEN, INFO_SEITEN, WETTER_SEITEN, hinweis, musikStumm, schritt, dauer, hoehe, wind, flughoehe } from "../src/tasten.js";
-import { REGLER, PROFILE, uuid } from "../src/belegung.js";
+import { REGLER, PROFILE, uuid, profilFuer } from "../src/belegung.js";
 import { tasteSvg, reglerSvg, passend } from "../src/bild.js";
 
 // Feldnamen wie ActiveFlightInfo (lib.rs) sie serialisiert.
@@ -62,7 +62,7 @@ const voll = { erreichbar: true, status, kabine, hoppie: { connected: true, logg
 test("ohne AeroACARS sind alle Tasten aus, ohne Flug die Flugtasten", () => {
   const ohne = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt };
   for (const [id, t] of Object.entries(TASTEN)) {
-    if (id === "utc") continue;
+    if (id === "utc" || id === "oeffnen") continue; // brauchen AeroACARS nicht
     assert.equal(t.bild(ohne).ton, "aus", id);
   }
   const keinFlug = { ...voll, status: null };
@@ -230,4 +230,13 @@ test("Regler-Feld am StreamDeck +: eigenes Bild statt $B1, Werte passen hinein",
   for (const a of manifest.Actions.filter((x) => x.Controllers.includes("Encoder"))) assert.equal(a.Encoder.layout, "layouts/regler.json");
   const layout = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/layouts/regler.json"), "utf8"));
   assert.deepEqual(layout.items, [{ key: "bild", type: "pixmap", rect: [0, 0, 200, 100] }]);
+});
+
+test("„AeroACARS öffnen“ findet das Profil im Manifest je Gerätetyp", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/manifest.json"), "utf8"));
+  for (const typ of [0, 2, 7]) {
+    const name = profilFuer(typ);
+    assert.ok(manifest.Profiles.some((p) => p.Name === name && p.DeviceType === typ), `${typ}: ${name}`);
+  }
+  assert.equal(profilFuer(1), null); // Mini: kein Profil
 });

@@ -22,12 +22,16 @@ auch mehrfach und auf mehreren Decks gleichzeitig.
      Taste ziehen, doppelklicken, dann AeroACARS-Aktionen hineinziehen.
      Oben links im Ordner setzt das StreamDeck automatisch "Zurück".
 
-3. ZUM AEROACARS-PROFIL SPRINGEN
-   - In deinem normalen Profil die Aktion "Profil wechseln" (Kategorie
-     "Navigation") auf eine Taste legen und als Ziel "AeroACARS" wählen.
+3. ZUM AEROACARS-PROFIL SPRINGEN UND ZURÜCK
+   - In deinem normalen Profil die Aktion "AeroACARS öffnen" (Kategorie
+     "AeroACARS") auf eine Taste legen. Ein Druck wechselt ins
+     AeroACARS-Profil dieses Decks (15er, XL oder +).
    - Zurück kommst du über die Phasen-Taste (oben links, kleiner Pfeil).
-   - Achtung: Die Phasen-Taste springt IMMER ins vorherige Profil. Legst du
-     sie in dein eigenes Profil, springt sie von dort ebenfalls weg.
+   - WICHTIG: Das Zurück funktioniert nur, wenn du mit "AeroACARS öffnen"
+     hingewechselt bist. Wählst du das Profil von Hand in der
+     StreamDeck-Software, kennt das Plugin keinen Rückweg.
+   - Die Phasen-Taste springt immer ins vorherige Profil. Legst du sie in
+     dein eigenes Profil, springt sie auch von dort weg.
 
 4. STREAMDECK + (DREHREGLER)
    - Die vier Regler-Aktionen ("Regler Ansagen", "Regler Musik",
@@ -35,7 +39,7 @@ auch mehrfach und auf mehreren Decks gleichzeitig.
      Normale Tasten-Aktionen funktionieren auf den 8 Tasten des +.
 
 5. WAS DIE TASTEN TUN
-   Bedienen:  Kabine stumm (1 s halten), Ansagen/Musik leiser/lauter,
+   Bedienen:  AeroACARS öffnen (Profil), Kabine stumm (1 s halten), Ansagen/Musik leiser/lauter,
               Musik-Lautstärke (drücken = Musik stumm), Boarding-Musik
               an/aus, VATSIM CDM (öffnet das Fenster), Phase (zurück).
    Anzeigen:  alle anderen. Sie zeigen nur an.

@@ -312,6 +312,12 @@ export const TASTEN = {
       };
     },
   },
+  oeffnen: {
+    name: "AeroACARS öffnen",
+    tip: "In dein eigenes Profil legen: wechselt ins AeroACARS-Profil dieses Decks. Die Phasen-Taste führt von dort zurück.",
+    icon: "plane",
+    bild: () => ({ label: "AeroACARS", icon: "plane", wert: "Deck", unter: "Profil öffnen", ton: "ctl" }),
+  },
   utc: {
     name: "UTC-Uhr",
     tip: "Zulu-Zeit, darunter Ortszeit.",
