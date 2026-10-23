@@ -161,16 +161,35 @@ fn einstellungen_pfad(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|p| p.join("kabinenansagen.json"))
 }
 
+/// Einstellungen aus dem Inhalt der Datei. Ab Werk an (2.1.9) gilt nur ohne
+/// Datei (Neuinstallation). Ist eine Datei da, aber unlesbar, kaputt oder ohne
+/// Feld `an`, bleiben die Ansagen aus — wer sie ausgeschaltet hatte, bekommt
+/// sie nicht durch einen Dateischaden zurück (Codex 23.10.2026).
+fn einstellungen_aus(inhalt: Option<std::io::Result<String>>) -> Einstellungen {
+    let aus = Einstellungen { an: false, ..Einstellungen::default() };
+    match inhalt {
+        None => Einstellungen::default(),
+        Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Einstellungen::default(),
+        Some(Err(_)) => aus,
+        Some(Ok(text)) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(wert) => {
+                let mut e = serde_json::from_value::<Einstellungen>(wert.clone()).unwrap_or_else(|_| aus.clone());
+                if wert.get("an").is_none() {
+                    e.an = false;
+                }
+                e
+            }
+            Err(_) => aus,
+        },
+    }
+}
+
 pub(crate) fn einstellungen(app: &AppHandle) -> Einstellungen {
     let zelle = EINSTELLUNGEN.get_or_init(|| RwLock::new(None));
     if let Some(e) = zelle.read().expect("kabinen einstellungen").clone() {
         return e;
     }
-    let geladen = einstellungen_pfad(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|t| serde_json::from_str::<Einstellungen>(&t).ok())
-        .unwrap_or_default()
-        .normalisiert();
+    let geladen = einstellungen_aus(einstellungen_pfad(app).map(std::fs::read_to_string)).normalisiert();
     // Azure gibt es nicht mehr: einen alten Schlüssel nicht liegen lassen.
     let _ = secrets::delete_api_key(ALTES_AZURE_KONTO);
     ausgabe::lautstaerke_setzen(geladen.lautstaerke);
@@ -4712,6 +4731,17 @@ mod tests {
         assert!(e.an, "Standard an seit 2.1.9");
         let gespeichert: Einstellungen = serde_json::from_str(r#"{"an":false}"#).unwrap();
         assert!(!gespeichert.an, "wer ausgeschaltet hat, bleibt aus");
+        // Aus der Datei (Codex): an nur ohne Datei; kaputt, unlesbar oder ohne
+        // Feld `an` bleibt aus.
+        let nicht_da = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(einstellungen_aus(None).an);
+        assert!(einstellungen_aus(Some(Err(nicht_da))).an, "Neuinstallation");
+        assert!(!einstellungen_aus(Some(Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)))).an, "unlesbar");
+        assert!(!einstellungen_aus(Some(Ok("{kaputt".into()))).an, "ungültiges JSON");
+        assert!(!einstellungen_aus(Some(Ok(r#"{"lautstaerke":0.5}"#.into()))).an, "ohne Feld an");
+        assert!(einstellungen_aus(Some(Ok(r#"{"an":true,"lautstaerke":0.5}"#.into()))).an);
+        assert!(!einstellungen_aus(Some(Ok(r#"{"an":false}"#.into()))).an);
+        assert_eq!(einstellungen_aus(Some(Ok(r#"{"an":true,"lautstaerke":0.5}"#.into()))).lautstaerke, 0.5);
         assert_eq!(e.zweite_sprache, "airline");
         let kaputt = Einstellungen { zweite_sprache: "klingonisch".into(), lautstaerke: 7.0, ..Einstellungen::default() }.normalisiert();
         assert_eq!(kaputt.zweite_sprache, "airline");
