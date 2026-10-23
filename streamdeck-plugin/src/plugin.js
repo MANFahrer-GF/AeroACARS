@@ -139,18 +139,28 @@ const pixmap = (name, farbe) => `data:image/svg+xml;base64,${Buffer.from(`<svg x
 
 /** Lautstärke-Regler: drehen = live ändern, kurz danach speichern. */
 class PegelRegler extends Taste {
-  constructor(id, { befehlName, live, gespeichert, titel, symbol, druecken }) {
+  constructor(id, { befehlName, live, titel, symbol, druecken }) {
     super(id);
-    Object.assign(this, { befehlName, live, gespeichert, titel, symbol, druckFn: druecken });
-    this.entwurf = null;
-    this.speicherUhr = null;
-    this.halteUhr = null;
+    Object.assign(this, { befehlName, live, titel, symbol, druckFn: druecken });
+    // Je Regler-Instanz (eine Aktion kann auf mehreren Geräten liegen).
+    this.lage = new Map();
+  }
+
+  lageVon(a) {
+    if (!this.lage.has(a.id)) this.lage.set(a.id, { entwurf: null, speicherUhr: null, halteUhr: null, gehalten: false });
+    return this.lage.get(a.id);
+  }
+
+  onWillDisappear(ev) {
+    const l = this.lage.get(ev.action.id);
+    if (l) clearTimeout(l.halteUhr);
+    super.onWillDisappear(ev);
   }
 
   zeichnen(a, s) {
     if (!a.isDial?.()) return;
     const k = s.kabine;
-    const wert = this.entwurf ?? (k ? k[this.live] : null);
+    const wert = this.lageVon(a).entwurf ?? (k ? k[this.live] : null);
     const stumm = k && (this.id === "regler_ansage" ? k.stumm : musikStumm(k));
     const text = !s.erreichbar ? "aus" : !k ? "–" : stumm ? "stumm" : `${Math.round((wert ?? 0) * 100)} %`;
     const fb = JSON.stringify([text, wert, stumm]);
@@ -167,28 +177,36 @@ class PegelRegler extends Taste {
   async onDialRotate(ev) {
     const k = zustand.s.kabine;
     if (!k) return;
-    const basis = this.entwurf ?? k[this.live];
-    this.entwurf = Math.min(1, Math.max(0, Math.round((basis + ev.payload.ticks * 0.02) * 100) / 100));
-    clearTimeout(this.speicherUhr);
-    await ausfuehren(ev.action, this.befehlName, { lautstaerke: this.entwurf, speichern: false });
-    this.speicherUhr = setTimeout(async () => {
-      const wert = this.entwurf;
-      this.entwurf = null;
-      await ausfuehren(ev.action, this.befehlName, { lautstaerke: wert, speichern: true });
+    const l = this.lageVon(ev.action);
+    const basis = l.entwurf ?? k[this.live] ?? 0;
+    const wert = Math.min(1, Math.max(0, Math.round((basis + ev.payload.ticks * 0.02) * 100) / 100));
+    l.entwurf = wert;
+    // Speicher-Uhr VOR dem Netzaufruf neu stellen: so gibt es immer genau
+    // eine, und sie speichert den zuletzt gedrehten Wert.
+    clearTimeout(l.speicherUhr);
+    l.speicherUhr = setTimeout(async () => {
+      l.speicherUhr = null;
+      const letzter = l.entwurf;
+      if (letzter == null) return;
+      await ausfuehren(ev.action, this.befehlName, { lautstaerke: letzter, speichern: true });
+      if (l.entwurf === letzter && !l.speicherUhr) l.entwurf = null;
     }, SPEICHERN_NACH_MS);
+    await ausfuehren(ev.action, this.befehlName, { lautstaerke: wert, speichern: false });
   }
 
   onDialDown(ev) {
-    this.gehalten = false;
-    this.halteUhr = setTimeout(() => {
-      this.gehalten = true;
+    const l = this.lageVon(ev.action);
+    l.gehalten = false;
+    l.halteUhr = setTimeout(() => {
+      l.gehalten = true;
       this.druckFn(ev.action, zustand.s.kabine, true);
     }, HALTEN_MS);
   }
 
   onDialUp(ev) {
-    clearTimeout(this.halteUhr);
-    if (!this.gehalten) this.druckFn(ev.action, zustand.s.kabine, false);
+    const l = this.lageVon(ev.action);
+    clearTimeout(l.halteUhr);
+    if (!l.gehalten) this.druckFn(ev.action, zustand.s.kabine, false);
   }
 }
 
@@ -197,12 +215,12 @@ class BlaetterRegler extends Taste {
   constructor(id, titel, seiten) {
     super(id);
     Object.assign(this, { titel, seiten });
-    this.seite = 0;
+    this.seiten_ = new Map(); // Seite je Regler-Instanz
   }
 
   zeichnen(a, s) {
     if (!a.isDial?.()) return;
-    const b = TASTEN[this.seiten[this.seite]].bild(s);
+    const b = TASTEN[this.seiten[this.seiten_.get(a.id) ?? 0]].bild(s);
     const fb = JSON.stringify([b.label, b.wert, b.unter]);
     if (this.letztes.get(a.id) === fb) return;
     this.letztes.set(a.id, fb);
@@ -216,7 +234,8 @@ class BlaetterRegler extends Taste {
 
   onDialRotate(ev) {
     const n = this.seiten.length;
-    this.seite = (((this.seite + Math.sign(ev.payload.ticks)) % n) + n) % n;
+    const alt = this.seiten_.get(ev.action.id) ?? 0;
+    this.seiten_.set(ev.action.id, (((alt + Math.sign(ev.payload.ticks)) % n) + n) % n);
     this.letztes.delete(ev.action.id);
     this.zeichnen(ev.action, zustand.s);
   }
@@ -244,7 +263,6 @@ streamDeck.actions.registerAction(
   new PegelRegler("regler_ansage", {
     befehlName: "kabinen_lautstaerke",
     live: "lautstaerke_live",
-    gespeichert: "lautstaerke_gespeichert",
     titel: "Ansagen",
     symbol: "spk",
     // Halten = stumm, kurz = Stumm aufheben (wie die Taste).
@@ -259,7 +277,6 @@ streamDeck.actions.registerAction(
   new PegelRegler("regler_musik", {
     befehlName: "kabinen_musik_lautstaerke",
     live: "musik_live",
-    gespeichert: "musik_gespeichert",
     titel: "Musik",
     symbol: "music",
     // Kurz = Musik stumm/laut, halten = Boarding-Musik an/aus.

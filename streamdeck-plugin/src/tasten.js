@@ -85,6 +85,18 @@ export function hoehe(ft) {
   return `${Math.round(ft / 100) * 100} ft`.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 }
 
+/**
+ * Höhe für die Phasen-Taste. `last_known_*` liefert der Client nur nach einer
+ * Wiederaufnahme; im normalen Flug steht die Höhe in `live`. Ab 10.000 ft
+ * zählt die Druckhöhe (Flugfläche), darunter MSL.
+ */
+export function flughoehe(st) {
+  const msl = st.live?.altitude_msl_ft;
+  if (msl == null) return st.last_known_alt_ft ?? null;
+  const druck = st.live.altitude_pressure_ft ?? msl;
+  return druck >= 10000 ? druck : msl;
+}
+
 export function wind(m) {
   if (!m || m.wind_speed_kt == null) return null;
   const kt = Math.round(m.wind_speed_kt);
@@ -146,7 +158,7 @@ export const TASTEN = {
     bild: (s) => {
       const b = flugTaste("Phase", "plane", (st) => {
         const [text, stufe, ton] = PHASEN[st.phase] ?? [st.phase ?? "–", 0, "neutral"];
-        return { wert: text, gross: false, unter: hoehe(st.last_known_alt_ft), ton, stufen: stufe };
+        return { wert: text, gross: false, unter: hoehe(flughoehe(st)), ton, stufen: stufe };
       })(s);
       return { ...b, zurueck: true };
     },
@@ -180,7 +192,7 @@ export const TASTEN = {
     tip: "Sprit an Bord laut Simulator und geplante Reserve.",
     icon: "fuel",
     bild: flugTaste("Sprit", "fuel", (st) => {
-      const kg = zahl(st.sim_fuel_kg ?? st.last_known_fuel_kg);
+      const kg = zahl(st.sim_fuel_kg ?? st.live?.fuel_total_kg ?? st.last_known_fuel_kg);
       const res = zahl(st.planned_reserve_kg);
       const ton = kg != null && res ? (kg <= res ? "crit" : kg <= res * 1.2 ? "warn" : "neutral") : "neutral";
       return { wert: tonnen(kg), unter: res ? `Reserve ${tonnen(res)}` : "an Bord", ton };
@@ -308,12 +320,13 @@ export const TASTEN = {
   },
   tempo: {
     name: "Geschwindigkeit",
-    tip: "Geschwindigkeit über Grund und Kurs.",
+    tip: "Geschwindigkeit über Grund, darunter angezeigte Fahrt (IAS).",
     icon: "gauge",
     bild: flugTaste("GS", "gauge", (st) => {
+      // Live-Daten tragen keinen Kurs, nur GS und IAS (PanelLiveSnapshot).
       const gs = st.live?.gs_kt ?? st.last_known_gs_kt;
-      const kurs = st.last_known_heading_deg;
-      return { wert: gs == null ? "–" : `${Math.round(gs)} kt`, unter: kurs == null ? "" : `Kurs ${String(Math.round(kurs) % 360).padStart(3, "0")}°`, klein: true };
+      const ias = st.live?.ias_kt;
+      return { wert: gs == null ? "–" : `${Math.round(gs)} kt`, unter: ias == null ? "GS" : `IAS ${Math.round(ias)} kt`, klein: true };
     }),
   },
   strecke: {

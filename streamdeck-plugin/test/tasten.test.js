@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { TASTEN, INFO_SEITEN, WETTER_SEITEN, hinweis, musikStumm, schritt, dauer, hoehe, wind } from "../src/tasten.js";
+import { TASTEN, INFO_SEITEN, WETTER_SEITEN, hinweis, musikStumm, schritt, dauer, hoehe, wind, flughoehe } from "../src/tasten.js";
 import { REGLER, PROFILE, uuid } from "../src/belegung.js";
 import { tasteSvg } from "../src/bild.js";
 
@@ -14,7 +14,6 @@ const status = {
   dep_gate: "B44",
   arr_gate: null,
   phase: "cruise",
-  last_known_alt_ft: 35012,
   block_off_at: "2026-10-23T12:00:00Z",
   takeoff_at: "2026-10-23T12:21:00Z",
   landing_at: null,
@@ -37,8 +36,7 @@ const status = {
   landing_g_force: null,
   go_around_count: 0,
   touch_and_go_count: 0,
-  live: { gs_kt: 468.4 },
-  last_known_heading_deg: 212,
+  live: { gs_kt: 468.4, ias_kt: 271.2, altitude_msl_ft: 35180, altitude_pressure_ft: 35012, fuel_total_kg: 6390 },
   distance_nm: 512.3,
   connection_state: "live",
   paused_since: null,
@@ -97,7 +95,7 @@ test("Beispielflug im Reiseflug", () => {
   assert.equal(b("bahn").wert, "24L");
   assert.equal(b("landung").wert, "—");
   assert.equal(b("tempo").wert, "468 kt");
-  assert.equal(b("tempo").unter, "Kurs 212°");
+  assert.equal(b("tempo").unter, "IAS 271 kt");
   assert.equal(b("strecke").wert, "512 nm");
   assert.equal(b("hoppie").unter, "1 offen");
   assert.equal(b("hoppie").ton, "warn");
@@ -156,6 +154,16 @@ test("Landebewertung erst nach der Landung, Farbe wie im MSFS-Panel", () => {
   assert.equal(d("smooth").ton, "ok");
   assert.equal(d("firm").ton, "warn");
   assert.equal(d("hard").ton, "crit");
+});
+
+test("Höhe kommt im normalen Flug aus live, nicht aus last_known", () => {
+  // Wie der Client es ohne Wiederaufnahme liefert: last_known_* fehlt ganz.
+  assert.equal(flughoehe({ live: { altitude_msl_ft: 35180, altitude_pressure_ft: 35012 } }), 35012);
+  assert.equal(flughoehe({ live: { altitude_msl_ft: 3215, altitude_pressure_ft: 3100 } }), 3215);
+  assert.equal(flughoehe({ live: null, last_known_alt_ft: 12000 }), 12000);
+  assert.equal(flughoehe({ live: null }), null);
+  const sprit = TASTEN.sprit.bild({ ...voll, status: { ...status, sim_fuel_kg: null } });
+  assert.equal(sprit.wert, "6,4 t");
 });
 
 test("Formatierungen", () => {

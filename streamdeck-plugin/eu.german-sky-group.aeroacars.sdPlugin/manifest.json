@@ -335,7 +335,7 @@
 			"Name": "Geschwindigkeit",
 			"UUID": "eu.german-sky-group.aeroacars.tempo",
 			"Icon": "imgs/actions/tempo",
-			"Tooltip": "Geschwindigkeit über Grund und Kurs.",
+			"Tooltip": "Geschwindigkeit über Grund, darunter angezeigte Fahrt (IAS).",
 			"Controllers": [
 				"Keypad"
 			],
