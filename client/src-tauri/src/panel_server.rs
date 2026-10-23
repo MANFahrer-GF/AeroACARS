@@ -721,18 +721,18 @@ fn kabine_zusammenfassen(
     musik_live: f32,
     ueberblick: Option<&Value>,
 ) -> Value {
-    let naechste = ueberblick
-        .and_then(|u| u.get("geplant"))
-        .and_then(Value::as_array)
-        .and_then(|g| g.first())
-        .map(|g| {
-            serde_json::json!({
-                "slot": g.get("slot"),
-                "wann": g.get("wann"),
-                "faellig": g.get("faellig"),
-                "wartet": g.get("wartet"),
-            })
-        });
+    let kurz = |g: &Value| {
+        serde_json::json!({
+            "slot": g.get("slot"),
+            "wann": g.get("wann"),
+            "faellig": g.get("faellig"),
+            "wartet": g.get("wartet"),
+        })
+    };
+    let geplant = ueberblick.and_then(|u| u.get("geplant")).and_then(Value::as_array);
+    let naechste = geplant.and_then(|g| g.first()).map(kurz);
+    // Für den Kabinen-Zeitstrahl am Deck: die nächsten vier.
+    let folgende: Vec<Value> = geplant.map(|g| g.iter().take(4).map(kurz).collect()).unwrap_or_default();
     let feld = |k: &str| ueberblick.and_then(|u| u.get(k)).cloned().unwrap_or(Value::Null);
     serde_json::json!({
         "an": einst.an,
@@ -747,6 +747,7 @@ fn kabine_zusammenfassen(
         "belegt": feld("belegt"),
         "hinweis": feld("hinweis"),
         "naechste": naechste,
+        "folgende": folgende,
     })
 }
 
@@ -978,6 +979,8 @@ mod deck_tests {
         assert_eq!(v["stumm"], true);
         assert_eq!(v["naechste"]["slot"], "kabine_sinkflug");
         assert_eq!(v["naechste"]["wann"], 1_800_000_000);
+        assert_eq!(v["folgende"].as_array().map(Vec::len), Some(2));
+        assert_eq!(v["folgende"][1]["slot"], "nach_der_landung");
         assert_eq!(v["hinweis"], "anschnallzeichen");
         // Schmal: der Kapitänsname geht nicht über die offene Route.
         assert!(v.get("kapitaen").is_none());

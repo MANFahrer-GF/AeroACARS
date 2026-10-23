@@ -3,43 +3,15 @@
 // dessen lokalem Panel-Server.
 
 import streamDeck, { SingletonAction } from "@elgato/streamdeck";
-import { befehl } from "./aeroacars.js";
-import { TASTEN, INFO_SEITEN, WETTER_SEITEN, musikStumm, schritt } from "./tasten.js";
-import { tasteSvg, reglerSvg, alsDatenUrl, alsBase64 } from "./bild.js";
-import { Zustand } from "./zustand.js";
+import { TASTEN, musikStumm, schritt } from "./tasten.js";
+import { tasteSvg, alsDatenUrl } from "./bild.js";
+import { zustand, ausfuehren } from "./befehle.js";
+import { registrieren as deckRegistrieren } from "./deck.js";
 import { uuid, profilFuer } from "./belegung.js";
 
 const HALTEN_MS = 1000;
 /** Ab hier gilt ein Druck auf eine Anzeigetaste als „lang“ (App öffnen). */
 const LANG_MS = 600;
-const SPEICHERN_NACH_MS = 800;
-
-const zustand = new Zustand();
-
-// Befehle strikt nacheinander: so kommen sie in der Reihenfolge beim Server
-// an, in der sie ausgelöst wurden. Sonst könnte ein langsamer Live-Pegel vom
-// Drehen nach dem Speichern eintreffen und den Klang wieder zurückstellen.
-let kette = Promise.resolve();
-
-/**
- * `args` darf eine Funktion des Kabinenzustands sein: Sie wird erst
- * ausgewertet, wenn der Befehl an der Reihe ist — dann rechnen zwei schnelle
- * Drücke auf „lauter“ vom Ergebnis des ersten aus, nicht beide vom selben Wert.
- */
-function ausfuehren(aktion, name, args) {
-  const lauf = kette.then(async () => {
-    try {
-      const werte = typeof args === "function" ? args(zustand.s.kabine) : args;
-      if (werte == null) return;
-      zustand.kabineSetzen(await befehl(name, werte));
-    } catch (e) {
-      streamDeck.logger.warn(`${name} fehlgeschlagen: ${e.message}`);
-      await aktion.showAlert();
-    }
-  });
-  kette = lauf;
-  return lauf;
-}
 
 /** Gemeinsame Grundlage: Bild bei jeder Abfragerunde neu zeichnen. */
 class Taste extends SingletonAction {
@@ -232,116 +204,6 @@ class CdmTaste extends Taste {
   }
 }
 
-// ---- Drehregler (StreamDeck +) --------------------------------------------
-
-
-/** Lautstärke-Regler: drehen = live ändern, kurz danach speichern. */
-class PegelRegler extends Taste {
-  constructor(id, { befehlName, live, titel, symbol, druecken }) {
-    super(id);
-    Object.assign(this, { befehlName, live, titel, symbol, druckFn: druecken });
-    // Je Regler-Instanz (eine Aktion kann auf mehreren Geräten liegen).
-    this.lage = new Map();
-  }
-
-  lageVon(a) {
-    if (!this.lage.has(a.id)) this.lage.set(a.id, { entwurf: null, speicherUhr: null, halteUhr: null, gehalten: false });
-    return this.lage.get(a.id);
-  }
-
-  onWillDisappear(ev) {
-    const l = this.lage.get(ev.action.id);
-    if (l) clearTimeout(l.halteUhr);
-    super.onWillDisappear(ev);
-  }
-
-  zeichnen(a, s) {
-    if (!a.isDial?.()) return;
-    const k = s.kabine;
-    const wert = this.lageVon(a).entwurf ?? (k ? k[this.live] : null);
-    const ansage = this.id === "regler_ansage";
-    const stumm = !!k && (ansage ? k.stumm : musikStumm(k));
-    const kopf = { label: this.titel, icon: this.symbol };
-    const b = !s.erreichbar
-      ? { ...kopf, wert: "aus", unter: "AeroACARS", ton: "aus" }
-      : !k
-        ? { ...kopf, wert: "–", unter: "Client zu alt", ton: "aus" }
-        : stumm
-          ? { ...kopf, icon: ansage ? "mute" : "musicOff", wert: "stumm", unter: ansage ? "kurz drücken = Ton an" : "drücken = laut", ton: ansage ? "crit" : "warn" }
-          : { ...kopf, wert: `${Math.round((wert ?? 0) * 100)} %`, balken: wert ?? 0, ton: "ctl" };
-    this.feld(a, b);
-  }
-
-  feld(a, b) {
-    const bild = alsBase64(reglerSvg(b));
-    if (this.letztes.get(a.id) === bild) return;
-    this.letztes.set(a.id, bild);
-    a.setFeedback({ bild });
-  }
-
-  async onDialRotate(ev) {
-    const k = zustand.s.kabine;
-    if (!k) return;
-    const l = this.lageVon(ev.action);
-    const basis = l.entwurf ?? k[this.live] ?? 0;
-    const wert = Math.min(1, Math.max(0, Math.round((basis + ev.payload.ticks * 0.02) * 100) / 100));
-    l.entwurf = wert;
-    // Speicher-Uhr VOR dem Netzaufruf neu stellen: so gibt es immer genau
-    // eine, und sie speichert den zuletzt gedrehten Wert.
-    clearTimeout(l.speicherUhr);
-    l.speicherUhr = setTimeout(async () => {
-      l.speicherUhr = null;
-      const letzter = l.entwurf;
-      if (letzter == null) return;
-      await ausfuehren(ev.action, this.befehlName, { lautstaerke: letzter, speichern: true });
-      if (l.entwurf === letzter && !l.speicherUhr) l.entwurf = null;
-    }, SPEICHERN_NACH_MS);
-    await ausfuehren(ev.action, this.befehlName, { lautstaerke: wert, speichern: false });
-  }
-
-  onDialDown(ev) {
-    const l = this.lageVon(ev.action);
-    l.gehalten = false;
-    l.halteUhr = setTimeout(() => {
-      l.gehalten = true;
-      this.druckFn(ev.action, zustand.s.kabine, true);
-    }, HALTEN_MS);
-  }
-
-  onDialUp(ev) {
-    const l = this.lageVon(ev.action);
-    clearTimeout(l.halteUhr);
-    if (!l.gehalten) this.druckFn(ev.action, zustand.s.kabine, false);
-  }
-}
-
-/** Blätter-Regler: drehen wechselt die Seite, das Bild ist das der Taste. */
-class BlaetterRegler extends Taste {
-  constructor(id, titel, seiten) {
-    super(id);
-    Object.assign(this, { titel, seiten });
-    this.seiten_ = new Map(); // Seite je Regler-Instanz
-  }
-
-  zeichnen(a, s) {
-    if (!a.isDial?.()) return;
-    const seite = this.seiten_.get(a.id) ?? 0;
-    const b = TASTEN[this.seiten[seite]].bild(s);
-    const bild = alsBase64(reglerSvg({ ...b, label: `${this.titel} ${seite + 1}/${this.seiten.length} · ${b.label}`, stufen: undefined }));
-    if (this.letztes.get(a.id) === bild) return;
-    this.letztes.set(a.id, bild);
-    a.setFeedback({ bild });
-  }
-
-  onDialRotate(ev) {
-    const n = this.seiten.length;
-    const alt = this.seiten_.get(ev.action.id) ?? 0;
-    this.seiten_.set(ev.action.id, (((alt + Math.sign(ev.payload.ticks)) % n) + n) % n);
-    this.letztes.delete(ev.action.id);
-    this.zeichnen(ev.action, zustand.s);
-  }
-}
-
 // ---- Anmelden -------------------------------------------------------------
 
 const besondere = {
@@ -361,35 +223,7 @@ for (const id of Object.keys(TASTEN)) {
   streamDeck.actions.registerAction((besondere[id] ?? (() => new AnzeigeTaste(id)))());
 }
 
-streamDeck.actions.registerAction(
-  new PegelRegler("regler_ansage", {
-    befehlName: "kabinen_lautstaerke",
-    live: "lautstaerke_live",
-    titel: "Ansagen",
-    symbol: "spk",
-    // Halten = stumm, kurz = Stumm aufheben (wie die Taste).
-    druecken: (a, k, gehalten) => {
-      if (!k) return;
-      if (gehalten && !k.stumm) ausfuehren(a, "kabinen_stumm", { stumm: true });
-      else if (!gehalten && k.stumm) ausfuehren(a, "kabinen_stumm", { stumm: false });
-    },
-  }),
-);
-streamDeck.actions.registerAction(
-  new PegelRegler("regler_musik", {
-    befehlName: "kabinen_musik_lautstaerke",
-    live: "musik_live",
-    titel: "Musik",
-    symbol: "music",
-    // Kurz = Musik stumm/laut, halten = Boarding-Musik an/aus.
-    druecken: (a, k, gehalten) => {
-      if (!k) return;
-      if (gehalten) ausfuehren(a, "kabinen_boarding_musik", (j) => (j ? { an: !j.boarding_musik } : null));
-      else ausfuehren(a, "kabinen_musik_lautstaerke", (j) => (j ? { lautstaerke: musikStumm(j) ? j.musik_gespeichert : 0, speichern: false } : null));
-    },
-  }),
-);
-streamDeck.actions.registerAction(new BlaetterRegler("regler_info", "Flug", INFO_SEITEN));
-streamDeck.actions.registerAction(new BlaetterRegler("regler_wetter", "Wetter", WETTER_SEITEN));
+// Kacheln (ganzes Deck als eine Szene) und die Räder des StreamDeck +.
+deckRegistrieren();
 
 streamDeck.connect();

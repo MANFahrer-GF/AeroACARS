@@ -26,6 +26,10 @@ for (const [id, t] of Object.entries(TASTEN)) {
   schreiben(`${ORDNER}/imgs/actions/${id}_taste.svg`, tasteSvg(t.bild(ruhe)));
 }
 for (const [id, r] of Object.entries(REGLER)) schreiben(`${ORDNER}/imgs/actions/${id}.svg`, listenIconSvg(r.icon));
+schreiben(`${ORDNER}/imgs/actions/kachel.svg`, listenIconSvg("route"));
+// Rasterer (resvg als WebAssembly) ins Paket — wird nicht eingecheckt.
+fs.mkdirSync(`${ORDNER}/wasm`, { recursive: true });
+fs.copyFileSync(path.resolve(import.meta.dirname, "../node_modules/@resvg/resvg-wasm/index_bg.wasm"), `${ORDNER}/wasm/resvg.wasm`);
 schreiben(`${ORDNER}/imgs/plugin/kategorie.svg`, listenIconSvg("plane", 28));
 // Das Plugin-Symbol (Marketplace, Plugin-Liste) muss PNG sein. macOS'
 // `sips` rastert SVG; die Dateien liegen im Repo, nur wer das Symbol
@@ -47,6 +51,15 @@ schreiben(`${ORDNER}/layouts/regler.json`, JSON.stringify({ id: `${PRAEFIX}.regl
 // ---- Manifest -------------------------------------------------------------
 
 const aktionen = [
+  {
+    Name: "AeroACARS-Kachel",
+    UUID: uuid("kachel"),
+    Icon: "imgs/actions/kachel",
+    Tooltip: "Ein Stück des großen AeroACARS-Bildes. Auf jede Taste des Decks legen — die Position bestimmt Inhalt und Bedienung.",
+    Controllers: ["Keypad"],
+    States: [{ Image: "imgs/actions/kachel", ShowTitle: false }],
+    UserTitleEnabled: false,
+  },
   ...Object.entries(TASTEN).map(([id, t]) => ({
     Name: t.name,
     UUID: uuid(id),
@@ -115,7 +128,8 @@ function profilBauen(p) {
   const seite = randomUUID();
   const wurzel = `${arbeit}/Profiles/${profilId}.sdProfile`;
   const tasten = {};
-  p.tasten.forEach((zeile, r) => zeile.forEach((id, c) => id && (tasten[`${c},${r}`] = aktion(id, TASTEN[id].name))));
+  // Entwurf 2: auf jeder Taste die Kachel — die Szene verteilt die Inhalte.
+  for (let r = 0; r < p.reihen; r++) for (let c = 0; c < p.spalten; c++) tasten[`${c},${r}`] = aktion("kachel", "AeroACARS-Kachel");
   const regler = {};
   (p.regler ?? []).forEach((id, c) => (regler[`${c},0`] = aktion(id, REGLER[id].name)));
   const steuer = (acts) => [{ Type: "Keypad", Actions: acts }, ...(p.regler ? [{ Type: "Encoder", Actions: regler }] : [])];

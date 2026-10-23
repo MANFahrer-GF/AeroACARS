@@ -1,6 +1,6 @@
 {
 	"Name": "AeroACARS",
-	"Version": "1.0.6.0",
+	"Version": "2.0.0.0",
 	"Author": "German Sky Group",
 	"Description": "Flugstatus, Kabinenansagen und Boarding-Musik von AeroACARS auf dem StreamDeck.",
 	"Category": "AeroACARS",
@@ -27,6 +27,22 @@
 	},
 	"UUID": "eu.german-sky-group.aeroacars",
 	"Actions": [
+		{
+			"Name": "AeroACARS-Kachel",
+			"UUID": "eu.german-sky-group.aeroacars.kachel",
+			"Icon": "imgs/actions/kachel",
+			"Tooltip": "Ein Stück des großen AeroACARS-Bildes. Auf jede Taste des Decks legen — die Position bestimmt Inhalt und Bedienung.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/kachel",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
 		{
 			"Name": "Phase und Zurück",
 			"UUID": "eu.german-sky-group.aeroacars.phase",

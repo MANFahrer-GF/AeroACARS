@@ -20,6 +20,8 @@ export const KACHEL = 144;
 export const FUGE = 36;
 
 const kx = (c) => c * (KACHEL + FUGE);
+/** Linke obere Ecke der Kachel c/r in der Szene (zum Ausschneiden). */
+export const kachelOrt = (c, r) => ({ x: c * (KACHEL + FUGE), y: r * (KACHEL + FUGE) });
 const ky = (r) => r * (KACHEL + FUGE);
 /** Breite über n Kacheln ab Spalte c (inklusive Fugen dazwischen). */
 const spanne = (n) => n * KACHEL + (n - 1) * FUGE;
@@ -565,7 +567,7 @@ ${flugzeug(px, ly, 30, FARBE.text)}
 function radAnzeige(s, st, dreh) {
   const k = s.kabine;
   // Kleine Markierung über dem Rad, das gerade dran ist.
-  const rad = { ans: 0, mus: 1, info: 2, wetter: 3 }[dreh.rad] ?? 0;
+  const rad = dreh.spalte ?? { ans: 0, mus: 1, info: 2, wetter: 3 }[dreh.rad] ?? 0;
   const marker = `<rect x="${rad * 200 + 70}" y="0" width="60" height="4" rx="2" fill="${FARBE.cyan}"/>`;
   if (dreh.rad === "ans" || dreh.rad === "mus") {
     const ansage = dreh.rad === "ans";

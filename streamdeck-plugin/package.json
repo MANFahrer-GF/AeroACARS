@@ -1,13 +1,14 @@
 {
   "name": "aeroacars-streamdeck",
-  "version": "1.0.6",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "erzeugen": "node skripte/erzeugen.mjs",
     "build": "npm run erzeugen && rollup -c",
     "test": "node --test test/*.test.js",
-    "pack": "npm run build && streamdeck validate eu.german-sky-group.aeroacars.sdPlugin && streamdeck pack eu.german-sky-group.aeroacars.sdPlugin --output dist --force"
+    "pack": "npm run build && streamdeck validate eu.german-sky-group.aeroacars.sdPlugin && streamdeck pack eu.german-sky-group.aeroacars.sdPlugin --output dist --force",
+    "durchlauf": "npm run build && node test/durchlauf.mjs"
   },
   "dependencies": {
     "@elgato/streamdeck": "3.0.2",

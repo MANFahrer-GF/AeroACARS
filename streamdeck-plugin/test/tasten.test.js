@@ -87,7 +87,9 @@ test("Beispielflug im Reiseflug", () => {
   assert.equal(b("phase").stufen, 2);
   assert.equal(b("phase").zurueck, true);
   assert.equal(b("flug").unter, "EDDF›LEPA");
-  assert.equal(b("gates").wert, "B44›–");
+  // Zielgate erst nach der Landung (Thomas 23.10.: vorher geraten).
+  assert.equal(b("gates").wert, "B44");
+  assert.equal(TASTEN.gates.bild({ ...voll, status: { ...status, phase: "blocks_on", arr_gate: "12" } }).wert, "12");
   assert.equal(b("block").wert, "1:42");
   assert.equal(b("luft").wert, "1:21");
   assert.equal(b("sprit").wert, "6,4 t");
@@ -198,6 +200,7 @@ test("Tastenbilder sind sauberes SVG, auch mit Sonderzeichen", () => {
 
 test("Profile, Regler und Manifest passen zueinander", () => {
   const bekannt = new Set([...Object.keys(TASTEN), ...Object.keys(REGLER)]);
+  const mitKachel = new Set([...bekannt, "kachel"]); // Entwurf 2: Kachel-Aktion
   for (const p of PROFILE) {
     for (const id of [...p.tasten.flat(), ...(p.regler ?? [])]) if (id) assert.ok(bekannt.has(id), `${p.datei}: ${id}`);
   }
@@ -206,7 +209,7 @@ test("Profile, Regler und Manifest passen zueinander", () => {
 
   const manifest = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/manifest.json"), "utf8"));
   const imManifest = new Set(manifest.Actions.map((a) => a.UUID));
-  assert.deepEqual([...imManifest].sort(), [...bekannt].map(uuid).sort(), "npm run erzeugen vergessen?");
+  assert.deepEqual([...imManifest].sort(), [...mitKachel].map(uuid).sort(), "npm run erzeugen vergessen?");
 });
 
 test("lange Texte werden kleiner statt aus der Taste zu laufen (Feldbefund Windows)", () => {

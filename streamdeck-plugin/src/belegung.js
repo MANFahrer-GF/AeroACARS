@@ -41,6 +41,8 @@ export const PROFILE = [
     name: "AeroACARS",
     geraetetyp: 0,
     modell: "20GBA9901",
+    spalten: 5,
+    reihen: 3,
     tasten: [
       ["phase", "flug", "block", "sprit", "wetter_ziel"],
       ["kabine_stumm", "ansage_leiser", "ansage_pegel", "ansage_lauter", "boarding_musik"],
@@ -52,6 +54,8 @@ export const PROFILE = [
     name: "AeroACARS",
     geraetetyp: 2,
     modell: "20GAT9901",
+    spalten: 8,
+    reihen: 4,
     tasten: [
       ["phase", "flug", "gates", "block", "luft", "sprit", "gewicht", "hinweis"],
       ["wetter_start", "wetter_ziel", "bahn", "ausweich", "landung", "durchstarten", "verbindung", "hoppie"],
@@ -64,6 +68,8 @@ export const PROFILE = [
     name: "AeroACARS",
     geraetetyp: 7,
     modell: "20GBD9901",
+    spalten: 4,
+    reihen: 2,
     tasten: [
       ["phase", "flug", "sprit", "hinweis"],
       ["wetter_ziel", "landung", "hoppie", "verbindung"],
