@@ -492,6 +492,25 @@ pub(crate) struct Lauf {
     texte_fehlen: Fehlen,
     /// Kabinen-Reaktion nach der Landung: einmal je Flug.
     reaktion: ReaktionStand,
+    /// Auffrischung der Sinkflug-Ansage des Kapitäns (Restzeit und Landezeit
+    /// zum Abspielzeitpunkt, 23.10.2026).
+    auffrischung: Auffrischung,
+}
+
+/// Restzeit und Landezeit, wie der Server sie in die Sinkflug-Ansage des
+/// Kapitäns einsetzt: Restzeit auf 5 min gerundet ([`restzeit_gerundet`]),
+/// Landung als Epoch-Minute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KapitaenWerte {
+    rest_min: Option<i64>,
+    ankunft_min: Option<i64>,
+}
+
+/// Auffrischung der Sinkflug-Ansage des Kapitäns.
+#[derive(Debug, Default)]
+struct Auffrischung {
+    /// Mit dem Teil `ankunft` gesendet (nur, wenn der Kapitän dabei war).
+    gesendet: Option<KapitaenWerte>,
 }
 
 /// Stand der Kabinen-Reaktion eines Fluges.
@@ -740,6 +759,34 @@ const TON_GLEICHZEITIG: usize = 2;
 /// Ankunftstexte werden erst so kurz vor der Landung geschrieben, damit
 /// Wetter, Verspätung und Ankunftszeit stimmen.
 const ANKUNFT_TEXT_VOR_LANDUNG_MIN: i64 = 45;
+
+/// Bezugszeitpunkt für `flug.rest_min` eines Text-Teils: der erwartete
+/// Abspielzeitpunkt, nicht die Bestellung (23.10.2026, 37 Flüge: Die
+/// Sinkflug-Ansage des Kapitäns nannte meist 15–20 min zu viel, weil der
+/// Ankunftsteil ~45 min vor der Landung bestellt und am TOD gespielt wird).
+/// Halbzeit: ihr Zeitpunkt; Ankunft: die Prognose der Kapitänsansage; sonst
+/// und ohne Quelle: jetzt. Nie vor jetzt.
+fn rest_bezug(teil: &str, planer: Option<&cabin_announcements::Planer>, landung: Option<i64>, jetzt: i64) -> i64 {
+    let um = planer.and_then(|p| match teil {
+        "halbzeit" => p.zeitpunkt(Slot::Reiseflug50, landung),
+        "ankunft" => p.kapitaen_sinkflug_prognose(landung),
+        _ => None,
+    });
+    um.unwrap_or(jetzt).max(jetzt)
+}
+
+/// Restflugzeit (ganze Minuten) ab dem Bezugszeitpunkt; ohne erwartete
+/// Landung keine.
+fn rest_min_ab(landung: Option<i64>, bezug: i64) -> Option<i64> {
+    landung.map(|t| ((t - bezug) / 60).max(0))
+}
+
+/// Restzeit, wie der Server sie für Halbzeit und Ankunft einsetzt:
+/// `max(5, round(r / 5) * 5)`, 0 → keine Angabe. Ganze Minuten treffen nie
+/// genau die Mitte zwischen zwei Fünfern.
+fn restzeit_gerundet(rest_min: Option<i64>) -> Option<i64> {
+    rest_min.filter(|r| *r > 0).map(|r| ((r + 2) / 5 * 5).max(5))
+}
 
 const ABFLUG: [Slot; 8] = [
     Slot::Boarding,
@@ -1838,11 +1885,20 @@ fn takt_schritt(
     }
     for (schluessel, slots, anlass) in auftraege {
         let mut anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
+        // Restzeit zum Abspielzeitpunkt, nicht zum Zeitpunkt der Anfrage
+        // (sonst stimmte „noch etwa zwei Stunden“ bzw. die Restzeit der
+        // Sinkflug-Ansage um den Vorlauf nicht).
+        let teil = schluessel.split(':').next().unwrap_or_default();
+        let bezug = rest_bezug(teil, stats.kabinen_planer.as_ref(), stats.landung_erwartet, jetzt);
+        let rest = rest_min_ab(stats.landung_erwartet, bezug);
+        anfrage["flug"]["rest_min"] = serde_json::json!(rest);
+        if schluessel == "ankunft" && slots.contains(&Slot::KapitaenSinkflug) {
+            // Für die Auffrischung kurz vor dem Abspielen: was der Server
+            // eingesetzt hat.
+            let ankunft_min = anfrage["flug"]["ankunft_erwartet"].as_i64().map(|a| a.div_euclid(60));
+            stats.kabinen_lauf.auffrischung.gesendet = Some(KapitaenWerte { rest_min: restzeit_gerundet(rest), ankunft_min });
+        }
         if schluessel == "halbzeit" {
-            // Restzeit zum Abspielzeitpunkt, nicht zum Zeitpunkt der Anfrage
-            // (sonst stimmte „noch etwa zwei Stunden“ um den Vorlauf nicht).
-            let ab = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet)).unwrap_or(jetzt).max(jetzt);
-            anfrage["flug"]["rest_min"] = serde_json::json!(stats.landung_erwartet.map(|t| ((t - ab) / 60).max(0)));
             // „Früher, pünktlich, später“ gilt hier für die Ankunft, nicht für
             // den Off-Block (Codex 2.1.1): erwartete gegen geplante Ankunft.
             if let (Some(an), Some(plan)) = (anfrage["flug"]["ankunft_erwartet"].as_i64(), stats.ofp_planzeiten.plan_on_block) {
@@ -1856,7 +1912,7 @@ fn takt_schritt(
             stats.kabinen_lauf.lied.angefragt = true;
             stats.kabinen_lauf.lied.slots = slots.clone();
         }
-        holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet);
+        holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet, bezug);
     }
 
     // ---- Ton: das Dringendste zuerst, höchstens zwei zugleich ----
@@ -2518,6 +2574,8 @@ fn stimme_streichen(lauf: &mut Lauf, sprache: &str) {
     }
 }
 
+/// `bezug`: Zeitpunkt, ab dem `flug.rest_min` gerechnet ist (nur fürs Protokoll).
+#[allow(clippy::too_many_arguments)]
 fn holen(
     app: AppHandle,
     flight: Arc<ActiveFlight>,
@@ -2527,11 +2585,18 @@ fn holen(
     slots: Vec<Slot>,
     nachholung: bool,
     bizjet: bool,
+    bezug: i64,
 ) {
     tauri::async_runtime::spawn(async move {
         let gestartet = Utc::now();
         {
-            let details = serde_json::json!({ "teil": schluessel, "slots": slots.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(), "nachholung": nachholung });
+            let details = serde_json::json!({
+                "teil": schluessel,
+                "slots": slots.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(),
+                "nachholung": nachholung,
+                "rest_min": anfrage["flug"]["rest_min"],
+                "bezug": bezug,
+            });
             notiz(&mut flight.stats.lock().expect("flight stats").kabinen_lauf, "text_anfrage", None, None, details);
         }
         protokoll_leeren(&app, &flight);
@@ -2612,7 +2677,7 @@ fn holen(
             let mut erneut = anfrage.clone();
             erneut["slots"] = serde_json::json!(nach.iter().map(|s| slot_name(*s)).collect::<Vec<_>>());
             tracing::info!(teil = %schluessel, fehlend = ?fehlend, "kabinenansagen: fehlende Texte nachholen");
-            holen(app, flight, client, format!("{schluessel}+"), erneut, nach, true, bizjet);
+            holen(app, flight, client, format!("{schluessel}+"), erneut, nach, true, bizjet, bezug);
         }
     });
 }
@@ -6538,5 +6603,134 @@ mod reaktion_tests {
         let e: Einstellungen = serde_json::from_str(r#"{"an":true,"boarding_musik":false}"#).unwrap();
         assert!(e.reaktionen);
         assert!(Einstellungen::default().reaktionen);
+    }
+}
+
+/// 23.10.2026: Restzeit der Sinkflug-Ansage des Kapitäns ab dem erwarteten
+/// Abspielzeitpunkt und Auffrischung kurz davor (37 Flüge: meist 15–20 min
+/// zu hoch, Peter u. a.).
+#[cfg(test)]
+mod auffrischung_tests {
+    use super::*;
+    use crate::FlightPhase::*;
+
+    fn flugdaten(min: u32) -> cabin_announcements::Flugdaten {
+        cabin_announcements::Flugdaten {
+            flugart: Some(Flugart::Linie),
+            geplante_flugzeit_min: Some(min),
+            tod_nach_abheben_s: None,
+            ziel_plan_icao: Some("EDDF".into()),
+            reiseflughoehe_ft: Some(37_000),
+            abheben_epoch: None,
+        }
+    }
+
+    fn reise(jetzt: i64, landung: i64, tod: Option<i64>) -> cabin_announcements::Tick {
+        cabin_announcements::Tick {
+            jetzt,
+            phase: Cruise,
+            hoehe_ft: 37_000.0,
+            vs_fpm: 0.0,
+            anschnallzeichen: Some(0),
+            rest_min: Some((landung - jetzt) as f64 / 60.0),
+            tod_erwartet: tod,
+            ..Default::default()
+        }
+    }
+
+    /// Gesendete Restzeit des Teils `ankunft`, gerundet wie vom Server.
+    fn gesendet(teil: &str, p: &cabin_announcements::Planer, landung: Option<i64>, jetzt: i64) -> Option<i64> {
+        restzeit_gerundet(rest_min_ab(landung, rest_bezug(teil, Some(p), landung, jetzt)))
+    }
+
+    /// Peters Fall: bestellt 44 min vor der Landung, der Kapitän spricht
+    /// am TOD 20 min davor — gesendet wird 20, nicht 44 (bzw. 45).
+    #[test]
+    fn peter_restzeit_ab_dem_tod_nicht_ab_der_bestellung() {
+        let landung = 100_000;
+        let jetzt = landung - 44 * 60;
+        let tod = landung - 20 * 60 + cabin_announcements::planer::KAPITAEN_VOR_TOD_S;
+        let mut p = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        p.tick(&reise(jetzt, landung, Some(tod)));
+        assert_eq!(p.kapitaen_sinkflug_prognose(Some(landung)), Some(landung - 20 * 60));
+        assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&p), Some(landung), jetzt)), Some(20));
+        assert_eq!(gesendet("ankunft", &p, Some(landung), jetzt), Some(20));
+        // Heute (Bezug = Bestellung) wären es 44 → 45 gewesen.
+        assert_eq!(restzeit_gerundet(rest_min_ab(Some(landung), jetzt)), Some(45));
+        // Der TOD liegt später als „Landung − 20“: Die ETA-Regel gewinnt.
+        let mut q = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        q.tick(&reise(jetzt, landung, Some(landung - 5 * 60)));
+        assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&q), Some(landung), jetzt)), Some(cabin_announcements::planer::KAPITAEN_VOR_LANDUNG_MIN as i64));
+        // TOD früher (30 min vor der Landung): 30 min + 90 s → 31 → 30.
+        let mut r = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        r.tick(&reise(jetzt, landung, Some(landung - 30 * 60)));
+        assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&r), Some(landung), jetzt)), Some(31));
+        assert_eq!(gesendet("ankunft", &r, Some(landung), jetzt), Some(30));
+    }
+
+    /// Kurzstrecke: Der Ankunftsteil wird gleich nach dem Abheben bestellt,
+    /// der Steigflug ist nicht vorbei — die Restzeit gilt trotzdem dem TOD.
+    #[test]
+    fn kurzstrecke_nach_dem_abheben() {
+        let landung = 50_000;
+        let jetzt = landung - 40 * 60;
+        let mut p = cabin_announcements::Planer::neu(flugdaten(45));
+        let mut tk = reise(jetzt, landung, Some(landung - 18 * 60));
+        tk.phase = Climb;
+        tk.hoehe_ft = 3_000.0;
+        tk.vs_fpm = 2_000.0;
+        p.tick(&tk);
+        assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, Some(landung)), None, "Anzeige: noch keine Uhrzeit");
+        assert_eq!(gesendet("ankunft", &p, Some(landung), jetzt), Some(20), "20 min + 90 s → 21 → 20");
+    }
+
+    /// Umleitung: Landezeit und TOD der alten Route zählen nicht — Bezug ist
+    /// jetzt (wie bisher).
+    #[test]
+    fn umleitung_ohne_alte_route() {
+        let landung = 100_000;
+        let jetzt = landung - 40 * 60;
+        let mut p = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        let mut tk = reise(jetzt, landung, Some(landung - 25 * 60));
+        tk.ziel_icao = Some("EDDK".into());
+        p.tick(&tk);
+        assert_eq!(rest_bezug("ankunft", Some(&p), Some(landung), jetzt), jetzt);
+        assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&p), Some(landung), jetzt)), Some(40));
+    }
+
+    /// Ohne Prognose und ohne erwartete Landung: wie heute (`None`).
+    #[test]
+    fn ohne_quelle_wie_heute() {
+        let jetzt = 10_000;
+        let p = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        assert_eq!(rest_bezug("ankunft", Some(&p), None, jetzt), jetzt);
+        assert_eq!(rest_min_ab(None, rest_bezug("ankunft", Some(&p), None, jetzt)), None);
+        assert_eq!(rest_bezug("ankunft", None, Some(20_000), jetzt), jetzt, "ohne Planer: jetzt");
+        assert_eq!(rest_bezug("abflug", Some(&p), Some(20_000), jetzt), jetzt, "andere Teile: jetzt");
+        // Prognose in der Vergangenheit: nie vor jetzt.
+        let mut q = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        q.tick(&reise(jetzt, jetzt + 10 * 60, None));
+        assert_eq!(rest_bezug("ankunft", Some(&q), Some(jetzt + 10 * 60), jetzt), jetzt);
+    }
+
+    /// Regression: Die Halbzeit rechnet weiter ab ihrem eigenen Zeitpunkt.
+    #[test]
+    fn halbzeit_unveraendert() {
+        let mut f = flugdaten(240);
+        f.abheben_epoch = Some(0);
+        let p = cabin_announcements::Planer::fortsetzen(f, Cruise);
+        let landung = 240 * 60;
+        let um = p.zeitpunkt(Slot::Reiseflug50, Some(landung)).expect("Halbzeit hat eine Uhrzeit");
+        let jetzt = um - HALBZEIT_VORLAUF_MIN * 60;
+        assert_eq!(rest_bezug("halbzeit", Some(&p), Some(landung), jetzt), um);
+        assert_eq!(rest_min_ab(Some(landung), rest_bezug("halbzeit", Some(&p), Some(landung), jetzt)), Some((landung - um) / 60));
+    }
+
+    #[test]
+    fn restzeit_wie_der_server_gerundet() {
+        for (r, erwartet) in [(0, None), (-3, None), (1, Some(5)), (2, Some(5)), (3, Some(5)), (7, Some(5)), (8, Some(10)), (12, Some(10)), (13, Some(15)), (20, Some(20)), (22, Some(20)), (23, Some(25)), (44, Some(45)), (178, Some(180))] {
+            assert_eq!(restzeit_gerundet(Some(r)), erwartet, "{r}");
+        }
+        assert_eq!(restzeit_gerundet(None), None);
     }
 }
