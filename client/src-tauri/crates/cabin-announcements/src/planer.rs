@@ -653,15 +653,29 @@ impl Planer {
             // darauf, die Seite sagt „kurz vor dem Sinkflug“ (Lasse NOZ 607:
             // „Spielt ca. 17:55“ verstrich ohne Ansage).
             Slot::KapitaenSinkflug if !self.steigflug_vorbei => None,
-            Slot::KapitaenSinkflug => {
-                let aus_tod = self.tod().map(|t| t - KAPITAEN_VOR_TOD_S);
-                let aus_landung = landung_erwartet.filter(|_| !self.umgeleitet).map(|l| l - (KAPITAEN_VOR_LANDUNG_MIN * 60.0) as i64);
-                match (aus_tod, aus_landung) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                }
-            }
+            Slot::KapitaenSinkflug => self.kapitaen_sinkflug_prognose(landung_erwartet),
             _ => None,
+        }
+    }
+
+    /// Voraussichtlicher Abspielzeitpunkt der Sinkflug-Ansage des Kapitäns
+    /// (UTC-Epoch-Sekunden) aus denselben Quellen wie der Auslöser in
+    /// [`Self::tick`]: TOD − [`KAPITAEN_VOR_TOD_S`] bzw. Landung −
+    /// [`KAPITAEN_VOR_LANDUNG_MIN`], das frühere; nach einer Umleitung zählt
+    /// die Landezeit des Hosts nicht. Anders als [`Self::zeitpunkt`] auch im
+    /// Steigflug: Auf der Kurzstrecke wird der Ankunftstext gleich nach dem
+    /// Abheben bestellt, und seine Restzeit soll zum Abspielen stimmen
+    /// (23.10.2026, 37 Flüge: meist 15–20 min zu hoch). `None`, wenn die
+    /// Ansage erledigt ist oder es keine Quelle gibt.
+    pub fn kapitaen_sinkflug_prognose(&self, landung_erwartet: Option<i64>) -> Option<i64> {
+        if self.schon(Slot::KapitaenSinkflug) {
+            return None;
+        }
+        let aus_tod = self.tod().map(|t| t - KAPITAEN_VOR_TOD_S);
+        let aus_landung = landung_erwartet.filter(|_| !self.umgeleitet).map(|l| l - (KAPITAEN_VOR_LANDUNG_MIN * 60.0) as i64);
+        match (aus_tod, aus_landung) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         }
     }
 
@@ -2810,5 +2824,64 @@ mod tests {
                 (360, Slot::Sicherheit),
             ]
         );
+    }
+
+    /// 23.10.2026 (Restzeit der Sinkflug-Ansage): Die Prognose nimmt dieselben
+    /// Quellen wie der Auslöser — das frühere von TOD − 90 s und Landung −
+    /// 20 min —, gilt aber auch noch im Steigflug.
+    #[test]
+    fn kapitaen_prognose_wie_der_ausloeser() {
+        // ETA-Regel früher als der TOD: Landung − 20 min.
+        let mut p = Planer::fortsetzen(flug(120), Cruise);
+        let mut tk = tick(1_000, Cruise, 37_000.0, 0.0);
+        tk.tod_erwartet = Some(5_000);
+        p.tick(&tk);
+        let landung = 5_600;
+        let um = p.kapitaen_sinkflug_prognose(Some(landung)).expect("Prognose");
+        assert_eq!(um, landung - (KAPITAEN_VOR_LANDUNG_MIN * 60.0) as i64);
+        assert_eq!(Some(um), p.zeitpunkt(Slot::KapitaenSinkflug, Some(landung)), "Anzeige wie Prognose");
+        // Der Auslöser kommt genau dort (Restzeit 20 min), nicht früher.
+        let mut tk = tick(um - 10, Cruise, 37_000.0, 0.0);
+        tk.tod_erwartet = Some(5_000);
+        tk.rest_min = Some((landung - (um - 10)) as f64 / 60.0);
+        assert!(!slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug));
+        tk.jetzt = um;
+        tk.rest_min = Some((landung - um) as f64 / 60.0);
+        assert!(slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug));
+        assert_eq!(p.kapitaen_sinkflug_prognose(Some(landung)), None, "erledigt: keine Prognose");
+
+        // TOD früher als die ETA-Regel: TOD − 90 s.
+        let mut q = Planer::fortsetzen(flug(120), Cruise);
+        let mut tk = tick(1_000, Cruise, 37_000.0, 0.0);
+        tk.tod_erwartet = Some(4_000);
+        q.tick(&tk);
+        assert_eq!(q.kapitaen_sinkflug_prognose(Some(6_000)), Some(4_000 - KAPITAEN_VOR_TOD_S));
+
+        // Kurzstrecke direkt nach dem Abheben: Der Steigflug ist nicht vorbei,
+        // die Anzeige hat keine Uhrzeit — die Prognose aber schon.
+        let mut k = Planer::neu(flug(45));
+        k.tick(&tick(100, Takeoff, 500.0, 2_000.0));
+        let mut tk = tick(110, Climb, 1_500.0, 2_000.0);
+        tk.tod_erwartet = Some(1_400);
+        k.tick(&tk);
+        assert!(!k.steigflug_vorbei);
+        assert_eq!(k.zeitpunkt(Slot::KapitaenSinkflug, Some(2_800)), None);
+        assert_eq!(k.kapitaen_sinkflug_prognose(Some(2_800)), Some(1_400 - KAPITAEN_VOR_TOD_S));
+        assert_eq!(k.kapitaen_sinkflug_prognose(Some(2_400)), Some(2_400 - 20 * 60));
+
+        // Umleitung: TOD und ETA der alten Route fließen nicht ein.
+        let mut u = Planer::fortsetzen(flug(120), Cruise);
+        let mut tk = tick(1_000, Cruise, 37_000.0, 0.0);
+        tk.tod_erwartet = Some(3_000);
+        u.tick(&tk);
+        let mut tk = tick(1_010, Cruise, 37_000.0, 0.0);
+        tk.ziel_icao = Some("LFBD".into());
+        tk.tod_erwartet = Some(3_000);
+        u.tick(&tk);
+        assert_eq!(u.kapitaen_sinkflug_prognose(Some(4_000)), None);
+
+        // Keine Quelle: keine Prognose.
+        let n = Planer::fortsetzen(flug(120), Cruise);
+        assert_eq!(n.kapitaen_sinkflug_prognose(None), None);
     }
 }
