@@ -8,7 +8,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { TASTEN } from "../src/tasten.js";
-import { tasteSvg, listenIconSvg, icon } from "../src/bild.js";
+import { listenIconSvg, icon } from "../src/bild.js";
+import { einzelSvg } from "../src/einzel.js";
 import { REGLER, PROFILE, PRAEFIX, uuid } from "../src/belegung.js";
 import { szene, kachelOrt, KACHEL } from "../src/szene.js";
 import { vorbereiten, rastern, pngAusschnitt } from "../src/render.js";
@@ -22,10 +23,17 @@ const schreiben = (datei, inhalt) => {
 
 // ---- Bilder ---------------------------------------------------------------
 
+await vorbereiten(ORDNER);
+
 const ruhe = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: new Date(0) };
 for (const [id, t] of Object.entries(TASTEN)) {
   schreiben(`${ORDNER}/imgs/actions/${id}.svg`, listenIconSvg(t.icon));
-  schreiben(`${ORDNER}/imgs/actions/${id}_taste.svg`, tasteSvg(t.bild(ruhe)));
+  // Standardbild (bevor das Plugin zeichnet) im neuen Stil, als PNG mit B612.
+  fs.rmSync(`${ORDNER}/imgs/actions/${id}_taste.svg`, { force: true });
+  {
+    const bild = rastern(einzelSvg(t.bild(ruhe)));
+    schreiben(`${ORDNER}/imgs/actions/${id}_taste.png`, pngAusschnitt(bild, 0, 0, bild.breite, bild.hoehe));
+  }
 }
 for (const [id, r] of Object.entries(REGLER)) schreiben(`${ORDNER}/imgs/actions/${id}.svg`, listenIconSvg(r.icon));
 schreiben(`${ORDNER}/imgs/actions/kachel.svg`, listenIconSvg("route"));
@@ -127,7 +135,6 @@ function aktion(id, name) {
 // Thomas 23.10.: das Plugin kennt kein fremdes Profil (switchToProfile ohne
 // Namen griff nicht); so wählt der Pilot das Ziel einmal in der StreamDeck-
 // Software, und das Bild der Szene bleibt erhalten.
-await vorbereiten(ORDNER);
 const LEER_ZUSTAND = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: 0 };
 const LAYOUT = { 0: "15", 2: "xl", 7: "plus" };
 function zurueckTaste(p) {

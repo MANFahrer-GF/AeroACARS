@@ -54,3 +54,17 @@ test("Gegenprobe: der Prüfer findet Text über der Blende und erfasst alle Text
   assert.ok(anzahlText > 40, `nur ${anzahlText} Texte`);
   assert.equal(erfasst, anzahlText);
 });
+
+test("Einzeltasten im neuen Stil: kein Text verlässt die Taste, in jeder Ansicht und Phase", async () => {
+  const { TASTEN } = await import("../src/tasten.js");
+  const { einzelSvg } = await import("../src/einzel.js");
+  const alle = [];
+  for (const [phase, s] of Object.entries(PHASEN)) for (const [id, t] of Object.entries(TASTEN)) {
+    for (let i = 0; i < (t.ansichten ?? 1); i++) {
+      const svg = einzelSvg({ ...t.bild({ ...s, jetzt: new Date(s.jetzt) }, i), ansichten: t.ansichten, ansicht: i });
+      assert.ok(!svg.includes("✗"), `${id}: ✗ fehlt in B612`);
+      for (const f of texteAusserhalb(svg)) alle.push(`${phase}/${id}/${i}: ${f}`);
+    }
+  }
+  assert.deepEqual([...new Set(alle)], []);
+});

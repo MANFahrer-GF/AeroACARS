@@ -71,3 +71,10 @@ export function pngAusschnitt(bild, x, y, b, h) {
 }
 
 export const alsPngUrl = (png) => `data:image/png;base64,${png.toString("base64")}`;
+
+/** Eine ganze Taste (SVG 144 × 144) als PNG-Daten-URL. */
+export async function tasteAlsUrl(svg, ordner) {
+  await vorbereiten(ordner);
+  const bild = rastern(svg);
+  return alsPngUrl(pngAusschnitt(bild, 0, 0, bild.breite, bild.hoehe));
+}

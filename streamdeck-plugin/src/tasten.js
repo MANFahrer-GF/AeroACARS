@@ -349,7 +349,8 @@ export const TASTEN = {
     bild: flugTaste("Netz", "signal", (st) => {
       const sim = !!st.live;
       const srv = st.connection_state === "live";
-      return { wert: `Sim ${sim ? "✓" : "✗"}`, unter: `Server ${srv ? "✓" : "✗"}`, ton: sim && srv ? "ok" : "crit", klein: true };
+      // B612 kennt kein ✗: Worte statt Haken.
+      return { wert: sim && srv ? "OK" : !sim ? "SIM WEG" : "SERVER", unter: `Sim ${sim ? "ok" : "weg"} · Server ${srv ? "ok" : "weg"}`, ton: sim && srv ? "ok" : "crit", klein: true };
     }),
   },
   hoppie: {

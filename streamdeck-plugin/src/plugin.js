@@ -4,12 +4,20 @@
 
 import streamDeck, { SingletonAction } from "@elgato/streamdeck";
 import { TASTEN, musikStumm, schritt } from "./tasten.js";
-import { tasteSvg, alsDatenUrl } from "./bild.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { einzelSvg } from "./einzel.js";
+import { tasteAlsUrl } from "./render.js";
 import { zustand, ausfuehren } from "./befehle.js";
 import { registrieren as deckRegistrieren } from "./deck.js";
 import { uuid, profilFuer } from "./belegung.js";
 
 const HALTEN_MS = 1000;
+/** Plugin-Ordner (.sdPlugin) — bin/plugin.js liegt eine Ebene darunter. */
+const ORDNER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Tastenbild im Glascockpit-Stil, im Plugin gerastert (B612). */
+const malen = (b) => tasteAlsUrl(einzelSvg(b), ORDNER);
 /** Ab hier gilt ein Druck auf eine Anzeigetaste als „lang“ (App öffnen). */
 const LANG_MS = 600;
 
@@ -36,11 +44,18 @@ class Taste extends SingletonAction {
 
   zeichnen(a, s) {
     if (!a.isKey?.()) return;
-    const bild = alsDatenUrl(tasteSvg(TASTEN[this.id].bild(s)));
-    // Nur senden, was sich geändert hat — die Software zeichnet sonst jede Sekunde alles neu.
-    if (this.letztes.get(a.id) === bild) return;
-    this.letztes.set(a.id, bild);
-    a.setImage(bild);
+    const b = TASTEN[this.id].bild(s);
+    this.senden(a, b);
+  }
+
+  /** Nur senden, was sich geändert hat — die Software zeichnet sonst jede Sekunde alles neu. */
+  senden(a, b) {
+    const schluessel = JSON.stringify(b);
+    if (this.letztes.get(a.id) === schluessel) return;
+    this.letztes.set(a.id, schluessel);
+    malen(b)
+      .then((url) => a.setImage(url))
+      .catch((e) => streamDeck.logger.error(`Taste ${this.id}: ${e.stack ?? e}`));
   }
 
   async onKeyDown(ev) {
@@ -66,10 +81,7 @@ class AnzeigeTaste extends Taste {
     const def = TASTEN[this.id];
     const ansichten = def.ansichten ?? 1;
     const ansicht = Math.min(this.ansicht.get(a.id) ?? 0, ansichten - 1);
-    const bild = alsDatenUrl(tasteSvg({ ...def.bild(s, ansicht), ansichten, ansicht }));
-    if (this.letztes.get(a.id) === bild) return;
-    this.letztes.set(a.id, bild);
-    a.setImage(bild);
+    this.senden(a, { ...def.bild(s, ansicht), ansichten, ansicht });
   }
 
   onKeyDown(ev) {
