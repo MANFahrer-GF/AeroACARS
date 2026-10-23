@@ -41,7 +41,16 @@ pub struct Warteschlange {
     /// nicht und verfällt nicht (der Host wartet auf frischen Ton, siehe
     /// [`Self::zurueckhalten`]).
     zurueckgehalten: Option<(Slot, i64)>,
+    /// Nach dem Zurückhalten verfällt der Slot noch so lange nicht (Codex
+    /// 23.10.2026: sonst ging die alte Ansage verloren, wenn die Frist bis in
+    /// ihre Verfallsphase lief). `None` im Zeitpunkt = beginnt beim nächsten
+    /// [`Self::naechstes_bereit`].
+    nachfrist: Option<(Slot, Option<i64>)>,
 }
+
+/// Nachfrist nach dem Zurückhalten (s): Spielt der Slot darin nicht (etwa
+/// wegen der Ruhephase), verfällt er wie gewohnt.
+pub const NACHFRIST_S: i64 = 15;
 
 impl Warteschlange {
     pub fn aufnehmen(&mut self, faellig: impl IntoIterator<Item = Faellig>) {
@@ -141,6 +150,9 @@ impl Warteschlange {
     /// normaler Verfall (23.10.2026: Die Sinkflug-Ansage des Kapitäns wartet
     /// höchstens eine Minute auf ihre aufgefrischte Restzeit).
     pub fn zurueckhalten(&mut self, slot: Slot, bis: Option<i64>) {
+        if bis.is_none() && self.zurueckgehalten.is_some_and(|(s, _)| s == slot) {
+            self.nachfrist = Some((slot, None));
+        }
         self.zurueckgehalten = bis.map(|b| (slot, b));
     }
 
@@ -181,10 +193,19 @@ impl Warteschlange {
         ruhephase: bool,
         bereit: impl Fn(Slot) -> bool,
     ) -> Option<Slot> {
-        let gehalten = self.zurueckgehalten.filter(|(_, bis)| jetzt < *bis).map(|(s, _)| s);
+        // Frist von selbst abgelaufen: wie freigegeben, Nachfrist ab ihrem Ende.
+        if let Some((s, bis)) = self.zurueckgehalten.filter(|(_, bis)| jetzt >= *bis) {
+            self.zurueckgehalten = None;
+            self.nachfrist = Some((s, Some(bis + NACHFRIST_S)));
+        }
+        if let Some((s, None)) = self.nachfrist {
+            self.nachfrist = Some((s, Some(jetzt + NACHFRIST_S)));
+        }
+        let gehalten = self.zurueckgehalten.map(|(s, _)| s);
+        let nachfrist = self.nachfrist.filter(|(_, bis)| bis.is_some_and(|b| jetzt < b)).map(|(s, _)| s);
         let (behalten, weg): (Vec<_>, Vec<_>) = std::mem::take(&mut self.eintraege)
             .into_iter()
-            .partition(|e| gehalten == Some(e.slot) || !Self::abgelaufen(e, jetzt, phase));
+            .partition(|e| gehalten == Some(e.slot) || nachfrist == Some(e.slot) || !Self::abgelaufen(e, jetzt, phase));
         self.eintraege = behalten;
         self.verfallen.extend(weg.into_iter().map(|e| e.slot));
 
@@ -285,8 +306,19 @@ mod tests {
         assert_eq!(w.naechstes(150, Final, false), None);
         assert!(w.verfallene_abholen().is_empty(), "verfällt nicht in der Frist");
         assert_eq!(w.wartend(), vec![Slot::KapitaenSinkflug]);
-        assert_eq!(w.naechstes(160, Final, false), None);
-        assert_eq!(w.verfallene_abholen(), vec![Slot::KapitaenSinkflug], "nach der Frist normal");
+        // Frist vorbei: Nachfrist — die Ansage spielt noch, statt zu verfallen (Codex).
+        assert_eq!(w.naechstes(160, Final, false), Some(Slot::KapitaenSinkflug), "spielt nach der Frist noch");
+        assert!(w.verfallene_abholen().is_empty());
+        // Hält die Ruhephase sie auch in der Nachfrist auf, verfällt sie danach.
+        let mut w = Warteschlange::default();
+        w.aufnehmen([f(Slot::KapitaenSinkflug, Verfall::AbPhase(Final))]);
+        w.zurueckhalten(Slot::KapitaenSinkflug, Some(160));
+        assert_eq!(w.naechstes(150, Final, true), None);
+        w.zurueckhalten(Slot::KapitaenSinkflug, None);
+        assert_eq!(w.naechstes(155, Final, true), None, "Ruhephase");
+        assert!(w.verfallene_abholen().is_empty(), "in der Nachfrist nicht verfallen");
+        assert_eq!(w.naechstes(155 + NACHFRIST_S, Final, true), None);
+        assert_eq!(w.verfallene_abholen(), vec![Slot::KapitaenSinkflug], "nach der Nachfrist normal");
         // Vorzeitig freigegeben: sofort spielbar.
         let mut w = Warteschlange::default();
         w.aufnehmen([f(Slot::KapitaenSinkflug, Verfall::AbPhase(Final))]);

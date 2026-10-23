@@ -974,6 +974,11 @@ fn auffrischen_aufgeben(lauf: &mut Lauf, grund: &str) {
     notiz(lauf, "auffrischen_ende", Some(Slot::KapitaenSinkflug), None, serde_json::json!({ "ergebnis": "aufgegeben", "grund": grund, "anlass": anlass }));
 }
 
+/// Steht noch ein `{platzhalter}` im Text?
+fn offener_platzhalter(text: &str) -> bool {
+    text.split('{').skip(1).any(|r| r.split_once('}').is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_lowercase() || c == '_')))
+}
+
 /// Gilt eine Antwort noch (gleiche Generation, Auffrischung läuft)?
 fn auffrischung_gilt(lauf: &Lauf, generation: u32) -> bool {
     lauf.auffrischung.stand == AuffrischStand::Laeuft && lauf.auffrischung.generation == generation
@@ -1006,6 +1011,11 @@ fn auffrischen_texte(lauf: &mut Lauf, generation: u32, ergebnis: Result<api_clie
     }
     if a.sprachen.iter().any(|sp| a.texte.get(sp).is_none_or(|t| t.trim().is_empty())) {
         auffrischen_aufgeben(lauf, "unvollstaendig");
+        return Vec::new();
+    }
+    // Ein stehengebliebener Platzhalter würde vorgelesen (Codex 23.10.2026).
+    if a.texte.values().any(|t| offener_platzhalter(t)) {
+        auffrischen_aufgeben(lauf, "platzhalter");
         return Vec::new();
     }
     a.sprachen.iter().map(|sp| (sp.clone(), a.texte[sp].clone())).collect()
@@ -7127,6 +7137,12 @@ mod auffrischung_tests {
         (start, g)
     }
 
+    fn mit_platzhalter() -> api_client::KabinenDrehbuch {
+        let mut d = frisches_drehbuch(true, &["de-DE", "en-GB"]);
+        d.eintraege[1].text = "About {restzeit} to go.".into();
+        d
+    }
+
     fn frisches_drehbuch(aufgefrischt: bool, sprachen: &[&str]) -> api_client::KabinenDrehbuch {
         api_client::KabinenDrehbuch {
             sprachen: vec!["de-DE".into(), "en-GB".into()],
@@ -7239,6 +7255,7 @@ mod auffrischung_tests {
             (Err("Netz weg".to_string()), "Netz weg"),
             (Ok(frisches_drehbuch(false, &["de-DE", "en-GB"])), "altes_format"),
             (Ok(frisches_drehbuch(true, &["de-DE"])), "unvollstaendig"),
+            (Ok(mit_platzhalter()), "platzhalter"),
         ] {
             // Fällig gestartet (kein Takt im Vorlauf): Die Frist hält ihn.
             let mut st = welt(45);
@@ -7279,7 +7296,8 @@ mod auffrischung_tests {
     }
 
     /// Die Frist läuft in Final hinein: Der Kapitän verfällt nicht während
-    /// der Frist; danach gilt sein normaler Verfall.
+    /// der Frist und nicht in der Nachfrist danach (Codex); hält ihn die
+    /// Ruhephase auch dann noch auf, gilt sein normaler Verfall.
     #[test]
     fn frist_in_final_verfaellt_erst_danach() {
         let mut st = welt(45);
@@ -7293,6 +7311,8 @@ mod auffrischung_tests {
             assert!(!st.kabinen_lauf.verlauf.iter().any(|g| g.slot == Slot::KapitaenSinkflug));
         }
         takt(&mut st, &tk(UM + AUFFRISCHEN_WARTEN_S, Final, 900.0, -700.0));
+        assert!(st.kabinen_lauf.warteschlange.wartend().contains(&Slot::KapitaenSinkflug), "Nachfrist");
+        takt(&mut st, &tk(UM + AUFFRISCHEN_WARTEN_S + cabin_announcements::warteschlange::NACHFRIST_S, Final, 800.0, -700.0));
         assert!(!st.kabinen_lauf.warteschlange.wartend().contains(&Slot::KapitaenSinkflug));
         let g = st.kabinen_lauf.verlauf.iter().find(|g| g.slot == Slot::KapitaenSinkflug).expect("in „Bisher“");
         assert_eq!(g.ergebnis.as_deref(), Some("entfallen"));
